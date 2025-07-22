@@ -1,0 +1,30 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:views="clr-namespace:PhotoViewer.Views"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PhotoViewer.Views.MainView"
+             x:DataType="vm:MainViewModel">
+  <!-- <Design.DataContext> -->
+    <!-- This only sets the DataContext for the previewer in an IDE,
+         to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
+    <!-- <vm:MainViewModel /> -->
+  <!-- </Design.DataContext> -->
+    
+    <Grid Name="MainGrid" RowDefinitions="Auto,*,Auto">
+        <!-- 顶部：缩略图栏 -->
+        <Border Grid.Row="0" Height="120" Background="#F5F5F5" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
+            <views:ThumbnailView x:Name="ThumbnailView"/>
+        </Border>
+        
+        <!-- 中间：图片显示区域 -->
+        <views:ImageView x:Name="ImageViewer" Grid.Row="1"/>
+        
+        <!-- 底部：控制栏 -->
+        <Border Grid.Row="2" Height="60" Background="#F0F0F0" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0">
+            <views:ControlView x:Name="ControlBar"/>
+        </Border>
+    </Grid>
+</UserControl>

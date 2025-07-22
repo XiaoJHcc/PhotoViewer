@@ -1,0 +1,77 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:PhotoViewer.Views"
+             xmlns:system="clr-namespace:System;assembly=System.Runtime"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PhotoViewer.Views.ThumbnailView"
+             x:DataType="local:ThumbnailView">
+    
+    <Design.DataContext>
+        <local:ThumbnailView/>
+    </Design.DataContext>
+    
+    <UserControl.Resources>
+        <!-- 定义转换器为资源 -->
+        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter"/>
+        
+        <!-- 设计时示例数据 -->
+        <!-- <system:Array x:Key="DesignTimeItems" Type="local:ThumbnailItem"> -->
+        <!--     <local:ThumbnailItem IsCurrent="True" File="{x:Null}"/> -->
+        <!--     <local:ThumbnailItem IsCurrent="False" File="{x:Null}"/> -->
+        <!--     <local:ThumbnailItem IsCurrent="False" File="{x:Null}"/> -->
+        <!-- </system:Array> -->
+    </UserControl.Resources>
+    
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+        
+        <!-- 排序工具栏 -->
+        <StackPanel Orientation="Horizontal" Spacing="10" Margin="5" HorizontalAlignment="Center">
+            <ComboBox Name="SortByComboBox" SelectedIndex="0" MinWidth="100">
+                <ComboBoxItem>按名称</ComboBoxItem>
+                <ComboBoxItem>按时间</ComboBoxItem>
+            </ComboBox>
+            
+            <ComboBox Name="OrderComboBox" SelectedIndex="0" MinWidth="80">
+                <ComboBoxItem>正序</ComboBoxItem>
+                <ComboBoxItem>倒序</ComboBoxItem>
+            </ComboBox>
+            
+            <Button Name="CenterButton" Content="复位" Width="80" Click="CenterButton_Click"/>
+        </StackPanel>
+        
+        <!-- 缩略图列表 -->
+        <ScrollViewer Grid.Row="1" Name="ThumbnailScrollViewer" 
+                      HorizontalScrollBarVisibility="Auto" 
+                      VerticalScrollBarVisibility="Disabled">
+            <ItemsControl Name="ThumbnailItemsControl"
+                          ItemsSource="{Binding ThumbnailItems}">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" Spacing="5"/>
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border BorderThickness="2" 
+                                BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
+                                CornerRadius="4"
+                                Margin="2">
+                            <Image Source="{Binding Image}" 
+                                   Width="80" 
+                                   Height="80"
+                                   Stretch="UniformToFill"
+                                   Tag="{Binding File}"
+                                   PointerPressed="Thumbnail_PointerPressed"/>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
