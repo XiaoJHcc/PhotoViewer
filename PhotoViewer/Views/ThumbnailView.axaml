@@ -3,46 +3,58 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
-             xmlns:viewModels="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
              x:Class="PhotoViewer.Views.ThumbnailView"
-             x:DataType="local:ThumbnailView">
+             x:DataType="vm:ThumbnailViewModel">
     
     <UserControl.Resources>
+        <!-- 布尔到边框颜色转换器 -->
         <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter"/>
+        
+        <!-- 对象存在性检查转换器 -->
+        <!-- <local:ObjectToVisibilityConverter x:Key="ObjectToVisibilityConverter"/> -->
     </UserControl.Resources>
     
-    <Design.DataContext>
-        <viewModels:ThumbnailViewModelDesignData/>
-    </Design.DataContext>
-    
-    <Grid>
+ <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
         
         <!-- 排序工具栏 -->
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Spacing="10" Margin="5" HorizontalAlignment="Center">
-            <ComboBox Name="SortByComboBox" SelectedIndex="0" MinWidth="100">
+        <StackPanel Grid.Row="0" 
+                    Orientation="Horizontal" 
+                    Spacing="10" 
+                    Margin="5" 
+                    HorizontalAlignment="Center">
+            <ComboBox Name="SortByComboBox" 
+                      SelectedIndex="0" 
+                      MinWidth="100">
                 <ComboBoxItem>按名称</ComboBoxItem>
                 <ComboBoxItem>按时间</ComboBoxItem>
             </ComboBox>
             
-            <ComboBox Name="OrderComboBox" SelectedIndex="0" MinWidth="80">
+            <ComboBox Name="OrderComboBox" 
+                      SelectedIndex="0" 
+                      MinWidth="80">
                 <ComboBoxItem>正序</ComboBoxItem>
                 <ComboBoxItem>倒序</ComboBoxItem>
             </ComboBox>
             
-            <Button Name="CenterButton" Content="复位" Width="80" Click="CenterButton_Click"/>
+            <Button Name="CenterButton" 
+                    Content="复位" 
+                    Width="80"
+                    Click="CenterButton_Click"/>
         </StackPanel>
         
         <!-- 缩略图列表 -->
-        <ScrollViewer Grid.Row="1" Name="ThumbnailScrollViewer" 
-                      HorizontalScrollBarVisibility="Auto"
-                      VerticalScrollBarVisibility="Visible">
+        <ScrollViewer Grid.Row="1" 
+                      Name="ThumbnailScrollViewer" 
+                      HorizontalScrollBarVisibility="Auto" 
+                      VerticalScrollBarVisibility="Disabled">
             <ItemsControl Name="ThumbnailItemsControl"
-                          ItemsSource="{Binding ViewModel.ThumbnailItems}">
+                          ItemsSource="{Binding DisplayedFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Orientation="Horizontal" Spacing="5"/>
@@ -59,12 +71,12 @@
                                 Background="#F0F0F0">
                             <Grid>
                                 <!-- 图片缩略图 -->
-                                <Image Source="{Binding Image}" 
+                                <Image Source="{Binding Thumbnail}" 
                                        Stretch="UniformToFill"
-                                       IsVisible="{Binding Image, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                       IsVisible="{Binding Thumbnail, Converter={StaticResource ObjectToVisibilityConverter}, ConverterParameter=Invert}"/>
                                 
                                 <!-- 文件名占位符 -->
-                                <TextBlock Text="{Binding File.Name}" 
+                                <TextBlock Text="{Binding Name}" 
                                            TextWrapping="Wrap"
                                            TextAlignment="Center"
                                            VerticalAlignment="Center"
@@ -73,9 +85,7 @@
                                            FontSize="10"
                                            MaxWidth="80"
                                            MaxHeight="80"
-                                           Tag="{Binding File}"
-                                           IsVisible="{Binding Image, Converter={x:Static ObjectConverters.IsNull}}"
-                                           PointerPressed="Thumbnail_PointerPressed"/>
+                                           IsVisible="{Binding Thumbnail, Converter={StaticResource ObjectToVisibilityConverter}}"/>
                             </Grid>
                         </Border>
                     </DataTemplate>

@@ -1,0 +1,37 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PhotoViewer.Views.SettingsView"
+             x:DataType="vm:SettingsViewModel">
+    
+    <StackPanel Margin="20" Spacing="10">
+        <TextBlock Text="文件格式过滤:" FontWeight="Bold"/>
+        <ListBox ItemsSource="{Binding AvailableFormats}" SelectionMode="Multiple"
+                 SelectedItems="{Binding SelectedFormats}">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <CheckBox Content="{Binding}" IsChecked="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"/>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+        
+        <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="排序方式:" VerticalAlignment="Center"/>
+            <ComboBox ItemsSource="{Binding SortModes}" SelectedItem="{Binding SelectedSortMode}"
+                      Width="100"/>
+            <ComboBox ItemsSource="{Binding SortOrders}" SelectedItem="{Binding SelectedSortOrder}"
+                      Width="80"/>
+        </StackPanel>
+        
+        <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="缓存大小 (MB):" VerticalAlignment="Center"/>
+            <Slider Minimum="50" Maximum="2000" Value="{Binding CacheSize}" Width="200"/>
+            <TextBlock Text="{Binding CacheSize}" MinWidth="30"/>
+        </StackPanel>
+        
+        <Button Content="应用设置" HorizontalAlignment="Center" Padding="20,5"/>
+    </StackPanel>
+</UserControl>

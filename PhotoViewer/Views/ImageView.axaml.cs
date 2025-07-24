@@ -11,7 +11,7 @@ using System.IO;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using PhotoViewer.Service;
+using PhotoViewer.Core;
 
 namespace PhotoViewer.Views;
 

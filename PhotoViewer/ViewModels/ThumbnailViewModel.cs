@@ -1,109 +1,65 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using ReactiveUI;
+using System;
+using System.Collections.ObjectModel;
 using System.Linq;
+using System.Reactive.Linq;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using PhotoViewer.Service;
+using PhotoViewer.Core;
 
 namespace PhotoViewer.ViewModels
 {
-    public class ThumbnailViewModel : ViewModelBase
+    public class ThumbnailViewModel : ReactiveObject
     {
-        private IStorageFile? _currentFile;
-        private bool _isLoading;
+        internal readonly AppState _state;
+        private readonly ObservableCollection<ImageFile> _displayedFiles = new();
+        private readonly object _loadLock = new();
         
-        public ObservableCollection<ThumbnailItem> ThumbnailItems { get; } 
-            = new ObservableCollection<ThumbnailItem>();
-
-        public IStorageFile? CurrentFile;
+        public ReadOnlyObservableCollection<ImageFile> DisplayedFiles { get; }
         
-        public async Task SetFiles(IEnumerable<IStorageFile> files, IStorageFile? currentFile = null)
+        public ThumbnailViewModel(AppState state)
         {
-            CurrentFile = currentFile;
-            ThumbnailItems.Clear();
+            _state = state;
+            DisplayedFiles = new ReadOnlyObservableCollection<ImageFile>(_displayedFiles);
             
-            // 先添加占位符
-            foreach (var file in files)
-            {
-                ThumbnailItems.Add(new ThumbnailItem 
-                { 
-                    File = file,
-                    IsCurrent = file.Path.AbsolutePath == currentFile?.Path.AbsolutePath,
-                    Image = null // 初始为null，显示文件名
-                });
-            }
+            // 当过滤后的文件变化时更新显示
+            // _state.FilteredFiles.CollectionChanged += (s, e) => UpdateDisplayedFiles();
+            // Deepseek BUG
             
-            // 初始加载可见区域的缩略图
-            await LoadVisibleThumbnails();
+            // 当排序方式变化时更新显示
+            _state.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
+                .Subscribe(_ => UpdateDisplayedFiles());
+            
+            // 初始更新
+            UpdateDisplayedFiles();
         }
-        
-        public async Task LoadVisibleThumbnails()
+
+        private void UpdateDisplayedFiles()
         {
-            if (_isLoading) return;
-            _isLoading = true;
-            
-            try
+            lock (_loadLock)
             {
-                // 加载前10个缩略图（可见区域）
-                for (int i = 0; i < Math.Min(10, ThumbnailItems.Count); i++)
+                _displayedFiles.Clear();
+                foreach (var file in _state.FilteredFiles)
                 {
-                    var item = ThumbnailItems[i];
-                    if (item.Image == null)
-                    {
-                        item.Image = await BitmapCacheService.GetBitmapAsync(item.File, 120);
-                    }
+                    _displayedFiles.Add(file);
                 }
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"加载可见缩略图失败: {ex.Message}");
-            }
-            finally
-            {
-                _isLoading = false;
-            }
         }
         
-        public void RefreshThumbnails(int sortBy, int order)
+        public async Task PreloadThumbnailsAsync()
         {
-            if (ThumbnailItems.Count == 0) return;
+            // 只加载前10个缩略图（可见区域）
+            var tasks = _displayedFiles
+                .Take(10)
+                .Where(f => f.Thumbnail == null)
+                .Select(f => f.LoadThumbnailAsync())
+                .ToArray();
             
-            var sorted = sortBy switch
-            {
-                0 => ThumbnailItems.OrderBy(t => t.File.Name),
-                _ => ThumbnailItems.OrderBy(t => t.File.GetBasicPropertiesAsync().Result.DateModified)
-            };
-            
-            if (order == 1) sorted = sorted.Reverse() as IOrderedEnumerable<ThumbnailItem>;
-            
-            var sortedList = sorted.ToList();
-            ThumbnailItems.Clear();
-            
-            foreach (var item in sortedList)
-            {
-                ThumbnailItems.Add(item);
-            }
+            await Task.WhenAll(tasks);
         }
-        
-        public void SetCurrentFile(IStorageFile file)
-        {
-            CurrentFile = file;
-            
-            // 高亮当前项
-            foreach (var item in ThumbnailItems)
-            {
-                item.IsCurrent = item.File.Path.AbsolutePath == file.Path.AbsolutePath;
-            }
-        }
-    }
-    
-    // ThumbnailItem 类定义
-    public class ThumbnailItem
-    {
-        public IStorageFile File { get; set; }
-        public Bitmap? Image { get; set; }
-        public bool IsCurrent { get; set; }
     }
 }

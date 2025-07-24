@@ -1,12 +1,12 @@
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 
 namespace PhotoViewer.Views;
 
-public partial class MainWindow : Window
+public partial class SettingsView : UserControl
 {
-    public MainWindow()
+    public SettingsView()
     {
         InitializeComponent();
     }

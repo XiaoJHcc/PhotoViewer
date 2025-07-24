@@ -16,16 +16,15 @@
   <Grid RowDefinitions="Auto,*,Auto">
       <!-- 顶部：缩略图栏 -->
       <Border Grid.Row="0" Height="120" Background="#F5F5F5" BorderBrush="#E0E0E0" BorderThickness="0,0,0,1">
-          <views:ThumbnailView x:Name="ThumbnailView"
-                               ThumbnailSelected="OnThumbnailSelected"/>
+          <views:ThumbnailView/>
       </Border>
         
       <!-- 中间：图片显示区域 -->
-      <views:ImageView x:Name="ImageViewer" Grid.Row="1"/>
+      <views:ImageView Grid.Row="1"/>
         
       <!-- 底部：控制栏 -->
       <Border Grid.Row="2" Height="60" Background="#F0F0F0" BorderBrush="#E0E0E0" BorderThickness="0,1,0,0">
-          <views:ControlView x:Name="ControlBar"/>
+          <views:ControlView/>
       </Border>
   </Grid>
 </UserControl>

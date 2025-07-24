@@ -1,66 +1,45 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using CommunityToolkit.Mvvm.ComponentModel;
+using PhotoViewer.Core;
 using PhotoViewer.Views;
+using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
 
-public partial class MainViewModel : ViewModelBase
+public partial class MainViewModel : ReactiveObject
 {
-        private IStorageFile? _currentFile;
-        private List<IStorageFile>? _currentFolderFiles;
+    private readonly AppState _appState = new();
         
-        public ThumbnailViewModel ThumbnailViewModel { get; } = new ThumbnailViewModel();
-
-        public IStorageFile? CurrentFile;
+    public ThumbnailViewModel ThumbnailViewModel { get; }
+    public ControlViewModel ControlViewModel { get; }
+    public ImageViewModel ImageViewModel { get; }
+    public SettingsViewModel SettingsViewModel { get; }
         
-        public void SetFolderFiles(IEnumerable<IStorageFile> files)
-        {
-            _currentFolderFiles = new List<IStorageFile>(files);
-        }
-        
-        public void ClearFolderFiles()
-        {
-            _currentFolderFiles = null;
-            CurrentFile = null;
-        }
-        
-        public bool HasPreviousFile()
-        {
-            if (_currentFolderFiles == null || CurrentFile == null) 
-                return false;
+    public MainViewModel()
+    {
+        ThumbnailViewModel = new ThumbnailViewModel(_appState);
+        ControlViewModel = new ControlViewModel(_appState);
+        ImageViewModel = new ImageViewModel(_appState);
+        SettingsViewModel = new SettingsViewModel(_appState);
             
-            var currentIndex = _currentFolderFiles.IndexOf(CurrentFile);
-            return currentIndex > 0;
-        }
+        // 当当前文件变化时加载图片
+        _appState.WhenAnyValue(state => state.CurrentFile)
+            .Subscribe(file =>
+            {
+                if (file != null)
+                {
+                    ImageViewModel.LoadImage(file.File);
+                }
+            });
+    }
         
-        public bool HasNextFile()
-        {
-            if (_currentFolderFiles == null || CurrentFile == null) 
-                return false;
-            
-            var currentIndex = _currentFolderFiles.IndexOf(CurrentFile);
-            return currentIndex < _currentFolderFiles.Count - 1;
-        }
-        
-        public IStorageFile? GetPreviousFile()
-        {
-            if (_currentFolderFiles == null || CurrentFile == null) 
-                return null;
-            
-            var currentIndex = _currentFolderFiles.IndexOf(CurrentFile);
-            return currentIndex > 0 ? _currentFolderFiles[currentIndex - 1] : null;
-        }
-        
-        public IStorageFile? GetNextFile()
-        {
-            if (_currentFolderFiles == null || CurrentFile == null) 
-                return null;
-            
-            var currentIndex = _currentFolderFiles.IndexOf(CurrentFile);
-            return currentIndex < _currentFolderFiles.Count - 1 
-                ? _currentFolderFiles[currentIndex + 1] 
-                : null;
-        }
+    public async Task OpenFolder(IStorageFolder folder)
+    {
+        await _appState.LoadFolder(folder);
+        await ThumbnailViewModel.PreloadThumbnailsAsync();
+    }
 }

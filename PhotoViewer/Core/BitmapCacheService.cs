@@ -5,7 +5,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 
-namespace PhotoViewer.Service
+namespace PhotoViewer.Core
 {
     public static class BitmapCacheService
     {
