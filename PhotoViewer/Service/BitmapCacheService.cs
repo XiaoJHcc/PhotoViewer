@@ -9,17 +9,19 @@ namespace PhotoViewer.Service
 {
     public static class BitmapCacheService
     {
-        private static readonly ConcurrentDictionary<string, WeakReference<Bitmap>> _cache = 
-            new ConcurrentDictionary<string, WeakReference<Bitmap>>();
+        private static readonly ConcurrentDictionary<string, (Bitmap, DateTime)> _cache = 
+            new ConcurrentDictionary<string, (Bitmap, DateTime)>();
+        private static readonly TimeSpan CacheDuration = TimeSpan.FromMinutes(5);
         
         public static async Task<Bitmap?> GetBitmapAsync(IStorageFile file, int? maxWidth = null)
         {
             var path = file.Path.AbsolutePath;
             
             // 尝试从缓存获取
-            if (_cache.TryGetValue(path, out var weakRef) && weakRef.TryGetTarget(out var cachedBitmap))
+            if (_cache.TryGetValue(path, out var cached) && 
+                DateTime.UtcNow - cached.Item2 < CacheDuration)
             {
-                return cachedBitmap;
+                return cached.Item1;
             }
             
             try
@@ -35,11 +37,16 @@ namespace PhotoViewer.Service
                         (int)(bitmap.PixelSize.Width * scale),
                         (int)(bitmap.PixelSize.Height * scale)
                     );
+                    
                     bitmap = bitmap.CreateScaledBitmap(newSize);
+                    
+                    // 使用更高效的缩放方法
+                    // using var scaledBitmap = bitmap.CreateScaledBitmap(newSize);
+                    // bitmap = new Bitmap(scaledBitmap.PlatformImpl);
                 }
                 
                 // 更新缓存
-                _cache[path] = new WeakReference<Bitmap>(bitmap);
+                _cache[path] = (bitmap, DateTime.UtcNow);
                 return bitmap;
             }
             catch (Exception ex)
@@ -51,6 +58,10 @@ namespace PhotoViewer.Service
         
         public static void ClearCache()
         {
+            foreach (var item in _cache.Values)
+            {
+                item.Item1.Dispose();
+            }
             _cache.Clear();
         }
     }

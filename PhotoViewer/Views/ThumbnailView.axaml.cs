@@ -14,7 +14,9 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Interactivity;
+using Avalonia.Threading;
 using PhotoViewer.Service;
+using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
 
@@ -22,15 +24,15 @@ namespace PhotoViewer.Views;
     {
         public event EventHandler<IStorageFile>? ThumbnailSelected;
         
-        // 使用 ObservableCollection 并绑定到 ItemsSource
-        public ObservableCollection<ThumbnailItem> ThumbnailItems { get; } 
-            = new ObservableCollection<ThumbnailItem>();
-        
-        private IStorageFile? _currentFile;
+        private readonly DispatcherTimer _scrollTimer = new DispatcherTimer();
+        public ThumbnailViewModel? ViewModel => DataContext as ThumbnailViewModel;
         
         public ThumbnailView()
         {
             InitializeComponent();
+            
+            // 设置数据上下文
+            DataContext = new ThumbnailViewModel();
             
             // 排序选项变化时刷新
             SortByComboBox.SelectionChanged += (s, e) => RefreshThumbnails();
@@ -39,112 +41,77 @@ namespace PhotoViewer.Views;
             // 复位按钮点击
             CenterButton.Click += (s, e) => ScrollToCurrent();
             
-            // 缩略图点击事件
-            ThumbnailItemsControl.AddHandler(
-                PointerPressedEvent, 
-                Thumbnail_PointerPressed, 
-                RoutingStrategies.Tunnel);
+            // 滚动事件处理
+            ThumbnailScrollViewer.ScrollChanged += OnScrollChanged;
+            
+            // 设置滚动计时器（300ms延迟）
+            _scrollTimer.Interval = TimeSpan.FromMilliseconds(300);
+            _scrollTimer.Tick += async (s, e) => {
+                _scrollTimer.Stop();
+                if (ViewModel != null)
+                {
+                    await ViewModel.LoadVisibleThumbnails();
+                }
+            };
         }
         
         public async Task SetFiles(IEnumerable<IStorageFile> files, IStorageFile? currentFile = null)
         {
-            _currentFile = currentFile;
-            ThumbnailItems.Clear();
-            
-            foreach (var file in files)
+            if (ViewModel != null)
             {
-                ThumbnailItems.Add(new ThumbnailItem 
-                { 
-                    File = file,
-                    IsCurrent = file.Path.AbsolutePath == currentFile?.Path.AbsolutePath
-                });
+                await ViewModel.SetFiles(files, currentFile);
             }
-            
-            // 异步加载缩略图
-            _ = LoadThumbnailsAsync();
-            
-            // 滚动到当前图片
-            await Task.Delay(100); // 等待布局完成
-            ScrollToCurrent();
         }
         
-        private async Task LoadThumbnailsAsync()
+        private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
         {
-            foreach (var item in ThumbnailItems)
-            {
-                item.Image = await BitmapCacheService.GetBitmapAsync(item.File, 120);
-            }
+            // 使用计时器延迟加载，避免频繁滚动时重复加载
+            _scrollTimer.Stop();
+            _scrollTimer.Start();
         }
         
         private void RefreshThumbnails()
         {
-            if (ThumbnailItems.Count == 0) return;
-            
-            var sortBy = SortByComboBox.SelectedIndex;
-            var order = OrderComboBox.SelectedIndex;
-            
-            var sorted = sortBy switch
+            if (ViewModel != null)
             {
-                0 => ThumbnailItems.OrderBy(t => t.File.Name),
-                _ => ThumbnailItems.OrderBy(t => t.File.GetBasicPropertiesAsync().Result.DateModified)
-            };
-            
-            if (order == 1) sorted = sorted.Reverse() as IOrderedEnumerable<ThumbnailItem>;
-            
-            var sortedList = sorted.ToList();
-            ThumbnailItems.Clear();
-            
-            foreach (var item in sortedList)
-            {
-                ThumbnailItems.Add(item);
+                ViewModel.RefreshThumbnails(
+                    SortByComboBox.SelectedIndex,
+                    OrderComboBox.SelectedIndex
+                );
             }
-            
-            ScrollToCurrent();
         }
         
-        private void ScrollToCurrent()
+        public void ScrollToCurrent()
         {
-            if (_currentFile == null) return;
-            
-            var currentItem = ThumbnailItems.FirstOrDefault(t => 
-                t.File.Path.AbsolutePath == _currentFile.Path.AbsolutePath);
-            
-            if (currentItem != null)
+            if (ViewModel != null && ViewModel.CurrentFile != null)
             {
-                // 高亮当前项
-                foreach (var item in ThumbnailItems)
-                {
-                    item.IsCurrent = item == currentItem;
-                }
-                
-                // 滚动到可见区域
-                ThumbnailItemsControl.ScrollIntoView(currentItem);
+                ThumbnailItemsControl.ScrollIntoView(
+                    ViewModel.ThumbnailItems.FirstOrDefault(t => 
+                        t.File.Path.AbsolutePath == ViewModel.CurrentFile.Path.AbsolutePath
+                    )
+                );
             }
         }
         
         private void Thumbnail_PointerPressed(object sender, PointerPressedEventArgs e)
         {
-            if (e.Source is Image image && image.Tag is IStorageFile file)
+            if (e.Source is TextBlock textBlock && textBlock.Tag is IStorageFile file)
             {
                 ThumbnailSelected?.Invoke(this, file);
                 e.Handled = true;
             }
-            else if (e.Source is Border border && border.Child is Image childImage && childImage.Tag is IStorageFile borderFile)
+        }
+        
+        public void SetCurrentFile(IStorageFile file)
+        {
+            if (ViewModel != null)
             {
-                ThumbnailSelected?.Invoke(this, borderFile);
-                e.Handled = true;
+                ViewModel.SetCurrentFile(file);
             }
         }
         
         private void CenterButton_Click(object sender, RoutedEventArgs e)
         {
-            ScrollToCurrent();
-        }
-        
-        // 设置当前文件（从外部调用）
-        public void SetCurrentFile(IStorageFile file)
-        {
-            _currentFile = file;
             ScrollToCurrent();
         }
         
@@ -164,12 +131,4 @@ namespace PhotoViewer.Views;
         {
             throw new NotSupportedException();
         }
-    }
-
-// ThumbnailItem 类定义
-    public class ThumbnailItem
-    {
-        public IStorageFile File { get; set; }
-        public Bitmap? Image { get; set; }
-        public bool IsCurrent { get; set; }
     }
