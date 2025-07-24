@@ -34,6 +34,10 @@ public partial class MainViewModel : ReactiveObject
                 {
                     ImageViewModel.LoadImage(file.File);
                 }
+                else
+                {
+                    ImageViewModel.CurrentImage = null;
+                }
             });
     }
         

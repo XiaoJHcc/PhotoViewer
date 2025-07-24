@@ -15,7 +15,7 @@ public class ImageViewModel : ReactiveObject
     public Bitmap? CurrentImage
     {
         get => _currentImage;
-        private set => this.RaiseAndSetIfChanged(ref _currentImage, value);
+        set => this.RaiseAndSetIfChanged(ref _currentImage, value);
     }
     
     public ImageViewModel(AppState state)

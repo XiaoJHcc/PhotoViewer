@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Specialized;
+using System.Diagnostics;
 using System.Reactive;
 using System.Reactive.Linq;
+using DynamicData.Binding;
 using PhotoViewer.Core;
 using ReactiveUI;
 
@@ -15,42 +17,55 @@ namespace PhotoViewer.ViewModels
         public ReactiveCommand<Unit, Unit> NextCommand { get; }
         public ReactiveCommand<Unit, Unit> ClearCommand { get; }
         
-        public bool CanPrevious => 
-            _state.CurrentFile != null && 
-            _state.FilteredFiles.IndexOf(_state.CurrentFile) > 0;
+        private bool _canPrevious;
+        public bool CanPrevious
+        {
+            get => _canPrevious;
+            set => this.RaiseAndSetIfChanged(ref _canPrevious, value);
+        }
         
-        public bool CanNext => 
-            _state.CurrentFile != null && 
-            _state.FilteredFiles.IndexOf(_state.CurrentFile) < _state.FilteredFiles.Count - 1;
+        private bool _canNext;
+        public bool CanNext
+        {
+            get => _canNext;
+            set => this.RaiseAndSetIfChanged(ref _canNext, value);
+        }
         
         public ControlViewModel(AppState state)
         {
             _state = state;
             
             // 创建命令
-            PreviousCommand = ReactiveCommand.Create(OnPrevious);
-            NextCommand = ReactiveCommand.Create(OnNext);
+            PreviousCommand = ReactiveCommand.Create(OnPrevious, this.WhenAnyValue(x => x.CanPrevious));
+            NextCommand = ReactiveCommand.Create(OnNext, this.WhenAnyValue(x => x.CanNext));
             ClearCommand = ReactiveCommand.Create(OnClear);
             
-            // 当状态变化时更新命令可用性
-            // _state.WhenAnyValue(s => s.CurrentFile)
-            //     .Subscribe(_ => UpdateCommandState());
-            //
-            // _state.FilteredFiles.CollectionChanged += (s, e) => UpdateCommandState();
-            // Deepseek BUG
-            
+            // 监听状态变化
             _state.WhenAnyValue(s => s.CurrentFile)
                 .Subscribe(_ => UpdateCommandState());
+            
+            // 监听过滤文件集合变化
+            // Observable.FromEventPattern<NotifyCollectionChangedEventArgs>(
+            //     h => _state.FilteredFiles.CollectionChanged += h,
+            //     h => _state.FilteredFiles.CollectionChanged -= h
+            // ).Subscribe(_ => UpdateCommandState());
+            
+            // 初始更新状态
+            UpdateCommandState();
         }
         
         private void UpdateCommandState()
         {
-            this.RaisePropertyChanged(nameof(CanPrevious));
-            this.RaisePropertyChanged(nameof(CanNext));
+            if (_state.CurrentFile == null || _state.FilteredFiles.Count == 0)
+            {
+                CanPrevious = false;
+                CanNext = false;
+                return;
+            }
             
-            // 更新命令的可执行状态
-            PreviousCommand.ThrownExceptions.Subscribe(ex => Console.WriteLine(ex.Message));
-            NextCommand.ThrownExceptions.Subscribe(ex => Console.WriteLine(ex.Message));
+            var currentIndex = _state.FilteredFiles.IndexOf(_state.CurrentFile);
+            CanPrevious = currentIndex > 0;
+            CanNext = currentIndex < _state.FilteredFiles.Count - 1;
         }
         
         private void OnPrevious()

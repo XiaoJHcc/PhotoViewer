@@ -10,8 +10,6 @@ namespace PhotoViewer.Views;
 
 public partial class MainView : UserControl
 {
-    private MainViewModel? ViewModel => DataContext as MainViewModel;
-    
     public MainView()
     {
         InitializeComponent();
