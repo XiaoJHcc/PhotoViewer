@@ -4,15 +4,17 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
-using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
-using System;
 using System.IO;
+using System.Reactive.Disposables;
+using System.Reactive.Linq;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
 using PhotoViewer.ViewModels;
+using ReactiveUI;
 
 namespace PhotoViewer.Views;
 
@@ -26,7 +28,7 @@ public partial class ImageView : UserControl
         
     // 原始图片尺寸
     private Size _originalImageSize;
-    public event EventHandler<IStorageFile>? ImageLoaded;
+    // public event EventHandler<IStorageFile>? ImageLoaded;
     
     public ImageView()
     {
@@ -37,6 +39,9 @@ public partial class ImageView : UserControl
             
         // 点击事件（仅当没有图片时）
         MainGrid.PointerPressed += OnPointerPressed;
+        
+        // 加载完成事件
+        // ImageLoaded += OnImageLoaded;
 
         // 拖拽支持
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -54,10 +59,102 @@ public partial class ImageView : UserControl
         }
     }
     
+    /**
+     *  选择打开图片
+     */
+    private async Task OpenImageAsync()
+    {
+        // 获取顶级窗口的StorageProvider
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel?.StorageProvider == null) return;
+            
+        // 选择图片窗口
+        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "选择图片",
+            FileTypeFilter = new[] { ImageFileTypes.All },
+            AllowMultiple = false
+        });
+
+        if (files.Count > 0 && files[0] is IStorageFile file)
+        {
+            await LoadNewImageAsync(file);
+        }
+    }
+    /*
+     *  加载新文件 需要刷新文件夹
+     */
+    private async Task LoadNewImageAsync(IStorageFile file)
+    {
+        await LoadImageAsync(file);
+        
+        // 同步信息至 Main
+        ViewModel.Main.OnNewImageLoaded(file);
+    }
+    
+    /*
+     *  加载文件
+     */
+    public async Task LoadImageAsync(IStorageFile file)
+    {
+        try
+        {
+            // 使用缓存服务加载图片
+            // var bitmap = await BitmapCacheService.GetBitmapAsync(file);
+            // if (bitmap == null) return;
+            // PreviewImage.Source = bitmap;
+            
+            // 使用 ImageViewModel 加载图片
+            ViewModel.LoadImageAsync(file);
+        
+            // 加载成功后
+            // ImageLoaded?.Invoke(this, file);
+            // OnImageLoaded(this, file);
+            
+            HintText.IsVisible = false;
+        
+            // 重置缩放状态
+            _currentZoomState = ZoomState.Normal;
+            PreviewImage.Width = double.NaN;
+            PreviewImage.Height = double.NaN;
+            PreviewImage.Stretch = Stretch.Uniform;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"加载图片失败: {ex.Message}");
+        }
+    }
+    
+    /*
+     *  加载完成后
+     */
+    // private void OnImageLoaded(object? sender, IStorageFile file)
+    // {
+    //     HintText.IsVisible = false;
+    //     
+    //     // 重置缩放状态
+    //     _currentZoomState = ZoomState.Normal;
+    //     PreviewImage.Width = double.NaN;
+    //     PreviewImage.Height = double.NaN;
+    //     PreviewImage.Stretch = Stretch.Uniform;
+    // }
+    
+    public void ClearImage()
+    {
+        // PreviewImage.Source = null;
+        ViewModel.SourceBitmap = null;
+        HintText.IsVisible = true;
+        _currentZoomState = ZoomState.Normal;
+    }
+
+    /*
+     *  点击处理
+     */
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
         // 仅当没有图片时才响应点击
-        if (PreviewImage.Source == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        // if (PreviewImage.Source == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        if (ViewModel.SourceBitmap == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             _ = OpenImageAsync();
         }
@@ -65,7 +162,8 @@ public partial class ImageView : UserControl
 
     private void OnDoubleTapped(object? sender, RoutedEventArgs e)
     {
-        if (PreviewImage.Source == null) return;
+        // if (PreviewImage.Source == null) return;
+        if (ViewModel.SourceBitmap == null) return;
             
         switch (_currentZoomState)
         {
@@ -85,7 +183,8 @@ public partial class ImageView : UserControl
     
     private void ZoomToOriginalSize()
     {
-        if (PreviewImage.Source is Bitmap bitmap)
+        // if (PreviewImage.Source is Bitmap bitmap)
+        if (ViewModel.SourceBitmap is Bitmap bitmap)
         {
             // 保存当前尺寸
             _originalImageSize = new Size(
@@ -139,58 +238,9 @@ public partial class ImageView : UserControl
         // this.GestureRecognizers.Add(pinchGesture);
     }
     
-    private async Task OpenImageAsync()
-    {
-        // 获取顶级窗口的StorageProvider
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider == null) return;
-            
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择图片",
-            FileTypeFilter = new[] { ImageFileTypes.All },
-            AllowMultiple = false
-        });
-
-        if (files.Count > 0 && files[0] is IStorageFile file)
-        {
-            await LoadImageAsync(file);
-        }
-    }
-    
-    public async Task LoadImageAsync(IStorageFile file)
-    {
-        try
-        {
-            // 使用缓存服务加载图片
-            var bitmap = await BitmapCacheService.GetBitmapAsync(file);
-            if (bitmap == null) return;
-        
-            PreviewImage.Source = bitmap;
-            HintText.IsVisible = false;
-            // ViewModel.HintText = file.Path.ToString(); //DEBUG
-        
-            // 重置缩放状态
-            _currentZoomState = ZoomState.Normal;
-            PreviewImage.Width = double.NaN;
-            PreviewImage.Height = double.NaN;
-            PreviewImage.Stretch = Stretch.Uniform;
-        
-            ImageLoaded?.Invoke(this, file);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"加载图片失败: {ex.Message}");
-        }
-    }
-    
-    public void ClearImage()
-    {
-        PreviewImage.Source = null;
-        HintText.IsVisible = true;
-        _currentZoomState = ZoomState.Normal;
-    }
-
+    /*
+     *  拖拽处理
+     */
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         var hasValidFile = e.Data.GetFiles()?
@@ -205,7 +255,7 @@ public partial class ImageView : UserControl
         var files = e.Data.GetFiles()?.ToList();
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
-            await LoadImageAsync(file);
+            await LoadNewImageAsync(file);
         }
         e.Handled = true;
     }

@@ -9,7 +9,8 @@
              x:DataType="vm:ImageViewModel">
     
     <Grid Name="MainGrid" Background="Transparent">
-        <Image Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+        <Image Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+               Source="{Binding SourceBitmap}"/>
         <TextBlock Text="{Binding HintText}" 
                    HorizontalAlignment="Center" 
                    VerticalAlignment="Center"

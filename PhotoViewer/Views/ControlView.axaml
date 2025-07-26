@@ -2,12 +2,10 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ControlView"
              x:DataType="vm:ControlViewModel">
-             <!-- d:DataContext="{d:DesignInstance Type=vm:ControlViewModel}"> -->
     
     <Border Background="#888888" Padding="10">
         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="20">
@@ -15,20 +13,20 @@
                     Content="上一张" 
                     Width="100" 
                     Height="40"
-                    Command="{Binding PreviousCommand}"
+                    Command="{Binding OnPrevious}"
                     IsEnabled="{Binding CanPrevious}"/>
                     
             <Button Name="ClearButton" 
                     Content="清除图片" 
                     Width="100" 
                     Height="40"
-                    Command="{Binding ClearCommand}"/>
+                    Command="{Binding OnClear}"/>
                     
             <Button Name="NextButton" 
                     Content="下一张" 
                     Width="100" 
                     Height="40"
-                    Command="{Binding NextCommand}"
+                    Command="{Binding OnNext}"
                     IsEnabled="{Binding CanNext}"/>
         </StackPanel>
     </Border>
