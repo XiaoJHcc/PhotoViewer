@@ -12,11 +12,14 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using PhotoViewer.Core;
+using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
 
 public partial class ImageView : UserControl
 {
+    private ImageViewModel? ViewModel => DataContext as ImageViewModel;
+    
     // 缩放状态
     private enum ZoomState { Normal, Zoomed }
     private ZoomState _currentZoomState = ZoomState.Normal;
@@ -165,6 +168,7 @@ public partial class ImageView : UserControl
         
             PreviewImage.Source = bitmap;
             HintText.IsVisible = false;
+            // ViewModel.HintText = file.Path.ToString(); //DEBUG
         
             // 重置缩放状态
             _currentZoomState = ZoomState.Normal;

@@ -117,10 +117,10 @@ namespace PhotoViewer.Views;
         
         private void CenterButton_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            if (ViewModel?._state?.CurrentFile != null)
+            if (ViewModel?._mainViewModel?.CurrentFile != null)
             {
                 var currentItem = ViewModel.DisplayedFiles.FirstOrDefault(
-                    f => f.File == ViewModel._state.CurrentFile);
+                    f => f.File == ViewModel._mainViewModel.CurrentFile);
                 
                 if (currentItem != null)
                 {

@@ -20,16 +20,16 @@
         
         <StackPanel Orientation="Horizontal" Spacing="10">
             <TextBlock Text="排序方式:" VerticalAlignment="Center"/>
-            <ComboBox ItemsSource="{Binding SortModes}" SelectedItem="{Binding SelectedSortMode}"
+            <ComboBox ItemsSource="{Binding SortModes}" SelectedItem="{Binding SortMode}"
                       Width="100"/>
-            <ComboBox ItemsSource="{Binding SortOrders}" SelectedItem="{Binding SelectedSortOrder}"
+            <ComboBox ItemsSource="{Binding SortOrders}" SelectedItem="{Binding SortOrder}"
                       Width="80"/>
         </StackPanel>
         
         <StackPanel Orientation="Horizontal" Spacing="10">
             <TextBlock Text="缓存大小 (MB):" VerticalAlignment="Center"/>
-            <Slider Minimum="50" Maximum="2000" Value="{Binding CacheSize}" Width="200"/>
-            <TextBlock Text="{Binding CacheSize}" MinWidth="30"/>
+            <Slider Minimum="50" Maximum="2000" Value="{Binding MaxCacheSizeMB}" Width="200"/>
+            <TextBlock Text="{Binding MaxCacheSizeMB}" MinWidth="30"/>
         </StackPanel>
         
         <Button Content="应用设置" HorizontalAlignment="Center" Padding="20,5"/>

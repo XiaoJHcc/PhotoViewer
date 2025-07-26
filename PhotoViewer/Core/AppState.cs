@@ -9,6 +9,7 @@ using ReactiveUI;
 
 namespace PhotoViewer.Core
 {
+    /*
     public enum SortMode { Name, Date, Size }
     public enum SortOrder { Ascending, Descending }
     
@@ -43,7 +44,8 @@ namespace PhotoViewer.Core
             set => this.RaiseAndSetIfChanged(ref _maxCacheSizeMB, value);
         }
     }
-    
+    */
+    /*
     public class AppState : ReactiveObject
     {
         private IStorageFolder? _currentFolder;
@@ -189,6 +191,7 @@ namespace PhotoViewer.Core
             CurrentFile = current;
         }
     }
+    */
     
     public class ImageFile : ReactiveObject
     {

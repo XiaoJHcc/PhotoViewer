@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using ReactiveUI;
 using System;
 using System.Collections.ObjectModel;
+using System.Collections.Specialized;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
@@ -15,24 +16,23 @@ namespace PhotoViewer.ViewModels
 {
     public class ThumbnailViewModel : ReactiveObject
     {
-        internal readonly AppState _state;
+        internal readonly MainViewModel _mainViewModel;
         private readonly ObservableCollection<ImageFile> _displayedFiles = new();
         private readonly object _loadLock = new();
         
         public ReadOnlyObservableCollection<ImageFile> DisplayedFiles { get; }
         
-        public ThumbnailViewModel(AppState state)
+        public ThumbnailViewModel(MainViewModel mainViewModel)
         {
-            _state = state;
+            _mainViewModel = mainViewModel;
             DisplayedFiles = new ReadOnlyObservableCollection<ImageFile>(_displayedFiles);
             
-            // 当过滤后的文件变化时更新显示
-            // _state.FilteredFiles.CollectionChanged += (s, e) => UpdateDisplayedFiles();
+            // 监听过滤文件集合变化
+            // Observable.FromEventPattern<NotifyCollectionChangedEventArgs>(
+            //     h => _mainViewModel.FilteredFiles.CollectionChanged += h,
+            //     h => _mainViewModel.FilteredFiles.CollectionChanged -= h
+            // ).Subscribe(_ => UpdateDisplayedFiles());
             // Deepseek BUG
-            
-            // 当排序方式变化时更新显示
-            _state.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
-                .Subscribe(_ => UpdateDisplayedFiles());
             
             // 初始更新
             UpdateDisplayedFiles();
@@ -43,7 +43,7 @@ namespace PhotoViewer.ViewModels
             lock (_loadLock)
             {
                 _displayedFiles.Clear();
-                foreach (var file in _state.FilteredFiles)
+                foreach (var file in _mainViewModel.FilteredFiles)
                 {
                     _displayedFiles.Add(file);
                 }
@@ -60,6 +60,11 @@ namespace PhotoViewer.ViewModels
                 .ToArray();
             
             await Task.WhenAll(tasks);
+        }
+        
+        public void SetCurrentFile(ImageFile file)
+        {
+            _mainViewModel.CurrentFile = file;
         }
     }
 }

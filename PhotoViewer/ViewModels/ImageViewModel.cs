@@ -9,18 +9,26 @@ namespace PhotoViewer.ViewModels;
 
 public class ImageViewModel : ReactiveObject
 {
-    private readonly AppState _state;
-    private Bitmap? _currentImage;
+    private readonly MainViewModel _mainViewModel;
     
+    private string _hintText = "点击或拖入图片";
+    public string HintText
+    {
+        get => _hintText;
+        set => this.RaiseAndSetIfChanged(ref _hintText, value);
+    }
+    
+    private Bitmap? _currentImage;
+        
     public Bitmap? CurrentImage
     {
         get => _currentImage;
         set => this.RaiseAndSetIfChanged(ref _currentImage, value);
     }
-    
-    public ImageViewModel(AppState state)
+        
+    public ImageViewModel(MainViewModel mainViewModel)
     {
-        _state = state;
+        _mainViewModel = mainViewModel;
     }
     
     public async Task LoadImage(IStorageFile file)
@@ -36,4 +44,5 @@ public class ImageViewModel : ReactiveObject
             CurrentImage = null;
         }
     }
+    
 }

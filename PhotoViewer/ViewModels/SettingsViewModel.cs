@@ -5,53 +5,51 @@ using ReactiveUI;
 
 namespace PhotoViewer.ViewModels
 {
+    public enum SortMode { Name, Date, Size }
+    public enum SortOrder { Ascending, Descending }
+    
     public class SettingsViewModel : ReactiveObject
     {
-        private readonly AppState _state;
+        private SortMode _sortMode = SortMode.Name;
+        private SortOrder _sortOrder = SortOrder.Ascending;
+        private int _maxCacheSizeMB = 500;
+        private int _preloadCount = 3;
         
         public ObservableCollection<string> AvailableFormats { get; } = new ObservableCollection<string>
         {
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".svg"
         };
         
-        public ObservableCollection<string> SelectedFormats { get; } = new ObservableCollection<string>();
+        public ObservableCollection<string> SelectedFormats { get; } = new ObservableCollection<string>
+        {
+            ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
+        };
         
         public Array SortModes => Enum.GetValues(typeof(SortMode));
         public Array SortOrders => Enum.GetValues(typeof(SortOrder));
         
-        public SortMode SelectedSortMode
+        public SortMode SortMode
         {
-            get => _state.SortMode;
-            set => _state.SortMode = value;
+            get => _sortMode;
+            set => this.RaiseAndSetIfChanged(ref _sortMode, value);
         }
         
-        public SortOrder SelectedSortOrder
+        public SortOrder SortOrder
         {
-            get => _state.SortOrder;
-            set => _state.SortOrder = value;
+            get => _sortOrder;
+            set => this.RaiseAndSetIfChanged(ref _sortOrder, value);
         }
         
-        public int CacheSize
+        public int MaxCacheSizeMB
         {
-            get => _state.CacheSettings.MaxCacheSizeMB;
-            set => _state.CacheSettings.MaxCacheSizeMB = value;
+            get => _maxCacheSizeMB;
+            set => this.RaiseAndSetIfChanged(ref _maxCacheSizeMB, value);
         }
         
-        public SettingsViewModel(AppState state)
+        public int PreloadCount
         {
-            _state = state;
-            
-            // 初始化选择的格式
-            foreach (var format in _state.FilterSettings.IncludedFormats)
-            {
-                SelectedFormats.Add(format);
-            }
-            
-            // 当选择的格式变化时更新状态
-            SelectedFormats.CollectionChanged += (s, e) =>
-            {
-                _state.FilterSettings.IncludedFormats = new ObservableCollection<string>(SelectedFormats);
-            };
+            get => _preloadCount;
+            set => this.RaiseAndSetIfChanged(ref _preloadCount, value);
         }
     }
 }

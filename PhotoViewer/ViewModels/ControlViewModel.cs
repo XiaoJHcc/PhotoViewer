@@ -11,82 +11,59 @@ namespace PhotoViewer.ViewModels
 {
     public class ControlViewModel : ReactiveObject
     {
-        private readonly AppState _state;
+        private readonly MainViewModel _mainViewModel;
         
-        public ReactiveCommand<Unit, Unit> PreviousCommand { get; }
-        public ReactiveCommand<Unit, Unit> NextCommand { get; }
-        public ReactiveCommand<Unit, Unit> ClearCommand { get; }
+        public ReactiveCommand<Unit, ImageFile?> PreviousCommand { get; }
+        public ReactiveCommand<Unit, ImageFile?> NextCommand { get; }
+        public ReactiveCommand<Unit, ImageFile?> ClearCommand { get; }
         
-        private bool _canPrevious;
-        public bool CanPrevious
+        public bool CanPrevious => _mainViewModel.HasPreviousFile();
+        public bool CanNext => _mainViewModel.HasNextFile();
+        
+        public ControlViewModel(MainViewModel mainViewModel)
         {
-            get => _canPrevious;
-            set => this.RaiseAndSetIfChanged(ref _canPrevious, value);
-        }
-        
-        private bool _canNext;
-        public bool CanNext
-        {
-            get => _canNext;
-            set => this.RaiseAndSetIfChanged(ref _canNext, value);
-        }
-        
-        public ControlViewModel(AppState state)
-        {
-            _state = state;
+            _mainViewModel = mainViewModel;
             
             // 创建命令
-            PreviousCommand = ReactiveCommand.Create(OnPrevious, this.WhenAnyValue(x => x.CanPrevious));
-            NextCommand = ReactiveCommand.Create(OnNext, this.WhenAnyValue(x => x.CanNext));
-            ClearCommand = ReactiveCommand.Create(OnClear);
             
-            // 监听状态变化
-            _state.WhenAnyValue(s => s.CurrentFile)
-                .Subscribe(_ => UpdateCommandState());
+            PreviousCommand = ReactiveCommand.Create(
+                () => _mainViewModel.CurrentFile = _mainViewModel.GetPreviousFile(),
+                this.WhenAnyValue(x => x.CanPrevious));
             
-            // 监听过滤文件集合变化
-            // Observable.FromEventPattern<NotifyCollectionChangedEventArgs>(
-            //     h => _state.FilteredFiles.CollectionChanged += h,
-            //     h => _state.FilteredFiles.CollectionChanged -= h
-            // ).Subscribe(_ => UpdateCommandState());
+            NextCommand = ReactiveCommand.Create(
+                () => _mainViewModel.CurrentFile = _mainViewModel.GetNextFile(),
+                this.WhenAnyValue(x => x.CanNext));
             
-            // 初始更新状态
-            UpdateCommandState();
-        }
-        
-        private void UpdateCommandState()
-        {
-            if (_state.CurrentFile == null || _state.FilteredFiles.Count == 0)
-            {
-                CanPrevious = false;
-                CanNext = false;
-                return;
-            }
+            ClearCommand = ReactiveCommand.Create(() => _mainViewModel.CurrentFile = null);
             
-            var currentIndex = _state.FilteredFiles.IndexOf(_state.CurrentFile);
-            CanPrevious = currentIndex > 0;
-            CanNext = currentIndex < _state.FilteredFiles.Count - 1;
+            // 当状态变化时更新命令可用性
+            _mainViewModel.WhenAnyValue(vm => vm.CurrentFile)
+                .Subscribe(_ => 
+                {
+                    this.RaisePropertyChanged(nameof(CanPrevious));
+                    this.RaisePropertyChanged(nameof(CanNext));
+                });
         }
         
         private void OnPrevious()
         {
             if (!CanPrevious) return;
             
-            var currentIndex = _state.FilteredFiles.IndexOf(_state.CurrentFile);
-            _state.CurrentFile = _state.FilteredFiles[currentIndex - 1];
+            var currentIndex = _mainViewModel.FilteredFiles.IndexOf(_mainViewModel.CurrentFile);
+            _mainViewModel.CurrentFile = _mainViewModel.FilteredFiles[currentIndex - 1];
         }
         
         private void OnNext()
         {
             if (!CanNext) return;
             
-            var currentIndex = _state.FilteredFiles.IndexOf(_state.CurrentFile);
-            _state.CurrentFile = _state.FilteredFiles[currentIndex + 1];
+            var currentIndex = _mainViewModel.FilteredFiles.IndexOf(_mainViewModel.CurrentFile);
+            _mainViewModel.CurrentFile = _mainViewModel.FilteredFiles[currentIndex + 1];
         }
         
         private void OnClear()
         {
-            _state.CurrentFile = null;
+            _mainViewModel.CurrentFile = null;
         }
     }
 }

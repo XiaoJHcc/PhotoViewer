@@ -23,17 +23,13 @@ public partial class App : Application
         // 设置依赖注入
         var services = new ServiceCollection();
         
-        // 添加核心状态管理
-        services.AddSingleton<AppState>();
+        // 核心 ViewModel
+        services.AddSingleton<SettingsViewModel>();
+        services.AddSingleton<MainViewModel>();
         
-        // 添加视图模型
-        services.AddTransient<MainViewModel>();
-        services.AddTransient<ThumbnailViewModel>();
-        services.AddTransient<ControlViewModel>();
-        services.AddTransient<ImageViewModel>();
-        services.AddTransient<SettingsViewModel>();
+        // 子 ViewModel（由 MainViewModel 创建，这里不需要注册）
         
-        // 添加视图
+        // 视图
         services.AddTransient<MainView>();
         services.AddTransient<ThumbnailView>();
         services.AddTransient<ControlView>();
@@ -48,8 +44,11 @@ public partial class App : Application
             // More info: https://docs.avaloniaui.net/docs/guides/development-guides/data-validation#manage-validationplugins
             // DisableAvaloniaDataAnnotationValidation();
             
-            // 创建主窗口和主视图模型
+            // 获取设置和主 ViewModel
+            var settings = provider.GetRequiredService<SettingsViewModel>();
             var mainVM = provider.GetRequiredService<MainViewModel>();
+            
+            // 创建主窗口
             var mainView = provider.GetRequiredService<MainView>();
             mainView.DataContext = mainVM;
             
