@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
-using PhotoViewer.Views;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
@@ -12,7 +11,6 @@ namespace PhotoViewer.ViewModels;
 public class MainViewModel : ReactiveObject
 {
     private readonly SettingsViewModel _settings;
-    // private readonly AppState _appState = new();
         
     public ThumbnailViewModel ThumbnailViewModel { get; }
     public ControlViewModel ControlViewModel { get; }
@@ -26,15 +24,17 @@ public class MainViewModel : ReactiveObject
         get => _currentFile;
         set
         {
-            
-            Console.WriteLine("CurrentFile => " + value.Name);
-            
             if (_currentFile != null) _currentFile.IsCurrent = false;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
             if (value != null) 
             {
+                Console.WriteLine("CurrentFile => " + value.Name);
                 value.IsCurrent = true;
                 PreloadNearbyFiles();
+            }
+            else
+            {
+                Console.WriteLine("CurrentFile => null");
             }
         }
     }
@@ -156,11 +156,6 @@ public class MainViewModel : ReactiveObject
         }
         
         //DEBUG
-        Console.WriteLine("_filteredFiles = ");
-        foreach (var file in _filteredFiles)
-        {
-            Console.WriteLine(file.Name);
-        }
         Console.WriteLine("_filteredFiles.Count = " + _filteredFiles.Count);
         Console.WriteLine("IndexOf(CurrentFile) = " + _filteredFiles.IndexOf(CurrentFile));
         
@@ -178,20 +173,6 @@ public class MainViewModel : ReactiveObject
         if (CurrentFile == null || _filteredFiles.Count == 0) return false;
         return _filteredFiles.IndexOf(CurrentFile) < _filteredFiles.Count - 1;
     }
-        
-    // public ImageFile? GetPreviousFile()
-    // {
-    //     if (!HasPreviousFile()) return null;
-    //     var index = _filteredFiles.IndexOf(CurrentFile);
-    //     return _filteredFiles[index - 1];
-    // }
-    //     
-    // public ImageFile? GetNextFile()
-    // {
-    //     if (!HasNextFile()) return null;
-    //     var index = _filteredFiles.IndexOf(CurrentFile);
-    //     return _filteredFiles[index + 1];
-    // }
         
     private void PreloadNearbyFiles()
     {

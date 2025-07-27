@@ -1,10 +1,8 @@
 ﻿using System;
-using System.Reactive.Linq;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
-using PhotoViewer.Views;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
@@ -28,13 +26,18 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _sourceBitmap, value);
     }
     
+    public event EventHandler<IStorageFile>? ImageLoaded;
+    
     public ImageViewModel(MainViewModel mainViewModel)
     {
         _main = mainViewModel;
         
         Main.WhenAnyValue(vm => vm.CurrentFile)
-            .Where(file => file != null)
-            .Subscribe(currentFile => LoadImageAsync(currentFile.File));
+            .Subscribe(currentFile =>
+            {
+                if (currentFile == null) ClearImage();
+                else LoadImageAsync(currentFile.File);
+            });
     }
 
     public async Task LoadImageAsync(IStorageFile file)
@@ -43,5 +46,12 @@ public class ImageViewModel : ReactiveObject
         var bitmap = await BitmapCacheService.GetBitmapAsync(file);
         if (bitmap == null) return;
         SourceBitmap = bitmap;
+        ImageLoaded?.Invoke(this, file);
+    }
+    
+    public void ClearImage()
+    {
+        SourceBitmap = null;
+        ImageLoaded?.Invoke(this, null);
     }
 }

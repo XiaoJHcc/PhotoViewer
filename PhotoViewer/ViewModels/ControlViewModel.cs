@@ -1,10 +1,3 @@
-using System;
-using System.Collections.Specialized;
-using System.Diagnostics;
-using System.Reactive;
-using System.Reactive.Linq;
-using DynamicData.Binding;
-using PhotoViewer.Core;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels
@@ -12,10 +5,6 @@ namespace PhotoViewer.ViewModels
     public class ControlViewModel : ReactiveObject
     {
         private readonly MainViewModel Main;
-        
-        // public ReactiveCommand<Unit, ImageFile?> PreviousCommand { get; }
-        // public ReactiveCommand<Unit, ImageFile?> NextCommand { get; }
-        // public ReactiveCommand<Unit, ImageFile?> ClearCommand { get; }
         
         public bool CanPrevious => Main.HasPreviousFile();
         public bool CanNext => Main.HasNextFile();

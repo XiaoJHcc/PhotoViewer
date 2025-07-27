@@ -6,15 +6,10 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using System.IO;
-using System.Reactive.Disposables;
-using System.Reactive.Linq;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
-using Avalonia.ReactiveUI;
-using PhotoViewer.Core;
 using PhotoViewer.ViewModels;
-using ReactiveUI;
 
 namespace PhotoViewer.Views;
 
@@ -39,9 +34,6 @@ public partial class ImageView : UserControl
             
         // 点击事件（仅当没有图片时）
         MainGrid.PointerPressed += OnPointerPressed;
-        
-        // 加载完成事件
-        // ImageLoaded += OnImageLoaded;
 
         // 拖拽支持
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
@@ -86,6 +78,10 @@ public partial class ImageView : UserControl
      */
     private async Task LoadNewImageAsync(IStorageFile file)
     {
+        // 注册加载完成事件
+        ViewModel.ImageLoaded += OnImageLoaded;
+        
+        // 加载图片
         await LoadImageAsync(file);
         
         // 同步信息至 Main
@@ -99,25 +95,8 @@ public partial class ImageView : UserControl
     {
         try
         {
-            // 使用缓存服务加载图片
-            // var bitmap = await BitmapCacheService.GetBitmapAsync(file);
-            // if (bitmap == null) return;
-            // PreviewImage.Source = bitmap;
-            
             // 使用 ImageViewModel 加载图片
             ViewModel.LoadImageAsync(file);
-        
-            // 加载成功后
-            // ImageLoaded?.Invoke(this, file);
-            // OnImageLoaded(this, file);
-            
-            HintText.IsVisible = false;
-        
-            // 重置缩放状态
-            _currentZoomState = ZoomState.Normal;
-            PreviewImage.Width = double.NaN;
-            PreviewImage.Height = double.NaN;
-            PreviewImage.Stretch = Stretch.Uniform;
         }
         catch (Exception ex)
         {
@@ -128,23 +107,15 @@ public partial class ImageView : UserControl
     /*
      *  加载完成后
      */
-    // private void OnImageLoaded(object? sender, IStorageFile file)
-    // {
-    //     HintText.IsVisible = false;
-    //     
-    //     // 重置缩放状态
-    //     _currentZoomState = ZoomState.Normal;
-    //     PreviewImage.Width = double.NaN;
-    //     PreviewImage.Height = double.NaN;
-    //     PreviewImage.Stretch = Stretch.Uniform;
-    // }
-    
-    public void ClearImage()
+    private void OnImageLoaded(object? sender, IStorageFile? file)
     {
-        // PreviewImage.Source = null;
-        ViewModel.SourceBitmap = null;
-        HintText.IsVisible = true;
+        HintText.IsVisible = file == null;
+        
+        // 重置缩放状态
         _currentZoomState = ZoomState.Normal;
+        PreviewImage.Width = double.NaN;
+        PreviewImage.Height = double.NaN;
+        PreviewImage.Stretch = Stretch.Uniform;
     }
 
     /*
