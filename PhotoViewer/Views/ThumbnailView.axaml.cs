@@ -37,23 +37,23 @@ namespace PhotoViewer.Views;
             OrderComboBox.SelectionChanged += (s, e) => RefreshThumbnails();
             
             // 监听数据上下文变化
-            this.WhenAnyValue(x => x.DataContext)
-                .Where(dc => dc is ThumbnailViewModel)
-                .Subscribe(_ => InitializeViewModel());
+            // this.WhenAnyValue(x => x.DataContext)
+            //     .Where(dc => dc is ThumbnailViewModel)
+            //     .Subscribe(_ => InitializeViewModel());
         }
         
-        private void InitializeViewModel()
-        {
-            if (ViewModel != null)
-            {
-                // 初始加载可见缩略图
-                Dispatcher.UIThread.Post(async () => 
-                {
-                    await Task.Delay(100); // 等待布局完成
-                    await LoadVisibleThumbnailsAsync();
-                });
-            }
-        }
+        // private void InitializeViewModel()
+        // {
+        //     if (ViewModel != null)
+        //     {
+        //         // 初始加载可见缩略图
+        //         Dispatcher.UIThread.Post(async () => 
+        //         {
+        //             await Task.Delay(100); // 等待布局完成
+        //             await LoadVisibleThumbnailsAsync();
+        //         });
+        //     }
+        // }
         
         private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
         {
@@ -76,9 +76,9 @@ namespace PhotoViewer.Views;
                 double endX = startX + scrollViewer.Viewport.Width;
                 
                 // 加载可见区域及附近区域的缩略图
-                for (int i = 0; i < ViewModel.DisplayedFiles.Count; i++)
+                for (int i = 0; i < ViewModel.Main.FilteredFiles.Count; i++)
                 {
-                    var item = ViewModel.DisplayedFiles[i];
+                    var item = ViewModel.Main.FilteredFiles[i];
                     if (item.Thumbnail != null) continue; // 已经加载过
                     
                     // 获取该项在列表中的位置
@@ -111,10 +111,10 @@ namespace PhotoViewer.Views;
         
         private void CenterButton_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
         {
-            if (ViewModel?._mainViewModel?.CurrentFile != null)
+            if (ViewModel?.Main?.CurrentFile != null)
             {
-                var currentItem = ViewModel.DisplayedFiles.FirstOrDefault(
-                    f => f.File == ViewModel._mainViewModel.CurrentFile);
+                var currentItem = ViewModel.Main.FilteredFiles.FirstOrDefault(
+                    f => f.File == ViewModel.Main.CurrentFile);
                 
                 if (currentItem != null)
                 {

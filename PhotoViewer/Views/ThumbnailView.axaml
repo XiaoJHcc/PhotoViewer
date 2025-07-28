@@ -13,7 +13,7 @@
         <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter"/>
         
         <!-- 对象存在性检查转换器 -->
-        <!-- <local:ObjectToVisibilityConverter x:Key="ObjectToVisibilityConverter"/> -->
+        <local:ObjectToVisibilityConverter x:Key="ObjectToVisibilityConverter"/>
     </UserControl.Resources>
     
  <Grid>
@@ -54,7 +54,7 @@
                       HorizontalScrollBarVisibility="Auto" 
                       VerticalScrollBarVisibility="Disabled">
             <ItemsControl Name="ThumbnailItemsControl"
-                          ItemsSource="{Binding DisplayedFiles}">
+                          ItemsSource="{Binding Main.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Orientation="Horizontal" Spacing="5"/>
