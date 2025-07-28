@@ -12,8 +12,11 @@
         <!-- 布尔到边框颜色转换器 -->
         <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter"/>
         
-        <!-- 对象存在性检查转换器 -->
-        <local:ObjectToVisibilityConverter x:Key="ObjectToVisibilityConverter"/>
+        <!-- 文件大小转换器 -->
+        <local:FileSizeConverter x:Key="FileSizeConverter"/>
+        
+        <!-- 日期格式转换器 -->
+        <local:DateTimeConverter x:Key="DateTimeConverter"/>
     </UserControl.Resources>
     
  <Grid>
@@ -28,24 +31,18 @@
                     Spacing="10" 
                     Margin="5" 
                     HorizontalAlignment="Center">
-            <ComboBox Name="SortByComboBox" 
-                      SelectedIndex="0" 
-                      MinWidth="100">
-                <ComboBoxItem>按名称</ComboBoxItem>
-                <ComboBoxItem>按时间</ComboBoxItem>
-            </ComboBox>
-            
+            <ComboBox Name="SortByComboBox"
+                      ItemsSource="{Binding SortModes}"
+                      SelectedItem="{Binding SortMode}"
+                      Width="100"/>
             <ComboBox Name="OrderComboBox" 
-                      SelectedIndex="0" 
-                      MinWidth="80">
-                <ComboBoxItem>正序</ComboBoxItem>
-                <ComboBoxItem>倒序</ComboBoxItem>
-            </ComboBox>
-            
-            <Button Name="CenterButton" 
-                    Content="复位" 
-                    Width="80"
-                    Click="CenterButton_Click"/>
+                      ItemsSource="{Binding SortOrders}"
+                      SelectedItem="{Binding SortOrder}"
+                      Width="80"/>
+            <!-- <Button Name="CenterButton"  -->
+            <!--         Content="当前张"  -->
+            <!--         Width="80" -->
+            <!--         Command="{Binding CenterCommand}"/> -->
         </StackPanel>
         
         <!-- 缩略图列表 -->
@@ -57,37 +54,65 @@
                           ItemsSource="{Binding Main.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel Orientation="Horizontal" Spacing="5"/>
+                        <StackPanel Orientation="Horizontal" Spacing="10"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Border BorderThickness="2" 
-                                BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
-                                CornerRadius="4"
-                                Margin="2"
-                                Width="80"
-                                Height="80"
-                                Background="#F0F0F0">
-                            <Grid>
-                                <!-- 图片缩略图 -->
-                                <Image Source="{Binding Thumbnail}" 
-                                       Stretch="UniformToFill"
-                                       IsVisible="{Binding Thumbnail, Converter={StaticResource ObjectToVisibilityConverter}, ConverterParameter=Invert}"/>
-                                
-                                <!-- 文件名占位符 -->
-                                <TextBlock Text="{Binding Name}" 
-                                           TextWrapping="Wrap"
-                                           TextAlignment="Center"
-                                           VerticalAlignment="Center"
-                                           HorizontalAlignment="Center"
-                                           Padding="5"
-                                           FontSize="10"
-                                           MaxWidth="80"
-                                           MaxHeight="80"
-                                           IsVisible="{Binding Thumbnail, Converter={StaticResource ObjectToVisibilityConverter}}"/>
-                            </Grid>
-                        </Border>
+                        
+                        <Button Command="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).SelectImageCommand}"
+                                CommandParameter="{Binding}"
+                                Background="Transparent"
+                                BorderThickness="0"
+                                Margin="0"
+                                Padding="0">
+                            <Border BorderThickness="2" 
+                                    BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
+                                    CornerRadius="4"
+                                    Margin="0"
+                                    Padding="5"
+                                    Width="90"
+                                    Height="140"
+                                    Background="#555555">
+                                <StackPanel Orientation="Vertical" Spacing="5">
+                                    <!-- 缩略图容器 -->
+                                    <Border Width="80" 
+                                            Height="80" 
+                                            Background="#333333"
+                                            CornerRadius="3"
+                                            BorderThickness="1"
+                                            BorderBrush="#505050">
+                                        <Image Source="{Binding Thumbnail}" 
+                                               Stretch="Uniform"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"/>
+                                    </Border>
+                                    
+                                    <!-- 文件信息 -->
+                                    <StackPanel Orientation="Vertical" Spacing="2">
+                                        <TextBlock Text="{Binding Name}" 
+                                                   TextWrapping="NoWrap"
+                                                   TextTrimming="CharacterEllipsis"
+                                                   Foreground="#EEEEEE"
+                                                   FontSize="10"
+                                                   FontWeight="SemiBold"
+                                                   HorizontalAlignment="Center"
+                                                   MaxWidth="110"/>
+                                        
+                                        <TextBlock Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" 
+                                                   FontSize="9"
+                                                   Foreground="#AAAAAA"
+                                                   HorizontalAlignment="Center"/>
+                                        
+                                        <TextBlock Text="{Binding ModifiedDate, Converter={StaticResource DateTimeConverter}}" 
+                                                   FontSize="9"
+                                                   Foreground="#AAAAAA"
+                                                   HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+                        </Button>
+                        
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>

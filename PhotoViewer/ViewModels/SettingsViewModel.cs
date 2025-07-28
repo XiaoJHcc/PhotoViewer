@@ -5,13 +5,9 @@ using ReactiveUI;
 
 namespace PhotoViewer.ViewModels
 {
-    public enum SortMode { Name, Date, Size }
-    public enum SortOrder { Ascending, Descending }
     
     public class SettingsViewModel : ReactiveObject
     {
-        private SortMode _sortMode = SortMode.Name;
-        private SortOrder _sortOrder = SortOrder.Ascending;
         private int _maxCacheSizeMB = 500;
         private int _preloadCount = 3;
         
@@ -25,20 +21,6 @@ namespace PhotoViewer.ViewModels
             ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
         };
         
-        public Array SortModes => Enum.GetValues(typeof(SortMode));
-        public Array SortOrders => Enum.GetValues(typeof(SortOrder));
-        
-        public SortMode SortMode
-        {
-            get => _sortMode;
-            set => this.RaiseAndSetIfChanged(ref _sortMode, value);
-        }
-        
-        public SortOrder SortOrder
-        {
-            get => _sortOrder;
-            set => this.RaiseAndSetIfChanged(ref _sortOrder, value);
-        }
         
         public int MaxCacheSizeMB
         {

@@ -11,7 +11,6 @@ namespace PhotoViewer.ViewModels;
 public class MainViewModel : ReactiveObject
 {
     private readonly SettingsViewModel _settings;
-        
     public ThumbnailViewModel ThumbnailViewModel { get; }
     public ControlViewModel ControlViewModel { get; }
     public ImageViewModel ImageViewModel { get; }
@@ -60,7 +59,7 @@ public class MainViewModel : ReactiveObject
         _settings.WhenAnyValue(s => s.SelectedFormats)
             .Subscribe(_ => ApplyFilter());
             
-        _settings.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
+        ThumbnailViewModel.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
         
     }
@@ -126,17 +125,17 @@ public class MainViewModel : ReactiveObject
     // 排序筛选后的图片
     private void ApplySort()
     {
-        var sortedFiles = _settings.SortMode switch
+        var sortedFiles = ThumbnailViewModel.SortMode switch
         {
-            SortMode.Name => _settings.SortOrder == SortOrder.Ascending 
+            SortMode.Name => ThumbnailViewModel.SortOrder == SortOrder.Ascending
                 ? _filteredFiles.OrderBy(f => f.Name)
                 : _filteredFiles.OrderByDescending(f => f.Name),
                 
-            SortMode.Date => _settings.SortOrder == SortOrder.Ascending 
+            SortMode.Date => ThumbnailViewModel.SortOrder == SortOrder.Ascending
                 ? _filteredFiles.OrderBy(f => f.ModifiedDate)
                 : _filteredFiles.OrderByDescending(f => f.ModifiedDate),
                 
-            SortMode.Size => _settings.SortOrder == SortOrder.Ascending 
+            SortMode.Size => ThumbnailViewModel.SortOrder == SortOrder.Ascending
                 ? _filteredFiles.OrderBy(f => f.FileSize)
                 : _filteredFiles.OrderByDescending(f => f.FileSize),
                 
