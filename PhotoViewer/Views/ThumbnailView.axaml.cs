@@ -168,7 +168,7 @@ public class FileSizeConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is long bytes)
+        if (value is ulong bytes)
         {
             string[] sizes = { "B", "KB", "MB", "GB" };
             int order = 0;
@@ -201,7 +201,7 @@ public class DateTimeConverter : IValueConverter
     {
         if (value is DateTimeOffset dateTime)
         {
-            return dateTime.ToString("yyyy-MM-dd HH:mm");
+            return dateTime.ToString("MM-dd HH:mm");
         }
         return string.Empty;
     }

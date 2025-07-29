@@ -4,6 +4,8 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:i="clr-namespace:Avalonia.Xaml.Interactivity;assembly=Avalonia.Xaml.Interactivity"
+             xmlns:core="clr-namespace:PhotoViewer.Core"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
              x:Class="PhotoViewer.Views.ThumbnailView"
              x:DataType="vm:ThumbnailViewModel">
@@ -31,14 +33,36 @@
                     Spacing="10" 
                     Margin="5" 
                     HorizontalAlignment="Center">
+            <!-- <ComboBox Name="SortByComboBox" -->
+            <!--           ItemsSource="{Binding SortModes}" -->
+            <!--           SelectedItem="{Binding SortMode}" -->
+            <!--           Width="100"/> -->
+            <!-- <ComboBox Name="OrderComboBox"  -->
+            <!--           ItemsSource="{Binding SortOrders}" -->
+            <!--           SelectedItem="{Binding SortOrder}" -->
+            <!--           Width="80"/> -->
             <ComboBox Name="SortByComboBox"
                       ItemsSource="{Binding SortModes}"
-                      SelectedItem="{Binding SortMode}"
-                      Width="100"/>
-            <ComboBox Name="OrderComboBox" 
+                      SelectedValue="{Binding SortMode}"
+                      SelectedValueBinding="{Binding Value}"
+                      Width="100">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayName}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+            <ComboBox Name="OrderComboBox"
                       ItemsSource="{Binding SortOrders}"
-                      SelectedItem="{Binding SortOrder}"
-                      Width="80"/>
+                      SelectedValue="{Binding SortOrder}"
+                      SelectedValueBinding="{Binding Value}"
+                      Width="100">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayName}"/>
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
             <!-- <Button Name="CenterButton"  -->
             <!--         Content="当前张"  -->
             <!--         Width="80" -->
@@ -50,6 +74,10 @@
                       Name="ThumbnailScrollViewer" 
                       HorizontalScrollBarVisibility="Auto" 
                       VerticalScrollBarVisibility="Disabled">
+            <i:Interaction.Behaviors>
+                <core:HorizontalScrollWheelBehavior/>
+            </i:Interaction.Behaviors>
+            
             <ItemsControl Name="ThumbnailItemsControl"
                           ItemsSource="{Binding Main.FilteredFiles}">
                 <ItemsControl.ItemsPanel>

@@ -1,5 +1,6 @@
 using ReactiveUI;
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reactive;
 using PhotoViewer.Core;
@@ -18,8 +19,18 @@ public class ThumbnailViewModel : ReactiveObject
     private SortMode _sortMode = SortMode.Name;
     private SortOrder _sortOrder = SortOrder.Ascending;
     
-    public Array SortModes => Enum.GetValues(typeof(SortMode));
-    public Array SortOrders => Enum.GetValues(typeof(SortOrder));
+    public List<ComboBoxItem> SortModes { get; } =
+    [
+        new() { DisplayName = "名称", Value = SortMode.Name },
+        new() { DisplayName = "修改日期", Value = SortMode.Date },
+        new() { DisplayName = "文件大小", Value = SortMode.Size }
+    ];
+
+    public List<ComboBoxItem> SortOrders { get; } =
+    [
+        new() { DisplayName = "升序 ↑", Value = SortOrder.Ascending },
+        new() { DisplayName = "降序 ↓", Value = SortOrder.Descending }
+    ];
         
     public SortMode SortMode
     {
