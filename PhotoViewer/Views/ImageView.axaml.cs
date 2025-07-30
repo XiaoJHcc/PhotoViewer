@@ -50,7 +50,7 @@ public partial class ImageView : UserControl
             SetupPinchZoom();
         }
     }
-    
+
     /**
      *  选择打开图片
      */
@@ -59,22 +59,43 @@ public partial class ImageView : UserControl
         // 获取顶级窗口的StorageProvider
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider == null) return;
-            
-        // 选择图片窗口
-        var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-        {
-            Title = "选择图片",
-            FileTypeFilter = new[] { ImageFileTypes.All },
-            AllowMultiple = false
-        });
 
-        if (files.Count > 0 && files[0] is IStorageFile file)
+        if (OperatingSystem.IsAndroid())
         {
-            await LoadNewImageAsync(file);
+            // Android 平台：选择文件夹
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择图片文件夹",
+                AllowMultiple = false
+            });
+
+            if (folders.Count > 0)
+            {
+                // 注册加载完成事件
+                ViewModel.ImageLoaded += OnImageLoaded;
+                
+                // 通过 Main 加载文件夹
+                await ViewModel.Main.OpenAndroidFolder(folders[0]);
+            }
+        }
+        else
+        {
+            // 选择图片窗口
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择图片",
+                FileTypeFilter = new[] { ImageFileTypes.All },
+                AllowMultiple = false
+            });
+
+            if (files.Count > 0 && files[0] is IStorageFile file)
+            {
+                await LoadNewImageAsync(file);
+            }
         }
     }
     /*
-     *  加载新文件 需要刷新文件夹
+     *  选择新文件 或 拖入新文件 需要刷新文件夹
      */
     private async Task LoadNewImageAsync(IStorageFile file)
     {
@@ -85,7 +106,7 @@ public partial class ImageView : UserControl
         await LoadImageAsync(file);
         
         // 同步信息至 Main
-        ViewModel.Main.OnNewImageLoaded(file);
+        ViewModel.Main.LoadNewImageFolder(file);
     }
     
     /*

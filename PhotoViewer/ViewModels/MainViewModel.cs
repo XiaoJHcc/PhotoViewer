@@ -65,19 +65,14 @@ public class MainViewModel : ReactiveObject
     }
     
     // 优先加载图片 加载完成后调用其他逻辑
-    public async void OnNewImageLoaded(IStorageFile file)
+    public async void LoadNewImageFolder(IStorageFile file)
     {
         var folder = await file.GetParentAsync();
         if (folder == null || folder == _currentFolder) return;
 
         CurrentFile = new ImageFile(file);
         
-        await LoadFolder(folder);
-    }
-    
-    // 读取当前图片文件夹内其他图片
-    public async Task LoadFolder(IStorageFolder folder)
-    {
+        // 加载图片所在文件夹
         _currentFolder = folder;
         _allFiles.Clear();
         _filteredFiles.Clear();
@@ -102,6 +97,34 @@ public class MainViewModel : ReactiveObject
     {
         var extension = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant();
         return _settings.SelectedFormats.Contains(extension);
+    }
+    
+    // Android 从文件夹加载第一个文件
+    public async Task OpenAndroidFolder(IStorageFolder folder)
+    {
+        _currentFolder = folder;
+        _allFiles.Clear();
+        _filteredFiles.Clear();
+    
+        Console.WriteLine("OpenFolder: " + folder.Path);
+        
+        // 加载文件夹内容
+        var items = folder.GetItemsAsync();
+        await foreach (var storageItem in items)
+        {
+            var item = (IStorageFile)storageItem;
+            
+            Console.WriteLine(item.Name);
+            
+            if (IsImageFile(item.Name))
+            {
+                _allFiles.Add(new ImageFile(item));
+            }
+        }
+            
+        ApplyFilter();
+        
+        CurrentFile = _allFiles.FirstOrDefault();
     }
     
     // 筛选文件夹内图片

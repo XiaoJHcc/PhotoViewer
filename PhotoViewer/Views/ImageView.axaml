@@ -10,6 +10,7 @@
     
     <Grid Name="MainGrid" Background="Transparent">
         <Image Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
+               RenderOptions.BitmapInterpolationMode="HighQuality"
                Source="{Binding SourceBitmap}"/>
         <TextBlock Text="{Binding HintText}" 
                    HorizontalAlignment="Center" 
