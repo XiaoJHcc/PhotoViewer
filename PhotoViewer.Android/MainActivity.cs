@@ -6,6 +6,7 @@ using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using Avalonia;
 using Avalonia.Android;
+using Avalonia.ReactiveUI;
 
 namespace PhotoViewer.Android;
 
@@ -20,7 +21,8 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         return base.CustomizeAppBuilder(builder)
-            .WithInterFont();
+            .WithInterFont()
+            .UseReactiveUI();
     }
     
     // Android 运行时权限请求
