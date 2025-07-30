@@ -15,15 +15,32 @@
     
   <Grid RowDefinitions="Auto,*,Auto">
       <!-- 顶部：缩略图栏 -->
-      <Border Grid.Row="0" Height="200" Background="#111111" BorderBrush="#333333" BorderThickness="0,0,0,1">
+      <Border
+          Grid.Row="0"
+          Height="300"
+          Margin="-100, -100, -100, 0"
+          Padding="100, 100, 100, 0"
+          Background="#111111"
+          BorderBrush="#333333"
+          BorderThickness="0,0,0,1">
           <views:ThumbnailView DataContext="{Binding ThumbnailViewModel}"/>
       </Border>
         
       <!-- 中间：图片显示区域 -->
-      <views:ImageView Grid.Row="1" Background="#000000" DataContext="{Binding ImageViewModel}"/>
+      <views:ImageView
+          Grid.Row="1"
+          Background="#000000" 
+          DataContext="{Binding ImageViewModel}"/>
         
       <!-- 底部：控制栏 -->
-      <Border Grid.Row="2" Height="60" Background="#111111" BorderBrush="#333333" BorderThickness="0,1,0,0">
+      <Border
+          Grid.Row="2"
+          Height="60"
+          Margin="-100, 0, -100, 0"
+          Padding="100, 0, 100, 0"
+          Background="#111111"
+          BorderBrush="#333333"
+          BorderThickness="0,1,0,0">
           <views:ControlView DataContext="{Binding ControlViewModel}"/>
       </Border>
   </Grid>
