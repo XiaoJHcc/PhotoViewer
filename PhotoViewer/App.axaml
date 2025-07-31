@@ -1,0 +1,40 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="using:PhotoViewer"
+             x:Class="PhotoViewer.App"
+             RequestedThemeVariant="Dark">
+             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+
+    <Application.DataTemplates>
+        <local:ViewLocator/>
+    </Application.DataTemplates>
+
+    <Application.Styles>
+        <FluentTheme />
+        <Style Selector="TextBlock">
+            <Setter Property="Foreground" Value="#FFFFFF" />
+        </Style>
+        <Style Selector="Button">
+            <Setter Property="Foreground" Value="#CCCCCC" />
+            <Setter Property="Background" Value="#555555" />
+            <Setter Property="HorizontalContentAlignment" Value="Center"></Setter>
+            <Setter Property="VerticalContentAlignment" Value="Center"></Setter>
+        </Style>
+        <Style Selector="Button:pointerover">
+            <Setter Property="Foreground" Value="#DDDDDD" />
+            <Setter Property="Background" Value="#666666" />
+        </Style>
+        <Style Selector="Button:pressed">
+            <Setter Property="Foreground" Value="#BBBBBB" />
+            <Setter Property="Background" Value="#444444" />
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Foreground" Value="#888888" />
+            <Setter Property="Background" Value="#333333" />
+        </Style>
+        <Style Selector="Button:focus">
+            <Setter Property="Foreground" Value="#DDDDDD" />
+            <Setter Property="Background" Value="#666666" />
+        </Style>
+    </Application.Styles>
+</Application>
