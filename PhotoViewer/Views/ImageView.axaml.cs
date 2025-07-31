@@ -60,7 +60,7 @@ public partial class ImageView : UserControl
         var topLevel = TopLevel.GetTopLevel(this);
         if (topLevel?.StorageProvider == null) return;
 
-        if (OperatingSystem.IsAndroid())
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
         {
             // Android 平台：选择文件夹
             var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions

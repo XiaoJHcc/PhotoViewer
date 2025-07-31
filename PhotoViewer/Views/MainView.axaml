@@ -35,9 +35,9 @@
       <!-- 底部：控制栏 -->
       <Border
           Grid.Row="2"
-          Height="60"
-          Margin="-100, 0, -100, 0"
-          Padding="100, 0, 100, 0"
+          Height="85"
+          Margin="-100, 0, -100, -25"
+          Padding="100, 0, 100, 25"
           Background="#111111"
           BorderBrush="#333333"
           BorderThickness="0,1,0,0">
