@@ -5,7 +5,7 @@
 	<key>CFBundleDisplayName</key>
 	<string>PhotoViewer</string>
 	<key>CFBundleIdentifier</key>
-	<string>companyName.PhotoViewer</string>
+	<string>cc.xiaojh.PhotoViewer</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
 	<key>CFBundleVersion</key>

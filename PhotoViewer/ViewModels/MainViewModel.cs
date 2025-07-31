@@ -7,6 +7,7 @@ using PhotoViewer.Core;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
+
 public class MainViewModel : ViewModelBase
 {
     private readonly SettingsViewModel _settings;
