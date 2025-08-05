@@ -49,11 +49,9 @@ public class ImageViewModel : ReactiveObject
         
         // 图片加载完成时
         this.WhenAnyValue(vm => vm.SourceBitmap)
-            .Subscribe(source =>
+            .Subscribe(_ =>
             {
-                if (SourceBitmap == null) return;
-                ImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
-                if (Fit) FitToScreen();
+                OnBitmapChanged();
             });
     }
 
@@ -128,13 +126,12 @@ public class ImageViewModel : ReactiveObject
     /// </summary> 
     public void UpdateView(Vector viewSize)
     {
+        var deltaSize = viewSize - ViewSize;
         ViewSize = viewSize;
         Console.WriteLine("ImageView.UpdateView() " + ViewSize.X + ", " + ViewSize.Y);
         if (ViewSize.X <= 0 || ViewSize.Y <= 0) return;
-        if (Fit && ImageSize != default)
-        {
-            FitToScreen();
-        }
+        if (Fit) FitToScreen();
+        else Translate += deltaSize * 0.5;
     }
     
     /// <summary>
@@ -142,6 +139,7 @@ public class ImageViewModel : ReactiveObject
     /// </summary>
     public void FitToScreen()
     {
+        if (ImageSize == default) return;
         FitScale = Math.Min(ViewSize.X / ImageSize.X, ViewSize.Y / ImageSize.Y);
         Scale = FitScale;
         var moveToLeft = - ((1.0 - FitScale) * 0.5 * ImageSize);
@@ -181,6 +179,41 @@ public class ImageViewModel : ReactiveObject
     public void Move(Vector delta)
     {
         Translate += delta;
+    }
+
+    /// <summary>
+    /// 图片切换时保持缩放位置一致
+    /// </summary>
+    private void OnBitmapChanged()
+    {
+        if (SourceBitmap == null) return;
+        var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
+        if (ImageSize == newImageSize) return;
+        if (Fit)
+        {
+            ImageSize = newImageSize;
+            FitToScreen();
+        }
+        else
+        {
+            var uv = GetCenterUV();
+            ImageSize = newImageSize;
+            SetUVToCenter(uv);
+        }
+    }
+    
+    private Vector GetCenterUV()
+    {
+        var imageCenterPoint = ImageSize * 0.5 + Translate;
+        var viewCenterOffset = ViewSize * 0.5 - imageCenterPoint;
+        return Vector.Divide(viewCenterOffset, Scale * ImageSize);
+    }
+    
+    private void SetUVToCenter(Vector uv)
+    {
+        var viewCenterOffset = Vector.Multiply(uv, ImageSize * Scale);
+        var imageCenterPoint = ViewSize * 0.5 - viewCenterOffset;
+        Translate = imageCenterPoint - 0.5 * ImageSize;
     }
 
 }
