@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
@@ -9,6 +10,7 @@ using System.IO;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
+using Avalonia.Platform;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -17,41 +19,268 @@ public partial class ImageView : UserControl
 {
     private ImageViewModel? ViewModel => DataContext as ImageViewModel;
     
-    // 缩放状态
-    private enum ZoomState { Normal, Zoomed }
-    private ZoomState _currentZoomState = ZoomState.Normal;
-        
-    // 原始图片尺寸
-    private Size _originalImageSize;
-    // public event EventHandler<IStorageFile>? ImageLoaded;
-    
     public ImageView()
     {
         InitializeComponent();
             
         // 启用拖拽支持
         DragDrop.SetAllowDrop(this, true);
-            
-        // 点击事件（仅当没有图片时）
-        MainGrid.PointerPressed += OnPointerPressed;
-
-        // 拖拽支持
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
-            
-        // 桌面端双击事件
-        if (!OperatingSystem.IsAndroid() && !OperatingSystem.IsIOS())
-        {
-            MainGrid.DoubleTapped += OnDoubleTapped;
-        }
-        // 移动端双指缩放
-        else
-        {
-            SetupPinchZoom();
-        }
+        
+        // 点击事件（仅当没有图片时）
+        // MainGrid.PointerPressed += OnPointerPressed;
+        
+        SetupEventHandlers();
     }
 
-    /**
+    #region Control
+    
+    // 操作状态
+    private Vector _lastPanPosition;
+    private Vector _lastCenter;
+    private double _lastDistance;
+    private bool _isDragging;
+    
+    
+    // 活动指针跟踪
+    private readonly Dictionary<IPointer, Point> _activePointers = new();
+    
+    private void SetupEventHandlers()
+    {
+        PointerPressed += OnPointerPressed;
+        PointerMoved += OnPointerMoved;
+        PointerReleased += OnPointerReleased;
+        PointerWheelChanged += OnPointerWheelChanged;
+        DoubleTapped += OnDoubleTapped;
+        KeyDown += OnKeyDown;
+            
+        // 监听尺寸变化
+        this.GetObservable(BoundsProperty)
+            .Subscribe(_ => 
+                ViewModel?.UpdateView(new Vector(Bounds.Size.Width, Bounds.Size.Height)));
+    }
+    
+    /// <summary>
+    /// 监听滚轮
+    /// </summary>
+    private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (ViewModel == null) return;
+        
+        var pointerPosition = e.GetPosition(this);
+        var zoomFactor = e.Delta.Y > 0 ? 1.25 : 0.8;
+        
+        ViewModel.Zoom(ViewModel.Scale * zoomFactor, pointerPosition);
+        
+        e.Handled = true;
+    }
+    
+    /// <summary>
+    /// 监听点击
+    /// </summary>
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        // 当没有图片时 打开图片
+        if (ViewModel.SourceBitmap == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        {
+            _ = OpenImageAsync();
+        }
+        else
+        {
+            var point = e.GetPosition(this);
+            var pointer = e.Pointer;
+
+            // if (pointer.Capture(this))
+            {
+                _activePointers[pointer] = point;
+                
+                if (_activePointers.Count == 1)
+                {
+                    _lastPanPosition = point;
+                    _isDragging = true;
+                }
+            }
+        }
+        
+        e.Handled = true;
+    }
+    
+    /// <summary>
+    /// 监听移动拖动
+    /// </summary>
+    private void OnPointerMoved(object? sender, PointerEventArgs e)
+    {
+        if (ViewModel == null || !_activePointers.TryGetValue(e.Pointer, out var lastPoint)) 
+            return;
+
+        var currentPoint = e.GetPosition(this);
+            
+        switch (_activePointers.Count)
+        {
+            case 1:
+                // 单指拖动
+                ViewModel.Move(currentPoint - _lastPanPosition);
+                
+                _lastPanPosition = currentPoint;
+                _activePointers[e.Pointer] = currentPoint;
+                break;
+            case >= 2:
+            {
+                // 双指缩放
+                var points = _activePointers.Values.ToArray();
+                var center = GetCenter(points);
+                var distance = GetDistance(points);
+
+                if (_lastDistance > 0)
+                {
+                    var scaleChange = distance / _lastDistance;
+                    ViewModel.Zoom(ViewModel.Scale * scaleChange, center);
+
+                    var centerOffset = center - _lastCenter;
+                    ViewModel.Move(centerOffset);
+
+                    ViewModel.Fit = false;
+                }
+
+                _lastCenter = center;
+                _lastDistance = distance;
+                
+                // 更新当前点
+                _activePointers[e.Pointer] = currentPoint;
+                break;
+            }
+        }
+
+        e.Handled = true;
+    }
+    
+    private static Vector GetCenter(IEnumerable<Point> points)
+    {
+        return new Vector(
+            points.Average(p => p.X),
+            points.Average(p => p.Y)
+        );
+    }
+
+    private static double GetDistance(IEnumerable<Point> points)
+    {
+        var arr = points.Take(2).ToArray();
+        if (arr.Length < 2) return 0;
+        return Point.Distance(arr[0], arr[1]);
+    }
+    
+    /// <summary>
+    /// 监听抬手
+    /// </summary>
+    private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
+    {
+        var pointer = e.Pointer;
+            
+        if (_activePointers.ContainsKey(pointer))
+        {
+            _activePointers.Remove(pointer);
+            pointer.Capture(null);
+        }
+            
+        if (_activePointers.Count < 2)
+        {
+            _lastDistance = 0;
+        }
+            
+        if (_activePointers.Count == 0)
+        {
+            _isDragging = false;
+        }
+
+        e.Handled = true;
+    }
+    
+    /// <summary>
+    /// 监听双击
+    /// </summary>
+    private void OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        ViewModel?.ToggleFit(e.GetPosition(this));
+        e.Handled = true;
+    }
+
+    /// <summary>
+    /// 监听键盘
+    /// </summary>
+    private void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (ViewModel == null) return;
+            
+        if (e.KeyModifiers == KeyModifiers.Control)
+        {
+            switch (e.Key)
+            {
+                case Key.Add:
+                    ViewModel.Zoom(1.25 * ViewModel.Scale);
+                    break;
+                case Key.Subtract:
+                    ViewModel.Zoom(0.8 * ViewModel.Scale);
+                    break;
+                case Key.D0:
+                    ViewModel.FitToScreen();
+                    break;
+            }
+        }
+        else
+        {
+            switch (e.Key)
+            {
+                case Key.Left:
+                    ViewModel.Main.ControlViewModel.OnPrevious();
+                    break;
+                case Key.Right:
+                    ViewModel.Main.ControlViewModel.OnNext();
+                    break;
+            }
+        }
+    }
+    
+    private double SnapToPreset(double zoom)
+    {
+        // 预设缩放比例
+        double[] presets = { 0.125, 0.25, 0.5, 1.0, 2.0, 4.0 };
+            
+        var closest = presets
+            .Select(p => new { Value = p, Diff = Math.Abs(p - zoom) })
+            .OrderBy(x => x.Diff)
+            .FirstOrDefault();
+
+        return closest?.Value ?? zoom;
+    }
+
+    
+    // 边界约束
+    // private void ConstrainPanOffset()
+    // {
+    //     if (ViewModel == null || _imageSize == default || _controlSize == default) return;
+    //         
+    //     var scaledWidth = _imageSize.Width * ViewModel.Scale;
+    //     var scaledHeight = _imageSize.Height * ViewModel.Scale;
+    //         
+    //     var maxX = Math.Max(0, (scaledWidth - _controlSize.Width) / 2);
+    //     var maxY = Math.Max(0, (scaledHeight - _controlSize.Height) / 2);
+    //         
+    //     ViewModel.Translate = new Point(
+    //         Math.Clamp(ViewModel.Translate.X, -maxX, maxX),
+    //         Math.Clamp(ViewModel.Translate.Y, -maxY, maxY)
+    //     );
+    // }
+
+    #endregion
+
+
+    /*
+     *  打开图片
+     */
+    #region OpenFile
+    
+    /*
      *  选择打开图片
      */
     private async Task OpenImageAsync()
@@ -72,7 +301,7 @@ public partial class ImageView : UserControl
             if (folders.Count > 0)
             {
                 // 注册加载完成事件
-                ViewModel.ImageLoaded += OnImageLoaded;
+                // ViewModel.ImageLoaded += OnImageLoaded;
                 
                 // 通过 Main 加载文件夹
                 await ViewModel.Main.OpenAndroidFolder(folders[0]);
@@ -99,14 +328,15 @@ public partial class ImageView : UserControl
      */
     private async Task LoadNewImageAsync(IStorageFile file)
     {
-        // 注册加载完成事件
-        ViewModel.ImageLoaded += OnImageLoaded;
+        // 新打开文件时始终适配显示
+        ViewModel.Fit = true;
         
         // 加载图片
         await LoadImageAsync(file);
         
         // 同步信息至 Main
         ViewModel.Main.LoadNewImageFolder(file);
+
     }
     
     /*
@@ -124,114 +354,9 @@ public partial class ImageView : UserControl
             Console.WriteLine($"加载图片失败: {ex.Message}");
         }
     }
-    
-    /*
-     *  加载完成后
-     */
-    private void OnImageLoaded(object? sender, IStorageFile? file)
-    {
-        HintText.IsVisible = file == null;
-        
-        // 重置缩放状态
-        _currentZoomState = ZoomState.Normal;
-        PreviewImage.Width = double.NaN;
-        PreviewImage.Height = double.NaN;
-        PreviewImage.Stretch = Stretch.Uniform;
-    }
 
     /*
-     *  点击处理
-     */
-    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        // 仅当没有图片时才响应点击
-        // if (PreviewImage.Source == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        if (ViewModel.SourceBitmap == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
-        {
-            _ = OpenImageAsync();
-        }
-    }
-
-    private void OnDoubleTapped(object? sender, RoutedEventArgs e)
-    {
-        // if (PreviewImage.Source == null) return;
-        if (ViewModel.SourceBitmap == null) return;
-            
-        switch (_currentZoomState)
-        {
-            case ZoomState.Normal:
-                // 放大到100%
-                ZoomToOriginalSize();
-                _currentZoomState = ZoomState.Zoomed;
-                break;
-                    
-            case ZoomState.Zoomed:
-                // 恢复自适应大小
-                ResetZoom();
-                _currentZoomState = ZoomState.Normal;
-                break;
-        }
-    }
-    
-    private void ZoomToOriginalSize()
-    {
-        // if (PreviewImage.Source is Bitmap bitmap)
-        if (ViewModel.SourceBitmap is Bitmap bitmap)
-        {
-            // 保存当前尺寸
-            _originalImageSize = new Size(
-                PreviewImage.Bounds.Width, 
-                PreviewImage.Bounds.Height
-            );
-                
-            // 设置到原始尺寸
-            PreviewImage.Width = bitmap.PixelSize.Width;
-            PreviewImage.Height = bitmap.PixelSize.Height;
-            PreviewImage.Stretch = Stretch.None;
-                
-            // 居中显示
-            Canvas.SetLeft(PreviewImage, (MainGrid.Bounds.Width - bitmap.PixelSize.Width) / 2);
-            Canvas.SetTop(PreviewImage, (MainGrid.Bounds.Height - bitmap.PixelSize.Height) / 2);
-        }
-    }
-
-    private void ResetZoom()
-    {
-        // 恢复自适应大小
-        PreviewImage.Width = double.NaN;
-        PreviewImage.Height = double.NaN;
-        PreviewImage.Stretch = Stretch.Uniform;
-            
-        // 恢复原始位置
-        Canvas.SetLeft(PreviewImage, 0);
-        Canvas.SetTop(PreviewImage, 0);
-        // PreviewImage.HorizontalAlignment = HorizontalAlignment.Center;
-        // PreviewImage.VerticalAlignment = VerticalAlignment.Center;
-    }
-    
-    private void SetupPinchZoom()
-    {
-        // // 使用手势识别器实现双指缩放
-        // var pinchGesture = new PinchGestureRecognizer();
-        // double initialScale = 1;
-        // double currentScale = 1;
-        //
-        // pinchGesture.PinchStarted += (s, e) => {
-        //     initialScale = currentScale;
-        // };
-        //
-        // pinchGesture.PinchUpdated += (s, e) => {
-        //     currentScale = initialScale * e.Scale;
-        //     currentScale = Math.Max(0.5, Math.Min(currentScale, 5)); // 限制缩放范围
-        //
-        //     PreviewImage.RenderTransform = new ScaleTransform(currentScale, currentScale);
-        // };
-        //
-        // this.GestureRecognizers.Add(pinchGesture);
-    }
-    
-    /*
-     *  拖拽处理
+     *  拖入文件
      */
     private void OnDragOver(object? sender, DragEventArgs e)
     {
@@ -267,6 +392,7 @@ public partial class ImageView : UserControl
             _ => false
         };
     }
+    #endregion
 }
 
 public static class ImageFileTypes

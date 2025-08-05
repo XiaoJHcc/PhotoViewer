@@ -28,6 +28,14 @@
                     Height="40"
                     Command="{Binding OnNext}"/>
                     <!-- IsEnabled="{Binding CanNext}" -->
+            <TextBlock Name="ScaleText"
+                       Text="{Binding Main.ImageViewModel.Scale, StringFormat={}{0:P1}}"
+                       Width="50"/>
+            <Slider Name="ScaleSlider"
+                    Value="{Binding ScaleSlider}"
+                    Minimum="0.125"
+                    Maximum="4.000"
+                    Width="200"/>
         </StackPanel>
     </Border>
     
