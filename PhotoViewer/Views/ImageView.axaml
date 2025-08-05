@@ -2,22 +2,33 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ImageView"
-             x:DataType="vm:ImageViewModel">
+             x:DataType="vm:ImageViewModel"
+             Focusable="True">
     
-    <Grid Name="MainGrid" Background="Transparent">
-        <Image Name="PreviewImage" Stretch="Uniform" HorizontalAlignment="Center" VerticalAlignment="Center"
-               RenderOptions.BitmapInterpolationMode="HighQuality"
-               Source="{Binding SourceBitmap}"/>
-        <TextBlock Text="{Binding HintText}" 
-                   HorizontalAlignment="Center" 
-                   VerticalAlignment="Center"
-                   Foreground="Gray"
-                   FontSize="20"
-                   Name="HintText"/>
-    </Grid>
+    <Canvas Name="MainGrid" 
+          Background="Transparent" 
+          ClipToBounds="False" >
+        <Image Name="PreviewImage" 
+               RenderOptions.BitmapInterpolationMode="HighQuality" 
+               Source="{Binding SourceBitmap}" >
+            <Image.RenderTransform>
+                <TransformGroup>
+                    <ScaleTransform
+                        ScaleX="{Binding Scale}"
+                        ScaleY="{Binding Scale}"/>
+                    <TranslateTransform
+                        X="{Binding Translate.X}"
+                        Y="{Binding Translate.Y}"/>
+                </TransformGroup>
+            </Image.RenderTransform>
+        </Image>
+        <!-- <TextBlock Text="{Binding HintText}"  -->
+        <!--            IsVisible="{Binding HintTextVisible}" -->
+        <!--            Foreground="Gray" -->
+        <!--            FontSize="20"/> -->
+    </Canvas>
     
 </UserControl>
