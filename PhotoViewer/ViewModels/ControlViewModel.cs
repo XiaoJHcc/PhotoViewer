@@ -4,14 +4,25 @@ namespace PhotoViewer.ViewModels
 {
     public class ControlViewModel : ReactiveObject
     {
-        private readonly MainViewModel Main;
+        private readonly MainViewModel _main;
+        public MainViewModel Main => _main;
         
         public bool CanPrevious => Main.HasPreviousFile();
         public bool CanNext => Main.HasNextFile();
-        
+
+        public double ScaleSlider
+        {
+            get => Main.ImageViewModel.Scale;
+            set
+            {
+                Main.ImageViewModel.Zoom(value);
+            }
+        }
+
+
         public ControlViewModel(MainViewModel main)
         {
-            Main = main;
+            _main = main;
         }
 
         public void Update()
