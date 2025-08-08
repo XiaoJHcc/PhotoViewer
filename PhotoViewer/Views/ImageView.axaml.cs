@@ -34,13 +34,18 @@ public partial class ImageView : UserControl
         SetupEventHandlers();
     }
 
+    ////////////////////
+    /// 预览控制
+    ////////////////////
+    
     #region Control
     
     // 操作状态
     private Vector _lastPanPosition;
     private Vector _lastCenter;
     private double _lastDistance;
-    private bool _isDragging;
+    // private bool _isDragging;
+    private bool _wasTwoFingers = false; // 标记上一次操作是否为双指
     
     
     // 活动指针跟踪
@@ -86,6 +91,7 @@ public partial class ImageView : UserControl
         {
             _ = OpenImageAsync();
         }
+        // 已打开图片时 拖动图片
         else
         {
             var point = e.GetPosition(this);
@@ -94,11 +100,12 @@ public partial class ImageView : UserControl
             // if (pointer.Capture(this))
             {
                 _activePointers[pointer] = point;
+                _wasTwoFingers = false;
                 
                 if (_activePointers.Count == 1)
                 {
                     _lastPanPosition = point;
-                    _isDragging = true;
+                    // _isDragging = true;
                 }
             }
         }
@@ -116,6 +123,13 @@ public partial class ImageView : UserControl
 
         var currentPoint = e.GetPosition(this);
             
+        // 当从双指变为单指时，不执行任何操作
+        if (_wasTwoFingers && _activePointers.Count == 1)
+        {
+            _activePointers[e.Pointer] = currentPoint;
+            return;
+        }
+        
         switch (_activePointers.Count)
         {
             case 1:
@@ -128,6 +142,7 @@ public partial class ImageView : UserControl
             case >= 2:
             {
                 // 双指缩放
+                _wasTwoFingers = true;
                 var points = _activePointers.Values.ToArray();
                 var center = GetCenter(points);
                 var distance = GetDistance(points);
@@ -183,14 +198,30 @@ public partial class ImageView : UserControl
             pointer.Capture(null);
         }
             
+        // 当从双指变为单指时
+        if (_wasTwoFingers && _activePointers.Count == 1)
+        {
+            // 清除拖动状态
+            // _isDragging = false;
+        
+            // 更新最后位置为剩余手指的位置
+            _lastPanPosition = _activePointers.Values.First();
+        }
+    
         if (_activePointers.Count < 2)
         {
             _lastDistance = 0;
+        
+            // 双指状态结束
+            if (_activePointers.Count == 0)
+            {
+                _wasTwoFingers = false;
+            }
         }
-            
+        
         if (_activePointers.Count == 0)
         {
-            _isDragging = false;
+            // _isDragging = false;
         }
 
         e.Handled = true;
@@ -254,35 +285,18 @@ public partial class ImageView : UserControl
         return closest?.Value ?? zoom;
     }
 
-    
-    // 边界约束
-    // private void ConstrainPanOffset()
-    // {
-    //     if (ViewModel == null || _imageSize == default || _controlSize == default) return;
-    //         
-    //     var scaledWidth = _imageSize.Width * ViewModel.Scale;
-    //     var scaledHeight = _imageSize.Height * ViewModel.Scale;
-    //         
-    //     var maxX = Math.Max(0, (scaledWidth - _controlSize.Width) / 2);
-    //     var maxY = Math.Max(0, (scaledHeight - _controlSize.Height) / 2);
-    //         
-    //     ViewModel.Translate = new Point(
-    //         Math.Clamp(ViewModel.Translate.X, -maxX, maxX),
-    //         Math.Clamp(ViewModel.Translate.Y, -maxY, maxY)
-    //     );
-    // }
-
     #endregion
 
 
-    /*
-     *  打开图片
-     */
+    ////////////////////
+    /// 打开图片
+    ////////////////////
+    
     #region OpenFile
     
-    /*
-     *  选择打开图片
-     */
+    /// <summary>
+    /// 选择打开图片
+    /// </summary>
     private async Task OpenImageAsync()
     {
         // 获取顶级窗口的StorageProvider
@@ -300,11 +314,7 @@ public partial class ImageView : UserControl
 
             if (folders.Count > 0)
             {
-                // 注册加载完成事件
-                // ViewModel.ImageLoaded += OnImageLoaded;
-                
-                // 通过 Main 加载文件夹
-                await ViewModel.Main.OpenAndroidFolder(folders[0]);
+                await LoadNewFolderAsync(folders);
             }
         }
         else
@@ -323,9 +333,22 @@ public partial class ImageView : UserControl
             }
         }
     }
-    /*
-     *  选择新文件 或 拖入新文件 需要刷新文件夹
-     */
+
+    /// <summary>
+    /// 刷新文件夹（选择新文件夹时）
+    /// </summary>
+    private async Task LoadNewFolderAsync(IReadOnlyList<IStorageFolder> folders)
+    {
+        // 新打开文件夹时始终适配显示
+        ViewModel.Fit = true;
+        
+        // 通过 Main 加载文件夹
+        await ViewModel.Main.OpenAndroidFolder(folders[0]);
+    }
+    
+    /// <summary>
+    /// 刷新文件夹（选择新文件 或 拖入新文件 时）
+    /// </summary>
     private async Task LoadNewImageAsync(IStorageFile file)
     {
         // 新打开文件时始终适配显示
@@ -336,12 +359,11 @@ public partial class ImageView : UserControl
         
         // 同步信息至 Main
         ViewModel.Main.LoadNewImageFolder(file);
-
     }
     
-    /*
-     *  加载文件
-     */
+    /// <summary>
+    /// 加载文件
+    /// </summary>
     public async Task LoadImageAsync(IStorageFile file)
     {
         try
@@ -355,9 +377,9 @@ public partial class ImageView : UserControl
         }
     }
 
-    /*
-     *  拖入文件
-     */
+    /// <summary>
+    /// 拖入文件
+    /// </summary>
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         var hasValidFile = e.Data.GetFiles()?

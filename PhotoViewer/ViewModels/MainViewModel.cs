@@ -124,7 +124,7 @@ public class MainViewModel : ViewModelBase
             
         ApplyFilter();
         
-        CurrentFile = _allFiles.FirstOrDefault();
+        CurrentFile = _filteredFiles.First();
     }
     
     // 筛选文件夹内图片

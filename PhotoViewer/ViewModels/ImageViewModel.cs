@@ -164,6 +164,7 @@ public class ImageViewModel : ReactiveObject
         var imageCenter = ImageSize * 0.5 + Translate;
         Translate += (Scale - scale) / Scale * (center - imageCenter);
         Scale = scale;
+        ClampCenter();
         Fit = false;
     }
 
@@ -179,6 +180,7 @@ public class ImageViewModel : ReactiveObject
     public void Move(Vector delta)
     {
         Translate += delta;
+        ClampCenter();
     }
 
     /// <summary>
@@ -214,6 +216,13 @@ public class ImageViewModel : ReactiveObject
         var viewCenterOffset = Vector.Multiply(uv, ImageSize * Scale);
         var imageCenterPoint = ViewSize * 0.5 - viewCenterOffset;
         Translate = imageCenterPoint - 0.5 * ImageSize;
+    }
+
+    private void ClampCenter()
+    {
+        var clamp1 = ViewSize * 0.5 - ImageSize * 0.5;
+        var clamp2 = ImageSize * Scale * 0.5;
+        Translate = Vector.Clamp(Translate, clamp1 - clamp2, clamp1 + clamp2);
     }
 
 }
