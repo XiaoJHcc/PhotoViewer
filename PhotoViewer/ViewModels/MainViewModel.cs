@@ -4,16 +4,17 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Views;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
 
 public class MainViewModel : ViewModelBase
 {
-    private readonly SettingsViewModel _settings;
     public ThumbnailViewModel ThumbnailViewModel { get; }
     public ControlViewModel ControlViewModel { get; }
     public ImageViewModel ImageViewModel { get; }
+    public SettingsViewModel Settings { get; }
     
     // 当前状态
     private IStorageFolder? _currentFolder;
@@ -42,10 +43,8 @@ public class MainViewModel : ViewModelBase
     public ReadOnlyObservableCollection<ImageFile> AllFiles { get; }
     public ReadOnlyObservableCollection<ImageFile> FilteredFiles { get; }
         
-    public MainViewModel(SettingsViewModel settings)
+    public MainViewModel()
     {
-        _settings = settings;
-            
         // 初始化集合
         AllFiles = new ReadOnlyObservableCollection<ImageFile>(_allFiles);
         FilteredFiles = new ReadOnlyObservableCollection<ImageFile>(_filteredFiles);
@@ -54,14 +53,29 @@ public class MainViewModel : ViewModelBase
         ThumbnailViewModel = new ThumbnailViewModel(this);
         ControlViewModel = new ControlViewModel(this);
         ImageViewModel = new ImageViewModel(this);
+        Settings = new SettingsViewModel();
             
         // 监听设置变化
-        _settings.WhenAnyValue(s => s.SelectedFormats)
+        Settings.WhenAnyValue(s => s.SelectedFormats)
             .Subscribe(_ => ApplyFilter());
             
         ThumbnailViewModel.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
         
+    }
+    
+    private SettingsWindow? _settingsWindow;
+    
+    /// <summary>
+    /// 打开图片预览设置窗口
+    /// </summary>
+    public void OpenSettingWindow()
+    {
+        _settingsWindow = new SettingsWindow
+        {
+            DataContext = Settings
+        };
+        _settingsWindow.Show();
     }
     
     // 优先加载图片 加载完成后调用其他逻辑
@@ -96,7 +110,7 @@ public class MainViewModel : ViewModelBase
     private bool IsImageFile(string fileName)
     {
         var extension = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant();
-        return _settings.SelectedFormats.Contains(extension);
+        return Settings.SelectedFormats.Contains(extension);
     }
     
     // Android 从文件夹加载第一个文件
@@ -131,7 +145,7 @@ public class MainViewModel : ViewModelBase
     private void ApplyFilter()
     {
         var filtered = _allFiles.Where(f => 
-            _settings.SelectedFormats.Contains(
+            Settings.SelectedFormats.Contains(
                 System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant()
             )
         ).ToList();
@@ -201,8 +215,8 @@ public class MainViewModel : ViewModelBase
         if (CurrentFile == null || _filteredFiles.Count == 0) return;
             
         var index = _filteredFiles.IndexOf(CurrentFile);
-        var start = Math.Max(0, index - _settings.PreloadCount);
-        var end = Math.Min(_filteredFiles.Count - 1, index + _settings.PreloadCount);
+        var start = Math.Max(0, index - Settings.PreloadCount);
+        var end = Math.Min(_filteredFiles.Count - 1, index + Settings.PreloadCount);
             
         for (int i = start; i <= end; i++)
         {

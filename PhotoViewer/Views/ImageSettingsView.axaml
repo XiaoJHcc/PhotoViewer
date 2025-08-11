@@ -1,0 +1,81 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="400"
+             x:Class="PhotoViewer.Views.ImageSettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+
+    <StackPanel>
+        <StackPanel Width="125">
+        <TextBlock Margin="0,20,0,10">
+            缩放比例预设
+        </TextBlock>
+        <Border BorderBrush="#222222"
+                BorderThickness="1"
+                CornerRadius="5"
+                Width="150"
+                Background="#111111"
+                Padding="10">
+            <StackPanel>
+                <ItemsControl ItemsSource="{Binding ScalePresets}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Vertical" Width="125">
+                                <StackPanel Orientation="Horizontal" Height="32">
+                                    <TextBox Width="70" Height="30"
+                                             BorderBrush="Transparent"
+                                             BorderThickness="0"
+                                             HorizontalAlignment="Center"
+                                             VerticalAlignment="Center"
+                                             Text="{Binding Text}"
+                                             IsVisible="{Binding Editing}"
+                                             LostFocus="OnScalePresetLostFocus"
+                                             KeyDown="OnScalePresetKeyDown" />
+                                    <TextBlock Text="%" Width="30" Height="30"
+                                               TextAlignment="Center"
+                                               LineHeight="30"
+                                               IsVisible="{Binding Editing}" />
+                                    <Button Content="√" Width="20" Height="20" 
+                                            Margin="5" Padding="0"
+                                            Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyScalePreset}"
+                                            CommandParameter="{Binding .}"
+                                            IsVisible="{Binding Editing}" />
+
+
+                                    <Button Width="100" Height="30"
+                                            Background="Transparent"
+                                            Content="{Binding Display}"
+                                            VerticalAlignment="Center"
+                                            IsVisible="{Binding !Editing}"
+                                            Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).EditScalePreset}"
+                                            CommandParameter="{Binding .}" />
+                                    <Button Content="-" Width="20" Height="20" 
+                                            Margin="5" Padding="0"
+                                            IsVisible="{Binding !Editing}"
+                                            Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveScalePreset}"
+                                            CommandParameter="{Binding .}" />
+                                </StackPanel>
+                                <Panel Background="#222222" Width="100" Height="1" Margin="0, 0, 30, 0"></Panel>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <StackPanel Orientation="Horizontal">
+                    <Button Content="+" Width="20" Height="20" 
+                            Margin="107,5,5,5" Padding="0"
+                            Command="{Binding AddScalePreset}" />
+                </StackPanel>
+
+            </StackPanel>
+        </Border>
+        </StackPanel>
+    </StackPanel>
+
+</UserControl>
