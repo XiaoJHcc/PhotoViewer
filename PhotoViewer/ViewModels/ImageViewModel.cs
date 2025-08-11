@@ -153,6 +153,11 @@ public class ImageViewModel : ReactiveObject
         if (!Fit) FitToScreen();
         else Zoom(1, center);
     }
+    
+    public void ToggleFit()
+    {
+        ToggleFit(ViewSize * 0.5);
+    }
 
     /// <summary>
     /// 缩放图片：以窗口指定点为中心，缩放至指定倍率
@@ -171,6 +176,32 @@ public class ImageViewModel : ReactiveObject
     public void Zoom(double scale)
     {
         Zoom(scale, ViewSize * 0.5);
+    }
+
+    /// <summary>
+    /// 缩放图片至预设百分比
+    /// </summary>
+    /// <param name="levelOffset">放大或缩小几挡</param>
+    public void ZoomPreset(int levelOffset)
+    {
+        var presets = Main.Settings.ScalePresets;
+        var offset = levelOffset;
+        if (offset > 0)
+        {
+            for (int i = 0; i < presets.Count && offset != 0; i++)
+            {
+                if (presets[i].Value > Scale) offset--;
+                if (offset == 0) Zoom(presets[i].Value);
+            }
+        }
+        else if (offset < 0)
+        {
+            for (int i = presets.Count - 1; i >= 0 && offset != 0; i--)
+            {
+                if (presets[i].Value < Scale) offset++;
+                if (offset == 0) Zoom(presets[i].Value);
+            }
+        }
     }
 
     /// <summary>

@@ -33,6 +33,14 @@ public partial class ImageView : UserControl
         
         SetupEventHandlers();
     }
+    
+    /// <summary>
+    /// 打开图片预览设置窗口
+    /// </summary>
+    private void OpenImageSetting(object? sender, RoutedEventArgs e)
+    {
+        ViewModel.Main.OpenSettingWindow();
+    }
 
     ////////////////////
     /// 预览控制
@@ -86,6 +94,8 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
+        if (!e.Properties.IsLeftButtonPressed) return; // 非左键全无效
+            
         // 当没有图片时 打开图片
         if (ViewModel.SourceBitmap == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
@@ -118,6 +128,8 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
+        if (!e.Properties.IsLeftButtonPressed) return; // 非左键全无效
+        
         if (ViewModel == null || !_activePointers.TryGetValue(e.Pointer, out var lastPoint)) 
             return;
 
@@ -247,14 +259,14 @@ public partial class ImageView : UserControl
         {
             switch (e.Key)
             {
-                case Key.Add:
-                    ViewModel.Zoom(1.25 * ViewModel.Scale);
+                case Key.OemPlus:
+                    ViewModel.ZoomPreset(+1);
                     break;
-                case Key.Subtract:
-                    ViewModel.Zoom(0.8 * ViewModel.Scale);
+                case Key.OemMinus:
+                    ViewModel.ZoomPreset(-1);
                     break;
                 case Key.D0:
-                    ViewModel.FitToScreen();
+                    ViewModel.ToggleFit();
                     break;
             }
         }
