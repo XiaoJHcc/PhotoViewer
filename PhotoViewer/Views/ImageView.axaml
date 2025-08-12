@@ -29,11 +29,6 @@
         <!--            IsVisible="{Binding HintTextVisible}" -->
         <!--            Foreground="Gray" -->
         <!--            FontSize="20"/> -->
-        <Canvas.ContextMenu>
-            <ContextMenu>
-                <MenuItem Header="设置" Click="OpenImageSetting"/>
-            </ContextMenu>
-        </Canvas.ContextMenu>
     </Canvas>
     
 </UserControl>

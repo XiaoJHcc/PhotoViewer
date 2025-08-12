@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
+using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Views;
@@ -69,13 +70,14 @@ public class MainViewModel : ViewModelBase
     /// <summary>
     /// 打开图片预览设置窗口
     /// </summary>
-    public void OpenSettingWindow()
+    public void OpenSettingWindow(Window parentWindow)
     {
         _settingsWindow = new SettingsWindow
         {
             DataContext = Settings
         };
-        _settingsWindow.Show();
+        _settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        _settingsWindow.ShowDialog(parentWindow);
     }
     
     // 优先加载图片 加载完成后调用其他逻辑
