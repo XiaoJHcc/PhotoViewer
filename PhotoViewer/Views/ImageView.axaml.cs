@@ -7,10 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using System.IO;
-using Avalonia.Interactivity;
-using Avalonia.Media;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
+using Avalonia.Threading;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -19,27 +16,50 @@ public partial class ImageView : UserControl
 {
     private ImageViewModel? ViewModel => DataContext as ImageViewModel;
     
+    // 右键菜单
+    private MenuFlyout _menuFlyout;
+    private void InitMenu()
+    {
+        _menuFlyout = new MenuFlyout();
+        var menuItem = new MenuItem { Header = "设置" };
+        menuItem.Click += (s, e) => OpenImageSetting();
+        _menuFlyout.Items.Add(menuItem);
+    }
+    private void ShowMenu()
+    {
+        _menuFlyout.ShowAt(this, true);
+    }
+    
+    /// <summary>
+    /// 构造函数
+    /// </summary>
     public ImageView()
     {
         InitializeComponent();
+        
+        InitMenu();
+        
+        SetupEventHandlers();
             
         // 启用拖拽支持
         DragDrop.SetAllowDrop(this, true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
-        
-        // 点击事件（仅当没有图片时）
-        // MainGrid.PointerPressed += OnPointerPressed;
-        
-        SetupEventHandlers();
     }
     
     /// <summary>
     /// 打开图片预览设置窗口
     /// </summary>
-    private void OpenImageSetting(object? sender, RoutedEventArgs e)
+    private void OpenImageSetting()
     {
-        ViewModel.Main.OpenSettingWindow();
+        if (VisualRoot is Window parentWindow)
+        {
+            ViewModel.Main.OpenSettingWindow(parentWindow);
+        }
+        else
+        {
+            // settingsWindow.Show();
+        }
     }
 
     ////////////////////
@@ -47,6 +67,29 @@ public partial class ImageView : UserControl
     ////////////////////
     
     #region Control
+    
+    // 菜单长按状态
+    private Point _pressPosition;
+    private DispatcherTimer _longPressTimer = new()
+    {
+        Interval = TimeSpan.FromMilliseconds(1000) // 长按时间（毫秒）
+    };
+    private const double MoveTolerance = 10; // 移动容差（像素）
+    private bool _isLongPressTriggered;
+    
+    // 长按成功
+    private void OnLongPressTimerTick(object? sender, EventArgs e)
+    {
+        _longPressTimer.Stop();
+        _isLongPressTriggered = true;
+        ShowMenu();
+    }
+    
+    // 长按取消
+    private void CancelLongPress()
+    {
+        _longPressTimer.Stop();
+    }
     
     // 操作状态
     private Vector _lastPanPosition;
@@ -67,6 +110,8 @@ public partial class ImageView : UserControl
         PointerWheelChanged += OnPointerWheelChanged;
         DoubleTapped += OnDoubleTapped;
         KeyDown += OnKeyDown;
+        
+        _longPressTimer.Tick += OnLongPressTimerTick;
             
         // 监听尺寸变化
         this.GetObservable(BoundsProperty)
@@ -94,46 +139,72 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        if (!e.Properties.IsLeftButtonPressed) return; // 非左键全无效
-            
-        // 当没有图片时 打开图片
-        if (ViewModel.SourceBitmap == null && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        // 右键 打开菜单
+        if (e.Properties.IsRightButtonPressed)
         {
-            _ = OpenImageAsync();
+            ShowMenu();
+            e.Handled = true;
         }
-        // 已打开图片时 拖动图片
-        else
+        
+        // 左键
+        if (e.Properties.IsLeftButtonPressed)
         {
-            var point = e.GetPosition(this);
-            var pointer = e.Pointer;
-
-            // if (pointer.Capture(this))
+            // 触摸等待判断：点击、拖动、长按
+            if (e.Pointer.Type is PointerType.Touch or PointerType.Pen)
             {
+                _isLongPressTriggered = false;
+                _pressPosition = e.GetPosition(this);
+                _longPressTimer.Start();
+                e.Pointer.Capture(this);
+            }
+
+            // 已打开图片时 准备拖动图片
+            if (ViewModel?.SourceBitmap != null)
+            {
+                var point = e.GetPosition(this);
+                var pointer = e.Pointer;
+
+                pointer.Capture(this);
+                
                 _activePointers[pointer] = point;
                 _wasTwoFingers = false;
-                
+
                 if (_activePointers.Count == 1)
                 {
                     _lastPanPosition = point;
                     // _isDragging = true;
                 }
             }
+            else
+            {
+                // 无图片时 鼠标左键打开图片
+                if (e.Pointer.Type == PointerType.Mouse)
+                {
+                    _ = OpenImageAsync();
+                }
+            }
+            e.Handled = true;
         }
-        
-        e.Handled = true;
     }
     
     /// <summary>
-    /// 监听移动拖动
+    /// 监听拖动
     /// </summary>
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (!e.Properties.IsLeftButtonPressed) return; // 非左键全无效
         
-        if (ViewModel == null || !_activePointers.TryGetValue(e.Pointer, out var lastPoint)) 
-            return;
+        if (ViewModel == null || !_activePointers.TryGetValue(e.Pointer, out var lastPoint)) return;
 
         var currentPoint = e.GetPosition(this);
+
+        // 触屏设备识别长按
+        if (e.Pointer.Type is PointerType.Touch or PointerType.Pen || _longPressTimer.IsEnabled)
+        {
+            // 超出容差范围，取消长按
+            if (Vector.Distance(_pressPosition, currentPoint) > MoveTolerance) 
+                CancelLongPress();
+        }
             
         // 当从双指变为单指时，不执行任何操作
         if (_wasTwoFingers && _activePointers.Count == 1)
@@ -203,6 +274,17 @@ public partial class ImageView : UserControl
     private void OnPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
         var pointer = e.Pointer;
+
+        // 触摸设备响应长按
+        if (e.Pointer.Type is PointerType.Touch or PointerType.Pen)
+        {
+            // 取消长按计时
+            CancelLongPress();
+            
+            // 未触发长按 且无图片时 打开图片
+            if (!_isLongPressTriggered && ViewModel?.SourceBitmap == null)
+                _ = OpenImageAsync();
+        }
             
         if (_activePointers.ContainsKey(pointer))
         {
