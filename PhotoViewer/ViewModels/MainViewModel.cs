@@ -65,19 +65,37 @@ public class MainViewModel : ViewModelBase
         
     }
     
-    private SettingsWindow? _settingsWindow;
-    
     /// <summary>
-    /// 打开图片预览设置窗口
+    /// 打开设置窗口
     /// </summary>
     public void OpenSettingWindow(Window parentWindow)
     {
-        _settingsWindow = new SettingsWindow
+        var settingsWindow = new SettingsWindow
         {
             DataContext = Settings
         };
-        _settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        _settingsWindow.ShowDialog(parentWindow);
+        settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        settingsWindow.ShowDialog(parentWindow);
+    }
+
+    private bool _isModalVisible = false;
+        
+    public bool IsModalVisible
+    {
+        get => _isModalVisible;
+        set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
+    }
+        
+    /// <summary>
+    /// 打开设置弹窗
+    /// </summary>
+    public void OpenSettingModal()
+    {
+        IsModalVisible = true;
+    }
+    public void HideModal()
+    {
+        IsModalVisible = false;
     }
     
     // 优先加载图片 加载完成后调用其他逻辑
