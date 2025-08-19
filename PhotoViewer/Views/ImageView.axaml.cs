@@ -7,6 +7,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using System.IO;
+using Avalonia.Controls.Primitives.PopupPositioning;
 using Avalonia.Threading;
 using PhotoViewer.ViewModels;
 
@@ -24,10 +25,20 @@ public partial class ImageView : UserControl
         var menuItem = new MenuItem { Header = "设置" };
         menuItem.Click += (s, e) => OpenImageSetting();
         _menuFlyout.Items.Add(menuItem);
+        // 移动端手指上方弹出
+        _menuFlyout.Placement = PlacementMode.AnchorAndGravity;
+        _menuFlyout.PlacementAnchor = PopupAnchor.TopLeft;
+        _menuFlyout.PlacementGravity = PopupGravity.Top;
     }
-    private void ShowMenu()
+    private void ShowMenuAtPointer()
     {
         _menuFlyout.ShowAt(this, true);
+    }
+    private void ShowMenuAtTouch(Point point)
+    {
+        _menuFlyout.HorizontalOffset = point.X;
+        _menuFlyout.VerticalOffset = point.Y - 40;
+        _menuFlyout.ShowAt(this, false);
     }
     
     /// <summary>
@@ -58,7 +69,7 @@ public partial class ImageView : UserControl
         }
         else
         {
-            // settingsWindow.Show();
+            ViewModel.Main.OpenSettingModal();
         }
     }
 
@@ -72,7 +83,7 @@ public partial class ImageView : UserControl
     private Point _pressPosition;
     private DispatcherTimer _longPressTimer = new()
     {
-        Interval = TimeSpan.FromMilliseconds(1000) // 长按时间（毫秒）
+        Interval = TimeSpan.FromMilliseconds(800) // 长按时间（毫秒）
     };
     private const double MoveTolerance = 10; // 移动容差（像素）
     private bool _isLongPressTriggered;
@@ -82,7 +93,7 @@ public partial class ImageView : UserControl
     {
         _longPressTimer.Stop();
         _isLongPressTriggered = true;
-        ShowMenu();
+        ShowMenuAtTouch(_pressPosition);
     }
     
     // 长按取消
@@ -142,7 +153,7 @@ public partial class ImageView : UserControl
         // 右键 打开菜单
         if (e.Properties.IsRightButtonPressed)
         {
-            ShowMenu();
+            ShowMenuAtPointer();
             e.Handled = true;
         }
         

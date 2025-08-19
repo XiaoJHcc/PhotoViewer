@@ -7,41 +7,81 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.MainView"
              x:DataType="vm:MainViewModel">
-  <!-- <Design.DataContext> -->
+    <!-- <Design.DataContext> -->
     <!-- This only sets the DataContext for the previewer in an IDE,
          to set the actual DataContext for runtime, set the DataContext property in code (look at App.axaml.cs) -->
     <!-- <vm:MainViewModel /> -->
-  <!-- </Design.DataContext> -->
-    
-  <Grid RowDefinitions="Auto,*,Auto">
-      <!-- 顶部：缩略图栏 -->
-      <Border
-          Grid.Row="0"
-          Height="300"
-          Margin="-100, -100, -100, 0"
-          Padding="100, 100, 100, 0"
-          Background="#111111"
-          BorderBrush="#333333"
-          BorderThickness="0,0,0,1">
-          <views:ThumbnailView DataContext="{Binding ThumbnailViewModel}"/>
-      </Border>
-        
-      <!-- 中间：图片显示区域 -->
-      <views:ImageView
-          Grid.Row="1"
-          Background="#000000" 
-          DataContext="{Binding ImageViewModel}"/>
-        
-      <!-- 底部：控制栏 -->
-      <Border
-          Grid.Row="2"
-          Height="85"
-          Margin="-100, 0, -100, -25"
-          Padding="100, 0, 100, 25"
-          Background="#111111"
-          BorderBrush="#333333"
-          BorderThickness="0,1,0,0">
-          <views:ControlView DataContext="{Binding ControlViewModel}"/>
-      </Border>
-  </Grid>
+    <!-- </Design.DataContext> -->
+    <Grid>
+        <!-- 主要内容-->
+        <Grid RowDefinitions="Auto,*,Auto">
+            <!-- 顶部：缩略图栏 -->
+            <Border
+                Grid.Row="0"
+                Height="300"
+                Margin="-100, -100, -100, 0"
+                Padding="100, 100, 100, 0"
+                Background="#111111"
+                BorderBrush="#333333"
+                BorderThickness="0,0,0,1">
+                <views:ThumbnailView DataContext="{Binding ThumbnailViewModel}" />
+            </Border>
+
+            <!-- 中间：图片显示区域 -->
+            <views:ImageView
+                Grid.Row="1"
+                Background="#000000"
+                DataContext="{Binding ImageViewModel}" />
+
+            <!-- 底部：控制栏 -->
+            <Border
+                Grid.Row="2"
+                Height="85"
+                Margin="-100, 0, -100, -25"
+                Padding="100, 0, 100, 25"
+                Background="#111111"
+                BorderBrush="#333333"
+                BorderThickness="0,1,0,0">
+                <views:ControlView DataContext="{Binding ControlViewModel}" />
+            </Border>
+        </Grid>
+
+        <!-- 模态遮罩层 -->
+        <Panel Background="#90000000"
+               ZIndex="100"
+               IsVisible="{Binding IsModalVisible}">
+        </Panel>
+
+        <!-- 模态弹窗内容 -->
+        <Border Background="#333333"
+                ZIndex="200"
+                Margin="0, 80, 0, 0"
+                CornerRadius="32, 32, 0, 0"
+                ClipToBounds="True"
+                IsVisible="{Binding IsModalVisible}">
+            <Grid RowDefinitions="Auto, *"
+                  VerticalAlignment="Stretch"
+                  HorizontalAlignment="Stretch">
+                <!-- 弹窗标题 -->
+                <Panel Grid.Row="0" 
+                            Background="#3f3f3f">
+                    <TextBlock Text="设置"
+                               Foreground="#ccc"
+                               FontSize="18"
+                               LineHeight="64"
+                               HorizontalAlignment="Center" />
+                    <Button Content="×"
+                            Command="{Binding HideModal}"
+                            Width="60"
+                            Height="60"
+                            HorizontalAlignment="Right"/>
+                </Panel>
+
+                <!-- 弹窗内容 -->
+                <ContentControl Grid.Row="1" >
+                    <views:SettingsView DataContext="{Binding Settings}"/>
+                </ContentControl>
+            </Grid>
+        </Border>
+    </Grid>
 </UserControl>
