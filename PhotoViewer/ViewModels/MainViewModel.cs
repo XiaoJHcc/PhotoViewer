@@ -78,23 +78,50 @@ public class MainViewModel : ViewModelBase
         settingsWindow.ShowDialog(parentWindow);
     }
 
+    // 模态显示
     private bool _isModalVisible = false;
-        
     public bool IsModalVisible
     {
         get => _isModalVisible;
         set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
     }
+    // 模态显示时 遮罩不透明度
+    private double _modalMaskOpacity = 0.5;
+    public double ModalMaskOpacity
+    {
+        get => _modalMaskOpacity;
+        set => this.RaiseAndSetIfChanged(ref _modalMaskOpacity, value);
+    }
+    // 模态显示时 模态弹出
+    private double _modalMarginTop = 2000;
+    public double ModalMarginTop
+    {
+        get => _modalMarginTop;
+        set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
+    }
+    
         
     /// <summary>
     /// 打开设置弹窗
     /// </summary>
     public void OpenSettingModal()
     {
-        IsModalVisible = true;
+        ShowModal();
     }
-    public void HideModal()
+
+    public void ShowModal()
     {
+        IsModalVisible = true;
+        
+        ModalMaskOpacity = 0.5;
+        ModalMarginTop = 80;
+    }
+    public async void HideModal()
+    {
+        ModalMaskOpacity = 0;
+        ModalMarginTop = 2000;
+        
+        await Task.Delay(400);
         IsModalVisible = false;
     }
     
