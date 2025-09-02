@@ -1,0 +1,46 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="400"
+             x:Class="PhotoViewer.Views.FileSettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+    
+    <StackPanel>
+        <TextBlock Margin="5">文件格式排序</TextBlock>
+        <ListBox x:Name="SortableFormats"
+                 ItemsSource="{Binding FormatItems}"
+                 DragDrop.AllowDrop="True"
+                 Background="Transparent"
+                 Margin="5">
+            <ListBox.ItemTemplate>
+                <DataTemplate>
+                    <Grid ColumnDefinitions="Auto,*"
+                          Background="Transparent"
+                          PointerPressed="OnPointerPressed">
+                        <CheckBox Grid.Column="0"
+                                  IsChecked="{Binding IsChecked}"
+                                  Margin="0,0,10,0" />
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding Format}"
+                                   VerticalAlignment="Center" />
+                    </Grid>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+
+        <TextBlock Margin="5">缓存</TextBlock>
+
+        <StackPanel Orientation="Horizontal" Spacing="10">
+            <TextBlock Text="缓存大小 (MB):" VerticalAlignment="Center" />
+            <Slider Minimum="50" Maximum="2000" Value="{Binding MaxCacheSizeMB}" Width="200" />
+            <TextBlock Text="{Binding MaxCacheSizeMB}" MinWidth="30" />
+        </StackPanel>
+    </StackPanel>
+
+</UserControl>

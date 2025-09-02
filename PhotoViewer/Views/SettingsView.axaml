@@ -7,40 +7,22 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
-    
+
     <TabControl Margin="5">
-        
+
         <TabItem Header="文件">
-            <StackPanel>
-                <TextBlock Margin="5">支持的文件格式</TextBlock>
-                <ListBox ItemsSource="{Binding AvailableFormats}" SelectionMode="Multiple"
-                         SelectedItems="{Binding SelectedFormats}">
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <CheckBox Content="{Binding}" IsChecked="{Binding IsSelected, RelativeSource={RelativeSource AncestorType=ListBoxItem}}"/>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-                
-                <TextBlock Margin="5">缓存</TextBlock>
-                
-                <StackPanel Orientation="Horizontal" Spacing="10">
-                    <TextBlock Text="缓存大小 (MB):" VerticalAlignment="Center"/>
-                    <Slider Minimum="50" Maximum="2000" Value="{Binding MaxCacheSizeMB}" Width="200"/>
-                    <TextBlock Text="{Binding MaxCacheSizeMB}" MinWidth="30"/>
-                </StackPanel>
-            </StackPanel>
+            <views:FileSettingsView />
         </TabItem>
-        
+
         <TabItem Header="预览">
             <views:ImageSettingsView />
         </TabItem>
-        
+
         <TabItem Header="键位">
             <StackPanel>
                 <TextBlock Margin="5">键位</TextBlock>
             </StackPanel>
         </TabItem>
-        
+
     </TabControl>
 </UserControl>

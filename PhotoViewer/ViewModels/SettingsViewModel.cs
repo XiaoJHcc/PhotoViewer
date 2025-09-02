@@ -12,18 +12,7 @@ public class SettingsViewModel : ReactiveObject
 {
     private int _maxCacheSizeMB = 500;
     private int _preloadCount = 3;
-        
-    public ObservableCollection<string> AvailableFormats { get; } = new ObservableCollection<string>
-    {
-        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tiff", ".svg"
-    };
-        
-    public ObservableCollection<string> SelectedFormats { get; } = new ObservableCollection<string>
-    {
-        ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
-    };
-        
-        
+    
     public int MaxCacheSizeMB
     {
         get => _maxCacheSizeMB;
@@ -38,9 +27,88 @@ public class SettingsViewModel : ReactiveObject
     
     public SettingsViewModel()
     {
+        InitFileSettings();
+        
         SortScalePreset();
     }
 
+
+    //////////////
+    /// 文件格式支持
+    //////////////
+    
+    #region FileFormatSetting
+    
+    public class FormatItem : ReactiveObject
+    {
+        private bool _isChecked;
+        private string _format;
+    
+        public string Format
+        {
+            get => _format;
+            set => this.RaiseAndSetIfChanged(ref _format, value);
+        }
+    
+        public bool IsChecked
+        {
+            get => _isChecked;
+            set
+            {
+                this.RaiseAndSetIfChanged(ref _isChecked, value);
+                CheckedChanged?.Invoke(this, EventArgs.Empty);
+            }
+        }
+        
+        public event EventHandler CheckedChanged;
+    }
+    
+    private ObservableCollection<FormatItem> _formatItems;
+        
+    public ObservableCollection<FormatItem> FormatItems
+    {
+        get => _formatItems;
+        set => this.RaiseAndSetIfChanged(ref _formatItems, value);
+    }
+    
+    private ObservableCollection<string> _selectedFormats;
+    public ObservableCollection<string> SelectedFormats
+    {
+        get => _selectedFormats;
+        set => this.RaiseAndSetIfChanged(ref _selectedFormats, value);
+    }
+    
+    public void InitFileSettings()
+    {
+        FormatItems = new ObservableCollection<FormatItem>
+        {
+            new() { Format = ".jpg", IsChecked = true },
+            new() { Format = ".jpeg", IsChecked = true },
+            new() { Format = ".png", IsChecked = true },
+            new() { Format = ".webp", IsChecked = true },
+            new() { Format = ".tif", IsChecked = true },
+            new() { Format = ".tiff", IsChecked = true },
+            new() { Format = ".gif", IsChecked = false }
+        };
+        foreach (var item in FormatItems)
+        {
+            item.CheckedChanged += (_, _) => UpdateSelectedFormats();
+        }
+        // 监听 FormatItems 的变化
+        FormatItems.CollectionChanged += (_, _) => UpdateSelectedFormats();
+        
+        UpdateSelectedFormats();
+    }
+    
+    private void UpdateSelectedFormats()
+    {
+        SelectedFormats = new ObservableCollection<string>(
+            FormatItems.Where(x => x.IsChecked)
+                .Select(x => x.Format)
+        );
+    }
+        
+    #endregion
 
     //////////////
     /// 缩放倍率预设
