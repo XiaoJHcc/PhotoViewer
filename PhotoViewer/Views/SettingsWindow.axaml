@@ -10,7 +10,8 @@
         Icon="/Assets/avalonia-logo.ico"
         Title="设置"
         Width="800"
-        Height="600">
+        Height="600"
+        Background="#333333">
     
     <views:SettingsView/>
 </Window>
