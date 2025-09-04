@@ -253,9 +253,16 @@ public partial class FileSettingsView : UserControl
         
         if (targetIndex >= 0 && targetIndex != _currentDropIndex)
         {
-            // 使用Transform重排元素，不移动DOM
-            ReorderItemsVisually(targetIndex);
-            _currentDropIndex = targetIndex;
+            // 使用 Dispatcher.UIThread.Post 确保Transform更新的原子性
+            Dispatcher.UIThread.Post(() =>
+            {
+                // 再次检查拖拽状态，防止异步执行时状态已改变
+                if (_isDragging && _itemElements.Count > 0)
+                {
+                    ReorderItemsVisually(targetIndex);
+                    _currentDropIndex = targetIndex;
+                }
+            }, DispatcherPriority.Render);
         }
     }
 
@@ -263,6 +270,10 @@ public partial class FileSettingsView : UserControl
     {
         if (_originalDraggedIndex < 0 || _itemElements.Count == 0) return;
 
+        // 批量更新Transform，避免中间状态闪烁
+        var transforms = new Dictionary<Border, TranslateTransform>();
+        var placeholderStates = new Dictionary<Border, bool>();
+        
         for (int i = 0; i < _itemElements.Count; i++)
         {
             var item = _itemElements[i];
@@ -271,17 +282,34 @@ public partial class FileSettingsView : UserControl
             {
                 // 被拖拽的项始终保持空位状态，移动到目标位置
                 var newPosition = (targetIndex - _originalDraggedIndex) * ITEM_HEIGHT;
-                item.RenderTransform = new TranslateTransform(0, newPosition);
-                // 确保始终显示为空位
-                ShowAsDropPlaceholder(item);
+                transforms[item] = new TranslateTransform(0, newPosition);
+                placeholderStates[item] = true; // 标记为占位符
             }
             else
             {
                 // 其他项的重排逻辑
                 var newPosition = CalculateNewPosition(i, targetIndex);
-                item.RenderTransform = new TranslateTransform(0, newPosition);
-                // 其他项都恢复正常显示
-                RestoreNormalAppearance(item);
+                transforms[item] = new TranslateTransform(0, newPosition);
+                placeholderStates[item] = false; // 标记为正常显示
+            }
+        }
+        
+        // 先更新所有Transform
+        foreach (var kvp in transforms)
+        {
+            kvp.Key.RenderTransform = kvp.Value;
+        }
+        
+        // 然后更新所有状态
+        foreach (var kvp in placeholderStates)
+        {
+            if (kvp.Value)
+            {
+                ShowAsDropPlaceholder(kvp.Key);
+            }
+            else
+            {
+                RestoreNormalAppearance(kvp.Key);
             }
         }
     }
@@ -317,6 +345,9 @@ public partial class FileSettingsView : UserControl
         // 只有在还没有设置为占位符时才设置
         if (item.Tag?.ToString() == "placeholder") return;
         
+        // 批处理样式更改以减少重绘
+        item.BeginInit();
+        
         // 将项目变为虚线框显示
         item.Opacity = 1.0;
         item.Background = Brushes.Transparent;
@@ -334,30 +365,42 @@ public partial class FileSettingsView : UserControl
         
         item.BorderThickness = new Thickness(2);
         
-        // 创建虚线边框效果
-        var rect = new Rectangle
-        {
-            Stroke = item.BorderBrush,
-            StrokeThickness = 2,
-            StrokeDashArray = new AvaloniaList<double> { 4, 4 },
-            Fill = Brushes.Transparent,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
-            VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
-        };
-        
         // 隐藏原始内容并添加虚线矩形
         if (item.Child is Grid originalGrid)
         {
             originalGrid.Opacity = 0;
-            originalGrid.Children.Add(rect);
+            
+            // 检查是否已经添加了虚线矩形
+            var existingRect = originalGrid.Children.OfType<Rectangle>().FirstOrDefault();
+            if (existingRect == null)
+            {
+                // 创建虚线边框效果
+                var rect = new Rectangle
+                {
+                    Stroke = item.BorderBrush,
+                    StrokeThickness = 2,
+                    StrokeDashArray = new AvaloniaList<double> { 4, 4 },
+                    Fill = Brushes.Transparent,
+                    HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+                    VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch
+                };
+                
+                originalGrid.Children.Add(rect);
+            }
+            
             item.Tag = "placeholder";
         }
+        
+        item.EndInit();
     }
 
     private void RestoreNormalAppearance(Border item)
     {
         // 只有当前是占位符状态时才恢复
         if (item.Tag?.ToString() != "placeholder") return;
+        
+        // 批处理样式更改以减少重绘
+        item.BeginInit();
         
         // 恢复正常显示
         item.Opacity = 1.0;
@@ -379,6 +422,8 @@ public partial class FileSettingsView : UserControl
             
             item.Tag = null;
         }
+        
+        item.EndInit();
     }
 
     private void CompleteDrag()
@@ -487,8 +532,7 @@ public partial class FileSettingsView : UserControl
         // 计算相对于列表起始位置的偏移
         var relativeY = listPosition.Y - listStartY;
         
-        // 使用固定高度计算目标索引
-        var targetIndex = (int)Math.Round(relativeY / ITEM_HEIGHT);
+        var targetIndex = (int)Math.Floor(relativeY / ITEM_HEIGHT);
         
         // 确保索引在有效范围内
         targetIndex = Math.Max(0, Math.Min(targetIndex, _itemElements.Count - 1));
