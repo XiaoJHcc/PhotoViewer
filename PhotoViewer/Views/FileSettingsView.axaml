@@ -10,29 +10,94 @@
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
+
+    <UserControl.Styles>
+        <!-- 拖拽项样式 -->
+        <Style Selector="Border.DragItem">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundAltHighBrush}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource SystemControlForegroundBaseMediumBrush}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.15" />
+                    <BrushTransition Property="Background" Duration="0:0:0.15" />
+                    <BrushTransition Property="BorderBrush" Duration="0:0:0.15" />
+                    <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.2" />
+                </Transitions>
+            </Setter>
+        </Style>
+
+        <!-- 拖拽时的半透明样式 -->
+        <Style Selector="Border.DragItem.Dragging">
+            <Setter Property="Opacity" Value="0.7" />
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundAccentBrush}" />
+        </Style>
+
+        <!-- 拖拽把手样式 -->
+        <Style Selector="Border.DragHandle">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="Width" Value="20" />
+            <Setter Property="Padding" Value="4" />
+            <Setter Property="Transitions">
+                <Transitions>
+                    <BrushTransition Property="Background" Duration="0:0:0.1" />
+                </Transitions>
+            </Setter>
+        </Style>
+
+        <Style Selector="Border.DragHandle:pointerover">
+            <Setter Property="Background" Value="{DynamicResource SystemControlBackgroundListLowBrush}" />
+        </Style>
+    </UserControl.Styles>
     
     <StackPanel>
         <TextBlock Margin="5">文件格式排序</TextBlock>
-        <ListBox x:Name="SortableFormats"
-                 ItemsSource="{Binding FormatItems}"
-                 DragDrop.AllowDrop="True"
-                 Background="Transparent"
-                 Margin="5">
-            <ListBox.ItemTemplate>
-                <DataTemplate>
-                    <Grid ColumnDefinitions="Auto,*"
-                          Background="Transparent"
-                          PointerPressed="OnPointerPressed">
-                        <CheckBox Grid.Column="0"
-                                  IsChecked="{Binding IsChecked}"
-                                  Margin="0,0,10,0" />
-                        <TextBlock Grid.Column="1"
-                                   Text="{Binding Format}"
-                                   VerticalAlignment="Center" />
-                    </Grid>
-                </DataTemplate>
-            </ListBox.ItemTemplate>
-        </ListBox>
+
+        <!-- 文件格式可拖拽列表 -->
+        <Border Background="{DynamicResource SystemControlBackgroundAltHighBrush}" 
+                CornerRadius="4" 
+                Padding="4" 
+                Margin="5">
+            <ScrollViewer Name="FormatScrollViewer" MaxHeight="300">
+                <ItemsControl Name="FileFormatList" ItemsSource="{Binding FileFormats}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Classes="DragItem" Name="FormatItem">
+                                <Grid ColumnDefinitions="Auto,*,Auto">
+                                    <!-- 勾选框 -->
+                                    <CheckBox Grid.Column="0" 
+                                              IsChecked="{Binding IsEnabled}" 
+                                              VerticalAlignment="Center" 
+                                              Margin="0,0,8,0" />
+                                    
+                                    <!-- 格式名称 -->
+                                    <TextBlock Grid.Column="1" 
+                                               Text="{Binding Name}" 
+                                               VerticalAlignment="Center" 
+                                               FontWeight="Medium" />
+                                    
+                                    <!-- 拖拽把手 -->
+                                    <Border Grid.Column="2" 
+                                            Classes="DragHandle" 
+                                            Name="DragHandle">
+                                        <Path Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                              Data="M3,15H21V13H3V15M3,19H21V17H3V19M3,11H21V9H3V11M3,7H21V5H3V7Z"
+                                              Stretch="Uniform"
+                                              Width="12"
+                                              Height="12" />
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+        </Border>
 
         <TextBlock Margin="5">缓存</TextBlock>
 
