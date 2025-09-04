@@ -30,6 +30,9 @@ public partial class FileSettingsView : UserControl
     private List<Border> _itemElements = new(); // 缓存的UI元素列表
     private int _originalDraggedIndex = -1; // 原始拖拽索引
     private const double ITEM_HEIGHT = 44; // 固定项目高度
+    private IPointer? _capturedPointer; // 缓存捕获的指针
+    private TopLevel? _topLevel; // 缓存顶层控件用于全局事件监听
+    private bool _preventCaptureLoss = false; // 防止重排时丢失捕获
 
     public FileSettingsView()
     {
@@ -45,6 +48,9 @@ public partial class FileSettingsView : UserControl
             // 监听布局更新以重新附加事件处理器
             FileFormatList.LayoutUpdated += OnLayoutUpdated;
         }
+        
+        // 缓存顶层控件
+        _topLevel = this.GetVisualRoot() as TopLevel;
     }
 
     private void OnLayoutUpdated(object? sender, EventArgs e)
@@ -59,45 +65,94 @@ public partial class FileSettingsView : UserControl
         {
             // 移除旧的事件处理器避免重复
             dragHandle.PointerPressed -= OnDragHandlePressed;
-            dragHandle.PointerMoved -= OnDragHandleMoved;
-            dragHandle.PointerReleased -= OnDragHandleReleased;
             
             // 添加新的事件处理器
             dragHandle.PointerPressed += OnDragHandlePressed;
-            dragHandle.PointerMoved += OnDragHandleMoved;
-            dragHandle.PointerReleased += OnDragHandleReleased;
         }
     }
 
     private void OnDragHandlePressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is Border handle && e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        if (sender is Border handle)
         {
-            _startPoint = e.GetPosition(this);
-            _draggedItem = handle.FindAncestorOfType<Border>();
-            _draggedIndex = GetItemIndex(_draggedItem);
-            
-            // 计算鼠标相对于把手的偏移
-            var handlePosition = handle.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
-            _dragOffset = new Point(_startPoint.X - handlePosition.X, _startPoint.Y - handlePosition.Y);
-            
-            e.Pointer.Capture(handle);
-            e.Handled = true;
+            var point = e.GetCurrentPoint(this);
+            // 支持左键点击和触摸
+            if (point.Properties.IsLeftButtonPressed || point.Pointer.Type == PointerType.Touch)
+            {
+                _startPoint = point.Position;
+                _draggedItem = handle.FindAncestorOfType<Border>();
+                _draggedIndex = GetItemIndex(_draggedItem);
+                _capturedPointer = e.Pointer;
+                
+                // 计算鼠标相对于把手的偏移
+                var handlePosition = handle.TranslatePoint(new Point(0, 0), this) ?? new Point(0, 0);
+                _dragOffset = new Point(_startPoint.X - handlePosition.X, _startPoint.Y - handlePosition.Y);
+                
+                // 对于触摸设备，直接捕获到TopLevel以获得更稳定的事件处理
+                if (e.Pointer.Type == PointerType.Touch && _topLevel != null)
+                {
+                    e.Pointer.Capture(_topLevel);
+                }
+                else
+                {
+                    // 桌面设备使用原有逻辑
+                    e.Pointer.Capture(handle);
+                }
+                
+                // 在顶层控件上监听全局事件，确保即使离开把手区域也能继续接收事件
+                if (_topLevel != null)
+                {
+                    _topLevel.PointerMoved += OnGlobalPointerMoved;
+                    _topLevel.PointerReleased += OnGlobalPointerReleased;
+                    _topLevel.PointerCaptureLost += OnGlobalPointerCaptureLost;
+                }
+                
+                e.Handled = true;
+            }
         }
     }
 
-    private void OnDragHandleMoved(object? sender, PointerEventArgs e)
+    private void OnGlobalPointerMoved(object? sender, PointerEventArgs e)
     {
-        if (_draggedItem == null || !e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
+        // 只处理被捕获的指针
+        if (_capturedPointer == null || e.Pointer != _capturedPointer || _draggedItem == null)
             return;
 
         var currentPoint = e.GetCurrentPoint(this);
-        var distance = Math.Abs(currentPoint.Position.X - _startPoint.X) + 
-                      Math.Abs(currentPoint.Position.Y - _startPoint.Y);
-
-        if (!_isDragging && distance > 5)
+        
+        // 对于触摸设备，检查指针是否仍然按下
+        if (currentPoint.Pointer.Type == PointerType.Touch)
         {
-            StartDrag(currentPoint);
+            // 触摸设备可能没有 IsLeftButtonPressed 状态，所以在拖拽开始后继续处理
+            if (!_isDragging)
+            {
+                var distance = Math.Abs(currentPoint.Position.X - _startPoint.X) + 
+                              Math.Abs(currentPoint.Position.Y - _startPoint.Y);
+                if (distance > 5)
+                {
+                    StartDrag(currentPoint);
+                }
+            }
+        }
+        else
+        {
+            // 鼠标设备检查按钮状态
+            if (!currentPoint.Properties.IsLeftButtonPressed)
+            {
+                // 如果鼠标按钮已松开，结束拖拽
+                CompleteDragAndReset();
+                return;
+            }
+            
+            if (!_isDragging)
+            {
+                var distance = Math.Abs(currentPoint.Position.X - _startPoint.X) + 
+                              Math.Abs(currentPoint.Position.Y - _startPoint.Y);
+                if (distance > 5)
+                {
+                    StartDrag(currentPoint);
+                }
+            }
         }
 
         if (_isDragging)
@@ -107,15 +162,50 @@ public partial class FileSettingsView : UserControl
         }
     }
 
-    private void OnDragHandleReleased(object? sender, PointerReleasedEventArgs e)
+    private void OnGlobalPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
+        Console.WriteLine("OnGlobalPointerReleased");
+        
+        // 只处理被捕获的指针
+        if (_capturedPointer == null || e.Pointer != _capturedPointer)
+            return;
+        
+        Console.WriteLine("OnGlobalPointerReleased -> CompleteDragAndReset");
+        
+        CompleteDragAndReset();
+        e.Handled = true;
+    }
+
+    private void OnGlobalPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
+    {
+        Console.WriteLine("OnGlobalPointerCaptureLost");
+        
+        // 如果是在防止捕获丢失期间，忽略这个事件
+        if (_preventCaptureLoss)
+        {
+            Console.WriteLine("OnGlobalPointerCaptureLost -> Ignored (preventCaptureLoss)");
+            return;
+        }
+        
+        // 指针捕获丢失时清理拖拽状态
+        if (_capturedPointer != null && e.Pointer == _capturedPointer)
+        {
+            Console.WriteLine("OnGlobalPointerCaptureLost -> CompleteDragAndReset");
+            
+            CompleteDragAndReset();
+        }
+    }
+
+    private void CompleteDragAndReset()
+    {
+        Console.WriteLine("CompleteDragAndReset" + (_isDragging ? " (was dragging)" : " (was not dragging)"));
+        
         if (_isDragging)
         {
             CompleteDrag();
         }
         
         ResetDrag();
-        e.Handled = true;
     }
 
     private void StartDrag(PointerPoint point)
@@ -253,16 +343,9 @@ public partial class FileSettingsView : UserControl
         
         if (targetIndex >= 0 && targetIndex != _currentDropIndex)
         {
-            // 使用 Dispatcher.UIThread.Post 确保Transform更新的原子性
-            Dispatcher.UIThread.Post(() =>
-            {
-                // 再次检查拖拽状态，防止异步执行时状态已改变
-                if (_isDragging && _itemElements.Count > 0)
-                {
-                    ReorderItemsVisually(targetIndex);
-                    _currentDropIndex = targetIndex;
-                }
-            }, DispatcherPriority.Render);
+            // 直接同步执行，避免异步问题
+            ReorderItemsVisually(targetIndex);
+            _currentDropIndex = targetIndex;
         }
     }
 
@@ -270,47 +353,86 @@ public partial class FileSettingsView : UserControl
     {
         if (_originalDraggedIndex < 0 || _itemElements.Count == 0) return;
 
-        // 批量更新Transform，避免中间状态闪烁
-        var transforms = new Dictionary<Border, TranslateTransform>();
-        var placeholderStates = new Dictionary<Border, bool>();
-        
-        for (int i = 0; i < _itemElements.Count; i++)
+        // 设置标志防止重排期间的捕获丢失
+        _preventCaptureLoss = true;
+
+        try
         {
-            var item = _itemElements[i];
+            // 批量更新Transform，避免中间状态闪烁
+            var transforms = new Dictionary<Border, TranslateTransform>();
+            var placeholderStates = new Dictionary<Border, bool>();
             
-            if (i == _originalDraggedIndex)
+            for (int i = 0; i < _itemElements.Count; i++)
             {
-                // 被拖拽的项始终保持空位状态，移动到目标位置
-                var newPosition = (targetIndex - _originalDraggedIndex) * ITEM_HEIGHT;
-                transforms[item] = new TranslateTransform(0, newPosition);
-                placeholderStates[item] = true; // 标记为占位符
+                var item = _itemElements[i];
+                
+                if (i == _originalDraggedIndex)
+                {
+                    // 被拖拽的项始终保持空位状态，移动到目标位置
+                    var newPosition = (targetIndex - _originalDraggedIndex) * ITEM_HEIGHT;
+                    transforms[item] = new TranslateTransform(0, newPosition);
+                    placeholderStates[item] = true; // 标记为占位符
+                }
+                else
+                {
+                    // 其他项的重排逻辑
+                    var newPosition = CalculateNewPosition(i, targetIndex);
+                    transforms[item] = new TranslateTransform(0, newPosition);
+                    placeholderStates[item] = false; // 标记为正常显示
+                }
+            }
+            
+            // 先更新所有Transform
+            foreach (var kvp in transforms)
+            {
+                kvp.Key.RenderTransform = kvp.Value;
+            }
+            
+            // 然后更新所有状态
+            foreach (var kvp in placeholderStates)
+            {
+                if (kvp.Value)
+                {
+                    ShowAsDropPlaceholder(kvp.Key);
+                }
+                else
+                {
+                    RestoreNormalAppearance(kvp.Key);
+                }
+            }
+
+            // 在Android上，重新确保指针捕获
+            if (_capturedPointer != null && _capturedPointer.Type == PointerType.Touch)
+            {
+                // 延迟重新捕获，确保UI更新完成
+                Dispatcher.UIThread.Post(() =>
+                {
+                    try
+                    {
+                        if (_capturedPointer != null && _isDragging)
+                        {
+                            // 尝试重新捕获到TopLevel，确保不会丢失
+                            if (_topLevel != null)
+                            {
+                                _capturedPointer.Capture(_topLevel);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        _preventCaptureLoss = false;
+                    }
+                }, DispatcherPriority.Background);
             }
             else
             {
-                // 其他项的重排逻辑
-                var newPosition = CalculateNewPosition(i, targetIndex);
-                transforms[item] = new TranslateTransform(0, newPosition);
-                placeholderStates[item] = false; // 标记为正常显示
+                _preventCaptureLoss = false;
             }
         }
-        
-        // 先更新所有Transform
-        foreach (var kvp in transforms)
+        catch
         {
-            kvp.Key.RenderTransform = kvp.Value;
-        }
-        
-        // 然后更新所有状态
-        foreach (var kvp in placeholderStates)
-        {
-            if (kvp.Value)
-            {
-                ShowAsDropPlaceholder(kvp.Key);
-            }
-            else
-            {
-                RestoreNormalAppearance(kvp.Key);
-            }
+            _preventCaptureLoss = false;
+            throw;
         }
     }
 
@@ -449,6 +571,17 @@ public partial class FileSettingsView : UserControl
 
     private void ResetDrag()
     {
+        // 重置防止捕获丢失标志
+        _preventCaptureLoss = false;
+
+        // 移除全局事件监听
+        if (_topLevel != null)
+        {
+            _topLevel.PointerMoved -= OnGlobalPointerMoved;
+            _topLevel.PointerReleased -= OnGlobalPointerReleased;
+            _topLevel.PointerCaptureLost -= OnGlobalPointerCaptureLost;
+        }
+
         // 恢复所有项目的正常显示和位置
         if (_itemElements.Count > 0)
         {
@@ -475,6 +608,12 @@ public partial class FileSettingsView : UserControl
             }
         }
         
+        // 在 Avalonia 11.x 中释放指针捕获
+        if (_capturedPointer != null)
+        {
+            _capturedPointer.Capture(null);
+        }
+        
         _draggedItem = null;
         _dragLayer = null;
         _dragGhost = null;
@@ -483,6 +622,7 @@ public partial class FileSettingsView : UserControl
         _originalDraggedIndex = -1;
         _isDragging = false;
         _dragOffset = new Point(0, 0);
+        _capturedPointer = null;
         _itemElements.Clear();
     }
 
