@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reactive;
 using PhotoViewer.Core;
 using ReactiveUI;
+using System.Collections.Generic;
 
 namespace PhotoViewer.ViewModels;
 
@@ -27,85 +28,127 @@ public class SettingsViewModel : ReactiveObject
     
     public SettingsViewModel()
     {
-        InitFileSettings();
-        
         SortScalePreset();
+        InitializeFileFormats();
     }
-
 
     //////////////
     /// 文件格式支持
     //////////////
     
     #region FileFormatSetting
-    
-    public class FormatItem : ReactiveObject
+
+    private ObservableCollection<FileFormatItem> _fileFormats = new();
+    public ObservableCollection<FileFormatItem> FileFormats
     {
-        private bool _isChecked;
-        private string _format;
-    
-        public string Format
-        {
-            get => _format;
-            set => this.RaiseAndSetIfChanged(ref _format, value);
-        }
-    
-        public bool IsChecked
-        {
-            get => _isChecked;
-            set
-            {
-                this.RaiseAndSetIfChanged(ref _isChecked, value);
-                CheckedChanged?.Invoke(this, EventArgs.Empty);
-            }
-        }
-        
-        public event EventHandler CheckedChanged;
+        get => _fileFormats;
+        set => this.RaiseAndSetIfChanged(ref _fileFormats, value);
     }
-    
-    private ObservableCollection<FormatItem> _formatItems;
-        
-    public ObservableCollection<FormatItem> FormatItems
-    {
-        get => _formatItems;
-        set => this.RaiseAndSetIfChanged(ref _formatItems, value);
-    }
-    
-    private ObservableCollection<string> _selectedFormats;
-    public ObservableCollection<string> SelectedFormats
+
+    private List<string> _selectedFormats = new();
+    public List<string> SelectedFormats
     {
         get => _selectedFormats;
-        set => this.RaiseAndSetIfChanged(ref _selectedFormats, value);
+        private set => this.RaiseAndSetIfChanged(ref _selectedFormats, value);
     }
-    
-    public void InitFileSettings()
+
+    private void InitializeFileFormats()
     {
-        FormatItems = new ObservableCollection<FormatItem>
+        FileFormats = new ObservableCollection<FileFormatItem>
         {
-            new() { Format = ".jpg", IsChecked = true },
-            new() { Format = ".jpeg", IsChecked = true },
-            new() { Format = ".png", IsChecked = true },
-            new() { Format = ".webp", IsChecked = true },
-            new() { Format = ".tif", IsChecked = true },
-            new() { Format = ".tiff", IsChecked = true },
-            new() { Format = ".gif", IsChecked = false }
+            new("JPG", true),
+            new("PNG", true),
+            new("TIFF", false),
+            new("WEBP", true),
         };
-        foreach (var item in FormatItems)
-        {
-            item.CheckedChanged += (_, _) => UpdateSelectedFormats();
-        }
-        // 监听 FormatItems 的变化
-        FormatItems.CollectionChanged += (_, _) => UpdateSelectedFormats();
+
+        // 监听集合变化
+        FileFormats.CollectionChanged += OnFileFormatsChanged;
         
+        // 为现有项目订阅属性变化
+        foreach (var item in FileFormats)
+        {
+            item.PropertyChanged += OnFileFormatItemChanged;
+        }
+
         UpdateSelectedFormats();
     }
-    
+
+    private void OnFileFormatsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        // 为新添加的项目订阅属性变化
+        if (e.NewItems != null)
+        {
+            foreach (FileFormatItem item in e.NewItems)
+            {
+                item.PropertyChanged += OnFileFormatItemChanged;
+            }
+        }
+
+        // 为移除的项目取消订阅
+        if (e.OldItems != null)
+        {
+            foreach (FileFormatItem item in e.OldItems)
+            {
+                item.PropertyChanged -= OnFileFormatItemChanged;
+            }
+        }
+
+        UpdateSelectedFormats();
+    }
+
+    private void OnFileFormatItemChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FileFormatItem.IsEnabled))
+        {
+            UpdateSelectedFormats();
+        }
+    }
+
     private void UpdateSelectedFormats()
     {
-        SelectedFormats = new ObservableCollection<string>(
-            FormatItems.Where(x => x.IsChecked)
-                .Select(x => x.Format)
-        );
+        SelectedFormats = FileFormats
+            .Where(f => f.IsEnabled)
+            .Select(f => f.Name)
+            .ToList();
+    }
+
+    public void MoveFileFormat(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= FileFormats.Count || 
+            toIndex < 0 || toIndex >= FileFormats.Count || 
+            fromIndex == toIndex)
+            return;
+
+        var item = FileFormats[fromIndex];
+        FileFormats.RemoveAt(fromIndex);
+        FileFormats.Insert(toIndex, item);
+        
+        // 移动操作会触发 CollectionChanged 事件，自动更新 SelectedFormats
+    }
+
+    public class FileFormatItem : ReactiveObject
+    {
+        private string _name;
+        private bool _isEnabled;
+
+        public string Name
+        {
+            get => _name;
+            set => this.RaiseAndSetIfChanged(ref _name, value);
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set => this.RaiseAndSetIfChanged(ref _isEnabled, value);
+        }
+
+        public FileFormatItem(string name, bool isEnabled = true)
+        {
+            _name = name;
+            _isEnabled = isEnabled;
+        }
     }
         
     #endregion
