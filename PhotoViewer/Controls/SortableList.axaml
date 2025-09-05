@@ -1,0 +1,67 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="300"
+             x:Class="PhotoViewer.Controls.SortableList">
+
+    <UserControl.Styles>
+        <!-- 拖拽项样式 -->
+        <Style Selector="Border.DragItem">
+            <Setter Property="Background" Value="#333" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Padding" Value="10, 0, 2, 0" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="Height" Value="40" />
+        </Style>
+
+        <!-- 拖拽时的半透明样式 -->
+        <Style Selector="Border.DragItem.Dragging">
+            <Setter Property="Opacity" Value="0.8" />
+            <Setter Property="Background" Value="#000" />
+        </Style>
+
+        <!-- 拖拽把手样式 -->
+        <Style Selector="Border.DragHandle">
+            <Setter Property="Cursor" Value="SizeAll" />
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="CornerRadius" Value="5" />
+        </Style>
+
+        <Style Selector="Border.DragHandle:pointerover">
+            <Setter Property="Background" Value="#444" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer Name="ItemScrollViewer">
+        <ItemsControl Name="ItemsList" ItemsSource="{Binding $parent[controls:SortableList].ItemsSource}">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Border Classes="DragItem" Name="SortableItem">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <!-- 可自定义的内容区域 -->
+                            <ContentPresenter Grid.Column="0" 
+                                              Content="{Binding}"
+                                              ContentTemplate="{Binding $parent[controls:SortableList].ItemTemplate}"
+                                              VerticalAlignment="Center" />
+                            
+                            <!-- 固定的拖拽把手 -->
+                            <Border Grid.Column="1" 
+                                    Classes="DragHandle" 
+                                    Name="DragHandle">
+                                <Path Fill="#666"
+                                      Data="M3,15H21V13H3V15M3,19H21V17H3V19M3,11H21V9H3V11M3,7H21V5H3V7Z"
+                                      Stretch="Uniform"
+                                      Width="12"
+                                      Height="12" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </ScrollViewer>
+
+</UserControl>
