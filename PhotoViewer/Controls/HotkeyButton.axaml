@@ -3,7 +3,8 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              mc:Ignorable="d" d:DesignWidth="120" d:DesignHeight="30"
-             x:Class="PhotoViewer.Controls.HotkeyButton">
+             x:Class="PhotoViewer.Controls.HotkeyButton"
+             x:Name="Root">
 
     <UserControl.Styles>
         <Style Selector="Button.HotkeyButton">
@@ -29,10 +30,7 @@
 
     <Button Name="HotkeyBtn" 
             Classes="HotkeyButton"
-            Content="0"
+            Content="{Binding HotkeyText, ElementName=Root}"
             Click="OnHotkeyButtonClick" />
  
-    <!-- Content="{Binding $parent[UserControl].HotkeyText}" -->
-    
 </UserControl>
-

@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
+using PhotoViewer.Converters;
 
 namespace PhotoViewer.Controls;
 
@@ -19,14 +20,14 @@ public partial class HotkeyButton : UserControl
         set => SetValue(HotkeyProperty, value);
     }
 
-    // 依赖属性：快捷键文本显示
+    // 依赖属性：快捷键文本显示 - 修改为 public set
     public static readonly StyledProperty<string> HotkeyTextProperty =
         AvaloniaProperty.Register<HotkeyButton, string>(nameof(HotkeyText), "未设置");
 
     public string HotkeyText
     {
         get => GetValue(HotkeyTextProperty);
-        private set => SetValue(HotkeyTextProperty, value);
+        set => SetValue(HotkeyTextProperty, value); // 改为 public
     }
 
     // 路由事件：快捷键改变
@@ -40,6 +41,7 @@ public partial class HotkeyButton : UserControl
     }
 
     private bool _isCapturing = false;
+    private static readonly KeyGestureToStringConverter _converter = new();
 
     static HotkeyButton()
     {
@@ -59,7 +61,14 @@ public partial class HotkeyButton : UserControl
 
     private void UpdateHotkeyText()
     {
-        HotkeyText = Hotkey?.ToString() ?? "未设置";
+        var displayText = _converter.Convert(Hotkey, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture) as string ?? "未设置";
+        HotkeyText = displayText;
+        
+        // 直接更新按钮内容
+        if (HotkeyBtn != null && !_isCapturing)
+        {
+            HotkeyBtn.Content = displayText;
+        }
     }
 
     private void OnHotkeyButtonClick(object? sender, RoutedEventArgs e)
@@ -151,4 +160,3 @@ public partial class HotkeyButton : UserControl
         base.OnDetachedFromVisualTree(e);
     }
 }
-
