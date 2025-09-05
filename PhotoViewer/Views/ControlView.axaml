@@ -8,35 +8,22 @@
              x:DataType="vm:ControlViewModel">
     
     <Border Padding="10">
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="20">
-            <Button Name="PrevButton" 
-                    Content="上一张" 
-                    Width="100" 
-                    Height="40"
-                    Command="{Binding OnPrevious}"/>
-                    <!-- IsEnabled="{Binding CanPrevious}" -->
-                    
-            <Button Name="ClearButton" 
-                    Content="清除图片" 
-                    Width="100" 
-                    Height="40"
-                    Command="{Binding OnClear}"/>
-                    
-            <Button Name="NextButton" 
-                    Content="下一张" 
-                    Width="100" 
-                    Height="40"
-                    Command="{Binding OnNext}"/>
-                    <!-- IsEnabled="{Binding CanNext}" -->
-            <TextBlock Name="ScaleText"
-                       Text="{Binding Main.ImageViewModel.Scale, StringFormat={}{0:P1}}"
-                       Width="50"/>
-            <Slider Name="ScaleSlider"
-                    Value="{Binding ScaleSlider}"
-                    Minimum="0.125"
-                    Maximum="4.000"
-                    Width="200"/>
-        </StackPanel>
+        <ItemsControl ItemsSource="{Binding EnabledControls}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="20" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
+                    <Button Content="{Binding Name}" 
+                            Width="100" 
+                            Height="40"
+                            Click="OnControlButtonClick"
+                            Tag="{Binding Command}" />
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Border>
     
 </UserControl>

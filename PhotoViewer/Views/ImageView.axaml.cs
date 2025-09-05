@@ -120,7 +120,7 @@ public partial class ImageView : UserControl
         PointerReleased += OnPointerReleased;
         PointerWheelChanged += OnPointerWheelChanged;
         DoubleTapped += OnDoubleTapped;
-        KeyDown += OnKeyDown;
+        // KeyDown += OnKeyDown;
         
         _longPressTimer.Tick += OnLongPressTimerTick;
             
@@ -365,15 +365,15 @@ public partial class ImageView : UserControl
         }
         else
         {
-            switch (e.Key)
-            {
-                case Key.Left:
-                    ViewModel.Main.ControlViewModel.OnPrevious();
-                    break;
-                case Key.Right:
-                    ViewModel.Main.ControlViewModel.OnNext();
-                    break;
-            }
+            // switch (e.Key)
+            // {
+            //     case Key.Left:
+            //         ViewModel.Main.ControlViewModel.OnPrevious();
+            //         break;
+            //     case Key.Right:
+            //         ViewModel.Main.ControlViewModel.OnNext();
+            //         break;
+            // }
         }
     }
     
@@ -449,7 +449,9 @@ public partial class ImageView : UserControl
     {
         get
         {
-            _filePickerFileTypes.Patterns = ViewModel?.Main.Settings.SelectedFormats.ToArray();
+            _filePickerFileTypes.Patterns = ViewModel?.Main.Settings.SelectedFormats
+                .Select(format => $"*{format}")
+                .ToArray();
             return _filePickerFileTypes;
         }
     }
