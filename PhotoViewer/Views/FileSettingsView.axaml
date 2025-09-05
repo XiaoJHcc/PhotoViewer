@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.FileSettingsView"
              x:DataType="vm:SettingsViewModel">
@@ -10,35 +11,6 @@
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
-
-    <UserControl.Styles>
-        <!-- 拖拽项样式 -->
-        <Style Selector="Border.DragItem">
-            <Setter Property="Background" Value="#333" />
-            <Setter Property="CornerRadius" Value="6" />
-            <Setter Property="Padding" Value="10, 0, 2, 0" />
-            <Setter Property="Margin" Value="2" />
-            <Setter Property="Height" Value="40" />
-        </Style>
-
-        <!-- 拖拽时的半透明样式 -->
-        <Style Selector="Border.DragItem.Dragging">
-            <Setter Property="Opacity" Value="0.8" />
-            <Setter Property="Background" Value="#000" />
-        </Style>
-
-        <!-- 拖拽把手样式 -->
-        <Style Selector="Border.DragHandle">
-            <Setter Property="Cursor" Value="SizeAll" />
-            <Setter Property="Width" Value="36" />
-            <Setter Property="Height" Value="36" />
-            <Setter Property="CornerRadius" Value="5" />
-        </Style>
-
-        <Style Selector="Border.DragHandle:pointerover">
-            <Setter Property="Background" Value="#444" />
-        </Style>
-    </UserControl.Styles>
     
     <StackPanel Background="#333">
         <StackPanel MaxWidth="300">
@@ -50,40 +22,26 @@
                     CornerRadius="10"
                     Background="#222"
                     Padding="8">
-                <ScrollViewer Name="FormatScrollViewer">
-                    <ItemsControl Name="FileFormatList" ItemsSource="{Binding FileFormats}">
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate>
-                                <Border Classes="DragItem" Name="FormatItem">
-                                    <Grid ColumnDefinitions="Auto,*,Auto">
-                                        <!-- 勾选框 -->
-                                        <CheckBox Grid.Column="0" 
-                                                  IsChecked="{Binding IsEnabled}" 
-                                                  VerticalAlignment="Center" 
-                                                  Margin="0,0,8,0" />
-                                        
-                                        <!-- 格式名称 -->
-                                        <TextBlock Grid.Column="1" 
-                                                   Text="{Binding Name}" 
-                                                   VerticalAlignment="Center" 
-                                                   FontWeight="Medium" />
-                                        
-                                        <!-- 拖拽把手 -->
-                                        <Border Grid.Column="2" 
-                                                Classes="DragHandle" 
-                                                Name="DragHandle">
-                                            <Path Fill="#666"
-                                                  Data="M3,15H21V13H3V15M3,19H21V17H3V19M3,11H21V9H3V11M3,7H21V5H3V7Z"
-                                                  Stretch="Uniform"
-                                                  Width="12"
-                                                  Height="12" />
-                                        </Border>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
+                <controls:SortableList ItemsSource="{Binding FileFormats}"
+                                       MoveCommand="{Binding MoveFileFormatCommand}">
+                    <controls:SortableList.ItemTemplate>
+                        <DataTemplate x:DataType="vm:SettingsViewModel+FileFormatItem">
+                            <Grid ColumnDefinitions="Auto,*">
+                                <!-- 勾选框 -->
+                                <CheckBox Grid.Column="0" 
+                                          IsChecked="{Binding IsEnabled}" 
+                                          VerticalAlignment="Center" 
+                                          Margin="0,0,8,0" />
+                                
+                                <!-- 格式名称 -->
+                                <TextBlock Grid.Column="1" 
+                                           Text="{Binding Name}" 
+                                           VerticalAlignment="Center" 
+                                           FontWeight="Medium" />
+                            </Grid>
+                        </DataTemplate>
+                    </controls:SortableList.ItemTemplate>
+                </controls:SortableList>
             </Border>
         </StackPanel>
 

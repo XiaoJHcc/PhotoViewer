@@ -6,6 +6,7 @@ using System.Reactive;
 using PhotoViewer.Core;
 using ReactiveUI;
 using System.Collections.Generic;
+using PhotoViewer.Controls;
 
 namespace PhotoViewer.ViewModels;
 
@@ -30,6 +31,9 @@ public class SettingsViewModel : ReactiveObject
     {
         SortScalePreset();
         InitializeFileFormats();
+        
+        // 初始化移动命令
+        MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
     }
 
     //////////////
@@ -111,6 +115,14 @@ public class SettingsViewModel : ReactiveObject
             .Where(f => f.IsEnabled)
             .Select(f => f.Name)
             .ToList();
+    }
+
+    // 添加移动命令
+    public ReactiveCommand<MoveCommandParameter, Unit> MoveFileFormatCommand { get; private set; }
+
+    private void OnMoveFileFormat(MoveCommandParameter parameter)
+    {
+        MoveFileFormat(parameter.FromIndex, parameter.ToIndex);
     }
 
     public void MoveFileFormat(int fromIndex, int toIndex)
