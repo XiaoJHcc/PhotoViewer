@@ -4,9 +4,14 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.ControlSettingsView"
              x:DataType="vm:SettingsViewModel">
+
+    <UserControl.Resources>
+        <converters:KeyGestureToStringConverter x:Key="KeyGestureToStringConverter" />
+    </UserControl.Resources>
 
     <Design.DataContext>
         <vm:SettingsViewModel />
