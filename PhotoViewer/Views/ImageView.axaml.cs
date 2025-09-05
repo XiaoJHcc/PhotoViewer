@@ -488,7 +488,7 @@ public partial class ImageView : UserControl
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         var hasValidFile = e.Data.GetFiles()?
-            .Any(f => IsImageFile(f.Name)) ?? false;
+            .Any(f => ViewModel.Main.IsImageFile(f.Name)) ?? false;
             
         e.DragEffects = hasValidFile ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
@@ -503,22 +503,7 @@ public partial class ImageView : UserControl
         }
         e.Handled = true;
     }
-        
-    // 检查是否是图片文件
-    public static bool IsImageFile(string fileName)
-    {
-        var extension = Path.GetExtension(fileName)?.ToLowerInvariant();
-        return extension switch
-        {
-            ".png" => true,
-            ".jpg" => true,
-            ".jpeg" => true,
-            ".bmp" => true,
-            ".gif" => true,
-            ".webp" => true,
-            _ => false
-        };
-    }
+
     #endregion
 }
 

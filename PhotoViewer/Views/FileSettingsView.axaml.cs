@@ -164,13 +164,9 @@ public partial class FileSettingsView : UserControl
 
     private void OnGlobalPointerReleased(object? sender, PointerReleasedEventArgs e)
     {
-        Console.WriteLine("OnGlobalPointerReleased");
-        
         // 只处理被捕获的指针
         if (_capturedPointer == null || e.Pointer != _capturedPointer)
             return;
-        
-        Console.WriteLine("OnGlobalPointerReleased -> CompleteDragAndReset");
         
         CompleteDragAndReset();
         e.Handled = true;
@@ -178,28 +174,21 @@ public partial class FileSettingsView : UserControl
 
     private void OnGlobalPointerCaptureLost(object? sender, PointerCaptureLostEventArgs e)
     {
-        Console.WriteLine("OnGlobalPointerCaptureLost");
-        
         // 如果是在防止捕获丢失期间，忽略这个事件
         if (_preventCaptureLoss)
         {
-            Console.WriteLine("OnGlobalPointerCaptureLost -> Ignored (preventCaptureLoss)");
             return;
         }
         
         // 指针捕获丢失时清理拖拽状态
         if (_capturedPointer != null && e.Pointer == _capturedPointer)
         {
-            Console.WriteLine("OnGlobalPointerCaptureLost -> CompleteDragAndReset");
-            
             CompleteDragAndReset();
         }
     }
 
     private void CompleteDragAndReset()
     {
-        Console.WriteLine("CompleteDragAndReset" + (_isDragging ? " (was dragging)" : " (was not dragging)"));
-        
         if (_isDragging)
         {
             CompleteDrag();

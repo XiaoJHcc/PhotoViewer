@@ -3,73 +3,111 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
-             mc:Ignorable="d" d:DesignWidth="600" d:DesignHeight="400"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.ImageSettingsView"
              x:DataType="vm:SettingsViewModel">
 
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
+    
+    <UserControl.Styles>
+        <!-- 按钮统一样式 -->
+        <Style Selector="Button.ScaleSettingBtn">
+            <Setter Property="Background" Value="#333"/>
+            <Setter Property="Width" Value="36" />
+            <Setter Property="Height" Value="36" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        <Style Selector="Button.ScaleSettingBtn:pressed">
+            <Setter Property="Background" Value="#191919"/>
+        </Style>
+    </UserControl.Styles>
 
-    <StackPanel>
-        <StackPanel Width="125">
-            <TextBlock Margin="0,20,0,10">
+    <StackPanel Background="#333">
+        <StackPanel MaxWidth="300">
+            <TextBlock Margin="20,20,0,10">
                 缩放比例预设
             </TextBlock>
-            <Border BorderBrush="#222222"
+            <Border BorderBrush="#444"
                     BorderThickness="1"
-                    CornerRadius="5"
-                    Width="150"
-                    Background="#111111"
-                    Padding="10">
+                    CornerRadius="10"
+                    Background="#222"
+                    Padding="8">
                 <StackPanel>
                     <ItemsControl ItemsSource="{Binding ScalePresets}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Vertical" Width="125">
-                                    <StackPanel Orientation="Horizontal" Height="32">
-                                        <TextBox Width="70" Height="30"
-                                                 BorderBrush="Transparent"
-                                                 BorderThickness="0"
-                                                 HorizontalAlignment="Center"
-                                                 VerticalAlignment="Center"
-                                                 Text="{Binding Text}"
-                                                 IsVisible="{Binding Editing}"
-                                                 LostFocus="OnScalePresetLostFocus"
-                                                 KeyDown="OnScalePresetKeyDown" />
-                                        <TextBlock Text="%" Width="30" Height="30"
-                                                   TextAlignment="Center"
-                                                   LineHeight="30"
-                                                   IsVisible="{Binding Editing}" />
-                                        <Button Content="√" Width="20" Height="20"
-                                                Margin="5" Padding="0"
-                                                Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyScalePreset}"
-                                                CommandParameter="{Binding .}"
-                                                IsVisible="{Binding Editing}" />
-
-
-                                        <Button Width="100" Height="30"
-                                                Background="Transparent"
-                                                Content="{Binding Display}"
-                                                VerticalAlignment="Center"
-                                                IsVisible="{Binding !Editing}"
-                                                Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).EditScalePreset}"
-                                                CommandParameter="{Binding .}" />
-                                        <Button Content="-" Width="20" Height="20"
-                                                Margin="5" Padding="0"
-                                                IsVisible="{Binding !Editing}"
-                                                Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveScalePreset}"
-                                                CommandParameter="{Binding .}" />
-                                    </StackPanel>
-                                    <Panel Background="#222222" Width="100" Height="1" Margin="0, 0, 30, 0"></Panel>
+                                <StackPanel Orientation="Vertical">
+                                    <Panel Height="36">
+                                        <!-- 左 -->
+                                        <Panel HorizontalAlignment="Stretch"
+                                               Margin="0, 0, 40, 0">
+                                            <!-- 展示框 / 修改键 -->
+                                            <Button Height="36"
+                                                    CornerRadius="6"
+                                                    HorizontalAlignment="Stretch"
+                                                    Background="Transparent"
+                                                    Foreground="#dddddd"
+                                                    Content="{Binding Display}"
+                                                    IsVisible="{Binding !Editing}"
+                                                    Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).EditScalePreset}"
+                                                    CommandParameter="{Binding .}" />
+                                            
+                                            <!-- 输入框 -->
+                                            <TextBox Height="36"
+                                                     LineHeight="36"
+                                                     Padding="0"
+                                                     CornerRadius="6"
+                                                     TextAlignment="Center"
+                                                     HorizontalAlignment="Stretch"
+                                                     BorderBrush="Transparent"
+                                                     BorderThickness="0"
+                                                     Text="{Binding Text}"
+                                                     IsVisible="{Binding Editing}"
+                                                     LostFocus="OnScalePresetLostFocus"
+                                                     KeyDown="OnScalePresetKeyDown" />
+                                            <!-- 输入框后的 % -->
+                                            <TextBlock Text="%" Width="36"
+                                                       LineHeight="36"
+                                                       HorizontalAlignment="Right"
+                                                       TextAlignment="Center"
+                                                       IsVisible="{Binding Editing}" />
+                                        </Panel>
+                                        <!-- 右 -->
+                                        <Panel HorizontalAlignment="Right">
+                                            <!-- 删除键 -->
+                                            <Button Content="-" 
+                                                    Classes="ScaleSettingBtn"
+                                                    HorizontalAlignment="Right"
+                                                    IsVisible="{Binding !Editing}"
+                                                    Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveScalePreset}"
+                                                    CommandParameter="{Binding .}" />
+                                            
+                                            <!-- 确定键 -->
+                                            <Button Content="√" 
+                                                    Classes="ScaleSettingBtn"
+                                                    HorizontalAlignment="Right"
+                                                    Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyScalePreset}"
+                                                    CommandParameter="{Binding .}"
+                                                    IsVisible="{Binding Editing}" />
+                                        </Panel>
+                                    </Panel>
+                                    <Panel Background="#333"
+                                           HorizontalAlignment="Stretch"
+                                           Height="1"
+                                           Margin="0, 1, 40, 1">
+                                    </Panel>
                                 </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
-                    <StackPanel Orientation="Horizontal">
-                        <Button Content="+" Width="20" Height="20"
-                                Margin="107,5,5,5" Padding="0"
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Right">
+                        <Button Content="+"
+                                Classes="ScaleSettingBtn"
+                                HorizontalAlignment="Right"
                                 Command="{Binding AddScalePreset}" />
                     </StackPanel>
 
