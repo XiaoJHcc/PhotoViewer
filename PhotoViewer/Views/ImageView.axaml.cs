@@ -428,7 +428,7 @@ public partial class ImageView : UserControl
             var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "选择图片",
-                FileTypeFilter = new[] { ImageFileTypes.All },
+                FileTypeFilter = [FilePickerFileTypes],
                 AllowMultiple = false
             });
 
@@ -436,6 +436,21 @@ public partial class ImageView : UserControl
             {
                 await LoadNewImageAsync(file);
             }
+        }
+    }
+
+    private readonly FilePickerFileType _filePickerFileTypes = new("选择图片")
+    {
+        AppleUniformTypeIdentifiers = new[] { "public.image" },
+        MimeTypes = new[] { "image/*" }
+    };
+
+    private FilePickerFileType FilePickerFileTypes
+    {
+        get
+        {
+            _filePickerFileTypes.Patterns = ViewModel?.Main.Settings.SelectedFormats.ToArray();
+            return _filePickerFileTypes;
         }
     }
 
@@ -505,14 +520,4 @@ public partial class ImageView : UserControl
     }
 
     #endregion
-}
-
-public static class ImageFileTypes
-{
-    public static FilePickerFileType All { get; } = new("图片文件")
-    {
-        Patterns = new[] { "*.png", "*.jpg", "*.jpeg", "*.bmp", "*.gif", "*.webp" },
-        AppleUniformTypeIdentifiers = new[] { "public.image" },
-        MimeTypes = new[] { "image/*" }
-    };
 }

@@ -43,7 +43,7 @@
     <StackPanel Background="#333">
         <StackPanel MaxWidth="300">
             <TextBlock Margin="20,20,0,10">
-                文件格式排序
+                支持文件格式
             </TextBlock>
             <Border BorderBrush="#444"
                     BorderThickness="1"
@@ -72,7 +72,7 @@
                                         <Border Grid.Column="2" 
                                                 Classes="DragHandle" 
                                                 Name="DragHandle">
-                                            <Path Fill="{DynamicResource SystemControlForegroundBaseMediumBrush}"
+                                            <Path Fill="#666"
                                                   Data="M3,15H21V13H3V15M3,19H21V17H3V19M3,11H21V9H3V11M3,7H21V5H3V7Z"
                                                   Stretch="Uniform"
                                                   Width="12"
@@ -90,7 +90,7 @@
         <!-- <TextBlock Margin="5">缓存</TextBlock> -->
         <!-- -->
         <!-- <StackPanel Orientation="Horizontal" Spacing="10"> -->
-        <!--     <TextBlock Text="缓存大小 (MB):" VerticalAlignment="Center" /> -->
+        <!--     <TextBlock Text="缓存大小 (MB)" VerticalAlignment="Center" /> -->
         <!--     <Slider Minimum="50" Maximum="2000" Value="{Binding MaxCacheSizeMB}" Width="200" /> -->
         <!--     <TextBlock Text="{Binding MaxCacheSizeMB}" MinWidth="30" /> -->
         <!-- </StackPanel> -->
