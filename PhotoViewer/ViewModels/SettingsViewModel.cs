@@ -7,6 +7,7 @@ using PhotoViewer.Core;
 using ReactiveUI;
 using System.Collections.Generic;
 using PhotoViewer.Controls;
+using Avalonia.Input;
 
 namespace PhotoViewer.ViewModels;
 
@@ -31,9 +32,11 @@ public class SettingsViewModel : ReactiveObject
     {
         SortScalePreset();
         InitializeFileFormats();
+        InitializeHotkeys();
         
         // 初始化移动命令
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
+        MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
     }
 
     //////////////
@@ -160,6 +163,137 @@ public class SettingsViewModel : ReactiveObject
         {
             _name = name;
             _isEnabled = isEnabled;
+        }
+    }
+        
+    #endregion
+
+    //////////////
+    /// 快捷键设置
+    //////////////
+    
+    #region HotkeySetting
+
+    private ObservableCollection<HotkeyItem> _hotkeys = new();
+    public ObservableCollection<HotkeyItem> Hotkeys
+    {
+        get => _hotkeys;
+        set => this.RaiseAndSetIfChanged(ref _hotkeys, value);
+    }
+
+    private void InitializeHotkeys()
+    {
+        Hotkeys = new ObservableCollection<HotkeyItem>
+        {
+            new("上一张", "Previous", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
+            new("下一张", "Next", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
+            new("缩放适应", "Fit", true, new KeyGesture(Key.F), null),
+        };
+
+        // 监听集合变化
+        Hotkeys.CollectionChanged += OnHotkeysChanged;
+        
+        // 为现有项目订阅属性变化
+        foreach (var item in Hotkeys)
+        {
+            item.PropertyChanged += OnHotkeyItemChanged;
+        }
+    }
+
+    private void OnHotkeysChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        // 为新添加的项目订阅属性变化
+        if (e.NewItems != null)
+        {
+            foreach (HotkeyItem item in e.NewItems)
+            {
+                item.PropertyChanged += OnHotkeyItemChanged;
+            }
+        }
+
+        // 为移除的项目取消订阅
+        if (e.OldItems != null)
+        {
+            foreach (HotkeyItem item in e.OldItems)
+            {
+                item.PropertyChanged -= OnHotkeyItemChanged;
+            }
+        }
+    }
+
+    private void OnHotkeyItemChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        // 可以在这里处理快捷键变化的逻辑
+    }
+
+    // 添加移动命令
+    public ReactiveCommand<MoveCommandParameter, Unit> MoveHotkeyCommand { get; private set; }
+
+    private void OnMoveHotkey(MoveCommandParameter parameter)
+    {
+        MoveHotkey(parameter.FromIndex, parameter.ToIndex);
+    }
+
+    public void MoveHotkey(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || fromIndex >= Hotkeys.Count || 
+            toIndex < 0 || toIndex >= Hotkeys.Count || 
+            fromIndex == toIndex)
+            return;
+
+        var item = Hotkeys[fromIndex];
+        Hotkeys.RemoveAt(fromIndex);
+        Hotkeys.Insert(toIndex, item);
+    }
+
+    public class HotkeyItem : ReactiveObject
+    {
+        private string _name;
+        private string _command;
+        private bool _isEnabled;
+        private KeyGesture? _primaryHotkey;
+        private KeyGesture? _secondaryHotkey;
+
+        public string Name
+        {
+            get => _name;
+            set => this.RaiseAndSetIfChanged(ref _name, value);
+        }
+
+        public string Command
+        {
+            get => _command;
+            set => this.RaiseAndSetIfChanged(ref _command, value);
+        }
+
+        public bool IsEnabled
+        {
+            get => _isEnabled;
+            set => this.RaiseAndSetIfChanged(ref _isEnabled, value);
+        }
+
+        public KeyGesture? PrimaryHotkey
+        {
+            get => _primaryHotkey;
+            set => this.RaiseAndSetIfChanged(ref _primaryHotkey, value);
+        }
+
+        public KeyGesture? SecondaryHotkey
+        {
+            get => _secondaryHotkey;
+            set => this.RaiseAndSetIfChanged(ref _secondaryHotkey, value);
+        }
+
+        public string PrimaryHotkeyText => PrimaryHotkey?.ToString() ?? "未设置";
+        public string SecondaryHotkeyText => SecondaryHotkey?.ToString() ?? "未设置";
+
+        public HotkeyItem(string name, string command, bool isEnabled = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
+        {
+            _name = name;
+            _command = command;
+            _isEnabled = isEnabled;
+            _primaryHotkey = primaryHotkey;
+            _secondaryHotkey = secondaryHotkey;
         }
     }
         

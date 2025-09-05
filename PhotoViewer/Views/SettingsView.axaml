@@ -18,10 +18,8 @@
             <views:ImageSettingsView />
         </TabItem>
 
-        <TabItem Header="键位">
-            <StackPanel>
-                <TextBlock Margin="5">键位</TextBlock>
-            </StackPanel>
+        <TabItem Header="快捷">
+            <views:ControlSettingsView />
         </TabItem>
 
     </TabControl>

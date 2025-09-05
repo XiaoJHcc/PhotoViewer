@@ -1,0 +1,61 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
+             x:Class="PhotoViewer.Views.ControlSettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+    
+    <StackPanel Background="#333">
+        <StackPanel MaxWidth="400">
+            <TextBlock Margin="20,20,0,10">
+                控制快捷键设置
+            </TextBlock>
+            <Border BorderBrush="#444"
+                    BorderThickness="1"
+                    CornerRadius="10"
+                    Background="#222"
+                    Padding="8">
+                <controls:SortableList ItemsSource="{Binding Hotkeys}"
+                                       MoveCommand="{Binding MoveHotkeyCommand}">
+                    <controls:SortableList.ItemTemplate>
+                        <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
+                            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                <!-- 勾选框 -->
+                                <CheckBox Grid.Column="0" 
+                                          IsChecked="{Binding IsEnabled}" 
+                                          VerticalAlignment="Center" 
+                                          Margin="0,0,12,0" />
+                                
+                                <!-- 功能名称 -->
+                                <TextBlock Grid.Column="1" 
+                                           Text="{Binding Name}" 
+                                           VerticalAlignment="Center" 
+                                           FontWeight="Medium"
+                                           Margin="0,0,12,0" />
+                                
+                                <!-- 主要快捷键 -->
+                                <controls:HotkeyButton Grid.Column="2"
+                                                       Hotkey="{Binding PrimaryHotkey}"
+                                                       HotkeyChanged="OnPrimaryHotkeyChanged"
+                                                       Margin="0,0,8,0" />
+                                
+                                <!-- 次要快捷键 -->
+                                <controls:HotkeyButton Grid.Column="3"
+                                                       Hotkey="{Binding SecondaryHotkey}"
+                                                       HotkeyChanged="OnSecondaryHotkeyChanged" />
+                            </Grid>
+                        </DataTemplate>
+                    </controls:SortableList.ItemTemplate>
+                </controls:SortableList>
+            </Border>
+        </StackPanel>
+    </StackPanel>
+
+</UserControl>

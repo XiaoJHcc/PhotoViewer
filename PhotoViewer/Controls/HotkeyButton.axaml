@@ -1,0 +1,38 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="120" d:DesignHeight="30"
+             x:Class="PhotoViewer.Controls.HotkeyButton">
+
+    <UserControl.Styles>
+        <Style Selector="Button.HotkeyButton">
+            <Setter Property="MinWidth" Value="80" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="8,4" />
+            <Setter Property="Background" Value="#333" />
+            <Setter Property="BorderBrush" Value="#555" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="FontSize" Value="12" />
+        </Style>
+        
+        <Style Selector="Button.HotkeyButton:pointerover">
+            <Setter Property="Background" Value="#444" />
+        </Style>
+        
+        <Style Selector="Button.HotkeyButton.Capturing">
+            <Setter Property="Background" Value="#2c5aa0" />
+            <Setter Property="BorderBrush" Value="#4a8bc2" />
+        </Style>
+    </UserControl.Styles>
+
+    <Button Name="HotkeyBtn" 
+            Classes="HotkeyButton"
+            Content="0"
+            Click="OnHotkeyButtonClick" />
+ 
+    <!-- Content="{Binding $parent[UserControl].HotkeyText}" -->
+    
+</UserControl>
+

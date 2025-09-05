@@ -52,7 +52,6 @@ public class MainViewModel : ViewModelBase
             
         // 创建子 ViewModel
         ThumbnailViewModel = new ThumbnailViewModel(this);
-        ControlViewModel = new ControlViewModel(this);
         ImageViewModel = new ImageViewModel(this);
         Settings = new SettingsViewModel();
             
@@ -63,6 +62,8 @@ public class MainViewModel : ViewModelBase
         ThumbnailViewModel.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
         
+        // 确保所有必要的属性在第55行之前已初始化
+        ControlViewModel = new ControlViewModel(this);
     }
     
     /// <summary>
@@ -237,12 +238,6 @@ public class MainViewModel : ViewModelBase
         {
             _filteredFiles.Add(file);
         }
-        
-        //DEBUG
-        Console.WriteLine("_filteredFiles.Count = " + _filteredFiles.Count);
-        Console.WriteLine("IndexOf(CurrentFile) = " + _filteredFiles.IndexOf(CurrentFile));
-        
-        ControlViewModel.Update();
     }
     
     public bool HasPreviousFile()

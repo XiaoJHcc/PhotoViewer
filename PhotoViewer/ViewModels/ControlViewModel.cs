@@ -1,55 +1,85 @@
+using System.Collections.Generic;
+using System.Linq;
+using System.Reactive;
+using System.Windows.Input;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels
+namespace PhotoViewer.ViewModels;
+
+public class ControlViewModel : ReactiveObject
 {
-    public class ControlViewModel : ReactiveObject
+    private readonly MainViewModel Main;
+
+    public ControlViewModel(MainViewModel mainViewModel)
     {
-        private readonly MainViewModel _main;
-        public MainViewModel Main => _main;
+        Main = mainViewModel;
         
-        public bool CanPrevious => Main.HasPreviousFile();
-        public bool CanNext => Main.HasNextFile();
-
-        public double ScaleSlider
+        // 初始化命令
+        OnPrevious = ReactiveCommand.Create(ExecutePrevious);
+        OnNext = ReactiveCommand.Create(ExecuteNext);
+        OnFit = ReactiveCommand.Create(ExecuteFit);
+        
+        // 监听设置变化
+        Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
+        foreach (var hotkey in Main.Settings.Hotkeys)
         {
-            get => Main.ImageViewModel.Scale;
-            set
+            hotkey.PropertyChanged += (s, e) => 
             {
-                Main.ImageViewModel.Zoom(value);
-            }
+                if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsEnabled))
+                {
+                    this.RaisePropertyChanged(nameof(EnabledControls));
+                }
+            };
         }
+    }
 
+    // 命令
+    public ReactiveCommand<Unit, Unit> OnPrevious { get; }
+    public ReactiveCommand<Unit, Unit> OnNext { get; }
+    public ReactiveCommand<Unit, Unit> OnFit { get; }
 
-        public ControlViewModel(MainViewModel main)
-        {
-            _main = main;
-        }
+    // 启用的控件列表
+    public IEnumerable<SettingsViewModel.HotkeyItem> EnabledControls => 
+        Main.Settings.Hotkeys.Where(h => h.IsEnabled);
 
-        public void Update()
+    // 所有快捷键（用于全局监听）
+    public IEnumerable<SettingsViewModel.HotkeyItem> AllHotkeys => Main.Settings.Hotkeys;
+
+    // 根据命令名称获取命令
+    public ICommand? GetCommandByName(string commandName)
+    {
+        return commandName switch
         {
-            this.RaisePropertyChanged(nameof(CanPrevious));
-            this.RaisePropertyChanged(nameof(CanNext));
-        }
-        
-        public void OnPrevious()
+            "Previous" => OnPrevious,
+            "Next" => OnNext,
+            "Fit" => OnFit,
+            _ => null
+        };
+    }
+
+    private void ExecutePrevious()
+    {
+        // 实现上一张逻辑
+        if (Main.HasPreviousFile())
         {
-            if (!CanPrevious) return;
-            
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FilteredFiles[currentIndex - 1];
         }
-        
-        public void OnNext()
+    }
+
+    private void ExecuteNext()
+    {
+        // 实现下一张逻辑
+        if (Main.HasNextFile())
         {
-            if (!CanNext) return;
-            
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FilteredFiles[currentIndex + 1];
         }
-        
-        public void OnClear()
-        {
-            Main.CurrentFile = null;
-        }
+    }
+
+    private void ExecuteFit()
+    {
+        // 实现缩放适应逻辑
+        Main.ImageViewModel.FitToScreen();
     }
 }
