@@ -154,10 +154,10 @@ public class MainViewModel : ViewModelBase
         ApplyFilter();
     }
     
-    private bool IsImageFile(string fileName)
+    public bool IsImageFile(string fileName)
     {
         var extension = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant();
-        return Settings.SelectedFormats.Contains(extension);
+        return extension != null && Settings.SelectedFormats.Contains(extension);
     }
     
     // Android 从文件夹加载第一个文件

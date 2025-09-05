@@ -56,10 +56,10 @@ public class SettingsViewModel : ReactiveObject
     {
         FileFormats = new ObservableCollection<FileFormatItem>
         {
-            new("JPG", true),
-            new("PNG", true),
-            new("TIFF", false),
-            new("WEBP", true),
+            new(".jpg", true),
+            new(".png", true),
+            new(".tiff", false),
+            new(".webp", true),
         };
 
         // 监听集合变化
