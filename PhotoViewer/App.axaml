@@ -3,10 +3,10 @@
              xmlns:local="using:PhotoViewer"
              x:Class="PhotoViewer.App"
              RequestedThemeVariant="Dark">
-             <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
+    <!-- "Default" ThemeVariant follows system theme variant. "Dark" or "Light" are other available options. -->
 
     <Application.DataTemplates>
-        <local:ViewLocator/>
+        <local:ViewLocator />
     </Application.DataTemplates>
 
     <Application.Styles>
@@ -37,4 +37,9 @@
             <Setter Property="Background" Value="#666666" />
         </Style>
     </Application.Styles>
+
+    <Application.Resources>
+        <FontFamily x:Key="UiconsFont">avares://PhotoViewer/Assets/Fonts/#uicons-regular-rounded</FontFamily>
+    </Application.Resources>
+    
 </Application>
