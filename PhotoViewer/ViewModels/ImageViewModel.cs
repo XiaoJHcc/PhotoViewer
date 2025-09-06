@@ -128,7 +128,6 @@ public class ImageViewModel : ReactiveObject
     {
         var deltaSize = viewSize - ViewSize;
         ViewSize = viewSize;
-        Console.WriteLine("ImageView.UpdateView() " + ViewSize.X + ", " + ViewSize.Y);
         if (ViewSize.X <= 0 || ViewSize.Y <= 0) return;
         if (Fit) FitToScreen();
         else Translate += deltaSize * 0.5;

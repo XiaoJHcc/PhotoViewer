@@ -52,6 +52,8 @@ public class SettingsViewModel : ReactiveObject
     /// 布局
     //////////////
     
+    #region LayoutModeSetting
+
     // 布局模式
     private LayoutMode _layoutMode = LayoutMode.Auto;
     public LayoutMode LayoutMode
@@ -65,9 +67,9 @@ public class SettingsViewModel : ReactiveObject
 
     private void InitializeLayoutModes()
     {
-        LayoutModes.Add(new LayoutModeItem(LayoutMode.Vertical, "上中下", "传统的垂直布局"));
-        LayoutModes.Add(new LayoutModeItem(LayoutMode.Horizontal, "左中右", "水平布局"));
-        LayoutModes.Add(new LayoutModeItem(LayoutMode.Auto, "智能", "根据屏幕方向自动选择"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Vertical, "上下", "缩略图和控制栏位于上下侧，适合竖屏"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Horizontal, "左右", "缩略图和控制栏位于左右侧，适合横屏"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Auto, "自动", "根据屏幕方向自动选择空间较多两侧"));
     }
 
     public class LayoutModeItem
@@ -83,6 +85,8 @@ public class SettingsViewModel : ReactiveObject
             Description = description;
         }
     }
+
+    #endregion
 
     //////////////
     /// 文件格式支持

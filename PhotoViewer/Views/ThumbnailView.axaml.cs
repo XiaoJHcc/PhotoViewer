@@ -266,3 +266,43 @@ public class ScrollBarVisibilityConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
+
+// 垂直布局下的水平对齐转换器
+public class VerticalLayoutAlignmentConverter : IValueConverter
+{
+    public static readonly VerticalLayoutAlignmentConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical)
+        {
+            return isVertical ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+        }
+        return HorizontalAlignment.Stretch;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 垂直布局下的垂直对齐转换器
+public class VerticalLayoutVerticalAlignmentConverter : IValueConverter
+{
+    public static readonly VerticalLayoutVerticalAlignmentConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical)
+        {
+            return isVertical ? VerticalAlignment.Center : VerticalAlignment.Stretch;
+        }
+        return VerticalAlignment.Stretch;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
