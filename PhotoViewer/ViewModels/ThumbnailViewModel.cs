@@ -22,6 +22,12 @@ public class ThumbnailViewModel : ReactiveObject
     private SortMode _sortMode = SortMode.Name;
     private SortOrder _sortOrder = SortOrder.Ascending;
     
+    // // 滚动到当前图片的命令
+    // public ReactiveCommand<Unit, Unit> ScrollToCurrentCommand { get; }
+    
+    // 滚动到当前图片的事件
+    public event Action? ScrollToCurrentRequested;
+    
     public List<ComboBoxItem> SortModes { get; } =
     [
         new() { DisplayName = "名称", Value = SortMode.Name },
@@ -51,6 +57,9 @@ public class ThumbnailViewModel : ReactiveObject
     {
         Main = main;
         
+        // 初始化滚动命令
+        // ScrollToCurrentCommand = ReactiveCommand.Create(ScrollToCurrent);
+        
         // 监听布局变化
         Main.WhenAnyValue(x => x.IsHorizontalLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
@@ -58,41 +67,11 @@ public class ThumbnailViewModel : ReactiveObject
 
     public void SelectImageCommand(ImageFile file)
     {
-        Console.WriteLine("SelectImageCommand");
         Main.CurrentFile = file;
     }
     
-    // public void CenterCommand()
-    // {
-    //     Console.WriteLine("CenterCommand");
-    //     if (Main.CurrentFile != null)
-    //     {
-    //         var index = Main.FilteredFiles.IndexOf(Main.CurrentFile);
-    //         if (index >= 0)
-    //         {
-    //             // 实际滚动逻辑在视图层实现
-    //             this.RaisePropertyChanged(nameof(ScrollToIndex));
-    //         }
-    //     }
-    // }
-    
-    // 用于触发视图层滚动
-    public int? ScrollToIndex { get; private set; }
-        
     public void ScrollToCurrent()
     {
-        if (Main.CurrentFile != null)
-        {
-            // var index = Main.FilteredFiles.IndexOf(Main.CurrentFile);
-            var index = Main.FilteredFiles.IndexOf(
-                Main.FilteredFiles.FirstOrDefault(f => f.File == Main.CurrentFile));
-            
-            if (index >= 0)
-            {
-                ScrollToIndex = index;
-                this.RaisePropertyChanged(nameof(ScrollToIndex));
-                ScrollToIndex = null; // 重置
-            }
-        }
+        ScrollToCurrentRequested?.Invoke();
     }
 }
