@@ -38,6 +38,18 @@ public class SettingsViewModel : ReactiveObject
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
         MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
     }
+    
+    //////////////
+    /// 全局
+    //////////////
+    
+    // 布局模式切换
+    private bool _horizontalLayoutMode = false;
+    public bool HorizontalLayoutMode
+    {
+        get => _horizontalLayoutMode;
+        set => this.RaiseAndSetIfChanged(ref _horizontalLayoutMode, value);
+    }
 
     //////////////
     /// 文件格式支持

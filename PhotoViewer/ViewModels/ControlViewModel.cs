@@ -10,6 +10,9 @@ namespace PhotoViewer.ViewModels;
 public class ControlViewModel : ReactiveObject
 {
     private readonly MainViewModel Main;
+    
+    // 布局方向（从主视图模型获取）
+    public bool IsVerticalLayout => Main.Settings.HorizontalLayoutMode;
 
     public ControlViewModel(MainViewModel mainViewModel)
     {

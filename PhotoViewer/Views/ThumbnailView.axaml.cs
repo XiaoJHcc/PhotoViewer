@@ -7,7 +7,9 @@ using System.Globalization;
 using System.Linq;
 using System.Reactive.Linq;
 using Avalonia;
+using Avalonia.Controls.Primitives;
 using Avalonia.Data.Converters;
+using Avalonia.Layout;
 using Avalonia.Media;
 using PhotoViewer.ViewModels;
 
@@ -206,6 +208,59 @@ public class DateTimeConverter : IValueConverter
         return string.Empty;
     }
         
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 布局方向转换器
+public class LayoutOrientationConverter : IValueConverter
+{
+    public static readonly LayoutOrientationConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical)
+        {
+            return isVertical ? Orientation.Vertical : Orientation.Horizontal;
+        }
+        return Orientation.Horizontal;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is Orientation orientation)
+        {
+            return orientation == Orientation.Vertical;
+        }
+        return false;
+    }
+}
+
+// 滚动条可见性转换器
+public class ScrollBarVisibilityConverter : IValueConverter
+{
+    public static readonly ScrollBarVisibilityConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical)
+        {
+            bool reverse = parameter?.ToString() == "Reverse";
+            
+            if (reverse)
+            {
+                return isVertical ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+            }
+            else
+            {
+                return isVertical ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+            }
+        }
+        return ScrollBarVisibility.Auto;
+    }
+
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotSupportedException();
