@@ -29,10 +29,10 @@ public partial class ControlView : UserControl
     private void OnControlButtonClick(object? sender, RoutedEventArgs e)
     {
         if (sender is Button button && 
-            button.Tag is string commandName && 
-            DataContext is ControlViewModel viewModel)
+            button.DataContext is SettingsViewModel.HotkeyItem hotkeyItem &&
+            DataContext is ControlViewModel controlViewModel)
         {
-            var command = viewModel.GetCommandByName(commandName);
+            var command = controlViewModel.GetCommandByName(hotkeyItem.Command);
             if (command?.CanExecute(null) == true)
             {
                 command.Execute(null);

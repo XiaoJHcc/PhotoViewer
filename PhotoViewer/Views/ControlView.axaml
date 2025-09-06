@@ -6,21 +6,46 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ControlView"
              x:DataType="vm:ControlViewModel">
-    
+
+    <UserControl.Styles>
+        <!-- 控制按钮样式 -->
+        <Style Selector="Button.ControlButton">
+            <Setter Property="Width" Value="40" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Background" Value="#333" />
+            <Setter Property="BorderBrush" Value="#555" />
+            <Setter Property="Margin" Value="4,0" />
+        </Style>
+        
+        <Style Selector="Button.ControlButton:pointerover">
+            <Setter Property="Background" Value="#444" />
+        </Style>
+        
+        <!-- 按钮文字样式 - 可以在这里修改字体 -->
+        <Style Selector="TextBlock.ControlButtonSymbol">
+            <Setter Property="FontSize" Value="18" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <!-- 要使用图标字体时，在这里添加 FontFamily -->
+            <!-- <Setter Property="FontFamily" Value="YourIconFont" /> -->
+        </Style>
+    </UserControl.Styles>
+
     <Border Padding="10">
         <ItemsControl ItemsSource="{Binding EnabledControls}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="20" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" />
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
+            
             <ItemsControl.ItemTemplate>
                 <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
-                    <Button Content="{Binding Name}" 
-                            Width="100" 
-                            Height="40"
+                    <Button Classes="ControlButton"
+                            ToolTip.Tip="{Binding Tooltip}"
                             Click="OnControlButtonClick"
-                            Tag="{Binding Command}" />
+                            Tag="{Binding Command}">
+                        <TextBlock Classes="ControlButtonSymbol" Text="{Binding DisplaySymbol}" />
+                    </Button>
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>

@@ -17,7 +17,7 @@
             <Setter Property="CornerRadius" Value="4" />
             <Setter Property="FontSize" Value="12" />
         </Style>
-        
+
 
         <Style Selector="Button.HotkeyButton:pointerover">
             <Setter Property="Background" Value="#444" />

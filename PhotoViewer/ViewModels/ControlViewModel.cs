@@ -19,6 +19,8 @@ public class ControlViewModel : ReactiveObject
         OnPrevious = ReactiveCommand.Create(ExecutePrevious);
         OnNext = ReactiveCommand.Create(ExecuteNext);
         OnFit = ReactiveCommand.Create(ExecuteFit);
+        OnZoomIn = ReactiveCommand.Create(ExecuteZoomIn);
+        OnZoomOut = ReactiveCommand.Create(ExecuteZoomOut);
         
         // 监听设置变化
         Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
@@ -38,6 +40,8 @@ public class ControlViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> OnPrevious { get; }
     public ReactiveCommand<Unit, Unit> OnNext { get; }
     public ReactiveCommand<Unit, Unit> OnFit { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomIn { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomOut { get; }
 
     // 启用的控件列表
     public IEnumerable<SettingsViewModel.HotkeyItem> EnabledControls => 
@@ -54,13 +58,15 @@ public class ControlViewModel : ReactiveObject
             "Previous" => OnPrevious,
             "Next" => OnNext,
             "Fit" => OnFit,
+            "ZoomIn" => OnZoomIn,
+            "ZoomOut" => OnZoomOut,
             _ => null
         };
     }
 
     private void ExecutePrevious()
     {
-        // 实现上一张逻辑
+        // 上一张
         if (Main.HasPreviousFile())
         {
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
@@ -70,7 +76,7 @@ public class ControlViewModel : ReactiveObject
 
     private void ExecuteNext()
     {
-        // 实现下一张逻辑
+        // 下一张
         if (Main.HasNextFile())
         {
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
@@ -80,8 +86,20 @@ public class ControlViewModel : ReactiveObject
 
     private void ExecuteFit()
     {
-        // 实现缩放适应逻辑
-        Main.ImageViewModel.FitToScreen();
+        // 缩放适应
+        Main.ImageViewModel.ToggleFit();
+    }
+
+    private void ExecuteZoomIn()
+    {
+        // 放大
+        Main.ImageViewModel.ZoomPreset(+1);
+    }
+
+    private void ExecuteZoomOut()
+    {
+        // 缩小
+        Main.ImageViewModel.ZoomPreset(-1);
     }
 
     // 处理全局快捷键输入
