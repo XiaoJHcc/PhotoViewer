@@ -10,6 +10,33 @@
 
     <TabControl Margin="5">
 
+        <TabItem Header="全局">
+            <StackPanel MaxWidth="300">
+                <TextBlock Margin="20,20,0,10">
+                    支持文件格式
+                </TextBlock>
+                <Border BorderBrush="#444"
+                        BorderThickness="1"
+                        CornerRadius="10"
+                        Background="#222"
+                        Padding="8">
+                    <StackPanel>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <CheckBox Grid.Column="0" 
+                                      IsChecked="{Binding HorizontalLayoutMode}" 
+                                      VerticalAlignment="Center" 
+                                      Margin="0,0,8,0" />
+                            <TextBlock Grid.Column="1"
+                                       VerticalAlignment="Center" 
+                                       FontWeight="Medium">
+                                左中右布局
+                            </TextBlock>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </TabItem>
+
         <TabItem Header="文件">
             <views:FileSettingsView />
         </TabItem>

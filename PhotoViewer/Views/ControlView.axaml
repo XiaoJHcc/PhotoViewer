@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:local="clr-namespace:PhotoViewer.Views"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ControlView"
              x:DataType="vm:ControlViewModel">
@@ -34,7 +35,9 @@
         <ItemsControl ItemsSource="{Binding EnabledControls}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="8" />
+                    <StackPanel HorizontalAlignment="Center" 
+                               Spacing="8"
+                               Orientation="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, Converter={x:Static local:LayoutOrientationConverter.Instance}}" />
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
             

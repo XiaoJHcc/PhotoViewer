@@ -15,6 +15,9 @@ public class ThumbnailViewModel : ReactiveObject
 {
     public MainViewModel Main { get; }
     
+    // 布局方向（从主视图模型获取）
+    public bool IsVerticalLayout => Main.Settings.HorizontalLayoutMode;
+    
     // 排序方式
     private SortMode _sortMode = SortMode.Name;
     private SortOrder _sortOrder = SortOrder.Ascending;
@@ -47,6 +50,10 @@ public class ThumbnailViewModel : ReactiveObject
     public ThumbnailViewModel(MainViewModel main)
     {
         Main = main;
+        
+        // 监听布局变化
+        Main.WhenAnyValue(x => x.Settings.HorizontalLayoutMode)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
     }
 
     public void SelectImageCommand(ImageFile file)
