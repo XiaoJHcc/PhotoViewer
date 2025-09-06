@@ -185,9 +185,11 @@ public class SettingsViewModel : ReactiveObject
     {
         Hotkeys = new ObservableCollection<HotkeyItem>
         {
-            new("上一张", "Previous", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
-            new("下一张", "Next", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
-            new("缩放适应", "Fit", true, new KeyGesture(Key.F), null),
+            new("上一张", "Previous", "←", "上一张", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
+            new("下一张", "Next", "→", "下一张", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
+            new("缩放适应", "Fit", "O", "缩放适应", true, new KeyGesture(Key.F), null),
+            new("放大", "ZoomIn", "+", "放大", true, new KeyGesture(Key.OemPlus, KeyModifiers.Control), null),
+            new("缩小", "ZoomOut", "-", "缩小", true, new KeyGesture(Key.OemMinus, KeyModifiers.Control), null),
         };
 
         // 监听集合变化
@@ -347,6 +349,8 @@ public class SettingsViewModel : ReactiveObject
     {
         private string _name;
         private string _command;
+        private string _displaySymbol;
+        private string _tooltip;
         private bool _isEnabled;
         private KeyGesture? _primaryHotkey;
         private KeyGesture? _secondaryHotkey;
@@ -361,6 +365,18 @@ public class SettingsViewModel : ReactiveObject
         {
             get => _command;
             set => this.RaiseAndSetIfChanged(ref _command, value);
+        }
+
+        public string DisplaySymbol
+        {
+            get => _displaySymbol;
+            set => this.RaiseAndSetIfChanged(ref _displaySymbol, value);
+        }
+
+        public string Tooltip
+        {
+            get => _tooltip;
+            set => this.RaiseAndSetIfChanged(ref _tooltip, value);
         }
 
         public bool IsEnabled
@@ -398,10 +414,12 @@ public class SettingsViewModel : ReactiveObject
             set => this.RaiseAndSetIfChanged(ref _hasSecondaryConflict, value);
         }
 
-        public HotkeyItem(string name, string command, bool isEnabled = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
+        public HotkeyItem(string name, string command, string displaySymbol, string tooltip, bool isEnabled = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
         {
             _name = name;
             _command = command;
+            _displaySymbol = displaySymbol;
+            _tooltip = tooltip;
             _isEnabled = isEnabled;
             _primaryHotkey = primaryHotkey;
             _secondaryHotkey = secondaryHotkey;
