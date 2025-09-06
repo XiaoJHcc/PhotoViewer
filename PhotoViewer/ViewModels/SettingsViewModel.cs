@@ -185,11 +185,11 @@ public class SettingsViewModel : ReactiveObject
     {
         Hotkeys = new ObservableCollection<HotkeyItem>
         {
-            new("上一张", "Previous", "←", "上一张", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
-            new("下一张", "Next", "→", "下一张", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
-            new("缩放适应", "Fit", "O", "缩放适应", true, new KeyGesture(Key.F), null),
-            new("放大", "ZoomIn", "+", "放大", true, new KeyGesture(Key.OemPlus, KeyModifiers.Control), null),
-            new("缩小", "ZoomOut", "-", "缩小", true, new KeyGesture(Key.OemMinus, KeyModifiers.Control), null),
+            new("上一张", "Previous", "\uf151", "上一张", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
+            new("下一张", "Next", "\uf152", "下一张", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
+            new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, new KeyGesture(Key.F), null),
+            new("放大", "ZoomIn", "\ufaac", "放大", true, new KeyGesture(Key.OemPlus, KeyModifiers.Control), null),
+            new("缩小", "ZoomOut", "\uf94e", "缩小", true, new KeyGesture(Key.OemMinus, KeyModifiers.Control), null),
         };
 
         // 监听集合变化

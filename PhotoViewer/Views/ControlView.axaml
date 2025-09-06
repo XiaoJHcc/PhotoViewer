@@ -21,12 +21,12 @@
             <Setter Property="Background" Value="#444" />
         </Style>
         
-        <!-- 按钮文字样式 - 可以在这里修改字体 -->
+        <!-- 按钮文字样式 -->
         <Style Selector="TextBlock.ControlButtonSymbol">
             <Setter Property="FontSize" Value="18" />
-            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="FontWeight" Value="Regular" />
             <!-- 要使用图标字体时，在这里添加 FontFamily -->
-            <!-- <Setter Property="FontFamily" Value="YourIconFont" /> -->
+            <Setter Property="FontFamily" Value="{StaticResource UiconsFont}" />
         </Style>
     </UserControl.Styles>
 
