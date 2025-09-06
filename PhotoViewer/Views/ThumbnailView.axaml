@@ -71,18 +71,20 @@
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Spacing="10"
+                                   HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static local:VerticalLayoutAlignmentConverter.Instance}}"
                                    Orientation="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static local:LayoutOrientationConverter.Instance}}"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
+                
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        
                         <Button Command="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).SelectImageCommand}"
                                 CommandParameter="{Binding}"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 Margin="0"
-                                Padding="0">
+                                Padding="0"
+                                HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static local:VerticalLayoutAlignmentConverter.Instance}}">
                             <Border BorderThickness="2" 
                                     BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
                                     CornerRadius="4"
@@ -129,7 +131,6 @@
                                 </StackPanel>
                             </Border>
                         </Button>
-                        
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
