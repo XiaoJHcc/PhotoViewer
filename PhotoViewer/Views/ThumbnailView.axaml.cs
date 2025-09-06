@@ -11,6 +11,10 @@ using Avalonia.Controls.Primitives;
 using Avalonia.Data.Converters;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
+using Avalonia.Styling;
+using System.Threading;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -18,11 +22,20 @@ namespace PhotoViewer.Views;
 public partial class ThumbnailView : UserControl
 {
     private readonly DispatcherTimer _scrollTimer = new DispatcherTimer();
+    
+    // 添加动画相关字段
+    private Animation? _scrollAnimation;
+    private CancellationTokenSource? _animationCancellationTokenSource;
+    private Task? _currentAnimationTask;
+    
     public ThumbnailViewModel? ViewModel => DataContext as ThumbnailViewModel;
 
     public ThumbnailView()
     {
         InitializeComponent();
+
+        // 初始化滚动动画
+        InitializeScrollAnimation();
 
         // 设置滚动计时器（300ms延迟）
         _scrollTimer.Interval = TimeSpan.FromMilliseconds(300);
@@ -162,10 +175,143 @@ public partial class ThumbnailView : UserControl
     }
     
     /// <summary>
+    /// 初始化滚动动画
+    /// </summary>
+    private void InitializeScrollAnimation()
+    {
+        _scrollAnimation = new Animation
+        {
+            Duration = TimeSpan.FromMilliseconds(350), // 动画持续时间
+            Easing = new CubicEaseOut(), // 缓动函数
+            FillMode = FillMode.Forward
+        };
+    }
+    
+    /// <summary>
+    /// 带缓动效果的滚动到指定位置
+    /// </summary>
+    /// <param name="targetOffset">目标偏移量</param>
+    private async Task AnimateScrollToAsync(Vector targetOffset)
+    {
+        var scrollViewer = ThumbnailScrollViewer;
+        if (scrollViewer == null) return;
+
+        // 取消之前的动画
+        await CancelCurrentAnimationAsync();
+        
+        // 创建新的取消令牌
+        _animationCancellationTokenSource = new CancellationTokenSource();
+        var cancellationToken = _animationCancellationTokenSource.Token;
+        
+        try
+        {
+            var currentOffset = scrollViewer.Offset;
+            
+            // 如果目标位置和当前位置相同，直接返回
+            if (Math.Abs(targetOffset.X - currentOffset.X) < 1 && 
+                Math.Abs(targetOffset.Y - currentOffset.Y) < 1)
+            {
+                return;
+            }
+
+            // 检查是否已被取消
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // 创建关键帧动画
+            var keyFrame = new KeyFrame
+            {
+                Cue = new Cue(1.0)
+            };
+            
+            // 根据布局方向选择动画属性
+            var isVertical = ViewModel?.IsVerticalLayout ?? false;
+            
+            if (isVertical)
+            {
+                // 垂直滚动动画
+                keyFrame.Setters.Add(new Setter(ScrollViewer.OffsetProperty, 
+                    new Vector(currentOffset.X, targetOffset.Y)));
+            }
+            else
+            {
+                // 水平滚动动画
+                keyFrame.Setters.Add(new Setter(ScrollViewer.OffsetProperty, 
+                    new Vector(targetOffset.X, currentOffset.Y)));
+            }
+
+            _scrollAnimation.Children.Clear();
+            _scrollAnimation.Children.Add(keyFrame);
+
+            // 检查是否已被取消
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // 执行动画并保存任务引用
+            _currentAnimationTask = _scrollAnimation.RunAsync(scrollViewer, cancellationToken);
+            await _currentAnimationTask;
+        }
+        catch (OperationCanceledException)
+        {
+            // 动画被取消，不需要处理
+            Console.WriteLine("滚动动画被取消");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"滚动动画失败: {ex.Message}");
+            // 如果动画失败，直接设置位置
+            if (!cancellationToken.IsCancellationRequested)
+            {
+                scrollViewer.Offset = targetOffset;
+            }
+        }
+        finally
+        {
+            // 清理资源
+            if (_animationCancellationTokenSource?.Token == cancellationToken)
+            {
+                _animationCancellationTokenSource?.Dispose();
+                _animationCancellationTokenSource = null;
+                _currentAnimationTask = null;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 取消当前正在执行的动画
+    /// </summary>
+    private async Task CancelCurrentAnimationAsync()
+    {
+        if (_animationCancellationTokenSource != null && !_animationCancellationTokenSource.Token.IsCancellationRequested)
+        {
+            _animationCancellationTokenSource.Cancel();
+            
+            // 等待当前动画完成取消
+            if (_currentAnimationTask != null)
+            {
+                try
+                {
+                    await _currentAnimationTask;
+                }
+                catch (OperationCanceledException)
+                {
+                    // 预期的取消异常，忽略
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"等待动画取消时发生错误: {ex.Message}");
+                }
+            }
+            
+            _animationCancellationTokenSource?.Dispose();
+            _animationCancellationTokenSource = null;
+            _currentAnimationTask = null;
+        }
+    }
+    
+    /// <summary>
     /// 滚动到指定的容器控件
     /// </summary>
     /// <param name="container">要滚动到的容器控件</param>
-    private void ScrollToContainer(Control container)
+    private async void ScrollToContainer(Control container)
     {
         try
         {
@@ -177,6 +323,7 @@ public partial class ThumbnailView : UserControl
             if (containerPosition == null) return;
 
             var isVertical = ViewModel?.IsVerticalLayout ?? false;
+            Vector targetOffset;
             
             if (isVertical)
             {
@@ -189,7 +336,7 @@ public partial class ThumbnailView : UserControl
                 var centerY = targetY - (viewportHeight - containerHeight) / 2;
                 centerY = Math.Max(0, Math.Min(centerY, scrollViewer.Extent.Height - viewportHeight));
                 
-                scrollViewer.Offset = new Vector(scrollViewer.Offset.X, centerY);
+                targetOffset = new Vector(scrollViewer.Offset.X, centerY);
             }
             else
             {
@@ -202,13 +349,33 @@ public partial class ThumbnailView : UserControl
                 var centerX = targetX - (viewportWidth - containerWidth) / 2;
                 centerX = Math.Max(0, Math.Min(centerX, scrollViewer.Extent.Width - viewportWidth));
                 
-                scrollViewer.Offset = new Vector(centerX, scrollViewer.Offset.Y);
+                targetOffset = new Vector(centerX, scrollViewer.Offset.Y);
             }
+
+            // 使用缓动动画滚动到目标位置（会自动取消之前的动画）
+            await AnimateScrollToAsync(targetOffset);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"滚动到容器失败: {ex.Message}");
         }
+    }
+    
+    /// <summary>
+    /// 公共方法：平滑滚动到指定偏移量
+    /// </summary>
+    /// <param name="offset">目标偏移量</param>
+    public async Task SmoothScrollToAsync(Vector offset)
+    {
+        await AnimateScrollToAsync(offset);
+    }
+
+    /// <summary>
+    /// 立即停止所有滚动动画
+    /// </summary>
+    public async Task StopAnimationAsync()
+    {
+        await CancelCurrentAnimationAsync();
     }
 }
 
