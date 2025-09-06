@@ -274,11 +274,24 @@ public class MainViewModel : ViewModelBase
     /// </summary>
     public async Task OpenFilePickerAsync()
     {
-        // 获取当前应用的顶级窗口
-        var topLevel = TopLevel.GetTopLevel(App.Current?.ApplicationLifetime is 
-            Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop 
-            ? desktop.MainWindow : null);
-            
+        TopLevel? topLevel = null;
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        {
+            // 移动端：通过 MainView 获取 TopLevel
+            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
+            {
+                topLevel = TopLevel.GetTopLevel(singleView.MainView);
+            }
+        }
+        else
+        {
+            // 桌面端：通过 MainWindow 获取 TopLevel
+            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+            }
+        }
+
         if (topLevel?.StorageProvider == null) return;
 
         if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
