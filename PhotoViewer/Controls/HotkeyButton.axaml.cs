@@ -1,6 +1,7 @@
 ﻿using System;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
@@ -30,6 +31,16 @@ public partial class HotkeyButton : UserControl
         set => SetValue(HotkeyTextProperty, value); // 改为 public
     }
 
+    // 依赖属性：冲突状态
+    public static readonly StyledProperty<bool> HasConflictProperty =
+        AvaloniaProperty.Register<HotkeyButton, bool>(nameof(HasConflict), false);
+
+    public bool HasConflict
+    {
+        get => GetValue(HasConflictProperty);
+        set => SetValue(HasConflictProperty, value);
+    }
+
     // 路由事件：快捷键改变
     public static readonly RoutedEvent<RoutedEventArgs> HotkeyChangedEvent =
         RoutedEvent.Register<HotkeyButton, RoutedEventArgs>(nameof(HotkeyChanged), RoutingStrategies.Bubble);
@@ -46,6 +57,7 @@ public partial class HotkeyButton : UserControl
     static HotkeyButton()
     {
         HotkeyProperty.Changed.AddClassHandler<HotkeyButton>((x, e) => x.OnHotkeyChanged());
+        HasConflictProperty.Changed.AddClassHandler<HotkeyButton>((x, e) => x.OnConflictChanged());
     }
 
     public HotkeyButton()
@@ -71,6 +83,21 @@ public partial class HotkeyButton : UserControl
         }
     }
 
+    private void OnConflictChanged()
+    {
+        if (HotkeyBtn != null)
+        {
+            if (HasConflict)
+            {
+                HotkeyBtn.Classes.Add("Conflict");
+            }
+            else
+            {
+                HotkeyBtn.Classes.Remove("Conflict");
+            }
+        }
+    }
+
     private void OnHotkeyButtonClick(object? sender, RoutedEventArgs e)
     {
         StartCapturing();
@@ -82,7 +109,7 @@ public partial class HotkeyButton : UserControl
 
         _isCapturing = true;
         HotkeyBtn.Classes.Add("Capturing");
-        HotkeyBtn.Content = "按下快捷键...";
+        HotkeyBtn.Content = "按下快捷键";
 
         // 获取焦点以接收键盘事件
         this.Focus();
@@ -158,5 +185,11 @@ public partial class HotkeyButton : UserControl
     {
         StopCapturing();
         base.OnDetachedFromVisualTree(e);
+    }
+
+    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
+    {
+        base.OnApplyTemplate(e);
+        OnConflictChanged(); // 确保模板应用后状态正确
     }
 }

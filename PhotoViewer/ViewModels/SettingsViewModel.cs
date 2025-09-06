@@ -223,7 +223,104 @@ public class SettingsViewModel : ReactiveObject
 
     private void OnHotkeyItemChanged(object? sender, PropertyChangedEventArgs e)
     {
-        // 可以在这里处理快捷键变化的逻辑
+        // 当快捷键变化时检测冲突
+        if (e.PropertyName == nameof(HotkeyItem.PrimaryHotkey) || 
+            e.PropertyName == nameof(HotkeyItem.SecondaryHotkey))
+        {
+            CheckHotkeyConflicts();
+        }
+    }
+
+    public void CheckHotkeyConflicts()
+    {
+        // 清除所有冲突标记
+        foreach (var item in Hotkeys)
+        {
+            item.HasPrimaryConflict = false;
+            item.HasSecondaryConflict = false;
+        }
+
+        // 检查冲突
+        for (int i = 0; i < Hotkeys.Count; i++)
+        {
+            var current = Hotkeys[i];
+            
+            for (int j = i + 1; j < Hotkeys.Count; j++)
+            {
+                var other = Hotkeys[j];
+                
+                // 检查主要快捷键冲突
+                if (current.PrimaryHotkey != null && other.PrimaryHotkey != null &&
+                    AreKeyGesturesEqual(current.PrimaryHotkey, other.PrimaryHotkey))
+                {
+                    current.HasPrimaryConflict = true;
+                    other.HasPrimaryConflict = true;
+                }
+                
+                if (current.PrimaryHotkey != null && other.SecondaryHotkey != null &&
+                    AreKeyGesturesEqual(current.PrimaryHotkey, other.SecondaryHotkey))
+                {
+                    current.HasPrimaryConflict = true;
+                    other.HasSecondaryConflict = true;
+                }
+                
+                // 检查次要快捷键冲突
+                if (current.SecondaryHotkey != null && other.PrimaryHotkey != null &&
+                    AreKeyGesturesEqual(current.SecondaryHotkey, other.PrimaryHotkey))
+                {
+                    current.HasSecondaryConflict = true;
+                    other.HasPrimaryConflict = true;
+                }
+                
+                if (current.SecondaryHotkey != null && other.SecondaryHotkey != null &&
+                    AreKeyGesturesEqual(current.SecondaryHotkey, other.SecondaryHotkey))
+                {
+                    current.HasSecondaryConflict = true;
+                    other.HasSecondaryConflict = true;
+                }
+            }
+        }
+    }
+
+    private bool AreKeyGesturesEqual(KeyGesture? gesture1, KeyGesture? gesture2)
+    {
+        if (gesture1 == null || gesture2 == null)
+            return false;
+            
+        return gesture1.Key == gesture2.Key && 
+               gesture1.KeyModifiers == gesture2.KeyModifiers;
+    }
+
+    // 获取有效的快捷键（用于执行，优先级按列表顺序）
+    public KeyGesture? GetEffectiveHotkey(KeyGesture targetGesture)
+    {
+        foreach (var hotkeyItem in Hotkeys)
+        {
+            if (!hotkeyItem.IsEnabled) continue;
+            
+            if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture))
+                return hotkeyItem.PrimaryHotkey;
+                
+            if (AreKeyGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
+                return hotkeyItem.SecondaryHotkey;
+        }
+        
+        return null;
+    }
+
+    // 根据快捷键获取对应的命令名称（仅返回第一个匹配的）
+    public string? GetCommandByHotkey(KeyGesture targetGesture)
+    {
+        foreach (var hotkeyItem in Hotkeys)
+        {
+            if (!hotkeyItem.IsEnabled) continue;
+            
+            if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture) ||
+                AreKeyGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
+                return hotkeyItem.Command;
+        }
+        
+        return null;
     }
 
     // 添加移动命令
@@ -286,6 +383,20 @@ public class SettingsViewModel : ReactiveObject
 
         public string PrimaryHotkeyText => PrimaryHotkey?.ToString() ?? "未设置";
         public string SecondaryHotkeyText => SecondaryHotkey?.ToString() ?? "未设置";
+
+        private bool _hasPrimaryConflict;
+        public bool HasPrimaryConflict
+        {
+            get => _hasPrimaryConflict;
+            set => this.RaiseAndSetIfChanged(ref _hasPrimaryConflict, value);
+        }
+
+        private bool _hasSecondaryConflict;
+        public bool HasSecondaryConflict
+        {
+            get => _hasSecondaryConflict;
+            set => this.RaiseAndSetIfChanged(ref _hasSecondaryConflict, value);
+        }
 
         public HotkeyItem(string name, string command, bool isEnabled = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
         {
