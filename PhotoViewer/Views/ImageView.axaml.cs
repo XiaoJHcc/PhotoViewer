@@ -191,7 +191,7 @@ public partial class ImageView : UserControl
                 // 无图片时 鼠标左键打开图片
                 if (e.Pointer.Type == PointerType.Mouse)
                 {
-                    _ = OpenImageAsync();
+                    _ = ViewModel?.Main.OpenFilePickerAsync();
                 }
             }
             e.Handled = true;
@@ -294,9 +294,9 @@ public partial class ImageView : UserControl
             
             // 未触发长按 且无图片时 打开图片
             if (!_isLongPressTriggered && ViewModel?.SourceBitmap == null)
-                _ = OpenImageAsync();
+                _ = ViewModel?.Main.OpenFilePickerAsync();
         }
-            
+
         if (_activePointers.ContainsKey(pointer))
         {
             _activePointers.Remove(pointer);
@@ -340,42 +340,6 @@ public partial class ImageView : UserControl
         ViewModel?.ToggleFit(e.GetPosition(this));
         e.Handled = true;
     }
-
-    /// <summary>
-    /// 监听键盘
-    /// </summary>
-    private void OnKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (ViewModel == null) return;
-            
-        if (e.KeyModifiers == KeyModifiers.Control)
-        {
-            switch (e.Key)
-            {
-                case Key.OemPlus:
-                    ViewModel.ZoomPreset(+1);
-                    break;
-                case Key.OemMinus:
-                    ViewModel.ZoomPreset(-1);
-                    break;
-                case Key.D0:
-                    ViewModel.ToggleFit();
-                    break;
-            }
-        }
-        else
-        {
-            // switch (e.Key)
-            // {
-            //     case Key.Left:
-            //         ViewModel.Main.ControlViewModel.OnPrevious();
-            //         break;
-            //     case Key.Right:
-            //         ViewModel.Main.ControlViewModel.OnNext();
-            //         break;
-            // }
-        }
-    }
     
     private double SnapToPreset(double zoom)
     {
@@ -400,106 +364,6 @@ public partial class ImageView : UserControl
     #region OpenFile
     
     /// <summary>
-    /// 选择打开图片
-    /// </summary>
-    private async Task OpenImageAsync()
-    {
-        // 获取顶级窗口的StorageProvider
-        var topLevel = TopLevel.GetTopLevel(this);
-        if (topLevel?.StorageProvider == null) return;
-
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            // Android 平台：选择文件夹
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "选择图片文件夹",
-                AllowMultiple = false
-            });
-
-            if (folders.Count > 0)
-            {
-                await LoadNewFolderAsync(folders);
-            }
-        }
-        else
-        {
-            // 选择图片窗口
-            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-            {
-                Title = "选择图片",
-                FileTypeFilter = [FilePickerFileTypes],
-                AllowMultiple = false
-            });
-
-            if (files.Count > 0 && files[0] is IStorageFile file)
-            {
-                await LoadNewImageAsync(file);
-            }
-        }
-    }
-
-    private readonly FilePickerFileType _filePickerFileTypes = new("选择图片")
-    {
-        AppleUniformTypeIdentifiers = new[] { "public.image" },
-        MimeTypes = new[] { "image/*" }
-    };
-
-    private FilePickerFileType FilePickerFileTypes
-    {
-        get
-        {
-            _filePickerFileTypes.Patterns = ViewModel?.Main.Settings.SelectedFormats
-                .Select(format => $"*{format}")
-                .ToArray();
-            return _filePickerFileTypes;
-        }
-    }
-
-    /// <summary>
-    /// 刷新文件夹（选择新文件夹时）
-    /// </summary>
-    private async Task LoadNewFolderAsync(IReadOnlyList<IStorageFolder> folders)
-    {
-        // 新打开文件夹时始终适配显示
-        ViewModel.Fit = true;
-        
-        // 通过 Main 加载文件夹
-        await ViewModel.Main.OpenAndroidFolder(folders[0]);
-    }
-    
-    /// <summary>
-    /// 刷新文件夹（选择新文件 或 拖入新文件 时）
-    /// </summary>
-    private async Task LoadNewImageAsync(IStorageFile file)
-    {
-        // 新打开文件时始终适配显示
-        ViewModel.Fit = true;
-        
-        // 加载图片
-        await LoadImageAsync(file);
-        
-        // 同步信息至 Main
-        ViewModel.Main.LoadNewImageFolder(file);
-    }
-    
-    /// <summary>
-    /// 加载文件
-    /// </summary>
-    public async Task LoadImageAsync(IStorageFile file)
-    {
-        try
-        {
-            // 使用 ImageViewModel 加载图片
-            ViewModel.LoadImageAsync(file);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"加载图片失败: {ex.Message}");
-        }
-    }
-
-    /// <summary>
     /// 拖入文件
     /// </summary>
     private void OnDragOver(object? sender, DragEventArgs e)
@@ -511,15 +375,19 @@ public partial class ImageView : UserControl
         e.Handled = true;
     }
 
-    private async void OnDrop(object? sender, DragEventArgs e)
+    private void OnDrop(object? sender, DragEventArgs e)
     {
         var files = e.Data.GetFiles()?.ToList();
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
-            await LoadNewImageAsync(file);
+            // 通过 MainViewModel 处理拖拽文件
+            ViewModel?.Main.LoadNewImageFolder(file);
         }
         e.Handled = true;
     }
+
+    // 移除 OpenImageAsync, LoadNewFolderAsync, LoadNewImageAsync 等方法
+    // 这些逻辑已移到 MainViewModel
 
     #endregion
 }
