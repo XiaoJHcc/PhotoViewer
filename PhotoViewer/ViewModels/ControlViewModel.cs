@@ -16,6 +16,7 @@ public class ControlViewModel : ReactiveObject
         Main = mainViewModel;
         
         // 初始化命令
+        OnOpen = ReactiveCommand.Create(ExecuteOpen);
         OnPrevious = ReactiveCommand.Create(ExecutePrevious);
         OnNext = ReactiveCommand.Create(ExecuteNext);
         OnFit = ReactiveCommand.Create(ExecuteFit);
@@ -37,6 +38,7 @@ public class ControlViewModel : ReactiveObject
     }
 
     // 命令
+    public ReactiveCommand<Unit, Unit> OnOpen { get; }
     public ReactiveCommand<Unit, Unit> OnPrevious { get; }
     public ReactiveCommand<Unit, Unit> OnNext { get; }
     public ReactiveCommand<Unit, Unit> OnFit { get; }
@@ -55,6 +57,7 @@ public class ControlViewModel : ReactiveObject
     {
         return commandName switch
         {
+            "Open" => OnOpen,
             "Previous" => OnPrevious,
             "Next" => OnNext,
             "Fit" => OnFit,
@@ -64,6 +67,12 @@ public class ControlViewModel : ReactiveObject
         };
     }
 
+    private void ExecuteOpen()
+    {
+        // 打开文件
+        Main.OpenFilePickerAsync();
+    }
+    
     private void ExecutePrevious()
     {
         // 上一张

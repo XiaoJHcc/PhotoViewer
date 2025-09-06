@@ -268,4 +268,73 @@ public class MainViewModel : ViewModelBase
             }
         }
     }
+    
+    /// <summary>
+    /// 打开文件选择器
+    /// </summary>
+    public async Task OpenFilePickerAsync()
+    {
+        // 获取当前应用的顶级窗口
+        var topLevel = TopLevel.GetTopLevel(App.Current?.ApplicationLifetime is 
+            Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop 
+            ? desktop.MainWindow : null);
+            
+        if (topLevel?.StorageProvider == null) return;
+
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        {
+            // 移动平台：选择文件夹
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择图片文件夹",
+                AllowMultiple = false
+            });
+
+            if (folders.Count > 0)
+            {
+                await OpenAndroidFolder(folders[0]);
+            }
+        }
+        else
+        {
+            // 桌面平台：选择图片文件
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择图片",
+                FileTypeFilter = [GetFilePickerFileTypes()],
+                AllowMultiple = false
+            });
+
+            if (files.Count > 0 && files[0] is IStorageFile file)
+            {
+                await LoadNewImageFromFile(file);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 获取文件选择器的文件类型过滤器
+    /// </summary>
+    private FilePickerFileType GetFilePickerFileTypes()
+    {
+        var fileType = new FilePickerFileType("选择图片")
+        {
+            AppleUniformTypeIdentifiers = new[] { "public.image" },
+            MimeTypes = new[] { "image/*" },
+            Patterns = Settings.SelectedFormats.Select(format => $"*{format}").ToArray()
+        };
+        return fileType;
+    }
+
+    /// <summary>
+    /// 从文件加载新图片（适配显示）
+    /// </summary>
+    private async Task LoadNewImageFromFile(IStorageFile file)
+    {
+        // 新打开文件时始终适配显示
+        ImageViewModel.Fit = true;
+        
+        // 加载图片所在文件夹
+        LoadNewImageFolder(file);
+    }
 }
