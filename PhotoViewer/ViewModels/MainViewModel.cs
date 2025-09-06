@@ -152,8 +152,8 @@ public class MainViewModel : ViewModelBase
         IsModalVisible = false;
     }
     
-    // 优先加载图片 加载完成后调用其他逻辑
-    public async void LoadNewImageFolder(IStorageFile file)
+    // 图片加载完成后 调用其他逻辑
+    public async Task LoadNewImageFolder(IStorageFile file)
     {
         var folder = await file.GetParentAsync();
         if (folder == null || folder == _currentFolder) return;
@@ -374,7 +374,10 @@ public class MainViewModel : ViewModelBase
         ImageViewModel.Fit = true;
         
         // 加载图片所在文件夹
-        LoadNewImageFolder(file);
+        await LoadNewImageFolder(file);
+        
+        // 加载文件夹后滚动至当前图片
+        ThumbnailViewModel.ScrollToCurrent();
     }
     
     /// <summary>

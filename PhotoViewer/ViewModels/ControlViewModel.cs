@@ -83,6 +83,7 @@ public class ControlViewModel : ReactiveObject
         {
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FilteredFiles[currentIndex - 1];
+            Main.ThumbnailViewModel.ScrollToCurrent();
         }
     }
 
@@ -93,6 +94,7 @@ public class ControlViewModel : ReactiveObject
         {
             var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FilteredFiles[currentIndex + 1];
+            Main.ThumbnailViewModel.ScrollToCurrent();
         }
     }
 

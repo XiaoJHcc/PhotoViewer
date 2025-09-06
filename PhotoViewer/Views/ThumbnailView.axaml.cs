@@ -38,47 +38,20 @@ public partial class ThumbnailView : UserControl
         // 排序选项变化时刷新
         SortByComboBox.SelectionChanged += (s, e) => LoadVisibleThumbnailsAsync();
         OrderComboBox.SelectionChanged += (s, e) => LoadVisibleThumbnailsAsync();
-
-        // 监听数据上下文变化
-        // this.WhenAnyValue(x => x.DataContext)
-        //     .Where(dc => dc is ThumbnailViewModel)
-        //     .Subscribe(_ => InitializeViewModel());
-
-        // 在 View 中监听 ViewModel 传来的 ScrollToIndex 更新
-        this.WhenAnyValue(x => x.ViewModel.ScrollToIndex)
-            .Where(index => index.HasValue)
-            .Subscribe(index =>
-            {
-                if (index.Value < ThumbnailItemsControl.ItemCount)
-                {
-                    ThumbnailItemsControl.ScrollIntoView(index.Value);
-                }
-            });
         
-        // 添加命令绑定
-        // this.WhenActivated(disposables =>
-        // {
-        //     this.BindCommand(
-        //             ViewModel, 
-        //             vm => vm.SelectImageCommand, 
-        //             v => v.ThumbnailItemsControl,
-        //             nameof(ThumbnailItemsControl.SelectionChanged))
-        //         .DisposeWith(disposables);
-        // });
+        // 监听DataContext变化
+        this.WhenAnyValue(x => x.DataContext)
+            .Subscribe(OnDataContextChanged);
     }
-
-    // private void InitializeViewModel()
-    // {
-    //     if (ViewModel != null)
-    //     {
-    //         // 初始加载可见缩略图
-    //         Dispatcher.UIThread.Post(async () => 
-    //         {
-    //             await Task.Delay(100); // 等待布局完成
-    //             await LoadVisibleThumbnailsAsync();
-    //         });
-    //     }
-    // }
+    
+    private void OnDataContextChanged(object? dataContext)
+    {
+        if (dataContext is ThumbnailViewModel viewModel)
+        {
+            // 订阅滚动到当前图片的事件
+            viewModel.ScrollToCurrentRequested += ScrollToCurrentImage;
+        }
+    }
 
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
@@ -128,16 +101,113 @@ public partial class ThumbnailView : UserControl
         }
     }
 
-    private void CenterButton_Click(object sender, Avalonia.Interactivity.RoutedEventArgs e)
+    /// <summary>
+    /// 滚动到当前选中的图片
+    /// </summary>
+    private async void ScrollToCurrentImage()
     {
-        if (ViewModel?.Main?.CurrentFile != null)
-        {
-            var currentItem = ViewModel.Main.FilteredFiles.FirstOrDefault(f => f.File == ViewModel.Main.CurrentFile);
+        if (ViewModel?.Main.CurrentFile == null) return;
 
-            if (currentItem != null)
+        await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            try
             {
-                ThumbnailItemsControl.ScrollIntoView(currentItem);
+                var currentFile = ViewModel.Main.CurrentFile;
+                var index = ViewModel.Main.FilteredFiles.IndexOf(currentFile);
+                
+                if (index >= 0)
+                {
+                    ScrollToIndex(index);
+                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"滚动到当前图片失败: {ex.Message}");
+            }
+        });
+    }
+    
+    /// <summary>
+    /// 滚动到指定索引的图片
+    /// </summary>
+    /// <param name="index">图片在列表中的索引</param>
+    private void ScrollToIndex(int index)
+    {
+        if (index < 0 || index >= ViewModel?.Main.FilteredFiles.Count) return;
+
+        try
+        {
+            // 获取ItemsControl中的容器
+            var container = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(index) as Control;
+            if (container == null)
+            {
+                // 如果容器未创建，等待一下再试
+                Dispatcher.UIThread.Post(() =>
+                {
+                    var retryContainer = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(index) as Control;
+                    if (retryContainer != null)
+                    {
+                        ScrollToContainer(retryContainer);
+                    }
+                }, DispatcherPriority.Background);
+                return;
+            }
+
+            ScrollToContainer(container);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"滚动到索引 {index} 失败: {ex.Message}");
+        }
+    }
+    
+    /// <summary>
+    /// 滚动到指定的容器控件
+    /// </summary>
+    /// <param name="container">要滚动到的容器控件</param>
+    private void ScrollToContainer(Control container)
+    {
+        try
+        {
+            var scrollViewer = ThumbnailScrollViewer;
+            if (scrollViewer == null) return;
+
+            // 获取容器相对于ItemsControl的位置
+            var containerPosition = container.TranslatePoint(new Point(), ThumbnailItemsControl);
+            if (containerPosition == null) return;
+
+            var isVertical = ViewModel?.IsVerticalLayout ?? false;
+            
+            if (isVertical)
+            {
+                // 垂直布局：滚动Y轴
+                var targetY = containerPosition.Value.Y;
+                var viewportHeight = scrollViewer.Viewport.Height;
+                var containerHeight = container.Bounds.Height;
+                
+                // 计算居中位置
+                var centerY = targetY - (viewportHeight - containerHeight) / 2;
+                centerY = Math.Max(0, Math.Min(centerY, scrollViewer.Extent.Height - viewportHeight));
+                
+                scrollViewer.Offset = new Vector(scrollViewer.Offset.X, centerY);
+            }
+            else
+            {
+                // 水平布局：滚动X轴
+                var targetX = containerPosition.Value.X;
+                var viewportWidth = scrollViewer.Viewport.Width;
+                var containerWidth = container.Bounds.Width;
+                
+                // 计算居中位置
+                var centerX = targetX - (viewportWidth - containerWidth) / 2;
+                centerX = Math.Max(0, Math.Min(centerX, scrollViewer.Extent.Width - viewportWidth));
+                
+                scrollViewer.Offset = new Vector(centerX, scrollViewer.Offset.Y);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"滚动到容器失败: {ex.Message}");
         }
     }
 }
