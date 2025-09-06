@@ -17,6 +17,28 @@ public class MainViewModel : ViewModelBase
     public ImageViewModel ImageViewModel { get; }
     public SettingsViewModel Settings { get; }
     
+    // 实际使用的布局方向（考虑智能模式）
+    private bool _isHorizontalLayout = false;
+    public bool IsHorizontalLayout
+    {
+        get => _isHorizontalLayout;
+        private set => this.RaiseAndSetIfChanged(ref _isHorizontalLayout, value);
+    }
+
+    // 屏幕方向状态
+    private bool _isScreenLandscape = true;
+    public bool IsScreenLandscape
+    {
+        get => _isScreenLandscape;
+        set
+        {
+            if (this.RaiseAndSetIfChanged(ref _isScreenLandscape, value))
+            {
+                UpdateLayoutFromSettings();
+            }
+        }
+    }
+
     // 当前状态
     private IStorageFolder? _currentFolder;
     private ImageFile? _currentFile;
@@ -61,6 +83,10 @@ public class MainViewModel : ViewModelBase
             
         ThumbnailViewModel.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
+
+        // 监听布局模式变化
+        Settings.WhenAnyValue(s => s.LayoutMode)
+            .Subscribe(_ => UpdateLayoutFromSettings());
         
         // 确保所有必要的属性在第55行之前已初始化
         ControlViewModel = new ControlViewModel(this);
@@ -349,5 +375,47 @@ public class MainViewModel : ViewModelBase
         
         // 加载图片所在文件夹
         LoadNewImageFolder(file);
+    }
+    
+    /// <summary>
+    /// 根据设置和屏幕方向更新布局
+    /// </summary>
+    private void UpdateLayoutFromSettings()
+    {
+        bool newLayout = Settings.LayoutMode switch
+        {
+            LayoutMode.Horizontal => true,
+            LayoutMode.Vertical => false,
+            LayoutMode.Auto => IsScreenLandscape,
+            _ => false
+        };
+
+        if (IsHorizontalLayout != newLayout)
+        {
+            IsHorizontalLayout = newLayout;
+            
+            // 通知相关视图模型布局已变化
+            ThumbnailViewModel?.RaisePropertyChanged(nameof(ThumbnailViewModel.IsVerticalLayout));
+            ControlViewModel?.RaisePropertyChanged(nameof(ControlViewModel.IsVerticalLayout));
+        }
+    }
+
+    /// <summary>
+    /// 更新屏幕方向（由视图调用）
+    /// </summary>
+    public void UpdateScreenOrientation(double width, double height)
+    {
+        bool newIsLandscape = width > height;
+        
+        if (IsScreenLandscape != newIsLandscape)
+        {
+            IsScreenLandscape = newIsLandscape;
+            
+            // 如果是智能模式，屏幕方向变化会触发布局更新
+            if (Settings.LayoutMode == LayoutMode.Auto)
+            {
+                UpdateLayoutFromSettings();
+            }
+        }
     }
 }

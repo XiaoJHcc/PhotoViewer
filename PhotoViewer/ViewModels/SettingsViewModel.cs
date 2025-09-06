@@ -11,6 +11,14 @@ using Avalonia.Input;
 
 namespace PhotoViewer.ViewModels;
 
+// 布局模式枚举
+public enum LayoutMode
+{
+    Vertical,    // 上中下
+    Horizontal,  // 左中右
+    Auto         // 智能（根据屏幕方向）
+}
+
 public class SettingsViewModel : ReactiveObject
 {
     private int _maxCacheSizeMB = 500;
@@ -33,6 +41,7 @@ public class SettingsViewModel : ReactiveObject
         SortScalePreset();
         InitializeFileFormats();
         InitializeHotkeys();
+        InitializeLayoutModes();
         
         // 初始化移动命令
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
@@ -40,15 +49,39 @@ public class SettingsViewModel : ReactiveObject
     }
     
     //////////////
-    /// 全局
+    /// 布局
     //////////////
     
-    // 布局模式切换
-    private bool _horizontalLayoutMode = false;
-    public bool HorizontalLayoutMode
+    // 布局模式
+    private LayoutMode _layoutMode = LayoutMode.Auto;
+    public LayoutMode LayoutMode
     {
-        get => _horizontalLayoutMode;
-        set => this.RaiseAndSetIfChanged(ref _horizontalLayoutMode, value);
+        get => _layoutMode;
+        set => this.RaiseAndSetIfChanged(ref _layoutMode, value);
+    }
+
+    // 布局模式选项
+    public ObservableCollection<LayoutModeItem> LayoutModes { get; } = new();
+
+    private void InitializeLayoutModes()
+    {
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Vertical, "上中下", "传统的垂直布局"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Horizontal, "左中右", "水平布局"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Auto, "智能", "根据屏幕方向自动选择"));
+    }
+
+    public class LayoutModeItem
+    {
+        public LayoutMode Value { get; }
+        public string DisplayName { get; }
+        public string Description { get; }
+
+        public LayoutModeItem(LayoutMode value, string displayName, string description)
+        {
+            Value = value;
+            DisplayName = displayName;
+            Description = description;
+        }
     }
 
     //////////////

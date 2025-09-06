@@ -9,7 +9,7 @@
              x:DataType="vm:MainViewModel">
     <Grid>
         <!-- 垂直布局（上中下）-->
-        <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding !Settings.HorizontalLayoutMode}">
+        <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding !IsHorizontalLayout}">
             <!-- 顶部：缩略图栏 -->
             <Border
                 Grid.Row="0"
@@ -42,7 +42,7 @@
         </Grid>
 
         <!-- 水平布局（左中右）-->
-        <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding Settings.HorizontalLayoutMode}">
+        <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding IsHorizontalLayout}">
             <!-- 左侧：缩略图栏 -->
             <Border
                 Grid.Column="0"
