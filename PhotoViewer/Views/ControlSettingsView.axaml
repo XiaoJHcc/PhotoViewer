@@ -48,12 +48,14 @@
                                 <!-- 主要快捷键 -->
                                 <controls:HotkeyButton Grid.Column="2"
                                                        Hotkey="{Binding PrimaryHotkey}"
+                                                       HasConflict="{Binding HasPrimaryConflict}"
                                                        HotkeyChanged="OnPrimaryHotkeyChanged"
                                                        Margin="0,0,8,0" />
                                 
                                 <!-- 次要快捷键 -->
                                 <controls:HotkeyButton Grid.Column="3"
                                                        Hotkey="{Binding SecondaryHotkey}"
+                                                       HasConflict="{Binding HasSecondaryConflict}"
                                                        HotkeyChanged="OnSecondaryHotkeyChanged" />
                             </Grid>
                         </DataTemplate>

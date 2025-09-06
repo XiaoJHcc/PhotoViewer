@@ -18,6 +18,7 @@
             <Setter Property="FontSize" Value="12" />
         </Style>
         
+
         <Style Selector="Button.HotkeyButton:pointerover">
             <Setter Property="Background" Value="#444" />
         </Style>
@@ -25,6 +26,16 @@
         <Style Selector="Button.HotkeyButton.Capturing">
             <Setter Property="Background" Value="#2c5aa0" />
             <Setter Property="BorderBrush" Value="#4a8bc2" />
+        </Style>
+        
+        <!-- 冲突状态样式 - 黄色背景 -->
+        <Style Selector="Button.HotkeyButton.Conflict">
+            <!-- <Setter Property="Background" Value="#b8860b" /> -->
+            <Setter Property="BorderBrush" Value="#daa520" />
+        </Style>
+        
+        <Style Selector="Button.HotkeyButton.Conflict:pointerover">
+            <Setter Property="Background" Value="#daa520" />
         </Style>
     </UserControl.Styles>
 

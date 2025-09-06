@@ -19,6 +19,12 @@ public partial class ControlSettingsView : UserControl
         if (sender is HotkeyButton hotkeyButton && hotkeyButton.DataContext is SettingsViewModel.HotkeyItem item)
         {
             item.PrimaryHotkey = hotkeyButton.Hotkey;
+            
+            // 触发冲突检测
+            if (DataContext is SettingsViewModel settingsViewModel)
+            {
+                settingsViewModel.CheckHotkeyConflicts();
+            }
         }
     }
 
@@ -27,6 +33,12 @@ public partial class ControlSettingsView : UserControl
         if (sender is HotkeyButton hotkeyButton && hotkeyButton.DataContext is SettingsViewModel.HotkeyItem item)
         {
             item.SecondaryHotkey = hotkeyButton.Hotkey;
+            
+            // 触发冲突检测
+            if (DataContext is SettingsViewModel settingsViewModel)
+            {
+                settingsViewModel.CheckHotkeyConflicts();
+            }
         }
     }
 }
