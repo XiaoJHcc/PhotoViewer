@@ -75,7 +75,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Border Padding="8"
+    <Border Padding="16"
             VerticalAlignment="Stretch"
             HorizontalAlignment="Stretch">
 
