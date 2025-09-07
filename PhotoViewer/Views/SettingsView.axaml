@@ -7,7 +7,43 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.SettingsView"
              x:DataType="vm:SettingsViewModel">
-
+    
+    <UserControl.Styles>
+        <!-- 设置容器样式 -->
+        <Style Selector="StackPanel.settings-container">
+            <Setter Property="MaxWidth" Value="300" />
+        </Style>
+        
+        <!-- 设置标题样式 -->
+        <Style Selector="TextBlock.settings-title">
+            <Setter Property="Margin" Value="20,20,0,10" />
+        </Style>
+        
+        <!-- 通用卡片样式 -->
+        <Style Selector="Border.settings-card">
+            <Setter Property="BorderBrush" Value="#444" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="10" />
+            <Setter Property="Background" Value="#222" />
+            <Setter Property="Margin" Value="0, 0, 0, 10" />
+            <Setter Property="Padding" Value="8" />
+        </Style>
+        
+        <!-- 设置行样式 -->
+        <Style Selector="CheckBox.settings-checkbox">
+            <Setter Property="Margin" Value="10, 0, 10, 0" />
+            <Setter Property="Padding" Value="10, 0, 10, 0" />
+        </Style>
+        
+        <!-- 描述行样式 -->
+        <Style Selector="TextBlock.settings-description">
+            <Setter Property="Margin" Value="10, 0, 10, 0" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#aaa" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </UserControl.Styles>
+    
     <TabControl Margin="5">
 
         <TabItem Header="全局">

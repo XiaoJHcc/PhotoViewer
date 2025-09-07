@@ -112,10 +112,13 @@ public class SettingsViewModel : ReactiveObject
     {
         FileFormats = new ObservableCollection<FileFormatItem>
         {
-            new(".jpg", true),
-            new(".png", true),
-            new(".tiff", false),
-            new(".webp", true),
+            new("JPG", new[] { ".jpg", ".jpeg" }, true),
+            new("PNG", new[] { ".png" }, true),
+            new("TIFF", new[] { ".tiff", ".tif" }, false),
+            new("WebP", new[] { ".webp" }, true),
+            new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, false),
+            new("BMP", new[] { ".bmp" }, false),
+            new("GIF", new[] { ".gif" }, false),
         };
 
         // 监听集合变化
@@ -165,7 +168,7 @@ public class SettingsViewModel : ReactiveObject
     {
         SelectedFormats = FileFormats
             .Where(f => f.IsEnabled)
-            .Select(f => f.Name)
+            .SelectMany(f => f.Extensions)
             .ToList();
     }
 
@@ -193,13 +196,20 @@ public class SettingsViewModel : ReactiveObject
 
     public class FileFormatItem : ReactiveObject
     {
-        private string _name;
+        private string _displayName;
+        private string[] _extensions;
         private bool _isEnabled;
 
-        public string Name
+        public string DisplayName
         {
-            get => _name;
-            set => this.RaiseAndSetIfChanged(ref _name, value);
+            get => _displayName;
+            set => this.RaiseAndSetIfChanged(ref _displayName, value);
+        }
+
+        public string[] Extensions
+        {
+            get => _extensions;
+            set => this.RaiseAndSetIfChanged(ref _extensions, value);
         }
 
         public bool IsEnabled
@@ -208,13 +218,35 @@ public class SettingsViewModel : ReactiveObject
             set => this.RaiseAndSetIfChanged(ref _isEnabled, value);
         }
 
-        public FileFormatItem(string name, bool isEnabled = true)
+        // 用于显示的扩展名字符串
+        public string ExtensionsText => string.Join(" / ", Extensions);
+
+        // 保持向后兼容的 Name 属性
+        public string Name => DisplayName;
+
+        public FileFormatItem(string displayName, string[] extensions, bool isEnabled = true)
         {
-            _name = name;
+            _displayName = displayName;
+            _extensions = extensions;
             _isEnabled = isEnabled;
         }
     }
         
+    #endregion
+
+    //////////////
+    /// 同名文件处理
+    //////////////
+    
+    #region SameNameFileHandling
+
+    private bool _sameNameAsOnePhoto = true;
+    public bool SameNameAsOnePhoto
+    {
+        get => _sameNameAsOnePhoto;
+        set => this.RaiseAndSetIfChanged(ref _sameNameAsOnePhoto, value);
+    }
+
     #endregion
 
     //////////////

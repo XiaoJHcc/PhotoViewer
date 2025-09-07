@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Threading.Tasks;
@@ -340,7 +341,7 @@ public class MainViewModel : ViewModelBase
             var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
                 Title = "选择图片",
-                FileTypeFilter = [GetFilePickerFileTypes()],
+                FileTypeFilter = GetFilePickerFileTypes(),
                 AllowMultiple = false
             });
 
@@ -354,15 +355,84 @@ public class MainViewModel : ViewModelBase
     /// <summary>
     /// 获取文件选择器的文件类型过滤器
     /// </summary>
-    private FilePickerFileType GetFilePickerFileTypes()
+    private List<FilePickerFileType> GetFilePickerFileTypes()
     {
-        var fileType = new FilePickerFileType("选择图片")
+        var fileTypes = new List<FilePickerFileType>();
+        
+        // 添加"所有支持的图片格式"选项
+        var allSupportedType = new FilePickerFileType("所有图片")
         {
             AppleUniformTypeIdentifiers = new[] { "public.image" },
             MimeTypes = new[] { "image/*" },
             Patterns = Settings.SelectedFormats.Select(format => $"*{format}").ToArray()
         };
-        return fileType;
+        fileTypes.Add(allSupportedType);
+        
+        // 为每个已勾选的格式创建单独的文件类型
+        foreach (var formatItem in Settings.FileFormats.Where(f => f.IsEnabled))
+        {
+            var fileType = new FilePickerFileType($"{formatItem.DisplayName} 文件")
+            {
+                AppleUniformTypeIdentifiers = GetAppleTypeIdentifiers(formatItem.Extensions),
+                MimeTypes = GetMimeTypes(formatItem.Extensions),
+                Patterns = formatItem.Extensions.Select(ext => $"*{ext}").ToArray()
+            };
+            fileTypes.Add(fileType);
+        }
+        
+        return fileTypes;
+    }
+    // 根据扩展名获取对应的 Apple 类型标识符
+    private string[] GetAppleTypeIdentifiers(string[] extensions)
+    {
+        var identifiers = new List<string>();
+        
+        foreach (var ext in extensions)
+        {
+            var identifier = ext.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "public.jpeg",
+                ".png" => "public.png",
+                ".tiff" or ".tif" => "public.tiff",
+                ".webp" => "public.webp",
+                ".bmp" => "com.microsoft.bmp",
+                ".gif" => "com.compuserve.gif",
+                _ => "public.image"
+            };
+            
+            if (!identifiers.Contains(identifier))
+            {
+                identifiers.Add(identifier);
+            }
+        }
+        
+        return identifiers.ToArray();
+    }
+    // 根据扩展名获取对应的 MIME 类型
+    private string[] GetMimeTypes(string[] extensions)
+    {
+        var mimeTypes = new List<string>();
+        
+        foreach (var ext in extensions)
+        {
+            var mimeType = ext.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".tiff" or ".tif" => "image/tiff",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".gif" => "image/gif",
+                _ => "image/*"
+            };
+            
+            if (!mimeTypes.Contains(mimeType))
+            {
+                mimeTypes.Add(mimeType);
+            }
+        }
+        
+        return mimeTypes.ToArray();
     }
 
     /// <summary>

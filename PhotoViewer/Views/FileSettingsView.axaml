@@ -13,15 +13,12 @@
     </Design.DataContext>
     
     <StackPanel Background="#333">
-        <StackPanel MaxWidth="300">
-            <TextBlock Margin="20,20,0,10">
-                支持文件格式
+        <!-- 支持文件格式 -->
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
+                支持的文件格式
             </TextBlock>
-            <Border BorderBrush="#444"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    Background="#222"
-                    Padding="8">
+            <Border Classes="settings-card">
                 <controls:SortableList ItemsSource="{Binding FileFormats}"
                                        MoveCommand="{Binding MoveFileFormatCommand}">
                     <controls:SortableList.ItemTemplate>
@@ -33,15 +30,44 @@
                                           VerticalAlignment="Center" 
                                           Margin="0,0,8,0" />
                                 
-                                <!-- 格式名称 -->
-                                <TextBlock Grid.Column="1" 
-                                           Text="{Binding Name}" 
-                                           VerticalAlignment="Center" 
-                                           FontWeight="Medium" />
+                                <!-- 格式信息 -->
+                                <Grid Grid.Column="1" 
+                                           VerticalAlignment="Center"
+                                           RowDefinitions="Auto"
+                                           ColumnDefinitions="Auto,*">
+                                    <!-- 格式名称 -->
+                                    <TextBlock Grid.Column="0" 
+                                               Text="{Binding DisplayName}" 
+                                               VerticalAlignment="Center"
+                                               MinWidth="30"
+                                               FontWeight="Medium" 
+                                               FontSize="14" />
+                                    <!-- 扩展名列表 -->
+                                    <TextBlock Grid.Column="1" 
+                                               Text="{Binding ExtensionsText}" 
+                                               VerticalAlignment="Center"
+                                               FontSize="11" 
+                                               Foreground="#AAA" 
+                                               TextWrapping="WrapWithOverflow"
+                                               Margin="10,2,0,0" />
+                                </Grid>
                             </Grid>
                         </DataTemplate>
                     </controls:SortableList.ItemTemplate>
                 </controls:SortableList>
+            </Border>
+
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="2">
+                    <!-- 主选项 -->
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding SameNameAsOnePhoto}"
+                              Content="同名文件视为同一张照片" />
+                    
+                    <!-- 描述文字 -->
+                    <TextBlock Classes="settings-description" 
+                               Text="按列表排序优先级高的作为默认展示图片"/>
+                </StackPanel>
             </Border>
         </StackPanel>
 
