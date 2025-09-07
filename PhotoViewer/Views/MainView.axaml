@@ -31,7 +31,6 @@
             <!-- 底部：控制栏 -->
             <Border
                 Grid.Row="2"
-                Height="85"
                 Margin="-100, 0, -100, -25"
                 Padding="100, 0, 100, 25"
                 Background="#111111"
@@ -64,7 +63,6 @@
             <!-- 右侧：控制栏 -->
             <Border
                 Grid.Column="2"
-                Width="85"
                 Margin="0, -100, -25, -100"
                 Padding="0, 100, 25, 100"
                 Background="#111111"
