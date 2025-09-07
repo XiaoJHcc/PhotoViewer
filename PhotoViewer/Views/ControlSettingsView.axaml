@@ -4,29 +4,48 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
-             xmlns:converters="clr-namespace:PhotoViewer.Converters"
+             xmlns:views="clr-namespace:PhotoViewer.Views"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.ControlSettingsView"
              x:DataType="vm:SettingsViewModel">
-
-    <UserControl.Resources>
-        <converters:KeyGestureToStringConverter x:Key="KeyGestureToStringConverter" />
-    </UserControl.Resources>
 
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
     
     <StackPanel Background="#333">
-        <StackPanel MaxWidth="400">
-            <TextBlock Margin="20,20,0,10">
-                控制快捷键设置
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
+                控制栏布局位置
             </TextBlock>
-            <Border BorderBrush="#444"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    Background="#222"
-                    Padding="8">
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8">
+                    <ComboBox ItemsSource="{Binding LayoutModes}"
+                              SelectedValue="{Binding LayoutMode}"
+                              SelectedValueBinding="{Binding Value}"
+                              HorizontalAlignment="Stretch"
+                              BorderBrush="#444"
+                              CornerRadius="6">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="{Binding DisplayName}" 
+                                               FontWeight="Medium" />
+                                    <TextBlock Text="{Binding Description}" 
+                                               FontSize="11" 
+                                               Foreground="#999"
+                                               Margin="10,2,0,0" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+            
+            <TextBlock Classes="settings-title">
+                控制栏功能/快捷键
+            </TextBlock>
+            <Border Classes="settings-card">
                 <controls:SortableList ItemsSource="{Binding Hotkeys}"
                                        MoveCommand="{Binding MoveHotkeyCommand}">
                     <controls:SortableList.ItemTemplate>

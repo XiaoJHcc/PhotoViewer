@@ -11,7 +11,7 @@
     <UserControl.Styles>
         <!-- 设置容器样式 -->
         <Style Selector="StackPanel.settings-container">
-            <Setter Property="MaxWidth" Value="300" />
+            <Setter Property="MaxWidth" Value="400" />
         </Style>
         
         <!-- 设置标题样式 -->
@@ -46,45 +46,6 @@
     
     <TabControl Margin="5">
 
-        <TabItem Header="全局">
-            <StackPanel MaxWidth="300">
-                <TextBlock Margin="20,20,0,10">
-                    布局方向
-                </TextBlock>
-                <Border BorderBrush="#444"
-                        BorderThickness="1"
-                        CornerRadius="10"
-                        Background="#222"
-                        Padding="8">
-                    <StackPanel Spacing="8">
-                        <ComboBox ItemsSource="{Binding LayoutModes}"
-                                  SelectedValue="{Binding LayoutMode}"
-                                  SelectedValueBinding="{Binding Value}"
-                                  HorizontalAlignment="Stretch">
-                            <ComboBox.ItemTemplate>
-                                <DataTemplate>
-                                    <StackPanel>
-                                        <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" />
-                                        <TextBlock Text="{Binding Description}" 
-                                                   FontSize="11" 
-                                                   Foreground="#999"
-                                                   Margin="0,2,0,0" />
-                                    </StackPanel>
-                                </DataTemplate>
-                            </ComboBox.ItemTemplate>
-                        </ComboBox>
-                        
-                        <!-- 显示当前选择的说明 -->
-                        <TextBlock Text="{Binding LayoutModes, Converter={x:Static views:LayoutModeDescriptionConverter.Instance}, ConverterParameter={Binding LayoutMode}}"
-                                   FontSize="12"
-                                   Foreground="#CCC"
-                                   TextWrapping="Wrap"
-                                   Margin="4,4,4,0" />
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </TabItem>
-
         <TabItem Header="文件">
             <views:FileSettingsView />
         </TabItem>
@@ -93,7 +54,7 @@
             <views:ImageSettingsView />
         </TabItem>
 
-        <TabItem Header="快捷">
+        <TabItem Header="控制">
             <views:ControlSettingsView />
         </TabItem>
 
