@@ -15,7 +15,7 @@ public class ControlViewModel : ReactiveObject
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
 
     // EXIF 信息属性（示例数据）
-    private string _exifIso = "ISO 400";
+    private string _exifIso = "400";
     private string _exifAperture = "f/2.8";
     private string _exifShutter = "1/125";
     

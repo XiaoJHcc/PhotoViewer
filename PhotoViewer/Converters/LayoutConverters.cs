@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Globalization;
 using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Data.Converters;
 using Avalonia.Layout;
@@ -101,16 +102,24 @@ public class VerticalLayoutVerticalAlignmentConverter : IValueConverter
     }
 }
 
-// 垂直布局下控制区域行位置转换器
-public class VerticalControlAreaRowConverter : IValueConverter
+// 通用网格位置转换器 - 根据参数返回不同的行列位置
+public class GridPositionConverter : IValueConverter
 {
-    public static readonly VerticalControlAreaRowConverter Instance = new();
+    public static readonly GridPositionConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical)
+        if (value is bool isVertical && parameter is string param)
         {
-            return isVertical ? 0 : 0; // 垂直布局时在第一行，水平布局时也在第一行
+            // 参数格式: "VerticalRow,HorizontalColumn" 或 "VerticalColumn,HorizontalRow"
+            // 例如: "0,0" 表示垂直布局时第0行，水平布局时第0列
+            var parts = param.Split(',');
+            if (parts.Length == 2 && 
+                int.TryParse(parts[0], out int verticalValue) && 
+                int.TryParse(parts[1], out int horizontalValue))
+            {
+                return isVertical ? verticalValue : horizontalValue;
+            }
         }
         return 0;
     }
@@ -121,156 +130,31 @@ public class VerticalControlAreaRowConverter : IValueConverter
     }
 }
 
-// 垂直布局下控制区域列位置转换器
-public class VerticalControlAreaColumnConverter : IValueConverter
+// 通用边框转换器 - 根据参数返回不同的边框设置
+public class BorderThicknessConverter : IValueConverter
 {
-    public static readonly VerticalControlAreaColumnConverter Instance = new();
+    public static readonly BorderThicknessConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical)
+        if (value is bool isVertical && parameter is string param)
         {
-            return isVertical ? 0 : 0; // 垂直布局时在第一列，水平布局时也在第一列
-        }
-        return 0;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下EXIF区域行位置转换器
-public class VerticalExifAreaRowConverter : IValueConverter
-{
-    public static readonly VerticalExifAreaRowConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? 1 : 0; // 垂直布局时在第二行，水平布局时在第一行
-        }
-        return 0;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下EXIF区域列位置转换器
-public class VerticalExifAreaColumnConverter : IValueConverter
-{
-    public static readonly VerticalExifAreaColumnConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? 0 : 1; // 垂直布局时在第一列，水平布局时在第二列
-        }
-        return 1;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下评分区域行位置转换器
-public class VerticalRatingAreaRowConverter : IValueConverter
-{
-    public static readonly VerticalRatingAreaRowConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? 2 : 0; // 垂直布局时在第三行，水平布局时在第一行
-        }
-        return 0;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下评分区域列位置转换器
-public class VerticalRatingAreaColumnConverter : IValueConverter
-{
-    public static readonly VerticalRatingAreaColumnConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? 0 : 2; // 垂直布局时在第一列，水平布局时在第三列
-        }
-        return 2;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下控制区域边框转换器
-public class VerticalControlBorderConverter : IValueConverter
-{
-    public static readonly VerticalControlBorderConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? new Thickness(0, 0, 0, 1) : new Thickness(0, 0, 1, 0); // 垂直布局时下边框，水平布局时右边框
-        }
-        return new Thickness(0);
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下EXIF区域边框转换器
-public class VerticalExifBorderConverter : IValueConverter
-{
-    public static readonly VerticalExifBorderConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? new Thickness(0, 0, 0, 1) : new Thickness(0, 0, 1, 0); // 垂直布局时下边框，水平布局时右边框
-        }
-        return new Thickness(0);
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 垂直布局下评分区域边框转换器
-public class VerticalRatingBorderConverter : IValueConverter
-{
-    public static readonly VerticalRatingBorderConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return new Thickness(0); // 最后一个区域不需要边框
+            // 参数格式: "vertical|horizontal"
+            // 例如: "0,0,0,1|0,0,1,0" 表示垂直布局时下边框，水平布局时右边框
+            var parts = param.Split('|');
+            if (parts.Length == 2)
+            {
+                var thicknessStr = isVertical ? parts[0] : parts[1];
+                var values = thicknessStr.Split(',');
+                if (values.Length == 4 &&
+                    double.TryParse(values[0], out double left) &&
+                    double.TryParse(values[1], out double top) &&
+                    double.TryParse(values[2], out double right) &&
+                    double.TryParse(values[3], out double bottom))
+                {
+                    return new Thickness(left, top, right, bottom);
+                }
+            }
         }
         return new Thickness(0);
     }
@@ -297,6 +181,81 @@ public class StarColorConverter : IValueConverter
                 new SolidColorBrush(Colors.Gray);
         }
         return new SolidColorBrush(Colors.Gray);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 网格尺寸转换器 - 根据布局方向返回不同的尺寸
+public class GridSizeConverter : IValueConverter
+{
+    public static readonly GridSizeConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical && parameter is string param)
+        {
+            // 参数格式: "VerticalSize,HorizontalSize"
+            // 例如: "80,Auto" 表示垂直布局时80像素，水平布局时自动
+            // 例如: "*,80" 表示垂直布局时自适应，水平布局时80像素
+            var parts = param.Split(',');
+            if (parts.Length == 2)
+            {
+                var sizeStr = isVertical ? parts[0] : parts[1];
+                
+                if (sizeStr == "*")
+                {
+                    return new GridLength(1, GridUnitType.Star);
+                }
+                else if (sizeStr == "Auto")
+                {
+                    return new GridLength(1, GridUnitType.Auto);
+                }
+                else if (double.TryParse(sizeStr, out double pixels))
+                {
+                    return new GridLength(pixels, GridUnitType.Pixel);
+                }
+            }
+        }
+        return new GridLength(1, GridUnitType.Auto);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 星级按钮停靠方向转换器
+public class StarDockConverter : IValueConverter
+{
+    public static readonly StarDockConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical && parameter is string param)
+        {
+            // 参数格式: "VerticalDock,HorizontalDock"
+            // 例如: "Bottom,Left" 表示垂直布局时使用Bottom，水平布局时使用Left
+            var parts = param.Split(',');
+            if (parts.Length == 2)
+            {
+                var dockStr = isVertical ? parts[0] : parts[1];
+                
+                return dockStr switch
+                {
+                    "Left" => Dock.Left,
+                    "Top" => Dock.Top,
+                    "Right" => Dock.Right,
+                    "Bottom" => Dock.Bottom,
+                    _ => Dock.Left
+                };
+            }
+        }
+        return Dock.Left;
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
