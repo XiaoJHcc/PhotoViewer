@@ -14,6 +14,37 @@ public class ControlViewModel : ReactiveObject
     // 布局方向（从主视图模型获取实际布局状态）
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
 
+    // EXIF 信息属性（示例数据）
+    private string _exifIso = "ISO 400";
+    private string _exifAperture = "f/2.8";
+    private string _exifShutter = "1/125";
+    
+    public string ExifIso
+    {
+        get => _exifIso;
+        set => this.RaiseAndSetIfChanged(ref _exifIso, value);
+    }
+    
+    public string ExifAperture
+    {
+        get => _exifAperture;
+        set => this.RaiseAndSetIfChanged(ref _exifAperture, value);
+    }
+    
+    public string ExifShutter
+    {
+        get => _exifShutter;
+        set => this.RaiseAndSetIfChanged(ref _exifShutter, value);
+    }
+
+    // 评分属性
+    private int _rating = 0;
+    public int Rating
+    {
+        get => _rating;
+        set => this.RaiseAndSetIfChanged(ref _rating, value);
+    }
+
     public ControlViewModel(MainViewModel mainViewModel)
     {
         Main = mainViewModel;
@@ -114,6 +145,16 @@ public class ControlViewModel : ReactiveObject
     {
         // 缩小
         Main.ImageViewModel.ZoomPreset(-1);
+    }
+
+    // 设置评分
+    public void SetRating(int rating)
+    {
+        if (rating >= 0 && rating <= 5)
+        {
+            Rating = rating;
+            // TODO: 在这里可以添加保存评分到文件元数据的逻辑
+        }
     }
 
     // 处理全局快捷键输入

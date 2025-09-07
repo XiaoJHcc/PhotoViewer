@@ -65,6 +65,17 @@ public partial class ControlView : UserControl
         }
     }
 
+    private void OnRatingButtonClick(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button button && 
+            button.Tag is string ratingStr &&
+            int.TryParse(ratingStr, out int rating) &&
+            DataContext is ControlViewModel controlViewModel)
+        {
+            controlViewModel.SetRating(rating);
+        }
+    }
+
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         // 移除全局键盘事件监听

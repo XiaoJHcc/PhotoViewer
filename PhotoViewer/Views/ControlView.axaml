@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:local="clr-namespace:PhotoViewer.Views"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ControlView"
              x:DataType="vm:ControlViewModel">
@@ -29,31 +30,164 @@
             <!-- 要使用图标字体时，在这里添加 FontFamily -->
             <Setter Property="FontFamily" Value="{StaticResource UiconsFont}" />
         </Style>
+
+        <!-- 星级按钮样式 -->
+        <Style Selector="Button.StarButton">
+            <Setter Property="Width" Value="30" />
+            <Setter Property="Height" Value="30" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Margin" Value="2" />
+        </Style>
+        
+        <Style Selector="Button.StarButton:pointerover">
+            <Setter Property="Background" Value="#333" />
+        </Style>
+
+        <!-- EXIF 文本样式 -->
+        <Style Selector="TextBlock.ExifLabel">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="Foreground" Value="#AAA" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+
+        <Style Selector="TextBlock.ExifValue">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#FFF" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
     </UserControl.Styles>
 
-    <Border Padding="0" 
-            VerticalAlignment="{Binding IsVerticalLayout, Converter={x:Static local:VerticalLayoutVerticalAlignmentConverter.Instance}}">
-        <ItemsControl ItemsSource="{Binding EnabledControls}">
-            <ItemsControl.ItemsPanel>
-                <ItemsPanelTemplate>
-                    <StackPanel HorizontalAlignment="Center" 
-                               VerticalAlignment="Center"
-                               Spacing="8"
-                               Orientation="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, Converter={x:Static local:LayoutOrientationConverter.Instance}}" />
-                </ItemsPanelTemplate>
-            </ItemsControl.ItemsPanel>
-            
-            <ItemsControl.ItemTemplate>
-                <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
-                    <Button Classes="ControlButton"
-                            ToolTip.Tip="{Binding Tooltip}"
-                            Click="OnControlButtonClick"
-                            Tag="{Binding Command}">
-                        <TextBlock Classes="ControlButtonSymbol" Text="{Binding DisplaySymbol}" />
+    <Border Padding="8" 
+            VerticalAlignment="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalLayoutVerticalAlignmentConverter.Instance}}">
+        
+        <!-- 主要布局：三个区域 -->
+        <Grid>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="*" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <!-- 区域1：控制按钮 -->
+            <Border Grid.Row="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalControlAreaRowConverter.Instance}}"
+                    Grid.Column="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalControlAreaColumnConverter.Instance}}"
+                    BorderBrush="#555" 
+                    BorderThickness="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalControlBorderConverter.Instance}}">
+                <ItemsControl ItemsSource="{Binding EnabledControls}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel HorizontalAlignment="Center" 
+                                       VerticalAlignment="Center"
+                                       Spacing="8"
+                                       Orientation="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
+                            <Button Classes="ControlButton"
+                                    ToolTip.Tip="{Binding Tooltip}"
+                                    Click="OnControlButtonClick"
+                                    Tag="{Binding Command}">
+                                <TextBlock Classes="ControlButtonSymbol" Text="{Binding DisplaySymbol}" />
+                            </Button>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </Border>
+
+            <!-- 区域2：EXIF 信息 -->
+            <Border Grid.Row="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalExifAreaRowConverter.Instance}}"
+                    Grid.Column="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalExifAreaColumnConverter.Instance}}"
+                    BorderBrush="#555" 
+                    BorderThickness="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalExifBorderConverter.Instance}}">
+                <StackPanel HorizontalAlignment="Center" 
+                           VerticalAlignment="Center"
+                           Spacing="4"
+                           Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+                    
+                    <!-- ISO -->
+                    <StackPanel Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Classes="ExifLabel" Text="ISO" />
+                        <TextBlock Classes="ExifValue" Text="{Binding ExifIso}" />
+                    </StackPanel>
+                    
+                    <!-- 光圈 -->
+                    <StackPanel Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Classes="ExifLabel" Text="光圈" />
+                        <TextBlock Classes="ExifValue" Text="{Binding ExifAperture}" />
+                    </StackPanel>
+                    
+                    <!-- 快门速度 -->
+                    <StackPanel Spacing="2" HorizontalAlignment="Center">
+                        <TextBlock Classes="ExifLabel" Text="快门" />
+                        <TextBlock Classes="ExifValue" Text="{Binding ExifShutter}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- 区域3：星级评分 -->
+            <Border Grid.Row="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalRatingAreaRowConverter.Instance}}"
+                    Grid.Column="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalRatingAreaColumnConverter.Instance}}"
+                    BorderBrush="#555" 
+                    BorderThickness="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalRatingBorderConverter.Instance}}">
+                <StackPanel HorizontalAlignment="Center" 
+                           VerticalAlignment="Center"
+                           Spacing="4"
+                           Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+                    
+                    <!-- 0星 按钮 -->
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="0"
+                            ToolTip.Tip="无星级">
+                        <TextBlock Text="×" FontSize="14" Foreground="#666" />
                     </Button>
-                </DataTemplate>
-            </ItemsControl.ItemTemplate>
-        </ItemsControl>
+                    
+                    <!-- 1-5星 按钮 -->
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="1"
+                            ToolTip.Tip="1星">
+                        <TextBlock Text="★" FontSize="16" Foreground="{Binding Rating, Converter={x:Static converters:StarColorConverter.Instance}, ConverterParameter=1}" />
+                    </Button>
+                    
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="2"
+                            ToolTip.Tip="2星">
+                        <TextBlock Text="★" FontSize="16" Foreground="{Binding Rating, Converter={x:Static converters:StarColorConverter.Instance}, ConverterParameter=2}" />
+                    </Button>
+                    
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="3"
+                            ToolTip.Tip="3星">
+                        <TextBlock Text="★" FontSize="16" Foreground="{Binding Rating, Converter={x:Static converters:StarColorConverter.Instance}, ConverterParameter=3}" />
+                    </Button>
+                    
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="4"
+                            ToolTip.Tip="4星">
+                        <TextBlock Text="★" FontSize="16" Foreground="{Binding Rating, Converter={x:Static converters:StarColorConverter.Instance}, ConverterParameter=4}" />
+                    </Button>
+                    
+                    <Button Classes="StarButton" 
+                            Click="OnRatingButtonClick"
+                            Tag="5"
+                            ToolTip.Tip="5星">
+                        <TextBlock Text="★" FontSize="16" Foreground="{Binding Rating, Converter={x:Static converters:StarColorConverter.Instance}, ConverterParameter=5}" />
+                    </Button>
+                </StackPanel>
+            </Border>
+        </Grid>
     </Border>
-    
 </UserControl>
