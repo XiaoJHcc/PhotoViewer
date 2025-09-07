@@ -18,6 +18,7 @@ public class ControlViewModel : ReactiveObject
     private string _exifIso = "400";
     private string _exifAperture = "f/2.8";
     private string _exifShutter = "1/125";
+    private string _exifFocalLength = "50mm";
     
     public string ExifIso
     {
@@ -35,6 +36,12 @@ public class ControlViewModel : ReactiveObject
     {
         get => _exifShutter;
         set => this.RaiseAndSetIfChanged(ref _exifShutter, value);
+    }
+    
+    public string ExifFocalLength
+    {
+        get => _exifFocalLength;
+        set => this.RaiseAndSetIfChanged(ref _exifFocalLength, value);
     }
 
     // 评分属性
