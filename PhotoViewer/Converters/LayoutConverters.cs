@@ -82,26 +82,6 @@ public class VerticalLayoutAlignmentConverter : IValueConverter
     }
 }
 
-// 垂直布局下的垂直对齐转换器
-public class VerticalLayoutVerticalAlignmentConverter : IValueConverter
-{
-    public static readonly VerticalLayoutVerticalAlignmentConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical)
-        {
-            return isVertical ? VerticalAlignment.Center : VerticalAlignment.Stretch;
-        }
-        return VerticalAlignment.Stretch;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
 // 通用网格位置转换器 - 根据参数返回不同的行列位置
 public class GridPositionConverter : IValueConverter
 {
@@ -165,30 +145,6 @@ public class BorderThicknessConverter : IValueConverter
     }
 }
 
-// 星级颜色转换器
-public class StarColorConverter : IValueConverter
-{
-    public static readonly StarColorConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is int currentRating && 
-            parameter is string starIndexStr && 
-            int.TryParse(starIndexStr, out int starIndex))
-        {
-            return currentRating >= starIndex ? 
-                new SolidColorBrush(Colors.Gold) : 
-                new SolidColorBrush(Colors.Gray);
-        }
-        return new SolidColorBrush(Colors.Gray);
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
 // 网格尺寸转换器 - 根据布局方向返回不同的尺寸
 public class GridSizeConverter : IValueConverter
 {
@@ -230,9 +186,9 @@ public class GridSizeConverter : IValueConverter
 }
 
 // 星级按钮停靠方向转换器
-public class StarDockConverter : IValueConverter
+public class DockConverter : IValueConverter
 {
-    public static readonly StarDockConverter Instance = new();
+    public static readonly DockConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
@@ -256,6 +212,41 @@ public class StarDockConverter : IValueConverter
             }
         }
         return Dock.Left;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 外边距转换器 - 根据布局方向返回不同的外边距
+public class MarginConverter : IValueConverter
+{
+    public static readonly MarginConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isVertical && parameter is string param)
+        {
+            // 参数格式: "vertical|horizontal"
+            // 例如: "12,6,12,6|6,12,6,12" 表示垂直布局时左右较宽边距，水平布局时上下较高边距
+            var parts = param.Split('|');
+            if (parts.Length == 2)
+            {
+                var marginStr = isVertical ? parts[0] : parts[1];
+                var values = marginStr.Split(',');
+                if (values.Length == 4 &&
+                    double.TryParse(values[0], out double left) &&
+                    double.TryParse(values[1], out double top) &&
+                    double.TryParse(values[2], out double right) &&
+                    double.TryParse(values[3], out double bottom))
+                {
+                    return new Thickness(left, top, right, bottom);
+                }
+            }
+        }
+        return new Thickness(0);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

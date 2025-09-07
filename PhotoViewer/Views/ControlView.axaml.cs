@@ -1,9 +1,12 @@
-﻿using System.Linq;
+﻿using System;
+using System.Globalization;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Data.Converters;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Markup.Xaml;
+using Avalonia.Media;
 using Avalonia.VisualTree;
 using PhotoViewer.ViewModels;
 
@@ -84,5 +87,29 @@ public partial class ControlView : UserControl
             topLevel.KeyDown -= OnGlobalKeyDown;
         }
         base.OnDetachedFromVisualTree(e);
+    }
+}
+
+// 星级颜色转换器
+public class StarColorConverter : IValueConverter
+{
+    public static readonly StarColorConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is int currentRating && 
+            parameter is string starIndexStr && 
+            int.TryParse(starIndexStr, out int starIndex))
+        {
+            return currentRating >= starIndex ? 
+                new SolidColorBrush(Colors.Gold) : 
+                new SolidColorBrush(Colors.Gray);
+        }
+        return new SolidColorBrush(Colors.Gray);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
     }
 }

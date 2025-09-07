@@ -39,7 +39,8 @@
     </Application.Styles>
 
     <Application.Resources>
-        <FontFamily x:Key="UiconsFont">avares://PhotoViewer/Assets/Fonts/#uicons-regular-rounded</FontFamily>
+        <FontFamily x:Key="UiconsFontRegularRounded">avares://PhotoViewer/Assets/Fonts/#uicons-regular-rounded</FontFamily>
+        <FontFamily x:Key="UiconsFontSolidStraight">avares://PhotoViewer/Assets/Fonts/#uicons-solid-straight</FontFamily>
     </Application.Resources>
     
 </Application>
