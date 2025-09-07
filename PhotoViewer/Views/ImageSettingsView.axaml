@@ -17,7 +17,9 @@
             <Setter Property="Background" Value="#333"/>
             <Setter Property="Width" Value="36" />
             <Setter Property="Height" Value="36" />
-            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="CornerRadius" Value="0,6,6,0" />
+            <Setter Property="HorizontalAlignment" Value="Right" />
+            <Setter Property="FontFamily" Value="{StaticResource UiconsFontRegularRounded}"></Setter>
         </Style>
         <Style Selector="Button.ScaleSettingBtn:pressed">
             <Setter Property="Background" Value="#191919"/>
@@ -25,30 +27,25 @@
     </UserControl.Styles>
 
     <StackPanel Background="#333">
-        <StackPanel MaxWidth="300">
-            <TextBlock Margin="20,20,0,10">
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
                 缩放比例预设
             </TextBlock>
-            <Border BorderBrush="#444"
-                    BorderThickness="1"
-                    CornerRadius="10"
-                    Background="#222"
-                    Padding="8">
+            <Border Classes="settings-card">
                 <StackPanel>
                     <ItemsControl ItemsSource="{Binding ScalePresets}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate>
-                                <StackPanel Orientation="Vertical">
-                                    <Panel Height="36">
+                                    <Panel Height="36" Margin="1">
                                         <!-- 左 -->
                                         <Panel HorizontalAlignment="Stretch"
-                                               Margin="0, 0, 40, 0">
+                                               Margin="0, 0, 38, 0">
                                             <!-- 展示框 / 修改键 -->
                                             <Button Height="36"
-                                                    CornerRadius="6"
+                                                    CornerRadius="6,0,0,6"
                                                     HorizontalAlignment="Stretch"
-                                                    Background="Transparent"
-                                                    Foreground="#dddddd"
+                                                    Background="#333"
+                                                    Foreground="#eee"
                                                     Content="{Binding Display}"
                                                     IsVisible="{Binding !Editing}"
                                                     Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).EditScalePreset}"
@@ -58,7 +55,7 @@
                                             <TextBox Height="36"
                                                      LineHeight="36"
                                                      Padding="0"
-                                                     CornerRadius="6"
+                                                     CornerRadius="6,0,0,6"
                                                      TextAlignment="Center"
                                                      HorizontalAlignment="Stretch"
                                                      BorderBrush="Transparent"
@@ -77,38 +74,31 @@
                                         <!-- 右 -->
                                         <Panel HorizontalAlignment="Right">
                                             <!-- 删除键 -->
-                                            <Button Content="-" 
+                                            <Button Content="&#xf94d;"
                                                     Classes="ScaleSettingBtn"
-                                                    HorizontalAlignment="Right"
                                                     IsVisible="{Binding !Editing}"
                                                     Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).RemoveScalePreset}"
                                                     CommandParameter="{Binding .}" />
                                             
                                             <!-- 确定键 -->
-                                            <Button Content="√" 
+                                            <Button Content="&#xf3c8;"
                                                     Classes="ScaleSettingBtn"
-                                                    HorizontalAlignment="Right"
                                                     Command="{Binding $parent[ItemsControl].((vm:SettingsViewModel)DataContext).ApplyScalePreset}"
                                                     CommandParameter="{Binding .}"
                                                     IsVisible="{Binding Editing}" />
                                         </Panel>
                                     </Panel>
-                                    <Panel Background="#333"
-                                           HorizontalAlignment="Stretch"
-                                           Height="1"
-                                           Margin="0, 1, 40, 1">
-                                    </Panel>
-                                </StackPanel>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
 
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Right">
-                        <Button Content="+"
+                        <Button Content="&#xfaab;"
                                 Classes="ScaleSettingBtn"
-                                HorizontalAlignment="Right"
-                                Command="{Binding AddScalePreset}" />
+                                CornerRadius="6"
+                                Command="{Binding AddScalePreset}" 
+                                Margin="1"/>
                     </StackPanel>
 
                 </StackPanel>
