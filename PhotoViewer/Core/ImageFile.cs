@@ -60,6 +60,36 @@ public class ImageFile : ReactiveObject
     }
 
     /// <summary>
+    /// 图片旋转角度（基于EXIF Orientation）
+    /// </summary>
+    public double RotationAngle
+    {
+        get
+        {
+            if (ExifData?.OrientationValue != null)
+            {
+                return ExifLoader.GetRotationAngle(ExifData.OrientationValue);
+            }
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// 是否需要水平翻转（基于EXIF Orientation）
+    /// </summary>
+    public bool NeedsHorizontalFlip
+    {
+        get
+        {
+            if (ExifData?.OrientationValue != null)
+            {
+                return ExifLoader.NeedsHorizontalFlip(ExifData.OrientationValue);
+            }
+            return false;
+        }
+    }
+
+    /// <summary>
     /// EXIF 数据
     /// </summary>
     public ExifData? ExifData
@@ -70,10 +100,12 @@ public class ImageFile : ReactiveObject
             var oldValue = _exifData;
             this.RaiseAndSetIfChanged(ref _exifData, value);
             
-            // 只有当值真正发生变化时才通知拍摄日期变化
+            // 只有当值真正发生变化时才通知相关属性变化
             if (!ReferenceEquals(oldValue, value))
             {
                 this.RaisePropertyChanged(nameof(PhotoDate));
+                this.RaisePropertyChanged(nameof(RotationAngle));
+                this.RaisePropertyChanged(nameof(NeedsHorizontalFlip));
             }
         }
     }

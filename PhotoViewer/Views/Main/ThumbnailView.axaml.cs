@@ -603,3 +603,44 @@ public class BoolToCachedBorderConverter : IValueConverter
         throw new NotImplementedException();
     }
 }
+
+// 旋转角度到变换转换器
+public class RotationTransformConverter : IValueConverter
+{
+    public static readonly RotationTransformConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is double angle)
+        {
+            return new RotateTransform(angle);
+        }
+        return new RotateTransform(0);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+// 水平翻转到缩放变换转换器
+public class FlipTransformConverter : IValueConverter
+{
+    public static readonly FlipTransformConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool needsFlip && needsFlip)
+        {
+            return -1.0; // 水平翻转
+        }
+        return 1.0; // 不翻转
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
