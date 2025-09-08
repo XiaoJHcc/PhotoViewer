@@ -361,12 +361,14 @@ public class FolderViewModel : ReactiveObject
             var otherFiles = _filteredFiles.Where(f => f != Main.CurrentFile);
             await ExifLoader.LoadFolderExifDataAsync(otherFiles);
             
-            // EXIF 加载完成后，触发UI更新以显示拍摄日期
+            // EXIF 加载完成后，触发UI更新以显示拍摄日期和旋转信息
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var file in otherFiles)
                 {
                     file.RaisePropertyChanged(nameof(file.PhotoDate));
+                    file.RaisePropertyChanged(nameof(file.RotationAngle));
+                    file.RaisePropertyChanged(nameof(file.NeedsHorizontalFlip));
                 }
             });
         });
@@ -407,6 +409,8 @@ public class FolderViewModel : ReactiveObject
                 foreach (var file in otherFiles)
                 {
                     file.RaisePropertyChanged(nameof(file.PhotoDate));
+                    file.RaisePropertyChanged(nameof(file.RotationAngle));
+                    file.RaisePropertyChanged(nameof(file.NeedsHorizontalFlip));
                 }
             });
         });

@@ -23,6 +23,12 @@
 
         <!-- 缓存状态到边框颜色转换器 -->
         <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
+
+        <!-- 旋转角度到变换转换器 -->
+        <local:RotationTransformConverter x:Key="RotationTransformConverter" />
+
+        <!-- 水平翻转到变换转换器 -->
+        <local:FlipTransformConverter x:Key="FlipTransformConverter" />
     </UserControl.Resources>
 
     <Grid>
@@ -74,7 +80,7 @@
                           ItemsSource="{Binding Main.FolderVM.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel Spacing="10"
+                        <StackPanel Spacing="6"
                                     HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
                                     Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                     </ItemsPanelTemplate>
@@ -99,10 +105,13 @@
                                     Margin="0"
                                     Padding="0"
                                     Width="90"
-                                    Height="140"
+                                    Height="120"
                                     Background="#444">
                                 
-                                <StackPanel Orientation="Vertical" Margin="4" Spacing="4">
+                                <StackPanel Orientation="Vertical" 
+                                            HorizontalAlignment="Center"
+                                            Margin="0,3,0,0" 
+                                            Spacing="4">
                                     <!-- 缩略图容器 -->
                                     <Border Width="80"
                                             Height="80"
@@ -116,7 +125,16 @@
                                                    Stretch="Uniform"
                                                    HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"
-                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                <Image.RenderTransform>
+                                                    <TransformGroup>
+                                                        <!-- 旋转变换 -->
+                                                        <RotateTransform Angle="{Binding RotationAngle}" />
+                                                        <!-- 水平翻转变换 -->
+                                                        <ScaleTransform ScaleX="{Binding NeedsHorizontalFlip, Converter={StaticResource FlipTransformConverter}}" ScaleY="1" />
+                                                    </TransformGroup>
+                                                </Image.RenderTransform>
+                                            </Image>
 
                                             <!-- 加载指示器 -->
                                             <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
@@ -152,13 +170,13 @@
                                                    FontSize="10"
                                                    FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"
-                                                   MaxWidth="110" />
+                                                   MaxWidth="90" />
                                         
-                                        <TextBlock
-                                            Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}"
-                                            FontSize="9"
-                                            Foreground="#AAAAAA"
-                                            HorizontalAlignment="Center" />
+                                        <!-- <TextBlock -->
+                                        <!--     Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" -->
+                                        <!--     FontSize="9" -->
+                                        <!--     Foreground="#AAAAAA" -->
+                                        <!--     HorizontalAlignment="Center" /> -->
 
                                         <TextBlock
                                             Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}"
