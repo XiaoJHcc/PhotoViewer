@@ -12,7 +12,7 @@
     <Design.DataContext>
         <vm:SettingsViewModel />
     </Design.DataContext>
-    
+
     <StackPanel Background="#333">
         <StackPanel Classes="settings-container">
             <TextBlock Classes="settings-title">
@@ -29,10 +29,10 @@
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding DisplayName}" 
+                                    <TextBlock Text="{Binding DisplayName}"
                                                FontWeight="Medium" />
-                                    <TextBlock Text="{Binding Description}" 
-                                               FontSize="11" 
+                                    <TextBlock Text="{Binding Description}"
+                                               FontSize="11"
                                                Foreground="#999"
                                                Margin="10,2,0,0" />
                                 </StackPanel>
@@ -41,7 +41,33 @@
                     </ComboBox>
                 </StackPanel>
             </Border>
-            
+
+            <TextBlock Classes="settings-title">
+                EXIF 显示/收纳
+            </TextBlock>
+            <Border Classes="settings-card">
+                <controls:SortableList ItemsSource="{Binding ExifDisplayItems}"
+                                       MoveCommand="{Binding MoveExifDisplayCommand}">
+                    <controls:SortableList.ItemTemplate>
+                        <DataTemplate DataType="vm:SettingsViewModel+ExifDisplayItem">
+                            <StackPanel Orientation="Horizontal">
+                                <!-- 勾选框 -->
+                                <CheckBox IsChecked="{Binding IsEnabled}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,12,0" />
+
+                                <!-- EXIF 名称 -->
+                                <TextBlock Text="{Binding DisplayName}"
+                                           VerticalAlignment="Center"
+                                           FontWeight="Medium"
+                                           FontSize="13"
+                                           Margin="0,0,12,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </controls:SortableList.ItemTemplate>
+                </controls:SortableList>
+            </Border>
+
             <TextBlock Classes="settings-title">
                 控制栏功能/快捷键
             </TextBlock>
@@ -52,25 +78,25 @@
                         <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
                             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                                 <!-- 勾选框 -->
-                                <CheckBox Grid.Column="0" 
-                                          IsChecked="{Binding IsEnabled}" 
-                                          VerticalAlignment="Center" 
+                                <CheckBox Grid.Column="0"
+                                          IsChecked="{Binding IsEnabled}"
+                                          VerticalAlignment="Center"
                                           Margin="0,0,12,0" />
-                                
+
                                 <!-- 功能名称 -->
-                                <TextBlock Grid.Column="1" 
-                                           Text="{Binding Name}" 
-                                           VerticalAlignment="Center" 
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Name}"
+                                           VerticalAlignment="Center"
                                            FontWeight="Medium"
                                            Margin="0,0,12,0" />
-                                
+
                                 <!-- 主要快捷键 -->
                                 <controls:HotkeyButton Grid.Column="2"
                                                        Hotkey="{Binding PrimaryHotkey}"
                                                        HasConflict="{Binding HasPrimaryConflict}"
                                                        HotkeyChanged="OnPrimaryHotkeyChanged"
                                                        Margin="0,0,8,0" />
-                                
+
                                 <!-- 次要快捷键 -->
                                 <controls:HotkeyButton Grid.Column="3"
                                                        Hotkey="{Binding SecondaryHotkey}"

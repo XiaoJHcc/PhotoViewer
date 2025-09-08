@@ -75,6 +75,30 @@ public class FocalLengthConverter : IValueConverter
 }
 
 /// <summary>
+/// 曝光补偿转换器
+/// </summary>
+public class ExposureBiasConverter : IValueConverter
+{
+    public static readonly ExposureBiasConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is Rational exposureBias)
+        {
+            var biasValue = (double)exposureBias.Numerator / exposureBias.Denominator;
+            var sign = biasValue >= 0 ? "+" : "";
+            return $"{sign}{biasValue:F1} EV";
+        }
+        return "--";
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+/// <summary>
 /// 日期时间转换器
 /// </summary>
 public class DateTimeConverter : IValueConverter
@@ -95,4 +119,3 @@ public class DateTimeConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
-

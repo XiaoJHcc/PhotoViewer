@@ -52,13 +52,21 @@
         </Style>
 
         <!-- EXIF 文本样式 -->
-        <Style Selector="StackPanel.ExifBlock">
-            <Setter Property="Spacing" Value="2" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
+        <Style Selector="Border.ExifBlockBorder">
+            <Setter Property="Width" Value="50" />
+            <Setter Property="Height" Value="40" />
+            <Setter Property="Background" Value="#222" />
+            <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Margin"
                     Value="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, 
                             Converter={x:Static converters:MarginConverter.Instance}, 
-                            ConverterParameter='0,10,0,10|10,0,10,0'}" />
+                            ConverterParameter='0,4,0,4|4,0,4,0'}" />
+            
+        </Style>
+        <Style Selector="StackPanel.ExifBlock">
+            <Setter Property="Spacing" Value="2" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
 
         <Style Selector="TextBlock.ExifLabel">
@@ -75,7 +83,7 @@
         </Style>
     </UserControl.Styles>
 
-    <Border Padding="16"
+    <Border Padding="10"
             VerticalAlignment="Stretch"
             HorizontalAlignment="Stretch">
 
@@ -93,50 +101,39 @@
             <Border
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Stretch">
-                <StackPanel
-                    HorizontalAlignment="Center"
-                    VerticalAlignment="Center"
-                    Spacing="4"
-                    Orientation="{Binding IsVerticalLayout, 
-                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
-                    Margin="{Binding IsVerticalLayout, 
-                        Converter={x:Static converters:MarginConverter.Instance}, 
-                        ConverterParameter='0,0,0,0|10,0,10,0'}">
+                <ItemsControl ItemsSource="{Binding EnabledExifItems}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Spacing="4"
+                                Orientation="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, 
+                                    Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
+                                Margin="{Binding $parent[UserControl].((vm:ControlViewModel)DataContext).IsVerticalLayout, 
+                                    Converter={x:Static converters:MarginConverter.Instance}, 
+                                    ConverterParameter='0,0,0,0|10,0,10,0'}" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
 
-                    <!-- 光圈 -->
-                    <StackPanel Classes="ExifBlock">
-                        <TextBlock Classes="ExifLabel" Text="光圈" />
-                        <TextBlock Classes="ExifValue" 
-                                   Text="{Binding CurrentExifData.Aperture, 
-                                          Converter={x:Static converters:ApertureConverter.Instance}}" />
-                    </StackPanel>
-
-                    <!-- 快门速度 -->
-                    <StackPanel Classes="ExifBlock">
-                        <TextBlock Classes="ExifLabel" Text="快门" />
-                        <TextBlock Classes="ExifValue" 
-                                   Text="{Binding CurrentExifData.ExposureTime, 
-                                          Converter={x:Static converters:ExposureTimeConverter.Instance}}" />
-                    </StackPanel>
-
-                    <!-- ISO -->
-                    <StackPanel Classes="ExifBlock">
-                        <TextBlock Classes="ExifLabel" Text="ISO" />
-                        <TextBlock Classes="ExifValue" 
-                                   Text="{Binding CurrentExifData.Iso, 
-                                          FallbackValue='--', 
-                                          TargetNullValue='--'}" />
-                    </StackPanel>
-
-                    <!-- 等效焦距 -->
-                    <StackPanel Classes="ExifBlock">
-                        <TextBlock Classes="ExifLabel" Text="等效焦距" />
-                        <TextBlock Classes="ExifValue" 
-                                   Text="{Binding CurrentExifData.EquivFocalLength, 
-                                          Converter={x:Static converters:FocalLengthConverter.Instance}}" />
-                    </StackPanel>
-
-                </StackPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:SettingsViewModel+ExifDisplayItem">
+                            <Border Classes="ExifBlockBorder">
+                                <StackPanel Classes="ExifBlock">
+                                    <TextBlock Classes="ExifLabel" Text="{Binding DisplayName}" />
+                                    <TextBlock Classes="ExifValue">
+                                        <TextBlock.Text>
+                                            <MultiBinding Converter="{x:Static local:ExifValueConverter.Instance}">
+                                                <Binding Path="$parent[UserControl].((vm:ControlViewModel)DataContext).CurrentExifData" />
+                                                <Binding Path="PropertyName" />
+                                            </MultiBinding>
+                                        </TextBlock.Text>
+                                    </TextBlock>
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
             </Border>
 
             <!-- 区域2：星级评分 -->
