@@ -106,25 +106,34 @@
                     <!-- 光圈 -->
                     <StackPanel Classes="ExifBlock">
                         <TextBlock Classes="ExifLabel" Text="光圈" />
-                        <TextBlock Classes="ExifValue" Text="{Binding ExifAperture}" />
+                        <TextBlock Classes="ExifValue" 
+                                   Text="{Binding CurrentExifData.Aperture, 
+                                          Converter={x:Static converters:ApertureConverter.Instance}}" />
                     </StackPanel>
 
                     <!-- 快门速度 -->
                     <StackPanel Classes="ExifBlock">
                         <TextBlock Classes="ExifLabel" Text="快门" />
-                        <TextBlock Classes="ExifValue" Text="{Binding ExifShutter}" />
+                        <TextBlock Classes="ExifValue" 
+                                   Text="{Binding CurrentExifData.ExposureTime, 
+                                          Converter={x:Static converters:ExposureTimeConverter.Instance}}" />
                     </StackPanel>
 
                     <!-- ISO -->
                     <StackPanel Classes="ExifBlock">
                         <TextBlock Classes="ExifLabel" Text="ISO" />
-                        <TextBlock Classes="ExifValue" Text="{Binding ExifIso}" />
+                        <TextBlock Classes="ExifValue" 
+                                   Text="{Binding CurrentExifData.Iso, 
+                                          FallbackValue='--', 
+                                          TargetNullValue='--'}" />
                     </StackPanel>
 
                     <!-- 等效焦距 -->
                     <StackPanel Classes="ExifBlock">
                         <TextBlock Classes="ExifLabel" Text="等效焦距" />
-                        <TextBlock Classes="ExifValue" Text="{Binding ExifFocalLength}" />
+                        <TextBlock Classes="ExifValue" 
+                                   Text="{Binding CurrentExifData.FocalLength, 
+                                          Converter={x:Static converters:FocalLengthConverter.Instance}}" />
                     </StackPanel>
 
                 </StackPanel>

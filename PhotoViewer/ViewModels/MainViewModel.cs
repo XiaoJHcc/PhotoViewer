@@ -17,6 +17,7 @@ public class MainViewModel : ViewModelBase
     public ControlViewModel ControlViewModel { get; }
     public ImageViewModel ImageViewModel { get; }
     public SettingsViewModel Settings { get; }
+    public ExifViewModel ExifViewModel { get; }
 
     // 当前状态
     private IStorageFolder? _currentFolder;
@@ -53,6 +54,8 @@ public class MainViewModel : ViewModelBase
             
         // 先创建设置 ViewModel
         Settings = new SettingsViewModel();
+        // 创建 EXIF 管理器
+        ExifViewModel = new ExifViewModel();
         // 创建子 ViewModel
         ThumbnailViewModel = new ThumbnailViewModel(this);
         ImageViewModel = new ImageViewModel(this);
@@ -279,6 +282,12 @@ public class MainViewModel : ViewModelBase
         }
             
         ApplyFilter();
+        
+        // 异步加载文件夹内所有图片的 EXIF 数据
+        _ = Task.Run(async () =>
+        {
+            await ExifViewModel.LoadFolderExifDataAsync(_filteredFiles);
+        });
     }
     
     public bool IsImageFile(string fileName)
@@ -303,6 +312,12 @@ public class MainViewModel : ViewModelBase
         }
         
         ApplySort();
+        
+        // 筛选后重新加载 EXIF 数据
+        _ = Task.Run(async () =>
+        {
+            await ExifViewModel.LoadFolderExifDataAsync(_filteredFiles);
+        });
     }
     
     // 排序筛选后的图片
