@@ -17,28 +17,6 @@ public class MainViewModel : ViewModelBase
     public ControlViewModel ControlViewModel { get; }
     public ImageViewModel ImageViewModel { get; }
     public SettingsViewModel Settings { get; }
-    
-    // 实际使用的布局方向（考虑智能模式）
-    private bool _isHorizontalLayout = false;
-    public bool IsHorizontalLayout
-    {
-        get => _isHorizontalLayout;
-        private set => this.RaiseAndSetIfChanged(ref _isHorizontalLayout, value);
-    }
-
-    // 屏幕方向状态
-    private bool _isScreenLandscape = true;
-    public bool IsScreenLandscape
-    {
-        get => _isScreenLandscape;
-        set
-        {
-            if (this.RaiseAndSetIfChanged(ref _isScreenLandscape, value))
-            {
-                UpdateLayoutFromSettings();
-            }
-        }
-    }
 
     // 当前状态
     private IStorageFolder? _currentFolder;
@@ -73,10 +51,12 @@ public class MainViewModel : ViewModelBase
         AllFiles = new ReadOnlyObservableCollection<ImageFile>(_allFiles);
         FilteredFiles = new ReadOnlyObservableCollection<ImageFile>(_filteredFiles);
             
+        // 先创建设置 ViewModel
+        Settings = new SettingsViewModel();
         // 创建子 ViewModel
         ThumbnailViewModel = new ThumbnailViewModel(this);
         ImageViewModel = new ImageViewModel(this);
-        Settings = new SettingsViewModel();
+        ControlViewModel = new ControlViewModel(this);
             
         // 监听设置变化
         Settings.WhenAnyValue(s => s.SelectedFormats)
@@ -88,70 +68,189 @@ public class MainViewModel : ViewModelBase
         // 监听布局模式变化
         Settings.WhenAnyValue(s => s.LayoutMode)
             .Subscribe(_ => UpdateLayoutFromSettings());
-        
-        // 确保所有必要的属性在第55行之前已初始化
-        ControlViewModel = new ControlViewModel(this);
     }
     
+    ////////////////
+    /// 打开文件
+    ////////////////
+
+    #region OpenFile
+    
     /// <summary>
-    /// 打开设置窗口
+    /// 打开文件选择器
     /// </summary>
-    public void OpenSettingWindow(Window parentWindow)
+    public async Task OpenFilePickerAsync()
     {
-        var settingsWindow = new SettingsWindow
+        TopLevel? topLevel = null;
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
         {
-            DataContext = Settings
-        };
-        settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        settingsWindow.ShowDialog(parentWindow);
+            // 移动端：通过 MainView 获取 TopLevel
+            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
+            {
+                topLevel = TopLevel.GetTopLevel(singleView.MainView);
+            }
+        }
+        else
+        {
+            // 桌面端：通过 MainWindow 获取 TopLevel
+            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+            {
+                topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
+            }
+        }
+
+        if (topLevel?.StorageProvider == null) return;
+
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        {
+            // 移动平台：选择文件夹
+            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "选择图片文件夹",
+                AllowMultiple = false
+            });
+
+            if (folders.Count > 0)
+            {
+                // 加载文件夹内第一个文件
+                _currentFolder = folders[0];
+                _allFiles.Clear();
+                _filteredFiles.Clear();
+    
+                Console.WriteLine("OpenFolder: " + folders[0].Path);
+        
+                // 加载文件夹内容
+                var items = folders[0].GetItemsAsync();
+                await foreach (var storageItem in items)
+                {
+                    var item = (IStorageFile)storageItem;
+            
+                    Console.WriteLine(item.Name);
+            
+                    if (IsImageFile(item.Name))
+                    {
+                        _allFiles.Add(new ImageFile(item));
+                    }
+                }
+            
+                ApplyFilter();
+        
+                CurrentFile = _filteredFiles.First();
+            }
+        }
+        else
+        {
+            // 桌面平台：选择图片文件
+            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择图片",
+                FileTypeFilter = GetFilePickerFileTypes(),
+                AllowMultiple = false
+            });
+
+            if (files.Count > 0 && files[0] is IStorageFile file)
+            {
+                // 新打开文件时始终适配显示
+                ImageViewModel.Fit = true;
+        
+                // 加载图片所在文件夹
+                await LoadNewImageFolder(file);
+        
+                // 加载文件夹后滚动至当前图片
+                ThumbnailViewModel.ScrollToCurrent();
+            }
+        }
     }
 
-    // 模态显示
-    private bool _isModalVisible = false;
-    public bool IsModalVisible
+    // 打开文件选择器中的类型过滤器
+    private List<FilePickerFileType> GetFilePickerFileTypes()
     {
-        get => _isModalVisible;
-        set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
+        var fileTypes = new List<FilePickerFileType>();
+        
+        // 添加"所有支持的图片格式"选项
+        var allSupportedType = new FilePickerFileType("所有图片")
+        {
+            AppleUniformTypeIdentifiers = new[] { "public.image" },
+            MimeTypes = new[] { "image/*" },
+            Patterns = Settings.SelectedFormats.Select(format => $"*{format}").ToArray()
+        };
+        fileTypes.Add(allSupportedType);
+        
+        // 为每个已勾选的格式创建单独的文件类型
+        foreach (var formatItem in Settings.FileFormats.Where(f => f.IsEnabled))
+        {
+            var fileType = new FilePickerFileType($"{formatItem.DisplayName} 文件")
+            {
+                AppleUniformTypeIdentifiers = GetAppleTypeIdentifiers(formatItem.Extensions),
+                MimeTypes = GetMimeTypes(formatItem.Extensions),
+                Patterns = formatItem.Extensions.Select(ext => $"*{ext}").ToArray()
+            };
+            fileTypes.Add(fileType);
+        }
+        
+        return fileTypes;
     }
-    // 模态显示时 遮罩不透明度
-    private double _modalMaskOpacity = 0.5;
-    public double ModalMaskOpacity
+    // 根据扩展名获取对应的 Apple 类型标识符
+    private string[] GetAppleTypeIdentifiers(string[] extensions)
     {
-        get => _modalMaskOpacity;
-        set => this.RaiseAndSetIfChanged(ref _modalMaskOpacity, value);
+        var identifiers = new List<string>();
+        
+        foreach (var ext in extensions)
+        {
+            var identifier = ext.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "public.jpeg",
+                ".png" => "public.png",
+                ".tiff" or ".tif" => "public.tiff",
+                ".webp" => "public.webp",
+                ".bmp" => "com.microsoft.bmp",
+                ".gif" => "com.compuserve.gif",
+                _ => "public.image"
+            };
+            
+            if (!identifiers.Contains(identifier))
+            {
+                identifiers.Add(identifier);
+            }
+        }
+        
+        return identifiers.ToArray();
     }
-    // 模态显示时 模态弹出
-    private double _modalMarginTop = 2000;
-    public double ModalMarginTop
+    // 根据扩展名获取对应的 MIME 类型
+    private string[] GetMimeTypes(string[] extensions)
     {
-        get => _modalMarginTop;
-        set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
+        var mimeTypes = new List<string>();
+        
+        foreach (var ext in extensions)
+        {
+            var mimeType = ext.ToLowerInvariant() switch
+            {
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".png" => "image/png",
+                ".tiff" or ".tif" => "image/tiff",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".gif" => "image/gif",
+                _ => "image/*"
+            };
+            
+            if (!mimeTypes.Contains(mimeType))
+            {
+                mimeTypes.Add(mimeType);
+            }
+        }
+        
+        return mimeTypes.ToArray();
     }
     
-        
-    /// <summary>
-    /// 打开设置弹窗
-    /// </summary>
-    public void OpenSettingModal()
-    {
-        ShowModal();
-    }
+    #endregion
+    
+    
+    ////////////////
+    /// 缩略图和筛选
+    ////////////////
 
-    public void ShowModal()
-    {
-        IsModalVisible = true;
-        
-        ModalMaskOpacity = 0.5;
-        ModalMarginTop = 80;
-    }
-    public async void HideModal()
-    {
-        ModalMaskOpacity = 0;
-        ModalMarginTop = 2000;
-        
-        await Task.Delay(400);
-        IsModalVisible = false;
-    }
+    #region LoadFolder
     
     // 图片加载完成后 调用其他逻辑
     public async Task LoadNewImageFolder(IStorageFile file)
@@ -186,34 +285,6 @@ public class MainViewModel : ViewModelBase
     {
         var extension = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant();
         return extension != null && Settings.SelectedFormats.Contains(extension);
-    }
-    
-    // Android 从文件夹加载第一个文件
-    public async Task OpenAndroidFolder(IStorageFolder folder)
-    {
-        _currentFolder = folder;
-        _allFiles.Clear();
-        _filteredFiles.Clear();
-    
-        Console.WriteLine("OpenFolder: " + folder.Path);
-        
-        // 加载文件夹内容
-        var items = folder.GetItemsAsync();
-        await foreach (var storageItem in items)
-        {
-            var item = (IStorageFile)storageItem;
-            
-            Console.WriteLine(item.Name);
-            
-            if (IsImageFile(item.Name))
-            {
-                _allFiles.Add(new ImageFile(item));
-            }
-        }
-            
-        ApplyFilter();
-        
-        CurrentFile = _filteredFiles.First();
     }
     
     // 筛选文件夹内图片
@@ -296,158 +367,104 @@ public class MainViewModel : ViewModelBase
         }
     }
     
+    #endregion
+    
+    
+    ////////////////
+    /// 打开设置模态
+    ////////////////
+    
+    #region OpenSettingsModal
+    
     /// <summary>
-    /// 打开文件选择器
+    /// 打开设置窗口
     /// </summary>
-    public async Task OpenFilePickerAsync()
+    public void OpenSettingWindow(Window parentWindow)
     {
-        TopLevel? topLevel = null;
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        var settingsWindow = new SettingsWindow
         {
-            // 移动端：通过 MainView 获取 TopLevel
-            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
-            {
-                topLevel = TopLevel.GetTopLevel(singleView.MainView);
-            }
-        }
-        else
-        {
-            // 桌面端：通过 MainWindow 获取 TopLevel
-            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-            {
-                topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
-            }
-        }
-
-        if (topLevel?.StorageProvider == null) return;
-
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            // 移动平台：选择文件夹
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-            {
-                Title = "选择图片文件夹",
-                AllowMultiple = false
-            });
-
-            if (folders.Count > 0)
-            {
-                await OpenAndroidFolder(folders[0]);
-            }
-        }
-        else
-        {
-            // 桌面平台：选择图片文件
-            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-            {
-                Title = "选择图片",
-                FileTypeFilter = GetFilePickerFileTypes(),
-                AllowMultiple = false
-            });
-
-            if (files.Count > 0 && files[0] is IStorageFile file)
-            {
-                await LoadNewImageFromFile(file);
-            }
-        }
-    }
-
-    /// <summary>
-    /// 获取文件选择器的文件类型过滤器
-    /// </summary>
-    private List<FilePickerFileType> GetFilePickerFileTypes()
-    {
-        var fileTypes = new List<FilePickerFileType>();
-        
-        // 添加"所有支持的图片格式"选项
-        var allSupportedType = new FilePickerFileType("所有图片")
-        {
-            AppleUniformTypeIdentifiers = new[] { "public.image" },
-            MimeTypes = new[] { "image/*" },
-            Patterns = Settings.SelectedFormats.Select(format => $"*{format}").ToArray()
+            DataContext = Settings
         };
-        fileTypes.Add(allSupportedType);
-        
-        // 为每个已勾选的格式创建单独的文件类型
-        foreach (var formatItem in Settings.FileFormats.Where(f => f.IsEnabled))
-        {
-            var fileType = new FilePickerFileType($"{formatItem.DisplayName} 文件")
-            {
-                AppleUniformTypeIdentifiers = GetAppleTypeIdentifiers(formatItem.Extensions),
-                MimeTypes = GetMimeTypes(formatItem.Extensions),
-                Patterns = formatItem.Extensions.Select(ext => $"*{ext}").ToArray()
-            };
-            fileTypes.Add(fileType);
-        }
-        
-        return fileTypes;
-    }
-    // 根据扩展名获取对应的 Apple 类型标识符
-    private string[] GetAppleTypeIdentifiers(string[] extensions)
-    {
-        var identifiers = new List<string>();
-        
-        foreach (var ext in extensions)
-        {
-            var identifier = ext.ToLowerInvariant() switch
-            {
-                ".jpg" or ".jpeg" => "public.jpeg",
-                ".png" => "public.png",
-                ".tiff" or ".tif" => "public.tiff",
-                ".webp" => "public.webp",
-                ".bmp" => "com.microsoft.bmp",
-                ".gif" => "com.compuserve.gif",
-                _ => "public.image"
-            };
-            
-            if (!identifiers.Contains(identifier))
-            {
-                identifiers.Add(identifier);
-            }
-        }
-        
-        return identifiers.ToArray();
-    }
-    // 根据扩展名获取对应的 MIME 类型
-    private string[] GetMimeTypes(string[] extensions)
-    {
-        var mimeTypes = new List<string>();
-        
-        foreach (var ext in extensions)
-        {
-            var mimeType = ext.ToLowerInvariant() switch
-            {
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".png" => "image/png",
-                ".tiff" or ".tif" => "image/tiff",
-                ".webp" => "image/webp",
-                ".bmp" => "image/bmp",
-                ".gif" => "image/gif",
-                _ => "image/*"
-            };
-            
-            if (!mimeTypes.Contains(mimeType))
-            {
-                mimeTypes.Add(mimeType);
-            }
-        }
-        
-        return mimeTypes.ToArray();
+        settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        settingsWindow.ShowDialog(parentWindow);
     }
 
-    /// <summary>
-    /// 从文件加载新图片（适配显示）
-    /// </summary>
-    private async Task LoadNewImageFromFile(IStorageFile file)
+    // 模态显示
+    private bool _isModalVisible = false;
+    public bool IsModalVisible
     {
-        // 新打开文件时始终适配显示
-        ImageViewModel.Fit = true;
+        get => _isModalVisible;
+        set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
+    }
+    // 模态显示时 遮罩不透明度
+    private double _modalMaskOpacity = 0.5;
+    public double ModalMaskOpacity
+    {
+        get => _modalMaskOpacity;
+        set => this.RaiseAndSetIfChanged(ref _modalMaskOpacity, value);
+    }
+    // 模态显示时 模态弹出
+    private double _modalMarginTop = 2000;
+    public double ModalMarginTop
+    {
+        get => _modalMarginTop;
+        set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
+    }
+    
         
-        // 加载图片所在文件夹
-        await LoadNewImageFolder(file);
+    /// <summary>
+    /// 打开设置弹窗
+    /// </summary>
+    public void OpenSettingModal()
+    {
+        ShowModal();
+    }
+
+    public void ShowModal()
+    {
+        IsModalVisible = true;
         
-        // 加载文件夹后滚动至当前图片
-        ThumbnailViewModel.ScrollToCurrent();
+        ModalMaskOpacity = 0.5;
+        ModalMarginTop = 80;
+    }
+    public async void HideModal()
+    {
+        ModalMaskOpacity = 0;
+        ModalMarginTop = 2000;
+        
+        await Task.Delay(400);
+        IsModalVisible = false;
+    }
+    
+    #endregion
+    
+    
+    ////////////////
+    /// 整体布局
+    ////////////////
+
+    #region Layout
+    
+    // 实际使用的布局方向（考虑智能模式）
+    private bool _isHorizontalLayout = false;
+    public bool IsHorizontalLayout
+    {
+        get => _isHorizontalLayout;
+        private set => this.RaiseAndSetIfChanged(ref _isHorizontalLayout, value);
+    }
+
+    // 屏幕方向状态
+    private bool _isScreenLandscape = true;
+    public bool IsScreenLandscape
+    {
+        get => _isScreenLandscape;
+        set
+        {
+            if (this.RaiseAndSetIfChanged(ref _isScreenLandscape, value))
+            {
+                UpdateLayoutFromSettings();
+            }
+        }
     }
     
     /// <summary>
@@ -491,4 +508,8 @@ public class MainViewModel : ViewModelBase
             }
         }
     }
+
+    #endregion
+    
+    
 }
