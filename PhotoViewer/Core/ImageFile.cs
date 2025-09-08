@@ -5,10 +5,6 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using ReactiveUI;
-using System.IO;
-using MetadataExtractor;
-using MetadataExtractor.Formats.Exif;
-using System.Linq;
 
 namespace PhotoViewer.Core;
 
@@ -117,20 +113,18 @@ public class ImageFile : ReactiveObject
                 try
                 {
                     // 首先尝试从EXIF中提取嵌入式缩略图
-                    var exifThumbnail = await TryLoadExifThumbnailAsync();
+                    var exifThumbnail = await ExifLoader.TryLoadExifThumbnailAsync(File);
                     if (exifThumbnail != null)
                     {
-                        Console.WriteLine($"使用EXIF缩略图: {Name}");
                         return exifThumbnail;
                     }
 
                     // 如果没有EXIF缩略图，则解码原图生成缩略图
-                    Console.WriteLine($"生成缩略图: {Name}");
-                    return await GenerateThumbnailFromImageAsync();
+                    return await ExifLoader.GenerateThumbnailFromImageAsync(File);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"解码缩略图失败 ({Name}): {ex.Message}");
+                    Console.WriteLine("解码缩略图失败 (" + Name + "): " + ex.Message);
                     return null;
                 }
             });
@@ -146,7 +140,7 @@ public class ImageFile : ReactiveObject
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"加载缩略图失败 ({Name}): {ex.Message}");
+            Console.WriteLine("加载缩略图失败 (" + Name + "): " + ex.Message);
         }
         finally
         {
@@ -154,82 +148,6 @@ public class ImageFile : ReactiveObject
         }
     }
 
-    /// <summary>
-    /// 尝试从EXIF中加载嵌入式缩略图
-    /// </summary>
-    private async Task<Bitmap?> TryLoadExifThumbnailAsync()
-    {/*
-        try
-        {
-            await using var stream = await File.OpenReadAsync();
-            var directories = ImageMetadataReader.ReadMetadata(stream);
-            
-            // 查找缩略图目录
-            var exifThumbnailDirectory = directories.OfType<ExifThumbnailDirectory>().FirstOrDefault();
-            if (exifThumbnailDirectory?.HasThumbnailData == true)
-            {
-                var thumbnailData = exifThumbnailDirectory.GetThumbnailData();
-                if (thumbnailData?.Length > 0)
-                {
-                    using var thumbnailStream = new MemoryStream(thumbnailData);
-                    var thumbnail = new Bitmap(thumbnailStream);
-                    
-                    // 如果EXIF缩略图过大，则缩放到合适大小
-                    if (thumbnail.PixelSize.Width > 120)
-                    {
-                        var scale = 120.0 / thumbnail.PixelSize.Width;
-                        var newSize = new PixelSize(
-                            (int)(thumbnail.PixelSize.Width * scale),
-                            (int)(thumbnail.PixelSize.Height * scale)
-                        );
-                        var scaledThumbnail = thumbnail.CreateScaledBitmap(newSize);
-                        thumbnail.Dispose();
-                        return scaledThumbnail;
-                    }
-                    
-                    return thumbnail;
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"提取EXIF缩略图失败 ({Name}): {ex.Message}");
-        }*/
-        
-        return null;
-    }
-
-    /// <summary>
-    /// 从原图生成缩略图
-    /// </summary>
-    private async Task<Bitmap?> GenerateThumbnailFromImageAsync()
-    {
-        try
-        {
-            await using var stream = await File.OpenReadAsync();
-            var originalBitmap = new Bitmap(stream);
-            
-            // 生成缩略图 (120px宽度)
-            if (originalBitmap.PixelSize.Width > 120)
-            {
-                var scale = 120.0 / originalBitmap.PixelSize.Width;
-                var newSize = new PixelSize(
-                    (int)(originalBitmap.PixelSize.Width * scale),
-                    (int)(originalBitmap.PixelSize.Height * scale)
-                );
-                var scaledBitmap = originalBitmap.CreateScaledBitmap(newSize);
-                originalBitmap.Dispose();
-                return scaledBitmap;
-            }
-            
-            return originalBitmap;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"从原图生成缩略图失败 ({Name}): {ex.Message}");
-            return null;
-        }
-    }
 
     /// <summary>
     /// 异步加载 EXIF 数据
@@ -250,7 +168,7 @@ public class ImageFile : ReactiveObject
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"读取 EXIF 数据失败 ({Name}): {ex.Message}");
+                    Console.WriteLine("读取 EXIF 数据失败 (" + Name + "): " + ex.Message);
                     return null;
                 }
             });
@@ -266,7 +184,7 @@ public class ImageFile : ReactiveObject
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"加载 EXIF 数据失败 ({Name}): {ex.Message}");
+            Console.WriteLine("加载 EXIF 数据失败 (" + Name + "): " + ex.Message);
             return null;
         }
         finally

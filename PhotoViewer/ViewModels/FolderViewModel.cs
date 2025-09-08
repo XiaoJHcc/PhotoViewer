@@ -195,15 +195,50 @@ public class FolderViewModel : ReactiveObject
     /// <param name="visibleFiles">可见的图片文件列表</param>
     public void LoadVisibleThumbnails(IEnumerable<ImageFile> visibleFiles)
     {
-        // 清空队列，只加载可见区域的缩略图
-        while (_thumbnailLoadQueue.TryDequeue(out _)) { }
+        // 获取当前队列中的文件
+        var queuedFiles = new HashSet<ImageFile>();
+        var tempQueue = new List<ImageFile>();
+        
+        // 保存当前队列中未加载的文件
+        while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
+        {
+            if (existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
+            {
+                queuedFiles.Add(existingFile);
+                tempQueue.Add(existingFile);
+            }
+        }
+        
+        // 按优先级重新组织队列：可见文件优先
+        var priorityFiles = new List<ImageFile>();
+        var normalFiles = new List<ImageFile>();
         
         foreach (var file in visibleFiles)
         {
             if (file.Thumbnail == null && !file.IsThumbnailLoading)
             {
-                QueueThumbnailLoad(file, priority: true);
+                priorityFiles.Add(file);
+                queuedFiles.Remove(file); // 从普通队列中移除，避免重复
             }
+        }
+        
+        // 添加剩余的队列文件
+        foreach (var file in tempQueue)
+        {
+            if (queuedFiles.Contains(file))
+            {
+                normalFiles.Add(file);
+            }
+        }
+        
+        // 重新构建队列：优先文件在前
+        foreach (var file in priorityFiles)
+        {
+            _thumbnailLoadQueue.Enqueue(file);
+        }
+        foreach (var file in normalFiles)
+        {
+            _thumbnailLoadQueue.Enqueue(file);
         }
     }
     
@@ -280,8 +315,6 @@ public class FolderViewModel : ReactiveObject
                 await foreach (var storageItem in items)
                 {
                     var item = (IStorageFile)storageItem;
-            
-                    Console.WriteLine(item.Name);
             
                     if (IsImageFile(item.Name))
                     {
