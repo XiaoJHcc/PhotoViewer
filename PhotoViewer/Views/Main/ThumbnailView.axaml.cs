@@ -581,3 +581,25 @@ public class PhotoDateConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
+
+// 根据缓存状态返回边框颜色的转换器
+public class BoolToCachedBorderConverter : IValueConverter
+{
+    public static readonly BoolToCachedBorderConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isInCache && isInCache)
+        {
+            // 已缓存的图片使用半透明蓝色边框
+            return new SolidColorBrush(Color.FromArgb(180, 70, 130, 180)); // 半透明淡蓝色
+        }
+        
+        return new SolidColorBrush(Colors.Transparent);
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotImplementedException();
+    }
+}

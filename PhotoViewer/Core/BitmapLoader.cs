@@ -53,6 +53,9 @@ public static class BitmapLoader
     private static int _maxCacheCount = 20;
     private static long _maxCacheSize = 2048L * 1024 * 1024; // 2048 MB
     
+    // 缓存状态变化事件
+    public static event Action<string, bool>? CacheStatusChanged;
+
     /// <summary>
     /// 最大缓存图片数量
     /// </summary>
@@ -90,6 +93,14 @@ public static class BitmapLoader
     public static long CurrentCacheSize => _cache.Values.Sum(item => item.Size);
     
     /// <summary>
+    /// 检查文件是否在缓存中
+    /// </summary>
+    public static bool IsInCache(string filePath)
+    {
+        return _cache.ContainsKey(filePath);
+    }
+    
+    /// <summary>
     /// 异步获取图片（带缓存和EXIF旋转）
     /// </summary>
     public static async Task<Bitmap?> GetBitmapAsync(IStorageFile file)
@@ -112,6 +123,9 @@ public static class BitmapLoader
             // 添加到缓存
             var cacheItem = new BitmapCacheItem(bitmap, filePath);
             _cache[filePath] = cacheItem;
+            
+            // 通知缓存状态变化（在UI线程中触发）
+            Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(filePath, true));
             
             // 异步清理缓存
             _ = Task.Run(CleanupCache);
@@ -393,6 +407,9 @@ public static class BitmapLoader
                 {
                     if (_cache.TryRemove(key, out var item))
                     {
+                        // 通知缓存状态变化（在UI线程中触发）
+                        Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(key, false));
+                        
                         // 在UI线程中释放位图
                         Dispatcher.UIThread.Post(() => item.Bitmap.Dispose());
                     }
@@ -421,7 +438,17 @@ public static class BitmapLoader
             try
             {
                 var items = _cache.Values.ToList();
+                var filePaths = items.Select(item => item.FilePath).ToList();
                 _cache.Clear();
+                
+                // 通知所有文件缓存状态变化（在UI线程中触发）
+                Dispatcher.UIThread.Post(() =>
+                {
+                    foreach (var filePath in filePaths)
+                    {
+                        CacheStatusChanged?.Invoke(filePath, false);
+                    }
+                });
                 
                 // 在UI线程中释放所有位图
                 Dispatcher.UIThread.Post(() =>
@@ -448,6 +475,9 @@ public static class BitmapLoader
     {
         if (_cache.TryRemove(filePath, out var item))
         {
+            // 通知缓存状态变化（在UI线程中触发）
+            Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(filePath, false));
+            
             Dispatcher.UIThread.Post(() => item.Bitmap.Dispose());
         }
     }

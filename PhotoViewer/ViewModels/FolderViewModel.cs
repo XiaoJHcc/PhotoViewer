@@ -98,6 +98,25 @@ public class FolderViewModel : ReactiveObject
             
         this.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
+
+        // 注册缓存状态变化事件
+        BitmapLoader.CacheStatusChanged += OnCacheStatusChanged;
+    }
+
+    /// <summary>
+    /// 处理缓存状态变化
+    /// </summary>
+    private void OnCacheStatusChanged(string filePath, bool isInCache)
+    {
+        // 在UI线程中更新对应文件的缓存状态
+        Dispatcher.UIThread.Post(() =>
+        {
+            var imageFile = AllFiles.FirstOrDefault(f => f.File.Path.LocalPath == filePath);
+            if (imageFile != null)
+            {
+                imageFile.IsInCache = isInCache;
+            }
+        });
     }
 
     public void SelectImageCommand(ImageFile file)
@@ -329,6 +348,12 @@ public class FolderViewModel : ReactiveObject
         }
             
         ApplyFilter();
+
+        // 加载完成后更新所有文件的缓存状态
+        foreach (var imageFile in AllFiles)
+        {
+            imageFile.UpdateCacheStatus();
+        }
         
         // 异步加载其他图片的 EXIF 数据（排除当前图片）
         _ = Task.Run(async () =>
