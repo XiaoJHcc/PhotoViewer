@@ -124,7 +124,7 @@ public class ImageFile : ReactiveObject
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("解码缩略图失败 (" + Name + "): " + ex.Message);
+                    Console.WriteLine("Failed to decode thumbnail (" + Name + "): " + ex.Message);
                     return null;
                 }
             });
@@ -137,10 +137,13 @@ public class ImageFile : ReactiveObject
                     Thumbnail = bitmap;
                 }
             });
+
+            // 加载缩略图的同时异步加载 EXIF 数据（用于旋转和其他信息）
+            _ = LoadExifDataAsync();
         }
         catch (Exception ex)
         {
-            Console.WriteLine("加载缩略图失败 (" + Name + "): " + ex.Message);
+            Console.WriteLine("Failed to load thumbnail (" + Name + "): " + ex.Message);
         }
         finally
         {
@@ -168,7 +171,7 @@ public class ImageFile : ReactiveObject
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("读取 EXIF 数据失败 (" + Name + "): " + ex.Message);
+                    Console.WriteLine("Failed to read EXIF data (" + Name + "): " + ex.Message);
                     return null;
                 }
             });
@@ -184,7 +187,7 @@ public class ImageFile : ReactiveObject
         }
         catch (Exception ex)
         {
-            Console.WriteLine("加载 EXIF 数据失败 (" + Name + "): " + ex.Message);
+            Console.WriteLine("Failed to load EXIF data (" + Name + "): " + ex.Message);
             return null;
         }
         finally

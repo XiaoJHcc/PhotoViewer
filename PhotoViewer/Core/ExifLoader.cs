@@ -36,6 +36,13 @@ public class ExifData
     
     // 其他常用信息
     public string? Orientation { get; set; }
+    
+    /// <summary>
+    /// 图片方向（EXIF Orientation 数值）
+    /// 1=正常, 3=180度旋转, 6=顺时针90度, 8=逆时针90度
+    /// </summary>
+    public int OrientationValue { get; set; } = 1;
+    
     public Rational? ExposureBias { get; set; }
     public string? WhiteBalance { get; set; }
     public string? Flash { get; set; }
@@ -159,6 +166,12 @@ public static class ExifLoader
                 if (exifIfd0.HasTagName(ExifDirectoryBase.TagOrientation))
                 {
                     exifData.Orientation = exifIfd0.GetDescription(ExifDirectoryBase.TagOrientation);
+                    
+                    // 获取数值型方向
+                    if (exifIfd0.TryGetInt32(ExifDirectoryBase.TagOrientation, out var orientationValue))
+                    {
+                        exifData.OrientationValue = orientationValue;
+                    }
                 }
             }
             
@@ -166,7 +179,7 @@ public static class ExifLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("读取 EXIF 数据失败 (" + filePath + "): " + ex.Message);
+            Console.WriteLine("Failed to read EXIF data (" + filePath + "): " + ex.Message);
             return null;
         }
     }
@@ -184,7 +197,7 @@ public static class ExifLoader
             }
             catch (Exception ex)
             {
-                Console.WriteLine("批量加载 EXIF 失败 (" + imageFile.Name + "): " + ex.Message);
+                Console.WriteLine("Failed to batch load EXIF (" + imageFile.Name + "): " + ex.Message);
             }
         });
         
@@ -272,13 +285,13 @@ public static class ExifLoader
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine("通过偏移量提取缩略图失败 (" + file.Name + "): " + ex.Message);
+                            Console.WriteLine("Failed to extract thumbnail by offset (" + file.Name + "): " + ex.Message);
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("从ExifThumbnailDirectory提取缩略图失败 (" + file.Name + "): " + ex.Message);
+                    Console.WriteLine("Failed to extract thumbnail from ExifThumbnailDirectory (" + file.Name + "): " + ex.Message);
                 }
             }
             
@@ -312,7 +325,7 @@ public static class ExifLoader
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("从目录 " + directoryName + " 提取缩略图失败: " + ex.Message);
+                        Console.WriteLine("Failed to extract thumbnail from directory " + directoryName + ": " + ex.Message);
                     }
                 }
             }
@@ -351,13 +364,13 @@ public static class ExifLoader
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine("从IFD1提取缩略图失败 (" + file.Name + "): " + ex.Message);
+                    Console.WriteLine("Failed to extract thumbnail from IFD1 (" + file.Name + "): " + ex.Message);
                 }
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("提取EXIF缩略图失败 (" + file.Name + "): " + ex.Message);
+            Console.WriteLine("Failed to extract EXIF thumbnail (" + file.Name + "): " + ex.Message);
         }
         
         return null;
@@ -412,7 +425,7 @@ public static class ExifLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("从数据创建缩略图失败: " + ex.Message);
+            Console.WriteLine("Failed to create thumbnail from data: " + ex.Message);
             return null;
         }
     }
@@ -472,7 +485,7 @@ public static class ExifLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("从原图生成缩略图失败 (" + file.Name + "): " + ex.Message);
+            Console.WriteLine("Failed to generate thumbnail from image (" + file.Name + "): " + ex.Message);
             return null;
         }
     }
@@ -651,7 +664,7 @@ public static class ExifLoader
         }
         catch (Exception ex)
         {
-            Console.WriteLine("采样生成缩略图失败: " + ex.Message);
+            Console.WriteLine("Failed to generate sampled thumbnail: " + ex.Message);
             return null;
         }
     }
