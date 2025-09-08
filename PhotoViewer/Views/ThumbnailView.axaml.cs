@@ -23,11 +23,16 @@ namespace PhotoViewer.Views;
 public partial class ThumbnailView : UserControl
 {
     private readonly DispatcherTimer _scrollTimer = new DispatcherTimer();
+    private readonly DispatcherTimer _scrollingTimer = new DispatcherTimer(); // 新增：滚动中计时器
     
     // 添加动画相关字段
     private Animation? _scrollAnimation;
     private CancellationTokenSource? _animationCancellationTokenSource;
     private Task? _currentAnimationTask;
+    
+    // 滚动状态跟踪
+    private bool _isScrolling = false;
+    private Vector _lastScrollOffset = Vector.Zero;
     
     public FolderViewModel? ViewModel => DataContext as FolderViewModel;
 
@@ -38,12 +43,23 @@ public partial class ThumbnailView : UserControl
         // 初始化滚动动画
         InitializeScrollAnimation();
 
-        // 设置滚动计时器（减少延迟，提高响应性）
-        _scrollTimer.Interval = TimeSpan.FromMilliseconds(200);
+        // 设置滚动结束计时器（300ms延迟确认滚动结束）
+        _scrollTimer.Interval = TimeSpan.FromMilliseconds(300);
         _scrollTimer.Tick += async (s, e) =>
         {
             _scrollTimer.Stop();
+            _isScrolling = false;
             await LoadVisibleThumbnailsAsync();
+        };
+
+        // 设置滚动中计时器（100ms间隔实时加载）
+        _scrollingTimer.Interval = TimeSpan.FromMilliseconds(100);
+        _scrollingTimer.Tick += async (s, e) =>
+        {
+            if (_isScrolling)
+            {
+                await LoadVisibleThumbnailsAsync();
+            }
         };
 
         // 滚动事件处理
@@ -76,9 +92,25 @@ public partial class ThumbnailView : UserControl
 
     private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
     {
-        // 使用计时器延迟加载，避免频繁滚动时重复加载
-        _scrollTimer.Stop();
-        _scrollTimer.Start();
+        var currentOffset = ThumbnailScrollViewer?.Offset ?? Vector.Zero;
+        
+        // 检测是否真的在滚动（偏移量发生变化）
+        if (Math.Abs(currentOffset.X - _lastScrollOffset.X) > 1 || 
+            Math.Abs(currentOffset.Y - _lastScrollOffset.Y) > 1)
+        {
+            _lastScrollOffset = currentOffset;
+            
+            if (!_isScrolling)
+            {
+                // 开始滚动
+                _isScrolling = true;
+                _scrollingTimer.Start(); // 启动滚动中的实时加载
+            }
+            
+            // 重置滚动结束计时器
+            _scrollTimer.Stop();
+            _scrollTimer.Start();
+        }
     }
 
     private async Task LoadVisibleThumbnailsAsync()
@@ -95,8 +127,8 @@ public partial class ThumbnailView : UserControl
             var viewport = scrollViewer.Viewport;
             var offset = scrollViewer.Offset;
             
-            // 缓冲区大小，用于预加载临近的缩略图
-            double bufferSize = 200;
+            // 根据滚动状态调整缓冲区大小
+            double bufferSize = _isScrolling ? 300 : 200; // 滚动中增大缓冲区
             
             var visibleFiles = new List<Core.ImageFile>();
             var itemCount = ViewModel.FilteredFiles.Count;
@@ -280,6 +312,10 @@ public partial class ThumbnailView : UserControl
                 return;
             }
 
+            // 标记为动画滚动状态
+            _isScrolling = true;
+            _scrollingTimer.Start();
+
             // 检查是否已被取消
             cancellationToken.ThrowIfCancellationRequested();
 
@@ -315,6 +351,10 @@ public partial class ThumbnailView : UserControl
             _currentAnimationTask = _scrollAnimation.RunAsync(scrollViewer, cancellationToken);
             await _currentAnimationTask;
             
+            // 动画完成后的处理
+            _isScrolling = false;
+            _scrollingTimer.Stop();
+            
             // 动画完成后加载可见区域缩略图
             await Task.Delay(50, cancellationToken);
             await LoadVisibleThumbnailsAsync();
@@ -330,6 +370,8 @@ public partial class ThumbnailView : UserControl
             if (!cancellationToken.IsCancellationRequested)
             {
                 scrollViewer.Offset = targetOffset;
+                _isScrolling = false;
+                _scrollingTimer.Stop();
                 // 设置位置后加载可见区域缩略图
                 await LoadVisibleThumbnailsAsync();
             }
@@ -354,6 +396,10 @@ public partial class ThumbnailView : UserControl
         if (_animationCancellationTokenSource != null && !_animationCancellationTokenSource.Token.IsCancellationRequested)
         {
             _animationCancellationTokenSource.Cancel();
+            
+            // 停止滚动中的计时器
+            _scrollingTimer.Stop();
+            _isScrolling = false;
             
             // 等待当前动画完成取消
             if (_currentAnimationTask != null)
@@ -459,6 +505,8 @@ public partial class ThumbnailView : UserControl
     public async Task StopAnimationAsync()
     {
         await CancelCurrentAnimationAsync();
+        _scrollingTimer.Stop();
+        _isScrolling = false;
     }
 }
 
