@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive;
+using System.Threading.Tasks;
 using System.Windows.Input;
 using Avalonia.Input;
+using PhotoViewer.Core;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
@@ -16,14 +18,7 @@ public class ControlViewModel : ReactiveObject
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
 
     // 当前文件的 EXIF 数据
-    public ExifData? CurrentExifData
-    {
-        get
-        {
-            if (Main.CurrentFile?.File == null) return null;
-            return Main.ExifViewModel.GetExifData(Main.CurrentFile.File);
-        }
-    }
+    public ExifData? CurrentExifData => Main.CurrentFile?.ExifData;
 
     // 评分属性
     private int _rating = 0;
@@ -47,9 +42,20 @@ public class ControlViewModel : ReactiveObject
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)
-            .Subscribe(_ =>
+            .Subscribe(currentFile =>
             {
                 this.RaisePropertyChanged(nameof(CurrentExifData));
+                
+                // 如果当前文件有效且 EXIF 未加载，则加载 EXIF
+                if (currentFile != null && !currentFile.IsExifLoaded && !currentFile.IsExifLoading)
+                {
+                    _ = Task.Run(async () => 
+                    {
+                        await currentFile.LoadExifDataAsync();
+                        // EXIF 加载完成后通知 UI 更新
+                        this.RaisePropertyChanged(nameof(CurrentExifData));
+                    });
+                }
             });
         
         // 监听设置变化
