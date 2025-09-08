@@ -122,47 +122,47 @@ public class ControlViewModel : ReactiveObject
     private void ExecuteOpen()
     {
         // 打开文件
-        Main.OpenFilePickerAsync();
+        Main.FolderVM.OpenFilePickerAsync();
     }
     
     private void ExecutePrevious()
     {
         // 上一张
-        if (Main.HasPreviousFile())
+        if (Main.FolderVM.HasPreviousFile())
         {
-            var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = Main.FilteredFiles[currentIndex - 1];
-            Main.ThumbnailViewModel.ScrollToCurrent();
+            var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
+            Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex - 1];
+            Main.FolderVM.ScrollToCurrent();
         }
     }
 
     private void ExecuteNext()
     {
         // 下一张
-        if (Main.HasNextFile())
+        if (Main.FolderVM.HasNextFile())
         {
-            var currentIndex = Main.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = Main.FilteredFiles[currentIndex + 1];
-            Main.ThumbnailViewModel.ScrollToCurrent();
+            var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
+            Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex + 1];
+            Main.FolderVM.ScrollToCurrent();
         }
     }
 
     private void ExecuteFit()
     {
         // 缩放适应
-        Main.ImageViewModel.ToggleFit();
+        Main.ImageVM.ToggleFit();
     }
 
     private void ExecuteZoomIn()
     {
         // 放大
-        Main.ImageViewModel.ZoomPreset(+1);
+        Main.ImageVM.ZoomPreset(+1);
     }
 
     private void ExecuteZoomOut()
     {
         // 缩小
-        Main.ImageViewModel.ZoomPreset(-1);
+        Main.ImageVM.ZoomPreset(-1);
     }
 
     // 设置评分

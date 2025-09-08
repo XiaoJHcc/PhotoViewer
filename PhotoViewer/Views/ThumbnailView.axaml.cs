@@ -28,7 +28,7 @@ public partial class ThumbnailView : UserControl
     private CancellationTokenSource? _animationCancellationTokenSource;
     private Task? _currentAnimationTask;
     
-    public ThumbnailViewModel? ViewModel => DataContext as ThumbnailViewModel;
+    public FolderViewModel? ViewModel => DataContext as FolderViewModel;
 
     public ThumbnailView()
     {
@@ -59,7 +59,7 @@ public partial class ThumbnailView : UserControl
     
     private void OnDataContextChanged(object? dataContext)
     {
-        if (dataContext is ThumbnailViewModel viewModel)
+        if (dataContext is FolderViewModel viewModel)
         {
             // 订阅滚动到当前图片的事件
             viewModel.ScrollToCurrentRequested += ScrollToCurrentImage;
@@ -87,9 +87,9 @@ public partial class ThumbnailView : UserControl
             double endX = startX + scrollViewer.Viewport.Width;
 
             // 加载可见区域及附近区域的缩略图
-            for (int i = 0; i < ViewModel.Main.FilteredFiles.Count; i++)
+            for (int i = 0; i < ViewModel.Main.FolderVM.FilteredFiles.Count; i++)
             {
-                var item = ViewModel.Main.FilteredFiles[i];
+                var item = ViewModel.Main.FolderVM.FilteredFiles[i];
                 if (item.Thumbnail != null) continue; // 已经加载过
 
                 // 获取该项在列表中的位置
@@ -126,7 +126,7 @@ public partial class ThumbnailView : UserControl
             try
             {
                 var currentFile = ViewModel.Main.CurrentFile;
-                var index = ViewModel.Main.FilteredFiles.IndexOf(currentFile);
+                var index = ViewModel.Main.FolderVM.FilteredFiles.IndexOf(currentFile);
                 
                 if (index >= 0)
                 {
@@ -146,7 +146,7 @@ public partial class ThumbnailView : UserControl
     /// <param name="index">图片在列表中的索引</param>
     private void ScrollToIndex(int index)
     {
-        if (index < 0 || index >= ViewModel?.Main.FilteredFiles.Count) return;
+        if (index < 0 || index >= ViewModel?.Main.FolderVM.FilteredFiles.Count) return;
 
         try
         {

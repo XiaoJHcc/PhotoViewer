@@ -19,14 +19,14 @@
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="0,0,0,1">
-                <views:ThumbnailView DataContext="{Binding ThumbnailViewModel}" />
+                <views:ThumbnailView DataContext="{Binding FolderVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->
             <views:ImageView
                 Grid.Row="1"
                 Background="#000000"
-                DataContext="{Binding ImageViewModel}" />
+                DataContext="{Binding ImageVM}" />
 
             <!-- 底部：控制栏 -->
             <Border
@@ -36,7 +36,7 @@
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="0,1,0,0">
-                <views:ControlView DataContext="{Binding ControlViewModel}" />
+                <views:ControlView DataContext="{Binding ControlVM}" />
             </Border>
         </Grid>
 
@@ -51,14 +51,14 @@
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="0,0,1,0">
-                <views:ThumbnailView DataContext="{Binding ThumbnailViewModel}" />
+                <views:ThumbnailView DataContext="{Binding FolderVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->
             <views:ImageView
                 Grid.Column="1"
                 Background="#000000"
-                DataContext="{Binding ImageViewModel}" />
+                DataContext="{Binding ImageVM}" />
 
             <!-- 右侧：控制栏 -->
             <Border
@@ -68,7 +68,7 @@
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="1,0,0,0">
-                <views:ControlView DataContext="{Binding ControlViewModel}" />
+                <views:ControlView DataContext="{Binding ControlVM}" />
             </Border>
         </Grid>
 

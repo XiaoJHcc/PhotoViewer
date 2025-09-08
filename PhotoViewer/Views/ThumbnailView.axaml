@@ -9,7 +9,7 @@
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
              x:Class="PhotoViewer.Views.ThumbnailView"
-             x:DataType="vm:ThumbnailViewModel">
+             x:DataType="vm:FolderViewModel">
     
     <UserControl.Resources>
         <!-- 布尔到边框颜色转换器 -->
@@ -68,24 +68,24 @@
             </i:Interaction.Behaviors>
             
             <ItemsControl Name="ThumbnailItemsControl"
-                          ItemsSource="{Binding Main.FilteredFiles}">
+                          ItemsSource="{Binding Main.FolderVM.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Spacing="10"
-                                   HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
-                                   Orientation="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}"/>
+                                   HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
+                                   Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}"/>
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
                 
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button Command="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).SelectImageCommand}"
+                        <Button Command="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).SelectImageCommand}"
                                 CommandParameter="{Binding}"
                                 Background="Transparent"
                                 BorderThickness="0"
                                 Margin="0"
                                 Padding="0"
-                                HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
+                                HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
                             <Border BorderThickness="2" 
                                     BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
                                     CornerRadius="4"
