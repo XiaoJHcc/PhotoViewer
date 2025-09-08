@@ -191,7 +191,7 @@ public partial class ImageView : UserControl
                 // 无图片时 鼠标左键打开图片
                 if (e.Pointer.Type == PointerType.Mouse)
                 {
-                    _ = ViewModel?.Main.OpenFilePickerAsync();
+                    _ = ViewModel?.Main.FolderVM.OpenFilePickerAsync();
                 }
             }
             e.Handled = true;
@@ -294,7 +294,7 @@ public partial class ImageView : UserControl
             
             // 未触发长按 且无图片时 打开图片
             if (!_isLongPressTriggered && ViewModel?.SourceBitmap == null)
-                _ = ViewModel?.Main.OpenFilePickerAsync();
+                _ = ViewModel?.Main.FolderVM.OpenFilePickerAsync();
         }
 
         if (_activePointers.ContainsKey(pointer))
@@ -369,7 +369,7 @@ public partial class ImageView : UserControl
     private void OnDragOver(object? sender, DragEventArgs e)
     {
         var hasValidFile = e.Data.GetFiles()?
-            .Any(f => ViewModel.Main.IsImageFile(f.Name)) ?? false;
+            .Any(f => ViewModel.Main.FolderVM.IsImageFile(f.Name)) ?? false;
             
         e.DragEffects = hasValidFile ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
@@ -381,7 +381,7 @@ public partial class ImageView : UserControl
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
             // 通过 MainViewModel 处理拖拽文件
-            ViewModel?.Main.LoadNewImageFolder(file);
+            ViewModel?.Main.FolderVM.LoadNewImageFolder(file);
         }
         e.Handled = true;
     }
