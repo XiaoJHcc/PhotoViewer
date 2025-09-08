@@ -16,6 +16,7 @@ public class ImageFile : ReactiveObject
     private bool _isExifLoading;
     private bool _isExifLoaded;
     private bool _isThumbnailLoading;
+    private bool _isInCache;
         
     public IStorageFile File { get; }
     public string Name => File.Name;
@@ -47,6 +48,15 @@ public class ImageFile : ReactiveObject
     {
         get => _isCurrent;
         set => this.RaiseAndSetIfChanged(ref _isCurrent, value);
+    }
+
+    /// <summary>
+    /// 图片是否在缓存中
+    /// </summary>
+    public bool IsInCache
+    {
+        get => _isInCache;
+        set => this.RaiseAndSetIfChanged(ref _isInCache, value);
     }
 
     /// <summary>
@@ -98,6 +108,26 @@ public class ImageFile : ReactiveObject
     public ImageFile(IStorageFile file)
     {
         File = file;
+        
+        // 延迟初始化缓存状态，避免在静态类还未完全初始化时调用
+        Dispatcher.UIThread.Post(() => UpdateCacheStatus());
+    }
+
+    /// <summary>
+    /// 更新缓存状态
+    /// </summary>
+    public void UpdateCacheStatus()
+    {
+        try
+        {
+            var filePath = File.Path.LocalPath;
+            IsInCache = BitmapLoader.IsInCache(filePath);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to update cache status for {Name}: {ex.Message}");
+            IsInCache = false;
+        }
     }
         
     public async Task LoadThumbnailAsync()

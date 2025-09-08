@@ -10,28 +10,31 @@
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
              x:Class="PhotoViewer.Views.ThumbnailView"
              x:DataType="vm:FolderViewModel">
-    
+
     <UserControl.Resources>
         <!-- 布尔到边框颜色转换器 -->
-        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter"/>
-        
+        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
+
         <!-- 文件大小转换器 -->
-        <local:FileSizeConverter x:Key="FileSizeConverter"/>
-        
+        <local:FileSizeConverter x:Key="FileSizeConverter" />
+
         <!-- 拍摄日期格式转换器 -->
-        <local:PhotoDateConverter x:Key="PhotoDateConverter"/>
+        <local:PhotoDateConverter x:Key="PhotoDateConverter" />
+
+        <!-- 缓存状态到边框颜色转换器 -->
+        <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
     </UserControl.Resources>
-    
+
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        
+
         <!-- 排序工具栏 -->
-        <StackPanel Grid.Row="0" 
-                    Spacing="10" 
-                    Margin="5" 
+        <StackPanel Grid.Row="0"
+                    Spacing="10"
+                    Margin="5"
                     HorizontalAlignment="Center"
                     Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
             <ComboBox Name="SortByComboBox"
@@ -41,7 +44,7 @@
                       Width="100">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
-                        <TextBlock Text="{Binding DisplayName}"/>
+                        <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
@@ -52,109 +55,117 @@
                       Width="100">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
-                        <TextBlock Text="{Binding DisplayName}"/>
+                        <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
         </StackPanel>
-        
+
         <!-- 缩略图列表 -->
-        <ScrollViewer Grid.Row="1" 
+        <ScrollViewer Grid.Row="1"
                       Name="ThumbnailScrollViewer"
                       HorizontalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                       VerticalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, ConverterParameter=Reverse}">
             <i:Interaction.Behaviors>
-                <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}"/>
+                <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
             </i:Interaction.Behaviors>
-            
+
             <ItemsControl Name="ThumbnailItemsControl"
                           ItemsSource="{Binding Main.FolderVM.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
                         <StackPanel Spacing="10"
-                                   HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
-                                   Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}"/>
+                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
+                                    Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
-                
+
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Button Command="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).SelectImageCommand}"
-                                CommandParameter="{Binding}"
-                                Background="Transparent"
-                                BorderThickness="0"
-                                Margin="0"
-                                Padding="0"
-                                HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
-                            <Border BorderThickness="2" 
+                        <Button
+                            Command="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).SelectImageCommand}"
+                            CommandParameter="{Binding}"
+                            Background="Transparent"
+                            BorderThickness="0"
+                            Margin="0"
+                            Padding="0"
+                            CornerRadius="8"
+                            HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
+
+                            <!-- 主要边框（选中状态） -->
+                            <Border BorderThickness="2"
                                     BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
-                                    CornerRadius="4"
+                                    CornerRadius="7"
                                     Margin="0"
-                                    Padding="5"
+                                    Padding="0"
                                     Width="90"
                                     Height="140"
-                                    Background="#555555">
-                                <StackPanel Orientation="Vertical" Spacing="5">
+                                    Background="#444">
+                                
+                                <StackPanel Orientation="Vertical" Margin="4" Spacing="4">
                                     <!-- 缩略图容器 -->
-                                    <Border Width="80" 
-                                            Height="80" 
+                                    <Border Width="80"
+                                            Height="80"
                                             Background="#333333"
-                                            CornerRadius="3"
+                                            CornerRadius="4"
                                             BorderThickness="1"
-                                            BorderBrush="#505050">
+                                            BorderBrush="{Binding IsInCache, Converter={StaticResource CachedBorderConverter}}">
                                         <Grid>
                                             <!-- 缩略图 -->
-                                            <Image Source="{Binding Thumbnail}" 
+                                            <Image Source="{Binding Thumbnail}"
                                                    Stretch="Uniform"
                                                    HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"
-                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}"/>
-                                            
+                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}" />
+
                                             <!-- 加载指示器 -->
                                             <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
-                                                        IsIndeterminate="True"
-                                                        Width="60"
-                                                        Height="4"
-                                                        HorizontalAlignment="Center"
-                                                        VerticalAlignment="Center"/>
-                                            
+                                                         IsIndeterminate="True"
+                                                         Width="60"
+                                                         Height="4"
+                                                         HorizontalAlignment="Center"
+                                                         VerticalAlignment="Center" />
+
                                             <!-- 无缩略图占位符 -->
                                             <TextBlock Text="📷"
-                                                      FontSize="24"
-                                                      HorizontalAlignment="Center"
-                                                      VerticalAlignment="Center"
-                                                      Foreground="#666666">
+                                                       FontSize="24"
+                                                       HorizontalAlignment="Center"
+                                                       VerticalAlignment="Center"
+                                                       Foreground="#666666">
                                                 <TextBlock.IsVisible>
                                                     <MultiBinding Converter="{x:Static BoolConverters.And}">
-                                                        <Binding Path="!IsThumbnailLoading"/>
-                                                        <Binding Path="Thumbnail" Converter="{x:Static ObjectConverters.IsNull}"/>
+                                                        <Binding Path="!IsThumbnailLoading" />
+                                                        <Binding Path="Thumbnail"
+                                                                 Converter="{x:Static ObjectConverters.IsNull}" />
                                                     </MultiBinding>
                                                 </TextBlock.IsVisible>
                                             </TextBlock>
                                         </Grid>
                                     </Border>
-                                    
+
                                     <!-- 文件信息 -->
                                     <StackPanel Orientation="Vertical" Spacing="2">
-                                        <TextBlock Text="{Binding Name}" 
+                                        <TextBlock Text="{Binding Name}"
                                                    TextWrapping="NoWrap"
                                                    TextTrimming="CharacterEllipsis"
                                                    Foreground="#EEEEEE"
                                                    FontSize="10"
                                                    FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"
-                                                   MaxWidth="110"/>
+                                                   MaxWidth="110" />
                                         
-                                        <TextBlock Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" 
-                                                   FontSize="9"
-                                                   Foreground="#AAAAAA"
-                                                   HorizontalAlignment="Center"/>
-                                        
-                                        <TextBlock Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}" 
-                                                   FontSize="9"
-                                                   Foreground="#AAAAAA"
-                                                   HorizontalAlignment="Center"
-                                                   ToolTip.Tip="{Binding PhotoDate}"/>
+                                        <TextBlock
+                                            Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}"
+                                            FontSize="9"
+                                            Foreground="#AAAAAA"
+                                            HorizontalAlignment="Center" />
+
+                                        <TextBlock
+                                            Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}"
+                                            FontSize="9"
+                                            Foreground="#AAAAAA"
+                                            HorizontalAlignment="Center"
+                                            ToolTip.Tip="{Binding PhotoDate}" />
                                     </StackPanel>
                                 </StackPanel>
                             </Border>
