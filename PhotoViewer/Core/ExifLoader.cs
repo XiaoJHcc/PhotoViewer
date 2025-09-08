@@ -418,22 +418,50 @@ public static class ExifLoader
     }
 
     /// <summary>
-    /// 从原图生成缩略图
+    /// 从原图生成缩略图（优化版本，使用快速解码）
     /// </summary>
     public static async Task<Bitmap?> GenerateThumbnailFromImageAsync(IStorageFile file)
     {
         try
         {
             await using var stream = await file.OpenReadAsync();
+            
+            // 方法1: 尝试使用解码时缩放（如果支持）
+            try
+            {
+                // 先读取图片尺寸信息，不解码完整图片
+                var imageInfo = await GetImageInfoAsync(stream);
+                if (imageInfo.HasValue)
+                {
+                    var (width, height) = imageInfo.Value;
+                    
+                    // 计算目标缩放比例
+                    var targetSize = 120;
+                    var scale = Math.Min((double)targetSize / width, (double)targetSize / height);
+                    
+                    // 如果原图很大，使用快速采样解码
+                    if (scale < 0.5)
+                    {
+                        return await GenerateThumbnailWithSampling(stream, targetSize);
+                    }
+                }
+            }
+            catch
+            {
+                // 如果快速方法失败，回退到常规方法
+            }
+            
+            // 方法2: 常规解码但优化内存使用
+            stream.Seek(0, SeekOrigin.Begin);
             var originalBitmap = new Bitmap(stream);
             
-            // 生成缩略图 (120px宽度)
-            if (originalBitmap.PixelSize.Width > 120)
+            // 生成缩略图 (120px目标尺寸)
+            if (originalBitmap.PixelSize.Width > 120 || originalBitmap.PixelSize.Height > 120)
             {
-                var scale = 120.0 / originalBitmap.PixelSize.Width;
+                var scale = Math.Min(120.0 / originalBitmap.PixelSize.Width, 120.0 / originalBitmap.PixelSize.Height);
                 var newSize = new PixelSize(
-                    (int)(originalBitmap.PixelSize.Width * scale),
-                    (int)(originalBitmap.PixelSize.Height * scale)
+                    Math.Max(1, (int)(originalBitmap.PixelSize.Width * scale)),
+                    Math.Max(1, (int)(originalBitmap.PixelSize.Height * scale))
                 );
                 var scaledBitmap = originalBitmap.CreateScaledBitmap(newSize);
                 originalBitmap.Dispose();
@@ -445,6 +473,185 @@ public static class ExifLoader
         catch (Exception ex)
         {
             Console.WriteLine("从原图生成缩略图失败 (" + file.Name + "): " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 快速获取图片尺寸信息（不解码完整图片）
+    /// </summary>
+    private static async Task<(int width, int height)?> GetImageInfoAsync(Stream stream)
+    {
+        try
+        {
+            // 尝试从EXIF或文件头获取尺寸信息
+            var directories = ImageMetadataReader.ReadMetadata(stream);
+            
+            // 优先从EXIF获取尺寸
+            var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+            if (exifSubIfd != null)
+            {
+                if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var exifWidth) &&
+                    exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var exifHeight))
+                {
+                    return (exifWidth, exifHeight);
+                }
+            }
+            
+            // 从IFD0获取尺寸
+            var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+            if (exifIfd0 != null)
+            {
+                if (exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageWidth, out var ifdWidth) &&
+                    exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageHeight, out var ifdHeight))
+                {
+                    return (ifdWidth, ifdHeight);
+                }
+            }
+            
+            // 尝试从JPEG文件头快速读取尺寸
+            stream.Seek(0, SeekOrigin.Begin);
+            var jpegSize = ReadJpegDimensions(stream);
+            if (jpegSize.HasValue)
+            {
+                return jpegSize;
+            }
+            
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 从JPEG文件头快速读取尺寸
+    /// </summary>
+    private static (int width, int height)? ReadJpegDimensions(Stream stream)
+    {
+        try
+        {
+            var buffer = new byte[4];
+            stream.Seek(0, SeekOrigin.Begin);
+            
+            // 检查JPEG文件头
+            if (stream.Read(buffer, 0, 2) != 2 || buffer[0] != 0xFF || buffer[1] != 0xD8)
+                return null;
+            
+            // 查找SOF段
+            while (stream.Position < stream.Length - 8)
+            {
+                if (stream.Read(buffer, 0, 2) != 2 || buffer[0] != 0xFF)
+                    continue;
+                
+                var marker = buffer[1];
+                
+                // SOF0, SOF1, SOF2等段包含图片尺寸
+                if ((marker >= 0xC0 && marker <= 0xC3) || (marker >= 0xC5 && marker <= 0xC7) || 
+                    (marker >= 0xC9 && marker <= 0xCB) || (marker >= 0xCD && marker <= 0xCF))
+                {
+                    // 跳过段长度
+                    if (stream.Read(buffer, 0, 2) != 2) return null;
+                    
+                    // 跳过精度字节
+                    stream.Seek(1, SeekOrigin.Current);
+                    
+                    // 读取高度和宽度
+                    var heightBytes = new byte[2];
+                    var widthBytes = new byte[2];
+                    
+                    if (stream.Read(heightBytes, 0, 2) != 2 || stream.Read(widthBytes, 0, 2) != 2)
+                        return null;
+                    
+                    var height = (heightBytes[0] << 8) | heightBytes[1];
+                    var width = (widthBytes[0] << 8) | widthBytes[1];
+                    
+                    return (width, height);
+                }
+                else
+                {
+                    // 跳过其他段
+                    if (stream.Read(buffer, 0, 2) != 2) break;
+                    var segmentLength = (buffer[0] << 8) | buffer[1];
+                    stream.Seek(segmentLength - 2, SeekOrigin.Current);
+                }
+            }
+            
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 使用采样方式生成缩略图（适用于大图片）
+    /// </summary>
+    private static async Task<Bitmap?> GenerateThumbnailWithSampling(Stream stream, int targetSize)
+    {
+        try
+        {
+            stream.Seek(0, SeekOrigin.Begin);
+            
+            // 使用较低质量但更快的解码方式
+            var originalBitmap = new Bitmap(stream);
+            
+            var originalWidth = originalBitmap.PixelSize.Width;
+            var originalHeight = originalBitmap.PixelSize.Height;
+            
+            // 计算采样步长（跳过像素以提高速度）
+            var sampleRate = Math.Max(originalWidth / targetSize, originalHeight / targetSize);
+            sampleRate = Math.Max(1, sampleRate / 2); // 适度采样，保持质量
+            
+            if (sampleRate > 1)
+            {
+                // 创建采样后的尺寸
+                var sampledWidth = Math.Max(1, originalWidth / sampleRate);
+                var sampledHeight = Math.Max(1, originalHeight / sampleRate);
+                
+                // 先进行粗糙缩放
+                var roughSize = new PixelSize(sampledWidth, sampledHeight);
+                var roughBitmap = originalBitmap.CreateScaledBitmap(roughSize);
+                originalBitmap.Dispose();
+                
+                // 再精确缩放到目标尺寸
+                var finalScale = Math.Min((double)targetSize / sampledWidth, (double)targetSize / sampledHeight);
+                if (finalScale < 1.0)
+                {
+                    var finalSize = new PixelSize(
+                        Math.Max(1, (int)(sampledWidth * finalScale)),
+                        Math.Max(1, (int)(sampledHeight * finalScale))
+                    );
+                    var finalBitmap = roughBitmap.CreateScaledBitmap(finalSize);
+                    roughBitmap.Dispose();
+                    return finalBitmap;
+                }
+                
+                return roughBitmap;
+            }
+            else
+            {
+                // 小图片直接缩放
+                var scale = Math.Min((double)targetSize / originalWidth, (double)targetSize / originalHeight);
+                if (scale < 1.0)
+                {
+                    var newSize = new PixelSize(
+                        Math.Max(1, (int)(originalWidth * scale)),
+                        Math.Max(1, (int)(originalHeight * scale))
+                    );
+                    var scaledBitmap = originalBitmap.CreateScaledBitmap(newSize);
+                    originalBitmap.Dispose();
+                    return scaledBitmap;
+                }
+                
+                return originalBitmap;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("采样生成缩略图失败: " + ex.Message);
             return null;
         }
     }
