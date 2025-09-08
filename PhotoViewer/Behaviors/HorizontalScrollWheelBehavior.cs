@@ -1,10 +1,9 @@
 using System;
-using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Xaml.Interactivity;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Behaviors;
 
 public class HorizontalScrollWheelBehavior : Behavior<ScrollViewer>
 {
