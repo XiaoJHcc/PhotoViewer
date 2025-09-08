@@ -88,66 +88,91 @@ public partial class ThumbnailView : UserControl
         try
         {
             var scrollViewer = ThumbnailScrollViewer;
-            if (scrollViewer == null) return;
+            var itemsControl = ThumbnailItemsControl;
+            if (scrollViewer == null || itemsControl == null) return;
 
-            // 计算可见区域
             var isVertical = ViewModel.IsVerticalLayout;
-            double startPos, endPos;
-            // 减少缓冲区大小，避免加载过多不必要的缩略图
-            double bufferSize = 100;
+            var viewport = scrollViewer.Viewport;
+            var offset = scrollViewer.Offset;
             
-            if (isVertical)
-            {
-                startPos = scrollViewer.Offset.Y;
-                endPos = startPos + scrollViewer.Viewport.Height;
-            }
-            else
-            {
-                startPos = scrollViewer.Offset.X;
-                endPos = startPos + scrollViewer.Viewport.Width;
-            }
-
+            // 缓冲区大小，用于预加载临近的缩略图
+            double bufferSize = 200;
+            
             var visibleFiles = new List<Core.ImageFile>();
-
-            // 遍历所有文件，检查可见性
-            for (int i = 0; i < ViewModel.FilteredFiles.Count; i++)
+            var itemCount = ViewModel.FilteredFiles.Count;
+            
+            // 简化可见性检测：基于项目索引估算位置
+            var estimatedItemSize = isVertical ? 150.0 : 100.0; // 估算的项目尺寸
+            var viewportSize = isVertical ? viewport.Height : viewport.Width;
+            var scrollPosition = isVertical ? offset.Y : offset.X;
+            
+            // 计算可见范围的索引
+            var startIndex = Math.Max(0, (int)((scrollPosition - bufferSize) / estimatedItemSize));
+            var endIndex = Math.Min(itemCount - 1, (int)((scrollPosition + viewportSize + bufferSize) / estimatedItemSize));
+            
+            // 扩展范围以确保覆盖
+            startIndex = Math.Max(0, startIndex - 2);
+            endIndex = Math.Min(itemCount - 1, endIndex + 2);
+            
+            for (int i = startIndex; i <= endIndex; i++)
             {
-                var item = ViewModel.FilteredFiles[i];
-
-                // 获取该项在列表中的位置
-                var container = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(i) as Control;
-                if (container == null) continue;
-
-                // 计算该项的实际位置
-                var position = container.TranslatePoint(new Point(), ThumbnailScrollViewer) ?? new Point();
-                double itemStart, itemEnd;
-                
-                if (isVertical)
+                if (i < itemCount)
                 {
-                    itemStart = position.Y;
-                    itemEnd = itemStart + container.Bounds.Height;
-                }
-                else
-                {
-                    itemStart = position.X;
-                    itemEnd = itemStart + container.Bounds.Width;
-                }
+                    var item = ViewModel.FilteredFiles[i];
+                    
+                    // 尝试获取实际容器进行精确检测
+                    var container = itemsControl.ItemContainerGenerator.ContainerFromIndex(i) as Control;
+                    if (container != null && container.IsMeasureValid && container.IsArrangeValid)
+                    {
+                        try
+                        {
+                            var containerPosition = container.TranslatePoint(new Point(0, 0), itemsControl);
+                            if (containerPosition.HasValue)
+                            {
+                                var containerBounds = container.Bounds;
+                                double itemStart, itemEnd;
+                                double viewportStart, viewportEnd;
+                                
+                                if (isVertical)
+                                {
+                                    itemStart = containerPosition.Value.Y;
+                                    itemEnd = itemStart + containerBounds.Height;
+                                    viewportStart = offset.Y;
+                                    viewportEnd = offset.Y + viewport.Height;
+                                }
+                                else
+                                {
+                                    itemStart = containerPosition.Value.X;
+                                    itemEnd = itemStart + containerBounds.Width;
+                                    viewportStart = offset.X;
+                                    viewportEnd = offset.X + viewport.Width;
+                                }
 
-                // 检查是否在可见区域内（包含小范围缓冲区）
-                if (itemEnd >= startPos - bufferSize && itemStart <= endPos + bufferSize)
-                {
+                                // 精确的可见性检测
+                                if (itemEnd >= viewportStart - bufferSize && itemStart <= viewportEnd + bufferSize)
+                                {
+                                    visibleFiles.Add(item);
+                                }
+                                continue;
+                            }
+                        }
+                        catch
+                        {
+                            // 如果精确检测失败，回退到估算方式
+                        }
+                    }
+                    
+                    // 回退到估算方式
                     visibleFiles.Add(item);
                 }
             }
-            
-            Console.WriteLine($"可见缩略图数量: {visibleFiles.Count}");
             
             // 使用FolderViewModel的批量加载方法
             ViewModel.LoadVisibleThumbnails(visibleFiles);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"加载可见缩略图失败: {ex.Message}");
+            Console.WriteLine("加载可见缩略图失败: " + ex.Message);
         }
     }
 
@@ -176,7 +201,7 @@ public partial class ThumbnailView : UserControl
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"滚动到当前图片失败: {ex.Message}");
+                Console.WriteLine("滚动到当前图片失败: " + ex.Message);
             }
         });
     }
@@ -211,7 +236,7 @@ public partial class ThumbnailView : UserControl
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"滚动到索引 {index} 失败: {ex.Message}");
+            Console.WriteLine("滚动到索引 " + index + " 失败: " + ex.Message);
         }
     }
     
@@ -297,11 +322,10 @@ public partial class ThumbnailView : UserControl
         catch (OperationCanceledException)
         {
             // 动画被取消，不需要处理
-            Console.WriteLine("滚动动画被取消");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"滚动动画失败: {ex.Message}");
+            Console.WriteLine("滚动动画失败: " + ex.Message);
             // 如果动画失败，直接设置位置
             if (!cancellationToken.IsCancellationRequested)
             {
@@ -344,7 +368,7 @@ public partial class ThumbnailView : UserControl
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"等待动画取消时发生错误: {ex.Message}");
+                    Console.WriteLine("等待动画取消时发生错误: " + ex.Message);
                 }
             }
             
@@ -363,10 +387,22 @@ public partial class ThumbnailView : UserControl
         try
         {
             var scrollViewer = ThumbnailScrollViewer;
-            if (scrollViewer == null) return;
+            var itemsControl = ThumbnailItemsControl;
+            if (scrollViewer == null || itemsControl == null) return;
+
+            // 确保容器已经测量和排列
+            if (!container.IsMeasureValid || !container.IsArrangeValid)
+            {
+                // 等待布局完成
+                await Task.Delay(50);
+                if (!container.IsMeasureValid || !container.IsArrangeValid)
+                {
+                    return;
+                }
+            }
 
             // 获取容器相对于ItemsControl的位置
-            var containerPosition = container.TranslatePoint(new Point(), ThumbnailItemsControl);
+            var containerPosition = container.TranslatePoint(new Point(0, 0), itemsControl);
             if (containerPosition == null) return;
 
             var isVertical = ViewModel?.IsVerticalLayout ?? false;
@@ -404,7 +440,7 @@ public partial class ThumbnailView : UserControl
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"滚动到容器失败: {ex.Message}");
+            Console.WriteLine("滚动到容器失败: " + ex.Message);
         }
     }
     
@@ -497,4 +533,3 @@ public class PhotoDateConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
-

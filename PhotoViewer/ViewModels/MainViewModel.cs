@@ -25,7 +25,6 @@ public class MainViewModel : ViewModelBase
             this.RaiseAndSetIfChanged(ref _currentFile, value);
             if (value != null) 
             {
-                Console.WriteLine("CurrentFile => " + value.Name);
                 value.IsCurrent = true;
                 FolderVM.PreloadNearbyFiles();
             }
