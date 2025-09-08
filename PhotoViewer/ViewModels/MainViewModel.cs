@@ -140,7 +140,11 @@ public class MainViewModel : ViewModelBase
         get => _isScreenLandscape;
         set
         {
-            if (this.RaiseAndSetIfChanged(ref _isScreenLandscape, value))
+            var oldValue = _isScreenLandscape;
+            this.RaiseAndSetIfChanged(ref _isScreenLandscape, value);
+            
+            // 只有当值真正发生变化时才更新布局
+            if (oldValue != value)
             {
                 UpdateLayoutFromSettings();
             }
@@ -177,6 +181,7 @@ public class MainViewModel : ViewModelBase
     {
         bool newIsLandscape = width > height;
         
+        // 直接比较值是否变化，而不是依赖 RaiseAndSetIfChanged 的返回值
         if (IsScreenLandscape != newIsLandscape)
         {
             IsScreenLandscape = newIsLandscape;

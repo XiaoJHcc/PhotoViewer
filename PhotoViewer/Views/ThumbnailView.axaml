@@ -18,8 +18,8 @@
         <!-- 文件大小转换器 -->
         <local:FileSizeConverter x:Key="FileSizeConverter"/>
         
-        <!-- 日期格式转换器 -->
-        <local:DateTimeConverter x:Key="DateTimeConverter"/>
+        <!-- 拍摄日期格式转换器 -->
+        <local:PhotoDateConverter x:Key="PhotoDateConverter"/>
     </UserControl.Resources>
     
     <Grid>
@@ -102,10 +102,36 @@
                                             CornerRadius="3"
                                             BorderThickness="1"
                                             BorderBrush="#505050">
-                                        <Image Source="{Binding Thumbnail}" 
-                                               Stretch="Uniform"
-                                               HorizontalAlignment="Center"
-                                               VerticalAlignment="Center"/>
+                                        <Grid>
+                                            <!-- 缩略图 -->
+                                            <Image Source="{Binding Thumbnail}" 
+                                                   Stretch="Uniform"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}"/>
+                                            
+                                            <!-- 加载指示器 -->
+                                            <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
+                                                        IsIndeterminate="True"
+                                                        Width="60"
+                                                        Height="4"
+                                                        HorizontalAlignment="Center"
+                                                        VerticalAlignment="Center"/>
+                                            
+                                            <!-- 无缩略图占位符 -->
+                                            <TextBlock Text="📷"
+                                                      FontSize="24"
+                                                      HorizontalAlignment="Center"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="#666666">
+                                                <TextBlock.IsVisible>
+                                                    <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                        <Binding Path="!IsThumbnailLoading"/>
+                                                        <Binding Path="Thumbnail" Converter="{x:Static ObjectConverters.IsNull}"/>
+                                                    </MultiBinding>
+                                                </TextBlock.IsVisible>
+                                            </TextBlock>
+                                        </Grid>
                                     </Border>
                                     
                                     <!-- 文件信息 -->
@@ -124,10 +150,11 @@
                                                    Foreground="#AAAAAA"
                                                    HorizontalAlignment="Center"/>
                                         
-                                        <TextBlock Text="{Binding ModifiedDate, Converter={StaticResource DateTimeConverter}}" 
+                                        <TextBlock Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}" 
                                                    FontSize="9"
                                                    Foreground="#AAAAAA"
-                                                   HorizontalAlignment="Center"/>
+                                                   HorizontalAlignment="Center"
+                                                   ToolTip.Tip="{Binding PhotoDate}"/>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>

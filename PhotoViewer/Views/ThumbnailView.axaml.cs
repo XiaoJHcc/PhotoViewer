@@ -2,6 +2,7 @@
 using Avalonia.Threading;
 using ReactiveUI;
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using System.Globalization;
 using System.Linq;
@@ -37,8 +38,8 @@ public partial class ThumbnailView : UserControl
         // 初始化滚动动画
         InitializeScrollAnimation();
 
-        // 设置滚动计时器（300ms延迟）
-        _scrollTimer.Interval = TimeSpan.FromMilliseconds(300);
+        // 设置滚动计时器（减少延迟，提高响应性）
+        _scrollTimer.Interval = TimeSpan.FromMilliseconds(200);
         _scrollTimer.Tick += async (s, e) =>
         {
             _scrollTimer.Stop();
@@ -55,6 +56,13 @@ public partial class ThumbnailView : UserControl
         // 监听DataContext变化
         this.WhenAnyValue(x => x.DataContext)
             .Subscribe(OnDataContextChanged);
+            
+        // 组件加载完成后初始加载可见缩略图
+        this.Loaded += async (s, e) =>
+        {
+            await Task.Delay(100); // 等待布局完成
+            await LoadVisibleThumbnailsAsync();
+        };
     }
     
     private void OnDataContextChanged(object? dataContext)
@@ -83,30 +91,59 @@ public partial class ThumbnailView : UserControl
             if (scrollViewer == null) return;
 
             // 计算可见区域
-            double startX = scrollViewer.Offset.X;
-            double endX = startX + scrollViewer.Viewport.Width;
-
-            // 加载可见区域及附近区域的缩略图
-            for (int i = 0; i < ViewModel.Main.FolderVM.FilteredFiles.Count; i++)
+            var isVertical = ViewModel.IsVerticalLayout;
+            double startPos, endPos;
+            // 减少缓冲区大小，避免加载过多不必要的缩略图
+            double bufferSize = 100;
+            
+            if (isVertical)
             {
-                var item = ViewModel.Main.FolderVM.FilteredFiles[i];
-                if (item.Thumbnail != null) continue; // 已经加载过
+                startPos = scrollViewer.Offset.Y;
+                endPos = startPos + scrollViewer.Viewport.Height;
+            }
+            else
+            {
+                startPos = scrollViewer.Offset.X;
+                endPos = startPos + scrollViewer.Viewport.Width;
+            }
+
+            var visibleFiles = new List<Core.ImageFile>();
+
+            // 遍历所有文件，检查可见性
+            for (int i = 0; i < ViewModel.FilteredFiles.Count; i++)
+            {
+                var item = ViewModel.FilteredFiles[i];
 
                 // 获取该项在列表中的位置
                 var container = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(i) as Control;
                 if (container == null) continue;
 
-                // 计算该项的位置
-                var position = container.TranslatePoint(new Point(), ThumbnailItemsControl) ?? new Point();
-                double itemStartX = position.X;
-                double itemEndX = itemStartX + container.Bounds.Width;
-
-                // 检查是否在可见区域附近（左右各加200像素缓冲区）
-                if (itemEndX >= startX - 200 && itemStartX <= endX + 200)
+                // 计算该项的实际位置
+                var position = container.TranslatePoint(new Point(), ThumbnailScrollViewer) ?? new Point();
+                double itemStart, itemEnd;
+                
+                if (isVertical)
                 {
-                    await item.LoadThumbnailAsync();
+                    itemStart = position.Y;
+                    itemEnd = itemStart + container.Bounds.Height;
+                }
+                else
+                {
+                    itemStart = position.X;
+                    itemEnd = itemStart + container.Bounds.Width;
+                }
+
+                // 检查是否在可见区域内（包含小范围缓冲区）
+                if (itemEnd >= startPos - bufferSize && itemStart <= endPos + bufferSize)
+                {
+                    visibleFiles.Add(item);
                 }
             }
+            
+            Console.WriteLine($"可见缩略图数量: {visibleFiles.Count}");
+            
+            // 使用FolderViewModel的批量加载方法
+            ViewModel.LoadVisibleThumbnails(visibleFiles);
         }
         catch (Exception ex)
         {
@@ -121,16 +158,20 @@ public partial class ThumbnailView : UserControl
     {
         if (ViewModel?.Main.CurrentFile == null) return;
 
-        await Dispatcher.UIThread.InvokeAsync(() =>
+        await Dispatcher.UIThread.InvokeAsync(async () =>
         {
             try
             {
                 var currentFile = ViewModel.Main.CurrentFile;
-                var index = ViewModel.Main.FolderVM.FilteredFiles.IndexOf(currentFile);
+                var index = ViewModel.FilteredFiles.IndexOf(currentFile);
                 
                 if (index >= 0)
                 {
                     ScrollToIndex(index);
+                    
+                    // 滚动完成后加载可见区域缩略图
+                    await Task.Delay(100);
+                    await LoadVisibleThumbnailsAsync();
                 }
             }
             catch (Exception ex)
@@ -248,6 +289,10 @@ public partial class ThumbnailView : UserControl
             // 执行动画并保存任务引用
             _currentAnimationTask = _scrollAnimation.RunAsync(scrollViewer, cancellationToken);
             await _currentAnimationTask;
+            
+            // 动画完成后加载可见区域缩略图
+            await Task.Delay(50, cancellationToken);
+            await LoadVisibleThumbnailsAsync();
         }
         catch (OperationCanceledException)
         {
@@ -261,6 +306,8 @@ public partial class ThumbnailView : UserControl
             if (!cancellationToken.IsCancellationRequested)
             {
                 scrollViewer.Offset = targetOffset;
+                // 设置位置后加载可见区域缩略图
+                await LoadVisibleThumbnailsAsync();
             }
         }
         finally
@@ -431,10 +478,10 @@ public class FileSizeConverter : IValueConverter
     }
 }
 
-// 日期格式转换器
-public class DateTimeConverter : IValueConverter
+// 拍摄日期格式转换器
+public class PhotoDateConverter : IValueConverter
 {
-    public static readonly DateTimeConverter Instance = new();
+    public static readonly PhotoDateConverter Instance = new();
         
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
