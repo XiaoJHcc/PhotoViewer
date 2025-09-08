@@ -5,7 +5,7 @@
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:i="clr-namespace:Avalonia.Xaml.Interactivity;assembly=Avalonia.Xaml.Interactivity"
-             xmlns:core="clr-namespace:PhotoViewer.Core"
+             xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
              x:Class="PhotoViewer.Views.ThumbnailView"
@@ -64,7 +64,7 @@
                       HorizontalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                       VerticalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, ConverterParameter=Reverse}">
             <i:Interaction.Behaviors>
-                <core:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}"/>
+                <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}"/>
             </i:Interaction.Behaviors>
             
             <ItemsControl Name="ThumbnailItemsControl"

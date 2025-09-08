@@ -11,9 +11,15 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
-using ComboBoxItem = PhotoViewer.Core.ComboBoxItem;
 
 namespace PhotoViewer.ViewModels;
+
+// 下拉选框类
+public class SortOption
+{
+    public string DisplayName { get; set; } // 中文显示
+    public object Value { get; set; }       // 实际值
+}
 
 // 排序方式
 public enum SortMode { Name, Date, Star, Size }
@@ -46,14 +52,14 @@ public class FolderViewModel : ReactiveObject
     // 滚动到当前图片的事件
     public event Action? ScrollToCurrentRequested;
     
-    public List<ComboBoxItem> SortModes { get; } =
+    public List<SortOption> SortModes { get; } =
     [
         new() { DisplayName = "名称", Value = SortMode.Name },
         new() { DisplayName = "修改日期", Value = SortMode.Date },
         new() { DisplayName = "文件大小", Value = SortMode.Size }
     ];
 
-    public List<ComboBoxItem> SortOrders { get; } =
+    public List<SortOption> SortOrders { get; } =
     [
         new() { DisplayName = "升序 ↑", Value = SortOrder.Ascending },
         new() { DisplayName = "降序 ↓", Value = SortOrder.Descending }
@@ -103,157 +109,6 @@ public class FolderViewModel : ReactiveObject
     {
         ScrollToCurrentRequested?.Invoke();
     }
-    
-    ////////////////
-    /// 缩略图异步加载
-    ////////////////
-    
-    #region ThumbnailLoading
-    
-    /// <summary>
-    /// 启动缩略图加载后台任务
-    /// </summary>
-    private void StartThumbnailLoadingTask()
-    {
-        _isThumbnailLoadingActive = true;
-        _ = Task.Run(async () =>
-        {
-            while (_isThumbnailLoadingActive && !_thumbnailCancellationTokenSource.Token.IsCancellationRequested)
-            {
-                try
-                {
-                    if (_thumbnailLoadQueue.TryDequeue(out var imageFile))
-                    {
-                        await _thumbnailLoadSemaphore.WaitAsync(_thumbnailCancellationTokenSource.Token);
-                        
-                        try
-                        {
-                            // 检查是否已经加载过缩略图
-                            if (imageFile.Thumbnail == null && !imageFile.IsThumbnailLoading)
-                            {
-                                await imageFile.LoadThumbnailAsync();
-                            }
-                        }
-                        finally
-                        {
-                            _thumbnailLoadSemaphore.Release();
-                        }
-                    }
-                    else
-                    {
-                        // 队列为空时等待一段时间
-                        await Task.Delay(50, _thumbnailCancellationTokenSource.Token);
-                    }
-                }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("缩略图加载任务异常: " + ex.Message);
-                }
-            }
-        });
-    }
-    
-    /// <summary>
-    /// 将图片文件加入缩略图加载队列
-    /// </summary>
-    /// <param name="imageFile">要加载缩略图的图片文件</param>
-    /// <param name="priority">是否优先加载</param>
-    public void QueueThumbnailLoad(ImageFile imageFile, bool priority = false)
-    {
-        if (imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
-        
-        if (priority)
-        {
-            // 优先加载：清空队列并重新排序
-            var tempQueue = new List<ImageFile> { imageFile };
-            while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
-            {
-                if (existingFile != imageFile && existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
-                {
-                    tempQueue.Add(existingFile);
-                }
-            }
-            
-            foreach (var file in tempQueue)
-            {
-                _thumbnailLoadQueue.Enqueue(file);
-            }
-        }
-        else
-        {
-            _thumbnailLoadQueue.Enqueue(imageFile);
-        }
-    }
-    
-    /// <summary>
-    /// 批量加载可见区域的缩略图
-    /// </summary>
-    /// <param name="visibleFiles">可见的图片文件列表</param>
-    public void LoadVisibleThumbnails(IEnumerable<ImageFile> visibleFiles)
-    {
-        // 获取当前队列中的文件
-        var queuedFiles = new HashSet<ImageFile>();
-        var tempQueue = new List<ImageFile>();
-        
-        // 保存当前队列中未加载的文件
-        while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
-        {
-            if (existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
-            {
-                queuedFiles.Add(existingFile);
-                tempQueue.Add(existingFile);
-            }
-        }
-        
-        // 按优先级重新组织队列：可见文件优先
-        var priorityFiles = new List<ImageFile>();
-        var normalFiles = new List<ImageFile>();
-        
-        foreach (var file in visibleFiles)
-        {
-            if (file.Thumbnail == null && !file.IsThumbnailLoading)
-            {
-                priorityFiles.Add(file);
-                queuedFiles.Remove(file); // 从普通队列中移除，避免重复
-            }
-        }
-        
-        // 限制普通文件数量，避免队列过长影响滚动性能
-        var limitedNormalFiles = tempQueue.Where(f => queuedFiles.Contains(f)).Take(10).ToList();
-        
-        // 重新构建队列：优先文件在前
-        foreach (var file in priorityFiles)
-        {
-            _thumbnailLoadQueue.Enqueue(file);
-        }
-        foreach (var file in limitedNormalFiles)
-        {
-            _thumbnailLoadQueue.Enqueue(file);
-        }
-    }
-    
-    /// <summary>
-    /// 清空缩略图加载队列
-    /// </summary>
-    public void ClearThumbnailQueue()
-    {
-        while (_thumbnailLoadQueue.TryDequeue(out _)) { }
-    }
-
-    /// <summary>
-    /// 停止缩略图加载
-    /// </summary>
-    public void StopThumbnailLoading()
-    {
-        _isThumbnailLoadingActive = false;
-        _thumbnailCancellationTokenSource.Cancel();
-    }
-    
-    #endregion
     
     ////////////////
     /// 打开文件
@@ -435,8 +290,9 @@ public class FolderViewModel : ReactiveObject
     
     #endregion
     
+    
     ////////////////
-    /// 缩略图和筛选
+    /// 加载文件夹
     ////////////////
 
     #region LoadFolder
@@ -593,6 +449,158 @@ public class FolderViewModel : ReactiveObject
             // 优先加载当前图片，其次是相邻图片
             QueueThumbnailLoad(file, priority: i == index);
         }
+    }
+    
+    #endregion
+    
+    
+    ////////////////
+    /// 缩略图异步加载
+    ////////////////
+    
+    #region ThumbnailLoading
+    
+    /// <summary>
+    /// 启动缩略图加载后台任务
+    /// </summary>
+    private void StartThumbnailLoadingTask()
+    {
+        _isThumbnailLoadingActive = true;
+        _ = Task.Run(async () =>
+        {
+            while (_isThumbnailLoadingActive && !_thumbnailCancellationTokenSource.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (_thumbnailLoadQueue.TryDequeue(out var imageFile))
+                    {
+                        await _thumbnailLoadSemaphore.WaitAsync(_thumbnailCancellationTokenSource.Token);
+                        
+                        try
+                        {
+                            // 检查是否已经加载过缩略图
+                            if (imageFile.Thumbnail == null && !imageFile.IsThumbnailLoading)
+                            {
+                                await imageFile.LoadThumbnailAsync();
+                            }
+                        }
+                        finally
+                        {
+                            _thumbnailLoadSemaphore.Release();
+                        }
+                    }
+                    else
+                    {
+                        // 队列为空时等待一段时间
+                        await Task.Delay(50, _thumbnailCancellationTokenSource.Token);
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("缩略图加载任务异常: " + ex.Message);
+                }
+            }
+        });
+    }
+    
+    /// <summary>
+    /// 将图片文件加入缩略图加载队列
+    /// </summary>
+    /// <param name="imageFile">要加载缩略图的图片文件</param>
+    /// <param name="priority">是否优先加载</param>
+    public void QueueThumbnailLoad(ImageFile imageFile, bool priority = false)
+    {
+        if (imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
+        
+        if (priority)
+        {
+            // 优先加载：清空队列并重新排序
+            var tempQueue = new List<ImageFile> { imageFile };
+            while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
+            {
+                if (existingFile != imageFile && existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
+                {
+                    tempQueue.Add(existingFile);
+                }
+            }
+            
+            foreach (var file in tempQueue)
+            {
+                _thumbnailLoadQueue.Enqueue(file);
+            }
+        }
+        else
+        {
+            _thumbnailLoadQueue.Enqueue(imageFile);
+        }
+    }
+    
+    /// <summary>
+    /// 批量加载可见区域的缩略图
+    /// </summary>
+    /// <param name="visibleFiles">可见的图片文件列表</param>
+    public void LoadVisibleThumbnails(IEnumerable<ImageFile> visibleFiles)
+    {
+        // 获取当前队列中的文件
+        var queuedFiles = new HashSet<ImageFile>();
+        var tempQueue = new List<ImageFile>();
+        
+        // 保存当前队列中未加载的文件
+        while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
+        {
+            if (existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
+            {
+                queuedFiles.Add(existingFile);
+                tempQueue.Add(existingFile);
+            }
+        }
+        
+        // 按优先级重新组织队列：可见文件优先
+        var priorityFiles = new List<ImageFile>();
+        var normalFiles = new List<ImageFile>();
+        
+        foreach (var file in visibleFiles)
+        {
+            if (file.Thumbnail == null && !file.IsThumbnailLoading)
+            {
+                priorityFiles.Add(file);
+                queuedFiles.Remove(file); // 从普通队列中移除，避免重复
+            }
+        }
+        
+        // 限制普通文件数量，避免队列过长影响滚动性能
+        var limitedNormalFiles = tempQueue.Where(f => queuedFiles.Contains(f)).Take(10).ToList();
+        
+        // 重新构建队列：优先文件在前
+        foreach (var file in priorityFiles)
+        {
+            _thumbnailLoadQueue.Enqueue(file);
+        }
+        foreach (var file in limitedNormalFiles)
+        {
+            _thumbnailLoadQueue.Enqueue(file);
+        }
+    }
+    
+    /// <summary>
+    /// 清空缩略图加载队列
+    /// </summary>
+    public void ClearThumbnailQueue()
+    {
+        while (_thumbnailLoadQueue.TryDequeue(out _)) { }
+    }
+
+    /// <summary>
+    /// 停止缩略图加载
+    /// </summary>
+    public void StopThumbnailLoading()
+    {
+        _isThumbnailLoadingActive = false;
+        _thumbnailCancellationTokenSource.Cancel();
     }
     
     #endregion
