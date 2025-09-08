@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using Avalonia;
@@ -8,6 +9,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.VisualTree;
+using PhotoViewer.Core;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -111,5 +113,47 @@ public class StarColorConverter : IValueConverter
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotSupportedException();
+    }
+}
+
+// EXIF 值转换器
+public class ExifValueConverter : IMultiValueConverter
+{
+    public static readonly ExifValueConverter Instance = new();
+
+    public object? Convert(IList<object?> values, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (values.Count != 2 || values[0] is not ExifData exifData || values[1] is not string propertyName)
+            return "--";
+
+        try
+        {
+            return propertyName switch
+            {
+                "Aperture" => exifData.Aperture != null ? 
+                    PhotoViewer.Converters.ApertureConverter.Instance.Convert(exifData.Aperture, targetType, parameter, culture) : "--",
+                "ExposureTime" => exifData.ExposureTime != null ? 
+                    PhotoViewer.Converters.ExposureTimeConverter.Instance.Convert(exifData.ExposureTime, targetType, parameter, culture) : "--",
+                "Iso" => exifData.Iso?.ToString() ?? "--",
+                "EquivFocalLength" => exifData.EquivFocalLength != null ? 
+                    PhotoViewer.Converters.FocalLengthConverter.Instance.Convert(exifData.EquivFocalLength, targetType, parameter, culture) : "--",
+                "FocalLength" => exifData.FocalLength != null ? 
+                    PhotoViewer.Converters.FocalLengthConverter.Instance.Convert(exifData.FocalLength, targetType, parameter, culture) : "--",
+                "CameraMake" => exifData.CameraMake ?? "--",
+                "CameraModel" => exifData.CameraModel ?? "--",
+                "LensModel" => exifData.LensModel ?? "--",
+                "DateTimeOriginal" => exifData.DateTimeOriginal != null ? 
+                    PhotoViewer.Converters.DateTimeConverter.Instance.Convert(exifData.DateTimeOriginal, targetType, parameter, culture) : "--",
+                "ExposureBias" => exifData.ExposureBias != null ? 
+                    PhotoViewer.Converters.ExposureBiasConverter.Instance.Convert(exifData.ExposureBias, targetType, parameter, culture) : "--",
+                "WhiteBalance" => exifData.WhiteBalance ?? "--",
+                "Flash" => exifData.Flash ?? "--",
+                _ => "--"
+            };
+        }
+        catch
+        {
+            return "--";
+        }
     }
 }

@@ -20,6 +20,10 @@ public class ControlViewModel : ReactiveObject
     // 当前文件的 EXIF 数据
     public ExifData? CurrentExifData => Main.CurrentFile?.ExifData;
 
+    // 启用的 EXIF 显示项列表
+    public IEnumerable<SettingsViewModel.ExifDisplayItem> EnabledExifItems => 
+        Main.Settings.EnabledExifItems;
+
     // 评分属性
     private int _rating = 0;
     public int Rating
@@ -67,6 +71,19 @@ public class ControlViewModel : ReactiveObject
                 if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsEnabled))
                 {
                     this.RaisePropertyChanged(nameof(EnabledControls));
+                }
+            };
+        }
+
+        // 监听 EXIF 显示设置变化
+        Main.Settings.ExifDisplayItems.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledExifItems));
+        foreach (var exifItem in Main.Settings.ExifDisplayItems)
+        {
+            exifItem.PropertyChanged += (s, e) => 
+            {
+                if (e.PropertyName == nameof(SettingsViewModel.ExifDisplayItem.IsEnabled))
+                {
+                    this.RaisePropertyChanged(nameof(EnabledExifItems));
                 }
             };
         }

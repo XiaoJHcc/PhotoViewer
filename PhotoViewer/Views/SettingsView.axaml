@@ -47,15 +47,21 @@
     <TabControl Margin="5">
 
         <TabItem Header="文件">
-            <views:FileSettingsView />
+            <ScrollViewer>
+                <views:FileSettingsView />
+            </ScrollViewer>
         </TabItem>
 
         <TabItem Header="预览">
-            <views:ImageSettingsView />
+            <ScrollViewer>
+                <views:ImageSettingsView />
+            </ScrollViewer>
         </TabItem>
 
         <TabItem Header="控制">
-            <views:ControlSettingsView />
+            <ScrollViewer>
+                <views:ControlSettingsView />
+            </ScrollViewer>
         </TabItem>
 
     </TabControl>
