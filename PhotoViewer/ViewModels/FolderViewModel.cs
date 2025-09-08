@@ -151,7 +151,7 @@ public class FolderViewModel : ReactiveObject
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"缩略图加载任务异常: {ex.Message}");
+                    Console.WriteLine("缩略图加载任务异常: " + ex.Message);
                 }
             }
         });
@@ -222,21 +222,15 @@ public class FolderViewModel : ReactiveObject
             }
         }
         
-        // 添加剩余的队列文件
-        foreach (var file in tempQueue)
-        {
-            if (queuedFiles.Contains(file))
-            {
-                normalFiles.Add(file);
-            }
-        }
+        // 限制普通文件数量，避免队列过长影响滚动性能
+        var limitedNormalFiles = tempQueue.Where(f => queuedFiles.Contains(f)).Take(10).ToList();
         
         // 重新构建队列：优先文件在前
         foreach (var file in priorityFiles)
         {
             _thumbnailLoadQueue.Enqueue(file);
         }
-        foreach (var file in normalFiles)
+        foreach (var file in limitedNormalFiles)
         {
             _thumbnailLoadQueue.Enqueue(file);
         }
