@@ -163,21 +163,4 @@ public class ControlViewModel : ReactiveObject
             // TODO: 在这里可以添加保存评分到文件元数据的逻辑
         }
     }
-
-    // 处理全局快捷键输入
-    public bool HandleKeyInput(KeyGesture keyGesture)
-    {
-        var command = Main.Settings.GetCommandByHotkey(keyGesture);
-        if (command != null)
-        {
-            var commandToExecute = GetCommandByName(command);
-            if (commandToExecute?.CanExecute(null) == true)
-            {
-                commandToExecute.Execute(null);
-                return true;
-            }
-        }
-        
-        return false;
-    }
 }
