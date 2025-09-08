@@ -12,20 +12,6 @@ public class ImageViewModel : ReactiveObject
 {
     private readonly MainViewModel _main;
     public MainViewModel Main => _main;
-    
-    private string _hintText = "点击或拖入图片";
-    public string HintText
-    {
-        get => _hintText;
-        set => this.RaiseAndSetIfChanged(ref _hintText, value);
-    }
-    
-    private bool _hintTextVisible = true;
-    public bool HintTextVisible
-    {
-        get => _hintTextVisible;
-        set => this.RaiseAndSetIfChanged(ref _hintTextVisible, value);
-    }
 
     private Bitmap? _sourceBitmap;
     public Bitmap? SourceBitmap
@@ -61,17 +47,44 @@ public class ImageViewModel : ReactiveObject
     
     public async Task LoadImageAsync(IStorageFile file)
     {
-        // 使用缓存服务加载图片
-        var bitmap = await BitmapCacheService.GetBitmapAsync(file);
-        if (bitmap == null) return;
-        SourceBitmap = bitmap;
-        ImageLoaded?.Invoke(this, file);
+        try
+        {
+            // 使用缓存服务加载图片
+            var bitmap = await BitmapLoader.GetBitmapAsync(file);
+            if (bitmap == null) 
+            {
+                Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
+                return;
+            }
+            
+            // 验证位图有效性
+            if (bitmap.PixelSize.Width <= 0 || bitmap.PixelSize.Height <= 0)
+            {
+                Console.WriteLine($"Invalid bitmap dimensions: {bitmap.PixelSize.Width}x{bitmap.PixelSize.Height} for file: {file.Name}");
+                bitmap.Dispose();
+                return;
+            }
+            
+            SourceBitmap = bitmap;
+            ImageLoaded?.Invoke(this, file);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load image in ImageViewModel ({file.Name}): {ex.Message}");
+        }
     }
     
     public void ClearImage()
     {
-        SourceBitmap = null;
-        ImageLoaded?.Invoke(this, null);
+        try
+        {
+            SourceBitmap = null;
+            ImageLoaded?.Invoke(this, null);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to clear image: {ex.Message}");
+        }
     }
     
     /*
@@ -218,22 +231,38 @@ public class ImageViewModel : ReactiveObject
     /// </summary>
     private void OnBitmapChanged()
     {
-        if (SourceBitmap == null) return;
-        var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
-        if (ImageSize == newImageSize) return;
-        if (Fit)
+        try
         {
-            ImageSize = newImageSize;
-            FitToScreen();
+            if (SourceBitmap == null) return;
+            
+            // 验证位图尺寸
+            if (SourceBitmap.PixelSize.Width <= 0 || SourceBitmap.PixelSize.Height <= 0)
+            {
+                Console.WriteLine($"Invalid bitmap size in OnBitmapChanged: {SourceBitmap.PixelSize.Width}x{SourceBitmap.PixelSize.Height}");
+                return;
+            }
+            
+            var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
+            if (ImageSize == newImageSize) return;
+            
+            if (Fit)
+            {
+                ImageSize = newImageSize;
+                FitToScreen();
+            }
+            else
+            {
+                var uv = GetCenterUV();
+                ImageSize = newImageSize;
+                SetUVToCenter(uv);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            var uv = GetCenterUV();
-            ImageSize = newImageSize;
-            SetUVToCenter(uv);
+            Console.WriteLine($"Failed in OnBitmapChanged: {ex.Message}");
         }
     }
-    
+
     private Vector GetCenterUV()
     {
         var imageCenterPoint = ImageSize * 0.5 + Translate;
