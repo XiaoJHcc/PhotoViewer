@@ -20,12 +20,10 @@
             </TextBlock>
             <Border Classes="settings-card">
                 <StackPanel Spacing="8">
-                    <ComboBox ItemsSource="{Binding LayoutModes}"
+                    <ComboBox Classes="settings-combobox" 
+                              ItemsSource="{Binding LayoutModes}"
                               SelectedValue="{Binding LayoutMode}"
-                              SelectedValueBinding="{Binding Value}"
-                              HorizontalAlignment="Stretch"
-                              BorderBrush="#444"
-                              CornerRadius="6">
+                              SelectedValueBinding="{Binding Value}">
                         <ComboBox.ItemTemplate>
                             <DataTemplate>
                                 <StackPanel Orientation="Horizontal">
