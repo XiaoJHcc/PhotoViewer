@@ -132,7 +132,7 @@
                     <StackPanel Classes="ExifBlock">
                         <TextBlock Classes="ExifLabel" Text="等效焦距" />
                         <TextBlock Classes="ExifValue" 
-                                   Text="{Binding CurrentExifData.FocalLength, 
+                                   Text="{Binding CurrentExifData.EquivFocalLength, 
                                           Converter={x:Static converters:FocalLengthConverter.Instance}}" />
                     </StackPanel>
 

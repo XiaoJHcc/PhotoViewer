@@ -16,7 +16,7 @@ public class ApertureConverter : IValueConverter
     {
         if (value is Rational aperture)
         {
-            return $"f/{aperture.Numerator/aperture.Denominator}";
+            return $"f/{(double)aperture.Numerator/aperture.Denominator}";
         }
         return "--";
     }
@@ -38,7 +38,10 @@ public class ExposureTimeConverter : IValueConverter
     {
         if (value is Rational exposureTime)
         {
-            return $"{exposureTime.Numerator}/{exposureTime.Denominator}";
+            if (exposureTime.Numerator == 1)
+                return $"1/{exposureTime.Denominator}";
+            else
+                return $"{(double)exposureTime.Numerator/exposureTime.Denominator}s";
         }
         return "--";
     }

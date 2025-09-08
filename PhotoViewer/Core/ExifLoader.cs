@@ -1,16 +1,13 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
-using ReactiveUI;
 using PhotoViewer.Core;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.Core;
 
 /// <summary>
 /// 单个文件的 EXIF 数据
@@ -42,55 +39,27 @@ public class ExifData
 }
 
 /// <summary>
-/// EXIF 数据管理器
+/// EXIF 数据加载器（静态工具类）
 /// </summary>
-public class ExifViewModel : ReactiveObject
+public static class ExifLoader
 {
-    private readonly ConcurrentDictionary<string, ExifData> _exifCache = new();
-    
     /// <summary>
-    /// 获取指定文件的 EXIF 数据
+    /// 异步加载文件的 EXIF 数据（仅读取 EXIF，不加载图片数据）
     /// </summary>
-    public ExifData? GetExifData(string filePath)
-    {
-        return _exifCache.TryGetValue(filePath, out var data) ? data : null;
-    }
-    
-    /// <summary>
-    /// 获取指定文件的 EXIF 数据
-    /// </summary>
-    public ExifData? GetExifData(IStorageFile file)
-    {
-        return GetExifData(file.Path.LocalPath);
-    }
-    
-    /// <summary>
-    /// 异步加载文件的 EXIF 数据
-    /// </summary>
-    public async Task<ExifData?> LoadExifDataAsync(IStorageFile file)
+    public static async Task<ExifData?> LoadExifDataAsync(IStorageFile file)
     {
         var filePath = file.Path.LocalPath;
-        
-        // 如果已缓存，直接返回
-        if (_exifCache.TryGetValue(filePath, out var cachedData))
-        {
-            return cachedData;
-        }
         
         try
         {
             var exifData = new ExifData { FilePath = filePath };
             
+            // 只读取 EXIF 数据，不解码图片内容
             using var stream = await file.OpenReadAsync();
             var directories = ImageMetadataReader.ReadMetadata(stream);
 
             var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
             var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
-            
-            ////TEST
-            foreach (var directory in directories)
-            foreach (var tag in directory.Tags)
-                Console.WriteLine($"{directory.Name} - {tag.Name} = {tag.Description}");
 
             if (exifSubIfd != null)
             {
@@ -112,16 +81,20 @@ public class ExifViewModel : ReactiveObject
                     exifData.Iso = iso;
                 }
 
-                // 焦距 (原始 Rational)
+                // 实际焦距 (原始 Rational)
                 if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagFocalLength, out var focalLength))
                 {
                     exifData.FocalLength = focalLength;
                 }
                 
-                // 等效焦距 (原始 Rational)
-                if (exifSubIfd.TryGetRational(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLength))
+                // 35mm 等效焦距 - 修复获取方式
+                if (exifSubIfd.TryGetInt32(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLengthInt))
                 {
-                    exifData.EquivFocalLength = equivFocalLength;
+                    exifData.EquivFocalLength = new Rational(equivFocalLengthInt, 1);
+                }
+                else if (exifSubIfd.TryGetRational(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLengthRational))
+                {
+                    exifData.EquivFocalLength = equivFocalLengthRational;
                 }
 
                 // 拍摄时间
@@ -186,8 +159,6 @@ public class ExifViewModel : ReactiveObject
                 }
             }
             
-            // 缓存数据
-            _exifCache[filePath] = exifData;
             return exifData;
         }
         catch (Exception ex)
@@ -200,13 +171,13 @@ public class ExifViewModel : ReactiveObject
     /// <summary>
     /// 批量加载文件夹内所有图片的 EXIF 数据
     /// </summary>
-    public async Task LoadFolderExifDataAsync(IEnumerable<ImageFile> imageFiles)
+    public static async Task LoadFolderExifDataAsync(IEnumerable<ImageFile> imageFiles)
     {
         var tasks = imageFiles.Select(async imageFile =>
         {
             try
             {
-                await LoadExifDataAsync(imageFile.File);
+                await imageFile.LoadExifDataAsync();
             }
             catch (Exception ex)
             {
@@ -215,21 +186,5 @@ public class ExifViewModel : ReactiveObject
         });
         
         await Task.WhenAll(tasks);
-    }
-    
-    /// <summary>
-    /// 清除指定文件的 EXIF 缓存
-    /// </summary>
-    public void ClearExifData(string filePath)
-    {
-        _exifCache.TryRemove(filePath, out _);
-    }
-    
-    /// <summary>
-    /// 清除所有 EXIF 缓存
-    /// </summary>
-    public void ClearAllExifData()
-    {
-        _exifCache.Clear();
     }
 }

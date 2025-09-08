@@ -17,7 +17,6 @@ public class MainViewModel : ViewModelBase
     public ControlViewModel ControlViewModel { get; }
     public ImageViewModel ImageViewModel { get; }
     public SettingsViewModel Settings { get; }
-    public ExifViewModel ExifViewModel { get; }
 
     // 当前状态
     private IStorageFolder? _currentFolder;
@@ -54,8 +53,6 @@ public class MainViewModel : ViewModelBase
             
         // 先创建设置 ViewModel
         Settings = new SettingsViewModel();
-        // 创建 EXIF 管理器
-        ExifViewModel = new ExifViewModel();
         // 创建子 ViewModel
         ThumbnailViewModel = new ThumbnailViewModel(this);
         ImageViewModel = new ImageViewModel(this);
@@ -263,6 +260,9 @@ public class MainViewModel : ViewModelBase
 
         CurrentFile = new ImageFile(file);
         
+        // 优先加载当前图片的 EXIF 数据
+        _ = Task.Run(async () => await CurrentFile.LoadExifDataAsync());
+        
         // 加载图片所在文件夹
         _currentFolder = folder;
         _allFiles.Clear();
@@ -283,10 +283,11 @@ public class MainViewModel : ViewModelBase
             
         ApplyFilter();
         
-        // 异步加载文件夹内所有图片的 EXIF 数据
+        // 异步加载其他图片的 EXIF 数据（排除当前图片）
         _ = Task.Run(async () =>
         {
-            await ExifViewModel.LoadFolderExifDataAsync(_filteredFiles);
+            var otherFiles = _filteredFiles.Where(f => f != CurrentFile);
+            await ExifLoader.LoadFolderExifDataAsync(otherFiles);
         });
     }
     
@@ -313,10 +314,11 @@ public class MainViewModel : ViewModelBase
         
         ApplySort();
         
-        // 筛选后重新加载 EXIF 数据
+        // 筛选后重新加载 EXIF 数据（排除当前图片，因为已经优先加载了）
         _ = Task.Run(async () =>
         {
-            await ExifViewModel.LoadFolderExifDataAsync(_filteredFiles);
+            var otherFiles = _filteredFiles.Where(f => f != CurrentFile);
+            await ExifLoader.LoadFolderExifDataAsync(otherFiles);
         });
     }
     
