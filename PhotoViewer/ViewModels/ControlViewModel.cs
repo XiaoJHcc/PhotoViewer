@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive;
@@ -14,34 +15,14 @@ public class ControlViewModel : ReactiveObject
     // 布局方向（从主视图模型获取实际布局状态）
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
 
-    // EXIF 信息属性（示例数据）
-    private string _exifIso = "400";
-    private string _exifAperture = "f/2.8";
-    private string _exifShutter = "1/125";
-    private string _exifFocalLength = "50mm";
-    
-    public string ExifIso
+    // 当前文件的 EXIF 数据
+    public ExifData? CurrentExifData
     {
-        get => _exifIso;
-        set => this.RaiseAndSetIfChanged(ref _exifIso, value);
-    }
-    
-    public string ExifAperture
-    {
-        get => _exifAperture;
-        set => this.RaiseAndSetIfChanged(ref _exifAperture, value);
-    }
-    
-    public string ExifShutter
-    {
-        get => _exifShutter;
-        set => this.RaiseAndSetIfChanged(ref _exifShutter, value);
-    }
-    
-    public string ExifFocalLength
-    {
-        get => _exifFocalLength;
-        set => this.RaiseAndSetIfChanged(ref _exifFocalLength, value);
+        get
+        {
+            if (Main.CurrentFile?.File == null) return null;
+            return Main.ExifViewModel.GetExifData(Main.CurrentFile.File);
+        }
     }
 
     // 评分属性
@@ -63,6 +44,13 @@ public class ControlViewModel : ReactiveObject
         OnFit = ReactiveCommand.Create(ExecuteFit);
         OnZoomIn = ReactiveCommand.Create(ExecuteZoomIn);
         OnZoomOut = ReactiveCommand.Create(ExecuteZoomOut);
+
+        // 监听当前文件变化，通知 EXIF 数据更新
+        Main.WhenAnyValue(vm => vm.CurrentFile)
+            .Subscribe(_ =>
+            {
+                this.RaisePropertyChanged(nameof(CurrentExifData));
+            });
         
         // 监听设置变化
         Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
