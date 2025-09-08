@@ -30,6 +30,15 @@
         <!-- 水平翻转到变换转换器 -->
         <local:FlipTransformConverter x:Key="FlipTransformConverter" />
     </UserControl.Resources>
+    
+    <UserControl.Styles>
+        <!-- 下拉样式 -->
+        <Style Selector="ComboBox">
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="BorderBrush" Value="#444" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+    </UserControl.Styles>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -39,15 +48,15 @@
 
         <!-- 排序工具栏 -->
         <StackPanel Grid.Row="0"
-                    Spacing="10"
-                    Margin="5"
+                    Spacing="5"
+                    Margin="10"
                     HorizontalAlignment="Center"
                     Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
             <ComboBox Name="SortByComboBox"
                       ItemsSource="{Binding SortModes}"
                       SelectedValue="{Binding SortMode}"
                       SelectedValueBinding="{Binding Value}"
-                      Width="100">
+                      HorizontalAlignment="Stretch">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
                         <TextBlock Text="{Binding DisplayName}" />
@@ -58,7 +67,7 @@
                       ItemsSource="{Binding SortOrders}"
                       SelectedValue="{Binding SortOrder}"
                       SelectedValueBinding="{Binding Value}"
-                      Width="100">
+                      HorizontalAlignment="Stretch">
                 <ComboBox.ItemTemplate>
                     <DataTemplate>
                         <TextBlock Text="{Binding DisplayName}" />
@@ -70,6 +79,7 @@
         <!-- 缩略图列表 -->
         <ScrollViewer Grid.Row="1"
                       Name="ThumbnailScrollViewer"
+                      Padding="10,0,10,0"
                       HorizontalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                       VerticalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, ConverterParameter=Reverse}">
             <i:Interaction.Behaviors>
@@ -106,7 +116,7 @@
                                     Padding="0"
                                     Width="90"
                                     Height="120"
-                                    Background="#444">
+                                    Background="#222">
                                 
                                 <StackPanel Orientation="Vertical" 
                                             HorizontalAlignment="Center"
@@ -115,7 +125,7 @@
                                     <!-- 缩略图容器 -->
                                     <Border Width="80"
                                             Height="80"
-                                            Background="#333333"
+                                            Background="#333"
                                             CornerRadius="4"
                                             BorderThickness="1"
                                             BorderBrush="{Binding IsInCache, Converter={StaticResource CachedBorderConverter}}">

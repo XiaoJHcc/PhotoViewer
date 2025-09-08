@@ -133,8 +133,10 @@ public partial class ThumbnailView : UserControl
             var visibleFiles = new List<Core.ImageFile>();
             var itemCount = ViewModel.FilteredFiles.Count;
             
-            // 简化可见性检测：基于项目索引估算位置
-            var estimatedItemSize = isVertical ? 150.0 : 100.0; // 估算的项目尺寸
+            // 更新项目尺寸估算：根据实际的缩略图项目尺寸
+            // 项目总尺寸 = 边框宽度(90) + 间距(6) = 96px
+            // 垂直布局时高度 = 边框高度(120) + 间距(6) = 126px
+            var estimatedItemSize = isVertical ? 126.0 : 96.0; // 更新估算的项目尺寸
             var viewportSize = isVertical ? viewport.Height : viewport.Width;
             var scrollPosition = isVertical ? offset.Y : offset.X;
             
