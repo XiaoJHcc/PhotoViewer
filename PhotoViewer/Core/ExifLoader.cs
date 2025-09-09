@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
+using MetadataExtractor.Formats.Xmp;
 using PhotoViewer.Core;
 
 namespace PhotoViewer.Core;
@@ -46,6 +47,11 @@ public class ExifData
     public Rational? ExposureBias { get; set; }
     public string? WhiteBalance { get; set; }
     public string? Flash { get; set; }
+    
+    /// <summary>
+    /// XMP Rating 评分 (0-5)
+    /// </summary>
+    public int? Rating { get; set; }
 }
 
 /// <summary>
@@ -70,6 +76,7 @@ public static class ExifLoader
 
             var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
             var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+            var xmpDirectory = directories.OfType<XmpDirectory>().FirstOrDefault();
 
             if (exifSubIfd != null)
             {
@@ -172,6 +179,48 @@ public static class ExifLoader
                     {
                         exifData.OrientationValue = orientationValue;
                     }
+                }
+            }
+            
+            // 读取 XMP Rating 数据
+            if (xmpDirectory != null)
+            {
+                try
+                {
+                    var xmpMeta = xmpDirectory.GetXmpProperties();
+                    
+                    // 尝试多种可能的 Rating 属性路径
+                    var ratingPaths = new[]
+                    {
+                        "xmp:Rating",
+                        "http://ns.adobe.com/xap/1.0/:Rating",
+                        "Rating",
+                        "xap:Rating"
+                    };
+                    
+                    foreach (var path in ratingPaths)
+                    {
+                        if (xmpMeta.ContainsKey(path))
+                        {
+                            var ratingValue = xmpMeta[path];
+                            if (int.TryParse(ratingValue, out var rating) && rating >= 0 && rating <= 5)
+                            {
+                                exifData.Rating = rating;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // 如果上述方法未找到，尝试解析完整的 XMP 字符串
+                    // if (!exifData.Rating.HasValue)
+                    // {
+                    //     var xmpString = xmpDirectory.GetXmpProperties().ToString();
+                    //     exifData.Rating = ExtractRatingFromXmpString(xmpString);
+                    // }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Failed to read XMP Rating (" + filePath + "): " + ex.Message);
                 }
             }
             
