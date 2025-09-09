@@ -30,7 +30,7 @@
         <!-- 水平翻转到变换转换器 -->
         <local:FlipTransformConverter x:Key="FlipTransformConverter" />
     </UserControl.Resources>
-    
+
     <UserControl.Styles>
         <!-- 下拉样式 -->
         <Style Selector="ComboBox">
@@ -79,9 +79,11 @@
         <!-- 缩略图列表 -->
         <ScrollViewer Grid.Row="1"
                       Name="ThumbnailScrollViewer"
-                      Padding="10,0,10,0"
-                      HorizontalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
-                      VerticalScrollBarVisibility="{Binding IsVerticalLayout, Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, ConverterParameter=Reverse}">
+                      HorizontalScrollBarVisibility="{Binding IsVerticalLayout, 
+                            Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
+                      VerticalScrollBarVisibility="{Binding IsVerticalLayout, 
+                            Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, 
+                            ConverterParameter=Reverse}">
             <i:Interaction.Behaviors>
                 <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
             </i:Interaction.Behaviors>
@@ -90,9 +92,12 @@
                           ItemsSource="{Binding Main.FolderVM.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel Spacing="6"
-                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
-                                    Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
+                        <StackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
+                                        Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
+                                    Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
+                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}" 
+                                    Margin="10,0,10,10"
+                                    Spacing="6" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
 
@@ -106,7 +111,8 @@
                             Margin="0"
                             Padding="0"
                             CornerRadius="8"
-                            HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
+                            HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
+                                Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
 
                             <!-- 主要边框（选中状态） -->
                             <Border BorderThickness="2"
@@ -117,10 +123,10 @@
                                     Width="90"
                                     Height="120"
                                     Background="#222">
-                                
-                                <StackPanel Orientation="Vertical" 
+
+                                <StackPanel Orientation="Vertical"
                                             HorizontalAlignment="Center"
-                                            Margin="0,3,0,0" 
+                                            Margin="0,3,0,0"
                                             Spacing="4">
                                     <!-- 缩略图容器 -->
                                     <Border Width="80"
@@ -128,20 +134,25 @@
                                             Background="#333"
                                             CornerRadius="4"
                                             BorderThickness="1"
-                                            BorderBrush="{Binding IsInCache, Converter={StaticResource CachedBorderConverter}}">
+                                            BorderBrush="{Binding IsInCache, 
+                                                Converter={StaticResource CachedBorderConverter}}">
                                         <Grid>
                                             <!-- 缩略图 -->
                                             <Image Source="{Binding Thumbnail}"
                                                    Stretch="Uniform"
                                                    HorizontalAlignment="Center"
                                                    VerticalAlignment="Center"
-                                                   IsVisible="{Binding Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}">
+                                                   IsVisible="{Binding Thumbnail, 
+                                                        Converter={x:Static ObjectConverters.IsNotNull}}">
                                                 <Image.RenderTransform>
                                                     <TransformGroup>
                                                         <!-- 旋转变换 -->
                                                         <RotateTransform Angle="{Binding RotationAngle}" />
                                                         <!-- 水平翻转变换 -->
-                                                        <ScaleTransform ScaleX="{Binding NeedsHorizontalFlip, Converter={StaticResource FlipTransformConverter}}" ScaleY="1" />
+                                                        <ScaleTransform
+                                                            ScaleX="{Binding NeedsHorizontalFlip, 
+                                                            Converter={StaticResource FlipTransformConverter}}"
+                                                            ScaleY="1" />
                                                     </TransformGroup>
                                                 </Image.RenderTransform>
                                             </Image>
@@ -181,7 +192,7 @@
                                                    FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"
                                                    MaxWidth="90" />
-                                        
+
                                         <!-- <TextBlock -->
                                         <!--     Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" -->
                                         <!--     FontSize="9" -->
@@ -189,7 +200,8 @@
                                         <!--     HorizontalAlignment="Center" /> -->
 
                                         <TextBlock
-                                            Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}"
+                                            Text="{Binding PhotoDate, 
+                                                Converter={StaticResource PhotoDateConverter}}"
                                             FontSize="9"
                                             Foreground="#AAAAAA"
                                             HorizontalAlignment="Center"

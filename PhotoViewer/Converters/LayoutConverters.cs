@@ -110,29 +110,45 @@ public class GridPositionConverter : IValueConverter
     }
 }
 
-// 通用边框转换器 - 根据参数返回不同的边框设置
-public class BorderThicknessConverter : IValueConverter
+// 通用边框边距转换器 - 根据布局方向返回不同的外边距
+// Margin / Padding / BorderThickness 通用
+// 顺序为 Web CSS 规范 (上, 右, 下, 左)
+public class WebMarginConverter : IValueConverter
 {
-    public static readonly BorderThicknessConverter Instance = new();
+    public static readonly WebMarginConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         if (value is bool isVertical && parameter is string param)
         {
             // 参数格式: "vertical|horizontal"
-            // 例如: "0,0,0,1|0,0,1,0" 表示垂直布局时下边框，水平布局时右边框
+            // 例如: "12,6,12,6|6,12,6,12" 表示垂直布局时上下较高边距，水平布局时左右较宽边距
             var parts = param.Split('|');
             if (parts.Length == 2)
             {
-                var thicknessStr = isVertical ? parts[0] : parts[1];
-                var values = thicknessStr.Split(',');
-                if (values.Length == 4 &&
-                    double.TryParse(values[0], out double left) &&
-                    double.TryParse(values[1], out double top) &&
-                    double.TryParse(values[2], out double right) &&
-                    double.TryParse(values[3], out double bottom))
+                var marginStr = isVertical ? parts[0] : parts[1];
+                var values = marginStr.Split(',');
+                double top, right, bottom, left;
+                switch (values.Length)
                 {
-                    return new Thickness(left, top, right, bottom);
+                    case 4 when
+                        double.TryParse(values[0], out top) &&
+                        double.TryParse(values[1], out right) &&
+                        double.TryParse(values[2], out bottom) &&
+                        double.TryParse(values[3], out left):
+                        return new Thickness(left, top, right, bottom);
+                    case 3 when
+                        double.TryParse(values[0], out top) &&
+                        double.TryParse(values[1], out right) &&
+                        double.TryParse(values[2], out bottom):
+                        return new Thickness(right, top, right, bottom);
+                    case 2 when
+                        double.TryParse(values[0], out top) &&
+                        double.TryParse(values[1], out right):
+                        return new Thickness(right, top, right, top);
+                    case 1 when
+                        double.TryParse(values[0], out top):
+                        return new Thickness(top);
                 }
             }
         }
@@ -212,41 +228,6 @@ public class DockConverter : IValueConverter
             }
         }
         return Dock.Left;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
-// 外边距转换器 - 根据布局方向返回不同的外边距
-public class MarginConverter : IValueConverter
-{
-    public static readonly MarginConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool isVertical && parameter is string param)
-        {
-            // 参数格式: "vertical|horizontal"
-            // 例如: "12,6,12,6|6,12,6,12" 表示垂直布局时左右较宽边距，水平布局时上下较高边距
-            var parts = param.Split('|');
-            if (parts.Length == 2)
-            {
-                var marginStr = isVertical ? parts[0] : parts[1];
-                var values = marginStr.Split(',');
-                if (values.Length == 4 &&
-                    double.TryParse(values[0], out double left) &&
-                    double.TryParse(values[1], out double top) &&
-                    double.TryParse(values[2], out double right) &&
-                    double.TryParse(values[3], out double bottom))
-                {
-                    return new Thickness(left, top, right, bottom);
-                }
-            }
-        }
-        return new Thickness(0);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)

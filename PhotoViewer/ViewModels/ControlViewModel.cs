@@ -170,7 +170,7 @@ public class ControlViewModel : ReactiveObject
     {
         if (rating >= 0 && rating <= 5)
         {
-            Rating = rating;
+            // Rating = rating;
             // TODO: 在这里可以添加保存评分到文件元数据的逻辑
         }
     }
