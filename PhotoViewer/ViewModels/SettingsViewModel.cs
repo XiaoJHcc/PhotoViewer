@@ -3,7 +3,6 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Reactive;
-using PhotoViewer.Core;
 using ReactiveUI;
 using System.Collections.Generic;
 using PhotoViewer.Controls;
@@ -21,21 +20,6 @@ public enum LayoutMode
 
 public class SettingsViewModel : ReactiveObject
 {
-    private int _maxCacheSizeMB = 500;
-    private int _preloadCount = 3;
-    
-    public int MaxCacheSizeMB
-    {
-        get => _maxCacheSizeMB;
-        set => this.RaiseAndSetIfChanged(ref _maxCacheSizeMB, value);
-    }
-        
-    public int PreloadCount
-    {
-        get => _preloadCount;
-        set => this.RaiseAndSetIfChanged(ref _preloadCount, value);
-    }
-    
     public SettingsViewModel()
     {
         SortScalePreset();
@@ -118,7 +102,7 @@ public class SettingsViewModel : ReactiveObject
             new("PNG", new[] { ".png" }, true),
             new("TIFF", new[] { ".tiff", ".tif" }, false),
             new("WebP", new[] { ".webp" }, true),
-            new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, false),
+            // new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, false),
             new("BMP", new[] { ".bmp" }, false),
             new("GIF", new[] { ".gif" }, false),
         };
@@ -644,9 +628,8 @@ public class SettingsViewModel : ReactiveObject
             new("ISO", "Iso", true),
             new("等效焦距", "EquivFocalLength", true),
             new("实际焦距", "FocalLength", false),
-            new("相机", "CameraMake", false),
-            new("型号", "CameraModel", false),
-            new("镜头", "LensModel", false),
+            new("相机型号", "CameraModel", false),
+            new("镜头型号", "LensModel", false),
             new("拍摄时间", "DateTimeOriginal", false),
             new("曝光补偿", "ExposureBias", false),
             new("白平衡", "WhiteBalance", false),
@@ -757,5 +740,26 @@ public class SettingsViewModel : ReactiveObject
         }
     }
 
+    #endregion
+    
+    //////////////
+    /// 星级设置
+    //////////////
+
+    #region RatingSetting
+
+    private bool _showRating = true;
+    public bool ShowRating
+    {
+        get => _showRating;
+        set => this.RaiseAndSetIfChanged(ref _showRating, value);
+    }
+    private bool _allowSetRating = false;
+    public bool AllowSetRating
+    {
+        get => _allowSetRating;
+        set => this.RaiseAndSetIfChanged(ref _allowSetRating, value);
+    }
+    
     #endregion
 }

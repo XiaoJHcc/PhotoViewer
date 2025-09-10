@@ -65,6 +65,17 @@
                     </controls:SortableList.ItemTemplate>
                 </controls:SortableList>
             </Border>
+            
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="2">
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding ShowRating}"
+                              Content="显示星级评分" />
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding AllowSetRating}"
+                              Content="允许修改文件星级" />
+                </StackPanel>
+            </Border>
 
             <TextBlock Classes="settings-title">
                 控制栏功能/快捷键

@@ -46,6 +46,16 @@
             <Setter Property="Background" Value="#333" />
         </Style>
 
+        <!-- 禁用状态的星级按钮样式 -->
+        <Style Selector="Button.StarButton:disabled">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+
+        <Style Selector="Button.StarButton:disabled:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
         <Style Selector="TextBlock.StarButtonSymbol">
             <Setter Property="FontSize" Value="16" />
             <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
@@ -137,6 +147,7 @@
             <Border
                 HorizontalAlignment="Stretch"
                 VerticalAlignment="Stretch"
+                IsVisible="{Binding ShowRating}"
                 Background="#222"
                 CornerRadius="6"
                 Margin="0,0,0,0">
@@ -162,6 +173,7 @@
                             Click="OnRatingButtonClick"
                             Tag="1"
                             ToolTip.Tip="1星"
+                            IsEnabled="{Binding AllowSetRating}"
                             DockPanel.Dock="{Binding IsVerticalLayout, 
                                     Converter={x:Static converters:DockConverter.Instance}, 
                                     ConverterParameter='Bottom,Left'}">
@@ -176,6 +188,7 @@
                             Click="OnRatingButtonClick"
                             Tag="2"
                             ToolTip.Tip="2星"
+                            IsEnabled="{Binding AllowSetRating}"
                             DockPanel.Dock="{Binding IsVerticalLayout, 
                                     Converter={x:Static converters:DockConverter.Instance}, 
                                     ConverterParameter='Bottom,Left'}">
@@ -190,6 +203,7 @@
                             Click="OnRatingButtonClick"
                             Tag="3"
                             ToolTip.Tip="3星"
+                            IsEnabled="{Binding AllowSetRating}"
                             DockPanel.Dock="{Binding IsVerticalLayout, 
                                     Converter={x:Static converters:DockConverter.Instance}, 
                                     ConverterParameter='Bottom,Left'}">
@@ -204,6 +218,7 @@
                             Click="OnRatingButtonClick"
                             Tag="4"
                             ToolTip.Tip="4星"
+                            IsEnabled="{Binding AllowSetRating}"
                             DockPanel.Dock="{Binding IsVerticalLayout, 
                                     Converter={x:Static converters:DockConverter.Instance}, 
                                     ConverterParameter='Bottom,Left'}">
@@ -217,7 +232,8 @@
                     <Button Classes="StarButton"
                             Click="OnRatingButtonClick"
                             Tag="5"
-                            ToolTip.Tip="5星">
+                            ToolTip.Tip="5星"
+                            IsEnabled="{Binding AllowSetRating}">
                         <TextBlock Classes="StarButtonSymbol" Text="&#xfcd7;"
                                    Foreground="{Binding CurrentExifData.Rating, 
                                             Converter={x:Static local:StarColorConverter.Instance}, 
