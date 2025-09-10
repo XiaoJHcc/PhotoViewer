@@ -12,7 +12,7 @@ namespace PhotoViewer.ViewModels;
 
 public class ControlViewModel : ReactiveObject
 {
-    private readonly MainViewModel Main;
+    private MainViewModel Main { get; }
     
     // 布局方向（从主视图模型获取实际布局状态）
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
@@ -23,6 +23,10 @@ public class ControlViewModel : ReactiveObject
     // 启用的 EXIF 显示项列表
     public IEnumerable<SettingsViewModel.ExifDisplayItem> EnabledExifItems => 
         Main.Settings.EnabledExifItems;
+
+    // 直接访问设置属性
+    public bool ShowRating => Main.Settings.ShowRating;
+    public bool AllowSetRating => Main.Settings.AllowSetRating;
 
     // 评分属性
     private int _rating = 0;
@@ -63,6 +67,12 @@ public class ControlViewModel : ReactiveObject
             });
         
         // 监听设置变化
+        Main.Settings.WhenAnyValue(s => s.ShowRating)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(ShowRating)));
+            
+        Main.Settings.WhenAnyValue(s => s.AllowSetRating)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(AllowSetRating)));
+
         Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
         foreach (var hotkey in Main.Settings.Hotkeys)
         {
@@ -165,13 +175,20 @@ public class ControlViewModel : ReactiveObject
         Main.ImageVM.ZoomPreset(-1);
     }
 
-    // 设置评分
-    public void SetRating(int rating)
+    /// <summary>
+    /// 设置评分并写入 XMP
+    /// </summary>
+    public async void SetRating(int rating)
     {
-        if (rating >= 0 && rating <= 5)
+        if (!AllowSetRating || Main.CurrentFile == null) return;
+
+        var file = Main.CurrentFile;
+        var success = await XmpWriter.WriteRatingAsync(file.File, rating);
+        if (success)
         {
-            // Rating = rating;
-            // TODO: 在这里可以添加保存评分到文件元数据的逻辑
+            // 写入成功后刷新 EXIF
+            await file.LoadExifDataAsync();
+            this.RaisePropertyChanged(nameof(CurrentExifData));
         }
     }
 }

@@ -23,6 +23,7 @@
         <PackageReference Include="Avalonia.Xaml.Interactions.Custom" />
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="XmpCore" />
     </ItemGroup>
 
     <ItemGroup>
