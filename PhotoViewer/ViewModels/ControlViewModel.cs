@@ -181,14 +181,48 @@ public class ControlViewModel : ReactiveObject
     public async void SetRating(int rating)
     {
         if (!AllowSetRating || Main.CurrentFile == null) return;
-
+        
         var file = Main.CurrentFile;
-        var success = await XmpWriter.WriteRatingAsync(file.File, rating);
-        if (success)
+        var previousRating = Rating;
+        
+        try
         {
-            // 写入成功后刷新 EXIF
-            await file.LoadExifDataAsync();
-            this.RaisePropertyChanged(nameof(CurrentExifData));
+            var success = await XmpWriter.WriteRatingAsync(file.File, rating);
+            if (success)
+            {
+                // 更新 UI 显示的评分
+                Rating = rating;
+                
+                // 异步刷新 EXIF 数据
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        file.ClearExifData();
+                        await file.LoadExifDataAsync();
+                        
+                        // 在 UI 线程上通知更新
+                        Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            this.RaisePropertyChanged(nameof(CurrentExifData));
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to refresh EXIF after rating update: {ex.Message}");
+                    }
+                });
+                
+                Console.WriteLine($"Successfully updated rating to {rating} for {file.Name}");
+            }
+            else
+            {
+                Console.WriteLine($"Failed to update rating for {file.Name} (XMP Rating not found or file not supported)");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error setting rating for {file.Name}: {ex.Message}");
         }
     }
 }
