@@ -259,6 +259,15 @@ public class ImageFile : ReactiveObject
     }
 
     /// <summary>
+    /// 强制重新加载 EXIF 数据
+    /// </summary>
+    public async Task ForceReloadExifDataAsync()
+    {
+        ClearExifData();
+        await LoadExifDataAsync();
+    }
+
+    /// <summary>
     /// 清除 EXIF 数据
     /// </summary>
     public void ClearExifData()

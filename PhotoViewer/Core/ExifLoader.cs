@@ -211,12 +211,28 @@ public static class ExifLoader
                         }
                     }
                     
-                    // 如果上述方法未找到，尝试解析完整的 XMP 字符串
-                    // if (!exifData.Rating.HasValue)
-                    // {
-                    //     var xmpString = xmpDirectory.GetXmpProperties().ToString();
-                    //     exifData.Rating = ExtractRatingFromXmpString(xmpString);
-                    // }
+                    // 如果上述方法未找到，尝试直接使用 XmpCore 解析
+                    if (!exifData.Rating.HasValue)
+                    {
+                        try
+                        {
+                            // 获取原始 XMP 字符串并用 XmpCore 解析
+                            var xmpString = xmpDirectory.GetXmpProperties().ToString();
+                            if (!string.IsNullOrEmpty(xmpString))
+                            {
+                                var parsedXmp = XmpCore.XmpMetaFactory.ParseFromString(xmpString);
+                                var ratingProperty = parsedXmp.GetProperty("http://ns.adobe.com/xap/1.0/", "Rating");
+                                if (ratingProperty != null && int.TryParse(ratingProperty.Value, out var parsedRating) && parsedRating >= 0 && parsedRating <= 5)
+                                {
+                                    exifData.Rating = parsedRating;
+                                }
+                            }
+                        }
+                        catch (Exception xmpEx)
+                        {
+                            Console.WriteLine("Failed to parse XMP with XmpCore (" + filePath + "): " + xmpEx.Message);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

@@ -754,7 +754,7 @@ public class SettingsViewModel : ReactiveObject
         get => _showRating;
         set => this.RaiseAndSetIfChanged(ref _showRating, value);
     }
-    private bool _allowSetRating = false;
+    private bool _allowSetRating = true;
     public bool AllowSetRating
     {
         get => _allowSetRating;
