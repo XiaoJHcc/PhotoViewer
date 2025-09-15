@@ -87,61 +87,82 @@ public static class XmpWriter
                 return true;
             }
             
+            string? backupPath = null;
+            
             // 安全模式：创建备份
             if (enableSafeMode)
             {
-                var backupPath = filePath + ".xmp_backup";
+                backupPath = filePath + ".xmp_backup";
                 File.Copy(filePath, backupPath, true);
-                _lastBackupPath = backupPath;
-                _lastBackupOriginalPath = filePath;
             }
             
-            // 直接修改文件中的单个字符
-            var newRatingByte = (byte)('0' + rating);
-            using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
+            try
             {
-                stream.Seek(ratingPosition, SeekOrigin.Begin);
-                stream.WriteByte(newRatingByte);
-                stream.Flush();
-            }
-            
-            // 安全模式：校验修改结果
-            if (enableSafeMode)
-            {
-                if (!await VerifyFullFileModification(_lastBackupPath!, filePath, ratingPosition))
+                // 直接修改文件中的单个字符
+                var newRatingByte = (byte)('0' + rating);
+                using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
                 {
-                    // 校验失败，还原备份
-                    Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
-                    File.Copy(_lastBackupPath!, filePath, true);
-                    File.Delete(_lastBackupPath!);
-                    _lastBackupPath = null;
-                    _lastBackupOriginalPath = null;
-                    return false;
+                    stream.Seek(ratingPosition, SeekOrigin.Begin);
+                    stream.WriteByte(newRatingByte);
+                    stream.Flush();
+                }
+                
+                // 安全模式：校验修改结果
+                if (enableSafeMode && backupPath != null)
+                {
+                    if (!await VerifyFullFileModification(backupPath, filePath, ratingPosition))
+                    {
+                        // 校验失败，还原备份
+                        Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
+                        File.Copy(backupPath, filePath, true);
+                        return false;
+                    }
+                    
+                    // 校验通过，立即删除备份文件
+                    File.Delete(backupPath);
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[XMP Writer] {ex.Message}");
+                
+                // 如果有备份且启用安全模式，尝试还原
+                if (enableSafeMode && backupPath != null && File.Exists(backupPath))
+                {
+                    try
+                    {
+                        File.Copy(backupPath, filePath, true);
+                        File.Delete(backupPath);
+                    }
+                    catch (Exception restoreEx)
+                    {
+                        Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
+                    }
+                }
+                
+                return false;
+            }
+            finally
+            {
+                // 确保备份文件被清理
+                if (backupPath != null && File.Exists(backupPath))
+                {
+                    try
+                    {
+                        File.Delete(backupPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"[XMP Writer] {ex.Message}");
+                    }
                 }
             }
-            
-            return true;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[XMP Writer] {ex.Message}");
-            
-            // 如果有备份且启用安全模式，尝试还原
-            if (enableSafeMode && _lastBackupPath != null && File.Exists(_lastBackupPath))
-            {
-                try
-                {
-                    File.Copy(_lastBackupPath, filePath, true);
-                    File.Delete(_lastBackupPath);
-                    _lastBackupPath = null;
-                    _lastBackupOriginalPath = null;
-                }
-                catch (Exception restoreEx)
-                {
-                    Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
-                }
-            }
-            
             return false;
         }
     }
