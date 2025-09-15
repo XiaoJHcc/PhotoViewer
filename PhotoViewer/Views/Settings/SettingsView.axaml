@@ -35,6 +35,11 @@
             <Setter Property="Padding" Value="10, 0, 10, 0" />
         </Style>
         
+        <!-- 勾选行文字样式 -->
+        <Style Selector="TextBlock.settings-label">
+            <Setter Property="Margin" Value="0, 4, 0, 4" />
+        </Style>
+        
         <!-- 下拉行样式 -->
         <Style Selector="ComboBox.settings-combobox">
             <Setter Property="MinHeight" Value="44" />
@@ -43,9 +48,10 @@
             <Setter Property="CornerRadius" Value="6" />
         </Style>
         
+        
         <!-- 描述行样式 -->
         <Style Selector="TextBlock.settings-description">
-            <Setter Property="Margin" Value="10, 0, 10, 0" />
+            <Setter Property="Margin" Value="0, 0, 0, 0" />
             <Setter Property="FontSize" Value="12" />
             <Setter Property="Foreground" Value="#aaa" />
             <Setter Property="TextWrapping" Value="Wrap" />

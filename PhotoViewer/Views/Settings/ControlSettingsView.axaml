@@ -69,11 +69,16 @@
             <Border Classes="settings-card">
                 <StackPanel Spacing="8" Margin="2">
                     <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding ShowRating}"
-                              Content="显示星级评分" />
+                              IsChecked="{Binding ShowRating}">
+                        显示星级评分
+                    </CheckBox>
                     <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding SafeSetRating}"
-                              Content="安全修改文件星级" />
+                              IsChecked="{Binding SafeSetRating}">
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock Classes="settings-label">安全修改文件星级</TextBlock>
+                            <TextBlock Classes="settings-description">检验文件字节变化再写回，避免损坏文件，但速度较慢</TextBlock>
+                        </StackPanel>
+                    </CheckBox>
                 </StackPanel>
             </Border>
 
