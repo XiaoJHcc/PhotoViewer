@@ -175,26 +175,45 @@ public class FolderViewModel : ReactiveObject
                 _currentFolder = folders[0];
                 _allFiles.Clear();
                 _filteredFiles.Clear();
-    
+
                 Console.WriteLine("OpenFolder: " + folders[0].Path);
-        
+
                 // 加载文件夹内容
                 var items = folders[0].GetItemsAsync();
                 await foreach (var storageItem in items)
                 {
                     var item = (IStorageFile)storageItem;
-            
+    
                     if (IsImageFile(item.Name))
                     {
                         _allFiles.Add(new ImageFile(item));
                     }
                 }
-            
+
                 ApplyFilter();
-        
+
                 if (_filteredFiles.Count > 0)
                 {
                     Main.CurrentFile = _filteredFiles.First();
+                    
+                    // 立即为当前图片加载 EXIF 数据
+                    _ = Task.Run(async () =>
+                    {
+                        await Main.CurrentFile.LoadExifDataAsync();
+                        
+                        // EXIF 加载完成后，在 UI 线程中触发属性更新
+                        await Dispatcher.UIThread.InvokeAsync(() =>
+                        {
+                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.PhotoDate));
+                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.RotationAngle));
+                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.NeedsHorizontalFlip));
+                            
+                            // 触发 ControlViewModel 的 EXIF 数据更新（包括星级）
+                            Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
+                            Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.StarOpacity));
+                        });
+                    });
+            
                     // 只为当前图片加载缩略图，其他的由可见性检测触发
                     QueueThumbnailLoad(Main.CurrentFile, priority: true);
                 }
