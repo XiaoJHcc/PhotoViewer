@@ -20,6 +20,11 @@ public static class XmpWriter
     private static string? _lastBackupOriginalPath;
     
     /// <summary>
+    /// 检查是否为安卓平台
+    /// </summary>
+    private static bool IsAndroid => OperatingSystem.IsAndroid();
+    
+    /// <summary>
     /// 安全地写入 XMP 星级到 JPG 文件，只修改星级数字
     /// </summary>
     /// <param name="file">要修改的存储文件</param>
@@ -35,11 +40,11 @@ public static class XmpWriter
             return false;
         }
         
-        var filePath = file.Path.LocalPath;
-        if (!filePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
-            !filePath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+        var fileName = file.Name;
+        if (!fileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
+            !fileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"[XMP Writer] File {file.Name} is not a JPG file");
+            Console.WriteLine($"[XMP Writer] File {fileName} is not a JPG file");
             return false;
         }
         
@@ -60,7 +65,7 @@ public static class XmpWriter
             var ratingPosition = FindXmpRatingPosition(fileData);
             if (ratingPosition == -1)
             {
-                Console.WriteLine($"[XMP Writer] No XMP Rating found in {file.Name}");
+                Console.WriteLine($"[XMP Writer] No XMP Rating found in {fileName}");
                 return false;
             }
             
@@ -71,7 +76,7 @@ public static class XmpWriter
             // 检查当前星级是否为 -1 (未评级)，如果是则按不符合要求处理
             if (currentRatingByte == '1' && ratingPosition > 0 && fileData[ratingPosition - 1] == '-')
             {
-                Console.WriteLine($"[XMP Writer] Unsupported rating format (-1) in {file.Name}");
+                Console.WriteLine($"[XMP Writer] Unsupported rating format (-1) in {fileName}");
                 return false;
             }
             
@@ -87,77 +92,31 @@ public static class XmpWriter
                 return true;
             }
             
-            string? backupPath = null;
+            byte[]? backupData = null;
             
             // 安全模式：创建备份
             if (enableSafeMode)
             {
-                backupPath = filePath + ".xmp_backup";
-                File.Copy(filePath, backupPath, true);
+                backupData = new byte[fileData.Length];
+                Array.Copy(fileData, backupData, fileData.Length);
             }
             
             try
             {
-                // 直接修改文件中的单个字符
-                var newRatingByte = (byte)('0' + rating);
-                using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
+                // 安卓平台特殊处理
+                if (IsAndroid)
                 {
-                    stream.Seek(ratingPosition, SeekOrigin.Begin);
-                    stream.WriteByte(newRatingByte);
-                    stream.Flush();
+                    return await WriteRatingAndroidAsync(file, fileData, ratingPosition, rating, enableSafeMode, backupData);
                 }
-                
-                // 安全模式：校验修改结果
-                if (enableSafeMode && backupPath != null)
+                else
                 {
-                    if (!await VerifyFullFileModification(backupPath, filePath, ratingPosition))
-                    {
-                        // 校验失败，还原备份
-                        Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
-                        File.Copy(backupPath, filePath, true);
-                        return false;
-                    }
-                    
-                    // 校验通过，立即删除备份文件
-                    File.Delete(backupPath);
+                    return await WriteRatingDesktopAsync(file, ratingPosition, rating, enableSafeMode, backupData);
                 }
-                
-                return true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[XMP Writer] {ex.Message}");
-                
-                // 如果有备份且启用安全模式，尝试还原
-                if (enableSafeMode && backupPath != null && File.Exists(backupPath))
-                {
-                    try
-                    {
-                        File.Copy(backupPath, filePath, true);
-                        File.Delete(backupPath);
-                    }
-                    catch (Exception restoreEx)
-                    {
-                        Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
-                    }
-                }
-                
                 return false;
-            }
-            finally
-            {
-                // 确保备份文件被清理
-                if (backupPath != null && File.Exists(backupPath))
-                {
-                    try
-                    {
-                        File.Delete(backupPath);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[XMP Writer] {ex.Message}");
-                    }
-                }
             }
         }
         catch (Exception ex)
@@ -168,11 +127,293 @@ public static class XmpWriter
     }
     
     /// <summary>
+    /// 安卓平台的写入处理
+    /// </summary>
+    private static async Task<bool> WriteRatingAndroidAsync(IStorageFile file, byte[] fileData, int ratingPosition, int rating, bool enableSafeMode, byte[]? backupData)
+    {
+        try
+        {
+            // 安卓端也只修改单个字符，但需要通过重写整个文件实现
+            var newRatingByte = (byte)('0' + rating);
+            
+            // 创建修改后的数据副本
+            var modifiedData = new byte[fileData.Length];
+            Array.Copy(fileData, modifiedData, fileData.Length);
+            modifiedData[ratingPosition] = newRatingByte;
+            
+            // 尝试以追加模式打开文件来检查是否支持随机访问
+            bool supportsRandomAccess = false;
+            try
+            {
+                await using (var testStream = await file.OpenWriteAsync())
+                {
+                    if (testStream.CanSeek)
+                    {
+                        supportsRandomAccess = true;
+                    }
+                }
+            }
+            catch
+            {
+                supportsRandomAccess = false;
+            }
+            
+            if (supportsRandomAccess)
+            {
+                // 支持随机访问，直接修改单个字符
+                await using (var writeStream = await file.OpenWriteAsync())
+                {
+                    if (writeStream.CanSeek && writeStream.Length >= ratingPosition + 1)
+                    {
+                        writeStream.Seek(ratingPosition, SeekOrigin.Begin);
+                        writeStream.WriteByte(newRatingByte);
+                        await writeStream.FlushAsync();
+                    }
+                    else
+                    {
+                        // 回退到全文件写入
+                        writeStream.SetLength(0);
+                        await writeStream.WriteAsync(modifiedData, 0, modifiedData.Length);
+                        await writeStream.FlushAsync();
+                    }
+                }
+            }
+            else
+            {
+                // 不支持随机访问，使用全文件替换
+                // 先创建临时文件
+                var tempFileName = $"{file.Name}.tmp";
+                var folder = await file.GetParentAsync();
+                if (folder != null)
+                {
+                    try
+                    {
+                        // 创建临时文件
+                        var tempFile = await folder.CreateFileAsync(tempFileName);
+                        await using (var tempStream = await tempFile.OpenWriteAsync())
+                        {
+                            await tempStream.WriteAsync(modifiedData, 0, modifiedData.Length);
+                            await tempStream.FlushAsync();
+                        }
+                        
+                        // 验证临时文件写入成功
+                        byte[] tempData;
+                        await using (var verifyStream = await tempFile.OpenReadAsync())
+                        {
+                            tempData = new byte[verifyStream.Length];
+                            await verifyStream.ReadAsync(tempData, 0, tempData.Length);
+                        }
+                        
+                        if (tempData.Length == modifiedData.Length)
+                        {
+                            // 删除原文件并重命名临时文件
+                            await file.DeleteAsync();
+                            // 注意：由于 Avalonia 的限制，我们无法直接重命名文件
+                            // 所以我们需要重新创建原文件
+                            var newFile = await folder.CreateFileAsync(file.Name);
+                            await using (var newStream = await newFile.OpenWriteAsync())
+                            {
+                                await newStream.WriteAsync(tempData, 0, tempData.Length);
+                                await newStream.FlushAsync();
+                            }
+                        }
+                        
+                        // 清理临时文件
+                        try { await tempFile.DeleteAsync(); } catch { }
+                    }
+                    catch (Exception)
+                    {
+                        // 临时文件方法失败，尝试直接覆盖
+                        await using (var writeStream = await file.OpenWriteAsync())
+                        {
+                            // 尝试写入修改后的数据
+                            await writeStream.WriteAsync(modifiedData, 0, modifiedData.Length);
+                            await writeStream.FlushAsync();
+                        }
+                    }
+                }
+                else
+                {
+                    throw new InvalidOperationException("Cannot access parent folder");
+                }
+            }
+            
+            // 安全模式：校验修改结果
+            if (enableSafeMode && backupData != null)
+            {
+                // 重新读取文件进行校验
+                byte[] writtenData;
+                await using (var verifyStream = await file.OpenReadAsync())
+                {
+                    writtenData = new byte[verifyStream.Length];
+                    await verifyStream.ReadAsync(writtenData, 0, writtenData.Length);
+                }
+                
+                if (!VerifyFullFileModification(backupData, writtenData, ratingPosition))
+                {
+                    // 校验失败，还原备份
+                    Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
+                    
+                    // 尝试恢复备份
+                    try
+                    {
+                        if (supportsRandomAccess)
+                        {
+                            await using (var restoreStream = await file.OpenWriteAsync())
+                            {
+                                restoreStream.SetLength(0);
+                                await restoreStream.WriteAsync(backupData, 0, backupData.Length);
+                                await restoreStream.FlushAsync();
+                            }
+                        }
+                        else
+                        {
+                            // 使用临时文件方式恢复
+                            var folder = await file.GetParentAsync();
+                            if (folder != null)
+                            {
+                                var tempFileName = $"{file.Name}.restore";
+                                var tempFile = await folder.CreateFileAsync(tempFileName);
+                                await using (var tempStream = await tempFile.OpenWriteAsync())
+                                {
+                                    await tempStream.WriteAsync(backupData, 0, backupData.Length);
+                                    await tempStream.FlushAsync();
+                                }
+                                
+                                await file.DeleteAsync();
+                                var restoredFile = await folder.CreateFileAsync(file.Name);
+                                await using (var restoredStream = await restoredFile.OpenWriteAsync())
+                                {
+                                    await restoredStream.WriteAsync(backupData, 0, backupData.Length);
+                                    await restoredStream.FlushAsync();
+                                }
+                                
+                                try { await tempFile.DeleteAsync(); } catch { }
+                            }
+                        }
+                    }
+                    catch (Exception restoreEx)
+                    {
+                        Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
+                    }
+                    
+                    return false;
+                }
+            }
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] Android write error: {ex.Message}");
+            
+            // 如果有备份且启用安全模式，尝试还原
+            if (enableSafeMode && backupData != null)
+            {
+                try
+                {
+                    await using (var restoreStream = await file.OpenWriteAsync())
+                    {
+                        await restoreStream.WriteAsync(backupData, 0, backupData.Length);
+                        await restoreStream.FlushAsync();
+                    }
+                }
+                catch (Exception restoreEx)
+                {
+                    Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
+                }
+            }
+            
+            return false;
+        }
+    }
+    
+    /// <summary>
+    /// 桌面平台的写入处理
+    /// </summary>
+    private static async Task<bool> WriteRatingDesktopAsync(IStorageFile file, int ratingPosition, int rating, bool enableSafeMode, byte[]? backupData)
+    {
+        var filePath = file.Path.LocalPath;
+        string? backupPath = null;
+        
+        try
+        {
+            // 安全模式：创建文件备份
+            if (enableSafeMode)
+            {
+                backupPath = filePath + ".xmp_backup";
+                File.Copy(filePath, backupPath, true);
+            }
+            
+            // 直接修改文件中的单个字符
+            var newRatingByte = (byte)('0' + rating);
+            using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
+            {
+                stream.Seek(ratingPosition, SeekOrigin.Begin);
+                stream.WriteByte(newRatingByte);
+                stream.Flush();
+            }
+            
+            // 安全模式：校验修改结果
+            if (enableSafeMode && backupPath != null)
+            {
+                if (!await VerifyFullFileModificationFromFiles(backupPath, filePath, ratingPosition))
+                {
+                    // 校验失败，还原备份
+                    Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
+                    File.Copy(backupPath, filePath, true);
+                    return false;
+                }
+                
+                // 校验通过，立即删除备份文件
+                File.Delete(backupPath);
+            }
+            
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] Desktop write error: {ex.Message}");
+            
+            // 如果有备份且启用安全模式，尝试还原
+            if (enableSafeMode && backupPath != null && File.Exists(backupPath))
+            {
+                try
+                {
+                    File.Copy(backupPath, filePath, true);
+                    File.Delete(backupPath);
+                }
+                catch (Exception restoreEx)
+                {
+                    Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
+                }
+            }
+            
+            return false;
+        }
+        finally
+        {
+            // 确保备份文件被清理
+            if (backupPath != null && File.Exists(backupPath))
+            {
+                try
+                {
+                    File.Delete(backupPath);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[XMP Writer] {ex.Message}");
+                }
+            }
+        }
+    }
+    
+    /// <summary>
     /// 清理上一次的备份缓存
     /// </summary>
     private static void CleanupPreviousBackup()
     {
-        if (_lastBackupPath != null && File.Exists(_lastBackupPath))
+        if (!IsAndroid && _lastBackupPath != null && File.Exists(_lastBackupPath))
         {
             try
             {
@@ -402,16 +643,12 @@ public static class XmpWriter
     }
     
     /// <summary>
-    /// 全文件字节校验，确保除指定位置外所有字节都相同
+    /// 全文件字节校验，确保除指定位置外所有字节都相同（内存版本）
     /// </summary>
-    private static async Task<bool> VerifyFullFileModification(string backupPath, string modifiedPath, long ratingPosition)
+    private static bool VerifyFullFileModification(byte[] backupData, byte[] modifiedData, long ratingPosition)
     {
         try
         {
-            // 读取备份文件和修改后的文件
-            var backupData = await File.ReadAllBytesAsync(backupPath);
-            var modifiedData = await File.ReadAllBytesAsync(modifiedPath);
-            
             if (backupData.Length != modifiedData.Length)
             {
                 Console.WriteLine($"[XMP Writer] File length changed");
@@ -481,15 +718,35 @@ public static class XmpWriter
     }
     
     /// <summary>
+    /// 全文件字节校验，确保除指定位置外所有字节都相同（文件版本）
+    /// </summary>
+    private static async Task<bool> VerifyFullFileModificationFromFiles(string backupPath, string modifiedPath, long ratingPosition)
+    {
+        try
+        {
+            // 读取备份文件和修改后的文件
+            var backupData = await File.ReadAllBytesAsync(backupPath);
+            var modifiedData = await File.ReadAllBytesAsync(modifiedPath);
+            
+            return VerifyFullFileModification(backupData, modifiedData, ratingPosition);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
+            return false;
+        }
+    }
+    
+    /// <summary>
     /// 从文件中读取当前 XMP 星级，不修改文件
     /// </summary>
     public static async Task<int?> ReadRatingAsync(IStorageFile file)
     {
         try
         {
-            var filePath = file.Path.LocalPath;
-            if (!filePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
-                !filePath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+            var fileName = file.Name;
+            if (!fileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
+                !fileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
             {
                 return null;
             }
