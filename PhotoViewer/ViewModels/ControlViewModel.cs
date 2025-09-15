@@ -26,15 +26,10 @@ public class ControlViewModel : ReactiveObject
 
     // 直接访问设置属性
     public bool ShowRating => Main.Settings.ShowRating;
-    public bool AllowSetRating => Main.Settings.AllowSetRating;
+    public bool SafeSetRating => Main.Settings.SafeSetRating;
 
-    // 评分属性
-    private int _rating = 0;
-    public int Rating
-    {
-        get => _rating;
-        set => this.RaiseAndSetIfChanged(ref _rating, value);
-    }
+    // 星级区域的不透明度：有照片时为1.0，无照片时为0.1
+    public double StarOpacity => Main.CurrentFile != null ? 1.0 : 0.1;
 
     public ControlViewModel(MainViewModel mainViewModel)
     {
@@ -53,6 +48,7 @@ public class ControlViewModel : ReactiveObject
             .Subscribe(currentFile =>
             {
                 this.RaisePropertyChanged(nameof(CurrentExifData));
+                this.RaisePropertyChanged(nameof(StarOpacity));
                 
                 // 如果当前文件有效且 EXIF 未加载，则加载 EXIF
                 if (currentFile != null && !currentFile.IsExifLoaded && !currentFile.IsExifLoading)
@@ -70,8 +66,8 @@ public class ControlViewModel : ReactiveObject
         Main.Settings.WhenAnyValue(s => s.ShowRating)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(ShowRating)));
             
-        Main.Settings.WhenAnyValue(s => s.AllowSetRating)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(AllowSetRating)));
+        Main.Settings.WhenAnyValue(s => s.SafeSetRating)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(SafeSetRating)));
 
         Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
         foreach (var hotkey in Main.Settings.Hotkeys)
@@ -180,19 +176,15 @@ public class ControlViewModel : ReactiveObject
     /// </summary>
     public async void SetRating(int rating)
     {
-        if (!AllowSetRating || Main.CurrentFile == null) return;
+        if (Main.CurrentFile == null) return;
         
         var file = Main.CurrentFile;
-        var previousRating = Rating;
         
         try
         {
-            var success = await XmpWriter.WriteRatingAsync(file.File, rating);
+            var success = await XmpWriter.WriteRatingAsync(file.File, rating, SafeSetRating);
             if (success)
             {
-                // 更新 UI 显示的评分
-                Rating = rating;
-                
                 // 异步刷新 EXIF 数据
                 _ = Task.Run(async () =>
                 {
@@ -212,12 +204,10 @@ public class ControlViewModel : ReactiveObject
                         Console.WriteLine($"Failed to refresh EXIF after rating update: {ex.Message}");
                     }
                 });
-                
-                Console.WriteLine($"Successfully updated rating to {rating} for {file.Name}");
             }
             else
             {
-                Console.WriteLine($"Failed to update rating for {file.Name} (XMP Rating not found or file not supported)");
+                Console.WriteLine($"Failed to update rating for {file.Name}");
             }
         }
         catch (Exception ex)

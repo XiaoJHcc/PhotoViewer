@@ -1,6 +1,6 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
@@ -8,25 +8,30 @@ using Avalonia.Platform.Storage;
 namespace PhotoViewer.Core;
 
 /// <summary>
-/// XMP Writer for modifying single XMP Rating character in JPG files
+/// XMP 写入器，用于修改 JPG 文件中的单个 XMP 星级字符
 /// </summary>
 public static class XmpWriter
 {
     private const byte JpegMarkerStart = 0xFF;
     private const byte App1Marker = 0xE1;
     
+    // 备份缓存管理
+    private static string? _lastBackupPath;
+    private static string? _lastBackupOriginalPath;
+    
     /// <summary>
-    /// Write XMP Rating to JPG file by modifying only the rating digit
+    /// 安全地写入 XMP 星级到 JPG 文件，只修改星级数字
     /// </summary>
-    /// <param name="file">Storage file to modify</param>
-    /// <param name="rating">Rating value (0-5)</param>
-    /// <returns>True if successful, false if file doesn't meet requirements</returns>
-    public static async Task<bool> WriteRatingAsync(IStorageFile file, int rating)
+    /// <param name="file">要修改的存储文件</param>
+    /// <param name="rating">星级值 (0-5)</param>
+    /// <param name="enableSafeMode">是否启用安全模式（备份和校验）</param>
+    /// <returns>成功返回 true，失败或文件不符合要求返回 false</returns>
+    public static async Task<bool> WriteRatingAsync(IStorageFile file, int rating, bool enableSafeMode = true)
     {
-        // Validate input parameters
+        // 验证输入参数
         if (rating < 0 || rating > 5)
         {
-            Console.WriteLine($"XmpWriter: Invalid rating value {rating}, must be between 0-5");
+            Console.WriteLine($"[XMP Writer] Invalid rating value {rating}");
             return false;
         }
         
@@ -34,113 +39,149 @@ public static class XmpWriter
         if (!filePath.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
             !filePath.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
         {
-            Console.WriteLine($"XmpWriter: File {file.Name} is not a JPG file");
+            Console.WriteLine($"[XMP Writer] File {file.Name} is not a JPG file");
             return false;
         }
         
         try
         {
-            // Read original file data
-            byte[] originalData;
+            // 清理上一次的备份缓存
+            CleanupPreviousBackup();
+            
+            // 全量读取文件数据查找星级位置
+            byte[] fileData;
             await using (var stream = await file.OpenReadAsync())
             {
-                originalData = new byte[stream.Length];
-                await stream.ReadAsync(originalData, 0, originalData.Length);
+                fileData = new byte[stream.Length];
+                await stream.ReadAsync(fileData, 0, fileData.Length);
             }
             
-            Console.WriteLine($"XmpWriter: Processing file {file.Name}, size: {originalData.Length} bytes");
-            
-            // Find XMP segment and rating position
-            var ratingPosition = FindXmpRatingPosition(originalData);
+            // 查找 XMP 星级位置
+            var ratingPosition = FindXmpRatingPosition(fileData);
             if (ratingPosition == -1)
             {
-                Console.WriteLine($"XmpWriter: No XMP Rating found in {file.Name}");
+                Console.WriteLine($"[XMP Writer] No XMP Rating found in {file.Name}");
                 return false;
             }
             
-            // Get current rating value
-            var currentRating = originalData[ratingPosition] - '0';
+            // 获取当前星级值
+            var currentRatingByte = fileData[ratingPosition];
+            var currentRating = currentRatingByte - '0';
+            
+            // 检查当前星级是否为 -1 (未评级)，如果是则按不符合要求处理
+            if (currentRatingByte == '1' && ratingPosition > 0 && fileData[ratingPosition - 1] == '-')
+            {
+                Console.WriteLine($"[XMP Writer] Unsupported rating format (-1) in {file.Name}");
+                return false;
+            }
+            
             if (currentRating < 0 || currentRating > 5)
             {
-                Console.WriteLine($"XmpWriter: Invalid current rating {currentRating} at position {ratingPosition}");
+                Console.WriteLine($"[XMP Writer] Invalid current rating {currentRating}");
                 return false;
             }
             
-            Console.WriteLine($"XmpWriter: Found rating {currentRating} at position {ratingPosition}");
-            
-            // If rating is the same, no need to modify
+            // 如果星级相同，无需修改
             if (currentRating == rating)
             {
-                Console.WriteLine($"XmpWriter: Rating is already {rating}, no changes needed");
                 return true;
             }
             
-            // Create modified data by changing only the rating digit
-            var modifiedData = new byte[originalData.Length];
-            Array.Copy(originalData, modifiedData, originalData.Length);
-            modifiedData[ratingPosition] = (byte)('0' + rating);
-            
-            Console.WriteLine($"XmpWriter: Changing rating from {currentRating} to {rating} at position {ratingPosition}");
-            
-            // Verify that only one byte changed
-            if (!VerifyOnlyRatingChanged(originalData, modifiedData, ratingPosition))
+            // 安全模式：创建备份
+            if (enableSafeMode)
             {
-                Console.WriteLine($"XmpWriter: Verification failed - more than one byte changed");
-                return false;
+                var backupPath = filePath + ".xmp_backup";
+                File.Copy(filePath, backupPath, true);
+                _lastBackupPath = backupPath;
+                _lastBackupOriginalPath = filePath;
             }
             
-            // Write modified data to temporary file first
-            var tempFilePath = filePath + ".tmp";
-            try
+            // 直接修改文件中的单个字符
+            var newRatingByte = (byte)('0' + rating);
+            using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
             {
-                await File.WriteAllBytesAsync(tempFilePath, modifiedData);
-                
-                // Verify written file
-                var writtenData = await File.ReadAllBytesAsync(tempFilePath);
-                if (!writtenData.SequenceEqual(modifiedData))
+                stream.Seek(ratingPosition, SeekOrigin.Begin);
+                stream.WriteByte(newRatingByte);
+                stream.Flush();
+            }
+            
+            // 安全模式：校验修改结果
+            if (enableSafeMode)
+            {
+                if (!await VerifyFullFileModification(_lastBackupPath!, filePath, ratingPosition))
                 {
-                    Console.WriteLine($"XmpWriter: Written file verification failed");
-                    File.Delete(tempFilePath);
+                    // 校验失败，还原备份
+                    Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
+                    File.Copy(_lastBackupPath!, filePath, true);
+                    File.Delete(_lastBackupPath!);
+                    _lastBackupPath = null;
+                    _lastBackupOriginalPath = null;
                     return false;
                 }
-                
-                // Replace original file atomically
-                File.Replace(tempFilePath, filePath, null);
-                Console.WriteLine($"XmpWriter: Successfully updated rating from {currentRating} to {rating} for {file.Name}");
-                return true;
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"XmpWriter: Failed to write file: {ex.Message}");
-                if (File.Exists(tempFilePath))
-                {
-                    File.Delete(tempFilePath);
-                }
-                return false;
-            }
+            
+            return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"XmpWriter: Unexpected error processing {file.Name}: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
+            
+            // 如果有备份且启用安全模式，尝试还原
+            if (enableSafeMode && _lastBackupPath != null && File.Exists(_lastBackupPath))
+            {
+                try
+                {
+                    File.Copy(_lastBackupPath, filePath, true);
+                    File.Delete(_lastBackupPath);
+                    _lastBackupPath = null;
+                    _lastBackupOriginalPath = null;
+                }
+                catch (Exception restoreEx)
+                {
+                    Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
+                }
+            }
+            
             return false;
         }
     }
     
     /// <summary>
-    /// Find the position of XMP Rating digit in the file
+    /// 清理上一次的备份缓存
+    /// </summary>
+    private static void CleanupPreviousBackup()
+    {
+        if (_lastBackupPath != null && File.Exists(_lastBackupPath))
+        {
+            try
+            {
+                File.Delete(_lastBackupPath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[XMP Writer] {ex.Message}");
+            }
+            finally
+            {
+                _lastBackupPath = null;
+                _lastBackupOriginalPath = null;
+            }
+        }
+    }
+    
+    /// <summary>
+    /// 在文件数据中查找 XMP 星级数字的位置
     /// </summary>
     private static int FindXmpRatingPosition(byte[] data)
     {
         try
         {
-            // Find APP1 XMP segment
+            // 查找 APP1 XMP 段
             for (int i = 0; i < data.Length - 1; i++)
             {
                 if (data[i] == JpegMarkerStart && data[i + 1] == App1Marker)
                 {
-                    Console.WriteLine($"XmpWriter: Found APP1 marker at position {i}");
-                    
-                    // Check if this is an XMP segment
+                    // 检查是否为 XMP 段
                     if (i + 4 >= data.Length) continue;
                     
                     var segmentLength = (data[i + 2] << 8) | data[i + 3];
@@ -149,29 +190,49 @@ public static class XmpWriter
                     
                     if (segmentEnd > data.Length) continue;
                     
-                    // Check for XMP identifier
-                    var xmpIdentifier = Encoding.ASCII.GetBytes("http://ns.adobe.com/xap/1.0/\0");
-                    if (segmentLength < xmpIdentifier.Length + 2) continue;
-                    
-                    bool isXmpSegment = true;
-                    for (int j = 0; j < xmpIdentifier.Length; j++)
+                    // 检查 XMP 标识符
+                    var xmpIdentifiers = new[]
                     {
-                        if (segmentStart + j >= data.Length || data[segmentStart + j] != xmpIdentifier[j])
+                        "http://ns.adobe.com/xap/1.0/\0",
+                        "adobe:ns:meta/",
+                        "http://ns.adobe.com/photoshop/1.0/",
+                        "<?xpacket"
+                    };
+                    
+                    bool isXmpSegment = false;
+                    int xmpDataStart = segmentStart;
+                    
+                    foreach (var identifier in xmpIdentifiers)
+                    {
+                        var identifierBytes = Encoding.ASCII.GetBytes(identifier);
+                        if (segmentLength < identifierBytes.Length + 2) continue;
+                        
+                        bool matches = true;
+                        for (int j = 0; j < identifierBytes.Length; j++)
                         {
-                            isXmpSegment = false;
+                            if (segmentStart + j >= data.Length || data[segmentStart + j] != identifierBytes[j])
+                            {
+                                matches = false;
+                                break;
+                            }
+                        }
+                        
+                        if (matches)
+                        {
+                            isXmpSegment = true;
+                            xmpDataStart = segmentStart + identifierBytes.Length;
                             break;
                         }
                     }
                     
-                    if (!isXmpSegment) continue;
+                    // 如果没有找到标识符，尝试直接搜索（有些 XMP 段可能格式不标准）
+                    if (!isXmpSegment)
+                    {
+                        xmpDataStart = segmentStart;
+                    }
                     
-                    Console.WriteLine($"XmpWriter: Found XMP segment at position {segmentStart}, length {segmentLength}");
-                    
-                    // Search for rating patterns in this XMP segment
-                    var xmpDataStart = segmentStart + xmpIdentifier.Length;
-                    var xmpDataEnd = segmentEnd;
-                    
-                    var ratingPos = FindRatingInXmpData(data, xmpDataStart, xmpDataEnd);
+                    // 在此段中搜索星级模式
+                    var ratingPos = FindRatingInXmpData(data, xmpDataStart, segmentEnd);
                     if (ratingPos != -1)
                     {
                         return ratingPos;
@@ -179,33 +240,46 @@ public static class XmpWriter
                 }
             }
             
-            Console.WriteLine("XmpWriter: No XMP Rating found in any APP1 segment");
             return -1;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"XmpWriter: Error finding XMP rating position: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
             return -1;
         }
     }
     
     /// <summary>
-    /// Find rating digit within XMP data
+    /// 在 XMP 数据中查找星级数字
     /// </summary>
     private static int FindRatingInXmpData(byte[] data, int start, int end)
     {
         try
         {
-            // Common XMP rating patterns to search for
+            // 扩展的 XMP 星级模式
             var ratingPatterns = new[]
             {
+                // 属性格式
                 "xmp:Rating=\"",
                 "xap:Rating=\"", 
                 ":Rating=\"",
                 "Rating=\"",
+                "rating=\"",
+                
+                // XML 元素格式
                 "<xmp:Rating>",
                 "<xap:Rating>",
-                "<Rating>"
+                "<Rating>",
+                "<rating>",
+                
+                // 命名空间变体
+                "photoshop:Rating=\"",
+                "ps:Rating=\"",
+                "tiff:Rating=\"",
+                
+                // RDF 格式
+                "rdf:Rating=\"",
+                "dc:Rating=\""
             };
             
             foreach (var pattern in ratingPatterns)
@@ -226,31 +300,42 @@ public static class XmpWriter
                     
                     if (matches)
                     {
-                        var ratingPos = i + patternBytes.Length;
+                        var ratingOffset = i + patternBytes.Length;
                         
-                        // Verify the next character is a valid rating digit (0-5)
-                        if (ratingPos < data.Length)
+                        // 验证下一个字符是有效的星级数字 (0-5)
+                        if (ratingOffset < end)
                         {
-                            var ratingChar = data[ratingPos];
+                            var ratingChar = data[ratingOffset];
+                            
                             if (ratingChar >= '0' && ratingChar <= '5')
                             {
-                                Console.WriteLine($"XmpWriter: Found rating pattern '{pattern}' at position {i}, rating digit at {ratingPos}");
-                                return ratingPos;
+                                return ratingOffset;
+                            }
+                            // 如果遇到 -1 格式，直接跳过不处理
+                            else if (ratingChar == '-' && ratingOffset + 1 < end && data[ratingOffset + 1] == '1')
+                            {
+                                continue; // 跳过 -1 格式
                             }
                         }
                     }
                 }
             }
             
-            // Alternative search for XML element content
-            var xmlPatterns = new[]
+            // 通过 XML 结束标签进行替代搜索
+            var xmlEndPatterns = new[]
             {
                 "</xmp:Rating>",
                 "</xap:Rating>", 
-                "</Rating>"
+                "</Rating>",
+                "</rating>",
+                "</photoshop:Rating>",
+                "</ps:Rating>",
+                "</tiff:Rating>",
+                "</rdf:Rating>",
+                "</dc:Rating>"
             };
             
-            foreach (var endPattern in xmlPatterns)
+            foreach (var endPattern in xmlEndPatterns)
             {
                 var endPatternBytes = Encoding.UTF8.GetBytes(endPattern);
                 
@@ -268,12 +353,19 @@ public static class XmpWriter
                     
                     if (matches)
                     {
-                        // Look backwards for the rating digit
-                        var ratingPos = i - 1;
-                        if (ratingPos >= start && data[ratingPos] >= '0' && data[ratingPos] <= '5')
+                        // 向前查找星级数字
+                        for (int k = i - 1; k >= Math.Max(start, i - 10); k--)
                         {
-                            Console.WriteLine($"XmpWriter: Found rating via end tag '{endPattern}' at position {i}, rating digit at {ratingPos}");
-                            return ratingPos;
+                            var ratingChar = data[k];
+                            if (ratingChar >= '0' && ratingChar <= '5')
+                            {
+                                // 检查是否为 -1 格式
+                                if (k > start && data[k - 1] == '-' && ratingChar == '1')
+                                {
+                                    continue; // 跳过 -1 格式
+                                }
+                                return k;
+                            }
                         }
                     }
                 }
@@ -283,71 +375,92 @@ public static class XmpWriter
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"XmpWriter: Error searching for rating in XMP data: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
             return -1;
         }
     }
     
     /// <summary>
-    /// Verify that only the rating digit changed between original and modified data
+    /// 全文件字节校验，确保除指定位置外所有字节都相同
     /// </summary>
-    private static bool VerifyOnlyRatingChanged(byte[] originalData, byte[] modifiedData, int ratingPosition)
+    private static async Task<bool> VerifyFullFileModification(string backupPath, string modifiedPath, long ratingPosition)
     {
         try
         {
-            if (originalData.Length != modifiedData.Length)
+            // 读取备份文件和修改后的文件
+            var backupData = await File.ReadAllBytesAsync(backupPath);
+            var modifiedData = await File.ReadAllBytesAsync(modifiedPath);
+            
+            if (backupData.Length != modifiedData.Length)
             {
-                Console.WriteLine($"XmpWriter: File length changed: {originalData.Length} -> {modifiedData.Length}");
+                Console.WriteLine($"[XMP Writer] File length changed");
                 return false;
             }
             
             int changedBytes = 0;
-            int firstChangedPosition = -1;
+            var changedPositions = new List<long>();
             
-            for (int i = 0; i < originalData.Length; i++)
+            // 逐字节比较整个文件
+            for (long i = 0; i < backupData.Length; i++)
             {
-                if (originalData[i] != modifiedData[i])
+                if (backupData[i] != modifiedData[i])
                 {
                     changedBytes++;
-                    if (firstChangedPosition == -1)
-                    {
-                        firstChangedPosition = i;
-                    }
+                    changedPositions.Add(i);
                     
+                    // 如果有超过1个字节被修改，立即记录并失败
                     if (changedBytes > 1)
                     {
-                        Console.WriteLine($"XmpWriter: Multiple bytes changed. First at {firstChangedPosition}, another at {i}");
+                        Console.WriteLine($"[XMP Writer] Multiple bytes changed");
                         return false;
                     }
                 }
             }
             
+            // 检查修改情况
             if (changedBytes == 0)
             {
-                Console.WriteLine($"XmpWriter: No bytes changed");
-                return true; // Same rating, no change needed
-            }
-            
-            if (changedBytes == 1 && firstChangedPosition == ratingPosition)
-            {
-                var oldRating = originalData[ratingPosition];
-                var newRating = modifiedData[ratingPosition];
-                Console.WriteLine($"XmpWriter: Verification passed - only rating digit changed at position {ratingPosition}: '{(char)oldRating}' -> '{(char)newRating}'");
+                // 没有字节被修改（可能是相同的星级值）
                 return true;
             }
+            else if (changedBytes == 1)
+            {
+                var changedPosition = changedPositions[0];
+                if (changedPosition == ratingPosition)
+                {
+                    // 只有预期的星级位置被修改
+                    var oldRating = (char)backupData[ratingPosition];
+                    var newRating = (char)modifiedData[ratingPosition];
+                    
+                    // 验证修改的字符都是有效的星级字符
+                    if (oldRating >= '0' && oldRating <= '5' && newRating >= '0' && newRating <= '5')
+                    {
+                        return true;
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[XMP Writer] Invalid rating characters");
+                        return false;
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"[XMP Writer] Unexpected change at position {changedPosition}");
+                    return false;
+                }
+            }
             
-            Console.WriteLine($"XmpWriter: Unexpected change at position {firstChangedPosition}, expected {ratingPosition}");
             return false;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"XmpWriter: Error during verification: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
             return false;
         }
     }
     
     /// <summary>
-    /// Read current XMP Rating from file without modifying it
+    /// 从文件中读取当前 XMP 星级，不修改文件
     /// </summary>
     public static async Task<int?> ReadRatingAsync(IStorageFile file)
     {
@@ -360,29 +473,36 @@ public static class XmpWriter
                 return null;
             }
             
-            byte[] data;
+            // 全量读取文件查找星级
+            byte[] fileData;
             await using (var stream = await file.OpenReadAsync())
             {
-                data = new byte[stream.Length];
-                await stream.ReadAsync(data, 0, data.Length);
+                fileData = new byte[stream.Length];
+                await stream.ReadAsync(fileData, 0, fileData.Length);
             }
             
-            var ratingPosition = FindXmpRatingPosition(data);
+            var ratingPosition = FindXmpRatingPosition(fileData);
             if (ratingPosition == -1) return null;
             
-            var ratingChar = data[ratingPosition];
-            if (ratingChar >= '0' && ratingChar <= '5')
+            var ratingByte = fileData[ratingPosition];
+            
+            // 检查是否为 -1 格式，如果是则返回 null
+            if (ratingByte == '1' && ratingPosition > 0 && fileData[ratingPosition - 1] == '-')
             {
-                return ratingChar - '0';
+                return null;
+            }
+            
+            if (ratingByte >= '0' && ratingByte <= '5')
+            {
+                return ratingByte - '0';
             }
             
             return null;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"XmpWriter: Error reading rating from {file.Name}: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
             return null;
         }
     }
 }
-

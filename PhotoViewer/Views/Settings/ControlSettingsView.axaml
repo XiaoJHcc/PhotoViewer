@@ -72,8 +72,8 @@
                               IsChecked="{Binding ShowRating}"
                               Content="显示星级评分" />
                     <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding AllowSetRating}"
-                              Content="允许修改文件星级" />
+                              IsChecked="{Binding SafeSetRating}"
+                              Content="安全修改文件星级" />
                 </StackPanel>
             </Border>
 

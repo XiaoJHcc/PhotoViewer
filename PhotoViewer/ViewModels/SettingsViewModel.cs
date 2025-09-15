@@ -754,11 +754,11 @@ public class SettingsViewModel : ReactiveObject
         get => _showRating;
         set => this.RaiseAndSetIfChanged(ref _showRating, value);
     }
-    private bool _allowSetRating = true;
-    public bool AllowSetRating
+    private bool _safeSetRating = true;
+    public bool SafeSetRating
     {
-        get => _allowSetRating;
-        set => this.RaiseAndSetIfChanged(ref _allowSetRating, value);
+        get => _safeSetRating;
+        set => this.RaiseAndSetIfChanged(ref _safeSetRating, value);
     }
     
     #endregion
