@@ -99,6 +99,7 @@ public class SettingsViewModel : ReactiveObject
         FileFormats = new ObservableCollection<FileFormatItem>
         {
             new("JPG", new[] { ".jpg", ".jpeg" }, true),
+            new("HEIF", new[] { ".heif", ".heic", ".avif", ".hif" }, true),
             new("PNG", new[] { ".png" }, true),
             new("TIFF", new[] { ".tiff", ".tif" }, false),
             new("WebP", new[] { ".webp" }, true),
