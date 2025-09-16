@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -202,87 +203,6 @@ public static class HeifLoader
     }
     
     /// <summary>
-    /// 解码缩略图图像
-    /// </summary>
-    private static Bitmap? DecodeThumbnailImage(HeifImageHandle thumbnailHandle, int maxSize)
-    {
-        try
-        {
-            var thumbnail = thumbnailHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
-            if (thumbnail == null) return null;
-            
-            using (thumbnail)
-            {
-                var bitmap = ConvertHeifImageToBitmap(thumbnail);
-                if (bitmap == null) return null;
-                
-                // 如果缩略图过大，进一步缩放
-                if (bitmap.PixelSize.Width > maxSize || bitmap.PixelSize.Height > maxSize)
-                {
-                    var finalScale = Math.Min((double)maxSize / bitmap.PixelSize.Width, 
-                                            (double)maxSize / bitmap.PixelSize.Height);
-                    var finalSize = new PixelSize(
-                        Math.Max(1, (int)(bitmap.PixelSize.Width * finalScale)),
-                        Math.Max(1, (int)(bitmap.PixelSize.Height * finalScale))
-                    );
-                    
-                    var scaledBitmap = bitmap.CreateScaledBitmap(finalSize);
-                    bitmap.Dispose();
-                    return scaledBitmap;
-                }
-                
-                return bitmap;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to decode HEIF thumbnail image: {ex.Message}");
-            return null;
-        }
-    }
-    
-    /// <summary>
-    /// 从主图像生成缩略图
-    /// </summary>
-    private static Bitmap? GenerateHeifThumbnail(HeifImageHandle imageHandle, int maxSize)
-    {
-        try
-        {
-            // 解码为缩略图尺寸
-            var image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
-            if (image == null) return null;
-            
-            using (image)
-            {
-                var bitmap = ConvertHeifImageToBitmap(image);
-                if (bitmap == null) return null;
-                
-                // 如果需要进一步缩放
-                if (bitmap.PixelSize.Width > maxSize || bitmap.PixelSize.Height > maxSize)
-                {
-                    var finalScale = Math.Min((double)maxSize / bitmap.PixelSize.Width, 
-                                            (double)maxSize / bitmap.PixelSize.Height);
-                    var finalSize = new PixelSize(
-                        Math.Max(1, (int)(bitmap.PixelSize.Width * finalScale)),
-                        Math.Max(1, (int)(bitmap.PixelSize.Height * finalScale))
-                    );
-                    
-                    var scaledBitmap = bitmap.CreateScaledBitmap(finalSize);
-                    bitmap.Dispose();
-                    return scaledBitmap;
-                }
-                
-                return bitmap;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to generate HEIF thumbnail: {ex.Message}");
-            return null;
-        }
-    }
-    
-    /// <summary>
     /// 将 HeifImage 转换为 Avalonia Bitmap
     /// </summary>
     private static Bitmap? ConvertHeifImageToBitmap(HeifImage heifImage)
@@ -292,133 +212,329 @@ public static class HeifLoader
             var width = heifImage.Width;
             var height = heifImage.Height;
             
-            if (width <= 0 || height <= 0) return null;
+            if (width <= 0 || height <= 0) 
+            {
+                Console.WriteLine($"Invalid HEIF image dimensions: {width}x{height}");
+                return null;
+            }
             
-            // 获取像素数据 - 使用正确的属性访问
+            Console.WriteLine($"Converting HEIF image: {width}x{height}, colorspace: {heifImage.Colorspace}");
+            
+            // 获取像素数据
             var plane = heifImage.GetPlane(HeifChannel.Interleaved);
-            if (plane == null) return null;
+            if (plane == null)
+            {
+                Console.WriteLine("Failed to get interleaved plane from HEIF image");
+                return null;
+            }
             
-            // 从 Scan0 指针获取像素数据
             var stride = plane.Stride;
-            var dataSize = stride * height;
-            var rgbData = new byte[dataSize];
+            if (stride <= 0)
+            {
+                Console.WriteLine($"Invalid stride value: {stride}");
+                return null;
+            }
+            
+            Console.WriteLine($"Plane info: stride={stride}, scan0={plane.Scan0}");
+            
+            // 对于 RGB24 格式，每像素 3 字节
+            var bytesPerPixel = 3;
+            var expectedRowSize = width * bytesPerPixel;
+            
+            // 验证 stride 是否合理
+            if (stride < expectedRowSize)
+            {
+                Console.WriteLine($"Stride {stride} is less than expected row size {expectedRowSize}");
+                return null;
+            }
+            
+            // 计算实际需要的数据大小
+            var totalDataSize = stride * height;
+            Console.WriteLine($"Expected data size: {totalDataSize} bytes");
+            
+            // 创建 BGRA 数据数组
+            var bgraData = new byte[width * height * 4];
             
             unsafe
             {
                 var sourcePtr = (byte*)plane.Scan0;
-                for (int i = 0; i < dataSize; i++)
+                if (sourcePtr == null)
                 {
-                    rgbData[i] = sourcePtr[i];
+                    Console.WriteLine("Invalid source pointer from HEIF plane");
+                    return null;
+                }
+                
+                // 逐行转换 RGB 到 BGRA
+                for (int y = 0; y < height; y++)
+                {
+                    var sourceRowPtr = sourcePtr + (y * stride);
+                    var destRowOffset = y * width * 4;
+                    
+                    for (int x = 0; x < width; x++)
+                    {
+                        var srcPixelOffset = x * bytesPerPixel;
+                        var destPixelOffset = destRowOffset + (x * 4);
+                        
+                        // 边界检查
+                        if (destPixelOffset + 3 >= bgraData.Length)
+                        {
+                            Console.WriteLine($"Destination buffer overflow at pixel ({x}, {y})");
+                            break;
+                        }
+                        
+                        // RGB -> BGRA 转换
+                        bgraData[destPixelOffset] = sourceRowPtr[srcPixelOffset + 2];     // B
+                        bgraData[destPixelOffset + 1] = sourceRowPtr[srcPixelOffset + 1]; // G
+                        bgraData[destPixelOffset + 2] = sourceRowPtr[srcPixelOffset];     // R
+                        bgraData[destPixelOffset + 3] = 255;                              // A (不透明)
+                    }
                 }
             }
             
-            // 转换为 BGRA 格式
-            var bgraData = ConvertRgbToBgra(rgbData, width, height, stride);
-            
-            // 创建 Avalonia Bitmap
+            // 创建 Avalonia Bitmap - 确保数据完整复制
+            var bitmap = CreateBitmapFromBgraDataImproved(bgraData, width, height);
+            return bitmap;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to convert HEIF image to bitmap: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return null;
+        }
+    }
+    
+    /// <summary>
+    /// 从 BGRA 数据创建 Bitmap - 改进版本
+    /// </summary>
+    private static Bitmap? CreateBitmapFromBgraDataImproved(byte[] bgraData, int width, int height)
+    {
+        try
+        {
             var pixelSize = new PixelSize(width, height);
+            
+            // 验证数据大小
+            var expectedDataSize = width * height * 4;
+            if (bgraData.Length < expectedDataSize)
+            {
+                Console.WriteLine($"Insufficient BGRA data: expected {expectedDataSize}, got {bgraData.Length}");
+                return null;
+            }
+            
             var bitmap = new WriteableBitmap(pixelSize, new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888);
             
             using (var lockedBitmap = bitmap.Lock())
             {
                 var destStride = lockedBitmap.RowBytes;
                 var destPtr = lockedBitmap.Address;
+                var sourceStride = width * 4; // BGRA 每像素 4 字节
                 
-                // 复制像素数据
-                for (int y = 0; y < height; y++)
+                Console.WriteLine($"Bitmap creation: destStride={destStride}, sourceStride={sourceStride}");
+                
+                unsafe
                 {
-                    var srcOffset = y * width * 4;
-                    var destOffset = y * destStride;
+                    var destBytePtr = (byte*)destPtr;
                     
-                    unsafe
+                    // 逐行复制数据
+                    for (int y = 0; y < height; y++)
                     {
-                        var src = bgraData.AsSpan(srcOffset, width * 4);
-                        var dest = new Span<byte>((byte*)destPtr + destOffset, width * 4);
-                        src.CopyTo(dest);
+                        var srcOffset = y * sourceStride;
+                        var destOffset = y * destStride;
+                        var copySize = Math.Min(sourceStride, destStride);
+                        
+                        // 边界检查
+                        if (srcOffset + copySize > bgraData.Length)
+                        {
+                            Console.WriteLine($"Source data insufficient for row {y}");
+                            break;
+                        }
+                        
+                        // 使用固定指针进行内存复制
+                        fixed (byte* srcPtr = &bgraData[srcOffset])
+                        {
+                            Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
+                        }
                     }
                 }
             }
             
+            Console.WriteLine($"Successfully created bitmap: {bitmap.PixelSize.Width}x{bitmap.PixelSize.Height}");
             return bitmap;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to convert HEIF image to bitmap: {ex.Message}");
+            Console.WriteLine($"Failed to create bitmap from BGRA data: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
             return null;
         }
     }
     
     /// <summary>
-    /// 将 RGB 数据转换为 BGRA 数据
+    /// 解码缩略图图像 - 修复版本
     /// </summary>
-    private static byte[] ConvertRgbToBgra(byte[] rgbData, int width, int height, int stride)
+    private static Bitmap? DecodeThumbnailImage(HeifImageHandle thumbnailHandle, int maxSize)
     {
-        var bgraData = new byte[width * height * 4];
-        
-        for (int y = 0; y < height; y++)
+        try
         {
-            for (int x = 0; x < width; x++)
+            Console.WriteLine("Attempting to decode embedded HEIF thumbnail");
+            
+            // 只尝试 RGB24 格式，因为日志显示这个格式是成功的
+            HeifImage? thumbnail = null;
+            try
             {
-                var srcIndex = y * stride + x * 3;
-                var destIndex = (y * width + x) * 4;
-                
-                if (srcIndex + 2 < rgbData.Length)
+                thumbnail = thumbnailHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
+                if (thumbnail != null)
                 {
-                    // RGB -> BGRA
-                    bgraData[destIndex] = rgbData[srcIndex + 2];     // B
-                    bgraData[destIndex + 1] = rgbData[srcIndex + 1]; // G
-                    bgraData[destIndex + 2] = rgbData[srcIndex];     // R
-                    bgraData[destIndex + 3] = 255;                   // A (不透明)
+                    Console.WriteLine($"Successfully decoded thumbnail: {thumbnail.Width}x{thumbnail.Height}");
                 }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to decode thumbnail with Rgb/InterleavedRgb24: {ex.Message}");
+                return null;
+            }
+            
+            if (thumbnail == null)
+            {
+                Console.WriteLine("Failed to decode thumbnail - thumbnail is null");
+                return null;
+            }
+            
+            using (thumbnail)
+            {
+                var bitmap = ConvertHeifImageToBitmap(thumbnail);
+                if (bitmap == null) 
+                {
+                    Console.WriteLine("ConvertHeifImageToBitmap returned null for thumbnail");
+                    return null;
+                }
+                
+                // 检查缩略图是否需要缩放
+                if (bitmap.PixelSize.Width > maxSize || bitmap.PixelSize.Height > maxSize)
+                {
+                    try
+                    {
+                        var finalScale = Math.Min((double)maxSize / bitmap.PixelSize.Width, 
+                                                (double)maxSize / bitmap.PixelSize.Height);
+                        var finalSize = new PixelSize(
+                            Math.Max(1, (int)(bitmap.PixelSize.Width * finalScale)),
+                            Math.Max(1, (int)(bitmap.PixelSize.Height * finalScale))
+                        );
+                        
+                        Console.WriteLine($"Scaling thumbnail from {bitmap.PixelSize} to {finalSize}");
+                        
+                        // 创建新的缩放位图前，验证原位图的有效性
+                        if (bitmap.PixelSize.Width <= 0 || bitmap.PixelSize.Height <= 0)
+                        {
+                            Console.WriteLine("Original bitmap has invalid dimensions for scaling");
+                            bitmap.Dispose();
+                            return null;
+                        }
+                        
+                        var scaledBitmap = bitmap.CreateScaledBitmap(finalSize);
+                        bitmap.Dispose();
+                        return scaledBitmap;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to scale thumbnail: {ex.Message}");
+                        // 缩放失败时返回原图
+                        return bitmap;
+                    }
+                }
+                
+                return bitmap;
+            }
         }
-        
-        return bgraData;
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to decode HEIF thumbnail image: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return null;
+        }
     }
     
     /// <summary>
-    /// 获取 HEIF 图片信息（不解码完整图片）
+    /// 从主图像生成缩略图 - 修复版本
     /// </summary>
-    // [Obsolete("Obsolete")]
-    // public static async Task<(int width, int height)?> GetHeifImageInfoAsync(IStorageFile file)
-    // {
-    //     try
-    //     {
-    //         await using var stream = await file.OpenReadAsync();
-    //         
-    //         // 将流数据读取到字节数组
-    //         using var memoryStream = new MemoryStream();
-    //         await stream.CopyToAsync(memoryStream);
-    //         var data = memoryStream.ToArray();
-    //         
-    //         return await Task.Run(() =>
-    //         {
-    //             try
-    //             {
-    //                 using var context = new HeifContext();
-    //                 context.ReadFromMemory(data);
-    //                 
-    //                 var imageHandle = context.GetPrimaryImageHandle();
-    //                 if (imageHandle == null) return null;
-    //                 
-    //                 using (imageHandle)
-    //                 {
-    //                     var width = imageHandle.Width;
-    //                     var height = imageHandle.Height;
-    //                     return (width, height);
-    //                 }
-    //             }
-    //             catch (Exception ex)
-    //             {
-    //                 Console.WriteLine($"Failed to get HEIF image info: {ex.Message}");
-    //                 return null;
-    //             }
-    //         });
-    //     }
-    //     catch (Exception ex)
-    //     {
-    //         Console.WriteLine($"Failed to get HEIF image info ({file.Name}): {ex.Message}");
-    //         return null;
-    //     }
-    // }
+    private static Bitmap? GenerateHeifThumbnail(HeifImageHandle imageHandle, int maxSize)
+    {
+        try
+        {
+            Console.WriteLine("Generating HEIF thumbnail from main image");
+            
+            // 只尝试 RGB24 格式
+            HeifImage? image = null;
+            try
+            {
+                image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
+                if (image != null)
+                {
+                    Console.WriteLine($"Successfully decoded main image: {image.Width}x{image.Height}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to decode main image with Rgb/InterleavedRgb24: {ex.Message}");
+                return null;
+            }
+            
+            if (image == null)
+            {
+                Console.WriteLine("Failed to decode main image - image is null");
+                return null;
+            }
+            
+            using (image)
+            {
+                var bitmap = ConvertHeifImageToBitmap(image);
+                if (bitmap == null) 
+                {
+                    Console.WriteLine("ConvertHeifImageToBitmap returned null for main image");
+                    return null;
+                }
+                
+                // 检查是否需要缩放
+                if (bitmap.PixelSize.Width > maxSize || bitmap.PixelSize.Height > maxSize)
+                {
+                    try
+                    {
+                        var finalScale = Math.Min((double)maxSize / bitmap.PixelSize.Width, 
+                                                (double)maxSize / bitmap.PixelSize.Height);
+                        var finalSize = new PixelSize(
+                            Math.Max(1, (int)(bitmap.PixelSize.Width * finalScale)),
+                            Math.Max(1, (int)(bitmap.PixelSize.Height * finalScale))
+                        );
+                        
+                        Console.WriteLine($"Scaling main image from {bitmap.PixelSize} to {finalSize}");
+                        
+                        // 创建新的缩放位图前，验证原位图的有效性
+                        if (bitmap.PixelSize.Width <= 0 || bitmap.PixelSize.Height <= 0)
+                        {
+                            Console.WriteLine("Original bitmap has invalid dimensions for scaling");
+                            bitmap.Dispose();
+                            return null;
+                        }
+                        
+                        var scaledBitmap = bitmap.CreateScaledBitmap(finalSize);
+                        bitmap.Dispose();
+                        return scaledBitmap;
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Failed to scale main image: {ex.Message}");
+                        // 缩放失败时返回原图
+                        return bitmap;
+                    }
+                }
+                
+                return bitmap;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to generate HEIF thumbnail: {ex.Message}");
+            Console.WriteLine($"Stack trace: {ex.StackTrace}");
+            return null;
+        }
+    }
 }
