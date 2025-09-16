@@ -151,7 +151,6 @@ public static class XmpWriter
             // 使用多重写入策略确保立即同步
             bool writeSuccess = false;
             
-            // 策略1: 标准写入 + 激进同步
             try
             {
                 await using (var writeStream = await file.OpenWriteAsync())
@@ -165,44 +164,11 @@ public static class XmpWriter
                     }
                 }
                 
-                // 立即执行激进同步
-                await AggressiveAndroidSync();
                 writeSuccess = true;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[XMP Writer] Android strategy 1 failed: {ex.Message}");
-            }
-            
-            // 策略2: 如果策略1失败，使用分块写入
-            if (!writeSuccess)
-            {
-                try
-                {
-                    await using (var writeStream = await file.OpenWriteAsync())
-                    {
-                        // 分块写入并在每块后强制同步
-                        const int chunkSize = 8192;
-                        for (int i = 0; i < fileData.Length; i += chunkSize)
-                        {
-                            int currentChunkSize = Math.Min(chunkSize, fileData.Length - i);
-                            await writeStream.WriteAsync(fileData, i, currentChunkSize);
-                            await writeStream.FlushAsync();
-                        }
-                        
-                        if (writeStream is FileStream fs)
-                        {
-                            fs.Flush(true);
-                        }
-                    }
-                    
-                    await AggressiveAndroidSync();
-                    writeSuccess = true;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[XMP Writer] Android strategy 2 failed: {ex.Message}");
-                }
+                Console.WriteLine($"[XMP Writer] Android: Strategy 1 FAILED: {ex.Message}");
             }
             
             if (!writeSuccess)
@@ -214,12 +180,12 @@ public static class XmpWriter
             // 安全模式验证
             if (enableSafeMode && backupData != null)
             {
-                // 多次验证确保写入成功
                 bool verificationPassed = false;
                 
-                for (int attempt = 0; attempt < 3; attempt++)
+                // 多次验证确保写入成功
+                // for (int attempt = 0; attempt < 3; attempt++)
                 {
-                    await Task.Delay(50); // 短暂等待
+                    // await Task.Delay(50); // 短暂等待
                     
                     try
                     {
@@ -233,18 +199,18 @@ public static class XmpWriter
                         if (VerifyFullFileModification(backupData, verifyData, ratingPosition))
                         {
                             verificationPassed = true;
-                            break;
+                            // break;
                         }
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[XMP Writer] Android verification attempt {attempt + 1} failed: {ex.Message}");
+                        Console.WriteLine($"[XMP Writer] Android: Verification failed with exception: {ex.Message}");
                     }
                 }
                 
                 if (!verificationPassed)
                 {
-                    Console.WriteLine($"[XMP Writer] Android: File verification failed after write");
+                    Console.WriteLine($"[XMP Writer] Android: Verification attempts failed, attempting restore");
                     
                     // 尝试恢复原始数据
                     try
@@ -259,7 +225,6 @@ public static class XmpWriter
                                 restoreFs.Flush(true);
                             }
                         }
-                        await AggressiveAndroidSync();
                     }
                     catch (Exception restoreEx)
                     {
@@ -271,52 +236,14 @@ public static class XmpWriter
             }
             
             // 最终激进同步
-            await AggressiveAndroidSync();
+            await ExecuteSystemSync();
             
             return true;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[XMP Writer] Android: Unexpected error: {ex.Message}");
+            Console.WriteLine($"[XMP Writer] Android: OPERATION FAILED");
             return false;
-        }
-    }
-    
-    /// <summary>
-    /// 激进的安卓平台强制同步操作
-    /// </summary>
-    private static async Task AggressiveAndroidSync()
-    {
-        try
-        {
-            // 步骤1: 立即强制GC
-            for (int i = 0; i < 3; i++)
-            {
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-            }
-            
-            // 步骤2: 尝试调用系统级同步命令
-            await ExecuteSystemSync();
-            
-            // 步骤3: 尝试直接调用Linux系统调用 (如果可用)
-            await TryLinuxSync();
-            
-            // 步骤4: 强制线程让步，让系统处理I/O
-            for (int i = 0; i < 5; i++)
-            {
-                await Task.Delay(20);
-                await Task.Yield();
-            }
-            
-            // 步骤5: 再次执行系统同步
-            await ExecuteSystemSync();
-            
-            Console.WriteLine($"[XMP Writer] Android: Aggressive sync completed");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[XMP Writer] Android aggressive sync warning: {ex.Message}");
         }
     }
     
@@ -328,6 +255,7 @@ public static class XmpWriter
         try
         {
             // 方法1: 尝试执行sync命令
+            // 实测有效
             try
             {
                 using var process = new System.Diagnostics.Process();
@@ -340,103 +268,22 @@ public static class XmpWriter
                 if (process.Start())
                 {
                     await process.WaitForExitAsync();
-                    Console.WriteLine($"[XMP Writer] Android: sync command executed");
+                    // Console.WriteLine($"[XMP Writer] System Sync: 'sync' command executed successfully");
                 }
-            }
-            catch
-            {
-                // sync命令可能不可用，尝试其他方法
-            }
-            
-            // 方法2: 尝试sh -c sync
-            try
-            {
-                using var process = new System.Diagnostics.Process();
-                process.StartInfo.FileName = "sh";
-                process.StartInfo.Arguments = "-c sync";
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.CreateNoWindow = true;
-                
-                if (process.Start())
+                else
                 {
-                    await process.WaitForExitAsync();
-                    Console.WriteLine($"[XMP Writer] Android: sh sync command executed");
+                    Console.WriteLine($"[XMP Writer] System Sync: 'sync' command failed to start");
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // sh命令可能不可用
-            }
-            
-            // 方法3: 尝试echo命令强制缓冲区刷新
-            try
-            {
-                using var process = new System.Diagnostics.Process();
-                process.StartInfo.FileName = "sh";
-                process.StartInfo.Arguments = "-c 'echo 3 > /proc/sys/vm/drop_caches 2>/dev/null || true'";
-                process.StartInfo.UseShellExecute = false;
-                process.StartInfo.CreateNoWindow = true;
-                
-                if (process.Start())
-                {
-                    await process.WaitForExitAsync();
-                }
-            }
-            catch
-            {
-                // 缓存清理可能没有权限，继续
+                Console.WriteLine($"[XMP Writer] System Sync: 'sync' command failed: {ex.Message}");
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[XMP Writer] System sync error: {ex.Message}");
         }
-    }
-    
-    /// <summary>
-    /// 尝试直接调用Linux系统调用
-    /// </summary>
-    private static async Task TryLinuxSync()
-    {
-        try
-        {
-            // 尝试通过P/Invoke调用fsync系统调用
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                try
-                {
-                    // 这需要libc，在安卓上可能可用
-                    LibC.sync();
-                    Console.WriteLine($"[XMP Writer] Android: Direct sync() called");
-                }
-                catch (DllNotFoundException)
-                {
-                    // libc不可用，跳过
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[XMP Writer] Direct sync error: {ex.Message}");
-                }
-            }
-            
-            await Task.Delay(10); // 给系统时间处理同步
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[XMP Writer] Linux sync error: {ex.Message}");
-        }
-    }
-    
-    /// <summary>
-    /// Linux C库函数导入
-    /// </summary>
-    private static class LibC
-    {
-        [DllImport("libc", EntryPoint = "sync", SetLastError = true)]
-        public static extern void sync();
-        
-        [DllImport("libc", EntryPoint = "fsync", SetLastError = true)]
-        public static extern int fsync(int fd);
     }
     
     /// <summary>
