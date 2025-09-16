@@ -133,197 +133,94 @@ public static class XmpWriter
     {
         try
         {
-            // 安卓端也只修改单个字符，但需要通过重写整个文件实现
+            // 修改内存中的星级数据
             var newRatingByte = (byte)('0' + rating);
+            fileData[ratingPosition] = newRatingByte;
             
-            // 创建修改后的数据副本
-            var modifiedData = new byte[fileData.Length];
-            Array.Copy(fileData, modifiedData, fileData.Length);
-            modifiedData[ratingPosition] = newRatingByte;
-            
-            // 尝试以追加模式打开文件来检查是否支持随机访问
-            bool supportsRandomAccess = false;
-            try
-            {
-                await using (var testStream = await file.OpenWriteAsync())
-                {
-                    if (testStream.CanSeek)
-                    {
-                        supportsRandomAccess = true;
-                    }
-                }
-            }
-            catch
-            {
-                supportsRandomAccess = false;
-            }
-            
-            if (supportsRandomAccess)
-            {
-                // 支持随机访问，直接修改单个字符
-                await using (var writeStream = await file.OpenWriteAsync())
-                {
-                    if (writeStream.CanSeek && writeStream.Length >= ratingPosition + 1)
-                    {
-                        writeStream.Seek(ratingPosition, SeekOrigin.Begin);
-                        writeStream.WriteByte(newRatingByte);
-                        await writeStream.FlushAsync();
-                    }
-                    else
-                    {
-                        // 回退到全文件写入
-                        writeStream.SetLength(0);
-                        await writeStream.WriteAsync(modifiedData, 0, modifiedData.Length);
-                        await writeStream.FlushAsync();
-                    }
-                }
-            }
-            else
-            {
-                // 不支持随机访问，使用全文件替换
-                // 先创建临时文件
-                var tempFileName = $"{file.Name}.tmp";
-                var folder = await file.GetParentAsync();
-                if (folder != null)
-                {
-                    try
-                    {
-                        // 创建临时文件
-                        var tempFile = await folder.CreateFileAsync(tempFileName);
-                        await using (var tempStream = await tempFile.OpenWriteAsync())
-                        {
-                            await tempStream.WriteAsync(modifiedData, 0, modifiedData.Length);
-                            await tempStream.FlushAsync();
-                        }
-                        
-                        // 验证临时文件写入成功
-                        byte[] tempData;
-                        await using (var verifyStream = await tempFile.OpenReadAsync())
-                        {
-                            tempData = new byte[verifyStream.Length];
-                            await verifyStream.ReadAsync(tempData, 0, tempData.Length);
-                        }
-                        
-                        if (tempData.Length == modifiedData.Length)
-                        {
-                            // 删除原文件并重命名临时文件
-                            await file.DeleteAsync();
-                            // 注意：由于 Avalonia 的限制，我们无法直接重命名文件
-                            // 所以我们需要重新创建原文件
-                            var newFile = await folder.CreateFileAsync(file.Name);
-                            await using (var newStream = await newFile.OpenWriteAsync())
-                            {
-                                await newStream.WriteAsync(tempData, 0, tempData.Length);
-                                await newStream.FlushAsync();
-                            }
-                        }
-                        
-                        // 清理临时文件
-                        try { await tempFile.DeleteAsync(); } catch { }
-                    }
-                    catch (Exception)
-                    {
-                        // 临时文件方法失败，尝试直接覆盖
-                        await using (var writeStream = await file.OpenWriteAsync())
-                        {
-                            // 尝试写入修改后的数据
-                            await writeStream.WriteAsync(modifiedData, 0, modifiedData.Length);
-                            await writeStream.FlushAsync();
-                        }
-                    }
-                }
-                else
-                {
-                    throw new InvalidOperationException("Cannot access parent folder");
-                }
-            }
-            
-            // 安全模式：校验修改结果
+            // 安全模式：校验修改前的数据
             if (enableSafeMode && backupData != null)
             {
-                // 重新读取文件进行校验
-                byte[] writtenData;
-                await using (var verifyStream = await file.OpenReadAsync())
+                if (!VerifyFullFileModification(backupData, fileData, ratingPosition))
                 {
-                    writtenData = new byte[verifyStream.Length];
-                    await verifyStream.ReadAsync(writtenData, 0, writtenData.Length);
-                }
-                
-                if (!VerifyFullFileModification(backupData, writtenData, ratingPosition))
-                {
-                    // 校验失败，还原备份
-                    Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
-                    
-                    // 尝试恢复备份
-                    try
-                    {
-                        if (supportsRandomAccess)
-                        {
-                            await using (var restoreStream = await file.OpenWriteAsync())
-                            {
-                                restoreStream.SetLength(0);
-                                await restoreStream.WriteAsync(backupData, 0, backupData.Length);
-                                await restoreStream.FlushAsync();
-                            }
-                        }
-                        else
-                        {
-                            // 使用临时文件方式恢复
-                            var folder = await file.GetParentAsync();
-                            if (folder != null)
-                            {
-                                var tempFileName = $"{file.Name}.restore";
-                                var tempFile = await folder.CreateFileAsync(tempFileName);
-                                await using (var tempStream = await tempFile.OpenWriteAsync())
-                                {
-                                    await tempStream.WriteAsync(backupData, 0, backupData.Length);
-                                    await tempStream.FlushAsync();
-                                }
-                                
-                                await file.DeleteAsync();
-                                var restoredFile = await folder.CreateFileAsync(file.Name);
-                                await using (var restoredStream = await restoredFile.OpenWriteAsync())
-                                {
-                                    await restoredStream.WriteAsync(backupData, 0, backupData.Length);
-                                    await restoredStream.FlushAsync();
-                                }
-                                
-                                try { await tempFile.DeleteAsync(); } catch { }
-                            }
-                        }
-                    }
-                    catch (Exception restoreEx)
-                    {
-                        Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
-                    }
-                    
+                    Console.WriteLine($"[XMP Writer] Android: Data modification verification failed");
                     return false;
                 }
             }
             
-            return true;
+            // 使用 IStorageFile 直接写入
+            try
+            {
+                await using (var writeStream = await file.OpenWriteAsync())
+                {
+                    await writeStream.WriteAsync(fileData, 0, fileData.Length);
+                    await writeStream.FlushAsync();
+                }
+                
+                // 安全模式：读取文件验证写入结果
+                if (enableSafeMode && backupData != null)
+                {
+                    byte[] verifyData;
+                    await using (var verifyStream = await file.OpenReadAsync())
+                    {
+                        verifyData = new byte[verifyStream.Length];
+                        await verifyStream.ReadAsync(verifyData, 0, verifyData.Length);
+                    }
+                    
+                    if (!VerifyFullFileModification(backupData, verifyData, ratingPosition))
+                    {
+                        Console.WriteLine($"[XMP Writer] Android: File verification failed after write");
+                        
+                        // 尝试恢复原始数据
+                        try
+                        {
+                            await using (var restoreStream = await file.OpenWriteAsync())
+                            {
+                                await restoreStream.WriteAsync(backupData, 0, backupData.Length);
+                                await restoreStream.FlushAsync();
+                            }
+                        }
+                        catch (Exception restoreEx)
+                        {
+                            Console.WriteLine($"[XMP Writer] Android: Failed to restore backup: {restoreEx.Message}");
+                        }
+                        
+                        return false;
+                    }
+                }
+                
+                // 强制GC以释放可能的文件句柄
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[XMP Writer] Android write error: {ex.Message}");
+                
+                // 如果写入失败且启用安全模式，尝试恢复
+                if (enableSafeMode && backupData != null)
+                {
+                    try
+                    {
+                        await using (var restoreStream = await file.OpenWriteAsync())
+                        {
+                            await restoreStream.WriteAsync(backupData, 0, backupData.Length);
+                            await restoreStream.FlushAsync();
+                        }
+                    }
+                    catch (Exception restoreEx)
+                    {
+                        Console.WriteLine($"[XMP Writer] Android: Failed to restore backup: {restoreEx.Message}");
+                    }
+                }
+                
+                return false;
+            }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[XMP Writer] Android write error: {ex.Message}");
-            
-            // 如果有备份且启用安全模式，尝试还原
-            if (enableSafeMode && backupData != null)
-            {
-                try
-                {
-                    await using (var restoreStream = await file.OpenWriteAsync())
-                    {
-                        await restoreStream.WriteAsync(backupData, 0, backupData.Length);
-                        await restoreStream.FlushAsync();
-                    }
-                }
-                catch (Exception restoreEx)
-                {
-                    Console.WriteLine($"[XMP Writer] {restoreEx.Message}");
-                }
-            }
-            
+            Console.WriteLine($"[XMP Writer] Android: Unexpected error: {ex.Message}");
             return false;
         }
     }
