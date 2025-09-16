@@ -761,5 +761,8 @@ public class SettingsViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _safeSetRating, value);
     }
     
+    // 检查是否为安卓平台
+    private static bool IsAndroid => OperatingSystem.IsAndroid();
+    
     #endregion
 }

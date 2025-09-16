@@ -75,8 +75,16 @@
                     <CheckBox Classes="settings-checkbox"
                               IsChecked="{Binding SafeSetRating}">
                         <StackPanel Orientation="Vertical">
-                            <TextBlock Classes="settings-label">安全修改文件星级</TextBlock>
-                            <TextBlock Classes="settings-description">检验文件字节变化再写回，避免损坏文件，但速度较慢</TextBlock>
+                            <TextBlock Classes="settings-label">
+                                安全修改文件星级
+                            </TextBlock>
+                            <TextBlock Classes="settings-description">
+                                检验文件字节变化再写回，避免损坏原文件
+                            </TextBlock>
+                            <TextBlock Classes="settings-description"
+                                       IsVisible="{Binding IsAndroid}">
+                                安卓平台通过 USB 连接相机时可能存在写入延迟，无论是否开启安全修改，都请等待相机写卡灯闪烁后再移除 USB 连接
+                            </TextBlock>
                         </StackPanel>
                     </CheckBox>
                 </StackPanel>
