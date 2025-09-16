@@ -147,18 +147,32 @@ public static class XmpWriter
                 }
             }
             
-            // 使用 IStorageFile 直接写入
+            // 使用 IStorageFile 写入并强制同步
             try
             {
                 await using (var writeStream = await file.OpenWriteAsync())
                 {
                     await writeStream.WriteAsync(fileData, 0, fileData.Length);
+                    
+                    // 强制刷新到操作系统缓冲区
                     await writeStream.FlushAsync();
+                    
+                    // 如果是 FileStream，强制同步到硬件
+                    if (writeStream is FileStream fs)
+                    {
+                        fs.Flush(true); // 强制同步到磁盘
+                    }
                 }
+                
+                // 安卓平台额外的强制同步操作
+                await ForceAndroidSync();
                 
                 // 安全模式：读取文件验证写入结果
                 if (enableSafeMode && backupData != null)
                 {
+                    // 等待一小段时间确保写入完成
+                    await Task.Delay(100);
+                    
                     byte[] verifyData;
                     await using (var verifyStream = await file.OpenReadAsync())
                     {
@@ -177,7 +191,13 @@ public static class XmpWriter
                             {
                                 await restoreStream.WriteAsync(backupData, 0, backupData.Length);
                                 await restoreStream.FlushAsync();
+                                
+                                if (restoreStream is FileStream restoreFs)
+                                {
+                                    restoreFs.Flush(true);
+                                }
                             }
+                            await ForceAndroidSync();
                         }
                         catch (Exception restoreEx)
                         {
@@ -188,9 +208,8 @@ public static class XmpWriter
                     }
                 }
                 
-                // 强制GC以释放可能的文件句柄
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
+                // 最终强制同步确保数据已写入
+                await ForceAndroidSync();
                 
                 return true;
             }
@@ -207,7 +226,13 @@ public static class XmpWriter
                         {
                             await restoreStream.WriteAsync(backupData, 0, backupData.Length);
                             await restoreStream.FlushAsync();
+                            
+                            if (restoreStream is FileStream restoreFs)
+                            {
+                                restoreFs.Flush(true);
+                            }
                         }
+                        await ForceAndroidSync();
                     }
                     catch (Exception restoreEx)
                     {
@@ -222,6 +247,62 @@ public static class XmpWriter
         {
             Console.WriteLine($"[XMP Writer] Android: Unexpected error: {ex.Message}");
             return false;
+        }
+    }
+    
+    /// <summary>
+    /// 安卓平台强制同步操作
+    /// </summary>
+    private static async Task ForceAndroidSync()
+    {
+        try
+        {
+            // 强制GC以释放可能的文件句柄
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            
+            // 短暂延迟让系统处理缓冲区
+            await Task.Delay(50);
+            
+            // 尝试调用系统同步（如果可用）
+            try
+            {
+                // 在安卓上，尝试通过反射调用系统同步
+                var processType = Type.GetType("System.Diagnostics.Process");
+                if (processType != null)
+                {
+                    var startMethod = processType.GetMethod("Start", new[] { typeof(string) });
+                    if (startMethod != null)
+                    {
+                        // 尝试执行 sync 命令（可能需要权限）
+                        try
+                        {
+                            var syncProcess = startMethod.Invoke(null, new object[] { "sync" });
+                            if (syncProcess != null)
+                            {
+                                var waitMethod = syncProcess.GetType().GetMethod("WaitForExit", new Type[0]);
+                                waitMethod?.Invoke(syncProcess, null);
+                            }
+                        }
+                        catch
+                        {
+                            // sync 命令可能不可用或没有权限，忽略错误
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // 反射调用失败，继续其他操作
+            }
+            
+            // 额外的延迟确保操作完成
+            await Task.Delay(100);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] Android sync warning: {ex.Message}");
         }
     }
     
