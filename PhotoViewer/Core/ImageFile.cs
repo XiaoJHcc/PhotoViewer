@@ -174,15 +174,30 @@ public class ImageFile : ReactiveObject
             {
                 try
                 {
-                    // 首先尝试从EXIF中提取嵌入式缩略图
-                    var exifThumbnail = await ExifLoader.TryLoadExifThumbnailAsync(File);
-                    if (exifThumbnail != null)
+                    // 检查是否为 HEIF 格式
+                    if (HeifLoader.IsHeifFile(File))
                     {
-                        return exifThumbnail;
+                        // 先尝试 HEIF 缩略图
+                        var heifThumbnail = await HeifLoader.LoadHeifThumbnailAsync(File);
+                        if (heifThumbnail != null)
+                        {
+                            return heifThumbnail;
+                        }
                     }
+                    else
+                    {
+                        // 首先尝试从EXIF中提取嵌入式缩略图
+                        var exifThumbnail = await ExifLoader.TryLoadExifThumbnailAsync(File);
+                        if (exifThumbnail != null)
+                        {
+                            return exifThumbnail;
+                        }
 
-                    // 如果没有EXIF缩略图，则解码原图生成缩略图
-                    return await ExifLoader.GenerateThumbnailFromImageAsync(File);
+                        // 如果没有EXIF缩略图，则解码原图生成缩略图
+                        return await ExifLoader.GenerateThumbnailFromImageAsync(File);
+                    }
+                    
+                    return null;
                 }
                 catch (Exception ex)
                 {

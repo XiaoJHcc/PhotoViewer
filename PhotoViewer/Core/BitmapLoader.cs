@@ -146,8 +146,18 @@ public static class BitmapLoader
     {
         try
         {
-            await using var stream = await file.OpenReadAsync();
-            var originalBitmap = new Bitmap(stream);
+            Bitmap? originalBitmap = null;
+            
+            // 检查是否为 HEIF 格式
+            if (HeifLoader.IsHeifFile(file))
+            {
+                originalBitmap = await HeifLoader.LoadHeifBitmapAsync(file);
+            }
+            else
+            {
+                await using var stream = await file.OpenReadAsync();
+                originalBitmap = new Bitmap(stream);
+            }
             
             // 验证原始位图是否有效
             if (originalBitmap == null || originalBitmap.PixelSize.Width <= 0 || originalBitmap.PixelSize.Height <= 0)
