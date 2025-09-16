@@ -185,9 +185,9 @@ public static class HeifLoader
     {
         try
         {
-            var width = heifImage.Width;
-            var height = heifImage.Height;
-            if (width <= 0 || height <= 0) return null;
+            var reportedWidth = heifImage.Width;
+            var reportedHeight = heifImage.Height;
+            if (reportedWidth <= 0 || reportedHeight <= 0) return null;
 
             var plane = heifImage.GetPlane(HeifChannel.Interleaved);
             if (plane == null) return null;
@@ -196,25 +196,62 @@ public static class HeifLoader
             if (stride <= 0) return null;
 
             var bytesPerPixel = 3;
-            var expectedRowSize = width * bytesPerPixel;
-            if (stride < expectedRowSize) return null;
+            
+            // 计算实际的图像尺寸
+            var pixelsPerRow = stride / bytesPerPixel;
+            var actualWidth = pixelsPerRow;
+            var actualHeight = reportedHeight;
+            
+            // 对于竖拍照片，如果stride表明每行像素数少于报告的宽度，
+            // 说明图像实际上是竖拍的，需要交换宽高
+            if (pixelsPerRow < reportedWidth && pixelsPerRow == reportedHeight)
+            {
+                actualWidth = reportedHeight;
+                actualHeight = reportedWidth;
+                Console.WriteLine($"Detected portrait orientation: stride={stride}, pixels per row={pixelsPerRow}, swapping dimensions to {actualWidth}x{actualHeight}");
+            }
+            else if (pixelsPerRow == reportedWidth)
+            {
+                // 正常横拍照片
+                actualWidth = reportedWidth;
+                actualHeight = reportedHeight;
+                Console.WriteLine($"Detected landscape orientation: {actualWidth}x{actualHeight}, stride={stride}");
+            }
+            else
+            {
+                Console.WriteLine($"Unusual dimensions: reported={reportedWidth}x{reportedHeight}, stride={stride}, pixels per row={pixelsPerRow}");
+            }
 
-            var bgraData = new byte[width * height * 4];
+            if (stride < bytesPerPixel)
+            {
+                Console.WriteLine($"Stride too small: {stride}, needs at least {bytesPerPixel} bytes per pixel");
+                return null;
+            }
+
+            // 使用实际尺寸创建BGRA数据
+            var bgraData = new byte[actualWidth * actualHeight * 4];
 
             unsafe
             {
                 var sourcePtr = (byte*)plane.Scan0;
                 if (sourcePtr == null) return null;
 
-                for (int y = 0; y < height; y++)
+                for (int y = 0; y < actualHeight; y++)
                 {
                     var sourceRowPtr = sourcePtr + (y * stride);
-                    var destRowOffset = y * width * 4;
+                    var destRowOffset = y * actualWidth * 4;
 
-                    for (int x = 0; x < width; x++)
+                    for (int x = 0; x < actualWidth; x++)
                     {
                         var srcPixelOffset = x * bytesPerPixel;
                         var destPixelOffset = destRowOffset + (x * 4);
+
+                        // 确保不会越界访问源数据
+                        if (srcPixelOffset + 2 >= stride)
+                        {
+                            Console.WriteLine($"Stopping at pixel x={x}, y={y} due to stride limit");
+                            break;
+                        }
 
                         if (destPixelOffset + 3 >= bgraData.Length) break;
 
@@ -226,7 +263,7 @@ public static class HeifLoader
                 }
             }
 
-            return CreateBitmapFromBgraDataImproved(bgraData, width, height);
+            return CreateBitmapFromBgraDataImproved(bgraData, actualWidth, actualHeight);
         }
         catch (Exception ex)
         {
@@ -354,20 +391,9 @@ public static class HeifLoader
     {
         try
         {
-            var originalWidth = heifImage.Width;
-            var originalHeight = heifImage.Height;
-            if (originalWidth <= 0 || originalHeight <= 0) return null;
-
-            // 计算目标尺寸
-            var scale = Math.Min((double)maxSize / originalWidth, (double)maxSize / originalHeight);
-            var targetWidth = Math.Max(1, (int)(originalWidth * scale));
-            var targetHeight = Math.Max(1, (int)(originalHeight * scale));
-
-            // 如果不需要缩放，使用原始转换方法
-            if (scale >= 1.0)
-            {
-                return ConvertHeifImageToBitmap(heifImage);
-            }
+            var reportedWidth = heifImage.Width;
+            var reportedHeight = heifImage.Height;
+            if (reportedWidth <= 0 || reportedHeight <= 0) return null;
 
             var plane = heifImage.GetPlane(HeifChannel.Interleaved);
             if (plane == null) return null;
@@ -376,8 +402,44 @@ public static class HeifLoader
             if (stride <= 0) return null;
 
             var bytesPerPixel = 3;
-            var expectedRowSize = originalWidth * bytesPerPixel;
-            if (stride < expectedRowSize) return null;
+            
+            // 计算实际的图像尺寸
+            var pixelsPerRow = stride / bytesPerPixel;
+            var actualOriginalWidth = pixelsPerRow;
+            var actualOriginalHeight = reportedHeight;
+            
+            // 检测竖拍照片并交换尺寸
+            if (pixelsPerRow < reportedWidth && pixelsPerRow == reportedHeight)
+            {
+                actualOriginalWidth = reportedHeight;
+                actualOriginalHeight = reportedWidth;
+                Console.WriteLine($"Resize - Detected portrait: stride={stride}, swapping to {actualOriginalWidth}x{actualOriginalHeight}");
+            }
+            else if (pixelsPerRow == reportedWidth)
+            {
+                actualOriginalWidth = reportedWidth;
+                actualOriginalHeight = reportedHeight;
+                Console.WriteLine($"Resize - Detected landscape: {actualOriginalWidth}x{actualOriginalHeight}");
+            }
+
+            if (stride < bytesPerPixel)
+            {
+                Console.WriteLine($"Stride too small for resize: {stride}, needs at least {bytesPerPixel} bytes per pixel");
+                return null;
+            }
+
+            // 计算目标尺寸（基于实际尺寸）
+            var scale = Math.Min((double)maxSize / actualOriginalWidth, (double)maxSize / actualOriginalHeight);
+            var targetWidth = Math.Max(1, (int)(actualOriginalWidth * scale));
+            var targetHeight = Math.Max(1, (int)(actualOriginalHeight * scale));
+
+            // 如果不需要缩放，使用原始转换方法
+            if (scale >= 1.0)
+            {
+                return ConvertHeifImageToBitmap(heifImage);
+            }
+
+            Console.WriteLine($"Resize - Original: {actualOriginalWidth}x{actualOriginalHeight}, Target: {targetWidth}x{targetHeight}, stride: {stride}");
 
             // 直接创建目标尺寸的 BGRA 数据
             var bgraData = new byte[targetWidth * targetHeight * 4];
@@ -397,12 +459,19 @@ public static class HeifLoader
                         var sourceY = (int)(targetY / scale);
 
                         // 确保不超出边界
-                        sourceX = Math.Min(sourceX, originalWidth - 1);
-                        sourceY = Math.Min(sourceY, originalHeight - 1);
+                        sourceX = Math.Min(sourceX, pixelsPerRow - 1);
+                        sourceY = Math.Min(sourceY, actualOriginalHeight - 1);
 
                         var sourceRowPtr = sourcePtr + (sourceY * stride);
                         var srcPixelOffset = sourceX * bytesPerPixel;
                         var destPixelOffset = (targetY * targetWidth + targetX) * 4;
+
+                        // 确保不会越界访问源数据
+                        if (srcPixelOffset + 2 >= stride)
+                        {
+                            Console.WriteLine($"Resize pixel access would exceed stride at sourceX={sourceX}, sourceY={sourceY}");
+                            break;
+                        }
 
                         if (destPixelOffset + 3 >= bgraData.Length) break;
 
