@@ -6,7 +6,7 @@
         xmlns:views="clr-namespace:PhotoViewer.Views"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="PhotoViewer.Views.MainWindow"
-        Icon="/Assets/avalonia-logo.ico"
+        Icon="/Assets/icon.ico"
         Title="PhotoViewer 图片查看器">
         
         <views:MainView />
