@@ -385,6 +385,12 @@ public static class HeifLoader
     }
 
     /// <summary>
+    /// 对齐到 alignment 的上取整（本次用于按像素个数对齐到 4）
+    /// </summary>
+    private static int AlignUp(int value, int alignment)
+        => ((value + alignment - 1) / alignment) * alignment;
+
+    /// <summary>
     /// 将 HeifImage 转换为指定尺寸的 Avalonia Bitmap（采样缩放）
     /// </summary>
     private static Bitmap? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
@@ -402,46 +408,57 @@ public static class HeifLoader
             if (stride <= 0) return null;
 
             var bytesPerPixel = 3;
-            
-            // 计算实际的图像尺寸
+
+            // 每行像素（含对齐/padding）
             var pixelsPerRow = stride / bytesPerPixel;
-            var actualOriginalWidth = pixelsPerRow;
-            var actualOriginalHeight = reportedHeight;
-            
-            // 检测竖拍照片并交换尺寸
-            if (pixelsPerRow < reportedWidth && pixelsPerRow == reportedHeight)
+
+            // 竖拍检测：当每行像素数 == AlignUp(reportedHeight, 4) 且 != reportedWidth，则应交换宽高
+            var alignedHeight4 = AlignUp(reportedHeight, 4);
+            var alignedWidth4 = AlignUp(reportedWidth, 4);
+
+            var swapPortrait =
+                (pixelsPerRow == alignedHeight4 && pixelsPerRow != reportedWidth)
+                // 容错：某些实现可能有轻微差异，放宽判断
+                || (pixelsPerRow < reportedWidth && Math.Abs(pixelsPerRow - alignedHeight4) <= 8);
+
+            int actualOriginalWidth;
+            int actualOriginalHeight;
+
+            if (swapPortrait)
             {
+                // 竖拍：实际宽度应为 reportedHeight（如 1080），行像素 padded 到 1088
                 actualOriginalWidth = reportedHeight;
                 actualOriginalHeight = reportedWidth;
-                Console.WriteLine($"Resize - Detected portrait: stride={stride}, swapping to {actualOriginalWidth}x{actualOriginalHeight}");
+                Console.WriteLine($"Thumbnail - Detected portrait: Reported={reportedWidth}x{reportedHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}, Use={actualOriginalWidth}x{actualOriginalHeight} (aligned width={alignedHeight4})");
             }
-            else if (pixelsPerRow == reportedWidth)
+            else
             {
+                // 横拍或常规：使用 reportedWidth/Height，行像素可能为 AlignUp(reportedWidth, 4)
                 actualOriginalWidth = reportedWidth;
                 actualOriginalHeight = reportedHeight;
-                Console.WriteLine($"Resize - Detected landscape: {actualOriginalWidth}x{actualOriginalHeight}");
+                Console.WriteLine($"Thumbnail - Detected landscape: Reported={reportedWidth}x{reportedHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}, Use={actualOriginalWidth}x{actualOriginalHeight} (aligned width={alignedWidth4})");
             }
 
             if (stride < bytesPerPixel)
             {
-                Console.WriteLine($"Stride too small for resize: {stride}, needs at least {bytesPerPixel} bytes per pixel");
+                Console.WriteLine($"Thumbnail - Stride too small for resize: {stride}, needs at least {bytesPerPixel} bytes per pixel");
                 return null;
             }
 
-            // 计算目标尺寸（基于实际尺寸）
+            // 计算缩放（基于实际宽高）
             var scale = Math.Min((double)maxSize / actualOriginalWidth, (double)maxSize / actualOriginalHeight);
+
+            // 统一走采样/拷贝路径，避免回退影响原图解码逻辑
+            if (scale >= 1.0)
+            {
+                scale = 1.0;
+            }
+
             var targetWidth = Math.Max(1, (int)(actualOriginalWidth * scale));
             var targetHeight = Math.Max(1, (int)(actualOriginalHeight * scale));
 
-            // 如果不需要缩放，使用原始转换方法
-            if (scale >= 1.0)
-            {
-                return ConvertHeifImageToBitmap(heifImage);
-            }
+            Console.WriteLine($"Thumbnail - Original={actualOriginalWidth}x{actualOriginalHeight}, Target={targetWidth}x{targetHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}");
 
-            Console.WriteLine($"Resize - Original: {actualOriginalWidth}x{actualOriginalHeight}, Target: {targetWidth}x{targetHeight}, stride: {stride}");
-
-            // 直接创建目标尺寸的 BGRA 数据
             var bgraData = new byte[targetWidth * targetHeight * 4];
 
             unsafe
@@ -449,37 +466,38 @@ public static class HeifLoader
                 var sourcePtr = (byte*)plane.Scan0;
                 if (sourcePtr == null) return null;
 
-                // 使用采样方式直接生成目标尺寸
+                // 有效行内像素（不含对齐填充）
+                var validRowPixels = actualOriginalWidth;
+                // padded 行像素（由 stride 得出）
+                var paddedRowPixels = pixelsPerRow;
+
                 for (int targetY = 0; targetY < targetHeight; targetY++)
                 {
                     for (int targetX = 0; targetX < targetWidth; targetX++)
                     {
-                        // 计算对应的源像素位置
                         var sourceX = (int)(targetX / scale);
                         var sourceY = (int)(targetY / scale);
 
-                        // 确保不超出边界
-                        sourceX = Math.Min(sourceX, pixelsPerRow - 1);
+                        // 限定在实际有效范围内（避免读取对齐 padding 区域）
+                        sourceX = Math.Min(sourceX, validRowPixels - 1);
                         sourceY = Math.Min(sourceY, actualOriginalHeight - 1);
+
+                        // 同时也不超过 padded 行像素，避免 stride 越界
+                        sourceX = Math.Min(sourceX, paddedRowPixels - 1);
 
                         var sourceRowPtr = sourcePtr + (sourceY * stride);
                         var srcPixelOffset = sourceX * bytesPerPixel;
                         var destPixelOffset = (targetY * targetWidth + targetX) * 4;
 
-                        // 确保不会越界访问源数据
-                        if (srcPixelOffset + 2 >= stride)
-                        {
-                            Console.WriteLine($"Resize pixel access would exceed stride at sourceX={sourceX}, sourceY={sourceY}");
-                            break;
-                        }
-
+                        // 保护：不越过本行 stride
+                        if (srcPixelOffset + 2 >= stride) break;
                         if (destPixelOffset + 3 >= bgraData.Length) break;
 
-                        // RGB -> BGRA 转换
-                        bgraData[destPixelOffset] = sourceRowPtr[srcPixelOffset + 2]; // B
+                        // RGB -> BGRA
+                        bgraData[destPixelOffset] = sourceRowPtr[srcPixelOffset + 2];     // B
                         bgraData[destPixelOffset + 1] = sourceRowPtr[srcPixelOffset + 1]; // G
-                        bgraData[destPixelOffset + 2] = sourceRowPtr[srcPixelOffset]; // R
-                        bgraData[destPixelOffset + 3] = 255; // A
+                        bgraData[destPixelOffset + 2] = sourceRowPtr[srcPixelOffset];     // R
+                        bgraData[destPixelOffset + 3] = 255;                               // A
                     }
                 }
             }
