@@ -138,16 +138,36 @@ public static class HeifLoader
 
                     using (imageHandle)
                     {
-                        // 尝试获取嵌入式缩略图
+                        // 尝试获取嵌入式缩略图（优先使用长边>=maxSize的最小缩略图）
                         var thumbnailIds = imageHandle.GetThumbnailImageIds();
                         if (thumbnailIds.Count > 0)
                         {
                             try
                             {
-                                var thumbnailHandle = imageHandle.GetThumbnailImage(thumbnailIds[0]);
-                                if (thumbnailHandle != null)
+                                HeifItemId? selectedId = null;
+                                var bestLongSide = int.MaxValue;
+
+                                foreach (var id in thumbnailIds)
                                 {
-                                    using (thumbnailHandle)
+                                    using var th = imageHandle.GetThumbnailImage(id);
+                                    if (th == null) continue;
+
+                                    var w = th.Width;
+                                    var h = th.Height;
+                                    var longSide = Math.Max(w, h);
+
+                                    // 只选择长边>=maxSize，且尽可能小的缩略图
+                                    if (longSide >= maxSize && longSide < bestLongSide)
+                                    {
+                                        selectedId = id;
+                                        bestLongSide = longSide;
+                                    }
+                                }
+
+                                if (selectedId.HasValue)
+                                {
+                                    using var thumbnailHandle = imageHandle.GetThumbnailImage(selectedId.Value);
+                                    if (thumbnailHandle != null)
                                     {
                                         var thumbnail = DecodeThumbnailImage(thumbnailHandle, maxSize);
                                         if (thumbnail != null) return thumbnail;
@@ -160,7 +180,7 @@ public static class HeifLoader
                             }
                         }
 
-                        // 如果没有嵌入式缩略图，生成缩略图
+                        // 如果没有合适的嵌入式缩略图，生成缩略图
                         return GenerateHeifThumbnail(imageHandle, maxSize);
                     }
                 }
@@ -208,14 +228,12 @@ public static class HeifLoader
             {
                 actualWidth = reportedHeight;
                 actualHeight = reportedWidth;
-                Console.WriteLine($"Detected portrait orientation: stride={stride}, pixels per row={pixelsPerRow}, swapping dimensions to {actualWidth}x{actualHeight}");
             }
             else if (pixelsPerRow == reportedWidth)
             {
                 // 正常横拍照片
                 actualWidth = reportedWidth;
                 actualHeight = reportedHeight;
-                Console.WriteLine($"Detected landscape orientation: {actualWidth}x{actualHeight}, stride={stride}");
             }
             else
             {
@@ -385,12 +403,6 @@ public static class HeifLoader
     }
 
     /// <summary>
-    /// 对齐到 alignment 的上取整（本次用于按像素个数对齐到 4）
-    /// </summary>
-    private static int AlignUp(int value, int alignment)
-        => ((value + alignment - 1) / alignment) * alignment;
-
-    /// <summary>
     /// 将 HeifImage 转换为指定尺寸的 Avalonia Bitmap（采样缩放）
     /// </summary>
     private static Bitmap? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
@@ -412,53 +424,35 @@ public static class HeifLoader
             // 每行像素（含对齐/padding）
             var pixelsPerRow = stride / bytesPerPixel;
 
-            // 竖拍检测：当每行像素数 == AlignUp(reportedHeight, 4) 且 != reportedWidth，则应交换宽高
-            var alignedHeight4 = AlignUp(reportedHeight, 4);
-            var alignedWidth4 = AlignUp(reportedWidth, 4);
-
-            var swapPortrait =
-                (pixelsPerRow == alignedHeight4 && pixelsPerRow != reportedWidth)
-                // 容错：某些实现可能有轻微差异，放宽判断
-                || (pixelsPerRow < reportedWidth && Math.Abs(pixelsPerRow - alignedHeight4) <= 8);
+            // 放宽竖拍判断：只要行内有效像素 < 报告的宽度，即认为是竖拍
+            var swapPortrait = pixelsPerRow < reportedWidth;
 
             int actualOriginalWidth;
             int actualOriginalHeight;
 
             if (swapPortrait)
             {
-                // 竖拍：实际宽度应为 reportedHeight（如 1080），行像素 padded 到 1088
                 actualOriginalWidth = reportedHeight;
-                actualOriginalHeight = reportedWidth;
-                Console.WriteLine($"Thumbnail - Detected portrait: Reported={reportedWidth}x{reportedHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}, Use={actualOriginalWidth}x{actualOriginalHeight} (aligned width={alignedHeight4})");
+                actualOriginalHeight = reportedWidth; 
             }
             else
             {
-                // 横拍或常规：使用 reportedWidth/Height，行像素可能为 AlignUp(reportedWidth, 4)
                 actualOriginalWidth = reportedWidth;
                 actualOriginalHeight = reportedHeight;
-                Console.WriteLine($"Thumbnail - Detected landscape: Reported={reportedWidth}x{reportedHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}, Use={actualOriginalWidth}x{actualOriginalHeight} (aligned width={alignedWidth4})");
             }
 
             if (stride < bytesPerPixel)
             {
-                Console.WriteLine($"Thumbnail - Stride too small for resize: {stride}, needs at least {bytesPerPixel} bytes per pixel");
                 return null;
             }
 
             // 计算缩放（基于实际宽高）
             var scale = Math.Min((double)maxSize / actualOriginalWidth, (double)maxSize / actualOriginalHeight);
-
-            // 统一走采样/拷贝路径，避免回退影响原图解码逻辑
-            if (scale >= 1.0)
-            {
-                scale = 1.0;
-            }
+            if (scale >= 1.0) scale = 1.0;
 
             var targetWidth = Math.Max(1, (int)(actualOriginalWidth * scale));
             var targetHeight = Math.Max(1, (int)(actualOriginalHeight * scale));
-
-            Console.WriteLine($"Thumbnail - Original={actualOriginalWidth}x{actualOriginalHeight}, Target={targetWidth}x{targetHeight}, Stride={stride}, PixelsPerRow={pixelsPerRow}");
-
+            
             var bgraData = new byte[targetWidth * targetHeight * 4];
 
             unsafe
@@ -494,7 +488,7 @@ public static class HeifLoader
                         if (destPixelOffset + 3 >= bgraData.Length) break;
 
                         // RGB -> BGRA
-                        bgraData[destPixelOffset] = sourceRowPtr[srcPixelOffset + 2];     // B
+                        bgraData[destPixelOffset]     = sourceRowPtr[srcPixelOffset + 2]; // B
                         bgraData[destPixelOffset + 1] = sourceRowPtr[srcPixelOffset + 1]; // G
                         bgraData[destPixelOffset + 2] = sourceRowPtr[srcPixelOffset];     // R
                         bgraData[destPixelOffset + 3] = 255;                               // A
