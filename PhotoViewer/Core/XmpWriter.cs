@@ -16,9 +16,30 @@ public static class XmpWriter
     private const byte JpegMarkerStart = 0xFF;
     private const byte App1Marker = 0xE1;
     
+    // 支持的文件格式列表
+    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg",
+        ".jpeg",
+        ".heif",
+        ".heic",
+        ".hif"
+    };
+    
     // 备份缓存管理
     private static string? _lastBackupPath;
     private static string? _lastBackupOriginalPath;
+    
+    /// <summary>
+    /// 检查文件是否为支持的格式
+    /// </summary>
+    /// <param name="fileName">文件名</param>
+    /// <returns>是否支持</returns>
+    private static bool IsSupportedFormat(string fileName)
+    {
+        var extension = Path.GetExtension(fileName);
+        return SupportedExtensions.Contains(extension);
+    }
     
     /// <summary>
     /// 检查是否为安卓平台
@@ -26,7 +47,7 @@ public static class XmpWriter
     private static bool IsAndroid => OperatingSystem.IsAndroid();
     
     /// <summary>
-    /// 安全地写入 XMP 星级到 JPG 文件，只修改星级数字
+    /// 安全地写入 XMP 星级到文件，只修改星级数字
     /// </summary>
     /// <param name="file">要修改的存储文件</param>
     /// <param name="rating">星级值 (0-5)</param>
@@ -42,10 +63,9 @@ public static class XmpWriter
         }
         
         var fileName = file.Name;
-        if (!fileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
-            !fileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+        if (!IsSupportedFormat(fileName))
         {
-            Console.WriteLine($"[XMP Writer] File {fileName} is not a JPG file");
+            Console.WriteLine($"[XMP Writer] File {fileName} is not a supported format");
             return false;
         }
         
@@ -390,9 +410,33 @@ public static class XmpWriter
     }
     
     /// <summary>
-    /// 在文件数据中查找 XMP 星级数字的位置
+    /// 在文件数据中查找 XMP 星级数字的位置（通用方法，支持多种文件格式）
     /// </summary>
     private static int FindXmpRatingPosition(byte[] data)
+    {
+        try
+        {
+            // 方法1: 优先查找 JPEG APP1 XMP 段（保持向后兼容）
+            var jpegXmpPosition = FindXmpRatingInJpegApp1(data);
+            if (jpegXmpPosition != -1)
+            {
+                return jpegXmpPosition;
+            }
+            
+            // 方法2: 通用 XMP 搜索 - 在整个文件中搜索 XMP 内容
+            return FindXmpRatingInEntireFile(data);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] {ex.Message}");
+            return -1;
+        }
+    }
+    
+    /// <summary>
+    /// 在 JPEG APP1 段中查找 XMP 星级（保持向后兼容）
+    /// </summary>
+    private static int FindXmpRatingInJpegApp1(byte[] data)
     {
         try
         {
@@ -464,7 +508,80 @@ public static class XmpWriter
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[XMP Writer] {ex.Message}");
+            Console.WriteLine($"[XMP Writer] JPEG APP1 search error: {ex.Message}");
+            return -1;
+        }
+    }
+    
+    /// <summary>
+    /// 在整个文件中搜索 XMP 星级（通用方法）
+    /// </summary>
+    private static int FindXmpRatingInEntireFile(byte[] data)
+    {
+        try
+        {
+            // 先查找 XMP 包标识符
+            var xmpPacketIdentifiers = new[]
+            {
+                "<?xpacket",
+                "<x:xmpmeta",
+                "<rdf:RDF",
+                "http://ns.adobe.com/xap/1.0/",
+                "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+                "adobe:ns:meta/"
+            };
+            
+            var xmpRegions = new List<(int start, int end)>();
+            
+            // 查找可能的 XMP 区域
+            foreach (var identifier in xmpPacketIdentifiers)
+            {
+                var identifierBytes = Encoding.UTF8.GetBytes(identifier);
+                
+                for (int i = 0; i <= data.Length - identifierBytes.Length; i++)
+                {
+                    bool matches = true;
+                    for (int j = 0; j < identifierBytes.Length; j++)
+                    {
+                        if (data[i + j] != identifierBytes[j])
+                        {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    
+                    if (matches)
+                    {
+                        // 找到 XMP 标识符，确定搜索区域
+                        int regionStart = Math.Max(0, i - 1000); // 向前扩展
+                        int regionEnd = Math.Min(data.Length, i + 50000); // 向后扩展
+                        
+                        xmpRegions.Add((regionStart, regionEnd));
+                    }
+                }
+            }
+            
+            // 如果没有找到明确的 XMP 区域，搜索整个文件（适用于某些嵌入格式）
+            if (xmpRegions.Count == 0)
+            {
+                xmpRegions.Add((0, data.Length));
+            }
+            
+            // 在找到的 XMP 区域中搜索星级
+            foreach (var (start, end) in xmpRegions)
+            {
+                var ratingPos = FindRatingInXmpData(data, start, end);
+                if (ratingPos != -1)
+                {
+                    return ratingPos;
+                }
+            }
+            
+            return -1;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[XMP Writer] Entire file search error: {ex.Message}");
             return -1;
         }
     }
@@ -703,8 +820,7 @@ public static class XmpWriter
         try
         {
             var fileName = file.Name;
-            if (!fileName.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) && 
-                !fileName.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase))
+            if (!IsSupportedFormat(fileName))
             {
                 return null;
             }
