@@ -6,21 +6,21 @@
   <ItemGroup>
     <!-- Avalonia packages -->
     <!-- Important: keep version in sync! -->
-    <PackageVersion Include="Avalonia" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Diagnostics" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Desktop" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.iOS" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Browser" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.Android" Version="11.3.2" />
-    <PackageVersion Include="Avalonia.ReactiveUI" Version="11.3.2" />
+    <PackageVersion Include="Avalonia" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Diagnostics" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Desktop" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.iOS" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Browser" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.Android" Version="11.3.6" />
+    <PackageVersion Include="Avalonia.ReactiveUI" Version="11.3.6" />
     <PackageVersion Include="Avalonia.Xaml.Interactions.Custom" Version="11.3.0.6" />
     <PackageVersion Include="LibHeif.Native" Version="1.15.1" />
     <PackageVersion Include="LibHeif.Native.win-x64" Version="1.15.1" />
     <PackageVersion Include="MetadataExtractor" Version="2.8.1" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0-preview.6.25358.103" />
-    <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
+    <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.17" />
     <PackageVersion Include="XmpCore" Version="6.1.10.1" />
     <PackageVersion Include="LibHeifSharp" Version="3.2.0" />
   </ItemGroup>
