@@ -23,7 +23,24 @@ public static class HeifLoader
         return extension is ".heif" or ".heic" or ".avif" or ".hif";
     }
 
-    public static bool IsHeifFile(IStorageFile file) => IsHeifFile(file.Path.LocalPath);
+    public static bool IsHeifFile(IStorageFile file)
+    {
+        if (file is null) return false;
+        // Android 上可能是 content:// 无法从 LocalPath 识别扩展名，回退到 Name
+        var fromPath = file.Path?.LocalPath ?? string.Empty;
+        if (IsHeifFile(fromPath)) return true;
+
+        // 某些平台 Name 可能包含扩展名
+        try
+        {
+            var name = (file as IStorageItem)?.Name ?? string.Empty;
+            return IsHeifFile(name);
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static Task<Bitmap?> LoadHeifBitmapAsync(IStorageFile file)
         => _decoder.IsSupported ? _decoder.LoadBitmapAsync(file) : Task.FromResult<Bitmap?>(null);
