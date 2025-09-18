@@ -36,22 +36,40 @@ public sealed class MacHeifDecoder : IHeifDecoder
             src = CGImageSourceCreateWithURL(url, IntPtr.Zero);
             if (src == IntPtr.Zero) return null;
 
-            img = CGImageSourceCreateImageAtIndex(src, 0, IntPtr.Zero);
+            // 选择要解码的 image 索引：
+            // - 缩略图：挑选“长边 > maxSize 的其中最小的那张”，若无则“长边最大的缩略图”；再无则回退 0
+            // - 原图：使用 index 0
+            int chosenIndex = 0;
+            if (maxSize.HasValue)
+            {
+                var best = FindBestThumbnailIndex(src, maxSize.Value);
+                if (best.HasValue) chosenIndex = best.Value;
+            }
+
+            img = CGImageSourceCreateImageAtIndex(src, chosenIndex, IntPtr.Zero);
             if (img == IntPtr.Zero) return null;
 
             var w = (int)CGImageGetWidth(img);
             var h = (int)CGImageGetHeight(img);
             if (w <= 0 || h <= 0) return null;
 
-            int targetW = w, targetH = h;
+            // 读取 EXIF Orientation（1..8），影响旋转/镜像与目标尺寸
+            int orientation = GetOrientationAtIndex(src, chosenIndex);
+            bool swapWH = OrientationSwapsWH(orientation);
+
+            // 按应用旋转后的自然宽高决定目标尺寸
+            int baseW = swapWH ? h : w;
+            int baseH = swapWH ? w : h;
+
+            int targetW = baseW, targetH = baseH;
             if (maxSize.HasValue)
             {
                 var m = maxSize.Value;
-                var scale = Math.Min((double)m / w, (double)m / h);
+                var scale = Math.Min((double)m / baseW, (double)m / baseH);
                 if (scale < 1.0)
                 {
-                    targetW = Math.Max(1, (int)Math.Round(w * scale));
-                    targetH = Math.Max(1, (int)Math.Round(h * scale));
+                    targetW = Math.Max(1, (int)Math.Round(baseW * scale));
+                    targetH = Math.Max(1, (int)Math.Round(baseH * scale));
                 }
             }
 
@@ -81,8 +99,16 @@ public sealed class MacHeifDecoder : IHeifDecoder
                         return null;
                     }
 
-                    var rect = new CGRect(0, 0, targetW, targetH);
+                    // 应用 EXIF 方向变换
+                    CGContextSaveGState(ctx);
+                    ApplyOrientationTransform(ctx, orientation, targetW, targetH);
+
+                    // 90/270 度旋转后绘制矩形的宽高需要互换
+                    var drawW = (swapWH ? targetH : targetW);
+                    var drawH = (swapWH ? targetW : targetH);
+                    var rect = new CGRect(0, 0, drawW, drawH);
                     CGContextDrawImage(ctx, rect, img);
+                    CGContextRestoreGState(ctx);
 
                     // 释放与原生上下文/色彩空间的关联，避免 buffer 未固定情况下被访问
                     CFRelease(ctx);
@@ -104,6 +130,180 @@ public sealed class MacHeifDecoder : IHeifDecoder
             if (img != IntPtr.Zero) CFRelease(img);
             if (src != IntPtr.Zero) CFRelease(src);
             if (url != IntPtr.Zero) CFRelease(url);
+        }
+    }
+
+    // 根据 EXIF Orientation 判断是否交换宽高（90/270 度）
+    private static bool OrientationSwapsWH(int orientation)
+        => orientation == 5 || orientation == 6 || orientation == 7 || orientation == 8;
+
+    // 对 CGContext 应用 EXIF Orientation 变换（1..8）
+    private static void ApplyOrientationTransform(IntPtr ctx, int orientation, int canvasW, int canvasH)
+    {
+        const double PI = Math.PI;
+        switch (orientation)
+        {
+            case 2: // 镜像水平
+                CGContextTranslateCTM(ctx, canvasW, 0);
+                CGContextScaleCTM(ctx, -1, 1);
+                break;
+            case 3: // 旋转 180
+                CGContextTranslateCTM(ctx, canvasW, canvasH);
+                CGContextRotateCTM(ctx, PI);
+                break;
+            case 4: // 镜像垂直
+                CGContextTranslateCTM(ctx, 0, canvasH);
+                CGContextScaleCTM(ctx, 1, -1);
+                break;
+            case 5: // 镜像水平 + 旋转 90 CW（transpose）
+                // 先把坐标原点移到左上角（以宽为位移），再顺时针 90°，再镜像水平
+                CGContextTranslateCTM(ctx, 0, canvasW);
+                CGContextRotateCTM(ctx, -PI / 2);
+                CGContextTranslateCTM(ctx, canvasW, 0);
+                CGContextScaleCTM(ctx, -1, 1);
+                break;
+            case 6: // 旋转 90 CW
+                // 注意顺时针应使用负角度，并按宽（canvasH 对应原图宽）在 Y 方向平移
+                CGContextTranslateCTM(ctx, 0, canvasH);
+                CGContextRotateCTM(ctx, -PI / 2);
+                break;
+            case 7: // 镜像水平 + 旋转 90 CCW（transverse）
+                // 先沿 X 方向按高（canvasW 对应原图高）平移，再逆时针 90°，再镜像水平
+                CGContextTranslateCTM(ctx, canvasW, 0);
+                CGContextRotateCTM(ctx, PI / 2);
+                CGContextTranslateCTM(ctx, canvasH, 0);
+                CGContextScaleCTM(ctx, -1, 1);
+                break;
+            case 8: // 旋转 90 CCW
+                // 逆时针用正角度，并按高（canvasW 对应原图高）在 X 方向平移
+                CGContextTranslateCTM(ctx, canvasW, 0);
+                CGContextRotateCTM(ctx, PI / 2);
+                break;
+            case 1:
+            default:
+                // 不变换
+                break;
+        }
+    }
+
+    // 读取指定 index 的 Orientation（没有则返回 1）
+    private static int GetOrientationAtIndex(IntPtr src, int index)
+    {
+        IntPtr dict = IntPtr.Zero;
+        try
+        {
+            dict = CGImageSourceCopyPropertiesAtIndex(src, (nint)index, IntPtr.Zero);
+            if (dict == IntPtr.Zero) return 1;
+            return GetIntProperty(dict, "Orientation", 1);
+        }
+        finally
+        {
+            if (dict != IntPtr.Zero) CFRelease(dict);
+        }
+    }
+
+    // 在缩略图中选择最优索引
+    private static int? FindBestThumbnailIndex(IntPtr src, int maxSize)
+    {
+        try
+        {
+            int count = (int)CGImageSourceGetCount(src);
+            int? bestGreaterIdx = null;
+            int bestGreaterLong = int.MaxValue;
+
+            int? bestElseIdx = null;
+            int bestElseLong = -1;
+
+            for (int i = 0; i < count; i++)
+            {
+                IntPtr dict = IntPtr.Zero;
+                try
+                {
+                    dict = CGImageSourceCopyPropertiesAtIndex(src, (nint)i, IntPtr.Zero);
+                    if (dict == IntPtr.Zero) continue;
+
+                    bool isThumb = GetBoolProperty(dict, "IsThumbnail", false);
+                    if (!isThumb) continue;
+
+                    int pw = GetIntProperty(dict, "PixelWidth", 0);
+                    int ph = GetIntProperty(dict, "PixelHeight", 0);
+                    if (pw <= 0 || ph <= 0) continue;
+
+                    int longEdge = Math.Max(pw, ph);
+
+                    if (longEdge > maxSize)
+                    {
+                        if (longEdge < bestGreaterLong)
+                        {
+                            bestGreaterLong = longEdge;
+                            bestGreaterIdx = i;
+                        }
+                    }
+                    else
+                    {
+                        if (longEdge > bestElseLong)
+                        {
+                            bestElseLong = longEdge;
+                            bestElseIdx = i;
+                        }
+                    }
+                }
+                finally
+                {
+                    if (dict != IntPtr.Zero) CFRelease(dict);
+                }
+            }
+
+            if (bestGreaterIdx.HasValue) return bestGreaterIdx.Value;
+            if (bestElseIdx.HasValue) return bestElseIdx.Value;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    // 读取 int 属性
+    private static int GetIntProperty(IntPtr dict, string key, int defaultValue)
+    {
+        IntPtr keyStr = IntPtr.Zero;
+        try
+        {
+            keyStr = CFStringCreateWithCString(IntPtr.Zero, key, kCFStringEncodingUTF8);
+            if (keyStr == IntPtr.Zero) return defaultValue;
+
+            var val = CFDictionaryGetValue(dict, keyStr);
+            if (val == IntPtr.Zero) return defaultValue;
+
+            if (CFNumberGetValue(val, /*kCFNumberSInt32Type*/ 3, out int v))
+                return v;
+
+            return defaultValue;
+        }
+        finally
+        {
+            if (keyStr != IntPtr.Zero) CFRelease(keyStr);
+        }
+    }
+
+    // 读取 bool 属性
+    private static bool GetBoolProperty(IntPtr dict, string key, bool defaultValue)
+    {
+        IntPtr keyStr = IntPtr.Zero;
+        try
+        {
+            keyStr = CFStringCreateWithCString(IntPtr.Zero, key, kCFStringEncodingUTF8);
+            if (keyStr == IntPtr.Zero) return defaultValue;
+
+            var val = CFDictionaryGetValue(dict, keyStr);
+            if (val == IntPtr.Zero) return defaultValue;
+
+            return CFBooleanGetValue(val);
+        }
+        finally
+        {
+            if (keyStr != IntPtr.Zero) CFRelease(keyStr);
         }
     }
 
@@ -154,11 +354,32 @@ public sealed class MacHeifDecoder : IHeifDecoder
     [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
     private static extern void CFRelease(IntPtr cfTypeRef);
 
+    // 新增：CFString / CFDictionary / CFNumber / CFBoolean
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
+    private static extern IntPtr CFStringCreateWithCString(IntPtr alloc, string str, uint encoding);
+    private const uint kCFStringEncodingUTF8 = 0x08000100;
+
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
+    private static extern IntPtr CFDictionaryGetValue(IntPtr theDict, IntPtr key);
+
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
+    private static extern bool CFNumberGetValue(IntPtr number, int theType, out int value);
+
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
+    private static extern bool CFBooleanGetValue(IntPtr boolean);
+
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
     private static extern IntPtr CGImageSourceCreateWithURL(IntPtr url, IntPtr options);
 
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
     private static extern IntPtr CGImageSourceCreateImageAtIndex(IntPtr isrc, nint index, IntPtr options);
+
+    // 新增：读取属性与计数
+    [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
+    private static extern IntPtr CGImageSourceCopyPropertiesAtIndex(IntPtr isrc, nint index, IntPtr options);
+
+    [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
+    private static extern nint CGImageSourceGetCount(IntPtr isrc);
 
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern nint CGImageGetWidth(IntPtr image);
@@ -181,6 +402,22 @@ public sealed class MacHeifDecoder : IHeifDecoder
 
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern void CGContextDrawImage(IntPtr c, CGRect rect, IntPtr image);
+
+    // 新增：CTM 变换
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextSaveGState(IntPtr c);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextRestoreGState(IntPtr c);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextTranslateCTM(IntPtr c, double tx, double ty);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextRotateCTM(IntPtr c, double angle);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextScaleCTM(IntPtr c, double sx, double sy);
 
     // 基础结构体
     [StructLayout(LayoutKind.Sequential)]
