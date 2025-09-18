@@ -22,11 +22,9 @@
         </PackageReference>
         <PackageReference Include="Avalonia.ReactiveUI" />
         <PackageReference Include="Avalonia.Xaml.Interactions.Custom" />
-        <PackageReference Include="LibHeif.Native" />
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="XmpCore" />
-        <PackageReference Include="LibHeifSharp" />
     </ItemGroup>
 
     <ItemGroup>
