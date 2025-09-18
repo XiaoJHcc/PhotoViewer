@@ -1,10 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net9.0-macos</TargetFramework>
-        <OutputType>WinExe</OutputType>
+        <OutputType>Exe</OutputType>
+        <SupportedOSPlatformVersion>12.0</SupportedOSPlatformVersion>
+        <UseAppHost>true</UseAppHost>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
-        <RuntimeIdentifiers>osx-x64;osx-arm64</RuntimeIdentifiers>
+        <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
 
