@@ -13,13 +13,6 @@ public sealed class WindowsHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => true;
 
-    public bool IsHeifFile(string filePath)
-    {
-        if (string.IsNullOrEmpty(filePath)) return false;
-        var ext = Path.GetExtension(filePath).ToLowerInvariant();
-        return ext is ".heif" or ".heic" or ".avif" or ".hif";
-    }
-
     /// <summary>
     /// 异步加载 HEIF 图片
     /// </summary>

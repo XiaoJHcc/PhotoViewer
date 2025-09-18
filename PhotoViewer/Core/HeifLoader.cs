@@ -30,14 +30,7 @@ public static class HeifLoader
 
     public static Task<Bitmap?> LoadHeifThumbnailAsync(IStorageFile file, int maxSize = 120)
         => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
-
-    [Obsolete("Obsolete")]
-    public static Task<Bitmap?> LoadHeifBitmapFromStreamAsync(Stream stream)
-        => _decoder.IsSupported ? _decoder.LoadBitmapFromStreamAsync(stream) : Task.FromResult<Bitmap?>(null);
-
-    [Obsolete("Obsolete")]
-    public static Task<Bitmap?> LoadHeifThumbnailFromStreamAsync(Stream stream, int maxSize = 120)
-        => _decoder.IsSupported ? _decoder.LoadThumbnailFromStreamAsync(stream, maxSize) : Task.FromResult<Bitmap?>(null);
+    
 }
 
 // 为空
@@ -45,15 +38,6 @@ internal sealed class NoopHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => false;
 
-    public bool IsHeifFile(string filePath)
-    {
-        if (string.IsNullOrEmpty(filePath)) return false;
-        var ext = System.IO.Path.GetExtension(filePath).ToLowerInvariant();
-        return ext is ".heif" or ".heic" or ".avif" or ".hif";
-    }
-
     public Task<Bitmap?> LoadBitmapAsync(IStorageFile file) => Task.FromResult<Bitmap?>(null);
     public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize) => Task.FromResult<Bitmap?>(null);
-    public Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream) => Task.FromResult<Bitmap?>(null);
-    public Task<Bitmap?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize) => Task.FromResult<Bitmap?>(null);
 }
