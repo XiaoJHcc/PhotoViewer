@@ -7,6 +7,8 @@ using AndroidX.Core.Content;
 using Avalonia;
 using Avalonia.Android;
 using Avalonia.ReactiveUI;
+using PhotoViewer.Android.Core;
+using PhotoViewer.Core;
 
 namespace PhotoViewer.Android;
 
@@ -31,6 +33,10 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override void OnCreate(Bundle savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
+
+        // 注册 Android 平台的 HeifDecoder
+        HeifLoader.Initialize(new AndroidHeifDecoder());
+
         RequestStoragePermissions();
     }
     
