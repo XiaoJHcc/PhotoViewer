@@ -2,7 +2,7 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
-using PhotoViewer.Desktop.Core;
+using PhotoViewer.Mac.Core;
 
 namespace PhotoViewer.Mac;
 
@@ -13,7 +13,7 @@ sealed class Program
     // yet and stuff might break.
     [STAThread]
     public static void Main(string[] args) => BuildAvaloniaApp()
-        // .AfterSetup(_ => HeifLoader.Initialize(new WindowsHeifDecoder()))
+        .AfterSetup(_ => HeifLoader.Initialize(new MacHeifDecoder()))
         
         .StartWithClassicDesktopLifetime(args);
 
