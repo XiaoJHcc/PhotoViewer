@@ -13,7 +13,14 @@ sealed class Program
     // yet and stuff might break.
     [STAThread]
     public static void Main(string[] args) => BuildAvaloniaApp()
-        .AfterSetup(_ => HeifLoader.Initialize(new WindowsHeifDecoder()))
+        .AfterSetup(_ =>
+        {
+            // Windows 优先使用 WIC，其它平台仍旧 LibHeifDecoder
+            // if (OperatingSystem.IsWindows())
+            //     HeifLoader.Initialize(new WindowsHeifDecoder(new LibHeifDecoder()));
+            // else
+                HeifLoader.Initialize(new LibHeifDecoder());
+        })
         .StartWithClassicDesktopLifetime(args);
 
     // Avalonia configuration, don't remove; also used by visual designer.
