@@ -21,6 +21,7 @@
         </PackageReference>
         <PackageReference Include="LibHeifSharp" />
         <PackageReference Include="LibHeif.Native.win-x64" />
+        <PackageReference Include="WicNet" />
     </ItemGroup>
 
     <ItemGroup>
