@@ -18,27 +18,37 @@ public sealed class WindowsHeifDecoder : IHeifDecoder
     private readonly IHeifDecoder _fallback = new LibHeifDecoder();
 #else
     private static readonly Guid HeifContainerGuid = new("E1E62521-6787-405B-8D77-260D8D729909");
-    private readonly Lazy<bool> _isSupported;
+
+    // 启动时（类型首次使用）即探测一次
+    private static readonly bool s_isWicHeifAvailable;
+    public static bool WicHeifAvailable => s_isWicHeifAvailable;
+
+    static WindowsHeifDecoder()
+    {
+        s_isWicHeifAvailable = DetectSupportStatic();
+        if (!s_isWicHeifAvailable)
+            Console.WriteLine("[WindowsHeifDecoder] WIC HEIF not supported. Falling back to LibHeifDecoder.");
+    }
+
     private readonly IHeifDecoder _fallback;
 
     public WindowsHeifDecoder()
     {
         _fallback = new LibHeifDecoder();
-        _isSupported = new Lazy<bool>(DetectSupport, isThreadSafe: true);
     }
 
-    public bool IsSupported => _isSupported.Value;
+    public bool IsSupported => s_isWicHeifAvailable;
 #endif
 
     public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
     {
 #if !WINDOWS
-        Console.WriteLine("[WindowsHeifDecoder] Non-Windows platform. Falling back to LibHeifDecoder.");
+        // Console.WriteLine("[WindowsHeifDecoder] Non-Windows platform. Falling back to LibHeifDecoder.");
         return await _fallback.LoadBitmapAsync(file);
 #else
         if (!IsSupported)
         {
-            Console.WriteLine("[WindowsHeifDecoder] WIC HEIF not supported. Falling back to LibHeifDecoder.");
+            // Console.WriteLine("[WindowsHeifDecoder] WIC HEIF not supported. Falling back to LibHeifDecoder.");
             return await _fallback.LoadBitmapAsync(file);
         }
 
@@ -67,7 +77,7 @@ public sealed class WindowsHeifDecoder : IHeifDecoder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[WindowsHeifDecoder] Decode failed: {ex.Message}. Falling back.");
+            Console.WriteLine("[WindowsHeifDecoder] Decode failed:" + ex.Message + "Falling back.");
             try
             {
                 return await _fallback.LoadBitmapAsync(file);
@@ -185,7 +195,8 @@ public sealed class WindowsHeifDecoder : IHeifDecoder
     }
 
 #if WINDOWS
-    private bool DetectSupport()
+    // 静态探测函数（原 DetectSupport 重命名）
+    private static bool DetectSupportStatic()
     {
         if (!OperatingSystem.IsWindows())
             return false;
@@ -202,12 +213,8 @@ public sealed class WindowsHeifDecoder : IHeifDecoder
                         e.Equals(".heic", StringComparison.OrdinalIgnoreCase) ||
                         e.Equals(".heif", StringComparison.OrdinalIgnoreCase));
                 }
-                catch
-                {
-                    return false;
-                }
+                catch { return false; }
             });
-
             if (extMatch)
                 return true;
 
