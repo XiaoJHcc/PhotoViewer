@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -17,7 +18,8 @@ public class ImageFile : ReactiveObject
     private bool _isExifLoaded;
     private bool _isThumbnailLoading;
     private bool _isInCache;
-        
+    private string? _displayName;
+
     public IStorageFile File { get; }
     public string Name => File.Name;
     public DateTimeOffset? ModifiedDate => File.GetBasicPropertiesAsync().Result.DateModified;
@@ -136,11 +138,27 @@ public class ImageFile : ReactiveObject
         get => _isThumbnailLoading;
         private set => this.RaiseAndSetIfChanged(ref _isThumbnailLoading, value);
     }
-        
+
+    public string DisplayName
+    {
+        get => _displayName ?? Name;
+        set => this.RaiseAndSetIfChanged(ref _displayName, value);
+    }
+
+    // 被同名合并隐藏的其它格式文件
+    public List<IStorageFile> HiddenFiles { get; } = new();
+
+    // 工具：清空隐藏文件并重置显示名
+    public void ResetGrouping()
+    {
+        HiddenFiles.Clear();
+        DisplayName = Name;
+    }
+
     public ImageFile(IStorageFile file)
     {
         File = file;
-        
+
         // 延迟初始化缓存状态，避免在静态类还未完全初始化时调用
         Dispatcher.UIThread.Post(() => UpdateCacheStatus());
     }

@@ -185,7 +185,26 @@ public class ControlViewModel : ReactiveObject
             var success = await XmpWriter.WriteRatingAsync(file.File, rating, SafeSetRating);
             if (success)
             {
-                // 异步刷新 EXIF 数据
+                // 同步写入隐藏同名文件星级
+                if (file.HiddenFiles.Count > 0)
+                {
+                    foreach (var hidden in file.HiddenFiles)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                await XmpWriter.WriteRatingAsync(hidden, rating, SafeSetRating);
+                            }
+                            catch (Exception exHidden)
+                            {
+                                Console.WriteLine($"Hidden file rating sync failed: {exHidden.Message}");
+                            }
+                        });
+                    }
+                }
+
+                // 异步刷新 EXIF 数据（仅代表文件）
                 _ = Task.Run(async () =>
                 {
                     try

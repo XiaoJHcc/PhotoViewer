@@ -95,6 +95,10 @@ public class FolderViewModel : ReactiveObject
         // 监听设置变化
         Main.Settings.WhenAnyValue(s => s.SelectedFormats)
             .Subscribe(_ => ApplyFilter());
+        
+        // 监听同名视为一张图片设置
+        Main.Settings.WhenAnyValue(s => s.SameNameAsOnePhoto)
+            .Subscribe(_ => ApplyFilter());
             
         this.WhenAnyValue(s => s.SortMode, s => s.SortOrder)
             .Subscribe(_ => ApplySort());
@@ -407,22 +411,89 @@ public class FolderViewModel : ReactiveObject
                 System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant()
             )
         ).ToList();
-        
+
+        // 同名文件合并逻辑
+        if (Main.Settings.SameNameAsOnePhoto)
+        {
+            var order = Main.Settings.SelectedFormats;
+            var grouped = filtered
+                .GroupBy(f => System.IO.Path.GetFileNameWithoutExtension(f.Name), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            List<ImageFile> merged = new();
+            foreach (var g in grouped)
+            {
+                if (g.Count() == 1)
+                {
+                    var single = g.First();
+                    single.ResetGrouping();
+                    merged.Add(single);
+                    continue;
+                }
+
+                // 选择代表文件：按 SelectedFormats 中扩展名索引最小优先
+                ImageFile representative = g
+                    .OrderBy(f =>
+                    {
+                        var ext = System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? "";
+                        var idx = order.IndexOf(ext);
+                        return idx < 0 ? int.MaxValue : idx;
+                    })
+                    .First();
+
+                representative.HiddenFiles.Clear();
+                foreach (var other in g)
+                {
+                    if (other != representative)
+                    {
+                        representative.HiddenFiles.Add(other.File);
+                        // 非代表文件恢复原始显示名（避免切换设置后残留）
+                        other.ResetGrouping();
+                    }
+                }
+
+                if (representative.HiddenFiles.Count > 0)
+                {
+                    var hiddenGroups = representative.HiddenFiles
+                        .Select(f => Main.Settings.GetFormatDisplayNameByExtension(
+                            System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? ""))
+                        .Distinct()
+                        .ToList();
+
+                    representative.DisplayName = $"{representative.Name}({string.Join('/', hiddenGroups)})";
+                }
+                else
+                {
+                    representative.DisplayName = representative.Name;
+                }
+
+                merged.Add(representative);
+            }
+
+            filtered = merged;
+        }
+        else
+        {
+            // 未合并模式重置所有
+            foreach (var f in filtered)
+            {
+                f.ResetGrouping();
+            }
+        }
+
         _filteredFiles.Clear();
         foreach (var file in filtered)
         {
             _filteredFiles.Add(file);
         }
-        
+
         ApplySort();
-        
-        // 筛选后重新加载 EXIF 数据（排除当前图片，因为已经优先加载了）
+
+        // 合并后异步加载非当前文件 EXIF（保持原逻辑）
         _ = Task.Run(async () =>
         {
             var otherFiles = _filteredFiles.Where(f => f != Main.CurrentFile);
             await ExifLoader.LoadFolderExifDataAsync(otherFiles);
-            
-            // EXIF 加载完成后，触发UI更新
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var file in otherFiles)

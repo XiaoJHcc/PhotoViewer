@@ -79,7 +79,7 @@
                                 安全修改文件星级
                             </TextBlock>
                             <TextBlock Classes="settings-description">
-                                检验文件字节变化再写回，避免损坏原文件
+                                检验文件字节变化再写回，降低损坏原文件概率
                             </TextBlock>
                             <TextBlock Classes="settings-description"
                                        IsVisible="{Binding IsAndroid}">

@@ -159,6 +159,15 @@ public class SettingsViewModel : ReactiveObject
             .ToList();
     }
 
+    // 新增：根据扩展名获取格式显示名（用于同名合并显示 RAW 等）
+    public string GetFormatDisplayNameByExtension(string ext)
+    {
+        if (string.IsNullOrWhiteSpace(ext)) return string.Empty;
+        ext = ext.ToLowerInvariant();
+        var item = FileFormats.FirstOrDefault(f => f.Extensions.Any(e => e.Equals(ext, StringComparison.OrdinalIgnoreCase)));
+        return item?.DisplayName.ToUpperInvariant() ?? ext.TrimStart('.').ToUpperInvariant();
+    }
+
     // 添加移动命令
     public ReactiveCommand<MoveCommandParameter, Unit> MoveFileFormatCommand { get; private set; }
 
@@ -763,7 +772,7 @@ public class SettingsViewModel : ReactiveObject
     }
     
     // 检查是否为安卓平台
-    private static bool IsAndroid => OperatingSystem.IsAndroid();
+    public static bool IsAndroid => OperatingSystem.IsAndroid();
     
     #endregion
 }
