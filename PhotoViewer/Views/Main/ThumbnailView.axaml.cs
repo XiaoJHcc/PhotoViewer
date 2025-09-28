@@ -34,6 +34,11 @@ public partial class ThumbnailView : UserControl
     private bool _isScrolling = false;
     private Vector _lastScrollOffset = Vector.Zero;
     
+    private ScrollViewer? _scroll;
+    private DispatcherTimer? _debounceTimer;
+    private double _lastHorizontalOffset;
+    private double _lastVerticalOffset;
+
     public FolderViewModel? ViewModel => DataContext as FolderViewModel;
 
     public ThumbnailView()
@@ -63,7 +68,7 @@ public partial class ThumbnailView : UserControl
         };
 
         // 滚动事件处理
-        ThumbnailScrollViewer.ScrollChanged += OnScrollChanged;
+        ThumbnailScrollViewer.ScrollChanged += OnScrollChangedThumbnail;
 
         // 排序选项变化时刷新
         SortByComboBox.SelectionChanged += (s, e) => LoadVisibleThumbnailsAsync();
@@ -79,6 +84,8 @@ public partial class ThumbnailView : UserControl
             await Task.Delay(100); // 等待布局完成
             await LoadVisibleThumbnailsAsync();
         };
+
+        this.AttachedToVisualTree += OnAttached;
     }
     
     private void OnDataContextChanged(object? dataContext)
@@ -89,8 +96,8 @@ public partial class ThumbnailView : UserControl
             viewModel.ScrollToCurrentRequested += ScrollToCurrentImage;
         }
     }
-
-    private void OnScrollChanged(object? sender, ScrollChangedEventArgs e)
+    
+    private void OnScrollChangedThumbnail(object? sender, ScrollChangedEventArgs e)
     {
         var currentOffset = ThumbnailScrollViewer?.Offset ?? Vector.Zero;
         
@@ -112,7 +119,76 @@ public partial class ThumbnailView : UserControl
             _scrollTimer.Start();
         }
     }
+    
+    private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        _scroll = this.FindControl<ScrollViewer>("ThumbnailScrollViewer");
+        if (_scroll != null)
+        {
+            _scroll.ScrollChanged += OnScrollChangedBitmapPrefetch;
+        }
+    }
 
+    private void OnScrollChangedBitmapPrefetch(object? s, ScrollChangedEventArgs e)
+    {
+        // 若无偏移变化不触发
+        if (Math.Abs(_lastHorizontalOffset - _scroll!.Offset.X) < 0.1 &&
+            Math.Abs(_lastVerticalOffset - _scroll.Offset.Y) < 0.1)
+            return;
+
+        _lastHorizontalOffset = _scroll.Offset.X;
+        _lastVerticalOffset = _scroll.Offset.Y;
+
+        RestartDebounce();
+    }
+
+    private void RestartDebounce()
+    {
+        var vm = DataContext as FolderViewModel;
+        if (vm == null) return;
+        var delayMs = vm.Main.Settings.VisibleCenterDelayMs;
+
+        _debounceTimer?.Stop();
+        _debounceTimer ??= new DispatcherTimer();
+        _debounceTimer.Interval = TimeSpan.FromMilliseconds(delayMs);
+        _debounceTimer.Tick += (_, _) =>
+        {
+            _debounceTimer.Stop();
+            TryReportVisibleRange();
+        };
+        _debounceTimer.Start();
+    }
+
+    private void TryReportVisibleRange()
+    {
+        var vm = DataContext as FolderViewModel;
+        if (vm == null || _scroll == null) return;
+
+        // 估算项尺寸（与 XAML 固定尺寸保持一致）
+        bool vertical = vm.IsVerticalLayout; // vertical => 纵向排列（Orientation=Vertical）
+        // 项本体：高度 138 / 宽度 90；间隙 Spacing=6
+        double itemExtent = vertical ? 138 + 6 : 90 + 6;
+
+        double offset = vertical ? _scroll.Offset.Y : _scroll.Offset.X;
+        double viewport = vertical ? _scroll.Viewport.Height : _scroll.Viewport.Width;
+
+        if (itemExtent < 1) return;
+
+        int firstIndex = (int)Math.Floor(offset / itemExtent);
+        if (firstIndex < 0) firstIndex = 0;
+
+        int visibleCount = (int)Math.Ceiling(viewport / itemExtent) + 2;
+        int lastIndex = firstIndex + visibleCount - 1;
+
+        var total = vm.FilteredFiles.Count;
+        if (total == 0) return;
+
+        if (lastIndex >= total) lastIndex = total - 1;
+        if (firstIndex >= total) firstIndex = total - 1;
+
+        vm.ReportVisibleRange(firstIndex, lastIndex);
+    }
+    
     private async Task LoadVisibleThumbnailsAsync()
     {
         if (ViewModel == null) return;

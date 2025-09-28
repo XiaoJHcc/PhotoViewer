@@ -7,6 +7,7 @@ using ReactiveUI;
 using System.Collections.Generic;
 using PhotoViewer.Controls;
 using Avalonia.Input;
+using PhotoViewer.Core;
 
 namespace PhotoViewer.ViewModels;
 
@@ -32,6 +33,10 @@ public class SettingsViewModel : ReactiveObject
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
         MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
         MoveExifDisplayCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveExifDisplay);
+        
+        // 监听缓存最大数量变化同步到 BitmapLoader
+        this.WhenAnyValue(v => v.BitmapCacheMaxCount)
+            .Subscribe(v => BitmapLoader.MaxCacheCount = v);
     }
     
     //////////////
@@ -774,5 +779,47 @@ public class SettingsViewModel : ReactiveObject
     // 检查是否为安卓平台
     public static bool IsAndroid => OperatingSystem.IsAndroid();
     
+    #endregion
+
+    //////////////
+    /// 位图缓存与预取设置
+    //////////////
+    #region BitmapPrefetchSetting
+
+    private int _bitmapCacheMaxCount = 30;
+    public int BitmapCacheMaxCount
+    {
+        get => _bitmapCacheMaxCount;
+        set => this.RaiseAndSetIfChanged(ref _bitmapCacheMaxCount, value < 1 ? 1 : value);
+    }
+
+    private int _preloadForwardCount = 10;
+    public int PreloadForwardCount
+    {
+        get => _preloadForwardCount;
+        set => this.RaiseAndSetIfChanged(ref _preloadForwardCount, Math.Max(0, value));
+    }
+
+    private int _preloadBackwardCount = 5;
+    public int PreloadBackwardCount
+    {
+        get => _preloadBackwardCount;
+        set => this.RaiseAndSetIfChanged(ref _preloadBackwardCount, Math.Max(0, value));
+    }
+
+    private int _visibleCenterPreloadCount = 5;
+    public int VisibleCenterPreloadCount
+    {
+        get => _visibleCenterPreloadCount;
+        set => this.RaiseAndSetIfChanged(ref _visibleCenterPreloadCount, Math.Max(1, value));
+    }
+
+    private int _visibleCenterDelayMs = 1000;
+    public int VisibleCenterDelayMs
+    {
+        get => _visibleCenterDelayMs;
+        set => this.RaiseAndSetIfChanged(ref _visibleCenterDelayMs, Math.Clamp(value, 100, 5000));
+    }
+
     #endregion
 }
