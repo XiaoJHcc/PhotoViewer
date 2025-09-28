@@ -136,7 +136,7 @@ public partial class ThumbnailView : UserControl
             // 更新项目尺寸估算：根据实际的缩略图项目尺寸
             // 项目总尺寸 = 边框宽度(90) + 间距(6) = 96px
             // 垂直布局时高度 = 边框高度(120) + 间距(6) = 126px
-            var estimatedItemSize = isVertical ? 126.0 : 96.0; // 更新估算的项目尺寸
+            var estimatedItemSize = isVertical ? 144.0 : 96.0; // 更新估算的项目尺寸
             var viewportSize = isVertical ? viewport.Height : viewport.Width;
             var scrollPosition = isVertical ? offset.Y : offset.X;
             
@@ -509,6 +509,18 @@ public partial class ThumbnailView : UserControl
         await CancelCurrentAnimationAsync();
         _scrollingTimer.Stop();
         _isScrolling = false;
+    }
+
+    private void OnThumbStarClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (ViewModel == null) return;
+        if (sender is Button btn &&
+            btn.Tag is string s &&
+            int.TryParse(s, out var rating) &&
+            btn.DataContext is Core.ImageFile file)
+        {
+            _ = ViewModel.Main.SetRatingAsync(file, rating);
+        }
     }
 }
 

@@ -49,6 +49,34 @@ public partial class ControlView : UserControl
     {
         if (DataContext is not ControlViewModel viewModel) return;
 
+        // 新增：星级快捷键 (` -> 0, 主键盘1-5 -> 1-5，小键盘0-5 -> 0-5)
+        if (e.KeyModifiers == KeyModifiers.None && viewModel.ShowRating)
+        {
+            int? rating = null;
+            switch (e.Key)
+            {
+                case Key.OemTilde: rating = 0; break;      // ` 键
+                case Key.D1: rating = 1; break;
+                case Key.D2: rating = 2; break;
+                case Key.D3: rating = 3; break;
+                case Key.D4: rating = 4; break;
+                case Key.D5: rating = 5; break;
+                case Key.NumPad0: rating = 0; break;
+                case Key.NumPad1: rating = 1; break;
+                case Key.NumPad2: rating = 2; break;
+                case Key.NumPad3: rating = 3; break;
+                case Key.NumPad4: rating = 4; break;
+                case Key.NumPad5: rating = 5; break;
+            }
+
+            if (rating.HasValue)
+            {
+                viewModel.SetRating(rating.Value);
+                e.Handled = true;
+                return;
+            }
+        }
+
         var pressedGesture = new KeyGesture(e.Key, e.KeyModifiers);
         
         // 查找匹配的快捷键

@@ -101,13 +101,12 @@ public class ImageFile : ReactiveObject
         {
             var oldValue = _exifData;
             this.RaiseAndSetIfChanged(ref _exifData, value);
-            
-            // 只有当值真正发生变化时才通知相关属性变化
             if (!ReferenceEquals(oldValue, value))
             {
                 this.RaisePropertyChanged(nameof(PhotoDate));
                 this.RaisePropertyChanged(nameof(RotationAngle));
                 this.RaisePropertyChanged(nameof(NeedsHorizontalFlip));
+                this.RaisePropertyChanged(nameof(Rating)); // 新增：星级同步更新
             }
         }
     }
@@ -319,4 +318,9 @@ public class ImageFile : ReactiveObject
         Thumbnail = null;
         IsThumbnailLoading = false;
     }
+    
+    /// <summary>
+    /// 星级（0~5，来自 EXIF/XMP；若无则为0）
+    /// </summary>
+    public int Rating => ExifData?.Rating ?? 0;
 }
