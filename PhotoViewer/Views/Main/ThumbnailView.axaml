@@ -29,6 +29,10 @@
 
         <!-- 水平翻转到变换转换器 -->
         <local:FlipTransformConverter x:Key="FlipTransformConverter" />
+
+        <!-- 星级颜色转换器 -->
+        <local:StarColorConverter x:Key="StarColorConverter" />
+        
     </UserControl.Resources>
 
     <UserControl.Styles>
@@ -37,6 +41,37 @@
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="BorderBrush" Value="#444" />
             <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        
+        <!-- 星级按钮样式 -->
+        <Style Selector="Button.ThumbStarButton">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style Selector="Button.ThumbStarButton:pointerover">
+            <Setter Property="Background" Value="#333" />
+        </Style>
+
+        <!-- 禁用状态的星级按钮样式 -->
+        <Style Selector="Button.ThumbStarButton:disabled">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+
+        <Style Selector="Button.ThumbStarButton:disabled:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="TextBlock.ThumbStarButtonSymbol">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
         </Style>
     </UserControl.Styles>
 
@@ -52,6 +87,7 @@
                     Margin="10"
                     HorizontalAlignment="Center"
                     Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+            <!-- 排序方式下拉框 -->
             <ComboBox Name="SortByComboBox"
                       ItemsSource="{Binding SortModes}"
                       SelectedValue="{Binding SortMode}"
@@ -63,6 +99,8 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
+
+            <!-- 排序顺序下拉框 -->
             <ComboBox Name="OrderComboBox"
                       ItemsSource="{Binding SortOrders}"
                       SelectedValue="{Binding SortOrder}"
@@ -74,6 +112,23 @@
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
             </ComboBox>
+
+            <!-- 星级筛选 -->
+            <ComboBox ItemsSource="{Binding RatingFilters}"
+                      SelectedValue="{Binding SelectedRatingFilter}"
+                      SelectedValueBinding="{Binding Key}">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayName}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <!-- 筛选后计数 -->
+            <TextBlock Text="{Binding FilteredCount, StringFormat='共 {0} 张'}"
+                       VerticalAlignment="Center"
+                       Foreground="#DDD"
+                       FontSize="12"/>
         </StackPanel>
 
         <!-- 缩略图列表 -->
@@ -121,7 +176,7 @@
                                     Margin="0"
                                     Padding="0"
                                     Width="90"
-                                    Height="120"
+                                    Height="138"
                                     Background="#222">
 
                                 <StackPanel Orientation="Vertical"
@@ -185,27 +240,50 @@
                                     <!-- 文件信息 -->
                                     <StackPanel Orientation="Vertical" Spacing="2">
                                         <TextBlock Text="{Binding DisplayName}"
-                                                   TextWrapping="NoWrap"
-                                                   TextTrimming="CharacterEllipsis"
-                                                   Foreground="#EEEEEE"
                                                    FontSize="10"
+                                                   Foreground="#EEEEEE"
                                                    FontWeight="SemiBold"
                                                    HorizontalAlignment="Center"
+                                                   TextTrimming="CharacterEllipsis"
                                                    MaxWidth="90" />
+                                        <TextBlock Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}"
+                                                   FontSize="9"
+                                                   Foreground="#AAAAAA"
+                                                   HorizontalAlignment="Center"
+                                                   ToolTip.Tip="{Binding PhotoDate}" />
 
-                                        <!-- <TextBlock -->
-                                        <!--     Text="{Binding FileSize, Converter={StaticResource FileSizeConverter}}" -->
-                                        <!--     FontSize="9" -->
-                                        <!--     Foreground="#AAAAAA" -->
-                                        <!--     HorizontalAlignment="Center" /> -->
-
-                                        <TextBlock
-                                            Text="{Binding PhotoDate, 
-                                                Converter={StaticResource PhotoDateConverter}}"
-                                            FontSize="9"
-                                            Foreground="#AAAAAA"
-                                            HorizontalAlignment="Center"
-                                            ToolTip.Tip="{Binding PhotoDate}" />
+                                        <!-- 星级行（缩略图内） -->
+                                        <StackPanel Orientation="Horizontal"
+                                                    HorizontalAlignment="Center"
+                                                    IsVisible="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).Main.Settings.ShowRating}">
+                                            <!-- 0星 -->
+                                            <Button Classes="ThumbStarButton" Tag="0" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xf4f8;"
+                                                           FontSize="8"
+                                                           Foreground="#666"/>
+                                            </Button>
+                                            <!-- 1~5星 -->
+                                            <Button Classes="ThumbStarButton" Tag="1" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                           Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=1}"/>
+                                            </Button>
+                                            <Button Classes="ThumbStarButton" Tag="2" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                           Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=2}"/>
+                                            </Button>
+                                            <Button Classes="ThumbStarButton" Tag="3" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                           Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=3}"/>
+                                            </Button>
+                                            <Button Classes="ThumbStarButton" Tag="4" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                           Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=4}"/>
+                                            </Button>
+                                            <Button Classes="ThumbStarButton" Tag="5" Click="OnThumbStarClick">
+                                                <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                           Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=5}"/>
+                                            </Button>
+                                        </StackPanel>
                                     </StackPanel>
                                 </StackPanel>
                             </Border>

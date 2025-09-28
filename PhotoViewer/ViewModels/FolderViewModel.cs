@@ -334,7 +334,7 @@ public class FolderViewModel : ReactiveObject
     
     
     ////////////////
-    /// 加载文件夹
+    /// 加载文件夹 筛选
     ////////////////
 
     #region LoadFolder
@@ -481,30 +481,73 @@ public class FolderViewModel : ReactiveObject
             }
         }
 
-        _filteredFiles.Clear();
-        foreach (var file in filtered)
+        // 星级筛选附加阶段
+        filtered = filtered.Where(f =>
         {
-            _filteredFiles.Add(file);
-        }
+            var r = f.Rating;
+            return SelectedRatingFilter switch
+            {
+                "All" => true,
+                "None" => r == 0,
+                "Eq1" => r == 1,
+                "Eq2" => r == 2,
+                "Eq3" => r == 3,
+                "Eq4" => r == 4,
+                "Eq5" => r == 5,
+                "Gt1" => r >= 1,
+                "Gt2" => r >= 2,
+                "Gt3" => r >= 3,
+                "Gt4" => r >= 4,
+                _ => true
+            };
+        }).ToList();
+
+        _filteredFiles.Clear();
+        foreach (var file in filtered) _filteredFiles.Add(file);
 
         ApplySort();
 
-        // 合并后异步加载非当前文件 EXIF（保持原逻辑）
-        _ = Task.Run(async () =>
-        {
-            var otherFiles = _filteredFiles.Where(f => f != Main.CurrentFile);
-            await ExifLoader.LoadFolderExifDataAsync(otherFiles);
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var file in otherFiles)
-                {
-                    file.RaisePropertyChanged(nameof(file.PhotoDate));
-                    file.RaisePropertyChanged(nameof(file.RotationAngle));
-                    file.RaisePropertyChanged(nameof(file.NeedsHorizontalFlip));
-                }
-            });
-        });
+        this.RaisePropertyChanged(nameof(FilteredCount)); // 更新计数
     }
+    
+    // 星级筛选项
+    public class RatingFilterOption
+    {
+        public string DisplayName { get; set; } = "";
+        public string Key { get; set; } = "";
+    }
+    
+    // 评分筛选
+    public List<RatingFilterOption> RatingFilters { get; } =
+    [
+        new() { DisplayName = "全部", Key = "All" },
+        new() { DisplayName = "无星级", Key = "None" },
+        new() { DisplayName = "一星", Key = "Eq1" },
+        new() { DisplayName = "二星", Key = "Eq2" },
+        new() { DisplayName = "三星", Key = "Eq3" },
+        new() { DisplayName = "四星", Key = "Eq4" },
+        new() { DisplayName = "五星", Key = "Eq5" },
+        new() { DisplayName = "一星以上", Key = "Gt1" },
+        new() { DisplayName = "二星以上", Key = "Gt2" },
+        new() { DisplayName = "三星以上", Key = "Gt3" },
+        new() { DisplayName = "四星以上", Key = "Gt4" },
+    ];
+
+    private string _selectedRatingFilter = "All";
+    public string SelectedRatingFilter
+    {
+        get => _selectedRatingFilter;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedRatingFilter, value);
+            ApplyFilter();
+        }
+    }
+
+    public int FilteredCount => _filteredFiles.Count;
+
+    // 对外刷新（评分变化后调用）
+    public void RefreshFilters() => ApplyFilter();
     
     // 排序筛选后的图片
     private void ApplySort()
@@ -723,4 +766,6 @@ public class FolderViewModel : ReactiveObject
     }
     
     #endregion
+    
+    
 }

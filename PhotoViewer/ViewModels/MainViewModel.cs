@@ -194,4 +194,58 @@ public class MainViewModel : ViewModelBase
     }
 
     #endregion
+
+    public async Task SetRatingAsync(ImageFile? file, int rating)
+    {
+        if (file == null) return;
+        try
+        {
+            var success = await XmpWriter.WriteRatingAsync(file.File, rating, Settings.SafeSetRating);
+            if (success)
+            {
+                // 同步写入隐藏文件
+                if (file.HiddenFiles.Count > 0)
+                {
+                    foreach (var hidden in file.HiddenFiles)
+                    {
+                        _ = Task.Run(async () =>
+                        {
+                            try { await XmpWriter.WriteRatingAsync(hidden, rating, Settings.SafeSetRating); }
+                            catch (Exception exHidden) { Console.WriteLine("Hidden file rating sync failed: " + exHidden.Message); }
+                        });
+                    }
+                }
+
+                // 重新加载 EXIF 刷新星级显示
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        file.ClearExifData();
+                        await file.LoadExifDataAsync();
+                        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+                        {
+                            ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
+                            file.RaisePropertyChanged(nameof(file.Rating));
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
+                    }
+                });
+
+                // 重新应用筛选（若当前使用星级筛选）
+                FolderVM.RefreshFilters();
+            }
+            else
+            {
+                Console.WriteLine("Failed to update rating for " + file.Name);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Error setting rating for " + file.Name + ": " + ex.Message);
+        }
+    }
 }

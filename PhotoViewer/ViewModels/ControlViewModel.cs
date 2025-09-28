@@ -177,9 +177,9 @@ public class ControlViewModel : ReactiveObject
     public async void SetRating(int rating)
     {
         if (Main.CurrentFile == null) return;
-        
+
         var file = Main.CurrentFile;
-        
+
         try
         {
             var success = await XmpWriter.WriteRatingAsync(file.File, rating, SafeSetRating);
@@ -211,7 +211,7 @@ public class ControlViewModel : ReactiveObject
                     {
                         file.ClearExifData();
                         await file.LoadExifDataAsync();
-                        
+
                         // 在 UI 线程上通知更新
                         Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                         {
@@ -235,3 +235,4 @@ public class ControlViewModel : ReactiveObject
         }
     }
 }
+
