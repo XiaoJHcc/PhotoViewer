@@ -154,24 +154,54 @@ public class BackgroundBitmapPrefetcher
         _busy = true;
         try
         {
-            foreach (var f in files)
+            var fileList = files
+                .Where(f => !BitmapLoader.IsInCache(f.Path.LocalPath))
+                .ToList();
+            if (fileList.Count == 0) return;
+
+            int parallel = Math.Max(1, _settings.PreloadParallelism);
+            using var semaphore = new SemaphoreSlim(parallel);
+            var tasks = new List<Task>(fileList.Count);
+
+            foreach (var f in fileList)
             {
                 if (ct.IsCancellationRequested) break;
 
-                // 等待高优先级任务空闲
-                await WaitForHighPriorityIdleAsync(ct);
-                if (ct.IsCancellationRequested) break;
+                await semaphore.WaitAsync(ct);
 
-                try
+                // 轻微错峰，避免瞬时大量 I/O
+                await Task.Delay(15, ct);
+
+                tasks.Add(Task.Run(async () =>
                 {
-                    if (!BitmapLoader.IsInCache(f.Path.LocalPath))
-                        await BitmapLoader.PreloadBitmapAsync(f);
-                }
-                catch { /* 忽略单张错误 */ }
+                    try
+                    {
+                        // 每个任务都需让位于高优先级加载
+                        await WaitForHighPriorityIdleAsync(ct);
+                        if (ct.IsCancellationRequested) return;
 
-                // 轻量节流，避免持续占用 IO 与解码
-                await Task.Delay(40, ct);
+                        // 二次检查，避免重复
+                        if (!BitmapLoader.IsInCache(f.Path.LocalPath))
+                        {
+                            await BitmapLoader.PreloadBitmapAsync(f);
+                        }
+
+                        // 节流：给 UI / 解码线程留喘息
+                        await Task.Delay(30, ct);
+                    }
+                    catch
+                    {
+                        // 单个失败忽略
+                    }
+                    finally
+                    {
+                        semaphore.Release();
+                    }
+                }, ct));
             }
+
+            try { await Task.WhenAll(tasks); }
+            catch (OperationCanceledException) { /* 忽略取消 */ }
         }
         finally
         {
