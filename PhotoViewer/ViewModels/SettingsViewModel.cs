@@ -821,5 +821,12 @@ public class SettingsViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _visibleCenterDelayMs, Math.Clamp(value, 100, 5000));
     }
 
+    private int _preloadParallelism = 8;
+    public int PreloadParallelism
+    {
+        get => _preloadParallelism;
+        set => this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 8));
+    }
+
     #endregion
 }
