@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -11,9 +12,13 @@ namespace PhotoViewer.Views;
 
 public partial class MainWindow : Window
 {
+    private const int HotZoneHeight = 50;
+    private const int ResizeBorderThickness = 6;
     private bool _enableCustomTitleBar;
-    private CancellationTokenSource? _hideCts;
     private WindowState _prevStateBeforeFullScreen = WindowState.Normal;
+    private Thickness _normalPadding = new Thickness(0);
+    private WindowEdge? _currentResizeEdge;
+    private CancellationTokenSource? _snapHoverCts;
 
     public MainWindow()
     {
@@ -22,31 +27,83 @@ public partial class MainWindow : Window
         {
             _enableCustomTitleBar = true;
             PointerMoved += Window_PointerMoved;
-            Deactivated += (_, _) => TryHideSoon(); // 失焦尽快隐藏
+            PointerPressed += Window_PointerPressedForResize;
+            Deactivated += (_, _) => HideTitleBar();
+            this.GetObservable(WindowStateProperty).Subscribe(OnWindowStateChanged);
+            _normalPadding = Padding;
         }
     }
 
-    // 鼠标移动控制显示/隐藏
+    private void OnWindowStateChanged(WindowState state)
+    {
+        if (state == WindowState.Maximized)
+            Padding = new Thickness(0); // 去除间隙
+        else if (state == WindowState.Normal)
+            Padding = _normalPadding;
+    }
+
+    // 鼠标移动控制显示/隐藏 (进入 50 像素显示, 离开立即隐藏)
     private void Window_PointerMoved(object? sender, PointerEventArgs e)
     {
         if (!_enableCustomTitleBar) return;
         var p = e.GetPosition(this);
-        // 靠近顶部
-        if (p.Y <= 50)
-        {
+
+        // 先处理缩放光标
+        UpdateResizeCursor(p);
+
+        // 标题栏显示/隐藏
+        if (p.Y <= HotZoneHeight)
             ShowTitleBar();
-        }
         else
+            HideTitleBar();
+    }
+
+    private void UpdateResizeCursor(Point p)
+    {
+        if (WindowState != WindowState.Normal)
         {
-            // 超出标题栏 + 缓冲
-            if (CustomTitleBar.Opacity > 0 && p.Y > CustomTitleBar.Bounds.Height + 10)
-                TryHideSoon();
+            if (_currentResizeEdge != null)
+            {
+                _currentResizeEdge = null;
+                Cursor = new Cursor(StandardCursorType.Arrow);
+            }
+            return;
+        }
+
+        bool left = p.X <= ResizeBorderThickness;
+        bool right = p.X >= Bounds.Width - ResizeBorderThickness;
+        bool top = p.Y <= ResizeBorderThickness;
+        bool bottom = p.Y >= Bounds.Height - ResizeBorderThickness;
+
+        WindowEdge? edge = null;
+        StandardCursorType cursorType = StandardCursorType.Arrow;
+
+        if (top && left) { edge = WindowEdge.NorthWest; cursorType = StandardCursorType.TopLeftCorner; }
+        else if (top && right) { edge = WindowEdge.NorthEast; cursorType = StandardCursorType.TopRightCorner; }
+        else if (bottom && left) { edge = WindowEdge.SouthWest; cursorType = StandardCursorType.BottomLeftCorner; }
+        else if (bottom && right) { edge = WindowEdge.SouthEast; cursorType = StandardCursorType.BottomRightCorner; }
+        else if (top) { edge = WindowEdge.North; cursorType = StandardCursorType.TopSide; }
+        else if (bottom) { edge = WindowEdge.South; cursorType = StandardCursorType.BottomSide; }
+        else if (left) { edge = WindowEdge.West; cursorType = StandardCursorType.LeftSide; }
+        else if (right) { edge = WindowEdge.East; cursorType = StandardCursorType.RightSide; }
+
+        _currentResizeEdge = edge;
+        Cursor = edge == null ? new Cursor(StandardCursorType.Arrow) : new Cursor(cursorType);
+    }
+
+    private void Window_PointerPressedForResize(object? sender, PointerPressedEventArgs e)
+    {
+        if (!_enableCustomTitleBar) return;
+        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
+            _currentResizeEdge.HasValue &&
+            WindowState == WindowState.Normal)
+        {
+            BeginResizeDrag(_currentResizeEdge.Value, e);
         }
     }
 
     private void ShowTitleBar()
     {
-        _hideCts?.Cancel();
         if (CustomTitleBar.Opacity < 1)
         {
             CustomTitleBar.IsHitTestVisible = true;
@@ -54,31 +111,20 @@ public partial class MainWindow : Window
         }
     }
 
-    private void TryHideSoon(int delayMs = 400)
+    private void HideTitleBar()
     {
-        _hideCts?.Cancel();
-        _hideCts = new CancellationTokenSource();
-        var token = _hideCts.Token;
-        Task.Run(async () =>
+        if (CustomTitleBar.Opacity > 0)
         {
-            try
-            {
-                await Task.Delay(delayMs, token);
-                await Dispatcher.UIThread.InvokeAsync(() =>
-                {
-                    if (token.IsCancellationRequested) return;
-                    CustomTitleBar.IsHitTestVisible = false;
-                    CustomTitleBar.Opacity = 0;
-                });
-            }
-            catch (TaskCanceledException) { /* ignore */ }
-        }, token);
+            CustomTitleBar.IsHitTestVisible = false;
+            CustomTitleBar.Opacity = 0;
+        }
     }
 
-    // 拖拽窗口
+    // 拖拽窗口（非缩放状态且左键）
     private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
     {
         if (!_enableCustomTitleBar) return;
+        if (_currentResizeEdge != null) return; // 正在缩放边缘
         if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed)
         {
             BeginMoveDrag(e);
@@ -89,13 +135,13 @@ public partial class MainWindow : Window
 
     private void BtnMax_Click(object? sender, RoutedEventArgs e)
     {
+        _snapHoverCts?.Cancel();
         if (WindowState == WindowState.Maximized)
             WindowState = WindowState.Normal;
         else if (WindowState == WindowState.Normal)
             WindowState = WindowState.Maximized;
         else if (WindowState == WindowState.FullScreen)
         {
-            // 在全屏中点击最大化 => 退出全屏并还原/最大化逻辑
             WindowState = _prevStateBeforeFullScreen == WindowState.Maximized
                 ? WindowState.Maximized
                 : WindowState.Normal;
@@ -104,6 +150,7 @@ public partial class MainWindow : Window
 
     private void BtnFull_Click(object? sender, RoutedEventArgs e)
     {
+        _snapHoverCts?.Cancel();
         if (WindowState == WindowState.FullScreen)
         {
             WindowState = _prevStateBeforeFullScreen;
@@ -115,5 +162,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void BtnClose_Click(object? sender, RoutedEventArgs e) => Close();
+    private void BtnClose_Click(object? sender, RoutedEventArgs e)
+    {
+        _snapHoverCts?.Cancel();
+        Close();
+    }
 }
