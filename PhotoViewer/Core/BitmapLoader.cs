@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -50,8 +51,8 @@ public static class BitmapLoader
     private static readonly object _cleanupLock = new();
     
     // 缓存配置
-    private static int _maxCacheCount = 20;
-    private static long _maxCacheSize = 2048L * 1024 * 1024; // 2048 MB
+    private static int _maxCacheCount = 30; // 修改默认值 30
+    private static long _maxCacheSize = 4096L * 1024 * 1024; // 2048 MB
     
     // 缓存状态变化事件
     public static event Action<string, bool>? CacheStatusChanged;
@@ -504,6 +505,23 @@ public static class BitmapLoader
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to preload image ({file.Name}): {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 批量顺序预取（如某张失败不中断，支持取消）
+    /// </summary>
+    public static async Task PreloadBitmapsSequentiallyAsync(IEnumerable<IStorageFile> files, CancellationToken token)
+    {
+        foreach (var f in files)
+        {
+            if (token.IsCancellationRequested) break;
+            try
+            {
+                if (!IsInCache(f.Path.LocalPath))
+                    await PreloadBitmapAsync(f);
+            }
+            catch { /* 单个失败忽略 */ }
         }
     }
     

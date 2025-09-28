@@ -72,13 +72,36 @@
             </Border>
         </StackPanel>
 
-        <!-- <TextBlock Margin="5">缓存</TextBlock> -->
-        <!-- -->
-        <!-- <StackPanel Orientation="Horizontal" Spacing="10"> -->
-        <!--     <TextBlock Text="缓存大小 (MB)" VerticalAlignment="Center" /> -->
-        <!--     <Slider Minimum="50" Maximum="2000" Value="{Binding MaxCacheSizeMB}" Width="200" /> -->
-        <!--     <TextBlock Text="{Binding MaxCacheSizeMB}" MinWidth="30" /> -->
-        <!-- </StackPanel> -->
+        <!-- 新增：缓存与预加载 -->
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">缓存与预加载</TextBlock>
+            <Border Classes="settings-card">
+                <StackPanel Spacing="10" Margin="4">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="最大缓存数量" Width="110"/>
+                        <TextBox Text="{Binding BitmapCacheMaxCount}" Width="80"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="前向预取数量" Width="110"/>
+                        <TextBox Text="{Binding PreloadForwardCount}" Width="80"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="后向预取数量" Width="110"/>
+                        <TextBox Text="{Binding PreloadBackwardCount}" Width="80"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="可见中心预取" Width="110"/>
+                        <TextBox Text="{Binding VisibleCenterPreloadCount}" Width="80"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="滚动停顿延时(ms)" Width="110"/>
+                        <TextBox Text="{Binding VisibleCenterDelayMs}" Width="80"/>
+                    </StackPanel>
+                    <TextBlock Classes="settings-description"
+                               Text="说明：当前图片加载完成后后台按前后顺序预取；滚动停止后延时再预取可见区域最居中的若干张；所有来源共享一个缓存池。"/>
+                </StackPanel>
+            </Border>
+        </StackPanel>
     </StackPanel>
 
 </UserControl>

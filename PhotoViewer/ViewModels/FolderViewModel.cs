@@ -77,6 +77,8 @@ public class FolderViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _sortOrder, value);
     }
         
+    private readonly BackgroundBitmapPrefetcher _bitmapPrefetcher; // 新增
+
     public FolderViewModel(MainViewModel main)
     {
         Main = main;
@@ -105,6 +107,12 @@ public class FolderViewModel : ReactiveObject
 
         // 注册缓存状态变化事件
         BitmapLoader.CacheStatusChanged += OnCacheStatusChanged;
+
+        _bitmapPrefetcher = new BackgroundBitmapPrefetcher(this);
+
+        // 当前图片变化 -> 触发前后预取
+        Main.WhenAnyValue(m => m.CurrentFile)
+            .Subscribe(_ => _bitmapPrefetcher.PrefetchAroundCurrent());
     }
 
     /// <summary>
@@ -508,6 +516,23 @@ public class FolderViewModel : ReactiveObject
         ApplySort();
 
         this.RaisePropertyChanged(nameof(FilteredCount)); // 更新计数
+
+        // 移除已缓存但被筛掉的文件
+        try
+        {
+            var remain = new HashSet<string>(_filteredFiles
+                .Select(f => f.File.Path.LocalPath), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var f in _allFiles)
+            {
+                var path = f.File.Path.LocalPath;
+                if (!remain.Contains(path) && BitmapLoader.IsInCache(path))
+                {
+                    BitmapLoader.RemoveFromCache(path);
+                }
+            }
+        }
+        catch { /* 忽略 */ }
     }
     
     // 星级筛选项
@@ -767,5 +792,22 @@ public class FolderViewModel : ReactiveObject
     
     #endregion
     
+    // 供缩略图视图滚动停止后调用，触发可见范围中心预取
+    public void ReportVisibleRange(int firstIndex, int lastIndex)
+    {
+        if (firstIndex < 0 || lastIndex < firstIndex) return;
+        if (_filteredFiles.Count == 0) return;
+        if (firstIndex >= _filteredFiles.Count) return;
+        if (lastIndex >= _filteredFiles.Count) lastIndex = _filteredFiles.Count - 1;
+        _bitmapPrefetcher.PrefetchVisibleCenter(firstIndex, lastIndex);
+    }
     
+    // 供后台 Bitmap 预取降低优先级：判断缩略图是否仍然繁忙
+    internal bool IsThumbnailLoadingBusy()
+    {
+        // 队列中还有待处理 或 仍有项处于加载中
+        if (!_thumbnailLoadQueue.IsEmpty) return true;
+        // 快速检测（数量大时可加短路）
+        return _filteredFiles.Any(f => f.IsThumbnailLoading);
+    }
 }
