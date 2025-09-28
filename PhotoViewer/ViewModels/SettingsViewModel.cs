@@ -103,7 +103,7 @@ public class SettingsViewModel : ReactiveObject
             new("PNG", new[] { ".png" }, true),
             new("TIFF", new[] { ".tiff", ".tif" }, false),
             new("WebP", new[] { ".webp" }, true),
-            // new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, false),
+            new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, true),
             new("BMP", new[] { ".bmp" }, false),
             new("GIF", new[] { ".gif" }, false),
         };

@@ -5,6 +5,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using Avalonia.Platform.Storage;
+using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Core;
 
@@ -17,14 +18,14 @@ public static class XmpWriter
     private const byte App1Marker = 0xE1;
     
     // 支持的文件格式列表
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".jpg",
-        ".jpeg",
-        ".heif",
-        ".heic",
-        ".hif"
-    };
+    // private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    // {
+    //     ".jpg",
+    //     ".jpeg",
+    //     ".heif",
+    //     ".heic",
+    //     ".hif"
+    // };
     
     // 备份缓存管理
     private static string? _lastBackupPath;
@@ -37,8 +38,11 @@ public static class XmpWriter
     /// <returns>是否支持</returns>
     private static bool IsSupportedFormat(string fileName)
     {
-        var extension = Path.GetExtension(fileName);
-        return SupportedExtensions.Contains(extension);
+        // 暂时允许所有格式
+        return true;
+        
+        // var extension = Path.GetExtension(fileName);
+        // return SupportedExtensions.Contains(extension);
     }
     
     /// <summary>
