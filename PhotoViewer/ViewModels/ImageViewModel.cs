@@ -19,6 +19,13 @@ public class ImageViewModel : ReactiveObject
         get => _sourceBitmap;
         set => this.RaiseAndSetIfChanged(ref _sourceBitmap, value);
     }
+    
+    private string _HintText = "点击打开文件 或 拖拽图片到此处";
+    public string HintText
+    {
+        get => _HintText;
+        set => this.RaiseAndSetIfChanged(ref _HintText, value);
+    }
 
     public event EventHandler<IStorageFile>? ImageLoaded;
     
@@ -49,11 +56,16 @@ public class ImageViewModel : ReactiveObject
     {
         try
         {
+            HintText = string.Empty;
+            
             // 使用缓存服务加载图片
             var bitmap = await BitmapLoader.GetBitmapAsync(file);
+            
             if (bitmap == null) 
             {
                 Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
+                SourceBitmap = null;
+                HintText = "无法打开该图片";
                 return;
             }
             
@@ -62,6 +74,8 @@ public class ImageViewModel : ReactiveObject
             {
                 Console.WriteLine($"Invalid bitmap dimensions: {bitmap.PixelSize.Width}x{bitmap.PixelSize.Height} for file: {file.Name}");
                 bitmap.Dispose();
+                SourceBitmap = null;
+                HintText = "图片解码无效";
                 return;
             }
             

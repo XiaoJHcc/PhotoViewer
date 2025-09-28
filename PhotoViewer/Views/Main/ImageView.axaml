@@ -8,27 +8,31 @@
              x:DataType="vm:ImageViewModel"
              Focusable="True">
     
-    <Canvas Name="MainGrid" 
+    <Grid Name="MainGrid" 
           Background="Transparent" 
           ClipToBounds="False" >
-        <Image Name="PreviewImage" 
-               RenderOptions.BitmapInterpolationMode="HighQuality" 
-               Source="{Binding SourceBitmap}" >
-            <Image.RenderTransform>
-                <TransformGroup>
-                    <ScaleTransform
-                        ScaleX="{Binding Scale}"
-                        ScaleY="{Binding Scale}"/>
-                    <TranslateTransform
-                        X="{Binding Translate.X}"
-                        Y="{Binding Translate.Y}"/>
-                </TransformGroup>
-            </Image.RenderTransform>
-        </Image>
-        <!-- <TextBlock Text="{Binding HintText}"  -->
-        <!--            IsVisible="{Binding HintTextVisible}" -->
-        <!--            Foreground="Gray" -->
-        <!--            FontSize="20"/> -->
-    </Canvas>
+        <Canvas>
+            <Image Name="PreviewImage" 
+                   RenderOptions.BitmapInterpolationMode="HighQuality" 
+                   Source="{Binding SourceBitmap}" >
+                <Image.RenderTransform>
+                    <TransformGroup>
+                        <ScaleTransform
+                            ScaleX="{Binding Scale}"
+                            ScaleY="{Binding Scale}"/>
+                        <TranslateTransform
+                            X="{Binding Translate.X}"
+                            Y="{Binding Translate.Y}"/>
+                    </TransformGroup>
+                </Image.RenderTransform>
+            </Image>
+        </Canvas>
+        <TextBlock Text="{Binding HintText}"
+                   IsVisible="{Binding HintText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Foreground="Gray"
+                   FontSize="20"/>
+    </Grid>
     
 </UserControl>
