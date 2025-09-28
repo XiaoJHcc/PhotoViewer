@@ -63,8 +63,8 @@
                     <CheckBox Classes="settings-checkbox"
                               IsChecked="{Binding SameNameAsOnePhoto}">
                         <StackPanel Orientation="Vertical">
-                            <TextBlock Classes="settings-label">同名文件视为同一张照片</TextBlock>
-                            <TextBlock Classes="settings-description">按列表排序优先级高的作为默认展示图片</TextBlock>
+                            <TextBlock Classes="settings-label">同名文件视为同一张图片</TextBlock>
+                            <TextBlock Classes="settings-description">按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件</TextBlock>
                         </StackPanel>
                     </CheckBox>
                     
