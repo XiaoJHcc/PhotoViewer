@@ -101,7 +101,7 @@
                             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                                 <!-- 勾选框 -->
                                 <CheckBox Grid.Column="0"
-                                          IsChecked="{Binding IsEnabled}"
+                                          IsChecked="{Binding IsDisplay}"
                                           VerticalAlignment="Center"
                                           Margin="0,0,12,0" />
 

@@ -270,6 +270,7 @@ public class SettingsViewModel : ReactiveObject
             new("打开文件", "Open", "\uf6b5", "打开文件", true, new KeyGesture(Key.N, KeyModifiers.Control), new KeyGesture(Key.O, KeyModifiers.Control)),
             new("上一张", "Previous", "\uf151", "上一张", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
             new("下一张", "Next", "\uf152", "下一张", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
+            new("切换上一张", "Exchange", "\uf5ea", "切换上一张", false, new KeyGesture(Key.Z), new KeyGesture(Key.Y)),
             new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, new KeyGesture(Key.D0, KeyModifiers.Control), new KeyGesture(Key.F)),
             new("放大", "ZoomIn", "\ufaac", "放大", true, new KeyGesture(Key.OemPlus, KeyModifiers.Control), null),
             new("缩小", "ZoomOut", "\uf94e", "缩小", true, new KeyGesture(Key.OemMinus, KeyModifiers.Control), null),
@@ -381,7 +382,7 @@ public class SettingsViewModel : ReactiveObject
     {
         foreach (var hotkeyItem in Hotkeys)
         {
-            if (!hotkeyItem.IsEnabled) continue;
+            // if (!hotkeyItem.IsDisplay) continue;
             
             if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture))
                 return hotkeyItem.PrimaryHotkey;
@@ -398,7 +399,7 @@ public class SettingsViewModel : ReactiveObject
     {
         foreach (var hotkeyItem in Hotkeys)
         {
-            if (!hotkeyItem.IsEnabled) continue;
+            // if (!hotkeyItem.IsDisplay) continue;
             
             if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture) ||
                 AreKeyGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
@@ -434,7 +435,7 @@ public class SettingsViewModel : ReactiveObject
         private string _command;
         private string _displaySymbol;
         private string _tooltip;
-        private bool _isEnabled;
+        private bool _isDisplay;
         private KeyGesture? _primaryHotkey;
         private KeyGesture? _secondaryHotkey;
 
@@ -462,10 +463,10 @@ public class SettingsViewModel : ReactiveObject
             set => this.RaiseAndSetIfChanged(ref _tooltip, value);
         }
 
-        public bool IsEnabled
+        public bool IsDisplay
         {
-            get => _isEnabled;
-            set => this.RaiseAndSetIfChanged(ref _isEnabled, value);
+            get => _isDisplay;
+            set => this.RaiseAndSetIfChanged(ref _isDisplay, value);
         }
 
         public KeyGesture? PrimaryHotkey
@@ -497,13 +498,13 @@ public class SettingsViewModel : ReactiveObject
             set => this.RaiseAndSetIfChanged(ref _hasSecondaryConflict, value);
         }
 
-        public HotkeyItem(string name, string command, string displaySymbol, string tooltip, bool isEnabled = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
+        public HotkeyItem(string name, string command, string displaySymbol, string tooltip, bool isDisplay = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
         {
             _name = name;
             _command = command;
             _displaySymbol = displaySymbol;
             _tooltip = tooltip;
-            _isEnabled = isEnabled;
+            _isDisplay = isDisplay;
             _primaryHotkey = primaryHotkey;
             _secondaryHotkey = secondaryHotkey;
         }
@@ -781,9 +782,10 @@ public class SettingsViewModel : ReactiveObject
     
     #endregion
 
-    //////////////
+    ///////////////////
     /// 位图缓存与预取设置
-    //////////////
+    ///////////////////
+    
     #region BitmapPrefetchSetting
 
     private int _bitmapCacheMaxCount = 30;
@@ -829,4 +831,6 @@ public class SettingsViewModel : ReactiveObject
     }
 
     #endregion
+    
+    
 }

@@ -81,10 +81,9 @@ public partial class ControlView : UserControl
         
         // 查找匹配的快捷键
         var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h => 
-            h.IsEnabled && (
-                (h.PrimaryHotkey?.Equals(pressedGesture) == true) ||
-                (h.SecondaryHotkey?.Equals(pressedGesture) == true)
-            ));
+            (h.PrimaryHotkey?.Equals(pressedGesture) == true) ||
+            (h.SecondaryHotkey?.Equals(pressedGesture) == true)
+        );
 
         if (matchedHotkey != null)
         {
