@@ -792,6 +792,13 @@ public class FolderViewModel : ReactiveObject
     
     #endregion
     
+    
+    ////////////////
+    /// 位图预加载
+    ////////////////
+
+    #region BitmapPrefetching
+    
     // 供缩略图视图滚动停止后调用，触发可见范围中心预取
     public void ReportVisibleRange(int firstIndex, int lastIndex)
     {
@@ -810,4 +817,8 @@ public class FolderViewModel : ReactiveObject
         // 快速检测（数量大时可加短路）
         return _filteredFiles.Any(f => f.IsThumbnailLoading);
     }
+    
+    #endregion
+    
+    
 }

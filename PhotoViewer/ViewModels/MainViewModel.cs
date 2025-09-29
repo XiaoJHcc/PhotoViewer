@@ -15,6 +15,7 @@ public class MainViewModel : ViewModelBase
     public SettingsViewModel Settings { get; }
 
     // 当前状态
+    public ImageFile? LastFile;
     private ImageFile? _currentFile;
     public ImageFile? CurrentFile
     {
@@ -22,6 +23,7 @@ public class MainViewModel : ViewModelBase
         set
         {
             if (_currentFile != null) _currentFile.IsCurrent = false;
+            if (_currentFile != value) LastFile = _currentFile;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
             if (value != null) 
             {

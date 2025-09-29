@@ -39,6 +39,7 @@ public class ControlViewModel : ReactiveObject
         OnOpen = ReactiveCommand.Create(ExecuteOpen);
         OnPrevious = ReactiveCommand.Create(ExecutePrevious);
         OnNext = ReactiveCommand.Create(ExecuteNext);
+        OnExchange = ReactiveCommand.Create(ExecuteExchange);
         OnFit = ReactiveCommand.Create(ExecuteFit);
         OnZoomIn = ReactiveCommand.Create(ExecuteZoomIn);
         OnZoomOut = ReactiveCommand.Create(ExecuteZoomOut);
@@ -74,7 +75,7 @@ public class ControlViewModel : ReactiveObject
         {
             hotkey.PropertyChanged += (s, e) => 
             {
-                if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsEnabled))
+                if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsDisplay))
                 {
                     this.RaisePropertyChanged(nameof(EnabledControls));
                 }
@@ -99,13 +100,14 @@ public class ControlViewModel : ReactiveObject
     public ReactiveCommand<Unit, Unit> OnOpen { get; }
     public ReactiveCommand<Unit, Unit> OnPrevious { get; }
     public ReactiveCommand<Unit, Unit> OnNext { get; }
+    public ReactiveCommand<Unit, Unit> OnExchange { get; }
     public ReactiveCommand<Unit, Unit> OnFit { get; }
     public ReactiveCommand<Unit, Unit> OnZoomIn { get; }
     public ReactiveCommand<Unit, Unit> OnZoomOut { get; }
 
     // 启用的控件列表
     public IEnumerable<SettingsViewModel.HotkeyItem> EnabledControls => 
-        Main.Settings.Hotkeys.Where(h => h.IsEnabled);
+        Main.Settings.Hotkeys.Where(h => h.IsDisplay);
 
     // 所有快捷键（用于全局监听）
     public IEnumerable<SettingsViewModel.HotkeyItem> AllHotkeys => Main.Settings.Hotkeys;
@@ -118,6 +120,7 @@ public class ControlViewModel : ReactiveObject
             "Open" => OnOpen,
             "Previous" => OnPrevious,
             "Next" => OnNext,
+            "Exchange" => OnExchange,
             "Fit" => OnFit,
             "ZoomIn" => OnZoomIn,
             "ZoomOut" => OnZoomOut,
@@ -151,6 +154,11 @@ public class ControlViewModel : ReactiveObject
             Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex + 1];
             Main.FolderVM.ScrollToCurrent();
         }
+    }
+
+    private void ExecuteExchange()
+    {
+        Main.CurrentFile = Main.LastFile;
     }
 
     private void ExecuteFit()
