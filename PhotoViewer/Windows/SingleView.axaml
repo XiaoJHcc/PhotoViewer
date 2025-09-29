@@ -1,0 +1,71 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:views="clr-namespace:PhotoViewer.Views"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
+             x:Class="PhotoViewer.Windows.SingleView"
+             x:DataType="vm:MainViewModel">
+    <Grid>
+        <!-- 主窗口内容 -->
+        <views:MainView />
+
+        <!-- 模态遮罩层 -->
+        <Panel Background="#000000"
+               ZIndex="100"
+               IsVisible="{Binding IsModalVisible}"
+               Opacity="{Binding ModalMaskOpacity}">
+            <Panel.Transitions>
+                <Transitions>
+                    <DoubleTransition Property="Opacity" Duration="0:0:0.2" />
+                </Transitions>
+            </Panel.Transitions>
+        </Panel>
+
+        <!-- 模态弹窗内容 -->
+        <Grid RowDefinitions="Auto, Auto, *"
+              VerticalAlignment="Stretch"
+              HorizontalAlignment="Stretch"
+              ZIndex="200"
+              IsVisible="{Binding IsModalVisible}">
+                
+            <!-- 弹窗外占位 -->
+            <Panel Grid.Row="0" 
+                   Height="{Binding ModalMarginTop}">
+                <Panel.Transitions>
+                    <Transitions>
+                        <DoubleTransition Property="Height" Duration="0:0:0.5" Easing="CubicEaseOut"/>
+                    </Transitions>
+                </Panel.Transitions>
+            </Panel>
+                
+            <!-- 弹窗标题 -->
+            <Border Grid.Row="1" 
+                    Background="#3f3f3f" 
+                    CornerRadius="32, 32, 0, 0" 
+                    ClipToBounds="True">
+                <Panel>
+                    <TextBlock Text="设置"
+                               Foreground="#ccc"
+                               FontSize="18"
+                               LineHeight="64"
+                               HorizontalAlignment="Center" />
+                    <Button Content="×"
+                            Command="{Binding HideModal}"
+                            Width="32"
+                            Height="32"
+                            Margin="16"
+                            CornerRadius="30"
+                            HorizontalAlignment="Right"/>
+                </Panel>
+            </Border>
+            
+            <!-- 弹窗内容 -->
+            <ContentControl Grid.Row="2"
+                            Background="#333333">
+                <views:SettingsView DataContext="{Binding Settings}"/>
+            </ContentControl>
+        </Grid>
+    </Grid>
+</UserControl>

@@ -66,13 +66,27 @@
         <DependentUpon>MainView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
-      <Compile Update="Views\Main\MainWindow.axaml.cs">
-        <DependentUpon>MainWindow.axaml</DependentUpon>
-        <SubType>Code</SubType>
-      </Compile>
       <Compile Update="Views\Main\ThumbnailView.axaml.cs">
         <DependentUpon>ThumbnailView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\Window\MainWindow.axaml.cs">
+        <DependentUpon>MainWindow.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Window\SingleView.axaml.cs">
+        <DependentUpon>SingleView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+      <Compile Update="Views\Window\MainWindowForMac.axaml.cs">
+        <DependentUpon>MainWindow.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+    </ItemGroup>
+
+    <ItemGroup>
+      <AdditionalFiles Include="Windows\MainWindowForMac.axaml" />
+      <AdditionalFiles Include="Windows\MainWindowForWindows.axaml" />
+      <AdditionalFiles Include="Windows\SingleView.axaml" />
     </ItemGroup>
 </Project>
