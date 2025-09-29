@@ -516,23 +516,7 @@ public class FolderViewModel : ReactiveObject
         ApplySort();
 
         this.RaisePropertyChanged(nameof(FilteredCount)); // 更新计数
-
-        // 移除已缓存但被筛掉的文件
-        try
-        {
-            var remain = new HashSet<string>(_filteredFiles
-                .Select(f => f.File.Path.LocalPath), StringComparer.OrdinalIgnoreCase);
-
-            foreach (var f in _allFiles)
-            {
-                var path = f.File.Path.LocalPath;
-                if (!remain.Contains(path) && BitmapLoader.IsInCache(path))
-                {
-                    BitmapLoader.RemoveFromCache(path);
-                }
-            }
-        }
-        catch { /* 忽略 */ }
+        
     }
     
     // 星级筛选项
