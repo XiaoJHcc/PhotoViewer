@@ -1,16 +1,13 @@
 using System;
-using System.Runtime.InteropServices;
 using System.Threading;
-using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Threading;
 
-namespace PhotoViewer.Views;
+namespace PhotoViewer.Windows;
 
-public partial class MainWindow : Window
+public partial class MainWindowForWindows : Window
 {
     private const int HotZoneHeight = 50;
     private const int ResizeBorderThickness = 6;
@@ -20,7 +17,7 @@ public partial class MainWindow : Window
     private WindowEdge? _currentResizeEdge;
     private CancellationTokenSource? _snapHoverCts;
 
-    public MainWindow()
+    public MainWindowForWindows()
     {
         InitializeComponent();
         if (OperatingSystem.IsWindows())
