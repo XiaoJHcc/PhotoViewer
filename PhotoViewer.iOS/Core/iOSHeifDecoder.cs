@@ -11,7 +11,7 @@ namespace PhotoViewer.iOS.Core;
 
 public sealed class iOSHeifDecoder : IHeifDecoder
 {
-    public bool IsSupported => OperatingSystem.IsMacOS();
+    public bool IsSupported => OperatingSystem.IsIOS();
 
     public Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
         => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, null));
