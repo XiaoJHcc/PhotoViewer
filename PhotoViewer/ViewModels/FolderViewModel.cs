@@ -407,8 +407,14 @@ public class FolderViewModel : ReactiveObject
     
     public bool IsImageFile(string fileName)
     {
+        if (IsHiddenFile(fileName)) return false;
         var extension = System.IO.Path.GetExtension(fileName)?.ToLowerInvariant();
         return extension != null && Main.Settings.SelectedFormats.Contains(extension);
+    }
+
+    public static bool IsHiddenFile(string fileName)
+    {
+        return fileName.StartsWith('.');
     }
     
     // 筛选文件夹内图片
