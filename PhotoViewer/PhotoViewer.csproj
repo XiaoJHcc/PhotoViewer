@@ -70,8 +70,8 @@
         <DependentUpon>ThumbnailView.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
-      <Compile Update="Views\Window\MainWindow.axaml.cs">
-        <DependentUpon>MainWindow.axaml</DependentUpon>
+      <Compile Update="Views\Window\MainWindowForWindows.axaml.cs">
+        <DependentUpon>MainWindowForWindows.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
       <Compile Update="Views\Window\SingleView.axaml.cs">
@@ -79,7 +79,7 @@
         <SubType>Code</SubType>
       </Compile>
       <Compile Update="Views\Window\MainWindowForMac.axaml.cs">
-        <DependentUpon>MainWindow.axaml</DependentUpon>
+        <DependentUpon>MainWindowForMac.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
     </ItemGroup>
