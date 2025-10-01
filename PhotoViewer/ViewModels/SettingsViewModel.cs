@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using PhotoViewer.Controls;
 using Avalonia.Input;
 using PhotoViewer.Core;
+using System.Reactive.Linq; // 新增
 
 namespace PhotoViewer.ViewModels;
 
@@ -34,9 +35,16 @@ public class SettingsViewModel : ReactiveObject
         MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
         MoveExifDisplayCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveExifDisplay);
         
+        // 平台内存限制初始化
+        _platformMemoryLimitBytes = DetectPlatformAppMemoryLimit();
+        _bitmapCacheMaxSizeMB = ComputeInitialCacheSizeMB();
+        
         // 监听缓存最大数量变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.BitmapCacheMaxCount)
             .Subscribe(v => BitmapLoader.MaxCacheCount = v);
+        // 新增：监听缓存最大容量(MB)变化同步到 BitmapLoader
+        this.WhenAnyValue(v => v.BitmapCacheMaxSizeMB)
+            .Subscribe(v => BitmapLoader.MaxCacheSize = (long)v * 1024 * 1024);
     }
     
     //////////////
@@ -828,6 +836,51 @@ public class SettingsViewModel : ReactiveObject
     {
         get => _preloadParallelism;
         set => this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 8));
+    }
+
+    // 新增：最大缓存大小（MB）
+    private int _bitmapCacheMaxSizeMB;
+    public int BitmapCacheMaxSizeMB
+    {
+        get => _bitmapCacheMaxSizeMB;
+        set
+        {
+            var clamped = Math.Clamp(value, 10, MaxAllowedCacheSizeMB);
+            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxSizeMB, clamped);
+        }
+    }
+
+    // 平台应用可用内存（字节，可能为 0 表示未知）
+    private readonly long _platformMemoryLimitBytes;
+    public int PlatformAppMemoryLimitMB => _platformMemoryLimitBytes > 0
+        ? (int)(_platformMemoryLimitBytes / (1024 * 1024))
+        : 0;
+    // 最大允许设置（取平台限制的 80%，否则给一个保守上限 8192MB）
+    public int MaxAllowedCacheSizeMB => PlatformAppMemoryLimitMB > 0
+        ? Math.Max(512, (int)(PlatformAppMemoryLimitMB * 0.8))
+        : 8192;
+    public string PlatformAppMemoryLimitDisplay =>
+        PlatformAppMemoryLimitMB > 0 ? $"{PlatformAppMemoryLimitMB} MB" : "未知";
+    
+    private long DetectPlatformAppMemoryLimit()
+    {
+        try
+        {
+            var info = GC.GetGCMemoryInfo();
+            if (info.TotalAvailableMemoryBytes > 0)
+                return info.TotalAvailableMemoryBytes;
+        }
+        catch { }
+        return 0;
+    }
+
+    private int ComputeInitialCacheSizeMB()
+    {
+        // 目标初始值：1GB，如超出上限则取上限（至少 256MB）
+        int target = 1024;
+        int max = MaxAllowedCacheSizeMB;
+        if (target > max) target = Math.Max(256, max);
+        return target;
     }
 
     #endregion

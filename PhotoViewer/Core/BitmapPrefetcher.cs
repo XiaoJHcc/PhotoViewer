@@ -14,7 +14,7 @@ namespace PhotoViewer.Core;
 /// 2. 滚动停止后中心附近预取
 /// 3. 统一串行，旧任务自动取消
 /// </summary>
-public class BackgroundBitmapPrefetcher
+public class BitmapPrefetcher
 {
     private readonly FolderViewModel _folder;
     private readonly SettingsViewModel _settings;
@@ -24,7 +24,7 @@ public class BackgroundBitmapPrefetcher
     
     private volatile bool _busy;
 
-    public BackgroundBitmapPrefetcher(FolderViewModel folder)
+    public BitmapPrefetcher(FolderViewModel folder)
     {
         _folder = folder;
         _settings = folder.Main.Settings;

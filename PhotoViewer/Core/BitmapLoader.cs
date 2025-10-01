@@ -51,8 +51,8 @@ public static class BitmapLoader
     private static readonly object _cleanupLock = new();
     
     // 缓存配置
-    private static int _maxCacheCount = 30; // 修改默认值 30
-    private static long _maxCacheSize = 4096L * 1024 * 1024; // 2048 MB
+    private static int _maxCacheCount = 30;
+    private static long _maxCacheSize = 4096L * 1024 * 1024; // 默认 4096 MB（可由设置覆盖）
     
     // 缓存状态变化事件
     public static event Action<string, bool>? CacheStatusChanged;
