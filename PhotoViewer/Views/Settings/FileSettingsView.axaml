@@ -82,6 +82,10 @@
                         <TextBox Text="{Binding BitmapCacheMaxCount}" Width="80"/>
                     </StackPanel>
                     <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Classes="settings-label" Text="最大缓存大小(MB)" Width="110"/>
+                        <TextBox Text="{Binding BitmapCacheMaxSizeMB}" Width="80"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
                         <TextBlock Classes="settings-label" Text="前向预取数量" Width="110"/>
                         <TextBox Text="{Binding PreloadForwardCount}" Width="80"/>
                     </StackPanel>
@@ -101,8 +105,17 @@
                         <TextBlock Classes="settings-label" Text="并行预取数" Width="110"/>
                         <TextBox Text="{Binding PreloadParallelism}" Width="80"/>
                     </StackPanel>
+                    <!-- 平台内存 & 限制说明 -->
+                    <StackPanel Spacing="2">
+                        <TextBlock Classes="settings-description"
+                                   Text="平台应用内存上限："/>
+                        <TextBlock Classes="settings-description"
+                                   Text="{Binding PlatformAppMemoryLimitDisplay}"/>
+                        <TextBlock Classes="settings-description"
+                                   Text="{Binding MaxAllowedCacheSizeMB, StringFormat=允许最大缓存设置: {0} MB}"/>
+                    </StackPanel>
                     <TextBlock Classes="settings-description"
-                               Text="说明：当前图片加载完成后后台按前后顺序预取；滚动停止后延时再预取可见区域最居中的若干张；所有来源共享一个缓存池。"/>
+                               Text="说明：缓存基于最近使用策略回收；大小与数量任一达到上限即触发清理。iOS 等平台将限制为不超过平台上限的 80%。"/>
                 </StackPanel>
             </Border>
         </StackPanel>

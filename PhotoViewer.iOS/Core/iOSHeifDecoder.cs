@@ -1,44 +1,86 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using Foundation;
 using PhotoViewer.Core;
 
 namespace PhotoViewer.iOS.Core;
 
+[Preserve(AllMembers = true)]
 public sealed class iOSHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsIOS();
 
-    public Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
-        => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, null));
-
-    public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
-        => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, maxSize));
-
-    private static Bitmap? DecodeWithImageIO(string path, int? maxSize)
+    // 替换：真正异步 + 路径不可用时用内存数据回退
+    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
     {
-        if (string.IsNullOrEmpty(path)) return null;
+        var (path, data) = await PreparePathOrDataAsync(file);
+        return DecodeWithImageIO(path, null, data);
+    }
+
+    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    {
+        var (path, data) = await PreparePathOrDataAsync(file);
+        return DecodeWithImageIO(path, maxSize, data);
+    }
+
+    // 新增：获取可用路径或内存字节
+    private static async Task<(string? path, byte[]? data)> PreparePathOrDataAsync(IStorageFile file)
+    {
+        try
+        {
+            var path = file.Path?.LocalPath;
+            if (!string.IsNullOrEmpty(path) && File.Exists(path))
+                return (path, null);
+
+            // 路径不可用 -> 内存读取
+            await using var stream = await file.OpenReadAsync();
+            using var ms = new MemoryStream();
+            await stream.CopyToAsync(ms);
+            return (null, ms.ToArray());
+        }
+        catch
+        {
+            return (null, null);
+        }
+    }
+
+    // 修改：支持 path 或 memory data
+    private static Bitmap? DecodeWithImageIO(string? path, int? maxSize, byte[]? fileBytes = null)
+    {
+        if (string.IsNullOrEmpty(path) && (fileBytes == null || fileBytes.Length == 0))
+            return null;
 
         IntPtr url = IntPtr.Zero;
+        IntPtr dataRef = IntPtr.Zero;
         IntPtr src = IntPtr.Zero;
         IntPtr img = IntPtr.Zero;
 
         try
         {
-            var pathUtf8 = Encoding.UTF8.GetBytes(path);
-            url = CFURLCreateFromFileSystemRepresentation(IntPtr.Zero, pathUtf8, (nint)pathUtf8.Length, false);
-            if (url == IntPtr.Zero) return null;
+            if (!string.IsNullOrEmpty(path))
+            {
+                var pathUtf8 = Encoding.UTF8.GetBytes(path);
+                url = CFURLCreateFromFileSystemRepresentation(IntPtr.Zero, pathUtf8, (nint)pathUtf8.Length, false);
+                if (url == IntPtr.Zero) return null;
 
-            src = CGImageSourceCreateWithURL(url, IntPtr.Zero);
-            if (src == IntPtr.Zero) return null;
+                src = CGImageSourceCreateWithURL(url, IntPtr.Zero);
+                if (src == IntPtr.Zero) return null;
+            }
+            else
+            {
+                // 内存方式
+                dataRef = CFDataCreate(IntPtr.Zero, fileBytes!, (nint)fileBytes!.Length);
+                if (dataRef == IntPtr.Zero) return null;
+                src = CGImageSourceCreateWithData(dataRef, IntPtr.Zero);
+                if (src == IntPtr.Zero) return null;
+            }
 
-            // 选择要解码的 image 索引：
-            // - 缩略图：挑选“长边 > maxSize 的其中最小的那张”，若无则“长边最大的缩略图”；再无则回退 0
-            // - 原图：使用 index 0
             int chosenIndex = 0;
             if (maxSize.HasValue)
             {
@@ -122,13 +164,14 @@ public sealed class iOSHeifDecoder : IHeifDecoder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"MacHeifDecoder failed: {ex.Message}");
+            Console.WriteLine($"iOSHeifDecoder failed: {ex.Message}");
             return null;
         }
         finally
         {
             if (img != IntPtr.Zero) CFRelease(img);
             if (src != IntPtr.Zero) CFRelease(src);
+            if (dataRef != IntPtr.Zero) CFRelease(dataRef);
             if (url != IntPtr.Zero) CFRelease(url);
         }
     }
@@ -373,6 +416,13 @@ public sealed class iOSHeifDecoder : IHeifDecoder
 
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
     private static extern IntPtr CGImageSourceCreateImageAtIndex(IntPtr isrc, nint index, IntPtr options);
+
+    // 新增：CFDataCreate / CGImageSourceCreateWithData
+    [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
+    private static extern IntPtr CFDataCreate(IntPtr allocator, byte[] bytes, nint length);
+
+    [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
+    private static extern IntPtr CGImageSourceCreateWithData(IntPtr data, IntPtr options);
 
     // 新增：读取属性与计数
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]

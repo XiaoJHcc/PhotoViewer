@@ -77,7 +77,7 @@ public class FolderViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _sortOrder, value);
     }
         
-    private readonly BackgroundBitmapPrefetcher _bitmapPrefetcher; // 新增
+    private readonly BitmapPrefetcher _bitmapPrefetcher; // 新增
 
     public FolderViewModel(MainViewModel main)
     {
@@ -108,7 +108,7 @@ public class FolderViewModel : ReactiveObject
         // 注册缓存状态变化事件
         BitmapLoader.CacheStatusChanged += OnCacheStatusChanged;
 
-        _bitmapPrefetcher = new BackgroundBitmapPrefetcher(this);
+        _bitmapPrefetcher = new BitmapPrefetcher(this);
 
         // 当前图片变化 -> 触发前后预取
         Main.WhenAnyValue(m => m.CurrentFile)
