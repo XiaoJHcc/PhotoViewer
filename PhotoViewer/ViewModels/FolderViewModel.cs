@@ -22,7 +22,7 @@ public class SortOption
 }
 
 // 排序方式
-public enum SortMode { Name, Date, Star, Size }
+public enum SortMode { Name, Date, Rating, Size }
 public enum SortOrder { Ascending, Descending }
 
 public class FolderViewModel : ReactiveObject
@@ -49,13 +49,16 @@ public class FolderViewModel : ReactiveObject
     private readonly CancellationTokenSource _thumbnailCancellationTokenSource = new();
     private bool _isThumbnailLoadingActive = false;
     
+    // 添加EXIF加载状态跟踪
+    private bool _isExifLoadingInProgress = false;
+    
     // 滚动到当前图片的事件
     public event Action? ScrollToCurrentRequested;
     
     public List<SortOption> SortModes { get; } =
     [
         new() { DisplayName = "名称", Value = SortMode.Name },
-        new() { DisplayName = "修改日期", Value = SortMode.Date },
+        new() { DisplayName = "拍摄时间", Value = SortMode.Date },
         new() { DisplayName = "文件大小", Value = SortMode.Size }
     ];
 
@@ -202,13 +205,16 @@ public class FolderViewModel : ReactiveObject
                     }
                 }
 
+                // 立即加载所有文件的EXIF星级数据
+                await LoadAllExifRatingsAsync();
+
                 ApplyFilter();
 
                 if (_filteredFiles.Count > 0)
                 {
                     Main.CurrentFile = _filteredFiles.First();
                     
-                    // 立即为当前图片加载 EXIF 数据
+                    // 立即为当前图片加载完整 EXIF 数据
                     _ = Task.Run(async () =>
                     {
                         await Main.CurrentFile.LoadExifDataAsync();
@@ -377,6 +383,9 @@ public class FolderViewModel : ReactiveObject
                 // 移除自动加载缩略图的逻辑
             }
         }
+        
+        // 立即加载所有文件的EXIF星级数据
+        await LoadAllExifRatingsAsync();
             
         ApplyFilter();
 
@@ -386,7 +395,7 @@ public class FolderViewModel : ReactiveObject
             imageFile.UpdateCacheStatus();
         }
         
-        // 异步加载其他图片的 EXIF 数据（排除当前图片）
+        // 异步加载其他图片的完整 EXIF 数据（排除当前图片）
         _ = Task.Run(async () =>
         {
             var otherFiles = _filteredFiles.Where(f => f != Main.CurrentFile);
@@ -403,6 +412,47 @@ public class FolderViewModel : ReactiveObject
                 }
             });
         });
+    }
+    
+    /// <summary>
+    /// 加载所有文件的EXIF星级数据，用于准确的星级筛选
+    /// </summary>
+    private async Task LoadAllExifRatingsAsync()
+    {
+        if (_isExifLoadingInProgress) return;
+        
+        _isExifLoadingInProgress = true;
+        
+        try
+        {
+            // 并行加载所有文件的星级信息（只读取Rating，不加载其他EXIF数据以提高速度）
+            var tasks = _allFiles.Select(async file =>
+            {
+                try
+                {
+                    await file.LoadRatingOnlyAsync();
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"加载文件 {file.Name} 星级失败: {ex.Message}");
+                }
+            }).ToList();
+
+            await Task.WhenAll(tasks);
+            
+            // 在UI线程中更新星级显示
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                foreach (var file in _allFiles)
+                {
+                    file.RaisePropertyChanged(nameof(file.Rating));
+                }
+            });
+        }
+        finally
+        {
+            _isExifLoadingInProgress = false;
+        }
     }
     
     public bool IsImageFile(string fileName)
@@ -555,7 +605,29 @@ public class FolderViewModel : ReactiveObject
         set
         {
             this.RaiseAndSetIfChanged(ref _selectedRatingFilter, value);
+            // 筛选变化时重新加载可见区域的缩略图
             ApplyFilter();
+            LoadVisibleThumbnailsAfterFilter();
+        }
+    }
+    
+    /// <summary>
+    /// 筛选变化后加载可见区域的缩略图
+    /// </summary>
+    private void LoadVisibleThumbnailsAfterFilter()
+    {
+        // 清空当前缩略图队列，重新安排加载顺序
+        ClearThumbnailQueue();
+        
+        // 为筛选后的前几个文件（通常是可见的）加载缩略图
+        var visibleRange = _filteredFiles.Take(20).ToList(); // 取前20个作为初始可见范围
+        
+        foreach (var file in visibleRange)
+        {
+            if (file.Thumbnail == null && !file.IsThumbnailLoading)
+            {
+                QueueThumbnailLoad(file);
+            }
         }
     }
 

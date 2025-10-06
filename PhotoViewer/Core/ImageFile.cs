@@ -291,6 +291,58 @@ public class ImageFile : ReactiveObject
     }
 
     /// <summary>
+    /// 仅加载星级信息（用于快速筛选，不加载其他EXIF数据）
+    /// </summary>
+    public async Task LoadRatingOnlyAsync()
+    {
+        // 如果已经有完整的EXIF数据，直接返回
+        if (IsExifLoaded && ExifData != null) return;
+        
+        // 如果正在加载完整EXIF数据，等待完成
+        if (IsExifLoading) return;
+
+        try
+        {
+            // 在后台线程中只读取星级信息
+            var rating = await Task.Run(async () =>
+            {
+                try
+                {
+                    return await ExifLoader.LoadRatingOnlyAsync(File);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Failed to read rating (" + Name + "): " + ex.Message);
+                    return 0;
+                }
+            });
+            
+            // 在UI线程中更新星级信息
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                // 如果还没有EXIF数据，创建一个只包含星级的ExifData
+                if (ExifData == null)
+                {
+                    ExifData = new ExifData 
+                    { 
+                        FilePath = File.Path.LocalPath,
+                        Rating = rating 
+                    };
+                }
+                else
+                {
+                    // 如果已有EXIF数据，只更新星级
+                    ExifData.Rating = rating;
+                }
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Failed to load rating (" + Name + "): " + ex.Message);
+        }
+    }
+
+    /// <summary>
     /// 强制重新加载 EXIF 数据
     /// </summary>
     public async Task ForceReloadExifDataAsync()
