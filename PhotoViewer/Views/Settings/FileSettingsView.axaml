@@ -77,35 +77,79 @@
             <TextBlock Classes="settings-title">缓存与预加载</TextBlock>
             <Border Classes="settings-card">
                 <StackPanel Spacing="10" Margin="4">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="全局缓存数量上限" Width="110"/>
-                        <TextBox Text="{Binding BitmapCacheMaxCount}" Width="80"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="全局内存上限(MB)" Width="110"/>
-                        <TextBox Text="{Binding BitmapCacheMaxMemory}" Width="80"/>
-                    </StackPanel>
-                    <TextBlock Classes="settings-description" Text="{Binding MemoryBudgetInfo}" FontSize="11" Foreground="#888" Margin="0,0,0,5"/>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="前向预取数量" Width="110"/>
-                        <TextBox Text="{Binding PreloadForwardCount}" Width="80"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="后向预取数量" Width="110"/>
-                        <TextBox Text="{Binding PreloadBackwardCount}" Width="80"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="可见中心预取" Width="110"/>
-                        <TextBox Text="{Binding VisibleCenterPreloadCount}" Width="80"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="滚动停顿延时(ms)" Width="110"/>
-                        <TextBox Text="{Binding VisibleCenterDelayMs}" Width="80"/>
-                    </StackPanel>
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <TextBlock Classes="settings-label" Text="并行预取数" Width="110"/>
-                        <TextBox Text="{Binding PreloadParallelism}" Width="80"/>
-                    </StackPanel>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="并行预载线程" />
+                        <Slider Grid.Column="1" 
+                                Minimum="1"
+                                Maximum="16"
+                                Value="{Binding PreloadParallelism}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding PreloadParallelism}" />
+                    </Grid>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="缓存数量上限" />
+                        <Slider Grid.Column="1" 
+                                Minimum="1"
+                                Maximum="100"
+                                Value="{Binding BitmapCacheMaxCount}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding BitmapCacheMaxCount}" />
+                    </Grid>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="内存上限(MB)" />
+                        <Slider Grid.Column="1" 
+                                Minimum="1"
+                                Maximum="32768"
+                                Value="{Binding BitmapCacheMaxMemory}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding BitmapCacheMaxMemory}" />
+                    </Grid>
+                    <TextBlock Classes="settings-description" 
+                               Margin="8, 0, 8, 0"
+                               Text="{Binding MemoryBudgetInfo}" />
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="前向预载数量" />
+                        <Slider Grid.Column="1" 
+                                Minimum="0"
+                                Maximum="{Binding PreloadMaximum}"
+                                Value="{Binding PreloadForwardCount}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding PreloadForwardCount}" />
+                    </Grid>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="后向预载数量" />
+                        <Slider Grid.Column="1" 
+                                Minimum="0"
+                                Maximum="{Binding PreloadMaximum}"
+                                Value="{Binding PreloadBackwardCount}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding PreloadBackwardCount}" />
+                    </Grid>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="列表滚动预载数量" />
+                        <Slider Grid.Column="1" 
+                                Minimum="0"
+                                Maximum="{Binding PreloadMaximum}"
+                                Value="{Binding VisibleCenterPreloadCount}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding VisibleCenterPreloadCount}" />
+                    </Grid>
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="滚动预载延时(ms)" />
+                        <Slider Grid.Column="1" 
+                                Minimum="100"
+                                Maximum="5000"
+                                Value="{Binding VisibleCenterDelayMs}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding VisibleCenterDelayMs}" />
+                    </Grid>
                 </StackPanel>
             </Border>
         </StackPanel>

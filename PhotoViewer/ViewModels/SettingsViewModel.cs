@@ -37,7 +37,11 @@ public class SettingsViewModel : ReactiveObject
         
         // 监听缓存最大数量变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.BitmapCacheMaxCount)
-            .Subscribe(v => BitmapLoader.MaxCacheCount = v);
+            .Subscribe(v =>
+            {
+                BitmapLoader.MaxCacheCount = v;
+                PreloadMaximum = v / 3;
+            });
         
         // 监听内存上限变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.BitmapCacheMaxMemory)
@@ -807,13 +811,6 @@ public class SettingsViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Max(256, value));
     }
 
-    private int _systemMemoryLimit = 2048;
-    public int SystemMemoryLimit
-    {
-        get => _systemMemoryLimit;
-        private set => this.RaiseAndSetIfChanged(ref _systemMemoryLimit, value);
-    }
-
     private string _memoryBudgetInfo = string.Empty;
     public string MemoryBudgetInfo
     {
@@ -825,42 +822,48 @@ public class SettingsViewModel : ReactiveObject
     {
         try
         {
-            SystemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
+            var systemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
             
             // 设置默认内存上限为系统限制的 75%，但不超过 4GB
-            var defaultMemory = Math.Min(SystemMemoryLimit * 3 / 4, 4096);
-            BitmapCacheMaxMemory = Math.Max(256, defaultMemory);
+            var defaultMemory = Math.Min(systemMemoryLimit * 3 / 4, 4096);
+            BitmapCacheMaxMemory = Math.Max(512, defaultMemory);
             
-            MemoryBudgetInfo = $"设备内存上限: {SystemMemoryLimit} MB";
+            MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to initialize memory budget: {ex.Message}");
-            SystemMemoryLimit = 2048;
-            BitmapCacheMaxMemory = 1024;
+            BitmapCacheMaxMemory = 2048;
             MemoryBudgetInfo = "设备内存上限: 未知";
         }
     }
-    
+
+    private int _preloadMaximum = 10;
+    public int PreloadMaximum
+    {
+        get => _preloadMaximum;
+        set => this.RaiseAndSetIfChanged(ref _preloadMaximum, value);
+    }
+
     private int _preloadForwardCount = 10;
     public int PreloadForwardCount
     {
         get => _preloadForwardCount;
-        set => this.RaiseAndSetIfChanged(ref _preloadForwardCount, Math.Max(0, value));
+        set => this.RaiseAndSetIfChanged(ref _preloadForwardCount, Math.Clamp(value, 0, PreloadMaximum));
     }
     
-    private int _preloadBackwardCount = 3;
+    private int _preloadBackwardCount = 5;
     public int PreloadBackwardCount
     {
         get => _preloadBackwardCount;
-        private set => this.RaiseAndSetIfChanged(ref _preloadBackwardCount, Math.Max(0, value));
+        set => this.RaiseAndSetIfChanged(ref _preloadBackwardCount, Math.Clamp(value, 0, PreloadMaximum));
     }
     
-    private int _visibleCenterPreloadCount = 3;
+    private int _visibleCenterPreloadCount = 5;
     public int VisibleCenterPreloadCount
     {
         get => _visibleCenterPreloadCount;
-        private set => this.RaiseAndSetIfChanged(ref _visibleCenterPreloadCount, Math.Max(0, value));
+        set => this.RaiseAndSetIfChanged(ref _visibleCenterPreloadCount, Math.Clamp(value, 0, PreloadMaximum));
     }
     
     private int _visibleCenterDelayMs = 1000;
@@ -870,11 +873,11 @@ public class SettingsViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _visibleCenterDelayMs, Math.Clamp(value, 100, 5000));
     }
     
-    private int _preloadParallelism = 1000;
+    private int _preloadParallelism = 8;
     public int PreloadParallelism
     {
         get => _preloadParallelism;
-        set => this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 8));
+        set => this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 16));
     }
 
 

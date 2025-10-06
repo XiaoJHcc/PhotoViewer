@@ -35,7 +35,7 @@
             <Setter Property="Padding" Value="10, 0, 10, 0" />
         </Style>
         
-        <!-- 勾选行文字样式 -->
+        <!-- 行文字样式 -->
         <Style Selector="TextBlock.settings-label">
             <Setter Property="Margin" Value="0, 4, 0, 4" />
         </Style>
@@ -54,6 +54,26 @@
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="BorderBrush" Value="#444" />
             <Setter Property="CornerRadius" Value="6" />
+        </Style>
+        
+        <!-- 滑条行样式 -->
+        <Style Selector="Grid.settings-numeric">
+            <Setter Property="Margin" Value="8, 0, 0, 0" />
+        </Style>
+        
+        <!-- 滑条样式 -->
+        <Style Selector="Grid.settings-numeric TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Grid.settings-numeric Slider">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="10, 0, 10, 0" />
+            <Setter Property="Padding" Value="0, -15, 0, -15" />
+            <Setter Property="Height" Value="20" />
+        </Style>
+        <Style Selector="Grid.settings-numeric TextBox">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="BorderBrush" Value="Transparent" />
         </Style>
         
     </UserControl.Styles>

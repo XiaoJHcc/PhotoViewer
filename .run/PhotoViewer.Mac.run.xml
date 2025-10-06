@@ -5,6 +5,7 @@
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$/PhotoViewer.Mac/bin/Debug/net9.0-macos" />
     <option name="PASS_PARENT_ENVS_MAC" value="1" />
     <method v="2">
+      <option name="CleanProject" projectName="所选项目" />
       <option name="Build" />
     </method>
   </configuration>
