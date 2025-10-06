@@ -765,4 +765,82 @@ public static class ExifLoader
         return orientationValue == 2 || orientationValue == 4 || 
                orientationValue == 5 || orientationValue == 7;
     }
+
+    /// <summary>
+    /// 仅加载文件的星级评分（用于快速筛选）
+    /// </summary>
+    public static async Task<int> LoadRatingOnlyAsync(IStorageFile file)
+    {
+        var filePath = file.Path.LocalPath;
+        
+        try
+        {
+            // 只读取 XMP 数据中的 Rating 信息，不解码图片内容
+            using var stream = await file.OpenReadAsync();
+            var directories = ImageMetadataReader.ReadMetadata(stream);
+
+            var xmpDirectory = directories.OfType<XmpDirectory>().FirstOrDefault();
+            
+            // 读取 XMP Rating 数据
+            if (xmpDirectory != null)
+            {
+                try
+                {
+                    var xmpMeta = xmpDirectory.GetXmpProperties();
+                    
+                    // 尝试多种可能的 Rating 属性路径
+                    var ratingPaths = new[]
+                    {
+                        "xmp:Rating",
+                        "http://ns.adobe.com/xap/1.0/:Rating",
+                        "Rating",
+                        "xap:Rating"
+                    };
+                    
+                    foreach (var path in ratingPaths)
+                    {
+                        if (xmpMeta.ContainsKey(path))
+                        {
+                            var ratingValue = xmpMeta[path];
+                            if (int.TryParse(ratingValue, out var rating) && rating >= 0 && rating <= 5)
+                            {
+                                return rating;
+                            }
+                        }
+                    }
+                    
+                    // 如果上述方法未找到，尝试直接使用 XmpCore 解析
+                    try
+                    {
+                        // 获取原始 XMP 字符串并用 XmpCore 解析
+                        var xmpString = xmpDirectory.GetXmpProperties().ToString();
+                        if (!string.IsNullOrEmpty(xmpString))
+                        {
+                            var parsedXmp = XmpCore.XmpMetaFactory.ParseFromString(xmpString);
+                            var ratingProperty = parsedXmp.GetProperty("http://ns.adobe.com/xap/1.0/", "Rating");
+                            if (ratingProperty != null && int.TryParse(ratingProperty.Value, out var parsedRating) && parsedRating >= 0 && parsedRating <= 5)
+                            {
+                                return parsedRating;
+                            }
+                        }
+                    }
+                    catch (Exception xmpEx)
+                    {
+                        Console.WriteLine("Failed to parse XMP with XmpCore (" + filePath + "): " + xmpEx.Message);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Failed to read XMP Rating (" + filePath + "): " + ex.Message);
+                }
+            }
+            
+            return 0; // 默认无星级
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Failed to read rating data (" + filePath + "): " + ex.Message);
+            return 0;
+        }
+    }
 }
