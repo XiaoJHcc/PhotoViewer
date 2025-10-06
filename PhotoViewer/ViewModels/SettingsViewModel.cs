@@ -8,7 +8,6 @@ using System.Collections.Generic;
 using PhotoViewer.Controls;
 using Avalonia.Input;
 using PhotoViewer.Core;
-using System.Reactive.Linq; // 新增
 
 namespace PhotoViewer.ViewModels;
 
@@ -29,22 +28,20 @@ public class SettingsViewModel : ReactiveObject
         InitializeHotkeys();
         InitializeLayoutModes();
         InitializeExifDisplayItems();
+        InitializeMemoryBudget();
         
         // 初始化移动命令
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
         MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
         MoveExifDisplayCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveExifDisplay);
         
-        // 平台内存限制初始化
-        _platformMemoryLimitBytes = DetectPlatformAppMemoryLimit();
-        _bitmapCacheMaxSizeMB = ComputeInitialCacheSizeMB();
-        
         // 监听缓存最大数量变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.BitmapCacheMaxCount)
             .Subscribe(v => BitmapLoader.MaxCacheCount = v);
-        // 新增：监听缓存最大容量(MB)变化同步到 BitmapLoader
-        this.WhenAnyValue(v => v.BitmapCacheMaxSizeMB)
-            .Subscribe(v => BitmapLoader.MaxCacheSize = (long)v * 1024 * 1024);
+        
+        // 监听内存上限变化同步到 BitmapLoader
+        this.WhenAnyValue(v => v.BitmapCacheMaxMemory)
+            .Subscribe(v => BitmapLoader.MaxCacheSize = v * 1024L * 1024L);
     }
     
     //////////////
@@ -802,88 +799,86 @@ public class SettingsViewModel : ReactiveObject
         get => _bitmapCacheMaxCount;
         set => this.RaiseAndSetIfChanged(ref _bitmapCacheMaxCount, value < 1 ? 1 : value);
     }
+    
+    private int _bitmapCacheMaxMemory = 2048;
+    public int BitmapCacheMaxMemory
+    {
+        get => _bitmapCacheMaxMemory;
+        set => this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Max(256, value));
+    }
 
+    private int _systemMemoryLimit = 2048;
+    public int SystemMemoryLimit
+    {
+        get => _systemMemoryLimit;
+        private set => this.RaiseAndSetIfChanged(ref _systemMemoryLimit, value);
+    }
+
+    private string _memoryBudgetInfo = string.Empty;
+    public string MemoryBudgetInfo
+    {
+        get => _memoryBudgetInfo;
+        private set => this.RaiseAndSetIfChanged(ref _memoryBudgetInfo, value);
+    }
+
+    private void InitializeMemoryBudget()
+    {
+        try
+        {
+            SystemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
+            
+            // 设置默认内存上限为系统限制的 75%，但不超过 4GB
+            var defaultMemory = Math.Min(SystemMemoryLimit * 3 / 4, 4096);
+            BitmapCacheMaxMemory = Math.Max(256, defaultMemory);
+            
+            MemoryBudgetInfo = $"设备内存上限: {SystemMemoryLimit} MB";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to initialize memory budget: {ex.Message}");
+            SystemMemoryLimit = 2048;
+            BitmapCacheMaxMemory = 1024;
+            MemoryBudgetInfo = "设备内存上限: 未知";
+        }
+    }
+    
     private int _preloadForwardCount = 10;
     public int PreloadForwardCount
     {
         get => _preloadForwardCount;
         set => this.RaiseAndSetIfChanged(ref _preloadForwardCount, Math.Max(0, value));
     }
-
-    private int _preloadBackwardCount = 5;
+    
+    private int _preloadBackwardCount = 3;
     public int PreloadBackwardCount
     {
         get => _preloadBackwardCount;
-        set => this.RaiseAndSetIfChanged(ref _preloadBackwardCount, Math.Max(0, value));
+        private set => this.RaiseAndSetIfChanged(ref _preloadBackwardCount, Math.Max(0, value));
     }
-
-    private int _visibleCenterPreloadCount = 5;
+    
+    private int _visibleCenterPreloadCount = 3;
     public int VisibleCenterPreloadCount
     {
         get => _visibleCenterPreloadCount;
-        set => this.RaiseAndSetIfChanged(ref _visibleCenterPreloadCount, Math.Max(1, value));
+        private set => this.RaiseAndSetIfChanged(ref _visibleCenterPreloadCount, Math.Max(0, value));
     }
-
+    
     private int _visibleCenterDelayMs = 1000;
     public int VisibleCenterDelayMs
     {
         get => _visibleCenterDelayMs;
         set => this.RaiseAndSetIfChanged(ref _visibleCenterDelayMs, Math.Clamp(value, 100, 5000));
     }
-
-    private int _preloadParallelism = 8;
+    
+    private int _preloadParallelism = 1000;
     public int PreloadParallelism
     {
         get => _preloadParallelism;
         set => this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 8));
     }
 
-    // 新增：最大缓存大小（MB）
-    private int _bitmapCacheMaxSizeMB;
-    public int BitmapCacheMaxSizeMB
-    {
-        get => _bitmapCacheMaxSizeMB;
-        set
-        {
-            var clamped = Math.Clamp(value, 10, MaxAllowedCacheSizeMB);
-            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxSizeMB, clamped);
-        }
-    }
-
-    // 平台应用可用内存（字节，可能为 0 表示未知）
-    private readonly long _platformMemoryLimitBytes;
-    public int PlatformAppMemoryLimitMB => _platformMemoryLimitBytes > 0
-        ? (int)(_platformMemoryLimitBytes / (1024 * 1024))
-        : 0;
-    // 最大允许设置（取平台限制的 80%，否则给一个保守上限 8192MB）
-    public int MaxAllowedCacheSizeMB => PlatformAppMemoryLimitMB > 0
-        ? Math.Max(512, (int)(PlatformAppMemoryLimitMB * 0.8))
-        : 8192;
-    public string PlatformAppMemoryLimitDisplay =>
-        PlatformAppMemoryLimitMB > 0 ? $"{PlatformAppMemoryLimitMB} MB" : "未知";
-    
-    private long DetectPlatformAppMemoryLimit()
-    {
-        try
-        {
-            var info = GC.GetGCMemoryInfo();
-            if (info.TotalAvailableMemoryBytes > 0)
-                return info.TotalAvailableMemoryBytes;
-        }
-        catch { }
-        return 0;
-    }
-
-    private int ComputeInitialCacheSizeMB()
-    {
-        // 目标初始值：1GB，如超出上限则取上限（至少 256MB）
-        int target = 1024;
-        int max = MaxAllowedCacheSizeMB;
-        if (target > max) target = Math.Max(256, max);
-        return target;
-    }
 
     #endregion
     
-    
 }
+

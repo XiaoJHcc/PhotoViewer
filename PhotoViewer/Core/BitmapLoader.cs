@@ -52,7 +52,7 @@ public static class BitmapLoader
     
     // 缓存配置
     private static int _maxCacheCount = 30;
-    private static long _maxCacheSize = 4096L * 1024 * 1024; // 默认 4096 MB（可由设置覆盖）
+    private static long _maxCacheSize = 2048L * 1024 * 1024; // 2048 MB
     
     // 缓存状态变化事件
     public static event Action<string, bool>? CacheStatusChanged;
@@ -78,7 +78,7 @@ public static class BitmapLoader
         get => _maxCacheSize;
         set
         {
-            _maxCacheSize = Math.Max(10L * 1024 * 1024, value); // 最小10MB
+            _maxCacheSize = Math.Max(256L * 1024 * 1024, value); // 最小256MB
             _ = Task.Run(CleanupCache);
         }
     }
