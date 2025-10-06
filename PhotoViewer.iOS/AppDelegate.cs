@@ -23,6 +23,10 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
             .UseReactiveUI()
-            .AfterSetup(_ => HeifLoader.Initialize(new iOSHeifDecoder()));
+            .AfterSetup(_ => 
+            {
+                HeifLoader.Initialize(new iOSHeifDecoder());
+                MemoryBudget.Initialize(new iOSMemoryBudget());
+            });
     }
 }

@@ -13,8 +13,11 @@ sealed class Program
     // yet and stuff might break.
     [STAThread]
     public static void Main(string[] args) => BuildAvaloniaApp()
-        .AfterSetup(_ => HeifLoader.Initialize(new MacHeifDecoder()))
-        
+        .AfterSetup(_ => 
+        {
+            HeifLoader.Initialize(new MacHeifDecoder());
+            MemoryBudget.Initialize(new DefaultMemoryBudget());
+        })
         .StartWithClassicDesktopLifetime(args);
 
     // Avalonia configuration, don't remove; also used by visual designer.

@@ -20,6 +20,8 @@ sealed class Program
                 HeifLoader.Initialize(new WindowsHeifDecoder());
             else
                 HeifLoader.Initialize(new LibHeifDecoder());
+                
+            MemoryBudget.Initialize(new DefaultMemoryBudget());
         })
         .StartWithClassicDesktopLifetime(args);
 
