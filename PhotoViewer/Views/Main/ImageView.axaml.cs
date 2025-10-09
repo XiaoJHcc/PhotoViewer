@@ -375,13 +375,14 @@ public partial class ImageView : UserControl
         e.Handled = true;
     }
 
-    private void OnDrop(object? sender, DragEventArgs e)
+    private async Task OnDrop(object? sender, DragEventArgs e)
     {
         var files = e.Data.GetFiles()?.ToList();
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
-            // 通过 MainViewModel 处理拖拽文件
-            ViewModel?.Main.FolderVM.LoadNewImageFolder(file);
+            // 通过 MainViewModel 处理拖拽文件 (逻辑同选择打开文件)
+            await ViewModel?.Main.FolderVM.LoadNewImageFolder(file)!;
+            ViewModel?.Main.FolderVM.ScrollToCurrent();
         }
         e.Handled = true;
     }
