@@ -16,9 +16,9 @@ sealed class Program
         .AfterSetup(_ =>
         {
             // Windows 优先使用 WIC，其它平台仍旧 LibHeifDecoder
-            if (OperatingSystem.IsWindows())
-                HeifLoader.Initialize(new WindowsHeifDecoder());
-            else
+            // if (OperatingSystem.IsWindows())
+            //     HeifLoader.Initialize(new WindowsHeifDecoder());
+            // else
                 HeifLoader.Initialize(new LibHeifDecoder());
                 
             MemoryBudget.Initialize(new DefaultMemoryBudget());
