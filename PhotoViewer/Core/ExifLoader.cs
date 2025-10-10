@@ -843,4 +843,40 @@ public static class ExifLoader
             return 0;
         }
     }
+
+    /// <summary>
+    /// 仅尝试从 EXIF/IFD 读取图片尺寸，失败返回 null（不解码整图）
+    /// </summary>
+    public static async Task<(int width, int height)?> TryGetDimensionsAsync(IStorageFile file)
+    {
+        try
+        {
+            await using var stream = await file.OpenReadAsync();
+            var directories = ImageMetadataReader.ReadMetadata(stream);
+
+            var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+            if (exifSubIfd != null &&
+                exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var w1) &&
+                exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var h1) &&
+                w1 > 0 && h1 > 0)
+            {
+                return (w1, h1);
+            }
+
+            var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+            if (exifIfd0 != null &&
+                exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageWidth, out var w2) &&
+                exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageHeight, out var h2) &&
+                w2 > 0 && h2 > 0)
+            {
+                return (w2, h2);
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

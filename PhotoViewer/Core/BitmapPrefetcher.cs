@@ -174,11 +174,16 @@ public class BitmapPrefetcher
 
                 tasks.Add(Task.Run(async () =>
                 {
+                    IDisposable? reservation = null;
                     try
                     {
                         // 每个任务都需让位于高优先级加载
                         await WaitForHighPriorityIdleAsync(ct);
                         if (ct.IsCancellationRequested) return;
+
+                        // 申请内存预留：失败或过大则跳过该文件
+                        reservation = await BitmapLoader.ReserveForPreloadAsync(f, ct);
+                        if (reservation == null) return;
 
                         // 二次检查，避免重复
                         if (!BitmapLoader.IsInCache(f.Path.LocalPath))
@@ -195,6 +200,7 @@ public class BitmapPrefetcher
                     }
                     finally
                     {
+                        reservation?.Dispose();
                         semaphore.Release();
                     }
                 }, ct));

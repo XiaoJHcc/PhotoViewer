@@ -101,6 +101,140 @@ public static class BitmapLoader
         return _cache.ContainsKey(filePath);
     }
     
+    // 新增：预加载内存预留与容量序列化
+    private static long _reservedBytes = 0;
+    private static readonly SemaphoreSlim _capacitySemaphore = new(1, 1);
+
+    // 新增：平均缓存项大小（字节）
+    private static long GetAverageCacheItemSizeBytes()
+    {
+        var count = CurrentCacheCount;
+        if (count <= 0) return 0;
+        var total = CurrentCacheSize;
+        if (total <= 0) return 0;
+        return total / count;
+    }
+
+    /// <summary>
+    /// 估算文件解码后的内存大小：
+    /// 1) EXIF 尺寸（width*height*4）
+    /// 2) 缓存平均占用
+    /// 3) 兜底 100MB
+    /// </summary>
+    public static async Task<long> EstimateDecodedSizeAsync(IStorageFile file, CancellationToken ct = default)
+    {
+        try
+        {
+            // 1) EXIF 尺寸
+            var dims = await ExifLoader.TryGetDimensionsAsync(file);
+            if (ct.IsCancellationRequested) return 0;
+            if (dims.HasValue && dims.Value.width > 0 && dims.Value.height > 0)
+            {
+                return (long)dims.Value.width * dims.Value.height * 4;
+            }
+        }
+        catch
+        {
+            // 忽略，走回退
+        }
+
+        // 2) 回退到缓存平均占用
+        var avg = GetAverageCacheItemSizeBytes();
+        if (avg > 0) return avg;
+
+        // 3) 最终兜底为 100MB
+        return 100L * 1024 * 1024;
+    }
+
+    /// <summary>
+    /// 在解码前确保容量：(缓存 + 预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
+    /// </summary>
+    private static async Task EnsureCapacityAsync(long needBytes)
+    {
+        if (needBytes <= 0) return;
+
+        await _capacitySemaphore.WaitAsync();
+        try
+        {
+            long safeLimit = (long)(MaxCacheSize * 0.8);
+            bool tooLarge = needBytes > (long)(MaxCacheSize * 0.6);
+
+            while (true)
+            {
+                var currentSize = CurrentCacheSize;
+                var totalPlanned = currentSize + Interlocked.Read(ref _reservedBytes) + needBytes;
+                long limit = tooLarge ? safeLimit : MaxCacheSize;
+                if (totalPlanned <= limit) break;
+
+                var sorted = _cache.ToList()
+                    .OrderBy(kv => kv.Value.LastAccessTime)
+                    .ToList();
+
+                if (sorted.Count == 0) break;
+
+                var itemsToRemove = new List<(string key, Bitmap bmp)>();
+                long willFree = 0;
+
+                foreach (var kv in sorted)
+                {
+                    if (_cache.TryRemove(kv.Key, out var item))
+                    {
+                        itemsToRemove.Add((kv.Key, item.Bitmap));
+                        willFree += item.Size;
+                        if (currentSize - willFree + Interlocked.Read(ref _reservedBytes) + needBytes <= safeLimit)
+                            break;
+                    }
+                }
+
+                if (itemsToRemove.Count == 0) break;
+
+                var removedKeys = itemsToRemove.Select(t => t.key).ToList();
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    foreach (var k in removedKeys)
+                        CacheStatusChanged?.Invoke(k, false);
+                });
+
+                await Dispatcher.UIThread.InvokeAsync(() =>
+                {
+                    foreach (var t in itemsToRemove)
+                        t.bmp.Dispose();
+                });
+
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+            }
+        }
+        finally
+        {
+            _capacitySemaphore.Release();
+        }
+    }
+
+    /// <summary>
+    /// 预取任务申请内存预留；若估算过大（>60%上限）则返回 null（跳过预取）。
+    /// </summary>
+    public static async Task<IDisposable?> ReserveForPreloadAsync(IStorageFile file, CancellationToken ct)
+    {
+        var estimate = await EstimateDecodedSizeAsync(file, ct);
+        if (estimate <= 0) return null;
+
+        if (estimate > (long)(MaxCacheSize * 0.6))
+            return null;
+
+        await EnsureCapacityAsync(estimate);
+        Interlocked.Add(ref _reservedBytes, estimate);
+        return new Reservation(() => Interlocked.Add(ref _reservedBytes, -estimate));
+    }
+
+    private sealed class Reservation : IDisposable
+    {
+        private Action? _release;
+        public Reservation(Action release) => _release = release;
+        public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
+    }
+
     /// <summary>
     /// 异步获取图片（带缓存和EXIF旋转）
     /// </summary>
@@ -114,6 +248,14 @@ public static class BitmapLoader
             cachedItem.UpdateAccessTime();
             return cachedItem.Bitmap;
         }
+
+        // 在解码前进行容量保障（基于估算）
+        try
+        {
+            var estimate = await EstimateDecodedSizeAsync(file);
+            await EnsureCapacityAsync(estimate);
+        }
+        catch { /* 容量保障失败不致命，继续尝试加载 */ }
         
         try
         {

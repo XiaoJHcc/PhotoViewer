@@ -64,7 +64,13 @@ public class SettingsViewModel : ReactiveObject
         
         // 监听内存上限变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.BitmapCacheMaxMemory)
-            .Subscribe(v => BitmapLoader.MaxCacheSize = v * 1024L * 1024L);
+            .Subscribe(v =>
+            {
+                BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
+                
+                // 计算当前内存能够满足多少张照片
+                BitmapCacheCountInfo = "当前内存设置下可容纳的照片数量上限: \n24MP < " + v/(24*4) + " 张，33MP < " + v/(33*4) + " 张，42MP < " + v/(42*4) + " 张，61MP < " + v/(61*4) + " 张";
+            });
     }
     
     //////////////
@@ -805,10 +811,13 @@ public class SettingsViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _safeSetRating, value);
     }
     
+    #endregion
+    
     // 检查是否为安卓平台
     public static bool IsAndroid => OperatingSystem.IsAndroid();
     
-    #endregion
+    // 检查是否为 iOS 平台
+    public static bool IsIOS => OperatingSystem.IsIOS();
 
     ///////////////////
     /// 位图缓存与预取设置
@@ -886,6 +895,13 @@ public class SettingsViewModel : ReactiveObject
         get => _memoryBudgetInfo;
         private set => this.RaiseAndSetIfChanged(ref _memoryBudgetInfo, value);
     }
+    
+    private string _bitmapCacheCountInfo = string.Empty;
+    public string BitmapCacheCountInfo
+    {
+        get => _bitmapCacheCountInfo;
+        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfo, value);
+    }
 
     private void InitializeMemoryBudget()
     {
@@ -898,6 +914,10 @@ public class SettingsViewModel : ReactiveObject
             BitmapCacheMaxMemory = Math.Max(512, defaultMemory);
 
             MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
+            if (IsIOS)
+            {
+                MemoryBudgetInfo += "（iOS 内存限制更加严格，如遇闪退请调小限值）";
+            }
         }
         catch (Exception ex)
         {
