@@ -87,16 +87,7 @@
                         <TextBox Grid.Column="2" 
                                  Text="{Binding PreloadParallelism}" />
                     </Grid>
-                    <Grid Classes="settings-numeric"
-                          ColumnDefinitions="120,*,60">
-                        <TextBlock Classes="settings-label" Text="缓存数量上限" />
-                        <Slider Grid.Column="1" 
-                                Minimum="0"
-                                Maximum="1"
-                                Value="{Binding BitmapCacheMaxCountExp}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding BitmapCacheMaxCount}" />
-                    </Grid>
+                    
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
                         <TextBlock Classes="settings-label" Text="内存上限 (MB)" />
@@ -110,6 +101,21 @@
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
                                Text="{Binding MemoryBudgetInfo}" />
+                    
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="缓存数量上限" />
+                        <Slider Grid.Column="1" 
+                                Minimum="0"
+                                Maximum="1"
+                                Value="{Binding BitmapCacheMaxCountExp}" />
+                        <TextBox Grid.Column="2" 
+                                 Text="{Binding BitmapCacheMaxCount}" />
+                    </Grid>
+                    <TextBlock Classes="settings-description" 
+                               Margin="8, 0, 8, 0"
+                               Text="{Binding BitmapCacheCountInfo}" />
+                    
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
                         <TextBlock Classes="settings-label secondary" Text="下一张预载数量" />
