@@ -69,7 +69,7 @@ public class SettingsViewModel : ReactiveObject
                 BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
                 
                 // 计算当前内存能够满足多少张照片
-                BitmapCacheCountInfo = "当前内存设置下可容纳的照片数量上限: \n24MP < " + v/(24*4) + " 张，33MP < " + v/(33*4) + " 张，42MP < " + v/(42*4) + " 张，61MP < " + v/(61*4) + " 张";
+                BitmapCacheCountInfo = "当前内存设置下可缓存的照片数量上限: \n24MP < " + v/(24*4) + " 张，33MP < " + v/(33*4) + " 张，42MP < " + v/(42*4) + " 张，61MP < " + v/(61*4) + " 张";
             });
     }
     
@@ -909,14 +909,20 @@ public class SettingsViewModel : ReactiveObject
         {
             var systemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
 
-            // 设置默认内存上限为系统限制的 75%，但不超过 4GB
-            var defaultMemory = Math.Min(systemMemoryLimit * 3 / 4, 4096);
+            // 设置默认内存上限为系统限制的 50%，但不超过 4GB
+            var defaultMemory = Math.Min(systemMemoryLimit * 1 / 2, 4096);
             BitmapCacheMaxMemory = Math.Max(512, defaultMemory);
+
+            if (BitmapCacheMaxMemory < 4096)
+            {
+                BitmapCacheMaxCount = BitmapCacheMaxMemory / 132; // 以 33MP 估算张数上限
+                PreloadParallelism = (int)(BitmapCacheMaxMemory / 4096.0 * 8.0); // 同比减少线程数
+            }
 
             MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
             if (IsIOS)
             {
-                MemoryBudgetInfo += "（iOS 内存限制更加严格，如遇闪退请调小限值）";
+                MemoryBudgetInfo += "\niOS 内存限制更加严格，如遇闪退请调小限值";
             }
         }
         catch (Exception ex)
