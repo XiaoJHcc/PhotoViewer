@@ -171,6 +171,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
             if (w <= 0 || h <= 0) return null;
 
             // 将 ARGB_8888 拷贝并转换为 BGRA8888
+            // 修复：实际顺序并非如此，而是 ABGR -> RGBA，总之顺序颠倒
             var pixels = new int[w * h];
             using (var ib = IntBuffer.Allocate(pixels.Length))
             {
@@ -184,9 +185,9 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
             {
                 int p = pixels[i];
                 byte a = (byte)((p >> 24) & 0xFF);
-                byte r = (byte)((p >> 16) & 0xFF);
+                byte b = (byte)((p >> 16) & 0xFF);
                 byte g = (byte)((p >> 8) & 0xFF);
-                byte b = (byte)(p & 0xFF);
+                byte r = (byte)(p & 0xFF);
 
                 bgra[j + 0] = b;
                 bgra[j + 1] = g;
