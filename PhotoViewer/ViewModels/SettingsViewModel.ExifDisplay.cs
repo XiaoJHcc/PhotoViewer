@@ -28,8 +28,10 @@ public partial class SettingsViewModel
         private set => this.RaiseAndSetIfChanged(ref _enabledExifItems, value);
     }
 
-    private void InitializeExifDisplayItems()
+    private void InitializeExifDisplay()
     {
+        MoveExifDisplayCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveExifDisplay);
+        
         ExifDisplayItems = new ObservableCollection<ExifDisplayItem>
         {
             new("光圈", "Aperture", true),

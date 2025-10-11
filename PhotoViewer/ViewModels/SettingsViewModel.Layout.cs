@@ -3,6 +3,14 @@ using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
 
+// 布局模式枚举
+public enum LayoutMode
+{
+    Vertical,    // 上中下
+    Horizontal,  // 左中右
+    Auto         // 智能（根据屏幕方向）
+}
+
 public partial class SettingsViewModel
 {
     //////////////

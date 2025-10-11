@@ -23,6 +23,8 @@ public partial class SettingsViewModel
 
     private void InitializeHotkeys()
     {
+        MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
+        
         Hotkeys = new ObservableCollection<HotkeyItem>
         {
             new("打开文件", "Open", "\uf6b5", "打开文件", true, new KeyGesture(Key.N, KeyModifiers.Control), new KeyGesture(Key.O, KeyModifiers.Control)),
