@@ -42,6 +42,8 @@ public partial class SettingsViewModel
 
     private void InitializeFileFormats()
     {
+        MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
+        
         FileFormats = new ObservableCollection<FileFormatItem>
         {
             new("JPG", new[] { ".jpg", ".jpeg" }, true),
