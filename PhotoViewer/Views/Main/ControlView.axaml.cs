@@ -77,17 +77,17 @@ public partial class ControlView : UserControl
             }
         }
 
-        var pressedGesture = new KeyGesture(e.Key, e.KeyModifiers);
-        
-        // 查找匹配的快捷键
-        var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h => 
-            (h.PrimaryHotkey?.Equals(pressedGesture) == true) ||
-            (h.SecondaryHotkey?.Equals(pressedGesture) == true)
-        );
+        // 基于 PhysicalKey 标准化当前按键，区分主键盘 +/- 与小键盘 +/-，修复 iOS/macOS 键位混淆
+        var normalizedKey = NormalizeKey(e);
+        var mods = e.KeyModifiers;
+
+        // 查找匹配的快捷键（包含平台兼容桥接，保证历史错误设置仍可触发）
+        var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h =>
+            AreGestureMatch(h.PrimaryHotkey, normalizedKey, mods) ||
+            AreGestureMatch(h.SecondaryHotkey, normalizedKey, mods));
 
         if (matchedHotkey != null)
         {
-            // 执行对应的命令
             var command = viewModel.GetCommandByName(matchedHotkey.Command);
             if (command?.CanExecute(null) == true)
             {
@@ -116,6 +116,35 @@ public partial class ControlView : UserControl
             topLevel.KeyDown -= OnGlobalKeyDown;
         }
         base.OnDetachedFromVisualTree(e);
+    }
+
+    // 使用 PhysicalKey 将当前事件标准化为正确的逻辑键
+    private static Key NormalizeKey(KeyEventArgs e)
+    {
+        switch (e.PhysicalKey)
+        {
+            case PhysicalKey.Equal:
+                return Key.OemPlus;           // "=" 键位（Shift 为 "+")
+            case PhysicalKey.Minus:
+                return Key.OemMinus;          // "-" 键位
+            case PhysicalKey.NumPadAdd:
+                return Key.Add;               // 小键盘 "+"
+            case PhysicalKey.NumPadSubtract:
+                return Key.Subtract;          // 小键盘 "-"
+        }
+
+        return e.Key;
+    }
+
+    // 匹配逻辑：先比对修饰键，再比对键值；包含平台兼容桥接（仅在执行匹配阶段生效，不影响新建/冲突检测）
+    private static bool AreGestureMatch(KeyGesture? stored, Key normalizedKey, KeyModifiers mods)
+    {
+        if (stored == null) return false;
+        if (stored.KeyModifiers != mods) return false;
+
+        if (stored.Key == normalizedKey) return true;
+
+        return false;
     }
 }
 
