@@ -121,8 +121,8 @@
                         <TextBlock Classes="settings-label secondary" Text="下一张预载数量" />
                         <Slider Grid.Column="1" 
                                 Minimum="0"
-                                Maximum="1"
-                                Value="{Binding PreloadForwardCountExp}" />
+                                Maximum="33.3333333"
+                                Value="{Binding PreloadForwardPercent}" />
                         <TextBox Grid.Column="2" 
                                  Text="{Binding PreloadForwardCount}" />
                     </Grid>
@@ -131,8 +131,8 @@
                         <TextBlock Classes="settings-label secondary" Text="上一张预载数量" />
                         <Slider Grid.Column="1" 
                                 Minimum="0"
-                                Maximum="1"
-                                Value="{Binding PreloadBackwardCountExp}" />
+                                Maximum="33.3333333"
+                                Value="{Binding PreloadBackwardPercent}" />
                         <TextBox Grid.Column="2" 
                                  Text="{Binding PreloadBackwardCount}" />
                     </Grid>
@@ -141,8 +141,8 @@
                         <TextBlock Classes="settings-label secondary" Text="列表滚动预载数量" />
                         <Slider Grid.Column="1" 
                                 Minimum="0"
-                                Maximum="1"
-                                Value="{Binding VisibleCenterPreloadCountExp}" />
+                                Maximum="33.3333333"
+                                Value="{Binding VisibleCenterPreloadPercent}" />
                         <TextBox Grid.Column="2" 
                                  Text="{Binding VisibleCenterPreloadCount}" />
                     </Grid>
