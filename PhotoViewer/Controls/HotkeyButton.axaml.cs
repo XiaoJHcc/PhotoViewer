@@ -207,9 +207,16 @@ public partial class HotkeyButton : UserControl
             case PhysicalKey.Minus:           // 主键盘 "-"
                 return Key.OemMinus;
             case PhysicalKey.NumPadAdd:       // 小键盘 "+"
-                return Key.Add;
+                return OperatingSystem.IsIOS() ? Key.OemPlus : Key.Add;
             case PhysicalKey.NumPadSubtract:  // 小键盘 "-"
-                return Key.Subtract;
+                return OperatingSystem.IsIOS() ? Key.OemMinus : Key.Subtract;
+        }
+
+        // iOS 兼容：将 Add/Subtract 归一到 OemPlus/OemMinus，避免把主键盘当作小键盘
+        if (OperatingSystem.IsIOS())
+        {
+            if (e.Key == Key.Add) return Key.OemPlus;
+            if (e.Key == Key.Subtract) return Key.OemMinus;
         }
 
         return e.Key;

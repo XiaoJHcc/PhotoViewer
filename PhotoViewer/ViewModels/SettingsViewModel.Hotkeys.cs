@@ -5,6 +5,7 @@ using Avalonia.Input;
 using ReactiveUI;
 using System.Reactive;
 using PhotoViewer.Controls;
+using System; // 新增
 
 namespace PhotoViewer.ViewModels;
 
@@ -132,9 +133,22 @@ public partial class SettingsViewModel
     {
         if (gesture1 == null || gesture2 == null)
             return false;
-            
-        return gesture1.Key == gesture2.Key && 
-               gesture1.KeyModifiers == gesture2.KeyModifiers;
+
+        var k1 = NormalizeKeyForCompare(gesture1.Key);
+        var k2 = NormalizeKeyForCompare(gesture2.Key);
+
+        return k1 == k2 && gesture1.KeyModifiers == gesture2.KeyModifiers;
+    }
+
+    // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus，用于冲突检测等价比较
+    private static Key NormalizeKeyForCompare(Key key)
+    {
+        if (OperatingSystem.IsIOS())
+        {
+            if (key == Key.Add) return Key.OemPlus;
+            if (key == Key.Subtract) return Key.OemMinus;
+        }
+        return key;
     }
 
     // 获取有效的快捷键（用于执行，优先级按列表顺序）
@@ -266,4 +280,3 @@ public partial class SettingsViewModel
         }
     }
 }
-
