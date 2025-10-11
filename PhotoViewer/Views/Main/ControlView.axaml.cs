@@ -128,23 +128,40 @@ public partial class ControlView : UserControl
             case PhysicalKey.Minus:
                 return Key.OemMinus;          // "-" 键位
             case PhysicalKey.NumPadAdd:
-                return Key.Add;               // 小键盘 "+"
+                return OperatingSystem.IsIOS() ? Key.OemPlus : Key.Add;      // iOS 并入 OemPlus
             case PhysicalKey.NumPadSubtract:
-                return Key.Subtract;          // 小键盘 "-"
+                return OperatingSystem.IsIOS() ? Key.OemMinus : Key.Subtract; // iOS 并入 OemMinus
+        }
+
+        if (OperatingSystem.IsIOS())
+        {
+            if (e.Key == Key.Add) return Key.OemPlus;
+            if (e.Key == Key.Subtract) return Key.OemMinus;
         }
 
         return e.Key;
     }
 
-    // 匹配逻辑：先比对修饰键，再比对键值；包含平台兼容桥接（仅在执行匹配阶段生效，不影响新建/冲突检测）
+    // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus 用于比较
+    private static Key NormalizeKeyForCompare(Key key)
+    {
+        if (OperatingSystem.IsIOS())
+        {
+            if (key == Key.Add) return Key.OemPlus;
+            if (key == Key.Subtract) return Key.OemMinus;
+        }
+        return key;
+    }
+
+    // 匹配逻辑：先比对修饰键，再比对键值；iOS 下做等价合并
     private static bool AreGestureMatch(KeyGesture? stored, Key normalizedKey, KeyModifiers mods)
     {
         if (stored == null) return false;
         if (stored.KeyModifiers != mods) return false;
 
-        if (stored.Key == normalizedKey) return true;
-
-        return false;
+        var left = NormalizeKeyForCompare(stored.Key);
+        var right = NormalizeKeyForCompare(normalizedKey);
+        return left == right;
     }
 }
 
