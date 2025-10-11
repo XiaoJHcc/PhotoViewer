@@ -79,7 +79,9 @@ public partial class ControlView : UserControl
 
         // 基于 PhysicalKey 标准化当前按键，区分主键盘 +/- 与小键盘 +/-，修复 iOS/macOS 键位混淆
         var normalizedKey = NormalizeKey(e);
-        var mods = e.KeyModifiers;
+
+        // 新增：应用苹果键盘映射后再匹配
+        var mods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
 
         // 查找匹配的快捷键（包含平台兼容桥接，保证历史错误设置仍可触发）
         var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h =>

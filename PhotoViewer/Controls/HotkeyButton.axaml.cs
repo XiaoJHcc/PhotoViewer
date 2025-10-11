@@ -6,6 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using PhotoViewer.Converters;
+using PhotoViewer.ViewModels; // 新增：用于读取全局映射
 
 namespace PhotoViewer.Controls;
 
@@ -64,6 +65,17 @@ public partial class HotkeyButton : UserControl
     {
         InitializeComponent();
         UpdateHotkeyText();
+        // 新增：订阅映射变化，及时刷新显示
+        AppleKeyboardMapping.MappingChanged += OnAppleMappingChanged;
+    }
+
+    private void OnAppleMappingChanged()
+    {
+        // 可能在后台线程触发，切回 UI 线程刷新
+        if (HotkeyBtn is not null)
+        {
+            Avalonia.Threading.Dispatcher.UIThread.Post(UpdateHotkeyText);
+        }
     }
 
     private void OnHotkeyChanged()
@@ -143,7 +155,7 @@ public partial class HotkeyButton : UserControl
         }
 
         // 处理 Delete 键清除快捷键
-        if (e.Key == Key.Delete)
+        if (e.Key is Key.Delete or Key.Back or Key.Escape or Key.Clear or Key.OemClear or Key.OemBackslash)
         {
             Hotkey = null;
             RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
@@ -155,8 +167,11 @@ public partial class HotkeyButton : UserControl
         // 基于物理键标准化，正确区分主键盘 +/- 与小键盘 +/-（并修正 iOS/macOS 的映射差异）
         var normalizedKey = NormalizeKey(e);
 
-        // 创建新的快捷键
-        var newHotkey = new KeyGesture(normalizedKey, e.KeyModifiers);
+        // 新增：对修饰键应用苹果键盘映射（用于保存）
+        var mappedMods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+
+        // 创建新的快捷键（仅存储逻辑修饰键）
+        var newHotkey = new KeyGesture(normalizedKey, mappedMods);
         
         // 更新快捷键
         Hotkey = newHotkey;
@@ -187,6 +202,8 @@ public partial class HotkeyButton : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         StopCapturing();
+        // 新增：取消订阅
+        AppleKeyboardMapping.MappingChanged -= OnAppleMappingChanged;
         base.OnDetachedFromVisualTree(e);
     }
 
