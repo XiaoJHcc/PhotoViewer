@@ -129,6 +129,57 @@
                     </controls:SortableList.ItemTemplate>
                 </controls:SortableList>
             </Border>
+            
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="2">
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding UseAppleKeyboard}">
+                        使用苹果键盘
+                    </CheckBox>
+
+                    <StackPanel Spacing="8" Margin="40,0,0,0"
+                                IsVisible="{Binding UseAppleKeyboard}">
+                        <!-- Cmd 映射 -->
+                        <Grid ColumnDefinitions="*, Auto, 100" ColumnSpacing="8">
+                            <TextBlock Classes="settings-label secondary">
+                                ⌘ Command
+                            </TextBlock>
+                            <TextBlock Grid.Column="1" Classes="settings-label secondary">
+                                映射至
+                            </TextBlock>
+                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                                      ItemsSource="{Binding AppleMappingTargets}"
+                                      SelectedItem="{Binding MapCommandTarget}" />
+                        </Grid>
+
+                        <!-- Option 映射 -->
+                        <Grid ColumnDefinitions="*, Auto, 100" ColumnSpacing="8">
+                            <TextBlock Classes="settings-label secondary">
+                                ⌥ Option
+                            </TextBlock>
+                            <TextBlock Grid.Column="1" Classes="settings-label secondary">
+                                映射至
+                            </TextBlock>
+                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                                      ItemsSource="{Binding AppleMappingTargets}"
+                                      SelectedItem="{Binding MapOptionTarget}" />
+                        </Grid>
+
+                        <!-- Ctrl 映射（可重复） -->
+                        <Grid ColumnDefinitions="*, Auto, 100" ColumnSpacing="8">
+                            <TextBlock Classes="settings-label secondary">
+                                ⌃ Ctrl
+                            </TextBlock>
+                            <TextBlock Grid.Column="1" Classes="settings-label secondary">
+                                映射至
+                            </TextBlock>
+                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                                      ItemsSource="{Binding AppleMappingTargets}"
+                                      SelectedItem="{Binding MapControlTarget}" />
+                        </Grid>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
         </StackPanel>
     </StackPanel>
 

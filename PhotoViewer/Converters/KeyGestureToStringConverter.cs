@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
+using PhotoViewer.ViewModels; // 读取映射状态
 
 namespace PhotoViewer.Converters;
 
@@ -55,17 +56,20 @@ public class KeyGestureToStringConverter : IValueConverter
 
         var parts = new List<string>();
 
-        // 添加修饰键
-        if (keyGesture.KeyModifiers.HasFlag(KeyModifiers.Control))
-            parts.Add("Ctrl");
-        if (keyGesture.KeyModifiers.HasFlag(KeyModifiers.Alt))
-            parts.Add("Alt");
-        if (keyGesture.KeyModifiers.HasFlag(KeyModifiers.Shift))
-            parts.Add("Shift");
-        if (keyGesture.KeyModifiers.HasFlag(KeyModifiers.Meta))
-            parts.Add("Win");
+        bool hasCtrl = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Control);
+        bool hasAlt  = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Alt);
+        bool hasShift= keyGesture.KeyModifiers.HasFlag(KeyModifiers.Shift);
+        bool hasMeta = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Meta);
 
-        // 添加主键
+        if (hasCtrl)
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Control));
+        if (hasAlt)
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Alt));
+        if (hasShift)
+            parts.Add(AppleKeyboardMapping.GetShiftDisplay()); // 修改：Shift 显示 ⇧（苹果模式）
+        if (hasMeta)
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Meta));
+
         var keyName = GetKeyDisplayName(keyGesture.Key);
         parts.Add(keyName);
 
@@ -92,4 +96,3 @@ public class KeyGestureToStringConverter : IValueConverter
         return keyString;
     }
 }
-
