@@ -152,8 +152,11 @@ public partial class HotkeyButton : UserControl
             return;
         }
 
+        // 基于物理键标准化，正确区分主键盘 +/- 与小键盘 +/-（并修正 iOS/macOS 的映射差异）
+        var normalizedKey = NormalizeKey(e);
+
         // 创建新的快捷键
-        var newHotkey = new KeyGesture(e.Key, e.KeyModifiers);
+        var newHotkey = new KeyGesture(normalizedKey, e.KeyModifiers);
         
         // 更新快捷键
         Hotkey = newHotkey;
@@ -191,5 +194,24 @@ public partial class HotkeyButton : UserControl
     {
         base.OnApplyTemplate(e);
         OnConflictChanged(); // 确保模板应用后状态正确
+    }
+
+    // 使用 PhysicalKey 标准化逻辑键，修复 iOS/macOS 的键位映射问题
+    private static Key NormalizeKey(KeyEventArgs e)
+    {
+        // 优先用物理键定位行列来源
+        switch (e.PhysicalKey)
+        {
+            case PhysicalKey.Equal:           // 主键盘 "="（Shift+"=" 为 "+")
+                return Key.OemPlus;
+            case PhysicalKey.Minus:           // 主键盘 "-"
+                return Key.OemMinus;
+            case PhysicalKey.NumPadAdd:       // 小键盘 "+"
+                return Key.Add;
+            case PhysicalKey.NumPadSubtract:  // 小键盘 "-"
+                return Key.Subtract;
+        }
+
+        return e.Key;
     }
 }

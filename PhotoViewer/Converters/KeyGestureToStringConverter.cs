@@ -69,7 +69,7 @@ public class KeyGestureToStringConverter : IValueConverter
         var keyName = GetKeyDisplayName(keyGesture.Key);
         parts.Add(keyName);
 
-        return string.Join("+", parts);
+        return string.Join(" ", parts);
     }
 
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
