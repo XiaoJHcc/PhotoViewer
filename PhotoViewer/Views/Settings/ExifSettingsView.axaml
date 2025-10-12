@@ -4,7 +4,6 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
-             xmlns:views="clr-namespace:PhotoViewer.Views"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.ExifSettingsView"
              x:DataType="vm:SettingsViewModel">
