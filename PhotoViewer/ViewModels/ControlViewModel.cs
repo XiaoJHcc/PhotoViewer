@@ -7,8 +7,18 @@ using System.Windows.Input;
 using Avalonia.Input;
 using PhotoViewer.Core;
 using ReactiveUI;
+using Avalonia;
+
 
 namespace PhotoViewer.ViewModels;
+
+// 新增：用于携带鼠标位置（ImageView 坐标系）
+public sealed class PointerContext
+{
+    public Vector Center { get; set; }
+    public PointerContext() { }
+    public PointerContext(Vector center) { Center = center; }
+}
 
 public class ControlViewModel : ReactiveObject
 {
@@ -48,37 +58,72 @@ public class ControlViewModel : ReactiveObject
             _ => null
         };
     }
-    
-    private void ExecuteExchange()
-    {
-        Main.CurrentFile = Main.LastFile;
-    }
 
     // 命令
-    public ReactiveCommand<Unit, Unit> OnOpen { get; }
-    public ReactiveCommand<Unit, Unit> OnPrevious { get; }
-    public ReactiveCommand<Unit, Unit> OnNext { get; }
-    public ReactiveCommand<Unit, Unit> OnExchange { get; }
-    public ReactiveCommand<Unit, Unit> OnFit { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomInPreset { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomOutPreset { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomInScale { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomOutScale { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnOpen { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnPrevious { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnNext { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnExchange { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnFit { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnZoomInPreset { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnZoomOutPreset { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnZoomInScale { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnZoomOutScale { get; }
     
     public ControlViewModel(MainViewModel mainViewModel)
     {
         Main = mainViewModel;
         
         // 初始化命令
-        OnOpen = ReactiveCommand.Create(() => { Main.FolderVM.OpenFilePickerAsync(); });
-        OnPrevious = ReactiveCommand.Create(ExecutePrevious);
-        OnNext = ReactiveCommand.Create(ExecuteNext);
-        OnExchange = ReactiveCommand.Create(() => { Main.CurrentFile = Main.LastFile; });
-        OnFit = ReactiveCommand.Create(() => Main.ImageVM.ToggleFit() );
-        OnZoomInPreset = ReactiveCommand.Create(() => Main.ImageVM.ZoomPreset(+1) );
-        OnZoomOutPreset = ReactiveCommand.Create(() => Main.ImageVM.ZoomPreset(-1) );
-        OnZoomInScale = ReactiveCommand.Create(() => Main.ImageVM.ZoomScale(1.25) );
-        OnZoomOutScale = ReactiveCommand.Create(() => Main.ImageVM.ZoomScale(0.8) );
+        OnOpen = ReactiveCommand.Create<PointerContext?>(_ =>
+        {
+            Main.FolderVM.OpenFilePickerAsync();
+        });
+        
+        OnPrevious = ReactiveCommand.Create<PointerContext?>(_ =>
+        {
+            ExecutePrevious();
+        });
+        
+        OnNext = ReactiveCommand.Create<PointerContext?>(_ =>
+        {
+            ExecuteNext();
+        });
+        
+        OnExchange = ReactiveCommand.Create<PointerContext?>(_ =>
+        {
+            Main.CurrentFile = Main.LastFile;
+        });
+        
+        OnFit = ReactiveCommand.Create<PointerContext?>(ctx =>
+        {
+            if (ctx != null) Main.ImageVM.ToggleFit(ctx.Center);
+            else Main.ImageVM.ToggleFit();
+        });
+        
+        OnZoomInPreset = ReactiveCommand.Create<PointerContext?>(ctx =>
+        {
+            if (ctx != null) Main.ImageVM.ZoomPreset(+1, ctx.Center);
+            else Main.ImageVM.ZoomPreset(+1);
+        });
+        
+        OnZoomOutPreset = ReactiveCommand.Create<PointerContext?>(ctx =>
+        {
+            if (ctx != null) Main.ImageVM.ZoomPreset(-1, ctx.Center);
+            else Main.ImageVM.ZoomPreset(-1);
+        });
+        
+        OnZoomInScale = ReactiveCommand.Create<PointerContext?>(ctx =>
+        {
+            if (ctx != null) Main.ImageVM.ZoomScale(1.25, ctx.Center);
+            else Main.ImageVM.ZoomScale(1.25);
+        });
+        
+        OnZoomOutScale = ReactiveCommand.Create<PointerContext?>(ctx =>
+        {
+            if (ctx != null) Main.ImageVM.ZoomScale(0.8, ctx.Center);
+            else Main.ImageVM.ZoomScale(0.8);
+        });
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)
@@ -225,4 +270,3 @@ public class ControlViewModel : ReactiveObject
         }
     }
 }
-
