@@ -49,33 +49,6 @@ public partial class ControlView : UserControl
     {
         if (DataContext is not ControlViewModel viewModel) return;
 
-        // 新增：星级快捷键 (` -> 0, 主键盘1-5 -> 1-5，小键盘0-5 -> 0-5)
-        if (e.KeyModifiers == KeyModifiers.None && viewModel.ShowRating)
-        {
-            int? rating = null;
-            switch (e.Key)
-            {
-                case Key.OemTilde: rating = 0; break;      // ` 键
-                case Key.D1: rating = 1; break;
-                case Key.D2: rating = 2; break;
-                case Key.D3: rating = 3; break;
-                case Key.D4: rating = 4; break;
-                case Key.D5: rating = 5; break;
-                case Key.NumPad0: rating = 0; break;
-                case Key.NumPad1: rating = 1; break;
-                case Key.NumPad2: rating = 2; break;
-                case Key.NumPad3: rating = 3; break;
-                case Key.NumPad4: rating = 4; break;
-                case Key.NumPad5: rating = 5; break;
-            }
-
-            if (rating.HasValue)
-            {
-                viewModel.SetRating(rating.Value);
-                e.Handled = true;
-                return;
-            }
-        }
 
         // 基于 PhysicalKey 标准化当前按键，区分主键盘 +/- 与小键盘 +/-，修复 iOS/macOS 键位混淆
         var normalizedKey = NormalizeKey(e);
@@ -240,4 +213,25 @@ public class ExifValueConverter : IMultiValueConverter
             return "--";
         }
     }
+}
+
+// 新增：将符号字符串拆分为单字符并逆序，用于 Grid 内叠放
+public class SymbolToCharsConverter : IValueConverter
+{
+    public static readonly SymbolToCharsConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var s = value as string;
+        if (string.IsNullOrEmpty(s)) return Array.Empty<string>();
+
+        // 简单按 char 拆分；如需支持复杂合成字形，可在此扩展为 Grapheme 拆分
+        var list = s.ToCharArray().Select(c => c.ToString()).ToList();
+        // 逆序：让原字符串中靠前的字符绘制在最上层（最后添加）
+        list.Reverse();
+        return list;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => throw new NotSupportedException();
 }
