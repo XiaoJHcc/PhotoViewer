@@ -28,7 +28,7 @@
                                 <CheckBox Grid.Column="0" 
                                           IsChecked="{Binding IsEnabled}" 
                                           VerticalAlignment="Center" 
-                                          Margin="0,0,8,0" />
+                                          Margin="0,0,4,0" />
                                 
                                 <!-- 格式信息 -->
                                 <Grid Grid.Column="1" 
