@@ -32,7 +32,7 @@
                    HorizontalAlignment="Center"
                    VerticalAlignment="Center"
                    Foreground="Gray"
-                   FontSize="20"/>
+                   FontSize="16"/>
     </Grid>
     
 </UserControl>
