@@ -79,14 +79,12 @@ public partial class ControlView : UserControl
 
         // 基于 PhysicalKey 标准化当前按键，区分主键盘 +/- 与小键盘 +/-，修复 iOS/macOS 键位混淆
         var normalizedKey = NormalizeKey(e);
-
-        // 新增：应用苹果键盘映射后再匹配
         var mods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
 
-        // 查找匹配的快捷键（包含平台兼容桥接，保证历史错误设置仍可触发）
+        // 仅匹配键盘类手势（鼠标手势在 ImageView 内处理）
         var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h =>
-            AreGestureMatch(h.PrimaryHotkey, normalizedKey, mods) ||
-            AreGestureMatch(h.SecondaryHotkey, normalizedKey, mods));
+            AreKeyGestureMatch(h.PrimaryHotkey, normalizedKey, mods) ||
+            AreKeyGestureMatch(h.SecondaryHotkey, normalizedKey, mods));
 
         if (matchedHotkey != null)
         {
@@ -162,6 +160,17 @@ public partial class ControlView : UserControl
         if (stored.KeyModifiers != mods) return false;
 
         var left = NormalizeKeyForCompare(stored.Key);
+        var right = NormalizeKeyForCompare(normalizedKey);
+        return left == right;
+    }
+
+    // 键盘匹配：仅当存储为键盘手势时才参与
+    private static bool AreKeyGestureMatch(AppGesture? stored, Key normalizedKey, KeyModifiers mods)
+    {
+        if (stored?.Key == null) return false;
+        if (stored.Key.KeyModifiers != mods) return false;
+
+        var left = NormalizeKeyForCompare(stored.Key.Key);
         var right = NormalizeKeyForCompare(normalizedKey);
         return left == right;
     }

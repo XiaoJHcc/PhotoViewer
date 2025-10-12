@@ -30,19 +30,55 @@ public class ControlViewModel : ReactiveObject
 
     // 星级区域的不透明度：有照片时为1.0，无照片时为0.1
     public double StarOpacity => Main.CurrentFile != null ? 1.0 : 0.1;
+    
+    // 根据命令名称获取命令
+    public ICommand? GetCommandByName(string commandName)
+    {
+        return commandName switch
+        {
+            "Open" => OnOpen,
+            "Previous" => OnPrevious,
+            "Next" => OnNext,
+            "Exchange" => OnExchange,
+            "Fit" => OnFit,
+            "ZoomInPreset" => OnZoomInPreset,
+            "ZoomOutPreset" => OnZoomOutPreset,
+            "ZoomInScale" => OnZoomInScale,
+            "ZoomOutScale" => OnZoomOutScale,
+            _ => null
+        };
+    }
+    
+    private void ExecuteExchange()
+    {
+        Main.CurrentFile = Main.LastFile;
+    }
 
+    // 命令
+    public ReactiveCommand<Unit, Unit> OnOpen { get; }
+    public ReactiveCommand<Unit, Unit> OnPrevious { get; }
+    public ReactiveCommand<Unit, Unit> OnNext { get; }
+    public ReactiveCommand<Unit, Unit> OnExchange { get; }
+    public ReactiveCommand<Unit, Unit> OnFit { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomInPreset { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomOutPreset { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomInScale { get; }
+    public ReactiveCommand<Unit, Unit> OnZoomOutScale { get; }
+    
     public ControlViewModel(MainViewModel mainViewModel)
     {
         Main = mainViewModel;
         
         // 初始化命令
-        OnOpen = ReactiveCommand.Create(ExecuteOpen);
+        OnOpen = ReactiveCommand.Create(() => { Main.FolderVM.OpenFilePickerAsync(); });
         OnPrevious = ReactiveCommand.Create(ExecutePrevious);
         OnNext = ReactiveCommand.Create(ExecuteNext);
-        OnExchange = ReactiveCommand.Create(ExecuteExchange);
-        OnFit = ReactiveCommand.Create(ExecuteFit);
-        OnZoomIn = ReactiveCommand.Create(ExecuteZoomIn);
-        OnZoomOut = ReactiveCommand.Create(ExecuteZoomOut);
+        OnExchange = ReactiveCommand.Create(() => { Main.CurrentFile = Main.LastFile; });
+        OnFit = ReactiveCommand.Create(() => Main.ImageVM.ToggleFit() );
+        OnZoomInPreset = ReactiveCommand.Create(() => Main.ImageVM.ZoomPreset(+1) );
+        OnZoomOutPreset = ReactiveCommand.Create(() => Main.ImageVM.ZoomPreset(-1) );
+        OnZoomInScale = ReactiveCommand.Create(() => Main.ImageVM.ZoomScale(1.25) );
+        OnZoomOutScale = ReactiveCommand.Create(() => Main.ImageVM.ZoomScale(0.8) );
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)
@@ -96,43 +132,12 @@ public class ControlViewModel : ReactiveObject
         }
     }
 
-    // 命令
-    public ReactiveCommand<Unit, Unit> OnOpen { get; }
-    public ReactiveCommand<Unit, Unit> OnPrevious { get; }
-    public ReactiveCommand<Unit, Unit> OnNext { get; }
-    public ReactiveCommand<Unit, Unit> OnExchange { get; }
-    public ReactiveCommand<Unit, Unit> OnFit { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomIn { get; }
-    public ReactiveCommand<Unit, Unit> OnZoomOut { get; }
-
     // 启用的控件列表
     public IEnumerable<SettingsViewModel.HotkeyItem> EnabledControls => 
         Main.Settings.Hotkeys.Where(h => h.IsDisplay);
 
     // 所有快捷键（用于全局监听）
     public IEnumerable<SettingsViewModel.HotkeyItem> AllHotkeys => Main.Settings.Hotkeys;
-
-    // 根据命令名称获取命令
-    public ICommand? GetCommandByName(string commandName)
-    {
-        return commandName switch
-        {
-            "Open" => OnOpen,
-            "Previous" => OnPrevious,
-            "Next" => OnNext,
-            "Exchange" => OnExchange,
-            "Fit" => OnFit,
-            "ZoomIn" => OnZoomIn,
-            "ZoomOut" => OnZoomOut,
-            _ => null
-        };
-    }
-
-    private void ExecuteOpen()
-    {
-        // 打开文件
-        Main.FolderVM.OpenFilePickerAsync();
-    }
     
     private void ExecutePrevious()
     {
@@ -154,29 +159,6 @@ public class ControlViewModel : ReactiveObject
             Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex + 1];
             Main.FolderVM.ScrollToCurrent();
         }
-    }
-
-    private void ExecuteExchange()
-    {
-        Main.CurrentFile = Main.LastFile;
-    }
-
-    private void ExecuteFit()
-    {
-        // 缩放适应
-        Main.ImageVM.ToggleFit();
-    }
-
-    private void ExecuteZoomIn()
-    {
-        // 放大
-        Main.ImageVM.ZoomPreset(+1);
-    }
-
-    private void ExecuteZoomOut()
-    {
-        // 缩小
-        Main.ImageVM.ZoomPreset(-1);
     }
 
     /// <summary>

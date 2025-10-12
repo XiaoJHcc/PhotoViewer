@@ -136,12 +136,19 @@ public partial class ImageView : UserControl
     private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
         if (ViewModel == null) return;
+
+        // 新增：先匹配鼠标滚轮快捷键（仅限 ImageView 范围内）
+        var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
+        if (TryExecuteMouseGesture(action, e.KeyModifiers))
+        {
+            e.Handled = true;
+            return;
+        }
         
+        // 未匹配则沿用缩放
         var pointerPosition = e.GetPosition(this);
         var zoomFactor = e.Delta.Y > 0 ? 1.25 : 0.8;
-        
-        ViewModel.Zoom(ViewModel.Scale * zoomFactor, pointerPosition);
-        
+        ViewModel.ZoomTo(ViewModel.Scale * zoomFactor, pointerPosition);
         e.Handled = true;
     }
     
@@ -150,7 +157,36 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
     {
-        // 右键 打开菜单
+        // 新增：先尝试匹配鼠标按键快捷键（仅限鼠标）
+        if (e.Pointer.Type == PointerType.Mouse)
+        {
+            var kind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+            MouseAction? action = kind switch
+            {
+                PointerUpdateKind.LeftButtonPressed => MouseAction.LeftClick,
+                PointerUpdateKind.RightButtonPressed => MouseAction.RightClick,
+                PointerUpdateKind.MiddleButtonPressed => MouseAction.MiddleClick,
+                PointerUpdateKind.XButton1Pressed => MouseAction.XButton1Click,
+                PointerUpdateKind.XButton2Pressed => MouseAction.XButton2Click,
+                _ => null
+            };
+
+            if (action != null)
+            {
+                // 禁止无修饰的 左/右 键作为独立快捷键；其余允许
+                var mappedMods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
+                if (!((action is MouseAction.LeftClick or MouseAction.RightClick) && mappedMods == KeyModifiers.None))
+                {
+                    if (TryExecuteMouseGesture(action.Value, e.KeyModifiers))
+                    {
+                        e.Handled = true;
+                        return;
+                    }
+                }
+            }
+        }
+
+        // 右键 打开菜单（仅当未匹配快捷键时）
         if (e.Properties.IsRightButtonPressed)
         {
             ShowMenuAtPointer();
@@ -244,7 +280,7 @@ public partial class ImageView : UserControl
                 if (_lastDistance > 0)
                 {
                     var scaleChange = distance / _lastDistance;
-                    ViewModel.Zoom(ViewModel.Scale * scaleChange, center);
+                    ViewModel.ZoomTo(ViewModel.Scale * scaleChange, center);
 
                     var centerOffset = center - _lastCenter;
                     ViewModel.Move(centerOffset);
@@ -391,4 +427,28 @@ public partial class ImageView : UserControl
     // 这些逻辑已移到 MainViewModel
 
     #endregion
+
+    /// <summary>
+    /// 在 ImageView 内尝试执行鼠标手势快捷键
+    /// </summary>
+    private bool TryExecuteMouseGesture(MouseAction action, KeyModifiers rawMods)
+    {
+        if (ViewModel?.Main is null) return false;
+
+        // 运行时应用苹果键盘修饰键映射，统一比较口径
+        var mods = AppleKeyboardMapping.ApplyForRuntime(rawMods);
+        var gesture = AppGesture.FromMouse(new MouseGestureEx(action, mods));
+
+        // 根据手势查询配置的命令
+        var cmdName = ViewModel.Main.Settings.GetCommandByGesture(gesture);
+        if (string.IsNullOrEmpty(cmdName)) return false;
+
+        var cmd = ViewModel.Main.ControlVM.GetCommandByName(cmdName);
+        if (cmd?.CanExecute(null) == true)
+        {
+            cmd.Execute(null);
+            return true;
+        }
+        return false;
+    }
 }
