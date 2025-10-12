@@ -15,17 +15,6 @@ public partial class MainView : UserControl
 
         // 监听尺寸变化以检测屏幕方向
         SizeChanged += OnSizeChanged;
-
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            Loaded += (_, _) =>
-            {
-
-                var insetsManager = TopLevel.GetTopLevel(this).InsetsManager;
-                insetsManager.DisplayEdgeToEdgePreference = true;
-                insetsManager.IsSystemBarVisible = false;
-            };
-        }
     }
 
     private void OnSizeChanged(object? sender, SizeChangedEventArgs e)

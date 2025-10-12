@@ -153,7 +153,8 @@
                             Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                       VerticalScrollBarVisibility="{Binding IsVerticalLayout, 
                             Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}, 
-                            ConverterParameter=Reverse}">
+                            ConverterParameter=Reverse}"
+                      MinHeight="148">
             <i:Interaction.Behaviors>
                 <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
             </i:Interaction.Behaviors>
