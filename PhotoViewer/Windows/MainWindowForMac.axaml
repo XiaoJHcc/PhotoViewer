@@ -6,7 +6,37 @@
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="PhotoViewer.Windows.MainWindowForMac"
         Icon="/Assets/icon.ico"
-        Title="PhotoViewer 图片查看器">
+        Title="PhotoViewer 图片查看器"
+        SystemDecorations="Full"
+        ExtendClientAreaToDecorationsHint="True"
+        ExtendClientAreaChromeHints="PreferSystemChrome"
+        ExtendClientAreaTitleBarHeightHint="44"
+        Background="Transparent">
+    
+    <Grid>
+        <!-- 主内容 -->
+        <views:MainView Name="RootMainView" />
         
-        <views:MainView />
+        <!-- 半透明自定义标题栏，初始 44，高度由代码在不同布局下切换为 24/44 -->
+        <Grid Height="44" 
+              VerticalAlignment="Top"
+              x:Name="CustomTitleBar"
+              IsVisible="False"
+              ColumnDefinitions="*,Auto,*">
+            <!-- 左侧拖拽区 -->
+            <Border x:Name="DragZoneLeft"
+                    Grid.Column="0"
+                    Background="#9111" />
+            <!-- 中间空白区：用于避让筛选工具条（仅上中下布局下由代码动态设置宽度） -->
+            <Border x:Name="CenterGap"
+                    Grid.Column="1"
+                    Width="0"
+                    IsHitTestVisible="False" />
+            <!-- 右侧拖拽区 -->
+            <Border x:Name="DragZoneRight"
+                    Grid.Column="2"
+                    Background="#9111" />
+        </Grid>
+
+    </Grid>
 </Window>
