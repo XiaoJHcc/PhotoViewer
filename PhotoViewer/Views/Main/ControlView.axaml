@@ -28,6 +28,10 @@
             <Setter Property="FontSize" Value="18" />
             <Setter Property="FontWeight" Value="Regular" />
             <Setter Property="FontFamily" Value="{StaticResource UiconsFontRegularRounded}" />
+            <!-- 新增：让字符在容器内水平/垂直居中，便于叠放 -->
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="TextAlignment" Value="Center" />
         </Style>
 
         <!-- 星级按钮样式 -->
@@ -258,8 +262,22 @@
                                     ToolTip.Tip="{Binding Tooltip}"
                                     Click="OnControlButtonClick"
                                     Tag="{Binding Command}">
-                                <TextBlock Classes="ControlButtonSymbol"
-                                           Text="{Binding DisplaySymbol}" />
+                                <!-- 修改：将 DisplaySymbol 拆分为字符并在 Grid 中叠放 -->
+                                <ItemsControl ItemsSource="{Binding DisplaySymbol, 
+                                            Converter={x:Static local:SymbolToCharsConverter.Instance}}">
+                                    <ItemsControl.ItemsPanel>
+                                        <!-- Grid 默认将所有子元素放在同一单元格，从而叠放 -->
+                                        <ItemsPanelTemplate>
+                                            <Grid />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Classes="ControlButtonSymbol"
+                                                       Text="{Binding .}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
                             </Button>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>

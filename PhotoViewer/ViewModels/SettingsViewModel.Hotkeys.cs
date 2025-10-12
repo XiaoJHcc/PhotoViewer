@@ -136,6 +136,26 @@ public partial class SettingsViewModel
             new("缩小（比例）", "ZoomOutScale", "\uf94e", "缩小", false, 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, KeyModifiers.Control)), 
                 null),
+
+            // ===== 新增：评分热键（默认不在控制栏显示） =====
+            new("评分 0 星", "SetRating0", "\uf4f4", "0 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.OemTilde)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad0))),
+            new("评分 1 星", "SetRating1", "\uf3ea", "1 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.D1)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad1))),
+            new("评分 2 星", "SetRating2", "\uf3eb", "2 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.D2)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad2))),
+            new("评分 3 星", "SetRating3", "\uf3ec", "3 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.D3)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad3))),
+            new("评分 4 星", "SetRating4", "\uf3ed", "4 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.D4)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad4))),
+            new("评分 5 星", "SetRating5", "\uf3ee", "5 星", false,
+                AppGesture.FromKey(new KeyGesture(Key.D5)), 
+                AppGesture.FromKey(new KeyGesture(Key.NumPad5))),
         };
 
         // 监听集合变化
