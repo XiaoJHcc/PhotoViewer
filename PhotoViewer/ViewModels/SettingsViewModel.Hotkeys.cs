@@ -9,6 +9,87 @@ using System;
 
 namespace PhotoViewer.ViewModels;
 
+// 新增：鼠标动作与通用手势
+public enum MouseAction
+{
+    LeftClick,
+    RightClick,
+    MiddleClick,   // 滚轮按压
+    XButton1Click, // 侧键1
+    XButton2Click, // 侧键2
+    WheelUp,
+    WheelDown
+}
+
+public sealed class MouseGestureEx
+{
+    public MouseAction Action { get; }
+    public KeyModifiers Modifiers { get; }
+
+    public MouseGestureEx(MouseAction action, KeyModifiers modifiers)
+    {
+        Action = action;
+        Modifiers = modifiers;
+    }
+    
+    public MouseGestureEx(MouseAction action)
+    {
+        Action = action;
+        Modifiers = KeyModifiers.None;
+    }
+
+    public string ToDisplayString()
+    {
+        var mods = Modifiers;
+        var parts = new System.Collections.Generic.List<string>();
+        if (mods.HasFlag(KeyModifiers.Shift)) parts.Add(AppleKeyboardMapping.GetShiftDisplay());
+        if (mods.HasFlag(KeyModifiers.Control)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Control));
+        if (mods.HasFlag(KeyModifiers.Alt)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Alt));
+        if (mods.HasFlag(KeyModifiers.Meta)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Meta));
+
+        string actionName = Action switch
+        {
+            MouseAction.LeftClick => "左键",
+            MouseAction.RightClick => "右键",
+            MouseAction.MiddleClick => "中键",
+            MouseAction.XButton1Click => "侧键1",
+            MouseAction.XButton2Click => "侧键2",
+            MouseAction.WheelUp => "滚轮上",
+            MouseAction.WheelDown => "滚轮下",
+            _ => "鼠标"
+        };
+
+        parts.Add(actionName);
+        return string.Join(" ", parts);
+    }
+}
+
+public sealed class AppGesture
+{
+    public KeyGesture? Key { get; }
+    public MouseGestureEx? Mouse { get; }
+
+    private AppGesture(KeyGesture? key, MouseGestureEx? mouse)
+    {
+        Key = key;
+        Mouse = mouse;
+    }
+
+    public static AppGesture FromKey(KeyGesture key) => new AppGesture(key, null);
+    public static AppGesture FromMouse(MouseGestureEx mouse) => new AppGesture(null, mouse);
+
+    public string ToDisplayString()
+    {
+        if (Key != null)
+        {
+            // 交给 Key 转换器（HotkeyButton 内也会处理）
+            return Key.ToString() ?? "未设置";
+        }
+        if (Mouse != null) return Mouse.ToDisplayString();
+        return "未设置";
+    }
+}
+
 public partial class SettingsViewModel
 {
     //////////////
@@ -28,13 +109,33 @@ public partial class SettingsViewModel
         
         Hotkeys = new ObservableCollection<HotkeyItem>
         {
-            new("打开文件", "Open", "\uf6b5", "打开文件", true, new KeyGesture(Key.N, KeyModifiers.Control), new KeyGesture(Key.O, KeyModifiers.Control)),
-            new("上一张", "Previous", "\uf151", "上一张", true, new KeyGesture(Key.Left), new KeyGesture(Key.A)),
-            new("下一张", "Next", "\uf152", "下一张", true, new KeyGesture(Key.Right), new KeyGesture(Key.D)),
-            new("切换上一张", "Exchange", "\uf5ea", "切换上一张", false, new KeyGesture(Key.Z), new KeyGesture(Key.Y)),
-            new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, new KeyGesture(Key.D0, KeyModifiers.Control), new KeyGesture(Key.F)),
-            new("放大", "ZoomIn", "\ufaac", "放大", true, new KeyGesture(Key.OemPlus, KeyModifiers.Control), null),
-            new("缩小", "ZoomOut", "\uf94e", "缩小", true, new KeyGesture(Key.OemMinus, KeyModifiers.Control), null),
+            new("打开文件", "Open", "\uf6b5", "打开文件", true, 
+                AppGesture.FromKey(new KeyGesture(Key.N, KeyModifiers.Control)), 
+                AppGesture.FromKey(new KeyGesture(Key.O, KeyModifiers.Control))),
+            new("上一张", "Previous", "\uf151", "上一张", true, 
+                AppGesture.FromKey(new KeyGesture(Key.Left)), 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp))),
+            new("下一张", "Next", "\uf152", "下一张", true, 
+                AppGesture.FromKey(new KeyGesture(Key.Right)), 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown))),
+            new("切换上一张", "Exchange", "\uf5ea", "切换上一张", false, 
+                AppGesture.FromKey(new KeyGesture(Key.Z)), 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.MiddleClick))),
+            new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, 
+                AppGesture.FromKey(new KeyGesture(Key.D0, KeyModifiers.Control)), 
+                AppGesture.FromKey(new KeyGesture(Key.F))),
+            new("放大（预设）", "ZoomInPreset", "\ufaac", "放大", true, 
+                AppGesture.FromKey(new KeyGesture(Key.OemPlus, KeyModifiers.Control)), 
+                null),
+            new("缩小（预设）", "ZoomOutPreset", "\uf94e", "缩小", true, 
+                AppGesture.FromKey(new KeyGesture(Key.OemMinus, KeyModifiers.Control)), 
+                null),
+            new("放大（比例）", "ZoomInScale", "\ufaac", "放大", false, 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp, KeyModifiers.Control)), 
+                null),
+            new("缩小（比例）", "ZoomOutScale", "\uf94e", "缩小", false, 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, KeyModifiers.Control)), 
+                null),
         };
 
         // 监听集合变化
@@ -104,7 +205,7 @@ public partial class SettingsViewModel
             item.HasSecondaryConflict = false;
         }
 
-        // 检查冲突
+        // 检查冲突（键盘/鼠标类型各自匹配）
         for (int i = 0; i < Hotkeys.Count; i++)
         {
             var current = Hotkeys[i];
@@ -113,31 +214,22 @@ public partial class SettingsViewModel
             {
                 var other = Hotkeys[j];
                 
-                // 检查主要快捷键冲突
-                if (current.PrimaryHotkey != null && other.PrimaryHotkey != null &&
-                    AreKeyGesturesEqual(current.PrimaryHotkey, other.PrimaryHotkey))
+                if (AreGesturesEqual(current.PrimaryHotkey, other.PrimaryHotkey))
                 {
                     current.HasPrimaryConflict = true;
                     other.HasPrimaryConflict = true;
                 }
-                
-                if (current.PrimaryHotkey != null && other.SecondaryHotkey != null &&
-                    AreKeyGesturesEqual(current.PrimaryHotkey, other.SecondaryHotkey))
+                if (AreGesturesEqual(current.PrimaryHotkey, other.SecondaryHotkey))
                 {
                     current.HasPrimaryConflict = true;
                     other.HasSecondaryConflict = true;
                 }
-                
-                // 检查次要快捷键冲突
-                if (current.SecondaryHotkey != null && other.PrimaryHotkey != null &&
-                    AreKeyGesturesEqual(current.SecondaryHotkey, other.PrimaryHotkey))
+                if (AreGesturesEqual(current.SecondaryHotkey, other.PrimaryHotkey))
                 {
                     current.HasSecondaryConflict = true;
                     other.HasPrimaryConflict = true;
                 }
-                
-                if (current.SecondaryHotkey != null && other.SecondaryHotkey != null &&
-                    AreKeyGesturesEqual(current.SecondaryHotkey, other.SecondaryHotkey))
+                if (AreGesturesEqual(current.SecondaryHotkey, other.SecondaryHotkey))
                 {
                     current.HasSecondaryConflict = true;
                     other.HasSecondaryConflict = true;
@@ -146,15 +238,27 @@ public partial class SettingsViewModel
         }
     }
 
-    private bool AreKeyGesturesEqual(KeyGesture? gesture1, KeyGesture? gesture2)
+    // 统一手势比较（同类型才有可比性）
+    private static bool AreGesturesEqual(AppGesture? g1, AppGesture? g2)
     {
-        if (gesture1 == null || gesture2 == null)
-            return false;
+        if (g1 == null || g2 == null) return false;
 
-        var k1 = NormalizeKeyForCompare(gesture1.Key);
-        var k2 = NormalizeKeyForCompare(gesture2.Key);
+        // 键盘
+        if (g1.Key != null && g2.Key != null)
+        {
+            var k1 = NormalizeKeyForCompare(g1.Key.Key);
+            var k2 = NormalizeKeyForCompare(g2.Key.Key);
+            return k1 == k2 && g1.Key.KeyModifiers == g2.Key.KeyModifiers;
+        }
 
-        return k1 == k2 && gesture1.KeyModifiers == gesture2.KeyModifiers;
+        // 鼠标
+        if (g1.Mouse != null && g2.Mouse != null)
+        {
+            return g1.Mouse.Action == g2.Mouse.Action &&
+                   g1.Mouse.Modifiers == g2.Mouse.Modifiers;
+        }
+
+        return false;
     }
 
     // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus，用于冲突检测等价比较
@@ -168,42 +272,21 @@ public partial class SettingsViewModel
         return key;
     }
 
-    // 获取有效的快捷键（用于执行，优先级按列表顺序）
-    public KeyGesture? GetEffectiveHotkey(KeyGesture targetGesture)
+    // 新增：根据通用手势查找命令（用于执行）
+    public string? GetCommandByGesture(AppGesture targetGesture)
     {
         foreach (var hotkeyItem in Hotkeys)
         {
-            if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture))
-                return hotkeyItem.PrimaryHotkey;
-                
-            if (AreKeyGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
-                return hotkeyItem.SecondaryHotkey;
-        }
-        
-        return null;
-    }
-
-    // 根据快捷键获取对应的命令名称（仅返回第一个匹配的）
-    public string? GetCommandByHotkey(KeyGesture targetGesture)
-    {
-        foreach (var hotkeyItem in Hotkeys)
-        {
-            if (AreKeyGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture) ||
-                AreKeyGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
+            if (AreGesturesEqual(hotkeyItem.PrimaryHotkey, targetGesture) ||
+                AreGesturesEqual(hotkeyItem.SecondaryHotkey, targetGesture))
                 return hotkeyItem.Command;
         }
-        
         return null;
     }
 
     // 添加移动命令
     public ReactiveCommand<MoveCommandParameter, Unit> MoveHotkeyCommand { get; private set; }
-
-    private void OnMoveHotkey(MoveCommandParameter parameter)
-    {
-        MoveHotkey(parameter.FromIndex, parameter.ToIndex);
-    }
-
+    private void OnMoveHotkey(MoveCommandParameter parameter) => MoveHotkey(parameter.FromIndex, parameter.ToIndex);
     public void MoveHotkey(int fromIndex, int toIndex)
     {
         if (fromIndex < 0 || fromIndex >= Hotkeys.Count || 
@@ -223,8 +306,8 @@ public partial class SettingsViewModel
         private string _displaySymbol;
         private string _tooltip;
         private bool _isDisplay;
-        private KeyGesture? _primaryHotkey;
-        private KeyGesture? _secondaryHotkey;
+        private AppGesture? _primaryHotkey;
+        private AppGesture? _secondaryHotkey;
 
         public string Name
         {
@@ -256,20 +339,20 @@ public partial class SettingsViewModel
             set => this.RaiseAndSetIfChanged(ref _isDisplay, value);
         }
 
-        public KeyGesture? PrimaryHotkey
+        public AppGesture? PrimaryHotkey
         {
             get => _primaryHotkey;
             set => this.RaiseAndSetIfChanged(ref _primaryHotkey, value);
         }
 
-        public KeyGesture? SecondaryHotkey
+        public AppGesture? SecondaryHotkey
         {
             get => _secondaryHotkey;
             set => this.RaiseAndSetIfChanged(ref _secondaryHotkey, value);
         }
 
-        public string PrimaryHotkeyText => PrimaryHotkey?.ToString() ?? "未设置";
-        public string SecondaryHotkeyText => SecondaryHotkey?.ToString() ?? "未设置";
+        public string PrimaryHotkeyText => PrimaryHotkey?.ToDisplayString() ?? "未设置";
+        public string SecondaryHotkeyText => SecondaryHotkey?.ToDisplayString() ?? "未设置";
 
         private bool _hasPrimaryConflict;
         public bool HasPrimaryConflict
@@ -285,7 +368,7 @@ public partial class SettingsViewModel
             set => this.RaiseAndSetIfChanged(ref _hasSecondaryConflict, value);
         }
 
-        public HotkeyItem(string name, string command, string displaySymbol, string tooltip, bool isDisplay = true, KeyGesture? primaryHotkey = null, KeyGesture? secondaryHotkey = null)
+        public HotkeyItem(string name, string command, string displaySymbol, string tooltip, bool isDisplay = true, AppGesture? primaryHotkey = null, AppGesture? secondaryHotkey = null)
         {
             _name = name;
             _command = command;

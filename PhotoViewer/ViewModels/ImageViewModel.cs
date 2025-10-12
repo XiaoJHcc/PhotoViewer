@@ -177,7 +177,7 @@ public class ImageViewModel : ReactiveObject
     public void ToggleFit(Vector center)
     {
         if (!Fit) FitToScreen();
-        else Zoom(1, center);
+        else ZoomTo(1, center);
     }
     
     public void ToggleFit()
@@ -190,7 +190,7 @@ public class ImageViewModel : ReactiveObject
     /// </summary>
     /// <param name="scale">目标倍率</param>
     /// <param name="center">缩放中心（窗口坐标系）</param>
-    public void Zoom(double scale, Vector center)
+    public void ZoomTo(double scale, Vector center)
     {
         var imageCenter = ImageSize * 0.5 + Translate;
         Translate += (Scale - scale) / Scale * (center - imageCenter);
@@ -199,13 +199,13 @@ public class ImageViewModel : ReactiveObject
         Fit = false;
     }
 
-    public void Zoom(double scale)
+    public void ZoomTo(double scale)
     {
-        Zoom(scale, ViewSize * 0.5);
+        ZoomTo(scale, ViewSize * 0.5);
     }
 
     /// <summary>
-    /// 缩放图片至预设百分比
+    /// 缩放至预设
     /// </summary>
     /// <param name="levelOffset">放大或缩小几挡</param>
     public void ZoomPreset(int levelOffset)
@@ -217,7 +217,7 @@ public class ImageViewModel : ReactiveObject
             for (int i = 0; i < presets.Count && offset != 0; i++)
             {
                 if (presets[i].Value > Scale) offset--;
-                if (offset == 0) Zoom(presets[i].Value);
+                if (offset == 0) ZoomTo(presets[i].Value);
             }
         }
         else if (offset < 0)
@@ -225,9 +225,22 @@ public class ImageViewModel : ReactiveObject
             for (int i = presets.Count - 1; i >= 0 && offset != 0; i--)
             {
                 if (presets[i].Value < Scale) offset++;
-                if (offset == 0) Zoom(presets[i].Value);
+                if (offset == 0) ZoomTo(presets[i].Value);
             }
         }
+    }
+
+    /// <summary>
+    /// 缩放等比
+    /// </summary>
+    public void ZoomScale(double scale, Vector center)
+    {
+        ZoomTo(Scale * scale, center);
+    }
+    
+    public void ZoomScale(double scale)
+    {
+        ZoomTo(Scale * scale);
     }
 
     /// <summary>
@@ -236,6 +249,7 @@ public class ImageViewModel : ReactiveObject
     /// <param name="delta">增量</param>
     public void Move(Vector delta)
     {
+        if (Fit) return; // 适应屏幕时不响应移动
         Translate += delta;
         ClampCenter();
     }

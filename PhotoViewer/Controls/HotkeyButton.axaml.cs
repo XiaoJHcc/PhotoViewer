@@ -12,11 +12,11 @@ namespace PhotoViewer.Controls;
 
 public partial class HotkeyButton : UserControl
 {
-    // 依赖属性：快捷键
-    public static readonly StyledProperty<KeyGesture?> HotkeyProperty =
-        AvaloniaProperty.Register<HotkeyButton, KeyGesture?>(nameof(Hotkey));
+    // 依赖属性：快捷键（更新为通用手势）
+    public static readonly StyledProperty<AppGesture?> HotkeyProperty =
+        AvaloniaProperty.Register<HotkeyButton, AppGesture?>(nameof(Hotkey));
 
-    public KeyGesture? Hotkey
+    public AppGesture? Hotkey
     {
         get => GetValue(HotkeyProperty);
         set => SetValue(HotkeyProperty, value);
@@ -54,6 +54,7 @@ public partial class HotkeyButton : UserControl
 
     private bool _isCapturing = false;
     private static readonly KeyGestureToStringConverter _converter = new();
+    private TopLevel? _topLevel;
 
     static HotkeyButton()
     {
@@ -65,7 +66,6 @@ public partial class HotkeyButton : UserControl
     {
         InitializeComponent();
         UpdateHotkeyText();
-        // 新增：订阅映射变化，及时刷新显示
         AppleKeyboardMapping.MappingChanged += OnAppleMappingChanged;
     }
 
@@ -85,7 +85,15 @@ public partial class HotkeyButton : UserControl
 
     private void UpdateHotkeyText()
     {
-        var displayText = _converter.Convert(Hotkey, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture) as string ?? "未设置";
+        string displayText = "未设置";
+        if (Hotkey?.Key != null)
+        {
+            displayText = _converter.Convert(Hotkey.Key, typeof(string), null, System.Globalization.CultureInfo.CurrentCulture) as string ?? "未设置";
+        }
+        else if (Hotkey?.Mouse != null)
+        {
+            displayText = Hotkey.Mouse.ToDisplayString();
+        }
         HotkeyText = displayText;
         
         // 直接更新按钮内容
@@ -126,11 +134,53 @@ public partial class HotkeyButton : UserControl
         // 获取焦点以接收键盘事件
         this.Focus();
         
-        // 监听全局键盘事件
+        // 监听全局事件（滚轮使用路由事件拦截以阻止 UI 滚动）
         if (this.GetVisualRoot() is TopLevel topLevel)
         {
-            topLevel.KeyDown += OnGlobalKeyDown;
+            _topLevel = topLevel;
+            _topLevel.KeyDown += OnGlobalKeyDown;
+            _topLevel.PointerPressed += OnGlobalPointerPressed;
+            // _topLevel.PointerWheelChanged += OnGlobalPointerWheelChanged; // 改为路由事件拦截
+            _topLevel.AddHandler(InputElement.PointerWheelChangedEvent,
+                                 OnCapturePointerWheelChanged,
+                                 RoutingStrategies.Tunnel | RoutingStrategies.Bubble,
+                                 handledEventsToo: true);
         }
+    }
+
+    private void StopCapturing()
+    {
+        if (!_isCapturing) return;
+
+        _isCapturing = false;
+        HotkeyBtn.Classes.Remove("Capturing");
+        
+        if (_topLevel != null)
+        {
+            _topLevel.KeyDown -= OnGlobalKeyDown;
+            _topLevel.PointerPressed -= OnGlobalPointerPressed;
+            // _topLevel.PointerWheelChanged -= OnGlobalPointerWheelChanged;
+            _topLevel.RemoveHandler(InputElement.PointerWheelChangedEvent, OnCapturePointerWheelChanged);
+            _topLevel = null;
+        }
+        
+        UpdateHotkeyText();
+    }
+
+    // 用路由事件在捕获模式下拦截滚轮（隧道阶段先于 ScrollViewer）
+    private void OnCapturePointerWheelChanged(object? sender, PointerWheelEventArgs e)
+    {
+        if (!_isCapturing) return;
+
+        // 拦截滚动
+        e.Handled = true;
+
+        var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
+        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+
+        Hotkey = AppGesture.FromMouse(new MouseGestureEx(action, mods));
+        RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
+        StopCapturing();
     }
 
     private void OnGlobalKeyDown(object? sender, KeyEventArgs e)
@@ -146,7 +196,7 @@ public partial class HotkeyButton : UserControl
             return;
         }
 
-        // 处理 Escape 键取消输入
+        // 处理 Escape 取消
         if (e.Key == Key.Escape)
         {
             StopCapturing();
@@ -154,8 +204,8 @@ public partial class HotkeyButton : UserControl
             return;
         }
 
-        // 处理 Delete 键清除快捷键
-        if (e.Key is Key.Delete or Key.Back or Key.Escape or Key.Clear or Key.OemClear or Key.OemBackslash)
+        // 删除类键 清除快捷键
+        if (e.Key is Key.Delete or Key.Back or Key.Clear or Key.OemClear or Key.OemBackslash)
         {
             Hotkey = null;
             RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
@@ -166,51 +216,64 @@ public partial class HotkeyButton : UserControl
 
         // 基于物理键标准化，正确区分主键盘 +/- 与小键盘 +/-（并修正 iOS/macOS 的映射差异）
         var normalizedKey = NormalizeKey(e);
-
-        // 新增：对修饰键应用苹果键盘映射（用于保存）
         var mappedMods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
-
-        // 创建新的快捷键（仅存储逻辑修饰键）
-        var newHotkey = new KeyGesture(normalizedKey, mappedMods);
-        
-        // 更新快捷键
-        Hotkey = newHotkey;
-        
-        // 触发事件
+        Hotkey = AppGesture.FromKey(new KeyGesture(normalizedKey, mappedMods));
         RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
-        
         StopCapturing();
         e.Handled = true;
     }
 
-    private void StopCapturing()
+    // 新增：捕获鼠标按压（含侧键/中键）
+    private void OnGlobalPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!_isCapturing) return;
+        if (e.Pointer.Type != PointerType.Mouse) return;
+
+        var kind = e.GetCurrentPoint(this).Properties.PointerUpdateKind;
+        MouseAction? action = kind switch
+        {
+            PointerUpdateKind.LeftButtonPressed => MouseAction.LeftClick,
+            PointerUpdateKind.RightButtonPressed => MouseAction.RightClick,
+            PointerUpdateKind.MiddleButtonPressed => MouseAction.MiddleClick,
+            PointerUpdateKind.XButton1Pressed => MouseAction.XButton1Click,
+            PointerUpdateKind.XButton2Pressed => MouseAction.XButton2Click,
+            _ => null
+        };
+        if (action == null) return;
+
+        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+
+        // 禁止单独左/右键
+        if ((action is MouseAction.LeftClick or MouseAction.RightClick) && mods == KeyModifiers.None)
+        {
+            return;
+        }
+
+        Hotkey = AppGesture.FromMouse(new MouseGestureEx(action.Value, mods));
+        RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
+        StopCapturing();
+        e.Handled = true;
+    }
+
+    // 新增：捕获滚轮上下（保留以兼容性，实际拦截由 OnCapturePointerWheelChanged 完成）
+    private void OnGlobalPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
         if (!_isCapturing) return;
 
-        _isCapturing = false;
-        HotkeyBtn.Classes.Remove("Capturing");
-        
-        // 移除全局键盘事件监听
-        if (this.GetVisualRoot() is TopLevel topLevel)
-        {
-            topLevel.KeyDown -= OnGlobalKeyDown;
-        }
-        
-        UpdateHotkeyText();
+        var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
+        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+
+        Hotkey = AppGesture.FromMouse(new MouseGestureEx(action, mods));
+        RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
+        StopCapturing();
+        e.Handled = true;
     }
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         StopCapturing();
-        // 新增：取消订阅
         AppleKeyboardMapping.MappingChanged -= OnAppleMappingChanged;
         base.OnDetachedFromVisualTree(e);
-    }
-
-    protected override void OnApplyTemplate(TemplateAppliedEventArgs e)
-    {
-        base.OnApplyTemplate(e);
-        OnConflictChanged(); // 确保模板应用后状态正确
     }
 
     // 使用 PhysicalKey 标准化逻辑键，修复 iOS/macOS 的键位映射问题
@@ -219,23 +282,16 @@ public partial class HotkeyButton : UserControl
         // 优先用物理键定位行列来源
         switch (e.PhysicalKey)
         {
-            case PhysicalKey.Equal:           // 主键盘 "="（Shift+"=" 为 "+")
-                return Key.OemPlus;
-            case PhysicalKey.Minus:           // 主键盘 "-"
-                return Key.OemMinus;
-            case PhysicalKey.NumPadAdd:       // 小键盘 "+"
-                return OperatingSystem.IsIOS() ? Key.OemPlus : Key.Add;
-            case PhysicalKey.NumPadSubtract:  // 小键盘 "-"
-                return OperatingSystem.IsIOS() ? Key.OemMinus : Key.Subtract;
+            case PhysicalKey.Equal:           return Key.OemPlus;
+            case PhysicalKey.Minus:           return Key.OemMinus;
+            case PhysicalKey.NumPadAdd:       return OperatingSystem.IsIOS() ? Key.OemPlus : Key.Add;
+            case PhysicalKey.NumPadSubtract:  return OperatingSystem.IsIOS() ? Key.OemMinus : Key.Subtract;
         }
-
-        // iOS 兼容：将 Add/Subtract 归一到 OemPlus/OemMinus，避免把主键盘当作小键盘
         if (OperatingSystem.IsIOS())
         {
             if (e.Key == Key.Add) return Key.OemPlus;
             if (e.Key == Key.Subtract) return Key.OemMinus;
         }
-
         return e.Key;
     }
 }
