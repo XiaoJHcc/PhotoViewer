@@ -12,13 +12,14 @@
         <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding !IsHorizontalLayout}">
             <!-- 顶部：缩略图栏 -->
             <Border
+                x:Name="TopThumbHost"
                 Grid.Row="0"
                 Margin="-100, -100, -100, 0"
                 Padding="100, 100, 100, 0"
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="0,0,0,1">
-                <views:ThumbnailView DataContext="{Binding FolderVM}" />
+                <views:ThumbnailView x:Name="TopThumbnailView" DataContext="{Binding FolderVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->
@@ -43,13 +44,14 @@
         <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding IsHorizontalLayout}">
             <!-- 左侧：缩略图栏 -->
             <Border
+                x:Name="LeftThumbHost"
                 Grid.Column="0"
                 Margin="-100, -100, 0, -100"
                 Padding="100, 100, 0, 100"
                 Background="#111111"
                 BorderBrush="#333333"
                 BorderThickness="0,0,1,0">
-                <views:ThumbnailView DataContext="{Binding FolderVM}" />
+                <views:ThumbnailView x:Name="LeftThumbnailView" DataContext="{Binding FolderVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->
