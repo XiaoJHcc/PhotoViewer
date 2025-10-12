@@ -137,19 +137,13 @@ public partial class ImageView : UserControl
     {
         if (ViewModel == null) return;
 
-        // 新增：先匹配鼠标滚轮快捷键（仅限 ImageView 范围内）
+        // 匹配鼠标滚轮快捷键（仅限 ImageView 范围内）
         var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
-        if (TryExecuteMouseGesture(action, e.KeyModifiers))
+        var pos = e.GetPosition(this);
+        if (TryExecuteMouseGesture(action, e.KeyModifiers, pos))
         {
             e.Handled = true;
-            return;
         }
-        
-        // 未匹配则沿用缩放
-        var pointerPosition = e.GetPosition(this);
-        var zoomFactor = e.Delta.Y > 0 ? 1.25 : 0.8;
-        ViewModel.ZoomTo(ViewModel.Scale * zoomFactor, pointerPosition);
-        e.Handled = true;
     }
     
     /// <summary>
@@ -177,7 +171,8 @@ public partial class ImageView : UserControl
                 var mappedMods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
                 if (!((action is MouseAction.LeftClick or MouseAction.RightClick) && mappedMods == KeyModifiers.None))
                 {
-                    if (TryExecuteMouseGesture(action.Value, e.KeyModifiers))
+                    var pos = e.GetPosition(this);
+                    if (TryExecuteMouseGesture(action.Value, e.KeyModifiers, pos))
                     {
                         e.Handled = true;
                         return;
@@ -429,9 +424,9 @@ public partial class ImageView : UserControl
     #endregion
 
     /// <summary>
-    /// 在 ImageView 内尝试执行鼠标手势快捷键
+    /// 在 ImageView 内尝试执行鼠标手势快捷键（携带鼠标位置）
     /// </summary>
-    private bool TryExecuteMouseGesture(MouseAction action, KeyModifiers rawMods)
+    private bool TryExecuteMouseGesture(MouseAction action, KeyModifiers rawMods, Point position)
     {
         if (ViewModel?.Main is null) return false;
 
@@ -446,7 +441,8 @@ public partial class ImageView : UserControl
         var cmd = ViewModel.Main.ControlVM.GetCommandByName(cmdName);
         if (cmd?.CanExecute(null) == true)
         {
-            cmd.Execute(null);
+            var ctx = new PointerContext(new Vector(position.X, position.Y));
+            cmd.Execute(ctx);
             return true;
         }
         return false;

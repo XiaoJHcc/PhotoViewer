@@ -210,6 +210,16 @@ public class ImageViewModel : ReactiveObject
     /// <param name="levelOffset">放大或缩小几挡</param>
     public void ZoomPreset(int levelOffset)
     {
+        ZoomPreset(levelOffset, ViewSize * 0.5);
+    }
+
+    /// <summary>
+    /// 缩放至预设（带中心）
+    /// </summary>
+    /// <param name="levelOffset">放大或缩小几挡</param>
+    /// <param name="center">缩放中心（窗口坐标系）</param>
+    public void ZoomPreset(int levelOffset, Vector center)
+    {
         var presets = Main.Settings.ScalePresets;
         var offset = levelOffset;
         if (offset > 0)
@@ -217,7 +227,7 @@ public class ImageViewModel : ReactiveObject
             for (int i = 0; i < presets.Count && offset != 0; i++)
             {
                 if (presets[i].Value > Scale) offset--;
-                if (offset == 0) ZoomTo(presets[i].Value);
+                if (offset == 0) ZoomTo(presets[i].Value, center);
             }
         }
         else if (offset < 0)
@@ -225,7 +235,7 @@ public class ImageViewModel : ReactiveObject
             for (int i = presets.Count - 1; i >= 0 && offset != 0; i--)
             {
                 if (presets[i].Value < Scale) offset++;
-                if (offset == 0) ZoomTo(presets[i].Value);
+                if (offset == 0) ZoomTo(presets[i].Value, center);
             }
         }
     }
