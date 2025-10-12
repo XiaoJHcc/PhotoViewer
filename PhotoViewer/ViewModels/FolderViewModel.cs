@@ -353,6 +353,13 @@ public class FolderViewModel : ReactiveObject
 
     #region LoadFolder
     
+    private string _folderName = "";
+    public string FolderName
+    {
+        get => _folderName;
+        set => this.RaiseAndSetIfChanged(ref _folderName, value);
+    }
+    
     // 图片加载完成后 调用其他逻辑
     public async Task LoadNewImageFolder(IStorageFile file)
     {
@@ -360,6 +367,7 @@ public class FolderViewModel : ReactiveObject
         if (folder == null || folder == _currentFolder) return;
 
         Main.CurrentFile = new ImageFile(file);
+        FolderName = folder.Name;
         
         // 优先加载当前图片的 EXIF 数据，暂不加载缩略图（由可见性检测触发）
         _ = Task.Run(async () => await Main.CurrentFile.LoadExifDataAsync());

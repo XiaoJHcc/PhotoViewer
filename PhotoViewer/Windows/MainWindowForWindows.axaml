@@ -20,54 +20,62 @@
         <!-- 标题栏按钮样式 -->
         <Style Selector="Button.TitleBtn">
             <Setter Property="FontFamily" Value="{StaticResource UiconsFontRegularRounded}" />
-            <Setter Property="Background" Value="Transparent"/>
             <Setter Property="BorderBrush" Value="Transparent"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Foreground" Value="White"/>
-            <Setter Property="Width" Value="48"/>
-            <Setter Property="Height" Value="36"/>
+            <Setter Property="Width" Value="36"/>
+            <Setter Property="Height" Value="32"/>
+            <Setter Property="Margin" Value="4,8,4,8"/>
             <Setter Property="FontSize" Value="12"/>
-        </Style>
-        <Style Selector="Button.TitleBtn:pointerover">
-            <Setter Property="Background" Value="#33FFFFFF"/>
-        </Style>
-        <Style Selector="Button.TitleBtn:pressed">
-            <Setter Property="Background" Value="#55FFFFFF"/>
-        </Style>
-        <Style Selector="Border#CustomTitleBar">
-            <Setter Property="IsHitTestVisible" Value="False"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
         </Style>
     </Window.Styles>
 
     <Grid>
         <!-- 原主内容 -->
-        <views:MainView />
+        <views:MainView Name="RootMainView" />
 
-        <!-- 自定义标题栏 (默认隐藏) -->
-        <Border x:Name="CustomTitleBar"
-                Height="36"
+        <!-- 左侧标题栏覆盖区：用于拖拽与标题文本（中间留空，不覆盖筛选栏） -->
+        <Border Name="LeftTitleBar"
+                Height="48"
                 VerticalAlignment="Top"
+                HorizontalAlignment="Left"
                 Opacity="0"
-                Background="#444">
-            <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" Margin="8,0,4,0">
-                <Panel PointerPressed="TitleBar_PointerPressed" Background="Transparent">
-                    <TextBlock Text="{Binding Title, FallbackValue=PhotoViewer 图片查看器}"
-                               VerticalAlignment="Center"
-                               Foreground="White"
-                               Opacity="0.85"
-                               Margin="4,0,0,0"/>
-                </Panel>
+                Background="#6111"
+                PointerPressed="TitleBar_PointerPressed">
+            <Grid Margin="8,0,4,0">
+                <TextBlock Text="{Binding Title, FallbackValue=PhotoViewer 图片查看器}"
+                           VerticalAlignment="Center"
+                           Foreground="White"
+                           Opacity="0.85"
+                           Margin="4,0,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- 右侧标题栏覆盖区：扩展至中间空隙右侧全部区域；区域内与按钮上都可拖拽 -->
+        <Border Name="RightTitleBar"
+                Height="48"
+                VerticalAlignment="Top"
+                HorizontalAlignment="Right"
+                Opacity="0"
+                Background="Transparent"
+                PointerPressed="TitleBar_PointerPressed">
+            <StackPanel Name="RightButtonsHost"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,0,4,0"
+                        PointerPressed="TitleBar_PointerPressed">
                 <!-- 最小化 -->
-                <Button Grid.Column="1" x:Name="BtnMin" Classes="TitleBtn" Content="&#xf94e;"
+                <Button Name="BtnMin" Classes="TitleBtn" Content="&#xf94e;"
                         Click="BtnMin_Click" ToolTip.Tip="最小化"/>
                 <!-- 最大化 / 还原 -->
-                <Button Grid.Column="2" x:Name="BtnMax" Classes="TitleBtn" Content="&#xfcd4;"
-                        Click="BtnMax_Click" ToolTip.Tip="最大化/还原"/>
+                <Button Name="BtnMax" Classes="TitleBtn" Content="&#xfcd4;"
+                        Click="BtnMax_Click" ToolTip.Tip="最大化"/>
                 <!-- 全屏 / 退出全屏 -->
-                <Button Grid.Column="3" x:Name="BtnFull" Classes="TitleBtn" Content="&#xf5ef;"
-                        Click="BtnFull_Click" ToolTip.Tip="全屏/退出全屏"/>
+                <Button Name="BtnFull" Classes="TitleBtn" Content="&#xf5ef;"
+                        Click="BtnFull_Click" ToolTip.Tip="全屏"/>
                 <!-- 关闭 -->
-                <Button Grid.Column="4" x:Name="BtnClose" Classes="TitleBtn" Content="&#xf4f7;"
+                <Button Name="BtnClose" Classes="TitleBtn" Content="&#xf4f7;"
                         Click="BtnClose_Click" ToolTip.Tip="关闭">
                     <Button.Styles>
                         <Style Selector="Button:pointerover /template/ ContentPresenter">
@@ -75,7 +83,7 @@
                         </Style>
                     </Button.Styles>
                 </Button>
-            </Grid>
+            </StackPanel>
         </Border>
     </Grid>
 </Window>

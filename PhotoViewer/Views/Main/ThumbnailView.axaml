@@ -38,6 +38,8 @@
     <UserControl.Styles>
         <!-- 下拉样式 -->
         <Style Selector="ComboBox">
+            <Setter Property="Width" Value="90" />
+            <Setter Property="FontSize" Value="13" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="BorderBrush" Value="#444" />
             <Setter Property="CornerRadius" Value="6" />
@@ -79,14 +81,26 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <!-- 排序工具栏 -->
-        <StackPanel Grid.Row="0"
+        <StackPanel x:Name="FilterBarPanel"
+                    Grid.Row="0"
                     Spacing="5"
                     Margin="10"
                     HorizontalAlignment="Center"
                     Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+
+            <!-- 文件夹名 -->
+            <!-- <TextBlock Text="{Binding FolderName}" -->
+            <!--            HorizontalAlignment="Center" -->
+            <!--            VerticalAlignment="Center" -->
+            <!--            Foreground="#DDD" -->
+            <!--            FontSize="12" -->
+            <!--            MaxWidth="90"  -->
+            <!--            TextWrapping="Wrap" /> -->
+            
             <!-- 排序方式下拉框 -->
             <ComboBox Name="SortByComboBox"
                       ItemsSource="{Binding SortModes}"
@@ -126,6 +140,7 @@
 
             <!-- 筛选后计数 -->
             <TextBlock Text="{Binding FilteredCount, StringFormat='共 {0} 张'}"
+                       HorizontalAlignment="Center"
                        VerticalAlignment="Center"
                        Foreground="#DDD"
                        FontSize="12"/>
@@ -292,5 +307,6 @@
                 </ItemsControl.ItemTemplate>
             </ItemsControl>
         </ScrollViewer>
+        
     </Grid>
 </UserControl>
