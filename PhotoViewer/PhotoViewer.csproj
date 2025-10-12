@@ -82,6 +82,10 @@
         <DependentUpon>MainWindowForMac.axaml</DependentUpon>
         <SubType>Code</SubType>
       </Compile>
+      <Compile Update="Views\Settings\ExifSettingsView.axaml.cs">
+        <DependentUpon>ExifSettingsView.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
     </ItemGroup>
 
     <ItemGroup>

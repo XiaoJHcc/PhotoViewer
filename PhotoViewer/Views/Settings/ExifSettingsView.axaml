@@ -1,0 +1,71 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             xmlns:views="clr-namespace:PhotoViewer.Views"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
+             x:Class="PhotoViewer.Views.ExifSettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+
+    <StackPanel Background="#333">
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
+                EXIF 显示/收纳
+            </TextBlock>
+            <Border Classes="settings-card">
+                <controls:SortableList ItemsSource="{Binding ExifDisplayItems}"
+                                       MoveCommand="{Binding MoveExifDisplayCommand}">
+                    <controls:SortableList.ItemTemplate>
+                        <DataTemplate DataType="vm:SettingsViewModel+ExifDisplayItem">
+                            <StackPanel Orientation="Horizontal">
+                                <!-- 勾选框 -->
+                                <CheckBox IsChecked="{Binding IsEnabled}"
+                                          VerticalAlignment="Center"
+                                          Margin="0,0,4,0" />
+
+                                <!-- EXIF 名称 -->
+                                <TextBlock Text="{Binding DisplayName}"
+                                           VerticalAlignment="Center"
+                                           FontWeight="Medium"
+                                           FontSize="13"
+                                           Margin="0,0,8,0" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </controls:SortableList.ItemTemplate>
+                </controls:SortableList>
+            </Border>
+            
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="2">
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding ShowRating}">
+                        显示星级评分
+                    </CheckBox>
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding SafeSetRating}">
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock Classes="settings-label">
+                                安全修改文件星级
+                            </TextBlock>
+                            <TextBlock Classes="settings-description">
+                                检验文件字节变化再写回，降低损坏原文件概率
+                            </TextBlock>
+                            <TextBlock Classes="settings-description"
+                                       IsVisible="{Binding IsAndroid}">
+                                安卓平台通过 USB 连接相机时可能存在写入延迟，无论是否开启安全修改，都请等待相机写卡灯闪烁后再移除 USB 连接
+                            </TextBlock>
+                        </StackPanel>
+                    </CheckBox>
+                </StackPanel>
+            </Border>
+            
+        </StackPanel>
+    </StackPanel>
+
+</UserControl>

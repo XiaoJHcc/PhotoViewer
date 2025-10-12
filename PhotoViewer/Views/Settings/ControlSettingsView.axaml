@@ -21,6 +21,7 @@
             <Border Classes="settings-card">
                 <StackPanel Spacing="8">
                     <ComboBox Classes="settings-combobox" 
+                              Height="44"
                               ItemsSource="{Binding LayoutModes}"
                               SelectedValue="{Binding LayoutMode}"
                               SelectedValueBinding="{Binding Value}">
@@ -39,57 +40,7 @@
                     </ComboBox>
                 </StackPanel>
             </Border>
-
-            <TextBlock Classes="settings-title">
-                EXIF 显示/收纳
-            </TextBlock>
-            <Border Classes="settings-card">
-                <controls:SortableList ItemsSource="{Binding ExifDisplayItems}"
-                                       MoveCommand="{Binding MoveExifDisplayCommand}">
-                    <controls:SortableList.ItemTemplate>
-                        <DataTemplate DataType="vm:SettingsViewModel+ExifDisplayItem">
-                            <StackPanel Orientation="Horizontal">
-                                <!-- 勾选框 -->
-                                <CheckBox IsChecked="{Binding IsEnabled}"
-                                          VerticalAlignment="Center"
-                                          Margin="0,0,12,0" />
-
-                                <!-- EXIF 名称 -->
-                                <TextBlock Text="{Binding DisplayName}"
-                                           VerticalAlignment="Center"
-                                           FontWeight="Medium"
-                                           FontSize="13"
-                                           Margin="0,0,12,0" />
-                            </StackPanel>
-                        </DataTemplate>
-                    </controls:SortableList.ItemTemplate>
-                </controls:SortableList>
-            </Border>
             
-            <Border Classes="settings-card">
-                <StackPanel Spacing="8" Margin="2">
-                    <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding ShowRating}">
-                        显示星级评分
-                    </CheckBox>
-                    <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding SafeSetRating}">
-                        <StackPanel Orientation="Vertical">
-                            <TextBlock Classes="settings-label">
-                                安全修改文件星级
-                            </TextBlock>
-                            <TextBlock Classes="settings-description">
-                                检验文件字节变化再写回，降低损坏原文件概率
-                            </TextBlock>
-                            <TextBlock Classes="settings-description"
-                                       IsVisible="{Binding IsAndroid}">
-                                安卓平台通过 USB 连接相机时可能存在写入延迟，无论是否开启安全修改，都请等待相机写卡灯闪烁后再移除 USB 连接
-                            </TextBlock>
-                        </StackPanel>
-                    </CheckBox>
-                </StackPanel>
-            </Border>
-
             <TextBlock Classes="settings-title">
                 控制栏功能/快捷键
             </TextBlock>
@@ -103,14 +54,14 @@
                                 <CheckBox Grid.Column="0"
                                           IsChecked="{Binding IsDisplay}"
                                           VerticalAlignment="Center"
-                                          Margin="0,0,12,0" />
+                                          Margin="0,0,4,0" />
 
                                 <!-- 功能名称 -->
                                 <TextBlock Grid.Column="1"
                                            Text="{Binding Name}"
                                            VerticalAlignment="Center"
                                            FontWeight="Medium"
-                                           Margin="0,0,12,0" />
+                                           Margin="0,0,8,0" />
 
                                 <!-- 主要快捷键 -->
                                 <controls:HotkeyButton Grid.Column="2"
@@ -147,7 +98,7 @@
                             <TextBlock Grid.Column="1" Classes="settings-label secondary">
                                 映射至
                             </TextBlock>
-                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                            <ComboBox Grid.Column="2" Classes="settings-combobox"
                                       ItemsSource="{Binding AppleMappingTargets}"
                                       SelectedItem="{Binding MapCommandTarget}" />
                         </Grid>
@@ -160,7 +111,7 @@
                             <TextBlock Grid.Column="1" Classes="settings-label secondary">
                                 映射至
                             </TextBlock>
-                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                            <ComboBox Grid.Column="2" Classes="settings-combobox"
                                       ItemsSource="{Binding AppleMappingTargets}"
                                       SelectedItem="{Binding MapOptionTarget}" />
                         </Grid>
@@ -173,7 +124,7 @@
                             <TextBlock Grid.Column="1" Classes="settings-label secondary">
                                 映射至
                             </TextBlock>
-                            <ComboBox Grid.Column="2" HorizontalAlignment="Stretch" Height="16"
+                            <ComboBox Grid.Column="2" Classes="settings-combobox"
                                       ItemsSource="{Binding AppleMappingTargets}"
                                       SelectedItem="{Binding MapControlTarget}" />
                         </Grid>

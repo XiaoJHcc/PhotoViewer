@@ -38,6 +38,7 @@
         <!-- 行文字样式 -->
         <Style Selector="TextBlock.settings-label">
             <Setter Property="Margin" Value="0, 4, 0, 4" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
         <Style Selector="TextBlock.settings-label.secondary">
             <Setter Property="Foreground" Value="#ccc" />
@@ -52,9 +53,8 @@
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
         
-        <!-- 下拉行样式 -->
+        <!-- 下拉样式 -->
         <Style Selector="ComboBox.settings-combobox">
-            <Setter Property="MinHeight" Value="44" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="BorderBrush" Value="#444" />
             <Setter Property="CornerRadius" Value="6" />
@@ -99,6 +99,12 @@
         <TabItem Header="控制">
             <ScrollViewer>
                 <views:ControlSettingsView />
+            </ScrollViewer>
+        </TabItem>
+        
+        <TabItem Header="EXIF">
+            <ScrollViewer>
+                <views:ExifSettingsView />
             </ScrollViewer>
         </TabItem>
 
