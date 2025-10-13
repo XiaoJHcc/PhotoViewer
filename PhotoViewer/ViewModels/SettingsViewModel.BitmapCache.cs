@@ -49,7 +49,7 @@ public partial class SettingsViewModel
             MemoryBudgetInfo = "设备内存上限: 未知";
         }
 
-        // 订阅内存告警事件：更新 UI 上的 MemoryBudgetInfo
+        // 订阅内存告警事件：仅显示触发时快照（大小、数量、时间）
         MessageBus.Current
             .Listen<BitmapLoader.MemoryWarningEvent>()
             .ObserveOn(RxApp.MainThreadScheduler)
@@ -58,7 +58,7 @@ public partial class SettingsViewModel
                 var iosNote = IsIOS ? "\niOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
                 MemoryBudgetInfo =
                     $"设备内存上限: {_systemMemoryLimitMB} MB{iosNote}\n" +
-                    $"上次系统内存告警：缓存 {evt.beforeMB} MB -> {evt.afterMB} MB @ {evt.time:HH:mm:ss}";
+                    $"上次系统内存告警：缓存 {evt.sizeMB} MB, {evt.count} 项 @ {evt.time:HH:mm:ss}";
             });
 
         // 初始化三个预载滑条的 百分比 backing 字段（0~33.3333），确保 UI 初始位置正确
