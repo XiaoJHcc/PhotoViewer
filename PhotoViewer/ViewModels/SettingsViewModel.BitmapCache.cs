@@ -38,7 +38,7 @@ public partial class SettingsViewModel
             MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
             if (IsIOS)
             {
-                MemoryBudgetInfo += "\niOS 内存限制更加严格，如遇闪退请调小限值";
+                MemoryBudgetInfo += " / iOS 内存限制更加严格，如遇闪退请调小限值";
             }
         }
         catch (Exception ex)
@@ -55,9 +55,9 @@ public partial class SettingsViewModel
             .ObserveOn(RxApp.MainThreadScheduler)
             .Subscribe(evt =>
             {
-                var iosNote = IsIOS ? "\niOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
+                var iosNote = IsIOS ? " / iOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
                 MemoryBudgetInfo =
-                    $"设备内存上限: {_systemMemoryLimitMB} MB{iosNote}\n" +
+                    $"设备内存上限: {_systemMemoryLimitMB} MB{iosNote} / " +
                     $"上次系统内存告警：缓存 {evt.sizeMB} MB, {evt.count} 项 @ {evt.time:HH:mm:ss}";
             });
 
@@ -97,16 +97,17 @@ public partial class SettingsViewModel
             .Subscribe(v =>
             {
                 BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
-                
                 // 计算当前内存能够满足多少张照片
-                BitmapCacheCountInfo = "当前内存设置下可缓存的照片数量上限: \n24MP < " + v/(24*4) + " 张，33MP < " + v/(33*4) + " 张，42MP < " + v/(42*4) + " 张，61MP < " + v/(61*4) + " 张";
+                this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
             });
 
         // 新增：监听“忽略透明度”设置变化同步到 BitmapLoader
-        this.WhenAnyValue(v => v.IgnoreTransparency)
+        this.WhenAnyValue(v => v.IgnoreAlpha)
             .Subscribe(v =>
             {
                 BitmapLoader.IgnoreAlpha = v;
+                // 计算当前内存能够满足多少张照片
+                this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
             });
     }
     
@@ -140,7 +141,7 @@ public partial class SettingsViewModel
     private double _preloadBackwardPercent;
     private double _visibleCenterPreloadPercent;
 
-    private int _bitmapCacheMaxCount = 30;
+    private int _bitmapCacheMaxCount = 40;
     public int BitmapCacheMaxCount
     {
         get => _bitmapCacheMaxCount;
@@ -148,6 +149,7 @@ public partial class SettingsViewModel
         {
             this.RaiseAndSetIfChanged(ref _bitmapCacheMaxCount, value < 1 ? 1 : value);
             this.RaisePropertyChanged(nameof(BitmapCacheMaxCountExp));
+            this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
         }
     }
     // 0~1：1~400 的指数映射
@@ -163,15 +165,15 @@ public partial class SettingsViewModel
         get => _bitmapCacheMaxMemory;
         set
         {
-            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Max(256, value));
+            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Max(512, value));
             this.RaisePropertyChanged(nameof(BitmapCacheMaxMemoryExp));
         }
     }
-    // 0~1：256~32768 的指数映射
+    // 0~1：512~32768 的指数映射
     public double BitmapCacheMaxMemoryExp
     {
-        get => ToExp(BitmapCacheMaxMemory, 256, 32768);
-        set => BitmapCacheMaxMemory = FromExp(value, 256, 32768);
+        get => ToExp(BitmapCacheMaxMemory, 512, 32768);
+        set => BitmapCacheMaxMemory = FromExp(value, 512, 32768);
     }
 
     private string _memoryBudgetInfo = string.Empty;
@@ -180,12 +182,25 @@ public partial class SettingsViewModel
         get => _memoryBudgetInfo;
         private set => this.RaiseAndSetIfChanged(ref _memoryBudgetInfo, value);
     }
+
+    // 忽略透明度通道
+    private bool _ignoreAlpha = true;
+    public bool IgnoreAlpha
+    {
+        get => _ignoreAlpha;
+        set => this.RaiseAndSetIfChanged(ref _ignoreAlpha, value);
+    }
     
-    private string _bitmapCacheCountInfo = string.Empty;
     public string BitmapCacheCountInfo
     {
-        get => _bitmapCacheCountInfo;
-        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfo, value);
+        get
+        {
+            var bit = IgnoreAlpha ? 3 : 4;
+            var mp = BitmapCacheMaxMemory / (bit * BitmapCacheMaxCount);
+            if (mp < 1) return "提示：需要降低缓存数量或增加内存上限";
+            if (mp < 8) return "当前设置仅适合浏览 " + mp + "00 万像素照片";
+            return "当前设置适合浏览 " + mp + "00 万像素照片";
+        }
     }
 
     private int _preloadMaximum = 10;
@@ -342,13 +357,5 @@ public partial class SettingsViewModel
     {
         get => ToExp(PreloadParallelism, 1, 32);
         set => PreloadParallelism = FromExp(value, 1, 32);
-    }
-
-    // 新增：忽略透明度（默认关闭）
-    private bool _ignoreTransparency = false;
-    public bool IgnoreTransparency
-    {
-        get => _ignoreTransparency;
-        set => this.RaiseAndSetIfChanged(ref _ignoreTransparency, value);
     }
 }

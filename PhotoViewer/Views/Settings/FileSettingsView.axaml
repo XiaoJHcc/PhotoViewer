@@ -102,6 +102,15 @@
                                Margin="8, 0, 8, 0"
                                Text="{Binding MemoryBudgetInfo}" />
                     
+                    <!-- 忽略透明度 -->
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding IgnoreAlpha}">
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock Classes="settings-label">忽略透明度通道</TextBlock>
+                            <TextBlock Classes="settings-description">每张照片可降低 25% 内存占用</TextBlock>
+                        </StackPanel>
+                    </CheckBox>
+                    
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
                         <TextBlock Classes="settings-label" Text="缓存数量上限" />
@@ -157,14 +166,6 @@
                                  Text="{Binding VisibleCenterDelayMs}" />
                     </Grid>
 
-                    <!-- 新增：忽略透明度 -->
-                    <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding IgnoreTransparency}">
-                        <StackPanel Orientation="Vertical">
-                            <TextBlock Classes="settings-label">忽略透明度</TextBlock>
-                            <TextBlock Classes="settings-description">有助于压缩内存（RGB24 代替 RGBA8888）</TextBlock>
-                        </StackPanel>
-                    </CheckBox>
                 </StackPanel>
             </Border>
         </StackPanel>
