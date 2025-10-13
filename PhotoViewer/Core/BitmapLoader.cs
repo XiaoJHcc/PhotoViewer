@@ -678,23 +678,46 @@ public static class BitmapLoader
         return (count, size, info);
     }
 
-    // 内存告警事件载体（供 MessageBus 广播用）
-    public readonly record struct MemoryWarningEvent(long beforeMB, long afterMB, DateTimeOffset time);
+    // 内存告警事件载体（UI 仅展示触发时的大小、数量与时间）
+    public readonly record struct MemoryWarningEvent(long sizeMB, int count, DateTimeOffset time);
 
     /// <summary>
     /// 系统内存告警：按 LRU 精简缓存至目标上限占比（默认 50%），返回 (beforeBytes, afterBytes)。
+    /// 复用 LRU 公共方法，减少重复代码。
     /// </summary>
     public static (long beforeBytes, long afterBytes) TrimOnMemoryWarning(double targetRatio = 0.5)
     {
         targetRatio = Math.Clamp(targetRatio, 0.1, 0.9);
+        var targetBytes = (long)(MaxCacheSize * targetRatio);
+        var (before, _, after) = LruRemoveToSize(targetBytes);
+        return (before, after);
+    }
+
+    /// <summary>
+    /// 按“当前缓存大小的比例”清理（用于系统告警：清理到触发时缓存大小的 80%）。
+    /// 返回 (beforeBytes, beforeCount, afterBytes)。
+    /// </summary>
+    public static (long beforeBytes, int beforeCount, long afterBytes) TrimToCurrentRatio(double targetCurrentRatio)
+    {
+        targetCurrentRatio = Math.Clamp(targetCurrentRatio, 0.1, 0.95);
+        var snapshot = CurrentCacheSize; // 注意：最终目标在锁内再计算一次，避免竞争
+        var targetBytes = (long)(snapshot * targetCurrentRatio);
+        return LruRemoveToSize(targetBytes);
+    }
+
+    /// <summary>
+    /// 公共 LRU 清理：按最后访问时间升序移除，直到当前大小 <= targetBytes。
+    /// 返回 (beforeBytes, beforeCount, afterBytes)。
+    /// </summary>
+    private static (long beforeBytes, int beforeCount, long afterBytes) LruRemoveToSize(long targetBytes)
+    {
         lock (_cleanupLock)
         {
             var before = CurrentCacheSize;
-            var targetBytes = (long)(MaxCacheSize * targetRatio);
+            var beforeCount = CurrentCacheCount;
             if (before <= targetBytes || _cache.IsEmpty)
-                return (before, before);
+                return (before, beforeCount, before);
 
-            // 按最久未使用 -> 最近使用 排序
             var sortedItems = _cache.ToList()
                 .OrderBy(kvp => kvp.Value.LastAccessTime)
                 .ToList();
@@ -708,14 +731,11 @@ public static class BitmapLoader
                 if (before - willFree <= targetBytes) break;
             }
 
-            // 实际移除并在 UI 线程释放位图
             var removedItems = new List<(string key, Bitmap bmp)>();
             foreach (var key in toRemove)
             {
                 if (_cache.TryRemove(key, out var item))
-                {
                     removedItems.Add((key, item.Bitmap));
-                }
             }
 
             if (removedItems.Count > 0)
@@ -738,7 +758,7 @@ public static class BitmapLoader
             }
 
             var after = CurrentCacheSize;
-            return (before, after);
+            return (before, beforeCount, after);
         }
     }
 }

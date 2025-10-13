@@ -30,23 +30,19 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 MemoryBudget.Initialize(new iOSMemoryBudget());
 
-                // 可选：监听系统内存告警，触发应用内缓存/资源降级逻辑，避免被系统杀死
+                // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>
                 {
-                    // 1) 记录清理前缓存大小
-                    var beforeBytes = BitmapLoader.CurrentCacheSize;
+                    var (beforeBytes, beforeCount, _) = BitmapLoader.TrimToCurrentRatio(0.8);
 
-                    // 2) 通知 BitmapLoader 进行快速精简（目标 50% 上限）
-                    var (before, after) = BitmapLoader.TrimOnMemoryWarning(0.5);
+                    // 记录触发时缓存大小（MB）
+                    iOSMemoryBudget.RecordMemoryWarningCacheMB(beforeBytes);
 
-                    // 3) 记录到 MemoryBudget（iOS 侧存档 MB 值）
-                    iOSMemoryBudget.RecordMemoryWarningCacheMB(before);
-
-                    // 4) 广播给 UI：更新 MemoryBudgetInfo
+                    // 广播给 UI（仅显示触发时的大小、数量与时间）
                     var evt = new BitmapLoader.MemoryWarningEvent(
-                        beforeMB: before / (1024 * 1024),
-                        afterMB:  after / (1024 * 1024),
-                        time:     DateTimeOffset.Now
+                        sizeMB: beforeBytes / (1024 * 1024),
+                        count:  beforeCount,
+                        time:   DateTimeOffset.Now
                     );
                     MessageBus.Current.SendMessage(evt);
                 });
