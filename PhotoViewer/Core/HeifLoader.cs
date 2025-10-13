@@ -6,6 +6,15 @@ using Avalonia.Platform.Storage;
 
 namespace PhotoViewer.Core;
 
+public interface IHeifDecoder
+{
+    bool IsSupported { get; }
+    
+    Task<Bitmap?> LoadBitmapAsync(IStorageFile file);
+    Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize);
+
+}
+
 public static class HeifLoader
 {
     private static IHeifDecoder _decoder = new NoopHeifDecoder();
