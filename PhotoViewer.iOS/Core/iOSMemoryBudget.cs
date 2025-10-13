@@ -8,6 +8,11 @@ namespace PhotoViewer.iOS.Core;
 
 public sealed class iOSMemoryBudget : IMemoryBudget
 {
+    // 新增：记录上次系统内存告警前缓存大小（MB）
+    public static int LastMemoryWarningCacheMB { get; private set; }
+    public static void RecordMemoryWarningCacheMB(long bytes)
+        => LastMemoryWarningCacheMB = (int)Math.Max(0, bytes / (1024 * 1024));
+
     private class DeviceBudget
     {
         public string[] Keys;            // 型号标识或营销名关键字(小写)

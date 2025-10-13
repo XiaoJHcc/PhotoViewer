@@ -677,4 +677,68 @@ public static class BitmapLoader
         var info = $"Cache: {count}/{MaxCacheCount} items, {size / (1024 * 1024)}/{MaxCacheSize / (1024 * 1024)} MB";
         return (count, size, info);
     }
+
+    // 内存告警事件载体（供 MessageBus 广播用）
+    public readonly record struct MemoryWarningEvent(long beforeMB, long afterMB, DateTimeOffset time);
+
+    /// <summary>
+    /// 系统内存告警：按 LRU 精简缓存至目标上限占比（默认 50%），返回 (beforeBytes, afterBytes)。
+    /// </summary>
+    public static (long beforeBytes, long afterBytes) TrimOnMemoryWarning(double targetRatio = 0.5)
+    {
+        targetRatio = Math.Clamp(targetRatio, 0.1, 0.9);
+        lock (_cleanupLock)
+        {
+            var before = CurrentCacheSize;
+            var targetBytes = (long)(MaxCacheSize * targetRatio);
+            if (before <= targetBytes || _cache.IsEmpty)
+                return (before, before);
+
+            // 按最久未使用 -> 最近使用 排序
+            var sortedItems = _cache.ToList()
+                .OrderBy(kvp => kvp.Value.LastAccessTime)
+                .ToList();
+
+            var toRemove = new List<string>();
+            long willFree = 0;
+            foreach (var kv in sortedItems)
+            {
+                toRemove.Add(kv.Key);
+                willFree += kv.Value.Size;
+                if (before - willFree <= targetBytes) break;
+            }
+
+            // 实际移除并在 UI 线程释放位图
+            var removedItems = new List<(string key, Bitmap bmp)>();
+            foreach (var key in toRemove)
+            {
+                if (_cache.TryRemove(key, out var item))
+                {
+                    removedItems.Add((key, item.Bitmap));
+                }
+            }
+
+            if (removedItems.Count > 0)
+            {
+                var removedKeys = removedItems.Select(t => t.key).ToList();
+
+                // 通知缓存状态变化（UI 线程）
+                Dispatcher.UIThread.Post(() =>
+                {
+                    foreach (var k in removedKeys)
+                        CacheStatusChanged?.Invoke(k, false);
+                });
+
+                // 释放位图（UI 线程）
+                Dispatcher.UIThread.Post(() =>
+                {
+                    foreach (var t in removedItems)
+                        t.bmp.Dispose();
+                });
+            }
+
+            var after = CurrentCacheSize;
+            return (before, after);
+        }
+    }
 }

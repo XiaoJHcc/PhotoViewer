@@ -1,6 +1,7 @@
 ﻿using System;
 using ReactiveUI;
 using PhotoViewer.Core;
+using System.Reactive.Linq;
 
 namespace PhotoViewer.ViewModels;
 
@@ -9,6 +10,8 @@ public partial class SettingsViewModel
     ///////////////////
     /// 位图缓存与预取设置
     ///////////////////
+
+    private int _systemMemoryLimitMB; // 记录设备上限，便于事件到来时重建 UI 文本
 
     /// <summary>
     /// 初始化数据（缓存数量、内存大小、预载数量）
@@ -20,6 +23,7 @@ public partial class SettingsViewModel
         try
         {
             var systemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
+            _systemMemoryLimitMB = systemMemoryLimit;
 
             // 设置默认内存上限为系统限制的 50%，但不超过 4GB
             var defaultMemory = Math.Min(systemMemoryLimit * 1 / 2, 4096);
@@ -41,9 +45,22 @@ public partial class SettingsViewModel
         {
             Console.WriteLine($"Failed to initialize memory budget: {ex.Message}");
             BitmapCacheMaxMemory = 2048;
+            _systemMemoryLimitMB = 0;
             MemoryBudgetInfo = "设备内存上限: 未知";
         }
-        
+
+        // 订阅内存告警事件：更新 UI 上的 MemoryBudgetInfo
+        MessageBus.Current
+            .Listen<BitmapLoader.MemoryWarningEvent>()
+            .ObserveOn(RxApp.MainThreadScheduler)
+            .Subscribe(evt =>
+            {
+                var iosNote = IsIOS ? "\niOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
+                MemoryBudgetInfo =
+                    $"设备内存上限: {_systemMemoryLimitMB} MB{iosNote}\n" +
+                    $"上次系统内存告警：缓存 {evt.beforeMB} MB -> {evt.afterMB} MB @ {evt.time:HH:mm:ss}";
+            });
+
         // 初始化三个预载滑条的 百分比 backing 字段（0~33.3333），确保 UI 初始位置正确
         // 注意：百分比是相对总缓存数的百分比（0 ~ 33.3333），实际预载数量由 percent/100 * BitmapCacheMaxCount 计算
         _preloadForwardPercent = BitmapCacheMaxCount <= 0 ? 0 : Math.Min(33.3333333, _preloadForwardCount * 100.0 / Math.Max(1, BitmapCacheMaxCount));
