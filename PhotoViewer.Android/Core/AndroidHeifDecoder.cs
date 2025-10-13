@@ -170,8 +170,6 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
             var h = androidBmp.Height;
             if (w <= 0 || h <= 0) return null;
 
-            // 将 ARGB_8888 拷贝并转换为 BGRA8888
-            // 修复：实际顺序并非如此，而是 ABGR -> RGBA，总之顺序颠倒
             var pixels = new int[w * h];
             using (var ib = IntBuffer.Allocate(pixels.Length))
             {
@@ -180,44 +178,87 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 ib.Get(pixels);
             }
 
-            var bgra = new byte[pixels.Length * 4];
-            for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
+            // 修改：按设置输出 BGRA8888 或 BGR24
+            if (!BitmapLoader.IgnoreAlpha)
             {
-                int p = pixels[i];
-                byte a = (byte)((p >> 24) & 0xFF);
-                byte b = (byte)((p >> 16) & 0xFF);
-                byte g = (byte)((p >> 8) & 0xFF);
-                byte r = (byte)(p & 0xFF);
-
-                bgra[j + 0] = b;
-                bgra[j + 1] = g;
-                bgra[j + 2] = r;
-                bgra[j + 3] = a;
-            }
-
-            var bmp = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888);
-            using (var l = bmp.Lock())
-            {
-                int srcStride = w * 4;
-                int destStride = l.RowBytes;
-                unsafe
+                var bgra = new byte[pixels.Length * 4];
+                for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
                 {
-                    var dest = (byte*)l.Address;
-                    for (int y = 0; y < h; y++)
-                    {
-                        var srcOff = y * srcStride;
-                        var dstOff = y * destStride;
-                        var copy = Math.Min(srcStride, destStride);
-                        if (srcOff + copy > bgra.Length) break;
+                    int p = pixels[i];
+                    byte a = (byte)((p >> 24) & 0xFF);
+                    byte b = (byte)((p >> 16) & 0xFF);
+                    byte g = (byte)((p >> 8) & 0xFF);
+                    byte r = (byte)(p & 0xFF);
 
-                        fixed (byte* srcPtr = &bgra[srcOff])
+                    bgra[j + 0] = b;
+                    bgra[j + 1] = g;
+                    bgra[j + 2] = r;
+                    bgra[j + 3] = a;
+                }
+
+                var bmp = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
+                using (var l = bmp.Lock())
+                {
+                    int srcStride = w * 4;
+                    int destStride = l.RowBytes;
+                    unsafe
+                    {
+                        var dest = (byte*)l.Address;
+                        for (int y = 0; y < h; y++)
                         {
-                            Buffer.MemoryCopy(srcPtr, dest + dstOff, copy, copy);
+                            var srcOff = y * srcStride;
+                            var dstOff = y * destStride;
+                            var copy = Math.Min(srcStride, destStride);
+                            if (srcOff + copy > bgra.Length) break;
+
+                            fixed (byte* srcPtr = &bgra[srcOff])
+                            {
+                                Buffer.MemoryCopy(srcPtr, dest + dstOff, copy, copy);
+                            }
                         }
                     }
                 }
+                return bmp;
             }
-            return bmp;
+            else
+            {
+                var bgr = new byte[pixels.Length * 3];
+                for (int i = 0, j = 0; i < pixels.Length; i++, j += 3)
+                {
+                    int p = pixels[i];
+                    byte b = (byte)((p >> 16) & 0xFF);
+                    byte g = (byte)((p >> 8) & 0xFF);
+                    byte r = (byte)(p & 0xFF);
+
+                    bgr[j + 0] = b;
+                    bgr[j + 1] = g;
+                    bgr[j + 2] = r;
+                }
+
+                var bmp = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
+                using (var l = bmp.Lock())
+                {
+                    int srcStride = w * 3;
+                    int destStride = l.RowBytes;
+                    unsafe
+                    {
+                        var dest = (byte*)l.Address;
+                        for (int y = 0; y < h; y++)
+                        {
+                            var srcOff = y * srcStride;
+                            var dstOff = y * destStride;
+                            var copy = Math.Min(srcStride, destStride);
+                            if (srcOff + copy > bgr.Length) break;
+
+                            fixed (byte* srcPtr = &bgr[srcOff])
+                            {
+                                Buffer.MemoryCopy(srcPtr, dest + dstOff, copy, copy);
+                            }
+                        }
+                    }
+                }
+                return bmp;
+            }
         }
         catch (Exception ex)
         {

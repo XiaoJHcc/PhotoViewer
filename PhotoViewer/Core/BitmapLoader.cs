@@ -9,6 +9,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
+using Avalonia.Platform;
 
 namespace PhotoViewer.Core;
 
@@ -32,8 +33,22 @@ public class BitmapCacheItem
 
     private static long EstimateBitmapSize(Bitmap bitmap)
     {
-        // 估算位图内存大小（像素数 × 4字节/像素）
-        return (long)bitmap.PixelSize.Width * bitmap.PixelSize.Height * 4;
+        // 修改：根据像素格式估算大小（Bgr24=3，Bgra8888/Rgba8888=4，其余保守按4）
+        int w = bitmap.PixelSize.Width;
+        int h = bitmap.PixelSize.Height;
+        int bpp = 4;
+        try
+        {
+            if (bitmap is WriteableBitmap wb)
+            {
+                if (wb.Format == PixelFormats.Bgr24) bpp = 3;
+                else if (wb.Format == PixelFormats.Bgra8888 || wb.Format == PixelFormats.Rgba8888) bpp = 4;
+                else if (wb.Format == PixelFormats.Rgb565) bpp = 2;
+            }
+        }
+        catch { /* 忽略，保守按4 */ }
+
+        return (long)w * h * Math.Max(1, bpp);
     }
 
     public void UpdateAccessTime()
@@ -50,6 +65,9 @@ public static class BitmapLoader
     private static readonly ConcurrentDictionary<string, BitmapCacheItem> _cache = new();
     private static readonly object _cleanupLock = new();
     
+    // 新增：忽略透明度（默认 false）
+    public static bool IgnoreAlpha { get; set; } = false;
+
     // 缓存配置
     private static int _maxCacheCount = 30;
     private static long _maxCacheSize = 2048L * 1024 * 1024; // 2048 MB
@@ -130,7 +148,9 @@ public static class BitmapLoader
             if (ct.IsCancellationRequested) return 0;
             if (dims.HasValue && dims.Value.width > 0 && dims.Value.height > 0)
             {
-                return (long)dims.Value.width * dims.Value.height * 4;
+                // 修改：按设置计算 BPP
+                int bpp = IgnoreAlpha ? 3 : 4;
+                return (long)dims.Value.width * dims.Value.height * bpp;
             }
         }
         catch
@@ -316,7 +336,8 @@ public static class BitmapLoader
             // 如果不需要旋转，直接返回原图
             if (orientation == 1)
             {
-                return originalBitmap;
+                // 新增：按需转为 Bgr24
+                return ConvertToDesiredFormat(originalBitmap);
             }
             
             // 应用EXIF旋转
@@ -326,7 +347,11 @@ public static class BitmapLoader
             if (rotatedBitmap != null && rotatedBitmap != originalBitmap)
             {
                 originalBitmap.Dispose();
-                return rotatedBitmap;
+                // 新增：按需转为 Bgr24
+                var outBmp = ConvertToDesiredFormat(rotatedBitmap);
+                if (!ReferenceEquals(outBmp, rotatedBitmap))
+                    rotatedBitmap.Dispose();
+                return outBmp;
             }
             else if (rotatedBitmap == null)
             {
@@ -335,12 +360,83 @@ public static class BitmapLoader
                 return originalBitmap;
             }
             
-            return rotatedBitmap;
+            // 新增：兜底转换
+            var finalBmp = ConvertToDesiredFormat(rotatedBitmap);
+            if (!ReferenceEquals(finalBmp, rotatedBitmap) && rotatedBitmap != null)
+                rotatedBitmap.Dispose();
+            return finalBmp;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load and rotate image ({file.Name}): {ex.Message}");
             return null;
+        }
+    }
+
+    // 新增：将位图按设置转为 Bgr24（忽略透明度）或原样返回
+    private static Bitmap ConvertToDesiredFormat(Bitmap source)
+    {
+        // 未开启或已是 Bgr24，直接返回
+        if (!IgnoreAlpha)
+            return source;
+
+        if (source is WriteableBitmap wb && wb.Format == PixelFormats.Bgr24)
+            return source;
+
+        // 仅对 WriteableBitmap 执行像素拷贝；普通 Bitmap 跳过（避免 Lock 编译错误）
+        if (source is not WriteableBitmap readable)
+            return source;
+
+        try
+        {
+            var size = readable.PixelSize;
+            using var srcLock = readable.Lock();
+            if (srcLock.Address == IntPtr.Zero || size.Width <= 0 || size.Height <= 0)
+                return source;
+
+            var target = new WriteableBitmap(size, new Vector(96, 96), PixelFormats.Bgr24);
+            using var dstLock = target.Lock();
+
+            unsafe
+            {
+                int w = size.Width;
+                int h = size.Height;
+                int srcStride = srcLock.RowBytes;
+                int dstStride = dstLock.RowBytes;
+
+                byte* srcBase = (byte*)srcLock.Address;
+                byte* dstBase = (byte*)dstLock.Address;
+
+                for (int y = 0; y < h; y++)
+                {
+                    byte* src = srcBase + y * srcStride;
+                    byte* dst = dstBase + y * dstStride;
+
+                    for (int x = 0; x < w; x++)
+                    {
+                        // 读取 BGRA
+                        byte b = src[0];
+                        byte g = src[1];
+                        byte r = src[2];
+                        // 丢弃 A
+                        dst[0] = b;
+                        dst[1] = g;
+                        dst[2] = r;
+
+                        src += 4;
+                        dst += 3;
+                    }
+                }
+            }
+
+            // 转换成功后释放源位图，返回新位图
+            readable.Dispose();
+            return target;
+        }
+        catch
+        {
+            // 失败则返回原图
+            return source;
         }
     }
     

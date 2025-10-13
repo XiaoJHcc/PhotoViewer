@@ -101,6 +101,13 @@ public partial class SettingsViewModel
                 // 计算当前内存能够满足多少张照片
                 BitmapCacheCountInfo = "当前内存设置下可缓存的照片数量上限: \n24MP < " + v/(24*4) + " 张，33MP < " + v/(33*4) + " 张，42MP < " + v/(42*4) + " 张，61MP < " + v/(61*4) + " 张";
             });
+
+        // 新增：监听“忽略透明度”设置变化同步到 BitmapLoader
+        this.WhenAnyValue(v => v.IgnoreTransparency)
+            .Subscribe(v =>
+            {
+                BitmapLoader.IgnoreAlpha = v;
+            });
     }
     
     // 指数映射工具：t ∈ [0,1]
@@ -335,5 +342,13 @@ public partial class SettingsViewModel
     {
         get => ToExp(PreloadParallelism, 1, 32);
         set => PreloadParallelism = FromExp(value, 1, 32);
+    }
+
+    // 新增：忽略透明度（默认关闭）
+    private bool _ignoreTransparency = false;
+    public bool IgnoreTransparency
+    {
+        get => _ignoreTransparency;
+        set => this.RaiseAndSetIfChanged(ref _ignoreTransparency, value);
     }
 }

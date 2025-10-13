@@ -369,35 +369,77 @@ public sealed class LibHeifDecoder : IHeifDecoder
             var expected = width * height * 4;
             if (bgraData.Length < expected) return null;
 
-            var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormat.Bgra8888);
-
-            using (var locked = bitmap.Lock())
+            if (BitmapLoader.IgnoreAlpha)
             {
-                var destStride = locked.RowBytes;
-                var destPtr = locked.Address;
-                var srcStride = width * 4;
-
-                unsafe
+                var bgr = new byte[width * height * 3];
+                for (int i = 0, j = 0; i < expected; i += 4, j += 3)
                 {
-                    var destBytePtr = (byte*)destPtr;
+                    bgr[j + 0] = bgraData[i + 0]; // B
+                    bgr[j + 1] = bgraData[i + 1]; // G
+                    bgr[j + 2] = bgraData[i + 2]; // R
+                }
 
-                    for (int y = 0; y < height; y++)
+                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
+                using (var locked = bitmap.Lock())
+                {
+                    var destStride = locked.RowBytes;
+                    var destPtr = locked.Address;
+                    var srcStride = width * 3;
+
+                    unsafe
                     {
-                        var srcOffset = y * srcStride;
-                        var destOffset = y * destStride;
-                        var copySize = Math.Min(srcStride, destStride);
+                        var destBytePtr = (byte*)destPtr;
 
-                        if (srcOffset + copySize > bgraData.Length) break;
-
-                        fixed (byte* srcPtr = &bgraData[srcOffset])
+                        for (int y = 0; y < height; y++)
                         {
-                            Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
+                            var srcOffset = y * srcStride;
+                            var destOffset = y * destStride;
+                            var copySize = Math.Min(srcStride, destStride);
+
+                            if (srcOffset + copySize > bgr.Length) break;
+
+                            fixed (byte* srcPtr = &bgr[srcOffset])
+                            {
+                                Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
+                            }
                         }
                     }
                 }
-            }
 
-            return bitmap;
+                return bitmap;
+            }
+            else
+            {
+                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
+
+                using (var locked = bitmap.Lock())
+                {
+                    var destStride = locked.RowBytes;
+                    var destPtr = locked.Address;
+                    var srcStride = width * 4;
+
+                    unsafe
+                    {
+                        var destBytePtr = (byte*)destPtr;
+
+                        for (int y = 0; y < height; y++)
+                        {
+                            var srcOffset = y * srcStride;
+                            var destOffset = y * destStride;
+                            var copySize = Math.Min(srcStride, destStride);
+
+                            if (srcOffset + copySize > bgraData.Length) break;
+
+                            fixed (byte* srcPtr = &bgraData[srcOffset])
+                            {
+                                Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
+                            }
+                        }
+                    }
+                }
+
+                return bitmap;
+            }
         }
         catch (Exception ex)
         {

@@ -156,6 +156,15 @@
                         <TextBox Grid.Column="2" 
                                  Text="{Binding VisibleCenterDelayMs}" />
                     </Grid>
+
+                    <!-- 新增：忽略透明度 -->
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding IgnoreTransparency}">
+                        <StackPanel Orientation="Vertical">
+                            <TextBlock Classes="settings-label">忽略透明度</TextBlock>
+                            <TextBlock Classes="settings-description">有助于压缩内存（RGB24 代替 RGBA8888）</TextBlock>
+                        </StackPanel>
+                    </CheckBox>
                 </StackPanel>
             </Border>
         </StackPanel>
