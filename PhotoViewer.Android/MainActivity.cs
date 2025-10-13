@@ -36,7 +36,7 @@ public class MainActivity : AvaloniaMainActivity<App>
 
         // 注册 Android 平台的 HeifDecoder
         HeifLoader.Initialize(new AndroidHeifDecoder());
-        MemoryBudget.Initialize(new DefaultMemoryBudget());
+        MemoryBudget.Initialize(new AndroidMemoryBudget());
 
         RequestStoragePermissions();
     }
