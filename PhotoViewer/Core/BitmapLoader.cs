@@ -10,6 +10,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using Avalonia.Platform;
+using Avalonia.Media; // 新增：用于合成去除透明度
 
 namespace PhotoViewer.Core;
 
@@ -373,69 +374,175 @@ public static class BitmapLoader
         }
     }
 
-    // 新增：将位图按设置转为 Bgr24（忽略透明度）或原样返回
+    // 将位图按设置转为 Bgr24（忽略透明度）或原样返回
     private static Bitmap ConvertToDesiredFormat(Bitmap source)
     {
-        // 未开启或已是 Bgr24，直接返回
+        // 未开启忽略透明度：原样返回
         if (!IgnoreAlpha)
             return source;
 
+        var size = source.PixelSize;
+        if (size.Width <= 0 || size.Height <= 0)
+            return source;
+
+        // 已是目标格式：直接返回
         if (source is WriteableBitmap wb && wb.Format == PixelFormats.Bgr24)
             return source;
 
-        // 仅对 WriteableBitmap 执行像素拷贝；普通 Bitmap 跳过（避免 Lock 编译错误）
-        if (source is not WriteableBitmap readable)
-            return source;
+        // 目标：始终生成 WriteableBitmap(Bgr24)
+        WriteableBitmap? target = null;
 
         try
         {
-            var size = readable.PixelSize;
-            using var srcLock = readable.Lock();
-            if (srcLock.Address == IntPtr.Zero || size.Width <= 0 || size.Height <= 0)
-                return source;
+            target = new WriteableBitmap(size, source.Dpi, PixelFormats.Bgr24);
 
-            var target = new WriteableBitmap(size, new Vector(96, 96), PixelFormats.Bgr24);
-            using var dstLock = target.Lock();
-
-            unsafe
+            // 情况 A：源是 WriteableBitmap，走锁定内存的快路径
+            if (source is WriteableBitmap readable)
             {
-                int w = size.Width;
-                int h = size.Height;
-                int srcStride = srcLock.RowBytes;
-                int dstStride = dstLock.RowBytes;
+                using var srcLock = readable.Lock();
+                using var dstLock = target.Lock();
 
-                byte* srcBase = (byte*)srcLock.Address;
-                byte* dstBase = (byte*)dstLock.Address;
-
-                for (int y = 0; y < h; y++)
+                unsafe
                 {
-                    byte* src = srcBase + y * srcStride;
-                    byte* dst = dstBase + y * dstStride;
+                    int w = size.Width;
+                    int h = size.Height;
+                    int srcStride = srcLock.RowBytes;
+                    int dstStride = dstLock.RowBytes;
 
-                    for (int x = 0; x < w; x++)
+                    byte* srcBase = (byte*)srcLock.Address;
+                    byte* dstBase = (byte*)dstLock.Address;
+
+                    // 常见格式：BGRA8888 -> BGR24（丢弃 A）
+                    if (readable.Format == PixelFormats.Bgra8888 || readable.Format == PixelFormats.Rgba8888)
                     {
-                        // 读取 BGRA
-                        byte b = src[0];
-                        byte g = src[1];
-                        byte r = src[2];
-                        // 丢弃 A
-                        dst[0] = b;
-                        dst[1] = g;
-                        dst[2] = r;
-
-                        src += 4;
-                        dst += 3;
+                        for (int y = 0; y < h; y++)
+                        {
+                            byte* src = srcBase + y * srcStride;
+                            byte* dst = dstBase + y * dstStride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                dst[0] = src[0]; // B
+                                dst[1] = src[1]; // G
+                                dst[2] = src[2]; // R
+                                src += 4;
+                                dst += 3;
+                            }
+                        }
+                    }
+                    // 已是 BGR24：直接行拷贝（理论上不会走到这里，前面已返回）
+                    else if (readable.Format == PixelFormats.Bgr24)
+                    {
+                        for (int y = 0; y < h; y++)
+                        {
+                            Buffer.MemoryCopy(srcBase + y * srcStride, dstBase + y * dstStride, dstStride, Math.Min(srcStride, dstStride));
+                        }
+                    }
+                    // RGB565 等其他格式：做基础转换到 BGR24
+                    else if (readable.Format == PixelFormats.Rgb565)
+                    {
+                        for (int y = 0; y < h; y++)
+                        {
+                            byte* src = srcBase + y * srcStride;
+                            byte* dst = dstBase + y * dstStride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                ushort v = (ushort)(src[0] | (src[1] << 8)); // 小端
+                                byte r = (byte)((((v >> 11) & 0x1F) * 255 + 15) / 31);
+                                byte g = (byte)((((v >> 5) & 0x3F) * 255 + 31) / 63);
+                                byte b = (byte)(((v & 0x1F) * 255 + 15) / 31);
+                                dst[0] = b; dst[1] = g; dst[2] = r;
+                                src += 2;
+                                dst += 3;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // 未知格式：按 BGRA 假定处理
+                        for (int y = 0; y < h; y++)
+                        {
+                            byte* src = srcBase + y * srcStride;
+                            byte* dst = dstBase + y * dstStride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                dst[0] = src[0];
+                                dst[1] = src[1];
+                                dst[2] = src[2];
+                                src += 4;
+                                dst += 3;
+                            }
+                        }
                     }
                 }
-            }
 
-            // 转换成功后释放源位图，返回新位图
-            readable.Dispose();
-            return target;
+                // 返回新位图并释放源
+                readable.Dispose();
+                return target;
+            }
+            else
+            {
+                // 情况 B：源不是 WriteableBitmap
+                // 为了保证可读且一致的 32bpp 格式，先在黑底上合成到 RenderTargetBitmap（去透明）
+                using var rtb = new RenderTargetBitmap(size);
+                using (var ctx = rtb.CreateDrawingContext())
+                {
+                    if (ctx != null)
+                    {
+                        ctx.FillRectangle(Brushes.Black, new Rect(0, 0, size.Width, size.Height));
+                        ctx.DrawImage(source, new Rect(0, 0, size.Width, size.Height));
+                    }
+                }
+
+                // 从 rtb 复制像素（假定 BGRA8888）
+                var srcStride = size.Width * 4;
+                var buffer = new byte[srcStride * size.Height];
+
+                // CopyPixels: 将 rtb 像素拷贝到托管缓冲区
+                var rect = new PixelRect(0, 0, size.Width, size.Height);
+                unsafe
+                {
+                    fixed (byte* p = buffer)
+                    {
+                        rtb.CopyPixels(rect, (IntPtr)p, buffer.Length, srcStride);
+                    }
+                }
+
+                // 写入目标 BGR24
+                using var dstLock = target.Lock();
+                unsafe
+                {
+                    int w = size.Width;
+                    int h = size.Height;
+                    int dstStride = dstLock.RowBytes;
+
+                    fixed (byte* srcBase = buffer)
+                    {
+                        byte* dstBase = (byte*)dstLock.Address;
+                        for (int y = 0; y < h; y++)
+                        {
+                            byte* src = srcBase + y * srcStride;
+                            byte* dst = dstBase + y * dstStride;
+                            for (int x = 0; x < w; x++)
+                            {
+                                dst[0] = src[0]; // B
+                                dst[1] = src[1]; // G
+                                dst[2] = src[2]; // R
+                                src += 4;
+                                dst += 3;
+                            }
+                        }
+                    }
+                }
+
+                // 返回新位图并释放源
+                source.Dispose();
+                return target;
+            }
         }
         catch
         {
-            // 失败则返回原图
+            target?.Dispose();
+            // 失败则保守返回源
             return source;
         }
     }
