@@ -31,8 +31,8 @@ public partial class SettingsViewModel
 
             if (BitmapCacheMaxMemory < 4096)
             {
-                BitmapCacheMaxCount = BitmapCacheMaxMemory / 132; // 以 33MP 估算张数上限
-                PreloadParallelism = (int)(BitmapCacheMaxMemory / 4096.0 * 8.0); // 同比减少线程数
+                BitmapCacheMaxCount = Math.Min(BitmapCacheMaxMemory / 99, 30); // 按 33MP RGB24 估算减少张数
+                PreloadParallelism = (int)(BitmapCacheMaxMemory / 4096.0 * 8); // 同比减少线程数
             }
 
             MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
@@ -141,7 +141,7 @@ public partial class SettingsViewModel
     private double _preloadBackwardPercent;
     private double _visibleCenterPreloadPercent;
 
-    private int _bitmapCacheMaxCount = 40;
+    private int _bitmapCacheMaxCount = 30;
     public int BitmapCacheMaxCount
     {
         get => _bitmapCacheMaxCount;
