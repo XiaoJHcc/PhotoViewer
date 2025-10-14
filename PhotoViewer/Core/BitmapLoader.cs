@@ -334,38 +334,25 @@ public static class BitmapLoader
             // 获取EXIF方向信息
             var orientation = await GetExifOrientationAsync(file);
             
-            // 如果不需要旋转，直接返回原图
+            // 如果不需要旋转
             if (orientation == 1)
             {
-                // 新增：按需转为 Rgb24
+                // 仅当需要移除Alpha通道时才进行转换
                 return ConvertToDesiredFormat(originalBitmap);
             }
             
-            // 应用EXIF旋转
-            var rotatedBitmap = ApplyExifRotation(originalBitmap, orientation);
+            // 应用EXIF旋转，此过程会直接生成最终格式的位图
+            var finalBitmap = ApplyExifRotation(originalBitmap, orientation);
             
-            // 释放原图内存（只有在旋转成功且返回新位图时才释放）
-            if (rotatedBitmap != null && rotatedBitmap != originalBitmap)
+            // 释放原图内存
+            originalBitmap.Dispose();
+            
+            if (finalBitmap == null)
             {
-                originalBitmap.Dispose();
-                // 新增：按需转为 Rgb24
-                var outBmp = ConvertToDesiredFormat(rotatedBitmap);
-                if (!ReferenceEquals(outBmp, rotatedBitmap))
-                    rotatedBitmap.Dispose();
-                return outBmp;
-            }
-            else if (rotatedBitmap == null)
-            {
-                // 旋转失败，返回原图
-                Console.WriteLine($"Rotation failed for {file.Name}, returning original bitmap");
-                return originalBitmap;
+                Console.WriteLine($"Rotation failed for {file.Name}, returning null");
             }
             
-            // 新增：兜底转换
-            var finalBmp = ConvertToDesiredFormat(rotatedBitmap);
-            if (!ReferenceEquals(finalBmp, rotatedBitmap) && rotatedBitmap != null)
-                rotatedBitmap.Dispose();
-            return finalBmp;
+            return finalBitmap;
         }
         catch (Exception ex)
         {
@@ -505,18 +492,37 @@ public static class BitmapLoader
         
         try
         {
-            return orientation switch
+            Bitmap? rotatedBitmap = orientation switch
             {
                 3 => RotateBitmap(originalBitmap, 180),
                 6 => RotateBitmap(originalBitmap, 90),
                 8 => RotateBitmap(originalBitmap, 270),
-                _ => originalBitmap
+                _ => null
             };
+
+            if (rotatedBitmap == null)
+            {
+                // 如果旋转失败或不需要旋转，返回原始位图的副本以统一后续处理流程
+                // 但在此调用流程中，originalBitmap 会被释放，所以这里返回 null
+                return null;
+            }
+
+            // 检查是否需要移除 Alpha 通道
+            bool needsConversion = IgnoreAlpha && 
+                                   (rotatedBitmap.Format == PixelFormats.Bgra8888 || rotatedBitmap.Format == PixelFormats.Rgba8888);
+
+            if (needsConversion)
+            {
+                // ConvertToDesiredFormat 会在成功后 Dispose 传入的 rotatedBitmap
+                return ConvertToDesiredFormat(rotatedBitmap);
+            }
+
+            return rotatedBitmap;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to apply EXIF rotation (orientation: {orientation}): {ex.Message}");
-            return originalBitmap; // 旋转失败时返回原图
+            return null; // 旋转失败时返回null，由调用方处理
         }
     }
     
@@ -550,18 +556,19 @@ public static class BitmapLoader
             if (newSize.Width <= 0 || newSize.Height <= 0)
             {
                 Console.WriteLine($"Invalid calculated size for rotation: {newSize.Width}x{newSize.Height}");
-                return originalBitmap;
+                return null;
             }
             
-            // 创建旋转后的位图
+            // 创建旋转后的位图，直接使用最终的目标格式
             RenderTargetBitmap? renderTarget = null;
             try
             {
+                // 修正：RenderTargetBitmap 构造函数没有 format 参数
                 renderTarget = new RenderTargetBitmap(newSize, originalBitmap.Dpi);
                 if (renderTarget == null)
                 {
                     Console.WriteLine("Failed to create RenderTargetBitmap");
-                    return originalBitmap;
+                    return null;
                 }
                 
                 using var context = renderTarget.CreateDrawingContext();
@@ -569,7 +576,7 @@ public static class BitmapLoader
                 {
                     Console.WriteLine("Failed to create DrawingContext");
                     renderTarget.Dispose();
-                    return originalBitmap;
+                    return null;
                 }
                 
                 // 计算旋转中心
@@ -611,7 +618,7 @@ public static class BitmapLoader
                         );
                     }
                     
-                    // 绘制原图
+                    // 绘制原图。DrawImage会处理到目标RenderTarget格式的转换
                     context.DrawImage(originalBitmap, destRect);
                 }
                 
@@ -621,13 +628,13 @@ public static class BitmapLoader
             {
                 renderTarget?.Dispose();
                 Console.WriteLine($"Failed during bitmap rotation rendering: {ex.Message}");
-                return originalBitmap;
+                return null;
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to rotate bitmap by {degrees} degrees: {ex.Message}");
-            return originalBitmap;
+            return null;
         }
     }
     
