@@ -90,7 +90,7 @@
                     
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
-                        <TextBlock Classes="settings-label" Text="内存上限 (MB)" />
+                        <TextBlock Classes="settings-label" Text="缓存内存上限 (MB)" />
                         <Slider Grid.Column="1" 
                                 Minimum="0"
                                 Maximum="1"
@@ -100,16 +100,17 @@
                     </Grid>
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
-                               Text="{Binding MemoryBudgetInfo}" />
+                               Text="{Binding MemoryBudgetInfo}"
+                               Foreground="{Binding MemoryBudgetInfoColor}" />
                     
                     <!-- 忽略透明度 -->
-                    <CheckBox Classes="settings-checkbox"
-                              IsChecked="{Binding IgnoreAlpha}">
-                        <StackPanel Orientation="Vertical">
-                            <TextBlock Classes="settings-label">忽略透明度通道</TextBlock>
-                            <TextBlock Classes="settings-description">每张照片可降低 25% 内存占用</TextBlock>
-                        </StackPanel>
-                    </CheckBox>
+                    <!-- <CheckBox Classes="settings-checkbox" -->
+                    <!--           IsChecked="{Binding IgnoreAlpha}"> -->
+                    <!--     <StackPanel Orientation="Vertical"> -->
+                    <!--         <TextBlock Classes="settings-label">忽略透明度通道</TextBlock> -->
+                    <!--         <TextBlock Classes="settings-description">每张照片可降低 25% 内存占用</TextBlock> -->
+                    <!--     </StackPanel> -->
+                    <!-- </CheckBox> -->
                     
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
@@ -123,7 +124,8 @@
                     </Grid>
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
-                               Text="{Binding BitmapCacheCountInfo}" />
+                               Text="{Binding BitmapCacheCountInfo}" 
+                               Foreground="{Binding BitmapCacheCountInfoColor}" />
                     
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
