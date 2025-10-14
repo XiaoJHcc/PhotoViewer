@@ -197,9 +197,9 @@ public partial class SettingsViewModel
         {
             var bit = IgnoreAlpha ? 3 : 4;
             var mp = BitmapCacheMaxMemory / (bit * BitmapCacheMaxCount);
-            if (mp < 1) return "提示：需要降低缓存数量或增加内存上限";
-            if (mp < 8) return "当前设置仅适合浏览 " + mp + "00 万像素照片";
-            return "当前设置适合浏览 " + mp + "00 万像素照片";
+            if (mp < 1) return "⚠ 缓存数量过高，需要同步提高内存上限";
+            if (mp < 8) return "⚠ 当前设置仅适合浏览 " + mp + "00 万像素以下的照片";
+            return "✓ 当前设置适合浏览 " + mp + "00 万像素以下的照片";
         }
     }
 
