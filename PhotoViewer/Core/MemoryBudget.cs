@@ -15,9 +15,9 @@ public static class MemoryBudget
     private static IMemoryBudget _budget = new DefaultMemoryBudget();
     
     // 由各平台启动时注入具体实现
-    public static void Initialize(IMemoryBudget decoder)
+    public static void Initialize(IMemoryBudget budget)
     {
-        _budget = decoder ?? new DefaultMemoryBudget();
+        _budget = budget;
     }
 
     /// <summary>
@@ -28,7 +28,7 @@ public static class MemoryBudget
 
 
 /// <summary>
-/// 默认内存预算实现（适用于 Windows, macOS, Linux, Android 等平台）
+/// 默认内存预算实现（适用于 Windows, macOS 平台）
 /// </summary>
 public sealed class DefaultMemoryBudget : IMemoryBudget
 {
@@ -36,16 +36,9 @@ public sealed class DefaultMemoryBudget : IMemoryBudget
     {
         try
         {
-            // 获取系统总内存
-            var totalMemoryBytes = GC.GetTotalMemory(false);
-            
-            // 尝试使用 GC 获取更准确的可用内存信息
             var memoryInfo = GC.GetGCMemoryInfo();
             var totalAvailableMemoryBytes = memoryInfo.TotalAvailableMemoryBytes;
-            if (totalAvailableMemoryBytes > 0)
-                return (int)(totalAvailableMemoryBytes / (1024 * 1024));
-            else
-                return (int)(totalMemoryBytes / (1024 * 1024));
+            return (int)(totalAvailableMemoryBytes / (1024 * 1024));
         }
         catch (Exception ex)
         {
