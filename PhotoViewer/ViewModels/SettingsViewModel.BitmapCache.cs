@@ -2,6 +2,7 @@
 using ReactiveUI;
 using PhotoViewer.Core;
 using System.Reactive.Linq;
+using Avalonia.Media;
 
 namespace PhotoViewer.ViewModels;
 
@@ -31,7 +32,7 @@ public partial class SettingsViewModel
 
             if (BitmapCacheMaxMemory < 4096)
             {
-                BitmapCacheMaxCount = Math.Min(BitmapCacheMaxMemory / 99, 30); // 按 33MP RGB24 估算减少张数
+                BitmapCacheMaxCount = Math.Min(BitmapCacheMaxMemory / 132, 30); // 按 33MP 估算减少张数
                 PreloadParallelism = (int)(BitmapCacheMaxMemory / 4096.0 * 8); // 同比减少线程数
             }
 
@@ -97,6 +98,10 @@ public partial class SettingsViewModel
             .Subscribe(v =>
             {
                 BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
+                
+                // 更新内存信息颜色
+                this.RaisePropertyChanged(nameof(MemoryBudgetInfoColor));
+                
                 // 计算当前内存能够满足多少张照片
                 this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
             });
@@ -182,13 +187,27 @@ public partial class SettingsViewModel
         get => _memoryBudgetInfo;
         private set => this.RaiseAndSetIfChanged(ref _memoryBudgetInfo, value);
     }
-
+    
+    public SolidColorBrush MemoryBudgetInfoColor
+    {
+        get
+        {
+            if (BitmapCacheMaxMemory > _systemMemoryLimitMB)
+                return new SolidColorBrush(Colors.Salmon);
+            else if (BitmapCacheMaxMemory > _systemMemoryLimitMB * 0.51)
+                return new SolidColorBrush(Colors.BurlyWood);
+            else
+                return new SolidColorBrush(Colors.DarkGray);
+        }
+    }
+    
     // 忽略透明度通道
-    private bool _ignoreAlpha = true;
+    private bool _ignoreAlpha = false;
     public bool IgnoreAlpha
     {
         get => _ignoreAlpha;
-        set => this.RaiseAndSetIfChanged(ref _ignoreAlpha, value);
+        // 存在内存泄漏，暂停使用
+        // set => this.RaiseAndSetIfChanged(ref _ignoreAlpha, value);
     }
     
     public string BitmapCacheCountInfo
@@ -197,10 +216,25 @@ public partial class SettingsViewModel
         {
             var bit = IgnoreAlpha ? 3 : 4;
             var mp = BitmapCacheMaxMemory / (bit * BitmapCacheMaxCount);
-            if (mp < 1) return "⚠ 缓存数量过高，需要同步提高内存上限";
-            if (mp < 8) return "⚠ 当前设置仅适合浏览 " + mp + "00 万像素以下的照片";
-            return "✓ 当前设置适合浏览 " + mp + "00 万像素以下的照片";
+            switch (mp)
+            {
+                case < 1:
+                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.Salmon);
+                    return "⚠ 缓存数量过高，需要同步提高内存上限";
+                case < 8:
+                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.BurlyWood);
+                    return "⚠ 当前设置仅适合浏览 " + mp + "00 万像素以下的照片";
+                default:
+                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.DarkGray);
+                    return "✓ 当前设置适合浏览 " + mp + "00 万像素以下的照片";
+            }
         }
+    }
+    private SolidColorBrush _bitmapCacheCountInfoColor = new (Colors.DarkGray);
+    public SolidColorBrush BitmapCacheCountInfoColor
+    {
+        get => _bitmapCacheCountInfoColor;
+        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfoColor, value);
     }
 
     private int _preloadMaximum = 10;
