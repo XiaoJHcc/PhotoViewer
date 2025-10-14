@@ -26,17 +26,19 @@ public class MainActivity : AvaloniaMainActivity<App>
     {
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
-            .UseReactiveUI();
+            .UseReactiveUI()
+            .AfterSetup(_ =>
+            {
+                // 注册 Android 平台的 HeifDecoder
+                HeifLoader.Initialize(new AndroidHeifDecoder());
+                MemoryBudget.Initialize(new AndroidMemoryBudget());
+            });
     }
     
     // Android 运行时权限请求
     protected override void OnCreate(Bundle savedInstanceState)
     {
         base.OnCreate(savedInstanceState);
-
-        // 注册 Android 平台的 HeifDecoder
-        HeifLoader.Initialize(new AndroidHeifDecoder());
-        MemoryBudget.Initialize(new AndroidMemoryBudget());
 
         RequestStoragePermissions();
     }

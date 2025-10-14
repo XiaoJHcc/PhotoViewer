@@ -15,13 +15,9 @@ sealed class Program
     public static void Main(string[] args) => BuildAvaloniaApp()
         .AfterSetup(_ =>
         {
-            // Windows 优先使用 WIC，其它平台仍旧 LibHeifDecoder
-            // if (OperatingSystem.IsWindows())
-            //     HeifLoader.Initialize(new WindowsHeifDecoder());
-            // else
-                HeifLoader.Initialize(new LibHeifDecoder());
-                
+            HeifLoader.Initialize(new LibHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
+            
         })
         .StartWithClassicDesktopLifetime(args);
 
