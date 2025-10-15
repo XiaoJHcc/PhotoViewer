@@ -4,9 +4,9 @@
         <TargetFramework>net9.0-android</TargetFramework>
         <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
-        <ApplicationId>com.CompanyName.PhotoViewer</ApplicationId>
-        <ApplicationVersion>1</ApplicationVersion>
-        <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+        <ApplicationId>cc.xiaojh.PhotoViewer</ApplicationId>
+        <ApplicationVersion>37</ApplicationVersion>
+        <ApplicationDisplayVersion>0.3.7</ApplicationDisplayVersion>
         <AndroidPackageFormat>apk</AndroidPackageFormat>
         <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
