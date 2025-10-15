@@ -12,7 +12,6 @@
 
     <ItemGroup>
         <PackageReference Include="Avalonia.Desktop"/>
-        <!--Condition below is needed to remove Avalonia.Diagnostics package from build output in Release configuration.-->
         <PackageReference Include="Avalonia.Diagnostics">
             <IncludeAssets Condition="'$(Configuration)' != 'Debug'">None</IncludeAssets>
             <PrivateAssets Condition="'$(Configuration)' != 'Debug'">All</PrivateAssets>
@@ -20,6 +19,28 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj" />
+        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+    </ItemGroup>
+
+    <PropertyGroup Condition="'$(Configuration)'=='Release'">
+        <UseAppHost>true</UseAppHost>
+        <CreatePackage>false</CreatePackage>
+        
+        <SelfContained>true</SelfContained>
+        <PublishSingleFile>false</PublishSingleFile>
+        <PublishReadyToRun>false</PublishReadyToRun>
+
+        <PublishTrimmed>true</PublishTrimmed>
+        <TrimMode>partial</TrimMode>
+        <LinkMode>SdkOnly</LinkMode>
+
+        <DebugType>none</DebugType>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <StripSymbols>true</StripSymbols>
+    </PropertyGroup>
+
+    <!-- 将图标作为 BundleResource 拷入 .app（Contents/Resources） -->
+    <ItemGroup>
+        <BundleResource Include="icon.icns"/>
     </ItemGroup>
 </Project>
