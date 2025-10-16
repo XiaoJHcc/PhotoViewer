@@ -2,6 +2,8 @@
 
 一个基于 Avalonia 开发的全平台照片查看器，专为摄影选片流程优化设计。
 
+![image](README-IMG/PhotoViewer-Mockup.jpg)
+
 ## 项目简介
 
 PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows、macOS、iOS 和 Android 平台。专注于优化摄影工作流，让选片过程更加快速、随时随地，帮助您在拍摄后第一时间筛选出最佳作品。
@@ -11,6 +13,8 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 2. *想在只浏览 JPG /HEIF 的情况下给 RAW 同步标星*
 3. *需要操作习惯统一的移动端应用*
 4. *需要针对摄影流程优化布局、精简功能*
+
+![image](README-IMG/PhotoViewer-Screenshot.jpg)
 
 ## 核心特色
 
