@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleIdentifier</key>
-	<string>cc.xiaojh.PhotoViewer</string>
+	<string>cc.xiaojh.PhotoViewer.Mac</string>
 	<key>CFBundleName</key>
-	<string>PhotoViewer</string>
+	<string>PhotoViewer.Mac</string>
 	<key>CFBundleDisplayName</key>
 	<string>PhotoViewer</string>
 	<key>CFBundleVersion</key>
