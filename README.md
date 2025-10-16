@@ -19,8 +19,8 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 - **格式兼容**：浏览 JPG 或 HEIF 文件，同时将星级同步至对应的 RAW 文件
 - **高效筛选**：使用快捷键快速浏览、对比、标星
 
-### 🖼️ 摄影优先
-- **质量优先**：图片始终以最高质量显示，尽可能占满屏幕空间
+### 🖼️ 视觉体验
+- **质量优先**：照片始终以最高质量显示，尽可能占满屏幕空间
 - **信息精简**：仅在剩余空间显示关键的 EXIF 信息和星级评价
 - **平台统一**：跨平台一致的 UI 设计和使用体验
 
@@ -70,6 +70,10 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 
 ### 下载安装
 [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) 
+
+- **Windows** : 下载 `PhotoViewer.Windows.exe` 直接运行
+- **Android** : 下载 `PhotoViewer.Android.apk` 并安装
+- **macOS** : 下载 `PhotoViewer.Mac.dmg` 打开映像，并将 app 拖入应用程序文件夹。启动时显示“Apple无法验证……移到废纸篓”，则打开设置, 进入“隐私与安全性”，拉到最底点击“仍要打开”。
 
 ## 开发计划
 

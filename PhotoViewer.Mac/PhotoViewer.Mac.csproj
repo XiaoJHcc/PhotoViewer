@@ -24,10 +24,7 @@
 
     <PropertyGroup Condition="'$(Configuration)'=='Release'">
         <UseAppHost>true</UseAppHost>
-        <CreatePackage>false</CreatePackage>
-        
         <SelfContained>true</SelfContained>
-        <PublishSingleFile>false</PublishSingleFile>
         <PublishReadyToRun>false</PublishReadyToRun>
 
         <PublishTrimmed>true</PublishTrimmed>
@@ -35,8 +32,6 @@
         <LinkMode>SdkOnly</LinkMode>
 
         <DebugType>none</DebugType>
-        <InvariantGlobalization>true</InvariantGlobalization>
-        <StripSymbols>true</StripSymbols>
     </PropertyGroup>
 
     <!-- 将图标作为 BundleResource 拷入 .app（Contents/Resources） -->
