@@ -29,6 +29,18 @@
     <StackPanel Background="#333">
         <StackPanel Classes="settings-container">
             <TextBlock Classes="settings-title">
+                缩放位置显示
+            </TextBlock>
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="2">
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding ShowZoomIndicator}">
+                        缩放时显示指示器
+                    </CheckBox>
+                </StackPanel>
+            </Border>
+            
+            <TextBlock Classes="settings-title">
                 缩放比例预设
             </TextBlock>
             <Border Classes="settings-card">

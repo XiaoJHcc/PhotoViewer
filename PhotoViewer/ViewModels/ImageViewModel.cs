@@ -46,6 +46,17 @@ public class ImageViewModel : ReactiveObject
             {
                 OnBitmapChanged();
             });
+
+        // 监听影响缩略图显示的属性变化
+        this.WhenAnyValue(
+            vm => vm.Main.Settings.ShowZoomIndicator,
+            vm => vm.Fit,
+            vm => vm.Scale,
+            vm => vm.Translate,
+            vm => vm.ViewSize,
+            vm => vm.ImageSize,
+            vm => vm.SourceBitmap)
+            .Subscribe(_ => UpdateZoomIndicator());
     }
 
     /*
@@ -141,11 +152,114 @@ public class ImageViewModel : ReactiveObject
     }
 
     private double _fitScale;   // 适配缩放值
-
     public double FitScale
     {
         get => _fitScale;
         set => this.RaiseAndSetIfChanged(ref _fitScale, value);
+    }
+
+    /*
+     * 缩放指示器相关属性
+     */
+    
+    private bool _showZoomIndicator;
+    public bool ShowZoomIndicator
+    {
+        get => _showZoomIndicator;
+        private set => this.RaiseAndSetIfChanged(ref _showZoomIndicator, value);
+    }
+
+    private Vector _thumbnailDisplaySize;
+    public Vector ThumbnailDisplaySize
+    {
+        get => _thumbnailDisplaySize;
+        private set => this.RaiseAndSetIfChanged(ref _thumbnailDisplaySize, value);
+    }
+
+    private Vector _thumbnailImageSize;
+    public Vector ThumbnailImageSize
+    {
+        get => _thumbnailImageSize;
+        private set => this.RaiseAndSetIfChanged(ref _thumbnailImageSize, value);
+    }
+
+    private Vector _thumbnailImageOffset;
+    public Vector ThumbnailImageOffset
+    {
+        get => _thumbnailImageOffset;
+        private set => this.RaiseAndSetIfChanged(ref _thumbnailImageOffset, value);
+    }
+
+    private Vector _viewportFrameSize;
+    public Vector ViewportFrameSize
+    {
+        get => _viewportFrameSize;
+        private set => this.RaiseAndSetIfChanged(ref _viewportFrameSize, value);
+    }
+
+    private Vector _viewportFramePosition;
+    public Vector ViewportFramePosition
+    {
+        get => _viewportFramePosition;
+        private set => this.RaiseAndSetIfChanged(ref _viewportFramePosition, value);
+    }
+
+    private string _zoomPercentageText = "100%";
+    public string ZoomPercentageText
+    {
+        get => _zoomPercentageText;
+        private set => this.RaiseAndSetIfChanged(ref _zoomPercentageText, value);
+    }
+
+    /// <summary>
+    /// 更新缩略图相关属性
+    /// </summary>
+    private void UpdateZoomIndicator()
+    {
+        // 只在非适配状态且有图片时显示
+        ShowZoomIndicator = Main.Settings.ShowZoomIndicator && !Fit && SourceBitmap != null && ImageSize.X > 0 && ImageSize.Y > 0 && ViewSize.X > 0 && ViewSize.Y > 0;
+
+        if (!ShowZoomIndicator) return;
+
+        const double maxThumbnailSize = 150;
+
+        // 计算缩略图显示尺寸（保持原图比例，长边为150）
+        var imageAspect = ImageSize.X / ImageSize.Y;
+        if (imageAspect > 1) // 横图
+        {
+            ThumbnailDisplaySize = new Vector(maxThumbnailSize, maxThumbnailSize / imageAspect);
+        }
+        else // 竖图
+        {
+            ThumbnailDisplaySize = new Vector(maxThumbnailSize * imageAspect, maxThumbnailSize);
+        }
+
+        // 缩略图内的图片尺寸和偏移（居中显示）
+        ThumbnailImageSize = ThumbnailDisplaySize;
+        ThumbnailImageOffset = new Vector(0, 0);
+
+        // 计算可见区域白框
+        UpdateZoomViewportFrame();
+
+        // 计算缩放百分比（保留两位小数）
+        ZoomPercentageText = $"{Scale * 100:0.##}%";
+    }
+
+    /// <summary>
+    /// 计算可见区域白框的位置和大小
+    /// </summary>
+    private void UpdateZoomViewportFrame()
+    {
+        if (ImageSize.X <= 0 || ImageSize.Y <= 0 || ViewSize.X <= 0 || ViewSize.Y <= 0) return;
+
+        // 白框尺寸
+        // 显示大小 / 显示缩放 = 缩略大小 / 缩略缩放
+        var thumbnailScale = ThumbnailDisplaySize.X / ImageSize.X;
+        ViewportFrameSize = ViewSize / Scale * thumbnailScale;
+        
+        // 白框位置
+        var frameCenter = Vector.Multiply(GetCenterUV(), ThumbnailDisplaySize) + ThumbnailDisplaySize * 0.5;
+        ViewportFramePosition = frameCenter - ViewportFrameSize * 0.5;
     }
     
     /// <summary>
@@ -301,6 +415,10 @@ public class ImageViewModel : ReactiveObject
         }
     }
 
+    /// <summary>
+    /// 获取屏幕中间点在图片上的相对位置（左上角 -0.5,-0.5，右下角 0.5,0.5）
+    /// </summary>
+    /// <returns></returns>
     private Vector GetCenterUV()
     {
         var imageCenterPoint = ImageSize * 0.5 + Translate;

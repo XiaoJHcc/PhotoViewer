@@ -33,6 +33,42 @@
                    VerticalAlignment="Center"
                    Foreground="Gray"
                    FontSize="16"/>
+        
+        <!-- 缩放状态下的右下角示意图 -->
+        <Border IsVisible="{Binding ShowZoomIndicator}"
+                HorizontalAlignment="Right"
+                VerticalAlignment="Bottom"
+                Margin="12"
+                Background="#9222"
+                CornerRadius="8"
+                Padding="8">
+            <StackPanel>
+                <Canvas Width="{Binding ThumbnailImageSize.X}"
+                        Height="{Binding ThumbnailImageSize.Y}" >
+                    <!-- 缩略图 -->
+                    <Image Source="{Binding SourceBitmap}"
+                           Width="{Binding ThumbnailImageSize.X}"
+                           Height="{Binding ThumbnailImageSize.Y}"
+                           Canvas.Left="{Binding ThumbnailImageOffset.X}"
+                           Canvas.Top="{Binding ThumbnailImageOffset.Y}" />
+                    <!-- 可见区域白框 -->
+                    <Rectangle Fill="Transparent"
+                               Stroke="White"
+                               StrokeThickness="2"
+                               Width="{Binding ViewportFrameSize.X}"
+                               Height="{Binding ViewportFrameSize.Y}"
+                               Canvas.Left="{Binding ViewportFramePosition.X}"
+                               Canvas.Top="{Binding ViewportFramePosition.Y}" />
+                </Canvas>
+                <!-- 缩放百分比 -->
+                <TextBlock Text="{Binding ZoomPercentageText}"
+                           Foreground="White"
+                           HorizontalAlignment="Center"
+                           FontSize="12"
+                           FontWeight="Bold"
+                           Margin="0,8,0,2" />
+            </StackPanel>
+        </Border>
     </Grid>
     
 </UserControl>

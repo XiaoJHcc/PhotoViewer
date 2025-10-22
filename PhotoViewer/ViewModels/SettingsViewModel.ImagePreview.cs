@@ -6,6 +6,14 @@ namespace PhotoViewer.ViewModels;
 
 public partial class SettingsViewModel
 {
+        
+    private bool _showZoomIndicator = true;
+    public bool ShowZoomIndicator
+    {
+        get => _showZoomIndicator;
+        set => this.RaiseAndSetIfChanged(ref _showZoomIndicator, value);
+    }
+    
     //////////////
     /// 缩放倍率预设
     //////////////
