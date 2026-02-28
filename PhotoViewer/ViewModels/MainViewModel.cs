@@ -12,6 +12,7 @@ public class MainViewModel : ViewModelBase
     public FolderViewModel FolderVM { get; }
     public ControlViewModel ControlVM { get; }
     public ImageViewModel ImageVM { get; }
+    public DetailViewModel DetailVM { get; }
     public SettingsViewModel Settings { get; }
 
     // 当前状态
@@ -44,6 +45,7 @@ public class MainViewModel : ViewModelBase
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
         ImageVM = new ImageViewModel(this);
+        DetailVM = new DetailViewModel(this);
         ControlVM = new ControlViewModel(this);
 
         // 监听布局模式变化
@@ -172,6 +174,7 @@ public class MainViewModel : ViewModelBase
             // 通知相关视图模型布局已变化
             FolderVM?.RaisePropertyChanged(nameof(FolderVM.IsVerticalLayout));
             ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsVerticalLayout));
+            DetailVM?.RaisePropertyChanged(nameof(DetailVM.IsVerticalLayout));
         }
     }
 
