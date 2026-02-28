@@ -35,7 +35,8 @@
                 Padding="100, 0, 100, 0"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="0,1,0,0">
+                BorderThickness="0,1,0,0"
+                IsVisible="{Binding IsDetailViewVisible}">
                 <views:DetailView DataContext="{Binding DetailVM}" />
             </Border>
 
@@ -78,7 +79,8 @@
                 Padding="0, 100, 0, 100"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="1,0,0,0">
+                BorderThickness="1,0,0,0"
+                IsVisible="{Binding IsDetailViewVisible}">
                 <views:DetailView DataContext="{Binding DetailVM}" />
             </Border>
 

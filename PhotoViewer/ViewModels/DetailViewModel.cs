@@ -35,6 +35,10 @@ public class DetailViewModel : ReactiveObject
 
     public bool IsVerticalLayout => _main.IsHorizontalLayout;
 
+    public bool IsDetailViewVisible => _main.IsDetailViewVisible;
+
+    public ImageViewModel ImageVM => _main.ImageVM;
+
     public Bitmap? SourceBitmap => _main.ImageVM.SourceBitmap;
 
     private double _previewSize = 300;
@@ -68,6 +72,9 @@ public class DetailViewModel : ReactiveObject
 
         _main.WhenAnyValue(vm => vm.IsHorizontalLayout)
             .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout))));
+
+        _main.WhenAnyValue(vm => vm.IsDetailViewVisible)
+            .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsDetailViewVisible))));
 
         _main.ImageVM.WhenAnyValue(vm => vm.SourceBitmap)
             .Subscribe(Observer.Create<Bitmap?>(_ => this.RaisePropertyChanged(nameof(SourceBitmap))));

@@ -6,27 +6,30 @@
              x:Class="PhotoViewer.Controls.DetailPreview"
              x:Name="Root">
 
-    <Border Background="#222"
+    <Border x:Name="RootBorder"
             BorderBrush="#444"
             BorderThickness="1"
-            CornerRadius="6"
-            ClipToBounds="True">
-        <Grid>
-            <Image x:Name="PreviewImage"
-                   Source="{Binding Source, ElementName=Root}"
-                   Stretch="None"
-                   HorizontalAlignment="Left"
-                   VerticalAlignment="Top" />
+            CornerRadius="6">
+        <Border Background="#222"
+                CornerRadius="5"
+                ClipToBounds="True">
+            <Grid>
+                <Image x:Name="PreviewImage"
+                       Source="{Binding Source, ElementName=Root}"
+                       Stretch="None"
+                       HorizontalAlignment="Left"
+                       VerticalAlignment="Top" />
 
-            <Border Background="#88000000"
-                    HorizontalAlignment="Left"
-                    VerticalAlignment="Top"
-                    Padding="6,2"
-                    CornerRadius="0,0,6,0">
-                <TextBlock Text="{Binding Label, ElementName=Root}"
-                           FontSize="11"
-                           Foreground="#EEE" />
-            </Border>
-        </Grid>
+                <Border Background="#88000000"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top"
+                        Padding="8,4"
+                        CornerRadius="5,0,5,0">
+                    <TextBlock Text="{Binding Label, ElementName=Root}"
+                               FontSize="12"
+                               Foreground="#aaffffff" />
+                </Border>
+            </Grid>
+        </Border>
     </Border>
 </UserControl>

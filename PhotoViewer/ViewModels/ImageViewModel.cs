@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -29,6 +30,22 @@ public class ImageViewModel : ReactiveObject
 
     public event EventHandler<IStorageFile>? ImageLoaded;
     
+    private Rect _detailHighlightRect;
+    public Rect DetailHighlightRect
+    {
+        get => _detailHighlightRect;
+        private set => this.RaiseAndSetIfChanged(ref _detailHighlightRect, value);
+    }
+
+    private bool _isDetailHighlightVisible;
+    public bool IsDetailHighlightVisible
+    {
+        get => _isDetailHighlightVisible;
+        private set => this.RaiseAndSetIfChanged(ref _isDetailHighlightVisible, value);
+    }
+
+    private Rect? _detailHighlightImageRect;
+
     public ImageViewModel(MainViewModel mainViewModel)
     {
         _main = mainViewModel;
@@ -57,6 +74,13 @@ public class ImageViewModel : ReactiveObject
             vm => vm.ImageSize,
             vm => vm.SourceBitmap)
             .Subscribe(_ => UpdateZoomIndicator());
+
+        this.WhenAnyValue(
+            vm => vm.Scale,
+            vm => vm.Translate,
+            vm => vm.ViewSize,
+            vm => vm.ImageSize)
+            .Subscribe(_ => UpdateDetailHighlightRect());
     }
 
     /*
@@ -440,4 +464,35 @@ public class ImageViewModel : ReactiveObject
         Translate = Vector.Clamp(Translate, clamp1 - clamp2, clamp1 + clamp2);
     }
 
+    public void SetDetailHighlight(Rect? imageRect)
+    {
+        _detailHighlightImageRect = imageRect;
+        UpdateDetailHighlightRect();
+    }
+
+    private void UpdateDetailHighlightRect()
+    {
+        if (_detailHighlightImageRect == null)
+        {
+            IsDetailHighlightVisible = false;
+            return;
+        }
+
+        if (Scale <= 0 || ImageSize.X <= 0 || ImageSize.Y <= 0)
+        {
+            IsDetailHighlightVisible = false;
+            return;
+        }
+
+        var rect = _detailHighlightImageRect.Value;
+        
+        var viewRect = new Rect(
+            (rect.X - ImageSize.X * 0.5 ) * Scale + ImageSize.X * 0.5 + Translate.X,
+            (rect.Y - ImageSize.Y * 0.5 ) * Scale + ImageSize.Y * 0.5 + Translate.Y,
+            rect.Width * Scale,
+            rect.Height * Scale);
+
+        DetailHighlightRect = viewRect;
+        IsDetailHighlightVisible = true;
+    }
 }

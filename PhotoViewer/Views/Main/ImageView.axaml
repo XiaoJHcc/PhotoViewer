@@ -26,6 +26,14 @@
                     </TransformGroup>
                 </Image.RenderTransform>
             </Image>
+            <Rectangle IsVisible="{Binding IsDetailHighlightVisible}"
+                       Fill="Transparent"
+                       Stroke="#00ff00"
+                       StrokeThickness="3"
+                       Width="{Binding DetailHighlightRect.Width}"
+                       Height="{Binding DetailHighlightRect.Height}"
+                       Canvas.Left="{Binding DetailHighlightRect.X}"
+                       Canvas.Top="{Binding DetailHighlightRect.Y}" />
         </Canvas>
         <TextBlock Text="{Binding HintText}"
                    IsVisible="{Binding HintText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"

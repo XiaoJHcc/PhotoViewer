@@ -200,6 +200,18 @@ public class MainViewModel : ViewModelBase
 
     #endregion
 
+    private bool _isDetailViewVisible = false;
+    public bool IsDetailViewVisible
+    {
+        get => _isDetailViewVisible;
+        set => this.RaiseAndSetIfChanged(ref _isDetailViewVisible, value);
+    }
+
+    public void ToggleDetailView()
+    {
+        IsDetailViewVisible = !IsDetailViewVisible;
+    }
+
     public async Task SetRatingAsync(ImageFile? file, int rating)
     {
         if (file == null) return;
