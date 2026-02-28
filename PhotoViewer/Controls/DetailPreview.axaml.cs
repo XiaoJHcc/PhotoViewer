@@ -91,6 +91,7 @@ public partial class DetailPreview : UserControl
         PointerEntered += OnPointerEntered;
         PointerExited += OnPointerExited;
         PointerPressed += OnPointerPressed;
+        DoubleTapped += OnDoubleTapped;
         QueueUpdatePreview();
     }
 
@@ -196,6 +197,18 @@ public partial class DetailPreview : UserControl
         }
 
         SetHighlighted(!_isHighlighted);
+        e.Handled = true;
+    }
+
+    private void OnDoubleTapped(object? sender, TappedEventArgs e)
+    {
+        if (!IsActive || HighlightTarget == null || _lastImageRect == null)
+        {
+            return;
+        }
+
+        var center = _lastImageRect.Value.Center;
+        HighlightTarget.FocusOnImagePoint(new Vector(center.X, center.Y), 1.0);
         e.Handled = true;
     }
 
