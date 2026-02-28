@@ -1,8 +1,11 @@
 ﻿using System;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Input;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
+using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Controls;
 
@@ -44,27 +47,67 @@ public partial class DetailPreview : UserControl
         set => SetValue(CropSizeProperty, value);
     }
 
+    public static readonly StyledProperty<bool> IsActiveProperty =
+        AvaloniaProperty.Register<DetailPreview, bool>(nameof(IsActive), true);
+
+    public bool IsActive
+    {
+        get => GetValue(IsActiveProperty);
+        set => SetValue(IsActiveProperty, value);
+    }
+
+    public static readonly StyledProperty<ImageViewModel?> HighlightTargetProperty =
+        AvaloniaProperty.Register<DetailPreview, ImageViewModel?>(nameof(HighlightTarget));
+
+    public ImageViewModel? HighlightTarget
+    {
+        get => GetValue(HighlightTargetProperty);
+        set => SetValue(HighlightTargetProperty, value);
+    }
+
+    private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromRgb(0, 255, 0));
+    private static readonly IBrush DefaultBorderBrush = new SolidColorBrush(Color.FromRgb(68, 68, 68));
+
     private Image? _previewImage;
+    private Border? _rootBorder;
     private bool _updateQueued;
+    private bool _isHighlighted;
+    private Rect? _lastImageRect;
 
     static DetailPreview()
     {
         SourceProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
         CenterProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
         CropSizeProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
+        IsActiveProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.OnActiveChanged());
     }
 
     public DetailPreview()
     {
         InitializeComponent();
         _previewImage = this.FindControl<Image>("PreviewImage");
+        _rootBorder = this.FindControl<Border>("RootBorder");
         AttachedToVisualTree += (_, _) => QueueUpdatePreview();
+        PointerEntered += OnPointerEntered;
+        PointerExited += OnPointerExited;
+        PointerPressed += OnPointerPressed;
+        QueueUpdatePreview();
+    }
+
+    private void OnActiveChanged()
+    {
+        if (!IsActive)
+        {
+            SetHighlighted(false);
+            return;
+        }
+
         QueueUpdatePreview();
     }
 
     private void QueueUpdatePreview()
     {
-        if (_updateQueued)
+        if (!IsActive || _updateQueued)
         {
             return;
         }
@@ -79,7 +122,7 @@ public partial class DetailPreview : UserControl
 
     private void UpdatePreview()
     {
-        if (_previewImage == null)
+        if (!IsActive || _previewImage == null)
         {
             return;
         }
@@ -88,6 +131,8 @@ public partial class DetailPreview : UserControl
         {
             _previewImage.IsVisible = false;
             _previewImage.Source = null;
+            _lastImageRect = null;
+            UpdateHighlightTarget();
             return;
         }
 
@@ -97,6 +142,8 @@ public partial class DetailPreview : UserControl
         {
             _previewImage.IsVisible = false;
             _previewImage.Source = null;
+            _lastImageRect = null;
+            UpdateHighlightTarget();
             return;
         }
 
@@ -113,8 +160,83 @@ public partial class DetailPreview : UserControl
         left = Math.Clamp(left, 0, Math.Max(0, pixelWidth - cropWidth));
         top = Math.Clamp(top, 0, Math.Max(0, pixelHeight - cropHeight));
 
+        _lastImageRect = new Rect(left, top, cropWidth, cropHeight);
+
         var rect = new PixelRect(left, top, cropWidth, cropHeight);
         _previewImage.Source = new CroppedBitmap(Source, rect);
         _previewImage.IsVisible = true;
+        UpdateHighlightTarget();
+    }
+
+    private void OnPointerEntered(object? sender, PointerEventArgs e)
+    {
+        if (!IsActive || e.Pointer.Type != PointerType.Mouse)
+        {
+            return;
+        }
+
+        SetHighlighted(true);
+    }
+
+    private void OnPointerExited(object? sender, PointerEventArgs e)
+    {
+        if (!IsActive || e.Pointer.Type != PointerType.Mouse)
+        {
+            return;
+        }
+
+        SetHighlighted(false);
+    }
+
+    private void OnPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (!IsActive || e.Pointer.Type == PointerType.Mouse)
+        {
+            return;
+        }
+
+        SetHighlighted(!_isHighlighted);
+        e.Handled = true;
+    }
+
+    private void SetHighlighted(bool isHighlighted)
+    {
+        _isHighlighted = isHighlighted;
+        UpdateBorderHighlight();
+        UpdateHighlightTarget();
+    }
+
+    private void UpdateBorderHighlight()
+    {
+        if (_rootBorder == null)
+        {
+            return;
+        }
+
+        if (_isHighlighted)
+        {
+            _rootBorder.BorderBrush = HighlightBrush;;
+        }
+        else
+        {
+            _rootBorder.BorderBrush = DefaultBorderBrush;
+        }
+    }
+
+    private void UpdateHighlightTarget()
+    {
+        if (HighlightTarget == null)
+        {
+            return;
+        }
+
+        if (!IsActive || !_isHighlighted || _lastImageRect == null)
+        {
+            HighlightTarget.SetDetailHighlight(null);
+            return;
+        }
+
+        HighlightTarget.SetDetailHighlight(_lastImageRect);
     }
 }
+

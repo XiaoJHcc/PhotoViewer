@@ -22,6 +22,8 @@
                     <controls:DetailPreview Width="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).PreviewSize}"
                                             Height="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).PreviewSize}"
                                             CropSize="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).CropSize}"
+                                            IsActive="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).IsDetailViewVisible}"
+                                            HighlightTarget="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).ImageVM}"
                                             Source="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).SourceBitmap}"
                                             Label="{Binding Label}"
                                             Center="{Binding Center}" />

@@ -109,7 +109,7 @@ public partial class SettingsViewModel
         
         Hotkeys = new ObservableCollection<HotkeyItem>
         {
-            new("打开文件", "Open", "\uf6b5", "打开文件", true, 
+            new("打开文件", "Open", "\uf6b5", "打开文件", false, 
                 AppGesture.FromKey(new KeyGesture(Key.N, KeyModifiers.Control)), 
                 AppGesture.FromKey(new KeyGesture(Key.O, KeyModifiers.Control))),
             new("上一张", "Previous", "\uf151", "上一张", true, 
@@ -118,7 +118,7 @@ public partial class SettingsViewModel
             new("下一张", "Next", "\uf152", "下一张", true, 
                 AppGesture.FromKey(new KeyGesture(Key.Right)), 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown))),
-            new("切换上一张", "Exchange", "\uf5ea", "切换上一张", false, 
+            new("切换上一张", "Exchange", "\uf5ea", "切换上一张", true, 
                 AppGesture.FromKey(new KeyGesture(Key.Z)), 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.MiddleClick))),
             new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, 
@@ -135,6 +135,9 @@ public partial class SettingsViewModel
                 null),
             new("缩小（比例）", "ZoomOutScale", "\uf94e", "缩小", false, 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, KeyModifiers.Control)), 
+                null),
+            new("细节栏展开/收纳", "ToggleDetailView", "\ufad2", "细节栏", true,
+                null,
                 null),
 
             // ===== 新增：评分热键（默认不在控制栏显示） =====
