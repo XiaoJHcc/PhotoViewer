@@ -495,4 +495,13 @@ public class ImageViewModel : ReactiveObject
         DetailHighlightRect = viewRect;
         IsDetailHighlightVisible = true;
     }
+
+    public void FocusOnImagePoint(Vector imagePoint, double scale)
+    {
+        if (ViewSize.X <= 0 || ViewSize.Y <= 0) return;
+        Scale = scale;
+        Translate = ViewSize * 0.5 - imagePoint * scale;
+        ClampCenter();
+        Fit = false;
+    }
 }
