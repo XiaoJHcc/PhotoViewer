@@ -1,0 +1,32 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="90" d:DesignHeight="90"
+             x:Class="PhotoViewer.Controls.DetailPreview"
+             x:Name="Root">
+
+    <Border Background="#222"
+            BorderBrush="#444"
+            BorderThickness="1"
+            CornerRadius="6"
+            ClipToBounds="True">
+        <Grid>
+            <Image x:Name="PreviewImage"
+                   Source="{Binding Source, ElementName=Root}"
+                   Stretch="None"
+                   HorizontalAlignment="Left"
+                   VerticalAlignment="Top" />
+
+            <Border Background="#88000000"
+                    HorizontalAlignment="Left"
+                    VerticalAlignment="Top"
+                    Padding="6,2"
+                    CornerRadius="0,0,6,0">
+                <TextBlock Text="{Binding Label, ElementName=Root}"
+                           FontSize="11"
+                           Foreground="#EEE" />
+            </Border>
+        </Grid>
+    </Border>
+</UserControl>

@@ -9,7 +9,7 @@
              x:DataType="vm:MainViewModel">
     <Grid>
         <!-- 垂直布局（上中下）-->
-        <Grid RowDefinitions="Auto,*,Auto" IsVisible="{Binding !IsHorizontalLayout}">
+        <Grid RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding !IsHorizontalLayout}">
             <!-- 顶部：缩略图栏 -->
             <Border
                 x:Name="TopThumbHost"
@@ -28,9 +28,20 @@
                 Background="#000000"
                 DataContext="{Binding ImageVM}" />
 
-            <!-- 底部：控制栏 -->
+            <!-- 中间：细节预览 -->
             <Border
                 Grid.Row="2"
+                Margin="-100, 0, -100, 0"
+                Padding="100, 0, 100, 0"
+                Background="#111111"
+                BorderBrush="#333333"
+                BorderThickness="0,1,0,0">
+                <views:DetailView DataContext="{Binding DetailVM}" />
+            </Border>
+
+            <!-- 底部：控制栏 -->
+            <Border
+                Grid.Row="3"
                 Margin="-100, 0, -100, -100"
                 Padding="100, 0, 100, 100"
                 Background="#111111"
@@ -41,7 +52,7 @@
         </Grid>
 
         <!-- 水平布局（左中右）-->
-        <Grid ColumnDefinitions="Auto,*,Auto" IsVisible="{Binding IsHorizontalLayout}">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsHorizontalLayout}">
             <!-- 左侧：缩略图栏 -->
             <Border
                 x:Name="LeftThumbHost"
@@ -60,9 +71,20 @@
                 Background="#000000"
                 DataContext="{Binding ImageVM}" />
 
-            <!-- 右侧：控制栏 -->
+            <!-- 中间：细节预览 -->
             <Border
                 Grid.Column="2"
+                Margin="0, -100, 0, -100"
+                Padding="0, 100, 0, 100"
+                Background="#111111"
+                BorderBrush="#333333"
+                BorderThickness="1,0,0,0">
+                <views:DetailView DataContext="{Binding DetailVM}" />
+            </Border>
+
+            <!-- 右侧：控制栏 -->
+            <Border
+                Grid.Column="3"
                 Margin="0, -100, -100, -100"
                 Padding="0, 100, 100, 100"
                 Background="#111111"
