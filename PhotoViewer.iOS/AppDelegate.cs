@@ -6,6 +6,7 @@ using Avalonia.iOS;
 using Avalonia.Media;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.iOS.Core;
 using ReactiveUI;
 using System;
@@ -29,7 +30,8 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
             {
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 MemoryBudget.Initialize(new iOSMemoryBudget());
-
+                SettingsService.ConfigureStorage(new iOSSettingsStorage());
+ 
                 // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>
                 {

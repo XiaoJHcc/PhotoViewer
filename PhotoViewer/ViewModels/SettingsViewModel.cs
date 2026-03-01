@@ -4,11 +4,18 @@ using System.Reactive;
 using PhotoViewer.Controls;
 using ReactiveUI;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.ViewModels;
 
 public partial class SettingsViewModel : ReactiveObject
 {
+    private readonly ISettingsService _settingsService;
+    private readonly System.Reactive.Subjects.Subject<Unit> _saveRequests = new();
+    private readonly IDisposable _saveSubscription;
+    private bool _isRestoring;
+    private bool _hasLoaded;
+
     // 检查是否为安卓平台
     public static bool IsAndroid => OperatingSystem.IsAndroid();
     
@@ -18,8 +25,10 @@ public partial class SettingsViewModel : ReactiveObject
     // 检查是否为 Apple 平台
     public static bool IsApple => OperatingSystem.IsIOS() || OperatingSystem.IsMacOS();
     
-    public SettingsViewModel()
+    public SettingsViewModel(ISettingsService? settingsService = null)
     {
+        _settingsService = settingsService ?? SettingsService.Instance;
+        _saveSubscription = InitializePersistence();
         // 设置 UI 初始化
         SortScalePreset();
         InitializeLayoutModes();
@@ -31,5 +40,8 @@ public partial class SettingsViewModel : ReactiveObject
         
         // 设置缓存数据初始化
         InitializeBitMapCache();
-    }
-}
+
+        _ = LoadSettingsAsync();
+        GC.KeepAlive(_saveSubscription); // keep subscription rooted
+     }
+ }

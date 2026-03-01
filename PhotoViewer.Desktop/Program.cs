@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
 using PhotoViewer.Desktop.Core;
+using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.Desktop;
 
@@ -17,7 +18,8 @@ sealed class Program
         {
             HeifLoader.Initialize(new LibHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
-            
+            SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
+             
         })
         .StartWithClassicDesktopLifetime(args);
 

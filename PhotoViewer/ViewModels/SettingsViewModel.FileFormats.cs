@@ -89,6 +89,7 @@ public partial class SettingsViewModel
         }
 
         UpdateSelectedFormats();
+        RequestSave();
     }
 
     private void OnFileFormatItemChanged(object? sender, PropertyChangedEventArgs e)
@@ -96,6 +97,7 @@ public partial class SettingsViewModel
         if (e.PropertyName == nameof(FileFormatItem.IsEnabled))
         {
             UpdateSelectedFormats();
+            RequestSave();
         }
     }
 
@@ -134,6 +136,7 @@ public partial class SettingsViewModel
         var item = FileFormats[fromIndex];
         FileFormats.RemoveAt(fromIndex);
         FileFormats.Insert(toIndex, item);
+        RequestSave();
     }
 
     public class FileFormatItem : ReactiveObject
@@ -174,4 +177,3 @@ public partial class SettingsViewModel
         }
     }
 }
-
