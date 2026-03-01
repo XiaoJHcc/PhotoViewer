@@ -7,8 +7,8 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
 using System.IO;
-using Avalonia.Controls.Primitives.PopupPositioning;
 using Avalonia.Threading;
+using PhotoViewer.Controls;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -16,48 +16,170 @@ namespace PhotoViewer.Views;
 public partial class ImageView : UserControl
 {
     private ImageViewModel? ViewModel => DataContext as ImageViewModel;
-    
-    // 右键菜单
-    private MenuFlyout _menuFlyout;
+
+    ////////////
+    /// 右键菜单
+    ////////////
+
+    #region Menu
+
+    private Grid? _contextMenuOverlay;
+    private Border? _contextMenuHost;
+    private CheckableMenuHeader? _detailViewMenuHeader;
+    private CheckableMenuHeader? _thumbnailViewMenuHeader;
+    private CheckableMenuHeader? _controlViewMenuHeader;
+
     private void InitMenu()
     {
-        _menuFlyout = new MenuFlyout();
-        var menuItem = new MenuItem { Header = "设置" };
-        menuItem.Click += (s, e) => OpenImageSetting();
-        _menuFlyout.Items.Add(menuItem);
-        // 移动端手指上方弹出
-        _menuFlyout.Placement = PlacementMode.AnchorAndGravity;
-        _menuFlyout.PlacementAnchor = PopupAnchor.TopLeft;
-        _menuFlyout.PlacementGravity = PopupGravity.Top;
+        _contextMenuOverlay = this.FindControl<Grid>("ContextMenuOverlay");
+        _contextMenuHost = this.FindControl<Border>("ContextMenuHost");
+        _thumbnailViewMenuHeader = this.FindControl<CheckableMenuHeader>("ThumbnailMenuHeader");
+        _detailViewMenuHeader = this.FindControl<CheckableMenuHeader>("DetailMenuHeader");
+        _controlViewMenuHeader = this.FindControl<CheckableMenuHeader>("ControlMenuHeader");
+        UpdateMenuCheckStates();
     }
-    private void ShowMenuAtPointer()
+
+    private void ShowMenuAt(Point point)
     {
-        _menuFlyout.ShowAt(this, true);
+        if (_contextMenuOverlay == null || _contextMenuHost == null) return;
+        UpdateMenuCheckStates();
+
+        _contextMenuOverlay.IsVisible = true;
+        _contextMenuHost.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        var menuSize = _contextMenuHost.DesiredSize;
+
+        var overlaySize = _contextMenuOverlay.Bounds.Size;
+        if (overlaySize.Width <= 0 || overlaySize.Height <= 0)
+        {
+            overlaySize = Bounds.Size;
+        }
+
+        var x = point.X;
+        var y = point.Y;
+        if (x + menuSize.Width > overlaySize.Width)
+        {
+            x = Math.Max(0, overlaySize.Width - menuSize.Width - 4);
+        }
+        if (y + menuSize.Height > overlaySize.Height)
+        {
+            y = Math.Max(0, overlaySize.Height - menuSize.Height - 4);
+        }
+
+        Canvas.SetLeft(_contextMenuHost, x);
+        Canvas.SetTop(_contextMenuHost, y);
     }
+
+    private void HideMenu()
+    {
+        if (_contextMenuOverlay == null) return;
+        _contextMenuOverlay.IsVisible = false;
+    }
+
+    private void ShowMenuAtPointer(Point point)
+    {
+        ShowMenuAt(point);
+    }
+
     private void ShowMenuAtTouch(Point point)
     {
-        _menuFlyout.HorizontalOffset = point.X;
-        _menuFlyout.VerticalOffset = point.Y - 40;
-        _menuFlyout.ShowAt(this, false);
+        ShowMenuAt(new Point(point.X, point.Y - 40));
     }
-    
+
+    private void ToggleDetailViewFromMenu()
+    {
+        if (ViewModel?.Main == null) return;
+        ViewModel.Main.ToggleDetailView();
+        UpdateMenuCheckStates();
+        HideMenu();
+    }
+
+    private void ToggleThumbnailViewFromMenu()
+    {
+        if (ViewModel?.Main == null) return;
+        ViewModel.Main.ToggleThumbnailView();
+        UpdateMenuCheckStates();
+        HideMenu();
+    }
+
+    private void ToggleControlViewFromMenu()
+    {
+        if (ViewModel?.Main == null) return;
+        ViewModel.Main.ToggleControlView();
+        UpdateMenuCheckStates();
+        HideMenu();
+    }
+
+    private void UpdateMenuCheckStates()
+    {
+        if (_detailViewMenuHeader != null)
+        {
+            _detailViewMenuHeader.IsIconVisible = ViewModel?.Main.IsDetailViewVisible ?? false;
+        }
+
+        if (_thumbnailViewMenuHeader != null)
+        {
+            _thumbnailViewMenuHeader.IsIconVisible = ViewModel?.Main.IsThumbnailViewVisible ?? false;
+        }
+
+        if (_controlViewMenuHeader != null)
+        {
+            _controlViewMenuHeader.IsIconVisible = ViewModel?.Main.IsControlViewVisible ?? false;
+        }
+    }
+
+    private void OnMenuOverlayPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (_contextMenuOverlay == null || _contextMenuHost == null) return;
+        if (_contextMenuHost.IsPointerOver) return;
+        HideMenu();
+        e.Handled = true;
+    }
+
+    private void OnToggleThumbnailMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ToggleThumbnailViewFromMenu();
+        e.Handled = true;
+    }
+
+    private void OnToggleDetailMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ToggleDetailViewFromMenu();
+        e.Handled = true;
+    }
+
+    private void OnToggleControlMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        ToggleControlViewFromMenu();
+        e.Handled = true;
+    }
+
+    private void OnOpenSettingMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        OpenImageSetting();
+        HideMenu();
+        e.Handled = true;
+    }
+
+    #endregion
+
+
     /// <summary>
     /// 构造函数
     /// </summary>
     public ImageView()
     {
         InitializeComponent();
-        
+
         InitMenu();
-        
+
         SetupEventHandlers();
-            
+
         // 启用拖拽支持
         DragDrop.SetAllowDrop(this, true);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
-    
+
     /// <summary>
     /// 打开图片预览设置窗口
     /// </summary>
@@ -76,18 +198,20 @@ public partial class ImageView : UserControl
     ////////////////////
     /// 预览控制
     ////////////////////
-    
+
     #region Control
-    
+
     // 菜单长按状态
     private Point _pressPosition;
+
     private DispatcherTimer _longPressTimer = new()
     {
         Interval = TimeSpan.FromMilliseconds(800) // 长按时间（毫秒）
     };
+
     private const double MoveTolerance = 10; // 移动容差（像素）
     private bool _isLongPressTriggered;
-    
+
     // 长按成功
     private void OnLongPressTimerTick(object? sender, EventArgs e)
     {
@@ -95,24 +219,26 @@ public partial class ImageView : UserControl
         _isLongPressTriggered = true;
         ShowMenuAtTouch(_pressPosition);
     }
-    
+
     // 长按取消
     private void CancelLongPress()
     {
         _longPressTimer.Stop();
     }
-    
+
     // 操作状态
     private Vector _lastPanPosition;
     private Vector _lastCenter;
+
     private double _lastDistance;
+
     // private bool _isDragging;
     private bool _wasTwoFingers = false; // 标记上一次操作是否为双指
-    
-    
+
+
     // 活动指针跟踪
     private readonly Dictionary<IPointer, Point> _activePointers = new();
-    
+
     private void SetupEventHandlers()
     {
         PointerPressed += OnPointerPressed;
@@ -121,15 +247,15 @@ public partial class ImageView : UserControl
         PointerWheelChanged += OnPointerWheelChanged;
         DoubleTapped += OnDoubleTapped;
         // KeyDown += OnKeyDown;
-        
+
         _longPressTimer.Tick += OnLongPressTimerTick;
-            
+
         // 监听尺寸变化
         this.GetObservable(BoundsProperty)
-            .Subscribe(_ => 
+            .Subscribe(_ =>
                 ViewModel?.UpdateView(new Vector(Bounds.Size.Width, Bounds.Size.Height)));
     }
-    
+
     /// <summary>
     /// 监听滚轮
     /// </summary>
@@ -145,7 +271,7 @@ public partial class ImageView : UserControl
             e.Handled = true;
         }
     }
-    
+
     /// <summary>
     /// 监听点击
     /// </summary>
@@ -184,10 +310,12 @@ public partial class ImageView : UserControl
         // 右键 打开菜单（仅当未匹配快捷键时）
         if (e.Properties.IsRightButtonPressed)
         {
-            ShowMenuAtPointer();
+            var pos = e.GetPosition(this);
+            _pressPosition = pos;
+            ShowMenuAtPointer(pos);
             e.Handled = true;
         }
-        
+
         // 左键
         if (e.Properties.IsLeftButtonPressed)
         {
@@ -207,7 +335,7 @@ public partial class ImageView : UserControl
                 var pointer = e.Pointer;
 
                 pointer.Capture(this);
-                
+
                 _activePointers[pointer] = point;
                 _wasTwoFingers = false;
 
@@ -225,17 +353,18 @@ public partial class ImageView : UserControl
                     _ = ViewModel?.Main.FolderVM.OpenFilePickerAsync();
                 }
             }
+
             e.Handled = true;
         }
     }
-    
+
     /// <summary>
     /// 监听拖动
     /// </summary>
     private void OnPointerMoved(object? sender, PointerEventArgs e)
     {
         if (!e.Properties.IsLeftButtonPressed) return; // 非左键全无效
-        
+
         if (ViewModel == null || !_activePointers.TryGetValue(e.Pointer, out var lastPoint)) return;
 
         var currentPoint = e.GetPosition(this);
@@ -244,23 +373,23 @@ public partial class ImageView : UserControl
         if (e.Pointer.Type is PointerType.Touch or PointerType.Pen || _longPressTimer.IsEnabled)
         {
             // 超出容差范围，取消长按
-            if (Vector.Distance(_pressPosition, currentPoint) > MoveTolerance) 
+            if (Vector.Distance(_pressPosition, currentPoint) > MoveTolerance)
                 CancelLongPress();
         }
-            
+
         // 当从双指变为单指时，不执行任何操作
         if (_wasTwoFingers && _activePointers.Count == 1)
         {
             _activePointers[e.Pointer] = currentPoint;
             return;
         }
-        
+
         switch (_activePointers.Count)
         {
             case 1:
                 // 单指拖动
                 ViewModel.Move(currentPoint - _lastPanPosition);
-                
+
                 _lastPanPosition = currentPoint;
                 _activePointers[e.Pointer] = currentPoint;
                 break;
@@ -285,7 +414,7 @@ public partial class ImageView : UserControl
 
                 _lastCenter = center;
                 _lastDistance = distance;
-                
+
                 // 更新当前点
                 _activePointers[e.Pointer] = currentPoint;
                 break;
@@ -294,7 +423,7 @@ public partial class ImageView : UserControl
 
         e.Handled = true;
     }
-    
+
     private static Vector GetCenter(IEnumerable<Point> points)
     {
         return new Vector(
@@ -309,7 +438,7 @@ public partial class ImageView : UserControl
         if (arr.Length < 2) return 0;
         return Point.Distance(arr[0], arr[1]);
     }
-    
+
     /// <summary>
     /// 监听抬手
     /// </summary>
@@ -322,7 +451,7 @@ public partial class ImageView : UserControl
         {
             // 取消长按计时
             CancelLongPress();
-            
+
             // 未触发长按 且无图片时 打开图片
             if (!_isLongPressTriggered && ViewModel?.SourceBitmap == null)
                 _ = ViewModel?.Main.FolderVM.OpenFilePickerAsync();
@@ -333,28 +462,28 @@ public partial class ImageView : UserControl
             _activePointers.Remove(pointer);
             pointer.Capture(null);
         }
-            
+
         // 当从双指变为单指时
         if (_wasTwoFingers && _activePointers.Count == 1)
         {
             // 清除拖动状态
             // _isDragging = false;
-        
+
             // 更新最后位置为剩余手指的位置
             _lastPanPosition = _activePointers.Values.First();
         }
-    
+
         if (_activePointers.Count < 2)
         {
             _lastDistance = 0;
-        
+
             // 双指状态结束
             if (_activePointers.Count == 0)
             {
                 _wasTwoFingers = false;
             }
         }
-        
+
         if (_activePointers.Count == 0)
         {
             // _isDragging = false;
@@ -362,7 +491,7 @@ public partial class ImageView : UserControl
 
         e.Handled = true;
     }
-    
+
     /// <summary>
     /// 监听双击
     /// </summary>
@@ -371,12 +500,12 @@ public partial class ImageView : UserControl
         ViewModel?.ToggleFit(e.GetPosition(this));
         e.Handled = true;
     }
-    
+
     private double SnapToPreset(double zoom)
     {
         // 预设缩放比例
         double[] presets = { 0.125, 0.25, 0.5, 1.0, 2.0, 4.0 };
-            
+
         var closest = presets
             .Select(p => new { Value = p, Diff = Math.Abs(p - zoom) })
             .OrderBy(x => x.Diff)
@@ -391,9 +520,9 @@ public partial class ImageView : UserControl
     ////////////////////
     /// 打开图片
     ////////////////////
-    
+
     #region OpenFile
-    
+
     /// <summary>
     /// 拖入文件
     /// </summary>
@@ -401,7 +530,7 @@ public partial class ImageView : UserControl
     {
         var hasValidFile = e.Data.GetFiles()?
             .Any(f => ViewModel.Main.FolderVM.IsImageFile(f.Name)) ?? false;
-            
+
         e.DragEffects = hasValidFile ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
@@ -415,6 +544,7 @@ public partial class ImageView : UserControl
             await ViewModel?.Main.FolderVM.LoadNewImageFolder(file)!;
             ViewModel?.Main.FolderVM.ScrollToCurrent();
         }
+
         e.Handled = true;
     }
 
@@ -445,6 +575,8 @@ public partial class ImageView : UserControl
             cmd.Execute(ctx);
             return true;
         }
+
         return false;
     }
 }
+

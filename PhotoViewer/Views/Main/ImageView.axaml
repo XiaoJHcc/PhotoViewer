@@ -3,11 +3,25 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.ImageView"
              x:DataType="vm:ImageViewModel"
              Focusable="True">
-    
+
+    <UserControl.Styles>
+        <Style Selector="Button.ContextMenuButton">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            <Setter Property="Padding" Value="8,4" />
+        </Style>
+        <Style Selector="Button.ContextMenuButton:pointerover">
+            <Setter Property="Background" Value="#333333" />
+        </Style>
+    </UserControl.Styles>
+
     <Grid Name="MainGrid" 
           Background="Transparent" 
           ClipToBounds="False" >
@@ -77,6 +91,41 @@
                            Margin="0,8,0,2" />
             </StackPanel>
         </Border>
+
+        <!-- 自定义右键菜单覆盖层 -->
+        <Grid x:Name="ContextMenuOverlay"
+              IsVisible="False"
+              Background="Transparent"
+              PointerPressed="OnMenuOverlayPressed">
+            <Canvas>
+                <Border x:Name="ContextMenuHost"
+                        Background="#222222"
+                        BorderBrush="#444444"
+                        BorderThickness="1"
+                        CornerRadius="6"
+                        Padding="6">
+                    <StackPanel Spacing="4">
+                        <Button Classes="ContextMenuButton"
+                                Click="OnToggleThumbnailMenuClick">
+                            <controls:CheckableMenuHeader x:Name="ThumbnailMenuHeader" Text="缩略图栏" />
+                        </Button>
+                        <Button Classes="ContextMenuButton"
+                                Click="OnToggleDetailMenuClick">
+                            <controls:CheckableMenuHeader x:Name="DetailMenuHeader" Text="细节栏" />
+                        </Button>
+                        <Button Classes="ContextMenuButton"
+                                Click="OnToggleControlMenuClick">
+                            <controls:CheckableMenuHeader x:Name="ControlMenuHeader" Text="控制栏" />
+                        </Button>
+                        <Border Height="1" Background="#333333" Margin="0,4" />
+                        <Button Classes="ContextMenuButton"
+                                Click="OnOpenSettingMenuClick">
+                            <TextBlock Text="设置" />
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </Canvas>
+        </Grid>
     </Grid>
     
 </UserControl>

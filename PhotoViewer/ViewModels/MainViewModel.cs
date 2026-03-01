@@ -197,9 +197,7 @@ public class MainViewModel : ViewModelBase
             }
         }
     }
-
-    #endregion
-
+    
     private bool _isDetailViewVisible = false;
     public bool IsDetailViewVisible
     {
@@ -207,10 +205,36 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isDetailViewVisible, value);
     }
 
+    private bool _isThumbnailViewVisible = true;
+    public bool IsThumbnailViewVisible
+    {
+        get => _isThumbnailViewVisible;
+        set => this.RaiseAndSetIfChanged(ref _isThumbnailViewVisible, value);
+    }
+
+    private bool _isControlViewVisible = true;
+    public bool IsControlViewVisible
+    {
+        get => _isControlViewVisible;
+        set => this.RaiseAndSetIfChanged(ref _isControlViewVisible, value);
+    }
+
     public void ToggleDetailView()
     {
         IsDetailViewVisible = !IsDetailViewVisible;
     }
+
+    public void ToggleThumbnailView()
+    {
+        IsThumbnailViewVisible = !IsThumbnailViewVisible;
+    }
+
+    public void ToggleControlView()
+    {
+        IsControlViewVisible = !IsControlViewVisible;
+    }
+    
+    #endregion
 
     public async Task SetRatingAsync(ImageFile? file, int rating)
     {
