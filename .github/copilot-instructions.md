@@ -52,6 +52,8 @@
 - `PhotoViewer/Core/MemoryBudget.cs`
   - `IMemoryBudget` / `MemoryBudget.Initialize`：平台注入内存预算。
   - `DefaultMemoryBudget`：基于 GC 信息的默认实现。
+ 
+- `PhotoViewer/Core/Settings`：设置持久化模型与服务（`SettingsModel`/`SettingsService`）。Windows/Linux 默认 JSON（应用数据目录或 XDG），macOS 使用 NSUserDefaults，Android 使用 SharedPreferences，iOS 使用 NSUserDefaults，平台入口在启动时调用 `SettingsService.ConfigureStorage(...)` 注入具体存储。
 
 - `PhotoViewer/Core/XmpWriter.cs`
   - `WriteRatingAsync`：写入 XMP 星级（可启安全模式）。

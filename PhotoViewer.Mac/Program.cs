@@ -2,6 +2,7 @@
 using Avalonia;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Mac.Core;
 
 namespace PhotoViewer.Mac;
@@ -17,6 +18,7 @@ sealed class Program
         {
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
+            SettingsService.ConfigureStorage(new MacSettingsStorage());
         })
         .StartWithClassicDesktopLifetime(args);
 

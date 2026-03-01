@@ -36,12 +36,28 @@ public partial class SettingsViewModel
     // 添加预设 +
     public void AddScalePreset() => ScalePresets.Add(new("100"));
     // 删除预设 -
-    public void RemoveScalePreset(ScalePreset item) => ScalePresets.Remove(item);
+    public void RemoveScalePreset(ScalePreset item)
+    {
+        ScalePresets.Remove(item);
+        RequestSave();
+    }
     // 排序预设 回车或失焦后
     public void SortScalePreset()
     {
         var sorted = ScalePresets.OrderBy(x => x.Value).ToList();
+        ScalePresets.CollectionChanged -= OnScalePresetsChanged;
+        foreach (var preset in ScalePresets)
+        {
+            preset.PropertyChanged -= OnScalePresetPropertyChanged;
+        }
+
         ScalePresets = new ObservableCollection<ScalePreset>(sorted);
+        ScalePresets.CollectionChanged += OnScalePresetsChanged;
+        foreach (var preset in ScalePresets)
+        {
+            preset.PropertyChanged += OnScalePresetPropertyChanged;
+        }
+        RequestSave();
     }
     // 切换编辑模式
     public void EditScalePreset(ScalePreset item)
@@ -56,6 +72,7 @@ public partial class SettingsViewModel
             preset.Editing = false;
         }
         SortScalePreset();
+        RequestSave();
     }
 
     public class ScalePreset : ReactiveObject
@@ -112,4 +129,3 @@ public partial class SettingsViewModel
         }
     }
 }
-

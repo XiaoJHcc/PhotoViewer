@@ -9,6 +9,7 @@ using Avalonia.Android;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.Android;
 
@@ -32,6 +33,7 @@ public class MainActivity : AvaloniaMainActivity<App>
                 // 注册 Android 平台的 HeifDecoder
                 HeifLoader.Initialize(new AndroidHeifDecoder());
                 MemoryBudget.Initialize(new AndroidMemoryBudget());
+                SettingsService.ConfigureStorage(new AndroidSettingsStorage());
             });
     }
     

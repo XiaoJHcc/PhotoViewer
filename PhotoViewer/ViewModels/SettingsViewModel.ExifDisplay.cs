@@ -78,6 +78,7 @@ public partial class SettingsViewModel
         }
 
         UpdateEnabledExifItems();
+        RequestSave();
     }
 
     private void OnExifDisplayItemChanged(object? sender, PropertyChangedEventArgs e)
@@ -85,6 +86,7 @@ public partial class SettingsViewModel
         if (e.PropertyName == nameof(ExifDisplayItem.IsEnabled))
         {
             UpdateEnabledExifItems();
+            RequestSave();
         }
     }
 
@@ -113,6 +115,7 @@ public partial class SettingsViewModel
         var item = ExifDisplayItems[fromIndex];
         ExifDisplayItems.RemoveAt(fromIndex);
         ExifDisplayItems.Insert(toIndex, item);
+        RequestSave();
     }
 
     public class ExifDisplayItem : ReactiveObject
@@ -147,4 +150,3 @@ public partial class SettingsViewModel
         }
     }
 }
-

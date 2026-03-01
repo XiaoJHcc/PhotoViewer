@@ -207,6 +207,8 @@ public partial class SettingsViewModel
                 item.PropertyChanged -= OnHotkeyItemChanged;
             }
         }
+
+        RequestSave();
     }
 
     private void OnHotkeyItemChanged(object? sender, PropertyChangedEventArgs e)
@@ -217,6 +219,8 @@ public partial class SettingsViewModel
         {
             CheckHotkeyConflicts();
         }
+
+        RequestSave();
     }
 
     public void CheckHotkeyConflicts()
@@ -232,7 +236,7 @@ public partial class SettingsViewModel
         for (int i = 0; i < Hotkeys.Count; i++)
         {
             var current = Hotkeys[i];
-            
+             
             for (int j = i + 1; j < Hotkeys.Count; j++)
             {
                 var other = Hotkeys[j];
@@ -320,6 +324,7 @@ public partial class SettingsViewModel
         var item = Hotkeys[fromIndex];
         Hotkeys.RemoveAt(fromIndex);
         Hotkeys.Insert(toIndex, item);
+        RequestSave();
     }
 
     public class HotkeyItem : ReactiveObject
@@ -535,3 +540,4 @@ public static class AppleKeyboardMapping
         _ => 0
     };
 }
+
