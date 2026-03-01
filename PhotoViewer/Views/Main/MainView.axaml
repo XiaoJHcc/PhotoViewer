@@ -18,7 +18,8 @@
                 Padding="100, 100, 100, 0"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="0,0,0,1">
+                BorderThickness="0,0,0,1"
+                IsVisible="{Binding IsThumbnailViewVisible}">
                 <views:ThumbnailView x:Name="TopThumbnailView" DataContext="{Binding FolderVM}" />
             </Border>
 
@@ -47,7 +48,8 @@
                 Padding="100, 0, 100, 100"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="0,1,0,0">
+                BorderThickness="0,1,0,0"
+                IsVisible="{Binding IsControlViewVisible}">
                 <views:ControlView DataContext="{Binding ControlVM}" />
             </Border>
         </Grid>
@@ -62,7 +64,8 @@
                 Padding="100, 100, 0, 100"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="0,0,1,0">
+                BorderThickness="0,0,1,0"
+                IsVisible="{Binding IsThumbnailViewVisible}">
                 <views:ThumbnailView x:Name="LeftThumbnailView" DataContext="{Binding FolderVM}" />
             </Border>
 
@@ -91,7 +94,8 @@
                 Padding="0, 100, 100, 100"
                 Background="#111111"
                 BorderBrush="#333333"
-                BorderThickness="1,0,0,0">
+                BorderThickness="1,0,0,0"
+                IsVisible="{Binding IsControlViewVisible}">
                 <views:ControlView DataContext="{Binding ControlVM}" />
             </Border>
         </Grid>

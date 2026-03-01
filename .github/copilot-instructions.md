@@ -93,6 +93,7 @@
 - `PhotoViewer/Views/Settings`：设置界面模块化页面。
 - `PhotoViewer/Controls`：可复用控件（快捷键按钮、可排序列表、细节预览组件）。
 - `PhotoViewer/Controls/DetailPreview.axaml`：正方形细节预览组件（标签 + 局部裁切）。
+- `PhotoViewer/Controls/CheckableMenuHeader.axaml`：菜单项头部（左文右图标）的可复用控件。
 - `PhotoViewer/Converters`：键位/布局/EXIF 显示等转换器。
 - `PhotoViewer/Behaviors`：交互行为（如滚轮横向滚动）。
 

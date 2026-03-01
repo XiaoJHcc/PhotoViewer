@@ -1,0 +1,21 @@
+﻿<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             mc:Ignorable="d"
+             x:Class="PhotoViewer.Controls.CheckableMenuHeader"
+             x:DataType="controls:CheckableMenuHeader">
+    <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+        <TextBlock Text="{Binding Text, RelativeSource={RelativeSource AncestorType=controls:CheckableMenuHeader}}"
+                   VerticalAlignment="Center" />
+        <TextBlock Grid.Column="1"
+                   Text="&#xf3c8;"
+                   Margin="0"
+                   IsVisible="{Binding IsIconVisible, RelativeSource={RelativeSource AncestorType=controls:CheckableMenuHeader}}"
+                   FontFamily="{StaticResource UiconsFontRegularRounded}"
+                   FontSize="10"
+                   VerticalAlignment="Center"
+                   HorizontalAlignment="Right" />
+    </Grid>
+</UserControl>

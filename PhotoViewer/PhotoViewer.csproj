@@ -89,6 +89,13 @@
     </ItemGroup>
 
     <ItemGroup>
+      <Compile Update="Controls\CheckableMenuHeader.axaml.cs">
+        <DependentUpon>CheckableMenuHeader.axaml</DependentUpon>
+        <SubType>Code</SubType>
+      </Compile>
+    </ItemGroup>
+
+    <ItemGroup>
       <AdditionalFiles Include="Windows\MainWindowForMac.axaml" />
       <AdditionalFiles Include="Windows\MainWindowForWindows.axaml" />
       <AdditionalFiles Include="Windows\SingleView.axaml" />
