@@ -7,7 +7,14 @@
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-      <MtouchLink>Full</MtouchLink>
+        <!-- None: 不启用链接器，防止反射用到的类（ViewLocator/ReactiveUI/DI）被裁掉 -->
+        <MtouchLink>None</MtouchLink>
+        <!-- Use iOS 26.3 simulator runtime (already installed); avoids requiring iOS 26.2 runtime -->
+        <_DeviceName>:v2:runtime=com.apple.CoreSimulator.SimRuntime.iOS-26-3,devicetype=com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro</_DeviceName>
+    </PropertyGroup>
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
+        <!-- SdkOnly: 只链接 SDK 程序集，用户代码完整保留，避免 ViewLocator/ReactiveUI 反射失效 -->
+        <MtouchLink>SdkOnly</MtouchLink>
     </PropertyGroup>
 
     <ItemGroup>
@@ -16,5 +23,10 @@
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+    </ItemGroup>
+
+    <!-- Linker preservation: protect reflection-used types (ViewLocator, ReactiveUI, DI) -->
+    <ItemGroup>
+        <LinkDescription Include="Linker.xml"/>
     </ItemGroup>
 </Project>
