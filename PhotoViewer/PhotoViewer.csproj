@@ -28,11 +28,6 @@
         <PackageReference Include="XmpCore" />
     </ItemGroup>
 
-    <ItemGroup>
-      <Reference Include="Mono.Android">
-        <HintPath>C:\Users\doudo\.dotnet\packs\Microsoft.Android.Ref.35\35.0.78\ref\net9.0\Mono.Android.dll</HintPath>
-      </Reference>
-    </ItemGroup>
 
     <ItemGroup>
       <Compile Update="Views\Settings\ControlSettingsView.axaml.cs">

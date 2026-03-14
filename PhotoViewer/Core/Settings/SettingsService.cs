@@ -24,7 +24,14 @@ public sealed class SettingsService : ISettingsService
         _storage = storage;
     }
 
-    public static ISettingsService Instance { get; private set; } = new SettingsService(CreateFileStorage());
+    private static readonly Lazy<ISettingsService> _lazyInstance = new(() => new SettingsService(CreateFileStorage()));
+    private static ISettingsService? _overrideInstance;
+
+    public static ISettingsService Instance
+    {
+        get => _overrideInstance ?? _lazyInstance.Value;
+        private set => _overrideInstance = value;
+    }
 
     public static void ConfigureStorage(ISettingsStorage storage)
     {
