@@ -1,7 +1,7 @@
 # PhotoViewer 项目速览（按目录/文件）
 
 ## 技术栈与平台
-- UI：Avalonia 11.3.2（编译绑定）
+- UI：Avalonia 11.3.9
 - 运行时：.NET 9（net9.0）
 - 架构：MVVM（Avalonia.ReactiveUI）
 - 关键依赖：MetadataExtractor（EXIF）、XmpCore（XMP/星级）、Microsoft.Extensions.DependencyInjection

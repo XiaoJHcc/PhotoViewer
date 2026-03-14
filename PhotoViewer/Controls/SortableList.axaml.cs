@@ -15,6 +15,7 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using Path = Avalonia.Controls.Shapes.Path;
 
 namespace PhotoViewer.Controls;
 
