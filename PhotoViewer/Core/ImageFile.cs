@@ -147,10 +147,25 @@ public class ImageFile : ReactiveObject
     // 被同名合并隐藏的其它格式文件
     public List<IStorageFile> HiddenFiles { get; } = new();
 
+    /// <summary>
+    /// 隐藏文件的星级缓存（key = 文件名，value = 星级），
+    /// 在 FolderViewModel.ApplyFilter 分组时填充，用于"星级冲突"筛选。
+    /// </summary>
+    public Dictionary<string, int> HiddenFileRatings { get; } = new();
+
+    /// <summary>
+    /// 是否存在星级冲突：代表文件与任意隐藏伴侣文件（如 RAW）的星级不一致。
+    /// 仅在开启"同名视为一张"且有隐藏文件时有意义。
+    /// </summary>
+    public bool HasRatingConflict =>
+        HiddenFileRatings.Count > 0 &&
+        HiddenFileRatings.Any(kvp => kvp.Value != Rating);
+
     // 工具：清空隐藏文件并重置显示名
     public void ResetGrouping()
     {
         HiddenFiles.Clear();
+        HiddenFileRatings.Clear();
         DisplayName = Name;
     }
 
