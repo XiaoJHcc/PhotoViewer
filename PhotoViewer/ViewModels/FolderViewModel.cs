@@ -514,11 +514,14 @@ public class FolderViewModel : ReactiveObject
                     .First();
 
                 representative.HiddenFiles.Clear();
+                representative.HiddenFileRatings.Clear();
                 foreach (var other in g)
                 {
                     if (other != representative)
                     {
                         representative.HiddenFiles.Add(other.File);
+                        // 缓存隐藏伴侣文件的星级，用于"星级冲突"筛选
+                        representative.HiddenFileRatings[other.File.Name] = other.Rating;
                         // 非代表文件恢复原始显示名（避免切换设置后残留）
                         other.ResetGrouping();
                     }
@@ -570,6 +573,8 @@ public class FolderViewModel : ReactiveObject
                 "Gt2" => r >= 2,
                 "Gt3" => r >= 3,
                 "Gt4" => r >= 4,
+                // 筛选出同名 HEIF/JPG/RAW 中星级不一致的照片
+                "Conflict" => f.HasRatingConflict,
                 _ => true
             };
         }).ToList();
@@ -604,6 +609,7 @@ public class FolderViewModel : ReactiveObject
         new() { DisplayName = "二星以上", Key = "Gt2" },
         new() { DisplayName = "三星以上", Key = "Gt3" },
         new() { DisplayName = "四星以上", Key = "Gt4" },
+        new() { DisplayName = "星级冲突", Key = "Conflict" },
     ];
 
     private string _selectedRatingFilter = "All";
