@@ -160,6 +160,16 @@ public partial class ImageView : UserControl
         e.Handled = true;
     }
 
+    /// <summary>
+    /// 右键菜单"打开文件/打开文件夹"点击：调用与控制栏相同的文件选择器功能，并关闭菜单
+    /// </summary>
+    private void OnOpenFileMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        HideMenu();
+        _ = ViewModel?.Main.FolderVM.OpenFilePickerAsync();
+        e.Handled = true;
+    }
+
     #endregion
 
 

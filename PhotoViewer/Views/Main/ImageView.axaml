@@ -105,6 +105,12 @@
                         CornerRadius="6"
                         Padding="6">
                     <StackPanel Spacing="4">
+                        <!-- 打开文件 / 打开文件夹（根据平台自动切换文字） -->
+                        <Button Classes="ContextMenuButton"
+                                Click="OnOpenFileMenuClick">
+                            <TextBlock Text="{Binding OpenFileMenuLabel}" />
+                        </Button>
+                        <Border Height="1" Background="#333333" Margin="0,4" />
                         <Button Classes="ContextMenuButton"
                                 Click="OnToggleThumbnailMenuClick">
                             <controls:CheckableMenuHeader x:Name="ThumbnailMenuHeader" Text="缩略图栏" />

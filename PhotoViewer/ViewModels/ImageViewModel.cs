@@ -46,6 +46,13 @@ public class ImageViewModel : ReactiveObject
 
     private Rect? _detailHighlightImageRect;
 
+    /// <summary>
+    /// 右键菜单"打开文件/打开文件夹"标签文本，根据平台自动切换：
+    /// 移动端（Android/iOS）显示"打开文件夹"，桌面端显示"打开文件"
+    /// </summary>
+    public string OpenFileMenuLabel =>
+        OperatingSystem.IsAndroid() || OperatingSystem.IsIOS() ? "打开文件夹" : "打开文件";
+
     public ImageViewModel(MainViewModel mainViewModel)
     {
         _main = mainViewModel;
