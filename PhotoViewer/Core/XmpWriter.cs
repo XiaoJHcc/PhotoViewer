@@ -29,7 +29,6 @@ public static class XmpWriter
     
     // 备份缓存管理
     private static string? _lastBackupPath;
-    private static string? _lastBackupOriginalPath;
     
     /// <summary>
     /// 检查文件是否为支持的格式
@@ -83,7 +82,7 @@ public static class XmpWriter
             await using (var stream = await file.OpenReadAsync())
             {
                 fileData = new byte[stream.Length];
-                await stream.ReadAsync(fileData, 0, fileData.Length);
+                await stream.ReadExactlyAsync(fileData, 0, fileData.Length);
             }
             
             // 查找 XMP 星级位置
@@ -217,7 +216,7 @@ public static class XmpWriter
                         await using (var verifyStream = await file.OpenReadAsync())
                         {
                             verifyData = new byte[verifyStream.Length];
-                            await verifyStream.ReadAsync(verifyData, 0, verifyData.Length);
+                            await verifyStream.ReadExactlyAsync(verifyData, 0, verifyData.Length);
                         }
                         
                         if (VerifyFullFileModification(backupData, verifyData, ratingPosition))
@@ -264,7 +263,7 @@ public static class XmpWriter
             
             return true;
         }
-        catch (Exception ex)
+        catch (Exception)
         {
             Console.WriteLine($"[XMP Writer] Android: OPERATION FAILED");
             return false;
@@ -408,7 +407,6 @@ public static class XmpWriter
             finally
             {
                 _lastBackupPath = null;
-                _lastBackupOriginalPath = null;
             }
         }
     }
@@ -834,7 +832,7 @@ public static class XmpWriter
             await using (var stream = await file.OpenReadAsync())
             {
                 fileData = new byte[stream.Length];
-                await stream.ReadAsync(fileData, 0, fileData.Length);
+                await stream.ReadExactlyAsync(fileData, 0, fileData.Length);
             }
             
             var ratingPosition = FindXmpRatingPosition(fileData);

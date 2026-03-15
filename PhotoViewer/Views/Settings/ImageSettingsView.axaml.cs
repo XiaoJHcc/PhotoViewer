@@ -16,11 +16,11 @@ public partial class ImageSettingsView : UserControl
 
     private void OnScalePresetLostFocus(object? sender, RoutedEventArgs e)
     {
-        ViewModel.ApplyScalePreset();
+        ViewModel?.ApplyScalePreset();
     }
 
     private void OnScalePresetKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter) ViewModel.ApplyScalePreset();
+        if (e.Key == Key.Enter) ViewModel?.ApplyScalePreset();
     }
 }

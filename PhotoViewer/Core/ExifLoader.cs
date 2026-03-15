@@ -466,7 +466,7 @@ public static class ExifLoader
     /// <summary>
     /// 从字节数据创建缩略图
     /// </summary>
-    public static async Task<Bitmap?> CreateThumbnailFromDataAsync(byte[] data)
+    public static Task<Bitmap?> CreateThumbnailFromDataAsync(byte[] data)
     {
         try
         {
@@ -483,15 +483,15 @@ public static class ExifLoader
                 );
                 var scaledThumbnail = thumbnail.CreateScaledBitmap(newSize);
                 thumbnail.Dispose();
-                return scaledThumbnail;
+                return Task.FromResult<Bitmap?>(scaledThumbnail);
             }
             
-            return thumbnail;
+            return Task.FromResult<Bitmap?>(thumbnail);
         }
         catch (Exception ex)
         {
             Console.WriteLine("Failed to create thumbnail from data: " + ex.Message);
-            return null;
+            return Task.FromResult<Bitmap?>(null);
         }
     }
 
@@ -558,7 +558,7 @@ public static class ExifLoader
     /// <summary>
     /// 快速获取图片尺寸信息（不解码完整图片）
     /// </summary>
-    private static async Task<(int width, int height)?> GetImageInfoAsync(Stream stream)
+    private static Task<(int width, int height)?> GetImageInfoAsync(Stream stream)
     {
         try
         {
@@ -572,7 +572,7 @@ public static class ExifLoader
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var exifWidth) &&
                     exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var exifHeight))
                 {
-                    return (exifWidth, exifHeight);
+                    return Task.FromResult<(int width, int height)?>((exifWidth, exifHeight));
                 }
             }
             
@@ -583,7 +583,7 @@ public static class ExifLoader
                 if (exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageWidth, out var ifdWidth) &&
                     exifIfd0.TryGetInt32(ExifDirectoryBase.TagImageHeight, out var ifdHeight))
                 {
-                    return (ifdWidth, ifdHeight);
+                    return Task.FromResult<(int width, int height)?>((ifdWidth, ifdHeight));
                 }
             }
             
@@ -592,14 +592,14 @@ public static class ExifLoader
             var jpegSize = ReadJpegDimensions(stream);
             if (jpegSize.HasValue)
             {
-                return jpegSize;
+                return Task.FromResult<(int width, int height)?>(jpegSize);
             }
             
-            return null;
+            return Task.FromResult<(int width, int height)?>(null);
         }
         catch
         {
-            return null;
+            return Task.FromResult<(int width, int height)?>(null);
         }
     }
 
@@ -667,7 +667,7 @@ public static class ExifLoader
     /// <summary>
     /// 使用采样方式生成缩略图（适用于大图片）
     /// </summary>
-    private static async Task<Bitmap?> GenerateThumbnailWithSampling(Stream stream, int targetSize)
+    private static Task<Bitmap?> GenerateThumbnailWithSampling(Stream stream, int targetSize)
     {
         try
         {
@@ -704,10 +704,10 @@ public static class ExifLoader
                     );
                     var finalBitmap = roughBitmap.CreateScaledBitmap(finalSize);
                     roughBitmap.Dispose();
-                    return finalBitmap;
+                    return Task.FromResult<Bitmap?>(finalBitmap);
                 }
                 
-                return roughBitmap;
+                return Task.FromResult<Bitmap?>(roughBitmap);
             }
             else
             {
@@ -721,16 +721,16 @@ public static class ExifLoader
                     );
                     var scaledBitmap = originalBitmap.CreateScaledBitmap(newSize);
                     originalBitmap.Dispose();
-                    return scaledBitmap;
+                    return Task.FromResult<Bitmap?>(scaledBitmap);
                 }
                 
-                return originalBitmap;
+                return Task.FromResult<Bitmap?>(originalBitmap);
             }
         }
         catch (Exception ex)
         {
             Console.WriteLine("Failed to generate sampled thumbnail: " + ex.Message);
-            return null;
+            return Task.FromResult<Bitmap?>(null);
         }
     }
 

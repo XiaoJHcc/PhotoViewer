@@ -30,7 +30,7 @@ public class HorizontalScrollWheelBehavior : Behavior<ScrollViewer>
         base.OnDetaching();
     }
 
-    private void OnPointerWheelChanged(object sender, PointerWheelEventArgs e)
+    private void OnPointerWheelChanged(object? sender, PointerWheelEventArgs e)
     {
         if (AssociatedObject is ScrollViewer scrollViewer && 
             scrollViewer.Extent.Width > scrollViewer.Viewport.Width)

@@ -17,8 +17,8 @@ namespace PhotoViewer.ViewModels;
 // 下拉选框类
 public class SortOption
 {
-    public string DisplayName { get; set; } // 中文显示
-    public object Value { get; set; }       // 实际值
+    public string DisplayName { get; set; } = null!; // 中文显示
+    public object Value { get; set; } = null!;       // 实际值
 }
 
 // 排序方式
@@ -480,7 +480,7 @@ public class FolderViewModel : ReactiveObject
     {
         var filtered = _allFiles.Where(f => 
             Main.Settings.SelectedFormats.Contains(
-                System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant()
+                System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? string.Empty
             )
         ).ToList();
 

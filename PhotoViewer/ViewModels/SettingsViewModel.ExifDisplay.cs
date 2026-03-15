@@ -98,7 +98,7 @@ public partial class SettingsViewModel
     }
 
     // 添加移动命令
-    public ReactiveCommand<MoveCommandParameter, Unit> MoveExifDisplayCommand { get; private set; }
+    public ReactiveCommand<MoveCommandParameter, Unit> MoveExifDisplayCommand { get; private set; } = null!;
 
     private void OnMoveExifDisplay(MoveCommandParameter parameter)
     {
