@@ -71,8 +71,8 @@ public partial class ThumbnailView : UserControl
         ThumbnailScrollViewer.ScrollChanged += OnScrollChangedThumbnail;
 
         // 排序选项变化时刷新
-        SortByComboBox.SelectionChanged += (s, e) => LoadVisibleThumbnailsAsync();
-        OrderComboBox.SelectionChanged += (s, e) => LoadVisibleThumbnailsAsync();
+        SortByComboBox.SelectionChanged += (s, e) => _ = LoadVisibleThumbnailsAsync();
+        OrderComboBox.SelectionChanged += (s, e) => _ = LoadVisibleThumbnailsAsync();
         
         // 监听DataContext变化
         this.WhenAnyValue(x => x.DataContext)
@@ -189,15 +189,15 @@ public partial class ThumbnailView : UserControl
         vm.ReportVisibleRange(firstIndex, lastIndex);
     }
     
-    private async Task LoadVisibleThumbnailsAsync()
+    private Task LoadVisibleThumbnailsAsync()
     {
-        if (ViewModel == null) return;
+        if (ViewModel == null) return Task.CompletedTask;
 
         try
         {
             var scrollViewer = ThumbnailScrollViewer;
             var itemsControl = ThumbnailItemsControl;
-            if (scrollViewer == null || itemsControl == null) return;
+            if (scrollViewer == null || itemsControl == null) return Task.CompletedTask;
 
             var isVertical = ViewModel.IsVerticalLayout;
             var viewport = scrollViewer.Viewport;
@@ -231,7 +231,7 @@ public partial class ThumbnailView : UserControl
                     var item = ViewModel.FilteredFiles[i];
                     
                     // 尝试获取实际容器进行精确检测
-                    var container = itemsControl.ItemContainerGenerator.ContainerFromIndex(i) as Control;
+                    var container = itemsControl.ContainerFromIndex(i) as Control;
                     if (container != null && container.IsMeasureValid && container.IsArrangeValid)
                     {
                         try
@@ -284,6 +284,7 @@ public partial class ThumbnailView : UserControl
         {
             Console.WriteLine("加载可见缩略图失败: " + ex.Message);
         }
+        return Task.CompletedTask;
     }
 
     /// <summary>
@@ -327,13 +328,13 @@ public partial class ThumbnailView : UserControl
         try
         {
             // 获取ItemsControl中的容器
-            var container = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(index) as Control;
+            var container = ThumbnailItemsControl.ContainerFromIndex(index) as Control;
             if (container == null)
             {
                 // 如果容器未创建，等待一下再试
                 Dispatcher.UIThread.Post(() =>
                 {
-                    var retryContainer = ThumbnailItemsControl.ItemContainerGenerator.ContainerFromIndex(index) as Control;
+                    var retryContainer = ThumbnailItemsControl.ContainerFromIndex(index) as Control;
                     if (retryContainer != null)
                     {
                         ScrollToContainer(retryContainer);
@@ -419,7 +420,7 @@ public partial class ThumbnailView : UserControl
                     new Vector(targetOffset.X, currentOffset.Y)));
             }
 
-            _scrollAnimation.Children.Clear();
+            _scrollAnimation!.Children.Clear();
             _scrollAnimation.Children.Add(keyFrame);
 
             // 检查是否已被取消

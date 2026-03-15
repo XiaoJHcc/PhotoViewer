@@ -197,11 +197,11 @@ public partial class ImageView : UserControl
     {
         if (VisualRoot is Window parentWindow)
         {
-            ViewModel.Main.OpenSettingWindow(parentWindow);
+            ViewModel?.Main.OpenSettingWindow(parentWindow);
         }
         else
         {
-            ViewModel.Main.OpenSettingModal();
+            ViewModel?.Main.OpenSettingModal();
         }
     }
 
@@ -538,8 +538,10 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OnDragOver(object? sender, DragEventArgs e)
     {
+#pragma warning disable CS0618 // DragEventArgs.Data 已过时，暂用旧 API
         var hasValidFile = e.Data.GetFiles()?
-            .Any(f => ViewModel.Main.FolderVM.IsImageFile(f.Name)) ?? false;
+            .Any(f => ViewModel?.Main.FolderVM.IsImageFile(f.Name) == true) ?? false;
+#pragma warning restore CS0618
 
         e.DragEffects = hasValidFile ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
@@ -547,7 +549,9 @@ public partial class ImageView : UserControl
 
     private async Task OnDrop(object? sender, DragEventArgs e)
     {
+#pragma warning disable CS0618 // DragEventArgs.Data 已过时，暂用旧 API
         var files = e.Data.GetFiles()?.ToList();
+#pragma warning restore CS0618
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
             // 通过 MainViewModel 处理拖拽文件 (逻辑同选择打开文件)

@@ -90,7 +90,7 @@ public class ControlViewModel : ReactiveObject
         Main = mainViewModel;
         
         // 初始化命令
-        OnOpen = ReactiveCommand.Create<PointerContext?>(_ => { Main.FolderVM.OpenFilePickerAsync(); });
+        OnOpen = ReactiveCommand.Create<PointerContext?>(ctx => { var _ = Main.FolderVM.OpenFilePickerAsync(); });
         OnPrevious = ReactiveCommand.Create<PointerContext?>(_ => { ExecutePrevious(); });
         OnNext = ReactiveCommand.Create<PointerContext?>(_ => { ExecuteNext(); });
         OnExchange = ReactiveCommand.Create<PointerContext?>(_ => { Main.CurrentFile = Main.LastFile; });
@@ -172,7 +172,7 @@ public class ControlViewModel : ReactiveObject
     private void ExecutePrevious()
     {
         // 上一张
-        if (Main.FolderVM.HasPreviousFile())
+        if (Main.FolderVM.HasPreviousFile() && Main.CurrentFile != null)
         {
             var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex - 1];
@@ -183,7 +183,7 @@ public class ControlViewModel : ReactiveObject
     private void ExecuteNext()
     {
         // 下一张
-        if (Main.FolderVM.HasNextFile())
+        if (Main.FolderVM.HasNextFile() && Main.CurrentFile != null)
         {
             var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
             Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex + 1];
@@ -233,7 +233,7 @@ public class ControlViewModel : ReactiveObject
                         await file.LoadExifDataAsync();
 
                         // 在 UI 线程上通知更新
-                        Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
+                        _ = Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
                         {
                             this.RaisePropertyChanged(nameof(CurrentExifData));
                         });

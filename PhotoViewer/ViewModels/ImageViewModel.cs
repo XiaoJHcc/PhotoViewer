@@ -28,7 +28,7 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _HintText, value);
     }
 
-    public event EventHandler<IStorageFile>? ImageLoaded;
+    public event EventHandler<IStorageFile?>? ImageLoaded;
     
     private Rect _detailHighlightRect;
     public Rect DetailHighlightRect
@@ -61,7 +61,7 @@ public class ImageViewModel : ReactiveObject
             .Subscribe(currentFile =>
             {
                 if (currentFile == null) ClearImage();
-                else LoadImageAsync(currentFile.File);
+                else _ = LoadImageAsync(currentFile.File);
             });
         
         // 图片加载完成时

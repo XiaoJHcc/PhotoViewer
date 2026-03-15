@@ -1,5 +1,4 @@
 using System;
-using System.Threading;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
@@ -19,7 +18,6 @@ public partial class MainWindowForWindows : Window
     private WindowState _prevStateBeforeFullScreen = WindowState.Normal;
     private Thickness _normalPadding = new Thickness(0);
     private WindowEdge? _currentResizeEdge;
-    private CancellationTokenSource? _snapHoverCts;
 
     public MainWindowForWindows()
     {
@@ -230,7 +228,6 @@ public partial class MainWindowForWindows : Window
 
     private void BtnMax_Click(object? sender, RoutedEventArgs e)
     {
-        _snapHoverCts?.Cancel();
         if (WindowState == WindowState.Maximized)
             WindowState = WindowState.Normal;
         else if (WindowState == WindowState.Normal)
@@ -245,7 +242,6 @@ public partial class MainWindowForWindows : Window
 
     private void BtnFull_Click(object? sender, RoutedEventArgs e)
     {
-        _snapHoverCts?.Cancel();
         if (WindowState == WindowState.FullScreen)
         {
             WindowState = _prevStateBeforeFullScreen;
@@ -259,7 +255,6 @@ public partial class MainWindowForWindows : Window
 
     private void BtnClose_Click(object? sender, RoutedEventArgs e)
     {
-        _snapHoverCts?.Cancel();
         Close();
     }
 }

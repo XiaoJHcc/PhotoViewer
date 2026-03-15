@@ -88,7 +88,7 @@ public partial class SettingsViewModel
             }
         }
 
-        private string _text;
+        private string _text = null!;
         public string Text
         {
             get => _text;
@@ -108,7 +108,7 @@ public partial class SettingsViewModel
             }
         }
 
-        private string _display;
+        private string _display = null!;
         public string Display
         {
             get => _display;
