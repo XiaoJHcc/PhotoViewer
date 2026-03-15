@@ -1,0 +1,37 @@
+<Project>
+  <PropertyGroup>
+    <!-- 统一版本号：修改此处即可同步所有平台项目 -->
+    <AppVersion>0.4.0</AppVersion>
+    <AppBuildNumber>40</AppBuildNumber>
+
+    <!-- .NET 程序集版本 -->
+    <Version>$(AppVersion)</Version>
+    <AssemblyVersion>$(AppVersion).0</AssemblyVersion>
+    <FileVersion>$(AppVersion).0</FileVersion>
+    <InformationalVersion>$(AppVersion)</InformationalVersion>
+
+    <!-- 平台 SDK 版本号（Android / iOS / macOS 通用） -->
+    <!-- Android: → android:versionName / android:versionCode -->
+    <!-- iOS/macOS: → CFBundleShortVersionString / CFBundleVersion -->
+    <ApplicationDisplayVersion>$(AppVersion)</ApplicationDisplayVersion>
+    <ApplicationVersion>$(AppBuildNumber)</ApplicationVersion>
+
+    <!-- 产品信息 -->
+    <Product>PhotoViewer</Product>
+    <Company>xiaojh.cc</Company>
+    <Copyright>Copyright © 2024-2026 xiaojh.cc</Copyright>
+  </PropertyGroup>
+
+  <!--
+    自动同步 Info.plist 版本号（iOS / macOS）
+    在构建读取 Info.plist 前，用 PlistBuddy 将 Directory.Build.props 中的版本写入 Info.plist。
+    效果：只需修改上方 AppVersion，构建时 Info.plist 自动更新，无需手动编辑。
+  -->
+  <Target Name="_SyncInfoPlistVersion"
+          BeforeTargets="_DetectAppManifest"
+          Condition="Exists('$(MSBuildProjectDirectory)/Info.plist')">
+    <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
+    <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
+    <Message Importance="high" Text="[版本同步] Info.plist → $(AppVersion)" />
+  </Target>
+</Project>

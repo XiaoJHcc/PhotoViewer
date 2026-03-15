@@ -14,7 +14,7 @@ using PhotoViewer.Core.Settings;
 namespace PhotoViewer.Android;
 
 [Activity(
-    Label = "PhotoViewer.Android",
+    Label = "PhotoViewer",
     Theme = "@style/MyTheme.NoActionBar",
     Icon = "@drawable/icon",
     MainLauncher = true,

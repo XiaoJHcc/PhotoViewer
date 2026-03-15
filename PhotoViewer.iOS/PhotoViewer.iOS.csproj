@@ -5,6 +5,8 @@
         <SupportedOSPlatformVersion>13.0</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!-- iOS 应用图标：引用 Assets.xcassets 中的 AppIcon -->
+        <XSAppIconAssets>Resources/Assets.xcassets/AppIcon.appiconset</XSAppIconAssets>
     </PropertyGroup>
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
         <!-- None: 不启用链接器，防止反射用到的类（ViewLocator/ReactiveUI/DI）被裁掉 -->

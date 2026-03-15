@@ -7,10 +7,12 @@
 	<key>CFBundleIdentifier</key>
 	<string>cc.xiaojh.PhotoViewer</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.3.7</string>
+	<string>0.4.0</string>
 	<key>CFBundleVersion</key>
-	<string>0.3.7</string>
+	<string>0.4.0</string>
 	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>MinimumOSVersion</key>
 	<string>13.0</string>
@@ -39,7 +41,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>LSSupportsOpeningDocumentsInPlace</key>
-	<true/>
 </dict>
 </plist>
