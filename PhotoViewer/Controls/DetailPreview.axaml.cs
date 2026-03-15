@@ -9,6 +9,37 @@ using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Controls;
 
+/// <summary>
+/// 管理同组 <see cref="DetailPreview"/> 的互斥高亮（绿框）状态。
+/// 确保同一时刻至多一个预览组件处于高亮状态：
+/// 点击新组件时，自动清除上一个高亮；再次点击同一组件则取消高亮。
+/// </summary>
+public class DetailPreviewHighlightGroup
+{
+    private DetailPreview? _current;
+
+    /// <summary>
+    /// 请求切换指定预览组件的高亮状态。
+    /// 若该组件已高亮则取消；否则高亮该组件并清除上一个高亮。
+    /// </summary>
+    /// <param name="preview">发起请求的预览组件。</param>
+    internal void RequestToggle(DetailPreview preview)
+    {
+        if (_current == preview)
+        {
+            _current = null;
+            preview.SetHighlighted(false);
+        }
+        else
+        {
+            var previous = _current;
+            _current = preview;
+            previous?.SetHighlighted(false);
+            preview.SetHighlighted(true);
+        }
+    }
+}
+
 public partial class DetailPreview : UserControl
 {
     public static readonly StyledProperty<Bitmap?> SourceProperty =
@@ -65,6 +96,21 @@ public partial class DetailPreview : UserControl
         set => SetValue(HighlightTargetProperty, value);
     }
 
+    /// <summary>
+    /// 互斥高亮分组。设置后，同组内的预览组件在触摸点击时只允许一个显示高亮绿框。
+    /// </summary>
+    public static readonly StyledProperty<DetailPreviewHighlightGroup?> HighlightGroupProperty =
+        AvaloniaProperty.Register<DetailPreview, DetailPreviewHighlightGroup?>(nameof(HighlightGroup));
+
+    /// <summary>
+    /// 获取或设置所属的互斥高亮分组。
+    /// </summary>
+    public DetailPreviewHighlightGroup? HighlightGroup
+    {
+        get => GetValue(HighlightGroupProperty);
+        set => SetValue(HighlightGroupProperty, value);
+    }
+
     private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromRgb(0, 255, 0));
     private static readonly IBrush DefaultBorderBrush = new SolidColorBrush(Color.FromRgb(68, 68, 68));
 
@@ -72,6 +118,7 @@ public partial class DetailPreview : UserControl
     private Border? _rootBorder;
     private bool _updateQueued;
     private bool _isHighlighted;
+    private bool _wasHighlightedBeforeDeactivate; // 记录隐藏细节栏前的高亮状态，以便重新显示时恢复
     private Rect? _lastImageRect;
 
     static DetailPreview()
@@ -99,11 +146,21 @@ public partial class DetailPreview : UserControl
     {
         if (!IsActive)
         {
+            // 细节栏隐藏：保存高亮状态后清除视觉效果（组的 _current 指针保持不变）
+            _wasHighlightedBeforeDeactivate = _isHighlighted;
             SetHighlighted(false);
             return;
         }
 
+        // 细节栏重新显示：先触发预览更新（重新计算 _lastImageRect）
         QueueUpdatePreview();
+
+        // 恢复之前的高亮状态，使绿框和主照片标记一并重现
+        if (_wasHighlightedBeforeDeactivate)
+        {
+            _wasHighlightedBeforeDeactivate = false;
+            SetHighlighted(true);
+        }
     }
 
     private void QueueUpdatePreview()
@@ -196,7 +253,15 @@ public partial class DetailPreview : UserControl
             return;
         }
 
-        SetHighlighted(!_isHighlighted);
+        // 触摸点击时通过互斥分组协调高亮状态，确保同一时刻只有一个预览显示绿框
+        if (HighlightGroup != null)
+        {
+            HighlightGroup.RequestToggle(this);
+        }
+        else
+        {
+            SetHighlighted(!_isHighlighted);
+        }
         e.Handled = true;
     }
 
@@ -212,10 +277,23 @@ public partial class DetailPreview : UserControl
         e.Handled = true;
     }
 
-    private void SetHighlighted(bool isHighlighted)
+    /// <summary>
+    /// 设置当前组件的高亮状态，更新边框颜色并同步到 <see cref="HighlightTarget"/>。
+    /// </summary>
+    /// <param name="isHighlighted">是否高亮。</param>
+    internal void SetHighlighted(bool isHighlighted)
     {
+        var wasHighlighted = _isHighlighted;
         _isHighlighted = isHighlighted;
         UpdateBorderHighlight();
+
+        // 由高亮切换为非高亮时，明确清除主照片绿框标记
+        if (wasHighlighted && !isHighlighted)
+        {
+            HighlightTarget?.SetDetailHighlight(null);
+            return;
+        }
+
         UpdateHighlightTarget();
     }
 
@@ -238,12 +316,13 @@ public partial class DetailPreview : UserControl
 
     private void UpdateHighlightTarget()
     {
-        if (HighlightTarget == null)
+        if (HighlightTarget == null || !_isHighlighted)
         {
+            // 非高亮状态下不操作 HighlightTarget，避免覆盖其他预览组件的高亮设置
             return;
         }
 
-        if (!IsActive || !_isHighlighted || _lastImageRect == null)
+        if (!IsActive || _lastImageRect == null)
         {
             HighlightTarget.SetDetailHighlight(null);
             return;

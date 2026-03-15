@@ -9,6 +9,11 @@
              x:Class="PhotoViewer.Views.DetailView"
              x:DataType="vm:DetailViewModel">
 
+    <!-- 共享高亮分组：确保触摸点击时只有一个预览组件显示绿框 -->
+    <UserControl.Resources>
+        <controls:DetailPreviewHighlightGroup x:Key="SharedHighlightGroup" />
+    </UserControl.Resources>
+
     <Border Padding="10">
         <ItemsControl ItemsSource="{Binding Items}">
             <ItemsControl.ItemsPanel>
@@ -24,6 +29,7 @@
                                             CropSize="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).CropSize}"
                                             IsActive="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).IsDetailViewVisible}"
                                             HighlightTarget="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).ImageVM}"
+                                            HighlightGroup="{StaticResource SharedHighlightGroup}"
                                             Source="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).SourceBitmap}"
                                             Label="{Binding Label}"
                                             Center="{Binding Center}" />

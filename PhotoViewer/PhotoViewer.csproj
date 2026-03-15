@@ -96,10 +96,4 @@
       <AdditionalFiles Include="Windows\MainWindowForWindows.axaml" />
       <AdditionalFiles Include="Windows\SingleView.axaml" />
     </ItemGroup>
-
-    <ItemGroup>
-      <Content Include="..\AGENTS.md">
-        <Link>AGENTS.md</Link>
-      </Content>
-    </ItemGroup>
 </Project>
