@@ -421,6 +421,10 @@ public class ImageViewModel : ReactiveObject
             var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
             if (ImageSize == newImageSize) return;
             
+            // 图片尺寸即将变化，提前清空细节高亮矩形，避免旧坐标在新布局下显示到错误位置。
+            // DetailPreview.UpdatePreview() 将在下一帧以新图片坐标重新计算并恢复高亮。
+            SetDetailHighlight(null);
+            
             if (Fit)
             {
                 ImageSize = newImageSize;
