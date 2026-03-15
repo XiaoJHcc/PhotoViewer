@@ -4,9 +4,26 @@
   <assembly fullname="PhotoViewer" preserve="all" />
   <assembly fullname="PhotoViewer.iOS" preserve="all" />
 
+  <!-- Avalonia 核心程序集：使用大量反射、XAML 动态加载和编译绑定 -->
+  <assembly fullname="Avalonia" preserve="all" />
+  <assembly fullname="Avalonia.Base" preserve="all" />
+  <assembly fullname="Avalonia.Controls" preserve="all" />
+  <assembly fullname="Avalonia.DesignerSupport" preserve="all" />
+  <assembly fullname="Avalonia.Dialogs" preserve="all" />
+  <assembly fullname="Avalonia.Markup" preserve="all" />
+  <assembly fullname="Avalonia.Markup.Xaml" preserve="all" />
+  <assembly fullname="Avalonia.Themes.Fluent" preserve="all" />
+  <assembly fullname="Avalonia.Fonts.Inter" preserve="all" />
+  <assembly fullname="Avalonia.iOS" preserve="all" />
+  <assembly fullname="Avalonia.Skia" preserve="all" />
+  <assembly fullname="Avalonia.Metal" preserve="all" />
+
   <!-- ReactiveUI uses reflection extensively -->
   <assembly fullname="ReactiveUI" preserve="all" />
   <assembly fullname="Avalonia.ReactiveUI" preserve="all" />
+  <assembly fullname="DynamicData" preserve="all" />
+  <assembly fullname="System.Reactive" preserve="all" />
+  <assembly fullname="Splat" preserve="all" />
 
   <!-- MetadataExtractor / XmpCore use reflection for metadata parsing -->
   <assembly fullname="MetadataExtractor" preserve="all" />

@@ -5,19 +5,36 @@
         <SupportedOSPlatformVersion>13.0</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-        <!-- iOS 应用图标：引用 Assets.xcassets 中的 AppIcon -->
-        <XSAppIconAssets>Resources/Assets.xcassets/AppIcon.appiconset</XSAppIconAssets>
+        <!-- iOS 应用图标：指定 Assets.xcassets 中的 AppIcon 图标集名称 -->
+        <AppIcon>AppIcon</AppIcon>
     </PropertyGroup>
+
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-        <!-- None: 不启用链接器，防止反射用到的类（ViewLocator/ReactiveUI/DI）被裁掉 -->
+        <!-- 不启用链接器，防止反射用到的类（ViewLocator/ReactiveUI/DI）被裁掉 -->
         <MtouchLink>None</MtouchLink>
+        <!-- 使用解释器模式，跳过 AOT 编译，大幅加速 Debug 构建与安装 -->
+        <UseInterpreter>true</UseInterpreter>
+        <MtouchUseLlvm>false</MtouchUseLlvm>
         <!-- Use iOS 26.3 simulator runtime (already installed); avoids requiring iOS 26.2 runtime -->
         <_DeviceName>:v2:runtime=com.apple.CoreSimulator.SimRuntime.iOS-26-3,devicetype=com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro</_DeviceName>
+        <CodesignKey>Apple Development: doudou0610@gmail.com (9F9GJKXYJ7)</CodesignKey>
     </PropertyGroup>
+
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-        <!-- SdkOnly: 只链接 SDK 程序集，用户代码完整保留，避免 ViewLocator/ReactiveUI 反射失效 -->
+        <!-- SdkOnly: 只链接 SDK 程序集，用户代码完整保留 -->
         <MtouchLink>SdkOnly</MtouchLink>
+        <!-- 混合模式：AOT + 解释器回退，防止纯 AOT 对反射密集型代码（Avalonia/ReactiveUI）闪退 -->
+        <UseInterpreter>true</UseInterpreter>
+        <MtouchUseLlvm>false</MtouchUseLlvm>
+        <CodesignKey>Apple Development: doudou0610@gmail.com (9F9GJKXYJ7)</CodesignKey>
     </PropertyGroup>
+
+    <!-- iOS 应用图标：将 Assets.xcassets 中的图标编译进 Assets.car -->
+    <ItemGroup>
+        <ImageAsset Include="Resources\Assets.xcassets\Contents.json" />
+        <ImageAsset Include="Resources\Assets.xcassets\AppIcon.appiconset\Contents.json" />
+        <ImageAsset Include="Resources\Assets.xcassets\AppIcon.appiconset\icon-1024.png" />
+    </ItemGroup>
 
     <ItemGroup>
         <PackageReference Include="Avalonia.iOS"/>
