@@ -101,7 +101,21 @@ NuGet versions are centrally managed in `Directory.Packages.props` — **always 
 | Modify **window chrome / title bar** | `Windows/MainWindowForWindows.axaml` (Windows) or `Windows/MainWindowForMac.axaml` (macOS) |
 | Modify **cache size / format settings** | `SettingsViewModel.BitmapCache.cs`, `Views/Settings/ImageSettingsView.axaml` |
 | Modify **supported file formats** | `SettingsViewModel.FileFormats.cs`, `Views/Settings/FileSettingsView.axaml` |
+| **Release macOS build** | `PhotoViewer.Mac/publish.sh` |
 
 ## Documentation Maintenance
 When adding new files or making significant changes, update this file's Quick Reference table. Keep descriptions concise.
+
+## Release (macOS)
+
+```bash
+# 在 PhotoViewer.Mac/ 目录下执行，版本号可选（默认 0.4.0）
+bash publish.sh 0.4.0
+# 输出：bin/Release/dist/PhotoViewer-0.4.0-arm64.dmg
+```
+
+- 构建产物：`bin/Release/net9.0-macos/osx-arm64/PhotoViewer.Mac.app`（ad-hoc 签名，self-contained）
+- DMG 内含 `.app`、`Applications` 快捷方式、`安装 PhotoViewer.command`（去隔离助手）
+- 发版时更新 `Info.plist` 的 `CFBundleShortVersionString` / `CFBundleVersion`，然后执行脚本，将 DMG 上传至 GitHub Releases
+- 用户安装见 README.md
 

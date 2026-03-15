@@ -46,11 +46,12 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 - **Windows 11**
 - **macOS** （MacBook Air M1）
 - **iPadOS** （iPad mini A17 Pro）
-- **Android** （小米 13）
+- **Android** （小米 13 / 17 Ultra）
 
 ### 已测试相机
-- **SONY A6100**
 - **SONY A7C2**
+- **SONY A6700**
+- **SONY A6100**
 - *其他品牌相机的 RAW 标星功能暂未测试，为避免文件损坏，使用前应先验证可靠性*
 
 ### 平台支持情况
@@ -77,18 +78,19 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 
 - **Windows** : 下载 `PhotoViewer.Windows.exe` 直接运行
 - **Android** : 下载 `PhotoViewer.Android.apk` 并安装
-- **macOS** : 下载 `PhotoViewer.Mac.dmg` 打开映像，并将 app 拖入应用程序文件夹。启动时显示“Apple无法验证……移到废纸篓”，则打开设置, 进入“隐私与安全性”，拉到最底点击“仍要打开”。
+- **macOS** : 下载 `PhotoViewer.Mac.dmg`，打开映像，将 `PhotoViewer.Mac.app` 拖入右侧 `Applications` 文件夹。首次启动若提示"Apple 无法验证…移到废纸篓"，有以下两种方法解除：
+  - **方法一（推荐）**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开
+  - **方法二**：打开 `系统设置 → 隐私与安全性`，滚动到底部，点击 `仍要打开`
 
 ## 开发计划
 
 ### 🚧 待开发功能
-- **设置保存**
-- **RAW 格式预览**
-- **长曝抖动检查**（尝试自动化）
 - **连拍/HDR/堆栈自动分组**
 - **SONY 对焦点识别**
-- *……其他需要的功能*
+- **基于 CV 对长曝抖动/主体虚焦检查** （主要研究方向）
+- **基于 AI 的视觉显著度分析** （主要研究方向）
+- **RAW 格式预览** （疑似伪需求，或许不会做了）
 
 ## 许可证
 
-本项目因使用 [LibHeif](https://github.com/strukturag/libheif) 等开源库，遵顼协议采用 [GPL 许可证](LICENSE)。
+本项目因使用 [LibHeif](https://github.com/strukturag/libheif) 等开源库，遵循协议采用 [GPL 许可证](LICENSE)。
