@@ -134,30 +134,32 @@ public class ControlViewModel : ReactiveObject
         Main.Settings.WhenAnyValue(s => s.SafeSetRating)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(SafeSetRating)));
 
-        Main.Settings.Hotkeys.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledControls));
+        // 使用具名本地函数，以便在集合变化时正确地订阅/取消订阅新增项目
+        void OnHotkeyIsDisplayChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsDisplay))
+                this.RaisePropertyChanged(nameof(EnabledControls));
+        }
         foreach (var hotkey in Main.Settings.Hotkeys)
-        {
-            hotkey.PropertyChanged += (s, e) => 
-            {
-                if (e.PropertyName == nameof(SettingsViewModel.HotkeyItem.IsDisplay))
-                {
-                    this.RaisePropertyChanged(nameof(EnabledControls));
-                }
-            };
-        }
+            hotkey.PropertyChanged += OnHotkeyIsDisplayChanged;
 
-        // 监听 EXIF 显示设置变化
-        Main.Settings.ExifDisplayItems.CollectionChanged += (s, e) => this.RaisePropertyChanged(nameof(EnabledExifItems));
-        foreach (var exifItem in Main.Settings.ExifDisplayItems)
+        // 集合变化时：为新增项订阅、为移除项取消订阅，并刷新控件列表
+        Main.Settings.Hotkeys.CollectionChanged += (s, e) =>
         {
-            exifItem.PropertyChanged += (s, e) => 
-            {
-                if (e.PropertyName == nameof(SettingsViewModel.ExifDisplayItem.IsEnabled))
-                {
-                    this.RaisePropertyChanged(nameof(EnabledExifItems));
-                }
-            };
-        }
+            if (e.OldItems != null)
+                foreach (SettingsViewModel.HotkeyItem item in e.OldItems)
+                    item.PropertyChanged -= OnHotkeyIsDisplayChanged;
+            if (e.NewItems != null)
+                foreach (SettingsViewModel.HotkeyItem item in e.NewItems)
+                    item.PropertyChanged += OnHotkeyIsDisplayChanged;
+            this.RaisePropertyChanged(nameof(EnabledControls));
+        };
+
+        // 监听 EXIF 显示设置变化：直接订阅 SettingsVM.EnabledExifItems 属性
+        // （SettingsVM 在 UpdateEnabledExifItems() 中通过 RaiseAndSetIfChanged 更新缓存后才通知，
+        //   避免 ControlVM 先于 UpdateEnabledExifItems 读到旧缓存导致"滞后一次"的问题）
+        Main.Settings.WhenAnyValue(s => s.EnabledExifItems)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(EnabledExifItems)));
     }
 
     // 启用的控件列表
