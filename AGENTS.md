@@ -29,22 +29,46 @@ Platform-specific implementations live in `<PlatformProject>/Core/`. When adding
 ### Data Flow: Star Rating
 `MainViewModel.SetRatingAsync` → `XmpWriter.WriteRatingAsync` (byte-level in-place XMP edit with backup) → syncs to `ImageFile.HiddenFiles` (companion RAW files) → reloads EXIF → `FolderVM.RefreshFilters`.
 
-## Build & Run
-```bash
-# macOS (primary dev platform)
-dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj
-dotnet run --project PhotoViewer.Mac
+## Development / Run / Publish
 
-# Windows
-dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj
-dotnet run --project PhotoViewer.Desktop
+### Local Build & Run (Rider-first)
+For day-to-day development, prefer **running the startup project directly in Rider**. This is closer to real app startup behavior than ad-hoc CLI commands, especially for UI, platform initialization, and device deployment.
+
+| Scenario | Rider startup project / action | Closest CLI equivalent | Notes |
+|---|---|---|---|
+| Windows desktop debug | Run `PhotoViewer.Desktop` | `dotnet run --project .\PhotoViewer.Desktop\PhotoViewer.Desktop.csproj -c Debug` | Closest to clicking Run in Rider on Windows. |
+| macOS desktop debug | Run `PhotoViewer.Mac` | `dotnet run --project ./PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug` | Use on macOS only. |
+| Android debug | Run `PhotoViewer.Android` on device/emulator | `dotnet build .\PhotoViewer.Android\PhotoViewer.Android.csproj -c Debug /p:AndroidSdkDirectory="$env:LOCALAPPDATA\Android\Sdk"` | Rider Run is preferred because it also deploys and starts the app. |
+| iOS debug | Run `PhotoViewer.iOS` on simulator/device | `dotnet build ./PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug` | Use Rider/Xcode device tooling; build-only CLI is not equivalent to Rider Run. |
+
+Use CLI mainly for **build validation** or scripting. If CLI succeeds but Rider Run fails, trust Rider/device configuration first and debug from the startup project used in Rider.
+
+#### Common build validation commands
+
+```powershell
+# Windows desktop
+dotnet build .\PhotoViewer.Desktop\PhotoViewer.Desktop.csproj -c Debug
 
 # Android (requires Android SDK)
-dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj
+$env:ANDROID_SDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk"
+dotnet build .\PhotoViewer.Android\PhotoViewer.Android.csproj -c Debug /p:AndroidSdkDirectory="$env:ANDROID_SDK_ROOT"
+```
+
+```bash
+# macOS desktop
+dotnet build ./PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug
 
 # iOS (requires Xcode)
-dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj
+dotnet build ./PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug
 ```
+
+### Publish distributable artifacts
+Distribution packaging is documented centrally in `PUBLISH.md`.
+
+- `PUBLISH.md` covers Windows / Android / macOS package commands and output paths
+- All package scripts also copy final artifacts into the repository root `release/` folder
+- `release/` is only for collected distributable files, not source-controlled assets
+
 NuGet versions are centrally managed in `Directory.Packages.props` — **always edit versions there**, not in individual `.csproj` files.
 
 ## Key Conventions
@@ -101,21 +125,10 @@ NuGet versions are centrally managed in `Directory.Packages.props` — **always 
 | Modify **window chrome / title bar** | `Windows/MainWindowForWindows.axaml` (Windows) or `Windows/MainWindowForMac.axaml` (macOS) |
 | Modify **cache size / format settings** | `SettingsViewModel.BitmapCache.cs`, `Views/Settings/ImageSettingsView.axaml` |
 | Modify **supported file formats** | `SettingsViewModel.FileFormats.cs`, `Views/Settings/FileSettingsView.axaml` |
-| **Release macOS build** | `PhotoViewer.Mac/publish.sh` |
+| Publish **Windows single-file EXE** | `PhotoViewer.Desktop/publish-win-x64-singlefile.ps1`, `PhotoViewer.Desktop/PhotoViewer.Desktop.csproj`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
+| Publish **Android APK** | `PhotoViewer.Android/publish-android-apk.ps1`, `PhotoViewer.Android/PhotoViewer.Android.csproj`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
+| Publish **macOS build** | `PhotoViewer.Mac/publish.sh`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
 
 ## Documentation Maintenance
 When adding new files or making significant changes, update this file's Quick Reference table. Keep descriptions concise.
-
-## Release (macOS)
-
-```bash
-# 在 PhotoViewer.Mac/ 目录下执行，版本号可选（默认 0.4.0）
-bash publish.sh 0.4.0
-# 输出：bin/Release/dist/PhotoViewer-0.4.0-arm64.dmg
-```
-
-- 构建产物：`bin/Release/net9.0-macos/osx-arm64/PhotoViewer.Mac.app`（ad-hoc 签名，self-contained）
-- DMG 内含 `.app`、`Applications` 快捷方式、`安装 PhotoViewer.command`（去隔离助手）
-- 发版时更新 `Info.plist` 的 `CFBundleShortVersionString` / `CFBundleVersion`，然后执行脚本，将 DMG 上传至 GitHub Releases
-- 用户安装见 README.md
 
