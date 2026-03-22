@@ -367,6 +367,30 @@ public class ImageFile : ReactiveObject
     }
 
     /// <summary>
+    /// 仅更新当前对象的内存星级缓存，避免在文件已写入后仍使用旧的运行期星级参与筛选。
+    /// </summary>
+    /// <param name="rating">新的星级（0~5）</param>
+    public void UpdateCachedRating(int rating)
+    {
+        // 若当前尚未加载 EXIF，则创建一个仅包含星级的最小缓存，保证筛选与界面立即使用新值。
+        if (ExifData == null)
+        {
+            ExifData = new ExifData
+            {
+                FilePath = File.Path.LocalPath,
+                Rating = rating
+            };
+        }
+        else
+        {
+            ExifData.Rating = rating;
+            this.RaisePropertyChanged(nameof(Rating));
+        }
+
+        this.RaisePropertyChanged(nameof(HasRatingConflict));
+    }
+
+    /// <summary>
     /// 清除 EXIF 数据
     /// </summary>
     public void ClearExifData()
