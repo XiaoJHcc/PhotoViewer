@@ -198,60 +198,6 @@ public class ControlViewModel : ReactiveObject
     {
         if (Main.CurrentFile == null) return;
 
-        var file = Main.CurrentFile;
-
-        try
-        {
-            var success = await XmpWriter.WriteRatingAsync(file.File, rating, SafeSetRating);
-            if (success)
-            {
-                // 同步写入隐藏同名文件星级
-                if (file.HiddenFiles.Count > 0)
-                {
-                    foreach (var hidden in file.HiddenFiles)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try
-                            {
-                                await XmpWriter.WriteRatingAsync(hidden, rating, SafeSetRating);
-                            }
-                            catch (Exception exHidden)
-                            {
-                                Console.WriteLine($"Hidden file rating sync failed: {exHidden.Message}");
-                            }
-                        });
-                    }
-                }
-
-                // 异步刷新 EXIF 数据（仅代表文件）
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        file.ClearExifData();
-                        await file.LoadExifDataAsync();
-
-                        // 在 UI 线程上通知更新
-                        _ = Avalonia.Threading.Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            this.RaisePropertyChanged(nameof(CurrentExifData));
-                        });
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Failed to refresh EXIF after rating update: {ex.Message}");
-                    }
-                });
-            }
-            else
-            {
-                Console.WriteLine($"Failed to update rating for {file.Name}");
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Error setting rating for {file.Name}: {ex.Message}");
-        }
+        await Main.SetRatingAsync(Main.CurrentFile, rating);
     }
 }

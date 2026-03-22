@@ -1,6 +1,9 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
+using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Views;
 using ReactiveUI;
@@ -236,57 +239,125 @@ public class MainViewModel : ViewModelBase
     
     #endregion
 
+    
+    ////////////////
+    /// 星级管理
+    ////////////////
+    
+    #region Rating
+    
+    /// <summary>
+    /// 获取当前文件及其已合并隐藏伴侣文件对应的运行期对象，便于在写入 XMP 后同步刷新内存星级。
+    /// </summary>
+    /// <param name="file">当前参与评分的代表文件</param>
+    /// <returns>需要同步星级缓存的图片对象集合</returns>
+    private List<ImageFile> GetRatingSyncTargets(ImageFile file)
+    {
+        var relatedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            file.File.Path.LocalPath
+        };
+
+        foreach (var hiddenFile in file.HiddenFiles)
+        {
+            relatedPaths.Add(hiddenFile.Path.LocalPath);
+        }
+
+        return FolderVM.AllFiles
+            .Where(candidate => relatedPaths.Contains(candidate.File.Path.LocalPath))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 在 UI 线程同步更新已成功写入文件的运行期星级缓存，并刷新依赖星级的界面状态。
+    /// </summary>
+    /// <param name="syncedFiles">已成功写入星级的图片对象</param>
+    /// <param name="rating">新的星级</param>
+    private void UpdateRatingCaches(IReadOnlyCollection<ImageFile> syncedFiles, int rating)
+    {
+        foreach (var syncedFile in syncedFiles)
+        {
+            syncedFile.UpdateCachedRating(rating);
+        }
+
+        ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
+        FolderVM.RefreshFilters();
+    }
+
+    /// <summary>
+    /// 设置图片星级，并在写入代表文件及其同名伴侣文件后同步更新运行期缓存。
+    /// </summary>
+    /// <param name="file">要设置星级的图片</param>
+    /// <param name="rating">新的星级（0~5）</param>
     public async Task SetRatingAsync(ImageFile? file, int rating)
     {
         if (file == null) return;
+
         try
         {
             var success = await XmpWriter.WriteRatingAsync(file.File, rating, Settings.SafeSetRating);
-            if (success)
+            if (!success)
             {
-                // 同步写入隐藏文件
-                if (file.HiddenFiles.Count > 0)
-                {
-                    foreach (var hidden in file.HiddenFiles)
-                    {
-                        _ = Task.Run(async () =>
-                        {
-                            try { await XmpWriter.WriteRatingAsync(hidden, rating, Settings.SafeSetRating); }
-                            catch (Exception exHidden) { Console.WriteLine("Hidden file rating sync failed: " + exHidden.Message); }
-                        });
-                    }
-                }
+                Console.WriteLine("Failed to update rating for " + file.Name);
+                return;
+            }
 
-                // 重新加载 EXIF 刷新星级显示
-                _ = Task.Run(async () =>
+            var syncTargets = GetRatingSyncTargets(file);
+            var syncedFiles = new List<ImageFile> { file };
+
+            if (file.HiddenFiles.Count > 0)
+            {
+                var hiddenWriteTasks = file.HiddenFiles.Select(async hidden =>
                 {
                     try
                     {
-                        file.ClearExifData();
-                        await file.LoadExifDataAsync();
-                        Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                        {
-                            ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
-                            file.RaisePropertyChanged(nameof(file.Rating));
-                        });
+                        var hiddenWriteSuccess = await XmpWriter.WriteRatingAsync(hidden, rating, Settings.SafeSetRating);
+                        return (Path: hidden.Path.LocalPath, Success: hiddenWriteSuccess);
                     }
-                    catch (Exception ex)
+                    catch (Exception exHidden)
                     {
-                        Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
+                        Console.WriteLine("Hidden file rating sync failed: " + exHidden.Message);
+                        return (Path: hidden.Path.LocalPath, Success: false);
                     }
-                });
+                }).ToList();
 
-                // 重新应用筛选（若当前使用星级筛选）
-                FolderVM.RefreshFilters();
+                var hiddenResults = await Task.WhenAll(hiddenWriteTasks);
+                var hiddenSuccessPaths = hiddenResults
+                    .Where(result => result.Success)
+                    .Select(result => result.Path)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+                syncedFiles.AddRange(syncTargets.Where(target =>
+                    !ReferenceEquals(target, file) && hiddenSuccessPaths.Contains(target.File.Path.LocalPath)));
             }
-            else
+
+            await Dispatcher.UIThread.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
+
+            // 再异步重载当前文件完整 EXIF，确保界面中的其他字段也与磁盘状态保持一致。
+            _ = Task.Run(async () =>
             {
-                Console.WriteLine("Failed to update rating for " + file.Name);
-            }
+                try
+                {
+                    file.ClearExifData();
+                    await file.LoadExifDataAsync();
+                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    {
+                        ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
+                        file.RaisePropertyChanged(nameof(file.Rating));
+                        file.RaisePropertyChanged(nameof(file.HasRatingConflict));
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
+                }
+            });
         }
         catch (Exception ex)
         {
             Console.WriteLine("Error setting rating for " + file.Name + ": " + ex.Message);
         }
     }
+    
+    #endregion
 }
