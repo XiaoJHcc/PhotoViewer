@@ -121,6 +121,7 @@ NuGet versions are centrally managed in `Directory.Packages.props` — **always 
 | Change **main image view / zoom** | `Views/Main/ImageView.axaml`, `ImageViewModel.cs` |
 | Change **control panel buttons** | `Views/Main/ControlView.axaml`, `ControlViewModel.cs` |
 | Change **detail preview panels** | `Views/Main/DetailView.axaml`, `Controls/DetailPreview.axaml`, `DetailViewModel.cs` |
+| Modify **external open / open with / Android share-open** | `Core/ExternalOpenService.cs`, `App.axaml.cs`, `ViewModels/FolderViewModel.cs`, `PhotoViewer.Desktop/Program.cs`, `PhotoViewer.Android/MainActivity.cs`, `PhotoViewer.Android/Core/AndroidExternalOpenBridge.cs` |
 | Add a **new platform** | New `<Platform>/Core/` impls + `Program.cs`/`AppDelegate.cs` `AfterSetup` injections |
 | Modify **window chrome / title bar** | `Windows/MainWindowForWindows.axaml` (Windows) or `Windows/MainWindowForMac.axaml` (macOS) |
 | Modify **cache size / format settings** | `SettingsViewModel.BitmapCache.cs`, `Views/Settings/ImageSettingsView.axaml` |
