@@ -1,9 +1,7 @@
 using Foundation;
 using UIKit;
 using Avalonia;
-using Avalonia.Controls;
 using Avalonia.iOS;
-using Avalonia.Media;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
@@ -21,6 +19,10 @@ namespace PhotoViewer.iOS;
 public partial class AppDelegate : AvaloniaAppDelegate<App>
 #pragma warning restore CA1711 // Identifiers should not have incorrect suffix
 {
+    /// <summary>
+    /// 自定义 Avalonia AppBuilder，并注入 iOS 平台能力实现。
+    /// </summary>
+    /// <param name="builder">Avalonia 构建器</param>
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         return base.CustomizeAppBuilder(builder)
@@ -49,5 +51,43 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                     MessageBus.Current.SendMessage(evt);
                 });
             });
+    }
+
+    /// <summary>
+    /// 处理 iOS 9+ 的文件 URL 打开回调。
+    /// </summary>
+    /// <param name="app">当前应用</param>
+    /// <param name="url">系统传入的文件 URL</param>
+    /// <param name="options">打开参数</param>
+    /// <returns>是否成功识别并投递</returns>
+    [Export("application:openURL:options:")]
+    public new bool OpenUrl(UIApplication app, NSUrl url, NSDictionary options)
+    {
+        return PublishIncomingUrl(url, source: "iOS:OpenUrl");
+    }
+
+    /// <summary>
+    /// 处理旧版 iOS 的文件 URL 打开回调。
+    /// </summary>
+    /// <param name="app">当前应用</param>
+    /// <param name="url">系统传入的文件 URL</param>
+    /// <param name="sourceApplication">来源应用标识</param>
+    /// <param name="annotation">附加参数</param>
+    /// <returns>是否成功识别并投递</returns>
+    [Export("application:openURL:sourceApplication:annotation:")]
+    public bool OpenUrl(UIApplication app, NSUrl url, string sourceApplication, NSObject annotation)
+    {
+        return PublishIncomingUrl(url, source: $"iOS:OpenUrl:{sourceApplication}");
+    }
+
+    /// <summary>
+    /// 将系统传入的 URL 交给 iOS 外部打开桥接层统一处理。
+    /// </summary>
+    /// <param name="url">系统传入的文件 URL</param>
+    /// <param name="source">请求来源标记</param>
+    /// <returns>是否成功识别并投递</returns>
+    private static bool PublishIncomingUrl(NSUrl url, string source)
+    {
+        return iOSExternalOpenBridge.PublishFromUrl(url, source);
     }
 }

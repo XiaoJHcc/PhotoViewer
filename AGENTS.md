@@ -44,7 +44,7 @@
 | **HEIF 解码** | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder` |
 | **内存管理** | `DefaultMemoryBudget` | `DefaultMemoryBudget` | `AndroidMemoryBudget` | `iOSMemoryBudget` |
 | **配置存储** | `FileStorage` (默认) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |
-| **外部打开** | `Program.Main` 参数解析 | (System Event) | `AndroidExternalOpenBridge` | (System Event) |
+| **外部打开** | `Program.Main` 参数解析 | `Program.Main` + `MacExternalOpenBridge` | `AndroidExternalOpenBridge` | `AppDelegate` + `iOSExternalOpenBridge` |
 
 ### 2.3 用户界面逻辑 (ViewModels & Views)
 
@@ -89,13 +89,15 @@ UI 逻辑位于 `PhotoViewer/ViewModels`，视图位于 `PhotoViewer/Views`。
 
 1. **入口**:
    - **Windows**: `Program.Main(args)` 捕获命令行参数 -> `PublishExternalOpenArgs`.
+   - **macOS**: `Program.Main(args)` 安装 `MacExternalOpenBridge`，由 `OpenFile/OpenFiles/OpenUrls` 接收 Finder / Dock / “打开方式” 事件.
    - **Android**: `MainActivity` 捕获 `Intent` -> `AndroidExternalOpenBridge` 解析 Uri.
-2. **桥接**: 调用 `ExternalOpenService.Open(path/uri)`.
+   - **iOS**: `AppDelegate` 捕获 `openURL` 回调 -> `iOSExternalOpenBridge` 解析文件 URL.
+2. **桥接**: 各平台统一调用 `ExternalOpenService.PublishFile(...)` / `PublishFiles(...)` 投递请求；若 UI 尚未完成初始化，请求会先进入挂起队列。
 3. **响应**:
-   - `GlobalEvents` (或通过 `MainViewModel` 订阅) 收到请求。
-   - 触发 `FolderViewModel.LoadFile(path)`：
-     - 如果是文件：加载该文件所在文件夹，并选中该文件。
-     - 如果是文件夹：直接加载该文件夹。
+   - `App.axaml.cs` 在 `OnFrameworkInitializationCompleted()` 中注册处理器，并通过 `StorageProvider` 将 `Uri` 解析为 `IStorageFile` / `IStorageFolder`。
+   - 文件夹请求：调用 `FolderViewModel.OpenFolderAsync(...)`。
+   - 文件请求：调用 `FolderViewModel.OpenImageAsync(...)`。
+   - `OpenImageAsync(...)` 会优先尝试进入父文件夹；若 Apple / Android 等平台拿不到父目录权限，则自动回退为“单图模式”，保证至少能打开当前图片。
 
 ### 3.3 评分与元数据同步 (Rating Sync)
 

@@ -1,5 +1,4 @@
-﻿using System;
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.ReactiveUI;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
@@ -19,10 +18,15 @@ sealed class Program
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
+            MacExternalOpenBridge.Install();
+            MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })
         .StartWithClassicDesktopLifetime(args);
 
     // Avalonia configuration, don't remove; also used by visual designer.
+    /// <summary>
+    /// 构建 Avalonia 应用。
+    /// </summary>
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
