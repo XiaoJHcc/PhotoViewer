@@ -528,7 +528,7 @@ public partial class ImageView : UserControl
 
 
     ////////////////////
-    /// 打开图片
+    // 打开图片
     ////////////////////
 
     #region OpenFile
@@ -555,8 +555,7 @@ public partial class ImageView : UserControl
         if (files?.Count > 0 && files[0] is IStorageFile file)
         {
             // 通过 MainViewModel 处理拖拽文件 (逻辑同选择打开文件)
-            await ViewModel?.Main.FolderVM.LoadNewImageFolder(file)!;
-            ViewModel?.Main.FolderVM.ScrollToCurrent();
+            await ViewModel?.Main.FolderVM.OpenImageAsync(file)!;
         }
 
         e.Handled = true;

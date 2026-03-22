@@ -145,7 +145,7 @@ public class FolderViewModel : ReactiveObject
     }
     
     ////////////////
-    /// 打开文件
+    // 打开文件
     ////////////////
 
     #region OpenFile
@@ -155,23 +155,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     public async Task OpenFilePickerAsync()
     {
-        TopLevel? topLevel = null;
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            // 移动端：通过 MainView 获取 TopLevel
-            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
-            {
-                topLevel = TopLevel.GetTopLevel(singleView.MainView);
-            }
-        }
-        else
-        {
-            // 桌面端：通过 MainWindow 获取 TopLevel
-            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-            {
-                topLevel = TopLevel.GetTopLevel(desktop.MainWindow);
-            }
-        }
+        var topLevel = GetCurrentTopLevel();
 
         if (topLevel?.StorageProvider == null) return;
 
@@ -186,55 +170,7 @@ public class FolderViewModel : ReactiveObject
 
             if (folders.Count > 0)
             {
-                // 加载文件夹内第一个文件
-                _currentFolder = folders[0];
-                _allFiles.Clear();
-                _filteredFiles.Clear();
-
-                Console.WriteLine("OpenFolder: " + folders[0].Path);
-
-                // 加载文件夹内容
-                var items = folders[0].GetItemsAsync();
-                await foreach (var storageItem in items)
-                {
-                    var item = (IStorageFile)storageItem;
-    
-                    if (IsImageFile(item.Name))
-                    {
-                        _allFiles.Add(new ImageFile(item));
-                    }
-                }
-
-                // 立即加载所有文件的EXIF星级数据
-                await LoadAllExifRatingsAsync();
-
-                ApplyFilter();
-
-                if (_filteredFiles.Count > 0)
-                {
-                    Main.CurrentFile = _filteredFiles.First();
-                    
-                    // 立即为当前图片加载完整 EXIF 数据
-                    _ = Task.Run(async () =>
-                    {
-                        await Main.CurrentFile.LoadExifDataAsync();
-                        
-                        // EXIF 加载完成后，在 UI 线程中触发属性更新
-                        await Dispatcher.UIThread.InvokeAsync(() =>
-                        {
-                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.PhotoDate));
-                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.RotationAngle));
-                            Main.CurrentFile.RaisePropertyChanged(nameof(Main.CurrentFile.NeedsHorizontalFlip));
-                            
-                            // 触发 ControlViewModel 的 EXIF 数据更新（包括星级）
-                            Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
-                            Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.StarOpacity));
-                        });
-                    });
-            
-                    // 只为当前图片加载缩略图，其他的由可见性检测触发
-                    QueueThumbnailLoad(Main.CurrentFile, priority: true);
-                }
+                await OpenFolderAsync(folders[0]);
             }
         }
         else
@@ -247,18 +183,94 @@ public class FolderViewModel : ReactiveObject
                 AllowMultiple = false
             });
 
-            if (files.Count > 0 && files[0] is IStorageFile file)
+            if (files.Count > 0)
             {
-                // 新打开文件时始终适配显示
-                Main.ImageVM.Fit = true;
-        
-                // 加载图片所在文件夹
-                await LoadNewImageFolder(file);
-        
-                // 加载文件夹后滚动至当前图片
-                ScrollToCurrent();
+                var file = files[0];
+                await OpenImageAsync(file);
             }
         }
+    }
+
+    /// <summary>
+    /// 打开外部传入的一组文件，并优先使用首个可识别图片。
+    /// </summary>
+    /// <param name="files">外部传入的文件集合</param>
+    /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
+    public async Task OpenExternalFilesAsync(IEnumerable<IStorageFile> files, bool scrollToCurrent = true)
+    {
+        var targetFile = files.FirstOrDefault(file => IsImageFile(file.Name));
+        if (targetFile == null)
+        {
+            return;
+        }
+
+        await OpenImageAsync(targetFile, scrollToCurrent);
+    }
+
+    /// <summary>
+    /// 打开指定图片，并尽量进入其所在文件夹；若平台权限不支持，则回退为单图模式。
+    /// </summary>
+    /// <param name="file">要打开的图片文件</param>
+    /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
+    public async Task OpenImageAsync(IStorageFile file, bool scrollToCurrent = true)
+    {
+        if (!IsImageFile(file.Name))
+        {
+            return;
+        }
+
+        // 新打开文件时始终适配显示
+        Main.ImageVM.Fit = true;
+
+        await OpenImageWithFolderFallbackAsync(file);
+
+        if (scrollToCurrent)
+        {
+            ScrollToCurrent();
+        }
+    }
+
+    /// <summary>
+    /// 打开指定文件夹，并定位到筛选后的第一张图片。
+    /// </summary>
+    /// <param name="folder">要打开的文件夹</param>
+    /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
+    public async Task OpenFolderAsync(IStorageFolder folder, bool scrollToCurrent = true)
+    {
+        // 新打开目录时也恢复为适配显示，避免沿用上一次缩放状态。
+        Main.ImageVM.Fit = true;
+
+        await LoadFolderAsync(folder);
+
+        if (scrollToCurrent)
+        {
+            ScrollToCurrent();
+        }
+    }
+
+    /// <summary>
+    /// 获取当前主界面的 TopLevel。
+    /// </summary>
+    private static TopLevel? GetCurrentTopLevel()
+    {
+        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
+        {
+            // 移动端：通过 MainView 获取 TopLevel
+            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
+            {
+                return TopLevel.GetTopLevel(singleView.MainView);
+            }
+
+            return null;
+        }
+
+        // 桌面端：通过 MainWindow 获取 TopLevel
+        if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
+        {
+            return TopLevel.GetTopLevel(desktop.MainWindow);
+        }
+
+        return null;
     }
 
     // 打开文件选择器中的类型过滤器
@@ -360,56 +372,171 @@ public class FolderViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _folderName, value);
     }
     
-    // 图片加载完成后 调用其他逻辑
+    /// <summary>
+    /// 兼容旧调用路径：打开新图片所在文件夹。
+    /// </summary>
+    /// <param name="file">要打开的图片文件</param>
     public async Task LoadNewImageFolder(IStorageFile file)
     {
-        var folder = await file.GetParentAsync();
-        if (folder == null || folder == _currentFolder) return;
+        await OpenImageAsync(file, scrollToCurrent: false);
+    }
 
-        Main.CurrentFile = new ImageFile(file);
-        FolderName = folder.Name;
-        
-        // 优先加载当前图片的 EXIF 数据，暂不加载缩略图（由可见性检测触发）
-        _ = Task.Run(async () => await Main.CurrentFile.LoadExifDataAsync());
-        
-        // 加载图片所在文件夹
-        _currentFolder = folder;
+    /// <summary>
+    /// 优先尝试以“文件夹上下文”打开图片；若无法获取父目录，则回退为单图模式。
+    /// </summary>
+    /// <param name="file">要打开的图片文件</param>
+    private async Task OpenImageWithFolderFallbackAsync(IStorageFile file)
+    {
+        var folder = await file.GetParentAsync();
+
+        if (folder == null)
+        {
+            await OpenSingleImageAsync(file);
+            return;
+        }
+
+        if (IsSameStorageItem(folder, _currentFolder) && _allFiles.Count > 0)
+        {
+            FolderName = folder.Name;
+
+            var existingFile = FindLoadedFile(file);
+            if (existingFile == null)
+            {
+                existingFile = new ImageFile(file);
+                _allFiles.Insert(0, existingFile);
+                await existingFile.LoadRatingOnlyAsync();
+                existingFile.UpdateCacheStatus();
+                ApplyFilter();
+            }
+
+            await SetCurrentFileAsync(existingFile);
+            return;
+        }
+
+        await LoadFolderAsync(folder, file);
+    }
+
+    /// <summary>
+    /// 以单图模式打开图片。
+    /// 当平台只授予单文件访问权限时，仍可保证用户至少能看到当前图片。
+    /// </summary>
+    /// <param name="file">要打开的图片文件</param>
+    private async Task OpenSingleImageAsync(IStorageFile file)
+    {
+        _currentFolder = null;
+        FolderName = file.Name;
         _allFiles.Clear();
         _filteredFiles.Clear();
-        _allFiles.Add(Main.CurrentFile);
-            
-        // 加载文件夹内容（不自动加载缩略图）
-        var items = folder.GetItemsAsync();
 
-        await foreach (var storageItem in items)
-        {
-            var item = (IStorageFile)storageItem;
-            if (IsImageFile(item.Name) && item.Name != Main.CurrentFile.Name)
-            {
-                var imageFile = new ImageFile(item);
-                _allFiles.Add(imageFile);
-                // 移除自动加载缩略图的逻辑
-            }
-        }
-        
-        // 立即加载所有文件的EXIF星级数据
-        await LoadAllExifRatingsAsync();
-            
+        var imageFile = new ImageFile(file);
+        _allFiles.Add(imageFile);
+
+        await imageFile.LoadRatingOnlyAsync();
         ApplyFilter();
 
-        // 加载完成后更新所有文件的缓存状态
+        imageFile.UpdateCacheStatus();
+        await SetCurrentFileAsync(imageFile);
+    }
+
+    /// <summary>
+    /// 加载文件夹内容，并可选定位到指定图片。
+    /// </summary>
+    /// <param name="folder">要加载的文件夹</param>
+    /// <param name="preferredFile">优先定位的图片；为空时打开第一张</param>
+    private async Task LoadFolderAsync(IStorageFolder folder, IStorageFile? preferredFile = null)
+    {
+        Console.WriteLine("OpenFolder: " + folder.Path);
+
+        _currentFolder = folder;
+        FolderName = folder.Name;
+        _allFiles.Clear();
+        _filteredFiles.Clear();
+
+        if (preferredFile != null && IsImageFile(preferredFile.Name))
+        {
+            _allFiles.Add(new ImageFile(preferredFile));
+        }
+
+        var items = folder.GetItemsAsync();
+        await foreach (var storageItem in items)
+        {
+            if (storageItem is not IStorageFile item)
+            {
+                continue;
+            }
+
+            if (!IsImageFile(item.Name))
+            {
+                continue;
+            }
+
+            if (preferredFile != null && IsSameStorageItem(item, preferredFile))
+            {
+                continue;
+            }
+
+            _allFiles.Add(new ImageFile(item));
+        }
+
+        await LoadAllExifRatingsAsync();
+        ApplyFilter();
+
         foreach (var imageFile in AllFiles)
         {
             imageFile.UpdateCacheStatus();
         }
-        
-        // 异步加载其他图片的完整 EXIF 数据（排除当前图片）
+
+        var targetFile = preferredFile != null
+            ? FindLoadedFile(preferredFile)
+            : _filteredFiles.FirstOrDefault();
+
+        await SetCurrentFileAsync(targetFile ?? _filteredFiles.FirstOrDefault());
+    }
+
+    /// <summary>
+    /// 切换当前图片，并触发当前图与同目录其它图片的 EXIF 预加载。
+    /// </summary>
+    /// <param name="imageFile">要设为当前的图片</param>
+    private Task SetCurrentFileAsync(ImageFile? imageFile)
+    {
+        Main.CurrentFile = imageFile;
+        if (imageFile == null)
+        {
+            return Task.CompletedTask;
+        }
+
+        // 立即为当前图片加载完整 EXIF 数据。
         _ = Task.Run(async () =>
         {
-            var otherFiles = _filteredFiles.Where(f => f != Main.CurrentFile);
+            await imageFile.LoadExifDataAsync();
+
+            // EXIF 加载完成后，在 UI 线程中触发属性更新。
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                imageFile.RaisePropertyChanged(nameof(imageFile.PhotoDate));
+                imageFile.RaisePropertyChanged(nameof(imageFile.RotationAngle));
+                imageFile.RaisePropertyChanged(nameof(imageFile.NeedsHorizontalFlip));
+
+                // 触发 ControlViewModel 的 EXIF 数据更新（包括星级）。
+                Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
+                Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.StarOpacity));
+            });
+        });
+
+        QueueThumbnailLoad(imageFile, priority: true);
+
+        // 异步加载其它图片的完整 EXIF 数据，单图模式下这里会自然跳过。
+        _ = Task.Run(async () =>
+        {
+            var otherFiles = _filteredFiles.Where(f => f != imageFile).ToList();
+            if (otherFiles.Count == 0)
+            {
+                return;
+            }
+
             await ExifLoader.LoadFolderExifDataAsync(otherFiles);
-            
-            // EXIF 加载完成后，触发UI更新以显示拍摄日期和旋转信息
+
+            // EXIF 加载完成后，触发 UI 更新以显示拍摄日期和旋转信息。
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 foreach (var file in otherFiles)
@@ -420,6 +547,47 @@ public class FolderViewModel : ReactiveObject
                 }
             });
         });
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// 在已加载集合中查找同一个存储文件。
+    /// </summary>
+    /// <param name="file">要查找的存储文件</param>
+    private ImageFile? FindLoadedFile(IStorageFile file)
+    {
+        return _allFiles.FirstOrDefault(imageFile => IsSameStorageItem(imageFile.File, file));
+    }
+
+    /// <summary>
+    /// 判断两个存储项是否指向同一个底层对象。
+    /// </summary>
+    /// <param name="left">左侧存储项</param>
+    /// <param name="right">右侧存储项</param>
+    private static bool IsSameStorageItem(IStorageItem? left, IStorageItem? right)
+    {
+        if (left == null || right == null)
+        {
+            return false;
+        }
+
+        if (left.Path == right.Path)
+        {
+            return true;
+        }
+
+        var leftLocalPath = left.TryGetLocalPath();
+        var rightLocalPath = right.TryGetLocalPath();
+        if (!string.IsNullOrEmpty(leftLocalPath) && !string.IsNullOrEmpty(rightLocalPath))
+        {
+            var comparison = OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal;
+            return string.Equals(leftLocalPath, rightLocalPath, comparison);
+        }
+
+        return string.Equals(left.Name, right.Name, StringComparison.OrdinalIgnoreCase);
     }
     
     /// <summary>
