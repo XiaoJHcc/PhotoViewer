@@ -1,135 +1,113 @@
 # AGENTS.md — PhotoViewer
 
-## Project Overview
-Cross-platform photo viewer for photography culling workflows, built with **Avalonia 11 / .NET 9 / ReactiveUI (MVVM)**. Supports Windows, macOS, iOS, Android. Core value: browse JPG/HEIF images and sync XMP star ratings to companion RAW files.
+> **文档说明**
+> 本文档专为 AI Copilot 编写，用于快速理解项目结构与核心逻辑。
+> 涉及 **打包发布** 的内容请查阅 `PUBLISH.md`。
 
-## Architecture
+## 1. 技术栈与环境
 
-### Solution Structure
-| Project | Target | Role |
+- **框架**: Avalonia 11.3.9, .NET 9
+- **模式**: MVVM (ReactiveUI)
+- **平台**:
+  - `PhotoViewer.Desktop`: Windows (net9.0-windows)
+  - `PhotoViewer.Mac`: macOS (net9.0-macos)
+  - `PhotoViewer.Android`: Android (net9.0-android)
+  - `PhotoViewer.iOS`: iOS (net9.0-ios)
+- **依赖**:
+  - 图片解码: `LibHeifSharp` (Windows), `ImageIO` (macOS/iOS/Android Native)
+  - 依赖注入: 不使用 DI 容器，核心服务为静态类，平台能力通过初始化时注入。
+
+## 2. 项目结构 (Project Structure)
+
+### 2.1 核心通用服务 (`PhotoViewer/Core`)
+
+核心业务逻辑全部位于共享项目的 `Core` 文件夹下，**不依赖 UI 控件**。
+
+| 文件/类 | 说明 | 关键职责 |
 |---|---|---|
-| `PhotoViewer` | net9.0; net9.0-ios | Shared core, ViewModels, Views, Controls |
-| `PhotoViewer.Desktop` | net9.0-windows | Windows entry point (LibHeifSharp + WIC) |
-| `PhotoViewer.Mac` | net9.0-macos | macOS entry point (native HEIF via ImageIO) |
-| `PhotoViewer.Android` | net9.0-android | Android entry point |
-| `PhotoViewer.iOS` | net9.0-ios | iOS entry point |
+| **BitmapLoader** | 图片加载器 | 图片解码、LRU 缓存管理、EXIF 旋转修正、缩略图生成。 |
+| **BitmapPrefetcher** | 预加载器 | 监听当前浏览图片，后台预加载前后邻居图片进入缓存。 |
+| **ExifLoader** | 元数据读取 | 读取 EXIF/XMP 信息，快速读取缩略图流。 |
+| **HeifLoader** | HEIF 解码桥接 | 静态外观类。通过 `Initialize` 注入平台特定的 `IHeifDecoder` 实现。 |
+| **MemoryBudget** | 内存预算 | 静态外观类。管理内存上限，通过 `Initialize` 注入平台特定的 `IMemoryBudget`。 |
+| **XmpWriter** | 评分写入 | 修改 XMP 星级评分。支持无损修改（In-place）及备份策略。 |
+| **ImageFile** | 文件模型 | 代表磁盘上的一个图片文件。包含路径、加载状态、缓存 Key。 |
+| **ExternalOpenService** | 外部打开服务 | 处理“右键打开方式”或“分享到”进入应用的逻辑。 |
+| **Settings/** | 设置服务 | `SettingsService` 负责配置的读写与持久化。 |
 
-### Platform Injection Pattern (Critical)
-Each platform `Program.cs` / `AppDelegate` calls three static initializers in `AfterSetup` **before** any UI code runs:
-```csharp
-HeifLoader.Initialize(new PlatformHeifDecoder());   // HEIF decoding
-MemoryBudget.Initialize(new PlatformMemoryBudget()); // memory limits
-SettingsService.ConfigureStorage(new PlatformStorage()); // settings persistence
-```
-Platform-specific implementations live in `<PlatformProject>/Core/`. When adding a new platform capability, follow this same static-init + interface pattern.
+### 2.2 平台差异化实现 (Platform Core)
 
-### Data Flow: Image Loading Pipeline
-`FolderViewModel.LoadNewImageFolder` → populates `AllFiles` / `FilteredFiles` → setting `MainViewModel.CurrentFile` triggers `ImageViewModel.LoadImageAsync` → `BitmapLoader.GetBitmapAsync` (LRU cache + EXIF rotation) → `BitmapPrefetcher` preloads neighbors.
+各平台项目 (`.Desktop`, `.Android`, etc.) 的 `Core` 文件夹包含具体实现，并在程序启动 (`Program.cs` / `Activity` / `AppDelegate`) 时注入。
 
-### Data Flow: Star Rating
-`MainViewModel.SetRatingAsync` → `XmpWriter.WriteRatingAsync` (byte-level in-place XMP edit with backup) → syncs to `ImageFile.HiddenFiles` (companion RAW files) → reloads EXIF → `FolderVM.RefreshFilters`.
+| 接口/功能 | Windows Impl | macOS Impl | Android Impl | iOS Impl |
+|---|---|---|---|---|
+| **HEIF 解码** | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder` |
+| **内存管理** | `DefaultMemoryBudget` | `DefaultMemoryBudget` | `AndroidMemoryBudget` | `iOSMemoryBudget` |
+| **配置存储** | `FileStorage` (默认) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |
+| **外部打开** | `Program.Main` 参数解析 | (System Event) | `AndroidExternalOpenBridge` | (System Event) |
 
-## Development / Run / Publish
+### 2.3 用户界面逻辑 (ViewModels & Views)
 
-### Local Build & Run (Rider-first)
-For day-to-day development, prefer **running the startup project directly in Rider**. This is closer to real app startup behavior than ad-hoc CLI commands, especially for UI, platform initialization, and device deployment.
+UI 逻辑位于 `PhotoViewer/ViewModels`，视图位于 `PhotoViewer/Views`。
+**MainViewModel** 是根节点，负责组装各子模块。
 
-| Scenario | Rider startup project / action | Closest CLI equivalent | Notes |
-|---|---|---|---|
-| Windows desktop debug | Run `PhotoViewer.Desktop` | `dotnet run --project .\PhotoViewer.Desktop\PhotoViewer.Desktop.csproj -c Debug` | Closest to clicking Run in Rider on Windows. |
-| macOS desktop debug | Run `PhotoViewer.Mac` | `dotnet run --project ./PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug` | Use on macOS only. |
-| Android debug | Run `PhotoViewer.Android` on device/emulator | `dotnet build .\PhotoViewer.Android\PhotoViewer.Android.csproj -c Debug /p:AndroidSdkDirectory="$env:LOCALAPPDATA\Android\Sdk"` | Rider Run is preferred because it also deploys and starts the app. |
-| iOS debug | Run `PhotoViewer.iOS` on simulator/device | `dotnet build ./PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug` | Use Rider/Xcode device tooling; build-only CLI is not equivalent to Rider Run. |
+| 模块 | ViewModel (主要逻辑) | View (界面布局) | 说明                                          |
+|---|---|---|---------------------------------------------|
+| **主窗口** | `MainViewModel` | `Windows/MainWindow*.axaml` | 负责整体布局（网格/列表模式切换）、全屏状态、子 VM 初始化。            |
+| **文件管理** | `FolderViewModel` | N/A (逻辑控制) | 管理当前文件夹路径、`AllFiles` 列表、过滤逻辑、排序逻辑。          |
+| **图片浏览** | `ImageViewModel` | `Views/Main/ImageView` | **主视图**。负责单张大图显示、缩放平移手势、加载状态。               |
+| **缩略图栏** | `FolderViewModel` (共享) | `Views/Main/ThumbnailView` | **最左侧或顶部边栏**。显示文件带状列表，处理滚动同步与选中高亮。          |
+| **顶部/控制栏** | `ControlViewModel` | `Views/Main/ControlView` | **最右侧或底部边栏**。工具栏按钮（打开、显示设置、全屏）。             |
+| **详细/侧边栏** | `DetailViewModel` | `Views/Main/DetailView` | **右侧或底部边栏**。显示直方图、EXIF 信息、概览小图。             |
+| **设置页** | `SettingsViewModel` | `Views/Settings/*` | 设置界面。Partial Class 把不同分类（快捷键、格式、布局）拆分到不同文件。 |
 
-Use CLI mainly for **build validation** or scripting. If CLI succeeds but Rider Run fails, trust Rider/device configuration first and debug from the startup project used in Rider.
+### 2.4 辅助组件 (Helpers)
 
-#### Common build validation commands
+- **Controls/**:
+  - `DetailPreview`: 侧边栏使用的图片概览控件。
+  - `SortableList`: 支持拖拽排序的列表（用于设置页）。
+  - `HotkeyButton`: 快捷键录制按钮。
+- **Converters/**: 值转换器（如 `ExifConverters` 格式化光圈快门文本）。
 
-```powershell
-# Windows desktop
-dotnet build .\PhotoViewer.Desktop\PhotoViewer.Desktop.csproj -c Debug
+## 3. 关键流程速览 (Workflows)
 
-# Android (requires Android SDK)
-$env:ANDROID_SDK_ROOT = "$env:LOCALAPPDATA\Android\Sdk"
-dotnet build .\PhotoViewer.Android\PhotoViewer.Android.csproj -c Debug /p:AndroidSdkDirectory="$env:ANDROID_SDK_ROOT"
-```
+### 3.1 图片加载流水线 (Image Loading Pipeline)
 
-```bash
-# macOS desktop
-dotnet build ./PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug
+1. **触发**: 用户切换图片 (`MainViewModel.CurrentFile` 变更)。
+2. **调度**: `ImageViewModel` 监听到变更，调用 `LoadImageAsync`。
+3. **缓存/解码**:
+   - 调用 `BitmapLoader.GetBitmapAsync`。
+   - 检查 **LRU 内存缓存**。命中则直接返回。
+   - 未命中则读取文件流 -> 识别格式 (JPG/HEIF) -> 解码 -> **应用 EXIF 旋转**。
+   - 存入 LRU 缓存并返回。
+4. **显示**: `ImageView` 绑定 `Bitmap` 属性刷新界面。
+5. **预加载**:
+   - 如果启用了预加载，`ImageViewModel` 加载完成后通知 `BitmapPrefetcher`。
+   - `BitmapPrefetcher` 依序请求前后 N 张图片的解码任务（低优先级）。
 
-# iOS (requires Xcode)
-dotnet build ./PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug
-```
+### 3.2 外部文件打开 (External Open Flow)
 
-### Publish distributable artifacts
-Distribution packaging is documented centrally in `PUBLISH.md`.
+1. **入口**:
+   - **Windows**: `Program.Main(args)` 捕获命令行参数 -> `PublishExternalOpenArgs`.
+   - **Android**: `MainActivity` 捕获 `Intent` -> `AndroidExternalOpenBridge` 解析 Uri.
+2. **桥接**: 调用 `ExternalOpenService.Open(path/uri)`.
+3. **响应**:
+   - `GlobalEvents` (或通过 `MainViewModel` 订阅) 收到请求。
+   - 触发 `FolderViewModel.LoadFile(path)`：
+     - 如果是文件：加载该文件所在文件夹，并选中该文件。
+     - 如果是文件夹：直接加载该文件夹。
 
-- `PUBLISH.md` covers Windows / Android / macOS package commands and output paths
-- All package scripts also copy final artifacts into the repository root `release/` folder
-- `release/` is only for collected distributable files, not source-controlled assets
+### 3.3 评分与元数据同步 (Rating Sync)
 
-NuGet versions are centrally managed in `Directory.Packages.props` — **always edit versions there**, not in individual `.csproj` files.
+1. **动作**: 用户按键盘 `1-5` 或点击星星。
+2. **逻辑**: `MainViewModel.SetRatingAsync`。
+3. **写入**:
+   - Update 内存中 `ImageFile` 的状态。
+   - 调用 `XmpWriter.WriteRatingAsync`。
+   - **原地编辑**: 尝试直接修改文件/XMP 头部字节。
+   - **Sidecar**: 如果是 RAW 文件，查找或创建同名 `.xmp` 文件写入。
+4. **刷新**: 写入完成后，触发过滤列表刷新 (`FolderVM.RefreshFilters`)，确保过滤条件实时生效。
 
-## Key Conventions
-
-### MVVM Wiring
-- `ViewLocator` maps ViewModels → Views by name convention: `FooViewModel` → `FooView` (namespace swap).
-- `MainViewModel` is the composition root — owns `FolderVM`, `ImageVM`, `DetailVM`, `ControlVM`, `Settings`.
-- Sub-ViewModels receive `MainViewModel` via constructor (not DI), access siblings through it.
-- Use `ReactiveObject` + `RaiseAndSetIfChanged` for all observable properties. `ViewModelBase : ReactiveObject` is the base class.
-
-### Window Selection (in `App.axaml.cs`)
-- Windows → `MainWindowForWindows` (custom title bar)
-- macOS → `MainWindowForMac` (native title bar)
-- Mobile → `SingleView`
-
-### Settings Architecture
-`SettingsViewModel` is a **partial class** split across multiple files (`SettingsViewModel.*.cs`) by concern: `Hotkeys`, `ExifDisplay`, `FileFormats`, `BitmapCache`, `ImagePreview`, `Layout`, `Rating`. Follow this pattern when adding new settings categories.
-
-### Static Service Classes
-`BitmapLoader`, `HeifLoader`, `XmpWriter`, `ExifLoader`, `MemoryBudget` are **static classes** (not DI-registered). They use static state and are accessed directly. This is intentional for performance-critical paths.
-
-### Compiled Bindings
-`AvaloniaUseCompiledBindingsByDefault` is **true** — all AXAML bindings must use `x:DataType` and compiled binding syntax. Avoid `{Binding Path}` without data type context.
-
-## File Naming & Organization
-- Views: `PhotoViewer/Views/Main/` (main UI), `PhotoViewer/Views/Settings/` (settings pages)
-- Windows: `PhotoViewer/Windows/` — platform-specific window shells (`MainWindowForWindows`, `MainWindowForMac`, `SingleView`)
-- Each `.axaml` has a matching `.axaml.cs` code-behind
-- Reusable controls: `PhotoViewer/Controls/`
-- Value converters: `PhotoViewer/Converters/`
-- Platform-specific capability implementations: `<PlatformProject>/Core/`
-
-## Task → File Quick Reference
-> Use this to jump directly to the right file without searching.
-
-| Task | Files to edit |
-|---|---|
-| Add / change a **hotkey** | `SettingsViewModel.Hotkeys.cs`, `Views/Settings/ControlSettingsView.axaml` |
-| Add / change **EXIF display fields** | `SettingsViewModel.ExifDisplay.cs`, `Views/Settings/ExifSettingsView.axaml` |
-| Add a new **settings category** | New `SettingsViewModel.{Category}.cs` (partial class) + new `Views/Settings/{Category}SettingsView.axaml` |
-| Modify **image loading / LRU cache** | `Core/BitmapLoader.cs` |
-| Modify **prefetch behavior** | `Core/BitmapPrefetcher.cs` |
-| Modify **EXIF / thumbnail reading** | `Core/ExifLoader.cs` |
-| Modify **XMP star rating write logic** | `Core/XmpWriter.cs` |
-| Modify **HEIF decoding** (platform-specific) | `<PlatformProject>/Core/*HeifDecoder.cs` |
-| Modify **memory budget** (platform-specific) | `<PlatformProject>/Core/*MemoryBudget.cs` |
-| Modify **settings persistence** (platform-specific) | `<PlatformProject>/Core/*SettingsStorage.cs` |
-| Change **layout / panel visibility** | `MainViewModel.cs` (`UpdateLayoutFromSettings`), `SettingsViewModel.Layout.cs` |
-| Change **thumbnail strip UI** | `Views/Main/ThumbnailView.axaml`, `FolderViewModel.cs` |
-| Change **main image view / zoom** | `Views/Main/ImageView.axaml`, `ImageViewModel.cs` |
-| Change **control panel buttons** | `Views/Main/ControlView.axaml`, `ControlViewModel.cs` |
-| Change **detail preview panels** | `Views/Main/DetailView.axaml`, `Controls/DetailPreview.axaml`, `DetailViewModel.cs` |
-| Modify **external open / open with / Android share-open** | `Core/ExternalOpenService.cs`, `App.axaml.cs`, `ViewModels/FolderViewModel.cs`, `PhotoViewer.Desktop/Program.cs`, `PhotoViewer.Android/MainActivity.cs`, `PhotoViewer.Android/Core/AndroidExternalOpenBridge.cs` |
-| Add a **new platform** | New `<Platform>/Core/` impls + `Program.cs`/`AppDelegate.cs` `AfterSetup` injections |
-| Modify **window chrome / title bar** | `Windows/MainWindowForWindows.axaml` (Windows) or `Windows/MainWindowForMac.axaml` (macOS) |
-| Modify **cache size / format settings** | `SettingsViewModel.BitmapCache.cs`, `Views/Settings/ImageSettingsView.axaml` |
-| Modify **supported file formats** | `SettingsViewModel.FileFormats.cs`, `Views/Settings/FileSettingsView.axaml` |
-| Publish **Windows single-file EXE** | `PhotoViewer.Desktop/publish-win-x64-singlefile.ps1`, `PhotoViewer.Desktop/PhotoViewer.Desktop.csproj`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
-| Publish **Android APK** | `PhotoViewer.Android/publish-android-apk.ps1`, `PhotoViewer.Android/PhotoViewer.Android.csproj`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
-| Publish **macOS build** | `PhotoViewer.Mac/publish.sh`, `Directory.Build.props`, `PUBLISH.md`, `AGENTS.md` |
-
-## Documentation Maintenance
-When adding new files or making significant changes, update this file's Quick Reference table. Keep descriptions concise.
-
+> **保持更新**
+> 本文档的内容如果有根本性变化（即现有实现被大幅度重构、文件废弃、功能新增）请更新此文档 AGENT.md 以保持信息可靠。
+> 通常的 BUG 修复和小幅度优化内容无需新增条目，保持该文档简要精确。
