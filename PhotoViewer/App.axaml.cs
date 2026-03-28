@@ -19,6 +19,12 @@ public partial class App : Application
     private static readonly SemaphoreSlim ExternalOpenSemaphore = new(1, 1);
 
     /// <summary>
+    /// 平台层可在 AfterSetup 阶段注册此回调，用于在框架完全初始化后执行
+    /// 需要 AppKit/UI 线程就绪才能进行的平台特定初始化（如 macOS NSApplicationDelegate 安装）。
+    /// </summary>
+    public static Action? PlatformFrameworkReadyCallback { get; set; }
+
+    /// <summary>
     /// 初始化应用资源。
     /// </summary>
     public override void Initialize()
@@ -31,6 +37,11 @@ public partial class App : Application
     /// </summary>
     public override void OnFrameworkInitializationCompleted()
     {
+        // 执行平台层注册的延迟初始化回调。
+        // 各平台实现内部负责将需要特定线程上下文的操作调度到正确线程。
+        PlatformFrameworkReadyCallback?.Invoke();
+        PlatformFrameworkReadyCallback = null;
+
         var vm = new MainViewModel();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
