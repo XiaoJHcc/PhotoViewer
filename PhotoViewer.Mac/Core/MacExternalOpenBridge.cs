@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using AppKit;
+using CoreFoundation;
 using Foundation;
 using PhotoViewer.Core;
 
@@ -9,15 +11,17 @@ namespace PhotoViewer.Mac.Core;
 
 /// <summary>
 /// macOS 外部打开桥接。
-/// 负责接收 Finder / Dock / “打开方式” 传入的文件，并转发给共享层。
+/// 负责接收 Finder / Dock / "打开方式" 传入的文件，并转发给共享层。
 /// </summary>
 public static class MacExternalOpenBridge
 {
-    private static readonly MacExternalOpenApplicationDelegate ApplicationDelegate = new();
+    private static MacExternalOpenApplicationDelegate? _applicationDelegate;
     private static bool _isInstalled;
 
     /// <summary>
     /// 安装 macOS 原生文件打开委托。
+    /// 必须在 Avalonia 框架初始化完成后（OnFrameworkInitializationCompleted）调用。
+    /// 内部会通过 GCD 主队列异步调度，确保在正确线程上下文中完成安装。
     /// </summary>
     public static void Install()
     {
@@ -26,9 +30,61 @@ public static class MacExternalOpenBridge
             return;
         }
 
-        NSApplication.SharedApplication.Delegate = ApplicationDelegate;
-        _isInstalled = true;
+        // NSApplicationDelegate 的 C# 托管构造函数内部调用 NSApplication.EnsureUIThread()，
+        // 要求代码在 GCD 主队列中执行。Avalonia 的调用线程并非 GCD 主队列，
+        // 因此通过 DispatchQueue.MainQueue.DispatchAsync 延迟到主队列消息循环运行后执行。
+        DispatchQueue.MainQueue.DispatchAsync(() =>
+        {
+            try
+            {
+                if (_isInstalled) return;
+
+                // macOS 26 Tahoe (beta) 加强了 EnsureUIThread() 的检查：
+                // 即使在 GCD 主队列上，托管构造函数 NSApplicationDelegate..ctor() 内的
+                // EnsureUIThread() 仍可能失败。
+                // 解决方案：通过 ObjC runtime 的 alloc+init 直接创建实例，
+                // 完全绕过 C# 托管构造函数，再用 Runtime.GetNSObject<T> 包装为托管对象。
+                var cls = ObjCRuntime.Class.GetHandle(typeof(MacExternalOpenApplicationDelegate));
+                if (cls == IntPtr.Zero)
+                {
+                    Console.Error.WriteLine("[MacExternalOpenBridge] ObjC class handle not found.");
+                    return;
+                }
+
+                var allocSel = ObjCRuntime.Selector.GetHandle("alloc");
+                var initSel  = ObjCRuntime.Selector.GetHandle("init");
+
+                var allocPtr = ObjC_msgSend(cls, allocSel);
+                var initPtr  = ObjC_msgSend(allocPtr, initSel);
+
+                _applicationDelegate = ObjCRuntime.Runtime.GetNSObject<MacExternalOpenApplicationDelegate>(initPtr);
+
+                if (_applicationDelegate == null)
+                {
+                    Console.Error.WriteLine("[MacExternalOpenBridge] 委托实例化失败。");
+                    return;
+                }
+
+                NSApplication.SharedApplication.Delegate = _applicationDelegate;
+                _isInstalled = true;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"[MacExternalOpenBridge.Install] 安装失败: {ex.GetType().Name}: {ex.Message}");
+                Console.Error.WriteLine(ex.StackTrace);
+            }
+        });
     }
+
+    /// <summary>
+    /// ObjC runtime 消息发送函数，接受 receiver 和 selector 两个参数。
+    /// 用于绕过 Xamarin/MAUI 托管绑定的构造函数检查。
+    /// </summary>
+    /// <param name="receiver">ObjC 对象指针（类指针或实例指针）</param>
+    /// <param name="selector">选择子指针</param>
+    /// <returns>消息调用的返回值（对象指针）</returns>
+    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
+    private static extern IntPtr ObjC_msgSend(IntPtr receiver, IntPtr selector);
 
     /// <summary>
     /// 将一组本地文件路径发布为外部打开请求。
@@ -149,9 +205,12 @@ public static class MacExternalOpenBridge
 
     /// <summary>
     /// macOS 应用委托。
-    /// 负责把系统“打开文档”事件转交给桥接层。
+    /// 负责把系统"打开文档"事件转交给桥接层。
+    /// 标记为 internal + [Register] 以确保 ObjC 静态/动态注册器均能通过
+    /// Class.GetHandle(typeof(...)) 可靠找到该类型，从而支持 alloc+init 绕过方式。
     /// </summary>
-    private sealed class MacExternalOpenApplicationDelegate : NSApplicationDelegate
+    [Register("PhotoViewerMacExternalOpenDelegate")]
+    internal sealed class MacExternalOpenApplicationDelegate : NSApplicationDelegate
     {
         /// <summary>
         /// 处理单文件打开事件。

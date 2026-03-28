@@ -19,7 +19,9 @@ sealed class Program
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
-            MacExternalOpenBridge.Install();
+            // NSApplicationDelegate 的构造需要 AppKit UI 线程就绪，
+            // 因此将 Install() 注册为回调，延迟到 OnFrameworkInitializationCompleted() 中执行。
+            App.PlatformFrameworkReadyCallback = MacExternalOpenBridge.Install;
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })
         .StartWithClassicDesktopLifetime(args);
