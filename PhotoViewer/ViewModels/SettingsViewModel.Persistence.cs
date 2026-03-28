@@ -12,6 +12,7 @@ using Avalonia.Input;
 using PhotoViewer.Core.Settings;
 using ReactiveUI;
 
+
 namespace PhotoViewer.ViewModels;
 
 public partial class SettingsViewModel
@@ -20,7 +21,7 @@ public partial class SettingsViewModel
     {
         var subscription = _saveRequests
             .Throttle(TimeSpan.FromMilliseconds(400))
-            .ObserveOn(RxApp.TaskpoolScheduler)
+            .ObserveOn(System.Reactive.Concurrency.TaskPoolScheduler.Default)
             .SelectMany(async _ => { await PersistAsync(); return Unit.Default; })
             .Subscribe();
 

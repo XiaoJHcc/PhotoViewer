@@ -3,7 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Avalonia;
-using Avalonia.ReactiveUI;
+using ReactiveUI;
+using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
 using PhotoViewer.Desktop.Core;
 using PhotoViewer.Core.Settings;
@@ -39,7 +40,7 @@ sealed class Program
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .UseReactiveUI()
+            .UseReactiveUI(_ => { })
             .LogToTrace();
 
     /// <summary>

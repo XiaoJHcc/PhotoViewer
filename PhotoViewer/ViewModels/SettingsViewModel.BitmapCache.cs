@@ -1,5 +1,7 @@
 ﻿using System;
 using ReactiveUI;
+using ReactiveUI.Avalonia;
+
 using PhotoViewer.Core;
 using System.Reactive.Linq;
 using Avalonia.Media;
@@ -53,7 +55,7 @@ public partial class SettingsViewModel
         // 订阅内存告警事件：仅显示触发时快照（大小、数量、时间）
         MessageBus.Current
             .Listen<BitmapLoader.MemoryWarningEvent>()
-            .ObserveOn(RxApp.MainThreadScheduler)
+            .ObserveOn(AvaloniaScheduler.Instance)
             .Subscribe(evt =>
             {
                 var iosNote = IsIOS ? " / iOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
