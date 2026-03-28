@@ -136,7 +136,7 @@ public partial class SettingsViewModel
             new("缩小（比例）", "ZoomOutScale", "\uf94e", "缩小", false, 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, KeyModifiers.Control)), 
                 null),
-            new("细节栏展开/收纳", "ToggleDetailView", "\ufad2", "细节栏", true,
+            new("细节栏展开/收纳", "ToggleDetailView", "\ufad2", "细节栏", false,
                 null,
                 null),
 

@@ -82,6 +82,31 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
   - **方法一（推荐）**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开
   - **方法二**：打开 `系统设置 → 隐私与安全性`，滚动到底部，点击 `仍要打开`
 
+## 开发环境配置
+
+1. **必要工具**：Rider、Xcode（macOS/iOS 必须）、Android Studio（Android 调试必须）。
+2. **安装 .NET**：下载并安装 .NET 9 SDK。
+3. **安装工作负载**：
+
+    Windows 环境：
+   ```bash
+   dotnet workload install android
+   ```
+   
+    macOS 环境：
+   ```bash
+   dotnet workload install ios macos android
+   ```
+   
+4. **恢复依赖**：
+   ```bash
+   dotnet restore PhotoViewer.sln
+   ```
+   
+5. **iOS 配置签名**：修改对应平台 `.csproj` 中的 `<CodesignKey>` 为自己 Apple 开发者证书。
+
+---
+
 ## 开发计划
 
 ### 🚧 待开发功能

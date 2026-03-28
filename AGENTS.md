@@ -6,7 +6,7 @@
 
 ## 1. 技术栈与环境
 
-- **框架**: Avalonia 11.3.9, .NET 9
+- **框架**: Avalonia 11.3.12, .NET 9
 - **模式**: MVVM (ReactiveUI)
 - **平台**:
   - `PhotoViewer.Desktop`: Windows (net9.0-windows)
