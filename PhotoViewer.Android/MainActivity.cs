@@ -7,7 +7,8 @@ using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using Avalonia;
 using Avalonia.Android;
-using Avalonia.ReactiveUI;
+using ReactiveUI;
+using ReactiveUI.Avalonia;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
@@ -40,7 +41,7 @@ public class MainActivity : AvaloniaMainActivity<App>
     {
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
-            .UseReactiveUI()
+            .UseReactiveUI(_ => { })
             .AfterSetup(_ =>
             {
                 // 注册 Android 平台的 HeifDecoder

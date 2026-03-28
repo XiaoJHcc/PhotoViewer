@@ -1,5 +1,6 @@
 ﻿using Avalonia;
-using Avalonia.ReactiveUI;
+using ReactiveUI;
+using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Mac.Core;
@@ -31,6 +32,6 @@ sealed class Program
         => AppBuilder.Configure<App>()
             .UsePlatformDetect()
             .WithInterFont()
-            .UseReactiveUI()
+            .UseReactiveUI(_ => { })
             .LogToTrace();
 }

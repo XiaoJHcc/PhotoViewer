@@ -32,10 +32,9 @@ public sealed class LibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 从流中加载 HEIF 图片为 Bitmap
+    /// 从流中加载 HEIF 图片为 Bitmap（内部实现辅助方法）
     /// </summary>
-    [Obsolete("Obsolete")]
-    public async Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream)
+    private async Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream)
     {
         try
         {
@@ -47,8 +46,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
             {
                 try
                 {
-                    using var context = new HeifContext();
-                    context.ReadFromMemory(data);
+                    using var context = new HeifContext(data);
 
                     using var imageHandle = context.GetPrimaryImageHandle();
                     if (imageHandle == null) return null;
@@ -73,10 +71,9 @@ public sealed class LibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 从流中生成 HEIF 缩略图
+    /// 从流中生成 HEIF 缩略图（内部实现辅助方法）
     /// </summary>
-    [Obsolete("Obsolete")]
-    public async Task<Bitmap?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
+    private async Task<Bitmap?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
     {
         try
         {
@@ -88,8 +85,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
             {
                 try
                 {
-                    using var context = new HeifContext();
-                    context.ReadFromMemory(data);
+                    using var context = new HeifContext(data);
 
                     using var imageHandle = context.GetPrimaryImageHandle();
                     if (imageHandle == null) return null;

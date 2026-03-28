@@ -1,12 +1,15 @@
+using ReactiveUI;
+
 using Foundation;
 using UIKit;
 using Avalonia;
 using Avalonia.iOS;
-using Avalonia.ReactiveUI;
+
+using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.iOS.Core;
-using ReactiveUI;
+
 using System;
 
 namespace PhotoViewer.iOS;
@@ -27,7 +30,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
     {
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
-            .UseReactiveUI()
+            .UseReactiveUI(_ => { })
             .AfterSetup(_ => 
             {
                 HeifLoader.Initialize(new iOSHeifDecoder());

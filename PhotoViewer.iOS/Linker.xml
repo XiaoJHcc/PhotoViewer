@@ -20,7 +20,7 @@
 
   <!-- ReactiveUI uses reflection extensively -->
   <assembly fullname="ReactiveUI" preserve="all" />
-  <assembly fullname="Avalonia.ReactiveUI" preserve="all" />
+  <assembly fullname="ReactiveUI.Avalonia" preserve="all" />
   <assembly fullname="DynamicData" preserve="all" />
   <assembly fullname="System.Reactive" preserve="all" />
   <assembly fullname="Splat" preserve="all" />
