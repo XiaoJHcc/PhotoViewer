@@ -2,7 +2,7 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net9.0-ios</TargetFramework>
-        <RuntimeIdentifiers>ios-arm64;iossimulator-arm64;iossimulator-x64</RuntimeIdentifiers>
+        <RuntimeIdentifiers>ios-arm64;iossimulator-arm64</RuntimeIdentifiers>
         <SupportedOSPlatformVersion>13.0</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -16,9 +16,8 @@
         <!-- 使用解释器模式，跳过 AOT 编译，大幅加速 Debug 构建与安装 -->
         <UseInterpreter>true</UseInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
-        <!-- Use iOS 26.3 simulator runtime (already installed); avoids requiring iOS 26.2 runtime -->
-        <_DeviceName>:v2:runtime=com.apple.CoreSimulator.SimRuntime.iOS-26-3,devicetype=com.apple.CoreSimulator.SimDeviceType.iPhone-17-Pro</_DeviceName>
-        <CodesignKey>Apple Development: ——————————————————————</CodesignKey>
+        <CodesignKey>iPhone Developer</CodesignKey>
+        <IOSDebugOverWiFi>true</IOSDebugOverWiFi>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
@@ -27,7 +26,7 @@
         <!-- 混合模式：AOT + 解释器回退，防止纯 AOT 对反射密集型代码（Avalonia/ReactiveUI）闪退 -->
         <UseInterpreter>true</UseInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
-        <CodesignKey>Apple Development: ——————————————————————</CodesignKey>
+        <CodesignKey>iPhone Developer</CodesignKey>
     </PropertyGroup>
 
     <!-- iOS 应用图标：将 Assets.xcassets 中的图标编译进 Assets.car -->
