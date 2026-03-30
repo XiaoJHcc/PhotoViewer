@@ -7,6 +7,7 @@ using AndroidX.Core.App;
 using AndroidX.Core.Content;
 using Avalonia;
 using Avalonia.Android;
+using Avalonia.Media;
 using ReactiveUI;
 using ReactiveUI.Avalonia;
 using PhotoViewer.Android.Core;
@@ -40,12 +41,18 @@ public class MainActivity : AvaloniaMainActivity<App>
     protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         return base.CustomizeAppBuilder(builder)
-            .WithInterFont()
+            .With(new FontManagerOptions
+            {
+                DefaultFamilyName = "sans-serif"
+            })
             .UseReactiveUI(_ => { })
             .AfterSetup(_ =>
             {
-                // 注册 Android 平台的 HeifDecoder
-                HeifLoader.Initialize(new AndroidHeifDecoder());
+                // 注册 Android 平台的 HeifDecoder。
+                // AndroidLibHeifDecoder 优先使用系统 BitmapFactory（硬件加速，API 28+），
+                // 系统无法解码时（如 HEIF YUV 4:2:2）回退到 libheif 软件解码器。
+                // 若 libheif.so 未打包进 APK，则仅使用系统解码器。
+                HeifLoader.Initialize(new AndroidLibHeifDecoder());
                 MemoryBudget.Initialize(new AndroidMemoryBudget());
                 SettingsService.ConfigureStorage(new AndroidSettingsStorage());
             });

@@ -7,8 +7,23 @@
         <ApplicationId>cc.xiaojh.PhotoViewer</ApplicationId>
         <!-- ApplicationVersion / ApplicationDisplayVersion 继承自 Directory.Build.props -->
         <AndroidPackageFormat>apk</AndroidPackageFormat>
-        <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <!-- Debug 配置：将所有 .NET 程序集内嵌进 APK -->
+    <!-- 默认 Debug 启用 Fast Deployment（程序集不打包进 APK，由 IDE 单独推送），
+         直接 adb install 安装时 Mono 运行时找不到程序集会立即崩溃。
+         EmbedAssembliesIntoApk=true 使 Debug APK 和 Release 一样自包含，
+         可直接安装运行，代价是包体积略大、构建稍慢。 -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    </PropertyGroup>
+
+    <!-- Release 配置：启用 AOT 编译加快启动速度、减少 JIT 开销 -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <RunAOTCompilation>true</RunAOTCompilation>
+        <!-- Profile-guided AOT 需要收集运行时数据，普通发布保持关闭 -->
+        <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
     </PropertyGroup>
 
     <ItemGroup>
@@ -20,6 +35,54 @@
     <ItemGroup>
         <PackageReference Include="Avalonia.Android"/>
         <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
+        <!-- LibHeifSharp：libheif 软件解码器，支持 HEIF YUV 4:2:2 等系统不支持的格式 -->
+        <!-- 需配套将 libheif.so + libde265.so 放入 NativeLibs/{abi}/ 目录（见下方） -->
+        <PackageReference Include="LibHeifSharp"/>
+    </ItemGroup>
+
+    <!--
+        libheif 原生库配置：
+        运行 .\build-native-android.ps1 脚本自动交叉编译，需要 Android NDK + CMake + Ninja。
+
+        构建策略：libde265 编译为静态库并链接进 libheif.so，只需分发 libheif.so 一个文件。
+          NativeLibs/arm64-v8a/libheif.so    ← 包含 HEIF 解码 + HEVC(libde265) 解码
+          NativeLibs/armeabi-v7a/libheif.so
+          NativeLibs/x86_64/libheif.so
+
+        缺少 .so 的 ABI / 系统版本（< API 28）将自动回退到系统 BitmapFactory 解码器。
+        libde265.so 条目已保留（Condition 防止文件不存在时报错），可忽略。
+    -->
+    <ItemGroup>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libde265.so')"
+            Include="NativeLibs\arm64-v8a\libde265.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libheif.so')"
+            Include="NativeLibs\arm64-v8a\libheif.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\armeabi-v7a\libde265.so')"
+            Include="NativeLibs\armeabi-v7a\libde265.so">
+            <Abi>armeabi-v7a</Abi>
+        </AndroidNativeLibrary>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\armeabi-v7a\libheif.so')"
+            Include="NativeLibs\armeabi-v7a\libheif.so">
+            <Abi>armeabi-v7a</Abi>
+        </AndroidNativeLibrary>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\x86_64\libde265.so')"
+            Include="NativeLibs\x86_64\libde265.so">
+            <Abi>x86_64</Abi>
+        </AndroidNativeLibrary>
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\x86_64\libheif.so')"
+            Include="NativeLibs\x86_64\libheif.so">
+            <Abi>x86_64</Abi>
+        </AndroidNativeLibrary>
     </ItemGroup>
 
     <ItemGroup>
