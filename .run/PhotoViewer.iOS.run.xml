@@ -6,7 +6,8 @@
     <option name="EXTRA_MLAUNCH_PARAMETERS" value="" />
     <option name="PLATFORM_TYPE" value="IOS" />
     <method v="2">
-      <option name="Build" default="false" projectName="PhotoViewer.iOS" projectPath="$PROJECT_DIR$/PhotoViewer.iOS/PhotoViewer.iOS.csproj" />
+      <option name="CleanProject" projectName="所选项目" />
+      <option name="Build" projectName="所选项目" />
     </method>
   </configuration>
 </component>
