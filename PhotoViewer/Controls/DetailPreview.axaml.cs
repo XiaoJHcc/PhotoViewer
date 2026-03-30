@@ -1,5 +1,4 @@
-﻿using System;
-using Avalonia;
+﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Media;
@@ -306,7 +305,7 @@ public partial class DetailPreview : UserControl
 
         if (_isHighlighted)
         {
-            _rootBorder.BorderBrush = HighlightBrush;;
+            _rootBorder.BorderBrush = HighlightBrush;
         }
         else
         {
