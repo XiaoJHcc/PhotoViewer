@@ -1,0 +1,13 @@
+# 二进制文件 — 禁止 git 进行换行符转换或文本 diff
+*.so            binary
+*.a             binary
+*.dylib         binary
+*.dll           binary
+*.apk           binary
+*.ipa           binary
+*.dmg           binary
+*.png           binary
+*.jpg           binary
+*.jpeg          binary
+*.heic          binary
+*.heif          binary

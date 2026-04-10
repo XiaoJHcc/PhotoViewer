@@ -23,37 +23,69 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// </summary>
     private static readonly bool _libHeifAvailable = CheckLibHeifAvailable();
 
+    /// <summary>
+    /// libheif 不可用时的具体原因描述，供诊断使用。
+    /// </summary>
+    private static readonly string _libHeifUnavailableReason = GetLibHeifUnavailableReason();
+
     /// <summary>系统级回退解码器（BitmapFactory）</summary>
     private readonly AndroidHeifDecoder _systemFallback = new();
 
     /// <summary>
     /// 检测 libheif 原生库是否已成功加载。
-    /// 通过触发一次 P/Invoke 调用：若抛 DllNotFoundException 则库不存在；
-    /// 若抛 HeifException（数据无效的合法错误）则库已就绪。
+    /// 探针：传入 1 字节数据以触发 P/Invoke（避免空数组被 LibHeifSharp 在进入 native 前就拒绝）；
+    /// 若抛 DllNotFoundException 则库不存在；若抛 HeifException（数据无效）则库已就绪。
     /// </summary>
     private static bool CheckLibHeifAvailable()
     {
         try
         {
-            // 用空字节触发 libheif 初始化；空数据会抛 HeifException，这是正常的
-            using var ctx = new HeifContext(Array.Empty<byte>());
+            // 注意：必须传入非空字节数组；Array.Empty<byte>() 会被 LibHeifSharp 在调用 native
+            // 之前就以 ArgumentException 拒绝，导致误判为库不可用。
+            using var ctx = new HeifContext(new byte[] { 0x00 });
             return true;
         }
         catch (HeifException)
         {
-            // HeifException = libheif.so 已加载，只是数据无效 → 库可用
+            // HeifException = libheif.so 已加载，只是数据无效（非 HEIF 格式）→ 库可用
             return true;
         }
-        catch (DllNotFoundException)
+        catch (DllNotFoundException ex)
         {
-            // libheif.so 未在 APK native libs 中找到 → 回退系统解码器
-            Console.WriteLine("[AndroidLibHeifDecoder] libheif.so 未找到，将使用系统解码器回退。");
+            // libheif.so 未在 APK native libs 中找到
+            Console.WriteLine($"[AndroidLibHeifDecoder] libheif.so 未找到: {ex.Message}");
             return false;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AndroidLibHeifDecoder] libheif 初始化异常: {ex.Message}");
+            Console.WriteLine($"[AndroidLibHeifDecoder] libheif 初始化异常 ({ex.GetType().Name}): {ex.Message}");
             return false;
+        }
+    }
+
+    /// <summary>
+    /// 返回 libheif 不可用的原因描述（仅在 CheckLibHeifAvailable 返回 false 时有意义）。
+    /// 设计为独立方法，确保 _libHeifAvailable 已先被赋值。
+    /// </summary>
+    private static string GetLibHeifUnavailableReason()
+    {
+        if (_libHeifAvailable) return string.Empty;
+        try
+        {
+            using var ctx = new HeifContext(new byte[] { 0x00 });
+            return string.Empty; // 不应进入此分支
+        }
+        catch (HeifException)
+        {
+            return string.Empty; // 可用，不应进入此分支
+        }
+        catch (DllNotFoundException ex)
+        {
+            return $"libheif.so 未找到（DllNotFoundException: {ex.Message}）";
+        }
+        catch (Exception ex)
+        {
+            return $"libheif 初始化异常（{ex.GetType().Name}: {ex.Message}）";
         }
     }
 
@@ -71,25 +103,49 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <returns>解码后的 Bitmap，失败返回 null</returns>
     public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
     {
+        var reasons = new System.Text.StringBuilder();
+
         // 1) 优先系统解码器（硬件加速，速度快，覆盖常见 HEIF 4:2:0 格式）
         if (_systemFallback.IsSupported)
         {
             var systemResult = await _systemFallback.LoadBitmapAsync(file);
             if (systemResult != null) return systemResult;
 
+            reasons.AppendLine("① 系统解码器(BitmapFactory/API 28+): 返回 null（格式可能不受支持）");
             Console.WriteLine("[AndroidLibHeifDecoder] 系统解码器返回 null，尝试 libheif 软件解码。");
+        }
+        else
+        {
+            int apiLevel = (int)global::Android.OS.Build.VERSION.SdkInt;
+            reasons.AppendLine($"① 系统解码器(BitmapFactory): 不支持（需 API 28+，当前 API {apiLevel}）");
         }
 
         // 2) 系统无法解码（如 HEIF 4:2:2），回退 libheif 软件解码
-        if (!_libHeifAvailable) return null;
+        if (!_libHeifAvailable)
+        {
+            var reason = string.IsNullOrEmpty(_libHeifUnavailableReason)
+                ? "libheif.so 未能加载（原因未知）"
+                : _libHeifUnavailableReason;
+            reasons.AppendLine($"② libheif 软件解码器: {reason}");
+            HeifLoader.SetLastDecodeError(reasons.ToString().TrimEnd());
+            return null;
+        }
 
         try
         {
             await using var stream = await file.OpenReadAsync();
-            return await LoadBitmapFromStreamAsync(stream);
+            var result = await LoadBitmapFromStreamAsync(stream);
+            if (result == null)
+            {
+                reasons.AppendLine("② libheif 软件解码器: 解码返回 null（HeifImage 无效或格式不兼容）");
+                HeifLoader.SetLastDecodeError(reasons.ToString().TrimEnd());
+            }
+            return result;
         }
         catch (Exception ex)
         {
+            reasons.AppendLine($"② libheif 软件解码器: 解码失败（{ex.GetType().Name}: {ex.Message}）");
+            HeifLoader.SetLastDecodeError(reasons.ToString().TrimEnd());
             Console.WriteLine($"[AndroidLibHeifDecoder] libheif 解码也失败: {ex.Message}");
             return null;
         }
@@ -134,6 +190,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
 
     /// <summary>
     /// 从流中使用 LibHeifSharp 解码完整 HEIF 图片。
+    /// 异常不在此方法内吞掉，由调用方捕获并格式化为用户可见的错误信息。
     /// </summary>
     private static async Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream)
     {
@@ -141,24 +198,31 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
         await stream.CopyToAsync(ms);
         var data = ms.ToArray();
 
+        Console.WriteLine($"[AndroidLibHeifDecoder] 开始 libheif 解码，数据大小: {data.Length} 字节");
+
         return await Task.Run(() =>
         {
-            try
-            {
-                using var context = new HeifContext(data);
-                using var imageHandle = context.GetPrimaryImageHandle();
-                if (imageHandle == null) return null;
+            using var context = new HeifContext(data);
+            Console.WriteLine("[AndroidLibHeifDecoder] HeifContext 创建成功");
 
-                using var image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
-                if (image == null) return null;
+            using var imageHandle = context.GetPrimaryImageHandle();
+            if (imageHandle == null)
+                throw new InvalidOperationException("GetPrimaryImageHandle 返回 null");
 
-                return ConvertHeifImageToBitmap(image);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[AndroidLibHeifDecoder] LibHeifSharp 解码失败: {ex.Message}");
-                return null;
-            }
+            Console.WriteLine($"[AndroidLibHeifDecoder] 主图句柄: {imageHandle.Width}x{imageHandle.Height}, " +
+                              $"HasAlpha={imageHandle.HasAlphaChannel}, BitDepth={imageHandle.BitDepth}");
+
+            using var image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
+            if (image == null)
+                throw new InvalidOperationException("Decode 返回 null（HeifColorspace.Rgb, InterleavedRgb24）");
+
+            Console.WriteLine($"[AndroidLibHeifDecoder] 解码成功: {image.Width}x{image.Height}");
+
+            var result = ConvertHeifImageToBitmap(image);
+            if (result == null)
+                throw new InvalidOperationException("ConvertHeifImageToBitmap 返回 null（像素数据转换失败）");
+
+            return result;
         });
     }
 
