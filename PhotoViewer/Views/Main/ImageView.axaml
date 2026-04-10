@@ -49,12 +49,24 @@
                        Canvas.Left="{Binding DetailHighlightRect.X}"
                        Canvas.Top="{Binding DetailHighlightRect.Y}" />
         </Canvas>
-        <TextBlock Text="{Binding HintText}"
-                   IsVisible="{Binding HintText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                   HorizontalAlignment="Center"
-                   VerticalAlignment="Center"
-                   Foreground="Gray"
-                   FontSize="16"/>
+        <StackPanel HorizontalAlignment="Center"
+                    VerticalAlignment="Center"
+                    MaxWidth="500">
+            <TextBlock Text="{Binding HintText}"
+                       IsVisible="{Binding HintText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                       HorizontalAlignment="Center"
+                       Foreground="Gray"
+                       FontSize="16"
+                       TextWrapping="Wrap"
+                       TextAlignment="Center"/>
+            <TextBlock Text="{Binding HintDetail}"
+                       IsVisible="{Binding HintDetail, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                       Foreground="#888"
+                       FontSize="11"
+                       TextWrapping="Wrap"
+                       TextAlignment="Left"
+                       Margin="0,8,0,0"/>
+        </StackPanel>
         
         <!-- 缩放状态下的右下角示意图 -->
         <Border IsVisible="{Binding ShowZoomIndicator}"

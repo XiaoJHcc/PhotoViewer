@@ -400,7 +400,11 @@ foreach ($abi in $Abis) {
         -ExtraArgs @(
             "-DBUILD_SHARED_LIBS=ON",
             # 让 cmake find_package(libde265) 找到上面安装的静态库
+            # 注意：Android NDK toolchain 将 find_path/find_library 限制为仅搜索
+            # CMAKE_FIND_ROOT_PATH 内的路径（ONLY 模式）。CMAKE_PREFIX_PATH 不受此约束
+            # 但 FindLIBDE265.cmake 使用 find_path/find_library，所以必须同时设置两者。
             "-DCMAKE_PREFIX_PATH=$installDir",
+            "-DCMAKE_FIND_ROOT_PATH=$installDir",
             # 只启用 HEVC (libde265)，禁用所有其他编解码器
             "-DWITH_LIBDE265=ON",
             "-DENABLE_PLUGIN_LOADING=OFF",  # Android 不支持运行时插件加载

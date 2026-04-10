@@ -28,6 +28,16 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _HintText, value);
     }
 
+    private string _HintDetail = string.Empty;
+    /// <summary>
+    /// 错误详情，显示在 HintText 下方，字号较小。
+    /// </summary>
+    public string HintDetail
+    {
+        get => _HintDetail;
+        set => this.RaiseAndSetIfChanged(ref _HintDetail, value);
+    }
+
     public event EventHandler<IStorageFile?>? ImageLoaded;
     
     private Rect _detailHighlightRect;
@@ -99,6 +109,7 @@ public class ImageViewModel : ReactiveObject
         try
         {
             HintText = string.Empty;
+            HintDetail = string.Empty;
             
             // 使用缓存服务加载图片
             var bitmap = await BitmapLoader.GetBitmapAsync(file);
@@ -107,7 +118,17 @@ public class ImageViewModel : ReactiveObject
             {
                 Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
                 SourceBitmap = null;
-                HintText = "无法打开该图片";
+                var hint = "无法打开该图片";
+                var detail = string.Empty;
+                if (HeifLoader.IsHeifFile(file))
+                {
+                    hint += "（HEIF 格式）";
+                    var decodeError = HeifLoader.LastDecodeError;
+                    if (!string.IsNullOrEmpty(decodeError))
+                        detail = decodeError;
+                }
+                HintText = hint;
+                HintDetail = detail;
                 return;
             }
             
@@ -118,6 +139,7 @@ public class ImageViewModel : ReactiveObject
                 bitmap.Dispose();
                 SourceBitmap = null;
                 HintText = "图片解码无效";
+                HintDetail = string.Empty;
                 return;
             }
             
