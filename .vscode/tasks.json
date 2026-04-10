@@ -1,0 +1,79 @@
+{
+  // See https://go.microsoft.com/fwlink/?LinkId=733558
+  // for the documentation about the tasks.json format
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Windows (Debug)",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/PhotoViewer.Desktop/PhotoViewer.Desktop.csproj",
+        "-c",
+        "Debug"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "Build Android (Debug)",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/PhotoViewer.Android/PhotoViewer.Android.csproj",
+        "-c",
+        "Debug",
+        "-t:Run",
+        "-p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": "build"
+    },
+    {
+      "label": "Publish Windows EXE (Release)",
+      "command": "powershell",
+      "type": "process",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Release)",
+      "command": "powershell",
+      "type": "process",
+      "args": [
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1",
+        "-AndroidSdkDirectory",
+        "${env:LOCALAPPDATA}\\Android\\Sdk"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Watch Android Logcat",
+      "command": "adb",
+      "type": "process",
+      "args": [
+        "logcat",
+        "-s",
+        "PhotoViewer:V",
+        "AndroidRuntime:E",
+        "mono:W",
+        "monodroid:W"
+      ],
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}
