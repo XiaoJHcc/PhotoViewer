@@ -1,10 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Runtime.InteropServices;
 using AppKit;
 using CoreFoundation;
 using Foundation;
+using ObjCRuntime;
 using PhotoViewer.Core;
 
 namespace PhotoViewer.Mac.Core;
@@ -12,79 +12,31 @@ namespace PhotoViewer.Mac.Core;
 /// <summary>
 /// macOS 外部打开桥接。
 /// 负责接收 Finder / Dock / "打开方式" 传入的文件，并转发给共享层。
+/// 通过 NSAppleEventManager 注册 'odoc' (Open Documents) Apple Event 处理程序，
+/// 不替换 Avalonia 的 NSApplicationDelegate，兼容 macOS 26+。
 /// </summary>
 public static class MacExternalOpenBridge
 {
-    private static MacExternalOpenApplicationDelegate? _applicationDelegate;
     private static bool _isInstalled;
 
     /// <summary>
-    /// 安装 macOS 原生文件打开委托。
-    /// 必须在 Avalonia 框架初始化完成后（OnFrameworkInitializationCompleted）调用。
-    /// 内部会通过 GCD 主队列异步调度，确保在正确线程上下文中完成安装。
+    /// 安装 macOS 原生文件打开事件处理。
+    /// 通过 NSAppleEventManager 注册 kAEOpenDocuments ('odoc') 事件处理程序，
+    /// 不涉及 NSApplicationDelegate，避免 macOS 26 的 EnsureUIThread() 限制。
     /// </summary>
     public static void Install()
     {
-        if (_isInstalled)
-        {
-            return;
-        }
+        if (_isInstalled) return;
+        _isInstalled = true;
 
-        // NSApplicationDelegate 的 C# 托管构造函数内部调用 NSApplication.EnsureUIThread()，
-        // 要求代码在 GCD 主队列中执行。Avalonia 的调用线程并非 GCD 主队列，
-        // 因此通过 DispatchQueue.MainQueue.DispatchAsync 延迟到主队列消息循环运行后执行。
-        DispatchQueue.MainQueue.DispatchAsync(() =>
-        {
-            try
-            {
-                if (_isInstalled) return;
-
-                // macOS 26 Tahoe (beta) 加强了 EnsureUIThread() 的检查：
-                // 即使在 GCD 主队列上，托管构造函数 NSApplicationDelegate..ctor() 内的
-                // EnsureUIThread() 仍可能失败。
-                // 解决方案：通过 ObjC runtime 的 alloc+init 直接创建实例，
-                // 完全绕过 C# 托管构造函数，再用 Runtime.GetNSObject<T> 包装为托管对象。
-                var cls = ObjCRuntime.Class.GetHandle(typeof(MacExternalOpenApplicationDelegate));
-                if (cls == IntPtr.Zero)
-                {
-                    Console.Error.WriteLine("[MacExternalOpenBridge] ObjC class handle not found.");
-                    return;
-                }
-
-                var allocSel = ObjCRuntime.Selector.GetHandle("alloc");
-                var initSel  = ObjCRuntime.Selector.GetHandle("init");
-
-                var allocPtr = ObjC_msgSend(cls, allocSel);
-                var initPtr  = ObjC_msgSend(allocPtr, initSel);
-
-                _applicationDelegate = ObjCRuntime.Runtime.GetNSObject<MacExternalOpenApplicationDelegate>(initPtr);
-
-                if (_applicationDelegate == null)
-                {
-                    Console.Error.WriteLine("[MacExternalOpenBridge] 委托实例化失败。");
-                    return;
-                }
-
-                NSApplication.SharedApplication.Delegate = _applicationDelegate;
-                _isInstalled = true;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[MacExternalOpenBridge.Install] 安装失败: {ex.GetType().Name}: {ex.Message}");
-                Console.Error.WriteLine(ex.StackTrace);
-            }
-        });
+        var aem = NSAppleEventManager.SharedAppleEventManager;
+        // kCoreEventClass = 'aevt' (0x61657674), kAEOpenDocuments = 'odoc' (0x6f646f63)
+        aem.SetEventHandler(
+            new AppleEventHandler(),
+            new Selector("handleOpenDocuments:withReply:"),
+            (AEEventClass)0x61657674,
+            (AEEventID)0x6f646f63);
     }
-
-    /// <summary>
-    /// ObjC runtime 消息发送函数，接受 receiver 和 selector 两个参数。
-    /// 用于绕过 Xamarin/MAUI 托管绑定的构造函数检查。
-    /// </summary>
-    /// <param name="receiver">ObjC 对象指针（类指针或实例指针）</param>
-    /// <param name="selector">选择子指针</param>
-    /// <returns>消息调用的返回值（对象指针）</returns>
-    [DllImport("/usr/lib/libobjc.A.dylib", EntryPoint = "objc_msgSend")]
-    private static extern IntPtr ObjC_msgSend(IntPtr receiver, IntPtr selector);
 
     /// <summary>
     /// 将一组本地文件路径发布为外部打开请求。
@@ -204,50 +156,37 @@ public static class MacExternalOpenBridge
     }
 
     /// <summary>
-    /// macOS 应用委托。
-    /// 负责把系统"打开文档"事件转交给桥接层。
-    /// 标记为 internal + [Register] 以确保 ObjC 静态/动态注册器均能通过
-    /// Class.GetHandle(typeof(...)) 可靠找到该类型，从而支持 alloc+init 绕过方式。
+    /// Apple Event 处理器。
+    /// 接收 kAEOpenDocuments ('odoc') 事件，从中提取文件 URL 并转发给共享层。
+    /// 继承 NSObject 以满足 NSAppleEventManager.SetEventHandler 的要求。
     /// </summary>
-    [Register("PhotoViewerMacExternalOpenDelegate")]
-    internal sealed class MacExternalOpenApplicationDelegate : NSApplicationDelegate
+    private sealed class AppleEventHandler : NSObject
     {
         /// <summary>
-        /// 处理单文件打开事件。
+        /// 处理 'odoc' Apple Event，从事件描述符中提取文件 URL 列表。
         /// </summary>
-        /// <param name="sender">当前应用</param>
-        /// <param name="filename">系统传入的文件路径</param>
-        /// <returns>是否成功识别并投递</returns>
-        public override bool OpenFile(NSApplication sender, string filename)
+        /// <param name="evt">系统传入的 Apple Event 描述符</param>
+        /// <param name="reply">回复描述符（未使用）</param>
+        [Export("handleOpenDocuments:withReply:")]
+        public void HandleOpenDocuments(NSAppleEventDescriptor evt, NSAppleEventDescriptor reply)
         {
-            var uri = TryCreateFileUri(filename);
-            if (uri == null)
+            // 文件列表位于 keyDirectObject ('----') 参数中
+            var directObject = evt.ParamDescriptorForKeyword(0x2d2d2d2d); // '----'
+            if (directObject == null) return;
+
+            var urls = new List<NSUrl>();
+            int count = (int)directObject.NumberOfItems;
+            for (int i = 1; i <= count; i++)
             {
-                return false;
+                var desc = directObject.DescriptorAtIndex(i);
+                var url = desc?.StringValue != null ? new NSUrl(desc.StringValue) : null;
+                if (url != null) urls.Add(url);
             }
 
-            ExternalOpenService.PublishFile(uri, source: "Mac:OpenFile");
-            return true;
-        }
-
-        /// <summary>
-        /// 处理多文件打开事件。
-        /// </summary>
-        /// <param name="sender">当前应用</param>
-        /// <param name="filenames">系统传入的文件路径列表</param>
-        public override void OpenFiles(NSApplication sender, string[] filenames)
-        {
-            PublishFromPaths(filenames, source: "Mac:OpenFiles");
-        }
-
-        /// <summary>
-        /// 处理 URL 形式的打开事件。
-        /// </summary>
-        /// <param name="application">当前应用</param>
-        /// <param name="urls">系统传入的 URL 列表</param>
-        public override void OpenUrls(NSApplication application, NSUrl[] urls)
-        {
-            PublishFromUrls(urls, source: "Mac:OpenUrls");
+            if (urls.Count > 0)
+            {
+                PublishFromUrls(urls, source: "Mac:AppleEvent:odoc");
+            }
         }
     }
 }
