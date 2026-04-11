@@ -38,4 +38,20 @@
     <ItemGroup>
         <BundleResource Include="icon.icns"/>
     </ItemGroup>
+
+    <!--
+      macOS 26+ Code Signing 修正：
+      dotnet build 产出的 .app 中部分原生 dylib 的 adhoc 签名不完整，
+      内核会因 cs_invalid_page 拒绝加载并发送 SIGKILL。
+      在 _CodesignAppBundle 之后追加一轮签名：先逐个签名所有 dylib，
+      再对整个 .app 签名（附带 Entitlements）。
+    -->
+    <Target Name="_FixDylibCodeSigning"
+            AfterTargets="_CodesignAppBundle"
+            Condition="$([MSBuild]::IsOSPlatform('osx'))">
+        <Exec Command="find &quot;$(AppBundleDir.TrimEnd('/'))&quot; -name '*.dylib' -exec codesign --force -s - {} +"
+              IgnoreExitCode="false" />
+        <Exec Command="codesign --force -s - --entitlements &quot;$(MSBuildProjectDirectory)/Entitlements.plist&quot; &quot;$(AppBundleDir.TrimEnd('/'))&quot;"
+              IgnoreExitCode="false" />
+    </Target>
 </Project>

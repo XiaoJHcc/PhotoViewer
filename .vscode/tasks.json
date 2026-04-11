@@ -1,79 +1,103 @@
 {
-  // See https://go.microsoft.com/fwlink/?LinkId=733558
-  // for the documentation about the tasks.json format
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Build Windows (Debug)",
-      "command": "dotnet",
-      "type": "process",
-      "args": [
-        "build",
-        "${workspaceFolder}/PhotoViewer.Desktop/PhotoViewer.Desktop.csproj",
-        "-c",
-        "Debug"
-      ],
-      "problemMatcher": "$msCompile",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
+      "label": "Debug Windows",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Desktop -c Debug",
+      "group": "test",
+      "problemMatcher": "$msCompile"
     },
     {
-      "label": "Build Android (Debug)",
-      "command": "dotnet",
-      "type": "process",
-      "args": [
-        "build",
-        "${workspaceFolder}/PhotoViewer.Android/PhotoViewer.Android.csproj",
-        "-c",
-        "Debug",
-        "-t:Run",
-        "-p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk"
-      ],
-      "problemMatcher": "$msCompile",
-      "group": "build"
+      "label": "Run Windows",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Desktop --no-build -c Debug",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug Mac",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug && open PhotoViewer.Mac/bin/Debug/net9.0-macos/PhotoViewer.Mac.app",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run Mac",
+      "type": "shell",
+      "command": "open PhotoViewer.Mac/bin/Debug/net9.0-macos/PhotoViewer.Mac.app",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug Android",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk && adb logcat -c && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install Android",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Install --no-build -p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug iOS Simulator",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net9.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS Simulator",
+      "type": "shell",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net9.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Debug iOS",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 -t:Run",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 -t:Install --no-build",
+      "group": "test",
+      "problemMatcher": "$msCompile"
     },
     {
       "label": "Publish Windows EXE (Release)",
-      "command": "powershell",
-      "type": "process",
-      "args": [
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1"
-      ],
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1",
+      "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Publish Android APK (Release)",
-      "command": "powershell",
-      "type": "process",
-      "args": [
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        "${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1",
-        "-AndroidSdkDirectory",
-        "${env:LOCALAPPDATA}\\Android\\Sdk"
-      ],
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk",
+      "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Watch Android Logcat",
-      "command": "adb",
-      "type": "process",
-      "args": [
-        "logcat",
-        "-s",
-        "PhotoViewer:V",
-        "AndroidRuntime:E",
-        "mono:W",
-        "monodroid:W"
-      ],
-      "isBackground": true,
-      "problemMatcher": []
+      "label": "Publish Mac DMG (Release)",
+      "type": "shell",
+      "command": "bash PhotoViewer.Mac/publish.sh",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish iOS IPA (Release)",
+      "type": "shell",
+      "command": "dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64",
+      "group": "build",
+      "problemMatcher": "$msCompile"
     }
   ]
 }

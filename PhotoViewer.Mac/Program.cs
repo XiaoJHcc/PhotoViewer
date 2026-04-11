@@ -19,8 +19,7 @@ sealed class Program
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
-            // NSApplicationDelegate 的构造需要 AppKit UI 线程就绪，
-            // 因此将 Install() 注册为回调，延迟到 OnFrameworkInitializationCompleted() 中执行。
+            // 注册 Apple Event 处理程序，接收 Finder / Dock / "打开方式" 传入的文件。
             App.PlatformFrameworkReadyCallback = MacExternalOpenBridge.Install;
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })

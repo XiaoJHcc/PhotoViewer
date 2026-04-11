@@ -18,8 +18,20 @@ if [[ -z "${VERSION}" ]]; then
     exit 1
 fi
 
+echo "=== 还原 ==="
+dotnet restore "${SCRIPT_DIR}/${APP_NAME}.csproj"
+
+echo ""
 echo "=== 构建 ==="
-dotnet publish "${SCRIPT_DIR}/${APP_NAME}.csproj" -c Release -r osx-arm64
+dotnet publish "${SCRIPT_DIR}/${APP_NAME}.csproj" -c Release -r osx-arm64 --no-restore
+
+echo ""
+echo "=== 签名 ==="
+# macOS 26+ 要求所有原生 dylib 持有有效签名，dotnet 产出的 adhoc 签名可能不完整。
+# 先逐一签名所有 dylib，再对整个 .app 签名（附带 Entitlements）。
+ENT="${SCRIPT_DIR}/Entitlements.plist"
+find "${APP_PATH}" \( -name "*.dylib" -o -name "*.so" \) -exec codesign --force -s - {} \;
+codesign --force -s - --entitlements "${ENT}" "${APP_PATH}"
 
 echo ""
 echo "=== 打包 DMG ==="

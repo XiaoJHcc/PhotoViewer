@@ -1,84 +1,73 @@
 # PhotoViewer 开发与发布指南
 
-本文档介绍如何在一台全新的电脑上，仅使用 VS Code 和基础环境，从零开始搭建、调试直至发布本项目的桌面端与移动端。
+本文档精简并以 Task 为导向，介绍如何在全新环境中，仅使用 VS Code 从零搭建并发布本项目。各平台的命令行操作均已封装为一键 Task，聚焦于“怎么做”。
 
 ## 一、 环境依赖与扩展安装
 
 1. **核心环境安装**
-   - **[.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0)**：所有平台通用的核心环境，只需装它即可。
-   - **安卓开发工作负载 (可选)**：打开终端（`Ctrl+~`），运行指令 `dotnet workload install android` 即可自动拉取 Android 所需的底层链。
+   - **[.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)**（或更高版本）。
+   - **必需工作负载**（需 `sudo` 权限）：
+     - macOS / iOS：`sudo dotnet workload install macos ios`
+     - Android：`sudo dotnet workload install android`
 
-2. **VS Code 扩展 (必装)**
+2. **必装 VS Code 扩展**
+   - **C# Dev Kit** (`ms-dotnettools.csdevkit`)
+   - **C#** (`ms-dotnettools.csharp`) 
+   - **Avalonia for VS Code** (`avalonia.avalonia-vscode`)
 
-   当使用 VS Code 打开工程时，右下角会弹出推荐扩展列表，请**全部安装**以获得完整的开发体验：
-   - **C# Dev Kit** (`ms-dotnettools.csdevkit`)：提供项目资源管理器树、智能补全以及 .NET Core 的调试支持。
-   - **C#** (`ms-dotnettools.csharp`)：与 C# Dev Kit 同步安装。
-   - **Avalonia for VS Code** (`avalonia.avalonia-vscode`)：提供 XAML UI 实时预览和语法检查。
-
-*注意：首次安装完 C# Dev Kit 后，需要登录账号，并静待扩展在后台把项目的依赖拉好（若有输出面板或右下角进度，就耐心等完），以确保智能提示和代码高亮完全生效。*
+*注：首次安装 C# Dev Kit 后需登录账号，等待依赖加载完毕，使智能提示生效。*
 
 ---
 
 ## 二、 操作方式指引
 
-为了避免赘述，本工程的日常开发动作统一抽象为以下三种标准方式：
+本工程的运行和发布统一使用 VS Code Task 执行，屏蔽细枝末节的配置。
+- ⚡ **Task 任务操作**：按 `F1` 或 `Ctrl+Shift+P` 呼出命令面板，输入 `>task` 并选择 **Tasks: Run Task (运行任务)**，从中挑选对应命令。
 
-- 🖱️ **UI 操作**：特指在侧边栏 **文件管理器 (Explorer)** 底部的 **解决方案资源管理器 (Solution Explorer)** 中右键目标项目(例如PhotoViewer.Desktop)，选择 `生成 (Build)`、`清理 (Clean)` 或 `调试 (Debug) -> 启动新实例 (Start New Instance)`。
-- ⚡ **Task 任务**：按 `F1` 或 `Ctrl+Shift+P` 呼出顶部命令面板，输入 `>task` 选择 **Tasks: Run Task (运行任务)**，从中下拉选取。
-- 💻 **CLI 指令**：按下快捷键 `Ctrl+~` 呼出集成终端，直接执行脚本或 dotnet 命令。
-
-> ⚠️ **注意**： UI 菜单自带的 `Publish (发布)` 不包含本项目深度定制的系统原生剪裁或签名逻辑，**请严格避免直接点击 UI 发布**！打包分发请认准下文指明的 Task 或 CLI 指令。
+> ⚠️ **注意**：请避免直接使用 UI 菜单的 `Publish (发布)` 选项，打包分发请务必使用下方约定的 Task，内部包含了代码签名和剪裁等专属操作。
 
 ---
 
-## 三、 运行与调试
+## 三、 运行与调试 (Debug 构建)
 
 ### 1. Windows
-- 🖱️ **UI**: 右键 `PhotoViewer.Desktop` -> **调试 -> 启动新实例**。
-- 💻 **CLI (带参启图)**: `dotnet run --project PhotoViewer.Desktop "C:\path\to\image.jpg"`
+- ⚡ **Debug Windows**：完整发版构建并以此为新实例启动。
+- ⚡ **Run Windows**：**仅启动**，不触发构建，直接极速启动上次修改保留的最新版本。
 
-### 2. Android
-*前提条件：手机已通过 USB 连接到电脑，并处于“USB 调试”模式。*
-- ⚡ **Task (推荐应用流)**: 输入 `>task` 选择运行 **`Build Android (Debug)`**。这会通过内置的安卓构建引擎直接把现烤的包强推安装并在手机上打开，兼容最纯净的基础工作链。
-- ⚡ **Task (查验日志)**: 程序运行后，随时输入 `>task` 选择运行 **`Watch Android Logcat`**。它会在后台挂载并捕捉崩溃及排错日志。
+### 2. Mac
+- ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动 `open .app`，解决原生的系统签名拦截。
+- ⚡ **Run Mac**：**仅启动**，不触发构建，直接 `open` 打开上次已编译签名完毕的 `.app`。
 
-> **⚠️ 关于安卓断点调试与 UI 启动 (必读)**
-> 经过核实，在**不安装 Android Studio** 的极简 VS Code 生态下，C# Dev Kit 会直接拒绝安卓平台的右键 `执行新实例` 或设备下发（报错 `No launchable target found` / 或一直要求配齐 SDK 组件）。这是微软当前跨平台组件的底层依赖限制。因此对于日常开发，推荐以上述的 **Task** 搭配真机效果和 Log 辅助作为核心流——这绝对能顺畅跑通。
-
-### 3. Mac
+### 3. Android
+*前提：手机已通过 USB 连接并处于“USB 调试”模式。*
+- ⚡ **Debug Android**：编译并自动将新版推送到已连接手机上直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
+- ⚡ **Install Android**：**仅安装**，省去耗时的全量构建步骤，直接将上次构建出的包下发更新覆盖。
 
 ### 4. iOS
+*前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机则需要在内部配置对应 Developer Certificate。*
+- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写并强推进模拟器并拉起应用。
+- ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物推送至当前运行的模拟器，不重新构建。
+- ⚡ **Debug iOS**：针对真机的完整发版、签名、推送及应用拉起触发。
+- ⚡ **Install iOS**：将上一次真机向的构建产物做覆写更新安装。
 
 ---
 
 ## 四、 打包发布 (Release)
 
-版本号由仓库根目录 `Directory.Build.props` 统一中控。各平台的最终产物均会自动合并输出到 `release/` 目录下。
+版本号统一由仓库根目录 `Directory.Build.props` 控制。各个 Task 执行完毕后，所有文件均沉淀在 `release/` 目录。
 
-### 1. Windows 单文件 EXE 
-原生支持剪裁和免框架的单文件执行。
-- ⚡ **Task**: 运行 **`Publish Windows (Release)`**
-- 💻 **CLI**: 
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\PhotoViewer.Desktop\publish-win-x64-singlefile.ps1
-  ```
+### 1. Windows 单文件
+- ⚡ Task: **`Publish Windows EXE (Release)`**
+- 原生支持剪裁，打包成真正的单文件免依赖执行程序。
 
-### 2. Android APK (含签名对齐)
-*(正式发布前，请确保在根目录使用 `keytool` 生成了正式的 `release.keystore`)*
-- ⚡ **Task**: 运行 **`Publish Android APK (Release)`**
-- 💻 **CLI**: 
-  ```powershell
-  powershell -ExecutionPolicy Bypass -File .\PhotoViewer.Android\publish-android-apk.ps1 -AndroidSdkDirectory "$env:LOCALAPPDATA\Android\Sdk"
-  ```
+### 2. Android APK
+- ⚡ Task: **`Publish Android APK (Release)`**
+- 包含签名对齐。（需在根目录配置好 `release.keystore`）
 
-### 3. macOS App Bundle
+### 3. macOS App & DMG
+- ⚡ Task: **`Publish Mac DMG (Release)`**
+- 内部自动拆分 `restore` 规避 SDK Bug，完成 App 封包归档并对所有原生依赖附加 macOS 必要代码签名，最终封装为 DMG。
 
-### 4. iOS IPA (仅开发者设备调试)
-
----
-
-## 五、 NuGet 包管理
-
-跨平台组件版本由 `Directory.Packages.props` 集中式管理。
-- 🖱️ **UI**: 若只升级已有包的版本号，直接去 `Directory.Packages.props` 修改对应数字。
-- 💻 **CLI**: 若要引入全新依赖，在某项目级目录下执行：`dotnet add package [内容]`。
+### 4. iOS IPA (限开发者受托设备)
+- ⚡ Task: **`Publish iOS IPA (Release)`**
+- 构建生产发布包，配合 Apple 开发者证书编译；如须上架则需将产物通过 Xcode/Transporter 继续流转。

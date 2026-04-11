@@ -1,0 +1,16 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug PhotoViewer.Mac",
+            "type": "coreclr",
+            "request": "launch",
+            "preLaunchTask": "Build Mac (Debug)",
+            "program": "${workspaceFolder}/PhotoViewer.Mac/bin/Debug/net9.0-macos/osx-arm64/PhotoViewer.Mac.app/Contents/MacOS/PhotoViewer.Mac",
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "stopAtEntry": false,
+            "console": "internalConsole"
+        }
+    ]
+}
