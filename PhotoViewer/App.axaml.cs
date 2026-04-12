@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
@@ -17,12 +18,6 @@ namespace PhotoViewer;
 public partial class App : Application
 {
     private static readonly SemaphoreSlim ExternalOpenSemaphore = new(1, 1);
-
-    /// <summary>
-    /// 平台层可在 AfterSetup 阶段注册此回调，用于在框架完全初始化后执行
-    /// 需要 AppKit/UI 线程就绪才能进行的平台特定初始化（如 macOS NSApplicationDelegate 安装）。
-    /// </summary>
-    public static Action? PlatformFrameworkReadyCallback { get; set; }
 
     /// <summary>
     /// 初始化应用资源。
@@ -37,11 +32,6 @@ public partial class App : Application
     /// </summary>
     public override void OnFrameworkInitializationCompleted()
     {
-        // 执行平台层注册的延迟初始化回调。
-        // 各平台实现内部负责将需要特定线程上下文的操作调度到正确线程。
-        PlatformFrameworkReadyCallback?.Invoke();
-        PlatformFrameworkReadyCallback = null;
-
         var vm = new MainViewModel();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
@@ -74,7 +64,55 @@ public partial class App : Application
 
         ExternalOpenService.RegisterHandler(request => HandleExternalOpenRequestAsync(vm, request));
 
+        // 订阅 Avalonia 原生的文件激活事件（macOS: AvnAppDelegate.openFiles/openURLs）。
+        // Avalonia 的 NSApplicationDelegate 会拦截系统的"打开方式"事件并通过此接口转发。
+        if (this.TryGetFeature<IActivatableLifetime>() is { } activatableLifetime)
+        {
+            activatableLifetime.Activated += (_, e) =>
+            {
+                if (e is FileActivatedEventArgs fileArgs)
+                {
+                    _ = HandleFileActivatedAsync(vm, fileArgs);
+                }
+            };
+        }
+
         base.OnFrameworkInitializationCompleted();
+    }
+
+    /// <summary>
+    /// 处理 Avalonia 原生文件激活事件（macOS "打开方式"、Dock 拖放等）。
+    /// Avalonia 已将系统事件解析为 IStorageItem，直接在 UI 线程打开。
+    /// </summary>
+    private static async Task HandleFileActivatedAsync(MainViewModel vm, FileActivatedEventArgs e)
+    {
+        await ExternalOpenSemaphore.WaitAsync();
+
+        try
+        {
+            foreach (var item in e.Files)
+            {
+                if (item is IStorageFolder folder)
+                {
+                    await OpenFolderOnUiThreadAsync(vm, folder);
+                    return;
+                }
+
+                if (item is IStorageFile file && vm.FolderVM.IsImageFile(file.Name))
+                {
+                    await OpenFileOnUiThreadAsync(vm, file);
+                    return;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"File activated handling failed: {ex.Message}");
+        }
+        finally
+        {
+            ExternalOpenSemaphore.Release();
+        }
     }
 
     /// <summary>
