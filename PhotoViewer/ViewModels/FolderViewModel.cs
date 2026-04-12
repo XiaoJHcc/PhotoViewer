@@ -45,7 +45,6 @@ public class FolderViewModel : ReactiveObject
     
     // 缩略图加载队列和并发控制
     private readonly ConcurrentQueue<ImageFile> _thumbnailLoadQueue = new();
-    private readonly SemaphoreSlim _thumbnailLoadSemaphore = new(3); // 最多同时加载3个缩略图
     private readonly CancellationTokenSource _thumbnailCancellationTokenSource = new();
     private bool _isThumbnailLoadingActive = false;
     
@@ -478,7 +477,21 @@ public class FolderViewModel : ReactiveObject
             _allFiles.Add(new ImageFile(item));
         }
 
-        await LoadAllExifRatingsAsync();
+        // 后台并行加载所有文件的基本属性（大小、修改日期），不阻塞 UI。
+        _ = Task.Run(async () =>
+        {
+            var propTasks = _allFiles.Select(f => f.LoadBasicPropertiesAsync()).ToList();
+            await Task.WhenAll(propTasks);
+        });
+
+        // 后台并行加载星级，加载完成后刷新筛选列表。
+        _ = Task.Run(async () =>
+        {
+            await LoadAllExifRatingsAsync();
+            await Dispatcher.UIThread.InvokeAsync(() => ApplyFilter());
+        });
+
+        // 先用当前已有信息立即执行一次筛选，让界面快速显示文件列表。
         ApplyFilter();
 
         foreach (var imageFile in AllFiles)
@@ -747,10 +760,11 @@ public class FolderViewModel : ReactiveObject
             };
         }).ToList();
 
+        // 先排序再一次性填充 ObservableCollection，避免双重 Clear+Add 引发大量 UI 更新
+        filtered = SortFileList(filtered);
+
         _filteredFiles.Clear();
         foreach (var file in filtered) _filteredFiles.Add(file);
-
-        ApplySort();
 
         this.RaisePropertyChanged(nameof(FilteredCount)); // 更新计数
         
@@ -819,33 +833,39 @@ public class FolderViewModel : ReactiveObject
     public void RefreshFilters() => ApplyFilter();
     
     // 排序筛选后的图片
-    private void ApplySort()
+    /// <summary>
+    /// 按当前排序模式和排序方向对文件列表排序，返回排序后的新列表。
+    /// </summary>
+    private List<ImageFile> SortFileList(List<ImageFile> files)
     {
-        var sortedFiles = SortMode switch
+        IEnumerable<ImageFile> sorted = SortMode switch
         {
             SortMode.Name => SortOrder == SortOrder.Ascending
-                ? _filteredFiles.OrderBy(f => f.Name)
-                : _filteredFiles.OrderByDescending(f => f.Name),
+                ? files.OrderBy(f => f.Name)
+                : files.OrderByDescending(f => f.Name),
                 
             SortMode.Date => SortOrder == SortOrder.Ascending
-                ? _filteredFiles.OrderBy(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue)
-                : _filteredFiles.OrderByDescending(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue),
+                ? files.OrderBy(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue)
+                : files.OrderByDescending(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue),
                 
             SortMode.Size => SortOrder == SortOrder.Ascending
-                ? _filteredFiles.OrderBy(f => f.FileSize)
-                : _filteredFiles.OrderByDescending(f => f.FileSize),
+                ? files.OrderBy(f => f.FileSize)
+                : files.OrderByDescending(f => f.FileSize),
                 
-            _ => _filteredFiles.OrderBy(f => f.Name)
+            _ => files.OrderBy(f => f.Name)
         };
-        
-        ObservableCollection<ImageFile> tempFiles = new();
-        foreach (var file in sortedFiles)
-        {
-            tempFiles.Add(file);
-        }
+        return sorted.ToList();
+    }
+
+    /// <summary>
+    /// 重新排序当前已筛选的文件列表（仅在排序模式/方向变化时独立调用）
+    /// </summary>
+    private void ApplySort()
+    {
+        var sorted = SortFileList(_filteredFiles.ToList());
         
         _filteredFiles.Clear();
-        foreach (var file in tempFiles)
+        foreach (var file in sorted)
         {
             _filteredFiles.Add(file);
         }
@@ -892,50 +912,46 @@ public class FolderViewModel : ReactiveObject
     #region ThumbnailLoading
     
     /// <summary>
-    /// 启动缩略图加载后台任务
+    /// 启动缩略图加载后台任务（多个并发消费者）
     /// </summary>
     private void StartThumbnailLoadingTask()
     {
         _isThumbnailLoadingActive = true;
-        _ = Task.Run(async () =>
+        // 启动多个并发消费者以充分利用 I/O 带宽
+        for (int i = 0; i < 3; i++)
         {
-            while (_isThumbnailLoadingActive && !_thumbnailCancellationTokenSource.Token.IsCancellationRequested)
+            _ = Task.Run(async () =>
             {
-                try
+                while (_isThumbnailLoadingActive && !_thumbnailCancellationTokenSource.Token.IsCancellationRequested)
                 {
-                    if (_thumbnailLoadQueue.TryDequeue(out var imageFile))
+                    try
                     {
-                        await _thumbnailLoadSemaphore.WaitAsync(_thumbnailCancellationTokenSource.Token);
-                        
-                        try
+                        if (_thumbnailLoadQueue.TryDequeue(out var imageFile))
                         {
-                            // 检查是否已经加载过缩略图
-                            if (imageFile.Thumbnail == null && !imageFile.IsThumbnailLoading)
+                            try
                             {
-                                await imageFile.LoadThumbnailAsync();
+                                if (imageFile.Thumbnail == null && !imageFile.IsThumbnailLoading)
+                                {
+                                    await imageFile.LoadThumbnailAsync();
+                                }
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("缩略图加载异常: " + ex.Message);
                             }
                         }
-                        finally
+                        else
                         {
-                            _thumbnailLoadSemaphore.Release();
+                            await Task.Delay(50, _thumbnailCancellationTokenSource.Token);
                         }
                     }
-                    else
+                    catch (OperationCanceledException)
                     {
-                        // 队列为空时等待一段时间
-                        await Task.Delay(50, _thumbnailCancellationTokenSource.Token);
+                        break;
                     }
                 }
-                catch (OperationCanceledException)
-                {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("缩略图加载任务异常: " + ex.Message);
-                }
-            }
-        });
+            });
+        }
     }
     
     /// <summary>

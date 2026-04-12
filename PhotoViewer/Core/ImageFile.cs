@@ -19,11 +19,30 @@ public class ImageFile : ReactiveObject
     private bool _isThumbnailLoading;
     private bool _isInCache;
     private string? _displayName;
+    private DateTimeOffset? _modifiedDate;
+    private ulong? _fileSize;
+    private bool _basicPropsLoaded;
 
     public IStorageFile File { get; }
     public string Name => File.Name;
-    public DateTimeOffset? ModifiedDate => File.GetBasicPropertiesAsync().Result.DateModified;
-    public ulong? FileSize => File.GetBasicPropertiesAsync().Result.Size;
+
+    /// <summary>
+    /// 文件修改日期（异步初始化后可用，初始化前返回 null）。
+    /// </summary>
+    public DateTimeOffset? ModifiedDate
+    {
+        get => _modifiedDate;
+        private set => this.RaiseAndSetIfChanged(ref _modifiedDate, value);
+    }
+
+    /// <summary>
+    /// 文件大小（异步初始化后可用，初始化前返回 null）。
+    /// </summary>
+    public ulong? FileSize
+    {
+        get => _fileSize;
+        private set => this.RaiseAndSetIfChanged(ref _fileSize, value);
+    }
     
     /// <summary>
     /// 拍摄日期（优先使用EXIF中的拍摄时间，否则使用修改时间）
@@ -175,6 +194,29 @@ public class ImageFile : ReactiveObject
 
         // 延迟初始化缓存状态，避免在静态类还未完全初始化时调用
         Dispatcher.UIThread.Post(() => UpdateCacheStatus());
+    }
+
+    /// <summary>
+    /// 异步加载文件基本属性（大小、修改日期），避免在属性 getter 中同步阻塞。
+    /// </summary>
+    public async Task LoadBasicPropertiesAsync()
+    {
+        if (_basicPropsLoaded) return;
+        try
+        {
+            var props = await File.GetBasicPropertiesAsync();
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                ModifiedDate = props.DateModified;
+                FileSize = props.Size;
+                _basicPropsLoaded = true;
+                this.RaisePropertyChanged(nameof(PhotoDate));
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Failed to load basic properties for {Name}: {ex.Message}");
+        }
     }
 
     /// <summary>
