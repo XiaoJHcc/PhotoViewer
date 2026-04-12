@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
@@ -58,6 +59,9 @@ public static class XmpWriter
     /// <returns>成功返回 true，失败或文件不符合要求返回 false</returns>
     public static async Task<bool> WriteRatingAsync(IStorageFile file, int rating, bool enableSafeMode = true)
     {
+        var totalSw = Stopwatch.StartNew();
+        var stepSw = Stopwatch.StartNew();
+        
         // 验证输入参数
         if (rating < 0 || rating > 5)
         {
@@ -72,21 +76,46 @@ public static class XmpWriter
             return false;
         }
         
+        Console.WriteLine($"[XMP Writer] === BEGIN WriteRating({fileName}, {rating}, safe={enableSafeMode}) ===");
+        
         try
         {
             // 清理上一次的备份缓存
             CleanupPreviousBackup();
             
-            // 全量读取文件数据查找星级位置
-            byte[] fileData;
+            // 只读取文件头部来查找 XMP 星级位置（XMP 元数据几乎总在前几 KB）
+            stepSw.Restart();
+            const int headerSize = 256 * 1024; // 256KB
+            byte[] headerData;
+            long fileLength;
             await using (var stream = await file.OpenReadAsync())
             {
-                fileData = new byte[stream.Length];
-                await stream.ReadExactlyAsync(fileData, 0, fileData.Length);
+                fileLength = stream.Length;
+                var readSize = (int)Math.Min(fileLength, headerSize);
+                headerData = new byte[readSize];
+                await stream.ReadExactlyAsync(headerData, 0, readSize);
+            }
+            Console.WriteLine($"[XMP Writer] [1] ReadHeader: {stepSw.ElapsedMilliseconds}ms ({headerData.Length / 1024}KB of {fileLength / 1024}KB)");
+            
+            // 在头部快速查找 XMP 星级位置
+            stepSw.Restart();
+            var ratingPosition = FindXmpRatingPositionFast(headerData);
+            Console.WriteLine($"[XMP Writer] [2] FindXmpPos: {stepSw.ElapsedMilliseconds}ms (pos={ratingPosition})");
+            
+            // 头部未找到时，回退到全量搜索
+            if (ratingPosition == -1 && fileLength > headerSize)
+            {
+                stepSw.Restart();
+                byte[] fullData;
+                await using (var stream = await file.OpenReadAsync())
+                {
+                    fullData = new byte[stream.Length];
+                    await stream.ReadExactlyAsync(fullData, 0, fullData.Length);
+                }
+                ratingPosition = FindXmpRatingPosition(fullData);
+                Console.WriteLine($"[XMP Writer] [2b] FullScan fallback: {stepSw.ElapsedMilliseconds}ms (pos={ratingPosition})");
             }
             
-            // 查找 XMP 星级位置
-            var ratingPosition = FindXmpRatingPosition(fileData);
             if (ratingPosition == -1)
             {
                 Console.WriteLine($"[XMP Writer] No XMP Rating found in {fileName}");
@@ -94,11 +123,11 @@ public static class XmpWriter
             }
             
             // 获取当前星级值
-            var currentRatingByte = fileData[ratingPosition];
+            var currentRatingByte = headerData[ratingPosition];
             var currentRating = currentRatingByte - '0';
             
-            // 检查当前星级是否为 -1 (未评级)，如果是则按不符合要求处理
-            if (currentRatingByte == '1' && ratingPosition > 0 && fileData[ratingPosition - 1] == '-')
+            // 检查当前星级是否为 -1 (未评级)
+            if (currentRatingByte == '1' && ratingPosition > 0 && headerData[ratingPosition - 1] == '-')
             {
                 Console.WriteLine($"[XMP Writer] Unsupported rating format (-1) in {fileName}");
                 return false;
@@ -113,29 +142,39 @@ public static class XmpWriter
             // 如果星级相同，无需修改
             if (currentRating == rating)
             {
+                Console.WriteLine($"[XMP Writer] Rating unchanged ({currentRating}), skip. Total: {totalSw.ElapsedMilliseconds}ms");
                 return true;
             }
             
+            stepSw.Restart();
             byte[]? backupData = null;
             
-            // 安全模式：创建备份
-            if (enableSafeMode)
+            // 安全模式：仅在安卓平台需要内存备份（桌面/iOS 使用文件备份）
+            if (enableSafeMode && IsAndroid)
             {
+                // 安卓路径需要完整文件数据，此处回退全量读取
+                byte[] fileData;
+                await using (var stream = await file.OpenReadAsync())
+                {
+                    fileData = new byte[stream.Length];
+                    await stream.ReadExactlyAsync(fileData, 0, fileData.Length);
+                }
                 backupData = new byte[fileData.Length];
                 Array.Copy(fileData, backupData, fileData.Length);
+                Console.WriteLine($"[XMP Writer] [3] MemBackup(Android): {stepSw.ElapsedMilliseconds}ms");
+                
+                bool result = await WriteRatingAndroidAsync(file, fileData, ratingPosition, rating, enableSafeMode, backupData);
+                Console.WriteLine($"[XMP Writer] === END WriteRating({fileName}): {(result ? "OK" : "FAIL")} Total: {totalSw.ElapsedMilliseconds}ms ===");
+                return result;
             }
+            
+            Console.WriteLine($"[XMP Writer] [3] MemBackup: {stepSw.ElapsedMilliseconds}ms");
             
             try
             {
-                // 安卓平台特殊处理
-                if (IsAndroid)
-                {
-                    return await WriteRatingAndroidAsync(file, fileData, ratingPosition, rating, enableSafeMode, backupData);
-                }
-                else
-                {
-                    return await WriteRatingDesktopAsync(file, ratingPosition, rating, enableSafeMode, backupData);
-                }
+                bool result = await WriteRatingDesktopAsync(file, ratingPosition, rating, enableSafeMode, backupData);
+                Console.WriteLine($"[XMP Writer] === END WriteRating({fileName}): {(result ? "OK" : "FAIL")} Total: {totalSw.ElapsedMilliseconds}ms ===");
+                return result;
             }
             catch (Exception ex)
             {
@@ -314,7 +353,9 @@ public static class XmpWriter
     /// </summary>
     private static async Task<bool> WriteRatingDesktopAsync(IStorageFile file, int ratingPosition, int rating, bool enableSafeMode, byte[]? backupData)
     {
+        var sw = Stopwatch.StartNew();
         var filePath = file.Path.LocalPath;
+        Console.WriteLine($"[XMP Writer] [Desktop] filePath={filePath}");
         string? backupPath = null;
         
         try
@@ -322,11 +363,14 @@ public static class XmpWriter
             // 安全模式：创建文件备份
             if (enableSafeMode)
             {
+                sw.Restart();
                 backupPath = filePath + ".xmp_backup";
                 File.Copy(filePath, backupPath, true);
+                Console.WriteLine($"[XMP Writer] [4] FileCopy(backup): {sw.ElapsedMilliseconds}ms");
             }
             
             // 直接修改文件中的单个字符
+            sw.Restart();
             var newRatingByte = (byte)('0' + rating);
             using (var stream = new FileStream(filePath, FileMode.Open, FileAccess.Write))
             {
@@ -334,20 +378,26 @@ public static class XmpWriter
                 stream.WriteByte(newRatingByte);
                 stream.Flush();
             }
+            Console.WriteLine($"[XMP Writer] [5] WriteByte: {sw.ElapsedMilliseconds}ms");
             
             // 安全模式：校验修改结果
             if (enableSafeMode && backupPath != null)
             {
+                sw.Restart();
                 if (!await VerifyFullFileModificationFromFiles(backupPath, filePath, ratingPosition))
                 {
+                    Console.WriteLine($"[XMP Writer] [6] Verify: {sw.ElapsedMilliseconds}ms => FAIL");
                     // 校验失败，还原备份
                     Console.WriteLine($"[XMP Writer] Verification failed, restoring backup");
                     File.Copy(backupPath, filePath, true);
                     return false;
                 }
+                Console.WriteLine($"[XMP Writer] [6] Verify: {sw.ElapsedMilliseconds}ms => OK");
                 
                 // 校验通过，立即删除备份文件
+                sw.Restart();
                 File.Delete(backupPath);
+                Console.WriteLine($"[XMP Writer] [7] DeleteBackup: {sw.ElapsedMilliseconds}ms");
             }
             
             return true;
@@ -411,6 +461,65 @@ public static class XmpWriter
         }
     }
     
+    /// <summary>
+    /// 快速查找 XMP 星级位置，使用 Span 进行 SIMD 加速搜索。
+    /// 优先搜索最常见的 Rating 模式，命中后立即返回。
+    /// </summary>
+    private static int FindXmpRatingPositionFast(byte[] data)
+    {
+        var span = data.AsSpan();
+        
+        // 高频模式优先（覆盖 JPEG/HEIF/ARW/TIFF 等主流格式）
+        ReadOnlySpan<byte> ratingAttr = "xmp:Rating=\""u8;
+        ReadOnlySpan<byte> ratingAttr2 = "xap:Rating=\""u8;
+        ReadOnlySpan<byte> ratingAttr3 = ":Rating=\""u8;
+        ReadOnlySpan<byte> ratingElem = "<xmp:Rating>"u8;
+        ReadOnlySpan<byte> ratingElem2 = "<xap:Rating>"u8;
+
+        // 属性格式: xmp:Rating="N"
+        int pos = SpanIndexOf(span, ratingAttr);
+        if (pos != -1) { var r = ValidateRatingDigit(data, pos + ratingAttr.Length); if (r != -1) return r; }
+        
+        pos = SpanIndexOf(span, ratingAttr2);
+        if (pos != -1) { var r = ValidateRatingDigit(data, pos + ratingAttr2.Length); if (r != -1) return r; }
+        
+        pos = SpanIndexOf(span, ratingAttr3);
+        if (pos != -1) { var r = ValidateRatingDigit(data, pos + ratingAttr3.Length); if (r != -1) return r; }
+
+        // 元素格式: <xmp:Rating>N</xmp:Rating>
+        pos = SpanIndexOf(span, ratingElem);
+        if (pos != -1) { var r = ValidateRatingDigit(data, pos + ratingElem.Length); if (r != -1) return r; }
+        
+        pos = SpanIndexOf(span, ratingElem2);
+        if (pos != -1) { var r = ValidateRatingDigit(data, pos + ratingElem2.Length); if (r != -1) return r; }
+
+        return -1;
+    }
+
+    /// <summary>
+    /// 在 Span 中查找子序列的首次出现位置（SIMD 加速）。
+    /// </summary>
+    private static int SpanIndexOf(ReadOnlySpan<byte> data, ReadOnlySpan<byte> pattern)
+    {
+        return data.IndexOf(pattern);
+    }
+
+    /// <summary>
+    /// 验证指定偏移处是否为有效的星级数字（0~5），排除 -1 格式。
+    /// </summary>
+    private static int ValidateRatingDigit(byte[] data, int offset)
+    {
+        if (offset >= data.Length) return -1;
+        var ch = data[offset];
+        if (ch >= '0' && ch <= '5')
+        {
+            // 排除 -1 格式
+            if (ch == '1' && offset > 0 && data[offset - 1] == '-') return -1;
+            return offset;
+        }
+        return -1;
+    }
+
     /// <summary>
     /// 在文件数据中查找 XMP 星级数字的位置（通用方法，支持多种文件格式）
     /// </summary>
