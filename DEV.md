@@ -45,11 +45,17 @@
 - ⚡ **Run Mac**：**仅启动**，不触发构建，直接 `open` 打开上次已编译签名完毕的 `.app`。
 
 ### 4. iOS
-*前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机则需要在内部配置对应 Developer Certificate。*
-- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写并强推进模拟器并拉起应用。
-- ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物推送至当前运行的模拟器，不重新构建。
-- ⚡ **Debug iOS**：针对真机的完整发版、签名、推送及应用拉起触发。
-- ⚡ **Install iOS**：将上一次真机向的构建产物做覆写更新安装。
+*前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机需配置 Developer Certificate（在 Xcode 中登录 Apple ID 即可自动管理签名）。*
+- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起。
+- ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物至当前运行的模拟器，不重新构建。
+- ⚡ **Debug iOS**：构建 arm64 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动。
+- ⚡ **Install iOS**：弹窗选择目标设备，将上一次构建产物覆写安装至真机并启动，不重新构建。
+
+- ⚡ **Renew iOS Certificate**：清除本地 Provisioning Profile 缓存，强制重新构建以生成新 Profile（7 天免费证书期限从今天重新计算），然后安装并启动。每次证书过期后执行一次即可。
+
+> **首次真机运行须信任开发者证书**：安装后如果应用无法启动，在 iPhone 进入 **设置 → 通用 → VPN 与设备管理** 找到对应的开发者帐号，点击**信任**后重新执行 **Install iOS** 即可。
+
+> **多台设备**：执行 Debug iOS / Install iOS 时会弹窗显示所有已配置的设备名供选择（默认 XJH-mini7）。如需增减设备，在 `.vscode/tasks.json` 的 `inputs[iosDevice].options` 数组中编辑。
 
 ---
 

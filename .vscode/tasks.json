@@ -70,18 +70,25 @@
       "problemMatcher": []
     },
     {
+      "label": "Renew iOS Certificate",
+      "type": "shell",
+      "command": "find ~/Library/MobileDevice/Provisioning\\ Profiles/ -name '*.mobileprovision' -delete && dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
       "label": "Debug iOS",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 -t:Run",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Install iOS",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 -t:Install --no-build",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
       "group": "test",
-      "problemMatcher": "$msCompile"
+      "problemMatcher": []
     },
     {
       "label": "Publish Windows EXE (Release)",
@@ -110,6 +117,15 @@
       "command": "dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64",
       "group": "build",
       "problemMatcher": "$msCompile"
+    }
+  ],
+  "inputs": [
+    {
+      "id": "iosDevice",
+      "type": "pickString",
+      "description": "选择要安装的 iOS 设备",
+      "options": ["XJH-17", "XJH-mini7"],
+      "default": "XJH-mini7"
     }
   ]
 }
