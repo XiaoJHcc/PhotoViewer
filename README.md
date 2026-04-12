@@ -56,20 +56,16 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 
 ### 平台支持情况
 
-| 功能          | Windows                                                      | macOS                                                           | iOS/iPadOS | Android |
-|-------------|--------------------------------------------------------------|-----------------------------------------------------------------|------------|-----|
-| JPG 预览      | ✅ 支持                                                         | ✅ 支持                                                            | ✅ 支持       | ✅ 支持 |
-| HEIF 预览     | ✅ 支持                                                         | ✅ 原生支持                                                          | ✅ 原生支持       | ⚠️ 部分支持 |
-| RAW 预览      | ❌ 待开发                                                        | ❌ 待开发                                                           | ❌ 待开发      | ❌ 待开发 |
-| SONY ARW 标星 | ✅ 支持                                                         | ✅ 支持                                                            | ✅ 支持       | ✅ 支持 |
-| 其他 RAW 标星   | 未测试                                                          | 未测试                                                             | 未测试     | 未测试 |
-| 快捷键         | ✅ 支持                                                         | ✅ 支持                                                            | ✅ 外接键盘     | ✅ 外接键盘 |
-| 触摸          | 触控板未优化                                                       | 触控板未优化                                                          | ✅ 触屏手势     | ✅ 触屏手势 |
-| 下载          | [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) | [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) | ⚠️ 暂未上架    | [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) |
-
-- *Android 平台对 HEIF 的支持取决于系统本身，如果系统相册支持则本应用也支持*
-- *小米 13 实测情况：本机和 iPhone 拍摄的 HEIC 可支持，SONY 拍摄的 HIF 不支持*
-- *iOS 版暂未上架 AppStore，如需使用可自行使用 Xcode 编译安装*
+| 功能 | Windows | macOS | iOS/iPadOS | Android |
+|-----|---------|-------|------------|---------|
+| JPG 预览 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
+| HEIF 预览 | ✅ 支持(LibHeif) | ✅ 支持(原生) | ✅ 支持(原生) | ✅ 支持(LibHeif) |
+| RAW 预览 | ❌ 待开发 | ❌ 待开发 | ❌ 待开发 | ❌ 待开发 |
+| SONY ARW 标星 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
+| 其他 RAW 标星 | 未测试 | 未测试 | 未测试 | 未测试 |
+| 快捷键 | ✅ 支持 | ✅ 支持 | ✅ 外接键盘 | ✅ 外接键盘 |
+| 触摸 | 触控板未优化 | 触控板未优化 | ✅ 触屏手势 | ✅ 触屏手势 |
+| 下载 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | ⚠️ 暂未上架 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) |
 
 ## 安装与使用
 
@@ -79,33 +75,14 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 - **Windows** : 下载 `PhotoViewer.Windows.exe` 直接运行
 - **Android** : 下载 `PhotoViewer.Android.apk` 并安装
 - **macOS** : 下载 `PhotoViewer.Mac.dmg`，打开映像，将 `PhotoViewer.Mac.app` 拖入右侧 `Applications` 文件夹。首次启动若提示"Apple 无法验证…移到废纸篓"，有以下两种方法解除：
-  - **方法一（推荐）**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开
+  - **方法一**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开
   - **方法二**：打开 `系统设置 → 隐私与安全性`，滚动到底部，点击 `仍要打开`
+
+> *iOS 版暂未上架 AppStore，如需使用可使用 Mac 电脑自行编译安装*
 
 ## 开发环境配置
 
-1. **必要工具**：Rider、Xcode（macOS/iOS 必须）、Android Studio（Android 调试必须）。
-2. **安装 .NET**：下载并安装 .NET 9 SDK。
-3. **安装工作负载**：
-
-    Windows 环境：
-   ```bash
-   dotnet workload install android
-   ```
-   
-    macOS 环境：
-   ```bash
-   dotnet workload install ios macos android
-   ```
-   
-4. **恢复依赖**：
-   ```bash
-   dotnet restore PhotoViewer.sln
-   ```
-   
-5. **iOS 配置签名**：修改对应平台 `.csproj` 中的 `<CodesignKey>` 为自己 Apple 开发者证书。
-
----
+参见文档 DEV.md
 
 ## 开发计划
 
