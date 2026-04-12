@@ -31,17 +31,18 @@
 ## 三、 运行与调试 (Debug 构建)
 
 ### 1. Windows
+- 💻 在文件边栏 EXPLORER 底部的 SOLUTION EXPLORER 中，右键点击项目 `PhotoViewer.Desktop`，选择 Debug > **Start New Instance**。或：
 - ⚡ **Debug Windows**：完整发版构建并以此为新实例启动。
-- ⚡ **Run Windows**：**仅启动**，不触发构建，直接极速启动上次修改保留的最新版本。
+- ⚡ **Run Windows**：**仅启动**，不触发构建，直接启动上次构建版本。
 
-### 2. Mac
+### 2. Android
+*前提：手机已通过 ADB 连接。*
+- ⚡ **Debug Android**：编译并自动将新版推送到已连接手机上直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
+- ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
+
+### 3. Mac
 - ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动 `open .app`，解决原生的系统签名拦截。
 - ⚡ **Run Mac**：**仅启动**，不触发构建，直接 `open` 打开上次已编译签名完毕的 `.app`。
-
-### 3. Android
-*前提：手机已通过 USB 连接并处于“USB 调试”模式。*
-- ⚡ **Debug Android**：编译并自动将新版推送到已连接手机上直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
-- ⚡ **Install Android**：**仅安装**，省去耗时的全量构建步骤，直接将上次构建出的包下发更新覆盖。
 
 ### 4. iOS
 *前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机则需要在内部配置对应 Developer Certificate。*

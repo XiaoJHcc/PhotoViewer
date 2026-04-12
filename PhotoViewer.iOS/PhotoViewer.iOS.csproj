@@ -48,4 +48,11 @@
     <ItemGroup>
         <LinkDescription Include="Linker.xml"/>
     </ItemGroup>
+
+    <!-- 自动同步 Info.plist 版本号，在构建读取 Info.plist 前写入 -->
+    <Target Name="_SyncInfoPlistVersion" BeforeTargets="_DetectAppManifest">
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
+        <Message Importance="high" Text="[版本同步] Info.plist → $(AppVersion)" />
+    </Target>
 </Project>

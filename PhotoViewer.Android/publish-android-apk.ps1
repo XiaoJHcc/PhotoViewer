@@ -34,7 +34,9 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
-$requiredSdkVersion = (Get-Content $globalJson -Raw | ConvertFrom-Json).sdk.version
+$sdkConfig = Get-Content $globalJson -Raw | ConvertFrom-Json
+$requiredSdkVersion = $sdkConfig.sdk.version
+$sdkRollForward = if ($sdkConfig.sdk.rollForward) { $sdkConfig.sdk.rollForward } else { 'latestMinor' }
 $appVersion = ([xml](Get-Content $directoryBuildProps -Raw)).Project.PropertyGroup.AppVersion
 
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
@@ -46,6 +48,18 @@ $dotnetCandidates = @(
     (Join-Path $env:USERPROFILE '.dotnet\dotnet.exe'),
     (Get-Command dotnet -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1)
 ) | Where-Object { $_ -and (Test-Path $_) } | Select-Object -Unique
+
+function Test-SdkSatisfiesVersion {
+    param([string]$InstalledVersion, [string]$RequiredVersion, [string]$RollForward)
+    $installed = [version]$InstalledVersion
+    $required = [version]$RequiredVersion
+    switch ($RollForward) {
+        { $_ -in @('disable', 'exact') } { return $InstalledVersion -eq $RequiredVersion }
+        { $_ -in @('patch', 'latestPatch') } { return $installed.Major -eq $required.Major -and $installed.Minor -eq $required.Minor -and $installed -ge $required }
+        { $_ -in @('minor', 'latestMinor') } { return $installed.Major -eq $required.Major -and $installed -ge $required }
+        default { return $installed -ge $required }
+    }
+}
 
 function Test-DotnetHasWorkload {
     param(
@@ -64,10 +78,12 @@ function Test-DotnetHasWorkload {
 }
 
 $dotnetInfos = foreach ($candidate in $dotnetCandidates) {
-    $installedSdks = & $candidate --list-sdks 2>$null | Out-String
+    $installedSdks = & $candidate --list-sdks 2>$null
     [pscustomobject]@{
         Path = $candidate
-        HasRequiredSdk = $installedSdks -match "^$([regex]::Escape($requiredSdkVersion))\s"
+        HasRequiredSdk = [bool]($installedSdks | Where-Object {
+            $_ -match '^(\S+)\s' -and (Test-SdkSatisfiesVersion -InstalledVersion $Matches[1] -RequiredVersion $requiredSdkVersion -RollForward $sdkRollForward)
+        })
         HasAndroidWorkload = Test-DotnetHasWorkload -DotnetPath $candidate -WorkloadId 'android'
     }
 }
@@ -94,16 +110,28 @@ Write-Host "[发布] 输出目录: $OutputDirectory"
 
 if ($temporarilyBypassGlobalJson) {
     Write-Warning "当前未找到同时满足 SDK $requiredSdkVersion 与 android workload 的 dotnet，将临时绕开 global.json 并使用已安装 android workload 的 dotnet。"
+
+    # 在 bypassGlobalJson 模式下，workload 可能因 SDK band 升级而出现版本错位，
+    # 导致 ILLink 等工具在发布时崩溃。在发布前同步更新 workload。
+    Write-Host "[发布] 正在更新 android workload（确保 ILLink 与当前 SDK band 对齐）..."
+    Push-Location $env:TEMP
+    try {
+        & $dotnetPath workload update 2>&1 | Write-Host
+        if ($LASTEXITCODE -ne 0) {
+            throw "dotnet workload update 失败，退出码：$LASTEXITCODE"
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    Write-Host "[发布] workload 更新完成。"
 }
 
 $sharedProjectBackup = "$sharedProject.publishbak"
 $globalJsonBackup = "$globalJson.publishbak"
 $originalSharedProjectContent = Get-Content $sharedProject -Raw
 $patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net9.0;net9.0-ios</TargetFrameworks>', '<TargetFramework>net9.0</TargetFramework>'
-
-if ($patchedSharedProjectContent -eq $originalSharedProjectContent) {
-    throw '未能在共享项目中找到预期的 TargetFrameworks 配置，请先检查 PhotoViewer.csproj。'
-}
+$needsProjectPatch = $patchedSharedProjectContent -ne $originalSharedProjectContent
 
 try {
     if ($temporarilyBypassGlobalJson -and (Test-Path $globalJson)) {
@@ -123,8 +151,10 @@ try {
         Remove-Item $OutputDirectory -Recurse -Force -ErrorAction SilentlyContinue
     }
 
-    Copy-Item $sharedProject $sharedProjectBackup -Force
-    Set-Content $sharedProject $patchedSharedProjectContent -Encoding UTF8
+    if ($needsProjectPatch) {
+        Copy-Item $sharedProject $sharedProjectBackup -Force
+        Set-Content $sharedProject $patchedSharedProjectContent -Encoding UTF8
+    }
 
     & $dotnetPath publish $androidProject `
         -c $Configuration `
@@ -168,7 +198,7 @@ try {
     $outputFiles | Select-Object Name, Length | Format-Table -AutoSize
 }
 finally {
-    if (Test-Path $sharedProjectBackup) {
+    if ($needsProjectPatch -and (Test-Path $sharedProjectBackup)) {
         Move-Item $sharedProjectBackup $sharedProject -Force
     }
 
