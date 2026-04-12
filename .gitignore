@@ -454,3 +454,6 @@ $RECYCLE.BIN/
 !.vscode/launch.json
 !.vscode/extensions.json
 PhotoViewer.Android/.build-android-native
+# Android 签名证书（本地敏感文件，勿提交）
+PhotoViewer.Android/signing.json
+PhotoViewer.Android/keystore/

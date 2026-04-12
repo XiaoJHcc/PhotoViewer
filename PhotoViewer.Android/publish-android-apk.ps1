@@ -34,6 +34,30 @@ if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
 }
 
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
+
+# ──────────────────────────────────────────────────────────────
+# 读取签名配置（signing.json 或环境变量）
+# ──────────────────────────────────────────────────────────────
+$signingJsonPath = Join-Path $PSScriptRoot 'signing.json'
+$signingConfig = $null
+
+if (Test-Path $signingJsonPath) {
+    $signingConfig = Get-Content $signingJsonPath -Raw | ConvertFrom-Json
+}
+elseif ($env:ANDROID_KEYSTORE_PATH -and $env:ANDROID_KEYSTORE_PASSWORD -and
+        $env:ANDROID_KEY_ALIAS -and $env:ANDROID_KEY_PASSWORD) {
+    $signingConfig = [PSCustomObject]@{
+        keystoreFile     = $env:ANDROID_KEYSTORE_PATH
+        keystorePassword = $env:ANDROID_KEYSTORE_PASSWORD
+        keyAlias         = $env:ANDROID_KEY_ALIAS
+        keyPassword      = $env:ANDROID_KEY_PASSWORD
+    }
+}
+else {
+    Write-Warning '未找到签名配置：signing.json 不存在，且未设置 ANDROID_KEYSTORE_PATH 等环境变量。'
+    Write-Warning '发布的 APK 将使用自动生成的临时签名，无法用于正式更新。请运行 setup-android-signing.ps1 生成证书。'
+}
+
 $sdkConfig = Get-Content $globalJson -Raw | ConvertFrom-Json
 $requiredSdkVersion = $sdkConfig.sdk.version
 $sdkRollForward = if ($sdkConfig.sdk.rollForward) { $sdkConfig.sdk.rollForward } else { 'latestMinor' }
@@ -141,11 +165,31 @@ try {
         Set-Content $sharedProject $patchedSharedProjectContent -Encoding UTF8
     }
 
+    $signingArgs = @()
+    if ($signingConfig) {
+        $keystoreFullPath = if ([System.IO.Path]::IsPathRooted($signingConfig.keystoreFile)) {
+            $signingConfig.keystoreFile
+        } else {
+            [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $signingConfig.keystoreFile))
+        }
+        if (-not (Test-Path $keystoreFullPath)) {
+            throw "Keystore 文件不存在：$keystoreFullPath`n请运行 setup-android-signing.ps1 重新生成证书。"
+        }
+        $signingArgs = @(
+            '/p:AndroidKeyStore=true',
+            "/p:AndroidSigningKeyStore=$keystoreFullPath",
+            "/p:AndroidSigningKeyAlias=$($signingConfig.keyAlias)",
+            "/p:AndroidSigningKeyPass=$($signingConfig.keyPassword)",
+            "/p:AndroidSigningStorePass=$($signingConfig.keystorePassword)"
+        )
+    }
+
     & $dotnetPath publish $androidProject `
         -c $Configuration `
         -f $Framework `
         /p:AndroidPackageFormat=apk `
-        /p:AndroidSdkDirectory="$AndroidSdkDirectory"
+        /p:AndroidSdkDirectory="$AndroidSdkDirectory" `
+        @signingArgs
 
     if ($LASTEXITCODE -ne 0) {
         throw "dotnet publish 失败，退出码：$LASTEXITCODE"

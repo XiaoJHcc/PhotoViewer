@@ -69,7 +69,7 @@
 
 ### 2. Android APK
 - ⚡ Task: **`Publish Android APK (Release)`**
-- 包含签名对齐。（需在根目录配置好 `release.keystore`）
+- 包含签名对齐。首次发布前需在 `PhotoViewer.Android/` 目录运行 `setup-android-signing.ps1` 生成证书（配置写入 `signing.json`，已被 .gitignore 排除）。
 
 ### 3. macOS App & DMG
 - ⚡ Task: **`Publish Mac DMG (Release)`**

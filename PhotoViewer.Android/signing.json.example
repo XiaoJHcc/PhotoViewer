@@ -1,0 +1,6 @@
+{
+  "keystoreFile": "keystore/release.keystore",
+  "keystorePassword": "your_keystore_password_here",
+  "keyAlias": "photoviewer",
+  "keyPassword": "your_key_password_here"
+}
