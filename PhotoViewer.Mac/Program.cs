@@ -19,8 +19,6 @@ sealed class Program
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
-            // 注册 Apple Event 处理程序，接收 Finder / Dock / "打开方式" 传入的文件。
-            App.PlatformFrameworkReadyCallback = MacExternalOpenBridge.Install;
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })
         .StartWithClassicDesktopLifetime(args);
