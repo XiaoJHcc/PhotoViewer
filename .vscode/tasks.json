@@ -32,14 +32,26 @@
     {
       "label": "Debug Android",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk && adb logcat -c && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+      "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Install Android",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Install --no-build -p:AndroidSdkDirectory=${env:LOCALAPPDATA}\\Android\\Sdk",
+      "command": "adb install -r PhotoViewer.Android\\bin\\Debug\\net9.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
       "group": "test",
       "problemMatcher": "$msCompile"
     },
