@@ -149,6 +149,9 @@ public class ImageViewModel : ReactiveObject
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load image in ImageViewModel ({file.Name}): {ex.Message}");
+            SourceBitmap = null;
+            HintText = "无法打开该图片";
+            HintDetail = $"{ex.GetType().Name}: {ex.Message}";
         }
     }
     

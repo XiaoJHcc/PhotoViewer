@@ -299,7 +299,7 @@ public static class BitmapLoader
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load image ({file.Name}): {ex.Message}");
-            return null;
+            throw;
         }
     }
     
@@ -334,10 +334,9 @@ public static class BitmapLoader
             // 获取EXIF方向信息
             var orientation = await GetExifOrientationAsync(file);
             
-            // 如果不需要旋转
-            if (orientation == 1)
+            // 只有 3/6/8 需要旋转，其余（包括 0、1 及未知值）均视为无旋转
+            if (orientation != 3 && orientation != 6 && orientation != 8)
             {
-                // 仅当需要移除Alpha通道时才进行转换
                 return ConvertToDesiredFormat(originalBitmap);
             }
             
@@ -348,16 +347,14 @@ public static class BitmapLoader
             originalBitmap.Dispose();
             
             if (finalBitmap == null)
-            {
-                Console.WriteLine($"Rotation failed for {file.Name}, returning null");
-            }
+                throw new InvalidOperationException($"EXIF 旋转失败（方向值 {orientation}）");
             
             return finalBitmap;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load and rotate image ({file.Name}): {ex.Message}");
-            return null;
+            throw;
         }
     }
 
