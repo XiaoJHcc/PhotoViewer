@@ -1,8 +1,8 @@
 <Project>
   <PropertyGroup>
     <!-- 统一版本号：修改此处即可同步所有平台项目 -->
-    <AppVersion>0.4.0</AppVersion>
-    <AppBuildNumber>40</AppBuildNumber>
+    <AppVersion>0.4.4</AppVersion>
+    <AppBuildNumber>44</AppBuildNumber>
 
     <!-- .NET 程序集版本 -->
     <Version>$(AppVersion)</Version>
