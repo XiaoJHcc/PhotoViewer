@@ -110,21 +110,6 @@ Write-Host "[发布] 输出目录: $OutputDirectory"
 
 if ($temporarilyBypassGlobalJson) {
     Write-Warning "当前未找到同时满足 SDK $requiredSdkVersion 与 android workload 的 dotnet，将临时绕开 global.json 并使用已安装 android workload 的 dotnet。"
-
-    # 在 bypassGlobalJson 模式下，workload 可能因 SDK band 升级而出现版本错位，
-    # 导致 ILLink 等工具在发布时崩溃。在发布前同步更新 workload。
-    Write-Host "[发布] 正在更新 android workload（确保 ILLink 与当前 SDK band 对齐）..."
-    Push-Location $env:TEMP
-    try {
-        & $dotnetPath workload update 2>&1 | Write-Host
-        if ($LASTEXITCODE -ne 0) {
-            throw "dotnet workload update 失败，退出码：$LASTEXITCODE"
-        }
-    }
-    finally {
-        Pop-Location
-    }
-    Write-Host "[发布] workload 更新完成。"
 }
 
 $sharedProjectBackup = "$sharedProject.publishbak"
