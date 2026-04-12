@@ -163,12 +163,11 @@
                           ItemsSource="{Binding Main.FolderVM.FilteredFiles}">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
-                        <StackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
+                        <VirtualizingStackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
                                         Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
                                     Orientation="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 
                                         Converter={x:Static converters:LayoutOrientationConverter.Instance}}" 
-                                    Margin="10,0,10,10"
-                                    Spacing="6" />
+                                    Margin="10,0,10,10" />
                     </ItemsPanelTemplate>
                 </ItemsControl.ItemsPanel>
 
@@ -179,7 +178,7 @@
                             CommandParameter="{Binding}"
                             Background="Transparent"
                             BorderThickness="0"
-                            Margin="0"
+                            Margin="3"
                             Padding="0"
                             CornerRadius="8"
                             HorizontalAlignment="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).IsVerticalLayout, 

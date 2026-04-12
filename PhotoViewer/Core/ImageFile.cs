@@ -205,13 +205,11 @@ public class ImageFile : ReactiveObject
         try
         {
             var props = await File.GetBasicPropertiesAsync();
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                ModifiedDate = props.DateModified;
-                FileSize = props.Size;
-                _basicPropsLoaded = true;
-                this.RaisePropertyChanged(nameof(PhotoDate));
-            });
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 调用方在全部加载完成后统一在 UI 线程批量通知。
+            _modifiedDate = props.DateModified;
+            _fileSize = props.Size;
+            _basicPropsLoaded = true;
         }
         catch (Exception ex)
         {
@@ -289,7 +287,7 @@ public class ImageFile : ReactiveObject
                 }
             });
 
-            // 加载缩略图的同时异步加载 EXIF 数据（用于旋转和其他信息）
+            // 缩略图已就绪后加载 EXIF 数据（用于旋转角度等），消费者限流保证并发可控。
             _ = LoadExifDataAsync();
         }
         catch (Exception ex)
@@ -360,7 +358,6 @@ public class ImageFile : ReactiveObject
 
         try
         {
-            // 在后台线程中只读取星级信息
             var rating = await Task.Run(async () =>
             {
                 try
@@ -374,24 +371,20 @@ public class ImageFile : ReactiveObject
                 }
             });
             
-            // 在UI线程中更新星级信息
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 调用方 LoadAllExifRatingsAsync 在全部加载完成后统一在 UI 线程批量通知。
+            if (_exifData == null)
             {
-                // 如果还没有EXIF数据，创建一个只包含星级的ExifData
-                if (ExifData == null)
-                {
-                    ExifData = new ExifData 
-                    { 
-                        FilePath = File.Path.LocalPath,
-                        Rating = rating 
-                    };
-                }
-                else
-                {
-                    // 如果已有EXIF数据，只更新星级
-                    ExifData.Rating = rating;
-                }
-            });
+                _exifData = new ExifData 
+                { 
+                    FilePath = File.Path.LocalPath,
+                    Rating = rating 
+                };
+            }
+            else
+            {
+                _exifData.Rating = rating;
+            }
         }
         catch (Exception ex)
         {

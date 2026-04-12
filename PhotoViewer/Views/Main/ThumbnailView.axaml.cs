@@ -329,21 +329,28 @@ public partial class ThumbnailView : UserControl
         {
             // 获取ItemsControl中的容器
             var container = ThumbnailItemsControl.ContainerFromIndex(index) as Control;
-            if (container == null)
+            if (container != null)
             {
-                // 如果容器未创建，等待一下再试
-                Dispatcher.UIThread.Post(() =>
-                {
-                    var retryContainer = ThumbnailItemsControl.ContainerFromIndex(index) as Control;
-                    if (retryContainer != null)
-                    {
-                        ScrollToContainer(retryContainer);
-                    }
-                }, DispatcherPriority.Background);
+                ScrollToContainer(container);
                 return;
             }
 
-            ScrollToContainer(container);
+            // 虚拟化场景：容器未创建，根据索引和项尺寸估算位置并滚动
+            var scrollViewer = ThumbnailScrollViewer;
+            if (scrollViewer == null) return;
+
+            bool isVertical = ViewModel?.IsVerticalLayout ?? false;
+            // 项尺寸 = 固定尺寸 + Margin*2（每项 Margin="3"）
+            double itemExtent = isVertical ? (138 + 6) : (90 + 6);
+            double targetPos = index * itemExtent;
+            double viewport = isVertical ? scrollViewer.Viewport.Height : scrollViewer.Viewport.Width;
+            double centered = Math.Max(0, targetPos - (viewport - itemExtent) / 2);
+
+            var targetOffset = isVertical
+                ? new Vector(scrollViewer.Offset.X, centered)
+                : new Vector(centered, scrollViewer.Offset.Y);
+
+            _ = AnimateScrollToAsync(targetOffset);
         }
         catch (Exception ex)
         {

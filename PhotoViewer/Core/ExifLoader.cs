@@ -250,26 +250,6 @@ public static class ExifLoader
     }
     
     /// <summary>
-    /// 批量加载文件夹内所有图片的 EXIF 数据
-    /// </summary>
-    public static async Task LoadFolderExifDataAsync(IEnumerable<ImageFile> imageFiles)
-    {
-        var tasks = imageFiles.Select(async imageFile =>
-        {
-            try
-            {
-                await imageFile.LoadExifDataAsync();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("Failed to batch load EXIF (" + imageFile.Name + "): " + ex.Message);
-            }
-        });
-        
-        await Task.WhenAll(tasks);
-    }
-
-    /// <summary>
     /// 尝试从EXIF中加载嵌入式缩略图
     /// </summary>
     public static async Task<Bitmap?> TryLoadExifThumbnailAsync(IStorageFile file)

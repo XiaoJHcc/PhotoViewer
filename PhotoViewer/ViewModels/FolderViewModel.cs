@@ -2,7 +2,6 @@ using ReactiveUI;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Linq;
 using System.Reactive;
 using System.Threading;
@@ -38,10 +37,19 @@ public class FolderViewModel : ReactiveObject
     
     // 当前文件夹和文件集合
     private IStorageFolder? _currentFolder;
-    private readonly ObservableCollection<ImageFile> _allFiles = new();
-    private readonly ObservableCollection<ImageFile> _filteredFiles = new();
-    public ReadOnlyObservableCollection<ImageFile> AllFiles { get; }
-    public ReadOnlyObservableCollection<ImageFile> FilteredFiles { get; }
+    private readonly List<ImageFile> _allFiles = new();
+    private List<ImageFile> _filteredFiles = new();
+    public IReadOnlyList<ImageFile> AllFiles => _allFiles;
+
+    /// <summary>
+    /// 筛选后的文件列表，绑定到 ThumbnailView 的 ItemsSource。
+    /// 每次重新赋值时通知 UI 整体刷新（原子替换，避免逐条 Add 的 N 次 CollectionChanged）。
+    /// </summary>
+    public List<ImageFile> FilteredFiles
+    {
+        get => _filteredFiles;
+        private set => this.RaiseAndSetIfChanged(ref _filteredFiles, value);
+    }
     
     // 缩略图加载队列和并发控制
     private readonly ConcurrentQueue<ImageFile> _thumbnailLoadQueue = new();
@@ -85,9 +93,7 @@ public class FolderViewModel : ReactiveObject
     {
         Main = main;
         
-        // 初始化集合
-        AllFiles = new ReadOnlyObservableCollection<ImageFile>(_allFiles);
-        FilteredFiles = new ReadOnlyObservableCollection<ImageFile>(_filteredFiles);
+        // 初始化集合（_allFiles 和 _filteredFiles 已在字段初始化时创建）
         
         // 启动缩略图加载后台任务
         StartThumbnailLoadingTask();
@@ -444,66 +450,87 @@ public class FolderViewModel : ReactiveObject
     /// <param name="preferredFile">优先定位的图片；为空时打开第一张</param>
     private async Task LoadFolderAsync(IStorageFolder folder, IStorageFile? preferredFile = null)
     {
-        Console.WriteLine("OpenFolder: " + folder.Path);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.Path);
 
         _currentFolder = folder;
         FolderName = folder.Name;
         _allFiles.Clear();
         _filteredFiles.Clear();
 
+        // ── 阶段 1：优先显示目标图片 ──
+        // 立即把用户点击/打开的图片加入列表并设为当前，使 UI 在毫秒级内有内容。
+        ImageFile? targetFile = null;
         if (preferredFile != null && IsImageFile(preferredFile.Name))
         {
-            _allFiles.Add(new ImageFile(preferredFile));
+            targetFile = new ImageFile(preferredFile);
+            _allFiles.Add(targetFile);
+            ApplyFilter();
+            targetFile.UpdateCacheStatus();
+            await SetCurrentFileAsync(targetFile);
+            Console.WriteLine($"[Folder] Phase1 (first image): {sw.ElapsedMilliseconds}ms");
         }
 
+        // ── 阶段 2：枚举文件夹所有文件 ──
+        // 枚举需在 UI 线程完成（iOS 的 security-scoped URL 可能有线程亲和性），
+        // 但只做轻量的名称过滤，不做任何文件 I/O。
+        var allNewFiles = new List<ImageFile>();
         var items = folder.GetItemsAsync();
         await foreach (var storageItem in items)
         {
-            if (storageItem is not IStorageFile item)
-            {
-                continue;
-            }
-
-            if (!IsImageFile(item.Name))
-            {
-                continue;
-            }
-
-            if (preferredFile != null && IsSameStorageItem(item, preferredFile))
-            {
-                continue;
-            }
-
-            _allFiles.Add(new ImageFile(item));
+            if (storageItem is not IStorageFile item) continue;
+            if (!IsImageFile(item.Name)) continue;
+            if (preferredFile != null && IsSameStorageItem(item, preferredFile)) continue;
+            allNewFiles.Add(new ImageFile(item));
         }
 
-        // 后台并行加载所有文件的基本属性（大小、修改日期），不阻塞 UI。
+        Console.WriteLine($"[Folder] Phase2 (enumerate {allNewFiles.Count} files): {sw.ElapsedMilliseconds}ms");
+
+        // 一次性添加后执行筛选，ApplyFilter 内部原子替换 FilteredFiles 引用。
+        foreach (var file in allNewFiles)
+        {
+            _allFiles.Add(file);
+        }
+        ApplyFilter();
+
+        // 若阶段 1 未设置当前文件（例如直接打开文件夹而非打开某张图片），
+        // 则定位到筛选后的第一张。
+        if (targetFile == null)
+        {
+            var firstFile = _filteredFiles.FirstOrDefault();
+            if (firstFile != null)
+            {
+                firstFile.UpdateCacheStatus();
+                await SetCurrentFileAsync(firstFile);
+            }
+        }
+
+        Console.WriteLine($"[Folder] Phase2 (UI updated): {sw.ElapsedMilliseconds}ms");
+
+        // ── 阶段 3：后台加载基本属性和星级 ──
+        foreach (var imageFile in _allFiles) imageFile.UpdateCacheStatus();
+
         _ = Task.Run(async () =>
         {
-            var propTasks = _allFiles.Select(f => f.LoadBasicPropertiesAsync()).ToList();
+            using var semaphore = new SemaphoreSlim(8);
+            var propTasks = _allFiles.Select(async f =>
+            {
+                await semaphore.WaitAsync();
+                try { await f.LoadBasicPropertiesAsync(); }
+                finally { semaphore.Release(); }
+            }).ToList();
             await Task.WhenAll(propTasks);
+            Console.WriteLine($"[Folder] Phase3 (basic props loaded): {sw.ElapsedMilliseconds}ms");
         });
 
-        // 后台并行加载星级，加载完成后刷新筛选列表。
         _ = Task.Run(async () =>
         {
             await LoadAllExifRatingsAsync();
             await Dispatcher.UIThread.InvokeAsync(() => ApplyFilter());
+            Console.WriteLine($"[Folder] Phase3 (ratings loaded): {sw.ElapsedMilliseconds}ms");
         });
 
-        // 先用当前已有信息立即执行一次筛选，让界面快速显示文件列表。
-        ApplyFilter();
-
-        foreach (var imageFile in AllFiles)
-        {
-            imageFile.UpdateCacheStatus();
-        }
-
-        var targetFile = preferredFile != null
-            ? FindLoadedFile(preferredFile)
-            : _filteredFiles.FirstOrDefault();
-
-        await SetCurrentFileAsync(targetFile ?? _filteredFiles.FirstOrDefault());
+        Console.WriteLine($"[Folder] === END OpenFolder (sync portion): {sw.ElapsedMilliseconds}ms ===");
     }
 
     /// <summary>
@@ -537,29 +564,6 @@ public class FolderViewModel : ReactiveObject
         });
 
         QueueThumbnailLoad(imageFile, priority: true);
-
-        // 异步加载其它图片的完整 EXIF 数据，单图模式下这里会自然跳过。
-        _ = Task.Run(async () =>
-        {
-            var otherFiles = _filteredFiles.Where(f => f != imageFile).ToList();
-            if (otherFiles.Count == 0)
-            {
-                return;
-            }
-
-            await ExifLoader.LoadFolderExifDataAsync(otherFiles);
-
-            // EXIF 加载完成后，触发 UI 更新以显示拍摄日期和旋转信息。
-            await Dispatcher.UIThread.InvokeAsync(() =>
-            {
-                foreach (var file in otherFiles)
-                {
-                    file.RaisePropertyChanged(nameof(file.PhotoDate));
-                    file.RaisePropertyChanged(nameof(file.RotationAngle));
-                    file.RaisePropertyChanged(nameof(file.NeedsHorizontalFlip));
-                }
-            });
-        });
 
         return Task.CompletedTask;
     }
@@ -614,9 +618,11 @@ public class FolderViewModel : ReactiveObject
         
         try
         {
-            // 并行加载所有文件的星级信息（只读取Rating，不加载其他EXIF数据以提高速度）
+            // 使用信号量限制并发 I/O 数量，避免在 iOS 上同时打开过多文件描述符。
+            using var semaphore = new SemaphoreSlim(8);
             var tasks = _allFiles.Select(async file =>
             {
+                await semaphore.WaitAsync();
                 try
                 {
                     await file.LoadRatingOnlyAsync();
@@ -624,6 +630,10 @@ public class FolderViewModel : ReactiveObject
                 catch (Exception ex)
                 {
                     Console.WriteLine($"加载文件 {file.Name} 星级失败: {ex.Message}");
+                }
+                finally
+                {
+                    semaphore.Release();
                 }
             }).ToList();
 
@@ -760,11 +770,9 @@ public class FolderViewModel : ReactiveObject
             };
         }).ToList();
 
-        // 先排序再一次性填充 ObservableCollection，避免双重 Clear+Add 引发大量 UI 更新
+        // 先排序再一次性替换 FilteredFiles 引用，通知 UI 整体刷新（单次绑定更新，非逐条 Add）
         filtered = SortFileList(filtered);
-
-        _filteredFiles.Clear();
-        foreach (var file in filtered) _filteredFiles.Add(file);
+        FilteredFiles = filtered;
 
         this.RaisePropertyChanged(nameof(FilteredCount)); // 更新计数
         
@@ -862,13 +870,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     private void ApplySort()
     {
-        var sorted = SortFileList(_filteredFiles.ToList());
-        
-        _filteredFiles.Clear();
-        foreach (var file in sorted)
-        {
-            _filteredFiles.Add(file);
-        }
+        FilteredFiles = SortFileList(_filteredFiles.ToList());
     }
     
     public bool HasPreviousFile()
