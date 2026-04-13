@@ -19,7 +19,7 @@
     <PackageVersion Include="DirectNStandard" Version="1.17.3" />
     <PackageVersion Include="LibHeif.Native" Version="1.15.1" />
     <PackageVersion Include="LibHeif.Native.win-x64" Version="1.15.1" />
-    <PackageVersion Include="MetadataExtractor" Version="2.8.1" />
+    <PackageVersion Include="MetadataExtractor" Version="2.9.3" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
     <PackageVersion Include="WicNet" Version="1.8.4.1" />
     <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
