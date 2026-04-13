@@ -4,10 +4,11 @@ using System.Linq;
 using System.Reactive;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Avalonia;
+using Avalonia.Controls;
 using Avalonia.Input;
 using PhotoViewer.Core;
 using ReactiveUI;
-using Avalonia;
 
 
 namespace PhotoViewer.ViewModels;
@@ -199,5 +200,21 @@ public class ControlViewModel : ReactiveObject
         if (Main.CurrentFile == null) return;
 
         await Main.SetRatingAsync(Main.CurrentFile, rating);
+    }
+    
+    /// <summary>
+    /// 打开 EXIF 详情窗口（桌面端）
+    /// </summary>
+    public void OpenExifDetail(Window parentWindow)
+    {
+        Main.OpenExifDetailWindow(parentWindow);
+    }
+    
+    /// <summary>
+    /// 打开 EXIF 详情弹窗（移动端）
+    /// </summary>
+    public void OpenExifDetailModal()
+    {
+        Main.OpenExifDetailModal();
     }
 }

@@ -46,7 +46,7 @@
                     CornerRadius="32, 32, 0, 0" 
                     ClipToBounds="True">
                 <Panel>
-                    <TextBlock Text="设置"
+                    <TextBlock Text="{Binding ModalTitle}"
                                Foreground="#ccc"
                                FontSize="18"
                                LineHeight="64"
@@ -61,10 +61,18 @@
                 </Panel>
             </Border>
             
-            <!-- 弹窗内容 -->
+            <!-- 弹窗内容：设置 -->
             <ContentControl Grid.Row="2"
-                            Background="#333333">
+                            Background="#333333"
+                            IsVisible="{Binding IsModalSettings}">
                 <views:SettingsView DataContext="{Binding Settings}"/>
+            </ContentControl>
+            
+            <!-- 弹窗内容：EXIF 详情 -->
+            <ContentControl Grid.Row="2"
+                            Background="#333333"
+                            IsVisible="{Binding IsModalExifDetail}">
+                <views:ExifDetailView DataContext="{Binding ExifDetailVM}"/>
             </ContentControl>
         </Grid>
     </Grid>
