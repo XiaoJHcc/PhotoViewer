@@ -481,10 +481,22 @@ public static class ExifLoader
             if (desc.Length > 200)
                 desc = desc[..200] + "...";
             
+            // 对 MetadataExtractor 未能识别的 tag，尝试从 ExifTool 数据库补充名称
+            var tagName = tag.Name;
+            if (tagName.StartsWith("Unknown tag", StringComparison.Ordinal))
+            {
+                var supplemental = ExifToolTags.GetSupplementalName(directory.Name, tag.Type);
+                if (supplemental != null)
+                    tagName = supplemental;
+            }
+
+            // 中文显示名称（最高优先级）
+            var displayName = ExifChinese.GetChineseName(tagName) ?? tagName;
+
             group.Tags.Add(new MetadataTag
             {
                 TagId = tag.Type,
-                Name = tag.Name,
+                Name = displayName,
                 Value = desc
             });
         }
