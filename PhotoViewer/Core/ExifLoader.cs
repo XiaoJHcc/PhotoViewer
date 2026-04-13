@@ -8,10 +8,30 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
+using MetadataExtractor.Formats.FileType;
 using MetadataExtractor.Formats.Xmp;
 using PhotoViewer.Core;
 
 namespace PhotoViewer.Core;
+
+/// <summary>
+/// 元数据标签（目录中的一个字段）
+/// </summary>
+public class MetadataTag
+{
+    public int TagId { get; set; }
+    public string Name { get; set; } = "";
+    public string Value { get; set; } = "";
+}
+
+/// <summary>
+/// 元数据分组（对应 EXIF 目录，如 IFD0、ExifIFD、XMP 等）
+/// </summary>
+public class MetadataGroup
+{
+    public string Name { get; set; } = "";
+    public List<MetadataTag> Tags { get; set; } = new();
+}
 
 /// <summary>
 /// 单个文件的 EXIF 数据
@@ -52,6 +72,84 @@ public class ExifData
     /// XMP Rating 评分 (0-5)
     /// </summary>
     public int? Rating { get; set; }
+    
+    // ---- 新增：扩展拍摄参数 ----
+    
+    /// <summary>曝光程序（如 Aperture-priority AE）</summary>
+    public string? ExposureProgram { get; set; }
+    
+    /// <summary>测光模式（如 Multi-segment）</summary>
+    public string? MeteringMode { get; set; }
+    
+    /// <summary>色彩空间（如 sRGB）</summary>
+    public string? ColorSpace { get; set; }
+    
+    /// <summary>最大光圈</summary>
+    public Rational? MaxAperture { get; set; }
+    
+    /// <summary>镜头规格（如 28-75mm f/2.8）</summary>
+    public string? LensSpecification { get; set; }
+    
+    /// <summary>曝光模式（如 Auto exposure）</summary>
+    public string? ExposureMode { get; set; }
+    
+    /// <summary>白平衡模式（如 Auto white balance）</summary>
+    public string? WhiteBalanceMode { get; set; }
+    
+    /// <summary>场景拍摄类型（如 Standard）</summary>
+    public string? SceneCaptureType { get; set; }
+    
+    /// <summary>对比度</summary>
+    public string? Contrast { get; set; }
+    
+    /// <summary>饱和度</summary>
+    public string? Saturation { get; set; }
+    
+    /// <summary>锐度</summary>
+    public string? Sharpness { get; set; }
+    
+    /// <summary>数码变焦比</summary>
+    public Rational? DigitalZoomRatio { get; set; }
+    
+    /// <summary>文件来源（如 Digital Still Camera）</summary>
+    public string? FileSource { get; set; }
+    
+    /// <summary>场景类型</summary>
+    public string? SceneType { get; set; }
+    
+    /// <summary>Exif 版本（如 2.32）</summary>
+    public string? ExifVersion { get; set; }
+    
+    /// <summary>亮度值</summary>
+    public Rational? BrightnessValue { get; set; }
+    
+    /// <summary>压缩位/像素</summary>
+    public Rational? CompressedBitsPerPixel { get; set; }
+    
+    /// <summary>软件版本</summary>
+    public string? Software { get; set; }
+    
+    /// <summary>感光度类型</summary>
+    public string? SensitivityType { get; set; }
+    
+    /// <summary>时区偏移</summary>
+    public string? TimeZone { get; set; }
+    
+    /// <summary>亚秒时间（用于精确到毫秒的时间戳）</summary>
+    public string? SubSecTimeOriginal { get; set; }
+    
+    /// <summary>文件类型名称（如 ARW、JPEG 等）</summary>
+    public string? FileTypeName { get; set; }
+    
+    /// <summary>检测到的 MIME 类型</summary>
+    public string? MimeType { get; set; }
+    
+    // ---- 全量元数据（按目录分组）----
+    
+    /// <summary>
+    /// 所有元数据分组列表，包含文件中的全部 EXIF/XMP/Makernote 等信息
+    /// </summary>
+    public List<MetadataGroup> AllMetadata { get; set; } = new();
 }
 
 /// <summary>
@@ -74,130 +172,162 @@ public static class ExifLoader
             using var stream = await file.OpenReadAsync();
             var directories = ImageMetadataReader.ReadMetadata(stream);
 
-            var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+            // 找到包含拍摄参数的 ExifSubIFD（ARW 等 RAW 文件可能有多个 SubIFD，
+            // 第一个往往是 RAW 图像结构信息，拍摄参数在后续的 SubIFD 中）
+            var exifSubIfd = FindShootingExifSubIfd(directories);
             var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
             var xmpDirectory = directories.OfType<XmpDirectory>().FirstOrDefault();
 
+            // ---- 从 ExifSubIFD（拍摄参数）读取 ----
             if (exifSubIfd != null)
             {
-                // 光圈值 (原始 Rational)
                 if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagFNumber, out var fNumber))
-                {
                     exifData.Aperture = fNumber;
-                }
 
-                // 快门速度 (原始 Rational)
                 if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagExposureTime, out var exposureTime))
-                {
                     exifData.ExposureTime = exposureTime;
-                }
 
-                // ISO 感光度
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagIsoEquivalent, out var iso))
-                {
                     exifData.Iso = iso;
-                }
 
-                // 实际焦距 (原始 Rational)
                 if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagFocalLength, out var focalLength))
-                {
                     exifData.FocalLength = focalLength;
-                }
                 
-                // 35mm 等效焦距 - 修复获取方式
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLengthInt))
-                {
                     exifData.EquivFocalLength = new Rational(equivFocalLengthInt, 1);
-                }
                 else if (exifSubIfd.TryGetRational(ExifDirectoryBase.Tag35MMFilmEquivFocalLength, out var equivFocalLengthRational))
-                {
                     exifData.EquivFocalLength = equivFocalLengthRational;
-                }
 
-                // 拍摄时间
                 if (exifSubIfd.TryGetDateTime(ExifDirectoryBase.TagDateTimeOriginal, out var dateTime))
-                {
                     exifData.DateTimeOriginal = dateTime;
-                }
 
-                // 镜头信息
                 if (exifSubIfd.HasTagName(ExifDirectoryBase.TagLensModel))
-                {
                     exifData.LensModel = exifSubIfd.GetDescription(ExifDirectoryBase.TagLensModel);
-                }
                 
-                // 曝光补偿
                 if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagExposureBias, out var exposureBias))
-                {
                     exifData.ExposureBias = exposureBias;
-                }
                 
-                // 白平衡
                 if (exifSubIfd.HasTagName(ExifDirectoryBase.TagWhiteBalance))
                 {
-                    exifData.WhiteBalance = exifSubIfd.GetDescription(ExifDirectoryBase.TagWhiteBalance);
+                    var wb = exifSubIfd.GetDescription(ExifDirectoryBase.TagWhiteBalance);
+                    // TagWhiteBalance (37384) 在部分相机上返回 "Unknown"，用 TagWhiteBalanceMode (41987) 补充
+                    if (string.Equals(wb, "Unknown", StringComparison.OrdinalIgnoreCase) &&
+                        exifSubIfd.HasTagName(ExifDirectoryBase.TagWhiteBalanceMode))
+                    {
+                        wb = exifSubIfd.GetDescription(ExifDirectoryBase.TagWhiteBalanceMode);
+                    }
+                    exifData.WhiteBalance = wb;
                 }
                 
-                // 闪光灯
                 if (exifSubIfd.HasTagName(ExifDirectoryBase.TagFlash))
-                {
                     exifData.Flash = exifSubIfd.GetDescription(ExifDirectoryBase.TagFlash);
-                }
                 
-                // 图片尺寸
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var width))
-                {
                     exifData.ImageWidth = width;
-                }
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var height))
-                {
                     exifData.ImageHeight = height;
-                }
+
+                // ---- 新增：扩展拍摄参数 ----
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagExposureProgram))
+                    exifData.ExposureProgram = exifSubIfd.GetDescription(ExifDirectoryBase.TagExposureProgram);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagMeteringMode))
+                    exifData.MeteringMode = exifSubIfd.GetDescription(ExifDirectoryBase.TagMeteringMode);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagColorSpace))
+                    exifData.ColorSpace = exifSubIfd.GetDescription(ExifDirectoryBase.TagColorSpace);
+                
+                if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagMaxAperture, out var maxAperture))
+                    exifData.MaxAperture = maxAperture;
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagLensSpecification))
+                    exifData.LensSpecification = exifSubIfd.GetDescription(ExifDirectoryBase.TagLensSpecification);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagExposureMode))
+                    exifData.ExposureMode = exifSubIfd.GetDescription(ExifDirectoryBase.TagExposureMode);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagWhiteBalanceMode))
+                    exifData.WhiteBalanceMode = exifSubIfd.GetDescription(ExifDirectoryBase.TagWhiteBalanceMode);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagSceneCaptureType))
+                    exifData.SceneCaptureType = exifSubIfd.GetDescription(ExifDirectoryBase.TagSceneCaptureType);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagContrast))
+                    exifData.Contrast = exifSubIfd.GetDescription(ExifDirectoryBase.TagContrast);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagSaturation))
+                    exifData.Saturation = exifSubIfd.GetDescription(ExifDirectoryBase.TagSaturation);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagSharpness))
+                    exifData.Sharpness = exifSubIfd.GetDescription(ExifDirectoryBase.TagSharpness);
+                
+                if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagDigitalZoomRatio, out var digitalZoomRatio))
+                    exifData.DigitalZoomRatio = digitalZoomRatio;
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagFileSource))
+                    exifData.FileSource = exifSubIfd.GetDescription(ExifDirectoryBase.TagFileSource);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagSceneType))
+                    exifData.SceneType = exifSubIfd.GetDescription(ExifDirectoryBase.TagSceneType);
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagExifVersion))
+                    exifData.ExifVersion = exifSubIfd.GetDescription(ExifDirectoryBase.TagExifVersion);
+                
+                if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagBrightnessValue, out var brightness))
+                    exifData.BrightnessValue = brightness;
+                
+                if (exifSubIfd.TryGetRational(ExifDirectoryBase.TagCompressedAverageBitsPerPixel, out var compressedBpp))
+                    exifData.CompressedBitsPerPixel = compressedBpp;
+                
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagSensitivityType))
+                    exifData.SensitivityType = exifSubIfd.GetDescription(ExifDirectoryBase.TagSensitivityType);
+                
+                // 时区与亚秒时间
+                if (exifSubIfd.HasTagName(ExifDirectoryBase.TagTimeZone))
+                    exifData.TimeZone = exifSubIfd.GetDescription(ExifDirectoryBase.TagTimeZone);
+                
+                // SubSecTimeOriginal (tag 37521)
+                const int TagSubSecTimeOriginal = 37521;
+                if (exifSubIfd.HasTagName(TagSubSecTimeOriginal))
+                    exifData.SubSecTimeOriginal = exifSubIfd.GetString(TagSubSecTimeOriginal);
             }
 
+            // ---- 从 IFD0 读取 ----
             if (exifIfd0 != null)
             {
-                // 相机制造商
                 if (exifIfd0.HasTagName(ExifDirectoryBase.TagMake))
-                {
                     exifData.CameraMake = exifIfd0.GetDescription(ExifDirectoryBase.TagMake);
-                }
 
-                // 相机型号
                 if (exifIfd0.HasTagName(ExifDirectoryBase.TagModel))
-                {
                     exifData.CameraModel = exifIfd0.GetDescription(ExifDirectoryBase.TagModel);
-                }
                 
-                // 方向
                 if (exifIfd0.HasTagName(ExifDirectoryBase.TagOrientation))
                 {
                     exifData.Orientation = exifIfd0.GetDescription(ExifDirectoryBase.TagOrientation);
-                    
-                    // 获取数值型方向
                     if (exifIfd0.TryGetInt32(ExifDirectoryBase.TagOrientation, out var orientationValue))
-                    {
                         exifData.OrientationValue = orientationValue;
-                    }
                 }
+                
+                if (exifIfd0.HasTagName(ExifDirectoryBase.TagSoftware))
+                    exifData.Software = exifIfd0.GetDescription(ExifDirectoryBase.TagSoftware);
             }
             
-            // 读取 XMP Rating 数据
+            // ---- 读取文件类型信息 ----
+            var fileTypeDir = directories.OfType<MetadataExtractor.Formats.FileType.FileTypeDirectory>().FirstOrDefault();
+            if (fileTypeDir != null)
+            {
+                exifData.FileTypeName = fileTypeDir.GetDescription(MetadataExtractor.Formats.FileType.FileTypeDirectory.TagDetectedFileTypeName);
+                exifData.MimeType = fileTypeDir.GetDescription(MetadataExtractor.Formats.FileType.FileTypeDirectory.TagDetectedFileMimeType);
+            }
+            
+            // ---- 读取 XMP 数据 ----
             if (xmpDirectory != null)
             {
                 try
                 {
                     var xmpMeta = xmpDirectory.GetXmpProperties();
                     
-                    // 尝试多种可能的 Rating 属性路径
-                    var ratingPaths = new[]
-                    {
-                        "xmp:Rating",
-                        "http://ns.adobe.com/xap/1.0/:Rating",
-                        "Rating",
-                        "xap:Rating"
-                    };
-                    
+                    var ratingPaths = new[] { "xmp:Rating", "http://ns.adobe.com/xap/1.0/:Rating", "Rating", "xap:Rating" };
                     foreach (var path in ratingPaths)
                     {
                         if (xmpMeta.ContainsKey(path))
@@ -211,12 +341,10 @@ public static class ExifLoader
                         }
                     }
                     
-                    // 如果上述方法未找到，尝试直接使用 XmpCore 解析
                     if (!exifData.Rating.HasValue)
                     {
                         try
                         {
-                            // 获取原始 XMP 字符串并用 XmpCore 解析
                             var xmpString = xmpDirectory.GetXmpProperties().ToString();
                             if (!string.IsNullOrEmpty(xmpString))
                             {
@@ -240,6 +368,9 @@ public static class ExifLoader
                 }
             }
             
+            // ---- 提取全量元数据（按目录分组）----
+            exifData.AllMetadata = ExtractAllMetadata(directories);
+            
             return exifData;
         }
         catch (Exception ex)
@@ -247,6 +378,117 @@ public static class ExifLoader
             Console.WriteLine("Failed to read EXIF data (" + filePath + "): " + ex.Message);
             return null;
         }
+    }
+    
+    /// <summary>
+    /// 在多个 ExifSubIfdDirectory 中找到包含拍摄参数的那一个。
+    /// RAW 文件（如 Sony ARW）通常有两个 SubIFD：第一个描述 RAW 图像结构，
+    /// 第二个包含拍摄参数（ExposureTime、FNumber、ISO 等）。
+    /// </summary>
+    private static ExifSubIfdDirectory? FindShootingExifSubIfd(IReadOnlyList<MetadataExtractor.Directory> directories)
+    {
+        var subIfds = directories.OfType<ExifSubIfdDirectory>().ToList();
+        if (subIfds.Count == 0) return null;
+        if (subIfds.Count == 1) return subIfds[0];
+        
+        // 优先选择包含 ExposureTime 或 FNumber 标签的 SubIFD
+        foreach (var subIfd in subIfds)
+        {
+            if (subIfd.ContainsTag(ExifDirectoryBase.TagExposureTime) ||
+                subIfd.ContainsTag(ExifDirectoryBase.TagFNumber) ||
+                subIfd.ContainsTag(ExifDirectoryBase.TagIsoEquivalent))
+            {
+                return subIfd;
+            }
+        }
+        
+        // 回退：返回标签数最多的（通常是拍摄参数目录）
+        return subIfds.OrderByDescending(d => d.Tags.Count).First();
+    }
+    
+    /// <summary>
+    /// 提取所有目录中的全部标签，按目录名分组
+    /// </summary>
+    private static List<MetadataGroup> ExtractAllMetadata(IReadOnlyList<MetadataExtractor.Directory> directories)
+    {
+        var groups = new List<MetadataGroup>();
+        
+        // 合并 XMP 属性为单独的分组展示
+        var xmpDirs = directories.OfType<XmpDirectory>().ToList();
+        
+        foreach (var directory in directories)
+        {
+            // XMP 目录特殊处理：展开 XMP 属性而非原始 tag
+            if (directory is XmpDirectory xmpDir)
+            {
+                try
+                {
+                    var xmpProps = xmpDir.GetXmpProperties();
+                    if (xmpProps.Count > 0)
+                    {
+                        // 按 XMP 命名空间前缀分组（如 xmp:Rating -> "XMP-xmp", xmpMM:DocumentID -> "XMP-xmpMM"）
+                        var nsByPrefix = new Dictionary<string, List<MetadataTag>>();
+                        foreach (var kv in xmpProps)
+                        {
+                            var prefix = "XMP";
+                            var colonIdx = kv.Key.IndexOf(':');
+                            if (colonIdx > 0)
+                                prefix = "XMP-" + kv.Key[..colonIdx];
+                            
+                            if (!nsByPrefix.TryGetValue(prefix, out var tagList))
+                            {
+                                tagList = new List<MetadataTag>();
+                                nsByPrefix[prefix] = tagList;
+                            }
+                            tagList.Add(new MetadataTag
+                            {
+                                Name = kv.Key,
+                                Value = kv.Value ?? ""
+                            });
+                        }
+                        foreach (var ns in nsByPrefix.OrderBy(n => n.Key))
+                        {
+                            groups.Add(new MetadataGroup { Name = ns.Key, Tags = ns.Value });
+                        }
+                    }
+                }
+                catch
+                {
+                    // XMP 解析失败时回退到原始 tag 显示
+                    groups.Add(ExtractDirectoryGroup(directory));
+                }
+                continue;
+            }
+            
+            groups.Add(ExtractDirectoryGroup(directory));
+        }
+        
+        return groups;
+    }
+    
+    /// <summary>
+    /// 将单个 MetadataExtractor 目录转换为 MetadataGroup
+    /// </summary>
+    private static MetadataGroup ExtractDirectoryGroup(MetadataExtractor.Directory directory)
+    {
+        var group = new MetadataGroup { Name = directory.Name };
+        foreach (var tag in directory.Tags)
+        {
+            string desc;
+            try { desc = tag.Description ?? ""; } catch { desc = ""; }
+            
+            // 跳过超长的二进制数据值
+            if (desc.Length > 200)
+                desc = desc[..200] + "...";
+            
+            group.Tags.Add(new MetadataTag
+            {
+                TagId = tag.Type,
+                Name = tag.Name,
+                Value = desc
+            });
+        }
+        return group;
     }
     
     /// <summary>
@@ -546,7 +788,7 @@ public static class ExifLoader
             var directories = ImageMetadataReader.ReadMetadata(stream);
             
             // 优先从EXIF获取尺寸
-            var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+            var exifSubIfd = FindShootingExifSubIfd(directories);
             if (exifSubIfd != null)
             {
                 if (exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var exifWidth) &&
@@ -834,7 +1076,7 @@ public static class ExifLoader
             await using var stream = await file.OpenReadAsync();
             var directories = ImageMetadataReader.ReadMetadata(stream);
 
-            var exifSubIfd = directories.OfType<ExifSubIfdDirectory>().FirstOrDefault();
+            var exifSubIfd = FindShootingExifSubIfd(directories);
             if (exifSubIfd != null &&
                 exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageWidth, out var w1) &&
                 exifSubIfd.TryGetInt32(ExifDirectoryBase.TagExifImageHeight, out var h1) &&

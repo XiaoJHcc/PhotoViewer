@@ -29,6 +29,26 @@ public partial class ControlView : UserControl
         {
             topLevel.KeyDown += OnGlobalKeyDown;
         }
+        
+        // EXIF 信息块点击事件
+        ExifInfoBlock.PointerPressed += OnExifInfoBlockClick;
+    }
+
+    /// <summary>
+    /// 点击 EXIF 信息块，打开 EXIF 详情（桌面端新窗口，移动端模态弹窗）
+    /// </summary>
+    private void OnExifInfoBlockClick(object? sender, PointerPressedEventArgs e)
+    {
+        if (DataContext is not ControlViewModel viewModel) return;
+        
+        if (VisualRoot is Window parentWindow)
+        {
+            viewModel.OpenExifDetail(parentWindow);
+        }
+        else
+        {
+            viewModel.OpenExifDetailModal();
+        }
     }
 
     private void OnControlButtonClick(object? sender, RoutedEventArgs e)

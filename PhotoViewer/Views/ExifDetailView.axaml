@@ -1,0 +1,74 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:core="clr-namespace:PhotoViewer.Core"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="PhotoViewer.Views.ExifDetailView"
+             x:DataType="vm:ExifDetailViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.GroupHeader">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#EEE" />
+            <Setter Property="Margin" Value="12,18,12,6" />
+        </Style>
+        <Style Selector="TextBlock.TagName">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#AAA" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="12,5" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.TagValue">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#FFF" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="12,5" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+            <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+            <Setter Property="MaxLines" Value="3" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="0,0,0,24">
+            <!-- 文件名标题 -->
+            <TextBlock Text="{Binding FileName}"
+                       FontSize="14"
+                       Foreground="#999"
+                       HorizontalAlignment="Center"
+                       Margin="12,12,12,4" />
+
+            <!-- 分组列表 -->
+            <ItemsControl ItemsSource="{Binding Groups}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate DataType="core:MetadataGroup">
+                        <StackPanel>
+                            <TextBlock Classes="GroupHeader" Text="{Binding Name}" />
+                            <Border Background="#2a2a2a" CornerRadius="6" Margin="12,4" Padding="0" ClipToBounds="True">
+                                <ItemsControl ItemsSource="{Binding Tags}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate DataType="core:MetadataTag">
+                                            <StackPanel>
+                                                <Grid ColumnDefinitions="2*, 1, 3*" MinHeight="30">
+                                                    <TextBlock Grid.Column="0" Classes="TagName" Text="{Binding Name}" />
+                                                    <Border Grid.Column="1" Width="1" Background="#3a3a3a" VerticalAlignment="Stretch" />
+                                                    <TextBlock Grid.Column="2" Classes="TagValue" Text="{Binding Value}" />
+                                                </Grid>
+                                                <Border Height="1" Background="#3a3a3a" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Border>
+                        </StackPanel>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

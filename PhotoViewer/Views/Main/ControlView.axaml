@@ -114,7 +114,9 @@
             <!-- 区域1：EXIF信息 -->
             <Border
                 HorizontalAlignment="Stretch"
-                VerticalAlignment="Stretch">
+                VerticalAlignment="Stretch"
+                Cursor="Hand"
+                x:Name="ExifInfoBlock">
                 <ItemsControl ItemsSource="{Binding EnabledExifItems}">
                     <ItemsControl.ItemsPanel>
                         <ItemsPanelTemplate>

@@ -76,6 +76,22 @@ public class MainViewModel : ViewModelBase
         settingsWindow.ShowDialog(parentWindow);
     }
 
+    /// <summary>
+    /// 打开 EXIF 详情窗口（桌面端）
+    /// </summary>
+    public void OpenExifDetailWindow(Window parentWindow)
+    {
+        var exifData = CurrentFile?.ExifData;
+        if (exifData == null) return;
+        
+        var window = new ExifDetailWindow
+        {
+            DataContext = new ExifDetailViewModel(exifData)
+        };
+        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        window.Show(parentWindow);
+    }
+
     // 模态显示
     private bool _isModalVisible = false;
     public bool IsModalVisible
@@ -98,12 +114,68 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
     }
     
-        
+    /// <summary>
+    /// 当前模态内容类型：Settings 或 ExifDetail
+    /// </summary>
+    private string _modalContentType = "Settings";
+    public string ModalContentType
+    {
+        get => _modalContentType;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _modalContentType, value);
+            this.RaisePropertyChanged(nameof(IsModalSettings));
+            this.RaisePropertyChanged(nameof(IsModalExifDetail));
+        }
+    }
+    
+    /// <summary>模态内容是否为设置页</summary>
+    public bool IsModalSettings => _modalContentType == "Settings";
+    
+    /// <summary>模态内容是否为 EXIF 详情</summary>
+    public bool IsModalExifDetail => _modalContentType == "ExifDetail";
+    
+    /// <summary>
+    /// 模态标题文本
+    /// </summary>
+    private string _modalTitle = "设置";
+    public string ModalTitle
+    {
+        get => _modalTitle;
+        set => this.RaiseAndSetIfChanged(ref _modalTitle, value);
+    }
+
+    /// <summary>
+    /// EXIF 详情 ViewModel（模态显示时使用）
+    /// </summary>
+    private ExifDetailViewModel? _exifDetailVM;
+    public ExifDetailViewModel? ExifDetailVM
+    {
+        get => _exifDetailVM;
+        set => this.RaiseAndSetIfChanged(ref _exifDetailVM, value);
+    }
+    
     /// <summary>
     /// 打开设置弹窗
     /// </summary>
     public void OpenSettingModal()
     {
+        ModalContentType = "Settings";
+        ModalTitle = "设置";
+        ShowModal();
+    }
+
+    /// <summary>
+    /// 打开 EXIF 详情弹窗（移动端）
+    /// </summary>
+    public void OpenExifDetailModal()
+    {
+        var exifData = CurrentFile?.ExifData;
+        if (exifData == null) return;
+        
+        ExifDetailVM = new ExifDetailViewModel(exifData);
+        ModalContentType = "ExifDetail";
+        ModalTitle = "EXIF 详情";
         ShowModal();
     }
 
