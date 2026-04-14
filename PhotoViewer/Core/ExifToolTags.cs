@@ -65,6 +65,7 @@ internal static partial class ExifToolTags
                 [0xc620] = "DefaultCropSize",
 
                 // ===== Sony Makernote 中生成表缺失的 tag =====
+                [0xB020] = "Creative Style",
                 // 已用对焦点集合（10 位标志值，全零 = 未使用，由 HTML AFPointsUsed 匹配确认）
                 [0x2020] = "AFPointsUsed",
                 // JPEG/HEIF 切换模式（由 HTML JPEG-HEIFSwitch 匹配确认）

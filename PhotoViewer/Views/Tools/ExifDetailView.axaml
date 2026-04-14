@@ -15,16 +15,32 @@
             <Setter Property="Foreground" Value="#EEE" />
             <Setter Property="Margin" Value="12,18,12,6" />
         </Style>
+        <Style Selector="SelectableTextBlock.TagId">
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontFamily" Value="Monospace" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#555" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="TextWrapping" Value="NoWrap" />
+        </Style>
         <Style Selector="SelectableTextBlock.TagName">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="#AAA" />
-            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Padding" Value="10,8" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="SelectableTextBlock.TagChinese">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="Foreground" Value="#888" />
+            <Setter Property="Padding" Value="10,8" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
         <Style Selector="SelectableTextBlock.TagValue">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="#FFF" />
-            <Setter Property="Padding" Value="12,6" />
+            <Setter Property="Padding" Value="10,8" />
             <Setter Property="TextWrapping" Value="Wrap" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="MaxLines" Value="3" />
@@ -119,10 +135,16 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="core:MetadataTag">
                                             <StackPanel>
-                                                <Grid ColumnDefinitions="2*, 1, 3*">
-                                                    <SelectableTextBlock Grid.Column="0" Classes="TagName" Text="{Binding Name}" />
+                                                <Grid ColumnDefinitions="60, 1, 2*, 1, 2*, 1, 3*">
+                                                    <Border Grid.Column="0" Background="#222">
+                                                        <SelectableTextBlock Classes="TagId" Text="{Binding TagIdHex}" />
+                                                    </Border>
                                                     <Border Grid.Column="1" Width="1" Background="#3a3a3a" VerticalAlignment="Stretch" />
-                                                    <SelectableTextBlock Grid.Column="2" Classes="TagValue" Text="{Binding Value}" />
+                                                    <SelectableTextBlock Grid.Column="2" Classes="TagName" Text="{Binding Name}" />
+                                                    <Border Grid.Column="3" Width="1" Background="#3a3a3a" VerticalAlignment="Stretch" />
+                                                    <SelectableTextBlock Grid.Column="4" Classes="TagChinese" Text="{Binding ChineseName}" />
+                                                    <Border Grid.Column="5" Width="1" Background="#3a3a3a" VerticalAlignment="Stretch" />
+                                                    <SelectableTextBlock Grid.Column="6" Classes="TagValue" Text="{Binding Value}" />
                                                 </Grid>
                                                 <Border Height="1" Background="#3a3a3a" />
                                             </StackPanel>
