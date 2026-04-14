@@ -28,9 +28,40 @@ internal static partial class ExifChinese
     private static readonly IReadOnlyDictionary<string, string> _overrideNames =
         new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            // 示例：
-            // ["F-Number"] = "光圈值",
-            // ["DriveMode"] = "驱动模式",
+            // 覆盖自动生成表中错误的译名，或补充缺失的中文名
+            // 键名使用最终解析后的英文名（ExifToolTags 覆盖后的名称）
+
+            // ===== Exif IFD0 / Exif Image =====
+            ["New Subfile Type"]              = "子文件类型",
+            ["PreviewImageStart"]             = "预览图像起始",
+            ["PreviewImageLength"]            = "预览图像长度",
+
+            // ===== SubIFD RAW 图像区 =====
+            ["SonyRawFileType"]               = "RAW 文件类型",
+            ["SonyToneCurve"]                 = "色调曲线",
+            ["SonyRawImageSize"]              = "RAW 图像尺寸",
+            ["VignettingCorrection"]          = "暗角校正",
+            ["VignettingCorrParams"]          = "暗角校正参数",
+            ["ChromaticAberrationCorrection"] = "色差校正",
+            ["ChromaticAberrationCorrParams"] = "色差校正参数",
+            ["DistortionCorrection"]          = "畸变校正",
+            ["DistortionCorrParams"]          = "畸变校正参数",
+            ["BlackLevel"]                    = "黑电平",
+            ["WB_RGGBLevels"]                 = "白平衡 RGGB 值",
+            ["SonyCropTopLeft"]               = "裁剪起始点",
+            ["SonyCropSize"]                  = "裁剪尺寸",
+            ["WhiteLevel"]                    = "白电平",
+            ["DefaultCropOrigin"]             = "默认裁剪起点",
+            ["DefaultCropSize"]               = "默认裁剪尺寸",
+
+            // ===== Sony Makernote =====
+            ["AFPointsUsed"]                  = "已用对焦点",
+            ["JPEGHEIFSwitch"]                = "JPEG/HEIF 切换",
+            ["FocusPosition2"]                = "对焦位置",
+            ["AmbientTemperature"]            = "环境温度",
+
+            // ===== 扩展 EXIF 标准字段 =====
+            ["CompositeImage"]                = "合成图像",
         };
 
     /// <summary>

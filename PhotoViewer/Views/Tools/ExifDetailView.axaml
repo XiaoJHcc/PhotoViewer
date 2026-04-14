@@ -15,18 +15,16 @@
             <Setter Property="Foreground" Value="#EEE" />
             <Setter Property="Margin" Value="12,18,12,6" />
         </Style>
-        <Style Selector="TextBlock.TagName">
+        <Style Selector="SelectableTextBlock.TagName">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="#AAA" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="12,5" />
+            <Setter Property="Padding" Value="12,6" />
             <Setter Property="TextWrapping" Value="Wrap" />
         </Style>
-        <Style Selector="TextBlock.TagValue">
+        <Style Selector="SelectableTextBlock.TagValue">
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Foreground" Value="#FFF" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-            <Setter Property="Margin" Value="12,5" />
+            <Setter Property="Padding" Value="12,6" />
             <Setter Property="TextWrapping" Value="Wrap" />
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="MaxLines" Value="3" />
@@ -121,10 +119,10 @@
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate DataType="core:MetadataTag">
                                             <StackPanel>
-                                                <Grid ColumnDefinitions="2*, 1, 3*" MinHeight="30">
-                                                    <TextBlock Grid.Column="0" Classes="TagName" Text="{Binding Name}" />
+                                                <Grid ColumnDefinitions="2*, 1, 3*">
+                                                    <SelectableTextBlock Grid.Column="0" Classes="TagName" Text="{Binding Name}" />
                                                     <Border Grid.Column="1" Width="1" Background="#3a3a3a" VerticalAlignment="Stretch" />
-                                                    <TextBlock Grid.Column="2" Classes="TagValue" Text="{Binding Value}" />
+                                                    <SelectableTextBlock Grid.Column="2" Classes="TagValue" Text="{Binding Value}" />
                                                 </Grid>
                                                 <Border Height="1" Background="#3a3a3a" />
                                             </StackPanel>
