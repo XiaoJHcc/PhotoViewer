@@ -31,17 +31,84 @@
             <Setter Property="TextTrimming" Value="CharacterEllipsis" />
             <Setter Property="MaxLines" Value="3" />
         </Style>
+
+        <!-- 格式切换 ListBox 整体无背景 -->
+        <Style Selector="ListBox.FormatSelector">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Padding" Value="0" />
+        </Style>
+        <!-- ListBoxItem 内边距和背景 -->
+        <Style Selector="ListBox.FormatSelector ListBoxItem">
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="ListBox.FormatSelector ListBoxItem:selected /template/ ContentPresenter">
+            <Setter Property="Background" Value="#505050" />
+        </Style>
+        <Style Selector="ListBox.FormatSelector ListBoxItem:pointerover /template/ ContentPresenter">
+            <Setter Property="Background" Value="#404040" />
+        </Style>
+        <Style Selector="ListBox.FormatSelector ListBoxItem /template/ ContentPresenter">
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
     </UserControl.Styles>
 
     <ScrollViewer HorizontalScrollBarVisibility="Disabled"
                   VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="0,0,0,24">
-            <!-- 文件名标题 -->
-            <TextBlock Text="{Binding FileName}"
-                       FontSize="14"
-                       Foreground="#999"
+
+            <!-- 文件名 + 格式切换 -->
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        Margin="12,12,12,4">
+
+                <!-- 文件名（不含后缀） -->
+                <TextBlock Text="{Binding BaseFileName}"
+                           FontSize="14"
+                           Foreground="#CCC"
+                           VerticalAlignment="Center" />
+
+                <!-- 格式选择（多格式时） -->
+                <ListBox Classes="FormatSelector"
+                         IsVisible="{Binding HasMultipleFormats}"
+                         ItemsSource="{Binding Formats}"
+                         SelectedItem="{Binding SelectedFormat}">
+                    <ListBox.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" Spacing="4" />
+                        </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate x:DataType="vm:FormatEntry">
+                            <TextBlock Text="{Binding Label}"
+                                       FontSize="13"
+                                       Foreground="#AAA"
+                                       Margin="8,4" />
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+
+                <!-- 格式标签（单格式时） -->
+                <TextBlock IsVisible="{Binding !HasMultipleFormats}"
+                           Text="{Binding SelectedFormat.Label}"
+                           FontSize="13"
+                           Foreground="#888"
+                           VerticalAlignment="Center" />
+            </StackPanel>
+
+            <!-- 加载中提示 -->
+            <TextBlock IsVisible="{Binding IsLoading}"
+                       Text="加载中..."
+                       FontSize="13"
+                       Foreground="#666"
                        HorizontalAlignment="Center"
-                       Margin="12,12,12,4" />
+                       Margin="12,12" />
 
             <!-- 分组列表 -->
             <ItemsControl ItemsSource="{Binding Groups}">
@@ -72,3 +139,4 @@
         </StackPanel>
     </ScrollViewer>
 </UserControl>
+
