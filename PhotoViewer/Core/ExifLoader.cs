@@ -20,8 +20,13 @@ namespace PhotoViewer.Core;
 public class MetadataTag
 {
     public int TagId { get; set; }
+    /// <summary>ExifTool 风格英文名称</summary>
     public string Name { get; set; } = "";
+    /// <summary>中文译名；无翻译时为 null</summary>
+    public string? ChineseName { get; set; }
     public string Value { get; set; } = "";
+    /// <summary>Tag ID 的十六进制表示，如 "0x0201"</summary>
+    public string TagIdHex => $"0x{TagId:X4}";
 }
 
 /// <summary>
@@ -493,13 +498,11 @@ public static class ExifLoader
                     tagName = supplemental;
             }
 
-            // 中文显示名称（最高优先级）
-            var displayName = ExifChinese.GetChineseName(tagName) ?? tagName;
-
             group.Tags.Add(new MetadataTag
             {
                 TagId = tag.Type,
-                Name = displayName,
+                Name = tagName,
+                ChineseName = ExifChinese.GetChineseName(tagName),
                 Value = desc
             });
         }
