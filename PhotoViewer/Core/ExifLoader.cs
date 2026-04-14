@@ -413,8 +413,9 @@ public static class ExifLoader
     {
         var groups = new List<MetadataGroup>();
         
-        // 合并 XMP 属性为单独的分组展示
-        var xmpDirs = directories.OfType<XmpDirectory>().ToList();
+        // 从 IFD0 中提取相机品牌，供后续匹配厂商 tag 名称时作为 fallback
+        var ifd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
+        var cameraMake = ifd0?.GetDescription(ExifDirectoryBase.TagMake);
         
         foreach (var directory in directories)
         {
@@ -455,12 +456,12 @@ public static class ExifLoader
                 catch
                 {
                     // XMP 解析失败时回退到原始 tag 显示
-                    groups.Add(ExtractDirectoryGroup(directory));
+                    groups.Add(ExtractDirectoryGroup(directory, cameraMake));
                 }
                 continue;
             }
             
-            groups.Add(ExtractDirectoryGroup(directory));
+            groups.Add(ExtractDirectoryGroup(directory, cameraMake));
         }
         
         return groups;
@@ -469,7 +470,9 @@ public static class ExifLoader
     /// <summary>
     /// 将单个 MetadataExtractor 目录转换为 MetadataGroup
     /// </summary>
-    private static MetadataGroup ExtractDirectoryGroup(MetadataExtractor.Directory directory)
+    /// <param name="directory">MetadataExtractor 目录</param>
+    /// <param name="cameraMake">相机品牌（用于在通用 EXIF 目录中 fallback 查找厂商 tag 名称）</param>
+    private static MetadataGroup ExtractDirectoryGroup(MetadataExtractor.Directory directory, string? cameraMake = null)
     {
         var group = new MetadataGroup { Name = directory.Name };
         foreach (var tag in directory.Tags)
@@ -485,7 +488,7 @@ public static class ExifLoader
             var tagName = tag.Name;
             if (tagName.StartsWith("Unknown tag", StringComparison.Ordinal))
             {
-                var supplemental = ExifToolTags.GetSupplementalName(directory.Name, tag.Type);
+                var supplemental = ExifToolTags.GetSupplementalName(directory.Name, tag.Type, cameraMake);
                 if (supplemental != null)
                     tagName = supplemental;
             }

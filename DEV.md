@@ -78,3 +78,44 @@
 ### 4. iOS IPA (限开发者受托设备)
 - ⚡ Task: **`Publish iOS IPA (Release)`**
 - 构建生产发布包，配合 Apple 开发者证书编译；如须上架则需将产物通过 Xcode/Transporter 继续流转。
+
+---
+
+## 五、 手动维护/更新数据
+
+### EXIF 字段名称（英文）
+
+EXIF 字段英文名由两层决定：
+1. **MetadataExtractor 库**：已知字段由库自动识别，无需维护。
+2. **ExifTool 补充名称**（`ExifToolTags.Generated.cs`）：对库无法识别的 Unknown tag，从 ExifTool Perl 源码爬取英文名作为补充。通过以下脚本更新：
+   ```
+   python3 Tools/generate-exiftool-tags.py
+   ```
+   脚本会完全覆盖 `ExifToolTags.Generated.cs`，请勿手动编辑该文件。
+
+**手动纠正/补充英文名**：若生成表中某条目名称有误、或存在脚本未收录的私有 tag（如 `0x7038`），在 `ExifToolTags.cs` 的 `_overrideTables` 对应品牌下添加条目，优先级高于生成表，且不受脚本覆盖影响：
+```csharp
+["Sony"] = new Dictionary<int, string>
+{
+    [0x0201] = "PreviewImageStart",   // 纠正：生成表误标为 MoreInfo0201
+    [0x7038] = "SonyRawImageSize",    // 补充：生成表缺失的私有 tag
+},
+```
+
+---
+
+### EXIF 字段名称（中文）
+
+中文名同样由两层决定：
+1. **自动生成表**（`ExifChinese.Generated.cs`）：内嵌预置中文翻译，通过以下脚本生成/更新：
+   ```
+   python3 Tools/generate-chinese-template.py
+   ```
+   脚本会完全覆盖 `ExifChinese.Generated.cs`，请勿手动编辑该文件。生成表中注释掉的条目表示尚未翻译，可以复制到手动覆盖表中覆盖翻译。
+
+2. **手动覆盖表**（`ExifChinese.cs` 中的 `_overrideNames`）：优先级最高，脚本永不修改此文件。在此添加/修改，永久生效：
+   ```csharp
+   ["PreviewImageStart"] = "预览图像起始",
+   ["SonyRawImageSize"]  = "RAW 图像尺寸",
+   ```
+   键名使用最终确定的英文名（经过上方 `_overrideTables` 修正后的名称）。
