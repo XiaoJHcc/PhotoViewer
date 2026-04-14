@@ -81,12 +81,12 @@ public class MainViewModel : ViewModelBase
     /// </summary>
     public void OpenExifDetailWindow(Window parentWindow)
     {
-        var exifData = CurrentFile?.ExifData;
-        if (exifData == null) return;
+        var imageFile = CurrentFile;
+        if (imageFile?.ExifData == null) return;
         
         var window = new ExifDetailWindow
         {
-            DataContext = new ExifDetailViewModel(exifData)
+            DataContext = new ExifDetailViewModel(imageFile)
         };
         window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
         window.Show(parentWindow);
@@ -170,10 +170,10 @@ public class MainViewModel : ViewModelBase
     /// </summary>
     public void OpenExifDetailModal()
     {
-        var exifData = CurrentFile?.ExifData;
-        if (exifData == null) return;
+        var imageFile = CurrentFile;
+        if (imageFile?.ExifData == null) return;
         
-        ExifDetailVM = new ExifDetailViewModel(exifData);
+        ExifDetailVM = new ExifDetailViewModel(imageFile);
         ModalContentType = "ExifDetail";
         ModalTitle = "EXIF 详情";
         ShowModal();
