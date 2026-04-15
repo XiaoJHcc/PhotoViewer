@@ -2,7 +2,6 @@
 
 > **文档说明**
 > 本文档专为 AI Copilot 编写，用于快速理解项目结构与核心逻辑。
-> 涉及 **打包发布** 的内容请查阅 `PUBLISH.md`。
 
 ## 1. 技术栈与环境
 
@@ -23,11 +22,12 @@
 
 核心业务逻辑全部位于共享项目的 `Core` 文件夹下，**不依赖 UI 控件**。
 
-| 文件/类 | 说明 | 关键职责 |
+| 源文件 | 说明 | 关键职责 |
 |---|---|---|
 | **BitmapLoader** | 图片加载器 | 图片解码、LRU 缓存管理、EXIF 旋转修正、缩略图生成。 |
 | **BitmapPrefetcher** | 预加载器 | 监听当前浏览图片，后台预加载前后邻居图片进入缓存。 |
 | **ExifLoader** | 元数据读取 | 读取 EXIF/XMP 信息，快速读取缩略图流。 |
+| **ExifChinese / ExifToolTags** | 元数据汉化与标签库 | 通过 `Tools/*.py` 脚本从 ExifTool 数据中生成的跨平台翻译映射和标签支持，用于翻译各类 Exif 属性为中文。 |
 | **HeifLoader** | HEIF 解码桥接 | 静态外观类。通过 `Initialize` 注入平台特定的 `IHeifDecoder` 实现。 |
 | **MemoryBudget** | 内存预算 | 静态外观类。管理内存上限，通过 `Initialize` 注入平台特定的 `IMemoryBudget`。 |
 | **XmpWriter** | 评分写入 | 修改 XMP 星级评分。支持无损修改（In-place）及备份策略。 |
@@ -58,7 +58,7 @@ UI 逻辑位于 `PhotoViewer/ViewModels`，视图位于 `PhotoViewer/Views`。
 | **图片浏览** | `ImageViewModel` | `Views/Main/ImageView` | **主视图**。负责单张大图显示、缩放平移手势、加载状态。               |
 | **缩略图栏** | `FolderViewModel` (共享) | `Views/Main/ThumbnailView` | **最左侧或顶部边栏**。显示文件带状列表，处理滚动同步与选中高亮。          |
 | **顶部/控制栏** | `ControlViewModel` | `Views/Main/ControlView` | **最右侧或底部边栏**。工具栏按钮（打开、显示设置、全屏）。             |
-| **详细/侧边栏** | `DetailViewModel` | `Views/Main/DetailView` | **右侧或底部边栏**。显示直方图、EXIF 信息、概览小图。             |
+| **详细/侧边栏** | `DetailViewModel` <br/> `ExifDetailViewModel` | `Views/Main/DetailView` | **右侧或底部边栏**。显示直方图、EXIF 信息、概览小图。包含更专门的 Exif 参数解析ViewModel。 |
 | **设置页** | `SettingsViewModel` | `Views/Settings/*` | 设置界面。Partial Class 把不同分类（快捷键、格式、布局）拆分到不同文件。 |
 
 ### 2.4 辅助组件 (Helpers)
