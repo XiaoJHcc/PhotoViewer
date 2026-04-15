@@ -55,6 +55,17 @@ public class MainViewModel : ViewModelBase
         // 监听布局模式变化
         Settings.WhenAnyValue(s => s.LayoutMode)
             .Subscribe(_ => UpdateLayoutFromSettings());
+
+        // 当前图片切换时同步更新已打开的 EXIF 详情窗口/模态
+        this.WhenAnyValue(m => m.CurrentFile)
+            .Subscribe(file =>
+            {
+                if (file == null) return;
+                if (_exifDetailWindow?.DataContext is ExifDetailViewModel desktopVm)
+                    desktopVm.UpdateToFile(file);
+                if (IsModalVisible && IsModalExifDetail && _exifDetailVM != null)
+                    _exifDetailVM.UpdateToFile(file);
+            });
     }
     
     ////////////////
@@ -76,20 +87,31 @@ public class MainViewModel : ViewModelBase
         settingsWindow.ShowDialog(parentWindow);
     }
 
+    // 桌面端单例 EXIF 详情窗口引用
+    private ExifDetailWindow? _exifDetailWindow;
+
     /// <summary>
-    /// 打开 EXIF 详情窗口（桌面端）
+    /// 打开 EXIF 详情窗口（桌面端单例）。已打开时直接前置并更新内容，不重复创建。
     /// </summary>
     public void OpenExifDetailWindow(Window parentWindow)
     {
         var imageFile = CurrentFile;
         if (imageFile?.ExifData == null) return;
-        
-        var window = new ExifDetailWindow
+
+        if (_exifDetailWindow != null)
+        {
+            _exifDetailWindow.Activate();
+            ((ExifDetailViewModel)_exifDetailWindow.DataContext!).UpdateToFile(imageFile);
+            return;
+        }
+
+        _exifDetailWindow = new ExifDetailWindow
         {
             DataContext = new ExifDetailViewModel(imageFile)
         };
-        window.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        window.Show(parentWindow);
+        _exifDetailWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        _exifDetailWindow.Closed += (_, _) => _exifDetailWindow = null;
+        _exifDetailWindow.Show(parentWindow);
     }
 
     // 模态显示
