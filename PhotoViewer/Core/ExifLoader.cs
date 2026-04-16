@@ -498,12 +498,18 @@ public static class ExifLoader
                     tagName = supplemental;
             }
 
+            // 尝试将原始数值翻译为可读名称（如 "4" → "Sony Lossless Compressed RAW 2"）
+            var translated = ExifToolValues.TranslateValue(directory.Name, tag.Type, desc, cameraMake);
+            if (translated != null)
+                desc = translated;
+
+            var chineseValue = ExifToolValues.GetChineseValue(desc);
             group.Tags.Add(new MetadataTag
             {
                 TagId = tag.Type,
                 Name = tagName,
                 ChineseName = ExifChinese.GetChineseName(tagName),
-                Value = desc
+                Value = chineseValue ?? desc
             });
         }
         return group;
