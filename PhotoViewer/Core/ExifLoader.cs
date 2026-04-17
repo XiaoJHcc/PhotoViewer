@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
+using MetadataExtractor.Formats.Exif.Makernotes;
 using MetadataExtractor.Formats.FileType;
 using MetadataExtractor.Formats.Xmp;
 using PhotoViewer.Core;
@@ -418,9 +419,10 @@ public static class ExifLoader
     {
         var groups = new List<MetadataGroup>();
         
-        // 从 IFD0 中提取相机品牌，供后续匹配厂商 tag 名称时作为 fallback
+        // 从 IFD0 中提取相机品牌和型号，供后续匹配厂商 tag 名称时作为 fallback
         var ifd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
         var cameraMake = ifd0?.GetDescription(ExifDirectoryBase.TagMake);
+        var cameraModel = ifd0?.GetDescription(ExifDirectoryBase.TagModel);
         
         foreach (var directory in directories)
         {
@@ -467,9 +469,40 @@ public static class ExifLoader
             }
             
             groups.Add(ExtractDirectoryGroup(directory, cameraMake));
+            
+            // Sony 加密 MakerNote tag 解码：将 [N values] 二进制块替换为解码后的可读字段
+            if (directory is SonyType1MakernoteDirectory sonyDir)
+            {
+                DecodeSonyCipherTags(sonyDir, groups[^1], cameraModel);
+            }
         }
         
         return groups;
+    }
+    
+    /// <summary>
+    /// 解码 Sony 加密 MakerNote tag，将原始二进制条目替换为可读字段
+    /// </summary>
+    private static void DecodeSonyCipherTags(SonyType1MakernoteDirectory sonyDir, MetadataGroup group, string? cameraModel)
+    {
+        foreach (var tagId in SonyCipherTags.SupportedTagIds)
+        {
+            var decoded = SonyCipherTags.Decode(sonyDir, tagId, cameraModel);
+            if (decoded == null || decoded.Count == 0)
+                continue;
+            
+            // 找到原始条目并替换
+            int origIdx = group.Tags.FindIndex(t => t.TagId == tagId);
+            if (origIdx >= 0)
+            {
+                group.Tags.RemoveAt(origIdx);
+                group.Tags.InsertRange(origIdx, decoded);
+            }
+            else
+            {
+                group.Tags.AddRange(decoded);
+            }
+        }
     }
     
     /// <summary>
