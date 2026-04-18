@@ -110,6 +110,20 @@ public partial class DetailPreview : UserControl
         set => SetValue(HighlightGroupProperty, value);
     }
 
+    /// <summary>
+    /// 对焦框归一化尺寸（宽/图像宽, 高/图像高，范围 0~1）。
+    /// 非 null 时高亮主图时显示实际对焦框大小的绿框，而非裁剪区域大小。
+    /// </summary>
+    public static readonly StyledProperty<Size?> FocusFrameProperty =
+        AvaloniaProperty.Register<DetailPreview, Size?>(nameof(FocusFrame));
+
+    /// <summary>对焦框归一化尺寸（相对于原始图像宽高的比例），null 表示使用裁剪区域作为主图高亮框。</summary>
+    public Size? FocusFrame
+    {
+        get => GetValue(FocusFrameProperty);
+        set => SetValue(FocusFrameProperty, value);
+    }
+
     private static readonly IBrush HighlightBrush = new SolidColorBrush(Color.FromRgb(0, 255, 0));
     private static readonly IBrush DefaultBorderBrush = new SolidColorBrush(Color.FromRgb(68, 68, 68));
 
@@ -125,6 +139,7 @@ public partial class DetailPreview : UserControl
         SourceProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
         CenterProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
         CropSizeProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
+        FocusFrameProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.QueueUpdatePreview());
         IsActiveProperty.Changed.AddClassHandler<DetailPreview>((x, _) => x.OnActiveChanged());
     }
 
@@ -324,6 +339,20 @@ public partial class DetailPreview : UserControl
         if (!IsActive || _lastImageRect == null)
         {
             HighlightTarget.SetDetailHighlight(null);
+            return;
+        }
+
+        // 对焦点预览：在主图上显示实际对焦框大小的绿框（而非裁剪区域大小）
+        var frame = FocusFrame;
+        if (frame.HasValue && Source != null)
+        {
+            var pw = Source.PixelSize.Width;
+            var ph = Source.PixelSize.Height;
+            var fw = frame.Value.Width * pw;
+            var fh = frame.Value.Height * ph;
+            var cx = Math.Clamp(Center.X, 0, 1) * pw;
+            var cy = Math.Clamp(Center.Y, 0, 1) * ph;
+            HighlightTarget.SetDetailHighlight(new Rect(cx - fw / 2, cy - fh / 2, fw, fh));
             return;
         }
 

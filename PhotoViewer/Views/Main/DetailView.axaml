@@ -32,7 +32,8 @@
                                             HighlightGroup="{StaticResource SharedHighlightGroup}"
                                             Source="{Binding $parent[UserControl].((vm:DetailViewModel)DataContext).SourceBitmap}"
                                             Label="{Binding Label}"
-                                            Center="{Binding Center}" />
+                                            Center="{Binding Center}"
+                                            FocusFrame="{Binding FocusFrame}" />
                 </DataTemplate>
             </ItemsControl.ItemTemplate>
         </ItemsControl>
