@@ -150,6 +150,20 @@ public class ExifData
     /// <summary>检测到的 MIME 类型</summary>
     public string? MimeType { get; set; }
     
+    // ---- Sony 对焦信息 ----
+    
+    /// <summary>
+    /// Sony FocusPosition2 (0x2027)：图像尺寸与对焦点坐标（以左上角为原点的像素坐标）。
+    /// 仅在 Sony 相机拍摄的文件中有效，非 Sony 文件此字段为 null。
+    /// </summary>
+    public (int ImageWidth, int ImageHeight, int FocusX, int FocusY)? SonyFocusPosition { get; set; }
+    
+    /// <summary>
+    /// Sony FocusFrameSize (0x2037)：对焦框像素尺寸（宽×高）。
+    /// 仅在 Sony 相机拍摄且对焦框数据有效时不为 null。
+    /// </summary>
+    public (int Width, int Height)? SonyFocusFrameSize { get; set; }
+    
     // ---- 全量元数据（按目录分组）----
     
     /// <summary>
@@ -377,6 +391,14 @@ public static class ExifLoader
             // ---- 提取全量元数据（按目录分组）----
             exifData.AllMetadata = ExtractAllMetadata(directories);
             
+            // ---- 解析 Sony 对焦信息 ----
+            var sonyMakernote = directories.OfType<SonyType1MakernoteDirectory>().FirstOrDefault();
+            if (sonyMakernote != null)
+            {
+                exifData.SonyFocusPosition = ParseSonyFocusPosition(sonyMakernote);
+                exifData.SonyFocusFrameSize = ParseSonyFocusFrameSizeRaw(sonyMakernote);
+            }
+            
             return exifData;
         }
         catch (Exception ex)
@@ -558,6 +580,110 @@ public static class ExifLoader
             });
         }
         return group;
+    }
+
+    /// <summary>
+    /// 解析 Sony FocusPosition2 (0x2027)：4 x int16u [图像宽, 图像高, 对焦X, 对焦Y]。
+    /// 支持 MetadataExtractor 以 4 个 int16u 字符串或 8 个字节字符串输出的两种格式。
+    /// </summary>
+    private static (int ImageWidth, int ImageHeight, int FocusX, int FocusY)? ParseSonyFocusPosition(
+        SonyType1MakernoteDirectory dir)
+    {
+        // 优先尝试直接读取原始字节
+        var obj = dir.GetObject(0x2027);
+        byte[]? bytes = obj switch
+        {
+            byte[] b => b,
+            sbyte[] sb => sb.Select(x => (byte)x).ToArray(),
+            _ => null
+        };
+        if (bytes != null && bytes.Length >= 8)
+        {
+            int iw = bytes[0] | (bytes[1] << 8);
+            int ih = bytes[2] | (bytes[3] << 8);
+            int fx = bytes[4] | (bytes[5] << 8);
+            int fy = bytes[6] | (bytes[7] << 8);
+            if (iw > 0 && ih > 0)
+                return (iw, ih, fx, fy);
+        }
+        
+        // 回退：解析描述字符串（空格分隔）
+        var desc = dir.GetDescription(0x2027);
+        if (string.IsNullOrEmpty(desc)) return null;
+        
+        var parts = desc.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // 4 个 int16u
+        if (parts.Length >= 4 &&
+            int.TryParse(parts[0], out int iw4) && int.TryParse(parts[1], out int ih4) &&
+            int.TryParse(parts[2], out int fx4) && int.TryParse(parts[3], out int fy4) &&
+            iw4 > 0 && ih4 > 0)
+            return (iw4, ih4, fx4, fy4);
+        // 8 个字节：按 little-endian int16u 重组
+        if (parts.Length >= 8)
+        {
+            var vals = new int[8];
+            bool ok = true;
+            for (int i = 0; i < 8; i++)
+                ok &= int.TryParse(parts[i], out vals[i]);
+            if (ok)
+            {
+                int iw8 = vals[0] | (vals[1] << 8);
+                int ih8 = vals[2] | (vals[3] << 8);
+                int fx8 = vals[4] | (vals[5] << 8);
+                int fy8 = vals[6] | (vals[7] << 8);
+                if (iw8 > 0 && ih8 > 0)
+                    return (iw8, ih8, fx8, fy8);
+            }
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 解析 Sony FocusFrameSize (0x2037)：3 x int16u [框宽, 框高, 有效标志]。
+    /// 标志为零时表示对焦框无效。
+    /// </summary>
+    private static (int Width, int Height)? ParseSonyFocusFrameSizeRaw(SonyType1MakernoteDirectory dir)
+    {
+        var obj = dir.GetObject(0x2037);
+        byte[]? bytes = obj switch
+        {
+            byte[] b => b,
+            sbyte[] sb => sb.Select(x => (byte)x).ToArray(),
+            _ => null
+        };
+        if (bytes != null && bytes.Length >= 6)
+        {
+            int fw = bytes[0] | (bytes[1] << 8);
+            int fh = bytes[2] | (bytes[3] << 8);
+            int flag = bytes[4] | (bytes[5] << 8);
+            if (fw > 0 && fh > 0 && flag != 0)
+                return (fw, fh);
+        }
+        
+        var desc = dir.GetDescription(0x2037);
+        if (string.IsNullOrEmpty(desc)) return null;
+        
+        var parts = desc.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 3 &&
+            int.TryParse(parts[0], out int w3) && int.TryParse(parts[1], out int h3) &&
+            int.TryParse(parts[2], out int f3) && w3 > 0 && h3 > 0 && f3 != 0)
+            return (w3, h3);
+        if (parts.Length == 6)
+        {
+            var vals = new int[6];
+            bool ok = true;
+            for (int i = 0; i < 6; i++)
+                ok &= int.TryParse(parts[i], out vals[i]);
+            if (ok)
+            {
+                int w = vals[0] | (vals[1] << 8);
+                int h = vals[2] | (vals[3] << 8);
+                int flag = vals[4] | (vals[5] << 8);
+                if (w > 0 && h > 0 && flag != 0)
+                    return (w, h);
+            }
+        }
+        return null;
     }
 
     /// <summary>

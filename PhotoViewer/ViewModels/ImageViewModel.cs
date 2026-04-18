@@ -207,6 +207,12 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _fit, value);
     }
 
+    /// <summary>
+    /// 当前视图中心是否处于对焦点附近（由每次移动/缩放后动态计算，或切换到对焦点后显式置 true）。
+    /// 切换照片时若为 true，则以新照片的对焦点为中心并保持当前缩放倍率，而非按 UV 坐标定位。
+    /// </summary>
+    private bool _isFocusedOnFocusPoint;
+
     private double _fitScale;   // 适配缩放值
     public double FitScale
     {
@@ -336,6 +342,7 @@ public class ImageViewModel : ReactiveObject
     public void FitToScreen()
     {
         if (ImageSize == default) return;
+        _isFocusedOnFocusPoint = false;
         FitScale = Math.Min(ViewSize.X / ImageSize.X, ViewSize.Y / ImageSize.Y);
         Scale = FitScale;
         var moveToLeft = - ((1.0 - FitScale) * 0.5 * ImageSize);
@@ -346,13 +353,32 @@ public class ImageViewModel : ReactiveObject
 
     public void ToggleFit(Vector center)
     {
+        _isFocusedOnFocusPoint = false;
         if (!Fit) FitToScreen();
         else ZoomTo(1, center);
     }
-    
+
+    /// <summary>
+    /// 切换适配/放大：放大时优先以当前图片对焦点为中心做 100% 放大，
+    /// 无对焦数据时回退到视图中心。进入对焦点模式后设置标记，供切换照片时使用。
+    /// </summary>
     public void ToggleFit()
     {
-        ToggleFit(ViewSize * 0.5);
+        if (!Fit)
+        {
+            FitToScreen();
+            return;
+        }
+        var focusPoint = GetFocusImagePoint();
+        if (focusPoint.HasValue)
+        {
+            FocusOnImagePoint(focusPoint.Value, 1.0);
+            _isFocusedOnFocusPoint = true;
+        }
+        else
+        {
+            ZoomTo(1, ViewSize * 0.5);
+        }
     }
 
     /// <summary>
@@ -367,6 +393,7 @@ public class ImageViewModel : ReactiveObject
         Scale = scale;
         ClampCenter();
         Fit = false;
+        _isFocusedOnFocusPoint = IsViewCenteredOnFocusPoint();
     }
 
     public void ZoomTo(double scale)
@@ -432,6 +459,7 @@ public class ImageViewModel : ReactiveObject
         if (Fit) return; // 适应屏幕时不响应移动
         Translate += delta;
         ClampCenter();
+        _isFocusedOnFocusPoint = IsViewCenteredOnFocusPoint();
     }
 
     /// <summary>
@@ -451,20 +479,41 @@ public class ImageViewModel : ReactiveObject
             }
             
             var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
-            if (ImageSize == newImageSize) return;
+            
+            // 对焦点模式下即使尺寸不变也需重新定位到新照片对焦点，其余情况尺寸未变则无需处理
+            if (ImageSize == newImageSize && !_isFocusedOnFocusPoint) return;
             
             // 图片尺寸即将变化，提前清空细节高亮矩形，避免旧坐标在新布局下显示到错误位置。
             // DetailPreview.UpdatePreview() 将在下一帧以新图片坐标重新计算并恢复高亮。
             SetDetailHighlight(null);
+            
+            // 提前保存当前视图状态，ImageSize 变更后这些值将失效
+            var uv = GetCenterUV();
+            var currentScale = Scale;
             
             if (Fit)
             {
                 ImageSize = newImageSize;
                 FitToScreen();
             }
+            else if (_isFocusedOnFocusPoint)
+            {
+                // 对焦点模式：定位到新照片的对焦点，保持缩放倍率
+                ImageSize = newImageSize;
+                var newFocusPoint = GetFocusImagePoint(newImageSize);
+                if (newFocusPoint.HasValue)
+                {
+                    FocusOnImagePoint(newFocusPoint.Value, currentScale);
+                    _isFocusedOnFocusPoint = true;
+                }
+                else
+                {
+                    SetUVToCenter(uv);
+                    _isFocusedOnFocusPoint = false;
+                }
+            }
             else
             {
-                var uv = GetCenterUV();
                 ImageSize = newImageSize;
                 SetUVToCenter(uv);
             }
@@ -473,6 +522,44 @@ public class ImageViewModel : ReactiveObject
         {
             Console.WriteLine($"Failed in OnBitmapChanged: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 获取当前图片对焦点的像素坐标（使用当前 ImageSize）。
+    /// </summary>
+    private Vector? GetFocusImagePoint() => GetFocusImagePoint(ImageSize);
+
+    /// <summary>
+    /// 检查当前视图中心是否处于对焦点附近（UV 偏差各轴小于 5% 即为附近）。
+    /// 每次移动/缩放后调用，动态更新 _isFocusedOnFocusPoint 标记。
+    /// </summary>
+    private bool IsViewCenteredOnFocusPoint()
+    {
+        if (Fit || ImageSize.X <= 0 || ImageSize.Y <= 0) return false;
+        var pos = _main.CurrentFile?.ExifData?.SonyFocusPosition;
+        if (pos == null || pos.Value.ImageWidth <= 0 || pos.Value.ImageHeight <= 0) return false;
+        var focusUV = new Vector(
+            pos.Value.FocusX / (double)pos.Value.ImageWidth - 0.5,
+            pos.Value.FocusY / (double)pos.Value.ImageHeight - 0.5);
+        var currentUV = GetCenterUV();
+        const double tolerance = 0.05;
+        return Math.Abs(currentUV.X - focusUV.X) < tolerance &&
+               Math.Abs(currentUV.Y - focusUV.Y) < tolerance;
+    }
+
+    /// <summary>
+    /// 获取对焦点在指定图像尺寸下的像素坐标。
+    /// 从当前文件的 ExifData.SonyFocusPosition 读取，映射到 imageSize。
+    /// </summary>
+    private Vector? GetFocusImagePoint(Vector imageSize)
+    {
+        var pos = _main.CurrentFile?.ExifData?.SonyFocusPosition;
+        if (pos == null || imageSize.X <= 0 || imageSize.Y <= 0) return null;
+        var p = pos.Value;
+        if (p.ImageWidth <= 0 || p.ImageHeight <= 0) return null;
+        return new Vector(
+            p.FocusX / (double)p.ImageWidth * imageSize.X,
+            p.FocusY / (double)p.ImageHeight * imageSize.Y);
     }
 
     /// <summary>
@@ -536,7 +623,10 @@ public class ImageViewModel : ReactiveObject
     {
         if (ViewSize.X <= 0 || ViewSize.Y <= 0) return;
         Scale = scale;
-        Translate = ViewSize * 0.5 - imagePoint * scale;
+        // 渲染坐标系：视图位置 = (px - W/2)*Scale + W/2 + Translate
+        // 令 imagePoint 出现在视图中心，逆推 Translate：
+        // Translate = ViewSize/2 - ImageSize/2*(1-scale) - imagePoint*scale
+        Translate = ViewSize * 0.5 - ImageSize * 0.5 * (1 - scale) - imagePoint * scale;
         ClampCenter();
         Fit = false;
     }
