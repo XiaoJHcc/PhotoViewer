@@ -46,6 +46,14 @@ internal static partial class SonyCipherTags
         SonyFNumber,
         /// <summary>val / 256 — 档位数</summary>
         Divide256,
+        /// <summary>val &amp; 0x00FFFFFF — 快门次数 (高字节清零)</summary>
+        Mask24bit,
+        /// <summary>(val - 32) / 1.8 — 华氏→摄氏</summary>
+        BatteryTemp,
+        /// <summary>"val%" — 百分比直接显示</summary>
+        Percentage,
+        /// <summary>val &amp; 0x7F — FocusMode 掩码</summary>
+        Mask0x7F,
         /// <summary>ISOInfo 子目录 (特殊处理)</summary>
         ISOInfo,
     }
@@ -85,9 +93,18 @@ internal static partial class SonyCipherTags
         // 解析字段
         var result = new List<MetadataTag>();
         bool isoInfoDecoded = false;
+        var seenNames = new HashSet<string>();
 
         foreach (var (offset, name, format, printConv, formula) in fields)
         {
+            // 跳过占位符字段 (自动生成的无名字段)
+            if (name.Contains('_') && name.StartsWith("Tag"))
+                continue;
+
+            // 跳过噪声字段 (矫正参数、内部数据等)
+            if (IsHiddenField(name))
+                continue;
+
             if (name == "_ISOInfo_")
             {
                 // Tag9401: 使用版本字节选择正确的 ISOInfo 偏移量
@@ -106,7 +123,7 @@ internal static partial class SonyCipherTags
             if (format == FieldFormat.Rational32u)
             {
                 var ratStr = ReadRational32u(decrypted, offset, name);
-                if (ratStr != null)
+                if (ratStr != null && seenNames.Add(name))
                 {
                     result.Add(new MetadataTag
                     {
@@ -123,6 +140,10 @@ internal static partial class SonyCipherTags
             if (value == null) continue;
 
             string displayValue = FormatValue(value.Value, formula, printConv);
+
+            // 去重: 同名字段只保留第一个
+            if (!seenNames.Add(name))
+                continue;
 
             result.Add(new MetadataTag
             {
@@ -313,6 +334,30 @@ internal static partial class SonyCipherTags
                 result = $"{rawValue / 256.0:F1}";
                 break;
 
+            case ValueFormula.Mask24bit:
+                result = (rawValue & 0x00FFFFFF).ToString();
+                break;
+
+            case ValueFormula.BatteryTemp:
+            {
+                var celsius = (rawValue - 32) / 1.8;
+                result = $"{celsius:F1} °C";
+                break;
+            }
+
+            case ValueFormula.Percentage:
+                result = $"{rawValue}%";
+                break;
+
+            case ValueFormula.Mask0x7F:
+            {
+                long masked = rawValue & 0x7F;
+                if (printConv != null && printConv.TryGetValue((int)masked, out var label0x7F))
+                    return label0x7F;
+                result = masked.ToString();
+                break;
+            }
+
             default:
                 result = rawValue.ToString();
                 break;
@@ -326,6 +371,27 @@ internal static partial class SonyCipherTags
         }
 
         return result;
+    }
+
+    /// <summary>判断字段是否应被隐藏 (矫正参数、内部数据等无用户可读价值的字段)</summary>
+    private static bool IsHiddenField(string name)
+    {
+        return name.EndsWith("CorrParams", StringComparison.Ordinal)
+            || name.EndsWith("CorrParamsPresent", StringComparison.Ordinal)
+            || name.StartsWith("Tag9", StringComparison.Ordinal)
+            || name == "TempTest1"
+            || name == "SonyTimeMinSec"
+            || name == "ModelReleaseYear"
+            || name == "LensSpecFeatures"
+            || name == "InternalSerialNumber"
+            || name == "BatteryLevelGrip1"
+            || name == "BatteryLevelGrip2"
+            || name == "ShotNumberSincePowerUp"
+            || name == "LensMount2"
+            || name == "LensType3"
+            || name == "Battery2"
+            || name == "BatteryLevel2"
+            || name == "ShutterType";
     }
 
     /// <summary>ISO 设置值映射 (ExifTool isoSetting2010)</summary>

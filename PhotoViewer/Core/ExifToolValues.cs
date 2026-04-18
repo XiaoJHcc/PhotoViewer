@@ -54,12 +54,18 @@ internal static partial class ExifToolValues
         if (string.IsNullOrEmpty(rawValue))
             return null;
 
+        // 提取 "Unknown (N)" 中的数值，作为备选查找键
+        string? numericKey = null;
+        if (rawValue.StartsWith("Unknown (", StringComparison.Ordinal) && rawValue.EndsWith(')'))
+            numericKey = rawValue[9..^1];
+
         // 第一优先级：按目录名关键词匹配厂商模块
         foreach (var (keyword, module) in _keywordMap)
         {
             if (directoryName.Contains(keyword, StringComparison.OrdinalIgnoreCase))
             {
-                var result = LookupInModule(module, tagId, rawValue);
+                var result = LookupInModule(module, tagId, rawValue)
+                          ?? (numericKey != null ? LookupInModule(module, tagId, numericKey) : null);
                 if (result != null)
                     return result;
                 break;
@@ -68,7 +74,8 @@ internal static partial class ExifToolValues
 
         // 第二优先级：标准 EXIF 表（Exif.pm 中的通用 tag，如 SubIFD 中的 Sony 私有 tag）
         {
-            var result = LookupInModule("Exif", tagId, rawValue);
+            var result = LookupInModule("Exif", tagId, rawValue)
+                      ?? (numericKey != null ? LookupInModule("Exif", tagId, numericKey) : null);
             if (result != null)
                 return result;
         }
@@ -80,7 +87,8 @@ internal static partial class ExifToolValues
             {
                 if (cameraMake.Contains(keyword, StringComparison.OrdinalIgnoreCase))
                 {
-                    var result = LookupInModule(module, tagId, rawValue);
+                    var result = LookupInModule(module, tagId, rawValue)
+                              ?? (numericKey != null ? LookupInModule(module, tagId, numericKey) : null);
                     if (result != null)
                         return result;
                     break;
@@ -166,7 +174,7 @@ internal static partial class ExifToolValues
             ["Program AE"]               = "P 程序自动",
             ["Aperture-priority AE"]     = "A 光圈优先",
             ["Aperture Priority"]        = "A 光圈优先",
-            ["Shutter speed priority AE"] = "S 快门优先",
+            ["Shutter speed priority AE"]= "S 快门优先",
             ["Creative (Slow speed)"]    = "创意（慢速）",
             ["Action (High speed)"]      = "运动（高速）",
             ["Bulb"]                     = "B 门",
@@ -286,9 +294,9 @@ internal static partial class ExifToolValues
             ["Wireless Controlled Flash Fired"] = "无线控制闪光灯已触发",
             ["Did not fire"]          = "未触发",
             ["Flash Inhibited"]       = "闪光灯已禁用",
-            ["Built-in Flash present"] = "内置闪光灯就绪",
+            ["Built-in Flash present"]= "内置闪光灯就绪",
             ["Built-in Flash Fired"]  = "内置闪光灯已触发",
-            ["External Flash present"] = "外置闪光灯就绪",
+            ["External Flash present"]= "外置闪光灯就绪",
             ["No Flash present"]      = "无闪光灯",
             ["Fired, Fill-flash"]     = "已触发，补光闪光",
             ["Fired, Rear Sync"]      = "已触发，后帘同步",
@@ -314,7 +322,7 @@ internal static partial class ExifToolValues
             ["Toy Camera"]       = "玩具相机",
             ["Pop Color"]        = "流行色彩",
             ["Posterization"]    = "色调分离",
-            ["Posterization B/W"] = "色调分离（黑白）",
+            ["Posterization B/W"]= "色调分离（黑白）",
             ["Retro Photo"]      = "怀旧照片",
             ["Soft High Key"]    = "柔和高调",
             ["Partial Color"]    = "局部色彩",

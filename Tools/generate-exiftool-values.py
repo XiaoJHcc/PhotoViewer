@@ -110,7 +110,7 @@ def _parse_tag_id(raw: str) -> Optional[int]:
         return None
 
 
-def _find_closing_brace(lines: list[str], start: int, max_lines: int = 60) -> int:
+def _find_closing_brace(lines: list[str], start: int, max_lines: int = 200) -> int:
     """从 start 行开始找到 PrintConv 哈希的关闭括号位置"""
     depth = 0
     for i in range(start, min(start + max_lines, len(lines))):
