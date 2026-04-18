@@ -485,10 +485,18 @@ public static class ExifLoader
     /// </summary>
     private static void DecodeSonyCipherTags(SonyType1MakernoteDirectory sonyDir, MetadataGroup group, string? cameraModel)
     {
+        // 跨 tag 去重: 同名字段只保留第一个有效解码
+        var globalSeen = new HashSet<string>();
+
         foreach (var tagId in SonyCipherTags.SupportedTagIds)
         {
             var decoded = SonyCipherTags.Decode(sonyDir, tagId, cameraModel);
             if (decoded == null || decoded.Count == 0)
+                continue;
+
+            // 跨 tag 去重
+            decoded.RemoveAll(t => !globalSeen.Add(t.Name));
+            if (decoded.Count == 0)
                 continue;
             
             // 找到原始条目并替换
@@ -536,6 +544,10 @@ public static class ExifLoader
             if (translated != null)
                 desc = translated;
 
+            // Sony MakerNote 特殊字段格式化
+            if (directory is SonyType1MakernoteDirectory)
+                desc = FormatSonyMakernoteValue(tag.Type, desc, directory, tag) ?? desc;
+
             var chineseValue = ExifToolValues.GetChineseValue(desc);
             group.Tags.Add(new MetadataTag
             {
@@ -546,6 +558,148 @@ public static class ExifLoader
             });
         }
         return group;
+    }
+
+    /// <summary>
+    /// 格式化 Sony MakerNote 中需要特殊解码的字段值。
+    /// LensSpec (0xB02A): 8 字节解码为 "E 28-75mm F2.8" 格式。
+    /// FocusFrameSize (0x2037): 3 个 int16u 解码为 "WxH" 格式。
+    /// </summary>
+    private static string? FormatSonyMakernoteValue(int tagId, string currentDesc,
+        MetadataExtractor.Directory directory, Tag tag)
+    {
+        switch (tagId)
+        {
+            case 0xB02A: // LensSpec
+                return FormatSonyLensSpec(directory);
+            case 0x2037: // FocusFrameSize
+                return FormatSonyFocusFrameSize(currentDesc);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>
+    /// 解码 Sony LensSpec (0xB02A) 8 字节为 "E 28-75mm F2.8" 格式。
+    /// Sony 使用 BCD 编码: 每个字节的十六进制表示即为十进制值。
+    /// 例: 字节值 0x28 (十进制40) 表示数值 28。
+    /// 字节布局: [flags1, shortFocalHi, shortFocalLo, longFocalHi, longFocalLo, maxApShort, maxApLong, flags2]
+    /// </summary>
+    private static string? FormatSonyLensSpec(MetadataExtractor.Directory directory)
+    {
+        var obj = directory.GetObject(0xB02A);
+        byte[]? bytes = obj switch
+        {
+            byte[] b => b,
+            sbyte[] sb => sb.Select(x => (byte)x).ToArray(),
+            _ => null,
+        };
+        if (bytes == null || bytes.Length != 8)
+            return null;
+
+        // BCD 解码焦距: 两个字节的十六进制表示拼合为十进制数值
+        int shortFocal = Bcd2ToInt(bytes[1], bytes[2]);
+        int longFocal = Bcd2ToInt(bytes[3], bytes[4]);
+
+        // BCD 解码光圈: 单字节十六进制表示 / 10
+        double maxApShort = Bcd1ToInt(bytes[5]) / 10.0;
+        double maxApLong = Bcd1ToInt(bytes[6]) / 10.0;
+
+        if (shortFocal == 0 || maxApShort == 0)
+            return null;
+
+        // 构建焦距和光圈字符串
+        string focalStr = longFocal != shortFocal && longFocal != 0
+            ? $"{shortFocal}-{longFocal}mm"
+            : $"{shortFocal}mm";
+        string apStr = maxApShort != maxApLong && maxApLong != 0
+            ? $"F{maxApShort:G}-{maxApLong:G}"
+            : $"F{maxApShort:G}";
+
+        string result = $"{focalStr} {apStr}";
+
+        // 解码镜头特性标志 (flags1 高字节 + flags2 低字节)
+        int flags = (bytes[0] << 8) | bytes[7];
+        var features = new List<string>();
+        // 参照 ExifTool @lensFeatures 定义
+        if ((flags & 0x4000) != 0) features.Add("PZ");
+        int mountBits = flags & 0x0300;
+        if (mountBits == 0x0100) features.Add("DT");
+        else if (mountBits == 0x0200) features.Add("FE");
+        else if (mountBits == 0x0300) features.Add("E");
+        // 后缀特性
+        var suffixes = new List<string>();
+        int typeBits = flags & 0x00E0;
+        if (typeBits == 0x0020) suffixes.Add("STF");
+        else if (typeBits == 0x0040) suffixes.Add("Reflex");
+        else if (typeBits == 0x0060) suffixes.Add("Macro");
+        else if (typeBits == 0x0080) suffixes.Add("Fisheye");
+        int glassBits = flags & 0x000C;
+        if (glassBits == 0x0004) suffixes.Add("ZA");
+        else if (glassBits == 0x0008) suffixes.Add("G");
+        int motorBits = flags & 0x0003;
+        if (motorBits == 0x0001) suffixes.Add("SSM");
+        else if (motorBits == 0x0002) suffixes.Add("SAM");
+        if ((flags & 0x8000) != 0) suffixes.Add("OSS");
+        if ((flags & 0x2000) != 0) suffixes.Add("LE");
+        if ((flags & 0x0800) != 0) suffixes.Add("II");
+
+        // 前缀 + 焦距光圈 + 后缀
+        if (features.Count > 0)
+            result = string.Join(" ", features) + " " + result;
+        if (suffixes.Count > 0)
+            result += " " + string.Join(" ", suffixes);
+
+        return result;
+    }
+
+    /// <summary>
+    /// 格式化 FocusFrameSize (0x2037): int16u[3] → "WxH"。
+    /// 第三个值为标志位，非零时有效。
+    /// </summary>
+    private static string? FormatSonyFocusFrameSize(string currentDesc)
+    {
+        // MetadataExtractor 输出格式为空格分隔的数值
+        var parts = currentDesc.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        // 可能是 3 个 int16u，也可能是 6 个 int8u (取决于 MetadataExtractor 解析)
+        if (parts.Length == 3 && int.TryParse(parts[0], out int w3) &&
+            int.TryParse(parts[1], out int h3) && int.TryParse(parts[2], out int flag3))
+        {
+            return flag3 != 0 ? $"{w3}x{h3}" : "n/a";
+        }
+        // 6 个字节: 按 little-endian int16u 重组
+        if (parts.Length == 6)
+        {
+            var vals = new int[6];
+            for (int i = 0; i < 6; i++)
+            {
+                if (!int.TryParse(parts[i], out vals[i]))
+                    return null;
+            }
+            int w = vals[0] | (vals[1] << 8);
+            int h = vals[2] | (vals[3] << 8);
+            int flag = vals[4] | (vals[5] << 8);
+            return flag != 0 ? $"{w}x{h}" : "n/a";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// BCD 解码: 将两个字节的十六进制表示拼合为十进制数值。
+    /// 例: (0x01, 0x35) → 0135 → 135
+    /// </summary>
+    private static int Bcd2ToInt(byte hi, byte lo)
+    {
+        return (hi >> 4) * 1000 + (hi & 0xF) * 100 + (lo >> 4) * 10 + (lo & 0xF);
+    }
+
+    /// <summary>
+    /// BCD 解码: 将单个字节的十六进制表示解释为十进制数值。
+    /// 例: 0x28 → 28, 0x56 → 56
+    /// </summary>
+    private static int Bcd1ToInt(byte b)
+    {
+        return (b >> 4) * 10 + (b & 0xF);
     }
     
     /// <summary>

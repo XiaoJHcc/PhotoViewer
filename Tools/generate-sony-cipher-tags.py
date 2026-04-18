@@ -538,12 +538,12 @@ def apply_variant_corrections(variants: dict[int, list[VariantRule]]) -> None:
         VariantRule([0x23, 0x24, 0x26, 0x28, 0x31, 0x32, 0x33, 0x41], None, "Tag9405b"),
     ])
 
-    # 0x9050: 型号条件选择
+    # 0x9050: 型号条件选择 (ExifTool: 4 个世代)
     _set_variants(variants, 0x9050, [
-        VariantRule(None, r"!^(DSC-|Stellar|ILCE-(1|5100|6[01]00|QX1)\b)", "Tag9050a"),
-        VariantRule(None, r"^(ILCE-(6[01]00|5100|QX1)\b)", "Tag9050b"),
-        VariantRule(None, r"^(DSC-|Stellar)", "Tag9050c"),
-        VariantRule(None, r"^ILCE-1\b", "Tag9050d"),
+        VariantRule(None, r"!^(DSC-|Stellar|ILCE-(1\b|6[1-7]00|6400|7C\b|7M[3-5]|7RM[2-5]|7SM[23]|7C[MR]|9\b|9M[23])|ILCA-99M2|ILME-|ZV-)", "Tag9050a"),
+        VariantRule(None, r"^(ILCE-(6[1-6]00|6400|7C\b|7M3|7RM[234]A?|7SM2|9\b|9M2)|ILCA-99M2|ZV-E10\b)", "Tag9050b"),
+        VariantRule(None, r"^(ILCE-(1\b|7M4|7RM5|7SM3)|ILME-FX3)", "Tag9050c"),
+        VariantRule(None, r"^(ILCE-(6700|7CM2|7CR|7M5|1M2|9M3)|ILME-FX2|ZV-E1\b|ZV-E10M2)", "Tag9050d"),
     ])
 
     # 0x2010: 型号条件选择 (多世代，简化处理)
@@ -564,6 +564,12 @@ def apply_variant_corrections(variants: dict[int, list[VariantRule]]) -> None:
         VariantRule(None, None, "Tag940e"),
     ])
 
+    # 0x9406: 加密首字节选择 (ExifTool: $$valPt 检查)
+    _set_variants(variants, 0x9406, [
+        VariantRule([0x01, 0x08, 0x1B], None, "Tag9406"),
+        VariantRule([0x40], None, "Tag9406b"),
+    ])
+
 
 def _set_variants(variants: dict[int, list[VariantRule]], tag_id: int,
                    rules: list[VariantRule]) -> None:
@@ -579,51 +585,145 @@ def _set_variants(variants: dict[int, list[VariantRule]], tag_id: int,
 
 def apply_field_corrections(sub_tables: dict[str, SubTable],
                              lookup_tables: dict[str, dict[int, str]]) -> None:
-    """修正自动解析器在多变体 Perl 条目中可能错取的字段属性。
-    Perl 中同一偏移量常有 [{variant1},{variant2}] 多版本条目，
-    自动解析器取第一个变体但有时取到次要名称或遗漏 Format/ValueConv。"""
+    """修正自动解析器在多变体 Perl 条目中可能错取的字段属性，
+    并补充关键 PrintConv 映射和缺失字段。"""
+
+    # ─── PrintConv 表 ─────────────────────────────────────────────
+
+    pc_quality2 = {0: "JPEG", 1: "RAW", 2: "RAW + JPEG", 3: "JPEG + MPO"}
+    pc_quality2_heif = {1: "JPEG", 2: "RAW", 3: "RAW + JPEG", 4: "HEIF", 6: "RAW + HEIF"}
+    pc_focus_mode = {0: "Manual", 2: "AF-S", 3: "AF-C", 4: "AF-A", 6: "DMF", 7: "AF-D"}
+    pc_exposure_program = {
+        0: "P", 1: "A", 2: "S", 3: "M",
+        4: "Auto", 5: "iAuto", 6: "Superior Auto", 7: "iAuto+",
+        8: "Portrait", 9: "Landscape", 10: "Twilight", 11: "Twilight Portrait",
+        12: "Sunset", 14: "Action", 16: "Sports",
+        17: "Handheld Night Shot", 18: "Anti Motion Blur", 19: "High Sensitivity",
+        21: "Beach", 22: "Snow", 23: "Fireworks",
+        26: "Underwater", 27: "Gourmet", 28: "Pet", 29: "Macro",
+        30: "HDR", 33: "Sweep Panorama", 36: "Background Defocus",
+        43: "Cont. Priority AE", 45: "Document", 46: "Party",
+    }
+    pc_lens_format = {0: "Unknown", 1: "APS-C", 2: "Full-frame"}
+    pc_lens_mount = {0: "Unknown", 1: "A-mount", 2: "E-mount"}
+    pc_aps_c_capture = {0: "Off", 1: "On"}
+    pc_release_mode2 = {
+        0: "Normal", 1: "Continuous", 2: "Bracketing",
+        3: "WB Bracketing", 5: "Burst", 6: "Capture During Movie",
+        7: "Sweep Panorama", 8: "Anti-Motion Blur",
+        9: "HDR", 13: "3D Sweep Panorama",
+        16: "3D Image", 17: "Burst 2", 18: "iAuto+",
+        19: "Speed Priority", 20: "Multi Frame NR",
+        23: "Bracketing (Single)", 26: "Continuous Low",
+        27: "High Sensitivity", 28: "Smile Shutter",
+        146: "Movie Capture (Single)",
+    }
+    pc_flash_status = {
+        0: "No Flash", 2: "Flash Inhibited",
+        64: "Built-in Flash", 65: "Built-in Flash Fired",
+        128: "External Flash", 129: "External Flash Fired",
+    }
+    pc_camera_orientation = {1: "Horizontal", 3: "Rotate 180", 6: "Rotate 90 CW", 8: "Rotate 270 CW"}
+    pc_shutter_type = {7: "Electronic", 23: "Mechanical"}
+    pc_creative_style = {
+        0: "Standard", 1: "Vivid", 2: "Neutral", 3: "Portrait", 4: "Landscape",
+        5: "B&W", 6: "Clear", 7: "Deep", 8: "Light", 9: "Sunset",
+        10: "Night View", 11: "Autumn Leaves", 13: "Sepia",
+        15: "FL", 16: "VV2", 17: "IN", 18: "SH", 255: "Off",
+    }
+    pc_picture_profile = {
+        0: "Standard (PP2)", 1: "Portrait", 3: "Night View",
+        4: "B&W/Sepia", 5: "Clear", 6: "Deep", 7: "Light", 8: "Vivid", 9: "Real",
+        10: "Movie (PP1)", 22: "ITU709 (PP3/PP4)", 24: "Cine1 (PP5)", 25: "Cine2 (PP6)",
+        26: "Cine3", 27: "Cine4", 28: "S-Log2 (PP7)", 29: "ITU709 (800%)",
+        31: "S-Log3 (PP8/PP9)", 33: "HLG2 (PP10)", 34: "HLG3",
+        36: "Off", 37: "FL", 38: "VV2", 39: "IN", 40: "SH", 48: "FL2", 49: "FL3",
+    }
+    pc_hi_iso_nr = {0: "Off", 1: "Low", 2: "Normal", 3: "High"}
+    pc_long_exp_nr = {0: "Off", 1: "On"}
+
+    # ─── 字段修正列表 ────────────────────────────────────────────
 
     corrections: list[tuple[str, int, Optional[str], Optional[str], Optional[str], Optional[dict[int,str]]]] = [
         # (表名, 偏移, 字段名覆盖, 格式覆盖, 公式覆盖, PrintConv覆盖)
-        # Tag9416
+
+        # ── Tag9416 ──
         ("Tag9416", 0x0006, "SonyExposureTime2", "int16u", "ExposureTime16", None),
         ("Tag9416", 0x000a, "SonyExposureTime2", "int16u", "ExposureTime16", None),
         ("Tag9416", 0x0010, "SonyFNumber2", "int16u", "SonyFNumber", None),
         ("Tag9416", 0x0012, "SonyMaxApertureValue", "int16u", "SonyFNumber", None),
+        ("Tag9416", 0x0035, "ExposureProgram", "int8u", None, pc_exposure_program),
+        ("Tag9416", 0x0048, "LensMount", "int8u", None, pc_lens_mount),
+        ("Tag9416", 0x0049, "LensFormat", "int8u", None, pc_lens_format),
+        ("Tag9416", 0x004A, "LensMount", "int8u", None, pc_lens_mount),
         ("Tag9416", 0x004B, None, "int16u", None, lookup_tables.get("sonyLensTypes2")),
-        ("Tag9416", 0x004D, None, "int16u", None, None),  # LensType (A-mount, 暂不添加查找表)
-        ("Tag9416", 0x0070, "FocalLength", "int16u", "Divide10", None),
-        ("Tag9416", 0x0071, "FocalLength", "int16u", "Divide10", None),
-        # Tag9405b
+
+        # ── Tag9400c (当前机型的基本信息表) ──
+        ("Tag9400c", 0x0029, "CameraOrientation", "int8u", None, pc_camera_orientation),
+        ("Tag9400c", 0x002a, "Quality2", "int8u", None, pc_quality2_heif),
+
+        # ── Tag9402 ──
+        ("Tag9402", 0x0004, "FocusMode", "int8u", "Mask0x7F", pc_focus_mode),
+
+        # ── Tag9405b (曝光/风格信息) ──
         ("Tag9405b", 0x0004, None, "int16u", "SonyISO", None),
         ("Tag9405b", 0x0006, None, "int16u", "SonyISO", None),
         ("Tag9405b", 0x000A, "StopsAboveBaseISO", "int16u", "Divide256", None),
         ("Tag9405b", 0x0014, "SonyFNumber", "int16u", "SonyFNumber", None),
         ("Tag9405b", 0x0016, "SonyMaxApertureValue", "int16u", "SonyFNumber", None),
-        # Tag9050a/b/c: ShutterCount 格式修正
-        ("Tag9050a", 0x004C, "ShutterCount2", "int32u", None, None),
-        ("Tag9050a", 0x01A0, None, "int32u", None, None),
-        ("Tag9050a", 0x01AA, None, "int32u", None, None),
-        ("Tag9050a", 0x01BD, None, "int32u", None, None),
-        ("Tag9050b", 0x0052, "ShutterCount2", "int32u", None, None),
-        ("Tag9050b", 0x0058, "ShutterCount2", "int32u", None, None),
+        ("Tag9405b", 0x0042, "HighISONoiseReduction", "int8u", None, pc_hi_iso_nr),
+        ("Tag9405b", 0x0044, "LongExposureNoiseReduction", "int8u", None, pc_long_exp_nr),
+        ("Tag9405b", 0x0048, "ExposureProgram", "int8u", None, pc_exposure_program),
+        ("Tag9405b", 0x004a, "CreativeStyle", "int8u", None, pc_creative_style),
+        ("Tag9405b", 0x005d, "LensFormat", "int8u", None, pc_lens_format),
+        ("Tag9405b", 0x005e, "LensMount", "int8u", None, pc_lens_mount),
+
+        # ── Tag9050b (A7III 等中期机型) ──
+        ("Tag9050b", 0x0026, "Shutter", "int16u", "ExposureTime16", None),
+        ("Tag9050b", 0x0039, "FlashStatus", "int8u", "None", pc_flash_status),
+        ("Tag9050b", 0x003A, "ShutterCount", "int32u", "Mask24bit", None),
+        ("Tag9050b", 0x0046, "SonyExposureTime", "int16u", "ExposureTime16", None),
+        ("Tag9050b", 0x0048, "SonyFNumber", "int16u", "SonyFNumber", None),
+        ("Tag9050b", 0x004b, "ReleaseMode2", "int8u", None, pc_release_mode2),
+        ("Tag9050b", 0x0052, "ShutterCount2", "int32u", "Mask24bit", None),
+        ("Tag9050b", 0x0058, "ShutterCount2", "int32u", "Mask24bit", None),
+        ("Tag9050b", 0x0105, "LensMount", "int8u", None, pc_lens_mount),
+        ("Tag9050b", 0x0106, "LensFormat", "int8u", None, pc_lens_format),
+        ("Tag9050b", 0x0114, "APS-CSizeCapture", "int8u", None, pc_aps_c_capture),
         ("Tag9050b", 0x019F, None, "int32u", None, None),
         ("Tag9050b", 0x01CB, None, "int32u", None, None),
         ("Tag9050b", 0x01CD, None, "int32u", None, None),
-        # Tag9050a/b: SonyFNumber 修正
-        ("Tag9050a", 0x003C, "SonyFNumber", "int16u", "SonyFNumber", None),
-        ("Tag9050b", 0x0048, "SonyFNumber", "int16u", "SonyFNumber", None),
-        ("Tag9050c", 0x0048, "SonyFNumber", "int16u", "SonyFNumber", None),
-        ("Tag9050c", 0x0068, "SonyFNumber", "int16u", "SonyFNumber", None),
-        # Tag9050: Shutter (ExposureTime)
+
+        # ── Tag9050a (老一代机型) ──
         ("Tag9050a", 0x0020, "Shutter", "int16u", "ExposureTime16", None),
-        ("Tag9050b", 0x0026, "Shutter", "int16u", "ExposureTime16", None),
+        ("Tag9050a", 0x0031, "FlashStatus", "int8u", "None", pc_flash_status),
+        ("Tag9050a", 0x003C, "SonyFNumber", "int16u", "SonyFNumber", None),
+        ("Tag9050a", 0x004C, "ShutterCount2", "int32u", "Mask24bit", None),
+        ("Tag9050a", 0x01A0, None, "int32u", None, None),
+        ("Tag9050a", 0x01AA, None, "int32u", None, None),
+        ("Tag9050a", 0x01BD, None, "int32u", None, None),
+
+        # ── Tag9050c/d (新一代机型) ──
         ("Tag9050c", 0x0026, "Shutter", "int16u", "ExposureTime16", None),
+        ("Tag9050c", 0x0039, "FlashStatus", "int8u", "None", pc_flash_status),
+        ("Tag9050c", 0x0048, "SonyFNumber", "int16u", "SonyFNumber", None),
         ("Tag9050c", 0x0066, "SonyExposureTime", "int16u", "ExposureTime16", None),
+        ("Tag9050c", 0x0068, "SonyFNumber", "int16u", "SonyFNumber", None),
+        ("Tag9050d", 0x000A, "ShutterCount", "int32u", "Mask24bit", None),
         ("Tag9050d", 0x001A, "SonyExposureTime", "int16u", "ExposureTime16", None),
-        # Tag2010 关键字段
+        ("Tag9050d", 0x001C, "SonyFNumber", "int16u", "SonyFNumber", None),
+        ("Tag9050d", 0x001F, "ReleaseMode2", "int8u", None, pc_release_mode2),
+
+        # ── Tag9406 / Tag9406b (电池信息) ──
+        ("Tag9406", 0x0005, "BatteryTemperature", "int8u", "BatteryTemp", None),
+        ("Tag9406", 0x0007, "BatteryLevel", "int8u", "Percentage", None),
+        ("Tag9406b", 0x0005, "BatteryLevel", "int8u", "Percentage", None),
+        ("Tag9406b", 0x0007, "BatteryLevel2", "int8u", "Percentage", None),
+
+        # ── Tag2010 关键字段 ──
         ("Tag2010f", 0x113C, None, "int16u", "SonyISO", None),
         ("Tag2010g", 0x0344, None, "int16u", "SonyISO", None),
+        ("Tag2010g", 0x0237, "PictureProfile", "int8u", None, pc_picture_profile),
         ("Tag2010h", 0x0346, None, "int16u", "SonyISO", None),
         ("Tag2010i", 0x0320, None, "int16u", "SonyISO", None),
     ]
@@ -632,6 +732,7 @@ def apply_field_corrections(sub_tables: dict[str, SubTable],
         if table_name not in sub_tables:
             continue
         st = sub_tables[table_name]
+        found = False
         for field in st.fields:
             if field.offset == offset:
                 if name_override:
@@ -642,7 +743,16 @@ def apply_field_corrections(sub_tables: dict[str, SubTable],
                     field.value_formula = formula_override
                 if pc_override is not None:
                     field.print_conv = pc_override
+                found = True
                 break
+        # 如果字段不存在则添加 (用于补齐缺失字段)
+        if not found and name_override:
+            st.fields.append(FieldDef(
+                offset, name_override,
+                fmt_override or st.default_format,
+                pc_override, formula_override or "None",
+            ))
+            st.fields.sort(key=lambda f: f.offset)
 
 
 # ─── 解密表计算 ──────────────────────────────────────────────────────────────
