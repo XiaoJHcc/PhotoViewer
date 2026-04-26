@@ -34,7 +34,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
             .AfterSetup(_ => 
             {
                 HeifLoader.Initialize(new iOSHeifDecoder());
-                MemoryBudget.Initialize(new iOSMemoryBudget());
+                PerformanceBudget.Initialize(new iOSPerformanceBudget());
                 XmpWriter.Initialize(new iOSXmpWriter());
                 SettingsService.ConfigureStorage(new iOSSettingsStorage());
  
@@ -44,7 +44,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                     var (beforeBytes, beforeCount, _) = BitmapLoader.TrimToCurrentRatio(0.8);
 
                     // 记录触发时缓存大小（MB）
-                    iOSMemoryBudget.RecordMemoryWarningCacheMB(beforeBytes);
+                    iOSPerformanceBudget.RecordMemoryWarningCacheMB(beforeBytes);
 
                     // 广播给 UI（仅显示触发时的大小、数量与时间）
                     var evt = new BitmapLoader.MemoryWarningEvent(

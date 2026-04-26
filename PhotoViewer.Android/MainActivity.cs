@@ -53,7 +53,7 @@ public class MainActivity : AvaloniaMainActivity<App>
                 // 系统无法解码时（如 HEIF YUV 4:2:2）回退到 libheif 软件解码器。
                 // 若 libheif.so 未打包进 APK，则仅使用系统解码器。
                 HeifLoader.Initialize(new AndroidLibHeifDecoder());
-                MemoryBudget.Initialize(new AndroidMemoryBudget());
+                PerformanceBudget.Initialize(new AndroidPerformanceBudget());
                 XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
                 SettingsService.ConfigureStorage(new AndroidSettingsStorage());
             });

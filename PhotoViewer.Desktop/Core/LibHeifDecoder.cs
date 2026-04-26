@@ -18,8 +18,11 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// </summary>
     public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
     {
-        await using var stream = await file.OpenReadAsync();
-        return await LoadBitmapFromStreamAsync(stream);
+        return await HeifLoader.RunCpuDecodeAsync(async () =>
+        {
+            await using var stream = await file.OpenReadAsync();
+            return await LoadBitmapFromStreamAsync(stream);
+        });
     }
 
     /// <summary>
@@ -27,8 +30,11 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// </summary>
     public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
     {
-        await using var stream = await file.OpenReadAsync();
-        return await LoadThumbnailFromStreamAsync(stream, maxSize);
+        return await HeifLoader.RunCpuDecodeAsync(async () =>
+        {
+            await using var stream = await file.OpenReadAsync();
+            return await LoadThumbnailFromStreamAsync(stream, maxSize);
+        });
     }
 
     /// <summary>
