@@ -26,6 +26,7 @@ sealed class Program
         {
             HeifLoader.Initialize(new LibHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
+            XmpWriter.Initialize(new WindowsXmpWriter());
             SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
             PublishExternalOpenArgs(args);
              

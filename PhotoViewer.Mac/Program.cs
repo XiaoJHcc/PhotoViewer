@@ -18,6 +18,7 @@ sealed class Program
         {
             HeifLoader.Initialize(new MacHeifDecoder());
             MemoryBudget.Initialize(new DefaultMemoryBudget());
+            XmpWriter.Initialize(new MacXmpWriter());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })
