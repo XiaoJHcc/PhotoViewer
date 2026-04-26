@@ -2,11 +2,11 @@
 """
 Tools/generate-chinese-template.py
 
-生成 PhotoViewer/Core/ExifChinese.cs —— EXIF 字段中文名称映射表。
+生成 PhotoViewer/Core/Exif/ExifChinese.cs —— EXIF 字段中文名称映射表。
 
 工作流程：
   1. 首次运行：生成包含已知中文翻译 + 注释掉的未知条目的完整模板
-  2. 手动编辑 ExifChinese.cs：取消注释并填写中文名称
+    2. 手动编辑 Exif/ExifChinese.cs：取消注释并填写中文名称
   3. 如需加入新 ExifTool 模块的条目，可重新运行脚本，再用 git diff 合并改动
 
 用法:
@@ -16,7 +16,7 @@ Tools/generate-chinese-template.py
     --ref   ExifTool GitHub 仓库的 git ref（默认 master）
 
 输出:
-    PhotoViewer/Core/ExifChinese.cs  （首次生成后由用户手动维护）
+    PhotoViewer/Core/Exif/ExifChinese.cs  （首次生成后由用户手动维护）
 """
 
 import re
@@ -31,7 +31,7 @@ from typing import Optional
 EXIFTOOL_RAW = "https://raw.githubusercontent.com/exiftool/exiftool/{ref}/lib/Image/ExifTool/{file}.pm"
 
 REPO_ROOT = Path(__file__).parent.parent
-OUTPUT_PATH = REPO_ROOT / "PhotoViewer" / "Core" / "ExifChinese.Generated.cs"
+OUTPUT_PATH = REPO_ROOT / "PhotoViewer" / "Core" / "Exif" / "ExifChinese.Generated.cs"
 
 # ============================================================
 #  A. MetadataExtractor 格式（Title Case With Spaces / 特殊符号）
@@ -545,7 +545,7 @@ def generate_cs(module_tag_names, ref: str) -> str:
     now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
 
     lines = [
-        "// PhotoViewer/Core/ExifChinese.Generated.cs",
+        "// PhotoViewer/Core/Exif/ExifChinese.Generated.cs",
         "// 【自动生成文件，请勿直接编辑】",
         "//",
         "// 如需修改中文名称，请在 ExifChinese.cs 的 _overrideNames 中添加覆盖条目。",
@@ -591,7 +591,7 @@ def generate_cs(module_tag_names, ref: str) -> str:
 
 
 def main() -> None:
-    parser = ArgumentParser(description="生成 ExifChinese.cs EXIF 字段中文名称模板")
+    parser = ArgumentParser(description="生成 Exif/ExifChinese.cs EXIF 字段中文名称模板")
     parser.add_argument('--ref', default='master',
                         help='ExifTool GitHub 仓库的 git ref（默认: master）')
     args = parser.parse_args()

@@ -1,4 +1,4 @@
-// PhotoViewer/Core/ExifChinese.cs
+// PhotoViewer/Core/Exif/ExifChinese.cs
 // EXIF 字段中文名称 —— 手动维护的覆盖表（最高优先级）
 //
 // 用法：

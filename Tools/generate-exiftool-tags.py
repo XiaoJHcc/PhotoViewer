@@ -12,7 +12,7 @@ Tools/generate-exiftool-tags.py
     --ref   ExifTool GitHub 仓库的 git ref（分支/tag/commit），默认 master
 
 输出:
-    PhotoViewer/Core/ExifToolTags.Generated.cs
+    PhotoViewer/Core/Exif/ExifToolTags.Generated.cs
 """
 
 import re
@@ -50,7 +50,7 @@ MODULES: list[tuple[str, str]] = [
 ]
 
 REPO_ROOT = Path(__file__).parent.parent
-OUTPUT_PATH = REPO_ROOT / "PhotoViewer" / "Core" / "ExifToolTags.Generated.cs"
+OUTPUT_PATH = REPO_ROOT / "PhotoViewer" / "Core" / "Exif" / "ExifToolTags.Generated.cs"
 
 # 匹配 tag ID 行: 以缩进开头，后跟十六进制 0xHEX 或短十进制（最多 5 位），再跟 =>
 _TAG_ID_RE = re.compile(r'^\s+(0x[0-9a-fA-F]{1,6}|\b\d{1,5}\b)\s*=>')

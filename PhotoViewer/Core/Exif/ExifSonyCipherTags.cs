@@ -6,11 +6,11 @@ using MetadataExtractor.Formats.Exif.Makernotes;
 namespace PhotoViewer.Core;
 
 /// <summary>
-/// Sony 加密 MakerNote tag 解码器。
+/// Exif Sony 加密 MakerNote tag 解码器。
 /// 处理 0x94xx / 0x9050 等使用 (b³ % 249) 替换密码加密的二进制数据块，
 /// 将其解密后按 ExifTool 定义的偏移量解析为可读字段。
 /// </summary>
-internal static partial class SonyCipherTags
+internal static partial class ExifSonyCipherTags
 {
     /// <summary>值读取格式</summary>
     internal enum FieldFormat

@@ -495,7 +495,7 @@ public static class ExifLoader
             // Sony 加密 MakerNote tag 解码：将 [N values] 二进制块替换为解码后的可读字段
             if (directory is SonyType1MakernoteDirectory sonyDir)
             {
-                DecodeSonyCipherTags(sonyDir, groups[^1], cameraModel);
+                DecodeExifSonyCipherTags(sonyDir, groups[^1], cameraModel);
             }
         }
         
@@ -505,14 +505,14 @@ public static class ExifLoader
     /// <summary>
     /// 解码 Sony 加密 MakerNote tag，将原始二进制条目替换为可读字段
     /// </summary>
-    private static void DecodeSonyCipherTags(SonyType1MakernoteDirectory sonyDir, MetadataGroup group, string? cameraModel)
+    private static void DecodeExifSonyCipherTags(SonyType1MakernoteDirectory sonyDir, MetadataGroup group, string? cameraModel)
     {
         // 跨 tag 去重: 同名字段只保留第一个有效解码
         var globalSeen = new HashSet<string>();
 
-        foreach (var tagId in SonyCipherTags.SupportedTagIds)
+        foreach (var tagId in ExifSonyCipherTags.SupportedTagIds)
         {
-            var decoded = SonyCipherTags.Decode(sonyDir, tagId, cameraModel);
+            var decoded = ExifSonyCipherTags.Decode(sonyDir, tagId, cameraModel);
             if (decoded == null || decoded.Count == 0)
                 continue;
 
