@@ -159,15 +159,15 @@ public class BitmapPrefetcher
                 .ToList();
             if (fileList.Count == 0) return;
 
-            int parallel = Math.Max(1, _settings.PreloadParallelism);
-            using var semaphore = new SemaphoreSlim(parallel);
+            var nativeParallel = Math.Max(1, _settings.NativePreloadParallelism);
+            using var nativeSemaphore = new SemaphoreSlim(nativeParallel);
             var tasks = new List<Task>(fileList.Count);
 
             foreach (var f in fileList)
             {
                 if (ct.IsCancellationRequested) break;
 
-                await semaphore.WaitAsync(ct);
+                await nativeSemaphore.WaitAsync(ct);
 
                 // 轻微错峰，避免瞬时大量 I/O
                 await Task.Delay(15, ct);
@@ -201,7 +201,7 @@ public class BitmapPrefetcher
                     finally
                     {
                         reservation?.Dispose();
-                        semaphore.Release();
+                        nativeSemaphore.Release();
                     }
                 }, ct));
             }

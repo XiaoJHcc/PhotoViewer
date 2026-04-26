@@ -30,6 +30,8 @@ public sealed class SettingsModel
     public int PreloadBackwardCount { get; set; }
     public int VisibleCenterPreloadCount { get; set; }
     public int VisibleCenterDelayMs { get; set; }
+    public int NativePreloadParallelism { get; set; }
+    public int CpuPreloadParallelism { get; set; }
     public int PreloadParallelism { get; set; }
 }
 

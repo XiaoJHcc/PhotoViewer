@@ -120,7 +120,8 @@ public partial class SettingsViewModel
             PreloadBackwardCount = PreloadBackwardCount,
             VisibleCenterPreloadCount = VisibleCenterPreloadCount,
             VisibleCenterDelayMs = VisibleCenterDelayMs,
-            PreloadParallelism = PreloadParallelism
+            NativePreloadParallelism = NativePreloadParallelism,
+            CpuPreloadParallelism = CpuPreloadParallelism
         };
     }
 
@@ -167,7 +168,15 @@ public partial class SettingsViewModel
             if (model.PreloadBackwardCount > 0) PreloadBackwardCount = model.PreloadBackwardCount;
             if (model.VisibleCenterPreloadCount > 0) VisibleCenterPreloadCount = model.VisibleCenterPreloadCount;
             if (model.VisibleCenterDelayMs > 0) VisibleCenterDelayMs = model.VisibleCenterDelayMs;
-            if (model.PreloadParallelism > 0) PreloadParallelism = model.PreloadParallelism;
+            if (model.NativePreloadParallelism > 0)
+                NativePreloadParallelism = model.NativePreloadParallelism;
+            else if (model.PreloadParallelism > 0)
+                NativePreloadParallelism = model.PreloadParallelism;
+
+            if (model.CpuPreloadParallelism > 0)
+                CpuPreloadParallelism = model.CpuPreloadParallelism;
+            else if (model.PreloadParallelism > 0)
+                CpuPreloadParallelism = model.PreloadParallelism;
         }
         finally
         {

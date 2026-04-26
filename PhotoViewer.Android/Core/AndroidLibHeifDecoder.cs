@@ -133,8 +133,11 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
 
         try
         {
-            await using var stream = await file.OpenReadAsync();
-            var result = await LoadBitmapFromStreamAsync(stream);
+            var result = await HeifLoader.RunCpuDecodeAsync(async () =>
+            {
+                await using var stream = await file.OpenReadAsync();
+                return await LoadBitmapFromStreamAsync(stream);
+            });
             if (result == null)
             {
                 reasons.AppendLine("② libheif 软件解码器: 解码返回 null（HeifImage 无效或格式不兼容）");
@@ -174,8 +177,11 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
 
         try
         {
-            await using var stream = await file.OpenReadAsync();
-            return await LoadThumbnailFromStreamAsync(stream, maxSize);
+            return await HeifLoader.RunCpuDecodeAsync(async () =>
+            {
+                await using var stream = await file.OpenReadAsync();
+                return await LoadThumbnailFromStreamAsync(stream, maxSize);
+            });
         }
         catch (Exception ex)
         {

@@ -6,10 +6,19 @@ using PhotoViewer.Core;
 
 namespace PhotoViewer.iOS.Core;
 
-public sealed class iOSMemoryBudget : IMemoryBudget
+/// <summary>
+/// iOS 平台性能预算实现。
+/// </summary>
+public sealed class iOSPerformanceBudget : IPerformanceBudget
 {
-    // 新增：记录上次系统内存告警前缓存大小（MB）
+    /// <summary>
+    /// 记录上次系统内存告警前缓存大小（MB）。
+    /// </summary>
     public static int LastMemoryWarningCacheMB { get; private set; }
+
+    /// <summary>
+    /// 在系统内存告警到来前记录当前缓存大小。
+    /// </summary>
     public static void RecordMemoryWarningCacheMB(long bytes)
         => LastMemoryWarningCacheMB = (int)Math.Max(0, bytes / (1024 * 1024));
 
@@ -18,6 +27,7 @@ public sealed class iOSMemoryBudget : IMemoryBudget
         public string[] Keys;            // 型号标识或营销名关键字(小写)
         public int MemoryCapacityMB;     // 内存容量列 (例如 8GB -> 8192)
         public int CrashLimitMB;         // 崩溃量 (表中“崩溃量”列)
+
         public DeviceBudget(int memoryCapacityMB, int crashLimitMB, params string[] keys)
         {
             MemoryCapacityMB = memoryCapacityMB;
@@ -32,18 +42,16 @@ public sealed class iOSMemoryBudget : IMemoryBudget
     // 3. 可持续补全更多表中机型。
     private static readonly DeviceBudget[] Budgets =
     {
-        // iPhone 系列 (节选)
-        new(12288, 3356, "iphone17,1", "iphone 17 pro"),              // 12GB 标准权限
-        new(8192, 3341, "iphone16,2", "iphone16,1", "iphone 15 pro"), // 8GB
+        new(12288, 3356, "iphone17,1", "iphone 17 pro"),
+        new(8192, 3341, "iphone16,2", "iphone16,1", "iphone 15 pro"),
         new(6144, 3064, "iphone13,3", "iphone12,3", "iphone 12 pro", "iphone 13 pro max", "iphone 12 pro max"),
         new(4096, 2091, "iphone14,5", "iphone 13", "iphone 12", "iphone 11", "iphone 11 pro", "iphone 11 pro max"),
         new(3072, 1843, "iphone11,8", "iphone xr"),
         new(3072, 1392, "iphone10,3", "iphone10,6", "iphone x"),
         new(2048, 1395, "iphone9,1", "iphone9,3", "iphone7,2", "iphone 7", "iphone se (1st)"),
-        new(2048, 1444, "iphone se"), // 2GB SE 特例
+        new(2048, 1444, "iphone se"),
         new(1024, 646, "iphone6,1", "iphone6,2", "iphone5s"),
         new(512, 325, "iphone4,1", "iphone 4"),
-        // iPad / iPad Pro (节选)
         new(8192, 5089, "ipad16,3", "ipad pro 11 (m4)", "ipad pro 11 英寸 (第 5 代)"),
         new(8192, 5089, "ipad14,3", "ipad14,4", "ipad pro 11 英寸 (第 4 代)"),
         new(6144, 4597, "ipad13,4", "ipad13,5", "ipad13,6", "ipad13,7", "ipad pro 11 英寸 (第 2 代)"),
@@ -77,9 +85,15 @@ public sealed class iOSMemoryBudget : IMemoryBudget
                 sysctlbyname("hw.machine", p, ref len, IntPtr.Zero, 0);
                 return Marshal.PtrToStringAnsi(p) ?? string.Empty;
             }
-            finally { Marshal.FreeHGlobal(p); }
+            finally
+            {
+                Marshal.FreeHGlobal(p);
+            }
         }
-        catch { return string.Empty; }
+        catch
+        {
+            return string.Empty;
+        }
     }
 
     private static int GetPhysicalMemoryMB()
@@ -89,9 +103,15 @@ public sealed class iOSMemoryBudget : IMemoryBudget
             var bytes = (long)NSProcessInfo.ProcessInfo.PhysicalMemory;
             return (int)(bytes / (1024 * 1024));
         }
-        catch { return 0; }
+        catch
+        {
+            return 0;
+        }
     }
 
+    /// <summary>
+    /// 获取应用可用的内存上限（MB）。
+    /// </summary>
     public int GetAppMemoryLimitMB()
     {
         var machine = GetMachineIdentifier().ToLowerInvariant();
@@ -129,4 +149,22 @@ public sealed class iOSMemoryBudget : IMemoryBudget
         // 5. 最终兜底：2GB *50% = 1024 (不少于 256)
         return 1024;
     }
+
+    /// <summary>
+    /// 获取当前平台可用于解码任务的 CPU 并行能力。
+    /// </summary>
+    public int GetCpuCoreCount()
+        => Math.Max(1, Environment.ProcessorCount);
+
+    /// <summary>
+    /// 获取原生解码路径建议的最大并行预载线程数。
+    /// </summary>
+    public int GetNativePreloadThreadLimit()
+        => Math.Min(GetCpuCoreCount(), 4);
+
+    /// <summary>
+    /// 获取 CPU 解码路径建议的最大并行预载线程数。
+    /// </summary>
+    public int GetCpuPreloadThreadLimit()
+        => 1;
 }

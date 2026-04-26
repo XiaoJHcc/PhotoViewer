@@ -79,13 +79,24 @@
                 <StackPanel Spacing="10" Margin="4">
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
-                        <TextBlock Classes="settings-label" Text="并行预载线程" />
+                        <TextBlock Classes="settings-label" Text="原生解码线程" />
                         <Slider Grid.Column="1" 
                                 Minimum="0"
                                 Maximum="1"
-                                Value="{Binding PreloadParallelismExp}" />
+                            Value="{Binding NativePreloadParallelismExp}" />
                         <TextBox Grid.Column="2" 
-                                 Text="{Binding PreloadParallelism}" />
+                             Text="{Binding NativePreloadParallelism}" />
+                        </Grid>
+
+                        <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="软件解码线程" />
+                        <Slider Grid.Column="1" 
+                            Minimum="0"
+                            Maximum="1"
+                            Value="{Binding CpuPreloadParallelismExp}" />
+                        <TextBox Grid.Column="2" 
+                             Text="{Binding CpuPreloadParallelism}" />
                     </Grid>
                     
                     <Grid Classes="settings-numeric"
@@ -100,8 +111,8 @@
                     </Grid>
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
-                               Text="{Binding MemoryBudgetInfo}"
-                               Foreground="{Binding MemoryBudgetInfoColor}" />
+                               Text="{Binding PerformanceBudgetInfo}"
+                               Foreground="{Binding PerformanceBudgetInfoColor}" />
                     
                     <!-- 忽略透明度 -->
                     <!-- <CheckBox Classes="settings-checkbox" -->

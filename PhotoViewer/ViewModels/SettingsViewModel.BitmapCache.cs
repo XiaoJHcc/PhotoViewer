@@ -15,6 +15,9 @@ public partial class SettingsViewModel
     ///////////////////
 
     private int _systemMemoryLimitMB; // 记录设备上限，便于事件到来时重建 UI 文本
+    private int _systemCpuCoreCount = 1;
+    private int _systemNativePreloadLimit = 8;
+    private int _systemCpuPreloadLimit = 8;
 
     /// <summary>
     /// 初始化数据（缓存数量、内存大小、预载数量）
@@ -25,8 +28,11 @@ public partial class SettingsViewModel
         // 读取系统内存上限，设置默认值
         try
         {
-            var systemMemoryLimit = MemoryBudget.AppMemoryLimitMB;
+            var systemMemoryLimit = PerformanceBudget.AppMemoryLimitMB;
             _systemMemoryLimitMB = systemMemoryLimit;
+            _systemCpuCoreCount = Math.Max(1, PerformanceBudget.CpuCoreCount);
+            _systemNativePreloadLimit = Math.Max(1, PerformanceBudget.NativePreloadThreadLimit);
+            _systemCpuPreloadLimit = Math.Max(1, PerformanceBudget.CpuPreloadThreadLimit);
 
             // 设置默认内存上限为系统限制的 50%，但不超过 4GB
             var defaultMemory = Math.Min(systemMemoryLimit * 1 / 2, 4096);
@@ -35,21 +41,32 @@ public partial class SettingsViewModel
             if (BitmapCacheMaxMemory < 4096)
             {
                 BitmapCacheMaxCount = Math.Min(BitmapCacheMaxMemory / 132, 30); // 按 33MP 估算减少张数
-                PreloadParallelism = (int)(BitmapCacheMaxMemory / 4096.0 * 8); // 同比减少线程数
+                NativePreloadParallelism = EstimateInitialPreloadParallelism(_systemNativePreloadLimit);
+                CpuPreloadParallelism = EstimateInitialPreloadParallelism(_systemCpuPreloadLimit);
+            }
+            else
+            {
+                NativePreloadParallelism = _systemNativePreloadLimit;
+                CpuPreloadParallelism = _systemCpuPreloadLimit;
             }
 
-            MemoryBudgetInfo = $"设备内存上限: {systemMemoryLimit} MB";
+            PerformanceBudgetInfo = BuildPerformanceBudgetInfo();
             if (IsIOS)
             {
-                MemoryBudgetInfo += " / iOS 内存限制更加严格，如遇闪退请调小限值";
+                PerformanceBudgetInfo += " / iOS 内存限制更加严格，如遇闪退请调小限值";
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to initialize memory budget: {ex.Message}");
+            Console.WriteLine($"Failed to initialize performance budget: {ex.Message}");
             BitmapCacheMaxMemory = 2048;
             _systemMemoryLimitMB = 0;
-            MemoryBudgetInfo = "设备内存上限: 未知";
+            _systemCpuCoreCount = Math.Max(1, Environment.ProcessorCount);
+            _systemNativePreloadLimit = Math.Min(_systemCpuCoreCount, 8);
+            _systemCpuPreloadLimit = Math.Min(_systemCpuCoreCount, 4);
+            NativePreloadParallelism = _systemNativePreloadLimit;
+            CpuPreloadParallelism = Math.Min(_systemCpuPreloadLimit, 1);
+            PerformanceBudgetInfo = "设备性能: 未知";
         }
 
         // 订阅内存告警事件：仅显示触发时快照（大小、数量、时间）
@@ -59,8 +76,8 @@ public partial class SettingsViewModel
             .Subscribe(evt =>
             {
                 var iosNote = IsIOS ? " / iOS 内存限制更加严格，如遇闪退请调小限值" : string.Empty;
-                MemoryBudgetInfo =
-                    $"设备内存上限: {_systemMemoryLimitMB} MB{iosNote} / " +
+                PerformanceBudgetInfo =
+                    $"{BuildPerformanceBudgetInfo()}{iosNote} / " +
                     $"上次系统内存告警：缓存 {evt.sizeMB} MB, {evt.count} 项 @ {evt.time:HH:mm:ss}";
             });
 
@@ -102,7 +119,7 @@ public partial class SettingsViewModel
                 BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
                 
                 // 更新内存信息颜色
-                this.RaisePropertyChanged(nameof(MemoryBudgetInfoColor));
+                this.RaisePropertyChanged(nameof(PerformanceBudgetInfoColor));
                 
                 // 计算当前内存能够满足多少张照片
                 this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
@@ -116,6 +133,9 @@ public partial class SettingsViewModel
                 // 计算当前内存能够满足多少张照片
                 this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
             });
+
+        this.WhenAnyValue(v => v.CpuPreloadParallelism)
+            .Subscribe(v => HeifLoader.SetCpuDecodeParallelism(v));
     }
     
     // 指数映射工具：t ∈ [0,1]
@@ -140,6 +160,20 @@ public partial class SettingsViewModel
         var v = min * Math.Pow(max / min, t);
         return (int)Math.Round(v);
     }
+
+    private int EstimateInitialPreloadParallelism(int maxParallelism)
+    {
+        if (maxParallelism <= 1)
+        {
+            return 1;
+        }
+
+        var scaled = (int)Math.Round(BitmapCacheMaxMemory / 4096.0 * maxParallelism);
+        return Math.Clamp(scaled, 1, maxParallelism);
+    }
+
+    private string BuildPerformanceBudgetInfo()
+        => $"设备性能: CPU {_systemCpuCoreCount} 核 / 内存 {_systemMemoryLimitMB} MB";
 
     // 冻结标志：缓存数量上限变化时冻结 百分比 更新，保持滑条位置不变
     private bool _freezePreloadExp = false;
@@ -183,17 +217,20 @@ public partial class SettingsViewModel
         set => BitmapCacheMaxMemory = FromExp(value, 512, 32768);
     }
 
-    private string _memoryBudgetInfo = string.Empty;
-    public string MemoryBudgetInfo
+    private string _performanceBudgetInfo = string.Empty;
+    public string PerformanceBudgetInfo
     {
-        get => _memoryBudgetInfo;
-        private set => this.RaiseAndSetIfChanged(ref _memoryBudgetInfo, value);
+        get => _performanceBudgetInfo;
+        private set => this.RaiseAndSetIfChanged(ref _performanceBudgetInfo, value);
     }
     
-    public SolidColorBrush MemoryBudgetInfoColor
+    public SolidColorBrush PerformanceBudgetInfoColor
     {
         get
         {
+            if (_systemMemoryLimitMB <= 0)
+                return new SolidColorBrush(Colors.DarkGray);
+
             if (BitmapCacheMaxMemory > _systemMemoryLimitMB)
                 return new SolidColorBrush(Colors.Salmon);
             else if (BitmapCacheMaxMemory > _systemMemoryLimitMB * 0.51)
@@ -378,20 +415,43 @@ public partial class SettingsViewModel
         set => VisibleCenterDelayMs = FromExp(value, 100, 5000);
     }
     
-    private int _preloadParallelism = 8;
-    public int PreloadParallelism
+    private int _nativePreloadParallelism = 8;
+    public int NativePreloadParallelism
     {
-        get => _preloadParallelism;
+        get => _nativePreloadParallelism;
         set
         {
-            this.RaiseAndSetIfChanged(ref _preloadParallelism, Math.Clamp(value, 1, 32));
-            this.RaisePropertyChanged(nameof(PreloadParallelismExp));
+            this.RaiseAndSetIfChanged(ref _nativePreloadParallelism, Math.Clamp(value, 1, NativePreloadParallelismMaximum));
+            this.RaisePropertyChanged(nameof(NativePreloadParallelismExp));
         }
     }
-    // 0~1：1~32 的指数映射
-    public double PreloadParallelismExp
+
+    public int NativePreloadParallelismMaximum => Math.Max(1, _systemNativePreloadLimit);
+
+    // 0~1：1~当前平台上限 的指数映射
+    public double NativePreloadParallelismExp
     {
-        get => ToExp(PreloadParallelism, 1, 32);
-        set => PreloadParallelism = FromExp(value, 1, 32);
+        get => ToExp(NativePreloadParallelism, 1, NativePreloadParallelismMaximum);
+        set => NativePreloadParallelism = FromExp(value, 1, NativePreloadParallelismMaximum);
+    }
+
+    private int _cpuPreloadParallelism = 8;
+    public int CpuPreloadParallelism
+    {
+        get => _cpuPreloadParallelism;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _cpuPreloadParallelism, Math.Clamp(value, 1, CpuPreloadParallelismMaximum));
+            this.RaisePropertyChanged(nameof(CpuPreloadParallelismExp));
+        }
+    }
+
+    public int CpuPreloadParallelismMaximum => Math.Max(1, _systemCpuPreloadLimit);
+
+    // 0~1：1~当前平台上限 的指数映射
+    public double CpuPreloadParallelismExp
+    {
+        get => ToExp(CpuPreloadParallelism, 1, CpuPreloadParallelismMaximum);
+        set => CpuPreloadParallelism = FromExp(value, 1, CpuPreloadParallelismMaximum);
     }
 }

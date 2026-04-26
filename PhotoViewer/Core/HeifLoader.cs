@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
@@ -18,6 +19,8 @@ public interface IHeifDecoder
 public static class HeifLoader
 {
     private static IHeifDecoder _decoder = new NoopHeifDecoder();
+    private static SemaphoreSlim _cpuDecodeSemaphore = new(8, 8);
+    private static volatile int _cpuDecodeParallelism = 8;
 
     /// <summary>
     /// 最近一次 HEIF 解码失败时各回退级别的详细原因。
@@ -81,6 +84,38 @@ public static class HeifLoader
 
     public static Task<Bitmap?> LoadHeifThumbnailAsync(IStorageFile file, int maxSize = 120)
         => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
+
+    /// <summary>
+    /// 设置 CPU 软件解码路径的最大并发数。
+    /// </summary>
+    public static void SetCpuDecodeParallelism(int parallelism)
+    {
+        var clamped = Math.Max(1, parallelism);
+        if (clamped == _cpuDecodeParallelism)
+        {
+            return;
+        }
+
+        Interlocked.Exchange(ref _cpuDecodeSemaphore, new SemaphoreSlim(clamped, clamped));
+        _cpuDecodeParallelism = clamped;
+    }
+
+    /// <summary>
+    /// 在 CPU 软件解码预算下执行任务。
+    /// </summary>
+    public static async Task<T> RunCpuDecodeAsync<T>(Func<Task<T>> action)
+    {
+        var semaphore = _cpuDecodeSemaphore;
+        await semaphore.WaitAsync();
+        try
+        {
+            return await action();
+        }
+        finally
+        {
+            semaphore.Release();
+        }
+    }
     
 }
 
