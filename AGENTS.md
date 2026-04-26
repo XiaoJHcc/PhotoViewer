@@ -26,9 +26,9 @@
 |---|---|---|
 | **BitmapLoader** | 图片加载器 | 图片解码、LRU 缓存管理、EXIF 旋转修正、缩略图生成。 |
 | **BitmapPrefetcher** | 预加载器 | 监听当前浏览图片，后台预加载前后邻居图片进入缓存。 |
-| **ExifLoader** | 元数据读取 | 读取 EXIF/XMP 信息，快速读取缩略图流。集成 `SonyCipherTags` 解码 Sony 加密 MakerNote。 |
-| **SonyCipherTags** | Sony 加密 tag 解码 | 解密 Sony 0x94xx/0x9050 等加密 MakerNote 数据块，按 ExifTool 字段定义解析为可读值。由 `Tools/generate-sony-cipher-tags.py` 从 ExifTool Sony.pm 自动生成字段映射。 |
-| **ExifChinese / ExifToolTags** | 元数据汉化与标签库 | 通过 `Tools/*.py` 脚本从 ExifTool 数据中生成的跨平台翻译映射和标签支持，用于翻译各类 Exif 属性为中文。 |
+| **ExifLoader** | 元数据读取 | 读取 EXIF/XMP 信息，快速读取缩略图流。集成 `ExifSonyCipherTags` 解码 Sony 加密 MakerNote。 |
+| **ExifSonyCipherTags** | Sony 加密 tag 解码 | 解密 Sony 0x94xx/0x9050 等加密 MakerNote 数据块，按 ExifTool 字段定义解析为可读值。由 `Tools/generate-sony-cipher-tags.py` 从 ExifTool Sony.pm 自动生成字段映射。 |
+| **ExifChinese / ExifToolTags** | 元数据汉化与标签库 | 位于 `PhotoViewer/Core/Exif/`，通过 `Tools/*.py` 脚本从 ExifTool 数据中生成的跨平台翻译映射和标签支持，用于翻译各类 Exif 属性为中文。 |
 | **HeifLoader** | HEIF 解码桥接 | 静态外观类。通过 `Initialize` 注入平台特定的 `IHeifDecoder` 实现。 |
 | **MemoryBudget** | 内存预算 | 静态外观类。管理内存上限，通过 `Initialize` 注入平台特定的 `IMemoryBudget`。 |
 | **XmpWriter** | 评分写入 | 修改 XMP 星级评分。支持无损修改（In-place）及备份策略。 |
