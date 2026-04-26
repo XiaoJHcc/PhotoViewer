@@ -11,8 +11,7 @@ namespace PhotoViewer.Android.Core;
 public sealed class AndroidPerformanceBudget : IPerformanceBudget
 {
     /// <summary>
-    /// 获取应用可用的内存上限（MB）。
-    /// Android 使用每应用内存等级而不是整机总内存。
+    /// 获取设备物理内存大小（MB）。
     /// </summary>
     public int GetAppMemoryLimitMB()
     {
@@ -21,7 +20,9 @@ public sealed class AndroidPerformanceBudget : IPerformanceBudget
             var activityManager = Application.Context.GetSystemService(Context.ActivityService) as ActivityManager;
             if (activityManager != null)
             {
-                return Math.Max(0, activityManager.MemoryClass);
+                var memoryInfo = new ActivityManager.MemoryInfo();
+                activityManager.GetMemoryInfo(memoryInfo);
+                return (int)Math.Max(0, memoryInfo.TotalMem / (1024 * 1024));
             }
         }
         catch (Exception ex)

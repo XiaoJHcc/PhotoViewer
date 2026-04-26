@@ -421,18 +421,18 @@ public partial class SettingsViewModel
         get => _nativePreloadParallelism;
         set
         {
-            this.RaiseAndSetIfChanged(ref _nativePreloadParallelism, Math.Clamp(value, 1, NativePreloadParallelismMaximum));
+            this.RaiseAndSetIfChanged(ref _nativePreloadParallelism, Math.Clamp(value, 1, 32));
             this.RaisePropertyChanged(nameof(NativePreloadParallelismExp));
         }
     }
 
     public int NativePreloadParallelismMaximum => Math.Max(1, _systemNativePreloadLimit);
 
-    // 0~1：1~当前平台上限 的指数映射
+    // 0~1：1~32 的指数映射
     public double NativePreloadParallelismExp
     {
-        get => ToExp(NativePreloadParallelism, 1, NativePreloadParallelismMaximum);
-        set => NativePreloadParallelism = FromExp(value, 1, NativePreloadParallelismMaximum);
+        get => ToExp(NativePreloadParallelism, 1, 32);
+        set => NativePreloadParallelism = FromExp(value, 1, 32);
     }
 
     private int _cpuPreloadParallelism = 8;
@@ -441,17 +441,17 @@ public partial class SettingsViewModel
         get => _cpuPreloadParallelism;
         set
         {
-            this.RaiseAndSetIfChanged(ref _cpuPreloadParallelism, Math.Clamp(value, 1, CpuPreloadParallelismMaximum));
+            this.RaiseAndSetIfChanged(ref _cpuPreloadParallelism, Math.Clamp(value, 1, 32));
             this.RaisePropertyChanged(nameof(CpuPreloadParallelismExp));
         }
     }
 
     public int CpuPreloadParallelismMaximum => Math.Max(1, _systemCpuPreloadLimit);
 
-    // 0~1：1~当前平台上限 的指数映射
+    // 0~1：1~32 的指数映射
     public double CpuPreloadParallelismExp
     {
-        get => ToExp(CpuPreloadParallelism, 1, CpuPreloadParallelismMaximum);
-        set => CpuPreloadParallelism = FromExp(value, 1, CpuPreloadParallelismMaximum);
+        get => ToExp(CpuPreloadParallelism, 1, 32);
+        set => CpuPreloadParallelism = FromExp(value, 1, 32);
     }
 }
