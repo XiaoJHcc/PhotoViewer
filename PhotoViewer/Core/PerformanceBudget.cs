@@ -1,4 +1,5 @@
 using System;
+using System.Runtime.InteropServices;
 
 namespace PhotoViewer.Core;
 
@@ -69,6 +70,23 @@ public static class PerformanceBudget
 /// </summary>
 public sealed class DefaultPerformanceBudget : IPerformanceBudget
 {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct MemoryStatusEx
+    {
+        public uint dwLength;
+        public uint dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    private static extern bool GlobalMemoryStatusEx(ref MemoryStatusEx lpBuffer);
+
     /// <summary>
     /// 获取应用可用的内存上限（MB）。
     /// </summary>
@@ -76,6 +94,19 @@ public sealed class DefaultPerformanceBudget : IPerformanceBudget
     {
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                var memoryStatus = new MemoryStatusEx
+                {
+                    dwLength = (uint)Marshal.SizeOf<MemoryStatusEx>()
+                };
+
+                if (GlobalMemoryStatusEx(ref memoryStatus))
+                {
+                    return (int)(memoryStatus.ullTotalPhys / (1024 * 1024));
+                }
+            }
+
             var memoryInfo = GC.GetGCMemoryInfo();
             var totalAvailableMemoryBytes = memoryInfo.TotalAvailableMemoryBytes;
             return (int)(totalAvailableMemoryBytes / (1024 * 1024));
