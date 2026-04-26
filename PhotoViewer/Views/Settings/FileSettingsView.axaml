@@ -84,8 +84,10 @@
                                 Minimum="0"
                                 Maximum="1"
                             Value="{Binding NativePreloadParallelismExp}" />
-                        <TextBox Grid.Column="2" 
-                             Text="{Binding NativePreloadParallelism}" />
+                            <controls:DeferredNumericTextBox Grid.Column="2"
+                                                      Value="{Binding NativePreloadParallelism}"
+                                                      Minimum="1"
+                                                      Maximum="{Binding NativePreloadParallelismMaximum}" />
                         </Grid>
 
                         <Grid Classes="settings-numeric"
@@ -95,8 +97,10 @@
                             Minimum="0"
                             Maximum="1"
                             Value="{Binding CpuPreloadParallelismExp}" />
-                        <TextBox Grid.Column="2" 
-                             Text="{Binding CpuPreloadParallelism}" />
+                            <controls:DeferredNumericTextBox Grid.Column="2"
+                                                      Value="{Binding CpuPreloadParallelism}"
+                                                      Minimum="1"
+                                                      Maximum="{Binding CpuPreloadParallelismMaximum}" />
                     </Grid>
                     
                     <Grid Classes="settings-numeric"
@@ -106,8 +110,10 @@
                                 Minimum="0"
                                 Maximum="1"
                                 Value="{Binding BitmapCacheMaxMemoryExp}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding BitmapCacheMaxMemory}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding BitmapCacheMaxMemory}"
+                                                         Minimum="512"
+                                                         Maximum="32768" />
                     </Grid>
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
@@ -130,8 +136,10 @@
                                 Minimum="0"
                                 Maximum="1"
                                 Value="{Binding BitmapCacheMaxCountExp}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding BitmapCacheMaxCount}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding BitmapCacheMaxCount}"
+                                                         Minimum="1"
+                                                         Maximum="400" />
                     </Grid>
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
@@ -145,8 +153,10 @@
                                 Minimum="0"
                                 Maximum="33.3333333"
                                 Value="{Binding PreloadForwardPercent}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding PreloadForwardCount}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding PreloadForwardCount}"
+                                                         Minimum="0"
+                                                         Maximum="{Binding PreloadMaximum}" />
                     </Grid>
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
@@ -155,8 +165,10 @@
                                 Minimum="0"
                                 Maximum="33.3333333"
                                 Value="{Binding PreloadBackwardPercent}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding PreloadBackwardCount}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding PreloadBackwardCount}"
+                                                         Minimum="0"
+                                                         Maximum="{Binding PreloadMaximum}" />
                     </Grid>
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
@@ -165,8 +177,10 @@
                                 Minimum="0"
                                 Maximum="33.3333333"
                                 Value="{Binding VisibleCenterPreloadPercent}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding VisibleCenterPreloadCount}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding VisibleCenterPreloadCount}"
+                                                         Minimum="0"
+                                                         Maximum="{Binding PreloadMaximum}" />
                     </Grid>
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
@@ -175,8 +189,10 @@
                                 Minimum="0"
                                 Maximum="1"
                                 Value="{Binding VisibleCenterDelayExp}" />
-                        <TextBox Grid.Column="2" 
-                                 Text="{Binding VisibleCenterDelayMs}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding VisibleCenterDelayMs}"
+                                                         Minimum="100"
+                                                         Maximum="5000" />
                     </Grid>
 
                 </StackPanel>

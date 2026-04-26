@@ -75,7 +75,7 @@
             <Setter Property="Padding" Value="0, -15, 0, -15" />
             <Setter Property="Height" Value="20" />
         </Style>
-        <Style Selector="Grid.settings-numeric TextBox">
+        <Style Selector="Grid.settings-numeric :is(TextBox)">
             <Setter Property="VerticalAlignment" Value="Center" />
             <Setter Property="BorderBrush" Value="Transparent" />
         </Style>
@@ -85,26 +85,42 @@
     <TabControl Margin="5">
 
         <TabItem Header="文件">
-            <ScrollViewer>
-                <views:FileSettingsView />
+            <ScrollViewer x:Name="FileSettingsScrollViewer"
+                          ScrollViewer.BringIntoViewOnFocusChange="True">
+                <StackPanel>
+                    <views:FileSettingsView />
+                    <Border x:Name="FileSettingsBottomSpacer" Height="0" />
+                </StackPanel>
             </ScrollViewer>
         </TabItem>
 
         <TabItem Header="预览">
-            <ScrollViewer>
-                <views:ImageSettingsView />
+            <ScrollViewer x:Name="ImageSettingsScrollViewer"
+                          ScrollViewer.BringIntoViewOnFocusChange="True">
+                <StackPanel>
+                    <views:ImageSettingsView />
+                    <Border x:Name="ImageSettingsBottomSpacer" Height="0" />
+                </StackPanel>
             </ScrollViewer>
         </TabItem>
 
         <TabItem Header="控制">
-            <ScrollViewer>
-                <views:ControlSettingsView />
+            <ScrollViewer x:Name="ControlSettingsScrollViewer"
+                          ScrollViewer.BringIntoViewOnFocusChange="True">
+                <StackPanel>
+                    <views:ControlSettingsView />
+                    <Border x:Name="ControlSettingsBottomSpacer" Height="0" />
+                </StackPanel>
             </ScrollViewer>
         </TabItem>
         
         <TabItem Header="EXIF">
-            <ScrollViewer>
-                <views:ExifSettingsView />
+            <ScrollViewer x:Name="ExifSettingsScrollViewer"
+                          ScrollViewer.BringIntoViewOnFocusChange="True">
+                <StackPanel>
+                    <views:ExifSettingsView />
+                    <Border x:Name="ExifSettingsBottomSpacer" Height="0" />
+                </StackPanel>
             </ScrollViewer>
         </TabItem>
 
