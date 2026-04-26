@@ -54,6 +54,7 @@ public class MainActivity : AvaloniaMainActivity<App>
                 // 若 libheif.so 未打包进 APK，则仅使用系统解码器。
                 HeifLoader.Initialize(new AndroidLibHeifDecoder());
                 MemoryBudget.Initialize(new AndroidMemoryBudget());
+                XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
                 SettingsService.ConfigureStorage(new AndroidSettingsStorage());
             });
     }
