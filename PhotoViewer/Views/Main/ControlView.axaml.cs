@@ -41,7 +41,7 @@ public partial class ControlView : UserControl
     {
         if (DataContext is not ControlViewModel viewModel) return;
         
-        if (VisualRoot is Window parentWindow)
+        if (TopLevel.GetTopLevel(this) is Window parentWindow)
         {
             viewModel.OpenExifDetail(parentWindow);
         }
