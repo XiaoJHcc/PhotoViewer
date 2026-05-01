@@ -82,12 +82,12 @@
         
     </UserControl.Styles>
     
-    <TabControl Margin="5">
+    <TabControl Padding="0" Margin="0">
 
         <TabItem Header="文件">
             <ScrollViewer x:Name="FileSettingsScrollViewer"
                           ScrollViewer.BringIntoViewOnFocusChange="True">
-                <StackPanel>
+                <StackPanel Margin="8">
                     <views:FileSettingsView />
                     <Border x:Name="FileSettingsBottomSpacer" Height="0" />
                 </StackPanel>
@@ -97,7 +97,7 @@
         <TabItem Header="预览">
             <ScrollViewer x:Name="ImageSettingsScrollViewer"
                           ScrollViewer.BringIntoViewOnFocusChange="True">
-                <StackPanel>
+                <StackPanel Margin="8">
                     <views:ImageSettingsView />
                     <Border x:Name="ImageSettingsBottomSpacer" Height="0" />
                 </StackPanel>
@@ -107,7 +107,7 @@
         <TabItem Header="控制">
             <ScrollViewer x:Name="ControlSettingsScrollViewer"
                           ScrollViewer.BringIntoViewOnFocusChange="True">
-                <StackPanel>
+                <StackPanel Margin="8">
                     <views:ControlSettingsView />
                     <Border x:Name="ControlSettingsBottomSpacer" Height="0" />
                 </StackPanel>
@@ -117,7 +117,7 @@
         <TabItem Header="EXIF">
             <ScrollViewer x:Name="ExifSettingsScrollViewer"
                           ScrollViewer.BringIntoViewOnFocusChange="True">
-                <StackPanel>
+                <StackPanel Margin="8">
                     <views:ExifSettingsView />
                     <Border x:Name="ExifSettingsBottomSpacer" Height="0" />
                 </StackPanel>
