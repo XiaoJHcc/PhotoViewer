@@ -33,6 +33,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
             .UseReactiveUI(_ => { })
             .AfterSetup(_ => 
             {
+                iOSTextInputWorkarounds.Install();
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
                 XmpWriter.Initialize(new iOSXmpWriter());

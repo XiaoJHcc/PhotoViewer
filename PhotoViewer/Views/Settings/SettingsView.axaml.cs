@@ -36,8 +36,25 @@ public partial class SettingsView : UserControl
         ];
 
         SetBottomSpacerHeight(GetCollapsedBottomSpacerHeight());
+        ConfigureIosScrollViewerFocusBehavior();
         AddHandler(InputElement.GotFocusEvent, OnInputGotFocus, RoutingStrategies.Bubble);
         AddHandler(InputElement.LostFocusEvent, OnInputLostFocus, RoutingStrategies.Bubble);
+    }
+
+    /// <summary>
+    /// 在 iOS 设置页关闭 ScrollViewer 的自动聚焦滚动，避免与手动键盘避让逻辑叠加后触发错误定位。
+    /// </summary>
+    private void ConfigureIosScrollViewerFocusBehavior()
+    {
+        if (!OperatingSystem.IsIOS())
+        {
+            return;
+        }
+
+        FileSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
+        ImageSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
+        ControlSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
+        ExifSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
     }
 
     /// <summary>
