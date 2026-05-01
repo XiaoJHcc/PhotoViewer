@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Platform.Storage;
+using Avalonia.VisualTree;
 using System.IO;
 using Avalonia.Threading;
 using PhotoViewer.Controls;
@@ -195,7 +196,7 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OpenImageSetting()
     {
-        if (VisualRoot is Window parentWindow)
+        if (TopLevel.GetTopLevel(this) is Window parentWindow)
         {
             ViewModel?.Main.OpenSettingWindow(parentWindow);
         }
