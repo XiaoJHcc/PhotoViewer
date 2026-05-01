@@ -25,7 +25,7 @@ public partial class ControlView : UserControl
     private void OnLoaded(object? sender, RoutedEventArgs e)
     {
         // 监听全局键盘事件
-        if (this.GetVisualRoot() is TopLevel topLevel)
+        if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
         {
             topLevel.KeyDown += OnGlobalKeyDown;
         }
@@ -104,7 +104,7 @@ public partial class ControlView : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         // 移除全局键盘事件监听
-        if (this.GetVisualRoot() is TopLevel topLevel)
+        if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
         {
             topLevel.KeyDown -= OnGlobalKeyDown;
         }

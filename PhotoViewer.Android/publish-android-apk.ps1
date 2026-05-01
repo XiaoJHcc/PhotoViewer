@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [string]$Configuration = 'Release',
-    [string]$Framework = 'net9.0-android',
+    [string]$Framework = 'net10.0-android',
     [string]$AndroidSdkDirectory = '',
     [string]$OutputDirectory = ''
 )
@@ -30,7 +30,7 @@ if (-not (Test-Path $AndroidSdkDirectory)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
-    $OutputDirectory = Join-Path $PSScriptRoot 'bin\Release\net9.0-android\publish'
+    $OutputDirectory = Join-Path $PSScriptRoot 'bin\Release\net10.0-android\publish'
 }
 
 $OutputDirectory = [System.IO.Path]::GetFullPath($OutputDirectory)
@@ -139,7 +139,7 @@ if ($temporarilyBypassGlobalJson) {
 $sharedProjectBackup = "$sharedProject.publishbak"
 $globalJsonBackup = "$globalJson.publishbak"
 $originalSharedProjectContent = Get-Content $sharedProject -Raw
-$patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net9.0;net9.0-ios</TargetFrameworks>', '<TargetFramework>net9.0</TargetFramework>'
+$patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>', '<TargetFramework>net10.0</TargetFramework>'
 $needsProjectPatch = $patchedSharedProjectContent -ne $originalSharedProjectContent
 
 try {

@@ -9,9 +9,8 @@
         x:DataType="windows:MainWindowForWindows"
         Icon="/Assets/icon.ico"
         Title="PhotoViewer 图片查看器"
-        SystemDecorations="None"
+        WindowDecorations="None"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="NoChrome"
         ExtendClientAreaTitleBarHeightHint="-1"
         TransparencyLevelHint="Mica, AcrylicBlur, Blur, Transparent"
         Background="Transparent">

@@ -72,7 +72,7 @@ Write-Host "[发布] 输出目录: $OutputDirectory"
 
 $sharedProjectBackup = "$sharedProject.publishbak"
 $originalSharedProjectContent = Get-Content $sharedProject -Raw
-$patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net9.0;net9.0-ios</TargetFrameworks>', '<TargetFramework>net9.0</TargetFramework>'
+$patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>', '<TargetFramework>net10.0</TargetFramework>'
 $needsProjectPatch = $patchedSharedProjectContent -ne $originalSharedProjectContent
 
 try {

@@ -5,11 +5,7 @@ using Android.Content.PM;
 using Android.OS;
 using AndroidX.Core.App;
 using AndroidX.Core.Content;
-using Avalonia;
 using Avalonia.Android;
-using Avalonia.Media;
-using ReactiveUI;
-using ReactiveUI.Avalonia;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;
@@ -31,34 +27,10 @@ namespace PhotoViewer.Android;
     [Intent.ActionSend, Intent.ActionSendMultiple],
     Categories = [Intent.CategoryDefault],
     DataMimeType = "image/*")]
-public class MainActivity : AvaloniaMainActivity<App>
+public class MainActivity : AvaloniaMainActivity
 {
     private const int StoragePermissionRequestCode = 1;
-    
-    /// <summary>
-    /// 自定义 Avalonia AppBuilder，并注入 Android 平台能力实现。
-    /// </summary>
-    protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
-    {
-        return base.CustomizeAppBuilder(builder)
-            .With(new FontManagerOptions
-            {
-                DefaultFamilyName = "sans-serif"
-            })
-            .UseReactiveUI(_ => { })
-            .AfterSetup(_ =>
-            {
-                // 注册 Android 平台的 HeifDecoder。
-                // AndroidLibHeifDecoder 优先使用系统 BitmapFactory（硬件加速，API 28+），
-                // 系统无法解码时（如 HEIF YUV 4:2:2）回退到 libheif 软件解码器。
-                // 若 libheif.so 未打包进 APK，则仅使用系统解码器。
-                HeifLoader.Initialize(new AndroidLibHeifDecoder());
-                PerformanceBudget.Initialize(new AndroidPerformanceBudget());
-                XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
-                SettingsService.ConfigureStorage(new AndroidSettingsStorage());
-            });
-    }
-    
+
     /// <summary>
     /// Android 入口。
     /// 这里会先初始化 Avalonia，再处理运行时权限与冷启动外部打开 Intent。

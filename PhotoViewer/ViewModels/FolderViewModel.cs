@@ -258,24 +258,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     private static TopLevel? GetCurrentTopLevel()
     {
-        if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
-        {
-            // 移动端：通过 MainView 获取 TopLevel
-            if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.ISingleViewApplicationLifetime singleView)
-            {
-                return TopLevel.GetTopLevel(singleView.MainView);
-            }
-
-            return null;
-        }
-
-        // 桌面端：通过 MainWindow 获取 TopLevel
-        if (App.Current?.ApplicationLifetime is Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop)
-        {
-            return TopLevel.GetTopLevel(desktop.MainWindow);
-        }
-
-        return null;
+        return App.GetCurrentTopLevel();
     }
 
     // 打开文件选择器中的类型过滤器

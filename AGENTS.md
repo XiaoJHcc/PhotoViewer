@@ -5,13 +5,13 @@
 
 ## 1. 技术栈与环境
 
-- **框架**: Avalonia 11.3.12, .NET 9
+- **框架**: Avalonia 12.0.2, .NET 10
 - **模式**: MVVM (ReactiveUI)
 - **平台**:
-  - `PhotoViewer.Desktop`: Windows (net9.0-windows)
-  - `PhotoViewer.Mac`: macOS (net9.0-macos)
-  - `PhotoViewer.Android`: Android (net9.0-android)
-  - `PhotoViewer.iOS`: iOS (net9.0-ios)
+   - `PhotoViewer.Desktop`: Windows (net10.0-windows)
+   - `PhotoViewer.Mac`: macOS (net10.0-macos)
+   - `PhotoViewer.Android`: Android (net10.0-android)
+   - `PhotoViewer.iOS`: iOS (net10.0-ios)
 - **依赖**:
   - 图片解码: `LibHeifSharp` (Windows), `ImageIO` (macOS/iOS/Android Native)
   - 依赖注入: 不使用 DI 容器，核心服务为静态类，平台能力通过初始化时注入。

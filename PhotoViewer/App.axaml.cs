@@ -18,6 +18,7 @@ namespace PhotoViewer;
 public partial class App : Application
 {
     private static readonly SemaphoreSlim ExternalOpenSemaphore = new(1, 1);
+    private static Control? CurrentMobileMainView;
 
     /// <summary>
     /// 初始化应用资源。
@@ -53,13 +54,14 @@ public partial class App : Application
                 };
             }
         }
+        else if (ApplicationLifetime is IActivityApplicationLifetime activityLifetime)
+        {
+            activityLifetime.MainViewFactory = () => CreateMobileMainView(vm);
+        }
         else if (ApplicationLifetime is ISingleViewApplicationLifetime singleViewPlatform)
         {
             // 移动端 (Android / iOS): 使用新建的 SingleView
-            singleViewPlatform.MainView = new SingleView
-            {
-                DataContext = vm
-            };
+            singleViewPlatform.MainView = CreateMobileMainView(vm);
         }
 
         ExternalOpenService.RegisterHandler(request => HandleExternalOpenRequestAsync(vm, request));
@@ -204,20 +206,45 @@ public partial class App : Application
     }
 
     /// <summary>
-    /// 获取当前主界面的存储提供器。
+    /// 创建移动端主视图，并记录当前可用于定位 TopLevel 的根控件。
     /// </summary>
-    private static IStorageProvider? GetStorageProvider()
+    private static Control CreateMobileMainView(MainViewModel vm)
+    {
+        var view = new SingleView
+        {
+            DataContext = vm
+        };
+
+        CurrentMobileMainView = view;
+        return view;
+    }
+
+    /// <summary>
+    /// 获取当前激活界面的 TopLevel。
+    /// </summary>
+    internal static TopLevel? GetCurrentTopLevel()
     {
         if (Current?.ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            return TopLevel.GetTopLevel(desktop.MainWindow)?.StorageProvider;
+            return TopLevel.GetTopLevel(desktop.MainWindow);
+        }
+
+        if (Current?.ApplicationLifetime is IActivityApplicationLifetime)
+        {
+            return CurrentMobileMainView is null ? null : TopLevel.GetTopLevel(CurrentMobileMainView);
         }
 
         if (Current?.ApplicationLifetime is ISingleViewApplicationLifetime singleView)
         {
-            return TopLevel.GetTopLevel(singleView.MainView)?.StorageProvider;
+            return TopLevel.GetTopLevel(singleView.MainView);
         }
 
         return null;
     }
+
+    /// <summary>
+    /// 获取当前主界面的存储提供器。
+    /// </summary>
+    private static IStorageProvider? GetStorageProvider()
+        => GetCurrentTopLevel()?.StorageProvider;
 }
