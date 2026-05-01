@@ -81,7 +81,7 @@ public partial class SortableList : UserControl
             ItemsList.LayoutUpdated += OnLayoutUpdated;
         }
         
-        _topLevel = this.GetVisualRoot() as TopLevel;
+        _topLevel = TopLevel.GetTopLevel(this);
     }
 
     private void OnLayoutUpdated(object? sender, EventArgs e)
@@ -229,7 +229,7 @@ public partial class SortableList : UserControl
 
     private void CreateDragLayer()
     {
-        if (this.GetVisualRoot() is TopLevel topLevel)
+        if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
         {
             _dragLayer = new Canvas
             {
@@ -305,7 +305,7 @@ public partial class SortableList : UserControl
         if (_dragGhost == null || _draggedItem == null) return;
 
         var rootPosition = point.Position;
-        if (this.GetVisualRoot() is Visual root)
+        if (TopLevel.GetTopLevel(this) is Visual root)
         {
             var transform = this.TransformToVisual(root);
             if (transform != null)
@@ -557,7 +557,7 @@ public partial class SortableList : UserControl
         
         if (_dragLayer != null)
         {
-            if (this.GetVisualRoot() is TopLevel topLevel)
+            if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
             {
                 var overlayLayer = OverlayLayer.GetOverlayLayer(topLevel);
                 overlayLayer?.Children.Remove(_dragLayer);

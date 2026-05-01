@@ -135,7 +135,7 @@ public partial class HotkeyButton : UserControl
         this.Focus();
         
         // 监听全局事件（滚轮使用路由事件拦截以阻止 UI 滚动）
-        if (this.GetVisualRoot() is TopLevel topLevel)
+        if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
         {
             _topLevel = topLevel;
             _topLevel.KeyDown += OnGlobalKeyDown;

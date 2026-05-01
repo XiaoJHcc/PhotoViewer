@@ -7,9 +7,8 @@
         x:Class="PhotoViewer.Windows.MainWindowForMac"
         Icon="/Assets/icon.ico"
         Title="PhotoViewer 图片查看器"
-        SystemDecorations="Full"
+        WindowDecorations="Full"
         ExtendClientAreaToDecorationsHint="True"
-        ExtendClientAreaChromeHints="PreferSystemChrome"
         ExtendClientAreaTitleBarHeightHint="44"
         Background="Transparent">
     

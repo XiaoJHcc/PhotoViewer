@@ -92,7 +92,7 @@ public partial class SettingsView : UserControl
     /// </summary>
     /// <param name="sender">事件发送方。</param>
     /// <param name="e">焦点事件参数。</param>
-    private void OnInputGotFocus(object? sender, GotFocusEventArgs e)
+    private void OnInputGotFocus(object? sender, FocusChangedEventArgs e)
     {
         if (!IsMobilePlatform() || e.Source is not DeferredNumericTextBox textBox)
         {
@@ -112,7 +112,7 @@ public partial class SettingsView : UserControl
     /// </summary>
     /// <param name="sender">事件发送方。</param>
     /// <param name="e">路由事件参数。</param>
-    private void OnInputLostFocus(object? sender, RoutedEventArgs e)
+    private void OnInputLostFocus(object? sender, FocusChangedEventArgs e)
     {
         if (!IsMobilePlatform() || e.Source is not DeferredNumericTextBox)
         {

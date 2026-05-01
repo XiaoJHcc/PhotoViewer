@@ -114,7 +114,7 @@ public class DeferredNumericTextBox : TextBox
     /// 聚焦时选中全部文本，便于直接改写数值。
     /// </summary>
     /// <param name="e">焦点事件参数。</param>
-    protected override void OnGotFocus(GotFocusEventArgs e)
+    protected override void OnGotFocus(FocusChangedEventArgs e)
     {
         base.OnGotFocus(e);
 
@@ -184,7 +184,7 @@ public class DeferredNumericTextBox : TextBox
     /// 失焦时提交编辑结果，并恢复为合法范围内的最终值。
     /// </summary>
     /// <param name="e">路由事件参数。</param>
-    protected override void OnLostFocus(RoutedEventArgs e)
+    protected override void OnLostFocus(FocusChangedEventArgs e)
     {
         CommitText();
         base.OnLostFocus(e);
@@ -289,7 +289,7 @@ public class DeferredNumericTextBox : TextBox
             return;
         }
 
-        TopLevel.GetTopLevel(this)?.FocusManager?.ClearFocus();
+        TopLevel.GetTopLevel(this)?.FocusManager?.Focus(null);
         UpdateMobileFocusableState();
     }
 

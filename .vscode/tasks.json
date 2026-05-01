@@ -18,14 +18,14 @@
     {
       "label": "Debug Mac",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug && open PhotoViewer.Mac/bin/Debug/net9.0-macos/PhotoViewer.Mac.app",
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug && open PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Run Mac",
       "type": "shell",
-      "command": "open PhotoViewer.Mac/bin/Debug/net9.0-macos/PhotoViewer.Mac.app",
+      "command": "open PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app",
       "group": "test",
       "problemMatcher": []
     },
@@ -45,7 +45,7 @@
     {
       "label": "Install Android",
       "type": "shell",
-      "command": "adb install -r PhotoViewer.Android\\bin\\Debug\\net9.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+      "command": "adb install -r PhotoViewer.Android\\bin\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
       "options": {
         "shell": {
           "executable": "cmd.exe",
@@ -58,35 +58,35 @@
     {
       "label": "Debug iOS Simulator",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net9.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Install iOS Simulator",
       "type": "shell",
-      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net9.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
       "group": "test",
       "problemMatcher": []
     },
     {
       "label": "Renew iOS Certificate",
       "type": "shell",
-      "command": "find ~/Library/MobileDevice/Provisioning\\ Profiles/ -name '*.mobileprovision' -delete && dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "command": "find ~/Library/MobileDevice/Provisioning\\ Profiles/ -name '*.mobileprovision' -delete && dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Debug iOS",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Install iOS",
       "type": "shell",
-      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Debug/net9.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": []
     },
