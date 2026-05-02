@@ -38,6 +38,7 @@ public partial class ThumbnailView : UserControl
     private DispatcherTimer? _debounceTimer;
     private double _lastHorizontalOffset;
     private double _lastVerticalOffset;
+    private FolderViewModel? _attachedViewModel;
 
     public FolderViewModel? ViewModel => DataContext as FolderViewModel;
 
@@ -86,14 +87,31 @@ public partial class ThumbnailView : UserControl
         };
 
         this.AttachedToVisualTree += OnAttached;
+        this.DetachedFromVisualTree += OnDetached;
     }
     
     private void OnDataContextChanged(object? dataContext)
     {
-        if (dataContext is FolderViewModel viewModel)
+        UpdateViewModelSubscription(dataContext as FolderViewModel);
+    }
+
+    private void UpdateViewModelSubscription(FolderViewModel? viewModel)
+    {
+        if (ReferenceEquals(_attachedViewModel, viewModel))
         {
-            // 订阅滚动到当前图片的事件
-            viewModel.ScrollToCurrentRequested += ScrollToCurrentImage;
+            return;
+        }
+
+        if (_attachedViewModel != null)
+        {
+            _attachedViewModel.ScrollToCurrentRequested -= ScrollToCurrentImage;
+        }
+
+        _attachedViewModel = viewModel;
+
+        if (_attachedViewModel != null)
+        {
+            _attachedViewModel.ScrollToCurrentRequested += ScrollToCurrentImage;
         }
     }
     
@@ -122,11 +140,35 @@ public partial class ThumbnailView : UserControl
     
     private void OnAttached(object? sender, VisualTreeAttachmentEventArgs e)
     {
+        UpdateViewModelSubscription(DataContext as FolderViewModel);
+
+        if (_scroll != null)
+        {
+            _scroll.ScrollChanged -= OnScrollChangedBitmapPrefetch;
+        }
+
         _scroll = this.FindControl<ScrollViewer>("ThumbnailScrollViewer");
         if (_scroll != null)
         {
             _scroll.ScrollChanged += OnScrollChangedBitmapPrefetch;
         }
+    }
+
+    private async void OnDetached(object? sender, VisualTreeAttachmentEventArgs e)
+    {
+        UpdateViewModelSubscription(null);
+
+        if (_scroll != null)
+        {
+            _scroll.ScrollChanged -= OnScrollChangedBitmapPrefetch;
+            _scroll = null;
+        }
+
+        _scrollTimer.Stop();
+        _scrollingTimer.Stop();
+        _debounceTimer?.Stop();
+        _isScrolling = false;
+        await CancelCurrentAnimationAsync();
     }
 
     private void OnScrollChangedBitmapPrefetch(object? s, ScrollChangedEventArgs e)

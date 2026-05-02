@@ -16,18 +16,22 @@ namespace PhotoViewer.Views;
 
 public partial class ControlView : UserControl
 {
+    private TopLevel? _topLevel;
+
     public ControlView()
     {
         InitializeComponent();
-        Loaded += OnLoaded;
     }
 
-    private void OnLoaded(object? sender, RoutedEventArgs e)
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
     {
+        base.OnAttachedToVisualTree(e);
+
         // 监听全局键盘事件
         if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
         {
-            topLevel.KeyDown += OnGlobalKeyDown;
+            _topLevel = topLevel;
+            _topLevel.KeyDown += OnGlobalKeyDown;
         }
         
         // EXIF 信息块点击事件
@@ -104,10 +108,13 @@ public partial class ControlView : UserControl
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
         // 移除全局键盘事件监听
-        if (TopLevel.GetTopLevel(this) is TopLevel topLevel)
+        if (_topLevel != null)
         {
-            topLevel.KeyDown -= OnGlobalKeyDown;
+            _topLevel.KeyDown -= OnGlobalKeyDown;
+            _topLevel = null;
         }
+
+        ExifInfoBlock.PointerPressed -= OnExifInfoBlockClick;
         base.OnDetachedFromVisualTree(e);
     }
 

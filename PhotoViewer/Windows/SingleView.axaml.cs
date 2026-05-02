@@ -1,4 +1,5 @@
 ﻿using System;
+using Avalonia;
 using Avalonia.Controls;
 using PhotoViewer.ViewModels;
 
@@ -9,15 +10,17 @@ public partial class SingleView : UserControl
     public SingleView()
     {
         InitializeComponent();
+    }
 
-        Loaded += (_, _) =>
+    protected override void OnAttachedToVisualTree(VisualTreeAttachmentEventArgs e)
+    {
+        base.OnAttachedToVisualTree(e);
+
+        var insetsManager = TopLevel.GetTopLevel(this)?.InsetsManager;
+        if (insetsManager != null)
         {
-            var insetsManager = TopLevel.GetTopLevel(this)?.InsetsManager;
-            if (insetsManager != null)
-            {
-                insetsManager.DisplayEdgeToEdgePreference = true;
-                insetsManager.IsSystemBarVisible = false;
-            }
-        };
+            insetsManager.DisplayEdgeToEdgePreference = true;
+            insetsManager.IsSystemBarVisible = false;
+        }
     }
 }
