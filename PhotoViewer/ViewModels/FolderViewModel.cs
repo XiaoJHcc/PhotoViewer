@@ -224,6 +224,8 @@ public class FolderViewModel : ReactiveObject
             return;
         }
 
+        StorageAccessManager.Retain(file);
+
         // 新打开文件时始终适配显示
         Main.ImageVM.Fit = true;
 
@@ -242,6 +244,8 @@ public class FolderViewModel : ReactiveObject
     /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
     public async Task OpenFolderAsync(IStorageFolder folder, bool scrollToCurrent = true)
     {
+        StorageAccessManager.Retain(folder);
+
         // 新打开目录时也恢复为适配显示，避免沿用上一次缩放状态。
         Main.ImageVM.Fit = true;
 
@@ -385,6 +389,7 @@ public class FolderViewModel : ReactiveObject
 
         if (IsSameStorageItem(folder, _currentFolder) && _allFiles.Count > 0)
         {
+            StorageAccessManager.Retain(folder);
             FolderName = folder.Name;
 
             var existingFile = FindLoadedFile(file);
@@ -411,6 +416,8 @@ public class FolderViewModel : ReactiveObject
     /// <param name="file">要打开的图片文件</param>
     private async Task OpenSingleImageAsync(IStorageFile file)
     {
+        StorageAccessManager.Retain(file);
+
         _currentFolder = null;
         FolderName = file.Name;
         _allFiles.Clear();
@@ -435,6 +442,9 @@ public class FolderViewModel : ReactiveObject
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.Path);
+
+        StorageAccessManager.Retain(folder);
+        StorageAccessManager.Retain(preferredFile);
 
         _currentFolder = folder;
         FolderName = folder.Name;

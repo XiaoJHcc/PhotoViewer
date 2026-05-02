@@ -18,6 +18,8 @@ public sealed class iOSXmpWriter : IXmpPlatformWriter
     {
         try
         {
+            using var accessScope = StorageAccessManager.TryAcquireScope(file);
+
             if (!XmpLocalFileWriter.TryGetWritableLocalPath(file, out var localPath))
             {
                 Console.WriteLine("[XMP Writer] iOS: Local path unavailable");

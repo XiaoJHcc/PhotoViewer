@@ -35,6 +35,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
             {
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
+                StorageAccessManager.Initialize(new iOSStorageAccessManager());
                 XmpWriter.Initialize(new iOSXmpWriter());
                 SettingsService.ConfigureStorage(new iOSSettingsStorage());
  
