@@ -13,11 +13,8 @@ namespace PhotoViewer.Windows;
 public partial class MainWindowForWindows : Window
 {
     private const int HotZoneHeight = 50;
-    private const int ResizeBorderThickness = 6;
     private bool _enableCustomTitleBar;
     private WindowState _prevStateBeforeFullScreen = WindowState.Normal;
-    private Thickness _normalPadding = new Thickness(0);
-    private WindowEdge? _currentResizeEdge;
 
     public MainWindowForWindows()
     {
@@ -26,13 +23,16 @@ public partial class MainWindowForWindows : Window
         {
             _enableCustomTitleBar = true;
             PointerMoved += Window_PointerMoved;
-            PointerPressed += Window_PointerPressedForResize;
             Deactivated += (_, _) => HideTitleBar();
-            this.GetObservable(WindowStateProperty).Subscribe(OnWindowStateChanged);
-            _normalPadding = Padding;
+            this.GetObservable(WindowStateProperty).Subscribe(_ => UpdateClientPadding());
+            this.GetObservable(OffScreenMarginProperty).Subscribe(_ => UpdateClientPadding());
 
             // 绑定布局/尺寸变化，动态更新标题栏
-            Opened += (_, _) => SetupTitleBarLayoutHooks();
+            Opened += (_, _) =>
+            {
+                SetupTitleBarLayoutHooks();
+                UpdateClientPadding();
+            };
         }
     }
 
@@ -75,13 +75,19 @@ public partial class MainWindowForWindows : Window
 
     private void UpdateTitleBarLayout()
     {
-        var vm = RootMainView.DataContext as MainViewModel;
-        bool isHorizontal = vm?.IsHorizontalLayout ?? false;
+        var rootMainView = RootMainView;
+        var rightButtonsHost = RightButtonsHost;
+        if (rootMainView is null)
+            return;
 
-        var leftHost   = RootMainView.FindControl<Border>("LeftThumbHost");
+        var vm = rootMainView.DataContext as MainViewModel;
+        bool isHorizontal = vm?.IsHorizontalLayout ?? false;
+        var rightButtonsWidth = (rightButtonsHost?.Bounds.Width ?? 0) + (rightButtonsHost?.Margin.Right ?? 0);
+
+        var leftHost   = rootMainView.FindControl<Border>("LeftThumbHost");
         // var topHost    = RootMainView.FindControl<Border>("TopThumbHost");
         // var leftThumb  = RootMainView.FindControl<ThumbnailView>("LeftThumbnailView");
-        var topThumb   = RootMainView.FindControl<ThumbnailView>("TopThumbnailView");
+        var topThumb   = rootMainView.FindControl<ThumbnailView>("TopThumbnailView");
         // var leftFilter = leftThumb?.FindControl<StackPanel>("FilterBarPanel");
         var topFilter  = topThumb?.FindControl<StackPanel>("FilterBarPanel");
 
@@ -98,10 +104,9 @@ public partial class MainWindowForWindows : Window
             LeftTitleBar.Margin = new Thickness(leftEffective, 0, 0, 0);
             LeftTitleBar.Width = Math.Max(0, winWidth - leftEffective);
 
-            // 右侧覆盖区：靠右，自动宽度（按钮）即可
-            RightTitleBar.Margin = new Thickness(0);
-            // 在左右布局下，不需要留中间空隙
-            RightTitleBar.Width = double.NaN; // Auto
+            // 右侧拖拽区：避开真正可点击的按钮区域
+            RightTitleBar.Margin = new Thickness(leftEffective, 0, rightButtonsWidth, 0);
+            RightTitleBar.Width = double.NaN;
         }
         else
         {
@@ -116,18 +121,18 @@ public partial class MainWindowForWindows : Window
             LeftTitleBar.Margin = new Thickness(0, 0, 0, 0);
             LeftTitleBar.Width = Math.Max(0, centerLeft);
 
-            // 右侧覆盖区：从中间空隙右边界到窗口右侧
-            RightTitleBar.Margin = new Thickness(0, 0, 0, 0);
-            RightTitleBar.Width = Math.Max(0, winWidth - centerRight);
+            // 右侧拖拽区：从中间空隙右边界到按钮左侧
+            RightTitleBar.Margin = new Thickness(centerRight, 0, rightButtonsWidth, 0);
+            RightTitleBar.Width = double.NaN;
         }
     }
 
-    private void OnWindowStateChanged(WindowState state)
+    /// <summary>
+    /// 使用 Avalonia 12 提供的屏外边距，避免 Windows 最大化时内容贴到被系统吞掉的边框区域。
+    /// </summary>
+    private void UpdateClientPadding()
     {
-        if (state == WindowState.Maximized)
-            Padding = new Thickness(0);
-        else if (state == WindowState.Normal)
-            Padding = _normalPadding;
+        Padding = WindowState == WindowState.Maximized ? OffScreenMargin : default;
     }
 
     // 鼠标移动控制显示/隐藏
@@ -136,9 +141,6 @@ public partial class MainWindowForWindows : Window
         if (!_enableCustomTitleBar) return;
         var p = e.GetPosition(this);
 
-        // 先处理缩放光标
-        UpdateResizeCursor(p);
-
         // 标题栏显示/隐藏（使用动态热区高度）
         if (p.Y <= HotZoneHeight)
             ShowTitleBar();
@@ -146,82 +148,30 @@ public partial class MainWindowForWindows : Window
             HideTitleBar();
     }
 
-    private void UpdateResizeCursor(Point p)
-    {
-        if (WindowState != WindowState.Normal)
-        {
-            if (_currentResizeEdge != null)
-            {
-                _currentResizeEdge = null;
-                Cursor = new Cursor(StandardCursorType.Arrow);
-            }
-            return;
-        }
-
-        bool left = p.X <= ResizeBorderThickness;
-        bool right = p.X >= Bounds.Width - ResizeBorderThickness;
-        bool top = p.Y <= ResizeBorderThickness;
-        bool bottom = p.Y >= Bounds.Height - ResizeBorderThickness;
-
-        WindowEdge? edge = null;
-        StandardCursorType cursorType = StandardCursorType.Arrow;
-
-        if (top && left) { edge = WindowEdge.NorthWest; cursorType = StandardCursorType.TopLeftCorner; }
-        else if (top && right) { edge = WindowEdge.NorthEast; cursorType = StandardCursorType.TopRightCorner; }
-        else if (bottom && left) { edge = WindowEdge.SouthWest; cursorType = StandardCursorType.BottomLeftCorner; }
-        else if (bottom && right) { edge = WindowEdge.SouthEast; cursorType = StandardCursorType.BottomRightCorner; }
-        else if (top) { edge = WindowEdge.North; cursorType = StandardCursorType.TopSide; }
-        else if (bottom) { edge = WindowEdge.South; cursorType = StandardCursorType.BottomSide; }
-        else if (left) { edge = WindowEdge.West; cursorType = StandardCursorType.LeftSide; }
-        else if (right) { edge = WindowEdge.East; cursorType = StandardCursorType.RightSide; }
-
-        _currentResizeEdge = edge;
-        Cursor = edge == null ? new Cursor(StandardCursorType.Arrow) : new Cursor(cursorType);
-    }
-
-    private void Window_PointerPressedForResize(object? sender, PointerPressedEventArgs e)
-    {
-        if (!_enableCustomTitleBar) return;
-        if (e.GetCurrentPoint(this).Properties.IsLeftButtonPressed &&
-            _currentResizeEdge.HasValue &&
-            WindowState == WindowState.Normal)
-        {
-            BeginResizeDrag(_currentResizeEdge.Value, e);
-        }
-    }
-
     private void ShowTitleBar()
     {
         // 同时显示左右覆盖区
-        if (LeftTitleBar.Opacity < 1 || RightTitleBar.Opacity < 1)
+        if (LeftTitleBar.Opacity < 1 || RightTitleBar.Opacity < 1 || RightButtonsHost.Opacity < 1)
         {
             LeftTitleBar.IsHitTestVisible = true;
             RightTitleBar.IsHitTestVisible = true;
             LeftTitleBar.Opacity = 1;
             RightTitleBar.Opacity = 1;
+            RightButtonsHost.Opacity = 1;
         }
     }
 
     private void HideTitleBar()
     {
         // 同时隐藏左右覆盖区
-        if (LeftTitleBar.Opacity > 0 || RightTitleBar.Opacity > 0)
+        if (LeftTitleBar.Opacity > 0 || RightTitleBar.Opacity > 0 || RightButtonsHost.Opacity > 0)
         {
             LeftTitleBar.IsHitTestVisible = false;
             RightTitleBar.IsHitTestVisible = false;
             LeftTitleBar.Opacity = 0;
             RightTitleBar.Opacity = 0;
+            RightButtonsHost.Opacity = 0;
         }
-    }
-
-    // 拖拽窗口（非缩放状态且左键）；若命中按钮则不触发拖拽
-    private void TitleBar_PointerPressed(object? sender, PointerPressedEventArgs e)
-    {
-        if (!_enableCustomTitleBar) return;
-        if (_currentResizeEdge != null) return; // 正在缩放边缘
-        if (!e.GetCurrentPoint(this).Properties.IsLeftButtonPressed) return;
-
-        BeginMoveDrag(e);
     }
 
     private void BtnMin_Click(object? sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
