@@ -2,6 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Clean Build Caches (All Platforms)",
+      "type": "shell",
+      "command": "find . \\( -path './.git' -o -path './release' -o -path './README-IMG' \\) -prune -o -type d \\( -name bin -o -name obj \\) -exec rm -rf {} + && rm -rf ~/Library/Developer/Xcode/DerivedData/* ~/Library/Caches/Xamarin/mtbs/builds/* && dotnet nuget locals temp --clear && dotnet nuget locals http-cache --clear",
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
       "label": "Debug Windows",
       "type": "shell",
       "command": "dotnet run --project PhotoViewer.Desktop -c Debug",
@@ -91,6 +98,13 @@
       "problemMatcher": []
     },
     {
+      "label": "Install iOS Stable (Release)",
+      "type": "shell",
+      "command": "test -d release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "Publish Windows EXE (Release)",
       "type": "shell",
       "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1",
@@ -114,7 +128,7 @@
     {
       "label": "Publish iOS IPA (Release)",
       "type": "shell",
-      "command": "dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64",
+      "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa release/ios-stable/PhotoViewer.iOS.ipa && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\"",
       "group": "build",
       "problemMatcher": "$msCompile"
     }

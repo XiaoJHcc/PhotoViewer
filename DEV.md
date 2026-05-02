@@ -46,10 +46,12 @@
 
 ### 4. iOS
 *前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机需配置 Developer Certificate（在 Xcode 中登录 Apple ID 即可自动管理签名）。*
+- ⚡ **Clean Build Caches (All Platforms)**：清理仓库内所有平台的 `bin/obj`，并清空 NuGet 临时/http 缓存、Xcode DerivedData、Xamarin iOS/macOS 本机构建缓存；适合版本回退、SDK 升降级、疑似脏缓存时执行。
 - ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起。
 - ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物至当前运行的模拟器，不重新构建。
 - ⚡ **Debug iOS**：构建 arm64 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动。
 - ⚡ **Install iOS**：弹窗选择目标设备，将上一次构建产物覆写安装至真机并启动，不重新构建。
+- ⚡ **Install iOS Stable (Release)**：将 `release/ios-stable/PhotoViewer.iOS.app` 中归档的稳定包重新安装到真机并启动，不依赖当前 Release 输出目录。
 
 - ⚡ **Renew iOS Certificate**：清除本地 Provisioning Profile 缓存，强制重新构建以生成新 Profile（7 天免费证书期限从今天重新计算），然后安装并启动。每次证书过期后执行一次即可。
 
@@ -77,7 +79,8 @@
 
 ### 4. iOS IPA (限开发者受托设备)
 - ⚡ Task: **`Publish iOS IPA (Release)`**
-- 构建生产发布包，配合 Apple 开发者证书编译；如须上架则需将产物通过 Xcode/Transporter 继续流转。
+- 构建生产发布包，并额外把稳定包归档到 `release/ios-stable/PhotoViewer.iOS.app` 与 `release/ios-stable/PhotoViewer.iOS.ipa`；同时复制一份版本化 IPA 到 `release/PhotoViewer-版本号-ios-arm64.ipa`。
+- 若你想保留一个可随时回装的稳定真机版本，先执行此 Task 固化产物，之后开发过程中随时运行 **Install iOS Stable (Release)** 即可恢复到这份稳定包。
 
 ---
 
