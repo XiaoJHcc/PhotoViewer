@@ -163,34 +163,30 @@ public sealed class iOSStorageAccessManager : IPlatformStorageAccessManager
     }
 
     /// <summary>
-    /// 临时访问作用域。
+    /// 一次性安全作用域访问对象，释放时自动结束访问。
     /// </summary>
-    private sealed class TemporaryScope : IDisposable
+    private sealed class TemporaryScope(NSUrl url) : IDisposable
     {
-        private readonly NSUrl _url;
-        private bool _disposed;
+        private NSUrl? _url = url;
 
-        /// <summary>
-        /// 初始化临时作用域。
-        /// </summary>
-        /// <param name="url">已开始访问的安全作用域 URL</param>
-        public TemporaryScope(NSUrl url)
-        {
-            _url = url;
-        }
-
-        /// <summary>
-        /// 结束访问作用域。
-        /// </summary>
         public void Dispose()
         {
-            if (_disposed)
+            var currentUrl = _url;
+            if (currentUrl == null)
             {
                 return;
             }
 
-            _disposed = true;
-            _url.StopAccessingSecurityScopedResource();
+            _url = null;
+
+            try
+            {
+                currentUrl.StopAccessingSecurityScopedResource();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[StorageAccess] iOS scope release skipped: {ex.Message}");
+            }
         }
     }
 }

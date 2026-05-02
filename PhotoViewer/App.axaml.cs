@@ -126,18 +126,26 @@ public partial class App : Application
 
         try
         {
-            var storageProvider = await WaitForStorageProviderAsync();
-            if (storageProvider == null)
-            {
-                Console.WriteLine($"External open skipped: storage provider unavailable ({request.Source})");
-                return;
-            }
+            var requiresPathResolution = request.Items.Any(item => item.StorageItem == null);
+            var storageProvider = requiresPathResolution ? await WaitForStorageProviderAsync() : null;
 
             foreach (var item in request.Items)
             {
+                if (item.StorageItem is IStorageFolder directFolder)
+                {
+                    await OpenFolderOnUiThreadAsync(vm, directFolder);
+                    return;
+                }
+
+                if (item.StorageItem is IStorageFile directFile && vm.FolderVM.IsImageFile(directFile.Name))
+                {
+                    await OpenFileOnUiThreadAsync(vm, directFile);
+                    return;
+                }
+
                 if (item.Kind == ExternalOpenItemKind.Folder)
                 {
-                    var folder = await storageProvider.TryGetFolderFromPathAsync(item.Path);
+                    var folder = storageProvider == null ? null : await storageProvider.TryGetFolderFromPathAsync(item.Path);
                     if (folder != null)
                     {
                         await OpenFolderOnUiThreadAsync(vm, folder);
@@ -147,7 +155,7 @@ public partial class App : Application
                     continue;
                 }
 
-                var file = await storageProvider.TryGetFileFromPathAsync(item.Path);
+                var file = storageProvider == null ? null : await storageProvider.TryGetFileFromPathAsync(item.Path);
                 if (file == null || !vm.FolderVM.IsImageFile(file.Name))
                 {
                     continue;
