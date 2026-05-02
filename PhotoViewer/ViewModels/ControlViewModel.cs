@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Reactive;
 using System.Threading.Tasks;
@@ -21,6 +22,37 @@ public sealed class PointerContext
     public PointerContext(Vector center) { Center = center; }
 }
 
+/// <summary>
+/// 控制栏中展示的 EXIF 条目。
+/// </summary>
+public sealed class ExifDisplayEntry
+{
+    /// <summary>
+    /// 显示名称。
+    /// </summary>
+    public string DisplayName { get; }
+
+    /// <summary>
+    /// 原始 EXIF 属性名。
+    /// </summary>
+    public string PropertyName { get; }
+
+    /// <summary>
+    /// 已格式化的显示值。
+    /// </summary>
+    public string DisplayValue { get; }
+
+    /// <summary>
+    /// 构造控制栏 EXIF 展示项。
+    /// </summary>
+    public ExifDisplayEntry(string displayName, string propertyName, string displayValue)
+    {
+        DisplayName = displayName;
+        PropertyName = propertyName;
+        DisplayValue = displayValue;
+    }
+}
+
 public class ControlViewModel : ReactiveObject
 {
     private MainViewModel Main { get; }
@@ -31,9 +63,14 @@ public class ControlViewModel : ReactiveObject
     // 当前文件的 EXIF 数据
     public ExifData? CurrentExifData => Main.CurrentFile?.ExifData;
 
+    private IReadOnlyList<ExifDisplayEntry> _enabledExifItems = Array.Empty<ExifDisplayEntry>();
+
     // 启用的 EXIF 显示项列表
-    public IEnumerable<SettingsViewModel.ExifDisplayItem> EnabledExifItems => 
-        Main.Settings.EnabledExifItems;
+    public IReadOnlyList<ExifDisplayEntry> EnabledExifItems
+    {
+        get => _enabledExifItems;
+        private set => this.RaiseAndSetIfChanged(ref _enabledExifItems, value);
+    }
 
     // 直接访问设置属性
     public bool ShowRating => Main.Settings.ShowRating;
@@ -127,6 +164,9 @@ public class ControlViewModel : ReactiveObject
                     });
                 }
             });
+
+        this.WhenAnyValue(vm => vm.CurrentExifData)
+            .Subscribe(_ => UpdateEnabledExifItems());
         
         // 监听设置变化
         Main.Settings.WhenAnyValue(s => s.ShowRating)
@@ -160,7 +200,9 @@ public class ControlViewModel : ReactiveObject
         // （SettingsVM 在 UpdateEnabledExifItems() 中通过 RaiseAndSetIfChanged 更新缓存后才通知，
         //   避免 ControlVM 先于 UpdateEnabledExifItems 读到旧缓存导致"滞后一次"的问题）
         Main.Settings.WhenAnyValue(s => s.EnabledExifItems)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(EnabledExifItems)));
+            .Subscribe(_ => UpdateEnabledExifItems());
+
+        UpdateEnabledExifItems();
     }
 
     // 启用的控件列表
@@ -169,6 +211,66 @@ public class ControlViewModel : ReactiveObject
 
     // 所有快捷键（用于全局监听）
     public IEnumerable<SettingsViewModel.HotkeyItem> AllHotkeys => Main.Settings.Hotkeys;
+
+    /// <summary>
+    /// 根据当前照片与设置项生成控制栏 EXIF 展示列表。
+    /// </summary>
+    private void UpdateEnabledExifItems()
+    {
+        EnabledExifItems = Main.Settings.EnabledExifItems
+            .Select(item => new ExifDisplayEntry(
+                item.DisplayName,
+                item.PropertyName,
+                FormatExifValue(CurrentExifData, item.PropertyName)))
+            .ToList();
+    }
+
+    /// <summary>
+    /// 将 EXIF 原始值转换为控制栏使用的展示文本。
+    /// </summary>
+    private static string FormatExifValue(ExifData? exifData, string propertyName)
+    {
+        if (exifData == null)
+        {
+            return "--";
+        }
+
+        try
+        {
+            return propertyName switch
+            {
+                "Aperture" => exifData.Aperture != null
+                    ? Converters.ApertureConverter.Instance.Convert(exifData.Aperture, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "ExposureTime" => exifData.ExposureTime != null
+                    ? Converters.ExposureTimeConverter.Instance.Convert(exifData.ExposureTime, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "Iso" => exifData.Iso?.ToString() ?? "--",
+                "EquivFocalLength" => exifData.EquivFocalLength != null
+                    ? Converters.FocalLengthConverter.Instance.Convert(exifData.EquivFocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "FocalLength" => exifData.FocalLength != null
+                    ? Converters.FocalLengthConverter.Instance.Convert(exifData.FocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "CameraMake" => exifData.CameraMake ?? "--",
+                "CameraModel" => exifData.CameraModel ?? "--",
+                "LensModel" => exifData.LensModel ?? "--",
+                "DateTimeOriginal" => exifData.DateTimeOriginal != null
+                    ? Converters.DateTimeConverter.Instance.Convert(exifData.DateTimeOriginal, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "ExposureBias" => exifData.ExposureBias != null
+                    ? Converters.ExposureBiasConverter.Instance.Convert(exifData.ExposureBias, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
+                    : "--",
+                "WhiteBalance" => exifData.WhiteBalance ?? "--",
+                "Flash" => exifData.Flash ?? "--",
+                _ => "--"
+            };
+        }
+        catch
+        {
+            return "--";
+        }
+    }
     
     private void ExecutePrevious()
     {

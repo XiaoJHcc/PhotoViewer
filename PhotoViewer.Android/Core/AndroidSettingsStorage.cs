@@ -22,7 +22,7 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
                 var json = prefs.GetString(SettingsKey, null);
                 if (string.IsNullOrWhiteSpace(json)) return (SettingsModel?)null;
 
-                return JsonSerializer.Deserialize<SettingsModel>(json, SettingsJsonOptions.Default);
+                return JsonSerializer.Deserialize(json, SettingsJsonContext.Default.SettingsModel);
             }
             catch (Exception ex)
             {
@@ -39,7 +39,7 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
             try
             {
                 var prefs = Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private);
-                var json = JsonSerializer.Serialize(model, SettingsJsonOptions.Default);
+                var json = JsonSerializer.Serialize(model, SettingsJsonContext.Default.SettingsModel);
                 using var editor = prefs.Edit();
                 editor.PutString(SettingsKey, json);
                 editor.Apply();
