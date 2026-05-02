@@ -2,6 +2,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:chrome="clr-namespace:Avalonia.Controls.Chrome;assembly=Avalonia.Controls"
         xmlns:views="clr-namespace:PhotoViewer.Views"
         mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
         x:Class="PhotoViewer.Windows.MainWindowForMac"
@@ -25,6 +26,7 @@
             <!-- 左侧拖拽区 -->
             <Border x:Name="DragZoneLeft"
                     Grid.Column="0"
+                    chrome:WindowDecorationProperties.ElementRole="TitleBar"
                     Background="#9111" />
             <!-- 中间空白区：用于避让筛选工具条（仅上中下布局下由代码动态设置宽度） -->
             <Border x:Name="CenterGap"
@@ -34,6 +36,7 @@
             <!-- 右侧拖拽区 -->
             <Border x:Name="DragZoneRight"
                     Grid.Column="2"
+                    chrome:WindowDecorationProperties.ElementRole="TitleBar"
                     Background="#9111" />
         </Grid>
 

@@ -19,25 +19,6 @@ public partial class MainWindowForMac : Window
     {
         InitializeComponent();
 
-        // 左/右拖拽区
-        var dragLeft = this.FindControl<Border>("DragZoneLeft");
-        var dragRight = this.FindControl<Border>("DragZoneRight");
-
-        void AttachDrag(Border? zone)
-        {
-            if (zone is null) return;
-            zone.PointerPressed += (_, e) =>
-            {
-                if (e.GetCurrentPoint(zone).Properties.IsLeftButtonPressed)
-                {
-                    BeginMoveDrag(e);
-                }
-            };
-        }
-
-        AttachDrag(dragLeft);
-        AttachDrag(dragRight);
-
         var titleBar = this.FindControl<Grid>("CustomTitleBar");
         if (titleBar is not null)
         {
