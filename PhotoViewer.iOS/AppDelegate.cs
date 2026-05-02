@@ -11,6 +11,7 @@ using PhotoViewer.Core.Settings;
 using PhotoViewer.iOS.Core;
 
 using System;
+using System.Runtime.Versioning;
 
 namespace PhotoViewer.iOS;
 
@@ -68,7 +69,8 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
     [Export("application:openURL:options:")]
     public new bool OpenUrl(UIApplication app, NSUrl url, NSDictionary options)
     {
-        return PublishIncomingUrl(url, source: "iOS:OpenUrl");
+        iOSStorageAccessManager.RetainUrl(url);
+        return base.OpenUrl(app, url, options);
     }
 
     /// <summary>
@@ -82,17 +84,31 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
     [Export("application:openURL:sourceApplication:annotation:")]
     public bool OpenUrl(UIApplication app, NSUrl url, string sourceApplication, NSObject annotation)
     {
-        return PublishIncomingUrl(url, source: $"iOS:OpenUrl:{sourceApplication}");
+        iOSStorageAccessManager.RetainUrl(url);
+        return base.OpenUrl(app, url, new NSDictionary());
     }
 
     /// <summary>
-    /// 将系统传入的 URL 交给 iOS 外部打开桥接层统一处理。
+    /// 处理 iOS 13+ scene 冷启动时附带的 URLContexts。
+    /// Avalonia 的默认 SceneDelegate 不消费连接选项中的文件 URL，这里提前转成挂起的外部打开请求。
     /// </summary>
-    /// <param name="url">系统传入的文件 URL</param>
-    /// <param name="source">请求来源标记</param>
-    /// <returns>是否成功识别并投递</returns>
-    private static bool PublishIncomingUrl(NSUrl url, string source)
+    /// <param name="application">当前应用</param>
+    /// <param name="connectingSceneSession">正在连接的场景会话</param>
+    /// <param name="options">场景连接选项</param>
+    /// <returns>Avalonia 默认的场景配置</returns>
+    [Export("application:configurationForConnectingSceneSession:options:")]
+    [SupportedOSPlatform("ios13.0")]
+    public new UISceneConfiguration GetConfiguration(UIApplication application, UISceneSession connectingSceneSession, UISceneConnectionOptions options)
     {
-        return iOSExternalOpenBridge.PublishFromUrl(url, source);
+        var role = connectingSceneSession?.Role ?? UIWindowSceneSessionRole.Application;
+        if (connectingSceneSession?.Role is null)
+        {
+            Console.WriteLine("[iOS Scene] Missing scene role, falling back to application role.");
+        }
+
+        return new UISceneConfiguration("PhotoViewer", role)
+        {
+            DelegateType = typeof(PhotoViewerSceneDelegate)
+        };
     }
 }
