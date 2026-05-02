@@ -26,7 +26,7 @@
                               SelectedValue="{Binding LayoutMode}"
                               SelectedValueBinding="{Binding Value}">
                         <ComboBox.ItemTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="vm:SettingsViewModel+LayoutModeItem">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="{Binding DisplayName}"
                                                FontWeight="Medium" />
@@ -48,7 +48,7 @@
                 <controls:SortableList ItemsSource="{Binding Hotkeys}"
                                        MoveCommand="{Binding MoveHotkeyCommand}">
                     <controls:SortableList.ItemTemplate>
-                        <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
+                        <DataTemplate x:DataType="vm:SettingsViewModel+HotkeyItem">
                             <Grid ColumnDefinitions="Auto,*,Auto,Auto">
                                 <!-- 勾选框 -->
                                 <CheckBox Grid.Column="0"

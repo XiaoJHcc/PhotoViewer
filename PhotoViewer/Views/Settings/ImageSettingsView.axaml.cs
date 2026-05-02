@@ -14,7 +14,7 @@ public partial class ImageSettingsView : UserControl
         InitializeComponent();
     }
 
-    private void OnScalePresetLostFocus(object? sender, RoutedEventArgs e)
+    private void OnScalePresetLostFocus(object? sender, FocusChangedEventArgs e)
     {
         ViewModel?.ApplyScalePreset();
     }

@@ -47,7 +47,7 @@
                 <StackPanel>
                     <ItemsControl ItemsSource="{Binding ScalePresets}">
                         <ItemsControl.ItemTemplate>
-                            <DataTemplate>
+                            <DataTemplate x:DataType="vm:SettingsViewModel+ScalePreset">
                                     <Panel Height="36" Margin="1">
                                         <!-- 左 -->
                                         <Panel HorizontalAlignment="Stretch"

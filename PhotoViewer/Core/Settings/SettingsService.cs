@@ -1,7 +1,6 @@
 ﻿using System;
 using System.IO;
 using System.Text.Json;
-using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -79,8 +78,8 @@ public sealed class SettingsService : ISettingsService
     private static SettingsModel Clone(SettingsModel source)
     {
         // Json round-trip clone to avoid accidental reference mutation
-        var json = JsonSerializer.Serialize(source, SettingsJsonOptions.Default);
-        return JsonSerializer.Deserialize<SettingsModel>(json, SettingsJsonOptions.Default) ?? new SettingsModel();
+        var json = JsonSerializer.Serialize(source, SettingsJsonContext.Default.SettingsModel);
+        return JsonSerializer.Deserialize(json, SettingsJsonContext.Default.SettingsModel) ?? new SettingsModel();
     }
 
     public static ISettingsStorage CreateFileStorage()
@@ -112,7 +111,7 @@ public sealed class FileSettingsStorage : ISettingsStorage
             if (!File.Exists(_path)) return null;
 
             using var stream = File.OpenRead(_path);
-            return await JsonSerializer.DeserializeAsync<SettingsModel>(stream, SettingsJsonOptions.Default).ConfigureAwait(false);
+            return await JsonSerializer.DeserializeAsync(stream, SettingsJsonContext.Default.SettingsModel).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -134,7 +133,7 @@ public sealed class FileSettingsStorage : ISettingsStorage
             var tempPath = _path + ".tmp";
             await using (var stream = File.Create(tempPath))
             {
-                await JsonSerializer.SerializeAsync(stream, model, SettingsJsonOptions.Default).ConfigureAwait(false);
+                await JsonSerializer.SerializeAsync(stream, model, SettingsJsonContext.Default.SettingsModel).ConfigureAwait(false);
             }
 
             if (File.Exists(_path))
@@ -148,16 +147,6 @@ public sealed class FileSettingsStorage : ISettingsStorage
             Console.WriteLine($"FileSettingsStorage.SaveAsync failed: {ex.Message}");
         }
     }
-}
-
-public static class SettingsJsonOptions
-{
-    public static readonly JsonSerializerOptions Default = new()
-    {
-        PropertyNameCaseInsensitive = true,
-        WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() }
-    };
 }
 
 public static class SettingsPathHelper

@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:core="clr-namespace:PhotoViewer.Core"
              xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
@@ -107,7 +108,7 @@
                       SelectedValueBinding="{Binding Value}"
                       HorizontalAlignment="Stretch">
                 <ComboBox.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="vm:SortOption">
                         <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -120,7 +121,7 @@
                       SelectedValueBinding="{Binding Value}"
                       HorizontalAlignment="Stretch">
                 <ComboBox.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="vm:SortOption">
                         <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -131,7 +132,7 @@
                       SelectedValue="{Binding SelectedRatingFilter}"
                       SelectedValueBinding="{Binding Key}">
                 <ComboBox.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="vm:FolderViewModel+RatingFilterOption">
                         <TextBlock Text="{Binding DisplayName}" />
                     </DataTemplate>
                 </ComboBox.ItemTemplate>
@@ -171,7 +172,7 @@
                 </ItemsControl.ItemsPanel>
 
                 <ItemsControl.ItemTemplate>
-                    <DataTemplate>
+                    <DataTemplate x:DataType="core:ImageFile">
                         <Button
                             Command="{Binding $parent[UserControl].((vm:FolderViewModel)DataContext).SelectImageCommand}"
                             CommandParameter="{Binding}"
@@ -239,15 +240,8 @@
                                                        FontSize="24"
                                                        HorizontalAlignment="Center"
                                                        VerticalAlignment="Center"
-                                                       Foreground="#666666">
-                                                <TextBlock.IsVisible>
-                                                    <MultiBinding Converter="{x:Static BoolConverters.And}">
-                                                        <Binding Path="!IsThumbnailLoading" />
-                                                        <Binding Path="Thumbnail"
-                                                                 Converter="{x:Static ObjectConverters.IsNull}" />
-                                                    </MultiBinding>
-                                                </TextBlock.IsVisible>
-                                            </TextBlock>
+                                                       Foreground="#666666"
+                                                       IsVisible="{Binding ShowThumbnailPlaceholder}" />
                                         </Grid>
                                     </Border>
 

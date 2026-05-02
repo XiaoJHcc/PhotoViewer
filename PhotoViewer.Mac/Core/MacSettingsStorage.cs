@@ -21,7 +21,7 @@ public sealed class MacSettingsStorage : ISettingsStorage
             {
                 var json = NSUserDefaults.StandardUserDefaults.StringForKey(SettingsKey);
                 if (string.IsNullOrWhiteSpace(json)) return null;
-                return JsonSerializer.Deserialize<SettingsModel>(json, SettingsJsonOptions.Default);
+                return JsonSerializer.Deserialize(json, SettingsJsonContext.Default.SettingsModel);
             }
             catch (Exception ex)
             {
@@ -37,7 +37,7 @@ public sealed class MacSettingsStorage : ISettingsStorage
         {
             try
             {
-                var json = JsonSerializer.Serialize(model, SettingsJsonOptions.Default);
+                var json = JsonSerializer.Serialize(model, SettingsJsonContext.Default.SettingsModel);
                 NSUserDefaults.StandardUserDefaults.SetString(json, SettingsKey);
                 NSUserDefaults.StandardUserDefaults.Synchronize();
             }

@@ -62,7 +62,11 @@ public class ImageFile : ReactiveObject
     public Bitmap? Thumbnail
     {
         get => _thumbnail;
-        private set => this.RaiseAndSetIfChanged(ref _thumbnail, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _thumbnail, value);
+            this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
+        }
     }
         
     public bool IsCurrent
@@ -154,8 +158,17 @@ public class ImageFile : ReactiveObject
     public bool IsThumbnailLoading
     {
         get => _isThumbnailLoading;
-        private set => this.RaiseAndSetIfChanged(ref _isThumbnailLoading, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isThumbnailLoading, value);
+            this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
+        }
     }
+
+    /// <summary>
+    /// 是否显示无缩略图占位符。
+    /// </summary>
+    public bool ShowThumbnailPlaceholder => Thumbnail == null && !IsThumbnailLoading;
 
     public string DisplayName
     {

@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
@@ -130,18 +131,11 @@
                     </ItemsControl.ItemsPanel>
 
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:SettingsViewModel+ExifDisplayItem">
+                        <DataTemplate x:DataType="vm:ExifDisplayEntry">
                             <Border Classes="ExifBlockBorder">
                                 <StackPanel Classes="ExifBlock">
                                     <TextBlock Classes="ExifLabel" Text="{Binding DisplayName}" />
-                                    <TextBlock Classes="ExifValue">
-                                        <TextBlock.Text>
-                                            <MultiBinding Converter="{x:Static local:ExifValueConverter.Instance}">
-                                                <Binding Path="$parent[UserControl].((vm:ControlViewModel)DataContext).CurrentExifData" />
-                                                <Binding Path="PropertyName" />
-                                            </MultiBinding>
-                                        </TextBlock.Text>
-                                    </TextBlock>
+                                    <TextBlock Classes="ExifValue" Text="{Binding DisplayValue}" />
                                 </StackPanel>
                             </Border>
                         </DataTemplate>
@@ -259,27 +253,13 @@
                     </ItemsControl.ItemsPanel>
 
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="vm:SettingsViewModel+HotkeyItem">
+                        <DataTemplate x:DataType="vm:SettingsViewModel+HotkeyItem">
                             <Button Classes="ControlButton"
                                     ToolTip.Tip="{Binding Tooltip}"
                                     Click="OnControlButtonClick"
                                     Tag="{Binding Command}">
-                                <!-- 修改：将 DisplaySymbol 拆分为字符并在 Grid 中叠放 -->
-                                <ItemsControl ItemsSource="{Binding DisplaySymbol, 
-                                            Converter={x:Static local:SymbolToCharsConverter.Instance}}">
-                                    <ItemsControl.ItemsPanel>
-                                        <!-- Grid 默认将所有子元素放在同一单元格，从而叠放 -->
-                                        <ItemsPanelTemplate>
-                                            <Grid />
-                                        </ItemsPanelTemplate>
-                                    </ItemsControl.ItemsPanel>
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <TextBlock Classes="ControlButtonSymbol"
-                                                       Text="{Binding .}" />
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <controls:OverlayGlyphText Text="{Binding DisplaySymbol}"
+                                                          GlyphClass="ControlButtonSymbol" />
                             </Button>
                         </DataTemplate>
                     </ItemsControl.ItemTemplate>
