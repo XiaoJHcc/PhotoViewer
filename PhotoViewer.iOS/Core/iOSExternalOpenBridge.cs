@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using Foundation;
 using PhotoViewer.Core;
@@ -12,8 +11,6 @@ namespace PhotoViewer.iOS.Core;
 /// </summary>
 public static class iOSExternalOpenBridge
 {
-    private static readonly object SyncRoot = new();
-    private static readonly Dictionary<string, NSUrl> ActiveSecurityScopedUrls = new(StringComparer.Ordinal);
 
     /// <summary>
     /// 将 iOS 原生文件 URL 发布为外部打开请求。
@@ -44,7 +41,7 @@ public static class iOSExternalOpenBridge
             return null;
         }
 
-        TryRetainSecurityScopedAccess(url);
+        iOSStorageAccessManager.RetainUrl(url);
 
         try
         {
@@ -62,42 +59,4 @@ public static class iOSExternalOpenBridge
         }
     }
 
-    /// <summary>
-    /// 尝试保留安全作用域资源访问权限。
-    /// 某些文件提供者只授予 URL 级访问；保留访问可提高后续单图回退成功率。
-    /// </summary>
-    /// <param name="url">系统传入的文件 URL</param>
-    private static void TryRetainSecurityScopedAccess(NSUrl url)
-    {
-        var key = url.AbsoluteString;
-        if (string.IsNullOrWhiteSpace(key))
-        {
-            return;
-        }
-
-        lock (SyncRoot)
-        {
-            if (ActiveSecurityScopedUrls.ContainsKey(key))
-            {
-                return;
-            }
-        }
-
-        try
-        {
-            if (!url.StartAccessingSecurityScopedResource())
-            {
-                return;
-            }
-
-            lock (SyncRoot)
-            {
-                ActiveSecurityScopedUrls[key] = url;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"StartAccessingSecurityScopedResource skipped: {ex.Message}");
-        }
-    }
 }
