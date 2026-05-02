@@ -43,5 +43,11 @@ Bring PhotoViewer to a clean Avalonia 12 latest-style baseline, not just "builds
 - Updated key high-traffic templates to explicit `x:DataType` declarations.
 - Moved EXIF value formatting and thumbnail placeholder visibility into view-model/model properties, removing remaining `MultiBinding` usage.
 - Switched settings serialization to source-generated `System.Text.Json` metadata and cleared macOS trimming warnings.
+- Reworked settings-page keyboard avoidance to use Avalonia 12 `InputPane` occlusion geometry instead of a hard-coded mobile keyboard height.
+- Removed the custom touch-focus deferral state machine from `DeferredNumericTextBox` and aligned settings-page focus handling with Avalonia 12 native touch focus timing.
+- Dropped the custom iOS numeric-keyboard workaround path and reverted iOS numeric settings inputs to Avalonia's native full-keyboard flow with built-in return-key handling.
 - Validated with `dotnet build PhotoViewer/PhotoViewer.csproj -c Debug` and the macOS `Debug Mac` task.
+- Revalidated after the keyboard-avoidance refactor with `dotnet build PhotoViewer/PhotoViewer.csproj -c Debug` and `dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug`.
+- Revalidated the input-focus cleanup with `dotnet build PhotoViewer/PhotoViewer.csproj -c Debug` and `dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64`.
+- Revalidated the simplified native iOS input flow with `dotnet build PhotoViewer/PhotoViewer.csproj -c Debug` and `dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64`.
 - Next focus: audit Avalonia 12 focus semantics and evaluate replacing custom window chrome logic with decoration primitives.
