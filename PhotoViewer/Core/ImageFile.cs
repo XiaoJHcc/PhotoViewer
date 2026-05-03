@@ -93,7 +93,7 @@ public class ImageFile : ReactiveObject
         {
             if (ExifData?.OrientationValue != null)
             {
-                return ExifLoader.GetRotationAngle(ExifData.OrientationValue);
+                return ExifOrientation.GetRotationAngle(ExifData.OrientationValue);
             }
             return 0;
         }
@@ -108,7 +108,7 @@ public class ImageFile : ReactiveObject
         {
             if (ExifData?.OrientationValue != null)
             {
-                return ExifLoader.NeedsHorizontalFlip(ExifData.OrientationValue);
+                return ExifOrientation.NeedsHorizontalFlip(ExifData.OrientationValue);
             }
             return false;
         }
@@ -272,14 +272,14 @@ public class ImageFile : ReactiveObject
                     else
                     {
                         // 首先尝试从EXIF中提取嵌入式缩略图
-                        var exifThumbnail = await ExifLoader.TryLoadExifThumbnailAsync(File);
+                        var exifThumbnail = await ThumbnailExtractor.TryLoadEmbeddedAsync(File);
                         if (exifThumbnail != null)
                         {
                             return exifThumbnail;
                         }
 
                         // 如果没有EXIF缩略图，则解码原图生成缩略图
-                        return await ExifLoader.GenerateThumbnailFromImageAsync(File);
+                        return await ThumbnailExtractor.GenerateFromImageAsync(File);
                     }
                     
                     return null;

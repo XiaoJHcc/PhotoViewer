@@ -12,7 +12,7 @@ using System.Collections.Generic;
 
 namespace PhotoViewer.Core;
 
-internal static partial class ExifSonyCipherTags
+internal static partial class SonyCipherTags
 {
     /// <summary>解密查找表: DecipherTable[encrypted] = original, 基于 (b³ % 249)</summary>
     private static readonly byte[] DecipherTable =
