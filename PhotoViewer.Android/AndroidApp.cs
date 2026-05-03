@@ -25,7 +25,7 @@ public class AndroidApp : AvaloniaAndroidApplication<App>
     /// <summary>
     /// 构建 Avalonia AppBuilder，并注入 Android 平台能力实现。
     /// </summary>
-    public override AppBuilder CustomizeAppBuilder(AppBuilder builder)
+    protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
     {
         return base.CustomizeAppBuilder(builder)
             .With(new FontManagerOptions
