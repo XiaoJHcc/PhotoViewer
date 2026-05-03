@@ -223,6 +223,8 @@ public partial class App : Application
             DataContext = vm
         };
 
+        view.SetValue(TopLevel.AutoSafeAreaPaddingProperty, false);
+
         CurrentMobileMainView = view;
         return view;
     }
