@@ -37,6 +37,12 @@
 
 ### 2. Android
 *前提：手机已通过 ADB 连接。*
+
+> **macOS 前置依赖**
+> 1. **JDK 17+**：`dotnet build` 内部需要 keytool / javac。推荐通过 [Adoptium](https://adoptium.net) 安装，或 `brew install temurin`。安装后确认 `keytool -version` 可用。
+> 2. **Android SDK**：首次使用请通过 [Android Studio](https://developer.android.com/studio) 安装，SDK 默认落在 `~/Library/Android/sdk`；项目已内置该路径的备用寻址，无需额外设置环境变量。
+> 3. **ADB**：Tasks 已硬编码使用 `~/Library/Android/sdk/platform-tools/adb`，无需将其加入 PATH。
+
 - ⚡ **Debug Android**：编译并自动将新版推送到已连接手机上直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
 - ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
 
@@ -71,7 +77,10 @@
 
 ### 2. Android APK
 - ⚡ Task: **`Publish Android APK (Release)`**
-- 包含签名对齐。首次发布前需在 `PhotoViewer.Android/` 目录运行 `setup-android-signing.ps1` 生成证书（配置写入 `signing.json`，已被 .gitignore 排除）。
+- 包含签名对齐。首次发布前需生成证书：
+  - **Windows**：在 `PhotoViewer.Android/` 目录运行 `setup-android-signing.ps1`
+  - **macOS**：运行 `bash PhotoViewer.Android/setup-android-signing.sh`
+  - 证书配置写入 `signing.json`（已被 .gitignore 排除）。
 
 ### 3. macOS App & DMG
 - ⚡ Task: **`Publish Mac DMG (Release)`**

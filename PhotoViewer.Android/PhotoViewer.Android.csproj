@@ -2,7 +2,7 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-android</TargetFramework>
-        <SupportedOSPlatformVersion>21</SupportedOSPlatformVersion>
+        <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
         <ApplicationId>cc.xiaojh.PhotoViewer</ApplicationId>
         <AndroidPackageFormat>apk</AndroidPackageFormat>
@@ -10,6 +10,7 @@
         <!-- 默认情况下，C# Dev Kit 等环境很难推断通过 dotnet workload 下载的隐藏 Android SDK，
              在此提供备用寻址，确保开箱即用（无需配环境变量） -->
         <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(LocalAppData)\Android\Sdk')">$(LocalAppData)\Android\Sdk</AndroidSdkDirectory>
+        <AndroidSdkDirectory Condition="'$(AndroidSdkDirectory)' == '' and Exists('$(HOME)/Library/Android/sdk')">$(HOME)/Library/Android/sdk</AndroidSdkDirectory>
     </PropertyGroup>
 
     <!-- Debug 配置：将所有 .NET 程序集内嵌进 APK -->
