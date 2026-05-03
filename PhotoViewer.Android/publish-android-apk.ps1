@@ -117,8 +117,8 @@ $temporarilyBypassGlobalJson = $false
 
 if (-not $selectedDotnet) {
     $selectedDotnet = $dotnetInfos | Where-Object { $_.HasAndroidWorkload } | Select-Object -First 1
-    if ($selectedDotnet) {
-        $temporarilyBypassGlobalJson = -not $selectedDotnet.HasRequiredSdk
+    if ($selectedDotnet -and -not $selectedDotnet.HasRequiredSdk) {
+        throw "已找到安装了 android workload 的 dotnet：$($selectedDotnet.Path)，但它不满足 global.json 要求的 SDK $requiredSdkVersion。请先对兼容的 .NET SDK 安装 android workload，例如：`"C:\Program Files\dotnet\dotnet.exe`" workload install android"
     }
 }
 

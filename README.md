@@ -6,15 +6,12 @@
 
 ## 项目简介
 
-PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows、macOS、iOS 和 Android 平台。专注于优化摄影工作流，让选片过程更加快速、随时随地，帮助您在拍摄后第一时间筛选出最佳作品。
+PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows、macOS、iOS 和 Android 平台。专注于优化摄影工作流，让选片过程更加快速、随时随地，帮助您在拍摄后第一时间筛选出最佳作品。同时支持较为完善的 EXIF 解码。
 
-*这是一个个人项目，先期版本主要解决以下痛点：*
-1. *Windows 上缺少浏览 HEIF 格式的图片查看器（尤其是 SONY HEIF 10bit 4:2:2）*
-2. *想在只浏览 JPG /HEIF 的情况下给 RAW 同步标星*
-3. *需要操作习惯统一的移动端应用*
-4. *需要针对摄影流程优化布局、精简功能*
+> 主要适配 SONY 相机，其他品牌暂未针对优化。
 
 ![image](README-IMG/PhotoViewer-Screenshot.jpg)
+![image](README-IMG/PhotoViewer-Exif.jpg)
 
 ## 核心特色
 
@@ -24,8 +21,8 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 - **高效筛选**：使用快捷键快速浏览、对比、标星
 
 ### 🖼️ 视觉体验
-- **质量优先**：照片始终以最高质量显示，尽可能占满屏幕空间
-- **信息精简**：仅在剩余空间显示关键的 EXIF 信息和星级评价
+- **质量优先**：照片始终以最高质量显示，不用缩略图糊弄
+- **信息精简**：照片占据主要空间，仅在剩余空间显示精简的 EXIF、星级、操作按钮
 - **平台统一**：跨平台一致的 UI 设计和使用体验
 
 ### ⚡ 完全自定义
@@ -59,13 +56,14 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 | 功能 | Windows | macOS | iOS/iPadOS | Android |
 |-----|---------|-------|------------|---------|
 | JPG 预览 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| HEIF 预览 | ✅ 支持(LibHeif) | ✅ 支持(原生) | ✅ 支持(原生) | ✅ 支持(LibHeif) |
-| RAW 预览 | ❌ 待开发 | ❌ 待开发 | ❌ 待开发 | ❌ 待开发 |
+| HEIF 预览 | ✅ LibHeif | ✅ 原生 | ✅ 原生 | ✅ LibHeif |
+| RAW 预览 | 待开发 | 待开发 | 待开发 | 待开发 |
 | SONY ARW 标星 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
 | 其他 RAW 标星 | 未测试 | 未测试 | 未测试 | 未测试 |
+| EXIF 解析 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
 | 快捷键 | ✅ 支持 | ✅ 支持 | ✅ 外接键盘 | ✅ 外接键盘 |
-| 触摸 | 触控板未优化 | 触控板未优化 | ✅ 触屏手势 | ✅ 触屏手势 |
-| 下载 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | ⚠️ 暂未上架 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) |
+| 触摸 | 触控板待优化 | 触控板待优化 | ✅ 触屏手势 | ✅ 触屏手势 |
+| 下载 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) | 暂未上架 | [Releases](https://github.com/XiaoJHcc/PhotoViewer/releases) |
 
 ## 安装与使用
 
@@ -87,12 +85,11 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 ## 开发计划
 
 ### 🚧 待开发功能
-- **连拍/HDR/堆栈自动分组**
-- **SONY 对焦点识别**
-- **基于 CV 对长曝抖动/主体虚焦检查** （主要研究方向）
-- **基于 AI 的视觉显著度分析** （主要研究方向）
-- **RAW 格式预览** （疑似伪需求，或许不会做了）
+- **基于 ViT 的美学评级算法**（主要 AI 研究方向）
+- **基于 CV 的长曝抖动/主体虚焦检查**（AI 的前置基建）
+- **基于 ViT 的相似度检查（连拍/HDR/堆栈自动分组）**（AI 的副产物）
+- **RAW 格式预览** （我还是建议使用 RAW+JPG/HEIF，或许不会做了）
 
 ## 许可证
 
-本项目因使用 [LibHeif](https://github.com/strukturag/libheif) 等开源库，遵循协议采用 [GPL 许可证](LICENSE)。
+本项目使用 [LibHeif](https://github.com/strukturag/libheif) 开源库解码 HEIF 格式照片，使用 [ExifTool](https://github.com/exiftool/exiftool) 的源码参数用于补充解析 EXIF 信息，遵循协议采用 [GPL 许可证](LICENSE)。
