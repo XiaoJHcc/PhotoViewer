@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.ViewModels.File;
 using PhotoViewer.Views;
 using ReactiveUI;
 
@@ -14,6 +15,7 @@ namespace PhotoViewer.ViewModels;
 public class MainViewModel : ViewModelBase
 {
     public FolderViewModel FolderVM { get; }
+    public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
     public ImageViewModel ImageVM { get; }
     public DetailViewModel DetailVM { get; }
@@ -30,10 +32,10 @@ public class MainViewModel : ViewModelBase
             if (_currentFile != null) _currentFile.IsCurrent = false;
             if (_currentFile != value) LastFile = _currentFile;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
-            if (value != null) 
+            if (value != null)
             {
                 value.IsCurrent = true;
-                FolderVM.PreloadNearbyFiles();
+                FileVM.ThumbnailList.PreloadNearbyFiles();
             }
             else
             {
@@ -41,7 +43,7 @@ public class MainViewModel : ViewModelBase
             }
         }
     }
-        
+
     public MainViewModel()
     {
         // 先创建设置 ViewModel
@@ -51,6 +53,8 @@ public class MainViewModel : ViewModelBase
         ImageVM = new ImageViewModel(this);
         DetailVM = new DetailViewModel(this);
         ControlVM = new ControlViewModel(this);
+        // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
+        FileVM = new FileViewModel(this);
 
         // 监听布局模式变化
         Settings.WhenAnyValue(s => s.LayoutMode)
@@ -268,9 +272,8 @@ public class MainViewModel : ViewModelBase
         if (IsHorizontalLayout != newLayout)
         {
             IsHorizontalLayout = newLayout;
-            
+
             // 通知相关视图模型布局已变化
-            FolderVM?.RaisePropertyChanged(nameof(FolderVM.IsVerticalLayout));
             ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsVerticalLayout));
             DetailVM?.RaisePropertyChanged(nameof(DetailVM.IsVerticalLayout));
         }
@@ -377,10 +380,10 @@ public class MainViewModel : ViewModelBase
 
         ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
 
-        // 仅在启用了星级筛选时才重建文件列表，否则仅更新内存缓存即可，避免重建 ObservableCollection 导致 UI 卡顿
-        if (FolderVM.SelectedRatingFilter != "All")
+        // 仅在启用了星级筛选时才重建文件列表,否则仅更新内存缓存即可,避免重建 ObservableCollection 导致 UI 卡顿
+        if (FileVM.FilterBar.SelectedRatingFilter != "All")
         {
-            FolderVM.RefreshFilters();
+            FileVM.ThumbnailList.RefreshFilters();
         }
     }
 

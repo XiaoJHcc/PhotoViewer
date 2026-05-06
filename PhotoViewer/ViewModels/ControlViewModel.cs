@@ -275,22 +275,24 @@ public class ControlViewModel : ReactiveObject
     private void ExecutePrevious()
     {
         // 上一张
-        if (Main.FolderVM.HasPreviousFile() && Main.CurrentFile != null)
+        var list = Main.FileVM.ThumbnailList;
+        if (list.HasPreviousFile() && Main.CurrentFile != null)
         {
-            var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex - 1];
-            Main.FolderVM.ScrollToCurrent();
+            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
+            Main.CurrentFile = list.FilteredFiles[currentIndex - 1];
+            list.ScrollToCurrent();
         }
     }
 
     private void ExecuteNext()
     {
         // 下一张
-        if (Main.FolderVM.HasNextFile() && Main.CurrentFile != null)
+        var list = Main.FileVM.ThumbnailList;
+        if (list.HasNextFile() && Main.CurrentFile != null)
         {
-            var currentIndex = Main.FolderVM.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = Main.FolderVM.FilteredFiles[currentIndex + 1];
-            Main.FolderVM.ScrollToCurrent();
+            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
+            Main.CurrentFile = list.FilteredFiles[currentIndex + 1];
+            list.ScrollToCurrent();
         }
     }
 

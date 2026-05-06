@@ -1,37 +1,45 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.File;
 
 namespace PhotoViewer.Core;
 
 /// <summary>
-/// 位图后台预取协调器：
-/// 1. 当前图前后预取（前 Forward / 后 Backward）
+/// 位图后台预取协调器:
+/// 1. 当前图前后预取(前 Forward / 后 Backward)
 /// 2. 滚动停止后中心附近预取
-/// 3. 统一串行，旧任务自动取消
+/// 3. 统一串行,旧任务自动取消
 /// </summary>
 public class BitmapPrefetcher
 {
-    private readonly FolderViewModel _folder;
+    private readonly MainViewModel _main;
+    private readonly ThumbnailListViewModel _list;
     private readonly SettingsViewModel _settings;
-    
+
     private CancellationTokenSource? _currentAroundCts;
     private CancellationTokenSource? _currentVisibleCenterCts;
-    
+
     private volatile bool _busy;
 
-    public BitmapPrefetcher(FolderViewModel folder)
+    /// <summary>
+    /// 构造位图预取器,绑定到主视图模型与缩略图列表视图模型。
+    /// </summary>
+    /// <param name="main">主视图模型(读取当前图、设置)</param>
+    /// <param name="list">主缩略图列表视图模型(提供 FilteredFiles 与忙碌状态)</param>
+    public BitmapPrefetcher(MainViewModel main, ThumbnailListViewModel list)
     {
-        _folder = folder;
-        _settings = folder.Main.Settings;
+        _main = main;
+        _list = list;
+        _settings = main.Settings;
     }
 
     /// <summary>
-    /// 当前图片变化后调用
+    /// 当前图片变化后调用:取消旧任务,预取前后若干张。
     /// </summary>
     public void PrefetchAroundCurrent()
     {
@@ -43,11 +51,11 @@ public class BitmapPrefetcher
         {
             try
             {
-                if (_folder.Main.CurrentFile == null) return;
-                var files = _folder.FilteredFiles;
+                if (_main.CurrentFile == null) return;
+                var files = _list.FilteredFiles;
                 if (files.Count == 0) return;
 
-                var idx = files.IndexOf(_folder.Main.CurrentFile);
+                var idx = files.IndexOf(_main.CurrentFile);
                 if (idx < 0) return;
 
                 int backward = Math.Max(0, _settings.PreloadBackwardCount);
@@ -55,14 +63,12 @@ public class BitmapPrefetcher
 
                 var indices = new List<int>();
 
-                // 后 forward
                 for (int i = 1; i <= forward; i++)
                 {
                     int p = idx + i;
                     if (p < files.Count) indices.Add(p);
                     else break;
                 }
-                // 前 backward
                 for (int i = 1; i <= backward; i++)
                 {
                     int p = idx - i;
@@ -70,7 +76,6 @@ public class BitmapPrefetcher
                     else break;
                 }
 
-                // 去重 & 顺序：优先前后距离近
                 var ordered = indices
                     .Select(i => (i, dist: Math.Abs(i - idx)))
                     .OrderBy(t => t.dist)
@@ -85,7 +90,7 @@ public class BitmapPrefetcher
     }
 
     /// <summary>
-    /// 滚动停止后调用
+    /// 滚动停止后调用:预取可见区域中心附近图片。
     /// </summary>
     public void PrefetchVisibleCenter(int firstIndex, int lastIndex)
     {
@@ -97,7 +102,7 @@ public class BitmapPrefetcher
         {
             try
             {
-                var files = _folder.FilteredFiles;
+                var files = _list.FilteredFiles;
                 if (files.Count == 0) return;
                 firstIndex = Math.Max(0, Math.Min(firstIndex, files.Count - 1));
                 lastIndex = Math.Max(0, Math.Min(lastIndex, files.Count - 1));
@@ -125,29 +130,37 @@ public class BitmapPrefetcher
         }, ct);
     }
 
+    /// <summary>
+    /// 主图是否仍在加载中(用于让位高优先级解码)。
+    /// </summary>
     private bool IsCurrentImageLoading()
     {
-        var current = _folder.Main.CurrentFile;
+        var current = _main.CurrentFile;
         if (current == null) return false;
-        // 主图尚未准备好（UI显示优先）
-        var imgVM = _folder.Main.ImageVM;
+        var imgVM = _main.ImageVM;
         var path = current.File.Path.LocalPath;
         return imgVM.SourceBitmap == null && !BitmapLoader.IsInCache(path);
     }
 
+    /// <summary>
+    /// 让位等待:当前主图或缩略图通道仍在繁忙时退避。
+    /// </summary>
     private async Task WaitForHighPriorityIdleAsync(CancellationToken ct)
     {
         int waited = 0;
         while (!ct.IsCancellationRequested)
         {
-            if (!IsCurrentImageLoading() && !_folder.IsThumbnailLoadingBusy())
+            if (!IsCurrentImageLoading() && !_list.IsThumbnailLoadingBusy())
                 break;
             await Task.Delay(120, ct);
             waited += 120;
-            if (waited > 5000) break; // 最长等待 5 秒避免极端阻塞
+            if (waited > 5000) break;
         }
     }
 
+    /// <summary>
+    /// 实际预取执行:按并行度限制启动多个任务,逐个预留内存并解码。
+    /// </summary>
     private async Task RunQueuedAsync(IEnumerable<IStorageFile> files, CancellationToken ct)
     {
         if (_busy) return;
@@ -168,8 +181,6 @@ public class BitmapPrefetcher
                 if (ct.IsCancellationRequested) break;
 
                 await nativeSemaphore.WaitAsync(ct);
-
-                // 轻微错峰，避免瞬时大量 I/O
                 await Task.Delay(15, ct);
 
                 tasks.Add(Task.Run(async () =>
@@ -177,21 +188,17 @@ public class BitmapPrefetcher
                     IDisposable? reservation = null;
                     try
                     {
-                        // 每个任务都需让位于高优先级加载
                         await WaitForHighPriorityIdleAsync(ct);
                         if (ct.IsCancellationRequested) return;
 
-                        // 申请内存预留：失败或过大则跳过该文件
                         reservation = await BitmapLoader.ReserveForPreloadAsync(f, ct);
                         if (reservation == null) return;
 
-                        // 二次检查，避免重复
                         if (!BitmapLoader.IsInCache(f.Path.LocalPath))
                         {
                             await BitmapLoader.PreloadBitmapAsync(f);
                         }
 
-                        // 节流：给 UI / 解码线程留喘息
                         await Task.Delay(30, ct);
                     }
                     catch

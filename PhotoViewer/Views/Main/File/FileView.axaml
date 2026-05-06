@@ -1,0 +1,46 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.File"
+             xmlns:fileViews="clr-namespace:PhotoViewer.Views.Main.File"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="120"
+             x:Class="PhotoViewer.Views.Main.File.FileView"
+             x:DataType="vm:FileViewModel">
+
+    <!--
+        文件栏(File)三分区容器:上=筛选条,左=主缩略图列表,右=相似聚类面板。
+        左/右挂载(竖向滚动)与顶部挂载(横向滚动)共用同一份 Grid 模板:
+        子组件内部根据 IsVerticalLayout 自行切换滚动方向与排列方向。
+    -->
+    <Grid RowDefinitions="Auto,*">
+        <ContentControl Grid.Row="0"
+                        Content="{Binding FilterBar}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate DataType="vm:FilterBarViewModel">
+                    <fileViews:FilterBarView />
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
+
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+            <ContentControl Grid.Column="0"
+                            Content="{Binding ThumbnailList}">
+                <ContentControl.ContentTemplate>
+                    <DataTemplate DataType="vm:ThumbnailListViewModel">
+                        <fileViews:ThumbnailListView />
+                    </DataTemplate>
+                </ContentControl.ContentTemplate>
+            </ContentControl>
+
+            <ContentControl Grid.Column="1"
+                            Content="{Binding SimilarityPanel}">
+                <ContentControl.ContentTemplate>
+                    <DataTemplate DataType="vm:SimilarityPanelViewModel">
+                        <fileViews:SimilarityListView />
+                    </DataTemplate>
+                </ContentControl.ContentTemplate>
+            </ContentControl>
+        </Grid>
+    </Grid>
+</UserControl>

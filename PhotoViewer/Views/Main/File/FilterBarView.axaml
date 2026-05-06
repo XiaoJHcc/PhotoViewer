@@ -1,0 +1,71 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.File"
+             xmlns:vmRoot="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="40"
+             x:Class="PhotoViewer.Views.Main.File.FilterBarView"
+             x:DataType="vm:FilterBarViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="ComboBox">
+            <Setter Property="Width" Value="90" />
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="BorderBrush" Value="#444" />
+            <Setter Property="CornerRadius" Value="6" />
+        </Style>
+    </UserControl.Styles>
+
+    <!-- 排序/筛选工具栏:竖向布局时纵排,横向布局时横排 -->
+    <StackPanel x:Name="FilterBarPanel"
+                Spacing="5"
+                Margin="10"
+                HorizontalAlignment="Center"
+                Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+
+        <!-- 排序方式 -->
+        <ComboBox ItemsSource="{Binding SortModes}"
+                  SelectedValue="{Binding SortMode}"
+                  SelectedValueBinding="{Binding Value}"
+                  HorizontalAlignment="Stretch">
+            <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vmRoot:SortOption">
+                    <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <!-- 排序方向 -->
+        <ComboBox ItemsSource="{Binding SortOrders}"
+                  SelectedValue="{Binding SortOrder}"
+                  SelectedValueBinding="{Binding Value}"
+                  HorizontalAlignment="Stretch">
+            <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vmRoot:SortOption">
+                    <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <!-- 星级筛选 -->
+        <ComboBox ItemsSource="{Binding RatingFilters}"
+                  SelectedValue="{Binding SelectedRatingFilter}"
+                  SelectedValueBinding="{Binding Key}">
+            <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="vm:RatingFilterOption">
+                    <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+            </ComboBox.ItemTemplate>
+        </ComboBox>
+
+        <!-- 筛选后计数 -->
+        <TextBlock Text="{Binding FilteredCount, StringFormat='共 {0} 张'}"
+                   HorizontalAlignment="Center"
+                   VerticalAlignment="Center"
+                   Foreground="#DDD"
+                   FontSize="12"/>
+    </StackPanel>
+</UserControl>
