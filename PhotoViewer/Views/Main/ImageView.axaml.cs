@@ -10,6 +10,7 @@ using Avalonia.VisualTree;
 using System.IO;
 using Avalonia.Threading;
 using PhotoViewer.Controls;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Views;
@@ -196,13 +197,23 @@ public partial class ImageView : UserControl
     /// </summary>
     private void OpenImageSetting()
     {
+        if (ViewModel?.Main is not { } main)
+        {
+            return;
+        }
+
+        if (NativeSettingsPresenter.TryPresent(main.Settings))
+        {
+            return;
+        }
+
         if (TopLevel.GetTopLevel(this) is Window parentWindow)
         {
-            ViewModel?.Main.OpenSettingWindow(parentWindow);
+            main.OpenSettingWindow(parentWindow);
         }
         else
         {
-            ViewModel?.Main.OpenSettingModal();
+            main.OpenSettingModal();
         }
     }
 
@@ -592,4 +603,3 @@ public partial class ImageView : UserControl
         return false;
     }
 }
-
