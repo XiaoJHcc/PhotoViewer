@@ -1,11 +1,14 @@
 using System;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Threading;
+using Avalonia.VisualTree;
 using ReactiveUI;
 using PhotoViewer.Views;
+using PhotoViewer.Views.Main.File;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Windows;
@@ -53,10 +56,10 @@ public partial class MainWindowForWindows : Window
                 topHost?.GetObservable(BoundsProperty).Subscribe(_ => UpdateTitleBarLayout());
 
                 // 监听筛选栏尺寸变化（上下、左右各一套）
-                var leftThumb = RootMainView.FindControl<ThumbnailView>("LeftThumbnailView");
-                var topThumb  = RootMainView.FindControl<ThumbnailView>("TopThumbnailView");
-                var leftFilter = leftThumb?.FindControl<StackPanel>("FilterBarPanel");
-                var topFilter  = topThumb?.FindControl<StackPanel>("FilterBarPanel");
+                var leftFile = RootMainView.FindControl<FileView>("LeftFileView");
+                var topFile  = RootMainView.FindControl<FileView>("TopFileView");
+                var leftFilter = FindFilterBarPanel(leftFile);
+                var topFilter  = FindFilterBarPanel(topFile);
 
                 leftFilter?.GetObservable(BoundsProperty).Subscribe(_ => UpdateTitleBarLayout());
                 topFilter?.GetObservable(BoundsProperty).Subscribe(_ => UpdateTitleBarLayout());
@@ -85,11 +88,8 @@ public partial class MainWindowForWindows : Window
         var rightButtonsWidth = (rightButtonsHost?.Bounds.Width ?? 0) + (rightButtonsHost?.Margin.Right ?? 0);
 
         var leftHost   = rootMainView.FindControl<Border>("LeftThumbHost");
-        // var topHost    = RootMainView.FindControl<Border>("TopThumbHost");
-        // var leftThumb  = RootMainView.FindControl<ThumbnailView>("LeftThumbnailView");
-        var topThumb   = rootMainView.FindControl<ThumbnailView>("TopThumbnailView");
-        // var leftFilter = leftThumb?.FindControl<StackPanel>("FilterBarPanel");
-        var topFilter  = topThumb?.FindControl<StackPanel>("FilterBarPanel");
+        var topFile    = rootMainView.FindControl<FileView>("TopFileView");
+        var topFilter  = FindFilterBarPanel(topFile);
 
         double winWidth = Bounds.Width > 0 ? Bounds.Width : 0;
 
@@ -206,5 +206,16 @@ public partial class MainWindowForWindows : Window
     private void BtnClose_Click(object? sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    /// <summary>
+    /// 在 FileView 的可视化树中查找名为 FilterBarPanel 的 StackPanel(位于嵌套 FilterBarView 内)。
+    /// </summary>
+    private static StackPanel? FindFilterBarPanel(FileView? fileView)
+    {
+        if (fileView == null) return null;
+        return fileView.GetVisualDescendants()
+            .OfType<StackPanel>()
+            .FirstOrDefault(p => p.Name == "FilterBarPanel");
     }
 }

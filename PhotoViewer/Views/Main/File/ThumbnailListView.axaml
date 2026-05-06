@@ -1,0 +1,194 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:PhotoViewer.Views"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.File"
+             xmlns:core="clr-namespace:PhotoViewer.Core"
+             xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="160"
+             x:Class="PhotoViewer.Views.Main.File.ThumbnailListView"
+             x:DataType="vm:ThumbnailListViewModel">
+
+    <UserControl.Resources>
+        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
+        <local:PhotoDateConverter x:Key="PhotoDateConverter" />
+        <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
+        <local:FlipTransformConverter x:Key="FlipTransformConverter" />
+        <local:StarColorConverter x:Key="StarColorConverter" />
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Button.ThumbStarButton">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+
+        <Style Selector="Button.ThumbStarButton:pointerover">
+            <Setter Property="Background" Value="#333" />
+        </Style>
+
+        <Style Selector="Button.ThumbStarButton:disabled">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+
+        <Style Selector="Button.ThumbStarButton:disabled:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+
+        <Style Selector="TextBlock.ThumbStarButtonSymbol">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer Name="ThumbnailScrollViewer"
+                  HorizontalScrollBarVisibility="{Binding IsVerticalLayout,
+                        Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
+                  VerticalScrollBarVisibility="{Binding IsVerticalLayout,
+                        Converter={x:Static converters:ScrollBarVisibilityConverter.Instance},
+                        ConverterParameter=Reverse}"
+                  MinHeight="148">
+        <Interaction.Behaviors>
+            <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
+        </Interaction.Behaviors>
+
+        <ItemsControl Name="ThumbnailItemsControl"
+                      ItemsSource="{Binding FilteredFiles}">
+            <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <VirtualizingStackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                                    Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
+                                Orientation="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                                    Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
+                                Margin="10,0,10,10" />
+                </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+
+            <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="core:ImageFile">
+                    <Button
+                        Command="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).SelectImageCommand}"
+                        CommandParameter="{Binding}"
+                        Background="Transparent"
+                        BorderThickness="0"
+                        Margin="3"
+                        Padding="0"
+                        CornerRadius="8"
+                        HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                            Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
+
+                        <Border BorderThickness="2"
+                                BorderBrush="{Binding IsCurrent, Converter={StaticResource BoolToBorderConverter}}"
+                                CornerRadius="7"
+                                Margin="0"
+                                Padding="0"
+                                Width="90"
+                                Height="138"
+                                Background="#222">
+
+                            <StackPanel Orientation="Vertical"
+                                        HorizontalAlignment="Center"
+                                        Margin="0,3,0,0"
+                                        Spacing="4">
+                                <Border Width="80"
+                                        Height="80"
+                                        Background="#333"
+                                        CornerRadius="4"
+                                        BorderThickness="1"
+                                        BorderBrush="{Binding IsInCache,
+                                            Converter={StaticResource CachedBorderConverter}}">
+                                    <Grid>
+                                        <Image Source="{Binding Thumbnail}"
+                                               Stretch="Uniform"
+                                               HorizontalAlignment="Center"
+                                               VerticalAlignment="Center"
+                                               IsVisible="{Binding Thumbnail,
+                                                    Converter={x:Static ObjectConverters.IsNotNull}}">
+                                            <Image.RenderTransform>
+                                                <TransformGroup>
+                                                    <RotateTransform Angle="{Binding RotationAngle}" />
+                                                    <ScaleTransform
+                                                        ScaleX="{Binding NeedsHorizontalFlip,
+                                                        Converter={StaticResource FlipTransformConverter}}"
+                                                        ScaleY="1" />
+                                                </TransformGroup>
+                                            </Image.RenderTransform>
+                                        </Image>
+
+                                        <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
+                                                     IsIndeterminate="True"
+                                                     Width="60"
+                                                     Height="4"
+                                                     HorizontalAlignment="Center"
+                                                     VerticalAlignment="Center" />
+
+                                        <TextBlock Text="📷"
+                                                   FontSize="24"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center"
+                                                   Foreground="#666666"
+                                                   IsVisible="{Binding ShowThumbnailPlaceholder}" />
+                                    </Grid>
+                                </Border>
+
+                                <StackPanel Orientation="Vertical" Spacing="2">
+                                    <TextBlock Text="{Binding DisplayName}"
+                                               FontSize="10"
+                                               Foreground="#EEEEEE"
+                                               FontWeight="SemiBold"
+                                               HorizontalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis"
+                                               MaxWidth="90" />
+                                    <TextBlock Text="{Binding PhotoDate, Converter={StaticResource PhotoDateConverter}}"
+                                               FontSize="9"
+                                               Foreground="#AAAAAA"
+                                               HorizontalAlignment="Center"
+                                               ToolTip.Tip="{Binding PhotoDate}" />
+
+                                    <StackPanel Orientation="Horizontal"
+                                                HorizontalAlignment="Center"
+                                                IsVisible="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).Settings.ShowRating}">
+                                        <Button Classes="ThumbStarButton" Tag="0" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xf4f8;"
+                                                       FontSize="8"
+                                                       Foreground="#666"/>
+                                        </Button>
+                                        <Button Classes="ThumbStarButton" Tag="1" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=1}"/>
+                                        </Button>
+                                        <Button Classes="ThumbStarButton" Tag="2" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=2}"/>
+                                        </Button>
+                                        <Button Classes="ThumbStarButton" Tag="3" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=3}"/>
+                                        </Button>
+                                        <Button Classes="ThumbStarButton" Tag="4" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=4}"/>
+                                        </Button>
+                                        <Button Classes="ThumbStarButton" Tag="5" Click="OnThumbStarClick">
+                                            <TextBlock Classes="ThumbStarButtonSymbol" Text="&#xfcd7;"
+                                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=5}"/>
+                                        </Button>
+                                    </StackPanel>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </Button>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
+    </ScrollViewer>
+</UserControl>

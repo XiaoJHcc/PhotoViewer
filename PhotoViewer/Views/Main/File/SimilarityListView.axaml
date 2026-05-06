@@ -1,0 +1,12 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.File"
+             mc:Ignorable="d" d:DesignWidth="120" d:DesignHeight="200"
+             x:Class="PhotoViewer.Views.Main.File.SimilarityListView"
+             x:DataType="vm:SimilarityPanelViewModel">
+
+    <!-- 阶段 3 占位:相似聚类面板,当前为空,不占用布局空间。 -->
+    <Border Width="0" />
+</UserControl>

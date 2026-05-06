@@ -1,11 +1,13 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using PhotoViewer.ViewModels;
 using PhotoViewer.Views;
+using PhotoViewer.Views.Main.File;
 
 namespace PhotoViewer.Windows;
 
@@ -79,8 +81,8 @@ public partial class MainWindowForMac : Window
         if (isHorizontal)
         {
             // 左中右：不使用中间避让，通过调整左侧筛选条顶部边距避免与 24px 标题栏重叠
-            var leftThumb  = RootMainView?.FindControl<ThumbnailView>("LeftThumbnailView");
-            var filterBarL = leftThumb?.FindControl<StackPanel>("FilterBarPanel");
+            var leftFile  = RootMainView?.FindControl<FileView>("LeftFileView");
+            var filterBarL = FindFilterBarPanel(leftFile);
             if (filterBarL != null)
             {
                 var m = filterBarL.Margin;
@@ -94,9 +96,9 @@ public partial class MainWindowForMac : Window
         }
         else
         {
-            // 上中下：恢复顶部边距为 10，并启用中间避让（覆盖 TopThumbnailView 的筛选条）
-            var topThumb  = RootMainView?.FindControl<ThumbnailView>("TopThumbnailView");
-            var filterBarT = topThumb?.FindControl<StackPanel>("FilterBarPanel");
+            // 上中下：恢复顶部边距为 10，并启用中间避让（覆盖 TopFileView 的筛选条）
+            var topFile  = RootMainView?.FindControl<FileView>("TopFileView");
+            var filterBarT = FindFilterBarPanel(topFile);
             if (filterBarT != null)
             {
                 var m = filterBarT.Margin;
@@ -120,5 +122,16 @@ public partial class MainWindowForMac : Window
 
             CenterGap.Width = gapWidth;
         }
+    }
+
+    /// <summary>
+    /// 在 FileView 的可视化树中查找名为 FilterBarPanel 的 StackPanel(位于嵌套 FilterBarView 内)。
+    /// </summary>
+    private static StackPanel? FindFilterBarPanel(FileView? fileView)
+    {
+        if (fileView == null) return null;
+        return fileView.GetVisualDescendants()
+            .OfType<StackPanel>()
+            .FirstOrDefault(p => p.Name == "FilterBarPanel");
     }
 }

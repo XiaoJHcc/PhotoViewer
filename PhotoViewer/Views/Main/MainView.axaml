@@ -4,13 +4,14 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:views="clr-namespace:PhotoViewer.Views"
+             xmlns:fileViews="clr-namespace:PhotoViewer.Views.Main.File"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Views.MainView"
              x:DataType="vm:MainViewModel">
     <Grid>
         <!-- 垂直布局（上中下）-->
         <Grid RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding !IsHorizontalLayout}">
-            <!-- 顶部：缩略图栏 -->
+            <!-- 顶部：文件栏 -->
             <Border
                 x:Name="TopThumbHost"
                 Grid.Row="0"
@@ -20,7 +21,7 @@
                 BorderBrush="#333333"
                 BorderThickness="0,0,0,1"
                 IsVisible="{Binding IsThumbnailViewVisible}">
-                <views:ThumbnailView x:Name="TopThumbnailView" DataContext="{Binding FolderVM}" />
+                <fileViews:FileView x:Name="TopFileView" DataContext="{Binding FileVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->
@@ -56,7 +57,7 @@
 
         <!-- 水平布局（左中右）-->
         <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsHorizontalLayout}">
-            <!-- 左侧：缩略图栏 -->
+            <!-- 左侧：文件栏 -->
             <Border
                 x:Name="LeftThumbHost"
                 Grid.Column="0"
@@ -66,7 +67,7 @@
                 BorderBrush="#333333"
                 BorderThickness="0,0,1,0"
                 IsVisible="{Binding IsThumbnailViewVisible}">
-                <views:ThumbnailView x:Name="LeftThumbnailView" DataContext="{Binding FolderVM}" />
+                <fileViews:FileView x:Name="LeftFileView" DataContext="{Binding FileVM}" />
             </Border>
 
             <!-- 中间：图片显示区域 -->

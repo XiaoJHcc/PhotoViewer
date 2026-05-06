@@ -68,11 +68,13 @@ public sealed record ThumbnailSource(int Width, int Height, ThumbnailOrigin Orig
 
 ---
 
-## 阶段 2：缩略图栏 UI 改造 + MVVM 清理
+## 阶段 2：文件栏 UI 改造 + MVVM 清理
+
+> **命名**：这一“三合一”工作区（筛选条 + 主缩略图列表 + 相似聚类列表）统称**文件栏**（`File`），不再用 `FileBar` / `Thumbnail` 字眼。容器对应 `FileViewModel` / `FileView`，目录命名 `ViewModels/File/` 与 `Views/Main/File/`。
 
 ### 最终布局
 
-缩略图栏位于左侧时：
+文件栏位于左/右侧（竖向滚动）时：
 
 ```
 ┌────────────────────────────┐
@@ -85,31 +87,31 @@ public sealed record ThumbnailSource(int Width, int Height, ThumbnailOrigin Orig
 └──────────────┴─────────────┘
 ```
 
-缩略图栏位于顶部（垂直布局）时：主列表横排，聚类列表仍在主列表右侧或下方（具体由 `FileBarView` 内部根据方向切换，外层 `MainView` 无感）。
+文件栏位于顶部（横向滚动）时：沿用同一份“上 + 左 + 右”的三分区模板，无需切换方向 —— 当前 `ThumbnailView` 在顶部布局下已是横滚 `ScrollViewer + ItemsControl`，直接搬入 `FileView` 即可工作。筛选条仍居最上方（Auto），主列表与聚类列表并排横滚（* 列宽）。**两种朝向共用同一份 axaml，无需 if/switch、无需方向分支。**
 
 ### VM 拆分
 
 | 新 ViewModel | 职责 |
 |---|---|
-| [PhotoViewer/ViewModels/FileBar/FileBarViewModel.cs](PhotoViewer/ViewModels/FileBar/FileBarViewModel.cs) | 容器 VM，仅组合三个子 VM（`FilterBar`、`ThumbnailList`、`SimilarityPanel`），本身几乎无逻辑 |
-| [PhotoViewer/ViewModels/FileBar/FilterBarViewModel.cs](PhotoViewer/ViewModels/FileBar/FilterBarViewModel.cs) | 吸走现 `FolderViewModel` 的 `SortMode` / `SortOrder` / `RatingFilters` / `SelectedRatingFilter` / `FilteredCount` / `FolderName` |
-| [PhotoViewer/ViewModels/FileBar/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/FileBar/ThumbnailListViewModel.cs) | 吸走 `FilteredFiles` / `ApplyFilter` / `ApplySort` / `ScrollToCurrentRequested` / `ReportVisibleRange` / `SelectImageCommand` |
+| [PhotoViewer/ViewModels/File/FileViewModel.cs](PhotoViewer/ViewModels/File/FileViewModel.cs) | 容器 VM，仅组合三个子 VM（`FilterBar`、`ThumbnailList`、`SimilarityPanel`），本身几乎无逻辑 |
+| [PhotoViewer/ViewModels/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/File/FilterBarViewModel.cs) | 吸走现 `FolderViewModel` 的 `SortMode` / `SortOrder` / `RatingFilters` / `SelectedRatingFilter` / `FilteredCount` / `FolderName` |
+| [PhotoViewer/ViewModels/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/File/ThumbnailListViewModel.cs) | 吸走 `FilteredFiles` / `ApplyFilter` / `ApplySort` / `ScrollToCurrentRequested` / `ReportVisibleRange` / `SelectImageCommand` |
 | `FolderViewModel`（保留） | 只负责文件来源：`OpenFilePickerAsync` / `OpenFolderAsync` / `OpenImageAsync` / `LoadFolderAsync` / `_allFiles` / `LoadAllExifRatingsAsync` / `IsImageFile` |
 
-拆分原则：**`FolderViewModel` 是"文件源"，`ThumbnailListViewModel` 是"展示列表"，`FilterBarViewModel` 是"筛选控件"**。筛选变化由 `FilterBarViewModel` 发出事件，`ThumbnailListViewModel` 订阅后重算 `FilteredFiles`。
+拆分原则：**`FolderViewModel` 是“文件源”，`ThumbnailListViewModel` 是“展示列表”，`FilterBarViewModel` 是“筛选控件”**。筛选变化由 `FilterBarViewModel` 发出事件，`ThumbnailListViewModel` 订阅后重算 `FilteredFiles`。
 
-`MainViewModel` 新增 `FileBarViewModel FileBarVM { get; }`，旧 `FolderVM` 保留（供 `MainViewModel.SetRatingAsync` 等仍需访问 `AllFiles`）。
+`MainViewModel` 新增 `FileViewModel FileVM { get; }`，旧 `FolderVM` 保留（供 `MainViewModel.SetRatingAsync` 等仍需访问 `AllFiles`）。
 
 ### View 拆分
 
 | 新 View | 对应 VM |
 |---|---|
-| [PhotoViewer/Views/Main/FileBar/FileBarView.axaml](PhotoViewer/Views/Main/FileBar/FileBarView.axaml) | `FileBarViewModel` — 三分区容器（Grid：筛选条 / 主列表 / 聚类列表） |
-| [PhotoViewer/Views/Main/FileBar/FilterBarView.axaml](PhotoViewer/Views/Main/FileBar/FilterBarView.axaml) | `FilterBarViewModel` — 从 [ThumbnailView.axaml](PhotoViewer/Views/Main/ThumbnailView.axaml) 第 88–147 行的 `FilterBarPanel` 迁出 |
-| [PhotoViewer/Views/Main/FileBar/ThumbnailListView.axaml](PhotoViewer/Views/Main/FileBar/ThumbnailListView.axaml) | `ThumbnailListViewModel` — 从 [ThumbnailView.axaml](PhotoViewer/Views/Main/ThumbnailView.axaml) 第 150–302 行的 `ScrollViewer + ItemsControl` 迁出 |
-| [PhotoViewer/Views/Main/FileBar/SimilarityListView.axaml](PhotoViewer/Views/Main/FileBar/SimilarityListView.axaml) | `SimilarityPanelViewModel` — 空壳先，阶段 3 填充 |
+| [PhotoViewer/Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | `FileViewModel` — 三分区容器（Grid：筛选条 / 主列表 / 聚类列表），竖向与横向布局共用 |
+| [PhotoViewer/Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | `FilterBarViewModel` — 从 [ThumbnailView.axaml](PhotoViewer/Views/Main/ThumbnailView.axaml) 第 88–147 行的 `FilterBarPanel` 迁出 |
+| [PhotoViewer/Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | `ThumbnailListViewModel` — 从 [ThumbnailView.axaml](PhotoViewer/Views/Main/ThumbnailView.axaml) 第 150–302 行的 `ScrollViewer + ItemsControl` 迁出 |
+| [PhotoViewer/Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | `SimilarityPanelViewModel` — 空壳先，阶段 3 填充 |
 
-老 `ThumbnailView.axaml` 删除；[MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) 的两处 `views:ThumbnailView` 替换为 `views:FileBarView`，`DataContext` 改为 `FileBarVM`。
+老 `ThumbnailView.axaml` 删除；[MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) 中所有挂载缩略图栏的位置（上 / 左 / 右）`views:ThumbnailView` 全部替换为 `views:FileView`，`DataContext` 改为 `FileVM`。
 
 ### 验收
 - 所有原交互（选图、滚动、筛选、排序、星级点击）行为不变
@@ -135,14 +137,14 @@ public sealed record ThumbnailSource(int Width, int Height, ThumbnailOrigin Orig
 
 ### ViewModel
 
-[PhotoViewer/ViewModels/FileBar/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/FileBar/SimilarityPanelViewModel.cs):
+[PhotoViewer/ViewModels/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/File/SimilarityPanelViewModel.cs):
 - 订阅 `Main.CurrentFile` 变化 → 异步调 `SimilarityService.FindSimilarAsync`
 - 暴露 `IReadOnlyList<ImageFile> SimilarItems`、`bool IsEmpty`（无相似时显示占位文案）
 - 点击相似项 → `Main.CurrentFile = item`
 
 ### View
 
-[PhotoViewer/Views/Main/FileBar/SimilarityListView.axaml](PhotoViewer/Views/Main/FileBar/SimilarityListView.axaml):
+[PhotoViewer/Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml):
 - 竖排 `ItemsControl` + `VirtualizingStackPanel`
 - 每个 item 缩略图尺寸小于主列表（`ThumbnailSize.Small` 即可，约 80×80）
 - 缩略图加载走 `ThumbnailService.Enqueue(file, ThumbnailSize.Small, priority: true)`
