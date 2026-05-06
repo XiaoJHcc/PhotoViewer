@@ -11,6 +11,9 @@ namespace PhotoViewer.Core;
 
 public class ImageFile : ReactiveObject
 {
+    /// <summary>列表用缩略图的目标短边像素值。</summary>
+    private const int ListThumbnailShortSide = 120;
+
     private Bitmap? _thumbnail;
     private bool _isCurrent;
     private ExifData? _exifData;
@@ -250,46 +253,12 @@ public class ImageFile : ReactiveObject
     public async Task LoadThumbnailAsync()
     {
         if (Thumbnail != null || IsThumbnailLoading) return;
-        
+
         IsThumbnailLoading = true;
         try
         {
-            // 在后台线程中生成缩略图
-            var bitmap = await Task.Run(async () =>
-            {
-                try
-                {
-                    // 检查是否为 HEIF 格式
-                    if (HeifLoader.IsHeifFile(File))
-                    {
-                        // 先尝试 HEIF 缩略图
-                        var heifThumbnail = await HeifLoader.LoadHeifThumbnailAsync(File);
-                        if (heifThumbnail != null)
-                        {
-                            return heifThumbnail;
-                        }
-                    }
-                    else
-                    {
-                        // 首先尝试从EXIF中提取嵌入式缩略图
-                        var exifThumbnail = await ThumbnailExtractor.TryLoadEmbeddedAsync(File);
-                        if (exifThumbnail != null)
-                        {
-                            return exifThumbnail;
-                        }
-
-                        // 如果没有EXIF缩略图，则解码原图生成缩略图
-                        return await ThumbnailExtractor.GenerateFromImageAsync(File);
-                    }
-                    
-                    return null;
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Failed to decode thumbnail (" + Name + "): " + ex.Message);
-                    return null;
-                }
-            });
+            // 在后台线程中生成缩略图：约 120 短边的列表用缩略图。
+            var bitmap = await Task.Run(() => Thumbnails.ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
             
             // 在UI线程中设置结果
             await Dispatcher.UIThread.InvokeAsync(() =>

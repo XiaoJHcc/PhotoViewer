@@ -17,6 +17,8 @@
         <UseInterpreter>true</UseInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
         <CodesignKey>iPhone Developer</CodesignKey>
+        <!-- 允许 .NET iOS 工具链调用 Xcode 自动签名基础设施，Profile 缺失或过期时自动创建 -->
+        <AutomaticProvisioning>true</AutomaticProvisioning>
         <IOSDebugOverWiFi>false</IOSDebugOverWiFi>
     </PropertyGroup>
 
@@ -27,6 +29,8 @@
         <UseInterpreter>true</UseInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
         <CodesignKey>iPhone Developer</CodesignKey>
+        <!-- 允许 .NET iOS 工具链调用 Xcode 自动签名基础设施，Profile 缺失或过期时自动创建 -->
+        <AutomaticProvisioning>true</AutomaticProvisioning>
     </PropertyGroup>
 
     <!-- iOS 应用图标：将 Assets.xcassets 中的图标编译进 Assets.car -->
