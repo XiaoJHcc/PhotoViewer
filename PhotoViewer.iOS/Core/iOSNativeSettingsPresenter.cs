@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
@@ -35,12 +36,9 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
                 return;
             }
 
-            var rootController = new iOSNativeSettingsRootViewController(settings);
-            var navigationController = new UINavigationController(rootController)
-            {
-                ModalPresentationStyle = UIModalPresentationStyle.PageSheet
-            };
-
+            var session = new iOSNativeSettingsSession(settings);
+            var rootController = new iOSNativeSettingsRootViewController(session);
+            var navigationController = new iOSNativeSettingsNavigationController(rootController, session);
             ConfigureSheetPresentation(navigationController.SheetPresentationController);
             GetTopMostPresentedViewController(presentingController).PresentViewController(navigationController, true, null);
         }
@@ -195,11 +193,141 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
 }
 
 /// <summary>
+/// iOS 原生设置编辑会话。
+/// 负责持有一个可编辑副本，并在关闭时一次性回写到共享设置实例。
+/// </summary>
+internal sealed class iOSNativeSettingsSession
+{
+    private readonly SettingsViewModel _source;
+    private bool _hasApplied;
+
+    /// <summary>
+    /// 当前会话使用的工作设置副本。
+    /// </summary>
+    public SettingsViewModel WorkingSettings { get; }
+
+    /// <summary>
+    /// 初始化原生设置编辑会话。
+    /// </summary>
+    /// <param name="source">共享层当前生效的设置实例。</param>
+    public iOSNativeSettingsSession(SettingsViewModel source)
+    {
+        _source = source;
+        WorkingSettings = new SettingsViewModel(
+            settingsService: new iOSNativeTransientSettingsService(),
+            initialModel: source.CreateSnapshot());
+    }
+
+    /// <summary>
+    /// 将暂存改动一次性应用回共享设置实例。
+    /// 重复调用时只会真正应用一次，避免关闭回调多次触发。
+    /// </summary>
+    public void ApplyPendingChanges()
+    {
+        if (_hasApplied)
+        {
+            return;
+        }
+
+        _source.ApplySnapshot(WorkingSettings.CreateSnapshot());
+        _hasApplied = true;
+    }
+}
+
+/// <summary>
+/// iOS 原生设置临时存储服务。
+/// 用于屏蔽工作副本的自动持久化，避免编辑过程中提前落盘。
+/// </summary>
+internal sealed class iOSNativeTransientSettingsService : ISettingsService
+{
+    /// <summary>
+    /// 读取临时设置。
+    /// 工作副本通过初始快照同步，这里始终返回空模型。
+    /// </summary>
+    /// <returns>空设置模型。</returns>
+    public Task<SettingsModel> LoadAsync()
+    {
+        return Task.FromResult(new SettingsModel());
+    }
+
+    /// <summary>
+    /// 忽略工作副本的持久化请求。
+    /// 真正的写回在设置页关闭时统一发生。
+    /// </summary>
+    /// <param name="model">待保存的临时模型。</param>
+    public Task SaveAsync(SettingsModel model)
+    {
+        return Task.CompletedTask;
+    }
+}
+
+/// <summary>
+/// iOS 原生设置导航控制器。
+/// 负责持有关闭代理，确保系统下拉关闭时也会统一应用暂存设置。
+/// </summary>
+internal sealed class iOSNativeSettingsNavigationController : UINavigationController
+{
+    private readonly iOSNativeSettingsDismissDelegate _dismissDelegate;
+
+    /// <summary>
+    /// 初始化原生设置导航控制器。
+    /// </summary>
+    /// <param name="rootViewController">根控制器。</param>
+    /// <param name="session">当前设置编辑会话。</param>
+    public iOSNativeSettingsNavigationController(UIViewController rootViewController, iOSNativeSettingsSession session)
+        : base(rootViewController)
+    {
+        ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
+        _dismissDelegate = new iOSNativeSettingsDismissDelegate(session);
+    }
+
+    /// <summary>
+    /// 页面加载后挂接系统 dismiss 回调。
+    /// </summary>
+    public override void ViewDidLoad()
+    {
+        base.ViewDidLoad();
+        if (PresentationController != null)
+        {
+            PresentationController.Delegate = _dismissDelegate;
+        }
+    }
+}
+
+/// <summary>
+/// iOS 原生设置关闭代理。
+/// 用于统一处理关闭按钮与下拉收起后的设置提交。
+/// </summary>
+internal sealed class iOSNativeSettingsDismissDelegate : UIAdaptivePresentationControllerDelegate
+{
+    private readonly iOSNativeSettingsSession _session;
+
+    /// <summary>
+    /// 初始化关闭代理。
+    /// </summary>
+    /// <param name="session">当前设置编辑会话。</param>
+    public iOSNativeSettingsDismissDelegate(iOSNativeSettingsSession session)
+    {
+        _session = session;
+    }
+
+    /// <summary>
+    /// 在系统 sheet 完成关闭后统一应用暂存设置。
+    /// </summary>
+    /// <param name="presentationController">当前展示控制器。</param>
+    public override void DidDismiss(UIPresentationController presentationController)
+    {
+        _session.ApplyPendingChanges();
+    }
+}
+
+/// <summary>
 /// iOS 原生设置页根控制器。
 /// 负责展示一级分组入口并提供关闭按钮。
 /// </summary>
 internal sealed class iOSNativeSettingsRootViewController : UITableViewController
 {
+    private readonly iOSNativeSettingsSession _session;
     private readonly SettingsViewModel _settings;
 
     private readonly (string Title, string Subtitle, Func<UIViewController> Factory)[] _items;
@@ -208,15 +336,16 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// 初始化原生设置页根控制器。
     /// </summary>
     /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeSettingsRootViewController(SettingsViewModel settings)
+    public iOSNativeSettingsRootViewController(iOSNativeSettingsSession session)
         : base(UITableViewStyle.InsetGrouped)
     {
-        _settings = settings;
+        _session = session;
+        _settings = session.WorkingSettings;
         _items =
         [
             ("文件", "同名合并、文件格式与缓存预加载", () => new iOSNativeFileSettingsViewController(_settings)),
             ("预览", "缩放指示器与缩放比例预设", () => new iOSNativePreviewSettingsViewController(_settings)),
-            ("控制", "热键录制与排序拖拽后续补齐", () => new iOSNativeControlSettingsPlaceholderViewController(_settings)),
+            ("控制", "布局、控制栏显示与快捷键只读查看", () => new iOSNativeControlSettingsViewController(_settings)),
             ("EXIF", "EXIF 显示项与评分写回策略", () => new iOSNativeExifSettingsViewController(_settings)),
         ];
     }
@@ -228,7 +357,11 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     {
         base.ViewDidLoad();
         Title = "设置";
-        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => DismissViewController(true, null));
+        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) =>
+        {
+            _session.ApplyPendingChanges();
+            DismissViewController(true, null);
+        });
         TableView.CellLayoutMarginsFollowReadableWidth = false;
     }
 
@@ -963,13 +1096,22 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
         contentStack.AddArrangedSubview(
             CreateSection(
                 "文件格式",
-                "第一阶段先支持启用/停用，排序后置。",
-                Settings.FileFormats.Select(item =>
-                    CreateSwitchRow(
-                        item.DisplayName,
-                        item.ExtensionsText,
-                        () => item.IsEnabled,
-                        value => item.IsEnabled = value)).ToArray()));
+                "点击进入后可勾选启用状态，并通过拖拽调整同名合并的优先级。",
+                CreateNavigationRow(
+                    "管理文件格式",
+                    "支持勾选启用与拖拽排序。",
+                    $"{Settings.FileFormats.Count(item => item.IsEnabled)}/{Settings.FileFormats.Count} 已启用",
+                    () => NavigationController?.PushViewController(
+                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.FileFormatItem>(
+                            title: "文件格式",
+                            footer: "轻点切换启用状态，拖拽右侧排序手柄可调整优先级。",
+                            itemsProvider: () => Settings.FileFormats,
+                            titleSelector: item => item.DisplayName,
+                            subtitleSelector: item => item.ExtensionsText,
+                            isEnabledGetter: item => item.IsEnabled,
+                            isEnabledSetter: (item, value) => item.IsEnabled = value,
+                            moveAction: Settings.MoveFileFormat),
+                        true))));
 
         contentStack.AddArrangedSubview(
             CreateSection(
@@ -1119,13 +1261,22 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
         contentStack.AddArrangedSubview(
             CreateSection(
                 "EXIF 显示项",
-                "第一阶段先支持启用/停用，排序后置。",
-                Settings.ExifDisplayItems.Select(item =>
-                    CreateSwitchRow(
-                        item.DisplayName,
-                        null,
-                        () => item.IsEnabled,
-                        value => item.IsEnabled = value)).ToArray()));
+                "点击进入后可勾选启用状态，并通过拖拽调整侧栏展示顺序。",
+                CreateNavigationRow(
+                    "管理 EXIF 显示项",
+                    "支持勾选启用与拖拽排序。",
+                    $"{Settings.ExifDisplayItems.Count(item => item.IsEnabled)}/{Settings.ExifDisplayItems.Count} 已启用",
+                    () => NavigationController?.PushViewController(
+                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.ExifDisplayItem>(
+                            title: "EXIF 显示项",
+                            footer: "轻点切换启用状态，拖拽右侧排序手柄可调整显示顺序。",
+                            itemsProvider: () => Settings.ExifDisplayItems,
+                            titleSelector: item => item.DisplayName,
+                            subtitleSelector: _ => null,
+                            isEnabledGetter: item => item.IsEnabled,
+                            isEnabledSetter: (item, value) => item.IsEnabled = value,
+                            moveAction: Settings.MoveExifDisplay),
+                        true))));
 
         contentStack.AddArrangedSubview(
             CreateSection(
@@ -1145,21 +1296,21 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
 }
 
 /// <summary>
-/// iOS 原生控制设置占位页。
+/// iOS 原生控制设置页。
 /// </summary>
-internal sealed class iOSNativeControlSettingsPlaceholderViewController : iOSNativeSettingsFormViewController
+internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
     /// <summary>
-    /// 初始化控制设置占位页。
+    /// 初始化控制设置页。
     /// </summary>
     /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeControlSettingsPlaceholderViewController(SettingsViewModel settings)
+    public iOSNativeControlSettingsViewController(SettingsViewModel settings)
         : base(settings)
     {
     }
 
     /// <summary>
-    /// 构建控制设置占位内容。
+    /// 构建控制设置内容。
     /// </summary>
     /// <param name="contentStack">页面主内容栈。</param>
     protected override void BuildContent(UIStackView contentStack)
@@ -1167,11 +1318,221 @@ internal sealed class iOSNativeControlSettingsPlaceholderViewController : iOSNat
         Title = "控制";
         contentStack.AddArrangedSubview(
             CreateSection(
-                "后续规划",
-                "iOS 第一阶段先不复刻热键录制与拖拽排序，后续再补原生交互。",
+                "控制栏布局位置",
+                "移动端设置页内先编辑暂存副本，关闭设置页后再统一应用到主界面。",
+                CreateNavigationRow(
+                    "布局模式",
+                    "决定缩略图与控制栏优先布局在上下、左右或自动跟随屏幕方向。",
+                    GetLayoutModeDisplayName(Settings.LayoutMode),
+                    PresentLayoutModePicker)));
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "控制栏功能 / 快捷键",
+                "轻点切换控制栏显示状态，拖拽排序手柄可调整控制栏按钮顺序；快捷键仅作只读展示。",
+                CreateNavigationRow(
+                    "管理控制栏功能",
+                    "支持勾选显示、拖拽排序，并查看当前主/次快捷键。",
+                    $"{Settings.Hotkeys.Count(item => item.IsDisplay)}/{Settings.Hotkeys.Count} 已显示",
+                    () => NavigationController?.PushViewController(
+                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.HotkeyItem>(
+                            title: "控制栏功能",
+                            footer: "轻点切换控制栏显示状态，拖拽排序手柄可调整顺序。快捷键在此页只读展示，不提供录制。",
+                            itemsProvider: () => Settings.Hotkeys,
+                            titleSelector: item => item.Name,
+                            subtitleSelector: item => $"主：{item.PrimaryHotkeyText}    次：{item.SecondaryHotkeyText}",
+                            isEnabledGetter: item => item.IsDisplay,
+                            isEnabledSetter: (item, value) => item.IsDisplay = value,
+                            moveAction: Settings.MoveHotkey),
+                        true)),
                 CreateStaticInfoRow(
-                    "当前状态",
-                    "本页先保留信息架构占位，避免与现有 Avalonia 四分页结构完全耦合。")));
+                    "快捷键编辑",
+                    "iOS 第一阶段先只读展示当前快捷键配置，不在原生设置页内录制或修改。")));
+    }
+
+    /// <summary>
+    /// 弹出布局模式选择对话框。
+    /// </summary>
+    private void PresentLayoutModePicker()
+    {
+        var alert = UIAlertController.Create("布局模式", null, UIAlertControllerStyle.ActionSheet);
+        foreach (var item in Settings.LayoutModes)
+        {
+            alert.AddAction(UIAlertAction.Create(item.DisplayName, UIAlertActionStyle.Default, _ => Settings.LayoutMode = item.Value));
+        }
+
+        alert.AddAction(UIAlertAction.Create("取消", UIAlertActionStyle.Cancel, null));
+
+        if (alert.PopoverPresentationController != null)
+        {
+            alert.PopoverPresentationController.SourceView = View;
+            alert.PopoverPresentationController.SourceRect = new CoreGraphics.CGRect(
+                View.Bounds.GetMidX(),
+                View.Bounds.GetMidY(),
+                1,
+                1);
+        }
+
+        PresentViewController(alert, true, null);
+    }
+
+    /// <summary>
+    /// 获取布局模式的当前展示名称。
+    /// </summary>
+    /// <param name="layoutMode">当前布局模式。</param>
+    /// <returns>用于右侧摘要展示的文本。</returns>
+    private string GetLayoutModeDisplayName(LayoutMode layoutMode)
+    {
+        return Settings.LayoutModes.FirstOrDefault(item => item.Value == layoutMode)?.DisplayName ?? layoutMode.ToString();
+    }
+}
+
+/// <summary>
+/// iOS 原生可勾选可排序列表页。
+/// 用于承载文件格式、控制栏功能、EXIF 显示项等同类排序列表。
+/// </summary>
+/// <typeparam name="TItem">列表项类型。</typeparam>
+internal sealed class iOSNativeCheckableReorderListViewController<TItem> : UITableViewController
+{
+    private readonly string _screenTitle;
+    private readonly string? _footer;
+    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
+    private readonly Func<TItem, string> _titleSelector;
+    private readonly Func<TItem, string?> _subtitleSelector;
+    private readonly Func<TItem, bool> _isEnabledGetter;
+    private readonly Action<TItem, bool> _isEnabledSetter;
+    private readonly Action<int, int> _moveAction;
+
+    /// <summary>
+    /// 初始化可勾选可排序列表页。
+    /// </summary>
+    public iOSNativeCheckableReorderListViewController(
+        string title,
+        string? footer,
+        Func<IReadOnlyList<TItem>> itemsProvider,
+        Func<TItem, string> titleSelector,
+        Func<TItem, string?> subtitleSelector,
+        Func<TItem, bool> isEnabledGetter,
+        Action<TItem, bool> isEnabledSetter,
+        Action<int, int> moveAction)
+        : base(UITableViewStyle.InsetGrouped)
+    {
+        _screenTitle = title;
+        _footer = footer;
+        _itemsProvider = itemsProvider;
+        _titleSelector = titleSelector;
+        _subtitleSelector = subtitleSelector;
+        _isEnabledGetter = isEnabledGetter;
+        _isEnabledSetter = isEnabledSetter;
+        _moveAction = moveAction;
+    }
+
+    /// <summary>
+    /// 初始化列表显示与编辑模式。
+    /// </summary>
+    public override void ViewDidLoad()
+    {
+        base.ViewDidLoad();
+        Title = _screenTitle;
+        TableView.SetEditing(true, false);
+        TableView.AllowsSelectionDuringEditing = true;
+        TableView.CellLayoutMarginsFollowReadableWidth = false;
+    }
+
+    /// <summary>
+    /// 返回分组数量。
+    /// </summary>
+    public override nint NumberOfSections(UITableView tableView)
+    {
+        return 1;
+    }
+
+    /// <summary>
+    /// 返回分组底部说明。
+    /// </summary>
+    public override string? TitleForFooter(UITableView tableView, nint section)
+    {
+        return _footer;
+    }
+
+    /// <summary>
+    /// 返回列表项数量。
+    /// </summary>
+    public override nint RowsInSection(UITableView tableView, nint section)
+    {
+        return _itemsProvider().Count;
+    }
+
+    /// <summary>
+    /// 构建列表单元格。
+    /// </summary>
+    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
+    {
+        const string reuseIdentifier = "CheckableReorderCell";
+        var cell = tableView.DequeueReusableCell(reuseIdentifier)
+            ?? new UITableViewCell(UITableViewCellStyle.Subtitle, reuseIdentifier);
+
+        var item = _itemsProvider()[indexPath.Row];
+        cell.TextLabel.Text = _titleSelector(item);
+        cell.DetailTextLabel.Text = _subtitleSelector(item);
+        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabelColor;
+        cell.Accessory = _isEnabledGetter(item)
+            ? UITableViewCellAccessory.Checkmark
+            : UITableViewCellAccessory.None;
+        cell.ShowsReorderControl = true;
+        return cell;
+    }
+
+    /// <summary>
+    /// 允许所有行进入编辑态。
+    /// </summary>
+    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return true;
+    }
+
+    /// <summary>
+    /// 允许所有行拖拽排序。
+    /// </summary>
+    public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return true;
+    }
+
+    /// <summary>
+    /// 关闭删除样式，仅保留拖拽排序。
+    /// </summary>
+    public override UITableViewCellEditingStyle EditingStyleForRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return UITableViewCellEditingStyle.None;
+    }
+
+    /// <summary>
+    /// 关闭编辑态下的左侧缩进，保持内容对齐。
+    /// </summary>
+    public override bool ShouldIndentWhileEditingRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// 处理拖拽排序后的数据回写。
+    /// </summary>
+    public override void MoveRow(UITableView tableView, NSIndexPath sourceIndexPath, NSIndexPath destinationIndexPath)
+    {
+        _moveAction(sourceIndexPath.Row, destinationIndexPath.Row);
+        tableView.ReloadData();
+    }
+
+    /// <summary>
+    /// 轻点切换当前行的勾选状态。
+    /// </summary>
+    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
+    {
+        tableView.DeselectRow(indexPath, true);
+        var item = _itemsProvider()[indexPath.Row];
+        _isEnabledSetter(item, !_isEnabledGetter(item));
+        tableView.ReloadRows([indexPath], UITableViewRowAnimation.Automatic);
     }
 }
 
