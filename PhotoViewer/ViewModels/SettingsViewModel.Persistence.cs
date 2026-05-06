@@ -77,6 +77,27 @@ public partial class SettingsViewModel
         _saveRequests.OnNext(Unit.Default);
     }
 
+    /// <summary>
+    /// 导出当前设置快照。
+    /// 用于原生设置页先编辑副本，再在关闭时一次性回写。
+    /// </summary>
+    /// <returns>当前设置对应的数据模型副本。</returns>
+    public SettingsModel CreateSnapshot()
+    {
+        return ToModel();
+    }
+
+    /// <summary>
+    /// 应用外部传入的设置快照。
+    /// 用于在原生设置页关闭时，把暂存改动一次性同步回主设置实例。
+    /// </summary>
+    /// <param name="model">待应用的设置快照。</param>
+    public void ApplySnapshot(SettingsModel model)
+    {
+        ApplyModel(model, preserveDefaultValues: false);
+        RequestSave();
+    }
+
     private SettingsModel ToModel()
     {
          return new SettingsModel
@@ -125,7 +146,7 @@ public partial class SettingsViewModel
         };
     }
 
-    private void ApplyModel(SettingsModel model)
+    private void ApplyModel(SettingsModel model, bool preserveDefaultValues = true)
     {
         _isRestoring = true;
         try
@@ -133,7 +154,7 @@ public partial class SettingsViewModel
             LayoutMode = model.LayoutMode;
             ShowZoomIndicator = model.ShowZoomIndicator;
 
-            if (model.ScalePresets.Count > 0)
+            if (!preserveDefaultValues || model.ScalePresets.Count > 0)
             {
                 ResetScalePresets(model.ScalePresets);
             }
@@ -142,17 +163,17 @@ public partial class SettingsViewModel
             SafeSetRating = model.SafeSetRating;
             SameNameAsOnePhoto = model.SameNameAsOnePhoto;
 
-            if (model.FileFormats.Count > 0)
+            if (!preserveDefaultValues || model.FileFormats.Count > 0)
             {
                 ResetFileFormats(model.FileFormats);
             }
 
-            if (model.ExifDisplayItems.Count > 0)
+            if (!preserveDefaultValues || model.ExifDisplayItems.Count > 0)
             {
                 ResetExifDisplayItems(model.ExifDisplayItems);
             }
 
-            if (model.Hotkeys.Count > 0)
+            if (!preserveDefaultValues || model.Hotkeys.Count > 0)
             {
                 ResetHotkeys(model.Hotkeys);
             }
@@ -162,18 +183,18 @@ public partial class SettingsViewModel
             MapOptionTarget = model.MapOptionTarget;
             MapControlTarget = model.MapControlTarget;
 
-            if (model.BitmapCacheMaxCount > 0) BitmapCacheMaxCount = model.BitmapCacheMaxCount;
-            if (model.BitmapCacheMaxMemory > 0) BitmapCacheMaxMemory = model.BitmapCacheMaxMemory;
-            if (model.PreloadForwardCount > 0) PreloadForwardCount = model.PreloadForwardCount;
-            if (model.PreloadBackwardCount > 0) PreloadBackwardCount = model.PreloadBackwardCount;
-            if (model.VisibleCenterPreloadCount > 0) VisibleCenterPreloadCount = model.VisibleCenterPreloadCount;
-            if (model.VisibleCenterDelayMs > 0) VisibleCenterDelayMs = model.VisibleCenterDelayMs;
-            if (model.NativePreloadParallelism > 0)
+            if (!preserveDefaultValues || model.BitmapCacheMaxCount > 0) BitmapCacheMaxCount = model.BitmapCacheMaxCount;
+            if (!preserveDefaultValues || model.BitmapCacheMaxMemory > 0) BitmapCacheMaxMemory = model.BitmapCacheMaxMemory;
+            if (!preserveDefaultValues || model.PreloadForwardCount > 0) PreloadForwardCount = model.PreloadForwardCount;
+            if (!preserveDefaultValues || model.PreloadBackwardCount > 0) PreloadBackwardCount = model.PreloadBackwardCount;
+            if (!preserveDefaultValues || model.VisibleCenterPreloadCount > 0) VisibleCenterPreloadCount = model.VisibleCenterPreloadCount;
+            if (!preserveDefaultValues || model.VisibleCenterDelayMs > 0) VisibleCenterDelayMs = model.VisibleCenterDelayMs;
+            if (!preserveDefaultValues || model.NativePreloadParallelism > 0)
                 NativePreloadParallelism = model.NativePreloadParallelism;
             else if (model.PreloadParallelism > 0)
                 NativePreloadParallelism = model.PreloadParallelism;
 
-            if (model.CpuPreloadParallelism > 0)
+            if (!preserveDefaultValues || model.CpuPreloadParallelism > 0)
                 CpuPreloadParallelism = model.CpuPreloadParallelism;
             else if (model.PreloadParallelism > 0)
                 CpuPreloadParallelism = model.PreloadParallelism;

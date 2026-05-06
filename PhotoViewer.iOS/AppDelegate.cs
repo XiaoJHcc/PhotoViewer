@@ -38,6 +38,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
                 StorageAccessManager.Initialize(new iOSStorageAccessManager());
                 XmpWriter.Initialize(new iOSXmpWriter());
+                NativeSettingsPresenter.Initialize(new iOSNativeSettingsPresenter());
                 SettingsService.ConfigureStorage(new iOSSettingsStorage());
  
                 // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
