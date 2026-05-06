@@ -155,7 +155,7 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         var medium = CreateDetent(detentType, "MediumDetent", "Medium", "CreateMediumDetent");
         var large = CreateDetent(detentType, "LargeDetent", "Large", "CreateLargeDetent");
 
-        return [.. new UISheetPresentationControllerDetent?[] { medium, large }.OfType<UISheetPresentationControllerDetent>()];
+        return new[] { medium, large }.OfType<UISheetPresentationControllerDetent>().ToArray();
     }
 
     /// <summary>
@@ -964,12 +964,12 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
             CreateSection(
                 "文件格式",
                 "第一阶段先支持启用/停用，排序后置。",
-                [.. Settings.FileFormats.Select(item =>
+                Settings.FileFormats.Select(item =>
                     CreateSwitchRow(
                         item.DisplayName,
                         item.ExtensionsText,
                         () => item.IsEnabled,
-                        value => item.IsEnabled = value))]));
+                        value => item.IsEnabled = value)).ToArray()));
 
         contentStack.AddArrangedSubview(
             CreateSection(
@@ -1120,12 +1120,12 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
             CreateSection(
                 "EXIF 显示项",
                 "第一阶段先支持启用/停用，排序后置。",
-                [.. Settings.ExifDisplayItems.Select(item =>
+                Settings.ExifDisplayItems.Select(item =>
                     CreateSwitchRow(
                         item.DisplayName,
                         null,
                         () => item.IsEnabled,
-                        value => item.IsEnabled = value))]));
+                        value => item.IsEnabled = value)).ToArray()));
 
         contentStack.AddArrangedSubview(
             CreateSection(
