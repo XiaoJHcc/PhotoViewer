@@ -56,7 +56,8 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 | [Exif/ExifOrientation.cs](PhotoViewer/Core/Exif/ExifOrientation.cs) | 方向计算 | 基于 EXIF Orientation 值的旋转角度与水平翻转判断。 |
 | [Exif/Sony/SonyMakernoteParser.cs](PhotoViewer/Core/Exif/Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度。 |
 | [Exif/Sony/SonyCipherTags.cs](PhotoViewer/Core/Exif/Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks. **Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
-| [ThumbnailExtractor.cs](PhotoViewer/Core/ThumbnailExtractor.cs) | 缩略图提取 | 先试 EXIF/IFD1 内嵌缩略图，再回退 `Bitmap.DecodeToWidth` 子采样原图。 |
+| [Thumbnails/ThumbnailService.cs](PhotoViewer/Core/Thumbnails/ThumbnailService.cs) | 缩略图服务门面 | 对外仅两个 API：`GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌、全图回退）；`GetThumbnailAsync(file, minShortSide)` 取不低于该短边的来源并解码到目标尺寸。HEIF 容器分派给 `HeifLoader`。 |
+| [Thumbnails/ThumbnailSource.cs](PhotoViewer/Core/Thumbnails/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`/`Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded` / `FullImage`）。 |
 | [Exif/ExifChinese.cs](PhotoViewer/Core/Exif/ExifChinese.cs) | 元数据汉化 | Chinese tag-name overrides; generated baseline in `ExifChinese.Generated.cs`. |
 | [Exif/ExifToolTags.cs](PhotoViewer/Core/Exif/ExifToolTags.cs) | 标签库 | English tag-name overrides + brand override tables. Generated baseline in `ExifToolTags.Generated.cs`. |
 | [Exif/ExifToolValues.cs](PhotoViewer/Core/Exif/ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
