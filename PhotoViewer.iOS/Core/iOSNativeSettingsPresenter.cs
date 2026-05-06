@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using Foundation;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels;
@@ -401,7 +402,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         var item = _items[indexPath.Row];
         cell.TextLabel.Text = item.Title;
         cell.DetailTextLabel.Text = item.Subtitle;
-        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabelColor;
+        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabel;
         cell.Accessory = UITableViewCellAccessory.DisclosureIndicator;
         return cell;
     }
@@ -447,7 +448,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
-        View.BackgroundColor = UIColor.SystemGroupedBackgroundColor;
+        View.BackgroundColor = UIColor.SystemGroupedBackground;
         ConfigureLayout();
         RebuildContent();
     }
@@ -528,8 +529,12 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
             TranslatesAutoresizingMaskIntoConstraints = false
         };
 
-        var titleLabel = CreateSectionTitleLabel(title);
-        sectionStack.AddArrangedSubview(titleLabel);
+        if (!string.IsNullOrWhiteSpace(title))
+        {
+            var titleLabel = CreateSectionTitleLabel(title);
+            sectionStack.AddArrangedSubview(titleLabel);
+        }
+
         sectionStack.AddArrangedSubview(CreateCard(rows));
 
         if (!string.IsNullOrWhiteSpace(footer))
@@ -538,6 +543,26 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         }
 
         return sectionStack;
+    }
+
+    /// <summary>
+    /// 创建自定义内容行。
+    /// </summary>
+    /// <param name="content">行内内容视图。</param>
+    /// <returns>带默认边距的行视图。</returns>
+    protected UIView CreateCustomRow(UIView content)
+    {
+        var row = CreateRowContainer();
+        row.AddSubview(content);
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            content.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
+            content.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
+            content.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
+            content.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
+        ]);
+
+        return row;
     }
 
     /// <summary>
@@ -767,7 +792,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             Text = "›",
             Font = UIFont.SystemFontOfSize(20, UIFontWeight.Semibold),
-            TextColor = UIColor.TertiaryLabelColor,
+            TextColor = UIColor.TertiaryLabel,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
         chevronLabel.SetContentCompressionResistancePriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
@@ -850,11 +875,11 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// </summary>
     /// <param name="rows">卡片中的行视图。</param>
     /// <returns>圆角卡片视图。</returns>
-    private UIView CreateCard(params UIView[] rows)
+    protected UIView CreateCard(params UIView[] rows)
     {
         var card = new UIView
         {
-            BackgroundColor = UIColor.SecondarySystemGroupedBackgroundColor,
+            BackgroundColor = UIColor.SecondarySystemGroupedBackground,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
         card.Layer.CornerRadius = 16;
@@ -886,6 +911,25 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         }
 
         return card;
+    }
+
+    /// <summary>
+    /// 创建数字输入完成工具栏。
+    /// </summary>
+    /// <param name="textField">目标输入框。</param>
+    /// <returns>带完成按钮的工具栏。</returns>
+    protected static UIToolbar CreateDoneToolbar(UITextField textField)
+    {
+        var toolbar = new UIToolbar
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+        toolbar.SizeToFit();
+
+        var flexibleItem = new UIBarButtonItem(UIBarButtonSystemItem.FlexibleSpace);
+        var doneItem = new UIBarButtonItem(UIBarButtonSystemItem.Done, (_, _) => textField.ResignFirstResponder());
+        toolbar.SetItems([flexibleItem, doneItem], false);
+        return toolbar;
     }
 
     /// <summary>
@@ -936,7 +980,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             Text = title,
             Font = UIFont.SystemFontOfSize(13, UIFontWeight.Semibold),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
     }
@@ -952,7 +996,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             Text = footer,
             Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             Lines = 0,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -969,7 +1013,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             Text = title,
             Font = UIFont.SystemFontOfSize(16),
-            TextColor = UIColor.LabelColor,
+            TextColor = UIColor.Label,
             Lines = 0,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -986,7 +1030,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         {
             Text = subtitle,
             Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             Lines = 0,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -996,12 +1040,12 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// 创建右侧数值标签。
     /// </summary>
     /// <returns>数值展示标签。</returns>
-    private static UILabel CreateTrailingValueLabel()
+    protected static UILabel CreateTrailingValueLabel()
     {
         return new UILabel
         {
             Font = UIFont.MonospacedDigitSystemFontOfSize(14, UIFontWeight.Medium),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             Lines = 1,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -1011,7 +1055,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// 创建可伸缩空白占位视图。
     /// </summary>
     /// <returns>用于把右侧控件推向边缘的占位视图。</returns>
-    private static UIView CreateFlexibleSpacer()
+    protected static UIView CreateFlexibleSpacer()
     {
         var spacer = new UIView
         {
@@ -1026,11 +1070,11 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// 创建分隔线。
     /// </summary>
     /// <returns>分隔线视图。</returns>
-    private static UIView CreateSeparator()
+    protected static UIView CreateSeparator()
     {
         var separator = new UIView
         {
-            BackgroundColor = UIColor.SeparatorColor,
+            BackgroundColor = UIColor.Separator,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
         separator.HeightAnchor.ConstraintEqualTo(1 / UIScreen.MainScreen.Scale).Active = true;
@@ -1064,7 +1108,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
         {
             Text = Settings.PerformanceBudgetInfo,
             Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             Lines = 0,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -1072,7 +1116,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
         {
             Text = Settings.BitmapCacheCountInfo,
             Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabelColor,
+            TextColor = UIColor.SecondaryLabel,
             Lines = 0,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
@@ -1085,33 +1129,25 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
 
         contentStack.AddArrangedSubview(
             CreateSection(
-                "文件行为",
+                "",
                 null,
                 CreateSwitchRow(
                     "同名文件视为同一张图片",
-                    "按优先级选择代表图显示，并在标星时同步修改同名文件。",
+                    "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
                     () => Settings.SameNameAsOnePhoto,
                     value => Settings.SameNameAsOnePhoto = value)));
 
         contentStack.AddArrangedSubview(
             CreateSection(
-                "文件格式",
-                "点击进入后可勾选启用状态，并通过拖拽调整同名合并的优先级。",
-                CreateNavigationRow(
-                    "管理文件格式",
-                    "支持勾选启用与拖拽排序。",
-                    $"{Settings.FileFormats.Count(item => item.IsEnabled)}/{Settings.FileFormats.Count} 已启用",
-                    () => NavigationController?.PushViewController(
-                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.FileFormatItem>(
-                            title: "文件格式",
-                            footer: "轻点切换启用状态，拖拽右侧排序手柄可调整优先级。",
-                            itemsProvider: () => Settings.FileFormats,
-                            titleSelector: item => item.DisplayName,
-                            subtitleSelector: item => item.ExtensionsText,
-                            isEnabledGetter: item => item.IsEnabled,
-                            isEnabledSetter: (item, value) => item.IsEnabled = value,
-                            moveAction: Settings.MoveFileFormat),
-                        true))));
+                "支持的文件格式",
+                null,
+                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.FileFormatItem>(
+                    itemsProvider: () => Settings.FileFormats,
+                    titleSelector: item => item.DisplayName,
+                    subtitleSelector: item => item.ExtensionsText,
+                    isEnabledGetter: item => item.IsEnabled,
+                    isEnabledSetter: (item, value) => item.IsEnabled = value,
+                    moveAction: Settings.MoveFileFormat)));
 
         contentStack.AddArrangedSubview(
             CreateSection(
@@ -1119,7 +1155,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                 null,
                 CreateStepperRow(
                     "原生解码线程",
-                    "影响 HEIF 等原生路径的后台解码并发。",
+                    null,
                     () => Settings.NativePreloadParallelism,
                     value => Settings.NativePreloadParallelism = value,
                     () => 1,
@@ -1127,7 +1163,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     valueFormatter: value => $"{value} 线程"),
                 CreateStepperRow(
                     "软件解码线程",
-                    "影响托管路径的后台解码并发。",
+                    null,
                     () => Settings.CpuPreloadParallelism,
                     value => Settings.CpuPreloadParallelism = value,
                     () => 1,
@@ -1135,7 +1171,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     valueFormatter: value => $"{value} 线程"),
                 CreateSliderRow(
                     "缓存内存上限",
-                    "iOS 内存更敏感，过高可能触发系统内存告警。",
+                    null,
                     () => Settings.BitmapCacheMaxMemory,
                     value => Settings.BitmapCacheMaxMemory = value,
                     512,
@@ -1145,7 +1181,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     onEditingCompleted: RebuildContent),
                 CreateSliderRow(
                     "缓存数量上限",
-                    "缓存数量改变后会同步重算预载数量上限。",
+                    null,
                     () => Settings.BitmapCacheMaxCount,
                     value => Settings.BitmapCacheMaxCount = value,
                     1,
@@ -1155,7 +1191,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     onEditingCompleted: RebuildContent),
                 CreateStepperRow(
                     "下一张预载数量",
-                    "进入下一张时优先预读前方邻居图像。",
+                    null,
                     () => Settings.PreloadForwardCount,
                     value => Settings.PreloadForwardCount = value,
                     () => 0,
@@ -1163,7 +1199,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     valueFormatter: value => $"{value} 张"),
                 CreateStepperRow(
                     "上一张预载数量",
-                    "返回上一张时优先命中后方缓存。",
+                    null,
                     () => Settings.PreloadBackwardCount,
                     value => Settings.PreloadBackwardCount = value,
                     () => 0,
@@ -1171,7 +1207,7 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     valueFormatter: value => $"{value} 张"),
                 CreateStepperRow(
                     "列表滚动预载数量",
-                    "缩略图快速滚动时补充中心区域的预载。",
+                    null,
                     () => Settings.VisibleCenterPreloadCount,
                     value => Settings.VisibleCenterPreloadCount = value,
                     () => 0,
@@ -1179,12 +1215,12 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     valueFormatter: value => $"{value} 张"),
                 CreateSliderRow(
                     "滚动预载延时",
-                    "延时越高，滚动期间触发预载越保守。",
+                    null,
                     () => Settings.VisibleCenterDelayMs,
                     value => Settings.VisibleCenterDelayMs = value,
                     100,
                     5000,
-                    valueFormatter: value => $"{value} ms"))));
+                    valueFormatter: value => $"{value} ms")));
 
         contentStack.AddArrangedSubview(performanceInfo);
         contentStack.AddArrangedSubview(cacheInfo);
@@ -1220,503 +1256,169 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
                 null,
                 CreateSwitchRow(
                     "缩放时显示指示器",
-                    "在图片角落显示当前画面位置与缩放状态。",
+                    null,
                     () => Settings.ShowZoomIndicator,
                     value => Settings.ShowZoomIndicator = value)));
 
         contentStack.AddArrangedSubview(
             CreateSection(
                 "缩放比例预设",
-                string.Join(" / ", Settings.ScalePresets.Select(item => item.Display)),
-                CreateNavigationRow(
-                    "管理缩放比例预设",
-                    "支持新增、修改、删除，并在保存时自动排序。",
-                    $"{Settings.ScalePresets.Count} 项",
-                    () => NavigationController?.PushViewController(new iOSNativeScalePresetListViewController(Settings), true))));
-    }
-}
-
-/// <summary>
-/// iOS 原生 EXIF 设置页。
-/// </summary>
-internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFormViewController
-{
-    /// <summary>
-    /// 初始化 EXIF 设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeExifSettingsViewController(SettingsViewModel settings)
-        : base(settings)
-    {
-    }
-
-    /// <summary>
-    /// 构建 EXIF 设置页面内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
-    {
-        Title = "EXIF";
-
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "EXIF 显示项",
-                "点击进入后可勾选启用状态，并通过拖拽调整侧栏展示顺序。",
-                CreateNavigationRow(
-                    "管理 EXIF 显示项",
-                    "支持勾选启用与拖拽排序。",
-                    $"{Settings.ExifDisplayItems.Count(item => item.IsEnabled)}/{Settings.ExifDisplayItems.Count} 已启用",
-                    () => NavigationController?.PushViewController(
-                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.ExifDisplayItem>(
-                            title: "EXIF 显示项",
-                            footer: "轻点切换启用状态，拖拽右侧排序手柄可调整显示顺序。",
-                            itemsProvider: () => Settings.ExifDisplayItems,
-                            titleSelector: item => item.DisplayName,
-                            subtitleSelector: _ => null,
-                            isEnabledGetter: item => item.IsEnabled,
-                            isEnabledSetter: (item, value) => item.IsEnabled = value,
-                            moveAction: Settings.MoveExifDisplay),
-                        true))));
-
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "评分与写回",
                 null,
-                CreateSwitchRow(
-                    "显示星级评分",
-                    "控制主界面与侧栏中的评分显示。",
-                    () => Settings.ShowRating,
-                    value => Settings.ShowRating = value),
-                CreateSwitchRow(
-                    "安全修改文件星级",
-                    "写回前校验文件变化，降低原文件损坏风险。",
-                    () => Settings.SafeSetRating,
-                    value => Settings.SafeSetRating = value))));
-    }
-}
-
-/// <summary>
-/// iOS 原生控制设置页。
-/// </summary>
-internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
-{
-    /// <summary>
-    /// 初始化控制设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeControlSettingsViewController(SettingsViewModel settings)
-        : base(settings)
-    {
+                CreateScalePresetEditor()));
     }
 
     /// <summary>
-    /// 构建控制设置内容。
+    /// 创建缩放比例预设编辑器。
     /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
-    protected override void BuildContent(UIStackView contentStack)
+    /// <returns>可直接编辑的原生列表。</returns>
+    private UIView CreateScalePresetEditor()
     {
-        Title = "控制";
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "控制栏布局位置",
-                "移动端设置页内先编辑暂存副本，关闭设置页后再统一应用到主界面。",
-                CreateNavigationRow(
-                    "布局模式",
-                    "决定缩略图与控制栏优先布局在上下、左右或自动跟随屏幕方向。",
-                    GetLayoutModeDisplayName(Settings.LayoutMode),
-                    PresentLayoutModePicker)));
-
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "控制栏功能 / 快捷键",
-                "轻点切换控制栏显示状态，拖拽排序手柄可调整控制栏按钮顺序；快捷键仅作只读展示。",
-                CreateNavigationRow(
-                    "管理控制栏功能",
-                    "支持勾选显示、拖拽排序，并查看当前主/次快捷键。",
-                    $"{Settings.Hotkeys.Count(item => item.IsDisplay)}/{Settings.Hotkeys.Count} 已显示",
-                    () => NavigationController?.PushViewController(
-                        new iOSNativeCheckableReorderListViewController<SettingsViewModel.HotkeyItem>(
-                            title: "控制栏功能",
-                            footer: "轻点切换控制栏显示状态，拖拽排序手柄可调整顺序。快捷键在此页只读展示，不提供录制。",
-                            itemsProvider: () => Settings.Hotkeys,
-                            titleSelector: item => item.Name,
-                            subtitleSelector: item => $"主：{item.PrimaryHotkeyText}    次：{item.SecondaryHotkeyText}",
-                            isEnabledGetter: item => item.IsDisplay,
-                            isEnabledSetter: (item, value) => item.IsDisplay = value,
-                            moveAction: Settings.MoveHotkey),
-                        true)),
-                CreateStaticInfoRow(
-                    "快捷键编辑",
-                    "iOS 第一阶段先只读展示当前快捷键配置，不在原生设置页内录制或修改。")));
-    }
-
-    /// <summary>
-    /// 弹出布局模式选择对话框。
-    /// </summary>
-    private void PresentLayoutModePicker()
-    {
-        var alert = UIAlertController.Create("布局模式", null, UIAlertControllerStyle.ActionSheet);
-        foreach (var item in Settings.LayoutModes)
+        var stack = new UIStackView
         {
-            alert.AddAction(UIAlertAction.Create(item.DisplayName, UIAlertActionStyle.Default, _ => Settings.LayoutMode = item.Value));
+            Axis = UILayoutConstraintAxis.Vertical,
+            Spacing = 0,
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+
+        for (var index = 0; index < Settings.ScalePresets.Count; index++)
+        {
+            if (index > 0)
+            {
+                stack.AddArrangedSubview(CreateSeparator());
+            }
+
+            stack.AddArrangedSubview(CreateScalePresetRow(Settings.ScalePresets[index]));
         }
 
-        alert.AddAction(UIAlertAction.Create("取消", UIAlertActionStyle.Cancel, null));
-
-        if (alert.PopoverPresentationController != null)
+        if (Settings.ScalePresets.Count > 0)
         {
-            alert.PopoverPresentationController.SourceView = View;
-            alert.PopoverPresentationController.SourceRect = new CoreGraphics.CGRect(
-                View.Bounds.GetMidX(),
-                View.Bounds.GetMidY(),
-                1,
-                1);
+            stack.AddArrangedSubview(CreateSeparator());
         }
 
-        PresentViewController(alert, true, null);
+        stack.AddArrangedSubview(CreateAddScalePresetRow());
+        return stack;
     }
 
     /// <summary>
-    /// 获取布局模式的当前展示名称。
+    /// 创建单个缩放比例预设行。
     /// </summary>
-    /// <param name="layoutMode">当前布局模式。</param>
-    /// <returns>用于右侧摘要展示的文本。</returns>
-    private string GetLayoutModeDisplayName(LayoutMode layoutMode)
+    /// <param name="preset">当前预设。</param>
+    /// <returns>可编辑行。</returns>
+    private UIView CreateScalePresetRow(SettingsViewModel.ScalePreset preset)
     {
-        return Settings.LayoutModes.FirstOrDefault(item => item.Value == layoutMode)?.DisplayName ?? layoutMode.ToString();
-    }
-}
-
-/// <summary>
-/// iOS 原生可勾选可排序列表页。
-/// 用于承载文件格式、控制栏功能、EXIF 显示项等同类排序列表。
-/// </summary>
-/// <typeparam name="TItem">列表项类型。</typeparam>
-internal sealed class iOSNativeCheckableReorderListViewController<TItem> : UITableViewController
-{
-    private readonly string _screenTitle;
-    private readonly string? _footer;
-    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
-    private readonly Func<TItem, string> _titleSelector;
-    private readonly Func<TItem, string?> _subtitleSelector;
-    private readonly Func<TItem, bool> _isEnabledGetter;
-    private readonly Action<TItem, bool> _isEnabledSetter;
-    private readonly Action<int, int> _moveAction;
-
-    /// <summary>
-    /// 初始化可勾选可排序列表页。
-    /// </summary>
-    public iOSNativeCheckableReorderListViewController(
-        string title,
-        string? footer,
-        Func<IReadOnlyList<TItem>> itemsProvider,
-        Func<TItem, string> titleSelector,
-        Func<TItem, string?> subtitleSelector,
-        Func<TItem, bool> isEnabledGetter,
-        Action<TItem, bool> isEnabledSetter,
-        Action<int, int> moveAction)
-        : base(UITableViewStyle.InsetGrouped)
-    {
-        _screenTitle = title;
-        _footer = footer;
-        _itemsProvider = itemsProvider;
-        _titleSelector = titleSelector;
-        _subtitleSelector = subtitleSelector;
-        _isEnabledGetter = isEnabledGetter;
-        _isEnabledSetter = isEnabledSetter;
-        _moveAction = moveAction;
-    }
-
-    /// <summary>
-    /// 初始化列表显示与编辑模式。
-    /// </summary>
-    public override void ViewDidLoad()
-    {
-        base.ViewDidLoad();
-        Title = _screenTitle;
-        TableView.SetEditing(true, false);
-        TableView.AllowsSelectionDuringEditing = true;
-        TableView.CellLayoutMarginsFollowReadableWidth = false;
-    }
-
-    /// <summary>
-    /// 返回分组数量。
-    /// </summary>
-    public override nint NumberOfSections(UITableView tableView)
-    {
-        return 1;
-    }
-
-    /// <summary>
-    /// 返回分组底部说明。
-    /// </summary>
-    public override string? TitleForFooter(UITableView tableView, nint section)
-    {
-        return _footer;
-    }
-
-    /// <summary>
-    /// 返回列表项数量。
-    /// </summary>
-    public override nint RowsInSection(UITableView tableView, nint section)
-    {
-        return _itemsProvider().Count;
-    }
-
-    /// <summary>
-    /// 构建列表单元格。
-    /// </summary>
-    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
-    {
-        const string reuseIdentifier = "CheckableReorderCell";
-        var cell = tableView.DequeueReusableCell(reuseIdentifier)
-            ?? new UITableViewCell(UITableViewCellStyle.Subtitle, reuseIdentifier);
-
-        var item = _itemsProvider()[indexPath.Row];
-        cell.TextLabel.Text = _titleSelector(item);
-        cell.DetailTextLabel.Text = _subtitleSelector(item);
-        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabelColor;
-        cell.Accessory = _isEnabledGetter(item)
-            ? UITableViewCellAccessory.Checkmark
-            : UITableViewCellAccessory.None;
-        cell.ShowsReorderControl = true;
-        return cell;
-    }
-
-    /// <summary>
-    /// 允许所有行进入编辑态。
-    /// </summary>
-    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return true;
-    }
-
-    /// <summary>
-    /// 允许所有行拖拽排序。
-    /// </summary>
-    public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return true;
-    }
-
-    /// <summary>
-    /// 关闭删除样式，仅保留拖拽排序。
-    /// </summary>
-    public override UITableViewCellEditingStyle EditingStyleForRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return UITableViewCellEditingStyle.None;
-    }
-
-    /// <summary>
-    /// 关闭编辑态下的左侧缩进，保持内容对齐。
-    /// </summary>
-    public override bool ShouldIndentWhileEditingRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return false;
-    }
-
-    /// <summary>
-    /// 处理拖拽排序后的数据回写。
-    /// </summary>
-    public override void MoveRow(UITableView tableView, NSIndexPath sourceIndexPath, NSIndexPath destinationIndexPath)
-    {
-        _moveAction(sourceIndexPath.Row, destinationIndexPath.Row);
-        tableView.ReloadData();
-    }
-
-    /// <summary>
-    /// 轻点切换当前行的勾选状态。
-    /// </summary>
-    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
-    {
-        tableView.DeselectRow(indexPath, true);
-        var item = _itemsProvider()[indexPath.Row];
-        _isEnabledSetter(item, !_isEnabledGetter(item));
-        tableView.ReloadRows([indexPath], UITableViewRowAnimation.Automatic);
-    }
-}
-
-/// <summary>
-/// iOS 原生缩放比例预设列表页。
-/// </summary>
-internal sealed class iOSNativeScalePresetListViewController : UITableViewController
-{
-    private readonly SettingsViewModel _settings;
-
-    /// <summary>
-    /// 初始化缩放比例预设列表页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeScalePresetListViewController(SettingsViewModel settings)
-        : base(UITableViewStyle.InsetGrouped)
-    {
-        _settings = settings;
-    }
-
-    /// <summary>
-    /// 初始化导航栏与新增按钮。
-    /// </summary>
-    public override void ViewDidLoad()
-    {
-        base.ViewDidLoad();
-        Title = "缩放比例预设";
-        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Add, (_, _) => PresentAddPresetAlert());
-    }
-
-    /// <summary>
-    /// 页面出现时刷新列表。
-    /// </summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewWillAppear(bool animated)
-    {
-        base.ViewWillAppear(animated);
-        TableView.ReloadData();
-    }
-
-    /// <summary>
-    /// 返回分组数量。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <returns>固定 1 个分组。</returns>
-    public override nint NumberOfSections(UITableView tableView)
-    {
-        return 1;
-    }
-
-    /// <summary>
-    /// 返回缩放预设数量。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <param name="section">分组索引。</param>
-    /// <returns>预设数量。</returns>
-    public override nint RowsInSection(UITableView tableView, nint section)
-    {
-        return _settings.ScalePresets.Count;
-    }
-
-    /// <summary>
-    /// 构建缩放预设单元格。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <param name="indexPath">目标索引。</param>
-    /// <returns>配置完成的原生单元格。</returns>
-    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
-    {
-        const string reuseIdentifier = "ScalePresetCell";
-        var cell = tableView.DequeueReusableCell(reuseIdentifier)
-            ?? new UITableViewCell(UITableViewCellStyle.Subtitle, reuseIdentifier);
-
-        var preset = _settings.ScalePresets[indexPath.Row];
-        cell.TextLabel.Text = preset.Display;
-        cell.DetailTextLabel.Text = "点击修改，左滑删除";
-        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabelColor;
-        cell.Accessory = UITableViewCellAccessory.DisclosureIndicator;
-        return cell;
-    }
-
-    /// <summary>
-    /// 允许缩放预设行进入删除编辑态。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <param name="indexPath">目标索引。</param>
-    /// <returns>始终返回 true。</returns>
-    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
-    {
-        return true;
-    }
-
-    /// <summary>
-    /// 处理缩放预设删除。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <param name="editingStyle">编辑动作。</param>
-    /// <param name="indexPath">目标索引。</param>
-    public override void CommitEditingStyle(UITableView tableView, UITableViewCellEditingStyle editingStyle, NSIndexPath indexPath)
-    {
-        if (editingStyle != UITableViewCellEditingStyle.Delete)
+        var content = new UIStackView
         {
-            return;
+            Axis = UILayoutConstraintAxis.Horizontal,
+            Alignment = UIStackViewAlignment.Center,
+            Spacing = 12,
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+
+        var textField = new UITextField
+        {
+            Text = preset.Text,
+            KeyboardType = UIKeyboardType.DecimalPad,
+            BorderStyle = UITextBorderStyle.RoundedRect,
+            TextAlignment = UITextAlignment.Center,
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+        textField.WidthAnchor.ConstraintEqualTo(96).Active = true;
+        textField.InputAccessoryView = CreateDoneToolbar(textField);
+
+        void ApplyText()
+        {
+            if (TryApplyScalePresetValue(textField.Text ?? string.Empty, preset, textField))
+            {
+                RebuildContent();
+                return;
+            }
+
+            textField.Text = preset.Text;
         }
 
-        var preset = _settings.ScalePresets[indexPath.Row];
-        _settings.RemoveScalePreset(preset);
-        tableView.ReloadData();
-    }
+        textField.EditingDidEnd += (_, _) => ApplyText();
 
-    /// <summary>
-    /// 响应列表点击并打开编辑对话框。
-    /// </summary>
-    /// <param name="tableView">当前表格。</param>
-    /// <param name="indexPath">被点击的索引。</param>
-    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
-    {
-        tableView.DeselectRow(indexPath, true);
-        PresentEditPresetAlert(_settings.ScalePresets[indexPath.Row]);
-    }
-
-    /// <summary>
-    /// 弹出新增缩放预设对话框。
-    /// </summary>
-    private void PresentAddPresetAlert()
-    {
-        PresentPresetEditor("新增缩放比例", "100", text => TryApplyPresetValue(text, null));
-    }
-
-    /// <summary>
-    /// 弹出编辑缩放预设对话框。
-    /// </summary>
-    /// <param name="preset">当前预设项。</param>
-    private void PresentEditPresetAlert(SettingsViewModel.ScalePreset preset)
-    {
-        PresentPresetEditor("编辑缩放比例", preset.Text, text => TryApplyPresetValue(text, preset));
-    }
-
-    /// <summary>
-    /// 弹出预设编辑对话框。
-    /// </summary>
-    /// <param name="title">对话框标题。</param>
-    /// <param name="defaultText">默认输入值。</param>
-    /// <param name="onConfirm">确认回调。</param>
-    private void PresentPresetEditor(string title, string defaultText, Action<string> onConfirm)
-    {
-        var alert = UIAlertController.Create(title, "请输入百分比数值，例如 100 或 66.7。", UIAlertControllerStyle.Alert);
-        alert.AddTextField(textField =>
+        var percentLabel = new UILabel
         {
-            textField.Text = defaultText;
-            textField.Placeholder = "百分比";
-            textField.KeyboardType = UIKeyboardType.DecimalPad;
-        });
-        alert.AddAction(UIAlertAction.Create("取消", UIAlertActionStyle.Cancel, null));
-        alert.AddAction(UIAlertAction.Create("保存", UIAlertActionStyle.Default, _ =>
+            Text = "%",
+            Font = UIFont.SystemFontOfSize(16, UIFontWeight.Medium),
+            TextColor = UIColor.SecondaryLabel,
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+
+        var displayLabel = CreateTrailingValueLabel();
+        displayLabel.Text = preset.Display;
+
+        var deleteButton = new UIButton(UIButtonType.System)
         {
-            var text = alert.TextFields?.FirstOrDefault()?.Text ?? string.Empty;
-            onConfirm(text);
-        }));
-        PresentViewController(alert, true, null);
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+        deleteButton.SetTitle("-", UIControlState.Normal);
+        deleteButton.TitleLabel.Font = UIFont.SystemFontOfSize(22, UIFontWeight.Semibold);
+        deleteButton.TouchUpInside += (_, _) =>
+        {
+            Settings.RemoveScalePreset(preset);
+            RebuildContent();
+        };
+
+        content.AddArrangedSubview(textField);
+        content.AddArrangedSubview(percentLabel);
+        content.AddArrangedSubview(displayLabel);
+        content.AddArrangedSubview(CreateFlexibleSpacer());
+        content.AddArrangedSubview(deleteButton);
+
+        return CreateCustomRow(content);
+    }
+
+    /// <summary>
+    /// 创建新增缩放比例行。
+    /// </summary>
+    /// <returns>新增按钮行。</returns>
+    private UIView CreateAddScalePresetRow()
+    {
+        var content = new UIStackView
+        {
+            Axis = UILayoutConstraintAxis.Horizontal,
+            Alignment = UIStackViewAlignment.Center,
+            Spacing = 12,
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+
+        var addButton = new UIButton(UIButtonType.System)
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false
+        };
+        addButton.SetTitle("+", UIControlState.Normal);
+        addButton.TitleLabel.Font = UIFont.SystemFontOfSize(22, UIFontWeight.Semibold);
+        addButton.TouchUpInside += (_, _) =>
+        {
+            Settings.AddScalePreset();
+            RebuildContent();
+        };
+
+        content.AddArrangedSubview(CreateFlexibleSpacer());
+        content.AddArrangedSubview(addButton);
+        return CreateCustomRow(content);
     }
 
     /// <summary>
     /// 将文本输入应用到缩放预设。
     /// </summary>
     /// <param name="text">用户输入的百分比文本。</param>
-    /// <param name="preset">现有预设；新增时为 null。</param>
-    private void TryApplyPresetValue(string text, SettingsViewModel.ScalePreset? preset)
+    /// <param name="preset">目标预设。</param>
+    /// <param name="textFieldResponder">校验失败后重新聚焦的输入框。</param>
+    /// <returns>应用成功返回 true，否则返回 false。</returns>
+    private bool TryApplyScalePresetValue(string text, SettingsViewModel.ScalePreset preset, UIView textFieldResponder)
     {
         if (!TryParsePercentage(text, out var normalizedText))
         {
-            PresentValidationAlert("请输入大于 0 的数字，例如 100 或 66.7。");
-            return;
-        }
-
-        if (preset == null)
-        {
-            _settings.AddScalePreset();
-            preset = _settings.ScalePresets.Last();
+            PresentValidationAlert("请输入大于 0 的数字，例如 100 或 66.7。", textFieldResponder: textFieldResponder);
+            return false;
         }
 
         preset.Text = normalizedText;
-        _settings.ApplyScalePreset();
-        TableView.ReloadData();
+        Settings.ApplyScalePreset();
+        return true;
     }
 
     /// <summary>
@@ -1747,10 +1449,445 @@ internal sealed class iOSNativeScalePresetListViewController : UITableViewContro
     /// 弹出输入校验失败提示。
     /// </summary>
     /// <param name="message">提示内容。</param>
-    private void PresentValidationAlert(string message)
+    /// <param name="textFieldResponder">关闭后重新聚焦的目标视图。</param>
+    private void PresentValidationAlert(string message, UIView textFieldResponder)
     {
         var alert = UIAlertController.Create("输入无效", message, UIAlertControllerStyle.Alert);
-        alert.AddAction(UIAlertAction.Create("确定", UIAlertActionStyle.Default, null));
+        alert.AddAction(UIAlertAction.Create("确定", UIAlertActionStyle.Default, _ => textFieldResponder.BecomeFirstResponder()));
         PresentViewController(alert, true, null);
+    }
+}
+
+/// <summary>
+/// iOS 原生 EXIF 设置页。
+/// </summary>
+internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFormViewController
+{
+    /// <summary>
+    /// 初始化 EXIF 设置页。
+    /// </summary>
+    /// <param name="settings">共享设置 ViewModel。</param>
+    public iOSNativeExifSettingsViewController(SettingsViewModel settings)
+        : base(settings)
+    {
+    }
+
+    /// <summary>
+    /// 构建 EXIF 设置页面内容。
+    /// </summary>
+    /// <param name="contentStack">页面主内容栈。</param>
+    protected override void BuildContent(UIStackView contentStack)
+    {
+        Title = "EXIF";
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "EXIF 显示/收纳",
+                null,
+                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.ExifDisplayItem>(
+                    itemsProvider: () => Settings.ExifDisplayItems,
+                    titleSelector: item => item.DisplayName,
+                    subtitleSelector: _ => null,
+                    isEnabledGetter: item => item.IsEnabled,
+                    isEnabledSetter: (item, value) => item.IsEnabled = value,
+                    moveAction: Settings.MoveExifDisplay,
+                    rowHeight: 52,
+                    cellStyle: UITableViewCellStyle.Default)));
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "评分与写回",
+                null,
+                CreateSwitchRow(
+                    "显示星级评分",
+                    null,
+                    () => Settings.ShowRating,
+                    value => Settings.ShowRating = value),
+                CreateSwitchRow(
+                    "安全修改文件星级",
+                    "检验文件字节变化再写回，降低损坏原文件概率",
+                    () => Settings.SafeSetRating,
+                    value => Settings.SafeSetRating = value)));
+    }
+}
+
+/// <summary>
+/// iOS 原生控制设置页。
+/// </summary>
+internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
+{
+    /// <summary>
+    /// 初始化控制设置页。
+    /// </summary>
+    /// <param name="settings">共享设置 ViewModel。</param>
+    public iOSNativeControlSettingsViewController(SettingsViewModel settings)
+        : base(settings)
+    {
+    }
+
+    /// <summary>
+    /// 构建控制设置内容。
+    /// </summary>
+    /// <param name="contentStack">页面主内容栈。</param>
+    protected override void BuildContent(UIStackView contentStack)
+    {
+        Title = "控制";
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "控制栏布局位置",
+                null,
+                CreateNavigationRow(
+                    "布局模式",
+                    null,
+                    GetLayoutModeDisplayName(Settings.LayoutMode),
+                    PresentLayoutModePicker)));
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "控制栏功能",
+                null,
+                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
+                    itemsProvider: () => Settings.Hotkeys,
+                    titleSelector: item => item.Name,
+                    subtitleSelector: _ => null,
+                    isEnabledGetter: item => item.IsDisplay,
+                    isEnabledSetter: (item, value) => item.IsDisplay = value,
+                    moveAction: Settings.MoveHotkey,
+                    rowHeight: 52,
+                    cellStyle: UITableViewCellStyle.Default)));
+    }
+
+    /// <summary>
+    /// 弹出布局模式选择对话框。
+    /// </summary>
+    private void PresentLayoutModePicker()
+    {
+        var alert = UIAlertController.Create("布局模式", null, UIAlertControllerStyle.ActionSheet);
+        foreach (var item in Settings.LayoutModes)
+        {
+            alert.AddAction(UIAlertAction.Create(item.DisplayName, UIAlertActionStyle.Default, _ => Settings.LayoutMode = item.Value));
+        }
+
+        alert.AddAction(UIAlertAction.Create("取消", UIAlertActionStyle.Cancel, null));
+
+        if (alert.PopoverPresentationController != null)
+        {
+            alert.PopoverPresentationController.SourceView = View;
+            alert.PopoverPresentationController.SourceRect = new CoreGraphics.CGRect(
+                View.Bounds.X + (View.Bounds.Width / 2),
+                View.Bounds.Y + (View.Bounds.Height / 2),
+                1,
+                1);
+        }
+
+        PresentViewController(alert, true, null);
+    }
+
+    /// <summary>
+    /// 获取布局模式的当前展示名称。
+    /// </summary>
+    /// <param name="layoutMode">当前布局模式。</param>
+    /// <returns>用于右侧摘要展示的文本。</returns>
+    private string GetLayoutModeDisplayName(LayoutMode layoutMode)
+    {
+        return Settings.LayoutModes.FirstOrDefault(item => item.Value == layoutMode)?.DisplayName ?? layoutMode.ToString();
+    }
+}
+
+/// <summary>
+/// iOS 内联可勾选可排序列表视图。
+/// </summary>
+/// <typeparam name="TItem">列表项类型。</typeparam>
+internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
+{
+    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
+    private readonly UITableView _tableView;
+    private readonly NSLayoutConstraint _heightConstraint;
+
+    /// <summary>
+    /// 初始化内联列表视图。
+    /// </summary>
+    public iOSNativeEmbeddedCheckableReorderListView(
+        Func<IReadOnlyList<TItem>> itemsProvider,
+        Func<TItem, string> titleSelector,
+        Func<TItem, string?> subtitleSelector,
+        Func<TItem, bool> isEnabledGetter,
+        Action<TItem, bool> isEnabledSetter,
+        Action<int, int> moveAction,
+        double rowHeight = 60,
+        UITableViewCellStyle cellStyle = UITableViewCellStyle.Subtitle)
+    {
+        _itemsProvider = itemsProvider;
+
+        TranslatesAutoresizingMaskIntoConstraints = false;
+
+        _tableView = new UITableView(CoreGraphics.CGRect.Empty, UITableViewStyle.Plain)
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false,
+            ScrollEnabled = false,
+            BackgroundColor = UIColor.Clear,
+            RowHeight = (nfloat)rowHeight,
+            SeparatorInset = UIEdgeInsets.Zero,
+            TableFooterView = new UIView(CoreGraphics.CGRect.Empty)
+        };
+        _tableView.SetEditing(true, false);
+        _tableView.AllowsSelectionDuringEditing = true;
+        _tableView.CellLayoutMarginsFollowReadableWidth = false;
+        _tableView.Source = new iOSNativeEmbeddedCheckableReorderListSource<TItem>(
+            itemsProvider,
+            titleSelector,
+            subtitleSelector,
+            isEnabledGetter,
+            isEnabledSetter,
+            moveAction,
+            cellStyle,
+            Refresh);
+
+        AddSubview(_tableView);
+        _heightConstraint = _tableView.HeightAnchor.ConstraintEqualTo(1);
+
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            _tableView.TopAnchor.ConstraintEqualTo(TopAnchor),
+            _tableView.LeadingAnchor.ConstraintEqualTo(LeadingAnchor),
+            _tableView.TrailingAnchor.ConstraintEqualTo(TrailingAnchor),
+            _tableView.BottomAnchor.ConstraintEqualTo(BottomAnchor),
+            _heightConstraint,
+        ]);
+
+        Refresh();
+    }
+
+    /// <summary>
+    /// 刷新列表内容与高度。
+    /// </summary>
+    public void Refresh()
+    {
+        _tableView.ReloadData();
+        _heightConstraint.Constant = Math.Max(1, _itemsProvider().Count) * _tableView.RowHeight;
+    }
+}
+
+/// <summary>
+/// iOS 内联可勾选可排序列表数据源。
+/// </summary>
+/// <typeparam name="TItem">列表项类型。</typeparam>
+internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITableViewSource
+{
+    private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
+    private readonly Func<TItem, string> _titleSelector;
+    private readonly Func<TItem, string?> _subtitleSelector;
+    private readonly Func<TItem, bool> _isEnabledGetter;
+    private readonly Action<TItem, bool> _isEnabledSetter;
+    private readonly Action<int, int> _moveAction;
+    private readonly UITableViewCellStyle _cellStyle;
+    private readonly Action _refreshAction;
+
+    /// <summary>
+    /// 初始化列表数据源。
+    /// </summary>
+    public iOSNativeEmbeddedCheckableReorderListSource(
+        Func<IReadOnlyList<TItem>> itemsProvider,
+        Func<TItem, string> titleSelector,
+        Func<TItem, string?> subtitleSelector,
+        Func<TItem, bool> isEnabledGetter,
+        Action<TItem, bool> isEnabledSetter,
+        Action<int, int> moveAction,
+        UITableViewCellStyle cellStyle,
+        Action refreshAction)
+    {
+        _itemsProvider = itemsProvider;
+        _titleSelector = titleSelector;
+        _subtitleSelector = subtitleSelector;
+        _isEnabledGetter = isEnabledGetter;
+        _isEnabledSetter = isEnabledSetter;
+        _moveAction = moveAction;
+        _cellStyle = cellStyle;
+        _refreshAction = refreshAction;
+    }
+
+    /// <summary>
+    /// 返回列表项数量。
+    /// </summary>
+    public override nint RowsInSection(UITableView tableView, nint section)
+    {
+        return _itemsProvider().Count;
+    }
+
+    /// <summary>
+    /// 构建列表单元格。
+    /// </summary>
+    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
+    {
+        var showsSubtitle = _cellStyle == UITableViewCellStyle.Subtitle;
+        var reuseIdentifier = showsSubtitle
+            ? "EmbeddedCheckableReorderSubtitleCell"
+            : "EmbeddedCheckableReorderDefaultCell";
+        var cell = tableView.DequeueReusableCell(reuseIdentifier) as iOSNativeEmbeddedCheckableReorderCell
+            ?? new iOSNativeEmbeddedCheckableReorderCell(reuseIdentifier, showsSubtitle);
+
+        var item = _itemsProvider()[indexPath.Row];
+        cell.Configure(
+            title: _titleSelector(item),
+            subtitle: showsSubtitle ? _subtitleSelector(item) : null,
+            isEnabled: _isEnabledGetter(item));
+        cell.ShowsReorderControl = true;
+        cell.BackgroundColor = UIColor.Clear;
+        return cell;
+    }
+
+    /// <summary>
+    /// 允许所有行进入编辑态。
+    /// </summary>
+    public override bool CanEditRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return true;
+    }
+
+    /// <summary>
+    /// 允许所有行拖拽排序。
+    /// </summary>
+    public override bool CanMoveRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return true;
+    }
+
+    /// <summary>
+    /// 关闭删除样式，仅保留拖拽排序。
+    /// </summary>
+    public override UITableViewCellEditingStyle EditingStyleForRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return UITableViewCellEditingStyle.None;
+    }
+
+    /// <summary>
+    /// 关闭编辑态下的左侧缩进，保持内容对齐。
+    /// </summary>
+    public override bool ShouldIndentWhileEditing(UITableView tableView, NSIndexPath indexPath)
+    {
+        return false;
+    }
+
+    /// <summary>
+    /// 处理拖拽排序后的数据回写。
+    /// </summary>
+    public override void MoveRow(UITableView tableView, NSIndexPath sourceIndexPath, NSIndexPath destinationIndexPath)
+    {
+        _moveAction(sourceIndexPath.Row, destinationIndexPath.Row);
+        _refreshAction();
+    }
+
+    /// <summary>
+    /// 轻点切换当前行的勾选状态。
+    /// </summary>
+    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
+    {
+        tableView.DeselectRow(indexPath, true);
+        var item = _itemsProvider()[indexPath.Row];
+        _isEnabledSetter(item, !_isEnabledGetter(item));
+        _refreshAction();
+    }
+}
+
+/// <summary>
+/// iOS 内联勾选排序列表单元格。
+/// 左侧固定显示勾选位，右侧保留系统拖拽手柄。
+/// </summary>
+internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
+{
+    private readonly UIImageView _checkmarkView;
+    private readonly UILabel _titleLabel;
+    private readonly UILabel? _subtitleLabel;
+
+    /// <summary>
+    /// 初始化列表单元格。
+    /// </summary>
+    /// <param name="reuseIdentifier">复用标识。</param>
+    /// <param name="showsSubtitle">是否展示副标题。</param>
+    public iOSNativeEmbeddedCheckableReorderCell(string reuseIdentifier, bool showsSubtitle)
+        : base(UITableViewCellStyle.Default, reuseIdentifier)
+    {
+        BackgroundColor = UIColor.Clear;
+        ContentView.BackgroundColor = UIColor.Clear;
+        SelectionStyle = UITableViewCellSelectionStyle.Default;
+
+        _checkmarkView = new UIImageView
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false,
+            TintColor = UIColor.SystemBlue,
+            ContentMode = UIViewContentMode.ScaleAspectFit,
+            Image = UIImage.GetSystemImage("checkmark")
+        };
+
+        _titleLabel = new UILabel
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false,
+            Font = UIFont.SystemFontOfSize(16),
+            TextColor = UIColor.Label,
+            Lines = 1
+        };
+
+        ContentView.AddSubview(_checkmarkView);
+        ContentView.AddSubview(_titleLabel);
+
+        UILabel? subtitleLabel = null;
+        if (showsSubtitle)
+        {
+            subtitleLabel = new UILabel
+            {
+                TranslatesAutoresizingMaskIntoConstraints = false,
+                Font = UIFont.SystemFontOfSize(12),
+                TextColor = UIColor.SecondaryLabel,
+                Lines = 1
+            };
+            ContentView.AddSubview(subtitleLabel);
+        }
+
+        _subtitleLabel = subtitleLabel;
+
+        var leadingInset = 16f;
+        var checkmarkWidth = 22f;
+        var spacing = 12f;
+
+        _checkmarkView.WidthAnchor.ConstraintEqualTo(checkmarkWidth).Active = true;
+        _checkmarkView.HeightAnchor.ConstraintEqualTo(22).Active = true;
+        _checkmarkView.LeadingAnchor.ConstraintEqualTo(ContentView.LeadingAnchor, leadingInset).Active = true;
+        _checkmarkView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
+
+        if (_subtitleLabel == null)
+        {
+            _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
+            _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
+            _titleLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
+        }
+        else
+        {
+            _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
+            _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
+            _titleLabel.TopAnchor.ConstraintEqualTo(ContentView.TopAnchor, 10).Active = true;
+
+            _subtitleLabel.LeadingAnchor.ConstraintEqualTo(_titleLabel.LeadingAnchor).Active = true;
+            _subtitleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
+            _subtitleLabel.TopAnchor.ConstraintEqualTo(_titleLabel.BottomAnchor, 2).Active = true;
+            _subtitleLabel.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -10).Active = true;
+        }
+    }
+
+    /// <summary>
+    /// 刷新单元格展示状态。
+    /// </summary>
+    /// <param name="title">主标题。</param>
+    /// <param name="subtitle">副标题。</param>
+    /// <param name="isEnabled">是否启用。</param>
+    public void Configure(string title, string? subtitle, bool isEnabled)
+    {
+        _titleLabel.Text = title;
+        if (_subtitleLabel != null)
+        {
+            _subtitleLabel.Text = subtitle;
+            _subtitleLabel.Hidden = string.IsNullOrWhiteSpace(subtitle);
+        }
+
+        _checkmarkView.Hidden = !isEnabled;
     }
 }
