@@ -25,7 +25,7 @@ public partial class SettingsViewModel : ReactiveObject
     // 检查是否为 Apple 平台
     public static bool IsApple => OperatingSystem.IsIOS() || OperatingSystem.IsMacOS();
     
-    public SettingsViewModel(ISettingsService? settingsService = null)
+    public SettingsViewModel(ISettingsService? settingsService = null, SettingsModel? initialModel = null)
     {
         _settingsService = settingsService ?? SettingsService.Instance;
         _saveSubscription = InitializePersistence();
@@ -41,7 +41,15 @@ public partial class SettingsViewModel : ReactiveObject
         // 设置缓存数据初始化
         InitializeBitMapCache();
 
-        _ = LoadSettingsAsync();
+        if (initialModel != null)
+        {
+            ApplyModel(initialModel, preserveDefaultValues: false);
+            _hasLoaded = true;
+        }
+        else
+        {
+            _ = LoadSettingsAsync();
+        }
         GC.KeepAlive(_saveSubscription); // keep subscription rooted
      }
- }
+  }
