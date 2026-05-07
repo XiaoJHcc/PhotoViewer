@@ -307,18 +307,18 @@ public class ControlViewModel : ReactiveObject
     }
     
     /// <summary>
-    /// 打开 EXIF 详情工具（桌面端）。
+    /// 打开工具窗口（桌面端）。
     /// </summary>
-    public void OpenExifDetail(Window parentWindow)
+    public void OpenTools(Window parentWindow)
     {
-        Main.OpenExifDetailWindow(parentWindow);
+        Main.OpenToolsWindow(parentWindow);
     }
 
     /// <summary>
-    /// 打开 EXIF 详情工具（移动端）。
+    /// 打开工具弹窗（移动端）。
     /// </summary>
-    public void OpenExifDetailModal()
+    public void OpenToolsModal()
     {
-        Main.OpenExifDetailModal();
+        Main.OpenToolsModal();
     }
 }

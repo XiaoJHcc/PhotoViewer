@@ -133,12 +133,11 @@ public class MainViewModel : ViewModelBase
     private ToolsWindow? _toolsWindow;
 
     /// <summary>
-    /// 打开工具窗口并导航到 EXIF 详情（桌面端单例）。已打开时直接前置，不重复创建。
+    /// 打开工具窗口并显示工具首页（桌面端单例）。已打开时直接前置，不重复创建。
     /// </summary>
-    public void OpenExifDetailWindow(Window parentWindow)
+    public void OpenToolsWindow(Window parentWindow)
     {
-        if (Tools.ExifDetail == null) return;
-        Tools.OpenExifDetail();
+        Tools.ShowList();
 
         if (_toolsWindow != null)
         {
@@ -219,12 +218,11 @@ public class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 打开工具弹窗并导航到 EXIF 详情（移动端）。
+    /// 打开工具弹窗并显示工具首页（移动端）。
     /// </summary>
-    public void OpenExifDetailModal()
+    public void OpenToolsModal()
     {
-        if (Tools.ExifDetail == null) return;
-        Tools.OpenExifDetail();
+        Tools.ShowList();
         ModalContentType = "Tools";
         ModalTitle = "工具";
         ShowModal();

@@ -241,11 +241,11 @@ public partial class ImageView : UserControl
 
         if (TopLevel.GetTopLevel(this) is Window parentWindow)
         {
-            main.OpenExifDetailWindow(parentWindow);
+            main.OpenToolsWindow(parentWindow);
         }
         else
         {
-            main.OpenExifDetailModal();
+            main.OpenToolsModal();
         }
     }
 

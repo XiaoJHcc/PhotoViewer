@@ -17,4 +17,7 @@ public partial class ToolsView : UserControl
 
     private void OnOpenExifDetailClick(object? sender, RoutedEventArgs e)
         => (DataContext as ToolsViewModel)?.OpenExifDetail();
+
+    private void OnOpenPhotoStatsClick(object? sender, RoutedEventArgs e)
+        => (DataContext as ToolsViewModel)?.OpenPhotoStats();
 }
