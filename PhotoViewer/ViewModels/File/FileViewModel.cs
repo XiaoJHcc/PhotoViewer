@@ -28,7 +28,7 @@ public class FileViewModel : ReactiveObject
 
         FilterBar = new FilterBarViewModel(main, main.FolderVM);
         ThumbnailList = new ThumbnailListViewModel(main, main.FolderVM, FilterBar);
-        SimilarityPanel = new SimilarityPanelViewModel();
+        SimilarityPanel = new SimilarityPanelViewModel(main, ThumbnailList);
 
         main.WhenAnyValue(x => x.IsHorizontalLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));

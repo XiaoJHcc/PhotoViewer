@@ -16,6 +16,7 @@ public class ImageFile : ReactiveObject
 
     private Bitmap? _thumbnail;
     private bool _isCurrent;
+    private bool _isCurrentImage;
     private ExifData? _exifData;
     private bool _isExifLoading;
     private bool _isExifLoaded;
@@ -76,6 +77,17 @@ public class ImageFile : ReactiveObject
     {
         get => _isCurrent;
         set => this.RaiseAndSetIfChanged(ref _isCurrent, value);
+    }
+
+    /// <summary>
+    /// 是否为主图视图当前显示的图片(独立于主缩略图列表的锚点高亮)。
+    /// 由 <see cref="ViewModels.MainViewModel.CurrentFile"/> setter 维护;相似聚类面板的边框高亮绑定此属性,
+    /// 这样点击相似项切换主图时,主缩略图列表的 <see cref="IsCurrent"/> 锚点保持不变。
+    /// </summary>
+    public bool IsCurrentImage
+    {
+        get => _isCurrentImage;
+        set => this.RaiseAndSetIfChanged(ref _isCurrentImage, value);
     }
 
     /// <summary>
