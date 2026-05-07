@@ -1,0 +1,45 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:toolVm="clr-namespace:PhotoViewer.ViewModels.Tools"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:views="clr-namespace:PhotoViewer.Views"
+             mc:Ignorable="d"
+             d:DesignWidth="880"
+             d:DesignHeight="640"
+             x:Class="PhotoViewer.Views.Tools.ToolsView"
+             x:DataType="toolVm:ToolsViewModel">
+
+    <Grid RowDefinitions="Auto,*">
+
+        <!-- 返回按钮（仅进入子页面时可见） -->
+        <Button Grid.Row="0"
+                IsVisible="{Binding CanGoBack}"
+                Click="OnBackClick"
+                Content="返回"
+                Margin="8" />
+
+        <!-- 工具首屏列表 -->
+        <StackPanel Grid.Row="1"
+                    IsVisible="{Binding !CanGoBack}"
+                    Margin="16"
+                    Spacing="8">
+            <Button IsEnabled="{Binding IsExifDetailEnabled}"
+                    Click="OnOpenExifDetailClick"
+                    Content="EXIF 详情" />
+        </StackPanel>
+
+        <!-- 子工具页面 -->
+        <ContentControl Grid.Row="1"
+                        IsVisible="{Binding CanGoBack}"
+                        Content="{Binding CurrentTool}">
+            <ContentControl.DataTemplates>
+                <DataTemplate DataType="vm:ExifDetailViewModel">
+                    <views:ExifDetailView />
+                </DataTemplate>
+            </ContentControl.DataTemplates>
+        </ContentControl>
+
+    </Grid>
+</UserControl>
