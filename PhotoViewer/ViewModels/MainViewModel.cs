@@ -2,12 +2,15 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Reactive.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.ViewModels.File;
+using PhotoViewer.ViewModels.Tools;
 using PhotoViewer.Views;
+using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels;
@@ -20,6 +23,7 @@ public class MainViewModel : ViewModelBase
     public ImageViewModel ImageVM { get; }
     public DetailViewModel DetailVM { get; }
     public SettingsViewModel Settings { get; }
+    public ToolsViewModel Tools { get; }
 
     // 当前状态
     public ImageFile? LastFile;
@@ -86,6 +90,7 @@ public class MainViewModel : ViewModelBase
     {
         // 先创建设置 ViewModel
         Settings = new SettingsViewModel();
+        Tools = new ToolsViewModel(this);
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
         ImageVM = new ImageViewModel(this);
@@ -98,16 +103,11 @@ public class MainViewModel : ViewModelBase
         Settings.WhenAnyValue(s => s.LayoutMode)
             .Subscribe(_ => UpdateLayoutFromSettings());
 
-        // 当前图片切换时同步更新已打开的 EXIF 详情窗口/模态
+        // 当前图片切换、或 ExifData 异步加载完成时，同步刷新工具状态。
         this.WhenAnyValue(m => m.CurrentFile)
-            .Subscribe(file =>
-            {
-                if (file == null) return;
-                if (_exifDetailWindow?.DataContext is ExifDetailViewModel desktopVm)
-                    desktopVm.UpdateToFile(file);
-                if (IsModalVisible && IsModalExifDetail && _exifDetailVM != null)
-                    _exifDetailVM.UpdateToFile(file);
-            });
+            .Select(file => file?.WhenAnyValue(f => f.ExifData) ?? Observable.Return<ExifData?>(null))
+            .Switch()
+            .Subscribe(_ => Tools.SyncCurrentFile(CurrentFile));
     }
     
     ////////////////
@@ -129,31 +129,30 @@ public class MainViewModel : ViewModelBase
         settingsWindow.ShowDialog(parentWindow);
     }
 
-    // 桌面端单例 EXIF 详情窗口引用
-    private ExifDetailWindow? _exifDetailWindow;
+    // 桌面端单例工具窗口引用
+    private ToolsWindow? _toolsWindow;
 
     /// <summary>
-    /// 打开 EXIF 详情窗口（桌面端单例）。已打开时直接前置并更新内容，不重复创建。
+    /// 打开工具窗口并导航到 EXIF 详情（桌面端单例）。已打开时直接前置，不重复创建。
     /// </summary>
     public void OpenExifDetailWindow(Window parentWindow)
     {
-        var imageFile = CurrentFile;
-        if (imageFile?.ExifData == null) return;
+        if (Tools.ExifDetail == null) return;
+        Tools.OpenExifDetail();
 
-        if (_exifDetailWindow != null)
+        if (_toolsWindow != null)
         {
-            _exifDetailWindow.Activate();
-            ((ExifDetailViewModel)_exifDetailWindow.DataContext!).UpdateToFile(imageFile);
+            _toolsWindow.Activate();
             return;
         }
 
-        _exifDetailWindow = new ExifDetailWindow
+        _toolsWindow = new ToolsWindow
         {
-            DataContext = new ExifDetailViewModel(imageFile)
+            DataContext = Tools
         };
-        _exifDetailWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        _exifDetailWindow.Closed += (_, _) => _exifDetailWindow = null;
-        _exifDetailWindow.Show(parentWindow);
+        _toolsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
+        _toolsWindow.Closed += (_, _) => _toolsWindow = null;
+        _toolsWindow.Show(parentWindow);
     }
 
     // 模态显示
@@ -179,7 +178,7 @@ public class MainViewModel : ViewModelBase
     }
     
     /// <summary>
-    /// 当前模态内容类型：Settings 或 ExifDetail
+    /// 当前模态内容类型：Settings 或 Tools
     /// </summary>
     private string _modalContentType = "Settings";
     public string ModalContentType
@@ -189,16 +188,16 @@ public class MainViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _modalContentType, value);
             this.RaisePropertyChanged(nameof(IsModalSettings));
-            this.RaisePropertyChanged(nameof(IsModalExifDetail));
+            this.RaisePropertyChanged(nameof(IsModalTools));
         }
     }
     
     /// <summary>模态内容是否为设置页</summary>
     public bool IsModalSettings => _modalContentType == "Settings";
     
-    /// <summary>模态内容是否为 EXIF 详情</summary>
-    public bool IsModalExifDetail => _modalContentType == "ExifDetail";
-    
+    /// <summary>模态内容是否为工具页</summary>
+    public bool IsModalTools => _modalContentType == "Tools";
+
     /// <summary>
     /// 模态标题文本
     /// </summary>
@@ -207,16 +206,6 @@ public class MainViewModel : ViewModelBase
     {
         get => _modalTitle;
         set => this.RaiseAndSetIfChanged(ref _modalTitle, value);
-    }
-
-    /// <summary>
-    /// EXIF 详情 ViewModel（模态显示时使用）
-    /// </summary>
-    private ExifDetailViewModel? _exifDetailVM;
-    public ExifDetailViewModel? ExifDetailVM
-    {
-        get => _exifDetailVM;
-        set => this.RaiseAndSetIfChanged(ref _exifDetailVM, value);
     }
     
     /// <summary>
@@ -230,16 +219,14 @@ public class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 打开 EXIF 详情弹窗（移动端）
+    /// 打开工具弹窗并导航到 EXIF 详情（移动端）。
     /// </summary>
     public void OpenExifDetailModal()
     {
-        var imageFile = CurrentFile;
-        if (imageFile?.ExifData == null) return;
-        
-        ExifDetailVM = new ExifDetailViewModel(imageFile);
-        ModalContentType = "ExifDetail";
-        ModalTitle = "EXIF 详情";
+        if (Tools.ExifDetail == null) return;
+        Tools.OpenExifDetail();
+        ModalContentType = "Tools";
+        ModalTitle = "工具";
         ShowModal();
     }
 

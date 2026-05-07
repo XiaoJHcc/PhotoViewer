@@ -137,6 +137,10 @@
                         </Button>
                         <Border Height="1" Background="#333333" Margin="0,4" />
                         <Button Classes="ContextMenuButton"
+                                Click="OnOpenToolsMenuClick">
+                            <TextBlock Text="工具" />
+                        </Button>
+                        <Button Classes="ContextMenuButton"
                                 Click="OnOpenSettingMenuClick">
                             <TextBlock Text="设置" />
                         </Button>

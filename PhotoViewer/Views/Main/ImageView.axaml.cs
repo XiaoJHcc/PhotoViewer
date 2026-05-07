@@ -163,6 +163,18 @@ public partial class ImageView : UserControl
     }
 
     /// <summary>
+    /// 打开工具页并关闭右键菜单。
+    /// </summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">路由事件参数。</param>
+    private void OnOpenToolsMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        OpenTools();
+        HideMenu();
+        e.Handled = true;
+    }
+
+    /// <summary>
     /// 右键菜单"打开文件/打开文件夹"点击：调用与控制栏相同的文件选择器功能，并关闭菜单
     /// </summary>
     private void OnOpenFileMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
@@ -214,6 +226,26 @@ public partial class ImageView : UserControl
         else
         {
             main.OpenSettingModal();
+        }
+    }
+
+    /// <summary>
+    /// 打开工具页窗口或模态。
+    /// </summary>
+    private void OpenTools()
+    {
+        if (ViewModel?.Main is not { } main)
+        {
+            return;
+        }
+
+        if (TopLevel.GetTopLevel(this) is Window parentWindow)
+        {
+            main.OpenExifDetailWindow(parentWindow);
+        }
+        else
+        {
+            main.OpenExifDetailModal();
         }
     }
 

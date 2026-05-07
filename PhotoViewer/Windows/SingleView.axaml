@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:views="clr-namespace:PhotoViewer.Views"
+             xmlns:toolViews="clr-namespace:PhotoViewer.Views.Tools"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="450"
              x:Class="PhotoViewer.Windows.SingleView"
              x:DataType="vm:MainViewModel">
@@ -68,11 +69,11 @@
                 <views:SettingsView DataContext="{Binding Settings}"/>
             </ContentControl>
             
-            <!-- 弹窗内容：EXIF 详情 -->
+            <!-- 弹窗内容：工具页 -->
             <ContentControl Grid.Row="2"
                             Background="#333333"
-                            IsVisible="{Binding IsModalExifDetail}">
-                <views:ExifDetailView DataContext="{Binding ExifDetailVM}"/>
+                            IsVisible="{Binding IsModalTools}">
+                <toolViews:ToolsView DataContext="{Binding Tools}"/>
             </ContentControl>
         </Grid>
     </Grid>
