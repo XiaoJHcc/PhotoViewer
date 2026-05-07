@@ -84,3 +84,24 @@ public class FlipTransformConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
+
+/// <summary>相似度分数(0~1)→ "97%" 形式的百分比文本。</summary>
+public class SimilarityScoreConverter : IValueConverter
+{
+    public static readonly SimilarityScoreConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is double score)
+        {
+            var pct = (int)Math.Round(Math.Clamp(score, 0.0, 1.0) * 100);
+            return pct + "%";
+        }
+        return string.Empty;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}

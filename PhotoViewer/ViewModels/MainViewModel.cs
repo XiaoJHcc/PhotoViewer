@@ -24,17 +24,43 @@ public class MainViewModel : ViewModelBase
     // 当前状态
     public ImageFile? LastFile;
     private ImageFile? _currentFile;
+
+    /// <summary>
+    /// 主缩略图列表的当前锚点(持有 <see cref="ImageFile.IsCurrent"/> 高亮的那一项)。
+    /// 与 <see cref="CurrentFile"/> 通常一致;但 <see cref="SetCurrentImageKeepAnchor"/> 会让二者解耦,
+    /// 这里独立记录,确保下一次正常切换能正确清掉旧锚点的高亮。
+    /// </summary>
+    private ImageFile? _currentAnchor;
+
+    /// <summary>
+    /// setter 内部抑制位:为 true 时,本次 <see cref="CurrentFile"/> 赋值仅更新主图状态(<see cref="ImageFile.IsCurrentImage"/>),
+    /// 不更新主缩略图列表的锚点高亮(<see cref="ImageFile.IsCurrent"/>)。
+    /// 由 <see cref="SetCurrentImageKeepAnchor"/> 一次性置位,用于相似聚类面板等"切主图但保留原锚点"的场景。
+    /// </summary>
+    private bool _suppressAnchorUpdate;
+
     public ImageFile? CurrentFile
     {
         get => _currentFile;
         set
         {
-            if (_currentFile != null) _currentFile.IsCurrent = false;
+            if (_currentFile != null) _currentFile.IsCurrentImage = false;
             if (_currentFile != value) LastFile = _currentFile;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
+
+            if (!_suppressAnchorUpdate)
+            {
+                if (_currentAnchor != null && !ReferenceEquals(_currentAnchor, value))
+                {
+                    _currentAnchor.IsCurrent = false;
+                }
+                if (value != null) value.IsCurrent = true;
+                _currentAnchor = value;
+            }
+
             if (value != null)
             {
-                value.IsCurrent = true;
+                value.IsCurrentImage = true;
                 FileVM.ThumbnailList.PreloadNearbyFiles();
             }
             else
@@ -42,6 +68,18 @@ public class MainViewModel : ViewModelBase
                 Console.WriteLine("CurrentFile => null");
             }
         }
+    }
+
+    /// <summary>
+    /// 切换主图但保留主缩略图列表的锚点高亮不变。
+    /// 用于相似聚类面板的点击:用户从相似列表选一张时只想看新图,不希望主列表里原锚点跟着漂。
+    /// </summary>
+    /// <param name="file">要切换到的图片</param>
+    public void SetCurrentImageKeepAnchor(ImageFile? file)
+    {
+        _suppressAnchorUpdate = true;
+        try { CurrentFile = file; }
+        finally { _suppressAnchorUpdate = false; }
     }
 
     public MainViewModel()
