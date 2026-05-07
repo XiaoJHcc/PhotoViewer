@@ -5,6 +5,7 @@
              xmlns:toolVm="clr-namespace:PhotoViewer.ViewModels.Tools"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
              xmlns:views="clr-namespace:PhotoViewer.Views"
+             xmlns:toolViews="clr-namespace:PhotoViewer.Views.Tools"
              mc:Ignorable="d"
              d:DesignWidth="880"
              d:DesignHeight="640"
@@ -28,6 +29,10 @@
             <Button IsEnabled="{Binding IsExifDetailEnabled}"
                     Click="OnOpenExifDetailClick"
                     Content="EXIF 详情" />
+            <Button IsEnabled="{Binding IsPhotoStatsAvailable}"
+                    IsVisible="{Binding IsPhotoStatsAvailable}"
+                    Click="OnOpenPhotoStatsClick"
+                    Content="照片数据统计" />
         </StackPanel>
 
         <!-- 子工具页面 -->
@@ -37,6 +42,9 @@
             <ContentControl.DataTemplates>
                 <DataTemplate DataType="vm:ExifDetailViewModel">
                     <views:ExifDetailView />
+                </DataTemplate>
+                <DataTemplate DataType="toolVm:PhotoStatsViewModel">
+                    <toolViews:PhotoStatsView />
                 </DataTemplate>
             </ContentControl.DataTemplates>
         </ContentControl>

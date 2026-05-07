@@ -25,6 +25,12 @@ public class ToolsViewModel : ViewModelBase
     /// <summary>EXIF 详情工具当前是否可进入。</summary>
     public bool IsExifDetailEnabled => _exifDetail != null;
 
+    /// <summary>照片数据统计工具 VM。</summary>
+    public PhotoStatsViewModel PhotoStats { get; }
+
+    /// <summary>照片数据统计工具是否在当前平台可用（仅 Windows）。</summary>
+    public bool IsPhotoStatsAvailable => OperatingSystem.IsWindows();
+
     /// <summary>当前显示的子工具 VM；null 表示显示工具列表首页。</summary>
     public ReactiveObject? CurrentTool
     {
@@ -42,6 +48,7 @@ public class ToolsViewModel : ViewModelBase
     /// <summary>初始化工具页 ViewModel。</summary>
     public ToolsViewModel(MainViewModel main)
     {
+        PhotoStats = new PhotoStatsViewModel();
         SyncCurrentFile(main.CurrentFile);
     }
 
@@ -51,6 +58,9 @@ public class ToolsViewModel : ViewModelBase
         if (_exifDetail != null)
             CurrentTool = _exifDetail;
     }
+
+    /// <summary>导航到照片数据统计子页面。</summary>
+    public void OpenPhotoStats() => CurrentTool = PhotoStats;
 
     /// <summary>返回工具列表首页。</summary>
     public void ShowList() => CurrentTool = null;

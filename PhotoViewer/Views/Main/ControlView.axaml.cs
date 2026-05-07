@@ -47,11 +47,11 @@ public partial class ControlView : UserControl
         
         if (TopLevel.GetTopLevel(this) is Window parentWindow)
         {
-            viewModel.OpenExifDetail(parentWindow);
+            viewModel.OpenTools(parentWindow);
         }
         else
         {
-            viewModel.OpenExifDetailModal();
+            viewModel.OpenToolsModal();
         }
     }
 
