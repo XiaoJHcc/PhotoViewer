@@ -1,6 +1,6 @@
 using System;
 
-namespace PhotoViewer.Core.Thumbnails;
+namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 缩略图来源类别。

@@ -270,7 +270,7 @@ public class ImageFile : ReactiveObject
         try
         {
             // 在后台线程中生成缩略图：约 120 短边的列表用缩略图。
-            var bitmap = await Task.Run(() => Thumbnails.ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
+            var bitmap = await Task.Run(() => ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
             
             // 在UI线程中设置结果
             await Dispatcher.UIThread.InvokeAsync(() =>

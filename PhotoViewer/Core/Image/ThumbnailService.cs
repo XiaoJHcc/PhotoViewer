@@ -5,11 +5,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using PhotoViewer.Core.Image;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 
-namespace PhotoViewer.Core.Thumbnails;
+namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 缩略图服务门面：对外只暴露两个能力 ——
