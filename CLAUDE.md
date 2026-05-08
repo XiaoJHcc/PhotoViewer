@@ -40,28 +40,59 @@ Directory.Packages.props  # Central NuGet version pinning
 
 UI-independent business logic. **Do not reference Avalonia controls from this layer.**
 
+**Image/** — 图片解码与文件模型（`namespace PhotoViewer.Core.Image`）
+
 | File | 模块 | Responsibility |
 |---|---|---|
-| [Image/BitmapLoader.cs](PhotoViewer/Core/Image/BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation + thumbnails. |
+| [Image/BitmapLoader.cs](PhotoViewer/Core/Image/BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation. |
 | [Image/BitmapPrefetcher.cs](PhotoViewer/Core/Image/BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
 | [Image/HeifLoader.cs](PhotoViewer/Core/Image/HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
-| [Image/ImageFile.cs](PhotoViewer/Core/Image/ImageFile.cs) | 文件模型 | Per-file state: path, load status, cache key. |
-| [Platform/PerformanceBudget.cs](PhotoViewer/Core/Platform/PerformanceBudget.cs) | 性能预算 | Static facade. Exposes memory cap, CPU cores, native-preload thread limit. (formerly `MemoryBudget`) |
+| [Image/ImageFile.cs](PhotoViewer/Core/Image/ImageFile.cs) | 文件模型 | Per-file state: path, load status, EXIF cache, thumbnail bitmap. |
+| [Image/ThumbnailService.cs](PhotoViewer/Core/Image/ThumbnailService.cs) | 缩略图服务门面 | `GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌、全图回退）；`GetThumbnailAsync(file, minShortSide)` 取最合适来源并解码到目标尺寸。HEIF 容器分派给 `HeifLoader`。 |
+| [Image/ThumbnailSource.cs](PhotoViewer/Core/Image/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`/`Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded` / `FullImage`）。 |
+
+**Platform/** — 平台能力抽象（`namespace PhotoViewer.Core.Platform`）
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [Platform/PerformanceBudget.cs](PhotoViewer/Core/Platform/PerformanceBudget.cs) | 性能预算 | Static facade. Exposes memory cap, CPU cores, native-preload thread limit. |
 | [Platform/ExternalOpenService.cs](PhotoViewer/Core/Platform/ExternalOpenService.cs) | 外部打开服务 | Pending-queue + dispatch for "Open With" / share-to flows. |
 | [Platform/StorageAccessManager.cs](PhotoViewer/Core/Platform/StorageAccessManager.cs) | 存储访问门面 | Platform security-scoped access (iOS/macOS sandbox, Android SAF). Long-term retention + transient scopes. |
+
+**Settings/** — 设置持久化（`namespace PhotoViewer.Core.Settings`）
+
+| File | 模块 | Responsibility |
+|---|---|---|
 | [Settings/SettingsService.cs](PhotoViewer/Core/Settings/SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). |
+| [Settings/SettingsModel.cs](PhotoViewer/Core/Settings/SettingsModel.cs) | 设置模型 | 序列化 POCO，定义所有持久化字段及默认值。 |
+| [Settings/NativeSettingsPresenter.cs](PhotoViewer/Core/Settings/NativeSettingsPresenter.cs) | 原生设置展示器 | `INativeSettingsPresenter` 接口 + `TryPresent` 静态调用入口；平台层实现原生弹窗，移动端回退到 Avalonia 模态。 |
+
+**Exif/** — 元数据读写（`namespace PhotoViewer.Core`，Exif 文件沿用根命名空间）
+
+| File | 模块 | Responsibility |
+|---|---|---|
 | [Exif/ExifLoader.cs](PhotoViewer/Core/Exif/ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser` / `ExifOrientation`。 |
 | [Exif/ExifModels.cs](PhotoViewer/Core/Exif/ExifModels.cs) | 元数据模型 | `ExifData` / `MetadataGroup` / `MetadataTag` POCO。 |
 | [Exif/ExifMetadataGrouper.cs](PhotoViewer/Core/Exif/ExifMetadataGrouper.cs) | 分组与翻译 | 展开 MetadataExtractor 目录为按目录分组的可读 tag 列表，应用 `ExifChinese`/`ExifToolTags`/`ExifToolValues` 翻译。 |
 | [Exif/ExifOrientation.cs](PhotoViewer/Core/Exif/ExifOrientation.cs) | 方向计算 | 基于 EXIF Orientation 值的旋转角度与水平翻转判断。 |
-| [Exif/Sony/SonyMakernoteParser.cs](PhotoViewer/Core/Exif/Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度。 |
-| [Exif/Sony/SonyCipherTags.cs](PhotoViewer/Core/Exif/Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks. **Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
-| [Thumbnails/ThumbnailService.cs](PhotoViewer/Core/Thumbnails/ThumbnailService.cs) | 缩略图服务门面 | 对外仅两个 API：`GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌、全图回退）；`GetThumbnailAsync(file, minShortSide)` 取不低于该短边的来源并解码到目标尺寸。HEIF 容器分派给 `HeifLoader`。 |
-| [Thumbnails/ThumbnailSource.cs](PhotoViewer/Core/Thumbnails/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`/`Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded` / `FullImage`）。 |
 | [Exif/ExifChinese.cs](PhotoViewer/Core/Exif/ExifChinese.cs) | 元数据汉化 | Chinese tag-name overrides; generated baseline in `ExifChinese.Generated.cs`. |
 | [Exif/ExifToolTags.cs](PhotoViewer/Core/Exif/ExifToolTags.cs) | 标签库 | English tag-name overrides + brand override tables. Generated baseline in `ExifToolTags.Generated.cs`. |
 | [Exif/ExifToolValues.cs](PhotoViewer/Core/Exif/ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
 | [Exif/XmpWriter.cs](PhotoViewer/Core/Exif/XmpWriter.cs) | 标星评分写入 | XMP rating writes — in-place edit + sidecar fallback for RAW. |
+| [Exif/Sony/SonyMakernoteParser.cs](PhotoViewer/Core/Exif/Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度。 |
+| [Exif/Sony/SonyCipherTags.cs](PhotoViewer/Core/Exif/Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks. **Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
+
+**Similarity/** — 相似聚类（`namespace PhotoViewer.Core.Similarity`）
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [Similarity/SimilarityService.cs](PhotoViewer/Core/Similarity/SimilarityService.cs) | 相似聚类服务 | 阶段 3 占位实现（按拍摄时间差模拟分数）；后续替换 `ScoreAsync` 内部算法接入 pHash / 连拍检测。 |
+
+**Tools/** — 辅助工具（`namespace PhotoViewer.Core.Tools`）
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs) | 照片数据统计服务 | 递归扫描多文件夹，读取等效焦距与星级，导出 CSV。仅 Windows 启用（`OperatingSystem.IsWindows()`）。 |
 
 > **Generated files**: anything ending in `.Generated.cs` is overwritten by `Tools/*.py`. Manual fixes belong in the non-generated companion file's override table. See [DEV.md §五](DEV.md) for the regeneration workflow.
 
@@ -92,15 +123,15 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
 |---|---|---|---|
 | **主窗口 / Main shell** | `MainViewModel` | Desktop: [Windows/MainWindowForWindows.axaml](PhotoViewer/Windows/MainWindowForWindows.axaml), [Windows/MainWindowForMac.axaml](PhotoViewer/Windows/MainWindowForMac.axaml) · Mobile: [Windows/SingleView.axaml](PhotoViewer/Windows/SingleView.axaml) hosting [Views/Main/MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) | Layout switch (grid/list), fullscreen, child-VM wiring. |
 | **文件源** | [ViewModels/Main/FolderViewModel.cs](PhotoViewer/ViewModels/Main/FolderViewModel.cs) | (logic only) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。 |
-| **文件栏（File）容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。竖向（左/右挂载）与横向（顶部挂载）共用同一份 Grid 模板。 |
-| **筛选/排序条** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数。变化通过 `FilterChanged` / `SortChanged` 事件通知缩略图列表。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
-| **主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。 |
-| **相似聚类面板** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 阶段 3 占位空壳；阶段 3 接入 `SimilarityService` 后填充。 |
+| **文件栏-容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。竖向（左/右挂载）与横向（顶部挂载）共用同一份 Grid 模板。 |
+| **文件栏-筛选** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数。变化通过 `FilterChanged` / `SortChanged` 事件通知缩略图列表。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
+| **文件栏-主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。 |
+| **文件栏-相似聚类列表** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 阶段 3 占位空壳；阶段 3 接入 `SimilarityService` 后填充。 |
 | **主要图片显示** | [ViewModels/Main/ImageViewModel.cs](PhotoViewer/ViewModels/Main/ImageViewModel.cs) | [Views/Main/ImageView.axaml](PhotoViewer/Views/Main/ImageView.axaml) | Main canvas. Single-image display, zoom/pan gestures, load state. |
 | **控制栏** | [ViewModels/Main/ControlViewModel.cs](PhotoViewer/ViewModels/Main/ControlViewModel.cs) | [Views/Main/ControlView.axaml](PhotoViewer/Views/Main/ControlView.axaml) | Toolbar buttons (open, display options, fullscreen). |
 | **细节栏** | [ViewModels/Main/DetailViewModel.cs](PhotoViewer/ViewModels/Main/DetailViewModel.cs) | [Views/Main/DetailView.axaml](PhotoViewer/Views/Main/DetailView.axaml) | Sidebar previews — center / four-corner crops via the `DetailPreview` control; subscribes to `ExifData` to inject a Sony "对焦点" (focus-point) preview when available. Does not render the full EXIF table. |
+| **工具窗口首页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计。 |
 | **EXIF 详情页** | [ViewModels/Tools/ExifDetailViewModel.cs](PhotoViewer/ViewModels/Tools/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
-| **工具页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计。 |
 | **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs)。 |
 | **设置页** | `SettingsViewModel` (partial across 8 files: `.BitmapCache`, `.ExifDisplay`, `.FileFormats`, `.Hotkeys`, `.ImagePreview`, `.Layout`, `.Persistence`, `.Rating`) | [Views/Settings/](PhotoViewer/Views/Settings/) | Each partial owns one settings category. Add new categories by following the same partial-class pattern. |
 
