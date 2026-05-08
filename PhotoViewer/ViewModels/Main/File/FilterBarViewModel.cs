@@ -2,8 +2,9 @@ using ReactiveUI;
 using System;
 using System.Collections.Generic;
 using System.Reactive.Linq;
+using PhotoViewer.ViewModels.Settings;
 
-namespace PhotoViewer.ViewModels.File;
+namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 文件栏顶部筛选/排序控件的视图模型。

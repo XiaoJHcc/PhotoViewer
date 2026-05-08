@@ -1,7 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using PhotoViewer.Core.Similarity;
-using PhotoViewer.ViewModels.File;
+using PhotoViewer.ViewModels.Main.File;
 
 namespace PhotoViewer.Views.Main.File;
 

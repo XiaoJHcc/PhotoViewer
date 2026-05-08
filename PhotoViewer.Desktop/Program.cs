@@ -6,6 +6,8 @@ using Avalonia;
 using ReactiveUI;
 using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Desktop.Core;
 using PhotoViewer.Core.Settings;
 

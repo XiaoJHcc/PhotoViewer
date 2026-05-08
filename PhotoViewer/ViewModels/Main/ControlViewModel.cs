@@ -9,10 +9,12 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Settings;
 using ReactiveUI;
 
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Main;
 
 // 新增：用于携带鼠标位置（ImageView 坐标系）
 public sealed class PointerContext

@@ -4,6 +4,7 @@ using System.Globalization;
 using Avalonia.Data.Converters;
 using Avalonia.Input;
 using PhotoViewer.ViewModels; // 读取映射状态
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Converters;
 

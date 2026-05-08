@@ -6,6 +6,7 @@ using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.VisualTree;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
 using PhotoViewer.Views;
 using PhotoViewer.Views.Main.File;
 

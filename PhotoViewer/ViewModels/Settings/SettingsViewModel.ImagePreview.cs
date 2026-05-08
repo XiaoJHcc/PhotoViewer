@@ -2,7 +2,7 @@
 using System.Linq;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {

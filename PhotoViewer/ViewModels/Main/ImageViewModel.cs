@@ -5,9 +5,10 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Main;
 
 public class ImageViewModel : ReactiveObject
 {

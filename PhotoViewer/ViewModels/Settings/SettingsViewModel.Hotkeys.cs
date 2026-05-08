@@ -7,7 +7,7 @@ using System.Reactive;
 using PhotoViewer.Controls;
 using System;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Settings;
 
 // 新增：鼠标动作与通用手势
 public enum MouseAction

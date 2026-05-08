@@ -2,6 +2,7 @@
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Views;
 

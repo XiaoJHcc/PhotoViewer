@@ -7,6 +7,8 @@ using Avalonia.Media;
 using ReactiveUI.Avalonia;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.Android;

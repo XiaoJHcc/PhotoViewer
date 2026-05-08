@@ -4,6 +4,7 @@ using System.Reflection;
 using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.iOS.Core;
 

@@ -3,6 +3,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using Foundation;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.iOS.Core;
 

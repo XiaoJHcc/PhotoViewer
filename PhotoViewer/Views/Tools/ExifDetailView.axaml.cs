@@ -3,6 +3,7 @@ using System.ComponentModel;
 using Avalonia;
 using Avalonia.Controls;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Tools;
 
 namespace PhotoViewer.Views;
 

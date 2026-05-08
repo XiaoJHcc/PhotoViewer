@@ -7,7 +7,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using ReactiveUI;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Image;
 
 public class ImageFile : ReactiveObject
 {

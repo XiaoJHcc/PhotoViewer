@@ -10,6 +10,7 @@ using ReactiveUI;
 using PhotoViewer.Views;
 using PhotoViewer.Views.Main.File;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Windows;
 

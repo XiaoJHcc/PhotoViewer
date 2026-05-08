@@ -1,7 +1,7 @@
 using System;
 using Avalonia.Platform.Storage;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Platform;
 
 /// <summary>
 /// 平台存储访问协调器。

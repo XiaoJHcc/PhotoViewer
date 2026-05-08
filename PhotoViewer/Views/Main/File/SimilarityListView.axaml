@@ -3,7 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
-             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.File"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Main.File"
              xmlns:sim="clr-namespace:PhotoViewer.Core.Similarity"
              xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"

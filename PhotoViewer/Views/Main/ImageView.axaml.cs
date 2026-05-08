@@ -12,6 +12,8 @@ using Avalonia.Threading;
 using PhotoViewer.Controls;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Views;
 

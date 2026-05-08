@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Image;
 
 public interface IHeifDecoder
 {

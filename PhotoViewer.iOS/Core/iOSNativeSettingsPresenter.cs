@@ -6,7 +6,7 @@ using System.Reflection;
 using System.Threading.Tasks;
 using Foundation;
 using PhotoViewer.Core.Settings;
-using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Settings;
 using UIKit;
 
 namespace PhotoViewer.iOS.Core;

@@ -3,10 +3,12 @@ using ReactiveUI;
 using ReactiveUI.Avalonia;
 
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using System.Reactive.Linq;
 using Avalonia.Media;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {

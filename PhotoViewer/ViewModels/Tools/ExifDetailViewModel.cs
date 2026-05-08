@@ -6,9 +6,10 @@ using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Tools;
 
 /// <summary>
 /// EXIF 详情中可切换的文件格式条目（如 ARW、JPG、HIF 等）

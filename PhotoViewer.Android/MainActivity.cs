@@ -8,6 +8,7 @@ using AndroidX.Core.Content;
 using Avalonia.Android;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.Android;

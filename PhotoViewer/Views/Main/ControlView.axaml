@@ -2,7 +2,8 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Main"
+             xmlns:settings="clr-namespace:PhotoViewer.ViewModels.Settings"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
@@ -253,7 +254,7 @@
                     </ItemsControl.ItemsPanel>
 
                     <ItemsControl.ItemTemplate>
-                        <DataTemplate x:DataType="vm:SettingsViewModel+HotkeyItem">
+                        <DataTemplate x:DataType="settings:SettingsViewModel+HotkeyItem">
                             <Button Classes="ControlButton"
                                     ToolTip.Tip="{Binding Tooltip}"
                                     Click="OnControlButtonClick"

@@ -6,7 +6,7 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using PhotoViewer.Converters;
-using PhotoViewer.ViewModels; // 新增：用于读取全局映射
+using PhotoViewer.ViewModels.Settings; // 用于读取全局映射
 
 namespace PhotoViewer.Controls;
 

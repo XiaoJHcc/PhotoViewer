@@ -1,7 +1,7 @@
 ﻿using System.Collections.ObjectModel;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Settings;
 
 // 布局模式枚举
 public enum LayoutMode

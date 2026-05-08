@@ -6,6 +6,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using LibHeifSharp;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using Buffer = System.Buffer;
 
 namespace PhotoViewer.Android.Core;

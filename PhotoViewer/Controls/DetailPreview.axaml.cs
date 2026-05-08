@@ -5,6 +5,7 @@ using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Controls;
 

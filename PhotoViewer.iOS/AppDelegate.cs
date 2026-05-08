@@ -7,6 +7,8 @@ using Avalonia.iOS;
 
 using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.iOS.Core;
 

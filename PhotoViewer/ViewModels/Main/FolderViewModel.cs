@@ -8,8 +8,10 @@ using Avalonia.Controls;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Main;
 
 /// <summary>排序下拉选项(显示名 + 枚举值)</summary>
 public class SortOption

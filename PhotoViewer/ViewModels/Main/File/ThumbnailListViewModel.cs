@@ -8,8 +8,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Settings;
 
-namespace PhotoViewer.ViewModels.File;
+namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 主缩略图列表的视图模型。

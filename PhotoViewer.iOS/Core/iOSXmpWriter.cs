@@ -2,6 +2,8 @@ using System;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.iOS.Core;
 
