@@ -2,6 +2,7 @@ using System;
 using Android.App;
 using Android.Content;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.Android.Core;
 

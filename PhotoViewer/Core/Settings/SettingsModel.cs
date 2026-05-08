@@ -1,6 +1,6 @@
 ﻿using System.Collections.Generic;
 using Avalonia.Input;
-using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Core.Settings;
 

@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using Android.Graphics;
 using Android.OS;
 using Java.Nio;

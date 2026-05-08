@@ -5,6 +5,7 @@ using Android.Content;
 using Avalonia.Platform.Storage;
 using Java.Nio;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using AndroidUri = Android.Net.Uri;
 using JavaFileInputStream = Java.IO.FileInputStream;
 using JavaFileOutputStream = Java.IO.FileOutputStream;

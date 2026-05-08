@@ -1,5 +1,5 @@
 using System;
-using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Core.Settings;
 

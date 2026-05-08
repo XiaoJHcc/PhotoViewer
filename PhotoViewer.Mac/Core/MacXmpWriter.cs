@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Mac.Core;
 

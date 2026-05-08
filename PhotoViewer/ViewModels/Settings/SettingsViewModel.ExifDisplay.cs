@@ -6,7 +6,7 @@ using ReactiveUI;
 using System.Reactive;
 using PhotoViewer.Controls;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {

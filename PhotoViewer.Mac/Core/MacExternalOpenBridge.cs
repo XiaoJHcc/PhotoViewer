@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.Mac.Core;
 

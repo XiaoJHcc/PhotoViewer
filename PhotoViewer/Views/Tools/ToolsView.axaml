@@ -3,7 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:toolVm="clr-namespace:PhotoViewer.ViewModels.Tools"
-             xmlns:vm="clr-namespace:PhotoViewer.ViewModels"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Tools"
              xmlns:views="clr-namespace:PhotoViewer.Views"
              xmlns:toolViews="clr-namespace:PhotoViewer.Views.Tools"
              mc:Ignorable="d"

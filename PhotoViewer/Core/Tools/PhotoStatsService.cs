@@ -7,7 +7,7 @@ using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 using MetadataExtractor.Formats.Xmp;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Tools;
 
 /// <summary>照片统计结果行。</summary>
 public record PhotoStatsRow(string FilePath, string FileName, int? EquivFocalLength, int Rating);

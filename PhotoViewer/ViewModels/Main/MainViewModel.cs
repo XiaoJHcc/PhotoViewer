@@ -7,13 +7,15 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using PhotoViewer.Core;
-using PhotoViewer.ViewModels.File;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Main.File;
+using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
 using PhotoViewer.Views;
 using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Main;
 
 public class MainViewModel : ViewModelBase
 {

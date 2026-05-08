@@ -4,10 +4,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
-using PhotoViewer.ViewModels;
-using PhotoViewer.ViewModels.File;
+using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
+using PhotoViewer.ViewModels.Settings;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 位图后台预取协调器:

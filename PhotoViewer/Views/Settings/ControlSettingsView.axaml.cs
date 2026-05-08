@@ -8,6 +8,7 @@ using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using PhotoViewer.Controls;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Settings;
 using Avalonia.Data.Converters;
 
 namespace PhotoViewer.Views;

@@ -1,7 +1,7 @@
 using ReactiveUI;
 using System;
 
-namespace PhotoViewer.ViewModels.File;
+namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 文件栏(File)容器视图模型,组合筛选条 + 主缩略图列表 + 相似聚类面板三块。

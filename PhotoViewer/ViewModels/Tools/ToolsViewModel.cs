@@ -1,4 +1,6 @@
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Main;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Tools;

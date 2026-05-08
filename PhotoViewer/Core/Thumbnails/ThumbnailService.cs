@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Image;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 

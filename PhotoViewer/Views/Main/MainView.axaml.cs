@@ -4,6 +4,7 @@ using Avalonia.Media;
 using Avalonia.Input;
 using Avalonia.Interactivity;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Views;
 

@@ -5,6 +5,7 @@ using Android.App;
 using Android.Content;
 using Java.Lang;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 using AndroidUri = Android.Net.Uri;
 using SystemUri = System.Uri;
 

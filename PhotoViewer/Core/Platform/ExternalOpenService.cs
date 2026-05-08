@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Platform;
 
 /// <summary>
 /// 外部打开项类型。

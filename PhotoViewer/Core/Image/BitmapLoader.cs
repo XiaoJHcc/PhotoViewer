@@ -12,7 +12,7 @@ using Avalonia.Threading;
 using Avalonia.Platform;
 using Avalonia.Media; // 新增：用于合成去除透明度
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 缓存项

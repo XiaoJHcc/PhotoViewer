@@ -10,7 +10,9 @@ using Avalonia.Platform;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
 using PhotoViewer.Windows;
 
 namespace PhotoViewer;

@@ -42,13 +42,13 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 
 | File | 模块 | Responsibility |
 |---|---|---|
-| [BitmapLoader.cs](PhotoViewer/Core/BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation + thumbnails. |
-| [BitmapPrefetcher.cs](PhotoViewer/Core/BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
-| [HeifLoader.cs](PhotoViewer/Core/HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
-| [PerformanceBudget.cs](PhotoViewer/Core/PerformanceBudget.cs) | 性能预算 | Static facade. Exposes memory cap, CPU cores, native-preload thread limit. (formerly `MemoryBudget`) |
-| [ImageFile.cs](PhotoViewer/Core/ImageFile.cs) | 文件模型 | Per-file state: path, load status, cache key. |
-| [ExternalOpenService.cs](PhotoViewer/Core/ExternalOpenService.cs) | 外部打开服务 | Pending-queue + dispatch for "Open With" / share-to flows. |
-| [StorageAccessManager.cs](PhotoViewer/Core/StorageAccessManager.cs) | 存储访问门面 | Platform security-scoped access (iOS/macOS sandbox, Android SAF). Long-term retention + transient scopes. |
+| [Image/BitmapLoader.cs](PhotoViewer/Core/Image/BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation + thumbnails. |
+| [Image/BitmapPrefetcher.cs](PhotoViewer/Core/Image/BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
+| [Image/HeifLoader.cs](PhotoViewer/Core/Image/HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
+| [Image/ImageFile.cs](PhotoViewer/Core/Image/ImageFile.cs) | 文件模型 | Per-file state: path, load status, cache key. |
+| [Platform/PerformanceBudget.cs](PhotoViewer/Core/Platform/PerformanceBudget.cs) | 性能预算 | Static facade. Exposes memory cap, CPU cores, native-preload thread limit. (formerly `MemoryBudget`) |
+| [Platform/ExternalOpenService.cs](PhotoViewer/Core/Platform/ExternalOpenService.cs) | 外部打开服务 | Pending-queue + dispatch for "Open With" / share-to flows. |
+| [Platform/StorageAccessManager.cs](PhotoViewer/Core/Platform/StorageAccessManager.cs) | 存储访问门面 | Platform security-scoped access (iOS/macOS sandbox, Android SAF). Long-term retention + transient scopes. |
 | [Settings/SettingsService.cs](PhotoViewer/Core/Settings/SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). |
 | [Exif/ExifLoader.cs](PhotoViewer/Core/Exif/ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser` / `ExifOrientation`。 |
 | [Exif/ExifModels.cs](PhotoViewer/Core/Exif/ExifModels.cs) | 元数据模型 | `ExifData` / `MetadataGroup` / `MetadataTag` POCO。 |
@@ -84,24 +84,24 @@ Each head project's `Core/` folder contains platform-specific implementations in
 ## 5. UI Layer 用户界面逻辑
 
 ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [PhotoViewer/Views/](PhotoViewer/Views/).
-[MainViewModel.cs](PhotoViewer/ViewModels/MainViewModel.cs) is the root and composes all sub-VMs.
+[MainViewModel.cs](PhotoViewer/ViewModels/Main/MainViewModel.cs) is the root and composes all sub-VMs.
 
 ### 5.1 Module map 模块对应
 
 | 模块 | ViewModel | View | Notes |
 |---|---|---|---|
 | **主窗口 / Main shell** | `MainViewModel` | Desktop: [Windows/MainWindowForWindows.axaml](PhotoViewer/Windows/MainWindowForWindows.axaml), [Windows/MainWindowForMac.axaml](PhotoViewer/Windows/MainWindowForMac.axaml) · Mobile: [Windows/SingleView.axaml](PhotoViewer/Windows/SingleView.axaml) hosting [Views/Main/MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) | Layout switch (grid/list), fullscreen, child-VM wiring. |
-| **文件源** | [FolderViewModel.cs](PhotoViewer/ViewModels/FolderViewModel.cs) | (logic only) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。 |
-| **文件栏（File）容器** | [ViewModels/File/FileViewModel.cs](PhotoViewer/ViewModels/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。竖向（左/右挂载）与横向（顶部挂载）共用同一份 Grid 模板。 |
-| **筛选/排序条** | [ViewModels/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数。变化通过 `FilterChanged` / `SortChanged` 事件通知缩略图列表。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
-| **主缩略图列表** | [ViewModels/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。 |
-| **相似聚类面板** | [ViewModels/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 阶段 3 占位空壳；阶段 3 接入 `SimilarityService` 后填充。 |
-| **主要图片显示** | [ImageViewModel.cs](PhotoViewer/ViewModels/ImageViewModel.cs) | [Views/Main/ImageView.axaml](PhotoViewer/Views/Main/ImageView.axaml) | Main canvas. Single-image display, zoom/pan gestures, load state. |
-| **控制栏** | [ControlViewModel.cs](PhotoViewer/ViewModels/ControlViewModel.cs) | [Views/Main/ControlView.axaml](PhotoViewer/Views/Main/ControlView.axaml) | Toolbar buttons (open, display options, fullscreen). |
-| **细节栏** | [DetailViewModel.cs](PhotoViewer/ViewModels/DetailViewModel.cs) | [Views/Main/DetailView.axaml](PhotoViewer/Views/Main/DetailView.axaml) | Sidebar previews — center / four-corner crops via the `DetailPreview` control; subscribes to `ExifData` to inject a Sony "对焦点" (focus-point) preview when available. Does not render the full EXIF table. |
-| **EXIF 详情页** | [ExifDetailViewModel.cs](PhotoViewer/ViewModels/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
+| **文件源** | [ViewModels/Main/FolderViewModel.cs](PhotoViewer/ViewModels/Main/FolderViewModel.cs) | (logic only) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。 |
+| **文件栏（File）容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。竖向（左/右挂载）与横向（顶部挂载）共用同一份 Grid 模板。 |
+| **筛选/排序条** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数。变化通过 `FilterChanged` / `SortChanged` 事件通知缩略图列表。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
+| **主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。 |
+| **相似聚类面板** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 阶段 3 占位空壳；阶段 3 接入 `SimilarityService` 后填充。 |
+| **主要图片显示** | [ViewModels/Main/ImageViewModel.cs](PhotoViewer/ViewModels/Main/ImageViewModel.cs) | [Views/Main/ImageView.axaml](PhotoViewer/Views/Main/ImageView.axaml) | Main canvas. Single-image display, zoom/pan gestures, load state. |
+| **控制栏** | [ViewModels/Main/ControlViewModel.cs](PhotoViewer/ViewModels/Main/ControlViewModel.cs) | [Views/Main/ControlView.axaml](PhotoViewer/Views/Main/ControlView.axaml) | Toolbar buttons (open, display options, fullscreen). |
+| **细节栏** | [ViewModels/Main/DetailViewModel.cs](PhotoViewer/ViewModels/Main/DetailViewModel.cs) | [Views/Main/DetailView.axaml](PhotoViewer/Views/Main/DetailView.axaml) | Sidebar previews — center / four-corner crops via the `DetailPreview` control; subscribes to `ExifData` to inject a Sony "对焦点" (focus-point) preview when available. Does not render the full EXIF table. |
+| **EXIF 详情页** | [ViewModels/Tools/ExifDetailViewModel.cs](PhotoViewer/ViewModels/Tools/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
 | **工具页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计。 |
-| **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/PhotoStatsService.cs](PhotoViewer/Core/PhotoStatsService.cs)。 |
+| **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs)。 |
 | **设置页** | `SettingsViewModel` (partial across 8 files: `.BitmapCache`, `.ExifDisplay`, `.FileFormats`, `.Hotkeys`, `.ImagePreview`, `.Layout`, `.Persistence`, `.Rating`) | [Views/Settings/](PhotoViewer/Views/Settings/) | Each partial owns one settings category. Add new categories by following the same partial-class pattern. |
 
 ### 5.2 Helpers 辅助组件

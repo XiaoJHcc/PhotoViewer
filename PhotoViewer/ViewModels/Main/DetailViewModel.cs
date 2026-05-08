@@ -4,9 +4,10 @@ using System.Reactive.Linq;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using ReactiveUI;
 
-namespace PhotoViewer.ViewModels;
+namespace PhotoViewer.ViewModels.Main;
 
 public sealed class DetailPreviewItem : ReactiveObject
 {

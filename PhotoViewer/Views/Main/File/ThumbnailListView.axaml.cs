@@ -10,7 +10,8 @@ using System.Collections.Generic;
 using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using PhotoViewer.ViewModels.File;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Main.File;
 
 namespace PhotoViewer.Views.Main.File;
 
@@ -246,7 +247,7 @@ public partial class ThumbnailListView : UserControl
 
             double bufferSize = _isScrolling ? 300 : 200;
 
-            var visibleFiles = new List<Core.ImageFile>();
+            var visibleFiles = new List<ImageFile>();
             var itemCount = ViewModel.FilteredFiles.Count;
 
             var estimatedItemSize = isVertical ? 144.0 : 96.0;
@@ -583,7 +584,7 @@ public partial class ThumbnailListView : UserControl
         if (sender is Button btn &&
             btn.Tag is string s &&
             int.TryParse(s, out var rating) &&
-            btn.DataContext is Core.ImageFile file)
+            btn.DataContext is ImageFile file)
         {
             _ = ViewModel.Main.SetRatingAsync(file, rating);
         }

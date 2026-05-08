@@ -7,9 +7,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.Core.Similarity;
 
-namespace PhotoViewer.ViewModels.File;
+namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 相似聚类面板的视图模型。

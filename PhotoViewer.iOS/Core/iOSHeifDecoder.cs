@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.iOS.Core;
 

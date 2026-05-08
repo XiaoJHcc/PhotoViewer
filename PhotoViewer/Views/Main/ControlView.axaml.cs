@@ -11,6 +11,8 @@ using Avalonia.Media;
 using Avalonia.VisualTree;
 using PhotoViewer.Core;
 using PhotoViewer.ViewModels;
+using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Views;
 

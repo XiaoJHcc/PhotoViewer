@@ -1,7 +1,7 @@
 using System;
 using System.Runtime.InteropServices;
 
-namespace PhotoViewer.Core;
+namespace PhotoViewer.Core.Platform;
 
 /// <summary>
 /// 提供当前平台的性能预算信息。
