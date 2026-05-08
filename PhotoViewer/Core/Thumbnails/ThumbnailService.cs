@@ -13,126 +13,202 @@ namespace PhotoViewer.Core.Thumbnails;
 /// <summary>
 /// 缩略图服务门面：对外只暴露两个能力 ——
 /// 1) <see cref="GetAvailableSourcesAsync"/>：列出文件可用的缩略图来源（含尺寸，未解码）；
-/// 2) <see cref="GetThumbnailAsync"/>：取一个不低于指定短边的缩略图并缩放到目标尺寸。
-/// 内部对 JPEG/TIFF 类容器扫描 EXIF/IFD1 缩略图与厂商 PreviewImage；HEIF 容器分派给 <see cref="HeifLoader"/>。
+/// 2) <see cref="GetThumbnailAsync"/>：按目标短边挑一个尺寸最合适的来源解码。
+/// 设计约束：
+/// - 仅从广义 EXIF/容器元数据里列出"已知尺寸的缩略图条目"，绝不触发原图全分辨率解码。
+/// - HEIF 路径优先直接按 HEIC Thumbnail Data 条目的 Offset/Length 读 JPEG 字节解码（零 HEIF/HEVC 解码）；
+///   仅当所有 JPEG 字节条目都无法解码时，退到平台 <see cref="HeifLoader"/> 兜底一次。
 /// </summary>
 public static class ThumbnailService
 {
     /// <summary>
-    /// 列出该文件所有可用的缩略图来源（按解码代价升序：内嵌缩略图 → PreviewImage → 全图回退）。
-    /// 不进行实际位图解码；仅做必要的元数据/容器扫描。来源尺寸未知时 <see cref="ThumbnailSource.Width"/> / <see cref="ThumbnailSource.Height"/> 为 0。
+    /// 列出该文件所有可用的缩略图来源（尺寸由容器/EXIF 元数据读取；不做任何图像解码）。
+    /// 顺序与容器里的声明顺序一致；尺寸未知时 <see cref="ThumbnailSource.Width"/> / <see cref="ThumbnailSource.Height"/> 为 0。
     /// </summary>
     public static async Task<IReadOnlyList<ThumbnailSource>> GetAvailableSourcesAsync(IStorageFile file)
     {
         if (file == null) return Array.Empty<ThumbnailSource>();
 
-        if (HeifLoader.IsHeifFile(file))
+        try
         {
-            // HEIF：平台解码器内部已在多个内嵌条目中按尺寸择优；这里只暴露一个聚合来源 + 全图回退。
-            return new ThumbnailSource[]
-            {
-                new(width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
-                    loaderAsync: async target => await HeifLoader.LoadHeifThumbnailAsync(file, target)),
-                new(width: 0, height: 0, origin: ThumbnailOrigin.FullImage,
-                    loaderAsync: async _ => await HeifLoader.LoadHeifBitmapAsync(file)),
-            };
+            await using var stream = await file.OpenReadAsync();
+            var directories = ImageMetadataReader.ReadMetadata(stream);
+            return HeifLoader.IsHeifFile(file)
+                ? EnumerateHeifSources(file, directories)
+                : EnumerateNonHeifSources(file, directories);
         }
-
-        return await EnumerateContainerSourcesAsync(file);
+        catch (Exception ex)
+        {
+            Console.WriteLine("Failed to enumerate thumbnail sources (" + file.Name + "): " + ex.Message);
+            return Array.Empty<ThumbnailSource>();
+        }
     }
 
     /// <summary>
-    /// 取一个短边不低于 <paramref name="minShortSide"/> 的缩略图并缩放到该短边附近。
-    /// 选源策略：按 <see cref="GetAvailableSourcesAsync"/> 顺序逐个尝试解码，
-    /// 取首个成功且解码后短边 ≥ <paramref name="minShortSide"/> 的位图；
-    /// 若没有任何来源满足"短边足够"，则返回最后一个成功解码出的位图（保证总是返回一个能用的结果）。
+    /// 按目标短边 <paramref name="targetShortSide"/> 选取并解码一张缩略图：
+    /// 优先"短边 ≥ target 中最小"的来源（最省 I/O 就能达到显示质量），
+    /// 若无任何已知尺寸合格，再尝试尺寸未知的来源，
+    /// 最后退到"短边 &lt; target 中最大"的条目。
+    /// 任何来源都不会触发原图全分辨率解码；所有来源都失败时返回 null。
     /// </summary>
-    public static async Task<Bitmap?> GetThumbnailAsync(IStorageFile file, int minShortSide)
+    public static async Task<Bitmap?> GetThumbnailAsync(IStorageFile file, int targetShortSide)
     {
-        if (file == null || minShortSide <= 0) return null;
+        if (file == null || targetShortSide <= 0) return null;
 
         var sources = await GetAvailableSourcesAsync(file);
-        Bitmap? lastDecoded = null;
+        if (sources.Count == 0) return null;
 
-        foreach (var src in sources)
+        foreach (var src in OrderByPriority(sources, targetShortSide))
         {
             try
             {
-                var bmp = await src.LoaderAsync(minShortSide);
-                if (bmp == null) continue;
-
-                var shortSide = Math.Min(bmp.PixelSize.Width, bmp.PixelSize.Height);
-                if (shortSide >= minShortSide)
-                {
-                    lastDecoded?.Dispose();
-                    return bmp;
-                }
-
-                // 当前来源解码出的位图短边偏小，留作兜底，继续尝试更高质量的来源
-                lastDecoded?.Dispose();
-                lastDecoded = bmp;
+                var bmp = await src.LoaderAsync(targetShortSide);
+                if (bmp != null) return bmp;
             }
             catch (Exception ex)
             {
                 Console.WriteLine("ThumbnailService: source " + src.Origin + " failed for " + file.Name + ": " + ex.Message);
             }
         }
+        return null;
+    }
 
-        return lastDecoded;
+    /// <summary>
+    /// 选源优先级：短边 ≥ target 中最小优先（解码代价最低且质量达标），
+    /// 其次是尺寸未知的（由平台解码器挑选），最后是"短边 &lt; target 中最大"（退而求其次）。
+    /// </summary>
+    private static IEnumerable<ThumbnailSource> OrderByPriority(IReadOnlyList<ThumbnailSource> sources, int target)
+    {
+        var qualified = sources.Where(s => s.ShortSide >= target).OrderBy(s => s.ShortSide);
+        var unknown = sources.Where(s => s.ShortSide == 0);
+        var insufficient = sources.Where(s => s.ShortSide > 0 && s.ShortSide < target).OrderByDescending(s => s.ShortSide);
+        return qualified.Concat(unknown).Concat(insufficient);
     }
 
     // ============================================================
-    // 以下为 JPEG/TIFF 等非 HEIF 容器的来源枚举与字节解码实现
+    // HEIF 容器：从 HEIC Thumbnail Properties/Data 目录读尺寸与字节偏移，
+    // 直接按字节解码 JPEG 内嵌缩略图；仅对非 JPEG 字节（如 HEVC 条目）退到平台解码器。
     // ============================================================
 
-    /// <summary>
-    /// 枚举一张文件中可用的非-HEIF 缩略图来源（包括 EXIF/IFD1 缩略图、厂商 PreviewImage、以及保底的全图来源）。
-    /// 不进行真正的位图解码；仅读取容器元数据与字节范围。
-    /// </summary>
-    private static async Task<IReadOnlyList<ThumbnailSource>> EnumerateContainerSourcesAsync(IStorageFile file)
+    private static IReadOnlyList<ThumbnailSource> EnumerateHeifSources(IStorageFile file, IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         var result = new List<ThumbnailSource>();
 
-        try
+        // 先把"属性目录"里的尺寸按出现顺序收齐，用于对齐到随后出现的"数据目录"条目。
+        var propSizes = new List<(int w, int h)>();
+        foreach (var dir in directories)
         {
-            await using var stream = await file.OpenReadAsync();
-            var directories = ImageMetadataReader.ReadMetadata(stream);
-
-            // 1) 标准 EXIF/IFD1 缩略图条目
-            var exifThumbDir = directories.OfType<ExifThumbnailDirectory>().FirstOrDefault();
-            if (exifThumbDir != null)
-            {
-                var capturedDir = exifThumbDir;
-                result.Add(new ThumbnailSource(
-                    width: 0, height: 0, origin: ThumbnailOrigin.ExifEmbedded,
-                    loaderAsync: target => ReadEmbeddedFromExifThumbnailDirectoryAsync(file, capturedDir, target)));
-            }
-
-            // 2) 厂商 MakerNote / Preview / Thumbnail 目录（如 Sony PreviewImage）
-            foreach (var dir in directories)
-            {
-                if (ReferenceEquals(dir, exifThumbDir)) continue;
-                var lname = dir.GetType().Name.ToLowerInvariant();
-                if (!(lname.Contains("preview") || lname.Contains("thumbnail"))) continue;
-
-                AppendMakernoteSources(dir, result);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Failed to enumerate thumbnail sources (" + file.Name + "): " + ex.Message);
+            if (!IsHeicThumbnailProperties(dir)) continue;
+            int w = TryReadInt(dir, 1);
+            int h = TryReadInt(dir, 2);
+            if (w > 0 && h > 0) propSizes.Add((w, h));
         }
 
-        // 3) 保底：原图全图解码（尺寸未知；放在列表最后）
+        int dataIdx = 0;
+        foreach (var dir in directories)
+        {
+            if (!IsHeicThumbnailData(dir)) continue;
+            int offset = TryReadInt(dir, 1);
+            int length = TryReadInt(dir, 2);
+
+            int w = 0, h = 0;
+            if (dataIdx < propSizes.Count)
+            {
+                w = propSizes[dataIdx].w;
+                h = propSizes[dataIdx].h;
+            }
+            dataIdx++;
+
+            if (offset <= 0 || length <= 100) continue;
+
+            int capturedOffset = offset;
+            int capturedLength = length;
+            result.Add(new ThumbnailSource(
+                width: w, height: h, origin: ThumbnailOrigin.HeifEmbedded,
+                loaderAsync: target => ReadRangeAndDecodeAsync(file, capturedOffset, capturedLength, target)));
+        }
+
+        // 平台解码器兜底（尺寸未知）：当字节条目全部嗅探失败（如 HEVC 编码）时仍可走平台路径。
+        // 不再追加任何全分辨率解码来源。
         result.Add(new ThumbnailSource(
-            width: 0, height: 0, origin: ThumbnailOrigin.FullImage,
-            loaderAsync: target => GenerateFromFullImageAsync(file, target)));
+            width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
+            loaderAsync: target => HeifLoader.LoadHeifThumbnailAsync(file, target)));
 
         return result;
     }
 
     /// <summary>
-    /// 在厂商 Preview/Thumbnail 类目录中,把任何"看起来是合法图像字节"的 tag 列为一个 <see cref="ThumbnailSource"/>。
+    /// 按 (offset, length) 从文件里截取一段字节，嗅探为合法图片（JPEG/PNG/BMP/TIFF）后按目标宽度解码。
+    /// 不是图片字节（如 HEVC 裸流）时返回 null，让上层跳到下一个来源。
+    /// </summary>
+    private static async Task<Bitmap?> ReadRangeAndDecodeAsync(IStorageFile file, int offset, int length, int targetShortSide)
+    {
+        try
+        {
+            await using var s = await file.OpenReadAsync();
+            s.Seek(offset, SeekOrigin.Begin);
+            var buffer = new byte[length];
+            int read = await s.ReadAsync(buffer, 0, length);
+            if (read != length) return null;
+            if (!IsValidImageData(buffer)) return null;
+            return DecodeBytesToShortSide(buffer, targetShortSide);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ThumbnailService: read range failed (" + file.Name + "): " + ex.Message);
+            return null;
+        }
+    }
+
+    private static bool IsHeicThumbnailProperties(MetadataExtractor.Directory d) =>
+        d.Name.IndexOf("Thumbnail Properties", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static bool IsHeicThumbnailData(MetadataExtractor.Directory d) =>
+        d.Name.IndexOf("Thumbnail Data", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    private static int TryReadInt(MetadataExtractor.Directory dir, int tag)
+    {
+        try { return dir.GetInt32(tag); }
+        catch { return 0; }
+    }
+
+    // ============================================================
+    // JPEG / TIFF / ARW 等非 HEIF 容器：枚举 EXIF/IFD1 与厂商 Preview/Thumbnail 目录。
+    // 尺寸能从元数据读出就读出；字节条目仅懒加载，不做原图解码。
+    // ============================================================
+
+    private static IReadOnlyList<ThumbnailSource> EnumerateNonHeifSources(IStorageFile file, IReadOnlyList<MetadataExtractor.Directory> directories)
+    {
+        var result = new List<ThumbnailSource>();
+
+        // 1) 标准 EXIF/IFD1 缩略图条目（tag 256/257 = Width/Height）
+        var exifThumbDir = directories.OfType<ExifThumbnailDirectory>().FirstOrDefault();
+        if (exifThumbDir != null)
+        {
+            int w = TryReadInt(exifThumbDir, ExifDirectoryBase.TagImageWidth);
+            int h = TryReadInt(exifThumbDir, ExifDirectoryBase.TagImageHeight);
+            var capturedDir = exifThumbDir;
+            result.Add(new ThumbnailSource(
+                width: w, height: h, origin: ThumbnailOrigin.ExifEmbedded,
+                loaderAsync: target => ReadEmbeddedFromExifThumbnailDirectoryAsync(file, capturedDir, target)));
+        }
+
+        // 2) 厂商 MakerNote / Preview / Thumbnail 目录（如 Sony PreviewImage）
+        foreach (var dir in directories)
+        {
+            if (ReferenceEquals(dir, exifThumbDir)) continue;
+            var lname = dir.GetType().Name.ToLowerInvariant();
+            if (!(lname.Contains("preview") || lname.Contains("thumbnail"))) continue;
+            AppendMakernoteSources(dir, result);
+        }
+
+        // 不再追加 FullImage 全图兜底：若没有任何内嵌缩略图，返回空列表由上层显示占位符。
+        return result;
+    }
+
+    /// <summary>
+    /// 把厂商 Preview/Thumbnail 目录里"看起来是合法图像字节"的 tag 列为来源；
+    /// 尺寸信息大多无法从元数据直接取，填 0（未知），由选源策略决定尝试顺序。
     /// </summary>
     private static void AppendMakernoteSources(MetadataExtractor.Directory dir, List<ThumbnailSource> sink)
     {
@@ -143,22 +219,21 @@ public static class ThumbnailService
                 var data = dir.GetByteArray(tag.Type);
                 if (data == null || data.Length <= 100 || !IsValidImageData(data)) continue;
 
-                var capturedDir = dir;
-                var capturedTagType = tag.Type;
+                var capturedData = data;
                 sink.Add(new ThumbnailSource(
                     width: 0, height: 0, origin: ThumbnailOrigin.MakernotePreview,
-                    loaderAsync: target => Task.FromResult(DecodeBytesToShortSide(capturedDir.GetByteArray(capturedTagType), target))));
+                    loaderAsync: target => Task.FromResult(DecodeBytesToShortSide(capturedData, target))));
             }
             catch
             {
-                // 当前 tag 不是字节数组,跳过
+                // 当前 tag 不是字节数组，跳过
             }
         }
     }
 
     /// <summary>
-    /// 从 ExifThumbnailDirectory 读取嵌入缩略图字节并解码:
-    /// 先尝试常见字节 tag,再回退按 (Offset 0x0201, Length 0x0202) 从原文件偏移读取。
+    /// 从 ExifThumbnailDirectory 读取嵌入缩略图字节：先按常见字节 tag，再按 (Offset 0x0201, Length 0x0202) 偏移读取。
+    /// 始终只解码嵌入字节；任何情况都不会触发原图解码。
     /// </summary>
     private static async Task<Bitmap?> ReadEmbeddedFromExifThumbnailDirectoryAsync(IStorageFile file, ExifThumbnailDirectory dir, int targetShortSide)
     {
@@ -177,7 +252,7 @@ public static class ThumbnailService
             }
             catch
             {
-                // 当前 tag 不是字节数组,继续
+                // 当前 tag 不是字节数组，继续
             }
         }
 
@@ -209,27 +284,9 @@ public static class ThumbnailService
     }
 
     /// <summary>
-    /// 按目标短边对原图做子采样解码,得到接近目标尺寸的位图。
-    /// </summary>
-    private static async Task<Bitmap?> GenerateFromFullImageAsync(IStorageFile file, int targetShortSide)
-    {
-        try
-        {
-            await using var stream = await file.OpenReadAsync();
-            // Avalonia 仅提供按宽度的子采样接口；FullImage 是最后兜底，宁可略高也接受。
-            return Bitmap.DecodeToWidth(stream, targetShortSide);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Failed to generate thumbnail from image (" + file.Name + "): " + ex.Message);
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 把已编码的图片字节解码为目标短边的位图。
-    /// 由于 Avalonia 仅有 DecodeToWidth,这里近似用 target 作为目标宽度;
-    /// 内嵌缩略图通常很小(~160px),解码到 target 不会先放大,所以多数情况精度足够。
+    /// 把已编码的图片字节解码为目标短边附近的位图。
+    /// Avalonia 仅提供 DecodeToWidth；内嵌缩略图本就很小（几十到几百 KB），
+    /// 无论目标是按宽度还是短边表达，都不会反向放大，精度足够。
     /// </summary>
     private static Bitmap? DecodeBytesToShortSide(byte[]? data, int targetShortSide)
     {
@@ -247,7 +304,7 @@ public static class ThumbnailService
     }
 
     /// <summary>
-    /// 通过文件头特征判断字节数据是否为受支持的图片格式(JPEG/PNG/BMP/TIFF)。
+    /// 通过文件头特征判断字节数据是否为受支持的图片格式（JPEG/PNG/BMP/TIFF）。
     /// </summary>
     private static bool IsValidImageData(byte[] data)
     {
