@@ -7,12 +7,19 @@ using MetadataExtractor.Formats.Exif;
 using MetadataExtractor.Formats.Exif.Makernotes;
 using MetadataExtractor.Formats.Xmp;
 using XmpCore;
+using ExifTestTool;
 
 // ========================================================
 // EXIF 全量提取测试工具
 // 目标：从 ARW 文件中提取尽可能多的元数据
 // 与 EXIF信息查看.html 中的参考结果做对比
 // ========================================================
+
+// 指纹验证子命令：dotnet run -- fp <folder>
+if (args.Length >= 2 && args[0] == "fp")
+{
+    return FingerprintHarness.Run(args[1]);
+}
 
 var filePath = args.Length > 0 ? args[0] : "../A7C07315.ARW";
 if (!File.Exists(filePath))
