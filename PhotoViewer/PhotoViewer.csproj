@@ -20,6 +20,7 @@
         <PackageReference Include="Xaml.Behaviors.Interactions.Custom" />
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+        <PackageReference Include="Microsoft.Data.Sqlite" />
         <PackageReference Include="XmpCore" />
     </ItemGroup>
 

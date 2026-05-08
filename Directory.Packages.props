@@ -24,5 +24,6 @@
     <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
     <PackageVersion Include="XmpCore" Version="6.1.10.1" />
     <PackageVersion Include="LibHeifSharp" Version="3.2.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0" />
   </ItemGroup>
 </Project>

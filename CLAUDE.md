@@ -88,6 +88,13 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 |---|---|---|
 | [Similarity/SimilarityService.cs](PhotoViewer/Core/Similarity/SimilarityService.cs) | 相似聚类服务 | 阶段 3 占位实现（按拍摄时间差模拟分数）；后续替换 `ScoreAsync` 内部算法接入 pHash / 连拍检测。 |
 
+**Database/** — 照片缓存数据库（`namespace PhotoViewer.Core.Database`，**预留基建，DINOv3 接入前不启用**）
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [Database/PhotoDatabase.cs](PhotoViewer/Core/Database/PhotoDatabase.cs) | 缓存数据库门面 | SQLite (`photos.db`) 静态门面，与 `SettingsService` 共用数据目录。`photos` 表列：`fingerprint`(PK) / `filename_noext` / `capture_time` / `capture_subsec` / `rating`(预留) / `feature_vector` / `feature_model` / `feature_computed_at` / `heatmap`(预留) / `updated_at`。`rating` 按现状仍以文件实读为准，**不从数据库取**。 |
+| [Database/PhotoFingerprint.cs](PhotoViewer/Core/Database/PhotoFingerprint.cs) | 指纹计算 | 三字段规范化 SHA1：`filename_noext` + `DateTimeOriginal`(秒, UTC ISO-8601) + `SubSecTimeOriginal`(3 位毫秒)。同一次曝光的 RAW/HIF/JPG 字节级字段一致 → 同指纹；高速连拍由 SubSec 毫秒区分；文件名编号循环由日期区隔。验证工具见 `ExifTestTool fp <folder>`。 |
+
 **Tools/** — 辅助工具（`namespace PhotoViewer.Core.Tools`）
 
 | File | 模块 | Responsibility |
