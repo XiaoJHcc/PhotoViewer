@@ -2,7 +2,8 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-android</TargetFramework>
-        <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+        <!-- ONNX Runtime AAR 要求 minSdk >= 24（Android 7.0）；A2-M1 起必须满足此门槛 -->
+        <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
         <ApplicationId>cc.xiaojh.PhotoViewer</ApplicationId>
         <AndroidPackageFormat>apk</AndroidPackageFormat>

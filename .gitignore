@@ -458,3 +458,8 @@ PhotoViewer.Android/.build-android-native
 PhotoViewer.Android/signing.json
 PhotoViewer.Android/keystore/
 ExifTestTool/assets
+
+# DINOv3 ONNX 模型（Meta DINOv3 License，属受控分发 / gated model）
+# 不可直接入库。每个开发者本地跑 Tools/export_dinov3_onnx.py 从 HF/ModelScope 权重生成。
+PhotoViewer/Assets/Models/*.onnx
+PhotoViewer/Assets/Models/*.onnx.data

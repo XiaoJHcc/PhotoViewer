@@ -102,22 +102,31 @@ public static class PhotoDatabase
     }
 
     /// <summary>
-    /// 写入（或覆盖）特征向量及其模型标识；行不存在时自动创建占位行。
+    /// 写入（或覆盖）特征向量及其模型标识。首次写入时同步把身份字段（filename_noext / capture_time / capture_subsec）
+    /// 一并填好，满足 <c>filename_noext NOT NULL</c> 约束；已有行时仅更新特征相关列。
     /// </summary>
-    public static async Task WriteFeatureVectorAsync(string fingerprint, byte[] vector, string modelId)
+    public static async Task WriteFeatureVectorAsync(
+        PhotoFingerprintInput input,
+        string fingerprint,
+        byte[] vector,
+        string modelId)
     {
         Initialize();
         await using var conn = OpenConnection();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            INSERT INTO photos (fingerprint, feature_vector, feature_model, feature_computed_at, updated_at)
-            VALUES ($fp, $v, $m, $t, $t)
+            INSERT INTO photos (fingerprint, filename_noext, capture_time, capture_subsec,
+                                feature_vector, feature_model, feature_computed_at, updated_at)
+            VALUES ($fp, $fn, $ct, $cs, $v, $m, $t, $t)
             ON CONFLICT(fingerprint) DO UPDATE SET
                 feature_vector      = excluded.feature_vector,
                 feature_model       = excluded.feature_model,
                 feature_computed_at = excluded.feature_computed_at,
                 updated_at          = excluded.updated_at;";
         cmd.Parameters.AddWithValue("$fp", fingerprint);
+        cmd.Parameters.AddWithValue("$fn", input.FilenameNoExt ?? "");
+        cmd.Parameters.AddWithValue("$ct", FormatTime(input.CaptureTime));
+        cmd.Parameters.AddWithValue("$cs", (object?)input.CaptureSubSec ?? DBNull.Value);
         cmd.Parameters.AddWithValue("$v", vector);
         cmd.Parameters.AddWithValue("$m", modelId);
         cmd.Parameters.AddWithValue("$t", FormatTime(DateTime.UtcNow));

@@ -4,7 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Main.File"
-             xmlns:sim="clr-namespace:PhotoViewer.Core.Similarity"
+             xmlns:sim="clr-namespace:PhotoViewer.Core.AI"
              xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="160" d:DesignHeight="400"

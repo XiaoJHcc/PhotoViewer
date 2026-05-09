@@ -7,9 +7,9 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Settings;
-using PhotoViewer.Core.Similarity;
 
 namespace PhotoViewer.ViewModels.Main.File;
 
@@ -126,9 +126,8 @@ public class SimilarityPanelViewModel : ReactiveObject
         var pool = _thumbnailList.FilteredFiles;
         try
         {
-            var results = await Task.Run(
-                () => SimilarityService.FindSimilarAsync(current, pool),
-                token);
+            var results = await SimilarityService.FindSimilarAsync(current, pool, ct: token)
+                .ConfigureAwait(false);
 
             if (token.IsCancellationRequested) return;
 
