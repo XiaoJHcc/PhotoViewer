@@ -21,6 +21,7 @@
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
         <PackageReference Include="Microsoft.Data.Sqlite" />
+        <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <PackageReference Include="XmpCore" />
     </ItemGroup>
 

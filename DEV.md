@@ -131,3 +131,31 @@ EXIF 字段英文名由两层决定：
    ["SonyRawImageSize"]  = "RAW 图像尺寸",
    ```
    键名使用最终确定的英文名（经过上方 `_overrideTables` 修正后的名称）。
+
+---
+
+### DINOv3 ONNX 模型
+
+相似聚类使用 DINOv3 ViT-S/16 的 [CLS] 特征。模型文件 `PhotoViewer/Assets/Models/dinov3_vits16.onnx` 受 **Meta DINOv3 License** 约束，**不入库**（`.gitignore` 已拦截）；每位开发者在本地生成一次即可。
+
+1. **获取原始权重**（任选其一）：
+   - **HuggingFace**（需登录并接受 gated license）：`facebook/dinov3-vits16-pretrain-lvd1689m`
+   - **ModelScope 镜像**：下载到 `~/.cache/modelscope/hub/models/facebook/dinov3-vits16-pretrain-lvd1689m`
+
+2. **导出 ONNX**（首次需 `pip install torch transformers onnx onnxruntime onnxscript`）：
+   ```
+   python Tools/export_dinov3_onnx.py \
+       --model-id <本地权重目录或 HF id> \
+       --output PhotoViewer/Assets/Models/dinov3_vits16.onnx
+   ```
+   产物约 82 MB，权重内嵌为单文件（`external_data=False`）。
+
+3. **验证一致性**（可选，首次导出或改脚本时建议跑）：
+   ```
+   python Tools/verify_onnx_parity.py \
+       --model-id <同上> \
+       --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
+   ```
+   输出 `cos_mean ≥ 0.999` 即通过。
+
+模型缺失时应用仍可运行，只是相似面板为空、日志会打印一行 `model missing` 提示。

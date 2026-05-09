@@ -1,7 +1,8 @@
 # DINOv3 选片排序系统 — 落地执行计划
 
-> 状态:草案 v1 / 2026-05-09
+> 状态:草案 v1.1 / 2026-05-09
 > 上游讨论:[相似度处理与模型推理优化](copilot-chat-conversation-相似度处理与模型推理优化.md)
+> v1.1 变更:AI 代码路径统一到 `PhotoViewer/Core/AI/`,老 `PhotoViewer/Core/Similarity/` 占位实现完全废弃;A2 拆成 M1(打包运行)→ M2(UI 接入)两个先后里程碑
 
 ---
 
@@ -101,15 +102,18 @@
 **本期目标:把 DINOv3 摸透,作为下游所有训练的输入基建。** 三件事并行推进:
 
 1. **A1:Python 推理验证** — 4080 上跑通 + 三尺寸 t-SNE 对比(技术决策依据)
-2. **A2:全平台端侧打包跑通** — 用一个最小尺寸模型走通 ONNX 导出 → C# 接入 → 四平台部署的完整链路;同时把"基于 DINO 特征的相似聚类"接到 [SimilarityPanelViewModel](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs),取代当前占位实现 — **这本身就是一种可视化验证:相似聚类靠不靠谱,肉眼一看便知**
+2. **A2:全平台端侧打包跑通** — 用一个最小尺寸模型走通 ONNX 导出 → C# 接入 → 四平台部署的完整链路;全部落在新目录 [PhotoViewer/Core/AI/](../PhotoViewer/Core/AI/),老的 [PhotoViewer/Core/Similarity/](../PhotoViewer/Core/Similarity/) 占位实现整体废弃,不参考、不兼容
 3. **A3:CV 网格采样设计** — 不写代码,先设计好"每格输出哪些标量、为什么这些对 AI 选片有用",验收物是设计文档与小样本 PoC
+
+A2 分两个先后里程碑:**M1 打包运行跑通**(ONNX 导出 + 四平台 C# 接入 + 最小命令行自检),**M2 UI 接入**(把基于 DINO 特征的相似聚类接到 [SimilarityPanelViewModel](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs))。**M1 不动 UI,M2 才上 UI** — 这样 M1 的打包与运行问题暴露在最小 surface 上,不被 UI 问题干扰。
 
 A1/A2/A3 完成后进入 B 阶段(数据工程批量入库)。
 
 ```
-A1: Python 推理验证(4080)        ─ 技术决策:用哪个尺寸 / DINOv3 vs v2
-A2: 端侧打包 + 相似聚类落地(四平台) ─ 技术验证 + 可视化验收 + 替换占位
-A3: CV 网格采样设计               ─ 设计文档 + 小样本 PoC,不写生产代码
+A1: Python 推理验证(4080)              ─ 技术决策:用哪个尺寸 / DINOv3 vs v2
+A2-M1: ONNX 导出 + 四平台 C# 运行自检   ─ 打通打包与运行链路,命令行/小入口验证
+A2-M2: 相似聚类接 UI(替换老占位)      ─ 用户视角验收 + 废弃 Core/Similarity/
+A3: CV 网格采样设计                    ─ 设计文档 + 小样本 PoC,不写生产代码
 ─────────────────────────────────────────────────
 远期(待 A 后规划):
 B:  数据工程批入库特征
@@ -257,14 +261,19 @@ plt.scatter(emb[:, 0], emb[:, 1], c=group_ids, cmap="tab20")
 
 ## 阶段 A2:端侧打包 + 相似聚类落地(四平台)
 
+> **总基调**:所有 AI 相关代码落到新目录 [PhotoViewer/Core/AI/](../PhotoViewer/Core/AI/)。老 [PhotoViewer/Core/Similarity/](../PhotoViewer/Core/Similarity/) 目录及 `SimilarityService` 占位实现**整体废弃**,M2 完成后删除,不做兼容、不做迁移、不参考其 API 形状。
+>
+> A2 分两个先后里程碑,**M1 先行、M2 后接**:
+> - **M1 — 打包与运行跑通**:ONNX 导出 + C# 特征提取器 + 四平台启动后能加载模型并对一张测试图产出 [CLS] 特征向量。**不动 UI**。
+> - **M2 — UI 接入相似聚类**:用 M1 的特征提取器,新建 `Core/AI/` 下的相似聚类服务,接到 [SimilarityPanelViewModel](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs);同步删除老 `Core/Similarity/`。
+
 ### A2.1 目的
 
-A2 不追求最终模型质量,只验证**完整工程链路是否打通**,并顺手把"基于 DINO 特征的相似聚类"接到现有 UI,**用肉眼可见的聚类质量做 A1 验证的双重保险**。
+A2 不追求最终模型质量,只验证**完整工程链路是否打通**,并顺手把"基于 DINO 特征的相似聚类"作为用户视角验收手段接到现有 UI。
 
-三件事:
-1. **DINOv3 ONNX 导出与四平台运行验证** — Windows / macOS / Android / iOS 各自启动后能加载模型并提特征
-2. **替换 [SimilarityService](../PhotoViewer/Core/Similarity/SimilarityService.cs) 占位** — 把当前的"按拍摄时间差模拟分数"换成"基于 [CLS] 特征的余弦相似度",[SimilarityPanelViewModel](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) 自然显示真实相似聚类
-3. **可视化验收 A1 结论** — 在你的真实照片库里,看相似面板里聚到一起的照片是否真的相似;t-SNE 是统计图,这里是终端用户视角的检验
+分里程碑的理由:
+1. 打包与运行问题(ONNX 算子兼容、EP 选型、包体积、签名、native lib)要暴露在最小 surface 上,不被 UI 状态机、事件时序问题盖过
+2. UI 接入是一个独立的"用肉眼判断聚类质量"的验证层,M1 有绿灯后才动 — 提前动 UI 会浪费调试精力
 
 ### A2.2 模型选择:用 ViT-S/16
 
@@ -276,7 +285,34 @@ A2 端侧用 **ViT-S/16**(`facebook/dinov3-vits16-pretrain-lvd1689m`):
 
 模型文件目标体积:S/16 FP16 ONNX ≈ 45MB。Android/iOS 可接受。
 
-### A2.3 ONNX 导出
+### A2.3 新目录规划:`PhotoViewer/Core/AI/`
+
+```
+PhotoViewer/Core/AI/
+├── DinoFeatureExtractor.cs     ← M1 新增:ONNX Runtime 平台门面,输入 ImageFile / 解码后 RGB 张量,输出 [CLS] 向量
+├── DinoModelResources.cs       ← M1 新增:模型文件路径 + 版本号 + 输入规格常量(518/normalize 参数)
+├── DinoFeatureCache.cs         ← M2 新增:读写 PhotoDatabase.feature_vector 的薄封装,按 PhotoFingerprint 命中
+└── SimilarityService.cs        ← M2 新增:基于 feature_vector 的 cosine 相似度聚类(取代老占位)
+```
+
+命名空间:`PhotoViewer.Core.AI`。
+
+**设计约束**:
+- `Core/AI/` 内部不 using `Core/Similarity/` 任何类型 — 老目录是已废弃隔离区
+- `DinoFeatureExtractor` 是静态/单例门面,**M1 统一走 CPU EP**(最小化变量);CoreML(macOS/iOS)与 NNAPI(Android)由 `Microsoft.ML.OnnxRuntime` 1.25+ 基础包内置,M2 或 B 阶段按测时结果启用;Windows DirectML 是独立包 `Microsoft.ML.OnnxRuntime.DirectML`,留到 M2 后再考虑
+- 特征提取按需触发,提取后写入 [PhotoDatabase](../PhotoViewer/Core/Database/PhotoDatabase.cs) `.feature_vector` 列(已预留);后续命中缓存不再重算
+- 同次曝光的 RAW/JPG/HEIF 三联基于 [PhotoFingerprint](../PhotoViewer/Core/Database/PhotoFingerprint.cs) 共享特征向量,只算一次
+- 像素输入管线复用 Avalonia `WriteableBitmap.CopyPixels`(桌面/移动同路径),**不引 SkiaSharp**,避免增加移动端包体
+
+模型文件放 [PhotoViewer/Assets/Models/dinov3_vits16.onnx](../PhotoViewer/Assets/Models/),通过项目已有的 `<AvaloniaResource Include="Assets/**"/>` 打包,运行时用 `AssetLoader.Open(uri)` 读流 → ORT `InferenceSession(byte[])`。
+
+NuGet(1.25.1,在 [Directory.Packages.props](../Directory.Packages.props) 集中管理):
+- `Microsoft.ML.OnnxRuntime`(唯一包,覆盖 Windows / macOS / iOS / Android)
+- `Microsoft.ML.OnnxRuntime.Managed` 不单独引,`Microsoft.ML.OnnxRuntime` 已自动带入
+
+### A2.4 M1 — 打包与运行跑通(不动 UI)
+
+#### M1.1 ONNX 导出
 
 ```python
 # Tools/export_dinov3_onnx.py
@@ -295,7 +331,7 @@ class DinoFeatureWrapper(torch.nn.Module):
 dummy = torch.randn(1, 3, 518, 518)
 torch.onnx.export(
     DinoFeatureWrapper(model), dummy,
-    "PhotoViewer/Resources/Models/dinov3_vits16.onnx",
+    "PhotoViewer/Assets/Models/dinov3_vits16.onnx",
     opset_version=17,
     input_names=["pixel_values"],
     output_names=["cls_embedding"],
@@ -303,50 +339,101 @@ torch.onnx.export(
 )
 ```
 
-**验收**:用 onnxruntime 加载后,与 PyTorch 输出 cosine 相似度 ≥ 0.999(逐张对比 100 张)。
+**Python 侧验收**:用 onnxruntime 加载后,与 PyTorch 输出 cosine 相似度 ≥ 0.999(逐张对比 100 张)。对应 `Tools/verify_onnx_parity.py`。
 
-### A2.4 C# 接入(Avalonia)
+#### M1.2 C# 特征提取器
 
+只实现 [Core/AI/DinoFeatureExtractor.cs](../PhotoViewer/Core/AI/DinoFeatureExtractor.cs) + [Core/AI/DinoModelResources.cs](../PhotoViewer/Core/AI/DinoModelResources.cs)。接口最小化:
+
+```csharp
+namespace PhotoViewer.Core.AI;
+
+public static class DinoFeatureExtractor
+{
+    /// <summary>从图片文件提取 [CLS] 特征向量(同步解码 + 异步推理)。</summary>
+    public static Task<float[]> ExtractAsync(ImageFile file, CancellationToken ct = default);
+
+    /// <summary>从解码后的 RGB 张量提特征(供批量场景复用,避免重复解码)。</summary>
+    public static Task<float[]> ExtractFromRgbAsync(ReadOnlyMemory<byte> rgb, int width, int height, CancellationToken ct = default);
+}
 ```
-PhotoViewer/Core/Similarity/
-├── SimilarityService.cs        ← 改造:替换占位
-└── DinoFeatureExtractor.cs     ← 新增:封装 ONNX Runtime 调用
-```
 
-**关键设计**:
-- `DinoFeatureExtractor` 是平台门面,内部按平台选 EP(Windows DirectML / macOS+iOS CoreML / Android NNAPI / 兜底 CPU)
-- 特征提取**只在需要时按需触发**,提取后写入 [PhotoDatabase](../PhotoViewer/Core/Database/PhotoDatabase.cs)`.feature_vector`(已经预留好的列),后续命中缓存
-- `SimilarityService.FindSimilarAsync` 改用 `feature_vector` 算 cosine,不再用拍摄时间差(时间差仅作为 tiebreaker 保留)
+**M1 不做**:
+- 不写数据库缓存逻辑(M2 才做)
+- 不写相似度算法(M2 才做)
+- 不接 UI(M2 才做)
+- 不做批量 API(远期 B 阶段做)
 
-NuGet:
-- `Microsoft.ML.OnnxRuntime`(桌面)
-- `Microsoft.ML.OnnxRuntime.Managed` + 平台 EP NuGet(移动)
+#### M1.3 四平台启动自检
 
-模型文件放 `PhotoViewer/Resources/Models/dinov3_vits16.onnx`,作为 Content + CopyToOutputDirectory。
-
-### A2.5 四平台验收
+在 [Platform/](../PhotoViewer/Core/Platform/) 新增一个极简的启动自检钩子:应用启动后,在后台跑一次"内置测试图 → ExtractAsync → 记录单张耗时与向量长度"。结果只写日志(`Console.WriteLine`),不显示在 UI。
 
 | 平台 | 验证项 | 启动方式 |
 |---|---|---|
-| Windows | 单张提取 ≤ 100ms,DirectML EP 启用 | VS Code Task `Debug Windows` |
-| macOS | 单张提取 ≤ 100ms,CoreML EP 启用 | VS Code Task `Debug Mac` |
-| Android | 单张提取 ≤ 300ms,NNAPI EP 启用,APK 增量 < 60MB | `Debug Android` |
-| iOS | 单张提取 ≤ 300ms,CoreML EP 启用 | `Debug iOS` |
+| Windows | CPU EP,单张提取 ≤ 400ms,日志见 384 维向量 | VS Code Task `Debug Windows` |
+| macOS | CPU EP,单张提取 ≤ 400ms | VS Code Task `Debug Mac` |
+| Android | CPU EP,单张提取 ≤ 800ms,APK 增量 < 60MB | `Debug Android` |
+| iOS | CPU EP,单张提取 ≤ 800ms | `Debug iOS` |
 
-**功能验收**:
-- 打开任意一个文件夹,选中一张照片,相似面板能显示真实相似聚类(肉眼判断:同机位/同题材/连拍能聚到一起,跨题材不会乱入)
-- 同次曝光的 RAW/JPG/HEIF 三联,基于 [PhotoFingerprint](../PhotoViewer/Core/Database/PhotoFingerprint.cs) 共享特征向量,只算一次
+**M1 验收门**:四平台日志都能打出合理耗时与向量 — 才进入 M2。自检钩子在 M2 接入真实缓存后即删除。
 
-**A2 不要做**:
+### A2.5 M2 — 相似聚类接 UI 并废弃老 `Core/Similarity/`
+
+#### M2.1 新建 `Core/AI/SimilarityService.cs`
+
+与老占位**无任何 API 兼容负担**,直接按新场景设计:
+
+```csharp
+namespace PhotoViewer.Core.AI;
+
+public sealed record SimilarityItem(ImageFile File, double Score);
+
+public static class SimilarityService
+{
+    /// <summary>基于 DINO [CLS] cosine 相似度找相似项,命中 PhotoDatabase 缓存则跳过 ONNX 推理。</summary>
+    public static Task<IReadOnlyList<SimilarityItem>> FindSimilarAsync(
+        ImageFile current,
+        IReadOnlyList<ImageFile> pool,
+        double threshold = 0.75,
+        CancellationToken ct = default);
+}
+```
+
+- 先读 [PhotoDatabase](../PhotoViewer/Core/Database/PhotoDatabase.cs) `.feature_vector`,miss 才走 `DinoFeatureExtractor.ExtractAsync`
+- 命名空间与类型名允许与老 `PhotoViewer.Core.Similarity.SimilarityItem` 撞名 — 因为老命名空间整体删除,不共存
+- 时间差只保留作为 tiebreaker(同 score 时按拍摄时间近的优先),不作为相似度主因
+
+#### M2.2 改动 `SimilarityPanelViewModel`
+
+- [SimilarityPanelViewModel.cs](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) 的 `using PhotoViewer.Core.Similarity;` 改为 `using PhotoViewer.Core.AI;`
+- 仅改 `using`,其余事件订阅 / 抑制位 / UI 调度逻辑不动
+- [SimilarityListView.axaml](../PhotoViewer/Views/Main/File/SimilarityListView.axaml) 的 DataTemplate 绑定路径 `{Binding File}` `{Binding Score}` 保持一致,依赖新 `SimilarityItem` 的形状与老的一致(这是我们特意保持的迁移兼容点)
+
+#### M2.3 删除老 `Core/Similarity/`
+
+完成 M2.1/M2.2 且跑通后,**立即删除**:
+- [PhotoViewer/Core/Similarity/SimilarityService.cs](../PhotoViewer/Core/Similarity/SimilarityService.cs)
+- [PhotoViewer/Core/Similarity/](../PhotoViewer/Core/Similarity/) 整个目录
+
+不留 `[Obsolete]` 标记,不留 type forwarder,不保留兼容路径。依 §8 规范"无开放式回退、无静默回退"。
+
+#### M2.4 功能验收
+
+- 打开任意文件夹,选中一张照片,相似面板显示基于 DINO 特征的真实聚类
+- 肉眼判断:同机位/同题材/连拍聚到一起,跨题材不会乱入
+- 同次曝光的 RAW/JPG/HEIF 三联基于 [PhotoFingerprint](../PhotoViewer/Core/Database/PhotoFingerprint.cs) 共享特征向量,日志可见只算一次
+- 切换文件夹 / 筛选变化时,相似面板能正确重算(沿用老事件时序,不回归)
+
+**M2 不要做**:
 - 排序头 / 美学打分(那是 D 阶段的事)
 - CV 网格特征接入(A3 设计完才做)
 - EXIF 向量化(D 阶段才用)
-- 性能极致优化(打通即可)
+- 性能极致优化(打通即可,批量优化留给 B)
 
 ### A2.6 配套工具
 
-- `Tools/export_dinov3_onnx.py` — A2.3 的导出脚本
-- `Tools/verify_onnx_parity.py` — 100 张 PyTorch vs ONNX 对齐校验
+- [Tools/export_dinov3_onnx.py](../Tools/export_dinov3_onnx.py) — M1.1 的导出脚本
+- [Tools/verify_onnx_parity.py](../Tools/verify_onnx_parity.py) — M1.1 的 PyTorch vs ONNX 对齐校验
 - 平台部署沿用 [DEV.md](../DEV.md) 的 VS Code Tasks,不引入新 build 系统
 
 ---
@@ -456,7 +543,7 @@ A2 已经把链路打通,F 主要是把 D 阶段训出的最终模型(backbone +
 
 | 风险 | 等级 | 触发阶段 | 应对 |
 |---|---|---|---|
-| DINOv3 license 不可接受 | 中 | A1 | 切 DINOv2-Large(架构不变,Apache 2.0,特征维度同为 1024) |
+| DINOv3 license 门槛 / 分发条款 | 中 | A1 / A2 打包发布前 | 本期仅本地训练 + 端侧本地推理,**不触发**分发条款;若远期要把 `.onnx` 打进 APK/IPA 对外分发,先 review [DINOv3 License](https://ai.meta.com/resources/models-and-libraries/dinov3-license/) 的 derivative works 条款,不行则整体回退 DINOv2-Large(Apache 2.0,架构兼容,L 维度同为 1024) |
 | ViT 特征对你的数据不够敏感 | **高** | A1 | t-SNE 验证就能发现,A1 失败立即停止 |
 | 4080 上 ViT-L 显存/速度超预期 | 低 | A1 | 降回 ViT-B(特征维度 1024→768,MLP 首层重训,成本 ~30 分钟) |
 | ONNX 算子在 CoreML/NNAPI 上不兼容 | **中** | A2 | 退回 CPU EP(慢但能用);或换 ConvNeXt-Small 变体(算子兼容性好) |
@@ -475,13 +562,16 @@ A2 已经把链路打通,F 主要是把 D 阶段训出的最终模型(backbone +
 |---|---|---|
 | [PhotoDatabase.cs](../PhotoViewer/Core/Database/PhotoDatabase.cs) | 远期可能加 `cv_grid` 列(向量长度由 A3 定) | B |
 | [PhotoFingerprint.cs](../PhotoViewer/Core/Database/PhotoFingerprint.cs) | 不动 — 已经够用 | - |
-| [SimilarityService.cs](../PhotoViewer/Core/Similarity/SimilarityService.cs) | **本期改造**:替换占位为基于 [CLS] 的余弦相似 | **A2** |
-| [SimilarityPanelViewModel.cs](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | **本期填充**:接入真实相似聚类 | **A2** |
-| `PhotoViewer/Core/Similarity/DinoFeatureExtractor.cs` | **本期新增**:ONNX Runtime 平台门面 | **A2** |
-| `PhotoViewer/Resources/Models/dinov3_vits16.onnx` | **本期新增**:S/16 端侧模型 | **A2** |
+| [PhotoViewer/Core/Similarity/](../PhotoViewer/Core/Similarity/) | **整体废弃并删除** — 含 `SimilarityService.cs` 占位 | **A2-M2** |
+| `PhotoViewer/Core/AI/DinoFeatureExtractor.cs` | **M1 新增**:ONNX Runtime 平台门面 | **A2-M1** |
+| `PhotoViewer/Core/AI/DinoModelResources.cs` | **M1 新增**:模型路径/输入规格常量 | **A2-M1** |
+| `PhotoViewer/Core/AI/DinoFeatureCache.cs` | **M2 新增**:`PhotoDatabase.feature_vector` 读写薄封装 | **A2-M2** |
+| `PhotoViewer/Core/AI/SimilarityService.cs` | **M2 新增**:cosine 相似聚类,取代老占位 | **A2-M2** |
+| [SimilarityPanelViewModel.cs](../PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | **M2 改动**:`using` 切换到 `PhotoViewer.Core.AI`;其余逻辑不动 | **A2-M2** |
+| `PhotoViewer/Assets/Models/dinov3_vits16.onnx` | **M1 新增**:S/16 端侧模型 | **A2-M1** |
 | `Tools/dinov3_feature_probe.py` | **本期新增**:A1 的三尺寸 t-SNE 验证 | **A1** |
-| `Tools/export_dinov3_onnx.py` | **本期新增**:A2 的 ONNX 导出 | **A2** |
-| `Tools/verify_onnx_parity.py` | **本期新增**:PyTorch vs ONNX 对齐校验 | **A2** |
+| `Tools/export_dinov3_onnx.py` | **M1 新增**:ONNX 导出 | **A2-M1** |
+| `Tools/verify_onnx_parity.py` | **M1 新增**:PyTorch vs ONNX 对齐校验 | **A2-M1** |
 | `Tools/cv_grid_design.ipynb` | **本期新增**:A3 的设计 PoC | **A3** |
 | `Tools/cv_grid_extract.py` | 设计冻结后新增(B 阶段使用) | A3→B |
 | `Tools/dinov3_batch_extract.py` | 远期新增 | B |
