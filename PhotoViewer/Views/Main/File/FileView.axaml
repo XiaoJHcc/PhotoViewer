@@ -23,13 +23,24 @@
             </ContentControl.ContentTemplate>
         </ContentControl>
 
-        <ContentControl Grid.Row="1"
-                        Content="{Binding ThumbnailList}">
-            <ContentControl.ContentTemplate>
-                <DataTemplate DataType="vm:ThumbnailListViewModel">
-                    <fileViews:ThumbnailListView />
-                </DataTemplate>
-            </ContentControl.ContentTemplate>
-        </ContentControl>
+        <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+            <ContentControl Grid.Column="0"
+                            Content="{Binding ThumbnailList}">
+                <ContentControl.ContentTemplate>
+                    <DataTemplate DataType="vm:ThumbnailListViewModel">
+                        <fileViews:ThumbnailListView />
+                    </DataTemplate>
+                </ContentControl.ContentTemplate>
+            </ContentControl>
+
+            <ContentControl Grid.Column="1"
+                            Content="{Binding SimilarityPanel}">
+                <ContentControl.ContentTemplate>
+                    <DataTemplate DataType="vm:SimilarityPanelViewModel">
+                        <fileViews:SimilarityListView />
+                    </DataTemplate>
+                </ContentControl.ContentTemplate>
+            </ContentControl>
+        </Grid>
     </Grid>
 </UserControl>
