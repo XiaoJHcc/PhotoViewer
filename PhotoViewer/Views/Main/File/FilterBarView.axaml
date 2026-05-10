@@ -43,8 +43,8 @@
     <StackPanel x:Name="FilterBarPanel"
                 Spacing="5"
                 Margin="10"
-                HorizontalAlignment="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}, ConverterParameter=Left}"
-                Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
+                HorizontalAlignment="{Binding IsRowLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}, ConverterParameter=Left}"
+                Orientation="{Binding IsRowLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
 
         <!-- 排序方式 -->
         <ComboBox ItemsSource="{Binding SortModes}"

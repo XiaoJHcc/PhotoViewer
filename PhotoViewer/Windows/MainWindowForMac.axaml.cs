@@ -55,7 +55,7 @@ public partial class MainWindowForMac : Window
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(MainViewModel.IsHorizontalLayout))
+        if (e.PropertyName == nameof(MainViewModel.IsRowLayout))
         {
             UpdateTitlebarLayout();
         }
@@ -68,10 +68,10 @@ public partial class MainWindowForMac : Window
         if (titleBar is null) return;
 
         var vm = RootMainView?.DataContext as MainViewModel;
-        bool isHorizontal = vm?.IsHorizontalLayout ?? false;
+        bool isCol = vm?.IsRowLayout == false;
 
         // 1) 动态标题栏高度（等距观感由高度控制）
-        double targetHeight = isHorizontal ? TitlebarHeightHorizontal : TitlebarHeightVertical;
+        double targetHeight = isCol ? TitlebarHeightHorizontal : TitlebarHeightVertical;
         if (Math.Abs(titleBar.Height - targetHeight) > 0.5)
         {
             titleBar.Height = targetHeight;
@@ -79,7 +79,7 @@ public partial class MainWindowForMac : Window
         }
 
         // 2) 中间避让策略
-        if (isHorizontal)
+        if (isCol)
         {
             // 左中右：不使用中间避让，通过调整左侧筛选条顶部边距避免与 24px 标题栏重叠
             var leftFile  = RootMainView?.FindControl<FileView>("LeftFileView");

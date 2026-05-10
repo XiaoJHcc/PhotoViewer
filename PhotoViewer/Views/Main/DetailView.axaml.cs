@@ -44,7 +44,7 @@ public partial class DetailView : UserControl
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(DetailViewModel.IsVerticalLayout))
+        if (e.PropertyName == nameof(DetailViewModel.IsRowLayout))
         {
             UpdatePreviewSize();
         }
@@ -57,7 +57,8 @@ public partial class DetailView : UserControl
             return;
         }
 
-        var available = _viewModel.IsVerticalLayout ? Bounds.Height : Bounds.Width;
+        // 按行布局（上下分栏，侧边细高）→ Width；按列布局（左右分栏，侧边宽矮）→ Height
+        var available = _viewModel.IsRowLayout ? Bounds.Width : Bounds.Height;
         if (available <= 0)
         {
             return;

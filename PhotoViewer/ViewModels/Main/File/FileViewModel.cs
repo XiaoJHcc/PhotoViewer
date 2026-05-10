@@ -15,8 +15,8 @@ public class FileViewModel : ReactiveObject
     public ThumbnailListViewModel ThumbnailList { get; }
     public SimilarityPanelViewModel SimilarityPanel { get; }
 
-    /// <summary>当前布局是否为竖向（决定 FileView 内三分区是横排还是纵排）</summary>
-    public bool IsVerticalLayout => Main.IsHorizontalLayout;
+    /// <summary>当前布局是否为行布局（分栏位于上下，内部横向排列）</summary>
+    public bool IsRowLayout => Main.IsRowLayout;
 
     /// <summary>相似聚类面板是否展开（绑定到 FileView 的 IsVisible）</summary>
     public bool IsSimilarityPanelOpen => FilterBar.IsSimilarityPanelOpen;
@@ -33,8 +33,8 @@ public class FileViewModel : ReactiveObject
         ThumbnailList = new ThumbnailListViewModel(main, main.FolderVM, FilterBar);
         SimilarityPanel = new SimilarityPanelViewModel(main, ThumbnailList, main.FolderVM);
 
-        main.WhenAnyValue(x => x.IsHorizontalLayout)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
+        main.WhenAnyValue(x => x.IsRowLayout)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
         // 面板展开时触发三态判定；关闭时无需操作
         FilterBar.SimilarityPanelToggled += isOpen =>

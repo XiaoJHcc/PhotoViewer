@@ -9,8 +9,8 @@
              x:Class="PhotoViewer.Views.MainView"
              x:DataType="vm:MainViewModel">
     <Grid>
-        <!-- 垂直布局（上中下）-->
-        <Grid RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding !IsHorizontalLayout}">
+        <!-- 按行布局（上中下）-->
+        <Grid RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsRowLayout}">
             <!-- 顶部：文件栏 -->
             <Border
                 x:Name="TopThumbHost"
@@ -55,8 +55,8 @@
             </Border>
         </Grid>
 
-        <!-- 水平布局（左中右）-->
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsHorizontalLayout}">
+        <!-- 按列布局（左中右）-->
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding !IsRowLayout}">
             <!-- 左侧：文件栏 -->
             <Border
                 x:Name="LeftThumbHost"

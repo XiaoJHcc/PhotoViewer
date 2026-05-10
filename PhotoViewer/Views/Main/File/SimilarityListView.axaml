@@ -78,15 +78,15 @@
     </UserControl.Styles>
 
     <!-- 外层 Border：背景 + 圆角描边，形成独立的聚类面板视觉区块 -->
-    <!-- IsVerticalLayout=true（侧边布局）：右侧紧贴窗口边缘，去掉右边距 -->
-    <!-- IsVerticalLayout=false（顶部布局）：四周均留 4px 间距 -->
+    <!-- IsRowLayout=false（按列布局，侧边）：右侧紧贴窗口边缘，去掉右边距 -->
+    <!-- IsRowLayout=true（按行布局，顶部）：四周均留 4px 间距 -->
     <Border Background="#1E1E1E"
             BorderBrush="#404040"
             BorderThickness="1"
             CornerRadius="8"
-            Margin="{Binding IsVerticalLayout,
+            Margin="{Binding IsRowLayout,
                 Converter={x:Static converters:WebMarginConverter.Instance},
-                ConverterParameter='4,0,4,4|4,4,4,4'}"
+                ConverterParameter='4,4,4,4|4,0,4,4'}"
             MinWidth="116">
 
         <Grid>
@@ -129,9 +129,9 @@
             <DockPanel IsVisible="{Binding IsStatePartialOrIndexing}">
 
                 <!-- 按钮区：竖向布局停靠 Bottom，横向布局停靠 Right -->
-                <StackPanel DockPanel.Dock="{Binding IsVerticalLayout,
+                <StackPanel DockPanel.Dock="{Binding IsRowLayout,
                                 Converter={x:Static converters:DockConverter.Instance},
-                                ConverterParameter='Bottom,Right'}"
+                                ConverterParameter='Right,Bottom'}"
                             VerticalAlignment="Bottom"
                             HorizontalAlignment="Center"
                             Spacing="6"
@@ -173,28 +173,28 @@
                 <!-- 列表：填满剩余空间 -->
                 <ScrollViewer Name="SimilarityScrollViewerPartial"
                               IsVisible="{Binding HasItems}"
-                              Padding="{Binding IsVerticalLayout,
+                              Padding="{Binding IsRowLayout,
                                     Converter={x:Static converters:WebMarginConverter.Instance},
-                                    ConverterParameter='4,0,4,4|4,4,4,4'}"
-                              HorizontalScrollBarVisibility="{Binding IsVerticalLayout,
+                                    ConverterParameter='4,4,4,4|4,0,4,4'}"
+                              HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
-                              VerticalScrollBarVisibility="{Binding IsVerticalLayout,
+                              VerticalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance},
                                     ConverterParameter=Reverse}">
                     <Interaction.Behaviors>
-                        <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
+                        <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding IsRowLayout}" />
                     </Interaction.Behaviors>
                     <ItemsControl ItemsSource="{Binding SimilarItems}"
-                                  HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsVerticalLayout,
+                                  HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                       Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
                                       ConverterParameter=Left}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel
-                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsVerticalLayout,
+                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
                                         ConverterParameter=Left}"
-                                    Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsVerticalLayout,
+                                    Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
                                     Margin="4" />
                             </ItemsPanelTemplate>
@@ -263,30 +263,30 @@
 
                 <ScrollViewer Name="SimilarityScrollViewer"
                               IsVisible="{Binding HasItems}"
-                              Padding="{Binding IsVerticalLayout,
+                              Padding="{Binding IsRowLayout,
                                     Converter={x:Static converters:WebMarginConverter.Instance},
-                                    ConverterParameter='4,0,4,4|4,4,4,4'}"
-                              HorizontalScrollBarVisibility="{Binding IsVerticalLayout,
+                                    ConverterParameter='4,4,4,4|4,0,4,4'}"
+                              HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
-                              VerticalScrollBarVisibility="{Binding IsVerticalLayout,
+                              VerticalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance},
                                     ConverterParameter=Reverse}">
                     <Interaction.Behaviors>
-                        <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
+                        <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding IsRowLayout}" />
                     </Interaction.Behaviors>
 
                     <ItemsControl Name="SimilarityItemsControl"
                                   ItemsSource="{Binding SimilarItems}"
-                                  HorizontalAlignment="{Binding IsVerticalLayout,
+                                  HorizontalAlignment="{Binding IsRowLayout,
                                       Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
                                       ConverterParameter=Left}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel
-                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsVerticalLayout,
+                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
                                         ConverterParameter=Left}"
-                                    Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsVerticalLayout,
+                                    Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
                                     Margin="4" />
                             </ItemsPanelTemplate>

@@ -18,7 +18,7 @@
         <ItemsControl ItemsSource="{Binding Items}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <StackPanel Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
+                    <StackPanel Orientation="{Binding IsRowLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
                                 Spacing="8" />
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>

@@ -6,9 +6,9 @@ namespace PhotoViewer.ViewModels.Settings;
 // 布局模式枚举
 public enum LayoutMode
 {
-    Vertical,    // 上中下
-    Horizontal,  // 左中右
-    Auto         // 智能（根据屏幕方向）
+    Row,   // 上下（文件栏在顶部，横向排列）
+    Col,   // 左右（文件栏在侧边，纵向排列）
+    Auto   // 智能（根据屏幕方向）
 }
 
 public partial class SettingsViewModel
@@ -30,8 +30,8 @@ public partial class SettingsViewModel
 
     private void InitializeLayoutModes()
     {
-        LayoutModes.Add(new LayoutModeItem(LayoutMode.Vertical, "上下", "缩略图和控制栏位于上下侧，适合竖屏"));
-        LayoutModes.Add(new LayoutModeItem(LayoutMode.Horizontal, "左右", "缩略图和控制栏位于左右侧，适合横屏"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Row, "上下", "缩略图和控制栏位于上下侧，适合竖屏"));
+        LayoutModes.Add(new LayoutModeItem(LayoutMode.Col, "左右", "缩略图和控制栏位于左右侧，适合横屏"));
         LayoutModes.Add(new LayoutModeItem(LayoutMode.Auto, "自动", "根据屏幕方向自动选择空间较多两侧"));
     }
 

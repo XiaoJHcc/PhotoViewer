@@ -69,8 +69,8 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// <summary>是否有相似项（便于直接绑定 IsVisible）。</summary>
     public bool HasItems => _similarItems.Count > 0;
 
-    /// <summary>当前布局是否为竖向（决定列表方向、对齐）。</summary>
-    public bool IsVerticalLayout => _main.IsHorizontalLayout;
+    /// <summary>当前布局是否为行布局（分栏位于上下，决定列表方向、对齐）。</summary>
+    public bool IsRowLayout => _main.IsRowLayout;
 
     /// <summary>主视图模型引用，模板内绑定 IsCurrent / Settings 用。</summary>
     public MainViewModel Main => _main;
@@ -168,8 +168,8 @@ public class SimilarityPanelViewModel : ReactiveObject
         _thumbnailList = thumbnailList;
         _folder = folder;
 
-        _main.WhenAnyValue(x => x.IsHorizontalLayout)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
+        _main.WhenAnyValue(x => x.IsRowLayout)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
         _main.WhenAnyValue(x => x.CurrentFile)
             .Subscribe(file =>

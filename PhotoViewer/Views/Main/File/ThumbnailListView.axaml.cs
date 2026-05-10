@@ -205,7 +205,7 @@ public partial class ThumbnailListView : UserControl
         var vm = ViewModel;
         if (vm == null || _scroll == null) return;
 
-        bool vertical = vm.IsVerticalLayout;
+        bool vertical = vm.IsRowLayout;
         double itemExtent = vertical ? 138 + 6 : 90 + 6;
 
         double offset = vertical ? _scroll.Offset.Y : _scroll.Offset.X;
@@ -241,7 +241,7 @@ public partial class ThumbnailListView : UserControl
             var itemsControl = ThumbnailItemsControl;
             if (scrollViewer == null || itemsControl == null) return Task.CompletedTask;
 
-            var isVertical = ViewModel.IsVerticalLayout;
+            var isRow = ViewModel.IsRowLayout;
             var viewport = scrollViewer.Viewport;
             var offset = scrollViewer.Offset;
 
@@ -250,9 +250,9 @@ public partial class ThumbnailListView : UserControl
             var visibleFiles = new List<ImageFile>();
             var itemCount = ViewModel.FilteredFiles.Count;
 
-            var estimatedItemSize = isVertical ? 144.0 : 96.0;
-            var viewportSize = isVertical ? viewport.Height : viewport.Width;
-            var scrollPosition = isVertical ? offset.Y : offset.X;
+            var estimatedItemSize = isRow ? 96.0 : 144.0;
+            var viewportSize = isRow ? viewport.Width : viewport.Height;
+            var scrollPosition = isRow ? offset.X : offset.Y;
 
             var startIndex = Math.Max(0, (int)((scrollPosition - bufferSize) / estimatedItemSize));
             var endIndex = Math.Min(itemCount - 1, (int)((scrollPosition + viewportSize + bufferSize) / estimatedItemSize));
@@ -278,18 +278,18 @@ public partial class ThumbnailListView : UserControl
                                 double itemStart, itemEnd;
                                 double viewportStart, viewportEnd;
 
-                                if (isVertical)
-                                {
-                                    itemStart = containerPosition.Value.Y;
-                                    itemEnd = itemStart + containerBounds.Height;
-                                    viewportStart = offset.Y;
-                                    viewportEnd = offset.Y + viewport.Height;
-                                }
-                                else
+                                if (isRow)
                                 {
                                     itemStart = containerPosition.Value.X;
                                     itemEnd = itemStart + containerBounds.Width;
                                     viewportStart = offset.X;
+                                    viewportEnd = offset.X + viewport.Width;
+                                }
+                                else
+                                {
+                                    itemStart = containerPosition.Value.Y;
+                                    itemEnd = itemStart + containerBounds.Height;
+                                    viewportStart = offset.Y;
                                     viewportEnd = offset.X + viewport.Width;
                                 }
 
@@ -367,15 +367,15 @@ public partial class ThumbnailListView : UserControl
             var scrollViewer = ThumbnailScrollViewer;
             if (scrollViewer == null) return;
 
-            bool isVertical = ViewModel.IsVerticalLayout;
-            double itemExtent = isVertical ? (138 + 6) : (90 + 6);
+            bool isRow = ViewModel.IsRowLayout;
+            double itemExtent = isRow ? (90 + 6) : (138 + 6);
             double targetPos = index * itemExtent;
-            double viewport = isVertical ? scrollViewer.Viewport.Height : scrollViewer.Viewport.Width;
+            double viewport = isRow ? scrollViewer.Viewport.Width : scrollViewer.Viewport.Height;
             double centered = Math.Max(0, targetPos - (viewport - itemExtent) / 2);
 
-            var targetOffset = isVertical
-                ? new Vector(scrollViewer.Offset.X, centered)
-                : new Vector(centered, scrollViewer.Offset.Y);
+            var targetOffset = isRow
+                ? new Vector(centered, scrollViewer.Offset.Y)
+                : new Vector(scrollViewer.Offset.X, centered);
 
             _ = AnimateScrollToAsync(targetOffset);
         }
@@ -431,17 +431,17 @@ public partial class ThumbnailListView : UserControl
                 Cue = new Cue(1.0)
             };
 
-            var isVertical = ViewModel?.IsVerticalLayout ?? false;
+            var isRow = ViewModel?.IsRowLayout ?? false;
 
-            if (isVertical)
+            if (isRow)
             {
                 keyFrame.Setters.Add(new Setter(ScrollViewer.OffsetProperty,
-                    new Vector(currentOffset.X, targetOffset.Y)));
+                    new Vector(targetOffset.X, currentOffset.Y)));
             }
             else
             {
                 keyFrame.Setters.Add(new Setter(ScrollViewer.OffsetProperty,
-                    new Vector(targetOffset.X, currentOffset.Y)));
+                    new Vector(currentOffset.X, targetOffset.Y)));
             }
 
             _scrollAnimation!.Children.Clear();
@@ -541,21 +541,10 @@ public partial class ThumbnailListView : UserControl
             var containerPosition = container.TranslatePoint(new Point(0, 0), itemsControl);
             if (containerPosition == null) return;
 
-            var isVertical = ViewModel?.IsVerticalLayout ?? false;
+            var isRow = ViewModel?.IsRowLayout ?? false;
             Vector targetOffset;
 
-            if (isVertical)
-            {
-                var targetY = containerPosition.Value.Y;
-                var viewportHeight = scrollViewer.Viewport.Height;
-                var containerHeight = container.Bounds.Height;
-
-                var centerY = targetY - (viewportHeight - containerHeight) / 2;
-                centerY = Math.Max(0, Math.Min(centerY, scrollViewer.Extent.Height - viewportHeight));
-
-                targetOffset = new Vector(scrollViewer.Offset.X, centerY);
-            }
-            else
+            if (isRow)
             {
                 var targetX = containerPosition.Value.X;
                 var viewportWidth = scrollViewer.Viewport.Width;
@@ -565,6 +554,17 @@ public partial class ThumbnailListView : UserControl
                 centerX = Math.Max(0, Math.Min(centerX, scrollViewer.Extent.Width - viewportWidth));
 
                 targetOffset = new Vector(centerX, scrollViewer.Offset.Y);
+            }
+            else
+            {
+                var targetY = containerPosition.Value.Y;
+                var viewportHeight = scrollViewer.Viewport.Height;
+                var containerHeight = container.Bounds.Height;
+
+                var centerY = targetY - (viewportHeight - containerHeight) / 2;
+                centerY = Math.Max(0, Math.Min(centerY, scrollViewer.Extent.Height - viewportHeight));
+
+                targetOffset = new Vector(scrollViewer.Offset.X, centerY);
             }
 
             await AnimateScrollToAsync(targetOffset);
