@@ -39,11 +39,11 @@
         </Style>
     </UserControl.Styles>
 
-    <!-- 排序/筛选工具栏：竖向布局时纵排，横向布局时横排 -->
+    <!-- 排序/筛选工具栏：竖向布局时纵排靠左，横向布局时横排居中 -->
     <StackPanel x:Name="FilterBarPanel"
                 Spacing="5"
                 Margin="10"
-                HorizontalAlignment="Center"
+                HorizontalAlignment="{Binding IsVerticalLayout, Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}, ConverterParameter=Left}"
                 Orientation="{Binding IsVerticalLayout, Converter={x:Static converters:LayoutOrientationConverter.Instance}}">
 
         <!-- 排序方式 -->

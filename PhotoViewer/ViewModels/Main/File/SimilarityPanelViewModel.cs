@@ -81,6 +81,10 @@ public class SimilarityPanelViewModel : ReactiveObject
     // ── 三态状态机 ──────────────────────────────────────────────────────────
 
     private SimilarityPanelState _panelState = SimilarityPanelState.Empty;
+
+    /// <summary>记录 Indexing 从哪个状态触发，用于决定进度条显示位置。</summary>
+    private bool _indexingFromEmpty = true;
+
     /// <summary>面板当前状态，驱动三态 UI 切换。</summary>
     public SimilarityPanelState PanelState
     {
@@ -92,6 +96,9 @@ public class SimilarityPanelViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(IsStatePartial));
             this.RaisePropertyChanged(nameof(IsStateFull));
             this.RaisePropertyChanged(nameof(IsStateIndexing));
+            this.RaisePropertyChanged(nameof(IsStateIndexingFromEmpty));
+            this.RaisePropertyChanged(nameof(IsStateEmptyOrIndexingFromEmpty));
+            this.RaisePropertyChanged(nameof(IsStatePartialOrIndexing));
         }
     }
 
@@ -99,6 +106,20 @@ public class SimilarityPanelViewModel : ReactiveObject
     public bool IsStatePartial => _panelState == SimilarityPanelState.Partial;
     public bool IsStateFull => _panelState == SimilarityPanelState.Full;
     public bool IsStateIndexing => _panelState == SimilarityPanelState.Indexing;
+
+    /// <summary>Indexing 从 Empty 触发时为 true，用于在面板中央显示进度条。</summary>
+    public bool IsStateIndexingFromEmpty
+        => _panelState == SimilarityPanelState.Indexing && _indexingFromEmpty;
+
+    /// <summary>Empty 态或从 Empty 触发 Indexing 时为 true，保持空态区块可见（按钮原地变进度条）。</summary>
+    public bool IsStateEmptyOrIndexingFromEmpty
+        => _panelState == SimilarityPanelState.Empty
+        || (_panelState == SimilarityPanelState.Indexing && _indexingFromEmpty);
+
+    /// <summary>Partial 态或从 Partial 触发 Indexing 时为 true，保持列表+底部按钮区可见。</summary>
+    public bool IsStatePartialOrIndexing
+        => _panelState == SimilarityPanelState.Partial
+        || (_panelState == SimilarityPanelState.Indexing && !_indexingFromEmpty);
 
     /// <summary>IndexTotal 为 0 时进度条显示不定态。</summary>
     public bool IsIndexTotalUnknown => _indexTotal == 0;
@@ -166,6 +187,13 @@ public class SimilarityPanelViewModel : ReactiveObject
         _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
             .Skip(1)
             .Subscribe(__ => { _ = RecomputeAsync(_main.CurrentFile); });
+
+        // 切换/加载文件夹后重新执行三态判定，避免面板停留在旧文件夹的空态。
+        _folder.AllFilesChanged += () =>
+        {
+            if (_main.Settings.SimilarityPanelExpanded)
+                _ = EvaluatePanelStateAsync();
+        };
     }
 
     // ── 公共命令 ────────────────────────────────────────────────────────────
@@ -260,6 +288,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0) return;
 
+        _indexingFromEmpty = _panelState == SimilarityPanelState.Empty;
         _indexer = new FolderFeatureIndexer();
         IndexProgress = 0;
         IndexTotal = files.Count;
