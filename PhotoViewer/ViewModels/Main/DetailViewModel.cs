@@ -45,7 +45,7 @@ public class DetailViewModel : ReactiveObject
 {
     private readonly MainViewModel _main;
 
-    public bool IsVerticalLayout => _main.IsHorizontalLayout;
+    public bool IsRowLayout => _main.IsRowLayout;
 
     public bool IsDetailViewVisible => _main.IsDetailViewVisible;
 
@@ -82,8 +82,8 @@ public class DetailViewModel : ReactiveObject
             new("右下", new Point(0.75, 0.75))
         };
 
-        _main.WhenAnyValue(vm => vm.IsHorizontalLayout)
-            .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout))));
+        _main.WhenAnyValue(vm => vm.IsRowLayout)
+            .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsRowLayout))));
 
         _main.WhenAnyValue(vm => vm.IsDetailViewVisible)
             .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsDetailViewVisible))));

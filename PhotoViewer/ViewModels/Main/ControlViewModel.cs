@@ -60,7 +60,7 @@ public class ControlViewModel : ReactiveObject
     private MainViewModel Main { get; }
     
     // 布局方向（从主视图模型获取实际布局状态）
-    public bool IsVerticalLayout => Main.IsHorizontalLayout;
+    public bool IsRowLayout => Main.IsRowLayout;
 
     // 当前文件的 EXIF 数据
     public ExifData? CurrentExifData => Main.CurrentFile?.ExifData;

@@ -256,11 +256,11 @@ public class MainViewModel : ViewModelBase
     #region Layout
     
     // 实际使用的布局方向（考虑智能模式）
-    private bool _isHorizontalLayout = false;
-    public bool IsHorizontalLayout
+    private bool _isRowLayout = true;
+    public bool IsRowLayout
     {
-        get => _isHorizontalLayout;
-        private set => this.RaiseAndSetIfChanged(ref _isHorizontalLayout, value);
+        get => _isRowLayout;
+        private set => this.RaiseAndSetIfChanged(ref _isRowLayout, value);
     }
 
     // 屏幕方向状态
@@ -288,19 +288,19 @@ public class MainViewModel : ViewModelBase
     {
         bool newLayout = Settings.LayoutMode switch
         {
-            LayoutMode.Horizontal => true,
-            LayoutMode.Vertical => false,
-            LayoutMode.Auto => IsScreenLandscape,
-            _ => false
+            LayoutMode.Col => false,
+            LayoutMode.Row => true,
+            LayoutMode.Auto => !IsScreenLandscape,
+            _ => true
         };
 
-        if (IsHorizontalLayout != newLayout)
+        if (IsRowLayout != newLayout)
         {
-            IsHorizontalLayout = newLayout;
+            IsRowLayout = newLayout;
 
             // 通知相关视图模型布局已变化
-            ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsVerticalLayout));
-            DetailVM?.RaisePropertyChanged(nameof(DetailVM.IsVerticalLayout));
+            ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsRowLayout));
+            DetailVM?.RaisePropertyChanged(nameof(DetailVM.IsRowLayout));
         }
     }
 

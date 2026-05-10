@@ -34,8 +34,8 @@ public class ThumbnailListViewModel : ReactiveObject
         private set => this.RaiseAndSetIfChanged(ref _filteredFiles, value);
     }
 
-    /// <summary>当前布局是否为竖向(影响列表方向、滚动条朝向、对齐方式)</summary>
-    public bool IsVerticalLayout => _main.IsHorizontalLayout;
+    /// <summary>当前布局是否为行布局（分栏位于上下，影响列表方向、滚动条朝向、对齐方式）</summary>
+    public bool IsRowLayout => _main.IsRowLayout;
 
     /// <summary>设置引用,用于绑定 ShowRating 等</summary>
     public SettingsViewModel Settings => _main.Settings;
@@ -68,8 +68,8 @@ public class ThumbnailListViewModel : ReactiveObject
 
         StartThumbnailLoadingTask();
 
-        _main.WhenAnyValue(x => x.IsHorizontalLayout)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
+        _main.WhenAnyValue(x => x.IsRowLayout)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
         _main.Settings.WhenAnyValue(s => s.SelectedFormats)
             .Subscribe(_ => ApplyFilter());

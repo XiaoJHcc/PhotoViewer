@@ -11,7 +11,7 @@
     <!--
         文件栏(File)三分区容器:上=筛选条,左=主缩略图列表,右=相似聚类面板。
         左/右挂载(竖向滚动)与顶部挂载(横向滚动)共用同一份 Grid 模板:
-        子组件内部根据 IsVerticalLayout 自行切换滚动方向与排列方向。
+        子组件内部根据 IsRowLayout 自行切换滚动方向与排列方向。
     -->
     <Grid RowDefinitions="Auto,*">
         <ContentControl Grid.Row="0"

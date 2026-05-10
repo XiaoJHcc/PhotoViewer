@@ -9,16 +9,16 @@ using Avalonia.Media;
 
 namespace PhotoViewer.Converters;
 
-// 布局方向转换器
+// 布局方向转换器：isRow=true（按行布局，上下分栏）→ Horizontal；isRow=false（按列布局，左右分栏）→ Vertical
 public class LayoutOrientationConverter : IValueConverter
 {
     public static readonly LayoutOrientationConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical)
+        if (value is bool isRow)
         {
-            return isVertical ? Orientation.Vertical : Orientation.Horizontal;
+            return isRow ? Orientation.Horizontal : Orientation.Vertical;
         }
         return Orientation.Horizontal;
     }
@@ -27,7 +27,7 @@ public class LayoutOrientationConverter : IValueConverter
     {
         if (value is Orientation orientation)
         {
-            return orientation == Orientation.Vertical;
+            return orientation == Orientation.Horizontal;
         }
         return false;
     }
@@ -40,17 +40,19 @@ public class ScrollBarVisibilityConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical)
+        if (value is bool isRow)
         {
             bool reverse = parameter?.ToString() == "Reverse";
-            
+
             if (reverse)
             {
-                return isVertical ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+                // 按列布局（isRow=false）竖向滚动 → Auto
+                return isRow ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
             }
             else
             {
-                return isVertical ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+                // 按行布局（isRow=true）横向滚动 → Auto
+                return isRow ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
             }
         }
         return ScrollBarVisibility.Auto;
@@ -62,18 +64,18 @@ public class ScrollBarVisibilityConverter : IValueConverter
     }
 }
 
-// 垂直布局下的水平对齐转换器
-// isVertical=true（控件纵向堆叠）= 侧边布局，返回参数指定值（默认 Stretch）；
-// isVertical=false（控件横向排列）= 顶部布局，返回 Center。
+// 行布局下的水平对齐转换器
+// isRow=false（按列布局，控件纵向堆叠）= 侧边布局，返回参数指定值（默认 Stretch）；
+// isRow=true（按行布局，控件横向排列）= 顶部布局，返回 Center。
 public class VerticalLayoutAlignmentConverter : IValueConverter
 {
     public static readonly VerticalLayoutAlignmentConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical)
+        if (value is bool isRow)
         {
-            if (!isVertical) return HorizontalAlignment.Center;
+            if (isRow) return HorizontalAlignment.Center;
             return parameter?.ToString() switch
             {
                 "Left" => HorizontalAlignment.Left,
@@ -98,16 +100,15 @@ public class GridPositionConverter : IValueConverter
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical && parameter is string param)
+        if (value is bool isRow && parameter is string param)
         {
-            // 参数格式: "VerticalRow,HorizontalColumn" 或 "VerticalColumn,HorizontalRow"
-            // 例如: "0,0" 表示垂直布局时第0行，水平布局时第0列
+            // 参数格式: "RowValue,ColValue"
             var parts = param.Split(',');
-            if (parts.Length == 2 && 
-                int.TryParse(parts[0], out int verticalValue) && 
-                int.TryParse(parts[1], out int horizontalValue))
+            if (parts.Length == 2 &&
+                int.TryParse(parts[0], out int rowValue) &&
+                int.TryParse(parts[1], out int colValue))
             {
-                return isVertical ? verticalValue : horizontalValue;
+                return isRow ? rowValue : colValue;
             }
         }
         return 0;
@@ -122,20 +123,19 @@ public class GridPositionConverter : IValueConverter
 // 通用边框边距转换器 - 根据布局方向返回不同的外边距
 // Margin / Padding / BorderThickness 通用
 // 顺序为 Web CSS 规范 (上, 右, 下, 左)
+// 参数格式: "row|col"，isRow=true 取第一段，isRow=false 取第二段
 public class WebMarginConverter : IValueConverter
 {
     public static readonly WebMarginConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical && parameter is string param)
+        if (value is bool isRow && parameter is string param)
         {
-            // 参数格式: "vertical|horizontal"
-            // 例如: "12,6,12,6|6,12,6,12" 表示垂直布局时上下较高边距，水平布局时左右较宽边距
             var parts = param.Split('|');
             if (parts.Length == 2)
             {
-                var marginStr = isVertical ? parts[0] : parts[1];
+                var marginStr = isRow ? parts[0] : parts[1];
                 var values = marginStr.Split(',');
                 double top, right, bottom, left;
                 switch (values.Length)
@@ -171,21 +171,19 @@ public class WebMarginConverter : IValueConverter
 }
 
 // 网格尺寸转换器 - 根据布局方向返回不同的尺寸
+// 参数格式: "RowSize,ColSize"，isRow=true 取第一段，isRow=false 取第二段
 public class GridSizeConverter : IValueConverter
 {
     public static readonly GridSizeConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical && parameter is string param)
+        if (value is bool isRow && parameter is string param)
         {
-            // 参数格式: "VerticalSize,HorizontalSize"
-            // 例如: "80,Auto" 表示垂直布局时80像素，水平布局时自动
-            // 例如: "*,80" 表示垂直布局时自适应，水平布局时80像素
             var parts = param.Split(',');
             if (parts.Length == 2)
             {
-                var sizeStr = isVertical ? parts[0] : parts[1];
+                var sizeStr = isRow ? parts[0] : parts[1];
                 
                 if (sizeStr == "*")
                 {
@@ -211,20 +209,19 @@ public class GridSizeConverter : IValueConverter
 }
 
 // 星级按钮停靠方向转换器
+// 参数格式: "RowDock,ColDock"，isRow=true 取第一段，isRow=false 取第二段
 public class DockConverter : IValueConverter
 {
     public static readonly DockConverter Instance = new();
 
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is bool isVertical && parameter is string param)
+        if (value is bool isRow && parameter is string param)
         {
-            // 参数格式: "VerticalDock,HorizontalDock"
-            // 例如: "Bottom,Left" 表示垂直布局时使用Bottom，水平布局时使用Left
             var parts = param.Split(',');
             if (parts.Length == 2)
             {
-                var dockStr = isVertical ? parts[0] : parts[1];
+                var dockStr = isRow ? parts[0] : parts[1];
                 
                 return dockStr switch
                 {

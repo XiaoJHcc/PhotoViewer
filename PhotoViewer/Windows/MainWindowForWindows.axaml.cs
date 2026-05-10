@@ -47,7 +47,7 @@ public partial class MainWindowForWindows : Window
             if (RootMainView?.DataContext is MainViewModel vm)
             {
                 // 监听布局切换
-                vm.WhenAnyValue(x => x.IsHorizontalLayout)
+                vm.WhenAnyValue(x => x.IsRowLayout)
                   .Subscribe(_ => Dispatcher.UIThread.Post(UpdateTitleBarLayout));
 
                 // 监听左右/上下缩略图容器尺寸变化
@@ -85,7 +85,7 @@ public partial class MainWindowForWindows : Window
             return;
 
         var vm = rootMainView.DataContext as MainViewModel;
-        bool isHorizontal = vm?.IsHorizontalLayout ?? false;
+        bool isCol = vm?.IsRowLayout == false;
         var rightButtonsWidth = (rightButtonsHost?.Bounds.Width ?? 0) + (rightButtonsHost?.Margin.Right ?? 0);
 
         var leftHost   = rootMainView.FindControl<Border>("LeftThumbHost");
@@ -94,7 +94,7 @@ public partial class MainWindowForWindows : Window
 
         double winWidth = Bounds.Width > 0 ? Bounds.Width : 0;
 
-        if (isHorizontal)
+        if (isCol)
         {
             // 左右布局：标题栏避开左侧缩略图宽度（扣除为边缘填充使用的左 Padding）
             var leftWidthRaw = leftHost?.Bounds.Width ?? 0;

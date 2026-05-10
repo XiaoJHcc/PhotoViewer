@@ -51,23 +51,23 @@
     </UserControl.Styles>
 
     <ScrollViewer Name="ThumbnailScrollViewer"
-                  HorizontalScrollBarVisibility="{Binding IsVerticalLayout,
+                  HorizontalScrollBarVisibility="{Binding IsRowLayout,
                         Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
-                  VerticalScrollBarVisibility="{Binding IsVerticalLayout,
+                  VerticalScrollBarVisibility="{Binding IsRowLayout,
                         Converter={x:Static converters:ScrollBarVisibilityConverter.Instance},
                         ConverterParameter=Reverse}"
                   MinHeight="148">
         <Interaction.Behaviors>
-            <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding !IsVerticalLayout}" />
+            <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding IsRowLayout}" />
         </Interaction.Behaviors>
 
         <ItemsControl Name="ThumbnailItemsControl"
                       ItemsSource="{Binding FilteredFiles}">
             <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <VirtualizingStackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                    <VirtualizingStackPanel HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsRowLayout,
                                     Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
-                                Orientation="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                                Orientation="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsRowLayout,
                                     Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
                                 Margin="10,0,10,10" />
                 </ItemsPanelTemplate>
@@ -83,7 +83,7 @@
                         Margin="3"
                         Padding="0"
                         CornerRadius="8"
-                        HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsVerticalLayout,
+                        HorizontalAlignment="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsRowLayout,
                             Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}">
 
                         <Border BorderThickness="2"

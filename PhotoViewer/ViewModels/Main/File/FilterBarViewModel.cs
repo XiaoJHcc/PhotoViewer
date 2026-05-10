@@ -88,8 +88,8 @@ public class FilterBarViewModel : ReactiveObject
     /// <summary>筛选后文件计数（由 ThumbnailListViewModel 提供）</summary>
     public int FilteredCount => _filteredCountProvider();
 
-    /// <summary>当前布局是否为竖向（决定筛选条横排/纵排）</summary>
-    public bool IsVerticalLayout => _main.IsHorizontalLayout;
+    /// <summary>当前布局是否为行布局（分栏位于上下，决定筛选条横排/纵排）</summary>
+    public bool IsRowLayout => _main.IsRowLayout;
 
     /// <summary>设置引用，用于绑定显示星级开关</summary>
     public SettingsViewModel Settings => _main.Settings;
@@ -113,8 +113,8 @@ public class FilterBarViewModel : ReactiveObject
         _main = main;
         _folder = folder;
 
-        _main.WhenAnyValue(x => x.IsHorizontalLayout)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
+        _main.WhenAnyValue(x => x.IsRowLayout)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
         _folder.WhenAnyValue(x => x.FolderName)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(FolderName)));
