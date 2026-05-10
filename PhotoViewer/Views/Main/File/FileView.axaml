@@ -23,7 +23,7 @@
             </ContentControl.ContentTemplate>
         </ContentControl>
 
-        <Grid Grid.Row="1" ColumnDefinitions="*,Auto">
+        <Grid Grid.Row="1" Name="ContentGrid" ColumnDefinitions="116,Auto">
             <ContentControl Grid.Column="0"
                             Content="{Binding ThumbnailList}">
                 <ContentControl.ContentTemplate>

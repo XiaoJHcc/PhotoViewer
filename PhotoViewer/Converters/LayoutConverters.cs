@@ -63,6 +63,8 @@ public class ScrollBarVisibilityConverter : IValueConverter
 }
 
 // 垂直布局下的水平对齐转换器
+// isVertical=true（控件纵向堆叠）= 侧边布局，返回参数指定值（默认 Stretch）；
+// isVertical=false（控件横向排列）= 顶部布局，返回 Center。
 public class VerticalLayoutAlignmentConverter : IValueConverter
 {
     public static readonly VerticalLayoutAlignmentConverter Instance = new();
@@ -71,7 +73,14 @@ public class VerticalLayoutAlignmentConverter : IValueConverter
     {
         if (value is bool isVertical)
         {
-            return isVertical ? HorizontalAlignment.Center : HorizontalAlignment.Stretch;
+            if (!isVertical) return HorizontalAlignment.Center;
+            return parameter?.ToString() switch
+            {
+                "Left" => HorizontalAlignment.Left,
+                "Center" => HorizontalAlignment.Center,
+                "Right" => HorizontalAlignment.Right,
+                _ => HorizontalAlignment.Stretch
+            };
         }
         return HorizontalAlignment.Stretch;
     }
