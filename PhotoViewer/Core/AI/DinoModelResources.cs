@@ -30,8 +30,20 @@ internal static class DinoModelResources
     /// <summary>ONNX 输入节点名。</summary>
     public const string InputName = "pixel_values";
 
-    /// <summary>ONNX 输出节点名。</summary>
-    public const string OutputName = "cls_embedding";
+    /// <summary>ONNX [CLS] 输出节点名（全局特征，用于相似聚类）。</summary>
+    public const string ClsOutputName = "cls_embedding";
+
+    /// <summary>ONNX patch tokens 输出节点名（M1 暂不消费，B 阶段美学评分使用）。</summary>
+    public const string PatchOutputName = "patch_tokens";
+
+    /// <summary>ViT 的 patch size（像素）。ViT-S/16 为 16。</summary>
+    public const int PatchSize = 16;
+
+    /// <summary>patch 网格边长 = InputSize / PatchSize。518/16 向下取整为 32。</summary>
+    public const int PatchGrid = InputSize / PatchSize;
+
+    /// <summary>patch token 数量 = PatchGrid²，与 ONNX `patch_tokens` 维度 N 一致。</summary>
+    public const int PatchTokenCount = PatchGrid * PatchGrid;
 
     /// <summary>
     /// 模型标识符，写入 <c>photos.feature_model</c>。变更模型或预处理规格时必须更新，

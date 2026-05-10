@@ -43,7 +43,28 @@ public static class DinoFeatureExtractor
                 IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
             };
             _session = new InferenceSession(bytes, options);
+            EnsureDualOutputSchema(_session);
             return _session;
+        }
+    }
+
+    /// <summary>
+    /// 校验 ONNX 模型同时导出 CLS 与 patch 两路输出。M1 虽然只消费 CLS，但缺 patch 端口
+    /// 意味着导出脚本未更新（B 阶段上线时才发现就晚了），这里早失败早提示。
+    /// </summary>
+    private static void EnsureDualOutputSchema(InferenceSession session)
+    {
+        bool hasCls = false, hasPatch = false;
+        foreach (var meta in session.OutputMetadata)
+        {
+            if (meta.Key == DinoModelResources.ClsOutputName) hasCls = true;
+            else if (meta.Key == DinoModelResources.PatchOutputName) hasPatch = true;
+        }
+        if (!hasCls || !hasPatch)
+        {
+            throw new InvalidOperationException(
+                $"DINOv3 ONNX 模型缺少必要输出端口：cls={hasCls}, patch={hasPatch}。" +
+                $"请用最新 Tools/export_dinov3_onnx.py 重新导出（CLS + patch 双输出）。");
         }
     }
 
@@ -81,7 +102,8 @@ public static class DinoFeatureExtractor
         };
 
         using var outputs = session.Run(inputs);
-        var cls = outputs.First(v => v.Name == DinoModelResources.OutputName).AsTensor<float>();
+        // M1 只消费 CLS；patch_tokens 端口已就绪但闲置，B 阶段由 PatchFeatureExtractor 接管。
+        var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
 
         var result = new float[DinoModelResources.FeatureDim];
         int i = 0;
