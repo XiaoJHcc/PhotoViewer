@@ -142,7 +142,8 @@ public partial class SettingsViewModel
             VisibleCenterPreloadCount = VisibleCenterPreloadCount,
             VisibleCenterDelayMs = VisibleCenterDelayMs,
             NativePreloadParallelism = NativePreloadParallelism,
-            CpuPreloadParallelism = CpuPreloadParallelism
+            CpuPreloadParallelism = CpuPreloadParallelism,
+            SimilarityPanelExpanded = SimilarityPanelExpanded
         };
     }
 
@@ -198,6 +199,8 @@ public partial class SettingsViewModel
                 CpuPreloadParallelism = model.CpuPreloadParallelism;
             else if (model.PreloadParallelism > 0)
                 CpuPreloadParallelism = model.PreloadParallelism;
+
+            SimilarityPanelExpanded = model.SimilarityPanelExpanded;
         }
         finally
         {

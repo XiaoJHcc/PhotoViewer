@@ -16,6 +16,14 @@ public partial class SettingsViewModel : ReactiveObject
     private bool _isRestoring;
     private bool _hasLoaded;
 
+    /// <summary>相似聚类面板是否展开（跨会话保留）。</summary>
+    private bool _similarityPanelExpanded;
+    public bool SimilarityPanelExpanded
+    {
+        get => _similarityPanelExpanded;
+        set => this.RaiseAndSetIfChanged(ref _similarityPanelExpanded, value);
+    }
+
     // 检查是否为安卓平台
     public static bool IsAndroid => OperatingSystem.IsAndroid();
     

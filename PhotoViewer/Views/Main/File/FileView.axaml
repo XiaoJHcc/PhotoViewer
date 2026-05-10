@@ -34,6 +34,7 @@
             </ContentControl>
 
             <ContentControl Grid.Column="1"
+                            IsVisible="{Binding IsSimilarityPanelOpen}"
                             Content="{Binding SimilarityPanel}">
                 <ContentControl.ContentTemplate>
                     <DataTemplate DataType="vm:SimilarityPanelViewModel">
