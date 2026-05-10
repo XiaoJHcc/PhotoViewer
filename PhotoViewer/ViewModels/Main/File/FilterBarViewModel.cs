@@ -8,7 +8,7 @@ namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 文件栏顶部筛选/排序控件的视图模型。
-/// 仅承载筛选、排序、计数等 UI 状态;实际的筛选执行由 <see cref="ThumbnailListViewModel"/> 订阅 <see cref="FilterChanged"/> 事件后完成。
+/// 仅承载筛选、排序、计数等 UI 状态；实际的筛选执行由 <see cref="ThumbnailListViewModel"/> 订阅 <see cref="FilterChanged"/> 事件后完成。
 /// </summary>
 public class FilterBarViewModel : ReactiveObject
 {
@@ -69,29 +69,45 @@ public class FilterBarViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _selectedRatingFilter, value);
     }
 
-    /// <summary>当前文件夹名称(只读,从 FolderViewModel 透传)</summary>
+    /// <summary>相似聚类面板是否展开；初值从 Settings 读取，变更时写回 Settings 并触发 <see cref="SimilarityPanelToggled"/>。</summary>
+    public bool IsSimilarityPanelOpen
+    {
+        get => _main.Settings.SimilarityPanelExpanded;
+        set
+        {
+            if (_main.Settings.SimilarityPanelExpanded == value) return;
+            _main.Settings.SimilarityPanelExpanded = value;
+            this.RaisePropertyChanged();
+            SimilarityPanelToggled?.Invoke(value);
+        }
+    }
+
+    /// <summary>当前文件夹名称（只读，从 FolderViewModel 透传）</summary>
     public string FolderName => _folder.FolderName;
 
-    /// <summary>筛选后文件计数(由 ThumbnailListViewModel 提供)</summary>
+    /// <summary>筛选后文件计数（由 ThumbnailListViewModel 提供）</summary>
     public int FilteredCount => _filteredCountProvider();
 
-    /// <summary>当前布局是否为竖向(决定筛选条横排/纵排)</summary>
+    /// <summary>当前布局是否为竖向（决定筛选条横排/纵排）</summary>
     public bool IsVerticalLayout => _main.IsHorizontalLayout;
 
-    /// <summary>设置引用,用于绑定显示星级开关</summary>
+    /// <summary>设置引用，用于绑定显示星级开关</summary>
     public SettingsViewModel Settings => _main.Settings;
 
-    /// <summary>排序模式或星级筛选发生变化时触发,由 ThumbnailListViewModel 订阅以重算筛选/排序</summary>
+    /// <summary>排序模式或星级筛选发生变化时触发，由 ThumbnailListViewModel 订阅以重算筛选/排序</summary>
     public event Action? FilterChanged;
 
-    /// <summary>仅排序变化时触发(可单独优化为不重算筛选)</summary>
+    /// <summary>仅排序变化时触发（可单独优化为不重算筛选）</summary>
     public event Action? SortChanged;
+
+    /// <summary>相似聚类面板展开/关闭时触发，参数为新的展开状态。</summary>
+    public event Action<bool>? SimilarityPanelToggled;
 
     /// <summary>
     /// 构造筛选条视图模型。
     /// </summary>
-    /// <param name="main">主视图模型,用于读取布局/设置</param>
-    /// <param name="folder">文件源视图模型,用于读取文件夹名</param>
+    /// <param name="main">主视图模型，用于读取布局/设置</param>
+    /// <param name="folder">文件源视图模型，用于读取文件夹名</param>
     public FilterBarViewModel(MainViewModel main, FolderViewModel folder)
     {
         _main = main;
@@ -110,6 +126,10 @@ public class FilterBarViewModel : ReactiveObject
         this.WhenAnyValue(x => x.SelectedRatingFilter)
             .Skip(1)
             .Subscribe(_ => FilterChanged?.Invoke());
+
+        // 当 Settings 里的值被外部（如 ApplyModel）改变时，同步通知 UI
+        _main.Settings.WhenAnyValue(x => x.SimilarityPanelExpanded)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(IsSimilarityPanelOpen)));
     }
 
     /// <summary>
@@ -122,13 +142,13 @@ public class FilterBarViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 通知筛选计数已变化,触发 UI 更新。
+    /// 通知筛选计数已变化，触发 UI 更新。
     /// </summary>
     public void RaiseFilteredCountChanged() => this.RaisePropertyChanged(nameof(FilteredCount));
 }
 
 /// <summary>
-/// 星级筛选选项,序列化键值由 <see cref="ThumbnailListViewModel.ApplyFilter"/> 解析。
+/// 星级筛选选项，序列化键值由 <see cref="ThumbnailListViewModel.ApplyFilter"/> 解析。
 /// </summary>
 public class RatingFilterOption
 {

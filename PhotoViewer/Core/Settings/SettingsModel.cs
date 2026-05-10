@@ -24,6 +24,9 @@ public sealed class SettingsModel
     public AppleMappingTarget MapOptionTarget { get; set; } = AppleMappingTarget.Alt;
     public AppleMappingTarget MapControlTarget { get; set; } = AppleMappingTarget.Ctrl;
 
+    /// <summary>相似聚类面板是否展开（跨会话保留）。</summary>
+    public bool SimilarityPanelExpanded { get; set; } = false;
+
     public int BitmapCacheMaxCount { get; set; }
     public int BitmapCacheMaxMemory { get; set; }
     public int PreloadForwardCount { get; set; }

@@ -17,9 +17,29 @@
             <Setter Property="BorderBrush" Value="#444" />
             <Setter Property="CornerRadius" Value="6" />
         </Style>
+
+        <Style Selector="ToggleButton.SimToggle">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="CornerRadius" Value="6" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="BorderBrush" Value="#555" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="#AAA" />
+            <Setter Property="HorizontalAlignment" Value="Stretch" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+        </Style>
+        <Style Selector="ToggleButton.SimToggle:checked">
+            <Setter Property="Background" Value="#2A3A2A" />
+            <Setter Property="BorderBrush" Value="#4A7A4A" />
+            <Setter Property="Foreground" Value="#88CC88" />
+        </Style>
+        <Style Selector="ToggleButton.SimToggle:pointerover">
+            <Setter Property="Background" Value="#333" />
+        </Style>
     </UserControl.Styles>
 
-    <!-- 排序/筛选工具栏:竖向布局时纵排,横向布局时横排 -->
+    <!-- 排序/筛选工具栏：竖向布局时纵排，横向布局时横排 -->
     <StackPanel x:Name="FilterBarPanel"
                 Spacing="5"
                 Margin="10"
@@ -67,5 +87,12 @@
                    VerticalAlignment="Center"
                    Foreground="#DDD"
                    FontSize="12"/>
+
+        <!-- 相似聚类 toggle：竖排布局在底部，横排布局在最右端 -->
+        <ToggleButton Classes="SimToggle"
+                      IsChecked="{Binding IsSimilarityPanelOpen}"
+                      Content="相似聚类"
+                      Width="90"
+                      ToolTip.Tip="展开/关闭相似聚类面板" />
     </StackPanel>
 </UserControl>

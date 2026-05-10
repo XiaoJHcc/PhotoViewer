@@ -61,6 +61,15 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
+    /// 将外部计算好的向量写入进程内存缓存（不写数据库）。
+    /// 供 <see cref="FolderFeatureIndexer"/> 在批量写库后同步内存缓存，避免下次查询再走数据库。
+    /// </summary>
+    public static void PutMemoryCache(string fingerprint, float[] vector)
+    {
+        _memoryCache[fingerprint] = vector;
+    }
+
+    /// <summary>
     /// 不触发推理，仅从进程缓存或数据库里读。用于"只用已有特征做聚类"的快速路径。
     /// </summary>
     public static async Task<float[]?> TryReadAsync(ImageFile file, CancellationToken ct = default)

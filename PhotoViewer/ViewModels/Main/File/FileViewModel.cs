@@ -4,8 +4,8 @@ using System;
 namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
-/// 文件栏(File)容器视图模型,组合筛选条 + 主缩略图列表 + 相似聚类面板三块。
-/// 自身不持有业务状态,仅协调三个子 VM 的生命周期。
+/// 文件栏（File）容器视图模型，组合筛选条 + 主缩略图列表 + 相似聚类面板三块。
+/// 自身不持有业务状态，仅协调三个子 VM 的生命周期。
 /// </summary>
 public class FileViewModel : ReactiveObject
 {
@@ -15,11 +15,14 @@ public class FileViewModel : ReactiveObject
     public ThumbnailListViewModel ThumbnailList { get; }
     public SimilarityPanelViewModel SimilarityPanel { get; }
 
-    /// <summary>当前布局是否为竖向(决定 FileView 内三分区是横排还是纵排)</summary>
+    /// <summary>当前布局是否为竖向（决定 FileView 内三分区是横排还是纵排）</summary>
     public bool IsVerticalLayout => Main.IsHorizontalLayout;
 
+    /// <summary>相似聚类面板是否展开（绑定到 FileView 的 IsVisible）</summary>
+    public bool IsSimilarityPanelOpen => FilterBar.IsSimilarityPanelOpen;
+
     /// <summary>
-    /// 构造文件栏容器视图模型,创建并连接三个子 VM。
+    /// 构造文件栏容器视图模型，创建并连接三个子 VM。
     /// </summary>
     /// <param name="main">主视图模型</param>
     public FileViewModel(MainViewModel main)
@@ -28,9 +31,17 @@ public class FileViewModel : ReactiveObject
 
         FilterBar = new FilterBarViewModel(main, main.FolderVM);
         ThumbnailList = new ThumbnailListViewModel(main, main.FolderVM, FilterBar);
-        SimilarityPanel = new SimilarityPanelViewModel(main, ThumbnailList);
+        SimilarityPanel = new SimilarityPanelViewModel(main, ThumbnailList, main.FolderVM);
 
         main.WhenAnyValue(x => x.IsHorizontalLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsVerticalLayout)));
+
+        // 面板展开时触发三态判定；关闭时无需操作
+        FilterBar.SimilarityPanelToggled += isOpen =>
+        {
+            this.RaisePropertyChanged(nameof(IsSimilarityPanelOpen));
+            if (isOpen)
+                SimilarityPanel.OnPanelOpened();
+        };
     }
 }
