@@ -179,11 +179,10 @@
                     </Grid>
                 </StackPanel>
 
-                <!-- 列表:填满剩余空间。Padding=4 在 chrome 层不影响滚动范围;
-                     底部预留余量由 VSP Margin 提供,确保最后一项可完整滚出 -->
+                <!-- 列表:填满剩余空间。chrome 交由 VSP Margin 管理(参考主缩略图栏写法),
+                     Padding 在 ScrollViewer 上不会扩展滚动范围,会导致最后一项滚不到底 -->
                 <ScrollViewer Name="SimilarityScrollViewerPartial"
                               IsVisible="{Binding HasItems}"
-                              Padding="4"
                               HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                               VerticalScrollBarVisibility="{Binding IsRowLayout,
@@ -200,7 +199,7 @@
                                     HorizontalAlignment="Left"
                                     Margin="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:WebMarginConverter.Instance},
-                                        ConverterParameter='0,0,0,0|0,0,5,0'}"
+                                        ConverterParameter='4,4,4,4|4,4,8,4'}"
                                     Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                             </ItemsPanelTemplate>
@@ -270,7 +269,6 @@
 
                 <ScrollViewer Name="SimilarityScrollViewer"
                               IsVisible="{Binding HasItems}"
-                              Padding="4"
                               HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                               VerticalScrollBarVisibility="{Binding IsRowLayout,
@@ -289,7 +287,7 @@
                                     HorizontalAlignment="Left"
                                     Margin="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:WebMarginConverter.Instance},
-                                        ConverterParameter='0,0,0,0|0,0,5,0'}"
+                                        ConverterParameter='4,4,4,4|4,4,8,4'}"
                                     Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
                                         Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                             </ItemsPanelTemplate>
