@@ -9,12 +9,16 @@
              x:DataType="vm:FileViewModel">
 
     <!--
-        文件栏(File)三分区容器:上=筛选条,左=主缩略图列表,右=相似聚类面板。
-        左/右挂载(竖向滚动)与顶部挂载(横向滚动)共用同一份 Grid 模板:
-        子组件内部根据 IsRowLayout 自行切换滚动方向与排列方向。
+        文件栏(File)三分区容器:筛选条 + 主缩略图列表 + 相似聚类面板
+        采用单层 Grid:行=Auto/* 容纳筛选条与列表区,列在代码后置中根据布局方向切换。
+        - 列布局(IsRowLayout=false):Col0=116px 容纳筛选条与缩略图列表;Col1=Auto 容纳相似面板。
+          筛选条 ColumnSpan=1 仅占 Col0,确保展开相似面板时筛选条不随之外移。
+        - 行布局(IsRowLayout=true):Col0/Col1 各占 *;筛选条 ColumnSpan=2 横跨两列。
     -->
-    <Grid RowDefinitions="Auto,*">
-        <ContentControl Grid.Row="0"
+    <Grid x:Name="OuterGrid" RowDefinitions="Auto,*">
+        <ContentControl x:Name="FilterHost"
+                        Grid.Row="0"
+                        Grid.Column="0"
                         Content="{Binding FilterBar}">
             <ContentControl.ContentTemplate>
                 <DataTemplate DataType="vm:FilterBarViewModel">
@@ -23,25 +27,25 @@
             </ContentControl.ContentTemplate>
         </ContentControl>
 
-        <Grid Grid.Row="1" Name="ContentGrid" ColumnDefinitions="116,Auto">
-            <ContentControl Grid.Column="0"
-                            Content="{Binding ThumbnailList}">
-                <ContentControl.ContentTemplate>
-                    <DataTemplate DataType="vm:ThumbnailListViewModel">
-                        <fileViews:ThumbnailListView />
-                    </DataTemplate>
-                </ContentControl.ContentTemplate>
-            </ContentControl>
+        <ContentControl Grid.Row="1"
+                        Grid.Column="0"
+                        Content="{Binding ThumbnailList}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate DataType="vm:ThumbnailListViewModel">
+                    <fileViews:ThumbnailListView />
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
 
-            <ContentControl Grid.Column="1"
-                            IsVisible="{Binding IsSimilarityPanelOpen}"
-                            Content="{Binding SimilarityPanel}">
-                <ContentControl.ContentTemplate>
-                    <DataTemplate DataType="vm:SimilarityPanelViewModel">
-                        <fileViews:SimilarityListView />
-                    </DataTemplate>
-                </ContentControl.ContentTemplate>
-            </ContentControl>
-        </Grid>
+        <ContentControl Grid.Row="1"
+                        Grid.Column="1"
+                        IsVisible="{Binding IsSimilarityPanelOpen}"
+                        Content="{Binding SimilarityPanel}">
+            <ContentControl.ContentTemplate>
+                <DataTemplate DataType="vm:SimilarityPanelViewModel">
+                    <fileViews:SimilarityListView />
+                </DataTemplate>
+            </ContentControl.ContentTemplate>
+        </ContentControl>
     </Grid>
 </UserControl>

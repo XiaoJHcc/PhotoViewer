@@ -69,7 +69,7 @@
                                     Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance}}"
                                 Orientation="{Binding $parent[UserControl].((vm:ThumbnailListViewModel)DataContext).IsRowLayout,
                                     Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
-                                Margin="10,0,10,10" />
+                                Margin="10,5,10,10" />
                 </ItemsPanelTemplate>
             </ItemsControl.ItemsPanel>
 

@@ -49,11 +49,11 @@
             <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
         </Style>
 
-        <!-- 提取/补齐按钮样式，宽高固定以便进度条完全替换 -->
+        <!-- 提取/补齐按钮样式,宽高固定以便进度条完全替换。宽度对齐列表项卡片 90px,避免撑宽面板 -->
         <Style Selector="Button.SimActionButton">
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Height" Value="28" />
-            <Setter Property="Width" Value="100" />
+            <Setter Property="Width" Value="90" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="BorderThickness" Value="1" />
             <Setter Property="BorderBrush" Value="#555" />
@@ -66,10 +66,10 @@
             <Setter Property="Background" Value="#3A3A3A" />
         </Style>
 
-        <!-- 进度条覆盖按钮，同宽高 -->
+        <!-- 进度条覆盖按钮,同宽高 -->
         <Style Selector="ProgressBar.SimIndexProgress">
             <Setter Property="Height" Value="28" />
-            <Setter Property="Width" Value="100" />
+            <Setter Property="Width" Value="90" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Foreground" Value="#4A7A4A" />
             <Setter Property="Background" Value="#2A2A2A" />
@@ -77,20 +77,29 @@
         </Style>
     </UserControl.Styles>
 
-    <!-- 外层 Border：背景 + 圆角描边，形成独立的聚类面板视觉区块 -->
-    <!-- IsRowLayout=false（按列布局，侧边）：右侧紧贴窗口边缘，去掉右边距 -->
-    <!-- IsRowLayout=true（按行布局，顶部）：四周均留 4px 间距 -->
+    <!--
+        相似聚类面板外壳。
+        Padding=4 + Border 1 + 列表项 Margin=3 = chrome 上下各 8px,138 + 16 = 154 严格匹配主列表高度。
+        宽度: 卡片 90 + chrome 16 = 106px,紧贴内容不留多余右边距。
+        CornerRadius 6 在 4px 内边距下不裁切 90×138 卡片的高亮描边。
+        - 列布局(IsRowLayout=false):VerticalAlignment=Stretch 吃满列高,
+                                    避免最后一项被 154 MinHeight + 底部按钮区夹挤而裁切。
+        - 行布局(IsRowLayout=true):VerticalAlignment=Top + MinHeight=154,
+                                  避免被 row=* 撑高,导致文件栏整体变高。
+    -->
     <Border Background="#1E1E1E"
             BorderBrush="#404040"
             BorderThickness="1"
-            CornerRadius="8"
-            Margin="{Binding IsRowLayout,
-                Converter={x:Static converters:WebMarginConverter.Instance},
-                ConverterParameter='4,4,4,4|4,0,4,4'}"
-            MinWidth="116">
+            CornerRadius="6"
+            Margin="0,0,4,0"
+            VerticalAlignment="{Binding IsRowLayout,
+                Converter={x:Static converters:RowColVAlignmentConverter.Instance},
+                ConverterParameter='Top,Stretch'}"
+            MinWidth="106"
+            MinHeight="154">
 
         <Grid>
-            <!-- ── Empty 态：无任何特征入库；Indexing(从Empty)时进度条原地替换按钮 ── -->
+            <!-- ── Empty 态:无任何特征入库;Indexing(从Empty)时进度条原地替换按钮 ── -->
             <Grid IsVisible="{Binding IsStateEmptyOrIndexingFromEmpty}"
                   RowDefinitions="*,Auto,12">
                 <TextBlock Grid.Row="0"
@@ -102,8 +111,7 @@
                            TextWrapping="Wrap"
                            TextAlignment="Center"
                            Margin="12,12,12,8" />
-                <!-- 按钮与进度条原地叠放，同宽高 -->
-                <Grid Grid.Row="1" Width="100" Height="28" HorizontalAlignment="Center">
+                <Grid Grid.Row="1" Width="90" Height="28" HorizontalAlignment="Center">
                     <Button Classes="SimActionButton"
                             IsVisible="{Binding !IsStateIndexing}"
                             Command="{Binding StartIndexingCommand}"
@@ -125,34 +133,35 @@
                 </Grid>
             </Grid>
 
-            <!-- ── Partial 态（含从Partial触发的Indexing）：列表占主体，提示+按钮竖向在底/横向在右 ── -->
+            <!-- ── Partial 态(含从Partial触发的Indexing):列表占主体,提示+按钮竖向在底/横向在右 ── -->
             <DockPanel IsVisible="{Binding IsStatePartialOrIndexing}">
 
-                <!-- 按钮区：竖向布局停靠 Bottom，横向布局停靠 Right -->
+                <!-- 按钮区 Margin: 行布局(Dock=Right)左 8 给 ScrollViewer 留间距、其余 3 防撑高;
+                                    列布局(Dock=Bottom)上下 8 给视觉留空、左右 3 防撑宽 -->
                 <StackPanel DockPanel.Dock="{Binding IsRowLayout,
                                 Converter={x:Static converters:DockConverter.Instance},
                                 ConverterParameter='Right,Bottom'}"
                             VerticalAlignment="Bottom"
                             HorizontalAlignment="Center"
                             Spacing="6"
-                            Margin="8">
+                            Margin="{Binding IsRowLayout,
+                                Converter={x:Static converters:WebMarginConverter.Instance},
+                                ConverterParameter='3,3,3,8|8,3,8,3'}">
                     <TextBlock FontSize="10"
                                Foreground="#777"
                                HorizontalAlignment="Center"
                                TextWrapping="Wrap"
                                TextAlignment="Center">
-                        <!-- <Run Text="还有 " /> -->
                         <Run Text="{Binding UnindexedCount}" />
                         <Run Text=" 张未提取" />
                     </TextBlock>
-                    <!-- 按钮与进度条原地叠放，同宽高 -->
                     <Grid HorizontalAlignment="Center">
                         <Button Classes="SimActionButton"
                                 IsVisible="{Binding !IsStateIndexing}"
                                 Command="{Binding StartIndexingCommand}"
                                 Content="补齐全部" />
                         <Grid IsVisible="{Binding IsStateIndexing}"
-                              Width="100" Height="28"
+                              Width="90" Height="28"
                               HorizontalAlignment="Center">
                             <ProgressBar Classes="SimIndexProgress"
                                          Value="{Binding IndexProgress}"
@@ -170,12 +179,11 @@
                     </Grid>
                 </StackPanel>
 
-                <!-- 列表：填满剩余空间 -->
+                <!-- 列表:填满剩余空间。Padding=4 在 chrome 层不影响滚动范围;
+                     底部预留余量由 VSP Margin 提供,确保最后一项可完整滚出 -->
                 <ScrollViewer Name="SimilarityScrollViewerPartial"
                               IsVisible="{Binding HasItems}"
-                              Padding="{Binding IsRowLayout,
-                                    Converter={x:Static converters:WebMarginConverter.Instance},
-                                    ConverterParameter='4,4,4,4|4,0,4,4'}"
+                              Padding="4"
                               HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                               VerticalScrollBarVisibility="{Binding IsRowLayout,
@@ -185,18 +193,16 @@
                         <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding IsRowLayout}" />
                     </Interaction.Behaviors>
                     <ItemsControl ItemsSource="{Binding SimilarItems}"
-                                  HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                      Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
-                                      ConverterParameter=Left}">
+                                  HorizontalAlignment="Left">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel
-                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
-                                        ConverterParameter=Left}"
+                                    HorizontalAlignment="Left"
+                                    Margin="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
+                                        Converter={x:Static converters:WebMarginConverter.Instance},
+                                        ConverterParameter='0,0,0,0|0,0,5,0'}"
                                     Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
-                                    Margin="4" />
+                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
                         <ItemsControl.ItemTemplate>
@@ -208,7 +214,8 @@
                                     BorderThickness="0"
                                     Margin="3"
                                     Padding="0"
-                                    CornerRadius="8">
+                                    CornerRadius="8"
+                                    HorizontalAlignment="Left">
                                     <Border BorderThickness="2"
                                             BorderBrush="{Binding File.IsCurrentImage, Converter={StaticResource BoolToBorderConverter}}"
                                             CornerRadius="7"
@@ -252,7 +259,7 @@
                 </ScrollViewer>
             </DockPanel>
 
-            <!-- ── Full 态：全部入库，显示完整聚类列表 ── -->
+            <!-- ── Full 态:全部入库,显示完整聚类列表 ── -->
             <Grid IsVisible="{Binding IsStateFull}">
                 <TextBlock Text="无相似照片"
                            FontSize="11"
@@ -263,9 +270,7 @@
 
                 <ScrollViewer Name="SimilarityScrollViewer"
                               IsVisible="{Binding HasItems}"
-                              Padding="{Binding IsRowLayout,
-                                    Converter={x:Static converters:WebMarginConverter.Instance},
-                                    ConverterParameter='4,4,4,4|4,0,4,4'}"
+                              Padding="4"
                               HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                               VerticalScrollBarVisibility="{Binding IsRowLayout,
@@ -277,18 +282,16 @@
 
                     <ItemsControl Name="SimilarityItemsControl"
                                   ItemsSource="{Binding SimilarItems}"
-                                  HorizontalAlignment="{Binding IsRowLayout,
-                                      Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
-                                      ConverterParameter=Left}">
+                                  HorizontalAlignment="Left">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
                                 <VirtualizingStackPanel
-                                    HorizontalAlignment="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:VerticalLayoutAlignmentConverter.Instance},
-                                        ConverterParameter=Left}"
+                                    HorizontalAlignment="Left"
+                                    Margin="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
+                                        Converter={x:Static converters:WebMarginConverter.Instance},
+                                        ConverterParameter='0,0,0,0|0,0,5,0'}"
                                     Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}"
-                                    Margin="4" />
+                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
                             </ItemsPanelTemplate>
                         </ItemsControl.ItemsPanel>
 
@@ -301,7 +304,8 @@
                                     BorderThickness="0"
                                     Margin="3"
                                     Padding="0"
-                                    CornerRadius="8">
+                                    CornerRadius="8"
+                                    HorizontalAlignment="Left">
 
                                     <Border BorderThickness="2"
                                             BorderBrush="{Binding File.IsCurrentImage, Converter={StaticResource BoolToBorderConverter}}"
