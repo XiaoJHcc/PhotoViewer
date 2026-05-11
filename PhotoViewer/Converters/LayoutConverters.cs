@@ -93,6 +93,40 @@ public class VerticalLayoutAlignmentConverter : IValueConverter
     }
 }
 
+// 行/列布局垂直对齐双段转换器
+// 参数格式: "RowAlign,ColAlign"，每段可选 Top/Center/Bottom/Stretch
+// isRow=true 取第一段，isRow=false 取第二段
+public class RowColVAlignmentConverter : IValueConverter
+{
+    public static readonly RowColVAlignmentConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is bool isRow && parameter is string param)
+        {
+            var parts = param.Split(',');
+            if (parts.Length == 2)
+            {
+                var alignStr = isRow ? parts[0] : parts[1];
+                return alignStr switch
+                {
+                    "Top" => VerticalAlignment.Top,
+                    "Center" => VerticalAlignment.Center,
+                    "Bottom" => VerticalAlignment.Bottom,
+                    "Stretch" => VerticalAlignment.Stretch,
+                    _ => VerticalAlignment.Stretch
+                };
+            }
+        }
+        return VerticalAlignment.Stretch;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
 // 通用网格位置转换器 - 根据参数返回不同的行列位置
 public class GridPositionConverter : IValueConverter
 {
