@@ -1,23 +1,29 @@
 using System;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Interactivity;
 using Avalonia.Xaml.Interactivity;
 
 namespace PhotoViewer.Behaviors;
 
 public class HorizontalScrollWheelBehavior : Behavior<ScrollViewer>
 {
-    // 添加公共无参数构造函数
     public HorizontalScrollWheelBehavior()
     {
     }
-    
+
+    /// <summary>
+    /// 用 AddHandler(handledEventsToo:true) 订阅,确保即使 ScrollViewer 自身的默认处理器
+    /// 把 PointerWheelChanged 标记为 Handled(例如行布局下 V=Disabled、H=Auto 时部分容器会先吃掉事件),
+    /// 我们的横向滚动逻辑依然能拿到事件。
+    /// </summary>
     protected override void OnAttached()
     {
         base.OnAttached();
         if (AssociatedObject is ScrollViewer scrollViewer)
         {
-            scrollViewer.PointerWheelChanged += OnPointerWheelChanged;
+            scrollViewer.AddHandler(InputElement.PointerWheelChangedEvent,
+                OnPointerWheelChanged, RoutingStrategies.Bubble, handledEventsToo: true);
         }
     }
 
@@ -25,7 +31,7 @@ public class HorizontalScrollWheelBehavior : Behavior<ScrollViewer>
     {
         if (AssociatedObject is ScrollViewer scrollViewer)
         {
-            scrollViewer.PointerWheelChanged -= OnPointerWheelChanged;
+            scrollViewer.RemoveHandler(InputElement.PointerWheelChangedEvent, OnPointerWheelChanged);
         }
         base.OnDetaching();
     }
