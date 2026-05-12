@@ -14,26 +14,12 @@ using PhotoViewer.ViewModels.Settings;
 namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
-/// 相似聚类面板的状态枚举。
-/// </summary>
-public enum SimilarityPanelState
-{
-    /// <summary>当前文件夹无任何照片已在数据库中算过特征。</summary>
-    Empty,
-    /// <summary>已有部分照片入库，但仍有未算过的。</summary>
-    Partial,
-    /// <summary>当前文件夹每张都已在库，显示完整聚类结果。</summary>
-    Full,
-    /// <summary>正在批量提取特征中。</summary>
-    Indexing
-}
-
-/// <summary>
 /// 相似聚类面板的视图模型。
-/// 订阅 <see cref="MainViewModel.CurrentFile"/> 切换，异步调用 <see cref="SimilarityService"/>
-/// 计算相似项并暴露给 <c>SimilarityListView</c>；同时通过 <see cref="ThumbnailListViewModel"/>
-/// 的加载队列，触发相似项的缩略图加载。
-/// 展开时执行三态判定（Empty/Partial/Full），并支持手动触发全文件夹批量特征提取。
+/// 订阅 <see cref="MainViewModel.CurrentFile"/> 切换,异步调用 <see cref="SimilarityService"/>
+/// 计算相似项并暴露给 <c>SimilarityListView</c>;同时通过 <see cref="ThumbnailListViewModel"/>
+/// 的加载队列,触发相似项的缩略图加载。
+/// 面板由两组正交开关驱动:<see cref="HasItems"/> 控制列表/占位,
+/// <see cref="ShowActionArea"/>(= <see cref="HasUnindexed"/> 或 <see cref="IsStateIndexing"/>) 控制按钮/进度条区域。
 /// </summary>
 public class SimilarityPanelViewModel : ReactiveObject
 {
@@ -44,88 +30,59 @@ public class SimilarityPanelViewModel : ReactiveObject
     private CancellationTokenSource? _computeCts;
 
     /// <summary>
-    /// 一次性抑制位：由 <see cref="SelectItemCommand"/> 置位，
-    /// 目的是让"点击相似项切换主图"这一动作不反过来刷新相似面板本身（避免锚点漂移）。
-    /// 只对"由自身触发的那一次 <see cref="MainViewModel.CurrentFile"/> 变更"生效，随即复位。
+    /// 一次性抑制位:由 <see cref="SelectItemCommand"/> 置位,
+    /// 目的是让"点击相似项切换主图"这一动作不反过来刷新相似面板本身(避免锚点漂移)。
+    /// 只对"由自身触发的那一次 <see cref="MainViewModel.CurrentFile"/> 变更"生效,随即复位。
     /// </summary>
     private bool _suppressNextRecompute;
 
     private IReadOnlyList<SimilarityItem> _similarItems = Array.Empty<SimilarityItem>();
-    /// <summary>当前相似项列表（已按分数降序），绑定到 SimilarityListView 的 ItemsSource。</summary>
+    /// <summary>当前相似项列表(已按分数降序),绑定到 SimilarityListView 的 ItemsSource。</summary>
     public IReadOnlyList<SimilarityItem> SimilarItems
     {
         get => _similarItems;
         private set
         {
             this.RaiseAndSetIfChanged(ref _similarItems, value);
-            this.RaisePropertyChanged(nameof(IsEmpty));
             this.RaisePropertyChanged(nameof(HasItems));
+            this.RaisePropertyChanged(nameof(ShowFullPlaceholder));
+            this.RaisePropertyChanged(nameof(ShowUnindexedPlaceholder));
+            this.RaisePropertyChanged(nameof(ActionButtonText));
         }
     }
 
-    /// <summary>是否无相似项，用于显示占位文案。</summary>
-    public bool IsEmpty => _similarItems.Count == 0;
-
-    /// <summary>是否有相似项（便于直接绑定 IsVisible）。</summary>
+    /// <summary>是否有相似项(便于直接绑定 IsVisible)。</summary>
     public bool HasItems => _similarItems.Count > 0;
 
-    /// <summary>当前布局是否为行布局（分栏位于上下，决定列表方向、对齐）。</summary>
+    /// <summary>当前布局是否为行布局(分栏位于上下,决定列表方向、对齐)。</summary>
     public bool IsRowLayout => _main.IsRowLayout;
 
-    /// <summary>主视图模型引用，模板内绑定 IsCurrent / Settings 用。</summary>
+    /// <summary>主视图模型引用,模板内绑定 IsCurrent / Settings 用。</summary>
     public MainViewModel Main => _main;
 
-    /// <summary>设置引用，供模板绑定 ShowRating 等。</summary>
+    /// <summary>设置引用,供模板绑定 ShowRating 等。</summary>
     public SettingsViewModel Settings => _main.Settings;
 
-    // ── 三态状态机 ──────────────────────────────────────────────────────────
+    // ── 进度与覆盖度 ───────────────────────────────────────────────────────
 
-    private SimilarityPanelState _panelState = SimilarityPanelState.Empty;
-
-    /// <summary>记录 Indexing 从哪个状态触发，用于决定进度条显示位置。</summary>
-    private bool _indexingFromEmpty = true;
-
-    /// <summary>面板当前状态，驱动三态 UI 切换。</summary>
-    public SimilarityPanelState PanelState
+    private bool _isStateIndexing;
+    /// <summary>是否正在批量提取特征。</summary>
+    public bool IsStateIndexing
     {
-        get => _panelState;
+        get => _isStateIndexing;
         private set
         {
-            this.RaiseAndSetIfChanged(ref _panelState, value);
-            this.RaisePropertyChanged(nameof(IsStateEmpty));
-            this.RaisePropertyChanged(nameof(IsStatePartial));
-            this.RaisePropertyChanged(nameof(IsStateFull));
-            this.RaisePropertyChanged(nameof(IsStateIndexing));
-            this.RaisePropertyChanged(nameof(IsStateIndexingFromEmpty));
-            this.RaisePropertyChanged(nameof(IsStateEmptyOrIndexingFromEmpty));
-            this.RaisePropertyChanged(nameof(IsStatePartialOrIndexing));
+            this.RaiseAndSetIfChanged(ref _isStateIndexing, value);
+            this.RaisePropertyChanged(nameof(ShowActionArea));
+            this.RaisePropertyChanged(nameof(ShowActionButton));
         }
     }
-
-    public bool IsStateEmpty => _panelState == SimilarityPanelState.Empty;
-    public bool IsStatePartial => _panelState == SimilarityPanelState.Partial;
-    public bool IsStateFull => _panelState == SimilarityPanelState.Full;
-    public bool IsStateIndexing => _panelState == SimilarityPanelState.Indexing;
-
-    /// <summary>Indexing 从 Empty 触发时为 true，用于在面板中央显示进度条。</summary>
-    public bool IsStateIndexingFromEmpty
-        => _panelState == SimilarityPanelState.Indexing && _indexingFromEmpty;
-
-    /// <summary>Empty 态或从 Empty 触发 Indexing 时为 true，保持空态区块可见（按钮原地变进度条）。</summary>
-    public bool IsStateEmptyOrIndexingFromEmpty
-        => _panelState == SimilarityPanelState.Empty
-        || (_panelState == SimilarityPanelState.Indexing && _indexingFromEmpty);
-
-    /// <summary>Partial 态或从 Partial 触发 Indexing 时为 true，保持列表+底部按钮区可见。</summary>
-    public bool IsStatePartialOrIndexing
-        => _panelState == SimilarityPanelState.Partial
-        || (_panelState == SimilarityPanelState.Indexing && !_indexingFromEmpty);
 
     /// <summary>IndexTotal 为 0 时进度条显示不定态。</summary>
     public bool IsIndexTotalUnknown => _indexTotal == 0;
 
     private int _indexProgress;
-    /// <summary>批量提取进度（已完成张数）。</summary>
+    /// <summary>批量提取进度(已完成张数)。</summary>
     public int IndexProgress
     {
         get => _indexProgress;
@@ -145,12 +102,45 @@ public class SimilarityPanelViewModel : ReactiveObject
     }
 
     private int _unindexedCount;
-    /// <summary>Partial 态下未计算的张数。</summary>
+    /// <summary>未计算特征的张数;= 0 表示当前文件夹全部已入库。</summary>
     public int UnindexedCount
     {
         get => _unindexedCount;
-        private set => this.RaiseAndSetIfChanged(ref _unindexedCount, value);
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _unindexedCount, value);
+            this.RaisePropertyChanged(nameof(HasUnindexed));
+            this.RaisePropertyChanged(nameof(ShowActionArea));
+            this.RaisePropertyChanged(nameof(ShowActionButton));
+            this.RaisePropertyChanged(nameof(ShowFullPlaceholder));
+            this.RaisePropertyChanged(nameof(ShowUnindexedPlaceholder));
+            this.RaisePropertyChanged(nameof(ActionButtonText));
+        }
     }
+
+    /// <summary>是否存在未提取特征的照片。</summary>
+    public bool HasUnindexed => _unindexedCount > 0;
+
+    /// <summary>是否显示底部按钮/进度条区域。</summary>
+    public bool ShowActionArea => HasUnindexed || IsStateIndexing;
+
+    /// <summary>按钮(非提取中时)是否可见。</summary>
+    public bool ShowActionButton => HasUnindexed && !IsStateIndexing;
+
+    /// <summary>按钮文案:已有列表则为"补齐全部",否则"提取全部"。</summary>
+    public string ActionButtonText => HasItems ? "补齐全部" : "提取全部";
+
+    /// <summary>
+    /// "无相似照片"占位:无列表项 且 无未提取(全部已入库的空结果)。
+    /// 此时没有按钮区,占位文字居中显示。
+    /// </summary>
+    public bool ShowFullPlaceholder => !HasItems && !HasUnindexed;
+
+    /// <summary>
+    /// "尚未提取特征"占位:无列表项 且 存在未提取。
+    /// 此时按钮区可见,占位文字与按钮共用 StackPanel 居中排布。
+    /// </summary>
+    public bool ShowUnindexedPlaceholder => !HasItems && HasUnindexed;
 
     private FolderFeatureIndexer? _indexer;
 
@@ -160,8 +150,8 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// 构造相似聚类面板视图模型。
     /// </summary>
     /// <param name="main">主视图模型</param>
-    /// <param name="thumbnailList">主缩略图列表 VM，候选池取自其 <see cref="ThumbnailListViewModel.FilteredFiles"/></param>
-    /// <param name="folder">文件源 VM，用于获取全文件夹列表</param>
+    /// <param name="thumbnailList">主缩略图列表 VM,候选池取自其 <see cref="ThumbnailListViewModel.FilteredFiles"/></param>
+    /// <param name="folder">文件源 VM,用于获取全文件夹列表</param>
     public SimilarityPanelViewModel(MainViewModel main, ThumbnailListViewModel thumbnailList, FolderViewModel folder)
     {
         _main = main;
@@ -182,26 +172,26 @@ public class SimilarityPanelViewModel : ReactiveObject
                 _ = RecomputeAsync(file);
             });
 
-        // 候选池来自主缩略图列表的 FilteredFiles（已应用同名分组与筛选）；
-        // 列表整体替换时（开关分组、改筛选、切文件夹）同步重算，避免相似面板出现"被合并掉的伴侣文件"或"自身的另一格式"。
+        // 候选池来自主缩略图列表的 FilteredFiles(已应用同名分组与筛选);
+        // 列表整体替换时(开关分组、改筛选、切文件夹)同步重算,避免相似面板出现"被合并掉的伴侣文件"或"自身的另一格式"。
         _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
             .Skip(1)
             .Subscribe(__ => { _ = RecomputeAsync(_main.CurrentFile); });
 
-        // 切换/加载文件夹后重新执行三态判定，避免面板停留在旧文件夹的空态。
+        // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
         _folder.AllFilesChanged += () =>
         {
             if (_main.Settings.SimilarityPanelExpanded)
-                _ = EvaluatePanelStateAsync();
+                _ = EvaluateUnindexedAsync();
         };
     }
 
     // ── 公共命令 ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 选中相似项（命令绑定），切换主视图当前图片但保留主缩略图列表的锚点高亮。
-    /// 同时抑制本次 <see cref="MainViewModel.CurrentFile"/> 变更对相似面板的反向刷新，
-    /// 保持原锚点对应的相似列表不被重排，避免操作混乱。
+    /// 选中相似项(命令绑定),切换主视图当前图片但保留主缩略图列表的锚点高亮。
+    /// 同时抑制本次 <see cref="MainViewModel.CurrentFile"/> 变更对相似面板的反向刷新,
+    /// 保持原锚点对应的相似列表不被重排,避免操作混乱。
     /// </summary>
     /// <param name="item">被点击的相似项</param>
     public void SelectItemCommand(SimilarityItem item)
@@ -214,42 +204,41 @@ public class SimilarityPanelViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 面板展开时调用：执行三态判定，决定显示 Empty / Partial / Full。
+    /// 面板展开时调用:重新统计当前文件夹未提取张数。
     /// </summary>
     public void OnPanelOpened()
     {
-        _ = EvaluatePanelStateAsync();
+        _ = EvaluateUnindexedAsync();
     }
 
     /// <summary>
-    /// 触发全文件夹批量特征提取（Empty 态"提取全部"按钮 / Partial 态"补齐全部"按钮）。
+    /// 触发全文件夹批量特征提取("提取全部" / "补齐全部" 按钮)。
     /// </summary>
     public void StartIndexingCommand()
     {
-        if (_panelState == SimilarityPanelState.Indexing) return;
+        if (IsStateIndexing) return;
         _ = RunIndexingAsync();
     }
 
-    // ── 三态判定 ────────────────────────────────────────────────────────────
+    // ── 未提取统计 ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 检查当前文件夹的特征覆盖度，更新 <see cref="PanelState"/>。
+    /// 扫描当前文件夹,更新 <see cref="UnindexedCount"/>。
     /// </summary>
-    private async Task EvaluatePanelStateAsync()
+    private async Task EvaluateUnindexedAsync()
     {
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0)
         {
-            PanelState = SimilarityPanelState.Empty;
+            Dispatcher.UIThread.Post(() => UnindexedCount = 0);
             return;
         }
 
-        int indexed = 0;
-        int total = 0;
+        int unindexed = 0;
 
         foreach (var file in files)
         {
-            // 无法计算指纹的文件跳过，不计入分母
+            // 无法计算指纹的文件跳过,不计入分母
             var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
             if (!file.ModifiedDate.HasValue)
                 await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
@@ -257,42 +246,29 @@ public class SimilarityPanelViewModel : ReactiveObject
             var input = Core.Database.PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
             if (!input.CaptureTime.HasValue) continue;
 
-            total++;
             var fingerprint = Core.Database.PhotoFingerprint.Compute(input);
             var record = await Core.Database.PhotoDatabase.GetAsync(fingerprint).ConfigureAwait(false);
-            if (record?.FeatureVector != null && record.FeatureModel == DinoModelResources.ModelId)
-                indexed++;
+            if (record?.FeatureVector == null || record.FeatureModel != DinoModelResources.ModelId)
+                unindexed++;
         }
 
-        int unindexed = total - indexed;
-        UnindexedCount = unindexed;
-
-        Dispatcher.UIThread.Post(() =>
-        {
-            if (total == 0 || indexed == 0)
-                PanelState = SimilarityPanelState.Empty;
-            else if (unindexed > 0)
-                PanelState = SimilarityPanelState.Partial;
-            else
-                PanelState = SimilarityPanelState.Full;
-        });
+        Dispatcher.UIThread.Post(() => UnindexedCount = unindexed);
     }
 
     // ── 批量提取 ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 启动批量特征提取任务。切换文件夹后任务继续后台跑完（本期不可中断）。
+    /// 启动批量特征提取任务。切换文件夹后任务继续后台跑完(本期不可中断)。
     /// </summary>
     private async Task RunIndexingAsync()
     {
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0) return;
 
-        _indexingFromEmpty = _panelState == SimilarityPanelState.Empty;
         _indexer = new FolderFeatureIndexer();
         IndexProgress = 0;
         IndexTotal = files.Count;
-        PanelState = SimilarityPanelState.Indexing;
+        IsStateIndexing = true;
 
         _indexer.ProgressChanged += OnIndexProgress;
 
@@ -304,10 +280,11 @@ public class SimilarityPanelViewModel : ReactiveObject
         {
             _indexer.ProgressChanged -= OnIndexProgress;
             _indexer = null;
+            Dispatcher.UIThread.Post(() => IsStateIndexing = false);
         }
 
-        // 提取完成后重新判定状态并刷新聚类列表
-        await EvaluatePanelStateAsync().ConfigureAwait(false);
+        // 提取完成后重新判定未提取数量并刷新聚类列表
+        await EvaluateUnindexedAsync().ConfigureAwait(false);
         _ = RecomputeAsync(_main.CurrentFile);
     }
 
@@ -323,7 +300,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     // ── 相似度计算 ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 重新计算当前图片的相似项；旧的计算被取消。
+    /// 重新计算当前图片的相似项;旧的计算被取消。
     /// </summary>
     private async Task RecomputeAsync(ImageFile? current)
     {
@@ -350,7 +327,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         }
         catch (OperationCanceledException)
         {
-            // 已被新的计算覆盖，忽略
+            // 已被新的计算覆盖,忽略
         }
         catch (Exception ex)
         {
@@ -359,7 +336,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 在 UI 线程提交计算结果，并触发缩略图加载。
+    /// 在 UI 线程提交计算结果,并触发缩略图加载。
     /// </summary>
     private void UpdateOnUi(IReadOnlyList<SimilarityItem> results, CancellationToken token)
     {

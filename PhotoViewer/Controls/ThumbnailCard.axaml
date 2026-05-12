@@ -1,0 +1,159 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:local="clr-namespace:PhotoViewer.Views"
+             mc:Ignorable="d" d:DesignWidth="96" d:DesignHeight="138"
+             x:Class="PhotoViewer.Controls.ThumbnailCard"
+             x:Name="CardRoot">
+
+    <UserControl.Resources>
+        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
+        <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
+        <local:FlipTransformConverter x:Key="FlipTransformConverter" />
+        <local:StarColorConverter x:Key="StarColorConverter" />
+    </UserControl.Resources>
+
+    <UserControl.Styles>
+        <Style Selector="Button.CardStarButton">
+            <Setter Property="Width" Value="14" />
+            <Setter Property="Height" Value="14" />
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderThickness" Value="0" />
+            <Setter Property="Margin" Value="0" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+        </Style>
+        <Style Selector="Button.CardStarButton:pointerover">
+            <Setter Property="Background" Value="#333" />
+        </Style>
+        <Style Selector="Button.CardStarButton:disabled">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Opacity" Value="0.6" />
+        </Style>
+        <Style Selector="Button.CardStarButton:disabled:pointerover">
+            <Setter Property="Background" Value="Transparent" />
+        </Style>
+        <Style Selector="TextBlock.CardStarSymbol">
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
+        </Style>
+    </UserControl.Styles>
+
+    <!--
+        卡片按钮:90×138 外框 + 选中描边 + 缩略图 + 文件名 + 第二行 + 6 星级。
+        HorizontalAlignment=Left 由外部 ItemsControl 控制,此处只给布局内部统一用 Center。
+    -->
+    <Button Command="{Binding SelectCommand, ElementName=CardRoot}"
+            CommandParameter="{Binding SelectCommandParameter, ElementName=CardRoot}"
+            Background="Transparent"
+            BorderThickness="0"
+            Margin="3"
+            Padding="0"
+            CornerRadius="8"
+            HorizontalAlignment="Left">
+
+        <Border BorderThickness="2"
+                BorderBrush="{Binding IsSelected, ElementName=CardRoot, Converter={StaticResource BoolToBorderConverter}}"
+                CornerRadius="7"
+                Margin="0"
+                Padding="0"
+                Width="90"
+                Height="138"
+                Background="#222">
+
+            <StackPanel Orientation="Vertical"
+                        HorizontalAlignment="Center"
+                        Margin="0,3,0,0"
+                        Spacing="4"
+                        DataContext="{Binding File, ElementName=CardRoot}">
+                <Border Width="80"
+                        Height="80"
+                        Background="#333"
+                        CornerRadius="4"
+                        BorderThickness="1"
+                        BorderBrush="{Binding IsInCache,
+                            Converter={StaticResource CachedBorderConverter}}">
+                    <Grid>
+                        <Image Source="{Binding Thumbnail}"
+                               Stretch="Uniform"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               IsVisible="{Binding Thumbnail,
+                                    Converter={x:Static ObjectConverters.IsNotNull}}">
+                            <Image.RenderTransform>
+                                <TransformGroup>
+                                    <RotateTransform Angle="{Binding RotationAngle}" />
+                                    <ScaleTransform
+                                        ScaleX="{Binding NeedsHorizontalFlip,
+                                        Converter={StaticResource FlipTransformConverter}}"
+                                        ScaleY="1" />
+                                </TransformGroup>
+                            </Image.RenderTransform>
+                        </Image>
+
+                        <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
+                                     IsIndeterminate="True"
+                                     Width="60"
+                                     Height="4"
+                                     HorizontalAlignment="Center"
+                                     VerticalAlignment="Center" />
+
+                        <TextBlock Text="📷"
+                                   FontSize="24"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Foreground="#666666"
+                                   IsVisible="{Binding ShowThumbnailPlaceholder}" />
+                    </Grid>
+                </Border>
+
+                <StackPanel Orientation="Vertical" Spacing="2">
+                    <TextBlock Text="{Binding DisplayName}"
+                               FontSize="10"
+                               Foreground="#EEEEEE"
+                               FontWeight="SemiBold"
+                               HorizontalAlignment="Center"
+                               TextTrimming="CharacterEllipsis"
+                               MaxWidth="90" />
+                    <TextBlock Text="{Binding SecondLineText, ElementName=CardRoot}"
+                               ToolTip.Tip="{Binding SecondLineToolTip, ElementName=CardRoot}"
+                               FontSize="9"
+                               Foreground="#AAAAAA"
+                               HorizontalAlignment="Center" />
+
+                    <StackPanel Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                IsVisible="{Binding ShowRating, ElementName=CardRoot}">
+                        <Button Classes="CardStarButton" Tag="0" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xf4f8;"
+                                       FontSize="8"
+                                       Foreground="#666"/>
+                        </Button>
+                        <Button Classes="CardStarButton" Tag="1" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xfcd7;"
+                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=1}"/>
+                        </Button>
+                        <Button Classes="CardStarButton" Tag="2" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xfcd7;"
+                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=2}"/>
+                        </Button>
+                        <Button Classes="CardStarButton" Tag="3" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xfcd7;"
+                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=3}"/>
+                        </Button>
+                        <Button Classes="CardStarButton" Tag="4" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xfcd7;"
+                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=4}"/>
+                        </Button>
+                        <Button Classes="CardStarButton" Tag="5" Click="OnStarClick">
+                            <TextBlock Classes="CardStarSymbol" Text="&#xfcd7;"
+                                       Foreground="{Binding Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=5}"/>
+                        </Button>
+                    </StackPanel>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+    </Button>
+</UserControl>

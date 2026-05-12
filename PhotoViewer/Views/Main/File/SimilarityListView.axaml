@@ -2,54 +2,22 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:local="clr-namespace:PhotoViewer.Views"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Main.File"
              xmlns:sim="clr-namespace:PhotoViewer.Core.AI"
              xmlns:behaviors="clr-namespace:PhotoViewer.Behaviors"
              xmlns:converters="clr-namespace:PhotoViewer.Converters"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             xmlns:viewsLocal="clr-namespace:PhotoViewer.Views"
              mc:Ignorable="d" d:DesignWidth="116" d:DesignHeight="400"
              x:Class="PhotoViewer.Views.Main.File.SimilarityListView"
              x:DataType="vm:SimilarityPanelViewModel">
 
     <UserControl.Resources>
-        <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
-        <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
-        <local:FlipTransformConverter x:Key="FlipTransformConverter" />
-        <local:StarColorConverter x:Key="StarColorConverter" />
-        <local:SimilarityScoreConverter x:Key="SimilarityScoreConverter" />
+        <viewsLocal:SimilarityScoreConverter x:Key="SimilarityScoreConverter" />
     </UserControl.Resources>
 
     <UserControl.Styles>
-        <Style Selector="Button.SimStarButton">
-            <Setter Property="Width" Value="14" />
-            <Setter Property="Height" Value="14" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="BorderThickness" Value="0" />
-            <Setter Property="Margin" Value="0" />
-            <Setter Property="Padding" Value="0" />
-            <Setter Property="HorizontalAlignment" Value="Center" />
-            <Setter Property="VerticalAlignment" Value="Center" />
-        </Style>
-
-        <Style Selector="Button.SimStarButton:pointerover">
-            <Setter Property="Background" Value="#333" />
-        </Style>
-
-        <Style Selector="Button.SimStarButton:disabled">
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Opacity" Value="0.6" />
-        </Style>
-
-        <Style Selector="Button.SimStarButton:disabled:pointerover">
-            <Setter Property="Background" Value="Transparent" />
-        </Style>
-
-        <Style Selector="TextBlock.SimStarButtonSymbol">
-            <Setter Property="FontSize" Value="10" />
-            <Setter Property="FontFamily" Value="{StaticResource UiconsFontSolidStraight}" />
-        </Style>
-
-        <!-- 提取/补齐按钮样式,宽高固定以便进度条完全替换。宽度对齐列表项卡片 90px,避免撑宽面板 -->
+        <!-- 提取/补齐按钮:宽高与列表项卡片宽 90 对齐,避免撑宽面板 -->
         <Style Selector="Button.SimActionButton">
             <Setter Property="FontSize" Value="11" />
             <Setter Property="Height" Value="28" />
@@ -66,7 +34,7 @@
             <Setter Property="Background" Value="#3A3A3A" />
         </Style>
 
-        <!-- 进度条覆盖按钮,同宽高 -->
+        <!-- 进度条覆盖按钮位置,同宽高 -->
         <Style Selector="ProgressBar.SimIndexProgress">
             <Setter Property="Height" Value="28" />
             <Setter Property="Width" Value="90" />
@@ -79,13 +47,12 @@
 
     <!--
         相似聚类面板外壳。
-        Padding=4 + Border 1 + 列表项 Margin=3 = chrome 上下各 8px,138 + 16 = 154 严格匹配主列表高度。
-        宽度: 卡片 90 + chrome 16 = 106px,紧贴内容不留多余右边距。
-        CornerRadius 6 在 4px 内边距下不裁切 90×138 卡片的高亮描边。
-        - 列布局(IsRowLayout=false):VerticalAlignment=Stretch 吃满列高,
-                                    避免最后一项被 154 MinHeight + 底部按钮区夹挤而裁切。
-        - 行布局(IsRowLayout=true):VerticalAlignment=Top + MinHeight=154,
-                                  避免被 row=* 撑高,导致文件栏整体变高。
+        合并后的两组正交开关:
+          ShowActionArea = HasUnindexed || IsStateIndexing → 是否显示按钮/进度条区;
+          HasItems                                       → 是否有列表主体。
+        按"有无列表"切两套布局,避免 DockPanel 贴边导致占位文字与按钮隔开很远:
+          HasItems=true : DockPanel(列表主体 + 动作区 Bottom/Right);
+          HasItems=false: 单个 StackPanel 在 Border 中央,占位文字与按钮紧贴居中。
     -->
     <Border Background="#1E1E1E"
             BorderBrush="#404040"
@@ -99,24 +66,36 @@
             MinHeight="154">
 
         <Grid>
-            <!-- ── Empty 态:无任何特征入库;Indexing(从Empty)时进度条原地替换按钮 ── -->
-            <Grid IsVisible="{Binding IsStateEmptyOrIndexingFromEmpty}"
-                  RowDefinitions="*,Auto,12">
-                <TextBlock Grid.Row="0"
+
+            <!-- 无列表主体:占位文字 + 动作区 整体居中 -->
+            <StackPanel IsVisible="{Binding !HasItems}"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center"
+                        Spacing="8"
+                        Margin="12">
+                <TextBlock IsVisible="{Binding ShowUnindexedPlaceholder}"
                            Text="尚未提取特征"
                            FontSize="11"
                            Foreground="#555"
                            HorizontalAlignment="Center"
-                           VerticalAlignment="Center"
                            TextWrapping="Wrap"
-                           TextAlignment="Center"
-                           Margin="12,12,12,8" />
-                <Grid Grid.Row="1" Width="90" Height="28" HorizontalAlignment="Center">
+                           TextAlignment="Center" />
+                <TextBlock IsVisible="{Binding ShowFullPlaceholder}"
+                           Text="无相似照片"
+                           FontSize="11"
+                           Foreground="#555"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center" />
+                <Grid IsVisible="{Binding ShowActionArea}"
+                      HorizontalAlignment="Center">
                     <Button Classes="SimActionButton"
-                            IsVisible="{Binding !IsStateIndexing}"
+                            IsVisible="{Binding ShowActionButton}"
                             Command="{Binding StartIndexingCommand}"
-                            Content="提取全部" />
-                    <Grid IsVisible="{Binding IsStateIndexing}">
+                            Content="{Binding ActionButtonText}" />
+                    <Grid IsVisible="{Binding IsStateIndexing}"
+                          Width="90" Height="28"
+                          HorizontalAlignment="Center">
                         <ProgressBar Classes="SimIndexProgress"
                                      Value="{Binding IndexProgress}"
                                      Maximum="{Binding IndexTotal}"
@@ -131,16 +110,14 @@
                         </TextBlock>
                     </Grid>
                 </Grid>
-            </Grid>
+            </StackPanel>
 
-            <!-- ── Partial 态(含从Partial触发的Indexing):列表占主体,提示+按钮竖向在底/横向在右 ── -->
-            <DockPanel IsVisible="{Binding IsStatePartialOrIndexing}">
-
-                <!-- 按钮区 Margin: 行布局(Dock=Right)左 8 给 ScrollViewer 留间距、其余 3 防撑高;
-                                    列布局(Dock=Bottom)上下 8 给视觉留空、左右 3 防撑宽 -->
+            <!-- 有列表主体:列表 + 动作区 Dock(Bottom/Right) -->
+            <DockPanel IsVisible="{Binding HasItems}">
                 <StackPanel DockPanel.Dock="{Binding IsRowLayout,
                                 Converter={x:Static converters:DockConverter.Instance},
                                 ConverterParameter='Right,Bottom'}"
+                            IsVisible="{Binding ShowActionArea}"
                             VerticalAlignment="Bottom"
                             HorizontalAlignment="Center"
                             Spacing="6"
@@ -157,9 +134,9 @@
                     </TextBlock>
                     <Grid HorizontalAlignment="Center">
                         <Button Classes="SimActionButton"
-                                IsVisible="{Binding !IsStateIndexing}"
+                                IsVisible="{Binding ShowActionButton}"
                                 Command="{Binding StartIndexingCommand}"
-                                Content="补齐全部" />
+                                Content="{Binding ActionButtonText}" />
                         <Grid IsVisible="{Binding IsStateIndexing}"
                               Width="90" Height="28"
                               HorizontalAlignment="Center">
@@ -179,96 +156,7 @@
                     </Grid>
                 </StackPanel>
 
-                <!-- 列表:填满剩余空间。chrome 交由 VSP Margin 管理(参考主缩略图栏写法),
-                     Padding 在 ScrollViewer 上不会扩展滚动范围,会导致最后一项滚不到底 -->
-                <ScrollViewer Name="SimilarityScrollViewerPartial"
-                              IsVisible="{Binding HasItems}"
-                              HorizontalScrollBarVisibility="{Binding IsRowLayout,
-                                    Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
-                              VerticalScrollBarVisibility="{Binding IsRowLayout,
-                                    Converter={x:Static converters:ScrollBarVisibilityConverter.Instance},
-                                    ConverterParameter=Reverse}">
-                    <Interaction.Behaviors>
-                        <behaviors:HorizontalScrollWheelBehavior IsEnabled="{Binding IsRowLayout}" />
-                    </Interaction.Behaviors>
-                    <ItemsControl ItemsSource="{Binding SimilarItems}"
-                                  HorizontalAlignment="Left">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <VirtualizingStackPanel
-                                    HorizontalAlignment="Left"
-                                    Margin="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:WebMarginConverter.Instance},
-                                        ConverterParameter='4,4,4,4|4,4,8,4'}"
-                                    Orientation="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).IsRowLayout,
-                                        Converter={x:Static converters:LayoutOrientationConverter.Instance}}" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate x:DataType="sim:SimilarityItem">
-                                <Button
-                                    Command="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).SelectItemCommand}"
-                                    CommandParameter="{Binding}"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    Margin="3"
-                                    Padding="0"
-                                    CornerRadius="8"
-                                    HorizontalAlignment="Left">
-                                    <Border BorderThickness="2"
-                                            BorderBrush="{Binding File.IsCurrentImage, Converter={StaticResource BoolToBorderConverter}}"
-                                            CornerRadius="7"
-                                            Width="90"
-                                            Height="138"
-                                            Background="#222">
-                                        <StackPanel Orientation="Vertical"
-                                                    HorizontalAlignment="Center"
-                                                    Margin="0,3,0,0"
-                                                    Spacing="4">
-                                            <Border Width="80" Height="80" Background="#333" CornerRadius="4">
-                                                <Grid>
-                                                    <Image Source="{Binding File.Thumbnail}"
-                                                           Stretch="Uniform"
-                                                           IsVisible="{Binding File.Thumbnail, Converter={x:Static ObjectConverters.IsNotNull}}">
-                                                        <Image.RenderTransform>
-                                                            <TransformGroup>
-                                                                <RotateTransform Angle="{Binding File.RotationAngle}" />
-                                                                <ScaleTransform ScaleX="{Binding File.NeedsHorizontalFlip, Converter={StaticResource FlipTransformConverter}}" ScaleY="1" />
-                                                            </TransformGroup>
-                                                        </Image.RenderTransform>
-                                                    </Image>
-                                                    <TextBlock Text="📷" FontSize="24"
-                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                               Foreground="#666"
-                                                               IsVisible="{Binding File.ShowThumbnailPlaceholder}" />
-                                                </Grid>
-                                            </Border>
-                                            <TextBlock Text="{Binding File.DisplayName}"
-                                                       FontSize="10" Foreground="#EEE" FontWeight="SemiBold"
-                                                       HorizontalAlignment="Center"
-                                                       TextTrimming="CharacterEllipsis" MaxWidth="90" />
-                                            <TextBlock Text="{Binding Score, Converter={StaticResource SimilarityScoreConverter}}"
-                                                       FontSize="9" Foreground="#AAA" HorizontalAlignment="Center" />
-                                        </StackPanel>
-                                    </Border>
-                                </Button>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                </ScrollViewer>
-            </DockPanel>
-
-            <!-- ── Full 态:全部入库,显示完整聚类列表 ── -->
-            <Grid IsVisible="{Binding IsStateFull}">
-                <TextBlock Text="无相似照片"
-                           FontSize="11"
-                           Foreground="#555"
-                           HorizontalAlignment="Center"
-                           VerticalAlignment="Center"
-                           IsVisible="{Binding IsEmpty}" />
-
                 <ScrollViewer Name="SimilarityScrollViewer"
-                              IsVisible="{Binding HasItems}"
                               HorizontalScrollBarVisibility="{Binding IsRowLayout,
                                     Converter={x:Static converters:ScrollBarVisibilityConverter.Instance}}"
                               VerticalScrollBarVisibility="{Binding IsRowLayout,
@@ -295,121 +183,20 @@
 
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="sim:SimilarityItem">
-                                <Button
-                                    Command="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).SelectItemCommand}"
-                                    CommandParameter="{Binding}"
-                                    Background="Transparent"
-                                    BorderThickness="0"
-                                    Margin="3"
-                                    Padding="0"
-                                    CornerRadius="8"
-                                    HorizontalAlignment="Left">
-
-                                    <Border BorderThickness="2"
-                                            BorderBrush="{Binding File.IsCurrentImage, Converter={StaticResource BoolToBorderConverter}}"
-                                            CornerRadius="7"
-                                            Margin="0"
-                                            Padding="0"
-                                            Width="90"
-                                            Height="138"
-                                            Background="#222">
-
-                                        <StackPanel Orientation="Vertical"
-                                                    HorizontalAlignment="Center"
-                                                    Margin="0,3,0,0"
-                                                    Spacing="4">
-                                            <Border Width="80"
-                                                    Height="80"
-                                                    Background="#333"
-                                                    CornerRadius="4"
-                                                    BorderThickness="1"
-                                                    BorderBrush="{Binding File.IsInCache,
-                                                        Converter={StaticResource CachedBorderConverter}}">
-                                                <Grid>
-                                                    <Image Source="{Binding File.Thumbnail}"
-                                                           Stretch="Uniform"
-                                                           HorizontalAlignment="Center"
-                                                           VerticalAlignment="Center"
-                                                           IsVisible="{Binding File.Thumbnail,
-                                                                Converter={x:Static ObjectConverters.IsNotNull}}">
-                                                        <Image.RenderTransform>
-                                                            <TransformGroup>
-                                                                <RotateTransform Angle="{Binding File.RotationAngle}" />
-                                                                <ScaleTransform
-                                                                    ScaleX="{Binding File.NeedsHorizontalFlip,
-                                                                    Converter={StaticResource FlipTransformConverter}}"
-                                                                    ScaleY="1" />
-                                                            </TransformGroup>
-                                                        </Image.RenderTransform>
-                                                    </Image>
-
-                                                    <ProgressBar IsVisible="{Binding File.IsThumbnailLoading}"
-                                                                 IsIndeterminate="True"
-                                                                 Width="60"
-                                                                 Height="4"
-                                                                 HorizontalAlignment="Center"
-                                                                 VerticalAlignment="Center" />
-
-                                                    <TextBlock Text="📷"
-                                                               FontSize="24"
-                                                               HorizontalAlignment="Center"
-                                                               VerticalAlignment="Center"
-                                                               Foreground="#666666"
-                                                               IsVisible="{Binding File.ShowThumbnailPlaceholder}" />
-                                                </Grid>
-                                            </Border>
-
-                                            <StackPanel Orientation="Vertical" Spacing="2">
-                                                <TextBlock Text="{Binding File.DisplayName}"
-                                                           FontSize="10"
-                                                           Foreground="#EEEEEE"
-                                                           FontWeight="SemiBold"
-                                                           HorizontalAlignment="Center"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           MaxWidth="90" />
-                                                <TextBlock Text="{Binding Score, Converter={StaticResource SimilarityScoreConverter}}"
-                                                           FontSize="9"
-                                                           Foreground="#AAAAAA"
-                                                           HorizontalAlignment="Center" />
-
-                                                <StackPanel Orientation="Horizontal"
-                                                            HorizontalAlignment="Center"
-                                                            IsVisible="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).Settings.ShowRating}">
-                                                    <Button Classes="SimStarButton" Tag="0" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xf4f8;"
-                                                                   FontSize="8"
-                                                                   Foreground="#666"/>
-                                                    </Button>
-                                                    <Button Classes="SimStarButton" Tag="1" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xfcd7;"
-                                                                   Foreground="{Binding File.Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=1}"/>
-                                                    </Button>
-                                                    <Button Classes="SimStarButton" Tag="2" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xfcd7;"
-                                                                   Foreground="{Binding File.Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=2}"/>
-                                                    </Button>
-                                                    <Button Classes="SimStarButton" Tag="3" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xfcd7;"
-                                                                   Foreground="{Binding File.Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=3}"/>
-                                                    </Button>
-                                                    <Button Classes="SimStarButton" Tag="4" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xfcd7;"
-                                                                   Foreground="{Binding File.Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=4}"/>
-                                                    </Button>
-                                                    <Button Classes="SimStarButton" Tag="5" Click="OnSimStarClick">
-                                                        <TextBlock Classes="SimStarButtonSymbol" Text="&#xfcd7;"
-                                                                   Foreground="{Binding File.Rating, Converter={StaticResource StarColorConverter}, ConverterParameter=5}"/>
-                                                    </Button>
-                                                </StackPanel>
-                                            </StackPanel>
-                                        </StackPanel>
-                                    </Border>
-                                </Button>
+                                <controls:ThumbnailCard
+                                    File="{Binding File}"
+                                    IsSelected="{Binding File.IsCurrentImage}"
+                                    SecondLineText="{Binding Score, Converter={StaticResource SimilarityScoreConverter}}"
+                                    ShowRating="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).Settings.ShowRating}"
+                                    SelectCommand="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).SelectItemCommand}"
+                                    SelectCommandParameter="{Binding}"
+                                    Main="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).Main}"
+                                    HorizontalAlignment="Left" />
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
                 </ScrollViewer>
-            </Grid>
+            </DockPanel>
         </Grid>
     </Border>
 </UserControl>

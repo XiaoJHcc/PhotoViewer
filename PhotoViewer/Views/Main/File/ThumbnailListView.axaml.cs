@@ -574,19 +574,4 @@ public partial class ThumbnailListView : UserControl
             Console.WriteLine("滚动到容器失败: " + ex.Message);
         }
     }
-
-    /// <summary>
-    /// 星级按钮点击:从 Tag 解析星级,转交 MainViewModel.SetRatingAsync。
-    /// </summary>
-    private void OnThumbStarClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
-    {
-        if (ViewModel == null) return;
-        if (sender is Button btn &&
-            btn.Tag is string s &&
-            int.TryParse(s, out var rating) &&
-            btn.DataContext is ImageFile file)
-        {
-            _ = ViewModel.Main.SetRatingAsync(file, rating);
-        }
-    }
 }
