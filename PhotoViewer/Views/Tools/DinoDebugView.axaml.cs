@@ -1,12 +1,13 @@
 using Avalonia.Controls;
 using Avalonia.Input;
-using PhotoViewer.Core.AI;
+using PhotoViewer.Controls;
 using PhotoViewer.ViewModels.Tools;
 
 namespace PhotoViewer.Views.Tools;
 
 /// <summary>
-/// DINO 诊断工具视图。PCA 预览的点击由本类翻译为 patch 网格坐标,回调到 VM 重算 cosine 图。
+/// DINO 诊断工具视图。6 张诊断瓦片共享同一十字准星:任意瓦片点击 → VM 下发新坐标;
+/// 瓦片外的空闲区域点击 → 清空准星。
 /// </summary>
 public partial class DinoDebugView : UserControl
 {
@@ -17,21 +18,21 @@ public partial class DinoDebugView : UserControl
     }
 
     /// <summary>
-    /// 处理 PCA 预览点击:将鼠标坐标(相对 Image 控件)映射到 32×32 patch 网格,通知 VM 更新参考点。
+    /// 瓦片点击:把归一化坐标转发给 VM。瓦片内部已把事件标记 Handled,此处只处理 VM 调度。
     /// </summary>
-    private void OnPcaImagePressed(object? sender, PointerPressedEventArgs e)
+    private void OnTileClicked(object? sender, TileClickedEventArgs e)
     {
-        if (sender is not Image img) return;
         if (DataContext is not DinoDebugViewModel vm) return;
-        if (vm.PcaRgbMap == null) return;
+        vm.OnTileClicked(e.U, e.V);
+    }
 
-        var pos = e.GetPosition(img);
-        double w = img.Bounds.Width;
-        double h = img.Bounds.Height;
-        if (w <= 0 || h <= 0) return;
-
-        int gx = (int)(pos.X / w * PatchHeatmap.Grid);
-        int gy = (int)(pos.Y / h * PatchHeatmap.Grid);
-        vm.SetReferencePoint(gx, gy);
+    /// <summary>
+    /// 空闲区域点击:瓦片内部点击已 Handled,只有瓦片之外的 StackPanel/ScrollViewer 背景会冒泡到这里。
+    /// </summary>
+    private void OnBackgroundPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (e.Handled) return;
+        if (DataContext is not DinoDebugViewModel vm) return;
+        vm.ClearCrosshair();
     }
 }
