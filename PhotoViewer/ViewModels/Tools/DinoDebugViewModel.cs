@@ -2,6 +2,7 @@ using ReactiveUI;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PhotoViewer.Core.AI;
@@ -10,8 +11,8 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.ViewModels.Tools;
 
 /// <summary>
-/// DINO 诊断工具页 VM。一次性对当前图片同时跑 CV 网格提取 + DINO 双输出推理,
-/// 暴露 3 张 CV 诊断图(失焦 / 抖动 / 金字塔一致性) + 1 张 PCA-RGB + 1 张点击 cosine 热力图。
+/// DINO 诊断工具页 VM。一次性对当前图片同时跑 CV 网格提取 + DINO 双输出推理，
+/// 暴露原始缩略图 + 3 张 CV 诊断图(失焦 / 抖动 / 金字塔一致性) + PCA-RGB + 点击 cosine 热力图。
 /// 本期不入库:每次 <see cref="SetSource(ImageFile)"/> 现算,切图即释放。
 /// τ 与归一化档当前固定默认值,后续阶段再补交互。
 /// </summary>
@@ -45,6 +46,33 @@ public sealed class DinoDebugViewModel : ReactiveObject
     {
         get => _status;
         private set => this.RaiseAndSetIfChanged(ref _status, value);
+    }
+
+    private Bitmap? _sourceThumbnail;
+    /// <summary>原图缩略图(短边 560,已应用 EXIF 旋转)。瓦片第一张用它,其他瓦片共享其长宽比。</summary>
+    public Bitmap? SourceThumbnail
+    {
+        get => _sourceThumbnail;
+        private set => this.RaiseAndSetIfChanged(ref _sourceThumbnail, value);
+    }
+
+    private double _aspectRatio = 1.0;
+    /// <summary>当前图片长宽比(宽/高)。所有诊断瓦片按此比值 Stretch=Fill,保证与缩略图视觉对齐。</summary>
+    public double AspectRatio
+    {
+        get => _aspectRatio;
+        private set => this.RaiseAndSetIfChanged(ref _aspectRatio, value);
+    }
+
+    private Point? _crosshair;
+    /// <summary>
+    /// 全局十字准星位置(归一化 [0,1],null 隐藏)。点击任意瓦片设为该点坐标,点击空闲区域清空。
+    /// 诊断瓦片共享此值,作为跨图的对应关系指示。
+    /// </summary>
+    public Point? Crosshair
+    {
+        get => _crosshair;
+        private set => this.RaiseAndSetIfChanged(ref _crosshair, value);
     }
 
     // ── 三张 CV 诊断图 ──────────────────────────────────────────────────────
@@ -122,21 +150,33 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 用户点击 PCA 预览时更新参考坐标并重算 cosine 图(不重跑推理)。
+    /// 用户点击任意诊断瓦片时:落十字准星 + 以点击位置作 cosine 参考点(映射到 32×32)。
     /// </summary>
-    public void SetReferencePoint(int gridX, int gridY)
+    /// <param name="u">归一化横坐标 [0,1]。</param>
+    /// <param name="v">归一化纵坐标 [0,1]。</param>
+    public void OnTileClicked(double u, double v)
     {
+        u = Math.Clamp(u, 0, 1);
+        v = Math.Clamp(v, 0, 1);
+        Crosshair = new Point(u, v);
+
         if (_patchTokens == null) return;
-        int clampedX = Math.Clamp(gridX, 0, PatchGridPixels - 1);
-        int clampedY = Math.Clamp(gridY, 0, PatchGridPixels - 1);
-        if (clampedX == RefGridX && clampedY == RefGridY && CosineMap != null) return;
+        int gx = Math.Clamp((int)(u * PatchGridPixels), 0, PatchGridPixels - 1);
+        int gy = Math.Clamp((int)(v * PatchGridPixels), 0, PatchGridPixels - 1);
+        if (gx == RefGridX && gy == RefGridY && CosineMap != null) return;
 
-        RefGridX = clampedX;
-        RefGridY = clampedY;
+        RefGridX = gx;
+        RefGridY = gy;
 
-        var cos = PatchHeatmap.ComputeRefCosine(_patchTokens, clampedX, clampedY);
+        var cos = PatchHeatmap.ComputeRefCosine(_patchTokens, gx, gy);
         var bmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
         SwapBitmap(ref _cosineMap, bmp, nameof(CosineMap));
+    }
+
+    /// <summary>用户在瓦片外空闲区域点击:清空十字准星(cosine 参考点保持最近一次)。</summary>
+    public void ClearCrosshair()
+    {
+        Crosshair = null;
     }
 
     // ── 内部流程 ────────────────────────────────────────────────────────────
@@ -156,6 +196,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
         });
 
         Bitmap? bitmap = null;
+        bool thumbnailHandedOff = false;
         try
         {
             bitmap = await ThumbnailService.GetThumbnailAsync(file.File, FeaturingShortSide).ConfigureAwait(false);
@@ -166,6 +207,10 @@ public sealed class DinoDebugViewModel : ReactiveObject
             }
 
             ct.ThrowIfCancellationRequested();
+
+            int bw = bitmap.PixelSize.Width;
+            int bh = bitmap.PixelSize.Height;
+            double ratio = bh > 0 ? (double)bw / bh : 1.0;
 
             // 并行跑 CV + DINO(DINO 内部自带互斥 gate,这里只需要并行触发)
             var cvTask = CvGridExtractor.ExtractAsync(bitmap, ct);
@@ -192,23 +237,20 @@ public sealed class DinoDebugViewModel : ReactiveObject
             // DINO 两张:PCA-RGB + 初始 cosine(中心参考点)
             Bitmap? pcaBmp = null;
             Bitmap? cosineBmp = null;
+            int rx = PatchGridPixels / 2;
+            int ry = PatchGridPixels / 2;
             if (patches != null)
             {
                 var pcaRgb = PatchHeatmap.ComputePcaRgb(patches);
                 pcaBmp = HeatmapBitmapBuilder.BuildRgb(pcaRgb, PatchGridPixels, PatchGridPixels);
 
-                int rx = PatchGridPixels / 2;
-                int ry = PatchGridPixels / 2;
                 var cos = PatchHeatmap.ComputeRefCosine(patches, rx, ry);
                 cosineBmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
-
-                _patchTokens = patches;
-                Dispatcher.UIThread.Post(() =>
-                {
-                    RefGridX = rx;
-                    RefGridY = ry;
-                });
             }
+
+            var thumbnailToShow = bitmap;
+            _patchTokens = patches;
+            thumbnailHandedOff = true;
 
             Dispatcher.UIThread.Post(() =>
             {
@@ -219,8 +261,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
                     pyramidBmp?.Dispose();
                     pcaBmp?.Dispose();
                     cosineBmp?.Dispose();
+                    thumbnailToShow.Dispose();
                     return;
                 }
+                SwapBitmap(ref _sourceThumbnail, thumbnailToShow, nameof(SourceThumbnail));
+                AspectRatio = ratio > 0 ? ratio : 1.0;
+                Crosshair = null;
+                RefGridX = rx;
+                RefGridY = ry;
                 SwapBitmap(ref _defocusMap, defocusBmp, nameof(DefocusMap));
                 SwapBitmap(ref _motionBlurMap, motionBmp, nameof(MotionBlurMap));
                 SwapBitmap(ref _pyramidMap, pyramidBmp, nameof(PyramidMap));
@@ -240,7 +288,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
         }
         finally
         {
-            bitmap?.Dispose();
+            if (!thumbnailHandedOff) bitmap?.Dispose();
         }
     }
 
@@ -248,12 +296,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
     {
         Dispatcher.UIThread.Post(() =>
         {
+            SwapBitmap(ref _sourceThumbnail, null, nameof(SourceThumbnail));
             SwapBitmap(ref _defocusMap, null, nameof(DefocusMap));
             SwapBitmap(ref _motionBlurMap, null, nameof(MotionBlurMap));
             SwapBitmap(ref _pyramidMap, null, nameof(PyramidMap));
             SwapBitmap(ref _pcaRgbMap, null, nameof(PcaRgbMap));
             SwapBitmap(ref _cosineMap, null, nameof(CosineMap));
             _patchTokens = null;
+            Crosshair = null;
             Status = status;
             IsBusy = false;
         });

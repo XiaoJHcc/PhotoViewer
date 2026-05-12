@@ -1,0 +1,50 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="220" d:DesignHeight="200"
+             x:Class="PhotoViewer.Controls.DiagnosticTile"
+             x:Name="TileRoot"
+             UseLayoutRounding="True">
+
+    <!--
+        DINO 诊断页专用瓦片：统一尺寸 + 保持源图长宽比 + 持久十字准星 overlay。
+        - 外框 Border 吃掉所有 PointerPressed，保证卡片内点击不会被父级当作"空闲点击"。
+        - 内部 ImageHost 的 Width/Height 通过代码同步为 ImageWidth × (ImageWidth / AspectRatio)。
+        - 十字准星由两条带阴影的 Rectangle 组成，只在 Crosshair != null 时显示；UseLayoutRounding 保证像素锐利。
+    -->
+    <Border x:Name="OuterBorder"
+            Background="#151515"
+            BorderBrush="#333"
+            BorderThickness="1"
+            CornerRadius="4"
+            Padding="8"
+            Margin="4">
+        <StackPanel HorizontalAlignment="Center">
+            <Border x:Name="ImageHost"
+                    Background="#222"
+                    CornerRadius="2"
+                    ClipToBounds="True"
+                    HorizontalAlignment="Center">
+                <Grid>
+                    <Image x:Name="ContentImage"
+                           Source="{Binding Source, ElementName=TileRoot}"
+                           Stretch="Fill"
+                           RenderOptions.BitmapInterpolationMode="None" />
+                    <Canvas x:Name="CrosshairCanvas"
+                            IsHitTestVisible="False"
+                            IsVisible="False">
+                        <Rectangle x:Name="VMain" Fill="White" Width="1" />
+                        <Rectangle x:Name="HMain" Fill="White" Height="1" />
+                    </Canvas>
+                </Grid>
+            </Border>
+            <TextBlock Text="{Binding Label, ElementName=TileRoot}"
+                       FontSize="12"
+                       Foreground="#888"
+                       HorizontalAlignment="Center"
+                       TextAlignment="Center"
+                       Margin="0,6,0,0" />
+        </StackPanel>
+    </Border>
+</UserControl>
