@@ -209,6 +209,8 @@ Most-used Tasks:
 
 Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 
+**iOS free-account profile renewal**: 免费 Apple ID 的 Provisioning Profile 每 7 天过期，`Debug iOS` 会报 `找不到任何可用预配配置文件`。执行 `Refresh iOS Profile` task 调占位工程 [Tools/RefreshIosProfile/](Tools/RefreshIosProfile/) 走 `xcodebuild -allowProvisioningUpdates` 续期，然后重跑 `Debug iOS` 即可。Team ID 存放在 gitignored 的 `Tools/RefreshIosProfile/Local.xcconfig`（从 `Local.xcconfig.sample` 复制而来），pbxproj 不含个人信息。
+
 ---
 
 ## 8. Coding Standards 编码规范

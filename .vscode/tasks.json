@@ -87,11 +87,11 @@
       "problemMatcher": []
     },
     {
-      "label": "Renew iOS Certificate",
+      "label": "Refresh iOS Profile",
       "type": "shell",
-      "command": "find ~/Library/MobileDevice/Provisioning\\ Profiles/ -name '*.mobileprovision' -delete && dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "command": "xcodebuild -project Tools/RefreshIosProfile/RefreshIosProfile.xcodeproj -scheme RefreshIosProfile -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build",
       "group": "test",
-      "problemMatcher": "$msCompile"
+      "problemMatcher": []
     },
     {
       "label": "Debug iOS",
