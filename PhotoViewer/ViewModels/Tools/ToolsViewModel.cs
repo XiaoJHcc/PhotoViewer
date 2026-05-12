@@ -33,6 +33,9 @@ public class ToolsViewModel : ViewModelBase
     /// <summary>照片数据统计工具是否在当前平台可用（仅 Windows）。</summary>
     public bool IsPhotoStatsAvailable => OperatingSystem.IsWindows();
 
+    /// <summary>DINO 诊断工具 VM。</summary>
+    public DinoDebugViewModel DinoDebug { get; }
+
     /// <summary>当前显示的子工具 VM；null 表示显示工具列表首页。</summary>
     public ReactiveObject? CurrentTool
     {
@@ -51,8 +54,12 @@ public class ToolsViewModel : ViewModelBase
     public ToolsViewModel(MainViewModel main)
     {
         PhotoStats = new PhotoStatsViewModel();
+        DinoDebug = new DinoDebugViewModel();
+        _main = main;
         SyncCurrentFile(main.CurrentFile);
     }
+
+    private readonly MainViewModel _main;
 
     /// <summary>导航到 EXIF 详情子页面。</summary>
     public void OpenExifDetail()
@@ -63,6 +70,13 @@ public class ToolsViewModel : ViewModelBase
 
     /// <summary>导航到照片数据统计子页面。</summary>
     public void OpenPhotoStats() => CurrentTool = PhotoStats;
+
+    /// <summary>导航到 DINO 诊断子页面,并用当前图片触发一次推理。</summary>
+    public void OpenDinoDebug()
+    {
+        CurrentTool = DinoDebug;
+        DinoDebug.SetSource(_main.CurrentFile);
+    }
 
     /// <summary>返回工具列表首页。</summary>
     public void ShowList() => CurrentTool = null;
@@ -75,12 +89,14 @@ public class ToolsViewModel : ViewModelBase
             ExifDetail = null;
             if (_currentTool is ExifDetailViewModel)
                 ShowList();
-            return;
         }
-
-        if (ExifDetail == null)
+        else if (ExifDetail == null)
             ExifDetail = new ExifDetailViewModel(imageFile);
         else
             ExifDetail.UpdateToFile(imageFile);
+
+        // 仅当 DINO 诊断页正在显示时联动重算,避免后台无谓推理。
+        if (_currentTool is DinoDebugViewModel)
+            DinoDebug.SetSource(imageFile);
     }
 }

@@ -1,0 +1,114 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:toolVm="clr-namespace:PhotoViewer.ViewModels.Tools"
+             mc:Ignorable="d"
+             d:DesignWidth="800"
+             d:DesignHeight="600"
+             x:Class="PhotoViewer.Views.Tools.DinoDebugView"
+             x:DataType="toolVm:DinoDebugViewModel">
+
+    <UserControl.Styles>
+        <Style Selector="TextBlock.SectionHeader">
+            <Setter Property="FontSize" Value="13" />
+            <Setter Property="FontWeight" Value="Medium" />
+            <Setter Property="Foreground" Value="#AAA" />
+            <Setter Property="Margin" Value="0,0,0,6" />
+        </Style>
+        <Style Selector="TextBlock.Caption">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Foreground" Value="#888" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+        </Style>
+        <Style Selector="Border.MapTile">
+            <Setter Property="Background" Value="#151515" />
+            <Setter Property="BorderBrush" Value="#333" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="4" />
+            <Setter Property="Padding" Value="8" />
+            <Setter Property="Margin" Value="4" />
+        </Style>
+        <Style Selector="Image.Pixelated">
+            <Setter Property="Stretch" Value="Uniform" />
+            <Setter Property="Width" Value="220" />
+            <Setter Property="Height" Value="220" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+        </Style>
+    </UserControl.Styles>
+
+    <ScrollViewer HorizontalScrollBarVisibility="Disabled"
+                  VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="16,16,16,24" Spacing="0">
+
+            <TextBlock Text="DINO 诊断"
+                       FontSize="16"
+                       FontWeight="SemiBold"
+                       Foreground="#EEE"
+                       Margin="0,0,0,12" />
+
+            <TextBlock Text="{Binding Status}"
+                       FontSize="12"
+                       Foreground="#888"
+                       Margin="0,0,0,16" />
+
+            <TextBlock Classes="SectionHeader" Text="CV 网格诊断（16×16，基于 level0）" />
+            <UniformGrid Columns="3" Margin="0,0,0,20">
+                <Border Classes="MapTile">
+                    <StackPanel>
+                        <Image Classes="Pixelated"
+                               Source="{Binding DefocusMap}"
+                               RenderOptions.BitmapInterpolationMode="None" />
+                        <TextBlock Classes="Caption" Text="失焦 (lap × sobel, log)" />
+                    </StackPanel>
+                </Border>
+                <Border Classes="MapTile">
+                    <StackPanel>
+                        <Image Classes="Pixelated"
+                               Source="{Binding MotionBlurMap}"
+                               RenderOptions.BitmapInterpolationMode="None" />
+                        <TextBlock Classes="Caption" Text="抖动 (低熵掩膜, τ=1.5bit)" />
+                    </StackPanel>
+                </Border>
+                <Border Classes="MapTile">
+                    <StackPanel>
+                        <Image Classes="Pixelated"
+                               Source="{Binding PyramidMap}"
+                               RenderOptions.BitmapInterpolationMode="None" />
+                        <TextBlock Classes="Caption" Text="金字塔一致性 (lap CV)" />
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+            <TextBlock Classes="SectionHeader" Text="DINO patch (32×32，点击左图设定参考点)" />
+            <UniformGrid Columns="2">
+                <Border Classes="MapTile">
+                    <StackPanel>
+                        <Image x:Name="PcaImage"
+                               Classes="Pixelated"
+                               Source="{Binding PcaRgbMap}"
+                               RenderOptions.BitmapInterpolationMode="None"
+                               PointerPressed="OnPcaImagePressed"
+                               Cursor="Cross" />
+                        <TextBlock Classes="Caption" Text="PCA-RGB (前 3 主成分)" />
+                    </StackPanel>
+                </Border>
+                <Border Classes="MapTile">
+                    <StackPanel>
+                        <Image Classes="Pixelated"
+                               Source="{Binding CosineMap}"
+                               RenderOptions.BitmapInterpolationMode="None" />
+                        <TextBlock Classes="Caption">
+                            <Run Text="Cosine 相似度  参考点: " />
+                            <Run Text="{Binding RefGridX}" />
+                            <Run Text=", " />
+                            <Run Text="{Binding RefGridY}" />
+                        </TextBlock>
+                    </StackPanel>
+                </Border>
+            </UniformGrid>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

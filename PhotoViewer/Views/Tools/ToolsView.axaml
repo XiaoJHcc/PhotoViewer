@@ -29,6 +29,8 @@
             <Button IsEnabled="{Binding IsExifDetailEnabled}"
                     Click="OnOpenExifDetailClick"
                     Content="EXIF 详情" />
+            <Button Click="OnOpenDinoDebugClick"
+                    Content="DINO 诊断" />
             <Button IsEnabled="{Binding IsPhotoStatsAvailable}"
                     IsVisible="{Binding IsPhotoStatsAvailable}"
                     Click="OnOpenPhotoStatsClick"
@@ -45,6 +47,9 @@
                 </DataTemplate>
                 <DataTemplate DataType="toolVm:PhotoStatsViewModel">
                     <toolViews:PhotoStatsView />
+                </DataTemplate>
+                <DataTemplate DataType="toolVm:DinoDebugViewModel">
+                    <toolViews:DinoDebugView />
                 </DataTemplate>
             </ContentControl.DataTemplates>
         </ContentControl>
