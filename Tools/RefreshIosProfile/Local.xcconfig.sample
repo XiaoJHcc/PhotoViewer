@@ -1,0 +1,10 @@
+// 开发者本地配置模板。
+// 首次使用：将此文件复制为 Local.xcconfig，并填入你的 Apple Developer Team ID。
+// Local.xcconfig 已在 .gitignore 中，不会提交到仓库。
+//
+// 查找你的 Team ID：
+//   1. Xcode → Settings → Accounts → 选中你的 Apple ID → 右下 Manage Certificates，
+//      弹窗标题栏或 Team 下拉里的 10 位字符即为 Team ID；或
+//   2. 命令行：defaults read com.apple.dt.Xcode IDEProvisioningTeamByIdentifier
+
+DEVELOPMENT_TEAM = YOUR_TEAM_ID_HERE

@@ -59,7 +59,14 @@
 - ⚡ **Install iOS**：弹窗选择目标设备，将上一次构建产物覆写安装至真机并启动，不重新构建。
 - ⚡ **Install iOS Stable (Release)**：将 `release/ios-stable/PhotoViewer.iOS.app` 中归档的稳定包重新安装到真机并启动，不依赖当前 Release 输出目录。
 
-- ⚡ **Renew iOS Certificate**：清除本地 Provisioning Profile 缓存，强制重新构建以生成新 Profile（7 天免费证书期限从今天重新计算），然后安装并启动。每次证书过期后执行一次即可。
+- ⚡ **Refresh iOS Profile**：免费 Apple ID 的 Provisioning Profile 每 7 天过期一次，过期后 **Debug iOS** 会构建失败（`找不到任何可用预配配置文件`）。执行此 Task 调用占位 Xcode 工程 `Tools/RefreshIosProfile/` 触发 `xcodebuild -allowProvisioningUpdates` 续期同 bundle id 的 Profile，随后再跑 **Debug iOS** 即可正常安装到真机。
+  - **首次使用**：先复制本地配置并填入你的 Apple Developer Team ID：
+    ```
+    cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.xcconfig
+    # 编辑 Local.xcconfig，把 DEVELOPMENT_TEAM 替换为你的 10 位 Team ID
+    ```
+    Team ID 可在 Xcode → Settings → Accounts 中查到。`Local.xcconfig` 已在 `.gitignore` 中，不会提交。
+  - **前提**：Xcode 已登录你的 Apple ID，且目标真机已在该 Apple ID 下注册（免费账号上限 3 台）。
 
 > **首次真机运行须信任开发者证书**：安装后如果应用无法启动，在 iPhone 进入 **设置 → 通用 → VPN 与设备管理** 找到对应的开发者帐号，点击**信任**后重新执行 **Install iOS** 即可。
 
