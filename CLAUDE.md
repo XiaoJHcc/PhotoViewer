@@ -28,7 +28,7 @@ PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
 PhotoViewer.Android/      # Android head (net10.0-android)
 ExifTestTool/             # Standalone CLI for EXIF debugging
-Tools/                    # Python scripts that regenerate ExifTool-derived tables
+Tools/                    # Python: ExifTool 表重生成 + DINOv3 ONNX 导出/校验 + CV/patch PoC notebooks
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
 Directory.Build.props     # Single source of truth for version number
 Directory.Packages.props  # Central NuGet version pinning
@@ -39,6 +39,30 @@ Directory.Packages.props  # Central NuGet version pinning
 ## 3. Shared Core 核心通用服务 ([PhotoViewer/Core/](PhotoViewer/Core/))
 
 UI-independent business logic. **Do not reference Avalonia controls from this layer.**
+
+**AI/** — DINOv3 特征 + CV 网格 + 相似聚类（`namespace PhotoViewer.Core.AI`）
+
+> AI 是目前主要开发任务，计划记录见 [Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) 与 [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [AI/DinoModelResources.cs](PhotoViewer/Core/AI/DinoModelResources.cs) | 模型资源常量 | ONNX 资源 URI、输入规格（518/ImageNet mean-std）、I/O 端口名、`PatchSize`/`PatchGrid`/`PatchTokenCount`、`ModelId`（当前 `dinov3_vits16_f32_518_v1`）。改动此处需同步两个 Python 工具。 |
+| [AI/DinoFeatureExtractor.cs](PhotoViewer/Core/AI/DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime CPU EP 静态门面；延迟建 session + `EnsureDualOutputSchema` 早失败；`ExtractAsync` 只取 L2 归一化的 CLS 向量；`ExtractDualAsync(..., includePatches)` 同时返回 1024×384 patch token，供诊断工具页消费。 |
+| [AI/DinoFeatureCache.cs](PhotoViewer/Core/AI/DinoFeatureCache.cs) | CLS 向量缓存 | 指纹索引 + 进程内存缓存 + `Lazy` 闸门（同指纹并发只推一次）。`GetOrComputeAsync` miss 后台写库；`TryReadAsync` 只读缓存不触发推理（`SimilarityService` 的候选池走这条）。写库列是 `photos.feature_vector` + `feature_model`（单列方案，纵表 schema 留到远期）。 |
+| [AI/FolderFeatureIndexer.cs](PhotoViewer/Core/AI/FolderFeatureIndexer.cs) | 全文件夹批量索引 | 实例化调度器：桌面端 `ProcessorCount/2` 并行解码 + 单线程 ONNX 推理；移动端单线程。跳过已入库指纹，单张失败不中断整批，本期**不可取消**。完成后 `PutMemoryCache` 同步到进程缓存。 |
+| [AI/SimilarityService.cs](PhotoViewer/Core/AI/SimilarityService.cs) | 相似聚类 | 基于 DINOv3 [CLS] cosine 的相似聚类（默认阈值 0.75，上限 64 项，拍摄时间差作 tiebreaker）。锚点必算、池内只读缓存 — 避免一次切图触发成百上千次推理。 |
+| [AI/CvGridResult.cs](PhotoViewer/Core/AI/CvGridResult.cs) | CV 网格结果 POCO | 16×16 格 × 5 标量 × 3 层金字塔 = 3840 float；`Version`（当前 `cv_grid_v0_5scalar`）+ 小端 BLOB Encode/Decode。 |
+| [AI/CvGridExtractor.cs](PhotoViewer/Core/AI/CvGridExtractor.cs) | CV 一期标量提取 | 纯托管，无 native 依赖；per-cell 单次扫描同时累加 Laplacian 方差 / Sobel 幅度均值 / 梯度方向 8-bin 熵 / 亮度均值+标准差；`Parallel.For` 跨格并行；`Downsample2x` 零插值金字塔。一期仅提供 `ExtractAsync` 同步接口，**不接调度、不入库**。 |
+| [AI/CvHeatmap.cs](PhotoViewer/Core/AI/CvHeatmap.cs) | CV 诊断图（纯函数） | 从 `CvGridResult` 推三张 16×16 诊断图：失焦（lap×sobel log 复合）/ 抖动（低熵+有梯度掩膜，默认 τ=1.5 bit）/ 金字塔一致性（lap CV）；`PerPlane` 与 `PerScalarPyramid` 两档归一化。 |
+| [AI/PatchHeatmap.cs](PhotoViewer/Core/AI/PatchHeatmap.cs) | DINO patch 诊断图（纯函数） | 消费 1024×384 patch token：`ComputePcaRgb` 经济型 SVD 取前 3 主成分 → 32×32×3；`ComputeRefCosine` 参考点 cosine 映射到 [0,1]。PCA 用 `MathNet.Numerics`。 |
+| [AI/HeatmapBitmapBuilder.cs](PhotoViewer/Core/AI/HeatmapBitmapBuilder.cs) | 诊断图渲染 | 把 [0,1] 平面或 RGB 数组渲成 `WriteableBitmap`（viridis / grayscale / raw RGB）；输出 1:1 原尺寸，放大交给 XAML 端 `BitmapInterpolationMode=None`。 |
+
+**Database/** — 照片缓存数据库（`namespace PhotoViewer.Core.Database`）
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [Database/PhotoDatabase.cs](PhotoViewer/Core/Database/PhotoDatabase.cs) | 缓存数据库门面 | SQLite (`photos.db`) 静态门面，与 `SettingsService` 共用数据目录。`photos` 表列：`fingerprint`(PK) / `filename_noext` / `capture_time` / `capture_subsec` / `rating`(预留) / `feature_vector` / `feature_model` / `feature_computed_at` / `heatmap`(预留) / `updated_at`。当前 **DINOv3 CLS 向量已启用**（`feature_vector` + `feature_model`，由 `DinoFeatureCache` / `FolderFeatureIndexer` 写入）；`rating` 仍以文件实读为准，`heatmap` / `photo_features` 纵表 / `photo_patches` / `cv_grid` 列**尚未启用**（Plan-1 §A3 冻结后一次性 ALTER）。 |
+| [Database/PhotoFingerprint.cs](PhotoViewer/Core/Database/PhotoFingerprint.cs) | 指纹计算 | 三字段规范化 SHA1：`filename_noext` + `DateTimeOriginal`(秒, UTC ISO-8601) + `SubSecTimeOriginal`(3 位毫秒)。同一次曝光的 RAW/HIF/JPG 字节级字段一致 → 同指纹；高速连拍由 SubSec 毫秒区分；文件名编号循环由日期区隔。验证工具见 `ExifTestTool fp <folder>`。 |
 
 **Image/** — 图片解码与文件模型（`namespace PhotoViewer.Core.Image`）
 
@@ -82,19 +106,6 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 | [Exif/Sony/SonyMakernoteParser.cs](PhotoViewer/Core/Exif/Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度。 |
 | [Exif/Sony/SonyCipherTags.cs](PhotoViewer/Core/Exif/Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks. **Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
 
-**Similarity/** — 相似聚类（`namespace PhotoViewer.Core.Similarity`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Similarity/SimilarityService.cs](PhotoViewer/Core/Similarity/SimilarityService.cs) | 相似聚类服务 | 阶段 3 占位实现（按拍摄时间差模拟分数）；后续替换 `ScoreAsync` 内部算法接入 pHash / 连拍检测。 |
-
-**Database/** — 照片缓存数据库（`namespace PhotoViewer.Core.Database`，**预留基建，DINOv3 接入前不启用**）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Database/PhotoDatabase.cs](PhotoViewer/Core/Database/PhotoDatabase.cs) | 缓存数据库门面 | SQLite (`photos.db`) 静态门面，与 `SettingsService` 共用数据目录。`photos` 表列：`fingerprint`(PK) / `filename_noext` / `capture_time` / `capture_subsec` / `rating`(预留) / `feature_vector` / `feature_model` / `feature_computed_at` / `heatmap`(预留) / `updated_at`。`rating` 按现状仍以文件实读为准，**不从数据库取**。 |
-| [Database/PhotoFingerprint.cs](PhotoViewer/Core/Database/PhotoFingerprint.cs) | 指纹计算 | 三字段规范化 SHA1：`filename_noext` + `DateTimeOriginal`(秒, UTC ISO-8601) + `SubSecTimeOriginal`(3 位毫秒)。同一次曝光的 RAW/HIF/JPG 字节级字段一致 → 同指纹；高速连拍由 SubSec 毫秒区分；文件名编号循环由日期区隔。验证工具见 `ExifTestTool fp <folder>`。 |
-
 **Tools/** — 辅助工具（`namespace PhotoViewer.Core.Tools`）
 
 | File | 模块 | Responsibility |
@@ -130,21 +141,22 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
 |---|---|---|---|
 | **主窗口 / Main shell** | `MainViewModel` | Desktop: [Windows/MainWindowForWindows.axaml](PhotoViewer/Windows/MainWindowForWindows.axaml), [Windows/MainWindowForMac.axaml](PhotoViewer/Windows/MainWindowForMac.axaml) · Mobile: [Windows/SingleView.axaml](PhotoViewer/Windows/SingleView.axaml) hosting [Views/Main/MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) | Layout switch (grid/list), fullscreen, child-VM wiring. |
 | **文件源** | [ViewModels/Main/FolderViewModel.cs](PhotoViewer/ViewModels/Main/FolderViewModel.cs) | (logic only) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。 |
-| **文件栏-容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。竖向（左/右挂载）与横向（顶部挂载）共用同一份 Grid 模板。 |
-| **文件栏-筛选** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数。变化通过 `FilterChanged` / `SortChanged` 事件通知缩略图列表。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
-| **文件栏-主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。 |
-| **文件栏-相似聚类列表** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 阶段 3 占位空壳；阶段 3 接入 `SimilarityService` 后填充。 |
+| **文件栏-容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。单层 `Grid` 按 `IsRowLayout` 切换列定义（行布局:两列 *，筛选条跨两列；列布局:主列 116px + 聚类列 Auto，筛选条仅占主列）。聚类面板 `IsVisible` 绑定 `IsSimilarityPanelOpen`，默认折叠。 |
+| **文件栏-筛选** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数 + 相似聚类 toggle。变化通过 `FilterChanged` / `SortChanged` / `SimilarityPanelToggled` 事件通知下游。`IsSimilarityPanelOpen` 直通 `SettingsModel.SimilarityPanelExpanded`（跨会话保留）。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
+| **文件栏-主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。卡片渲染已抽到共享 `ThumbnailCard` 控件（与相似聚类列表复用）。 |
+| **文件栏-相似聚类列表** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 基于 DINOv3 CLS 的真实相似聚类（`Core/AI/SimilarityService`）。三态 UI（Empty / Partial / Full）+ "提取全部/补齐全部" 按钮原地变进度条；`FolderFeatureIndexer` 驱动批量索引。面板展开时 `OnPanelOpened` 触发覆盖度评估；点击相似项通过 `SetCurrentImageKeepAnchor` 切主图但保留原锚点。 |
 | **主要图片显示** | [ViewModels/Main/ImageViewModel.cs](PhotoViewer/ViewModels/Main/ImageViewModel.cs) | [Views/Main/ImageView.axaml](PhotoViewer/Views/Main/ImageView.axaml) | Main canvas. Single-image display, zoom/pan gestures, load state. |
 | **控制栏** | [ViewModels/Main/ControlViewModel.cs](PhotoViewer/ViewModels/Main/ControlViewModel.cs) | [Views/Main/ControlView.axaml](PhotoViewer/Views/Main/ControlView.axaml) | Toolbar buttons (open, display options, fullscreen). |
 | **细节栏** | [ViewModels/Main/DetailViewModel.cs](PhotoViewer/ViewModels/Main/DetailViewModel.cs) | [Views/Main/DetailView.axaml](PhotoViewer/Views/Main/DetailView.axaml) | Sidebar previews — center / four-corner crops via the `DetailPreview` control; subscribes to `ExifData` to inject a Sony "对焦点" (focus-point) preview when available. Does not render the full EXIF table. |
-| **工具窗口首页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计。 |
+| **工具窗口首页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计、DINO 诊断。 |
 | **EXIF 详情页** | [ViewModels/Tools/ExifDetailViewModel.cs](PhotoViewer/ViewModels/Tools/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
 | **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs)。 |
+| **DINO 诊断页** | [ViewModels/Tools/DinoDebugViewModel.cs](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) | [Views/Tools/DinoDebugView.axaml](PhotoViewer/Views/Tools/DinoDebugView.axaml) | 对当前图片现算一次 CV 网格 + DINO 双输出，平铺展示 3 张 CV 诊断图（失焦 / 抖动 / 金字塔一致性）+ DINO PCA-RGB + 点击参考点 cosine。结果不入库，切图即重算；仅在工具页显示时联动（`SyncCurrentFile`）。 |
 | **设置页** | `SettingsViewModel` (partial across 8 files: `.BitmapCache`, `.ExifDisplay`, `.FileFormats`, `.Hotkeys`, `.ImagePreview`, `.Layout`, `.Persistence`, `.Rating`) | [Views/Settings/](PhotoViewer/Views/Settings/) | Each partial owns one settings category. Add new categories by following the same partial-class pattern. |
 
 ### 5.2 Helpers 辅助组件
 
-- [Controls/](PhotoViewer/Controls/): `DetailPreview` (sidebar overview), `SortableList` (drag-reorder list for settings), `HotkeyButton` (hotkey capture), `CheckableMenuHeader`, `DeferredNumericTextBox`, `OverlayGlyphText`.
+- [Controls/](PhotoViewer/Controls/): `ThumbnailCard` (主缩略图列表与相似聚类列表共用的 90×138 卡片:缩略图 + 文件名 + 自定义第二行 + 6 星级), `DetailPreview` (sidebar overview), `SortableList` (drag-reorder list for settings), `HotkeyButton` (hotkey capture), `CheckableMenuHeader`, `DeferredNumericTextBox`, `OverlayGlyphText`.
 - [Converters/](PhotoViewer/Converters/): `ExifConverters` (aperture / shutter / ISO formatters), `KeyGestureToStringConverter`, `LayoutConverters`.
 - [Behaviors/](PhotoViewer/Behaviors/): `HorizontalScrollWheelBehavior` (mouse-wheel → horizontal scroll for filmstrip).
 
@@ -232,3 +244,28 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 
 **Tidiness**:
 - Do not litter the code with redundant comments for minor fixes — a concise summary in the conversation is enough. In particular, **never add explanatory/note-like text to UI strings**. Keep code comments systematic and the UI visually clean.
+
+---
+
+## 11. DINOv3 计划推进状态 DINO Plan Progress
+
+计划原文：[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。本节只记录**里程碑落地状态**；技术细节在代码与计划书中，不在此处展开。
+
+**已实现（A2 + 二期 T1–T5 骨架）**：
+- A2-M1 打包与运行：[DinoFeatureExtractor](PhotoViewer/Core/AI/DinoFeatureExtractor.cs) + [DinoModelResources](PhotoViewer/Core/AI/DinoModelResources.cs)（CPU EP + CLS/patch 双输出校验）；ONNX 导出/校验脚本 `Tools/export_dinov3_onnx.py` / `Tools/verify_onnx_parity.py`；模型文件 [Assets/Models/dinov3_vits16.onnx](PhotoViewer/Assets/Models/) 已就位。
+- A2-M2 UI 接入：[SimilarityService](PhotoViewer/Core/AI/SimilarityService.cs) + [DinoFeatureCache](PhotoViewer/Core/AI/DinoFeatureCache.cs) 接入 [SimilarityPanelViewModel](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs)；老 `Core/Similarity/` 已删除。
+- 二期 T2 全文件夹批量索引：[FolderFeatureIndexer](PhotoViewer/Core/AI/FolderFeatureIndexer.cs)（桌面半核并行解码 + 单线程推理，单张失败跳过，不可取消）。
+- 二期 T5 相似聚类面板显示控制：FilterBar toggle + 三态（Empty / Partial / Full）+ 按钮原地进度条；`SettingsModel.SimilarityPanelExpanded` 跨会话保留。
+- A3 工程侧 CV 一期：[CvGridResult](PhotoViewer/Core/AI/CvGridResult.cs) + [CvGridExtractor](PhotoViewer/Core/AI/CvGridExtractor.cs) 5 标量 × 3 层金字塔，纯托管。
+- 二期 T3 + T4 DINO 诊断页骨架：[CvHeatmap](PhotoViewer/Core/AI/CvHeatmap.cs) + [PatchHeatmap](PhotoViewer/Core/AI/PatchHeatmap.cs) + [HeatmapBitmapBuilder](PhotoViewer/Core/AI/HeatmapBitmapBuilder.cs) + [DinoDebugViewModel](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) + [DinoDebugView](PhotoViewer/Views/Tools/DinoDebugView.axaml)，已接入 ToolsView 导航。
+
+**未实现 / 待推进**（按计划顺序列出）：
+- **A1 Python 推理验证（被跳过）**：三尺寸 + 双分辨率 t-SNE 对比、`Tools/dinov3_feature_probe.py` 未实现；当前端侧走 ViT-S/16 @ 518 是按计划默认结论落地的，**尚未有 t-SNE 数据支持**。
+- **A2-M1 四平台自检**：计划里 Windows / macOS / Android / iOS 都要 Debug 启动跑通 + 日志确认 `EnsureDualOutputSchema` 不抛、单张耗时达标。**目前只能确认代码路径存在，未见四平台实测记录**（对应 Plan-2 §3.1 T1，是后续所有功能的前置）。
+- **A3 设计侧 PoC**：`Tools/cv_grid_design.ipynb` + `Tools/patch_token_design.ipynb` 文件已在但**内容未跑完**；§5.4 FFT 去留决策占位仍为 "(未决)"，Plan-2 明确写"不决策不进阶段 III"。
+- **二期验收（§5）**：14 张 §0.3 七类代表样本 checklist 未过；相似聚类质量 + CV 诊断合理性 + PCA-RGB 区分度三条验收仍未打勾。
+- **DINO 诊断页交互细节**：归一化两档切换（PerPlane / PerScalarPyramid）下拉、抖动 τ 滑条、切换照片 spinner 当前都是硬编码/未暴露；Plan-2 §3.3.2 要求暴露给用户。
+- **阶段 III schema 冻结（Plan-1 §A3.4 / Plan-2 §6.1）**：`photo_features` / `photo_patches` 纵表 + `photos.cv_grid` / `cv_grid_spec` 列 + 历史 `feature_vector` 迁移脚本 `Tools/migrate_features_to_longtable.py` 全部未做；当前 CLS 仍走 `photos.feature_vector` 单列。
+- **阶段 B 数据工程批入库（Plan-1 §B）**：`PatchFeatureExtractor` / `PatchFeatureCache` / `CvGridCache`（接正式 `photos.cv_grid`）/ 全库 CV 归一化参数 / 调度策略（后台预跑、移动端 WiFi/充电 gate）均未启动。
+- **阶段 C / D / E / F**：训练对生成、线性头/MLP 训练、邻域聚合、端侧最终模型导出 — 均在阶段 B 之后，尚未开工。
+- **M6（条件触发）CLS-attention rollout**：PCA-RGB 质量过关则永久跳过；目前未到判断时机。
