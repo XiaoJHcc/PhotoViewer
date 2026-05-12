@@ -76,13 +76,28 @@ public static class DinoFeatureExtractor
     /// <returns>长度 384 的浮点向量。</returns>
     public static async Task<float[]> ExtractAsync(Bitmap bitmap, CancellationToken ct = default)
     {
+        var (cls, _) = await ExtractDualAsync(bitmap, includePatches: false, ct).ConfigureAwait(false);
+        return cls;
+    }
+
+    /// <summary>
+    /// 双输出推理:同时返回 CLS 向量与 patch token 张量(工具页可视化用)。
+    /// CLS 强制 L2 归一化,patch 保留原始值。includePatches=false 时跳过 patch 拷贝以节省内存。
+    /// </summary>
+    /// <param name="bitmap">已应用 EXIF 旋转的位图。</param>
+    /// <param name="includePatches">是否拷贝 patch token 数据。</param>
+    /// <param name="ct">取消令牌。</param>
+    /// <returns>CLS 向量(长度 384,L2 归一化)与 patch token 张量(长度 1024×384,按 token-major 排布;includePatches=false 时为 null)。</returns>
+    public static async Task<(float[] Cls, float[]? Patches)> ExtractDualAsync(
+        Bitmap bitmap, bool includePatches, CancellationToken ct = default)
+    {
         ArgumentNullException.ThrowIfNull(bitmap);
 
         var tensor = BuildInputTensor(bitmap);
         await _runGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return await Task.Run(() => RunInference(tensor), ct).ConfigureAwait(false);
+            return await Task.Run(() => RunInferenceDual(tensor, includePatches), ct).ConfigureAwait(false);
         }
         finally
         {
@@ -91,9 +106,9 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 执行 ONNX 推理并从输出张量拷出向量，随后 L2 归一化。
+    /// 执行 ONNX 推理,同时拷出 CLS 与 patch 两路输出。
     /// </summary>
-    private static float[] RunInference(DenseTensor<float> input)
+    private static (float[] Cls, float[]? Patches) RunInferenceDual(DenseTensor<float> input, bool includePatches)
     {
         var session = GetSession();
         var inputs = new List<NamedOnnxValue>
@@ -102,18 +117,32 @@ public static class DinoFeatureExtractor
         };
 
         using var outputs = session.Run(inputs);
-        // M1 只消费 CLS；patch_tokens 端口已就绪但闲置，B 阶段由 PatchFeatureExtractor 接管。
-        var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
 
-        var result = new float[DinoModelResources.FeatureDim];
+        var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
+        var clsVec = new float[DinoModelResources.FeatureDim];
         int i = 0;
         foreach (var v in cls)
         {
-            if (i >= result.Length) break;
-            result[i++] = v;
+            if (i >= clsVec.Length) break;
+            clsVec[i++] = v;
         }
-        L2Normalize(result);
-        return result;
+        L2Normalize(clsVec);
+
+        float[]? patchVec = null;
+        if (includePatches)
+        {
+            var patches = outputs.First(v => v.Name == DinoModelResources.PatchOutputName).AsTensor<float>();
+            int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
+            patchVec = new float[total];
+            int j = 0;
+            foreach (var v in patches)
+            {
+                if (j >= total) break;
+                patchVec[j++] = v;
+            }
+        }
+
+        return (clsVec, patchVec);
     }
 
     /// <summary>

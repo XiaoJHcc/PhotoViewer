@@ -20,4 +20,7 @@ public partial class ToolsView : UserControl
 
     private void OnOpenPhotoStatsClick(object? sender, RoutedEventArgs e)
         => (DataContext as ToolsViewModel)?.OpenPhotoStats();
+
+    private void OnOpenDinoDebugClick(object? sender, RoutedEventArgs e)
+        => (DataContext as ToolsViewModel)?.OpenDinoDebug();
 }
