@@ -11,29 +11,27 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.ViewModels.Tools;
 
 /// <summary>
-/// DINO 诊断工具页 VM。一次性对当前图片同时跑 CV 网格提取 + DINO 双输出推理，
-/// 暴露原始缩略图 + 3 张 CV 诊断图(失焦 / 抖动 / 金字塔一致性) + PCA-RGB + 点击 cosine 热力图。
-/// 本期不入库:每次 <see cref="SetSource(ImageFile)"/> 现算,切图即释放。
-/// τ 与归一化档当前固定默认值,后续阶段再补交互。
+/// DINO 诊断工具页 VM。一次性对当前图片并行跑 CV 网格（v3 中心采样 + 边宽量化 + 32 网格 + log 映射）
+/// 与 DINO 双输出推理，暴露缩略图 + 锐度热力图 + 抖动矢量场 + 刚体拟合文本 + PCA-RGB + cosine 图。
+/// CV 走 BitmapLoader 原始分辨率解码（与 ImageView 共用 LRU 缓存），DINO 仍走 560 短边缩略图。
+/// 切图即释放，不入库。
 /// </summary>
 public sealed class DinoDebugViewModel : ReactiveObject
 {
-    /// <summary>喂给 DINO/CV 的短边像素(与 FolderFeatureIndexer 一致)。</summary>
-    private const int FeaturingShortSide = 560;
+    /// <summary>DINO 推理输入短边（与 FolderFeatureIndexer 一致）。</summary>
+    private const int DinoShortSide = 560;
 
-    /// <summary>CV 诊断图像素边长(16),渲染时 XAML 端放大显示。</summary>
-    public const int CvGridPixels = 16;
+    /// <summary>CV 网格可视化像素边长（16），XAML 端放大显示。</summary>
+    public const int CvGridPixels = CvGridResult.GridSize;
 
-    /// <summary>DINO patch 图像素边长(32)。</summary>
+    /// <summary>DINO patch 图像素边长（32）。</summary>
     public const int PatchGridPixels = PatchHeatmap.Grid;
 
     private CancellationTokenSource? _cts;
     private float[]? _patchTokens;
 
-    // ── 状态 ────────────────────────────────────────────────────────────────
-
     private bool _isBusy;
-    /// <summary>是否正在后台计算。界面用于显示加载指示并禁用参考点击。</summary>
+    /// <summary>是否正在后台计算。</summary>
     public bool IsBusy
     {
         get => _isBusy;
@@ -49,7 +47,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private Bitmap? _sourceThumbnail;
-    /// <summary>原图缩略图(短边 560,已应用 EXIF 旋转)。瓦片第一张用它,其他瓦片共享其长宽比。</summary>
+    /// <summary>原图缩略图（短边 560，DINO 一致的输入）。</summary>
     public Bitmap? SourceThumbnail
     {
         get => _sourceThumbnail;
@@ -57,7 +55,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private double _aspectRatio = 1.0;
-    /// <summary>当前图片长宽比(宽/高)。所有诊断瓦片按此比值 Stretch=Fill,保证与缩略图视觉对齐。</summary>
+    /// <summary>当前图片长宽比（宽/高）。</summary>
     public double AspectRatio
     {
         get => _aspectRatio;
@@ -65,43 +63,36 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private Point? _crosshair;
-    /// <summary>
-    /// 全局十字准星位置(归一化 [0,1],null 隐藏)。点击任意瓦片设为该点坐标,点击空闲区域清空。
-    /// 诊断瓦片共享此值,作为跨图的对应关系指示。
-    /// </summary>
+    /// <summary>全局十字准星位置（归一化 [0,1]，null 隐藏）。</summary>
     public Point? Crosshair
     {
         get => _crosshair;
         private set => this.RaiseAndSetIfChanged(ref _crosshair, value);
     }
 
-    // ── 三张 CV 诊断图 ──────────────────────────────────────────────────────
-
-    private Bitmap? _defocusMap;
-    /// <summary>失焦诊断图(laplacian_var × sobel_mean,viridis)。</summary>
-    public Bitmap? DefocusMap
+    private Bitmap? _sharpnessMap;
+    /// <summary>锐度热力图（edge_width_p20 → viridis，NaN 显灰）。</summary>
+    public Bitmap? SharpnessMap
     {
-        get => _defocusMap;
-        private set => this.RaiseAndSetIfChanged(ref _defocusMap, value);
+        get => _sharpnessMap;
+        private set => this.RaiseAndSetIfChanged(ref _sharpnessMap, value);
     }
 
-    private Bitmap? _motionBlurMap;
-    /// <summary>抖动诊断图(低熵掩膜,grayscale)。</summary>
-    public Bitmap? MotionBlurMap
+    private ShakeField? _shakeField;
+    /// <summary>抖动矢量场（16×16 方向/位移/掩膜）；View 消费它绘制 Canvas 线段。</summary>
+    public ShakeField? ShakeField
     {
-        get => _motionBlurMap;
-        private set => this.RaiseAndSetIfChanged(ref _motionBlurMap, value);
+        get => _shakeField;
+        private set => this.RaiseAndSetIfChanged(ref _shakeField, value);
     }
 
-    private Bitmap? _pyramidMap;
-    /// <summary>金字塔一致性图(lap 变异系数,viridis)。</summary>
-    public Bitmap? PyramidMap
+    private string _rigidMotionText = "未加载";
+    /// <summary>刚体拟合的多行文本结果。</summary>
+    public string RigidMotionText
     {
-        get => _pyramidMap;
-        private set => this.RaiseAndSetIfChanged(ref _pyramidMap, value);
+        get => _rigidMotionText;
+        private set => this.RaiseAndSetIfChanged(ref _rigidMotionText, value);
     }
-
-    // ── DINO 两张图 ─────────────────────────────────────────────────────────
 
     private Bitmap? _pcaRgbMap;
     /// <summary>patch token 的前 3 主成分 RGB 预览。</summary>
@@ -112,7 +103,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private Bitmap? _cosineMap;
-    /// <summary>以 <see cref="RefGridX"/>/<see cref="RefGridY"/> 为参考的 cosine 相似度图。</summary>
+    /// <summary>以 RefGridX/Y 为参考的 cosine 相似度图。</summary>
     public Bitmap? CosineMap
     {
         get => _cosineMap;
@@ -120,7 +111,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private int _refGridX = 16;
-    /// <summary>cosine 参考 patch 的 x(0..31)。</summary>
+    /// <summary>cosine 参考 patch 的 x（0..31）。</summary>
     public int RefGridX
     {
         get => _refGridX;
@@ -128,19 +119,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private int _refGridY = 16;
-    /// <summary>cosine 参考 patch 的 y(0..31)。</summary>
+    /// <summary>cosine 参考 patch 的 y（0..31）。</summary>
     public int RefGridY
     {
         get => _refGridY;
         private set => this.RaiseAndSetIfChanged(ref _refGridY, value);
     }
 
-    // ── 对外 API ────────────────────────────────────────────────────────────
-
-    /// <summary>
-    /// 切换源图片。取消旧任务 → 加载缩略图 → 并行跑 CV + DINO 双输出 → 渲染 5 张图。
-    /// 所有位图在 UI 线程赋值,旧值同步 Dispose 避免泄漏。
-    /// </summary>
+    /// <summary>切换源图片：取消旧任务 → 并行解码 DINO/CV 两路 → 跑推理与提取 → 渲染。</summary>
     public void SetSource(ImageFile? file)
     {
         _cts?.Cancel();
@@ -149,11 +135,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
         _ = LoadAsync(file, cts.Token);
     }
 
-    /// <summary>
-    /// 用户点击任意诊断瓦片时:落十字准星 + 以点击位置作 cosine 参考点(映射到 32×32)。
-    /// </summary>
-    /// <param name="u">归一化横坐标 [0,1]。</param>
-    /// <param name="v">归一化纵坐标 [0,1]。</param>
+    /// <summary>点击任意瓦片：落十字准星 + 以点击位置作 cosine 参考点（映射到 32×32）。</summary>
     public void OnTileClicked(double u, double v)
     {
         u = Math.Clamp(u, 0, 1);
@@ -173,13 +155,11 @@ public sealed class DinoDebugViewModel : ReactiveObject
         SwapBitmap(ref _cosineMap, bmp, nameof(CosineMap));
     }
 
-    /// <summary>用户在瓦片外空闲区域点击:清空十字准星(cosine 参考点保持最近一次)。</summary>
+    /// <summary>空闲区域点击：清空十字准星。</summary>
     public void ClearCrosshair()
     {
         Crosshair = null;
     }
-
-    // ── 内部流程 ────────────────────────────────────────────────────────────
 
     private async Task LoadAsync(ImageFile? file, CancellationToken ct)
     {
@@ -195,12 +175,20 @@ public sealed class DinoDebugViewModel : ReactiveObject
             Status = $"计算中…  {file.Name}";
         });
 
-        Bitmap? bitmap = null;
+        Bitmap? dinoBitmap = null;
+        Bitmap? cvBitmap = null;
         bool thumbnailHandedOff = false;
         try
         {
-            bitmap = await ThumbnailService.GetThumbnailAsync(file.File, FeaturingShortSide).ConfigureAwait(false);
-            if (bitmap == null)
+            // DINO 560 缩略图与 CV 原始分辨率两路解码并行。
+            // CV 必须在原始像素上计算，任何下采样都会损害 Marziliano 边宽的测量精度。
+            var dinoTaskDecode = ThumbnailService.GetThumbnailAsync(file.File, DinoShortSide);
+            var cvTaskDecode = BitmapLoader.GetBitmapAsync(file.File);
+            await Task.WhenAll(dinoTaskDecode, cvTaskDecode).ConfigureAwait(false);
+            dinoBitmap = dinoTaskDecode.Result;
+            cvBitmap = cvTaskDecode.Result;
+
+            if (dinoBitmap == null)
             {
                 ClearAllOnUi("无法解码图片");
                 return;
@@ -208,13 +196,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
             ct.ThrowIfCancellationRequested();
 
-            int bw = bitmap.PixelSize.Width;
-            int bh = bitmap.PixelSize.Height;
+            int bw = dinoBitmap.PixelSize.Width;
+            int bh = dinoBitmap.PixelSize.Height;
             double ratio = bh > 0 ? (double)bw / bh : 1.0;
 
-            // 并行跑 CV + DINO(DINO 内部自带互斥 gate,这里只需要并行触发)
-            var cvTask = CvGridExtractor.ExtractAsync(bitmap, ct);
-            var dinoTask = DinoFeatureExtractor.ExtractDualAsync(bitmap, includePatches: true, ct);
+            // 并行跑 CV（大图）与 DINO（小图）；若 CV 大图解码失败，降级用 DINO 小图（短边可能不足，CvGridExtractor 会抛异常由 catch 兜底）。
+            var cvSourceBitmap = cvBitmap ?? dinoBitmap;
+            var cvTask = CvGridExtractor.ExtractAsync(cvSourceBitmap, ct);
+            var dinoTask = DinoFeatureExtractor.ExtractDualAsync(dinoBitmap, includePatches: true, ct);
             await Task.WhenAll(cvTask, dinoTask).ConfigureAwait(false);
 
             var cv = cvTask.Result;
@@ -222,19 +211,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
             ct.ThrowIfCancellationRequested();
 
-            // CV 三张:默认 PerPlane 归一化
-            var defocusRaw = CvHeatmap.BuildDefocus(cv);
-            var motionRaw = CvHeatmap.BuildMotionBlur(cv); // 已经是 0/1,归一化为恒等
-            var pyramidRaw = CvHeatmap.BuildPyramidConsistency(cv);
+            // CV：锐度图 + 抖动矢量场 + 刚体拟合
+            var sharpness = CvHeatmap.BuildSharpness(cv);
+            var sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridPixels, CvGridPixels);
+            var shakeField = CvHeatmap.BuildShakeField(cv);
+            var rigid = CvHeatmap.FitRigidMotion(shakeField);
+            var rigidText = FormatRigidMotion(rigid);
 
-            var defocusNorm = CvHeatmap.Normalize(defocusRaw, CvHeatmapNormalize.PerPlane);
-            var pyramidNorm = CvHeatmap.Normalize(pyramidRaw, CvHeatmapNormalize.PerPlane);
-
-            var defocusBmp = HeatmapBitmapBuilder.BuildViridis(defocusNorm, CvGridPixels, CvGridPixels);
-            var motionBmp = HeatmapBitmapBuilder.BuildGrayscale(motionRaw, CvGridPixels, CvGridPixels);
-            var pyramidBmp = HeatmapBitmapBuilder.BuildViridis(pyramidNorm, CvGridPixels, CvGridPixels);
-
-            // DINO 两张:PCA-RGB + 初始 cosine(中心参考点)
+            // DINO：PCA-RGB + 初始 cosine（中心参考点）
             Bitmap? pcaBmp = null;
             Bitmap? cosineBmp = null;
             int rx = PatchGridPixels / 2;
@@ -248,7 +232,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
                 cosineBmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
             }
 
-            var thumbnailToShow = bitmap;
+            var thumbnailToShow = dinoBitmap;
             _patchTokens = patches;
             thumbnailHandedOff = true;
 
@@ -256,9 +240,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
             {
                 if (ct.IsCancellationRequested)
                 {
-                    defocusBmp?.Dispose();
-                    motionBmp?.Dispose();
-                    pyramidBmp?.Dispose();
+                    sharpnessBmp?.Dispose();
                     pcaBmp?.Dispose();
                     cosineBmp?.Dispose();
                     thumbnailToShow.Dispose();
@@ -269,9 +251,9 @@ public sealed class DinoDebugViewModel : ReactiveObject
                 Crosshair = null;
                 RefGridX = rx;
                 RefGridY = ry;
-                SwapBitmap(ref _defocusMap, defocusBmp, nameof(DefocusMap));
-                SwapBitmap(ref _motionBlurMap, motionBmp, nameof(MotionBlurMap));
-                SwapBitmap(ref _pyramidMap, pyramidBmp, nameof(PyramidMap));
+                SwapBitmap(ref _sharpnessMap, sharpnessBmp, nameof(SharpnessMap));
+                ShakeField = shakeField;
+                RigidMotionText = rigidText;
                 SwapBitmap(ref _pcaRgbMap, pcaBmp, nameof(PcaRgbMap));
                 SwapBitmap(ref _cosineMap, cosineBmp, nameof(CosineMap));
                 Status = file.Name;
@@ -288,8 +270,42 @@ public sealed class DinoDebugViewModel : ReactiveObject
         }
         finally
         {
-            if (!thumbnailHandedOff) bitmap?.Dispose();
+            if (!thumbnailHandedOff) dinoBitmap?.Dispose();
+            // CV 大图来自 BitmapLoader 的 LRU 缓存，由 ImageView 共用，不在此处 Dispose。
         }
+    }
+
+    /// <summary>
+    /// 把刚体拟合结果格式化为三行文本：样本数 / 平移 / 旋转 / 残差 + 语义标签。
+    /// </summary>
+    private static string FormatRigidMotion(RigidMotionResult rigid)
+    {
+        string label;
+        if (rigid.SampleCount < 6)
+        {
+            label = "静止或信号不足";
+        }
+        else if (rigid.ResidualRms > Math.Max(rigid.TranslationMagnitude, 4f))
+        {
+            label = "混乱场景（车流 / 树叶）";
+        }
+        else if (rigid.TranslationMagnitude >= 3f)
+        {
+            label = "疑似平移手抖";
+        }
+        else if (rigid.RotationMagnitude >= 0.02f)
+        {
+            label = "疑似旋转手抖";
+        }
+        else
+        {
+            label = "静止纹理";
+        }
+        return $"样本 {rigid.SampleCount} 格\n" +
+               $"|T| = {rigid.TranslationMagnitude:F2} px\n" +
+               $"|ω| = {rigid.RotationMagnitude:F3} rad\n" +
+               $"残差 = {rigid.ResidualRms:F2} px\n" +
+               $"判定:{label}";
     }
 
     private void ClearAllOnUi(string status)
@@ -297,9 +313,9 @@ public sealed class DinoDebugViewModel : ReactiveObject
         Dispatcher.UIThread.Post(() =>
         {
             SwapBitmap(ref _sourceThumbnail, null, nameof(SourceThumbnail));
-            SwapBitmap(ref _defocusMap, null, nameof(DefocusMap));
-            SwapBitmap(ref _motionBlurMap, null, nameof(MotionBlurMap));
-            SwapBitmap(ref _pyramidMap, null, nameof(PyramidMap));
+            SwapBitmap(ref _sharpnessMap, null, nameof(SharpnessMap));
+            ShakeField = null;
+            RigidMotionText = "未加载";
             SwapBitmap(ref _pcaRgbMap, null, nameof(PcaRgbMap));
             SwapBitmap(ref _cosineMap, null, nameof(CosineMap));
             _patchTokens = null;

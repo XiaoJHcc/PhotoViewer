@@ -13,6 +13,7 @@ public static class HeatmapBitmapBuilder
 {
     /// <summary>
     /// 用 viridis 近似调色板渲染单通道热力图(输入 [0,1])。0 为深蓝,0.5 青绿,1 黄。
+    /// NaN 输入渲染为中灰 (#606060),表示"无效读数"。
     /// </summary>
     /// <param name="plane">长度 width*height 的归一化平面。</param>
     /// <param name="width">宽度。</param>
@@ -22,6 +23,7 @@ public static class HeatmapBitmapBuilder
     {
         return BuildInternal(plane, width, height, static t =>
         {
+            if (float.IsNaN(t)) return ((byte)0x60, (byte)0x60, (byte)0x60);
             // 简化 viridis:4 段线性插值
             // 0.00 #440154 (68,1,84)
             // 0.25 #3B528B (59,82,139)
