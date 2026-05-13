@@ -42,7 +42,7 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 
 **AI/** — DINOv3 特征 + CV 网格 + 相似聚类（`namespace PhotoViewer.Core.AI`）
 
-> AI 是目前主要开发任务，计划记录见 [Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) 与 [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。
+> AI 是目前主要开发任务，当前阶段聚焦 CV 诊断 v1 升级，见 [Plans/dinov3-photo-ranking-plan-2-wrapup.md](Plans/dinov3-photo-ranking-plan-2-wrapup.md)（含 v1 标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑）；上游设计原文：[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。
 
 | File | 模块 | Responsibility |
 |---|---|---|
@@ -247,27 +247,3 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 **Tidiness**:
 - Do not litter the code with redundant comments for minor fixes — a concise summary in the conversation is enough. In particular, **never add explanatory/note-like text to UI strings**. Keep code comments systematic and the UI visually clean.
 
----
-
-## 11. DINOv3 计划推进状态 DINO Plan Progress
-
-计划原文：[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。本节只记录**里程碑落地状态**；技术细节在代码与计划书中，不在此处展开。
-
-**已实现（A2 + 二期 T1–T5 骨架）**：
-- A2-M1 打包与运行：[DinoFeatureExtractor](PhotoViewer/Core/AI/DinoFeatureExtractor.cs) + [DinoModelResources](PhotoViewer/Core/AI/DinoModelResources.cs)（CPU EP + CLS/patch 双输出校验）；ONNX 导出/校验脚本 `Tools/export_dinov3_onnx.py` / `Tools/verify_onnx_parity.py`；模型文件 [Assets/Models/dinov3_vits16.onnx](PhotoViewer/Assets/Models/) 已就位。
-- A2-M2 UI 接入：[SimilarityService](PhotoViewer/Core/AI/SimilarityService.cs) + [DinoFeatureCache](PhotoViewer/Core/AI/DinoFeatureCache.cs) 接入 [SimilarityPanelViewModel](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs)；老 `Core/Similarity/` 已删除。
-- 二期 T2 全文件夹批量索引：[FolderFeatureIndexer](PhotoViewer/Core/AI/FolderFeatureIndexer.cs)（桌面半核并行解码 + 单线程推理，单张失败跳过，不可取消）。
-- 二期 T5 相似聚类面板显示控制：FilterBar toggle + 三态（Empty / Partial / Full）+ 按钮原地进度条；`SettingsModel.SimilarityPanelExpanded` 跨会话保留。
-- A3 工程侧 CV 一期：[CvGridResult](PhotoViewer/Core/AI/CvGridResult.cs) + [CvGridExtractor](PhotoViewer/Core/AI/CvGridExtractor.cs) 5 标量 × 3 层金字塔，纯托管。
-- 二期 T3 + T4 DINO 诊断页骨架：[CvHeatmap](PhotoViewer/Core/AI/CvHeatmap.cs) + [PatchHeatmap](PhotoViewer/Core/AI/PatchHeatmap.cs) + [HeatmapBitmapBuilder](PhotoViewer/Core/AI/HeatmapBitmapBuilder.cs) + [DinoDebugViewModel](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) + [DinoDebugView](PhotoViewer/Views/Tools/DinoDebugView.axaml)，已接入 ToolsView 导航。
-
-**未实现 / 待推进**（按计划顺序列出）：
-- **A1 Python 推理验证（被跳过）**：三尺寸 + 双分辨率 t-SNE 对比、`Tools/dinov3_feature_probe.py` 未实现；当前端侧走 ViT-S/16 @ 518 是按计划默认结论落地的，**尚未有 t-SNE 数据支持**。
-- **A2-M1 四平台自检**：计划里 Windows / macOS / Android / iOS 都要 Debug 启动跑通 + 日志确认 `EnsureDualOutputSchema` 不抛、单张耗时达标。**目前只能确认代码路径存在，未见四平台实测记录**（对应 Plan-2 §3.1 T1，是后续所有功能的前置）。
-- **A3 设计侧 PoC**：`Tools/cv_grid_design.ipynb` + `Tools/patch_token_design.ipynb` 文件已在但**内容未跑完**；§5.4 FFT 去留决策占位仍为 "(未决)"，Plan-2 明确写"不决策不进阶段 III"。
-- **二期验收（§5）**：14 张 §0.3 七类代表样本 checklist 未过；相似聚类质量 + CV 诊断合理性 + PCA-RGB 区分度三条验收仍未打勾。
-- **DINO 诊断页交互细节**：归一化两档切换（PerPlane / PerScalarPyramid）下拉、抖动 τ 滑条、切换照片 spinner 当前都是硬编码/未暴露；Plan-2 §3.3.2 要求暴露给用户。
-- **阶段 III schema 冻结（Plan-1 §A3.4 / Plan-2 §6.1）**：`photo_features` / `photo_patches` 纵表 + `photos.cv_grid` / `cv_grid_spec` 列 + 历史 `feature_vector` 迁移脚本 `Tools/migrate_features_to_longtable.py` 全部未做；当前 CLS 仍走 `photos.feature_vector` 单列。
-- **阶段 B 数据工程批入库（Plan-1 §B）**：`PatchFeatureExtractor` / `PatchFeatureCache` / `CvGridCache`（接正式 `photos.cv_grid`）/ 全库 CV 归一化参数 / 调度策略（后台预跑、移动端 WiFi/充电 gate）均未启动。
-- **阶段 C / D / E / F**：训练对生成、线性头/MLP 训练、邻域聚合、端侧最终模型导出 — 均在阶段 B 之后，尚未开工。
-- **M6（条件触发）CLS-attention rollout**：PCA-RGB 质量过关则永久跳过；目前未到判断时机。

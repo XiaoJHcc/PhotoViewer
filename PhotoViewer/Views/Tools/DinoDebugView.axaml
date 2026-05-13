@@ -4,6 +4,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:toolVm="clr-namespace:PhotoViewer.ViewModels.Tools"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             xmlns:views="clr-namespace:PhotoViewer.Views.Tools"
              mc:Ignorable="d"
              d:DesignWidth="800"
              d:DesignHeight="600"
@@ -63,26 +64,62 @@
                 </controls:DiagnosticTile>
             </UniformGrid>
 
-            <TextBlock Classes="SectionHeader" Text="CV 网格诊断（16×16，基于 level0）" />
+            <TextBlock Classes="SectionHeader" Text="CV 网格诊断（32×32 中心采样，像素单位）" />
             <UniformGrid Columns="3">
                 <controls:DiagnosticTile
-                    Source="{Binding DefocusMap}"
+                    Source="{Binding SharpnessMap}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
-                    Label="失焦 (lap × sobel, log)"
+                    Label="锐度 (edge_width_p20, 1.5-10 px)"
                     TileClicked="OnTileClicked" />
-                <controls:DiagnosticTile
-                    Source="{Binding MotionBlurMap}"
-                    AspectRatio="{Binding AspectRatio}"
-                    Crosshair="{Binding Crosshair}"
-                    Label="抖动 (低熵掩膜, τ=1.5bit)"
-                    TileClicked="OnTileClicked" />
-                <controls:DiagnosticTile
-                    Source="{Binding PyramidMap}"
-                    AspectRatio="{Binding AspectRatio}"
-                    Crosshair="{Binding Crosshair}"
-                    Label="金字塔一致性 (lap CV)"
-                    TileClicked="OnTileClicked" />
+                <Border Background="#151515"
+                        BorderBrush="#333"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8"
+                        Margin="4">
+                    <StackPanel HorizontalAlignment="Center">
+                        <Border Width="220" Height="220"
+                                Background="#222"
+                                CornerRadius="2"
+                                ClipToBounds="True">
+                            <views:ShakeFieldView ShakeField="{Binding ShakeField}"
+                                                  AspectRatio="{Binding AspectRatio}" />
+                        </Border>
+                        <TextBlock Text="抖动矢量场 (shake_spread / direction)"
+                                   FontSize="12"
+                                   Foreground="#888"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
+                <Border Background="#151515"
+                        BorderBrush="#333"
+                        BorderThickness="1"
+                        CornerRadius="4"
+                        Padding="8"
+                        Margin="4">
+                    <StackPanel HorizontalAlignment="Center" Width="220">
+                        <Border Background="#222"
+                                CornerRadius="2"
+                                Padding="12"
+                                MinHeight="220">
+                            <TextBlock Text="{Binding RigidMotionText}"
+                                       FontSize="12"
+                                       Foreground="#DDD"
+                                       FontFamily="Consolas,Menlo,monospace"
+                                       LineHeight="20"
+                                       TextWrapping="Wrap" />
+                        </Border>
+                        <TextBlock Text="刚体拟合 (|T| / |ω| / residual)"
+                                   FontSize="12"
+                                   Foreground="#888"
+                                   HorizontalAlignment="Center"
+                                   TextAlignment="Center"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+                </Border>
             </UniformGrid>
 
         </StackPanel>

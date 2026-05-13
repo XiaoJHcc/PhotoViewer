@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
@@ -8,21 +9,25 @@ using Avalonia.Media.Imaging;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// CV 网格一期提取器（§A3.8）：在传入的 bitmap 上计算 16×16 格 × 5 标量 × 3 层金字塔。
-/// 纯托管、无 native 依赖；所有标量共享一次 per-cell 扫描以避免为 Laplacian/Sobel 响应图
-/// 整图额外分配；金字塔 3 层顺序处理，同一时刻仅持有一份 luma 缓冲。
+/// CV 网格 v2 提取器（中心采样 + Marziliano 边宽量化）。
+/// 每个 16×16 格只在中心取一个 <see cref="CvGridResult.BlockSize"/> 大小的采样块，
+/// 在块内测"强边的跨像素宽度"，直接输出像素量化结果。
+/// 相较 v0/v1 放弃了"每格代表全格"的假设 —— 采样命中墙壁/纯色时以 NaN 标记，诊断页画灰。
 /// </summary>
 public static class CvGridExtractor
 {
     private const int Grid = CvGridResult.GridSize;
+    private const int MaxHalfWidth = 8;
+    private const int BucketCount = 8;
+    private const int BinCount = 64;
+    private const int MinEdgesForRead = 80;
+    private const int MinEdgesPerBucket = 5;
+    private const float PlateauRatio = 0.25f;
+    private const float P20Fraction = 0.2f;
+    /// <summary>边强度绝对下限（luma 0-255 标度的 Sobel 幅值）；块内 p90 不及此则整块判 NaN。</summary>
+    private const float TauEdgeFloor = 30f;
 
-    /// <summary>短边最小像素数。低于该阈值无法保证 16 格各自有 3×3 卷积邻域，直接抛异常。</summary>
-    private const int MinShortSide = Grid * 3;
-
-    /// <summary>
-    /// 从已解码 bitmap 提取 CV 网格。调用方负责把适合尺寸的 bitmap 交进来；
-    /// 一期不做调度、不做缓存，由上层决定何时触发。
-    /// </summary>
+    /// <summary>对外入口：异步包一层，实际计算在 <see cref="Extract"/> 里。</summary>
     public static Task<CvGridResult> ExtractAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
@@ -35,179 +40,257 @@ public static class CvGridExtractor
         var (luma, w, h) = ReadLuminance(bitmap);
 
         var data = new float[CvGridResult.DataLength];
-        var curLuma = luma;
-        int curW = w, curH = h;
+        // 先把所有 NaN 填满；命中的格再覆盖回去，未命中/不足的自动留 NaN。
+        for (int i = 0; i < data.Length; i++) data[i] = float.NaN;
 
-        for (int p = 0; p < CvGridResult.PyramidLevels; p++)
+        // 根据短边自适应块尺寸：短边/Grid 是格心间距，用它作为块边长可以几乎不重叠。
+        int shortSide = Math.Min(w, h);
+        int blockSize = Math.Clamp(shortSide / Grid, CvGridResult.MinBlockSize, CvGridResult.MaxBlockSize);
+        if (shortSide < CvGridResult.MinBlockSize)
         {
-            ct.ThrowIfCancellationRequested();
-            ComputeLevel(curLuma, curW, curH, p, data);
-
-            if (p < CvGridResult.PyramidLevels - 1)
-            {
-                (curLuma, curW, curH) = Downsample2x(curLuma, curW, curH);
-            }
+            return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
         }
+
+        Parallel.For(0, Grid * Grid, idx =>
+        {
+            int gy = idx / Grid;
+            int gx = idx % Grid;
+            // 格中心像素坐标（连续坐标取整）
+            int cx = (int)((gx + 0.5) * w / Grid);
+            int cy = (int)((gy + 0.5) * h / Grid);
+            int half = blockSize / 2;
+            int bx0 = cx - half;
+            int by0 = cy - half;
+            int bx1 = cx + half;
+            int by1 = cy + half;
+            // 越界时平移；平移后仍超短边就收缩。
+            if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
+            if (by0 < 0) { by1 -= by0; by0 = 0; }
+            if (bx1 > w) { bx0 -= (bx1 - w); bx1 = w; }
+            if (by1 > h) { by0 -= (by1 - h); by1 = h; }
+            bx0 = Math.Max(0, bx0);
+            by0 = Math.Max(0, by0);
+            int bw = bx1 - bx0;
+            int bh = by1 - by0;
+            if (bw < CvGridResult.MinBlockSize || bh < CvGridResult.MinBlockSize) return;
+
+            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, data);
+        });
 
         return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
     }
 
-    /// <summary>对单个金字塔层并行算 16×16 = 256 个格子。</summary>
-    private static void ComputeLevel(float[] luma, int w, int h, int pyramidLevel, float[] data)
-    {
-        int cellW = Math.Max(1, w / Grid);
-        int cellH = Math.Max(1, h / Grid);
-
-        Parallel.For(0, Grid * Grid, cellIdx =>
-        {
-            int gy = cellIdx / Grid;
-            int gx = cellIdx % Grid;
-            ComputeCell(luma, w, h, gx * cellW, gy * cellH, cellW, cellH, pyramidLevel, gy, gx, data);
-        });
-    }
-
     /// <summary>
-    /// 单格扫描：一次循环同时累加 5 个标量所需的统计量。3×3 卷积跳过图像绝对边缘一圈。
+    /// 单格处理：在块内算 Sobel → 自适应 τ_edge → NMS → Marziliano 测宽 → 方向桶。
+    /// 6 标量直接写入输出数组。
     /// </summary>
     private static void ComputeCell(
         float[] luma, int w, int h,
-        int x0, int y0, int cw, int ch,
-        int pyramid, int gy, int gx, float[] data)
+        int bx0, int by0, int bw, int bh,
+        int gy, int gx, float[] data)
     {
-        int xStart = Math.Max(1, x0);
-        int yStart = Math.Max(1, y0);
-        int xEnd = Math.Min(w - 1, x0 + cw);
-        int yEnd = Math.Min(h - 1, y0 + ch);
-        if (xEnd <= xStart || yEnd <= yStart)
+        int px = bw * bh;
+        var magArr = ArrayPool<float>.Shared.Rent(px);
+        var sxArr = ArrayPool<float>.Shared.Rent(px);
+        var syArr = ArrayPool<float>.Shared.Rent(px);
+        try
         {
-            WriteCell(data, pyramid, gy, gx, 0, 0, 0, 0, 0);
-            return;
-        }
+            double lumaSum = 0;
+            long lumaSamples = 0;
+            float magMax = 0f;
 
-        double lumaSum = 0, lumaSqSum = 0;
-        double lapSum = 0, lapSqSum = 0;
-        double magSum = 0;
-        Span<double> hist = stackalloc double[8];
-        long samples = 0;
-
-        for (int y = yStart; y < yEnd; y++)
-        {
-            int row = y * w;
-            int rowPrev = row - w;
-            int rowNext = row + w;
-            for (int x = xStart; x < xEnd; x++)
+            // Sobel：块内每像素求 sx/sy/mag；全图外圈 1 像素填 0。
+            for (int y = 0; y < bh; y++)
             {
-                float c = luma[row + x];
-                lumaSum += c;
-                lumaSqSum += c * c;
-
-                float l  = luma[row + x - 1];
-                float r  = luma[row + x + 1];
-                float u  = luma[rowPrev + x];
-                float d  = luma[rowNext + x];
-                float ul = luma[rowPrev + x - 1];
-                float ur = luma[rowPrev + x + 1];
-                float dl = luma[rowNext + x - 1];
-                float dr = luma[rowNext + x + 1];
-
-                float lap = l + r + u + d - 4f * c;
-                lapSum += lap;
-                lapSqSum += lap * lap;
-
-                float sx = (ur + 2f * r + dr) - (ul + 2f * l + dl);
-                float sy = (dl + 2f * d + dr) - (ul + 2f * u + ur);
-                float mag = MathF.Sqrt(sx * sx + sy * sy);
-                magSum += mag;
-
-                if (mag > 1e-3f)
+                int absY = by0 + y;
+                bool rowEdge = absY <= 0 || absY >= h - 1;
+                int row = absY * w;
+                int rowPrev = row - w;
+                int rowNext = row + w;
+                for (int x = 0; x < bw; x++)
                 {
-                    // atan2 → [-π, π]；再把对向方向合并（无向边）到 [0, 1) 后分 8 bin。
+                    int absX = bx0 + x;
+                    int idx = y * bw + x;
+                    float c = luma[row + absX];
+                    lumaSum += c;
+                    lumaSamples++;
+                    if (rowEdge || absX <= 0 || absX >= w - 1)
+                    {
+                        magArr[idx] = 0f;
+                        sxArr[idx] = 0f;
+                        syArr[idx] = 0f;
+                        continue;
+                    }
+                    float l = luma[row + absX - 1];
+                    float r = luma[row + absX + 1];
+                    float u = luma[rowPrev + absX];
+                    float d = luma[rowNext + absX];
+                    float ul = luma[rowPrev + absX - 1];
+                    float ur = luma[rowPrev + absX + 1];
+                    float dl = luma[rowNext + absX - 1];
+                    float dr = luma[rowNext + absX + 1];
+                    float sx = (ur + 2f * r + dr) - (ul + 2f * l + dl);
+                    float sy = (dl + 2f * d + dr) - (ul + 2f * u + ur);
+                    float mag = MathF.Sqrt(sx * sx + sy * sy);
+                    sxArr[idx] = sx;
+                    syArr[idx] = sy;
+                    magArr[idx] = mag;
+                    if (mag > magMax) magMax = mag;
+                }
+            }
+
+            float lumaMean = lumaSamples > 0 ? (float)(lumaSum / lumaSamples) : 0f;
+            WriteScalar(data, 5, gy, gx, lumaMean);
+
+            if (magMax < 1e-3f)
+            {
+                WriteScalar(data, 0, gy, gx, 0f);
+                return;
+            }
+
+            // 自适应 τ_edge = 块内 mag 的 p90（用 64 bin 直方图估算）。
+            Span<int> hist = stackalloc int[BinCount];
+            int nonZero = 0;
+            for (int i = 0; i < px; i++)
+            {
+                float m = magArr[i];
+                if (m <= 1e-3f) continue;
+                int b = (int)(m / magMax * BinCount);
+                if (b >= BinCount) b = BinCount - 1;
+                hist[b]++;
+                nonZero++;
+            }
+            int target = (int)(nonZero * 0.9);
+            int cum = 0;
+            int p90Bin = BinCount - 1;
+            for (int b = 0; b < BinCount; b++)
+            {
+                cum += hist[b];
+                if (cum >= target) { p90Bin = b; break; }
+            }
+            float tauEdge = (p90Bin + 0.5f) / BinCount * magMax;
+            // 绝对下限兜底：纯色 / 极弱纹理块的 p90 可能远低于真边阈值，强行采样会挤出"假边"。
+            if (tauEdge < TauEdgeFloor)
+            {
+                WriteScalar(data, 0, gy, gx, 0f);
+                return;
+            }
+            float tauPlateau = tauEdge * PlateauRatio;
+
+            var widths = new List<float>(1024);
+            var buckets = new List<float>[BucketCount];
+            for (int b = 0; b < BucketCount; b++) buckets[b] = new List<float>(64);
+
+            for (int y = 1; y < bh - 1; y++)
+            {
+                int row = y * bw;
+                for (int x = 1; x < bw - 1; x++)
+                {
+                    int idx = row + x;
+                    float mag = magArr[idx];
+                    if (mag < tauEdge) continue;
+
+                    float sx = sxArr[idx];
+                    float sy = syArr[idx];
+                    bool horizontal = MathF.Abs(sx) >= MathF.Abs(sy);
+
+                    // NMS：只沿主导轴做局部极大抑制。
+                    if (horizontal)
+                    {
+                        if (magArr[idx - 1] > mag || magArr[idx + 1] > mag) continue;
+                    }
+                    else
+                    {
+                        if (magArr[idx - bw] > mag || magArr[idx + bw] > mag) continue;
+                    }
+
+                    int dx = horizontal ? (sx >= 0 ? 1 : -1) : 0;
+                    int dy = horizontal ? 0 : (sy >= 0 ? 1 : -1);
+
+                    int right = StepUntilPlateau(magArr, bw, bh, x, y, dx, dy, tauPlateau);
+                    int left = StepUntilPlateau(magArr, bw, bh, x, y, -dx, -dy, tauPlateau);
+                    if (right <= 0 || left <= 0) continue;
+
+                    float width = right + left;
+                    widths.Add(width);
+
                     double theta = Math.Atan2(sy, sx);
                     double norm = (theta + Math.PI) / Math.PI;
                     if (norm >= 1.0) norm -= 1.0;
-                    int bin = (int)(norm * 8);
-                    if (bin >= 8) bin = 7;
-                    hist[bin] += mag;
+                    int bin = (int)(norm * BucketCount);
+                    if (bin >= BucketCount) bin = BucketCount - 1;
+                    buckets[bin].Add(width);
                 }
-
-                samples++;
             }
-        }
 
-        double lumaMean = lumaSum / samples;
-        double lumaVar = Math.Max(0, lumaSqSum / samples - lumaMean * lumaMean);
-        double lapMean = lapSum / samples;
-        double lapVar = Math.Max(0, lapSqSum / samples - lapMean * lapMean);
-        double sobelMean = magSum / samples;
+            int edgeCount = widths.Count;
+            WriteScalar(data, 0, gy, gx, edgeCount);
+            if (edgeCount < MinEdgesForRead) return;
 
-        double histSum = 0;
-        for (int i = 0; i < 8; i++) histSum += hist[i];
-        double entropy = 0;
-        if (histSum > 0)
-        {
-            for (int i = 0; i < 8; i++)
+            widths.Sort();
+            int p20End = Math.Max(1, (int)(widths.Count * P20Fraction));
+            double p20Sum = 0;
+            for (int i = 0; i < p20End; i++) p20Sum += widths[i];
+            float p20 = (float)(p20Sum / p20End);
+            float median = widths[widths.Count / 2];
+
+            float minBw = float.PositiveInfinity;
+            float maxBw = float.NegativeInfinity;
+            int maxBucket = -1;
+            for (int b = 0; b < BucketCount; b++)
             {
-                double p = hist[i] / histSum;
-                if (p > 0) entropy -= p * Math.Log2(p);
+                if (buckets[b].Count < MinEdgesPerBucket) continue;
+                buckets[b].Sort();
+                float bm = buckets[b][buckets[b].Count / 2];
+                if (bm < minBw) minBw = bm;
+                if (bm > maxBw) { maxBw = bm; maxBucket = b; }
             }
+            float spread = maxBucket >= 0 && !float.IsPositiveInfinity(minBw) ? maxBw - minBw : float.NaN;
+            float direction = maxBucket >= 0 ? (maxBucket + 0.5f) / BucketCount * MathF.PI : float.NaN;
+
+            WriteScalar(data, 1, gy, gx, p20);
+            WriteScalar(data, 2, gy, gx, median);
+            WriteScalar(data, 3, gy, gx, spread);
+            WriteScalar(data, 4, gy, gx, direction);
         }
-
-        WriteCell(data, pyramid, gy, gx,
-            (float)lapVar,
-            (float)sobelMean,
-            (float)entropy,
-            (float)lumaMean,
-            (float)Math.Sqrt(lumaVar));
-    }
-
-    /// <summary>将 5 标量写入扁平数组。标量顺序必须与 <see cref="CvGridResult.ScalarNames"/> 对齐。</summary>
-    private static void WriteCell(float[] data, int p, int gy, int gx,
-        float lapVar, float sobelMean, float gradEntropy, float lumaMean, float lumaStd)
-    {
-        int stride = CvGridResult.LevelStride;
-        int plane = CvGridResult.PlaneLength;
-        int baseIdx = p * stride + gy * Grid + gx;
-        data[baseIdx + 0 * plane] = lapVar;
-        data[baseIdx + 1 * plane] = sobelMean;
-        data[baseIdx + 2 * plane] = gradEntropy;
-        data[baseIdx + 3 * plane] = lumaMean;
-        data[baseIdx + 4 * plane] = lumaStd;
-    }
-
-    /// <summary>2×2 box 下采样，零插值（与 patch 下采样策略一致，避免引入低通偏差）。</summary>
-    private static (float[] luma, int w, int h) Downsample2x(float[] src, int w, int h)
-    {
-        int dw = w / 2;
-        int dh = h / 2;
-        var dst = new float[dw * dh];
-        Parallel.For(0, dh, dy =>
+        finally
         {
-            int dr = dy * dw;
-            int sr0 = (dy * 2) * w;
-            int sr1 = sr0 + w;
-            for (int dx = 0; dx < dw; dx++)
-            {
-                int sx = dx * 2;
-                dst[dr + dx] = 0.25f * (src[sr0 + sx] + src[sr0 + sx + 1] + src[sr1 + sx] + src[sr1 + sx + 1]);
-            }
-        });
-        return (dst, dw, dh);
+            ArrayPool<float>.Shared.Return(magArr);
+            ArrayPool<float>.Shared.Return(sxArr);
+            ArrayPool<float>.Shared.Return(syArr);
+        }
     }
 
     /// <summary>
-    /// 把任意解码格式的 bitmap 归一到 BGRA8888，再按 Rec.709 转灰度。
-    /// 套路同 <see cref="DinoFeatureExtractor"/> 的 BuildInputTensor，但不缩放尺寸。
+    /// 从 (x,y) 出发沿 (dx,dy) 单向步进，直到 mag 跌破 τ_plateau 或超过 MaxHalfWidth；
+    /// 返回走出的步数。撞到块边界返回 0（整条边丢弃）。
+    /// </summary>
+    private static int StepUntilPlateau(float[] mag, int bw, int bh, int x, int y, int dx, int dy, float tauPlateau)
+    {
+        for (int k = 1; k <= MaxHalfWidth; k++)
+        {
+            int nx = x + k * dx;
+            int ny = y + k * dy;
+            if (nx < 0 || nx >= bw || ny < 0 || ny >= bh) return 0;
+            if (mag[ny * bw + nx] < tauPlateau) return k;
+        }
+        return MaxHalfWidth;
+    }
+
+    private static void WriteScalar(float[] data, int scalar, int gy, int gx, float value)
+    {
+        data[scalar * CvGridResult.PlaneLength + gy * Grid + gx] = value;
+    }
+
+    /// <summary>
+    /// 把任意格式 bitmap 归一到 BGRA8888 后按 Rec.709 转灰度。
+    /// 短边不足 MinBlockSize 时，<see cref="Extract"/> 会直接返回全 NaN 结果，由热力图渲染层兜底。
     /// </summary>
     private static (float[] luma, int w, int h) ReadLuminance(Bitmap bitmap)
     {
         var size = bitmap.PixelSize;
         int w = size.Width;
         int h = size.Height;
-        if (w < MinShortSide || h < MinShortSide)
-        {
-            throw new InvalidOperationException(
-                $"CvGridExtractor: bitmap {w}×{h} 过小，至少需 {MinShortSide}×{MinShortSide}");
-        }
 
         var target = new RenderTargetBitmap(new PixelSize(w, h));
         try
