@@ -27,8 +27,8 @@ PhotoViewer.Desktop/      # Windows head (net10.0-windows)
 PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
 PhotoViewer.Android/      # Android head (net10.0-android)
-ExifTestTool/             # Standalone CLI for EXIF debugging
 Tools/                    # Python: ExifTool 表重生成 + DINOv3 ONNX 导出/校验 + CV/patch PoC notebooks
+Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
 Directory.Build.props     # Single source of truth for version number
 Directory.Packages.props  # Central NuGet version pinning
