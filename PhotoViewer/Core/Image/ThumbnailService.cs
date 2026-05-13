@@ -264,14 +264,8 @@ public static class ThumbnailService
                 var length = dir.GetInt32(0x0202);
                 if (offset > 0 && length > 100)
                 {
-                    await using var s = await file.OpenReadAsync();
-                    s.Seek(offset, SeekOrigin.Begin);
-                    var buffer = new byte[length];
-                    var read = await s.ReadAsync(buffer, 0, length);
-                    if (read == length && IsValidImageData(buffer))
-                    {
-                        return DecodeBytesToShortSide(buffer, targetShortSide);
-                    }
+                    var jpeg = await ReadJpegAroundAsync(file, offset, length);
+                    if (jpeg != null) return DecodeBytesToShortSide(jpeg, targetShortSide);
                 }
             }
             catch (Exception ex)
@@ -281,6 +275,57 @@ public static class ThumbnailService
         }
 
         return null;
+    }
+
+    /// <summary>
+    /// 从 <paramref name="hintOffset"/> 附近扫首个 JPEG SOI（FF D8 FF），再截取 <paramref name="length"/> 字节返回。
+    /// 动机：IFD1 的 ThumbnailOffset 口径因相机/软件而异（TIFF-相对 vs 文件-绝对），
+    /// 还常有 firmware quirk 偏移几字节（实测 Sony ILCE-6100 偏 +6）。
+    /// 做法：以 hint 为中心开 <paramref name="windowPad"/> 字节保险窗口，扫到 SOI 即为真实起点。
+    /// 解码器遇到 EOI 即停，尾部多余字节不影响结果，因此不做末端裁剪。
+    /// </summary>
+    private static async Task<byte[]?> ReadJpegAroundAsync(IStorageFile file, int hintOffset, int length)
+    {
+        const int windowPad = 64;
+        try
+        {
+            await using var s = await file.OpenReadAsync();
+            long start = Math.Max(0, (long)hintOffset - windowPad);
+            int want = length + windowPad * 2;
+            s.Seek(start, SeekOrigin.Begin);
+            var window = new byte[want];
+            int read = await s.ReadAsync(window, 0, want);
+            if (read < 100) return null;
+
+            int soi = FindSoiPrefix(window, read);
+            if (soi < 0) return null;
+
+            int take = Math.Min(length, read - soi);
+            if (take < 100) return null;
+
+            var jpeg = new byte[take];
+            Array.Copy(window, soi, jpeg, 0, take);
+            return jpeg;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ThumbnailService: scan SOI failed (" + file.Name + "): " + ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 在缓冲区前 <paramref name="count"/> 字节内查找首个 JPEG SOI 三字节签名（FF D8 FF）。
+    /// 未命中返回 -1。
+    /// </summary>
+    private static int FindSoiPrefix(byte[] buffer, int count)
+    {
+        int limit = Math.Min(count, buffer.Length) - 3;
+        for (int i = 0; i <= limit; i++)
+        {
+            if (buffer[i] == 0xFF && buffer[i + 1] == 0xD8 && buffer[i + 2] == 0xFF) return i;
+        }
+        return -1;
     }
 
     /// <summary>
