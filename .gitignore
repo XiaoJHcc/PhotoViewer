@@ -466,3 +466,9 @@ PhotoViewer/Assets/Models/*.onnx.data
 
 # iOS Profile 续期占位工程：开发者本地 Team ID（勿提交）
 Tools/RefreshIosProfile/Local.xcconfig
+
+# CV / DINO 离线诊断本地样本（HIF 大文件 + 工具输出 PNG/TXT，仅本地保留）
+TestCase/
+
+# Claude Code 工作目录（本地配置，勿提交）
+.claude/

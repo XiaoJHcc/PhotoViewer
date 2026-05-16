@@ -86,7 +86,7 @@
                             <views:ShakeFieldView ShakeField="{Binding ShakeField}"
                                                   AspectRatio="{Binding AspectRatio}" />
                         </Border>
-                        <TextBlock Text="抖动矢量场 (shake_spread / direction)"
+                        <TextBlock Text="抖动矢量场 (drag_width / direction)"
                                    FontSize="12"
                                    Foreground="#888"
                                    HorizontalAlignment="Center"
