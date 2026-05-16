@@ -203,22 +203,22 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
             // 并行跑 CV（大图）与 DINO（小图）；若 CV 大图解码失败，降级用 DINO 小图（短边可能不足，CvGridExtractor 会抛异常由 catch 兜底）。
             var cvSourceBitmap = cvBitmap ?? dinoBitmap;
-            var cvTask = CvGridExtractor.ExtractAsync(cvSourceBitmap, ct);
+            var cvTask = CvGridExtractor.ExtractWithContrastAsync(cvSourceBitmap, ct);
             var dinoTask = DinoFeatureExtractor.ExtractDualAsync(dinoBitmap, includePatches: true, ct);
             await Task.WhenAll(cvTask, dinoTask).ConfigureAwait(false);
 
-            var cv = cvTask.Result;
+            var (cv, contrast) = cvTask.Result;
             var (_, patches) = dinoTask.Result;
 
             ct.ThrowIfCancellationRequested();
 
-            // CV：锐度图 + 拖影矢量场 + 加权刚体拟合
+            // CV：锐度图 + 拖影矢量场 + 加权刚体拟合（r3 全部接入对比度软因子）
             int cvW = cvSourceBitmap.PixelSize.Width;
             int cvH = cvSourceBitmap.PixelSize.Height;
             float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
-            var sharpness = CvHeatmap.BuildSharpness(cv);
+            var sharpness = CvHeatmap.BuildSharpness(cv, contrast);
             var sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridPixels, CvGridPixels);
-            var shakeField = CvHeatmap.BuildShakeField(cv, diagonal);
+            var shakeField = CvHeatmap.BuildShakeField(cv, diagonal, contrast);
             var rigid = CvHeatmap.FitRigidMotion(shakeField);
             var rigidText = FormatRigidMotion(rigid, diagonal);
 

@@ -26,6 +26,8 @@ public static class CvGridExtractor
     private const int Grid = CvGridResult.GridSize;
     private const int BucketCount = 8;
     private const int BinCount = 64;
+    /// <summary>r3：luma 直方图 bin 数（0-255 标度，每 bin 4 灰阶）。p2/p98 用此精度。</summary>
+    private const int LumaBinCount = 64;
     private const int MinEdgesForRead = 80;
     private const int MinEdgesPerBucket = 3;
     private const float PlateauRatio = 0.25f;
@@ -41,37 +43,51 @@ public static class CvGridExtractor
     public static Task<CvGridResult> ExtractAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
+        return Task.Run(() =>
+        {
+            var (result, _) = Extract(bitmap, cancellationToken);
+            return result;
+        }, cancellationToken);
+    }
+
+    /// <summary>v5 r3：同时返回 32×32 的 block_contrast 平面（每格 luma p98-p2 跨度，0-255 标度）；
+    /// 不进 CvGridResult schema，作为消费侧软门控的额外通道。</summary>
+    public static Task<(CvGridResult result, float[] contrast)> ExtractWithContrastAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(bitmap);
         return Task.Run(() => Extract(bitmap, cancellationToken), cancellationToken);
     }
 
     /// <summary>调试入口：直接喂 8-bit luma 平面（行优先），跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
-    public static CvGridResult ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
+    public static (CvGridResult result, float[] contrast) ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(luma);
         if (luma.Length != w * h) throw new ArgumentException("luma length mismatch", nameof(luma));
         return ExtractCore(luma, w, h, cancellationToken);
     }
 
-    private static CvGridResult Extract(Bitmap bitmap, CancellationToken ct)
+    private static (CvGridResult result, float[] contrast) Extract(Bitmap bitmap, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var (luma, w, h) = ReadLuminance(bitmap);
         return ExtractCore(luma, w, h, ct);
     }
 
-    private static CvGridResult ExtractCore(float[] luma, int w, int h, CancellationToken ct)
+    private static (CvGridResult result, float[] contrast) ExtractCore(float[] luma, int w, int h, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var data = new float[CvGridResult.DataLength];
+        var contrast = new float[CvGridResult.PlaneLength];
         // 先把所有 NaN 填满；命中的格再覆盖回去，未命中/不足的自动留 NaN。
         for (int i = 0; i < data.Length; i++) data[i] = float.NaN;
+        for (int i = 0; i < contrast.Length; i++) contrast[i] = float.NaN;
 
         // 根据短边自适应块尺寸：短边/Grid 是格心间距，用它作为块边长可以几乎不重叠。
         int shortSide = Math.Min(w, h);
         int blockSize = Math.Clamp(shortSide / Grid, CvGridResult.MinBlockSize, CvGridResult.MaxBlockSize);
         if (shortSide < CvGridResult.MinBlockSize)
         {
-            return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
+            return (new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data }, contrast);
         }
 
         // v4：单边步进上限按对角线 0.8% 自适应，让单边最大 ~58 px @ 6000×4000，
@@ -102,20 +118,20 @@ public static class CvGridExtractor
             int bh = by1 - by0;
             if (bw < CvGridResult.MinBlockSize || bh < CvGridResult.MinBlockSize) return;
 
-            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data);
+            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data, contrast);
         });
 
-        return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
+        return (new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data }, contrast);
     }
 
     /// <summary>
-    /// 单格处理：在块内算 Sobel → 自适应 τ_edge → NMS → Marziliano 测宽 → 方向桶。
-    /// 6 标量直接写入输出数组。
+    /// 单格处理：在块内算 Sobel + luma 直方图 → 自适应 τ_edge → NMS → Marziliano 测宽 → 方向桶。
+    /// 6 标量直接写入输出数组；block_contrast = luma p98-p2 写入 contrastPlane。
     /// </summary>
     private static void ComputeCell(
         float[] luma, int w, int h,
         int bx0, int by0, int bw, int bh,
-        int gy, int gx, int maxHalfWidth, float[] data)
+        int gy, int gx, int maxHalfWidth, float[] data, float[] contrastPlane)
     {
         int px = bw * bh;
         var magArr = ArrayPool<float>.Shared.Rent(px);
@@ -127,6 +143,11 @@ public static class CvGridExtractor
             // 张量的 (Sxx,Syy,Sxy) 给出"哪个方向能量更集中"，比单条边的方向更稳健。
             double sxx = 0, syy = 0, sxy = 0;
             float magMax = 0f;
+
+            // r3 新增：64 bin luma 直方图（0-255 标度，每 bin 4 灰阶），扫完取 p98-p2 作 block_contrast。
+            // 用 stackalloc 避免分配；bin 计数总数 = bw*bh，最大 ~36864 远低于 int 上限。
+            Span<int> lumaHist = stackalloc int[LumaBinCount];
+            int lumaPxCount = 0;
 
             // Sobel：块内每像素求 sx/sy/mag；全图外圈 1 像素填 0。
             for (int y = 0; y < bh; y++)
@@ -140,6 +161,15 @@ public static class CvGridExtractor
                 {
                     int absX = bx0 + x;
                     int idx = y * bw + x;
+
+                    // luma 直方图：每像素都算，包括边界（边界 mag 填 0 但亮度仍要参与跨度）。
+                    float lv = luma[row + absX];
+                    int lb = (int)(lv * LumaBinCount / 256f);
+                    if (lb < 0) lb = 0;
+                    else if (lb >= LumaBinCount) lb = LumaBinCount - 1;
+                    lumaHist[lb]++;
+                    lumaPxCount++;
+
                     if (rowEdge || absX <= 0 || absX >= w - 1)
                     {
                         magArr[idx] = 0f;
@@ -168,6 +198,25 @@ public static class CvGridExtractor
                     sxy += sx * sy;
                 }
             }
+
+            // r3：先算 block_contrast = luma p98 - p2（4 灰阶分辨率，对单像素噪点尖峰鲁棒）。
+            float contrast = 0f;
+            if (lumaPxCount > 0)
+            {
+                int target2 = (int)MathF.Ceiling(lumaPxCount * 0.02f);
+                int target98 = (int)MathF.Ceiling(lumaPxCount * 0.98f);
+                int cumL = 0;
+                int p2Bin = 0, p98Bin = LumaBinCount - 1;
+                bool p2Set = false;
+                for (int b = 0; b < LumaBinCount; b++)
+                {
+                    cumL += lumaHist[b];
+                    if (!p2Set && cumL >= target2) { p2Bin = b; p2Set = true; }
+                    if (cumL >= target98) { p98Bin = b; break; }
+                }
+                contrast = (p98Bin - p2Bin) * (256f / LumaBinCount);
+            }
+            contrastPlane[gy * Grid + gx] = contrast;
 
             // 结构张量主梯度方向 θ_st 与各向异性 A：
             // λ1,2 = (Sxx+Syy)/2 ± √(((Sxx-Syy)/2)² + Sxy²)
