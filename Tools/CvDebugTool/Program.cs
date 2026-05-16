@@ -23,7 +23,7 @@ internal static class Program
         if (args.Length == 0)
         {
             Console.WriteLine("usage: dotnet run -- <file1> [file2] [...]");
-            Console.WriteLine("outputs:  <name>_sharpness.png  <name>_shake.png  <name>_report.txt");
+            Console.WriteLine("outputs to <input_dir>/outputs/:  <name>_sharpness.png  <name>_shake.png  <name>_report.txt");
             return 1;
         }
 
@@ -47,7 +47,10 @@ internal static class Program
         if (!File.Exists(path)) { Console.WriteLine($"not found: {path}"); return; }
 
         var name = Path.GetFileNameWithoutExtension(path);
-        var dir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+        var inputDir = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+        // 输出统一去 <input_dir>/outputs/，避免样本目录被 PNG/TXT 污染。
+        var outDir = Path.Combine(inputDir, "outputs");
+        Directory.CreateDirectory(outDir);
         Console.WriteLine($"\n=== {name} ===");
 
         var ext = Path.GetExtension(path).ToLowerInvariant();
@@ -75,18 +78,18 @@ internal static class Program
 
         // 文本报告
         var report = BuildReport(name, decoded.w, decoded.h, diagonal, cv, shake, rigid);
-        var reportPath = Path.Combine(dir, $"{name}_report.txt");
+        var reportPath = Path.Combine(outDir, $"{name}_report.txt");
         File.WriteAllText(reportPath, report);
         Console.Write(report);
         Console.WriteLine($"→ {reportPath}");
 
         // 锐度 PNG
-        var sharpPath = Path.Combine(dir, $"{name}_sharpness.png");
+        var sharpPath = Path.Combine(outDir, $"{name}_sharpness.png");
         SaveSharpnessPng(sharpness, sharpPath);
         Console.WriteLine($"→ {sharpPath}");
 
         // 抖动矢量场 PNG（带原图缩略叠底）
-        var shakePath = Path.Combine(dir, $"{name}_shake.png");
+        var shakePath = Path.Combine(outDir, $"{name}_shake.png");
         SaveShakePng(shake, decoded.rgb, decoded.w, decoded.h, shakePath);
         Console.WriteLine($"→ {shakePath}");
     }
