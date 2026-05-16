@@ -72,52 +72,37 @@
                     Crosshair="{Binding Crosshair}"
                     Label="锐度 (edge_width_p20, 1.5-10 px)"
                     TileClicked="OnTileClicked" />
+                <controls:DiagnosticTile
+                    BackgroundSource="{Binding SourceThumbnail}"
+                    AspectRatio="{Binding AspectRatio}"
+                    Crosshair="{Binding Crosshair}"
+                    Label="抖动拖影矢量 (drag_width / direction)"
+                    TileClicked="OnTileClicked">
+                    <controls:DiagnosticTile.Overlay>
+                        <views:ShakeFieldView ShakeField="{Binding ShakeField}" />
+                    </controls:DiagnosticTile.Overlay>
+                </controls:DiagnosticTile>
                 <Border Background="#151515"
                         BorderBrush="#333"
                         BorderThickness="1"
                         CornerRadius="4"
-                        Padding="8"
+                        Padding="14,12"
                         Margin="4">
-                    <StackPanel HorizontalAlignment="Center">
-                        <Border Width="220" Height="220"
-                                Background="#222"
-                                CornerRadius="2"
-                                ClipToBounds="True">
-                            <views:ShakeFieldView ShakeField="{Binding ShakeField}"
-                                                  AspectRatio="{Binding AspectRatio}" />
-                        </Border>
-                        <TextBlock Text="抖动矢量场 (drag_width / direction)"
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="刚体拟合"
+                                   FontSize="13"
+                                   FontWeight="Medium"
+                                   Foreground="#CCC" />
+                        <TextBlock Text="|T| / |ω| / residual"
+                                   FontSize="11"
+                                   Foreground="#666" />
+                        <TextBlock Text="{Binding RigidMotionText}"
                                    FontSize="12"
-                                   Foreground="#888"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"
-                                   Margin="0,6,0,0" />
-                    </StackPanel>
-                </Border>
-                <Border Background="#151515"
-                        BorderBrush="#333"
-                        BorderThickness="1"
-                        CornerRadius="4"
-                        Padding="8"
-                        Margin="4">
-                    <StackPanel HorizontalAlignment="Center" Width="220">
-                        <Border Background="#222"
-                                CornerRadius="2"
-                                Padding="12"
-                                MinHeight="220">
-                            <TextBlock Text="{Binding RigidMotionText}"
-                                       FontSize="12"
-                                       Foreground="#DDD"
-                                       FontFamily="Consolas,Menlo,monospace"
-                                       LineHeight="20"
-                                       TextWrapping="Wrap" />
-                        </Border>
-                        <TextBlock Text="刚体拟合 (|T| / |ω| / residual)"
-                                   FontSize="12"
-                                   Foreground="#888"
-                                   HorizontalAlignment="Center"
-                                   TextAlignment="Center"
-                                   Margin="0,6,0,0" />
+                                   Foreground="#DDD"
+                                   FontFamily="Consolas,Menlo,monospace"
+                                   LineHeight="20"
+                                   TextWrapping="Wrap"
+                                   Margin="0,4,0,0" />
                     </StackPanel>
                 </Border>
             </UniformGrid>
