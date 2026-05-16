@@ -29,6 +29,7 @@ PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
 PhotoViewer.Android/      # Android head (net10.0-android)
 Tools/                    # Python: ExifTool 表重生成 + DINOv3 ONNX 导出/校验 + CV/patch PoC notebooks
 Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
+Tools/CvDebugTool/        # Standalone CLI for CV v5 抖动诊断（HEIF/JPG → 锐度 PNG + 抖动矢量场 PNG + 文本报告）
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
 Directory.Build.props     # Single source of truth for version number
 Directory.Packages.props  # Central NuGet version pinning
@@ -42,7 +43,7 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 
 **AI/** — DINOv3 特征 + CV 网格 + 相似聚类（`namespace PhotoViewer.Core.AI`）
 
-> AI 是目前主要开发任务，当前阶段聚焦 CV 诊断 v1 升级，见 [Plans/dinov3-photo-ranking-plan-2-wrapup.md](Plans/dinov3-photo-ranking-plan-2-wrapup.md)（含 v1 标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑）；上游设计原文：[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2.md](Plans/dinov3-photo-ranking-plan-2.md)。
+> AI 是目前主要开发任务，当前阶段聚焦 CV 诊断 v5（抖动方向一致性路线），见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md)；上游：[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)（含 v1 标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑）。
 
 | File | 模块 | Responsibility |
 |---|---|---|
@@ -51,9 +52,9 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 | [AI/DinoFeatureCache.cs](PhotoViewer/Core/AI/DinoFeatureCache.cs) | CLS 向量缓存 | 指纹索引 + 进程内存缓存 + `Lazy` 闸门（同指纹并发只推一次）。`GetOrComputeAsync` miss 后台写库；`TryReadAsync` 只读缓存不触发推理（`SimilarityService` 的候选池走这条）。写库列是 `photos.feature_vector` + `feature_model`（单列方案，纵表 schema 留到远期）。 |
 | [AI/FolderFeatureIndexer.cs](PhotoViewer/Core/AI/FolderFeatureIndexer.cs) | 全文件夹批量索引 | 实例化调度器：桌面端 `ProcessorCount/2` 并行解码 + 单线程 ONNX 推理；移动端单线程。跳过已入库指纹，单张失败不中断整批，本期**不可取消**。完成后 `PutMemoryCache` 同步到进程缓存。 |
 | [AI/SimilarityService.cs](PhotoViewer/Core/AI/SimilarityService.cs) | 相似聚类 | 基于 DINOv3 [CLS] cosine 的相似聚类（默认阈值 0.75，上限 64 项，拍摄时间差作 tiebreaker）。锚点必算、池内只读缓存 — 避免一次切图触发成百上千次推理。 |
-| [AI/CvGridResult.cs](PhotoViewer/Core/AI/CvGridResult.cs) | CV 网格结果 POCO | 16×16 格 × 5 标量 × 3 层金字塔 = 3840 float；`Version`（当前 `cv_grid_v0_5scalar`）+ 小端 BLOB Encode/Decode。 |
-| [AI/CvGridExtractor.cs](PhotoViewer/Core/AI/CvGridExtractor.cs) | CV 一期标量提取 | 纯托管，无 native 依赖；per-cell 单次扫描同时累加 Laplacian 方差 / Sobel 幅度均值 / 梯度方向 8-bin 熵 / 亮度均值+标准差；`Parallel.For` 跨格并行；`Downsample2x` 零插值金字塔。一期仅提供 `ExtractAsync` 同步接口，**不接调度、不入库**。 |
-| [AI/CvHeatmap.cs](PhotoViewer/Core/AI/CvHeatmap.cs) | CV 诊断图（纯函数） | 从 `CvGridResult` 推三张 16×16 诊断图：失焦（lap×sobel log 复合）/ 抖动（低熵+有梯度掩膜，默认 τ=1.5 bit）/ 金字塔一致性（lap CV）；`PerPlane` 与 `PerScalarPyramid` 两档归一化。 |
+| [AI/CvGridResult.cs](PhotoViewer/Core/AI/CvGridResult.cs) | CV 网格结果 POCO | 32×32 格 × 6 标量 × 1 层（无金字塔）= 6144 float；标量 `edge_count` / `edge_width_p20` / `edge_width_median` / `drag_width` / `drag_direction` / `anisotropy`；`Version`（当前 `cv_grid_v4_structtensor`）+ 小端 BLOB Encode/Decode。块尺寸自适应 `clamp(短边/32, 64, 192)`。 |
+| [AI/CvGridExtractor.cs](PhotoViewer/Core/AI/CvGridExtractor.cs) | CV v5 标量提取 | 纯托管，无 native 依赖；每格 Sobel + 块级累结构张量 (Sxx,Syy,Sxy) → `θ_st` / `anisotropy`；边种子按自适应 τ_edge + NMS，Marziliano 单边步进算边宽；`drag_bucket` = 离 (θ_st+π/2) 最近的有效 bucket（测拖影线方向）；`MaxHalfWidth` 按对角线 0.8% 自适应；`Parallel.For` 跨格并行。`ExtractAsync(Bitmap)` 走 BitmapLoader 原始分辨率，`ExtractFromLuma(luma,w,h)` 给 CvDebugTool 用。**不接调度、不入库**。 |
+| [AI/CvHeatmap.cs](PhotoViewer/Core/AI/CvHeatmap.cs) | CV 诊断图 + 判定（纯函数） | `BuildSharpness` 边宽对数热力图；`BuildShakeField` 输出 32×32 `Direction` / `Width` / `Mask` / `LocalConsistency`（5×5 邻域 2θ 圆形均值）+ 图像对角线 D；`FitRigidMotion` 加权 LS + 迭代符号对齐，输出 `\|T\|` / `\|ω\|` / `R_global`（全图 2θ 一致性）/ `R_local p10`（切向场判据）/ `MaskRatio`；`ColorForShake(drag_r, R_local)` 是 View/CvDebugTool 共用的唯一权威配色函数；判定阈值常量集中在文件顶部，改一处必同步 14 张样本回归。 |
 | [AI/PatchHeatmap.cs](PhotoViewer/Core/AI/PatchHeatmap.cs) | DINO patch 诊断图（纯函数） | 消费 1024×384 patch token：`ComputePcaRgb` 经济型 SVD 取前 3 主成分 → 32×32×3；`ComputeRefCosine` 参考点 cosine 映射到 [0,1]。PCA 用 `MathNet.Numerics`。 |
 | [AI/HeatmapBitmapBuilder.cs](PhotoViewer/Core/AI/HeatmapBitmapBuilder.cs) | 诊断图渲染 | 把 [0,1] 平面或 RGB 数组渲成 `WriteableBitmap`（viridis / grayscale / raw RGB）；输出 1:1 原尺寸，放大交给 XAML 端 `BitmapInterpolationMode=None`。 |
 
@@ -152,7 +153,7 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
 | **工具窗口首页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计、DINO 诊断。 |
 | **EXIF 详情页** | [ViewModels/Tools/ExifDetailViewModel.cs](PhotoViewer/ViewModels/Tools/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
 | **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs)。 |
-| **DINO 诊断页** | [ViewModels/Tools/DinoDebugViewModel.cs](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) | [Views/Tools/DinoDebugView.axaml](PhotoViewer/Views/Tools/DinoDebugView.axaml) | 对当前图片现算一次 CV 网格 + DINO 双输出，平铺展示 3 张 CV 诊断图（失焦 / 抖动 / 金字塔一致性）+ DINO PCA-RGB + 点击参考点 cosine。结果不入库，切图即重算；仅在工具页显示时联动（`SyncCurrentFile`）。 |
+| **DINO 诊断页** | [ViewModels/Tools/DinoDebugViewModel.cs](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) | [Views/Tools/DinoDebugView.axaml](PhotoViewer/Views/Tools/DinoDebugView.axaml) | 对当前图片现算一次 CV 网格 + DINO 双输出，平铺展示锐度热力图 + 抖动矢量场（颜色由 R_local 主导色相 × drag_r 调亮度）+ 加权刚体拟合文本面板（含 \|T\| / \|ω\| / R_global / R_local p10 / 判定标签）+ DINO PCA-RGB + 点击参考点 cosine。结果不入库，切图即重算；仅在工具页显示时联动（`SyncCurrentFile`）。 |
 | **设置页** | `SettingsViewModel` (partial across 8 files: `.BitmapCache`, `.ExifDisplay`, `.FileFormats`, `.Hotkeys`, `.ImagePreview`, `.Layout`, `.Persistence`, `.Rating`) | [Views/Settings/](PhotoViewer/Views/Settings/) | Each partial owns one settings category. Add new categories by following the same partial-class pattern. |
 
 ### 5.2 Helpers 辅助组件

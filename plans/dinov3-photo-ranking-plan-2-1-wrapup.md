@@ -1,7 +1,7 @@
 # DINOv3 照片美学评分 — 二期增补收尾
 
 > 状态:草案 v4.1 / 2026-05-16
-> 上游:[dinov3-photo-ranking-plan-1.md](dinov3-photo-ranking-plan-1.md) · [dinov3-photo-ranking-plan-2.md](dinov3-photo-ranking-plan-2.md)
+> 上游:[dinov3-photo-ranking-plan-1.md](dinov3-photo-ranking-plan-1.md) · [dinov3-photo-ranking-plan-2-0.md](dinov3-photo-ranking-plan-2-0.md)
 >
 > **本文件的任务是收尾一件事**:把 Plan-2 二期里实测不及格的 CV 诊断算法从 v0 升级到 v4(中心采样 + Marziliano 绝对边宽 + 32 网格 + 对数锐度 + **结构张量主方向** + 对角线归一化抖动量级 + 加权刚体拟合 + 离线诊断工具),14 张代表样本的 CV 部分过审后进入阶段 III。
 >
