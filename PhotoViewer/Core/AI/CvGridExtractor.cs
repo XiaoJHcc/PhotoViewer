@@ -9,23 +9,33 @@ using Avalonia.Media.Imaging;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// CV 网格 v2 提取器（中心采样 + Marziliano 边宽量化）。
-/// 每个 16×16 格只在中心取一个 <see cref="CvGridResult.BlockSize"/> 大小的采样块，
-/// 在块内测"强边的跨像素宽度"，直接输出像素量化结果。
-/// 相较 v0/v1 放弃了"每格代表全格"的假设 —— 采样命中墙壁/纯色时以 NaN 标记，诊断页画灰。
+/// CV 网格 v4 提取器（中心采样 + Marziliano 边宽量化 + 结构张量方向）。
+/// 锐度路径沿用 v3：每格中心取 P=clamp(短边/32, 64, 192) 的块测最锐 20% 边宽。
+/// 抖动路径升级为：
+///   - 用结构张量 (Sxx,Syy,Sxy) 在块上累出主梯度方向 θ_st 与各向异性 A=(λ1-λ2)/(λ1+λ2)
+///   - drag_bucket = 离 θ_st 最近的 8 方向 bucket（不再选 max-width bucket，避免被孤立长边拐走）
+///   - drag_width = drag_bucket 的中位绝对边宽（px）
+///   - drag_direction = θ_st + π/2，限到 [0,π)
+///   - 各向异性 A 写到标量 5，下游用作"无主方向"掩膜
+///   - MaxHalfWidth 按对角线 0.8% 自适应，让超长建筑边能诚实显示为"肌理色"
+///   - MinEdgesPerBucket 5→3，让稀疏拖影方向（小光斑旋转抖）能进入中位数统计
+/// 采样命中纯色块时仍以 NaN 标记，由热力图渲染层处理。
 /// </summary>
 public static class CvGridExtractor
 {
     private const int Grid = CvGridResult.GridSize;
-    private const int MaxHalfWidth = 8;
     private const int BucketCount = 8;
     private const int BinCount = 64;
     private const int MinEdgesForRead = 80;
-    private const int MinEdgesPerBucket = 5;
+    private const int MinEdgesPerBucket = 3;
     private const float PlateauRatio = 0.25f;
     private const float P20Fraction = 0.2f;
     /// <summary>边强度绝对下限（luma 0-255 标度的 Sobel 幅值）；块内 p90 不及此则整块判 NaN。</summary>
     private const float TauEdgeFloor = 30f;
+    /// <summary>单边步进上限相对对角线的比例（v4：对角线 7211 → 58 px，让"肌理色"段不被截断）。</summary>
+    private const float MaxHalfWidthRatio = 0.008f;
+    /// <summary>单边步进的硬下限，避免极小图算到 0。</summary>
+    private const int MaxHalfWidthMin = 8;
 
     /// <summary>对外入口：异步包一层，实际计算在 <see cref="Extract"/> 里。</summary>
     public static Task<CvGridResult> ExtractAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
@@ -34,11 +44,24 @@ public static class CvGridExtractor
         return Task.Run(() => Extract(bitmap, cancellationToken), cancellationToken);
     }
 
+    /// <summary>调试入口：直接喂 8-bit luma 平面（行优先），跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
+    public static CvGridResult ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(luma);
+        if (luma.Length != w * h) throw new ArgumentException("luma length mismatch", nameof(luma));
+        return ExtractCore(luma, w, h, cancellationToken);
+    }
+
     private static CvGridResult Extract(Bitmap bitmap, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var (luma, w, h) = ReadLuminance(bitmap);
+        return ExtractCore(luma, w, h, ct);
+    }
 
+    private static CvGridResult ExtractCore(float[] luma, int w, int h, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
         var data = new float[CvGridResult.DataLength];
         // 先把所有 NaN 填满；命中的格再覆盖回去，未命中/不足的自动留 NaN。
         for (int i = 0; i < data.Length; i++) data[i] = float.NaN;
@@ -50,6 +73,11 @@ public static class CvGridExtractor
         {
             return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
         }
+
+        // v4：单边步进上限按对角线 0.8% 自适应，让单边最大 ~58 px @ 6000×4000，
+        // 总宽天花板 1.6% D 高于"肌理色"段下限 1.25% D，确保超长建筑边能完整测出。
+        float diagonal = MathF.Sqrt((float)w * w + (float)h * h);
+        int maxHalfWidth = Math.Max(MaxHalfWidthMin, (int)MathF.Round(diagonal * MaxHalfWidthRatio));
 
         Parallel.For(0, Grid * Grid, idx =>
         {
@@ -74,7 +102,7 @@ public static class CvGridExtractor
             int bh = by1 - by0;
             if (bw < CvGridResult.MinBlockSize || bh < CvGridResult.MinBlockSize) return;
 
-            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, data);
+            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data);
         });
 
         return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
@@ -87,7 +115,7 @@ public static class CvGridExtractor
     private static void ComputeCell(
         float[] luma, int w, int h,
         int bx0, int by0, int bw, int bh,
-        int gy, int gx, float[] data)
+        int gy, int gx, int maxHalfWidth, float[] data)
     {
         int px = bw * bh;
         var magArr = ArrayPool<float>.Shared.Rent(px);
@@ -95,8 +123,9 @@ public static class CvGridExtractor
         var syArr = ArrayPool<float>.Shared.Rent(px);
         try
         {
-            double lumaSum = 0;
-            long lumaSamples = 0;
+            // 结构张量累加器：覆盖整个块（不限于强边像素），用每像素的 (sx,sy) 加权 mag²。
+            // 张量的 (Sxx,Syy,Sxy) 给出"哪个方向能量更集中"，比单条边的方向更稳健。
+            double sxx = 0, syy = 0, sxy = 0;
             float magMax = 0f;
 
             // Sobel：块内每像素求 sx/sy/mag；全图外圈 1 像素填 0。
@@ -111,9 +140,6 @@ public static class CvGridExtractor
                 {
                     int absX = bx0 + x;
                     int idx = y * bw + x;
-                    float c = luma[row + absX];
-                    lumaSum += c;
-                    lumaSamples++;
                     if (rowEdge || absX <= 0 || absX >= w - 1)
                     {
                         magArr[idx] = 0f;
@@ -136,11 +162,28 @@ public static class CvGridExtractor
                     syArr[idx] = sy;
                     magArr[idx] = mag;
                     if (mag > magMax) magMax = mag;
+
+                    sxx += sx * sx;
+                    syy += sy * sy;
+                    sxy += sx * sy;
                 }
             }
 
-            float lumaMean = lumaSamples > 0 ? (float)(lumaSum / lumaSamples) : 0f;
-            WriteScalar(data, 5, gy, gx, lumaMean);
+            // 结构张量主梯度方向 θ_st 与各向异性 A：
+            // λ1,2 = (Sxx+Syy)/2 ± √(((Sxx-Syy)/2)² + Sxy²)
+            // 主梯度方向 θ = atan2(2·Sxy, Sxx-Syy) / 2
+            double trace = sxx + syy;
+            double diff = sxx - syy;
+            double offDiag = 2.0 * sxy;
+            double radical = Math.Sqrt(diff * diff + offDiag * offDiag);
+            double anisotropy = trace > 1e-9 ? radical / trace : 0.0;
+            if (anisotropy > 1.0) anisotropy = 1.0;
+            double thetaSt = 0.5 * Math.Atan2(offDiag, diff); // ∈ (-π/2, π/2]
+            // 折到 [0,π)，让方向与 bucket 同标度。
+            double thetaStPos = thetaSt < 0 ? thetaSt + Math.PI : thetaSt;
+            if (thetaStPos >= Math.PI) thetaStPos -= Math.PI;
+
+            WriteScalar(data, 5, gy, gx, (float)anisotropy);
 
             if (magMax < 1e-3f)
             {
@@ -207,8 +250,8 @@ public static class CvGridExtractor
                     int dx = horizontal ? (sx >= 0 ? 1 : -1) : 0;
                     int dy = horizontal ? 0 : (sy >= 0 ? 1 : -1);
 
-                    int right = StepUntilPlateau(magArr, bw, bh, x, y, dx, dy, tauPlateau);
-                    int left = StepUntilPlateau(magArr, bw, bh, x, y, -dx, -dy, tauPlateau);
+                    int right = StepUntilPlateau(magArr, bw, bh, x, y, dx, dy, tauPlateau, maxHalfWidth);
+                    int left = StepUntilPlateau(magArr, bw, bh, x, y, -dx, -dy, tauPlateau, maxHalfWidth);
                     if (right <= 0 || left <= 0) continue;
 
                     float width = right + left;
@@ -234,24 +277,52 @@ public static class CvGridExtractor
             float p20 = (float)(p20Sum / p20End);
             float median = widths[widths.Count / 2];
 
-            float minBw = float.PositiveInfinity;
-            float maxBw = float.NegativeInfinity;
-            int maxBucket = -1;
+            // 候选 bucket：边数足够、有可用中位边宽。
+            var bucketMedian = new float[BucketCount];
+            for (int b = 0; b < BucketCount; b++) bucketMedian[b] = float.NaN;
             for (int b = 0; b < BucketCount; b++)
             {
                 if (buckets[b].Count < MinEdgesPerBucket) continue;
                 buckets[b].Sort();
-                float bm = buckets[b][buckets[b].Count / 2];
-                if (bm < minBw) minBw = bm;
-                if (bm > maxBw) { maxBw = bm; maxBucket = b; }
+                bucketMedian[b] = buckets[b][buckets[b].Count / 2];
             }
-            float spread = maxBucket >= 0 && !float.IsPositiveInfinity(minBw) ? maxBw - minBw : float.NaN;
-            float direction = maxBucket >= 0 ? (maxBucket + 0.5f) / BucketCount * MathF.PI : float.NaN;
+
+            // v4-st：drag_bucket = 离 (θ_st + π/2) 最近的有效 bucket（环绕距离）。
+            // 关键修正（v4-st-r1）：之前选 θ_st 自身那个 bucket 等价于"读主结构边的横向锐度"——
+            // 主结构边永远是 1-3 px 锐的，不论拖影有多长，所以颜色永远落在灰→暗红段。
+            // 真正被运动模糊拉成 ramp 的是 **垂直于主结构** 的那批边（它们的 gradient 沿拖影方向）；
+            // 它们的 Marziliano 横向宽度 ≈ 拖影长度，正是我们想读的。
+            double dragGradDir = thetaStPos + Math.PI / 2;
+            if (dragGradDir >= Math.PI) dragGradDir -= Math.PI;
+            float bucketStep = MathF.PI / BucketCount; // π/8
+            int dragBucket = -1;
+            double bestDelta = double.PositiveInfinity;
+            for (int b = 0; b < BucketCount; b++)
+            {
+                if (float.IsNaN(bucketMedian[b])) continue;
+                double bucketCenter = (b + 0.5) * bucketStep;
+                double delta = Math.Abs(bucketCenter - dragGradDir);
+                if (delta > Math.PI / 2) delta = Math.PI - delta; // 环绕
+                if (delta < bestDelta)
+                {
+                    bestDelta = delta;
+                    dragBucket = b;
+                }
+            }
+
+            float dragWidth = dragBucket >= 0 ? bucketMedian[dragBucket] : float.NaN;
+            // drag_direction = θ_st + π/2（拖影线方向，无极性 [0,π)）；与 drag_bucket 中心同角度，
+            // 但用结构张量值消除 ±π/16 的 bucket 量化抖动。
+            float dragDir = float.NaN;
+            if (dragBucket >= 0)
+            {
+                dragDir = (float)dragGradDir;
+            }
 
             WriteScalar(data, 1, gy, gx, p20);
             WriteScalar(data, 2, gy, gx, median);
-            WriteScalar(data, 3, gy, gx, spread);
-            WriteScalar(data, 4, gy, gx, direction);
+            WriteScalar(data, 3, gy, gx, dragWidth);
+            WriteScalar(data, 4, gy, gx, dragDir);
         }
         finally
         {
@@ -262,19 +333,19 @@ public static class CvGridExtractor
     }
 
     /// <summary>
-    /// 从 (x,y) 出发沿 (dx,dy) 单向步进，直到 mag 跌破 τ_plateau 或超过 MaxHalfWidth；
+    /// 从 (x,y) 出发沿 (dx,dy) 单向步进，直到 mag 跌破 τ_plateau 或超过 maxHalfWidth；
     /// 返回走出的步数。撞到块边界返回 0（整条边丢弃）。
     /// </summary>
-    private static int StepUntilPlateau(float[] mag, int bw, int bh, int x, int y, int dx, int dy, float tauPlateau)
+    private static int StepUntilPlateau(float[] mag, int bw, int bh, int x, int y, int dx, int dy, float tauPlateau, int maxHalfWidth)
     {
-        for (int k = 1; k <= MaxHalfWidth; k++)
+        for (int k = 1; k <= maxHalfWidth; k++)
         {
             int nx = x + k * dx;
             int ny = y + k * dy;
             if (nx < 0 || nx >= bw || ny < 0 || ny >= bh) return 0;
             if (mag[ny * bw + nx] < tauPlateau) return k;
         }
-        return MaxHalfWidth;
+        return maxHalfWidth;
     }
 
     private static void WriteScalar(float[] data, int scalar, int gy, int gx, float value)

@@ -11,8 +11,9 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.ViewModels.Tools;
 
 /// <summary>
-/// DINO 诊断工具页 VM。一次性对当前图片并行跑 CV 网格（v3 中心采样 + 边宽量化 + 32 网格 + log 映射）
-/// 与 DINO 双输出推理，暴露缩略图 + 锐度热力图 + 抖动矢量场 + 刚体拟合文本 + PCA-RGB + cosine 图。
+/// DINO 诊断工具页 VM。一次性对当前图片并行跑 CV 网格（v4 中心采样 + Marziliano 绝对边宽 + 32 网格
+/// + 对数锐度 + 对角线归一化抖动量级 + 加权刚体拟合）与 DINO 双输出推理，
+/// 暴露缩略图 + 锐度热力图 + 拖影矢量场 + 加权刚体文本 + PCA-RGB + cosine 图。
 /// CV 走 BitmapLoader 原始分辨率解码（与 ImageView 共用 LRU 缓存），DINO 仍走 560 短边缩略图。
 /// 切图即释放，不入库。
 /// </summary>
@@ -79,7 +80,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     private ShakeField? _shakeField;
-    /// <summary>抖动矢量场（16×16 方向/位移/掩膜）；View 消费它绘制 Canvas 线段。</summary>
+    /// <summary>抖动矢量场（32×32 拖影线方向 / 绝对边宽 / 掩膜 + 图像对角线 D）；View 消费它绘制 Canvas 线段。</summary>
     public ShakeField? ShakeField
     {
         get => _shakeField;
@@ -211,12 +212,15 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
             ct.ThrowIfCancellationRequested();
 
-            // CV：锐度图 + 抖动矢量场 + 刚体拟合
+            // CV：锐度图 + 拖影矢量场 + 加权刚体拟合
+            int cvW = cvSourceBitmap.PixelSize.Width;
+            int cvH = cvSourceBitmap.PixelSize.Height;
+            float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
             var sharpness = CvHeatmap.BuildSharpness(cv);
             var sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridPixels, CvGridPixels);
-            var shakeField = CvHeatmap.BuildShakeField(cv);
+            var shakeField = CvHeatmap.BuildShakeField(cv, diagonal);
             var rigid = CvHeatmap.FitRigidMotion(shakeField);
-            var rigidText = FormatRigidMotion(rigid);
+            var rigidText = FormatRigidMotion(rigid, diagonal);
 
             // DINO：PCA-RGB + 初始 cosine（中心参考点）
             Bitmap? pcaBmp = null;
@@ -276,34 +280,43 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 把刚体拟合结果格式化为三行文本：样本数 / 平移 / 旋转 / 残差 + 语义标签。
+    /// 把加权刚体拟合结果格式化为多行文本（研发判断用）：样本 / 权重 / 平移 / 旋转 / 残差 / 判定标签。
+    /// 判定优先级：信息不足 &gt; 混乱场景 &gt; 平移/旋转手抖 &gt; 静止纹理。
     /// </summary>
-    private static string FormatRigidMotion(RigidMotionResult rigid)
+    private static string FormatRigidMotion(RigidMotionResult rigid, float diagonal)
     {
+        const float WeightSumMin = 20f;
+        // |T| 是 px、|ω| 是 rad；把 ω 换算成图像半对角线处的边缘像素位移量级，便于与 |T| 比较。
+        float halfDiag = diagonal * 0.5f;
+        float omegaPx = rigid.RotationMagnitude * halfDiag;
+        float motionScale = MathF.Max(MathF.Sqrt(rigid.TranslationMagnitude * rigid.TranslationMagnitude + omegaPx * omegaPx), 1e-3f);
+
         string label;
-        if (rigid.SampleCount < 6)
+        if (rigid.WeightSum < WeightSumMin)
         {
-            label = "静止或信号不足";
+            label = "信息不足";
         }
-        else if (rigid.ResidualRms > Math.Max(rigid.TranslationMagnitude, 4f))
+        else if (rigid.ResidualRms > 0.6f * motionScale)
         {
-            label = "混乱场景（车流 / 树叶）";
+            label = "混乱场景（车流 / 树叶 / 各向异性纹理）";
+        }
+        else if (rigid.RotationMagnitude >= 0.02f && omegaPx >= rigid.TranslationMagnitude)
+        {
+            label = "疑似旋转手抖";
         }
         else if (rigid.TranslationMagnitude >= 3f)
         {
             label = "疑似平移手抖";
         }
-        else if (rigid.RotationMagnitude >= 0.02f)
-        {
-            label = "疑似旋转手抖";
-        }
         else
         {
             label = "静止纹理";
         }
+
         return $"样本 {rigid.SampleCount} 格\n" +
-               $"|T| = {rigid.TranslationMagnitude:F2} px\n" +
-               $"|ω| = {rigid.RotationMagnitude:F3} rad\n" +
+               $"Σw   = {rigid.WeightSum:F1}\n" +
+               $"|T|  = {rigid.TranslationMagnitude:F2} px\n" +
+               $"|ω|  = {rigid.RotationMagnitude:F3} rad\n" +
                $"残差 = {rigid.ResidualRms:F2} px\n" +
                $"判定:{label}";
     }
