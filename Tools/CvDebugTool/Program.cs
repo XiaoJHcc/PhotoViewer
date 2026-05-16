@@ -67,10 +67,10 @@ internal static class Program
             luma[i] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
         }
 
-        var cv = CvGridExtractor.ExtractFromLuma(luma, decoded.w, decoded.h);
+        var (cv, contrast) = CvGridExtractor.ExtractFromLuma(luma, decoded.w, decoded.h);
         float diagonal = MathF.Sqrt((float)decoded.w * decoded.w + (float)decoded.h * decoded.h);
-        var sharpness = CvHeatmap.BuildSharpness(cv);
-        var shake = CvHeatmap.BuildShakeField(cv, diagonal);
+        var sharpness = CvHeatmap.BuildSharpness(cv, contrast);
+        var shake = CvHeatmap.BuildShakeField(cv, diagonal, contrast);
         var rigid = CvHeatmap.FitRigidMotion(shake);
 
         // 文本报告
@@ -143,6 +143,7 @@ internal static class Program
         var dragWidthsPx = new List<float>();
         var anisotropies = new List<float>();
         var localR = new List<float>();
+        var contrasts = new List<float>();
         for (int i = 0; i < n; i++)
         {
             float wpx = cv.Data[3 * n + i];
@@ -159,6 +160,8 @@ internal static class Program
             }
             float r = shake.LocalConsistency[i];
             if (!float.IsNaN(r)) localR.Add(r);
+            float c = shake.Contrast.Length > i ? shake.Contrast[i] : float.NaN;
+            if (!float.IsNaN(c)) contrasts.Add(c);
         }
         dragWidthsPx.Sort();
         float medianDrag = dragWidthsPx.Count > 0 ? dragWidthsPx[dragWidthsPx.Count / 2] : float.NaN;
@@ -170,6 +173,10 @@ internal static class Program
         float p10R = localR.Count > 0 ? localR[(int)(localR.Count * 0.1)] : float.NaN;
         float p50R = localR.Count > 0 ? localR[localR.Count / 2] : float.NaN;
         float p90R = localR.Count > 0 ? localR[(int)(localR.Count * 0.9)] : float.NaN;
+        contrasts.Sort();
+        float p10C = contrasts.Count > 0 ? contrasts[(int)(contrasts.Count * 0.1)] : float.NaN;
+        float p50C = contrasts.Count > 0 ? contrasts[contrasts.Count / 2] : float.NaN;
+        float p90C = contrasts.Count > 0 ? contrasts[(int)(contrasts.Count * 0.9)] : float.NaN;
 
         // 方向直方图（8 桶，限于矢量场掩膜内）
         var dirHist = new int[8];
@@ -195,6 +202,7 @@ internal static class Program
         sb.AppendLine($"drag_width p10/50/p90 : {p10Drag:F2} / {medianDrag:F2} / {p90Drag:F2} px");
         sb.AppendLine($"drag_r  p10/50/p90    : {p10Drag / diagonal * 100:F3}% / {medianDrag / diagonal * 100:F3}% / {p90Drag / diagonal * 100:F3}%");
         sb.AppendLine($"R_local p10/50/p90    : {p10R:F3} / {p50R:F3} / {p90R:F3}   (n={localR.Count})");
+        sb.AppendLine($"contrast p10/50/p90   : {p10C:F1} / {p50C:F1} / {p90C:F1}   (n={contrasts.Count})");
         sb.AppendLine();
         sb.AppendLine("direction histogram (drag-line angle, 8 bins of π/8):");
         string[] arrows = { "→",  "↗",  "↑",  "↖",  "←",  "↙",  "↓",  "↘"  };
@@ -303,7 +311,8 @@ internal static class Program
                     float dragR = wpx / field.Diagonal;
                     if (dragR < CvHeatmap.DragRMinDisplay) continue;
                     float rLocal = field.LocalConsistency[i];
-                    var color = CvHeatmap.ColorForShake(dragR, rLocal);
+                    float cf = field.Contrast.Length > i ? CvHeatmap.ContrastFactor(field.Contrast[i]) : 1f;
+                    var color = CvHeatmap.ColorForShake(dragR, rLocal, cf);
                     double cx = (gx + 0.5) * cellW;
                     double cy = (gy + 0.5) * cellH;
                     double hx = Math.Cos(dir) * half;

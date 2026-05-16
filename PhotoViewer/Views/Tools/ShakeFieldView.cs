@@ -67,7 +67,8 @@ public sealed class ShakeFieldView : Control
                 if (dragR < CvHeatmap.DragRMinDisplay) continue;
 
                 float rLocal = field.LocalConsistency.Length > i ? field.LocalConsistency[i] : float.NaN;
-                var (cr, cg, cb) = CvHeatmap.ColorForShake(dragR, rLocal);
+                float cf = field.Contrast.Length > i ? CvHeatmap.ContrastFactor(field.Contrast[i]) : 1f;
+                var (cr, cg, cb) = CvHeatmap.ColorForShake(dragR, rLocal, cf);
                 var stroke = Color.FromRgb(cr, cg, cb);
 
                 double cx = (gx + 0.5) * cellW;

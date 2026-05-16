@@ -37,6 +37,9 @@ public sealed class ShakeField
     /// <summary>局部方向一致性 R_local ∈ [0,1]：5×5 邻域内 Mask=true 格的 2θ 圆形均值长度；邻域有效格 &lt; 5 时为 NaN。</summary>
     public float[] LocalConsistency { get; init; } = Array.Empty<float>();
 
+    /// <summary>r3 新增：每格 block_contrast = luma p98-p2（0-255 标度）。下游通过 <see cref="CvHeatmap.ContrastFactor"/> 转软过渡因子。</summary>
+    public float[] Contrast { get; init; } = Array.Empty<float>();
+
     /// <summary>图像对角线像素长度 D = √(W²+H²)，用于把 Width 归一化为相对值。</summary>
     public float Diagonal { get; init; }
 }
@@ -120,11 +123,13 @@ public static class CvHeatmap
     }
 
     /// <summary>
-    /// 构造锐度图：edge_width_p20 → 对数量纲映射（v3 沿用，不变）。
+    /// 构造锐度图：edge_width_p20 → 对数量纲映射 × 对比度软因子（r3）。
     /// 亮 = 锐、暗 = 虚；NaN（采样块无有效边）映射为 0（与"严重虚"同深色），语义即"无锐内容"。
     /// 对数映射强调 1 px 数量级差异：1.5/2/3/5/10 px 的 t 约 1.00/0.74/0.49/0.27/0.00。
+    /// r3：低对比度块（夜景天空 ISO 400 噪点）即使测出"锐边"也被 c_factor 压暗。
+    /// contrast 为 null 时退化到 r2 行为（不乘 c_factor）。
     /// </summary>
-    public static float[] BuildSharpness(CvGridResult result)
+    public static float[] BuildSharpness(CvGridResult result, float[]? contrast = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         const int scalar = 1; // edge_width_p20
@@ -143,6 +148,10 @@ public static class CvHeatmap
             float t = (logVis - MathF.Log(w)) / range;
             if (t < 0f) t = 0f;
             if (t > 1f) t = 1f;
+            if (contrast != null)
+            {
+                t *= ContrastFactor(contrast[i]);
+            }
             plane[i] = t;
         }
         return plane;
@@ -191,12 +200,31 @@ public static class CvHeatmap
     /// <summary>残差/动量比阈值，超出 → 混乱场景。</summary>
     public const float ResidualMotionRatio = 0.6f;
 
+    // ── v5 r3 对比度软过渡阈值（实测 14 张样本校准） ──────────────────────────────
+    /// <summary>对比度软门控下端：block_contrast (luma p98-p2) &lt; LowEnd → c_factor=0，几乎完全排除。
+    /// r3 实测：1396 沥青 p50=88，HighEnd 必须高于此让沥青大半被压低。</summary>
+    public const float ContrastLowEnd = 60f;
+    /// <summary>对比度软门控上端：≥ HighEnd → c_factor=1，全权重。
+    /// r3 实测：典型夜景灯光局部 contrast > 200，建筑墙面 p50=120+；阈值 160 让 1396 沥青 (p50=88) 与 1479 玻璃 (p50=52) c_factor 大幅降低，
+    /// 而 1197/1259/1465/1467 真信号靠 p90 > 150 仍能贡献。</summary>
+    public const float ContrastHighEnd = 160f;
+
+    /// <summary>r3 软过渡因子：把 block_contrast 映射到 [0,1] 权重。低对比度块的所有读数都按此系数衰减。</summary>
+    public static float ContrastFactor(float contrast)
+    {
+        if (float.IsNaN(contrast) || contrast <= ContrastLowEnd) return 0f;
+        if (contrast >= ContrastHighEnd) return 1f;
+        return (contrast - ContrastLowEnd) / (ContrastHighEnd - ContrastLowEnd);
+    }
+
     /// <summary>
-    /// 构造抖动矢量场：取 drag_direction / drag_width，掩膜按 drag_r ≥ DragRMinDisplay 且 anisotropy ≥ AnisotropyMin 判定。
+    /// 构造抖动矢量场：取 drag_direction / drag_width，掩膜按 drag_r ≥ DragRMinDisplay
+    /// 且 anisotropy ≥ AnisotropyMin 判定；r3 增加对比度软门控（c_factor &gt; 0 才进 mask）。
     /// 然后在 5×5 邻域内算 R_local（2θ 圆形均值长度）填到 LocalConsistency。
     /// Diagonal 写入返回对象，下游可视化层与刚体拟合都按它做归一化。
+    /// contrast 为 null 时退化到 r2 行为（不做对比度门控）。
     /// </summary>
-    public static ShakeField BuildShakeField(CvGridResult result, float diagonal)
+    public static ShakeField BuildShakeField(CvGridResult result, float diagonal, float[]? contrast = null)
     {
         ArgumentNullException.ThrowIfNull(result);
         int n = CvGridResult.PlaneLength;
@@ -204,6 +232,7 @@ public static class CvHeatmap
         var width = new float[n];
         var mask = new bool[n];
         var local = new float[n];
+        var contrastOut = new float[n];
         float minWidthPx = diagonal > 0 ? diagonal * DragRMinDisplay : 0f;
         for (int i = 0; i < n; i++)
         {
@@ -212,8 +241,14 @@ public static class CvHeatmap
             float a = result.Data[5 * n + i];   // anisotropy
             direction[i] = d;
             width[i] = wpx;
+            float cContrast = contrast != null ? contrast[i] : float.PositiveInfinity;
+            contrastOut[i] = contrast != null ? cContrast : float.NaN;
+            // 对比度门控：r3 新增 —— 低对比度块（夜景天空噪点 / 沥青颗粒 / 玻璃折射）直接不进 mask。
+            // contrast==null 时 cContrast=+∞ 等价于无门控，退化到 r2 行为。
+            bool contrastOk = float.IsNaN(cContrast) ? false : ContrastFactor(cContrast) > 0f;
             mask[i] = !float.IsNaN(wpx) && !float.IsNaN(d) && wpx >= minWidthPx
-                      && !float.IsNaN(a) && a >= AnisotropyMin;
+                      && !float.IsNaN(a) && a >= AnisotropyMin
+                      && contrastOk;
         }
 
         // R_local：5×5 邻域 2θ 圆形均值长度；邻域有效格 < LocalMinSamples 的格 → NaN。
@@ -262,19 +297,22 @@ public static class CvHeatmap
             Width = width,
             Mask = mask,
             LocalConsistency = local,
+            Contrast = contrastOut,
             Diagonal = diagonal,
         };
     }
 
     /// <summary>
     /// v5 配色（唯一权威实现）：颜色由 R_local（方向一致性，主导色相）× drag_r（边宽量级，亮度调整）共同决定。
+    /// r3：再乘 contrastFactor —— 低对比度块即使方向集中也呈暗色，让人眼一看就知道这格信号弱。
     /// View 与 CvDebugTool 都来这里取色，避免两端 inline 不同步。
     ///   R_local NaN 或 &lt; RLocalLow      → 暗灰段（建筑/混合纹理，与"鲜红抖动峰"形成强对比）
     ///   R_local ∈ [RLocalLow, RLocalHigh) → 黄绿段（规则纹理：百叶/栏杆/有方向但不是抖动）
     ///   R_local ≥ RLocalHigh              → 鲜红段（真抖动信号；亮度峰值落在 sweet spot）
     /// drag_r 的角色：sweet spot（0.05%~0.30%）内全亮，两端低亮，让"长建筑边"与"过短噪声"都被压暗。
+    /// contrastFactor 缺省 1（r2 行为）；&lt; 1 时整体亮度按比例衰减。
     /// </summary>
-    public static (byte R, byte G, byte B) ColorForShake(float dragR, float rLocal)
+    public static (byte R, byte G, byte B) ColorForShake(float dragR, float rLocal, float contrastFactor = 1f)
     {
         // 亮度因子：sweet spot 内 = 1，外侧线性下降到 0.45。低于 DragRMinDisplay 调用方应短路不画。
         float lum;
@@ -329,9 +367,9 @@ public static class CvHeatmap
                 30f + (50f - 30f) * t);
         }
 
-        byte R8 = (byte)Math.Clamp((int)MathF.Round(baseColor.R * lum), 0, 255);
-        byte G8 = (byte)Math.Clamp((int)MathF.Round(baseColor.G * lum), 0, 255);
-        byte B8 = (byte)Math.Clamp((int)MathF.Round(baseColor.B * lum), 0, 255);
+        byte R8 = (byte)Math.Clamp((int)MathF.Round(baseColor.R * lum * contrastFactor), 0, 255);
+        byte G8 = (byte)Math.Clamp((int)MathF.Round(baseColor.G * lum * contrastFactor), 0, 255);
+        byte B8 = (byte)Math.Clamp((int)MathF.Round(baseColor.B * lum * contrastFactor), 0, 255);
         return (R8, G8, B8);
     }
 
@@ -366,6 +404,11 @@ public static class CvHeatmap
                 float dir = field.Direction[i];
                 if (float.IsNaN(wpx) || float.IsNaN(dir)) continue;
                 float wgt = TrapezoidWeight(wpx / diag);
+                if (wgt <= 0f) continue;
+                // r3：权重乘对比度软因子。低对比度格（沥青颗粒 / 玻璃折射）即使方向集中也少投票。
+                // Contrast 长度可能为 0（旧路径退化），此时 cf=1 等价 r2 行为。
+                float cf = field.Contrast.Length > i ? ContrastFactor(field.Contrast[i]) : 1f;
+                wgt *= cf;
                 if (wgt <= 0f) continue;
                 float vx = wpx * MathF.Cos(dir);
                 float vy = wpx * MathF.Sin(dir);
