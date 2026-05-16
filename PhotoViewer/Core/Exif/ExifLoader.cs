@@ -13,7 +13,7 @@ namespace PhotoViewer.Core;
 
 /// <summary>
 /// EXIF 数据加载编排器：读取 MetadataExtractor 目录并拼装 <see cref="ExifData"/>。
-/// 具体子任务委派给同目录下的 <see cref="ExifMetadataGrouper"/>、<see cref="SonyMakernoteParser"/> 与 <see cref="ExifOrientation"/>。
+/// 具体子任务委派给同目录下的 <see cref="ExifMetadataGrouper"/> 与 <see cref="SonyMakernoteParser"/>。
 /// </summary>
 public static class ExifLoader
 {

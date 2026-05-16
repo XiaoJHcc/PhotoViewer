@@ -65,26 +65,6 @@ public class BoolToCachedBorderConverter : IValueConverter
     }
 }
 
-/// <summary>水平翻转转换器:true → -1.0(翻转 ScaleX),false → 1.0。</summary>
-public class FlipTransformConverter : IValueConverter
-{
-    public static readonly FlipTransformConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is bool needsFlip && needsFlip)
-        {
-            return -1.0;
-        }
-        return 1.0;
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
-}
-
 /// <summary>相似度分数(0~1)→ "97%" 形式的百分比文本。</summary>
 public class SimilarityScoreConverter : IValueConverter
 {

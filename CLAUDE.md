@@ -72,8 +72,10 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 | [Image/BitmapPrefetcher.cs](PhotoViewer/Core/Image/BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
 | [Image/HeifLoader.cs](PhotoViewer/Core/Image/HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
 | [Image/ImageFile.cs](PhotoViewer/Core/Image/ImageFile.cs) | 文件模型 | Per-file state: path, load status, EXIF cache, thumbnail bitmap. |
-| [Image/ThumbnailService.cs](PhotoViewer/Core/Image/ThumbnailService.cs) | 缩略图服务门面 | `GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌、全图回退）；`GetThumbnailAsync(file, minShortSide)` 取最合适来源并解码到目标尺寸。HEIF 容器分派给 `HeifLoader`。 |
-| [Image/ThumbnailSource.cs](PhotoViewer/Core/Image/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`/`Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded` / `FullImage`）。 |
+| [Image/ImageOrientationInfo.cs](PhotoViewer/Core/Image/ImageOrientationInfo.cs) | 容器方向元数据 | 统一封装 HEIF `Default Rotation` / EXIF `Orientation` + `ExifImageWidth/Height`，给出"显示朝向旋转角 + 水平镜像 + 传感器原始 W/H"。`ThumbnailService` 据此做方向对齐与 letterbox 几何裁剪，无任何启发式。 |
+| [Image/JpegDimensionReader.cs](PhotoViewer/Core/Image/JpegDimensionReader.cs) | JPEG SOF 解析 | 字节级解析 JPEG SOF marker (FFC0..FFCF) 直接读真实宽高。HEIF 的 Thumbnail Data 字节嗅探与厂商 Preview 都依赖它，避免再用容器索引贴标签出错。 |
+| [Image/ThumbnailService.cs](PhotoViewer/Core/Image/ThumbnailService.cs) | 缩略图服务门面 | `GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌 JPEG/平台兜底）；`GetThumbnailAsync(file, minShortSide)` 取**显示短边 ≥ target 中最小**的来源解码,随后按 `ImageOrientationInfo` 做方向对齐 + letterbox 几何裁剪。HEIF 字节路径只接 JPEG（用 `JpegDimensionReader` 自读尺寸）,HEVC 字节走平台 `HeifLoader` 兜底（已预旋转）。**不再回退原图全图解码**,所有来源都失败时返回 null 由 UI 显示占位符。 |
+| [Image/ThumbnailSource.cs](PhotoViewer/Core/Image/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`（字节本身像素，未旋转）/ `Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded`）/ `IsPreRotated`（标记该来源是否已是显示朝向，平台 HEIF 解码器为 true，字节直读路径为 false）。 |
 
 **Platform/** — 平台能力抽象（`namespace PhotoViewer.Core.Platform`）
 
@@ -95,10 +97,9 @@ UI-independent business logic. **Do not reference Avalonia controls from this la
 
 | File | 模块 | Responsibility |
 |---|---|---|
-| [Exif/ExifLoader.cs](PhotoViewer/Core/Exif/ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser` / `ExifOrientation`。 |
+| [Exif/ExifLoader.cs](PhotoViewer/Core/Exif/ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser`。 |
 | [Exif/ExifModels.cs](PhotoViewer/Core/Exif/ExifModels.cs) | 元数据模型 | `ExifData` / `MetadataGroup` / `MetadataTag` POCO。 |
 | [Exif/ExifMetadataGrouper.cs](PhotoViewer/Core/Exif/ExifMetadataGrouper.cs) | 分组与翻译 | 展开 MetadataExtractor 目录为按目录分组的可读 tag 列表，应用 `ExifChinese`/`ExifToolTags`/`ExifToolValues` 翻译。 |
-| [Exif/ExifOrientation.cs](PhotoViewer/Core/Exif/ExifOrientation.cs) | 方向计算 | 基于 EXIF Orientation 值的旋转角度与水平翻转判断。 |
 | [Exif/ExifChinese.cs](PhotoViewer/Core/Exif/ExifChinese.cs) | 元数据汉化 | Chinese tag-name overrides; generated baseline in `ExifChinese.Generated.cs`. |
 | [Exif/ExifToolTags.cs](PhotoViewer/Core/Exif/ExifToolTags.cs) | 标签库 | English tag-name overrides + brand override tables. Generated baseline in `ExifToolTags.Generated.cs`. |
 | [Exif/ExifToolValues.cs](PhotoViewer/Core/Exif/ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
