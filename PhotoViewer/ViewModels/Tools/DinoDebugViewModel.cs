@@ -280,44 +280,70 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 把加权刚体拟合结果格式化为多行文本（研发判断用）：样本 / 权重 / 平移 / 旋转 / 残差 / 判定标签。
-    /// 判定优先级：信息不足 &gt; 混乱场景 &gt; 平移/旋转手抖 &gt; 静止纹理。
+    /// 把 v5 加权刚体拟合结果格式化为多行文本（研发判断用）：样本 / 权重 / 平移 / 旋转 / 残差 / 方向一致性 / 判定。
+    /// r2 校准（2026-05-16 实测 14 张样本）：判定优先级 = 信息不足 &gt; 强旋转抖动（必须 R_global ≥ 0.30）
+    ///   &gt; 静止纹理（R_global &lt; 0.45 早拦） &gt; 旋转抖动（必须 R_local p10 ≥ 0.55） &gt; 平移抖动 &gt; 混乱场景 &gt; 兜底静止 &gt; 弱信号。
+    ///
+    /// r2 关键修正（针对 Case4 假阳性）：
+    /// 1) 强旋转加 R_global ≥ 0.30 拦截：1179/1183/1396（|ω|=0.32-0.53 但 R_global=0.09-0.54）原本会被早判强旋；
+    ///    R_global 是"全图方向相关性"，弱信号场拟合出的虚拟旋转 R_global 必然低
+    /// 2) 旋转加 R_local p10 ≥ 0.55 拦截：1266/1479（|ω|=0.24-0.28 但 R_local p10=0.46-0.48）原本会被判旋转抖；
+    ///    真旋转抖切向场全图相关，最差 10% 格也 ≥ 0.55（1465=0.56 / 1467=0.82）
     /// </summary>
     private static string FormatRigidMotion(RigidMotionResult rigid, float diagonal)
     {
-        const float WeightSumMin = 20f;
         // |T| 是 px、|ω| 是 rad；把 ω 换算成图像半对角线处的边缘像素位移量级，便于与 |T| 比较。
         float halfDiag = diagonal * 0.5f;
         float omegaPx = rigid.RotationMagnitude * halfDiag;
         float motionScale = MathF.Max(MathF.Sqrt(rigid.TranslationMagnitude * rigid.TranslationMagnitude + omegaPx * omegaPx), 1e-3f);
+        float translateR = diagonal > 0 ? rigid.TranslationMagnitude / diagonal : 0f;
 
         string label;
-        if (rigid.WeightSum < WeightSumMin)
+        if (rigid.WeightSum < CvHeatmap.WeightSumMin || rigid.MaskRatio < CvHeatmap.MaskRatioMin)
         {
             label = "信息不足";
         }
-        else if (rigid.ResidualRms > 0.6f * motionScale)
+        else if (rigid.RotationMagnitude >= CvHeatmap.OmegaStrongRot
+                 && rigid.DirectionalConsistency >= CvHeatmap.RGlobalStrongRotAbove)
         {
-            label = "混乱场景（车流 / 树叶 / 各向异性纹理）";
+            label = "强旋转抖动";
         }
-        else if (rigid.RotationMagnitude >= 0.02f && omegaPx >= rigid.TranslationMagnitude)
-        {
-            label = "疑似旋转手抖";
-        }
-        else if (rigid.TranslationMagnitude >= 3f)
-        {
-            label = "疑似平移手抖";
-        }
-        else
+        else if (rigid.DirectionalConsistency < CvHeatmap.RGlobalQuietBelow)
         {
             label = "静止纹理";
         }
+        else if (rigid.RotationMagnitude >= CvHeatmap.OmegaRot
+                 && rigid.DirectionalConsistency >= CvHeatmap.RGlobalMotionAbove
+                 && rigid.RLocalP10 >= CvHeatmap.RLocalP10RotMin)
+        {
+            label = "旋转抖动";
+        }
+        else if (translateR >= CvHeatmap.TranslateMinDragR
+                 && rigid.DirectionalConsistency >= CvHeatmap.RGlobalMotionAbove)
+        {
+            label = "平移抖动";
+        }
+        else if (rigid.ResidualRms > CvHeatmap.ResidualMotionRatio * motionScale)
+        {
+            label = "混乱场景（车流 / 树叶 / 各向异性纹理）";
+        }
+        else if (translateR < CvHeatmap.TranslateMinDragR && rigid.RotationMagnitude < CvHeatmap.OmegaRot)
+        {
+            // 兜底：|T| 与 |ω| 都不到运动阈值 → 静止（不在乎 R_global 中等）。
+            // 实测 1301/8943 白天落此分支：|T|/D ≈ 0.09% < 0.13%，|ω| < 0.08，R_global 0.48-0.50。
+            label = "静止纹理";
+        }
+        else
+        {
+            label = "弱信号 / 难判";
+        }
 
-        return $"样本 {rigid.SampleCount} 格\n" +
+        return $"样本 {rigid.SampleCount} 格 ({rigid.MaskRatio * 100f:F1}%)\n" +
                $"Σw   = {rigid.WeightSum:F1}\n" +
-               $"|T|  = {rigid.TranslationMagnitude:F2} px\n" +
+               $"|T|  = {rigid.TranslationMagnitude:F2} px  ({translateR * 100f:F3}% D)\n" +
                $"|ω|  = {rigid.RotationMagnitude:F3} rad\n" +
                $"残差 = {rigid.ResidualRms:F2} px\n" +
+               $"R_global = {rigid.DirectionalConsistency:F2}  R_local p10 = {rigid.RLocalP10:F2}\n" +
                $"判定:{label}";
     }
 

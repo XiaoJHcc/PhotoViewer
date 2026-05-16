@@ -12,8 +12,9 @@ using SixLabors.ImageSharp.Processing;
 namespace CvDebugTool;
 
 /// <summary>
-/// CV 网格 v4-st 离线诊断工具。读入 HIF/HEIC/JPG，调
-/// CvGridExtractor.ExtractFromLuma + CvHeatmap，输出锐度图、抖动矢量场 PNG 与文本报告。
+/// CV 网格 v5 离线诊断工具。读入 HIF/HEIC/JPG，调
+/// CvGridExtractor.ExtractFromLuma + CvHeatmap（v5 R_local + R_global），
+/// 输出锐度图、抖动矢量场 PNG 与文本报告（含 R_global / R_local 分布 + 判定标签）。
 /// </summary>
 internal static class Program
 {
@@ -141,6 +142,7 @@ internal static class Program
         int anisotropicCells = 0;
         var dragWidthsPx = new List<float>();
         var anisotropies = new List<float>();
+        var localR = new List<float>();
         for (int i = 0; i < n; i++)
         {
             float wpx = cv.Data[3 * n + i];
@@ -155,6 +157,8 @@ internal static class Program
                 validCells++;
                 dragWidthsPx.Add(wpx);
             }
+            float r = shake.LocalConsistency[i];
+            if (!float.IsNaN(r)) localR.Add(r);
         }
         dragWidthsPx.Sort();
         float medianDrag = dragWidthsPx.Count > 0 ? dragWidthsPx[dragWidthsPx.Count / 2] : float.NaN;
@@ -162,6 +166,10 @@ internal static class Program
         float p90Drag = dragWidthsPx.Count > 0 ? dragWidthsPx[(int)(dragWidthsPx.Count * 0.9)] : float.NaN;
         anisotropies.Sort();
         float medianA = anisotropies.Count > 0 ? anisotropies[anisotropies.Count / 2] : 0f;
+        localR.Sort();
+        float p10R = localR.Count > 0 ? localR[(int)(localR.Count * 0.1)] : float.NaN;
+        float p50R = localR.Count > 0 ? localR[localR.Count / 2] : float.NaN;
+        float p90R = localR.Count > 0 ? localR[(int)(localR.Count * 0.9)] : float.NaN;
 
         // 方向直方图（8 桶，限于矢量场掩膜内）
         var dirHist = new int[8];
@@ -181,11 +189,12 @@ internal static class Program
         sb.AppendLine($"cv schema   : {cv.Version}");
         sb.AppendLine();
         sb.AppendLine("─── shake field ───");
-        sb.AppendLine($"valid cells       : {validCells} / 1024");
+        sb.AppendLine($"valid cells       : {validCells} / 1024  (mask_ratio={rigid.MaskRatio * 100:F1}%)");
         sb.AppendLine($"anisotropic cells : {anisotropicCells} / 1024  (A ≥ {CvHeatmap.AnisotropyMin:F2})");
         sb.AppendLine($"median A          : {medianA:F3}");
         sb.AppendLine($"drag_width p10/50/p90 : {p10Drag:F2} / {medianDrag:F2} / {p90Drag:F2} px");
         sb.AppendLine($"drag_r  p10/50/p90    : {p10Drag / diagonal * 100:F3}% / {medianDrag / diagonal * 100:F3}% / {p90Drag / diagonal * 100:F3}%");
+        sb.AppendLine($"R_local p10/50/p90    : {p10R:F3} / {p50R:F3} / {p90R:F3}   (n={localR.Count})");
         sb.AppendLine();
         sb.AppendLine("direction histogram (drag-line angle, 8 bins of π/8):");
         string[] arrows = { "→",  "↗",  "↑",  "↖",  "←",  "↙",  "↓",  "↘"  };
@@ -201,10 +210,34 @@ internal static class Program
         sb.AppendLine($"samples : {rigid.SampleCount}");
         sb.AppendLine($"Σw      : {rigid.WeightSum:F1}");
         sb.AppendLine($"|T|     : {rigid.TranslationMagnitude:F2} px");
-        sb.AppendLine($"|ω|     : {rigid.RotationMagnitude:F4} rad");
+        sb.AppendLine($"|ω|     : {rigid.RotationMagnitude:F4} rad   ratio={rigid.OmegaPxRatio:F3}");
         sb.AppendLine($"residual: {rigid.ResidualRms:F2} px");
+        sb.AppendLine($"R_global: {rigid.DirectionalConsistency:F3}");
+        sb.AppendLine($"R_local p10 (fit): {rigid.RLocalP10:F3}");
+        sb.AppendLine($"verdict : {VerdictLabel(rigid, diagonal)}");
         sb.AppendLine();
         return sb.ToString();
+    }
+
+    /// <summary>v5 r2 判定（与 DinoDebugViewModel.FormatRigidMotion 同优先级，调 CvHeatmap 常量同步）。</summary>
+    private static string VerdictLabel(RigidMotionResult r, float diagonal)
+    {
+        float halfDiag = diagonal * 0.5f;
+        float omegaPx = r.RotationMagnitude * halfDiag;
+        float motionScale = MathF.Max(MathF.Sqrt(r.TranslationMagnitude * r.TranslationMagnitude + omegaPx * omegaPx), 1e-3f);
+        float translateR = diagonal > 0 ? r.TranslationMagnitude / diagonal : 0f;
+        if (r.WeightSum < CvHeatmap.WeightSumMin || r.MaskRatio < CvHeatmap.MaskRatioMin) return "信息不足";
+        if (r.RotationMagnitude >= CvHeatmap.OmegaStrongRot
+            && r.DirectionalConsistency >= CvHeatmap.RGlobalStrongRotAbove) return "强旋转抖动";
+        if (r.DirectionalConsistency < CvHeatmap.RGlobalQuietBelow) return "静止纹理";
+        if (r.RotationMagnitude >= CvHeatmap.OmegaRot
+            && r.DirectionalConsistency >= CvHeatmap.RGlobalMotionAbove
+            && r.RLocalP10 >= CvHeatmap.RLocalP10RotMin) return "旋转抖动";
+        if (translateR >= CvHeatmap.TranslateMinDragR
+            && r.DirectionalConsistency >= CvHeatmap.RGlobalMotionAbove) return "平移抖动";
+        if (r.ResidualRms > CvHeatmap.ResidualMotionRatio * motionScale) return "混乱场景";
+        if (translateR < CvHeatmap.TranslateMinDragR && r.RotationMagnitude < CvHeatmap.OmegaRot) return "静止纹理";
+        return "弱信号 / 难判";
     }
 
     private static void SaveSharpnessPng(float[] plane, string outPath)
@@ -268,7 +301,9 @@ internal static class Program
                     float dir = field.Direction[i];
                     if (float.IsNaN(wpx) || float.IsNaN(dir)) continue;
                     float dragR = wpx / field.Diagonal;
-                    var color = ColorForDragR(dragR);
+                    if (dragR < CvHeatmap.DragRMinDisplay) continue;
+                    float rLocal = field.LocalConsistency[i];
+                    var color = CvHeatmap.ColorForShake(dragR, rLocal);
                     double cx = (gx + 0.5) * cellW;
                     double cy = (gy + 0.5) * cellH;
                     double hx = Math.Cos(dir) * half;
@@ -303,34 +338,6 @@ internal static class Program
         float g = s[idx].g + (s[idx + 1].g - s[idx].g) * k;
         float b = s[idx].b + (s[idx + 1].b - s[idx].b) * k;
         return ((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
-    }
-
-    private static (byte R, byte G, byte B) ColorForDragR(float dragR)
-    {
-        // 三色渐变（r2 2026-05-16）：黑 → 橙红峰 → 白；与 ShakeFieldView.ColorForDragR 同步。
-        const float B0 = 0.00033f;
-        const float B1 = 0.0006f;
-        const float B2 = 0.0010f;
-        const float B3 = 0.0018f;
-        const float B4 = 0.0030f;
-        var c0 = (R: 0,   G: 0,   B: 0);
-        var c1 = (R: 90,  G: 25,  B: 15);
-        var c2 = (R: 255, G: 80,  B: 30);
-        var c3 = (R: 255, G: 170, B: 130);
-        var c4 = (R: 240, G: 230, B: 220);
-        var c5 = (R: 255, G: 255, B: 255);
-        (int R, int G, int B) Lerp((int R, int G, int B) a, (int R, int G, int B) b, float t)
-        {
-            if (t < 0) t = 0;
-            if (t > 1) t = 1;
-            return ((int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
-        }
-        var c = c5;
-        if (dragR < B1) c = Lerp(c0, c1, (dragR - B0) / (B1 - B0));
-        else if (dragR < B2) c = Lerp(c1, c2, (dragR - B1) / (B2 - B1));
-        else if (dragR < B3) c = Lerp(c2, c3, (dragR - B2) / (B3 - B2));
-        else if (dragR < B4) c = Lerp(c3, c4, (dragR - B3) / (B4 - B3));
-        return ((byte)c.R, (byte)c.G, (byte)c.B);
     }
 }
 

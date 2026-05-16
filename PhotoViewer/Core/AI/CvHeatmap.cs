@@ -19,19 +19,23 @@ public enum CvDiagnostic
 }
 
 /// <summary>
-/// v4 抖动矢量场：per-cell 拖影线方向 / 绝对边宽 / 有效掩膜 + 图像对角线 D。
-/// 颜色编码与刚体拟合权重都按 drag_width/D 相对值取段，与图像分辨率解耦。
+/// v5 抖动矢量场：per-cell 拖影线方向 / 绝对边宽 / 有效掩膜 + 局部方向一致性 R_local + 图像对角线 D。
+/// 颜色编码改为二维：R_local（方向一致性，主导色相）× drag_r（边宽量级，亮度调整）；
+/// 刚体拟合权重仍按 drag_r 相对值取段。
 /// </summary>
 public sealed class ShakeField
 {
     /// <summary>拖影线方向（rad，[0,π)，无极性）；无效格填 NaN。</summary>
     public float[] Direction { get; init; } = Array.Empty<float>();
 
-    /// <summary>拖影线绝对边宽 drag_width（px）= max_bucket 中位边宽；无效格填 NaN。</summary>
+    /// <summary>拖影线绝对边宽 drag_width（px）= drag_bucket 中位边宽；无效格填 NaN。</summary>
     public float[] Width { get; init; } = Array.Empty<float>();
 
-    /// <summary>有效掩膜：true = 该格参与矢量场绘制 / 刚体拟合（Width &amp; Direction 都不为 NaN，且 drag_r ≥ 最低显示阈值）。</summary>
+    /// <summary>有效掩膜：true = 该格参与矢量场绘制 / 刚体拟合（Width &amp; Direction 都不为 NaN，且 drag_r ≥ 最低显示阈值，且 anisotropy ≥ AnisotropyMin）。</summary>
     public bool[] Mask { get; init; } = Array.Empty<bool>();
+
+    /// <summary>局部方向一致性 R_local ∈ [0,1]：5×5 邻域内 Mask=true 格的 2θ 圆形均值长度；邻域有效格 &lt; 5 时为 NaN。</summary>
+    public float[] LocalConsistency { get; init; } = Array.Empty<float>();
 
     /// <summary>图像对角线像素长度 D = √(W²+H²)，用于把 Width 归一化为相对值。</summary>
     public float Diagonal { get; init; }
@@ -56,6 +60,18 @@ public readonly struct RigidMotionResult
 
     /// <summary>拟合残差 RMS（px，仅在 Σw &gt; 0 时有意义）。</summary>
     public float ResidualRms { get; init; }
+
+    /// <summary>v5 新增：全图方向一致性 R_global ∈ [0,1]，按 weight × exp(i·2θ) 归一。</summary>
+    public float DirectionalConsistency { get; init; }
+
+    /// <summary>v5 新增：旋转能量占比 omegaPx / (|T| + omegaPx + ε)，ε=1e-3。omegaPx = |ω| · 半对角线。</summary>
+    public float OmegaPxRatio { get; init; }
+
+    /// <summary>v5 新增：有效格占比 = 参与拟合的格数 / 1024。低于 0.05 视为"信息不足"。</summary>
+    public float MaskRatio { get; init; }
+
+    /// <summary>v5 r2 新增：参与拟合的格的 R_local 第 10 百分位；旋转抖动判据用，区分"切向场全图相关"与"弱信号假旋转"。</summary>
+    public float RLocalP10 { get; init; }
 }
 
 /// <summary>
@@ -136,8 +152,48 @@ public static class CvHeatmap
     /// 典型边纹（A &gt; 0.5）也低于车流/反光的各向异性（A 通常 0.3-0.5）。</summary>
     public const float AnisotropyMin = 0.20f;
 
+    // ── v5 方向一致性 R_local 参数 ────────────────────────────────────────
+    /// <summary>R_local 邻域半径：5×5 窗（半径 2）。窗口太小受 NaN 与单格噪声影响，太大会平滑掉旋转抖切向场的方向梯度。</summary>
+    public const int LocalRadius = 2;
+    /// <summary>R_local 邻域内最少有效格数（不足则该格 R_local = NaN）。</summary>
+    public const int LocalMinSamples = 5;
+
+    // ── v5 颜色编码与判定阈值（实测 14 张样本校准 r2，见 plan-2-2-shake-v5 §1.3/§1.5） ──
+    /// <summary>R_local 阈值：方向"开始集中"的下断点；之下视为建筑/混合纹理（暗灰色）。</summary>
+    public const float RLocalLow = 0.30f;
+    /// <summary>R_local 阈值：方向"高度集中"的上断点；之上视为真抖动信号（鲜红色）。</summary>
+    public const float RLocalHigh = 0.55f;
+    /// <summary>R_global 判"静止纹理"的下断点：低于此 → 不论 |T|/|ω| 多大都判建筑/纹理。
+    /// r1 校准（实测 8 张样本）：1181=0.14 / 1211=0.22 必须被挡住；从 0.30 提到 0.45。</summary>
+    public const float RGlobalQuietBelow = 0.45f;
+    /// <summary>R_global 判"平移/旋转抖动"的下断点：满足此 + 量级阈值 → 真抖动。</summary>
+    public const float RGlobalMotionAbove = 0.50f;
+    /// <summary>R_global 判"强旋转抖动"的下断点（r2 新增）：低于此 → 不论 |ω| 多大都视为弱信号假旋转。
+    /// r2 校准：1467 真强旋 R_global=0.60；1179/1183/1396 假阳性 R_global=0.09-0.54；阈值 0.30 切开。
+    /// 注意 1396 R_global=0.536 偏高（小光斑加单一方向纹理混合），但 R_local p10=0.28 旋转判据会兜住。</summary>
+    public const float RGlobalStrongRotAbove = 0.30f;
+    /// <summary>R_local p10 判"旋转抖动"下断点（r2 新增）：旋转抖切向场全图相关，最差 10% 格也 ≥ 此值。
+    /// r2 校准：1465 真旋抖 p10=0.56 / 1467 强旋 p10=0.82；1266/1479 假阳性 p10=0.46/0.48；阈值 0.55 切开。</summary>
+    public const float RLocalP10RotMin = 0.55f;
+    /// <summary>"强旋转抖动"的 |ω| 下断点（rad）。1467 实测 0.84 远超此阈值。</summary>
+    public const float OmegaStrongRot = 0.30f;
+    /// <summary>"旋转抖动"的 |ω| 下断点（rad）。r1 校准：1465 实测 0.095（旋转抖）/ 8943 实测 0.083（白天）；
+    /// 阈值 0.090 留 0.005 余量切开两者。</summary>
+    public const float OmegaRot = 0.090f;
+    /// <summary>"平移抖动"的 |T| 下断点（按对角线 D 归一化的相对值）。
+    /// r1 校准：实测 1197/1259（抖）|T|/D ≈ 0.150-0.151%；1301/8943（白天）|T|/D ≈ 0.090-0.091%；
+    /// 阈值 0.13% 把它们切开（≈9.4 px @ 7211D / 11 px @ 8423D）。</summary>
+    public const float TranslateMinDragR = 0.0013f;
+    /// <summary>"信息不足"的 Σw 下限。</summary>
+    public const float WeightSumMin = 20f;
+    /// <summary>"信息不足"的 MaskRatio 下限（5%）。</summary>
+    public const float MaskRatioMin = 0.05f;
+    /// <summary>残差/动量比阈值，超出 → 混乱场景。</summary>
+    public const float ResidualMotionRatio = 0.6f;
+
     /// <summary>
     /// 构造抖动矢量场：取 drag_direction / drag_width，掩膜按 drag_r ≥ DragRMinDisplay 且 anisotropy ≥ AnisotropyMin 判定。
+    /// 然后在 5×5 邻域内算 R_local（2θ 圆形均值长度）填到 LocalConsistency。
     /// Diagonal 写入返回对象，下游可视化层与刚体拟合都按它做归一化。
     /// </summary>
     public static ShakeField BuildShakeField(CvGridResult result, float diagonal)
@@ -147,6 +203,7 @@ public static class CvHeatmap
         var direction = new float[n];
         var width = new float[n];
         var mask = new bool[n];
+        var local = new float[n];
         float minWidthPx = diagonal > 0 ? diagonal * DragRMinDisplay : 0f;
         for (int i = 0; i < n; i++)
         {
@@ -158,7 +215,124 @@ public static class CvHeatmap
             mask[i] = !float.IsNaN(wpx) && !float.IsNaN(d) && wpx >= minWidthPx
                       && !float.IsNaN(a) && a >= AnisotropyMin;
         }
-        return new ShakeField { Direction = direction, Width = width, Mask = mask, Diagonal = diagonal };
+
+        // R_local：5×5 邻域 2θ 圆形均值长度；邻域有效格 < LocalMinSamples 的格 → NaN。
+        for (int gy = 0; gy < Grid; gy++)
+        {
+            int y0 = Math.Max(0, gy - LocalRadius);
+            int y1 = Math.Min(Grid - 1, gy + LocalRadius);
+            for (int gx = 0; gx < Grid; gx++)
+            {
+                int x0 = Math.Max(0, gx - LocalRadius);
+                int x1 = Math.Min(Grid - 1, gx + LocalRadius);
+                double sumC = 0, sumS = 0;
+                int count = 0;
+                for (int ny = y0; ny <= y1; ny++)
+                {
+                    for (int nx = x0; nx <= x1; nx++)
+                    {
+                        int ni = ny * Grid + nx;
+                        if (!mask[ni]) continue;
+                        float th = direction[ni];
+                        if (float.IsNaN(th)) continue;
+                        // 2θ：让 0 与 π 在单位圆同点（无极性方向的正确圆形统计）。
+                        double two = 2.0 * th;
+                        sumC += Math.Cos(two);
+                        sumS += Math.Sin(two);
+                        count++;
+                    }
+                }
+                int idx = gy * Grid + gx;
+                if (count < LocalMinSamples)
+                {
+                    local[idx] = float.NaN;
+                }
+                else
+                {
+                    double r = Math.Sqrt(sumC * sumC + sumS * sumS) / count;
+                    if (r > 1.0) r = 1.0;
+                    local[idx] = (float)r;
+                }
+            }
+        }
+
+        return new ShakeField
+        {
+            Direction = direction,
+            Width = width,
+            Mask = mask,
+            LocalConsistency = local,
+            Diagonal = diagonal,
+        };
+    }
+
+    /// <summary>
+    /// v5 配色（唯一权威实现）：颜色由 R_local（方向一致性，主导色相）× drag_r（边宽量级，亮度调整）共同决定。
+    /// View 与 CvDebugTool 都来这里取色，避免两端 inline 不同步。
+    ///   R_local NaN 或 &lt; RLocalLow      → 暗灰段（建筑/混合纹理，与"鲜红抖动峰"形成强对比）
+    ///   R_local ∈ [RLocalLow, RLocalHigh) → 黄绿段（规则纹理：百叶/栏杆/有方向但不是抖动）
+    ///   R_local ≥ RLocalHigh              → 鲜红段（真抖动信号；亮度峰值落在 sweet spot）
+    /// drag_r 的角色：sweet spot（0.05%~0.30%）内全亮，两端低亮，让"长建筑边"与"过短噪声"都被压暗。
+    /// </summary>
+    public static (byte R, byte G, byte B) ColorForShake(float dragR, float rLocal)
+    {
+        // 亮度因子：sweet spot 内 = 1，外侧线性下降到 0.45。低于 DragRMinDisplay 调用方应短路不画。
+        float lum;
+        if (dragR < DragRWeightRampEnd)
+        {
+            float t = (dragR - DragRMinDisplay) / (DragRWeightRampEnd - DragRMinDisplay);
+            if (t < 0) t = 0; if (t > 1) t = 1;
+            lum = 0.45f + 0.55f * t;
+        }
+        else if (dragR <= DragRWeightFalloffStart)
+        {
+            lum = 1.0f;
+        }
+        else if (dragR < DragRMaxValid)
+        {
+            float t = (DragRMaxValid - dragR) / (DragRMaxValid - DragRWeightFalloffStart);
+            if (t < 0) t = 0; if (t > 1) t = 1;
+            lum = 0.45f + 0.55f * t;
+        }
+        else
+        {
+            lum = 0.45f;
+        }
+
+        // R_local 决定色相段：暗灰 / 黄绿 / 鲜红。NaN 视同低一致性。
+        float r = float.IsNaN(rLocal) ? 0f : rLocal;
+        (float R, float G, float B) baseColor;
+        if (r < RLocalLow)
+        {
+            // 暗灰段：60-90 灰度，让长建筑边一目了然不抢视线
+            baseColor = (90f, 90f, 90f);
+        }
+        else if (r < RLocalHigh)
+        {
+            // 黄绿段：插值黄绿，让规则纹理可读但与抖动峰区分
+            float t = (r - RLocalLow) / (RLocalHigh - RLocalLow);
+            // 暗黄 (110, 130, 40) → 鲜黄绿 (200, 220, 60)
+            baseColor = (
+                110f + (200f - 110f) * t,
+                130f + (220f - 130f) * t,
+                40f + (60f - 40f) * t);
+        }
+        else
+        {
+            // 鲜红段：高 R_local 表达真抖动峰；250 红 + 适度橙偏
+            float t = (r - RLocalHigh) / (1.0f - RLocalHigh);
+            if (t > 1) t = 1;
+            // 鲜红 (250, 70, 30) → 鲜橙 (255, 150, 50)
+            baseColor = (
+                250f + (255f - 250f) * t,
+                70f + (150f - 70f) * t,
+                30f + (50f - 30f) * t);
+        }
+
+        byte R8 = (byte)Math.Clamp((int)MathF.Round(baseColor.R * lum), 0, 255);
+        byte G8 = (byte)Math.Clamp((int)MathF.Round(baseColor.G * lum), 0, 255);
+        byte B8 = (byte)Math.Clamp((int)MathF.Round(baseColor.B * lum), 0, 255);
+        return (R8, G8, B8);
     }
 
     /// <summary>
@@ -177,6 +351,7 @@ public static class CvHeatmap
 
         // 把每格的测量转成 (位置 px、向量 vx/vy、权重 w)。位置用图像中心化的格坐标，单位 = 格。
         var samples = new List<(float px, float py, float vx, float vy, float w)>(256);
+        var localRs = new List<float>(256); // R_local p10 用：参与拟合的格的 R_local 集合
         float cx = (Grid - 1) / 2f;
         float cy = (Grid - 1) / 2f;
         float diag = field.Diagonal;
@@ -195,12 +370,25 @@ public static class CvHeatmap
                 float vx = wpx * MathF.Cos(dir);
                 float vy = wpx * MathF.Sin(dir);
                 samples.Add((x - cx, y - cy, vx, vy, wgt));
+                float rl = field.LocalConsistency.Length > i ? field.LocalConsistency[i] : float.NaN;
+                if (!float.IsNaN(rl)) localRs.Add(rl);
             }
         }
 
         if (samples.Count < 6)
         {
-            return new RigidMotionResult { SampleCount = samples.Count };
+            float maskRatioEarly = samples.Count / (float)(Grid * Grid);
+            return new RigidMotionResult { SampleCount = samples.Count, MaskRatio = maskRatioEarly };
+        }
+
+        // R_local p10：参与拟合的格的 R_local 排序后取第 10 百分位；区分"切向场全图相关"与"弱信号假旋转"。
+        float rLocalP10 = 0f;
+        if (localRs.Count > 0)
+        {
+            localRs.Sort();
+            int p10Idx = (int)(localRs.Count * 0.10);
+            if (p10Idx >= localRs.Count) p10Idx = localRs.Count - 1;
+            rLocalP10 = localRs[p10Idx];
         }
 
         // 迭代符号对齐：先用统一正向估一次 (T, ω)，再按预测方向翻转 v_i，重拟合。
@@ -231,15 +419,31 @@ public static class CvHeatmap
 
         double ssq = 0;
         double wsum = 0;
+        // R_global：方向 θ 已存在 field.Direction 里；这里用 weight 加权对 2θ 做圆形均值。
+        // 注意 v_i 经过迭代翻转，但方向 θ 是无极性 [0,π)，2θ 处理后翻转不影响。
+        double cAcc = 0, sAcc = 0;
         foreach (var s in arr)
         {
             double rx = s.vx - (tx - omega * s.py);
             double ry = s.vy - (ty + omega * s.px);
             ssq += s.w * (rx * rx + ry * ry);
             wsum += s.w;
+            // v_i = drag_width · (cos θ, sin θ)，θ 可由 atan2(vy, vx) 反推（符号翻转不影响 2θ）
+            double th = Math.Atan2(s.vy, s.vx);
+            double two = 2.0 * th;
+            cAcc += s.w * Math.Cos(two);
+            sAcc += s.w * Math.Sin(two);
         }
         double rms = wsum > 0 ? Math.Sqrt(ssq / (2.0 * wsum)) : 0;
         double tm = Math.Sqrt(tx * tx + ty * ty);
+        double rGlobal = wsum > 1e-9 ? Math.Sqrt(cAcc * cAcc + sAcc * sAcc) / wsum : 0;
+        if (rGlobal > 1.0) rGlobal = 1.0;
+
+        // OmegaPxRatio：把 ω 换算到半对角线处的边缘像素位移，再算占比。
+        double halfDiag = field.Diagonal * 0.5;
+        double omegaPx = Math.Abs(omega) * halfDiag;
+        double ratio = (tm + omegaPx) > 1e-3 ? omegaPx / (tm + omegaPx + 1e-3) : 0;
+        float maskRatio = samples.Count / (float)(Grid * Grid);
 
         return new RigidMotionResult
         {
@@ -248,6 +452,10 @@ public static class CvHeatmap
             TranslationMagnitude = (float)tm,
             RotationMagnitude = (float)Math.Abs(omega),
             ResidualRms = (float)rms,
+            DirectionalConsistency = (float)rGlobal,
+            OmegaPxRatio = (float)ratio,
+            MaskRatio = maskRatio,
+            RLocalP10 = rLocalP10,
         };
     }
 
