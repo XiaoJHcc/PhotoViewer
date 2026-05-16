@@ -10,7 +10,6 @@
     <UserControl.Resources>
         <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
         <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
-        <local:FlipTransformConverter x:Key="FlipTransformConverter" />
         <local:StarColorConverter x:Key="StarColorConverter" />
     </UserControl.Resources>
 
@@ -81,17 +80,7 @@
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"
                                IsVisible="{Binding Thumbnail,
-                                    Converter={x:Static ObjectConverters.IsNotNull}}">
-                            <Image.RenderTransform>
-                                <TransformGroup>
-                                    <RotateTransform Angle="{Binding RotationAngle}" />
-                                    <ScaleTransform
-                                        ScaleX="{Binding NeedsHorizontalFlip,
-                                        Converter={StaticResource FlipTransformConverter}}"
-                                        ScaleY="1" />
-                                </TransformGroup>
-                            </Image.RenderTransform>
-                        </Image>
+                                    Converter={x:Static ObjectConverters.IsNotNull}}" />
 
                         <ProgressBar IsVisible="{Binding IsThumbnailLoading}"
                                      IsIndeterminate="True"

@@ -442,8 +442,6 @@ public class FolderViewModel : ReactiveObject
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 imageFile.RaisePropertyChanged(nameof(imageFile.PhotoDate));
-                imageFile.RaisePropertyChanged(nameof(imageFile.RotationAngle));
-                imageFile.RaisePropertyChanged(nameof(imageFile.NeedsHorizontalFlip));
 
                 Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
                 Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.StarOpacity));

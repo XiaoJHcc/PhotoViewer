@@ -100,36 +100,6 @@ public class ImageFile : ReactiveObject
     }
 
     /// <summary>
-    /// 图片旋转角度（基于EXIF Orientation）
-    /// </summary>
-    public double RotationAngle
-    {
-        get
-        {
-            if (ExifData?.OrientationValue != null)
-            {
-                return ExifOrientation.GetRotationAngle(ExifData.OrientationValue);
-            }
-            return 0;
-        }
-    }
-
-    /// <summary>
-    /// 是否需要水平翻转（基于EXIF Orientation）
-    /// </summary>
-    public bool NeedsHorizontalFlip
-    {
-        get
-        {
-            if (ExifData?.OrientationValue != null)
-            {
-                return ExifOrientation.NeedsHorizontalFlip(ExifData.OrientationValue);
-            }
-            return false;
-        }
-    }
-
-    /// <summary>
     /// EXIF 数据
     /// </summary>
     public ExifData? ExifData
@@ -142,9 +112,7 @@ public class ImageFile : ReactiveObject
             if (!ReferenceEquals(oldValue, value))
             {
                 this.RaisePropertyChanged(nameof(PhotoDate));
-                this.RaisePropertyChanged(nameof(RotationAngle));
-                this.RaisePropertyChanged(nameof(NeedsHorizontalFlip));
-                this.RaisePropertyChanged(nameof(Rating)); // 新增：星级同步更新
+                this.RaisePropertyChanged(nameof(Rating));
             }
         }
     }
