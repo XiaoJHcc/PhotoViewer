@@ -2,49 +2,61 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             mc:Ignorable="d" d:DesignWidth="220" d:DesignHeight="200"
+             mc:Ignorable="d" d:DesignWidth="220" d:DesignHeight="240"
              x:Class="PhotoViewer.Controls.DiagnosticTile"
              x:Name="TileRoot"
              UseLayoutRounding="True">
 
     <!--
-        DINO 诊断页专用瓦片：统一尺寸 + 保持源图长宽比 + 持久十字准星 overlay。
-        - 外框 Border 吃掉所有 PointerPressed，保证卡片内点击不会被父级当作"空闲点击"。
-        - 内部 ImageHost 的 Width/Height 通过代码同步为 ImageWidth × (ImageWidth / AspectRatio)。
-        - 十字准星由两条带阴影的 Rectangle 组成，只在 Crosshair != null 时显示；UseLayoutRounding 保证像素锐利。
+        DINO 诊断页专用瓦片：
+        - 外框 SquareFrame 是边长随父级宽度变动的正方形（高度由代码同步为宽度，绑定 Bounds.Width）。
+        - 内部 ContentArea 按图像 AspectRatio letterbox 居中：横图 → 上下黑边；竖图 → 左右黑边；图像本身完全可见、不裁切、不变形。
+        - ContentArea 内部分四层：dim 缩略图背景 → 主图（heatmap / PCA / cosine 等）→ Overlay 槽位（如 ShakeFieldView 的 Canvas 矢量线）→ 持久十字准星。
+        - 标题 Label 移到正方形 *外* 下方，不挤占图像区域。
+        - 整个瓦片吃掉所有 PointerPressed（避免被父级当成"空闲点击"清准星），只在 ContentArea 内点击才把归一化坐标抛给上层。
     -->
-    <Border x:Name="OuterBorder"
-            Background="#151515"
-            BorderBrush="#333"
-            BorderThickness="1"
-            CornerRadius="4"
-            Padding="8"
-            Margin="4">
-        <StackPanel HorizontalAlignment="Center">
-            <Border x:Name="ImageHost"
-                    Background="#222"
-                    CornerRadius="2"
-                    ClipToBounds="True"
-                    HorizontalAlignment="Center">
-                <Grid>
-                    <Image x:Name="ContentImage"
-                           Source="{Binding Source, ElementName=TileRoot}"
-                           Stretch="Fill"
-                           RenderOptions.BitmapInterpolationMode="None" />
-                    <Canvas x:Name="CrosshairCanvas"
-                            IsHitTestVisible="False"
-                            IsVisible="False">
-                        <Rectangle x:Name="VMain" Fill="White" Width="1" />
-                        <Rectangle x:Name="HMain" Fill="White" Height="1" />
-                    </Canvas>
-                </Grid>
-            </Border>
-            <TextBlock Text="{Binding Label, ElementName=TileRoot}"
-                       FontSize="12"
-                       Foreground="#888"
-                       HorizontalAlignment="Center"
-                       TextAlignment="Center"
-                       Margin="0,6,0,0" />
-        </StackPanel>
-    </Border>
+    <StackPanel x:Name="OuterStack"
+                HorizontalAlignment="Stretch"
+                Margin="4">
+        <Border x:Name="SquareFrame"
+                Background="#151515"
+                BorderBrush="#333"
+                BorderThickness="1"
+                CornerRadius="4"
+                HorizontalAlignment="Stretch"
+                ClipToBounds="True">
+            <Grid x:Name="ContentArea"
+                  HorizontalAlignment="Center"
+                  VerticalAlignment="Center"
+                  Background="#222"
+                  ClipToBounds="True">
+                <Image x:Name="BackgroundImage"
+                       Source="{Binding BackgroundSource, ElementName=TileRoot}"
+                       Stretch="Fill"
+                       Opacity="0.30"
+                       RenderOptions.BitmapInterpolationMode="HighQuality" />
+                <Image x:Name="ContentImage"
+                       Source="{Binding Source, ElementName=TileRoot}"
+                       Stretch="Fill"
+                       Opacity="{Binding ContentOpacity, ElementName=TileRoot}"
+                       RenderOptions.BitmapInterpolationMode="None" />
+                <ContentPresenter x:Name="OverlayHost"
+                                  Content="{Binding Overlay, ElementName=TileRoot}" />
+                <Canvas x:Name="CrosshairCanvas"
+                        IsHitTestVisible="False"
+                        IsVisible="False">
+                    <Rectangle x:Name="VMain" Fill="White" Width="1" />
+                    <Rectangle x:Name="HMain" Fill="White" Height="1" />
+                </Canvas>
+            </Grid>
+        </Border>
+        <TextBlock x:Name="LabelBlock"
+                   Text="{Binding Label, ElementName=TileRoot}"
+                   FontSize="12"
+                   Foreground="#888"
+                   HorizontalAlignment="Center"
+                   TextAlignment="Center"
+                   TextWrapping="Wrap"
+                   Margin="4,6,4,4" />
+    </StackPanel>
 </UserControl>
