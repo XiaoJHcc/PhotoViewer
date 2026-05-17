@@ -28,6 +28,7 @@ public class ImageFile : ReactiveObject
     private DateTimeOffset? _modifiedDate;
     private ulong? _fileSize;
     private bool _basicPropsLoaded;
+    private bool? _isShake;
 
     public IStorageFile File { get; }
     public string Name => File.Name;
@@ -432,4 +433,14 @@ public class ImageFile : ReactiveObject
     /// 星级（0~5，来自 EXIF/XMP；若无则为0）
     /// </summary>
     public int Rating => ExifData?.Rating ?? 0;
+
+    /// <summary>
+    /// 抖动判定:null = 未判定(无 CV 缓存或解码失败,不挂徽标);true = 平移/旋转/强旋转抖动;false = 静止/纹理/混乱/弱信号。
+    /// 由 <see cref="PhotoViewer.Core.AI.ShakeFlagService"/> 在文件夹加载完成与批量索引完成后回填。
+    /// </summary>
+    public bool? IsShake
+    {
+        get => _isShake;
+        set => this.RaiseAndSetIfChanged(ref _isShake, value);
+    }
 }

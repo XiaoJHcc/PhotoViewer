@@ -303,6 +303,8 @@ public class SimilarityPanelViewModel : ReactiveObject
 
         // 提取完成后重新判定未提取数量并刷新聚类列表
         await EvaluateUnindexedAsync().ConfigureAwait(false);
+        // 新数据已落库,按指纹批量回填 ImageFile.IsShake — 直接读 CV grid + 尺寸,不再触发解码
+        await ShakeFlagService.EvaluateAsync(_folder.AllFiles).ConfigureAwait(false);
         _ = RecomputeAsync(_main.CurrentFile);
     }
 
