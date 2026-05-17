@@ -52,6 +52,29 @@
                 </StackPanel>
             </Border>
         </StackPanel>
+
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
+                开发者
+            </TextBlock>
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="4">
+                    <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+                        <TextBlock Grid.Column="0"
+                                   Classes="settings-label"
+                                   VerticalAlignment="Center"
+                                   Text="清除已提取的 DINO / CV 特征(不可撤销)" />
+                        <Button Grid.Column="1"
+                                Content="{Binding ClearDbButtonText}"
+                                Command="{Binding ClearDatabaseCommand}"
+                                IsEnabled="{Binding !ClearDbBusy}" />
+                    </Grid>
+                    <TextBlock Classes="settings-label"
+                               Text="{Binding ClearDbStatus}"
+                               IsVisible="{Binding ClearDbStatus, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
     </StackPanel>
 
 </UserControl>

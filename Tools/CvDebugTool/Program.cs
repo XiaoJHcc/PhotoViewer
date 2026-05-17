@@ -70,10 +70,10 @@ internal static class Program
             luma[i] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
         }
 
-        var (cv, contrast) = CvGridExtractor.ExtractFromLuma(luma, decoded.w, decoded.h);
+        var cv = CvGridExtractor.ExtractFromLuma(luma, decoded.w, decoded.h);
         float diagonal = MathF.Sqrt((float)decoded.w * decoded.w + (float)decoded.h * decoded.h);
-        var sharpness = CvHeatmap.BuildSharpness(cv, contrast);
-        var shake = CvHeatmap.BuildShakeField(cv, diagonal, contrast);
+        var sharpness = CvHeatmap.BuildSharpness(cv);
+        var shake = CvHeatmap.BuildShakeField(cv, diagonal);
         var rigid = CvHeatmap.FitRigidMotion(shake);
 
         // 文本报告

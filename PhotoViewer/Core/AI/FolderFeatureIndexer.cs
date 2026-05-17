@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -23,20 +24,22 @@ public sealed class FingerprintGroup
     /// <summary>组内文件,按解码代价升序排列(代表文件位于索引 0)。</summary>
     public IReadOnlyList<ImageFile> Files { get; init; } = Array.Empty<ImageFile>();
 
-    /// <summary>代表文件:实际喂给 DINO 推理的那一张。</summary>
+    /// <summary>代表文件:实际喂给 DINO 推理 + CV 提取的那一张。</summary>
     public ImageFile Representative => Files[0];
 }
 
 /// <summary>
 /// 全文件夹批量特征提取调度器。
-/// 对 <see cref="ImageFile"/> 列表按指纹聚合后逐组计算 DINOv3 [CLS] 特征向量并写入数据库——
-/// 同次曝光的 RAW+HEIF/JPG 共享同一指纹,只跑一次推理。
-/// 桌面端半核并行解码 + 单线程 ONNX 推理;移动端维持单线程。
+/// 对 <see cref="ImageFile"/> 列表按指纹聚合后,**一轮扫描同时提取 DINO CLS + patch token + CV grid 三类原始数据**
+/// 并写入 <see cref="PhotoDatabase"/>。同次曝光的 RAW+HEIF/JPG 共享同一指纹,只跑一次。
+///
+/// 解码两路:DINO 走 560 短边 <see cref="ThumbnailService"/>,CV 走原始分辨率 <see cref="BitmapLoader"/>(共享 LRU)。
+/// 桌面端半核并行解码 + 单线程 ONNX 推理;移动端单线程。
 /// 单组失败跳过,不中断整批。本期不支持取消(切文件夹后任务继续后台跑完)。
 /// </summary>
 public sealed class FolderFeatureIndexer
 {
-    /// <summary>喂给 DINO 的图片短边像素，与 <see cref="DinoFeatureCache"/> 保持一致。</summary>
+    /// <summary>喂给 DINO 的图片短边像素,与 <see cref="DinoFeatureCache"/> 保持一致。</summary>
     private const int FeaturingShortSide = 560;
 
     private static readonly SemaphoreSlim _inferSemaphore = new(1, 1);
@@ -48,7 +51,7 @@ public sealed class FolderFeatureIndexer
     /// <summary>是否正在运行。</summary>
     public bool IsRunning { get; private set; }
 
-    /// <summary>进度事件：每组完成（成功或跳过）后触发。</summary>
+    /// <summary>进度事件:每组完成(成功或跳过)后触发。</summary>
     public event Action<IndexProgress>? ProgressChanged;
 
     /// <summary>
@@ -106,6 +109,15 @@ public sealed class FolderFeatureIndexer
         return result;
     }
 
+    /// <summary>
+    /// 查询某指纹三路数据齐备情况;调用方据此决定是否跳过解码。
+    /// </summary>
+    public static Task<MissingParts> EvaluateMissingPartsAsync(string fingerprint)
+    {
+        return PhotoDatabase.EvaluateMissingPartsAsync(
+            fingerprint, DinoModelResources.ModelId, CvGridResult.CurrentVersion);
+    }
+
     /// <summary>解码代价评分:数字越小代表解码越快;同指纹组取分数最低的文件作代表。</summary>
     private static int DecodeCostScore(string name)
     {
@@ -120,10 +132,10 @@ public sealed class FolderFeatureIndexer
     }
 
     /// <summary>
-    /// 对 <paramref name="files"/> 中尚未入库的照片批量提取特征向量。
+    /// 对 <paramref name="files"/> 中尚未入库的照片批量提取三类特征。
     /// 同指纹的 RAW/HEIF/JPG 只算一次,进度按"指纹组"推进而非按文件数。
     /// </summary>
-    /// <param name="files">待处理文件列表（按 AllFiles 顺序）。</param>
+    /// <param name="files">待处理文件列表(按 AllFiles 顺序)。</param>
     public async Task RunAsync(IReadOnlyList<ImageFile> files)
     {
         if (IsRunning) return;
@@ -135,7 +147,7 @@ public sealed class FolderFeatureIndexer
         _failed = 0;
         _total = groups.Count;
 
-        // 桌面端半核并行解码；移动端单线程
+        // 桌面端半核并行解码;移动端单线程
         int decodeConcurrency = OperatingSystem.IsAndroid() || OperatingSystem.IsIOS()
             ? 1
             : Math.Max(1, Environment.ProcessorCount / 2);
@@ -165,8 +177,11 @@ public sealed class FolderFeatureIndexer
     }
 
     /// <summary>
-    /// 处理一个指纹组:无指纹组直接跳过;已入库则跳过;否则用代表文件解码 + 推理 + 写库,
-    /// 同指纹下其他文件后续通过 <see cref="DinoFeatureCache"/> 按指纹命中。
+    /// 处理一个指纹组:三路按需补齐:
+    /// 1. 评估缺失项(<see cref="EvaluateMissingPartsAsync"/>)
+    /// 2. 若需要 DINO(CLS 或 patch):解码 560 缩略图 → ONNX 推理(同时拿 CLS+patch)
+    /// 3. 若需要 CV:解码原图 → CvGridExtractor 提取
+    /// 4. 单事务写入 photos / photo_features / photo_patches
     /// </summary>
     private async Task ProcessGroupAsync(FingerprintGroup group)
     {
@@ -174,101 +189,112 @@ public sealed class FolderFeatureIndexer
         {
             if (string.IsNullOrEmpty(group.Fingerprint))
             {
-                ReportProgress(skipped: true);
+                ReportProgress();
                 return;
             }
 
-            // 已入库则跳过
-            if (await IsAlreadyIndexedAsync(group.Fingerprint).ConfigureAwait(false))
+            var missing = await EvaluateMissingPartsAsync(group.Fingerprint).ConfigureAwait(false);
+            if (!missing.AnyMissing)
             {
-                ReportProgress(skipped: false);
+                ReportProgress();
                 return;
             }
 
             var representative = group.Representative;
+            byte[]? clsBlob = null;
+            byte[]? patchBlob = null;
+            byte[]? cvBlob = null;
+            string? cvSpec = null;
 
-            // 解码缩略图(代表文件,通常是 HEIF/JPG,RAW 仅在没有伴侣时才会被选中)
-            Bitmap? bitmap = null;
+            Bitmap? thumbnail = null;
             try
             {
-                bitmap = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide).ConfigureAwait(false);
-                if (bitmap == null)
+                bool needDino = missing.NeedCls || missing.NeedPatches;
+                if (needDino)
                 {
-                    ReportProgress(skipped: true);
-                    return;
+                    thumbnail = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide).ConfigureAwait(false);
+                    if (thumbnail == null)
+                    {
+                        // 缩略图都拿不到,直接放弃整组(CV 大图通常更难解码)
+                        ReportProgress();
+                        return;
+                    }
+
+                    await _inferSemaphore.WaitAsync().ConfigureAwait(false);
+                    try
+                    {
+                        var (cls, patches) = await DinoFeatureExtractor.ExtractDualAsync(
+                            thumbnail, includePatches: missing.NeedPatches).ConfigureAwait(false);
+
+                        if (missing.NeedCls) clsBlob = EncodeFloatArray(cls);
+                        if (missing.NeedPatches && patches != null) patchBlob = EncodeFloatArray(patches);
+
+                        if (missing.NeedCls)
+                            DinoFeatureCache.PutMemoryCache(group.Fingerprint, cls);
+                    }
+                    finally
+                    {
+                        _inferSemaphore.Release();
+                    }
                 }
 
-                // 单线程 ONNX 推理
-                float[] vector;
-                await _inferSemaphore.WaitAsync().ConfigureAwait(false);
-                try
+                if (missing.NeedCv)
                 {
-                    vector = await DinoFeatureExtractor.ExtractAsync(bitmap).ConfigureAwait(false);
+                    Bitmap? cvBitmap = null;
+                    try
+                    {
+                        cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File).ConfigureAwait(false);
+                        if (cvBitmap != null)
+                        {
+                            var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);
+                            cvBlob = cvResult.Encode();
+                            cvSpec = CvGridResult.CurrentVersion;
+                        }
+                    }
+                    finally
+                    {
+                        // CV 大图来自 BitmapLoader 的 LRU 缓存,由 ImageView 共用,这里不 Dispose
+                    }
                 }
-                finally
-                {
-                    _inferSemaphore.Release();
-                }
 
-                // 写库
-                await PhotoDatabase.WriteFeatureVectorAsync(
-                    group.Input, group.Fingerprint,
-                    EncodeVector(vector),
-                    DinoModelResources.ModelId).ConfigureAwait(false);
+                // 单事务写入三表
+                await PhotoDatabase.WriteIndexedAsync(
+                    group.Input, group.Fingerprint, DinoModelResources.ModelId,
+                    clsBlob, patchBlob, cvBlob, cvSpec).ConfigureAwait(false);
 
-                // 同步到进程内存缓存(同指纹下所有文件后续 TryReadAsync 都能命中同一个值)
-                DinoFeatureCache.PutMemoryCache(group.Fingerprint, vector);
-
-                ReportProgress(skipped: false);
+                ReportProgress();
             }
             finally
             {
-                bitmap?.Dispose();
+                thumbnail?.Dispose();
             }
         }
         catch (FileNotFoundException)
         {
             // 模型文件缺失,整批都会失败,但仍逐组推进进度
             Interlocked.Increment(ref _failed);
-            ReportProgress(skipped: false);
+            ReportProgress();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[FolderFeatureIndexer] failed for {group.Representative.Name}: {ex.Message}");
             Interlocked.Increment(ref _failed);
-            ReportProgress(skipped: false);
+            ReportProgress();
         }
     }
 
-    /// <summary>
-    /// 检查指纹是否已在数据库中存有当前模型的特征向量。
-    /// </summary>
-    private static async Task<bool> IsAlreadyIndexedAsync(string fingerprint)
-    {
-        try
-        {
-            var record = await PhotoDatabase.GetAsync(fingerprint).ConfigureAwait(false);
-            return record?.FeatureVector != null
-                && record.FeatureModel == DinoModelResources.ModelId;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private void ReportProgress(bool skipped)
+    private void ReportProgress()
     {
         int done = Interlocked.Increment(ref _completed);
         ProgressChanged?.Invoke(new IndexProgress(done, _total, _failed));
     }
 
-    private static byte[] EncodeVector(float[] vector)
+    private static byte[] EncodeFloatArray(float[] data)
     {
-        var bytes = new byte[vector.Length * sizeof(float)];
-        for (int i = 0; i < vector.Length; i++)
-            System.Buffers.Binary.BinaryPrimitives.WriteSingleLittleEndian(
-                bytes.AsSpan(i * sizeof(float), sizeof(float)), vector[i]);
+        var bytes = new byte[data.Length * sizeof(float)];
+        for (int i = 0; i < data.Length; i++)
+            BinaryPrimitives.WriteSingleLittleEndian(
+                bytes.AsSpan(i * sizeof(float), sizeof(float)), data[i]);
         return bytes;
     }
 }
@@ -276,13 +302,13 @@ public sealed class FolderFeatureIndexer
 /// <summary>批量提取进度快照。</summary>
 public readonly struct IndexProgress
 {
-    /// <summary>已处理张数（含跳过）。</summary>
+    /// <summary>已处理张数(含跳过)。</summary>
     public int Completed { get; }
 
     /// <summary>总张数。</summary>
     public int Total { get; }
 
-    /// <summary>失败张数（不含跳过）。</summary>
+    /// <summary>失败张数(不含跳过)。</summary>
     public int Failed { get; }
 
     public IndexProgress(int completed, int total, int failed)

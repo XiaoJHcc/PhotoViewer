@@ -1,11 +1,13 @@
 using ReactiveUI;
 using System;
+using System.Buffers.Binary;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.ViewModels.Tools;
@@ -181,8 +183,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
         bool thumbnailHandedOff = false;
         try
         {
-            // DINO 560 缩略图与 CV 原始分辨率两路解码并行。
-            // CV 必须在原始像素上计算，任何下采样都会损害 Marziliano 边宽的测量精度。
+            // 先用指纹试读 patch token / cv_grid 缓存。
+            // v5 起 contrast 已是 result 第 7 标量,UI 看到的派生层(锐度/抖动图)与 indexer 写库时算出的完全等价 —
+            // 改算法只需 bump CvGridResult.CurrentVersion,阈值常量从不入库。
+            var (cachedPatches, cachedCv) = await TryReadCachedAsync(file, ct).ConfigureAwait(false);
+
+            // DINO 缩略图始终需要解码用于显示 SourceThumbnail。
+            // CV 大图:无论缓存命中与否都要解码 — 命中时跳过 100-300ms 的 CV 计算但仍需图像尺寸算 diagonal,
+            // 且 BitmapLoader.GetBitmapAsync 共享 LRU,这张图通常已在主视图里解码过,实际开销很低。
             var dinoTaskDecode = ThumbnailService.GetThumbnailAsync(file.File, DinoShortSide);
             var cvTaskDecode = BitmapLoader.GetBitmapAsync(file.File);
             await Task.WhenAll(dinoTaskDecode, cvTaskDecode).ConfigureAwait(false);
@@ -201,24 +209,29 @@ public sealed class DinoDebugViewModel : ReactiveObject
             int bh = dinoBitmap.PixelSize.Height;
             double ratio = bh > 0 ? (double)bw / bh : 1.0;
 
-            // 并行跑 CV（大图）与 DINO（小图）；若 CV 大图解码失败，降级用 DINO 小图（短边可能不足，CvGridExtractor 会抛异常由 catch 兜底）。
+            // CV 源图像:大图优先,失败降级到 DINO 缩略图。所有 diagonal 都从这里推。
             var cvSourceBitmap = cvBitmap ?? dinoBitmap;
-            var cvTask = CvGridExtractor.ExtractWithContrastAsync(cvSourceBitmap, ct);
-            var dinoTask = DinoFeatureExtractor.ExtractDualAsync(dinoBitmap, includePatches: true, ct);
-            await Task.WhenAll(cvTask, dinoTask).ConfigureAwait(false);
+            int cvW = cvSourceBitmap.PixelSize.Width;
+            int cvH = cvSourceBitmap.PixelSize.Height;
 
-            var (cv, contrast) = cvTask.Result;
-            var (_, patches) = dinoTask.Result;
+            // CV 7 标量:命中缓存直接用,否则现算。
+            CvGridResult cv = cachedCv ?? await CvGridExtractor.ExtractAsync(cvSourceBitmap, ct).ConfigureAwait(false);
+
+            // DINO patch:命中缓存直接用,否则现算 ExtractDualAsync。
+            float[]? patches = cachedPatches;
+            if (patches == null)
+            {
+                var (_, p) = await DinoFeatureExtractor.ExtractDualAsync(dinoBitmap, includePatches: true, ct).ConfigureAwait(false);
+                patches = p;
+            }
 
             ct.ThrowIfCancellationRequested();
 
-            // CV：锐度图 + 拖影矢量场 + 加权刚体拟合（r3 全部接入对比度软因子）
-            int cvW = cvSourceBitmap.PixelSize.Width;
-            int cvH = cvSourceBitmap.PixelSize.Height;
+            // CV:锐度图 + 拖影矢量场 + 加权刚体拟合(全部从 cv 7 标量现算)
             float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
-            var sharpness = CvHeatmap.BuildSharpness(cv, contrast);
+            var sharpness = CvHeatmap.BuildSharpness(cv);
             var sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridPixels, CvGridPixels);
-            var shakeField = CvHeatmap.BuildShakeField(cv, diagonal, contrast);
+            var shakeField = CvHeatmap.BuildShakeField(cv, diagonal);
             var rigid = CvHeatmap.FitRigidMotion(shakeField);
             var rigidText = FormatRigidMotion(rigid, diagonal);
 
@@ -280,7 +293,60 @@ public sealed class DinoDebugViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 把 v5 加权刚体拟合结果格式化为多行文本（研发判断用）：样本 / 权重 / 平移 / 旋转 / 残差 / 方向一致性 / 判定。
+    /// 读库快路径:用 EXIF 算指纹 → 同时尝试读 DINO patch token 与 CV grid 缓存。
+    /// 任一项失败返回该项 null,调用方走对应的现算路径。诊断页不回写库 — 入库由 <see cref="FolderFeatureIndexer"/> 主路径独占。
+    /// </summary>
+    private static async Task<(float[]? Patches, CvGridResult? Cv)> TryReadCachedAsync(ImageFile file, CancellationToken ct)
+    {
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
+            if (!file.ModifiedDate.HasValue)
+                await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
+            var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
+            if (!input.CaptureTime.HasValue) return (null, null);
+
+            var fingerprint = PhotoFingerprint.Compute(input);
+            ct.ThrowIfCancellationRequested();
+
+            var patchTask = PhotoDatabase.ReadPatchesAsync(fingerprint, DinoModelResources.ModelId);
+            var cvTask = PhotoDatabase.ReadCvGridAsync(fingerprint);
+            await Task.WhenAll(patchTask, cvTask).ConfigureAwait(false);
+
+            float[]? patches = null;
+            if (patchTask.Result is byte[] pBlob)
+            {
+                int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
+                if (pBlob.Length == total * sizeof(float))
+                {
+                    patches = new float[total];
+                    for (int i = 0; i < total; i++)
+                        patches[i] = BinaryPrimitives.ReadSingleLittleEndian(pBlob.AsSpan(i * sizeof(float), sizeof(float)));
+                }
+            }
+
+            CvGridResult? cv = null;
+            if (cvTask.Result is { Blob: var cvBlob, Spec: var cvSpec } && cvSpec == CvGridResult.CurrentVersion)
+            {
+                cv = CvGridResult.Decode(cvBlob, cvSpec);
+            }
+
+            return (patches, cv);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DinoDebug] cache read failed for {file.Name}: {ex.Message}");
+            return (null, null);
+        }
+    }
+
+    /// <summary>
+    /// 把 v5 加权刚体拟合结果格式化为多行文本(研发判断用):样本 / 权重 / 平移 / 旋转 / 残差 / 方向一致性 / 判定。
     /// r2 校准（2026-05-16 实测 14 张样本）：判定优先级 = 信息不足 &gt; 强旋转抖动（必须 R_global ≥ 0.30）
     ///   &gt; 静止纹理（R_global &lt; 0.45 早拦） &gt; 旋转抖动（必须 R_local p10 ≥ 0.55） &gt; 平移抖动 &gt; 混乱场景 &gt; 兜底静止 &gt; 弱信号。
     ///
