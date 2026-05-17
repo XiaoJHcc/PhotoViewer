@@ -34,6 +34,7 @@ public partial class SettingsView : UserControl
             ImageSettingsBottomSpacer,
             ControlSettingsBottomSpacer,
             ExifSettingsBottomSpacer,
+            AiSettingsBottomSpacer,
         ];
 
         SetBottomSpacerHeight(GetCollapsedBottomSpacerHeight());
@@ -56,6 +57,7 @@ public partial class SettingsView : UserControl
         ImageSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
         ControlSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
         ExifSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
+        AiSettingsScrollViewer.SetValue(ScrollViewer.BringIntoViewOnFocusChangeProperty, false);
     }
 
     /// <summary>

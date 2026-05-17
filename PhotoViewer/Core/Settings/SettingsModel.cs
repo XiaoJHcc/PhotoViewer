@@ -27,6 +27,12 @@ public sealed class SettingsModel
     /// <summary>相似聚类面板是否展开（跨会话保留）。</summary>
     public bool SimilarityPanelExpanded { get; set; } = false;
 
+    /// <summary>相似聚类显示的最低相似度（0~1，对应 cosine 归一化分数），默认 0.85。</summary>
+    public double SimilarityThreshold { get; set; } = 0.85;
+
+    /// <summary>相似聚类一次最多返回的项数（1~32），默认 8。</summary>
+    public int SimilarityMaxResults { get; set; } = 8;
+
     public int BitmapCacheMaxCount { get; set; }
     public int BitmapCacheMaxMemory { get; set; }
     public int PreloadForwardCount { get; set; }

@@ -1,4 +1,5 @@
 using ReactiveUI;
+using ReactiveUI.Avalonia;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -178,6 +179,13 @@ public class SimilarityPanelViewModel : ReactiveObject
             .Skip(1)
             .Subscribe(__ => { _ = RecomputeAsync(_main.CurrentFile); });
 
+        // 设置变化（阈值 / 最多数量）即时重算当前列表。
+        _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
+            .Skip(1)
+            .Throttle(TimeSpan.FromMilliseconds(150))
+            .ObserveOn(AvaloniaScheduler.Instance)
+            .Subscribe(tuple => { _ = RecomputeAsync(_main.CurrentFile); });
+
         // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
         _folder.AllFilesChanged += () =>
         {
@@ -318,7 +326,12 @@ public class SimilarityPanelViewModel : ReactiveObject
         var pool = _thumbnailList.FilteredFiles;
         try
         {
-            var results = await SimilarityService.FindSimilarAsync(current, pool, ct: token)
+            var results = await SimilarityService.FindSimilarAsync(
+                    current,
+                    pool,
+                    threshold: _main.Settings.SimilarityThreshold,
+                    maxResults: _main.Settings.SimilarityMaxResults,
+                    ct: token)
                 .ConfigureAwait(false);
 
             if (token.IsCancellationRequested) return;

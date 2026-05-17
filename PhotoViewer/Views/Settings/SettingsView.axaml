@@ -124,5 +124,15 @@
             </ScrollViewer>
         </TabItem>
 
+        <TabItem Header="AI">
+            <ScrollViewer x:Name="AiSettingsScrollViewer"
+                          ScrollViewer.BringIntoViewOnFocusChange="True">
+                <StackPanel Margin="8">
+                    <views:AiSettingsView />
+                    <Border x:Name="AiSettingsBottomSpacer" Height="0" />
+                </StackPanel>
+            </ScrollViewer>
+        </TabItem>
+
     </TabControl>
 </UserControl>
