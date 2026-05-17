@@ -257,9 +257,9 @@ public class SimilarityPanelViewModel : ReactiveObject
                     continue;
                 }
 
-                var record = await Core.Database.PhotoDatabase.GetAsync(group.Fingerprint).ConfigureAwait(false);
-                if (record?.FeatureVector == null || record.FeatureModel != DinoModelResources.ModelId)
-                    unindexed++;
+                // 三路齐备才算已提取:DINO CLS + patch + CV grid 任一缺失即需补齐。
+                var missing = await FolderFeatureIndexer.EvaluateMissingPartsAsync(group.Fingerprint).ConfigureAwait(false);
+                if (missing.AnyMissing) unindexed++;
             }
             catch (Exception ex)
             {

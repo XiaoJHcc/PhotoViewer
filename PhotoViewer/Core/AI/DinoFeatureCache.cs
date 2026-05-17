@@ -11,30 +11,33 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// DINOv3 特征向量缓存门面：按 <see cref="PhotoFingerprint"/> 命中 <see cref="PhotoDatabase"/>，
+/// DINOv3 [CLS] 特征向量缓存门面:按 <see cref="PhotoFingerprint"/> 命中 <see cref="PhotoDatabase"/>,
 /// 缓存未命中时解码缩略图 → 走 <see cref="DinoFeatureExtractor"/> 推理 → 写回数据库。
-/// 同次曝光的 RAW/JPG/HEIF 共享同一指纹，只会算一次。
+/// 同次曝光的 RAW/JPG/HEIF 共享同一指纹,只会算一次。
+///
+/// 写入侧只负责 CLS:patch token 的入库由 <see cref="FolderFeatureIndexer"/> 主路径独占,
+/// 避免诊断页 / 单图查询触发 patch 回写造成事务交错。
 /// </summary>
 public static class DinoFeatureCache
 {
-    /// <summary>喂给 DINO 的图片短边像素（大于模型输入边长即可，留余量给中心裁剪/缩放）。</summary>
+    /// <summary>喂给 DINO 的图片短边像素(大于模型输入边长即可,留余量给中心裁剪/缩放)。</summary>
     private const int FeaturingShortSide = 560;
 
     /// <summary>
-    /// 进程内指纹 → 向量缓存，避免同一会话内重复查数据库。
+    /// 进程内指纹 → 向量缓存,避免同一会话内重复查数据库。
     /// 值为长度 <see cref="DinoModelResources.FeatureDim"/> 的只读向量引用。
     /// </summary>
     private static readonly ConcurrentDictionary<string, float[]> _memoryCache = new();
 
     /// <summary>
-    /// 按指纹互斥的计算闸门：同一指纹并发进来时，只跑一次推理，其余等结果。
+    /// 按指纹互斥的计算闸门:同一指纹并发进来时,只跑一次推理,其余等结果。
     /// </summary>
     private static readonly ConcurrentDictionary<string, Lazy<Task<float[]?>>> _inflight = new();
 
     /// <summary>
-    /// 取得 <paramref name="file"/> 的 [CLS] 特征向量（L2 归一化）。
-    /// 流程：EXIF → 指纹 → 进程缓存 → 数据库缓存 → 推理并写回。
-    /// 任一阶段失败（缺 EXIF、缩略图失败、模型缺失）返回 null。
+    /// 取得 <paramref name="file"/> 的 [CLS] 特征向量(L2 归一化)。
+    /// 流程:EXIF → 指纹 → 进程缓存 → 数据库缓存 → 推理并写回。
+    /// 任一阶段失败(缺 EXIF、缩略图失败、模型缺失)返回 null。
     /// </summary>
     public static async Task<float[]?> GetOrComputeAsync(ImageFile file, CancellationToken ct = default)
     {
@@ -45,7 +48,7 @@ public static class DinoFeatureCache
 
         if (_memoryCache.TryGetValue(fingerprint, out var cached)) return cached;
 
-        // 用 Lazy 实现同一指纹的"只跑一次"语义；共用同一 Task 的 awaiter 自然并发等待。
+        // 用 Lazy 实现同一指纹的"只跑一次"语义;共用同一 Task 的 awaiter 自然并发等待。
         var lazy = _inflight.GetOrAdd(fingerprint, fp => new Lazy<Task<float[]?>>(
             () => ComputeAndStoreAsync(fp, file, ct),
             LazyThreadSafetyMode.ExecutionAndPublication));
@@ -61,8 +64,8 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
-    /// 将外部计算好的向量写入进程内存缓存（不写数据库）。
-    /// 供 <see cref="FolderFeatureIndexer"/> 在批量写库后同步内存缓存，避免下次查询再走数据库。
+    /// 将外部计算好的向量写入进程内存缓存(不写数据库)。
+    /// 供 <see cref="FolderFeatureIndexer"/> 在批量写库后同步内存缓存,避免下次查询再走数据库。
     /// </summary>
     public static void PutMemoryCache(string fingerprint, float[] vector)
     {
@@ -70,7 +73,17 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
-    /// 不触发推理，仅从进程缓存或数据库里读。用于"只用已有特征做聚类"的快速路径。
+    /// 清空进程内存缓存与计算闸门。AI 设置页"清除特征数据库"按钮调用本方法,
+    /// 避免库被清空后仍从内存里命中老向量。
+    /// </summary>
+    public static void InvalidateAll()
+    {
+        _memoryCache.Clear();
+        _inflight.Clear();
+    }
+
+    /// <summary>
+    /// 不触发推理,仅从进程缓存或数据库里读。用于"只用已有特征做聚类"的快速路径。
     /// </summary>
     public static async Task<float[]?> TryReadAsync(ImageFile file, CancellationToken ct = default)
     {
@@ -86,17 +99,17 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
-    /// 计算指纹（依赖 EXIF；为此确保 EXIF 已加载）。无法取到稳定时间戳时返回 null。
+    /// 计算指纹(依赖 EXIF;为此确保 EXIF 已加载)。无法取到稳定时间戳时返回 null。
     /// </summary>
     private static async Task<string?> ComputeFingerprintAsync(ImageFile file, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
 
-        // ImageFile.LoadExifDataAsync 内部做了"已加载/加载中"去抖，可安全重复调用。
+        // ImageFile.LoadExifDataAsync 内部做了"已加载/加载中"去抖,可安全重复调用。
         var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
         if (!file.ModifiedDate.HasValue)
         {
-            // 基础属性可能还没加载：补一次
+            // 基础属性可能还没加载:补一次
             await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
         }
 
@@ -108,7 +121,7 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
-    /// 核心计算路径：先查数据库，miss 则解码 + 推理 + 写回。
+    /// 核心计算路径:先查数据库,miss 则解码 + 推理 + 写回(只写 CLS)。
     /// </summary>
     private static async Task<float[]?> ComputeAndStoreAsync(string fingerprint, ImageFile file, CancellationToken ct)
     {
@@ -132,13 +145,13 @@ public static class DinoFeatureCache
             var vector = await DinoFeatureExtractor.ExtractAsync(bitmap, ct).ConfigureAwait(false);
             _memoryCache[fingerprint] = vector;
 
-            // 写库不阻塞调用方（异步写入出错只记日志，不影响当次聚类）。
+            // 写库不阻塞调用方(异步写入出错只记日志,不影响当次聚类)。
             _ = Task.Run(async () =>
             {
                 try
                 {
                     var input = PhotoFingerprint.BuildInput(file.Name, file.ExifData, file.ModifiedDate?.UtcDateTime);
-                    await PhotoDatabase.WriteFeatureVectorAsync(input, fingerprint, EncodeVector(vector), DinoModelResources.ModelId).ConfigureAwait(false);
+                    await PhotoDatabase.WriteFeatureAsync(input, fingerprint, DinoModelResources.ModelId, EncodeVector(vector)).ConfigureAwait(false);
                 }
                 catch (Exception ex)
                 {
@@ -169,16 +182,14 @@ public static class DinoFeatureCache
     }
 
     /// <summary>
-    /// 从 <see cref="PhotoDatabase"/> 读取并解码向量；模型标识不匹配时视为 miss，避免用老模型向量做相似度。
+    /// 从 <see cref="PhotoDatabase"/> 读取并解码向量;`(fingerprint, model_id)` 不命中视为 miss。
     /// </summary>
     private static async Task<float[]?> ReadFromDatabaseAsync(string fingerprint)
     {
         try
         {
-            var record = await PhotoDatabase.GetAsync(fingerprint).ConfigureAwait(false);
-            if (record?.FeatureVector == null) return null;
-            if (record.FeatureModel != DinoModelResources.ModelId) return null;
-            return DecodeVector(record.FeatureVector);
+            var blob = await PhotoDatabase.ReadFeatureAsync(fingerprint, DinoModelResources.ModelId).ConfigureAwait(false);
+            return blob == null ? null : DecodeVector(blob);
         }
         catch (Exception ex)
         {
@@ -198,7 +209,7 @@ public static class DinoFeatureCache
         return bytes;
     }
 
-    /// <summary>按小端 float32 解码；长度非整数倍或与期望维度不符时返回 null。</summary>
+    /// <summary>按小端 float32 解码;长度非整数倍或与期望维度不符时返回 null。</summary>
     private static float[]? DecodeVector(byte[] blob)
     {
         if (blob.Length == 0 || blob.Length % sizeof(float) != 0) return null;

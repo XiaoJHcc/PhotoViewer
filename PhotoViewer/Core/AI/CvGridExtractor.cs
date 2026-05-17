@@ -39,59 +39,45 @@ public static class CvGridExtractor
     /// <summary>单边步进的硬下限，避免极小图算到 0。</summary>
     private const int MaxHalfWidthMin = 8;
 
-    /// <summary>对外入口：异步包一层，实际计算在 <see cref="Extract"/> 里。</summary>
+    /// <summary>对外入口:异步包一层,实际计算在 <see cref="Extract"/> 里。</summary>
     public static Task<CvGridResult> ExtractAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(bitmap);
-        return Task.Run(() =>
-        {
-            var (result, _) = Extract(bitmap, cancellationToken);
-            return result;
-        }, cancellationToken);
-    }
-
-    /// <summary>v5 r3：同时返回 32×32 的 block_contrast 平面（每格 luma p98-p2 跨度，0-255 标度）；
-    /// 不进 CvGridResult schema，作为消费侧软门控的额外通道。</summary>
-    public static Task<(CvGridResult result, float[] contrast)> ExtractWithContrastAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(bitmap);
         return Task.Run(() => Extract(bitmap, cancellationToken), cancellationToken);
     }
 
-    /// <summary>调试入口：直接喂 8-bit luma 平面（行优先），跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
-    public static (CvGridResult result, float[] contrast) ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
+    /// <summary>调试入口:直接喂 8-bit luma 平面(行优先),跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
+    public static CvGridResult ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(luma);
         if (luma.Length != w * h) throw new ArgumentException("luma length mismatch", nameof(luma));
         return ExtractCore(luma, w, h, cancellationToken);
     }
 
-    private static (CvGridResult result, float[] contrast) Extract(Bitmap bitmap, CancellationToken ct)
+    private static CvGridResult Extract(Bitmap bitmap, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var (luma, w, h) = ReadLuminance(bitmap);
         return ExtractCore(luma, w, h, ct);
     }
 
-    private static (CvGridResult result, float[] contrast) ExtractCore(float[] luma, int w, int h, CancellationToken ct)
+    private static CvGridResult ExtractCore(float[] luma, int w, int h, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
         var data = new float[CvGridResult.DataLength];
-        var contrast = new float[CvGridResult.PlaneLength];
-        // 先把所有 NaN 填满；命中的格再覆盖回去，未命中/不足的自动留 NaN。
+        // 先把所有 NaN 填满;命中的格再覆盖回去,未命中/不足的自动留 NaN。
         for (int i = 0; i < data.Length; i++) data[i] = float.NaN;
-        for (int i = 0; i < contrast.Length; i++) contrast[i] = float.NaN;
 
-        // 根据短边自适应块尺寸：短边/Grid 是格心间距，用它作为块边长可以几乎不重叠。
+        // 根据短边自适应块尺寸:短边/Grid 是格心间距,用它作为块边长可以几乎不重叠。
         int shortSide = Math.Min(w, h);
         int blockSize = Math.Clamp(shortSide / Grid, CvGridResult.MinBlockSize, CvGridResult.MaxBlockSize);
         if (shortSide < CvGridResult.MinBlockSize)
         {
-            return (new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data }, contrast);
+            return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
         }
 
-        // v4：单边步进上限按对角线 0.8% 自适应，让单边最大 ~58 px @ 6000×4000，
-        // 总宽天花板 1.6% D 高于"肌理色"段下限 1.25% D，确保超长建筑边能完整测出。
+        // v4:单边步进上限按对角线 0.8% 自适应,让单边最大 ~58 px @ 6000×4000,
+        // 总宽天花板 1.6% D 高于"肌理色"段下限 1.25% D,确保超长建筑边能完整测出。
         float diagonal = MathF.Sqrt((float)w * w + (float)h * h);
         int maxHalfWidth = Math.Max(MaxHalfWidthMin, (int)MathF.Round(diagonal * MaxHalfWidthRatio));
 
@@ -99,7 +85,7 @@ public static class CvGridExtractor
         {
             int gy = idx / Grid;
             int gx = idx % Grid;
-            // 格中心像素坐标（连续坐标取整）
+            // 格中心像素坐标(连续坐标取整)
             int cx = (int)((gx + 0.5) * w / Grid);
             int cy = (int)((gy + 0.5) * h / Grid);
             int half = blockSize / 2;
@@ -107,7 +93,7 @@ public static class CvGridExtractor
             int by0 = cy - half;
             int bx1 = cx + half;
             int by1 = cy + half;
-            // 越界时平移；平移后仍超短边就收缩。
+            // 越界时平移;平移后仍超短边就收缩。
             if (bx0 < 0) { bx1 -= bx0; bx0 = 0; }
             if (by0 < 0) { by1 -= by0; by0 = 0; }
             if (bx1 > w) { bx0 -= (bx1 - w); bx1 = w; }
@@ -118,20 +104,20 @@ public static class CvGridExtractor
             int bh = by1 - by0;
             if (bw < CvGridResult.MinBlockSize || bh < CvGridResult.MinBlockSize) return;
 
-            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data, contrast);
+            ComputeCell(luma, w, h, bx0, by0, bw, bh, gy, gx, maxHalfWidth, data);
         });
 
-        return (new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data }, contrast);
+        return new CvGridResult { Version = CvGridResult.CurrentVersion, Data = data };
     }
 
     /// <summary>
-    /// 单格处理：在块内算 Sobel + luma 直方图 → 自适应 τ_edge → NMS → Marziliano 测宽 → 方向桶。
-    /// 6 标量直接写入输出数组；block_contrast = luma p98-p2 写入 contrastPlane。
+    /// 单格处理:在块内算 Sobel + luma 直方图 → 自适应 τ_edge → NMS → Marziliano 测宽 → 方向桶。
+    /// 7 标量直接写入输出数组(含 block_contrast = luma p98-p2)。
     /// </summary>
     private static void ComputeCell(
         float[] luma, int w, int h,
         int bx0, int by0, int bw, int bh,
-        int gy, int gx, int maxHalfWidth, float[] data, float[] contrastPlane)
+        int gy, int gx, int maxHalfWidth, float[] data)
     {
         int px = bw * bh;
         var magArr = ArrayPool<float>.Shared.Rent(px);
@@ -199,7 +185,8 @@ public static class CvGridExtractor
                 }
             }
 
-            // r3：先算 block_contrast = luma p98 - p2（4 灰阶分辨率，对单像素噪点尖峰鲁棒）。
+            // r3:先算 block_contrast = luma p98 - p2(4 灰阶分辨率,对单像素噪点尖峰鲁棒)。
+            // v5 升级:contrast 直接写进 result.Data 第 7 标量,与其他 6 标量同等持久化。
             float contrast = 0f;
             if (lumaPxCount > 0)
             {
@@ -216,7 +203,7 @@ public static class CvGridExtractor
                 }
                 contrast = (p98Bin - p2Bin) * (256f / LumaBinCount);
             }
-            contrastPlane[gy * Grid + gx] = contrast;
+            WriteScalar(data, CvGridResult.ContrastScalarIndex, gy, gx, contrast);
 
             // 结构张量主梯度方向 θ_st 与各向异性 A：
             // λ1,2 = (Sxx+Syy)/2 ± √(((Sxx-Syy)/2)² + Sxy²)

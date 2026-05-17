@@ -123,16 +123,18 @@ public static class CvHeatmap
     }
 
     /// <summary>
-    /// 构造锐度图：edge_width_p20 → 对数量纲映射 × 对比度软因子（r3）。
-    /// 亮 = 锐、暗 = 虚；NaN（采样块无有效边）映射为 0（与"严重虚"同深色），语义即"无锐内容"。
-    /// 对数映射强调 1 px 数量级差异：1.5/2/3/5/10 px 的 t 约 1.00/0.74/0.49/0.27/0.00。
-    /// r3：低对比度块（夜景天空 ISO 400 噪点）即使测出"锐边"也被 c_factor 压暗。
-    /// contrast 为 null 时退化到 r2 行为（不乘 c_factor）。
+    /// 构造锐度图:edge_width_p20 → 对数量纲映射 × 对比度软因子(r3)。
+    /// 亮 = 锐、暗 = 虚;NaN(采样块无有效边)映射为 0(与"严重虚"同深色),语义即"无锐内容"。
+    /// 对数映射强调 1 px 数量级差异:1.5/2/3/5/10 px 的 t 约 1.00/0.74/0.49/0.27/0.00。
+    /// r3:低对比度块(夜景天空 ISO 400 噪点)即使测出"锐边"也被 c_factor 压暗。
+    /// v5:contrast 已升标量(<see cref="CvGridResult.ContrastScalarIndex"/>),从 result 直接读;
+    /// 不再支持外部 contrast 参数,UI 必看图 ≡ DB 重画图。
     /// </summary>
-    public static float[] BuildSharpness(CvGridResult result, float[]? contrast = null)
+    public static float[] BuildSharpness(CvGridResult result)
     {
         ArgumentNullException.ThrowIfNull(result);
         const int scalar = 1; // edge_width_p20
+        int contrastBase = CvGridResult.ContrastScalarIndex * CvGridResult.PlaneLength;
         var plane = new float[CvGridResult.PlaneLength];
         float logSharp = MathF.Log(WidthSharpPx);
         float logVis = MathF.Log(WidthVisPx);
@@ -148,10 +150,7 @@ public static class CvHeatmap
             float t = (logVis - MathF.Log(w)) / range;
             if (t < 0f) t = 0f;
             if (t > 1f) t = 1f;
-            if (contrast != null)
-            {
-                t *= ContrastFactor(contrast[i]);
-            }
+            t *= ContrastFactor(result.Data[contrastBase + i]);
             plane[i] = t;
         }
         return plane;
@@ -218,13 +217,13 @@ public static class CvHeatmap
     }
 
     /// <summary>
-    /// 构造抖动矢量场：取 drag_direction / drag_width，掩膜按 drag_r ≥ DragRMinDisplay
-    /// 且 anisotropy ≥ AnisotropyMin 判定；r3 增加对比度软门控（c_factor &gt; 0 才进 mask）。
-    /// 然后在 5×5 邻域内算 R_local（2θ 圆形均值长度）填到 LocalConsistency。
-    /// Diagonal 写入返回对象，下游可视化层与刚体拟合都按它做归一化。
-    /// contrast 为 null 时退化到 r2 行为（不做对比度门控）。
+    /// 构造抖动矢量场:取 drag_direction / drag_width,掩膜按 drag_r ≥ DragRMinDisplay
+    /// 且 anisotropy ≥ AnisotropyMin 判定;r3 增加对比度软门控(c_factor &gt; 0 才进 mask)。
+    /// 然后在 5×5 邻域内算 R_local(2θ 圆形均值长度)填到 LocalConsistency。
+    /// Diagonal 写入返回对象,下游可视化层与刚体拟合都按它做归一化。
+    /// v5:contrast 直接从 result 第 7 标量读,UI 看图 ≡ DB 重画图。
     /// </summary>
-    public static ShakeField BuildShakeField(CvGridResult result, float diagonal, float[]? contrast = null)
+    public static ShakeField BuildShakeField(CvGridResult result, float diagonal)
     {
         ArgumentNullException.ThrowIfNull(result);
         int n = CvGridResult.PlaneLength;
@@ -233,19 +232,19 @@ public static class CvHeatmap
         var mask = new bool[n];
         var local = new float[n];
         var contrastOut = new float[n];
+        int contrastBase = CvGridResult.ContrastScalarIndex * n;
         float minWidthPx = diagonal > 0 ? diagonal * DragRMinDisplay : 0f;
         for (int i = 0; i < n; i++)
         {
             float wpx = result.Data[3 * n + i]; // drag_width
             float d = result.Data[4 * n + i];   // drag_direction
             float a = result.Data[5 * n + i];   // anisotropy
+            float c = result.Data[contrastBase + i]; // block_contrast
             direction[i] = d;
             width[i] = wpx;
-            float cContrast = contrast != null ? contrast[i] : float.PositiveInfinity;
-            contrastOut[i] = contrast != null ? cContrast : float.NaN;
-            // 对比度门控：r3 新增 —— 低对比度块（夜景天空噪点 / 沥青颗粒 / 玻璃折射）直接不进 mask。
-            // contrast==null 时 cContrast=+∞ 等价于无门控，退化到 r2 行为。
-            bool contrastOk = float.IsNaN(cContrast) ? false : ContrastFactor(cContrast) > 0f;
+            contrastOut[i] = c;
+            // 对比度门控:r3 —— 低对比度块(夜景天空噪点 / 沥青颗粒 / 玻璃折射)直接不进 mask。
+            bool contrastOk = !float.IsNaN(c) && ContrastFactor(c) > 0f;
             mask[i] = !float.IsNaN(wpx) && !float.IsNaN(d) && wpx >= minWidthPx
                       && !float.IsNaN(a) && a >= AnisotropyMin
                       && contrastOk;
