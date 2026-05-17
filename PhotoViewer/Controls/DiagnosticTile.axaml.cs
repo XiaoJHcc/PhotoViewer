@@ -64,6 +64,20 @@ public partial class DiagnosticTile : UserControl
         AvaloniaProperty.Register<DiagnosticTile, double>(nameof(AspectRatio), 1.0);
 
     /// <summary>
+    /// 左上角短标签(分析栏使用,识别瓦片身份用)。null/空 时隐藏整个标签框。
+    /// 诊断工具页不传 → 默认不出现,行为与改造前一致。
+    /// </summary>
+    public static readonly StyledProperty<string?> CornerLabelProperty =
+        AvaloniaProperty.Register<DiagnosticTile, string?>(nameof(CornerLabel));
+
+    /// <summary>
+    /// 占位文本:当 <see cref="Source"/> 为 null 且本属性非空时,在内容区域中央显示灰色提示。
+    /// 用于"未提取"等读库失败场景。Overlay 不受影响,仍正常显示;Source 一旦赋值,占位自动隐藏。
+    /// </summary>
+    public static readonly StyledProperty<string?> PlaceholderTextProperty =
+        AvaloniaProperty.Register<DiagnosticTile, string?>(nameof(PlaceholderText));
+
+    /// <summary>
     /// 十字准星归一化坐标([0,1]);null 表示不显示。
     /// 由父级在收到任意瓦片的 <see cref="TileClicked"/> 后统一下发给所有瓦片。
     /// </summary>
@@ -112,6 +126,20 @@ public partial class DiagnosticTile : UserControl
         set => SetValue(AspectRatioProperty, value);
     }
 
+    /// <summary>左上角短标签;null/空 时隐藏。</summary>
+    public string? CornerLabel
+    {
+        get => GetValue(CornerLabelProperty);
+        set => SetValue(CornerLabelProperty, value);
+    }
+
+    /// <summary>占位文本;Source 为 null 且本属性非空时,在内容区域中央显示。</summary>
+    public string? PlaceholderText
+    {
+        get => GetValue(PlaceholderTextProperty);
+        set => SetValue(PlaceholderTextProperty, value);
+    }
+
     /// <summary>十字准星归一化坐标(null 隐藏)。</summary>
     public Point? Crosshair
     {
@@ -133,6 +161,9 @@ public partial class DiagnosticTile : UserControl
         // 监听外框宽度变化:正方形高度跟随宽度;再据此 + AspectRatio 计算 letterbox 后的内容区域尺寸。
         SquareFrame.GetObservable(BoundsProperty).Subscribe(_ => SyncSquareLayout());
         UpdateCrosshair();
+        UpdateCornerLabel();
+        UpdatePlaceholder();
+        UpdateBottomLabel();
     }
 
     /// <inheritdoc />
@@ -147,6 +178,42 @@ public partial class DiagnosticTile : UserControl
         {
             UpdateCrosshair();
         }
+        else if (change.Property == CornerLabelProperty)
+        {
+            UpdateCornerLabel();
+        }
+        else if (change.Property == PlaceholderTextProperty || change.Property == SourceProperty)
+        {
+            UpdatePlaceholder();
+        }
+        else if (change.Property == LabelProperty)
+        {
+            UpdateBottomLabel();
+        }
+    }
+
+    /// <summary>底部标签仅在 <see cref="Label"/> 非空时显示;分析栏不传 Label 即隐藏整块。</summary>
+    private void UpdateBottomLabel()
+    {
+        LabelBlock.IsVisible = !string.IsNullOrWhiteSpace(Label);
+    }
+
+    /// <summary>同步左上角短标签的可见性与文字。</summary>
+    private void UpdateCornerLabel()
+    {
+        var text = CornerLabel;
+        bool visible = !string.IsNullOrWhiteSpace(text);
+        CornerLabelHost.IsVisible = visible;
+        CornerLabelBlock.Text = visible ? text : null;
+    }
+
+    /// <summary>Source 为 null 且 PlaceholderText 非空时显示居中占位文本。</summary>
+    private void UpdatePlaceholder()
+    {
+        var text = PlaceholderText;
+        bool visible = Source == null && !string.IsNullOrWhiteSpace(text);
+        PlaceholderBlock.IsVisible = visible;
+        PlaceholderBlock.Text = visible ? text : null;
     }
 
     /// <summary>
@@ -163,17 +230,21 @@ public partial class DiagnosticTile : UserControl
 
         SquareFrame.Height = side;
 
+        // 关键:Bounds.Width 是边框的"外尺寸",直接喂给 ContentArea 会让内容覆盖到 1px 边框上(横图左右边框消失)。
+        // letterbox 用的是边框内可用区域 = 外尺寸 - 上下/左右各一条 BorderThickness。
+        double border = SquareFrame.BorderThickness.Left + SquareFrame.BorderThickness.Right;
+        double inner = Math.Max(0, side - border);
         double ratio = AspectRatio > 0 ? AspectRatio : 1.0;
         double cw, ch;
         if (ratio >= 1.0)
         {
-            cw = side;
-            ch = side / ratio;
+            cw = inner;
+            ch = inner / ratio;
         }
         else
         {
-            ch = side;
-            cw = side * ratio;
+            ch = inner;
+            cw = inner * ratio;
         }
         ContentArea.Width = cw;
         ContentArea.Height = ch;
