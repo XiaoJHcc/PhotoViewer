@@ -1,0 +1,63 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Settings"
+             xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
+             x:Class="PhotoViewer.Views.AiSettingsView"
+             x:DataType="vm:SettingsViewModel">
+
+    <Design.DataContext>
+        <vm:SettingsViewModel />
+    </Design.DataContext>
+
+    <StackPanel Background="#333">
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
+                相似聚类
+            </TextBlock>
+            <Border Classes="settings-card">
+                <StackPanel Spacing="10" Margin="4">
+
+                    <!-- 相似度阈值滑块（75% ~ 95%，线性） -->
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="相似度阈值" />
+                        <Slider Grid.Column="1"
+                                Minimum="0.75"
+                                Maximum="0.95"
+                                TickFrequency="0.01"
+                                Value="{Binding SimilarityThreshold}" />
+                        <TextBlock Grid.Column="2"
+                                   Classes="settings-label"
+                                   HorizontalAlignment="Center"
+                                   Text="{Binding SimilarityThreshold, StringFormat={}{0:P0}}" />
+                    </Grid>
+                    <TextBlock Classes="settings-description"
+                               Margin="8, 0, 8, 0"
+                               Text="低于该相似度的照片不会出现在相似聚类列表中" />
+
+                    <!-- 最多数量滑块（1 ~ 32，指数分布） -->
+                    <Grid Classes="settings-numeric"
+                          ColumnDefinitions="120,*,60">
+                        <TextBlock Classes="settings-label" Text="最多数量" />
+                        <Slider Grid.Column="1"
+                                Minimum="0"
+                                Maximum="1"
+                                Value="{Binding SimilarityMaxResultsExp}" />
+                        <controls:DeferredNumericTextBox Grid.Column="2"
+                                                         Value="{Binding SimilarityMaxResults}"
+                                                         Minimum="1"
+                                                         Maximum="32" />
+                    </Grid>
+                    <TextBlock Classes="settings-description"
+                               Margin="8, 0, 8, 0"
+                               Text="相似聚类列表一次最多显示的照片数量" />
+
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </StackPanel>
+
+</UserControl>

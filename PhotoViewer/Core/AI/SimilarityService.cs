@@ -23,10 +23,13 @@ public sealed record SimilarityItem(ImageFile File, double Score);
 public static class SimilarityService
 {
     /// <summary>低于该分数的候选项不会出现在相似列表中。cosine ≥ 0.5 粗略对应"视觉接近"。</summary>
-    public const double DefaultThreshold = 0.75;
+    public const double DefaultThreshold = 0.85;
 
-    /// <summary>单次聚类最多返回的相似项数量上限（避免超大文件夹返回一屏以外的东西）。</summary>
-    private const int MaxResults = 64;
+    /// <summary>单次聚类最多返回的相似项数量默认值。</summary>
+    public const int DefaultMaxResults = 8;
+
+    /// <summary>单次聚类最多返回的相似项数量硬上限（避免超大文件夹返回一屏以外的东西）。</summary>
+    private const int HardMaxResults = 64;
 
     /// <summary>
     /// 计算 <paramref name="current"/> 与池中其他文件的相似度。<br/>
@@ -35,16 +38,20 @@ public static class SimilarityService
     /// <param name="current">基准图片</param>
     /// <param name="pool">候选池（通常为 <c>ThumbnailListViewModel.FilteredFiles</c>）</param>
     /// <param name="threshold">分数阈值，默认 <see cref="DefaultThreshold"/></param>
+    /// <param name="maxResults">最多返回的相似项数量，默认 <see cref="DefaultMaxResults"/>；硬上限 <see cref="HardMaxResults"/></param>
     /// <param name="ct">取消令牌</param>
     /// <returns>相似项列表（按分数降序，不含 <paramref name="current"/> 自身）</returns>
     public static async Task<IReadOnlyList<SimilarityItem>> FindSimilarAsync(
         ImageFile current,
         IReadOnlyList<ImageFile> pool,
         double threshold = DefaultThreshold,
+        int maxResults = DefaultMaxResults,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(current);
         ArgumentNullException.ThrowIfNull(pool);
+
+        maxResults = Math.Clamp(maxResults, 1, HardMaxResults);
 
         var anchor = await DinoFeatureCache.GetOrComputeAsync(current, ct).ConfigureAwait(false);
         if (anchor == null) return Array.Empty<SimilarityItem>();
@@ -95,9 +102,9 @@ public static class SimilarityService
             return da.CompareTo(db);
         });
 
-        if (ordered.Count > MaxResults)
+        if (ordered.Count > maxResults)
         {
-            ordered.RemoveRange(MaxResults, ordered.Count - MaxResults);
+            ordered.RemoveRange(maxResults, ordered.Count - maxResults);
         }
         return ordered;
     }

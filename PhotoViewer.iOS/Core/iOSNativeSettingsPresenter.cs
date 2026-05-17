@@ -348,6 +348,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
             ("预览", "缩放指示器与缩放比例预设", () => new iOSNativePreviewSettingsViewController(_settings)),
             ("控制", "布局、控制栏显示与快捷键只读查看", () => new iOSNativeControlSettingsViewController(_settings)),
             ("EXIF", "EXIF 显示项与评分写回策略", () => new iOSNativeExifSettingsViewController(_settings)),
+            ("AI", "相似聚类阈值与最多数量", () => new iOSNativeAiSettingsViewController(_settings)),
         ];
     }
 
@@ -1591,6 +1592,52 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     private string GetLayoutModeDisplayName(LayoutMode layoutMode)
     {
         return Settings.LayoutModes.FirstOrDefault(item => item.Value == layoutMode)?.DisplayName ?? layoutMode.ToString();
+    }
+}
+
+/// <summary>
+/// iOS 原生 AI 设置页。
+/// 用于配置相似聚类的阈值与最多返回数量。
+/// </summary>
+internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormViewController
+{
+    /// <summary>
+    /// 初始化 AI 设置页。
+    /// </summary>
+    /// <param name="settings">共享设置 ViewModel。</param>
+    public iOSNativeAiSettingsViewController(SettingsViewModel settings)
+        : base(settings)
+    {
+    }
+
+    /// <summary>
+    /// 构建 AI 设置页内容。
+    /// </summary>
+    /// <param name="contentStack">页面主内容栈。</param>
+    protected override void BuildContent(UIStackView contentStack)
+    {
+        Title = "AI";
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "相似聚类",
+                "调整相似度阈值与列表最多数量，立即作用于相似聚类列表",
+                CreateSliderRow(
+                    "相似度阈值",
+                    "低于该相似度的照片不会显示在相似聚类列表中",
+                    () => (int)Math.Round(Settings.SimilarityThreshold * 100),
+                    value => Settings.SimilarityThreshold = value / 100.0,
+                    (int)Math.Round(SettingsViewModel.SimilarityThresholdMin * 100),
+                    (int)Math.Round(SettingsViewModel.SimilarityThresholdMax * 100),
+                    valueFormatter: value => $"{value}%"),
+                CreateSliderRow(
+                    "最多数量",
+                    "相似聚类列表一次最多显示的照片数量",
+                    () => Settings.SimilarityMaxResults,
+                    value => Settings.SimilarityMaxResults = value,
+                    SettingsViewModel.SimilarityMaxResultsMin,
+                    SettingsViewModel.SimilarityMaxResultsMax,
+                    valueFormatter: value => $"{value} 张")));
     }
 }
 

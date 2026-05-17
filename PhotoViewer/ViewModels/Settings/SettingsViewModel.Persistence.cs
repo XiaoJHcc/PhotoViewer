@@ -143,7 +143,9 @@ public partial class SettingsViewModel
             VisibleCenterDelayMs = VisibleCenterDelayMs,
             NativePreloadParallelism = NativePreloadParallelism,
             CpuPreloadParallelism = CpuPreloadParallelism,
-            SimilarityPanelExpanded = SimilarityPanelExpanded
+            SimilarityPanelExpanded = SimilarityPanelExpanded,
+            SimilarityThreshold = SimilarityThreshold,
+            SimilarityMaxResults = SimilarityMaxResults
         };
     }
 
@@ -201,6 +203,11 @@ public partial class SettingsViewModel
                 CpuPreloadParallelism = model.PreloadParallelism;
 
             SimilarityPanelExpanded = model.SimilarityPanelExpanded;
+
+            if (!preserveDefaultValues || model.SimilarityThreshold > 0)
+                SimilarityThreshold = model.SimilarityThreshold;
+            if (!preserveDefaultValues || model.SimilarityMaxResults > 0)
+                SimilarityMaxResults = model.SimilarityMaxResults;
         }
         finally
         {
