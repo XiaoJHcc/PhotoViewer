@@ -197,6 +197,35 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
    - **Sidecar**: for RAW, find or create a same-name `.xmp` file.
 4. **Refresh**: `FolderViewModel.RefreshFilters` so rating-based filters update live.
 
+### 6.4 AI 特征提取与持久化 DINO/CV Indexing
+
+> 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)同源同时入库。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](Plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
+
+**指纹与 schema**:
+- 指纹 = SHA1(`filename_noext` + `DateTimeOriginal` + `SubSecTimeOriginal`),同次曝光的 RAW/HIF/JPG 共享同一指纹(见 [PhotoFingerprint](PhotoViewer/Core/Database/PhotoFingerprint.cs))。
+- 三表:`photos`(身份 + `cv_grid` BLOB + `cv_grid_spec` 覆盖式)、`photo_features`(CLS 纵表 `(fingerprint, model_id)`)、`photo_patches`(patch token 纵表同主键)。`model_id` 与 `cv_grid_spec` 不匹配视为 cache miss,改算法 = bump 字符串即整库失效。
+
+**批量提取**(用户点"提取全部 / 补齐全部"按钮):
+1. **入口**:[SimilarityPanelViewModel.StartIndexingCommand](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) → `FolderFeatureIndexer.RunAsync`。
+2. **聚合**:`GroupByFingerprintAsync` 把 RAW+HIF/JPG 合并为指纹组,代表文件按解码代价升序(HEIF→JPG→其他→RAW)。
+3. **缺失评估**:每组先 `EvaluateMissingPartsAsync(fingerprint, modelId, cvSpec)` 拿 `(needCls, needPatch, needCv)` 三元组,全齐备即跳过。
+4. **解码两路**:DINO 走 `ThumbnailService` 560 短边、CV 走 `BitmapLoader` 原始分辨率(共享 LRU);桌面端 `ProcessorCount/2` 并发,移动端单线程。
+5. **推理与提取**:`_inferSemaphore` 闸内一次 `DinoFeatureExtractor.ExtractDualAsync(includePatches: needPatch)` 同时拿 CLS 与 patch;原图喂 `CvGridExtractor.ExtractAsync` 出 7 标量(含 `block_contrast`)。
+6. **写库**:单事务 `PhotoDatabase.WriteIndexedAsync`,任一 blob 为 null 则该项不更新(支持按需补齐)。CLS 同步进 `DinoFeatureCache._memoryCache`。
+7. **进度**:按指纹组推进而非按文件;失败组跳过不中断整批,本期不可取消。
+
+**单图懒加载**(相似聚类切图时锚点没入库):
+- `DinoFeatureCache.GetOrComputeAsync` → 进程缓存 → DB → 解码缩略图 → ONNX 推理 → 后台 `WriteFeatureAsync`(只写 CLS,不写 patch);`Lazy` 闸门保证同指纹并发只算一次。
+
+**诊断页读库快路径**(DINO 诊断工具页):
+- `TryReadCachedAsync` 同时取 patch token 与 cv_grid 7 标量;命中即跳过推理与 CV 计算,不回写库(回写归 indexer 主路径)。
+- 派生层(`BuildSharpness` / `BuildShakeField` / `FitRigidMotion` / `ComputePcaRgb` / `ComputeRefCosine`)从原始数据现算 — 改阈值常量立刻见效,不需要重提整库。
+- diagonal 仍由 CV 大图 `PixelSize` 推出,所以缓存命中也要 `BitmapLoader` 解码(LRU 通常已被主视图填充)。
+
+**清除入口**(开发者用):
+- AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` 清进程缓存。
+- 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列)自动删库重建,无需手动清理。
+
 ---
 
 ## 7. Build / Run 快速参考
