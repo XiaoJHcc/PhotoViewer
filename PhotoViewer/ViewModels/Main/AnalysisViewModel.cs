@@ -21,6 +21,11 @@ namespace PhotoViewer.ViewModels.Main;
 /// 合并到一个常驻侧栏,只读库 — 不触发解码、不触发 ONNX 推理、不触发 CV 重算;
 /// 缓存缺失时诊断瓦片显示"未提取"占位,引导用户去相似聚类面板"提取全部"。
 ///
+/// 性能优化:派生数据按指纹走 <see cref="AnalysisResultCache"/>,与 <see cref="BitmapPrefetcher"/> 邻居预取
+/// 同步预热;命中时切图变成纯 UI 线程 swap,避免每次切图重跑 PCA SVD(几十 ms 主因)与抖动场重算。
+/// 4 张诊断瓦片的位图(PCA / 中心 cosine / 锐度 / 抖动)归 cache 所有 — VM 仅引用、不 Dispose;
+/// 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有(<see cref="_customCosineBmp"/>),切图或还原时显式释放。
+///
 /// 准星与 cosine 参考点的语义复制自 <see cref="PhotoViewer.ViewModels.Tools.DinoDebugViewModel"/>:
 /// 点击诊断瓦片 → 落归一化准星 → 映射到 32×32 patch 网格 → 重算 cosine 项 Source。
 /// 上半的细节预览不参与准星(其点击被 DetailPreview 自身吃掉)。
@@ -28,12 +33,12 @@ namespace PhotoViewer.ViewModels.Main;
 public sealed class AnalysisViewModel : ReactiveObject
 {
     /// <summary>DINO patch 图像素边长(32);也用于 cosine 参考点坐标系。</summary>
-    public const int PatchGridPixels = PatchHeatmap.Grid;
+    public const int PatchGridPixels = AnalysisComputer.PatchGridPixels;
 
     private readonly MainViewModel _main;
     private CancellationTokenSource? _cts;
     private float[]? _patchTokens;
-    private ImageFile? _lastFile;
+    private Bitmap? _customCosineBmp; // 用户点击重算的 cosine 位图(VM 所有);中心 cosine 位图归 cache 所有,不在此持有。
 
     // 6 项的固定引用,避免每次切图重建集合(列表项作为 DataContext 不会被回收)。
     private readonly AnalysisDetailItem _focusItem;          // 动态:有 Sony 对焦数据时存在
@@ -164,7 +169,6 @@ public sealed class AnalysisViewModel : ReactiveObject
     public void SetSource(ImageFile? file)
     {
         _cts?.Cancel();
-        _lastFile = file;
 
         if (!_main.IsAnalysisViewVisible || file == null)
         {
@@ -196,8 +200,13 @@ public sealed class AnalysisViewModel : ReactiveObject
 
         var cos = PatchHeatmap.ComputeRefCosine(_patchTokens, gx, gy);
         var bmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
-        SwapItemBitmap(_cosineItem, b => b.Source, (it, b) => it.Source = b, bmp);
+
+        // 用户点击重算的 cosine 位图归 VM 所有;旧的同样归 VM 才 dispose,中心位图(cache 所有)不动。
+        var old = _customCosineBmp;
+        _customCosineBmp = bmp;
+        _cosineItem.Source = bmp;
         _cosineItem.ShortLabel = FormatCosineLabel(gx, gy);
+        old?.Dispose();
     }
 
     /// <summary>空白处点击:清空准星(列表外的 PointerPressed 路由进来)。</summary>
@@ -237,81 +246,38 @@ public sealed class AnalysisViewModel : ReactiveObject
         if (existingIndex < 0) Items.Insert(0, _focusItem);
     }
 
-    /// <summary>后台只读路径:读库 → 派生层现算 4 张图与判定文字 → 在 UI 线程整体 swap。</summary>
+    /// <summary>
+    /// 切图主路径:算指纹 → 查 <see cref="AnalysisResultCache"/> → 命中即 UI swap;miss 才走读库 + 派生层现算 + 落 cache。
+    /// </summary>
     private async Task LoadAsync(ImageFile file, CancellationToken ct)
     {
         try
         {
-            var data = await AnalysisDataReader.TryReadAsync(file, ct).ConfigureAwait(false);
+            var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
-            // CV 派生层(锐度图 / ShakeField / 刚体拟合 + 判定文字)
-            Bitmap? sharpnessBmp = null;
-            ShakeField? shakeField = null;
-            string shakeLabel = "抖动拖影";
-            double aspect = _aspectRatio;
-            int cvW = data.CvImageWidth;
-            int cvH = data.CvImageHeight;
-            if (data.Cv != null && cvW > 0 && cvH > 0)
+            // 1) 命中 cache:不读库、不重算,直接 UI swap;
+            //    注意:用户点击 cosine 留下的自定义位图必须先释放,因为接下来要把 Source 切回 cache 拥有的中心位图。
+            var hit = AnalysisResultCache.TryGet(fingerprint);
+            if (hit != null)
             {
-                aspect = (double)cvW / cvH;
-                float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
-                var sharpness = CvHeatmap.BuildSharpness(data.Cv);
-                sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridResult.GridSize, CvGridResult.GridSize);
-                shakeField = CvHeatmap.BuildShakeField(data.Cv, diagonal);
-                var rigid = CvHeatmap.FitRigidMotion(shakeField);
-                var verdict = ShakeClassifier.Classify(rigid, diagonal);
-                shakeLabel = ShakeClassifier.FormatLabel(verdict);
+                ApplyEntry(hit, ct);
+                return;
             }
 
-            // DINO 派生层(PCA-RGB + cosine 中心参考点)
-            Bitmap? pcaBmp = null;
-            Bitmap? cosineBmp = null;
-            int rx = RefGridX;
-            int ry = RefGridY;
-            if (data.Patches != null)
-            {
-                var pcaRgb = PatchHeatmap.ComputePcaRgb(data.Patches);
-                pcaBmp = HeatmapBitmapBuilder.BuildRgb(pcaRgb, PatchGridPixels, PatchGridPixels);
-
-                // 同一指纹组切图时保留旧参考点;首次或缓存清空则重置到中心。
-                rx = Math.Clamp(rx, 0, PatchGridPixels - 1);
-                ry = Math.Clamp(ry, 0, PatchGridPixels - 1);
-                var cos = PatchHeatmap.ComputeRefCosine(data.Patches, rx, ry);
-                cosineBmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
-            }
-
+            // 2) miss:读库 → 派生层现算 → 落 cache,然后再 UI swap。指纹缺失(无 EXIF 时间戳)
+            //    直接喂空 Result,所有诊断瓦片回落"未提取"。
+            var data = string.IsNullOrEmpty(fingerprint)
+                ? new AnalysisDataReader.Result()
+                : await AnalysisDataReader.ReadByFingerprintAsync(fingerprint, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
-            Dispatcher.UIThread.Post(() =>
-            {
-                if (ct.IsCancellationRequested)
-                {
-                    sharpnessBmp?.Dispose();
-                    pcaBmp?.Dispose();
-                    cosineBmp?.Dispose();
-                    return;
-                }
+            var entry = AnalysisComputer.Compute(data);
+            if (!string.IsNullOrEmpty(fingerprint))
+                AnalysisResultCache.Put(fingerprint, entry);
 
-                _patchTokens = data.Patches;
-                AspectRatio = aspect > 0 ? aspect : 1.0;
-
-                SwapItemBitmap(_sharpnessItem, it => it.Source, (it, b) => it.Source = b, sharpnessBmp);
-                _sharpnessItem.PlaceholderText = sharpnessBmp == null ? "未提取" : null;
-
-                SwapItemBitmap(_pcaItem, it => it.Source, (it, b) => it.Source = b, pcaBmp);
-                _pcaItem.PlaceholderText = pcaBmp == null ? "未提取" : null;
-
-                SwapItemBitmap(_cosineItem, it => it.Source, (it, b) => it.Source = b, cosineBmp);
-                _cosineItem.PlaceholderText = cosineBmp == null ? "未提取" : null;
-                RefGridX = rx;
-                RefGridY = ry;
-                _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
-
-                _shakeOverlay.ShakeField = shakeField;
-                _shakeItem.ShortLabel = shakeLabel;
-                _shakeItem.PlaceholderText = shakeField == null ? "未提取" : null;
-            });
+            ct.ThrowIfCancellationRequested();
+            ApplyEntry(entry, ct);
         }
         catch (OperationCanceledException)
         {
@@ -323,16 +289,51 @@ public sealed class AnalysisViewModel : ReactiveObject
         }
     }
 
-    /// <summary>清空所有诊断瓦片(可见性切到 false 或当前文件为 null 时)。细节预览项不动。</summary>
+    /// <summary>把 cache 项内容贴到 UI:全部位图引用归 cache,VM 只引用,不 Dispose。中心 cosine 还原时释放历史用户位图。</summary>
+    private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ct.IsCancellationRequested) return;
+
+            _patchTokens = entry.Patches;
+            AspectRatio = entry.AspectRatio;
+
+            _sharpnessItem.Source = entry.SharpnessBmp;
+            _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
+
+            _pcaItem.Source = entry.PcaBmp;
+            _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
+
+            // 切图时还原到中心参考点;若有历史用户点击位图,这里释放(它由 VM 拥有)。
+            var oldCustom = _customCosineBmp;
+            _customCosineBmp = null;
+            int rx = PatchGridPixels / 2;
+            int ry = PatchGridPixels / 2;
+            RefGridX = rx;
+            RefGridY = ry;
+            _cosineItem.Source = entry.CenterCosineBmp;
+            _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
+            _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
+            oldCustom?.Dispose();
+
+            _shakeOverlay.ShakeField = entry.ShakeField;
+            _shakeItem.ShortLabel = entry.ShakeLabel;
+            _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
+        });
+    }
+
+    /// <summary>清空所有诊断瓦片(可见性切到 false 或当前文件为 null 时)。细节预览项不动。
+    /// 位图引用全部归 cache 所有,这里只清引用、不 Dispose;用户 cosine 位图归 VM 所有,显式释放。</summary>
     private void ClearDiagnostics()
     {
         Dispatcher.UIThread.Post(() =>
         {
             _patchTokens = null;
             Crosshair = null;
-            SwapItemBitmap(_pcaItem, it => it.Source, (it, b) => it.Source = b, null);
-            SwapItemBitmap(_cosineItem, it => it.Source, (it, b) => it.Source = b, null);
-            SwapItemBitmap(_sharpnessItem, it => it.Source, (it, b) => it.Source = b, null);
+            _pcaItem.Source = null;
+            _cosineItem.Source = null;
+            _sharpnessItem.Source = null;
             _pcaItem.PlaceholderText = "未提取";
             _cosineItem.PlaceholderText = "未提取";
             _cosineItem.ShortLabel = FormatCosineLabel(RefGridX, RefGridY);
@@ -340,15 +341,11 @@ public sealed class AnalysisViewModel : ReactiveObject
             _shakeOverlay.ShakeField = null;
             _shakeItem.ShortLabel = "抖动拖影";
             _shakeItem.PlaceholderText = "未提取";
-        });
-    }
 
-    /// <summary>统一的位图赋值 + 旧位图释放。</summary>
-    private static void SwapItemBitmap(AnalysisDiagnosticItem item, Func<AnalysisDiagnosticItem, Bitmap?> get, Action<AnalysisDiagnosticItem, Bitmap?> set, Bitmap? next)
-    {
-        var old = get(item);
-        set(item, next);
-        old?.Dispose();
+            var old = _customCosineBmp;
+            _customCosineBmp = null;
+            old?.Dispose();
+        });
     }
 
     /// <summary>cosine 角标格式:省略"参考点"前缀,只留坐标,与"中心"/"对焦点"风格对齐。</summary>

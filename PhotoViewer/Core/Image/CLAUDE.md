@@ -7,7 +7,7 @@
 | File | 模块 | Responsibility |
 |---|---|---|
 | [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation. |
-| [BitmapPrefetcher.cs](BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
+| [BitmapPrefetcher.cs](BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. 邻居位图解码完成后,若分析栏可见,顺手为该邻居 `AnalysisDataReader.ComputeFingerprintAsync` + `AnalysisComputer.Compute` 落进 `AnalysisResultCache` — 让前后切图变成纯 UI swap。 |
 | [HeifLoader.cs](HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
 | [ImageFile.cs](ImageFile.cs) | 文件模型 | Per-file state: path, load status, EXIF cache, thumbnail bitmap, `IsShake : bool?`(由 `ShakeFlagService` 回填,驱动缩略图卡片的"抖"徽标)。 |
 | [ImageOrientationInfo.cs](ImageOrientationInfo.cs) | 容器方向元数据 | 统一封装 HEIF `Default Rotation` / EXIF `Orientation` + `ExifImageWidth/Height`，给出"显示朝向旋转角 + 水平镜像 + 传感器原始 W/H"。`ThumbnailService` 据此做方向对齐与 letterbox 几何裁剪，无任何启发式。 |
