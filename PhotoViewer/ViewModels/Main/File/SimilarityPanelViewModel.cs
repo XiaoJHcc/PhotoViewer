@@ -231,7 +231,8 @@ public class SimilarityPanelViewModel : ReactiveObject
     // ── 未提取统计 ──────────────────────────────────────────────────────────
 
     /// <summary>
-    /// 扫描当前文件夹,更新 <see cref="UnindexedCount"/>。
+    /// 扫描当前文件夹,按指纹聚合后更新 <see cref="UnindexedCount"/>。
+    /// 同次曝光的 RAW+HEIF/JPG 共享指纹,只计为一张待提取。
     /// </summary>
     private async Task EvaluateUnindexedAsync()
     {
@@ -242,22 +243,29 @@ public class SimilarityPanelViewModel : ReactiveObject
             return;
         }
 
+        var groups = await FolderFeatureIndexer.GroupByFingerprintAsync(files).ConfigureAwait(false);
         int unindexed = 0;
 
-        foreach (var file in files)
+        foreach (var group in groups)
         {
-            // 无法计算指纹的文件跳过,不计入分母
-            var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
-            if (!file.ModifiedDate.HasValue)
-                await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
+            try
+            {
+                if (string.IsNullOrEmpty(group.Fingerprint))
+                {
+                    // 无拍摄时间或加载异常的孤立文件,也算"未提取"以保持按钮可见
+                    unindexed++;
+                    continue;
+                }
 
-            var input = Core.Database.PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
-            if (!input.CaptureTime.HasValue) continue;
-
-            var fingerprint = Core.Database.PhotoFingerprint.Compute(input);
-            var record = await Core.Database.PhotoDatabase.GetAsync(fingerprint).ConfigureAwait(false);
-            if (record?.FeatureVector == null || record.FeatureModel != DinoModelResources.ModelId)
+                var record = await Core.Database.PhotoDatabase.GetAsync(group.Fingerprint).ConfigureAwait(false);
+                if (record?.FeatureVector == null || record.FeatureModel != DinoModelResources.ModelId)
+                    unindexed++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SimilarityPanel] EvaluateUnindexed skip {group.Representative.Name}: {ex.Message}");
                 unindexed++;
+            }
         }
 
         Dispatcher.UIThread.Post(() => UnindexedCount = unindexed);
@@ -267,6 +275,7 @@ public class SimilarityPanelViewModel : ReactiveObject
 
     /// <summary>
     /// 启动批量特征提取任务。切换文件夹后任务继续后台跑完(本期不可中断)。
+    /// 进度按"指纹组"推进 — 同次曝光的 RAW+HEIF/JPG 合并为一组,只跑一次推理。
     /// </summary>
     private async Task RunIndexingAsync()
     {
@@ -275,7 +284,8 @@ public class SimilarityPanelViewModel : ReactiveObject
 
         _indexer = new FolderFeatureIndexer();
         IndexProgress = 0;
-        IndexTotal = files.Count;
+        // 真实总数会在首个 ProgressChanged 到达时被覆盖;暂用未提取数避免初值显示文件数(误差 2x)
+        IndexTotal = Math.Max(1, _unindexedCount);
         IsStateIndexing = true;
 
         _indexer.ProgressChanged += OnIndexProgress;

@@ -34,14 +34,18 @@
             <Setter Property="Background" Value="#3A3A3A" />
         </Style>
 
-        <!-- 进度条覆盖按钮位置,同宽高 -->
+        <!-- 进度条覆盖按钮位置,同宽高;Fluent 默认 MinWidth/MinHeight 较大,这里清零让 Width/Height 真正生效 -->
         <Style Selector="ProgressBar.SimIndexProgress">
-            <Setter Property="Height" Value="28" />
             <Setter Property="Width" Value="90" />
+            <Setter Property="Height" Value="28" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="MinHeight" Value="0" />
+            <Setter Property="MaxWidth" Value="90" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="Foreground" Value="#4A7A4A" />
             <Setter Property="Background" Value="#2A2A2A" />
             <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="VerticalAlignment" Value="Center" />
         </Style>
     </UserControl.Styles>
 
@@ -67,12 +71,12 @@
 
         <Grid>
 
-            <!-- 无列表主体:占位文字 + 动作区 整体居中 -->
+            <!-- 无列表主体:占位文字 + 动作区 整体居中。Margin 与有列表时的卡片 margin(4) 对齐,避免按钮区出现/消失时面板宽度跳变 -->
             <StackPanel IsVisible="{Binding !HasItems}"
                         HorizontalAlignment="Center"
                         VerticalAlignment="Center"
                         Spacing="8"
-                        Margin="12">
+                        Margin="4">
                 <TextBlock IsVisible="{Binding ShowUnindexedPlaceholder}"
                            Text="尚未提取特征"
                            FontSize="11"
