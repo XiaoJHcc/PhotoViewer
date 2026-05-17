@@ -133,6 +133,7 @@ public partial class SettingsViewModel
         {
             await PhotoDatabase.DeleteDatabaseAsync().ConfigureAwait(true);
             DinoFeatureCache.InvalidateAll();
+            ShakeFlagService.InvalidateAll();
             ClearDbStatus = "已清除";
         }
         catch (Exception ex)

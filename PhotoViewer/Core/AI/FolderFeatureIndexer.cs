@@ -205,6 +205,8 @@ public sealed class FolderFeatureIndexer
             byte[]? patchBlob = null;
             byte[]? cvBlob = null;
             string? cvSpec = null;
+            int cvWidth = 0;
+            int cvHeight = 0;
 
             Bitmap? thumbnail = null;
             try
@@ -249,6 +251,8 @@ public sealed class FolderFeatureIndexer
                             var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);
                             cvBlob = cvResult.Encode();
                             cvSpec = CvGridResult.CurrentVersion;
+                            cvWidth = cvBitmap.PixelSize.Width;
+                            cvHeight = cvBitmap.PixelSize.Height;
                         }
                     }
                     finally
@@ -260,7 +264,7 @@ public sealed class FolderFeatureIndexer
                 // 单事务写入三表
                 await PhotoDatabase.WriteIndexedAsync(
                     group.Input, group.Fingerprint, DinoModelResources.ModelId,
-                    clsBlob, patchBlob, cvBlob, cvSpec).ConfigureAwait(false);
+                    clsBlob, patchBlob, cvBlob, cvSpec, cvWidth, cvHeight).ConfigureAwait(false);
 
                 ReportProgress();
             }

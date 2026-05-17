@@ -110,6 +110,14 @@ public class MainViewModel : ViewModelBase
             .Select(file => file?.WhenAnyValue(f => f.ExifData) ?? Observable.Return<ExifData?>(null))
             .Switch()
             .Subscribe(_ => Tools.SyncCurrentFile(CurrentFile));
+
+        // 文件夹加载完成后,按指纹批量评估抖动判定 — 数据来自 photos.db 已有的 cv_grid + 尺寸,
+        // 不触发任何图像解码或 ONNX 推理。未入库的文件 IsShake 保持 null(不挂徽标)。
+        FolderVM.AllFilesChanged += () => _ = PhotoViewer.Core.AI.ShakeFlagService.EvaluateAsync(FolderVM.AllFiles);
+
+        // AI 设置页清空特征数据库后,触发对当前文件列表的重新评估,徽标即时消失。
+        PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested += () =>
+            _ = PhotoViewer.Core.AI.ShakeFlagService.EvaluateAsync(FolderVM.AllFiles);
     }
     
     ////////////////

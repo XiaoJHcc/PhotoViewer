@@ -95,6 +95,24 @@
                                    VerticalAlignment="Center"
                                    Foreground="#666666"
                                    IsVisible="{Binding ShowThumbnailPlaceholder}" />
+
+                        <!-- 抖动徽标:橙底白字"抖",右下角内嵌 2px -->
+                        <Border Width="16"
+                                Height="16"
+                                Background="#FF8800"
+                                CornerRadius="2"
+                                HorizontalAlignment="Right"
+                                VerticalAlignment="Bottom"
+                                Margin="0,0,2,2"
+                                IsVisible="{Binding IsShake, FallbackValue=False, TargetNullValue=False}">
+                            <TextBlock Text="抖"
+                                       FontSize="11"
+                                       FontWeight="Bold"
+                                       Foreground="White"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextAlignment="Center" />
+                        </Border>
                     </Grid>
                 </Border>
 

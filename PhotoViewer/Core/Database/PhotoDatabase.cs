@@ -98,7 +98,8 @@ public static class PhotoDatabase
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             SELECT fingerprint, filename_noext, capture_time, capture_subsec,
-                   rating, cv_grid, cv_grid_spec, cv_computed_at, updated_at
+                   rating, cv_grid, cv_grid_spec, cv_computed_at,
+                   cv_image_width, cv_image_height, updated_at
             FROM photos WHERE fingerprint = $fp LIMIT 1;";
         cmd.Parameters.AddWithValue("$fp", fingerprint);
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -218,48 +219,64 @@ public static class PhotoDatabase
         return result is byte[] b ? b : null;
     }
 
-    /// <summary>写入 CV grid blob 与版本字符串(覆盖式)。同样会先确保 photos 主行存在。</summary>
+    /// <summary>写入 CV grid blob 与版本字符串(覆盖式)。同样会先确保 photos 主行存在。
+    /// 同时把 CV 实际解码用的原图分辨率(<paramref name="imageWidth"/>/<paramref name="imageHeight"/>)落库,
+    /// 后续抖动判定不再依赖图像加载即可算出 diagonal。
+    /// </summary>
     public static async Task WriteCvGridAsync(
-        PhotoFingerprintInput input, string fingerprint, byte[] gridBlob, string spec)
+        PhotoFingerprintInput input, string fingerprint, byte[] gridBlob, string spec,
+        int imageWidth, int imageHeight)
     {
         Initialize();
         await using var conn = OpenConnectionInternal();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             INSERT INTO photos (fingerprint, filename_noext, capture_time, capture_subsec,
-                                cv_grid, cv_grid_spec, cv_computed_at, updated_at)
-            VALUES ($fp, $fn, $ct, $cs, $cv, $cs2, $t, $t)
+                                cv_grid, cv_grid_spec, cv_computed_at,
+                                cv_image_width, cv_image_height, updated_at)
+            VALUES ($fp, $fn, $ct, $cs, $cv, $cs2, $t, $cw, $ch, $t)
             ON CONFLICT(fingerprint) DO UPDATE SET
-                cv_grid        = excluded.cv_grid,
-                cv_grid_spec   = excluded.cv_grid_spec,
-                cv_computed_at = excluded.cv_computed_at,
-                updated_at     = excluded.updated_at;";
+                cv_grid          = excluded.cv_grid,
+                cv_grid_spec     = excluded.cv_grid_spec,
+                cv_computed_at   = excluded.cv_computed_at,
+                cv_image_width   = excluded.cv_image_width,
+                cv_image_height  = excluded.cv_image_height,
+                updated_at       = excluded.updated_at;";
         BindIdentity(cmd, fingerprint, input);
         cmd.Parameters.AddWithValue("$cv", gridBlob);
         cmd.Parameters.AddWithValue("$cs2", spec);
+        cmd.Parameters.AddWithValue("$cw", imageWidth);
+        cmd.Parameters.AddWithValue("$ch", imageHeight);
         cmd.Parameters.AddWithValue("$t", FormatTime(DateTime.UtcNow));
         await cmd.ExecuteNonQueryAsync();
     }
 
-    /// <summary>读取 CV grid blob 与 spec;blob 缺失或 spec 不一致由调用方判定 cache miss。</summary>
-    public static async Task<(byte[] Blob, string Spec)?> ReadCvGridAsync(string fingerprint)
+    /// <summary>读取 CV grid blob、spec 与解码尺寸;blob 缺失或 spec 不一致由调用方判定 cache miss。
+    /// 返回的 ImageWidth/Height 在旧记录尺寸列为空时为 0,调用方应据此走解码兜底路径。
+    /// </summary>
+    public static async Task<CvGridRecord?> ReadCvGridAsync(string fingerprint)
     {
         Initialize();
         await using var conn = OpenConnectionInternal();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
-            SELECT cv_grid, cv_grid_spec FROM photos
+            SELECT cv_grid, cv_grid_spec, cv_image_width, cv_image_height
+            FROM photos
             WHERE fingerprint = $fp LIMIT 1;";
         cmd.Parameters.AddWithValue("$fp", fingerprint);
         await using var reader = await cmd.ExecuteReaderAsync();
         if (!await reader.ReadAsync()) return null;
         if (reader.IsDBNull(0) || reader.IsDBNull(1)) return null;
-        return ((byte[])reader.GetValue(0), reader.GetString(1));
+        int w = reader.IsDBNull(2) ? 0 : reader.GetInt32(2);
+        int h = reader.IsDBNull(3) ? 0 : reader.GetInt32(3);
+        return new CvGridRecord((byte[])reader.GetValue(0), reader.GetString(1), w, h);
     }
 
     /// <summary>
     /// indexer 一轮扫描的主写入入口:单事务同时落 photos / photo_features / photo_patches。
     /// 任一 blob 为 null 视为本次不更新该项(允许"只补 CV"或"只补 patch"的按需补齐路径)。
+    /// 当 <paramref name="cvGridBlob"/> 非空时,<paramref name="cvImageWidth"/>/<paramref name="cvImageHeight"/>
+    /// 必须给出 CV 实际解码用的原图分辨率;后续抖动判定不需再重新解码。
     /// </summary>
     public static async Task WriteIndexedAsync(
         PhotoFingerprintInput input,
@@ -268,7 +285,9 @@ public static class PhotoDatabase
         byte[]? clsBlob,
         byte[]? patchBlob,
         byte[]? cvGridBlob,
-        string? cvSpec)
+        string? cvSpec,
+        int cvImageWidth = 0,
+        int cvImageHeight = 0)
     {
         Initialize();
         await using var conn = OpenConnectionInternal();
@@ -283,14 +302,18 @@ public static class PhotoDatabase
             cmd.Transaction = tx;
             cmd.CommandText = @"
                 UPDATE photos
-                SET cv_grid        = $cv,
-                    cv_grid_spec   = $cs,
-                    cv_computed_at = $t,
-                    updated_at     = $t
+                SET cv_grid         = $cv,
+                    cv_grid_spec    = $cs,
+                    cv_computed_at  = $t,
+                    cv_image_width  = $cw,
+                    cv_image_height = $ch,
+                    updated_at      = $t
                 WHERE fingerprint = $fp;";
             cmd.Parameters.AddWithValue("$fp", fingerprint);
             cmd.Parameters.AddWithValue("$cv", cvGridBlob);
             cmd.Parameters.AddWithValue("$cs", cvSpec);
+            cmd.Parameters.AddWithValue("$cw", cvImageWidth);
+            cmd.Parameters.AddWithValue("$ch", cvImageHeight);
             cmd.Parameters.AddWithValue("$t", nowIso);
             await cmd.ExecuteNonQueryAsync();
         }
@@ -412,7 +435,9 @@ public static class PhotoDatabase
 
     /// <summary>
     /// 检测旧 schema:photos 表若仍持有 <c>feature_vector</c> 或 <c>heatmap</c> 列,视为 Plan-2-3 前的遗留库,
-    /// 直接删除让 EnsureSchema 重建。开发期用,不需要迁移用户数据。
+    /// 直接删除让 EnsureSchema 重建。也检测新加的 <c>cv_image_width</c>/<c>cv_image_height</c> 列缺失,
+    /// 一并触发重建 — 抖动判定依赖原图分辨率,旧记录没有这两个字段会得到错误的 diagonal。
+    /// 开发期用,不需要迁移用户数据。
     /// </summary>
     private static bool ShouldResetDueToLegacySchema()
     {
@@ -423,7 +448,9 @@ public static class PhotoDatabase
             using var conn = OpenConnectionInternal();
             var cols = GetColumnNames(conn, "photos");
             if (cols.Count == 0) return false;
-            return cols.Contains("feature_vector") || cols.Contains("heatmap");
+            if (cols.Contains("feature_vector") || cols.Contains("heatmap")) return true;
+            if (!cols.Contains("cv_image_width") || !cols.Contains("cv_image_height")) return true;
+            return false;
         }
         catch (Exception ex)
         {
@@ -466,15 +493,17 @@ public static class PhotoDatabase
         using var cmd = conn.CreateCommand();
         cmd.CommandText = @"
             CREATE TABLE IF NOT EXISTS photos (
-                fingerprint    TEXT PRIMARY KEY,
-                filename_noext TEXT NOT NULL,
-                capture_time   TEXT,
-                capture_subsec TEXT,
-                rating         INTEGER,
-                cv_grid        BLOB,
-                cv_grid_spec   TEXT,
-                cv_computed_at TEXT,
-                updated_at     TEXT NOT NULL
+                fingerprint     TEXT PRIMARY KEY,
+                filename_noext  TEXT NOT NULL,
+                capture_time    TEXT,
+                capture_subsec  TEXT,
+                rating          INTEGER,
+                cv_grid         BLOB,
+                cv_grid_spec    TEXT,
+                cv_computed_at  TEXT,
+                cv_image_width  INTEGER,
+                cv_image_height INTEGER,
+                updated_at      TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_photos_capture_time ON photos(capture_time);
             CREATE INDEX IF NOT EXISTS idx_photos_filename     ON photos(filename_noext);
@@ -551,7 +580,9 @@ public static class PhotoDatabase
             CvGrid        = r.IsDBNull(5) ? null : (byte[])r.GetValue(5),
             CvGridSpec    = r.IsDBNull(6) ? null : r.GetString(6),
             CvComputedAt  = r.IsDBNull(7) ? null : r.GetString(7),
-            UpdatedAt     = r.GetString(8),
+            CvImageWidth  = r.IsDBNull(8) ? null : r.GetInt32(8),
+            CvImageHeight = r.IsDBNull(9) ? null : r.GetInt32(9),
+            UpdatedAt     = r.GetString(10),
         };
     }
 }
@@ -567,8 +598,13 @@ public sealed class PhotoCacheRecord
     public byte[]? CvGrid { get; init; }
     public string? CvGridSpec { get; init; }
     public string? CvComputedAt { get; init; }
+    public int? CvImageWidth { get; init; }
+    public int? CvImageHeight { get; init; }
     public string UpdatedAt { get; init; } = "";
 }
+
+/// <summary>CV grid 读取结果:blob + spec + 解码尺寸。尺寸为 0 表示旧记录无尺寸列(理论上 schema reset 后不应出现)。</summary>
+public readonly record struct CvGridRecord(byte[] Blob, string Spec, int ImageWidth, int ImageHeight);
 
 /// <summary>三路数据齐备评估结果。任一字段为 true 表示该项缺失,需要 indexer 补齐。</summary>
 public readonly record struct MissingParts(bool NeedCls, bool NeedPatches, bool NeedCv)
