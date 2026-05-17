@@ -39,18 +39,21 @@
             <TextBlock Classes="SectionHeader" Text="DINO patch (32×32，点击任意图设定参考点)" />
             <UniformGrid Columns="3" Margin="0,0,0,20">
                 <controls:DiagnosticTile
+                    Margin="4"
                     Source="{Binding SourceThumbnail}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
                     Label="原图缩略图"
                     TileClicked="OnTileClicked" />
                 <controls:DiagnosticTile
+                    Margin="4"
                     Source="{Binding PcaRgbMap}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
                     Label="PCA-RGB (前 3 主成分)"
                     TileClicked="OnTileClicked" />
                 <controls:DiagnosticTile
+                    Margin="4"
                     Source="{Binding CosineMap}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
@@ -67,12 +70,14 @@
             <TextBlock Classes="SectionHeader" Text="CV 网格诊断（32×32 中心采样，像素单位）" />
             <UniformGrid Columns="3">
                 <controls:DiagnosticTile
+                    Margin="4"
                     Source="{Binding SharpnessMap}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
                     Label="锐度 (edge_width_p20, 1.5-10 px)"
                     TileClicked="OnTileClicked" />
                 <controls:DiagnosticTile
+                    Margin="4"
                     BackgroundSource="{Binding SourceThumbnail}"
                     AspectRatio="{Binding AspectRatio}"
                     Crosshair="{Binding Crosshair}"
@@ -82,29 +87,22 @@
                         <views:ShakeFieldView ShakeField="{Binding ShakeField}" />
                     </controls:DiagnosticTile.Overlay>
                 </controls:DiagnosticTile>
-                <Border Background="#151515"
-                        BorderBrush="#333"
-                        BorderThickness="1"
-                        CornerRadius="4"
-                        Padding="14,12"
-                        Margin="4">
-                    <StackPanel Spacing="6">
-                        <TextBlock Text="刚体拟合"
-                                   FontSize="13"
-                                   FontWeight="Medium"
-                                   Foreground="#CCC" />
-                        <TextBlock Text="|T| / |ω| / residual"
-                                   FontSize="11"
-                                   Foreground="#666" />
-                        <TextBlock Text="{Binding RigidMotionText}"
-                                   FontSize="12"
-                                   Foreground="#DDD"
-                                   FontFamily="Consolas,Menlo,monospace"
-                                   LineHeight="20"
-                                   TextWrapping="Wrap"
-                                   Margin="0,4,0,0" />
-                    </StackPanel>
-                </Border>
+                <StackPanel Margin="4" Spacing="6">
+                    <TextBlock Text="抖动分析（刚体拟合）"
+                               FontSize="13"
+                               FontWeight="Medium"
+                               Foreground="#CCC" />
+                    <TextBlock Text="|T| / |ω| / residual"
+                               FontSize="11"
+                               Foreground="#666" />
+                    <TextBlock Text="{Binding RigidMotionText}"
+                               FontSize="12"
+                               Foreground="#DDD"
+                               FontFamily="Consolas,Menlo,monospace"
+                               LineHeight="20"
+                               TextWrapping="Wrap"
+                               Margin="0,4,0,0" />
+                </StackPanel>
             </UniformGrid>
 
         </StackPanel>

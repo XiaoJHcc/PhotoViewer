@@ -146,7 +146,7 @@ public class ControlViewModel : ReactiveObject
         OnSetRating3 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(3));
         OnSetRating4 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(4));
         OnSetRating5 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(5));
-        OnToggleDetailView = ReactiveCommand.Create<PointerContext?>(_ => Main.ToggleDetailView());
+        OnToggleDetailView = ReactiveCommand.Create<PointerContext?>(_ => Main.ToggleAnalysisView());
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)

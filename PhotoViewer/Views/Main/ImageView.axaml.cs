@@ -92,7 +92,7 @@ public partial class ImageView : UserControl
     private void ToggleDetailViewFromMenu()
     {
         if (ViewModel?.Main == null) return;
-        ViewModel.Main.ToggleDetailView();
+        ViewModel.Main.ToggleAnalysisView();
         UpdateMenuCheckStates();
         HideMenu();
     }
@@ -117,7 +117,7 @@ public partial class ImageView : UserControl
     {
         if (_detailViewMenuHeader != null)
         {
-            _detailViewMenuHeader.IsIconVisible = ViewModel?.Main.IsDetailViewVisible ?? false;
+            _detailViewMenuHeader.IsIconVisible = ViewModel?.Main.IsAnalysisViewVisible ?? false;
         }
 
         if (_thumbnailViewMenuHeader != null)

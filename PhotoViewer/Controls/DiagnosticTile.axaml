@@ -8,50 +8,75 @@
              UseLayoutRounding="True">
 
     <!--
-        DINO 诊断页专用瓦片：
-        - 外框 SquareFrame 是边长随父级宽度变动的正方形（高度由代码同步为宽度，绑定 Bounds.Width）。
-        - 内部 ContentArea 按图像 AspectRatio letterbox 居中：横图 → 上下黑边；竖图 → 左右黑边；图像本身完全可见、不裁切、不变形。
-        - ContentArea 内部分四层：dim 缩略图背景 → 主图（heatmap / PCA / cosine 等）→ Overlay 槽位（如 ShakeFieldView 的 Canvas 矢量线）→ 持久十字准星。
-        - 标题 Label 移到正方形 *外* 下方，不挤占图像区域。
-        - 整个瓦片吃掉所有 PointerPressed（避免被父级当成"空闲点击"清准星），只在 ContentArea 内点击才把归一化坐标抛给上层。
+        诊断瓦片视觉与 DetailPreview 一致：
+        - 外框 SquareFrame 是 BorderBrush=#444 / Thickness=1 / CornerRadius=6 的正方形,Background=#222
+          作为 letterbox 填色;ClipToBounds 把内容圆角化。高度由代码同步为宽度。
+        - 内部 ContentArea 按 AspectRatio letterbox 居中,显示主图/PCA/cosine。
+        - 左上角药丸标签 CornerLabelHost 悬挂在 SquareFrame 顶层(不挂在 ContentArea 上,
+          确保竖图 letterbox 时标签也贴着外框圆角而非贴在 letterbox 黑边里)。
+          CornerRadius=5,0,5,0 + 无 margin,与 DetailPreview 完全一致。
+        - 整个瓦片吃掉所有 PointerPressed(避免被父级当成"空闲点击"清准星),只在 ContentArea 内点击才把归一化坐标抛给上层。
+        - 底部 Label 仅在 Label 非空时显示;分析栏不传 Label,DINO 诊断工具页仍可传。
     -->
     <StackPanel x:Name="OuterStack"
-                HorizontalAlignment="Stretch"
-                Margin="4">
+                HorizontalAlignment="Stretch">
         <Border x:Name="SquareFrame"
-                Background="#151515"
-                BorderBrush="#333"
+                Background="#222"
+                BorderBrush="#444"
                 BorderThickness="1"
-                CornerRadius="4"
+                CornerRadius="6"
                 HorizontalAlignment="Stretch"
                 ClipToBounds="True">
-            <Grid x:Name="ContentArea"
-                  HorizontalAlignment="Center"
-                  VerticalAlignment="Center"
-                  Background="#222"
-                  ClipToBounds="True">
-                <Image x:Name="BackgroundImage"
-                       Source="{Binding BackgroundSource, ElementName=TileRoot}"
-                       Stretch="Fill"
-                       Opacity="0.30"
-                       RenderOptions.BitmapInterpolationMode="HighQuality" />
-                <Image x:Name="ContentImage"
-                       Source="{Binding Source, ElementName=TileRoot}"
-                       Stretch="Fill"
-                       Opacity="{Binding ContentOpacity, ElementName=TileRoot}"
-                       RenderOptions.BitmapInterpolationMode="None" />
-                <ContentPresenter x:Name="OverlayHost"
-                                  Content="{Binding Overlay, ElementName=TileRoot}" />
-                <Canvas x:Name="CrosshairCanvas"
+            <Grid>
+                <Grid x:Name="ContentArea"
+                      HorizontalAlignment="Center"
+                      VerticalAlignment="Center"
+                      Background="#222"
+                      ClipToBounds="True">
+                    <Image x:Name="BackgroundImage"
+                           Source="{Binding BackgroundSource, ElementName=TileRoot}"
+                           Stretch="Fill"
+                           Opacity="0.30"
+                           RenderOptions.BitmapInterpolationMode="HighQuality" />
+                    <Image x:Name="ContentImage"
+                           Source="{Binding Source, ElementName=TileRoot}"
+                           Stretch="Fill"
+                           Opacity="{Binding ContentOpacity, ElementName=TileRoot}"
+                           RenderOptions.BitmapInterpolationMode="None" />
+                    <ContentPresenter x:Name="OverlayHost"
+                                      Content="{Binding Overlay, ElementName=TileRoot}" />
+                    <TextBlock x:Name="PlaceholderBlock"
+                               IsHitTestVisible="False"
+                               IsVisible="False"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               FontSize="12"
+                               Foreground="#777"
+                               TextAlignment="Center" />
+                    <Canvas x:Name="CrosshairCanvas"
+                            IsHitTestVisible="False"
+                            IsVisible="False">
+                        <Rectangle x:Name="VMain" Fill="White" Width="1" />
+                        <Rectangle x:Name="HMain" Fill="White" Height="1" />
+                    </Canvas>
+                </Grid>
+                <Border x:Name="CornerLabelHost"
                         IsHitTestVisible="False"
-                        IsVisible="False">
-                    <Rectangle x:Name="VMain" Fill="White" Width="1" />
-                    <Rectangle x:Name="HMain" Fill="White" Height="1" />
-                </Canvas>
+                        IsVisible="False"
+                        HorizontalAlignment="Left"
+                        VerticalAlignment="Top"
+                        Background="#88000000"
+                        Padding="8,4"
+                        CornerRadius="5,0,5,0">
+                    <TextBlock x:Name="CornerLabelBlock"
+                               FontSize="12"
+                               Foreground="#aaffffff" />
+                </Border>
             </Grid>
         </Border>
         <TextBlock x:Name="LabelBlock"
                    Text="{Binding Label, ElementName=TileRoot}"
+                   IsVisible="False"
                    FontSize="12"
                    Foreground="#888"
                    HorizontalAlignment="Center"

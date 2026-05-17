@@ -24,6 +24,7 @@ public class MainViewModel : ViewModelBase
     public ControlViewModel ControlVM { get; }
     public ImageViewModel ImageVM { get; }
     public DetailViewModel DetailVM { get; }
+    public AnalysisViewModel AnalysisVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
 
@@ -97,6 +98,7 @@ public class MainViewModel : ViewModelBase
         FolderVM = new FolderViewModel(this);
         ImageVM = new ImageViewModel(this);
         DetailVM = new DetailViewModel(this);
+        AnalysisVM = new AnalysisViewModel(this);
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
         FileVM = new FileViewModel(this);
@@ -339,6 +341,14 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isDetailViewVisible, value);
     }
 
+    private bool _isAnalysisViewVisible = false;
+    /// <summary>分析栏(细节预览 + DINO/CV 诊断合并)是否可见。新菜单/快捷键的"细节栏"实际控制此项。</summary>
+    public bool IsAnalysisViewVisible
+    {
+        get => _isAnalysisViewVisible;
+        set => this.RaiseAndSetIfChanged(ref _isAnalysisViewVisible, value);
+    }
+
     private bool _isThumbnailViewVisible = true;
     public bool IsThumbnailViewVisible
     {
@@ -356,6 +366,12 @@ public class MainViewModel : ViewModelBase
     public void ToggleDetailView()
     {
         IsDetailViewVisible = !IsDetailViewVisible;
+    }
+
+    /// <summary>切换新分析栏可见性。绑定到原"细节栏"菜单项与快捷键。</summary>
+    public void ToggleAnalysisView()
+    {
+        IsAnalysisViewVisible = !IsAnalysisViewVisible;
     }
 
     public void ToggleThumbnailView()
