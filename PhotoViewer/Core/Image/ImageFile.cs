@@ -18,6 +18,8 @@ public class ImageFile : ReactiveObject
     private bool _isCurrent;
     private bool _isCurrentImage;
     private ExifData? _exifData;
+    private Task<ExifData?>? _exifLoadTask;
+    private readonly object _exifLoadLock = new();
     private bool _isExifLoading;
     private bool _isExifLoaded;
     private bool _isThumbnailLoading;
@@ -264,12 +266,23 @@ public class ImageFile : ReactiveObject
 
 
     /// <summary>
-    /// 异步加载 EXIF 数据
+    /// 异步加载 EXIF 数据。并发调用共享同一个加载 Task,避免后到的调用方拿到半成品的 null。
     /// </summary>
-    public async Task<ExifData?> LoadExifDataAsync()
+    public Task<ExifData?> LoadExifDataAsync()
     {
-        if (IsExifLoaded || IsExifLoading) return ExifData;
+        if (IsExifLoaded) return Task.FromResult(ExifData);
 
+        lock (_exifLoadLock)
+        {
+            if (IsExifLoaded) return Task.FromResult(ExifData);
+            if (_exifLoadTask != null) return _exifLoadTask;
+            _exifLoadTask = LoadExifDataCoreAsync();
+            return _exifLoadTask;
+        }
+    }
+
+    private async Task<ExifData?> LoadExifDataCoreAsync()
+    {
         IsExifLoading = true;
         try
         {
@@ -286,14 +299,14 @@ public class ImageFile : ReactiveObject
                     return null;
                 }
             });
-            
+
             // 在UI线程中设置结果
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 ExifData = exifData;
                 IsExifLoaded = true;
             });
-            
+
             return ExifData;
         }
         catch (Exception ex)
@@ -304,6 +317,10 @@ public class ImageFile : ReactiveObject
         finally
         {
             IsExifLoading = false;
+            lock (_exifLoadLock)
+            {
+                _exifLoadTask = null;
+            }
         }
     }
 
@@ -395,6 +412,10 @@ public class ImageFile : ReactiveObject
         ExifData = null;
         IsExifLoaded = false;
         IsExifLoading = false;
+        lock (_exifLoadLock)
+        {
+            _exifLoadTask = null;
+        }
     }
     
     /// <summary>
