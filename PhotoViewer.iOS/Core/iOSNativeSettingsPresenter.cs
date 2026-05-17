@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
-using System.Reflection;
 using System.Threading.Tasks;
 using Foundation;
 using PhotoViewer.Core.Settings;
@@ -90,7 +89,7 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         while (current != null)
         {
             if (current is UINavigationController navigationController &&
-                navigationController.ViewControllers.FirstOrDefault() is iOSNativeSettingsRootViewController)
+                navigationController.ViewControllers?.FirstOrDefault() is iOSNativeSettingsRootViewController)
             {
                 return navigationController;
             }
@@ -133,63 +132,14 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
             return;
         }
 
-        var detents = CreateDefaultDetents();
-        if (detents.Length > 0)
-        {
-            sheetPresentationController.Detents = detents;
-        }
-
+        sheetPresentationController.Detents =
+        [
+            UISheetPresentationControllerDetent.CreateMediumDetent(),
+            UISheetPresentationControllerDetent.CreateLargeDetent(),
+        ];
         sheetPresentationController.PrefersGrabberVisible = true;
         sheetPresentationController.PrefersScrollingExpandsWhenScrolledToEdge = false;
         sheetPresentationController.PreferredCornerRadius = 24;
-    }
-
-    /// <summary>
-    /// 通过反射兼容不同 .NET iOS 绑定版本的 detent API。
-    /// </summary>
-    /// <returns>可用的默认 detent 数组。</returns>
-    private static UISheetPresentationControllerDetent[] CreateDefaultDetents()
-    {
-        var detentType = typeof(UISheetPresentationControllerDetent);
-        var medium = CreateDetent(detentType, "MediumDetent", "Medium", "CreateMediumDetent");
-        var large = CreateDetent(detentType, "LargeDetent", "Large", "CreateLargeDetent");
-
-        return new[] { medium, large }.OfType<UISheetPresentationControllerDetent>().ToArray();
-    }
-
-    /// <summary>
-    /// 通过反射创建指定名称的 detent。
-    /// </summary>
-    /// <param name="detentType">detent 类型。</param>
-    /// <param name="propertyName">候选属性名。</param>
-    /// <param name="methodName">候选方法名一。</param>
-    /// <param name="factoryMethodName">候选方法名二。</param>
-    /// <returns>成功时返回 detent，否则返回 null。</returns>
-    private static UISheetPresentationControllerDetent? CreateDetent(
-        Type detentType,
-        string propertyName,
-        string methodName,
-        string factoryMethodName)
-    {
-        var property = detentType.GetProperty(propertyName, BindingFlags.Public | BindingFlags.Static);
-        if (property?.GetValue(null) is UISheetPresentationControllerDetent propertyDetent)
-        {
-            return propertyDetent;
-        }
-
-        var method = detentType.GetMethod(
-                methodName,
-                BindingFlags.Public | BindingFlags.Static,
-                binder: null,
-                types: Type.EmptyTypes,
-                modifiers: null)
-            ?? detentType.GetMethod(
-                factoryMethodName,
-                BindingFlags.Public | BindingFlags.Static,
-                binder: null,
-                types: Type.EmptyTypes,
-                modifiers: null);
-        return method?.Invoke(null, null) as UISheetPresentationControllerDetent;
     }
 }
 
@@ -401,9 +351,11 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
             ?? new UITableViewCell(UITableViewCellStyle.Subtitle, reuseIdentifier);
 
         var item = _items[indexPath.Row];
-        cell.TextLabel.Text = item.Title;
-        cell.DetailTextLabel.Text = item.Subtitle;
-        cell.DetailTextLabel.TextColor = UIColor.SecondaryLabel;
+        var configuration = UIListContentConfiguration.SubtitleCellConfiguration;
+        configuration.Text = item.Title;
+        configuration.SecondaryText = item.Subtitle;
+        configuration.SecondaryTextProperties.Color = UIColor.SecondaryLabel;
+        cell.ContentConfiguration = configuration;
         cell.Accessory = UITableViewCellAccessory.DisclosureIndicator;
         return cell;
     }
@@ -449,7 +401,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
-        View.BackgroundColor = UIColor.SystemGroupedBackground;
+        View!.BackgroundColor = UIColor.SystemGroupedBackground;
         ConfigureLayout();
         RebuildContent();
     }
@@ -496,15 +448,16 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         _contentStack.LayoutMarginsRelativeArrangement = true;
         _contentStack.LayoutMargins = new UIEdgeInsets(16, 16, 24, 16);
 
-        View.AddSubview(_scrollView);
+        var rootView = View!;
+        rootView.AddSubview(_scrollView);
         _scrollView.AddSubview(_contentStack);
 
         NSLayoutConstraint.ActivateConstraints(
         [
-            _scrollView.TopAnchor.ConstraintEqualTo(View.SafeAreaLayoutGuide.TopAnchor),
-            _scrollView.LeadingAnchor.ConstraintEqualTo(View.LeadingAnchor),
-            _scrollView.TrailingAnchor.ConstraintEqualTo(View.TrailingAnchor),
-            _scrollView.BottomAnchor.ConstraintEqualTo(View.BottomAnchor),
+            _scrollView.TopAnchor.ConstraintEqualTo(rootView.SafeAreaLayoutGuide.TopAnchor),
+            _scrollView.LeadingAnchor.ConstraintEqualTo(rootView.LeadingAnchor),
+            _scrollView.TrailingAnchor.ConstraintEqualTo(rootView.TrailingAnchor),
+            _scrollView.BottomAnchor.ConstraintEqualTo(rootView.BottomAnchor),
 
             _contentStack.TopAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.TopAnchor),
             _contentStack.LeadingAnchor.ConstraintEqualTo(_scrollView.ContentLayoutGuide.LeadingAnchor),
@@ -1573,10 +1526,11 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
 
         if (alert.PopoverPresentationController != null)
         {
-            alert.PopoverPresentationController.SourceView = View;
+            var rootView = View!;
+            alert.PopoverPresentationController.SourceView = rootView;
             alert.PopoverPresentationController.SourceRect = new CoreGraphics.CGRect(
-                View.Bounds.X + (View.Bounds.Width / 2),
-                View.Bounds.Y + (View.Bounds.Height / 2),
+                rootView.Bounds.X + (rootView.Bounds.Width / 2),
+                rootView.Bounds.Y + (rootView.Bounds.Height / 2),
                 1,
                 1);
         }
