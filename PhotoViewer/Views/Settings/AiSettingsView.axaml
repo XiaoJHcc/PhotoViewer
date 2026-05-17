@@ -34,9 +34,6 @@
                                    HorizontalAlignment="Center"
                                    Text="{Binding SimilarityThreshold, StringFormat={}{0:P0}}" />
                     </Grid>
-                    <TextBlock Classes="settings-description"
-                               Margin="8, 0, 8, 0"
-                               Text="低于该相似度的照片不会出现在相似聚类列表中" />
 
                     <!-- 最多数量滑块（1 ~ 32，指数分布） -->
                     <Grid Classes="settings-numeric"
@@ -51,9 +48,6 @@
                                                          Minimum="1"
                                                          Maximum="32" />
                     </Grid>
-                    <TextBlock Classes="settings-description"
-                               Margin="8, 0, 8, 0"
-                               Text="相似聚类列表一次最多显示的照片数量" />
 
                 </StackPanel>
             </Border>
