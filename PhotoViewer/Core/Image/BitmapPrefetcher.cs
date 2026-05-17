@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.AI;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
@@ -15,6 +15,9 @@ namespace PhotoViewer.Core.Image;
 /// 1. 当前图前后预取(前 Forward / 后 Backward)
 /// 2. 滚动停止后中心附近预取
 /// 3. 统一串行,旧任务自动取消
+///
+/// 预取邻居位图后,若分析栏可见,顺手为该邻居预热 <see cref="AnalysisResultCache"/>(读 DB + 派生层现算)。
+/// PCA SVD 是切图卡顿的主因 — 邻居预热后切图变成纯 UI 线程 swap。
 /// </summary>
 public class BitmapPrefetcher
 {
@@ -81,7 +84,7 @@ public class BitmapPrefetcher
                     .Select(i => (i, dist: Math.Abs(i - idx)))
                     .OrderBy(t => t.dist)
                     .ThenBy(t => t.i)
-                    .Select(t => files[t.i].File)
+                    .Select(t => files[t.i])
                     .ToList();
 
                 await RunQueuedAsync(ordered, ct);
@@ -122,7 +125,7 @@ public class BitmapPrefetcher
                     .OrderBy(t => t.dist)
                     .ThenBy(t => t.idx)
                     .Take(need)
-                    .Select(t => files[t.idx].File)
+                    .Select(t => files[t.idx])
                     .ToList();
 
                 await RunQueuedAsync(selected, ct);
@@ -160,17 +163,15 @@ public class BitmapPrefetcher
     }
 
     /// <summary>
-    /// 实际预取执行:按并行度限制启动多个任务,逐个预留内存并解码。
+    /// 实际预取执行:按并行度限制启动多个任务,逐个预留内存并解码。每个任务完成后顺手预热分析栏缓存。
     /// </summary>
-    private async Task RunQueuedAsync(IEnumerable<IStorageFile> files, CancellationToken ct)
+    private async Task RunQueuedAsync(IEnumerable<ImageFile> files, CancellationToken ct)
     {
         if (_busy) return;
         _busy = true;
         try
         {
-            var fileList = files
-                .Where(f => !BitmapLoader.IsInCache(f.Path.LocalPath))
-                .ToList();
+            var fileList = files.ToList();
             if (fileList.Count == 0) return;
 
             var nativeParallel = Math.Max(1, _settings.NativePreloadParallelism);
@@ -192,14 +193,24 @@ public class BitmapPrefetcher
                         await WaitForHighPriorityIdleAsync(ct);
                         if (ct.IsCancellationRequested) return;
 
-                        reservation = await BitmapLoader.ReserveForPreloadAsync(f, ct);
-                        if (reservation == null) return;
-
-                        if (!BitmapLoader.IsInCache(f.Path.LocalPath))
+                        var path = f.File.Path.LocalPath;
+                        if (!BitmapLoader.IsInCache(path))
                         {
-                            await BitmapLoader.PreloadBitmapAsync(f);
+                            reservation = await BitmapLoader.ReserveForPreloadAsync(f.File, ct);
+                            if (reservation == null)
+                            {
+                                // 预热分析栏缓存仍然有意义(纯 DB IO + CPU,不吃位图内存预算)。
+                                await PrewarmAnalysisAsync(f, ct).ConfigureAwait(false);
+                                return;
+                            }
+
+                            if (!BitmapLoader.IsInCache(path))
+                            {
+                                await BitmapLoader.PreloadBitmapAsync(f.File);
+                            }
                         }
 
+                        await PrewarmAnalysisAsync(f, ct).ConfigureAwait(false);
                         await Task.Delay(30, ct);
                     }
                     catch
@@ -220,6 +231,34 @@ public class BitmapPrefetcher
         finally
         {
             _busy = false;
+        }
+    }
+
+    /// <summary>
+    /// 为单张邻居预热分析栏缓存:仅在分析栏可见时执行(避免无谓的 PCA SVD)。
+    /// 计算指纹 → 命中即返回 → miss 则读库 + 派生层现算 + 落 cache。任一阶段失败静默跳过。
+    /// </summary>
+    private async Task PrewarmAnalysisAsync(ImageFile file, CancellationToken ct)
+    {
+        if (!_main.IsAnalysisViewVisible) return;
+        if (ct.IsCancellationRequested) return;
+
+        try
+        {
+            var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(fingerprint)) return;
+            if (AnalysisResultCache.TryGet(fingerprint) != null) return;
+
+            var data = await AnalysisDataReader.ReadByFingerprintAsync(fingerprint, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return;
+
+            var entry = AnalysisComputer.Compute(data);
+            AnalysisResultCache.Put(fingerprint, entry);
+        }
+        catch (OperationCanceledException) { /* 取消正常 */ }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[BitmapPrefetcher] analysis prewarm failed for {file.Name}: {ex.Message}");
         }
     }
 }

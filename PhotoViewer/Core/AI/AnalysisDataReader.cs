@@ -13,6 +13,9 @@ namespace PhotoViewer.Core.AI;
 ///
 /// 抽自 <see cref="PhotoViewer.ViewModels.Tools.DinoDebugViewModel"/>.TryReadCachedAsync,差别在于:
 /// 仅做读库,不触发任何解码 / ONNX 推理 / CV 重算 — 缺失即为缺失,由调用方决定如何呈现(显示"未提取"占位)。
+///
+/// 切分两步:<see cref="ComputeFingerprintAsync"/> 同步算指纹给 <see cref="AnalysisResultCache"/> 命中检查用,
+/// <see cref="ReadByFingerprintAsync"/> 给 cache miss 时的实际读库路径用。
 /// </summary>
 public static class AnalysisDataReader
 {
@@ -38,24 +41,28 @@ public static class AnalysisDataReader
     }
 
     /// <summary>
-    /// 只读路径:计算指纹 → 并行读两表 → 反序列化。任一异常或指纹计算失败返回空 <see cref="Result"/>。
+    /// 计算指纹:依赖 EXIF + 修改时间;无法取到稳定时间戳时返回 null。
+    /// 与 <see cref="DinoFeatureCache"/> 内部使用的指纹算法一致(同次曝光的 RAW/HEIF/JPG 共享指纹)。
     /// </summary>
-    /// <param name="file">目标图片;需要其 Name + ExifData(会按需触发懒加载,但不会解码图像)。</param>
-    /// <param name="ct">取消令牌。</param>
-    /// <returns>读到的部分缓存;调用方按字段是否为 null 决定占位与否。</returns>
-    public static async Task<Result> TryReadAsync(ImageFile file, CancellationToken ct)
+    public static async Task<string?> ComputeFingerprintAsync(ImageFile file, CancellationToken ct)
+    {
+        ct.ThrowIfCancellationRequested();
+        var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
+        if (!file.ModifiedDate.HasValue)
+            await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
+
+        var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
+        if (!input.CaptureTime.HasValue) return null;
+        return PhotoFingerprint.Compute(input);
+    }
+
+    /// <summary>
+    /// 给定指纹,并行读 photo_patches + photos.cv_grid 并反序列化。
+    /// </summary>
+    public static async Task<Result> ReadByFingerprintAsync(string fingerprint, CancellationToken ct)
     {
         try
         {
-            ct.ThrowIfCancellationRequested();
-            var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
-            if (!file.ModifiedDate.HasValue)
-                await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
-
-            var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
-            if (!input.CaptureTime.HasValue) return new Result();
-
-            var fingerprint = PhotoFingerprint.Compute(input);
             ct.ThrowIfCancellationRequested();
 
             var patchTask = PhotoDatabase.ReadPatchesAsync(fingerprint, DinoModelResources.ModelId);
@@ -95,8 +102,18 @@ public static class AnalysisDataReader
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AnalysisDataReader] read failed for {file.Name}: {ex.Message}");
+            Console.WriteLine($"[AnalysisDataReader] read failed for {fingerprint}: {ex.Message}");
             return new Result();
         }
+    }
+
+    /// <summary>
+    /// 两步合一:计算指纹 → 读库。指纹失败时返回空 <see cref="Result"/>。供仅需读一次的旧路径使用。
+    /// </summary>
+    public static async Task<Result> TryReadAsync(ImageFile file, CancellationToken ct)
+    {
+        var fp = await ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
+        if (fp == null) return new Result();
+        return await ReadByFingerprintAsync(fp, ct).ConfigureAwait(false);
     }
 }

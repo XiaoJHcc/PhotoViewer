@@ -135,8 +135,15 @@ Each head project's `Core/` folder contains platform-specific implementations in
 **抖动徽标回填**:
 - `ShakeFlagService.EvaluateAsync` 由 `MainViewModel` 在 `FolderVM.AllFilesChanged` 时调用、由 `SimilarityPanelViewModel` 在批量索引完成后调用 — 完全不解码、不推理,只读 `cv_grid` + 尺寸算判定 → 回填 `ImageFile.IsShake` → 缩略图卡片渲染徽标。
 
+**分析栏派生缓存**(切图无卡顿):
+- `AnalysisResultCache` 按指纹 LRU 缓存"读库 + 派生层现算"的全部产物(4 张诊断位图 + ShakeField + 判定文字 + patch tokens),容量 32 项 ≈ 50 MB。
+- `AnalysisViewModel` 切图 → `AnalysisDataReader.ComputeFingerprintAsync` → 命中即纯 UI swap;miss 才读 DB + `AnalysisComputer.Compute` 现算并落 cache。
+- `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
+- PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
+- 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有,切图或还原中心时显式释放;cache 拥有的位图 VM 只引用,不 Dispose。
+
 **清除入口**(开发者用):
-- AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` 清进程缓存,徽标即时消失。
+- AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` + `AnalysisResultCache.InvalidateAll` 清进程缓存,徽标与分析栏派生数据即时失效。
 - 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列)自动删库重建,无需手动清理。
 
 ---
