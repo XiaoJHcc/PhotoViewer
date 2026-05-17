@@ -128,8 +128,8 @@
                             <controls:CheckableMenuHeader x:Name="ThumbnailMenuHeader" Text="缩略图栏" />
                         </Button>
                         <Button Classes="ContextMenuButton"
-                                Click="OnToggleDetailMenuClick">
-                            <controls:CheckableMenuHeader x:Name="DetailMenuHeader" Text="细节栏" />
+                                Click="OnToggleAnalysisMenuClick">
+                            <controls:CheckableMenuHeader x:Name="AnalysisMenuHeader" Text="分析栏" />
                         </Button>
                         <Button Classes="ContextMenuButton"
                                 Click="OnToggleControlMenuClick">

@@ -297,11 +297,18 @@ public partial class SettingsViewModel
         Hotkeys.Clear();
         foreach (var hotkey in hotkeys)
         {
+            // 迁移历史命名:旧版本"细节栏" → 当前"分析栏",命令 id 同步升级。
+            var command = hotkey.Command == "ToggleDetailView" ? "ToggleAnalysisView" : hotkey.Command;
+            var name = command == "ToggleAnalysisView" && hotkey.Name == "细节栏展开/收纳"
+                ? "分析栏展开/收纳" : hotkey.Name;
+            var tooltip = command == "ToggleAnalysisView" && hotkey.Tooltip == "细节栏"
+                ? "分析栏" : hotkey.Tooltip;
+
             Hotkeys.Add(new HotkeyItem(
-                hotkey.Name,
-                hotkey.Command,
+                name,
+                command,
                 hotkey.DisplaySymbol,
-                hotkey.Tooltip,
+                tooltip,
                 hotkey.IsDisplay,
                 FromGestureModel(hotkey.Primary),
                 FromGestureModel(hotkey.Secondary)));

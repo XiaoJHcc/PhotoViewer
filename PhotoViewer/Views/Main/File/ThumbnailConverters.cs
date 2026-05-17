@@ -85,3 +85,55 @@ public class SimilarityScoreConverter : IValueConverter
         throw new NotSupportedException();
     }
 }
+
+/// <summary>
+/// 相似度分数(0~1)映射到柱状条占比(0~1):75% 以下为 0,100% 为 1,中间线性插值。
+/// 配合 <see cref="ProgressFractionToWidthConverter"/> 在卡片第二行绘制柱状进度条。
+/// </summary>
+public class SimilarityScoreToProgressFractionConverter : IValueConverter
+{
+    public static readonly SimilarityScoreToProgressFractionConverter Instance = new();
+
+    /// <summary>柱状条对应的下限分数(75%)。</summary>
+    private const double LowerBound = 0.75;
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is double score)
+        {
+            var clamped = Math.Clamp(score, LowerBound, 1.0);
+            return (clamped - LowerBound) / (1.0 - LowerBound);
+        }
+        return null;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}
+
+/// <summary>
+/// 把进度占比([0,1])与总宽度参数相乘,产出柱状条的宽度像素。
+/// null 输入返回 0,由 IsVisible 单独控制柱状条显隐。
+/// </summary>
+public class ProgressFractionToWidthConverter : IValueConverter
+{
+    public static readonly ProgressFractionToWidthConverter Instance = new();
+
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is double fraction &&
+            parameter is string s &&
+            double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var total))
+        {
+            return Math.Max(0.0, Math.Min(1.0, fraction)) * total;
+        }
+        return 0.0;
+    }
+
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        throw new NotSupportedException();
+    }
+}

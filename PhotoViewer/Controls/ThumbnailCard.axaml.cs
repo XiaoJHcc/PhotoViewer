@@ -64,6 +64,20 @@ public partial class ThumbnailCard : UserControl
         set => SetValue(SecondLineToolTipProperty, value);
     }
 
+    /// <summary>
+    /// 第二行进度条占比([0,1])。非 null 时在文本背后绘制一条"柱状条",左侧填色按比例延伸;
+    /// null 表示不显示(主缩略图列表用法)。相似聚类列表把分数 75%~100% 映射到此区间。
+    /// </summary>
+    public static readonly StyledProperty<double?> SecondLineProgressProperty =
+        AvaloniaProperty.Register<ThumbnailCard, double?>(nameof(SecondLineProgress));
+
+    /// <summary>第二行进度条占比。</summary>
+    public double? SecondLineProgress
+    {
+        get => GetValue(SecondLineProgressProperty);
+        set => SetValue(SecondLineProgressProperty, value);
+    }
+
     /// <summary>是否显示星级按钮,等同于 Settings.ShowRating。</summary>
     public static readonly StyledProperty<bool> ShowRatingProperty =
         AvaloniaProperty.Register<ThumbnailCard, bool>(nameof(ShowRating));

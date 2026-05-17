@@ -132,7 +132,7 @@ public partial class DetailPreview : UserControl
     private Border? _rootBorder;
     private bool _updateQueued;
     private bool _isHighlighted;
-    private bool _wasHighlightedBeforeDeactivate; // 记录隐藏细节栏前的高亮状态，以便重新显示时恢复
+    private bool _wasHighlightedBeforeDeactivate; // 记录隐藏分析栏前的高亮状态，以便重新显示时恢复
     private Rect? _lastImageRect;
 
     static DetailPreview()
@@ -161,13 +161,13 @@ public partial class DetailPreview : UserControl
     {
         if (!IsActive)
         {
-            // 细节栏隐藏：保存高亮状态后清除视觉效果（组的 _current 指针保持不变）
+            // 分析栏隐藏：保存高亮状态后清除视觉效果（组的 _current 指针保持不变）
             _wasHighlightedBeforeDeactivate = _isHighlighted;
             SetHighlighted(false);
             return;
         }
 
-        // 细节栏重新显示：先触发预览更新（重新计算 _lastImageRect）
+        // 分析栏重新显示：先触发预览更新（重新计算 _lastImageRect）
         QueueUpdatePreview();
 
         // 恢复之前的高亮状态，使绿框和主照片标记一并重现

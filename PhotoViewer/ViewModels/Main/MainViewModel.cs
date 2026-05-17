@@ -23,7 +23,6 @@ public class MainViewModel : ViewModelBase
     public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
     public ImageViewModel ImageVM { get; }
-    public DetailViewModel DetailVM { get; }
     public AnalysisViewModel AnalysisVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
@@ -97,7 +96,6 @@ public class MainViewModel : ViewModelBase
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
         ImageVM = new ImageViewModel(this);
-        DetailVM = new DetailViewModel(this);
         AnalysisVM = new AnalysisViewModel(this);
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
@@ -310,7 +308,7 @@ public class MainViewModel : ViewModelBase
 
             // 通知相关视图模型布局已变化
             ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsRowLayout));
-            DetailVM?.RaisePropertyChanged(nameof(DetailVM.IsRowLayout));
+            AnalysisVM?.RaisePropertyChanged(nameof(AnalysisVM.IsRowLayout));
         }
     }
 
@@ -334,15 +332,8 @@ public class MainViewModel : ViewModelBase
         }
     }
     
-    private bool _isDetailViewVisible = false;
-    public bool IsDetailViewVisible
-    {
-        get => _isDetailViewVisible;
-        set => this.RaiseAndSetIfChanged(ref _isDetailViewVisible, value);
-    }
-
     private bool _isAnalysisViewVisible = false;
-    /// <summary>分析栏(细节预览 + DINO/CV 诊断合并)是否可见。新菜单/快捷键的"细节栏"实际控制此项。</summary>
+    /// <summary>分析栏(细节预览 + DINO/CV 诊断合并)是否可见。菜单/快捷键(显示为"分析栏")控制此项。</summary>
     public bool IsAnalysisViewVisible
     {
         get => _isAnalysisViewVisible;
@@ -363,12 +354,7 @@ public class MainViewModel : ViewModelBase
         set => this.RaiseAndSetIfChanged(ref _isControlViewVisible, value);
     }
 
-    public void ToggleDetailView()
-    {
-        IsDetailViewVisible = !IsDetailViewVisible;
-    }
-
-    /// <summary>切换新分析栏可见性。绑定到原"细节栏"菜单项与快捷键。</summary>
+    /// <summary>切换分析栏可见性。绑定到菜单项与快捷键。</summary>
     public void ToggleAnalysisView()
     {
         IsAnalysisViewVisible = !IsAnalysisViewVisible;

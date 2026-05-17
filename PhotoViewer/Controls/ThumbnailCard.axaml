@@ -11,6 +11,7 @@
         <local:BoolToCurrentBorderConverter x:Key="BoolToBorderConverter" />
         <local:BoolToCachedBorderConverter x:Key="CachedBorderConverter" />
         <local:StarColorConverter x:Key="StarColorConverter" />
+        <local:ProgressFractionToWidthConverter x:Key="ProgressFractionToWidthConverter" />
     </UserControl.Resources>
 
     <UserControl.Styles>
@@ -99,7 +100,7 @@
                         <!-- 抖动徽标:橙底白字"抖",右下角内嵌 2px -->
                         <Border Width="16"
                                 Height="16"
-                                Background="#FF8800"
+                                Background="#FF5500"
                                 CornerRadius="2"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Bottom"
@@ -124,11 +125,34 @@
                                HorizontalAlignment="Center"
                                TextTrimming="CharacterEllipsis"
                                MaxWidth="90" />
-                    <TextBlock Text="{Binding SecondLineText, ElementName=CardRoot}"
-                               ToolTip.Tip="{Binding SecondLineToolTip, ElementName=CardRoot}"
-                               FontSize="9"
-                               Foreground="#AAAAAA"
-                               HorizontalAlignment="Center" />
+
+                    <!--
+                        第二行:文本上叠柱状进度条(Excel 风格)。
+                        SecondLineProgress 为 null 时只显示文本(主缩略图列表的"拍摄时间"用法);
+                        非 null 时在 80px 宽度上按比例填色,文本绘制在条的上层居中。
+                    -->
+                    <Grid Width="80" HorizontalAlignment="Center">
+                        <Border IsVisible="{Binding SecondLineProgress, ElementName=CardRoot,
+                                    Converter={x:Static ObjectConverters.IsNotNull}}"
+                                Background="#444444"
+                                CornerRadius="4"
+                                HorizontalAlignment="Stretch"
+                                VerticalAlignment="Stretch">
+                            <Border Background="#991e90ff"
+                                    CornerRadius="4"
+                                    HorizontalAlignment="Left"
+                                    Width="{Binding SecondLineProgress, ElementName=CardRoot,
+                                        Converter={StaticResource ProgressFractionToWidthConverter},
+                                        ConverterParameter=80}" />
+                        </Border>
+                        <TextBlock Text="{Binding SecondLineText, ElementName=CardRoot}"
+                                   ToolTip.Tip="{Binding SecondLineToolTip, ElementName=CardRoot}"
+                                   FontSize="9"
+                                   FontWeight="Bold"
+                                   Foreground="#EEEEEE"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Grid>
 
                     <StackPanel Orientation="Horizontal"
                                 HorizontalAlignment="Center"
