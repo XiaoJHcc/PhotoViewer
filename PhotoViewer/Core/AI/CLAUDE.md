@@ -1,0 +1,23 @@
+# Core/AI — DINOv3 特征 + CV 网格 + 相似聚类
+
+> 模块内手册。跨模块联动(批量索引被谁触发、抖动徽标怎么回填到 UI、清库按钮如何级联)写在根 `CLAUDE.md` §5 关键流程。
+
+`namespace PhotoViewer.Core.AI`
+
+> 二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](../../../Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](../../../Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
+
+| File | 模块 | Responsibility |
+|---|---|---|
+| [DinoModelResources.cs](DinoModelResources.cs) | 模型资源常量 | ONNX 资源 URI、输入规格(518/ImageNet mean-std)、I/O 端口名、`PatchSize`/`PatchGrid`/`PatchTokenCount`、`ModelId`(当前 `dinov3_vits16_f32_518_v1`)。改动此处需同步两个 Python 工具。 |
+| [DinoFeatureExtractor.cs](DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime CPU EP 静态门面;延迟建 session + `EnsureDualOutputSchema` 早失败;`ExtractAsync` 只取 L2 归一化的 CLS 向量;`ExtractDualAsync(..., includePatches)` 同时返回 1024×384 patch token,供诊断工具页与 indexer 消费。 |
+| [DinoFeatureCache.cs](DinoFeatureCache.cs) | CLS 向量缓存 | 指纹索引 + 进程内存缓存 + `Lazy` 闸门(同指纹并发只推一次)。`GetOrComputeAsync` miss 走 `PhotoDatabase.WriteFeatureAsync` 后台写纵表;`TryReadAsync` 只读不触发推理;`InvalidateAll` 给"清除特征数据库"按钮调用。 |
+| [FolderFeatureIndexer.cs](FolderFeatureIndexer.cs) | 全文件夹批量索引 | 实例化调度器:`GroupByFingerprintAsync` 按指纹聚合 → `EvaluateMissingPartsAsync` 评估三路缺失(CLS / patch / CV grid)→ 一轮扫描同时落 DINO CLS+patch+CV,单事务 `WriteIndexedAsync`。桌面端 `ProcessorCount/2` 解码并发 + 单线程 ONNX 推理;移动端单线程。进度按"指纹组"推进,完成后 `PutMemoryCache` 同步进程缓存。 |
+| [SimilarityService.cs](SimilarityService.cs) | 相似聚类 | 基于 DINOv3 [CLS] cosine 的相似聚类(阈值与最多数量由 `SettingsViewModel.SimilarityThreshold` / `SimilarityMaxResults` 提供:阈值 75%~95% 默认 85%,数量 1~32 默认 8;硬上限 64 项),拍摄时间差作 tiebreaker。锚点必算、池内只读缓存 — 避免一次切图触发成百上千次推理。 |
+| [CvGridResult.cs](CvGridResult.cs) | CV 网格结果 POCO | 32×32 格 × **7 标量** × 1 层 = **7168 float**;标量 `edge_count` / `edge_width_p20` / `edge_width_median` / `drag_width` / `drag_direction` / `anisotropy` / **`block_contrast`**;`Version`(当前 **`cv_grid_v5_contrast`**)+ 小端 BLOB Encode/Decode。块尺寸自适应 `clamp(短边/32, 64, 192)`。**v5 升级**:`block_contrast` 升标量入库,UI 看图 ≡ DB 重画图。 |
+| [CvGridExtractor.cs](CvGridExtractor.cs) | CV v5 标量提取 | 纯托管,无 native 依赖;每格 Sobel + 块级累结构张量 (Sxx,Syy,Sxy) → `θ_st` / `anisotropy`;边种子按自适应 τ_edge + NMS,Marziliano 单边步进算边宽;`drag_bucket` = 离 (θ_st+π/2) 最近的有效 bucket(测拖影线方向);`MaxHalfWidth` 按对角线 0.8% 自适应;同时累 luma 64-bin 直方图算 `block_contrast = p98-p2`(v5 写进 result.Data 第 7 标量);`Parallel.For` 跨格并行。`ExtractAsync(Bitmap)` 返回 CvGridResult(单一入口),`ExtractFromLuma(luma,w,h)` 给 CvDebugTool 用。 |
+| [CvHeatmap.cs](CvHeatmap.cs) | CV 诊断图 + 判定(纯函数) | `BuildSharpness(result)` 边宽对数热力图 × `ContrastFactor`(从 result 第 7 标量读);`BuildShakeField(result, diagonal)` 输出 32×32 `Direction` / `Width` / `Mask` / `LocalConsistency`(5×5 邻域 2θ 圆形均值)/ `Contrast` + 图像对角线 D,对比度软门控让低对比格不进 mask;`FitRigidMotion` 加权 LS + 迭代符号对齐,weight 乘 c_factor,输出 `\|T\|` / `\|ω\|` / `R_global` / `R_local p10` / `MaskRatio`;`ColorForShake(drag_r, R_local, c_factor)` 是 View/CvDebugTool 共用的唯一权威配色函数;判定阈值常量集中在文件顶部,改一处必同步 14 张样本回归。**所有 contrast 都从 result 读,阈值不入库**。 |
+| [ShakeClassifier.cs](ShakeClassifier.cs) | 抖动分类(纯函数) | 把 `RigidMotionResult` + diagonal 映射到 `ShakeVerdict` 枚举(信息不足/静止/强旋转抖动/旋转抖动/平移抖动/混乱/弱信号);`IsShake(verdict)` 判定三类"算抖"(平移/旋转/强旋转);`FormatLabel` 给文本面板与潜在 ToolTip 共用。判定阈值常量仍集中在 `CvHeatmap`,本文件只做规则编排 — 缩略图徽标与 DINO 诊断页文本面板从同一份判定出发,改阈值两端同步。 |
+| [ShakeFlagService.cs](ShakeFlagService.cs) | 抖动徽标服务 | 静态门面,按指纹分组读 `photos.cv_grid` + `cv_image_width/height` → `BuildShakeField` + `FitRigidMotion` + `ShakeClassifier.Classify` → 回填 `ImageFile.IsShake`。完全不触发图像解码或 ONNX 推理;进程内按指纹缓存。`EvaluateAsync` 由 `MainViewModel` 在 `FolderVM.AllFilesChanged` 时调用,以及 `SimilarityPanelViewModel` 在批量索引完成后调用;`InvalidateAll` + `RecheckRequested` 让 AI 设置页"清除特征数据库"按钮能让徽标即时消失。 |
+| [PatchHeatmap.cs](PatchHeatmap.cs) | DINO patch 诊断图(纯函数) | 消费 1024×384 patch token:`ComputePcaRgb` 经济型 SVD 取前 3 主成分 → 32×32×3;`ComputeRefCosine` 参考点 cosine 映射到 [0,1]。PCA 用 `MathNet.Numerics`。 |
+| [HeatmapBitmapBuilder.cs](HeatmapBitmapBuilder.cs) | 诊断图渲染 | 把 [0,1] 平面或 RGB 数组渲成 `WriteableBitmap`(viridis / grayscale / raw RGB);输出 1:1 原尺寸,放大交给 XAML 端 `BitmapInterpolationMode=None`。 |
+| [AnalysisDataReader.cs](AnalysisDataReader.cs) | 分析栏只读门面 | 静态门面,从 `ImageFile` 出发算指纹 → `Task.WhenAll(ReadPatchesAsync, ReadCvGridAsync)` 并行读 → 反序列化为 `(patches, cv, cvImageWidth, cvImageHeight)`。**完全不触发图像解码 / ONNX 推理 / CV 重算**;指纹缺失或 schema 不匹配视为该项缺失。供 `AnalysisViewModel` 切图时常驻拉取,缺什么由 UI 占位"未提取"。 |
