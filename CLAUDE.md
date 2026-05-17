@@ -2,6 +2,8 @@
 
 > Primary briefing for Claude Code. Loaded automatically at session start.
 > Keep concise; update when architecture shifts (rename, split, new module). Do **not** log small bug fixes here.
+>
+> **文档结构**:本文件仅含项目快照、跨模块流程、平台矩阵、辅助组件、编码/任务/文档规范。模块内的文件清单与职责放在各模块的 `CLAUDE.md`(见 §3 模块索引),改文件时会随目录自动加载。
 
 ---
 
@@ -37,87 +39,22 @@ Directory.Packages.props  # Central NuGet version pinning
 
 ---
 
-## 3. Shared Core 核心通用服务 ([PhotoViewer/Core/](PhotoViewer/Core/))
+## 3. Module Index 模块索引
 
-UI-independent business logic. **Do not reference Avalonia controls from this layer.**
-
-**AI/** — DINOv3 特征 + CV 网格 + 相似聚类（`namespace PhotoViewer.Core.AI`）
-
-> AI 是目前主要开发任务,二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
-
-| File | 模块 | Responsibility |
+| 目录 | 模块手册 | 一句话职责 |
 |---|---|---|
-| [AI/DinoModelResources.cs](PhotoViewer/Core/AI/DinoModelResources.cs) | 模型资源常量 | ONNX 资源 URI、输入规格(518/ImageNet mean-std)、I/O 端口名、`PatchSize`/`PatchGrid`/`PatchTokenCount`、`ModelId`(当前 `dinov3_vits16_f32_518_v1`)。改动此处需同步两个 Python 工具。 |
-| [AI/DinoFeatureExtractor.cs](PhotoViewer/Core/AI/DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime CPU EP 静态门面;延迟建 session + `EnsureDualOutputSchema` 早失败;`ExtractAsync` 只取 L2 归一化的 CLS 向量;`ExtractDualAsync(..., includePatches)` 同时返回 1024×384 patch token,供诊断工具页与 indexer 消费。 |
-| [AI/DinoFeatureCache.cs](PhotoViewer/Core/AI/DinoFeatureCache.cs) | CLS 向量缓存 | 指纹索引 + 进程内存缓存 + `Lazy` 闸门(同指纹并发只推一次)。`GetOrComputeAsync` miss 走 `PhotoDatabase.WriteFeatureAsync` 后台写纵表;`TryReadAsync` 只读不触发推理;`InvalidateAll` 给"清除特征数据库"按钮调用。 |
-| [AI/FolderFeatureIndexer.cs](PhotoViewer/Core/AI/FolderFeatureIndexer.cs) | 全文件夹批量索引 | 实例化调度器:`GroupByFingerprintAsync` 按指纹聚合 → `EvaluateMissingPartsAsync` 评估三路缺失(CLS / patch / CV grid)→ 一轮扫描同时落 DINO CLS+patch+CV,单事务 `WriteIndexedAsync`。桌面端 `ProcessorCount/2` 解码并发 + 单线程 ONNX 推理;移动端单线程。进度按"指纹组"推进,完成后 `PutMemoryCache` 同步进程缓存。 |
-| [AI/SimilarityService.cs](PhotoViewer/Core/AI/SimilarityService.cs) | 相似聚类 | 基于 DINOv3 [CLS] cosine 的相似聚类(阈值与最多数量由 `SettingsViewModel.SimilarityThreshold` / `SimilarityMaxResults` 提供:阈值 75%~95% 默认 85%,数量 1~32 默认 8;硬上限 64 项),拍摄时间差作 tiebreaker。锚点必算、池内只读缓存 — 避免一次切图触发成百上千次推理。 |
-| [AI/CvGridResult.cs](PhotoViewer/Core/AI/CvGridResult.cs) | CV 网格结果 POCO | 32×32 格 × **7 标量** × 1 层 = **7168 float**;标量 `edge_count` / `edge_width_p20` / `edge_width_median` / `drag_width` / `drag_direction` / `anisotropy` / **`block_contrast`**;`Version`(当前 **`cv_grid_v5_contrast`**)+ 小端 BLOB Encode/Decode。块尺寸自适应 `clamp(短边/32, 64, 192)`。**v5 升级**:`block_contrast` 升标量入库,UI 看图 ≡ DB 重画图。 |
-| [AI/CvGridExtractor.cs](PhotoViewer/Core/AI/CvGridExtractor.cs) | CV v5 标量提取 | 纯托管,无 native 依赖;每格 Sobel + 块级累结构张量 (Sxx,Syy,Sxy) → `θ_st` / `anisotropy`;边种子按自适应 τ_edge + NMS,Marziliano 单边步进算边宽;`drag_bucket` = 离 (θ_st+π/2) 最近的有效 bucket(测拖影线方向);`MaxHalfWidth` 按对角线 0.8% 自适应;同时累 luma 64-bin 直方图算 `block_contrast = p98-p2`(v5 写进 result.Data 第 7 标量);`Parallel.For` 跨格并行。`ExtractAsync(Bitmap)` 返回 CvGridResult(单一入口),`ExtractFromLuma(luma,w,h)` 给 CvDebugTool 用。 |
-| [AI/CvHeatmap.cs](PhotoViewer/Core/AI/CvHeatmap.cs) | CV 诊断图 + 判定(纯函数) | `BuildSharpness(result)` 边宽对数热力图 × `ContrastFactor`(从 result 第 7 标量读);`BuildShakeField(result, diagonal)` 输出 32×32 `Direction` / `Width` / `Mask` / `LocalConsistency`(5×5 邻域 2θ 圆形均值)/ `Contrast` + 图像对角线 D,对比度软门控让低对比格不进 mask;`FitRigidMotion` 加权 LS + 迭代符号对齐,weight 乘 c_factor,输出 `\|T\|` / `\|ω\|` / `R_global` / `R_local p10` / `MaskRatio`;`ColorForShake(drag_r, R_local, c_factor)` 是 View/CvDebugTool 共用的唯一权威配色函数;判定阈值常量集中在文件顶部,改一处必同步 14 张样本回归。**所有 contrast 都从 result 读,阈值不入库**。 |
-| [AI/ShakeClassifier.cs](PhotoViewer/Core/AI/ShakeClassifier.cs) | 抖动分类(纯函数) | 把 `RigidMotionResult` + diagonal 映射到 `ShakeVerdict` 枚举(信息不足/静止/强旋转抖动/旋转抖动/平移抖动/混乱/弱信号);`IsShake(verdict)` 判定三类"算抖"(平移/旋转/强旋转);`FormatLabel` 给文本面板与潜在 ToolTip 共用。判定阈值常量仍集中在 `CvHeatmap`,本文件只做规则编排 — 缩略图徽标与 DINO 诊断页文本面板从同一份判定出发,改阈值两端同步。 |
-| [AI/ShakeFlagService.cs](PhotoViewer/Core/AI/ShakeFlagService.cs) | 抖动徽标服务 | 静态门面,按指纹分组读 `photos.cv_grid` + `cv_image_width/height` → `BuildShakeField` + `FitRigidMotion` + `ShakeClassifier.Classify` → 回填 `ImageFile.IsShake`。完全不触发图像解码或 ONNX 推理;进程内按指纹缓存。`EvaluateAsync` 由 `MainViewModel` 在 `FolderVM.AllFilesChanged` 时调用,以及 `SimilarityPanelViewModel` 在批量索引完成后调用;`InvalidateAll` + `RecheckRequested` 让 AI 设置页"清除特征数据库"按钮能让徽标即时消失。 |
-| [AI/PatchHeatmap.cs](PhotoViewer/Core/AI/PatchHeatmap.cs) | DINO patch 诊断图(纯函数) | 消费 1024×384 patch token:`ComputePcaRgb` 经济型 SVD 取前 3 主成分 → 32×32×3;`ComputeRefCosine` 参考点 cosine 映射到 [0,1]。PCA 用 `MathNet.Numerics`。 |
-| [AI/HeatmapBitmapBuilder.cs](PhotoViewer/Core/AI/HeatmapBitmapBuilder.cs) | 诊断图渲染 | 把 [0,1] 平面或 RGB 数组渲成 `WriteableBitmap`(viridis / grayscale / raw RGB);输出 1:1 原尺寸,放大交给 XAML 端 `BitmapInterpolationMode=None`。 |
-| [AI/AnalysisDataReader.cs](PhotoViewer/Core/AI/AnalysisDataReader.cs) | 分析栏只读门面 | 静态门面,从 `ImageFile` 出发算指纹 → `Task.WhenAll(ReadPatchesAsync, ReadCvGridAsync)` 并行读 → 反序列化为 `(patches, cv, cvImageWidth, cvImageHeight)`。**完全不触发图像解码 / ONNX 推理 / CV 重算**;指纹缺失或 schema 不匹配视为该项缺失。供 `AnalysisViewModel` 切图时常驻拉取,缺什么由 UI 占位"未提取"。 |
+| [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/CLAUDE.md](PhotoViewer/Core/AI/CLAUDE.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
+| [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/CLAUDE.md](PhotoViewer/Core/Database/CLAUDE.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
+| [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/CLAUDE.md](PhotoViewer/Core/Image/CLAUDE.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
+| [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/CLAUDE.md](PhotoViewer/Core/Exif/CLAUDE.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
+| [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/CLAUDE.md](PhotoViewer/Core/Platform/CLAUDE.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |
+| [PhotoViewer/Core/Settings/](PhotoViewer/Core/Settings/) | [Core/Settings/CLAUDE.md](PhotoViewer/Core/Settings/CLAUDE.md) | JSON 设置持久化 + 原生设置展示器接口 |
+| [PhotoViewer/Core/Tools/](PhotoViewer/Core/Tools/) | [Core/Tools/CLAUDE.md](PhotoViewer/Core/Tools/CLAUDE.md) | 照片数据统计服务(Windows 限定) |
+| [PhotoViewer/ViewModels/Main/](PhotoViewer/ViewModels/Main/) | [ViewModels/Main/CLAUDE.md](PhotoViewer/ViewModels/Main/CLAUDE.md) | 主窗口 shell + 文件源/文件栏/图片/控制/分析 VM |
+| [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/CLAUDE.md](PhotoViewer/ViewModels/Tools/CLAUDE.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |
+| [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/CLAUDE.md](PhotoViewer/ViewModels/Settings/CLAUDE.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
 
-**Database/** — 照片缓存数据库（`namespace PhotoViewer.Core.Database`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Database/PhotoDatabase.cs](PhotoViewer/Core/Database/PhotoDatabase.cs) | 缓存数据库门面 | SQLite (`photos.db`) 静态门面,与 `SettingsService` 共用数据目录。三表 schema(Plan-2-3):**`photos`** 身份字段 + `cv_grid` BLOB + `cv_grid_spec` TEXT(覆盖式,版本 bump 即作废)+ `cv_computed_at` + `cv_image_width` / `cv_image_height`(CV 实际解码尺寸,供抖动徽标服务算 diagonal,无需重新解码)+ `rating`(预留);**`photo_features`** DINO CLS 纵表 `(fingerprint, model_id)` 主键 + `cls_vector` BLOB;**`photo_patches`** DINO patch token 纵表同主键 + `patch_tokens` BLOB(1024×384 float)。读写 API:`WriteIndexedAsync`(indexer 主路径,单事务三表,可携带尺寸)、`WriteFeatureAsync` / `ReadFeatureAsync` / `WritePatchesAsync` / `ReadPatchesAsync` / `WriteCvGridAsync` / `ReadCvGridAsync`(返回 `CvGridRecord` 含尺寸)/ `EvaluateMissingPartsAsync` / `DeleteDatabaseAsync`(供 AI 设置页"清除特征数据库"按钮)。启动时检测旧 schema(`feature_vector` / `heatmap` 列残留,或缺 `cv_image_width/height` 列)自动删库重建。 |
-| [Database/PhotoFingerprint.cs](PhotoViewer/Core/Database/PhotoFingerprint.cs) | 指纹计算 | 三字段规范化 SHA1：`filename_noext` + `DateTimeOriginal`(秒, UTC ISO-8601) + `SubSecTimeOriginal`(3 位毫秒)。同一次曝光的 RAW/HIF/JPG 字节级字段一致 → 同指纹；高速连拍由 SubSec 毫秒区分；文件名编号循环由日期区隔。验证工具见 `ExifTestTool fp <folder>`。 |
-
-**Image/** — 图片解码与文件模型（`namespace PhotoViewer.Core.Image`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Image/BitmapLoader.cs](PhotoViewer/Core/Image/BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation. |
-| [Image/BitmapPrefetcher.cs](PhotoViewer/Core/Image/BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. |
-| [Image/HeifLoader.cs](PhotoViewer/Core/Image/HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
-| [Image/ImageFile.cs](PhotoViewer/Core/Image/ImageFile.cs) | 文件模型 | Per-file state: path, load status, EXIF cache, thumbnail bitmap, `IsShake : bool?`(由 `ShakeFlagService` 回填,驱动缩略图卡片的"抖"徽标)。 |
-| [Image/ImageOrientationInfo.cs](PhotoViewer/Core/Image/ImageOrientationInfo.cs) | 容器方向元数据 | 统一封装 HEIF `Default Rotation` / EXIF `Orientation` + `ExifImageWidth/Height`，给出"显示朝向旋转角 + 水平镜像 + 传感器原始 W/H"。`ThumbnailService` 据此做方向对齐与 letterbox 几何裁剪，无任何启发式。 |
-| [Image/JpegDimensionReader.cs](PhotoViewer/Core/Image/JpegDimensionReader.cs) | JPEG SOF 解析 | 字节级解析 JPEG SOF marker (FFC0..FFCF) 直接读真实宽高。HEIF 的 Thumbnail Data 字节嗅探与厂商 Preview 都依赖它，避免再用容器索引贴标签出错。 |
-| [Image/ThumbnailService.cs](PhotoViewer/Core/Image/ThumbnailService.cs) | 缩略图服务门面 | `GetAvailableSourcesAsync(file)` 列出来源（EXIF/IFD1 缩略图、厂商 PreviewImage、HEIF 内嵌 JPEG/平台兜底）；`GetThumbnailAsync(file, minShortSide)` 取**显示短边 ≥ target 中最小**的来源解码,随后按 `ImageOrientationInfo` 做方向对齐 + letterbox 几何裁剪。HEIF 字节路径只接 JPEG（用 `JpegDimensionReader` 自读尺寸）,HEVC 字节走平台 `HeifLoader` 兜底（已预旋转）。**不再回退原图全图解码**,所有来源都失败时返回 null 由 UI 显示占位符。 |
-| [Image/ThumbnailSource.cs](PhotoViewer/Core/Image/ThumbnailSource.cs) | 缩略图来源 POCO | `Width`/`Height`（字节本身像素，未旋转）/ `Origin`（`ExifEmbedded` / `MakernotePreview` / `HeifEmbedded`）/ `IsPreRotated`（标记该来源是否已是显示朝向，平台 HEIF 解码器为 true，字节直读路径为 false）。 |
-
-**Platform/** — 平台能力抽象（`namespace PhotoViewer.Core.Platform`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Platform/PerformanceBudget.cs](PhotoViewer/Core/Platform/PerformanceBudget.cs) | 性能预算 | Static facade. Exposes memory cap, CPU cores, native-preload thread limit. |
-| [Platform/ExternalOpenService.cs](PhotoViewer/Core/Platform/ExternalOpenService.cs) | 外部打开服务 | Pending-queue + dispatch for "Open With" / share-to flows. |
-| [Platform/StorageAccessManager.cs](PhotoViewer/Core/Platform/StorageAccessManager.cs) | 存储访问门面 | Platform security-scoped access (iOS/macOS sandbox, Android SAF). Long-term retention + transient scopes. |
-
-**Settings/** — 设置持久化（`namespace PhotoViewer.Core.Settings`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Settings/SettingsService.cs](PhotoViewer/Core/Settings/SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). |
-| [Settings/SettingsModel.cs](PhotoViewer/Core/Settings/SettingsModel.cs) | 设置模型 | 序列化 POCO，定义所有持久化字段及默认值。 |
-| [Settings/NativeSettingsPresenter.cs](PhotoViewer/Core/Settings/NativeSettingsPresenter.cs) | 原生设置展示器 | `INativeSettingsPresenter` 接口 + `TryPresent` 静态调用入口；平台层实现原生弹窗，移动端回退到 Avalonia 模态。 |
-
-**Exif/** — 元数据读写（`namespace PhotoViewer.Core`，Exif 文件沿用根命名空间）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Exif/ExifLoader.cs](PhotoViewer/Core/Exif/ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser`。 |
-| [Exif/ExifModels.cs](PhotoViewer/Core/Exif/ExifModels.cs) | 元数据模型 | `ExifData` / `MetadataGroup` / `MetadataTag` POCO。 |
-| [Exif/ExifMetadataGrouper.cs](PhotoViewer/Core/Exif/ExifMetadataGrouper.cs) | 分组与翻译 | 展开 MetadataExtractor 目录为按目录分组的可读 tag 列表，应用 `ExifChinese`/`ExifToolTags`/`ExifToolValues` 翻译。 |
-| [Exif/ExifChinese.cs](PhotoViewer/Core/Exif/ExifChinese.cs) | 元数据汉化 | Chinese tag-name overrides; generated baseline in `ExifChinese.Generated.cs`. |
-| [Exif/ExifToolTags.cs](PhotoViewer/Core/Exif/ExifToolTags.cs) | 标签库 | English tag-name overrides + brand override tables. Generated baseline in `ExifToolTags.Generated.cs`. |
-| [Exif/ExifToolValues.cs](PhotoViewer/Core/Exif/ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
-| [Exif/XmpWriter.cs](PhotoViewer/Core/Exif/XmpWriter.cs) | 标星评分写入 | XMP rating writes — in-place edit + sidecar fallback for RAW. |
-| [Exif/Sony/SonyMakernoteParser.cs](PhotoViewer/Core/Exif/Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度。 |
-| [Exif/Sony/SonyCipherTags.cs](PhotoViewer/Core/Exif/Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks. **Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
-
-**Tools/** — 辅助工具（`namespace PhotoViewer.Core.Tools`）
-
-| File | 模块 | Responsibility |
-|---|---|---|
-| [Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs) | 照片数据统计服务 | 递归扫描多文件夹，读取等效焦距与星级，导出 CSV。仅 Windows 启用（`OperatingSystem.IsWindows()`）。 |
-
-> **Generated files**: anything ending in `.Generated.cs` is overwritten by `Tools/*.py`. Manual fixes belong in the non-generated companion file's override table. See [DEV.md §五](DEV.md) for the regeneration workflow.
+> Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
 ---
 
@@ -135,42 +72,11 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 ---
 
-## 5. UI Layer 用户界面逻辑
+## 5. Key Workflows 跨模块关键流程
 
-ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [PhotoViewer/Views/](PhotoViewer/Views/).
-[MainViewModel.cs](PhotoViewer/ViewModels/Main/MainViewModel.cs) is the root and composes all sub-VMs.
+> 每个流程跨越多个模块,所以集中在此处而非任一子文档。子文档只描述模块内部行为,跨模块联动以**链接**指回这里。
 
-### 5.1 Module map 模块对应
-
-| 模块 | ViewModel | View | Notes |
-|---|---|---|---|
-| **主窗口 / Main shell** | `MainViewModel` | Desktop: [Windows/MainWindowForWindows.axaml](PhotoViewer/Windows/MainWindowForWindows.axaml), [Windows/MainWindowForMac.axaml](PhotoViewer/Windows/MainWindowForMac.axaml) · Mobile: [Windows/SingleView.axaml](PhotoViewer/Windows/SingleView.axaml) hosting [Views/Main/MainView.axaml](PhotoViewer/Views/Main/MainView.axaml) | Layout switch (grid/list), fullscreen, child-VM wiring. |
-| **文件源** | [ViewModels/Main/FolderViewModel.cs](PhotoViewer/ViewModels/Main/FolderViewModel.cs) | (logic only) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。 |
-| **文件栏-容器** | [ViewModels/Main/File/FileViewModel.cs](PhotoViewer/ViewModels/Main/File/FileViewModel.cs) | [Views/Main/File/FileView.axaml](PhotoViewer/Views/Main/File/FileView.axaml) | 三分区容器：筛选条 + 主缩略图列表 + 相似聚类面板。单层 `Grid` 按 `IsRowLayout` 切换列定义（行布局:两列 *，筛选条跨两列；列布局:主列 116px + 聚类列 Auto，筛选条仅占主列）。聚类面板 `IsVisible` 绑定 `IsSimilarityPanelOpen`，默认折叠。 |
-| **文件栏-筛选** | [ViewModels/Main/File/FilterBarViewModel.cs](PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs) | [Views/Main/File/FilterBarView.axaml](PhotoViewer/Views/Main/File/FilterBarView.axaml) | 排序方式 / 方向 / 星级筛选 + 计数 + 相似聚类 toggle。变化通过 `FilterChanged` / `SortChanged` / `SimilarityPanelToggled` 事件通知下游。`IsSimilarityPanelOpen` 直通 `SettingsModel.SimilarityPanelExpanded`（跨会话保留）。`StackPanel` 名为 `FilterBarPanel`，平台标题栏代码靠它定位筛选条边界。 |
-| **文件栏-主缩略图列表** | [ViewModels/Main/File/ThumbnailListViewModel.cs](PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs) | [Views/Main/File/ThumbnailListView.axaml](PhotoViewer/Views/Main/File/ThumbnailListView.axaml) | 维护 `FilteredFiles`、缩略图加载队列、可见区域滚动+动画；位图预取由内置的 `BitmapPrefetcher` 调度。卡片渲染已抽到共享 `ThumbnailCard` 控件（与相似聚类列表复用）。 |
-| **文件栏-相似聚类列表** | [ViewModels/Main/File/SimilarityPanelViewModel.cs](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) | [Views/Main/File/SimilarityListView.axaml](PhotoViewer/Views/Main/File/SimilarityListView.axaml) | 基于 DINOv3 CLS 的真实相似聚类(`Core/AI/SimilarityService`)。三态 UI(Empty / Partial / Full)+ "提取全部/补齐全部" 按钮原地变进度条;`FolderFeatureIndexer` 一轮扫描同时落 DINO CLS+patch+CV 三类原始数据,`EvaluateMissingPartsAsync` 三路齐备才算已提取。面板展开时 `OnPanelOpened` 触发覆盖度评估;点击相似项通过 `SetCurrentImageKeepAnchor` 切主图但保留原锚点。 |
-| **主要图片显示** | [ViewModels/Main/ImageViewModel.cs](PhotoViewer/ViewModels/Main/ImageViewModel.cs) | [Views/Main/ImageView.axaml](PhotoViewer/Views/Main/ImageView.axaml) | Main canvas. Single-image display, zoom/pan gestures, load state. |
-| **控制栏** | [ViewModels/Main/ControlViewModel.cs](PhotoViewer/ViewModels/Main/ControlViewModel.cs) | [Views/Main/ControlView.axaml](PhotoViewer/Views/Main/ControlView.axaml) | Toolbar buttons (open, display options, fullscreen). |
-| **细节栏(旧,已无菜单入口)** | [ViewModels/Main/DetailViewModel.cs](PhotoViewer/ViewModels/Main/DetailViewModel.cs) | [Views/Main/DetailView.axaml](PhotoViewer/Views/Main/DetailView.axaml) | 旧实现:5 张 DetailPreview(中心/四角)+ Sony 对焦点动态项。`IsDetailViewVisible` 仍在 `MainViewModel`,但右键菜单和 `ToggleDetailView` 快捷键已重定向到分析栏。保留是为了出问题时一行改回 (`ControlViewModel.OnToggleDetailView`)。下个清理 PR 整体删除。 |
-| **分析栏** | [ViewModels/Main/AnalysisViewModel.cs](PhotoViewer/ViewModels/Main/AnalysisViewModel.cs) | [Views/Main/AnalysisView.axaml](PhotoViewer/Views/Main/AnalysisView.axaml) | 常驻侧栏,合并细节预览(对焦点/中心,DetailPreview 复用,hover/double-tap 联动主图绿框)+ 4 张 DINO/CV 诊断图(`DINO PCA` / `Cosine x,y` / `锐度` / `抖动拖影`,DiagnosticTile + ShakeFieldView 复用)。**只读库**:每次切图 `AnalysisDataReader.TryReadAsync` 拉指纹 → patch + cv_grid → 派生层现算 4 张图与判定文字 — **不解码、不推理、不重算 CV**,缓存缺失时角标改为判定文字或"中心"等占位,主图区显示"未提取"。`diagonal` 从 `cv_image_width/height` 读,无需重新解码。下半 4 张瓦片共享准星 + cosine 参考点(点击瓦片 → `OnTileClicked` 重算 cosine 项);上半 2 张 DetailPreview 自己吃点击事件,不参与准星。可见性 false 时取消后台 token,避免泄漏。 |
-| **工具窗口首页 / Tools shell** | [ViewModels/Tools/ToolsViewModel.cs](PhotoViewer/ViewModels/Tools/ToolsViewModel.cs) | [Views/Tools/ToolsView.axaml](PhotoViewer/Views/Tools/ToolsView.axaml) + [Views/Tools/ToolsWindow.axaml](PhotoViewer/Views/Tools/ToolsWindow.axaml) | Shared tool hub for desktop window / mobile modal. Current tools: EXIF 详情、照片数据统计、DINO 诊断。 |
-| **EXIF 详情页** | [ViewModels/Tools/ExifDetailViewModel.cs](PhotoViewer/ViewModels/Tools/ExifDetailViewModel.cs) | [Views/Tools/ExifDetailView.axaml](PhotoViewer/Views/Tools/ExifDetailView.axaml) | Tool page hosted inside the shared tools shell. Switches between sibling files of the same shot (RAW / JPG / HEIF) — RAW pinned first, companion files lazy-loaded. |
-| **照片数据统计** | [ViewModels/Tools/PhotoStatsViewModel.cs](PhotoViewer/ViewModels/Tools/PhotoStatsViewModel.cs) | [Views/Tools/PhotoStatsView.axaml](PhotoViewer/Views/Tools/PhotoStatsView.axaml) | 选择多文件夹 + 通配符筛选，批量递归扫描，读取等效焦距与星级，导出为 CSV。仅 Windows（依赖 `System.IO.Directory`，`IsPhotoStatsAvailable = OperatingSystem.IsWindows()`）。核心服务：[Core/Tools/PhotoStatsService.cs](PhotoViewer/Core/Tools/PhotoStatsService.cs)。 |
-| **DINO 诊断页** | [ViewModels/Tools/DinoDebugViewModel.cs](PhotoViewer/ViewModels/Tools/DinoDebugViewModel.cs) | [Views/Tools/DinoDebugView.axaml](PhotoViewer/Views/Tools/DinoDebugView.axaml) | 平铺展示锐度热力图 + 抖动矢量场(颜色由 R_local 主导色相 × drag_r 调亮度)+ 加权刚体拟合文本面板(含 \|T\| / \|ω\| / R_global / R_local p10 / 判定标签)+ DINO PCA-RGB + 点击参考点 cosine。**优先读库快路径**(`TryReadCachedAsync` 同时取 patch token + cv_grid 7 标量),命中跳过推理与 CV 计算;诊断页不回写库(回写交给 indexer 主路径)。派生层(锐度/抖动/刚体)从 7 标量现算,UI 看图 ≡ DB 重画图。仅在工具页显示时联动(`SyncCurrentFile`)。 |
-| **设置页** | `SettingsViewModel` (partial across 9 files: `.AI`, `.BitmapCache`, `.ExifDisplay`, `.FileFormats`, `.Hotkeys`, `.ImagePreview`, `.Layout`, `.Persistence`, `.Rating`) | [Views/Settings/](PhotoViewer/Views/Settings/) | 五个分页:文件 / 预览 / 控制 / EXIF / AI。每个 partial owns 一个分类;iOS 走原生设置页(`PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs`),共享 VM 实现。AI 分页承载相似聚类阈值(75%~95% / 85%)、最多数量(1~32 / 8,指数滑条)、以及"清除特征数据库"按钮(开发者用,二次确认后调 `PhotoDatabase.DeleteDatabaseAsync` + `DinoFeatureCache.InvalidateAll`)。 |
-
-### 5.2 Helpers 辅助组件
-
-- [Controls/](PhotoViewer/Controls/): `ThumbnailCard` (主缩略图列表与相似聚类列表共用的 90×138 卡片:缩略图 + 文件名 + 自定义第二行 + 6 星级 + 抖动徽标,徽标在 `File.IsShake == true` 时叠在 80×80 缩略图区右下角), `DetailPreview` (细节预览/分析栏共用,圆角灰边方框 + 左上药丸标签 + hover/double-tap 联动主图绿框), `DiagnosticTile` (DINO 诊断页与分析栏共用的诊断瓦片,letterbox + AspectRatio + Crosshair + CornerLabel + PlaceholderText,视觉与 DetailPreview 像素级对齐;`SyncSquareLayout` 必须从外尺寸扣 `BorderThickness` 再算 letterbox,否则 1px 边框会被内容覆盖), `SortableList` (drag-reorder list for settings), `HotkeyButton` (hotkey capture), `CheckableMenuHeader`, `DeferredNumericTextBox`, `OverlayGlyphText`.
-- [Converters/](PhotoViewer/Converters/): `ExifConverters` (aperture / shutter / ISO formatters), `KeyGestureToStringConverter`, `LayoutConverters`.
-- [Behaviors/](PhotoViewer/Behaviors/): `HorizontalScrollWheelBehavior` (mouse-wheel → horizontal scroll for filmstrip).
-
----
-
-## 6. Key Workflows 关键流程
-
-### 6.1 Image Loading Pipeline 图片加载流水线
+### 5.1 Image Loading Pipeline 图片加载流水线
 
 1. **Trigger**: `MainViewModel.CurrentFile` changes (user switches image).
 2. **Dispatch**: `ImageViewModel` observes the change and calls `LoadImageAsync`.
@@ -180,7 +86,7 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
 4. **Display**: `ImageView` re-binds to `Bitmap`.
 5. **Prefetch**: `ImageViewModel` notifies `BitmapPrefetcher`, which queues low-priority decodes for N neighbours.
 
-### 6.2 External Open Flow 外部文件打开
+### 5.2 External Open Flow 外部文件打开
 
 1. **Entry**:
    - **Windows**: `Program.Main(args)` parses CLI args → `PublishExternalOpenArgs`.
@@ -192,7 +98,7 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
    - Folder → `FolderViewModel.OpenFolderAsync`.
    - File → `FolderViewModel.OpenImageAsync` — tries to enter the parent folder first; on Apple/Android where parent access is denied, falls back to **single-image mode** so the user can at least see the file.
 
-### 6.3 Rating Sync 评分与元数据同步
+### 5.3 Rating Sync 评分与元数据同步
 
 1. **Action**: keyboard `1`–`5` or click a star.
 2. **Logic**: `MainViewModel.SetRatingAsync`.
@@ -201,7 +107,7 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
    - **Sidecar**: for RAW, find or create a same-name `.xmp` file.
 4. **Refresh**: `FolderViewModel.RefreshFilters` so rating-based filters update live.
 
-### 6.4 AI 特征提取与持久化 DINO/CV Indexing
+### 5.4 AI 特征提取与持久化 DINO/CV Indexing
 
 > 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)同源同时入库。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](Plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
 
@@ -226,9 +132,24 @@ ViewModels in [PhotoViewer/ViewModels/](PhotoViewer/ViewModels/), Views in [Phot
 - 派生层(`BuildSharpness` / `BuildShakeField` / `FitRigidMotion` / `ComputePcaRgb` / `ComputeRefCosine`)从原始数据现算 — 改阈值常量立刻见效,不需要重提整库。
 - diagonal 仍由 CV 大图 `PixelSize` 推出,所以缓存命中也要 `BitmapLoader` 解码(LRU 通常已被主视图填充)。
 
+**抖动徽标回填**:
+- `ShakeFlagService.EvaluateAsync` 由 `MainViewModel` 在 `FolderVM.AllFilesChanged` 时调用、由 `SimilarityPanelViewModel` 在批量索引完成后调用 — 完全不解码、不推理,只读 `cv_grid` + 尺寸算判定 → 回填 `ImageFile.IsShake` → 缩略图卡片渲染徽标。
+
 **清除入口**(开发者用):
-- AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` 清进程缓存。
+- AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` 清进程缓存,徽标即时消失。
 - 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列)自动删库重建,无需手动清理。
+
+---
+
+## 6. UI Helpers 共享控件 / 转换器 / 行为
+
+- [Controls/](PhotoViewer/Controls/):
+  - `ThumbnailCard` — 主缩略图列表与相似聚类列表共用的 90×138 卡片:缩略图 + 文件名 + 自定义第二行 + 6 星级 + 抖动徽标。徽标在 `File.IsShake == true` 时叠在 80×80 缩略图区右下角。
+  - `DetailPreview` — 细节预览/分析栏共用,圆角灰边方框 + 左上药丸标签 + hover/double-tap 联动主图绿框。
+  - `DiagnosticTile` — DINO 诊断页与分析栏共用的诊断瓦片,letterbox + AspectRatio + Crosshair + CornerLabel + PlaceholderText,视觉与 DetailPreview 像素级对齐;`SyncSquareLayout` 必须从外尺寸扣 `BorderThickness` 再算 letterbox,否则 1px 边框会被内容覆盖。
+  - `SortableList` (drag-reorder for settings), `HotkeyButton` (hotkey capture), `CheckableMenuHeader`, `DeferredNumericTextBox`, `OverlayGlyphText`。
+- [Converters/](PhotoViewer/Converters/): `ExifConverters` (aperture / shutter / ISO formatters), `KeyGestureToStringConverter`, `LayoutConverters`。
+- [Behaviors/](PhotoViewer/Behaviors/): `HorizontalScrollWheelBehavior` (mouse-wheel → horizontal scroll for filmstrip)。
 
 ---
 
@@ -267,6 +188,10 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 **Own the task to completion**:
 - Every task must go through **at least one full end-to-end run**. The task is not done until the app starts successfully.
 
+**Sync docs in the same task**:
+- 任务收尾前,**必须**回看本次改动是否让任一 `CLAUDE.md`(根或模块)的描述失准 — 文件清单变化、职责变化、跨模块流程改路径、阈值/字段命名调整等。失准必须在**同一任务**内修文档,否则任务**未完成**,与"编译通过"同级。
+- 判据:行为表 / 跨模块流程 / 关键字段命名过期 → 必更新;只是改实现细节、小修 bug、加日志 → 不动。
+
 **Use legitimate means only**:
 - If repeated attempts still fail, stop retrying indefinitely — surface the blocker in the conversation.
 - **Never** resort to cheating tactics (e.g. suppressing errors, returning mock data in place of real work, etc.).
@@ -277,8 +202,8 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 - Prefix every function with an XML comment (`/// <summary>...</summary>`) describing purpose, parameters, and return value. Add inline comments for non-trivial logic. **Write comments in Chinese.**
 
 **Docs**:
-- Proactively read and maintain this `CLAUDE.md`. When a large-scale change or refactor makes existing docs or comments semantically inconsistent with the new code, update those docs/comments. For small changes, do not add new entries.
+- 根 `CLAUDE.md` 与各模块 `CLAUDE.md` 边界:**模块内文件清单与职责** → 子文档;**跨模块流程、平台矩阵、共享 UI 辅助、规范** → 根。子文档点到外部类只用链接,不复述行为,避免两边漂移。
+- 文档同步是任务收尾的硬要求,见 §9 "Sync docs in the same task"。
 
 **Tidiness**:
 - Do not litter the code with redundant comments for minor fixes — a concise summary in the conversation is enough. In particular, **never add explanatory/note-like text to UI strings**. Keep code comments systematic and the UI visually clean.
-
