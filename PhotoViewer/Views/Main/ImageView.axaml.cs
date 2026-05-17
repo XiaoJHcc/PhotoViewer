@@ -29,7 +29,7 @@ public partial class ImageView : UserControl
 
     private Grid? _contextMenuOverlay;
     private Border? _contextMenuHost;
-    private CheckableMenuHeader? _detailViewMenuHeader;
+    private CheckableMenuHeader? _analysisViewMenuHeader;
     private CheckableMenuHeader? _thumbnailViewMenuHeader;
     private CheckableMenuHeader? _controlViewMenuHeader;
 
@@ -38,7 +38,7 @@ public partial class ImageView : UserControl
         _contextMenuOverlay = this.FindControl<Grid>("ContextMenuOverlay");
         _contextMenuHost = this.FindControl<Border>("ContextMenuHost");
         _thumbnailViewMenuHeader = this.FindControl<CheckableMenuHeader>("ThumbnailMenuHeader");
-        _detailViewMenuHeader = this.FindControl<CheckableMenuHeader>("DetailMenuHeader");
+        _analysisViewMenuHeader = this.FindControl<CheckableMenuHeader>("AnalysisMenuHeader");
         _controlViewMenuHeader = this.FindControl<CheckableMenuHeader>("ControlMenuHeader");
         UpdateMenuCheckStates();
     }
@@ -89,7 +89,7 @@ public partial class ImageView : UserControl
         ShowMenuAt(new Point(point.X, point.Y - 40));
     }
 
-    private void ToggleDetailViewFromMenu()
+    private void ToggleAnalysisViewFromMenu()
     {
         if (ViewModel?.Main == null) return;
         ViewModel.Main.ToggleAnalysisView();
@@ -115,9 +115,9 @@ public partial class ImageView : UserControl
 
     private void UpdateMenuCheckStates()
     {
-        if (_detailViewMenuHeader != null)
+        if (_analysisViewMenuHeader != null)
         {
-            _detailViewMenuHeader.IsIconVisible = ViewModel?.Main.IsAnalysisViewVisible ?? false;
+            _analysisViewMenuHeader.IsIconVisible = ViewModel?.Main.IsAnalysisViewVisible ?? false;
         }
 
         if (_thumbnailViewMenuHeader != null)
@@ -145,9 +145,9 @@ public partial class ImageView : UserControl
         e.Handled = true;
     }
 
-    private void OnToggleDetailMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void OnToggleAnalysisMenuClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        ToggleDetailViewFromMenu();
+        ToggleAnalysisViewFromMenu();
         e.Handled = true;
     }
 

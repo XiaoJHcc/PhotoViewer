@@ -10,7 +10,7 @@
              x:DataType="vm:MainViewModel">
     <Grid>
         <!-- 按行布局（上中下）-->
-        <Grid RowDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="{Binding IsRowLayout}">
+        <Grid RowDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding IsRowLayout}">
             <!-- 顶部：文件栏 -->
             <Border
                 x:Name="TopThumbHost"
@@ -30,21 +30,9 @@
                 Background="#000000"
                 DataContext="{Binding ImageVM}" />
 
-            <!-- 中间：细节预览（旧）-->
+            <!-- 中间：分析栏（DetailPreview + DINO/CV 诊断合并）-->
             <Border
                 Grid.Row="2"
-                Margin="-100, 0, -100, 0"
-                Padding="100, 0, 100, 0"
-                Background="#111111"
-                BorderBrush="#333333"
-                BorderThickness="0,1,0,0"
-                IsVisible="{Binding IsDetailViewVisible}">
-                <views:DetailView DataContext="{Binding DetailVM}" />
-            </Border>
-
-            <!-- 中间：分析栏（新，DetailPreview + DINO/CV 诊断合并）-->
-            <Border
-                Grid.Row="3"
                 Margin="-100, 0, -100, 0"
                 Padding="100, 0, 100, 0"
                 Background="#111111"
@@ -56,7 +44,7 @@
 
             <!-- 底部：控制栏 -->
             <Border
-                Grid.Row="4"
+                Grid.Row="3"
                 Margin="-100, 0, -100, -100"
                 Padding="100, 0, 100, 100"
                 Background="#111111"
@@ -68,7 +56,7 @@
         </Grid>
 
         <!-- 按列布局（左中右）-->
-        <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto" IsVisible="{Binding !IsRowLayout}">
+        <Grid ColumnDefinitions="Auto,*,Auto,Auto" IsVisible="{Binding !IsRowLayout}">
             <!-- 左侧：文件栏 -->
             <Border
                 x:Name="LeftThumbHost"
@@ -88,21 +76,9 @@
                 Background="#000000"
                 DataContext="{Binding ImageVM}" />
 
-            <!-- 中间：细节预览（旧）-->
+            <!-- 中间：分析栏 -->
             <Border
                 Grid.Column="2"
-                Margin="0, -100, 0, -100"
-                Padding="0, 100, 0, 100"
-                Background="#111111"
-                BorderBrush="#333333"
-                BorderThickness="1,0,0,0"
-                IsVisible="{Binding IsDetailViewVisible}">
-                <views:DetailView DataContext="{Binding DetailVM}" />
-            </Border>
-
-            <!-- 中间：分析栏（新）-->
-            <Border
-                Grid.Column="3"
                 Margin="0, -100, 0, -100"
                 Padding="0, 100, 0, 100"
                 Background="#111111"
@@ -114,7 +90,7 @@
 
             <!-- 右侧：控制栏 -->
             <Border
-                Grid.Column="4"
+                Grid.Column="3"
                 Margin="0, -100, -100, -100"
                 Padding="0, 100, 100, 100"
                 Background="#111111"

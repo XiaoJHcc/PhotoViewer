@@ -14,6 +14,7 @@
 
     <UserControl.Resources>
         <viewsLocal:SimilarityScoreConverter x:Key="SimilarityScoreConverter" />
+        <viewsLocal:SimilarityScoreToProgressFractionConverter x:Key="SimilarityScoreToProgressFractionConverter" />
     </UserControl.Resources>
 
     <UserControl.Styles>
@@ -191,6 +192,7 @@
                                     File="{Binding File}"
                                     IsSelected="{Binding File.IsCurrentImage}"
                                     SecondLineText="{Binding Score, Converter={StaticResource SimilarityScoreConverter}}"
+                                    SecondLineProgress="{Binding Score, Converter={StaticResource SimilarityScoreToProgressFractionConverter}}"
                                     ShowRating="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).Settings.ShowRating}"
                                     SelectCommand="{Binding $parent[UserControl].((vm:SimilarityPanelViewModel)DataContext).SelectItemCommand}"
                                     SelectCommandParameter="{Binding}"

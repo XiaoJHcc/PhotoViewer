@@ -215,7 +215,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         Crosshair = null;
     }
 
-    /// <summary>抽自 <see cref="DetailViewModel.UpdateFocusPointItem"/>:有 Sony 对焦数据时把对焦点项插到第一位。</summary>
+    /// <summary>有 Sony 对焦数据时把对焦点项插到第一位,根据 ExifData 动态增删。</summary>
     private void UpdateFocusPointItem(ExifData? exif)
     {
         var existingIndex = Items.IndexOf(_focusItem);

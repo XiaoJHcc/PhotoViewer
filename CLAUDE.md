@@ -151,9 +151,9 @@ Each head project's `Core/` folder contains platform-specific implementations in
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 
 - [Controls/](PhotoViewer/Controls/):
-  - `ThumbnailCard` — 主缩略图列表与相似聚类列表共用的 90×138 卡片:缩略图 + 文件名 + 自定义第二行 + 6 星级 + 抖动徽标。徽标在 `File.IsShake == true` 时叠在 80×80 缩略图区右下角。
+  - `ThumbnailCard` — 主缩略图列表与相似聚类列表共用的 90×138 卡片:缩略图 + 文件名 + 自定义第二行 + 6 星级 + 抖动徽标。徽标在 `File.IsShake == true` 时叠在 80×80 缩略图区右下角。第二行支持柱状进度条覆盖(`SecondLineProgress` 非 null 时启用,文本叠在条上),相似聚类用于把分数 75%~100% 映射成柱状。
   - `DetailPreview` — 细节预览/分析栏共用,圆角灰边方框 + 左上药丸标签 + hover/double-tap 联动主图绿框。
-  - `DiagnosticTile` — DINO 诊断页与分析栏共用的诊断瓦片,letterbox + AspectRatio + Crosshair + CornerLabel + PlaceholderText,视觉与 DetailPreview 像素级对齐;`SyncSquareLayout` 必须从外尺寸扣 `BorderThickness` 再算 letterbox,否则 1px 边框会被内容覆盖。
+  - `DiagnosticTile` — DINO 诊断页与分析栏共用的诊断瓦片,letterbox + AspectRatio + Crosshair + CornerLabel + PlaceholderText。嵌套圆角结构与 DetailPreview 像素级对齐(外 Border CornerRadius=6 + 内层 InnerClip CornerRadius=5 裁切);`SyncSquareLayout` 必须从外尺寸扣 `BorderThickness` 再算 letterbox,否则 1px 边框会被内容覆盖。
   - `SortableList` (drag-reorder for settings), `HotkeyButton` (hotkey capture), `CheckableMenuHeader`, `DeferredNumericTextBox`, `OverlayGlyphText`。
 - [Converters/](PhotoViewer/Converters/): `ExifConverters` (aperture / shutter / ISO formatters), `KeyGestureToStringConverter`, `LayoutConverters`。
 - [Behaviors/](PhotoViewer/Behaviors/): `HorizontalScrollWheelBehavior` (mouse-wheel → horizontal scroll for filmstrip)。

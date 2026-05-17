@@ -95,7 +95,7 @@ public class ControlViewModel : ReactiveObject
             "ZoomOutPreset" => OnZoomOutPreset,
             "ZoomInScale" => OnZoomInScale,
             "ZoomOutScale" => OnZoomOutScale,
-            "ToggleDetailView" => OnToggleDetailView,
+            "ToggleAnalysisView" => OnToggleAnalysisView,
             "SetRating0" => OnSetRating0,
             "SetRating1" => OnSetRating1,
             "SetRating2" => OnSetRating2,
@@ -123,7 +123,7 @@ public class ControlViewModel : ReactiveObject
     public ReactiveCommand<PointerContext?, Unit> OnSetRating3 { get; }
     public ReactiveCommand<PointerContext?, Unit> OnSetRating4 { get; }
     public ReactiveCommand<PointerContext?, Unit> OnSetRating5 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnToggleDetailView { get; }
+    public ReactiveCommand<PointerContext?, Unit> OnToggleAnalysisView { get; }
     
     public ControlViewModel(MainViewModel mainViewModel)
     {
@@ -146,7 +146,7 @@ public class ControlViewModel : ReactiveObject
         OnSetRating3 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(3));
         OnSetRating4 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(4));
         OnSetRating5 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(5));
-        OnToggleDetailView = ReactiveCommand.Create<PointerContext?>(_ => Main.ToggleAnalysisView());
+        OnToggleAnalysisView = ReactiveCommand.Create<PointerContext?>(_ => Main.ToggleAnalysisView());
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)

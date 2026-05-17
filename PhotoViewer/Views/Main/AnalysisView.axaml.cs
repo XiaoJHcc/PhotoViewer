@@ -78,7 +78,7 @@ public partial class AnalysisView : UserControl
     }
 
     /// <summary>
-    /// 复刻 DetailView 的逻辑:行布局占满宽度,列布局占满高度;按 6 项均分,确保单列/单行不裁切。
+    /// 行布局占满宽度,列布局占满高度;按项数均分,确保单列/单行不裁切。
     /// </summary>
     private void UpdatePreviewSize()
     {
