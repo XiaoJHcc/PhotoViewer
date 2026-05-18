@@ -23,19 +23,33 @@
             <Setter Property="Padding" Value="6,4" />
             <Setter Property="CornerRadius" Value="6" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="BorderBrush" Value="#555" />
-            <Setter Property="Background" Value="Transparent" />
-            <Setter Property="Foreground" Value="#AAA" />
             <Setter Property="HorizontalAlignment" Value="Stretch" />
             <Setter Property="HorizontalContentAlignment" Value="Center" />
         </Style>
-        <Style Selector="ToggleButton.SimToggle:checked">
-            <Setter Property="Background" Value="#2A3A2A" />
-            <Setter Property="BorderBrush" Value="#4A7A4A" />
-            <Setter Property="Foreground" Value="#88CC88" />
+        <Style Selector="ToggleButton.SimToggle /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="BorderBrush" Value="#555" />
+            <Setter Property="Foreground" Value="#AAA" />
         </Style>
-        <Style Selector="ToggleButton.SimToggle:pointerover">
+        <Style Selector="ToggleButton.SimToggle:pointerover /template/ ContentPresenter#PART_ContentPresenter">
             <Setter Property="Background" Value="#333" />
+            <Setter Property="BorderBrush" Value="#666" />
+            <Setter Property="Foreground" Value="#CCC" />
+        </Style>
+        <Style Selector="ToggleButton.SimToggle:checked /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#1F3A5F" />
+            <Setter Property="BorderBrush" Value="#3A6FA8" />
+            <Setter Property="Foreground" Value="#AECBEE" />
+        </Style>
+        <Style Selector="ToggleButton.SimToggle:checked:pointerover /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#26477A" />
+            <Setter Property="BorderBrush" Value="#4A85C4" />
+            <Setter Property="Foreground" Value="#CFE0F5" />
+        </Style>
+        <Style Selector="ToggleButton.SimToggle:checked:pressed /template/ ContentPresenter#PART_ContentPresenter">
+            <Setter Property="Background" Value="#1A3050" />
+            <Setter Property="BorderBrush" Value="#3A6FA8" />
+            <Setter Property="Foreground" Value="#AECBEE" />
         </Style>
     </UserControl.Styles>
 
