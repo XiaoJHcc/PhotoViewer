@@ -10,6 +10,8 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.AI;
+using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Android;
 
@@ -41,6 +43,10 @@ public class AndroidApp : AvaloniaAndroidApplication<App>
                 PerformanceBudget.Initialize(new AndroidPerformanceBudget());
                 XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
                 SettingsService.ConfigureStorage(new AndroidSettingsStorage());
+                DinoFeatureExtractor.ConfigureSession(options =>
+                {
+                    options.AppendExecutionProvider_Nnapi();
+                });
             });
     }
 }

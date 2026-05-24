@@ -9,7 +9,7 @@
 | File | 模块 | Responsibility |
 |---|---|---|
 | [DinoModelResources.cs](DinoModelResources.cs) | 模型资源常量 | ONNX 资源 URI、输入规格(518/ImageNet mean-std)、I/O 端口名、`PatchSize`/`PatchGrid`/`PatchTokenCount`、`ModelId`(当前 `dinov3_vits16_f32_518_v1`)。改动此处需同步两个 Python 工具。 |
-| [DinoFeatureExtractor.cs](DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime CPU EP 静态门面;延迟建 session + `EnsureDualOutputSchema` 早失败;`ExtractAsync` 只取 L2 归一化的 CLS 向量;`ExtractDualAsync(..., includePatches)` 同时返回 1024×384 patch token,供诊断工具页与 indexer 消费。 |
+| [DinoFeatureExtractor.cs](DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime 静态门面;`ConfigureSession(Action<SessionOptions>)` 接受平台注入的 GPU EP(Windows DirectML / macOS+iOS CoreML / Android NNAPI),未注入时 fallback CPU;延迟建 session + `EnsureDualOutputSchema` 早失败;`ExtractAsync` 只取 L2 归一化的 CLS 向量;`ExtractDualAsync(..., includePatches)` 同时返回 1024×384 patch token,供诊断工具页与 indexer 消费。 |
 | [DinoFeatureCache.cs](DinoFeatureCache.cs) | CLS 向量缓存 | 指纹索引 + 进程内存缓存 + `Lazy` 闸门(同指纹并发只推一次)。`GetOrComputeAsync` miss 走 `PhotoDatabase.WriteFeatureAsync` 后台写纵表;`TryReadAsync` 只读不触发推理;`InvalidateAll` 给"清除特征数据库"按钮调用。 |
 | [FolderFeatureIndexer.cs](FolderFeatureIndexer.cs) | 全文件夹批量索引 | 实例化调度器:`GroupByFingerprintAsync` 按指纹聚合 → `EvaluateMissingPartsAsync` 评估三路缺失(CLS / patch / CV grid)→ 一轮扫描同时落 DINO CLS+patch+CV,单事务 `WriteIndexedAsync` 顺手带 `ExifSnapshot`(Plan-2-4:实际焦距/光圈/快门/CMOS 倍率 + rating 快照,等效焦距由训练脚本现算)。桌面端 `ProcessorCount/2` 解码并发 + 单线程 ONNX 推理;移动端单线程。进度按"指纹组"推进,完成后 `PutMemoryCache` 同步进程缓存。 |
 | [SimilarityService.cs](SimilarityService.cs) | 相似聚类 | 基于 DINOv3 [CLS] cosine 的相似聚类(阈值与最多数量由 `SettingsViewModel.SimilarityThreshold` / `SimilarityMaxResults` 提供:阈值 75%~95% 默认 85%,数量 1~32 默认 8;硬上限 64 项),拍摄时间差作 tiebreaker。锚点必算、池内只读缓存 — 避免一次切图触发成百上千次推理。 |

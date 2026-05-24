@@ -13,7 +13,7 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// DINOv3 [CLS] 特征提取器（ONNX Runtime CPU EP，M1 统一 CPU，不做平台分派）。
+/// DINOv3 [CLS] 特征提取器（ONNX Runtime，平台 EP 通过 <see cref="ConfigureSession"/> 注入）。
 /// 线程安全：InferenceSession 内部线程安全，推理调用串行化到后台线程以避免竞争 Avalonia Bitmap。
 /// </summary>
 public static class DinoFeatureExtractor
@@ -21,6 +21,16 @@ public static class DinoFeatureExtractor
     private static InferenceSession? _session;
     private static readonly object _sessionLock = new();
     private static readonly SemaphoreSlim _runGate = new(1, 1);
+    private static Action<SessionOptions>? _configureSession;
+
+    /// <summary>
+    /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
+    /// 必须在首次推理前调用，否则 session 已创建后不再生效。
+    /// </summary>
+    public static void ConfigureSession(Action<SessionOptions> configure)
+    {
+        _configureSession = configure;
+    }
 
     /// <summary>
     /// 延迟加载 ONNX 会话；模型资源缺失会抛 <see cref="FileNotFoundException"/>。
@@ -42,6 +52,7 @@ public static class DinoFeatureExtractor
                 InterOpNumThreads = 1,
                 IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
             };
+            _configureSession?.Invoke(options);
             _session = new InferenceSession(bytes, options);
             EnsureDualOutputSchema(_session);
             return _session;

@@ -25,7 +25,9 @@
     <PackageVersion Include="XmpCore" Version="6.1.10.1" />
     <PackageVersion Include="LibHeifSharp" Version="3.2.0" />
     <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0" />
-    <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.25.1" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime.Managed" Version="1.24.4" />
+    <PackageVersion Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
     <PackageVersion Include="MathNet.Numerics" Version="5.0.0" />
   </ItemGroup>
 </Project>

@@ -5,7 +5,9 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.AI;
 using PhotoViewer.Mac.Core;
+using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Mac;
 
@@ -16,12 +18,16 @@ sealed class Program
     // yet and stuff might break.
     [STAThread]
     public static void Main(string[] args) => BuildAvaloniaApp()
-        .AfterSetup(_ => 
+        .AfterSetup(_ =>
         {
             HeifLoader.Initialize(new MacHeifDecoder());
             PerformanceBudget.Initialize(new DefaultPerformanceBudget());
             XmpWriter.Initialize(new MacXmpWriter());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
+            DinoFeatureExtractor.ConfigureSession(options =>
+            {
+                options.AppendExecutionProvider_CoreML();
+            });
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
         })
         .StartWithClassicDesktopLifetime(args);
