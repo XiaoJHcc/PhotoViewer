@@ -88,6 +88,26 @@ public static class PhotoDatabase
     }
 
     /// <summary>
+    /// 用户写星级时同步刷新 DB 副本(产品行为以文件为准,DB rating 仅给训练 pipeline 取快照)。
+    /// 指纹未入库时静默跳过 — 不主动 INSERT 占位行,等用户跑过 indexer 才有 EXIF/CV 数据可用。
+    /// </summary>
+    public static async Task UpdateRatingAsync(string fingerprint, int rating)
+    {
+        if (string.IsNullOrEmpty(fingerprint)) return;
+        Initialize();
+        await using var conn = OpenConnectionInternal();
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = @"
+            UPDATE photos
+            SET rating = $r, updated_at = $t
+            WHERE fingerprint = $fp;";
+        cmd.Parameters.AddWithValue("$fp", fingerprint);
+        cmd.Parameters.AddWithValue("$r", rating);
+        cmd.Parameters.AddWithValue("$t", FormatTime(DateTime.UtcNow));
+        await cmd.ExecuteNonQueryAsync();
+    }
+
+    /// <summary>
     /// 根据指纹读取身份记录;不存在时返回 null。
     /// 不再随手把 DINO CLS / patch / CV grid 都拉回来,各自走专用读取方法。
     /// </summary>
@@ -277,6 +297,8 @@ public static class PhotoDatabase
     /// 任一 blob 为 null 视为本次不更新该项(允许"只补 CV"或"只补 patch"的按需补齐路径)。
     /// 当 <paramref name="cvGridBlob"/> 非空时,<paramref name="cvImageWidth"/>/<paramref name="cvImageHeight"/>
     /// 必须给出 CV 实际解码用的原图分辨率;后续抖动判定不需再重新解码。
+    /// <paramref name="exif"/> 非 null 时同时刷新 EXIF 拍摄参数与 rating 快照(Plan-2-4),
+    /// 任一字段为 null 时 COALESCE 保留旧值;为 null 时整体不动 EXIF 列。
     /// </summary>
     public static async Task WriteIndexedAsync(
         PhotoFingerprintInput input,
@@ -287,7 +309,8 @@ public static class PhotoDatabase
         byte[]? cvGridBlob,
         string? cvSpec,
         int cvImageWidth = 0,
-        int cvImageHeight = 0)
+        int cvImageHeight = 0,
+        ExifSnapshot? exif = null)
     {
         Initialize();
         await using var conn = OpenConnectionInternal();
@@ -314,6 +337,31 @@ public static class PhotoDatabase
             cmd.Parameters.AddWithValue("$cs", cvSpec);
             cmd.Parameters.AddWithValue("$cw", cvImageWidth);
             cmd.Parameters.AddWithValue("$ch", cvImageHeight);
+            cmd.Parameters.AddWithValue("$t", nowIso);
+            await cmd.ExecuteNonQueryAsync();
+        }
+
+        if (exif.HasValue)
+        {
+            var snap = exif.Value;
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            // 任一字段为 null 时保留旧值,避免补齐路径误把已落库的 EXIF 抹掉
+            cmd.CommandText = @"
+                UPDATE photos
+                SET focal_length  = COALESCE($fl, focal_length),
+                    aperture      = COALESCE($ap, aperture),
+                    shutter_speed = COALESCE($ss, shutter_speed),
+                    crop_factor   = COALESCE($cf, crop_factor),
+                    rating        = COALESCE($rt, rating),
+                    updated_at    = $t
+                WHERE fingerprint = $fp;";
+            cmd.Parameters.AddWithValue("$fp", fingerprint);
+            cmd.Parameters.AddWithValue("$fl", (object?)snap.FocalLength ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ap", (object?)snap.Aperture ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$ss", (object?)snap.ShutterSpeed ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$cf", (object?)snap.CropFactor ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("$rt", (object?)snap.Rating ?? DBNull.Value);
             cmd.Parameters.AddWithValue("$t", nowIso);
             await cmd.ExecuteNonQueryAsync();
         }
@@ -435,8 +483,8 @@ public static class PhotoDatabase
 
     /// <summary>
     /// 检测旧 schema:photos 表若仍持有 <c>feature_vector</c> 或 <c>heatmap</c> 列,视为 Plan-2-3 前的遗留库,
-    /// 直接删除让 EnsureSchema 重建。也检测新加的 <c>cv_image_width</c>/<c>cv_image_height</c> 列缺失,
-    /// 一并触发重建 — 抖动判定依赖原图分辨率,旧记录没有这两个字段会得到错误的 diagonal。
+    /// 直接删除让 EnsureSchema 重建。也检测 <c>cv_image_width</c>/<c>cv_image_height</c> 列缺失(Plan-2-3)
+    /// 与 <c>focal_length</c> 列缺失(Plan-2-4 EXIF 列预留),一并触发重建。
     /// 开发期用,不需要迁移用户数据。
     /// </summary>
     private static bool ShouldResetDueToLegacySchema()
@@ -450,6 +498,7 @@ public static class PhotoDatabase
             if (cols.Count == 0) return false;
             if (cols.Contains("feature_vector") || cols.Contains("heatmap")) return true;
             if (!cols.Contains("cv_image_width") || !cols.Contains("cv_image_height")) return true;
+            if (!cols.Contains("focal_length")) return true;
             return false;
         }
         catch (Exception ex)
@@ -498,6 +547,10 @@ public static class PhotoDatabase
                 capture_time    TEXT,
                 capture_subsec  TEXT,
                 rating          INTEGER,
+                focal_length    REAL,
+                aperture        REAL,
+                shutter_speed   REAL,
+                crop_factor     REAL,
                 cv_grid         BLOB,
                 cv_grid_spec    TEXT,
                 cv_computed_at  TEXT,
@@ -611,4 +664,23 @@ public readonly record struct MissingParts(bool NeedCls, bool NeedPatches, bool 
 {
     /// <summary>任一缺失即视为"需要处理该指纹"。</summary>
     public bool AnyMissing => NeedCls || NeedPatches || NeedCv;
+}
+
+/// <summary>
+/// indexer 写库时携带的 EXIF 拍摄参数 + rating 快照(Plan-2-4)。
+/// 任一字段为 null 表示该次不刷新该列(写库走 COALESCE,旧值保留)。
+/// 等效焦距/光圈不入库,由训练脚本按 crop_factor 自行换算。
+/// </summary>
+public readonly struct ExifSnapshot
+{
+    /// <summary>实际焦距 mm。</summary>
+    public double? FocalLength { get; init; }
+    /// <summary>实际光圈 f-number。</summary>
+    public double? Aperture { get; init; }
+    /// <summary>快门速度,秒。</summary>
+    public double? ShutterSpeed { get; init; }
+    /// <summary>CMOS 倍率(等效焦距 / 实际焦距);拿不到 EquivFocalLength 时为 null。</summary>
+    public double? CropFactor { get; init; }
+    /// <summary>评分快照(0~5);indexer 路径从 ImageFile.Rating 直接取。</summary>
+    public int? Rating { get; init; }
 }

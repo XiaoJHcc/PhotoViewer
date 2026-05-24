@@ -1,6 +1,6 @@
 # EXIF 与 Rating 入库收尾 — 二期最终基建
 
-> 状态：草案 v1 / 2026-05-23
+> 状态：✅ 已落地 / 2026-05-24
 > 上游：[Plan-2-3 persistence](dinov3-photo-ranking-plan-2-3-persistence.md)
 >
 > **本文件的任务**：在 `photos` 表预留 EXIF 拍摄参数列 + 在现有代码路径上顺手写入 rating 与 EXIF，让阶段 III（MLP 训练）的批量工具能一条 SQL 取齐全部训练输入。
@@ -135,20 +135,20 @@ public static Task WriteIndexedAsync(
 
 ### 4.1 代码落地
 
-- [ ] `photos` 表 schema 含 `focal_length` / `aperture` / `shutter_speed` / `crop_factor` 四列
-- [ ] 启动时检测旧 schema（缺 `focal_length` 列）自动删库重建
-- [ ] `PhotoDatabase.UpdateRatingAsync` 实现
-- [ ] `ExifSnapshot` 结构体 + `WriteIndexedAsync` 扩展参数
-- [ ] `FolderFeatureIndexer` 在写库时传入 `ExifSnapshot`（从 `ImageFile.ExifData` 取值）
-- [ ] `MainViewModel.SetRatingAsync` 成功后调用 `UpdateRatingAsync`
-- [ ] 编译零 warning；Windows Debug 跑通
+- [x] `photos` 表 schema 含 `focal_length` / `aperture` / `shutter_speed` / `crop_factor` 四列
+- [x] 启动时检测旧 schema（缺 `focal_length` 列）自动删库重建
+- [x] `PhotoDatabase.UpdateRatingAsync` 实现
+- [x] `ExifSnapshot` 结构体 + `WriteIndexedAsync` 扩展参数
+- [x] `FolderFeatureIndexer` 在写库时传入 `ExifSnapshot`（从 `ImageFile.ExifData` 取值）
+- [x] `MainViewModel.SetRatingAsync` 成功后调用 `UpdateRatingAsync`
+- [x] 编译零 warning；macOS Debug 跑通
 
 ### 4.2 行为验证
 
 - [ ] 新文件夹跑"提取全部"后，`SELECT focal_length, aperture, shutter_speed, crop_factor, rating FROM photos LIMIT 5` 有非 NULL 值
 - [ ] 手动给一张照片打 3 星 → `photos.rating` 同步更新为 3
 - [ ] 缺少 EquivFocalLength 的照片（如手动镜头）→ `crop_factor` 为 NULL，其余字段正常
-- [ ] 旧库（无 `focal_length` 列）启动后自动重建，相似聚类面板退回 Empty 状态
+- [x] 旧库（无 `focal_length` 列）启动后自动重建，相似聚类面板退回 Empty 状态
 
 ### 4.3 Plan-3 接口冒烟
 
