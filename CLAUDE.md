@@ -141,7 +141,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **分析栏派生缓存**(切图无卡顿):
 - `AnalysisResultCache` 按指纹 LRU 缓存"读库 + 派生层现算"的全部产物(4 张诊断位图 + ShakeField + 判定文字 + patch tokens),容量 32 项 ≈ 50 MB。
-- `AnalysisViewModel` 切图 → `AnalysisDataReader.ComputeFingerprintAsync` → 命中即纯 UI swap;miss 才读 DB + `AnalysisComputer.Compute` 现算并落 cache。
+- `AnalysisViewModel` 切图 → 全部工作推迟到 `DispatcherPriority.Background`(绝不阻塞主图加载);快路径:EXIF 已加载 + 缓存命中 → 同步 swap;慢路径:异步读库 + 派生层现算 + 落 cache,旧图保留到新数据就绪再 swap。
 - `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
 - PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
 - 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有,切图或还原中心时显式释放;cache 拥有的位图 VM 只引用,不 Dispose。
