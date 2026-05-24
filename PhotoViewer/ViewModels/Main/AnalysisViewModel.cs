@@ -10,6 +10,7 @@ using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Views.Tools;
 using ReactiveUI;
@@ -170,7 +171,8 @@ public sealed class AnalysisViewModel : ReactiveObject
             }));
     }
 
-    /// <summary>外部入口:换图时刷新整个分析栏。可见性关闭时早退,避免后台读库泄漏。</summary>
+    /// <summary>外部入口:换图时刷新整个分析栏。可见性关闭时早退,避免后台读库泄漏。
+    /// 所有实际工作推迟到 Background 优先级,绝不阻塞主图加载。</summary>
     public void SetSource(ImageFile? file)
     {
         _cts?.Cancel();
@@ -182,12 +184,30 @@ public sealed class AnalysisViewModel : ReactiveObject
             return;
         }
 
-        // 立即置空诊断瓦片,让用户看到即时响应;实际数据异步填充,不阻塞主图加载。
-        ClearDiagnosticsSync();
-
         var cts = new CancellationTokenSource();
         _cts = cts;
-        _ = LoadAsync(file, cts.Token);
+        Dispatcher.UIThread.Post(() => LoadDeferred(file, cts.Token), DispatcherPriority.Background);
+    }
+
+    /// <summary>Background 优先级回调:主图已渲染后才执行。快路径同步 swap;慢路径启动异步加载。</summary>
+    private void LoadDeferred(ImageFile file, CancellationToken ct)
+    {
+        if (ct.IsCancellationRequested) return;
+
+        // 快路径:EXIF 已加载 + 缓存命中 → 直接 swap。
+        if (file.IsExifLoaded)
+        {
+            var fp = TryComputeFingerprintSync(file);
+            var hit = fp != null ? AnalysisResultCache.TryGet(fp) : null;
+            if (hit != null)
+            {
+                ApplyEntrySync(hit);
+                return;
+            }
+        }
+
+        // 慢路径:异步加载,不清空旧图(避免 layout storm)。
+        _ = LoadAsync(file, ct);
     }
 
     /// <summary>
@@ -256,15 +276,13 @@ public sealed class AnalysisViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 切图主路径:让出 UI 线程 → 算指纹 → 查 <see cref="AnalysisResultCache"/> → 命中即 UI swap;miss 才走读库 + 派生层现算 + 落 cache。
-    /// 开头 yield 确保主图加载优先获得 I/O 和 CPU 资源。
+    /// 慢路径异步加载:算指纹 → 查缓存 → miss 则读库 + 派生层现算 + 落 cache → UI swap。
+    /// 调用方已在 Background 优先级,无需再 yield。
     /// </summary>
     private async Task LoadAsync(ImageFile file, CancellationToken ct)
     {
         try
         {
-            // 让出执行权,确保主图加载先行;分析栏允许延后填充。
-            await Task.Yield();
             ct.ThrowIfCancellationRequested();
 
             var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
@@ -338,7 +356,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         }, DispatcherPriority.Background);
     }
 
-    /// <summary>同步清空所有诊断瓦片(调用方已在 UI 线程)。细节预览项不动。
+    /// <summary>同步清空所有诊断瓦片(面板隐藏或文件为 null 时使用)。细节预览项不动。
     /// 位图引用全部归 cache 所有,这里只清引用、不 Dispose;用户 cosine 位图归 VM 所有,显式释放。</summary>
     private void ClearDiagnosticsSync()
     {
@@ -358,6 +376,46 @@ public sealed class AnalysisViewModel : ReactiveObject
         var old = _customCosineBmp;
         _customCosineBmp = null;
         old?.Dispose();
+    }
+
+    /// <summary>快路径同步应用 cache 项(调用方已在 UI 线程,EXIF 已加载 + 缓存命中)。
+    /// 与 <see cref="ApplyEntry"/> 逻辑一致,但不经 Dispatcher.Post,零帧延迟。</summary>
+    private void ApplyEntrySync(AnalysisResultCache.Entry entry)
+    {
+        _patchTokens = entry.Patches;
+        AspectRatio = entry.AspectRatio;
+
+        _sharpnessItem.Source = entry.SharpnessBmp;
+        _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
+
+        _pcaItem.Source = entry.PcaBmp;
+        _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
+
+        var oldCustom = _customCosineBmp;
+        _customCosineBmp = null;
+        int rx = PatchGridPixels / 2;
+        int ry = PatchGridPixels / 2;
+        RefGridX = rx;
+        RefGridY = ry;
+        _cosineItem.Source = entry.CenterCosineBmp;
+        _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
+        _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
+        oldCustom?.Dispose();
+
+        _shakeOverlay.ShakeField = entry.ShakeField;
+        _shakeItem.ShortLabel = entry.ShakeLabel;
+        _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
+    }
+
+    /// <summary>同步计算指纹(仅当 EXIF 已加载时可用);失败返回 null。</summary>
+    private static string? TryComputeFingerprintSync(ImageFile file)
+    {
+        var exif = file.ExifData;
+        if (!file.ModifiedDate.HasValue && exif?.DateTimeOriginal == null) return null;
+        var fallback = file.ModifiedDate?.UtcDateTime;
+        var input = PhotoFingerprint.BuildInput(file.Name, exif, fallback);
+        if (!input.CaptureTime.HasValue) return null;
+        return PhotoFingerprint.Compute(input);
     }
 
     /// <summary>cosine 角标格式:省略"参考点"前缀,只留坐标,与"中心"/"对焦点"风格对齐。</summary>
