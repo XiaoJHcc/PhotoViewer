@@ -30,6 +30,7 @@ PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
 PhotoViewer.Android/      # Android head (net10.0-android)
 Tools/                    # Python: ExifTool 表重生成 + DINOv3 ONNX 导出/校验 + CV/patch PoC notebooks
+Tools/BatchIngest/        # C# CLI: 批量入库工具（Plan-3 数据准备，复用共享项目全部核心逻辑）
 Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
 Tools/CvDebugTool/        # Standalone CLI for CV v5 抖动诊断（HEIF/JPG → 锐度 PNG + 抖动矢量场 PNG + 文本报告）
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
