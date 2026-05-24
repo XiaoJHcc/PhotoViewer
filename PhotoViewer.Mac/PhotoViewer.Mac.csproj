@@ -12,6 +12,7 @@
 
     <ItemGroup>
         <PackageReference Include="Avalonia.Desktop"/>
+        <PackageReference Include="Microsoft.ML.OnnxRuntime" />
     </ItemGroup>
 
     <ItemGroup>

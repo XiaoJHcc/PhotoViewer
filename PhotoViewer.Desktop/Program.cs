@@ -9,7 +9,9 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Desktop.Core;
+using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Settings;
+using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Desktop;
 
@@ -30,8 +32,12 @@ sealed class Program
             PerformanceBudget.Initialize(new DefaultPerformanceBudget());
             XmpWriter.Initialize(new WindowsXmpWriter());
             SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
+            DinoFeatureExtractor.ConfigureSession(options =>
+            {
+                options.AppendExecutionProvider_DML();
+            });
             PublishExternalOpenArgs(args);
-             
+
         })
         .StartWithClassicDesktopLifetime(args);
 

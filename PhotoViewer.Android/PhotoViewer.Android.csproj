@@ -38,6 +38,7 @@
 
     <ItemGroup>
         <PackageReference Include="Avalonia.Android"/>
+        <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
         <!-- LibHeifSharp：libheif 软件解码器，支持 HEIF YUV 4:2:2 等系统不支持的格式 -->
         <!-- 需配套将 libheif.so + libde265.so 放入 NativeLibs/{abi}/ 目录（见下方） -->

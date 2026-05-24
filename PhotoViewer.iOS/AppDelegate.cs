@@ -10,7 +10,9 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.AI;
 using PhotoViewer.iOS.Core;
+using Microsoft.ML.OnnxRuntime;
 
 using System;
 using System.Runtime.Versioning;
@@ -34,7 +36,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
         return base.CustomizeAppBuilder(builder)
             .WithInterFont()
             .UseReactiveUI(_ => { })
-            .AfterSetup(_ => 
+            .AfterSetup(_ =>
             {
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
@@ -42,6 +44,10 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                 XmpWriter.Initialize(new iOSXmpWriter());
                 NativeSettingsPresenter.Initialize(new iOSNativeSettingsPresenter());
                 SettingsService.ConfigureStorage(new iOSSettingsStorage());
+                DinoFeatureExtractor.ConfigureSession(options =>
+                {
+                    options.AppendExecutionProvider_CoreML();
+                });
  
                 // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>

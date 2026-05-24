@@ -19,6 +19,7 @@
         <PackageReference Include="DirectNStandard" />
         <PackageReference Include="LibHeifSharp" />
         <PackageReference Include="LibHeif.Native.win-x64" />
+        <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
         <PackageReference Include="WicNet" />
     </ItemGroup>
 
