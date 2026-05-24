@@ -106,6 +106,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
    - **In-place**: patch the JPG/HEIF XMP block byte-by-byte.
    - **Sidecar**: for RAW, find or create a same-name `.xmp` file.
 4. **Refresh**: `FolderViewModel.RefreshFilters` so rating-based filters update live.
+5. **DB 副本**(Plan-2-4):成功写文件后顺手 `PhotoDatabase.UpdateRatingAsync(fp, rating)`。产品行为仍以文件为准,DB rating 只是给 Plan-3 训练 pipeline 取快照用;指纹未入库时静默跳过,不主动占位。
 
 ### 5.4 AI 特征提取与持久化 DINO/CV Indexing
 
@@ -113,7 +114,8 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **指纹与 schema**:
 - 指纹 = SHA1(`filename_noext` + `DateTimeOriginal` + `SubSecTimeOriginal`),同次曝光的 RAW/HIF/JPG 共享同一指纹(见 [PhotoFingerprint](PhotoViewer/Core/Database/PhotoFingerprint.cs))。
-- 三表:`photos`(身份 + `cv_grid` BLOB + `cv_grid_spec` 覆盖式)、`photo_features`(CLS 纵表 `(fingerprint, model_id)`)、`photo_patches`(patch token 纵表同主键)。`model_id` 与 `cv_grid_spec` 不匹配视为 cache miss,改算法 = bump 字符串即整库失效。
+- 三表:`photos`(身份 + `rating` + EXIF 拍摄参数 4 列 + `cv_grid` BLOB + `cv_grid_spec` 覆盖式)、`photo_features`(CLS 纵表 `(fingerprint, model_id)`)、`photo_patches`(patch token 纵表同主键)。`model_id` 与 `cv_grid_spec` 不匹配视为 cache miss,改算法 = bump 字符串即整库失效。
+- EXIF 列(Plan-2-4):`focal_length` / `aperture` / `shutter_speed` 存原始值;`crop_factor = EquivFocalLength / FocalLength`,缺失为 NULL。等效焦距/光圈不入库,训练脚本自行换算。
 
 **批量提取**(用户点"提取全部 / 补齐全部"按钮):
 1. **入口**:[SimilarityPanelViewModel.StartIndexingCommand](PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs) → `FolderFeatureIndexer.RunAsync`。
@@ -121,7 +123,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 3. **缺失评估**:每组先 `EvaluateMissingPartsAsync(fingerprint, modelId, cvSpec)` 拿 `(needCls, needPatch, needCv)` 三元组,全齐备即跳过。
 4. **解码两路**:DINO 走 `ThumbnailService` 560 短边、CV 走 `BitmapLoader` 原始分辨率(共享 LRU);桌面端 `ProcessorCount/2` 并发,移动端单线程。
 5. **推理与提取**:`_inferSemaphore` 闸内一次 `DinoFeatureExtractor.ExtractDualAsync(includePatches: needPatch)` 同时拿 CLS 与 patch;原图喂 `CvGridExtractor.ExtractAsync` 出 7 标量(含 `block_contrast`)。
-6. **写库**:单事务 `PhotoDatabase.WriteIndexedAsync`,任一 blob 为 null 则该项不更新(支持按需补齐)。CLS 同步进 `DinoFeatureCache._memoryCache`。
+6. **写库**:单事务 `PhotoDatabase.WriteIndexedAsync`,任一 blob 为 null 则该项不更新(支持按需补齐);顺手携带 `ExifSnapshot`(代表文件 EXIF 已在聚合阶段加载),写入 EXIF 4 列 + rating(任一字段为 null 走 COALESCE 保留旧值)。CLS 同步进 `DinoFeatureCache._memoryCache`。
 7. **进度**:按指纹组推进而非按文件;失败组跳过不中断整批,本期不可取消。
 
 **单图懒加载**(相似聚类切图时锚点没入库):
@@ -144,7 +146,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **清除入口**(开发者用):
 - AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` + `AnalysisResultCache.InvalidateAll` 清进程缓存,徽标与分析栏派生数据即时失效。
-- 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列)自动删库重建,无需手动清理。
+- 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列,或缺 `cv_image_width/height`,或缺 `focal_length`)自动删库重建,无需手动清理。
 
 ---
 

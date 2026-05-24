@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
@@ -493,6 +494,10 @@ public class MainViewModel : ViewModelBase
             // 回到 UI 线程刷新内存缓存与界面。
             await Dispatcher.UIThread.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
 
+            // 顺手同步 photos.rating 快照(Plan-2-4):产品行为以文件为准,DB rating 只是训练用副本。
+            // 指纹未入库时 UpdateRatingAsync 静默跳过,无需在 UI 线程等。
+            _ = SyncRatingToDatabaseAsync(file, rating);
+
             // 再异步重载当前文件完整 EXIF，确保界面中的其他字段也与磁盘状态保持一致。
             _ = Task.Run(async () =>
             {
@@ -523,6 +528,26 @@ public class MainViewModel : ViewModelBase
             Console.WriteLine($"[Rating] === END SetRating({file.Name}): Total {ratingSw.ElapsedMilliseconds}ms ===");
         }
     }
-    
+
+    /// <summary>
+    /// 用户写星级后顺手同步 photos.rating 副本(Plan-2-4)。
+    /// 走代表文件的指纹,失败仅打日志,不影响主流程 — DB 缺写不影响产品体验,等下一次 indexer 跑也会补上。
+    /// </summary>
+    private static async Task SyncRatingToDatabaseAsync(ImageFile file, int rating)
+    {
+        try
+        {
+            var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
+            var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
+            if (!input.CaptureTime.HasValue) return;
+            var fp = PhotoFingerprint.Compute(input);
+            await PhotoDatabase.UpdateRatingAsync(fp, rating).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Rating] DB sync failed for {file.Name}: {ex.Message}");
+        }
+    }
+
     #endregion
 }

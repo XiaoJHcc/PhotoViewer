@@ -261,10 +261,13 @@ public sealed class FolderFeatureIndexer
                     }
                 }
 
+                // 顺手带 EXIF + rating 快照(Plan-2-4):代表文件 ExifData 在 GroupByFingerprintAsync 已加载
+                var exifSnapshot = BuildExifSnapshot(representative);
+
                 // 单事务写入三表
                 await PhotoDatabase.WriteIndexedAsync(
                     group.Input, group.Fingerprint, DinoModelResources.ModelId,
-                    clsBlob, patchBlob, cvBlob, cvSpec, cvWidth, cvHeight).ConfigureAwait(false);
+                    clsBlob, patchBlob, cvBlob, cvSpec, cvWidth, cvHeight, exifSnapshot).ConfigureAwait(false);
 
                 ReportProgress();
             }
@@ -300,6 +303,42 @@ public sealed class FolderFeatureIndexer
             BinaryPrimitives.WriteSingleLittleEndian(
                 bytes.AsSpan(i * sizeof(float), sizeof(float)), data[i]);
         return bytes;
+    }
+
+    /// <summary>
+    /// 从代表文件的 EXIF 抽出训练用拍摄参数快照(实际焦距/光圈/快门/CMOS 倍率)+ 当前 rating。
+    /// `crop_factor` = EquivFocalLength / FocalLength,两者任一缺失则 NULL(训练脚本按 1.0 兜底)。
+    /// rating 0(未评)统一存 NULL — 让训练查询直接 `WHERE rating IS NOT NULL` 排除未评样本。
+    /// </summary>
+    private static ExifSnapshot BuildExifSnapshot(ImageFile file)
+    {
+        var exif = file.ExifData;
+        double? focal = ToDoubleOrNull(exif?.FocalLength);
+        double? aperture = ToDoubleOrNull(exif?.Aperture);
+        double? shutter = ToDoubleOrNull(exif?.ExposureTime);
+        double? equivFocal = ToDoubleOrNull(exif?.EquivFocalLength);
+
+        double? cropFactor = null;
+        if (focal.HasValue && focal.Value > 0 && equivFocal.HasValue && equivFocal.Value > 0)
+            cropFactor = equivFocal.Value / focal.Value;
+
+        int rating = file.Rating;
+        return new ExifSnapshot
+        {
+            FocalLength = focal,
+            Aperture = aperture,
+            ShutterSpeed = shutter,
+            CropFactor = cropFactor,
+            Rating = rating > 0 ? rating : (int?)null,
+        };
+    }
+
+    private static double? ToDoubleOrNull(MetadataExtractor.Rational? r)
+    {
+        if (!r.HasValue) return null;
+        var v = r.Value;
+        if (v.Denominator == 0) return null;
+        return (double)v.Numerator / v.Denominator;
     }
 }
 
