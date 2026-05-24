@@ -7,7 +7,7 @@ namespace PhotoViewer.Core.AI;
 /// DINOv3 ViT-S/16 端侧模型的静态资源与预处理规格。
 /// 改动此处需同步更新 Tools/export_dinov3_onnx.py 与 Tools/verify_onnx_parity.py。
 /// </summary>
-internal static class DinoModelResources
+public static class DinoModelResources
 {
     /// <summary>模型资源 URI（Avalonia AssetLoader 路径）。</summary>
     public static readonly Uri ModelAssetUri = new("avares://PhotoViewer/Assets/Models/dinov3_vits16.onnx");
