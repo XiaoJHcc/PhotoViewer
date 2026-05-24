@@ -37,6 +37,7 @@ public sealed class AnalysisViewModel : ReactiveObject
 
     private readonly MainViewModel _main;
     private CancellationTokenSource? _cts;
+    private ImageFile? _loadingFile; // 当前正在加载的文件,用于去重 ExifData 回调
     private float[]? _patchTokens;
     private Bitmap? _customCosineBmp; // 用户点击重算的 cosine 位图(VM 所有);中心 cosine 位图归 cache 所有,不在此持有。
 
@@ -153,15 +154,19 @@ public sealed class AnalysisViewModel : ReactiveObject
         _main.WhenAnyValue(vm => vm.CurrentFile)
             .Subscribe(Observer.Create<ImageFile?>(SetSource));
 
-        // 跟踪 ExifData:既驱动对焦点项的增删,也是分析栏本身重新读库的入口
-        // (LoadExifDataAsync 是 ImageFile 内部异步,首次切图时 ExifData 可能延后到位)。
+        // 跟踪 ExifData:驱动对焦点项的增删;仅当指纹尚未算出时才重新触发分析加载
+        // (首次切图时 ExifData 可能延后到位,此时指纹依赖 EXIF 时间戳)。
         _main.WhenAnyValue(vm => vm.CurrentFile)
             .Select(f => f?.WhenAnyValue(x => x.ExifData) ?? Observable.Return<ExifData?>(null))
             .Switch()
             .Subscribe(Observer.Create<ExifData?>(exif =>
             {
-                UpdateFocusPointItem(exif);
-                if (_main.IsAnalysisViewVisible) SetSource(_main.CurrentFile);
+                // ExifData 变 null 是 ClearExifData 的瞬态(如星级写入后重载),不动对焦点项,避免闪烁。
+                if (exif != null)
+                    UpdateFocusPointItem(exif);
+                // 仅当 LoadAsync 尚未为当前文件启动时才重新触发,避免重复加载
+                if (_main.IsAnalysisViewVisible && _main.CurrentFile != null && _main.CurrentFile != _loadingFile)
+                    SetSource(_main.CurrentFile);
             }));
     }
 
@@ -169,12 +174,16 @@ public sealed class AnalysisViewModel : ReactiveObject
     public void SetSource(ImageFile? file)
     {
         _cts?.Cancel();
+        _loadingFile = file;
 
         if (!_main.IsAnalysisViewVisible || file == null)
         {
-            ClearDiagnostics();
+            ClearDiagnosticsSync();
             return;
         }
+
+        // 立即置空诊断瓦片,让用户看到即时响应;实际数据异步填充,不阻塞主图加载。
+        ClearDiagnosticsSync();
 
         var cts = new CancellationTokenSource();
         _cts = cts;
@@ -247,12 +256,17 @@ public sealed class AnalysisViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 切图主路径:算指纹 → 查 <see cref="AnalysisResultCache"/> → 命中即 UI swap;miss 才走读库 + 派生层现算 + 落 cache。
+    /// 切图主路径:让出 UI 线程 → 算指纹 → 查 <see cref="AnalysisResultCache"/> → 命中即 UI swap;miss 才走读库 + 派生层现算 + 落 cache。
+    /// 开头 yield 确保主图加载优先获得 I/O 和 CPU 资源。
     /// </summary>
     private async Task LoadAsync(ImageFile file, CancellationToken ct)
     {
         try
         {
+            // 让出执行权,确保主图加载先行;分析栏允许延后填充。
+            await Task.Yield();
+            ct.ThrowIfCancellationRequested();
+
             var fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
@@ -289,7 +303,8 @@ public sealed class AnalysisViewModel : ReactiveObject
         }
     }
 
-    /// <summary>把 cache 项内容贴到 UI:全部位图引用归 cache,VM 只引用,不 Dispose。中心 cosine 还原时释放历史用户位图。</summary>
+    /// <summary>把 cache 项内容贴到 UI:全部位图引用归 cache,VM 只引用,不 Dispose。中心 cosine 还原时释放历史用户位图。
+    /// 使用 Background 优先级,确保主图渲染优先完成。</summary>
     private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
     {
         Dispatcher.UIThread.Post(() =>
@@ -320,32 +335,29 @@ public sealed class AnalysisViewModel : ReactiveObject
             _shakeOverlay.ShakeField = entry.ShakeField;
             _shakeItem.ShortLabel = entry.ShakeLabel;
             _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
-        });
+        }, DispatcherPriority.Background);
     }
 
-    /// <summary>清空所有诊断瓦片(可见性切到 false 或当前文件为 null 时)。细节预览项不动。
+    /// <summary>同步清空所有诊断瓦片(调用方已在 UI 线程)。细节预览项不动。
     /// 位图引用全部归 cache 所有,这里只清引用、不 Dispose;用户 cosine 位图归 VM 所有,显式释放。</summary>
-    private void ClearDiagnostics()
+    private void ClearDiagnosticsSync()
     {
-        Dispatcher.UIThread.Post(() =>
-        {
-            _patchTokens = null;
-            Crosshair = null;
-            _pcaItem.Source = null;
-            _cosineItem.Source = null;
-            _sharpnessItem.Source = null;
-            _pcaItem.PlaceholderText = "未提取";
-            _cosineItem.PlaceholderText = "未提取";
-            _cosineItem.ShortLabel = FormatCosineLabel(RefGridX, RefGridY);
-            _sharpnessItem.PlaceholderText = "未提取";
-            _shakeOverlay.ShakeField = null;
-            _shakeItem.ShortLabel = "抖动拖影";
-            _shakeItem.PlaceholderText = "未提取";
+        _patchTokens = null;
+        Crosshair = null;
+        _pcaItem.Source = null;
+        _cosineItem.Source = null;
+        _sharpnessItem.Source = null;
+        _pcaItem.PlaceholderText = "未提取";
+        _cosineItem.PlaceholderText = "未提取";
+        _cosineItem.ShortLabel = FormatCosineLabel(RefGridX, RefGridY);
+        _sharpnessItem.PlaceholderText = "未提取";
+        _shakeOverlay.ShakeField = null;
+        _shakeItem.ShortLabel = "抖动拖影";
+        _shakeItem.PlaceholderText = "未提取";
 
-            var old = _customCosineBmp;
-            _customCosineBmp = null;
-            old?.Dispose();
-        });
+        var old = _customCosineBmp;
+        _customCosineBmp = null;
+        old?.Dispose();
     }
 
     /// <summary>cosine 角标格式:省略"参考点"前缀,只留坐标,与"中心"/"对焦点"风格对齐。</summary>
