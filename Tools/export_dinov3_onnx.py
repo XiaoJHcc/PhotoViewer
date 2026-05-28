@@ -132,7 +132,6 @@ def main() -> int:
             input_names=["pixel_values"],
             output_names=["cls_embedding", "patch_tokens"],
             opset_version=args.opset,
-            dynamic_shapes={"pixel_values": {0: torch.export.Dim("batch")}},
             do_constant_folding=True,
             external_data=False,
         )
