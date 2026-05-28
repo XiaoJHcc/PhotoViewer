@@ -47,9 +47,13 @@ public sealed class FolderFeatureIndexer
     private int _completed;
     private int _failed;
     private int _total;
+    private string? _lastError;
 
     /// <summary>是否正在运行。</summary>
     public bool IsRunning { get; private set; }
+
+    /// <summary>首个失败组的错误信息;无失败时为 null。</summary>
+    public string? LastError => _lastError;
 
     /// <summary>进度事件:每组完成(成功或跳过)后触发。</summary>
     public event Action<IndexProgress>? ProgressChanged;
@@ -146,6 +150,7 @@ public sealed class FolderFeatureIndexer
         _completed = 0;
         _failed = 0;
         _total = groups.Count;
+        _lastError = null;
 
         // 桌面端半核并行解码;移动端单线程
         int decodeConcurrency = OperatingSystem.IsAndroid() || OperatingSystem.IsIOS()
@@ -276,15 +281,16 @@ public sealed class FolderFeatureIndexer
                 thumbnail?.Dispose();
             }
         }
-        catch (FileNotFoundException)
+        catch (FileNotFoundException ex)
         {
-            // 模型文件缺失,整批都会失败,但仍逐组推进进度
+            Interlocked.CompareExchange(ref _lastError, ex.Message, null);
             Interlocked.Increment(ref _failed);
             ReportProgress();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[FolderFeatureIndexer] failed for {group.Representative.Name}: {ex.Message}");
+            Interlocked.CompareExchange(ref _lastError, ex.Message, null);
             Interlocked.Increment(ref _failed);
             ReportProgress();
         }

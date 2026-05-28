@@ -149,6 +149,21 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     public bool ShowUnindexedPlaceholder => !HasItems && HasUnindexed;
 
+    private string? _indexError;
+    /// <summary>批量提取失败时的错误信息;无错误时为 null。</summary>
+    public string? IndexError
+    {
+        get => _indexError;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _indexError, value);
+            this.RaisePropertyChanged(nameof(HasIndexError));
+        }
+    }
+
+    /// <summary>是否存在提取错误(便于绑定 IsVisible)。</summary>
+    public bool HasIndexError => _indexError != null;
+
     private FolderFeatureIndexer? _indexer;
 
     // ── 构造 ────────────────────────────────────────────────────────────────
@@ -292,8 +307,8 @@ public class SimilarityPanelViewModel : ReactiveObject
 
         _indexer = new FolderFeatureIndexer();
         IndexProgress = 0;
-        // 真实总数会在首个 ProgressChanged 到达时被覆盖;暂用未提取数避免初值显示文件数(误差 2x)
         IndexTotal = Math.Max(1, _unindexedCount);
+        IndexError = null;
         IsStateIndexing = true;
 
         _indexer.ProgressChanged += OnIndexProgress;
@@ -304,9 +319,14 @@ public class SimilarityPanelViewModel : ReactiveObject
         }
         finally
         {
+            var error = _indexer.LastError;
             _indexer.ProgressChanged -= OnIndexProgress;
             _indexer = null;
-            Dispatcher.UIThread.Post(() => IsStateIndexing = false);
+            Dispatcher.UIThread.Post(() =>
+            {
+                IsStateIndexing = false;
+                IndexError = error;
+            });
         }
 
         // 提取完成后重新判定未提取数量并刷新聚类列表
