@@ -37,6 +37,12 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     private bool _suppressNextRecompute;
 
+    /// <summary>
+    /// 当前相似列表的锚点文件(即"以谁为中心找相似")。
+    /// 点击相似项切主图时锚点不变,仅在主缩略图列表正常切图时更新。
+    /// </summary>
+    private ImageFile? _anchorFile;
+
     private IReadOnlyList<SimilarityItem> _similarItems = Array.Empty<SimilarityItem>();
     /// <summary>当前相似项列表(已按分数降序),绑定到 SimilarityListView 的 ItemsSource。</summary>
     public IReadOnlyList<SimilarityItem> SimilarItems
@@ -170,21 +176,23 @@ public class SimilarityPanelViewModel : ReactiveObject
                     _suppressNextRecompute = false;
                     return;
                 }
+                _anchorFile = file;
                 _ = RecomputeAsync(file);
             });
 
         // 候选池来自主缩略图列表的 FilteredFiles(已应用同名分组与筛选);
         // 列表整体替换时(开关分组、改筛选、切文件夹)同步重算,避免相似面板出现"被合并掉的伴侣文件"或"自身的另一格式"。
+        // 使用 _anchorFile 而非 CurrentFile,避免用户从相似列表选中某项后改星级触发 FilteredFiles 重建时锚点漂移。
         _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
             .Skip(1)
-            .Subscribe(__ => { _ = RecomputeAsync(_main.CurrentFile); });
+            .Subscribe(__ => { _ = RecomputeAsync(_anchorFile); });
 
         // 设置变化（阈值 / 最多数量）即时重算当前列表。
         _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
             .Skip(1)
             .Throttle(TimeSpan.FromMilliseconds(150))
             .ObserveOn(AvaloniaScheduler.Instance)
-            .Subscribe(tuple => { _ = RecomputeAsync(_main.CurrentFile); });
+            .Subscribe(tuple => { _ = RecomputeAsync(_anchorFile); });
 
         // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
         _folder.AllFilesChanged += () =>

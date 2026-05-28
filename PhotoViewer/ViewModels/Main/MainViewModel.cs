@@ -419,7 +419,7 @@ public class MainViewModel : ViewModelBase
         // 仅在启用了星级筛选时才重建文件列表,否则仅更新内存缓存即可,避免重建 ObservableCollection 导致 UI 卡顿
         if (FileVM.FilterBar.SelectedRatingFilter != "All")
         {
-            FileVM.ThumbnailList.RefreshFilters();
+            FileVM.ThumbnailList.RefreshFilters(retainFile: CurrentFile);
         }
     }
 
