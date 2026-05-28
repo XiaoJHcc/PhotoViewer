@@ -30,6 +30,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import torch
 from transformers import AutoModel
 
@@ -123,7 +124,6 @@ def main() -> int:
 
     print(f"[export] exporting to {out_path} (opset={args.opset}, dtype={dtype})", flush=True)
     # external_data=False：把所有权重内嵌到单个 .onnx 文件，Avalonia 作为资源加载只需一份文件。
-    # dynamic_shapes 用于 torch 2.x dynamo 导出器放开 batch 维。
     with torch.no_grad():
         torch.onnx.export(
             wrapper,
@@ -136,9 +136,51 @@ def main() -> int:
             external_data=False,
         )
 
+    # DirectML 不支持 Reshape 中的 -1（推断维度），需要后处理把 -1 替换为实际值。
+    _fix_reshape_for_directml(out_path)
+
     size_mb = os.path.getsize(out_path) / (1024 * 1024)
     print(f"[export] done: {out_path} ({size_mb:.1f} MB)")
     return 0
+
+
+def _fix_reshape_for_directml(path: Path) -> None:
+    """用 ONNX shape inference 解析所有 Reshape 节点中的 -1 维度，替换为静态值。"""
+    import onnx
+    from onnx import shape_inference
+
+    model = onnx.load(str(path))
+    model = shape_inference.infer_shapes(model)
+
+    shape_map: dict[str, list[int]] = {}
+    for vi in model.graph.value_info:
+        t = vi.type.tensor_type
+        if t.HasField("shape"):
+            dims = [d.dim_value if d.HasField("dim_value") else -1 for d in t.shape.dim]
+            shape_map[vi.name] = dims
+
+    init_map = {i.name: i for i in model.graph.initializer}
+    fixed = 0
+    for node in model.graph.node:
+        if node.op_type != "Reshape":
+            continue
+        shape_name = node.input[1]
+        if shape_name not in init_map:
+            continue
+        init = init_map[shape_name]
+        shape_val = np.frombuffer(init.raw_data, dtype=np.int64).copy()
+        if -1 not in shape_val:
+            continue
+        out_name = node.output[0]
+        if out_name in shape_map:
+            actual = shape_map[out_name]
+            if -1 not in actual and len(actual) == len(shape_val):
+                init.raw_data = np.array(actual, dtype=np.int64).tobytes()
+                fixed += 1
+
+    if fixed > 0:
+        onnx.save(model, str(path))
+        print(f"[export] fixed {fixed} Reshape nodes with -1 dims (DirectML compat)", flush=True)
 
 
 if __name__ == "__main__":
