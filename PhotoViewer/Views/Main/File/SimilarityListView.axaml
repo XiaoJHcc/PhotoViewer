@@ -115,6 +115,14 @@
                         </TextBlock>
                     </Grid>
                 </Grid>
+                <TextBlock IsVisible="{Binding HasIndexError}"
+                           Text="{Binding IndexError}"
+                           FontSize="10"
+                           Foreground="#CC4444"
+                           HorizontalAlignment="Center"
+                           TextWrapping="Wrap"
+                           TextAlignment="Center"
+                           MaxWidth="120" />
             </StackPanel>
 
             <!-- 有列表主体:列表 + 动作区 Dock(Bottom/Right) -->

@@ -22,6 +22,7 @@ public static class DinoFeatureExtractor
     private static readonly object _sessionLock = new();
     private static readonly SemaphoreSlim _runGate = new(1, 1);
     private static Action<SessionOptions>? _configureSession;
+    private static bool _gpuFailed;
 
     /// <summary>
     /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
@@ -33,7 +34,8 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 延迟加载 ONNX 会话；模型资源缺失会抛 <see cref="FileNotFoundException"/>。
+    /// 延迟加载 ONNX 会话；GPU EP 初始化失败时自动回退 CPU。
+    /// 模型资源缺失会抛 <see cref="FileNotFoundException"/>。
     /// </summary>
     private static InferenceSession GetSession()
     {
@@ -41,22 +43,58 @@ public static class DinoFeatureExtractor
         lock (_sessionLock)
         {
             if (_session != null) return _session;
-
-            var bytes = DinoModelResources.TryLoadModelBytes()
-                ?? throw new FileNotFoundException(
-                    $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Tools/export_dinov3_onnx.py 生成后重新构建。");
-
-            var options = new SessionOptions
-            {
-                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
-                InterOpNumThreads = 1,
-                IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
-            };
-            _configureSession?.Invoke(options);
-            _session = new InferenceSession(bytes, options);
+            _session = CreateSession(useGpu: !_gpuFailed);
             EnsureDualOutputSchema(_session);
             return _session;
         }
+    }
+
+    /// <summary>
+    /// GPU 推理失败后丢弃当前 session，标记 GPU 不可用，下次 GetSession 重建 CPU session。
+    /// </summary>
+    private static void InvalidateSessionForGpuFallback()
+    {
+        lock (_sessionLock)
+        {
+            _gpuFailed = true;
+            _session?.Dispose();
+            _session = null;
+        }
+    }
+
+    private static InferenceSession CreateSession(bool useGpu)
+    {
+        var bytes = DinoModelResources.TryLoadModelBytes()
+            ?? throw new FileNotFoundException(
+                $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Tools/export_dinov3_onnx.py 生成后重新构建。");
+
+        var options = new SessionOptions
+        {
+            GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+            InterOpNumThreads = 1,
+            IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
+        };
+
+        if (useGpu && _configureSession != null)
+        {
+            try
+            {
+                _configureSession(options);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DinoFeatureExtractor] GPU EP 注册失败，回退 CPU: {ex.Message}");
+                _gpuFailed = true;
+                options = new SessionOptions
+                {
+                    GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
+                    InterOpNumThreads = 1,
+                    IntraOpNumThreads = Math.Max(1, Environment.ProcessorCount / 2),
+                };
+            }
+        }
+
+        return new InferenceSession(bytes, options);
     }
 
     /// <summary>
@@ -118,6 +156,7 @@ public static class DinoFeatureExtractor
 
     /// <summary>
     /// 执行 ONNX 推理,同时拷出 CLS 与 patch 两路输出。
+    /// GPU EP 推理失败时自动回退 CPU 重试一次。
     /// </summary>
     private static (float[] Cls, float[]? Patches) RunInferenceDual(DenseTensor<float> input, bool includePatches)
     {
@@ -127,33 +166,47 @@ public static class DinoFeatureExtractor
             NamedOnnxValue.CreateFromTensor(DinoModelResources.InputName, input),
         };
 
-        using var outputs = session.Run(inputs);
-
-        var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
-        var clsVec = new float[DinoModelResources.FeatureDim];
-        int i = 0;
-        foreach (var v in cls)
+        IDisposableReadOnlyCollection<DisposableNamedOnnxValue> outputs;
+        try
         {
-            if (i >= clsVec.Length) break;
-            clsVec[i++] = v;
+            outputs = session.Run(inputs);
         }
-        L2Normalize(clsVec);
-
-        float[]? patchVec = null;
-        if (includePatches)
+        catch (Exception ex) when (!_gpuFailed)
         {
-            var patches = outputs.First(v => v.Name == DinoModelResources.PatchOutputName).AsTensor<float>();
-            int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
-            patchVec = new float[total];
-            int j = 0;
-            foreach (var v in patches)
+            Console.WriteLine($"[DinoFeatureExtractor] GPU 推理失败，回退 CPU 重试: {ex.Message}");
+            InvalidateSessionForGpuFallback();
+            session = GetSession();
+            outputs = session.Run(inputs);
+        }
+
+        using (outputs)
+        {
+            var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
+            var clsVec = new float[DinoModelResources.FeatureDim];
+            int i = 0;
+            foreach (var v in cls)
             {
-                if (j >= total) break;
-                patchVec[j++] = v;
+                if (i >= clsVec.Length) break;
+                clsVec[i++] = v;
             }
-        }
+            L2Normalize(clsVec);
 
-        return (clsVec, patchVec);
+            float[]? patchVec = null;
+            if (includePatches)
+            {
+                var patches = outputs.First(v => v.Name == DinoModelResources.PatchOutputName).AsTensor<float>();
+                int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
+                patchVec = new float[total];
+                int j = 0;
+                foreach (var v in patches)
+                {
+                    if (j >= total) break;
+                    patchVec[j++] = v;
+                }
+            }
+
+            return (clsVec, patchVec);
+        }
     }
 
     /// <summary>
