@@ -53,6 +53,12 @@ public class ThumbnailListViewModel : ReactiveObject
     private readonly BitmapPrefetcher _bitmapPrefetcher;
 
     /// <summary>
+    /// 被保留的文件:改星级导致不再符合筛选条件时,暂时保留在列表中,
+    /// 待用户切走后再移除,避免丢失滚动进度。
+    /// </summary>
+    private ImageFile? _retainedFile;
+
+    /// <summary>
     /// 构造主缩略图列表视图模型。
     /// </summary>
     /// <param name="main">主视图模型</param>
@@ -88,7 +94,15 @@ public class ThumbnailListViewModel : ReactiveObject
         _bitmapPrefetcher = new BitmapPrefetcher(_main, this);
 
         _main.WhenAnyValue(m => m.CurrentFile)
-            .Subscribe(_ => _bitmapPrefetcher.PrefetchAroundCurrent());
+            .Subscribe(file =>
+            {
+                _bitmapPrefetcher.PrefetchAroundCurrent();
+                if (_retainedFile != null && !ReferenceEquals(file, _retainedFile))
+                {
+                    _retainedFile = null;
+                    ApplyFilter();
+                }
+            });
     }
 
     /// <summary>
@@ -204,6 +218,7 @@ public class ThumbnailListViewModel : ReactiveObject
         var ratingKey = _filter.SelectedRatingFilter;
         filtered = filtered.Where(f =>
         {
+            if (ReferenceEquals(f, _retainedFile)) return true;
             var r = f.Rating;
             return ratingKey switch
             {
@@ -260,8 +275,14 @@ public class ThumbnailListViewModel : ReactiveObject
 
     /// <summary>
     /// 对外刷新筛选(评分写入后调用)。
+    /// <paramref name="retainFile"/> 非 null 时,即使该文件不再符合筛选条件也暂时保留,
+    /// 待用户切走后再移除,避免丢失滚动进度。
     /// </summary>
-    public void RefreshFilters() => ApplyFilter();
+    public void RefreshFilters(ImageFile? retainFile = null)
+    {
+        _retainedFile = retainFile;
+        ApplyFilter();
+    }
 
     /// <summary>
     /// 当前文件之前是否还存在已筛选项。
