@@ -7,7 +7,7 @@
 | File | 模块 | Responsibility |
 |---|---|---|
 | [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation. |
-| [ImageEnhancer.cs](ImageEnhancer.cs) | 主图增强 | 确定性"增强预览"图像处理（v0：全局亮度直方图均衡，按 newY/oldY 等比缩放保色相）。纯算法、不改原文件、不入库；由 `ImageViewModel` 的增强 toggle 在后台调用。plan-3-1 §1.2 产品化落地的算法沙盒（铁约束：模型输入最终算法须非破坏性，此 v0 仅供产品目视）。 |
+| [ImageEnhancer.cs](ImageEnhancer.cs) | 主图增强 | 确定性"信息归一化"增强预览：全局**限对比直方图均衡（CLHE）**——亮度直方图按 `ClipFactor` 裁剪封顶 + 均匀回填（防断层 / 防大面积同色尖峰独吞输出范围）→ cdfMin 归一化 LUT → 按 `(newY+ε)/(oldY+ε)` 等比缩放保色相（ε = 暗部增益护栏，防夜景彩噪）。唯一手感参数 `ClipFactor`（保守↔激进，默认 2.0）。纯算法、不改原文件、不入库；由 `ImageViewModel` 的增强 toggle 在后台调用，当前仅作产品目视。设计意图 / 选型理由见 plan-3-1 §1.2。 |
 | [HistogramRenderer.cs](HistogramRenderer.cs) | 直方图渲染 | 把位图渲成 RGB 256 级直方图位图（透明底 + 三通道纯原色叠加填充曲线，重叠取 max → 三色重叠恰为白）。纯算法；分析栏"直方图"瓦片用它从当前主图（原片或增强图）现算，随增强切换实时重算，透明底让 DiagnosticTile 的 #222 透出。字节序沿用 BitmapLoader 约定。 |
 | [BitmapPrefetcher.cs](BitmapPrefetcher.cs) | 预加载器 | Background prefetch of N neighbours around the current image. 邻居位图解码完成后,若分析栏可见,顺手为该邻居 `AnalysisDataReader.ComputeFingerprintAsync` + `AnalysisComputer.Compute` 落进 `AnalysisResultCache` — 让前后切图变成纯 UI swap。 |
 | [HeifLoader.cs](HeifLoader.cs) | HEIF 解码桥接 | Static facade. `Initialize(IHeifDecoder)` injects platform decoder. |
