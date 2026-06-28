@@ -45,6 +45,13 @@
                                              Crosshair="{Binding $parent[UserControl].((vm:AnalysisViewModel)DataContext).Crosshair}"
                                              TileClicked="OnTileClicked" />
                 </DataTemplate>
+                <DataTemplate DataType="{x:Type vm:AnalysisHistogramItem}">
+                    <controls:DiagnosticTile Width="{Binding $parent[UserControl].((vm:AnalysisViewModel)DataContext).PreviewSize}"
+                                             Source="{Binding Source}"
+                                             PlaceholderText="计算中"
+                                             CornerLabel="{Binding ShortLabel}"
+                                             AspectRatio="1" />
+                </DataTemplate>
             </ItemsControl.DataTemplates>
         </ItemsControl>
     </Border>

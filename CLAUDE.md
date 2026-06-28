@@ -145,6 +145,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 - `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
 - PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
 - 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有,切图或还原中心时显式释放;cache 拥有的位图 VM 只引用,不 Dispose。
+- **增强预览例外**:`ImageVM.IsEnhanced` 开启时分析栏不再只读库 —— 直方图(`HistogramRenderer`,新增瓦片)与细节预览随主图自动跟随增强图;4 张 DINO/CV 诊断瓦片改对增强图**实时重算**(`AnalysisViewModel.LoadEnhancedAsync` 跑 `CvGridExtractor` + `DinoFeatureExtractor` → 复用 `AnalysisComputer.Compute`),产物位图本 VM 所有(`_ownedEntry`,不进 cache、不入库),替换/清理时显式 Dispose;关闭增强即回落 DB 只读路径。直方图位图始终 VM 所有、按竞态闸随主图重算。
 
 **清除入口**(开发者用):
 - AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` + `AnalysisResultCache.InvalidateAll` 清进程缓存,徽标与分析栏派生数据即时失效。
