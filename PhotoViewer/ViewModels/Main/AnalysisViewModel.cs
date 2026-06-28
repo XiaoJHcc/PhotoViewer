@@ -42,9 +42,15 @@ public sealed class AnalysisViewModel : ReactiveObject
     private float[]? _patchTokens;
     private Bitmap? _customCosineBmp; // 用户点击重算的 cosine 位图(VM 所有);中心 cosine 位图归 cache 所有,不在此持有。
 
-    // 6 项的固定引用,避免每次切图重建集合(列表项作为 DataContext 不会被回收)。
+    private Bitmap? _histogramBmp;     // 直方图位图(VM 所有),随主图切换重算
+    private int _histogramToken;       // 直方图竞态闸
+    // 增强实时重算出的诊断 Entry — 其位图本 VM 所有(非 cache),替换 / 清理时显式 Dispose;DB 路径下为 null。
+    private AnalysisResultCache.Entry? _ownedEntry;
+
+    // 固定项引用,避免每次切图重建集合(列表项作为 DataContext 不会被回收)。
     private readonly AnalysisDetailItem _focusItem;          // 动态:有 Sony 对焦数据时存在
     private readonly AnalysisDetailItem _centerItem;
+    private readonly AnalysisHistogramItem _histogramItem;
     private readonly AnalysisDiagnosticItem _pcaItem;
     private readonly AnalysisDiagnosticItem _cosineItem;
     private readonly AnalysisDiagnosticItem _sharpnessItem;
@@ -121,6 +127,7 @@ public sealed class AnalysisViewModel : ReactiveObject
 
         _focusItem = new AnalysisDetailItem("对焦点", new Point(0.5, 0.5));
         _centerItem = new AnalysisDetailItem("中心", new Point(0.5, 0.5));
+        _histogramItem = new AnalysisHistogramItem("直方图");
         _pcaItem = new AnalysisDiagnosticItem("DINO PCA");
         _cosineItem = new AnalysisDiagnosticItem(FormatCosineLabel(_refGridX, _refGridY));
         _sharpnessItem = new AnalysisDiagnosticItem("锐度");
@@ -132,6 +139,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         Items = new ObservableCollection<AnalysisItem>
         {
             _centerItem,
+            _histogramItem,
             _pcaItem,
             _cosineItem,
             _sharpnessItem,
@@ -147,10 +155,25 @@ public sealed class AnalysisViewModel : ReactiveObject
                 this.RaisePropertyChanged(nameof(IsAnalysisViewVisible));
                 if (visible) SetSource(_main.CurrentFile);
                 else _cts?.Cancel();
+                RefreshHistogram();
             }));
 
+        // 主图位图变化(含原片↔增强切换):刷新 DetailPreview 绑定 + 重算直方图。
         _main.ImageVM.WhenAnyValue(vm => vm.SourceBitmap)
-            .Subscribe(Observer.Create<Bitmap?>(_ => this.RaisePropertyChanged(nameof(SourceBitmap))));
+            .Subscribe(Observer.Create<Bitmap?>(_ =>
+            {
+                this.RaisePropertyChanged(nameof(SourceBitmap));
+                RefreshHistogram();
+            }));
+
+        // 增强开关 / 增强图就绪 → 重新路由诊断瓦片(增强时对增强图实时重算,关闭时回落 DB)。
+        _main.ImageVM.WhenAnyValue(vm => vm.IsEnhanced)
+            .Subscribe(Observer.Create<bool>(_ => SetSource(_main.CurrentFile)));
+        _main.ImageVM.WhenAnyValue(vm => vm.EnhancedBitmap)
+            .Subscribe(Observer.Create<Bitmap?>(_ =>
+            {
+                if (_main.ImageVM.IsEnhanced) SetSource(_main.CurrentFile);
+            }));
 
         _main.WhenAnyValue(vm => vm.CurrentFile)
             .Subscribe(Observer.Create<ImageFile?>(SetSource));
@@ -193,6 +216,13 @@ public sealed class AnalysisViewModel : ReactiveObject
     private void LoadDeferred(ImageFile file, CancellationToken ct)
     {
         if (ct.IsCancellationRequested) return;
+
+        // 增强模式且增强图就绪 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
+        if (_main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
+        {
+            _ = LoadEnhancedAsync(enhanced, ct);
+            return;
+        }
 
         // 快路径:EXIF 已加载 + 缓存命中 → 直接 swap。
         if (file.IsExifLoaded)
@@ -323,37 +353,138 @@ public sealed class AnalysisViewModel : ReactiveObject
 
     /// <summary>把 cache 项内容贴到 UI:全部位图引用归 cache,VM 只引用,不 Dispose。中心 cosine 还原时释放历史用户位图。
     /// 使用 Background 优先级,确保主图渲染优先完成。</summary>
-    private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
+    private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct, bool owned = false)
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (ct.IsCancellationRequested) return;
-
-            _patchTokens = entry.Patches;
-            AspectRatio = entry.AspectRatio;
-
-            _sharpnessItem.Source = entry.SharpnessBmp;
-            _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
-
-            _pcaItem.Source = entry.PcaBmp;
-            _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
-
-            // 切图时还原到中心参考点;若有历史用户点击位图,这里释放(它由 VM 拥有)。
-            var oldCustom = _customCosineBmp;
-            _customCosineBmp = null;
-            int rx = PatchGridPixels / 2;
-            int ry = PatchGridPixels / 2;
-            RefGridX = rx;
-            RefGridY = ry;
-            _cosineItem.Source = entry.CenterCosineBmp;
-            _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
-            _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
-            oldCustom?.Dispose();
-
-            _shakeOverlay.ShakeField = entry.ShakeField;
-            _shakeItem.ShortLabel = entry.ShakeLabel;
-            _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
+            if (ct.IsCancellationRequested)
+            {
+                // 取消时若是本 VM 拥有的位图,直接释放避免泄漏(cache 拥有的不动)。
+                if (owned) DisposeEntryBitmaps(entry);
+                return;
+            }
+            ApplyEntryCore(entry, owned);
         }, DispatcherPriority.Background);
+    }
+
+    /// <summary>
+    /// 把 Entry 贴到诊断瓦片。owned=true 表示 entry 位图本 VM 所有(增强实时重算);贴新图后释放上一份 owned 位图。
+    /// cache 路径(owned=false)位图归 cache,只引用不释放。
+    /// </summary>
+    private void ApplyEntryCore(AnalysisResultCache.Entry entry, bool owned)
+    {
+        var prevOwned = _ownedEntry;
+        _ownedEntry = owned ? entry : null;
+
+        _patchTokens = entry.Patches;
+        AspectRatio = entry.AspectRatio;
+
+        _sharpnessItem.Source = entry.SharpnessBmp;
+        _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
+
+        _pcaItem.Source = entry.PcaBmp;
+        _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
+
+        // 切图时还原到中心参考点;若有历史用户点击位图,这里释放(它由 VM 拥有)。
+        var oldCustom = _customCosineBmp;
+        _customCosineBmp = null;
+        int rx = PatchGridPixels / 2;
+        int ry = PatchGridPixels / 2;
+        RefGridX = rx;
+        RefGridY = ry;
+        _cosineItem.Source = entry.CenterCosineBmp;
+        _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
+        _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
+        oldCustom?.Dispose();
+
+        _shakeOverlay.ShakeField = entry.ShakeField;
+        _shakeItem.ShortLabel = entry.ShakeLabel;
+        _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
+
+        // 释放上一份 owned 位图(已被新 Source 替换,延后一拍确保 UI 解绑后再释放)。
+        if (prevOwned != null) Dispatcher.UIThread.Post(() => DisposeEntryBitmaps(prevOwned));
+    }
+
+    /// <summary>释放 Entry 中本 VM 拥有的诊断位图(PCA / 中心 cosine / 锐度)。</summary>
+    private static void DisposeEntryBitmaps(AnalysisResultCache.Entry entry)
+    {
+        entry.PcaBmp?.Dispose();
+        entry.CenterCosineBmp?.Dispose();
+        entry.SharpnessBmp?.Dispose();
+    }
+
+    /// <summary>
+    /// 增强实时重算:对增强图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
+    /// 产出位图归本 VM 所有(非 cache),经 owned=true 路径管理释放。
+    /// </summary>
+    private async Task LoadEnhancedAsync(Bitmap enhanced, CancellationToken ct)
+    {
+        try
+        {
+            ct.ThrowIfCancellationRequested();
+            int cvW = enhanced.PixelSize.Width;
+            int cvH = enhanced.PixelSize.Height;
+
+            // CV 走增强图原始分辨率;DINO 直接喂增强图(内部缩放到 518)。
+            var cv = await CvGridExtractor.ExtractAsync(enhanced, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(enhanced, includePatches: true, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+
+            var data = new AnalysisDataReader.Result
+            {
+                Patches = patches,
+                Cv = cv,
+                CvImageWidth = cvW,
+                CvImageHeight = cvH,
+            };
+            var entry = AnalysisComputer.Compute(data);
+            ct.ThrowIfCancellationRequested();
+            ApplyEntry(entry, ct, owned: true);
+        }
+        catch (OperationCanceledException)
+        {
+            // 被新任务覆盖,忽略
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AnalysisVM] enhanced compute failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>从当前主图(原片或增强图)现算 RGB 直方图,随主图 / 可见性变化触发;不可见或无图时清空。</summary>
+    private async void RefreshHistogram()
+    {
+        int token = ++_histogramToken;
+        var source = _main.ImageVM.SourceBitmap;
+        if (!_main.IsAnalysisViewVisible || source == null)
+        {
+            SwapHistogram(null, token);
+            return;
+        }
+        try
+        {
+            var bmp = await Task.Run(() => HistogramRenderer.Render(source, 512, 512));
+            SwapHistogram(bmp, token);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AnalysisVM] histogram failed: {ex.Message}");
+        }
+    }
+
+    /// <summary>替换直方图位图(VM 所有),过期 token 直接丢弃;旧位图延后一拍释放。</summary>
+    private void SwapHistogram(Bitmap? next, int token)
+    {
+        if (token != _histogramToken)
+        {
+            next?.Dispose();
+            return;
+        }
+        var old = _histogramBmp;
+        _histogramBmp = next;
+        _histogramItem.Source = next;
+        if (old != null) Dispatcher.UIThread.Post(old.Dispose);
     }
 
     /// <summary>同步清空所有诊断瓦片(面板隐藏或文件为 null 时使用)。细节预览项不动。
@@ -376,36 +507,16 @@ public sealed class AnalysisViewModel : ReactiveObject
         var old = _customCosineBmp;
         _customCosineBmp = null;
         old?.Dispose();
+
+        // 释放增强实时重算遗留的 owned 位图。
+        var prevOwned = _ownedEntry;
+        _ownedEntry = null;
+        if (prevOwned != null) Dispatcher.UIThread.Post(() => DisposeEntryBitmaps(prevOwned));
     }
 
     /// <summary>快路径同步应用 cache 项(调用方已在 UI 线程,EXIF 已加载 + 缓存命中)。
-    /// 与 <see cref="ApplyEntry"/> 逻辑一致,但不经 Dispatcher.Post,零帧延迟。</summary>
-    private void ApplyEntrySync(AnalysisResultCache.Entry entry)
-    {
-        _patchTokens = entry.Patches;
-        AspectRatio = entry.AspectRatio;
-
-        _sharpnessItem.Source = entry.SharpnessBmp;
-        _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
-
-        _pcaItem.Source = entry.PcaBmp;
-        _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
-
-        var oldCustom = _customCosineBmp;
-        _customCosineBmp = null;
-        int rx = PatchGridPixels / 2;
-        int ry = PatchGridPixels / 2;
-        RefGridX = rx;
-        RefGridY = ry;
-        _cosineItem.Source = entry.CenterCosineBmp;
-        _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
-        _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
-        oldCustom?.Dispose();
-
-        _shakeOverlay.ShakeField = entry.ShakeField;
-        _shakeItem.ShortLabel = entry.ShakeLabel;
-        _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
-    }
+    /// 走 <see cref="ApplyEntryCore"/>(owned=false),不经 Dispatcher.Post,零帧延迟。</summary>
+    private void ApplyEntrySync(AnalysisResultCache.Entry entry) => ApplyEntryCore(entry, owned: false);
 
     /// <summary>同步计算指纹(仅当 EXIF 已加载时可用);失败返回 null。</summary>
     private static string? TryComputeFingerprintSync(ImageFile file)

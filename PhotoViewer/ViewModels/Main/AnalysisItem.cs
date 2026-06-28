@@ -97,3 +97,21 @@ public sealed class AnalysisDiagnosticItem : AnalysisItem
     /// <summary>构造诊断瓦片项。</summary>
     public AnalysisDiagnosticItem(string shortLabel) : base(shortLabel) { }
 }
+
+/// <summary>
+/// 直方图瓦片项。Source 为从当前主图(原片或增强图)现算的 RGB 直方图位图(本 VM 所有,随主图切换重算)。
+/// 复用 <see cref="PhotoViewer.Controls.DiagnosticTile"/> 渲染,但不参与准星 / cosine 参考点。
+/// </summary>
+public sealed class AnalysisHistogramItem : AnalysisItem
+{
+    /// <summary>直方图位图;null 时瓦片显示占位。</summary>
+    private Bitmap? _source;
+    public Bitmap? Source
+    {
+        get => _source;
+        set => this.RaiseAndSetIfChanged(ref _source, value);
+    }
+
+    /// <summary>构造直方图项。</summary>
+    public AnalysisHistogramItem(string shortLabel) : base(shortLabel) { }
+}
