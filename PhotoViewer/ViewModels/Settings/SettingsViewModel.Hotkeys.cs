@@ -107,8 +107,16 @@ public partial class SettingsViewModel
     {
         MoveHotkeyCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveHotkey);
         
-        Hotkeys = new ObservableCollection<HotkeyItem>
-        {
+        Hotkeys = new ObservableCollection<HotkeyItem>(BuildDefaultHotkeys());
+
+        SubscribeAndInitHotkeyMapping();
+    }
+
+    /// <summary>
+    /// 构建出厂默认热键列表（也是"合并缺失默认项"的来源，见 Persistence.ResetHotkeys）。
+    /// </summary>
+    public static System.Collections.Generic.List<HotkeyItem> BuildDefaultHotkeys() => new()
+    {
             new("打开文件", "Open", "\uf6b5", "打开文件", false, 
                 AppGesture.FromKey(new KeyGesture(Key.N, KeyModifiers.Control)), 
                 AppGesture.FromKey(new KeyGesture(Key.O, KeyModifiers.Control))),
@@ -140,6 +148,10 @@ public partial class SettingsViewModel
                 null,
                 null),
 
+            new("增强预览", "ToggleEnhance", "", "增强预览", true,
+                AppGesture.FromKey(new KeyGesture(Key.E)),
+                null),
+
             // ===== 新增：评分热键（默认不在控制栏显示） =====
             new("评分 0 星", "SetRating0", "\uf4f4", "0 星", false,
                 AppGesture.FromKey(new KeyGesture(Key.OemTilde)), 
@@ -159,8 +171,13 @@ public partial class SettingsViewModel
             new("评分 5 星", "SetRating5", "\uf3ee", "5 星", false,
                 AppGesture.FromKey(new KeyGesture(Key.D5)), 
                 AppGesture.FromKey(new KeyGesture(Key.NumPad5))),
-        };
+    };
 
+    /// <summary>
+    /// 订阅热键集合 / 各项变化，并初始化苹果键盘映射（从原 InitializeHotkeys 尾部抽出）。
+    /// </summary>
+    private void SubscribeAndInitHotkeyMapping()
+    {
         // 监听集合变化
         Hotkeys.CollectionChanged += OnHotkeysChanged;
         

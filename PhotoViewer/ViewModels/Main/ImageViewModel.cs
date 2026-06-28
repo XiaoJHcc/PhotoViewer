@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
+using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using ReactiveUI;
@@ -21,7 +22,34 @@ public class ImageViewModel : ReactiveObject
         get => _sourceBitmap;
         set => this.RaiseAndSetIfChanged(ref _sourceBitmap, value);
     }
-    
+
+    // 当前原片位图（BitmapLoader 缓存所有，本 VM 只引用、绝不 Dispose）
+    private Bitmap? _originalBitmap;
+    // 增强任务竞态闸：每次切图 / 切换增强都自增，作废上一张的在途增强
+    private int _enhanceToken;
+
+    private Bitmap? _enhancedBitmap;
+    /// <summary>
+    /// 当前增强位图（本 VM 所有，替换 / 清理时显式 Dispose）；非增强或在途时为 null。
+    /// 公开为可观察属性，供分析栏在增强就绪后对增强图重算诊断瓦片（见 <see cref="AnalysisViewModel"/>）。
+    /// </summary>
+    public Bitmap? EnhancedBitmap
+    {
+        get => _enhancedBitmap;
+        private set => this.RaiseAndSetIfChanged(ref _enhancedBitmap, value);
+    }
+
+    private bool _isEnhanced;
+    /// <summary>
+    /// 增强预览模式：开启后主图原地替换为确定性增强版本，并在切图时对每张持续生效。
+    /// 详见 plan-3-1 §1.2 产品化落地（控制栏 toggle，算法走 <see cref="ImageEnhancer"/>）。
+    /// </summary>
+    public bool IsEnhanced
+    {
+        get => _isEnhanced;
+        private set => this.RaiseAndSetIfChanged(ref _isEnhanced, value);
+    }
+
     private string _HintText = "点击打开文件 或 拖拽图片到此处";
     public string HintText
     {
@@ -115,9 +143,10 @@ public class ImageViewModel : ReactiveObject
             // 使用缓存服务加载图片
             var bitmap = await BitmapLoader.GetBitmapAsync(file);
             
-            if (bitmap == null) 
+            if (bitmap == null)
             {
                 Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
+                DropEnhancement();
                 SourceBitmap = null;
                 var hint = "无法打开该图片";
                 var detail = string.Empty;
@@ -138,28 +167,39 @@ public class ImageViewModel : ReactiveObject
             {
                 Console.WriteLine($"Invalid bitmap dimensions: {bitmap.PixelSize.Width}x{bitmap.PixelSize.Height} for file: {file.Name}");
                 bitmap.Dispose();
+                DropEnhancement();
                 SourceBitmap = null;
                 HintText = "图片解码无效";
                 HintDetail = string.Empty;
                 return;
             }
-            
+
+            // 记录原片、作废上一张的在途增强，先显示原片
+            DropEnhancement();
+            _originalBitmap = bitmap;
+            var token = ++_enhanceToken;
             SourceBitmap = bitmap;
             ImageLoaded?.Invoke(this, file);
+
+            // 增强模式下：后台算好增强版本再原地切换，不阻塞主图显示
+            if (IsEnhanced)
+                _ = ApplyEnhancementAsync(bitmap, token);
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load image in ImageViewModel ({file.Name}): {ex.Message}");
+            DropEnhancement();
             SourceBitmap = null;
             HintText = "无法打开该图片";
             HintDetail = $"{ex.GetType().Name}: {ex.Message}";
         }
     }
-    
+
     public void ClearImage()
     {
         try
         {
+            DropEnhancement();
             SourceBitmap = null;
             ImageLoaded?.Invoke(this, null);
         }
@@ -167,6 +207,71 @@ public class ImageViewModel : ReactiveObject
         {
             Console.WriteLine($"Failed to clear image: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 切换增强预览模式：开启则后台算增强版本并原地替换，关闭则还原原片。模式跨切图持续生效。
+    /// </summary>
+    public async Task ToggleEnhanceAsync()
+    {
+        IsEnhanced = !IsEnhanced;
+        var token = ++_enhanceToken;
+
+        if (IsEnhanced)
+        {
+            if (_originalBitmap != null)
+                await ApplyEnhancementAsync(_originalBitmap, token);
+        }
+        else
+        {
+            // 还原原片后再释放增强位图，避免释放仍被 Image.Source 引用的位图
+            if (_originalBitmap != null) SourceBitmap = _originalBitmap;
+            ReleaseEnhanced();
+        }
+    }
+
+    /// <summary>
+    /// 后台计算增强位图并在校验竞态闸后原地替换主图；过期或已退出增强模式则丢弃结果。
+    /// </summary>
+    private async Task ApplyEnhancementAsync(Bitmap original, int token)
+    {
+        try
+        {
+            var enhanced = await Task.Run(() => ImageEnhancer.Enhance(original));
+            if (token != _enhanceToken || !IsEnhanced)
+            {
+                enhanced.Dispose();
+                return;
+            }
+            var old = EnhancedBitmap;
+            EnhancedBitmap = enhanced;
+            SourceBitmap = enhanced;
+            if (old != null) Dispatcher.UIThread.Post(old.Dispose);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"图片增强失败: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// 释放当前增强位图（本 VM 所有），延后到 UI 线程下一拍执行，避免释放仍在渲染的位图。
+    /// </summary>
+    private void ReleaseEnhanced()
+    {
+        var old = EnhancedBitmap;
+        EnhancedBitmap = null;
+        if (old != null) Dispatcher.UIThread.Post(old.Dispose);
+    }
+
+    /// <summary>
+    /// 切图 / 出错时丢弃上一张的增强状态：作废在途任务、清空原片引用、释放增强位图。
+    /// </summary>
+    private void DropEnhancement()
+    {
+        ++_enhanceToken;
+        _originalBitmap = null;
+        ReleaseEnhanced();
     }
     
     /*
