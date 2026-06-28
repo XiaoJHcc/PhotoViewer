@@ -314,6 +314,15 @@ public partial class SettingsViewModel
                 FromGestureModel(hotkey.Secondary)));
         }
 
+        // 合并缺失的默认热键:新版本新增的命令(旧配置 JSON 里没有)补进来,
+        // 使新按钮(如"增强预览")对沿用旧设置的用户也可见;按命令去重,已存在的不覆盖用户自定义。
+        var existingCommands = new HashSet<string>(Hotkeys.Select(h => h.Command));
+        foreach (var def in BuildDefaultHotkeys())
+        {
+            if (existingCommands.Add(def.Command))
+                Hotkeys.Add(def);
+        }
+
         Hotkeys.CollectionChanged += OnHotkeysChanged;
         foreach (var item in Hotkeys)
         {
