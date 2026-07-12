@@ -14,6 +14,7 @@
         <PackageReference Include="LibHeif.Native.win-x64" />
         <PackageReference Include="MetadataExtractor" />
         <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
+        <PackageReference Include="Microsoft.Data.Sqlite" />
     </ItemGroup>
 
     <ItemGroup>

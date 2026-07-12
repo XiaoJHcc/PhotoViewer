@@ -1,0 +1,20 @@
+{
+  "dbPath": "F:/照片2026-P2/dataset/photos_dataset.db",
+  "enhance": { "enabled": true },
+  "concurrency": null,
+  "retouchedList": "F:/照片2026-P2/dataset/retouched.txt",
+  "folders": [
+    {
+      "path": "F:/照片2026-P2/2026-1-10 祥睦桥 P2",
+      "recursive": true,
+      "eventLabel": "2026-1-10 祥睦桥 P2",
+      "subjectLabel": "风光"
+    },
+    {
+      "path": "F:/照片2026-P2/2026-3-14 茶博 P2",
+      "recursive": true,
+      "eventLabel": "2026-3-14 茶博 P2",
+      "subjectLabel": "人文"
+    }
+  ]
+}
