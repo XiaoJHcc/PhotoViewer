@@ -5,7 +5,7 @@ namespace PhotoViewer.Core.AI;
 
 /// <summary>
 /// DINOv3 ViT-S/16 端侧模型的静态资源与预处理规格。
-/// 改动此处需同步更新 Tools/export_dinov3_onnx.py 与 Tools/verify_onnx_parity.py。
+/// 改动此处需同步更新 Training/onnx/export_dinov3_onnx.py 与 Training/onnx/verify_onnx_parity.py。
 /// </summary>
 public static class DinoModelResources
 {
