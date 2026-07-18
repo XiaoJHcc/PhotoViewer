@@ -66,7 +66,7 @@ public static class DinoFeatureExtractor
     {
         var bytes = DinoModelResources.TryLoadModelBytes()
             ?? throw new FileNotFoundException(
-                $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Tools/export_dinov3_onnx.py 生成后重新构建。");
+                $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Training/onnx/export_dinov3_onnx.py 生成后重新构建。");
 
         var options = new SessionOptions
         {
@@ -113,7 +113,7 @@ public static class DinoFeatureExtractor
         {
             throw new InvalidOperationException(
                 $"DINOv3 ONNX 模型缺少必要输出端口：cls={hasCls}, patch={hasPatch}。" +
-                $"请用最新 Tools/export_dinov3_onnx.py 重新导出（CLS + patch 双输出）。");
+                $"请用最新 Training/onnx/export_dinov3_onnx.py 重新导出（CLS + patch 双输出）。");
         }
     }
 

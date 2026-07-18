@@ -29,10 +29,10 @@ PhotoViewer.Desktop/      # Windows head (net10.0-windows)
 PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
 PhotoViewer.Android/      # Android head (net10.0-android)
-Tools/                    # Python: ExifTool 表重生成 + DINOv3 ONNX 导出/校验 + CV/patch PoC notebooks
-Tools/DatasetBuilder/     # C# CLI: 训练数据集提取工具（Plan-3-1 M1，清单驱动，写独立数据集库，复用共享项目全部核心逻辑）
+Tools/                    # Python: ExifTool 表重生成
 Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
 Tools/CvDebugTool/        # Standalone CLI for CV v5 抖动诊断（HEIF/JPG → 锐度 PNG + 抖动矢量场 PNG + 文本报告）
+Training/                 # AI 训练一等模块：数据集提取 CLI + DINOv3 ONNX 导出/校验 + CV/patch PoC notebook + 特征可行性探针 + 三期计划 + 数据契约(见 Training/CLAUDE.md)
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
 Directory.Build.props     # Single source of truth for version number
 Directory.Packages.props  # Central NuGet version pinning
@@ -54,6 +54,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/ViewModels/Main/](PhotoViewer/ViewModels/Main/) | [ViewModels/Main/CLAUDE.md](PhotoViewer/ViewModels/Main/CLAUDE.md) | 主窗口 shell + 文件源/文件栏/图片/控制/分析 VM |
 | [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/CLAUDE.md](PhotoViewer/ViewModels/Tools/CLAUDE.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |
 | [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/CLAUDE.md](PhotoViewer/ViewModels/Settings/CLAUDE.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
+| [Training/](Training/) | [Training/CLAUDE.md](Training/CLAUDE.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -112,7 +113,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 ### 5.4 AI 特征提取与持久化 DINO/CV Indexing
 
-> 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)同源同时入库。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](Plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
+> 三类原始数据(DINO CLS / DINO patch token / CV grid 7 标量)同源同时入库。派生层(锐度热力图 / 抖动矢量场 / 刚体拟合 / PCA-RGB / 参考点 cosine)全部现算,阈值常量从不入库。详见 [Training/plans/dinov3-photo-ranking-plan-2-3-persistence.md](Training/plans/dinov3-photo-ranking-plan-2-3-persistence.md)。
 
 **指纹与 schema**:
 - 指纹 = SHA1(`filename_noext` + `DateTimeOriginal` + `SubSecTimeOriginal`),同次曝光的 RAW/HIF/JPG 共享同一指纹(见 [PhotoFingerprint](PhotoViewer/Core/Database/PhotoFingerprint.cs))。

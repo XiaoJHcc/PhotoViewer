@@ -151,7 +151,7 @@ EXIF 字段英文名由两层决定：
 
 2. **导出 ONNX**（首次需 `pip install torch transformers onnx onnxruntime onnxscript`）：
    ```
-   python Tools/export_dinov3_onnx.py \
+   python Training/onnx/export_dinov3_onnx.py \
        --model-id <本地权重目录或 HF id> \
        --output PhotoViewer/Assets/Models/dinov3_vits16.onnx
    ```
@@ -159,7 +159,7 @@ EXIF 字段英文名由两层决定：
 
 3. **验证一致性**（可选，首次导出或改脚本时建议跑）：
    ```
-   python Tools/verify_onnx_parity.py \
+   python Training/onnx/verify_onnx_parity.py \
        --model-id <同上> \
        --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
    ```

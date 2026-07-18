@@ -59,7 +59,7 @@
 - **制式（架构倾向 vs 数据出口）**：架构上倾向**原片 + 增强多视图**（保 B 补 A）；但**保留本节既定出口"仅原片在低对比上已够分 → 不增强、收工"**——增强这一路是否真要入模，由探针 ≥80% + 双视图成本 / 收益（双 DINO pass、双存储、端侧成本）判，不预设。
 - **入模前一致性清单（执行项，非决策）**：① C# 产品侧与 Python 探针 / 入库**按容差对齐**（两侧解码器不同，字面逐像素达不到；判据 = 同一原始文件增强后亮度差 |ΔY| ≤ 1，超差先排查解码 / 缩放差异）；② 增强施加的**解码阶段 / 分辨率训练-推理处处同一步**（产品跑全分辨率、DINO 走 560 缩略图，直方图随分辨率变 → LUT 变）；③ 多视图的**双 CLS schema / 存储 / 端侧代价**；④ 参数（`ClipFactor=2.0` / `SaturationScale=1.0`）**冻结进模型契约**（DatasetBuilder 后缀 `+clhe{ClipFactor}ycc{SaturationScale}`），改则重提整库；⑤ 过线性探针 **≥80%（含影调对）**。
 
-**量化判据（产出 `Tools/feature_probe.py`）：**
+**量化判据（产出 `Training/probes/feature_probe.py`）：**
 
 - 取 ~200 张含多组近重复 + 一组雾 / 低对比片的样本，入库拿 CLS（ViT-S/16@518，384d）。
 - **第 0 步目视已搬进产品**：用控制栏 toggle 在真实雾片上直接切「原图 ↔ 增强」对比，确认"均衡 ≠ ACR 效果"（均衡多半放大噪声、显得生硬）→ 据此定出送进下面矩阵的候选算法（不必再在脚本里并排出图）。
@@ -87,7 +87,7 @@
   - 库目录的**拍摄日期 / 拍摄段可恢复**（按段 / 日划分、滑窗都依赖它）。
 - **入库视图数由 §1.2 制式结论决定**：增强视图 CLS 以带参数后缀的 `model_id`（如 `dinov3_vits16_f32_518_v1+clhe2.0`）存 `photo_features` 第二行——每指纹原片 + 增强两行，天然满足"参数冻结进模型契约、改参即整库失效"（§1.2 清单④）；patch token 仍只存原片一份（M4 空间权重以原片为准）。**M1 探针阶段两行都提**（`--no-enhance` 可关），是否最终入模由探针 + 制式决策定。
 - **顺手写 `is_retouched` 标记**（photos 表加列，来源 = 1.1 的精修回溯匹配结果 → 清单 `retouchedList`；未提供则 NULL），供 M2 锚点 / 绝对池与金标准（§5）用。
-- 跑 `Tools/DatasetBuilder`（清单驱动、DirectML 加速）批量提取 → 填满**独立数据集库**（非产品 photos.db，可自由扩展、便携、不受查看器清库影响）。数据集库表/列名与产品对齐（Python 侧按 photos.db 写法可直接读），额外多训练列（增强行 / is_retouched / source_rel_path / event_label / subject_label / formats）+ `dataset_meta` 契约表。RAW 星级同时读同名 `.xmp` sidecar（承 §1.1）。
+- 跑 `Training/DatasetBuilder`（清单驱动、DirectML 加速）批量提取 → 填满**独立数据集库**（非产品 photos.db，可自由扩展、便携、不受查看器清库影响）。数据集库表/列名与产品对齐（Python 侧按 photos.db 写法可直接读），额外多训练列（增强行 / is_retouched / source_rel_path / event_label / subject_label / formats）+ `dataset_meta` 契约表。RAW 星级同时读同名 `.xmp` sidecar（承 §1.1）。
 - **GATE**：工具产出覆盖率报告 + 判定（`<db>.coverage.md`）——指纹聚合正确（同次曝光 RAW/JPG/HEIF 合一）、EXIF / rating 覆盖率达标、四路（原片 CLS / 增强 CLS / patch / cv_grid）覆盖全部可解码组（仅 RAW 组无法解码，合法单列不计失败）。
 
 ### 1.4 data_audit（看清真实分布、校准所有阈值）
@@ -119,7 +119,7 @@
 
 ## 2. M1 产物
 
-- 填满的**独立数据集库**（`Tools/DatasetBuilder` 产出，选定子集，~万级，原片 + 增强 CLS 两路 + patch + cv_grid + EXIF + rating + `is_retouched` + 来源标签 + `dataset_meta` 契约）。
+- 填满的**独立数据集库**（`Training/DatasetBuilder` 产出，选定子集，~万级，原片 + 增强 CLS 两路 + patch + cv_grid + EXIF + rating + `is_retouched` + 来源标签 + `dataset_meta` 契约）。
 - 线性探针结论（backbone 是否够、是否需 ViT-L）。
 - **绝对性探针结论**（§1.5，跨段绝对可分性 → plan-3-2 偏移法 vs 学习偏置的配比依据）。
 - **查看器控制栏增强 toggle**（产品功能落地；同时是算法目视迭代的载体）。
@@ -146,10 +146,10 @@
 
 | 工具 | 状态 | 职责 |
 |---|---|---|
-| `Tools/DatasetBuilder/`（C#） | **已就绪** | 清单驱动：扫描 → 指纹聚合（RAW/HEIF/JPG 合一，含 `.xmp` sidecar 星级）→ EXIF + rating → DINO(原片 CLS + 增强 CLS + patch) → CV → **独立数据集库** + 覆盖率报告 + GATE |
+| `Training/DatasetBuilder/`（C#） | **已就绪** | 清单驱动：扫描 → 指纹聚合（RAW/HEIF/JPG 合一，含 `.xmp` sidecar 星级）→ EXIF + rating → DINO(原片 CLS + 增强 CLS + patch) → CV → **独立数据集库** + 覆盖率报告 + GATE。`--scan-only` 入库前分布探查（焦段/星级/拍摄时间跨度与粗切段数，不解码、不建库），供挑样本 / 核验批次 |
 | `Tools/ExifTestTool/`（C#） | 已有 | 星级 / EXIF 可读性抽查（1.1） |
 | 查看器控制栏增强 toggle（C#，`ViewModels/Main` 控制 + 图片 VM） | **新建** | 主画面原地切换原片 ↔ 确定性增强；既是产品功能又是算法探索沙盒（1.2） |
-| `Tools/feature_probe.py` | **新建** | 增强制式量化判据：原片/增强/多视图 × 算法 × 集合的线性探针 + t-SNE（1.2）；增强算法与产品 toggle 同源；1.5 绝对性探针复用同一框架（跨段对可分性） |
+| `Training/probes/feature_probe.py` | **新建** | 增强制式量化判据：原片/增强/多视图 × 算法 × 集合的线性探针 + t-SNE（1.2）；增强算法与产品 toggle 同源；1.5 绝对性探针复用同一框架（跨段对可分性） |
 | `Tools/data_audit.py` | **新建** | 分布统计 + 阈值校准报告（1.4） |
 
 ---

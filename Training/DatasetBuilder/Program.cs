@@ -35,9 +35,10 @@ internal static class Program
     {
         IngestManifest manifest;
         int? concurrencyOverride;
+        bool scanOnly;
         try
         {
-            (manifest, concurrencyOverride) = BuildManifest(args);
+            (manifest, concurrencyOverride, scanOnly) = BuildManifest(args);
         }
         catch (Exception ex)
         {
@@ -45,7 +46,20 @@ internal static class Program
             PrintUsage();
             return 1;
         }
-        if (manifest.Folders.Count == 0 || string.IsNullOrWhiteSpace(manifest.DbPath))
+        if (manifest.Folders.Count == 0)
+        {
+            PrintUsage();
+            return 1;
+        }
+
+        // 分布探查：只扫描 + 指纹聚合 + 读 EXIF，不解码、不建库、不需要 Avalonia/DirectML。
+        if (scanOnly)
+        {
+            ScanReport.Print(FingerprintGrouper.Scan(manifest.Folders));
+            return 0;
+        }
+
+        if (string.IsNullOrWhiteSpace(manifest.DbPath))
         {
             PrintUsage();
             return 1;
@@ -278,11 +292,11 @@ internal static class Program
         return (set, true);
     }
 
-    private static (IngestManifest, int?) BuildManifest(string[] args)
+    private static (IngestManifest, int?, bool scanOnly) BuildManifest(string[] args)
     {
         string? manifestPath = null, dbPath = null;
         int? concurrency = null;
-        bool noEnhance = false;
+        bool noEnhance = false, scanOnly = false;
         var folders = new List<string>();
 
         for (int i = 0; i < args.Length; i++)
@@ -293,6 +307,7 @@ internal static class Program
                 case "--db" when i + 1 < args.Length: dbPath = args[++i]; break;
                 case "--concurrency" when i + 1 < args.Length: concurrency = int.Parse(args[++i]); break;
                 case "--no-enhance": noEnhance = true; break;
+                case "--scan-only": scanOnly = true; break;
                 default:
                     if (!args[i].StartsWith("--")) folders.Add(args[i]);
                     break;
@@ -300,21 +315,21 @@ internal static class Program
         }
 
         if (manifestPath != null)
-            return (IngestManifest.Load(manifestPath), concurrency);
+            return (IngestManifest.Load(manifestPath), concurrency, scanOnly);
 
-        // 快速模式：直接给文件夹 + --db，无标签。
+        // 快速模式：直接给文件夹 + --db，无标签。--scan-only 不写库，故不要求 --db。
         if (folders.Count == 0)
-            throw new ArgumentException("需要 --manifest <路径>，或提供文件夹 + --db <路径>。");
-        if (dbPath == null)
-            throw new ArgumentException("快速模式需要 --db <数据集库路径>。");
+            throw new ArgumentException("需要 --manifest <路径>，或提供文件夹（+ --db <路径>，--scan-only 除外）。");
+        if (dbPath == null && !scanOnly)
+            throw new ArgumentException("快速模式需要 --db <数据集库路径>（或加 --scan-only 只看分布）。");
 
         var m = new IngestManifest
         {
-            DbPath = dbPath,
+            DbPath = dbPath ?? "",
             Enhance = new EnhanceOptions { Enabled = !noEnhance },
             Folders = folders.Select(f => new FolderEntry { Path = f, Recursive = true }).ToList(),
         };
-        return (m, concurrency);
+        return (m, concurrency, scanOnly);
     }
 
     private static void PrintUsage()
@@ -322,11 +337,13 @@ internal static class Program
         Console.WriteLine("DatasetBuilder — 训练数据集提取工具 (Plan-3-1 M1)");
         Console.WriteLine();
         Console.WriteLine("用法:");
-        Console.WriteLine("  dotnet run --project Tools/DatasetBuilder -- --manifest <manifest.json>");
-        Console.WriteLine("  dotnet run --project Tools/DatasetBuilder -- <folder>... --db <dataset.db> [--no-enhance]");
+        Console.WriteLine("  dotnet run --project Training/DatasetBuilder -- --manifest <manifest.json>");
+        Console.WriteLine("  dotnet run --project Training/DatasetBuilder -- <folder>... --db <dataset.db> [--no-enhance]");
+        Console.WriteLine("  dotnet run --project Training/DatasetBuilder -- <folder>... --scan-only");
         Console.WriteLine();
         Console.WriteLine("  --manifest <path>   清单驱动（推荐）：dbPath + folders(带事件/题材标签) + 可选 retouchedList");
         Console.WriteLine("  --db <path>         快速模式的数据集库路径");
+        Console.WriteLine("  --scan-only         只扫描 + 指纹聚合 + 读 EXIF，输出焦段/星级/时间分布（不建库、不提特征）");
         Console.WriteLine("  --no-enhance        不提取增强 CLS（仅原片路）");
         Console.WriteLine("  --concurrency <n>   解码并发（默认 CPU/2）");
     }

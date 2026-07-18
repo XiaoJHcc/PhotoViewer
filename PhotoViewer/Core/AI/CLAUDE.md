@@ -4,7 +4,7 @@
 
 `namespace PhotoViewer.Core.AI`
 
-> 二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](../../../Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](../../../Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
+> 二期持久化收尾已落地,见 [Training/plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Training/plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Training/plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Training/plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Training/plans/dinov3-photo-ranking-plan-1.md](../../../Training/plans/dinov3-photo-ranking-plan-1.md) · [Training/plans/dinov3-photo-ranking-plan-2-0.md](../../../Training/plans/dinov3-photo-ranking-plan-2-0.md) · [Training/plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Training/plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
 
 | File | 模块 | Responsibility |
 |---|---|---|

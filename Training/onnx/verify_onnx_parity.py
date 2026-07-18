@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Tools/verify_onnx_parity.py
+Training/onnx/verify_onnx_parity.py
 
 校验导出的 DINOv3 ONNX 与 PyTorch 原始模型在相同输入下的特征一致性。
 A2-M1 验收门：
@@ -9,7 +9,7 @@ A2-M1 验收门：
 随机 100 张样本。
 
 用法:
-    python Tools/verify_onnx_parity.py \
+    python Training/onnx/verify_onnx_parity.py \
         --model-id facebook/dinov3-vits16-pretrain-lvd1689m \
         --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx \
         --samples 100

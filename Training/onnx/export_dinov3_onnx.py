@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Tools/export_dinov3_onnx.py
+Training/onnx/export_dinov3_onnx.py
 
 将 HuggingFace 上的 DINOv3 ViT 导出为 ONNX，双输出（CLS + patch tokens）。
 产物用于 PhotoViewer 端侧特征提取（A2-M1）。
 
 用法:
-    python Tools/export_dinov3_onnx.py \
+    python Training/onnx/export_dinov3_onnx.py \
         --model-id facebook/dinov3-vits16-pretrain-lvd1689m \
         --output PhotoViewer/Assets/Models/dinov3_vits16.onnx
 

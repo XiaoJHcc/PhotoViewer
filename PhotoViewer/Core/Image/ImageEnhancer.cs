@@ -16,7 +16,7 @@ namespace PhotoViewer.Core.Image;
 public static class ImageEnhancer
 {
     /// <summary>裁剪上限系数：限对比裁剪把每个 bin 封顶到 ClipFactor × 平均 bin 高，封住 LUT 斜率 → 防断层、防尖峰独吞输出范围。
-    /// public：数据集提取工具（Tools/DatasetBuilder）据此拼确定性的增强 model_id 后缀，保证参数与后缀永不漂移。</summary>
+    /// public：数据集提取工具（Training/DatasetBuilder）据此拼确定性的增强 model_id 后缀，保证参数与后缀永不漂移。</summary>
     public const double ClipFactor = 2.0;
 
     /// <summary>色度缩放系数：保色度重建 ch' = Y' + s·(ch − Y) 中的 s。

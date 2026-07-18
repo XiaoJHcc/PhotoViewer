@@ -1,0 +1,5 @@
+# 特征可行性探针(feature_probe.py / spatial_probe.py)依赖,版本不锁定,按需升级
+numpy
+scikit-learn
+matplotlib
+torch
