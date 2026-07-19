@@ -26,10 +26,12 @@ public static class CoverageReport
     /// <param name="failed">本次失败组数。</param>
     /// <param name="failures">失败信息样本（前若干条）。</param>
     /// <param name="elapsed">总耗时。</param>
+    /// <param name="noPatch">本次跳过 patch 提取，GATE 不核验 patch 覆盖。</param>
     public static async Task<bool> GenerateAsync(
         DatasetDatabase db, IReadOnlyList<FpGroup> groups,
         string modelId, string? enhancedModelId, string cvSpec,
-        int ingested, int skipped, int failed, IReadOnlyList<string> failures, TimeSpan elapsed)
+        int ingested, int skipped, int failed, IReadOnlyList<string> failures, TimeSpan elapsed,
+        bool noPatch = false)
     {
         int totalGroups = groups.Count;
         int totalFiles = groups.Sum(g => g.Files.Count);
@@ -62,7 +64,7 @@ public static class CoverageReport
 
         // ── GATE ──
         bool origOk = dbOrigCls >= decodable;
-        bool patchOk = dbPatches >= decodable;
+        bool patchOk = noPatch || dbPatches >= decodable;
         bool cvOk = dbCv >= decodable;
         bool enhOk = enhancedModelId == null || dbEnhCls >= decodable;
         bool photosOk = dbPhotos >= totalGroups;
@@ -100,7 +102,7 @@ public static class CoverageReport
         sb.AppendLine($"| photos 身份行 | {dbPhotos} | {totalGroups} | {Mark(photosOk)} |");
         sb.AppendLine($"| 原片 CLS | {dbOrigCls} | {decodable} | {Mark(origOk)} |");
         sb.AppendLine($"| 增强 CLS | {dbEnhCls} | {(enhancedModelId == null ? "—" : decodable.ToString())} | {(enhancedModelId == null ? "—" : Mark(enhOk))} |");
-        sb.AppendLine($"| patch token | {dbPatches} | {decodable} | {Mark(patchOk)} |");
+        sb.AppendLine($"| patch token | {dbPatches} | {(noPatch ? "—" : decodable.ToString())} | {(noPatch ? "—（--no-patch 跳过）" : Mark(patchOk))} |");
         sb.AppendLine($"| CV grid | {dbCv} | {decodable} | {Mark(cvOk)} |");
         sb.AppendLine();
         sb.AppendLine("## 标签 / EXIF 覆盖");

@@ -33,7 +33,7 @@ from pathlib import Path
 import numpy as np
 
 MODEL_ID_ORIG = "dinov3_vits16_f32_518_v1"
-FEATURE_DIM = 384
+FEATURE_DIM = 384      # 仅 patch 池化路径用（ViT-S）；CLS 维度按库内实测（梯2 ViT-L=1024）
 PATCH_TOKENS = 1024  # ViT-S/16@518 patch 网格 32×32
 
 # CV 网格布局常量，须与 PhotoViewer/Core/AI/CvGridResult.cs 保持一致。
@@ -139,8 +139,8 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
             (model_orig, model_enh),
         ):
             vec = np.frombuffer(blob, dtype="<f4")
-            if vec.shape[0] != FEATURE_DIM:
-                continue
+            # CLS 维度按库内实测（ViT-S=384 / 梯2 ViT-L=1024），不按 FEATURE_DIM 硬过滤；
+            # 同指纹原片/增强同维在样本组装处校验。
             feats.setdefault(fp, {})[model_id] = vec.astype(np.float32)
 
         # 原片 patch token（1024×384）→ mean / mean+std 池化（逐行处理，不整体驻留 ~2GB raw）
@@ -164,6 +164,8 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
         pair = feats.get(fp)
         if not pair or model_orig not in pair or model_enh not in pair:
             continue
+        if pair[model_orig].shape != pair[model_enh].shape:
+            continue                                   # 原片/增强维度不一致（异常行），剔除
         pm = ps = None
         if with_patch:
             pooled = patch_pooled.get(fp)

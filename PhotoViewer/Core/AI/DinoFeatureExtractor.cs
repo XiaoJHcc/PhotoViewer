@@ -23,6 +23,7 @@ public static class DinoFeatureExtractor
     private static readonly SemaphoreSlim _runGate = new(1, 1);
     private static Action<SessionOptions>? _configureSession;
     private static bool _gpuFailed;
+    private static byte[]? _modelBytesOverride;
 
     /// <summary>
     /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
@@ -31,6 +32,15 @@ public static class DinoFeatureExtractor
     public static void ConfigureSession(Action<SessionOptions> configure)
     {
         _configureSession = configure;
+    }
+
+    /// <summary>
+    /// （仅训练工具）覆盖 ONNX 模型字节来源，必须在首次推理前调用；session 已建后不再生效。
+    /// DatasetBuilder 升级梯实验（如 ViT-L 重提）用文件模型替代端侧资源模型；产品代码不调用。
+    /// </summary>
+    public static void ConfigureModelOverride(byte[] modelBytes)
+    {
+        _modelBytesOverride = modelBytes;
     }
 
     /// <summary>
@@ -64,7 +74,8 @@ public static class DinoFeatureExtractor
 
     private static InferenceSession CreateSession(bool useGpu)
     {
-        var bytes = DinoModelResources.TryLoadModelBytes()
+        var bytes = _modelBytesOverride
+            ?? DinoModelResources.TryLoadModelBytes()
             ?? throw new FileNotFoundException(
                 $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Training/onnx/export_dinov3_onnx.py 生成后重新构建。");
 
@@ -118,11 +129,11 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 从已解码位图提取 384 维 [CLS] 特征向量。L2 归一化后返回。
+    /// 从已解码位图提取 [CLS] 特征向量（维度随模型，ViT-S=384）。L2 归一化后返回。
     /// </summary>
     /// <param name="bitmap">已应用 EXIF 旋转的位图。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>长度 384 的浮点向量。</returns>
+    /// <returns>浮点向量，维度随模型（ViT-S=384）。</returns>
     public static async Task<float[]> ExtractAsync(Bitmap bitmap, CancellationToken ct = default)
     {
         var (cls, _) = await ExtractDualAsync(bitmap, includePatches: false, ct).ConfigureAwait(false);
@@ -136,7 +147,7 @@ public static class DinoFeatureExtractor
     /// <param name="bitmap">已应用 EXIF 旋转的位图。</param>
     /// <param name="includePatches">是否拷贝 patch token 数据。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <returns>CLS 向量(长度 384,L2 归一化)与 patch token 张量(长度 1024×384,按 token-major 排布;includePatches=false 时为 null)。</returns>
+    /// <returns>CLS 向量(维度随模型,ViT-S=384;L2 归一化)与 patch token 张量(token 数×维度随模型,ViT-S=1024×384,按 token-major 排布;includePatches=false 时为 null)。</returns>
     public static async Task<(float[] Cls, float[]? Patches)> ExtractDualAsync(
         Bitmap bitmap, bool includePatches, CancellationToken ct = default)
     {
@@ -182,27 +193,19 @@ public static class DinoFeatureExtractor
         using (outputs)
         {
             var cls = outputs.First(v => v.Name == DinoModelResources.ClsOutputName).AsTensor<float>();
-            var clsVec = new float[DinoModelResources.FeatureDim];
+            // 维度按张量实测（ViT-S=384 / ViT-L=1024），训练工具换模型时无需改这里。
+            var clsVec = new float[cls.Length];
             int i = 0;
-            foreach (var v in cls)
-            {
-                if (i >= clsVec.Length) break;
-                clsVec[i++] = v;
-            }
+            foreach (var v in cls) clsVec[i++] = v;
             L2Normalize(clsVec);
 
             float[]? patchVec = null;
             if (includePatches)
             {
                 var patches = outputs.First(v => v.Name == DinoModelResources.PatchOutputName).AsTensor<float>();
-                int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
-                patchVec = new float[total];
+                patchVec = new float[patches.Length];
                 int j = 0;
-                foreach (var v in patches)
-                {
-                    if (j >= total) break;
-                    patchVec[j++] = v;
-                }
+                foreach (var v in patches) patchVec[j++] = v;
             }
 
             return (clsVec, patchVec);

@@ -35,10 +35,11 @@ internal static class Program
     {
         IngestManifest manifest;
         int? concurrencyOverride;
-        bool scanOnly;
+        bool scanOnly, noPatch;
+        string? modelFile, modelIdOverride;
         try
         {
-            (manifest, concurrencyOverride, scanOnly) = BuildManifest(args);
+            (manifest, concurrencyOverride, scanOnly, modelFile, modelIdOverride, noPatch) = BuildManifest(args);
         }
         catch (Exception ex)
         {
@@ -57,6 +58,12 @@ internal static class Program
         {
             ScanReport.Print(FingerprintGrouper.Scan(manifest.Folders));
             return 0;
+        }
+
+        if ((modelFile == null) != (modelIdOverride == null))
+        {
+            Console.WriteLine("[ERROR] --model-file 与 --model-id 必须成对提供（换模型重提时两行 model_id 必须落对）。");
+            return 1;
         }
 
         if (string.IsNullOrWhiteSpace(manifest.DbPath))
@@ -78,7 +85,7 @@ internal static class Program
         var cts = new CancellationTokenSource();
         _ = Task.Run(async () =>
         {
-            try { rc = await RunPipelineAsync(manifest, concurrencyOverride); }
+            try { rc = await RunPipelineAsync(manifest, concurrencyOverride, modelFile, modelIdOverride, noPatch); }
             catch (Exception ex) { Console.WriteLine($"[ERROR] {ex}"); rc = 3; }
             finally { cts.Cancel(); }
         });
@@ -88,10 +95,17 @@ internal static class Program
     }
 
     /// <summary>核心流水线（在后台线程执行）：建库 → 写 meta → 扫描聚合 → 逐组四路提取 → 覆盖率报告 + GATE。</summary>
-    private static async Task<int> RunPipelineAsync(IngestManifest manifest, int? concurrencyOverride)
+    private static async Task<int> RunPipelineAsync(
+        IngestManifest manifest, int? concurrencyOverride, string? modelFile, string? modelIdOverride, bool noPatch)
     {
+        // 升级梯实验：外部 ONNX 文件替代内置资源模型（须与 --model-id 成对，见 Main 校验）。
+        if (modelFile != null)
+        {
+            Console.WriteLine($"模型覆盖: {modelFile} → model_id={modelIdOverride} · noPatch={noPatch}");
+            DinoFeatureExtractor.ConfigureModelOverride(File.ReadAllBytes(modelFile));
+        }
         bool enhance = manifest.Enhance?.Enabled ?? true;
-        string modelId = DinoModelResources.ModelId;
+        string modelId = modelIdOverride ?? DinoModelResources.ModelId;
         // 后缀编入 ClipFactor 与色彩模型标记 ycc（YCbCr 保色度重建）+ SaturationScale：算法语义变了后缀即变 → 缓存自动失效、永不漂移。
         string? enhancedModelId = enhance
             ? $"{modelId}+clhe{ImageEnhancer.ClipFactor.ToString("0.0", CultureInfo.InvariantCulture)}ycc{ImageEnhancer.SaturationScale.ToString("0.0", CultureInfo.InvariantCulture)}"
@@ -129,13 +143,13 @@ internal static class Program
         int concurrency = concurrencyOverride ?? manifest.Concurrency ?? Math.Max(1, Environment.ProcessorCount / 2);
         var sem = new SemaphoreSlim(concurrency);
         var tasks = groups.Select(g => Task.Run(() => ProcessGroupAsync(
-            g, db, modelId, enhancedModelId, cvSpec, retouched, hasRetouchedList, sem))).ToArray();
+            g, db, modelId, enhancedModelId, cvSpec, retouched, hasRetouchedList, noPatch, sem))).ToArray();
         await Task.WhenAll(tasks);
         sw.Stop();
 
         bool gate = await CoverageReport.GenerateAsync(
             db, groups, modelId, enhancedModelId, cvSpec,
-            _ingested, _skipped, _failed, _failures.ToArray(), sw.Elapsed);
+            _ingested, _skipped, _failed, _failures.ToArray(), sw.Elapsed, noPatch: noPatch);
 
         return gate ? 0 : 2;
     }
@@ -143,7 +157,7 @@ internal static class Program
     /// <summary>处理一个指纹组：评估缺失 → 解码代表 → 四路按需提取 → 单事务写库。</summary>
     private static async Task ProcessGroupAsync(
         FpGroup group, DatasetDatabase db, string modelId, string? enhancedModelId, string cvSpec,
-        HashSet<string> retouched, bool hasRetouchedList, SemaphoreSlim sem)
+        HashSet<string> retouched, bool hasRetouchedList, bool noPatch, SemaphoreSlim sem)
     {
         await sem.WaitAsync();
         try
@@ -166,7 +180,7 @@ internal static class Program
                 return;
             }
 
-            var missing = await db.EvaluateMissingAsync(group.Fingerprint, modelId, enhancedModelId, cvSpec);
+            var missing = await db.EvaluateMissingAsync(group.Fingerprint, modelId, enhancedModelId, cvSpec, includePatch: !noPatch);
             if (!missing.AnyMissing)
             {
                 // 全齐备：仍刷新 EXIF/rating/来源标签（清单可能更新了标签），但不重算。
@@ -292,11 +306,12 @@ internal static class Program
         return (set, true);
     }
 
-    private static (IngestManifest, int?, bool scanOnly) BuildManifest(string[] args)
+    private static (IngestManifest, int?, bool, string?, string?, bool) BuildManifest(string[] args)
     {
         string? manifestPath = null, dbPath = null;
         int? concurrency = null;
         bool noEnhance = false, scanOnly = false;
+        string? modelFile = null, modelIdOverride = null; bool noPatch = false;
         var folders = new List<string>();
 
         for (int i = 0; i < args.Length; i++)
@@ -308,6 +323,9 @@ internal static class Program
                 case "--concurrency" when i + 1 < args.Length: concurrency = int.Parse(args[++i]); break;
                 case "--no-enhance": noEnhance = true; break;
                 case "--scan-only": scanOnly = true; break;
+                case "--model-file" when i + 1 < args.Length: modelFile = args[++i]; break;
+                case "--model-id" when i + 1 < args.Length: modelIdOverride = args[++i]; break;
+                case "--no-patch": noPatch = true; break;
                 default:
                     if (!args[i].StartsWith("--")) folders.Add(args[i]);
                     break;
@@ -315,7 +333,7 @@ internal static class Program
         }
 
         if (manifestPath != null)
-            return (IngestManifest.Load(manifestPath), concurrency, scanOnly);
+            return (IngestManifest.Load(manifestPath), concurrency, scanOnly, modelFile, modelIdOverride, noPatch);
 
         // 快速模式：直接给文件夹 + --db，无标签。--scan-only 不写库，故不要求 --db。
         if (folders.Count == 0)
@@ -329,7 +347,7 @@ internal static class Program
             Enhance = new EnhanceOptions { Enabled = !noEnhance },
             Folders = folders.Select(f => new FolderEntry { Path = f, Recursive = true }).ToList(),
         };
-        return (m, concurrency, scanOnly);
+        return (m, concurrency, scanOnly, modelFile, modelIdOverride, noPatch);
     }
 
     private static void PrintUsage()
@@ -346,5 +364,8 @@ internal static class Program
         Console.WriteLine("  --scan-only         只扫描 + 指纹聚合 + 读 EXIF，输出焦段/星级/时间分布（不建库、不提特征）");
         Console.WriteLine("  --no-enhance        不提取增强 CLS（仅原片路）");
         Console.WriteLine("  --concurrency <n>   解码并发（默认 CPU/2）");
+        Console.WriteLine("  --model-file <path> 升级梯实验：改用指定 ONNX 文件替代内置模型（须与 --model-id 成对）");
+        Console.WriteLine("  --model-id <id>     升级梯实验：本批特征落库的 model_id（须与 --model-file 成对）");
+        Console.WriteLine("  --no-patch          不提取 patch token（梯级探针只提双路 CLS，省 ~38GB）");
     }
 }

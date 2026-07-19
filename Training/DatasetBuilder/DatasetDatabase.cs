@@ -85,13 +85,14 @@ public sealed class DatasetDatabase
     /// <summary>
     /// 评估某指纹四路数据齐备情况：原片 CLS / 增强 CLS / patch / cv grid。
     /// 增强路仅在 <paramref name="enhancedModelId"/> 非空时评估，否则该位恒为 false（不视为缺失）。
+    /// <paramref name="includePatch"/> 为 false 时 patch 位恒 false（梯级实验只提双路 CLS）。
     /// </summary>
     public async Task<DatasetMissing> EvaluateMissingAsync(
-        string fingerprint, string modelId, string? enhancedModelId, string cvSpec)
+        string fingerprint, string modelId, string? enhancedModelId, string cvSpec, bool includePatch = true)
     {
         await using var conn = OpenConnection();
 
-        bool needCv = true, needOrigCls = true, needEnhCls = enhancedModelId != null, needPatch = true;
+        bool needCv = true, needOrigCls = true, needEnhCls = enhancedModelId != null, needPatch = includePatch;
 
         await using (var cmd = conn.CreateCommand())
         {
@@ -100,7 +101,7 @@ public sealed class DatasetDatabase
             if (await cmd.ExecuteScalarAsync() is string s && s == cvSpec) needCv = false;
         }
         needOrigCls = !await FeatureExistsAsync(conn, fingerprint, modelId);
-        needPatch = !await PatchExistsAsync(conn, fingerprint, modelId);
+        needPatch = includePatch && !await PatchExistsAsync(conn, fingerprint, modelId);
         if (enhancedModelId != null)
             needEnhCls = !await FeatureExistsAsync(conn, fingerprint, enhancedModelId);
 
