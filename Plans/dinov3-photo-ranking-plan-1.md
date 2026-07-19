@@ -1,6 +1,7 @@
 # DINOv3 选片排序系统 — 落地执行计划
 
 > 状态:草案 v1.4 / 2026-05-10
+> **封板注记(2026-07-19)**:本文件为一/二期历史档案,考古专用。文中"锁定/新增"的设计(16×16 网格、3 层金字塔、5 标量、patch 压缩等)多处已被二期演进推翻,现行基建状态以根 `CLAUDE.md` §5.4 + [plan-2-1 wrapup §0.2 与 §4 墓碑](dinov3-photo-ranking-plan-2-1-wrapup.md) 为准;三期基准见 [Training/plans/dinov3-photo-ranking-plan-3-0-charter.md](../Training/plans/dinov3-photo-ranking-plan-3-0-charter.md)。
 > 上游讨论:[相似度处理与模型推理优化](copilot-chat-conversation-相似度处理与模型推理优化.md)
 > v1.4 变更(执行视角澄清,解除三处隐含假设):
 > - **CV 网格 + patch token 是全平台推理时的美学评分输入,不是 dev-only 离线批**;每张照片首次展示前必须算,结果进 cache。原 §3 对接清单里只有 Python 工具,补 C# 运行时 `CvGridExtractor`

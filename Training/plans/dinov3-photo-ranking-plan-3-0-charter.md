@@ -1,7 +1,7 @@
 # DINOv3 照片美学评分 — Plan-3-0 项目宪法
 
-> 状态：v1.4 / 2026-07-05（宪法封板；v1.1 据"照片增强"讨论修正 §0.3 / §0.4 / §0.6 / §0.7 的数据性质表述，并增补 §1 决策 13；v1.2 据开工前审查补 §0.3 训练/推理分布错位、§0.4 精修通路前提、§1 决策 3 备选 (d)、决策 11 金标准 split 约束、新增决策 14 废片闸门；v1.3 据控制性环节梳理补 §0.6 保底交付形态、决策 8 特征升级梯封顶、§2 分期表改三册规划；v1.4 三册契约册建立——plan-3-2/3-3/3-4 契约锁定、方案未开工）
-> 上游：[Plan-2-4](dinov3-photo-ranking-plan-2-4-exif-rating.md) · 原始讨论 [copilot-chat](copilot-chat-conversation-相似度处理与模型推理优化.md) · 基建宪法 [Plan-1](dinov3-photo-ranking-plan-1.md)
+> 状态：v1.4 / 2026-07-05（宪法封板；v1.1 据"照片增强"讨论修正 §0.3 / §0.4 / §0.6 / §0.7 的数据性质表述，并增补 §1 决策 13；v1.2 据开工前审查补 §0.3 训练/推理分布错位、§0.4 精修通路前提、§1 决策 3 备选 (d)、决策 11 金标准 split 约束、新增决策 14 废片闸门；v1.3 据控制性环节梳理补 §0.6 保底交付形态、决策 8 特征升级梯封顶、§2 分期表改三册规划；v1.4 三册契约册建立——plan-3-2/3-3/3-4 契约锁定、方案未开工；v1.5 模块文档重组——plan-1/2 系列与 copilot 原始讨论归还主仓 `Plans/`（考古专用，头部上游链接改指），补 §3 已否定方向附录（负知识防重开））
+> 上游（考古档案，已归还主仓 `Plans/`）：[Plan-2-4](../../Plans/dinov3-photo-ranking-plan-2-4-exif-rating.md) · 原始讨论 [copilot-chat](../../Plans/copilot-chat-conversation-相似度处理与模型推理优化.md) · 基建宪法 [Plan-1](../../Plans/dinov3-photo-ranking-plan-1.md)
 > 下游：M1 数据地基见 [Plan-3-1](dinov3-photo-ranking-plan-3-1-data-foundation.md)；M2 起按 §2 三册规划——[Plan-3-2](dinov3-photo-ranking-plan-3-2-calibration-pairs.md) / [Plan-3-3](dinov3-photo-ranking-plan-3-3-training-baseline.md) / [Plan-3-4](dinov3-photo-ranking-plan-3-4-integration-deploy.md) 契约册已建立（契约锁定，方案待各自输入就绪再填）。
 >
 > **本文件的角色**：三期（美学评分模型）的**项目宪法**——锁定面临的问题、已有的条件、目标意图，以及贯穿各期的技术决策。具体执行计划分期单列（plan-3-1 起），**M1 没跑完不锁后续**。
@@ -170,3 +170,28 @@
 - 提前成形的想法**直接写入对应册的想法节**（明确标注未锁定），不经停 plan-3-1；plan-3-1 §6 原停车位内容已迁入各册。
 
 M1 的详细步骤与 GATE 见 [Plan-3-1](dinov3-photo-ranking-plan-3-1-data-foundation.md)。
+
+---
+
+## 3. 附录：已否定方向（勿重开，考古见主仓 `Plans/`）
+
+> 一/二期已实测否定或正式归档的方向。**未来任何评审 / 会话撞到其中一条，直接指回本节，不再重议**。plan-3-0 只收编现行基准，否定论证过程不在本文件；完整墓碑表（含逐条废弃理由）见 [plan-2-1 wrapup §4](../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)。
+
+**特征 / CV 层：**
+
+- **FFT 高频能量占比**作锐度 / 抖动判据——Marziliano 边宽直接给 px，正交冗余（wrapup §4）。
+- **抖动"边宽量级"路线 v0–v4**（结构张量 + Marziliano 绝对边宽）——v4.1 r2 实测证明 drag_width 与"是否抖动"无关，被 v5 方向一致性判据取代（[plan-2-2](../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md) 开头）。
+- **CV 一期形态**：16×16 网格 / 3 层金字塔 / 一期 5 标量——已演进为 32×32 / 7 标量 / 无金字塔（wrapup §0.2 失效史）。
+- **下采样做 CV**（长边 2000 / 固定短边 2560 / 4096）——任何缩放损害 1 px 精度，CV 一律走原始分辨率（wrapup §4）。
+- **patch token 下采样 16×16 + INT8/PCA 压缩**（plan-1 旧设计）——废弃，1024×384 f32 直存（[plan-2-3](../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md)）。
+- **跨模型 CLS / patch fallback**（L 没算用 S 顶）——空间不可比；所有 SQL 强制 `WHERE model_id = ?`（wrapup §4）。
+- **独立 CNN 抖动 / 虚焦分支**——全部并入 CV 网格，避免多分支协调成本（wrapup §4）；废片检测同理走 CV / 规则闸门（§1 决策 14）。
+- **CLS-attention rollout 可解释性**——二期搁置无结论，勿默认采用（[plan-2-0](../../Plans/dinov3-photo-ranking-plan-2-0.md) §4）。
+
+**工具 / 工程层：**
+
+- **A1 t-SNE 决策探针**（plan-1 的 `Tools/dinov3_feature_probe.py` 设想）——正式归档"跳过不补做"；与三期新建的 `Training/probes/feature_probe.py` 同名不同物，勿混淆（wrapup §4）。
+- **继续迭代设计 notebook**（`cv_grid_design.ipynb` 等）——已定型归档，PatchHeatmap 落地替代（wrapup §4）。
+- **旧库"标 deprecated 不 DROP"迁移策略**——未对外发布，已反转为检测旧 schema 直接删库重建（plan-2-3）。
+
+**考古入口**：主仓 `Plans/`——[plan-1](../../Plans/dinov3-photo-ranking-plan-1.md)（一期宪法，其"锁定"表述多被二期推翻，读前先看其封板注记）、[plan-2-0](../../Plans/dinov3-photo-ranking-plan-2-0.md) / [plan-2-1 wrapup](../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)（终态盘点 + 完整墓碑表）/ [plan-2-2](../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md) / [plan-2-3](../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md) / [plan-2-4](../../Plans/dinov3-photo-ranking-plan-2-4-exif-rating.md)、[copilot 原始讨论](../../Plans/copilot-chat-conversation-相似度处理与模型推理优化.md)。**现行基建状态的活真源** = 根 `CLAUDE.md` §5.4 + `PhotoViewer/Core/AI/CLAUDE.md`。

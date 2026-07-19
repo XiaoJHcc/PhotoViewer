@@ -5,6 +5,8 @@
 >
 > **当前推进**：以**照片增强制式探针**为第一步（见 §1.2）——它决定全量入库的输入制式，必须在入库前定。本期把增强算法的**探索与目视评估搬进产品**（查看器控制栏一个 toggle，原地预览增强 / 还原），人机共用同一确定性算法；Python 侧只保留量化判据（线性探针 ≥80%）。
 >
+> **进度真源**：本文件只记计划、不追进度；当前里程碑位置 / 最近 GATE / 下一步见 [../STATUS.md](../STATUS.md)，实验证据链见 [../EXECUTION-LOG.md](../EXECUTION-LOG.md)。
+>
 > 原则（承 plan-3-0 §2）：每步带 **GATE**，不达标就停下排查 / 回退，不假设一路顺利。
 
 ---
@@ -92,7 +94,7 @@
 
 ### 1.4 data_audit（看清真实分布、校准所有阈值）
 
-新建 `Tools/data_audit.py`，读 `photos.db` 输出（这是 M2+ 一切阈值的来源）：
+新建 `Training/audit/data_audit.py`，读数据集库输出（这是 M2+ 一切阈值的来源）：
 
 | 统计项 | 用途 / 校准什么 |
 |---|---|
@@ -148,9 +150,9 @@
 |---|---|---|
 | `Training/DatasetBuilder/`（C#） | **已就绪** | 清单驱动：扫描 → 指纹聚合（RAW/HEIF/JPG 合一，含 `.xmp` sidecar 星级）→ EXIF + rating → DINO(原片 CLS + 增强 CLS + patch) → CV → **独立数据集库** + 覆盖率报告 + GATE。`--scan-only` 入库前分布探查（焦段/星级/拍摄时间跨度与粗切段数，不解码、不建库），供挑样本 / 核验批次 |
 | `Tools/ExifTestTool/`（C#） | 已有 | 星级 / EXIF 可读性抽查（1.1） |
-| 查看器控制栏增强 toggle（C#，`ViewModels/Main` 控制 + 图片 VM） | **新建** | 主画面原地切换原片 ↔ 确定性增强；既是产品功能又是算法探索沙盒（1.2） |
-| `Training/probes/feature_probe.py` | **新建** | 增强制式量化判据：原片/增强/多视图 × 算法 × 集合的线性探针 + t-SNE（1.2）；增强算法与产品 toggle 同源；1.5 绝对性探针复用同一框架（跨段对可分性） |
-| `Tools/data_audit.py` | **新建** | 分布统计 + 阈值校准报告（1.4） |
+| 查看器控制栏增强 toggle（C#，`ViewModels/Main` 控制 + 图片 VM） | **已落地**（2026-07，CLHE 随产品上线） | 主画面原地切换原片 ↔ 确定性增强；既是产品功能又是算法探索沙盒（1.2） |
+| `Training/probes/feature_probe.py` | **已建成**（首轮结论见 [../EXECUTION-LOG.md](../EXECUTION-LOG.md) 2026-07-18） | 增强制式量化判据：原片/增强/多视图 × 算法 × 集合的线性探针 + t-SNE（1.2）；增强算法与产品 toggle 同源；1.5 绝对性探针复用同一框架（跨段对可分性） |
+| `Training/audit/data_audit.py` | **新建** | 分布统计 + 阈值校准报告（1.4） |
 
 ---
 

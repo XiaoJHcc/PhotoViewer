@@ -14,9 +14,10 @@ AI 训练一等模块:从产品仓库(`PhotoViewer/Core`)提取 DINOv3 特征 + 
 | [probes/](probes/) | Python 特征可行性探针:`feature_probe.py`(线性探针 + t-SNE,判断 backbone/增强/多视图是否够分)、`spatial_probe.py`(空间感知头判别,复用 `feature_probe` 的配对/split 逻辑)。`out/` 是每次运行的覆盖式输出(不入库)。 |
 | [onnx/](onnx/) | DINOv3 模型导出/校验:`export_dinov3_onnx.py` 从 HuggingFace/ModelScope 权重导出双输出(CLS + patch)ONNX;`verify_onnx_parity.py` 校验 PyTorch vs ONNX 一致性(cosine ≥ 0.999)。改动需同步 `PhotoViewer/Core/AI/DinoModelResources.cs`。 |
 | [notebooks/](notebooks/) | `cv_grid_design.ipynb` —— CV 网格设计 PoC(numpy 全量标量验证),已定型归档,不再迭代。 |
-| [plans/](plans/) | 三期计划宪法(dinov3-photo-ranking-plan-*.md)+ 一份 copilot 讨论记录。计划文档彼此用文件名相对链接,内部指向产品代码的链接是工作区根相对路径。 |
+| [plans/](plans/) | 三期计划文档:plan-3-0 宪法 + plan-3-1(M1 详案)+ plan-3-2/3-3/3-4 契约册,彼此用文件名相对链接。一/二期基建历史与 copilot 原始讨论已归还主仓 [../Plans/](../Plans/)(考古专用;已否定方向收编在 plan-3-0 §3 附录),现行基建状态以根 `CLAUDE.md` §5.4 为准。 |
 | [data/](data/) | 数据契约文档([data/README.md](data/README.md)):数据集库 schema、与产品 `photos.db` 的对齐关系、`dataset_meta` 版本化约定。数据本体在仓外 `D:\PhotoDB`。 |
 | [EXECUTION-LOG.md](EXECUTION-LOG.md) | 执行台账(append-only):每次实验的数据/前提/命令/结果/解读/下一步,跨会话防遗忘;`probes/out/` 每次覆盖写,靠本台账留档历史结论。 |
+| [STATUS.md](STATUS.md) | 进度真源(每次会话末重写,不追加):里程碑位置 / 最近 GATE / 下一步 / 等待用户项 / 已冻结参数。开工先读。 |
 
 ## 构建 / 运行入口
 
