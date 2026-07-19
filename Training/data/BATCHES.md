@@ -8,7 +8,7 @@
 - **F: 原始库文件夹层级 = 星级层**（已与 XMP rating 交叉验证、**5170 组零不一致**，2026-07-19）：无后缀机型文件夹（`A7C2-*` / `A6700-*`）= 0★（仅 HIF/JPG、XMP 无 rating）；`-OK` = 1-2★（RAW+HIF）；`ARW3*` = 3★+（RAW+HIF，混机型筛选、标准基本一致）。
 - **0★ 回填规则**：F: 批次的 0★ 不写 XMP（Adobe 约定 0=未评）→ 入库后按层级语义回填 `rating=0`（仅填 NULL 行，不覆盖已有 rating）。已执行 2832 行（2026-07-19）。
 - **0★ 语义终裁（2026-07-19 用户确认）**：F:\照片2026-P2 与 D:\PhotoDB **全部已评，0★ 即真 0★**（XMP 0/缺失不再是"未评"）。原留 NULL 的 2732 组（重庆春天 1970 + 旧批 762）已全部回填 0★，**全库无 NULL**。
-- **`OUT-JPG*` = 精修导出件（ACR）**：EXIF 可能残缺；**不入库**（精修像素是 OOD，不可作模型输入，plan-3-0 §1 决策 13），仅作 §1.1 精修回溯匹配的来源（产出 `retouched.txt` 后重跑清单只补 `is_retouched` 列）。
+- **`OUT-JPG*` = 精修导出件（ACR）**：EXIF 可能残缺；**不入库**（精修像素是 OOD，不可作模型输入，plan-3-0 §1 决策 13），仅作精修回溯匹配的来源。**已匹配落标（2026-07-19）**：命名 = 原片基名+`@JPG(_\d+)?`，按"文件名+事件"匹配（`Training/DatasetBuilder/retouch_match.py --apply`），150 组精修原片 is_retouched=1（4★40/5★110，零误伤）；`retouched.txt` 仅 136 平铺安全子集，14 个跨事件同名（相机计数 rollover）由 SQL 事件域落库——**重跑 DatasetBuilder 勿直接用 retouched.txt，会把 14 行冲回 0**。
 - **Stack（曝光包围连拍）/ 延时摄影**：不参与评级、不入库。本批库中无此类文件夹；今后批次注意排除。
 - **macOS AppleDouble 残桩（`._*`）**：非图像，`FingerprintGrouper` 已过滤（2026-07-19 修复）；Mac 拷贝过的批次不会再产生 junk 组。
 - 指纹组代表文件按解码代价取 HIF > JPG > RAW；本批 ARW3/OK 组每张 RAW 均有同名 HIF，无"仅 RAW 不可解码"缺口。
@@ -35,3 +35,4 @@
 
 - **2026-07-19**：manifest `D:\PhotoDB\dataset\manifest.2026-07-19.json`（46 文件夹，排除 8 个 `OUT-JPG*`），目标库 `D:\PhotoDB\dataset\photos_dataset.db`（与 20240212 旧批累积同库）。四路全提（原片 CLS + 增强 CLS `+clhe2.0ycc1.0` + patch + CV）。耗时 1h21m；214 失败全为 AppleDouble `._*` 残桩（已修复过滤 + 清库 76 行）；层级交叉验证零不一致后回填 0★ 2832 行。详见 [../EXECUTION-LOG.md](../EXECUTION-LOG.md)。
 - **2026-07-19（决策8 梯2）**：ViT-L/16 双路 CLS 增提（`--model-file D:/PhotoDB/dataset/models/dinov3_vitl16.onnx --model-id dinov3_vitl16_f32_518_v1 --no-patch`），manifest 8057 组 + 旧批 1361 组两跑，双 GATE PASS 零失败；全库 9418 组 ViT-L 双路 CLS 齐（ViT-S 四路共存）。同日用户终裁 0★ 语义（见分组规则），回填 NULL 2732 行、全库无 NULL。详见 [../EXECUTION-LOG.md](../EXECUTION-LOG.md)。
+- **2026-07-19（精修回溯）**：8 个 `OUT-JPG*` 目录 152 件导出 → 150 个唯一精修原片，按"文件名+事件"匹配落标（`retouch_match.py --apply`）：is_retouched 1=150 / 0=7907 / NULL=1361（旧批无精修信息留 NULL）。详见 [../EXECUTION-LOG.md](../EXECUTION-LOG.md)。

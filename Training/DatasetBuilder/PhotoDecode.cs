@@ -54,7 +54,9 @@ public static class PhotoDecode
             double? focal = GetRational(sub, ExifDirectoryBase.TagFocalLength);
             double? aperture = GetRational(sub, ExifDirectoryBase.TagFNumber);
             double? shutter = GetRational(sub, ExifDirectoryBase.TagExposureTime);
-            double? equivFocal = GetRational(sub, ExifDirectoryBase.Tag35MMFilmEquivFocalLength);
+            // 0xA405 等效焦距按 EXIF 规范是 SHORT——TryGetRational 吃不到（crop_factor 曾全库 0% 的根因）；
+            // 对齐产品 ExifLoader/PhotoStatsService：先 int32 后 rational。
+            double? equivFocal = GetInt32OrRational(sub, ExifDirectoryBase.Tag35MMFilmEquivFocalLength);
 
             int rating = 0;
             if (xmp?.XmpMeta != null)
@@ -113,6 +115,15 @@ public static class PhotoDecode
         if (!dir.TryGetRational(tag, out var r)) return null;
         if (r.Denominator == 0) return null;
         return r.ToDouble();
+    }
+
+    /// <summary>先按 int32 读、再退 rational——用于 EXIF 规范里 SHORT 型的标签（如 0xA405 等效焦距）。</summary>
+    private static double? GetInt32OrRational(MetadataExtractor.Directory? dir, int tag)
+    {
+        if (dir == null) return null;
+        if (dir.TryGetInt32(tag, out var i)) return i;
+        if (dir.TryGetRational(tag, out var r) && r.Denominator != 0) return r.ToDouble();
+        return null;
     }
 
     private static unsafe Bitmap? DecodeHeif(string path)
