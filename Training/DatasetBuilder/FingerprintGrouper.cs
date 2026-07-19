@@ -31,7 +31,10 @@ public static class FingerprintGrouper
                 continue;
             }
             var opt = entry.Recursive ? SearchOption.AllDirectories : SearchOption.TopDirectoryOnly;
-            foreach (var path in System.IO.Directory.EnumerateFiles(entry.Path, "*.*", opt).Where(PhotoDecode.IsImage))
+            // 跳过 macOS AppleDouble 资源叉文件（._*）：Mac 拷贝产生的元数据残桩，非图像，解码必失败
+            foreach (var path in System.IO.Directory.EnumerateFiles(entry.Path, "*.*", opt)
+                         .Where(p => !Path.GetFileName(p).StartsWith("._", StringComparison.Ordinal))
+                         .Where(PhotoDecode.IsImage))
             {
                 var exif = PhotoDecode.ReadExif(path);
                 var captureTime = exif.CaptureTime ?? File.GetLastWriteTimeUtc(path);

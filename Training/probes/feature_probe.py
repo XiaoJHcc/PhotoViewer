@@ -50,7 +50,7 @@ FOLD_SEED = 0        # 折分配随机种子（用于打散同权重单元的顺
 
 @dataclass
 class Sample:
-    """一个指纹组的探针样本：身份 + 星级 + 拍摄时间 + 两路 CLS + CV 全图聚合标量。"""
+    """一个指纹组的探针样本：身份 + 星级 + 拍摄时间 + 两路 CLS + CV 全图聚合标量 + 事件标签。"""
     fingerprint: str
     rating: int
     capture_time: datetime | None
@@ -59,6 +59,7 @@ class Sample:
     cv_sharp: float                 # nanmean(edge_width_p20)，可能为 NaN
     cv_shake: float                 # nanmean(drag_width)，可能为 NaN
     cv_contrast: float              # nanmean(block_contrast)，可能为 NaN
+    event: str = ""                 # 事件标签（photos.event_label，空串=无）
     patch_mean: np.ndarray | None = None     # 原片 patch mean 池化（384，L2）；--with-patch 时填
     patch_meanstd: np.ndarray | None = None  # 原片 patch mean+std 池化（768）；--with-patch 时填
 
@@ -116,8 +117,10 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
     try:
         meta: dict[str, tuple] = {}
         n_missing_time = 0
-        for fp, rating, ctime, cv_blob in conn.execute(
-            "SELECT fingerprint, COALESCE(rating,0), capture_time, cv_grid FROM photos"
+        for fp, rating, ctime, cv_blob, event in conn.execute(
+            # 未评(NULL)不参与探针——NULL ≠ 0★（2026-07-19 修正：原 COALESCE(rating,0) 会把
+            # 2732 个未评组错当 0★ 标签注入配对；0★ 只来自 NO 层回填，NULL 一律剔除）
+            "SELECT fingerprint, rating, capture_time, cv_grid, COALESCE(event_label,'') FROM photos WHERE rating IS NOT NULL"
         ):
             parsed = None
             if ctime:
@@ -128,7 +131,7 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
             if parsed is None:
                 n_missing_time += 1
             sharp, shake, contrast = _cv_aggregate(cv_blob)
-            meta[fp] = (int(rating), parsed, sharp, shake, contrast)
+            meta[fp] = (int(rating), parsed, sharp, shake, contrast, str(event))
 
         feats: dict[str, dict[str, np.ndarray]] = {}
         for fp, model_id, blob in conn.execute(
@@ -157,7 +160,7 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
         conn.close()
 
     samples: list[Sample] = []
-    for fp, (rating, ctime, sharp, shake, contrast) in meta.items():
+    for fp, (rating, ctime, sharp, shake, contrast, event) in meta.items():
         pair = feats.get(fp)
         if not pair or model_orig not in pair or model_enh not in pair:
             continue
@@ -171,7 +174,7 @@ def load_samples(db_path: str, model_orig: str, model_enh: str,
             fingerprint=fp, rating=rating, capture_time=ctime,
             orig=l2_normalize(pair[model_orig]), enh=l2_normalize(pair[model_enh]),
             cv_sharp=sharp, cv_shake=shake, cv_contrast=contrast,
-            patch_mean=pm, patch_meanstd=ps,
+            patch_mean=pm, patch_meanstd=ps, event=event,
         ))
     n_missing = sum(1 for s in samples if s.capture_time is None)
     return samples, n_missing
@@ -280,6 +283,27 @@ def probe_accuracy(feat: np.ndarray, ii: np.ndarray, jj: np.ndarray, ratings: np
     if not accs:
         return float("nan"), float("nan"), int(same.sum())
     return float(np.mean(accs)), float(np.std(accs)), int(same.sum())
+
+
+def probe_oof_correct(feat: np.ndarray, ii: np.ndarray, jj: np.ndarray, ratings: np.ndarray,
+                      unit_fold: np.ndarray, folds: int = FOLDS,
+                      clf_kind: str = "linear") -> tuple[np.ndarray, np.ndarray]:
+    """单元级 split 的逐对 OOF 诊断版：与 probe_accuracy 同折同对称化训练，
+    返回 (correct, evaluated)——correct[i] 表示第 i 对在留出折上是否判对，evaluated[i] 表示
+    该对是否参与评估（只评两端同折的对）。用于按星级边界 / 按事件拆解准确率。"""
+    diff = feat[ii] - feat[jj]
+    label = np.where(ratings[ii] > ratings[jj], 1, -1)
+    same = unit_fold[ii] == unit_fold[jj]
+    pf = unit_fold[ii]
+    correct = np.zeros(len(ii), bool)
+    for f in range(folds):
+        te = same & (pf == f); tr = same & (pf != f)
+        if te.sum() < 10 or tr.sum() < 10:
+            continue
+        Xtr = np.concatenate([diff[tr], -diff[tr]]); ytr = np.concatenate([label[tr], -label[tr]])
+        clf = _make_clf(clf_kind).fit(Xtr, ytr)
+        correct[te] = (clf.decision_function(diff[te]) * label[te] > 0)
+    return correct, same
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +605,75 @@ def run_combo(samples: list[Sample], seg_ids: np.ndarray, gap: float, window: in
                 if not np.isnan(acc) and acc > best_acc:
                     best_view, best_acc, best_neval = name, acc, neval
 
+    # —— 诊断（仅 verbose 主口径）：构图层 Δ=1 按星级边界 / 按事件拆解 OOF 准确率 + 对级对照 ——
+    # 用途：段级 chance 时分辨病灶——0-1 边界（技术质量）chance 而 2-3+（美学）可行 → 特征够用、
+    # 技术层归 CV；全边界/全事件 chance → 特征瓶颈（H1）。见 EXECUTION-LOG 2026-07-19。
+    if verbose and comp_rows.get("Δ=1") is not None:
+        d_mask = comp_strata["Δ=1"]
+        d_ii, d_jj = comp_ii[d_mask], comp_jj[d_mask]
+        r_lo = np.minimum(ratings[d_ii], ratings[d_jj])
+        r_hi = np.maximum(ratings[d_ii], ratings[d_jj])
+        events = np.array([s.event or "(无事件)" for s in samples])
+        d_event = events[d_ii]
+        cls_views = {k: v for k, v in views.items() if k.startswith("CLS")}
+        cls_names = list(cls_views.keys())
+        oof_by_view = {}
+        if comp_unit_fold is not None:
+            for name, feat in cls_views.items():
+                oof_by_view[name] = probe_oof_correct(feat, d_ii, d_jj, ratings,
+                                                      comp_unit_fold, clf_kind=clf_kind)
+            bounds = [(b, b + 1) for b in range(5)]
+            print("  —— 诊断：构图层 Δ=1 按星级边界拆解（段级 split OOF 准确率%）——")
+            print(f"  {'制式':<12}" + "".join(f"{f'{lo}-{hi}':>13}" for lo, hi in bounds))
+            print(f"  {'对数':<12}" + "".join(
+                f"{int(((r_lo == lo) & (r_hi == hi)).sum()):>13}" for lo, hi in bounds))
+            for name in cls_names:
+                correct, ev_mask = oof_by_view[name]
+                cells = []
+                for lo, hi in bounds:
+                    m = ev_mask & (r_lo == lo) & (r_hi == hi)
+                    cells.append(f"{correct[m].mean()*100:5.1f}(n={m.sum()})" if m.sum() >= 20 else "·")
+                print(f"  {name:<12}" + "".join(f"{c:>13}" for c in cells))
+            print("  —— 诊断：构图层 Δ=1 按事件拆解（段级 split OOF 准确率%）——")
+            ev_counts = {e: int((d_event == e).sum()) for e in np.unique(d_event)}
+            print(f"  {'事件':<24}" + "".join(f"{k:>13}" for k in cls_names) + f"{'对数':>10}")
+            for e in sorted(ev_counts, key=ev_counts.get, reverse=True):
+                m_ev = d_event == e
+                cells = []
+                for name in cls_names:
+                    correct, ev_mask = oof_by_view[name]
+                    m = ev_mask & m_ev
+                    cells.append(f"{correct[m].mean()*100:5.1f}" if m.sum() >= 20 else "·")
+                print(f"  {e:<24}" + "".join(f"{c:>13}" for c in cells) + f"{ev_counts[e]:>10}")
+        print("  —— 对照：构图层 Δ=1 对级 split（乐观上界，分布内可学性）——")
+        pair_results = probe_stratum(cls_views, d_ii, d_jj, ratings, None, clf_kind)
+        print_stratum_row("Δ=1 对级", pair_results, cls_names)
+        # 事件条件化探针（Kronecker one-hot⊗diff）：给每个事件自己的线性方向。
+        # 判读：段级 >>50% → "单一全局规则"是病灶、特征可用（题材条件架构可解，无需升 backbone）；
+        # 仍 ~50% → 特征真盲（H1），走决策 8 升级梯。见 EXECUTION-LOG 2026-07-19。
+        if comp_unit_fold is not None:
+            ev_list = sorted(set(d_event))
+            onehot = np.stack([(d_event == e).astype(np.float64) for e in ev_list], axis=1)
+            label_d = np.where(ratings[d_ii] > ratings[d_jj], 1, -1)
+            same_d = comp_unit_fold[d_ii] == comp_unit_fold[d_jj]
+            pf_d = comp_unit_fold[d_ii]
+            print(f"  —— 诊断：事件条件化探针（one-hot x diff · {len(ev_list)} 事件 · 段级 split）——")
+            for name in cls_names:
+                feat = cls_views[name]
+                diff = feat[d_ii] - feat[d_jj]
+                kron = np.concatenate([diff * onehot[:, k:k + 1] for k in range(onehot.shape[1])], axis=1)
+                accs = []
+                for f in range(FOLDS):
+                    te = same_d & (pf_d == f); tr = same_d & (pf_d != f)
+                    if te.sum() < 10 or tr.sum() < 10:
+                        continue
+                    Xtr = np.concatenate([kron[tr], -kron[tr]]); ytr = np.concatenate([label_d[tr], -label_d[tr]])
+                    Xte = np.concatenate([kron[te], -kron[te]]); yte = np.concatenate([label_d[te], -label_d[te]])
+                    accs.append(_make_clf(clf_kind).fit(Xtr, ytr).score(Xte, yte))
+                if accs:
+                    print(f"    {name:<12}{np.mean(accs)*100:5.1f}±{np.std(accs)*100:3.1f}"
+                          f"（{len(accs)} 折 · 特征 {kron.shape[1]} 维）")
+
     # 细节层（条件保留后，中位数分位）：全部 一行作对照
     detail_ii, detail_jj = ii[detail_mask], jj[detail_mask]
     detail_cv = cv_dist[detail_mask]
@@ -708,6 +801,70 @@ def write_markdown(out_dir: Path, gap_list: list[float], seg_reports: list[tuple
     print(f"\nmarkdown 结论: {out_dir / 'probe_conclusion.md'}")
 
 
+def run_event_regime(samples: list[Sample], args) -> None:
+    """高星全局段探针（用户 2026-07-19 标注学补充：3-5★ 是"0-3★ 局部最优选出后、事件内总体
+    美学最优"——该段的合法配对域是**事件全集**（比较当年就是全局发生的），不是滑窗；split 用
+    **事件级留出**，测绝对美学的跨事件迁移——M4 绝对涌现的缩微预演。配合 --min-rating 3 使用。
+    宪法"禁跨段组对"约束的是 0-3★ 局部段，不约束本段。"""
+    views = _views_for(samples)
+    cls_views = {k: v for k, v in views.items() if k.startswith("CLS")}
+    cls_names = list(cls_views.keys())
+    ratings = np.array([s.rating for s in samples])
+    events = np.array([s.event or "(无事件)" for s in samples])
+    ev_list = sorted(set(events))
+    ev_idx = np.array([ev_list.index(e) for e in events])
+
+    # 事件内全配对（rating 不同的无序对；不做事前相似度分层——全局段对天然低相似）
+    ii_l, jj_l = [], []
+    for e in ev_list:
+        idx = np.where(events == e)[0]
+        for a in range(len(idx)):
+            ra = ratings[idx[a]]
+            for b in range(a + 1, len(idx)):
+                if ra != ratings[idx[b]]:
+                    ii_l.append(idx[a]); jj_l.append(idx[b])
+    ii = np.array(ii_l); jj = np.array(jj_l)
+    dr = np.abs(ratings[ii] - ratings[jj])
+    print(f"\n■ 全局段探针（≥{args.min_rating}★ · 事件内全配对 · 事件级 split）—— "
+          f"{len(samples)} 组 · {len(ev_list)} 事件 · 候选对 {len(ii)}")
+    for e in ev_list:
+        print(f"    {e}: {int((events == e).sum())} 组")
+
+    unit_size = {int(u): int(c) for u, c in zip(*np.unique(ev_idx, return_counts=True))}
+    ev_fold = assign_unit_folds_balanced(ev_idx, unit_size, FOLDS, FOLD_SEED)
+
+    strata = {"全部": np.ones(len(ii), bool), "Δ=1": dr == 1, "Δ≥2": dr >= 2}
+    print(f"  {'分层':<14}" + "".join(f"{k:>13}" for k in cls_names) + f"{'评估对数':>10}")
+    for label, mask in strata.items():
+        if mask.sum() < 20:
+            print(f"  {label:<14}{'(样本过少)':>13}")
+            continue
+        results = probe_stratum(cls_views, ii[mask], jj[mask], ratings, ev_fold, args.clf)
+        print_stratum_row(label, results, cls_names)
+        if label == "Δ=1":
+            d_ii, d_jj = ii[mask], jj[mask]
+            r_lo = np.minimum(ratings[d_ii], ratings[d_jj])
+            r_hi = np.maximum(ratings[d_ii], ratings[d_jj])
+            print("  —— Δ=1 按边界拆解（事件级 split OOF 准确率%）——")
+            bounds = sorted(set(zip(r_lo.tolist(), r_hi.tolist())))
+            print(f"  {'制式':<12}" + "".join(f"{f'{lo}-{hi}':>13}" for lo, hi in bounds))
+            print(f"  {'对数':<12}" + "".join(f"{int(((r_lo == lo) & (r_hi == hi)).sum()):>13}"
+                                              for lo, hi in bounds))
+            for name in cls_names:
+                correct, ev_mask = probe_oof_correct(cls_views[name], d_ii, d_jj, ratings,
+                                                     ev_fold, clf_kind=args.clf)
+                cells = []
+                for lo, hi in bounds:
+                    m = ev_mask & (r_lo == lo) & (r_hi == hi)
+                    cells.append(f"{correct[m].mean()*100:5.1f}(n={m.sum()})" if m.sum() >= 20 else "·")
+                print(f"  {name:<12}" + "".join(f"{c:>13}" for c in cells))
+            print("  —— 对级 split 对照（乐观上界）——")
+            pr = probe_stratum(cls_views, d_ii, d_jj, ratings, None, args.clf)
+            print_stratum_row("Δ=1 对级", pr, cls_names)
+    print("\n判据：全局段（≥3★）Δ=1 事件级 split 最佳制式 ≥80% → 绝对美学腿在 ViT-S 立住；"
+          "仍 chance → 全局段同样受特征瓶颈约束（决策 8 梯 2）")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="DINOv3 增强制式线性探针 (Plan-3-1 §1.2，段级 split 版)")
     ap.add_argument("--db", default="D:/PhotoDB/dataset/photos_dataset.db")
@@ -735,6 +892,9 @@ def main() -> int:
     ap.add_argument("--split", choices=["seg", "group", "pair"], default="seg",
                     help="split 口径：seg=段级(主口径,不可用时自动回退组级) / group=连拍组级(强制) / "
                         "pair=对级(乐观上界对照)")
+    ap.add_argument("--pair-scope", choices=["window", "event"], default="window",
+                    help="配对域：window=段内滑窗（0-3★ 局部段，默认）/ event=事件内全配对（3-5★ 全局段，"
+                        "配合 --min-rating 3，split 固定事件级留出；gap/window/τ 参数不生效）")
     args = ap.parse_args()
 
     if not Path(args.db).exists():
@@ -753,6 +913,10 @@ def main() -> int:
         n0 = len(samples)
         samples = [s for s in samples if s.rating >= args.min_rating]
         print(f"过滤 rating≥{args.min_rating}：{n0} → {len(samples)} 组（排除低星/0★）")
+
+    if args.pair_scope == "event":
+        run_event_regime(samples, args)
+        return 0
 
     ratings = np.array([s.rating for s in samples])
     dist = ", ".join(f"{k}★:{int((ratings==k).sum())}" for k in range(6))

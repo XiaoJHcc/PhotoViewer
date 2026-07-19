@@ -15,7 +15,7 @@ AI 训练一等模块:从产品仓库(`PhotoViewer/Core`)提取 DINOv3 特征 + 
 | [onnx/](onnx/) | DINOv3 模型导出/校验:`export_dinov3_onnx.py` 从 HuggingFace/ModelScope 权重导出双输出(CLS + patch)ONNX;`verify_onnx_parity.py` 校验 PyTorch vs ONNX 一致性(cosine ≥ 0.999)。改动需同步 `PhotoViewer/Core/AI/DinoModelResources.cs`。 |
 | [notebooks/](notebooks/) | `cv_grid_design.ipynb` —— CV 网格设计 PoC(numpy 全量标量验证),已定型归档,不再迭代。 |
 | [plans/](plans/) | 三期计划文档:plan-3-0 宪法 + plan-3-1(M1 详案)+ plan-3-2/3-3/3-4 契约册,彼此用文件名相对链接。一/二期基建历史与 copilot 原始讨论已归还主仓 [../Plans/](../Plans/)(考古专用;已否定方向收编在 plan-3-0 §3 附录),现行基建状态以根 `CLAUDE.md` §5.4 为准。 |
-| [data/](data/) | 数据契约文档([data/README.md](data/README.md)):数据集库 schema、与产品 `photos.db` 的对齐关系、`dataset_meta` 版本化约定。数据本体在仓外 `D:\PhotoDB`。 |
+| [data/](data/) | 数据契约文档([data/README.md](data/README.md)):数据集库 schema、与产品 `photos.db` 的对齐关系、`dataset_meta` 版本化约定;入库批次台账([data/BATCHES.md](data/BATCHES.md)):批次源/题材/分组规则/特殊情况,每入库一批更新。数据本体在仓外 `D:\PhotoDB`。 |
 | [EXECUTION-LOG.md](EXECUTION-LOG.md) | 执行台账(append-only):每次实验的数据/前提/命令/结果/解读/下一步,跨会话防遗忘;`probes/out/` 每次覆盖写,靠本台账留档历史结论。 |
 | [STATUS.md](STATUS.md) | 进度真源(每次会话末重写,不追加):里程碑位置 / 最近 GATE / 下一步 / 等待用户项 / 已冻结参数。开工先读。 |
 
@@ -23,7 +23,7 @@ AI 训练一等模块:从产品仓库(`PhotoViewer/Core`)提取 DINOv3 特征 + 
 
 - **构建**:`dotnet build Training/Training.sln`(独立解决方案,仅含 `DatasetBuilder`;**不要**把它加进主 `PhotoViewer.sln`——`DatasetBuilder` 是 `net10.0-windows`,加进跨平台主 sln 会连累 Mac/iOS 头的构建)。
 - **运行提取**:`dotnet run --project Training/DatasetBuilder -- --manifest <manifest.json>`(清单驱动,见 [DatasetBuilder/manifest.sample.json](DatasetBuilder/manifest.sample.json))或 `dotnet run --project Training/DatasetBuilder -- <folder>... --scan-only`(只扫描不建库,快速核验批次分布)。
-- **探针**:Python 侧用 `Training/.venv`(独立虚拟环境,首次需 `pip install -r Training/probes/requirements.txt`),例如 `Training/.venv/Scripts/python.exe Training/probes/feature_probe.py --db D:/PhotoDB/dataset/photos_dataset.db`。
+- **探针**:Python 侧用仓根 `Tools/.venv`(独立虚拟环境,首轮探针即用它;新建则 `pip install -r Training/probes/requirements.txt`),例如 `Tools/.venv/Scripts/python.exe Training/probes/feature_probe.py --db D:/PhotoDB/dataset/photos_dataset.db`(从仓根执行)。
 
 ## 对产品的契约
 

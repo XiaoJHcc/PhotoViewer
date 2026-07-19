@@ -1,18 +1,23 @@
 # STATUS — 三期当前进度
 
-> **进度真源：每次会话结束重写本文件（不追加）**。开工先读这里；实验证据链见 [EXECUTION-LOG.md](EXECUTION-LOG.md)（append-only）；计划见 [plans/](plans/)（plan-3-0 宪法 → plan-3-1 M1 详案）。
+> **进度真源：每次会话结束重写本文件（不追加）**。开工先读这里；实验证据链见 [EXECUTION-LOG.md](EXECUTION-LOG.md)（append-only）；计划见 [plans/](plans/)（plan-3-0 宪法 → plan-3-1 M1 详案）；入库批次台账见 [data/BATCHES.md](data/BATCHES.md)。
 > 最近重写：2026-07-19
 
-- **里程碑位置**：M1（[plan-3-1](plans/dinov3-photo-ranking-plan-3-1-data-foundation.md)）§1.2 → §1.3 之间。增强制式 / 特征可行性探针框架已建成并跑完首轮；首轮结论要求换多样多题材数据重探。
-- **最近 GATE 状态**：§1.2 首轮探针（2026-07-18，批次 20240212 单批、1361 指纹组）——段级 split 全 chance（最佳 CLS增强 44.1±3.4%）；H2 空间坍缩已排除；H1（ViT-S 弱）vs H3（单批同质 worst case）未分辨。**非失败：confound 未解，不是特征判死**。
-- **下一步（一件事）**：按 §1.3 用 DatasetBuilder 入**多样多题材子集**（必须含"靠影调 / 氛围区分"的对，否则增强 B 问题依旧测不出）→ 复用 feature_probe 重探。多样批仍 chance 才升 ViT-L（plan-3-0 决策 8 梯 2）。20240212 单批已探尽，不再加实验。
+- **里程碑位置**：M1（[plan-3-1](plans/dinov3-photo-ranking-plan-3-1-data-foundation.md)）§1.2 特征可行性探针系列完成——**无跨段/跨事件迁移（H1），但 ≥3★ 事件内可学性 79-84%**。梯 2（ViT-L）待用户批准。
+- **最近 GATE 状态**：§1.3 入库 GATE **PASS**。§1.2 重探 GATE **FAIL（干净确证）**：局部段（滑窗）全 24 组合 47–51%；诊断（按边界/按事件/Kronecker/池化 patch）全 chance；**spatial_probe 空间结构头（金字塔/微型CNN）49.4–50.7%，H2 在干净数据上同样排除——瓶颈是特征本身，不是池化**；全局段（≥3★ 事件内全配对）事件级 split 49.5-51.2% 全 chance，**对级对照 79.3/79.1/84.0%（事件内可学性强，vs 局部段 60-62%）**。
+- **关键判读**：问题已锐化为 **特征弱 vs 标签事件特异**。梯 2 ViT-L 复测同一套三段探针（局部段/全局段/事件级）即成 2×2 分离：跨事件仍 ~50% 而事件内仍 ~80% → 特征非瓶颈、backbone 定格 ViT-S 进 M2 锚定；跨事件显著上分 → 特征瓶颈获解按梯继续。
+- **下一步（一件事）**：**梯 2 = ViT-L 重提复测**，待用户点头：① `Training/onnx/export_dinov3_onnx.py --model-id facebook/dinov3-vitl16-pretrain-lvd1689m`；② 新 model_id（如 `dinov3_vitl16_f32_518_v1`，共存不返工）；③ DatasetBuilder 补 `--no-patch`（探针只需双路 CLS，ViT-L patch ≈ +38GB 暂缓）；④ 增提 9418 组双路 CLS；⑤ 复测三段探针套件。
 - **等待用户输入**：
-  - 雾 / 低对比片正反例样本（plan-3-1 §1.2 探针样本）；
-  - 精修成品存放位置盘点（§1.1，决定 `is_retouched` 与决策 3b 存亡）；
-  - 后续外拍保留原始 dump（§1.1，废片闸门 + 金标准废片组唯一数据来源）。
+  - **梯 2 是否开工** + **今日改动是否提交 git**（探针诊断补丁、`._` 过滤、台账/批次/STATUS 更新）；
+  - 重庆春天（1970 组）与 20240212 旧批（762 组）的未评组是否认定 0★（默认留 NULL 不假设）；
+  - 精修回溯匹配执行（OUT-JPG = 精修已确认；**升级为关键路径**——若走 M2 锚定路线，精修锚点是决策 3b 的核心腿）；
+  - 后续外拍保留原始 dump（§1.1，废片闸门 + 金标准废片组唯一来源）。
+- **暂缓事项**：§1.2 制式决策（增强是否入模）与影调对 B-测试——三制式在 CLS 任务上无差异，特征问题解决前无决策意义。
 - **已冻结 / 待校准参数**：
   - 增强 = CLHE `ClipFactor=2.0` / `SaturationScale=1.0`（YCbCr 恒定色度），后缀 `+clhe2.0ycc1.0` 冻结进 model_id 契约——改参 = 整库重提；
-  - 入库 model_id = `dinov3_vits16_f32_518_v1`（ViT-S/16@518，384d）；
+  - 当前入库 model_id = `dinov3_vits16_f32_518_v1`（ViT-S/16@518，384d；探针未过 GATE，非终选）；
   - 探针主口径 gap=10min / window=20 / τ_hi=0.95 / τ_lo=0.83——仍是扫描默认值，正式校准是 §1.4 data_audit 的事。
+- **分组与标注学规则（用户 07-19 确认）**：① 不同事件文件夹的照片**不可直接做星级比对**；同一事件文件夹内部可看作一组（0-3★ 局部段段切分在事件内部进行）。② **0-3★ 偏局部**（临近相似选优，配对域=滑窗）、**3-5★ 偏全局**（局部最优后事件内总体美学最优，配对域=事件全集）——已落成探针 `--pair-scope` 双模式（见 [EXECUTION-LOG.md](EXECUTION-LOG.md) 07-19 条）。
 - **并行长周期**：金标准集攒集（plan-3-1 §5，~50-100 组按七类场景；所在拍摄段必须入 test，攒集时随记段归属）。
-- **数据现状**：`D:\PhotoDB\dataset\photos_dataset.db` 仅含 20240212 单批（原片 + 增强 CLS + patch + CV 四路齐）；多样多题材子集未入库。
+- **数据现状**：`D:\PhotoDB\dataset\photos_dataset.db` = 9418 组、四路特征全齐（ViT-S）；标签分布 0★2832 / 1★1947 / 2★985 / 3★489 / 4★249 / 5★184（有标签 6686 组）；10 事件 ≈120 段（gap=10min）；明细见 [data/BATCHES.md](data/BATCHES.md)。
+- **已知事项**：DatasetBuilder 跑完主流程后进程会悬挂不退（ONNX session 清理期），手动/任务清理即可，不影响结果；`._*` AppleDouble 残桩已过滤（07-19 修复）。
