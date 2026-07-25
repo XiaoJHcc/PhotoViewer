@@ -19,8 +19,12 @@ namespace PhotoViewer.ViewModels.Main;
 
 /// <summary>
 /// 分析栏 VM。把"细节预览"(对焦点 / 中心)与"DINO/CV 诊断"(PCA / Cosine / 锐度 / 抖动)
-/// 合并到一个常驻侧栏,只读库 — 不触发解码、不触发 ONNX 推理、不触发 CV 重算;
-/// 缓存缺失时诊断瓦片显示"未提取"占位,引导用户去相似聚类面板"提取全部"。
+/// 合并到一个常驻侧栏。诊断瓦片有三条数据来源路径:
+/// 1. 只读库:指纹 → <see cref="AnalysisResultCache"/> → DB,不触发解码 / ONNX 推理 / CV 重算;
+/// 2. 增强预览联动:增强图就绪时对增强位图立即重算(CV + DINO 推理),不走 DB;
+/// 3. 未提取回退:库里没有提取结果时,不再显示"未提取",改为对当前主图位图立即计算 —
+///    先延迟再等主图 / 缩略图通道空闲,绝不抢主图浏览资源,期间占位显示"计算中…"。
+/// 立即计算(路径 2/3)的产物不落 cache、不写库,位图归 VM 所有(owned)显式释放。
 ///
 /// 性能优化:派生数据按指纹走 <see cref="AnalysisResultCache"/>,与 <see cref="BitmapPrefetcher"/> 邻居预取
 /// 同步预热;命中时切图变成纯 UI 线程 swap,避免每次切图重跑 PCA SVD(几十 ms 主因)与抖动场重算。
@@ -35,6 +39,9 @@ public sealed class AnalysisViewModel : ReactiveObject
 {
     /// <summary>DINO patch 图像素边长(32);也用于 cosine 参考点坐标系。</summary>
     public const int PatchGridPixels = AnalysisComputer.PatchGridPixels;
+
+    /// <summary>未提取回退的启动延迟(ms):快速翻页时在延迟内即被 _cts 取消,零 CV/推理开销。</summary>
+    private const int FallbackDelayMs = 500;
 
     private readonly MainViewModel _main;
     private CancellationTokenSource? _cts;
@@ -220,7 +227,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         // 增强模式且增强图就绪 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
         if (_main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
         {
-            _ = LoadEnhancedAsync(enhanced, ct);
+            _ = ComputeDiagnosticsAsync(enhanced, ct);
             return;
         }
 
@@ -232,6 +239,12 @@ public sealed class AnalysisViewModel : ReactiveObject
             if (hit != null)
             {
                 ApplyEntrySync(hit);
+                // 命中空 entry(未提取,慢路径 / 预热都会把空结果落 cache)→ 回退到立即计算。
+                if (IsEntryEmpty(hit))
+                {
+                    SetDiagnosticPlaceholder("计算中…");
+                    _ = LoadFallbackAsync(ct);
+                }
                 return;
             }
         }
@@ -328,7 +341,7 @@ public sealed class AnalysisViewModel : ReactiveObject
             }
 
             // 2) miss:读库 → 派生层现算 → 落 cache,然后再 UI swap。指纹缺失(无 EXIF 时间戳)
-            //    直接喂空 Result,所有诊断瓦片回落"未提取"。
+            //    直接喂空 Result。
             var data = string.IsNullOrEmpty(fingerprint)
                 ? new AnalysisDataReader.Result()
                 : await AnalysisDataReader.ReadByFingerprintAsync(fingerprint, ct).ConfigureAwait(false);
@@ -340,6 +353,13 @@ public sealed class AnalysisViewModel : ReactiveObject
 
             ct.ThrowIfCancellationRequested();
             ApplyEntry(entry, ct);
+
+            // 3) 库里没有提取结果 → 回退到立即计算:占位改"计算中…",延迟 + 让位后对当前主图跑 CV+DINO。
+            if (data.IsEmpty)
+            {
+                PostDiagnosticPlaceholder("计算中…", ct);
+                await LoadFallbackAsync(ct).ConfigureAwait(false);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -414,21 +434,22 @@ public sealed class AnalysisViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 增强实时重算:对增强图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
-    /// 产出位图归本 VM 所有(非 cache),经 owned=true 路径管理释放。
+    /// 立即计算:对指定位图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
+    /// 增强预览联动与未提取回退共用;不读库、不写库。产出位图归本 VM 所有(非 cache),经 owned=true 路径管理释放。
+    /// 返回是否成功贴出结果(被取消或失败均返回 false)。
     /// </summary>
-    private async Task LoadEnhancedAsync(Bitmap enhanced, CancellationToken ct)
+    private async Task<bool> ComputeDiagnosticsAsync(Bitmap bitmap, CancellationToken ct)
     {
         try
         {
             ct.ThrowIfCancellationRequested();
-            int cvW = enhanced.PixelSize.Width;
-            int cvH = enhanced.PixelSize.Height;
+            int cvW = bitmap.PixelSize.Width;
+            int cvH = bitmap.PixelSize.Height;
 
-            // CV 走增强图原始分辨率;DINO 直接喂增强图(内部缩放到 518)。
-            var cv = await CvGridExtractor.ExtractAsync(enhanced, ct).ConfigureAwait(false);
+            // CV 走位图原始分辨率;DINO 直接喂入(内部缩放到 518)。
+            var cv = await CvGridExtractor.ExtractAsync(bitmap, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(enhanced, includePatches: true, ct).ConfigureAwait(false);
+            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(bitmap, includePatches: true, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
             var data = new AnalysisDataReader.Result
@@ -441,6 +462,54 @@ public sealed class AnalysisViewModel : ReactiveObject
             var entry = AnalysisComputer.Compute(data);
             ct.ThrowIfCancellationRequested();
             ApplyEntry(entry, ct, owned: true);
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            // 被新任务覆盖,忽略
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AnalysisVM] immediate compute failed: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 未提取回退:库 / cache 都没有该照片结果时,对当前主图位图立即计算诊断瓦片。
+    /// 为保护主图浏览性能:先延迟 <see cref="FallbackDelayMs"/>(快速翻页在此即被 _cts 取消,零开销),
+    /// 再让位等待主图解码完成且缩略图通道空闲(策略同 BitmapPrefetcher.WaitForHighPriorityIdleAsync);
+    /// 结果不落 cache、不写库,位图归 VM 所有(owned) — 避免会话内 cache 遮蔽用户之后真正提取入库的结果。
+    /// </summary>
+    private async Task LoadFallbackAsync(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(FallbackDelayMs, ct).ConfigureAwait(false);
+
+            // 让位:主图未解码完(SourceBitmap 为空)或缩略图通道忙时退避,上限 5s 后放行。
+            int waited = 0;
+            while (!ct.IsCancellationRequested && waited < 5000)
+            {
+                if (_main.ImageVM.SourceBitmap != null && !_main.FileVM.ThumbnailList.IsThumbnailLoadingBusy())
+                    break;
+                await Task.Delay(120, ct).ConfigureAwait(false);
+                waited += 120;
+            }
+            ct.ThrowIfCancellationRequested();
+
+            // 非增强时 SourceBitmap 即原片(归 BitmapLoader 缓存所有,VM 不 Dispose),后台读取安全。
+            var source = _main.ImageVM.SourceBitmap;
+            if (source == null)
+            {
+                PostDiagnosticPlaceholder("未提取", ct);
+                return;
+            }
+
+            bool ok = await ComputeDiagnosticsAsync(source, ct).ConfigureAwait(false);
+            if (!ok && !ct.IsCancellationRequested)
+                PostDiagnosticPlaceholder("未提取", ct);
         }
         catch (OperationCanceledException)
         {
@@ -448,8 +517,32 @@ public sealed class AnalysisViewModel : ReactiveObject
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AnalysisVM] enhanced compute failed: {ex.Message}");
+            Console.WriteLine($"[AnalysisVM] fallback compute failed: {ex.Message}");
+            PostDiagnosticPlaceholder("未提取", ct);
         }
+    }
+
+    /// <summary>cache entry 是否为空(未提取):DINO patch 与 CV 锐度均缺失,对应 <see cref="AnalysisDataReader.Result.IsEmpty"/>。</summary>
+    private static bool IsEntryEmpty(AnalysisResultCache.Entry entry) =>
+        entry.Patches == null && entry.SharpnessBmp == null;
+
+    /// <summary>设置 4 个诊断瓦片的占位文本(调用方须在 UI 线程;在 ApplyEntryCore 之后调用以覆盖"未提取")。</summary>
+    private void SetDiagnosticPlaceholder(string text)
+    {
+        _pcaItem.PlaceholderText = text;
+        _cosineItem.PlaceholderText = text;
+        _sharpnessItem.PlaceholderText = text;
+        _shakeItem.PlaceholderText = text;
+    }
+
+    /// <summary>Background 优先级设置占位文本;供后台路径在 ApplyEntry 之后调用(同优先级 FIFO,保证顺序)。</summary>
+    private void PostDiagnosticPlaceholder(string text, CancellationToken ct)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (ct.IsCancellationRequested) return;
+            SetDiagnosticPlaceholder(text);
+        }, DispatcherPriority.Background);
     }
 
     /// <summary>从当前主图(原片或增强图)现算 RGB 直方图,随主图 / 可见性变化触发;不可见或无图时清空。</summary>
