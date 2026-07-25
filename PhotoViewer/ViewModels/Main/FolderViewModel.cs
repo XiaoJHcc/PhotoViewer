@@ -395,6 +395,10 @@ public class FolderViewModel : ReactiveObject
             }
         }
 
+        // 列表已完整(第二次 AllFilesChanged 已同步重建 FilteredFiles)且当前图已定,
+        // 显式补触发一次邻图预取 — 阶段1 触发时列表只有 1 项会空跑,CurrentFile 不再变则不会重触发
+        Main.FileVM.ThumbnailList.TriggerPrefetchAroundCurrent();
+
         Console.WriteLine($"[Folder] Phase2 (UI updated): {sw.ElapsedMilliseconds}ms");
 
         // ── 阶段 3:后台加载基本属性和星级 ──

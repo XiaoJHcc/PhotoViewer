@@ -1,5 +1,6 @@
-﻿using System;
+using System;
 using System.Diagnostics;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
@@ -27,6 +28,8 @@ public class ImageViewModel : ReactiveObject
     private Bitmap? _originalBitmap;
     // 增强任务竞态闸：每次切图 / 切换增强都自增，作废上一张的在途增强
     private int _enhanceToken;
+    // 主图解码代际闸：每次切图自增，作废上一张的在途解码，过期结果不再改写主图
+    private int _loadGeneration;
 
     private Bitmap? _enhancedBitmap;
     /// <summary>
@@ -99,8 +102,16 @@ public class ImageViewModel : ReactiveObject
         Main.WhenAnyValue(vm => vm.CurrentFile)
             .Subscribe(currentFile =>
             {
+                // 每次切图递增代际，作废上一张的在途解码
+                var generation = Interlocked.Increment(ref _loadGeneration);
                 if (currentFile == null) ClearImage();
-                else _ = LoadImageAsync(currentFile.File);
+                else
+                {
+                    // 新图未命中缓存时立即清屏（显示空白），旧图不留守；命中则走缓存快路径直接上屏
+                    if (!BitmapLoader.IsInCache(currentFile.File.Path.LocalPath))
+                        SourceBitmap = null;
+                    _ = LoadImageAsync(currentFile.File, generation);
+                }
             });
         
         // 图片加载完成时
@@ -133,15 +144,23 @@ public class ImageViewModel : ReactiveObject
      * 打开图片
      */
     
-    public async Task LoadImageAsync(IStorageFile file)
+    public async Task LoadImageAsync(IStorageFile file, int generation)
     {
         try
         {
             HintText = string.Empty;
             HintDetail = string.Empty;
             
-            // 使用缓存服务加载图片
-            var bitmap = await BitmapLoader.GetBitmapAsync(file);
+            // 使用缓存服务加载图片;解码期间向调度器报告 P0 在途,后台 worker 暂停取新工作
+            Bitmap? bitmap;
+            using (DecodeScheduler.TrackP0())
+            {
+                bitmap = await BitmapLoader.GetBitmapAsync(file);
+            }
+            
+            // 代际闸：解码期间已切图则丢弃结果，过期任务不再改写主图状态（位图留在缓存无害）
+            if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
+                return;
             
             if (bitmap == null)
             {
@@ -188,6 +207,9 @@ public class ImageViewModel : ReactiveObject
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to load image in ImageViewModel ({file.Name}): {ex.Message}");
+            // 代际闸：过期任务的失败不应清掉新当前图
+            if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
+                return;
             DropEnhancement();
             SourceBitmap = null;
             HintText = "无法打开该图片";

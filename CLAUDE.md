@@ -82,12 +82,15 @@ Each head project's `Core/` folder contains platform-specific implementations in
 ### 5.1 Image Loading Pipeline 图片加载流水线
 
 1. **Trigger**: `MainViewModel.CurrentFile` changes (user switches image).
-2. **Dispatch**: `ImageViewModel` observes the change and calls `LoadImageAsync`.
-3. **Cache / decode** (`BitmapLoader.GetBitmapAsync`):
+2. **Dispatch**: `ImageViewModel` observes the change, bumps a monotonic **generation counter** and calls `LoadImageAsync`; if the new image is not in cache, `SourceBitmap = null` immediately (old image never stays on screen).
+3. **Cache / decode** (`BitmapLoader.GetBitmapAsync`, runs as **P0** — wrapped in `DecodeScheduler.TrackP0` so background workers pause while it is in flight):
    - Check **LRU memory cache** — hit returns immediately.
-   - Miss: read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return.
+   - Miss: **in-flight dedup** (same-path requests share one decode task) → decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return.
+   - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (bitmap stays in cache, harmless).
 4. **Display**: `ImageView` re-binds to `Bitmap`.
-5. **Prefetch**: `ImageViewModel` notifies `BitmapPrefetcher`, which queues low-priority decodes for N neighbours.
+5. **Unified scheduling** (`DecodeScheduler`, static): P0 current image / P1 visible+current thumbnails / P2 neighbour bitmaps + queued thumbnails / P3 analysis prewarm; same-key dedup with priority promotion; background workers (parallelism = `Settings.NativePreloadParallelism`) pause while P0 is in flight.
+   - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour bitmap (reserve memory → decode → analysis-cache prewarm) as a P2 work item.
+   - **Eviction protection**: `ThumbnailListViewModel` reports `BitmapLoader.SetProtectedPaths` (current ± preload window + recently viewed M paths); every eviction path (EnsureCapacity / Cleanup / LruRemoveToSize) evicts non-protected LRU first and touches protected paths only as a last resort.
 
 ### 5.2 External Open Flow 外部文件打开
 

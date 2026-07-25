@@ -1,10 +1,8 @@
 using ReactiveUI;
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
-using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using PhotoViewer.Core;
@@ -46,11 +44,12 @@ public class ThumbnailListViewModel : ReactiveObject
     /// <summary>滚动到当前图片的事件,由 View 订阅</summary>
     public event Action? ScrollToCurrentRequested;
 
-    private readonly ConcurrentQueue<ImageFile> _thumbnailLoadQueue = new();
-    private readonly CancellationTokenSource _thumbnailCancellationTokenSource = new();
-    private bool _isThumbnailLoadingActive;
-
     private readonly BitmapPrefetcher _bitmapPrefetcher;
+
+    /// <summary>
+    /// 最近浏览过的路径 LRU(新→旧),容量 = 预取前后窗口之和,用于位图淘汰保护集。
+    /// </summary>
+    private readonly List<string> _recentViewedPaths = new();
 
     /// <summary>
     /// 被保留的文件:改星级导致不再符合筛选条件时,暂时保留在列表中,
@@ -71,8 +70,6 @@ public class ThumbnailListViewModel : ReactiveObject
         _filter = filter;
 
         _filter.BindFilteredCountProvider(() => _filteredFiles.Count);
-
-        StartThumbnailLoadingTask();
 
         _main.WhenAnyValue(x => x.IsRowLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
@@ -97,12 +94,50 @@ public class ThumbnailListViewModel : ReactiveObject
             .Subscribe(file =>
             {
                 _bitmapPrefetcher.PrefetchAroundCurrent();
+                UpdateProtectedPaths(file);
                 if (_retainedFile != null && !ReferenceEquals(file, _retainedFile))
                 {
                     _retainedFile = null;
                     ApplyFilter();
                 }
             });
+    }
+
+    /// <summary>
+    /// 当前图变更时刷新位图淘汰保护集:FilteredFiles 中当前 ±(PreloadBackward+PreloadForward)
+    /// 范围的路径 + 最近浏览过的 M 张(M = 前后窗口之和)。
+    /// </summary>
+    private void UpdateProtectedPaths(ImageFile? currentFile)
+    {
+        var settings = _main.Settings;
+        int window = Math.Max(0, settings.PreloadBackwardCount) + Math.Max(0, settings.PreloadForwardCount);
+        var protectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (currentFile != null)
+        {
+            // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
+            var currentPath = currentFile.File.Path.LocalPath;
+            _recentViewedPaths.Remove(currentPath);
+            _recentViewedPaths.Insert(0, currentPath);
+            int m = Math.Max(1, window);
+            if (_recentViewedPaths.Count > m)
+                _recentViewedPaths.RemoveRange(m, _recentViewedPaths.Count - m);
+
+            var files = _filteredFiles;
+            var idx = files.IndexOf(currentFile);
+            if (idx >= 0)
+            {
+                int start = Math.Max(0, idx - window);
+                int end = Math.Min(files.Count - 1, idx + window);
+                for (int i = start; i <= end; i++)
+                    protectedPaths.Add(files[i].File.Path.LocalPath);
+            }
+        }
+
+        foreach (var p in _recentViewedPaths)
+            protectedPaths.Add(p);
+
+        BitmapLoader.SetProtectedPaths(protectedPaths);
     }
 
     /// <summary>
@@ -113,6 +148,12 @@ public class ThumbnailListViewModel : ReactiveObject
     {
         _main.CurrentFile = file;
     }
+
+    /// <summary>
+    /// 显式补触发一次当前图邻图预取(由 <see cref="FolderViewModel"/> 在列表补全后调用,
+    /// 避免打开单个文件时阶段1 列表仅 1 项导致预取空跑)。
+    /// </summary>
+    public void TriggerPrefetchAroundCurrent() => _bitmapPrefetcher.PrefetchAroundCurrent();
 
     /// <summary>
     /// 当 BitmapLoader 缓存状态变化时,在 UI 线程同步刷新对应文件的缓存边框。
@@ -347,132 +388,47 @@ public class ThumbnailListViewModel : ReactiveObject
     #region ThumbnailLoading
 
     /// <summary>
-    /// 启动缩略图加载后台任务(多个并发消费者)。
-    /// </summary>
-    private void StartThumbnailLoadingTask()
-    {
-        _isThumbnailLoadingActive = true;
-        for (int i = 0; i < 3; i++)
-        {
-            _ = Task.Run(async () =>
-            {
-                while (_isThumbnailLoadingActive && !_thumbnailCancellationTokenSource.Token.IsCancellationRequested)
-                {
-                    try
-                    {
-                        if (_thumbnailLoadQueue.TryDequeue(out var imageFile))
-                        {
-                            try
-                            {
-                                if (imageFile.Thumbnail == null && !imageFile.IsThumbnailLoading)
-                                {
-                                    await imageFile.LoadThumbnailAsync();
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("缩略图加载异常: " + ex.Message);
-                            }
-                        }
-                        else
-                        {
-                            await Task.Delay(50, _thumbnailCancellationTokenSource.Token);
-                        }
-                    }
-                    catch (OperationCanceledException)
-                    {
-                        break;
-                    }
-                }
-            });
-        }
-    }
-
-    /// <summary>
-    /// 将图片加入缩略图加载队列。
+    /// 将图片的缩略图加载投递到 <see cref="DecodeScheduler"/>。
+    /// 同 key 已在队/在途时由调度器去重;高优先级请求可提升队列中该项的优先级。
     /// </summary>
     /// <param name="imageFile">目标图片</param>
-    /// <param name="priority">是否优先加载</param>
+    /// <param name="priority">是否优先加载(P1 可见/当前;否则 P2 普通排队)</param>
     public void QueueThumbnailLoad(ImageFile imageFile, bool priority = false)
     {
         if (imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
 
-        if (priority)
-        {
-            var tempQueue = new List<ImageFile> { imageFile };
-            while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
-            {
-                if (existingFile != imageFile && existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
-                {
-                    tempQueue.Add(existingFile);
-                }
-            }
-            foreach (var file in tempQueue)
-            {
-                _thumbnailLoadQueue.Enqueue(file);
-            }
-        }
-        else
-        {
-            _thumbnailLoadQueue.Enqueue(imageFile);
-        }
+        DecodeScheduler.Submit(
+            imageFile.File.Path.LocalPath + "#thumb",
+            priority ? DecodePriority.P1_HighValue : DecodePriority.P2_Prefetch,
+            _ => imageFile.LoadThumbnailAsync());
     }
 
     /// <summary>
-    /// 批量加载可见区域的缩略图。
+    /// 批量加载可见区域的缩略图(全部按 P1 投递;滚走的普通排队项由调度器去重兜底,不再手动限流)。
     /// </summary>
     /// <param name="visibleFiles">View 上报的可见文件列表</param>
     public void LoadVisibleThumbnails(IEnumerable<ImageFile> visibleFiles)
     {
-        var queuedFiles = new HashSet<ImageFile>();
-        var tempQueue = new List<ImageFile>();
-
-        while (_thumbnailLoadQueue.TryDequeue(out var existingFile))
-        {
-            if (existingFile.Thumbnail == null && !existingFile.IsThumbnailLoading)
-            {
-                queuedFiles.Add(existingFile);
-                tempQueue.Add(existingFile);
-            }
-        }
-
-        var priorityFiles = new List<ImageFile>();
         foreach (var file in visibleFiles)
         {
-            if (file.Thumbnail == null && !file.IsThumbnailLoading)
-            {
-                priorityFiles.Add(file);
-                queuedFiles.Remove(file);
-            }
-        }
-
-        var limitedNormalFiles = tempQueue.Where(f => queuedFiles.Contains(f)).Take(10).ToList();
-
-        foreach (var file in priorityFiles)
-        {
-            _thumbnailLoadQueue.Enqueue(file);
-        }
-        foreach (var file in limitedNormalFiles)
-        {
-            _thumbnailLoadQueue.Enqueue(file);
+            QueueThumbnailLoad(file, priority: true);
         }
     }
 
     /// <summary>
-    /// 清空缩略图加载队列。
+    /// 清空缩略图加载队列(调度器中全部待执行的 "#thumb" 工作项;在途项不受影响)。
     /// </summary>
     public void ClearThumbnailQueue()
     {
-        while (_thumbnailLoadQueue.TryDequeue(out _)) { }
+        DecodeScheduler.ClearQueuedByKeySuffix("#thumb");
     }
 
     /// <summary>
-    /// 停止缩略图加载后台任务。
+    /// 停止缩略图加载后台任务(全局停止调度器,取消所有在途工作项)。
     /// </summary>
     public void StopThumbnailLoading()
     {
-        _isThumbnailLoadingActive = false;
-        _thumbnailCancellationTokenSource.Cancel();
+        DecodeScheduler.Shutdown();
     }
 
     #endregion
@@ -498,7 +454,7 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     internal bool IsThumbnailLoadingBusy()
     {
-        if (!_thumbnailLoadQueue.IsEmpty) return true;
+        if (DecodeScheduler.GetQueuedCount(DecodePriority.P1_HighValue) > 0) return true;
         return _filteredFiles.Any(f => f.IsThumbnailLoading);
     }
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -64,8 +64,13 @@ public class BitmapCacheItem
 public static class BitmapLoader
 {
     private static readonly ConcurrentDictionary<string, BitmapCacheItem> _cache = new();
+    // 在途解码去重：同路径请求共享同一任务，完成后移除
+    private static readonly ConcurrentDictionary<string, Lazy<Task<Bitmap?>>> _inFlight = new();
     private static readonly object _cleanupLock = new();
-    
+
+    // 淘汰保护集：临近当前图与最近浏览过的路径，淘汰选择时整体排到最后（volatile 整体替换）
+    private static volatile HashSet<string> _protectedPaths = new(StringComparer.OrdinalIgnoreCase);
+
     // 新增：忽略透明度（默认 false）
     public static bool IgnoreAlpha { get; set; } = false;
 
@@ -119,6 +124,28 @@ public static class BitmapLoader
     {
         return _cache.ContainsKey(filePath);
     }
+
+    /// <summary>
+    /// 设置淘汰保护集：临近当前图与最近浏览过的路径。
+    /// 所有淘汰路径（EnsureCapacity / Cleanup / LruRemoveToSize）统一把保护项排到选择序列末尾，
+    /// 只有当非保护项全淘汰完仍不够时才动保护项（保护项之间也按 LRU）。
+    /// </summary>
+    public static void SetProtectedPaths(IReadOnlyCollection<string> paths)
+    {
+        _protectedPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// 淘汰选择序列：非保护项按 LRU（最后访问时间升序）在前，保护项整体排在末尾（内部同样按 LRU）。
+    /// </summary>
+    private static List<KeyValuePair<string, BitmapCacheItem>> OrderForEviction()
+    {
+        var protectedSet = _protectedPaths;
+        return _cache.ToList()
+            .OrderBy(kv => protectedSet.Contains(kv.Key) ? 1 : 0)
+            .ThenBy(kv => kv.Value.LastAccessTime)
+            .ToList();
+    }
     
     // 新增：预加载内存预留与容量序列化
     private static long _reservedBytes = 0;
@@ -145,7 +172,7 @@ public static class BitmapLoader
         try
         {
             // 1) EXIF 尺寸
-            var dims = await ExifLoader.TryGetDimensionsAsync(file);
+            var dims = await ExifLoader.TryGetDimensionsAsync(file).ConfigureAwait(false);
             if (ct.IsCancellationRequested) return 0;
             if (dims.HasValue && dims.Value.width > 0 && dims.Value.height > 0)
             {
@@ -187,9 +214,7 @@ public static class BitmapLoader
                 long limit = tooLarge ? safeLimit : MaxCacheSize;
                 if (totalPlanned <= limit) break;
 
-                var sorted = _cache.ToList()
-                    .OrderBy(kv => kv.Value.LastAccessTime)
-                    .ToList();
+                var sorted = OrderForEviction();
 
                 if (sorted.Count == 0) break;
 
@@ -257,9 +282,9 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 异步获取图片（带缓存和EXIF旋转）
+    /// 异步获取图片（带缓存和EXIF旋转）；同路径并发请求在途去重，共享同一解码任务。
     /// </summary>
-    public static async Task<Bitmap?> GetBitmapAsync(IStorageFile file)
+    public static Task<Bitmap?> GetBitmapAsync(IStorageFile file, CancellationToken ct = default)
     {
         var filePath = file.Path.LocalPath;
         
@@ -267,21 +292,49 @@ public static class BitmapLoader
         if (_cache.TryGetValue(filePath, out var cachedItem))
         {
             cachedItem.UpdateAccessTime();
-            return cachedItem.Bitmap;
+            return Task.FromResult<Bitmap?>(cachedItem.Bitmap);
         }
 
+        // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
+        var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<Bitmap?>>(
+            () => LoadAndCacheAsync(file, filePath, ct),
+            LazyThreadSafetyMode.ExecutionAndPublication));
+        var task = lazy.Value;
+        return AwaitInFlightAsync(filePath, lazy, task);
+    }
+
+    /// <summary>
+    /// 等待在途任务完成（无论成败）后将其移出去重表；只移除自己那一轮 Lazy，避免误删新一轮请求。
+    /// </summary>
+    private static async Task<Bitmap?> AwaitInFlightAsync(string filePath, Lazy<Task<Bitmap?>> lazy, Task<Bitmap?> task)
+    {
+        try
+        {
+            return await task.ConfigureAwait(false);
+        }
+        finally
+        {
+            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<Bitmap?>>>(filePath, lazy));
+        }
+    }
+
+    /// <summary>
+    /// 缓存未命中路径：容量保障 → 线程池解码 → 入缓存。
+    /// </summary>
+    private static async Task<Bitmap?> LoadAndCacheAsync(IStorageFile file, string filePath, CancellationToken ct)
+    {
         // 在解码前进行容量保障（基于估算）
         try
         {
-            var estimate = await EstimateDecodedSizeAsync(file);
-            await EnsureCapacityAsync(estimate);
+            var estimate = await EstimateDecodedSizeAsync(file, ct).ConfigureAwait(false);
+            await EnsureCapacityAsync(estimate).ConfigureAwait(false);
         }
         catch { /* 容量保障失败不致命，继续尝试加载 */ }
         
         try
         {
-            // 加载图片
-            var bitmap = await LoadBitmapWithExifRotationAsync(file);
+            // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
+            var bitmap = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
             if (bitmap == null) return null;
             
             // 添加到缓存
@@ -306,7 +359,7 @@ public static class BitmapLoader
     /// <summary>
     /// 加载图片并应用EXIF旋转
     /// </summary>
-    private static async Task<Bitmap?> LoadBitmapWithExifRotationAsync(IStorageFile file)
+    private static async Task<Bitmap?> LoadBitmapWithExifRotationAsync(IStorageFile file, CancellationToken ct = default)
     {
         try
         {
@@ -315,11 +368,13 @@ public static class BitmapLoader
             // 检查是否为 HEIF 格式
             if (HeifLoader.IsHeifFile(file))
             {
-                originalBitmap = await HeifLoader.LoadHeifBitmapAsync(file);
+                originalBitmap = await HeifLoader.LoadHeifBitmapAsync(file).ConfigureAwait(false);
             }
             else
             {
-                await using var stream = await file.OpenReadAsync();
+                ct.ThrowIfCancellationRequested();
+                await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
+                ct.ThrowIfCancellationRequested();
                 originalBitmap = new Bitmap(stream);
             }
             
@@ -332,7 +387,7 @@ public static class BitmapLoader
             }
             
             // 获取EXIF方向信息
-            var orientation = await GetExifOrientationAsync(file);
+            var orientation = await GetExifOrientationAsync(file).ConfigureAwait(false);
             
             // 只有 3/6/8 需要旋转，其余（包括 0、1 及未知值）均视为无旋转
             if (orientation != 3 && orientation != 6 && orientation != 8)
@@ -466,7 +521,7 @@ public static class BitmapLoader
     {
         try
         {
-            var exifData = await ExifLoader.LoadExifDataAsync(file);
+            var exifData = await ExifLoader.LoadExifDataAsync(file).ConfigureAwait(false);
             return exifData?.OrientationValue ?? 1;
         }
         catch (Exception ex)
@@ -646,10 +701,8 @@ public static class BitmapLoader
             {
                 var itemsToRemove = new List<string>();
                 
-                // 按最后访问时间排序
-                var sortedItems = _cache.ToList()
-                    .OrderBy(kvp => kvp.Value.LastAccessTime)
-                    .ToList();
+                // 按淘汰选择序列排序（非保护项 LRU 在前，保护项排末尾）
+                var sortedItems = OrderForEviction();
                 
                 var currentSize = CurrentCacheSize;
                 var currentCount = CurrentCacheCount;
@@ -773,11 +826,11 @@ public static class BitmapLoader
     /// <summary>
     /// 预加载图片（不会阻塞UI）
     /// </summary>
-    public static async Task PreloadBitmapAsync(IStorageFile file)
+    public static async Task PreloadBitmapAsync(IStorageFile file, CancellationToken ct = default)
     {
         try
         {
-            await GetBitmapAsync(file);
+            await GetBitmapAsync(file, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -796,7 +849,7 @@ public static class BitmapLoader
             try
             {
                 if (!IsInCache(f.Path.LocalPath))
-                    await PreloadBitmapAsync(f);
+                    await PreloadBitmapAsync(f, token);
             }
             catch { /* 单个失败忽略 */ }
         }
@@ -841,7 +894,7 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 公共 LRU 清理：按最后访问时间升序移除，直到当前大小 <= targetBytes。
+    /// 公共 LRU 清理：按淘汰选择序列（非保护项 LRU 在前，保护项排末尾）移除，直到当前大小 &lt;= targetBytes。
     /// 返回 (beforeBytes, beforeCount, afterBytes)。
     /// </summary>
     private static (long beforeBytes, int beforeCount, long afterBytes) LruRemoveToSize(long targetBytes)
@@ -853,9 +906,7 @@ public static class BitmapLoader
             if (before <= targetBytes || _cache.IsEmpty)
                 return (before, beforeCount, before);
 
-            var sortedItems = _cache.ToList()
-                .OrderBy(kvp => kvp.Value.LastAccessTime)
-                .ToList();
+            var sortedItems = OrderForEviction();
 
             var toRemove = new List<string>();
             long willFree = 0;

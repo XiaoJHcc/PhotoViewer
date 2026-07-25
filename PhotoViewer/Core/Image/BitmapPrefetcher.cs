@@ -7,6 +7,7 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
+using ReactiveUI;
 
 namespace PhotoViewer.Core.Image;
 
@@ -14,8 +15,10 @@ namespace PhotoViewer.Core.Image;
 /// 位图后台预取协调器:
 /// 1. 当前图前后预取(前 Forward / 后 Backward)
 /// 2. 滚动停止后中心附近预取
-/// 3. 统一串行,旧任务自动取消
+/// 3. latest-wins:新请求取消旧任务后重新排队,不再整体丢弃
 ///
+/// 每张邻居位图的"预留内存 + 解码 + 分析栏预热"作为 P2 工作项投递给 <see cref="DecodeScheduler"/>,
+/// 并发度与 P0 让位由调度器统一负责(本类构造时把 Settings.NativePreloadParallelism 同步给调度器)。
 /// 预取邻居位图后,若分析栏可见,顺手为该邻居预热 <see cref="AnalysisResultCache"/>(读 DB + 派生层现算)。
 /// PCA SVD 是切图卡顿的主因 — 邻居预热后切图变成纯 UI 线程 swap。
 /// </summary>
@@ -28,8 +31,6 @@ public class BitmapPrefetcher
     private CancellationTokenSource? _currentAroundCts;
     private CancellationTokenSource? _currentVisibleCenterCts;
 
-    private volatile bool _busy;
-
     /// <summary>
     /// 构造位图预取器,绑定到主视图模型与缩略图列表视图模型。
     /// </summary>
@@ -40,6 +41,11 @@ public class BitmapPrefetcher
         _main = main;
         _list = list;
         _settings = main.Settings;
+
+        // 调度器静态化后拿不到 settings 实例,这里一次性挂钩同步并发度上限
+        DecodeScheduler.MaxBackgroundParallelism = Math.Max(1, _settings.NativePreloadParallelism);
+        _settings.WhenAnyValue(s => s.NativePreloadParallelism)
+            .Subscribe(v => DecodeScheduler.MaxBackgroundParallelism = Math.Max(1, v));
     }
 
     /// <summary>
@@ -135,103 +141,75 @@ public class BitmapPrefetcher
     }
 
     /// <summary>
-    /// 主图是否仍在加载中(用于让位高优先级解码)。
-    /// </summary>
-    private bool IsCurrentImageLoading()
-    {
-        var current = _main.CurrentFile;
-        if (current == null) return false;
-        var imgVM = _main.ImageVM;
-        var path = current.File.Path.LocalPath;
-        return imgVM.SourceBitmap == null && !BitmapLoader.IsInCache(path);
-    }
-
-    /// <summary>
-    /// 让位等待:当前主图或缩略图通道仍在繁忙时退避。
+    /// 让位等待:P0(主图解码)在途或 P1(可见缩略图)队列非空时退避。
     /// </summary>
     private async Task WaitForHighPriorityIdleAsync(CancellationToken ct)
     {
         int waited = 0;
         while (!ct.IsCancellationRequested)
         {
-            if (!IsCurrentImageLoading() && !_list.IsThumbnailLoadingBusy())
+            if (DecodeScheduler.P0InFlightCount == 0 &&
+                DecodeScheduler.GetQueuedCount(DecodePriority.P1_HighValue) == 0)
                 break;
             await Task.Delay(120, ct);
             waited += 120;
-            if (waited > 5000) break;
+            if (waited > 1500) break;
         }
     }
 
     /// <summary>
-    /// 实际预取执行:按并行度限制启动多个任务,逐个预留内存并解码。每个任务完成后顺手预热分析栏缓存。
+    /// 实际预取执行:每张邻居位图的"预留内存 + 解码 + 分析栏预热"合并为一个 P2 工作项投递给调度器,
+    /// 并发度由调度器统一限制。latest-wins:新请求取消旧 CTS,旧轮次工作项执行时因 ct 已取消而空跑退出。
     /// </summary>
-    private async Task RunQueuedAsync(IEnumerable<ImageFile> files, CancellationToken ct)
+    private Task RunQueuedAsync(IEnumerable<ImageFile> files, CancellationToken ct)
     {
-        if (_busy) return;
-        _busy = true;
-        try
+        foreach (var f in files)
         {
-            var fileList = files.ToList();
-            if (fileList.Count == 0) return;
-
-            var nativeParallel = Math.Max(1, _settings.NativePreloadParallelism);
-            using var nativeSemaphore = new SemaphoreSlim(nativeParallel);
-            var tasks = new List<Task>(fileList.Count);
-
-            foreach (var f in fileList)
+            if (ct.IsCancellationRequested) break;
+            var file = f;
+            DecodeScheduler.Submit(file.File.Path.LocalPath, DecodePriority.P2_Prefetch, async token =>
             {
-                if (ct.IsCancellationRequested) break;
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct);
+                var lct = linkedCts.Token;
 
-                await nativeSemaphore.WaitAsync(ct);
-                await Task.Delay(15, ct);
+                await WaitForHighPriorityIdleAsync(lct);
+                if (lct.IsCancellationRequested) return;
 
-                tasks.Add(Task.Run(async () =>
+                IDisposable? reservation = null;
+                try
                 {
-                    IDisposable? reservation = null;
-                    try
+                    var path = file.File.Path.LocalPath;
+                    if (!BitmapLoader.IsInCache(path))
                     {
-                        await WaitForHighPriorityIdleAsync(ct);
-                        if (ct.IsCancellationRequested) return;
-
-                        var path = f.File.Path.LocalPath;
-                        if (!BitmapLoader.IsInCache(path))
+                        reservation = await BitmapLoader.ReserveForPreloadAsync(file.File, lct);
+                        if (reservation == null)
                         {
-                            reservation = await BitmapLoader.ReserveForPreloadAsync(f.File, ct);
-                            if (reservation == null)
-                            {
-                                // 预热分析栏缓存仍然有意义(纯 DB IO + CPU,不吃位图内存预算)。
-                                await PrewarmAnalysisAsync(f, ct).ConfigureAwait(false);
-                                return;
-                            }
-
-                            if (!BitmapLoader.IsInCache(path))
-                            {
-                                await BitmapLoader.PreloadBitmapAsync(f.File);
-                            }
+                            // 预热分析栏缓存仍然有意义(纯 DB IO + CPU,不吃位图内存预算)。
+                            await PrewarmAnalysisAsync(file, lct).ConfigureAwait(false);
+                            return;
                         }
 
-                        await PrewarmAnalysisAsync(f, ct).ConfigureAwait(false);
-                        await Task.Delay(30, ct);
+                        if (!BitmapLoader.IsInCache(path))
+                        {
+                            await BitmapLoader.PreloadBitmapAsync(file.File, lct);
+                        }
                     }
-                    catch
-                    {
-                        // 单个失败忽略
-                    }
-                    finally
-                    {
-                        reservation?.Dispose();
-                        nativeSemaphore.Release();
-                    }
-                }, ct));
-            }
 
-            try { await Task.WhenAll(tasks); }
-            catch (OperationCanceledException) { /* 忽略取消 */ }
+                    await PrewarmAnalysisAsync(file, lct).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { /* 取消正常 */ }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[BitmapPrefetcher] preload failed for {file.Name}: {ex.Message}");
+                }
+                finally
+                {
+                    reservation?.Dispose();
+                }
+            });
         }
-        finally
-        {
-            _busy = false;
-        }
+
+        return Task.CompletedTask;
     }
 
     /// <summary>
