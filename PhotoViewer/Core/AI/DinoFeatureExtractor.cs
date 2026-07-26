@@ -24,6 +24,7 @@ public static class DinoFeatureExtractor
     private static Action<SessionOptions>? _configureSession;
     private static bool _gpuFailed;
     private static byte[]? _modelBytesOverride;
+    private static int _inputSize = DinoModelResources.InputSize;   // 模型实际输入边长（518；升级梯换大分辨率模型时按 ONNX 输入元数据自适应）
 
     /// <summary>
     /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
@@ -55,6 +56,7 @@ public static class DinoFeatureExtractor
             if (_session != null) return _session;
             _session = CreateSession(useGpu: !_gpuFailed);
             EnsureDualOutputSchema(_session);
+            DetectInputSize(_session);
             return _session;
         }
     }
@@ -109,6 +111,20 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
+    /// 从 ONNX 输入元数据读取模型实际输入边长（NCHW 的 H），供预处理缩放对齐；
+    /// 读不到（动态维度）时保持内置默认 518。升级梯大分辨率模型（如 1024）靠此免改代码。
+    /// </summary>
+    private static void DetectInputSize(InferenceSession session)
+    {
+        if (session.InputMetadata.TryGetValue(DinoModelResources.InputName, out var meta)
+            && meta.Dimensions.Length == 4 && meta.Dimensions[2] > 0)
+        {
+            _inputSize = meta.Dimensions[2];
+            Console.WriteLine($"[DinoFeatureExtractor] 模型输入边长 = {_inputSize}（按 ONNX 元数据）");
+        }
+    }
+
+    /// <summary>
     /// 校验 ONNX 模型同时导出 CLS 与 patch 两路输出。M1 虽然只消费 CLS，但缺 patch 端口
     /// 意味着导出脚本未更新（B 阶段上线时才发现就晚了），这里早失败早提示。
     /// </summary>
@@ -153,6 +169,7 @@ public static class DinoFeatureExtractor
     {
         ArgumentNullException.ThrowIfNull(bitmap);
 
+        GetSession();   // 先建会话以完成输入尺寸自适应（升级梯大分辨率模型）
         var tensor = BuildInputTensor(bitmap);
         await _runGate.WaitAsync(ct).ConfigureAwait(false);
         try
@@ -225,11 +242,11 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 将 Avalonia 位图缩放到方形 518×518 并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
+    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
     /// </summary>
     private static DenseTensor<float> BuildInputTensor(Bitmap source)
     {
-        int size = DinoModelResources.InputSize;
+        int size = _inputSize;
         var target = new RenderTargetBitmap(new PixelSize(size, size));
         using (var ctx = target.CreateDrawingContext())
         {
