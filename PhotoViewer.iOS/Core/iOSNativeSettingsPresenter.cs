@@ -1592,6 +1592,16 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
                     SettingsViewModel.SimilarityMaxResultsMin,
                     SettingsViewModel.SimilarityMaxResultsMax,
                     valueFormatter: value => $"{value} 张")));
+
+        contentStack.AddArrangedSubview(
+            CreateSection(
+                "分析诊断",
+                null,
+                CreateSwitchRow(
+                    "即时计算DINO/CV",
+                    null,
+                    () => Settings.AnalysisImmediateCompute,
+                    value => Settings.AnalysisImmediateCompute = value)));
     }
 }
 

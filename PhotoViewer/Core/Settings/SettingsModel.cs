@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Avalonia.Input;
 using PhotoViewer.ViewModels.Settings;
 
@@ -32,6 +32,9 @@ public sealed class SettingsModel
 
     /// <summary>相似聚类一次最多返回的项数（1~32），默认 8。</summary>
     public int SimilarityMaxResults { get; set; } = 8;
+
+    /// <summary>分析栏即时计算 DINO/CV 诊断(未提取回退 + 增强实时重算),默认关。</summary>
+    public bool AnalysisImmediateCompute { get; set; } = false;
 
     public int BitmapCacheMaxCount { get; set; }
     public int BitmapCacheMaxMemory { get; set; }

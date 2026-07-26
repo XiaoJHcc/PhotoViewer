@@ -16,5 +16,5 @@
 | [SettingsViewModel.Hotkeys.cs](SettingsViewModel.Hotkeys.cs) | 控制 | 快捷键绑定,用 `HotkeyButton` 捕获。 |
 | [SettingsViewModel.Rating.cs](SettingsViewModel.Rating.cs) | 控制 | 星级写回 RAW 的 in-place / sidecar 策略,XMP 行为开关。 |
 | [SettingsViewModel.ExifDisplay.cs](SettingsViewModel.ExifDisplay.cs) | EXIF | EXIF 详情页的字段展示开关、汉化偏好。 |
-| [SettingsViewModel.AI.cs](SettingsViewModel.AI.cs) | AI | 相似聚类阈值(75%~95% / 默认 85%)、最多数量(1~32 / 默认 8,指数滑条)、**"清除特征数据库"按钮**(开发者用,二次确认后调 `PhotoDatabase.DeleteDatabaseAsync` + `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll`)。 |
+| [SettingsViewModel.AI.cs](SettingsViewModel.AI.cs) | AI | 相似聚类阈值(75%~95% / 默认 85%)、最多数量(1~32 / 默认 8,指数滑条)、**分析诊断"即时计算DINO/CV"开关**(默认关;门控分析栏增强实时重算与未提取回退,iOS 原生设置页同步)、**"清除特征数据库"按钮**(开发者用,二次确认后调 `PhotoDatabase.DeleteDatabaseAsync` + `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll`)。 |
 | [SettingsViewModel.Persistence.cs](SettingsViewModel.Persistence.cs) | 共用 | 各 partial 的 JSON 读写、默认值回滚、跨会话状态保留(如 `SimilarityPanelExpanded`)。 |

@@ -24,6 +24,8 @@ namespace PhotoViewer.ViewModels.Main;
 /// 2. 增强预览联动:增强图就绪时对增强位图立即重算(CV + DINO 推理),不走 DB;
 /// 3. 未提取回退:库里没有提取结果时,不再显示"未提取",改为对当前主图位图立即计算 —
 ///    先延迟再等主图 / 缩略图通道空闲,绝不抢主图浏览资源,期间占位显示"计算中…"。
+/// 路径 2/3 由设置"分析诊断 / 即时计算DINO/CV"(默认关)门控 — 关闭时只走路径 1,
+/// 未提取照片保持"未提取"占位;开关变化会重新路由当前照片。
 /// 立即计算(路径 2/3)的产物按文件路径落 <see cref="AnalysisResultCache"/> 的即时缓存
 /// (增强变体单独 key;随主图缓存清理一起失效,也被"清除特征数据库"一并清空),不写库。
 ///
@@ -181,6 +183,10 @@ public sealed class AnalysisViewModel : ReactiveObject
                 if (_main.ImageVM.IsEnhanced) SetSource(_main.CurrentFile);
             }));
 
+        // 即时计算开关变化 → 重新路由(开:增强重算 / 未提取回退;关:只读库,未提取保持占位)。
+        _main.Settings.WhenAnyValue(s => s.AnalysisImmediateCompute)
+            .Subscribe(Observer.Create<bool>(_ => SetSource(_main.CurrentFile)));
+
         _main.WhenAnyValue(vm => vm.CurrentFile)
             .Subscribe(Observer.Create<ImageFile?>(SetSource));
 
@@ -223,13 +229,19 @@ public sealed class AnalysisViewModel : ReactiveObject
     {
         if (ct.IsCancellationRequested) return;
 
-        // 增强模式且增强图就绪 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
-        if (_main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
+        // 增强模式且增强图就绪且开启即时计算 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
+        // 未开启即时计算时跳过本分支,落下面的 DB 路径(未提取则保持"未提取"占位)。
+        if (_main.Settings.AnalysisImmediateCompute &&
+            _main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
         {
             var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.Path.LocalPath, enhanced: true);
             var enhancedHit = AnalysisResultCache.TryGetImmediate(enhancedKey);
             if (enhancedHit != null) ApplyEntrySync(enhancedHit);
-            else _ = ComputeDiagnosticsAsync(enhanced, enhancedKey, ct);
+            else
+            {
+                SetDiagnosticPlaceholder("计算中…");
+                _ = ComputeDiagnosticsAsync(enhanced, enhancedKey, ct);
+            }
             return;
         }
 
@@ -241,9 +253,10 @@ public sealed class AnalysisViewModel : ReactiveObject
             if (hit != null)
             {
                 ApplyEntrySync(hit);
-                // 命中空 entry(未提取,慢路径 / 预热都会把空结果落 cache)→ 回退到立即计算;
-                // 先查即时缓存,已有结果则直接 swap 覆盖空 entry,不再重算。
-                if (IsEntryEmpty(hit))
+                // 命中空 entry(未提取,慢路径 / 预热都会把空结果落 cache)且开启即时计算 → 回退到
+                // 立即计算;先查即时缓存,已有结果则直接 swap 覆盖空 entry,不再重算。
+                // 未开启即时计算则保持 ApplyEntrySync 贴出的"未提取"占位。
+                if (IsEntryEmpty(hit) && _main.Settings.AnalysisImmediateCompute)
                 {
                     var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
                     if (imm != null) ApplyEntrySync(imm);
@@ -362,9 +375,10 @@ public sealed class AnalysisViewModel : ReactiveObject
             ct.ThrowIfCancellationRequested();
             ApplyEntry(entry, ct);
 
-            // 3) 库里没有提取结果 → 回退到立即计算。先查即时缓存(翻回已算过的照片直接 swap);
-            //    miss 则占位改"计算中…",延迟 + 让位后对当前主图跑 CV+DINO。
-            if (data.IsEmpty)
+            // 3) 库里没有提取结果且开启即时计算 → 回退到立即计算。先查即时缓存(翻回已算过的照片
+            //    直接 swap);miss 则占位改"计算中…",延迟 + 让位后对当前主图跑 CV+DINO。
+            //    未开启即时计算则保持上面空 entry 贴出的"未提取"占位。
+            if (data.IsEmpty && _main.Settings.AnalysisImmediateCompute)
             {
                 var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
                 if (imm != null)

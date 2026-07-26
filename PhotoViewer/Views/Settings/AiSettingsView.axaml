@@ -55,6 +55,20 @@
 
         <StackPanel Classes="settings-container">
             <TextBlock Classes="settings-title">
+                分析诊断
+            </TextBlock>
+            <Border Classes="settings-card">
+                <StackPanel Spacing="8" Margin="4">
+                    <CheckBox Classes="settings-checkbox"
+                              IsChecked="{Binding AnalysisImmediateCompute}">
+                        即时计算DINO/CV
+                    </CheckBox>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+
+        <StackPanel Classes="settings-container">
+            <TextBlock Classes="settings-title">
                 开发者
             </TextBlock>
             <Border Classes="settings-card">

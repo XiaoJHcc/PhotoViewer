@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics.CodeAnalysis;
@@ -145,7 +145,8 @@ public partial class SettingsViewModel
             CpuPreloadParallelism = CpuPreloadParallelism,
             SimilarityPanelExpanded = SimilarityPanelExpanded,
             SimilarityThreshold = SimilarityThreshold,
-            SimilarityMaxResults = SimilarityMaxResults
+            SimilarityMaxResults = SimilarityMaxResults,
+            AnalysisImmediateCompute = AnalysisImmediateCompute
         };
     }
 
@@ -208,6 +209,8 @@ public partial class SettingsViewModel
                 SimilarityThreshold = model.SimilarityThreshold;
             if (!preserveDefaultValues || model.SimilarityMaxResults > 0)
                 SimilarityMaxResults = model.SimilarityMaxResults;
+
+            AnalysisImmediateCompute = model.AnalysisImmediateCompute;
         }
         finally
         {

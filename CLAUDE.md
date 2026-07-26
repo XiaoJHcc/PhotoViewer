@@ -149,8 +149,8 @@ Each head project's `Core/` folder contains platform-specific implementations in
 - `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
 - PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
 - 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有,切图或还原中心时显式释放;cache 拥有的位图 VM 只引用,不 Dispose。
-- **增强预览例外**:`ImageVM.IsEnhanced` 开启时分析栏不再只读库 —— 直方图(`HistogramRenderer`,新增瓦片)与细节预览随主图自动跟随增强图;4 张 DINO/CV 诊断瓦片改对增强图**实时重算**(`AnalysisViewModel.ComputeDiagnosticsAsync` 跑 `CvGridExtractor` + `DinoFeatureExtractor` → 复用 `AnalysisComputer.Compute`),产物落 `AnalysisResultCache` 即时缓存(路径 + `#enhanced` 键,不入库),再次切到该图增强态直接命中;关闭增强即回落 DB 只读路径。直方图位图始终 VM 所有、按竞态闸随主图重算。
-- **未提取回退**:库/cache 均无该照片提取结果时(含快路径命中空 entry),不再显示"未提取",改走 `AnalysisViewModel.LoadFallbackAsync` 对当前主图位图立即计算(与增强联动共用 `ComputeDiagnosticsAsync`)——先延迟 500ms 再等主图解码与缩略图通道空闲,期间占位"计算中…";快速翻页在延迟内即被 `_cts` 取消,零推理开销,主图浏览性能优先。产物落即时缓存(文件路径键,不入库),翻回已算过的照片直接 swap。
+- **增强预览例外**(需开启设置"分析诊断 / 即时计算DINO/CV",默认关):`ImageVM.IsEnhanced` 开启时分析栏不再只读库 —— 直方图(`HistogramRenderer`,新增瓦片)与细节预览随主图自动跟随增强图;4 张 DINO/CV 诊断瓦片改对增强图**实时重算**(`AnalysisViewModel.ComputeDiagnosticsAsync` 跑 `CvGridExtractor` + `DinoFeatureExtractor` → 复用 `AnalysisComputer.Compute`),重算期间占位"计算中…",产物落 `AnalysisResultCache` 即时缓存(路径 + `#enhanced` 键,不入库),再次切到该图增强态直接命中;关闭增强(或关闭即时计算)即回落 DB 只读路径。直方图位图始终 VM 所有、按竞态闸随主图重算。
+- **未提取回退**(需开启同一设置):库/cache 均无该照片提取结果时(含快路径命中空 entry),不再显示"未提取",改走 `AnalysisViewModel.LoadFallbackAsync` 对当前主图位图立即计算(与增强联动共用 `ComputeDiagnosticsAsync`)——先延迟 500ms 再等主图解码与缩略图通道空闲,期间占位"计算中…";快速翻页在延迟内即被 `_cts` 取消,零推理开销,主图浏览性能优先。产物落即时缓存(文件路径键,不入库),翻回已算过的照片直接 swap。未开启设置时未提取照片保持"未提取"占位。
 - **即时计算缓存**:`AnalysisResultCache` 内按文件路径键的独立存储(增强变体加 `#enhanced` 后缀),与指纹缓存同 Entry 形状、同"不主动 Dispose"语义;不走 LRU — 生命周期跟随主图缓存:`BitmapLoader.CacheStatusChanged` 报某路径失效(淘汰/清空/内存告警精简)时同步移除该路径含增强变体的即时项;"清除特征数据库"(`InvalidateAll`)也一并清空。
 
 **清除入口**(开发者用):

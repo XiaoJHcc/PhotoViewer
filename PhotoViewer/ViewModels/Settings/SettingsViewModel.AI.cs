@@ -63,6 +63,19 @@ public partial class SettingsViewModel
         set => SimilarityMaxResults = FromExp(value, SimilarityMaxResultsMin, SimilarityMaxResultsMax);
     }
 
+    // ── 分析诊断 ─────────────────────────────────────────────────────────────
+
+    private bool _analysisImmediateCompute = false;
+    /// <summary>
+    /// 分析栏即时计算 DINO/CV 诊断(默认关)。开启后:库里没有提取结果时分析栏对当前主图立即计算
+    /// (延迟 + 让位,不抢主图浏览资源),增强预览时对增强图实时重算;关闭时未提取照片保持"未提取"占位。
+    /// </summary>
+    public bool AnalysisImmediateCompute
+    {
+        get => _analysisImmediateCompute;
+        set => this.RaiseAndSetIfChanged(ref _analysisImmediateCompute, value);
+    }
+
     // ── 清除特征数据库(开发者用)─────────────────────────────────────────────
 
     private bool _clearDbConfirming;
