@@ -474,6 +474,7 @@ TestCase/
 Training/.venv/
 Training/probes/out*/
 Training/audit/out/
+Training/train/out/
 
 # Python 虚拟环境（历史遗漏补全，任意目录下的 .venv 均不入库）
 **/.venv/
