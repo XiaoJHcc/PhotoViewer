@@ -24,7 +24,8 @@ namespace PhotoViewer.ViewModels.Main;
 /// 2. 增强预览联动:增强图就绪时对增强位图立即重算(CV + DINO 推理),不走 DB;
 /// 3. 未提取回退:库里没有提取结果时,不再显示"未提取",改为对当前主图位图立即计算 —
 ///    先延迟再等主图 / 缩略图通道空闲,绝不抢主图浏览资源,期间占位显示"计算中…"。
-/// 立即计算(路径 2/3)的产物不落 cache、不写库,位图归 VM 所有(owned)显式释放。
+/// 立即计算(路径 2/3)的产物按文件路径落 <see cref="AnalysisResultCache"/> 的即时缓存
+/// (增强变体单独 key;随主图缓存清理一起失效,也被"清除特征数据库"一并清空),不写库。
 ///
 /// 性能优化:派生数据按指纹走 <see cref="AnalysisResultCache"/>,与 <see cref="BitmapPrefetcher"/> 邻居预取
 /// 同步预热;命中时切图变成纯 UI 线程 swap,避免每次切图重跑 PCA SVD(几十 ms 主因)与抖动场重算。
@@ -51,8 +52,6 @@ public sealed class AnalysisViewModel : ReactiveObject
 
     private Bitmap? _histogramBmp;     // 直方图位图(VM 所有),随主图切换重算
     private int _histogramToken;       // 直方图竞态闸
-    // 增强实时重算出的诊断 Entry — 其位图本 VM 所有(非 cache),替换 / 清理时显式 Dispose;DB 路径下为 null。
-    private AnalysisResultCache.Entry? _ownedEntry;
 
     // 固定项引用,避免每次切图重建集合(列表项作为 DataContext 不会被回收)。
     private readonly AnalysisDetailItem _focusItem;          // 动态:有 Sony 对焦数据时存在
@@ -227,7 +226,10 @@ public sealed class AnalysisViewModel : ReactiveObject
         // 增强模式且增强图就绪 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
         if (_main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
         {
-            _ = ComputeDiagnosticsAsync(enhanced, ct);
+            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.Path.LocalPath, enhanced: true);
+            var enhancedHit = AnalysisResultCache.TryGetImmediate(enhancedKey);
+            if (enhancedHit != null) ApplyEntrySync(enhancedHit);
+            else _ = ComputeDiagnosticsAsync(enhanced, enhancedKey, ct);
             return;
         }
 
@@ -239,11 +241,17 @@ public sealed class AnalysisViewModel : ReactiveObject
             if (hit != null)
             {
                 ApplyEntrySync(hit);
-                // 命中空 entry(未提取,慢路径 / 预热都会把空结果落 cache)→ 回退到立即计算。
+                // 命中空 entry(未提取,慢路径 / 预热都会把空结果落 cache)→ 回退到立即计算;
+                // 先查即时缓存,已有结果则直接 swap 覆盖空 entry,不再重算。
                 if (IsEntryEmpty(hit))
                 {
-                    SetDiagnosticPlaceholder("计算中…");
-                    _ = LoadFallbackAsync(ct);
+                    var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
+                    if (imm != null) ApplyEntrySync(imm);
+                    else
+                    {
+                        SetDiagnosticPlaceholder("计算中…");
+                        _ = LoadFallbackAsync(file, ct);
+                    }
                 }
                 return;
             }
@@ -354,11 +362,18 @@ public sealed class AnalysisViewModel : ReactiveObject
             ct.ThrowIfCancellationRequested();
             ApplyEntry(entry, ct);
 
-            // 3) 库里没有提取结果 → 回退到立即计算:占位改"计算中…",延迟 + 让位后对当前主图跑 CV+DINO。
+            // 3) 库里没有提取结果 → 回退到立即计算。先查即时缓存(翻回已算过的照片直接 swap);
+            //    miss 则占位改"计算中…",延迟 + 让位后对当前主图跑 CV+DINO。
             if (data.IsEmpty)
             {
+                var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
+                if (imm != null)
+                {
+                    ApplyEntry(imm, ct);
+                    return;
+                }
                 PostDiagnosticPlaceholder("计算中…", ct);
-                await LoadFallbackAsync(ct).ConfigureAwait(false);
+                await LoadFallbackAsync(file, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException)
@@ -373,29 +388,20 @@ public sealed class AnalysisViewModel : ReactiveObject
 
     /// <summary>把 cache 项内容贴到 UI:全部位图引用归 cache,VM 只引用,不 Dispose。中心 cosine 还原时释放历史用户位图。
     /// 使用 Background 优先级,确保主图渲染优先完成。</summary>
-    private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct, bool owned = false)
+    private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
     {
         Dispatcher.UIThread.Post(() =>
         {
-            if (ct.IsCancellationRequested)
-            {
-                // 取消时若是本 VM 拥有的位图,直接释放避免泄漏(cache 拥有的不动)。
-                if (owned) DisposeEntryBitmaps(entry);
-                return;
-            }
-            ApplyEntryCore(entry, owned);
+            if (ct.IsCancellationRequested) return;
+            ApplyEntryCore(entry);
         }, DispatcherPriority.Background);
     }
 
     /// <summary>
-    /// 把 Entry 贴到诊断瓦片。owned=true 表示 entry 位图本 VM 所有(增强实时重算);贴新图后释放上一份 owned 位图。
-    /// cache 路径(owned=false)位图归 cache,只引用不释放。
+    /// 把 Entry 贴到诊断瓦片。位图归 cache 所有(含即时缓存),VM 只引用不释放。
     /// </summary>
-    private void ApplyEntryCore(AnalysisResultCache.Entry entry, bool owned)
+    private void ApplyEntryCore(AnalysisResultCache.Entry entry)
     {
-        var prevOwned = _ownedEntry;
-        _ownedEntry = owned ? entry : null;
-
         _patchTokens = entry.Patches;
         AspectRatio = entry.AspectRatio;
 
@@ -420,25 +426,15 @@ public sealed class AnalysisViewModel : ReactiveObject
         _shakeOverlay.ShakeField = entry.ShakeField;
         _shakeItem.ShortLabel = entry.ShakeLabel;
         _shakeItem.PlaceholderText = entry.ShakeField == null ? "未提取" : null;
-
-        // 释放上一份 owned 位图(已被新 Source 替换,延后一拍确保 UI 解绑后再释放)。
-        if (prevOwned != null) Dispatcher.UIThread.Post(() => DisposeEntryBitmaps(prevOwned));
-    }
-
-    /// <summary>释放 Entry 中本 VM 拥有的诊断位图(PCA / 中心 cosine / 锐度)。</summary>
-    private static void DisposeEntryBitmaps(AnalysisResultCache.Entry entry)
-    {
-        entry.PcaBmp?.Dispose();
-        entry.CenterCosineBmp?.Dispose();
-        entry.SharpnessBmp?.Dispose();
     }
 
     /// <summary>
     /// 立即计算:对指定位图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
-    /// 增强预览联动与未提取回退共用;不读库、不写库。产出位图归本 VM 所有(非 cache),经 owned=true 路径管理释放。
+    /// 增强预览联动与未提取回退共用;不读库、不写库。产物按 <paramref name="cacheKey"/> 落
+    /// <see cref="AnalysisResultCache"/> 的即时缓存(随主图缓存清理失效),位图归 cache 所有。
     /// 返回是否成功贴出结果(被取消或失败均返回 false)。
     /// </summary>
-    private async Task<bool> ComputeDiagnosticsAsync(Bitmap bitmap, CancellationToken ct)
+    private async Task<bool> ComputeDiagnosticsAsync(Bitmap bitmap, string cacheKey, CancellationToken ct)
     {
         try
         {
@@ -461,7 +457,8 @@ public sealed class AnalysisViewModel : ReactiveObject
             };
             var entry = AnalysisComputer.Compute(data);
             ct.ThrowIfCancellationRequested();
-            ApplyEntry(entry, ct, owned: true);
+            AnalysisResultCache.PutImmediate(cacheKey, entry);
+            ApplyEntry(entry, ct);
             return true;
         }
         catch (OperationCanceledException)
@@ -480,9 +477,9 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// 未提取回退:库 / cache 都没有该照片结果时,对当前主图位图立即计算诊断瓦片。
     /// 为保护主图浏览性能:先延迟 <see cref="FallbackDelayMs"/>(快速翻页在此即被 _cts 取消,零开销),
     /// 再让位等待主图解码完成且缩略图通道空闲(策略同 BitmapPrefetcher.WaitForHighPriorityIdleAsync);
-    /// 结果不落 cache、不写库,位图归 VM 所有(owned) — 避免会话内 cache 遮蔽用户之后真正提取入库的结果。
+    /// 产物落即时缓存(按文件路径,随主图缓存清理失效)、不写库。
     /// </summary>
-    private async Task LoadFallbackAsync(CancellationToken ct)
+    private async Task LoadFallbackAsync(ImageFile file, CancellationToken ct)
     {
         try
         {
@@ -499,6 +496,15 @@ public sealed class AnalysisViewModel : ReactiveObject
             }
             ct.ThrowIfCancellationRequested();
 
+            // 延迟 / 让位期间可能已被其他路径算好(如来回翻页),命中则直接贴,不再重算。
+            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.Path.LocalPath, enhanced: false);
+            var imm = AnalysisResultCache.TryGetImmediate(cacheKey);
+            if (imm != null)
+            {
+                ApplyEntry(imm, ct);
+                return;
+            }
+
             // 非增强时 SourceBitmap 即原片(归 BitmapLoader 缓存所有,VM 不 Dispose),后台读取安全。
             var source = _main.ImageVM.SourceBitmap;
             if (source == null)
@@ -507,7 +513,7 @@ public sealed class AnalysisViewModel : ReactiveObject
                 return;
             }
 
-            bool ok = await ComputeDiagnosticsAsync(source, ct).ConfigureAwait(false);
+            bool ok = await ComputeDiagnosticsAsync(source, cacheKey, ct).ConfigureAwait(false);
             if (!ok && !ct.IsCancellationRequested)
                 PostDiagnosticPlaceholder("未提取", ct);
         }
@@ -600,16 +606,11 @@ public sealed class AnalysisViewModel : ReactiveObject
         var old = _customCosineBmp;
         _customCosineBmp = null;
         old?.Dispose();
-
-        // 释放增强实时重算遗留的 owned 位图。
-        var prevOwned = _ownedEntry;
-        _ownedEntry = null;
-        if (prevOwned != null) Dispatcher.UIThread.Post(() => DisposeEntryBitmaps(prevOwned));
     }
 
     /// <summary>快路径同步应用 cache 项(调用方已在 UI 线程,EXIF 已加载 + 缓存命中)。
-    /// 走 <see cref="ApplyEntryCore"/>(owned=false),不经 Dispatcher.Post,零帧延迟。</summary>
-    private void ApplyEntrySync(AnalysisResultCache.Entry entry) => ApplyEntryCore(entry, owned: false);
+    /// 走 <see cref="ApplyEntryCore"/>,不经 Dispatcher.Post,零帧延迟。</summary>
+    private void ApplyEntrySync(AnalysisResultCache.Entry entry) => ApplyEntryCore(entry);
 
     /// <summary>同步计算指纹(仅当 EXIF 已加载时可用);失败返回 null。</summary>
     private static string? TryComputeFingerprintSync(ImageFile file)

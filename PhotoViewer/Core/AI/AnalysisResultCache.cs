@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Avalonia.Media.Imaging;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Core.AI;
 
@@ -16,7 +17,14 @@ namespace PhotoViewer.Core.AI;
 /// <see cref="WriteableBitmap"/> finalizer 兜底回收;相对地,我们换来"VM/Prefetcher 并发 TryGet/Put 不会出现
 /// use-after-dispose"的简单语义。
 ///
-/// AI 设置页"清除特征数据库"按钮通过 <see cref="InvalidateAll"/> 整体清空(仍只清引用,不 Dispose)。
+/// 另有按文件路径键的**即时计算缓存**(增强预览联动 / 未提取回退的产物):
+/// - 与指纹缓存同 Entry 形状、同"不主动 Dispose"语义,但不走 LRU — 生命周期跟随主图缓存:
+///   静态构造挂 <see cref="BitmapLoader.CacheStatusChanged"/>,主图位图被淘汰 / 清空时同步移除该路径
+///   (含增强变体)的即时缓存项。即时计算依赖已解码主图,故项数天然受主图缓存容量约束。
+/// - 增强变体 key = 路径 + "#enhanced"(增强算法确定性,同路径结果稳定)。
+///
+/// AI 设置页"清除特征数据库"按钮通过 <see cref="InvalidateAll"/> 整体清空(指纹缓存与即时缓存一并清,
+/// 仍只清引用,不 Dispose)。
 /// </summary>
 public static class AnalysisResultCache
 {
@@ -53,6 +61,49 @@ public static class AnalysisResultCache
     private static readonly object _lock = new();
     private static readonly LinkedList<KeyValuePair<string, Entry>> _order = new();
     private static readonly Dictionary<string, LinkedListNode<KeyValuePair<string, Entry>>> _index = new();
+
+    /// <summary>增强变体的即时缓存 key 后缀。</summary>
+    private const string EnhancedSuffix = "#enhanced";
+
+    /// <summary>即时计算缓存(文件路径键,含增强变体);生命周期跟随主图缓存,不走 LRU。</summary>
+    private static readonly Dictionary<string, Entry> _immediate = new(System.StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>挂主图缓存失效事件:主图位图被淘汰 / 清空时,同步移除该路径(含增强变体)的即时缓存项。</summary>
+    static AnalysisResultCache()
+    {
+        BitmapLoader.CacheStatusChanged += (path, inCache) =>
+        {
+            if (inCache) return;
+            lock (_lock)
+            {
+                _immediate.Remove(path);
+                _immediate.Remove(path + EnhancedSuffix);
+            }
+        };
+    }
+
+    /// <summary>即时缓存 key:原片为文件路径本身,增强变体加 <see cref="EnhancedSuffix"/>。</summary>
+    public static string ImmediateKey(string filePath, bool enhanced) =>
+        enhanced ? filePath + EnhancedSuffix : filePath;
+
+    /// <summary>查询即时缓存(增强预览联动 / 未提取回退的产物);miss 返回 null。</summary>
+    public static Entry? TryGetImmediate(string key)
+    {
+        lock (_lock)
+        {
+            return _immediate.TryGetValue(key, out var entry) ? entry : null;
+        }
+    }
+
+    /// <summary>写入即时缓存;同 key 覆盖,位图引用沉默丢弃(GC 兜底,与指纹缓存同语义)。</summary>
+    public static void PutImmediate(string key, Entry entry)
+    {
+        if (string.IsNullOrEmpty(key) || entry == null) return;
+        lock (_lock)
+        {
+            _immediate[key] = entry;
+        }
+    }
 
     /// <summary>
     /// 查询缓存;命中则把项提到 LRU 头部并返回。
@@ -101,7 +152,7 @@ public static class AnalysisResultCache
     }
 
     /// <summary>
-    /// 清空全部缓存项;由 AI 设置页"清除特征数据库"按钮调用。仅清引用,不 Dispose。
+    /// 清空全部缓存项(指纹缓存与即时缓存);由 AI 设置页"清除特征数据库"按钮调用。仅清引用,不 Dispose。
     /// </summary>
     public static void InvalidateAll()
     {
@@ -109,6 +160,7 @@ public static class AnalysisResultCache
         {
             _order.Clear();
             _index.Clear();
+            _immediate.Clear();
         }
     }
 }
