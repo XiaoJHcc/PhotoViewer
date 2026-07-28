@@ -242,9 +242,11 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
+    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）。
+    /// 提取为公共方法：DatasetBuilder --dump-render 用同一路径产出训练用渲染缓存，
+    /// 保证训练/推理像素严格同分布（Python 重采样已证与 CLS 不可比，见 EXECUTION-LOG）。
     /// </summary>
-    private static DenseTensor<float> BuildInputTensor(Bitmap source)
+    public static RenderTargetBitmap RenderInputBitmap(Bitmap source)
     {
         int size = _inputSize;
         var target = new RenderTargetBitmap(new PixelSize(size, size));
@@ -252,6 +254,16 @@ public static class DinoFeatureExtractor
         {
             ctx.DrawImage(source, new Rect(0, 0, size, size));
         }
+        return target;
+    }
+
+    /// <summary>
+    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
+    /// </summary>
+    private static DenseTensor<float> BuildInputTensor(Bitmap source)
+    {
+        int size = _inputSize;
+        using var target = RenderInputBitmap(source);
 
         int channels = DinoModelResources.InputChannels;
         int rowBytes = size * 4;
@@ -300,7 +312,6 @@ public static class DinoFeatureExtractor
         finally
         {
             ArrayPool<byte>.Shared.Return(rented);
-            target.Dispose();
         }
     }
 }
