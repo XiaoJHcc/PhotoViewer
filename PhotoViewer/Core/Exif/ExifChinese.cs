@@ -160,6 +160,12 @@ internal static partial class ExifChinese
             ["AFPointsSelected"]              = "选中对焦点",
             ["StopsAboveBaseISO"]             = "高于基准 ISO 档数",
             ["BaseISO"]                       = "基准 ISO",
+            // 0x940F 静照加速度计（重力方向 → 俯仰/横滚；非陀螺角速度）
+            ["AccelerometerX"]                = "加速度计 X",
+            ["AccelerometerY"]                = "加速度计 Y",
+            ["AccelerometerZ"]                = "加速度计 Z",
+            ["PitchAngle"]                    = "俯仰角",
+            ["RollAngle"]                     = "横滚角",
 
             ["White Balance 2"]               = "白平衡",
 

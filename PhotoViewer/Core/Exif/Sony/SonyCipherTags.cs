@@ -160,6 +160,152 @@ internal static partial class SonyCipherTags
     /// <summary>获取所有支持解码的 tag ID 列表</summary>
     public static IEnumerable<int> SupportedTagIds => Variants.Keys;
 
+    /// <summary>
+    /// 解码 Sony 0x940F 静照加速度计块（加密，ExifTool 尚无字段表）。
+    /// 主采样 int16 LE @ 0x86/0x88/0x8A = (rawX, rawY, rawZ)，|raw|≈8200 对应 1g。
+    /// 始终导出三轴加速度（m/s²，按本帧 |raw| 归一到标准重力）。
+    /// 俯仰/横滚仅对已校准机型（ILCE-7CM2 / ILCE-6700）计算：先映到统一 body 系
+    /// （水平 ay≈−g；仰拍 +Z；右横滚 −X），再
+    /// pitch=atan2(gz,√(gx²+gy²))，roll=atan2(gx,-gy)。
+    /// 未知机型轴序未标定，不臆造角度——单帧重力无法在不知轴映射时唯一确定横滚。
+    /// </summary>
+    /// <param name="directory">Sony MakerNote 目录</param>
+    /// <param name="cameraModel">相机型号（如 "ILCE-6700"），用于选择是否/如何做轴映射</param>
+    /// <returns>解码字段列表；数据不足或缺失时返回 null</returns>
+    public static List<MetadataTag>? DecodeAccelerometer940F(
+        SonyType1MakernoteDirectory directory, string? cameraModel = null)
+    {
+        const int tagId = 0x940F;
+        const int offAx = 0x86;
+        const int offAy = 0x88;
+        const int offAz = 0x8A;
+        const int minLen = offAz + 2;
+        // 标准重力加速度：本帧 |raw| 对应 1g，再换算为 m/s²
+        const double StandardGravity = 9.80665;
+
+        var obj = directory.GetObject(tagId);
+        if (obj is not byte[] raw || raw.Length < minLen)
+            return null;
+
+        var data = Decipher(raw);
+        if (data.Length < minLen)
+            return null;
+
+        short rawX = BitConverter.ToInt16(data, offAx);
+        short rawY = BitConverter.ToInt16(data, offAy);
+        short rawZ = BitConverter.ToInt16(data, offAz);
+
+        // 本帧向量模长作 1g 刻度；静照 |g| 应接近常量，避免写死 8200 因机型/校准漂移
+        double mag = Math.Sqrt((double)rawX * rawX + (double)rawY * rawY + (double)rawZ * rawZ);
+        if (mag < 1.0)
+            return null;
+
+        // 三轴始终按 tag 采样顺序导出（归一到 m/s²）；轴序语义仅在已校准机型上与 body 一致
+        double axMs2 = rawX / mag * StandardGravity;
+        double ayMs2 = rawY / mag * StandardGravity;
+        double azMs2 = rawZ / mag * StandardGravity;
+
+        var result = new List<MetadataTag>
+        {
+            new()
+            {
+                TagId = tagId,
+                Name = "AccelerometerX",
+                ChineseName = ExifChinese.GetChineseName("AccelerometerX"),
+                Value = $"{axMs2:F2} m/s²"
+            },
+            new()
+            {
+                TagId = tagId,
+                Name = "AccelerometerY",
+                ChineseName = ExifChinese.GetChineseName("AccelerometerY"),
+                Value = $"{ayMs2:F2} m/s²"
+            },
+            new()
+            {
+                TagId = tagId,
+                Name = "AccelerometerZ",
+                ChineseName = ExifChinese.GetChineseName("AccelerometerZ"),
+                Value = $"{azMs2:F2} m/s²"
+            },
+        };
+
+        // 姿态角：仅已校准机型。未知机型不猜测轴序。
+        if (TryMapAccelToBodyAxes(rawX, rawY, rawZ, cameraModel, out short bx, out short by, out short bz))
+        {
+            double bMag = Math.Sqrt((double)bx * bx + (double)by * by + (double)bz * bz);
+            if (bMag >= 1.0)
+            {
+                double gx = bx / bMag;
+                double gy = by / bMag;
+                double gz = bz / bMag;
+                // pitch = 光轴相对水平的仰角
+                // roll  = 传感器平面内重力方位（绕光轴）；竖拍 ≈ ±90°
+                // 注意：不要用 atan2(gx, √(gy²+gz²))，那会把俯仰泄漏进横滚。
+                double horiz = Math.Sqrt(gx * gx + gy * gy);
+                double pitchDeg = Math.Atan2(gz, horiz) * (180.0 / Math.PI);
+                double rollDeg = Math.Atan2(gx, -gy) * (180.0 / Math.PI);
+
+                result.Add(new MetadataTag
+                {
+                    TagId = tagId,
+                    Name = "PitchAngle",
+                    ChineseName = ExifChinese.GetChineseName("PitchAngle"),
+                    Value = $"{pitchDeg:F1}°"
+                });
+                result.Add(new MetadataTag
+                {
+                    TagId = tagId,
+                    Name = "RollAngle",
+                    ChineseName = ExifChinese.GetChineseName("RollAngle"),
+                    Value = $"{rollDeg:F1}°"
+                });
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// 将 0x940F raw 三轴映射到统一 body 系；仅对已校准机型返回 true。
+    /// body 约定（A7C2 校准序列）：水平 ay≈−g；仰拍 +Z；右横滚 −X。
+    /// <list type="bullet">
+    /// <item>ILCE-7CM2：恒等 (rawX, rawY, rawZ)</item>
+    /// <item>ILCE-6700：(-rawY, -rawZ, -rawX)（golden_star2 31 张穷举 48 置换唯一零坏点解）</item>
+    /// </list>
+    /// 未知机型返回 false——单帧重力在轴序未知时无法唯一确定 pitch/roll。
+    /// </summary>
+    private static bool TryMapAccelToBodyAxes(
+        short rawX, short rawY, short rawZ, string? cameraModel,
+        out short bodyX, out short bodyY, out short bodyZ)
+    {
+        bodyX = bodyY = bodyZ = 0;
+        if (string.IsNullOrEmpty(cameraModel))
+            return false;
+
+        // ILCE-7CM2（A7C2）：tag 轴即 body 轴
+        if (cameraModel.Contains("7CM2", StringComparison.OrdinalIgnoreCase))
+        {
+            bodyX = rawX;
+            bodyY = rawY;
+            bodyZ = rawZ;
+            return true;
+        }
+
+        // ILCE-6700：body = (-rawY, -rawZ, -rawX)
+        if (cameraModel.Contains("6700", StringComparison.OrdinalIgnoreCase))
+        {
+            // 饱和保护：-short.MinValue 会溢出
+            static short Neg(short v) => v == short.MinValue ? short.MaxValue : (short)(-v);
+            bodyX = Neg(rawY);
+            bodyY = Neg(rawZ);
+            bodyZ = Neg(rawX);
+            return true;
+        }
+
+        return false;
+    }
+
     // ─── 内部实现 ────────────────────────────────────────────────────────
 
     /// <summary>解密数据 (使用查找表)</summary>

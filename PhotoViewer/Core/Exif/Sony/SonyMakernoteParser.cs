@@ -132,6 +132,7 @@ internal static class SonyMakernoteParser
 
     /// <summary>
     /// 解码 Sony 加密 MakerNote tag，将原始二进制条目替换为可读字段。
+    /// 含 ExifTool 表驱动的 0x94xx/0x9050 字段，以及项目自研的 0x940F 加速度计姿态。
     /// </summary>
     public static void DecodeCipherTagsInto(SonyType1MakernoteDirectory sonyDir, MetadataGroup group, string? cameraModel)
     {
@@ -141,23 +142,35 @@ internal static class SonyMakernoteParser
         foreach (var tagId in SonyCipherTags.SupportedTagIds)
         {
             var decoded = SonyCipherTags.Decode(sonyDir, tagId, cameraModel);
-            if (decoded == null || decoded.Count == 0)
-                continue;
+            InsertDecoded(group, tagId, decoded, globalSeen);
+        }
 
-            decoded.RemoveAll(t => !globalSeen.Add(t.Name));
-            if (decoded.Count == 0)
-                continue;
+        // 0x940F 不在 ExifTool 字段表中：静照加速度计 → 三轴 +（已校准机型）俯仰/横滚
+        InsertDecoded(group, 0x940F, SonyCipherTags.DecodeAccelerometer940F(sonyDir, cameraModel), globalSeen);
+    }
 
-            int origIdx = group.Tags.FindIndex(t => t.TagId == tagId);
-            if (origIdx >= 0)
-            {
-                group.Tags.RemoveAt(origIdx);
-                group.Tags.InsertRange(origIdx, decoded);
-            }
-            else
-            {
-                group.Tags.AddRange(decoded);
-            }
+    /// <summary>
+    /// 将解码字段插入/替换到分组中：有同 TagId 原始条目则替换，否则追加；按全局字段名去重。
+    /// </summary>
+    private static void InsertDecoded(
+        MetadataGroup group, int tagId, List<MetadataTag>? decoded, HashSet<string> globalSeen)
+    {
+        if (decoded == null || decoded.Count == 0)
+            return;
+
+        decoded.RemoveAll(t => !globalSeen.Add(t.Name));
+        if (decoded.Count == 0)
+            return;
+
+        int origIdx = group.Tags.FindIndex(t => t.TagId == tagId);
+        if (origIdx >= 0)
+        {
+            group.Tags.RemoveAt(origIdx);
+            group.Tags.InsertRange(origIdx, decoded);
+        }
+        else
+        {
+            group.Tags.AddRange(decoded);
         }
     }
 
