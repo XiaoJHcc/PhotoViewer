@@ -14,6 +14,7 @@
 | [ExifToolValues.cs](ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
 | [XmpWriter.cs](XmpWriter.cs) | 标星评分写入 | XMP rating writes — in-place edit + sidecar fallback for RAW. |
 | [Sony/SonyMakernoteParser.cs](Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度（含 0x940F 加速度计姿态）。 |
-| [Sony/SonyCipherTags.cs](Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks；`DecodeAccelerometer940F` 自研解码 0x940F：始终导出三轴加速度；俯仰/横滚仅已校准机型（A7C2 恒等 / a6700 body=(-rawY,-rawZ,-rawX)），未知机型不算角度。**Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
+| [Sony/SonyCipherTags.cs](Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks；`DecodeAccelerometer940F` 只负责显示格式化，数值真源在 `SonyAttitudeDecoder`。**Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |
+| [Sony/SonyAttitudeDecoder.cs](Sony/SonyAttitudeDecoder.cs) | Sony 姿态数值 API（public） | 0x940F 静照加速度计数值解码唯一真源：三轴恒导出（m/s²，本帧 \|raw\| 归一）；俯仰/横滚仅已校准机型（A7C2 恒等 / a6700 body=(-rawY,-rawZ,-rawX)），未知机型不算角度。显示层与训练侧导出（DatasetBuilder `--dump-accel`）共用，禁止分叉。`DecryptRaw` 供新机型标定诊断（ExifTestTool `accel` 子命令）。 |
 
 > **Generated files**: anything ending in `.Generated.cs` is overwritten by `Tools/*.py`. Manual fixes belong in the non-generated companion file's override table. See [DEV.md §五](../../../DEV.md) for the regeneration workflow.

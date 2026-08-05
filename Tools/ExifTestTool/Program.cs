@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -19,6 +19,45 @@ using ExifTestTool;
 if (args.Length >= 2 && args[0] == "fp")
 {
     return FingerprintHarness.Run(args[1]);
+}
+
+// 加速度计诊断子命令：dotnet run -- accel <file>
+// 打印机型、0x940F 存在性、TryDecode 结果与解密后 0x70-0xA0 窗口 hex（新机型偏移/轴序标定用）
+if (args.Length >= 2 && args[0] == "accel")
+{
+    var p = args[1];
+    if (!File.Exists(p)) { Console.WriteLine($"File not found: {p}"); return 1; }
+    using var s = File.OpenRead(p);
+    var adirs = ImageMetadataReader.ReadMetadata(s);
+    var model = adirs.OfType<ExifIfd0Directory>().FirstOrDefault()
+        ?.GetString(ExifDirectoryBase.TagModel)?.Trim();
+    Console.WriteLine($"Model: {model ?? "(none)"}");
+    var sony = adirs.OfType<SonyType1MakernoteDirectory>().FirstOrDefault();
+    if (sony == null) { Console.WriteLine("无 Sony Makernote"); return 2; }
+    var obj = sony.GetObject(0x940F);
+    Console.WriteLine($"0x940F: {(obj is byte[] b ? $"{b.Length} bytes" : obj?.GetType().Name ?? "absent")}");
+    if (PhotoViewer.Core.SonyAttitudeDecoder.TryDecode(sony, model, out var att))
+    {
+        Console.WriteLine($"TryDecode: raw=({att.RawX},{att.RawY},{att.RawZ}) " +
+                          $"ms2=({att.Ax:F3},{att.Ay:F3},{att.Az:F3}) " +
+                          $"pitch={(att.PitchDeg?.ToString("F2") ?? "-")} roll={(att.RollDeg?.ToString("F2") ?? "-")}");
+    }
+    else Console.WriteLine("TryDecode: false（tag 缺失/过短或 |raw|<1）");
+    var raw = PhotoViewer.Core.SonyAttitudeDecoder.DecryptRaw(sony);
+    if (raw != null)
+    {
+        Console.WriteLine($"解密块全长 {raw.Length} 字节；非零行（int16 LE 成对可读）:");
+        for (int off = 0; off + 1 < raw.Length; off += 16)
+        {
+            int take = Math.Min(16, raw.Length - off);
+            if (raw.Skip(off).Take(take).All(x => x == 0)) continue;
+            var hex = string.Join(' ', raw.Skip(off).Take(take).Select(x => x.ToString("X2")));
+            var i16 = string.Join(' ', Enumerable.Range(0, take / 2)
+                .Select(k => BitConverter.ToInt16(raw, off + k * 2).ToString("D6")));
+            Console.WriteLine($"  {off:X4}: {hex}\n         {i16}");
+        }
+    }
+    return 0;
 }
 
 var filePath = args.Length > 0 ? args[0] : "../A7C07315.ARW";
