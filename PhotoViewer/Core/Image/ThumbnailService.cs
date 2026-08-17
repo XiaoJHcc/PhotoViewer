@@ -248,6 +248,16 @@ public static class ThumbnailService
             AppendMakernoteSources(dir, result);
         }
 
+        // 3) RAW 平台解码器兜底（macOS ImageIO）：全尺寸渲染代价高，尺寸未知排在最后，
+        //    仅在内嵌预览全部失败时才会被选中；解码器内部已应用方向。
+        if (RawLoader.IsRawFile(file) && RawLoader.IsSupported)
+        {
+            result.Add(new ThumbnailSource(
+                width: 0, height: 0, origin: ThumbnailOrigin.FullImage,
+                isPreRotated: true,
+                loaderAsync: target => RawLoader.LoadRawThumbnailAsync(file, target)));
+        }
+
         return result;
     }
 

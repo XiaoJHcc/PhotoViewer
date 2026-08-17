@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- 纯 P/Invoke + Avalonia，无需 macOS workload（避免依赖 Xcode 配置） -->
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Avalonia.Headless" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+  </ItemGroup>
+
+  <!-- Mac 平台项目是 .app 可执行文件，无法直接引用；直接编译所需的解码器源码 -->
+  <ItemGroup>
+    <Compile Include="..\..\PhotoViewer.Mac\Core\MacHeifDecoder.cs" />
+    <Compile Include="..\..\PhotoViewer.Mac\Core\MacRawDecoder.cs" />
+  </ItemGroup>
+
+  <!-- iOS 解码器源码同样直接编译（语法/语义验证 + 在 macOS 上运行同一 ImageIO 代码路径） -->
+  <ItemGroup>
+    <Compile Include="..\..\PhotoViewer.iOS\Core\iOSHeifDecoder.cs" />
+    <Compile Include="..\..\PhotoViewer.iOS\Core\iOSRawDecoder.cs" />
+  </ItemGroup>
+
+</Project>

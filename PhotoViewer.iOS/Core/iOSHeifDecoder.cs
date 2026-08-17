@@ -31,7 +31,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     }
 
     // 新增：获取可用路径或内存字节
-    private static async Task<(string? path, byte[]? data)> PreparePathOrDataAsync(IStorageFile file)
+    internal static async Task<(string? path, byte[]? data)> PreparePathOrDataAsync(IStorageFile file)
     {
         try
         {
@@ -52,7 +52,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     }
 
     // 修改：支持 path 或 memory data
-    private static Bitmap? DecodeWithImageIO(string? path, int? maxSize, byte[]? fileBytes = null)
+    internal static Bitmap? DecodeWithImageIO(string? path, int? maxSize, byte[]? fileBytes = null)
     {
         if (string.IsNullOrEmpty(path) && (fileBytes == null || fileBytes.Length == 0))
             return null;
@@ -165,7 +165,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"iOSHeifDecoder failed: {ex.Message}");
+            Console.WriteLine($"ImageIO decode failed: {ex.Message}");
             return null;
         }
         finally

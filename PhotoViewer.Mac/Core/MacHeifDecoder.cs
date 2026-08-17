@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -20,7 +20,7 @@ public sealed class MacHeifDecoder : IHeifDecoder
     public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
         => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, maxSize));
 
-    private static Bitmap? DecodeWithImageIO(string path, int? maxSize)
+    internal static Bitmap? DecodeWithImageIO(string path, int? maxSize)
     {
         if (string.IsNullOrEmpty(path)) return null;
 
@@ -123,7 +123,7 @@ public sealed class MacHeifDecoder : IHeifDecoder
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"MacHeifDecoder failed: {ex.Message}");
+            Console.WriteLine($"ImageIO decode failed: {ex.Message}");
             return null;
         }
         finally

@@ -67,6 +67,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 | Capability | Windows | macOS | Android | iOS |
 |---|---|---|---|---|
 | HEIF decoder | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder` |
+| RAW decoder | — | `MacRawDecoder`（复用 ImageIO，系统 RAW 引擎） | — | `iOSRawDecoder`（复用 ImageIO，系统 RAW 引擎） |
 | Performance budget | `DefaultPerformanceBudget` | `DefaultPerformanceBudget` | `AndroidPerformanceBudget` | `iOSPerformanceBudget` |
 | ONNX Execution Provider | DirectML EP | CoreML EP | NNAPI EP | CoreML EP |
 | Settings storage | `FileStorage` (default) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |

@@ -364,11 +364,18 @@ public static class BitmapLoader
         try
         {
             Bitmap? originalBitmap = null;
-            
+            // RAW 平台解码器（macOS ImageIO）内部已应用 EXIF 方向，下方不再二次旋转
+            bool decoderPreRotated = false;
+
             // 检查是否为 HEIF 格式
             if (HeifLoader.IsHeifFile(file))
             {
                 originalBitmap = await HeifLoader.LoadHeifBitmapAsync(file).ConfigureAwait(false);
+            }
+            else if (RawLoader.IsRawFile(file))
+            {
+                originalBitmap = await RawLoader.LoadRawBitmapAsync(file).ConfigureAwait(false);
+                decoderPreRotated = originalBitmap != null;
             }
             else
             {
@@ -386,8 +393,8 @@ public static class BitmapLoader
                 return null;
             }
             
-            // 获取EXIF方向信息
-            var orientation = await GetExifOrientationAsync(file).ConfigureAwait(false);
+            // 获取EXIF方向信息（RAW 解码器已预旋转的不再重复读取）
+            var orientation = decoderPreRotated ? 1 : await GetExifOrientationAsync(file).ConfigureAwait(false);
             
             // 只有 3/6/8 需要旋转，其余（包括 0、1 及未知值）均视为无旋转
             if (orientation != 3 && orientation != 6 && orientation != 8)

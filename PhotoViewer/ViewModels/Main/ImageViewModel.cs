@@ -176,6 +176,13 @@ public class ImageViewModel : ReactiveObject
                     if (!string.IsNullOrEmpty(decodeError))
                         detail = decodeError;
                 }
+                else if (RawLoader.IsRawFile(file))
+                {
+                    hint += "（RAW 格式）";
+                    var decodeError = RawLoader.LastDecodeError;
+                    if (!string.IsNullOrEmpty(decodeError))
+                        detail = decodeError;
+                }
                 HintText = hint;
                 HintDetail = detail;
                 return;

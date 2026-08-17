@@ -1,4 +1,4 @@
-﻿using Avalonia;
+using Avalonia;
 using ReactiveUI;
 using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
@@ -21,6 +21,7 @@ sealed class Program
         .AfterSetup(_ =>
         {
             HeifLoader.Initialize(new MacHeifDecoder());
+            RawLoader.Initialize(new MacRawDecoder());
             PerformanceBudget.Initialize(new DefaultPerformanceBudget());
             XmpWriter.Initialize(new MacXmpWriter());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
