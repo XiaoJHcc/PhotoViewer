@@ -1,6 +1,6 @@
 # ViewModels/Tools — 工具页 VM
 
-> 模块内手册。工具壳如何挂载到桌面/移动主窗口、在主窗口与工具页之间联动当前文件,见根 `CLAUDE.md` §4 UI 模块对应。
+> 模块内手册。工具壳如何挂载到桌面/移动主窗口、在主窗口与工具页之间联动当前文件,见根 `AGENTS.md` §4 UI 模块对应。
 
 `namespace PhotoViewer.ViewModels.Tools`
 

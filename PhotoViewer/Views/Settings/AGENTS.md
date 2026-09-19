@@ -1,6 +1,6 @@
 # Views/Settings — 设置页 View
 
-设置 VM(9 个 partial)的对应表与职责见 [ViewModels/Settings/CLAUDE.md](../../ViewModels/Settings/CLAUDE.md)。
+设置 VM(9 个 partial)的对应表与职责见 [ViewModels/Settings/AGENTS.md](../../ViewModels/Settings/AGENTS.md)。
 iOS 目前做了设置页面的原生化，并不使用本处 UI，但原生 UI 内容始终与此处保持一致，除非故意设计的平台差异。只要具备条件，就需要同步修改 iOS 原生设置页面。
 
 ## UI 设计规范

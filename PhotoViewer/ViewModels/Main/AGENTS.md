@@ -1,6 +1,6 @@
 # ViewModels/Main — 主窗口 VM
 
-> 模块内手册。VM 间联动(MainViewModel 怎么组合子 VM、文件源事件如何驱动文件栏)写在根 `CLAUDE.md` §4 UI 模块对应。Helpers / Controls 在根 §6。
+> 模块内手册。VM 间联动(MainViewModel 怎么组合子 VM、文件源事件如何驱动文件栏)写在根 `AGENTS.md` §4 UI 模块对应。Helpers / Controls 在根 §6。
 
 `namespace PhotoViewer.ViewModels.Main`
 

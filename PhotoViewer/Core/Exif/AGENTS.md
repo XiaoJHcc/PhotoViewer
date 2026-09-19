@@ -1,6 +1,6 @@
 # Core/Exif — 元数据读写
 
-> 模块内手册。评分回写到 RAW 的端到端流程(键盘 1~5 → XmpWriter → 筛选刷新)见根 `CLAUDE.md` §5 关键流程。
+> 模块内手册。评分回写到 RAW 的端到端流程(键盘 1~5 → XmpWriter → 筛选刷新)见根 `AGENTS.md` §5 关键流程。
 
 `namespace PhotoViewer.Core`(Exif 文件沿用根命名空间)
 

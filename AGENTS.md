@@ -1,9 +1,9 @@
-# CLAUDE.md — PhotoViewer
+# AGENTS.md — PhotoViewer
 
-> Primary briefing for Claude Code. Loaded automatically at session start.
+> Primary briefing for AI coding agents. Loaded automatically at session start.
 > Keep concise; update when architecture shifts (rename, split, new module). Do **not** log small bug fixes here.
 >
-> **文档结构**:本文件仅含项目快照、跨模块流程、平台矩阵、辅助组件、编码/任务/文档规范。模块内的文件清单与职责放在各模块的 `CLAUDE.md`(见 §3 模块索引),改文件时会随目录自动加载。
+> **文档结构**:本文件仅含项目快照、跨模块流程、平台矩阵、辅助组件、编码/任务/文档规范。模块内的文件清单与职责放在各模块的 `AGENTS.md`(见 §3 模块索引),改文件时会随目录自动加载。
 
 ---
 
@@ -32,11 +32,13 @@ PhotoViewer.Android/      # Android head (net10.0-android)
 Tools/                    # Python: ExifTool 表重生成
 Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
 Tools/CvDebugTool/        # Standalone CLI for CV v5 抖动诊断（HEIF/JPG → 锐度 PNG + 抖动矢量场 PNG + 文本报告）
-Training/                 # AI 训练一等模块：数据集提取 CLI + DINOv3 ONNX 导出/校验 + CV/patch PoC notebook + 特征可行性探针 + 三期计划 + 数据契约(见 Training/CLAUDE.md)
+Training/                 # AI 训练独立仓库（嵌套 git repo，主库 .gitignore 已忽略，见下方说明）：数据集提取 CLI + DINOv3 ONNX 导出/校验 + 特征可行性探针 + 三期计划 + 数据契约(见 Training/README.md 与 Training/AGENTS.md)
 release/                  # Output artifacts (DMG, APK, EXE, IPA)
 Directory.Build.props     # Single source of truth for version number
 Directory.Packages.props  # Central NuGet version pinning
 ```
+
+> **`Training/`**：已拆分为独立 git 仓库（PhotoViewer-Training）嵌套在主库工作区下，主库 `.gitignore` 忽略整个目录，主库 `git status`/提交**看不到也不包含** `Training/` 内的任何改动。两侧提交完全分开：改 `Training/` 内文件 → 进 `Training/` 目录在该仓提交；改主库文件 → 在主库提交。一次工作两边都有改动时各提各的（`DatasetBuilder` 以 `ProjectReference` 复用 `PhotoViewer/Core`，提取算法演进常需双仓联动提交）。提交规范与文档导航见 [Training/README.md](Training/README.md)。
 
 ---
 
@@ -44,17 +46,17 @@ Directory.Packages.props  # Central NuGet version pinning
 
 | 目录 | 模块手册 | 一句话职责 |
 |---|---|---|
-| [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/CLAUDE.md](PhotoViewer/Core/AI/CLAUDE.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
-| [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/CLAUDE.md](PhotoViewer/Core/Database/CLAUDE.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
-| [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/CLAUDE.md](PhotoViewer/Core/Image/CLAUDE.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
-| [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/CLAUDE.md](PhotoViewer/Core/Exif/CLAUDE.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
-| [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/CLAUDE.md](PhotoViewer/Core/Platform/CLAUDE.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |
-| [PhotoViewer/Core/Settings/](PhotoViewer/Core/Settings/) | [Core/Settings/CLAUDE.md](PhotoViewer/Core/Settings/CLAUDE.md) | JSON 设置持久化 + 原生设置展示器接口 |
-| [PhotoViewer/Core/Tools/](PhotoViewer/Core/Tools/) | [Core/Tools/CLAUDE.md](PhotoViewer/Core/Tools/CLAUDE.md) | 照片数据统计服务(Windows 限定) |
-| [PhotoViewer/ViewModels/Main/](PhotoViewer/ViewModels/Main/) | [ViewModels/Main/CLAUDE.md](PhotoViewer/ViewModels/Main/CLAUDE.md) | 主窗口 shell + 文件源/文件栏/图片/控制/分析 VM |
-| [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/CLAUDE.md](PhotoViewer/ViewModels/Tools/CLAUDE.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |
-| [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/CLAUDE.md](PhotoViewer/ViewModels/Settings/CLAUDE.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
-| [Training/](Training/) | [Training/CLAUDE.md](Training/CLAUDE.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
+| [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/AGENTS.md](PhotoViewer/Core/AI/AGENTS.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
+| [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/AGENTS.md](PhotoViewer/Core/Database/AGENTS.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
+| [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/AGENTS.md](PhotoViewer/Core/Image/AGENTS.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
+| [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/AGENTS.md](PhotoViewer/Core/Exif/AGENTS.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
+| [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/AGENTS.md](PhotoViewer/Core/Platform/AGENTS.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |
+| [PhotoViewer/Core/Settings/](PhotoViewer/Core/Settings/) | [Core/Settings/AGENTS.md](PhotoViewer/Core/Settings/AGENTS.md) | JSON 设置持久化 + 原生设置展示器接口 |
+| [PhotoViewer/Core/Tools/](PhotoViewer/Core/Tools/) | [Core/Tools/AGENTS.md](PhotoViewer/Core/Tools/AGENTS.md) | 照片数据统计服务(Windows 限定) |
+| [PhotoViewer/ViewModels/Main/](PhotoViewer/ViewModels/Main/) | [ViewModels/Main/AGENTS.md](PhotoViewer/ViewModels/Main/AGENTS.md) | 主窗口 shell + 文件源/文件栏/图片/控制/分析 VM |
+| [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/AGENTS.md](PhotoViewer/ViewModels/Tools/AGENTS.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |
+| [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/AGENTS.md](PhotoViewer/ViewModels/Settings/AGENTS.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
+| [Training/](Training/) | [Training/AGENTS.md](Training/AGENTS.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -208,7 +210,7 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 - Every task must go through **at least one full end-to-end run**. The task is not done until the app starts successfully.
 
 **Sync docs in the same task**:
-- 任务收尾前,**必须**回看本次改动是否让任一 `CLAUDE.md`(根或模块)的描述失准 — 文件清单变化、职责变化、跨模块流程改路径、阈值/字段命名调整等。失准必须在**同一任务**内修文档,否则任务**未完成**,与"编译通过"同级。
+- 任务收尾前,**必须**回看本次改动是否让任一 `AGENTS.md`(根或模块)的描述失准 — 文件清单变化、职责变化、跨模块流程改路径、阈值/字段命名调整等。失准必须在**同一任务**内修文档,否则任务**未完成**,与"编译通过"同级。
 - 判据:行为表 / 跨模块流程 / 关键字段命名过期 → 必更新;只是改实现细节、小修 bug、加日志 → 不动。
 
 **Use legitimate means only**:
@@ -221,7 +223,7 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 - Prefix every function with an XML comment (`/// <summary>...</summary>`) describing purpose, parameters, and return value. Add inline comments for non-trivial logic. **Write comments in Chinese.**
 
 **Docs**:
-- 根 `CLAUDE.md` 与各模块 `CLAUDE.md` 边界:**模块内文件清单与职责** → 子文档;**跨模块流程、平台矩阵、共享 UI 辅助、规范** → 根。子文档点到外部类只用链接,不复述行为,避免两边漂移。
+- 根 `AGENTS.md` 与各模块 `AGENTS.md` 边界:**模块内文件清单与职责** → 子文档;**跨模块流程、平台矩阵、共享 UI 辅助、规范** → 根。子文档点到外部类只用链接,不复述行为,避免两边漂移。
 - 文档同步是任务收尾的硬要求,见 §9 "Sync docs in the same task"。
 
 **Tidiness**:

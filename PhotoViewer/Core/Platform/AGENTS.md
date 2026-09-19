@@ -1,6 +1,6 @@
 # Core/Platform — 平台能力抽象
 
-> 模块内手册。具体平台实现(`LibHeifDecoder` / `MacExternalOpenBridge` 等)在各 head project 的 `Core/` 文件夹,启动期通过 `Initialize(...)` 注入。平台矩阵见根 `CLAUDE.md` §4。
+> 模块内手册。具体平台实现(`LibHeifDecoder` / `MacExternalOpenBridge` 等)在各 head project 的 `Core/` 文件夹,启动期通过 `Initialize(...)` 注入。平台矩阵见根 `AGENTS.md` §4。
 
 `namespace PhotoViewer.Core.Platform`
 

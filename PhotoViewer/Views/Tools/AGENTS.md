@@ -1,6 +1,6 @@
 # Views/Tools — 工具页 View
 
-模块文档(VM 与 View 对应表、行为描述)在 [ViewModels/Tools/CLAUDE.md](../../ViewModels/Tools/CLAUDE.md)。
+模块文档(VM 与 View 对应表、行为描述)在 [ViewModels/Tools/AGENTS.md](../../ViewModels/Tools/AGENTS.md)。
 
 ## UI 设计规范
 

@@ -1,6 +1,6 @@
 # Core/Image — 图片解码与文件模型
 
-> 模块内手册。图片加载 pipeline(切图触发 → 解码 → 显示 → 预取)的端到端流程见根 `CLAUDE.md` §5 关键流程。
+> 模块内手册。图片加载 pipeline(切图触发 → 解码 → 显示 → 预取)的端到端流程见根 `AGENTS.md` §5 关键流程。
 
 `namespace PhotoViewer.Core.Image`
 

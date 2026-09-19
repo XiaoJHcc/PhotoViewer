@@ -1,6 +1,6 @@
 # Views/Main — 主窗口 View
 
-模块文档(VM 与 View 对应表、行为描述)在 [ViewModels/Main/CLAUDE.md](../../ViewModels/Main/CLAUDE.md)。
+模块文档(VM 与 View 对应表、行为描述)在 [ViewModels/Main/AGENTS.md](../../ViewModels/Main/AGENTS.md)。
 
 ## UI 设计规范
 

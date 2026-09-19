@@ -1,6 +1,6 @@
 # Core/Database — 照片缓存数据库
 
-> 模块内手册。批量索引/单图懒加载/清库的端到端流程在根 `CLAUDE.md` §5 关键流程。
+> 模块内手册。批量索引/单图懒加载/清库的端到端流程在根 `AGENTS.md` §5 关键流程。
 
 `namespace PhotoViewer.Core.Database`
 
