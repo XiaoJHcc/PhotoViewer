@@ -128,7 +128,7 @@ public readonly struct ImageOrientationInfo
 
     /// <summary>
     /// EXIF Orientation (1..8) → (顺时针旋转角度, 是否水平镜像)。
-    /// 1=正常 / 2=镜像 / 3=180 / 4=180+镜像 / 5=镜像+90CW / 6=90CW / 7=镜像+270CW / 8=270CW。
+    /// 1=正常 / 2=镜像 / 3=180 / 4=180+镜像 / 5=镜像+270CW / 6=90CW / 7=镜像+90CW / 8=270CW。
     /// </summary>
     private static (int rotCw, bool mirror) MapExifOrientationToCwRotationAndMirror(int orientation)
     {
@@ -138,9 +138,9 @@ public readonly struct ImageOrientationInfo
             2 => (0, true),
             3 => (180, false),
             4 => (180, true),
-            5 => (90, true),
+            5 => (270, true),
             6 => (90, false),
-            7 => (270, true),
+            7 => (90, true),
             8 => (270, false),
             _ => (0, false),
         };

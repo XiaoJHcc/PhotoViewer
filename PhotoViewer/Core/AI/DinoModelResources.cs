@@ -49,7 +49,7 @@ public static class DinoModelResources
     /// 模型标识符，写入 <c>photos.feature_model</c>。变更模型或预处理规格时必须更新，
     /// 以便读取侧识别历史缓存是否仍兼容当前推理配置。
     /// </summary>
-    public const string ModelId = "dinov3_vits16_f32_518_v1";
+    public const string ModelId = "dinov3_vits16_f32_518_v2";
 
     /// <summary>
     /// 从 Avalonia 资源读取模型字节；若资源不存在返回 null。

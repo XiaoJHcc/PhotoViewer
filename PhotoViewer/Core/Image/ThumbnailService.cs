@@ -513,8 +513,14 @@ public static class ThumbnailService
     /// 把传感器朝向的位图按 (rotationCw, mirror) 变换到显示朝向,返回新位图。
     /// 变换顺序:平移到源中心 → （水平镜像）→ （顺时针旋转）→ 平移到目标中心。
     /// </summary>
-    private static Bitmap? ApplyOrientation(Bitmap source, int rotationCw, bool mirror)
+    /// <param name="source">传感器朝向位图，不转移所有权。</param>
+    /// <param name="rotationCw">顺时针旋转角度，须为 0、90、180 或 270。</param>
+    /// <param name="mirror">旋转前是否水平镜像。</param>
+    /// <returns>显示朝向的新位图；无效尺寸返回 null。</returns>
+    public static Bitmap? ApplyOrientation(Bitmap source, int rotationCw, bool mirror)
     {
+        if (rotationCw is not (0 or 90 or 180 or 270))
+            throw new ArgumentOutOfRangeException(nameof(rotationCw));
         int sw = source.PixelSize.Width;
         int sh = source.PixelSize.Height;
         if (sw <= 0 || sh <= 0) return null;
@@ -523,7 +529,7 @@ public static class ThumbnailService
         int dw = swap ? sh : sw;
         int dh = swap ? sw : sh;
 
-        var rt = new RenderTargetBitmap(new PixelSize(dw, dh), source.Dpi);
+        var rt = new RenderTargetBitmap(new PixelSize(dw, dh), new Vector(96, 96));
         using var ctx = rt.CreateDrawingContext();
 
         var transform = Matrix.CreateTranslation(-sw / 2.0, -sh / 2.0);
@@ -539,7 +545,7 @@ public static class ThumbnailService
 
         using (ctx.PushTransform(transform))
         {
-            ctx.DrawImage(source, new Rect(0, 0, sw, sh));
+            ctx.DrawImage(source, new Rect(0, 0, sw, sh), new Rect(0, 0, sw, sh));
         }
         return rt;
     }

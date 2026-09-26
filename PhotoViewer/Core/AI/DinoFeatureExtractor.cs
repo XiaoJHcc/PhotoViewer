@@ -252,7 +252,7 @@ public static class DinoFeatureExtractor
         var target = new RenderTargetBitmap(new PixelSize(size, size));
         using (var ctx = target.CreateDrawingContext())
         {
-            ctx.DrawImage(source, new Rect(0, 0, size, size));
+            ctx.DrawImage(source, new Rect(source.PixelSize.ToSize(1)), new Rect(0, 0, size, size));
         }
         return target;
     }
