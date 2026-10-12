@@ -1,94 +1,13 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
-using Avalonia.Input;
 using ReactiveUI;
 using System.Reactive;
 using PhotoViewer.Controls;
 using System;
+using PhotoViewer.Core.Input;
 
 namespace PhotoViewer.ViewModels.Settings;
-
-// 新增：鼠标动作与通用手势
-public enum MouseAction
-{
-    LeftClick,
-    RightClick,
-    MiddleClick,   // 滚轮按压
-    XButton1Click, // 侧键1
-    XButton2Click, // 侧键2
-    WheelUp,
-    WheelDown
-}
-
-public sealed class MouseGestureEx
-{
-    public MouseAction Action { get; }
-    public KeyModifiers Modifiers { get; }
-
-    public MouseGestureEx(MouseAction action, KeyModifiers modifiers)
-    {
-        Action = action;
-        Modifiers = modifiers;
-    }
-    
-    public MouseGestureEx(MouseAction action)
-    {
-        Action = action;
-        Modifiers = KeyModifiers.None;
-    }
-
-    public string ToDisplayString()
-    {
-        var mods = Modifiers;
-        var parts = new System.Collections.Generic.List<string>();
-        if (mods.HasFlag(KeyModifiers.Shift)) parts.Add(AppleKeyboardMapping.GetShiftDisplay());
-        if (mods.HasFlag(KeyModifiers.Control)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Control));
-        if (mods.HasFlag(KeyModifiers.Alt)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Alt));
-        if (mods.HasFlag(KeyModifiers.Meta)) parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Meta));
-
-        string actionName = Action switch
-        {
-            MouseAction.LeftClick => "左键",
-            MouseAction.RightClick => "右键",
-            MouseAction.MiddleClick => "中键",
-            MouseAction.XButton1Click => "侧键1",
-            MouseAction.XButton2Click => "侧键2",
-            MouseAction.WheelUp => "滚轮上",
-            MouseAction.WheelDown => "滚轮下",
-            _ => "鼠标"
-        };
-
-        parts.Add(actionName);
-        return string.Join(" ", parts);
-    }
-}
-
-public sealed class AppGesture
-{
-    public KeyGesture? Key { get; }
-    public MouseGestureEx? Mouse { get; }
-
-    private AppGesture(KeyGesture? key, MouseGestureEx? mouse)
-    {
-        Key = key;
-        Mouse = mouse;
-    }
-
-    public static AppGesture FromKey(KeyGesture key) => new AppGesture(key, null);
-    public static AppGesture FromMouse(MouseGestureEx mouse) => new AppGesture(null, mouse);
-
-    public string ToDisplayString()
-    {
-        if (Key != null)
-        {
-            // 交给 Key 转换器（HotkeyButton 内也会处理）
-            return Key.ToString() ?? "未设置";
-        }
-        if (Mouse != null) return Mouse.ToDisplayString();
-        return "未设置";
-    }
-}
 
 public partial class SettingsViewModel
 {
@@ -118,59 +37,59 @@ public partial class SettingsViewModel
     public static System.Collections.Generic.List<HotkeyItem> BuildDefaultHotkeys() => new()
     {
             new("打开文件", "Open", "\uf6b5", "打开文件", false, 
-                AppGesture.FromKey(new KeyGesture(Key.N, KeyModifiers.Control)), 
-                AppGesture.FromKey(new KeyGesture(Key.O, KeyModifiers.Control))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.N, GestureModifiers.Control)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.O, GestureModifiers.Control))),
             new("上一张", "Previous", "\uf151", "上一张", true, 
-                AppGesture.FromKey(new KeyGesture(Key.Left)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.Left)), 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp))),
             new("下一张", "Next", "\uf152", "下一张", true, 
-                AppGesture.FromKey(new KeyGesture(Key.Right)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.Right)), 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown))),
             new("切换上一张", "Exchange", "\uf5ea", "切换上一张", true, 
-                AppGesture.FromKey(new KeyGesture(Key.Z)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.Z)), 
                 AppGesture.FromMouse(new MouseGestureEx(MouseAction.MiddleClick))),
             new("缩放适应", "Fit", "\uf1b2", "缩放适应", true, 
-                AppGesture.FromKey(new KeyGesture(Key.D0, KeyModifiers.Control)), 
-                AppGesture.FromKey(new KeyGesture(Key.F))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D0, GestureModifiers.Control)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.F))),
             new("放大（预设）", "ZoomInPreset", "\ufaac", "放大", true, 
-                AppGesture.FromKey(new KeyGesture(Key.OemPlus, KeyModifiers.Control)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.OemPlus, GestureModifiers.Control)), 
                 null),
             new("缩小（预设）", "ZoomOutPreset", "\uf94e", "缩小", true, 
-                AppGesture.FromKey(new KeyGesture(Key.OemMinus, KeyModifiers.Control)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.OemMinus, GestureModifiers.Control)), 
                 null),
             new("放大（比例）", "ZoomInScale", "\ufaac", "放大", false, 
-                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp, KeyModifiers.Control)), 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp, GestureModifiers.Control)), 
                 null),
             new("缩小（比例）", "ZoomOutScale", "\uf94e", "缩小", false, 
-                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, KeyModifiers.Control)), 
+                AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelDown, GestureModifiers.Control)), 
                 null),
             new("分析栏展开/收纳", "ToggleAnalysisView", "\ufad2", "分析栏", false,
                 null,
                 null),
 
             new("增强预览", "ToggleEnhance", "", "增强预览", true,
-                AppGesture.FromKey(new KeyGesture(Key.E)),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.E)),
                 null),
 
             // ===== 新增：评分热键（默认不在控制栏显示） =====
             new("评分 0 星", "SetRating0", "\uf4f4", "0 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.OemTilde)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad0))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.OemTilde)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad0))),
             new("评分 1 星", "SetRating1", "\uf3ea", "1 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.D1)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad1))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D1)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad1))),
             new("评分 2 星", "SetRating2", "\uf3eb", "2 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.D2)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad2))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D2)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad2))),
             new("评分 3 星", "SetRating3", "\uf3ec", "3 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.D3)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad3))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D3)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad3))),
             new("评分 4 星", "SetRating4", "\uf3ed", "4 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.D4)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad4))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D4)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad4))),
             new("评分 5 星", "SetRating5", "\uf3ee", "5 星", false,
-                AppGesture.FromKey(new KeyGesture(Key.D5)), 
-                AppGesture.FromKey(new KeyGesture(Key.NumPad5))),
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.D5)), 
+                AppGesture.FromKey(new AppKeyGesture(GestureKey.NumPad5))),
     };
 
     /// <summary>
@@ -292,7 +211,7 @@ public partial class SettingsViewModel
         {
             var k1 = NormalizeKeyForCompare(g1.Key.Key);
             var k2 = NormalizeKeyForCompare(g2.Key.Key);
-            return k1 == k2 && g1.Key.KeyModifiers == g2.Key.KeyModifiers;
+            return k1 == k2 && g1.Key.Modifiers == g2.Key.Modifiers;
         }
 
         // 鼠标
@@ -306,12 +225,12 @@ public partial class SettingsViewModel
     }
 
     // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus，用于冲突检测等价比较
-    private static Key NormalizeKeyForCompare(Key key)
+    private static GestureKey NormalizeKeyForCompare(GestureKey key)
     {
         if (OperatingSystem.IsIOS())
         {
-            if (key == Key.Add) return Key.OemPlus;
-            if (key == Key.Subtract) return Key.OemMinus;
+            if (key == GestureKey.Add) return GestureKey.OemPlus;
+            if (key == GestureKey.Subtract) return GestureKey.OemMinus;
         }
         return key;
     }
@@ -477,84 +396,5 @@ public partial class SettingsViewModel
             AppleKeyboardMapping.RaiseChanged();
         }
     }
-}
-
-// ========= 新增：映射目标枚举 =========
-public enum AppleMappingTarget
-{
-    None,
-    Ctrl,
-    Alt,
-    Win
-}
-
-// ========= 更新：全局苹果键盘映射器 =========
-public static class AppleKeyboardMapping
-{
-    public static bool UseAppleKeyboard { get; set; }
-
-    public static AppleMappingTarget MapCommandTarget { get; set; }
-    public static AppleMappingTarget MapOptionTarget  { get; set; }
-    public static AppleMappingTarget MapControlTarget { get; set; }
-
-    public static event Action? MappingChanged;
-    public static void RaiseChanged() => MappingChanged?.Invoke();
-
-    public static KeyModifiers ApplyForRuntime(KeyModifiers mods)
-    {
-        if (!UseAppleKeyboard) return mods;
-
-        var result = mods;
-        result = ApplySource(result, KeyModifiers.Meta,    MapCommandTarget); // Cmd
-        result = ApplySource(result, KeyModifiers.Alt,     MapOptionTarget);  // Option
-        result = ApplySource(result, KeyModifiers.Control, MapControlTarget); // Ctrl
-        return result;
-    }
-
-    public static KeyModifiers ApplyForCapture(KeyModifiers mods) => ApplyForRuntime(mods);
-
-    // 显示目标修饰键的文本（若有映射到此目标则按 Cmd ⌘ → Option ⌥ → Ctrl ⌃ 优先展示符号）
-    public static string GetDisplayForModifier(KeyModifiers targetFlag)
-    {
-        string defaultName = targetFlag switch
-        {
-            KeyModifiers.Control => "Ctrl",
-            KeyModifiers.Alt     => "Alt",
-            KeyModifiers.Meta    => "Win",
-            _ => targetFlag.ToString()
-        };
-
-        if (!UseAppleKeyboard) return defaultName;
-
-        bool cmd = ToModifiers(MapCommandTarget) == targetFlag;
-        bool opt = ToModifiers(MapOptionTarget)  == targetFlag;
-        bool ctl = ToModifiers(MapControlTarget) == targetFlag;
-
-        if (cmd) return "⌘";
-        if (opt) return "⌥";
-        if (ctl) return "⌃";
-        return defaultName;
-    }
-
-    // 新增：Shift 的显示（开启苹果键盘时显示 ⇧）
-    public static string GetShiftDisplay() => UseAppleKeyboard ? "⇧" : "Shift";
-
-    private static KeyModifiers ApplySource(KeyModifiers current, KeyModifiers sourceFlag, AppleMappingTarget target)
-    {
-        if (target == AppleMappingTarget.None) return current;
-        if (!current.HasFlag(sourceFlag)) return current;
-
-        current &= ~sourceFlag;                 // 去掉原来源键
-        current |= ToModifiers(target);         // 添加目标键
-        return current;
-    }
-
-    private static KeyModifiers ToModifiers(AppleMappingTarget target) => target switch
-    {
-        AppleMappingTarget.Ctrl => KeyModifiers.Control,
-        AppleMappingTarget.Alt  => KeyModifiers.Alt,
-        AppleMappingTarget.Win  => KeyModifiers.Meta,
-        _ => 0
-    };
 }
 

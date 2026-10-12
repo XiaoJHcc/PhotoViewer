@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
@@ -6,6 +6,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.VisualTree;
 using PhotoViewer.Converters;
+using PhotoViewer.Core.Input;
+using PhotoViewer.Platform;
 using PhotoViewer.ViewModels.Settings; // 用于读取全局映射
 
 namespace PhotoViewer.Controls;
@@ -176,7 +178,7 @@ public partial class HotkeyButton : UserControl
         e.Handled = true;
 
         var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
-        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+        var mods = AppleKeyboardMapping.ApplyForCapture(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
 
         Hotkey = AppGesture.FromMouse(new MouseGestureEx(action, mods));
         RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
@@ -216,8 +218,8 @@ public partial class HotkeyButton : UserControl
 
         // 基于物理键标准化，正确区分主键盘 +/- 与小键盘 +/-（并修正 iOS/macOS 的映射差异）
         var normalizedKey = NormalizeKey(e);
-        var mappedMods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
-        Hotkey = AppGesture.FromKey(new KeyGesture(normalizedKey, mappedMods));
+        var mappedMods = AppleKeyboardMapping.ApplyForCapture(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
+        Hotkey = AppGesture.FromKey(new AppKeyGesture(AvaloniaGestureMapping.ToCore(normalizedKey), mappedMods));
         RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));
         StopCapturing();
         e.Handled = true;
@@ -241,10 +243,10 @@ public partial class HotkeyButton : UserControl
         };
         if (action == null) return;
 
-        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+        var mods = AppleKeyboardMapping.ApplyForCapture(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
 
         // 禁止单独左/右键
-        if ((action is MouseAction.LeftClick or MouseAction.RightClick) && mods == KeyModifiers.None)
+        if ((action is MouseAction.LeftClick or MouseAction.RightClick) && mods == GestureModifiers.None)
         {
             return;
         }
@@ -261,7 +263,7 @@ public partial class HotkeyButton : UserControl
         if (!_isCapturing) return;
 
         var action = e.Delta.Y > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
-        var mods = AppleKeyboardMapping.ApplyForCapture(e.KeyModifiers);
+        var mods = AppleKeyboardMapping.ApplyForCapture(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
 
         Hotkey = AppGesture.FromMouse(new MouseGestureEx(action, mods));
         RaiseEvent(new RoutedEventArgs(HotkeyChangedEvent));

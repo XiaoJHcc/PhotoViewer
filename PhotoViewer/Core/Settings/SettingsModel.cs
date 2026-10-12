@@ -1,5 +1,5 @@
 using System.Collections.Generic;
-using Avalonia.Input;
+using PhotoViewer.Core.Input;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Core.Settings;
@@ -82,7 +82,7 @@ public sealed class GestureModel
 {
     public GestureKind Kind { get; set; }
     public string? Key { get; set; }
-    public KeyModifiers Modifiers { get; set; }
+    public GestureModifiers Modifiers { get; set; }
     public MouseAction? MouseAction { get; set; }
 }
 

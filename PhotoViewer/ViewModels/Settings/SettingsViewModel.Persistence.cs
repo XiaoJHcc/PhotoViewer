@@ -8,7 +8,7 @@ using System.Reactive;
 using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading.Tasks;
-using Avalonia.Input;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using ReactiveUI;
 
@@ -342,7 +342,7 @@ public partial class SettingsViewModel
             {
                 Kind = GestureKind.Key,
                 Key = gesture.Key.Key.ToString(),
-                Modifiers = gesture.Key.KeyModifiers
+                Modifiers = gesture.Key.Modifiers
             };
         }
         if (gesture.Mouse != null)
@@ -364,9 +364,9 @@ public partial class SettingsViewModel
         switch (model.Kind)
         {
             case GestureKind.Key:
-                if (!string.IsNullOrWhiteSpace(model.Key) && Enum.TryParse<Key>(model.Key, true, out var key))
+                if (!string.IsNullOrWhiteSpace(model.Key) && Enum.TryParse<GestureKey>(model.Key, true, out var key))
                 {
-                    return AppGesture.FromKey(new KeyGesture(key, model.Modifiers));
+                    return AppGesture.FromKey(new AppKeyGesture(key, model.Modifiers));
                 }
                 break;
             case GestureKind.Mouse:

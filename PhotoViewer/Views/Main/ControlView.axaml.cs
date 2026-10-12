@@ -10,6 +10,8 @@ using Avalonia.Interactivity;
 using Avalonia.Media;
 using Avalonia.VisualTree;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Input;
+using PhotoViewer.Platform;
 using PhotoViewer.ViewModels;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -77,8 +79,8 @@ public partial class ControlView : UserControl
 
 
         // 基于 PhysicalKey 标准化当前按键，区分主键盘 +/- 与小键盘 +/-，修复 iOS/macOS 键位混淆
-        var normalizedKey = NormalizeKey(e);
-        var mods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
+        var normalizedKey = AvaloniaGestureMapping.ToCore(NormalizeKey(e));
+        var mods = AppleKeyboardMapping.ApplyForRuntime(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
 
         // 仅匹配键盘类手势（鼠标手势在 ImageView 内处理）
         var matchedHotkey = viewModel.AllHotkeys?.FirstOrDefault(h =>
@@ -145,32 +147,21 @@ public partial class ControlView : UserControl
     }
 
     // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus 用于比较
-    private static Key NormalizeKeyForCompare(Key key)
+    private static GestureKey NormalizeKeyForCompare(GestureKey key)
     {
         if (OperatingSystem.IsIOS())
         {
-            if (key == Key.Add) return Key.OemPlus;
-            if (key == Key.Subtract) return Key.OemMinus;
+            if (key == GestureKey.Add) return GestureKey.OemPlus;
+            if (key == GestureKey.Subtract) return GestureKey.OemMinus;
         }
         return key;
     }
 
-    // 匹配逻辑：先比对修饰键，再比对键值；iOS 下做等价合并
-    private static bool AreGestureMatch(KeyGesture? stored, Key normalizedKey, KeyModifiers mods)
-    {
-        if (stored == null) return false;
-        if (stored.KeyModifiers != mods) return false;
-
-        var left = NormalizeKeyForCompare(stored.Key);
-        var right = NormalizeKeyForCompare(normalizedKey);
-        return left == right;
-    }
-
-    // 键盘匹配：仅当存储为键盘手势时才参与
-    private static bool AreKeyGestureMatch(AppGesture? stored, Key normalizedKey, KeyModifiers mods)
+    // 键盘匹配：仅当存储为键盘手势时才参与；先比对修饰键，再比对键值，iOS 下做等价合并
+    private static bool AreKeyGestureMatch(AppGesture? stored, GestureKey normalizedKey, GestureModifiers mods)
     {
         if (stored?.Key == null) return false;
-        if (stored.Key.KeyModifiers != mods) return false;
+        if (stored.Key.Modifiers != mods) return false;
 
         var left = NormalizeKeyForCompare(stored.Key.Key);
         var right = NormalizeKeyForCompare(normalizedKey);

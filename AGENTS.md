@@ -50,6 +50,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/AGENTS.md](PhotoViewer/Core/Database/AGENTS.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
 | [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/AGENTS.md](PhotoViewer/Core/Image/AGENTS.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
 | [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/AGENTS.md](PhotoViewer/Core/Exif/AGENTS.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
+| [PhotoViewer/Core/Input/](PhotoViewer/Core/Input/) | [Core/Input/AGENTS.md](PhotoViewer/Core/Input/AGENTS.md) | 平台中立手势模型(键/鼠标/修饰键、苹果键盘映射) |
 | [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/AGENTS.md](PhotoViewer/Core/Platform/AGENTS.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |
 | [PhotoViewer/Core/Settings/](PhotoViewer/Core/Settings/) | [Core/Settings/AGENTS.md](PhotoViewer/Core/Settings/AGENTS.md) | JSON 设置持久化 + 原生设置展示器接口 |
 | [PhotoViewer/Core/Tools/](PhotoViewer/Core/Tools/) | [Core/Tools/AGENTS.md](PhotoViewer/Core/Tools/AGENTS.md) | 照片数据统计服务(Windows 限定) |

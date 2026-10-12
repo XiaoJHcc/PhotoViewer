@@ -10,7 +10,9 @@ using Avalonia.VisualTree;
 using System.IO;
 using Avalonia.Threading;
 using PhotoViewer.Controls;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Platform;
 using PhotoViewer.ViewModels;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -350,8 +352,8 @@ public partial class ImageView : UserControl
             if (action != null)
             {
                 // 禁止无修饰的 左/右 键作为独立快捷键；其余允许
-                var mappedMods = AppleKeyboardMapping.ApplyForRuntime(e.KeyModifiers);
-                if (!((action is MouseAction.LeftClick or MouseAction.RightClick) && mappedMods == KeyModifiers.None))
+                var mappedMods = AppleKeyboardMapping.ApplyForRuntime(AvaloniaGestureMapping.ToCore(e.KeyModifiers));
+                if (!((action is MouseAction.LeftClick or MouseAction.RightClick) && mappedMods == GestureModifiers.None))
                 {
                     var pos = e.GetPosition(this);
                     if (TryExecuteMouseGesture(action.Value, e.KeyModifiers, pos))
@@ -619,7 +621,7 @@ public partial class ImageView : UserControl
         if (ViewModel?.Main is null) return false;
 
         // 运行时应用苹果键盘修饰键映射，统一比较口径
-        var mods = AppleKeyboardMapping.ApplyForRuntime(rawMods);
+        var mods = AppleKeyboardMapping.ApplyForRuntime(AvaloniaGestureMapping.ToCore(rawMods));
         var gesture = AppGesture.FromMouse(new MouseGestureEx(action, mods));
 
         // 根据手势查询配置的命令

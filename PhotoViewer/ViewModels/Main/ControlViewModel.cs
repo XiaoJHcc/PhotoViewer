@@ -6,7 +6,6 @@ using System.Reactive;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Avalonia;
-using Avalonia.Input;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Settings;

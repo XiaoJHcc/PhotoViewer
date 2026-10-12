@@ -1,75 +1,79 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using Avalonia.Data.Converters;
-using Avalonia.Input;
-using PhotoViewer.ViewModels; // 读取映射状态
-using PhotoViewer.ViewModels.Settings;
+using PhotoViewer.Core.Input;
 
 namespace PhotoViewer.Converters;
 
+/// <summary>
+/// 把 <see cref="AppKeyGesture"/> 转换为显示文本(修饰键符号 + 键名,如 "⌘ N" / "Ctrl N")。
+/// </summary>
 public class KeyGestureToStringConverter : IValueConverter
 {
-    private static readonly Dictionary<Key, string> KeyDisplayNames = new()
+    private static readonly Dictionary<GestureKey, string> KeyDisplayNames = new()
     {
-        { Key.Left, "←" },
-        { Key.Right, "→" },
-        { Key.Up, "↑" },
-        { Key.Down, "↓" },
-        { Key.Enter, "Enter" },
-        { Key.Space, "Space" },
-        { Key.Tab, "Tab" },
-        { Key.Back, "Backspace" },
-        { Key.Delete, "Delete" },
-        { Key.Home, "Home" },
-        { Key.End, "End" },
-        { Key.PageUp, "Page Up" },
-        { Key.PageDown, "Page Down" },
-        { Key.Escape, "Esc" },
-        { Key.F1, "F1" }, { Key.F2, "F2" }, { Key.F3, "F3" }, { Key.F4, "F4" },
-        { Key.F5, "F5" }, { Key.F6, "F6" }, { Key.F7, "F7" }, { Key.F8, "F8" },
-        { Key.F9, "F9" }, { Key.F10, "F10" }, { Key.F11, "F11" }, { Key.F12, "F12" },
-        { Key.NumPad0, "Num 0" }, { Key.NumPad1, "Num 1" }, { Key.NumPad2, "Num 2" },
-        { Key.NumPad3, "Num 3" }, { Key.NumPad4, "Num 4" }, { Key.NumPad5, "Num 5" },
-        { Key.NumPad6, "Num 6" }, { Key.NumPad7, "Num 7" }, { Key.NumPad8, "Num 8" }, { Key.NumPad9, "Num 9" },
-        { Key.OemMinus, "-" },
-        { Key.OemPlus, "+" },
-        { Key.OemComma, "," },
-        { Key.OemPeriod, "." },
-        { Key.OemQuestion, "/" },
-        { Key.OemSemicolon, ";" },
-        { Key.OemQuotes, "'" },
-        { Key.OemOpenBrackets, "[" },
-        { Key.OemCloseBrackets, "]" },
-        { Key.OemPipe, "\\" },
-        { Key.OemTilde, "`" },
-        { Key.Multiply, "Num *" },
-        { Key.Add, "Num +" },
-        { Key.Subtract, "Num -" },
-        { Key.Decimal, "Num ." },
-        { Key.Divide, "Num /" }
+        { GestureKey.Left, "←" },
+        { GestureKey.Right, "→" },
+        { GestureKey.Up, "↑" },
+        { GestureKey.Down, "↓" },
+        { GestureKey.Enter, "Enter" },
+        { GestureKey.Space, "Space" },
+        { GestureKey.Tab, "Tab" },
+        { GestureKey.Back, "Backspace" },
+        { GestureKey.Delete, "Delete" },
+        { GestureKey.Home, "Home" },
+        { GestureKey.End, "End" },
+        { GestureKey.PageUp, "Page Up" },
+        { GestureKey.PageDown, "Page Down" },
+        { GestureKey.Escape, "Esc" },
+        { GestureKey.F1, "F1" }, { GestureKey.F2, "F2" }, { GestureKey.F3, "F3" }, { GestureKey.F4, "F4" },
+        { GestureKey.F5, "F5" }, { GestureKey.F6, "F6" }, { GestureKey.F7, "F7" }, { GestureKey.F8, "F8" },
+        { GestureKey.F9, "F9" }, { GestureKey.F10, "F10" }, { GestureKey.F11, "F11" }, { GestureKey.F12, "F12" },
+        { GestureKey.NumPad0, "Num 0" }, { GestureKey.NumPad1, "Num 1" }, { GestureKey.NumPad2, "Num 2" },
+        { GestureKey.NumPad3, "Num 3" }, { GestureKey.NumPad4, "Num 4" }, { GestureKey.NumPad5, "Num 5" },
+        { GestureKey.NumPad6, "Num 6" }, { GestureKey.NumPad7, "Num 7" }, { GestureKey.NumPad8, "Num 8" }, { GestureKey.NumPad9, "Num 9" },
+        { GestureKey.OemMinus, "-" },
+        { GestureKey.OemPlus, "+" },
+        { GestureKey.OemComma, "," },
+        { GestureKey.OemPeriod, "." },
+        { GestureKey.OemQuestion, "/" },
+        { GestureKey.OemSemicolon, ";" },
+        { GestureKey.OemQuotes, "'" },
+        { GestureKey.OemOpenBrackets, "[" },
+        { GestureKey.OemCloseBrackets, "]" },
+        { GestureKey.OemPipe, "\\" },
+        { GestureKey.OemTilde, "`" },
+        { GestureKey.Multiply, "Num *" },
+        { GestureKey.Add, "Num +" },
+        { GestureKey.Subtract, "Num -" },
+        { GestureKey.Decimal, "Num ." },
+        { GestureKey.Divide, "Num /" }
     };
 
+    /// <summary>
+    /// 转换键盘手势为显示文本;非键盘手势返回"未设置"。
+    /// </summary>
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
-        if (value is not KeyGesture keyGesture)
+        if (value is not AppKeyGesture keyGesture)
             return "未设置";
 
         var parts = new List<string>();
 
-        bool hasCtrl = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Control);
-        bool hasAlt  = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Alt);
-        bool hasShift= keyGesture.KeyModifiers.HasFlag(KeyModifiers.Shift);
-        bool hasMeta = keyGesture.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        bool hasCtrl = keyGesture.Modifiers.HasFlag(GestureModifiers.Control);
+        bool hasAlt  = keyGesture.Modifiers.HasFlag(GestureModifiers.Alt);
+        bool hasShift= keyGesture.Modifiers.HasFlag(GestureModifiers.Shift);
+        bool hasMeta = keyGesture.Modifiers.HasFlag(GestureModifiers.Meta);
 
         if (hasCtrl)
-            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Control));
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(GestureModifiers.Control));
         if (hasAlt)
-            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Alt));
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(GestureModifiers.Alt));
         if (hasShift)
             parts.Add(AppleKeyboardMapping.GetShiftDisplay()); // 修改：Shift 显示 ⇧（苹果模式）
         if (hasMeta)
-            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(KeyModifiers.Meta));
+            parts.Add(AppleKeyboardMapping.GetDisplayForModifier(GestureModifiers.Meta));
 
         var keyName = GetKeyDisplayName(keyGesture.Key);
         parts.Add(keyName);
@@ -77,12 +81,16 @@ public class KeyGestureToStringConverter : IValueConverter
         return string.Join(" ", parts);
     }
 
+    /// <summary>
+    /// 不支持反向转换。
+    /// </summary>
     public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
     {
         throw new NotImplementedException();
     }
 
-    private static string GetKeyDisplayName(Key key)
+    /// <summary>键名转显示名,字母/数字直接用键名。</summary>
+    private static string GetKeyDisplayName(GestureKey key)
     {
         if (KeyDisplayNames.TryGetValue(key, out var displayName))
             return displayName;
