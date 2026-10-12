@@ -6,7 +6,6 @@ using System.Reactive;
 using System.Threading.Tasks;
 using System.Windows.Input;
 using Avalonia;
-using Avalonia.Controls;
 using Avalonia.Input;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
@@ -314,9 +313,9 @@ public class ControlViewModel : ReactiveObject
     /// <summary>
     /// 打开工具窗口（桌面端）。
     /// </summary>
-    public void OpenTools(Window parentWindow)
+    public void OpenTools()
     {
-        Main.OpenToolsWindow(parentWindow);
+        Main.OpenToolsWindow();
     }
 
     /// <summary>

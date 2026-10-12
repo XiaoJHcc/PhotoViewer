@@ -5,9 +5,21 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using System.Reactive.Linq;
-using Avalonia.Media;
 
 namespace PhotoViewer.ViewModels.Settings;
+
+/// <summary>
+/// 设置页提示信息的语义级别,由 View 层决定具体颜色。
+/// </summary>
+public enum PerfInfoLevel
+{
+    /// <summary>常规提示。</summary>
+    Normal,
+    /// <summary>警告(接近或达到建议阈值)。</summary>
+    Warning,
+    /// <summary>错误/超限。</summary>
+    Error,
+}
 
 public partial class SettingsViewModel
 {
@@ -120,7 +132,7 @@ public partial class SettingsViewModel
                 BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
                 
                 // 更新内存信息颜色
-                this.RaisePropertyChanged(nameof(PerformanceBudgetInfoColor));
+                this.RaisePropertyChanged(nameof(PerformanceBudgetInfoLevel));
                 
                 // 计算当前内存能够满足多少张照片
                 this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
@@ -225,19 +237,19 @@ public partial class SettingsViewModel
         private set => this.RaiseAndSetIfChanged(ref _performanceBudgetInfo, value);
     }
     
-    public SolidColorBrush PerformanceBudgetInfoColor
+    public PerfInfoLevel PerformanceBudgetInfoLevel
     {
         get
         {
             if (_systemMemoryLimitMB <= 0)
-                return new SolidColorBrush(Colors.DarkGray);
+                return PerfInfoLevel.Normal;
 
             if (BitmapCacheMaxMemory > _systemMemoryLimitMB)
-                return new SolidColorBrush(Colors.Salmon);
+                return PerfInfoLevel.Error;
             else if (BitmapCacheMaxMemory > _systemMemoryLimitMB * 0.51)
-                return new SolidColorBrush(Colors.BurlyWood);
+                return PerfInfoLevel.Warning;
             else
-                return new SolidColorBrush(Colors.DarkGray);
+                return PerfInfoLevel.Normal;
         }
     }
     
@@ -259,22 +271,22 @@ public partial class SettingsViewModel
             switch (mp)
             {
                 case < 1:
-                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.Salmon);
+                    BitmapCacheCountInfoLevel = PerfInfoLevel.Error;
                     return "⚠ 缓存数量过高，需要同步提高内存上限";
                 case < 8:
-                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.BurlyWood);
+                    BitmapCacheCountInfoLevel = PerfInfoLevel.Warning;
                     return "⚠ 当前设置仅适合浏览 " + mp + "00 万像素以下的照片";
                 default:
-                    BitmapCacheCountInfoColor = new SolidColorBrush(Colors.DarkGray);
+                    BitmapCacheCountInfoLevel = PerfInfoLevel.Normal;
                     return "✓ 当前设置适合浏览 " + mp + "00 万像素以下的照片";
             }
         }
     }
-    private SolidColorBrush _bitmapCacheCountInfoColor = new (Colors.DarkGray);
-    public SolidColorBrush BitmapCacheCountInfoColor
+    private PerfInfoLevel _bitmapCacheCountInfoLevel = PerfInfoLevel.Normal;
+    public PerfInfoLevel BitmapCacheCountInfoLevel
     {
-        get => _bitmapCacheCountInfoColor;
-        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfoColor, value);
+        get => _bitmapCacheCountInfoLevel;
+        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfoLevel, value);
     }
 
     private int _preloadMaximum = 10;

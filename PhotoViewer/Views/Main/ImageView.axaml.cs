@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
@@ -221,9 +221,9 @@ public partial class ImageView : UserControl
             return;
         }
 
-        if (TopLevel.GetTopLevel(this) is Window parentWindow)
+        if (TopLevel.GetTopLevel(this) is Window)
         {
-            main.OpenSettingWindow(parentWindow);
+            main.OpenSettingWindow();
         }
         else
         {
@@ -241,9 +241,9 @@ public partial class ImageView : UserControl
             return;
         }
 
-        if (TopLevel.GetTopLevel(this) is Window parentWindow)
+        if (TopLevel.GetTopLevel(this) is Window)
         {
-            main.OpenToolsWindow(parentWindow);
+            main.OpenToolsWindow();
         }
         else
         {

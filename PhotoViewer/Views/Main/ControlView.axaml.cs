@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -47,9 +47,9 @@ public partial class ControlView : UserControl
     {
         if (DataContext is not ControlViewModel viewModel) return;
         
-        if (TopLevel.GetTopLevel(this) is Window parentWindow)
+        if (TopLevel.GetTopLevel(this) is Window)
         {
-            viewModel.OpenTools(parentWindow);
+            viewModel.OpenTools();
         }
         else
         {

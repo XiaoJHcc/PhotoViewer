@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
-using Avalonia.Controls;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
@@ -12,8 +11,6 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
-using PhotoViewer.Views;
-using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
@@ -128,41 +125,17 @@ public class MainViewModel : ViewModelBase
     #region OpenSettingsModal
     
     /// <summary>
-    /// 打开设置窗口
+    /// 打开设置窗口（桌面端）。窗口构建由平台窗口展示器完成。
     /// </summary>
-    public void OpenSettingWindow(Window parentWindow)
-    {
-        var settingsWindow = new SettingsWindow
-        {
-            DataContext = Settings
-        };
-        settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        settingsWindow.ShowDialog(parentWindow);
-    }
-
-    // 桌面端单例工具窗口引用
-    private ToolsWindow? _toolsWindow;
+    public void OpenSettingWindow() => NativeWindowPresenter.ShowSettingsWindow(Settings);
 
     /// <summary>
     /// 打开工具窗口并显示工具首页（桌面端单例）。已打开时直接前置，不重复创建。
     /// </summary>
-    public void OpenToolsWindow(Window parentWindow)
+    public void OpenToolsWindow()
     {
         Tools.ShowList();
-
-        if (_toolsWindow != null)
-        {
-            _toolsWindow.Activate();
-            return;
-        }
-
-        _toolsWindow = new ToolsWindow
-        {
-            DataContext = Tools
-        };
-        _toolsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        _toolsWindow.Closed += (_, _) => _toolsWindow = null;
-        _toolsWindow.Show(parentWindow);
+        NativeWindowPresenter.ShowOrActivateToolsWindow(Tools);
     }
 
     // 模态显示

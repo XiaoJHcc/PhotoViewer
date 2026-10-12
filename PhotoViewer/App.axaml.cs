@@ -38,6 +38,7 @@ public partial class App : Application
     {
         // 注入 UI 线程调度器,Core/ViewModel 的回调线程封送统一走 UiDispatcher 门面。
         UiDispatcher.Initialize(new AvaloniaUiDispatcher());
+        NativeWindowPresenter.Initialize(new AvaloniaWindowPresenter());
 
         var vm = new MainViewModel();
 

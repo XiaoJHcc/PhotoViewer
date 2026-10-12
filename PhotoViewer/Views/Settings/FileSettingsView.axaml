@@ -1,9 +1,10 @@
-﻿<UserControl xmlns="https://github.com/avaloniaui"
+<UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:vm="clr-namespace:PhotoViewer.ViewModels.Settings"
              xmlns:controls="clr-namespace:PhotoViewer.Controls"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="400" d:DesignHeight="600"
              x:Class="PhotoViewer.Views.FileSettingsView"
              x:DataType="vm:SettingsViewModel">
@@ -118,7 +119,7 @@
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
                                Text="{Binding PerformanceBudgetInfo}"
-                               Foreground="{Binding PerformanceBudgetInfoColor}" />
+                               Foreground="{Binding PerformanceBudgetInfoLevel, Converter={x:Static converters:PerfInfoLevelToBrushConverter.Instance}}" />
                     
                     <!-- 忽略透明度 -->
                     <!-- <CheckBox Classes="settings-checkbox" -->
@@ -144,7 +145,7 @@
                     <TextBlock Classes="settings-description" 
                                Margin="8, 0, 8, 0"
                                Text="{Binding BitmapCacheCountInfo}" 
-                               Foreground="{Binding BitmapCacheCountInfoColor}" />
+                               Foreground="{Binding BitmapCacheCountInfoLevel, Converter={x:Static converters:PerfInfoLevelToBrushConverter.Instance}}" />
                     
                     <Grid Classes="settings-numeric"
                           ColumnDefinitions="120,*,60">
