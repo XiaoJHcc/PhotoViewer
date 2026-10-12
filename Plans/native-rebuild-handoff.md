@@ -15,7 +15,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
 - **Phase 0 定向审查(2026-10-12)已通过**:Phase 0 由同一 agent 实现+自审(mimo 超时),本次补独立审查——机械门复核 PASS(Core 零 Avalonia,残留均注释;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,字符串枚举序列化下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告)。审查发现的 Phase 1 计划修订已全部落回 phase-1 清单(准入口优先级语义、分档缓冲池、解码路径平台差异、统一 LRU 键前置 M2、验收门平台口径)。
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
-- **下一步 = Phase 1**(统一内存架构 MemoryGovernor + 分级代理解码):执行清单 [native-rebuild-phase-1.md](native-rebuild-phase-1.md),验收门需 iPad 真机。
+- **下一步 = P1-M2**(统一缓存键 + 缓存登记 + 压力响应矩阵):执行清单 [native-rebuild-phase-1.md](native-rebuild-phase-1.md)(**先读其 §5 发现清单**——2026-10-12 审查裁定已修订 M1-M4 多处)。
+- **P1-M1 已完成**(commit `P1-M1`):`Core/Memory/` 新模块——MemoryGovernor(压力状态机迟滞/准入口 P0 豁免/快照 JSONL)+ 三平台预算源(iOS `os_proc_available_memory`+phys_footprint、Android 系统水位+`OnTrimMemory` 直报、桌面 CLR 50%)+ `PerfTrace` 解码计时埋点(BitmapLoader);pvbench `gov` 自测 24 项全过;Desktop/Mac/iOS 构建 0 错零新增警告;Mac 冒烟存活正常。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
 

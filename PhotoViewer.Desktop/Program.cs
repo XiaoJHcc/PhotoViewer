@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -8,9 +8,10 @@ using ReactiveUI.Avalonia;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
-using PhotoViewer.Desktop.Core;
-using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Memory;
+using PhotoViewer.Desktop.Core;
 using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Desktop;
@@ -30,6 +31,7 @@ sealed class Program
         {
             HeifLoader.Initialize(new LibHeifDecoder());
             PerformanceBudget.Initialize(new DefaultPerformanceBudget());
+            MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
             XmpWriter.Initialize(new WindowsXmpWriter());
             SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
             DinoFeatureExtractor.ConfigureSession(options =>

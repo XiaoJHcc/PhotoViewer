@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 
@@ -274,6 +275,7 @@ public static class BitmapLoader
         if (_cache.TryGetValue(filePath, out var cachedItem))
         {
             cachedItem.UpdateAccessTime();
+            PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
             return Task.FromResult<DecodedImage?>(cachedItem.Image);
         }
 
@@ -305,6 +307,7 @@ public static class BitmapLoader
     /// </summary>
     private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct)
     {
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
         // 在解码前进行容量保障（基于估算）
         try
         {
@@ -316,12 +319,17 @@ public static class BitmapLoader
         try
         {
             // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
+            var decodeSw = System.Diagnostics.Stopwatch.StartNew();
             var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
+            decodeSw.Stop();
             if (image == null) return null;
             
             // 添加到缓存
             var cacheItem = new BitmapCacheItem(image, filePath);
             _cache[filePath] = cacheItem;
+            
+            // P0 链路计时埋点(P1-M1):供压力快照与验收门判读
+            PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
             
             // 通知缓存状态变化（在UI线程中触发）
             UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, true));

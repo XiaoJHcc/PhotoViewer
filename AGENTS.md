@@ -51,6 +51,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/AGENTS.md](PhotoViewer/Core/AI/AGENTS.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
 | [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/AGENTS.md](PhotoViewer/Core/Database/AGENTS.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
 | [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/AGENTS.md](PhotoViewer/Core/Image/AGENTS.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
+| [PhotoViewer/Core/Memory/](PhotoViewer/Core/Memory/) | [Core/Memory/AGENTS.md](PhotoViewer/Core/Memory/AGENTS.md) | 统一内存管控:MemoryGovernor(压力状态机/解码准入/快照日志)、预算源契约、PerfTrace 解码计时 |
 | [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/AGENTS.md](PhotoViewer/Core/Exif/AGENTS.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
 | [PhotoViewer/Core/Input/](PhotoViewer/Core/Input/) | [Core/Input/AGENTS.md](PhotoViewer/Core/Input/AGENTS.md) | 平台中立手势模型(键/鼠标/修饰键、苹果键盘映射) |
 | [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/AGENTS.md](PhotoViewer/Core/Platform/AGENTS.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |

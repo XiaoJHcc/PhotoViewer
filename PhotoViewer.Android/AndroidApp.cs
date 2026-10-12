@@ -11,6 +11,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Memory;
 using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Android;
@@ -41,6 +42,7 @@ public class AndroidApp : AvaloniaAndroidApplication<App>
             {
                 HeifLoader.Initialize(new AndroidLibHeifDecoder());
                 PerformanceBudget.Initialize(new AndroidPerformanceBudget());
+                MemoryGovernor.Initialize(new AndroidMemoryBudgetProvider());
                 XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
                 SettingsService.ConfigureStorage(new AndroidSettingsStorage());
                 DinoFeatureExtractor.ConfigureSession(options =>

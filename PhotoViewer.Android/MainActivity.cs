@@ -1,4 +1,4 @@
-﻿using Android;
+using Android;
 using Android.App;
 using Android.Content;
 using Android.Content.PM;
@@ -8,6 +8,7 @@ using AndroidX.Core.Content;
 using Avalonia.Android;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 
@@ -58,6 +59,28 @@ public class MainActivity : AvaloniaMainActivity
         }
 
         HandleIncomingIntent(intent);
+    }
+
+    /// <summary>
+    /// 系统内存 trim 事件直报统一内存管家(只升不降,周期探测负责降级)。
+    /// 映射:RunningLow→Caution;RunningCritical/UiHidden→Warning;Background 及以上→Critical。
+    /// </summary>
+    /// <param name="level">系统 trim 级别。</param>
+    public override void OnTrimMemory(TrimMemory level)
+    {
+        base.OnTrimMemory(level);
+        var target = level switch
+        {
+            TrimMemory.RunningLow => PressureLevel.Caution,
+            TrimMemory.RunningCritical => PressureLevel.Warning,
+            TrimMemory.UiHidden => PressureLevel.Warning,
+            TrimMemory.Background => PressureLevel.Critical,
+            TrimMemory.Moderate => PressureLevel.Critical,
+            TrimMemory.Complete => PressureLevel.Critical,
+            _ => PressureLevel.Normal,
+        };
+        if (target != PressureLevel.Normal)
+            MemoryGovernor.ReportOsEvent(target);
     }
     
     /// <summary>

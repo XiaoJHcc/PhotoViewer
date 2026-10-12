@@ -6,7 +6,7 @@
 
 | File | 模块 | Responsibility |
 |---|---|---|
-| [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation,全程 `DecodedImage`(P0-M4 起 Core 不再碰 Avalonia 位图)。在途去重(同路径请求共享一个解码任务),解码本体在线程池执行;淘汰走距离保护——`SetProtectedPaths` 上报的保护项在所有淘汰路径(EnsureCapacity/Cleanup/LruRemoveToSize)中排到最后。 |
+| [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + LRU cache + EXIF rotation,全程 `DecodedImage`(P0-M4 起 Core 不再碰 Avalonia 位图)。在途去重(同路径请求共享一个解码任务),解码本体在线程池执行;淘汰走距离保护——`SetProtectedPaths` 上报的保护项在所有淘汰路径(EnsureCapacity/Cleanup/LruRemoveToSize)中排到最后。命中/miss 计时埋点写 `PerfTrace`(Core/Memory,供压力快照与验收门判读)。 |
 | [DecodedImage.cs](DecodedImage.cs) | 像素契约 | 平台中立已解码图像:`byte[] Pixels` + `Width/Height/Stride` + `PixelEncoding`(Bgra32/Rgb24)。纯托管数据载体,Dispose 释放缓冲引用;UI 层经 `Platform/DecodedImageAdapter` 转 `WriteableBitmap` 上屏。 |
 | [SkiaImageCodec.cs](SkiaImageCodec.cs) | 像素操作原语 | Core 唯一像素操作出口(SkiaSharp):`Decode` / `DecodeToWidth` / `ApplyOrientation`(旋转+镜像)/ `Crop` / `ScaleToExact` / `SavePng`。DINO 输入缩放用 Linear 采样,口径与原 Avalonia DrawImage 默认一致(契约敏感)。 |
 | [ImageEnhancer.cs](ImageEnhancer.cs) | 主图增强 | 确定性"信息归一化"增强预览：全局**限对比直方图均衡（CLHE）**——亮度直方图按 `ClipFactor` 裁剪封顶 + 均匀回填（防断层 / 防大面积同色尖峰独吞输出范围）→ cdfMin 归一化 LUT → **保色度重建** `ch' = Y' + s·(ch − Y)`（YCbCr 恒定色度，`s = SaturationScale`）。该式结果亮度恒等于 `LUT[Y]` → 亮暗关系严格单调、色相不变；`s=1` 保**绝对**彩度，暗部彩度不随亮度塌缩发灰（取代旧的 `(newY+ε)/(oldY+ε)` 等比增益——那只保**相对**饱和度，暗部彩度仍随亮度趋零而发灰，且加性重建无除法故 ε 取消）。极端亮/暗处绝对彩度越界时逐像素把 s 收到"恰好不越界"，物理最小去饱和、无硬钳位。手感参数 `ClipFactor`（保守↔激进，默认 2.0）+ `SaturationScale`（默认 1.0）。纯算法、不改原文件、不入库；由 `ImageViewModel` 的增强 toggle 在后台调用，当前仅作产品目视。输入输出均为 `DecodedImage`。设计意图 / 选型理由见 plan-3-1 §1.2。 |

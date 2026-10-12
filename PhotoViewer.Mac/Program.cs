@@ -6,6 +6,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Mac.Core;
 using Microsoft.ML.OnnxRuntime;
 
@@ -23,6 +24,7 @@ sealed class Program
             HeifLoader.Initialize(new MacHeifDecoder());
             RawLoader.Initialize(new MacRawDecoder());
             PerformanceBudget.Initialize(new DefaultPerformanceBudget());
+            MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
             XmpWriter.Initialize(new MacXmpWriter());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
             DinoFeatureExtractor.ConfigureSession(options =>

@@ -71,6 +71,13 @@
 
 ## 5. 基线数据与发现清单(执行中填写)
 
+**基线(2026-10-12,Mac M 系,Phase 0 HEAD,工具 = /tmp/pvbench 自包含基准,源 100 行,不入库)**:
+- P0 miss 延迟(42MP ARW,ImageIO 全尺寸):**p50 = 946ms(横)/ 986ms(竖)**,min/max 离散 <2% —— 每切一张新图约 1 秒;
+- 单张瞬时内存增量:**≈125MB 稳态**(首轮含解码瞬态 ≈250MB);
+- 大对象行为:**每张 124MB `byte[]` 自然触发 1 次 gen2 GC**(20 张 = 20 次,零主动 GC.Collect);
+- 连翻 RSS:22 张后进程 RSS 峰值 **3.37GB 且不回落**(LOH 段复用滞后 + 原生侧缓存)—— iPad jetsam 机制的桌面镜像实证;
+- iPad 闪退复现路径:待真机(P1-M5)。
+
 | 日期 | 发现 | 处置 |
 |---|---|---|
 | 2026-10-12 | **Phase 0 定向审查结论**(补独立审查缺位:Phase 0 由同一 agent 实现+自审):机械门复核 PASS(Core 零 Avalonia,残留均注释文本;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,`UseStringEnumConverter` 下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告);Mac 冒烟 PASS(CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常) | Phase 0 验收门对应项关闭;剩余:四平台交互冒烟(人工)、DINO 渲染口径验证、iPad 真机 |
@@ -79,5 +86,5 @@
 | 2026-10-12 | 42MP `byte[]` 直进 LOH,分配/回收循环是 iPad jetsam 放大器,原案缓冲池未落里程碑 | M3 增 DecodedImage 分档缓冲池(淘汰归还池;池登记为 IMemoryClient;接口抽象为 Phase 2 纹理上传留门) |
 | 2026-10-12 | use-after-dispose 租约涉及缓存/适配层 CWT/分析/增强多条消费路径,所有权时点未定义 | M3 先出所有权表再实施租约 |
 | 2026-10-12 | 缩略图若建独立缓存,M4 统一 LRU 键时需二次手术 | M2 一次到位:`(path, size-class)` 统一 LRU,`ImageFile.Thumbnail` 退化为查询视图 |
-| 2026-10-12 | `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 已知高危漏洞(NU1903,四平台构建均报) | 不在本阶段范围;单独升级任务,**iOS 上架前必须处理** |
+| 2026-10-12 | P1-M1 完成:MemoryGovernor 骨架(状态机迟滞/准入口 P0 豁免/快照 JSONL/PerfTrace 埋点)+ 三平台预算源(iOS `os_proc_available_memory`+phys_footprint、Android 系统水位+`OnTrimMemory` 直报、桌面 CLR 50%);pvbench `gov` 自测 24 项全过(准入矩阵/迟滞带/逐级退/OS 事件只升不降/快照落盘);Desktop/Mac/iOS 构建 0 错零新增警告;Mac 冒烟 App 存活正常 | commit `P1-M1` |
 | 2026-10-12 | **既有跨平台不一致(已被 Phase 0 顺带根治)**:macOS `RenderTargetBitmap.CopyPixels` 输出实为 RGBA 序,旧管线按 BGRA 读取导致 Mac 端 DINO 输入 R/B 互换(Windows 正常);新 Skia 路径全平台统一 BGRA。DINO 口径 A/B 实证:同滤波器族(Linear/无 mip),残差 meanDiff=0.24 为 GPU↔CPU 舍入级,分布未漂移 | 已修复,无需动作;Phase 2 色彩管线注意:平台字节序/像素格式一律以实证为准,不信注释口径 |

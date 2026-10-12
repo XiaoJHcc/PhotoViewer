@@ -11,6 +11,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.iOS.Core;
 using Microsoft.ML.OnnxRuntime;
 
@@ -41,6 +42,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 RawLoader.Initialize(new iOSRawDecoder());
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
+                MemoryGovernor.Initialize(new iOSMemoryBudgetProvider());
                 StorageAccessManager.Initialize(new iOSStorageAccessManager());
                 XmpWriter.Initialize(new iOSXmpWriter());
                 NativeSettingsPresenter.Initialize(new iOSNativeSettingsPresenter());
@@ -53,6 +55,9 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                 // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>
                 {
+                    // OS 事件直报统一内存管家(立即抬到 Warning 并落快照);旧 trim 行为在 P1-M2 由响应矩阵接管
+                    MemoryGovernor.ReportOsEvent(PressureLevel.Warning);
+
                     var (beforeBytes, beforeCount, _) = BitmapLoader.TrimToCurrentRatio(0.8);
 
                     // 记录触发时缓存大小（MB）
