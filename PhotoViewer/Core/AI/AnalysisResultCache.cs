@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -66,12 +67,14 @@ public static class AnalysisResultCache
     /// <summary>即时计算缓存(文件路径键,含增强变体);生命周期跟随主图缓存,不走 LRU。</summary>
     private static readonly Dictionary<string, Entry> _immediate = new(System.StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>挂主图缓存失效事件:主图位图被淘汰 / 清空时,同步移除该路径(含增强变体)的即时缓存项。</summary>
+    /// <summary>挂主图缓存失效事件:主图位图(Full 档)被淘汰 / 清空时,同步移除该路径(含增强变体)的即时缓存项。</summary>
     static AnalysisResultCache()
     {
-        BitmapLoader.CacheStatusChanged += (path, inCache) =>
+        MemoryGovernor.Register(new CacheMemoryClient());
+
+        BitmapLoader.CacheStatusChanged += (path, cls, inCache) =>
         {
-            if (inCache) return;
+            if (inCache || cls != ImageSizeClass.Full) return;
             lock (_lock)
             {
                 _immediate.Remove(path);
@@ -159,6 +162,24 @@ public static class AnalysisResultCache
             _order.Clear();
             _index.Clear();
             _immediate.Clear();
+        }
+    }
+
+    // ---- 统一内存管控(P1-M2)----
+
+    /// <summary>内存客户端:指纹 LRU 与即时缓存合计占用;Warning 起整体清空(派生数据可随时现算重建)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        // 每项 ≈ 16KB 派生位图 + 1.5MB patch tokens(见类头注释)
+        private const long EstimatedEntryBytes = 3L * 1024 * 1024 / 2;
+        public string Name => "AnalysisResultCache";
+        public long FootprintBytes
+        {
+            get { lock (_lock) return (_index.Count + _immediate.Count) * EstimatedEntryBytes; }
+        }
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) InvalidateAll();
         }
     }
 }

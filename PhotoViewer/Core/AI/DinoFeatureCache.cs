@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -79,6 +80,24 @@ public static class DinoFeatureCache
     {
         _memoryCache.Clear();
         _inflight.Clear();
+    }
+
+    // ---- 统一内存管控(P1-M2)----
+
+    static DinoFeatureCache()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
+
+    /// <summary>内存客户端:CLS 向量占用(条数 × 维数 × 4B);Warning 起清进程缓存(特征可从 DB 重读)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "DinoFeatureCache";
+        public long FootprintBytes => (long)_memoryCache.Count * DinoModelResources.FeatureDim * sizeof(float);
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) _memoryCache.Clear();
+        }
     }
 
     /// <summary>

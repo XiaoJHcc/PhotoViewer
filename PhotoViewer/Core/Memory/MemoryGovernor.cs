@@ -223,6 +223,19 @@ public static class MemoryGovernor
                 _returnedToNormalAt = DateTimeOffset.UtcNow;
         }
         WriteSnapshot($"level:{prev}->{next}", reason);
+
+        // 升级级联:对全部登记 client 执行压力修剪(契约:Trim 不阻塞;降级不触发)
+        if (next > prev && next > PressureLevel.Normal)
+        {
+            IMemoryClient[] clients;
+            lock (_gate) clients = _clients.ToArray();
+            foreach (var client in clients)
+            {
+                try { client.Trim(next); }
+                catch (Exception ex) { Console.WriteLine($"[MemoryGovernor] client {client.Name} Trim({next}) failed: {ex.Message}"); }
+            }
+        }
+
         try { LevelChanged?.Invoke(next); }
         catch (Exception ex) { Console.WriteLine($"[MemoryGovernor] LevelChanged subscriber failed: {ex.Message}"); }
     }

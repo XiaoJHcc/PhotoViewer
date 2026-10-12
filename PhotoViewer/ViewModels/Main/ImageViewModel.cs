@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Media.Imaging;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Platform;
@@ -105,7 +106,10 @@ public class ImageViewModel : ReactiveObject
     public ImageViewModel(MainViewModel mainViewModel)
     {
         _main = mainViewModel;
-        
+
+        // 统一内存管控(P1-M2):增强位图登记为内存客户端,压力下由 Governor 级联释放
+        MemoryGovernor.Register(new EnhancedMemoryClient(this));
+
         Main.WhenAnyValue(vm => vm.CurrentFile)
             .Subscribe(currentFile =>
             {
@@ -320,6 +324,32 @@ public class ImageViewModel : ReactiveObject
         ++_enhanceToken;
         _originalBitmap = null;
         ReleaseEnhanced();
+    }
+
+    // ---- 统一内存管控(P1-M2)----
+
+    /// <summary>
+    /// 增强位图的内存客户端:Warning 起在 UI 线程关闭增强并释放增强位图(等同用户手动关 toggle 的还原路径)。
+    /// 嵌套类可访问宿主私有成员;释放延后一拍,避免释放仍在渲染的位图。
+    /// </summary>
+    private sealed class EnhancedMemoryClient : IMemoryClient
+    {
+        private readonly ImageViewModel _vm;
+        public EnhancedMemoryClient(ImageViewModel vm) => _vm = vm;
+        public string Name => "EnhancedPreview";
+        public long FootprintBytes => _vm._enhancedDecoded?.ByteCount ?? 0;
+        public void Trim(PressureLevel level)
+        {
+            if (level < PressureLevel.Warning || _vm._enhancedDecoded == null) return;
+            UiDispatcher.Post(() =>
+            {
+                if (!_vm.IsEnhanced) return;
+                _vm.IsEnhanced = false;
+                if (_vm._originalBitmap != null)
+                    _vm.SourceBitmap = DecodedImageAdapter.ToBitmap(_vm._originalBitmap);
+                _vm.ReleaseEnhanced();
+            });
+        }
     }
     
     /*

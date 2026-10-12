@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -99,6 +100,24 @@ public static class ShakeFlagService
     {
         _cache.Clear();
         RecheckRequested?.Invoke();
+    }
+
+    // ---- 统一内存管控(P1-M2)----
+
+    static ShakeFlagService()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
+
+    /// <summary>内存客户端:判定缓存(条数 × ~512B 估算);Warning 起清缓存(判定可随时从 DB 重算,不触发 RecheckRequested)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "ShakeFlagService";
+        public long FootprintBytes => _cache.Count * 512L;
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) _cache.Clear();
+        }
     }
 
     /// <summary>把同一指纹组内所有文件的 IsShake 设为同一值。null 表示"未判定"(无 cv_grid 或解码失败)。</summary>

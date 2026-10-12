@@ -12,7 +12,6 @@ public class ImageFile : ReactiveObject
     /// <summary>列表用缩略图的目标短边像素值。</summary>
     private const int ListThumbnailShortSide = 120;
 
-    private DecodedImage? _thumbnail;
     private bool _isCurrent;
     private bool _isCurrentImage;
     private ExifData? _exifData;
@@ -64,14 +63,30 @@ public class ImageFile : ReactiveObject
         }
     }
         
+    /// <summary>
+    /// 列表缩略图。P1-M2 起存储于 <see cref="BitmapLoader"/> 统一缓存(Thumb 档),本属性为查询视图:
+    /// getter 直查缓存,setter 写入/移除缓存项(淘汰与释放归缓存所有)。
+    /// 缓存淘汰该档时经 <see cref="NotifyThumbnailChanged"/> 驱动 UI 回到占位符。
+    /// </summary>
     public DecodedImage? Thumbnail
     {
-        get => _thumbnail;
+        get => BitmapLoader.TryGetCached(File.PathKey, ImageSizeClass.Thumb);
         private set
         {
-            this.RaiseAndSetIfChanged(ref _thumbnail, value);
+            if (value != null)
+                BitmapLoader.StoreThumbnail(File.PathKey, value);
+            else
+                BitmapLoader.RemoveCached(File.PathKey, ImageSizeClass.Thumb);
+            this.RaisePropertyChanged(nameof(Thumbnail));
             this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
         }
+    }
+
+    /// <summary>缓存侧缩略图就绪/被淘汰时,驱动绑定重新读取 <see cref="Thumbnail"/> 视图。</summary>
+    public void NotifyThumbnailChanged()
+    {
+        this.RaisePropertyChanged(nameof(Thumbnail));
+        this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
     }
         
     public bool IsCurrent
@@ -418,11 +433,10 @@ public class ImageFile : ReactiveObject
     }
     
     /// <summary>
-    /// 清除缩略图
+    /// 清除缩略图(从统一缓存移除 Thumb 档;位图释放归缓存所有)
     /// </summary>
     public void ClearThumbnail()
     {
-        Thumbnail?.Dispose();
         Thumbnail = null;
         IsThumbnailLoading = false;
     }

@@ -158,15 +158,23 @@ public class ThumbnailListViewModel : ReactiveObject
     /// <summary>
     /// 当 BitmapLoader 缓存状态变化时,在 UI 线程同步刷新对应文件的缓存边框。
     /// </summary>
-    private void OnCacheStatusChanged(string filePath, bool isInCache)
+    /// <summary>
+    /// 当 BitmapLoader 缓存状态变化时,在 UI 线程同步刷新对应文件:Full 档 → 缓存边框;Thumb 档 → 重读缩略图视图(淘汰回占位符,就绪上屏)。
+    /// </summary>
+    private void OnCacheStatusChanged(string filePath, ImageSizeClass sizeClass, bool isInCache)
     {
         UiDispatcher.Post(() =>
         {
             var imageFile = _folder.AllFiles.FirstOrDefault(f => f.File.Path.LocalPath == filePath);
-            if (imageFile != null)
+            if (imageFile == null) return;
+
+            if (sizeClass == ImageSizeClass.Thumb)
             {
-                imageFile.IsInCache = isInCache;
+                imageFile.NotifyThumbnailChanged();
+                return;
             }
+
+            imageFile.IsInCache = isInCache;
         });
     }
 

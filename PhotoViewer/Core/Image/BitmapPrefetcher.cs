@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
@@ -30,6 +31,7 @@ public class BitmapPrefetcher
 
     private CancellationTokenSource? _currentAroundCts;
     private CancellationTokenSource? _currentVisibleCenterCts;
+    private int _normalParallelism = 2; // 设置值镜像;Warning 起被 Governor 指令覆盖为 1
 
     /// <summary>
     /// 构造位图预取器,绑定到主视图模型与缩略图列表视图模型。
@@ -43,9 +45,41 @@ public class BitmapPrefetcher
         _settings = main.Settings;
 
         // 调度器静态化后拿不到 settings 实例,这里一次性挂钩同步并发度上限
-        DecodeScheduler.MaxBackgroundParallelism = Math.Max(1, _settings.NativePreloadParallelism);
+        _normalParallelism = Math.Max(1, _settings.NativePreloadParallelism);
+        DecodeScheduler.MaxBackgroundParallelism = _normalParallelism;
         _settings.WhenAnyValue(s => s.NativePreloadParallelism)
-            .Subscribe(v => DecodeScheduler.MaxBackgroundParallelism = Math.Max(1, v));
+            .Subscribe(v =>
+            {
+                _normalParallelism = Math.Max(1, v);
+                // 压力下(Warning+)由 Governor 指令(1)接管,不覆盖
+                if (MemoryGovernor.CurrentLevel < PressureLevel.Warning)
+                    DecodeScheduler.MaxBackgroundParallelism = _normalParallelism;
+            });
+
+        // P1-M2 压力响应:Caution 起停预取(取消在途轮次);Normal 且过恢复观察期后渐进恢复
+        MemoryGovernor.LevelChanged += OnMemoryPressureChanged;
+    }
+
+    /// <summary>压力级别变化响应:升级取消在途预取;Warning 解码并发降 1;回 Normal 过观察期后恢复预取。</summary>
+    private void OnMemoryPressureChanged(PressureLevel level)
+    {
+        if (level >= PressureLevel.Caution)
+        {
+            _currentAroundCts?.Cancel();
+            _currentVisibleCenterCts?.Cancel();
+        }
+
+        DecodeScheduler.MaxBackgroundParallelism = level >= PressureLevel.Warning ? 1 : _normalParallelism;
+
+        if (level == PressureLevel.Normal)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(MemoryGovernor.RecoveryHold);
+                if (MemoryGovernor.CurrentLevel == PressureLevel.Normal && !MemoryGovernor.InRecoveryHold)
+                    PrefetchAroundCurrent();
+            });
+        }
     }
 
     /// <summary>
@@ -169,6 +203,9 @@ public class BitmapPrefetcher
             var file = f;
             DecodeScheduler.Submit(file.File.Path.LocalPath, DecodePriority.P2_Prefetch, async token =>
             {
+                // 压力闸(P1-M2):Caution/恢复观察期起预取不执行(投递即空跑退出)
+                if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return;
+
                 using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct);
                 var lct = linkedCts.Token;
 

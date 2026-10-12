@@ -22,10 +22,14 @@ public class BitmapCacheItem
     public DateTime LastAccessTime { get; set; }
     public string FilePath { get; set; }
 
-    public BitmapCacheItem(DecodedImage image, string filePath)
+    /// <summary>尺寸档(P1-M2 起缓存键的一维)。</summary>
+    public ImageSizeClass SizeClass { get; }
+
+    public BitmapCacheItem(DecodedImage image, string filePath, ImageSizeClass sizeClass = ImageSizeClass.Full)
     {
         Image = image;
         FilePath = filePath;
+        SizeClass = sizeClass;
         Size = EstimateImageSize(image);
         LastAccessTime = DateTime.Now;
     }
@@ -42,27 +46,44 @@ public class BitmapCacheItem
 }
 
 /// <summary>
-/// 图片缓存服务（静态类）
+/// 图片缓存服务（静态类）。
+/// P1-M2 起缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
+/// 缩略图分区有独立张数/字节上限,淘汰保护集按路径对所有档生效。
 /// </summary>
 public static class BitmapLoader
 {
-    private static readonly ConcurrentDictionary<string, BitmapCacheItem> _cache = new();
+    /// <summary>统一缓存键:路径(忽略大小写)+ 尺寸档。</summary>
+    private readonly struct BitmapCacheKey : IEquatable<BitmapCacheKey>
+    {
+        public readonly string Path;
+        public readonly ImageSizeClass Class;
+        public BitmapCacheKey(string path, ImageSizeClass cls) { Path = path; Class = cls; }
+        public bool Equals(BitmapCacheKey other) => Class == other.Class && string.Equals(Path, other.Path, StringComparison.OrdinalIgnoreCase);
+        public override bool Equals(object? obj) => obj is BitmapCacheKey other && Equals(other);
+        public override int GetHashCode() => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(Path), (int)Class);
+    }
+
+    private static readonly ConcurrentDictionary<BitmapCacheKey, BitmapCacheItem> _cache = new();
     // 在途解码去重：同路径请求共享同一任务，完成后移除
     private static readonly ConcurrentDictionary<string, Lazy<Task<DecodedImage?>>> _inFlight = new();
     private static readonly object _cleanupLock = new();
 
-    // 淘汰保护集：临近当前图与最近浏览过的路径，淘汰选择时整体排到最后（volatile 整体替换）
+    // 淘汰保护集：临近当前图与最近浏览过的路径，淘汰选择时整体排到最后（volatile 整体替换;按路径对所有档生效）
     private static volatile HashSet<string> _protectedPaths = new(StringComparer.OrdinalIgnoreCase);
 
     // 新增：忽略透明度（默认 false）
     public static bool IgnoreAlpha { get; set; } = false;
 
-    // 缓存配置
+    // 缓存配置(主分区:Full/Proxy)
     private static int _maxCacheCount = 30;
     private static long _maxCacheSize = 2048L * 1024 * 1024; // 2048 MB
-    
-    // 缓存状态变化事件
-    public static event Action<string, bool>? CacheStatusChanged;
+
+    // 缩略图分区配置(Thumb):张数 + 字节双限
+    private static int _thumbMaxCount = 2000;
+    private static long _thumbMaxBytes = 256L * 1024 * 1024; // 256 MB
+
+    // 缓存状态变化事件:(路径, 尺寸档, 是否在缓存中)
+    public static event Action<string, ImageSizeClass, bool>? CacheStatusChanged;
 
     /// <summary>
     /// 最大缓存图片数量
@@ -91,21 +112,114 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 当前缓存数量
+    /// 当前缓存数量(全部分区合计)
     /// </summary>
     public static int CurrentCacheCount => _cache.Count;
-    
+
     /// <summary>
-    /// 当前缓存大小
+    /// 当前缓存大小（字节,全部分区合计）
     /// </summary>
     public static long CurrentCacheSize => _cache.Values.Sum(item => item.Size);
-    
+
+    /// <summary>主分区(Full/Proxy)当前张数。</summary>
+    private static int FullCacheCount => _cache.Count(kv => kv.Value.SizeClass != ImageSizeClass.Thumb);
+
+    /// <summary>主分区(Full/Proxy)当前字节数。</summary>
+    private static long FullCacheSize => _cache.Where(kv => kv.Value.SizeClass != ImageSizeClass.Thumb).Sum(kv => kv.Value.Size);
+
+    /// <summary>缩略图分区当前张数。</summary>
+    private static int ThumbCacheCount => _cache.Count(kv => kv.Value.SizeClass == ImageSizeClass.Thumb);
+
+    /// <summary>缩略图分区当前字节数。</summary>
+    private static long ThumbCacheSize => _cache.Where(kv => kv.Value.SizeClass == ImageSizeClass.Thumb).Sum(kv => kv.Value.Size);
+
     /// <summary>
     /// 检查文件是否在缓存中
     /// </summary>
-    public static bool IsInCache(string filePath)
+    public static bool IsInCache(string filePath, ImageSizeClass sizeClass = ImageSizeClass.Full)
     {
-        return _cache.ContainsKey(filePath);
+        return _cache.ContainsKey(new BitmapCacheKey(filePath, sizeClass));
+    }
+
+    /// <summary>
+    /// 仅查缓存(不触发解码);命中更新 LRU 访问时间。
+    /// </summary>
+    public static DecodedImage? TryGetCached(string filePath, ImageSizeClass sizeClass)
+    {
+        if (_cache.TryGetValue(new BitmapCacheKey(filePath, sizeClass), out var item))
+        {
+            item.UpdateAccessTime();
+            return item.Image;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 写入缩略图分区(统一 LRU 的 Thumb 档);超出分区上限时按淘汰序列修剪非保护项。
+    /// </summary>
+    public static void StoreThumbnail(string filePath, DecodedImage image)
+    {
+        var key = new BitmapCacheKey(filePath, ImageSizeClass.Thumb);
+        if (_cache.TryRemove(key, out var old))
+            old.Image.Dispose();
+        _cache[key] = new BitmapCacheItem(image, filePath, ImageSizeClass.Thumb);
+        UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Thumb, true));
+        EvictThumbsToFit();
+    }
+
+    /// <summary>
+    /// 移除指定路径某一档的缓存项(不存在则空操作)。
+    /// </summary>
+    public static void RemoveCached(string filePath, ImageSizeClass sizeClass)
+    {
+        var key = new BitmapCacheKey(filePath, sizeClass);
+        if (_cache.TryRemove(key, out var item))
+        {
+            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, sizeClass, false));
+            UiDispatcher.Post(() => item.Image.Dispose());
+        }
+    }
+
+    /// <summary>缩略图分区张数上限。</summary>
+    public static int ThumbMaxCount
+    {
+        get => _thumbMaxCount;
+        set { _thumbMaxCount = Math.Max(32, value); EvictThumbsToFit(); }
+    }
+
+    /// <summary>缩略图分区字节上限。</summary>
+    public static long ThumbMaxBytes
+    {
+        get => _thumbMaxBytes;
+        set { _thumbMaxBytes = Math.Max(16L * 1024 * 1024, value); EvictThumbsToFit(); }
+    }
+
+    /// <summary>缩略图分区超限修剪:非保护项 LRU 在前,保护项垫底。</summary>
+    private static void EvictThumbsToFit()
+    {
+        List<KeyValuePair<BitmapCacheKey, BitmapCacheItem>>? toRemove = null;
+        int count = ThumbCacheCount;
+        long bytes = ThumbCacheSize;
+        if (count <= _thumbMaxCount && bytes <= _thumbMaxBytes) return;
+
+        foreach (var kv in OrderForEviction(thumbScope: true))
+        {
+            if (count <= _thumbMaxCount && bytes <= _thumbMaxBytes) break;
+            if (_cache.TryRemove(kv.Key, out var item))
+            {
+                (toRemove ??= new()).Add(new KeyValuePair<BitmapCacheKey, BitmapCacheItem>(kv.Key, item));
+                count--; bytes -= item.Size;
+            }
+        }
+        if (toRemove == null) return;
+        UiDispatcher.Post(() =>
+        {
+            foreach (var kv in toRemove)
+            {
+                CacheStatusChanged?.Invoke(kv.Key.Path, ImageSizeClass.Thumb, false);
+                kv.Value.Image.Dispose();
+            }
+        });
     }
 
     /// <summary>
@@ -121,11 +235,13 @@ public static class BitmapLoader
     /// <summary>
     /// 淘汰选择序列：非保护项按 LRU（最后访问时间升序）在前，保护项整体排在末尾（内部同样按 LRU）。
     /// </summary>
-    private static List<KeyValuePair<string, BitmapCacheItem>> OrderForEviction()
+    /// <param name="thumbScope">true = 只在 Thumb 分区选;false = 只在主分区(Full/Proxy)选。</param>
+    private static List<KeyValuePair<BitmapCacheKey, BitmapCacheItem>> OrderForEviction(bool thumbScope)
     {
         var protectedSet = _protectedPaths;
         return _cache.ToList()
-            .OrderBy(kv => protectedSet.Contains(kv.Key) ? 1 : 0)
+            .Where(kv => (kv.Key.Class == ImageSizeClass.Thumb) == thumbScope)
+            .OrderBy(kv => protectedSet.Contains(kv.Key.Path) ? 1 : 0)
             .ThenBy(kv => kv.Value.LastAccessTime)
             .ToList();
     }
@@ -134,12 +250,12 @@ public static class BitmapLoader
     private static long _reservedBytes = 0;
     private static readonly SemaphoreSlim _capacitySemaphore = new(1, 1);
 
-    // 新增：平均缓存项大小（字节）
+    // 新增：平均缓存项大小（字节,仅主分区——缩略图不参与全分辨率估算）
     private static long GetAverageCacheItemSizeBytes()
     {
-        var count = CurrentCacheCount;
+        var count = FullCacheCount;
         if (count <= 0) return 0;
-        var total = CurrentCacheSize;
+        var total = FullCacheSize;
         if (total <= 0) return 0;
         return total / count;
     }
@@ -178,7 +294,8 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 在解码前确保容量：(缓存 + 预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
+    /// 在解码前确保容量：主分区(缓存 + 预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
+    /// 缩略图分区不参与此账(上限自管,见 <see cref="EvictThumbsToFit"/>)。
     /// </summary>
     private static async Task EnsureCapacityAsync(long needBytes)
     {
@@ -192,16 +309,16 @@ public static class BitmapLoader
 
             while (true)
             {
-                var currentSize = CurrentCacheSize;
+                var currentSize = FullCacheSize;
                 var totalPlanned = currentSize + Interlocked.Read(ref _reservedBytes) + needBytes;
                 long limit = tooLarge ? safeLimit : MaxCacheSize;
                 if (totalPlanned <= limit) break;
 
-                var sorted = OrderForEviction();
+                var sorted = OrderForEviction(thumbScope: false);
 
                 if (sorted.Count == 0) break;
 
-                var itemsToRemove = new List<(string key, DecodedImage img)>();
+                var itemsToRemove = new List<(BitmapCacheKey key, DecodedImage img)>();
                 long willFree = 0;
 
                 foreach (var kv in sorted)
@@ -221,7 +338,7 @@ public static class BitmapLoader
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     foreach (var k in removedKeys)
-                        CacheStatusChanged?.Invoke(k, false);
+                        CacheStatusChanged?.Invoke(k.Path, k.Class, false);
                 });
 
                 await UiDispatcher.InvokeAsync(() =>
@@ -270,9 +387,9 @@ public static class BitmapLoader
     public static Task<DecodedImage?> GetBitmapAsync(IFileRef file, CancellationToken ct = default)
     {
         var filePath = file.PathKey;
-        
-        // 检查缓存
-        if (_cache.TryGetValue(filePath, out var cachedItem))
+
+        // 检查缓存(Full 档)
+        if (_cache.TryGetValue(new BitmapCacheKey(filePath, ImageSizeClass.Full), out var cachedItem))
         {
             cachedItem.UpdateAccessTime();
             PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
@@ -324,15 +441,15 @@ public static class BitmapLoader
             decodeSw.Stop();
             if (image == null) return null;
             
-            // 添加到缓存
-            var cacheItem = new BitmapCacheItem(image, filePath);
-            _cache[filePath] = cacheItem;
-            
+            // 添加到缓存(Full 档)
+            var cacheItem = new BitmapCacheItem(image, filePath, ImageSizeClass.Full);
+            _cache[new BitmapCacheKey(filePath, ImageSizeClass.Full)] = cacheItem;
+
             // P0 链路计时埋点(P1-M1):供压力快照与验收门判读
             PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
-            
+
             // 通知缓存状态变化（在UI线程中触发）
-            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, true));
+            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Full, true));
             
             // 异步清理缓存
             _ = Task.Run(CleanupCache);
@@ -512,7 +629,7 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 清理缓存
+    /// 清理缓存(仅主分区 Full/Proxy;缩略图分区由 <see cref="EvictThumbsToFit"/> 自管)
     /// </summary>
     private static void CleanupCache()
     {
@@ -520,13 +637,13 @@ public static class BitmapLoader
         {
             try
             {
-                var itemsToRemove = new List<string>();
+                var itemsToRemove = new List<BitmapCacheKey>();
                 
                 // 按淘汰选择序列排序（非保护项 LRU 在前，保护项排末尾）
-                var sortedItems = OrderForEviction();
+                var sortedItems = OrderForEviction(thumbScope: false);
                 
-                var currentSize = CurrentCacheSize;
-                var currentCount = CurrentCacheCount;
+                var currentSize = FullCacheSize;
+                var currentCount = FullCacheCount;
                 
                 // 清理超出数量限制的项
                 if (currentCount > MaxCacheCount)
@@ -570,7 +687,7 @@ public static class BitmapLoader
                     if (_cache.TryRemove(key, out var item))
                     {
                         // 通知缓存状态变化（在UI线程中触发）
-                        UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key, false));
+                        UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key.Path, key.Class, false));
                         
                         // 在UI线程中释放位图
                         UiDispatcher.Post(() => item.Image.Dispose());
@@ -580,7 +697,7 @@ public static class BitmapLoader
                 if (itemsToRemove.Count > 0)
                 {
                     Console.WriteLine($"Cache cleanup completed: removed {itemsToRemove.Count} items, " +
-                                      $"current cache: {CurrentCacheCount} items, {CurrentCacheSize / (1024 * 1024)} MB");
+                                      $"current cache: {FullCacheCount} items, {FullCacheSize / (1024 * 1024)} MB");
                 }
             }
             catch (Exception ex)
@@ -591,7 +708,7 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 清空所有缓存
+    /// 清空所有缓存(全部尺寸档)
     /// </summary>
     public static void ClearCache()
     {
@@ -599,25 +716,24 @@ public static class BitmapLoader
         {
             try
             {
-                var items = _cache.Values.ToList();
-                var filePaths = items.Select(item => item.FilePath).ToList();
+                var items = _cache.ToList();
                 _cache.Clear();
                 
                 // 通知所有文件缓存状态变化（在UI线程中触发）
                 UiDispatcher.Post(() =>
                 {
-                    foreach (var filePath in filePaths)
+                    foreach (var kv in items)
                     {
-                        CacheStatusChanged?.Invoke(filePath, false);
+                        CacheStatusChanged?.Invoke(kv.Key.Path, kv.Key.Class, false);
                     }
                 });
                 
                 // 在UI线程中释放所有位图
                 UiDispatcher.Post(() =>
                 {
-                    foreach (var item in items)
+                    foreach (var kv in items)
                     {
-                        item.Image.Dispose();
+                        kv.Value.Image.Dispose();
                     }
                 });
                 
@@ -631,17 +747,12 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 移除特定文件的缓存
+    /// 移除特定文件的全部尺寸档缓存
     /// </summary>
     public static void RemoveFromCache(string filePath)
     {
-        if (_cache.TryRemove(filePath, out var item))
-        {
-            // 通知缓存状态变化（在UI线程中触发）
-            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, false));
-            
-            UiDispatcher.Post(() => item.Image.Dispose());
-        }
+        foreach (var cls in Enum.GetValues<ImageSizeClass>())
+            RemoveCached(filePath, cls);
     }
     
     /// <summary>
@@ -677,95 +788,110 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 获取缓存统计信息
+    /// 获取缓存统计信息(主分区 + 缩略图分区分列)
     /// </summary>
     public static (int count, long sizeBytes, string info) GetCacheStats()
     {
-        var count = CurrentCacheCount;
-        var size = CurrentCacheSize;
-        var info = $"Cache: {count}/{MaxCacheCount} items, {size / (1024 * 1024)}/{MaxCacheSize / (1024 * 1024)} MB";
+        var count = FullCacheCount;
+        var size = FullCacheSize;
+        var info = $"Cache: {count}/{MaxCacheCount} items, {size / (1024 * 1024)}/{MaxCacheSize / (1024 * 1024)} MB"
+            + $"; thumbs {ThumbCacheCount}/{_thumbMaxCount}, {ThumbCacheSize / (1024 * 1024)}/{_thumbMaxBytes / (1024 * 1024)} MB";
         return (count, size, info);
     }
 
     // 内存告警事件载体（UI 仅展示触发时的大小、数量与时间）
     public readonly record struct MemoryWarningEvent(long sizeMB, int count, DateTimeOffset time);
 
-    /// <summary>
-    /// 系统内存告警：按 LRU 精简缓存至目标上限占比（默认 50%），返回 (beforeBytes, afterBytes)。
-    /// 复用 LRU 公共方法，减少重复代码。
-    /// </summary>
-    public static (long beforeBytes, long afterBytes) TrimOnMemoryWarning(double targetRatio = 0.5)
+    // ---- 统一内存管控(P1-M2)----
+
+    /// <summary>主缓存 + 缩略图分区的内存客户端适配器。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
     {
-        targetRatio = Math.Clamp(targetRatio, 0.1, 0.9);
-        var targetBytes = (long)(MaxCacheSize * targetRatio);
-        var (before, _, after) = LruRemoveToSize(targetBytes);
-        return (before, after);
+        public string Name => "BitmapLoader";
+        public long FootprintBytes => CurrentCacheSize;
+        public void Trim(PressureLevel level) => TrimForPressure(level);
+    }
+
+    /// <summary>向 MemoryGovernor 登记本缓存(幂等;静态构造即登记,首次访问本类时生效)。</summary>
+    static BitmapLoader()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
     }
 
     /// <summary>
-    /// 按“当前缓存大小的比例”清理（用于系统告警：清理到触发时缓存大小的 80%）。
-    /// 返回 (beforeBytes, beforeCount, afterBytes)。
+    /// 压力修剪(响应矩阵):
+    /// Caution = 缩略图只留保护集(可视区 ± 预载窗口);
+    /// Warning = 主分区砍到保护集内最近 2 张(当前 +1 邻居),缩略图只留保护集;
+    /// Critical = 全库只留最近访问的 1 张 Full。
     /// </summary>
-    public static (long beforeBytes, int beforeCount, long afterBytes) TrimToCurrentRatio(double targetCurrentRatio)
-    {
-        targetCurrentRatio = Math.Clamp(targetCurrentRatio, 0.1, 0.95);
-        var snapshot = CurrentCacheSize; // 注意：最终目标在锁内再计算一次，避免竞争
-        var targetBytes = (long)(snapshot * targetCurrentRatio);
-        return LruRemoveToSize(targetBytes);
-    }
-
-    /// <summary>
-    /// 公共 LRU 清理：按淘汰选择序列（非保护项 LRU 在前，保护项排末尾）移除，直到当前大小 &lt;= targetBytes。
-    /// 返回 (beforeBytes, beforeCount, afterBytes)。
-    /// </summary>
-    private static (long beforeBytes, int beforeCount, long afterBytes) LruRemoveToSize(long targetBytes)
+    private static void TrimForPressure(PressureLevel level)
     {
         lock (_cleanupLock)
         {
-            var before = CurrentCacheSize;
-            var beforeCount = CurrentCacheCount;
-            if (before <= targetBytes || _cache.IsEmpty)
-                return (before, beforeCount, before);
-
-            var sortedItems = OrderForEviction();
-
-            var toRemove = new List<string>();
-            long willFree = 0;
-            foreach (var kv in sortedItems)
+            try
             {
-                toRemove.Add(kv.Key);
-                willFree += kv.Value.Size;
-                if (before - willFree <= targetBytes) break;
-            }
-
-            var removedItems = new List<(string key, DecodedImage img)>();
-            foreach (var key in toRemove)
-            {
-                if (_cache.TryRemove(key, out var item))
-                    removedItems.Add((key, item.Image));
-            }
-
-            if (removedItems.Count > 0)
-            {
-                var removedKeys = removedItems.Select(t => t.key).ToList();
-
-                // 通知缓存状态变化（UI 线程）
-                UiDispatcher.Post(() =>
+                var protectedSet = _protectedPaths;
+                switch (level)
                 {
-                    foreach (var k in removedKeys)
-                        CacheStatusChanged?.Invoke(k, false);
-                });
-
-                // 释放位图（UI 线程）
-                UiDispatcher.Post(() =>
-                {
-                    foreach (var t in removedItems)
-                        t.img.Dispose();
-                });
+                    case PressureLevel.Caution:
+                        EvictRange(OrderForEviction(thumbScope: true)
+                            .Where(kv => !protectedSet.Contains(kv.Key.Path))
+                            .ToList());
+                        break;
+                    case PressureLevel.Warning:
+                    {
+                        var victims = OrderForEviction(thumbScope: false)
+                            .Where(kv => !protectedSet.Contains(kv.Key.Path))
+                            .ToList();
+                        // 保护集内主分区也只留最近 2 张(当前 + 1 邻居)
+                        victims.AddRange(OrderForEviction(thumbScope: false)
+                            .Where(kv => protectedSet.Contains(kv.Key.Path))
+                            .OrderByDescending(kv => kv.Value.LastAccessTime)
+                            .Skip(2));
+                        victims.AddRange(OrderForEviction(thumbScope: true)
+                            .Where(kv => !protectedSet.Contains(kv.Key.Path)));
+                        EvictRange(victims);
+                        break;
+                    }
+                    case PressureLevel.Critical:
+                    {
+                        var all = _cache.ToList();
+                        if (all.Count == 0) break;
+                        // 只留最近访问的 1 张 Full(当前纹理)
+                        var newest = all
+                            .Where(kv => kv.Key.Class == ImageSizeClass.Full)
+                            .OrderByDescending(kv => kv.Value.LastAccessTime)
+                            .Select(kv => (BitmapCacheKey?)kv.Key)
+                            .FirstOrDefault();
+                        EvictRange(all.Where(kv => !newest.HasValue || !kv.Key.Equals(newest.Value)).ToList());
+                        break;
+                    }
+                }
             }
-
-            var after = CurrentCacheSize;
-            return (before, beforeCount, after);
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BitmapLoader] Trim({level}) failed: {ex.Message}");
+            }
         }
+    }
+
+    /// <summary>按淘汰键移除并(在 UI 线程)发事件 + 释放位图。</summary>
+    private static void EvictRange(IEnumerable<KeyValuePair<BitmapCacheKey, BitmapCacheItem>> range)
+    {
+        var removed = new List<(BitmapCacheKey key, BitmapCacheItem item)>();
+        foreach (var kv in range)
+        {
+            if (_cache.TryRemove(kv.Key, out var item))
+                removed.Add((kv.Key, item));
+        }
+        if (removed.Count == 0) return;
+        UiDispatcher.Post(() =>
+        {
+            foreach (var (key, item) in removed)
+            {
+                CacheStatusChanged?.Invoke(key.Path, key.Class, false);
+                item.Image.Dispose();
+            }
+        });
     }
 }

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -22,7 +23,13 @@ public static class DinoFeatureExtractor
     private static Action<SessionOptions>? _configureSession;
     private static bool _gpuFailed;
     private static byte[]? _modelBytesOverride;
+    private static long _sessionFootprintBytes; // 内存账本:模型字节 + 会话工作区估算
     private static int _inputSize = DinoModelResources.InputSize;   // 模型实际输入边长（518；升级梯换大分辨率模型时按 ONNX 输入元数据自适应）
+
+    static DinoFeatureExtractor()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
 
     /// <summary>
     /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
@@ -105,7 +112,44 @@ public static class DinoFeatureExtractor
             }
         }
 
+        // 内存账本:模型字节 + 128MB 会话工作区估算(低估可接受,供压力快照判读数量级)
+        _sessionFootprintBytes = bytes.Length + 128L * 1024 * 1024;
         return new InferenceSession(bytes, options);
+    }
+
+    /// <summary>
+    /// 卸载 ONNX 会话(内存压力响应):先取推理闸确保无在途推理,再释放;下次 <see cref="GetSession"/> 惰性重建。
+    /// GPU 回退标记与输入尺寸自适应结果保持。
+    /// </summary>
+    public static void UnloadSession()
+    {
+        _runGate.Wait();
+        try
+        {
+            lock (_sessionLock)
+            {
+                _session?.Dispose();
+                _session = null;
+                _sessionFootprintBytes = 0;
+            }
+        }
+        finally
+        {
+            _runGate.Release();
+        }
+    }
+
+    // ---- 统一内存管控(P1-M2)----
+
+    /// <summary>内存客户端:ONNX 会话占用;Warning 起卸载(下次推理惰性重建)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "DinoOnnxSession";
+        public long FootprintBytes => _session != null ? _sessionFootprintBytes : 0;
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) UnloadSession();
+        }
     }
 
     /// <summary>

@@ -165,6 +165,13 @@ Each head project's `Core/` folder contains platform-specific implementations in
 - AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` + `AnalysisResultCache.InvalidateAll` 清进程缓存,徽标与分析栏派生数据即时失效。
 - 启动时检测旧 schema(残留 `feature_vector` / `heatmap` 列,或缺 `cv_image_width/height`,或缺 `focal_length`)自动删库重建,无需手动清理。
 
+### 5.5 内存压力响应(P1-M2 起)
+
+1. **感知**:`MemoryGovernor` 周期探测(2s)+ OS 事件直报(iOS `DidReceiveMemoryWarning`、Android `OnTrimMemory`),状态机带迟滞(进入 40/25/15%、退出 +5%、好转逐级退)。
+2. **级联修剪**:级别上升时 Governor 对全部登记 client 同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、增强位图。各级动作矩阵见 master plan §4.3。
+3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
+4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录),含各 client footprint 与近期解码 miss 统计。
+
 ---
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
