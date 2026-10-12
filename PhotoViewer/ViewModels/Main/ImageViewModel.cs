@@ -5,9 +5,9 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
@@ -275,7 +275,7 @@ public class ImageViewModel : ReactiveObject
             var old = EnhancedBitmap;
             EnhancedBitmap = enhanced;
             SourceBitmap = enhanced;
-            if (old != null) Dispatcher.UIThread.Post(old.Dispose);
+            if (old != null) UiDispatcher.Post(old.Dispose);
         }
         catch (Exception ex)
         {
@@ -290,7 +290,7 @@ public class ImageViewModel : ReactiveObject
     {
         var old = EnhancedBitmap;
         EnhancedBitmap = null;
-        if (old != null) Dispatcher.UIThread.Post(old.Dispose);
+        if (old != null) UiDispatcher.Post(old.Dispose);
     }
 
     /// <summary>

@@ -5,10 +5,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.ViewModels.Tools;
 
@@ -172,7 +172,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
             return;
         }
 
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             IsBusy = true;
             Status = $"计算中…  {file.Name}";
@@ -253,7 +253,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
             _patchTokens = patches;
             thumbnailHandedOff = true;
 
-            Dispatcher.UIThread.Post(() =>
+            UiDispatcher.Post(() =>
             {
                 if (ct.IsCancellationRequested)
                 {
@@ -366,7 +366,7 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
     private void ClearAllOnUi(string status)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             SwapBitmap(ref _sourceThumbnail, null, nameof(SourceThumbnail));
             SwapBitmap(ref _sharpnessMap, null, nameof(SharpnessMap));

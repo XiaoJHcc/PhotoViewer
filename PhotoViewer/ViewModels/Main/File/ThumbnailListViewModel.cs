@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.ViewModels.Main.File;
@@ -160,7 +160,7 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     private void OnCacheStatusChanged(string filePath, bool isInCache)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             var imageFile = _folder.AllFiles.FirstOrDefault(f => f.File.Path.LocalPath == filePath);
             if (imageFile != null)

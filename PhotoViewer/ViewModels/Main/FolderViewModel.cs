@@ -6,7 +6,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
@@ -420,7 +419,7 @@ public class FolderViewModel : ReactiveObject
         _ = Task.Run(async () =>
         {
             await LoadAllExifRatingsAsync();
-            await Dispatcher.UIThread.InvokeAsync(() => AllFilesChanged?.Invoke());
+            await UiDispatcher.InvokeAsync(() => AllFilesChanged?.Invoke());
             Console.WriteLine($"[Folder] Phase3 (ratings loaded): {sw.ElapsedMilliseconds}ms");
         });
 
@@ -443,7 +442,7 @@ public class FolderViewModel : ReactiveObject
         {
             await imageFile.LoadExifDataAsync();
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 imageFile.RaisePropertyChanged(nameof(imageFile.PhotoDate));
 
@@ -525,7 +524,7 @@ public class FolderViewModel : ReactiveObject
 
             await Task.WhenAll(tasks);
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 foreach (var file in _allFiles)
                 {

@@ -1,14 +1,14 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
@@ -492,7 +492,7 @@ public class MainViewModel : ViewModelBase
             Console.WriteLine($"[Rating] Write done. Elapsed: {ratingSw.ElapsedMilliseconds}ms. Updating UI caches...");
 
             // 回到 UI 线程刷新内存缓存与界面。
-            await Dispatcher.UIThread.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
+            await UiDispatcher.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
 
             // 顺手同步 photos.rating 快照(Plan-2-4):产品行为以文件为准,DB rating 只是训练用副本。
             // 指纹未入库时 UpdateRatingAsync 静默跳过,无需在 UI 线程等。
@@ -504,9 +504,9 @@ public class MainViewModel : ViewModelBase
                 try
                 {
                     // 在 UI 线程清除 EXIF 标记（涉及 RaisePropertyChanged），再由 LoadExifDataAsync 在后台重新加载
-                    await Dispatcher.UIThread.InvokeAsync(() => file.ClearExifData());
+                    await UiDispatcher.InvokeAsync(() => file.ClearExifData());
                     await file.LoadExifDataAsync();
-                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    await UiDispatcher.InvokeAsync(() =>
                     {
                         ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
                         file.RaisePropertyChanged(nameof(file.Rating));

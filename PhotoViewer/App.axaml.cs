@@ -11,6 +11,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Platform;
 using PhotoViewer.ViewModels;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.Windows;
@@ -35,6 +36,9 @@ public partial class App : Application
     /// </summary>
     public override void OnFrameworkInitializationCompleted()
     {
+        // 注入 UI 线程调度器,Core/ViewModel 的回调线程封送统一走 UiDispatcher 门面。
+        UiDispatcher.Initialize(new AvaloniaUiDispatcher());
+
         var vm = new MainViewModel();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)

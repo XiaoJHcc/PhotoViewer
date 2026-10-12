@@ -1,15 +1,14 @@
 using ReactiveUI;
-using ReactiveUI.Avalonia;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.ViewModels.Main.File;
@@ -206,7 +205,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
             .Skip(1)
             .Throttle(TimeSpan.FromMilliseconds(150))
-            .ObserveOn(AvaloniaScheduler.Instance)
+            .ObserveOn(UiDispatcher.MainThreadScheduler)
             .Subscribe(tuple => { _ = RecomputeAsync(_anchorFile); });
 
         // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
@@ -262,7 +261,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0)
         {
-            Dispatcher.UIThread.Post(() => UnindexedCount = 0);
+            UiDispatcher.Post(() => UnindexedCount = 0);
             return;
         }
 
@@ -291,7 +290,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             }
         }
 
-        Dispatcher.UIThread.Post(() => UnindexedCount = unindexed);
+        UiDispatcher.Post(() => UnindexedCount = unindexed);
     }
 
     // ── 批量提取 ────────────────────────────────────────────────────────────
@@ -322,7 +321,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             var error = _indexer.LastError;
             _indexer.ProgressChanged -= OnIndexProgress;
             _indexer = null;
-            Dispatcher.UIThread.Post(() =>
+            UiDispatcher.Post(() =>
             {
                 IsStateIndexing = false;
                 IndexError = error;
@@ -338,7 +337,7 @@ public class SimilarityPanelViewModel : ReactiveObject
 
     private void OnIndexProgress(IndexProgress progress)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             IndexProgress = progress.Completed;
             IndexTotal = progress.Total;
@@ -393,7 +392,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     private void UpdateOnUi(IReadOnlyList<SimilarityItem> results, CancellationToken token)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             if (token.IsCancellationRequested) return;
             SimilarItems = results;

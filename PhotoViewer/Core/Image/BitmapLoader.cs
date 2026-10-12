@@ -6,11 +6,11 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
-using Avalonia.Threading;
-using Avalonia.Platform;
 using Avalonia.Media; // 新增：用于合成去除透明度
+using Avalonia.Media.Imaging;
+using Avalonia.Platform;
+using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.Core.Image;
 
@@ -235,13 +235,13 @@ public static class BitmapLoader
                 if (itemsToRemove.Count == 0) break;
 
                 var removedKeys = itemsToRemove.Select(t => t.key).ToList();
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                await UiDispatcher.InvokeAsync(() =>
                 {
                     foreach (var k in removedKeys)
                         CacheStatusChanged?.Invoke(k, false);
                 });
 
-                await Dispatcher.UIThread.InvokeAsync(() =>
+                await UiDispatcher.InvokeAsync(() =>
                 {
                     foreach (var t in itemsToRemove)
                         t.bmp.Dispose();
@@ -342,7 +342,7 @@ public static class BitmapLoader
             _cache[filePath] = cacheItem;
             
             // 通知缓存状态变化（在UI线程中触发）
-            Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(filePath, true));
+            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, true));
             
             // 异步清理缓存
             _ = Task.Run(CleanupCache);
@@ -756,10 +756,10 @@ public static class BitmapLoader
                     if (_cache.TryRemove(key, out var item))
                     {
                         // 通知缓存状态变化（在UI线程中触发）
-                        Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(key, false));
+                        UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key, false));
                         
                         // 在UI线程中释放位图
-                        Dispatcher.UIThread.Post(() => item.Bitmap.Dispose());
+                        UiDispatcher.Post(() => item.Bitmap.Dispose());
                     }
                 }
                 
@@ -790,7 +790,7 @@ public static class BitmapLoader
                 _cache.Clear();
                 
                 // 通知所有文件缓存状态变化（在UI线程中触发）
-                Dispatcher.UIThread.Post(() =>
+                UiDispatcher.Post(() =>
                 {
                     foreach (var filePath in filePaths)
                     {
@@ -799,7 +799,7 @@ public static class BitmapLoader
                 });
                 
                 // 在UI线程中释放所有位图
-                Dispatcher.UIThread.Post(() =>
+                UiDispatcher.Post(() =>
                 {
                     foreach (var item in items)
                     {
@@ -824,9 +824,9 @@ public static class BitmapLoader
         if (_cache.TryRemove(filePath, out var item))
         {
             // 通知缓存状态变化（在UI线程中触发）
-            Dispatcher.UIThread.Post(() => CacheStatusChanged?.Invoke(filePath, false));
+            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, false));
             
-            Dispatcher.UIThread.Post(() => item.Bitmap.Dispose());
+            UiDispatcher.Post(() => item.Bitmap.Dispose());
         }
     }
     
@@ -936,14 +936,14 @@ public static class BitmapLoader
                 var removedKeys = removedItems.Select(t => t.key).ToList();
 
                 // 通知缓存状态变化（UI 线程）
-                Dispatcher.UIThread.Post(() =>
+                UiDispatcher.Post(() =>
                 {
                     foreach (var k in removedKeys)
                         CacheStatusChanged?.Invoke(k, false);
                 });
 
                 // 释放位图（UI 线程）
-                Dispatcher.UIThread.Post(() =>
+                UiDispatcher.Post(() =>
                 {
                     foreach (var t in removedItems)
                         t.bmp.Dispose();

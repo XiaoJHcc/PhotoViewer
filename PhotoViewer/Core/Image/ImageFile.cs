@@ -4,7 +4,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
+using PhotoViewer.Core.Platform;
 using ReactiveUI;
 
 namespace PhotoViewer.Core.Image;
@@ -192,7 +192,7 @@ public class ImageFile : ReactiveObject
         File = file;
 
         // 延迟初始化缓存状态，避免在静态类还未完全初始化时调用
-        Dispatcher.UIThread.Post(() => UpdateCacheStatus());
+        UiDispatcher.Post(() => UpdateCacheStatus());
     }
 
     /// <summary>
@@ -204,7 +204,7 @@ public class ImageFile : ReactiveObject
         try
         {
             var props = await File.GetBasicPropertiesAsync();
-            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
             // 调用方在全部加载完成后统一在 UI 线程批量通知。
             _modifiedDate = props.DateModified;
             _fileSize = props.Size;
@@ -244,7 +244,7 @@ public class ImageFile : ReactiveObject
             var bitmap = await Task.Run(() => ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
             
             // 在UI线程中设置结果
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 if (bitmap != null)
                 {
@@ -302,7 +302,7 @@ public class ImageFile : ReactiveObject
             });
 
             // 在UI线程中设置结果
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 ExifData = exifData;
                 IsExifLoaded = true;
@@ -351,7 +351,7 @@ public class ImageFile : ReactiveObject
                 }
             });
             
-            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
             // 调用方 LoadAllExifRatingsAsync 在全部加载完成后统一在 UI 线程批量通知。
             if (_exifData == null)
             {

@@ -7,11 +7,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
@@ -221,7 +221,7 @@ public sealed class AnalysisViewModel : ReactiveObject
 
         var cts = new CancellationTokenSource();
         _cts = cts;
-        Dispatcher.UIThread.Post(() => LoadDeferred(file, cts.Token), DispatcherPriority.Background);
+        UiDispatcher.Post(() => LoadDeferred(file, cts.Token), UiPriority.Background);
     }
 
     /// <summary>Background 优先级回调:主图已渲染后才执行。快路径同步 swap;慢路径启动异步加载。</summary>
@@ -404,11 +404,11 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// 使用 Background 优先级,确保主图渲染优先完成。</summary>
     private void ApplyEntry(AnalysisResultCache.Entry entry, CancellationToken ct)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             if (ct.IsCancellationRequested) return;
             ApplyEntryCore(entry);
-        }, DispatcherPriority.Background);
+        }, UiPriority.Background);
     }
 
     /// <summary>
@@ -558,11 +558,11 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// <summary>Background 优先级设置占位文本;供后台路径在 ApplyEntry 之后调用(同优先级 FIFO,保证顺序)。</summary>
     private void PostDiagnosticPlaceholder(string text, CancellationToken ct)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             if (ct.IsCancellationRequested) return;
             SetDiagnosticPlaceholder(text);
-        }, DispatcherPriority.Background);
+        }, UiPriority.Background);
     }
 
     /// <summary>从当前主图(原片或增强图)现算 RGB 直方图,随主图 / 可见性变化触发;不可见或无图时清空。</summary>
@@ -597,7 +597,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         var old = _histogramBmp;
         _histogramBmp = next;
         _histogramItem.Source = next;
-        if (old != null) Dispatcher.UIThread.Post(old.Dispose);
+        if (old != null) UiDispatcher.Post(old.Dispose);
     }
 
     /// <summary>同步清空所有诊断瓦片(面板隐藏或文件为 null 时使用)。细节预览项不动。

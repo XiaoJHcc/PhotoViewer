@@ -4,9 +4,9 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Tools;
@@ -236,7 +236,7 @@ public class ExifDetailViewModel : ReactiveObject
                 }
             });
 
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 if (_loadGeneration != generation) return; // 已过期，丢弃结果
                 entry.Groups = exifData?.AllMetadata ?? new List<MetadataGroup>();
@@ -251,7 +251,7 @@ public class ExifDetailViewModel : ReactiveObject
         catch (Exception ex)
         {
             Console.WriteLine($"[ExifDetail] 异常 {entry.Label}: {ex.Message}");
-            await Dispatcher.UIThread.InvokeAsync(() => { entry.IsLoading = false; });
+            await UiDispatcher.InvokeAsync(() => { entry.IsLoading = false; });
         }
     }
 
