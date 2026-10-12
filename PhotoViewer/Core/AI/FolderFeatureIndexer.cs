@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 
@@ -213,7 +212,7 @@ public sealed class FolderFeatureIndexer
             int cvWidth = 0;
             int cvHeight = 0;
 
-            Bitmap? thumbnail = null;
+            DecodedImage? thumbnail = null;
             try
             {
                 bool needDino = missing.NeedCls || missing.NeedPatches;
@@ -247,7 +246,7 @@ public sealed class FolderFeatureIndexer
 
                 if (missing.NeedCv)
                 {
-                    Bitmap? cvBitmap = null;
+                    DecodedImage? cvBitmap = null;
                     try
                     {
                         cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File).ConfigureAwait(false);
@@ -256,8 +255,8 @@ public sealed class FolderFeatureIndexer
                             var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);
                             cvBlob = cvResult.Encode();
                             cvSpec = CvGridResult.CurrentVersion;
-                            cvWidth = cvBitmap.PixelSize.Width;
-                            cvHeight = cvBitmap.PixelSize.Height;
+                            cvWidth = cvBitmap.Width;
+                            cvHeight = cvBitmap.Height;
                         }
                     }
                     finally

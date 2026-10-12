@@ -53,14 +53,14 @@ public sealed class ThumbnailSource
     /// 内部加载策略:由具体提取器闭包持有 (file/offset/tagByteArray/解码器引用) 等。
     /// 仅供 ThumbnailService 调用;不暴露给业务层。
     /// </summary>
-    internal Func<int, System.Threading.Tasks.Task<Avalonia.Media.Imaging.Bitmap?>> LoaderAsync { get; }
+    internal Func<int, System.Threading.Tasks.Task<DecodedImage?>> LoaderAsync { get; }
 
     internal ThumbnailSource(
         int width,
         int height,
         ThumbnailOrigin origin,
         bool isPreRotated,
-        Func<int, System.Threading.Tasks.Task<Avalonia.Media.Imaging.Bitmap?>> loaderAsync)
+        Func<int, System.Threading.Tasks.Task<DecodedImage?>> loaderAsync)
     {
         Width = Math.Max(0, width);
         Height = Math.Max(0, height);

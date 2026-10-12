@@ -90,9 +90,9 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. **Dispatch**: `ImageViewModel` observes the change, bumps a monotonic **generation counter** and calls `LoadImageAsync`; if the new image is not in cache, `SourceBitmap = null` immediately (old image never stays on screen).
 3. **Cache / decode** (`BitmapLoader.GetBitmapAsync`, runs as **P0** — wrapped in `DecodeScheduler.TrackP0` so background workers pause while it is in flight):
    - Check **LRU memory cache** — hit returns immediately.
-   - Miss: **in-flight dedup** (same-path requests share one decode task) → decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return.
-   - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (bitmap stays in cache, harmless).
-4. **Display**: `ImageView` re-binds to `Bitmap`.
+   - Miss: **in-flight dedup** (same-path requests share one decode task) → decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return。P0-M4 起 Core 全程使用平台中立 `DecodedImage`(SkiaSharp 解码/旋转),`IFileRef` 供流;UI 层经 `Platform/DecodedImageAdapter` 转 `WriteableBitmap`。
+   - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (image stays in cache, harmless).
+4. **Display**: `ImageView` re-binds to `Bitmap`(由适配层转换)。
 5. **Unified scheduling** (`DecodeScheduler`, static): P0 current image / P1 visible+current thumbnails / P2 neighbour bitmaps + queued thumbnails / P3 analysis prewarm; same-key dedup with priority promotion; background workers (parallelism = `Settings.NativePreloadParallelism`) pause while P0 is in flight.
    - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour bitmap (reserve memory → decode → analysis-cache prewarm) as a P2 work item.
    - **Eviction protection**: `ThumbnailListViewModel` reports `BitmapLoader.SetProtectedPaths` (current ± preload window + recently viewed M paths); every eviction path (EnsureCapacity / Cleanup / LruRemoveToSize) evicts non-protected LRU first and touches protected paths only as a last resort.

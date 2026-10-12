@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 
@@ -132,7 +131,7 @@ public static class DinoFeatureCache
             return dbVector;
         }
 
-        Bitmap? bitmap = null;
+        DecodedImage? bitmap = null;
         try
         {
             bitmap = await ThumbnailService.GetThumbnailAsync(file.File, FeaturingShortSide).ConfigureAwait(false);

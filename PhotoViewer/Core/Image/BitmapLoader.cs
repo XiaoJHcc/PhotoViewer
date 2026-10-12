@@ -5,10 +5,6 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media; // 新增：用于合成去除透明度
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 
@@ -19,37 +15,23 @@ namespace PhotoViewer.Core.Image;
 /// </summary>
 public class BitmapCacheItem
 {
-    public Bitmap Bitmap { get; set; }
+    /// <summary>已解码图像。</summary>
+    public DecodedImage Image { get; set; }
     public long Size { get; set; }
     public DateTime LastAccessTime { get; set; }
     public string FilePath { get; set; }
 
-    public BitmapCacheItem(Bitmap bitmap, string filePath)
+    public BitmapCacheItem(DecodedImage image, string filePath)
     {
-        Bitmap = bitmap;
+        Image = image;
         FilePath = filePath;
-        Size = EstimateBitmapSize(bitmap);
+        Size = EstimateImageSize(image);
         LastAccessTime = DateTime.Now;
     }
 
-    private static long EstimateBitmapSize(Bitmap bitmap)
+    private static long EstimateImageSize(DecodedImage image)
     {
-        // 修改：根据像素格式估算大小（Bgr24=3，Bgra8888/Rgba8888=4，其余保守按4）
-        int w = bitmap.PixelSize.Width;
-        int h = bitmap.PixelSize.Height;
-        int bpp = 4;
-        try
-        {
-            if (bitmap is WriteableBitmap wb)
-            {
-                if (wb.Format == PixelFormats.Rgb24 || wb.Format == PixelFormats.Bgr24) bpp = 3;
-                else if (wb.Format == PixelFormats.Rgba8888 || wb.Format == PixelFormats.Bgra8888) bpp = 4;
-                else if (wb.Format == PixelFormats.Rgb565 || wb.Format == PixelFormats.Bgr565) bpp = 2;
-            }
-        }
-        catch { /* 忽略，保守按4 */ }
-
-        return (long)w * h * Math.Max(1, bpp);
+        return (long)image.Width * image.Height * Math.Max(1, DecodedImage.BytesPerPixel(image.Encoding));
     }
 
     public void UpdateAccessTime()
@@ -65,7 +47,7 @@ public static class BitmapLoader
 {
     private static readonly ConcurrentDictionary<string, BitmapCacheItem> _cache = new();
     // 在途解码去重：同路径请求共享同一任务，完成后移除
-    private static readonly ConcurrentDictionary<string, Lazy<Task<Bitmap?>>> _inFlight = new();
+    private static readonly ConcurrentDictionary<string, Lazy<Task<DecodedImage?>>> _inFlight = new();
     private static readonly object _cleanupLock = new();
 
     // 淘汰保护集：临近当前图与最近浏览过的路径，淘汰选择时整体排到最后（volatile 整体替换）
@@ -218,14 +200,14 @@ public static class BitmapLoader
 
                 if (sorted.Count == 0) break;
 
-                var itemsToRemove = new List<(string key, Bitmap bmp)>();
+                var itemsToRemove = new List<(string key, DecodedImage img)>();
                 long willFree = 0;
 
                 foreach (var kv in sorted)
                 {
                     if (_cache.TryRemove(kv.Key, out var item))
                     {
-                        itemsToRemove.Add((kv.Key, item.Bitmap));
+                        itemsToRemove.Add((kv.Key, item.Image));
                         willFree += item.Size;
                         if (currentSize - willFree + Interlocked.Read(ref _reservedBytes) + needBytes <= safeLimit)
                             break;
@@ -244,7 +226,7 @@ public static class BitmapLoader
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     foreach (var t in itemsToRemove)
-                        t.bmp.Dispose();
+                        t.img.Dispose();
                 });
 
                 GC.Collect();
@@ -284,7 +266,7 @@ public static class BitmapLoader
     /// <summary>
     /// 异步获取图片（带缓存和EXIF旋转）；同路径并发请求在途去重，共享同一解码任务。
     /// </summary>
-    public static Task<Bitmap?> GetBitmapAsync(IFileRef file, CancellationToken ct = default)
+    public static Task<DecodedImage?> GetBitmapAsync(IFileRef file, CancellationToken ct = default)
     {
         var filePath = file.PathKey;
         
@@ -292,11 +274,11 @@ public static class BitmapLoader
         if (_cache.TryGetValue(filePath, out var cachedItem))
         {
             cachedItem.UpdateAccessTime();
-            return Task.FromResult<Bitmap?>(cachedItem.Bitmap);
+            return Task.FromResult<DecodedImage?>(cachedItem.Image);
         }
 
         // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
-        var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<Bitmap?>>(
+        var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
             () => LoadAndCacheAsync(file, filePath, ct),
             LazyThreadSafetyMode.ExecutionAndPublication));
         var task = lazy.Value;
@@ -306,7 +288,7 @@ public static class BitmapLoader
     /// <summary>
     /// 等待在途任务完成（无论成败）后将其移出去重表；只移除自己那一轮 Lazy，避免误删新一轮请求。
     /// </summary>
-    private static async Task<Bitmap?> AwaitInFlightAsync(string filePath, Lazy<Task<Bitmap?>> lazy, Task<Bitmap?> task)
+    private static async Task<DecodedImage?> AwaitInFlightAsync(string filePath, Lazy<Task<DecodedImage?>> lazy, Task<DecodedImage?> task)
     {
         try
         {
@@ -314,14 +296,14 @@ public static class BitmapLoader
         }
         finally
         {
-            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<Bitmap?>>>(filePath, lazy));
+            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<DecodedImage?>>>(filePath, lazy));
         }
     }
 
     /// <summary>
     /// 缓存未命中路径：容量保障 → 线程池解码 → 入缓存。
     /// </summary>
-    private static async Task<Bitmap?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct)
+    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct)
     {
         // 在解码前进行容量保障（基于估算）
         try
@@ -334,11 +316,11 @@ public static class BitmapLoader
         try
         {
             // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
-            var bitmap = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
-            if (bitmap == null) return null;
+            var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
+            if (image == null) return null;
             
             // 添加到缓存
-            var cacheItem = new BitmapCacheItem(bitmap, filePath);
+            var cacheItem = new BitmapCacheItem(image, filePath);
             _cache[filePath] = cacheItem;
             
             // 通知缓存状态变化（在UI线程中触发）
@@ -347,7 +329,7 @@ public static class BitmapLoader
             // 异步清理缓存
             _ = Task.Run(CleanupCache);
             
-            return bitmap;
+            return image;
         }
         catch (Exception ex)
         {
@@ -359,37 +341,37 @@ public static class BitmapLoader
     /// <summary>
     /// 加载图片并应用EXIF旋转
     /// </summary>
-    private static async Task<Bitmap?> LoadBitmapWithExifRotationAsync(IFileRef file, CancellationToken ct = default)
+    private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, CancellationToken ct = default)
     {
         try
         {
-            Bitmap? originalBitmap = null;
+            DecodedImage? originalImage = null;
             // RAW 平台解码器（macOS ImageIO）内部已应用 EXIF 方向，下方不再二次旋转
             bool decoderPreRotated = false;
 
             // 检查是否为 HEIF 格式
             if (HeifLoader.IsHeifFile(file))
             {
-                originalBitmap = await HeifLoader.LoadHeifBitmapAsync(file).ConfigureAwait(false);
+                originalImage = await HeifLoader.LoadHeifBitmapAsync(file).ConfigureAwait(false);
             }
             else if (RawLoader.IsRawFile(file))
             {
-                originalBitmap = await RawLoader.LoadRawBitmapAsync(file).ConfigureAwait(false);
-                decoderPreRotated = originalBitmap != null;
+                originalImage = await RawLoader.LoadRawBitmapAsync(file).ConfigureAwait(false);
+                decoderPreRotated = originalImage != null;
             }
             else
             {
                 ct.ThrowIfCancellationRequested();
                 await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
                 ct.ThrowIfCancellationRequested();
-                originalBitmap = new Bitmap(stream);
+                originalImage = SkiaImageCodec.Decode(stream);
             }
             
-            // 验证原始位图是否有效
-            if (originalBitmap == null || originalBitmap.PixelSize.Width <= 0 || originalBitmap.PixelSize.Height <= 0)
+            // 验证原始图像是否有效
+            if (originalImage == null || originalImage.Width <= 0 || originalImage.Height <= 0)
             {
-                Console.WriteLine($"Invalid bitmap loaded from file: {file.Name}");
-                originalBitmap?.Dispose();
+                Console.WriteLine($"Invalid image loaded from file: {file.Name}");
+                originalImage?.Dispose();
                 return null;
             }
             
@@ -399,19 +381,19 @@ public static class BitmapLoader
             // 只有 3/6/8 需要旋转，其余（包括 0、1 及未知值）均视为无旋转
             if (orientation != 3 && orientation != 6 && orientation != 8)
             {
-                return ConvertToDesiredFormat(originalBitmap);
+                return ConvertToDesiredFormat(originalImage);
             }
             
-            // 应用EXIF旋转，此过程会直接生成最终格式的位图
-            var finalBitmap = ApplyExifRotation(originalBitmap, orientation);
+            // 应用EXIF旋转，此过程会直接生成最终格式的图像
+            var finalImage = ApplyExifRotation(originalImage, orientation);
             
             // 释放原图内存
-            originalBitmap.Dispose();
+            originalImage.Dispose();
             
-            if (finalBitmap == null)
+            if (finalImage == null)
                 throw new InvalidOperationException($"EXIF 旋转失败（方向值 {orientation}）");
             
-            return finalBitmap;
+            return finalImage;
         }
         catch (Exception ex)
         {
@@ -420,104 +402,48 @@ public static class BitmapLoader
         }
     }
 
-    // 将位图按设置转为 Rgb24（忽略透明度）或原样返回
-    private static unsafe Bitmap ConvertToDesiredFormat(Bitmap source)
+    // 将图像按设置转为 Rgb24（忽略透明度）或原样返回；成功转换时释放传入图像
+    private static DecodedImage ConvertToDesiredFormat(DecodedImage source)
     {
         // 未开启忽略透明度或源格式已符合要求，则原样返回
-        if (!IgnoreAlpha || source.Format == PixelFormats.Rgb24)
+        if (!IgnoreAlpha || source.Encoding == PixelEncoding.Rgb24)
         {
             return source;
         }
 
-        // 仅处理带 Alpha 通道的常见格式
-        if (source.Format != PixelFormats.Bgra8888 && source.Format != PixelFormats.Rgba8888)
+        // 仅处理 Bgra32 来源
+        if (source.Encoding != PixelEncoding.Bgra32)
         {
             return source;
         }
-
-        var size = source.PixelSize;
-        if (size.Width <= 0 || size.Height <= 0)
-        {
-            return source;
-        }
-
-        WriteableBitmap? sourceWritable = null;
-        bool sourceIsOriginal = source is WriteableBitmap;
 
         try
         {
-            // 确保我们有一个可写的源位图
-            if (sourceIsOriginal)
+            var w = source.Width;
+            var h = source.Height;
+            var rgb = new byte[(long)w * h * 3];
+            for (int y = 0; y < h; y++)
             {
-                sourceWritable = (WriteableBitmap)source;
-            }
-            else
-            {
-                // 如果源不是 WriteableBitmap (例如 RenderTargetBitmap 或 Bitmap)，则复制一份
-                sourceWritable = new WriteableBitmap(size, source.Dpi, source.Format.Value, source.AlphaFormat);
-                using (var lockedFramebuffer = sourceWritable.Lock())
+                var srcRow = (long)y * source.Stride;
+                var destRow = (long)y * w * 3;
+                for (int x = 0; x < w; x++)
                 {
-                    source.CopyPixels(new PixelRect(size), lockedFramebuffer.Address, lockedFramebuffer.RowBytes * size.Height, lockedFramebuffer.RowBytes);
-                }
-                source.Dispose(); // 原始的非可写位图可以被释放了
-            }
-
-            // 创建目标位图，格式为 Rgb24 (每像素3字节)
-            var target = new WriteableBitmap(size, sourceWritable.Dpi, PixelFormats.Rgb24);
-
-            using (var sourceLock = sourceWritable.Lock())
-            using (var targetLock = target.Lock())
-            {
-                var sourcePtr = (byte*)sourceLock.Address;
-                var targetPtr = (byte*)targetLock.Address;
-                int sourceStride = sourceLock.RowBytes;
-                int targetStride = targetLock.RowBytes;
-
-                bool isBgra = sourceWritable.Format == PixelFormats.Bgra8888;
-
-                for (int y = 0; y < size.Height; y++)
-                {
-                    // 获取当前行的起始指针
-                    var sourceLine = sourcePtr + y * sourceStride;
-                    var targetLine = targetPtr + y * targetStride;
-
-                    for (int x = 0; x < size.Width; x++)
-                    {
-                        // 源像素为4字节，目标像素为3字节
-                        byte* pSource = sourceLine + x * 4;
-                        byte* pTarget = targetLine + x * 3;
-
-                        if (isBgra) // BGRA8888 -> Rgb24
-                        {
-                            // Avalonia 在非 Windows 平台（如 macOS, Linux, Android）上
-                            // 实际可能是 RGBA 顺序，但 Format 报告为 Bgra8888。
-                            // 为了跨平台兼容，我们检查字节序。
-                            // R(pSource[2]), G(pSource[1]), B(pSource[0])
-                            pTarget[0] = pSource[2]; // R
-                            pTarget[1] = pSource[1]; // G
-                            pTarget[2] = pSource[0]; // B
-                        }
-                        else // RGBA8888 -> Rgb24
-                        {
-                            // R(pSource[0]), G(pSource[1]), B(pSource[2])
-                            pTarget[0] = pSource[0]; // R
-                            pTarget[1] = pSource[1]; // G
-                            pTarget[2] = pSource[2]; // B
-                        }
-                    }
+                    var si = srcRow + x * 4;
+                    var di = destRow + x * 3;
+                    // BGRA8888: B=p[0], G=p[1], R=p[2]
+                    rgb[di] = source.Pixels[si + 2];     // R
+                    rgb[di + 1] = source.Pixels[si + 1]; // G
+                    rgb[di + 2] = source.Pixels[si];     // B
                 }
             }
 
-            // 转换成功，释放临时的可写源位图
-            sourceWritable.Dispose();
-            return target;
+            source.Dispose();
+            return new DecodedImage(rgb, w, h, w * 3, PixelEncoding.Rgb24);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Failed to convert bitmap to Rgb24: {ex.Message}");
-            // 如果转换失败，返回我们拥有的最新位图
-            // 如果我们创建了一个副本，则返回该副本，否则返回原始位图
-            return sourceIsOriginal ? source : (sourceWritable ?? source);
+            Console.WriteLine($"Failed to convert image to Rgb24: {ex.Message}");
+            return source;
         }
     }
     
@@ -539,161 +465,41 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 应用EXIF旋转到位图
+    /// 应用EXIF旋转到图像
     /// </summary>
-    private static Bitmap? ApplyExifRotation(Bitmap originalBitmap, int orientation)
+    private static DecodedImage? ApplyExifRotation(DecodedImage originalImage, int orientation)
     {
-        if (originalBitmap == null)
-        {
-            Console.WriteLine("Cannot apply rotation to null bitmap");
-            return null;
-        }
-        
         try
         {
-            Bitmap? rotatedBitmap = orientation switch
+            DecodedImage? rotatedImage = orientation switch
             {
-                3 => RotateBitmap(originalBitmap, 180),
-                6 => RotateBitmap(originalBitmap, 90),
-                8 => RotateBitmap(originalBitmap, 270),
+                3 => SkiaImageCodec.ApplyOrientation(originalImage, 180, false),
+                6 => SkiaImageCodec.ApplyOrientation(originalImage, 90, false),
+                8 => SkiaImageCodec.ApplyOrientation(originalImage, 270, false),
                 _ => null
             };
 
-            if (rotatedBitmap == null)
+            if (rotatedImage == null)
             {
-                // 如果旋转失败或不需要旋转，返回原始位图的副本以统一后续处理流程
-                // 但在此调用流程中，originalBitmap 会被释放，所以这里返回 null
+                // 旋转失败时返回 null，由调用方处理
                 return null;
             }
 
             // 检查是否需要移除 Alpha 通道
-            bool needsConversion = IgnoreAlpha && 
-                                   (rotatedBitmap.Format == PixelFormats.Bgra8888 || rotatedBitmap.Format == PixelFormats.Rgba8888);
+            bool needsConversion = IgnoreAlpha && rotatedImage.Encoding == PixelEncoding.Bgra32;
 
             if (needsConversion)
             {
-                // ConvertToDesiredFormat 会在成功后 Dispose 传入的 rotatedBitmap
-                return ConvertToDesiredFormat(rotatedBitmap);
+                // ConvertToDesiredFormat 会在成功后 Dispose 传入的 rotatedImage
+                return ConvertToDesiredFormat(rotatedImage);
             }
 
-            return rotatedBitmap;
+            return rotatedImage;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to apply EXIF rotation (orientation: {orientation}): {ex.Message}");
             return null; // 旋转失败时返回null，由调用方处理
-        }
-    }
-    
-    /// <summary>
-    /// 旋转位图
-    /// </summary>
-    private static Bitmap? RotateBitmap(Bitmap originalBitmap, int degrees)
-    {
-        if (originalBitmap == null)
-        {
-            Console.WriteLine("Cannot rotate null bitmap");
-            return null;
-        }
-        
-        try
-        {
-            var originalSize = originalBitmap.PixelSize;
-            
-            // 验证原始尺寸
-            if (originalSize.Width <= 0 || originalSize.Height <= 0)
-            {
-                Console.WriteLine($"Invalid bitmap size: {originalSize.Width}x{originalSize.Height}");
-                return originalBitmap;
-            }
-            
-            var newSize = (degrees % 180 == 0) ? 
-                originalSize : 
-                new PixelSize(originalSize.Height, originalSize.Width);
-            
-            // 验证新尺寸
-            if (newSize.Width <= 0 || newSize.Height <= 0)
-            {
-                Console.WriteLine($"Invalid calculated size for rotation: {newSize.Width}x{newSize.Height}");
-                return null;
-            }
-            
-            // 创建旋转后的位图，直接使用最终的目标格式
-            RenderTargetBitmap? renderTarget = null;
-            try
-            {
-                // 修正：RenderTargetBitmap 构造函数没有 format 参数
-                renderTarget = new RenderTargetBitmap(newSize, originalBitmap.Dpi);
-                if (renderTarget == null)
-                {
-                    Console.WriteLine("Failed to create RenderTargetBitmap");
-                    return null;
-                }
-                
-                using var context = renderTarget.CreateDrawingContext();
-                if (context == null)
-                {
-                    Console.WriteLine("Failed to create DrawingContext");
-                    renderTarget.Dispose();
-                    return null;
-                }
-                
-                // 计算旋转中心
-                var centerX = newSize.Width / 2.0;
-                var centerY = newSize.Height / 2.0;
-                
-                // 应用变换矩阵
-                var transforms = new List<Matrix>();
-                
-                // 移动到原点
-                transforms.Add(Matrix.CreateTranslation(-centerX, -centerY));
-                
-                // 旋转
-                var rotation = Matrix.CreateRotation(Math.PI * degrees / 180.0);
-                transforms.Add(rotation);
-                
-                // 移回中心
-                transforms.Add(Matrix.CreateTranslation(centerX, centerY));
-                
-                // 组合所有变换
-                var combinedTransform = Matrix.Identity;
-                foreach (var transform in transforms)
-                {
-                    combinedTransform *= transform;
-                }
-                
-                // 应用变换
-                using (context.PushTransform(combinedTransform))
-                {
-                    // 计算绘制矩形
-                    var destRect = new Rect(0, 0, originalSize.Width, originalSize.Height);
-                    if (degrees % 180 != 0)
-                    {
-                        destRect = new Rect(
-                            (newSize.Width - originalSize.Width) / 2.0,
-                            (newSize.Height - originalSize.Height) / 2.0,
-                            originalSize.Width,
-                            originalSize.Height
-                        );
-                    }
-                    
-                    // 绘制原图。DrawImage会处理到目标RenderTarget格式的转换
-                    context.DrawImage(originalBitmap, destRect);
-                }
-                
-                return renderTarget;
-            }
-            catch (Exception ex)
-            {
-                renderTarget?.Dispose();
-                Console.WriteLine($"Failed during bitmap rotation rendering: {ex.Message}");
-                return null;
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Failed to rotate bitmap by {degrees} degrees: {ex.Message}");
-            return null;
         }
     }
     
@@ -759,7 +565,7 @@ public static class BitmapLoader
                         UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key, false));
                         
                         // 在UI线程中释放位图
-                        UiDispatcher.Post(() => item.Bitmap.Dispose());
+                        UiDispatcher.Post(() => item.Image.Dispose());
                     }
                 }
                 
@@ -803,7 +609,7 @@ public static class BitmapLoader
                 {
                     foreach (var item in items)
                     {
-                        item.Bitmap.Dispose();
+                        item.Image.Dispose();
                     }
                 });
                 
@@ -826,7 +632,7 @@ public static class BitmapLoader
             // 通知缓存状态变化（在UI线程中触发）
             UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, false));
             
-            UiDispatcher.Post(() => item.Bitmap.Dispose());
+            UiDispatcher.Post(() => item.Image.Dispose());
         }
     }
     
@@ -924,11 +730,11 @@ public static class BitmapLoader
                 if (before - willFree <= targetBytes) break;
             }
 
-            var removedItems = new List<(string key, Bitmap bmp)>();
+            var removedItems = new List<(string key, DecodedImage img)>();
             foreach (var key in toRemove)
             {
                 if (_cache.TryRemove(key, out var item))
-                    removedItems.Add((key, item.Bitmap));
+                    removedItems.Add((key, item.Image));
             }
 
             if (removedItems.Count > 0)
@@ -946,7 +752,7 @@ public static class BitmapLoader
                 UiDispatcher.Post(() =>
                 {
                     foreach (var t in removedItems)
-                        t.bmp.Dispose();
+                        t.img.Dispose();
                 });
             }
 

@@ -3,8 +3,6 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
@@ -18,13 +16,13 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     public bool IsSupported => OperatingSystem.IsIOS();
 
     // 替换：真正异步 + 路径不可用时用内存数据回退
-    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+    public async Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
     {
         var (path, data) = await PreparePathOrDataAsync(file);
         return DecodeWithImageIO(path, null, data);
     }
 
-    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    public async Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         var (path, data) = await PreparePathOrDataAsync(file);
         return DecodeWithImageIO(path, maxSize, data);
@@ -52,7 +50,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     }
 
     // 修改：支持 path 或 memory data
-    internal static Bitmap? DecodeWithImageIO(string? path, int? maxSize, byte[]? fileBytes = null)
+    internal static DecodedImage? DecodeWithImageIO(string? path, int? maxSize, byte[]? fileBytes = null)
     {
         if (string.IsNullOrEmpty(path) && (fileBytes == null || fileBytes.Length == 0))
             return null;
@@ -351,78 +349,13 @@ public sealed class iOSHeifDecoder : IHeifDecoder
         }
     }
 
-    private static Bitmap? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
+    private static DecodedImage? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
     {
         try
         {
-            var expected = width * height * 4;
+            var expected = (long)width * height * 4;
             if (bgraData.Length < expected) return null;
-
-            // 修改：按设置创建 Bgr24 或 Bgra8888
-            if (BitmapLoader.IgnoreAlpha)
-            {
-                var bgr = new byte[width * height * 3];
-
-                // BGRA -> BGR
-                for (int i = 0, j = 0; i < expected; i += 4, j += 3)
-                {
-                    bgr[j + 0] = bgraData[i + 0]; // B
-                    bgr[j + 1] = bgraData[i + 1]; // G
-                    bgr[j + 2] = bgraData[i + 2]; // R
-                }
-
-                var bmp = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
-                using (var locked = bmp.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var srcStride = width * 3;
-
-                    unsafe
-                    {
-                        var destPtr = (byte*)locked.Address;
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOffset + copy > bgr.Length) break;
-
-                            fixed (byte* srcPtr = &bgr[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destPtr + destOffset, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
-            }
-            else
-            {
-                var bmp = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
-                using (var locked = bmp.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var srcStride = width * 4;
-
-                    unsafe
-                    {
-                        var destPtr = (byte*)locked.Address;
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOffset + copy > bgraData.Length) break;
-
-                            fixed (byte* srcPtr = &bgraData[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destPtr + destOffset, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
-            }
+            return new DecodedImage(bgraData, width, height, width * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {

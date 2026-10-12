@@ -2,8 +2,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
@@ -14,13 +12,13 @@ public sealed class MacHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsMacOS();
 
-    public Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+    public Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
         => Task.Run(() => DecodeWithImageIO(file.PathKey, null));
 
-    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
         => Task.Run(() => DecodeWithImageIO(file.PathKey, maxSize));
 
-    internal static Bitmap? DecodeWithImageIO(string path, int? maxSize)
+    internal static DecodedImage? DecodeWithImageIO(string path, int? maxSize)
     {
         if (string.IsNullOrEmpty(path)) return null;
 
@@ -308,76 +306,13 @@ public sealed class MacHeifDecoder : IHeifDecoder
         }
     }
 
-    private static Bitmap? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
+    private static DecodedImage? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
     {
         try
         {
-            var expected = width * height * 4;
+            var expected = (long)width * height * 4;
             if (bgraData.Length < expected) return null;
-
-            // 修改：按设置创建 Bgr24 或 Bgra8888
-            if (BitmapLoader.IgnoreAlpha)
-            {
-                var bgr = new byte[width * height * 3];
-                for (int i = 0, j = 0; i < expected; i += 4, j += 3)
-                {
-                    bgr[j + 0] = bgraData[i + 0];
-                    bgr[j + 1] = bgraData[i + 1];
-                    bgr[j + 2] = bgraData[i + 2];
-                }
-
-                var bmp = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
-                using (var locked = bmp.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var srcStride = width * 3;
-
-                    unsafe
-                    {
-                        var destPtr = (byte*)locked.Address;
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOffset + copy > bgr.Length) break;
-
-                            fixed (byte* srcPtr = &bgr[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destPtr + destOffset, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
-            }
-            else
-            {
-                var bmp = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
-                using (var locked = bmp.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var srcStride = width * 4;
-
-                    unsafe
-                    {
-                        var destPtr = (byte*)locked.Address;
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOffset + copy > bgraData.Length) break;
-
-                            fixed (byte* srcPtr = &bgraData[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destPtr + destOffset, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
-            }
+            return new DecodedImage(bgraData, width, height, width * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {

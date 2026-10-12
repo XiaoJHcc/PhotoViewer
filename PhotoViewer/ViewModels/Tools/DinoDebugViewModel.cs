@@ -8,6 +8,7 @@ using Avalonia.Media.Imaging;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Platform;
 using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.ViewModels.Tools;
@@ -154,7 +155,9 @@ public sealed class DinoDebugViewModel : ReactiveObject
         RefGridY = gy;
 
         var cos = PatchHeatmap.ComputeRefCosine(_patchTokens, gx, gy);
-        var bmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
+        var decoded = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
+        var bmp = DecodedImageAdapter.ToBitmap(decoded);
+        decoded.Dispose();
         SwapBitmap(ref _cosineMap, bmp, nameof(CosineMap));
     }
 
@@ -178,8 +181,8 @@ public sealed class DinoDebugViewModel : ReactiveObject
             Status = $"计算中…  {file.Name}";
         });
 
-        Bitmap? dinoBitmap = null;
-        Bitmap? cvBitmap = null;
+        DecodedImage? dinoBitmap = null;
+        DecodedImage? cvBitmap = null;
         bool thumbnailHandedOff = false;
         try
         {
@@ -205,14 +208,14 @@ public sealed class DinoDebugViewModel : ReactiveObject
 
             ct.ThrowIfCancellationRequested();
 
-            int bw = dinoBitmap.PixelSize.Width;
-            int bh = dinoBitmap.PixelSize.Height;
+            int bw = dinoBitmap.Width;
+            int bh = dinoBitmap.Height;
             double ratio = bh > 0 ? (double)bw / bh : 1.0;
 
             // CV 源图像:大图优先,失败降级到 DINO 缩略图。所有 diagonal 都从这里推。
             var cvSourceBitmap = cvBitmap ?? dinoBitmap;
-            int cvW = cvSourceBitmap.PixelSize.Width;
-            int cvH = cvSourceBitmap.PixelSize.Height;
+            int cvW = cvSourceBitmap.Width;
+            int cvH = cvSourceBitmap.Height;
 
             // CV 7 标量:命中缓存直接用,否则现算。
             CvGridResult cv = cachedCv ?? await CvGridExtractor.ExtractAsync(cvSourceBitmap, ct).ConfigureAwait(false);
@@ -236,8 +239,8 @@ public sealed class DinoDebugViewModel : ReactiveObject
             var rigidText = FormatRigidMotion(rigid, diagonal);
 
             // DINO：PCA-RGB + 初始 cosine（中心参考点）
-            Bitmap? pcaBmp = null;
-            Bitmap? cosineBmp = null;
+            DecodedImage? pcaBmp = null;
+            DecodedImage? cosineBmp = null;
             int rx = PatchGridPixels / 2;
             int ry = PatchGridPixels / 2;
             if (patches != null)
@@ -263,16 +266,21 @@ public sealed class DinoDebugViewModel : ReactiveObject
                     thumbnailToShow.Dispose();
                     return;
                 }
-                SwapBitmap(ref _sourceThumbnail, thumbnailToShow, nameof(SourceThumbnail));
+                // 像素已拷入位图,DecodedImage 中间体随即释放
+                SwapBitmap(ref _sourceThumbnail, DecodedImageAdapter.ToBitmap(thumbnailToShow), nameof(SourceThumbnail));
+                thumbnailToShow.Dispose();
                 AspectRatio = ratio > 0 ? ratio : 1.0;
                 Crosshair = null;
                 RefGridX = rx;
                 RefGridY = ry;
-                SwapBitmap(ref _sharpnessMap, sharpnessBmp, nameof(SharpnessMap));
+                SwapBitmap(ref _sharpnessMap, DecodedImageAdapter.ToBitmap(sharpnessBmp), nameof(SharpnessMap));
+                sharpnessBmp?.Dispose();
                 ShakeField = shakeField;
                 RigidMotionText = rigidText;
-                SwapBitmap(ref _pcaRgbMap, pcaBmp, nameof(PcaRgbMap));
-                SwapBitmap(ref _cosineMap, cosineBmp, nameof(CosineMap));
+                SwapBitmap(ref _pcaRgbMap, DecodedImageAdapter.ToBitmap(pcaBmp), nameof(PcaRgbMap));
+                pcaBmp?.Dispose();
+                SwapBitmap(ref _cosineMap, DecodedImageAdapter.ToBitmap(cosineBmp), nameof(CosineMap));
+                cosineBmp?.Dispose();
                 Status = file.Name;
                 IsBusy = false;
             });

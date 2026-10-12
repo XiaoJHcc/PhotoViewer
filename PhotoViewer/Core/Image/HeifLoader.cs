@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Image;
@@ -11,8 +10,8 @@ public interface IHeifDecoder
 {
     bool IsSupported { get; }
     
-    Task<Bitmap?> LoadBitmapAsync(IFileRef file);
-    Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize);
+    Task<DecodedImage?> LoadBitmapAsync(IFileRef file);
+    Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize);
 
 }
 
@@ -71,19 +70,19 @@ public static class HeifLoader
         }
     }
 
-    public static Task<Bitmap?> LoadHeifBitmapAsync(IFileRef file)
+    public static Task<DecodedImage?> LoadHeifBitmapAsync(IFileRef file)
     {
         _lastDecodeError = null;
         if (!_decoder.IsSupported)
         {
             _lastDecodeError = "HEIF 解码器不可用（未初始化或当前平台不支持）";
-            return Task.FromResult<Bitmap?>(null);
+            return Task.FromResult<DecodedImage?>(null);
         }
         return _decoder.LoadBitmapAsync(file);
     }
 
-    public static Task<Bitmap?> LoadHeifThumbnailAsync(IFileRef file, int maxSize = 120)
-        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
+    public static Task<DecodedImage?> LoadHeifThumbnailAsync(IFileRef file, int maxSize = 120)
+        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<DecodedImage?>(null);
 
     /// <summary>
     /// 设置 CPU 软件解码路径的最大并发数。
@@ -124,6 +123,6 @@ internal sealed class NoopHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => false;
 
-    public Task<Bitmap?> LoadBitmapAsync(IFileRef file) => Task.FromResult<Bitmap?>(null);
-    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<Bitmap?>(null);
+    public Task<DecodedImage?> LoadBitmapAsync(IFileRef file) => Task.FromResult<DecodedImage?>(null);
+    public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<DecodedImage?>(null);
 }

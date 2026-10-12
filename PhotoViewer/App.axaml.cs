@@ -41,6 +41,7 @@ public partial class App : Application
         UiDispatcher.Initialize(new AvaloniaUiDispatcher());
         NativeWindowPresenter.Initialize(new AvaloniaWindowPresenter());
         FilePicker.Initialize(new AvaloniaFilePickerService());
+        AppResources.Initialize(new AvaloniaAppResourceProvider());
 
         var vm = new MainViewModel();
 

@@ -12,6 +12,7 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Platform;
 using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
@@ -232,9 +233,9 @@ public sealed class AnalysisViewModel : ReactiveObject
         // 增强模式且增强图就绪且开启即时计算 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
         // 未开启即时计算时跳过本分支,落下面的 DB 路径(未提取则保持"未提取"占位)。
         if (_main.Settings.AnalysisImmediateCompute &&
-            _main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap is Bitmap enhanced)
+            _main.ImageVM.IsEnhanced && _main.ImageVM.EnhancedBitmap != null && _main.ImageVM.CurrentDecodedImage is { } enhanced)
         {
-            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.Path.LocalPath, enhanced: true);
+            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.PathKey, enhanced: true);
             var enhancedHit = AnalysisResultCache.TryGetImmediate(enhancedKey);
             if (enhancedHit != null) ApplyEntrySync(enhancedHit);
             else
@@ -292,7 +293,9 @@ public sealed class AnalysisViewModel : ReactiveObject
         RefGridY = gy;
 
         var cos = PatchHeatmap.ComputeRefCosine(_patchTokens, gx, gy);
-        var bmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
+        var decoded = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
+        var bmp = DecodedImageAdapter.ToBitmap(decoded);
+        decoded.Dispose();
 
         // 用户点击重算的 cosine 位图归 VM 所有;旧的同样归 VM 才 dispose,中心位图(cache 所有)不动。
         var old = _customCosineBmp;
@@ -419,10 +422,10 @@ public sealed class AnalysisViewModel : ReactiveObject
         _patchTokens = entry.Patches;
         AspectRatio = entry.AspectRatio;
 
-        _sharpnessItem.Source = entry.SharpnessBmp;
+        _sharpnessItem.Source = DecodedImageAdapter.ToBitmap(entry.SharpnessBmp);
         _sharpnessItem.PlaceholderText = entry.SharpnessBmp == null ? "未提取" : null;
 
-        _pcaItem.Source = entry.PcaBmp;
+        _pcaItem.Source = DecodedImageAdapter.ToBitmap(entry.PcaBmp);
         _pcaItem.PlaceholderText = entry.PcaBmp == null ? "未提取" : null;
 
         // 切图时还原到中心参考点;若有历史用户点击位图,这里释放(它由 VM 拥有)。
@@ -432,7 +435,7 @@ public sealed class AnalysisViewModel : ReactiveObject
         int ry = PatchGridPixels / 2;
         RefGridX = rx;
         RefGridY = ry;
-        _cosineItem.Source = entry.CenterCosineBmp;
+        _cosineItem.Source = DecodedImageAdapter.ToBitmap(entry.CenterCosineBmp);
         _cosineItem.PlaceholderText = entry.CenterCosineBmp == null ? "未提取" : null;
         _cosineItem.ShortLabel = FormatCosineLabel(rx, ry);
         oldCustom?.Dispose();
@@ -448,18 +451,18 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// <see cref="AnalysisResultCache"/> 的即时缓存(随主图缓存清理失效),位图归 cache 所有。
     /// 返回是否成功贴出结果(被取消或失败均返回 false)。
     /// </summary>
-    private async Task<bool> ComputeDiagnosticsAsync(Bitmap bitmap, string cacheKey, CancellationToken ct)
+    private async Task<bool> ComputeDiagnosticsAsync(DecodedImage image, string cacheKey, CancellationToken ct)
     {
         try
         {
             ct.ThrowIfCancellationRequested();
-            int cvW = bitmap.PixelSize.Width;
-            int cvH = bitmap.PixelSize.Height;
+            int cvW = image.Width;
+            int cvH = image.Height;
 
             // CV 走位图原始分辨率;DINO 直接喂入(内部缩放到 518)。
-            var cv = await CvGridExtractor.ExtractAsync(bitmap, ct).ConfigureAwait(false);
+            var cv = await CvGridExtractor.ExtractAsync(image, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
-            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(bitmap, includePatches: true, ct).ConfigureAwait(false);
+            var (_, patches) = await DinoFeatureExtractor.ExtractDualAsync(image, includePatches: true, ct).ConfigureAwait(false);
             ct.ThrowIfCancellationRequested();
 
             var data = new AnalysisDataReader.Result
@@ -511,7 +514,7 @@ public sealed class AnalysisViewModel : ReactiveObject
             ct.ThrowIfCancellationRequested();
 
             // 延迟 / 让位期间可能已被其他路径算好(如来回翻页),命中则直接贴,不再重算。
-            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.Path.LocalPath, enhanced: false);
+            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.PathKey, enhanced: false);
             var imm = AnalysisResultCache.TryGetImmediate(cacheKey);
             if (imm != null)
             {
@@ -519,8 +522,8 @@ public sealed class AnalysisViewModel : ReactiveObject
                 return;
             }
 
-            // 非增强时 SourceBitmap 即原片(归 BitmapLoader 缓存所有,VM 不 Dispose),后台读取安全。
-            var source = _main.ImageVM.SourceBitmap;
+            // 非增强时 CurrentDecodedImage 即原片(归 BitmapLoader 缓存所有,VM 不 Dispose),后台读取安全。
+            var source = _main.ImageVM.CurrentDecodedImage;
             if (source == null)
             {
                 PostDiagnosticPlaceholder("未提取", ct);
@@ -569,7 +572,7 @@ public sealed class AnalysisViewModel : ReactiveObject
     private async void RefreshHistogram()
     {
         int token = ++_histogramToken;
-        var source = _main.ImageVM.SourceBitmap;
+        var source = _main.ImageVM.CurrentDecodedImage;
         if (!_main.IsAnalysisViewVisible || source == null)
         {
             SwapHistogram(null, token);
@@ -577,7 +580,9 @@ public sealed class AnalysisViewModel : ReactiveObject
         }
         try
         {
-            var bmp = await Task.Run(() => HistogramRenderer.Render(source, 512, 512));
+            var decoded = await Task.Run(() => HistogramRenderer.Render(source, 512, 512));
+            var bmp = DecodedImageAdapter.ToBitmap(decoded);
+            decoded.Dispose();
             SwapHistogram(bmp, token);
         }
         catch (Exception ex)

@@ -3,8 +3,7 @@ using System.Buffers;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Core.AI;
 
@@ -40,10 +39,10 @@ public static class CvGridExtractor
     private const int MaxHalfWidthMin = 8;
 
     /// <summary>对外入口:异步包一层,实际计算在 <see cref="Extract"/> 里。</summary>
-    public static Task<CvGridResult> ExtractAsync(Bitmap bitmap, CancellationToken cancellationToken = default)
+    public static Task<CvGridResult> ExtractAsync(DecodedImage image, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(bitmap);
-        return Task.Run(() => Extract(bitmap, cancellationToken), cancellationToken);
+        ArgumentNullException.ThrowIfNull(image);
+        return Task.Run(() => Extract(image, cancellationToken), cancellationToken);
     }
 
     /// <summary>调试入口:直接喂 8-bit luma 平面(行优先),跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
@@ -54,10 +53,10 @@ public static class CvGridExtractor
         return ExtractCore(luma, w, h, cancellationToken);
     }
 
-    private static CvGridResult Extract(Bitmap bitmap, CancellationToken ct)
+    private static CvGridResult Extract(DecodedImage image, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        var (luma, w, h) = ReadLuminance(bitmap);
+        var (luma, w, h) = ReadLuminance(image);
         return ExtractCore(luma, w, h, ct);
     }
 
@@ -390,64 +389,30 @@ public static class CvGridExtractor
     }
 
     /// <summary>
-    /// 把任意格式 bitmap 归一到 BGRA8888 后按 Rec.709 转灰度。
+    /// 把图像按 Rec.709 转灰度(Bgra32 字节序:B,G,R,A)。
     /// 短边不足 MinBlockSize 时，<see cref="Extract"/> 会直接返回全 NaN 结果，由热力图渲染层兜底。
     /// </summary>
-    private static (float[] luma, int w, int h) ReadLuminance(Bitmap bitmap)
+    private static (float[] luma, int w, int h) ReadLuminance(DecodedImage image)
     {
-        var size = bitmap.PixelSize;
-        int w = size.Width;
-        int h = size.Height;
+        int w = image.Width;
+        int h = image.Height;
+        int srcStride = image.Stride;
+        var src = image.Pixels;
 
-        var target = new RenderTargetBitmap(new PixelSize(w, h));
-        try
+        var luma = new float[w * h];
+        Parallel.For(0, h, y =>
         {
-            using (var ctx = target.CreateDrawingContext())
+            long row = (long)y * srcStride;
+            int dst = y * w;
+            for (int x = 0; x < w; x++)
             {
-                ctx.DrawImage(bitmap, new Rect(0, 0, w, h));
+                long i = row + x * 4;
+                byte b = src[i + 0];
+                byte g = src[i + 1];
+                byte r = src[i + 2];
+                luma[dst + x] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
             }
-
-            int rowBytes = w * 4;
-            int totalBytes = rowBytes * h;
-            var rented = ArrayPool<byte>.Shared.Rent(totalBytes);
-            try
-            {
-                unsafe
-                {
-                    fixed (byte* ptr = rented)
-                    {
-                        target.CopyPixels(
-                            new PixelRect(0, 0, w, h),
-                            (IntPtr)ptr,
-                            totalBytes,
-                            rowBytes);
-                    }
-                }
-
-                var luma = new float[w * h];
-                Parallel.For(0, h, y =>
-                {
-                    int row = y * rowBytes;
-                    int dst = y * w;
-                    for (int x = 0; x < w; x++)
-                    {
-                        int i = row + x * 4;
-                        byte b = rented[i + 0];
-                        byte g = rented[i + 1];
-                        byte r = rented[i + 2];
-                        luma[dst + x] = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                    }
-                });
-                return (luma, w, h);
-            }
-            finally
-            {
-                ArrayPool<byte>.Shared.Return(rented);
-            }
-        }
-        finally
-        {
-            target.Dispose();
-        }
+        });
+        return (luma, w, h);
     }
 }

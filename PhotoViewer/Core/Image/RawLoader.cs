@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Image;
@@ -10,8 +9,8 @@ public interface IRawDecoder
 {
     bool IsSupported { get; }
 
-    Task<Bitmap?> LoadBitmapAsync(IFileRef file);
-    Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize);
+    Task<DecodedImage?> LoadBitmapAsync(IFileRef file);
+    Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize);
 }
 
 /// <summary>
@@ -69,24 +68,24 @@ public static class RawLoader
         }
     }
 
-    public static Task<Bitmap?> LoadRawBitmapAsync(IFileRef file)
+    public static Task<DecodedImage?> LoadRawBitmapAsync(IFileRef file)
     {
         _lastDecodeError = null;
         if (!_decoder.IsSupported)
         {
             _lastDecodeError = "RAW 解码器不可用（未初始化或当前平台不支持）";
-            return Task.FromResult<Bitmap?>(null);
+            return Task.FromResult<DecodedImage?>(null);
         }
         return _decoder.LoadBitmapAsync(file);
     }
 
-    public static Task<Bitmap?> LoadRawThumbnailAsync(IFileRef file, int maxSize = 120)
-        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
+    public static Task<DecodedImage?> LoadRawThumbnailAsync(IFileRef file, int maxSize = 120)
+        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<DecodedImage?>(null);
 
     private sealed class NoopRawDecoder : IRawDecoder
     {
         public bool IsSupported => false;
-        public Task<Bitmap?> LoadBitmapAsync(IFileRef file) => Task.FromResult<Bitmap?>(null);
-        public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<Bitmap?>(null);
+        public Task<DecodedImage?> LoadBitmapAsync(IFileRef file) => Task.FromResult<DecodedImage?>(null);
+        public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<DecodedImage?>(null);
     }
 }

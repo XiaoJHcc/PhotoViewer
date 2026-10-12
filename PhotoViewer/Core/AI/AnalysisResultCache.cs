@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Core.AI;
@@ -13,9 +12,8 @@ namespace PhotoViewer.Core.AI;
 /// 1. <see cref="ViewModels.Main.AnalysisViewModel"/> 切图 miss 后现算入缓存(主路径)。
 /// 2. <see cref="PhotoViewer.Core.Image.BitmapPrefetcher"/> 预取邻居位图时顺手预热(预热路径)。
 ///
-/// 容量按指纹计算,LRU 淘汰。**淘汰不主动 Dispose 位图** —— 32×32 BGRA 位图本体仅几 KB,native 资源由
-/// <see cref="WriteableBitmap"/> finalizer 兜底回收;相对地,我们换来"VM/Prefetcher 并发 TryGet/Put 不会出现
-/// use-after-dispose"的简单语义。
+/// 容量按指纹计算,LRU 淘汰。**淘汰不主动 Dispose 位图** —— 32×32 BGRA 图像为纯托管 byte[](DecodedImage),
+/// GC 兜底回收;相对地,我们换来"VM/Prefetcher 并发 TryGet/Put 不会出现 use-after-dispose"的简单语义。
 ///
 /// 另有按文件路径键的**即时计算缓存**(增强预览联动 / 未提取回退的产物):
 /// - 与指纹缓存同 Entry 形状、同"不主动 Dispose"语义,但不走 LRU — 生命周期跟随主图缓存:
@@ -40,13 +38,13 @@ public static class AnalysisResultCache
         public double AspectRatio { get; init; } = 1.0;
 
         /// <summary>PCA-RGB(DINO patch token 前 3 主成分),null 表示未提取 patch。</summary>
-        public Bitmap? PcaBmp { get; init; }
+        public DecodedImage? PcaBmp { get; init; }
 
         /// <summary>默认中心参考点(16,16)的 cosine 热力图,null 表示未提取 patch。</summary>
-        public Bitmap? CenterCosineBmp { get; init; }
+        public DecodedImage? CenterCosineBmp { get; init; }
 
         /// <summary>锐度图,null 表示未提取 CV。</summary>
-        public Bitmap? SharpnessBmp { get; init; }
+        public DecodedImage? SharpnessBmp { get; init; }
 
         /// <summary>抖动矢量场结构,null 表示未提取 CV。</summary>
         public ShakeField? ShakeField { get; init; }

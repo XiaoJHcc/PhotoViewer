@@ -68,33 +68,21 @@
 - UI 层适配 `AvaloniaFileRef/AvaloniaFolderRef` 直接委托 `IStorageFile/IStorageFolder`(行为零变化的关键:安全作用域书签、SAF 权限维持现状由 Avalonia 承载)。
 - 波及:`ImageFile`、`FolderViewModel`、`ExternalOpenService`、`ExifDetailViewModel`、`ImageViewModel`、`App.axaml.cs` 解析逻辑。
 
-### M4 — 像素货币 `DecodedImage` + `ColorEngine` 骨架(最大里程碑,拆三个子提交)
-**M4a — 契约与解码器出口**:
-- 新增 `Core/Image/DecodedImage.cs`:
-  ```csharp
-  public enum PixelFormat { Bgra32, Rgb24 }           // 匹配现有解码器实际输出
-  public enum NamedColorSpace { Srgb, DisplayP3, AdobeRgb, Unknown }
-  public sealed class DecodedImage : IDisposable {
-      public byte[] Pixels; public int Width, Height, Stride;
-      public PixelFormat Format; public NamedColorSpace ColorSpace; // Phase 0 恒为 Unknown/Srgb,不做转换
-      public int ExifOrientation;                                    // 1-8,为 M6 预留,M4 阶段恒 1
-  }
-  ```
-- 新增 `Core/Color/ColorEngine.cs` **骨架**:profile 解析/转换的接口与恒等实现(零行为变化;skcms 真实转换属 Phase 1/2,不在此阶段)。
-- 平台解码器(`IHeifDecoder`/`IRawDecoder` 四平台实现)出口从 Avalonia `Bitmap` 改为 `DecodedImage`(原生缓冲直接落 `byte[]`,少一次拷贝也不许——拷贝行为先保持,优化留 Phase 1)。
-- JPG 解码:Core 内以 **SkiaSharp `SKCodec`** 替代 Avalonia `Bitmap`/`DecodeToWidth`(`Directory.Packages.props` 增加 SkiaSharp 显式引用;输出格式保持 BGRA32 与现状一致)。
-- UI 层适配:`DecodedImageAdapter.ToBitmap(DecodedImage)`(写 `WriteableBitmap`),位于 UI 层。
+### M4 — 像素货币 `DecodedImage`(最大里程碑,一次做完,单个可编译提交)
 
-**M4b — 主链路切换**:`BitmapLoader`/`ThumbnailService`/`ImageFile.Thumbnail` 全部改产 `DecodedImage`;LRU 缓存改存 `DecodedImage`(估算逻辑适配新类型);VM 边界(`ImageViewModel.SourceBitmap` 等)经 adapter 转 `WriteableBitmap` 上屏 —— **VM 公共属性类型不变**(仍 `Avalonia.Bitmap`,VM 像素解耦留待原生壳阶段),View/axaml 零改动。
-
-**M4c — AI/分析链路**:`CvGridExtractor`/`DinoFeatureExtractor`/`AnalysisComputer`/`AnalysisResultCache`/`HistogramRenderer`/`ImageEnhancer` 去 Avalonia 位图依赖,改消费 `DecodedImage` 或原始缓冲;AI 设置页/诊断页经 adapter 显示。
-
-### M5 — EXIF 旋转元数据化
-- `DecodedImage.ExifOrientation` 落地:解码路径只读取不应用;`DecodedImageAdapter.ToBitmap` 内做旋转(搬现有 `RotateBitmap` 逻辑进 UI 层适配器);RAW 路径"跳过二次旋转"的现状语义必须保持(`BitmapLoader` RAW 分支注释)。
-- 完成后 Core 无任何像素级旋转代码。
+**实施定稿(2026-10-19,替代原 a/b/c 拆分与 M5)**:
+- `Core/Image/DecodedImage.cs`:`byte[] Pixels` + `Width/Height/Stride` + `PixelEncoding { Bgra32, Rgb24 }`(Bgra32=BGRA8888 premul,与 Avalonia ImmutableBitmap 一致)。**不携带 ExifOrientation**。
+- **Core 像素基座 = SkiaSharp 3.119.4-preview.1.1**(与 Avalonia 12.0.2 依赖严格同版,Directory.Packages.props 显式固定)。SkiaSharp 是图形库不是 UI 框架,Core 可自由用 `SKCodec/SKBitmap/SKCanvas` 做解码/缩放/旋转/裁剪。
+- `ColorEngine` **Phase 0 不做**(零行为变化下恒等骨架是无消费者的死代码),推迟到 Phase 2 与输出表面一起落地 —— 修订 master plan §5 第 1 项的拆分。
+- 旋转保持现状时机(解码后、入缓存前),实现从 RenderTargetBitmap 换成 SkiaSharp CPU 变换(90° 倍数无重采样损失);旋转元数据化(顶点变换)留 Phase 2 原生壳。原 M5 取消。
+- 适配层:`PhotoViewer/Platform/DecodedImageAdapter.cs`,`ConditionalWeakTable<DecodedImage, WriteableBitmap>` 保证每个 DecodedImage 至多转换一次;VM 公共属性(`SourceBitmap`/`Thumbnail` 等)类型不变,axaml 零改动。
+- LRU 缓存改存 `DecodedImage`;`Dispose` 语义退化为释放 byte[] 引用(纯托管,无原生资源),淘汰/Dispose 调用结构保持不变。
+- 波及:BitmapLoader(全链)/ HeifLoader / RawLoader / 四头 7 个解码器实现 / ImageViewModel / AnalysisViewModel / DinoDebugViewModel / Core/AI(CvGridExtractor、DinoFeatureExtractor、AnalysisComputer、AnalysisResultCache、HeatmapBitmapBuilder、FolderFeatureIndexer、DinoFeatureCache)/ ImageFile.Thumbnail(缩略图线含在内)/ HistogramRenderer / ImageEnhancer。
+- CV/DINO 输入保持"显示朝向像素"(旋转已先于缓存应用),grid 几何语义不变。
 
 ### M6 — 收口
 - grep 验收门全量执行;构建零警告确认;AGENTS.md(根 + 受影响模块)同步更新;提交。
+- **遗留 coupling(原生壳阶段处理,见 §5)**:`AnalysisItem.Overlay`(Control 实例)/ `PointerContext`(Avalonia.Vector)/ `ImageViewModel` 的 `Avalonia.Rect` / VM 公共 Bitmap 属性(适配层出口)。
 
 ## 4. 提交纪律
 
@@ -109,3 +97,7 @@
 | 2026-10-19 | `AnalysisItem.Overlay` 持有 Avalonia `Control`(抖动瓦片 ShakeFieldView 实例)— VM 直接持有控件实例 | 不在 M2 范围,保留 `using Avalonia.Controls`;归 M4 诊断瓦片改造时处理 |
 | 2026-10-19 | `ControlViewModel.PointerContext` 使用 `Avalonia.Vector`;`ImageViewModel` 用 `Avalonia.Rect` | 几何类型耦合,Phase 0 不处理(原生壳阶段替换为自有向量/矩形类型) |
 | 2026-10-19 | M3 起 macOS/iOS 头工程改动无法在 Windows 构建验证(盲改签名+路径提取) | 记入 §1 人工验收项:Mac 上 `dotnet build PhotoViewer.Mac` + `PhotoViewer.iOS` 验证 |
+| 2026-10-19 | `AndroidHeifDecoder` 的 ARGB→BGRA 字节序依赖"Android 端 WriteableBitmap 报告 Bgra8888 实为 RGBA 序"的既有口径,M4 按原样搬运(行为不变) | 真实通道序由 Phase 2 色彩管线统一定义;届时全平台核对 |
+| 2026-10-19 | 适配层(CWT)下当前显示图存在 `DecodedImage` + `WriteableBitmap` 双份缓冲(仅当前图/可见缩略图),预取项保持单份 | Phase 1 MemoryGovernor 统一记账;Phase 2 原生表面消除双份 |
+| 2026-10-19 | DINO 输入缩放(`RenderInputImage`)改用 Skia Linear 采样,口径对齐原 Avalonia DrawImage 默认;DatasetBuilder 已同步(Training 仓单独提交) | 下次提取前跑 `verify_onnx_parity.py` + 抽样对比渲染缓存确认分布未漂移 |
+| 2026-10-19 | BitmapLoader 淘汰路径的阻塞式 `GC.Collect ×2` 与 UI 线程 Dispose 在 Phase 0 原样保留(零行为变化) | Phase 1 内存架构(MemoryGovernor)统一拆除 |

@@ -1,8 +1,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
@@ -17,7 +15,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 异步加载 HEIF 图片
     /// </summary>
-    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+    public async Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
     {
         return await HeifLoader.RunCpuDecodeAsync(async () =>
         {
@@ -29,7 +27,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 异步加载 HEIF 缩略图
     /// </summary>
-    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    public async Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         return await HeifLoader.RunCpuDecodeAsync(async () =>
         {
@@ -41,7 +39,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 从流中加载 HEIF 图片为 Bitmap（内部实现辅助方法）
     /// </summary>
-    private async Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream)
+    private async Task<DecodedImage?> LoadBitmapFromStreamAsync(Stream stream)
     {
         try
         {
@@ -80,7 +78,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 从流中生成 HEIF 缩略图（内部实现辅助方法）
     /// </summary>
-    private async Task<Bitmap?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
+    private async Task<DecodedImage?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
     {
         try
         {
@@ -158,7 +156,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 解码缩略图图像
     /// </summary>
-    private static Bitmap? DecodeThumbnailImage(HeifImageHandle thumbnailHandle, int maxSize)
+    private static DecodedImage? DecodeThumbnailImage(HeifImageHandle thumbnailHandle, int maxSize)
     {
         try
         {
@@ -176,7 +174,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 从主图像生成缩略图
     /// </summary>
-    private static Bitmap? GenerateHeifThumbnail(HeifImageHandle imageHandle, int maxSize)
+    private static DecodedImage? GenerateHeifThumbnail(HeifImageHandle imageHandle, int maxSize)
     {
         try
         {
@@ -194,7 +192,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 将 HeifImage 转换为 Avalonia Bitmap
     /// </summary>
-    private static Bitmap? ConvertHeifImageToBitmap(HeifImage heifImage)
+    private static DecodedImage? ConvertHeifImageToBitmap(HeifImage heifImage)
     {
         try
         {
@@ -279,7 +277,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 将 HeifImage 转换为指定尺寸的 Avalonia Bitmap（采样缩放）
     /// </summary>
-    private static Bitmap? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
+    private static DecodedImage? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
     {
         try
         {
@@ -363,90 +361,19 @@ public sealed class LibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 从 BGRA 数据创建 Bitmap
+    /// 从 BGRA 数据创建已解码图像
     /// </summary>
-    private static Bitmap? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
+    private static DecodedImage? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
     {
         try
         {
-            var expected = width * height * 4;
+            var expected = (long)width * height * 4;
             if (bgraData.Length < expected) return null;
-
-            if (BitmapLoader.IgnoreAlpha)
-            {
-                var bgr = new byte[width * height * 3];
-                for (int i = 0, j = 0; i < expected; i += 4, j += 3)
-                {
-                    bgr[j + 0] = bgraData[i + 0]; // B
-                    bgr[j + 1] = bgraData[i + 1]; // G
-                    bgr[j + 2] = bgraData[i + 2]; // R
-                }
-
-                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
-                using (var locked = bitmap.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var destPtr = locked.Address;
-                    var srcStride = width * 3;
-
-                    unsafe
-                    {
-                        var destBytePtr = (byte*)destPtr;
-
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copySize = Math.Min(srcStride, destStride);
-
-                            if (srcOffset + copySize > bgr.Length) break;
-
-                            fixed (byte* srcPtr = &bgr[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
-                            }
-                        }
-                    }
-                }
-
-                return bitmap;
-            }
-            else
-            {
-                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
-
-                using (var locked = bitmap.Lock())
-                {
-                    var destStride = locked.RowBytes;
-                    var destPtr = locked.Address;
-                    var srcStride = width * 4;
-
-                    unsafe
-                    {
-                        var destBytePtr = (byte*)destPtr;
-
-                        for (int y = 0; y < height; y++)
-                        {
-                            var srcOffset = y * srcStride;
-                            var destOffset = y * destStride;
-                            var copySize = Math.Min(srcStride, destStride);
-
-                            if (srcOffset + copySize > bgraData.Length) break;
-
-                            fixed (byte* srcPtr = &bgraData[srcOffset])
-                            {
-                                Buffer.MemoryCopy(srcPtr, destBytePtr + destOffset, copySize, copySize);
-                            }
-                        }
-                    }
-                }
-
-                return bitmap;
-            }
+            return new DecodedImage(bgraData, width, height, width * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Failed to create bitmap from BGRA data: " + ex.Message);
+            Console.WriteLine("Failed to create image from BGRA data: " + ex.Message);
             return null;
         }
     }

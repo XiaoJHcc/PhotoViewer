@@ -3,6 +3,7 @@
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
              xmlns:local="clr-namespace:PhotoViewer.Views"
+             xmlns:converters="clr-namespace:PhotoViewer.Converters"
              mc:Ignorable="d" d:DesignWidth="96" d:DesignHeight="138"
              x:Class="PhotoViewer.Controls.ThumbnailCard"
              x:Name="CardRoot">
@@ -76,7 +77,7 @@
                         BorderBrush="{Binding IsInCache,
                             Converter={StaticResource CachedBorderConverter}}">
                     <Grid>
-                        <Image Source="{Binding Thumbnail}"
+                        <Image Source="{Binding Thumbnail, Converter={x:Static converters:DecodedImageToBitmapConverter.Instance}}"
                                Stretch="Uniform"
                                HorizontalAlignment="Center"
                                VerticalAlignment="Center"

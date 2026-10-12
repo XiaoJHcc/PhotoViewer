@@ -8,6 +8,7 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
+using PhotoViewer.Platform;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
@@ -24,8 +25,14 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _sourceBitmap, value);
     }
 
-    // 当前原片位图（BitmapLoader 缓存所有，本 VM 只引用、绝不 Dispose）
-    private Bitmap? _originalBitmap;
+    // 当前原片图像（BitmapLoader 缓存所有，本 VM 只引用、绝不 Dispose）
+    private DecodedImage? _originalBitmap;
+
+    // 当前增强图像（本 VM 所有,随增强关闭/切图释放）;分析栏/直方图的像素源
+    private DecodedImage? _enhancedDecoded;
+
+    /// <summary>当前应显示的已解码图像(增强态为增强图,否则为原片;外部只读,不 Dispose)。</summary>
+    internal DecodedImage? CurrentDecodedImage => _enhancedDecoded ?? _originalBitmap;
     // 增强任务竞态闸：每次切图 / 切换增强都自增，作废上一张的在途增强
     private int _enhanceToken;
     // 主图解码代际闸：每次切图自增，作废上一张的在途解码，过期结果不再改写主图
@@ -152,17 +159,17 @@ public class ImageViewModel : ReactiveObject
             HintDetail = string.Empty;
             
             // 使用缓存服务加载图片;解码期间向调度器报告 P0 在途,后台 worker 暂停取新工作
-            Bitmap? bitmap;
+            DecodedImage? image;
             using (DecodeScheduler.TrackP0())
             {
-                bitmap = await BitmapLoader.GetBitmapAsync(file);
+                image = await BitmapLoader.GetBitmapAsync(file);
             }
             
             // 代际闸：解码期间已切图则丢弃结果，过期任务不再改写主图状态（位图留在缓存无害）
             if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
                 return;
             
-            if (bitmap == null)
+            if (image == null)
             {
                 Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
                 DropEnhancement();
@@ -188,11 +195,11 @@ public class ImageViewModel : ReactiveObject
                 return;
             }
             
-            // 验证位图有效性
-            if (bitmap.PixelSize.Width <= 0 || bitmap.PixelSize.Height <= 0)
+            // 验证图像有效性
+            if (image.Width <= 0 || image.Height <= 0)
             {
-                Console.WriteLine($"Invalid bitmap dimensions: {bitmap.PixelSize.Width}x{bitmap.PixelSize.Height} for file: {file.Name}");
-                bitmap.Dispose();
+                Console.WriteLine($"Invalid image dimensions: {image.Width}x{image.Height} for file: {file.Name}");
+                image.Dispose();
                 DropEnhancement();
                 SourceBitmap = null;
                 HintText = "图片解码无效";
@@ -202,14 +209,14 @@ public class ImageViewModel : ReactiveObject
 
             // 记录原片、作废上一张的在途增强，先显示原片
             DropEnhancement();
-            _originalBitmap = bitmap;
+            _originalBitmap = image;
             var token = ++_enhanceToken;
-            SourceBitmap = bitmap;
+            SourceBitmap = DecodedImageAdapter.ToBitmap(image);
             ImageLoaded?.Invoke(this, file);
 
             // 增强模式下：后台算好增强版本再原地切换，不阻塞主图显示
             if (IsEnhanced)
-                _ = ApplyEnhancementAsync(bitmap, token);
+                _ = ApplyEnhancementAsync(image, token);
         }
         catch (Exception ex)
         {
@@ -254,7 +261,7 @@ public class ImageViewModel : ReactiveObject
         else
         {
             // 还原原片后再释放增强位图，避免释放仍被 Image.Source 引用的位图
-            if (_originalBitmap != null) SourceBitmap = _originalBitmap;
+            if (_originalBitmap != null) SourceBitmap = DecodedImageAdapter.ToBitmap(_originalBitmap);
             ReleaseEnhanced();
         }
     }
@@ -262,20 +269,29 @@ public class ImageViewModel : ReactiveObject
     /// <summary>
     /// 后台计算增强位图并在校验竞态闸后原地替换主图；过期或已退出增强模式则丢弃结果。
     /// </summary>
-    private async Task ApplyEnhancementAsync(Bitmap original, int token)
+    private async Task ApplyEnhancementAsync(DecodedImage original, int token)
     {
         try
         {
-            var enhanced = await Task.Run(() => ImageEnhancer.Enhance(original));
+            var enhancedImage = await Task.Run(() => ImageEnhancer.Enhance(original));
             if (token != _enhanceToken || !IsEnhanced)
             {
-                enhanced.Dispose();
+                enhancedImage.Dispose();
                 return;
             }
+            var enhanced = DecodedImageAdapter.ToBitmap(enhancedImage);
+            if (enhanced == null)
+            {
+                enhancedImage.Dispose();
+                return;
+            }
+            var oldDecoded = _enhancedDecoded;
+            _enhancedDecoded = enhancedImage;
             var old = EnhancedBitmap;
             EnhancedBitmap = enhanced;
             SourceBitmap = enhanced;
             if (old != null) UiDispatcher.Post(old.Dispose);
+            if (oldDecoded != null) UiDispatcher.Post(oldDecoded.Dispose);
         }
         catch (Exception ex)
         {
@@ -291,6 +307,9 @@ public class ImageViewModel : ReactiveObject
         var old = EnhancedBitmap;
         EnhancedBitmap = null;
         if (old != null) UiDispatcher.Post(old.Dispose);
+        var oldDecoded = _enhancedDecoded;
+        _enhancedDecoded = null;
+        if (oldDecoded != null) UiDispatcher.Post(oldDecoded.Dispose);
     }
 
     /// <summary>

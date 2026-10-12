@@ -1,4 +1,5 @@
 using System;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Core.AI;
 
@@ -28,7 +29,7 @@ public static class AnalysisComputer
         ArgumentNullException.ThrowIfNull(data);
 
         // CV 派生层(锐度图 / ShakeField / 刚体拟合 + 判定文字)
-        Avalonia.Media.Imaging.Bitmap? sharpnessBmp = null;
+        DecodedImage? sharpnessBmp = null;
         ShakeField? shakeField = null;
         string shakeLabel = "抖动拖影";
         double aspect = 1.0;
@@ -47,8 +48,8 @@ public static class AnalysisComputer
         }
 
         // DINO 派生层(PCA-RGB + 默认中心 cosine 参考点 16,16)
-        Avalonia.Media.Imaging.Bitmap? pcaBmp = null;
-        Avalonia.Media.Imaging.Bitmap? cosineBmp = null;
+        DecodedImage? pcaBmp = null;
+        DecodedImage? cosineBmp = null;
         if (data.Patches != null)
         {
             var pcaRgb = PatchHeatmap.ComputePcaRgb(data.Patches);

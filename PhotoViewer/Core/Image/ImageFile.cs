@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Platform;
 using ReactiveUI;
@@ -14,7 +12,7 @@ public class ImageFile : ReactiveObject
     /// <summary>列表用缩略图的目标短边像素值。</summary>
     private const int ListThumbnailShortSide = 120;
 
-    private Bitmap? _thumbnail;
+    private DecodedImage? _thumbnail;
     private bool _isCurrent;
     private bool _isCurrentImage;
     private ExifData? _exifData;
@@ -66,7 +64,7 @@ public class ImageFile : ReactiveObject
         }
     }
         
-    public Bitmap? Thumbnail
+    public DecodedImage? Thumbnail
     {
         get => _thumbnail;
         private set

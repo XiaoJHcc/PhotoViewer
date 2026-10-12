@@ -1,8 +1,4 @@
 using System;
-using System.Runtime.InteropServices;
-using Avalonia;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 
 namespace PhotoViewer.Core.Image;
 
@@ -25,56 +21,33 @@ public static class ImageEnhancer
     /// public：同 ClipFactor，随增强 model_id 契约一并冻结记录。</summary>
     public const double SaturationScale = 1.0;
     /// <summary>
-    /// 对源位图做全局限对比直方图均衡（CLHE），返回新的增强位图（调用方负责 Dispose）。
-    /// 按 ch' = Y' + s·(ch − Y) 保色度重建（恒定色度、色相不变）；支持 32 位 BGRA/RGBA 与 24 位 BGR/RGB。
+    /// 对源图像做全局限对比直方图均衡（CLHE），返回新的增强图像（调用方负责 Dispose）。
+    /// 按 ch' = Y' + s·(ch − Y) 保色度重建（恒定色度、色相不变）。
     /// </summary>
-    /// <param name="source">原片解码位图（由 BitmapLoader 缓存所有，本方法只读不释放）。</param>
-    /// <returns>增强后的可写位图。</returns>
-    public static WriteableBitmap Enhance(Bitmap source)
+    /// <param name="source">原片解码图像（由 BitmapLoader 缓存所有，本方法只读不释放）。</param>
+    /// <returns>增强后的图像。</returns>
+    public static DecodedImage Enhance(DecodedImage source)
     {
-        var size = source.PixelSize;
-        int w = size.Width, h = size.Height;
-        var format = source.Format ?? PixelFormats.Bgra8888;
-        int bpp = (format == PixelFormats.Rgb24 || format == PixelFormats.Bgr24) ? 3 : 4;
+        int w = source.Width, h = source.Height;
+        int bpp = DecodedImage.BytesPerPixel(source.Encoding);
 
-        // R/B 通道在像素内的字节下标（G 恒为 +1）：BGRA/BGR → B,_,R；RGBA/RGB → R,_,B。
-        // 与 BitmapLoader.ConvertToDesiredFormat 的跨平台字节序约定一致。
-        bool isBgr = format == PixelFormats.Bgra8888 || format == PixelFormats.Bgr24;
+        // R/B 通道在像素内的字节下标（G 恒为 +1）：BGRA → B,_,R；RGB → R,_,B。
+        bool isBgr = source.Encoding == PixelEncoding.Bgra32;
         int rIdx = isBgr ? 2 : 0;
         int bIdx = isBgr ? 0 : 2;
 
+        // 拷贝源像素到自有缓冲（按行,考虑 stride）：此后与源图像解耦，即便源被 LRU 淘汰释放也不影响后续运算。
         int stride = w * bpp;
         int byteCount = stride * h;
         var pixels = new byte[byteCount];
-
-        // 拷贝源像素到自有缓冲：此后与源位图解耦，即便源被 LRU 淘汰释放也不影响后续运算。
-        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
-        try
+        for (int y = 0; y < h; y++)
         {
-            source.CopyPixels(new PixelRect(0, 0, w, h), handle.AddrOfPinnedObject(), byteCount, stride);
-        }
-        finally
-        {
-            handle.Free();
+            Array.Copy(source.Pixels, (long)y * source.Stride, pixels, (long)y * stride, stride);
         }
 
         EqualizeLuminance(pixels, byteCount, bpp, rIdx, bIdx);
 
-        var result = new WriteableBitmap(size, source.Dpi, format, source.AlphaFormat);
-        using (var fb = result.Lock())
-        {
-            // 多数情况下目标行无 padding（RowBytes==stride）可整段拷；否则逐行拷贝。
-            if (fb.RowBytes == stride)
-            {
-                Marshal.Copy(pixels, 0, fb.Address, byteCount);
-            }
-            else
-            {
-                for (int y = 0; y < h; y++)
-                    Marshal.Copy(pixels, y * stride, fb.Address + y * fb.RowBytes, stride);
-            }
-        }
-        return result;
+        return new DecodedImage(pixels, w, h, stride, source.Encoding);
     }
 
     /// <summary>

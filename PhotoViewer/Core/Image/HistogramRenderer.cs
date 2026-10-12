@@ -1,64 +1,54 @@
 using System;
-using System.Runtime.InteropServices;
-using Avalonia;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
 
 namespace PhotoViewer.Core.Image;
 
 /// <summary>
-/// 把一张位图渲染成 RGB 直方图位图（256 级 / 通道，叠加式填充曲线）。纯算法、不改原文件、不入库。
+/// 把一张图像渲染成 RGB 直方图图像（256 级 / 通道，叠加式填充曲线）。纯算法、不改原文件、不入库。
 /// 分析栏的"直方图"瓦片用它：从当前主图（原片或增强图）现算 → 喂给 DiagnosticTile 展示，随增强切换实时重算。
 /// </summary>
 public static class HistogramRenderer
 {
     /// <summary>
-    /// 计算 source 的 R/G/B 三通道直方图并渲染为 outW×outH 的 BGRA 位图（透明底 + 三通道叠加填充）。
+    /// 计算 source 的 R/G/B 三通道直方图并渲染为 outW×outH 的 BGRA 图像（透明底 + 三通道叠加填充）。
     /// </summary>
-    /// <param name="source">主图位图（原片或增强图，本方法只读不释放）。</param>
-    /// <param name="outW">输出位图宽（直方图 256 级横向铺满）。</param>
-    /// <param name="outH">输出位图高（纵向为归一化频数）。</param>
-    /// <returns>渲染好的直方图位图（调用方负责 Dispose）。</returns>
-    public static WriteableBitmap Render(Bitmap source, int outW, int outH)
+    /// <param name="source">主图图像（原片或增强图，本方法只读不释放）。</param>
+    /// <param name="outW">输出图像宽（直方图 256 级横向铺满）。</param>
+    /// <param name="outH">输出图像高（纵向为归一化频数）。</param>
+    /// <returns>渲染好的直方图图像（调用方负责 Dispose）。</returns>
+    public static DecodedImage Render(DecodedImage source, int outW, int outH)
     {
         var hist = ComputeHistogram(source, out long _);
-        return RenderBitmap(hist, outW, outH);
+        return RenderImage(hist, outW, outH);
     }
 
     /// <summary>
-    /// 统计 source 的 R/G/B 256 级直方图（含像素总数）。字节序沿用 BitmapLoader 约定。
+    /// 统计 source 的 R/G/B 256 级直方图（含像素总数）。
     /// </summary>
-    private static int[][] ComputeHistogram(Bitmap source, out long pixelCount)
+    private static int[][] ComputeHistogram(DecodedImage source, out long pixelCount)
     {
-        var size = source.PixelSize;
-        int w = size.Width, h = size.Height;
-        var format = source.Format ?? PixelFormats.Bgra8888;
-        int bpp = (format == PixelFormats.Rgb24 || format == PixelFormats.Bgr24) ? 3 : 4;
-        bool isBgr = format == PixelFormats.Bgra8888 || format == PixelFormats.Bgr24;
+        int w = source.Width, h = source.Height;
+        int bpp = DecodedImage.BytesPerPixel(source.Encoding);
+        // Bgra32: R 在字节 2;Rgb24: R 在字节 0
+        bool isBgr = source.Encoding == PixelEncoding.Bgra32;
         int rIdx = isBgr ? 2 : 0;
         int bIdx = isBgr ? 0 : 2;
 
-        int stride = w * bpp;
-        int byteCount = stride * h;
-        var pixels = new byte[byteCount];
-        var handle = GCHandle.Alloc(pixels, GCHandleType.Pinned);
-        try
-        {
-            source.CopyPixels(new PixelRect(0, 0, w, h), handle.AddrOfPinnedObject(), byteCount, stride);
-        }
-        finally
-        {
-            handle.Free();
-        }
+        var pixels = source.Pixels;
+        int stride = source.Stride;
 
         var rHist = new int[256];
         var gHist = new int[256];
         var bHist = new int[256];
-        for (int i = 0; i + bpp <= byteCount; i += bpp)
+        for (int y = 0; y < h; y++)
         {
-            rHist[pixels[i + rIdx]]++;
-            gHist[pixels[i + 1]]++;
-            bHist[pixels[i + bIdx]]++;
+            long rowStart = (long)y * stride;
+            long rowEnd = rowStart + (long)w * bpp;
+            for (long i = rowStart; i + bpp <= rowEnd; i += bpp)
+            {
+                rHist[pixels[i + rIdx]]++;
+                gHist[pixels[i + 1]]++;
+                bHist[pixels[i + bIdx]]++;
+            }
         }
 
         pixelCount = (long)w * h;
@@ -66,9 +56,9 @@ public static class HistogramRenderer
     }
 
     /// <summary>
-    /// 把三通道直方图渲染成 BGRA 位图：透明底 + 每通道按全局峰值归一化的填充曲线，叠加处取较亮值（近似屏幕混合）。
+    /// 把三通道直方图渲染成 BGRA 图像：透明底 + 每通道按全局峰值归一化的填充曲线，叠加处取较亮值（近似屏幕混合）。
     /// </summary>
-    private static WriteableBitmap RenderBitmap(int[][] hist, int outW, int outH)
+    private static DecodedImage RenderImage(int[][] hist, int outW, int outH)
     {
         outW = Math.Max(16, outW);
         outH = Math.Max(16, outH);
@@ -89,16 +79,7 @@ public static class HistogramRenderer
         DrawChannel(buffer, stride, outW, outH, hist[1], peak, channelB: 64, channelG: 255, channelR: 64); // G 薄荷
         DrawChannel(buffer, stride, outW, outH, hist[2], peak, channelB: 255, channelG: 64, channelR: 32); // B 淡蓝
 
-        var wb = new WriteableBitmap(new PixelSize(outW, outH), new Vector(96, 96), PixelFormats.Bgra8888, AlphaFormat.Premul);
-        using (var fb = wb.Lock())
-        {
-            if (fb.RowBytes == stride)
-                Marshal.Copy(buffer, 0, fb.Address, buffer.Length);
-            else
-                for (int y = 0; y < outH; y++)
-                    Marshal.Copy(buffer, y * stride, fb.Address + y * fb.RowBytes, stride);
-        }
-        return wb;
+        return new DecodedImage(buffer, outW, outH, stride, PixelEncoding.Bgra32);
     }
 
     /// <summary>

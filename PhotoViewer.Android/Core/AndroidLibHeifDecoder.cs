@@ -1,8 +1,6 @@
 using System;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
@@ -96,13 +94,13 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     public bool IsSupported => _libHeifAvailable || _systemFallback.IsSupported;
 
     /// <summary>
-    /// 异步加载 HEIF 图片为 Avalonia Bitmap。
+    /// 异步加载 HEIF 图片。
     /// 优先使用系统解码器（硬件加速）；系统无法解码（返回 null）时回退 libheif 软件解码，
     /// 以支持 HEIF YUV 4:2:2 等系统不支持的格式。
     /// </summary>
     /// <param name="file">要解码的 HEIF 图片文件</param>
     /// <returns>解码后的 Bitmap，失败返回 null</returns>
-    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+    public async Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
     {
         var reasons = new System.Text.StringBuilder();
 
@@ -162,7 +160,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <param name="file">要解码的 HEIF 图片文件</param>
     /// <param name="maxSize">缩略图长边最大像素数</param>
     /// <returns>解码后的缩略图 Bitmap，失败返回 null</returns>
-    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    public async Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         // 1) 优先系统解码器
         if (_systemFallback.IsSupported)
@@ -199,7 +197,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// 从流中使用 LibHeifSharp 解码完整 HEIF 图片。
     /// 异常不在此方法内吞掉，由调用方捕获并格式化为用户可见的错误信息。
     /// </summary>
-    private static async Task<Bitmap?> LoadBitmapFromStreamAsync(Stream stream)
+    private static async Task<DecodedImage?> LoadBitmapFromStreamAsync(Stream stream)
     {
         using var ms = new MemoryStream();
         await stream.CopyToAsync(ms);
@@ -237,7 +235,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// 从流中使用 LibHeifSharp 解码 HEIF 缩略图。
     /// 优先使用内嵌缩略图，无合适缩略图时从主图采样。
     /// </summary>
-    private static async Task<Bitmap?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
+    private static async Task<DecodedImage?> LoadThumbnailFromStreamAsync(Stream stream, int maxSize)
     {
         using var ms = new MemoryStream();
         await stream.CopyToAsync(ms);
@@ -302,7 +300,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 解码 HEIF 缩略图句柄为 Bitmap。
     /// </summary>
-    private static Bitmap? DecodeThumbnailHandle(HeifImageHandle thumbnailHandle, int maxSize)
+    private static DecodedImage? DecodeThumbnailHandle(HeifImageHandle thumbnailHandle, int maxSize)
     {
         try
         {
@@ -320,7 +318,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 从主图句柄解码并缩放为指定尺寸的缩略图。
     /// </summary>
-    private static Bitmap? GenerateThumbnailFromMainImage(HeifImageHandle imageHandle, int maxSize)
+    private static DecodedImage? GenerateThumbnailFromMainImage(HeifImageHandle imageHandle, int maxSize)
     {
         try
         {
@@ -336,9 +334,9 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 将 HeifImage 转换为完整尺寸的 Avalonia Bitmap（RGB24 → BGRA8888/BGR24）。
+    /// 将 HeifImage 转换为完整尺寸的图像（RGB24 → BGRA8888）。
     /// </summary>
-    private static Bitmap? ConvertHeifImageToBitmap(HeifImage heifImage)
+    private static DecodedImage? ConvertHeifImageToBitmap(HeifImage heifImage)
     {
         try
         {
@@ -409,7 +407,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 将 HeifImage 转换为指定最大边长的缩放 Bitmap。
     /// </summary>
-    private static Bitmap? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
+    private static DecodedImage? ConvertHeifImageToBitmapWithResize(HeifImage heifImage, int maxSize)
     {
         try
         {
@@ -475,81 +473,24 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 从 BGRA 字节数组创建 Avalonia Bitmap。
+    /// 从 BGRA 字节数组创建已解码图像。
     /// 根据 BitmapLoader.IgnoreAlpha 决定输出格式（Bgra8888 或 Bgr24）。
     /// </summary>
     /// <param name="bgraData">BGRA 原始像素数据</param>
     /// <param name="width">图像宽度（像素）</param>
     /// <param name="height">图像高度（像素）</param>
-    private static Bitmap? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
+    private static DecodedImage? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
     {
         try
         {
-            var expected = width * height * 4;
+            var expected = (long)width * height * 4;
             if (bgraData.Length < expected) return null;
-
-            if (BitmapLoader.IgnoreAlpha)
-            {
-                // 输出 BGR24（节省内存）
-                var bgr = new byte[width * height * 3];
-                for (int i = 0, j = 0; i < expected; i += 4, j += 3)
-                {
-                    bgr[j]     = bgraData[i];     // B
-                    bgr[j + 1] = bgraData[i + 1]; // G
-                    bgr[j + 2] = bgraData[i + 2]; // R
-                }
-
-                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
-                    Avalonia.Platform.PixelFormats.Bgr24);
-                using (var locked = bitmap.Lock())
-                {
-                    CopyRowByRow(bgr, width * 3, locked.Address, locked.RowBytes, height);
-                }
-                return bitmap;
-            }
-            else
-            {
-                // 输出 BGRA8888
-                var bitmap = new WriteableBitmap(new PixelSize(width, height), new Vector(96, 96),
-                    Avalonia.Platform.PixelFormats.Bgra8888);
-                using (var locked = bitmap.Lock())
-                {
-                    CopyRowByRow(bgraData, width * 4, locked.Address, locked.RowBytes, height);
-                }
-                return bitmap;
-            }
+            return new DecodedImage(bgraData, width, height, width * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[AndroidLibHeifDecoder] 创建 Bitmap 失败: {ex.Message}");
+            Console.WriteLine($"[AndroidLibHeifDecoder] 创建图像失败: {ex.Message}");
             return null;
-        }
-    }
-
-    /// <summary>
-    /// 按行将 src 数据拷贝到目标地址，处理 stride 对齐差异。
-    /// </summary>
-    /// <param name="src">源像素字节数组</param>
-    /// <param name="srcStride">源每行字节数</param>
-    /// <param name="dest">目标内存地址</param>
-    /// <param name="destStride">目标每行字节数</param>
-    /// <param name="height">图像高度</param>
-    private static void CopyRowByRow(byte[] src, int srcStride, nint dest, int destStride, int height)
-    {
-        unsafe
-        {
-            var destPtr = (byte*)dest;
-            var copySize = Math.Min(srcStride, destStride);
-            for (int y = 0; y < height; y++)
-            {
-                var srcOff = y * srcStride;
-                var dstOff = y * destStride;
-                if (srcOff + copySize > src.Length) break;
-                fixed (byte* srcPtr = &src[srcOff])
-                {
-                    Buffer.MemoryCopy(srcPtr, destPtr + dstOff, copySize, copySize);
-                }
-            }
         }
     }
 }

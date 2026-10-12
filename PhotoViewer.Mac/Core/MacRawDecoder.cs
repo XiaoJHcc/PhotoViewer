@@ -1,6 +1,5 @@
 using System;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 
@@ -15,13 +14,13 @@ public sealed class MacRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsMacOS();
 
-    public Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+    public Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
         => Task.Run(() => Decode(file.PathKey, null));
 
-    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
         => Task.Run(() => Decode(file.PathKey, maxSize));
 
-    private static Bitmap? Decode(string path, int? maxSize)
+    private static DecodedImage? Decode(string path, int? maxSize)
     {
         var bmp = MacHeifDecoder.DecodeWithImageIO(path, maxSize);
         if (bmp == null)
