@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 using Buffer = System.Buffer;
 
 namespace PhotoViewer.Android.Core;
@@ -102,7 +102,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// </summary>
     /// <param name="file">要解码的 HEIF 图片文件</param>
     /// <returns>解码后的 Bitmap，失败返回 null</returns>
-    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
+    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
     {
         var reasons = new System.Text.StringBuilder();
 
@@ -162,7 +162,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// <param name="file">要解码的 HEIF 图片文件</param>
     /// <param name="maxSize">缩略图长边最大像素数</param>
     /// <returns>解码后的缩略图 Bitmap，失败返回 null</returns>
-    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         // 1) 优先系统解码器
         if (_systemFallback.IsSupported)

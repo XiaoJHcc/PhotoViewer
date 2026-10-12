@@ -1,9 +1,9 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Image;
 
@@ -11,8 +11,8 @@ public interface IHeifDecoder
 {
     bool IsSupported { get; }
     
-    Task<Bitmap?> LoadBitmapAsync(IStorageFile file);
-    Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize);
+    Task<Bitmap?> LoadBitmapAsync(IFileRef file);
+    Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize);
 
 }
 
@@ -52,17 +52,17 @@ public static class HeifLoader
         return extension is ".heif" or ".heic" or ".avif" or ".hif";
     }
 
-    public static bool IsHeifFile(IStorageFile file)
+    public static bool IsHeifFile(IFileRef file)
     {
         if (file is null) return false;
         // Android 上可能是 content:// 无法从 LocalPath 识别扩展名，回退到 Name
-        var fromPath = file.Path?.LocalPath ?? string.Empty;
+        var fromPath = file.PathKey;
         if (IsHeifFile(fromPath)) return true;
 
         // 某些平台 Name 可能包含扩展名
         try
         {
-            var name = (file as IStorageItem)?.Name ?? string.Empty;
+            var name = file.Name ?? string.Empty;
             return IsHeifFile(name);
         }
         catch
@@ -71,7 +71,7 @@ public static class HeifLoader
         }
     }
 
-    public static Task<Bitmap?> LoadHeifBitmapAsync(IStorageFile file)
+    public static Task<Bitmap?> LoadHeifBitmapAsync(IFileRef file)
     {
         _lastDecodeError = null;
         if (!_decoder.IsSupported)
@@ -82,7 +82,7 @@ public static class HeifLoader
         return _decoder.LoadBitmapAsync(file);
     }
 
-    public static Task<Bitmap?> LoadHeifThumbnailAsync(IStorageFile file, int maxSize = 120)
+    public static Task<Bitmap?> LoadHeifThumbnailAsync(IFileRef file, int maxSize = 120)
         => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
 
     /// <summary>
@@ -124,6 +124,6 @@ internal sealed class NoopHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => false;
 
-    public Task<Bitmap?> LoadBitmapAsync(IStorageFile file) => Task.FromResult<Bitmap?>(null);
-    public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize) => Task.FromResult<Bitmap?>(null);
+    public Task<Bitmap?> LoadBitmapAsync(IFileRef file) => Task.FromResult<Bitmap?>(null);
+    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<Bitmap?>(null);
 }

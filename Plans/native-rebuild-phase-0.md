@@ -106,3 +106,6 @@
 |---|---|---|
 | 2026-10-19 | **ReactiveUI 23.x 已删除静态 `RxApp` 类**,`RxSchedulers.MainThreadScheduler` 默认 `DefaultScheduler`(非 UI 线程),不能直接替换 `AvaloniaScheduler.Instance` | `IUiDispatcher` 增加 `MainThreadScheduler`(由 Avalonia 侧返回 `AvaloniaScheduler.Instance`),VM 统一走 `UiDispatcher.MainThreadScheduler`,语义零变化 |
 | 2026-10-19 | mimo coder subagent 连续 3 次 provider 超时,M1 由 kimi 直接执行 | 后续里程碑继续优先尝试 mimo;provider 恢复情况逐次观察 |
+| 2026-10-19 | `AnalysisItem.Overlay` 持有 Avalonia `Control`(抖动瓦片 ShakeFieldView 实例)— VM 直接持有控件实例 | 不在 M2 范围,保留 `using Avalonia.Controls`;归 M4 诊断瓦片改造时处理 |
+| 2026-10-19 | `ControlViewModel.PointerContext` 使用 `Avalonia.Vector`;`ImageViewModel` 用 `Avalonia.Rect` | 几何类型耦合,Phase 0 不处理(原生壳阶段替换为自有向量/矩形类型) |
+| 2026-10-19 | M3 起 macOS/iOS 头工程改动无法在 Windows 构建验证(盲改签名+路径提取) | 记入 §1 人工验收项:Mac 上 `dotnet build PhotoViewer.Mac` + `PhotoViewer.iOS` 验证 |

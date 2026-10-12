@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 using MetadataExtractor.Formats.Exif.Makernotes;
@@ -20,9 +20,9 @@ public static class ExifLoader
     /// <summary>
     /// 异步加载文件的完整 EXIF 数据（仅解析元数据，不解码像素）。
     /// </summary>
-    public static async Task<ExifData?> LoadExifDataAsync(IStorageFile file)
+    public static async Task<ExifData?> LoadExifDataAsync(IFileRef file)
     {
-        var filePath = file.Path.LocalPath;
+        var filePath = file.PathKey;
 
         try
         {
@@ -73,9 +73,9 @@ public static class ExifLoader
     /// <summary>
     /// 仅加载文件的星级评分（用于快速筛选，避免读取完整 EXIF）。
     /// </summary>
-    public static async Task<int> LoadRatingOnlyAsync(IStorageFile file)
+    public static async Task<int> LoadRatingOnlyAsync(IFileRef file)
     {
-        var filePath = file.Path.LocalPath;
+        var filePath = file.PathKey;
 
         try
         {
@@ -94,7 +94,7 @@ public static class ExifLoader
     /// <summary>
     /// 仅尝试从 EXIF/IFD 读取图片尺寸，失败返回 null（不解码整图）。
     /// </summary>
-    public static async Task<(int width, int height)?> TryGetDimensionsAsync(IStorageFile file)
+    public static async Task<(int width, int height)?> TryGetDimensionsAsync(IFileRef file)
     {
         try
         {

@@ -1,7 +1,7 @@
 using System;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Desktop.Core;
 
@@ -14,7 +14,7 @@ public sealed class WindowsXmpWriter : IXmpPlatformWriter
     /// <summary>
     /// 在 Windows 文件系统上执行单字节原位写入。
     /// </summary>
-    public Task<bool> TryWriteByteAsync(IStorageFile file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
+    public Task<bool> TryWriteByteAsync(IFileRef file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
     {
         try
         {

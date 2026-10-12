@@ -2,10 +2,10 @@ using System;
 using System.IO;
 using System.Threading.Tasks;
 using Android.Content;
-using Avalonia.Platform.Storage;
 using Java.Nio;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 using AndroidUri = Android.Net.Uri;
 using JavaFileInputStream = Java.IO.FileInputStream;
 using JavaFileOutputStream = Java.IO.FileOutputStream;
@@ -32,7 +32,7 @@ public sealed class AndroidXmpWriter : IXmpPlatformWriter
     /// <summary>
     /// 以 Android 原生方式将单个字节写回文件，并在安全模式下做字节级回读校验。
     /// </summary>
-    public Task<bool> TryWriteByteAsync(IStorageFile file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
+    public Task<bool> TryWriteByteAsync(IFileRef file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
     {
         try
         {

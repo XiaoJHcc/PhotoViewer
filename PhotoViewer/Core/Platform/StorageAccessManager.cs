@@ -1,5 +1,5 @@
 using System;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Platform;
 
@@ -14,7 +14,7 @@ public interface IPlatformStorageAccessManager
     /// 适用于文件打开后需要持续读取或后续写入的场景。
     /// </summary>
     /// <param name="item">目标存储项</param>
-    void Retain(IStorageItem item);
+    void Retain(IStorageItemRef item);
 
     /// <summary>
     /// 尝试获取一次性的访问作用域。
@@ -22,7 +22,7 @@ public interface IPlatformStorageAccessManager
     /// </summary>
     /// <param name="item">目标存储项</param>
     /// <returns>访问作用域；平台不需要时返回 null</returns>
-    IDisposable? TryAcquireScope(IStorageItem item);
+    IDisposable? TryAcquireScope(IStorageItemRef item);
 }
 
 /// <summary>
@@ -46,7 +46,7 @@ public static class StorageAccessManager
     /// 尝试为存储项保留长期访问权限。
     /// </summary>
     /// <param name="item">目标存储项</param>
-    public static void Retain(IStorageItem? item)
+    public static void Retain(IStorageItemRef? item)
     {
         if (item == null)
         {
@@ -61,7 +61,7 @@ public static class StorageAccessManager
     /// </summary>
     /// <param name="item">目标存储项</param>
     /// <returns>访问作用域；平台不需要时返回 null</returns>
-    public static IDisposable? TryAcquireScope(IStorageItem? item)
+    public static IDisposable? TryAcquireScope(IStorageItemRef? item)
     {
         return item == null ? null : _manager.TryAcquireScope(item);
     }
@@ -75,7 +75,7 @@ public static class StorageAccessManager
         /// 空实现，不保留任何访问权限。
         /// </summary>
         /// <param name="item">目标存储项</param>
-        public void Retain(IStorageItem item)
+        public void Retain(IStorageItemRef item)
         {
         }
 
@@ -84,7 +84,7 @@ public static class StorageAccessManager
         /// </summary>
         /// <param name="item">目标存储项</param>
         /// <returns>始终返回 null</returns>
-        public IDisposable? TryAcquireScope(IStorageItem item)
+        public IDisposable? TryAcquireScope(IStorageItemRef item)
         {
             return null;
         }

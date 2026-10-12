@@ -5,10 +5,10 @@ using System.Text;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.iOS.Core;
 
@@ -18,24 +18,24 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     public bool IsSupported => OperatingSystem.IsIOS();
 
     // 替换：真正异步 + 路径不可用时用内存数据回退
-    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
+    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
     {
         var (path, data) = await PreparePathOrDataAsync(file);
         return DecodeWithImageIO(path, null, data);
     }
 
-    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         var (path, data) = await PreparePathOrDataAsync(file);
         return DecodeWithImageIO(path, maxSize, data);
     }
 
     // 新增：获取可用路径或内存字节
-    internal static async Task<(string? path, byte[]? data)> PreparePathOrDataAsync(IStorageFile file)
+    internal static async Task<(string? path, byte[]? data)> PreparePathOrDataAsync(IFileRef file)
     {
         try
         {
-            var path = file.Path?.LocalPath;
+            var path = file.PathKey;
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
                 return (path, null);
 

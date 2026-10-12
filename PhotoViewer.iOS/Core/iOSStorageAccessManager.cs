@@ -2,10 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.iOS.Core;
 
@@ -22,7 +22,7 @@ public sealed class iOSStorageAccessManager : IPlatformStorageAccessManager
     /// 尝试保留存储项的长期访问权限。
     /// </summary>
     /// <param name="item">目标存储项</param>
-    public void Retain(IStorageItem item)
+    public void Retain(IStorageItemRef item)
     {
         var path = GetLocalPath(item);
         if (string.IsNullOrWhiteSpace(path))
@@ -68,7 +68,7 @@ public sealed class iOSStorageAccessManager : IPlatformStorageAccessManager
     /// </summary>
     /// <param name="item">目标存储项</param>
     /// <returns>访问作用域；不需要或创建失败时返回 null</returns>
-    public IDisposable? TryAcquireScope(IStorageItem item)
+    public IDisposable? TryAcquireScope(IStorageItemRef item)
     {
         var path = GetLocalPath(item);
         if (string.IsNullOrWhiteSpace(path))
@@ -151,7 +151,7 @@ public sealed class iOSStorageAccessManager : IPlatformStorageAccessManager
     /// </summary>
     /// <param name="item">目标存储项</param>
     /// <returns>本地路径；不可用时返回 null</returns>
-    private static string? GetLocalPath(IStorageItem item)
+    private static string? GetLocalPath(IStorageItemRef item)
     {
         var localPath = item.TryGetLocalPath();
         if (!string.IsNullOrWhiteSpace(localPath))
@@ -159,7 +159,7 @@ public sealed class iOSStorageAccessManager : IPlatformStorageAccessManager
             return Path.GetFullPath(localPath);
         }
 
-        var itemPath = item.Path?.LocalPath;
+        var itemPath = item.PathKey;
         return string.IsNullOrWhiteSpace(itemPath) ? null : Path.GetFullPath(itemPath);
     }
 

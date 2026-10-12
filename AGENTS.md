@@ -53,6 +53,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/Core/Input/](PhotoViewer/Core/Input/) | [Core/Input/AGENTS.md](PhotoViewer/Core/Input/AGENTS.md) | 平台中立手势模型(键/鼠标/修饰键、苹果键盘映射) |
 | [PhotoViewer/Core/Platform/](PhotoViewer/Core/Platform/) | [Core/Platform/AGENTS.md](PhotoViewer/Core/Platform/AGENTS.md) | 性能预算、外部打开服务、存储访问门面(平台能力抽象) |
 | [PhotoViewer/Core/Settings/](PhotoViewer/Core/Settings/) | [Core/Settings/AGENTS.md](PhotoViewer/Core/Settings/AGENTS.md) | JSON 设置持久化 + 原生设置展示器接口 |
+| [PhotoViewer/Core/Storage/](PhotoViewer/Core/Storage/) | [Core/Storage/AGENTS.md](PhotoViewer/Core/Storage/AGENTS.md) | 平台中立存储引用(IFileRef/IFolderRef)+ 文件选择器门面 |
 | [PhotoViewer/Core/Tools/](PhotoViewer/Core/Tools/) | [Core/Tools/AGENTS.md](PhotoViewer/Core/Tools/AGENTS.md) | 照片数据统计服务(Windows 限定) |
 | [PhotoViewer/ViewModels/Main/](PhotoViewer/ViewModels/Main/) | [ViewModels/Main/AGENTS.md](PhotoViewer/ViewModels/Main/AGENTS.md) | 主窗口 shell + 文件源/文件栏/图片/控制/分析 VM |
 | [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/AGENTS.md](PhotoViewer/ViewModels/Tools/AGENTS.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |

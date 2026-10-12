@@ -4,11 +4,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Controls;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.ViewModels.Main;
 
@@ -36,7 +35,7 @@ public class FolderViewModel : ReactiveObject
     /// <summary>原始文件集合(未筛选、未排序),写入星级后同步刷新</summary>
     public IReadOnlyList<ImageFile> AllFiles => _allFiles;
 
-    private IStorageFolder? _currentFolder;
+    private IFolderRef? _currentFolder;
     private bool _isExifLoadingInProgress;
 
     private string _folderName = "";
@@ -81,34 +80,20 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     public async Task OpenFilePickerAsync()
     {
-        var topLevel = GetCurrentTopLevel();
-        if (topLevel?.StorageProvider == null) return;
-
         if (OperatingSystem.IsAndroid() || OperatingSystem.IsIOS())
         {
-            var folders = await topLevel.StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            var folder = await FilePicker.PickFolderAsync("选择图片文件夹");
+            if (folder != null)
             {
-                Title = "选择图片文件夹",
-                AllowMultiple = false
-            });
-
-            if (folders.Count > 0)
-            {
-                await OpenFolderAsync(folders[0]);
+                await OpenFolderAsync(folder);
             }
         }
         else
         {
-            var files = await topLevel.StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            var file = await FilePicker.PickFileAsync("选择图片", GetFilePickFilters());
+            if (file != null)
             {
-                Title = "选择图片",
-                FileTypeFilter = GetFilePickerFileTypes(),
-                AllowMultiple = false
-            });
-
-            if (files.Count > 0)
-            {
-                await OpenImageAsync(files[0]);
+                await OpenImageAsync(file);
             }
         }
     }
@@ -118,7 +103,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     /// <param name="files">外部传入的文件集合</param>
     /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
-    public async Task OpenExternalFilesAsync(IEnumerable<IStorageFile> files, bool scrollToCurrent = true)
+    public async Task OpenExternalFilesAsync(IEnumerable<IFileRef> files, bool scrollToCurrent = true)
     {
         var targetFile = files.FirstOrDefault(file => IsImageFile(file.Name));
         if (targetFile == null)
@@ -133,7 +118,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
     /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
-    public async Task OpenImageAsync(IStorageFile file, bool scrollToCurrent = true)
+    public async Task OpenImageAsync(IFileRef file, bool scrollToCurrent = true)
     {
         if (!IsImageFile(file.Name))
         {
@@ -156,7 +141,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     /// <param name="folder">要打开的文件夹</param>
     /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
-    public async Task OpenFolderAsync(IStorageFolder folder, bool scrollToCurrent = true)
+    public async Task OpenFolderAsync(IFolderRef folder, bool scrollToCurrent = true)
     {
         StorageAccessManager.Retain(folder);
         Main.ImageVM.Fit = true;
@@ -173,100 +158,31 @@ public class FolderViewModel : ReactiveObject
     /// 兼容旧调用路径:打开新图片所在文件夹。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
-    public async Task LoadNewImageFolder(IStorageFile file)
+    public async Task LoadNewImageFolder(IFileRef file)
     {
         await OpenImageAsync(file, scrollToCurrent: false);
     }
 
     /// <summary>
-    /// 获取当前主界面的 TopLevel。
+    /// 构建文件选择器的类型过滤器(显示名 + 扩展名模式;UTI/MIME 推导在选择器实现内)。
     /// </summary>
-    private static TopLevel? GetCurrentTopLevel()
+    private List<FilePickFilter> GetFilePickFilters()
     {
-        return App.GetCurrentTopLevel();
-    }
-
-    /// <summary>
-    /// 打开文件选择器中的类型过滤器。
-    /// </summary>
-    private List<FilePickerFileType> GetFilePickerFileTypes()
-    {
-        var fileTypes = new List<FilePickerFileType>();
-
-        var allSupportedType = new FilePickerFileType("所有图片")
+        var filters = new List<FilePickFilter>
         {
-            AppleUniformTypeIdentifiers = new[] { "public.image" },
-            MimeTypes = new[] { "image/*" },
-            Patterns = Main.Settings.SelectedFormats.Select(format => $"*{format}").ToArray()
+            new("所有图片", Main.Settings.SelectedFormats.Select(format => $"*{format}").ToArray())
+            {
+                IsGenericImage = true
+            }
         };
-        fileTypes.Add(allSupportedType);
 
         foreach (var formatItem in Main.Settings.FileFormats.Where(f => f.IsEnabled))
         {
-            var fileType = new FilePickerFileType($"{formatItem.DisplayName} 文件")
-            {
-                AppleUniformTypeIdentifiers = GetAppleTypeIdentifiers(formatItem.Extensions),
-                MimeTypes = GetMimeTypes(formatItem.Extensions),
-                Patterns = formatItem.Extensions.Select(ext => $"*{ext}").ToArray()
-            };
-            fileTypes.Add(fileType);
+            filters.Add(new FilePickFilter($"{formatItem.DisplayName} 文件",
+                formatItem.Extensions.Select(ext => $"*{ext}").ToArray()));
         }
 
-        return fileTypes;
-    }
-
-    /// <summary>
-    /// 根据扩展名获取对应的 Apple UTI。
-    /// </summary>
-    private string[] GetAppleTypeIdentifiers(string[] extensions)
-    {
-        var identifiers = new List<string>();
-        foreach (var ext in extensions)
-        {
-            var identifier = ext.ToLowerInvariant() switch
-            {
-                ".jpg" or ".jpeg" => "public.jpeg",
-                ".png" => "public.png",
-                ".tiff" or ".tif" => "public.tiff",
-                ".webp" => "public.webp",
-                ".bmp" => "com.microsoft.bmp",
-                ".gif" => "com.compuserve.gif",
-                _ => "public.image"
-            };
-
-            if (!identifiers.Contains(identifier))
-            {
-                identifiers.Add(identifier);
-            }
-        }
-        return identifiers.ToArray();
-    }
-
-    /// <summary>
-    /// 根据扩展名获取对应的 MIME 类型。
-    /// </summary>
-    private string[] GetMimeTypes(string[] extensions)
-    {
-        var mimeTypes = new List<string>();
-        foreach (var ext in extensions)
-        {
-            var mimeType = ext.ToLowerInvariant() switch
-            {
-                ".jpg" or ".jpeg" => "image/jpeg",
-                ".png" => "image/png",
-                ".tiff" or ".tif" => "image/tiff",
-                ".webp" => "image/webp",
-                ".bmp" => "image/bmp",
-                ".gif" => "image/gif",
-                _ => "image/*"
-            };
-
-            if (!mimeTypes.Contains(mimeType))
-            {
-                mimeTypes.Add(mimeType);
-            }
-        }
-        return mimeTypes.ToArray();
+        return filters;
     }
 
     #endregion
@@ -282,7 +198,7 @@ public class FolderViewModel : ReactiveObject
     /// 优先尝试以"文件夹上下文"打开图片;若无法获取父目录,则回退为单图模式。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
-    private async Task OpenImageWithFolderFallbackAsync(IStorageFile file)
+    private async Task OpenImageWithFolderFallbackAsync(IFileRef file)
     {
         var folder = await file.GetParentAsync();
 
@@ -318,7 +234,7 @@ public class FolderViewModel : ReactiveObject
     /// 以单图模式打开图片。当平台只授予单文件访问权限时,保证用户至少能看到当前图片。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
-    private async Task OpenSingleImageAsync(IStorageFile file)
+    private async Task OpenSingleImageAsync(IFileRef file)
     {
         StorageAccessManager.Retain(file);
 
@@ -341,7 +257,7 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     /// <param name="folder">要加载的文件夹</param>
     /// <param name="preferredFile">优先定位的图片;为空时打开第一张</param>
-    private async Task LoadFolderAsync(IStorageFolder folder, IStorageFile? preferredFile = null)
+    private async Task LoadFolderAsync(IFolderRef folder, IFileRef? preferredFile = null)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.Path);
@@ -370,7 +286,7 @@ public class FolderViewModel : ReactiveObject
         var items = folder.GetItemsAsync();
         await foreach (var storageItem in items)
         {
-            if (storageItem is not IStorageFile item) continue;
+            if (storageItem is not IFileRef item) continue;
             if (!IsImageFile(item.Name)) continue;
             if (preferredFile != null && IsSameStorageItem(item, preferredFile)) continue;
             allNewFiles.Add(new ImageFile(item));
@@ -460,7 +376,7 @@ public class FolderViewModel : ReactiveObject
     /// 在已加载集合中查找同一个存储文件。
     /// </summary>
     /// <param name="file">要查找的存储文件</param>
-    private ImageFile? FindLoadedFile(IStorageFile file)
+    private ImageFile? FindLoadedFile(IFileRef file)
     {
         return _allFiles.FirstOrDefault(imageFile => IsSameStorageItem(imageFile.File, file));
     }
@@ -468,7 +384,7 @@ public class FolderViewModel : ReactiveObject
     /// <summary>
     /// 判断两个存储项是否指向同一个底层对象。
     /// </summary>
-    private static bool IsSameStorageItem(IStorageItem? left, IStorageItem? right)
+    private static bool IsSameStorageItem(IStorageItemRef? left, IStorageItemRef? right)
     {
         if (left == null || right == null)
         {

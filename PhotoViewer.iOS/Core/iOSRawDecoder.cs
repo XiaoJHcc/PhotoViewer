@@ -1,9 +1,9 @@
 using System;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.iOS.Core;
 
@@ -17,7 +17,7 @@ public sealed class iOSRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsIOS();
 
-    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
+    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
     {
         var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
         var bmp = iOSHeifDecoder.DecodeWithImageIO(path, null, data);
@@ -26,7 +26,7 @@ public sealed class iOSRawDecoder : IRawDecoder
         return bmp;
     }
 
-    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
         return iOSHeifDecoder.DecodeWithImageIO(path, maxSize, data);

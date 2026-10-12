@@ -9,8 +9,8 @@ using Avalonia;
 using Avalonia.Media; // 新增：用于合成去除透明度
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Image;
 
@@ -167,7 +167,7 @@ public static class BitmapLoader
     /// 2) 缓存平均占用
     /// 3) 兜底 100MB
     /// </summary>
-    public static async Task<long> EstimateDecodedSizeAsync(IStorageFile file, CancellationToken ct = default)
+    public static async Task<long> EstimateDecodedSizeAsync(IFileRef file, CancellationToken ct = default)
     {
         try
         {
@@ -261,7 +261,7 @@ public static class BitmapLoader
     /// <summary>
     /// 预取任务申请内存预留；若估算过大（>60%上限）则返回 null（跳过预取）。
     /// </summary>
-    public static async Task<IDisposable?> ReserveForPreloadAsync(IStorageFile file, CancellationToken ct)
+    public static async Task<IDisposable?> ReserveForPreloadAsync(IFileRef file, CancellationToken ct)
     {
         var estimate = await EstimateDecodedSizeAsync(file, ct);
         if (estimate <= 0) return null;
@@ -284,9 +284,9 @@ public static class BitmapLoader
     /// <summary>
     /// 异步获取图片（带缓存和EXIF旋转）；同路径并发请求在途去重，共享同一解码任务。
     /// </summary>
-    public static Task<Bitmap?> GetBitmapAsync(IStorageFile file, CancellationToken ct = default)
+    public static Task<Bitmap?> GetBitmapAsync(IFileRef file, CancellationToken ct = default)
     {
-        var filePath = file.Path.LocalPath;
+        var filePath = file.PathKey;
         
         // 检查缓存
         if (_cache.TryGetValue(filePath, out var cachedItem))
@@ -321,7 +321,7 @@ public static class BitmapLoader
     /// <summary>
     /// 缓存未命中路径：容量保障 → 线程池解码 → 入缓存。
     /// </summary>
-    private static async Task<Bitmap?> LoadAndCacheAsync(IStorageFile file, string filePath, CancellationToken ct)
+    private static async Task<Bitmap?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct)
     {
         // 在解码前进行容量保障（基于估算）
         try
@@ -359,7 +359,7 @@ public static class BitmapLoader
     /// <summary>
     /// 加载图片并应用EXIF旋转
     /// </summary>
-    private static async Task<Bitmap?> LoadBitmapWithExifRotationAsync(IStorageFile file, CancellationToken ct = default)
+    private static async Task<Bitmap?> LoadBitmapWithExifRotationAsync(IFileRef file, CancellationToken ct = default)
     {
         try
         {
@@ -524,7 +524,7 @@ public static class BitmapLoader
     /// <summary>
     /// 获取EXIF方向值
     /// </summary>
-    private static async Task<int> GetExifOrientationAsync(IStorageFile file)
+    private static async Task<int> GetExifOrientationAsync(IFileRef file)
     {
         try
         {
@@ -833,7 +833,7 @@ public static class BitmapLoader
     /// <summary>
     /// 预加载图片（不会阻塞UI）
     /// </summary>
-    public static async Task PreloadBitmapAsync(IStorageFile file, CancellationToken ct = default)
+    public static async Task PreloadBitmapAsync(IFileRef file, CancellationToken ct = default)
     {
         try
         {
@@ -848,14 +848,14 @@ public static class BitmapLoader
     /// <summary>
     /// 批量顺序预取（如某张失败不中断，支持取消）
     /// </summary>
-    public static async Task PreloadBitmapsSequentiallyAsync(IEnumerable<IStorageFile> files, CancellationToken token)
+    public static async Task PreloadBitmapsSequentiallyAsync(IEnumerable<IFileRef> files, CancellationToken token)
     {
         foreach (var f in files)
         {
             if (token.IsCancellationRequested) break;
             try
             {
-                if (!IsInCache(f.Path.LocalPath))
+                if (!IsInCache(f.PathKey))
                     await PreloadBitmapAsync(f, token);
             }
             catch { /* 单个失败忽略 */ }

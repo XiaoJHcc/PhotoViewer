@@ -11,6 +11,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.Platform;
 using PhotoViewer.ViewModels;
 using PhotoViewer.ViewModels.Main;
@@ -39,6 +40,7 @@ public partial class App : Application
         // 注入 UI 线程调度器,Core/ViewModel 的回调线程封送统一走 UiDispatcher 门面。
         UiDispatcher.Initialize(new AvaloniaUiDispatcher());
         NativeWindowPresenter.Initialize(new AvaloniaWindowPresenter());
+        FilePicker.Initialize(new AvaloniaFilePickerService());
 
         var vm = new MainViewModel();
 
@@ -103,13 +105,13 @@ public partial class App : Application
             {
                 if (item is IStorageFolder folder)
                 {
-                    await OpenFolderOnUiThreadAsync(vm, folder);
+                    await OpenFolderOnUiThreadAsync(vm, AvaloniaStorageRefs.WrapFolder(folder));
                     return;
                 }
 
                 if (item is IStorageFile file && vm.FolderVM.IsImageFile(file.Name))
                 {
-                    await OpenFileOnUiThreadAsync(vm, file);
+                    await OpenFileOnUiThreadAsync(vm, AvaloniaStorageRefs.WrapFile(file));
                     return;
                 }
             }
@@ -138,13 +140,13 @@ public partial class App : Application
 
             foreach (var item in request.Items)
             {
-                if (item.StorageItem is IStorageFolder directFolder)
+                if (item.StorageItem is IFolderRef directFolder)
                 {
                     await OpenFolderOnUiThreadAsync(vm, directFolder);
                     return;
                 }
 
-                if (item.StorageItem is IStorageFile directFile && vm.FolderVM.IsImageFile(directFile.Name))
+                if (item.StorageItem is IFileRef directFile && vm.FolderVM.IsImageFile(directFile.Name))
                 {
                     await OpenFileOnUiThreadAsync(vm, directFile);
                     return;
@@ -155,7 +157,7 @@ public partial class App : Application
                     var folder = storageProvider == null ? null : await storageProvider.TryGetFolderFromPathAsync(item.Path);
                     if (folder != null)
                     {
-                        await OpenFolderOnUiThreadAsync(vm, folder);
+                        await OpenFolderOnUiThreadAsync(vm, AvaloniaStorageRefs.WrapFolder(folder));
                         return;
                     }
 
@@ -168,7 +170,7 @@ public partial class App : Application
                     continue;
                 }
 
-                await OpenFileOnUiThreadAsync(vm, file);
+                await OpenFileOnUiThreadAsync(vm, AvaloniaStorageRefs.WrapFile(file));
                 return;
             }
 
@@ -188,7 +190,7 @@ public partial class App : Application
     /// <summary>
     /// 在 UI 线程中打开文件夹。
     /// </summary>
-    private static async Task OpenFolderOnUiThreadAsync(MainViewModel vm, IStorageFolder folder)
+    private static async Task OpenFolderOnUiThreadAsync(MainViewModel vm, IFolderRef folder)
     {
         await Dispatcher.UIThread.InvokeAsync(async () => await vm.FolderVM.OpenFolderAsync(folder));
     }
@@ -196,7 +198,7 @@ public partial class App : Application
     /// <summary>
     /// 在 UI 线程中打开图片文件。
     /// </summary>
-    private static async Task OpenFileOnUiThreadAsync(MainViewModel vm, IStorageFile file)
+    private static async Task OpenFileOnUiThreadAsync(MainViewModel vm, IFileRef file)
     {
         await Dispatcher.UIThread.InvokeAsync(async () => await vm.FolderVM.OpenImageAsync(file));
     }

@@ -1,8 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Mac.Core;
 
@@ -15,11 +15,11 @@ public sealed class MacRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsMacOS();
 
-    public Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
-        => Task.Run(() => Decode(file.Path.LocalPath, null));
+    public Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+        => Task.Run(() => Decode(file.PathKey, null));
 
-    public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
-        => Task.Run(() => Decode(file.Path.LocalPath, maxSize));
+    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+        => Task.Run(() => Decode(file.PathKey, maxSize));
 
     private static Bitmap? Decode(string path, int? maxSize)
     {

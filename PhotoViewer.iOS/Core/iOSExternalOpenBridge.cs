@@ -5,6 +5,7 @@ using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Platform;
 
 namespace PhotoViewer.iOS.Core;
 
@@ -26,7 +27,7 @@ public static class iOSExternalOpenBridge
         var storageItem = TryCreateStorageItem(url);
         if (storageItem != null)
         {
-            ExternalOpenService.PublishStorageItem(storageItem, source);
+            ExternalOpenService.PublishStorageItem(AvaloniaStorageRefs.Wrap(storageItem), source);
             return true;
         }
 

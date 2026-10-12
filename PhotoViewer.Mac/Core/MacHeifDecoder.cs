@@ -4,9 +4,9 @@ using System.Text;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Mac.Core;
 
@@ -14,11 +14,11 @@ public sealed class MacHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsMacOS();
 
-    public Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
-        => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, null));
+    public Task<Bitmap?> LoadBitmapAsync(IFileRef file)
+        => Task.Run(() => DecodeWithImageIO(file.PathKey, null));
 
-    public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
-        => Task.Run(() => DecodeWithImageIO(file.Path.LocalPath, maxSize));
+    public Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
+        => Task.Run(() => DecodeWithImageIO(file.PathKey, maxSize));
 
     internal static Bitmap? DecodeWithImageIO(string path, int? maxSize)
     {

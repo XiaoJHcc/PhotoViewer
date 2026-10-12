@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
 using Avalonia.Platform;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 
@@ -29,7 +29,7 @@ public static class ThumbnailService
     /// 列出该文件所有可用的缩略图来源（尺寸由容器/EXIF 元数据读取；不做任何图像解码）。
     /// 顺序由具体提取器决定;尺寸未知时 <see cref="ThumbnailSource.Width"/> / <see cref="ThumbnailSource.Height"/> 为 0。
     /// </summary>
-    public static async Task<IReadOnlyList<ThumbnailSource>> GetAvailableSourcesAsync(IStorageFile file)
+    public static async Task<IReadOnlyList<ThumbnailSource>> GetAvailableSourcesAsync(IFileRef file)
     {
         if (file == null) return Array.Empty<ThumbnailSource>();
 
@@ -59,7 +59,7 @@ public static class ThumbnailService
     /// 解码完成后,根据容器声明的方向与传感器比例完成"方向对齐 + letterbox 裁剪"。
     /// 任何来源都不会触发原图全分辨率解码；所有来源都失败时返回 null。
     /// </summary>
-    public static async Task<Bitmap?> GetThumbnailAsync(IStorageFile file, int targetShortSide)
+    public static async Task<Bitmap?> GetThumbnailAsync(IFileRef file, int targetShortSide)
     {
         if (file == null || targetShortSide <= 0) return null;
 
@@ -120,7 +120,7 @@ public static class ThumbnailService
     // ============================================================
 
     private static async Task<IReadOnlyList<ThumbnailSource>> EnumerateHeifSourcesAsync(
-        IStorageFile file,
+        IFileRef file,
         IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         var result = new List<ThumbnailSource>();
@@ -183,7 +183,7 @@ public static class ThumbnailService
     /// <summary>
     /// 按 (offset, length) 从文件里截取一段字节,嗅探为合法 JPEG 后按目标短边解码。
     /// </summary>
-    private static async Task<Bitmap?> ReadRangeAndDecodeAsync(IStorageFile file, int offset, int length, int targetShortSide)
+    private static async Task<Bitmap?> ReadRangeAndDecodeAsync(IFileRef file, int offset, int length, int targetShortSide)
     {
         try
         {
@@ -222,7 +222,7 @@ public static class ThumbnailService
     // 尺寸全部从字节本身读取（SOF 解析）,不再用元数据贴标签。
     // ============================================================
 
-    private static IReadOnlyList<ThumbnailSource> EnumerateNonHeifSources(IStorageFile file, IReadOnlyList<MetadataExtractor.Directory> directories)
+    private static IReadOnlyList<ThumbnailSource> EnumerateNonHeifSources(IFileRef file, IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         var result = new List<ThumbnailSource>();
 
@@ -294,7 +294,7 @@ public static class ThumbnailService
     /// 从 ExifThumbnailDirectory 读取嵌入缩略图字节:先按常见字节 tag,再按 (Offset 0x0201, Length 0x0202) 偏移读取。
     /// 始终只解码嵌入字节;任何情况都不会触发原图解码。
     /// </summary>
-    private static async Task<Bitmap?> ReadEmbeddedFromExifThumbnailDirectoryAsync(IStorageFile file, ExifThumbnailDirectory dir, int targetShortSide)
+    private static async Task<Bitmap?> ReadEmbeddedFromExifThumbnailDirectoryAsync(IFileRef file, ExifThumbnailDirectory dir, int targetShortSide)
     {
         int[] thumbnailTags = { 0x0201, 0x0202, 0x0103 };
         foreach (var tag in thumbnailTags)
@@ -341,7 +341,7 @@ public static class ThumbnailService
     /// 动机:IFD1 的 ThumbnailOffset 口径因相机/软件而异（TIFF-相对 vs 文件-绝对）,
     /// 还常有 firmware quirk 偏移几字节（实测 Sony ILCE-6100 偏 +6）。
     /// </summary>
-    private static async Task<byte[]?> ReadJpegAroundAsync(IStorageFile file, int hintOffset, int length)
+    private static async Task<byte[]?> ReadJpegAroundAsync(IFileRef file, int hintOffset, int length)
     {
         const int windowPad = 64;
         try

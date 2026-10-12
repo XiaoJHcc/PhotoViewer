@@ -4,7 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels;
 
 namespace PhotoViewer.Core;
@@ -24,7 +24,7 @@ public interface IXmpPlatformWriter
     /// <param name="newByte">新的目标字节</param>
     /// <param name="enableSafeMode">是否启用安全校验</param>
     /// <returns>写入是否成功</returns>
-    Task<bool> TryWriteByteAsync(IStorageFile file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode);
+    Task<bool> TryWriteByteAsync(IFileRef file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode);
 }
 
 /// <summary>
@@ -39,11 +39,10 @@ public static class XmpLocalFileWriter
     /// <param name="file">目标存储文件</param>
     /// <param name="localPath">成功时输出真实本地路径</param>
     /// <returns>是否成功获取</returns>
-    public static bool TryGetWritableLocalPath(IStorageFile file, out string localPath)
+    public static bool TryGetWritableLocalPath(IFileRef file, out string localPath)
     {
-        localPath = file.Path?.LocalPath ?? string.Empty;
+        localPath = file.PathKey;
         return !string.IsNullOrWhiteSpace(localPath)
-               && file.Path != null
                && file.Path.IsFile
                && File.Exists(localPath);
     }
@@ -209,7 +208,7 @@ public static class XmpWriter
     /// <param name="rating">星级值 (0-5)</param>
     /// <param name="enableSafeMode">是否启用安全模式（备份和校验）</param>
     /// <returns>成功返回 true，失败或文件不符合要求返回 false</returns>
-    public static async Task<bool> WriteRatingAsync(IStorageFile file, int rating, bool enableSafeMode = true)
+    public static async Task<bool> WriteRatingAsync(IFileRef file, int rating, bool enableSafeMode = true)
     {
         var totalSw = Stopwatch.StartNew();
         var stepSw = Stopwatch.StartNew();
@@ -648,7 +647,7 @@ public static class XmpWriter
     /// <summary>
     /// 从文件中读取当前 XMP 星级，不修改文件。
     /// </summary>
-    public static async Task<int?> ReadRatingAsync(IStorageFile file)
+    public static async Task<int?> ReadRatingAsync(IFileRef file)
     {
         try
         {
@@ -697,7 +696,7 @@ internal sealed class NoopXmpPlatformWriter : IXmpPlatformWriter
     /// <summary>
     /// 未注入平台实现时直接返回失败，避免落到不明确的回退路径。
     /// </summary>
-    public Task<bool> TryWriteByteAsync(IStorageFile file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
+    public Task<bool> TryWriteByteAsync(IFileRef file, long bytePosition, byte expectedByte, byte newByte, bool enableSafeMode)
     {
         Console.WriteLine("[XMP Writer] No platform writer registered");
         return Task.FromResult(false);

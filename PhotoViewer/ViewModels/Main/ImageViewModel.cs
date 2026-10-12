@@ -4,10 +4,10 @@ using System.Threading;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
@@ -70,7 +70,7 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _HintDetail, value);
     }
 
-    public event EventHandler<IStorageFile?>? ImageLoaded;
+    public event EventHandler<IFileRef?>? ImageLoaded;
     
     private Rect _detailHighlightRect;
     public Rect DetailHighlightRect
@@ -108,7 +108,7 @@ public class ImageViewModel : ReactiveObject
                 else
                 {
                     // 新图未命中缓存时立即清屏（显示空白），旧图不留守；命中则走缓存快路径直接上屏
-                    if (!BitmapLoader.IsInCache(currentFile.File.Path.LocalPath))
+                    if (!BitmapLoader.IsInCache(currentFile.File.PathKey))
                         SourceBitmap = null;
                     _ = LoadImageAsync(currentFile.File, generation);
                 }
@@ -144,7 +144,7 @@ public class ImageViewModel : ReactiveObject
      * 打开图片
      */
     
-    public async Task LoadImageAsync(IStorageFile file, int generation)
+    public async Task LoadImageAsync(IFileRef file, int generation)
     {
         try
         {

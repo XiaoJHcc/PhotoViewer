@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Desktop.Core;
 
@@ -17,7 +17,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 异步加载 HEIF 图片
     /// </summary>
-    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
+    public async Task<Bitmap?> LoadBitmapAsync(IFileRef file)
     {
         return await HeifLoader.RunCpuDecodeAsync(async () =>
         {
@@ -29,7 +29,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <summary>
     /// 异步加载 HEIF 缩略图
     /// </summary>
-    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    public async Task<Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         return await HeifLoader.RunCpuDecodeAsync(async () =>
         {

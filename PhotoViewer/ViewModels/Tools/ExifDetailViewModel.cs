@@ -3,10 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Tools;
@@ -20,7 +20,7 @@ public class FormatEntry : ReactiveObject
     public string Label { get; }
 
     /// <summary>对应的存储文件</summary>
-    public IStorageFile File { get; internal set; }
+    public IFileRef File { get; internal set; }
 
     private List<MetadataGroup>? _groups;
     /// <summary>该格式的元数据分组列表；null 表示尚未加载</summary>
@@ -49,7 +49,7 @@ public class FormatEntry : ReactiveObject
     /// <param name="label">格式标签（文件扩展名大写）</param>
     /// <param name="file">对应存储文件</param>
     /// <param name="preloaded">已预加载的 EXIF 数据（主文件可直接传入）</param>
-    public FormatEntry(string label, IStorageFile file, ExifData? preloaded = null)
+    public FormatEntry(string label, IFileRef file, ExifData? preloaded = null)
     {
         Label = label;
         File = file;

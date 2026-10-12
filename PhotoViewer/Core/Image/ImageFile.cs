@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Avalonia;
 using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Platform;
 using ReactiveUI;
 
@@ -30,7 +30,7 @@ public class ImageFile : ReactiveObject
     private bool _basicPropsLoaded;
     private bool? _isShake;
 
-    public IStorageFile File { get; }
+    public IFileRef File { get; }
     public string Name => File.Name;
 
     /// <summary>
@@ -163,7 +163,7 @@ public class ImageFile : ReactiveObject
     }
 
     // 被同名合并隐藏的其它格式文件
-    public List<IStorageFile> HiddenFiles { get; } = new();
+    public List<IFileRef> HiddenFiles { get; } = new();
 
     /// <summary>
     /// 隐藏文件的星级缓存（key = 文件名，value = 星级），
@@ -187,7 +187,7 @@ public class ImageFile : ReactiveObject
         DisplayName = Name;
     }
 
-    public ImageFile(IStorageFile file)
+    public ImageFile(IFileRef file)
     {
         File = file;
 
@@ -223,7 +223,7 @@ public class ImageFile : ReactiveObject
     {
         try
         {
-            var filePath = File.Path.LocalPath;
+            var filePath = File.PathKey;
             IsInCache = BitmapLoader.IsInCache(filePath);
         }
         catch (Exception ex)
@@ -357,7 +357,7 @@ public class ImageFile : ReactiveObject
             {
                 _exifData = new ExifData 
                 { 
-                    FilePath = File.Path.LocalPath,
+                    FilePath = File.PathKey,
                     Rating = rating 
                 };
             }
@@ -392,7 +392,7 @@ public class ImageFile : ReactiveObject
         {
             ExifData = new ExifData
             {
-                FilePath = File.Path.LocalPath,
+                FilePath = File.PathKey,
                 Rating = rating
             };
         }

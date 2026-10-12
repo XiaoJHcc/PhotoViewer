@@ -1,10 +1,10 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading.Tasks;
 using Avalonia;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 using Android.Graphics;
 using Android.OS;
 using Java.Nio;
@@ -18,7 +18,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsAndroid() && (int)Build.VERSION.SdkInt >= 28;
 
-    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadBitmapAsync(IStorageFile file)
+    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadBitmapAsync(IFileRef file)
     {
         if (!IsSupported || file is null) return null;
 
@@ -50,7 +50,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
         }
     }
 
-    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadThumbnailAsync(IFileRef file, int maxSize)
     {
         if (!IsSupported || file is null || maxSize <= 0) return null;
 
