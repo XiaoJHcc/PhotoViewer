@@ -4,6 +4,8 @@
 > Keep concise; update when architecture shifts (rename, split, new module). Do **not** log small bug fixes here.
 >
 > **文档结构**:本文件仅含项目快照、跨模块流程、平台矩阵、辅助组件、编码/任务/文档规范。模块内的文件清单与职责放在各模块的 `AGENTS.md`(见 §3 模块索引),改文件时会随目录自动加载。
+>
+> **⚠️ 分支提示**:本文件当前位于 `refactor/native-rebuild` 分支。若你在此分支上工作,先读 [Plans/native-rebuild-handoff.md](Plans/native-rebuild-handoff.md) —— 原生重构的动机、当前状态与下一步全在其中。
 
 ---
 
