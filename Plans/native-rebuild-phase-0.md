@@ -13,10 +13,11 @@
 
 ## 1. 验收门(Phase 0 出口标准)
 
-- [ ] `PhotoViewer/Core/` 全目录 grep `Avalonia` 零命中(命名空间引用与类型引用均无);
-- [ ] ViewModels 全目录无 `Dispatcher.UIThread`、无 `Avalonia.Controls.Window` 直接构造、无 `Avalonia.Media` 笔刷、无 `Avalonia.Input`(快捷键);
-- [ ] `PhotoViewer.Desktop` 构建零错误、无新增警告;
-- [ ] 人工冒烟(交回用户):打开文件夹、翻图、缩放、评分、设置页、相似聚类、分析栏。
+- [x] `PhotoViewer/Core/` 全目录 grep `Avalonia` 零命中(代码层面;残留均为注释文本)—— M4 达成;
+- [x] ViewModels 全目录无 `Dispatcher.UIThread`、无 `Avalonia.Controls.Window` 直接构造、无 `Avalonia.Media` 笔刷、无 `Avalonia.Input`(快捷键)—— M1/M2 达成;唯一豁免:`AnalysisItem.Overlay` 持有 Avalonia `Control` 实例(抖动瓦片),归原生壳阶段处理(§5 已记录);
+- [x] `PhotoViewer.Desktop` 构建零错误、无新增警告 —— 每个里程碑均过;Android/Training.sln/Tools 同步验证通过;
+- [ ] **人工/跨平台验收(交回用户)**:Mac 构建 `PhotoViewer.Mac` + `PhotoViewer.iOS`(M3/M4 盲改区);四平台人工冒烟(打开文件夹、翻图、缩放、评分、设置页、相似聚类、分析栏);DINO 渲染缓存抽样对比(verify_onnx_parity 口径)。
+- [x] Windows 冒烟(2026-10-19 已完成):CLI 外部打开 JPG(城市图,竖图 EXIF 旋转正确)+ HIF(水乡图,LibHeif 链路)均正常显示,胶片条/EXIF/评分栏渲染正常。
 - [ ] 物理拆分 `PhotoViewer.Core.csproj`(编译器强制隔离)**不在本阶段** —— 推迟到 Phase 2 首个原生壳开工时(Mac 上验证四头工程)。
 
 ## 2. 基线
@@ -101,3 +102,5 @@
 | 2026-10-19 | 适配层(CWT)下当前显示图存在 `DecodedImage` + `WriteableBitmap` 双份缓冲(仅当前图/可见缩略图),预取项保持单份 | Phase 1 MemoryGovernor 统一记账;Phase 2 原生表面消除双份 |
 | 2026-10-19 | DINO 输入缩放(`RenderInputImage`)改用 Skia Linear 采样,口径对齐原 Avalonia DrawImage 默认;DatasetBuilder 已同步(Training 仓单独提交) | 下次提取前跑 `verify_onnx_parity.py` + 抽样对比渲染缓存确认分布未漂移 |
 | 2026-10-19 | BitmapLoader 淘汰路径的阻塞式 `GC.Collect ×2` 与 UI 线程 Dispose 在 Phase 0 原样保留(零行为变化) | Phase 1 内存架构(MemoryGovernor)统一拆除 |
+| 2026-10-19 | 冒烟观察:`ShakeFlagService group failed: Collection was modified`(文件夹加载期 `_allFiles` 被改写与后台评估并发) | **既有竞态**,与 Phase 0 无关(未改该链路);Phase 1 做快照枚举修复 |
+| 2026-10-19 | Training 仓提交时误卷入用户已 staged 的 `docs/HUMAN.md`,已 soft-reset 拆分重提;HUMAN.md 现处于未暂存修改状态(内容未动) | 以后提交 Training 仓先 `git status` 检查既有暂存区 |
