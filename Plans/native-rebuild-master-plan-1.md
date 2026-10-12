@@ -153,7 +153,7 @@ MemoryGovernor(Core/Platform 或 Core/Memory,静态门面 + 平台注入)
 | 快捷键模型 | `Avalonia.Input.KeyGesture` ↔ `AppGesture` 互转 | `AppGesture` 提升为 Core 自有模型,平台壳单向映射 |
 | 笔刷着色 | VM 里 `SolidColorBrush`(`SettingsViewModel.BitmapCache.cs:229-269`) | VM 输出语义枚举,View 决定颜色 |
 
-**控件与风格**:Mac 版为基准(菜单、快捷键、表单、列表全部 AppKit 原生 + HIG);iOS 沿用 UIKit(设置页已有);WinUI3/Android 控件在布局密度、圆角、分组样式上跟随 Mac 版视觉规范。迁移顺序逐页推进,**一次平台做透再开下一个**(plan-1 §5 原则不变)。
+**控件与风格**:Mac 版为基准(菜单、快捷键、表单、列表全部 AppKit 原生 + HIG);iOS 沿用 UIKit(设置页已有);WinUI3/Android 控件在布局密度、圆角、分组样式上跟随 Mac 版视觉规范。迁移顺序逐页推进,**一次平台做透再开下一个**(plan-1 §5 原则不变)。功能项与现有 Avalonia 版对齐,但**形态不追求逐像素复刻**(2026-10-12 决策:Avalonia UI 仅为产品参考,原生阶段允许 UI/手感优化迭代,人工验收自原生壳阶段开始)。
 
 ### 4.5 iOS App Store 合规(Phase 内嵌,不单独成阶段)
 
@@ -182,7 +182,8 @@ MemoryGovernor(Core/Platform 或 Core/Memory,静态门面 + 平台注入)
 > 注意 Phase 1 不是 plan-1 反对的"临时修补":其全部产物(MemoryGovernor、分级解码、净化后的 Core)都在共享层,原生壳阶段原样带走。
 
 ### Phase 0 — Core 平台中立化(纯重构,零行为变化)
-§5 第 1/4/5/8 项。产出:Core 不再引用 Avalonia 程序集;旧壳经适配层运行;四平台功能零回归。
+§5 第 5/8 项 + 第 1 项的 `DecodedImage` 契约部分。产出:Core 不再引用 Avalonia 程序集;旧壳经适配层运行;四平台功能零回归。
+> 执行修订(phase-0 §3-M4 定稿):第 1 项的 `ColorEngine` 与第 4 项(EXIF 旋转元数据化)推迟到 Phase 2 原生壳阶段——零行为变化下 ColorEngine 是无消费者的恒等死代码;旋转元数据化(顶点变换)依赖原生渲染层,过渡期由 SkiaSharp CPU 像素变换承担(90° 倍数无重采样损失)。
 **验证门**:四平台构建 + 全功能人工回归清单(评分写回/外部打开/指纹 DB/AI 索引/分析栏/设置)通过。
 
 ### Phase 1 — 内存与解码新架构(旧壳内先行落地)
@@ -211,6 +212,7 @@ MemoryGovernor(Core/Platform 或 Core/Memory,静态门面 + 平台注入)
 | iOS 8bit P3 回退牺牲超 P3 内容 | 低 | 仅低预算机型/压力期启用;设置页给"始终高质量"开关(16float 强制) |
 | VM 净化触碰面广(25 VM + 19 Core 文件) | 中 | Phase 0 一次性做完而非渐进;适配层保证全程可编译可发布 |
 | iOS 审核对文件访问/XMP 写回的关注 | 低 | 用途字符串写清"照片元数据同步";就地写仅限用户显式授权的目录 |
+| Windows HEIF 无子采样解码,代理图仅获缓存驻留收益 | 低 | 桌面内存宽松;重采样走 Skia Mitchell(替换既有最近邻);切图提速验收以 Apple 平台实测为准 |
 | 迁移期双套 UI 维护(iOS 设置页已有同步约束先例) | 中 | 门面回退机制让新旧页面可随时切换;冻结旧 UI 新功能 |
 
 ## 8. 全局验证标准
