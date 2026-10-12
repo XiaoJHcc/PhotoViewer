@@ -36,10 +36,10 @@ public static class ImageEnhancer
         int rIdx = isBgr ? 2 : 0;
         int bIdx = isBgr ? 0 : 2;
 
-        // 拷贝源像素到自有缓冲（按行,考虑 stride）：此后与源图像解耦，即便源被 LRU 淘汰释放也不影响后续运算。
+        // 拷贝源像素到自有缓冲（按行,考虑 stride;缓冲池租用,P1-M3）：此后与源图像解耦，即便源被 LRU 淘汰释放也不影响后续运算。
         int stride = w * bpp;
         int byteCount = stride * h;
-        var pixels = new byte[byteCount];
+        var pixels = DecodedImage.RentPixels(byteCount);
         for (int y = 0; y < h; y++)
         {
             Array.Copy(source.Pixels, (long)y * source.Stride, pixels, (long)y * stride, stride);
@@ -47,7 +47,7 @@ public static class ImageEnhancer
 
         EqualizeLuminance(pixels, byteCount, bpp, rIdx, bIdx);
 
-        return new DecodedImage(pixels, w, h, stride, source.Encoding);
+        return DecodedImage.CreatePooled(pixels, w, h, stride, source.Encoding);
     }
 
     /// <summary>

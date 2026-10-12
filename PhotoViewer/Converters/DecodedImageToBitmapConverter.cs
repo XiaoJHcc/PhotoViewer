@@ -16,9 +16,21 @@ public sealed class DecodedImageToBitmapConverter : IValueConverter
 
     /// <summary>
     /// 转换为位图;null 或失败返回 null。
+    /// P1-M3 租约安全:拷贝全程持租约,已归还池的图像返回 null(绑定回占位符)。
     /// </summary>
     public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-        => value is DecodedImage image ? DecodedImageAdapter.ToBitmap(image) : null;
+    {
+        if (value is not DecodedImage image) return null;
+        if (!image.TryAcquire()) return null;
+        try
+        {
+            return DecodedImageAdapter.ToBitmap(image);
+        }
+        finally
+        {
+            image.Release();
+        }
+    }
 
     /// <summary>
     /// 不支持反向转换。

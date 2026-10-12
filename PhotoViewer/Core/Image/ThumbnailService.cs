@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
@@ -56,10 +57,29 @@ public static class ThumbnailService
     /// 解码完成后,根据容器声明的方向与传感器比例完成"方向对齐 + letterbox 裁剪"。
     /// 任何来源都不会触发原图全分辨率解码；所有来源都失败时返回 null。
     /// </summary>
-    public static async Task<DecodedImage?> GetThumbnailAsync(IFileRef file, int targetShortSide)
+    /// <param name="file">文件引用。</param>
+    /// <param name="targetShortSide">目标短边像素。</param>
+    /// <param name="priority">解码优先级(P1-M3 准入语义;批量索引传 P3)。准入被拒返回 null。</param>
+    public static async Task<DecodedImage?> GetThumbnailAsync(IFileRef file, int targetShortSide, DecodePriority priority = DecodePriority.P1_HighValue)
     {
         if (file == null || targetShortSide <= 0) return null;
 
+        // 解码准入(P1-M3):缩略图按固定估值记账,完成后按实际复核;被拒(非 P0)直接返回
+        if (!MemoryGovernor.TryAcquire(EstimatedThumbBytes, priority, out var thumbPermit))
+            return null;
+        using (thumbPermit)
+        {
+            var result = await GetThumbnailCoreAsync(file, targetShortSide).ConfigureAwait(false);
+            thumbPermit!.SetActual(result?.ByteCount ?? 0);
+            return result;
+        }
+    }
+
+    /// <summary>缩略图解码准入的固定估值(内嵌预览/小尺寸解码,完成后按实际复核)。</summary>
+    private const long EstimatedThumbBytes = 4L * 1024 * 1024;
+
+    private static async Task<DecodedImage?> GetThumbnailCoreAsync(IFileRef file, int targetShortSide)
+    {
         IReadOnlyList<MetadataExtractor.Directory> directories;
         bool isHeif = HeifLoader.IsHeifFile(file);
         try

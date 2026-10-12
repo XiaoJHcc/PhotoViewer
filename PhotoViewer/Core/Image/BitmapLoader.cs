@@ -176,8 +176,16 @@ public static class BitmapLoader
         if (_cache.TryRemove(key, out var item))
         {
             UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, sizeClass, false));
-            UiDispatcher.Post(() => item.Image.Dispose());
+            item.Image.Release();
         }
+    }
+
+    /// <summary>
+    /// 清空缩略图分区(P1-M3:文件夹切换时整批释放,不依赖 LRU 淘汰与 finalizer)。
+    /// </summary>
+    public static void ClearThumbnailClass()
+    {
+        EvictRange(_cache.ToList().Where(kv => kv.Key.Class == ImageSizeClass.Thumb));
     }
 
     /// <summary>缩略图分区张数上限。</summary>
@@ -215,11 +223,10 @@ public static class BitmapLoader
         UiDispatcher.Post(() =>
         {
             foreach (var kv in toRemove)
-            {
                 CacheStatusChanged?.Invoke(kv.Key.Path, ImageSizeClass.Thumb, false);
-                kv.Value.Image.Dispose();
-            }
         });
+        foreach (var kv in toRemove)
+            kv.Value.Image.Release();
     }
 
     /// <summary>
@@ -246,8 +253,7 @@ public static class BitmapLoader
             .ToList();
     }
     
-    // 新增：预加载内存预留与容量序列化
-    private static long _reservedBytes = 0;
+    // 容量序列化(在途预留账 P1-M3 起归 MemoryGovernor,不再本类自记)
     private static readonly SemaphoreSlim _capacitySemaphore = new(1, 1);
 
     // 新增：平均缓存项大小（字节,仅主分区——缩略图不参与全分辨率估算）
@@ -294,8 +300,9 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 在解码前确保容量：主分区(缓存 + 预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
+    /// 在解码前确保容量：主分区(缓存 + 在途预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
     /// 缩略图分区不参与此账(上限自管,见 <see cref="EvictThumbsToFit"/>)。
+    /// P1-M3:在途预留账归 <see cref="MemoryGovernor"/>;淘汰只做租约归还(纯托管,无 UI 线程同步 Dispose、无阻塞 GC)。
     /// </summary>
     private static async Task EnsureCapacityAsync(long needBytes)
     {
@@ -310,7 +317,7 @@ public static class BitmapLoader
             while (true)
             {
                 var currentSize = FullCacheSize;
-                var totalPlanned = currentSize + Interlocked.Read(ref _reservedBytes) + needBytes;
+                var totalPlanned = currentSize + MemoryGovernor.ReservedBytes + needBytes;
                 long limit = tooLarge ? safeLimit : MaxCacheSize;
                 if (totalPlanned <= limit) break;
 
@@ -327,29 +334,23 @@ public static class BitmapLoader
                     {
                         itemsToRemove.Add((kv.Key, item.Image));
                         willFree += item.Size;
-                        if (currentSize - willFree + Interlocked.Read(ref _reservedBytes) + needBytes <= safeLimit)
+                        if (currentSize - willFree + MemoryGovernor.ReservedBytes + needBytes <= safeLimit)
                             break;
                     }
                 }
 
                 if (itemsToRemove.Count == 0) break;
 
+                // 事件回 UI 线程;缓冲归还直接执行(租约语义:只释放缓存自己那份,仍在被借用的缓冲继续存活)
                 var removedKeys = itemsToRemove.Select(t => t.key).ToList();
-                await UiDispatcher.InvokeAsync(() =>
+                UiDispatcher.Post(() =>
                 {
                     foreach (var k in removedKeys)
                         CacheStatusChanged?.Invoke(k.Path, k.Class, false);
                 });
 
-                await UiDispatcher.InvokeAsync(() =>
-                {
-                    foreach (var t in itemsToRemove)
-                        t.img.Dispose();
-                });
-
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                GC.Collect();
+                foreach (var t in itemsToRemove)
+                    t.img.Release();
             }
         }
         finally
@@ -359,49 +360,52 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 预取任务申请内存预留；若估算过大（>60%上限）则返回 null（跳过预取）。
-    /// </summary>
-    public static async Task<IDisposable?> ReserveForPreloadAsync(IFileRef file, CancellationToken ct)
-    {
-        var estimate = await EstimateDecodedSizeAsync(file, ct);
-        if (estimate <= 0) return null;
-
-        if (estimate > (long)(MaxCacheSize * 0.6))
-            return null;
-
-        await EnsureCapacityAsync(estimate);
-        Interlocked.Add(ref _reservedBytes, estimate);
-        return new Reservation(() => Interlocked.Add(ref _reservedBytes, -estimate));
-    }
-
-    private sealed class Reservation : IDisposable
-    {
-        private Action? _release;
-        public Reservation(Action release) => _release = release;
-        public void Dispose() => Interlocked.Exchange(ref _release, null)?.Invoke();
-    }
-
-    /// <summary>
-    /// 异步获取图片（带缓存和EXIF旋转）；同路径并发请求在途去重，共享同一解码任务。
+    /// 异步获取图片（带缓存和EXIF旋转,Full 档,P0 优先级）；同路径并发请求在途去重，共享同一解码任务。
+    /// 返回的图像携带调用方一份租约,用完必须 <see cref="DecodedImage.Release"/>。
     /// </summary>
     public static Task<DecodedImage?> GetBitmapAsync(IFileRef file, CancellationToken ct = default)
+        => GetBitmapAsync(file, DecodePriority.P0_Current, ct);
+
+    /// <summary>
+    /// 异步获取图片（带缓存和EXIF旋转,Full 档,指定优先级准入）；同路径并发请求在途去重，共享同一解码任务。
+    /// 返回的图像携带调用方一份租约,用完必须 <see cref="DecodedImage.Release"/>。
+    /// 准入被拒(非 P0)或解码失败返回 null。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="priority">解码优先级(准入语义见 <see cref="MemoryGovernor.TryAcquire"/>)。</param>
+    /// <param name="ct">取消令牌。</param>
+    public static async Task<DecodedImage?> GetBitmapAsync(IFileRef file, DecodePriority priority, CancellationToken ct)
     {
         var filePath = file.PathKey;
+        var key = new BitmapCacheKey(filePath, ImageSizeClass.Full);
 
-        // 检查缓存(Full 档)
-        if (_cache.TryGetValue(new BitmapCacheKey(filePath, ImageSizeClass.Full), out var cachedItem))
+        // 尝试上限防循环:命中后被淘汰释放 / 加入了被拒的低优先级在途任务,都重走本流程
+        for (int attempt = 0; attempt < 3; attempt++)
         {
-            cachedItem.UpdateAccessTime();
-            PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
-            return Task.FromResult<DecodedImage?>(cachedItem.Image);
-        }
+            // 检查缓存(命中即携租约返回;恰好被淘汰释放则按 miss 重走)
+            if (_cache.TryGetValue(key, out var cachedItem) && cachedItem.Image.TryAcquire())
+            {
+                cachedItem.UpdateAccessTime();
+                PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
+                return cachedItem.Image;
+            }
 
-        // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
-        var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
-            () => LoadAndCacheAsync(file, filePath, ct),
-            LazyThreadSafetyMode.ExecutionAndPublication));
-        var task = lazy.Value;
-        return AwaitInFlightAsync(filePath, lazy, task);
+            // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
+            var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
+                () => LoadAndCacheAsync(file, filePath, ct, priority),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+            var img = await AwaitInFlightAsync(filePath, lazy, lazy.Value).ConfigureAwait(false);
+
+            if (img == null)
+            {
+                // P0 加入了被准入拒绝的低优先级在途任务:豁免准入,自行重发一次
+                if (priority == DecodePriority.P0_Current && !ct.IsCancellationRequested) continue;
+                return null;
+            }
+            if (img.TryAcquire()) return img;
+            // 完成即被淘汰释放的极端竞态:重走(此时多半命中缓存)
+        }
+        return null;
     }
 
     /// <summary>
@@ -420,46 +424,63 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 缓存未命中路径：容量保障 → 线程池解码 → 入缓存。
+    /// 缓存未命中路径：解码准入(Governor) → 容量保障 → 线程池解码 → 入缓存。
+    /// 准入被拒(非 P0)返回 null;在途账预留于解码期,解码完成按实际字节复核,出方法归还。
     /// </summary>
-    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct)
+    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct, DecodePriority priority)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
-        // 在解码前进行容量保障（基于估算）
+
+        long estimate = 0;
         try
         {
-            var estimate = await EstimateDecodedSizeAsync(file, ct).ConfigureAwait(false);
-            await EnsureCapacityAsync(estimate).ConfigureAwait(false);
+            estimate = await EstimateDecodedSizeAsync(file, ct).ConfigureAwait(false);
         }
-        catch { /* 容量保障失败不致命，继续尝试加载 */ }
-        
-        try
-        {
-            // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
-            var decodeSw = System.Diagnostics.Stopwatch.StartNew();
-            var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
-            decodeSw.Stop();
-            if (image == null) return null;
-            
-            // 添加到缓存(Full 档)
-            var cacheItem = new BitmapCacheItem(image, filePath, ImageSizeClass.Full);
-            _cache[new BitmapCacheKey(filePath, ImageSizeClass.Full)] = cacheItem;
+        catch { /* 估算失败按 0(仅记账)走,不阻断解码 */ }
 
-            // P0 链路计时埋点(P1-M1):供压力快照与验收门判读
-            PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
+        // 解码准入(P1-M3):P0 豁免放行;非 P0 预算不足直接拒绝(不排队)
+        if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
+            return null;
 
-            // 通知缓存状态变化（在UI线程中触发）
-            UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Full, true));
-            
-            // 异步清理缓存
-            _ = Task.Run(CleanupCache);
-            
-            return image;
-        }
-        catch (Exception ex)
+        using (permit)
         {
-            Console.WriteLine($"Failed to load image ({file.Name}): {ex.Message}");
-            throw;
+            try
+            {
+                await EnsureCapacityAsync(estimate).ConfigureAwait(false);
+            }
+            catch { /* 容量保障失败不致命，继续尝试加载 */ }
+
+            try
+            {
+                // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
+                var decodeSw = System.Diagnostics.Stopwatch.StartNew();
+                var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
+                decodeSw.Stop();
+                if (image == null) return null;
+
+                // 按实际(缓冲池分档对齐后)字节复核在途账本
+                permit!.SetActual(image.ByteCount);
+
+                // 添加到缓存(Full 档;创建者租约归缓存持有)
+                var cacheItem = new BitmapCacheItem(image, filePath, ImageSizeClass.Full);
+                _cache[new BitmapCacheKey(filePath, ImageSizeClass.Full)] = cacheItem;
+
+                // P0 链路计时埋点(P1-M1):供压力快照与验收门判读
+                PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
+
+                // 通知缓存状态变化（在UI线程中触发）
+                UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Full, true));
+
+                // 异步清理缓存
+                _ = Task.Run(CleanupCache);
+
+                return image;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load image ({file.Name}): {ex.Message}");
+                throw;
+            }
         }
     }
     
@@ -546,7 +567,8 @@ public static class BitmapLoader
         {
             var w = source.Width;
             var h = source.Height;
-            var rgb = new byte[(long)w * h * 3];
+            // 缓冲池租用(P1-M3):归还时回池而非丢 GC
+            var rgb = DecodedImage.RentPixels(w * h * 3);
             for (int y = 0; y < h; y++)
             {
                 var srcRow = (long)y * source.Stride;
@@ -563,7 +585,7 @@ public static class BitmapLoader
             }
 
             source.Dispose();
-            return new DecodedImage(rgb, w, h, w * 3, PixelEncoding.Rgb24);
+            return DecodedImage.CreatePooled(rgb, w, h, w * 3, PixelEncoding.Rgb24);
         }
         catch (Exception ex)
         {
@@ -681,16 +703,13 @@ public static class BitmapLoader
                     }
                 }
                 
-                // 执行清理
+                // 执行清理:事件回 UI 线程;租约归还直接执行(P1-M3 起拆除 UI 线程同步 Dispose)
                 foreach (var key in itemsToRemove.Distinct())
                 {
                     if (_cache.TryRemove(key, out var item))
                     {
-                        // 通知缓存状态变化（在UI线程中触发）
                         UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key.Path, key.Class, false));
-                        
-                        // 在UI线程中释放位图
-                        UiDispatcher.Post(() => item.Image.Dispose());
+                        item.Image.Release();
                     }
                 }
                 
@@ -727,16 +746,13 @@ public static class BitmapLoader
                         CacheStatusChanged?.Invoke(kv.Key.Path, kv.Key.Class, false);
                     }
                 });
-                
-                // 在UI线程中释放所有位图
-                UiDispatcher.Post(() =>
+
+                // 租约归还直接执行(纯托管,P1-M3 起不再回 UI 线程)
+                foreach (var kv in items)
                 {
-                    foreach (var kv in items)
-                    {
-                        kv.Value.Image.Dispose();
-                    }
-                });
-                
+                    kv.Value.Image.Release();
+                }
+
                 Console.WriteLine("Cache cleared");
             }
             catch (Exception ex)
@@ -756,13 +772,14 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 预加载图片（不会阻塞UI）
+    /// 预加载图片（不会阻塞UI;P2 优先级准入,被拒即跳过）。只填缓存不使用图像,取到即归还租约。
     /// </summary>
     public static async Task PreloadBitmapAsync(IFileRef file, CancellationToken ct = default)
     {
         try
         {
-            await GetBitmapAsync(file, ct).ConfigureAwait(false);
+            var img = await GetBitmapAsync(file, DecodePriority.P2_Prefetch, ct).ConfigureAwait(false);
+            img?.Release();
         }
         catch (Exception ex)
         {
@@ -875,7 +892,7 @@ public static class BitmapLoader
         }
     }
 
-    /// <summary>按淘汰键移除并(在 UI 线程)发事件 + 释放位图。</summary>
+    /// <summary>按淘汰键移除:UI 线程发事件,租约直接归还。</summary>
     private static void EvictRange(IEnumerable<KeyValuePair<BitmapCacheKey, BitmapCacheItem>> range)
     {
         var removed = new List<(BitmapCacheKey key, BitmapCacheItem item)>();
@@ -887,11 +904,10 @@ public static class BitmapLoader
         if (removed.Count == 0) return;
         UiDispatcher.Post(() =>
         {
-            foreach (var (key, item) in removed)
-            {
+            foreach (var (key, _) in removed)
                 CacheStatusChanged?.Invoke(key.Path, key.Class, false);
-                item.Image.Dispose();
-            }
         });
+        foreach (var (_, item) in removed)
+            item.Image.Release();
     }
 }

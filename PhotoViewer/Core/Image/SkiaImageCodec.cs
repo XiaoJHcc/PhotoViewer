@@ -130,7 +130,7 @@ public static class SkiaImageCodec
     }
 
     /// <summary>
-    /// 按源像素坐标裁剪(行级字节拷贝,无重采样)。
+    /// 按源像素坐标裁剪(行级字节拷贝,无重采样);缓冲池租用。
     /// </summary>
     /// <param name="src">源图像,所有权不转移。</param>
     /// <param name="x">左上角 X。</param>
@@ -146,16 +146,16 @@ public static class SkiaImageCodec
 
         const int bpp = 4;
         var rowBytes = width * bpp;
-        var dest = new byte[rowBytes * height];
+        var dest = DecodedImage.RentPixels(rowBytes * height);
         for (int row = 0; row < height; row++)
         {
             Array.Copy(src.Pixels, (long)(y + row) * src.Stride + (long)x * bpp, dest, (long)row * rowBytes, rowBytes);
         }
-        return new DecodedImage(dest, width, height, rowBytes, PixelEncoding.Bgra32);
+        return DecodedImage.CreatePooled(dest, width, height, rowBytes, PixelEncoding.Bgra32);
     }
 
     /// <summary>
-    /// SKBitmap → DecodedImage 行级拷贝(仅接受 Bgra8888)。
+    /// SKBitmap → DecodedImage 行级拷贝(仅接受 Bgra8888);缓冲池租用。
     /// </summary>
     /// <param name="bmp">源位图。</param>
     /// <returns>转换结果;尺寸非法或格式不符返回 null。</returns>
@@ -163,17 +163,23 @@ public static class SkiaImageCodec
     {
         if (bmp == null || bmp.Width <= 0 || bmp.Height <= 0) return null;
 
-        var bytes = new byte[(long)bmp.RowBytes * bmp.Height];
+        long copyBytes = (long)bmp.RowBytes * bmp.Height;
+        var bytes = DecodedImage.RentPixels((int)Math.Min(copyBytes, int.MaxValue));
         unsafe
         {
             var srcPtr = (byte*)bmp.GetPixels();
-            if (srcPtr == null) return null;
+            if (srcPtr == null)
+            {
+                ImageBufferPool.Return(bytes);
+                return null;
+            }
+            // 池化缓冲长度是分档对齐后的值,可能大于实际数据——只拷实际字节数
             fixed (byte* destPtr = bytes)
             {
-                Buffer.MemoryCopy(srcPtr, destPtr, bytes.Length, bytes.Length);
+                Buffer.MemoryCopy(srcPtr, destPtr, bytes.Length, copyBytes);
             }
         }
-        return new DecodedImage(bytes, bmp.Width, bmp.Height, bmp.RowBytes, PixelEncoding.Bgra32);
+        return DecodedImage.CreatePooled(bytes, bmp.Width, bmp.Height, bmp.RowBytes, PixelEncoding.Bgra32);
     }
 
     /// <summary>

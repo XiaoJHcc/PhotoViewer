@@ -146,6 +146,9 @@ public class FolderViewModel : ReactiveObject
         StorageAccessManager.Retain(folder);
         Main.ImageVM.Fit = true;
 
+        // P1-M3:文件夹切换显式整批释放旧文件夹缩略图(统一缓存 Thumb 档清空,不依赖淘汰)
+        BitmapLoader.ClearThumbnailClass();
+
         await LoadFolderAsync(folder);
 
         if (scrollToCurrent)

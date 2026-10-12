@@ -433,15 +433,6 @@ public class ImageFile : ReactiveObject
     }
     
     /// <summary>
-    /// 清除缩略图(从统一缓存移除 Thumb 档;位图释放归缓存所有)
-    /// </summary>
-    public void ClearThumbnail()
-    {
-        Thumbnail = null;
-        IsThumbnailLoading = false;
-    }
-    
-    /// <summary>
     /// 星级（0~5，来自 EXIF/XMP；若无则为0）
     /// </summary>
     public int Rating => ExifData?.Rating ?? 0;

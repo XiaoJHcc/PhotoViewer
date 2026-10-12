@@ -93,12 +93,12 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. **Dispatch**: `ImageViewModel` observes the change, bumps a monotonic **generation counter** and calls `LoadImageAsync`; if the new image is not in cache, `SourceBitmap = null` immediately (old image never stays on screen).
 3. **Cache / decode** (`BitmapLoader.GetBitmapAsync`, runs as **P0** — wrapped in `DecodeScheduler.TrackP0` so background workers pause while it is in flight):
    - Check **LRU memory cache** — hit returns immediately.
-   - Miss: **in-flight dedup** (same-path requests share one decode task) → decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return。P0-M4 起 Core 全程使用平台中立 `DecodedImage`(SkiaSharp 解码/旋转),`IFileRef` 供流;UI 层经 `Platform/DecodedImageAdapter` 转 `WriteableBitmap`。
+   - Miss: **in-flight dedup** (same-path requests share one decode task) → **解码准入 `MemoryGovernor.TryAcquire`**(P1-M3 起;P0 豁免、非 P0 预算不足直接拒绝)→ decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return。P0-M4 起 Core 全程使用平台中立 `DecodedImage`(SkiaSharp 解码/旋转),`IFileRef` 供流;UI 层经 `Platform/DecodedImageAdapter` 转 `WriteableBitmap`。P1-M3 起返回携带**调用方租约**(用完 `Release`;淘汰只归还缓存自己那份,租约归零缓冲才归还 `ImageBufferPool`)。
    - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (image stays in cache, harmless).
 4. **Display**: `ImageView` re-binds to `Bitmap`(由适配层转换)。
 5. **Unified scheduling** (`DecodeScheduler`, static): P0 current image / P1 visible+current thumbnails / P2 neighbour bitmaps + queued thumbnails / P3 analysis prewarm; same-key dedup with priority promotion; background workers (parallelism = `Settings.NativePreloadParallelism`) pause while P0 is in flight.
-   - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour bitmap (reserve memory → decode → analysis-cache prewarm) as a P2 work item.
-   - **Eviction protection**: `ThumbnailListViewModel` reports `BitmapLoader.SetProtectedPaths` (current ± preload window + recently viewed M paths); every eviction path (EnsureCapacity / Cleanup / LruRemoveToSize) evicts non-protected LRU first and touches protected paths only as a last resort.
+   - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour bitmap (governor 准入 → decode → analysis-cache prewarm) as a P2 work item;Caution 压力或恢复观察期内投递即空跑。
+   - **Eviction protection**: `ThumbnailListViewModel` reports `BitmapLoader.SetProtectedPaths` (current ± preload window + recently viewed M paths); every eviction path (EnsureCapacity / Cleanup / 压力 Trim) evicts non-protected LRU first and touches protected paths only as a last resort。淘汰只归还缓存持有的租约,仍被借用的缓冲继续存活(P1-M3 租约模型)。
 
 ### 5.2 External Open Flow 外部文件打开
 
@@ -168,8 +168,8 @@ Each head project's `Core/` folder contains platform-specific implementations in
 ### 5.5 内存压力响应(P1-M2 起)
 
 1. **感知**:`MemoryGovernor` 周期探测(2s)+ OS 事件直报(iOS `DidReceiveMemoryWarning`、Android `OnTrimMemory`),状态机带迟滞(进入 40/25/15%、退出 +5%、好转逐级退)。
-2. **级联修剪**:级别上升时 Governor 对全部登记 client 同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、增强位图。各级动作矩阵见 master plan §4.3。
-3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
+2. **级联修剪**:级别上升时 Governor 对全部登记 client 同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、增强位图、ImageBufferPool(Critical 整池清空)。各级动作矩阵见 master plan §4.3。
+3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停。**解码准入**(P1-M3 起):一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
 4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录),含各 client footprint 与近期解码 miss 统计。
 
 ---

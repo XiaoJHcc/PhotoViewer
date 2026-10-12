@@ -212,24 +212,13 @@ public class BitmapPrefetcher
                 await WaitForHighPriorityIdleAsync(lct);
                 if (lct.IsCancellationRequested) return;
 
-                IDisposable? reservation = null;
                 try
                 {
                     var path = file.File.Path.LocalPath;
                     if (!BitmapLoader.IsInCache(path))
                     {
-                        reservation = await BitmapLoader.ReserveForPreloadAsync(file.File, lct);
-                        if (reservation == null)
-                        {
-                            // 预热分析栏缓存仍然有意义(纯 DB IO + CPU,不吃位图内存预算)。
-                            await PrewarmAnalysisAsync(file, lct).ConfigureAwait(false);
-                            return;
-                        }
-
-                        if (!BitmapLoader.IsInCache(path))
-                        {
-                            await BitmapLoader.PreloadBitmapAsync(file.File, lct);
-                        }
+                        // P1-M3 起预留在解码准入内部完成(P2;被拒即跳过),无需预占
+                        await BitmapLoader.PreloadBitmapAsync(file.File, lct);
                     }
 
                     await PrewarmAnalysisAsync(file, lct).ConfigureAwait(false);
@@ -238,10 +227,6 @@ public class BitmapPrefetcher
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[BitmapPrefetcher] preload failed for {file.Name}: {ex.Message}");
-                }
-                finally
-                {
-                    reservation?.Dispose();
                 }
             });
         }

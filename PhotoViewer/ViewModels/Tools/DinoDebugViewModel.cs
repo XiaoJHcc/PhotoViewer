@@ -296,7 +296,8 @@ public sealed class DinoDebugViewModel : ReactiveObject
         finally
         {
             if (!thumbnailHandedOff) dinoBitmap?.Dispose();
-            // CV 大图来自 BitmapLoader 的 LRU 缓存，由 ImageView 共用，不在此处 Dispose。
+            // CV 大图经 GetBitmapAsync 取得调用方租约(P1-M3),用完归还(缓存仍持有自己那份)
+            cvBitmap?.Release();
         }
     }
 

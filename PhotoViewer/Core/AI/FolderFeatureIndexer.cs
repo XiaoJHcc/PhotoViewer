@@ -223,7 +223,7 @@ public sealed class FolderFeatureIndexer
                 bool needDino = missing.NeedCls || missing.NeedPatches;
                 if (needDino)
                 {
-                    thumbnail = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide).ConfigureAwait(false);
+                    thumbnail = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide, DecodePriority.P3_Background).ConfigureAwait(false);
                     if (thumbnail == null)
                     {
                         // 缩略图都拿不到,直接放弃整组(CV 大图通常更难解码)
@@ -254,7 +254,8 @@ public sealed class FolderFeatureIndexer
                     DecodedImage? cvBitmap = null;
                     try
                     {
-                        cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File).ConfigureAwait(false);
+                        // CV 大图:P3 优先级准入(批量索引);携带调用方租约,用完归还
+                        cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File, DecodePriority.P3_Background, CancellationToken.None).ConfigureAwait(false);
                         if (cvBitmap != null)
                         {
                             var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);
@@ -266,7 +267,7 @@ public sealed class FolderFeatureIndexer
                     }
                     finally
                     {
-                        // CV 大图来自 BitmapLoader 的 LRU 缓存,由 ImageView 共用,这里不 Dispose
+                        cvBitmap?.Release();
                     }
                 }
 

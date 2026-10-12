@@ -26,7 +26,7 @@ public class ImageViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _sourceBitmap, value);
     }
 
-    // 当前原片图像（BitmapLoader 缓存所有，本 VM 只引用、绝不 Dispose）
+    // 当前原片图像（BitmapLoader 缓存持有其租约,本 VM 另持一份调用方租约,DropEnhancement 时归还）
     private DecodedImage? _originalBitmap;
 
     // 当前增强图像（本 VM 所有,随增强关闭/切图释放）;分析栏/直方图的像素源
@@ -169,9 +169,12 @@ public class ImageViewModel : ReactiveObject
                 image = await BitmapLoader.GetBitmapAsync(file);
             }
             
-            // 代际闸：解码期间已切图则丢弃结果，过期任务不再改写主图状态（位图留在缓存无害）
+            // 代际闸：解码期间已切图则丢弃结果并归还本次租约，过期任务不再改写主图状态（位图留在缓存无害）
             if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
+            {
+                image?.Release();
                 return;
+            }
             
             if (image == null)
             {
@@ -317,12 +320,14 @@ public class ImageViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 切图 / 出错时丢弃上一张的增强状态：作废在途任务、清空原片引用、释放增强位图。
+    /// 切图 / 出错时丢弃上一张的增强状态：作废在途任务、归还原片租约、释放增强位图。
     /// </summary>
     private void DropEnhancement()
     {
         ++_enhanceToken;
+        var oldOriginal = _originalBitmap;
         _originalBitmap = null;
+        oldOriginal?.Release();   // P1-M3 租约:原片归还(缓存仍持有自己那份)
         ReleaseEnhanced();
     }
 
