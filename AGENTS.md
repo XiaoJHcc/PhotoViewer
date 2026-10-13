@@ -91,13 +91,14 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 1. **Trigger**: `MainViewModel.CurrentFile` changes (user switches image).
 2. **Dispatch**: `ImageViewModel` observes the change, bumps a monotonic **generation counter** and calls `LoadImageAsync`; if the new image is not in cache, `SourceBitmap = null` immediately (old image never stays on screen).
-3. **Cache / decode** (`BitmapLoader.GetBitmapAsync`, runs as **P0** — wrapped in `DecodeScheduler.TrackP0` so background workers pause while it is in flight):
+3. **分级代理解码**(P1-M4b 起):fit/浏览先解码**代理图**(长边 = 渲染表面物理像素 × overscan 1.5;Apple 走 `CGImageSourceCreateThumbnailAtIndex` 编解码器级子采样,JPEG 走 Skia codec 子采样,Windows libheif 全解码+Mitchell 精缩)数十~数百 ms 上屏;**缩放超出代理能力 / 分析栏可见(细节预览要 100% 源)** 时后台解码 Full,就绪后**同变换热替换**(几何基准 = 全分辨率逻辑尺寸,EXIF/`ImageOrientationInfo` 推导,`ImageSize` 恒定故无跳变);快速翻页代际闸作废在途 Full。100% 及以上放大永远以 Full 呈现(硬约束)。缓存层两级条目同驻统一 LRU(`(路径, 尺寸档)` 键,Proxy 档命中规则:已有代理长边 ≥ 需求即复用)。P0 失败时代理自动回退 Full。
+4. **Cache / decode** (`BitmapLoader.GetBitmapAsync`, runs as **P0** — wrapped in `DecodeScheduler.TrackP0` so background workers pause while it is in flight):
    - Check **LRU memory cache** — hit returns immediately.
    - Miss: **in-flight dedup** (same-path requests share one decode task) → **解码准入 `MemoryGovernor.TryAcquire`**(P1-M3 起;P0 豁免、非 P0 预算不足直接拒绝)→ decode body on the thread pool (`Task.Run`, continuations stay off the UI thread): read stream → format detect (JPG / HEIF) → decode → **apply EXIF rotation** → cache → return。P0-M4 起 Core 全程使用平台中立 `DecodedImage`(SkiaSharp 解码/旋转),`IFileRef` 供流;UI 层经 `Platform/DecodedImageAdapter` 转 `WriteableBitmap`。P1-M3 起返回携带**调用方租约**(用完 `Release`;淘汰只归还缓存自己那份,租约归零缓冲才归还 `ImageBufferPool`)。
-   - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (image stays in cache, harmless).
-4. **Display**: `ImageView` re-binds to `Bitmap`(由适配层转换)。
-5. **Unified scheduling** (`DecodeScheduler`, static): P0 current image / P1 visible+current thumbnails / P2 neighbour bitmaps + queued thumbnails / P3 analysis prewarm; same-key dedup with priority promotion; background workers (parallelism = `Settings.NativePreloadParallelism`) pause while P0 is in flight.
-   - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour bitmap (governor 准入 → decode → analysis-cache prewarm) as a P2 work item;Caution 压力或恢复观察期内投递即空跑。
+   - **Generation gate**: `SourceBitmap` is assigned only if `generation == _loadGeneration && file is still CurrentFile`; stale results are discarded (image stays in cache, harmless)。
+5. **Display**: `ImageView` re-binds to `Bitmap`(由适配层转换;主图元素尺寸绑定 `ImageSize` 逻辑坐标系,与纹理实际像素解耦,P1-M4b 起)。
+6. **Unified scheduling** (`DecodeScheduler`, static): P0 current image / P1 visible+current thumbnails / P2 neighbour bitmaps + queued thumbnails / P3 analysis prewarm; same-key dedup with priority promotion; background workers (parallelism = `Settings.NativePreloadParallelism`,Warning 压力降为 1) pause while P0 is in flight。
+   - **Prefetch**: `ThumbnailListViewModel` notifies `BitmapPrefetcher` (latest-wins — a new request cancels the old round's CTS), which submits each neighbour as a P2 work item:**±1 邻居取 Full**(变焦连续),**其余取代理档**(P1-M4b 起;省内存),**分析栏预热**同项顺带;Caution 压力或恢复观察期内投递即空跑。
    - **Eviction protection**: `ThumbnailListViewModel` reports `BitmapLoader.SetProtectedPaths` (current ± preload window + recently viewed M paths); every eviction path (EnsureCapacity / Cleanup / 压力 Trim) evicts non-protected LRU first and touches protected paths only as a last resort。淘汰只归还缓存持有的租约,仍被借用的缓冲继续存活(P1-M3 租约模型)。
 
 ### 5.2 External Open Flow 外部文件打开

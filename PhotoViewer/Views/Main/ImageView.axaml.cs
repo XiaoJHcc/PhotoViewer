@@ -308,10 +308,18 @@ public partial class ImageView : UserControl
 
         _longPressTimer.Tick += OnLongPressTimerTick;
 
-        // 监听尺寸变化
+        // 监听尺寸变化(附带渲染缩放,供代理图目标长边按物理像素计算)
+        // 注:首次 Bounds 变化时 VisualRoot 可能尚未就绪(RenderScaling 取 1.0),AttachedToVisualTree 后再推一次修正
         this.GetObservable(BoundsProperty)
-            .Subscribe(_ =>
-                ViewModel?.UpdateView(new Vector(Bounds.Size.Width, Bounds.Size.Height)));
+            .Subscribe(_ => PushViewSize());
+        AttachedToVisualTree += (_, _) => PushViewSize();
+    }
+
+    /// <summary>向 VM 推送视图尺寸与渲染缩放。</summary>
+    private void PushViewSize()
+    {
+        ViewModel?.UpdateView(new Vector(Bounds.Size.Width, Bounds.Size.Height),
+            Avalonia.Controls.TopLevel.GetTopLevel(this)?.RenderScaling ?? 1.0);
     }
 
     /// <summary>

@@ -75,8 +75,8 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// <summary>主图引用,DetailPreview 联动主图绿框时使用。</summary>
     public ImageViewModel ImageVM => _main.ImageVM;
 
-    /// <summary>主图位图,DetailPreview 项裁剪时使用。</summary>
-    public Bitmap? SourceBitmap => _main.ImageVM.SourceBitmap;
+    /// <summary>主图位图,DetailPreview 项裁剪时使用。代理图显示期返回 null(裁剪必须基于全分辨率源,Full 热替换后恢复)。</summary>
+    public Bitmap? SourceBitmap => _main.ImageVM.CurrentIsProxy ? null : _main.ImageVM.SourceBitmap;
 
     private double _previewSize = 300;
     /// <summary>瓦片显示尺寸(像素正方形外框宽度)。</summary>
@@ -174,6 +174,10 @@ public sealed class AnalysisViewModel : ReactiveObject
                 this.RaisePropertyChanged(nameof(SourceBitmap));
                 RefreshHistogram();
             }));
+
+        // 代理↔Full 热替换:DetailPreview 裁剪源在 Full 就绪后恢复(代理期占位)
+        _main.ImageVM.WhenAnyValue(vm => vm.CurrentIsProxy)
+            .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(SourceBitmap))));
 
         // 增强开关 / 增强图就绪 → 重新路由诊断瓦片(增强时对增强图实时重算,关闭时回落 DB)。
         _main.ImageVM.WhenAnyValue(vm => vm.IsEnhanced)

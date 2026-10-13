@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using MetadataExtractor;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -264,6 +265,32 @@ public static class BitmapLoader
         var total = FullCacheSize;
         if (total <= 0) return 0;
         return total / count;
+    }
+
+    /// <summary>当前渲染表面的代理目标长边(物理像素 × overscan;由 ImageViewModel 下发,0 = 未知)。</summary>
+    public static int ProxyTargetLongEdge { get; set; }
+
+    /// <summary>
+    /// 读取逻辑显示尺寸(不解码):经 <see cref="ImageOrientationInfo"/> 统一取数——
+    /// HEIF 读容器 ispe box + Default Rotation,JPEG/RAW 读 EXIF;失败返回 null。
+    /// 供代理显示期的几何基准(100% 缩放语义锚定全分辨率)。
+    /// </summary>
+    public static async Task<(int Width, int Height)?> GetLogicalDisplaySizeAsync(IFileRef file)
+    {
+        try
+        {
+            await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
+            var directories = ImageMetadataReader.ReadMetadata(stream);
+            var info = ImageOrientationInfo.FromDirectories(directories, HeifLoader.IsHeifFile(file));
+            if (info.SensorWidth <= 0 || info.SensorHeight <= 0) return null;
+            return info.SwapsWidthHeight
+                ? (info.SensorHeight, info.SensorWidth)
+                : (info.SensorWidth, info.SensorHeight);
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     /// <summary>

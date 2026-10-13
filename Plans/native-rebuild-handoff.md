@@ -15,10 +15,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
 - **Phase 0 定向审查(2026-10-12)已通过**:Phase 0 由同一 agent 实现+自审(mimo 超时),本次补独立审查——机械门复核 PASS(Core 零 Avalonia,残留均注释;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,字符串枚举序列化下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告)。审查发现的 Phase 1 计划修订已全部落回 phase-1 清单(准入口优先级语义、分档缓冲池、解码路径平台差异、统一 LRU 键前置 M2、验收门平台口径)。
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
-- **下一步 = P1-M4**(分级代理解码:Apple 换 `CGImageSourceCreateThumbnailAtIndex` 子采样、Windows libheif 全解码+Mitchell、双产物热替换;接口改名 `DecodeAsync(file, int? maxSize)`):执行清单 [native-rebuild-phase-1.md](native-rebuild-phase-1.md)。
-- **P1-M1 已完成**(commit `P1-M1`):`Core/Memory/` 新模块;自测 24 项全过;Mac 冒烟正常。
-- **P1-M2 已完成**(commit `P1-M2`):统一 LRU(路径+尺寸档三档分区)+ 全部缓存登记 + 压力级联 + 响应矩阵;自测 31 项全过;三平台构建零警告;Mac 冒烟正常。
-- **P1-M3 已完成**(commit `P1-M3`):解码准入全接线(P0 豁免语义)+ 淘汰路径去阻塞 GC/去 UI 线程 Dispose + `DecodedImage` 租约 + `ImageBufferPool` 缓冲池(gen2 20→0,A/B 无延迟回归)+ ShakeFlagService 竞态修复;四平台构建 0 错;Mac 冒烟正常。⚠️ Training 仓本 Mac 检出过旧(早于 Phase 0 适配),待网络恢复 pull(详见 phase-1 §5)。
+- **下一步 = P1-M5**(iPad 压测 + 收口;**需真机**:iPad mini 7 接入后跑 42MP 连翻 500 张 + 压力日志回放):执行清单 [native-rebuild-phase-1.md](native-rebuild-phase-1.md)。
+- **P1-M1~M4 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码,各笔提交逐笔可查;四平台构建 0 错零新增警告;gov 自测 31 项全过;Mac 冒烟逐里程碑通过)。验收门实测口径:HEIF 代理 -51% 达标,RAW -12%(渲染主导,内存减半)——RAW 数字以 iPad 真机复测为准。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
 

@@ -124,10 +124,12 @@ public class BitmapPrefetcher
                     .Select(i => (i, dist: Math.Abs(i - idx)))
                     .OrderBy(t => t.dist)
                     .ThenBy(t => t.i)
-                    .Select(t => files[t.i])
                     .ToList();
 
-                await RunQueuedAsync(ordered, ct);
+                // P1-M4b 分级预取:±1 邻居取 Full(变焦连续性),其余取代理(省内存);代理目标未知时全部 Full(旧行为)
+                int proxyTarget = BitmapLoader.ProxyTargetLongEdge;
+                var items = ordered.Select(t => (file: files[t.i], full: proxyTarget <= 0 || t.dist == 1)).ToList();
+                await RunQueuedAsync(items, ct);
             }
             catch { /* 忽略 */ }
         }, ct);
@@ -165,10 +167,13 @@ public class BitmapPrefetcher
                     .OrderBy(t => t.dist)
                     .ThenBy(t => t.idx)
                     .Take(need)
-                    .Select(t => files[t.idx])
+                    .Select(t => t.idx)
                     .ToList();
 
-                await RunQueuedAsync(selected, ct);
+                // 可视区中心预取:代理档优先(P1-M4b;目标未知时 Full 旧行为)
+                int proxyTarget = BitmapLoader.ProxyTargetLongEdge;
+                var items = selected.Select(i => (file: files[i], full: proxyTarget <= 0)).ToList();
+                await RunQueuedAsync(items, ct);
             }
             catch { /* 忽略 */ }
         }, ct);
@@ -192,15 +197,17 @@ public class BitmapPrefetcher
     }
 
     /// <summary>
-    /// 实际预取执行:每张邻居位图的"预留内存 + 解码 + 分析栏预热"合并为一个 P2 工作项投递给调度器,
-    /// 并发度由调度器统一限制。latest-wins:新请求取消旧 CTS,旧轮次工作项执行时因 ct 已取消而空跑退出。
+    /// 实际预取执行:每张邻居一个 P2 工作项投递给调度器,并发度由调度器统一限制。
+    /// latest-wins:新请求取消旧 CTS,旧轮次工作项执行时因 ct 已取消而空跑退出。
+    /// P1-M4b:full=false 走代理档(省内存),full=true 走全分辨率(±1 邻居变焦连续性)。
     /// </summary>
-    private Task RunQueuedAsync(IEnumerable<ImageFile> files, CancellationToken ct)
+    private Task RunQueuedAsync(IEnumerable<(ImageFile file, bool full)> items, CancellationToken ct)
     {
-        foreach (var f in files)
+        foreach (var (f, wantFull) in items)
         {
             if (ct.IsCancellationRequested) break;
             var file = f;
+            var full = wantFull;
             DecodeScheduler.Submit(file.File.Path.LocalPath, DecodePriority.P2_Prefetch, async token =>
             {
                 // 压力闸(P1-M2):Caution/恢复观察期起预取不执行(投递即空跑退出)
@@ -215,10 +222,16 @@ public class BitmapPrefetcher
                 try
                 {
                     var path = file.File.Path.LocalPath;
-                    if (!BitmapLoader.IsInCache(path))
+                    if (full)
                     {
-                        // P1-M3 起预留在解码准入内部完成(P2;被拒即跳过),无需预占
-                        await BitmapLoader.PreloadBitmapAsync(file.File, lct);
+                        if (!BitmapLoader.IsInCache(path))
+                            await BitmapLoader.PreloadBitmapAsync(file.File, lct);
+                    }
+                    else if (BitmapLoader.TryGetCached(path, ImageSizeClass.Proxy) == null)
+                    {
+                        // 代理档预取(P1-M3 起内部走 P2 准入,被拒即跳过)
+                        var img = await BitmapLoader.GetBitmapAsync(file.File, DecodeSizeHint.ProxyTo(BitmapLoader.ProxyTargetLongEdge), DecodePriority.P2_Prefetch, lct);
+                        img?.Release();
                     }
 
                     await PrewarmAnalysisAsync(file, lct).ConfigureAwait(false);

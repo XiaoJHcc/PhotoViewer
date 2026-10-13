@@ -29,6 +29,114 @@ public class ImageViewModel : ReactiveObject
     // 当前原片图像（BitmapLoader 缓存持有其租约,本 VM 另持一份调用方租约,DropEnhancement 时归还）
     private DecodedImage? _originalBitmap;
 
+    // ---- P1-M4b 分级代理解码:fit/浏览代理先行,Full 按需热替换 ----
+    /// <summary>代理图相对屏幕物理像素的过采样倍率(缩放余量)。</summary>
+    private const double ProxyOverscan = 1.5;
+    /// <summary>视图渲染缩放(物理像素/DIP,由 View 下发;Retina = 2)。</summary>
+    private double _viewRenderScale = 1.0;
+    /// <summary>全分辨率逻辑尺寸(代理显示期的几何基准;default 表示未设置)。</summary>
+    private Vector _logicalImageSize;
+    /// <summary>当前在屏代理的实际长边像素(0 = 非代理)。</summary>
+    private int _currentProxyLongEdge;
+    /// <summary>Full 升级在途去重(0/1)。</summary>
+    private int _fullUpgradeInFlight;
+
+    private bool _currentIsProxy;
+    /// <summary>当前主图是否代理图(100% 语义锚定全分辨率逻辑尺寸;细节预览/分析需要 Full 源时判读)。</summary>
+    public bool CurrentIsProxy
+    {
+        get => _currentIsProxy;
+        private set => this.RaiseAndSetIfChanged(ref _currentIsProxy, value);
+    }
+
+    /// <summary>当前渲染表面的代理目标长边:max(ViewSize) × 渲染缩放 × overscan;视图尺寸未知返回 0。</summary>
+    private int ComputeProxyTargetLongEdge()
+    {
+        if (ViewSize.X <= 0 || ViewSize.Y <= 0) return 0;
+        double dip = Math.Max(ViewSize.X, ViewSize.Y);
+        return (int)Math.Ceiling(dip * _viewRenderScale * ProxyOverscan);
+    }
+
+    /// <summary>是否需要 Full 分辨率:非代理图不需要;分析栏可见(细节预览要 100% 源)或缩放超出代理物理能力时需要。</summary>
+    private bool NeedsFullDecode()
+    {
+        if (!CurrentIsProxy) return false;
+        if (Main.IsAnalysisViewVisible) return true;
+        if (Fit) return false;
+        double logicalLong = Math.Max(ImageSize.X, ImageSize.Y);
+        if (logicalLong <= 0 || _currentProxyLongEdge <= 0) return true;
+        double proxyCoverage = _currentProxyLongEdge / logicalLong; // 代理可支撑的最大物理放大
+        return Scale * _viewRenderScale > proxyCoverage;
+    }
+
+    /// <summary>缩放/可见性驱动的 Full 升级(幂等去重,代际闸保护,快速翻页自动作废)。</summary>
+    private void MaybeUpgradeToFull()
+    {
+        if (!CurrentIsProxy || !NeedsFullDecode()) return;
+        var file = Main.CurrentFile?.File;
+        if (file == null) return;
+        if (Interlocked.Exchange(ref _fullUpgradeInFlight, 1) != 0) return;
+
+        var generation = Volatile.Read(ref _loadGeneration);
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var full = await BitmapLoader.GetBitmapAsync(file, DecodePriority.P0_Current, default);
+                if (full != null && generation == Volatile.Read(ref _loadGeneration)
+                    && ReferenceEquals(file, Main.CurrentFile?.File))
+                {
+                    // EXIF 缺失时代理期的几何基准是代理尺寸,Full 到达时纠正(有 EXIF 时同值,无跳变)
+                    _logicalImageSize = new Vector(full.Width, full.Height);
+                    ShowDecodedImage(file, full, isProxy: false);
+                }
+                else
+                {
+                    full?.Release();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Full upgrade failed ({file.Name}): {ex.Message}");
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _fullUpgradeInFlight, 0);
+            }
+        });
+    }
+
+    /// <summary>代理显示期设置几何基准为全分辨率逻辑尺寸(EXIF 推导,不解码);Full 直接用图像尺寸。</summary>
+    private async Task UpdateLogicalImageSizeAsync(IFileRef file, DecodedImage image, bool isProxy)
+    {
+        if (!isProxy)
+        {
+            _logicalImageSize = new Vector(image.Width, image.Height);
+            return;
+        }
+        var dims = await BitmapLoader.GetLogicalDisplaySizeAsync(file);
+        _logicalImageSize = dims.HasValue
+            ? new Vector(dims.Value.Width, dims.Value.Height)
+            : new Vector(image.Width, image.Height); // EXIF 不可得:自洽回退(Full 到达时纠正)
+    }
+
+    /// <summary>展示一张已解码图像(代理或全分辨率):接管租约、上屏、按需触发增强;几何由 _logicalImageSize 锚定。</summary>
+    private void ShowDecodedImage(IFileRef file, DecodedImage image, bool isProxy)
+    {
+        DropEnhancement();
+        _originalBitmap = image;
+        CurrentIsProxy = isProxy;
+        _currentProxyLongEdge = isProxy ? Math.Max(image.Width, image.Height) : 0;
+        Console.WriteLine($"[ImageVM] show {(isProxy ? "proxy" : "full")} {image.Width}x{image.Height} for {file.Name}");
+        var token = ++_enhanceToken;
+        SourceBitmap = DecodedImageAdapter.ToBitmap(image);
+        ImageLoaded?.Invoke(this, file);
+
+        // 增强模式下：后台算好增强版本再原地切换，不阻塞主图显示
+        if (IsEnhanced)
+            _ = ApplyEnhancementAsync(image, token);
+    }
+
     // 当前增强图像（本 VM 所有,随增强关闭/切图释放）;分析栏/直方图的像素源
     private DecodedImage? _enhancedDecoded;
 
@@ -118,8 +226,9 @@ public class ImageViewModel : ReactiveObject
                 if (currentFile == null) ClearImage();
                 else
                 {
-                    // 新图未命中缓存时立即清屏（显示空白），旧图不留守；命中则走缓存快路径直接上屏
-                    if (!BitmapLoader.IsInCache(currentFile.File.PathKey))
+                    // 新图未命中缓存时立即清屏（显示空白），旧图不留守；命中(Full 或代理)则走缓存快路径直接上屏
+                    if (!BitmapLoader.IsInCache(currentFile.File.PathKey)
+                        && !BitmapLoader.IsInCache(currentFile.File.PathKey, ImageSizeClass.Proxy))
                         SourceBitmap = null;
                     _ = LoadImageAsync(currentFile.File, generation);
                 }
@@ -149,6 +258,10 @@ public class ImageViewModel : ReactiveObject
             vm => vm.ViewSize,
             vm => vm.ImageSize)
             .Subscribe(_ => UpdateDetailHighlightRect());
+
+        // P1-M4b:缩放超出代理能力 / 分析栏打开时,代理图后台升级 Full(同变换热替换)
+        this.WhenAnyValue(vm => vm.Scale).Subscribe(_ => MaybeUpgradeToFull());
+        Main.WhenAnyValue(vm => vm.IsAnalysisViewVisible).Subscribe(_ => MaybeUpgradeToFull());
     }
 
     /*
@@ -161,21 +274,49 @@ public class ImageViewModel : ReactiveObject
         {
             HintText = string.Empty;
             HintDetail = string.Empty;
-            
-            // 使用缓存服务加载图片;解码期间向调度器报告 P0 在途,后台 worker 暂停取新工作
+
+            // P1-M4b 分级解码:代理先行上屏,Full 按需(缩放超代理能力/分析栏可见)后台热替换
+            int proxyTarget = ComputeProxyTargetLongEdge();
+            DecodedImage? proxy = null;
+
+            if (proxyTarget > 0)
+            {
+                using (DecodeScheduler.TrackP0())
+                    proxy = await BitmapLoader.GetBitmapAsync(file, DecodeSizeHint.ProxyTo(proxyTarget), DecodePriority.P0_Current, default);
+
+                // 代际闸：解码期间已切图则丢弃结果并归还本次租约，过期任务不再改写主图状态
+                if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
+                {
+                    proxy?.Release();
+                    return;
+                }
+            }
+
+            if (proxy != null && proxy.Width > 0 && proxy.Height > 0)
+            {
+                await UpdateLogicalImageSizeAsync(file, proxy, isProxy: true);
+                ShowDecodedImage(file, proxy, isProxy: true);
+
+                // fit 浏览:代理覆盖屏幕,Full 不解码;否则后台升级 Full,同变换热替换
+                MaybeUpgradeToFull();
+                return;
+            }
+            proxy?.Release();
+
+            // 全分辨率路径(代理不可得或视图尺寸未知)
             DecodedImage? image;
             using (DecodeScheduler.TrackP0())
             {
-                image = await BitmapLoader.GetBitmapAsync(file);
+                image = await BitmapLoader.GetBitmapAsync(file, DecodePriority.P0_Current, default);
             }
-            
+
             // 代际闸：解码期间已切图则丢弃结果并归还本次租约，过期任务不再改写主图状态（位图留在缓存无害）
             if (generation != Volatile.Read(ref _loadGeneration) || !ReferenceEquals(file, Main.CurrentFile?.File))
             {
                 image?.Release();
                 return;
             }
-            
+
             if (image == null)
             {
                 Console.WriteLine($"Failed to load bitmap for file: {file.Name}");
@@ -201,12 +342,12 @@ public class ImageViewModel : ReactiveObject
                 HintDetail = detail;
                 return;
             }
-            
+
             // 验证图像有效性
             if (image.Width <= 0 || image.Height <= 0)
             {
                 Console.WriteLine($"Invalid image dimensions: {image.Width}x{image.Height} for file: {file.Name}");
-                image.Dispose();
+                image.Release();
                 DropEnhancement();
                 SourceBitmap = null;
                 HintText = "图片解码无效";
@@ -214,16 +355,8 @@ public class ImageViewModel : ReactiveObject
                 return;
             }
 
-            // 记录原片、作废上一张的在途增强，先显示原片
-            DropEnhancement();
-            _originalBitmap = image;
-            var token = ++_enhanceToken;
-            SourceBitmap = DecodedImageAdapter.ToBitmap(image);
-            ImageLoaded?.Invoke(this, file);
-
-            // 增强模式下：后台算好增强版本再原地切换，不阻塞主图显示
-            if (IsEnhanced)
-                _ = ApplyEnhancementAsync(image, token);
+            await UpdateLogicalImageSizeAsync(file, image, isProxy: false);
+            ShowDecodedImage(file, image, isProxy: false);
         }
         catch (Exception ex)
         {
@@ -243,6 +376,9 @@ public class ImageViewModel : ReactiveObject
         try
         {
             DropEnhancement();
+            _logicalImageSize = default;
+            CurrentIsProxy = false;
+            _currentProxyLongEdge = 0;
             SourceBitmap = null;
             ImageLoaded?.Invoke(this, null);
         }
@@ -515,11 +651,24 @@ public class ImageViewModel : ReactiveObject
     
     /// <summary>
     /// 窗口大小变更时 更新图片框视图
-    /// </summary> 
-    public void UpdateView(Vector viewSize)
+    /// </summary>
+    /// <param name="viewSize">视图尺寸(DIP)</param>
+    /// <param name="renderScale">渲染缩放(物理像素/DIP,Retina=2;由 View 下发)</param>
+    public void UpdateView(Vector viewSize, double renderScale = 1.0)
     {
+        _viewRenderScale = renderScale > 0 ? renderScale : 1.0;
         var deltaSize = viewSize - ViewSize;
         ViewSize = viewSize;
+
+        // 代理目标随视图物理像素更新;变大且当前为代理图时重载当前图(缓存规则复用或重解码,守"不放大代理"红线)
+        int newTarget = ComputeProxyTargetLongEdge();
+        if (newTarget != BitmapLoader.ProxyTargetLongEdge)
+        {
+            BitmapLoader.ProxyTargetLongEdge = newTarget;
+            if (CurrentIsProxy && newTarget > _currentProxyLongEdge && Main.CurrentFile != null)
+                _ = LoadImageAsync(Main.CurrentFile.File, Volatile.Read(ref _loadGeneration));
+        }
+
         if (ViewSize.X <= 0 || ViewSize.Y <= 0) return;
         if (Fit) FitToScreen();
         else Translate += deltaSize * 0.5;
@@ -667,7 +816,10 @@ public class ImageViewModel : ReactiveObject
                 return;
             }
             
-            var newImageSize = new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
+            // P1-M4b:几何基准用全分辨率逻辑尺寸(代理显示期 _logicalImageSize;Full 期 = 图像尺寸)
+            var newImageSize = _logicalImageSize != default
+                ? _logicalImageSize
+                : new Vector(SourceBitmap.PixelSize.Width, SourceBitmap.PixelSize.Height);
             
             // 对焦点模式下即使尺寸不变也需重新定位到新照片对焦点，其余情况尺寸未变则无需处理
             if (ImageSize == newImageSize && !_isFocusedOnFocusPoint) return;
