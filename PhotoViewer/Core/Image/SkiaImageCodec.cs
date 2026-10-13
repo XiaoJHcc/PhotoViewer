@@ -191,9 +191,9 @@ public static class SkiaImageCodec
                 {
                     long si = srcRow + x * 3;
                     long di = dstRow + x * 4;
-                    dest[di] = src.Pixels[si];         // B
+                    dest[di] = src.Pixels[si + 2];     // B
                     dest[di + 1] = src.Pixels[si + 1]; // G
-                    dest[di + 2] = src.Pixels[si + 2]; // R
+                    dest[di + 2] = src.Pixels[si];     // R
                     dest[di + 3] = 255;
                 }
             }

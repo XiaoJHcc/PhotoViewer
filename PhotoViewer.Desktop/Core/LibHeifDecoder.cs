@@ -28,7 +28,7 @@ public sealed class LibHeifDecoder : IHeifDecoder
             if (full == null || !maxSize.HasValue) return full;
 
             var scaled = SkiaImageCodec.ScaleToLongEdge(full, maxSize.Value);
-            if (scaled == null) return full; // 源已小于目标,直接用全图
+            if (scaled == null) return full; // null = 不需缩放(源已小于目标)或缩放失败,用全图保证正确性
             full.Release();
             return scaled;
         });

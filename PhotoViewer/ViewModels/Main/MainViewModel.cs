@@ -48,6 +48,8 @@ public class MainViewModel : ViewModelBase
         get => _currentFile;
         set
         {
+            // 切图取证(常驻,一行):与 ImageVM 的 show 日志对表可还原错位/丢显事故
+            Console.WriteLine($"CurrentFile => {(value?.Name ?? "null")}");
             if (_currentFile != null) _currentFile.IsCurrentImage = false;
             if (_currentFile != value) LastFile = _currentFile;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
@@ -66,10 +68,6 @@ public class MainViewModel : ViewModelBase
             {
                 value.IsCurrentImage = true;
                 FileVM.ThumbnailList.PreloadNearbyFiles();
-            }
-            else
-            {
-                Console.WriteLine("CurrentFile => null");
             }
         }
     }

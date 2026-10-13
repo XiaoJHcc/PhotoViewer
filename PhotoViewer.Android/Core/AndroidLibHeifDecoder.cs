@@ -10,10 +10,9 @@ using Buffer = System.Buffer;
 namespace PhotoViewer.Android.Core;
 
 /// <summary>
-/// 基于 libheif 软件解码的 Android HEIF 解码器。
-/// 通过打包 libheif.so + libde265.so 原生库，支持 HEIF YUV 4:2:2（如索尼 .HIF 文件）
-/// 等 Android 系统编解码器不支持的格式。
-/// 若 libheif.so 未打包进 APK（native libs 目录中缺失），自动回退到系统解码器。
+/// Android HEIF 解码器(系统路 + libheif 软解双路)。
+/// 优先系统解码器(BitmapFactory,硬件加速);系统不支持(如 HEIF YUV 4:2:2、索尼 .HIF)时
+/// 回退打包的 libheif.so + libde265.so 软件解码;libheif.so 未打包进 APK 时仅用系统路。
 /// </summary>
 public sealed class AndroidLibHeifDecoder : IHeifDecoder
 {
@@ -139,7 +138,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
                 var full = await LoadBitmapFromStreamAsync(stream);
                 if (full == null || !maxSize.HasValue) return full;
                 var scaled = SkiaImageCodec.ScaleToLongEdge(full, maxSize.Value);
-                if (scaled == null) return full; // 源已小于目标,直接用全图
+                if (scaled == null) return full; // null = 不需缩放(源已小于目标)或缩放失败,用全图保证正确性
                 full.Release();
                 return scaled;
             });
@@ -277,8 +276,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 从 BGRA 字节数组创建已解码图像。
-    /// 根据 BitmapLoader.IgnoreAlpha 决定输出格式（Bgra8888 或 Bgr24）。
+    /// 从 BGRA 字节数组创建已解码图像(恒 Bgra32;IgnoreAlpha 的 24 位转换由 BitmapLoader 统一做)。
     /// </summary>
     /// <param name="bgraData">BGRA 原始像素数据</param>
     /// <param name="width">图像宽度（像素）</param>
