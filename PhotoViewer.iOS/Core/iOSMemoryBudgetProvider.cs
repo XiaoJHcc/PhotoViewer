@@ -20,8 +20,9 @@ public sealed class iOSMemoryBudgetProvider : IMemoryBudgetProvider
     private static extern IntPtr mach_task_self();
 
     // task_info(TASK_VM_INFO):取 phys_footprint(偏移 144,ulong)
+    // P/Invoke 全部显式指针化:mono 解释器对 ref/out 封送存在已证实的间歇崩溃风险(2026-10-13 真机 SIGSEGV)
     [DllImport("/usr/lib/libSystem.dylib")]
-    private static extern int task_info(IntPtr task, int flavor, IntPtr info, ref uint count);
+    private static extern int task_info(IntPtr task, int flavor, IntPtr info, IntPtr count);
 
     private const int TASK_VM_INFO = 22;
     private const int PhysFootprintOffset = 144;
@@ -63,9 +64,13 @@ public sealed class iOSMemoryBudgetProvider : IMemoryBudgetProvider
         try
         {
             buf = Marshal.AllocHGlobal(256);
-            uint count = 256 / 4; // task_info 的 count 以 4 字节为单位
-            int kr = task_info(mach_task_self(), TASK_VM_INFO, buf, ref count);
-            if (kr != 0 || count * 4u < PhysFootprintOffset + 8) return 0;
+            int kr;
+            unsafe
+            {
+                uint count = 256 / 4; // task_info 的 count 以 4 字节为单位
+                kr = task_info(mach_task_self(), TASK_VM_INFO, buf, (IntPtr)(&count));
+                if (kr != 0 || count * 4u < PhysFootprintOffset + 8) return 0;
+            }
             return Marshal.ReadInt64(buf, PhysFootprintOffset);
         }
         catch (Exception ex)

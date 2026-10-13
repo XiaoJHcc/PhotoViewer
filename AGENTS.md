@@ -171,7 +171,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 1. **感知**:`MemoryGovernor` 周期探测(2s)+ OS 事件直报(iOS `DidReceiveMemoryWarning`、Android `OnTrimMemory`),状态机带迟滞(进入 40/25/15%、退出 +5%、好转逐级退)。
 2. **级联修剪**:级别上升时 Governor 对全部登记 client 同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、增强位图、ImageBufferPool(Critical 整池清空)。各级动作矩阵见 master plan §4.3。
 3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停。**解码准入**(P1-M3 起):一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
-4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录),含各 client footprint 与近期解码 miss 统计。
+4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录;iOS 真机为沙盒 `Documents/PhotoViewer/`,devicectl copy 可取回),含各 client footprint 与近期解码 miss 统计。
 
 ---
 

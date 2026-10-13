@@ -144,7 +144,11 @@ public sealed class iOSHeifDecoder : IHeifDecoder
             if (kFromImageAlways == IntPtr.Zero || kMaxPixelSize == IntPtr.Zero || kWithTransform == IntPtr.Zero || cfTrue == IntPtr.Zero)
                 return IntPtr.Zero;
 
-            num = CFNumberCreate(IntPtr.Zero, /*kCFNumberSInt32Type*/ 3, ref maxSize);
+            // P/Invoke 全部显式指针化:mono 解释器对 ref/out 封送存在已证实的间歇崩溃风险(2026-10-13 真机 SIGSEGV)
+            unsafe
+            {
+                num = CFNumberCreate(IntPtr.Zero, /*kCFNumberSInt32Type*/ 3, (IntPtr)(&maxSize));
+            }
             if (num == IntPtr.Zero) return IntPtr.Zero;
 
             // 立即消费的字典:NULL 回调(不 retain)在本次调用内安全
@@ -475,8 +479,13 @@ public sealed class iOSHeifDecoder : IHeifDecoder
             var val = CFDictionaryGetValue(dict, keyStr);
             if (val == IntPtr.Zero) return defaultValue;
 
-            if (CFNumberGetValue(val, /*kCFNumberSInt32Type*/ 3, out int v))
-                return v;
+            // P/Invoke 全部显式指针化:mono 解释器对 ref/out 封送存在已证实的间歇崩溃风险(2026-10-13 真机 SIGSEGV)
+            unsafe
+            {
+                int v;
+                if (CFNumberGetValue(val, /*kCFNumberSInt32Type*/ 3, (IntPtr)(&v)))
+                    return v;
+            }
 
             return defaultValue;
         }
@@ -539,7 +548,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     private static extern IntPtr CFDictionaryGetValue(IntPtr theDict, IntPtr key);
 
     [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
-    private static extern bool CFNumberGetValue(IntPtr number, int theType, out int value);
+    private static extern bool CFNumberGetValue(IntPtr number, int theType, IntPtr valuePtr);
 
     [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
     private static extern bool CFBooleanGetValue(IntPtr boolean);
@@ -555,7 +564,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     private static extern IntPtr CGImageSourceCreateThumbnailAtIndex(IntPtr isrc, nint index, IntPtr options);
 
     [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
-    private static extern IntPtr CFNumberCreate(IntPtr allocator, int theType, ref int value);
+    private static extern IntPtr CFNumberCreate(IntPtr allocator, int theType, IntPtr valuePtr);
 
     [DllImport("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")]
     private static extern IntPtr CFDictionaryCreate(IntPtr allocator, IntPtr[] keys, IntPtr[] values, nint numValues, IntPtr keyCallBacks, IntPtr valueCallBacks);

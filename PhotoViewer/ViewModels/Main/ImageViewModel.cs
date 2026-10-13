@@ -276,7 +276,8 @@ public class ImageViewModel : ReactiveObject
             HintDetail = string.Empty;
 
             // P1-M4b 分级解码:代理先行上屏,Full 按需(缩放超代理能力/分析栏可见)后台热替换
-            int proxyTarget = ComputeProxyTargetLongEdge();
+            // P1-M5 压测对照组(--pv-stress-full):跳过代理档,每翻直接全尺寸解码
+            int proxyTarget = StressFlipDriver.ForceFullDecode ? 0 : ComputeProxyTargetLongEdge();
             DecodedImage? proxy = null;
 
             if (proxyTarget > 0)

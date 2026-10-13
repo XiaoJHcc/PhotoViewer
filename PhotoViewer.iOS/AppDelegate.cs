@@ -16,6 +16,7 @@ using PhotoViewer.iOS.Core;
 using Microsoft.ML.OnnxRuntime;
 
 using System;
+using System.IO;
 using System.Runtime.Versioning;
 
 namespace PhotoViewer.iOS;
@@ -39,6 +40,7 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
             .UseReactiveUI(_ => { })
             .AfterSetup(_ =>
             {
+                BootTrace.Mark("AfterSetup begin");
                 HeifLoader.Initialize(new iOSHeifDecoder());
                 RawLoader.Initialize(new iOSRawDecoder());
                 PerformanceBudget.Initialize(new iOSPerformanceBudget());
@@ -52,6 +54,14 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                     options.AppendExecutionProvider_CoreML();
                 });
  
+                // P1-M5 压测参数(devicectl launch 注入 --pv-stress 系);相对路径按沙盒 Documents 解析。
+                // 激活期间禁止自动锁屏,避免压测中途被系统挂起。
+                if (StressFlipDriver.TryParseArgs(NSProcessInfo.ProcessInfo.Arguments,
+                        rel => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), rel)))
+                {
+                    UIApplication.SharedApplication.IdleTimerDisabled = true;
+                }
+
                 // 监听系统内存告警：直报统一内存管家(抬级 + 客户端修剪级联由 Governor 驱动,P1-M2 起),并向 UI 广播展示事件
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>
                 {
@@ -68,6 +78,8 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                     );
                     MessageBus.Current.SendMessage(evt);
                 });
+
+                BootTrace.Mark("AfterSetup end");
             });
     }
 

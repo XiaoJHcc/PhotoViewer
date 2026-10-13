@@ -15,8 +15,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
 - **Phase 0 定向审查(2026-10-12)已通过**:Phase 0 由同一 agent 实现+自审(mimo 超时),本次补独立审查——机械门复核 PASS(Core 零 Avalonia,残留均注释;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,字符串枚举序列化下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告)。审查发现的 Phase 1 计划修订已全部落回 phase-1 清单(准入口优先级语义、分档缓冲池、解码路径平台差异、统一 LRU 键前置 M2、验收门平台口径)。
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
-- **下一步 = P1-M5**(iPad 压测 + 收口;**需真机**:iPad mini 7 接入后跑 42MP 连翻 500 张 + 压力日志回放):执行清单 [native-rebuild-phase-1.md](native-rebuild-phase-1.md)。
-- **P1-M1~M4 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码,各笔提交逐笔可查;四平台构建 0 错零新增警告;gov 自测 31 项全过;Mac 冒烟逐里程碑通过)。验收门实测口径:HEIF 代理 -51% 达标,RAW -12%(渲染主导,内存减半)——RAW 数字以 iPad 真机复测为准。
+- **Phase 1 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码 / **M5 iPad 真机验收 2026-10-13 全项通过**):验收门 ①500 连翻无闪退恒 Normal ✅ ②P0 延迟 iPad -55%/Mac HEIC -51% ✅ ③告警后 30s 恢复观察期真机实证 ✅ ⑤Core 零 Avalonia/零新增警告 ✅;④ Windows/Android 桌面回归待桌面会话。M5 副产物:**修复 mono 解释器 ref/out P/Invoke 封送间歇崩溃**(iOS 头工程签名全指针化;`BootTrace` 常驻取证);新增压测驱动器 `StressFlipDriver`(启动参数 `--pv-stress` 系,见 phase-1 §5)。详见 [native-rebuild-phase-1.md](native-rebuild-phase-1.md) §1 验收门勾选与 §5 发现清单。
+- **下一步 = Phase 2 规划与开工**(原生壳/色彩管理,依 master plan §6;人工验收自原生壳阶段开始,iPad mini 7 已验证为可用真机环境)。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
 
@@ -32,7 +32,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |
 | **macOS 构建** | ✅ 2026-10-12 | 0 错误,仅 NU1903 基线警告 |
 | **macOS 冒烟(首轮)** | ✅ 2026-10-12 | CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常;交互逐项(翻图/缩放/评分写回/设置)待人工 |
-| **iOS 构建** | ✅ 2026-10-12 | 模拟器目标 0 错误;真机构建(`Debug iOS`)+ iPad 冒烟待做 |
+| **iOS 构建** | ✅ 2026-10-13 | 模拟器+真机(ios-arm64 Release)均 0 错误 |
+| **iPad mini 7 真机验收(P1-M5)** | ✅ 2026-10-13 | 500 连翻(450 HEIC+50 ARW)p50 356.7ms 恒 Normal 零闪退;告警注入+30s 观察期实证;`--pv-stress-full` 对照组复现 jetsam(A/B 成立);修复 mono interp ref/out P/Invoke 间歇崩溃后 26/26 启动零崩溃。缩放热替换手感、外部打开选中行为留人工 |
 | DINO 渲染口径 | ✅ 2026-10-12 | A/B 实证(headless 不可行,用真窗口 GPU 路径):zoneplate 摩尔纹形态两侧一致(同为 Linear/无 mipmap 族),真实内容 meanDiff=0.24/maxDiff=15(GPU↔CPU 舍入级)。**意外发现:macOS 上 `RenderTargetBitmap.CopyPixels` 实为 RGBA 序**,旧管线 Mac 端 DINO 输入 R/B 互换(Windows 缓存正常);新 Skia 路径统一 BGRA,顺带根治 |
 | 四平台人工冒烟 | ⏸ 按 §2.1 决策推迟 | 旧壳阶段 agent 程序化自验;人工验收自原生壳阶段开始 |
 

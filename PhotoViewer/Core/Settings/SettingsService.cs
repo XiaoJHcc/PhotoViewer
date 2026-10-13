@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
 using System.Threading;
@@ -163,6 +163,11 @@ public static class SettingsPathHelper
     {
         if (OperatingSystem.IsWindows())
             return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+        if (OperatingSystem.IsMacCatalyst() || OperatingSystem.IsIOS())
+            // iOS 沙盒:HOME 口径的 ~/.config 实测对 devicectl(house_arrest)不可见,诊断日志无法取回;
+            // Documents 在容器内可直接读写且可经 devicectl copy 拉取,诊断产物落此。
+            return Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
 
         if (OperatingSystem.IsMacOS())
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData));

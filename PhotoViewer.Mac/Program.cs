@@ -9,6 +9,8 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Mac.Core;
 using Microsoft.ML.OnnxRuntime;
+using System;
+using System.IO;
 
 namespace PhotoViewer.Mac;
 
@@ -32,6 +34,8 @@ sealed class Program
                 options.AppendExecutionProvider_CoreML();
             });
             MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
+            // P1-M5 压测参数(--pv-stress 系,常规运行无此参数、完全惰性);相对路径按当前工作目录解析
+            StressFlipDriver.TryParseArgs(args, Path.GetFullPath);
         })
         .StartWithClassicDesktopLifetime(args);
 

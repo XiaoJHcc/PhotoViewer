@@ -71,24 +71,28 @@ public sealed class iOSPerformanceBudget : IPerformanceBudget
     };
 
     [DllImport("libc")]
-    private static extern int sysctlbyname(string name, IntPtr oldp, ref nuint oldlenp, IntPtr newp, nuint newlen);
+    private static extern int sysctlbyname(string name, IntPtr oldp, IntPtr oldlenp, IntPtr newp, nuint newlen);
 
     private static string GetMachineIdentifier()
     {
+        // P/Invoke 全部显式指针化:mono 解释器对 ref/out 封送存在已证实的间歇崩溃风险(2026-10-13 真机 SIGSEGV)
         try
         {
-            nuint len = 0;
-            sysctlbyname("hw.machine", IntPtr.Zero, ref len, IntPtr.Zero, 0);
-            if (len == 0) return string.Empty;
-            var p = Marshal.AllocHGlobal((int)len);
-            try
+            unsafe
             {
-                sysctlbyname("hw.machine", p, ref len, IntPtr.Zero, 0);
-                return Marshal.PtrToStringAnsi(p) ?? string.Empty;
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(p);
+                nuint len = 0;
+                sysctlbyname("hw.machine", IntPtr.Zero, (IntPtr)(&len), IntPtr.Zero, 0);
+                if (len == 0) return string.Empty;
+                var p = Marshal.AllocHGlobal((int)len);
+                try
+                {
+                    sysctlbyname("hw.machine", p, (IntPtr)(&len), IntPtr.Zero, 0);
+                    return Marshal.PtrToStringAnsi(p) ?? string.Empty;
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(p);
+                }
             }
         }
         catch
