@@ -360,6 +360,143 @@ public static class BitmapLoader
     }
 
     /// <summary>
+    /// 异步获取图片(分级解码,P1-M4):hint = Full 走全分辨率;Proxy 走代理(缓存已有足够大代理即复用,过小则重解码替换)。
+    /// 代理失败自动回退 Full(代理是性能优化,正确性优先)。返回图像携带调用方一份租约,用完 <see cref="DecodedImage.Release"/>。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="hint">尺寸档提示。</param>
+    /// <param name="priority">解码优先级。</param>
+    /// <param name="ct">取消令牌。</param>
+    public static async Task<DecodedImage?> GetBitmapAsync(IFileRef file, DecodeSizeHint hint, DecodePriority priority, CancellationToken ct)
+    {
+        if (hint.Class != ImageSizeClass.Proxy || hint.MaxLongEdge <= 0)
+            return await GetBitmapAsync(file, priority, ct);
+
+        var filePath = file.PathKey;
+        var key = new BitmapCacheKey(filePath, ImageSizeClass.Proxy);
+
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            // 代理命中规则:已有代理长边 ≥ 需求即复用(更大代理向下兼容,显示侧 GPU 缩放)
+            if (_cache.TryGetValue(key, out var cachedItem)
+                && Math.Max(cachedItem.Image.Width, cachedItem.Image.Height) >= hint.MaxLongEdge
+                && cachedItem.Image.TryAcquire())
+            {
+                cachedItem.UpdateAccessTime();
+                PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
+                return cachedItem.Image;
+            }
+
+            var flightKey = filePath + "#proxy" + hint.MaxLongEdge;
+            var lazy = _inFlight.GetOrAdd(flightKey, _ => new Lazy<Task<DecodedImage?>>(
+                () => LoadProxyAndCacheAsync(file, filePath, hint.MaxLongEdge, ct, priority),
+                LazyThreadSafetyMode.ExecutionAndPublication));
+            var img = await AwaitInFlightAsync(flightKey, lazy, lazy.Value).ConfigureAwait(false);
+
+            if (img == null)
+            {
+                // 代理解码失败(含准入被拒之外的解码错误):P0 回退 Full 保证正确性
+                if (priority == DecodePriority.P0_Current && !ct.IsCancellationRequested)
+                    return await GetBitmapAsync(file, priority, ct);
+                return null;
+            }
+            if (img.TryAcquire()) return img;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 代理解码路径:准入(按代理估值)→ 平台差异化缩解码 → EXIF 旋转(平台未预旋转时)→ 入 Proxy 档缓存。
+    /// 解码产物长边 ≤ targetLongEdge;源已更小时按源尺寸(不放大)。
+    /// </summary>
+    private static async Task<DecodedImage?> LoadProxyAndCacheAsync(IFileRef file, string filePath, int targetLongEdge, CancellationToken ct, DecodePriority priority)
+    {
+        var totalSw = System.Diagnostics.Stopwatch.StartNew();
+
+        // 代理估算:长边² × 2/3(3:2 幅面)× 4B
+        long estimate = (long)targetLongEdge * targetLongEdge * 8 / 3;
+        if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
+            return null;
+
+        using (permit)
+        {
+            try
+            {
+                var decodeSw = System.Diagnostics.Stopwatch.StartNew();
+                var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, ct), ct).ConfigureAwait(false);
+                decodeSw.Stop();
+                if (image == null) return null;
+
+                permit!.SetActual(image.ByteCount);
+
+                // 替换较小旧代理(若有),写 Proxy 档
+                var key = new BitmapCacheKey(filePath, ImageSizeClass.Proxy);
+                if (_cache.TryRemove(key, out var old))
+                {
+                    UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Proxy, false));
+                    old.Image.Release();
+                }
+                _cache[key] = new BitmapCacheItem(image, filePath, ImageSizeClass.Proxy);
+
+                PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
+                UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Proxy, true));
+                _ = Task.Run(CleanupCache);
+                return image;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to decode proxy ({file.Name}): {ex.Message}");
+                return null;   // 代理失败不抛出,调用方回退 Full
+            }
+        }
+    }
+
+    /// <summary>
+    /// 代理缩解码(平台差异化,P1-M4 审查裁定口径):JPEG/PNG → Skia codec 子采样+Mitchell;HEIF/RAW → 平台解码器
+    /// (Apple 编解码器级子采样;Windows libheif 全解码+Mitchell;Android InSampleSize)。平台未预旋转的再应用 EXIF 旋转。
+    /// </summary>
+    private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, CancellationToken ct)
+    {
+        DecodedImage? proxy = null;
+        bool preRotated;
+
+        if (HeifLoader.IsHeifFile(file))
+        {
+            proxy = await HeifLoader.DecodeAsync(file, targetLongEdge).ConfigureAwait(false);
+            preRotated = HeifLoader.OutputPreRotated;
+        }
+        else if (RawLoader.IsRawFile(file))
+        {
+            proxy = await RawLoader.DecodeAsync(file, targetLongEdge).ConfigureAwait(false);
+            preRotated = RawLoader.OutputPreRotated;
+        }
+        else
+        {
+            ct.ThrowIfCancellationRequested();
+            await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            proxy = SkiaImageCodec.DecodeToLongEdge(stream, targetLongEdge);
+            preRotated = false;
+        }
+
+        if (proxy == null || proxy.Width <= 0 || proxy.Height <= 0)
+        {
+            proxy?.Release();
+            return null;
+        }
+
+        if (preRotated) return proxy;
+
+        var orientation = await GetExifOrientationAsync(file).ConfigureAwait(false);
+        if (orientation != 3 && orientation != 6 && orientation != 8)
+            return proxy;
+
+        var rotated = ApplyExifRotation(proxy, orientation);
+        proxy.Release();
+        return rotated;   // null(旋转失败)由调用方回退 Full
+    }
+
+    /// <summary>
     /// 异步获取图片（带缓存和EXIF旋转,Full 档,P0 优先级）；同路径并发请求在途去重，共享同一解码任务。
     /// 返回的图像携带调用方一份租约,用完必须 <see cref="DecodedImage.Release"/>。
     /// </summary>
@@ -498,12 +635,14 @@ public static class BitmapLoader
             // 检查是否为 HEIF 格式
             if (HeifLoader.IsHeifFile(file))
             {
-                originalImage = await HeifLoader.LoadHeifBitmapAsync(file).ConfigureAwait(false);
+                originalImage = await HeifLoader.DecodeAsync(file, null).ConfigureAwait(false);
+                // P1-M4 起按解码器能力标记(Apple ImageIO 预旋转;libheif/BitmapFactory 不旋转)
+                decoderPreRotated = HeifLoader.OutputPreRotated;
             }
             else if (RawLoader.IsRawFile(file))
             {
-                originalImage = await RawLoader.LoadRawBitmapAsync(file).ConfigureAwait(false);
-                decoderPreRotated = originalImage != null;
+                originalImage = await RawLoader.DecodeAsync(file, null).ConfigureAwait(false);
+                decoderPreRotated = originalImage != null && RawLoader.OutputPreRotated;
             }
             else
             {

@@ -174,6 +174,9 @@ public class ThumbnailListViewModel : ReactiveObject
                 return;
             }
 
+            // 仅 Full 档驱动"已解码"边框;Proxy 档不计入
+            if (sizeClass != ImageSizeClass.Full) return;
+
             imageFile.IsInCache = isInCache;
         });
     }

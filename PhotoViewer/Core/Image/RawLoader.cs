@@ -9,14 +9,20 @@ public interface IRawDecoder
 {
     bool IsSupported { get; }
 
-    Task<DecodedImage?> LoadBitmapAsync(IFileRef file);
-    Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize);
+    /// <summary>解码产物是否已是显示朝向(Apple ImageIO RAW 引擎为 true)。</summary>
+    bool OutputPreRotated { get; }
+
+    /// <summary>
+    /// 解码 RAW 图像;<paramref name="maxSize"/> 非空时按长边上限缩渲染(ImageIO 支持),null 时全分辨率。
+    /// 失败返回 null,原因记录到 <see cref="RawLoader.LastDecodeError"/>。
+    /// </summary>
+    Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize);
 }
 
 /// <summary>
 /// RAW 解码门面：扩展名识别 + 平台解码器分发。
-/// 目前仅 macOS 提供实现（ImageIO 系统 RAW 引擎）；其他平台为 Noop，解码返回 null。
-/// 可解码的机型/压缩格式取决于系统 ImageIO 支持列表（随 macOS 版本更新），
+/// 目前仅 macOS/iOS 提供实现（ImageIO 系统 RAW 引擎）；其他平台为 Noop，解码返回 null。
+/// 可解码的机型/压缩格式取决于系统 ImageIO 支持列表（随 macOS/iOS 版本更新），
 /// 不支持的文件由平台解码器返回 null 并记录 <see cref="LastDecodeError"/>。
 /// </summary>
 public static class RawLoader
@@ -24,7 +30,7 @@ public static class RawLoader
     private static IRawDecoder _decoder = new NoopRawDecoder();
 
     /// <summary>
-    /// 最近一次 RAW 解码失败的原因。当 LoadRawBitmapAsync 返回 null 时可读取此属性辅助诊断。
+    /// 最近一次 RAW 解码失败的原因。当 DecodeAsync 返回 null 时可读取此属性辅助诊断。
     /// </summary>
     private static volatile string? _lastDecodeError;
 
@@ -40,6 +46,9 @@ public static class RawLoader
 
     /// <summary>当前平台是否有可用的 RAW 解码器。</summary>
     public static bool IsSupported => _decoder.IsSupported;
+
+    /// <summary>当前解码器产物是否已是显示朝向。</summary>
+    public static bool OutputPreRotated => _decoder.IsSupported && _decoder.OutputPreRotated;
 
     // 与设置页「RAW」格式组的扩展名保持一致
     public static bool IsRawFile(string filePath)
@@ -68,7 +77,10 @@ public static class RawLoader
         }
     }
 
-    public static Task<DecodedImage?> LoadRawBitmapAsync(IFileRef file)
+    /// <summary>
+    /// 解码 RAW;<paramref name="maxSize"/> 为代理长边上限(null = 全分辨率)。
+    /// </summary>
+    public static Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
     {
         _lastDecodeError = null;
         if (!_decoder.IsSupported)
@@ -76,16 +88,13 @@ public static class RawLoader
             _lastDecodeError = "RAW 解码器不可用（未初始化或当前平台不支持）";
             return Task.FromResult<DecodedImage?>(null);
         }
-        return _decoder.LoadBitmapAsync(file);
+        return _decoder.DecodeAsync(file, maxSize);
     }
-
-    public static Task<DecodedImage?> LoadRawThumbnailAsync(IFileRef file, int maxSize = 120)
-        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<DecodedImage?>(null);
 
     private sealed class NoopRawDecoder : IRawDecoder
     {
         public bool IsSupported => false;
-        public Task<DecodedImage?> LoadBitmapAsync(IFileRef file) => Task.FromResult<DecodedImage?>(null);
-        public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize) => Task.FromResult<DecodedImage?>(null);
+        public bool OutputPreRotated => false;
+        public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize) => Task.FromResult<DecodedImage?>(null);
     }
 }

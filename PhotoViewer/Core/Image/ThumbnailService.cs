@@ -192,7 +192,7 @@ public static class ThumbnailService
         result.Add(new ThumbnailSource(
             width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
             isPreRotated: true,
-            loaderAsync: target => HeifLoader.LoadHeifThumbnailAsync(file, target)));
+            loaderAsync: target => HeifLoader.DecodeAsync(file, target)));
 
         return result;
     }
@@ -272,7 +272,7 @@ public static class ThumbnailService
             result.Add(new ThumbnailSource(
                 width: 0, height: 0, origin: ThumbnailOrigin.FullImage,
                 isPreRotated: true,
-                loaderAsync: target => RawLoader.LoadRawThumbnailAsync(file, target)));
+                loaderAsync: target => RawLoader.DecodeAsync(file, target)));
         }
 
         return result;
