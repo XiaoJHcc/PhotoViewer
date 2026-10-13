@@ -16,18 +16,18 @@ public sealed class iOSRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsIOS();
 
-    public async Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
+    /// <summary>ImageIO RAW 引擎输出即显示朝向。</summary>
+    public bool OutputPreRotated => true;
+
+    public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
     {
         var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
-        var bmp = iOSHeifDecoder.DecodeWithImageIO(path, null, data);
-        if (bmp == null)
+        // P1-M4:maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
+        var bmp = maxSize.HasValue
+            ? iOSHeifDecoder.DecodeSubsampledWithImageIO(path, maxSize.Value, data)
+            : iOSHeifDecoder.DecodeWithImageIO(path, null, data);
+        if (bmp == null && !maxSize.HasValue)
             RawLoader.SetLastDecodeError("ImageIO 无法解码该 RAW 文件（当前 iOS 版本可能不支持该机型或压缩格式）");
         return bmp;
-    }
-
-    public async Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
-    {
-        var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
-        return iOSHeifDecoder.DecodeWithImageIO(path, maxSize, data);
     }
 }

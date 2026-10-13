@@ -52,21 +52,18 @@ public partial class AppDelegate : AvaloniaAppDelegate<App>
                     options.AppendExecutionProvider_CoreML();
                 });
  
-                // 监听系统内存告警：清理至“触发时缓存大小”的 80%，并仅上报触发时快照
+                // 监听系统内存告警：直报统一内存管家(抬级 + 客户端修剪级联由 Governor 驱动,P1-M2 起),并向 UI 广播展示事件
                 UIApplication.Notifications.ObserveDidReceiveMemoryWarning((_, __) =>
                 {
-                    // OS 事件直报统一内存管家(立即抬到 Warning 并落快照);旧 trim 行为在 P1-M2 由响应矩阵接管
                     MemoryGovernor.ReportOsEvent(PressureLevel.Warning);
 
-                    var (beforeBytes, beforeCount, _) = BitmapLoader.TrimToCurrentRatio(0.8);
-
                     // 记录触发时缓存大小（MB）
-                    iOSPerformanceBudget.RecordMemoryWarningCacheMB(beforeBytes);
+                    iOSPerformanceBudget.RecordMemoryWarningCacheMB(BitmapLoader.CurrentCacheSize);
 
                     // 广播给 UI（仅显示触发时的大小、数量与时间）
                     var evt = new BitmapLoader.MemoryWarningEvent(
-                        sizeMB: beforeBytes / (1024 * 1024),
-                        count:  beforeCount,
+                        sizeMB: BitmapLoader.CurrentCacheSize / (1024 * 1024),
+                        count:  BitmapLoader.CurrentCacheCount,
                         time:   DateTimeOffset.Now
                     );
                     MessageBus.Current.SendMessage(evt);

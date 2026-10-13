@@ -17,7 +17,20 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsAndroid() && (int)Build.VERSION.SdkInt >= 28;
 
-    public async Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
+    /// <summary>BitmapFactory 不应用 EXIF 方向,BitmapLoader 负责旋转。</summary>
+    public bool OutputPreRotated => false;
+
+    /// <summary>
+    /// 解码 HEIF。maxSize = null 全分辨率;非空时代理(内嵌缩略图够大用之,否则 InSampleSize 采样主图 + 精缩放)。
+    /// </summary>
+    public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
+    {
+        if (!IsSupported || file is null) return null;
+        if (!maxSize.HasValue) return await LoadFullAsync(file);
+        return await LoadScaledAsync(file, maxSize.Value);
+    }
+
+    private async Task<DecodedImage?> LoadFullAsync(IFileRef file)
     {
         if (!IsSupported || file is null) return null;
 
@@ -49,16 +62,16 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
         }
     }
 
-    public async Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
+    private async Task<DecodedImage?> LoadScaledAsync(IFileRef file, int maxSize)
     {
-        if (!IsSupported || file is null || maxSize <= 0) return null;
+        if (maxSize <= 0) return null;
 
         try
         {
             using var baseStream = await file.OpenReadAsync();
             using var stream = await EnsureSeekableAsync(baseStream);
 
-            // 1) 尝试内嵌缩略图（优先）
+            // 1) 尝试内嵌缩略图(仅在够大时;小了交给主图采样,避免放大糊图)
             Bitmap? embedded = null;
             try
             {
@@ -75,14 +88,18 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 try
                 {
                     var lw = Math.Max(embedded.Width, embedded.Height);
-                    using var chosen = (lw > maxSize)
-                        ? ScaleBitmap(embedded, maxSize) // 控制输出尺寸不浪费内存
-                        : embedded.Copy(Bitmap.Config.Argb8888, false);
+                    if (lw >= maxSize)
+                    {
+                        using var chosen = (lw > maxSize)
+                            ? ScaleBitmap(embedded, maxSize) // 控制输出尺寸不浪费内存
+                            : embedded.Copy(Bitmap.Config.Argb8888, false);
 
-                    if (!ReferenceEquals(chosen, embedded))
-                        embedded.Dispose();
+                        if (!ReferenceEquals(chosen, embedded))
+                            embedded.Dispose();
 
-                    return ToDecodedImage(chosen);
+                        return ToDecodedImage(chosen);
+                    }
+                    embedded.Dispose();
                 }
                 catch (Exception ex)
                 {
@@ -179,7 +196,8 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
             }
 
             // 字节布局与原 ToAvaloniaBitmap 完全一致(Android 端位图通道顺序的既有口径,不做改动)
-            var bgra = new byte[pixels.Length * 4];
+            // 缓冲池租用(P1-M3)
+            var bgra = DecodedImage.RentPixels(pixels.Length * 4);
             for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
             {
                 int p = pixels[i];
@@ -194,7 +212,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 bgra[j + 3] = a;
             }
 
-            return new DecodedImage(bgra, w, h, w * 4, PixelEncoding.Bgra32);
+            return DecodedImage.CreatePooled(bgra, w, h, w * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {

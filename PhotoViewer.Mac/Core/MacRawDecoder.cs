@@ -14,15 +14,18 @@ public sealed class MacRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsMacOS();
 
-    public Task<DecodedImage?> LoadBitmapAsync(IFileRef file)
-        => Task.Run(() => Decode(file.PathKey, null));
+    /// <summary>ImageIO RAW 引擎输出即显示朝向。</summary>
+    public bool OutputPreRotated => true;
 
-    public Task<DecodedImage?> LoadThumbnailAsync(IFileRef file, int maxSize)
-        => Task.Run(() => Decode(file.PathKey, maxSize));
+    public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
+        => Task.Run(() => Decode(file, maxSize));
 
-    private static DecodedImage? Decode(string path, int? maxSize)
+    private static DecodedImage? Decode(IFileRef file, int? maxSize)
     {
-        var bmp = MacHeifDecoder.DecodeWithImageIO(path, maxSize);
+        // P1-M4:maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
+        var bmp = maxSize.HasValue
+            ? MacHeifDecoder.DecodeSubsampledWithImageIO(file.PathKey, maxSize.Value)
+            : MacHeifDecoder.DecodeWithImageIO(file.PathKey, null);
         if (bmp == null)
             RawLoader.SetLastDecodeError("ImageIO 无法解码该 RAW 文件（当前 macOS 版本可能不支持该机型或压缩格式）");
         return bmp;
