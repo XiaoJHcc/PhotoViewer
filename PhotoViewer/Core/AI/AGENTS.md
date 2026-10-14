@@ -4,6 +4,8 @@
 
 `namespace PhotoViewer.Core.AI`
 
+P2 原生索引适配：FolderFeatureIndexer 从主缓存取得 RgbaF16 时，调用 Core/Color/ColorEngine.ToAnalysisSrgb8 得到已应用方向的 BGRA8 后再跑 CV，并用转换后尺寸入库。DINO 仍使用原缩略图/模型输入口径；算法版本、指纹与 schema 不改。
+
 > 二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](../../../Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](../../../Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
 
 | File | 模块 | Responsibility |

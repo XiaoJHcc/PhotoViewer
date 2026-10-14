@@ -25,7 +25,7 @@ public partial class SettingsViewModel
             .SelectMany(async _ => { await PersistAsync(); return Unit.Default; })
             .Subscribe();
 
-        this.Changed.Subscribe(_ => RequestSave());
+        _runtimeSubscriptions.Add(this.Changed.Subscribe(_ => RequestSave()));
 
         ScalePresets.CollectionChanged += OnScalePresetsChanged;
         foreach (var preset in ScalePresets)
@@ -59,7 +59,7 @@ public partial class SettingsViewModel
 
     private async Task PersistAsync()
     {
-        if (_isRestoring || !_hasLoaded) return;
+        if (_isRestoring || !_hasLoaded || _disposed) return;
         try
         {
             var model = ToModel();
@@ -73,7 +73,7 @@ public partial class SettingsViewModel
 
     private void RequestSave()
     {
-        if (_isRestoring || !_hasLoaded) return;
+        if (_isRestoring || !_hasLoaded || _disposed) return;
         _saveRequests.OnNext(Unit.Default);
     }
 

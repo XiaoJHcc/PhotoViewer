@@ -37,7 +37,7 @@ public class BitmapCacheItem
 
     private static long EstimateImageSize(DecodedImage image)
     {
-        return (long)image.Width * image.Height * Math.Max(1, DecodedImage.BytesPerPixel(image.Encoding));
+        return image.ByteCount;
     }
 
     public void UpdateAccessTime()
@@ -53,6 +53,18 @@ public class BitmapCacheItem
 /// </summary>
 public static class BitmapLoader
 {
+    private static IPresentationImageDecoder? _presentationDecoder;
+    /// <summary>当前展示解码每像素字节数，用于准入及设置预算提示；旧壳保留原透明度口径。</summary>
+    public static int PresentationBytesPerPixel => _presentationDecoder?.BytesPerPixel ?? (IgnoreAlpha ? 3 : 4);
+
+    /// <summary>启动期注入原生主图解码器；禁止在已开始解码后更换解释口径。</summary>
+    public static void InitializePresentationDecoder(IPresentationImageDecoder decoder)
+    {
+        if (!_cache.IsEmpty || !_inFlight.IsEmpty)
+            throw new InvalidOperationException("主图解码器必须在加载前注入");
+        _presentationDecoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+        ThumbnailService.InitializeMissingPreviewDecoder(decoder);
+    }
     /// <summary>统一缓存键:路径(忽略大小写)+ 尺寸档。</summary>
     private readonly struct BitmapCacheKey : IEquatable<BitmapCacheKey>
     {
@@ -309,7 +321,7 @@ public static class BitmapLoader
             if (dims.HasValue && dims.Value.width > 0 && dims.Value.height > 0)
             {
                 // 修改：按设置计算 BPP
-                int bpp = IgnoreAlpha ? 3 : 4;
+                int bpp = PresentationBytesPerPixel;
                 return (long)dims.Value.width * dims.Value.height * bpp;
             }
         }
@@ -418,7 +430,13 @@ public static class BitmapLoader
             var lazy = _inFlight.GetOrAdd(flightKey, _ => new Lazy<Task<DecodedImage?>>(
                 () => LoadProxyAndCacheAsync(file, filePath, hint.MaxLongEdge, ct, priority),
                 LazyThreadSafetyMode.ExecutionAndPublication));
-            var img = await AwaitInFlightAsync(flightKey, lazy, lazy.Value).ConfigureAwait(false);
+            DecodedImage? img;
+            try { img = await AwaitInFlightAsync(flightKey, lazy, lazy.Value).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 合并任务的原请求已取消，当前请求仍有效；重发代理，不把取消误判为解码失败升级 Full。
+                continue;
+            }
 
             if (img == null)
             {
@@ -440,8 +458,8 @@ public static class BitmapLoader
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
 
-        // 代理估算:长边² × 2/3(3:2 幅面)× 4B
-        long estimate = (long)targetLongEdge * targetLongEdge * 8 / 3;
+        // 按正方形上界与展示编码估算，避免 F16/方形用户素材低估准入预算。
+        long estimate = (long)targetLongEdge * targetLongEdge * (_presentationDecoder?.BytesPerPixel ?? 4);
         if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
             return null;
 
@@ -456,20 +474,31 @@ public static class BitmapLoader
 
                 permit!.SetActual(image.ByteCount);
 
-                // 替换较小旧代理(若有),写 Proxy 档
                 var key = new BitmapCacheKey(filePath, ImageSizeClass.Proxy);
-                if (_cache.TryRemove(key, out var old))
+                var replacement = new BitmapCacheItem(image, filePath, ImageSizeClass.Proxy);
+                while (true)
                 {
-                    UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Proxy, false));
-                    old.Image.Release();
+                    if (_cache.TryGetValue(key, out var old))
+                    {
+                        // 同路径不同目标尺寸可并发，慢的小代理不得降级大代理，也不能覆盖时遗失缓存租约。
+                        if (Math.Max(old.Image.Width, old.Image.Height) >= Math.Max(image.Width, image.Height))
+                        {
+                            image.Release();
+                            return old.Image;
+                        }
+                        if (!_cache.TryUpdate(key, replacement, old)) continue;
+                        old.Image.Release();
+                        break;
+                    }
+                    if (_cache.TryAdd(key, replacement)) break;
                 }
-                _cache[key] = new BitmapCacheItem(image, filePath, ImageSizeClass.Proxy);
 
                 PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
                 UiDispatcher.Post(() => CacheStatusChanged?.Invoke(filePath, ImageSizeClass.Proxy, true));
                 _ = Task.Run(CleanupCache);
                 return image;
             }
+            catch (OperationCanceledException) { throw; }
             catch (Exception ex)
             {
                 Console.WriteLine($"Failed to decode proxy ({file.Name}): {ex.Message}");
@@ -484,6 +513,8 @@ public static class BitmapLoader
     /// </summary>
     private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, CancellationToken ct)
     {
+        if (_presentationDecoder != null)
+            return await _presentationDecoder.DecodeAsync(file, targetLongEdge, ct).ConfigureAwait(false);
         DecodedImage? proxy = null;
         bool preRotated;
 
@@ -653,6 +684,8 @@ public static class BitmapLoader
     /// </summary>
     private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, CancellationToken ct = default)
     {
+        if (_presentationDecoder != null)
+            return await _presentationDecoder.DecodeAsync(file, null, ct).ConfigureAwait(false);
         try
         {
             DecodedImage? originalImage = null;

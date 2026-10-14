@@ -4,6 +4,8 @@
 
 `namespace PhotoViewer.ViewModels.Main`
 
+P2 原生模式：`MainViewModel.UsesNativePresentation` 使旧 ImageViewModel 的位图/缩放展示订阅退场；共享文件、筛选、评分及设置不变。加载由 Core/Image/PhotoLoadSession 编排，Mac 原生层持视口状态。P2 原生相似面板不执行隐藏的 RecomputeAsync，P3 接回分析功能时需重新启用。跨模块链路见根 §5.6。
+
 | 模块 | ViewModel | View | Notes |
 |---|---|---|---|
 | **主窗口 / Main shell** | [MainViewModel.cs](MainViewModel.cs) | Desktop: [Windows/MainWindowForWindows.axaml](../../Windows/MainWindowForWindows.axaml), [Windows/MainWindowForMac.axaml](../../Windows/MainWindowForMac.axaml) · Mobile: [Windows/SingleView.axaml](../../Windows/SingleView.axaml) hosting [Views/Main/MainView.axaml](../../Views/Main/MainView.axaml) | Layout switch (grid/list), fullscreen, child-VM wiring. |

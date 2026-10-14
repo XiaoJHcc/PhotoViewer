@@ -117,11 +117,14 @@ public partial class SettingsViewModel
         }
 
         // 同步到全局映射器
-        AppleKeyboardMapping.UseAppleKeyboard = UseAppleKeyboard;
-        AppleKeyboardMapping.MapCommandTarget = MapCommandTarget;
-        AppleKeyboardMapping.MapOptionTarget  = MapOptionTarget;
-        AppleKeyboardMapping.MapControlTarget = MapControlTarget;
-        AppleKeyboardMapping.RaiseChanged();
+        if (_applyRuntimeSettings)
+        {
+            AppleKeyboardMapping.UseAppleKeyboard = UseAppleKeyboard;
+            AppleKeyboardMapping.MapCommandTarget = MapCommandTarget;
+            AppleKeyboardMapping.MapOptionTarget  = MapOptionTarget;
+            AppleKeyboardMapping.MapControlTarget = MapControlTarget;
+            AppleKeyboardMapping.RaiseChanged();
+        }
     }
 
     private void OnHotkeysChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -356,8 +359,7 @@ public partial class SettingsViewModel
         set
         {
             this.RaiseAndSetIfChanged(ref _useAppleKeyboard, value);
-            AppleKeyboardMapping.UseAppleKeyboard = value;
-            AppleKeyboardMapping.RaiseChanged();
+            if (_applyRuntimeSettings) { AppleKeyboardMapping.UseAppleKeyboard = value; AppleKeyboardMapping.RaiseChanged(); }
         }
     }
 
@@ -368,8 +370,7 @@ public partial class SettingsViewModel
         set
         {
             this.RaiseAndSetIfChanged(ref _mapCommandTarget, value);
-            AppleKeyboardMapping.MapCommandTarget = value;
-            AppleKeyboardMapping.RaiseChanged();
+            if (_applyRuntimeSettings) { AppleKeyboardMapping.MapCommandTarget = value; AppleKeyboardMapping.RaiseChanged(); }
         }
     }
 
@@ -380,8 +381,7 @@ public partial class SettingsViewModel
         set
         {
             this.RaiseAndSetIfChanged(ref _mapOptionTarget, value);
-            AppleKeyboardMapping.MapOptionTarget = value;
-            AppleKeyboardMapping.RaiseChanged();
+            if (_applyRuntimeSettings) { AppleKeyboardMapping.MapOptionTarget = value; AppleKeyboardMapping.RaiseChanged(); }
         }
     }
 
@@ -392,8 +392,7 @@ public partial class SettingsViewModel
         set
         {
             this.RaiseAndSetIfChanged(ref _mapControlTarget, value);
-            AppleKeyboardMapping.MapControlTarget = value;
-            AppleKeyboardMapping.RaiseChanged();
+            if (_applyRuntimeSettings) { AppleKeyboardMapping.MapControlTarget = value; AppleKeyboardMapping.RaiseChanged(); }
         }
     }
 }

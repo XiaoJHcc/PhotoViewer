@@ -19,8 +19,20 @@ sealed class Program
     // Initialization code. Don't use any Avalonia, third-party APIs or any
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
+    /// <summary>按显式参数与构建通道选择原生或旧壳入口。</summary>
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp()
+    public static void Main(string[] args)
+    {
+        bool native = args.Contains("--native");
+#if DEBUG
+        native = !args.Contains("--legacy-ui");
+#endif
+        if (native) { Native.MacNativeApplication.Run(args); return; }
+        RunLegacy(args);
+    }
+
+    /// <summary>迁移期保留旧壳启动路径，Release 发布通道在人工验收前不切换。</summary>
+    private static void RunLegacy(string[] args) => BuildAvaloniaApp()
         .AfterSetup(_ =>
         {
             HeifLoader.Initialize(new MacHeifDecoder());

@@ -50,6 +50,8 @@
 - ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动 `open .app`，解决原生的系统签名拦截。
 - ⚡ **Run Mac**：**仅启动**，不触发构建，直接 `open` 打开上次已编译签名完毕的 `.app`。
 
+> `refactor/native-rebuild` 的 P2：Debug 默认 AppKit + Metal 原生壳；对照旧壳使用 `open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app --args --legacy-ui`。Release 默认旧壳，验收前不切换发布通道；Release 原生验证用 `--native`。产品验收与程序化冒烟见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
+
 ### 4. iOS
 *前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机需配置 Developer Certificate（在 Xcode 中登录 Apple ID 即可自动管理签名）。*
 - ⚡ **Clean Build Caches (All Platforms)**：清理仓库内所有平台的 `bin/obj`，并清空 NuGet 临时/http 缓存、Xcode DerivedData、Xamarin iOS/macOS 本机构建缓存；适合版本回退、SDK 升降级、疑似脏缓存时执行。

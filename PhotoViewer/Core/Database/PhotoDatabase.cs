@@ -26,14 +26,24 @@ public static class PhotoDatabase
     private static string? _dbPath;
     private static bool _initialized;
 
-    /// <summary>初始化数据库:确保文件存在并 schema 建好;检测到旧 schema 则删库重建。可重复调用,幂等。</summary>
-    public static void Initialize()
+    /// <summary>初始化数据库与 schema；可在启动期指定隔离目录，后续调用保持同一路径。</summary>
+    /// <param name="databasePath">可选数据库路径；为空时使用应用标准数据目录。</param>
+    public static void Initialize(string? databasePath = null)
     {
-        if (_initialized) return;
+        if (_initialized)
+        {
+            if (databasePath != null && Path.GetFullPath(databasePath) != _dbPath) throw new InvalidOperationException("数据库路径必须在首次读取前配置");
+            return;
+        }
         lock (_initLock)
         {
-            if (_initialized) return;
-            _dbPath = ResolvePath();
+            if (_initialized)
+            {
+                if (databasePath != null && Path.GetFullPath(databasePath) != _dbPath) throw new InvalidOperationException("数据库路径必须在首次读取前配置");
+                return;
+            }
+            _dbPath = databasePath == null ? ResolvePath() : Path.GetFullPath(databasePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
 
             if (ShouldResetDueToLegacySchema())
             {

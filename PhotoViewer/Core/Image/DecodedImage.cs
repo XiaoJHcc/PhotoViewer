@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using PhotoViewer.Core.Color;
 
 namespace PhotoViewer.Core.Image;
 
@@ -13,6 +14,9 @@ public enum PixelEncoding
 
     /// <summary>RGB888,3 字节/像素(libheif 等无 alpha 通道来源)。</summary>
     Rgb24,
+
+    /// <summary>RGBA 半精度浮点、预乘 alpha，8 字节/像素；线性 scRGB 由色彩标签声明。</summary>
+    RgbaF16,
 }
 
 /// <summary>
@@ -38,17 +42,23 @@ public sealed class DecodedImage : IDisposable
     /// <param name="height">像素高。</param>
     /// <param name="stride">每行字节数(含对齐填充)。</param>
     /// <param name="encoding">像素编码。</param>
-    public DecodedImage(byte[] pixels, int width, int height, int stride, PixelEncoding encoding)
-        : this(pixels, width, height, stride, encoding, pooled: false)
+    public DecodedImage(byte[] pixels, int width, int height, int stride, PixelEncoding encoding,
+        ImageColorSpace colorSpace = ImageColorSpace.Legacy, int sourceWidth = 0, int sourceHeight = 0, int orientation = 1, byte[]? iccProfile = null)
+        : this(pixels, width, height, stride, encoding, false, colorSpace, sourceWidth, sourceHeight, orientation, iccProfile)
     {
     }
 
-    private DecodedImage(byte[] pixels, int width, int height, int stride, PixelEncoding encoding, bool pooled)
+    /// <summary>验证像素与元数据并建立创建者租约，源尺寸为零时使用当前尺寸。</summary>
+    private DecodedImage(byte[] pixels, int width, int height, int stride, PixelEncoding encoding, bool pooled,
+        ImageColorSpace colorSpace, int sourceWidth, int sourceHeight, int orientation, byte[]? iccProfile)
     {
         if (pixels == null) throw new ArgumentNullException(nameof(pixels));
         if (width <= 0) throw new ArgumentOutOfRangeException(nameof(width));
         if (height <= 0) throw new ArgumentOutOfRangeException(nameof(height));
-        if (stride < width * BytesPerPixel(encoding)) throw new ArgumentOutOfRangeException(nameof(stride));
+        if (stride < checked(width * BytesPerPixel(encoding))) throw new ArgumentOutOfRangeException(nameof(stride));
+        if (pixels.LongLength < checked((long)(height - 1) * stride + (long)width * BytesPerPixel(encoding)))
+            throw new ArgumentException("像素缓冲不足", nameof(pixels));
+        if (orientation is < 1 or > 8) throw new ArgumentOutOfRangeException(nameof(orientation));
 
         _pixels = pixels;
         Width = width;
@@ -56,6 +66,11 @@ public sealed class DecodedImage : IDisposable
         Stride = stride;
         Encoding = encoding;
         _pooled = pooled;
+        ColorSpace = colorSpace;
+        SourceWidth = sourceWidth > 0 ? sourceWidth : width;
+        SourceHeight = sourceHeight > 0 ? sourceHeight : height;
+        Orientation = orientation;
+        IccProfile = iccProfile == null ? ReadOnlyMemory<byte>.Empty : new ReadOnlyMemory<byte>((byte[])iccProfile.Clone());
     }
 
     /// <summary>像素缓冲。租约归零后返回空数组。</summary>
@@ -73,6 +88,17 @@ public sealed class DecodedImage : IDisposable
     /// <summary>像素编码。</summary>
     public PixelEncoding Encoding { get; }
 
+    /// <summary>像素色彩空间；与编码正交。</summary>
+    public ImageColorSpace ColorSpace { get; }
+    /// <summary>未旋转的全分辨率源宽度，代理与 Full 共用几何基准。</summary>
+    public int SourceWidth { get; }
+    /// <summary>未旋转的全分辨率源高度。</summary>
+    public int SourceHeight { get; }
+    /// <summary>仍待渲染器应用的 EXIF 方向，已旋转产物为 1。</summary>
+    public int Orientation { get; }
+    /// <summary>源 ICC 的不可变副本，仅 Icc 色彩标签使用。</summary>
+    public ReadOnlyMemory<byte> IccProfile { get; }
+
     /// <summary>缓冲字节数(池化缓冲为分档对齐后的实际长度,即真实分配量)。</summary>
     public long ByteCount => _pixels.Length;
 
@@ -85,7 +111,8 @@ public sealed class DecodedImage : IDisposable
     {
         PixelEncoding.Bgra32 => 4,
         PixelEncoding.Rgb24 => 3,
-        _ => 4,
+        PixelEncoding.RgbaF16 => 8,
+        _ => throw new ArgumentOutOfRangeException(nameof(encoding)),
     };
 
     /// <summary>
@@ -97,8 +124,9 @@ public sealed class DecodedImage : IDisposable
     /// <summary>
     /// 用池化缓冲创建图像;缓冲归图像所有,最后一份租约释放时归还池。
     /// </summary>
-    public static DecodedImage CreatePooled(byte[] rentedPixels, int width, int height, int stride, PixelEncoding encoding)
-        => new(rentedPixels, width, height, stride, encoding, pooled: true);
+    public static DecodedImage CreatePooled(byte[] rentedPixels, int width, int height, int stride, PixelEncoding encoding,
+        ImageColorSpace colorSpace = ImageColorSpace.Legacy, int sourceWidth = 0, int sourceHeight = 0, int orientation = 1, byte[]? iccProfile = null)
+        => new(rentedPixels, width, height, stride, encoding, true, colorSpace, sourceWidth, sourceHeight, orientation, iccProfile);
 
     /// <summary>
     /// 借用一份租约(CAS 原子);已彻底释放(缓冲已归还/丢弃)返回 false,调用方按 miss 处理。

@@ -266,13 +266,17 @@ public static class AppleKeyboardMapping
     /// <param name="mods">原始修饰键。</param>
     /// <returns>映射后的修饰键。</returns>
     public static GestureModifiers ApplyForRuntime(GestureModifiers mods)
+        => ApplyForRuntime(mods, UseAppleKeyboard, MapCommandTarget, MapOptionTarget, MapControlTarget);
+
+    /// <summary>用指定设置映射修饰键，供工作副本录制使用，不临时改写全局键盘配置。</summary>
+    public static GestureModifiers ApplyForRuntime(GestureModifiers mods, bool useAppleKeyboard, AppleMappingTarget command, AppleMappingTarget option, AppleMappingTarget control)
     {
-        if (!UseAppleKeyboard) return mods;
+        if (!useAppleKeyboard) return mods;
 
         var result = mods;
-        result = ApplySource(result, GestureModifiers.Meta, MapCommandTarget); // Cmd
-        result = ApplySource(result, GestureModifiers.Alt, MapOptionTarget);  // Option
-        result = ApplySource(result, GestureModifiers.Control, MapControlTarget); // Ctrl
+        result = ApplySource(result, GestureModifiers.Meta, command); // Cmd
+        result = ApplySource(result, GestureModifiers.Alt, option);  // Option
+        result = ApplySource(result, GestureModifiers.Control, control); // Ctrl
         return result;
     }
 

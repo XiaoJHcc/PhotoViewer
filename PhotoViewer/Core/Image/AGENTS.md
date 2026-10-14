@@ -4,6 +4,10 @@
 
 `namespace PhotoViewer.Core.Image`
 
+P2 原生新增：`IPresentationImageDecoder` 是平台主图解码注入口；`PhotoLoadSession` 只持展示租约与代际/代理/Full 加载状态，视口变换由原生层负责。原生端到端流程见根 §5.6，旧壳仍走原有 ImageViewModel/适配器。
+
+`DecodedImage` P2 扩展：保留 Bgra32/Rgb24，新增 RgbaF16；色彩标签（Core/Color）、源尺寸、待应用方向与可选 ICC 均显式携带。缓存大小按 `ByteCount` 实际池化分配记账；原生启动期注入后 Thumb 仍是 sRGB8，小图缺少内嵌来源时允许原生子采样，不回退原图全解码。PhotoLoadSession 保持同代际代理覆盖单调增长，不让慢的小代理覆盖大代理/Full；放大态切图直接请求 Full。代理在途原请求取消而新调用仍有效时重发代理，取消不当作解码错误回退 Full；并发入库用原子更新保留更大代理与缓存租约。
+
 | File | 模块 | Responsibility |
 |---|---|---|
 | [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + **统一 LRU(键 = 路径 + `ImageSizeClass` 尺寸档,P1-M2 起)**:Thumb/Proxy/Full 同驻,缩略图分区独立张数/字节双限,主分区(Full/Proxy)走 MaxCacheCount/MaxCacheSize。EXIF rotation 内置,全程 `DecodedImage`。在途去重,解码本体在线程池执行;**解码准入**(P1-M3):一切解码先 `MemoryGovernor.TryAcquire`(P0 豁免/非 P0 拒而不排),解码完成按实际字节复核;命中返回携带调用方租约(用完 `Release`),淘汰只归还缓存自己那份(租约归零才真正归还缓冲池),淘汰路径无 GC.Collect、无 UI 线程同步 Dispose。淘汰保护集按路径对所有档生效。命中/miss 计时写 `PerfTrace`。内存客户端自登记,压力级联 `TrimForPressure`:Caution 缩略图只留保护集 / Warning 主分区留保护集内最近 2 张 / Critical 全库只留最近 1 张 Full。 |

@@ -256,6 +256,12 @@ public sealed class FolderFeatureIndexer
                     {
                         // CV 大图:P3 优先级准入(批量索引);携带调用方租约,用完归还
                         cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File, DecodePriority.P3_Background, CancellationToken.None).ConfigureAwait(false);
+                        if (cvBitmap?.Encoding == PixelEncoding.RgbaF16)
+                        {
+                            var analysisBitmap = PhotoViewer.Core.Color.ColorEngine.ToAnalysisSrgb8(cvBitmap);
+                            cvBitmap.Release();
+                            cvBitmap = analysisBitmap;
+                        }
                         if (cvBitmap != null)
                         {
                             var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);

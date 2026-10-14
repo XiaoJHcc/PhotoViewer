@@ -215,6 +215,9 @@ public class ImageViewModel : ReactiveObject
     {
         _main = mainViewModel;
 
+        // 原生展示由 PhotoLoadSession 负责，旧壳缩放/位图适配不创建第二份主图。
+        if (mainViewModel.UsesNativePresentation) return;
+
         // 统一内存管控(P1-M2):增强位图登记为内存客户端,压力下由 Governor 级联释放
         MemoryGovernor.Register(new EnhancedMemoryClient(this));
 

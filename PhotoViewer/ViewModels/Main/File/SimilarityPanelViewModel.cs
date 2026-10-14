@@ -351,6 +351,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     private async Task RecomputeAsync(ImageFile? current)
     {
+        if (_main.UsesNativePresentation) return;
         _computeCts?.Cancel();
         var cts = new CancellationTokenSource();
         _computeCts = cts;

@@ -83,7 +83,7 @@ public partial class SettingsViewModel
         }
 
         // 订阅内存告警事件：仅显示触发时快照（大小、数量、时间）
-        MessageBus.Current
+        _runtimeSubscriptions.Add(MessageBus.Current
             .Listen<BitmapLoader.MemoryWarningEvent>()
             .ObserveOn(UiDispatcher.MainThreadScheduler)
             .Subscribe(evt =>
@@ -92,7 +92,7 @@ public partial class SettingsViewModel
                 PerformanceBudgetInfo =
                     $"{BuildPerformanceBudgetInfo()}{iosNote} / " +
                     $"上次系统内存告警：缓存 {evt.sizeMB} MB, {evt.count} 项 @ {evt.time:HH:mm:ss}";
-            });
+            }));
 
         // 初始化三个预载滑条的 百分比 backing 字段（0~33.3333），确保 UI 初始位置正确
         // 注意：百分比是相对总缓存数的百分比（0 ~ 33.3333），实际预载数量由 percent/100 * BitmapCacheMaxCount 计算
@@ -104,7 +104,7 @@ public partial class SettingsViewModel
         this.WhenAnyValue(v => v.BitmapCacheMaxCount)
             .Subscribe(v =>
             {
-                BitmapLoader.MaxCacheCount = v;
+                if (_applyRuntimeSettings) BitmapLoader.MaxCacheCount = v;
 
                 _freezePreloadExp = true;
                 try
@@ -129,7 +129,7 @@ public partial class SettingsViewModel
         this.WhenAnyValue(v => v.BitmapCacheMaxMemory)
             .Subscribe(v =>
             {
-                BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
+                if (_applyRuntimeSettings) BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
                 
                 // 更新内存信息颜色
                 this.RaisePropertyChanged(nameof(PerformanceBudgetInfoLevel));
@@ -142,13 +142,13 @@ public partial class SettingsViewModel
         this.WhenAnyValue(v => v.IgnoreAlpha)
             .Subscribe(v =>
             {
-                BitmapLoader.IgnoreAlpha = v;
+                if (_applyRuntimeSettings) BitmapLoader.IgnoreAlpha = v;
                 // 计算当前内存能够满足多少张照片
                 this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
             });
 
         this.WhenAnyValue(v => v.CpuPreloadParallelism)
-            .Subscribe(v => HeifLoader.SetCpuDecodeParallelism(v));
+            .Subscribe(v => { if (_applyRuntimeSettings) HeifLoader.SetCpuDecodeParallelism(v); });
     }
     
     // 指数映射工具：t ∈ [0,1]
@@ -266,7 +266,7 @@ public partial class SettingsViewModel
     {
         get
         {
-            var bit = IgnoreAlpha ? 3 : 4;
+            var bit = BitmapLoader.PresentationBytesPerPixel;
             var mp = BitmapCacheMaxMemory / (bit * BitmapCacheMaxCount);
             switch (mp)
             {

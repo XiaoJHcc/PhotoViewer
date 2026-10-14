@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-14(P1-M4b 画质/双击放大修复,Mac 真屏冒烟通过)。
+> 最后更新:2026-10-14(P2 AppKit/Metal 已落地，程序化核验通过；作者产品验收待执行)。
 
 ## 1. 为什么重构(决策语境)
 
@@ -17,10 +17,12 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
 - **Phase 1 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码 / **M5 iPad 真机验收 2026-10-13 全项通过**):验收门 ①500 连翻无闪退恒 Normal ✅ ②P0 延迟 iPad -55%/Mac HEIC -51% ✅ ③告警后 30s 恢复观察期真机实证 ✅ ⑤Core 零 Avalonia/零新增警告 ✅;④ Windows 程序化部分 2026-10-13 过(交互项作者手测中)、Android 待办。M5 副产物:**修复 mono 解释器 ref/out P/Invoke 封送间歇崩溃**(iOS 头工程签名全指针化;`BootTrace` 常驻取证);新增压测驱动器 `StressFlipDriver`(启动参数 `--pv-stress` 系,见 phase-1 §5)。详见 [native-rebuild-phase-1.md](native-rebuild-phase-1.md) §1 验收门勾选与 §5 发现清单。
 - **Windows 收尾(2026-10-13)**:P1 定向审查(Windows 路径)3 项发现已修——`SkiaImageCodec.ToBgra32` R/B 映射(harness 逐通道断言 PASS)、Desktop `--pv-stress` 接线、P1-M4a 失准注释;Windows 桌面回归程序化部分过关(`--pv-stress` 18/18 零超时、告警注入级联+恢复观察期日志断言、评分 XmpWriter 读写回环 PASS);缩放/设置/聚类/分析栏交互项 2026-10-13 作者裁定手工冒烟。`MainViewModel.CurrentFile` 切图取证日志常驻(phase-1 §5 有一次性异常登记)。
-- **下一步 = Phase 2(macOS 首个原生壳 + 色彩管线)**:执行清单 [native-rebuild-phase-2.md](native-rebuild-phase-2.md)(2026-10-13 起草,首壳平台裁定 macOS;**§0 产品决策点 4 项待作者确认**,无异议按推荐执行)。人工验收自原生壳阶段开始,iPad mini 7 已验证为可用真机环境。
+- **Phase 2 实现与程序化自验已完成，待作者产品验收**：作者授权直接执行 P2，M1–M4 AppKit/Metal、F16 色彩/代理、胶片条/筛选/评分、手势/快捷键、原生设置、外部打开已落地；Debug 默认原生，Release 默认旧壳。ColorTestTool 23 项、原生色卡 39 项/RAW 副本 17 项/生成 HEIF 14 项通过（含八种 GPU 与分析方向、物理 100% Full、外部打开队列、设置副本隔离与落盘、CV/DINO/指纹三表索引）。四平台构建零错误、无新增编译警告；Mac NU1903、Android 14 条为既有基线。执行清单 [native-rebuild-phase-2.md](native-rebuild-phase-2.md)，产品验收 [native-rebuild-phase-2-acceptance.md](native-rebuild-phase-2-acceptance.md)。系统预览色彩对拍/跨屏、手感、大图性能门未关闭；RAW 冷图约 1.7–1.9s，小色卡不能替代真实素材 <100ms 指标。分析栏/聚类/工具/增强顺延 P3，入口隐藏且切图不隐式推理。作者已授权先提交，产品验收继续；五张实拍暴露的胶片条布局/滚动/顺序缺陷已修复，五张与十二张多图定向回归通过。
 - **P1-M4b 画质/交互修复(2026-10-14,作者实证驱动)**:① 代理 overscan 1.5→**2.0**(1.5× 下"解码降采样+上屏 Mitchell 降采样"双重软化可见;2× 超采样后上屏重采样近乎无损,守画质红线;内存代价由 Governor 准入兜底);② **双击/键盘放大不触发 Full 升级**(根因:`ZoomTo`/`FocusOnImagePoint` 先改 Scale、后落 `Fit=false`,`Scale` 订阅见到 `Fit==true` 直接 return;双指缩放因连续事件第二次起 Fit 已 false 才正常。修复:升级触发改听 `Scale`+`Fit` 双属性)。Mac 真屏冒烟:ARW 代理 4180×2787(=2× 视图物理像素)、双击 100% → `show full 7008×4672` 热替换、放大态切图 Full 自动接续、回 fit 不再全解码、零异常。两修复均在共享层,原生壳直接继承;上屏最后一级滤波(trilinear/mipmap)已写入 phase-2 P2-M2。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
+
+- **P2 UI 追加约束(2026-10-14)**：作者要求主窗口保留隐藏式标题栏，明确设计为方形的元素保持方形；下拉框、按钮等通用控件保持原位置与大体形状并接近原生风格。具体几何表、Apple SF Symbols 建议与字体图标保留边界已写入 [P2 UI 方案](native-rebuild-phase-2-ui.md) §1.4–1.5；上一版示意的矩形缩略图区是示意样式错误，不是解码问题，作者允许在原生实现时修正。**设置页**按作者要求参考已有 iOS 原生设置，直接采用 macOS 原生设置风格，功能一致、不追求 Avalonia 视觉一致；原网页设置布局不作为实现规格，以方案 §4 与原生真屏验收为准。
 
 - **人工验收推迟到原生壳阶段**:Phase 0/1 在 Avalonia 旧壳内,UI 形态是过渡载体、仅为产品参考,**不要求严格复刻**;此阶段回归项(评分写回/指纹 DB/AI 索引/分析栏)由 agent 程序化自验(读写回环、日志断言、截图),不做人工交互验收。原生壳阶段(Phase 2 起)功能项对齐即可,允许趁机做 UI/手感优化——plan-1 §7"交互规格以现有行为为准逐条复刻"的要求就此放宽。
 - **iPad 验证策略**:开发期用 iOS 模拟器(功能 + Simulate Memory Warning 驱动 MemoryGovernor 响应矩阵);**真机只在关键环节**:P1-M5 验收门(jetsam 压测——模拟器无内存上限,验不了)、以及各 Phase 的原生壳真屏验收。在役机型 = iPad mini 7(A17 Pro,8GB,主流配置而非低配,压力阈值校准按 8GB 档)。
@@ -34,6 +36,9 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | Android 构建 | ✅ | 真机冒烟未做;P1 桌面回归与 `--pv-stress` 接线待办 |
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |
 | **macOS 构建** | ✅ 2026-10-12 | 0 错误,仅 NU1903 基线警告 |
+| **P2 四平台构建** | ✅ 2026-10-14 | Windows/iOS 0 警告；Mac 仅 NU1903，Android 14 条既有警告；全部零错误 |
+| **P2 原生实跑** | ✅ 程序化 2026-10-14 | AppKit/Metal 真实启动、色卡/八方向、RAW Full7008×4672、设置实际落盘、评级/CV/DINO/指纹三表回环；输出 release/native-p2-acceptance，使用独立设置/数据库与自有图片副本 |
+| **P2 产品/色彩/性能** | ⏸ 待作者验收与真实素材测量 | 按 P2 验收清单操作，发布通道在此之前不切换 |
 | **macOS 冒烟(首轮)** | ✅ 2026-10-12 | CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常;交互逐项(翻图/缩放/评分写回/设置)待人工 |
 | **iOS 构建** | ✅ 2026-10-13 | 模拟器+真机(ios-arm64 Release)均 0 错误 |
 | **iPad mini 7 真机验收(P1-M5)** | ✅ 2026-10-13 | 500 连翻(450 HEIC+50 ARW)p50 356.7ms 恒 Normal 零闪退;告警注入+30s 观察期实证;`--pv-stress-full` 对照组复现 jetsam(A/B 成立);修复 mono interp ref/out P/Invoke 间歇崩溃后 26/26 启动零崩溃。缩放热替换手感、外部打开选中行为留人工 |
@@ -50,7 +55,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 5. 工作纪律(与主仓 AGENTS.md §8/§9/§10 一致,此处强调重构特有条目)
 
-- 每里程碑一个 commit(`P<n>-M<m>: ...`);编译零警告才能提交;AGENTS.md(根+模块)同任务同步。
+- 每里程碑可审阅、自验与文档同步；作者已授权先提交 P2 实现与胶片条修复，产品验收继续进行。既有基线警告据实记录，禁止压警告冒充通过。
 - 重构期禁止顺手优化无关代码;发现的既有问题记入对应阶段清单的"发现清单"表,不随手修(Phase 0 就是这么记的)。
 - **画质红线**:不接受视觉可见的降分辨率;Phase 1 分级解码的"100% 放大永远全分辨率"是硬约束。
 - 持久化契约(设置 JSON 键值、指纹、DB schema、DINO 模型输入口径)冻结,改动必须显式立项。

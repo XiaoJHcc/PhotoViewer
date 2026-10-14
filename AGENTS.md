@@ -13,7 +13,7 @@
 
 PhotoViewer is a cross-platform photo culling app for photographers, optimized for the **选片 (culling) workflow** — browse JPG/HEIF on the go, sync star ratings back to RAW, fast keyboard-driven UX.
 
-- **Framework**: Avalonia 12 · .NET 10 · MVVM (ReactiveUI)
+- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS P2 原生壳 AppKit + Metal（Debug 默认原生，Release 通道等待作者验收）。
 - **Platforms**: Windows / macOS / iOS / Android (one shared `PhotoViewer/` project + four head projects)
 - **No DI container**: core services are static facades; platform capabilities are injected at startup via `Initialize(...)`.
 - **HEIF decoding**: `LibHeifSharp` on Windows/Android, native `ImageIO`/`AVIF` on macOS/iOS.
@@ -51,6 +51,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/AGENTS.md](PhotoViewer/Core/AI/AGENTS.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
 | [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/AGENTS.md](PhotoViewer/Core/Database/AGENTS.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
 | [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/AGENTS.md](PhotoViewer/Core/Image/AGENTS.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
+| [PhotoViewer/Core/Color/](PhotoViewer/Core/Color/) | [Core/Color/AGENTS.md](PhotoViewer/Core/Color/AGENTS.md) | 色彩标签、线性 scRGB/F16 与 sRGB8 转换、分析方向归一化 |
 | [PhotoViewer/Core/Memory/](PhotoViewer/Core/Memory/) | [Core/Memory/AGENTS.md](PhotoViewer/Core/Memory/AGENTS.md) | 统一内存管控:MemoryGovernor(压力状态机/解码准入/快照日志)、预算源契约、PerfTrace 解码计时 |
 | [PhotoViewer/Core/Exif/](PhotoViewer/Core/Exif/) | [Core/Exif/AGENTS.md](PhotoViewer/Core/Exif/AGENTS.md) | EXIF/XMP 读写、汉化标签库、Sony MakerNote 解析 |
 | [PhotoViewer/Core/Input/](PhotoViewer/Core/Input/) | [Core/Input/AGENTS.md](PhotoViewer/Core/Input/AGENTS.md) | 平台中立手势模型(键/鼠标/修饰键、苹果键盘映射) |
@@ -62,6 +63,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/) | [ViewModels/Tools/AGENTS.md](PhotoViewer/ViewModels/Tools/AGENTS.md) | 工具壳 + EXIF 详情、照片统计、DINO 诊断 |
 | [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/AGENTS.md](PhotoViewer/ViewModels/Settings/AGENTS.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
 | [Training/](Training/) | [Training/AGENTS.md](Training/AGENTS.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
+| [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳 |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -119,7 +121,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. **Logic**: `MainViewModel.SetRatingAsync`.
 3. **Write**: update in-memory `ImageFile`, then `XmpWriter.WriteRatingAsync`:
    - **In-place**: patch the JPG/HEIF XMP block byte-by-byte.
-   - **Sidecar**: for RAW, find or create a same-name `.xmp` file.
+   - **RAW**:本仓实际仍对已有 XMP Rating 做原位更新；独立 `.xmp` 文件的字节写服务可用，但未实现自动创建/关联 RAW sidecar（P2 核验纠正此前文档误写，扩展能力须单独立项）。
 4. **Refresh**: `FolderViewModel.RefreshFilters` so rating-based filters update live.
 5. **DB 副本**(Plan-2-4):成功写文件后顺手 `PhotoDatabase.UpdateRatingAsync(fp, rating)`。产品行为仍以文件为准,DB rating 只是给 Plan-3 训练 pipeline 取快照用;指纹未入库时静默跳过,不主动占位。
 
@@ -174,6 +176,15 @@ Each head project's `Core/` folder contains platform-specific implementations in
 4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录;iOS 真机为沙盒 `Documents/PhotoViewer/`,devicectl copy 可取回),含各 client footprint 与近期解码 miss 统计。
 
 ---
+
+### 5.6 macOS P2 原生看图链路
+
+1. Debug 默认 AppKit，Release 默认旧壳；`--native`/`--legacy-ui` 明确切换。原生启动不创建 Avalonia 应用/窗口，NSApplication 生命周期与外部打开进入共享门面。
+2. `MainViewModel(nativePresentation: true)` 复用文件源、筛选、评分、设置；旧 `ImageViewModel` 不订阅加载、不创建 WriteableBitmap。原生加载编排使用共享 `PhotoLoadSession`，视口缩放/平移由 `MetalPhotoView` 管理。
+3. BitmapLoader 启动期注入 `IPresentationImageDecoder`；Mac ImageIO 统一 JPEG/HEIF/RAW 主图与代理，产物为带源尺寸/待应用 EXIF 方向的 **RGBA16F LinearSrgb**。代理同样保留广色域；2× 物理视口代理与 Full 使用统一 LRU、准入、租约、预取。内存按池化实际分配与 GPU 客户端分别记账。
+4. Metal 用 ExtendedLinearSrgb 标签、RGBA16F、mipmap 三线性采样和 GPU 方向变换呈现；物理 100%/代理能力不足触发 Full，热替换沿用原生变换。导航图复用同纹理的小目标渲染。缺少内嵌预览的用户图片走原生小图子采样，避免全尺寸兜底。
+5. 主窗口隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义；跨屏刷新物理尺寸，F 优先定位对焦点，小窗口控制栏可滚动，全屏/窗口/显隐状态持久化。设置采用 AppKit 分类侧栏与表单，工作副本关闭回写。P3 分析/聚类/工具/增强入口隐藏，切图不隐式推理；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
+6. 测试设置、数据库及测试照片使用自有目录；原生控件+GPU 帧导出不能替代系统预览/跨屏人工色彩验收。验收清单见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 

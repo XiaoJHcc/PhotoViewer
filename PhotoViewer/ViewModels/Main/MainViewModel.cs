@@ -17,6 +17,8 @@ namespace PhotoViewer.ViewModels.Main;
 
 public class MainViewModel : ViewModelBase
 {
+    /// <summary>原生壳使用独立展示会话，旧 ImageVM 展示状态不参与原生加载。</summary>
+    public bool UsesNativePresentation { get; }
     public FolderViewModel FolderVM { get; }
     public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
@@ -84,8 +86,10 @@ public class MainViewModel : ViewModelBase
         finally { _suppressAnchorUpdate = false; }
     }
 
-    public MainViewModel()
+    /// <summary>建立共享业务 VM；原生壳可接管图片展示，文件、评分与设置行为不变。</summary>
+    public MainViewModel(bool nativePresentation = false)
     {
+        UsesNativePresentation = nativePresentation;
         // 先创建设置 ViewModel
         Settings = new SettingsViewModel();
         Tools = new ToolsViewModel(this);

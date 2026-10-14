@@ -23,6 +23,9 @@ namespace PhotoViewer.Core.Image;
 /// </summary>
 public static class ThumbnailService
 {
+    private static IPresentationImageDecoder? _missingPreviewDecoder;
+    /// <summary>注入原生缩略子采样通道，仅在用户图片没有内嵌预览来源时使用。</summary>
+    public static void InitializeMissingPreviewDecoder(IPresentationImageDecoder decoder) => _missingPreviewDecoder = decoder;
     /// <summary>
     /// 列出该文件所有可用的缩略图来源（尺寸由容器/EXIF 元数据读取；不做任何图像解码）。
     /// 顺序由具体提取器决定;尺寸未知时 <see cref="ThumbnailSource.Width"/> / <see cref="ThumbnailSource.Height"/> 为 0。
@@ -97,7 +100,11 @@ public static class ThumbnailService
         var sources = isHeif
             ? await EnumerateHeifSourcesAsync(file, directories).ConfigureAwait(false)
             : EnumerateNonHeifSources(file, directories);
-        if (sources.Count == 0) return null;
+        if (sources.Count == 0)
+        {
+            if (_missingPreviewDecoder == null) return null;
+            return await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, CancellationToken.None).ConfigureAwait(false);
+        }
 
         foreach (var src in OrderByPriority(sources, targetShortSide))
         {

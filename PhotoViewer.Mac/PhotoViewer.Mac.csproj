@@ -34,6 +34,7 @@
     <!-- 将图标作为 BundleResource 拷入 .app（Contents/Resources） -->
     <ItemGroup>
         <BundleResource Include="icon.icns"/>
+        <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
     </ItemGroup>
 
     <!--
