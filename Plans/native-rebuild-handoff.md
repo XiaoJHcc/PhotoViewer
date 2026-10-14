@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-13(Windows 收尾:P1 审查修复 + 桌面回归程序化部分收口时)。
+> 最后更新:2026-10-14(P1-M4b 画质/双击放大修复,Mac 真屏冒烟通过)。
 
 ## 1. 为什么重构(决策语境)
 
@@ -18,6 +18,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Phase 1 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码 / **M5 iPad 真机验收 2026-10-13 全项通过**):验收门 ①500 连翻无闪退恒 Normal ✅ ②P0 延迟 iPad -55%/Mac HEIC -51% ✅ ③告警后 30s 恢复观察期真机实证 ✅ ⑤Core 零 Avalonia/零新增警告 ✅;④ Windows 程序化部分 2026-10-13 过(交互项作者手测中)、Android 待办。M5 副产物:**修复 mono 解释器 ref/out P/Invoke 封送间歇崩溃**(iOS 头工程签名全指针化;`BootTrace` 常驻取证);新增压测驱动器 `StressFlipDriver`(启动参数 `--pv-stress` 系,见 phase-1 §5)。详见 [native-rebuild-phase-1.md](native-rebuild-phase-1.md) §1 验收门勾选与 §5 发现清单。
 - **Windows 收尾(2026-10-13)**:P1 定向审查(Windows 路径)3 项发现已修——`SkiaImageCodec.ToBgra32` R/B 映射(harness 逐通道断言 PASS)、Desktop `--pv-stress` 接线、P1-M4a 失准注释;Windows 桌面回归程序化部分过关(`--pv-stress` 18/18 零超时、告警注入级联+恢复观察期日志断言、评分 XmpWriter 读写回环 PASS);缩放/设置/聚类/分析栏交互项 2026-10-13 作者裁定手工冒烟。`MainViewModel.CurrentFile` 切图取证日志常驻(phase-1 §5 有一次性异常登记)。
 - **下一步 = Phase 2(macOS 首个原生壳 + 色彩管线)**:执行清单 [native-rebuild-phase-2.md](native-rebuild-phase-2.md)(2026-10-13 起草,首壳平台裁定 macOS;**§0 产品决策点 4 项待作者确认**,无异议按推荐执行)。人工验收自原生壳阶段开始,iPad mini 7 已验证为可用真机环境。
+- **P1-M4b 画质/交互修复(2026-10-14,作者实证驱动)**:① 代理 overscan 1.5→**2.0**(1.5× 下"解码降采样+上屏 Mitchell 降采样"双重软化可见;2× 超采样后上屏重采样近乎无损,守画质红线;内存代价由 Governor 准入兜底);② **双击/键盘放大不触发 Full 升级**(根因:`ZoomTo`/`FocusOnImagePoint` 先改 Scale、后落 `Fit=false`,`Scale` 订阅见到 `Fit==true` 直接 return;双指缩放因连续事件第二次起 Fit 已 false 才正常。修复:升级触发改听 `Scale`+`Fit` 双属性)。Mac 真屏冒烟:ARW 代理 4180×2787(=2× 视图物理像素)、双击 100% → `show full 7008×4672` 热替换、放大态切图 Full 自动接续、回 fit 不再全解码、零异常。两修复均在共享层,原生壳直接继承;上屏最后一级滤波(trilinear/mipmap)已写入 phase-2 P2-M2。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
 

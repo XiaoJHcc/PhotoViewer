@@ -30,8 +30,8 @@ public class ImageViewModel : ReactiveObject
     private DecodedImage? _originalBitmap;
 
     // ---- P1-M4b 分级代理解码:fit/浏览代理先行,Full 按需热替换 ----
-    /// <summary>代理图相对屏幕物理像素的过采样倍率(缩放余量)。</summary>
-    private const double ProxyOverscan = 1.5;
+    /// <summary>代理图相对屏幕物理像素的过采样倍率(缩放余量 + 抗双重降采样:2× 超采样让上屏重采样近乎无损,守画质红线)。</summary>
+    private const double ProxyOverscan = 2.0;
     /// <summary>视图渲染缩放(物理像素/DIP,由 View 下发;Retina = 2)。</summary>
     private double _viewRenderScale = 1.0;
     /// <summary>全分辨率逻辑尺寸(代理显示期的几何基准;default 表示未设置)。</summary>
@@ -260,7 +260,8 @@ public class ImageViewModel : ReactiveObject
             .Subscribe(_ => UpdateDetailHighlightRect());
 
         // P1-M4b:缩放超出代理能力 / 分析栏打开时,代理图后台升级 Full(同变换热替换)
-        this.WhenAnyValue(vm => vm.Scale).Subscribe(_ => MaybeUpgradeToFull());
+        // 须同时监听 Fit:ZoomTo/FocusOnImagePoint 先改 Scale、后落 Fit=false,仅听 Scale 时双击/键盘放大永不触发升级
+        this.WhenAnyValue(vm => vm.Scale, vm => vm.Fit).Subscribe(_ => MaybeUpgradeToFull());
         Main.WhenAnyValue(vm => vm.IsAnalysisViewVisible).Subscribe(_ => MaybeUpgradeToFull());
     }
 

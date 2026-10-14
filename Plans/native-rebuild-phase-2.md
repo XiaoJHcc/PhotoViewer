@@ -51,6 +51,7 @@
 
 ### P2-M2 — Metal 照片层独立验证(渲染探针,先行 de-risk,plan-1 §7 缓解项)
 - Mac 头工程内独立 `MetalPhotoView`(NSView + CAMetalLayer `rgba16Float` + `kCGColorSpaceExtendedSRGB`):纹理四边形 + 双线性采样 + **顶点变换**(缩放/平移/**EXIF 旋转**——消灭 §2.1-P2 的重绘路径) + `ReplaceRegion` pinned 纹理上传。
+- **缩小滤波画质红线**(2026-10-14 旧壳修复带出):代理图已按屏幕物理像素 2× 超采样解码,旧壳上屏仍差最后一级(Avalonia HighQuality = 单遍 Mitchell 无 mipmap);Metal 层须实现 **trilinear/mipmap 链(或等价各向异性缩小滤波)**,不许退化为纯双线性直采——fit 浏览"无可见降质"在此收口。
 - 启动开关进独立 demo 渲染测试图集,对拍系统预览(截图程序化对比 + 人工目检);色彩标签实证(打标前后对照)。
 - 原生手势雏形:NSMagnify/NSPan/双击/惯性,原生层闭环(plan-1 §3.3)。
 - 验证:三色域一致;纹理上传帧时(42MP F16);拖屏收敛(外接 sRGB 屏,人工可后补)。
@@ -83,6 +84,7 @@
 | 2026-10-13 | Microsoft.macOS 26.2 pack 在机;AppKit/Metal/QuartzCore 绑定类型存在性实证(CAMetalLayer/NSCollectionView/NSGestureRecognizer/IMTLDevice) | M2 渲染冒烟探针复核正确性 |
 | 2026-10-13 | Phase 1-M5 教训:mono 解释器 ref/out P/Invoke 封送间歇崩溃;本阶段新 P/Invoke 一律显式指针化(铁律 5) | 全阶段适用 |
 | 2026-10-13 | plan-1 §3.4 派生功能 float 化(直方图/分析/增强 CLHE)随功能顺延 Phase 3,本阶段不做 | 决策点 2 |
+| 2026-10-14 | 旧壳修复:P1-M4b 代理 overscan 1.5→2.0(作者实证 1.5× 下"解码降采样+上屏降采样"双重 Mitchell 有可见软化;2× 超采样后上屏重采样近乎无损);双击/键盘放大不触发 Full 升级(根因:`ZoomTo`/`FocusOnImagePoint` 先改 Scale 后落 Fit=false,Scale 订阅见到 Fit=true 直接 return;改为同时监听 Scale+Fit) | 已修(共享层,原生壳直接继承);上屏最后一级滤波纳入 P2-M2 |
 
 ## 6. 风险与缓解(本阶段增量;master plan §7 与 plan-1 §7 继续有效)
 
