@@ -22,57 +22,87 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
     private CategorySource? _categorySource;
     private CategoryDelegate? _categoryDelegate;
     private NSTableView? _categoryTable;
+    private NSSplitViewController? _split;
+    private SettingGroup? _group;
+    private MacReorderList? _hotkeyList;
+    private Action? _cancelRecording;
 
     /// <summary>当前原生设置窗口，供回归验证取得已展示的实例。</summary>
     public NSWindow? Window => _window;
     /// <summary>验收工具检查工作副本隔离性，UI 外部不直接访问编辑实例。</summary>
     internal SettingsViewModel WorkingSettings => Settings;
+    /// <summary>验收访问当前行内快捷键表格。</summary>
+    internal MacReorderList? HotkeyList => _hotkeyList;
     /// <summary>切换原生设置分类，供菜单导航与程序化冒烟复用。</summary>
     public void ShowCategory(int category)
     {
         int selected = Math.Clamp(category, 0, 4);
         if (_categoryTable != null && _categoryTable.SelectedRow != selected) { _categoryTable.SelectRow(selected, false); return; }
         _finishEditor?.Invoke(); _category = selected; BuildCategory();
+        if (_scroll != null) { _scroll.ContentView.ScrollToPoint(CGPoint.Empty); _scroll.ReflectScrolledClipView(_scroll.ContentView); }
     }
     /// <summary>复用已打开窗口，否则创建原生分类侧栏与可滚动表单。</summary>
     public bool TryPresent(SettingsViewModel settings)
     {
         if (_window != null) { _window.MakeKeyAndOrderFront(null); return true; }
         _session = new NativeSettingsSession(settings);
-        _window = new NSWindow(new CGRect(180, 160, 800, 700), NSWindowStyle.Titled | NSWindowStyle.Closable | NSWindowStyle.Resizable, NSBackingStore.Buffered, false)
+        _window = new NSWindow(new CGRect(180, 160, 860, 720), NSWindowStyle.Titled | NSWindowStyle.Closable | NSWindowStyle.Resizable, NSBackingStore.Buffered, false)
         {
-            Title = "PhotoViewer 设置", MinSize = new CGSize(680, 500), BackgroundColor = NSColor.WindowBackground,
+            Title = "PhotoViewer 设置", MinSize = new CGSize(760, 540), BackgroundColor = NSColor.WindowBackground,
+            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua),
+            TitlebarSeparatorStyle = NSTitlebarSeparatorStyle.None,
         };
         _window.FrameAutosaveName = "PhotoViewer.Native.Settings";
-        var root = new SettingsRoot(new CGRect(0, 0, 800, 700));
-        root.WantsLayer = true;
-        root.Layer!.BackgroundColor = NSColor.WindowBackground.CGColor;
-        var sidebar = new NSView { WantsLayer = true };
-        sidebar.Layer!.BackgroundColor = NSColor.ControlBackground.CGColor;
+        var sidebar = new NSVisualEffectView(new CGRect(0, 0, 190, 720))
+        {
+            Material = NSVisualEffectMaterial.Sidebar, BlendingMode = NSVisualEffectBlendingMode.BehindWindow,
+            State = NSVisualEffectState.FollowsWindowActiveState,
+        };
         string[] names = ["文件", "预览", "控制", "EXIF", "AI"];
-        var table = new NSTableView { HeaderView = null, RowHeight = 38, Style = NSTableViewStyle.SourceList };
+        var table = new NSTableView
+        {
+            HeaderView = null, RowHeight = 32, Style = NSTableViewStyle.SourceList,
+            BackgroundColor = NSColor.Clear, IntercellSpacing = new CGSize(0, 6),
+            ColumnAutoresizingStyle = NSTableViewColumnAutoresizingStyle.LastColumnOnly,
+        };
         _categoryTable = table;
-        table.AddColumn(new NSTableColumn("Category") { Width = 140 });
+        table.AddColumn(new NSTableColumn("Category") { Width = 180 });
         _categorySource = new CategorySource(names);
         _categoryDelegate = new CategoryDelegate(names, row => { if (row >= 0) ShowCategory((int)row); });
         table.DataSource = _categorySource; table.Delegate = _categoryDelegate;
-        table.Frame = new CGRect(0, 0, 144, names.Length * 38);
+        table.Frame = new CGRect(0, 0, 190, names.Length * 38 + 16);
         table.ReloadData();
-        var sidebarScroll = new NSScrollView { DocumentView = table, DrawsBackground = false, HasVerticalScroller = false };
+        var sidebarScroll = new NSScrollView(new CGRect(0, 12, 190, 708))
+        {
+            DocumentView = table, DrawsBackground = false, HasVerticalScroller = false,
+            BorderType = NSBorderType.NoBorder, AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable,
+            AutomaticallyAdjustsContentInsets = false,
+        };
         sidebar.AddSubview(sidebarScroll);
         _form = new FormView(new CGRect(0, 0, 600, 680));
-        _scroll = new NSScrollView { DocumentView = _form, HasVerticalScroller = true, DrawsBackground = false };
-        root.AddSubview(sidebar); root.AddSubview(_scroll); _window.ContentView = root;
-        root.Resized = () =>
+        _scroll = new NSScrollView
         {
-            sidebar.Frame = new CGRect(0, 0, 160, root.Bounds.Height);
-            sidebarScroll.Frame = new CGRect(8, 12, 144, Math.Max(1, root.Bounds.Height - 24));
-            _scroll.Frame = new CGRect(160, 0, Math.Max(1, root.Bounds.Width - 160), root.Bounds.Height);
+            DocumentView = _form, HasVerticalScroller = true, DrawsBackground = false,
+            BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false,
+        };
+        var detail = new SettingsRoot(new CGRect(0, 0, 670, 720));
+        detail.AddSubview(_scroll);
+        detail.Resized = () =>
+        {
+            _scroll.Frame = detail.Bounds;
             LayoutForm();
         };
+        _split = new NSSplitViewController();
+        _split.SplitView.IsVertical = true;
+        _split.SplitView.DividerStyle = NSSplitViewDividerStyle.Thin;
+        var sidebarItem = NSSplitViewItem.CreateSidebar(new NSViewController { View = sidebar });
+        sidebarItem.MinimumThickness = 180; sidebarItem.MaximumThickness = 220; sidebarItem.CanCollapse = false;
+        _split.AddSplitViewItem(sidebarItem);
+        _split.AddSplitViewItem(NSSplitViewItem.FromViewController(new NSViewController { View = detail }));
+        _window.ContentViewController = _split;
         _window.WillClose += (_, _) => CloseSession();
         table.SelectRow(0, false);
-        root.Resized();
+        detail.Resized();
         _window.MakeKeyAndOrderFront(null);
         return true;
     }
@@ -89,12 +119,13 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
         _session?.Apply();
         _session?.Dispose();
         _finishEditor = null;
+        foreach (var row in _rows) { row.RemoveFromSuperview(); row.Dispose(); }
         _rows.Clear();
         if (_categoryTable != null) { _categoryTable.DataSource = null; _categoryTable.Delegate = null; }
-        _form = null; _scroll = null; _categoryTable = null;
+        _form = null; _scroll = null; _categoryTable = null; _group = null; _hotkeyList = null;
         _categorySource?.Dispose(); _categoryDelegate?.Dispose();
         _categorySource = null; _categoryDelegate = null;
-        _window = null; _session = null; _closing = false;
+        _window = null; _session = null; _split = null; _closing = false;
     }
 
     /// <summary>切换设置分类，保留同一工作副本并按 macOS 含义分组。</summary>
@@ -103,7 +134,7 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
         if (_form == null) return;
         StopRecording();
         foreach (var row in _rows) { row.RemoveFromSuperview(); row.Dispose(); }
-        _rows.Clear(); _finishEditor = null;
+        _rows.Clear(); _finishEditor = null; _group = null; _hotkeyList = null;
         switch (_category)
         {
             case 0: BuildFile(); break;
@@ -119,29 +150,37 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
     private void LayoutForm()
     {
         if (_form == null || _scroll == null) return;
-        double width = Math.Max(480, (double)_scroll.ContentView.Bounds.Width);
-        double top = 22;
-        foreach (var row in _rows) { row.Frame = new CGRect(24, top, width - 48, row.Frame.Height); top += (double)row.Frame.Height + 8; }
-        _form.Frame = new CGRect(0, 0, width, Math.Max(top + 16, (double)_scroll.ContentView.Bounds.Height));
+        double width = (double)_scroll.ContentView.Bounds.Width;
+        double contentWidth = Math.Min(680, Math.Max(1, width - 48));
+        double top = 24;
+        foreach (var row in _rows)
+        {
+            if (row is SettingGroup group) group.LayoutRows(contentWidth);
+            row.Frame = new CGRect((width - contentWidth) / 2, top, contentWidth, row.Frame.Height);
+            top += (double)row.Frame.Height + (row is SettingGroup ? 24 : 8);
+        }
+        _form.Frame = new CGRect(0, 0, width, Math.Max(top, (double)_scroll.ContentView.Bounds.Height));
     }
 
     /// <summary>把一行添加到原生表单。</summary>
-    private void Add(NSView row) { _rows.Add(row); _form!.AddSubview(row); }
+    private void Add(NSView row) => (_group ?? throw new InvalidOperationException("设置行必须归属分组")).AddRow(row);
     /// <summary>创建系统表单组标题。</summary>
     private void Group(string title)
     {
-        var label = Text(title, 14, true); label.Frame = new CGRect(0, 0, 500, 28); Add(label);
+        var label = Text(title, 13, true); label.Frame = new CGRect(0, 0, 500, 22);
+        _rows.Add(label); _form!.AddSubview(label);
+        _group = new SettingGroup(); _rows.Add(_group); _form.AddSubview(_group);
     }
     /// <summary>创建系统静态标签，字号与颜色使用 AppKit 默认。</summary>
     private static NSTextField Text(string text, double size = 13, bool emphasis = false)
         => new() { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
             Font = (emphasis ? NSFont.BoldSystemFontOfSize((nfloat)size) : NSFont.SystemFontOfSize((nfloat)size)) ?? throw new InvalidOperationException("系统字体不可用"), TextColor = NSColor.Label };
     /// <summary>一行左右标签/原生控件的布局。</summary>
-    private NSView Row(string title, NSView control, double controlWidth = 180, double height = 40)
+    private NSView Row(string title, NSView control, double controlWidth = 180, double height = 44)
     {
         var row = new SettingRow(new CGRect(0, 0, 500, height));
         var label = Text(title); row.AddSubview(label); row.AddSubview(control);
-        row.Resized = () => { label.Frame = new CGRect(0, 10, Math.Max(100, row.Bounds.Width - controlWidth - 16), height - 12); control.Frame = new CGRect(row.Bounds.Width - controlWidth, 7, controlWidth, height - 12); };
+        row.Resized = () => { label.Frame = new CGRect(0, (height - 20) / 2, Math.Max(100, row.Bounds.Width - controlWidth - 16), 20); control.Frame = new CGRect(row.Bounds.Width - controlWidth, (height - 26) / 2, controlWidth, 26); };
         row.Resized(); Add(row); return row;
     }
     /// <summary>原生布尔开关，改变工作副本。</summary>
@@ -154,7 +193,8 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
     /// <summary>有限范围的数值编辑，编辑结束时才提交；非法输入恢复当前有效值。</summary>
     private void Number(string title, Func<double> getter, Action<double> setter, double min, double max, bool integer = true, string suffix = "")
     {
-        var field = new NSTextField { StringValue = getter().ToString(integer ? "0" : "0.##", System.Globalization.CultureInfo.InvariantCulture), Alignment = NSTextAlignment.Right };
+        var field = new NSTextField { StringValue = getter().ToString(integer ? "0" : "0.##", System.Globalization.CultureInfo.InvariantCulture), Alignment = NSTextAlignment.Right, BezelStyle = NSTextFieldBezelStyle.Rounded };
+        /// <summary>校验完成的数值输入，将有效值提交工作副本并恢复规范文本。</summary>
         void Apply()
         {
             if (double.TryParse(field.StringValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value) && double.IsFinite(value) && value >= min && value <= max)
@@ -200,6 +240,7 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
             var field = new NSTextField { StringValue = preset.Text, Alignment = NSTextAlignment.Right };
             var percent = Text("%");
             var remove = NSButton.CreateButton("移除", () => { _finishEditor?.Invoke(); Settings.RemoveScalePreset(preset); BuildCategory(); });
+            /// <summary>完成缩放比例输入后校验范围，更新预设并恢复规范文本。</summary>
             void Apply()
             {
                 if (double.TryParse(field.StringValue, out double value) && double.IsFinite(value) && value > 0 && value <= 1600) { preset.Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture); Settings.ApplyScalePreset(); }
@@ -217,28 +258,31 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
     private void BuildControl()
     {
         Group("布局"); Choice("布局模式", Settings.LayoutModes.Select(mode => mode.DisplayName).ToArray(), Settings.LayoutModes.ToList().FindIndex(mode => mode.Value == Settings.LayoutMode), index => Settings.LayoutMode = Settings.LayoutModes[index].Value);
-        Group("控制栏功能");
-        Add(MacReorderList.Create(Settings.Hotkeys, item => item.Name, item => item.IsDisplay, (item, value) => item.IsDisplay = value, Settings.MoveHotkey));
-        Group("苹果键盘映射"); Toggle("使用苹果键盘", () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value);
+        Group("控制栏功能与快捷键");
+        _hotkeyList = MacReorderList.Create(Settings.Hotkeys, item => item.Name, item => item.IsDisplay,
+            (item, value) => item.IsDisplay = value, Settings.MoveHotkey, HotkeyEditor);
+        Add(_hotkeyList);
+        Group("苹果键盘映射"); Toggle("使用苹果键盘", () => Settings.UseAppleKeyboard, value => { Settings.UseAppleKeyboard = value; _hotkeyList?.RefreshRows(); });
         string[] targets = ["不映射", "Ctrl", "Alt", "Win"];
-        Choice("Command", targets, (int)Settings.MapCommandTarget, index => Settings.MapCommandTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index);
-        Choice("Option", targets, (int)Settings.MapOptionTarget, index => Settings.MapOptionTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index);
-        Choice("Control", targets, (int)Settings.MapControlTarget, index => Settings.MapControlTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index);
-        Group("快捷键");
-        foreach (var hotkey in Settings.Hotkeys)
-        {
-            var row = new SettingRow(new CGRect(0, 0, 500, 42));
-            var label = Text(hotkey.Name);
-            var primary = NSButton.CreateButton(hotkey.PrimaryHotkeyText, () => { });
-            var secondary = NSButton.CreateButton(hotkey.SecondaryHotkeyText, () => { });
-            primary.Activated += (_, _) => BeginRecording(primary, hotkey, true);
-            secondary.Activated += (_, _) => BeginRecording(secondary, hotkey, false);
-            primary.ToolTip = hotkey.HasPrimaryConflict ? "快捷键冲突" : "点击录制；删除键清空，Escape 取消";
-            secondary.ToolTip = hotkey.HasSecondaryConflict ? "快捷键冲突" : "点击录制；删除键清空，Escape 取消";
-            row.AddSubview(label); row.AddSubview(primary); row.AddSubview(secondary);
-            row.Resized = () => { label.Frame = new CGRect(0, 10, Math.Max(120, row.Bounds.Width - 280), 24); primary.Frame = new CGRect(row.Bounds.Width - 270, 6, 130, 28); secondary.Frame = new CGRect(row.Bounds.Width - 130, 6, 130, 28); };
-            row.Resized(); Add(row);
-        }
+        Choice("⌘ Command", targets, (int)Settings.MapCommandTarget, index => { Settings.MapCommandTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
+        Choice("⌥ Option", targets, (int)Settings.MapOptionTarget, index => { Settings.MapOptionTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
+        Choice("⌃ Control", targets, (int)Settings.MapControlTarget, index => { Settings.MapControlTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
+    }
+    /// <summary>在可排序功能行内创建主次手势录制按钮，冲突用系统橙色标明。</summary>
+    private NSView HotkeyEditor(SettingsViewModel.HotkeyItem hotkey, bool primary)
+    {
+        string title = MacInput.FormatGesture(primary ? hotkey.PrimaryHotkey : hotkey.SecondaryHotkey, Settings);
+        bool conflict = primary ? hotkey.HasPrimaryConflict : hotkey.HasSecondaryConflict;
+        var button = NSButton.CreateButton(string.IsNullOrWhiteSpace(title) ? "未设置" : title, () => { });
+        button.BezelStyle = NSBezelStyle.Rounded;
+        button.ControlSize = NSControlSize.Small;
+        button.ContentTintColor = conflict ? NSColor.SystemOrange : NSColor.Label;
+        button.ToolTip = conflict ? "快捷键冲突" : "点击录制；删除键清空，Escape 取消";
+        button.Activated += (_, _) => BeginRecording(button, hotkey, primary);
+        var cell = new NSTableCellView(new CGRect(0, 0, 116, 34));
+        button.Frame = new CGRect(4, 5, 108, 24);
+        cell.AddSubview(button);
+        return cell;
     }
     /// <summary>EXIF 项选择和排序、星级显示及安全写回。</summary>
     private void BuildExif()
@@ -276,19 +320,27 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
     /// <summary>原生手势录制，设置窗口中只捕获下一次键/鼠标手势。</summary>
     private void BeginRecording(NSButton button, SettingsViewModel.HotkeyItem hotkey, bool primary)
     {
-        StopRecording(); button.Title = "输入快捷键…";
+        StopRecording();
+        string previousTitle = button.Title;
+        _cancelRecording = () => button.Title = previousTitle;
+        button.Title = "输入快捷键…";
         _recordMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.LeftMouseDown | NSEventMask.RightMouseDown | NSEventMask.OtherMouseDown | NSEventMask.ScrollWheel, nativeEvent =>
         {
             if (nativeEvent.Window != _window) return nativeEvent;
-            if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode == 53) { StopRecording(); BuildCategory(); return null!; }
-            var gesture = nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode is 51 or 117 ? null : MacInput.FromEvent(nativeEvent, Settings);
-            if (gesture == null && nativeEvent.KeyCode is not (51 or 117)) return nativeEvent;
+            if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode == 53) { StopRecording(); return null!; }
+            bool clear = nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode is 51 or 117;
+            var gesture = clear ? null : MacInput.FromEvent(nativeEvent, Settings);
+            if (gesture == null && !clear) return nativeEvent;
             if (primary) hotkey.PrimaryHotkey = gesture; else hotkey.SecondaryHotkey = gesture;
-            Settings.CheckHotkeyConflicts(); StopRecording(); BuildCategory(); return null!;
+            Settings.CheckHotkeyConflicts(); StopRecording(); _hotkeyList?.RefreshRows(); return null!;
         });
     }
     /// <summary>结束手势录制并移除系统监视器。</summary>
-    private void StopRecording() { if (_recordMonitor != null) { NSEvent.RemoveMonitor(_recordMonitor); _recordMonitor.Dispose(); _recordMonitor = null; } }
+    private void StopRecording()
+    {
+        if (_recordMonitor != null) { NSEvent.RemoveMonitor(_recordMonitor); _recordMonitor.Dispose(); _recordMonitor = null; }
+        _cancelRecording?.Invoke(); _cancelRecording = null;
+    }
 
     /// <summary>侧栏分类数据。</summary>
     private sealed class CategorySource(string[] categories) : NSTableViewDataSource
@@ -304,19 +356,32 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
         /// <summary>使用系统标签展示分类。</summary>
         public override NSView GetViewForItem(NSTableView tableView, NSTableColumn? tableColumn, nint row)
         {
+            string[] symbols = ["folder", "photo", "keyboard", "info.circle", "sparkles"];
             var label = Text(categories[(int)row]);
-            label.Frame = new CGRect(8, 8, 130, 24);
-            var cell = new NSTableCellView(new CGRect(0, 0, 144, 38)) { TextField = label };
-            cell.AddSubview(label); return cell;
+            label.Frame = new CGRect(36, 6, 130, 20);
+            label.AutoresizingMask = NSViewResizingMask.WidthSizable;
+            var icon = new NSImageView(new CGRect(8, 7, 18, 18))
+            {
+                Image = MacSymbols.Get(symbols[(int)row]), ContentTintColor = NSColor.ControlAccent,
+            };
+            var cell = new NSTableCellView(new CGRect(0, 0, 180, 32)) { TextField = label, ImageView = icon };
+            cell.AddSubview(icon); cell.AddSubview(label); return cell;
         }
     }
     /// <summary>表单采用向下的布局坐标。</summary>
-    private sealed class FormView(CGRect frame) : NSView(frame) { public override bool IsFlipped => true; }
+    private sealed class FormView(CGRect frame) : NSView(frame)
+    {
+        public override bool IsFlipped => true;
+        /// <summary>在当前深色外观中解析语义底色，避免 CGColor 提前解析产生白边。</summary>
+        public override void DrawRect(CGRect dirtyRect) { NSColor.WindowBackground.SetFill(); NSBezierPath.FillRect(Bounds); }
+    }
     /// <summary>自适应原生设置根视图。</summary>
     private sealed class SettingsRoot(CGRect frame) : NSView(frame)
     {
         public Action? Resized { get; set; }
         public override bool IsFlipped => true;
+        /// <summary>整块详情区域绘制同一语义底色，填满滚动容器的四周。</summary>
+        public override void DrawRect(CGRect dirtyRect) { NSColor.WindowBackground.SetFill(); NSBezierPath.FillRect(Bounds); }
         /// <summary>尺寸变化重新布置侧栏与右侧表单。</summary>
         public override void SetFrameSize(CGSize newSize) { base.SetFrameSize(newSize); Resized?.Invoke(); }
     }
@@ -327,5 +392,52 @@ public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresente
         public override bool IsFlipped => true;
         /// <summary>行宽变化重新对齐控件。</summary>
         public override void SetFrameSize(CGSize newSize) { base.SetFrameSize(newSize); Resized?.Invoke(); }
+    }
+
+    /// <summary>同类设置的圆角分组，动态语义底色和轻量分隔线跟随窗口外观。</summary>
+    private sealed class SettingGroup : NSView
+    {
+        private readonly List<NSView> _children = [];
+        public override bool IsFlipped => true;
+
+        /// <summary>把完整设置行加入当前分组，保留各行的原生控件。</summary>
+        internal void AddRow(NSView row) { _children.Add(row); AddSubview(row); }
+
+        /// <summary>根据表单宽度排列行，表格保留自身滚动区且不增加外框。</summary>
+        internal void LayoutRows(double width)
+        {
+            double top = 6;
+            foreach (var row in _children)
+            {
+                row.Frame = new CGRect(14, top, Math.Max(1, width - 28), row.Frame.Height);
+                top += (double)row.Frame.Height;
+            }
+            Frame = new CGRect(Frame.X, Frame.Y, width, top + 6);
+            NeedsDisplay = true;
+        }
+
+        /// <summary>仅绘制分组底色和行间分隔线，不烘焙浅色背景或边框。</summary>
+        public override void DrawRect(CGRect dirtyRect)
+        {
+            using var fill = NSColor.WindowBackground.BlendedColor(.07f, NSColor.Label) ?? throw new InvalidOperationException("设置分组颜色不可用");
+            fill.SetFill();
+            using var background = NSBezierPath.FromRoundedRect(Bounds, 10, 10);
+            background.Fill();
+            NSColor.Separator.SetStroke();
+            using var separator = new NSBezierPath { LineWidth = .5f };
+            foreach (var row in _children.Skip(1))
+            {
+                separator.MoveTo(new CGPoint(14, row.Frame.Y));
+                separator.LineTo(new CGPoint(Bounds.Width - 14, row.Frame.Y));
+            }
+            separator.Stroke();
+        }
+
+        /// <summary>分类更换时释放表格的托管数据源及其它子控件。</summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing) { foreach (var row in _children) { row.RemoveFromSuperview(); row.Dispose(); } _children.Clear(); }
+            base.Dispose(disposing);
+        }
     }
 }

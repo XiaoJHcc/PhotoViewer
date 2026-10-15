@@ -235,16 +235,45 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
         encoder.EndEncoding();
     }
 
-    /// <summary>读取真实 GPU 照片帧，供自动验收和截图导出；不作为屏幕合成器色彩对拍的替代。</summary>
+    /// <summary>导航图长边逻辑点，与原 Avalonia 缩放指示器一致。</summary>
+    private const double NavigationLongEdge = 150;
+
+    /// <summary>导航图逻辑点尺寸：长边 150、按显示朝向照片比例缩小，不补方形衬边；无照片时为 150 方形占位。</summary>
+    public CGSize NavigationSize
+    {
+        get
+        {
+            double imageWidth = ImageWidth, imageHeight = ImageHeight;
+            if (imageWidth <= 0 || imageHeight <= 0) return new CGSize(NavigationLongEdge, NavigationLongEdge);
+            double factor = NavigationLongEdge / Math.Max(imageWidth, imageHeight);
+            return new CGSize(imageWidth * factor, imageHeight * factor);
+        }
+    }
+
+    /// <summary>读取真实 GPU 照片帧，供自动验收和截图导出；不作为屏幕合成器色彩对拍的替代。
+    /// navigation=true 时输出 NavigationSize 比例的小纹理（按 Retina 倍率取整），照片铺满目标且方向与主图一致。</summary>
     public unsafe DecodedImage CaptureLinearFrame(bool navigation = false)
     {
-        int width = navigation ? 128 : Math.Max(1, (int)Math.Round((double)Bounds.Width * BackingScale));
-        int height = navigation ? 128 : Math.Max(1, (int)Math.Round((double)Bounds.Height * BackingScale));
+        int width, height;
+        float[]? transform = null;
+        if (navigation)
+        {
+            var navigationSize = NavigationSize;
+            double navigationWidth = (double)navigationSize.Width, navigationHeight = (double)navigationSize.Height;
+            width = Math.Max(1, (int)Math.Round(navigationWidth * BackingScale));
+            height = Math.Max(1, (int)Math.Round(navigationHeight * BackingScale));
+            double fit = Math.Min(navigationWidth / Math.Max(1, ImageWidth), navigationHeight / Math.Max(1, ImageHeight));
+            transform = [(float)navigationWidth, (float)navigationHeight, (float)ImageWidth, (float)ImageHeight, (float)fit, 0, 0, _orientation];
+        }
+        else
+        {
+            width = Math.Max(1, (int)Math.Round((double)Bounds.Width * BackingScale));
+            height = Math.Max(1, (int)Math.Round((double)Bounds.Height * BackingScale));
+        }
         using var descriptor = MTLTextureDescriptor.CreateTexture2DDescriptor(MTLPixelFormat.RGBA16Float, (nuint)width, (nuint)height, false);
         descriptor.StorageMode = MTLStorageMode.Shared; descriptor.Usage = MTLTextureUsage.RenderTarget;
         using var texture = _device.CreateTexture(descriptor) ?? throw new InvalidOperationException("GPU 验收目标分配失败");
         using var command = _queue.CommandBuffer() ?? throw new InvalidOperationException("GPU 验收命令分配失败");
-        float[]? transform = navigation ? [128, 128, (float)ImageWidth, (float)ImageHeight, (float)(128 / Math.Max(1, Math.Max(ImageWidth, ImageHeight))), 0, 0, _orientation] : null;
         EncodeFrame(command, texture, transform); command.Commit(); command.WaitUntilCompleted();
         if (command.Error != null) throw new InvalidOperationException(command.Error.LocalizedDescription);
         int stride = checked(width * 8);
@@ -253,19 +282,26 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
         return DecodedImage.CreatePooled(buffer, width, height, stride, PixelEncoding.RgbaF16, ImageColorSpace.LinearSrgb);
     }
 
-    /// <summary>128 方形导航图内的可见区域，使用小纹理几何而非重画全尺寸缓冲。</summary>
+    /// <summary>导航图（NavigationSize 逻辑点坐标、无方形衬边）内的可见区域；缩放小于适应时退化为整幅照片。</summary>
     public CGRect NavigationViewport
     {
         get
         {
-            double factor = 128 / Math.Max(1, Math.Max(ImageWidth, ImageHeight));
-            double imageWidth = ImageWidth * factor, imageHeight = ImageHeight * factor;
-            double left = Math.Clamp(.5 - _panX / Math.Max(1, ImageWidth * _scale) - (double)Bounds.Width / Math.Max(1, ImageWidth * _scale) / 2, 0, 1);
-            double top = Math.Clamp(.5 - _panY / Math.Max(1, ImageHeight * _scale) - (double)Bounds.Height / Math.Max(1, ImageHeight * _scale) / 2, 0, 1);
-            double width = Math.Min(1 - left, (double)Bounds.Width / Math.Max(1, ImageWidth * _scale));
-            double height = Math.Min(1 - top, (double)Bounds.Height / Math.Max(1, ImageHeight * _scale));
-            return new CGRect((128 - imageWidth) / 2 + left * imageWidth, (128 - imageHeight) / 2 + top * imageHeight, Math.Max(1, width * imageWidth), Math.Max(1, height * imageHeight));
+            var navigationSize = NavigationSize;
+            double navigationWidth = (double)navigationSize.Width, navigationHeight = (double)navigationSize.Height;
+            double displayedWidth = Math.Max(1, ImageWidth * _scale), displayedHeight = Math.Max(1, ImageHeight * _scale);
+            var horizontal = NavigationAxis(navigationWidth, (double)Bounds.Width / displayedWidth, .5 - _panX / displayedWidth);
+            var vertical = NavigationAxis(navigationHeight, (double)Bounds.Height / displayedHeight, .5 - _panY / displayedHeight);
+            return new CGRect(horizontal.Offset, vertical.Offset, horizontal.Extent, vertical.Extent);
         }
+    }
+
+    /// <summary>把一条轴上的可见比例与中心比例换算成导航图内的偏移和长度，并钳制在导航图范围内。</summary>
+    private static (double Offset, double Extent) NavigationAxis(double navigationExtent, double visibleFraction, double centerFraction)
+    {
+        double extent = Math.Clamp(Math.Clamp(visibleFraction, 0, 1) * navigationExtent, Math.Min(1, navigationExtent), navigationExtent);
+        double offset = centerFraction * navigationExtent - extent / 2;
+        return (Math.Clamp(offset, 0, navigationExtent - extent), extent);
     }
 
     /// <summary>接收原生连续捏合事件，保持手势中心。</summary>

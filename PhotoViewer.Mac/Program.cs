@@ -41,6 +41,9 @@ sealed class Program
             MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
             XmpWriter.Initialize(new MacXmpWriter());
             SettingsService.ConfigureStorage(new MacSettingsStorage());
+            // 旧壳布局对拍:仅 --legacy-ui + --pv-legacy-layout 时接管设置/特征数据库并投递异步采集;
+            // 常规启动不解析该参数,设置存储仍是 NSUserDefaults 口径。
+            Native.LegacyLayoutAcceptance.TryActivate(args);
             DinoFeatureExtractor.ConfigureSession(options =>
             {
                 options.AppendExecutionProvider_CoreML();

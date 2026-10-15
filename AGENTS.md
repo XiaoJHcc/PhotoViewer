@@ -20,6 +20,7 @@ PhotoViewer is a cross-platform photo culling app for photographers, optimized f
 
 For end-user feature scope, screenshots, supported cameras, see [README.md](README.md).
 For build / run / publish workflow (VS Code Tasks), see [DEV.md](DEV.md).
+跨平台 UI 与交互对账草稿见 [Design/ui-contract.md](Design/ui-contract.md)：按稳定 ID 记录已确认要求、旧版表现及平台差异；原生表现与重要约束尚待分类，不把记录的尺寸/参数自动冻结成四平台规格。
 
 ---
 
@@ -183,7 +184,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. `MainViewModel(nativePresentation: true)` 复用文件源、筛选、评分、设置；旧 `ImageViewModel` 不订阅加载、不创建 WriteableBitmap。原生加载编排使用共享 `PhotoLoadSession`，视口缩放/平移由 `MetalPhotoView` 管理。
 3. BitmapLoader 启动期注入 `IPresentationImageDecoder`；Mac ImageIO 统一 JPEG/HEIF/RAW 主图与代理，产物为带源尺寸/待应用 EXIF 方向的 **RGBA16F LinearSrgb**。代理同样保留广色域；2× 物理视口代理与 Full 使用统一 LRU、准入、租约、预取。内存按池化实际分配与 GPU 客户端分别记账。
 4. Metal 用 ExtendedLinearSrgb 标签、RGBA16F、mipmap 三线性采样和 GPU 方向变换呈现；物理 100%/代理能力不足触发 Full，热替换沿用原生变换。导航图复用同纹理的小目标渲染。缺少内嵌预览的用户图片走原生小图子采样，避免全尺寸兜底。
-5. 主窗口隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义；跨屏刷新物理尺寸，F 优先定位对焦点，小窗口控制栏可滚动，全屏/窗口/显隐状态持久化。设置采用 AppKit 分类侧栏与表单，工作副本关闭回写。P3 分析/聚类/工具/增强入口隐藏，切图不隐式推理；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
+5. 主窗口布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角及适合的字体/菜单保留原生（本轮不改设置设计）；隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义；胶片栏定位条件、350ms 缓出及用户接管按 [FILM-01–04](Design/ui-contract.md) 执行，点选/交换/列表刷新不主动居中；跨屏刷新物理尺寸，F 优先定位对焦点；控制栏保留 EXIF/评分/命令三个整体分组，按空间换行/换列并居中，超长组可滚动；全屏/窗口/显隐状态持久化。设置固定深色外观，采用 AppKit 系统分栏侧栏与分组表单，显隐/排序与主次快捷键同一行，工作副本关闭回写。P3 分析/聚类/工具/增强入口隐藏，切图不隐式推理；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
 6. 测试设置、数据库及测试照片使用自有目录；原生控件+GPU 帧导出不能替代系统预览/跨屏人工色彩验收。验收清单见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
@@ -236,6 +237,7 @@ Version bumps: edit [Directory.Build.props](Directory.Build.props) only.
 **Sync docs in the same task**:
 - 任务收尾前,**必须**回看本次改动是否让任一 `AGENTS.md`(根或模块)的描述失准 — 文件清单变化、职责变化、跨模块流程改路径、阈值/字段命名调整等。失准必须在**同一任务**内修文档,否则任务**未完成**,与"编译通过"同级。
 - 判据:行为表 / 跨模块流程 / 关键字段命名过期 → 必更新;只是改实现细节、小修 bug、加日志 → 不动。
+- UI 移植或交互变更必须核对 [Design/ui-contract.md](Design/ui-contract.md) 的契约 ID；更新行为及平台验收状态，未通过的手感/设备项不得以编译或其他平台结果代替。
 
 **Use legitimate means only**:
 - If repeated attempts still fail, stop retrying indefinitely — surface the blocker in the conversation.

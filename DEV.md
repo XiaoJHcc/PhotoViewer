@@ -47,8 +47,10 @@
 - ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
 
 ### 3. Mac
-- ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动 `open .app`，解决原生的系统签名拦截。
-- ⚡ **Run Mac**：**仅启动**，不触发构建，直接 `open` 打开上次已编译签名完毕的 `.app`。
+- ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动启动原生版 `.app`，解决原生的系统签名拦截。
+- ⚡ **Run Mac**：**仅启动**，不触发构建，直接打开上次已编译签名完毕的原生版 `.app`。
+- ⚡ **Debug Mac (Legacy)** / **Run Mac (Legacy)**：带 `--legacy-ui` 编译或直接启动 Avalonia 旧壳实例。
+- ⚡ **Compare Mac (Native + Legacy)**：编译并同时拉起原生版与 Avalonia 旧壳两个实例，便于同屏对比。
 
 > `refactor/native-rebuild` 的 P2：Debug 默认 AppKit + Metal 原生壳；对照旧壳使用 `open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app --args --legacy-ui`。Release 默认旧壳，验收前不切换发布通道；Release 原生验证用 `--native`。产品验收与程序化冒烟见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 

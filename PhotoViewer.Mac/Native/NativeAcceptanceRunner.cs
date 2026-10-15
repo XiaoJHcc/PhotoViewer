@@ -27,6 +27,30 @@ public static class NativeAcceptanceRunner
         try
         {
             await WaitAsync(() => window.Main.CurrentFile != null && window.Session.Image != null, "首图加载");
+            if (args.Contains("--pv-native-toolbar"))
+            {
+                await NativeToolbarAcceptance.RunAsync(window, output);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Console.WriteLine("[NativeSmoke] PASS toolbar");
+                Environment.ExitCode = 0;
+                return;
+            }
+            if (args.Contains("--pv-native-layout"))
+            {
+                await NativeMainLayoutAcceptance.RunAsync(window, output);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Console.WriteLine("[NativeSmoke] PASS layout");
+                Environment.ExitCode = 0;
+                return;
+            }
+            if (args.Contains("--pv-native-settings"))
+            {
+                await NativeSettingsAcceptance.RunAsync(window, settings, output);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Console.WriteLine("[NativeSmoke] PASS settings");
+                Environment.ExitCode = 0;
+                return;
+            }
             if (args.Contains("--pv-native-filmstrip"))
             {
                 await NativeFilmstripAcceptance.RunAsync(window, output);
@@ -168,12 +192,12 @@ public static class NativeAcceptanceRunner
         using var frame = photo.CaptureLinearFrame(navigation: true);
         (double Horizontal, double Vertical)[] coordinates = [(.05, .05), (.95, .05), (.05, .95), (.95, .95)];
         int[][] sourceCorners = [[0, 1, 2, 3], [1, 0, 3, 2], [3, 2, 1, 0], [2, 3, 0, 1], [0, 2, 1, 3], [2, 0, 3, 1], [3, 1, 2, 0], [1, 3, 0, 2]];
-        double width = orientation >= 5 ? 128 * 800.0 / 1200 : 128;
-        double height = orientation >= 5 ? 128 : 128 * 800.0 / 1200;
+        double width = frame.Width;
+        double height = frame.Height;
         for (int corner = 0; corner < coordinates.Length; corner++)
         {
-            int horizontal = (int)((128 - width) / 2 + width * coordinates[corner].Horizontal);
-            int vertical = (int)((128 - height) / 2 + height * coordinates[corner].Vertical);
+            int horizontal = (int)(width * coordinates[corner].Horizontal);
+            int vertical = (int)(height * coordinates[corner].Vertical);
             var values = MemoryMarshal.Cast<byte, Half>(frame.Pixels.AsSpan(vertical * frame.Stride + horizontal * 8, 8));
             int original = sourceCorners[orientation - 1][corner];
             float red = (float)values[0], green = (float)values[1], blue = (float)values[2];
@@ -193,12 +217,10 @@ public static class NativeAcceptanceRunner
         using var analysis = ColorEngine.ToAnalysisSrgb8(source);
         using var gpu = photo.CaptureLinearFrame(navigation: true);
         using var rendered = ColorEngine.ToSrgb8(gpu);
-        double width = 128.0 * analysis.Width / Math.Max(analysis.Width, analysis.Height);
-        double height = 128.0 * analysis.Height / Math.Max(analysis.Width, analysis.Height);
         foreach (var point in new[] { (.05, .05), (.95, .05), (.05, .95), (.95, .95) })
         {
             int sourceOffset = (int)(analysis.Height * point.Item2) * analysis.Stride + (int)(analysis.Width * point.Item1) * 4;
-            int targetOffset = (int)((128 - height) / 2 + height * point.Item2) * rendered.Stride + (int)((128 - width) / 2 + width * point.Item1) * 4;
+            int targetOffset = (int)(rendered.Height * point.Item2) * rendered.Stride + (int)(rendered.Width * point.Item1) * 4;
             for (int channel = 0; channel < 3; channel++)
                 if (Math.Abs(analysis.Pixels[sourceOffset + channel] - rendered.Pixels[targetOffset + channel]) > 20)
                     throw new InvalidOperationException($"分析输入与 GPU 朝向不同：EXIF {source.Orientation}");

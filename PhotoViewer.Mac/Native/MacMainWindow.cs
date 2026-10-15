@@ -14,10 +14,15 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>AppKit 主窗口；复用共享业务 VM，加载与展示通过 PhotoLoadSession/MetalPhotoView 分离。</summary>
 public sealed class MacMainWindow : IDisposable
 {
+    private const double FilterWidth = 90;
+    private const double FilterHeight = 32;
     private readonly MainViewModel _main;
     private readonly RootView _root;
     private readonly NSView _filePane;
-    private readonly NSView _controlPane;
+    private readonly NSView _fileDivider = Pane(NSColor.FromWhite(.2f, 1));
+    private readonly NSView _controlDivider = Pane(NSColor.FromWhite(.2f, 1));
+    private readonly NSTextField _hintDetail = Label("", 11);
+    private readonly MacControlBar _controlPane;
     private readonly NSScrollView _controlScroll;
     private readonly NSView _photoPane;
     private readonly DragZone _dragLeft;
@@ -37,16 +42,17 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSTextField _zoomLabel;
     private NSImage? _navigationBitmap;
     private DecodedImage? _navigationSource;
-    private readonly List<NSView> _controls = [];
-    private readonly HashSet<NSView> _ratingControls = [];
     private readonly List<(NSMenuItem Item, Func<bool> Checked)> _menuChecks = [];
     private readonly NSObject _scrollObserver;
+    private readonly NSObject _liveScrollObserver;
     private readonly NSObject _inputMonitor;
     private readonly SemaphoreSlim _openGate = new(1, 1);
     private ImageFile? _observedFile;
+    private ImageFile[] _displayedFiles = [];
     private bool _layingOut;
     private bool _refreshPending;
     private bool _disposed;
+    private int _scrollRequestVersion;
     private readonly bool _automatedValidation;
     private MacNativeSettingsPresenter? _settingsPresenter;
 
@@ -58,12 +64,16 @@ public sealed class MacMainWindow : IDisposable
     public PhotoLoadSession Session { get; } = new();
     /// <summary>共享主 VM。</summary>
     public MainViewModel Main => _main;
-    /// <summary>真实胶片条与滚动容器供布局回归读取，不另建模拟列表。</summary>
+    /// <summary>真实胶片栏与滚动容器供布局回归读取，不另建模拟列表。</summary>
     internal NSCollectionView Filmstrip => _collection;
-    /// <summary>真实胶片条滚动容器。</summary>
+    /// <summary>真实胶片栏滚动容器。</summary>
     internal NSScrollView FilmstripScroll => _scroll;
+    /// <summary>实际分组控制栏供操作与几何回归读取。</summary>
+    internal MacControlBar ControlBar => _controlPane;
+    /// <summary>控制栏系统滚动容器供溢出与边缘验收读取。</summary>
+    internal NSScrollView ControlScroll => _controlScroll;
 
-    /// <summary>创建窗口、筛选、虚拟化胶片条与控制栏，并连接共享通知。</summary>
+    /// <summary>创建窗口、筛选、虚拟化胶片栏与控制栏，并连接共享通知。</summary>
     public MacMainWindow(MainViewModel main, bool automatedValidation = false)
     {
         _main = main;
@@ -83,21 +93,27 @@ public sealed class MacMainWindow : IDisposable
         Window.FrameAutosaveName = "PhotoViewer.Native.MainWindow";
         _root = new RootView(new CGRect(0, 0, 1200, 850));
         Window.ContentView = _root;
-        _filePane = Pane(); _controlPane = Pane(); _photoPane = Pane(NSColor.Black);
-        _controlScroll = new NSScrollView { DocumentView = _controlPane, HasVerticalScroller = true, DrawsBackground = false, AutomaticallyAdjustsContentInsets = false };
+        _filePane = Pane(); _controlPane = new MacControlBar(ScheduleControlsRefresh); _photoPane = Pane(NSColor.Black);
+        _controlScroll = new NSScrollView { DocumentView = _controlPane, HasVerticalScroller = true, DrawsBackground = true, BackgroundColor = NSColor.FromWhite(.07f, 1), BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
         _root.AddSubview(_filePane); _root.AddSubview(_photoPane); _root.AddSubview(_controlScroll);
+        _root.AddSubview(_fileDivider); _root.AddSubview(_controlDivider);
         _dragLeft = new DragZone(); _dragRight = new DragZone();
         _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _photoPane.AddSubview(Photo);
-        _hint = Label("点击打开文件 或 拖拽图片到此处", 14);
+        _hint = Label("点击打开文件 或 拖拽图片到此处", 16);
         _hint.Alignment = NSTextAlignment.Center;
-        _photoPane.AddSubview(_hint);
-        _navigationHost = Pane(NSColor.FromWhite(.12f, .9f));
+        _hint.TextColor = NSColor.SecondaryLabel;
+        _hintDetail.TextColor = NSColor.SecondaryLabel;
+        _hintDetail.LineBreakMode = NSLineBreakMode.ByWordWrapping;
+        _hintDetail.MaximumNumberOfLines = 4;
+        _photoPane.AddSubview(_hint); _photoPane.AddSubview(_hintDetail);
+        _navigationHost = Pane(NSColor.FromWhite(2f / 15, .6f));
         _navigationHost.Layer!.CornerRadius = 6;
-        _navigationImage = new NSImageView(new CGRect(8, 8, 128, 128)) { ImageScaling = NSImageScale.ProportionallyUpOrDown };
+        _navigationImage = new NSImageView { ImageScaling = NSImageScale.ProportionallyUpOrDown };
         _navigationFrame = Pane(NSColor.Clear); _navigationFrame.Layer!.BorderColor = NSColor.White.CGColor; _navigationFrame.Layer.BorderWidth = 1;
         _zoomLabel = Label("", 12); _zoomLabel.Alignment = NSTextAlignment.Center;
+        _zoomLabel.Font = NSFont.SystemFontOfSize(12, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
         _navigationHost.AddSubview(_navigationImage); _navigationHost.AddSubview(_navigationFrame); _navigationHost.AddSubview(_zoomLabel);
         _photoPane.AddSubview(_navigationHost); _navigationHost.Hidden = true;
         _sort = Popup(_main.FileVM.FilterBar.SortModes.Select(item => item.DisplayName).ToArray());
@@ -108,12 +124,14 @@ public sealed class MacMainWindow : IDisposable
         _order.Activated += (_, _) => _main.FileVM.FilterBar.SortOrder = (SortOrder)_main.FileVM.FilterBar.SortOrders[(int)_order.IndexOfSelectedItem].Value;
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
         foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count }) _filePane.AddSubview(control);
-        _filmstripLayout = new MacFilmstripLayout(() => _main.FileVM.ThumbnailList.FilteredFiles.Count);
+        _filmstripLayout = new MacFilmstripLayout();
         _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.FromWhite(.07f, 1)] };
         _collection.RegisterClassForItem(typeof(MacThumbnailItem), "PhotoCard");
         _source = new CollectionSource(this); _collection.DataSource = _source;
-        _scroll = new MacFilmstripScrollView { DocumentView = _collection, HasVerticalScroller = true, DrawsBackground = false, AutomaticallyAdjustsContentInsets = false };
+        _scroll = new MacFilmstripScrollView { DocumentView = _collection, HasVerticalScroller = true, DrawsBackground = false, BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
         _scroll.ContentView.PostsBoundsChangedNotifications = true;
+        _scroll.UserScrollStarted = CancelFilmstripScroll;
+        _liveScrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSScrollView.WillStartLiveScrollNotification, _ => CancelFilmstripScroll(), _scroll);
         _filePane.AddSubview(_scroll);
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
         _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
@@ -170,13 +188,56 @@ public sealed class MacMainWindow : IDisposable
         pane.Layer!.BackgroundColor = (color ?? NSColor.FromWhite(.07f, 1)).CGColor;
         return pane;
     }
-    /// <summary>创建只读原生标签。</summary>
+    /// <summary>创建只读且不拦截鼠标点击的原生标签。</summary>
     private static NSTextField Label(string text, double size)
-        => new() { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false, TextColor = NSColor.LightGray, Font = NSFont.SystemFontOfSize((nfloat)size) ?? throw new InvalidOperationException("系统字体不可用") };
+        => new PassThroughLabel { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false, TextColor = NSColor.LightGray, Font = NSFont.SystemFontOfSize((nfloat)size) ?? throw new InvalidOperationException("系统字体不可用") };
     /// <summary>创建固定位置的原生下拉框。</summary>
     private static NSPopUpButton Popup(string[] titles)
     {
-        var popup = new NSPopUpButton(new CGRect(0, 0, 96, 26), false); popup.AddItems(titles); return popup;
+        var popup = new FilterPopUpButton(new CGRect(0, 0, FilterWidth, FilterHeight))
+        {
+            Cell = new FilterPopUpCell(),
+            ControlSize = NSControlSize.Regular,
+            Font = NSFont.SystemFontOfSize(13) ?? throw new InvalidOperationException("系统字体不可用"),
+        };
+        popup.AddItems(titles);
+        return popup;
+    }
+
+    /// <summary>鼠标入口与键盘点击共用原生单元格的菜单定位，避免按钮另启默认菜单跟踪。</summary>
+    private sealed class FilterPopUpButton(CGRect frame) : NSPopUpButton(frame, false)
+    {
+        /// <summary>将鼠标按下交给同一弹出菜单路径，菜单负责选择、释放与取消。</summary>
+        public override void MouseDown(NSEvent nativeEvent) => Cell.PerformClick(Bounds, this);
+    }
+
+    /// <summary>保留原生筛选菜单和选择事件，以按钮左下角定位菜单，避免选中标记使菜单向左偏移。</summary>
+    private sealed class FilterPopUpCell : NSPopUpButtonCell
+    {
+        private const double MenuAnchorGap = 8;
+        /// <summary>初始化常规尺寸的原生弹出按钮单元格。</summary>
+        public FilterPopUpCell() : base(string.Empty, false) => BezelStyle = NSBezelStyle.Rounded;
+
+        /// <summary>键盘、辅助功能与程序化点击采用同一菜单定位路径。</summary>
+        public override void PerformClick(CGRect cellFrame, NSView controlView) => ShowMenu(cellFrame, controlView);
+
+        /// <summary>以按钮左下角定位菜单内容并预留原生菜单外框空间，返回是否选中菜单项。</summary>
+        private bool ShowMenu(CGRect cellFrame, NSView controlView)
+        {
+            var menu = Menu ?? throw new InvalidOperationException("筛选菜单未初始化");
+            menu.MinimumWidth = cellFrame.Width;
+            Highlight(true, cellFrame, controlView);
+            try
+            {
+                double anchorY = controlView.IsFlipped ? (double)(cellFrame.Y + cellFrame.Height) + MenuAnchorGap : (double)cellFrame.Y - MenuAnchorGap;
+                return menu.PopUpMenu(null, new CGPoint(cellFrame.X, anchorY), controlView);
+            }
+            finally
+            {
+                Highlight(false, cellFrame, controlView);
+                controlView.NeedsDisplay = true;
+            }
+        }
     }
 
     /// <summary>依据共享上下/左右/自动布局排列；主图延伸到顶部，局部避让交通灯。</summary>
@@ -186,51 +247,64 @@ public sealed class MacMainWindow : IDisposable
         _layingOut = true;
         try
         {
+            var previousViewport = _scroll.ContentView.Bounds.Size;
             double width = (double)_root.Bounds.Width, height = (double)_root.Bounds.Height;
             _main.UpdateScreenOrientation(width, height);
             bool row = _main.IsRowLayout;
-            double fileSize = _main.IsThumbnailViewVisible ? (row ? 218 : 132) : 0;
-            int controlItems = Math.Max(1, _controls.Count);
-            double controlSize = _main.IsControlViewVisible ? (row ? Math.Max(64, Math.Ceiling(controlItems * 54.0 / Math.Max(300, width)) * 54 + 16) : 80) : 0;
-            _filePane.Hidden = fileSize == 0; _controlScroll.Hidden = controlSize == 0;
-            _filePane.Frame = row ? new CGRect(0, 0, width, fileSize) : new CGRect(0, 0, fileSize, height);
-            _controlScroll.Frame = row ? new CGRect(0, height - controlSize, width, controlSize) : new CGRect(width - controlSize, 0, controlSize, height);
+            _count.SizeToFit();
+            double countWidth = Math.Ceiling((double)_count.Frame.Width);
+            const double countHeight = 17;
+            double filterContentWidth = FilterWidth * 3 + 15 + countWidth;
+            double filterHeight = row ? FilterHeight + 20 : 24 + 20 + FilterHeight * 3 + 15 + countHeight;
+            double filmstripHeight = MacFilmstripLayout.CardHeight + MacFilmstripLayout.TopPadding + MacFilmstripLayout.BottomPadding;
+            double fileSize = _main.IsThumbnailViewVisible ? (row ? filterHeight + filmstripHeight + 1 : 117) : 0;
+            var controlMeasure = _controlPane.Measure(row, row ? width : height);
+            double controlSize = _main.IsControlViewVisible ? (row ? (double)controlMeasure.Height : (double)controlMeasure.Width) + 1 : 0;
+            _filePane.Hidden = _fileDivider.Hidden = fileSize == 0;
+            _controlScroll.Hidden = _controlDivider.Hidden = controlSize == 0;
+            _filePane.Layer!.BackgroundColor = NSColor.FromWhite(.067f, 1).CGColor;
+            _photoPane.Layer!.BackgroundColor = NSColor.Black.CGColor;
+            _controlScroll.BackgroundColor = NSColor.FromWhite(.067f, 1);
+            _filePane.Frame = row ? new CGRect(0, 0, width, Math.Max(0, fileSize - 1)) : new CGRect(0, 0, Math.Max(0, fileSize - 1), height);
+            _fileDivider.Frame = row ? new CGRect(0, fileSize - 1, width, 1) : new CGRect(fileSize - 1, 0, 1, height);
+            _controlScroll.Frame = row ? new CGRect(0, height - controlSize + 1, width, Math.Max(0, controlSize - 1)) : new CGRect(width - controlSize + 1, 0, Math.Max(0, controlSize - 1), height);
+            _controlDivider.Frame = row ? new CGRect(0, height - controlSize, width, 1) : new CGRect(width - controlSize, 0, 1, height);
             _photoPane.Frame = row ? new CGRect(0, fileSize, width, Math.Max(1, height - fileSize - controlSize)) : new CGRect(fileSize, 0, Math.Max(1, width - fileSize - controlSize), height);
             Photo.Frame = _photoPane.Bounds;
-            _hint.Frame = new CGRect(10, Math.Max(0, _photoPane.Bounds.Height / 2 - 20), Math.Max(1, _photoPane.Bounds.Width - 20), 80);
-            _navigationHost.Frame = new CGRect(Math.Max(0, _photoPane.Bounds.Width - 156), Math.Max(0, _photoPane.Bounds.Height - 174), 144, 162);
-            _zoomLabel.Frame = new CGRect(8, 138, 128, 20);
-            double filterTop = row ? 9 : 30;
+            double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
+            double hintLeft = ((double)_photoPane.Bounds.Width - hintWidth) / 2;
+            double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
+            _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
+            _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
+            double filterTop = row ? 10 : 34;
             if (row)
             {
-                double start = Math.Max(90, (width - 400) / 2);
-                _sort.Frame = new CGRect(start, filterTop, 96, 26); _order.Frame = new CGRect(start + 100, filterTop, 96, 26);
-                _ratingFilter.Frame = new CGRect(start + 200, filterTop, 96, 26); _count.Frame = new CGRect(start + 300, filterTop + 3, 96, 22);
-                _scroll.Frame = new CGRect(8, 42, Math.Max(1, width - 16), 172);
+                double start = (width - filterContentWidth) / 2;
+                _sort.Frame = new CGRect(start, filterTop, FilterWidth, FilterHeight);
+                _order.Frame = new CGRect(start + FilterWidth + 5, filterTop, FilterWidth, FilterHeight);
+                _ratingFilter.Frame = new CGRect(start + (FilterWidth + 5) * 2, filterTop, FilterWidth, FilterHeight);
+                _count.Frame = new CGRect(start + (FilterWidth + 5) * 3, filterTop + (FilterHeight - countHeight) / 2, countWidth, countHeight);
+                _scroll.Frame = new CGRect(0, filterHeight, width, filmstripHeight);
             }
             else
             {
-                _sort.Frame = new CGRect(10, filterTop, 96, 26); _order.Frame = new CGRect(10, filterTop + 31, 96, 26);
-                _ratingFilter.Frame = new CGRect(10, filterTop + 62, 96, 26); _count.Frame = new CGRect(10, filterTop + 94, 96, 20);
-                _scroll.Frame = new CGRect(6, filterTop + 118, fileSize - 12, Math.Max(1, height - filterTop - 122));
+                double filterLeft = (116 - FilterWidth) / 2;
+                _sort.Frame = new CGRect(filterLeft, filterTop, FilterWidth, FilterHeight);
+                _order.Frame = new CGRect(filterLeft, filterTop + FilterHeight + 5, FilterWidth, FilterHeight);
+                _ratingFilter.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + 5) * 2, FilterWidth, FilterHeight);
+                _count.Frame = new CGRect((116 - countWidth) / 2, filterTop + (FilterHeight + 5) * 3, countWidth, countHeight);
+                _scroll.Frame = new CGRect(0, filterHeight, 116, Math.Max(1, height - filterHeight));
             }
             bool axisChanged = _filmstripLayout.Horizontal != row;
+            if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size) CancelFilmstripScroll();
             _filmstripLayout.Horizontal = row;
             _scroll.Horizontal = row;
             _scroll.HasVerticalScroller = !row; _scroll.HasHorizontalScroller = row;
-            UpdateFilmstripLayout();
+            if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size || _collection.Frame.Size != _filmstripLayout.CollectionViewContentSize)
+                UpdateFilmstripLayout();
             if (axisChanged) ScrollToCurrent();
-            double cursorX = row ? 10 : 15, cursorY = row ? 8 : 40;
-            foreach (var control in _controls)
-            {
-                double itemWidth = control is NSTextField ? 70 : _ratingControls.Contains(control) ? 30 : 40;
-                double itemHeight = _ratingControls.Contains(control) ? 30 : 40;
-                if (row && cursorX + itemWidth > width - 10) { cursorX = 10; cursorY += 54; }
-                control.Frame = new CGRect(row ? cursorX : (controlSize - itemWidth) / 2, cursorY, itemWidth, itemHeight);
-                if (row) cursorX += itemWidth + 8;
-                else cursorY += itemHeight + 8;
-            }
-            _controlPane.Frame = new CGRect(0, 0, row ? width : controlSize, Math.Max(row ? controlSize : height, cursorY + 48));
+            _controlScroll.HasHorizontalScroller = row && controlMeasure.Width > width;
+            _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size);
             double dragHeight = row ? 44 : 24;
             double gapStart = row && fileSize > 0 ? (double)_sort.Frame.X : width;
             double gapEnd = row && fileSize > 0 ? (double)(_count.Frame.X + _count.Frame.Width) : width;
@@ -245,31 +319,7 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
     private void BuildControls()
     {
-        foreach (var control in _controls) { control.RemoveFromSuperview(); control.Dispose(); }
-        _controls.Clear();
-        _ratingControls.Clear();
-        foreach (var entry in _main.ControlVM.EnabledExifItems)
-        {
-            var label = Label(entry.DisplayName + "\n" + entry.DisplayValue, 11); label.Alignment = NSTextAlignment.Center;
-            _controls.Add(label); _controlPane.AddSubview(label);
-        }
-        if (_main.Settings.ShowRating)
-            for (int rating = 0; rating < 6; rating++)
-            {
-                int value = rating;
-                bool active = rating > 0 && rating <= (_main.CurrentFile?.Rating ?? 0);
-                var star = MacSymbols.Button(rating == 0 ? "xmark" : active ? "star.fill" : "star", rating + " 星", () => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, value); }, 30, false);
-                star.ContentTintColor = active ? NSColor.FromRgb(255, 210, 20) : NSColor.Gray;
-                _controls.Add(star); _controlPane.AddSubview(star);
-                _ratingControls.Add(star);
-            }
-        foreach (var hotkey in _main.ControlVM.EnabledControls)
-        {
-            string? symbol = MacSymbols.ForCommand(hotkey.Command);
-            if (symbol == null) continue;
-            var button = MacSymbols.Button(symbol, hotkey.Name + " · " + hotkey.PrimaryHotkeyText, () => Execute(hotkey.Command));
-            _controls.Add(button); _controlPane.AddSubview(button);
-        }
+        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); });
         Layout();
     }
 
@@ -306,7 +356,7 @@ public sealed class MacMainWindow : IDisposable
         var files = _main.FileVM.ThumbnailList.FilteredFiles;
         int index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
         int target = index + offset;
-        if (target >= 0 && target < files.Count) { _main.CurrentFile = files[target]; ScrollToCurrent(); }
+        if (target >= 0 && target < files.Count) { _main.CurrentFile = files[target]; _main.FileVM.ThumbnailList.ScrollToCurrent(); }
     }
     /// <summary>按用户预设选择邻近倍率。</summary>
     private void ZoomPreset(int direction)
@@ -316,13 +366,18 @@ public sealed class MacMainWindow : IDisposable
             : values.Where(value => value < Photo.PhysicalScale - .001).Reverse().Cast<double?>().FirstOrDefault();
         if (target.HasValue) Photo.ZoomToPhysical(target.Value);
     }
-    /// <summary>匹配原生事件；系统设置入口及 Escape 保留，普通事件按用户手势表。</summary>
+    /// <summary>匹配原生事件；系统设置入口及 Escape 保留，普通事件按用户手势表，无图时左键打开文件。</summary>
     private bool HandleInput(NSEvent nativeEvent)
     {
         if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.CommandKeyMask) && nativeEvent.CharactersIgnoringModifiers == ",") { ShowSettings(); return true; }
         string? command = MacInput.ResolveCommand(nativeEvent, _main.Settings);
-        if (command == null || MacSymbols.ForCommand(command) == null) return false;
-        Execute(command); return true;
+        if (command != null && MacSymbols.ForCommand(command) != null) { Execute(command); return true; }
+        if (nativeEvent.Type == NSEventType.LeftMouseDown && Session.Image == null && (nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) == 0)
+        {
+            _ = OpenPickerAsync(false);
+            return true;
+        }
+        return false;
     }
 
     /// <summary>当前照片变更时只重置加载代际，不改变原生缩放状态。</summary>
@@ -330,17 +385,19 @@ public sealed class MacMainWindow : IDisposable
     {
         if (args.PropertyName == nameof(MainViewModel.CurrentFile))
         {
+            CancelFilmstripScroll();
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _observedFile = _main.CurrentFile;
             if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
             Session.SetFile(_main.CurrentFile?.File);
-            ScrollToCurrent();
             Window.Title = _main.CurrentFile?.Name ?? "PhotoViewer";
             BuildControls();
         }
         else if (args.PropertyName is nameof(MainViewModel.IsRowLayout) or nameof(MainViewModel.IsThumbnailViewVisible) or nameof(MainViewModel.IsControlViewVisible))
         {
+            if (!_main.IsThumbnailViewVisible) CancelFilmstripScroll();
             Layout(); UpdateMenuChecks();
+            if (args.PropertyName == nameof(MainViewModel.IsThumbnailViewVisible) && _main.IsThumbnailViewVisible) ScrollToCurrent();
             if (!_automatedValidation)
             {
                 NSUserDefaults.StandardUserDefaults.SetBool(_main.IsThumbnailViewVisible, "PhotoViewer.Native.ShowFilm");
@@ -353,12 +410,15 @@ public sealed class MacMainWindow : IDisposable
     {
         if (_disposed || !ReferenceEquals(sender, _observedFile)) return;
         if (args.PropertyName == nameof(ImageFile.ExifData)) UpdateFocusPoint();
-        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)) ScheduleControlsRefresh();
+        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)) BuildControls();
     });
     /// <summary>设置回写后重建按钮并重新布局。</summary>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args) => ScheduleControlsRefresh();
     /// <summary>共享控制摘要变化通知。</summary>
-    private void OnControlChanged(object? sender, PropertyChangedEventArgs args) { if (args.PropertyName == nameof(_main.ControlVM.EnabledExifItems)) ScheduleControlsRefresh(); }
+    private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(_main.ControlVM.EnabledExifItems) or nameof(_main.ControlVM.EnabledControls)) ScheduleControlsRefresh();
+    }
     /// <summary>合并快照回写产生的通知，避免同一轮设置改变重复创建全部原生按钮。</summary>
     private void ScheduleControlsRefresh()
     {
@@ -371,16 +431,27 @@ public sealed class MacMainWindow : IDisposable
             BuildControls(); _collection.ReloadData(); UpdateFilmstripLayout(); ReportVisible(); UpdateMenuChecks();
         });
     }
-    /// <summary>列表原子替换后刷新 CollectionView 和计数。</summary>
+    /// <summary>列表原子替换后刷新 CollectionView 和计数；后台星级扫描未改变列表顺序时不打断滚动或重建卡片。</summary>
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(_main.FileVM.ThumbnailList.FilteredFiles)) return;
+        var currentFiles = _main.FileVM.ThumbnailList.FilteredFiles;
+        if (_displayedFiles.Length != currentFiles.Count || !_displayedFiles.SequenceEqual(currentFiles))
+            CancelFilmstripScroll();
         UiDispatcher.Post(() =>
         {
             if (_disposed) return;
-            _collection.ReloadData(); UpdateFilmstripLayout();
-            _count.StringValue = $"共 {_main.FileVM.ThumbnailList.FilteredFiles.Count} 张";
-            ScrollToCurrent(); ReportVisible();
+            var files = _main.FileVM.ThumbnailList.FilteredFiles;
+            bool sameSequence = _displayedFiles.Length == files.Count && _displayedFiles.SequenceEqual(files);
+            _displayedFiles = files.ToArray();
+            if (!sameSequence)
+            {
+                _collection.ReloadData();
+                UpdateFilmstripLayout();
+            }
+            _count.StringValue = $"共 {files.Count} 张";
+            Layout();
+            ReportVisible();
         });
     }
     /// <summary>业务排序/筛选状态同步回原生控件，程序化或文件源刷新不会留下旧选中项。</summary>
@@ -411,8 +482,11 @@ public sealed class MacMainWindow : IDisposable
     {
         UpdateFocusPoint();
         Photo.SetImage(Session.Image);
-        _hint.StringValue = Session.Error.Length > 0 ? Session.Error : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处" : "";
-        _hint.Hidden = Session.Image != null && Session.Error.Length == 0;
+        _hint.StringValue = Session.Error.Length > 0 ? "无法打开该图片" : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处" : "";
+        _hintDetail.StringValue = Session.Error;
+        _hint.Hidden = _hint.StringValue.Length == 0;
+        _hintDetail.Hidden = Session.Error.Length == 0;
+        Layout();
     }
     /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时 F 仍使用过期空值。</summary>
     private void UpdateFocusPoint()
@@ -429,6 +503,12 @@ public sealed class MacMainWindow : IDisposable
         bool show = _main.Settings.ShowZoomIndicator && !Photo.IsFit && Session.Image != null;
         _navigationHost.Hidden = !show;
         if (!show) return;
+        var size = Photo.NavigationSize;
+        double width = (double)size.Width, height = (double)size.Height;
+        double hostWidth = width + 16, hostHeight = height + 16 + 8 + 15 + 2;
+        _navigationHost.Frame = new CGRect(Math.Max(0, (double)_photoPane.Bounds.Width - hostWidth - 12), Math.Max(0, (double)_photoPane.Bounds.Height - hostHeight - 12), hostWidth, hostHeight);
+        _navigationImage.Frame = new CGRect(8, 8, width, height);
+        _zoomLabel.Frame = new CGRect(8, height + 16, width, 15);
         if (!ReferenceEquals(_navigationSource, Session.Image))
         {
             using var frame = Photo.CaptureLinearFrame(navigation: true);
@@ -444,17 +524,26 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>把原生可见卡片交共享缩略图调度器，以 P1 优先级加载。</summary>
     private void ReportVisible()
     {
+        if (!_layingOut) _collection.LayoutSubtreeIfNeeded();
         var indexes = _collection.IndexPathsForVisibleItems.ToArray<NSIndexPath>().Select(path => (int)path.Item).Order().ToArray();
         var files = _main.FileVM.ThumbnailList.FilteredFiles;
         _main.FileVM.ThumbnailList.LoadVisibleThumbnails(indexes.Where(index => index >= 0 && index < files.Count).Select(index => files[index]));
         if (indexes.Length > 0) _main.FileVM.ThumbnailList.ReportVisibleRange(indexes[0], indexes[^1]);
     }
-    /// <summary>当前项自动滚到可见位置，保留原生滚动行为。</summary>
+    /// <summary>取消尚未执行的定位请求及正在播放的动画，保持当前可见位置。</summary>
+    private void CancelFilmstripScroll()
+    {
+        _scrollRequestVersion++;
+        _scroll.CancelAnimation();
+    }
+
+    /// <summary>显式定位请求沿主轴动画居中，首尾受边界约束；普通切图与列表刷新不触发。</summary>
     private void ScrollToCurrent()
     {
+        int request = ++_scrollRequestVersion;
         UiDispatcher.Post(() =>
         {
-            if (_disposed) return;
+            if (_disposed || request != _scrollRequestVersion || !_main.IsThumbnailViewVisible) return;
             int index = _main.CurrentFile == null ? -1 : _main.FileVM.ThumbnailList.FilteredFiles.IndexOf(_main.CurrentFile);
             if (index < 0) return;
             _collection.LayoutSubtreeIfNeeded();
@@ -463,16 +552,12 @@ public sealed class MacMainWindow : IDisposable
             if (attributes == null) return;
             var frame = attributes.Frame;
             var clip = _scroll.ContentView.Bounds;
-            double horizontal = (double)clip.X, vertical = (double)clip.Y;
-            if (frame.X < clip.X) horizontal = (double)frame.X;
-            else if (frame.X + frame.Width > clip.X + clip.Width) horizontal = (double)(frame.X + frame.Width - clip.Width);
-            if (frame.Y < clip.Y) vertical = (double)frame.Y;
-            else if (frame.Y + frame.Height > clip.Y + clip.Height) vertical = (double)(frame.Y + frame.Height - clip.Height);
+            double horizontal = _filmstripLayout.Horizontal ? (double)(frame.X + (frame.Width - clip.Width) / 2) : (double)clip.X;
+            double vertical = _filmstripLayout.Horizontal ? (double)clip.Y : (double)(frame.Y + (frame.Height - clip.Height) / 2);
             var document = _filmstripLayout.CollectionViewContentSize;
-            _scroll.ContentView.ScrollToPoint(new CGPoint(
+            _scroll.AnimateTo(new CGPoint(
                 Math.Clamp(horizontal, 0, Math.Max(0, (double)(document.Width - clip.Width))),
                 Math.Clamp(vertical, 0, Math.Max(0, (double)(document.Height - clip.Height)))));
-            _scroll.ReflectScrolledClipView(_scroll.ContentView);
         });
     }
 
@@ -523,7 +608,7 @@ public sealed class MacMainWindow : IDisposable
         var file = new NSMenu("文件"); file.AddItem(new NSMenuItem("打开文件…", (_, _) => _ = OpenPickerAsync(false))); file.AddItem(new NSMenuItem("打开文件夹…", (_, _) => _ = OpenPickerAsync(true)));
         menu.AddItem(new NSMenuItem("文件") { Submenu = file });
         var view = new NSMenu("显示");
-        AddCheck(view, "胶片条", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
+        AddCheck(view, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
         AddCheck(view, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
         foreach (var layout in _main.Settings.LayoutModes) AddCheck(view, layout.DisplayName, () => _main.Settings.LayoutMode == layout.Value, () => _main.Settings.LayoutMode = layout.Value);
         view.AddItem(new NSMenuItem("全屏", (_, _) => Window.ToggleFullScreen(null)));
@@ -545,27 +630,31 @@ public sealed class MacMainWindow : IDisposable
         menu.AddItem(new NSMenuItem("打开文件…", (_, _) => _ = OpenPickerAsync(false)));
         menu.AddItem(new NSMenuItem("打开文件夹…", (_, _) => _ = OpenPickerAsync(true)));
         menu.AddItem(NSMenuItem.SeparatorItem);
-        menu.AddItem(new NSMenuItem("胶片条", (_, _) => _main.ToggleThumbnailView()));
-        menu.AddItem(new NSMenuItem("控制栏", (_, _) => _main.ToggleControlView()));
-        menu.AddItem(new NSMenuItem("设置…", (_, _) => ShowSettings())); return menu;
+        AddCheck(menu, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
+        AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
+        menu.AddItem(new NSMenuItem("设置…", (_, _) => ShowSettings()));
+        UpdateMenuChecks();
+        return menu;
     }
 
     /// <summary>释放窗口观察者与渲染器，取消所有在途展示任务。</summary>
     public void Dispose()
     {
         _disposed = true;
+        CancelFilmstripScroll();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
+        NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
-        Session.Dispose(); _navigationBitmap?.Dispose(); Photo.Dispose(); Window.Dispose();
+        Session.Dispose(); _navigationBitmap?.Dispose(); _controlPane.Dispose(); Photo.Dispose(); Window.Dispose();
     }
 
     /// <summary>CollectionView 按需创建卡片，不为全部文件创建视图。</summary>
     private sealed class CollectionSource(MacMainWindow owner) : NSCollectionViewDataSource
     {
-        /// <summary>胶片条始终是单个 section，集合更新后先布局再滚动。</summary>
+        /// <summary>胶片栏始终是单个 section，集合更新后先布局再滚动。</summary>
         public override nint GetNumberOfSections(NSCollectionView collectionView) => 1;
         /// <summary>返回筛选后项目数。</summary>
         public override nint GetNumberofItems(NSCollectionView collectionView, nint section) => owner._main.FileVM.ThumbnailList.FilteredFiles.Count;
@@ -573,8 +662,15 @@ public sealed class MacMainWindow : IDisposable
         public override NSCollectionViewItem GetItem(NSCollectionView collectionView, NSIndexPath indexPath)
         {
             var item = (MacThumbnailItem)collectionView.MakeItem("PhotoCard", indexPath);
+            if (owner._filmstripLayout.GetLayoutAttributesForItem(indexPath) is { } attributes && item.View.Frame != attributes.Frame)
+                item.View.Frame = attributes.Frame;
+            item.View.Hidden = false;
             var file = owner._main.FileVM.ThumbnailList.FilteredFiles[(int)indexPath.Item];
-            item.Bind(file, owner._main.Settings.ShowRating, selected => owner._main.CurrentFile = selected, (selected, rating) => _ = owner.RateAsync(selected, rating));
+            item.Bind(file, owner._main.Settings.ShowRating, selected =>
+            {
+                owner.CancelFilmstripScroll();
+                owner._main.FileVM.ThumbnailList.SelectImageCommand(selected);
+            }, (selected, rating) => _ = owner.RateAsync(selected, rating));
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
             return item;
         }
@@ -603,6 +699,13 @@ public sealed class MacMainWindow : IDisposable
 
     /// <summary>文件与控制分区采用顶部为原点的布局坐标。</summary>
     private sealed class FlippedPane : NSView { public override bool IsFlipped => true; }
+
+    /// <summary>只读展示标签，鼠标命中透传给下层视图。</summary>
+    private sealed class PassThroughLabel : NSTextField
+    {
+        /// <summary>不拦截鼠标事件，使主图空状态提示可穿透点击。</summary>
+        public override NSView? HitTest(CGPoint aPoint) => null;
+    }
 
     /// <summary>顶边悬停才显示的透明拖动区，上下布局中间留空给筛选控件。</summary>
     private sealed class DragZone : NSView

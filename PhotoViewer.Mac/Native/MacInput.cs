@@ -73,4 +73,62 @@ public static class MacInput
     /// <summary>按用户主/次绑定查找命令，不另建原生默认快捷键表。</summary>
     public static string? ResolveCommand(NSEvent nativeEvent, SettingsViewModel settings)
         => FromEvent(nativeEvent) is { } gesture ? settings.GetCommandByGesture(gesture) : null;
+
+    /// <summary>按当前设置工作副本生成 macOS 快捷键符号，显示转换不改变持久化手势。</summary>
+    public static string FormatGesture(AppGesture? gesture, SettingsViewModel settings)
+    {
+        if (gesture == null) return "未设置";
+        GestureModifiers modifiers = gesture.Key?.Modifiers ?? gesture.Mouse?.Modifiers ?? GestureModifiers.None;
+        var parts = new List<string>();
+        foreach (var modifier in new[] { GestureModifiers.Control, GestureModifiers.Alt, GestureModifiers.Shift, GestureModifiers.Meta })
+        {
+            if (!modifiers.HasFlag(modifier)) continue;
+            AppleMappingTarget target = modifier switch
+            {
+                GestureModifiers.Control => AppleMappingTarget.Ctrl,
+                GestureModifiers.Alt => AppleMappingTarget.Alt,
+                GestureModifiers.Meta => AppleMappingTarget.Win,
+                _ => AppleMappingTarget.None,
+            };
+            string symbol = settings.UseAppleKeyboard && target != AppleMappingTarget.None
+                ? settings.MapCommandTarget == target ? "⌘" : settings.MapOptionTarget == target ? "⌥"
+                    : settings.MapControlTarget == target ? "⌃" : ModifierSymbol(modifier)
+                : ModifierSymbol(modifier);
+            if (!parts.Contains(symbol)) parts.Add(symbol);
+        }
+        string key = gesture.Key is { } keyboard ? KeyLabel(keyboard.Key) : gesture.Mouse!.Action switch
+        {
+            MouseAction.LeftClick => "左键", MouseAction.RightClick => "右键", MouseAction.MiddleClick => "中键",
+            MouseAction.XButton1Click => "侧键 1", MouseAction.XButton2Click => "侧键 2",
+            MouseAction.WheelUp => "滚轮上", MouseAction.WheelDown => "滚轮下", _ => throw new InvalidOperationException("未知鼠标动作"),
+        };
+        return string.Concat(parts) + (gesture.Mouse != null && parts.Count > 0 ? " " : "") + key;
+    }
+
+    /// <summary>将原生修饰键转换为系统常用符号。</summary>
+    private static string ModifierSymbol(GestureModifiers modifier) => modifier switch
+    {
+        GestureModifiers.Control => "⌃", GestureModifiers.Alt => "⌥", GestureModifiers.Shift => "⇧",
+        GestureModifiers.Meta => "⌘", _ => throw new InvalidOperationException("未知修饰键"),
+    };
+
+    /// <summary>显示键帽和方向符号，将数字、数字键盘和标点的存储名称转换为用户可读文本。</summary>
+    private static string KeyLabel(GestureKey key)
+    {
+        string name = key.ToString();
+        if (name.Length == 2 && name[0] == 'D' && char.IsDigit(name[1])) return name[1..];
+        if (name.StartsWith("NumPad", StringComparison.Ordinal)) return "数字 " + name[6..];
+        return key switch
+        {
+            GestureKey.Left => "←", GestureKey.Right => "→", GestureKey.Up => "↑", GestureKey.Down => "↓",
+            GestureKey.Return or GestureKey.Enter => "↩", GestureKey.Tab => "⇥", GestureKey.Back => "⌫",
+            GestureKey.Delete => "⌦", GestureKey.Escape => "⎋", GestureKey.Space => "空格",
+            GestureKey.OemPlus => "=", GestureKey.OemMinus => "−", GestureKey.OemTilde => "\u0060",
+            GestureKey.OemComma => ",", GestureKey.OemPeriod => ".", GestureKey.OemQuestion => "/",
+            GestureKey.OemSemicolon => ";", GestureKey.OemQuotes => "'", GestureKey.OemOpenBrackets => "[",
+            GestureKey.OemCloseBrackets => "]", GestureKey.OemPipe => "\\",
+            GestureKey.Add => "数字 +", GestureKey.Subtract => "数字 −", GestureKey.Multiply => "数字 ×",
+            GestureKey.Divide => "数字 /", GestureKey.Decimal => "数字 .", _ => name,
+        };
+    }
 }

@@ -34,15 +34,17 @@ public static class MacSymbols
         var button = new NSButton(new CoreGraphics.CGRect(0, 0, size, size))
         {
             Image = Get(symbol), ImagePosition = NSCellImagePosition.ImageOnly,
-            BezelStyle = NSBezelStyle.SmallSquare, Bordered = border, ToolTip = tooltip,
+            BezelStyle = NSBezelStyle.TexturedRounded, Bordered = border, ToolTip = tooltip,
         };
+        double pointSize = size <= 14 ? (symbol == "xmark" ? 8 : 10) : size <= 30 ? (symbol == "xmark" ? 12 : 16) : 18;
+        button.SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)pointSize, (double)NSFontWeight.Regular);
         button.Activated += (_, _) => action();
         return button;
     }
     /// <summary>把小图编码成带 sRGB 标签的 PNG，再交 NSImage 管理独立的像素生命周期。</summary>
     public static unsafe NSImage CreateThumbnail(DecodedImage source)
     {
-        if (source.Encoding != PixelEncoding.Bgra32) throw new InvalidOperationException("胶片条需要 BGRA8 缩略图");
+        if (source.Encoding != PixelEncoding.Bgra32) throw new InvalidOperationException("胶片栏需要 BGRA8 缩略图");
         using var space = SKColorSpace.CreateSrgb();
         fixed (byte* pixels = source.Pixels)
         {
