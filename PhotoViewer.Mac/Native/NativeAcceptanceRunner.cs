@@ -26,6 +26,13 @@ public static class NativeAcceptanceRunner
         Directory.CreateDirectory(output);
         try
         {
+            if (args.Contains("--pv-native-input"))
+            {
+                await NativeInputAcceptance.RunAsync(window, output);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Environment.ExitCode = 0;
+                return;
+            }
             await WaitAsync(() => window.Main.CurrentFile != null && window.Session.Image != null, "首图加载");
             if (args.Contains("--pv-native-toolbar"))
             {
@@ -101,7 +108,7 @@ public static class NativeAcceptanceRunner
             for (int category = 0; category < 5; category++)
             {
                 settings.ShowCategory(category); await Task.Delay(50);
-                if (settings.Window?.ContentView is { } view) NativeSnapshots.SaveView(view, System.IO.Path.Combine(output, "settings-" + category + ".png"));
+                settings.RenderTo(System.IO.Path.Combine(output, "settings-" + category + ".png"));
             }
             int memoryBefore = window.Main.Settings.BitmapCacheMaxMemory;
             bool keyboardBefore = window.Main.Settings.UseAppleKeyboard;
@@ -109,7 +116,7 @@ public static class NativeAcceptanceRunner
             settings.WorkingSettings.UseAppleKeyboard = !keyboardBefore;
             if (window.Main.Settings.BitmapCacheMaxMemory != memoryBefore || BitmapLoader.MaxCacheSize != memoryBefore * 1024L * 1024L || PhotoViewer.Core.Input.AppleKeyboardMapping.UseAppleKeyboard != keyboardBefore)
                 throw new InvalidOperationException("设置工作副本提前影响运行时配置");
-            settings.Window?.Close();
+            settings.CloseWindow();
             if (window.Main.Settings.BitmapCacheMaxMemory != memoryBefore + 1 || BitmapLoader.MaxCacheSize != (memoryBefore + 1) * 1024L * 1024L || PhotoViewer.Core.Input.AppleKeyboardMapping.UseAppleKeyboard == keyboardBefore)
                 throw new InvalidOperationException("设置关闭回写未应用运行时配置");
             results.Add(new NativeCheck { Check = "settings-working-copy-isolation", JsonRoundTrip = true });

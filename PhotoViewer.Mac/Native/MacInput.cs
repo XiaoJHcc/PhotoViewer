@@ -7,39 +7,72 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>AppKit 事件与共享手势模型之间的单向映射，保留设置 JSON 的键名与修饰键口径。</summary>
 public static class MacInput
 {
-    /// <summary>把原生事件转为现有键盘/鼠标手势；不支持的事件返回 null。</summary>
+    /// <summary>把原生事件转为现有键盘/鼠标手势；不支持的事件返回 null。
+    /// NSEvent 只允许读取与事件类型相关的字段，读取其余字段会抛 NSInternalInconsistencyException，
+    /// 故必须先按类型取值再复用 <see cref="FromRaw"/> 的同一映射口径，不能一次性传入全部字段。</summary>
     public static AppGesture? FromEvent(NSEvent nativeEvent, SettingsViewModel? captureSettings = null)
     {
+        switch (nativeEvent.Type)
+        {
+            case NSEventType.ScrollWheel:
+                return FromRaw((int)nativeEvent.Type, 0, (ulong)nativeEvent.ModifierFlags, 0,
+                    nativeEvent.ScrollingDeltaY, nativeEvent.HasPreciseScrollingDeltas, null, captureSettings);
+            case NSEventType.LeftMouseDown:
+            case NSEventType.RightMouseDown:
+            case NSEventType.OtherMouseDown:
+                return FromRaw((int)nativeEvent.Type, 0, (ulong)nativeEvent.ModifierFlags, nativeEvent.ButtonNumber,
+                    0, false, null, captureSettings);
+            case NSEventType.KeyDown:
+                return FromRaw((int)nativeEvent.Type, nativeEvent.KeyCode, (ulong)nativeEvent.ModifierFlags, 0,
+                    0, false, nativeEvent.CharactersIgnoringModifiers, captureSettings);
+            default:
+                return null;
+        }
+    }
+
+    /// <summary>把 SwiftUI 侧拆包后的原生事件字段还原为共享手势，供跨语言录制复用同一映射。</summary>
+    /// <param name="eventType">NSEventType 原始值。</param>
+    /// <param name="keyCode">原生键码。</param>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    /// <param name="buttonNumber">鼠标按键编号。</param>
+    /// <param name="scrollingDeltaY">滚轮纵向增量。</param>
+    /// <param name="hasPreciseScrollingDeltas">是否为精确滚轮事件。</param>
+    /// <param name="charactersIgnoringModifiers">忽略修饰键后的字符。</param>
+    /// <param name="captureSettings">录制所用的工作副本，决定苹果键盘映射口径。</param>
+    public static AppGesture? FromRaw(int eventType, ushort keyCode, ulong modifierFlags, nint buttonNumber, double scrollingDeltaY,
+        bool hasPreciseScrollingDeltas, string? charactersIgnoringModifiers, SettingsViewModel? captureSettings = null)
+    {
         GestureModifiers modifiers = 0;
-        if (nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.ShiftKeyMask)) modifiers |= GestureModifiers.Shift;
-        if (nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.ControlKeyMask)) modifiers |= GestureModifiers.Control;
-        if (nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.AlternateKeyMask)) modifiers |= GestureModifiers.Alt;
-        if (nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.CommandKeyMask)) modifiers |= GestureModifiers.Meta;
+        if ((modifierFlags & (ulong)NSEventModifierMask.ShiftKeyMask) != 0) modifiers |= GestureModifiers.Shift;
+        if ((modifierFlags & (ulong)NSEventModifierMask.ControlKeyMask) != 0) modifiers |= GestureModifiers.Control;
+        if ((modifierFlags & (ulong)NSEventModifierMask.AlternateKeyMask) != 0) modifiers |= GestureModifiers.Alt;
+        if ((modifierFlags & (ulong)NSEventModifierMask.CommandKeyMask) != 0) modifiers |= GestureModifiers.Meta;
         modifiers = captureSettings == null ? AppleKeyboardMapping.ApplyForRuntime(modifiers)
             : AppleKeyboardMapping.ApplyForRuntime(modifiers, captureSettings.UseAppleKeyboard, captureSettings.MapCommandTarget, captureSettings.MapOptionTarget, captureSettings.MapControlTarget);
-        if (nativeEvent.Type == NSEventType.ScrollWheel)
+        var type = (NSEventType)eventType;
+        if (type == NSEventType.ScrollWheel)
         {
-            if ((nativeEvent.HasPreciseScrollingDeltas && modifiers == 0) || nativeEvent.ScrollingDeltaY == 0) return null;
-            return AppGesture.FromMouse(new MouseGestureEx(nativeEvent.ScrollingDeltaY > 0 ? MouseAction.WheelUp : MouseAction.WheelDown, modifiers));
+            if ((hasPreciseScrollingDeltas && modifiers == 0) || scrollingDeltaY == 0) return null;
+            return AppGesture.FromMouse(new MouseGestureEx(scrollingDeltaY > 0 ? MouseAction.WheelUp : MouseAction.WheelDown, modifiers));
         }
-        if (nativeEvent.Type is NSEventType.LeftMouseDown or NSEventType.RightMouseDown or NSEventType.OtherMouseDown)
+        if (type is NSEventType.LeftMouseDown or NSEventType.RightMouseDown or NSEventType.OtherMouseDown)
         {
-            MouseAction action = nativeEvent.ButtonNumber switch
+            MouseAction action = (int)buttonNumber switch
             {
                 0 => MouseAction.LeftClick, 1 => MouseAction.RightClick, 2 => MouseAction.MiddleClick,
                 3 => MouseAction.XButton1Click, _ => MouseAction.XButton2Click,
             };
             return AppGesture.FromMouse(new MouseGestureEx(action, modifiers));
         }
-        if (nativeEvent.Type != NSEventType.KeyDown) return null;
-        var key = KeyFromEvent(nativeEvent);
+        if (type != NSEventType.KeyDown) return null;
+        var key = KeyFromRaw(keyCode, charactersIgnoringModifiers);
         return key.HasValue ? AppGesture.FromKey(new AppKeyGesture(key.Value, modifiers)) : null;
     }
 
     /// <summary>优先读取特殊键/数字键盘，普通字符按持久化键名转换。</summary>
-    private static GestureKey? KeyFromEvent(NSEvent nativeEvent)
+    private static GestureKey? KeyFromRaw(ushort keyCode, string? charactersIgnoringModifiers)
     {
-        GestureKey? special = nativeEvent.KeyCode switch
+        GestureKey? special = keyCode switch
         {
             123 => GestureKey.Left, 124 => GestureKey.Right, 125 => GestureKey.Down, 126 => GestureKey.Up,
             53 => GestureKey.Escape, 36 => GestureKey.Return, 48 => GestureKey.Tab, 49 => GestureKey.Space,
@@ -58,7 +91,7 @@ public static class MacInput
             _ => null,
         };
         if (special.HasValue) return special;
-        string text = nativeEvent.CharactersIgnoringModifiers?.ToUpperInvariant() ?? string.Empty;
+        string text = charactersIgnoringModifiers?.ToUpperInvariant() ?? string.Empty;
         if (text.Length != 1) return null;
         if (text[0] is >= 'A' and <= 'Z' && Enum.TryParse<GestureKey>(text, out var letter)) return letter;
         if (text[0] is >= '0' and <= '9' && Enum.TryParse<GestureKey>("D" + text, out var digit)) return digit;

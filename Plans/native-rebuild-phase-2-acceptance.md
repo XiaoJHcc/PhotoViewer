@@ -16,7 +16,7 @@ Release 发布通道仍为旧壳，原生通过 `--native` 进入；验收前不
 - 主窗口隐藏标题栏；交通灯与筛选器无重叠。上下/左右/自动布局、胶片条/控制栏显隐、系统全屏正常。
 - 缩略图区保持方形；当前蓝描边、Full 缓存淡蓝内边、星级与“抖”徽标含义正确。点缩略图星级不会切换主图。
 - 双击、F、预设缩放、捏合、拖动、触控板平移与离散滚轮翻图；100% 为源像素对屏幕物理像素 1:1。代理→Full 不跳位置，导航图与可见范围同步。
-- 设置固定深色外观，系统分栏侧栏与分组表单：文件/预览/控制/EXIF/AI；格式/按钮/EXIF 从名称区域拖动排序，复选框单独点击，行间插入与拖动到滚动区边缘的自动滚动需手工确认。控制功能的勾选/名称/主次快捷键同一行，采用苹果修饰键和方向键符号；录制/清空/取消/冲突可见。关闭设置后应用，重启检查持久化。
+- 设置窗口固定深色外观，由 SwiftUI 承载 macOS 26 系统设置风双栏（`NavigationSplitView` + `Form(.grouped)`）：文件/预览/控制/EXIF/AI；格式/按钮/EXIF 拖动排序，复选框单独点击，行间插入与拖动到滚动区边缘的自动滚动需手工确认。控制功能的勾选/名称/主次快捷键同一行，采用苹果修饰键和方向键符号；录制/清空/取消/冲突可见。关闭设置后应用，重启检查持久化。
 - 评分文件写回、同名合并同步、失败提示；Finder“打开方式”、Dock/窗口拖入及文件 URL 再次打开。
 - 系统预览与应用对拍 sRGB/P3/Adobe RGB、灰阶、高细节素材及 OUT-JPG；外接 sRGB 屏拖动后无需重载。帧导出不能代替此屏幕合成器验收。
 
@@ -54,6 +54,12 @@ PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app/Contents/MacOS/Photo
 筛选菜单对齐回归：同一胶片条定向回归实际打开三个原生菜单，读取菜单辅助功能屏幕坐标与按钮屏幕坐标，要求左边缘误差 ≤1 逻辑点、菜单不窄于按钮、菜单与按钮垂直间距在 2–8 点范围内、当前项勾号保留；键盘选择菜单项后检查共享排序属性更新。macOS 26 实测三项垂直间距均为 3 点。系统限制导致屏幕边缘避让时仍由 AppKit 调整。
 
 设置定向回归（2026-10-14）：`--pv-native-smoke --pv-native-settings <绝对图片路径>`，验证 DarkAqua、NSSplitViewController 系统侧栏、五分类、原生勾选、同行快捷键录制/删除/取消、pasteboard writer、排序后的项目身份、隐藏/重开设置窗口后的绑定释放，以及 760/1060 两档窗口宽度无列溢出和快捷键列宽稳定。报告 `settings-ui-checks.txt`；`settings-window-0.png` 至 `settings-window-4.png` 为宿主 screencapture 取得的真实窗口截图，包含系统侧栏材质。视图缓存导出中的白色侧栏是 NSVisualEffectView 离屏导出限制，不代表真实窗口外观。实际鼠标拖放验证被当前系统事件注入权限阻止，尚未通过，不以集合 Move 测试冒充真实拖放。
+
+设置页 macOS 26 系统设置风重构（2026-10-15）：右侧分页逐项对齐 iOS 原生设置——隐藏标题栏 FullSizeContentView、系统侧栏彩色圆角图标底板、右侧前进/后退历史胶囊与分页大标题；开关、步进器（等宽数值 + 加减胶囊）、连续拉条、下拉与缩放预设行取代原数值文本框；`MacReorderList` 改为无表头、无内部滚动的内嵌平铺表，新增最右拖拽把手列与文件格式主副标题。`settings-ui-checks.txt` 新增侧栏彩色图标、分页标题历史前进后退、内嵌列表无表头/五列/完整平铺、文件格式主副标题五项断言；五分类截图 `settings-0.png` 至 `settings-4.png` 已按新设计重出。`settings-window-*.png` 是上一版设计的宿主 screencapture，本轮会话无屏幕录制权限未重拍，侧栏材质与彩色底板以真机窗口为准；真实鼠标拖放仍待人工验收。
+
+设置页 SwiftUI 原生化（2026-10-15，替换上一版 AppKit 手搓实现）：设置窗口改由 `Native/SwiftSettings/MacSettingsUI.swift` 用 SwiftUI（macOS 26）实现，C# 侧 `MacNativeSettingsPresenter` 只保留工作副本、校验、派生文本与持久化，两侧通过 JSON 状态快照 + `@_cdecl` C ABI 动作回传通信；`MacReorderList.cs` 已删除。C# 的 csproj 新增 `_BuildSwiftSettingsDylib` 目标把 Swift 编译成 `MonoBundle/libMacSettingsUI.dylib`，并沿用 `_FixDylibCodeSigning` 签名。五分类逐项对齐 iOS 原生设置并找回桌面特性（快捷键录制、苹果键盘映射、清库）；界面为 `NavigationSplitView` 系统侧栏 + 右侧 `Form(.formStyle(.grouped))`，不再手绘卡片框。验收 `--pv-native-smoke --pv-native-settings` 新增/改写断言：深色外观 + `NSHostingController` 挂载、五分类分组表单渲染、分页历史前进后退、勾选动作往返并触发 SwiftUI 重绘、真实 `NSEvent` 录制/Delete 清空/Escape 取消、文件格式/快捷键/EXIF 三处排序、760/1060/860 三档窗口缩放、关闭回写与重开恢复，并通过 `screencapture -l` 取得真实窗口位图 `settings-window.png`（本轮授予屏幕录制权限，彩色侧栏底板与导航按钮已取证）。记录：合成 `NSEvent` 的滚轮增量可能为 NaN，直接喂 `JSONSerialization` 会抛异常，故录制事件改为手工拼装 JSON 且只读与事件类型相关的字段。设置页专项 `PASS settings`、完整 P2 `PASS 39 checks`，构建 0 错误、无新增警告；真实鼠标拖放与手感仍待人工验收。
+
+主图输入回归修复（2026-10-16）：`MacInput` 拆出 `FromRaw` 供 SwiftUI 录制复用后，`FromEvent` 改为一次性求值全部字段（`KeyCode`/`ButtonNumber`/`ScrollingDeltaY`/`CharactersIgnoringModifiers`），而 NSEvent 对与事件类型无关的字段会抛 `NSInternalInconsistencyException`；异常经 `MarshalManagedException` 记录后被吞，表现为主图右键菜单不弹出、空首屏左键无法打开文件，且全部键盘快捷键一并失效。改为按 `NSEventType` 只读对应字段后再复用 `FromRaw`。新增 `--pv-native-smoke --pv-native-input`（不加载照片）产出 `native-input-checks.txt`：断言鼠标/键盘/抬起事件映射不抛异常且正确、空首屏提示覆盖主图中心且透传点击、方向键经共享命令表被消费、左键打开原生文件选择器（桩实现免模态）、右键弹出原生上下文菜单（菜单代理捕获 `MenuWillOpen`）。`PASS input` ×3 稳定；同时复跑基线 `PASS 39 checks` 与设置 `PASS settings`。冒烟进程非最前台窗口时系统不派发首击，故点击直接投递主图视图，与胶片栏回归同一做法。
 
 - Apple 表面使用 **ExtendedLinearSrgb**，匹配 F16 线性数据；代理也保留 F16 广色域。
 - 加载编排使用共享 **PhotoLoadSession**，旧 ImageViewModel 展示状态留给旧壳；此设计减少新旧变换状态耦合，保持旧壳可回归。

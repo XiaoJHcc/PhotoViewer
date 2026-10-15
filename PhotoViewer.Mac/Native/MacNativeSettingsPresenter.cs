@@ -1,443 +1,407 @@
 using AppKit;
-using CoreGraphics;
-using Foundation;
+using System.Globalization;
 using System.Reactive.Linq;
+using System.Text.Json;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;
 
-/// <summary>macOS 原生设置，分类侧栏与系统表单；功能复用共享 VM 和 iOS 工作副本模式。</summary>
-public sealed partial class MacNativeSettingsPresenter : INativeSettingsPresenter
+/// <summary>macOS 26 原生设置：宿主为 SwiftUI（libMacSettingsUI.dylib），
+/// C# 侧持有工作副本、校验与持久化，只通过 JSON 状态快照与动作回传驱动界面。
+/// 淘汰此前用 AppKit 手搓的模拟设置界面，主窗口不受影响。</summary>
+public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
 {
-    private NSWindow? _window;
-    private NativeSettingsSession? _session;
-    private readonly List<NSView> _rows = [];
-    private FormView? _form;
-    private NSScrollView? _scroll;
-    private NSObject? _recordMonitor;
-    private int _category;
-    private bool _closing;
-    private Action? _finishEditor;
-    private CategorySource? _categorySource;
-    private CategoryDelegate? _categoryDelegate;
-    private NSTableView? _categoryTable;
-    private NSSplitViewController? _split;
-    private SettingGroup? _group;
-    private MacReorderList? _hotkeyList;
-    private Action? _cancelRecording;
+    private static readonly string[] CategoryNames = ["文件", "预览", "控制", "EXIF", "AI"];
 
-    /// <summary>当前原生设置窗口，供回归验证取得已展示的实例。</summary>
-    public NSWindow? Window => _window;
-    /// <summary>验收工具检查工作副本隔离性，UI 外部不直接访问编辑实例。</summary>
+    private NativeSettingsSession? _session;
+    private bool _presenting;
+    private bool _closing;
+    private int _category = -1;
+    private int _recordingIndex = -1;
+    private bool _recordingPrimary;
+    private readonly List<int> _historyBack = [];
+    private readonly List<int> _historyForward = [];
+
+    /// <summary>当前原生设置窗口是否展示中。</summary>
+    internal bool IsPresenting => _presenting;
+    /// <summary>验收读取当前分类索引。</summary>
+    internal int CurrentCategory => _category;
+    /// <summary>验收检查当前是否处于快捷键录制态。</summary>
+    internal bool IsRecording => _recordingIndex >= 0;
+    /// <summary>验收检查工作副本隔离性，UI 外部不直接访问编辑实例。</summary>
     internal SettingsViewModel WorkingSettings => Settings;
-    /// <summary>验收访问当前行内快捷键表格。</summary>
-    internal MacReorderList? HotkeyList => _hotkeyList;
-    /// <summary>切换原生设置分类，供菜单导航与程序化冒烟复用。</summary>
+
+    /// <summary>切换原生设置分类，记录历史以便顶部导航回退。</summary>
     public void ShowCategory(int category)
     {
-        int selected = Math.Clamp(category, 0, 4);
-        if (_categoryTable != null && _categoryTable.SelectedRow != selected) { _categoryTable.SelectRow(selected, false); return; }
-        _finishEditor?.Invoke(); _category = selected; BuildCategory();
-        if (_scroll != null) { _scroll.ContentView.ScrollToPoint(CGPoint.Empty); _scroll.ReflectScrolledClipView(_scroll.ContentView); }
+        if (!_presenting) return;
+        int target = Math.Clamp(category, 0, CategoryNames.Length - 1);
+        if (target != _category)
+        {
+            if (_category >= 0) { _historyBack.Add(_category); _historyForward.Clear(); }
+            _category = target;
+        }
+        PushState();
     }
-    /// <summary>复用已打开窗口，否则创建原生分类侧栏与可滚动表单。</summary>
+
+    /// <summary>验收驱动历史后退。</summary>
+    internal void NavigateBack() => GoBack();
+    /// <summary>验收驱动历史前进。</summary>
+    internal void NavigateForward() => GoForward();
+    /// <summary>验收读取窗口号，供宿主截图取证与事件投递。</summary>
+    internal int WindowNumber => MacSettingsNative.WindowNumber();
+    /// <summary>验收校验窗口深色外观。</summary>
+    internal bool IsDarkAppearance => MacSettingsNative.IsDark();
+    /// <summary>验收校验 SwiftUI 宿主视图已挂载。</summary>
+    internal bool HasHostingController => MacSettingsNative.HasHostingController();
+    /// <summary>验收调整窗口内容尺寸。</summary>
+    internal void SetContentSize(double width, double height) => MacSettingsNative.SetContentSize(width, height);
+    /// <summary>验收导出窗口控件绘制。</summary>
+    internal void RenderTo(string path) => MacSettingsNative.Render(path);
+    /// <summary>验收进入快捷键录制态。</summary>
+    internal void BeginRecording(int hotkeyIndex, bool primary) => MacSettingsNative.BeginRecording(hotkeyIndex, primary);
+    /// <summary>验收关闭设置窗口，触发工作副本回写。</summary>
+    internal void CloseWindow() => MacSettingsNative.Close();
+    /// <summary>验收以与 SwiftUI 相同的动作通道驱动一次交互。</summary>
+    internal int ApplyAction(string json) => HandleAction(json);
+
+    /// <summary>复用已打开窗口，否则建立工作副本并交由 SwiftUI 宿主展示。</summary>
     public bool TryPresent(SettingsViewModel settings)
     {
-        if (_window != null) { _window.MakeKeyAndOrderFront(null); return true; }
-        _session = new NativeSettingsSession(settings);
-        _window = new NSWindow(new CGRect(180, 160, 860, 720), NSWindowStyle.Titled | NSWindowStyle.Closable | NSWindowStyle.Resizable, NSBackingStore.Buffered, false)
+        MacSettingsNative.EnsureLoaded();
+        if (!_presenting)
         {
-            Title = "PhotoViewer 设置", MinSize = new CGSize(760, 540), BackgroundColor = NSColor.WindowBackground,
-            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua),
-            TitlebarSeparatorStyle = NSTitlebarSeparatorStyle.None,
-        };
-        _window.FrameAutosaveName = "PhotoViewer.Native.Settings";
-        var sidebar = new NSVisualEffectView(new CGRect(0, 0, 190, 720))
-        {
-            Material = NSVisualEffectMaterial.Sidebar, BlendingMode = NSVisualEffectBlendingMode.BehindWindow,
-            State = NSVisualEffectState.FollowsWindowActiveState,
-        };
-        string[] names = ["文件", "预览", "控制", "EXIF", "AI"];
-        var table = new NSTableView
-        {
-            HeaderView = null, RowHeight = 32, Style = NSTableViewStyle.SourceList,
-            BackgroundColor = NSColor.Clear, IntercellSpacing = new CGSize(0, 6),
-            ColumnAutoresizingStyle = NSTableViewColumnAutoresizingStyle.LastColumnOnly,
-        };
-        _categoryTable = table;
-        table.AddColumn(new NSTableColumn("Category") { Width = 180 });
-        _categorySource = new CategorySource(names);
-        _categoryDelegate = new CategoryDelegate(names, row => { if (row >= 0) ShowCategory((int)row); });
-        table.DataSource = _categorySource; table.Delegate = _categoryDelegate;
-        table.Frame = new CGRect(0, 0, 190, names.Length * 38 + 16);
-        table.ReloadData();
-        var sidebarScroll = new NSScrollView(new CGRect(0, 12, 190, 708))
-        {
-            DocumentView = table, DrawsBackground = false, HasVerticalScroller = false,
-            BorderType = NSBorderType.NoBorder, AutoresizingMask = NSViewResizingMask.WidthSizable | NSViewResizingMask.HeightSizable,
-            AutomaticallyAdjustsContentInsets = false,
-        };
-        sidebar.AddSubview(sidebarScroll);
-        _form = new FormView(new CGRect(0, 0, 600, 680));
-        _scroll = new NSScrollView
-        {
-            DocumentView = _form, HasVerticalScroller = true, DrawsBackground = false,
-            BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false,
-        };
-        var detail = new SettingsRoot(new CGRect(0, 0, 670, 720));
-        detail.AddSubview(_scroll);
-        detail.Resized = () =>
-        {
-            _scroll.Frame = detail.Bounds;
-            LayoutForm();
-        };
-        _split = new NSSplitViewController();
-        _split.SplitView.IsVertical = true;
-        _split.SplitView.DividerStyle = NSSplitViewDividerStyle.Thin;
-        var sidebarItem = NSSplitViewItem.CreateSidebar(new NSViewController { View = sidebar });
-        sidebarItem.MinimumThickness = 180; sidebarItem.MaximumThickness = 220; sidebarItem.CanCollapse = false;
-        _split.AddSplitViewItem(sidebarItem);
-        _split.AddSplitViewItem(NSSplitViewItem.FromViewController(new NSViewController { View = detail }));
-        _window.ContentViewController = _split;
-        _window.WillClose += (_, _) => CloseSession();
-        table.SelectRow(0, false);
-        detail.Resized();
-        _window.MakeKeyAndOrderFront(null);
+            _session = new NativeSettingsSession(settings);
+            MacSettingsNative.ActionSink = HandleAction;
+            MacSettingsNative.CloseSink = HandleClose;
+            _category = 0;
+            _presenting = true;
+        }
+        MacSettingsNative.Show(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
         return true;
     }
 
     private SettingsViewModel Settings => _session?.WorkingSettings ?? throw new InvalidOperationException("设置会话未建立");
 
-    /// <summary>原生窗口关闭时先完成编辑、校验，再一次性应用设置。</summary>
-    private void CloseSession()
+    /// <summary>窗口关闭：完成一次性回写并释放工作副本，等待下次展示重建。</summary>
+    private void HandleClose()
     {
         if (_closing) return;
         _closing = true;
-        _finishEditor?.Invoke();
-        StopRecording();
         _session?.Apply();
         _session?.Dispose();
-        _finishEditor = null;
-        foreach (var row in _rows) { row.RemoveFromSuperview(); row.Dispose(); }
-        _rows.Clear();
-        if (_categoryTable != null) { _categoryTable.DataSource = null; _categoryTable.Delegate = null; }
-        _form = null; _scroll = null; _categoryTable = null; _group = null; _hotkeyList = null;
-        _categorySource?.Dispose(); _categoryDelegate?.Dispose();
-        _categorySource = null; _categoryDelegate = null;
-        _window = null; _session = null; _split = null; _closing = false;
+        _session = null;
+        _presenting = false;
+        _category = -1;
+        _recordingIndex = -1;
+        _recordingPrimary = false;
+        _historyBack.Clear();
+        _historyForward.Clear();
+        _closing = false;
     }
 
-    /// <summary>切换设置分类，保留同一工作副本并按 macOS 含义分组。</summary>
-    private void BuildCategory()
+    /// <summary>回到上一个浏览过的分类，并把当前分类压入前进栈。</summary>
+    private void GoBack()
     {
-        if (_form == null) return;
-        StopRecording();
-        foreach (var row in _rows) { row.RemoveFromSuperview(); row.Dispose(); }
-        _rows.Clear(); _finishEditor = null; _group = null; _hotkeyList = null;
-        switch (_category)
+        if (_historyBack.Count == 0) return;
+        int target = _historyBack[^1];
+        _historyBack.RemoveAt(_historyBack.Count - 1);
+        _historyForward.Add(_category);
+        _category = target;
+        PushState();
+    }
+
+    /// <summary>前进到下一个浏览过的分类，并把当前分类压入后退栈。</summary>
+    private void GoForward()
+    {
+        if (_historyForward.Count == 0) return;
+        int target = _historyForward[^1];
+        _historyForward.RemoveAt(_historyForward.Count - 1);
+        _historyBack.Add(_category);
+        _category = target;
+        PushState();
+    }
+
+    /// <summary>把最新派生状态推回 SwiftUI，保持单一数据源。</summary>
+    private void PushState()
+    {
+        if (!_presenting) return;
+        MacSettingsNative.UpdateState(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
+    }
+
+    /// <summary>构建完整窗口状态快照，含派生文本、冲突与语义级别。</summary>
+    private MacSettingsStateDto BuildState()
+    {
+        var settings = Settings;
+        int layoutIndex = 0;
+        for (int index = 0; index < settings.LayoutModes.Count; index++)
         {
-            case 0: BuildFile(); break;
-            case 1: BuildPreview(); break;
-            case 2: BuildControl(); break;
-            case 3: BuildExif(); break;
-            case 4: BuildAi(); break;
+            if (settings.LayoutModes[index].Value == settings.LayoutMode) { layoutIndex = index; break; }
         }
-        LayoutForm();
-    }
-
-    /// <summary>按右侧可用宽度布置原生表单，长内容使用系统滚动条。</summary>
-    private void LayoutForm()
-    {
-        if (_form == null || _scroll == null) return;
-        double width = (double)_scroll.ContentView.Bounds.Width;
-        double contentWidth = Math.Min(680, Math.Max(1, width - 48));
-        double top = 24;
-        foreach (var row in _rows)
+        return new MacSettingsStateDto
         {
-            if (row is SettingGroup group) group.LayoutRows(contentWidth);
-            row.Frame = new CGRect((width - contentWidth) / 2, top, contentWidth, row.Frame.Height);
-            top += (double)row.Frame.Height + (row is SettingGroup ? 24 : 8);
-        }
-        _form.Frame = new CGRect(0, 0, width, Math.Max(top, (double)_scroll.ContentView.Bounds.Height));
-    }
-
-    /// <summary>把一行添加到原生表单。</summary>
-    private void Add(NSView row) => (_group ?? throw new InvalidOperationException("设置行必须归属分组")).AddRow(row);
-    /// <summary>创建系统表单组标题。</summary>
-    private void Group(string title)
-    {
-        var label = Text(title, 13, true); label.Frame = new CGRect(0, 0, 500, 22);
-        _rows.Add(label); _form!.AddSubview(label);
-        _group = new SettingGroup(); _rows.Add(_group); _form.AddSubview(_group);
-    }
-    /// <summary>创建系统静态标签，字号与颜色使用 AppKit 默认。</summary>
-    private static NSTextField Text(string text, double size = 13, bool emphasis = false)
-        => new() { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
-            Font = (emphasis ? NSFont.BoldSystemFontOfSize((nfloat)size) : NSFont.SystemFontOfSize((nfloat)size)) ?? throw new InvalidOperationException("系统字体不可用"), TextColor = NSColor.Label };
-    /// <summary>一行左右标签/原生控件的布局。</summary>
-    private NSView Row(string title, NSView control, double controlWidth = 180, double height = 44)
-    {
-        var row = new SettingRow(new CGRect(0, 0, 500, height));
-        var label = Text(title); row.AddSubview(label); row.AddSubview(control);
-        row.Resized = () => { label.Frame = new CGRect(0, (height - 20) / 2, Math.Max(100, row.Bounds.Width - controlWidth - 16), 20); control.Frame = new CGRect(row.Bounds.Width - controlWidth, (height - 26) / 2, controlWidth, 26); };
-        row.Resized(); Add(row); return row;
-    }
-    /// <summary>原生布尔开关，改变工作副本。</summary>
-    private void Toggle(string title, Func<bool> getter, Action<bool> setter, bool enabled = true)
-    {
-        var toggle = new NSSwitch { State = getter() ? 1 : 0, Enabled = enabled };
-        toggle.Activated += (_, _) => setter(toggle.State == 1);
-        Row(title, toggle, 40);
-    }
-    /// <summary>有限范围的数值编辑，编辑结束时才提交；非法输入恢复当前有效值。</summary>
-    private void Number(string title, Func<double> getter, Action<double> setter, double min, double max, bool integer = true, string suffix = "")
-    {
-        var field = new NSTextField { StringValue = getter().ToString(integer ? "0" : "0.##", System.Globalization.CultureInfo.InvariantCulture), Alignment = NSTextAlignment.Right, BezelStyle = NSTextFieldBezelStyle.Rounded };
-        /// <summary>校验完成的数值输入，将有效值提交工作副本并恢复规范文本。</summary>
-        void Apply()
-        {
-            if (double.TryParse(field.StringValue, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var value) && double.IsFinite(value) && value >= min && value <= max)
-                setter(integer ? Math.Round(value) : value);
-            field.StringValue = getter().ToString(integer ? "0" : "0.##", System.Globalization.CultureInfo.InvariantCulture);
-        }
-        field.EditingEnded += (_, _) => Apply();
-        _finishEditor += Apply;
-        Row(title + (suffix.Length > 0 ? " (" + suffix + ")" : ""), field, 110);
-    }
-    /// <summary>原生下拉选项，直接写入共享枚举/索引。</summary>
-    private void Choice(string title, string[] options, int selected, Action<int> setter)
-    {
-        var popup = new NSPopUpButton(new CGRect(0, 0, 180, 28), false); popup.AddItems(options); popup.SelectItem(Math.Clamp(selected, 0, options.Length - 1));
-        popup.Activated += (_, _) => setter((int)popup.IndexOfSelectedItem); Row(title, popup);
-    }
-
-    /// <summary>文件格式、合并、缓存/解码预算与预载；全部保留原共享范围。</summary>
-    private void BuildFile()
-    {
-        Group("文件"); Toggle("同名文件视为同一张图片", () => Settings.SameNameAsOnePhoto, value => Settings.SameNameAsOnePhoto = value);
-        Group("支持的文件格式");
-        Add(MacReorderList.Create(Settings.FileFormats, item => item.DisplayName + "  " + item.ExtensionsText, item => item.IsEnabled, (item, value) => item.IsEnabled = value, Settings.MoveFileFormat));
-        Group("缓存与预加载");
-        Number("原生解码线程", () => Settings.NativePreloadParallelism, value => Settings.NativePreloadParallelism = (int)value, 1, Settings.NativePreloadParallelismMaximum);
-        Number("软件解码线程", () => Settings.CpuPreloadParallelism, value => Settings.CpuPreloadParallelism = (int)value, 1, Settings.CpuPreloadParallelismMaximum);
-        Number("缓存内存上限", () => Settings.BitmapCacheMaxMemory, value => Settings.BitmapCacheMaxMemory = (int)value, 512, 65536, suffix: "MB");
-        Number("缓存数量上限", () => Settings.BitmapCacheMaxCount, value => Settings.BitmapCacheMaxCount = (int)value, 1, 4096);
-        Number("下一张预载数量", () => Settings.PreloadForwardCount, value => Settings.PreloadForwardCount = (int)value, 0, Settings.PreloadMaximum);
-        Number("上一张预载数量", () => Settings.PreloadBackwardCount, value => Settings.PreloadBackwardCount = (int)value, 0, Settings.PreloadMaximum);
-        Number("列表滚动预载数量", () => Settings.VisibleCenterPreloadCount, value => Settings.VisibleCenterPreloadCount = (int)value, 0, Settings.PreloadMaximum);
-        Number("滚动预载延时", () => Settings.VisibleCenterDelayMs, value => Settings.VisibleCenterDelayMs = (int)value, 100, 5000, suffix: "ms");
-        var budget = Text(Settings.PerformanceBudgetInfo + "\n" + Settings.BitmapCacheCountInfo, 11); budget.Frame = new CGRect(0, 0, 500, 64); Add(budget);
-    }
-    /// <summary>缩放导航与预设，独立原生列表支持增删编辑。</summary>
-    private void BuildPreview()
-    {
-        Group("预览"); Toggle("显示缩放指示器", () => Settings.ShowZoomIndicator, value => Settings.ShowZoomIndicator = value);
-        Group("缩放比例预设");
-        foreach (var preset in Settings.ScalePresets.ToArray())
-        {
-            var row = new SettingRow(new CGRect(0, 0, 500, 40));
-            var field = new NSTextField { StringValue = preset.Text, Alignment = NSTextAlignment.Right };
-            var percent = Text("%");
-            var remove = NSButton.CreateButton("移除", () => { _finishEditor?.Invoke(); Settings.RemoveScalePreset(preset); BuildCategory(); });
-            /// <summary>完成缩放比例输入后校验范围，更新预设并恢复规范文本。</summary>
-            void Apply()
+            Category = _category,
+            Title = _category >= 0 ? CategoryNames[_category] : string.Empty,
+            CanGoBack = _historyBack.Count > 0,
+            CanGoForward = _historyForward.Count > 0,
+            File = new MacFileStateDto
             {
-                if (double.TryParse(field.StringValue, out double value) && double.IsFinite(value) && value > 0 && value <= 1600) { preset.Text = value.ToString(System.Globalization.CultureInfo.InvariantCulture); Settings.ApplyScalePreset(); }
-                field.StringValue = preset.Text;
-            }
-            field.EditingEnded += (_, _) => Apply(); _finishEditor += Apply;
-            row.AddSubview(field); row.AddSubview(percent); row.AddSubview(remove);
-            row.Resized = () => { field.Frame = new CGRect(0, 7, 110, 26); percent.Frame = new CGRect(118, 10, 30, 24); remove.Frame = new CGRect(row.Bounds.Width - 80, 6, 80, 28); };
-            row.Resized(); Add(row);
-        }
-        var add = NSButton.CreateButton("添加比例", () => { _finishEditor?.Invoke(); Settings.AddScalePreset(); BuildCategory(); });
-        Row("", add, 120);
+                SameNameAsOnePhoto = settings.SameNameAsOnePhoto,
+                Formats = settings.FileFormats.Select(item => new MacFormatDto
+                {
+                    Name = item.DisplayName, Extensions = item.ExtensionsText, Enabled = item.IsEnabled,
+                }).ToList(),
+                NativeParallelism = settings.NativePreloadParallelism,
+                NativeParallelismMax = settings.NativePreloadParallelismMaximum,
+                CpuParallelism = settings.CpuPreloadParallelism,
+                CpuParallelismMax = settings.CpuPreloadParallelismMaximum,
+                CacheMemory = settings.BitmapCacheMaxMemory,
+                CacheCount = settings.BitmapCacheMaxCount,
+                PreloadForward = settings.PreloadForwardCount,
+                PreloadBackward = settings.PreloadBackwardCount,
+                PreloadCenter = settings.VisibleCenterPreloadCount,
+                PreloadDelay = settings.VisibleCenterDelayMs,
+                PreloadMax = settings.PreloadMaximum,
+                BudgetInfo = settings.PerformanceBudgetInfo,
+                BudgetLevel = LevelName(settings.PerformanceBudgetInfoLevel),
+                CacheCountInfo = settings.BitmapCacheCountInfo,
+                CacheCountLevel = LevelName(settings.BitmapCacheCountInfoLevel),
+            },
+            Preview = new MacPreviewStateDto
+            {
+                ShowZoomIndicator = settings.ShowZoomIndicator,
+                Presets = settings.ScalePresets.Select((preset, index) => new MacPresetDto
+                {
+                    Index = index, Text = preset.Text, Display = preset.Display,
+                }).ToList(),
+            },
+            Control = new MacControlStateDto
+            {
+                LayoutModes = settings.LayoutModes.Select(mode => new MacLayoutModeDto
+                {
+                    Name = mode.DisplayName, Description = mode.Description,
+                }).ToList(),
+                LayoutIndex = layoutIndex,
+                Hotkeys = settings.Hotkeys.Select((item, index) => new MacHotkeyDto
+                {
+                    Name = item.Name,
+                    IsDisplay = item.IsDisplay,
+                    Primary = MacInput.FormatGesture(item.PrimaryHotkey, settings),
+                    Secondary = MacInput.FormatGesture(item.SecondaryHotkey, settings),
+                    PrimaryConflict = item.HasPrimaryConflict,
+                    SecondaryConflict = item.HasSecondaryConflict,
+                    Recording = _recordingIndex == index ? (_recordingPrimary ? "primary" : "secondary") : string.Empty,
+                }).ToList(),
+                UseAppleKeyboard = settings.UseAppleKeyboard,
+                MappingTargets = ["不映射", "Ctrl", "Alt", "Win"],
+                CommandTarget = (int)settings.MapCommandTarget,
+                OptionTarget = (int)settings.MapOptionTarget,
+                ControlTarget = (int)settings.MapControlTarget,
+                RecordingActive = _recordingIndex >= 0,
+            },
+            Exif = new MacExifStateDto
+            {
+                Items = settings.ExifDisplayItems.Select(item => new MacExifItemDto
+                {
+                    Name = item.DisplayName, Enabled = item.IsEnabled,
+                }).ToList(),
+                ShowRating = settings.ShowRating,
+                SafeSetRating = settings.SafeSetRating,
+            },
+            Ai = new MacAiStateDto
+            {
+                SimilarityThreshold = (int)Math.Round(settings.SimilarityThreshold * 100),
+                MaxResults = settings.SimilarityMaxResults,
+                ImmediateCompute = settings.AnalysisImmediateCompute,
+                ClearButtonText = settings.ClearDbButtonText,
+                ClearStatus = settings.ClearDbStatus,
+                ClearBusy = settings.ClearDbBusy,
+            },
+        };
     }
-    /// <summary>控制布局、按钮显隐/排序、键盘映射与完整可编辑快捷键。</summary>
-    private void BuildControl()
+
+    /// <summary>把提示语义级别映射为 Swift 侧可读名称。</summary>
+    private static string LevelName(PerfInfoLevel level) => level switch
     {
-        Group("布局"); Choice("布局模式", Settings.LayoutModes.Select(mode => mode.DisplayName).ToArray(), Settings.LayoutModes.ToList().FindIndex(mode => mode.Value == Settings.LayoutMode), index => Settings.LayoutMode = Settings.LayoutModes[index].Value);
-        Group("控制栏功能与快捷键");
-        _hotkeyList = MacReorderList.Create(Settings.Hotkeys, item => item.Name, item => item.IsDisplay,
-            (item, value) => item.IsDisplay = value, Settings.MoveHotkey, HotkeyEditor);
-        Add(_hotkeyList);
-        Group("苹果键盘映射"); Toggle("使用苹果键盘", () => Settings.UseAppleKeyboard, value => { Settings.UseAppleKeyboard = value; _hotkeyList?.RefreshRows(); });
-        string[] targets = ["不映射", "Ctrl", "Alt", "Win"];
-        Choice("⌘ Command", targets, (int)Settings.MapCommandTarget, index => { Settings.MapCommandTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
-        Choice("⌥ Option", targets, (int)Settings.MapOptionTarget, index => { Settings.MapOptionTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
-        Choice("⌃ Control", targets, (int)Settings.MapControlTarget, index => { Settings.MapControlTarget = (PhotoViewer.Core.Input.AppleMappingTarget)index; _hotkeyList?.RefreshRows(); });
-    }
-    /// <summary>在可排序功能行内创建主次手势录制按钮，冲突用系统橙色标明。</summary>
-    private NSView HotkeyEditor(SettingsViewModel.HotkeyItem hotkey, bool primary)
+        PerfInfoLevel.Warning => "warning", PerfInfoLevel.Error => "error", _ => "normal",
+    };
+
+    /// <summary>处理 SwiftUI 回传动作；录制事件返回消费标记，其余返回 0。</summary>
+    private int HandleAction(string json)
     {
-        string title = MacInput.FormatGesture(primary ? hotkey.PrimaryHotkey : hotkey.SecondaryHotkey, Settings);
-        bool conflict = primary ? hotkey.HasPrimaryConflict : hotkey.HasSecondaryConflict;
-        var button = NSButton.CreateButton(string.IsNullOrWhiteSpace(title) ? "未设置" : title, () => { });
-        button.BezelStyle = NSBezelStyle.Rounded;
-        button.ControlSize = NSControlSize.Small;
-        button.ContentTintColor = conflict ? NSColor.SystemOrange : NSColor.Label;
-        button.ToolTip = conflict ? "快捷键冲突" : "点击录制；删除键清空，Escape 取消";
-        button.Activated += (_, _) => BeginRecording(button, hotkey, primary);
-        var cell = new NSTableCellView(new CGRect(0, 0, 116, 34));
-        button.Frame = new CGRect(4, 5, 108, 24);
-        cell.AddSubview(button);
-        return cell;
-    }
-    /// <summary>EXIF 项选择和排序、星级显示及安全写回。</summary>
-    private void BuildExif()
-    {
-        Group("EXIF 显示项");
-        Add(MacReorderList.Create(Settings.ExifDisplayItems, item => item.DisplayName, item => item.IsEnabled, (item, value) => item.IsEnabled = value, Settings.MoveExifDisplay));
-        Group("评分"); Toggle("显示星级评分", () => Settings.ShowRating, value => Settings.ShowRating = value);
-        Toggle("安全修改文件星级", () => Settings.SafeSetRating, value => Settings.SafeSetRating = value);
-    }
-    /// <summary>保留 AI 配置值，顺延功能暂不可编辑；清库命令仍需系统二次确认。</summary>
-    private void BuildAi()
-    {
-        Group("相似聚类");
-        var threshold = Text(Settings.SimilarityThreshold.ToString("P0")); threshold.TextColor = NSColor.SecondaryLabel;
-        var count = Text(Settings.SimilarityMaxResults.ToString()); count.TextColor = NSColor.SecondaryLabel;
-        Row("相似度阈值", threshold, 80); Row("最多数量", count, 80);
-        Toggle("即时计算 DINO/CV", () => Settings.AnalysisImmediateCompute, _ => { }, false);
-        Group("特征数据库");
-        var clear = NSButton.CreateButton("清除特征数据库", () =>
+        if (!_presenting) return 0;
+        MacSettingsActionDto? action;
+        try { action = JsonSerializer.Deserialize(json, MacSettingsJsonContext.Default.MacSettingsActionDto); }
+        catch (JsonException exception)
         {
-            using var alert = new NSAlert { MessageText = "清除特征数据库？", InformativeText = "已提取的 DINO/CV 特征将被清除。", AlertStyle = NSAlertStyle.Warning };
-            alert.AddButton("清除"); alert.AddButton("取消");
-            if (alert.RunModal() != 1000) return;
-            _ = ClearDatabaseAsync();
-        });
-        Row("", clear, 180);
+            Console.Error.WriteLine("[MacSettingsUI] action decode failed: " + exception.Message + " <- " + json);
+            return 0;
+        }
+        if (action == null) return 0;
+        switch (action.Type)
+        {
+            case "selectCategory":
+                ShowCategory(action.Index);
+                return 0;
+            case "navigate":
+                if (action.Forward) GoForward(); else GoBack();
+                return 0;
+            case "setBool":
+                ApplyBool(action.Key ?? throw new InvalidOperationException("动作缺少键名"), action.BoolValue);
+                PushState();
+                return 0;
+            case "setInt":
+                ApplyInt(action.Key ?? throw new InvalidOperationException("动作缺少键名"), action.IntValue);
+                PushState();
+                return 0;
+            case "moveFormat":
+                Settings.MoveFileFormat(action.From, action.To);
+                PushState();
+                return 0;
+            case "moveHotkey":
+                Settings.MoveHotkey(action.From, action.To);
+                PushState();
+                return 0;
+            case "moveExif":
+                Settings.MoveExifDisplay(action.From, action.To);
+                PushState();
+                return 0;
+            case "addPreset":
+                Settings.AddScalePreset();
+                PushState();
+                return 0;
+            case "removePreset":
+                if (action.Index >= 0 && action.Index < Settings.ScalePresets.Count) Settings.RemoveScalePreset(Settings.ScalePresets[action.Index]);
+                PushState();
+                return 0;
+            case "applyPreset":
+                ApplyPreset(action.Index, action.Text ?? string.Empty);
+                PushState();
+                return 0;
+            case "beginRecord":
+                _recordingIndex = action.Index;
+                _recordingPrimary = action.IntValue != 0;
+                PushState();
+                return 0;
+            case "clearDatabase":
+                _ = ClearDatabaseAsync();
+                PushState();
+                return 0;
+            case "recordEvent":
+                return HandleRecordEvent(action);
+            default:
+                throw new InvalidOperationException("未知的设置动作：" + action.Type);
+        }
     }
-    /// <summary>系统确认后顺序完成共享两段确认命令，避免 ReactiveCommand 的执行状态竞态。</summary>
+
+    /// <summary>按标量键写入工作副本，未知键显式报错避免静默失配。</summary>
+    private void ApplyBool(string key, bool value)
+    {
+        var settings = Settings;
+        switch (key)
+        {
+            case "file.sameName": settings.SameNameAsOnePhoto = value; break;
+            case "preview.showZoom": settings.ShowZoomIndicator = value; break;
+            case "control.useAppleKeyboard": settings.UseAppleKeyboard = value; break;
+            case "exif.showRating": settings.ShowRating = value; break;
+            case "exif.safeSetRating": settings.SafeSetRating = value; break;
+            case "ai.immediateCompute": settings.AnalysisImmediateCompute = value; break;
+            default:
+                if (key.StartsWith("file.format.", StringComparison.Ordinal))
+                {
+                    settings.FileFormats[int.Parse(key["file.format.".Length..], CultureInfo.InvariantCulture)].IsEnabled = value;
+                    break;
+                }
+                if (key.StartsWith("control.hotkey.display.", StringComparison.Ordinal))
+                {
+                    settings.Hotkeys[int.Parse(key["control.hotkey.display.".Length..], CultureInfo.InvariantCulture)].IsDisplay = value;
+                    break;
+                }
+                if (key.StartsWith("exif.item.", StringComparison.Ordinal))
+                {
+                    settings.ExifDisplayItems[int.Parse(key["exif.item.".Length..], CultureInfo.InvariantCulture)].IsEnabled = value;
+                    break;
+                }
+                throw new InvalidOperationException("未知的布尔设置键：" + key);
+        }
+    }
+
+    /// <summary>按标量键写入工作副本，未知键显式报错避免静默失配。</summary>
+    private void ApplyInt(string key, int value)
+    {
+        var settings = Settings;
+        switch (key)
+        {
+            case "file.nativeParallelism": settings.NativePreloadParallelism = value; break;
+            case "file.cpuParallelism": settings.CpuPreloadParallelism = value; break;
+            case "file.cacheMemory": settings.BitmapCacheMaxMemory = value; break;
+            case "file.cacheCount": settings.BitmapCacheMaxCount = value; break;
+            case "file.preloadForward": settings.PreloadForwardCount = value; break;
+            case "file.preloadBackward": settings.PreloadBackwardCount = value; break;
+            case "file.preloadCenter": settings.VisibleCenterPreloadCount = value; break;
+            case "file.preloadDelay": settings.VisibleCenterDelayMs = value; break;
+            case "control.layout": settings.LayoutMode = settings.LayoutModes[Math.Clamp(value, 0, settings.LayoutModes.Count - 1)].Value; break;
+            case "control.mapCommand": settings.MapCommandTarget = (AppleMappingTarget)value; break;
+            case "control.mapOption": settings.MapOptionTarget = (AppleMappingTarget)value; break;
+            case "control.mapControl": settings.MapControlTarget = (AppleMappingTarget)value; break;
+            case "ai.threshold": settings.SimilarityThreshold = value / 100.0; break;
+            case "ai.maxResults": settings.SimilarityMaxResults = value; break;
+            default: throw new InvalidOperationException("未知的整数设置键：" + key);
+        }
+    }
+
+    /// <summary>校验缩放比例输入并应用；非法输入保持原值，由状态回推复位界面。</summary>
+    private void ApplyPreset(int index, string text)
+    {
+        if (index < 0 || index >= Settings.ScalePresets.Count) return;
+        var preset = Settings.ScalePresets[index];
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value) && double.IsFinite(value) && value > 0 && value <= 1600)
+        {
+            preset.Text = value.ToString("0.###", CultureInfo.InvariantCulture);
+        }
+        Settings.ApplyScalePreset();
+    }
+
+    /// <summary>系统确认后顺序完成共享两段确认命令，避免 ReactiveCommand 执行状态竞态。</summary>
     private async Task ClearDatabaseAsync()
     {
         var settings = Settings;
         if (!settings.ClearDbConfirming) await settings.ClearDatabaseCommand.Execute();
         await settings.ClearDatabaseCommand.Execute();
+        PushState();
     }
-    /// <summary>原生手势录制，设置窗口中只捕获下一次键/鼠标手势。</summary>
-    private void BeginRecording(NSButton button, SettingsViewModel.HotkeyItem hotkey, bool primary)
+
+    /// <summary>录制态处理真实事件：Escape 取消、Delete/Backspace 清空，其余复用共享手势映射。返回消费标记。</summary>
+    private int HandleRecordEvent(MacSettingsActionDto action)
     {
-        StopRecording();
-        string previousTitle = button.Title;
-        _cancelRecording = () => button.Title = previousTitle;
-        button.Title = "输入快捷键…";
-        _recordMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.LeftMouseDown | NSEventMask.RightMouseDown | NSEventMask.OtherMouseDown | NSEventMask.ScrollWheel, nativeEvent =>
-        {
-            if (nativeEvent.Window != _window) return nativeEvent;
-            if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode == 53) { StopRecording(); return null!; }
-            bool clear = nativeEvent.Type == NSEventType.KeyDown && nativeEvent.KeyCode is 51 or 117;
-            var gesture = clear ? null : MacInput.FromEvent(nativeEvent, Settings);
-            if (gesture == null && !clear) return nativeEvent;
-            if (primary) hotkey.PrimaryHotkey = gesture; else hotkey.SecondaryHotkey = gesture;
-            Settings.CheckHotkeyConflicts(); StopRecording(); _hotkeyList?.RefreshRows(); return null!;
-        });
+        if (_recordingIndex < 0 || _recordingIndex >= Settings.Hotkeys.Count) return 0;
+        if (action.EventType == (int)NSEventType.KeyDown && action.KeyCode == 53) { StopRecording(); PushState(); return 1; }
+        bool clear = action.EventType == (int)NSEventType.KeyDown && action.KeyCode is 51 or 117;
+        if (clear) { AssignGesture(null); PushState(); return 1; }
+        var gesture = MacInput.FromRaw(action.EventType, (ushort)action.KeyCode, action.Modifiers, action.ButtonNumber,
+            action.ScrollingDeltaY, action.Precise, action.Characters, Settings);
+        if (gesture == null) return 0;
+        AssignGesture(gesture);
+        PushState();
+        return 1;
     }
-    /// <summary>结束手势录制并移除系统监视器。</summary>
+
+    /// <summary>把录制到的手势写入当前行主/次绑定并重新检测冲突。</summary>
+    private void AssignGesture(AppGesture? gesture)
+    {
+        var hotkey = Settings.Hotkeys[_recordingIndex];
+        if (_recordingPrimary) hotkey.PrimaryHotkey = gesture; else hotkey.SecondaryHotkey = gesture;
+        _recordingIndex = -1;
+        _recordingPrimary = false;
+        Settings.CheckHotkeyConflicts();
+    }
+
+    /// <summary>结束录制态。</summary>
     private void StopRecording()
     {
-        if (_recordMonitor != null) { NSEvent.RemoveMonitor(_recordMonitor); _recordMonitor.Dispose(); _recordMonitor = null; }
-        _cancelRecording?.Invoke(); _cancelRecording = null;
-    }
-
-    /// <summary>侧栏分类数据。</summary>
-    private sealed class CategorySource(string[] categories) : NSTableViewDataSource
-    {
-        /// <summary>分类行数。</summary>
-        public override nint GetRowCount(NSTableView tableView) => categories.Length;
-    }
-    /// <summary>原生分类行。</summary>
-    private sealed class CategoryDelegate(string[] categories, Action<nint> selected) : NSTableViewDelegate
-    {
-        /// <summary>分类选中由同一原生 delegate 消费，避免 .NET 事件覆盖已接入的 delegate。</summary>
-        public override void SelectionDidChange(NSNotification notification) { if (notification.Object is NSTableView table) selected(table.SelectedRow); }
-        /// <summary>使用系统标签展示分类。</summary>
-        public override NSView GetViewForItem(NSTableView tableView, NSTableColumn? tableColumn, nint row)
-        {
-            string[] symbols = ["folder", "photo", "keyboard", "info.circle", "sparkles"];
-            var label = Text(categories[(int)row]);
-            label.Frame = new CGRect(36, 6, 130, 20);
-            label.AutoresizingMask = NSViewResizingMask.WidthSizable;
-            var icon = new NSImageView(new CGRect(8, 7, 18, 18))
-            {
-                Image = MacSymbols.Get(symbols[(int)row]), ContentTintColor = NSColor.ControlAccent,
-            };
-            var cell = new NSTableCellView(new CGRect(0, 0, 180, 32)) { TextField = label, ImageView = icon };
-            cell.AddSubview(icon); cell.AddSubview(label); return cell;
-        }
-    }
-    /// <summary>表单采用向下的布局坐标。</summary>
-    private sealed class FormView(CGRect frame) : NSView(frame)
-    {
-        public override bool IsFlipped => true;
-        /// <summary>在当前深色外观中解析语义底色，避免 CGColor 提前解析产生白边。</summary>
-        public override void DrawRect(CGRect dirtyRect) { NSColor.WindowBackground.SetFill(); NSBezierPath.FillRect(Bounds); }
-    }
-    /// <summary>自适应原生设置根视图。</summary>
-    private sealed class SettingsRoot(CGRect frame) : NSView(frame)
-    {
-        public Action? Resized { get; set; }
-        public override bool IsFlipped => true;
-        /// <summary>整块详情区域绘制同一语义底色，填满滚动容器的四周。</summary>
-        public override void DrawRect(CGRect dirtyRect) { NSColor.WindowBackground.SetFill(); NSBezierPath.FillRect(Bounds); }
-        /// <summary>尺寸变化重新布置侧栏与右侧表单。</summary>
-        public override void SetFrameSize(CGSize newSize) { base.SetFrameSize(newSize); Resized?.Invoke(); }
-    }
-    /// <summary>左右标签和控件的自适应行。</summary>
-    private sealed class SettingRow(CGRect frame) : NSView(frame)
-    {
-        public Action? Resized { get; set; }
-        public override bool IsFlipped => true;
-        /// <summary>行宽变化重新对齐控件。</summary>
-        public override void SetFrameSize(CGSize newSize) { base.SetFrameSize(newSize); Resized?.Invoke(); }
-    }
-
-    /// <summary>同类设置的圆角分组，动态语义底色和轻量分隔线跟随窗口外观。</summary>
-    private sealed class SettingGroup : NSView
-    {
-        private readonly List<NSView> _children = [];
-        public override bool IsFlipped => true;
-
-        /// <summary>把完整设置行加入当前分组，保留各行的原生控件。</summary>
-        internal void AddRow(NSView row) { _children.Add(row); AddSubview(row); }
-
-        /// <summary>根据表单宽度排列行，表格保留自身滚动区且不增加外框。</summary>
-        internal void LayoutRows(double width)
-        {
-            double top = 6;
-            foreach (var row in _children)
-            {
-                row.Frame = new CGRect(14, top, Math.Max(1, width - 28), row.Frame.Height);
-                top += (double)row.Frame.Height;
-            }
-            Frame = new CGRect(Frame.X, Frame.Y, width, top + 6);
-            NeedsDisplay = true;
-        }
-
-        /// <summary>仅绘制分组底色和行间分隔线，不烘焙浅色背景或边框。</summary>
-        public override void DrawRect(CGRect dirtyRect)
-        {
-            using var fill = NSColor.WindowBackground.BlendedColor(.07f, NSColor.Label) ?? throw new InvalidOperationException("设置分组颜色不可用");
-            fill.SetFill();
-            using var background = NSBezierPath.FromRoundedRect(Bounds, 10, 10);
-            background.Fill();
-            NSColor.Separator.SetStroke();
-            using var separator = new NSBezierPath { LineWidth = .5f };
-            foreach (var row in _children.Skip(1))
-            {
-                separator.MoveTo(new CGPoint(14, row.Frame.Y));
-                separator.LineTo(new CGPoint(Bounds.Width - 14, row.Frame.Y));
-            }
-            separator.Stroke();
-        }
-
-        /// <summary>分类更换时释放表格的托管数据源及其它子控件。</summary>
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing) { foreach (var row in _children) { row.RemoveFromSuperview(); row.Dispose(); } _children.Clear(); }
-            base.Dispose(disposing);
-        }
+        _recordingIndex = -1;
+        _recordingPrimary = false;
     }
 }

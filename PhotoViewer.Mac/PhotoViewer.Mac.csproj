@@ -38,6 +38,23 @@
     </ItemGroup>
 
     <!--
+      原生设置 UI 动态库：
+      设置窗口由 SwiftUI 实现（Native/SwiftSettings/MacSettingsUI.swift），
+      编译成 libMacSettingsUI.dylib 落入 .app/Contents/MonoBundle/，
+      随后由 _FixDylibCodeSigning 统一完成 adhoc 代码签名。
+    -->
+    <Target Name="_BuildSwiftSettingsDylib"
+            BeforeTargets="_CodesignAppBundle"
+            Inputs="$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift"
+            Outputs="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib"
+            Condition="$([MSBuild]::IsOSPlatform('osx'))">
+        <MakeDir Directories="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle" />
+        <Exec Command="xcrun --sdk macosx swiftc -parse-as-library -emit-library -O -target arm64-apple-macosx26.0 &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift&quot; -o &quot;$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib&quot;"
+              IgnoreExitCode="false" />
+        <Message Importance="high" Text="[SwiftSettings] 编译 SwiftUI 设置动态库 → MonoBundle/libMacSettingsUI.dylib" />
+    </Target>
+
+    <!--
       macOS 26+ Code Signing 修正：
       dotnet build 产出的 .app 中部分原生 dylib 的 adhoc 签名不完整，
       内核会因 cs_invalid_page 拒绝加载并发送 SIGKILL。

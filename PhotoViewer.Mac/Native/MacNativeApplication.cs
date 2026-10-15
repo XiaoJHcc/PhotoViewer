@@ -107,7 +107,7 @@ public static class MacNativeApplication
         /// <summary>退出前关闭设置工作副本并完成持久化，再释放原生展示，避免保存节流来不及执行。</summary>
         public override void WillTerminate(NSNotification notification)
         {
-            _settings?.Window?.Close();
+            _settings?.CloseWindow();
             if (_mainWindow != null)
             {
                 SettingsService.Instance.SaveAsync(_mainWindow.Main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
