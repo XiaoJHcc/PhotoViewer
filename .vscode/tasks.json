@@ -23,6 +23,27 @@
       "problemMatcher": "$msCompile"
     },
     {
+      "label": "Debug Windows (Legacy)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Desktop -c Debug -- --legacy-ui",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run Windows (Legacy)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Desktop --no-build -c Debug -- --legacy-ui",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Compare Windows (Native + Legacy)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj -c Debug && powershell -NoProfile -Command \"Start-Process 'PhotoViewer.Desktop/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Desktop.exe' -ArgumentList '--legacy-ui'; Start-Process 'PhotoViewer.Desktop/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Desktop.exe'\"",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
       "label": "Debug Mac",
       "type": "shell",
       "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug && open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app",

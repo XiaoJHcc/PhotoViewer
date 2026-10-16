@@ -99,7 +99,20 @@ public sealed class PhotoLoadSession : IDisposable
                 if (_needsFull && IsProxy) UpdateViewport(_proxyLongEdge / 2.0, 0, true);
             }).ConfigureAwait(false);
         }
-        catch (OperationCanceledException) { }
+        catch (OperationCanceledException)
+        {
+            // 本代际仍是当前请求却被取消(并入的在途任务被前一次请求的令牌取消):必须复位加载状态并给出可见原因，
+            // 否则会停在"没有图且不会再加载"的黑屏(旧行为:静默吞掉、_fullLoading 永远为 true)。
+            if (generation == _generation && !cancellationToken.IsCancellationRequested)
+            {
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    _fullLoading = false;
+                    Error = "解码被中断，请重新选择照片";
+                    Changed?.Invoke();
+                }).ConfigureAwait(false);
+            }
+        }
         catch (Exception exception)
         {
             await UiDispatcher.InvokeAsync(() =>
