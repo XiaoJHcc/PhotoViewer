@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-14(P2 AppKit/Metal 已落地，程序化核验通过；作者产品验收待执行)。
+> 最后更新:2026-10-16(P3 四项功能已落地并经作者复验；复验发现的两个缺陷已修，其余验收门与发布通道仍在作者手上)。
 
 ## 1. 为什么重构(决策语境)
 
@@ -17,7 +17,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
 - **Phase 1 已完成**(M1 Governor 骨架 / M2 统一 LRU+压力矩阵 / M3 准入+租约+缓冲池 / M4 分级代理解码 / **M5 iPad 真机验收 2026-10-13 全项通过**):验收门 ①500 连翻无闪退恒 Normal ✅ ②P0 延迟 iPad -55%/Mac HEIC -51% ✅ ③告警后 30s 恢复观察期真机实证 ✅ ⑤Core 零 Avalonia/零新增警告 ✅;④ Windows 程序化部分 2026-10-13 过(交互项作者手测中)、Android 待办。M5 副产物:**修复 mono 解释器 ref/out P/Invoke 封送间歇崩溃**(iOS 头工程签名全指针化;`BootTrace` 常驻取证);新增压测驱动器 `StressFlipDriver`(启动参数 `--pv-stress` 系,见 phase-1 §5)。详见 [native-rebuild-phase-1.md](native-rebuild-phase-1.md) §1 验收门勾选与 §5 发现清单。
 - **Windows 收尾(2026-10-13)**:P1 定向审查(Windows 路径)3 项发现已修——`SkiaImageCodec.ToBgra32` R/B 映射(harness 逐通道断言 PASS)、Desktop `--pv-stress` 接线、P1-M4a 失准注释;Windows 桌面回归程序化部分过关(`--pv-stress` 18/18 零超时、告警注入级联+恢复观察期日志断言、评分 XmpWriter 读写回环 PASS);缩放/设置/聚类/分析栏交互项 2026-10-13 作者裁定手工冒烟。`MainViewModel.CurrentFile` 切图取证日志常驻(phase-1 §5 有一次性异常登记)。
-- **Phase 2 实现与程序化自验已完成，待作者产品验收**：作者授权直接执行 P2，M1–M4 AppKit/Metal、F16 色彩/代理、胶片条/筛选/评分、手势/快捷键、原生设置、外部打开已落地；Debug 默认原生，Release 默认旧壳。ColorTestTool 23 项、原生色卡 39 项/RAW 副本 17 项/生成 HEIF 14 项通过（含八种 GPU 与分析方向、物理 100% Full、外部打开队列、设置副本隔离与落盘、CV/DINO/指纹三表索引）。四平台构建零错误、无新增编译警告；Mac NU1903、Android 14 条为既有基线。执行清单 [native-rebuild-phase-2.md](native-rebuild-phase-2.md)，产品验收 [native-rebuild-phase-2-acceptance.md](native-rebuild-phase-2-acceptance.md)。系统预览色彩对拍/跨屏、手感、大图性能门未关闭；RAW 冷图约 1.7–1.9s，小色卡不能替代真实素材 <100ms 指标。分析栏/聚类/工具/增强顺延 P3，入口隐藏且切图不隐式推理。作者已授权先提交，产品验收继续；五张实拍暴露的胶片条布局/滚动/顺序缺陷已修复，五张与十二张多图定向回归通过。
+- **Phase 2 实现与程序化自验已完成，作者产品验收 2026-10-16 通过（性能门除外）**：作者授权直接执行 P2，M1–M4 AppKit/Metal、F16 色彩/代理、胶片条/筛选/评分、手势/快捷键、原生设置、外部打开已落地；Debug 默认原生，Release 默认旧壳。ColorTestTool 23 项、原生色卡 39 项/RAW 副本 17 项/生成 HEIF 14 项通过（含八种 GPU 与分析方向、物理 100% Full、外部打开队列、设置副本隔离与落盘、CV/DINO/指纹三表索引）。四平台构建零错误、无新增编译警告；Mac NU1903、Android 14 条为既有基线。执行清单 [native-rebuild-phase-2.md](native-rebuild-phase-2.md)，产品验收 [native-rebuild-phase-2-acceptance.md](native-rebuild-phase-2-acceptance.md)。系统预览色彩对拍/跨屏与手感已于 2026-10-16 由作者验收通过；大图性能门仍未关闭，RAW 冷图约 1.7–1.9s，小色卡不能替代真实素材 <100ms 指标。分析栏/聚类/工具/增强顺延 P3，入口隐藏且切图不隐式推理。作者已授权先提交，产品验收继续；五张实拍暴露的胶片条布局/滚动/顺序缺陷已修复，五张与十二张多图定向回归通过。
 - **P1-M4b 画质/交互修复(2026-10-14,作者实证驱动)**:① 代理 overscan 1.5→**2.0**(1.5× 下"解码降采样+上屏 Mitchell 降采样"双重软化可见;2× 超采样后上屏重采样近乎无损,守画质红线;内存代价由 Governor 准入兜底);② **双击/键盘放大不触发 Full 升级**(根因:`ZoomTo`/`FocusOnImagePoint` 先改 Scale、后落 `Fit=false`,`Scale` 订阅见到 `Fit==true` 直接 return;双指缩放因连续事件第二次起 Fit 已 false 才正常。修复:升级触发改听 `Scale`+`Fit` 双属性)。Mac 真屏冒烟:ARW 代理 4180×2787(=2× 视图物理像素)、双击 100% → `show full 7008×4672` 热替换、放大态切图 Full 自动接续、回 fit 不再全解码、零异常。两修复均在共享层,原生壳直接继承;上屏最后一级滤波(trilinear/mipmap)已写入 phase-2 P2-M2。
 
 ## 2.1 过程决策(2026-10-12 与作者对齐)
@@ -27,10 +27,11 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - **设计文档与工具栏对拍（2026-10-15，早期记录，几何宽松要求已被上条替代）**：作者明确 UI 文档现阶段是对账草稿，重要约束与原生表现待分类，不能把旧版尺寸/参数冻结。工具栏真屏对拍发现三分组丢失、EXIF 信息层级丢失、竖排评分倒置和固定高度按钮边框；新增 MacControlBar 恢复整体分组换行/换列、居中与信息块，按钮采用可变高度原生边框，同时修复显隐/排序刷新、苹果主次绑定提示及评分快捷命令星数。P3 入口保持延期。
 
 - **跨平台设计对账（2026-10-14）**：新增 [Design/ui-contract.md](../Design/ui-contract.md) 作为设计真源，使用稳定 ID 记录共同交互、平台差异、缺口及各平台验收状态。对照 Avalonia 纠正 P2 返修中“所有 CurrentFile/列表刷新都居中”的误实现：点选/交换/排序/筛选不居中，显式翻页/打开用 350ms 三次缓出，新请求覆盖并允许用户接管。Mac 显隐恢复/换向定位登记为平台差异；其他平台未做实机验证的项目保持待验，卡片日期/完整时间入口与加载提示缺口已登记。
-  - 本轮 12 张色卡与五组实拍 HIF/ARW 定向实跑均 `PASS filmstrip`，两向/升降序及实际筛选菜单回归通过，报告含动画中间帧与终点。Debug Mac 构建零错误、无新增警告（仅既有 NU1903）；滚动条真实拖动、开启减少动态效果与动画手感仍待作者手验。
+  - 本轮 12 张色卡与五组实拍 HIF/ARW 定向实跑均 `PASS filmstrip`，两向/升降序及实际筛选菜单回归通过，报告含动画中间帧与终点。Debug Mac 构建零错误、无新增警告（仅既有 NU1903）；触控板/滚动/动画手感与开启系统"减少动态效果"的显式导航已于 2026-10-16 由作者验收通过。
 
-- **Phase 3（macOS 原生缺失功能补全）进行中**：作者 2026-10-16 要求把剩余顺延功能按原 Avalonia 设计重构到 Mac 原生（布局/尺寸/要点/高亮尽量一致；下拉框、右键菜单等小型控件保留原生；工具窗口可仿设置窗口方式）。执行清单 [native-rebuild-phase-3.md](native-rebuild-phase-3.md)。已落地：① 共享层抽出平台中立的 `Core/AI/AnalysisPresenter` + `AnalysisTile` + `IAnalysisHost` 与 `Core/AI/DinoDiagnosticPresenter`，旧壳 `AnalysisViewModel` / `DinoDebugViewModel` 退化为位图适配器（编排单一来源）；② 增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）；③ `ImageOrientationMapping` + `DisplayCrop` 统一方向映射与显示朝向 1:1 细节裁剪，`SkiaImageCodec.Crop` 支持 F16；④ `HistogramRenderer` 直接支持 F16 线性表面；⑤ 原生分析栏（`MacAnalysisPanel` / `MacDiagnosticTile` / `MacDetailPreview` / `MacShakeFieldView`）与 `ToggleAnalysisView`、`ToggleEnhance` 命令、右键菜单入口；⑥ 原生相似聚类面板与筛选条 toggle；⑦ 原生工具窗口（EXIF 详情 / DINO 诊断）。验收套件 `--pv-native-analysis` 已加入 runner。
-- **P2 UI 返修（2026-10-14）**：作者指出胶片条自动居中缺失、控制栏右侧空带、设置浅色/四周白边及排序/快捷键结构草率。本轮恢复主轴居中（首尾受边界约束），主窗口滚动条统一 overlay、控制文档匹配裁剪宽度；设置固定 DarkAqua，采用 NSSplitViewController Sidebar、SourceList/SF Symbols 与语义色分组表单，NSTableView 分列勾选/名称/主次快捷键，原生 pasteboard writer 与行间插入。五组实拍/12 张色卡的两向居中回归通过，设置五分类/真实快捷键事件/勾选/排序绑定/窄宽窗/关闭落盘通过，无新增编译警告；系统窗口截图取得。真实鼠标拖放因系统事件注入权限受阻仍需作者手验，不能记作已通过。详见 P2 验收清单新增设置回归段。
+- **Phase 3（macOS 原生缺失功能补全）已完成并经作者复验**：作者 2026-10-16 要求把剩余顺延功能按原 Avalonia 设计重构到 Mac 原生（布局/尺寸/要点/高亮尽量一致；下拉框、右键菜单等小型控件保留原生；工具窗口可仿设置窗口方式）。执行清单 [native-rebuild-phase-3.md](native-rebuild-phase-3.md)。已落地：① 共享层抽出平台中立的 `Core/AI/AnalysisPresenter` + `AnalysisTile` + `IAnalysisHost` 与 `Core/AI/DinoDiagnosticPresenter`，旧壳 `AnalysisViewModel` / `DinoDebugViewModel` 退化为位图适配器（编排单一来源）；② 增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）；③ `ImageOrientationMapping` + `DisplayCrop` 统一方向映射与显示朝向 1:1 细节裁剪，`SkiaImageCodec.Crop` 支持 F16；④ `HistogramRenderer` 直接支持 F16 线性表面；⑤ 原生分析栏（`MacAnalysisPanel` / `MacDiagnosticTile` / `MacDetailPreview` / `MacShakeFieldView`）与 `ToggleAnalysisView`、`ToggleEnhance` 命令、右键菜单入口；⑥ 原生相似聚类面板与筛选条 toggle；⑦ 原生工具窗口（EXIF 详情 / DINO 诊断）。
+  作者复验（2026-10-16）：色彩 / 画质 / 手感通过；相似面板选中高亮、"提取全部"后瓦片仍显示未提取、toggle 闪烁与点不动等上一轮反馈已修。复验又发现两个缺陷并已修（`Plans/native-rebuild-phase-3.md` §3.2）：① **关闭窗口报"意外退出"**——`MacSettingsNative` 的函数指针要等设置窗口首次展示才赋值，从未打开设置时 `WillTerminate → CloseWindow()` 调用 null 跳地址 0；现在每个导出入口先 `EnsureLoaded()`，且从未展示过时 `CloseWindow()` 直接返回；② **标题栏双击不能最大化**——隐藏式标题栏不自带系统行为，新增窗口级监视器分支按系统偏好 `AppleActionOnDoubleClick` 缩放/最小化/不动作。作者另外判定"切图卡顿（预载/缓存）属共享层问题，本轮不修"。同轮裁定：**Avalonia 旧壳不做产品验收**（它将被原生壳替换），验收只在各平台原生壳上进行；macOS 原生壳的色彩、画质、手感、减少动态效果开启态与真实鼠标拖放（设置页拖拽排序 / 主窗口拖入文件）全部通过，未关闭项只剩大图性能门。
+- **P2 UI 返修（2026-10-14）**：作者指出胶片条自动居中缺失、控制栏右侧空带、设置浅色/四周白边及排序/快捷键结构草率。本轮恢复主轴居中（首尾受边界约束），主窗口滚动条统一 overlay、控制文档匹配裁剪宽度；设置固定 DarkAqua，采用 NSSplitViewController Sidebar、SourceList/SF Symbols 与语义色分组表单，NSTableView 分列勾选/名称/主次快捷键，原生 pasteboard writer 与行间插入。五组实拍/12 张色卡的两向居中回归通过，设置五分类/真实快捷键事件/勾选/排序绑定/窄宽窗/关闭落盘通过，无新增编译警告；系统窗口截图取得。真实鼠标拖放因系统事件注入权限受阻，程序化从未通过、不能记作已通过；该项已于 2026-10-16 由作者手工实操验收通过（设置页列表拖拽排序、主窗口拖入文件）。详见 P2 验收清单新增设置回归段。
 
 - **P2 UI 追加约束(2026-10-14)**：作者要求主窗口保留隐藏式标题栏，明确设计为方形的元素保持方形；下拉框、按钮等通用控件保持原位置与大体形状并接近原生风格。具体几何表、Apple SF Symbols 建议与字体图标保留边界已写入 [P2 UI 方案](native-rebuild-phase-2-ui.md) §1.4–1.5；上一版示意的矩形缩略图区是示意样式错误，不是解码问题，作者允许在原生实现时修正。**设置页**按作者要求参考已有 iOS 原生设置，直接采用 macOS 原生设置风格，功能一致、不追求 Avalonia 视觉一致；原网页设置布局不作为实现规格，以方案 §4 与原生真屏验收为准。
 
@@ -48,12 +49,14 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | **macOS 构建** | ✅ 2026-10-12 | 0 错误,仅 NU1903 基线警告 |
 | **P2 四平台构建** | ✅ 2026-10-14 | Windows/iOS 0 警告；Mac 仅 NU1903，Android 14 条既有警告；全部零错误 |
 | **P2 原生实跑** | ✅ 程序化 2026-10-14 | AppKit/Metal 真实启动、色卡/八方向、RAW Full7008×4672、设置实际落盘、评级/CV/DINO/指纹三表回环；输出 release/native-p2-acceptance，使用独立设置/数据库与自有图片副本 |
-| **P2 产品/色彩/性能** | ⏸ 待作者验收与真实素材测量 | 按 P2 验收清单操作，发布通道在此之前不切换 |
+| **P2 产品/色彩/性能** | ✅ 色彩/画质/手感/拖放 2026-10-16 作者验收通过；性能门未关 | 色彩跨屏对拍、画质、手感（含触控板）、真实鼠标拖放由作者实跑通过；大图性能门（RAW 冷图 1.7–1.9s <100ms）与真实素材矩阵仍未关闭。发布通道（dmg 默认是否切原生）待作者决定，属主计划 Phase 6 |
+| **P3 作者复验** | ✅ 2026-10-16 通过（含两处修复） | 作者实跑：色彩/画质/手感/真实鼠标拖放通过；退出崩溃与标题栏双击两缺陷已修并复验（八套原生回归 PASS、四平台 0 错误、真实 AppleEvent 退出两种路径无崩溃报告、"双击标题栏"真机双向切换）；系统"减弱动态效果"开启态作者实测通过。未修（作者判定共享层另立项）：切图卡顿；未关闭：大图性能门 |
+| **旧壳（Avalonia）验收** | ⛔ 不再验收 | 作者裁定旧壳将被原生壳替换、不做产品验收；各平台验收在各自原生壳落地后单独建立（macOS 已完成，下一个是 iOS） |
 | **macOS 冒烟(首轮)** | ✅ 2026-10-12 | CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常;交互逐项(翻图/缩放/评分写回/设置)待人工 |
 | **iOS 构建** | ✅ 2026-10-13 | 模拟器+真机(ios-arm64 Release)均 0 错误 |
 | **iPad mini 7 真机验收(P1-M5)** | ✅ 2026-10-13 | 500 连翻(450 HEIC+50 ARW)p50 356.7ms 恒 Normal 零闪退;告警注入+30s 观察期实证;`--pv-stress-full` 对照组复现 jetsam(A/B 成立);修复 mono interp ref/out P/Invoke 间歇崩溃后 26/26 启动零崩溃。缩放热替换手感、外部打开选中行为留人工 |
 | DINO 渲染口径 | ✅ 2026-10-12 | A/B 实证(headless 不可行,用真窗口 GPU 路径):zoneplate 摩尔纹形态两侧一致(同为 Linear/无 mipmap 族),真实内容 meanDiff=0.24/maxDiff=15(GPU↔CPU 舍入级)。**意外发现:macOS 上 `RenderTargetBitmap.CopyPixels` 实为 RGBA 序**,旧管线 Mac 端 DINO 输入 R/B 互换(Windows 缓存正常);新 Skia 路径统一 BGRA,顺带根治 |
-| 四平台人工冒烟 | ⏸ 按 §2.1 决策推迟 | 旧壳阶段 agent 程序化自验;人工验收自原生壳阶段开始 |
+| 四平台人工冒烟 | ⛔ 旧壳不验收 | 作者裁定：Avalonia 旧壳不做产品验收（将被原生壳替换）；人工验收只在各平台原生壳进行。macOS 原生壳 2026-10-16 通过 |
 
 ## 4. Mac 开工步骤(接手第一天)
 

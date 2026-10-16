@@ -230,7 +230,9 @@ internal sealed class MacSettingsActionDto
 [JsonSerializable(typeof(MacSettingsActionDto))]
 internal partial class MacSettingsJsonContext : JsonSerializerContext;
 
-/// <summary>libMacSettingsUI.dylib 的 C ABI 绑定：动态加载导出函数并提供强类型封装。</summary>
+/// <summary>libMacSettingsUI.dylib 的 C ABI 绑定：动态加载导出函数并提供强类型封装。
+/// 每个导出入口都先 <see cref="EnsureLoaded"/>：动态库未载入时函数指针仍为 null，
+/// 直接调用会跳到地址 0 崩溃（退出时关闭从未打开过的设置窗口曾命中）。</summary>
 internal static unsafe class MacSettingsNative
 {
     private const string LibraryName = "libMacSettingsUI.dylib";
@@ -277,31 +279,31 @@ internal static unsafe class MacSettingsNative
     }
 
     /// <summary>展示（或复用）设置窗口并载入状态 JSON。</summary>
-    internal static void Show(string json) => InvokeUtf8(json, _show);
+    internal static void Show(string json) { EnsureLoaded(); InvokeUtf8(json, _show); }
 
     /// <summary>用最新状态 JSON 刷新窗口。</summary>
-    internal static void UpdateState(string json) => InvokeUtf8(json, _updateState);
+    internal static void UpdateState(string json) { EnsureLoaded(); InvokeUtf8(json, _updateState); }
 
     /// <summary>关闭设置窗口。</summary>
-    internal static void Close() => _close();
+    internal static void Close() { EnsureLoaded(); _close(); }
 
     /// <summary>窗口号，供宿主截图取证。</summary>
-    internal static int WindowNumber() => _windowNumber();
+    internal static int WindowNumber() { EnsureLoaded(); return _windowNumber(); }
 
     /// <summary>窗口是否为深色外观。</summary>
-    internal static bool IsDark() => _isDark() != 0;
+    internal static bool IsDark() { EnsureLoaded(); return _isDark() != 0; }
 
     /// <summary>内容控制器是否已挂载 SwiftUI 宿主视图。</summary>
-    internal static bool HasHostingController() => _hasHostingController() != 0;
+    internal static bool HasHostingController() { EnsureLoaded(); return _hasHostingController() != 0; }
 
     /// <summary>调整窗口内容尺寸。</summary>
-    internal static void SetContentSize(double width, double height) => _setContentSize(width, height);
+    internal static void SetContentSize(double width, double height) { EnsureLoaded(); _setContentSize(width, height); }
 
     /// <summary>进入快捷键录制态。</summary>
-    internal static void BeginRecording(int index, bool primary) => _beginRecording(index, primary ? 1 : 0);
+    internal static void BeginRecording(int index, bool primary) { EnsureLoaded(); _beginRecording(index, primary ? 1 : 0); }
 
     /// <summary>把窗口内容导出为 PNG。</summary>
-    internal static void Render(string path) => InvokeUtf8(path, _render);
+    internal static void Render(string path) { EnsureLoaded(); InvokeUtf8(path, _render); }
 
     /// <summary>把托管字符串以 UTF-8 传入 C 函数。</summary>
     private static void InvokeUtf8(string value, delegate* unmanaged[Cdecl]<nint, void> function)

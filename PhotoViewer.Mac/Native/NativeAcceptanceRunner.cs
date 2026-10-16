@@ -24,6 +24,9 @@ public static class NativeAcceptanceRunner
         var results = new List<NativeCheck>();
         string output = System.IO.Path.GetFullPath("release/native-p2-acceptance");
         Directory.CreateDirectory(output);
+        // 各套件会为几何对拍反复改窗口尺寸，而主窗口开了 FrameAutosaveName，程序化 SetFrame 同样会写回
+        // 用户偏好。这里记住进入时的窗口帧，收尾还原，避免跑一轮验收就把作者的窗口尺寸改掉。
+        var originalFrame = window.Window.Frame;
         try
         {
             // 冒烟会话从中性布局状态开始：栏位显隐与面板开合由各套件自行设定，
@@ -33,7 +36,7 @@ public static class NativeAcceptanceRunner
             await Task.Delay(120);
             if (args.Contains("--pv-native-input"))
             {
-                await NativeInputAcceptance.RunAsync(window, output);
+                await NativeInputAcceptance.RunAsync(window, settings, output);
                 File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
                 Environment.ExitCode = 0;
                 return;
@@ -207,7 +210,13 @@ public static class NativeAcceptanceRunner
             Console.Error.WriteLine("[NativeSmoke] FAIL " + exception);
             Environment.ExitCode = 1;
         }
-        finally { await Task.Delay(600); Environment.Exit(Environment.ExitCode); }
+        finally
+        {
+            // 还原作者原窗口帧（触发 FrameAutosaveName 写回原值），再退出。
+            window.Window.SetFrame(originalFrame, true);
+            await Task.Delay(600);
+            Environment.Exit(Environment.ExitCode);
+        }
     }
     /// <summary>用已知测试色块检验 ImageIO 浮点通道和行朝向，P3/Adobe 红原色不能提前裁剪。</summary>
     private static void VerifyColor(DecodedImage image, string filename)

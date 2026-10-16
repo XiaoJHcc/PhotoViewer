@@ -33,6 +33,10 @@ public sealed class MacMainWindow : IDisposable
     private const double SimilarityListPadding = 8;
     /// <summary>相似面板左右各 1 点描边。</summary>
     private const double SimilarityBorderWidth = 1;
+    /// <summary>系统“双击窗口标题栏”偏好键(NSUserDefaults 全局域，取值 Maximize / Minimize / None)。</summary>
+    internal const string TitlebarDoubleClickPreference = "AppleActionOnDoubleClick";
+    /// <summary>AppKit 全屏样式位 <c>NSWindowStyleMaskFullScreen</c>（.NET 绑定的 <see cref="NSWindowStyle"/> 未导出该成员，按位取值）。</summary>
+    private const NSWindowStyle FullScreenStyleBit = (NSWindowStyle)(1 << 14);
     private readonly MainViewModel _main;
     private readonly RootView _root;
     private readonly NSView _filePane;
@@ -181,7 +185,7 @@ public sealed class MacMainWindow : IDisposable
         _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
         _filePane.AddSubview(_similarityPane);
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
-        _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
+        _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.LeftMouseDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
         {
             if (nativeEvent.Type is NSEventType.MouseMoved or NSEventType.MouseExited)
             {
@@ -190,6 +194,7 @@ public sealed class MacMainWindow : IDisposable
                 _dragLeft.Hidden = !show; _dragRight.Hidden = !show;
                 return nativeEvent;
             }
+            if (HandleTitlebarDoubleClick(nativeEvent)) return null!;
             if (nativeEvent.Window != Window || Window.FirstResponder is NSTextView or NSTextField) return nativeEvent;
             return HandleInput(nativeEvent) ? null! : nativeEvent;
         });
@@ -227,6 +232,32 @@ public sealed class MacMainWindow : IDisposable
     private void SaveFullscreen(bool fullscreen)
     {
         if (!_automatedValidation) NSUserDefaults.StandardUserDefaults.SetBool(fullscreen, "PhotoViewer.Native.Fullscreen");
+    }
+    /// <summary>按系统“双击窗口标题栏”偏好执行双击动作：隐藏式标题栏(FullSizeContentView)的窗口
+    /// 不会自带系统行为，须由顶边拖动区自己分派；取值缺省即系统默认“最大化”(缩放切换)。</summary>
+    private static void PerformTitlebarDoubleClickAction(NSWindow? window)
+    {
+        if (window == null) return;
+        switch (NSUserDefaults.StandardUserDefaults.StringForKey(TitlebarDoubleClickPreference))
+        {
+            case "Minimize": window.Miniaturize(null); break;
+            case "None": break;
+            default: window.Zoom(null); break;
+        }
+    }
+    /// <summary>顶边拖动区内的标题栏双击：命中即执行系统偏好动作并吞掉事件(否则会落到主图/筛选控件上)。
+    /// 判定挂在窗口级事件监视器上而不是拖动区视图自身 —— 拖动区只在悬停时显示，若靠命中测试，
+    /// 未先移动鼠标就直接双击会落到主图上。返回 true 表示事件已消费。</summary>
+    /// <param name="nativeEvent">进入窗口派发链的原生事件。</param>
+    internal bool HandleTitlebarDoubleClick(NSEvent nativeEvent)
+    {
+        if (nativeEvent.Type != NSEventType.LeftMouseDown || nativeEvent.ClickCount < 2 || nativeEvent.Window != Window) return false;
+        // 全屏没有标题栏：不接管双击，把它留给主图自己的双击语义。
+        if (Window.StyleMask.HasFlag(FullScreenStyleBit)) return false;
+        var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
+        if (!_dragLeft.Frame.Contains(point) && !_dragRight.Frame.Contains(point)) return false;
+        PerformTitlebarDoubleClickAction(Window);
+        return true;
     }
     /// <summary>创建深色观片分区，使用 layer 而不重绘大位图。</summary>
     private static NSView Pane(NSColor? color = null)
@@ -981,7 +1012,7 @@ public sealed class MacMainWindow : IDisposable
     {
         /// <summary>默认收起，不占用布局高度。</summary>
         public DragZone() { Hidden = true; WantsLayer = true; Layer!.BackgroundColor = NSColor.FromWhite(.08f, .55f).CGColor; }
-        /// <summary>拖动交由系统窗口移动，保留原生吸附与屏幕行为。</summary>
+        /// <summary>拖动交由系统窗口移动，保留原生吸附与屏幕行为；双击由窗口级监视器接管(见 HandleTitlebarDoubleClick)。</summary>
         public override void MouseDown(NSEvent theEvent) => Window?.PerformWindowDrag(theEvent);
     }
 }

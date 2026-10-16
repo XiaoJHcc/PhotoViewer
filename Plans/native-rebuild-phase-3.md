@@ -71,9 +71,12 @@
 - [x] 工具窗口：`--pv-native-tools` **PASS**（日志 `[NativeSmoke] PASS tools`）；清单 `native-tools-checks.txt` 记录懒创建单例、深色外观与 880×720、列表页两入口（无 Windows 专属项）、EXIF 页 6 组 / 50 标签渲染 + 返回按钮、DINO 页 5 张瓦片 + presenter 状态就绪、关闭与重开。
 - [x] 四平台构建：Mac / Desktop / iOS / Android 全部 **0 错误**；Android 仅 `PhotoViewer.Android/Core/` 两个文件的既有基线警告（非本次改动文件），iOS 与 Desktop 0 警告，Mac 保持既有 NU1903 三条。
 - [x] 相似聚类：`--pv-native-similarity` **PASS**（日志 `[NativeSmoke] PASS similarity`）；清单逐项记录 toggle 双向一致、行布局让位、列布局扩宽（cross ≥ MinWidth 106）、两向收起后几何逐项还原、顶边拖动区不覆盖 toggle、相似项卡片与胶片栏锚点高亮并存、列表/空态与 VM 一致。布局基线已随筛选条新增 toggle 重出：`--pv-native-layout` PASS，`--legacy-ui --pv-legacy-layout` PASS 6 轮，旧壳实测与原生逐项吻合（列布局筛选条高 204 / 排序项 13,34,90,32 / toggle 13,167,90,27；行布局 toggle 竖向居中 12.5），仅计数文本按系统字体自然宽度有约 3.5 点的既有已登记差异。
-- [ ] 旧壳（Windows/iOS/Android）分析栏与 DINO 诊断页只经编译与共享 presenter 实测覆盖，Avalonia 适配层的视觉结果留待对应平台实机（本轮无 Windows/移动端设备）。
-- [ ] 真实照片端到端（打开目录 → 翻图 → 开分析栏 → 增强 → 相似聚类 → 工具页）无异常、无崩溃。
-- [ ] 真实鼠标拖放、手感与真屏色彩验收仍留作者人工（不以程序化结果替代）。
+- [x] ~~旧壳（Windows/iOS/Android）分析栏与 DINO 诊断页视觉~~：**作者裁定旧壳不做验收（将被原生壳替换）**，本条撤销；P3 的共享 presenter 改动只在原生壳上验收，其余平台留待其原生壳阶段（下一个是 iOS）。
+- [x] 真实照片端到端（打开目录 → 翻图 → 开分析栏 → 增强 → 相似聚类 → 工具页）：作者 2026-10-16 复验，除退出崩溃（§3.2 已修）外无异常；色彩、画质、手感通过。
+- [ ] 切图卡顿（照片预载 / 缓存清理）：作者判定属共享层问题，**本轮不修**，转后续专项。
+- [x] 真实鼠标拖放：**作者 2026-10-16 手工验收通过**（设置页列表拖拽排序、主窗口拖入文件/目录；程序化合成拖动受系统事件注入权限限制，产品结论以实操为准）。
+- [ ] 大图性能门（RAW 冷图 1.7–1.9s，未达 fit <100ms）仍留真实素材实测。
+- [x] 系统"减弱动态效果"开启态：**作者 2026-10-16 实测通过**（开启后显式导航直接到终点、点选仍不定位）。
 
 ### 3.1 作者反馈修复（2026-10-16）
 
@@ -83,5 +86,18 @@
 | 「提取全部」之后 DINO/CV 诊断瓦片仍显示「未提取」（徽标已亮） | 提炼前算出的空 entry（含"未提取"）被 `AnalysisResultCache` 缓存；入库后既不作废缓存也没有任何信号让分析栏重路由 | `FolderFeatureIndexer` 每写成功一组即 `AnalysisResultCache.Invalidate(fingerprint)` 并抛 `FeaturesWritten`；`AnalysisPresenter` 订阅它（与 `ShakeFlagService.RecheckRequested`）后重新路由；`Refresh` 先归位 UI 线程 | `--pv-native-analysis` 新增断言：未入库照片四张瓦片为「未提取」→ 跑一次真实索引 → 瓦片自行出图且期间未切图 |
 | 相似聚类按钮"有时可点、有时不可点" | 顶边悬停拖动区（窗口拖动层）右段起点用的是「计数」右边缘，新增在计数之后的相似聚类 toggle 正好被盖住；拖动层随鼠标进出顶部显隐，于是按钮时灵时不灵 | 拖动区右段起点改取最后一个筛选控件的右边缘；`FilterToggleButton.IsOn` 改为值不变时不重绘 | `--pv-native-similarity` 新增断言：两个拖动区与 toggle 的 Frame 均不相交 |
 | 相似聚类按钮"点不动"（上一轮修复引入） | 把 `IsOn` 的 getter 改成读私有字段后，**点击时 AppKit 翻转的是 cell 的 State**，`Activated` 里回读 `IsOn` 永远是旧值 → 回写共享状态被 setter 的等值早退吃掉，点击等于没发生（外观还会被 AppKit 翻成 On，看似"亮着但没反应"） | 彻底不依赖 AppKit Toggle 语义：按钮改用 `MomentaryPushIn`（无系统外观），勾选态由类自持，点击在内部翻转后经 `Toggled` 回调回写共享状态；样式按「勾选 × 悬停」四态应用并与已应用组合比较，避免重复重绘 | `--pv-native-similarity` 新增**真实点击**断言：`PerformClick` 后共享状态与面板开合随之变化；此前套件只做程序化赋值，才漏掉这条回归。同时补齐旧壳的悬停配色（`#333`/`#666`/`#CCC`，勾选悬停 `#26477A`/`#4A85C4`/`#CFE0F5`） |
-- [ ] 旧壳（Windows/iOS/Android）分析栏与 DINO 诊断页只经编译与共享 presenter 实测覆盖，Avalonia 适配层的视觉结果留待对应平台实机（本轮无 Windows/移动端设备）。
+
+### 3.2 作者复验与第二轮修复（2026-10-16）
+
+作者本轮结论：色彩、画质、手感均**通过**；发现两个缺陷（下）；照片预载 / 缓存清理"切图会卡顿"作者
+判定属共享层、**本轮先不修**；"减少动态效果"一项作者需要说明（见末行）。
+
+| 反馈 | 根因 | 修复 | 回归 |
+|---|---|---|---|
+| 正常关闭窗口报"意外退出"（macOS 崩溃报告 `SIGSEGV / KERN_INVALID_ADDRESS at 0x0`） | 退出走 `WillTerminate` → `MacNativeSettingsPresenter.CloseWindow()` → `MacSettingsNative.Close()`，而该桥的函数指针**要等设置窗口首次展示时 `EnsureLoaded()` 才赋值**。本次会话没打开过设置 → `_close` 为 null → 调用跳到地址 0。崩溃栈：`-[NSApplication terminate:]` → 通知回调 → `xamarin_invoke_trampoline sel="applicationWillTerminate:"`（lldb 实测确认） | ① `MacSettingsNative` 的**每个**导出入口先 `EnsureLoaded()`，函数指针不再可能为 null；② `CloseWindow()` 在从未展示过设置窗口时直接返回——退出不该为了关一个不存在的窗口去载入 SwiftUI 动态库 | 真实会话 AppleEvent 退出两种路径均**干净退出、无新崩溃报告**（设置从未打开 / 设置窗口开着各一次）；`--pv-native-input` 新增断言：`!IsPresented` 时 `CloseWindow()` 必须是不触碰未载入动态库的空操作（修复前该断言会直接崩在地址 0） |
+| 标题栏双击没法最大化 | 隐藏式标题栏（`FullSizeContentView` + `TitleVisibility.Hidden`）的窗口不会自带系统"双击标题栏"动作；顶边拖动区只做 `PerformWindowDrag`，而双击若是先落到主图上，还会被主图自己的双击语义（缩放适应）吃掉 | 新增窗口级监视器分支 `HandleTitlebarDoubleClick`：左键双击且落点位于两个拖动区 Frame 内 → 按系统偏好 `AppleActionOnDoubleClick`（缺省 = 最大化/缩放，`Minimize` = 最小化，`None` = 不动作）执行并**吞掉事件**；全屏没有标题栏，不接管（留给主图双击）。判定放在监视器而不是拖动区视图里，是因为拖动区只在悬停时显示，靠命中测试会让"不预热鼠标直接双击"落到主图 | `--pv-native-input` 新增四点断言：区内双击放大到标准帧、`None` 完全不动、`Minimize` 最小化、主图中心（区外）双击既不被接管也不动窗口；并用真实双击（真机事件投递）复验 1199×747 ⇄ 1710×1072 双向切换 |
+| 「减少动态效果开启后的独立操作」作者不知道指什么 | ——（说明性条目，非缺陷） | 指 macOS **系统设置 → 辅助功能 → 显示 → 减弱动态效果**（Reduce Motion）。它开启后 `MacFilmstripView.AnimateTo` 必须**跳过 350ms 三次缓出、直接定位终点**，否则系统会把"降低动效"的设置变成一句空话。代码已接入 `NSWorkspace.AccessibilityDisplayShouldReduceMotion`（[FILM-03](../Design/ui-contract.md)），但该值只能由系统设置提供、无法在进程内伪造，所以只能人工开一次开关核对（胶片栏点选仍不定位，显式导航才动） | **作者 2026-10-16 开启态实测通过**（本轮未改代码） |
+
+作者本轮已确认的项：真实照片端到端（打开目录 → 翻图 → 分析栏/相似聚类/工具页/增强）除上述退出崩溃外
+无异常；色彩、画质、手感通过。**切图卡顿（预载/缓存）作者判定为共享层问题，本轮不修**，留待后续专项。
 

@@ -62,8 +62,15 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     internal void RenderTo(string path) => MacSettingsNative.Render(path);
     /// <summary>验收进入快捷键录制态。</summary>
     internal void BeginRecording(int hotkeyIndex, bool primary) => MacSettingsNative.BeginRecording(hotkeyIndex, primary);
-    /// <summary>验收关闭设置窗口，触发工作副本回写。</summary>
-    internal void CloseWindow() => MacSettingsNative.Close();
+    /// <summary>关闭设置窗口并触发工作副本回写；从未展示过时不动 SwiftUI 侧
+    /// （退出路径会调用本方法，此时不该为了关一个不存在的窗口去载入设置动态库）。</summary>
+    internal void CloseWindow()
+    {
+        if (!_presenting) return;
+        MacSettingsNative.Close();
+    }
+    /// <summary>当前是否有已展示的设置窗口（退出路径回归读取）。</summary>
+    internal bool IsPresented => _presenting;
     /// <summary>验收以与 SwiftUI 相同的动作通道驱动一次交互。</summary>
     internal int ApplyAction(string json) => HandleAction(json);
 
