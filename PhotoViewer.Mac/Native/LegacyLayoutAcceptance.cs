@@ -117,7 +117,7 @@ internal static class LegacyLayoutAcceptance
             await WaitOnUiAsync(() => File.Exists(settingsPath) ? settingsPath : null, "设置加载完成");
             await OnUiAsync(() => ApplyTestConfiguration(main, fixture));
             await WaitOnUiAsync(() => main.CurrentFile is not null && main.ImageVM.SourceBitmap is not null ? main.CurrentFile : null, "fixture 首图与主图位图加载");
-            await OnUiAsync(() => HideSimilarityToggle(mainView));
+            await OnUiAsync(() => VerifySimilarityToggleVisible(mainView));
             await Task.Delay(300);
             await OnUiAsync(() => VerifyTestConfiguration(main));
 
@@ -183,8 +183,9 @@ internal static class LegacyLayoutAcceptance
         }
     }
 
-    /// <summary>测试视觉树内隐藏相似聚类 toggle(P3 延期,不改 axaml 设计),使其不参与对拍布局。</summary>
-    private static void HideSimilarityToggle(MainView mainView)
+    /// <summary>核对视觉树内相似聚类 toggle 存在且未隐藏(P3 起恢复该入口,基线必须带上它一起对拍)。
+    /// 行/列两套布局各持一份 toggle,只有生效布局那份处于 IsEffectivelyVisible,所以要求全部未被显式隐藏且至少一份实际可见。</summary>
+    private static void VerifySimilarityToggleVisible(MainView mainView)
     {
         var toggles = mainView.GetVisualDescendants()
             .OfType<ToggleButton>()
@@ -192,12 +193,17 @@ internal static class LegacyLayoutAcceptance
             .ToArray();
         if (toggles.Length == 0)
         {
-            throw new InvalidOperationException("视觉树中找不到相似聚类 toggle,无法按测试口径隐藏");
+            throw new InvalidOperationException("视觉树中找不到相似聚类 toggle");
         }
 
-        foreach (var toggle in toggles)
+        if (toggles.Any(toggle => !toggle.IsVisible))
         {
-            toggle.IsVisible = false;
+            throw new InvalidOperationException("相似聚类 toggle 被隐藏,无法与旧壳基线对拍");
+        }
+
+        if (!toggles.Any(toggle => toggle.IsEffectivelyVisible))
+        {
+            throw new InvalidOperationException("生效布局内相似聚类 toggle 不可见,无法与旧壳基线对拍");
         }
     }
 
@@ -234,11 +240,7 @@ internal static class LegacyLayoutAcceptance
             window.Height = size.Height;
         });
         await WaitForLayoutAsync(window, mainView, mode);
-        await OnUiAsync(() =>
-        {
-            foreach (var panel in mainView.GetVisualDescendants().OfType<FilterBarView>().Select(view => view.FindControl<StackPanel>("FilterBarPanel")))
-                foreach (var toggle in panel?.Children.OfType<ToggleButton>() ?? []) toggle.IsVisible = false;
-        });
+        await OnUiAsync(() => VerifySimilarityToggleVisible(mainView));
         await Task.Delay(200);
 
         var run = await OnUiAsync(() =>

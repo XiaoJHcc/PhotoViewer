@@ -461,9 +461,9 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 后台位图预取检查缩略图通道是否仍在繁忙,以让位于高优先级加载。
+    /// 后台位图预取检查缩略图通道是否仍在繁忙,以让位于高优先级加载;原生分析栏的未提取回退同样需要它。
     /// </summary>
-    internal bool IsThumbnailLoadingBusy()
+    public bool IsThumbnailLoadingBusy()
     {
         if (DecodeScheduler.GetQueuedCount(DecodePriority.P1_HighValue) > 0) return true;
         return _filteredFiles.Any(f => f.IsThumbnailLoading);

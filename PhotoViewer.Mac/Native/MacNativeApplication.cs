@@ -64,6 +64,7 @@ public static class MacNativeApplication
     {
         private MacMainWindow? _mainWindow;
         private MacNativeSettingsPresenter? _settings;
+        private WindowPresenter? _presenter;
         /// <summary>创建共享 VM 与原生窗口，处理命令行或提前到达的 Finder 请求。</summary>
         public override async void DidFinishLaunching(NSNotification notification)
         {
@@ -74,7 +75,8 @@ public static class MacNativeApplication
                 _settings = new MacNativeSettingsPresenter();
                 _mainWindow.SetSettingsPresenter(_settings);
                 NativeSettingsPresenter.Initialize(_settings);
-                NativeWindowPresenter.Initialize(new WindowPresenter(_settings));
+                _presenter = new WindowPresenter(_settings, _mainWindow);
+                NativeWindowPresenter.Initialize(_presenter);
                 if (OperatingSystem.IsMacOSVersionAtLeast(14)) NSApplication.SharedApplication.Activate();
                 else NSApplication.SharedApplication.ActivateIgnoringOtherApps(true);
                 await _mainWindow.OpenPathsAsync(args.Where(path => !path.StartsWith("--", StringComparison.Ordinal)));
@@ -108,6 +110,7 @@ public static class MacNativeApplication
         public override void WillTerminate(NSNotification notification)
         {
             _settings?.CloseWindow();
+            _presenter?.Dispose();
             if (_mainWindow != null)
             {
                 SettingsService.Instance.SaveAsync(_mainWindow.Main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
@@ -116,12 +119,36 @@ public static class MacNativeApplication
         }
     }
 
-    /// <summary>共享设置窗口门面的 AppKit 实现。</summary>
-    private sealed class WindowPresenter(MacNativeSettingsPresenter settings) : INativeWindowPresenter
+    /// <summary>共享设置/工具窗口门面的 AppKit 实现；工具窗口为单例，未创建时按需创建。</summary>
+    private sealed class WindowPresenter(MacNativeSettingsPresenter settings, MacMainWindow window) : INativeWindowPresenter, IDisposable
     {
+        private MacToolsWindow? _tools;
         /// <summary>显示原生设置。</summary>
         public void ShowSettingsWindow(SettingsViewModel viewModel) => settings.TryPresent(viewModel);
-        /// <summary>工具属于 P3，误接入时明确暴露调用错误。</summary>
-        public void ShowOrActivateToolsWindow(ToolsViewModel tools) => throw new InvalidOperationException("工具页在 Phase 3 原生化");
+        /// <summary>显示或前置唯一的原生工具窗口；打开前把当前照片同步给工具页。</summary>
+        public void ShowOrActivateToolsWindow(ToolsViewModel tools)
+        {
+            if (_tools == null)
+            {
+                _tools = new MacToolsWindow(window.Main, window.IsAutomatedValidation);
+                MacToolsWindowRegistry.Current = _tools;
+            }
+            _tools.SyncCurrentFile();
+            _tools.ShowOrActivate();
+        }
+        /// <summary>退出时释放工具窗口的订阅与视图。</summary>
+        public void Dispose()
+        {
+            MacToolsWindowRegistry.Current = null;
+            _tools?.Dispose();
+            _tools = null;
+        }
     }
+}
+
+/// <summary>原生工具窗口登记处：实例由展示器创建，验收据此断言单例、关闭与重开。</summary>
+internal static class MacToolsWindowRegistry
+{
+    /// <summary>当前原生工具窗口；未创建时为 null。</summary>
+    internal static MacToolsWindow? Current { get; set; }
 }

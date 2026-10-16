@@ -53,6 +53,25 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     private double ImageWidth => _orientation >= 5 ? _sourceHeight : _sourceWidth;
     private double ImageHeight => _orientation >= 5 ? _sourceWidth : _sourceHeight;
 
+    /// <summary>显示朝向的逻辑图像宽（像素）。</summary>
+    public double DisplayWidth => ImageWidth;
+    /// <summary>显示朝向的逻辑图像高（像素）。</summary>
+    public double DisplayHeight => ImageHeight;
+    /// <summary>图像像素到视图点的当前缩放（点/像素）。</summary>
+    public double PointScale => _scale;
+
+    /// <summary>把显示朝向的归一化图像点换算成视图坐标（点）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    /// <returns>视图坐标系（顶边为原点）中的点。</returns>
+    public CGPoint ViewPoint(double u, double v)
+    {
+        double width = ImageWidth * _scale, height = ImageHeight * _scale;
+        return new CGPoint(
+            (double)Bounds.Width / 2 - width / 2 + _panX + u * width,
+            (double)Bounds.Height / 2 - height / 2 + _panY + v * height);
+    }
+
     /// <summary>建立 Metal 队列、着色器和带正确线性色彩标签的照片层；不支持时显式失败。</summary>
     public MetalPhotoView(CGRect frame) : base(frame)
     {
@@ -144,6 +163,22 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
             ViewportChanged?.Invoke();
         }
         else ZoomTo(1 / BackingScale, point ?? new CGPoint(Bounds.Width / 2, Bounds.Height / 2));
+    }
+
+    /// <summary>按物理倍率缩放并把显示朝向的归一化点移到视口中心（细节预览双击用）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    /// <param name="physicalScale">目标物理倍率（1 = 源像素对屏幕物理像素 1:1）。</param>
+    public void FocusOnPoint(double u, double v, double physicalScale)
+    {
+        _scale = physicalScale / BackingScale;
+        _fit = false;
+        _followsFocus = false;
+        _panX = (.5 - u) * ImageWidth * _scale;
+        _panY = (.5 - v) * ImageHeight * _scale;
+        ClampPan();
+        DrawFrame();
+        ViewportChanged?.Invoke();
     }
 
     /// <summary>以显示朝向的归一化对焦位置为视口中心，并约束边缘平移。</summary>

@@ -247,7 +247,7 @@ public static class SkiaImageCodec
     }
 
     /// <summary>
-    /// 按源像素坐标裁剪(行级字节拷贝,无重采样);缓冲池租用。
+    /// 按源像素坐标裁剪(行级字节拷贝,无重采样);缓冲池租用,保留源的像素编码与色彩标签。
     /// </summary>
     /// <param name="src">源图像,所有权不转移。</param>
     /// <param name="x">左上角 X。</param>
@@ -257,18 +257,17 @@ public static class SkiaImageCodec
     /// <returns>裁剪结果;失败返回 null。</returns>
     public static DecodedImage? Crop(DecodedImage src, int x, int y, int width, int height)
     {
-        if (src.Encoding != PixelEncoding.Bgra32) return null;
         if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > src.Width || y + height > src.Height)
             return null;
 
-        const int bpp = 4;
-        var rowBytes = width * bpp;
-        var dest = DecodedImage.RentPixels(rowBytes * height);
+        int bpp = DecodedImage.BytesPerPixel(src.Encoding);
+        var rowBytes = checked(width * bpp);
+        var dest = DecodedImage.RentPixels(checked(rowBytes * height));
         for (int row = 0; row < height; row++)
         {
             Array.Copy(src.Pixels, (long)(y + row) * src.Stride + (long)x * bpp, dest, (long)row * rowBytes, rowBytes);
         }
-        return DecodedImage.CreatePooled(dest, width, height, rowBytes, PixelEncoding.Bgra32);
+        return DecodedImage.CreatePooled(dest, width, height, rowBytes, src.Encoding, src.ColorSpace);
     }
 
     /// <summary>

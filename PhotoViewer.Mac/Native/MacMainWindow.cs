@@ -6,6 +6,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
 
@@ -16,6 +17,22 @@ public sealed class MacMainWindow : IDisposable
 {
     private const double FilterWidth = 90;
     private const double FilterHeight = 32;
+    /// <summary>筛选条内容间距(旧壳 <c>StackPanel Spacing=5</c>)。</summary>
+    private const double FilterGap = 5;
+    /// <summary>相似聚类 toggle 高度(旧壳 12 点字 + 6,4 内边距的实际量得值)。</summary>
+    private const double FilterToggleHeight = 27;
+    /// <summary>行布局下筛选条四周外边距(旧壳 <c>Margin=10</c>)。</summary>
+    private const double FilterMargin = 10;
+    /// <summary>列布局下筛选条顶边:为隐藏标题栏的交通灯让位(旧壳平台标题栏设置)。</summary>
+    private const double FilterTopInset = 34;
+    /// <summary>相似面板 MinWidth(旧壳 <c>SimilarityListView</c>)。</summary>
+    private const double SimilarityMinWidth = 106;
+    /// <summary>相似面板右侧外边距(旧壳 <c>Margin="0,0,4,0"</c>)。</summary>
+    private const double SimilarityMargin = 4;
+    /// <summary>相似列表两侧内边距合计(旧壳行布局 ItemsPanel <c>Margin="4,4,4,4"</c>)。</summary>
+    private const double SimilarityListPadding = 8;
+    /// <summary>相似面板左右各 1 点描边。</summary>
+    private const double SimilarityBorderWidth = 1;
     private readonly MainViewModel _main;
     private readonly RootView _root;
     private readonly NSView _filePane;
@@ -25,6 +42,8 @@ public sealed class MacMainWindow : IDisposable
     private readonly MacControlBar _controlPane;
     private readonly NSScrollView _controlScroll;
     private readonly NSView _photoPane;
+    private readonly MacAnalysisPanel _analysisPane;
+    private readonly NSView _detailHighlight;
     private readonly DragZone _dragLeft;
     private readonly DragZone _dragRight;
     private readonly MacFilmstripScrollView _scroll;
@@ -35,6 +54,8 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSPopUpButton _order;
     private readonly NSPopUpButton _ratingFilter;
     private readonly NSTextField _count;
+    private readonly FilterToggleButton _similarityToggle;
+    private readonly MacSimilarityPanel _similarityPane;
     private readonly NSTextField _hint;
     private readonly NSView _navigationHost;
     private readonly NSImageView _navigationImage;
@@ -70,8 +91,20 @@ public sealed class MacMainWindow : IDisposable
     internal NSScrollView FilmstripScroll => _scroll;
     /// <summary>实际分组控制栏供操作与几何回归读取。</summary>
     internal MacControlBar ControlBar => _controlPane;
+    /// <summary>原生分析栏供几何与交互回归读取。</summary>
+    internal MacAnalysisPanel Analysis => _analysisPane;
+    /// <summary>是否处于自动验收会话（验收工具据此避免写用户偏好与弹窗）。</summary>
+    internal bool IsAutomatedValidation => _automatedValidation;
     /// <summary>控制栏系统滚动容器供溢出与边缘验收读取。</summary>
     internal NSScrollView ControlScroll => _controlScroll;
+    /// <summary>原生相似聚类面板供几何与交互回归读取。</summary>
+    internal MacSimilarityPanel Similarity => _similarityPane;
+    /// <summary>筛选条相似聚类 toggle 供原生布局验收读取。</summary>
+    internal NSButton SimilarityToggle => _similarityToggle;
+    /// <summary>相似聚类 toggle 的勾选态（按钮自持，验收读取）。</summary>
+    internal bool SimilarityToggleIsOn => _similarityToggle.IsOn;
+    /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
+    internal IReadOnlyList<NSView> DragZones => [_dragLeft, _dragRight];
 
     /// <summary>创建窗口、筛选、虚拟化胶片栏与控制栏，并连接共享通知。</summary>
     public MacMainWindow(MainViewModel main, bool automatedValidation = false)
@@ -101,6 +134,15 @@ public sealed class MacMainWindow : IDisposable
         _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _photoPane.AddSubview(Photo);
+        _detailHighlight = new PassThroughPane();
+        _detailHighlight.Layer!.BorderColor = NSColor.FromRgb(0, 255, 0).CGColor;
+        _detailHighlight.Layer.BorderWidth = 3;
+        _detailHighlight.Hidden = true;
+        _photoPane.AddSubview(_detailHighlight);
+        _analysisPane = new MacAnalysisPanel(_main, Session) { Hidden = true };
+        _analysisPane.DetailHighlight = UpdateDetailHighlight;
+        _analysisPane.DetailFocusRequested = FocusDetailPoint;
+        _root.AddSubview(_analysisPane);
         _hint = Label("点击打开文件 或 拖拽图片到此处", 16);
         _hint.Alignment = NSTextAlignment.Center;
         _hint.TextColor = NSColor.SecondaryLabel;
@@ -120,10 +162,13 @@ public sealed class MacMainWindow : IDisposable
         _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
         _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
+        _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板");
         _sort.Activated += (_, _) => _main.FileVM.FilterBar.SortMode = (SortMode)_main.FileVM.FilterBar.SortModes[(int)_sort.IndexOfSelectedItem].Value;
         _order.Activated += (_, _) => _main.FileVM.FilterBar.SortOrder = (SortOrder)_main.FileVM.FilterBar.SortOrders[(int)_order.IndexOfSelectedItem].Value;
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
-        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count }) _filePane.AddSubview(control);
+        // 勾选态由按钮自持并回写共享状态（不回读按钮，避免与 AppKit cell 状态耦合）。
+        _similarityToggle.Toggled = open => _main.FileVM.FilterBar.IsSimilarityPanelOpen = open;
+        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count, _similarityToggle }) _filePane.AddSubview(control);
         _filmstripLayout = new MacFilmstripLayout();
         _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.FromWhite(.07f, 1)] };
         _collection.RegisterClassForItem(typeof(MacThumbnailItem), "PhotoCard");
@@ -133,6 +178,8 @@ public sealed class MacMainWindow : IDisposable
         _scroll.UserScrollStarted = CancelFilmstripScroll;
         _liveScrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSScrollView.WillStartLiveScrollNotification, _ => CancelFilmstripScroll(), _scroll);
         _filePane.AddSubview(_scroll);
+        _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
+        _filePane.AddSubview(_similarityPane);
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
         _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
         {
@@ -211,6 +258,121 @@ public sealed class MacMainWindow : IDisposable
         public override void MouseDown(NSEvent nativeEvent) => Cell.PerformClick(Bounds, this);
     }
 
+    /// <summary>筛选条相似聚类原生 toggle：无边框自绘药丸，12 点居中标题、圆角 6、1 点描边；
+    /// 勾选态按旧壳 <c>ToggleButton.SimToggle</c> 换成 <c>#1F3A5F</c> 底 / <c>#3A6FA8</c> 边 / <c>#AECBEE</c> 字，
+    /// 未勾选为透明底 / <c>#555</c> 边 / <c>#AAA</c> 字。
+    /// 勾选状态由本类自己持有（不用 <c>NSButtonType.Toggle</c>）：旧写法的 getter 读私有字段而点击翻转的是 cell 状态，
+    /// 导致点一次读回旧值、按钮表现为"点不动"；同时 Toggle 态会取 alternateTitle，只设 AttributedTitle 会露出系统占位串 "Button"。</summary>
+    private sealed class FilterToggleButton : NSButton
+    {
+        private const double CornerRadius = 6;
+        private static readonly NSColor BorderOff = NSColor.FromRgb(0x55, 0x55, 0x55);
+        private static readonly NSColor TextOff = NSColor.FromRgb(0xAA, 0xAA, 0xAA);
+        private static readonly NSColor FillOn = NSColor.FromRgb(0x1F, 0x3A, 0x5F);
+        private static readonly NSColor BorderOn = NSColor.FromRgb(0x3A, 0x6F, 0xA8);
+        private static readonly NSColor TextOn = NSColor.FromRgb(0xAE, 0xCB, 0xEE);
+        private static readonly NSColor FillOffHover = NSColor.FromRgb(0x33, 0x33, 0x33);
+        private static readonly NSColor BorderOffHover = NSColor.FromRgb(0x66, 0x66, 0x66);
+        private static readonly NSColor TextOffHover = NSColor.FromRgb(0xCC, 0xCC, 0xCC);
+        private static readonly NSColor FillOnHover = NSColor.FromRgb(0x26, 0x47, 0x7A);
+        private static readonly NSColor BorderOnHover = NSColor.FromRgb(0x4A, 0x85, 0xC4);
+        private static readonly NSColor TextOnHover = NSColor.FromRgb(0xCF, 0xE0, 0xF5);
+        private readonly string _title;
+        private bool _isOn;
+        private bool _hover;
+        private (bool On, bool Hover)? _styled;
+        private NSTrackingArea? _tracking;
+
+        /// <summary>点击切换回调，参数为切换后的勾选态；调用方据此回写共享状态。</summary>
+        public Action<bool>? Toggled { get; set; }
+
+        /// <summary>构造并立即应用未勾选样式（不依赖外部赋值，避免漏掉首次上色）。</summary>
+        /// <param name="title">按钮文案。</param>
+        /// <param name="tooltip">鼠标悬停提示。</param>
+        public FilterToggleButton(string title, string tooltip)
+        {
+            _title = title;
+            ToolTip = tooltip;
+            SetButtonType(NSButtonType.MomentaryPushIn);
+            Bordered = false;
+            WantsLayer = true;
+            Alignment = NSTextAlignment.Center;
+            Layer!.CornerRadius = (nfloat)CornerRadius;
+            Layer.BorderWidth = 1;
+            Layer.MasksToBounds = true;
+            Activated += (_, _) =>
+            {
+                _isOn = !_isOn;
+                ApplyStyle(_isOn);
+                Toggled?.Invoke(_isOn);
+            };
+            ApplyStyle(false);
+        }
+
+        /// <summary>勾选态；样式只在与已应用组合不同时重绘，避免筛选条每次属性变化都重画。</summary>
+        public bool IsOn
+        {
+            get => _isOn;
+            set
+            {
+                _isOn = value;
+                ApplyStyle(value);
+            }
+        }
+
+        /// <summary>新增/更新鼠标跟踪区，用于悬停反馈（旧壳 ToggleButton 有 pointerover 态）。</summary>
+        public override void UpdateTrackingAreas()
+        {
+            base.UpdateTrackingAreas();
+            if (_tracking != null) RemoveTrackingArea(_tracking);
+            _tracking = new NSTrackingArea(Bounds, NSTrackingAreaOptions.MouseEnteredAndExited | NSTrackingAreaOptions.ActiveInKeyWindow, this, null);
+            AddTrackingArea(_tracking);
+        }
+
+        /// <summary>鼠标进入：应用悬停配色。</summary>
+        public override void MouseEntered(NSEvent theEvent)
+        {
+            _hover = true;
+            ApplyStyle(_isOn);
+        }
+
+        /// <summary>鼠标离开：恢复常态配色。</summary>
+        public override void MouseExited(NSEvent theEvent)
+        {
+            _hover = false;
+            ApplyStyle(_isOn);
+        }
+
+        /// <summary>
+        /// 应用勾选/悬停组合的配色；普通与替代标题都按业务文案设置，杜漏系统占位串。
+        /// </summary>
+        /// <param name="on">是否勾选。</param>
+        private void ApplyStyle(bool on)
+        {
+            if (_styled == (on, _hover)) return;
+            _styled = (on, _hover);
+            var (fill, border, text) = (on, _hover) switch
+            {
+                (true, true) => (FillOnHover, BorderOnHover, TextOnHover),
+                (true, false) => (FillOn, BorderOn, TextOn),
+                (false, true) => (FillOffHover, BorderOffHover, TextOffHover),
+                (false, false) => (NSColor.Clear, BorderOff, TextOff),
+            };
+            Layer!.BackgroundColor = fill.CGColor;
+            Layer.BorderColor = border.CGColor;
+            using var paragraph = new NSMutableParagraphStyle { Alignment = NSTextAlignment.Center };
+            using var attributes = new NSDictionary(
+                NSStringAttributeKey.Font, NSFont.SystemFontOfSize(12) ?? throw new InvalidOperationException("系统字体不可用"),
+                NSStringAttributeKey.ForegroundColor, text,
+                NSStringAttributeKey.ParagraphStyle, paragraph);
+            var attributed = new NSAttributedString(_title, attributes);
+            Title = _title;
+            AlternateTitle = _title;
+            AttributedTitle = attributed;
+            AttributedAlternateTitle = attributed;
+        }
+    }
+
     /// <summary>保留原生筛选菜单和选择事件，以按钮左下角定位菜单，避免选中标记使菜单向左偏移。</summary>
     private sealed class FilterPopUpCell : NSPopUpButtonCell
     {
@@ -254,14 +416,28 @@ public sealed class MacMainWindow : IDisposable
             _count.SizeToFit();
             double countWidth = Math.Ceiling((double)_count.Frame.Width);
             const double countHeight = 17;
-            double filterContentWidth = FilterWidth * 3 + 15 + countWidth;
-            double filterHeight = row ? FilterHeight + 20 : 24 + 20 + FilterHeight * 3 + 15 + countHeight;
+            double filterContentWidth = FilterWidth * 4 + FilterGap * 4 + countWidth;
+            double filterHeight = row
+                ? FilterHeight + FilterMargin * 2
+                : FilterTopInset + FilterHeight * 3 + FilterGap * 3 + countHeight + FilterGap + FilterToggleHeight + FilterMargin;
             double filmstripHeight = MacFilmstripLayout.CardHeight + MacFilmstripLayout.TopPadding + MacFilmstripLayout.BottomPadding;
-            double fileSize = _main.IsThumbnailViewVisible ? (row ? filterHeight + filmstripHeight + 1 : 117) : 0;
+            // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
+            bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
+            double similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityMargin) : 0;
+            _similarityPane.Hidden = !similarityOpen;
+            double fileSize = _main.IsThumbnailViewVisible ? (row ? filterHeight + filmstripHeight + 1 : 117 + similarityColumn) : 0;
             var controlMeasure = _controlPane.Measure(row, row ? width : height);
             double controlSize = _main.IsControlViewVisible ? (row ? (double)controlMeasure.Height : (double)controlMeasure.Width) + 1 : 0;
+            // 分析栏占主图与相邻栏位之间的一条：行布局在主图下方、列布局在主图右侧，
+            // 主轴可用长度与交叉轴尺寸（瓦片边长 + 20）都和旧壳 AnalysisView 同口径。
+            bool analysisVisible = _main.IsAnalysisViewVisible;
+            double analysisMain = row ? width : height;
+            double analysisSize = analysisVisible ? _analysisPane.CrossSize(analysisMain) : 0;
             _filePane.Hidden = _fileDivider.Hidden = fileSize == 0;
             _controlScroll.Hidden = _controlDivider.Hidden = controlSize == 0;
+            _analysisPane.Hidden = !analysisVisible;
+            if (!analysisVisible) HideDetailHighlight();
             _filePane.Layer!.BackgroundColor = NSColor.FromWhite(.067f, 1).CGColor;
             _photoPane.Layer!.BackgroundColor = NSColor.Black.CGColor;
             _controlScroll.BackgroundColor = NSColor.FromWhite(.067f, 1);
@@ -269,31 +445,45 @@ public sealed class MacMainWindow : IDisposable
             _fileDivider.Frame = row ? new CGRect(0, fileSize - 1, width, 1) : new CGRect(fileSize - 1, 0, 1, height);
             _controlScroll.Frame = row ? new CGRect(0, height - controlSize + 1, width, Math.Max(0, controlSize - 1)) : new CGRect(width - controlSize + 1, 0, Math.Max(0, controlSize - 1), height);
             _controlDivider.Frame = row ? new CGRect(0, height - controlSize, width, 1) : new CGRect(width - controlSize, 0, 1, height);
-            _photoPane.Frame = row ? new CGRect(0, fileSize, width, Math.Max(1, height - fileSize - controlSize)) : new CGRect(fileSize, 0, Math.Max(1, width - fileSize - controlSize), height);
+            double photoWidth = row ? width : Math.Max(1, width - fileSize - analysisSize - controlSize);
+            double photoHeight = row ? Math.Max(1, height - fileSize - analysisSize - controlSize) : height;
+            _photoPane.Frame = row ? new CGRect(0, fileSize, photoWidth, photoHeight) : new CGRect(fileSize, 0, photoWidth, photoHeight);
+            _analysisPane.Frame = row
+                ? new CGRect(0, fileSize + photoHeight, width, analysisSize)
+                : new CGRect(fileSize + photoWidth, 0, analysisSize, photoHeight);
+            if (analysisVisible) _analysisPane.Arrange(row, analysisMain);
             Photo.Frame = _photoPane.Bounds;
             double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
             double hintLeft = ((double)_photoPane.Bounds.Width - hintWidth) / 2;
             double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
             _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
             _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-            double filterTop = row ? 10 : 34;
+            double filterTop = row ? FilterMargin : FilterTopInset;
             if (row)
             {
                 double start = (width - filterContentWidth) / 2;
                 _sort.Frame = new CGRect(start, filterTop, FilterWidth, FilterHeight);
-                _order.Frame = new CGRect(start + FilterWidth + 5, filterTop, FilterWidth, FilterHeight);
-                _ratingFilter.Frame = new CGRect(start + (FilterWidth + 5) * 2, filterTop, FilterWidth, FilterHeight);
-                _count.Frame = new CGRect(start + (FilterWidth + 5) * 3, filterTop + (FilterHeight - countHeight) / 2, countWidth, countHeight);
-                _scroll.Frame = new CGRect(0, filterHeight, width, filmstripHeight);
+                _order.Frame = new CGRect(start + FilterWidth + FilterGap, filterTop, FilterWidth, FilterHeight);
+                _ratingFilter.Frame = new CGRect(start + (FilterWidth + FilterGap) * 2, filterTop, FilterWidth, FilterHeight);
+                _count.Frame = new CGRect(start + (FilterWidth + FilterGap) * 3, filterTop + (FilterHeight - countHeight) / 2, countWidth, countHeight);
+                _similarityToggle.Frame = new CGRect(start + (FilterWidth + FilterGap) * 3 + countWidth + FilterGap, filterTop + (FilterHeight - FilterToggleHeight) / 2, FilterWidth, FilterToggleHeight);
+                _scroll.Frame = new CGRect(0, filterHeight, Math.Max(1, width - similarityColumn), filmstripHeight);
             }
             else
             {
                 double filterLeft = (116 - FilterWidth) / 2;
                 _sort.Frame = new CGRect(filterLeft, filterTop, FilterWidth, FilterHeight);
-                _order.Frame = new CGRect(filterLeft, filterTop + FilterHeight + 5, FilterWidth, FilterHeight);
-                _ratingFilter.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + 5) * 2, FilterWidth, FilterHeight);
-                _count.Frame = new CGRect((116 - countWidth) / 2, filterTop + (FilterHeight + 5) * 3, countWidth, countHeight);
+                _order.Frame = new CGRect(filterLeft, filterTop + FilterHeight + FilterGap, FilterWidth, FilterHeight);
+                _ratingFilter.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + FilterGap) * 2, FilterWidth, FilterHeight);
+                _count.Frame = new CGRect((116 - countWidth) / 2, filterTop + (FilterHeight + FilterGap) * 3, countWidth, countHeight);
+                _similarityToggle.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + FilterGap) * 3 + countHeight + FilterGap, FilterWidth, FilterToggleHeight);
                 _scroll.Frame = new CGRect(0, filterHeight, 116, Math.Max(1, height - filterHeight));
+            }
+            if (similarityOpen)
+            {
+                _similarityPane.Frame = row
+                    ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityMargin), (nfloat)_similarityPane.CrossSize)
+                    : new CGRect(116, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
             }
             bool axisChanged = _filmstripLayout.Horizontal != row;
             if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size) CancelFilmstripScroll();
@@ -306,20 +496,36 @@ public sealed class MacMainWindow : IDisposable
             _controlScroll.HasHorizontalScroller = row && controlMeasure.Width > width;
             _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size);
             double dragHeight = row ? 44 : 24;
-            double gapStart = row && fileSize > 0 ? (double)_sort.Frame.X : width;
-            double gapEnd = row && fileSize > 0 ? (double)(_count.Frame.X + _count.Frame.Width) : width;
-            _dragLeft.Frame = new CGRect(0, 0, gapStart, dragHeight);
-            _dragRight.Frame = new CGRect(gapEnd, 0, Math.Max(0, width - gapEnd), dragHeight);
+            // 拖动区必须绕开筛选条的全部可点控件：右区从最后一个控件（相似聚类 toggle）右边缘起，
+            // 否则悬停显隐的拖动层会盖住 toggle，让它"有时可点、有时不可点"。
+            double dragStart = row && fileSize > 0 ? (double)_sort.Frame.X : width;
+            double dragEnd = row && fileSize > 0
+                ? (double)_similarityToggle.Frame.X + (double)_similarityToggle.Frame.Width
+                : width;
+            _dragLeft.Frame = new CGRect(0, 0, dragStart, dragHeight);
+            _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), dragHeight);
             UpdateViewport();
             ReportVisible();
         }
         finally { _layingOut = false; }
     }
 
+    /// <summary>行布局下相似面板占用的水平长度:与旧壳 <c>SimilarityListView</c> 的 MaxWidth 规则一致 ——
+    /// 内容宽(卡片数 × 96 + 列表两侧内边距 8 + 面板描边 2,下限 MinWidth 106)与文件栏一半取小,再叠加面板右侧 4 点外边距。</summary>
+    /// <param name="paneWidth">文件栏可用宽度。</param>
+    private double SimilarityRowWidth(double paneWidth)
+    {
+        var panel = _main.FileVM.SimilarityPanel;
+        double content = panel.HasItems
+            ? panel.SimilarItems.Count * MacFilmstripLayout.CardWidth + SimilarityListPadding + SimilarityBorderWidth * 2
+            : SimilarityMinWidth;
+        return Math.Min(Math.Max(SimilarityMinWidth, content), paneWidth / 2) + SimilarityMargin;
+    }
+
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
     private void BuildControls()
     {
-        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); });
+        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
         Layout();
     }
 
@@ -344,6 +550,8 @@ public sealed class MacMainWindow : IDisposable
             case "ZoomOutScale": Photo.ZoomBy(.8); break;
             case "ZoomInPreset": ZoomPreset(1); break;
             case "ZoomOutPreset": ZoomPreset(-1); break;
+            case "ToggleAnalysisView": _main.ToggleAnalysisView(); break;
+            case "ToggleEnhance": Session.ToggleEnhanced(); break;
             default:
                 if (command.StartsWith("SetRating", StringComparison.Ordinal) && int.TryParse(command[9..], out int rating) && _main.CurrentFile != null)
                     _ = RateAsync(_main.CurrentFile, rating);
@@ -391,9 +599,10 @@ public sealed class MacMainWindow : IDisposable
             if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
             Session.SetFile(_main.CurrentFile?.File);
             Window.Title = _main.CurrentFile?.Name ?? "PhotoViewer";
+            HideDetailHighlight();
             BuildControls();
         }
-        else if (args.PropertyName is nameof(MainViewModel.IsRowLayout) or nameof(MainViewModel.IsThumbnailViewVisible) or nameof(MainViewModel.IsControlViewVisible))
+        else if (args.PropertyName is nameof(MainViewModel.IsRowLayout) or nameof(MainViewModel.IsThumbnailViewVisible) or nameof(MainViewModel.IsControlViewVisible) or nameof(MainViewModel.IsAnalysisViewVisible))
         {
             if (!_main.IsThumbnailViewVisible) CancelFilmstripScroll();
             Layout(); UpdateMenuChecks();
@@ -454,13 +663,15 @@ public sealed class MacMainWindow : IDisposable
             ReportVisible();
         });
     }
-    /// <summary>业务排序/筛选状态同步回原生控件，程序化或文件源刷新不会留下旧选中项。</summary>
+    /// <summary>业务排序/筛选状态同步回原生控件，程序化或文件源刷新不会留下旧选中项；相似聚类开关同时驱动面板显隐与重排。</summary>
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args)
     {
         var filter = _main.FileVM.FilterBar;
         _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
         _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
+        _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
+        if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
     }
     /// <summary>项目数与视口共同决定文档尺寸，重排不把滚动主轴截短成窗口高度。</summary>
     internal void UpdateFilmstripLayout()
@@ -495,10 +706,10 @@ public sealed class MacMainWindow : IDisposable
         Photo.FocusPoint = focus is { ImageWidth: > 0, ImageHeight: > 0 } position
             ? new CGPoint(position.FocusX / (double)position.ImageWidth, position.FocusY / (double)position.ImageHeight) : null;
     }
-    /// <summary>上报物理视口需求；full/proxy 热替换保持原生变换。</summary>
+    /// <summary>上报物理视口需求；full/proxy 热替换保持原生变换，分析栏可见时细节预览需要全分辨率源。</summary>
     private void UpdateViewport()
     {
-        Session.UpdateViewport((double)Photo.Bounds.Width * (double)Window.BackingScaleFactor, (double)Photo.Bounds.Height * (double)Window.BackingScaleFactor, Photo.NeedsFull);
+        Session.UpdateViewport((double)Photo.Bounds.Width * (double)Window.BackingScaleFactor, (double)Photo.Bounds.Height * (double)Window.BackingScaleFactor, Photo.NeedsFull || _main.IsAnalysisViewVisible);
         if (_navigationHost == null) return;
         bool show = _main.Settings.ShowZoomIndicator && !Photo.IsFit && Session.Image != null;
         _navigationHost.Hidden = !show;
@@ -521,6 +732,46 @@ public sealed class MacMainWindow : IDisposable
         _navigationFrame.Frame = new CGRect(rectangle.X + 8, rectangle.Y + 8, rectangle.Width, rectangle.Height);
         _zoomLabel.StringValue = $"{Photo.PhysicalScale * 100:0.##}%";
     }
+    /// <summary>细节预览高亮：在主图上叠加 3 点绿框（对焦框优先，否则为裁剪窗口）。</summary>
+    /// <param name="visible">是否显示绿框。</param>
+    /// <param name="u">裁剪中心归一化横坐标。</param>
+    /// <param name="v">裁剪中心归一化纵坐标。</param>
+    /// <param name="frameWidth">对焦框归一化宽；null 表示用裁剪区。</param>
+    /// <param name="frameHeight">对焦框归一化高。</param>
+    private void UpdateDetailHighlight(bool visible, double u, double v, double? frameWidth, double? frameHeight)
+    {
+        if (!visible || !_main.IsAnalysisViewVisible || Session.Image == null)
+        {
+            _detailHighlight.Hidden = true;
+            return;
+        }
+        double scale = Photo.PointScale;
+        double boxWidth, boxHeight;
+        if (frameWidth is { } width && frameHeight is { } height)
+        {
+            boxWidth = width * Photo.DisplayWidth * scale;
+            boxHeight = height * Photo.DisplayHeight * scale;
+        }
+        else
+        {
+            boxWidth = boxHeight = _analysisPane.CropPixels * scale;
+        }
+        var center = Photo.ViewPoint(u, v);
+        _detailHighlight.Frame = new CGRect(center.X - boxWidth / 2, center.Y - boxHeight / 2, boxWidth, boxHeight);
+        _detailHighlight.Hidden = false;
+    }
+
+    /// <summary>收起主图绿框（分析栏隐藏或切换照片时）。</summary>
+    private void HideDetailHighlight() => _detailHighlight.Hidden = true;
+
+    /// <summary>细节预览双击：把主图定位到该归一化点并放大到物理 100%（与旧壳 FocusOnImagePoint 同义）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    private void FocusDetailPoint(double u, double v) => Photo.FocusOnPoint(u, v, 1);
+
+    /// <summary>打开/前置原生工具窗口，与旧壳右键菜单「工具」同一入口。</summary>
+    public void ShowTools() => NativeWindowPresenter.ShowOrActivateToolsWindow(_main.Tools);
+
     /// <summary>把原生可见卡片交共享缩略图调度器，以 P1 优先级加载。</summary>
     private void ReportVisible()
     {
@@ -623,7 +874,7 @@ public sealed class MacMainWindow : IDisposable
     }
     /// <summary>同步菜单当前勾选，避免按钮、菜单与布局状态分叉。</summary>
     private void UpdateMenuChecks() { foreach (var check in _menuChecks) check.Item.State = check.Checked() ? NSCellStateValue.On : NSCellStateValue.Off; }
-    /// <summary>照片原生右键菜单，顺延功能没有失效入口。</summary>
+    /// <summary>照片原生右键菜单，顺序与旧壳一致：打开、栏位显隐（胶片/分析/控制）、工具、设置。</summary>
     private NSMenu ContextMenu()
     {
         var menu = new NSMenu();
@@ -631,7 +882,10 @@ public sealed class MacMainWindow : IDisposable
         menu.AddItem(new NSMenuItem("打开文件夹…", (_, _) => _ = OpenPickerAsync(true)));
         menu.AddItem(NSMenuItem.SeparatorItem);
         AddCheck(menu, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
+        AddCheck(menu, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView);
         AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        menu.AddItem(new NSMenuItem("工具", (_, _) => ShowTools()));
         menu.AddItem(new NSMenuItem("设置…", (_, _) => ShowSettings()));
         UpdateMenuChecks();
         return menu;
@@ -648,7 +902,7 @@ public sealed class MacMainWindow : IDisposable
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
-        Session.Dispose(); _navigationBitmap?.Dispose(); _controlPane.Dispose(); Photo.Dispose(); Window.Dispose();
+        Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();
     }
 
     /// <summary>CollectionView 按需创建卡片，不为全部文件创建视图。</summary>
@@ -699,6 +953,21 @@ public sealed class MacMainWindow : IDisposable
 
     /// <summary>文件与控制分区采用顶部为原点的布局坐标。</summary>
     private sealed class FlippedPane : NSView { public override bool IsFlipped => true; }
+
+    /// <summary>透明叠加层（细节预览绿框）：顶边为原点且不拦截鼠标，事件透传给下层主图。</summary>
+    private sealed class PassThroughPane : NSView
+    {
+        /// <summary>构造透明图层容器。</summary>
+        public PassThroughPane()
+        {
+            WantsLayer = true;
+            Layer!.BackgroundColor = NSColor.Clear.CGColor;
+        }
+        /// <summary>顶边为原点的布局坐标。</summary>
+        public override bool IsFlipped => true;
+        /// <summary>不参与命中测试，鼠标事件交给主图。</summary>
+        public override NSView? HitTest(CGPoint aPoint) => null;
+    }
 
     /// <summary>只读展示标签，鼠标命中透传给下层视图。</summary>
     private sealed class PassThroughLabel : NSTextField

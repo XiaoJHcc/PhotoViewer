@@ -37,14 +37,9 @@ public static class ColorEngine
     public static DecodedImage ToAnalysisSrgb8(DecodedImage source)
     {
         var converted = ToSrgb8(source);
-        if (source.Orientation == 1) return converted;
-        var transform = source.Orientation switch
-        {
-            2 => (0, true), 3 => (180, false), 4 => (180, true),
-            5 => (270, true), 6 => (90, false), 7 => (90, true), 8 => (270, false),
-            _ => throw new ArgumentOutOfRangeException(nameof(source)),
-        };
-        try { return SkiaImageCodec.ApplyOrientation(converted, transform.Item1, transform.Item2) ?? throw new InvalidOperationException("分析图方向变换失败"); }
+        var (rotationCw, mirror) = ImageOrientationMapping.ToDisplay(source.Orientation);
+        if (rotationCw == 0 && !mirror) return converted;
+        try { return SkiaImageCodec.ApplyOrientation(converted, rotationCw, mirror) ?? throw new InvalidOperationException("分析图方向变换失败"); }
         finally { converted.Release(); }
     }
 

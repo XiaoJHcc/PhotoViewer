@@ -59,6 +59,12 @@ public sealed class FolderFeatureIndexer
     public event Action<IndexProgress>? ProgressChanged;
 
     /// <summary>
+    /// 每次成功写入一组特征后触发（静态，库内容变化是全局事实）；
+    /// 分析栏据此对当前照片重新路由，避免把「提取全部」之前的空结果继续贴在诊断瓦片上。
+    /// </summary>
+    public static event Action? FeaturesWritten;
+
+    /// <summary>
     /// 把文件列表按指纹聚合:同指纹的多个文件合并为一组,代表文件按解码代价升序(HEIF/HIF → JPG → 其他 → RAW),
     /// 优先用解码最便宜的那张做推理。无法计算指纹的文件每个独占一组,<see cref="FingerprintGroup.Fingerprint"/> 为空字符串。
     /// 单文件读取异常视同"无指纹",不阻断整批。
@@ -284,6 +290,11 @@ public sealed class FolderFeatureIndexer
                 await PhotoDatabase.WriteIndexedAsync(
                     group.Input, group.Fingerprint, DinoModelResources.ModelId,
                     clsBlob, patchBlob, cvBlob, cvSpec, cvWidth, cvHeight, exifSnapshot).ConfigureAwait(false);
+
+                // 库里已有该指纹的派生层结果,旧的分析栏缓存(含"未提取"空 entry)必须作废,
+                // 否则分析栏会一直贴旧的空结果,直到 LRU 淘汰才恢复。
+                AnalysisResultCache.Invalidate(group.Fingerprint);
+                FeaturesWritten?.Invoke();
 
                 ReportProgress();
             }

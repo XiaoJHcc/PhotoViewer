@@ -1,4 +1,5 @@
 using PhotoViewer.Core;
+using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using ReactiveUI;
@@ -33,6 +34,9 @@ public class ToolsViewModel : ViewModelBase
     /// <summary>照片数据统计工具是否在当前平台可用（仅 Windows）。</summary>
     public bool IsPhotoStatsAvailable => OperatingSystem.IsWindows();
 
+    /// <summary>DINO 诊断的平台中立 presenter；旧壳 VM 与 macOS 原生工具窗口共用同一实例，避免重复推理。</summary>
+    public DinoDiagnosticPresenter DinoPresenter { get; }
+
     /// <summary>DINO 诊断工具 VM。</summary>
     public DinoDebugViewModel DinoDebug { get; }
 
@@ -51,10 +55,12 @@ public class ToolsViewModel : ViewModelBase
     public bool CanGoBack => _currentTool != null;
 
     /// <summary>初始化工具页 ViewModel。</summary>
+    /// <param name="main">共享主 VM。</param>
     public ToolsViewModel(MainViewModel main)
     {
         PhotoStats = new PhotoStatsViewModel();
-        DinoDebug = new DinoDebugViewModel();
+        DinoPresenter = new DinoDiagnosticPresenter();
+        DinoDebug = new DinoDebugViewModel(DinoPresenter);
         _main = main;
         SyncCurrentFile(main.CurrentFile);
     }

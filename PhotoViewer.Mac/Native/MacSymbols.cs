@@ -18,14 +18,14 @@ public static class MacSymbols
         Symbols.Add(name, image);
         return image;
     }
-    /// <summary>按业务命令取得 SF Symbols 名称，仅隐藏本阶段明确顺延的功能。</summary>
+    /// <summary>按业务命令取得 SF Symbols 名称；未定义映射的命令显式抛出，避免生成无图标按钮。</summary>
     public static string? ForCommand(string command) => command switch
     {
         "Open" => "folder", "Previous" => "chevron.left", "Next" => "chevron.right",
         "Exchange" => "arrow.left.arrow.right", "Fit" => "arrow.up.left.and.arrow.down.right",
         "ZoomInPreset" or "ZoomInScale" => "plus", "ZoomOutPreset" or "ZoomOutScale" => "minus",
         "SetRating0" => "xmark", "SetRating1" or "SetRating2" or "SetRating3" or "SetRating4" or "SetRating5" => "star",
-        "ToggleAnalysisView" or "ToggleEnhance" => null,
+        "ToggleAnalysisView" => "square.grid.2x2", "ToggleEnhance" => "wand.and.stars",
         _ => throw new InvalidOperationException($"未定义原生命令图标：{command}"),
     };
     /// <summary>创建原生方形图标按钮，尺寸由调用方指定。</summary>

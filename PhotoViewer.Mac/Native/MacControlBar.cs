@@ -35,13 +35,13 @@ internal sealed class MacControlBar : NSView
     }
 
     /// <summary>根据共享设置重建三组控件，保留设置排序、主次手势与缺少照片时的状态。</summary>
-    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate)
+    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null)
     {
         ClearGroups();
         var entries = main.ControlVM.EnabledExifItems;
         if (entries.Count > 0)
         {
-            var exif = new GroupView();
+            var exif = new GroupView { WantsLayer = true, Clicked = openTools };
             foreach (var entry in entries) exif.AddSubview(new ExifTile(entry));
             AddGroup(exif);
         }
@@ -226,8 +226,19 @@ internal sealed class MacControlBar : NSView
         base.Dispose(disposing);
     }
 
-    /// <summary>三个业务分组均以左上角作为布局原点。</summary>
-    private sealed class GroupView : NSView { public override bool IsFlipped => true; }
+    /// <summary>三个业务分组均以左上角作为布局原点；EXIF 分组可点击打开工具窗口（与旧壳 EXIF 信息块同义）。</summary>
+    private sealed class GroupView : NSView
+    {
+        /// <summary>整组点击回调；null 时不接收点击。</summary>
+        public Action? Clicked { get; set; }
+        public override bool IsFlipped => true;
+        /// <summary>点击整组时触发回调；未接线时交给系统默认处理。</summary>
+        public override void MouseDown(NSEvent theEvent)
+        {
+            if (Clicked == null) { base.MouseDown(theEvent); return; }
+            Clicked();
+        }
+    }
 
     /// <summary>EXIF 小块保留次要标签、强调值与完整内容悬停提示。</summary>
     private sealed class ExifTile : NSView

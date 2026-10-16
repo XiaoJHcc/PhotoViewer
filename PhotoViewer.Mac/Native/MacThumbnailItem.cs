@@ -16,7 +16,11 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     private NSView _surface = null!;
     private NSTextField _name = null!;
     private NSTextField _date = null!;
+    private NSView _secondLineBar = null!;
+    private NSView _secondLineFill = null!;
     private NSTextField _shake = null!;
+    /// <summary>第二行柱状条宽度,与卡片第二行文字宽度一致。</summary>
+    private const double SecondLineWidth = 80;
     private static readonly HashSet<MacThumbnailItem> LiveItems = [];
     private NSButton[] _stars = null!;
     private CardView? _card;
@@ -25,8 +29,15 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     private NSImage? _nativeThumbnail;
     private Action<ImageFile>? _select;
     private Action<ImageFile, int>? _rate;
+    private string? _secondLineText;
+    private double? _secondLineProgress;
+    /// <summary>选中态取主图身份（相似聚类）还是列表锚点（胶片栏）。</summary>
+    private bool _selectByDisplayedImage;
     /// <summary>当前绑定身份供原生复用回归核对，避免视图索引与文件顺序错位。</summary>
     internal ImageFile? BoundFile => _file;
+
+    /// <summary>卡片是否处于选中描边状态（胶片栏取列表锚点，相似面板取主图身份），供回归核对高亮语义。</summary>
+    internal bool IsHighlighted { get; private set; }
 
     /// <summary>原生 CollectionView 通过注册类构造可复用卡片。</summary>
     [Export("init")]
@@ -65,6 +76,14 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _date = Label(new CGRect(5, 103, 80, 11), 9);
         _name.Font = NSFont.SystemFontOfSize(10, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
         _date.Font = NSFont.SystemFontOfSize(9, NSFontWeight.Bold) ?? throw new InvalidOperationException("系统字体不可用");
+        _secondLineBar = new FlippedView(new CGRect(5, 103, SecondLineWidth, 11)) { WantsLayer = true };
+        _secondLineBar.Layer!.BackgroundColor = NSColor.FromRgb(0x44, 0x44, 0x44).CGColor;
+        _secondLineBar.Layer.CornerRadius = 4;
+        _secondLineBar.Layer.MasksToBounds = true;
+        _secondLineFill = new FlippedView(new CGRect(0, 0, 0, 11)) { WantsLayer = true };
+        _secondLineFill.Layer!.BackgroundColor = NSColor.FromRgba(0x1E, 0x90, 0xFF, 0x99).CGColor;
+        _secondLineBar.AddSubview(_secondLineFill);
+        _secondLineBar.Hidden = true;
         _shake = Label(new CGRect(67, 67, 16, 16), 11);
         _shake.StringValue = "抖";
         _shake.WantsLayer = true;
@@ -81,7 +100,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
             _surface.AddSubview(button);
         }
         _surface.AddSubview(_thumbnail); _surface.AddSubview(_placeholder); _surface.AddSubview(_progress);
-        _surface.AddSubview(_name); _surface.AddSubview(_date); _surface.AddSubview(_shake);
+        _surface.AddSubview(_name); _surface.AddSubview(_secondLineBar); _surface.AddSubview(_date); _surface.AddSubview(_shake);
         _card.SelectedByUser = () => { if (_file != null) _select?.Invoke(_file); };
     }
 
@@ -90,11 +109,21 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         => new(frame) { Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
             Alignment = NSTextAlignment.Center, Font = NSFont.SystemFontOfSize((nfloat)fontSize) ?? throw new InvalidOperationException("系统字体不可用"), TextColor = NSColor.White, LineBreakMode = NSLineBreakMode.TruncatingTail };
 
-    /// <summary>绑定新文件，取消旧模型订阅，防止虚拟化复用时评分/缩略图串位。</summary>
-    public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate)
+    /// <summary>绑定新文件，取消旧模型订阅，防止虚拟化复用时评分/缩略图串位；第二行文字与柱状条占比可覆盖拍摄时间。</summary>
+    /// <param name="file">卡片对应的照片。</param>
+    /// <param name="showRating">是否显示星级按钮。</param>
+    /// <param name="select">卡片点击回调。</param>
+    /// <param name="rate">星级点击回调。</param>
+    /// <param name="secondLineText">第二行文字；null 显示拍摄时间。</param>
+    /// <param name="secondLineProgress">第二行柱状条占比(0~1)；null 只显示文字。</param>
+    /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>(相似聚类面板)而非列表锚点 <see cref="ImageFile.IsCurrent"/>(胶片栏)。</param>
+    public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
+        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = file; _select = select; _rate = rate;
+        _secondLineText = secondLineText; _secondLineProgress = secondLineProgress;
+        _selectByDisplayedImage = selectByDisplayedImage;
         _lastThumbnail = null;
         file.PropertyChanged += OnFileChanged;
         foreach (var star in _stars) star.Hidden = !showRating;
@@ -111,9 +140,14 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         if (_file == null) return;
         _name.StringValue = _file.DisplayName;
         _name.ToolTip = _file.Name;
-        _date.StringValue = _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
+        _date.StringValue = _secondLineText ?? _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
         _date.ToolTip = _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss zzz");
-        _surface.Layer!.BorderColor = _file.IsCurrent ? NSColor.SystemBlue.CGColor : NSColor.Clear.CGColor;
+        _secondLineBar.Hidden = _secondLineProgress == null;
+        if (_secondLineProgress is { } fraction)
+            _secondLineFill.Frame = new CGRect(0, 0, (nfloat)(Math.Clamp(fraction, 0.0, 1.0) * SecondLineWidth), _secondLineBar.Bounds.Height);
+        _surface.Layer!.BorderColor = (_selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent)
+            ? NSColor.SystemBlue.CGColor : NSColor.Clear.CGColor;
+        IsHighlighted = _selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent;
         _thumbnail.Layer!.BorderColor = _file.IsInCache ? NSColor.FromRgba(70, 130, 180, 180).CGColor : NSColor.Clear.CGColor;
         _placeholder.Hidden = !_file.ShowThumbnailPlaceholder;
         bool loading = _file.IsThumbnailLoading && _file.Thumbnail == null;
@@ -148,6 +182,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = null; _thumbnail.Image = null; _nativeThumbnail?.Dispose(); _nativeThumbnail = null; _lastThumbnail = null;
+        _secondLineText = null; _secondLineProgress = null; _secondLineBar.Hidden = true;
         _progress.StopAnimation(null);
         _progress.Hidden = true;
     }

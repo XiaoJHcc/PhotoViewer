@@ -165,6 +165,21 @@ public static class AnalysisResultCache
         }
     }
 
+    /// <summary>
+    /// 作废单个指纹的派生层缓存。特征入库后必须调用：入库前算出的空 entry（"未提取"）会被缓存住，
+    /// 不作废的话分析栏即使重新路由也只会再贴一次旧结果。只清引用，不 Dispose（与整体清空同语义）。
+    /// </summary>
+    /// <param name="fingerprint">指纹；空值忽略。</param>
+    public static void Invalidate(string? fingerprint)
+    {
+        if (string.IsNullOrEmpty(fingerprint)) return;
+        lock (_lock)
+        {
+            if (!_index.Remove(fingerprint, out var node)) return;
+            _order.Remove(node);
+        }
+    }
+
     // ---- 统一内存管控(P1-M2)----
 
     /// <summary>内存客户端:指纹 LRU 与即时缓存合计占用;Warning 起整体清空(派生数据可随时现算重建)。</summary>

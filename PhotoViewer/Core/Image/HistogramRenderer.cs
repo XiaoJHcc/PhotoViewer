@@ -28,6 +28,31 @@ public static class HistogramRenderer
     {
         int w = source.Width, h = source.Height;
         int bpp = DecodedImage.BytesPerPixel(source.Encoding);
+
+        var rHist = new int[256];
+        var gHist = new int[256];
+        var bHist = new int[256];
+
+        if (source.Encoding == PixelEncoding.RgbaF16)
+        {
+            // 线性半精度表面（macOS 原生主图）按线性→sRGB 编码后量化，与 8 位 sRGB 口径可比。
+            var half = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Half>(source.Pixels.AsSpan());
+            int strideHalf = source.Stride / 2;
+            for (int y = 0; y < h; y++)
+            {
+                int rowStart = y * strideHalf;
+                for (int x = 0; x < w; x++)
+                {
+                    int i = rowStart + x * 4;
+                    rHist[EncodeSrgb(half[i])]++;
+                    gHist[EncodeSrgb(half[i + 1])]++;
+                    bHist[EncodeSrgb(half[i + 2])]++;
+                }
+            }
+            pixelCount = (long)w * h;
+            return new[] { rHist, gHist, bHist };
+        }
+
         // Bgra32: R 在字节 2;Rgb24: R 在字节 0
         bool isBgr = source.Encoding == PixelEncoding.Bgra32;
         int rIdx = isBgr ? 2 : 0;
@@ -36,9 +61,6 @@ public static class HistogramRenderer
         var pixels = source.Pixels;
         int stride = source.Stride;
 
-        var rHist = new int[256];
-        var gHist = new int[256];
-        var bHist = new int[256];
         for (int y = 0; y < h; y++)
         {
             long rowStart = (long)y * stride;
@@ -53,6 +75,16 @@ public static class HistogramRenderer
 
         pixelCount = (long)w * h;
         return new[] { rHist, gHist, bHist };
+    }
+
+    /// <summary>把线性 scRGB 分量编码成 sRGB 传递函数下的 0..255 级(负值与超一按边界钳位)。</summary>
+    private static int EncodeSrgb(Half linear)
+    {
+        float value = (float)linear;
+        if (float.IsNaN(value) || value <= 0f) return 0;
+        if (value >= 1f) return 255;
+        float encoded = value <= 0.0031308f ? value * 12.92f : 1.055f * MathF.Pow(value, 1f / 2.4f) - 0.055f;
+        return Math.Clamp((int)MathF.Round(encoded * 255f), 0, 255);
     }
 
     /// <summary>

@@ -49,7 +49,7 @@ Directory.Packages.props  # Central NuGet version pinning
 
 | 目录 | 模块手册 | 一句话职责 |
 |---|---|---|
-| [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/AGENTS.md](PhotoViewer/Core/AI/AGENTS.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引 |
+| [PhotoViewer/Core/AI/](PhotoViewer/Core/AI/) | [Core/AI/AGENTS.md](PhotoViewer/Core/AI/AGENTS.md) | DINOv3 特征提取、CV v5 抖动诊断、相似聚类、批量索引、分析栏与 DINO 诊断的平台中立 presenter |
 | [PhotoViewer/Core/Database/](PhotoViewer/Core/Database/) | [Core/Database/AGENTS.md](PhotoViewer/Core/Database/AGENTS.md) | `photos.db` SQLite 缓存门面 + 指纹计算 |
 | [PhotoViewer/Core/Image/](PhotoViewer/Core/Image/) | [Core/Image/AGENTS.md](PhotoViewer/Core/Image/AGENTS.md) | 图片解码、LRU 缓存、HEIF 桥接、缩略图服务、文件模型 |
 | [PhotoViewer/Core/Color/](PhotoViewer/Core/Color/) | [Core/Color/AGENTS.md](PhotoViewer/Core/Color/AGENTS.md) | 色彩标签、线性 scRGB/F16 与 sRGB8 转换、分析方向归一化 |
@@ -157,13 +157,14 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **分析栏派生缓存**(切图无卡顿):
 - `AnalysisResultCache` 按指纹 LRU 缓存"读库 + 派生层现算"的全部产物(4 张诊断位图 + ShakeField + 判定文字 + patch tokens),容量 32 项 ≈ 50 MB。
-- `AnalysisViewModel` 切图 → 全部工作推迟到 `DispatcherPriority.Background`(绝不阻塞主图加载);快路径:EXIF 已加载 + 缓存命中 → 同步 swap;慢路径:异步读库 + 派生层现算 + 落 cache,旧图保留到新数据就绪再 swap。
+- 编排逻辑集中在平台中立的 `Core/AI/AnalysisPresenter`(旧壳 `AnalysisViewModel` 与 macOS 原生分析栏共用同一份,各自只做位图格式适配)切图 → 全部工作推迟到 `DispatcherPriority.Background`(绝不阻塞主图加载);快路径:EXIF 已加载 + 缓存命中 → 同步 swap;慢路径:异步读库 + 派生层现算 + 落 cache,旧图保留到新数据就绪再 swap。后台读取展示图前先取租约,避免宿主释放导致 use-after-release。
 - `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
 - PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
-- 用户点击诊断瓦片重算 cosine 时产生的位图归 VM 所有,切图或还原中心时显式释放;cache 拥有的位图 VM 只引用,不 Dispose。
-- **增强预览例外**(需开启设置"分析诊断 / 即时计算DINO/CV",默认关):`ImageVM.IsEnhanced` 开启时分析栏不再只读库 —— 直方图(`HistogramRenderer`,新增瓦片)与细节预览随主图自动跟随增强图;4 张 DINO/CV 诊断瓦片改对增强图**实时重算**(`AnalysisViewModel.ComputeDiagnosticsAsync` 跑 `CvGridExtractor` + `DinoFeatureExtractor` → 复用 `AnalysisComputer.Compute`),重算期间占位"计算中…",产物落 `AnalysisResultCache` 即时缓存(路径 + `#enhanced` 键,不入库),再次切到该图增强态直接命中;关闭增强(或关闭即时计算)即回落 DB 只读路径。直方图位图始终 VM 所有、按竞态闸随主图重算。
-- **未提取回退**(需开启同一设置):库/cache 均无该照片提取结果时(含快路径命中空 entry),不再显示"未提取",改走 `AnalysisViewModel.LoadFallbackAsync` 对当前主图位图立即计算(与增强联动共用 `ComputeDiagnosticsAsync`)——先延迟 500ms 再等主图解码与缩略图通道空闲,期间占位"计算中…";快速翻页在延迟内即被 `_cts` 取消,零推理开销,主图浏览性能优先。产物落即时缓存(文件路径键,不入库),翻回已算过的照片直接 swap。未开启设置时未提取照片保持"未提取"占位。
+- 用户点击诊断瓦片重算 cosine 时产生的位图归 presenter 所有,切图或还原中心时显式释放;cache 拥有的位图 presenter 只引用,不 Dispose。
+- **增强预览例外**(需开启设置"分析诊断 / 即时计算DINO/CV",默认关):展示图已是增强图时分析栏不再只读库 —— 直方图(`HistogramRenderer`,新增瓦片,直接支持 F16 线性表面)与细节预览随主图自动跟随增强图;4 张 DINO/CV 诊断瓦片改对增强图**实时重算**(`AnalysisPresenter.ComputeDiagnosticsAsync` 跑 `CvGridExtractor` + `DinoFeatureExtractor` → 复用 `AnalysisComputer.Compute`),重算期间占位"计算中…",产物落 `AnalysisResultCache` 即时缓存(路径 + `#enhanced` 键,不入库),再次切到该图增强态直接命中;关闭增强(或关闭即时计算)即回落 DB 只读路径。直方图位图始终 presenter 所有、按竞态闸随主图重算。
+- **未提取回退**(需开启同一设置):库/cache 均无该照片提取结果时(含快路径命中空 entry),不再显示"未提取",改走 `AnalysisPresenter` 的未提取回退对当前主图位图立即计算(与增强联动共用 `ComputeDiagnosticsAsync`)——先延迟 500ms 再等主图解码与缩略图通道空闲,期间占位"计算中…";快速翻页在延迟内即被取消,零推理开销,主图浏览性能优先。产物落即时缓存(文件路径键,不入库),翻回已算过的照片直接 swap。未开启设置时未提取照片保持"未提取"占位。
 - **即时计算缓存**:`AnalysisResultCache` 内按文件路径键的独立存储(增强变体加 `#enhanced` 后缀),与指纹缓存同 Entry 形状、同"不主动 Dispose"语义;不走 LRU — 生命周期跟随主图缓存:`BitmapLoader.CacheStatusChanged` 报某路径失效(淘汰/清空/内存告警精简)时同步移除该路径含增强变体的即时项;"清除特征数据库"(`InvalidateAll`)也一并清空。
+- **入库后失效与重路由**:`FolderFeatureIndexer` 每写成功一组特征就 `AnalysisResultCache.Invalidate(fingerprint)` 并抛出 `FeaturesWritten`(静态,库内容变化是全局事实);分析栏 presenter 订阅它(以及 `ShakeFlagService.RecheckRequested`)后对当前照片重新路由 —— 否则入库前算出的空 entry("未提取")会一直贴在诊断瓦片上,直到 LRU 淘汰才恢复。`Refresh` 自身也归位到 UI 线程再触碰瓦片与宿主视图。
 
 **清除入口**(开发者用):
 - AI 设置页"清除特征数据库"按钮 → 二次确认 → `PhotoDatabase.DeleteDatabaseAsync` 删 `photos.db`/`-wal`/`-shm` 重建空库 → `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll` + `AnalysisResultCache.InvalidateAll` 清进程缓存,徽标与分析栏派生数据即时失效。
@@ -184,7 +185,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. `MainViewModel(nativePresentation: true)` 复用文件源、筛选、评分、设置；旧 `ImageViewModel` 不订阅加载、不创建 WriteableBitmap。原生加载编排使用共享 `PhotoLoadSession`，视口缩放/平移由 `MetalPhotoView` 管理。
 3. BitmapLoader 启动期注入 `IPresentationImageDecoder`；Mac ImageIO 统一 JPEG/HEIF/RAW 主图与代理，产物为带源尺寸/待应用 EXIF 方向的 **RGBA16F LinearSrgb**。代理同样保留广色域；2× 物理视口代理与 Full 使用统一 LRU、准入、租约、预取。内存按池化实际分配与 GPU 客户端分别记账。
 4. Metal 用 ExtendedLinearSrgb 标签、RGBA16F、mipmap 三线性采样和 GPU 方向变换呈现；物理 100%/代理能力不足触发 Full，热替换沿用原生变换。导航图复用同纹理的小目标渲染。缺少内嵌预览的用户图片走原生小图子采样，避免全尺寸兜底。
-5. 主窗口布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角及适合的字体/菜单保留原生（本轮不改设置设计）；隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义；胶片栏定位条件、350ms 缓出及用户接管按 [FILM-01–04](Design/ui-contract.md) 执行，点选/交换/列表刷新不主动居中；跨屏刷新物理尺寸，F 优先定位对焦点；控制栏保留 EXIF/评分/命令三个整体分组，按空间换行/换列并居中，超长组可滚动；全屏/窗口/显隐状态持久化。设置固定深色外观，由 SwiftUI（macOS 26）承载系统分栏侧栏与分组表单，侧栏选中态用系统原生高亮（跟随强调色），显隐/排序与主次快捷键同一行，工作副本关闭回写。P3 分析/聚类/工具/增强入口隐藏，切图不隐式推理；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
+5. 主窗口布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角及适合的字体/菜单保留原生（本轮不改设置设计）；隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义；胶片栏定位条件、350ms 缓出及用户接管按 [FILM-01–04](Design/ui-contract.md) 执行，点选/交换/列表刷新不主动居中；跨屏刷新物理尺寸，F 优先定位对焦点；控制栏保留 EXIF/评分/命令三个整体分组，按空间换行/换列并居中，超长组可滚动；全屏/窗口/显隐状态持久化。设置固定深色外观，由 SwiftUI（macOS 26）承载系统分栏侧栏与分组表单，侧栏选中态用系统原生高亮（跟随强调色），显隐/排序与主次快捷键同一行，工作副本关闭回写。**P3 起分析栏、相似聚类、工具窗口与增强预览已原生可用**：分析栏几何按旧壳 `AnalysisView` 同口径（正方形瓦片边长 = `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`，行布局在主图下方、列布局在其右侧，交叉轴 = 边长 + 20），编排复用 `Core/AI/AnalysisPresenter`；相似聚类面板由筛选条原生 toggle（行布局 90×27、列布局紧随计数 5 点，与旧壳筛选条 5 点间距/居中一致）控制，面板复用 DINO CLS 相似度与卡片视觉（列布局扩宽文件栏、行布局从胶片栏右侧切出，MinWidth 106）；工具窗口为独立 AppKit 窗口（EXIF 详情 / DINO 诊断，照片数据统计仍为 Windows 专属不显示入口）；增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）。分析栏可见时主图升 Full（细节预览需全分辨率源）；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
 6. 测试设置、数据库及测试照片使用自有目录；原生控件+GPU 帧导出不能替代系统预览/跨屏人工色彩验收。验收清单见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为

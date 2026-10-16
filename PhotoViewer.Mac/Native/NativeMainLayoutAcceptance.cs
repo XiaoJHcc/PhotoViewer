@@ -30,6 +30,9 @@ internal static class NativeMainLayoutAcceptance
             settings.ShowRating = true;
             window.Main.IsThumbnailViewVisible = true;
             window.Main.IsControlViewVisible = true;
+            // 旧壳基线（LegacyLayoutAcceptance）把相似聚类面板设为收起，原生侧必须同口径，
+            // 否则文件栏宽度会多出面板的交叉轴长度，整组几何对不上。
+            window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             foreach (var entry in settings.ExifDisplayItems)
                 entry.IsEnabled = entry.PropertyName is "Aperture" or "ExposureTime" or "Iso" or "EquivFocalLength";
             foreach (var hotkey in settings.Hotkeys)
@@ -156,32 +159,39 @@ internal static class NativeMainLayoutAcceptance
         }
     }
 
-    /// <summary>核对筛选条 90×32、5 点间距与居中（左右布局中心 58、首控件顶边 34，上下布局贴顶 10）。</summary>
+    /// <summary>核对筛选条 90×32、相似聚类 toggle 90×27、5 点间距与居中（左右布局中心 58、首控件顶边 34，上下布局贴顶 10）。</summary>
     private static void VerifyFilterBar(bool row, string scope, NSView filePane, List<string> geometry)
     {
         var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
         var count = filePane.Subviews.OfType<NSTextField>().Single();
+        var toggle = filePane.Subviews.OfType<NSButton>().Single(button => button is not NSPopUpButton);
         if (popups.Length != 3) throw new InvalidOperationException($"{scope} 筛选下拉框数量为 {popups.Length}，预期 3");
         foreach (var popup in popups)
             if (Math.Abs((double)popup.Frame.Width - 90) > Exact || Math.Abs((double)popup.Frame.Height - 32) > Exact)
                 throw new InvalidOperationException($"{scope} 筛选控件未保持 90×32：{popup.Frame}");
+        if (Math.Abs((double)toggle.Frame.Width - 90) > Exact || Math.Abs((double)toggle.Frame.Height - 27) > Exact)
+            throw new InvalidOperationException($"{scope} 相似聚类 toggle 未保持 90×27：{toggle.Frame}");
         Record(geometry, scope, "filter.sort", popups[0].Frame);
         Record(geometry, scope, "filter.order", popups[1].Frame);
         Record(geometry, scope, "filter.rating", popups[2].Frame);
         Record(geometry, scope, "filter.count", count.Frame);
+        Record(geometry, scope, "filter.toggle", toggle.Frame);
         double paneWidth = (double)filePane.Frame.Width;
         if (row)
         {
+            if (Math.Abs((double)toggle.Frame.X - (double)count.Frame.X - (double)count.Frame.Width - 5) > Exact)
+                throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{toggle.Frame}");
             foreach (var popup in popups)
                 if (Math.Abs((double)popup.Frame.Y - 10) > Exact) throw new InvalidOperationException($"{scope} 上下布局筛选条未贴顶 10 点：{popup.Frame}");
             if (Math.Abs((double)popups[1].Frame.X - (double)popups[0].Frame.X - 95) > Exact ||
                 Math.Abs((double)popups[2].Frame.X - (double)popups[1].Frame.X - 95) > Exact ||
                 Math.Abs((double)count.Frame.X - (double)popups[2].Frame.X - 95) > Exact)
                 throw new InvalidOperationException($"{scope} 筛选控件间距不是 5 点（应保持 95 点节距）");
-            double center = ((double)popups[0].Frame.X + (double)count.Frame.X + (double)count.Frame.Width) / 2;
+            double center = ((double)popups[0].Frame.X + (double)toggle.Frame.X + (double)toggle.Frame.Width) / 2;
             if (Math.Abs(center - paneWidth / 2) > .5) throw new InvalidOperationException($"{scope} 筛选条未水平居中：{center}/{paneWidth}");
-            if (Math.Abs((double)count.Frame.Y + (double)count.Frame.Height / 2 - (double)popups[0].Frame.Y - (double)popups[0].Frame.Height / 2) > .5)
-                throw new InvalidOperationException($"{scope} 计数未与筛选控件垂直对齐：{count.Frame}");
+            if (Math.Abs((double)count.Frame.Y + (double)count.Frame.Height / 2 - (double)popups[0].Frame.Y - (double)popups[0].Frame.Height / 2) > .5 ||
+                Math.Abs((double)toggle.Frame.Y + (double)toggle.Frame.Height / 2 - (double)popups[0].Frame.Y - (double)popups[0].Frame.Height / 2) > .5)
+                throw new InvalidOperationException($"{scope} 计数/相似聚类 toggle 未与筛选控件垂直对齐：{count.Frame}/{toggle.Frame}");
             return;
         }
         if (Math.Abs(paneWidth - 116) > .5) throw new InvalidOperationException($"{scope} 左右布局胶片栏栏宽不是 116 点：{paneWidth}");
@@ -191,12 +201,14 @@ internal static class NativeMainLayoutAcceptance
         if (Math.Abs((double)popups[0].Frame.Y - 34) > Exact) throw new InvalidOperationException($"{scope} 左右布局首控件未从 34 点起：{popups[0].Frame}");
         if (Math.Abs((double)popups[1].Frame.Y - (double)popups[0].Frame.Y - 37) > Exact ||
             Math.Abs((double)popups[2].Frame.Y - (double)popups[1].Frame.Y - 37) > Exact ||
-            Math.Abs((double)count.Frame.Y - (double)popups[2].Frame.Y - 37) > Exact)
+            Math.Abs((double)count.Frame.Y - (double)popups[2].Frame.Y - 37) > Exact ||
+            Math.Abs((double)toggle.Frame.Y - (double)count.Frame.Y - (double)count.Frame.Height - 5) > Exact)
             throw new InvalidOperationException($"{scope} 筛选控件纵向间距不是 5 点（应保持 37 点节距）");
         double popupCenter = (double)popups[0].Frame.X + (double)popups[0].Frame.Width / 2;
         double countCenter = (double)count.Frame.X + (double)count.Frame.Width / 2;
-        if (Math.Abs(popupCenter - 58) > Exact || Math.Abs(countCenter - 58) > Exact)
-            throw new InvalidOperationException($"{scope} 左右布局筛选条/计数中心不是 58：{popupCenter}/{countCenter}");
+        double toggleCenter = (double)toggle.Frame.X + (double)toggle.Frame.Width / 2;
+        if (Math.Abs(popupCenter - 58) > Exact || Math.Abs(countCenter - 58) > Exact || Math.Abs(toggleCenter - 58) > Exact)
+            throw new InvalidOperationException($"{scope} 左右布局筛选条/计数/toggle 中心不是 58：{popupCenter}/{countCenter}/{toggleCenter}");
     }
 
     /// <summary>核对胶片栏步长与内边距、卡片 96×144 内部结构，并输出前两张卡片的实际几何。</summary>
@@ -211,6 +223,7 @@ internal static class NativeMainLayoutAcceptance
         var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
         double filterBottom = Math.Max(popups.Max(popup => (double)popup.Frame.Y + (double)popup.Frame.Height),
             filePane.Subviews.OfType<NSTextField>().Max(label => (double)label.Frame.Y + (double)label.Frame.Height));
+        filterBottom = Math.Max(filterBottom, filePane.Subviews.OfType<NSButton>().Where(button => button is not NSPopUpButton).Max(button => (double)button.Frame.Y + (double)button.Frame.Height));
         if ((double)scroll.Frame.Y < filterBottom - Exact) throw new InvalidOperationException($"{scope} 筛选条与胶片栏重叠：{scroll.Frame}");
         if (Math.Abs((double)scroll.Frame.Y + (double)scroll.Frame.Height - (double)filePane.Frame.Height) > .5)
             throw new InvalidOperationException($"{scope} 胶片栏未填满文件栏剩余空间，出现空带：{scroll.Frame}/{filePane.Frame}");
