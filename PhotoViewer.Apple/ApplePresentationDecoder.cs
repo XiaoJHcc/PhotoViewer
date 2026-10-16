@@ -5,10 +5,10 @@ using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 
-namespace PhotoViewer.Mac.Core;
+namespace PhotoViewer.Apple;
 
 /// <summary>ImageIO 的 JPEG/HEIF/RAW 统一主图解码器，直接输出线性 RGBA16F，方向留给 GPU。</summary>
-public sealed class MacPresentationDecoder : IPresentationImageDecoder
+public sealed class ApplePresentationDecoder : IPresentationImageDecoder
 {
     /// <summary>半精度 RGBA 每像素八字节。</summary>
     public int BytesPerPixel => 8;

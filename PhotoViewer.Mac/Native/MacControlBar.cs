@@ -1,5 +1,6 @@
 using AppKit;
 using CoreGraphics;
+using PhotoViewer.Apple;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
@@ -9,10 +10,9 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>原生控制栏保留 EXIF、评分、命令三个整体分组，按可用空间换行或换列。</summary>
 internal sealed class MacControlBar : NSView
 {
-    private const double Padding = 10;
-    private const double GroupSpacing = 10;
     private readonly Action _changed;
     private readonly List<NSView> _groups = [];
+    private readonly List<ControlBarLayout.GroupSpec> _specs = [];
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, NSButton> _commands = [];
     private readonly List<NSButton> _ratings = [];
@@ -43,7 +43,7 @@ internal sealed class MacControlBar : NSView
         {
             var exif = new GroupView { WantsLayer = true, Clicked = openTools };
             foreach (var entry in entries) exif.AddSubview(new ExifTile(entry));
-            AddGroup(exif);
+            AddGroup(exif, ControlBarGroupKind.Exif);
         }
         if (main.Settings.ShowRating)
         {
@@ -62,12 +62,12 @@ internal sealed class MacControlBar : NSView
                 ratingGroup.AddSubview(button);
                 _ratings.Add(button);
             }
-            AddGroup(ratingGroup);
+            AddGroup(ratingGroup, ControlBarGroupKind.Rating);
         }
         var commandGroup = new GroupView();
         foreach (var hotkey in main.ControlVM.EnabledControls)
         {
-            string? symbol = MacSymbols.ForCommand(hotkey.Command);
+            string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
             if (symbol == null) continue;
             string tooltip = CommandTooltip(hotkey, main.Settings);
             var button = MacSymbols.Button(symbol, tooltip, () => execute(hotkey.Command));
@@ -86,7 +86,7 @@ internal sealed class MacControlBar : NSView
             commandGroup.AddSubview(button);
             _commands.Add(hotkey.Command, button);
         }
-        if (commandGroup.Subviews.Length > 0) AddGroup(commandGroup);
+        if (commandGroup.Subviews.Length > 0) AddGroup(commandGroup, ControlBarGroupKind.Command);
         else commandGroup.Dispose();
         foreach (var hotkey in main.Settings.Hotkeys)
         {
@@ -110,10 +110,13 @@ internal sealed class MacControlBar : NSView
             or nameof(SettingsViewModel.HotkeyItem.PrimaryHotkey) or nameof(SettingsViewModel.HotkeyItem.SecondaryHotkey)) _changed();
     }
 
-    /// <summary>登记非空业务分组，不把组内按钮摊平成可任意断开的列表。</summary>
-    private void AddGroup(NSView group)
+    /// <summary>登记非空业务分组及其类型，不把组内按钮摊平成可任意断开的列表。</summary>
+    /// <param name="group">已填好子控件的分组视图。</param>
+    /// <param name="kind">分组类型，决定共享布局口径。</param>
+    private void AddGroup(NSView group, ControlBarGroupKind kind)
     {
         _groups.Add(group);
+        _specs.Add(new ControlBarLayout.GroupSpec(kind, group.Subviews.Length));
         AddSubview(group);
     }
 
@@ -121,86 +124,64 @@ internal sealed class MacControlBar : NSView
     private void LayoutGroups(bool horizontal)
     {
         _horizontal = horizontal;
-        foreach (var group in _groups) LayoutGroup(group, horizontal);
+        for (int index = 0; index < _groups.Count; index++) LayoutGroup(index, horizontal);
     }
 
-    private void LayoutGroup(NSView group, bool horizontal, double crossSize = 0)
+    /// <summary>把共享布局算得的子控件偏移落到原生 frame；交叉轴按所在行拉伸并居中。</summary>
+    /// <param name="index">分组顺序索引。</param>
+    /// <param name="horizontal">是否横向排列。</param>
+    /// <param name="crossSize">所在行的交叉轴长度，0 表示仅按分组自身长度。</param>
+    private void LayoutGroup(int index, bool horizontal, double crossSize = 0)
     {
-        var children = group.Subviews;
-        bool ratingGroup = children.Length > 0 && children[0] is NSButton button && _ratings.Contains(button);
-        bool exifGroup = children.Length > 0 && children[0] is ExifTile;
-        double inset = ratingGroup ? 8 : exifGroup ? 4 : 0;
-        double spacing = ratingGroup ? 0 : exifGroup ? 4 : 8;
-        double width = exifGroup ? 50 : ratingGroup ? 30 : 40;
-        double height = ratingGroup ? 30 : 40;
-        int count = children.Length;
-        double childMain = horizontal ? width : height;
-        double childCross = horizontal ? height : width;
-        double main = count * childMain + Math.Max(0, count - 1) * spacing + inset * 2 * (exifGroup ? count : 1);
+        var group = _groups[index];
+        var spec = _specs[index];
+        var metrics = ControlBarLayout.GetMetrics(spec.Kind);
+        double main = ControlBarLayout.MainLength(spec, horizontal);
+        double childCross = horizontal ? metrics.Height : metrics.Width;
         double cross = Math.Max(childCross, crossSize);
         group.Frame = new CGRect(0, 0, horizontal ? main : cross, horizontal ? cross : main);
-        for (int index = 0; index < count; index++)
-        {
-            int position = ratingGroup && !horizontal ? count - index - 1 : index;
-            double childStart = inset + position * (childMain + spacing + (exifGroup ? inset * 2 : 0));
-            double crossStart = (cross - childCross) / 2;
-            children[index].Frame = new CGRect(horizontal ? childStart : crossStart,
-                horizontal ? crossStart : childStart, width, height);
-        }
+        var offsets = ControlBarLayout.ChildOffsets(spec, horizontal, crossSize);
+        var children = group.Subviews;
+        for (int child = 0; child < children.Length; child++)
+            children[child].Frame = new CGRect(horizontal ? offsets[child].Main : offsets[child].Cross,
+                horizontal ? offsets[child].Cross : offsets[child].Main, metrics.Width, metrics.Height);
     }
 
     /// <summary>整组沿主轴排布，空间不足时换行/换列，返回包含外边距的文档尺寸。</summary>
+    /// <param name="horizontal">是否横向排列。</param>
+    /// <param name="availableMain">主轴可用长度。</param>
+    /// <returns>文档尺寸。</returns>
     internal CGSize Measure(bool horizontal, double availableMain)
     {
         LayoutGroups(horizontal);
-        var lines = GetLines(Math.Max(1, availableMain - Padding * 2));
-        double cross = lines.Sum(line => line.Max(group => CrossSize(group))) + Math.Max(0, lines.Count - 1) * GroupSpacing;
-        double main = lines.Count == 0 ? 0 : lines.Max(line => LineLength(line));
-        return horizontal ? new CGSize(main + Padding * 2, cross + Padding * 2)
-            : new CGSize(cross + Padding * 2, main + Padding * 2);
+        var lines = ControlBarLayout.PackLines(_specs, horizontal, Math.Max(1, availableMain - ControlBarLayout.Padding * 2));
+        var document = ControlBarLayout.DocumentSize(_specs, horizontal, lines);
+        return new CGSize(document.Width, document.Height);
     }
 
     /// <summary>在实际视口内居中每一行/列，超长分组保留完整尺寸并交系统滚动容器处理。</summary>
+    /// <param name="viewport">系统滚动容器的客户端尺寸。</param>
     internal void Arrange(CGSize viewport)
     {
         double availableMain = _horizontal ? (double)viewport.Width : (double)viewport.Height;
         var measured = Measure(_horizontal, availableMain);
         var document = new CGSize(Math.Max((double)viewport.Width, (double)measured.Width), Math.Max((double)viewport.Height, (double)measured.Height));
         Frame = new CGRect(CGPoint.Empty, document);
-        var lines = GetLines(Math.Max(1, availableMain - Padding * 2));
-        double cross = Padding;
+        var lines = ControlBarLayout.PackLines(_specs, _horizontal, Math.Max(1, availableMain - ControlBarLayout.Padding * 2));
+        double cross = ControlBarLayout.Padding;
         foreach (var line in lines)
         {
-            double lineCross = line.Max(group => CrossSize(group));
-            double main = Math.Max(Padding, (availableMain - LineLength(line)) / 2);
-            foreach (var group in line)
+            double lineCross = ControlBarLayout.LineCross(_specs, _horizontal, line);
+            double main = Math.Max(ControlBarLayout.Padding, (availableMain - ControlBarLayout.LineLength(_specs, _horizontal, line)) / 2);
+            foreach (int index in line)
             {
-                LayoutGroup(group, _horizontal, lineCross);
-                group.SetFrameOrigin(_horizontal ? new CGPoint(main, cross) : new CGPoint(cross, main));
-                main += MainSize(group) + GroupSpacing;
+                LayoutGroup(index, _horizontal, lineCross);
+                _groups[index].SetFrameOrigin(_horizontal ? new CGPoint(main, cross) : new CGPoint(cross, main));
+                main += ControlBarLayout.MainLength(_specs[index], _horizontal) + ControlBarLayout.GroupSpacing;
             }
-            cross += lineCross + GroupSpacing;
+            cross += lineCross + ControlBarLayout.GroupSpacing;
         }
     }
-
-    /// <summary>按完整分组计算行列，单个超长分组保持整体而不是拆开评分或命令顺序。</summary>
-    private List<List<NSView>> GetLines(double available)
-    {
-        var lines = new List<List<NSView>>();
-        foreach (var group in _groups)
-        {
-            if (lines.Count == 0 || lines[^1].Count > 0 && LineLength(lines[^1]) + GroupSpacing + MainSize(group) > available) lines.Add([]);
-            lines[^1].Add(group);
-        }
-        return lines;
-    }
-
-    /// <summary>返回分组在当前排列主轴上的长度。</summary>
-    private double MainSize(NSView group) => _horizontal ? (double)group.Frame.Width : (double)group.Frame.Height;
-    /// <summary>返回分组在当前排列交叉轴上的长度。</summary>
-    private double CrossSize(NSView group) => _horizontal ? (double)group.Frame.Height : (double)group.Frame.Width;
-    /// <summary>返回一行或一列的总长度，组间空隙不计入最后一项。</summary>
-    private double LineLength(List<NSView> line) => line.Sum(MainSize) + Math.Max(0, line.Count - 1) * GroupSpacing;
 
     /// <summary>重建或关闭时释放控件并解除模型订阅。</summary>
     private void ClearGroups()
@@ -208,7 +189,7 @@ internal sealed class MacControlBar : NSView
         foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
         _hotkeys.Clear();
         foreach (var group in _groups) DisposeView(group);
-        _groups.Clear(); _commands.Clear(); _ratings.Clear();
+        _groups.Clear(); _specs.Clear(); _commands.Clear(); _ratings.Clear();
     }
 
     /// <summary>递归释放分组的托管控件，避免原生层持有旧按钮事件。</summary>

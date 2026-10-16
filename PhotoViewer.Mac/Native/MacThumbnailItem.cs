@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using System.ComponentModel;
 
@@ -58,7 +59,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     {
         LiveItems.Add(this);
         if (_card != null) return;
-        _card = new CardView(new CGRect(0, 0, MacFilmstripLayout.CardWidth, MacFilmstripLayout.CardHeight));
+        _card = new CardView(new CGRect(0, 0, FilmstripGeometry.CardWidth, FilmstripGeometry.CardHeight));
         View = _card;
         _surface = new FlippedView(new CGRect(3, 3, 90, 138)) { WantsLayer = true };
         _surface.Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, 1).CGColor;

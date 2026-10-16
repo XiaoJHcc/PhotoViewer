@@ -2,6 +2,7 @@ using AppKit;
 using System.Globalization;
 using System.Reactive.Linq;
 using System.Text.Json;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
@@ -387,7 +388,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         if (action.EventType == (int)NSEventType.KeyDown && action.KeyCode == 53) { StopRecording(); PushState(); return 1; }
         bool clear = action.EventType == (int)NSEventType.KeyDown && action.KeyCode is 51 or 117;
         if (clear) { AssignGesture(null); PushState(); return 1; }
-        var gesture = MacInput.FromRaw(action.EventType, (ushort)action.KeyCode, action.Modifiers, action.ButtonNumber,
+        var gesture = AppleInputMapping.FromRaw(action.EventType, (ushort)action.KeyCode, action.Modifiers, action.ButtonNumber,
             action.ScrollingDeltaY, action.Precise, action.Characters, Settings);
         if (gesture == null) return 0;
         AssignGesture(gesture);

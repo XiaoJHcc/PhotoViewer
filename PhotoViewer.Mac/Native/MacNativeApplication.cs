@@ -1,5 +1,6 @@
 using AppKit;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
@@ -42,7 +43,7 @@ public static class MacNativeApplication
         AppResources.Initialize(new MacAppResources());
         HeifLoader.Initialize(new MacHeifDecoder());
         RawLoader.Initialize(new MacRawDecoder());
-        BitmapLoader.InitializePresentationDecoder(new MacPresentationDecoder());
+        BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder());
         PerformanceBudget.Initialize(new DefaultPerformanceBudget());
         MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
         XmpWriter.Initialize(new MacXmpWriter());

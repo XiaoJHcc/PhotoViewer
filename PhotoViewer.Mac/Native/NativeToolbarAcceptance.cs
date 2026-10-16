@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
@@ -53,7 +54,7 @@ internal static class NativeToolbarAcceptance
             settings.UseAppleKeyboard = true;
             settings.MapCommandTarget = AppleMappingTarget.Ctrl;
             await Task.Delay(150);
-            var expected = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay && MacSymbols.ForCommand(hotkey.Command) != null).Select(hotkey => hotkey.Command);
+            var expected = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay && AppleSymbolNames.ForCommand(hotkey.Command) != null).Select(hotkey => hotkey.Command);
             if (!window.ControlBar.Commands.Keys.SequenceEqual(expected)) throw new InvalidOperationException("工具栏未保留设置排序");
             string tooltip = window.ControlBar.Commands["Next"].ToolTip ?? "";
             if (!tooltip.Contains(MacInput.FormatGesture(next.PrimaryHotkey, settings), StringComparison.Ordinal) ||

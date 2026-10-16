@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -451,7 +452,7 @@ public sealed class MacMainWindow : IDisposable
             double filterHeight = row
                 ? FilterHeight + FilterMargin * 2
                 : FilterTopInset + FilterHeight * 3 + FilterGap * 3 + countHeight + FilterGap + FilterToggleHeight + FilterMargin;
-            double filmstripHeight = MacFilmstripLayout.CardHeight + MacFilmstripLayout.TopPadding + MacFilmstripLayout.BottomPadding;
+            double filmstripHeight = FilmstripGeometry.CardHeight + FilmstripGeometry.TopPadding + FilmstripGeometry.BottomPadding;
             // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
             bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
@@ -548,7 +549,7 @@ public sealed class MacMainWindow : IDisposable
     {
         var panel = _main.FileVM.SimilarityPanel;
         double content = panel.HasItems
-            ? panel.SimilarItems.Count * MacFilmstripLayout.CardWidth + SimilarityListPadding + SimilarityBorderWidth * 2
+            ? panel.SimilarItems.Count * FilmstripGeometry.CardWidth + SimilarityListPadding + SimilarityBorderWidth * 2
             : SimilarityMinWidth;
         return Math.Min(Math.Max(SimilarityMinWidth, content), paneWidth / 2) + SimilarityMargin;
     }
@@ -610,7 +611,7 @@ public sealed class MacMainWindow : IDisposable
     {
         if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.CommandKeyMask) && nativeEvent.CharactersIgnoringModifiers == ",") { ShowSettings(); return true; }
         string? command = MacInput.ResolveCommand(nativeEvent, _main.Settings);
-        if (command != null && MacSymbols.ForCommand(command) != null) { Execute(command); return true; }
+        if (command != null && AppleSymbolNames.ForCommand(command) != null) { Execute(command); return true; }
         if (nativeEvent.Type == NSEventType.LeftMouseDown && Session.Image == null && (nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) == 0)
         {
             _ = OpenPickerAsync(false);

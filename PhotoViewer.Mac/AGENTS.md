@@ -2,22 +2,23 @@
 
 P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 默认旧壳，`--native` 启动原生；**发布通道切原生的时机由作者决定**。**作者 2026-10-16 裁定：Avalonia 旧壳不做产品验收（将被原生壳替换），验收只在各平台原生壳上进行**；macOS 原生壳的色彩、画质、手感、减少动态效果开启态与真实鼠标拖放已验收通过。构建/运行仍走根 DEV.md 的 Tasks。
 
+**Apple 共享源**：展示解码器、Metal 渲染核心与视口/胶片栏/控制栏/分析栏几何、命令符号与手势映射已迁到 `../PhotoViewer.Apple/`（纯源目录，由 csproj `<Compile Include="..\PhotoViewer.Apple\**\*.cs"/>` 链接编译，见 [其手册](../PhotoViewer.Apple/AGENTS.md)）。本壳只保留 AppKit 宿主：事件、命中测试、图层挂载、原生控件的 frame 落位与系统图标对象。改动共享源后必须复跑本壳八套 `--pv-native-*` 回归。
+
 | 文件/目录 | 职责 |
 |---|---|
 | Program.cs | 原生/旧壳入口分流，禁止启动原生时再创建 Avalonia 应用。 |
-| Core/MacPresentationDecoder.cs | ImageIO JPEG/HEIF/RAW → RGBA16F 扩展线性 sRGB；JPEG 扫描 ICC APP2 后按共享 EXIF 推断无标签色域（ImageIO ProfileName 会自动补值）；源尺寸与未应用 EXIF 方向交渲染器；无内嵌预览的小图子采样。 |
 | Core/MacHeifDecoder.cs / MacRawDecoder.cs | 旧壳及已有缩略图路径，维持原有 8 位口径。 |
 | Core/MacStorageRefs.cs | 原生本地存储引用，复用共享文件源、评分及元数据服务。 |
 | Native/MacNativeApplication.cs | AppKit 生命周期、ReactiveUI builder、平台门面、Finder/Dock/URL 打开接线。 |
-| Native/MetalPhotoView.cs | 正确线性层标签、F16 纹理、mipmap、GPU EXIF 方向、物理倍率、原生缩放/平移/惯性与 GPU 帧读回。 |
+| Native/MetalPhotoView.cs | AppKit 宿主：把共享 `MetalPhotoRenderer.Layer` 作为视图图层，包原生事件（捏合/滚轮/拖动/按键）为共享 `PhotoViewport` 操作，并暴露物理倍率、导航图几何与 GPU 帧读回给窗口与验收。线性层标签、F16 纹理、mipmap、GPU EXIF 方向与视口数学见 [PhotoViewer.Apple](../PhotoViewer.Apple/AGENTS.md)。 |
 | Native/MacMainWindow.cs | 隐藏标题栏、系统菜单、两向布局、筛选、可滚动控制栏、原生右键菜单、评分/打开、对焦缩放/导航图；跨屏物理尺寸刷新与全屏/显隐状态保存。窗口级事件监视器还负责顶边拖动区内的**标题栏双击**（隐藏式标题栏不会自带系统行为）：按 `AppleActionOnDoubleClick` 缩放/最小化/不动作并吞掉事件，全屏无标题栏故不接管；判定挂在监视器而非拖动区视图，因为拖动区只在悬停时显示，靠命中测试会漏掉未预热鼠标的双击。 |
-| Native/MacControlBar.cs | EXIF 信息块、评分与命令三个原生分组；按空间整体换行/换列并居中，超长组用系统滚动；保留评分方向、显隐/顺序、编号评分快捷命令及苹果主次绑定提示。 |
+| Native/MacControlBar.cs | EXIF 信息块、评分与命令三个原生分组；分组尺寸、换行/换列与行内居中由共享 `ControlBarLayout` 计算，本壳只落原生 frame；保留评分方向、显隐/顺序、编号评分快捷命令及苹果主次绑定提示。 |
 | Native/NativeMainLayoutAcceptance.cs | 显式 --pv-native-smoke --pv-native-layout 验证两向/三尺寸主界面几何、栏位显隐、自动方向、导航图与真实命令；筛选条核对三个 90×32 下拉、计数与 90×27 相似聚类 toggle 的 5 点节距与居中；--pv-layout-hold 在 830×650 暂停供系统截图。 |
 | Native/LegacyLayoutAcceptance.cs | 显式 --legacy-ui --pv-legacy-layout 采集同配置旧壳的两向/三尺寸实际几何和控件渲染（含筛选条相似聚类 toggle，P3 起不再按延期隐藏）；隔离设置与数据库。 |
 | Native/NativeToolbarAcceptance.cs | 显式 --pv-native-smoke --pv-native-toolbar 验证两向/窄宽窗分组几何、信息层级、形状、评分方向、显隐/排序/主次绑定及真实按钮事件；只对自有 toolbar-fixtures 素材执行评分写回。另覆盖 [FILM-06](../Design/ui-contract.md)：胶片栏卡片星级按钮真实点击 → 文件级写回一致 + 主图身份不变 + 点星不选中父卡片，改星后落出筛选**仍暂留**、切走后移除且计数与筛选一致；入参不是自有副本时自行打开副本目录，收尾还原评级/筛选/打开状态。 |
 | Native/MacThumbnailItem.cs | NSCollectionView 虚拟化卡片，80 方形图片/选中与缓存描边/评级/抖动。保留 `init`/`initWithNibName:bundle:`/`NativeHandle`/`LoadView` 幂等初始化与 `LiveItems` 托管常驻，防止复用池卡片被 GC 回收后重建 View 导致空缺。可选第二行覆盖（文本 + 柱状占比）供相似聚类卡片显示分数；`selectByDisplayedImage` 决定选中描边取 `IsCurrentImage`（相似聚类）还是列表锚点 `IsCurrent`（胶片栏），胶片栏调用点不变。 |
 | Native/MacAnalysisHost.cs | 分析栏宿主：把主 VM 的可见性、即时计算开关、当前图与 `PhotoLoadSession` 的展示位图上报给共享 `Core/AI/AnalysisPresenter`（与旧壳 `AnalysisViewModel` 同一份编排）。 |
-| Native/MacAnalysisPanel.cs | 原生分析栏：按 presenter 瓦片顺序排布细节预览 / 直方图 / 4 张 DINO-CV 诊断图。几何与旧壳 `AnalysisView` 同口径——正方形瓦片边长 `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`，从主轴内边距 10 起排、间距 8，交叉轴 = 边长 + 20；背景 `#111`、朝主图一侧 1 点 `#333`；空白点击清空准星；细节裁剪按 `DisplayCrop` 从展示会话的容器朝向像素取显示朝向 1:1 方块（代理期留空）。 |
+| Native/MacAnalysisPanel.cs | 原生分析栏：按 presenter 瓦片顺序排布细节预览 / 直方图 / 4 张 DINO-CV 诊断图。瓦片边长/交叉轴取共享 `AnalysisPanelGeometry`（与旧壳 `AnalysisView` 同口径：`floor((可用主轴长度 − 20 − 8×(n−1)) / n)`，从主轴内边距 10 起排、间距 8，交叉轴 = 边长 + 20）；背景 `#111`、朝主图一侧 1 点 `#333`；空白点击清空准星；细节裁剪按 `DisplayCrop` 从展示会话的容器朝向像素取显示朝向 1:1 方块（代理期留空）。 |
 | Native/MacDetailPreview.cs | 原生细节预览瓦片：外观复用 `MacDiagnosticTile`（外框/内层裁切/药丸角标/1:1 内容），叠加 hover 绿色描边并回报主图绿框位置、双击请求主图定位到裁剪中心。整体参与命中测试，内层瓦片不单独收事件。 |
 | Native/MacDiagnosticTile.cs | 原生诊断瓦片（分析栏与 DINO 诊断页共用）：外框 `#222`/`#444` 1 点/圆角 6、内层圆角 5 裁切、按 `AspectRatio` letterbox、主图关闭插值（32×32 热力图保持像素级）、背景图层 alpha 0.30、左上药丸角标 `#88000000` 圆角 5,0,5,0、底部说明、占位与准星；`Overlay` 插在图像之上、准星之下；`MouseDown` 吞掉自身点击，只有内容矩形内的点击换算成归一化坐标抛出。 |
 | Native/MacShakeFieldView.cs | 抖动矢量场绘制：32×32 定长线段（半长 = 格短边 ×0.5×0.85），颜色唯一取自 `CvHeatmap.ColorForShake`，跳过 `Mask` 为假 / NaN / `dragR` 低于显示阈值；透明背景，叠在瓦片的压暗原图上。 |
@@ -26,9 +27,9 @@ P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 
 | Native/MacToolsWindow.cs / MacExifDetailView.cs / MacDinoDiagnosticView.cs | 原生工具窗口：非模态单例，首次 `ShowOrActivate` 才懒创建真实 `NSWindow`（880×720、最小 560×420、深色外观、`ReleasedWhenClosed=false`，关闭后保留对象可重开），两态外壳 = 工具列表首页（`返回` + `EXIF 详情`/`DINO 诊断`；照片数据统计为 Windows 专属不建入口）与子页面，导航状态全部复用共享 `ToolsViewModel`。EXIF 详情页按旧壳 7 列口径渲染（60/1/2*/1/2*/1/3*、卡片 `#2a2a2a` 圆角 6、ID 列 `#222` 等宽 11、行/列 1 点 `#3a3a3a`、值 13 `#FFF` 最多 3 行尾部截断），多格式时用扁平按钮切换并触发 VM 惰性加载。DINO 诊断页只消费共享 `DinoDiagnosticPresenter`（读库与推理都在 presenter，视图不自行驱动、不调 `SetSource`），瓦片复用 `MacDiagnosticTile` + `MacShakeFieldView`，点击回传 `OnTileClicked`、空白处 `ClearCrosshair`，第三格为刚体拟合文本面板（12 点等宽、行高 20）。 |
 | Native/NativeAnalysisAcceptance.cs | 显式 `--pv-native-smoke --pv-native-analysis` 验证分析栏与增强预览：ToggleAnalysisView 入口、两向瓦片几何（边长/间距/内边距/交叉轴）、瓦片顺序与角标、点击落准星、直方图与细节预览出图、ToggleEnhance 经 `PhotoLoadSession` 生效并还原、关闭后主图恢复占满。 |
 | Native/NativeToolsAcceptance.cs | 显式 `--pv-native-smoke --pv-native-tools` 验证工具窗口：懒创建单例、深色外观与 880×720 内容尺寸、列表页两个入口（无 Windows 专属项）、真实按钮点击进入 EXIF 页（分组/标签渲染 + 返回按钮）、进入 DINO 页（5 张瓦片 + presenter 状态就绪）、返回与关闭/重开。 |
-| Native/MacFilmstripView.cs | 固定单行/单列布局与可中断的 350ms 三次缓出滚动；业务索引即几何顺序，按项目数扩展主轴；系统减少动态效果直接定位，横向支持纵向鼠标滚轮。 |
+| Native/MacFilmstripView.cs | 固定单行/单列布局与可中断的 350ms 三次缓出滚动；几何与缓出曲线取共享 `FilmstripGeometry`/`FilmstripAnimation`，本壳负责 NSCollectionView 布局属性与滚动容器。业务索引即几何顺序，按项目数扩展主轴；系统减少动态效果直接定位，横向支持纵向鼠标滚轮。 |
 | Native/NativeFilmstripAcceptance.cs | 显式 --pv-native-smoke --pv-native-filmstrip 验证 FILM 契约的真实卡片点击、定位条件、动画中间帧/终点/末次请求、用户接管、身份/几何及两向滚动；实际打开筛选菜单核对对齐、间距、勾号与选择事件；另覆盖 [FILM-05](../Design/ui-contract.md) 的延迟加载与失败形态——自建并刷新 `release/native-p2-acceptance/filmstrip-lazy-fixtures/`（两张自有好图副本 + 一个故意不可解码的坏文件）后核对身份/几何不等解码、缩略图与日期异步补齐、滚动后可见卡片身份立即有效、坏文件仍可选为主图且不呈现伪造图像，收尾还原目录/尺寸/当前照片。作者照片全程只读。 |
-| Native/MacSymbols.cs / MacInput.cs | SF Symbols 语义映射、独立 NSImage 生命周期、AppGesture/苹果键盘映射；不改持久化字码。`MacInput.FromEvent` 必须按 `NSEventType` 只读对应字段（鼠标/键盘读取 `KeyCode`/`ButtonNumber`/`ScrollingDeltaY`/`CharactersIgnoringModifiers` 的无关项会抛 `NSInternalInconsistencyException` 并被 ObjC 桥吞掉），再复用 `FromRaw` 的同一映射口径（SwiftUI 录制按字段拆包走 `FromRaw`）。 |
+| Native/MacSymbols.cs / MacInput.cs | 独立 NSImage 生命周期、设置文本格式化；命令→符号名与原生事件码→手势的映射口径在共享 `AppleSymbolNames`/`AppleInputMapping`。`MacInput.FromEvent` 必须按 `NSEventType` 只读对应字段（鼠标/键盘读取 `KeyCode`/`ButtonNumber`/`ScrollingDeltaY`/`CharactersIgnoringModifiers` 的无关项会抛 `NSInternalInconsistencyException` 并被 ObjC 桥吞掉），再交给共享映射（SwiftUI 录制按字段拆包直接调共享入口）。不改持久化字码。 |
 | Native/MacNativeSettingsPresenter.cs / MacSettingsBridge.cs | macOS 26 设置窗口的 C# 侧：持有工作副本（NativeSettingsSession）、校验与持久化，通过 JSON 状态快照 + 动作回传驱动 SwiftUI 界面，派生文本（性能预算/缓存提示/快捷键符号/冲突/清库状态）与窗口历史导航全在 C# 计算后推入；保留桌面端快捷键录制判定、苹果键盘映射与清库。MacSettingsBridge 定义 camelCase DTO、source-generated JSON 契约与 libMacSettingsUI.dylib 的 C ABI 动态绑定（NativeLibrary + `delegate* unmanaged[Cdecl]` + `@UnmanagedCallersOnly` 回调）；**每个导出入口先 `EnsureLoaded()`**（函数指针在首次载入前为 null，直接调用会跳到地址 0，退出路径曾因此崩溃），展示器侧 `CloseWindow()` 在从未展示过设置窗口时空手返回，退出不为了关一个不存在的窗口去载入 SwiftUI 动态库。工作副本关闭回写，不改 JSON 字段。 |
 | Native/SwiftSettings/MacSettingsUI.swift | 设置窗口 SwiftUI 实现（macOS 26 `NavigationSplitView` + `Form(.grouped)` 系统设置外观：侧栏彩色圆角 SF Symbol 底板、工具栏前进/后退、分页标题；内嵌可排序列表的行高与留白统一由 `SettingsMetrics` 规范——单行 38 点、含副标题 54 点，对齐原生 `Form` 行高）。以 `@_cdecl` 导出 C ABI；自身 `ObservableObject` 承接 C# 状态，交互以 JSON 动作回传；`NSEvent.addLocalMonitorForEvents` 捕获真实键/鼠标/滚轮手势回传 C# 判定（录制事件只读与事件类型相关的字段，合成事件的滚轮增量可能为 NaN 故手工拼装 JSON）。由 csproj 的 `_BuildSwiftSettingsDylib` 目标编译进 `MonoBundle` 并交 `_FixDylibCodeSigning` 签名。 |
 | Native/NativeSettingsAcceptance.cs | 显式 --pv-native-smoke --pv-native-settings 验证 SwiftUI 设置窗口：深色外观 + NSHostingController 挂载、五分类分组表单渲染、分页历史前进后退、勾选动作往返并触发重绘、真实 NSEvent 录制/删除清空/Escape 取消、文件格式/快捷键/EXIF 三处排序动作、窗口缩放、关闭回写与重开恢复；并尝试系统 screencapture 取真实窗口位图（无屏幕录制权限时在报告中如实记录）。采用隔离设置；真实鼠标拖放无法用合成事件验证，由作者手工实操验收（2026-10-16 通过）。 |

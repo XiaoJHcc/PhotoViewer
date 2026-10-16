@@ -2,6 +2,7 @@ using System.ComponentModel;
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
@@ -18,12 +19,7 @@ namespace PhotoViewer.Mac.Native;
 /// </summary>
 internal sealed class MacAnalysisPanel : NSView
 {
-    /// <summary>瓦片四周内边距（与旧壳 AnalysisView 的 Border Padding 一致）。</summary>
-    private const double Padding = 10;
-
-    /// <summary>瓦片间距（与旧壳 StackPanel Spacing 一致）。</summary>
-    private const double Spacing = 8;
-
+    /// <summary>瓦片几何（内边距、间距、边长与交叉轴）由共享 <see cref="AnalysisPanelGeometry"/> 提供。</summary>
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
     private readonly MacAnalysisHost _host;
@@ -82,34 +78,25 @@ internal sealed class MacAnalysisPanel : NSView
         Sync();
     }
 
-    /// <summary>按可用主轴长度算正方形瓦片边长（与旧壳 AnalysisView.UpdatePreviewSize 同口径）。</summary>
-    /// <param name="availableMain">主轴可用长度（行布局为面板宽，列布局为面板高）。</param>
-    /// <param name="count">瓦片数。</param>
-    /// <returns>瓦片边长，至少 1。</returns>
-    public static double TileSize(double availableMain, int count)
-    {
-        int n = Math.Max(1, count);
-        double usable = Math.Max(0, availableMain - Padding * 2 - Spacing * (n - 1));
-        return Math.Max(1, Math.Floor(usable / n));
-    }
-
     /// <summary>交叉轴尺寸（瓦片边长 + 两侧 10 点内边距）。</summary>
     /// <param name="availableMain">主轴可用长度。</param>
     /// <returns>需为面板分配的交叉轴长度。</returns>
-    public double CrossSize(double availableMain) => TileSize(availableMain, _order.Count) + Padding * 2;
+    public double CrossSize(double availableMain) => AnalysisPanelGeometry.CrossSize(availableMain, _order.Count);
 
     /// <summary>按交叉轴可用长度摆放瓦片，并刷新朝主图一侧的分隔线。</summary>
     /// <param name="horizontal">行布局（瓦片横排）为 true。</param>
     /// <param name="availableMain">主轴可用长度。</param>
     public void Arrange(bool horizontal, double availableMain)
     {
-        double tile = TileSize(availableMain, _order.Count);
+        double tile = AnalysisPanelGeometry.TileSize(availableMain, _order.Count);
         _tileSize = tile;
         // 与旧壳一致：瓦片从主轴内边距处起排（ItemsControl 内 StackPanel 左/上对齐），剩余不足一枚的零头留在末端。
         for (int i = 0; i < _order.Count; i++)
         {
-            double offset = Padding + i * (tile + Spacing);
-            _views[_order[i]].Frame = horizontal ? new CGRect(offset, Padding, tile, tile) : new CGRect(Padding, offset, tile, tile);
+            double offset = AnalysisPanelGeometry.TileOffset(i, tile);
+            _views[_order[i]].Frame = horizontal
+                ? new CGRect(offset, AnalysisPanelGeometry.Padding, tile, tile)
+                : new CGRect(AnalysisPanelGeometry.Padding, offset, tile, tile);
         }
         _divider.Frame = horizontal ? new CGRect(0, 0, Bounds.Width, 1) : new CGRect(0, 0, 1, Bounds.Height);
         foreach (var detail in _order)

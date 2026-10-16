@@ -19,6 +19,15 @@
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
     </ItemGroup>
 
+    <!--
+      Apple 共享源：PhotoViewer.Apple/ 是纯源文件目录（不是独立程序集），
+      以 Compile Include 链接进 macOS 原生壳；iOS 原生壳后续以同样方式链接同一目录，
+      因此这里的代码不得引用 AppKit/UIKit，平台专属部分留在各自 head 的 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+    </ItemGroup>
+
     <PropertyGroup Condition="'$(Configuration)'=='Release'">
         <UseAppHost>true</UseAppHost>
         <SelfContained>true</SelfContained>

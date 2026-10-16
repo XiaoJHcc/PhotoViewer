@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -8,22 +9,13 @@ namespace PhotoViewer.Mac.Native;
 internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
 {
     private int Count => (int)(CollectionView?.GetNumberOfItems(0) ?? 0);
-    internal const double CardWidth = 96;
-    internal const double CardHeight = 144;
-    internal const double Spacing = 0;
-    internal const double HorizontalPadding = 10;
-    internal const double TopPadding = 5;
-    internal const double BottomPadding = 10;
-    private double LeadingPadding => Horizontal ? HorizontalPadding : TopPadding;
-    private double TrailingPadding => Horizontal ? HorizontalPadding : BottomPadding;
+
     /// <summary>上下布局使用横向胶片栏，左右布局使用纵向胶片栏。</summary>
     internal bool Horizontal
     {
         get => ScrollDirection == NSCollectionViewScrollDirection.Horizontal;
         set => ScrollDirection = value ? NSCollectionViewScrollDirection.Horizontal : NSCollectionViewScrollDirection.Vertical;
     }
-    private double Step => (Horizontal ? CardWidth : CardHeight) + Spacing;
-    private double ItemStart => Horizontal ? Math.Max(HorizontalPadding, ((double)CollectionViewContentSize.Width - Count * Step + Spacing) / 2) : TopPadding;
 
     /// <summary>内容区只在主轴延伸，空列表与短列表仍至少覆盖原生裁剪视口。</summary>
     public override CGSize CollectionViewContentSize
@@ -31,9 +23,8 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
         get
         {
             var viewport = CollectionView?.EnclosingScrollView?.ContentView.Bounds.Size ?? CGSize.Empty;
-            double length = Count == 0 ? 0 : Count * Step - Spacing + LeadingPadding + TrailingPadding;
-            return Horizontal ? new CGSize(Math.Max((double)viewport.Width, length), viewport.Height)
-                : new CGSize(viewport.Width, Math.Max((double)viewport.Height, length));
+            var content = FilmstripGeometry.ContentSize(Horizontal, (double)viewport.Width, (double)viewport.Height, Count);
+            return new CGSize(content.Width, content.Height);
         }
     }
 
@@ -45,10 +36,8 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
     {
         if (indexPath.Section != 0 || indexPath.Item < 0 || indexPath.Item >= Count) return null;
         var attributes = NSCollectionViewLayoutAttributes.CreateForItem(indexPath);
-        var size = CollectionViewContentSize;
-        attributes.Frame = Horizontal
-            ? new CGRect(ItemStart + indexPath.Item * Step, TopPadding, CardWidth, CardHeight)
-            : new CGRect(Math.Max(0, ((double)size.Width - CardWidth) / 2), LeadingPadding + indexPath.Item * Step, CardWidth, CardHeight);
+        var card = FilmstripGeometry.ItemFrame(Horizontal, (int)indexPath.Item, Count, (double)CollectionViewContentSize.Width);
+        attributes.Frame = new CGRect(card.X, card.Y, card.Width, card.Height);
         return attributes;
     }
 
@@ -56,15 +45,14 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
     public override NSCollectionViewLayoutAttributes[] GetLayoutAttributesForElements(CGRect rect)
     {
         if (Count <= 0) return [];
-        double start = Horizontal ? (double)rect.X : (double)rect.Y;
-        double end = start + (Horizontal ? (double)rect.Width : (double)rect.Height);
-        int first = Math.Max(0, (int)Math.Floor((start - ItemStart) / Step));
-        int last = Math.Min(Count - 1, (int)Math.Floor((end - ItemStart) / Step));
-        if (last < first) return [];
-        var attributes = new List<NSCollectionViewLayoutAttributes>(last - first + 1);
-        for (int index = first; index <= last; index++)
+        double contentWidth = (double)CollectionViewContentSize.Width;
+        var range = FilmstripGeometry.VisibleRange(Count, FilmstripGeometry.ItemStart(Horizontal, contentWidth, Count),
+            FilmstripGeometry.Step(Horizontal), Horizontal ? (double)rect.X : (double)rect.Y, Horizontal ? (double)rect.Width : (double)rect.Height);
+        if (range.Last < range.First) return [];
+        var attributes = new List<NSCollectionViewLayoutAttributes>(range.Last - range.First + 1);
+        for (int index = range.First; index <= range.Last; index++)
         {
-            var path = NSIndexPath.FromItemSection(index, 0);
+            using var path = NSIndexPath.FromItemSection(index, 0);
             var item = GetLayoutAttributesForItem(path);
             if (item != null) attributes.Add(item);
         }
@@ -102,8 +90,8 @@ internal sealed class MacFilmstripScrollView : NSScrollView
         CancelAnimation();
         var start = ContentView.Bounds.Location;
         target = Horizontal ? new CGPoint(target.X, start.Y) : new CGPoint(start.X, target.Y);
-        if (NSWorkspace.SharedWorkspace.AccessibilityDisplayShouldReduceMotion ||
-            Math.Abs((double)(target.X - start.X)) < 1 && Math.Abs((double)(target.Y - start.Y)) < 1)
+        if (NSWorkspace.SharedWorkspace.AccessibilityDisplayShouldReduceMotion
+            || FilmstripAnimation.IsNegligible((double)start.X, (double)start.Y, (double)target.X, (double)target.Y))
         {
             SetScrollPosition(target);
             return;
@@ -111,9 +99,9 @@ internal sealed class MacFilmstripScrollView : NSScrollView
         double started = NSProcessInfo.ProcessInfo.SystemUptime;
         _animation = NSTimer.CreateRepeatingTimer(1.0 / 60, _ =>
         {
-            double progress = Math.Clamp((NSProcessInfo.ProcessInfo.SystemUptime - started) / .35, 0, 1);
-            double eased = 1 - Math.Pow(1 - progress, 3);
-            SetScrollPosition(new CGPoint(start.X + (target.X - start.X) * eased, start.Y + (target.Y - start.Y) * eased));
+            double progress = FilmstripAnimation.Progress(started, NSProcessInfo.ProcessInfo.SystemUptime);
+            SetScrollPosition(new CGPoint(FilmstripAnimation.Interpolate((double)start.X, (double)target.X, progress),
+                FilmstripAnimation.Interpolate((double)start.Y, (double)target.Y, progress)));
             if (progress >= 1) CancelAnimation();
         });
         NSRunLoop.Main.AddTimer(_animation, NSRunLoopMode.Common);

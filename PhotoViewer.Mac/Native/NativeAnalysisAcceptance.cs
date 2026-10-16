@@ -1,5 +1,6 @@
 using AppKit;
 using CoreGraphics;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
@@ -112,7 +113,7 @@ internal static class NativeAnalysisAcceptance
         int count = tiles.Count;
         double main = row ? (double)panel.Bounds.Width : (double)panel.Bounds.Height;
         double cross = row ? (double)panel.Bounds.Height : (double)panel.Bounds.Width;
-        double expectedTile = MacAnalysisPanel.TileSize(main, count);
+        double expectedTile = AnalysisPanelGeometry.TileSize(main, count);
         if (Math.Abs(cross - (expectedTile + 20)) > 1.5)
             throw new InvalidOperationException($"{(row ? "行" : "列")}布局分析栏交叉轴尺寸 {cross} 与边长 {expectedTile} + 20 不符");
         for (int i = 0; i < count; i++)

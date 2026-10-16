@@ -2,6 +2,7 @@ using System.ComponentModel;
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main;
@@ -44,9 +45,9 @@ internal sealed class MacSimilarityPanel : NSView
     /// <summary>错误提示的最大宽度(旧壳 MaxWidth 120)。</summary>
     private const double ErrorMaxWidth = 120;
     /// <summary>列布局下面板宽度:卡片 96 + 列表左右内边距 4/8 + 两侧 1 点描边。</summary>
-    private const double PanelWidth = MacFilmstripLayout.CardWidth + 4 + 8 + BorderWidth * 2;
+    private const double PanelWidth = FilmstripGeometry.CardWidth + 4 + 8 + BorderWidth * 2;
     /// <summary>行布局下列表交叉轴长度:卡片高 + 上下内边距 + 两侧描边。</summary>
-    private static readonly double ListCross = MacFilmstripLayout.CardHeight + MacFilmstripLayout.TopPadding + MacFilmstripLayout.BottomPadding + BorderWidth * 2;
+    private static readonly double ListCross = FilmstripGeometry.CardHeight + FilmstripGeometry.TopPadding + FilmstripGeometry.BottomPadding + BorderWidth * 2;
     /// <summary>行布局停靠区左右外边距。</summary>
     private const double DockRowMargin = 3;
     /// <summary>行布局停靠区下外边距(旧壳 Margin='3,3,3,8')。</summary>

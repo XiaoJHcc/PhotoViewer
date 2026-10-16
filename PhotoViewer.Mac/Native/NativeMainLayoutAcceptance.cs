@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;
@@ -214,8 +215,8 @@ internal static class NativeMainLayoutAcceptance
     /// <summary>核对胶片栏步长与内边距、卡片 96×144 内部结构，并输出前两张卡片的实际几何。</summary>
     private static async Task VerifyFilmstripAsync(MacMainWindow window, bool row, string scope, NSView filePane, List<string> geometry)
     {
-        if (MacFilmstripLayout.CardWidth != 96 || MacFilmstripLayout.CardHeight != 144 ||
-            MacFilmstripLayout.HorizontalPadding != 10 || MacFilmstripLayout.TopPadding != 5 || MacFilmstripLayout.BottomPadding != 10)
+        if (FilmstripGeometry.CardWidth != 96 || FilmstripGeometry.CardHeight != 144 ||
+            FilmstripGeometry.HorizontalPadding != 10 || FilmstripGeometry.TopPadding != 5 || FilmstripGeometry.BottomPadding != 10)
             throw new InvalidOperationException($"{scope} 胶片栏不再使用已验证的 96×144 卡片与 10/5/10 内边距");
         var scroll = window.FilmstripScroll;
         var layout = window.Filmstrip.CollectionViewLayout as MacFilmstripLayout ?? throw new InvalidOperationException($"{scope} 胶片栏布局类型改变");
@@ -239,9 +240,9 @@ internal static class NativeMainLayoutAcceptance
         Record(geometry, scope, "filmstripDocument", new CGRect(CGPoint.Empty, document));
         Record(geometry, scope, "filmstripScroll", scroll.Frame);
         int count = window.Main.FileVM.ThumbnailList.FilteredFiles.Count;
-        double step = row ? MacFilmstripLayout.CardWidth : MacFilmstripLayout.CardHeight;
-        double leading = row ? MacFilmstripLayout.HorizontalPadding : MacFilmstripLayout.TopPadding;
-        double trailing = row ? MacFilmstripLayout.HorizontalPadding : MacFilmstripLayout.BottomPadding;
+        double step = row ? FilmstripGeometry.CardWidth : FilmstripGeometry.CardHeight;
+        double leading = row ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.TopPadding;
+        double trailing = row ? FilmstripGeometry.HorizontalPadding : FilmstripGeometry.BottomPadding;
         double contentLength = count * step + leading + trailing;
         double documentMain = row ? (double)document.Width : (double)document.Height;
         double viewportMain = row ? (double)clip.Width : (double)clip.Height;
