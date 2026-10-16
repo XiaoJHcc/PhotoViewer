@@ -31,8 +31,13 @@ public static class ImageEnhancer
         int w = source.Width, h = source.Height;
         int bpp = DecodedImage.BytesPerPixel(source.Encoding);
 
-        // R/B 通道在像素内的字节下标（G 恒为 +1）：BGRA → B,_,R；RGB → R,_,B。
-        bool isBgr = source.Encoding == PixelEncoding.Bgra32;
+        // 算法定义在 8 位单字节通道上：F16 线性表面必须先经调用方转 sRGB8，误传时显式抛出而非按字节误算。
+        bool isBgr = source.Encoding switch
+        {
+            PixelEncoding.Bgra32 => true,
+            PixelEncoding.Rgb24 or PixelEncoding.Rgba8 => false,
+            _ => throw new ArgumentOutOfRangeException(nameof(source), $"增强预览只接受 8 位编码，实际 {source.Encoding}"),
+        };
         int rIdx = isBgr ? 2 : 0;
         int bIdx = isBgr ? 0 : 2;
 

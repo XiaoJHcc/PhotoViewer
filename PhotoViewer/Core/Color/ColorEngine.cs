@@ -33,7 +33,7 @@ public static class ColorEngine
     public static DecodedImage ToSrgb8(DecodedImage source)
         => Convert(source, PixelEncoding.Bgra32, ImageColorSpace.Srgb, Srgb);
 
-    /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径。</summary>
+    /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径（含 8 位 Display P3 展示产物）。</summary>
     public static DecodedImage ToAnalysisSrgb8(DecodedImage source)
     {
         var converted = ToSrgb8(source);
@@ -74,10 +74,8 @@ public static class ColorEngine
             fixed (byte* sourcePixels = effective.Pixels)
             fixed (byte* targetPixels = buffer)
             {
-                var sourceInfo = new SKImageInfo(source.Width, source.Height,
-                    effective.Encoding == PixelEncoding.RgbaF16 ? SKColorType.RgbaF16 : SKColorType.Bgra8888, SKAlphaType.Premul, sourceSpace);
-                var targetInfo = new SKImageInfo(source.Width, source.Height,
-                    encoding == PixelEncoding.RgbaF16 ? SKColorType.RgbaF16 : SKColorType.Bgra8888, SKAlphaType.Premul, targetSpace);
+                var sourceInfo = new SKImageInfo(source.Width, source.Height, ColorType(effective.Encoding), SKAlphaType.Premul, sourceSpace);
+                var targetInfo = new SKImageInfo(source.Width, source.Height, ColorType(encoding), SKAlphaType.Premul, targetSpace);
                 using var pixmap = new SKPixmap(sourceInfo, (IntPtr)sourcePixels, effective.Stride);
                 if (!pixmap.ReadPixels(targetInfo, (IntPtr)targetPixels, stride))
                     throw new InvalidOperationException("skcms 像素色彩转换失败");
@@ -91,6 +89,17 @@ public static class ColorEngine
             throw;
         }
     }
+
+    /// <summary>像素编码 → Skia 色彩类型；不支持的编码显式抛出，不做静默猜字节序。</summary>
+    /// <param name="encoding">像素编码。</param>
+    /// <returns>Skia 色彩类型。</returns>
+    private static SKColorType ColorType(PixelEncoding encoding) => encoding switch
+    {
+        PixelEncoding.RgbaF16 => SKColorType.RgbaF16,
+        PixelEncoding.Bgra32 => SKColorType.Bgra8888,
+        PixelEncoding.Rgba8 => SKColorType.Rgba8888,
+        _ => throw new ArgumentOutOfRangeException(nameof(encoding)),
+    };
 
     /// <summary>skcms 要求行距按像素对齐，非对齐输入按行打包，保留有效像素而不读取末行填充。</summary>
     private static DecodedImage PackRows(DecodedImage source)

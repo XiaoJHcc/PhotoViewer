@@ -50,21 +50,76 @@ public class BitmapCacheItem
 /// 图片缓存服务（静态类）。
 /// P1-M2 起缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
 /// 缩略图分区有独立张数/字节上限,淘汰保护集按路径对所有档生效。
+/// I2 起每档至多一条条目：**像素编码不进缓存键**——同一 (路径, 尺寸档) 只保留最新一次解码产物，
+/// 编码变化按"长边足够且保真度不低于需求"(<see cref="Reusable"/>)复用，否则原地替换，
+/// 因此不会出现同档多份编码副本，也不会因压力升降泄漏内存。
 /// </summary>
 public static class BitmapLoader
 {
     private static IPresentationImageDecoder? _presentationDecoder;
-    /// <summary>当前展示解码每像素字节数，用于准入及设置预算提示；旧壳保留原透明度口径。</summary>
-    public static int PresentationBytesPerPixel => _presentationDecoder?.BytesPerPixel ?? (IgnoreAlpha ? 3 : 4);
+    private static IPresentationEncodingPolicy? _encodingPolicy;
 
-    /// <summary>启动期注入原生主图解码器；禁止在已开始解码后更换解释口径。</summary>
-    public static void InitializePresentationDecoder(IPresentationImageDecoder decoder)
+    /// <summary>
+    /// 当前展示编码（按 Full 档在当下压力下协商）的每像素字节数，用于准入估算与设置页预算提示；
+    /// 旧壳（未注入展示解码器）保留原透明度口径。
+    /// </summary>
+    public static int PresentationBytesPerPixel => _presentationDecoder == null
+        ? (IgnoreAlpha ? 3 : 4)
+        : DecodedImage.BytesPerPixel(PresentationEncoding(ImageSizeClass.Full));
+
+    /// <summary>启动期注入原生主图解码器与编码协商策略；禁止在已开始解码后更换解释口径。</summary>
+    /// <param name="decoder">平台展示解码器。</param>
+    /// <param name="policy">展示编码协商策略。</param>
+    public static void InitializePresentationDecoder(IPresentationImageDecoder decoder, IPresentationEncodingPolicy policy)
     {
         if (!_cache.IsEmpty || !_inFlight.IsEmpty)
             throw new InvalidOperationException("主图解码器必须在加载前注入");
         _presentationDecoder = decoder ?? throw new ArgumentNullException(nameof(decoder));
+        _encodingPolicy = policy ?? throw new ArgumentNullException(nameof(policy));
         ThumbnailService.InitializeMissingPreviewDecoder(decoder);
     }
+
+    /// <summary>
+    /// 本次展示解码应产出的编码：按尺寸档与当前压力向注入的策略协商（平台无关，Core 不含平台判断）。
+    /// </summary>
+    /// <param name="sizeClass">尺寸档。</param>
+    /// <returns>编码策略给出的编码。</returns>
+    private static PixelEncoding PresentationEncoding(ImageSizeClass sizeClass)
+        => (_encodingPolicy ?? throw new InvalidOperationException("展示编码策略未注入")).Select(sizeClass, MemoryGovernor.CurrentLevel);
+
+    /// <summary>
+    /// 已有产物是否足以满足本次请求：长边不小于需求且编码保真度不低于需求（F16 可覆盖 8 位请求，反之不可）。
+    /// </summary>
+    /// <param name="candidate">缓存中的产物。</param>
+    /// <param name="requiredLongEdge">本次请求的长边上限（0 表示全分辨率请求）。</param>
+    /// <param name="requiredEncoding">本次请求的编码。</param>
+    private static bool Reusable(DecodedImage candidate, int requiredLongEdge, PixelEncoding requiredEncoding)
+        => (requiredLongEdge <= 0 || Math.Max(candidate.Width, candidate.Height) >= requiredLongEdge)
+            && FidelityAtLeast(candidate.Encoding, requiredEncoding);
+
+    /// <summary>
+    /// 编码保真度是否达标：解码器不放大，产物长边由源决定，故**不复核长边**——只复核编码，
+    /// 免得源本身小于代理目标时把正确产物误判为不合格并反复重解码。
+    /// </summary>
+    /// <param name="actual">产物编码。</param>
+    /// <param name="required">本次请求的编码。</param>
+    private static bool FidelityAtLeast(PixelEncoding actual, PixelEncoding required)
+        => DecodedImage.PresentationFidelity(actual) >= DecodedImage.PresentationFidelity(required);
+
+    /// <summary>
+    /// 新产物是否应当取代缓存中的旧产物：长边更大，或长边相同而编码保真度更高。
+    /// 任一项都不占优时保留旧产物（含"旧产物保真度更高"的情形），避免压力反复时来回重解码。
+    /// </summary>
+    /// <param name="candidate">刚解码出的产物。</param>
+    /// <param name="existing">缓存中同档的旧产物。</param>
+    private static bool Supersedes(DecodedImage candidate, DecodedImage existing)
+    {
+        int candidateLongEdge = Math.Max(candidate.Width, candidate.Height);
+        int existingLongEdge = Math.Max(existing.Width, existing.Height);
+        if (candidateLongEdge != existingLongEdge) return candidateLongEdge > existingLongEdge;
+        return DecodedImage.PresentationFidelity(candidate.Encoding) > DecodedImage.PresentationFidelity(existing.Encoding);
+    }
+
     /// <summary>统一缓存键:路径(忽略大小写)+ 尺寸档。</summary>
     private readonly struct BitmapCacheKey : IEquatable<BitmapCacheKey>
     {
@@ -399,7 +454,8 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 异步获取图片(分级解码,P1-M4):hint = Full 走全分辨率;Proxy 走代理(缓存已有足够大代理即复用,过小则重解码替换)。
+    /// 异步获取图片(分级解码,P1-M4):hint = Full 走全分辨率;Proxy 走代理(缓存已有足够大且保真度足够的代理即复用,否则重解码替换)。
+    /// 本次编码由 <see cref="IPresentationEncodingPolicy"/> 按尺寸档与当前压力协商。
     /// 代理失败自动回退 Full(代理是性能优化,正确性优先)。返回图像携带调用方一份租约,用完 <see cref="DecodedImage.Release"/>。
     /// </summary>
     /// <param name="file">文件引用。</param>
@@ -416,9 +472,12 @@ public static class BitmapLoader
 
         for (int attempt = 0; attempt < 3; attempt++)
         {
-            // 代理命中规则:已有代理长边 ≥ 需求即复用(更大代理向下兼容,显示侧 GPU 缩放)
+            // 本次请求的编码按当下压力协商；缓存复用要求长边足够且编码保真度不低于需求
+            var encoding = PresentationEncoding(ImageSizeClass.Proxy);
+
+            // 代理命中规则:已有代理长边 ≥ 需求且编码保真度不低于需求即复用(更大代理向下兼容,显示侧 GPU 缩放)
             if (_cache.TryGetValue(key, out var cachedItem)
-                && Math.Max(cachedItem.Image.Width, cachedItem.Image.Height) >= hint.MaxLongEdge
+                && Reusable(cachedItem.Image, hint.MaxLongEdge, encoding)
                 && cachedItem.Image.TryAcquire())
             {
                 cachedItem.UpdateAccessTime();
@@ -428,7 +487,7 @@ public static class BitmapLoader
 
             var flightKey = filePath + "#proxy" + hint.MaxLongEdge;
             var lazy = _inFlight.GetOrAdd(flightKey, _ => new Lazy<Task<DecodedImage?>>(
-                () => LoadProxyAndCacheAsync(file, filePath, hint.MaxLongEdge, ct, priority),
+                () => LoadProxyAndCacheAsync(file, filePath, hint.MaxLongEdge, encoding, ct, priority),
                 LazyThreadSafetyMode.ExecutionAndPublication));
             DecodedImage? img;
             try { img = await AwaitInFlightAsync(flightKey, lazy, lazy.Value).ConfigureAwait(false); }
@@ -445,7 +504,8 @@ public static class BitmapLoader
                     return await GetBitmapAsync(file, priority, ct);
                 return null;
             }
-            if (img.TryAcquire()) return img;
+            // 与已有在途任务合并时该任务的编码可能低于本次需求（压力刚抬高），重走协商
+            if (FidelityAtLeast(img.Encoding, PresentationEncoding(ImageSizeClass.Proxy)) && img.TryAcquire()) return img;
         }
         return null;
     }
@@ -454,12 +514,12 @@ public static class BitmapLoader
     /// 代理解码路径:准入(按代理估值)→ 平台差异化缩解码 → EXIF 旋转(平台未预旋转时)→ 入 Proxy 档缓存。
     /// 解码产物长边 ≤ targetLongEdge;源已更小时按源尺寸(不放大)。
     /// </summary>
-    private static async Task<DecodedImage?> LoadProxyAndCacheAsync(IFileRef file, string filePath, int targetLongEdge, CancellationToken ct, DecodePriority priority)
+    private static async Task<DecodedImage?> LoadProxyAndCacheAsync(IFileRef file, string filePath, int targetLongEdge, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
 
-        // 按正方形上界与展示编码估算，避免 F16/方形用户素材低估准入预算。
-        long estimate = (long)targetLongEdge * targetLongEdge * (_presentationDecoder?.BytesPerPixel ?? 4);
+        // 按正方形上界与本次协商编码估算，避免 F16/方形用户素材低估准入预算。
+        long estimate = (long)targetLongEdge * targetLongEdge * DecodedImage.BytesPerPixel(encoding);
         if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
             return null;
 
@@ -468,7 +528,7 @@ public static class BitmapLoader
             try
             {
                 var decodeSw = System.Diagnostics.Stopwatch.StartNew();
-                var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, ct), ct).ConfigureAwait(false);
+                var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, encoding, ct), ct).ConfigureAwait(false);
                 decodeSw.Stop();
                 if (image == null) return null;
 
@@ -480,8 +540,8 @@ public static class BitmapLoader
                 {
                     if (_cache.TryGetValue(key, out var old))
                     {
-                        // 同路径不同目标尺寸可并发，慢的小代理不得降级大代理，也不能覆盖时遗失缓存租约。
-                        if (Math.Max(old.Image.Width, old.Image.Height) >= Math.Max(image.Width, image.Height))
+                        // 同路径不同目标尺寸/编码可并发：小的或低保真度的代理不得降级已有产物，也不能覆盖时遗失缓存租约。
+                        if (!Supersedes(image, old.Image))
                         {
                             image.Release();
                             return old.Image;
@@ -511,10 +571,10 @@ public static class BitmapLoader
     /// 代理缩解码(平台差异化,P1-M4 审查裁定口径):JPEG/PNG → Skia codec 子采样+Mitchell;HEIF/RAW → 平台解码器
     /// (Apple 编解码器级子采样;Windows libheif 全解码+Mitchell;Android InSampleSize)。平台未预旋转的再应用 EXIF 旋转。
     /// </summary>
-    private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, CancellationToken ct)
+    private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, PixelEncoding encoding, CancellationToken ct)
     {
         if (_presentationDecoder != null)
-            return await _presentationDecoder.DecodeAsync(file, targetLongEdge, ct).ConfigureAwait(false);
+            return await _presentationDecoder.DecodeAsync(file, targetLongEdge, encoding, ct).ConfigureAwait(false);
         DecodedImage? proxy = null;
         bool preRotated;
 
@@ -587,7 +647,7 @@ public static class BitmapLoader
 
             // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
             var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
-                () => LoadAndCacheAsync(file, filePath, ct, priority),
+                () => LoadAndCacheAsync(file, filePath, PresentationEncoding(ImageSizeClass.Full), ct, priority),
                 LazyThreadSafetyMode.ExecutionAndPublication));
             var img = await AwaitInFlightAsync(filePath, lazy, lazy.Value).ConfigureAwait(false);
 
@@ -622,7 +682,7 @@ public static class BitmapLoader
     /// 缓存未命中路径：解码准入(Governor) → 容量保障 → 线程池解码 → 入缓存。
     /// 准入被拒(非 P0)返回 null;在途账预留于解码期,解码完成按实际字节复核,出方法归还。
     /// </summary>
-    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, CancellationToken ct, DecodePriority priority)
+    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -649,7 +709,7 @@ public static class BitmapLoader
             {
                 // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
                 var decodeSw = System.Diagnostics.Stopwatch.StartNew();
-                var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, ct), ct).ConfigureAwait(false);
+                var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, encoding, ct), ct).ConfigureAwait(false);
                 decodeSw.Stop();
                 if (image == null) return null;
 
@@ -682,10 +742,10 @@ public static class BitmapLoader
     /// <summary>
     /// 加载图片并应用EXIF旋转
     /// </summary>
-    private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, CancellationToken ct = default)
+    private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, PixelEncoding encoding, CancellationToken ct = default)
     {
         if (_presentationDecoder != null)
-            return await _presentationDecoder.DecodeAsync(file, null, ct).ConfigureAwait(false);
+            return await _presentationDecoder.DecodeAsync(file, null, encoding, ct).ConfigureAwait(false);
         try
         {
             DecodedImage? originalImage = null;

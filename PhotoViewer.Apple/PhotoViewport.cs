@@ -47,6 +47,10 @@ public sealed class PhotoViewport
     public double ImageHeight => Orientation >= 5 ? SourceWidth : SourceHeight;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
     public double PhysicalScale => Scale * BackingScale;
+    /// <summary>当前视图尺寸下照片恰好放满的缩放（逻辑点/图像像素）。</summary>
+    public double FitScale => ImageWidth > 0 && ImageHeight > 0
+        ? Math.Min(ViewWidth / ImageWidth, ViewHeight / ImageHeight)
+        : 1;
     /// <summary>当前全分辨率细节需求，包括代理覆盖不足的放大。</summary>
     public bool NeedsFull => !IsFit && (PhysicalScale >= 1
         || (TextureWidth > 0 && PhysicalScale > (double)TextureWidth / Math.Max(1, SourceWidth)));
@@ -133,7 +137,7 @@ public sealed class PhotoViewport
     {
         IsFit = true;
         FollowsFocus = false;
-        if (ImageWidth > 0 && ImageHeight > 0) Scale = Math.Min(ViewWidth / ImageWidth, ViewHeight / ImageHeight);
+        if (ImageWidth > 0 && ImageHeight > 0) Scale = FitScale;
         PanX = 0;
         PanY = 0;
     }
@@ -191,6 +195,23 @@ public sealed class PhotoViewport
         FollowsFocus = false;
         PanX += deltaX;
         PanY += deltaY;
+        ClampPan();
+    }
+
+    /// <summary>
+    /// 宿主手势驱动（iOS 用 UIScrollView 提供回弹/惯性/捏合，把 zoomScale 与 contentOffset 换算后写入这里）：
+    /// 缩放与平移一律按视口范围钳制，缩放贴合适应值即视为适应态，缩放上限与锚点缩放共用同一常量。
+    /// </summary>
+    /// <param name="scale">图像像素到逻辑点的缩放。</param>
+    /// <param name="panX">照片中心相对视口中心的横向偏移（逻辑点）。</param>
+    /// <param name="panY">照片中心相对视口中心的纵向偏移（逻辑点）。</param>
+    public void ApplyGestureView(double scale, double panX, double panY)
+    {
+        Scale = Math.Clamp(scale, .01 / BackingScale, 16 / BackingScale);
+        PanX = panX;
+        PanY = panY;
+        FollowsFocus = false;
+        IsFit = Scale <= FitScale + 1e-6;
         ClampPan();
     }
 

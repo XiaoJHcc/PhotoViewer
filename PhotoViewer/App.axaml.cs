@@ -92,7 +92,7 @@ public partial class App : Application
         base.OnFrameworkInitializationCompleted();
 
         // P1-M5 压测:仅当头工程注入 --pv-stress 参数时激活(常规运行立即返回)
-        StressFlipDriver.MaybeStart(vm);
+        StressFlipDriver.MaybeStart(vm, vm.ImageVM);
     }
 
     /// <summary>

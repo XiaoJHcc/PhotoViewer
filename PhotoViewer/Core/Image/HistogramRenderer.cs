@@ -35,7 +35,7 @@ public static class HistogramRenderer
 
         if (source.Encoding == PixelEncoding.RgbaF16)
         {
-            // 线性半精度表面（macOS 原生主图）按线性→sRGB 编码后量化，与 8 位 sRGB 口径可比。
+            // 线性半精度表面（原生主图 F16 档）按线性→sRGB 编码后量化，与 8 位 sRGB 口径可比。
             var half = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Half>(source.Pixels.AsSpan());
             int strideHalf = source.Stride / 2;
             for (int y = 0; y < h; y++)
@@ -53,10 +53,15 @@ public static class HistogramRenderer
             return new[] { rHist, gHist, bHist };
         }
 
-        // Bgra32: R 在字节 2;Rgb24: R 在字节 0
-        bool isBgr = source.Encoding == PixelEncoding.Bgra32;
-        int rIdx = isBgr ? 2 : 0;
-        int bIdx = isBgr ? 0 : 2;
+        // 8 位展示编码直接按存储通道计数：Bgra32 = B,G,R,A；Rgb24/Rgba8(Display P3，sRGB 传递函数) 均为 R,G,B(,A)。
+        // 8 位 P3 已是显示参考的编码值，与 F16 档"线性→sRGB 编码后量化"同一口径，故不再做色域换算。
+        int rIdx = source.Encoding switch
+        {
+            PixelEncoding.Bgra32 => 2,
+            PixelEncoding.Rgb24 or PixelEncoding.Rgba8 => 0,
+            _ => throw new ArgumentOutOfRangeException(nameof(source), $"不支持的直方图输入编码 {source.Encoding}"),
+        };
+        int bIdx = rIdx == 2 ? 0 : 2;
 
         var pixels = source.Pixels;
         int stride = source.Stride;

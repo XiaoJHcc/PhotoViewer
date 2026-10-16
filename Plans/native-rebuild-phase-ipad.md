@@ -104,3 +104,10 @@
 | 2026-10-17 | 托管 `Main(string[] args)` 在 iOS 上为空数组 | 启动参数一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch` 会传入） |
 | 2026-10-17 | ONNX Runtime 原生库在 iOS 模拟器上类型初始化失败（真机 P1-M5 正常） | I2 复核；不影响 I1 占位主屏 |
 | 2026-10-17 | 原生壳不加载 Avalonia，无法用 avares 资源读 DINO 模型 | 模型另作 BundleResource 拷入 app bundle（与 Mac 同口径；包内出现 avares + bundle 两份，约 86 MB） |
+| 2026-10-17 | **I2 编码协商落地**：Core 新增 `PixelEncoding.Rgba8` + `IPresentationEncodingPolicy`（平台注入）+ `IDisplayLoadSignal`；`IPresentationImageDecoder` 改为按请求编码解码；编码**不进缓存键**（同档至多一条，长边足够且保真度不低于需求即复用，否则原地替换），准入与 GPU 记账按实际编码字节 | 见根 AGENTS §5.7；Mac 九套 `--pv-native-*` 复跑全 PASS |
+| 2026-10-17 | **8 位 P3 立方体的原色边界**：Adobe RGB 红原色在扩展线性 sRGB 下需 1.3985（F16 档实测 1.387），8 位 Display P3 装不下、只能钳到 P3 红原色（≈1.2145，由共享 P3→scRGB 矩阵与立方体上界解析给出）。sRGB/P3 原色不受影响 | 属 8 位 P3 编码的既有边界，不做隐藏处理；`AppleAcceptanceChecks.ColorExpectation` 按编码取不同下界并在报告里记录实测值 |
+| 2026-10-17 | **视口未知时不得改写代理目标**：`PhotoLoadSession.UpdateViewport` 原会把 0 尺寸视口钳成 1 像素目标，解码出 1×1 的"合格代理"（`IsProxy` 判据是"小于源尺寸"，1×1 满足）且因 `IsProxy` 为假永不重载 → 主图恒为一片平均色 | 已修：`UpdateViewport` 忽略尺寸 < 1 的上报；iOS 根控制器改为"先上报视口再 `SetFile`"（`StartSession`） |
+| 2026-10-17 | **UIScrollView 程序化缩放会被偏移动画取消**：双击放大时先 `SetZoomScale(animated:)` 再 `SetContentOffset(animated:)`，实测缩放停在原值只动偏移（偏移 setter 中断在途缩放动画） | 改为 `ZoomToRect`（缩放+偏移一次动画），缩回适应只需 `SetZoomScale(1, animated:)` |
+| 2026-10-17 | **iOS 启动参数可能在根控制器上屏前就选中首图**（`--pv-open` 在壳初始化期投递），若在 `ViewWillAppear` 才订阅 `CurrentFile` 会漏掉该次变化 → 永不加载 | 根控制器改为**构造期**订阅（会话/VM/文件夹），布局完成后再启动会话 |
+| 2026-10-17 | **`--pv-native-photo-check` 需要"比 2× 视口更大"的素材**才能出现真实代理档：1200×800 夹具在 iPad 上 2× 目标 ≈ 4532，解码器不放大 → 直接是满尺寸产物（`IsProxy` 为假），代理/F16 路径根本没被走到 | 夹具加 `color-p3-large.jpg`（6000×4000 Display P3 色卡，缺一即 FAIL），代理档与 Full 档在此素材上才成立。生成法：按 `Tools/generate-native-color-fixtures.py` 的色块布局放大 5 倍（PIL，`icc_profile=` 读 `/System/Library/ColorSync/Profiles/Display P3.icc`、quality=100/subsampling=0） |
+| 2026-10-17 | **真机门被锁屏阻塞**：`devicectl` 安装/取文件均报 `kAMDMobileImageMounterDeviceLocked`（iPad mini 7 当前 `passcodeRequired: true`），设备需先解锁才能挂载 DDI | 本轮未完成真机验收（500 连翻/告警降级/日志回取）；模拟器已完成同口径的程序化与压测验证，命令见 [PhotoViewer.iOS/AGENTS.md](../PhotoViewer.iOS/AGENTS.md) "验收线索" |

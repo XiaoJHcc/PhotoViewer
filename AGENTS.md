@@ -177,7 +177,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 1. **感知**:`MemoryGovernor` 周期探测(2s)+ OS 事件直报(iOS `DidReceiveMemoryWarning`、Android `OnTrimMemory`),状态机带迟滞(进入 40/25/15%、退出 +5%、好转逐级退)。
 2. **级联修剪**:级别上升时 Governor 对全部登记 client 同步 `Trim(level)`——统一 LRU(BitmapLoader,Thumb/Proxy/Full 三档分区)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、ONNX session、增强位图、ImageBufferPool(Critical 整池清空)。各级动作矩阵见 master plan §4.3。
-3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停。**解码准入**(P1-M3 起):一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
+3. **行为响应**:`BitmapPrefetcher` Caution 起取消在途轮次且新投递空跑;Warning 起 `DecodeScheduler.MaxBackgroundParallelism` 降为 1;`FolderFeatureIndexer` 逐组轮询暂停;**编码降级**(I2 起,iOS):Warning 起代理档由 RGBA16F 降为 8 位 Display P3,每张驻留字节减半(逐张记录 `stress-flip.jsonl` 的 `enc` 字段;已缓存的 F16 代理在压力下仍可直接复用,不为此重解码)。**解码准入**(P1-M3 起):一切解码(主图/缩略图/预取/索引/CV·DINO)先 `MemoryGovernor.TryAcquire` 拿在途许可,P0 豁免、其余预算不足直接拒绝不排队;解码完成按实际字节复核。回 Normal 后过 `RecoveryHold`(30s)观察期才渐进恢复预取(打破告警→回填循环)。
 4. **观测**:级别迁移与拒批落 `memory-events.jsonl`(settings 同目录;iOS 真机为沙盒 `Documents/PhotoViewer/`,devicectl copy 可取回),含各 client footprint 与近期解码 miss 统计。
 
 ---
@@ -186,10 +186,18 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 1. Debug 默认 AppKit，Release 默认旧壳；`--native`/`--legacy-ui` 明确切换。原生启动不创建 Avalonia 应用/窗口，NSApplication 生命周期与外部打开进入共享门面。
 2. `MainViewModel(nativePresentation: true)` 复用文件源、筛选、评分、设置；旧 `ImageViewModel` 不订阅加载、不创建 WriteableBitmap。原生加载编排使用共享 `PhotoLoadSession`，视口缩放/平移由 `MetalPhotoView` 管理。
-3. BitmapLoader 启动期注入 `IPresentationImageDecoder`；Mac ImageIO 统一 JPEG/HEIF/RAW 主图与代理，产物为带源尺寸/待应用 EXIF 方向的 **RGBA16F LinearSrgb**。代理同样保留广色域；2× 物理视口代理与 Full 使用统一 LRU、准入、租约、预取。内存按池化实际分配与 GPU 客户端分别记账。
-4. Metal 用 ExtendedLinearSrgb 标签、RGBA16F、mipmap 三线性采样和 GPU 方向变换呈现；物理 100%/代理能力不足触发 Full，热替换沿用原生变换。导航图复用同纹理的小目标渲染。缺少内嵌预览的用户图片走原生小图子采样，避免全尺寸兜底。渲染核心（设备/管线/层/纹理上传/mipmap/方向变换/帧读回）与视口数学在共享 [PhotoViewer.Apple/](PhotoViewer.Apple/AGENTS.md)，Mac 头以 Compile Include 链接；宿主 `MetalPhotoView` 只保留 AppKit 事件与图层挂载（同一共享源将来供 iOS 原生壳复用）。
+3. BitmapLoader 启动期注入 `IPresentationImageDecoder` + `IPresentationEncodingPolicy`；Mac ImageIO 统一 JPEG/HEIF/RAW 主图与代理，产物为带源尺寸/待应用 EXIF 方向的 **RGBA16F LinearSrgb**（Mac 策略恒取 F16；I2 起编码按尺寸档/压力协商，见 §5.7）。代理同样保留广色域；2× 物理视口代理与 Full 使用统一 LRU、准入、租约、预取，准入估算与 GPU 记账按实际编码每像素字节。编码不进缓存键（同一 (路径,尺寸档) 至多一条：长边足够且保真度不低于需求即复用，否则原地替换）。内存按池化实际分配与 GPU 客户端分别记账。
+4. Metal 用 ExtendedLinearSrgb 标签、RGBA16F 绘制目标、mipmap 三线性采样和 GPU 方向变换呈现（主图纹理接受 F16 线性 scRGB 与 8 位 P3 两种编码：后者用 `RGBA8Unorm_sRGB` 纹理，采样得线性 P3 再由片段着色器 3×3 矩阵换算到扩展线性 sRGB）；物理 100%/代理能力不足触发 Full，热替换沿用原生变换。导航图复用同纹理的小目标渲染。缺少内嵌预览的用户图片走原生小图子采样，避免全尺寸兜底。渲染核心（设备/管线/层/纹理上传/mipmap/方向变换/帧读回）与视口数学在共享 [PhotoViewer.Apple/](PhotoViewer.Apple/AGENTS.md)，Mac 头以 Compile Include 链接；宿主 `MetalPhotoView` 只保留 AppKit 事件与图层挂载（同一共享源将来供 iOS 原生壳复用）。
 5. 主窗口布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角及适合的字体/菜单保留原生（本轮不改设置设计）；隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义，顶边拖动区双击按系统偏好 `AppleActionOnDoubleClick` 缩放/最小化/不动作（[SHELL-02](Design/ui-contract.md)；隐藏标题栏不自带该行为）；胶片栏定位条件、350ms 缓出及用户接管按 [FILM-01–04](Design/ui-contract.md) 执行，点选/交换/列表刷新不主动居中；跨屏刷新物理尺寸，F 优先定位对焦点；控制栏保留 EXIF/评分/命令三个整体分组，按空间换行/换列并居中，超长组可滚动；全屏/窗口/显隐状态持久化。设置固定深色外观，由 SwiftUI（macOS 26）承载系统分栏侧栏与分组表单，侧栏选中态用系统原生高亮（跟随强调色），显隐/排序与主次快捷键同一行，工作副本关闭回写。**P3 起分析栏、相似聚类、工具窗口与增强预览已原生可用**：分析栏几何按旧壳 `AnalysisView` 同口径（正方形瓦片边长 = `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`，行布局在主图下方、列布局在其右侧，交叉轴 = 边长 + 20），编排复用 `Core/AI/AnalysisPresenter`；相似聚类面板由筛选条原生 toggle（行布局 90×27、列布局紧随计数 5 点，与旧壳筛选条 5 点间距/居中一致）控制，面板复用 DINO CLS 相似度与卡片视觉（列布局扩宽文件栏、行布局从胶片栏右侧切出，MinWidth 106）；工具窗口为独立 AppKit 窗口（EXIF 详情 / DINO 诊断，照片数据统计仍为 Windows 专属不显示入口）；增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）。分析栏可见时主图升 Full（细节预览需全分辨率源）；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
 6. 测试设置、数据库及测试照片使用自有目录；原生控件+GPU 帧导出不能替代系统预览/跨屏人工色彩验收（macOS 跨屏色彩与手感已由作者 2026-10-16 验收通过；旧壳不做验收）。验收清单见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
+
+### 5.7 iOS 原生看图链路（iPad 主屏 I2）
+
+1. Debug 默认 UIKit 原生壳（旧壳 `--legacy-ui` 回退），启动不创建任何 Avalonia 对象；`MainViewModel(nativePresentation: true)` + 共享 `PhotoLoadSession`，主屏由 `iOSNativeRootViewController` 承载，主图由 `iOSPhotoView`（共享 `MetalPhotoRenderer` + `PhotoViewport`）渲染。
+2. **编码协商（I2 已定决策）**：`IPresentationEncodingPolicy` 由平台注入 —— macOS 恒 RGBA16F 扩展线性 sRGB；iPad 代理档 RGBA16F、Full 档 8 位 Display P3，内存压力 ≥ Warning 时代理档也降 8 位 P3（每张驻留字节减半）。两次解码都从同一 ImageIO 源转换，渲染器统一换算到扩展线性 sRGB 后绘制，故 F16 代理 ↔ 8 位 P3 Full 热替换无可面色偏（P3 立方体装不下的原色——如 Adobe RGB 红原色——只能钳到 P3 边界，这是 8 位 P3 编码的既有边界）。Core 不含任何 `OperatingSystem.IsIOS()` 分支。
+3. **手势**：透明 `UIScrollView` 只作手势与物理驱动（内容尺寸 = 适应态显示尺寸），`zoomScale`/`contentOffset` 与 `PhotoViewport` 变换互为逆映射并在同一回调内重绘；双击在适应与物理 100%（点按位置锚点）间动画切换，`minimumZoomScale` = 适应，`maximumZoomScale` = 物理 16 倍（与共享视口上限同口径）。
+4. **`NeedsFull` 与热替换**：宿主把物理视口（bounds × displayScale）与 `NeedsFull` 上报 `PhotoLoadSession.UpdateViewport`，代理目标 = 2× 物理视口；物理 100% 触发 Full，热替换沿用当前视口变换（含 `PhotoViewport.ApplyGestureView` 的手势态）。**视口未成形（尺寸 < 1）时禁止改写代理目标**，否则目标被钳成 1 像素会解码出 1×1 的"合格代理"并永不重载。
+5. **验收**：`--pv-native-photo-check <目录>` 程序化核对代理先行/编码/热替换变换/八方向 GPU 角点/色卡线性值，报告写 `Documents/PhotoViewer/native-photo-checks.txt`；Mac 与 iOS 共用 [PhotoViewer.Apple/AppleAcceptanceChecks.cs](PhotoViewer.Apple/AGENTS.md)。素材与真机步骤见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 

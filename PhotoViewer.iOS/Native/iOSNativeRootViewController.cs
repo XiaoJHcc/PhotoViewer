@@ -1,3 +1,5 @@
+using CoreGraphics;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main;
 using System.ComponentModel;
@@ -6,124 +8,186 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I1 占位主屏（脚手架，I2/I3 由真实主屏替换）：深色底 + 状态文本 + 打开文件夹/设置入口。
-/// 只读共享 <see cref="MainViewModel"/> 的状态，不承载任何主图渲染。
+/// I2 原生主屏：主图占满屏幕（安全区与栏位布局留待 I3），共享 <see cref="PhotoLoadSession"/> 提供展示产物，
+/// <see cref="iOSPhotoView"/> 负责 Metal 上屏与 UIKit 手势。状态标签与「打开文件夹 / 设置」按钮暂留为临时浮层（I3 换成真实主屏）。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
 {
     private readonly MainViewModel _main;
+    private readonly PhotoLoadSession _session;
+    private readonly iOSPhotoView _photo = new(CGRect.Empty);
     private readonly UILabel _statusLabel = new();
-    private bool _subscribed;
+    private readonly UILabel _hintLabel = new();
+    private ImageFile? _observedFile;
+    private bool _sessionStarted;
 
-    /// <summary>用共享主 VM 构建占位主屏。</summary>
+    /// <summary>主图宿主（验收读取视口与抓帧）。</summary>
+    internal iOSPhotoView Photo => _photo;
+
+    /// <summary>用共享主 VM 与展示会话构建原生主屏。</summary>
     /// <param name="main">共享主 VM。</param>
-    public iOSNativeRootViewController(MainViewModel main)
+    /// <param name="session">共享展示加载会话（所有权在壳层，生命周期与根控制器一致）。</param>
+    public iOSNativeRootViewController(MainViewModel main, PhotoLoadSession session)
     {
         _main = main;
+        _session = session;
+        // 订阅在构造期完成：启动参数（--pv-open / 外部打开）可能在根控制器上屏前就选中了首图，
+        // 若等到 ViewWillAppear 再订阅会漏掉那次 CurrentFile 变化而永不加载。
+        _session.Changed += OnSessionChanged;
+        _photo.ViewportChanged += ReportViewport;
+        _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
+        _main.PropertyChanged += OnMainPropertyChanged;
+        _observedFile = _main.CurrentFile;
+        if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
     }
 
-    /// <summary>搭建深色背景、状态文本与占位按钮。</summary>
+    /// <summary>布局完成后视口才有效；此前的切图只登记当前文件，等首次有效视口再发起解码。</summary>
+    public override void ViewDidLayoutSubviews()
+    {
+        base.ViewDidLayoutSubviews();
+        StartSession();
+    }
+
+    /// <summary>搭建主图层、临时状态浮层与空态提示。</summary>
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
 
         var root = View!;
         root.BackgroundColor = UIColor.FromRGB(18, 18, 18);
+        _photo.AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
+        _photo.Frame = root.Bounds;
+        root.AddSubview(_photo);
 
-        var titleLabel = new UILabel
-        {
-            Text = "PhotoViewer（iOS 原生壳 I1 占位）",
-            Font = UIFont.SystemFontOfSize(20, UIFontWeight.Semibold),
-            TextColor = UIColor.White,
-            TextAlignment = UITextAlignment.Center,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false,
-        };
+        _hintLabel.Text = "打开文件夹后在这里查看照片";
+        _hintLabel.Font = UIFont.SystemFontOfSize(15);
+        _hintLabel.TextColor = UIColor.Gray;
+        _hintLabel.TextAlignment = UITextAlignment.Center;
+        _hintLabel.Lines = 0;
+        _hintLabel.TranslatesAutoresizingMaskIntoConstraints = false;
+        root.AddSubview(_hintLabel);
 
-        _statusLabel.Font = UIFont.SystemFontOfSize(16);
-        _statusLabel.TextColor = UIColor.LightGray;
+        _statusLabel.Font = UIFont.SystemFontOfSize(13);
+        _statusLabel.TextColor = UIColor.White;
+        _statusLabel.BackgroundColor = UIColor.FromRGBA(0, 0, 0, 140);
         _statusLabel.TextAlignment = UITextAlignment.Center;
         _statusLabel.Lines = 0;
         _statusLabel.TranslatesAutoresizingMaskIntoConstraints = false;
+        root.AddSubview(_statusLabel);
 
-        var stack = new UIStackView
+        var buttons = new UIStackView
         {
-            Axis = UILayoutConstraintAxis.Vertical,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 20,
+            Axis = UILayoutConstraintAxis.Horizontal,
+            Spacing = 12,
             TranslatesAutoresizingMaskIntoConstraints = false,
         };
-        stack.AddArrangedSubview(titleLabel);
-        stack.AddArrangedSubview(_statusLabel);
-        stack.AddArrangedSubview(CreateButton("打开文件夹", onTap: () => _ = _main.FolderVM.OpenFilePickerAsync()));
-        stack.AddArrangedSubview(CreateButton("设置", onTap: () => _main.OpenSettingWindow()));
+        buttons.AddArrangedSubview(CreateButton("打开文件夹", () => _ = _main.FolderVM.OpenFilePickerAsync()));
+        buttons.AddArrangedSubview(CreateButton("设置", () => _main.OpenSettingWindow()));
+        root.AddSubview(buttons);
 
-        root.AddSubview(stack);
         NSLayoutConstraint.ActivateConstraints(
         [
-            stack.CenterXAnchor.ConstraintEqualTo(root.CenterXAnchor),
-            stack.CenterYAnchor.ConstraintEqualTo(root.CenterYAnchor),
-            stack.LeadingAnchor.ConstraintGreaterThanOrEqualTo(root.SafeAreaLayoutGuide.LeadingAnchor, 24),
-            stack.TrailingAnchor.ConstraintLessThanOrEqualTo(root.SafeAreaLayoutGuide.TrailingAnchor, -24),
+            _hintLabel.CenterXAnchor.ConstraintEqualTo(root.CenterXAnchor),
+            _hintLabel.CenterYAnchor.ConstraintEqualTo(root.CenterYAnchor),
+            _hintLabel.LeadingAnchor.ConstraintGreaterThanOrEqualTo(root.LeadingAnchor, 24),
+            buttons.TopAnchor.ConstraintEqualTo(root.SafeAreaLayoutGuide.TopAnchor, 12),
+            buttons.CenterXAnchor.ConstraintEqualTo(root.CenterXAnchor),
+            _statusLabel.TopAnchor.ConstraintEqualTo(buttons.BottomAnchor, 8),
+            _statusLabel.CenterXAnchor.ConstraintEqualTo(root.CenterXAnchor),
         ]);
 
-        BootTrace.Mark("native shell: placeholder root view loaded");
-    }
-
-    /// <summary>进入前台时订阅共享状态（占位屏通常不消失，被全屏内容覆盖时按 UIKit 生命周期重订阅）。</summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewWillAppear(bool animated)
-    {
-        base.ViewWillAppear(animated);
-        if (_subscribed)
-        {
-            return;
-        }
-
-        _subscribed = true;
-        _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
-        _main.PropertyChanged += OnMainPropertyChanged;
+        OnSessionChanged();
         UpdateStatus();
+        BootTrace.Mark("native shell: photo view loaded");
     }
 
-    /// <summary>离开前台时解除订阅，避免隐藏期间无谓刷新。</summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewDidDisappear(bool animated)
+    /// <summary>释放会话与视图订阅（壳退出路径）。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
     {
-        base.ViewDidDisappear(animated);
-        if (!_subscribed)
+        if (disposing)
         {
-            return;
+            _session.Changed -= OnSessionChanged;
+            _photo.ViewportChanged -= ReportViewport;
+            _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
+            _main.PropertyChanged -= OnMainPropertyChanged;
+            if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
+            _photo.Dispose();
+            _session.Dispose();
         }
-
-        _subscribed = false;
-        _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
-        _main.PropertyChanged -= OnMainPropertyChanged;
+        base.Dispose(disposing);
     }
 
     /// <summary>文件夹加载完成后刷新计数（共享层在 UI 线程调用，这里再兜一次线程）。</summary>
     private void OnAllFilesChanged() => UiDispatcher.Post(UpdateStatus);
 
-    /// <summary>主图切换后刷新状态文本。</summary>
+    /// <summary>当前照片变更：切换会话文件、跟踪 EXIF 到达以更新对焦点并刷新状态文本。</summary>
     /// <param name="sender">事件源（主 VM）。</param>
     /// <param name="args">属性变化参数。</param>
     private void OnMainPropertyChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(MainViewModel.CurrentFile))
+        if (args.PropertyName != nameof(MainViewModel.CurrentFile)) return;
+        UiDispatcher.Post(() =>
         {
-            UiDispatcher.Post(UpdateStatus);
-        }
+            if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
+            _observedFile = _main.CurrentFile;
+            if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+            _session.SetFile(_main.CurrentFile?.File);
+            UpdateStatus();
+        });
     }
 
-    /// <summary>把共享状态写进占位文本：当前文件名与文件夹张数。</summary>
+    /// <summary>当前文件 EXIF/星级就绪后同步对焦点与状态（对焦点供后续定位复用，本里程碑双击仍按点按位置）。</summary>
+    /// <param name="sender">事件源（当前文件）。</param>
+    /// <param name="args">属性变化参数。</param>
+    private void OnCurrentFileChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(UpdateStatus);
+
+    /// <summary>
+    /// 视口首次有效后启动展示会话（先上报视口再发起解码：代理目标必须来自真实视口，
+    /// 否则会话会把目标钳成 1 像素而解码出 1×1 的"合格代理"）。
+    /// </summary>
+    private void StartSession()
+    {
+        if (_sessionStarted || _photo.Bounds.Width < 1 || _photo.Bounds.Height < 1) return;
+        _sessionStarted = true;
+        ReportViewport();
+        _session.SetFile(_main.CurrentFile?.File);
+    }
+
+    /// <summary>会话产物变化：产物直接交 Metal 上传（不建第二份主图缓冲），并刷新空态/错误提示。</summary>
+    private void OnSessionChanged()
+    {
+        UpdateFocusPoint();
+        _photo.SetImage(_session.Image);
+        _hintLabel.Hidden = _session.Image != null;
+        if (_session.Error.Length > 0) _statusLabel.Text = $"无法打开：{_session.Error}";
+        else UpdateStatus();
+    }
+
+    /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时对焦点仍是空值。</summary>
+    private void UpdateFocusPoint()
+    {
+        var focus = _main.CurrentFile?.ExifData?.SonyFocusPosition;
+        _photo.FocusPoint = focus is { ImageWidth: > 0, ImageHeight: > 0 } position
+            ? new CGPoint(position.FocusX / (double)position.ImageWidth, position.FocusY / (double)position.ImageHeight) : null;
+    }
+
+    /// <summary>把主图物理视口与细节需求上报共享会话（代理目标 = 2× 物理视口，物理 100% 触发 Full 热替换）。</summary>
+    private void ReportViewport()
+        => _session.UpdateViewport(
+            (double)_photo.Bounds.Width * _photo.TraitCollection.DisplayScale,
+            (double)_photo.Bounds.Height * _photo.TraitCollection.DisplayScale,
+            _photo.NeedsFull);
+
+    /// <summary>把共享状态写进临时浮层：文件夹张数与当前文件名（代理档附带标记）。</summary>
     private void UpdateStatus()
     {
         var fileCount = _main.FolderVM.AllFiles.Count;
         var currentName = _main.CurrentFile?.Name ?? "无";
-        _statusLabel.Text = $"文件夹：{fileCount} 张\n当前：{currentName}";
+        _statusLabel.Text = $"文件夹：{fileCount} 张 · 当前：{currentName}{(_session.IsProxy ? " · 代理" : string.Empty)}";
     }
 
-    /// <summary>创建占位主屏的系统风格按钮。</summary>
+    /// <summary>创建临时浮层按钮（I3 换真实主屏控件后删除）。</summary>
     /// <param name="title">按钮标题。</param>
     /// <param name="onTap">点击回调。</param>
     /// <returns>配置完成的按钮。</returns>
@@ -131,11 +195,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         var button = UIButton.FromType(UIButtonType.System);
         button.SetTitle(title, UIControlState.Normal);
-        button.TitleLabel!.Font = UIFont.SystemFontOfSize(17, UIFontWeight.Medium);
+        button.TitleLabel!.Font = UIFont.SystemFontOfSize(15, UIFontWeight.Medium);
         button.TranslatesAutoresizingMaskIntoConstraints = false;
         button.TouchUpInside += (_, _) => onTap();
-        button.WidthAnchor.ConstraintEqualTo(220).Active = true;
-        button.HeightAnchor.ConstraintEqualTo(44).Active = true;
+        button.HeightAnchor.ConstraintEqualTo(32).Active = true;
         return button;
     }
 }

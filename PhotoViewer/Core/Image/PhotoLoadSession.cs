@@ -10,7 +10,7 @@ using PhotoViewer.Core.Storage;
 namespace PhotoViewer.Core.Image;
 
 /// <summary>原生展示加载会话；只管理代际、代理/Full、增强态与租约，不保存任何 UI 缩放/平移状态。</summary>
-public sealed class PhotoLoadSession : IDisposable, IMemoryClient
+public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadSignal
 {
     private IFileRef? _file;
     private DecodedImage? _image;
@@ -32,10 +32,28 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient
     public DecodedImage? Image => _enhanced ?? _image;
     /// <summary>当前产物是否代理。</summary>
     public bool IsProxy { get; private set; }
+    /// <summary>压测口径的代理标记（与本会话的 <see cref="IsProxy"/> 同源）。</summary>
+    bool IDisplayLoadSignal.CurrentIsProxy => IsProxy;
+    /// <summary>压测口径的编码（当前展示产物，无图时为 null）。</summary>
+    PixelEncoding? IDisplayLoadSignal.CurrentEncoding => Image?.Encoding;
     /// <summary>图像、代理状态、增强态或错误变化后在 UI 线程触发。</summary>
     public event Action? Changed;
     /// <summary>当前解码错误，无错误时为空。</summary>
     public string Error { get; private set; } = string.Empty;
+
+    /// <summary>订阅"本会话已把某文件上屏"（压测驱动器计时用），退订句柄可重复释放。</summary>
+    /// <param name="handler">上屏完成回调，参数为该次上屏的文件引用。</param>
+    /// <returns>退订句柄。</returns>
+    public IDisposable Subscribe(Action<IFileRef> handler)
+    {
+        void OnChanged()
+        {
+            if (_file is { } file && _image != null) handler(file);
+        }
+
+        Changed += OnChanged;
+        return new DelegateSubscription(() => Changed -= OnChanged);
+    }
 
     /// <summary>构造并登记为内存客户端：压力到 Warning 时自动关闭增强并释放增强图。</summary>
     public PhotoLoadSession() => MemoryGovernor.Register(this);
@@ -134,6 +152,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient
     /// <summary>原生视口以物理像素上报尺寸与细节需求，2× 超采样及 Full 升级沿用画质红线。</summary>
     public void UpdateViewport(double widthPixels, double heightPixels, bool needsFull)
     {
+        // 视口尚未成形（宿主未布局/尺寸为 0）时不得改写代理目标：否则目标会被钳成 1 像素，
+        // 解码出一个 1×1 的"合格代理"并因已非代理前置条件而永不重载。
+        if (widthPixels < 1 || heightPixels < 1) return;
         int target = Math.Max(1, checked((int)Math.Ceiling(Math.Max(widthPixels, heightPixels) * 2)));
         bool grow = target > _proxyLongEdge;
         _proxyLongEdge = target;
@@ -188,6 +209,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient
         catch (OperationCanceledException) { }
         catch (Exception exception)
         {
+            Console.Error.WriteLine($"[PhotoLoadSession] 加载失败: {exception}");
             await UiDispatcher.InvokeAsync(() =>
             {
                 if (generation != _generation) return;

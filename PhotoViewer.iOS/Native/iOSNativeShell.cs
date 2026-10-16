@@ -26,12 +26,16 @@ public static class iOSNativeShell
     private static MainViewModel? _main;
     private static iOSNativeSettingsPresenter? _settingsPresenter;
     private static iOSNativeRootViewController? _rootViewController;
+    private static PhotoLoadSession? _session;
 
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
     public static MainViewModel? Main => _main;
 
     /// <summary>当前原生壳根控制器；未启动时为 null。</summary>
     public static UIViewController? RootViewController => _rootViewController;
+
+    /// <summary>当前原生壳的展示加载会话（压测与验收共用同一份）。</summary>
+    internal static PhotoLoadSession? Session => _session;
 
     /// <summary>
     /// 接线原生平台门面并构建共享 VM 与根控制器；重复调用返回同一控制器。
@@ -49,9 +53,13 @@ public static class iOSNativeShell
         BootTrace.MarkAvaloniaAssemblies("native shell: bootstrap begin");
         InitializePlatform();
         var main = InitializeMainViewModel(args);
-        _rootViewController = new iOSNativeRootViewController(main);
+        _session = new PhotoLoadSession();
+        _rootViewController = new iOSNativeRootViewController(main, _session);
         BootTrace.MarkAvaloniaAssemblies("native shell: root view controller ready");
         Console.WriteLine("[Native] UIKit 原生壳就绪（不创建 Avalonia 对象）");
+        // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳 ImageViewModel。
+        StressFlipDriver.MaybeStart(main, _session);
+        iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         return _rootViewController;
     }
 
@@ -77,7 +85,7 @@ public static class iOSNativeShell
         AppResources.Initialize(new iOSAppResources());
         HeifLoader.Initialize(new iOSHeifDecoder());
         RawLoader.Initialize(new iOSRawDecoder());
-        BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder());
+        BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new iOSPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new iOSPerformanceBudget());
         MemoryGovernor.Initialize(new iOSMemoryBudgetProvider());
         StorageAccessManager.Initialize(new iOSStorageAccessManager());
@@ -113,7 +121,6 @@ public static class iOSNativeShell
         // 验收专用入口（非产品行为）：--pv-open <路径> 直接投递进共享外部打开链路。
         PublishLaunchArgumentOpenPaths(args);
         BootTrace.Mark("native shell: main view model ready");
-        StressFlipDriver.MaybeStart(main);
         return main;
     }
 

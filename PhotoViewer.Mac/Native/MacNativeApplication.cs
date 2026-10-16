@@ -43,7 +43,7 @@ public static class MacNativeApplication
         AppResources.Initialize(new MacAppResources());
         HeifLoader.Initialize(new MacHeifDecoder());
         RawLoader.Initialize(new MacRawDecoder());
-        BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder());
+        BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new MacPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new DefaultPerformanceBudget());
         MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
         XmpWriter.Initialize(new MacXmpWriter());

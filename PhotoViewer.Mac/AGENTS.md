@@ -9,6 +9,7 @@ P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 
 | Program.cs | 原生/旧壳入口分流，禁止启动原生时再创建 Avalonia 应用。 |
 | Core/MacHeifDecoder.cs / MacRawDecoder.cs | 旧壳及已有缩略图路径，维持原有 8 位口径。 |
 | Core/MacStorageRefs.cs | 原生本地存储引用，复用共享文件源、评分及元数据服务。 |
+| Core/MacPresentationEncodingPolicy.cs | Mac 展示编码策略：任何尺寸档与压力级别都返回 RGBA16F 扩展线性 sRGB（I2 编码协商不改变 Mac 产物；iPad 的 8 位 P3 路径只在 iOS 策略启用）。 |
 | Native/MacNativeApplication.cs | AppKit 生命周期、ReactiveUI builder、平台门面、Finder/Dock/URL 打开接线。 |
 | Native/MetalPhotoView.cs | AppKit 宿主：把共享 `MetalPhotoRenderer.Layer` 作为视图图层，包原生事件（捏合/滚轮/拖动/按键）为共享 `PhotoViewport` 操作，并暴露物理倍率、导航图几何与 GPU 帧读回给窗口与验收。线性层标签、F16 纹理、mipmap、GPU EXIF 方向与视口数学见 [PhotoViewer.Apple](../PhotoViewer.Apple/AGENTS.md)。 |
 | Native/MacMainWindow.cs | 隐藏标题栏、系统菜单、两向布局、筛选、可滚动控制栏、原生右键菜单、评分/打开、对焦缩放/导航图；跨屏物理尺寸刷新与全屏/显隐状态保存。窗口级事件监视器还负责顶边拖动区内的**标题栏双击**（隐藏式标题栏不会自带系统行为）：按 `AppleActionOnDoubleClick` 缩放/最小化/不动作并吞掉事件，全屏无标题栏故不接管；判定挂在监视器而非拖动区视图，因为拖动区只在悬停时显示，靠命中测试会漏掉未预热鼠标的双击。 |
@@ -35,7 +36,7 @@ P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 
 | Native/NativeSettingsAcceptance.cs | 显式 --pv-native-smoke --pv-native-settings 验证 SwiftUI 设置窗口：深色外观 + NSHostingController 挂载、五分类分组表单渲染、分页历史前进后退、勾选动作往返并触发重绘、真实 NSEvent 录制/删除清空/Escape 取消、文件格式/快捷键/EXIF 三处排序动作、窗口缩放、关闭回写与重开恢复；并尝试系统 screencapture 取真实窗口位图（无屏幕录制权限时在报告中如实记录）。采用隔离设置；真实鼠标拖放无法用合成事件验证，由作者手工实操验收（2026-10-16 通过）。 |
 | Native/NativeInputAcceptance.cs | 显式 --pv-native-smoke --pv-native-input（不加载照片）验证主图区域输入：`MacInput.FromEvent` 对鼠标/键盘/抬起事件不抛异常且映射到预期手势、空首屏提示覆盖主图中心且不拦截点击、方向键经共享命令表被消费、左键打开原生文件选择器（桩实现免模态）、右键弹出原生上下文菜单（菜单代理捕获 MenuWillOpen）；标题栏双击按系统偏好分派（区内双击放大/`None` 不动/`Minimize` 最小化/区外双击不接管）；退出路径上"从未展示过的设置窗口关闭是空操作"（修复前该路径调用未载入动态库的 null 函数指针直接崩溃）。冒烟进程非最前台窗口时不派发首击，故点击直接投递主图视图。 |
 | Native/MacUiServices.cs | AppKit/.NET/Rx 调度、NSOpenPanel、bundle 模型资源。 |
-| Native/NativeAcceptanceRunner.cs / NativeSnapshots.cs | 显式 --pv-native-smoke 的真实窗口回归、ICC/EXIF 与八方向 GPU 角点验证、设置落盘、评分/CV/DINO/指纹索引三表读写、控件+GPU 帧导出；只写自有测试副本与独立测试设置/数据库。各套件为几何对拍反复改窗口尺寸（会经 `FrameAutosaveName` 写回偏好），收尾统一还原进入时的窗口帧。 |
+| Native/NativeAcceptanceRunner.cs / NativeSnapshots.cs | 显式 --pv-native-smoke 的真实窗口回归、ICC/EXIF 与八方向 GPU 角点验证、设置落盘、评分/CV/DINO/指纹索引三表读写、控件+GPU 帧导出；只写自有测试副本与独立测试设置/数据库。各套件为几何对拍反复改窗口尺寸（会经 `FrameAutosaveName` 写回偏好），收尾统一还原进入时的窗口帧。色卡与八方向判定自 I2 起取共享 `AppleAcceptanceChecks`（与 iOS `--pv-native-photo-check` 同口径）。 |
 
 - 图片：共享 PhotoLoadSession 持租约，视图同步上传后只持 GPU 纹理。原生模式不创建 WriteableBitmap 副本；缓存/准入/预取复用 BitmapLoader。
 - 主窗口保留隐藏标题栏与方形元素；布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角与适合的字体/菜单保留原生。左右文件栏内容宽 116 点，卡片外框 90×138、带 3 点四周占位为 96×144，缩略图 80 方形；列表边距为左右 10、上 5、下 10。定位遵守 [FILM-01–04](../Design/ui-contract.md)，显隐恢复/换向定位是已登记的 Mac 差异。隐藏标题栏不自带系统"双击标题栏"动作，顶边拖动区内的双击（非全屏）按系统偏好缩放/最小化/不动作（[SHELL-02](../Design/ui-contract.md)）。控制栏分组按主轴边距测量并整组换行/换列，超长组使用 overlay 系统滚动。**设置窗口独立于主窗口**：固定深色外观，由 SwiftUI（libMacSettingsUI.dylib）承载 macOS 26 系统设置风双栏表单，快捷键与显隐/排序位于同一行；主窗口本轮设计不变。**P3 起分析栏、相似聚类、工具窗口与增强预览在原生壳可用**：分析栏复用共享 `AnalysisPresenter`（可见时主图升 Full），相似聚类面板复用 DINO CLS 相似度与卡片视觉，工具窗口为独立 AppKit 窗口（照片数据统计仍为 Windows 专属，不显示入口），增强预览在 `PhotoLoadSession` 内生效；切图不隐式推理（分析/诊断只在面板可见或被打开时工作）。

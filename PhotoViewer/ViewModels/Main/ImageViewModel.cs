@@ -14,7 +14,7 @@ using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
 
-public class ImageViewModel : ReactiveObject
+public class ImageViewModel : ReactiveObject, IDisplayLoadSignal
 {
     private readonly MainViewModel _main;
     public MainViewModel Main => _main;
@@ -187,6 +187,25 @@ public class ImageViewModel : ReactiveObject
     }
 
     public event EventHandler<IFileRef?>? ImageLoaded;
+
+    /// <summary>压测口径的代理标记（与本 VM 的 <see cref="CurrentIsProxy"/> 同源）。</summary>
+    bool IDisplayLoadSignal.CurrentIsProxy => CurrentIsProxy;
+    /// <summary>压测口径的编码（旧壳主图产物，无图时为 null）。</summary>
+    PixelEncoding? IDisplayLoadSignal.CurrentEncoding => _originalBitmap?.Encoding;
+
+    /// <summary>订阅"本 VM 已把某文件上屏"（压测驱动器计时用；旧壳路径），退订句柄可重复释放。</summary>
+    /// <param name="handler">上屏完成回调，参数为该次上屏的文件引用。</param>
+    /// <returns>退订句柄。</returns>
+    public IDisposable Subscribe(Action<IFileRef> handler)
+    {
+        void OnLoaded(object? sender, IFileRef? file)
+        {
+            if (file != null) handler(file);
+        }
+
+        ImageLoaded += OnLoaded;
+        return new DelegateSubscription(() => ImageLoaded -= OnLoaded);
+    }
     
     private Rect _detailHighlightRect;
     public Rect DetailHighlightRect

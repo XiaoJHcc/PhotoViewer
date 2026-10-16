@@ -17,6 +17,9 @@ public enum PixelEncoding
 
     /// <summary>RGBA 半精度浮点、预乘 alpha，8 字节/像素；线性 scRGB 由色彩标签声明。</summary>
     RgbaF16,
+
+    /// <summary>RGBA8888、预乘 alpha，4 字节/像素；通道顺序为 R,G,B,A(8 位展示编码，色彩空间由 <see cref="ImageColorSpace"/> 声明)。</summary>
+    Rgba8,
 }
 
 /// <summary>
@@ -112,6 +115,20 @@ public sealed class DecodedImage : IDisposable
         PixelEncoding.Bgra32 => 4,
         PixelEncoding.Rgb24 => 3,
         PixelEncoding.RgbaF16 => 8,
+        PixelEncoding.Rgba8 => 4,
+        _ => throw new ArgumentOutOfRangeException(nameof(encoding)),
+    };
+
+    /// <summary>
+    /// 展示编码的保真度序：8 位编码在颜色上可被 F16 线性表面无损覆盖（F16 允许超一与负分量），反之不成立。
+    /// 缓存复用与在途去重据此判断"已有产物是否足以满足本次请求"。
+    /// </summary>
+    /// <param name="encoding">像素编码。</param>
+    /// <returns>保真度序号，越大越通用。</returns>
+    public static int PresentationFidelity(PixelEncoding encoding) => encoding switch
+    {
+        PixelEncoding.RgbaF16 => 2,
+        PixelEncoding.Rgba8 => 1,
         _ => throw new ArgumentOutOfRangeException(nameof(encoding)),
     };
 

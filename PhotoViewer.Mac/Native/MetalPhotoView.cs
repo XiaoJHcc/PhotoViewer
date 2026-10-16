@@ -2,7 +2,6 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
-using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 
@@ -89,11 +88,9 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
         MemoryGovernor.Register(this);
     }
 
-    /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。</summary>
+    /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。编码支持范围由渲染核心判定。</summary>
     public void SetImage(DecodedImage? image)
     {
-        if (image != null && (image.Encoding != PixelEncoding.RgbaF16 || image.ColorSpace != ImageColorSpace.LinearSrgb))
-            throw new InvalidOperationException("Metal 主图必须为线性 RGBA16F");
         _viewport.BeginImageChange();
         _renderer.SetTexture(image);
         if (image == null) _viewport.ClearTexture();

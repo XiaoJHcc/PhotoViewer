@@ -1,4 +1,5 @@
 using AppKit;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Platform;
@@ -10,7 +11,6 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Mac.Core;
-using System.Runtime.InteropServices;
 using PhotoViewer.Core.Database;
 
 namespace PhotoViewer.Mac.Native;
@@ -110,12 +110,12 @@ public static class NativeAcceptanceRunner
                 results.Add(new NativeCheck { Check = "flip", File = file.Name, Milliseconds = stopwatch.Elapsed.TotalMilliseconds, Proxy = window.Session.IsProxy });
                 if (file.Name.StartsWith("color-", StringComparison.Ordinal))
                 {
-                    VerifyColor(window.Session.Image!, file.Name);
+                    AppleAcceptanceChecks.VerifyColor(window.Session.Image!, file.Name, 10.0 / window.Session.Image!.Width, 10.0 / window.Session.Image!.Height);
                     results.Add(new NativeCheck { Check = "imageio-color", File = file.Name });
                 }
                 if (file.Name.StartsWith("orientation-", StringComparison.Ordinal))
                 {
-                    VerifyOrientation(window.Photo, window.Session.Image!.Orientation);
+                    AppleAcceptanceChecks.VerifyOrientation(window.Photo.CaptureLinearFrame, window.Session.Image!.Orientation);
                     VerifyAnalysisOrientation(window.Photo, window.Session.Image!);
                     results.Add(new NativeCheck { Check = "gpu-orientation", File = file.Name });
                 }
@@ -216,41 +216,6 @@ public static class NativeAcceptanceRunner
             window.Window.SetFrame(originalFrame, true);
             await Task.Delay(600);
             Environment.Exit(Environment.ExitCode);
-        }
-    }
-    /// <summary>用已知测试色块检验 ImageIO 浮点通道和行朝向，P3/Adobe 红原色不能提前裁剪。</summary>
-    private static void VerifyColor(DecodedImage image, string filename)
-    {
-        var values = MemoryMarshal.Cast<byte, Half>(image.Pixels.AsSpan(image.Stride * 10 + 10 * 8, 8));
-        float red = (float)values[0], green = (float)values[1], blue = (float)values[2];
-        string name = System.IO.Path.GetFileNameWithoutExtension(filename);
-        if (name == "color-srgb" && (red < .98f || Math.Abs(green) > .02f || Math.Abs(blue) > .02f)) throw new InvalidOperationException("sRGB 通道或上下方向错误");
-        if (name == "color-p3" && (red < 1.15f || green > -.02f)) throw new InvalidOperationException("P3 色域被裁剪或 ICC 丢失");
-        if (name is "color-adobe" or "color-untagged-adobe" && red < 1.3f) throw new InvalidOperationException("Adobe RGB 色域被裁剪或 ICC/EXIF 丢失");
-    }
-    /// <summary>独立以 EXIF 标准角点映射验证 GPU 八种旋转/镜像，采样原色区内部以避开 mipmap 边缘。</summary>
-    private static void VerifyOrientation(MetalPhotoView photo, int orientation)
-    {
-        using var frame = photo.CaptureLinearFrame(navigation: true);
-        (double Horizontal, double Vertical)[] coordinates = [(.05, .05), (.95, .05), (.05, .95), (.95, .95)];
-        int[][] sourceCorners = [[0, 1, 2, 3], [1, 0, 3, 2], [3, 2, 1, 0], [2, 3, 0, 1], [0, 2, 1, 3], [2, 0, 3, 1], [3, 1, 2, 0], [1, 3, 0, 2]];
-        double width = frame.Width;
-        double height = frame.Height;
-        for (int corner = 0; corner < coordinates.Length; corner++)
-        {
-            int horizontal = (int)(width * coordinates[corner].Horizontal);
-            int vertical = (int)(height * coordinates[corner].Vertical);
-            var values = MemoryMarshal.Cast<byte, Half>(frame.Pixels.AsSpan(vertical * frame.Stride + horizontal * 8, 8));
-            int original = sourceCorners[orientation - 1][corner];
-            float red = (float)values[0], green = (float)values[1], blue = (float)values[2];
-            bool valid = original switch
-            {
-                0 => red > .9f && green < .05f && blue < .05f,
-                1 => blue > .9f && red < .05f && green < .05f,
-                2 => red > .9f && green > .9f && blue > .9f,
-                _ => red > .025f && red < .08f && Math.Abs(red - green) < .01f && Math.Abs(red - blue) < .01f,
-            };
-            if (!valid) throw new InvalidOperationException($"GPU EXIF {orientation} 角点 {corner} 方向错误：{red}/{green}/{blue}");
         }
     }
     /// <summary>对拍分析输入与 GPU 的显示朝向，防止镜像转置使 CV/DINO 坐标与主图相反。</summary>

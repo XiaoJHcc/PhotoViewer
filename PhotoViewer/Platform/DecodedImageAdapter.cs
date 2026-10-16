@@ -29,7 +29,13 @@ public static class DecodedImageAdapter
     /// <summary>执行像素行拷贝,生成 WriteableBitmap。</summary>
     private static WriteableBitmap CreateBitmap(DecodedImage image)
     {
-        var format = image.Encoding == PixelEncoding.Rgb24 ? PixelFormats.Rgb24 : PixelFormats.Bgra8888;
+        // 旧壳展示只认 8 位 Bgra32/Rgb24；原生展示编码（F16 线性、8 位 P3）不该走到这里，误用时显式抛出。
+        var format = image.Encoding switch
+        {
+            PixelEncoding.Rgb24 => PixelFormats.Rgb24,
+            PixelEncoding.Bgra32 => PixelFormats.Bgra8888,
+            _ => throw new ArgumentOutOfRangeException(nameof(image), $"Avalonia 主图适配层不支持的编码 {image.Encoding}"),
+        };
         var wb = new WriteableBitmap(new PixelSize(image.Width, image.Height), new Vector(96, 96), format, AlphaFormat.Premul);
         using (var fb = wb.Lock())
         {

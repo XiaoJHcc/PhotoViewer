@@ -7,15 +7,17 @@ using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Apple;
 
-/// <summary>ImageIO 的 JPEG/HEIF/RAW 统一主图解码器，直接输出线性 RGBA16F，方向留给 GPU。</summary>
+/// <summary>ImageIO 的 JPEG/HEIF/RAW 统一主图解码器：按请求编码输出 RGBA16F 扩展线性 sRGB 或 8 位 Display P3，方向留给 GPU。</summary>
 public sealed class ApplePresentationDecoder : IPresentationImageDecoder
 {
-    /// <summary>半精度 RGBA 每像素八字节。</summary>
-    public int BytesPerPixel => 8;
-
     /// <summary>在线程池解码；编码器子采样限制代理尺寸，不使用容器内的小缩略图。</summary>
-    public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
-        => Task.Run<DecodedImage?>(() => Decode(file.PathKey, maxLongEdge, cancellationToken), cancellationToken);
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="encoding">本次必须产出的像素编码（F16 扩展线性 sRGB 或 8 位 Display P3）。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>携带源尺寸、色彩与待应用方向的解码产物。</returns>
+    public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
+        => Task.Run<DecodedImage?>(() => Decode(file.PathKey, maxLongEdge, encoding, cancellationToken), cancellationToken);
 
     /// <summary>无内嵌预览的用户图片按短边缩解码，保持 ICC 与方向正确，不走原图全尺寸路径。</summary>
     public Task<DecodedImage?> DecodeThumbnailAsync(IFileRef file, int minShortEdge, CancellationToken cancellationToken)
@@ -28,13 +30,20 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             int width = properties?.PixelWidth ?? 0, height = properties?.PixelHeight ?? 0;
             if (width <= 0 || height <= 0) throw new InvalidOperationException("缩略图源尺寸无效");
             int target = Math.Max(minShortEdge, (int)Math.Ceiling((double)minShortEdge * Math.Max(width, height) / Math.Min(width, height)));
-            using var image = Decode(file.PathKey, target, cancellationToken);
+            using var image = Decode(file.PathKey, target, PixelEncoding.RgbaF16, cancellationToken);
             return ColorEngine.ToAnalysisSrgb8(image);
         }, cancellationToken);
 
-    /// <summary>读取原图色彩/尺寸/方向，并在 pinned 池化缓冲内完成一次浮点归一化。</summary>
-    private static unsafe DecodedImage Decode(string path, int? maxLongEdge, CancellationToken cancellationToken)
+    /// <summary>读取原图色彩/尺寸/方向，并在 pinned 池化缓冲内完成一次转换。</summary>
+    /// <param name="path">图片路径。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="encoding">目标像素编码。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>解码产物。</returns>
+    private static unsafe DecodedImage Decode(string path, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
     {
+        if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Rgba8))
+            throw new NotSupportedException($"Apple 展示解码器不支持编码 {encoding}");
         using var pool = new NSAutoreleasePool();
         using var url = NSUrl.FromFilename(path);
         using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false })
@@ -58,6 +67,14 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         using var inferredImage = InterpretUntaggedJpeg(image, properties, path);
         int width = checked((int)image.Width);
         int height = checked((int)image.Height);
+        return encoding == PixelEncoding.RgbaF16
+            ? DecodeLinearF16(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken)
+            : DecodeDisplayP3(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken);
+    }
+
+    /// <summary>绘制到扩展线性 sRGB 的半精度浮点缓冲；广色域原色允许超过一，由 scRGB 承载不裁剪。</summary>
+    private static unsafe DecodedImage DecodeLinearF16(CGImage image, int width, int height, int sourceWidth, int sourceHeight, int orientation, CancellationToken cancellationToken)
+    {
         int stride = checked(width * 8);
         var buffer = DecodedImage.RentPixels(checked(stride * height));
         try
@@ -69,11 +86,41 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
                 using var context = new CGBitmapContext((IntPtr)pixels, width, height, 16, stride,
                     linearSpace, CGBitmapFlags.FloatComponents | CGBitmapFlags.ByteOrder16Little | CGBitmapFlags.PremultipliedLast);
                 context.SetBlendMode(CGBlendMode.Copy);
-                context.DrawImage(new CGRect(0, 0, width, height), inferredImage ?? image);
+                context.DrawImage(new CGRect(0, 0, width, height), image);
             }
             cancellationToken.ThrowIfCancellationRequested();
             return DecodedImage.CreatePooled(buffer, width, height, stride, PixelEncoding.RgbaF16,
                 ImageColorSpace.LinearSrgb, sourceWidth, sourceHeight, orientation);
+        }
+        catch
+        {
+            ImageBufferPool.Return(buffer);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 绘制到 8 位 Display P3 缓冲（sRGB 传递函数、RGBA 字节序、预乘 alpha），供 iPad Full 档与压力降级使用。
+    /// P3 立方体容不下的超范围原色（如 Adobe RGB 红原色）在此被钳到 P3 原色，这是 8 位 P3 编码的既有边界。
+    /// </summary>
+    private static unsafe DecodedImage DecodeDisplayP3(CGImage image, int width, int height, int sourceWidth, int sourceHeight, int orientation, CancellationToken cancellationToken)
+    {
+        int stride = checked(width * 4);
+        var buffer = DecodedImage.RentPixels(checked(stride * height));
+        try
+        {
+            using var displayP3 = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3) ?? throw new InvalidOperationException("系统不支持 Display P3");
+            fixed (byte* pixels = buffer)
+            {
+                // PremultipliedLast + 默认字节序 = 内存中的 R,G,B,A 顺序。
+                using var context = new CGBitmapContext((IntPtr)pixels, width, height, 8, stride,
+                    displayP3, CGImageAlphaInfo.PremultipliedLast);
+                context.SetBlendMode(CGBlendMode.Copy);
+                context.DrawImage(new CGRect(0, 0, width, height), image);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return DecodedImage.CreatePooled(buffer, width, height, stride, PixelEncoding.Rgba8,
+                ImageColorSpace.DisplayP3, sourceWidth, sourceHeight, orientation);
         }
         catch
         {

@@ -5,9 +5,10 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia.Threading;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Main;
 
@@ -15,11 +16,13 @@ namespace PhotoViewer;
 
 /// <summary>
 /// P1-M5 真机压测翻页驱动器:仅当头工程解析到 --pv-stress 启动参数时激活,常规运行完全惰性。
-/// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路),
+/// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路);
+/// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取"当前壳的展示路径"——旧壳是 ImageViewModel、原生壳是 PhotoLoadSession，
+/// 故原生壳（macOS/iOS）压测同样覆盖真实 P0 解码链路而非空跑。
 /// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
 /// 日志位于 settings 同目录 stress-flip.jsonl,供真机 42MP 连翻验收回放。
 /// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N、
-/// --pv-stress-full(跳过代理档,模拟 Phase 0 每翻全尺寸解码,作 A/B 对照组)。
+/// --pv-stress-full(跳过代理档,模拟 Phase 0 每翻全尺寸解码,作 A/B 对照组;仅旧壳 ImageViewModel 生效)。
 /// </summary>
 public static class StressFlipDriver
 {
@@ -76,15 +79,16 @@ public static class StressFlipDriver
     /// 框架初始化完成后调用:存在注入路径则异步执行压测,否则立即返回。
     /// </summary>
     /// <param name="vm">主窗口 VM。</param>
-    public static void MaybeStart(MainViewModel vm)
+    /// <param name="signal">当前壳的主图上屏信号源（旧壳 ImageViewModel / 原生壳 PhotoLoadSession）。</param>
+    public static void MaybeStart(MainViewModel vm, IDisplayLoadSignal signal)
     {
         var path = PendingFolderPath;
         if (string.IsNullOrWhiteSpace(path)) return;
-        _ = RunAsync(vm, path);
+        _ = RunAsync(vm, signal, path);
     }
 
     /// <summary>压测主流程:开文件夹 → 清空当前选中 → 逐张翻页计时 → 写汇总行。</summary>
-    private static async Task RunAsync(MainViewModel vm, string folderPath)
+    private static async Task RunAsync(MainViewModel vm, IDisplayLoadSignal signal, string folderPath)
     {
         var logPath = Path.Combine(
             Path.GetDirectoryName(SettingsPathHelper.GetDefaultPath("PhotoViewer"))!,
@@ -109,7 +113,7 @@ public static class StressFlipDriver
             }
 
             var folder = new LocalFolderRef(folderPath);
-            await Dispatcher.UIThread.InvokeAsync(() => vm.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false));
+            await UiDispatcher.InvokeAsync(() => vm.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false)).Unwrap();
 
             var files = await WaitForFilesAsync(vm);
             if (files.Count == 0)
@@ -119,7 +123,7 @@ public static class StressFlipDriver
             }
 
             // 开文件夹自动选中了首图,先置空保证第 0 翻是真实切换(其解码可能已在途,延迟略偏乐观)
-            await Dispatcher.UIThread.InvokeAsync(() => vm.CurrentFile = null);
+            await UiDispatcher.InvokeAsync(() => { vm.CurrentFile = null; });
 
             var flips = MaxFlips > 0 ? Math.Min(MaxFlips, files.Count) : files.Count;
             Log($"{{\"type\":\"plan\",\"files\":{files.Count},\"flips\":{flips}}}");
@@ -131,16 +135,13 @@ public static class StressFlipDriver
             {
                 var target = files[i];
                 var loaded = new TaskCompletionSource();
-                void OnLoaded(object? s, IFileRef? f)
+                using var subscription = signal.Subscribe(file =>
                 {
-                    if (ReferenceEquals(f, target.File)) loaded.TrySetResult();
-                }
-
-                vm.ImageVM.ImageLoaded += OnLoaded;
+                    if (ReferenceEquals(file, target.File)) loaded.TrySetResult();
+                });
                 var flipSw = Stopwatch.StartNew();
-                await Dispatcher.UIThread.InvokeAsync(() => vm.CurrentFile = target);
+                await UiDispatcher.InvokeAsync(() => { vm.CurrentFile = target; });
                 var winner = await Task.WhenAny(loaded.Task, Task.Delay(PerFlipTimeoutMs));
-                vm.ImageVM.ImageLoaded -= OnLoaded;
                 flipSw.Stop();
 
                 var timedOut = winner != loaded.Task;
@@ -160,7 +161,8 @@ public static class StressFlipDriver
                     + ",\"file\":\"" + Esc(target.Name) + "\""
                     + ",\"ms\":" + F(ms)
                     + ",\"timeout\":" + B(timedOut)
-                    + ",\"proxy\":" + B(vm.ImageVM.CurrentIsProxy)
+                    + ",\"proxy\":" + B(signal.CurrentIsProxy)
+                    + ",\"enc\":\"" + (signal.CurrentEncoding?.ToString() ?? "none") + "\""
                     + ",\"level\":\"" + MemoryGovernor.CurrentLevel + "\""
                     + ",\"hold\":" + B(MemoryGovernor.InRecoveryHold)
                     + ",\"reservedMB\":" + MemoryGovernor.ReservedBytes / 1048576
@@ -199,7 +201,7 @@ public static class StressFlipDriver
     {
         for (var attempt = 0; attempt < 150; attempt++)
         {
-            var count = await Dispatcher.UIThread.InvokeAsync(() => vm.FolderVM.AllFiles.Count);
+            var count = await UiDispatcher.InvokeAsync(() => vm.FolderVM.AllFiles.Count);
             if (count > 0) return vm.FolderVM.AllFiles.ToList();
             await Task.Delay(100);
         }
