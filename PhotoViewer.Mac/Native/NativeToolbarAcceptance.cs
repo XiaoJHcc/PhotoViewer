@@ -1,6 +1,8 @@
 using AppKit;
 using CoreGraphics;
+using Foundation;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Settings;
@@ -113,6 +115,7 @@ internal static class NativeToolbarAcceptance
                     throw new InvalidOperationException("评分按钮写回/主图身份错误");
                 observations.Add($"real rating button changes owned fixture to {targetRating} stars and preserves current photo");
             }
+            await VerifyRatingContinuityAsync(window, observations);
             foreach (var entry in settings.ExifDisplayItems) entry.IsEnabled = true;
             foreach (var hotkey in settings.Hotkeys) hotkey.IsDisplay = true;
             settings.LayoutMode = LayoutMode.Row;
@@ -248,4 +251,137 @@ internal static class NativeToolbarAcceptance
         if (painted.Length == 0 || painted[^1] - painted[0] < bitmap.Height * .8)
             throw new InvalidOperationException("系统按钮的实际边框没有覆盖方形区域");
     }
+
+    /// <summary>
+    /// FILM-06：用胶片栏卡片的真实星级按钮改写自有可写副本，核对文件级写回、主图身份与筛选连续性的两半
+    /// （当前照片改星后落出筛选仍暂留、用户切走后才移除），收尾还原评级与进入本检查时的打开状态。
+    /// </summary>
+    private static async Task VerifyRatingContinuityAsync(MacMainWindow window, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var filter = window.Main.FileVM.FilterBar;
+        var thumbnailList = window.Main.FileVM.ThumbnailList;
+        var entryFile = window.Main.CurrentFile ?? throw new InvalidOperationException("评分连续性回归缺少进入时的当前照片");
+        string entryPath = entryFile.File.PathKey;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        string entryFilter = filter.SelectedRatingFilter;
+        string fixtures = System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures");
+        var entryRatings = new Dictionary<string, int>(StringComparer.Ordinal);
+        int entryRating = 0;
+        // 星级按钮只在卡片创建时按设置显隐，故先打开胶片栏与评分组再建卡片。
+        settings.ShowRating = true;
+        window.Main.IsThumbnailViewVisible = true;
+        await Task.Delay(250);
+
+        async Task RestoreAsync()
+        {
+            filter.SelectedRatingFilter = entryFilter;
+            foreach (var pair in entryRatings)
+            {
+                var candidate = window.Main.FolderVM.AllFiles.FirstOrDefault(item => item.File.PathKey == pair.Key);
+                if (candidate != null && candidate.Rating != pair.Value) await window.Main.SetRatingAsync(candidate, pair.Value);
+            }
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            if (window.Main.CurrentFile?.File.PathKey != entryPath) await window.Main.FolderVM.OpenImageAsync(new MacFileRef(entryPath));
+        }
+
+        try
+        {
+            // 只对自有可写副本操作：调用方传入别的图片时先切到副本目录。
+            if (!IsOwnedFixtureFile(window.Main.CurrentFile)) await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(fixtures));
+            await WaitAsync(() => window.Main.CurrentFile != null && thumbnailList.FilteredFiles.Count == 3, "自有评分副本载入");
+            var file = window.Main.CurrentFile!;
+            if (!IsOwnedFixtureFile(file)) throw new InvalidOperationException("评分连续性回归未落在自有可写副本上");
+            foreach (var candidate in window.Main.FolderVM.AllFiles)
+                entryRatings[candidate.File.PathKey] = (await ExifLoader.LoadExifDataAsync(new MacFileRef(candidate.File.PathKey)))?.Rating ?? 0;
+            entryRating = entryRatings[file.File.PathKey];
+            int target = entryRating == 3 ? 2 : 3;
+            var other = window.Main.FolderVM.AllFiles.First(candidate => !ReferenceEquals(candidate, file));
+            // 另一张副本先与当前照片同星级，才能同时构成“当前照片改星后落出筛选”和“列表里还有符合筛选的照片”。
+            if (entryRatings[other.File.PathKey] != entryRating) await window.Main.SetRatingAsync(other, entryRating);
+            await WaitAsync(() => file.Rating == entryRating && other.Rating == entryRating, "自有副本评级就绪");
+            string key = $"Eq{entryRating}";
+            filter.SelectedRatingFilter = key;
+            await Task.Delay(250);
+            if (!thumbnailList.FilteredFiles.Contains(file) || !thumbnailList.FilteredFiles.Contains(other))
+                throw new InvalidOperationException($"筛选键 {key} 与自有副本评级不一致，无法核对暂留规则");
+
+            window.Main.FileVM.ThumbnailList.ScrollToCurrent();
+            var card = await WaitForCardAsync(window, file);
+            var star = Descendants(card.View).OfType<NSButton>().SingleOrDefault(button => button.ToolTip == $"{target} 星")
+                ?? throw new InvalidOperationException("胶片栏卡片缺少目标星级的按钮");
+            if (star.Hidden) throw new InvalidOperationException("胶片栏卡片星级按钮未按设置显示");
+            var starCenter = new CGPoint(star.Bounds.Width / 2, star.Bounds.Height / 2);
+            var cardHit = card.View.HitTest(star.ConvertPointToView(starCenter, card.View.Superview));
+            var windowHit = window.Window.ContentView!.HitTest(star.ConvertPointToView(starCenter, null));
+            if (cardHit is not NSButton || windowHit is not NSButton)
+                throw new InvalidOperationException($"星级按钮未独立命中，点星会选中父卡片：card={cardHit?.GetType().Name ?? "null"}, window={windowHit?.GetType().Name ?? "null"}");
+            star.PerformClick(star);
+            await WaitAsync(() => file.Rating == target, $"胶片栏星级按钮写回 {target} 星");
+            var written = await ExifLoader.LoadExifDataAsync(new MacFileRef(file.File.PathKey));
+            if (file.Rating != target || written?.Rating != target)
+                throw new InvalidOperationException($"胶片栏星级按钮未写回文件：memory={file.Rating}, file={written?.Rating}");
+            if (!ReferenceEquals(window.Main.CurrentFile, file))
+                throw new InvalidOperationException("胶片栏星级按钮改变了当前主图身份");
+            if (!thumbnailList.FilteredFiles.Contains(file))
+                throw new InvalidOperationException("改星后当前照片未按 FILM-06 暂留，选片进度瞬间丢失");
+            observations.Add($"real filmstrip star button writes {target} stars to the owned fixture XMP without changing the current photo; the card stays listed although it no longer matches {key}");
+
+            window.Main.CurrentFile = other;
+            await WaitAsync(() => !thumbnailList.FilteredFiles.Contains(file), "切走后移除不符合筛选的照片");
+            int expected = window.Main.FolderVM.AllFiles.Count(candidate => candidate.Rating == entryRating);
+            if (thumbnailList.FilteredFiles.Contains(file) || thumbnailList.FilteredFiles.Count != expected)
+                throw new InvalidOperationException($"切走后筛选列表与 {key} 不一致：count={thumbnailList.FilteredFiles.Count}, expected={expected}");
+
+            await RestoreAsync();
+            bool restored = filter.SelectedRatingFilter == entryFilter && window.Main.CurrentFile?.File.PathKey == entryPath;
+            foreach (var pair in entryRatings)
+                restored &= (await ExifLoader.LoadExifDataAsync(new MacFileRef(pair.Key)))?.Rating == pair.Value;
+            if (!restored)
+                throw new InvalidOperationException("评分连续性回归未还原自有副本评级与进入时的打开状态");
+            observations.Add($"leaving the photo drops it from {key} with the filtered count matching the shared filter; owned fixture stars and filter restored to {entryRating}/{entryFilter}");
+        }
+        finally
+        {
+            try { await RestoreAsync(); }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 评分连续性收尾还原失败：" + exception.Message); }
+        }
+    }
+
+    /// <summary>轮询等待真实状态并设定有限超时，失败不输出虚假的通过报告。</summary>
+    private static async Task WaitAsync(Func<bool> condition, string name, int seconds = 5)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(seconds);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException(name);
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>等待胶片栏中目标照片的卡片被真实创建并绑定到该业务身份。</summary>
+    private static async Task<MacThumbnailItem> WaitForCardAsync(MacMainWindow window, ImageFile file)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            int index = window.Main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
+            if (index >= 0)
+            {
+                window.Filmstrip.LayoutSubtreeIfNeeded();
+                using (var path = NSIndexPath.FromItemSection(index, 0))
+                    if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
+            }
+            if (DateTime.UtcNow > deadline) throw new TimeoutException("胶片栏卡片未创建");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>递归枚举视图树的全部后代，供查找卡片内部的原生按钮。</summary>
+    private static IEnumerable<NSView> Descendants(NSView view)
+        => view.Subviews.SelectMany(subview => new[] { subview }.Concat(Descendants(subview)));
+
+    /// <summary>判断照片是否位于本套件自有的可写评分副本目录。</summary>
+    private static bool IsOwnedFixtureFile(ImageFile? file)
+        => file != null && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file.File.PathKey)) == "native-p2-toolbar-fixtures";
 }

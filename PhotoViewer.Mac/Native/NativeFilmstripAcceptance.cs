@@ -1,6 +1,8 @@
 using AppKit;
 using Foundation;
 using CoreGraphics;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 
@@ -135,6 +137,7 @@ internal static class NativeFilmstripAcceptance
         window.Main.CurrentFile = window.Main.FileVM.ThumbnailList.FilteredFiles[0];
         await Task.Delay(250);
         NativeSnapshots.SaveMain(window, System.IO.Path.Combine(output, "filmstrip-final.png"));
+        await VerifyLazyCardDecodingAsync(window, observations);
         string report = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(window.Main.CurrentFile!.File.PathKey)) == "PhotoViewerTest" ? "filmstrip-five-checks.txt" : "filmstrip-many-checks.txt";
         await File.WriteAllLinesAsync(System.IO.Path.Combine(output, report), observations);
         File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
@@ -227,6 +230,171 @@ internal static class NativeFilmstripAcceptance
         await Task.Delay(150);
         window.Main.CurrentFile = window.Main.FileVM.ThumbnailList.FilteredFiles[^1];
         observations.Add($"{window.Main.Settings.LayoutMode}/{original}: card click, ordinary selection, exchange, sort/filter preserve offset; explicit navigation animates (intermediate={intermediate:0.##}, endpoint={maximum:0.##}); wheel/click cancel; latest request wins");
+    }
+
+    /// <summary>
+    /// FILM-05：在自有延迟加载素材目录（两张自有好图副本 + 一个故意不可解码的坏文件）上核对卡片身份与几何不等解码、
+    /// 滚动不等解码、坏文件仍可选为主图且不呈现伪造图像；作者照片全程只读，收尾还原进入本检查前的目录与当前照片。
+    /// </summary>
+    private static async Task VerifyLazyCardDecodingAsync(MacMainWindow window, List<string> observations)
+    {
+        var thumbnailList = window.Main.FileVM.ThumbnailList;
+        var entryFile = window.Main.CurrentFile ?? throw new InvalidOperationException("延迟加载回归缺少进入时的当前照片");
+        string entryPath = entryFile.File.PathKey;
+        var entrySize = window.Window.ContentView!.Bounds.Size;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        window.Main.IsThumbnailViewVisible = true;
+        string root = PrepareLazyFixtures();
+        try
+        {
+            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(root));
+            // 身份与几何先于解码就绪：这里不等待任何解码，先就地取到“仍在异步解码”的证据。
+            var files = thumbnailList.FilteredFiles;
+            if (files.Count != 3) throw new InvalidOperationException($"延迟加载素材项目数错误：{files.Count}");
+            var goods = files.Where(file => !file.Name.StartsWith("broken", StringComparison.Ordinal)).ToArray();
+            if (goods.Length != 2 || files.Any(file => string.IsNullOrEmpty(file.Name))) throw new InvalidOperationException("延迟加载素材身份不完整");
+            bool stillDecoding = thumbnailList.IsThumbnailLoadingBusy();
+            if (!stillDecoding && !goods.Any(file => file.Thumbnail == null))
+                throw new InvalidOperationException("打开目录后缩略图已全部解码，无法证明卡片身份与几何不等待解码");
+            var cards = new MacThumbnailItem[files.Count];
+            for (int index = 0; index < files.Count; index++) cards[index] = await WaitForIndexCardAsync(window, index, files[index]);
+            foreach (var card in cards)
+            {
+                if (card.View.Hidden || card.View.Superview != window.Filmstrip)
+                    throw new InvalidOperationException("延迟加载阶段出现未挂载或被隐藏的卡片");
+                if (!CardLabels(card).Contains(card.BoundFile!.DisplayName))
+                    throw new InvalidOperationException($"卡片未显示业务身份：{card.BoundFile.Name}");
+            }
+            observations.Add($"list identity/count={files.Count} and all visible cards usable with names while the good thumbnails are still decoding (busy={stillDecoding})");
+
+            await WaitAsync(() => goods.All(file => file.Thumbnail != null), "好图缩略图异步补齐");
+            await WaitAsync(() => goods.All(file => file.PhotoDate != null), "好图日期就绪");
+            if (!thumbnailList.FilteredFiles.SequenceEqual(files))
+                throw new InvalidOperationException("后台评级阶段改变了业务列表顺序，无法按索引核对卡片");
+            foreach (var card in cards)
+                if (CardLabels(card).Count < 2) throw new InvalidOperationException($"卡片缺少文件名或第二行日期：{card.BoundFile!.Name}");
+            observations.Add($"good thumbnails and card name/date arrive asynchronously for {string.Join("/", goods.Select(file => file.Name))}");
+
+            // 视口小于全部卡片时滚一下：立刻核对可见卡片身份，不需要等待任何解码。
+            window.Window.SetContentSize(new CGSize(700, 420));
+            await Task.Delay(150);
+            var scroll = (MacFilmstripScrollView)window.FilmstripScroll;
+            double extent = (double)(window.Filmstrip.Frame.Height - scroll.ContentView.Bounds.Height);
+            if (extent <= 1) throw new InvalidOperationException($"延迟加载素材在竖排下未产生滚动范围：{extent}");
+            var beforeScroll = GeometricVisibleIndexes(window);
+            scroll.ContentView.ScrollToPoint(new CGPoint(0, extent));
+            scroll.ReflectScrolledClipView(scroll.ContentView);
+            await Task.Delay(40);
+            window.Filmstrip.LayoutSubtreeIfNeeded();
+            if (AxisOffset(scroll) <= 1) throw new InvalidOperationException("延迟加载素材的滚动没有发生");
+            var visible = GeometricVisibleIndexes(window);
+            if (!visible.Except(beforeScroll).Any())
+                throw new InvalidOperationException($"滚动后可见卡片没有变化，无法核对滚动不等解码：offset={AxisOffset(scroll):0.##}, extent={extent:0.##}, clip={scroll.ContentView.Bounds}, before=[{string.Join(",", beforeScroll.Order())}], after=[{string.Join(",", visible.Order())}]");
+            VerifyVisibleCards(window, "lazy-fixtures/manual-scroll");
+            foreach (int index in visible)
+                if (!CardLabels(cards[index]).Contains(files[index].DisplayName))
+                    throw new InvalidOperationException($"滚动后卡片未保留业务身份：{files[index].Name}");
+            observations.Add($"scrolling rebinds visible cards to their business identity immediately (visible=[{string.Join(",", visible.Order())}], offset={AxisOffset(scroll):0.##})");
+
+            // 点坏文件卡片：身份保留、不崩、不呈现伪造图像；再点好图卡片：主图正常出图。
+            var broken = files.Single(file => file.Name.StartsWith("broken", StringComparison.Ordinal));
+            int brokenIndex = files.IndexOf(broken);
+            int goodIndex = files.IndexOf(goods[0]);
+            scroll.ContentView.ScrollToPoint(CGPoint.Empty);
+            scroll.ReflectScrolledClipView(scroll.ContentView);
+            await Task.Delay(60);
+            await ClickCardAsync(window, await WaitForIndexCardAsync(window, brokenIndex, broken));
+            if (!ReferenceEquals(window.Main.CurrentFile, broken)) throw new InvalidOperationException("坏文件卡片未保留业务身份为当前照片");
+            await WaitAsync(() => window.Session.Error.Length > 0, "坏文件解码失败可见");
+            if (window.Session.Image != null) throw new InvalidOperationException("坏文件在真实读图路径下呈现了伪造图像");
+            observations.Add($"undecodable card stays selectable as the current photo and reports '{window.Session.Error}' without a fabricated image");
+
+            await ClickCardAsync(window, await WaitForIndexCardAsync(window, goodIndex, goods[0]));
+            if (!ReferenceEquals(window.Main.CurrentFile, goods[0])) throw new InvalidOperationException("好图卡片未切回主图身份");
+            await WaitAsync(() => window.Session.Image != null && window.Session.Error.Length == 0, "好图主图出图");
+            observations.Add($"{goods[0].Name} still shows the main photo after the undecodable card");
+        }
+        finally
+        {
+            window.Window.SetContentSize(entrySize);
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            if (window.Main.CurrentFile?.File.PathKey != entryPath) await window.Main.FolderVM.OpenImageAsync(new MacFileRef(entryPath));
+            await Task.Delay(150);
+        }
+    }
+
+    /// <summary>创建/刷新本套件自有的延迟加载素材目录：两张自有好图副本加一个故意不可解码的坏文件（幂等，作者照片只读）。</summary>
+    private static string PrepareLazyFixtures()
+    {
+        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/filmstrip-lazy-fixtures");
+        Directory.CreateDirectory(root);
+        foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
+        string sources = System.IO.Path.GetFullPath("release/native-p2-fixtures");
+        foreach (string name in new[] { "color-srgb.jpg", "color-p3.jpg" })
+            File.Copy(System.IO.Path.Combine(sources, name), System.IO.Path.Combine(root, name), true);
+        File.WriteAllBytes(System.IO.Path.Combine(root, "broken.jpg"),
+            System.Text.Encoding.ASCII.GetBytes(string.Concat(Enumerable.Repeat("PhotoViewer filmstrip broken fixture: not an image\n", 24))));
+        return root;
+    }
+
+    /// <summary>在真实卡片上派发左键按下（与既有卡片点选回归同一路径）。</summary>
+    private static async Task ClickCardAsync(MacMainWindow window, MacThumbnailItem card)
+    {
+        var location = card.View.ConvertPointToView(new CGPoint(15, 15), null);
+        using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+            window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("卡片鼠标事件创建失败");
+        card.View.MouseDown(click);
+        await Task.Delay(80);
+    }
+
+    /// <summary>按布局几何与当前裁剪区算出真正可见的业务索引（实例化集合可能多于几何可见项）。</summary>
+    private static HashSet<int> GeometricVisibleIndexes(MacMainWindow window)
+    {
+        var clip = window.FilmstripScroll.ContentView.Bounds;
+        return window.Filmstrip.CollectionViewLayout!.GetLayoutAttributesForElements(clip)
+            .Where(attribute => attribute.IndexPath != null)
+            .Where(attribute => { var intersect = CGRect.Intersect(attribute.Frame, clip); return intersect.Width > 1 && intersect.Height > 1; })
+            .Select(attribute => (int)attribute.IndexPath!.Item)
+            .ToHashSet();
+    }
+
+    /// <summary>等待指定业务索引的卡片真实建立并绑定到该身份。</summary>
+    private static async Task<MacThumbnailItem> WaitForIndexCardAsync(MacMainWindow window, int index, ImageFile file)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            window.Filmstrip.LayoutSubtreeIfNeeded();
+            using (var path = NSIndexPath.FromItemSection(index, 0))
+                if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
+            if (DateTime.UtcNow > deadline) throw new TimeoutException($"胶片栏第 {index} 项（{file.Name}）卡片未建立");
+            await Task.Delay(25);
+        }
+    }
+
+    /// <summary>卡片当前显示的非空文字（文件名与第二行日期），隐藏的抖动徽标不计入。</summary>
+    private static List<string> CardLabels(MacThumbnailItem card)
+    {
+        var labels = new List<string>();
+        var pending = new Queue<NSView>([card.View]);
+        while (pending.Count > 0)
+            foreach (var subview in pending.Dequeue().Subviews)
+            {
+                if (subview is NSTextField field && !field.Hidden && !string.IsNullOrEmpty(field.StringValue)) labels.Add(field.StringValue);
+                pending.Enqueue(subview);
+            }
+        return labels;
+    }
+
+    /// <summary>轮询等待真实状态并设定有限超时，失败不输出虚假的通过报告。</summary>
+    private static async Task WaitAsync(Func<bool> condition, string name)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (!condition())
+        {
+            if (DateTime.UtcNow > deadline) throw new TimeoutException(name);
+            await Task.Delay(25);
+        }
     }
 
     /// <summary>等待胶片栏 350ms 缓出动画结束并稳定。</summary>
