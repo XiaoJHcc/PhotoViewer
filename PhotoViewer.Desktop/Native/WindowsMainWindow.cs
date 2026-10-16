@@ -24,7 +24,7 @@ namespace PhotoViewer.Desktop.Native;
 /// 原生主窗口:隐藏式标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
 /// (契约 SHELL-01/02)。几何常量取自 <see cref="WindowsLayout"/>,方向切换只重排既有控件实例。
 /// </summary>
-internal sealed class WindowsMainWindow : Window
+internal sealed partial class WindowsMainWindow : Window
 {
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session = new();
@@ -47,6 +47,7 @@ internal sealed class WindowsMainWindow : Window
 
     private bool _isRowLayout = true;
     private bool _sized;
+    private XamlRoot? _xamlRoot;
 
     /// <summary>
     /// 创建主窗口。
@@ -149,6 +150,12 @@ internal sealed class WindowsMainWindow : Window
     /// </summary>
     public void Detach()
     {
+        if (_xamlRoot != null)
+        {
+            _xamlRoot.Changed -= OnXamlRootChanged;
+        }
+
+        _filterBar.SizeChanged -= OnFilterBarSizeChanged;
         _main.PropertyChanged -= OnMainChanged;
         _session.Changed -= OnImageChanged;
         _photo.ViewportChanged -= OnViewportChanged;
@@ -280,6 +287,17 @@ internal sealed class WindowsMainWindow : Window
     /// <summary>窗口首次布局完成后设定初始尺寸并让根元素获得键盘焦点。</summary>
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
+        if (_xamlRoot == null)
+        {
+            _xamlRoot = _root.XamlRoot;
+            if (_xamlRoot != null)
+            {
+                _xamlRoot.Changed += OnXamlRootChanged;
+            }
+
+            _filterBar.SizeChanged += OnFilterBarSizeChanged;
+        }
+
         if (!_sized)
         {
             _sized = true;
@@ -304,6 +322,16 @@ internal sealed class WindowsMainWindow : Window
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
         UpdateCaptionRegions();
     }
+
+    /// <summary>跨屏栅格化比例变化时重算物理标题栏区域，即使逻辑窗口尺寸不变。</summary>
+    /// <param name="sender">当前 XAML 根。</param>
+    /// <param name="args">根布局变化参数。</param>
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateCaptionRegions();
+
+    /// <summary>筛选条完成换向布局后更新拖动区，避免使用布局前的旧尺寸。</summary>
+    /// <param name="sender">筛选条。</param>
+    /// <param name="args">布局尺寸变化参数。</param>
+    private void OnFilterBarSizeChanged(object sender, SizeChangedEventArgs args) => UpdateCaptionRegions();
 
     /// <summary>按当前方向重排三个分区。</summary>
     private void ApplyLayout()
@@ -387,18 +415,21 @@ internal sealed class WindowsMainWindow : Window
             return;
         }
 
-        var width = (int)Math.Round(_root.ActualWidth);
-        var height = (int)Math.Round(Math.Min(WindowsLayout.CaptionHeight, _root.ActualHeight));
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var width = (int)Math.Round(_root.ActualWidth * scale);
+        var height = (int)Math.Round(Math.Min(WindowsLayout.CaptionHeight, _root.ActualHeight) * scale);
         var nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
 
         var rects = new List<RectInt32>();
-        if (_isRowLayout)
+        if (!_main.IsThumbnailViewVisible)
         {
-            var bounds = _filterBar
-                .TransformToVisual(_root)
-                .TransformBounds(new Rect(0, 0, _filterBar.ActualWidth, _filterBar.ActualHeight));
-            var left = (int)Math.Max(0, Math.Round(bounds.X));
-            var right = (int)Math.Min(width, Math.Round(bounds.X + bounds.Width));
+            rects.Add(new RectInt32(0, 0, width, height));
+        }
+        else if (_isRowLayout)
+        {
+            var bounds = _filterBar.GetInteractiveBounds(_root);
+            var left = (int)Math.Clamp(Math.Floor(bounds.X * scale), 0, width);
+            var right = (int)Math.Clamp(Math.Ceiling((bounds.X + bounds.Width) * scale), left, width);
             if (left > 0)
             {
                 rects.Add(new RectInt32(0, 0, left, height));
@@ -411,7 +442,7 @@ internal sealed class WindowsMainWindow : Window
         }
         else
         {
-            var left = (int)Math.Min(width, Math.Round(_filePaneFrame.ActualWidth));
+            var left = (int)Math.Min(width, Math.Ceiling(_filePaneFrame.ActualWidth * scale));
             if (left < width)
             {
                 rects.Add(new RectInt32(left, 0, width - left, height));

@@ -11,6 +11,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 2. 当前状态
 
+- **Windows 首屏与首轮纠偏（2026-10-16，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片；定向修复后台调度优先级、无 EXIF 代理源尺寸、标题栏物理坐标与实际控件避让、原生模型资源读取，补齐 resize/关闭的 GPU 引用释放。`--pv-native-smoke` 使用专用设置/数据库/日志与自有棋盘 JPEG，当前 100% DPI 的 13 项定向检查与 ColorTestTool 27 项通过；完整 W-M6、150%/200% DPI、实际跨屏/色彩/手感仍待验。详见 [Windows P2-W §11](native-rebuild-windows-p2.md)。
+
 - **分支**:`refactor/native-rebuild`(远端 github 已推送;`main` 保持可发布,未合并)。
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
 - **Phase 0 定向审查(2026-10-12)已通过**:Phase 0 由同一 agent 实现+自审(mimo 超时),本次补独立审查——机械门复核 PASS(Core 零 Avalonia,残留均注释;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,字符串枚举序列化下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告)。审查发现的 Phase 1 计划修订已全部落回 phase-1 清单(准入口优先级语义、分档缓冲池、解码路径平台差异、统一 LRU 键前置 M2、验收门平台口径)。

@@ -97,7 +97,7 @@ public static class SkiaImageCodec
 
             if (sampled.Width == targetW && sampled.Height == targetH)
             {
-                return FromSkBitmap(sampled);
+                return FromSkBitmap(sampled, srcW, srcH);
             }
 
             using var exact = new SKBitmap(BgraInfo(targetW, targetH));
@@ -110,7 +110,7 @@ public static class SkiaImageCodec
                     SKRect.Create(0, 0, targetW, targetH),
                     sampling, new SKPaint());
             }
-            return FromSkBitmap(exact);
+            return FromSkBitmap(exact, srcW, srcH);
         }
         catch (Exception ex)
         {
@@ -158,7 +158,7 @@ public static class SkiaImageCodec
                     SKRect.Create(0, 0, targetW, targetH),
                     sampling, new SKPaint());
             }
-            return FromSkBitmap(dst);
+            return FromSkBitmap(dst, src.SourceWidth, src.SourceHeight);
         }
         catch (Exception ex)
         {
@@ -276,7 +276,9 @@ public static class SkiaImageCodec
     /// </summary>
     /// <param name="bmp">源位图。</param>
     /// <returns>转换结果;尺寸非法或格式不符返回 null。</returns>
-    public static DecodedImage? FromSkBitmap(SKBitmap? bmp)
+    /// <param name="sourceWidth">可选的原始像素宽；零表示使用当前位图宽度。</param>
+    /// <param name="sourceHeight">可选的原始像素高；零表示使用当前位图高度。</param>
+    public static DecodedImage? FromSkBitmap(SKBitmap? bmp, int sourceWidth = 0, int sourceHeight = 0)
     {
         if (bmp == null || bmp.Width <= 0 || bmp.Height <= 0) return null;
 
@@ -296,7 +298,8 @@ public static class SkiaImageCodec
                 Buffer.MemoryCopy(srcPtr, destPtr, bytes.Length, copyBytes);
             }
         }
-        return DecodedImage.CreatePooled(bytes, bmp.Width, bmp.Height, bmp.RowBytes, PixelEncoding.Bgra32);
+        return DecodedImage.CreatePooled(bytes, bmp.Width, bmp.Height, bmp.RowBytes, PixelEncoding.Bgra32,
+            sourceWidth: sourceWidth, sourceHeight: sourceHeight);
     }
 
     /// <summary>

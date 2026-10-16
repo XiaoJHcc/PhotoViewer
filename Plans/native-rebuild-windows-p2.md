@@ -246,8 +246,18 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 `Windows.UI.Color` 会被本仓 `PhotoViewer.Windows` 命名空间遮蔽。
 
 **遗留(下一步)**
-1. **主图缩放/偏移**:首屏截图里主图呈放大模糊且右偏,已交回渲染层作者定位(与代理档/全分辨率档的基准尺寸一致性有关)。
-2. **上下布局未实机验证**:默认 `LayoutMode.Auto` + 横屏是左右布局;两向验证需要 W-M6 的隔离设置与窗口尺寸参数。
-3. 原生壳当前的设置读写走的是用户既有设置文件(与旧壳同源);W-M6 的 `--pv-native-smoke` 隔离设置/数据库尚未接入。
+1. **主图缩放/偏移**:布局前 1×1 占位视口已阻止上报；定向回归进一步修正无 EXIF 尺寸时丢失原始像素尺寸的问题（见 §11）。真实照片、八方向和跨屏仍需 W-M6/W-M7 验收。
+2. **上下布局**:已完成两向三尺寸往返 resize 和标题栏区域的定向实机程序化验证；完整几何对拍、滚动及真实输入仍待 W-M6。
+3. 常规原生壳继续使用用户既有设置；`--pv-native-smoke` 已接入隔离设置/数据库/日志及自有照片，其他 W-M6 专项入口尚未实现。
 4. **Debug 默认已是原生壳**(`--legacy-ui` 退回旧壳),`.vscode/tasks.json` 拆成 `Debug/Run Windows`(原生)、`Debug/Run Windows (Legacy)`(旧壳)与 `Compare Windows (Native + Legacy)`(对拍),`DEV.md` §三.1 已同步。
 5. 导航图(W 右下角小图)、EXIF 真实素材对拍(仓库内 JPEG 无 EXIF,EXIF 块显示 `--`)待补。
+
+## 11. 首轮底层纠偏与定向回归（2026-10-16）
+
+- **保持 WinUI 3 + D3D11 路线**。D3D11 flip-model 仍支持同一 API buffer 对象的自动轮转，不套用 D3D12 的逐帧索引管理；RTV 明确来自 buffer 0，resize 前解除 OM 引用，关闭时脱开 SwapChainPanel 并 ClearState 后释放。
+- **调度契约**：Normal → DispatcherQueue Normal，Background → Low；UI 线程 Background InvokeAsync 也须排队，不能就地执行。SynchronizationContext 续体保持 Normal。
+- **源尺寸**：codec 缩解码及内存 Mitchell 精缩保留真实原始像素尺寸，Windows 展示解码使用该尺寸而非 EXIF；缺少 EXIF 的 3600×2400 JPEG 不再被误判为代理已是 Full。
+- **标题栏**：DIP 边界转换为物理像素，监听 XamlRoot 与筛选条布局更新；上下布局仅避让实际控件组合，避免用拉伸网格宽度清空自定义区域、退回系统默认拖动区；胶片条隐藏时恢复全宽拖动。
+- **模型**：Windows 头工程以 .NET 清单资源提供模型，支持工作目录变化及单文件发布；迁移期与旧壳 AvaloniaResource 各有一份同源模型，原始模型 86,582,598 字节，这项体积代价随 Native/Legacy 工程和资源归属拆分再消除。
+- **验收入口**：`Check Windows Native` Task；仅 `--native --pv-native-smoke` 激活，配置自有设置/数据库/日志，忽略外部图片参数并生成自有棋盘 JPEG；输出 `release/native-win-acceptance/checks.json`，失败退出码 1。覆盖真实队列顺序、线程池回 UI、资源 SHA256/DirectML 双输出推理、两向 1200×850 / 830×650 / 700×480 加恢复原尺寸、标题栏区域、100% Full 升级和关闭释放。
+- **已验证边界**：当前设备 scale=1 的 13 项定向检查通过，模型 SHA256 与源文件独立核对一致；不是 W-M6 完整验收。150%/200% DPI、实际跨屏、真实鼠标手感、八方向和系统色彩仍待验。新增共享尺寸元数据回归，ColorTestTool 共 27 项通过（原色彩口径保持）。

@@ -37,7 +37,10 @@ internal static class WindowsNativeApplication
     /// <param name="args">命令行参数(非 -- 开头者按外部打开路径处理)</param>
     public static void Run(string[] args)
     {
-        NativeStartupLog.BeginSession(args);
+        var smoke = args.Contains("--pv-native-smoke");
+        NativeStartupLog.BeginSession(args, smoke
+            ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "native-startup.log")
+            : null);
         NativeStartupLog.InstallHooks();
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
@@ -75,7 +78,8 @@ internal static class WindowsNativeApplication
     /// <summary>
     /// 注入平台门面。顺序要求:<see cref="UiDispatcher.Initialize"/> 必须早于 MainViewModel 构造。
     /// </summary>
-    private static void InitializeFacades()
+    /// <param name="smoke">是否使用验收专用设置和数据库。</param>
+    private static void InitializeFacades(bool smoke)
     {
         FilePicker.Initialize(new WindowsFilePicker(() => _windowHandle != IntPtr.Zero
             ? _windowHandle
@@ -86,7 +90,14 @@ internal static class WindowsNativeApplication
         PerformanceBudget.Initialize(new DefaultPerformanceBudget());
         MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
         XmpWriter.Initialize(new WindowsXmpWriter());
-        SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
+        if (smoke)
+        {
+            WindowsMainWindow.ConfigureSmokeStorage();
+        }
+        else
+        {
+            SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
+        }
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_DML());
         NativeStartupLog.Write("facades ready");
     }
@@ -120,7 +131,8 @@ internal static class WindowsNativeApplication
         {
             try
             {
-                InitializeFacades();
+                var smoke = LaunchArgs.Contains("--pv-native-smoke");
+                InitializeFacades(smoke);
 
                 _main = new MainViewModel(nativePresentation: true);
                 NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl());
@@ -131,6 +143,12 @@ internal static class WindowsNativeApplication
                 NativeStartupLog.Write("main window activated");
 
                 ExternalOpenService.RegisterHandler(OnExternalOpenRequested);
+
+                if (smoke)
+                {
+                    await _window.RunSmokeAsync();
+                    return;
+                }
 
                 var paths = LaunchArgs.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToList();
                 await _window.OpenPathsAsync(paths);

@@ -27,7 +27,7 @@ internal interface ISwapChainPanelNativeWinUI
     /// <param name="swapChain">合成交换链</param>
     /// <returns>HRESULT。</returns>
     [PreserveSig]
-    HRESULT SetSwapChain(IDXGISwapChain swapChain);
+    HRESULT SetSwapChain(IDXGISwapChain? swapChain);
 }
 
 /// <summary>
@@ -355,7 +355,8 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
-        _context.Object.PSSetShaderResources(0, 1, NoShaderResources);
+        CastExtensions.As<ISwapChainPanelNativeWinUI>(this).SetSwapChain(null).ThrowOnError();
+        _context.Object.ClearState();
         _textureView?.Dispose();
         _texture?.Dispose();
         _renderTarget?.Dispose();
@@ -433,6 +434,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             uint height = (uint)Math.Round(ActualHeight * raster);
             if (width != _pixelWidth || height != _pixelHeight)
             {
+                _context.Object.OMSetRenderTargets(0, null, null);
                 _renderTarget?.Dispose();
                 _renderTarget = null;
                 _swapChain.ResizeBuffers(BufferCount, width, height, DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT, 0);
@@ -452,10 +454,10 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         }
     }
 
-    /// <summary>为当前后台缓冲建立渲染目标视图;翻转链的缓冲随时可能被 <c>ResizeBuffers</c> 重建。</summary>
+    /// <summary>为 D3D11 自动轮转的 buffer 0 建立渲染目标；仅在 ResizeBuffers 后重建。</summary>
     private void CreateRenderTarget()
     {
-        using var buffer = _swapChain.GetBuffer<ID3D11Texture2D>(_swapChain.Object.GetCurrentBackBufferIndex());
+        using var buffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
         _renderTarget = _device.CreateRenderTargetView(buffer, null);
     }
 

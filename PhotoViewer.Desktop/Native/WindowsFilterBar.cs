@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
+using Windows.Foundation;
 using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
@@ -103,6 +104,12 @@ internal sealed class WindowsFilterBar : Grid
 
     /// <summary>刷新计数文本。</summary>
     public void RefreshCount() => _count.Text = $"共 {_filter.FilteredCount} 张";
+
+    /// <summary>取得实际筛选控件的边界，供标题栏避让；不包含横向拉伸的外层网格。</summary>
+    /// <param name="relativeTo">用于表示边界坐标的参考元素。</param>
+    /// <returns>实际控件组合在参考元素内的逻辑坐标边界。</returns>
+    internal Rect GetInteractiveBounds(UIElement relativeTo)
+        => _panel.TransformToVisual(relativeTo).TransformBounds(new Rect(0, 0, _panel.ActualWidth, _panel.ActualHeight));
 
     /// <summary>创建统一外观的下拉框。</summary>
     private static ComboBox CreateComboBox(double width) => new()

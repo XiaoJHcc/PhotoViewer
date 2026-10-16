@@ -35,8 +35,8 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         {
             return ColorEngine.ToScRgb16(
                 decoded,
-                exif?.ImageWidth ?? decoded.Width,
-                exif?.ImageHeight ?? decoded.Height,
+                decoded.SourceWidth,
+                decoded.SourceHeight,
                 exif?.OrientationValue ?? 1);
         }
         finally

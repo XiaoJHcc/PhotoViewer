@@ -15,7 +15,7 @@ internal static class NativeStartupLog
     private static readonly object Gate = new();
 
     /// <summary>日志文件路径。</summary>
-    public static string LogPath { get; } = Path.Combine(
+    public static string LogPath { get; private set; } = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PhotoViewer",
         "native-startup.log");
@@ -26,8 +26,14 @@ internal static class NativeStartupLog
 
     /// <summary>清空上一轮日志并写入会话头。</summary>
     /// <param name="args">命令行参数</param>
-    public static void BeginSession(string[] args)
+    /// <param name="logPath">可选的隔离日志路径，仅验收入口指定。</param>
+    public static void BeginSession(string[] args, string? logPath = null)
     {
+        if (logPath != null)
+        {
+            LogPath = Path.GetFullPath(logPath);
+        }
+
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(LogPath)!);

@@ -6,6 +6,8 @@
 
 P2 原生新增：`IPresentationImageDecoder` 是平台主图解码注入口；`PhotoLoadSession` 只持展示租约与代际/代理/Full 加载状态，视口变换由原生层负责。原生端到端流程见根 §5.6，旧壳仍走原有 ImageViewModel/适配器。
 
+`SkiaImageCodec.DecodeToWidth/DecodeToLongEdge` 从 codec 原始尺寸填充 `SourceWidth/SourceHeight`，`ScaleToLongEdge` 继续保留这两项；无 EXIF 尺寸的照片也不能把代理尺寸当成 Full 几何。像素缩放算法和模型输入字节口径不变。
+
 `DecodedImage` P2 扩展：保留 Bgra32/Rgb24，新增 RgbaF16；色彩标签（Core/Color）、源尺寸、待应用方向与可选 ICC 均显式携带。缓存大小按 `ByteCount` 实际池化分配记账；原生启动期注入后 Thumb 仍是 sRGB8，小图缺少内嵌来源时允许原生子采样，不回退原图全解码。PhotoLoadSession 保持同代际代理覆盖单调增长，不让慢的小代理覆盖大代理/Full；放大态切图直接请求 Full。在途原请求取消而新调用仍有效时，代理与 Full 两条路径都重发自身请求，取消不当作解码错误（Full 旧行为会把取消当失败：`_fullLoading` 卡住且不再加载）；当前代际被外部取消时复位状态并给出可见错误，不再静默黑屏。并发入库用原子更新保留更大代理与缓存租约。
 
 | File | 模块 | Responsibility |

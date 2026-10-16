@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
+using SkiaSharp;
 
 int checks = 0;
 double maxError = 0;
@@ -43,7 +44,24 @@ using (var roundTrip = ColorEngine.ToSrgb8(floating))
 if (ColorEngine.InferJpegColorSpace(2) != ImageColorSpace.AdobeRgb || ColorEngine.InferJpegColorSpace(null, "R03") != ImageColorSpace.AdobeRgb || ColorEngine.InferJpegColorSpace(null) != ImageColorSpace.Srgb)
     throw new InvalidOperationException("JPEG 推断规则错误");
 checks++;
-Console.WriteLine($"PASS: {checks} color/stride/profile checks; max linear component error={maxError:F6}; P3 negative and >1 components preserved.");
+using (var bitmap = new SKBitmap(320, 200))
+{
+    bitmap.Erase(SKColors.Green);
+    using var encoded = bitmap.Encode(SKEncodedImageFormat.Jpeg, 95);
+    foreach (var target in new[] { 160, 139 })
+    {
+        using var stream = encoded.AsStream();
+        using var proxy = SkiaImageCodec.DecodeToLongEdge(stream, target) ?? throw new InvalidOperationException("无 EXIF JPEG 代理解码失败");
+        if (proxy.Width != target || proxy.SourceWidth != 320 || proxy.SourceHeight != 200)
+            throw new InvalidOperationException("codec 子采样或精缩丢失源尺寸");
+        checks++;
+        using var smaller = SkiaImageCodec.ScaleToLongEdge(proxy, 80) ?? throw new InvalidOperationException("代理再次缩放失败");
+        if (smaller.Width != 80 || smaller.SourceWidth != 320 || smaller.SourceHeight != 200)
+            throw new InvalidOperationException("内存缩放丢失源尺寸");
+        checks++;
+    }
+}
+Console.WriteLine($"PASS: {checks} color/stride/profile/dimension checks; max linear component error={maxError:F6}; P3 negative and >1 components preserved.");
 return 0;
 
 /// <summary>独立参考传递函数，用于验证 skcms 输出而非重复调用转换实现。</summary>

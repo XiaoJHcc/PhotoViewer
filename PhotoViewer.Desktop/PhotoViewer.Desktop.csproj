@@ -40,6 +40,8 @@
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+        <EmbeddedResource Include="..\PhotoViewer\Assets\Models\dinov3_vits16.onnx"
+                          LogicalName="PhotoViewer.Desktop.NativeAssets.Assets.Models.dinov3_vits16.onnx"/>
     </ItemGroup>
 
     <!--

@@ -102,7 +102,7 @@ internal sealed class WindowsUiDispatcher : IUiDispatcher
     public void Post(Action action, UiPriority priority = UiPriority.Normal)
     {
         ArgumentNullException.ThrowIfNull(action);
-        if (!_queue.TryEnqueue(() => action()))
+        if (!_queue.TryEnqueue(ToQueuePriority(priority), () => action()))
         {
             throw new InvalidOperationException("DispatcherQueue 已关闭,无法投递工作项。");
         }
@@ -123,13 +123,13 @@ internal sealed class WindowsUiDispatcher : IUiDispatcher
     public Task<T> InvokeAsync<T>(Func<T> func, UiPriority priority = UiPriority.Normal)
     {
         ArgumentNullException.ThrowIfNull(func);
-        if (_queue.HasThreadAccess)
+        if (_queue.HasThreadAccess && priority == UiPriority.Normal)
         {
             return Task.FromResult(func());
         }
 
         var completion = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_queue.TryEnqueue(() =>
+        if (!_queue.TryEnqueue(ToQueuePriority(priority), () =>
             {
                 try
                 {
@@ -146,6 +146,16 @@ internal sealed class WindowsUiDispatcher : IUiDispatcher
 
         return completion.Task;
     }
+
+    /// <summary>将共享调度优先级转换为 WinUI 队列优先级，未知值显式报错。</summary>
+    /// <param name="priority">共享调度优先级。</param>
+    /// <returns>WinUI 队列优先级。</returns>
+    private static DispatcherQueuePriority ToQueuePriority(UiPriority priority) => priority switch
+    {
+        UiPriority.Normal => DispatcherQueuePriority.Normal,
+        UiPriority.Background => DispatcherQueuePriority.Low,
+        _ => throw new ArgumentOutOfRangeException(nameof(priority)),
+    };
 }
 
 /// <summary>
@@ -232,9 +242,8 @@ internal sealed class WindowsFilePicker : IFilePickerService
 }
 
 /// <summary>
-/// 原生壳的资源读取:把 <c>avares://&lt;程序集&gt;/相对路径</c> 映射到应用目录下的同名文件。
-/// 共享层用 avares URI 定位内嵌资源(如 DINO 模型);原生壳不加载 Avalonia 程序集内嵌资源,
-/// 因此这些资源必须以文件形式随应用目录分发。
+/// 原生壳的资源读取：将共享 avares URI 映射到 Windows 头工程的清单资源。
+/// 不依赖运行目录、松散文件或单文件发布的解压位置，也不初始化 Avalonia。
 /// </summary>
 internal sealed class WindowsAppResources : IAppResourceProvider
 {
@@ -242,20 +251,20 @@ internal sealed class WindowsAppResources : IAppResourceProvider
     public Stream? OpenAsset(Uri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);
-        if (!uri.IsAbsoluteUri || !uri.Scheme.Equals("avares", StringComparison.OrdinalIgnoreCase))
+        if (!uri.IsAbsoluteUri || !uri.Scheme.Equals("avares", StringComparison.OrdinalIgnoreCase)
+            || !uri.Host.Equals("PhotoViewer", StringComparison.OrdinalIgnoreCase))
         {
-            NativeStartupLog.Write($"[资源] 非 avares URI,无法定位:{uri}");
+            NativeStartupLog.Write($"[资源] 不支持的应用资源 URI:{uri}");
             return null;
         }
 
-        var relativePath = uri.AbsolutePath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
-        var fullPath = Path.Combine(AppContext.BaseDirectory, relativePath);
-        if (!File.Exists(fullPath))
+        var resourceName = "PhotoViewer.Desktop.NativeAssets." + uri.AbsolutePath.TrimStart('/').Replace('/', '.');
+        var stream = typeof(WindowsAppResources).Assembly.GetManifestResourceStream(resourceName);
+        if (stream == null)
         {
-            NativeStartupLog.Write($"[资源] 应用目录缺少 {relativePath}");
-            return null;
+            NativeStartupLog.Write($"[资源] 缺少清单资源 {resourceName}");
         }
 
-        return File.Open(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return stream;
     }
 }
