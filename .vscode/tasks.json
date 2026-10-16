@@ -108,6 +108,13 @@
       "problemMatcher": []
     },
     {
+      "label": "Debug iOS Simulator (Legacy)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer --legacy-ui",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
       "label": "Refresh iOS Profile",
       "type": "shell",
       "command": "xcodebuild -project Tools/RefreshIosProfile/RefreshIosProfile.xcodeproj -scheme RefreshIosProfile -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build",

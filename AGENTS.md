@@ -67,6 +67,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [Training/](Training/) | [Training/AGENTS.md](Training/AGENTS.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳（旧壳不参与产品验收） |
 | [PhotoViewer.Apple/](PhotoViewer.Apple/) | [PhotoViewer.Apple/AGENTS.md](PhotoViewer.Apple/AGENTS.md) | Apple 平台共享源：展示解码器、Metal 渲染核心、视口/胶片栏/控制栏/分析栏几何、命令符号与手势映射（供 Mac 与 iOS 原生壳链接） |
+| [PhotoViewer.iOS/](PhotoViewer.iOS/) | [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) | iOS 原生壳基座（UIKit 生命周期、原生存储引用/文档选择器/外部打开、I1 占位主屏）；迁移期保留 Avalonia 旧壳 |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -83,7 +84,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 | Performance budget | `DefaultPerformanceBudget` | `DefaultPerformanceBudget` | `AndroidPerformanceBudget` | `iOSPerformanceBudget` |
 | ONNX Execution Provider | DirectML EP | CoreML EP | NNAPI EP | CoreML EP |
 | Settings storage | `FileStorage` (default) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |
-| External open bridge | `Program.Main` arg parsing | `Program.Main` + `MacExternalOpenBridge` | `AndroidExternalOpenBridge` | `AppDelegate` + `iOSExternalOpenBridge` |
+| External open bridge | `Program.Main` arg parsing | `Program.Main` + `MacExternalOpenBridge` | `AndroidExternalOpenBridge` | 旧壳 `AppDelegate` + `iOSExternalOpenBridge`（Avalonia 存储项反射）；原生壳 `iOSNativeAppDelegate`/scene + `iOSExternalOpenBridge.PublishNativeFromUrl`（直发原生存储引用，不加载 Avalonia） |
 | Storage access | n/a | macOS security-scoped bookmark | SAF persisted permissions | iOS security-scoped bookmark |
 
 ---

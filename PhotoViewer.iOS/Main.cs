@@ -1,4 +1,5 @@
 using PhotoViewer.iOS.Core;
+using PhotoViewer.iOS.Native;
 using UIKit;
 
 namespace PhotoViewer.iOS;
@@ -12,8 +13,13 @@ public class Application
         BootTrace.Install();
         BootTrace.Mark("Main enter");
 
-        // if you want to use a different Application Delegate class from "AppDelegate"
-        // you can specify it here.
-        UIApplication.Main(args, null, typeof(AppDelegate));
+        // iOS 不填充托管 Main 的 args（实测为空数组），启动参数一律从 NSProcessInfo 读取（与旧壳压测/外部打开同口径）。
+        var launchArguments = NSProcessInfo.ProcessInfo.Arguments;
+        BootTrace.Mark("args: " + string.Join(" ", launchArguments));
+        BootTrace.MarkAvaloniaAssemblies("Main enter(before UIApplication.Main)");
+
+        // 壳选择：Debug 默认原生壳，Release 默认旧壳；--native / --legacy-ui / NSUserDefaults(PVLegacyUI) 可覆盖。
+        // 未选中的壳委托类型不会被加载，因此原生路径不会载入 Avalonia 类型。
+        UIApplication.Main(args, null, iOSShellSwitch.SelectDelegateType(launchArguments));
     }
 }

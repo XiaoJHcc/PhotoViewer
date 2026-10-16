@@ -23,7 +23,7 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
     /// <returns>成功接管展示时返回 true，否则返回 false。</returns>
     public bool TryPresent(SettingsViewModel settings)
     {
-        var presentingController = GetPresentingController();
+        var presentingController = iOSViewControllerLocator.GetPresentingController();
         if (presentingController == null)
         {
             return false;
@@ -40,7 +40,12 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
             var rootController = new iOSNativeSettingsRootViewController(session);
             var navigationController = new iOSNativeSettingsNavigationController(rootController, session);
             ConfigureSheetPresentation(navigationController.SheetPresentationController);
-            GetTopMostPresentedViewController(presentingController).PresentViewController(navigationController, true, null);
+            if (iOSViewControllerLocator.GetTopMostViewController() is not { } topController)
+            {
+                return;
+            }
+
+            topController.PresentViewController(navigationController, true, null);
         }
 
         if (NSThread.IsMain)
@@ -53,29 +58,6 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         }
 
         return true;
-    }
-
-    /// <summary>
-    /// 获取当前可用于弹出设置页的宿主控制器。
-    /// </summary>
-    /// <returns>前台可见的控制器；没有时返回 null。</returns>
-    private static UIViewController? GetPresentingController()
-    {
-        var window = UIApplication.SharedApplication
-            .ConnectedScenes
-            .OfType<UIWindowScene>()
-            .Where(scene =>
-                scene.ActivationState == UISceneActivationState.ForegroundActive ||
-                scene.ActivationState == UISceneActivationState.ForegroundInactive)
-            .SelectMany(scene => scene.Windows)
-            .FirstOrDefault(window => window.IsKeyWindow)
-            ?? UIApplication.SharedApplication
-                .ConnectedScenes
-                .OfType<UIWindowScene>()
-                .SelectMany(scene => scene.Windows)
-                .FirstOrDefault();
-
-        return window?.RootViewController;
     }
 
     /// <summary>
@@ -98,27 +80,6 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// 获取当前展示链顶部的控制器。
-    /// </summary>
-    /// <param name="controller">起始控制器。</param>
-    /// <returns>当前最顶层的控制器。</returns>
-    private static UIViewController GetTopMostPresentedViewController(UIViewController controller)
-    {
-        var current = controller;
-        while (current.PresentedViewController != null)
-        {
-            current = current.PresentedViewController;
-        }
-
-        return current switch
-        {
-            UINavigationController navigationController => navigationController.VisibleViewController ?? navigationController,
-            UITabBarController tabBarController => tabBarController.SelectedViewController ?? tabBarController,
-            _ => current,
-        };
     }
 
     /// <summary>

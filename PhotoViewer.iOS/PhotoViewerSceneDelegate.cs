@@ -1,23 +1,17 @@
-using System;
-using System.Reflection;
-using Avalonia;
 using Foundation;
 using UIKit;
-using PhotoViewer.iOS.Core;
+using PhotoViewer.iOS.Native;
 
 namespace PhotoViewer.iOS;
 
 /// <summary>
-/// 自定义 iOS SceneDelegate。
-/// 在保留 Avalonia 单视图初始化流程的同时，补充文件 URL 的冷启动与热启动分发。
+/// 旧壳（Avalonia）的 iOS SceneDelegate。
+/// 窗口与 URLContexts 分发都交给共享的 <see cref="iOSSceneBridge"/>：系统会按持久化 scene session 恢复委托类型，
+/// 两个壳的 scene 委托必须都能按"当前活动壳"接线，否则切换壳后会出现无窗口（黑屏）。
 /// </summary>
 [Register("PhotoViewerSceneDelegate")]
 public sealed class PhotoViewerSceneDelegate : UIResponder, IUIWindowSceneDelegate
 {
-    private static readonly MethodInfo? InitWindowMethod =
-        Type.GetType("Avalonia.iOS.AvaloniaSceneDelegate, Avalonia.iOS", throwOnError: false)
-            ?.GetMethod("InitWindow", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-
     /// <summary>
     /// 当前 Scene 的窗口。
     /// </summary>
@@ -25,74 +19,33 @@ public sealed class PhotoViewerSceneDelegate : UIResponder, IUIWindowSceneDelega
     public UIWindow? Window { get; set; }
 
     /// <summary>
-    /// Scene 建立连接时初始化 Avalonia 窗口，并处理随启动附带的 URLContexts。
+    /// Scene 建立连接时初始化活动壳窗口，并处理随启动附带的 URLContexts。
     /// </summary>
+    /// <param name="scene">当前场景。</param>
+    /// <param name="session">正在连接的场景会话。</param>
+    /// <param name="connectionOptions">场景连接选项。</param>
     [Export("scene:willConnectToSession:options:")]
     public void WillConnect(UIScene scene, UISceneSession session, UISceneConnectionOptions connectionOptions)
     {
-        if (session.Configuration.Name is not null || scene is not UIWindowScene windowScene)
+        BootTrace.Mark("legacy scene delegate: willConnect");
+        if (scene is not UIWindowScene windowScene)
         {
-            return;
+            throw new InvalidOperationException($"PhotoViewer 只支持 UIWindowScene，实际为 {scene.GetType().Name}。");
         }
 
-        Window = new UIWindow(windowScene);
-        if (!TryInitializeAvaloniaWindow(Window))
-        {
-            return;
-        }
-
+        Window = iOSSceneBridge.Connect(windowScene);
         Window.MakeKeyAndVisible();
-        PublishOpenUrlContexts(connectionOptions?.UrlContexts, source: "iOS:SceneConnect");
+        iOSSceneBridge.PublishOpenUrlContexts(connectionOptions?.UrlContexts, "iOS:SceneConnect");
     }
 
     /// <summary>
     /// 处理应用已启动时 scene 收到的文件 URL 打开请求。
     /// </summary>
+    /// <param name="scene">当前场景。</param>
+    /// <param name="urlContexts">URL 上下文集合。</param>
     [Export("scene:openURLContexts:")]
     public void OpenUrlContexts(UIScene scene, NSSet<UIOpenUrlContext> urlContexts)
     {
-        PublishOpenUrlContexts(urlContexts, source: "iOS:SceneOpenUrl");
-    }
-
-    /// <summary>
-    /// 初始化 Avalonia 单视图窗口。
-    /// </summary>
-    private static bool TryInitializeAvaloniaWindow(UIWindow window)
-    {
-        try
-        {
-            var lifetime = Avalonia.Application.Current?.ApplicationLifetime;
-            if (window == null || lifetime == null || InitWindowMethod == null)
-            {
-                return false;
-            }
-
-            InitWindowMethod.Invoke(null, [window, lifetime]);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"Scene window initialization failed: {ex.Message}");
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// 将 Scene URLContexts 中的文件 URL 发布到共享层。
-    /// </summary>
-    private static void PublishOpenUrlContexts(NSSet<UIOpenUrlContext>? urlContexts, string source)
-    {
-        if (urlContexts == null)
-        {
-            return;
-        }
-
-        foreach (var contextObject in urlContexts)
-        {
-            if (contextObject is UIOpenUrlContext context)
-            {
-                _ = iOSExternalOpenBridge.PublishFromUrl(context.Url, source);
-            }
-        }
+        iOSSceneBridge.PublishOpenUrlContexts(urlContexts, "iOS:SceneOpenUrl");
     }
 }

@@ -1,8 +1,11 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-ios</TargetFramework>
-        <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+        <!-- 原生壳要求 iOS 17（见 Plans/native-rebuild-phase-ipad.md §1-4：CAMetalLayer 色彩空间/EDR 与 Metal F16 目标的最低系统版本） -->
+        <SupportedOSPlatformVersion>17.0</SupportedOSPlatformVersion>
+        <!-- 与 PhotoViewer.Mac 一致：PhotoViewer.Apple 共享源按隐式 using 编写，两个 head 必须同口径 -->
+        <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <!-- iOS 应用图标：指定 Assets.xcassets 中的 AppIcon 图标集名称 -->
@@ -46,6 +49,23 @@
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+    </ItemGroup>
+
+    <!--
+      Apple 共享源：PhotoViewer.Apple/ 是纯源文件目录（不是独立程序集），
+      与 PhotoViewer.Mac 链接同一份源；该目录不得出现 AppKit/UIKit 类型，
+      平台专属宿主留在各 head 的 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+    </ItemGroup>
+
+    <!--
+      DINOv3 ONNX 模型：旧壳经 Avalonia avares 资源读取，原生壳不加载 Avalonia，
+      因此按 Mac 同一口径把模型作为 Bundle 资源拷进 .app（NSBundle.ResourcePath）。
+    -->
+    <ItemGroup>
+        <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
     </ItemGroup>
 
     <!-- Linker preservation: protect reflection-used types (ViewLocator, ReactiveUI, DI) -->

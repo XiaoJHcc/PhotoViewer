@@ -100,3 +100,7 @@
 | 2026-10-17 | 旧壳 iOS 无真实安全区处理（固定 100px 出血 + 关闭自动内边距） | 原生壳读真实 insets，旧壳不修 |
 | 2026-10-17 | 共享层无按平台/预算选择像素编码的机制，`MetalPhotoView` 写死 F16 | I2 编码协商 |
 | 2026-10-17 | iOS 外部打开依赖反射 `Avalonia.iOS.Storage.IOSStorageItem` | I1 原生存储引用替换 |
+| 2026-10-17 | iOS 26 SDK 下应用委托窗口路径已废弃：系统按 UIScene 连接 scene，且**持久化 scene session（含委托类型）**跨启动恢复 —— 换壳重启时上一次运行的 scene 委托会收到连接 | I1 已处理：两个壳的 scene 委托共用 `iOSSceneBridge`，按"当前活动壳"接窗口（原生根控制器 / Avalonia 单视图），两向切换实测正常 |
+| 2026-10-17 | 托管 `Main(string[] args)` 在 iOS 上为空数组 | 启动参数一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch` 会传入） |
+| 2026-10-17 | ONNX Runtime 原生库在 iOS 模拟器上类型初始化失败（真机 P1-M5 正常） | I2 复核；不影响 I1 占位主屏 |
+| 2026-10-17 | 原生壳不加载 Avalonia，无法用 avares 资源读 DINO 模型 | 模型另作 BundleResource 拷入 app bundle（与 Mac 同口径；包内出现 avares + bundle 两份，约 86 MB） |
