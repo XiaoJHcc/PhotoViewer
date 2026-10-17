@@ -1,10 +1,10 @@
 # PhotoViewer.Apple — Apple 平台共享源
 
-`PhotoViewer.Apple/` 是**纯源文件目录**（不是独立 csproj/程序集）：由 `PhotoViewer.Mac/PhotoViewer.Mac.csproj` 以 `<Compile Include="..\PhotoViewer.Apple\**\*.cs"/>` 链接编译，iOS 原生壳（UIKit）后续以同样方式链接同一目录。
+`PhotoViewer.Apple/` 是**纯源文件目录**（不是独立 csproj/程序集）：`PhotoViewer.Mac/PhotoViewer.Mac.csproj` 与 `PhotoViewer.iOS/PhotoViewer.iOS.csproj` 都以 `<Compile Include="..\PhotoViewer.Apple\**\*.cs"/>` 链接编译同一目录（I1 起 iPad 原生壳已接入）。
 
 **硬规则**：本目录不得出现 AppKit / UIKit 类型（`NSView`、`NSEvent`、`NSImage`、`NSColor`、`UIView` 等）——iOS 侧无法编译。只允许 Foundation / CoreGraphics / CoreAnimation / ImageIO / Metal 与共享 `PhotoViewer` 项目类型。平台事件字段解包、原生视图与图层挂载、系统图标对象创建一律留在各 head 的 `Native/`、`Core/` 下。
 
-命名空间统一为 `PhotoViewer.Apple`。改动共享源会同时影响 Mac 与 iOS 两个原生壳；迁移期以 Mac 的八套 `--pv-native-*` 回归作为合并门（零行为变化）。
+命名空间统一为 `PhotoViewer.Apple`。改动共享源会同时影响 Mac 与 iOS 两个原生壳；合并门 = Mac 八套 `--pv-native-*` 回归零行为变化 + iOS 六套 `--pv-native-*/-check` 回归通过（几何改动尤其要两平台都跑）。
 
 | 文件 | 职责 |
 |---|---|

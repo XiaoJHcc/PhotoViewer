@@ -57,14 +57,17 @@
 ### 4. iOS
 *前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机需配置 Developer Certificate（在 Xcode 中登录 Apple ID 即可自动管理签名）。*
 - ⚡ **Clean Build Caches (All Platforms)**：清理仓库内所有平台的 `bin/obj`，并清空 NuGet 临时/http 缓存、Xcode DerivedData、Xamarin iOS/macOS 本机构建缓存；适合版本回退、SDK 升降级、疑似脏缓存时执行。
-- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起。
+- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起（Debug 默认 UIKit 原生壳）。
 - ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物至当前运行的模拟器，不重新构建。
-- ⚡ **Debug iOS**：构建 arm64 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动。
+- ⚡ **Debug iOS**：构建 arm64 **Release** 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动；Release 默认进 Avalonia 旧壳。
+- ⚡ **Debug iOS (Native)**：与 **Debug iOS** 相同，但以 `--native` 启动 iPad 原生壳（Release 配置、真机程序化验收用这条）。
 - ⚡ **Install iOS**：弹窗选择目标设备，将上一次构建产物覆写安装至真机并启动，不重新构建。
 - ⚡ **Install iOS Stable (Release)**：将 `release/ios-stable/PhotoViewer.iOS.app` 中归档的稳定包重新安装到真机并启动，不依赖当前 Release 输出目录。
 - ⚡ **Debug iOS Simulator (Legacy)**：与 **Debug iOS Simulator** 相同，但带 `--legacy-ui` 启动 Avalonia 旧壳，便于与原生壳对照。
 
-> `refactor/native-rebuild` 的 I1–I3 已落地：**Debug 默认 UIKit 原生壳**（不创建 Avalonia 对象）——I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）；输入（I4）与工具页（I5）未落地，控制栏不生成对应入口。旧壳启动加 `--legacy-ui`，或写入开关 `defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`。Release 默认旧壳，原生壳用 `--native`（模拟器与真机同规则）。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --native --pv-open <路径>` 可直接验证原生壳的外部打开链路（`--pv-open` 为验收专用入口，非产品行为）。详见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) 与 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)。
+> `refactor/native-rebuild` 的 I1–I5 已落地：**Debug 默认 UIKit 原生壳**（不创建 Avalonia 对象），I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）、I4 输入（上下文菜单/硬件键盘/滚轮/轻扫翻页/拖入/设置回写）、I5 P3 功能（分析栏/相似聚类/工具页/增强预览）全部可用。旧壳启动加 `--legacy-ui`，或写入开关 `defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`。**Release 默认旧壳**，模拟器与真机同规则：原生壳用 `--native`（真机开发用 **Debug iOS (Native)**）。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --pv-open <路径>` 可直接验证原生壳的外部打开链路。
+>
+> **程序化验收钩子**（参数只在验收会话生效，报告写 App 沙盒 `Documents/PhotoViewer/`）：`--pv-native-photo-check <目录>`、`--pv-native-layout-check <目录>`、`--pv-native-input-check <目录>`、`--pv-native-analysis-check <目录>`、`--pv-native-similarity-check <目录>`、`--pv-native-tools-check <目录>`、`--pv-dino-check <文件>`；辅助开关 `--pv-layout-mode row|col`、`--pv-analysis-open`。素材要求、真机 `devicectl` 步骤与各套件断言见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) "验收线索"；计划与结果见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)，作者手验见 [Plans/native-rebuild-phase-ipad-acceptance.md](Plans/native-rebuild-phase-ipad-acceptance.md)。
 
 - ⚡ **Refresh iOS Profile**：免费 Apple ID 的 Provisioning Profile 每 7 天过期一次，过期后 **Debug iOS** 会构建失败（`找不到任何可用预配配置文件`）。执行此 Task 调用占位 Xcode 工程 `Tools/RefreshIosProfile/` 触发 `xcodebuild -allowProvisioningUpdates` 续期同 bundle id 的 Profile，随后再跑 **Debug iOS** 即可正常安装到真机。
   - **首次使用**：先复制本地配置并填入你的 Apple Developer Team ID：

@@ -129,6 +129,13 @@
       "problemMatcher": "$msCompile"
     },
     {
+      "label": "Debug iOS (Native)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer --native",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
       "label": "Install iOS",
       "type": "shell",
       "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",

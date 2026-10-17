@@ -4,6 +4,8 @@
 > 主计划中 Phase 4/5 分别为 Windows/Android，本清单不占用其编号。
 >
 > **作者要求（2026-10-17）**：iPad 主屏与原 Avalonia 版本对标（布局结构、尺寸、边距、功能要点、选中/高亮语义）；设置已是原生，不在范围；需要针对触屏优化的地方可酌情使用原生控件。评估阶段的推荐项作者已全部采纳（见 §1）。
+>
+> **进度（2026-10-17）**：I1–I5 已完成并提交，I6 文档收尾完成；逐里程碑程序化证据见 §7，作者手验按 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md) 执行（尚未开始）。
 
 ## 0. 范围
 
@@ -45,35 +47,41 @@
 
 ### I1 基座
 - 建 `PhotoViewer.Apple/`，迁移 §2 纯逻辑、Metal 核心与展示解码器；Mac 改引用，八套 `--pv-native-*` 回归全 PASS、Mac 构建零新增警告。
-- `Main.cs` 按开关选择原生/旧壳 AppDelegate；原生启动顺序照 `MacNativeApplication`：`UiDispatcher`（主队列 SynchronizationContext）→ ReactiveUI builder → 门面注入（FilePicker / AppResources / Heif / Raw / PresentationDecoder / PerformanceBudget / MemoryGovernor / StorageAccess / Xmp / Settings / CoreML EP）→ `MainViewModel` → 根 VC。保留内存告警直报与 `BootTrace`、`--pv-stress` 接线。
+- `Main.cs` 按开关选择原生/旧壳 AppDelegate；原生启动顺序照 `MacNativeApplication`：`UiDispatcher`（主队列 SynchronizationContext）→ ReactiveUI builder → 门面注入（FilePicker / AppResources / Heif / Raw / PresentationDecoder / PerformanceBudget / MemoryGovernor / StorageAccess / Xmp / Settings / ONNX EP（CoreML 注册失败回退 CPU））→ `MainViewModel` → 根 VC。保留内存告警直报与 `BootTrace`、`--pv-stress` 接线。
 - 原生 `IFileRef`/`IFolderRef`（对标 `MacStorageRefs`）+ 安全作用域书签；`UIDocumentPickerViewController` 选文件夹；外部打开（openURL / scene URLContexts）去掉 Avalonia 反射，直接走 `ExternalOpenService`。
 - MinimumOSVersion 上调（§1-4），iOS 模拟器 + 真机构建零错误。
+- **状态：已完成** —— `d22403e`（共享源抽取，Mac 八套回归 PASS）+ `0a4ad1a`（原生壳启动/存储/选择器/外部打开，最低 iOS 17）。
 
 ### I2 主图
 - 编码协商落地（§1-1）：解码器、`BitmapLoader` 准入估算、`PhotoLoadSession`、GPU 记账、Governor 降级。
 - iOS Metal 视图 + `UIScrollView` 手势驱动；双击 Fit ↔ 对焦点 100% 动画；导航图；跨屏/旋转刷新物理尺寸。
 - **真机门（先于 I3）**：iPad mini 7 500 连翻（HEIC+ARW）无 jetsam、恒 Normal 或可恢复；告警注入降级生效；物理 100% Full 热替换无跳变；P3 色卡对拍（ColorTestTool / 原生色卡）。
+- **状态：已完成** —— `41abd7b`（编码协商 + Metal 主图 + 手势）；真机门 `2245d23`：`--pv-native-photo-check` PASS 10、500 连翻零超时恒 Normal、告警降级生效。ONNX/SCOPE-01 修复为 `e1f7cef`。
 
 ### I3 主屏布局
 - 根布局两向/自动（只看窗口方向），文件栏 116 内容宽、卡片 90×138+3 占位、80 方形、列表边距 10/10/5/10，与 Avalonia 对拍；读真实 `safeAreaInsets`，背景铺满边缘。
 - 胶片栏 `UICollectionView` 按 FILM-01–06；减少动态效果读 `UIAccessibility.IsReduceMotionEnabled`。
 - 筛选条 `UIButton`+`UIMenu` 下拉、计数、相似聚类 toggle；控制栏三分组换行/换列与居中，评分方向、显隐/排序、主次绑定提示。
 - 旋转、Split View、Stage Manager 任意尺寸下几何正确。
+- **状态：已完成** —— `6f36d8b`；两台模拟器 `layout` 24 + `photo` 10，Mac 回归 PASS。旋转/多任务任意尺寸待作者手验。
 
 ### I4 输入
 - 主图 `UIContextMenuInteraction`（打开文件夹、栏位显隐、设置；长按/辅助点按触发）；分析栏/工具/增强预览属 I5，不生成死项。卡片上下文菜单含评分 0–5。
 - 硬件键盘：`pressesBegan`/`UIKeyCommand` → `AppGesture`（HID usage 映射表，持久化字段不变）；输入控件获焦不误触（INPUT-01）。
 - 触控板滚动/悬停、`UIDropInteraction` 从"文件"拖入、Fit 下横向轻扫翻页。
 - 原生设置接线（`iOSNativeSettingsPresenter` 从根 VC 弹出），关闭回写后主屏即时刷新。
+- **状态：已完成** —— `9f20582`；模拟器 + 真机 `input` 27（含设置关闭回写修复、卡片菜单评分、轻扫翻页）。
 
 ### I5 P3 功能
 - 分析栏（几何同旧壳 `AnalysisView`，可见时主图升 Full）、细节预览点按定格；相似聚类面板（SIM-01）；增强预览（`PhotoLoadSession`）。
 - 工具页：sheet / `UINavigationController` 承载 EXIF 详情与 DINO 诊断，瓦片与分析栏共用 UIKit 诊断瓦片。
+- **状态：已完成** —— `e9ee179`；两台模拟器六套检查全 PASS，真机 `analysis` 15 / `similarity` 10 / `tools` 7。
 
 ### I6 验收与文档
 - UIKit 验收驱动器 `--pv-native-*`（模拟器跑几何/布局/胶片栏/工具栏/分析/相似；devicectl 传参真机跑内存与 Full 热替换），只写自有测试副本与独立设置/数据库。
 - 作者真机验收：色彩、画质、触摸手感（缩放/惯性/翻页/胶片栏）、键盘与触控板、拖入、旋转与多任务。
 - 文档：ui-contract iOS 列与新增 iOS 差异条目；新建 `PhotoViewer.iOS/AGENTS.md`、`PhotoViewer.Apple/` 文件表；根 AGENTS.md §4/§5（新增 iOS 原生链路小节）、DEV.md 任务、handoff 状态与验证矩阵。
+- **状态：程序化部分完成（I2–I5 各阶段随里程碑落地）；作者手验待执行**，清单见 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)，逐项状态见 §7。
 
 ## 4. 验收门
 
@@ -102,7 +110,7 @@
 | 2026-10-17 | iOS 外部打开依赖反射 `Avalonia.iOS.Storage.IOSStorageItem` | I1 原生存储引用替换 |
 | 2026-10-17 | iOS 26 SDK 下应用委托窗口路径已废弃：系统按 UIScene 连接 scene，且**持久化 scene session（含委托类型）**跨启动恢复 —— 换壳重启时上一次运行的 scene 委托会收到连接 | I1 已处理：两个壳的 scene 委托共用 `iOSSceneBridge`，按"当前活动壳"接窗口（原生根控制器 / Avalonia 单视图），两向切换实测正常 |
 | 2026-10-17 | 托管 `Main(string[] args)` 在 iOS 上为空数组 | 启动参数一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch` 会传入） |
-| 2026-10-17 | ONNX Runtime 原生库在 iOS 模拟器上类型初始化失败（真机 P1-M5 正常） | I2 复核；不影响 I1 占位主屏 |
+| 2026-10-17 | ONNX Runtime 原生库在 iOS 模拟器上类型初始化失败（真机 P1-M5 正常） | 已由下方 2026-10-17 "ONNX 推理在 iOS 上模拟器与真机都失败" 行处理（静态链接 + `DllImportResolver`）；CoreML EP 仍不受支持，推理走 CPU |
 | 2026-10-17 | 原生壳不加载 Avalonia，无法用 avares 资源读 DINO 模型 | 模型另作 BundleResource 拷入 app bundle（与 Mac 同口径；包内出现 avares + bundle 两份，约 86 MB） |
 | 2026-10-17 | **I2 编码协商落地**：Core 新增 `PixelEncoding.Rgba8` + `IPresentationEncodingPolicy`（平台注入）+ `IDisplayLoadSignal`；`IPresentationImageDecoder` 改为按请求编码解码；编码**不进缓存键**（同档至多一条，长边足够且保真度不低于需求即复用，否则原地替换），准入与 GPU 记账按实际编码字节 | 见根 AGENTS §5.7；Mac 九套 `--pv-native-*` 复跑全 PASS |
 | 2026-10-17 | **8 位 P3 立方体的原色边界**：Adobe RGB 红原色在扩展线性 sRGB 下需 1.3985（F16 档实测 1.387），8 位 Display P3 装不下、只能钳到 P3 红原色（≈1.2145，由共享 P3→scRGB 矩阵与立方体上界解析给出）。sRGB/P3 原色不受影响 | 属 8 位 P3 编码的既有边界，不做隐藏处理；`AppleAcceptanceChecks.ColorExpectation` 按编码取不同下界并在报告里记录实测值 |
@@ -135,3 +143,29 @@
 | 2026-10-17 | **相似聚类行布局在相似项从无到有后仍停在 106 点宽**：面板宽度由主屏布局按卡片数切出，但 `SimilarItems` 变化不触发布局，右侧停靠动作区把列表挤成零宽（真机/模拟器真实交互可见“有列表但空白”） | 根控制器订阅 `SimilarityPanelViewModel.PropertyChanged`（`SimilarItems`/`HasItems`）后重排；相似检查新增“项目出现后面板宽度按卡片数重算”断言 |
 | 2026-10-17 | **共享 EXIF 详情 VM 可能先于同名合并创建**：打开文件夹时当前项可能落在同名组的非代表项（隐藏伴侣）上，`Tools.ExifDetail` 因此在伴侣关系建立前构建，工具页只显示单一格式 | 属共享层时序（Mac 同源）；iOS 工具验收在筛选完成后切到带伴侣的代表项（真实用户点选列表卡片即发生）复核多格式切换，产品修复留待共享层专项 |
 | 2026-10-17 | **I4 输入落地与验收**：主图/卡片上下文菜单（SF Symbols + 原生勾选态，不含 I5 死项）、适应态轻扫翻页（单指、24 点阈值、走共享 Previous/Next）、HID usage 映射表（47 键）与合成派发、INPUT-01 守卫、拖入走 `ExternalOpenService`、设置关闭回写后六类设置传播 | 模拟器 `--pv-native-input-check layout-fixtures` **PASS 27 checks**；真机（iPad mini 7 / iPadOS 26，Release ios-arm64）`--pv-native-input-check photo-check` **PASS 27 checks**；同轮模拟器 photo **10** / layout **24** checks PASS，Mac `--pv-native-input`/`--pv-native-toolbar`/`--pv-native-settings` 与 base smoke PASS。模拟器上另以真实 UI 事件目视：主图长按、卡片长按、适应态左滑、放大态左滑不翻页 |
+
+## 7. 验收状态（I6 收尾，2026-10-17）
+
+> 本节只记录**程序化证据**；作者手验项一律未关闭，步骤见 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)。"模拟器"= iPad mini（A17 Pro）与 iPad Pro 13（M5）两机型；"真机"= iPad mini 7 / iPadOS 26 / Release ios-arm64。
+
+| 里程碑 | 提交 | 已验证（程序化） | 未关闭 |
+|---|---|---|---|
+| I1 基座 | `d22403e` + `0a4ad1a` | Mac 八套 `--pv-native-*` 回归 PASS、零新增警告；iOS 模拟器/真机构建零错误；原生壳启动不创建 Avalonia 对象；原生存储引用 / 文档选择器 / 外部打开接线 | 无 UI 手验项 |
+| I2 主图 | `41abd7b` + `2245d23` | 模拟器 `photo` 10；真机 `photo` 10、500 连翻 **500/500 零超时恒 Normal**、告警注入降级 + 30s 恢复观察期；F16 代理 ↔ 8 位 P3 Full 热替换变换保持、中心线性色差 ≈0.0001 | 色彩/P3 目视与跨屏；ARW 内嵌预览（待作者裁定） |
+| ONNX / SCOPE-01 | `e1f7cef` | 模拟器与真机 `--pv-dino-check` **PASS cls=384 ep=CPU**；真机 500 连翻 0 条 `DinoFeatureCache` 日志，p50 323.2ms / p95 418.5ms | CoreML EP 在 iOS 原生库不可用（上游限制，CPU 推理） |
+| I3 主屏布局 | `6f36d8b` | 两台模拟器 `layout` 24 + `photo` 10：两向/自动布局、真实安全区、栏位显隐释放空间、筛选条/控制栏/卡片几何、FILM-01–06 交互 | 旋转、Split View/Stage Manager、触摸手感 |
+| I4 输入 | `9f20582` | 模拟器 `input` 27；真机 `input` 27：两类上下文菜单、轻扫翻页、HID 映射 47 键、INPUT-01、滚轮识别范围、拖入、设置关闭回写传播 | 真实键盘/鼠标/触控板手感、滚轮方向 |
+| I5 P3 功能 | `e9ee179` | 两台模拟器六套 **10 / 24 / 27 / 15 / 10 / 7** 全 PASS；真机 `analysis` 15、`similarity` 10、`tools` 7；真机 200 连翻 p50 311.1ms / p95 385.3ms、gc 峰值 996MB | 分析栏可见压测（p95 2.66s）；触摸手感（长按菜单、点按定格） |
+
+**未关闭项（需作者决定或手验）**：
+
+1. **作者手验**：触摸手感（双指捏合/惯性/轻扫翻页/胶片栏定位）、旋转与 Split View/Stage Manager、硬件键盘/鼠标/触控板、文件拖入与"用…打开"、色彩与 P3 目视。程序化结果不替代这些项。
+2. **ARW 内嵌预览**：iOS ImageIO 对 Sony ARW 只返回约 1.7MP 内嵌预览（Mac 同文件为 7008×4672），`IsProxy=false` 使 `NeedsFull` 永不升级 Full。待作者裁定：改用 `CIRAWFilter` 全分辨率解码，或保持现状并记为平台限制。
+3. **CoreML EP 不可用**：`Microsoft.ML.OnnxRuntime` 1.24.4 / 1.25.1 的 iOS 原生库均不支持 CoreML EP，DINO 走 CPU（注册失败记日志后回退）。需等上游包或另立 GPU 方案。
+4. **DINO 模型包内重复**：原生壳不加载 Avalonia，模型另作 `BundleResource` 拷入 app bundle，与 avares 资源各一份（约 86MB），旧壳退役后消除。
+5. **8 位 P3 编码边界**：超出 P3 立方体的原色（如 Adobe RGB 红原色）在 Full 档被钳到 P3 边界；属当前编码的既有边界，非 I2 回归。
+6. **分析栏可见压测**：`--pv-analysis-open` + 50 连翻（每张升 Full）p50 447ms / p95 **2660ms** / max 4002ms、1 次超时；gc 峰值 1593MB，全程 Normal。是否优化留给性能专项。
+7. **Release 通道默认仍旧壳**：`Debug iOS` 构建 Release 配置，默认进入 Avalonia 旧壳；原生壳用 `Debug iOS (Native)` 或显式 `--native`。切默认通道属主计划 Phase 6，待作者决定。
+8. **iPhone 紧凑布局不在本轮范围**：同一原生壳可启动，不做专项适配。
+9. **设置页逐条契约**：I4 只验证"关闭回写后主屏传播"；设置页视觉/输入体验逐条验收待作者手验。
+10. **共享 EXIF 伴侣时序**：打开文件夹时当前项落在同名组非代表项会导致工具页只显示单一格式（共享层时序，Mac 同源）；产品修复留待共享层专项。

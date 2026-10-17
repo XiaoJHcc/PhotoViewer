@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-16(P3 四项功能已落地并经作者复验；复验发现的两个缺陷已修，其余验收门与发布通道仍在作者手上)。
+> 最后更新:2026-10-17(iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收；I6 文档收尾完成，作者手验与发布通道仍在作者手上)。
 
 ## 1. 为什么重构(决策语境)
 
@@ -31,7 +31,8 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 - **Phase 3（macOS 原生缺失功能补全）已完成并经作者复验**：作者 2026-10-16 要求把剩余顺延功能按原 Avalonia 设计重构到 Mac 原生（布局/尺寸/要点/高亮尽量一致；下拉框、右键菜单等小型控件保留原生；工具窗口可仿设置窗口方式）。执行清单 [native-rebuild-phase-3.md](native-rebuild-phase-3.md)。已落地：① 共享层抽出平台中立的 `Core/AI/AnalysisPresenter` + `AnalysisTile` + `IAnalysisHost` 与 `Core/AI/DinoDiagnosticPresenter`，旧壳 `AnalysisViewModel` / `DinoDebugViewModel` 退化为位图适配器（编排单一来源）；② 增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）；③ `ImageOrientationMapping` + `DisplayCrop` 统一方向映射与显示朝向 1:1 细节裁剪，`SkiaImageCodec.Crop` 支持 F16；④ `HistogramRenderer` 直接支持 F16 线性表面；⑤ 原生分析栏（`MacAnalysisPanel` / `MacDiagnosticTile` / `MacDetailPreview` / `MacShakeFieldView`）与 `ToggleAnalysisView`、`ToggleEnhance` 命令、右键菜单入口；⑥ 原生相似聚类面板与筛选条 toggle；⑦ 原生工具窗口（EXIF 详情 / DINO 诊断）。
   作者复验（2026-10-16）：色彩 / 画质 / 手感通过；相似面板选中高亮、"提取全部"后瓦片仍显示未提取、toggle 闪烁与点不动等上一轮反馈已修。复验又发现两个缺陷并已修（`Plans/native-rebuild-phase-3.md` §3.2）：① **关闭窗口报"意外退出"**——`MacSettingsNative` 的函数指针要等设置窗口首次展示才赋值，从未打开设置时 `WillTerminate → CloseWindow()` 调用 null 跳地址 0；现在每个导出入口先 `EnsureLoaded()`，且从未展示过时 `CloseWindow()` 直接返回；② **标题栏双击不能最大化**——隐藏式标题栏不自带系统行为，新增窗口级监视器分支按系统偏好 `AppleActionOnDoubleClick` 缩放/最小化/不动作。作者另外判定"切图卡顿（预载/缓存）属共享层问题，本轮不修"。同轮裁定：**Avalonia 旧壳不做产品验收**（它将被原生壳替换），验收只在各平台原生壳上进行；macOS 原生壳的色彩、画质、手感、减少动态效果开启态与真实鼠标拖放（设置页拖拽排序 / 主窗口拖入文件）全部通过。同轮指示：**性能相关（大图性能门、帧率/内存基线复测、RAW 冷图剖面、切图卡顿）一律"以后再做"**。收尾补齐 ui-contract 里 macOS 最后两个"待核验"格子：FILM-05 延迟加载与失败形态（`--pv-native-filmstrip`）、FILM-06 完整真实改星交互与筛选连续性（`--pv-native-toolbar`）。
-- **iPad 原生主屏已立项（2026-10-17）**：UIKit + Metal，主屏与 Avalonia 对标，触屏处用原生控件优化；作者已采纳评估推荐（代理 F16 / Full 8bit P3 按预算协商、UIScrollView 驱动缩放、Fit 下滑动翻页等、iOS 17 起、本轮只做 iPad、Mac/iOS 共用 `PhotoViewer.Apple/` 源）。执行清单 [native-rebuild-phase-ipad.md](native-rebuild-phase-ipad.md)，下一步 I1 基座。
+- **iPad 原生主屏已立项（2026-10-17）**：UIKit + Metal，主屏与 Avalonia 对标，触屏处用原生控件优化；作者已采纳评估推荐（代理 F16 / Full 8bit P3 按预算协商、UIScrollView 驱动缩放、Fit 下滑动翻页等、iOS 17 起、本轮只做 iPad、Mac/iOS 共用 `PhotoViewer.Apple/` 源）。执行清单 [native-rebuild-phase-ipad.md](native-rebuild-phase-ipad.md)。
+- **iPad 原生壳 I1–I5 已落地（2026-10-17，HEAD e9ee179）**：`d22403e` + `0a4ad1a` I1 基座（共享源抽取、原生壳启动/存储引用/文档选择器/外部打开，最低 iOS 17）、`41abd7b` + `2245d23` I2 主图（编码协商 + Metal + `UIScrollView`；真机门 500 连翻零超时）、`e1f7cef` ONNX 静态链接修复 + SCOPE-01（切图不隐式推理）、`6f36d8b` I3 主屏布局、`9f20582` I4 输入、`e9ee179` I5 P3 功能。模拟器 iPad mini（A17 Pro）与 iPad Pro 13（M5）两机型六套检查全 PASS（photo 10 / layout 24 / input 27 / analysis 15 / similarity 10 / tools 7）；真机 iPad mini 7（iPadOS 26）跑通 photo / input / analysis / similarity / tools，200 连翻与 500 连翻均零超时。**下一步**：作者按 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md) 手验（触摸手感、旋转与多任务、键鼠、拖入、色彩），并就 ARW 内嵌预览、CoreML EP、Release 默认通道作决定；分析栏可见压测 p95 2.6s 按"性能以后再做"处理。逐里程碑证据见执行清单 §7。
 - **P2 UI 返修（2026-10-14）**：作者指出胶片条自动居中缺失、控制栏右侧空带、设置浅色/四周白边及排序/快捷键结构草率。本轮恢复主轴居中（首尾受边界约束），主窗口滚动条统一 overlay、控制文档匹配裁剪宽度；设置固定 DarkAqua，采用 NSSplitViewController Sidebar、SourceList/SF Symbols 与语义色分组表单，NSTableView 分列勾选/名称/主次快捷键，原生 pasteboard writer 与行间插入。五组实拍/12 张色卡的两向居中回归通过，设置五分类/真实快捷键事件/勾选/排序绑定/窄宽窗/关闭落盘通过，无新增编译警告；系统窗口截图取得。真实鼠标拖放因系统事件注入权限受阻，程序化从未通过、不能记作已通过；该项已于 2026-10-16 由作者手工实操验收通过（设置页列表拖拽排序、主窗口拖入文件）。详见 P2 验收清单新增设置回归段。
 
 - **P2 UI 追加约束(2026-10-14)**：作者要求主窗口保留隐藏式标题栏，明确设计为方形的元素保持方形；下拉框、按钮等通用控件保持原位置与大体形状并接近原生风格。具体几何表、Apple SF Symbols 建议与字体图标保留边界已写入 [P2 UI 方案](native-rebuild-phase-2-ui.md) §1.4–1.5；上一版示意的矩形缩略图区是示意样式错误，不是解码问题，作者允许在原生实现时修正。**设置页**按作者要求参考已有 iOS 原生设置，直接采用 macOS 原生设置风格，功能一致、不追求 Avalonia 视觉一致；原网页设置布局不作为实现规格，以方案 §4 与原生真屏验收为准。
@@ -53,14 +54,18 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | **P2 产品/色彩/性能** | ✅ 色彩/画质/手感/拖放 2026-10-16 作者验收通过；性能门未关 | 色彩跨屏对拍、画质、手感（含触控板）、真实鼠标拖放由作者实跑通过；大图性能门（RAW 冷图 1.7–1.9s <100ms）与真实素材矩阵仍未关闭。发布通道（dmg 默认是否切原生）待作者决定，属主计划 Phase 6 |
 | **P3 作者复验** | ✅ 2026-10-16 通过（含两处修复） | 作者实跑：色彩/画质/手感/真实鼠标拖放通过；退出崩溃与标题栏双击两缺陷已修并复验（八套原生回归 PASS、四平台 0 错误、真实 AppleEvent 退出两种路径无崩溃报告、"双击标题栏"真机双向切换）；系统"减弱动态效果"开启态作者实测通过。未修（作者判定共享层另立项）：切图卡顿；未关闭：大图性能门 |
 | **FILM-05 / FILM-06 程序化补齐** | ✅ 2026-10-16 | ui-contract 里 macOS 最后两个"待核验"格子补成断言：filmstrip 套件加 FILM-05（自有素材上验身份/几何不等解码、缩略图与日期异步补齐、滚动不等解码、不可解码文件仍可选主图且无伪造图像）；toolbar 套件加 FILM-06（卡片星级真实点击 → 文件读回一致 + 主图身份不变 + 点星不选中父卡片，改星落出筛选仍暂留 / 切走后移除 / 计数一致）。八套回归 PASS，Mac 构建 0 错误 |
-| **旧壳（Avalonia）验收** | ⛔ 不再验收 | 作者裁定旧壳将被原生壳替换、不做产品验收；各平台验收在各自原生壳落地后单独建立（macOS 已完成，下一个是 iOS） |
+| **旧壳（Avalonia）验收** | ⛔ 不再验收 | 作者裁定旧壳将被原生壳替换、不做产品验收；各平台验收在各自原生壳落地后单独建立（macOS 已完成；iPad 程序化已完成、作者手验待做；Windows/Android 原生待迁移） |
 | **macOS 冒烟(首轮)** | ✅ 2026-10-12 | CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常;交互逐项(翻图/缩放/评分写回/设置)待人工 |
 | **iOS 构建** | ✅ 2026-10-13 | 模拟器+真机(ios-arm64 Release)均 0 错误 |
 | **iPad mini 7 真机验收(I2 主图：编码协商 + Metal 主图 + UIScrollView 手势)** | ✅ 2026-10-17 | 提交 41abd7b，设备 E71A131A（解锁后一次通过）。`--pv-native-photo-check` **PASS 10 checks**（代理 4532×3021 `RgbaF16` → 物理 100% 热替换 `Rgba8/DisplayP3` 且变换保持 scale=0.5 pan=(0,0)、代理↔Full 中心线性 Δ=0.0001、八方向 GPU 角点、四色卡线性值）；`--pv-stress-count=500`（450 HEIC+50 ARW）**500/500 零超时零闪退恒 Normal**（p50 716ms/p95 775ms/max 799ms、gc 峰 1620MB）；`--pv-stress-warn=100` → 代理降 8 位 P3（`enc=Rgba8`）+ 30s 恢复观察期实证；无新 .ips。**未关闭**：iOS ImageIO 读 ARW 只给内嵌预览（1.7MP），见 [phase-ipad §6](native-rebuild-phase-ipad.md) |
 | **iPad ONNX / 相似度隐式推理修复** | ✅ 2026-10-17 | iOS head 的 MSBuild 目标提前展开 `onnxruntime.xcframework`、按 `Kind=Static + ForceLoad` 静态链接、导出 `_OrtGetApiBase`（含 Release strip 的 `mtouch-symbols.list`），`iOSNativeShell` 用 `DllImportResolver` 映射到主程序。产物无 `Frameworks/onnxruntime.framework`（切片是 ar 静态库），`nm`/`dyld_info` 可见导出符号。模拟器与真机 `--pv-dino-check` 均 **PASS cls=384**（CoreML EP 在两版 iOS 原生库中不受支持，日志记录后回退 CPU：sim 440.7ms / 真机 629.0ms）。`SimilarityPanelViewModel` 改为只在面板展开且文件栏可见时推理；真机 500 连翻复测 **500/500 零超时、全 Normal、0 条 DinoFeatureCache**，p50 **323.2ms** / p95 **418.5ms**（基线 716/775ms）。Mac 四套回归 PASS，四平台构建零错误 |
+| **iPad 主屏布局(I3)** | ✅ 程序化 2026-10-17 | 提交 `6f36d8b`：两台模拟器 `layout` **PASS 24** + `photo` **10**，覆盖两向/自动布局、真实安全区、栏位显隐释放空间、筛选条/控制栏/卡片几何、FILM-01–06 交互；Mac 回归 PASS。旋转、Split View/Stage Manager 与触摸手感待作者手验 |
+| **iPad 输入(I4)** | ✅ 程序化 2026-10-17 | 提交 `9f20582`：模拟器与真机 `--pv-native-input-check` 均 **PASS 27**（两类上下文菜单、轻扫翻页与放大态不翻页、HID 映射 47 键、INPUT-01、滚轮识别范围、拖入、设置关闭回写传播）；修复设置下拉关闭不回写。真实键盘/鼠标/触控板手感待作者 |
+| **iPad P3 功能(I5)** | ✅ 程序化 2026-10-17 | 提交 `e9ee179`：两台模拟器 photo/layout/input/analysis/similarity/tools = **10/24/27/15/10/7** 全 PASS；真机 `analysis` **15** / `similarity` **10** / `tools` **7**；真机 200 连翻（分析栏关）**200/200 零超时**、p50 311.1ms / p95 385.3ms、gc 峰值 996MB；`--pv-analysis-open` + 50 连翻 p50 447ms / p95 2660ms（1 次超时），全程 Normal。触摸手感待作者 |
+| **iPad I6 文档与验收收尾** | ✅ 2026-10-17 | ui-contract iOS 列补齐、根/模块 AGENTS 与 handoff/DEV 同步、新增 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)；逐里程碑状态见 [执行清单 §7](native-rebuild-phase-ipad.md)。模拟器与 Mac Debug 构建 0 错误；作者手验未执行 |
 | **iPad mini 7 真机验收(P1-M5)** | ✅ 2026-10-13 | 500 连翻(450 HEIC+50 ARW)p50 356.7ms 恒 Normal 零闪退;告警注入+30s 观察期实证;`--pv-stress-full` 对照组复现 jetsam(A/B 成立);修复 mono interp ref/out P/Invoke 间歇崩溃后 26/26 启动零崩溃。缩放热替换手感、外部打开选中行为留人工 |
 | DINO 渲染口径 | ✅ 2026-10-12 | A/B 实证(headless 不可行,用真窗口 GPU 路径):zoneplate 摩尔纹形态两侧一致(同为 Linear/无 mipmap 族),真实内容 meanDiff=0.24/maxDiff=15(GPU↔CPU 舍入级)。**意外发现:macOS 上 `RenderTargetBitmap.CopyPixels` 实为 RGBA 序**,旧管线 Mac 端 DINO 输入 R/B 互换(Windows 缓存正常);新 Skia 路径统一 BGRA,顺带根治 |
-| 四平台人工冒烟 | ⛔ 旧壳不验收 | 作者裁定：Avalonia 旧壳不做产品验收（将被原生壳替换）；人工验收只在各平台原生壳进行。macOS 原生壳 2026-10-16 通过 |
+| 四平台人工冒烟 | ⛔ 旧壳不验收 | 作者裁定：Avalonia 旧壳不做产品验收（将被原生壳替换）；人工验收只在各平台原生壳进行。macOS 原生壳 2026-10-16 通过；iPad 原生壳作者手验**待执行**（[清单](native-rebuild-phase-ipad-acceptance.md)） |
 
 ## 4. Mac 开工步骤(接手第一天)
 

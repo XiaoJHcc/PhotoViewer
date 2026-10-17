@@ -13,7 +13,7 @@
 
 PhotoViewer is a cross-platform photo culling app for photographers, optimized for the **选片 (culling) workflow** — browse JPG/HEIF on the go, sync star ratings back to RAW, fast keyboard-driven UX.
 
-- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS P2 原生壳 AppKit + Metal（Debug 默认原生；Release 通道切原生的时机待作者决定）。**旧壳不再做产品验收，将被原生壳替换**。
+- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS 原生壳 AppKit + Metal（P2/P3）、iPad 原生壳 UIKit + Metal（I1–I5）。两个原生壳均 Debug 默认原生、Release 默认旧壳，发布通道切换待作者决定。**旧壳不再做产品验收，将被原生壳替换**。
 - **Platforms**: Windows / macOS / iOS / Android (one shared `PhotoViewer/` project + four head projects)
 - **No DI container**: core services are static facades; platform capabilities are injected at startup via `Initialize(...)`.
 - **HEIF decoding**: `LibHeifSharp` on Windows/Android, native `ImageIO`/`AVIF` on macOS/iOS.
@@ -31,7 +31,7 @@ PhotoViewer/              # Shared Avalonia project (UI + business logic, no pla
 PhotoViewer.Desktop/      # Windows head (net10.0-windows)
 PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.Apple/        # Apple 共享源（纯源目录，Compile Include 链接进 Mac/iOS head，不新增程序集）
-PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)
+PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)：I1–I5 原生 UIKit 壳 + 迁移期 Avalonia 旧壳
 PhotoViewer.Android/      # Android head (net10.0-android)
 Tools/                    # Python: ExifTool 表重生成
 Tools/ExifTestTool/       # Standalone CLI for EXIF debugging
@@ -66,8 +66,8 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/AGENTS.md](PhotoViewer/ViewModels/Settings/AGENTS.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
 | [Training/](Training/) | [Training/AGENTS.md](Training/AGENTS.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳（旧壳不参与产品验收） |
-| [PhotoViewer.Apple/](PhotoViewer.Apple/) | [PhotoViewer.Apple/AGENTS.md](PhotoViewer.Apple/AGENTS.md) | Apple 平台共享源：展示解码器、Metal 渲染核心、视口/胶片栏/控制栏/分析栏几何、主屏分区几何、命令符号与手势映射（供 Mac 与 iOS 原生壳链接） |
-| [PhotoViewer.iOS/](PhotoViewer.iOS/) | [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) | iOS 原生壳（UIKit 生命周期、原生存储引用/文档选择器/外部打开、主图 Metal 链路、主屏布局与胶片栏/筛选条/控制栏）；迁移期保留 Avalonia 旧壳 |
+| [PhotoViewer.Apple/](PhotoViewer.Apple/) | [PhotoViewer.Apple/AGENTS.md](PhotoViewer.Apple/AGENTS.md) | Apple 平台共享源：展示解码器与编码策略、Metal 渲染核心、视口/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何、主屏分区几何、验收判定、命令符号与手势映射（供 Mac 与 iOS 原生壳链接） |
+| [PhotoViewer.iOS/](PhotoViewer.iOS/) | [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳：UIKit 生命周期、原生存储引用/文档选择器/外部打开、主图 Metal 链路、主屏布局（胶片栏/筛选条/控制栏）、输入、P3 功能（分析栏/相似聚类/工具页/增强预览）；迁移期保留 Avalonia 旧壳 |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -79,12 +79,13 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 | Capability | Windows | macOS | Android | iOS |
 |---|---|---|---|---|
-| HEIF decoder | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder` |
-| RAW decoder | — | `MacRawDecoder`（复用 ImageIO，系统 RAW 引擎） | — | `iOSRawDecoder`（复用 ImageIO，系统 RAW 引擎） |
+| HEIF decoder | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder`（旧壳与缩略图既有路径；原生主图走展示解码器） |
+| RAW decoder | — | `MacRawDecoder`（复用 ImageIO，系统 RAW 引擎） | — | `iOSRawDecoder`（复用 ImageIO；**ImageIO 对 Sony ARW 只返回内嵌预览**，原生主图恒为预览档，待作者裁定是否改全分辨率解码） |
+| Presentation decoder / encoding | — | `ApplePresentationDecoder` + `MacPresentationEncodingPolicy`（恒 RGBA16F 扩展线性 sRGB） | — | `ApplePresentationDecoder` + `iOSPresentationEncodingPolicy`（代理 F16 / Full 8 位 Display P3 / 压力 ≥ Warning 代理也降 8 位） |
 | Performance budget | `DefaultPerformanceBudget` | `DefaultPerformanceBudget` | `AndroidPerformanceBudget` | `iOSPerformanceBudget` |
-| ONNX Execution Provider | DirectML EP | CoreML EP | NNAPI EP | CoreML EP |
+| ONNX Execution Provider | DirectML EP | CoreML EP | NNAPI EP | **CPU**（CoreML EP 在 iOS 原生库中不受支持，注册失败记日志后回退，不静默） |
 | Settings storage | `FileStorage` (default) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |
-| External open bridge | `Program.Main` arg parsing | `Program.Main` + `MacExternalOpenBridge` | `AndroidExternalOpenBridge` | 旧壳 `AppDelegate` + `iOSExternalOpenBridge`（Avalonia 存储项反射）；原生壳 `iOSNativeAppDelegate`/scene + `iOSExternalOpenBridge.PublishNativeFromUrl`（直发原生存储引用，不加载 Avalonia） |
+| External open bridge | `Program.Main` arg parsing | `Program.Main` + `MacExternalOpenBridge` | `AndroidExternalOpenBridge` | 旧壳 `AppDelegate` + `iOSExternalOpenBridge`（Avalonia 存储项反射）；原生壳 `iOSNativeAppDelegate`/scene + `iOSExternalOpenBridge.PublishNativeFromUrl`（直发原生存储引用，不加载 Avalonia），主屏另接 `UIDropInteraction` 拖入 |
 | Storage access | n/a | macOS security-scoped bookmark | SAF persisted permissions | iOS security-scoped bookmark |
 
 ---
@@ -113,9 +114,9 @@ Each head project's `Core/` folder contains platform-specific implementations in
    - **Windows**: `Program.Main(args)` parses CLI args → `PublishExternalOpenArgs`.
    - **macOS**: `Program.Main(args)` installs `MacExternalOpenBridge`; `OpenFile / OpenFiles / OpenUrls` capture Finder / Dock / "Open With".
    - **Android**: `MainActivity` captures `Intent` → `AndroidExternalOpenBridge` parses URI.
-   - **iOS**: `AppDelegate` `openURL` → `iOSExternalOpenBridge` parses file URL.
+   - **iOS**: 旧壳 `AppDelegate`/scene → `iOSExternalOpenBridge.PublishFromUrl`；原生壳 `iOSNativeAppDelegate`/scene → `PublishNativeFromUrl`（不加载 Avalonia），主屏 `UIDropInteraction` 把"文件"里的文件/文件夹 URL 也交同一条路径。
 2. **Bridge**: every platform funnels through `ExternalOpenService.PublishFile / PublishFiles`. If UI isn't ready, the request lands in a pending queue.
-3. **Handle**: `App.axaml.cs` `OnFrameworkInitializationCompleted` registers the handler; `StorageProvider` resolves the URI to `IStorageFile` / `IStorageFolder`.
+3. **Handle**: 旧壳经 `App.axaml.cs` `OnFrameworkInitializationCompleted` 注册处理器、`StorageProvider` 解析为 `IStorageFile` / `IStorageFolder`；原生壳（macOS/iOS）由各自启动壳注册同一 `ExternalOpenService` 处理器并直接使用原生存储引用。
    - Folder → `FolderViewModel.OpenFolderAsync`.
    - File → `FolderViewModel.OpenImageAsync` — tries to enter the parent folder first; on Apple/Android where parent access is denied, falls back to **single-image mode** so the user can at least see the file.
 
@@ -161,7 +162,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **分析栏派生缓存**(切图无卡顿):
 - `AnalysisResultCache` 按指纹 LRU 缓存"读库 + 派生层现算"的全部产物(4 张诊断位图 + ShakeField + 判定文字 + patch tokens),容量 32 项 ≈ 50 MB。
-- 编排逻辑集中在平台中立的 `Core/AI/AnalysisPresenter`(旧壳 `AnalysisViewModel` 与 macOS 原生分析栏共用同一份,各自只做位图格式适配)切图 → 全部工作推迟到 `DispatcherPriority.Background`(绝不阻塞主图加载);快路径:EXIF 已加载 + 缓存命中 → 同步 swap;慢路径:异步读库 + 派生层现算 + 落 cache,旧图保留到新数据就绪再 swap。后台读取展示图前先取租约,避免宿主释放导致 use-after-release。
+- 编排逻辑集中在平台中立的 `Core/AI/AnalysisPresenter`(旧壳 `AnalysisViewModel`、macOS 与 iPad 原生分析栏共用同一份,各自只做位图格式适配)切图 → 全部工作推迟到 `DispatcherPriority.Background`(绝不阻塞主图加载);快路径:EXIF 已加载 + 缓存命中 → 同步 swap;慢路径:异步读库 + 派生层现算 + 落 cache,旧图保留到新数据就绪再 swap。后台读取展示图前先取租约,避免宿主释放导致 use-after-release。
 - `BitmapPrefetcher` 预取邻居位图后,若分析栏可见,顺手对该邻居走相同 miss 流程预热 cache → 用户前后切图通常已命中。
 - PCA SVD 是切图卡顿主因(几十 ms),sink 进 cache 后变成纯位图引用切换。
 - 用户点击诊断瓦片重算 cosine 时产生的位图归 presenter 所有,切图或还原中心时显式释放;cache 拥有的位图 presenter 只引用,不 Dispose。
@@ -192,17 +193,15 @@ Each head project's `Core/` folder contains platform-specific implementations in
 5. 主窗口布局结构、尺寸和边距按 Avalonia 主界面对拍，边框/圆角及适合的字体/菜单保留原生（本轮不改设置设计）；隐藏式标题栏、方形缩略图区/图标按钮与原有标识语义，顶边拖动区双击按系统偏好 `AppleActionOnDoubleClick` 缩放/最小化/不动作（[SHELL-02](Design/ui-contract.md)；隐藏标题栏不自带该行为）；胶片栏定位条件、350ms 缓出及用户接管按 [FILM-01–04](Design/ui-contract.md) 执行，点选/交换/列表刷新不主动居中；跨屏刷新物理尺寸，F 优先定位对焦点；控制栏保留 EXIF/评分/命令三个整体分组，按空间换行/换列并居中，超长组可滚动；全屏/窗口/显隐状态持久化。设置固定深色外观，由 SwiftUI（macOS 26）承载系统分栏侧栏与分组表单，侧栏选中态用系统原生高亮（跟随强调色），显隐/排序与主次快捷键同一行，工作副本关闭回写。**P3 起分析栏、相似聚类、工具窗口与增强预览已原生可用**：分析栏几何按旧壳 `AnalysisView` 同口径（正方形瓦片边长 = `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`，行布局在主图下方、列布局在其右侧，交叉轴 = 边长 + 20），编排复用 `Core/AI/AnalysisPresenter`；相似聚类面板由筛选条原生 toggle（行布局 90×27、列布局紧随计数 5 点，与旧壳筛选条 5 点间距/居中一致）控制，面板复用 DINO CLS 相似度与卡片视觉（列布局扩宽文件栏、行布局从胶片栏右侧切出，MinWidth 106）；工具窗口为独立 AppKit 窗口（EXIF 详情 / DINO 诊断，照片数据统计仍为 Windows 专属不显示入口）；增强预览下移到 `PhotoLoadSession`（开关跨切图持续生效、压力 Warning 自动关闭）。分析栏可见时主图升 Full（细节预览需全分辨率源）；共享索引读取 F16 时先转显示朝向 sRGB8，保持 CV/DINO 契约。
 6. 测试设置、数据库及测试照片使用自有目录；原生控件+GPU 帧导出不能替代系统预览/跨屏人工色彩验收（macOS 跨屏色彩与手感已由作者 2026-10-16 验收通过；旧壳不做验收）。验收清单见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 
-### 5.7 iOS 原生看图链路（iPad 主屏 I2–I5）
+### 5.7 iOS 原生看图链路（iPad 主屏 I1–I5）
 
-1. Debug 默认 UIKit 原生壳（旧壳 `--legacy-ui` 回退），启动不创建任何 Avalonia 对象；`MainViewModel(nativePresentation: true)` + 共享 `PhotoLoadSession`，主屏由 `iOSNativeRootViewController` 承载，主图由 `iOSPhotoView`（共享 `MetalPhotoRenderer` + `PhotoViewport`）渲染。
-2. **编码协商（I2 已定决策）**：`IPresentationEncodingPolicy` 由平台注入 —— macOS 恒 RGBA16F 扩展线性 sRGB；iPad 代理档 RGBA16F、Full 档 8 位 Display P3，内存压力 ≥ Warning 时代理档也降 8 位 P3（每张驻留字节减半）。两次解码都从同一 ImageIO 源转换，渲染器统一换算到扩展线性 sRGB 后绘制，故 F16 代理 ↔ 8 位 P3 Full 热替换无可面色偏（P3 立方体装不下的原色——如 Adobe RGB 红原色——只能钳到 P3 边界，这是 8 位 P3 编码的既有边界）。Core 不含任何 `OperatingSystem.IsIOS()` 分支。
-3. **手势**：透明 `UIScrollView` 只作手势与物理驱动（内容尺寸 = 适应态显示尺寸），`zoomScale`/`contentOffset` 与 `PhotoViewport` 变换互为逆映射并在同一回调内重绘；双击在适应与物理 100%（点按位置锚点）间动画切换，`minimumZoomScale` = 适应，`maximumZoomScale` = 物理 16 倍（与共享视口上限同口径）。
-4. **`NeedsFull` 与热替换**：宿主把物理视口（bounds × displayScale）与 `NeedsFull` 上报 `PhotoLoadSession.UpdateViewport`，代理目标 = 2× 物理视口；物理 100% 触发 Full，热替换沿用当前视口变换（含 `PhotoViewport.ApplyGestureView` 的手势态）。**视口未成形（尺寸 < 1）时禁止改写代理目标**，否则目标被钳成 1 像素会解码出 1×1 的"合格代理"并永不重载。
-5. **主屏布局（I3）**：分区几何与 Mac 原生壳共用共享 [MainScreenLayout](PhotoViewer.Apple/AGENTS.md)（文件栏内容宽 116、筛选控件 90×32、toggle 90×27、间距 5、外边距 10、两向分区与"隐藏即让空间给主图"），iOS 侧在 `iOSMainScreenLayout` 叠加真实 `SafeAreaInsets`：栏位背景铺到屏幕边缘、栏位内容收在安全区内、主图满幅。两向只看窗口尺寸，隐藏栏位释放空间；分析栏交叉轴 = 瓦片边长 + 20（I5 起真正参与分区，主轴长度取安全区内内容长度）。胶片栏为 `UICollectionView` + 共享 `FilmstripGeometry` 布局（96×144 卡片、FILM-01–06 语义、350ms 三次缓出定位、用户接管、减少动态效果直达终点、重新显示与换向定位当前项）；筛选条为 `UIButton`+`UIMenu`（含相似聚类 toggle 90×27）；控制栏复用共享 `ControlBarLayout`（分组显隐/顺序来自共享设置，I5 起分析栏/增强预览命令可用）。主图区保留空态提示（点击打开文件夹）；I3 的临时设置齿轮已由 I4 的主图长按菜单取代。
-6. **输入（I4）**：主图与胶片栏卡片各挂 `UIContextMenuInteraction` —— 主图菜单与 Mac 原生右键菜单同序（打开文件夹、胶片栏/分析栏/控制栏勾选、增强、工具、设置，I5 起全部为真实入口），卡片菜单标题承载完整文件名 + 拍摄时间并含"评分 0–5"（写回走共享评分、不切主图）。硬件键盘取 `UIKey.KeyCode`（HID usage）经共享 `AppleInputMapping.FromHidUsage` → `AppGesture` → 用户主/次绑定（与 Mac 同一张命令表与苹果键盘映射口径），`PressesBegan` 派发、固定节奏计时器重复（350ms/60ms，iOS 无系统重复速率接口），文本输入获焦或模态展示期间不派发（INPUT-01）。离散滚轮按用户鼠标绑定执行（与 Mac 非精确滚轮同口径），触控板连续滚动与捏合仍归 `UIScrollView`；适应态单指横向轻扫 = 上一张/下一张（走共享 Previous/Next，含显式定位；放大态仍是平移）；根视图 `UIDropInteraction` 接收"文件"里的文件/文件夹 URL 并交共享 `ExternalOpenService`；设置页关闭回写后主屏即时刷新布局模式、控制栏命令显隐/顺序、快捷键、EXIF/评分分组与文件格式筛选。设置入口因此改由主图长按菜单承担，主图区只保留空态提示。
-7. **P3 功能（I5，与 Mac 共用 presenter）**：分析栏由 `iOSAnalysisHost` + 共享 `AnalysisPresenter` 驱动，UIKit 瓦片（`iOSDiagnosticTile` / `iOSDetailPreview` / `iOSShakeFieldView`）按共享 `AnalysisPanelGeometry` 排布；**触控板悬停**联动主图绿框、**手指点按定格绿框**（再点或点主图空白解除）、双击定位裁剪中心；分析栏可见时主图升 Full，细节裁剪从展示会话取源（F16 代理与 8 位 P3 Full 都经 `DisplayCrop` 转显示朝向 sRGB8）。相似聚类面板复用 `iOSFilmstripLayout` + `iOSThumbnailCard`（第二行分数百分比 + 75% 起柱状条），行布局按共享 `SimilarityPanelGeometry` 从胶片栏右侧切出（项目出现后重算宽度）、列布局扩宽文件栏；卡片选中取 `IsCurrentImage`，胶片栏锚点保留 `IsCurrent`。增强预览走 `PhotoLoadSession`。工具页以 sheet（iPad 大页）+ `UINavigationController` 承载：列表页（EXIF 详情 / DINO 诊断，无照片数据统计）、EXIF 详情页（`UITableView` + 共享 `ExifTableGeometry` 7 列、多格式切换）、DINO 诊断页（共享 `DinoDiagnosticPresenter` + 同一套 UIKit 瓦片），导航状态取共享 `ToolsViewModel`。
-8. **验收**：`--pv-native-photo-check <目录>`（代理先行/编码/热替换变换/八方向 GPU 角点/色卡线性值）、`--pv-native-layout-check <目录>`（两向与自动布局、安全区、栏位显隐、筛选条/控制栏几何、卡片几何、FILM-01–06 交互）、`--pv-native-input-check <目录>`（两类上下文菜单内容与回调、轻扫翻页与放大态不翻页、HID 映射表与合成派发、INPUT-01、滚轮识别范围、拖入、设置写回传播）、`--pv-native-analysis-check <目录>`（分析栏入口/两向几何/瓦片顺序/准星/F16·P3 裁剪/索引刷新/增强/点按定格）、`--pv-native-similarity-check <目录>`（toggle 双向+真实点击/两向让位/三态/分数条/双高亮）、`--pv-native-tools-check <目录>`（sheet 展示/列表/EXIF 7 列与格式切换/DINO 5 瓦片/返回/EXIF 块入口）与 `--pv-dino-check <文件>`（onnxruntime 静态链接 + 一次 DINO 推理的 CLS/EP/耗时），报告写 `Documents/PhotoViewer/native-{photo,layout,input,analysis,similarity,tools}-checks.txt` 与 `dino-check.txt`；`--pv-layout-mode row|col` 供两向截图（iPadOS 不允许程序化改方向，见执行清单发现清单），`--pv-analysis-open` 为压测分析栏可见态提供启动开关（测试专用）。Mac 与 iOS 共用 [PhotoViewer.Apple/AppleAcceptanceChecks.cs](PhotoViewer.Apple/AGENTS.md) 与几何文件。素材与真机步骤见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)。
-9. **DINO / ONNX Runtime（I2 后补）**：`onnxruntime.xcframework` 的 iOS 切片是 ar 静态库，iOS head 的 `_PvExpandOnnxRuntimeNativeReference` 在原生链接前排好 `NativeReference` 展开、把切片按 `Kind=Static + ForceLoad` 链接，并把 `_OrtGetApiBase` / CoreML 入口写进 `mtouch-symbols.list`（Release strip 会保留）；`iOSNativeShell` 用 `DllImportResolver` 把 `onnxruntime` 映射到主程序。CoreML EP 在 `Microsoft.ML.OnnxRuntime` 1.24.4/1.25.1 的 iOS 原生库中均返回 not supported → 推理走 CPU（注册失败会记录日志并按既有逻辑回退，不静默）。相似聚类只在面板展开且文件栏可见时触发（§5.4）。
+1. **壳与启动**：Debug 默认 UIKit 原生壳（`--legacy-ui` 回退），Release 默认旧壳（`--native` 显式进入）；原生路径不创建任何 Avalonia 对象。`iOSNativeShell` 的启动顺序与 macOS 对齐：主线程调度 → ReactiveUI → 平台门面（展示解码器/编码策略/HEIF/RAW/预算/Governor/存储/设置/ONNX）→ `MainViewModel(nativePresentation: true)` → `PhotoLoadSession` → 根控制器。启动参数读 `NSProcessInfo`（iOS 不填充托管 `Main(args)`）。文件清单见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)。
+2. **主图**：`PhotoLoadSession` 只管代际/代理↔Full/租约；`iOSPhotoView` 把共享 `MetalPhotoRenderer` 挂成 `CAMetalLayer` 子层，视口取共享 `PhotoViewport`；透明 `UIScrollView` 只作手势与物理驱动，`zoomScale`/`contentOffset` 与视口变换互为逆映射并同帧重绘，双击一次 `ZoomToRect` 完成缩放+偏移（分两次设置会互相取消）。宿主先上报有效视口再 `SetFile`（零尺寸守卫，避免解出 1×1 的"合格代理"）；物理 100% 触发 Full，热替换沿用当前变换。
+3. **编码协商（I2）**：`IPresentationEncodingPolicy` 平台注入——macOS 恒 RGBA16F 扩展线性 sRGB；iPad 代理档 F16、Full 档 8 位 Display P3、压力 ≥ Warning 时代理也降 8 位。渲染器统一换算到扩展线性 sRGB 后绘制，F16 代理 ↔ 8 位 P3 Full 热替换无可面色偏；8 位 P3 装不下的原色（如 Adobe RGB 红原色）钳到 P3 边界，属该编码的既有边界。Core 不含任何 `OperatingSystem.IsIOS()` 分支。
+4. **主屏布局**：分区几何与 Mac 共用共享 [MainScreenLayout](PhotoViewer.Apple/AGENTS.md)（文件栏内容宽 116、筛选控件 90×32、toggle 90×27、间距 5、外边距 10、隐藏即让位），`iOSMainScreenLayout` 叠加真实 `SafeAreaInsets`：栏位背景铺到屏幕边缘、内容收在安全区、主图满幅（状态栏隐藏时 `safe.Top = 0`）。两向只看窗口尺寸；胶片栏为 `UICollectionView` + 共享 `FilmstripGeometry`（FILM-01–06、350ms 三次缓出、用户接管、减少动态效果直达终点、重新显示/换向定位当前项），筛选条为 `UIButton`+`UIMenu`，控制栏复用 `ControlBarLayout`，分析栏按 `AnalysisPanelGeometry` 真正参与分区。
+5. **输入**：主图与卡片各挂原生 `UIContextMenuInteraction`（主图菜单与 Mac 右键菜单同序；卡片菜单标题含完整文件名+拍摄时间与"评分 0–5"）；硬件键盘 `UIKey.KeyCode`（HID usage）→ 共享 `AppleInputMapping` → `AppGesture` → 用户主/次绑定，固定节奏重复（350ms/60ms），INPUT-01 守卫；离散滚轮走用户鼠标绑定；适应态单指横向轻扫 = 上一张/下一张（走共享 Previous/Next 并显式定位，放大态仍是平移）；`UIDropInteraction` 拖入走共享 `ExternalOpenService`；设置页关闭回写后主屏即时刷新。
+6. **P3 功能（I5，与 Mac 共用 presenter）**：分析栏（`iOSAnalysisHost` + `AnalysisPresenter`，细节预览触控板悬停 + 手指点按定格）、相似聚类（复用胶片栏卡片/布局，行让位、列扩宽）、工具页（sheet + 导航控制器：EXIF 详情 7 列 / DINO 诊断）、增强预览（`PhotoLoadSession`）。入口为主图长按菜单、控制栏命令、筛选条 toggle 与 EXIF 信息块。
+7. **限制与验收**：iOS 的 ImageIO 对 Sony ARW 只给内嵌预览（约 1.7MP，作者待裁是否改 CIRAWFilter 全分辨率）；CoreML EP 在 iOS 原生库不受支持，DINO 走 CPU；原生壳另把 ONNX 模型作 `BundleResource` 拷入 app bundle（与 avares 资源重复约 86MB，旧壳退役后消除）。`--pv-native-{photo,layout,input,analysis,similarity,tools}-check` 与 `--pv-dino-check` 报告写 `Documents/PhotoViewer/`；iPadOS 26 拒绝程序化改方向，两向用 `--pv-layout-mode` 核对。程序化证据见 [执行清单 §7](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)，作者手验清单见 [iPad 验收](Plans/native-rebuild-phase-ipad-acceptance.md)。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 
@@ -221,7 +220,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 Always go through the VS Code Tasks defined in [DEV.md](DEV.md) — they wrap signing, trimming, install, and Logcat/console attach. Do **not** invoke `dotnet publish` directly for distribution builds.
 
 Most-used Tasks:
-- `Debug Windows` / `Debug Mac` / `Debug Android` / `Debug iOS` / `Debug iOS Simulator` — build + launch on target.
+- `Debug Windows` / `Debug Mac` / `Debug Android` / `Debug iOS` / `Debug iOS (Native)` / `Debug iOS Simulator` — build + launch on target（iOS 真机 Debug 走 Release 配置，默认旧壳；原生壳用 `Debug iOS (Native)` 或显式 `--native`）。
 - `Run Mac` / `Run Windows` / `Install Android` / `Install iOS` — re-launch last build without rebuilding.
 - `Publish Windows EXE / Mac DMG / Android APK / iOS IPA (Release)` — distribution artifacts → `release/`.
 - `Clean Build Caches (All Platforms)` — when caches go stale (SDK upgrade, weird link errors).
