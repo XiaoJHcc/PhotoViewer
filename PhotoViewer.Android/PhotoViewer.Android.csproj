@@ -43,6 +43,8 @@
     -->
     <ItemGroup>
         <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
+        <!-- 控制栏命令图标沿用 Avalonia 的 uicons 字体，随 APK 打包；与壳无关。 -->
+        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\*.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
     </ItemGroup>
 
     <ItemGroup>

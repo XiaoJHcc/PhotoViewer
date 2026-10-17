@@ -14,17 +14,24 @@ namespace PhotoViewer.Android.Core;
 public sealed class AndroidNativeWindowPresenter : INativeWindowPresenter
 {
     private readonly Activity _activity;
+    private readonly Native.AndroidNativeSettingsPresenter _settings;
 
-    /// <summary>绑定当前原生 Activity。</summary>
+    /// <summary>绑定当前原生 Activity 与设置展示器。</summary>
     /// <param name="activity">宿主 Activity。</param>
-    public AndroidNativeWindowPresenter(Activity activity) => _activity = activity;
+    /// <param name="settings">原生设置半屏展示器。</param>
+    public AndroidNativeWindowPresenter(Activity activity, Native.AndroidNativeSettingsPresenter settings)
+    {
+        _activity = activity;
+        _settings = settings;
+    }
 
     /// <summary>展示设置窗口（A4 之前的占位）。</summary>
     /// <param name="settings">共享设置 ViewModel。</param>
     public void ShowSettingsWindow(SettingsViewModel settings)
     {
-        Console.WriteLine("[Native] 设置 BottomSheet 将在 A4 接入");
-        Toast.MakeText(_activity, "设置页将在 A4 接入", ToastLength.Short)?.Show();
+        if (_settings.TryPresent(settings)) return;
+        Console.Error.WriteLine("[Native] 原生设置页未能展示");
+        Toast.MakeText(_activity, "设置页打开失败", ToastLength.Short)?.Show();
     }
 
     /// <summary>展示工具页（A5 之前的占位）。</summary>

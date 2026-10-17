@@ -8,7 +8,9 @@
 > 3. **无论 ROM 与系统版本，视觉设计与空间操作一致对标**。
 > 4. 能用原生最好；原生不可靠再议。
 >
-> **进度**：**A1a + A1b 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，以及 Android 普通 `Application`/bootstrap/原生壳基座/主题/门面/资源均已落地；A2–A6 未开始。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
+> **进度**：**A1a + A1b + A2 + A3 + A4 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，Android 原生壳基座，主图（EGL/GLES + 8 位 P3/sRGB + 代理↔Full）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、输入（硬件键盘/滚轮/长按菜单/轻扫/返回）与半屏设置（五分类、关闭回写）均已落地并在 API 35 arm64 模拟器自验。**A5–A6 未开始**（分析栏/相似聚类/工具页/增强入口未解禁；程序化验收 harness 未落地）。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
+>
+> **模拟器自验基线（2026-10-18，1080×2400 / density 2.625 / fontScale 1.0）**：原生壳默认启动、旧壳 `--legacy-ui` 可回退；应用内文件夹经 `@files/...` 启动参数加载；八方向 6 的 GPU 朝向、Fit/100% 热替换（代理 2706×1804 → Full 6000×4000）、导航图（长边 150 点 + 可见框 + 百分比）、卡片星级 XMP 写回（不改主图）、硬件键盘 Right/F、设置五分类打开/关闭回写（ShowRating 关闭后评分分组与卡片星级即时消失）均已目视/日志核对。**程序化 harness 与真机门未做**，不能记作通过。
 
 ## 0. 范围
 
@@ -158,22 +160,27 @@
   - A1b：普通 `Application` + `AndroidBootstrapActivity` + `AndroidNativeActivity`/`AndroidNativeShell` + `Theme.PhotoViewer.Native` + `AndroidAppResourceProvider`/`AndroidUiDispatcher`/门面占位落地；旧壳 `MainActivity : AvaloniaActivity` 自建 Avalonia。Debug 构建 **0 错误 / 21 警告**（与基线一致）；API 35 arm64 模拟器默认启动 `[Native] Avalonia.Application.Current=null`、`DINO 模型资源=ok`，`--legacy-ui` 旧壳 `MainView=True` 正常；首次启动 native `+940ms` / legacy `+1.09s`。ONNX Linux glibc `.so` 误打包已修（§6#11）。A2 未开始。
 
 ### A2 主图
-- `AndroidPresentationDecoder`（`BitmapFactory` + libheif，产出 8 位 sRGB 或 Display P3）+ `AndroidPresentationEncodingPolicy`；`BitmapLoader` 注入。
-- `AndroidPhotoRenderer`（EGL14 + GLES 3）：P3 探测、纹理上传与 mipmap、八方向 UV、帧提交、纹理字节记账。
-- `AndroidPhotoView`（`SurfaceView` 宿主）+ 手势 → `PhotoViewport`；物理 100% 触发 Full；代理↔Full 只换纹理。
-- **程序化门**（模拟器）：八方向角点、色卡、代理→Full 变换保持、双击精确 100%、Fit 双向、切图保持倍率/中心。
-- **状态**：未开始。
+- `AndroidPresentationDecoder`（`BitmapFactory` + libheif 兜底，产出 8 位 sRGB 或 Display P3）+ `AndroidPresentationEncodingPolicy`（恒 Rgba8）；`BitmapLoader.InitializePresentationDecoder` 注入。EXIF 方向只写 `DecodedImage.Orientation`，顶点阶段置换 UV；本地路径与 SAF `content://` 都支持。
+- `AndroidPhotoRenderer`（EGL14 + GLES 3）：EGL 表面 P3 协商（`EGL_EXT_gl_colorspace_display_p3`，失败回退默认 sRGB）、GL_RGBA8 纹理、mipmap/三线性、八方向 UV、视口矩形绘制、分块纹理上传、纹理字节记账。
+- `AndroidPhotoView`（`SurfaceView` 宿主 + 自有 EGL）：`PhotoViewport` 以 dp 为点、`BackingScale=density`；单指放大态平移、双指捏合锚定焦点、双击/Fit 命令切换、误触阈值与适应态横滑翻页；物理 100% 触发 Full；代理↔Full 只换纹理；小型素材物理 100% 低于适应态时夹回适应（iOS 同口径）。
+- `AndroidNavigationDecoder`：导航图改为按长边 300dp 的 BitmapFactory 子采样 + 方向转正，替代 GPU 离屏回读（理由见 §6#18）。
+- **自验**：方向 6 照片按显示朝向铺满；`color-p3-large` 6000×4000 代理→Full 上屏、Fit→100% 导航图与百分比正确；**程序化 harness 未落地**。
+- **状态**：**已完成（2026-10-18，模拟器目视/日志）**；八方向全量、色卡线性值、双击精确物理 100%、代理→Full 变换保持的自动断言随 A6 补。
 
 ### A3 主屏布局
-- 根布局按 `MainScreenLayout` 落 frame；行/列/自动；insets 与刘海；栏位显隐释放空间。
-- 胶片栏 `RecyclerView` + **自绘卡片**（`FilmstripGeometry`：96×144 外框 / 90×138 占位 / 80 方形 / 星级 / 抖动徽标 / 第二行）；350ms 三次缓出与用户接管。
-- 筛选条（三个下拉 + 计数 + 相似聚类 toggle）、控制栏三分组换行居中。
-- **状态**：未开始。
+- `AndroidMainScreenLayout` 在共享 `MainScreenLayout.Partition` 上叠加真实系统栏/刘海 insets：栏位背景铺到屏幕边缘、内容收在安全区、主图满幅；行/列/自动只看窗口方向，隐藏栏位把空间还给主图；筛选条行布局 `alignLeading: true`。
+- 胶片栏 `RecyclerView` + 自绘卡片（96×144 外框 / 90×138 占位 / 80 方形 / 星级 / 抖动徽标 / 第二行；当前项蓝框、Full 缓存细边、占位/加载态）；350ms 三次缓出定位、用户触摸接管、减少动态效果直达；可见范围上报共享缩略图调度器；点选不居中。
+- 筛选条：自绘 90×32 下拉 ×3 + 计数 + 相似聚类 toggle 位置（toggle 在 A5 前隐藏）；点按弹原生 `PopupMenu` 写回共享 VM。
+- 控制栏：共享 `ControlBarLayout` 的分组/换行/居中；EXIF 块、评分、命令三组自绘；命令显隐/顺序来自共享设置；A5 前隐藏「分析栏」命令。
+- 导航图：普通 View 覆盖在 `SurfaceView` 之上，长边 150dp、可见框与百分比，点按/拖动定位。
+- **状态**：**已完成（2026-10-18，模拟器目视/日志）**；两向、栏位显隐、卡片几何与 350ms 中间帧的自动断言随 A6 补。
 
 ### A4 输入 + 设置
-- `AndroidInputMapping`（`KeyEvent` → `GestureKey`）、长按菜单、卡片评分菜单、轻扫翻页、拖入、返回手势、减少动态效果。
-- 半屏设置 sheet（§1.8），五分类全量接线，关闭回写后主屏即时刷新。
-- **状态**：未开始。
+- `AndroidInputMapping`：`KeyEvent`/修饰键 → 共享 `GestureKey`/`GestureModifiers`，查共享命令表；Activity `DispatchKeyEvent` 在设置 sheet/文本输入期间让位；DPAD Right/F 已实测触发 Next/Fit。
+- 离散鼠标滚轮按用户绑定执行命令；主图长按菜单（打开文件夹/栏位显隐/增强/工具/设置，勾选态现读共享状态）；卡片长按评分菜单；适应态单指横滑翻页；返回键先关设置 sheet 再结束 Activity。
+- 半屏设置：Material 3 `BottomSheetDialog` + 共享 `NativeSettingsSession` 工作副本；五分类（文件/预览/控制/EXIF/AI）与 iOS 同口径；开关、数值步进、布局模式选择、文件格式/快捷键/EXIF 列表勾选 + 上下排序、缩放预设增删改、相似阈值/数量；关闭/下滑/返回统一 `Apply` 一次回写，主屏即时刷新。
+- **偏差**：数值控件用 +/- 步进而非滑条（功能等价、点击精度更高）；列表排序暂用上下按钮而非拖拽（`ItemTouchHelper` 待补）；拖入（`OnDragListener`）未接。
+- **状态**：**已完成（2026-10-18，模拟器目视/日志）**；真实键鼠手感、fontScale 1.3、拖入与真机返回手势待 A6/作者。
 
 ### A5 P3 功能
 - 分析栏（`IAnalysisHost` 宿主视图 + 共享 presenter）、相似聚类面板、增强预览（`PhotoLoadSession`）。
@@ -226,7 +233,14 @@
 | 12 | Avalonia 12 的 `ISingleViewApplicationLifetime`/`IApplicationLifetime` 标为 `NotClientImplementable`，手写 lifetime 无法编译 | 旧壳实例化 `Avalonia.Android.ApplicationLifetime`（internal）并走 `IActivityApplicationLifetime.MainViewFactory`；待上游公开 API 后移除反射 |
 | 13 | `AvaloniaActivity.InitializeAvaloniaView` 只创建 `AvaloniaView`，不调用 `SetContentView`；在 `base.OnCreate` 前写 `Content` 会白屏 | 旧壳在 `base.OnCreate` 后写 `Content`，触发 setter 的 `SetContentView` 分支；已实测主界面正常 |
 | 14 | `AndroidAsset` 打进 APK 的实际路径是 `assets/Models/...`，共享 URI 是 `avares://PhotoViewer/Assets/Models/...` | `AndroidAppResourceProvider` 去掉开头 `Assets/`；原生壳启动日志 `DINO 模型资源=ok` 验证 |
-| 15 | SAF 选择器、设置 BottomSheet、工具页当前是占位（返回 null / Toast） | A2/A3/A4/A5 按计划替换；占位有日志与可见反馈，不冒充已实现 |
+| 15 | SAF 选择器、设置 BottomSheet、工具页当前是占位（返回 null / Toast） | A2/A3/A4 已替换 SAF 与设置；工具页仍占位，A5 处理 |
+| 16 | 模拟器（API 35 arm64，ANGLE）`P3表面=False`，EGL P3 协商走 sRGB 回退；真实 P3 面板未验 | A2 代码探测 `Window.IsWideColorGamut` + EGL 扩展双条件；真机门补 P3 正向与色卡 |
+| 17 | 3+3 邻居预取同时解 Full 时，13 张夹具（含 6000×4000）启动后约 0.5s 进程 SIGSEGV；1/1 或全代理稳定 | **已修**：共享 `BitmapLoader.PrefetchFullNeighbors` 默认 true，Android 壳置 false，邻居预取统一代理档；Full 只在当前图放大时按需解码。Mac/iOS/Windows 行为不变 |
+| 18 | 导航图最初用 FBO `glReadPixels` 回读：缩略图内容错位/通道异常，且多一次 GPU 同步 | 改为 `AndroidNavigationDecoder`（BitmapFactory 子采样 + 方向转正，长边 300dp）；导航图仍是 150dp 显示，点按/拖动定位不变。与计划"GPU 小目标渲染"有偏离，登记为 Android 实现差异 |
+| 19 | Material 默认紫色主色与 iOS 系统蓝不一致 | 主题与 BottomSheet 显式 `colorPrimary/Secondary=#0A84FF`；开关/复选框跟随；不使用 DynamicColors |
+| 20 | 安装 APK 可能清空 App 私有目录（增量安装/数据清理），夹具与设置会丢 | 验收夹具每次用 `run-as` 重新拷入 `files/pv-fixtures`；程序化 harness 需自建隔离目录（A6） |
+| 21 | 设置列表排序暂用上下按钮，拖拽排序未接；拖入未接 | 记为 A4 偏差；A6 前补 `ItemTouchHelper` 与 `OnDragListener`，或作者裁定接受按钮排序 |
+| 22 | 主屏上下文菜单暂未含「分析栏」（A5 前该命令隐藏），「工具…」仍为占位 | A5 解禁分析栏/工具页后补菜单项与真实入口 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 
