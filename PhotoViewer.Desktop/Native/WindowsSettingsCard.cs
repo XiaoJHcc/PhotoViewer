@@ -10,11 +10,46 @@ using Windows.UI;
 namespace PhotoViewer.Desktop.Native;
 
 /// <summary>
-/// 设置页行原语:页面标题、分组标题、Win11 设置卡片、开关/滑块/数值行与提示。
+/// 设置页/工具页共用的 Win11 行原语:滚动页容器、页面/分组标题、设置卡片、开关/滑块/数值行与提示。
 /// 颜色、字号、圆角与卡片材质全部取 WinUI 3 主题资源,不再维护第二套灰度。
 /// </summary>
 internal static class WindowsSettingsCard
 {
+    /// <summary>设置页/工具页共用的滚动页容器:页面标题 + 内容,MaxWidth 与页边距统一。</summary>
+    /// <param name="title">页面标题</param>
+    /// <param name="children">页面内容</param>
+    /// <returns>自带滚动的页面</returns>
+    public static ScrollViewer Page(string title, params UIElement[] children)
+    {
+        var stack = new StackPanel
+        {
+            MaxWidth = WindowsLayout.SettingsPageMaxWidth,
+            Padding = new Thickness(
+                WindowsLayout.SettingsPagePadding,
+                WindowsLayout.SettingsPageTopPadding,
+                WindowsLayout.SettingsPagePadding,
+                WindowsLayout.SettingsPagePadding),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        stack.Children.Add(PageTitle(title));
+        foreach (var child in children)
+        {
+            stack.Children.Add(child);
+        }
+
+        return new ScrollViewer
+        {
+            Content = stack,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Disabled,
+            ZoomMode = ZoomMode.Disabled,
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Background = Brush(Color.FromArgb(0, 0, 0, 0)),
+        };
+    }
+
     /// <summary>页面标题(Win11 Title 28/36)。</summary>
     /// <param name="text">标题文本</param>
     /// <returns>标题控件</returns>
@@ -261,6 +296,11 @@ internal static class WindowsSettingsCard
     /// <param name="key">资源键</param>
     /// <returns>画刷</returns>
     public static Brush ThemeBrush(string key) => Resource<Brush>(key);
+
+    /// <summary>读取 WinUI 文本样式(页面内容与卡片行共用同一套字号层级)。</summary>
+    /// <param name="key">样式键</param>
+    /// <returns>文本样式</returns>
+    public static Style TextStyle(string key) => Style(key);
 
     /// <summary>把颜色包成纯色画刷(仅用于内容高亮等应用自有语义)。</summary>
     /// <param name="color">颜色</param>

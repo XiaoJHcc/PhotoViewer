@@ -1,7 +1,7 @@
 # Windows 原生主窗口方案(P2-W)
 
 > 2026-10-16 立项。隶属总纲 [native-rebuild-master-plan-1.md](native-rebuild-master-plan-1.md) §6 **Phase 4**,做法平移 macOS P2(见 [native-rebuild-phase-2-ui.md](native-rebuild-phase-2-ui.md) 与 [PhotoViewer.Mac/AGENTS.md](../PhotoViewer.Mac/AGENTS.md))。
-> 作者要求:**用 Windows 原生方式把主窗口内容重构成原生,尽可能与旧 Avalonia 设计对标**。设置页、分析栏、聚类、工具页按 macOS 同样口径延期。
+> 作者要求:**用 Windows 原生方式把主窗口内容重构成原生,尽可能与旧 Avalonia 设计对标**。设置页、分析栏、聚类、工具页按 macOS 同样口径延期(后续均已落地:设置 §17、分析栏/聚类/增强 §15–§16、工具窗口 §18)。
 > 跨平台对账真源:[Design/ui-contract.md](../Design/ui-contract.md)(Windows 列在 W-M6 补齐)。
 
 ## 0. W-M0 可行性闸门:结论(2026-10-16 已过)
@@ -74,7 +74,7 @@
 5. 原生验收 harness(隔离设置/数据库、几何 JSON 对拍、程序化断言)。
 
 **本轮不做**
-- 分析栏 / 相似聚类 / 工具页 / 增强预览(P3):入口隐藏、配置保留(`SCOPE-01`)。
+- 分析栏 / 相似聚类 / 工具页 / 增强预览(P3):入口隐藏、配置保留(`SCOPE-01`)。（后续已落地：分析栏/聚类/增强见 §15–§16，工具窗口见 §18）
 - 色彩正确性(ICC 广色域、ACM 探测、Win10 烘焙回退、`DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709` 标签验证)→ W-M7;本轮只保证**与旧壳行为一致**。
 - Windows RAW 解码(`Sdcb.LibRaw`):既有缺口(Windows 现在完全没有 RAW 解码器),随 W-M7 或单独立项。
 - 原生设置窗口 → W-M5;在此之前原生壳不显示设置入口(`SCOPE-01`)。
@@ -199,6 +199,8 @@ PhotoViewer.Desktop/
 - 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、根 `AGENTS.md` §4 平台矩阵 + 模块索引、新建 `PhotoViewer.Desktop/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
 
 **W-M7(独立立项)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)+ Windows `LibRawDecoder`(`Sdcb.LibRaw`)。
+
+**W-M8 工具窗口(P3 收口)** ✅ 2026-10-17 — 方案、实现与验收见 §18;`--pv-native-tools` 5 项 PASS,主冒烟/设置回归无变化。
 
 ## 7. 实现约定
 
@@ -346,6 +348,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 18 | 八方向 + 带 EXIF 素材:自生成方向 1–8 JPEG(含 f/2.8、1/250、ISO 400、75mm)验证方向链与控制栏取值 | ✅ 定向 | §14;GPU 表面四角回读 + 导航图四角回读逐方向核对、方向 6 的 `DisplayCrop` 象限与增强帧朝向断言;EXIF 块显示真实取值;真实相机素材与旧壳逐项对拍仍待做(见 13.2 #3/#5) |
 | 19 | **原生设置窗口(W-M5)**:Mica + TitleBar + NavigationView + SettingsCard/五分类/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
 | 20 | INPUT-01:设置窗口独立于主窗口,录制态吞键 | ✅ 定向 | 主窗口 `_root.KeyDown` 收不到设置窗口按键;录制态 `e.Handled` + 失活取消 |
+| 21 | **原生工具窗口(P3 收口)**:Mica + TitleBar + NavigationView(EXIF 详情/照片统计/DINO 诊断)+ SettingsCard;7 列 EXIF、DINO 5 瓦片、CSV 导出 | ✅ 定向 | §18;`--pv-native-tools` 5 项 PASS,主冒烟 24 项 + 设置 7 项无回归;真实多格式切换/文件夹与 CSV 选择器/视觉手感待手验 |
 
 ### 13.2 待完成
 
@@ -356,7 +359,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 3 | 八方向 + 带 EXIF 的**真实素材**与旧壳逐项对拍 | W-M6 | 相机素材(自生成素材已覆盖方向链与控制栏取值,见 §14) | 每个方向朝向/几何与旧壳一致 |
 | 5 | 相机 EXIF 取值与旧壳对拍(自生成素材已证明取值链路) | W-M6 | 真实素材 | 光圈/快门/ISO/等效焦距与旧壳完全一致 |
 | 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地/视觉重构见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS(含 Mica/NavigationView/TitleBar/NumberBox/InfoBar);真实拖拽/录制/清库/预设增删待手验 |
-| 10 | 工具页(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | 分析栏/相似聚类/增强已落地(§15–§16),工具页仍未原生 | 各页契约另立 |
+| 10 | 工具窗口(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | ✅ 2026-10-17,见 §18 | `--pv-native-tools` 5 项 PASS(深色/Mica/三分类、EXIF 分组/标签、DINO 5 瓦片与 cosine、统计导出、关闭重开);真实多格式切换/文件夹与 CSV 选择器待手验 |
 | 11 | W-M6 专项 harness + 旧壳几何 JSON 对拍 | W-M6 | ⬜ 未开始 | `--pv-native-layout/filmstrip/input/toolbar`、`--legacy-ui --pv-legacy-layout`、`Exact=0.01` |
 | 12 | 色彩正确性(ICC/广色域标签/ACM 探测/Win10 烘焙回退) | W-M7 | 独立立项 | 见色彩计划 |
 | 13 | Windows RAW 解码(`Sdcb.LibRaw`) | W-M7 | 独立立项 | RAW 主图 + 缩略图 |
@@ -368,7 +371,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 13.3 有意延期(不算待办)
 
-- P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16),不再延期;工具页仍待做。
+- P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16);工具窗口已落地(§18),不再延期。
 - 系统标题栏按钮改为自绘(为满足自动显隐),代价是失去最大化按钮的系统贴靠布局,与旧壳一致。
 
 ### 13.4 建议推进顺序
@@ -445,7 +448,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 15.4 仍待验
 
-增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具页(EXIF 详情/照片统计/DINO 调试)仍未原生;200%/跨屏/手感与 W-M7 色彩/RAW 不变。
+增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具窗口已原生(§18);200%/跨屏/手感与 W-M7 色彩/RAW 不变。
 
 ### 15.5 收尾缺陷修复(作者回报"提取后切相似聚类卡死")
 
@@ -515,7 +518,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **主图编码**:新增 `Core/WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB),`WindowsNativeApplication` 注入 `WindowsPresentationDecoder` + policy;`DecodeAsync` 改为共享四参签名(带 `PixelEncoding`),非 `RgbaF16` 显式拒绝,`BytesPerPixel` 删除,`BitmapLoader.PresentationBytesPerPixel` 由 policy 计算。
 - **共享修复保留**:Windows 分支对共享层的修复随合并进入——`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留(增强 F16 方向,冒烟在方向 6 用增强帧四角回读覆盖)、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载;不另开 Windows 分叉。
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
-- **待办不变**:工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。
+- **待办不变**:W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON;工具窗口已于 §18 落地。
 
 ## 17. W-M5 设置窗口落地与视觉重构(2026-10-17)
 
@@ -560,4 +563,67 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - 窗口尺寸在激活前定，而非 `Loaded` 后。
 - Mica 与标题栏为 2026-10-17 视觉重构新增，属于方案 D4/D7 的修订。
 - 排序整行拖 + 行尾把手视觉、无前进/后退、无 Apple 映射段——与方案一致。
+
+## 18. 工具窗口落地(2026-10-17,P3 收口)
+
+作者口径:**参考设置窗口的做法和结构,用原生控件复刻工具页功能**。本轮把 Windows 最后一个 P3 缺口(EXIF 详情 / 照片数据统计 / DINO 诊断)做成独立 Win11 工具窗口。
+
+### 18.1 结构与复用
+
+- **独立窗口** `WindowsToolsWindow`:960×720(min 800×560、不进任务栏、可缩放不可最大化),Mica + WinUI `TitleBar`(扳手 `E90F`)+ `NavigationView` 左栏三分类 + `SettingsCard` 页面;窗口壳与设置窗口共用 `WindowsWindowChrome`(深色 caption/DPI 当前置尺寸/居中),页面容器与行原语共用 `WindowsSettingsCard`。
+- **导航**复用共享 `ToolsViewModel`:分类切换走 `OpenExifDetail` / `OpenPhotoStats` / `OpenDinoDebug` 写回 `CurrentTool`,共享 `SyncCurrentFile` 的联动条件不变;默认 EXIF(无 EXIF 时回落照片统计),已打开再次请求时恢复上次分类;单例由 `WindowsNativeToolsPresenter` 管理,主窗口关闭一并释放。
+- **EXIF 详情** `WindowsExifToolPage`:不带头后缀文件名 + `SelectorBar` 多格式切换 + 7 列分组表格(ID 60 / 名称 2 / 中文名 2 / 值 3,值最多 3 行);订阅 `ExifDetailViewModel` 的格式/分组/加载状态,合并到一次 dispatcher turn 重建。
+- **照片数据统计** `WindowsStatsToolPage`:文件夹列表(UIElement 行 + 选中移除)、通配符 `TextBox`、`FileSavePicker` 导出 CSV、取消/进度/状态;文件夹与保存选择器都绑定**工具窗口自身**句柄,避免对话框落在主窗口后面。业务仍全部在 `PhotoStatsViewModel`/`PhotoStatsService`。
+- **DINO 诊断** `WindowsDinoToolPage`:直接消费共享 `DinoDiagnosticPresenter`,不经过旧壳 `DinoDebugViewModel`;3 列 DINO patch 瓦片(缩略图/PCA/Cosine)+ 2 列 CV 瓦片(锐度/抖动拖影)+ 全宽刚体拟合文本;点击回传 presenter 重算 cosine 参考点。
+- **入口**:主图右键「工具…」+ 控制栏 EXIF 信息块整组 `Tapped`,两者共用 `MainViewModel.OpenToolsWindow` → `NativeWindowPresenter` → `WindowsNativeToolsPresenter`。
+
+### 18.2 抽出的共享控件
+
+| 文件 | 内容 |
+|---|---|
+| `Native/WindowsDiagnosticTile.cs` | 自 `WindowsAnalysisPanel` 的私有瓦片抽出:正方形 + `ContentHost` 按 `AspectRatio` letterbox + 压暗背景/主图/矢量叠加/准星/药丸标签/占位/底部说明;Measure/Arrange 直接给出几何,不在 `SizeChanged` 里回写子元素尺寸。分析栏与 DINO 页共用。 |
+| `Native/WindowsDiagnosticBitmap.cs` | 诊断网格按纵横比最近邻放大到长边 512;两处共用。 |
+| `Native/WindowsShakeFieldView.cs` | 32×32 抖动矢量线,颜色统一走 `CvHeatmap.ColorForShake`;分析栏不再用 Skia 光栅化箭头位图。 |
+| `Native/WindowsWindowChrome.cs` | 设置/工具窗口共用的深色 caption、任务栏隐藏、DPI 尺寸与居中。 |
+
+### 18.3 与旧壳/macOS 的有意差异
+
+1. **Windows 用设置页结构,不是"列表 + 返回"两态**:三分类常驻左栏,EXIF/统计/DINO 直接是页;macOS/iPad 保留工具列表页。这是"参考设置窗口"的直接结果,也是 Win11 工具的常见形态。
+2. **DINO 五张瓦片按 3+2 同宽网格排列,第六格留空;刚体拟合面板占满下方整行**:首版试过 CV 行 2 列 + 面板占第三格,实机(作者 2026-10-17 截图反馈)暴露出两排瓦片宽度不同、无说明文字的缩略图因总高较矮被垂直居中而比同排其它瓦片上沿低约 20px。现两排都用三列、五张瓦片同宽,瓦片统一 `VerticalAlignment=Top` 保证两排正方形上沿齐平;第六格空位保留,刚体拟合文本以全宽卡片放在第二排瓦片之后。
+3. **工具窗口最小宽 800**(设置 720):EXIF 7 列表格在 720 下会把 `Compression` 一类单词折断;800 下名称列约 105 DIP,配合 `WrapWholeWords` 只按词换行。
+4. **EXIF 表格取 WinUI 主题色**,不再维护旧壳 `#222/#3a3a3a` 第二套灰度;ID 列用 `ControlFillColorDefaultBrush`,分隔线用 `DividerStrokeColorDefaultBrush`。
+
+### 18.4 验收
+
+- `--pv-native-tools`(隔离设置/数据库/日志、自建带 EXIF 的 400×300 素材)**5 项 PASS**,输出 `release/native-win-acceptance/tools-checks.json`:
+  1. 深色/Mica/NavigationView + TitleBar/三分类/960 DIP/不进任务栏;
+  2. EXIF 6 组 / 25 标签 + 单格式标签(文件名去后缀);
+  3. DINO 5 瓦片出图、3+2 同宽网格(206 DIP)且两排上沿齐平、状态 = 文件名、点击瓦片把 cosine 参考点设为 8,8;
+  4. 照片统计文件夹行/通配符写回/CSV 导出/移除;
+  5. 关闭重开:新窗口、默认 EXIF、共享统计状态保留。
+- 主冒烟 `--pv-native-smoke` **24 项无回归**(分析栏抽瓦片后含增强态诊断、两向等边长仍 PASS);`--pv-native-settings` **7 项无回归**(设置窗口改用共享 `WindowsWindowChrome`/页容器后)。
+- 150% 实机截图:`release/native-win-acceptance/tools-page-{exif,dino,stats}.png`;最小 800×560 的 EXIF 排版另行目视。
+- 主图右键「工具…」与控制栏 EXIF 块点击均实机验证可打开工具窗口。
+- 仍待作者手验:真实多格式(RAW+JPG/HEIF)切换、真实文件夹选择器与 CSV 保存对话框、工具页视觉/手感、125/150/200% 文本缩放。
+
+### 18.5 已知边界与未做
+
+- 多格式 EXIF 的 `SelectorBar` 程序化只覆盖了单格式素材;多格式的真实伴侣切换需作者用手头 RAW+JPG 验证。
+- 照片统计的文件夹/CSV 选择器是 WinRT 系统对话框,程序化无法可靠驱动;验收只覆盖 VM 与列表/导出数据路径。
+- 工具窗口不进入任务栏、随主窗口关闭;若作者希望它像普通文档窗口一样出现在 Alt+Tab,需要单独改 `IsShownInSwitchers` 与关闭策略。
+- UIA 的 `TransformPattern.Resize` 在本窗口上会导致窗口关闭(疑似 WinUI/UIA 组合问题),抓图用 `SetWindowPos`;这是验收工具的限制,不是产品行为。
+
+### 18.6 作者截图反馈修正(2026-10-17)
+
+作者用真实 `A7C01482.HIF` 截图反馈 DINO 页两处问题:
+
+1. **两排瓦片大小不同**:首版 CV 行用 2 列,第二排瓦片明显比第一排的三列瓦片宽。
+2. **高度不对齐**:第一排缩略图瓦片没有底部说明文字,总高较矮,在 Grid 行里被垂直居中,正方形上沿比 PCA/Cosine 低约 20px。
+
+修正:
+
+- CV 行也改三列,五张瓦片按 **3+2** 排列,第六格留空;刚体拟合面板仍全宽放在第二排下方。
+- 五张瓦片统一 `VerticalAlignment=Top`,两排正方形上沿齐平;说明文字长短只影响瓦片底部,不再影响正方形起点。
+- `--pv-native-tools` 的 DINO 检查新增布局断言:五张瓦片宽度差 ≤1 DIP、两排各自上沿差 ≤1 DIP;当前 150% 下五张均 206 DIP 宽。
+- 重新截图:`tools-page-dino.png`(默认窗高)、`tools-page-dino-full.png`(加高窗口显示完整刚体拟合面板)。
 

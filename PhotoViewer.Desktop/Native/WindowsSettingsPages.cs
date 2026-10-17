@@ -5,7 +5,6 @@ using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using PhotoViewer.ViewModels.Settings;
-using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
 
@@ -56,36 +55,8 @@ internal sealed partial class WindowsSettingsPages
     /// <param name="title">页面标题</param>
     /// <param name="children">页面内容</param>
     /// <returns>滚动容器</returns>
-    private ScrollViewer Page(string title, params UIElement[] children)
-    {
-        var stack = new StackPanel
-        {
-            MaxWidth = WindowsLayout.SettingsPageMaxWidth,
-            Padding = new Thickness(
-                WindowsLayout.SettingsPagePadding,
-                WindowsLayout.SettingsPageTopPadding,
-                WindowsLayout.SettingsPagePadding,
-                WindowsLayout.SettingsPagePadding),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-        };
-        stack.Children.Add(WindowsSettingsCard.PageTitle(title));
-        foreach (var child in children)
-        {
-            stack.Children.Add(child);
-        }
-
-        return new ScrollViewer
-        {
-            Content = stack,
-            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-            HorizontalScrollMode = ScrollMode.Disabled,
-            ZoomMode = ZoomMode.Disabled,
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-            Background = WindowsSettingsCard.Brush(Color.FromArgb(0, 0, 0, 0)),
-        };
-    }
+    private static ScrollViewer Page(string title, params UIElement[] children)
+        => WindowsSettingsCard.Page(title, children);
 
     /// <summary>一组卡片(卡间距 4)。</summary>
     /// <returns>容器</returns>

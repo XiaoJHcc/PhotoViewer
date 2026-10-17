@@ -330,6 +330,12 @@ internal static class WindowsLayout
     /// <summary>瓦片占位文字字号。</summary>
     public const double AnalysisPlaceholderFontSize = 12;
 
+    /// <summary>瓦片底部说明文字字号(工具页使用;分析栏不设说明)。</summary>
+    public const double AnalysisCaptionFontSize = 12;
+
+    /// <summary>瓦片底部说明文字色(旧壳 #888)。</summary>
+    public static readonly Color AnalysisCaptionForeground = Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
+
     /// <summary>准星单臂长度。</summary>
     public const double AnalysisCrosshairArm = 12;
 
@@ -528,4 +534,42 @@ internal static class WindowsLayout
 
     /// <summary>滑块行右侧数值文本宽度。</summary>
     public const double SettingsSliderValueWidth = 72;
+
+    // ===== 工具窗口 =====
+
+    /// <summary>工具窗口默认宽(与设置窗口同口径)。</summary>
+    public const double ToolsWindowWidth = 960;
+
+    /// <summary>工具窗口默认高(与设置窗口同口径)。</summary>
+    public const double ToolsWindowHeight = 720;
+
+    /// <summary>工具窗口最小宽(EXIF 7 列表格在 720 下会折断英文单词,抬到 800)。</summary>
+    public const double ToolsWindowMinWidth = 800;
+
+    /// <summary>工具窗口最小高。</summary>
+    public const double ToolsWindowMinHeight = 560;
+
+    /// <summary>工具页 7 列表格的 Tag ID 列宽(旧壳 60)。</summary>
+    public const double ToolsTableIdWidth = 60;
+
+    /// <summary>工具页表格的单元格左右内边距。</summary>
+    public const double ToolsTableCellPaddingX = 8;
+
+    /// <summary>工具页表格的单元格上下内边距。</summary>
+    public const double ToolsTableCellPaddingY = 6;
+
+    /// <summary>工具页表格值列最多显示行数(旧壳 MaxLines=3)。</summary>
+    public const int ToolsValueMaxLines = 3;
+
+    /// <summary>DINO 诊断瓦片网格的列间距与行间距。</summary>
+    public const double ToolsTileSpacing = 8;
+
+    /// <summary>照片统计页文件夹列表高度。</summary>
+    public const double ToolsFolderListHeight = 180;
+
+    /// <summary>照片统计页通配符输入框高度(Win11 控件高度)。</summary>
+    public const double ToolsPatternBoxHeight = 32;
+
+    /// <summary>工具窗口标题栏图标(Segoe Fluent Icons 扳手)。</summary>
+    public const string ToolsWindowGlyph = "\uE90F";
 }

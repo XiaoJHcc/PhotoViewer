@@ -34,9 +34,13 @@ internal static class WindowsNativeApplication
         var smoke = args.Contains("--pv-native-smoke");
         var settingsCheck = args.Contains("--pv-native-settings");
         var settingsHold = args.Contains("--pv-native-settings-hold");
-        NativeStartupLog.BeginSession(args, smoke || settingsCheck || settingsHold
-            ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "native-startup.log")
-            : null);
+        var toolsCheck = args.Contains("--pv-native-tools");
+        var toolsHold = args.Contains("--pv-native-tools-hold");
+        NativeStartupLog.BeginSession(
+            args,
+            smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
+                ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "native-startup.log")
+                : null);
         NativeStartupLog.InstallHooks();
 
         WinRT.ComWrappersSupport.InitializeComWrappers();

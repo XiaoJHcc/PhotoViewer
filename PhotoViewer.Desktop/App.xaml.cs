@@ -23,6 +23,7 @@ public partial class App : Application
     private WindowsMainWindow? _window;
     private MainViewModel? _main;
     private WindowsNativeSettingsPresenter? _settingsPresenter;
+    private WindowsNativeToolsPresenter? _toolsPresenter;
 
     /// <summary>
     /// 初始化应用对象并载入应用级资源。
@@ -49,15 +50,19 @@ public partial class App : Application
             var smoke = LaunchArgs.Contains("--pv-native-smoke");
             var settingsCheck = LaunchArgs.Contains("--pv-native-settings");
             var settingsHold = LaunchArgs.Contains("--pv-native-settings-hold");
+            var toolsCheck = LaunchArgs.Contains("--pv-native-tools");
+            var toolsHold = LaunchArgs.Contains("--pv-native-tools-hold");
             DebugSettings.XamlResourceReferenceFailed += (_, e) =>
                 NativeStartupLog.Write("xaml resource failed: " + e.Message);
             DebugSettings.BindingFailed += (_, e) =>
                 NativeStartupLog.Write("xaml binding failed: " + e.Message);
-            WindowsNativeApplication.InitializeFacades(smoke || settingsCheck || settingsHold);
+            WindowsNativeApplication.InitializeFacades(
+                smoke || settingsCheck || settingsHold || toolsCheck || toolsHold);
 
             _main = new MainViewModel(nativePresentation: true);
             _settingsPresenter = new WindowsNativeSettingsPresenter(() => WindowsNativeApplication.WindowHandle);
-            NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl(_settingsPresenter));
+            _toolsPresenter = new WindowsNativeToolsPresenter(() => WindowsNativeApplication.WindowHandle);
+            NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl(_settingsPresenter, _toolsPresenter));
             _window = new WindowsMainWindow(_main);
             _window.Closed += OnWindowClosed;
             _window.Activate();
@@ -82,6 +87,19 @@ public partial class App : Application
             if (settingsHold)
             {
                 _settingsPresenter!.TryPresent(_main.Settings);
+                return;
+            }
+
+            if (toolsCheck)
+            {
+                await WindowsToolsAcceptance.RunAsync(_main, _window, _toolsPresenter!);
+                _window.Close();
+                return;
+            }
+
+            if (toolsHold)
+            {
+                await WindowsToolsAcceptance.PrepareHoldAsync(_main, _window, _toolsPresenter!);
                 return;
             }
 
@@ -156,32 +174,40 @@ public partial class App : Application
         NativeStartupLog.Write($"外部打开未解析出可用项({request.Source})");
     }
 
-    /// <summary>关闭窗口:先关设置窗口回写工作副本,再释放 GPU 资源与订阅。</summary>
+    /// <summary>关闭窗口:先关设置/工具窗口(设置窗口回写工作副本),再释放 GPU 资源与订阅。</summary>
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
         _settingsPresenter?.CloseIfOpen();
+        _toolsPresenter?.CloseIfOpen();
         _window?.Detach();
         NativeStartupLog.Write("window closed");
     }
 
     /// <summary>
-    /// 原生壳的窗口门面:设置窗口转交 presenter;工具页属 P3,本阶段调用即为漂移,直接报错而不是静默无响应。
+    /// 原生壳的窗口门面:设置与工具窗口分别转交各自的 presenter,不另建展示路径。
     /// </summary>
     private sealed class NativeWindowPresenterImpl : INativeWindowPresenter
     {
         private readonly WindowsNativeSettingsPresenter _settings;
+        private readonly WindowsNativeToolsPresenter _tools;
 
         /// <summary>
         /// 创建窗口门面。
         /// </summary>
         /// <param name="settings">设置窗口展示器</param>
-        public NativeWindowPresenterImpl(WindowsNativeSettingsPresenter settings) => _settings = settings;
+        /// <param name="tools">工具窗口展示器</param>
+        public NativeWindowPresenterImpl(
+            WindowsNativeSettingsPresenter settings,
+            WindowsNativeToolsPresenter tools)
+        {
+            _settings = settings;
+            _tools = tools;
+        }
 
         /// <inheritdoc/>
         public void ShowSettingsWindow(SettingsViewModel settings) => _settings.TryPresent(settings);
 
         /// <inheritdoc/>
-        public void ShowOrActivateToolsWindow(ToolsViewModel tools)
-            => throw new InvalidOperationException("工具页属 P3,原生壳不显示入口。");
+        public void ShowOrActivateToolsWindow(ToolsViewModel tools) => _tools.TryPresent(tools);
     }
 }

@@ -1,13 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using Microsoft.UI;
-using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.ViewModels.Settings;
-using Windows.Graphics;
 using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
@@ -129,15 +125,7 @@ internal sealed class WindowsSettingsWindow
         _window.Closed += OnClosed;
         _window.Activated += OnActivated;
         _root.Loaded += OnLoaded;
-
-        _window.AppWindow.IsShownInSwitchers = false;
-        if (_window.AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.IsResizable = true;
-            presenter.IsMaximizable = false;
-        }
-
-        ConfigureCaption();
+        WindowsWindowChrome.Configure(_window);
     }
 
     /// <summary>窗口关闭事件(由 presenter 触发工作副本回写)。</summary>
@@ -177,28 +165,6 @@ internal sealed class WindowsSettingsWindow
     /// <summary>关闭窗口。</summary>
     public void Close() => _window.Close();
 
-    /// <summary>深色标题栏:扩展内容区后让系统 caption 按钮与 Mica 融合。</summary>
-    private void ConfigureCaption()
-    {
-        if (!AppWindowTitleBar.IsCustomizationSupported())
-        {
-            return;
-        }
-
-        var titleBar = _window.AppWindow.TitleBar;
-        var transparent = Color.FromArgb(0x00, 0x00, 0x00, 0x00);
-        titleBar.BackgroundColor = transparent;
-        titleBar.InactiveBackgroundColor = transparent;
-        titleBar.ButtonBackgroundColor = transparent;
-        titleBar.ButtonInactiveBackgroundColor = transparent;
-        titleBar.ButtonForegroundColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonHoverForegroundColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonPressedForegroundColor = Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
-    }
-
     /// <summary>按窗口 DPI 设定物理尺寸、最小尺寸与居中位置(激活前调用)。</summary>
     private void ApplyWindowMetrics()
     {
@@ -208,29 +174,13 @@ internal sealed class WindowsSettingsWindow
         }
 
         _sized = true;
-        var ownerDpi = _ownerHandle != IntPtr.Zero ? GetDpiForWindow(_ownerHandle) : 0u;
-        var systemDpi = GetDpiForSystem();
-        var dpi = ownerDpi > 0 ? ownerDpi : systemDpi;
-        var scale = dpi > 0 ? dpi / 96.0 : 1.0;
-        var width = (int)Math.Round(WindowsLayout.SettingsWindowWidth * scale);
-        var height = (int)Math.Round(WindowsLayout.SettingsWindowHeight * scale);
-        _window.AppWindow.Resize(new SizeInt32(width, height));
-        if (_window.AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.PreferredMinimumWidth =
-                (int)Math.Round(WindowsLayout.SettingsWindowMinWidth * scale);
-            presenter.PreferredMinimumHeight =
-                (int)Math.Round(WindowsLayout.SettingsWindowMinHeight * scale);
-        }
-
-        var area = _ownerHandle != IntPtr.Zero
-            ? DisplayArea.GetFromWindowId(
-                Win32Interop.GetWindowIdFromWindow(_ownerHandle), DisplayAreaFallback.Nearest)
-            : DisplayArea.GetFromWindowId(_window.AppWindow.Id, DisplayAreaFallback.Primary);
-        var work = area.WorkArea;
-        _window.AppWindow.Move(new PointInt32(
-            work.X + Math.Max(0, (work.Width - width) / 2),
-            work.Y + Math.Max(0, (work.Height - height) / 2)));
+        WindowsWindowChrome.SizeBeforeShow(
+            _window,
+            _ownerHandle,
+            WindowsLayout.SettingsWindowWidth,
+            WindowsLayout.SettingsWindowHeight,
+            WindowsLayout.SettingsWindowMinWidth,
+            WindowsLayout.SettingsWindowMinHeight);
     }
 
     /// <summary>首次布局后挂录制捕获并把焦点给根元素。</summary>
@@ -289,15 +239,4 @@ internal sealed class WindowsSettingsWindow
             _pages.Pages[page].Visibility = page == index ? Visibility.Visible : Visibility.Collapsed;
         }
     }
-
-    /// <summary>读取系统 DPI(无宿主窗口时的兜底)。</summary>
-    /// <returns>DPI</returns>
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForSystem();
-
-    /// <summary>读取窗口 DPI。</summary>
-    /// <param name="hwnd">窗口句柄</param>
-    /// <returns>DPI</returns>
-    [DllImport("user32.dll")]
-    private static extern uint GetDpiForWindow(IntPtr hwnd);
 }

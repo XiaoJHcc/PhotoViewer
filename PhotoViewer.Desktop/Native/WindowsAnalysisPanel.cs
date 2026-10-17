@@ -1,21 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Runtime.InteropServices;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
-using Microsoft.UI.Xaml.Shapes;
 using PhotoViewer.Core.AI;
-using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
-using SkiaSharp;
 using Windows.Foundation;
-using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
 
@@ -38,19 +33,18 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
 
     private readonly AnalysisPreviewTile _focusTile;
     private readonly AnalysisPreviewTile _centerTile;
-    private readonly AnalysisDiagnosticTile _histogramTile;
-    private readonly AnalysisDiagnosticTile _pcaTile;
-    private readonly AnalysisDiagnosticTile _cosineTile;
-    private readonly AnalysisDiagnosticTile _sharpnessTile;
-    private readonly AnalysisDiagnosticTile _shakeTile;
+    private readonly WindowsDiagnosticTile _histogramTile;
+    private readonly WindowsDiagnosticTile _pcaTile;
+    private readonly WindowsDiagnosticTile _cosineTile;
+    private readonly WindowsDiagnosticTile _sharpnessTile;
+    private readonly WindowsDiagnosticTile _shakeTile;
+    private readonly WindowsShakeFieldView _shakeOverlay;
 
     private DecodedImage? _lastHistogramSource;
     private DecodedImage? _lastPcaSource;
     private DecodedImage? _lastCosineSource;
     private DecodedImage? _lastSharpnessSource;
-    private ShakeField? _lastShakeField;
     private double _lastDiagnosticAspect = double.NaN;
-    private double _lastShakeAspect = double.NaN;
 
     /// <summary>
     /// 创建分析栏。宿主状态(可见性/当前图/展示帧/即时计算)由本类直接上报给共享 presenter。
@@ -68,11 +62,13 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
 
         _focusTile = new AnalysisPreviewTile("对焦点", focusImagePoint, Highlight);
         _centerTile = new AnalysisPreviewTile("中心", focusImagePoint, Highlight);
-        _histogramTile = new AnalysisDiagnosticTile("直方图", null, null);
-        _pcaTile = new AnalysisDiagnosticTile("DINO PCA", OnTileClicked, ClearCrosshair);
-        _cosineTile = new AnalysisDiagnosticTile("Cosine 16,16", OnTileClicked, ClearCrosshair);
-        _sharpnessTile = new AnalysisDiagnosticTile("锐度", OnTileClicked, ClearCrosshair);
-        _shakeTile = new AnalysisDiagnosticTile("抖动拖影", OnTileClicked, ClearCrosshair);
+        _histogramTile = new WindowsDiagnosticTile();
+        _pcaTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
+        _cosineTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
+        _sharpnessTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
+        _shakeTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
+        _shakeOverlay = new WindowsShakeFieldView();
+        _shakeTile.SetOverlay(_shakeOverlay);
 
         _tiles = new WindowsAnalysisTilePanel
         {
@@ -133,8 +129,8 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <summary>验收专用:直方图瓦片是否已出图。</summary>
     internal bool HasHistogram => _histogramTile.HasBitmap;
 
-    /// <summary>验收专用:四张诊断瓦片是否都已出图(即时计算完成)。</summary>
-    internal bool HasDiagnostics => _pcaTile.HasBitmap && _cosineTile.HasBitmap && _sharpnessTile.HasBitmap && _shakeTile.HasBitmap;
+    /// <summary>验收专用:四张诊断瓦片是否都已有内容(即时计算完成)。</summary>
+    internal bool HasDiagnostics => _pcaTile.HasBitmap && _cosineTile.HasBitmap && _sharpnessTile.HasBitmap && _shakeOverlay.HasField;
 
     /// <summary>验收专用:诊断瓦片是否仍处于占位状态。</summary>
     internal bool DiagnosticsPlaceholderVisible => _pcaTile.PlaceholderVisible || _sharpnessTile.PlaceholderVisible;
@@ -271,6 +267,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
 
         var aspect = _presenter.AspectRatio;
+        _histogramTile.SetAspect(1);
         _histogramTile.SetLabel(_presenter.HistogramTile.ShortLabel);
         if (!ReferenceEquals(_presenter.HistogramTile.Source, _lastHistogramSource))
         {
@@ -287,21 +284,11 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         SyncDiagnostic(_pcaTile, _presenter.PcaTile, ref _lastPcaSource, aspect);
         SyncDiagnostic(_cosineTile, _presenter.CosineTile, ref _lastCosineSource, aspect);
         SyncDiagnostic(_sharpnessTile, _presenter.SharpnessTile, ref _lastSharpnessSource, aspect);
-        _sharpnessTile.SetLabel(_presenter.SharpnessTile.ShortLabel);
 
         _shakeTile.SetAspect(aspect);
         _shakeTile.SetLabel(_presenter.ShakeTile.ShortLabel);
-        if (!ReferenceEquals(_presenter.ShakeTile.ShakeField, _lastShakeField) || aspect != _lastShakeAspect)
-        {
-            _lastShakeField = _presenter.ShakeTile.ShakeField;
-            _lastShakeAspect = aspect;
-            _shakeTile.SetBitmap(_lastShakeField == null ? null : BuildShakeBitmap(_lastShakeField, aspect),
-                _presenter.ShakeTile.Placeholder);
-        }
-        else
-        {
-            _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
-        }
+        _shakeTile.SetPlaceholder(_presenter.ShakeTile.Placeholder);
+        _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
 
         SyncCrosshair();
         // presenter 的 ApplyEntry 会同步改 aspect/位图引用;细节中心/对焦点瓦片增删时才重裁,
@@ -342,7 +329,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     }
 
     /// <summary>同步一张诊断瓦片:aspect/标签变化时重建,位图引用未变时只更新占位文字。</summary>
-    private void SyncDiagnostic(AnalysisDiagnosticTile view, AnalysisTile tile, ref DecodedImage? lastSource, double aspect)
+    private void SyncDiagnostic(WindowsDiagnosticTile view, AnalysisTile tile, ref DecodedImage? lastSource, double aspect)
     {
         if (aspect != _lastDiagnosticAspect)
         {
@@ -357,7 +344,9 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         if (!ReferenceEquals(tile.Source, lastSource))
         {
             lastSource = tile.Source;
-            view.SetBitmap(tile.Source == null ? null : ToSourceUpscaled(tile.Source, aspect), tile.Placeholder);
+            view.SetBitmap(
+                tile.Source == null ? null : WindowsDiagnosticBitmap.ToUpscaled(tile.Source, aspect),
+                tile.Placeholder);
         }
         else
         {
@@ -443,96 +432,6 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
 
     /// <summary>细节预览联动:悬停/离开时向主图推送绿框(显示朝向 uv)。</summary>
     private void Highlight(Rect? uv) => _setHighlight(_main.IsAnalysisViewVisible ? uv : null);
-
-    /// <summary>把 8 位派生位图放大到最近邻可读尺寸后交 XAML(诊断网格只有 32×32)。</summary>
-    /// <param name="image">派生位图(方形网格)。</param>
-    /// <param name="aspect">主图纵横比(宽/高);诊断网格按它铺开,瓦片里才与原片比例一致。</param>
-    /// <returns>XAML 位图;源为空时为 null。</returns>
-    private static unsafe WriteableBitmap? ToSourceUpscaled(DecodedImage? image, double aspect)
-    {
-        if (image == null) return null;
-        if (!image.TryAcquire()) return null;
-        try
-        {
-            ResolveDiagnosticSize(aspect, WindowsLayout.AnalysisDiagnosticLongEdge, out int width, out int height);
-            using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb()));
-            var info = new SKImageInfo(image.Width, image.Height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb());
-            fixed (byte* pixels = image.Pixels)
-            {
-                using var source = SKImage.FromPixels(info, (IntPtr)pixels, image.Stride)
-                    ?? throw new InvalidOperationException("诊断位图无法包装为 Skia 图像");
-                using var canvas = new SKCanvas(bitmap);
-                canvas.DrawImage(source, SKRect.Create(0, 0, image.Width, image.Height), SKRect.Create(0, 0, width, height),
-                    new SKSamplingOptions(SKFilterMode.Nearest), new SKPaint());
-            }
-
-            return WindowsImageAdapter.ToSource(width, height, bitmap.GetPixelSpan());
-        }
-        finally
-        {
-            image.Release();
-        }
-    }
-
-    /// <summary>按主图纵横比求诊断位图尺寸:长边固定,另一向按比例收,方形网格铺回原片比例。</summary>
-    /// <param name="aspect">主图纵横比(宽/高)。</param>
-    /// <param name="longEdge">长边像素。</param>
-    /// <param name="width">输出宽。</param>
-    /// <param name="height">输出高。</param>
-    private static void ResolveDiagnosticSize(double aspect, int longEdge, out int width, out int height)
-    {
-        double ratio = aspect > 0 ? aspect : 1;
-        if (ratio >= 1)
-        {
-            width = longEdge;
-            height = Math.Max(1, (int)Math.Round(longEdge / ratio));
-        }
-        else
-        {
-            width = Math.Max(1, (int)Math.Round(longEdge * ratio));
-            height = longEdge;
-        }
-    }
-
-    /// <summary>把抖动矢量场光栅化成箭头位图(颜色/方向/边宽口径同旧壳自绘)。</summary>
-    /// <param name="field">抖动矢量场。</param>
-    /// <param name="aspect">主图纵横比(宽/高);网格按它铺开,箭头不被压成正方。</param>
-    /// <returns>XAML 位图。</returns>
-    private static WriteableBitmap? BuildShakeBitmap(ShakeField field, double aspect)
-    {
-        int grid = PatchHeatmap.Grid;
-        ResolveDiagnosticSize(aspect, grid * WindowsLayout.AnalysisShakeCellPixels, out int width, out int height);
-        using var bitmap = new SKBitmap(new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb()));
-        float cellX = width / (float)grid;
-        float cellY = height / (float)grid;
-        using (var canvas = new SKCanvas(bitmap))
-        {
-            canvas.Clear(new SKColor(0x22, 0x22, 0x22));
-            using var paint = new SKPaint { IsAntialias = true, StrokeCap = SKStrokeCap.Round };
-            for (var index = 0; index < grid * grid && index < field.Direction.Length; index++)
-            {
-                if (index >= field.Mask.Length || !field.Mask[index]) continue;
-                float direction = field.Direction[index];
-                if (float.IsNaN(direction)) continue;
-                float contrast = index < field.Contrast.Length ? CvHeatmap.ContrastFactor(field.Contrast[index]) : 1f;
-                float consistency = index < field.LocalConsistency.Length && !float.IsNaN(field.LocalConsistency[index])
-                    ? field.LocalConsistency[index] : 0f;
-                var color = CvHeatmap.ColorForShake(field.Width[index] / Math.Max(1f, field.Diagonal), consistency, contrast);
-                paint.Color = new SKColor(color.R, color.G, color.B);
-                paint.StrokeWidth = Math.Max(1.5f, Math.Min(cellX, cellY) * 0.35f);
-                int gx = index % grid, gy = index / grid;
-                float cx = (gx + 0.5f) * cellX, cy = (gy + 0.5f) * cellY;
-                float dx = MathF.Cos(direction) * cellX * 0.35f, dy = MathF.Sin(direction) * cellY * 0.35f;
-                canvas.DrawLine(cx - dx, cy - dy, cx + dx, cy + dy, paint);
-            }
-        }
-
-        var stride = width * 4;
-        var bytes = new byte[stride * height];
-        Marshal.Copy(bitmap.GetPixels(), bytes, 0, bytes.Length);
-        using var decoded = new DecodedImage(bytes, width, height, stride, PixelEncoding.Bgra32, ImageColorSpace.Srgb);
-        return WindowsImageAdapter.ToSource(decoded);
-    }
 
     /// <summary>
     /// 细节预览瓦片:源像素 1:1 方形裁剪、左上药丸标签、悬停联动主图绿框、双击把主图对准预览中心。
@@ -709,222 +608,4 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
     }
 
-    /// <summary>
-    /// 诊断瓦片:方形外框 + 按纵横比 letterbox 的内容 + 占位文字 + 准星 + 药丸标签。
-    /// </summary>
-    private sealed class AnalysisDiagnosticTile : Grid
-    {
-        private readonly Grid _contentFrame;
-        private readonly Image _image;
-        private readonly TextBlock _placeholder;
-        private readonly Canvas _crosshair;
-        private readonly Line _crosshairHorizontal;
-        private readonly Line _crosshairVertical;
-        private readonly TextBlock _label;
-        private readonly Action<double, double>? _clicked;
-        private readonly Action? _backgroundClicked;
-        private double _aspect = 1;
-        private double? _crosshairU;
-        private double? _crosshairV;
-
-        /// <summary>
-        /// 创建诊断瓦片。
-        /// </summary>
-        /// <param name="label">药丸标签文字。</param>
-        /// <param name="clicked">内容区点击回调(uv);null 表示不响应。</param>
-        /// <param name="backgroundClicked">瓦片空白处点击回调。</param>
-        public AnalysisDiagnosticTile(string label, Action<double, double>? clicked, Action? backgroundClicked)
-        {
-            _clicked = clicked;
-            _backgroundClicked = backgroundClicked;
-
-            _image = new Image { Stretch = Stretch.Uniform };
-            var imageHost = new Grid { IsHitTestVisible = false };
-            imageHost.Children.Add(_image);
-            _placeholder = new TextBlock
-            {
-                FontSize = WindowsLayout.AnalysisPlaceholderFontSize,
-                Foreground = new SolidColorBrush(WindowsLayout.AnalysisPlaceholderForeground),
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center,
-                TextAlignment = TextAlignment.Center,
-                Visibility = Visibility.Collapsed,
-            };
-            imageHost.Children.Add(_placeholder);
-
-            _crosshairHorizontal = new Line
-            {
-                Stroke = new SolidColorBrush(WindowsLayout.AnalysisCrosshairStroke),
-                StrokeThickness = 1,
-                Visibility = Visibility.Collapsed,
-            };
-            _crosshairVertical = new Line
-            {
-                Stroke = new SolidColorBrush(WindowsLayout.AnalysisCrosshairStroke),
-                StrokeThickness = 1,
-                Visibility = Visibility.Collapsed,
-            };
-            _crosshair = new Canvas { IsHitTestVisible = false };
-            _crosshair.Children.Add(_crosshairHorizontal);
-            _crosshair.Children.Add(_crosshairVertical);
-
-            _contentFrame = new Grid();
-            _contentFrame.Children.Add(imageHost);
-            _contentFrame.Children.Add(_crosshair);
-
-            _label = new TextBlock
-            {
-                Text = label,
-                FontSize = WindowsLayout.AnalysisLabelFontSize,
-                Foreground = new SolidColorBrush(WindowsLayout.AnalysisLabelForeground),
-            };
-            var labelHost = new Border
-            {
-                Background = new SolidColorBrush(WindowsLayout.AnalysisLabelBackground),
-                CornerRadius = new CornerRadius(5, 0, 5, 0),
-                Padding = new Thickness(8, 4, 8, 4),
-                HorizontalAlignment = HorizontalAlignment.Left,
-                VerticalAlignment = VerticalAlignment.Top,
-                Child = _label,
-                IsHitTestVisible = false,
-            };
-
-            var outer = new Border
-            {
-                Background = new SolidColorBrush(WindowsLayout.AnalysisTileBackground),
-                BorderBrush = new SolidColorBrush(WindowsLayout.AnalysisTileBorder),
-                BorderThickness = new Thickness(WindowsLayout.AnalysisTileBorderThickness),
-                CornerRadius = new CornerRadius(WindowsLayout.AnalysisTileCornerRadius),
-                Child = _contentFrame,
-            };
-            Children.Add(outer);
-            Children.Add(labelHost);
-
-            // 只重画准星(Shape 坐标不进布局),尺寸与位置仍交给布局系统与新面板。
-            SizeChanged += (_, _) => RenderCrosshair();
-            PointerPressed += OnPressed;
-        }
-
-        /// <summary>当前是否显示位图(供 cosine 早退判断)。</summary>
-        public bool HasBitmap => _image.Source != null;
-
-        /// <summary>占位文字是否可见。</summary>
-        public bool PlaceholderVisible => _placeholder.Visibility == Visibility.Visible;
-
-        /// <summary>药丸标签文本。</summary>
-        public string LabelText => _label.Text;
-
-        /// <summary>设置内容纵横比(宽/高),用于 letterbox(位图自身按 Uniform 留边,这里只影响准星与 uv 换算)。</summary>
-        /// <param name="aspect">宽高比。</param>
-        public void SetAspect(double aspect)
-        {
-            _aspect = aspect > 0 ? aspect : 1;
-            RenderCrosshair();
-        }
-
-        /// <summary>设置位图与占位文字。</summary>
-        /// <param name="bitmap">位图(可为 null)。</param>
-        /// <param name="placeholder">占位文字。</param>
-        public void SetBitmap(WriteableBitmap? bitmap, string? placeholder)
-        {
-            _image.Source = bitmap;
-            SetPlaceholder(placeholder);
-        }
-
-        /// <summary>只更新占位文字(位图引用未变时用,避免重复放大/上传)。</summary>
-        /// <param name="placeholder">占位文字。</param>
-        public void SetPlaceholder(string? placeholder)
-        {
-            _placeholder.Text = placeholder ?? string.Empty;
-            _placeholder.Visibility = _image.Source == null && !string.IsNullOrEmpty(placeholder)
-                ? Visibility.Visible
-                : Visibility.Collapsed;
-        }
-
-        /// <summary>设置药丸标签文字。</summary>
-        /// <param name="label">标签。</param>
-        public void SetLabel(string label) => _label.Text = label;
-
-        /// <summary>设置准星位置(uv;null 清空)。</summary>
-        /// <param name="u">横向 0-1。</param>
-        /// <param name="v">纵向 0-1。</param>
-        public void SetCrosshair(double? u, double? v)
-        {
-            _crosshairU = u;
-            _crosshairV = v;
-            RenderCrosshair();
-        }
-
-        /// <summary>释放位图引用。</summary>
-        public void Dispose() => _image.Source = null;
-
-        /// <summary>内容(位图)在内容区坐标系里的实际矩形:按纵横比 letterbox 居中。</summary>
-        /// <returns>位图矩形;尺寸未就绪时为空矩形。</returns>
-        private Rect ContentRect()
-        {
-            double innerWidth = _contentFrame.ActualWidth;
-            double innerHeight = _contentFrame.ActualHeight;
-            if (innerWidth <= 0 || innerHeight <= 0)
-            {
-                return default;
-            }
-
-            double ratio = _aspect > 0 ? _aspect : 1;
-            double width = innerWidth;
-            double height = innerWidth / ratio;
-            if (height > innerHeight)
-            {
-                height = innerHeight;
-                width = innerHeight * ratio;
-            }
-
-            return new Rect((innerWidth - width) / 2, (innerHeight - height) / 2, width, height);
-        }
-
-        /// <summary>按 uv 绘制准星臂(坐标换算到 letterbox 后的位图区)。</summary>
-        private void RenderCrosshair()
-        {
-            var rect = ContentRect();
-            if (_crosshairU is not { } u || _crosshairV is not { } v || rect.Width <= 0 || rect.Height <= 0)
-            {
-                _crosshairHorizontal.Visibility = Visibility.Collapsed;
-                _crosshairVertical.Visibility = Visibility.Collapsed;
-                return;
-            }
-
-            double cx = Math.Round(rect.X + (Math.Clamp(u, 0, 1) * rect.Width));
-            double cy = Math.Round(rect.Y + (Math.Clamp(v, 0, 1) * rect.Height));
-            double arm = WindowsLayout.AnalysisCrosshairArm;
-            double left = rect.X, right = rect.X + rect.Width, top = rect.Y, bottom = rect.Y + rect.Height;
-            _crosshairHorizontal.X1 = Math.Max(left, cx - arm);
-            _crosshairHorizontal.X2 = Math.Min(right, cx + arm);
-            _crosshairHorizontal.Y1 = cy;
-            _crosshairHorizontal.Y2 = cy;
-            _crosshairVertical.X1 = cx;
-            _crosshairVertical.X2 = cx;
-            _crosshairVertical.Y1 = Math.Max(top, cy - arm);
-            _crosshairVertical.Y2 = Math.Min(bottom, cy + arm);
-            _crosshairHorizontal.Visibility = Visibility.Visible;
-            _crosshairVertical.Visibility = Visibility.Visible;
-        }
-
-        /// <summary>瓦片一律吞掉点击:位图区内换算 uv 回调,留边与空白处交给清空回调。</summary>
-        private void OnPressed(object sender, PointerRoutedEventArgs e)
-        {
-            e.Handled = true;
-            var rect = ContentRect();
-            var point = e.GetCurrentPoint(_contentFrame).Position;
-            bool inside = rect.Width > 0 && rect.Height > 0
-                && point.X >= rect.X && point.X <= rect.X + rect.Width
-                && point.Y >= rect.Y && point.Y <= rect.Y + rect.Height;
-            if (inside && _clicked != null)
-            {
-                _clicked(Math.Clamp((point.X - rect.X) / rect.Width, 0, 1), Math.Clamp((point.Y - rect.Y) / rect.Height, 0, 1));
-            }
-            else
-            {
-                _backgroundClicked?.Invoke();
-            }
-        }
-    }
 }

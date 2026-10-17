@@ -81,7 +81,7 @@ internal sealed partial class WindowsMainWindow : Window
         _photo = new WindowsPhotoView();
         _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile);
         _filterBar = new WindowsFilterBar(main.FileVM.FilterBar);
-        _controlBar = new WindowsControlBar(main, Execute);
+        _controlBar = new WindowsControlBar(main, Execute, main.OpenToolsWindow);
 
         _hintTitle = new TextBlock
         {
@@ -338,7 +338,7 @@ internal sealed partial class WindowsMainWindow : Window
         return pane;
     }
 
-    /// <summary>构建右键菜单(设置窗口随 W-M5 开放)。</summary>
+    /// <summary>构建右键菜单(工具/设置窗口入口)。</summary>
     private MenuFlyout BuildContextMenu()
     {
         var menu = new MenuFlyout();
@@ -374,6 +374,9 @@ internal sealed partial class WindowsMainWindow : Window
         menu.Items.Add(_analysisMenuToggle);
         menu.Items.Add(_controlMenuToggle);
         menu.Items.Add(new MenuFlyoutSeparator());
+        var tools = new MenuFlyoutItem { Text = "工具…" };
+        tools.Click += (_, _) => _main.OpenToolsWindow();
+        menu.Items.Add(tools);
         var settings = new MenuFlyoutItem { Text = "设置…" };
         settings.Click += (_, _) => _main.OpenSettingWindow();
         menu.Items.Add(settings);

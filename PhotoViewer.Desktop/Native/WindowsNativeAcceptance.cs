@@ -34,7 +34,6 @@ internal sealed partial class WindowsMainWindow
     internal static void ConfigureSmokeStorage()
     {
         Directory.CreateDirectory(SmokeOutputDirectory);
-        File.WriteAllText(Path.Combine(SmokeOutputDirectory, "checks.json"), "[\"RUNNING\"]");
         var settingsPath = Path.Combine(SmokeOutputDirectory, "settings-smoke.json");
         File.WriteAllText(settingsPath, "{\"Version\":0}");
         SettingsService.ConfigureStorage(new FileSettingsStorage(settingsPath));
@@ -55,6 +54,8 @@ internal sealed partial class WindowsMainWindow
     /// <returns>所有验证及窗口关闭完成后结束的任务；失败退出码为 1。</returns>
     internal async Task RunSmokeAsync()
     {
+        Directory.CreateDirectory(SmokeOutputDirectory);
+        File.WriteAllText(Path.Combine(SmokeOutputDirectory, "checks.json"), "[\"RUNNING\"]");
         var checks = new List<string>();
         try
         {
@@ -361,7 +362,7 @@ internal sealed partial class WindowsMainWindow
     /// <summary>写出一张四象限标记照片并拼上最小 EXIF APP1 段(便于肉眼核对朝向)。</summary>
     /// <param name="path">目标路径</param>
     /// <param name="orientation">EXIF 方向(1-8)</param>
-    private static void CreateExifFixture(string path, int orientation)
+    internal static void CreateExifFixture(string path, int orientation)
     {
         using var bitmap = new SKBitmap(400, 300);
         using (var canvas = new SKCanvas(bitmap))

@@ -84,6 +84,19 @@ internal static class WindowsIcons
     };
 
     /// <summary>
+    /// 工具窗口分类 → 导航图标字形。分类键由工具窗口固定使用(Exif/Stats/Dino)。
+    /// </summary>
+    /// <param name="category">分类键</param>
+    /// <returns>Segoe Fluent Icons 字形</returns>
+    public static string ForToolCategory(string category) => category switch
+    {
+        "Exif" => "\uE946",
+        "Stats" => "\uE9D2",
+        "Dino" => "\uE99A",
+        _ => WindowsLayout.ToolsWindowGlyph,
+    };
+
+    /// <summary>
     /// 判断命令是否为"显示星数"的评分命令
     /// (TOOLBAR-01:控制栏里显示的评分快捷命令要保留星数)。
     /// </summary>

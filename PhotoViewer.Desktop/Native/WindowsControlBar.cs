@@ -19,6 +19,7 @@ internal sealed class WindowsControlBar : Grid
 {
     private readonly MainViewModel _main;
     private readonly Action<string> _execute;
+    private readonly Action? _openTools;
     private readonly Border _frame;
     private readonly WindowsWrapPanel _groups;
     private readonly Border _exifGroup;
@@ -39,10 +40,12 @@ internal sealed class WindowsControlBar : Grid
     /// </summary>
     /// <param name="main">主视图模型</param>
     /// <param name="execute">命令执行入口(原生壳的命令分发)</param>
-    public WindowsControlBar(MainViewModel main, Action<string> execute)
+    /// <param name="openTools">EXIF 信息块点击时打开工具窗口;null 表示不接线</param>
+    public WindowsControlBar(MainViewModel main, Action<string> execute, Action? openTools = null)
     {
         _main = main;
         _execute = execute;
+        _openTools = openTools;
 
         _exifStack = new StackPanel
         {
@@ -56,6 +59,11 @@ internal sealed class WindowsControlBar : Grid
         {
             Child = _exifStack,
         };
+        if (_openTools != null)
+        {
+            _exifGroup.Tapped += (_, _) => _openTools();
+            ToolTipService.SetToolTip(_exifGroup, "工具");
+        }
 
         _ratingStack = new StackPanel
         {
