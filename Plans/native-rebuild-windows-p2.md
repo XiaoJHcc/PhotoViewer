@@ -1,22 +1,22 @@
 # Windows 原生主窗口方案(P2-W)
 
 > 2026-10-16 立项。隶属总纲 [native-rebuild-master-plan-1.md](native-rebuild-master-plan-1.md) §6 **Phase 4**,做法平移 macOS P2(见 [native-rebuild-phase-2-ui.md](native-rebuild-phase-2-ui.md) 与 [PhotoViewer.Mac/AGENTS.md](../PhotoViewer.Mac/AGENTS.md))。
-> 作者要求:**用 Windows 原生方式把主窗口内容重构成原生,尽可能与旧 Avalonia 设计对标**。设置页、分析栏、聚类、工具页按 macOS 同样口径延期。
+> 作者要求:**用 Windows 原生方式把主窗口内容重构成原生,尽可能与旧 Avalonia 设计对标**。设置页、分析栏、聚类、工具页按 macOS 同样口径延期(后续均已落地:设置 §17、分析栏/聚类/增强 §15–§16、工具窗口 §18)。
 > 跨平台对账真源:[Design/ui-contract.md](../Design/ui-contract.md)(Windows 列在 W-M6 补齐)。
 
 ## 0. W-M0 可行性闸门:结论(2026-10-16 已过)
 
-在 `PhotoViewer.Desktop` 上原地验证三项,全部通过:
+在 `PhotoViewer.Windows` 上原地验证三项,全部通过:
 
 | 闸门 | 结果 | 证据 |
 |---|---|---|
-| ① 同一工程加入 WinUI 3 后,旧 Avalonia 壳仍能构建与启动 | ✅ | `dotnet build PhotoViewer.Desktop` 0 错误 / 4 条既有 NU1903;`--legacy-ui` 启动窗口标题 `PhotoViewer 图片查看器` |
+| ① 同一工程加入 WinUI 3 后,旧 Avalonia 壳仍能构建与启动 | ✅ | `dotnet build PhotoViewer.Windows` 0 错误 / 4 条既有 NU1903;`--legacy-ui` 启动窗口标题 `PhotoViewer 图片查看器` |
 | ② 自写 `Main` + `Application.Start` 能起原生窗口 | ✅ | 窗口标题 `PhotoViewer`,`PrintWindow` 导出 `bin/Debug/spike-window.png`,深色 Fluent 按钮/下拉/复选框渲染正常 |
 | ③ 自包含单文件发布产物能启动 | ✅ | 单文件 exe **239 MB**(`PublishSingleFile` + 压缩 + 自包含 WinAppSDK),`--native` 启动并渲染同一深色界面(`bin/Debug/publish-native.png`);对照现役 Release **166 MB**(0.7.1) |
 
 ### 0.1 定下来的构建配置(踩过的坑,不要重走)
 
-`PhotoViewer.Desktop.csproj`:
+`PhotoViewer.Windows.csproj`:
 
 ```xml
 <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -49,21 +49,20 @@
 才补上 TFM/RID 段,在工程体里读它得到的是空串(实测 `MsixContent` 落到工程根目录,排除静默失效)。
 用 `ExcludeAssets="all"` 排掉 `Microsoft.WindowsAppSDK.ML`/`.AI` 包**无效**:该 MSIX 是框架单体包,内容与包资产无关。
 
-### 0.2 三条硬事实(非 XAML 工程必须先知道)
+### 0.2 三条硬事实(WinUI 工程,2026-10-17 更正)
 
-1. **`Application.Resources` 在构造期完全不可用**:读(get_Resources)或写(set_Resources)都抛 `COMException 0x8000FFFF`。只能在 `OnLaunched` 之后访问。
-2. **`XamlControlsResources` 不需要,且构造即崩**:非 XAML 工程里 `new XamlControlsResources()` 抛
-   `Cannot find a resource with the given key: AcrylicBackgroundFillColorDefaultBrush`。
-   WinUI 1.8 的控件样式由框架自带 —— 不并入任何字典,`Button`/`ComboBox`/`CheckBox` 已渲染为标准 Fluent 外观(见 spike 截图)。**不要照抄 XAML 模板里的 App.xaml 写法。**
-3. **深色外观按元素设置**:`Application.RequestedTheme` 对已建元素树不生效(实测控件仍为浅色);把根元素 `RequestedTheme = ElementTheme.Dark` 才生效(实测深色控件)。窗口标题栏/系统按钮颜色另需 `AppWindow.TitleBar` 显式设置(隐藏式标题栏在 W-M1 处理)。
+1. **`Application.Resources` 在 XAML 引导前不可用**:在没有 `App.xaml` 时直接读/写会抛 `COMException 0x8000FFFF`;把 `XamlControlsResources` 放进根 `App.xaml` 后,由 `App.InitializeComponent()` 在构造期装载,`OnLaunched` 及之后可正常访问。
+2. **`XamlControlsResources` 是 Fluent 控件模板的必需项**:没有 `App.xaml` 的纯 C# 工程直接 `new XamlControlsResources()` 会抛 `Cannot find a resource with the given key: AcrylicBackgroundFillColorDefaultBrush`,根因是缺少 XAML 元数据提供器(`IXamlMetadataProvider`)。补根 `App.xaml` 后 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar`/`ProgressBar` 全部可用;**不要**照旧结论退回 ListView/Slider/自绘 Border。
+3. **深色外观**:根 `App.xaml` 设 `Application.RequestedTheme="Dark"`(Mica 与主题资源取深色),窗口根元素仍设 `ElementTheme.Dark`。主窗口是自绘标题栏;设置窗口用 `MicaBackdrop` + `ExtendsContentIntoTitleBar` + `TitleBar` + `SetTitleBar`,系统 caption 按钮背景设透明(见 §17)。
 
 ### 0.3 其它 W-M0 观测
 
 - WinUI 原生启动失败是 stowed exception(`0xC000027B`),**无控制台输出**。因此新增 `Native/NativeStartupLog.cs`(写 `%LOCALAPPDATA%\PhotoViewer\native-startup.log` + 未处理异常钩子);没有它无法区分"起不来"与"起来后崩"。这是常驻诊断,不是临时脚手架。
-- 固定 `RuntimeIdentifier` 后 Debug 输出路径变为 `bin/Debug/net10.0-windows10.0.19041.0/win-x64/`;引用旧路径的 `.run/PhotoViewer.Desktop.run.xml`(本就停留在 `net9.0-windows`)与脚本需在 W-M1 同步。
+- 固定 `RuntimeIdentifier` 后 Debug 输出路径变为 `bin/Debug/net10.0-windows10.0.19041.0/win-x64/`;引用旧路径的 `.run/PhotoViewer.Windows.run.xml`(本就停留在 `net9.0-windows`)与脚本需在 W-M1 同步。
 - 未显式设尺寸时 WinUI 窗口按屏幕宽度开(实测 1920×1015);W-M1 必须显式 `AppWindow.Resize`。
 - Git Bash 里 `dotnet publish` 必须用 `-p:Foo=bar`,写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`(PowerShell 脚本不受影响)。
 - **体积**:自包含发布目录(未单文件化)约 **563 MB** —— 含 .NET 运行时、WinAppSDK 解包内容(101 MB)、ONNX/DirectML、Avalonia 全系;单文件压缩后 **239 MB**(脚本另删 `*.pdb`,实测这些 pdb 约 111 MB)。对照现役 0.7.1 Release 单文件 166 MB(+44%)。体积增量来自 WinAppSDK 自包含,后续可按需裁剪未用组件(Widgets/WebView2 投影等);是否接受由作者定夺。
+- **原生壳单文件发布复核(2026-10-17)**:Debug 单文件试发布产物不含 `PhotoViewer.Windows.pri`,启动在 `Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 已通过。Release 仍默认旧 Avalonia 壳,单文件 native 通道未启用;切 Release 前需单独修 PRI/运行时打包(参见 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720))。
 
 ## 1. 范围与非目标
 
@@ -75,7 +74,7 @@
 5. 原生验收 harness(隔离设置/数据库、几何 JSON 对拍、程序化断言)。
 
 **本轮不做**
-- 分析栏 / 相似聚类 / 工具页 / 增强预览(P3):入口隐藏、配置保留(`SCOPE-01`)。
+- 分析栏 / 相似聚类 / 工具页 / 增强预览(P3):入口隐藏、配置保留(`SCOPE-01`)。（后续已落地：分析栏/聚类/增强见 §15–§16，工具窗口见 §18）
 - 色彩正确性(ICC 广色域、ACM 探测、Win10 烘焙回退、`DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709` 标签验证)→ W-M7;本轮只保证**与旧壳行为一致**。
 - Windows RAW 解码(`Sdcb.LibRaw`):既有缺口(Windows 现在完全没有 RAW 解码器),随 W-M7 或单独立项。
 - 原生设置窗口 → W-M5;在此之前原生壳不显示设置入口(`SCOPE-01`)。
@@ -88,13 +87,13 @@
 | UI 框架 | WinUI 3(Windows App SDK 1.8),非打包自包含 |
 | 主图表面 | `SwapChainPanel` + 合成 DXGI 翻转链,`R16G16B16A16_FLOAT`(与 Metal 侧同口径) |
 | UI 构建方式 | **C# 代码构建,不写 `.xaml`**(与 Mac 的程序化 AppKit 一致;规避与 Avalonia 的 XAML 编译目标冲突,几何常量可被 harness 直接断言) |
-| 头工程 | `PhotoViewer.Desktop` 单工程 + 运行期开关(与 `PhotoViewer.Mac` 结构一致) |
+| 头工程 | `PhotoViewer.Windows` 单工程 + 运行期开关(与 `PhotoViewer.Mac` 结构一致) |
 
 **否决项**:WPF(D3D 只能走 D3DImage/HwndHost,拿不到干净的 `DXGI + scRGB 标签` 路径;仅在 W-M0 失败时才考虑);Win32 + Direct2D 全手绘(结构最像 Mac 壳、零打包风险,但下拉框/菜单/滚动条/DPI/无障碍全自建,工作量显著更大);半原生(总纲 §3 已否决)。
 
 ## 3. 现状事实
 
-- 改造前 `PhotoViewer.Desktop/Program.cs` 只有 Avalonia 一条路径;平台实现仅 `Core/LibHeifDecoder.cs` 与 `Core/WindowsXmpWriter.cs`。
+- 改造前 `PhotoViewer.Windows/Program.cs` 只有 Avalonia 一条路径;平台实现仅 `Core/LibHeifDecoder.cs` 与 `Core/WindowsXmpWriter.cs`。
 - 未注入的共享门面(回落默认):`BitmapLoader.InitializePresentationDecoder`(**Windows 无 `IPresentationImageDecoder`**)、`RawLoader.Initialize`、`NativeSettingsPresenter`、`StorageAccessManager`(Windows 用 `Noop` 正确)。
 - `DirectNStandard`、`WicNet` 已在 csproj 与中心版本表里但**代码零引用**(W-M2 主图解码/W-M7 色彩会用到,届时转正)。
 - 共享层可直接复用:`MainViewModel(nativePresentation: true)` 本身无 Avalonia 依赖;`ImageViewModel` 在 native 模式构造即 early-return,不产生 `WriteableBitmap`;`PhotoLoadSession`、`BitmapLoader/DecodeScheduler/MemoryGovernor`、`ThumbnailService`、`FolderViewModel/FileViewModel/FilterBarViewModel/ThumbnailListViewModel`、`SettingsViewModel`(全文件无 Avalonia)、`NativeSettingsSession`、`ExternalOpenService`、`Core/Input/GestureModels.cs`、`Core/Color/ColorEngine.cs`、`PhotoDatabase`、`XmpWriter`。
@@ -132,7 +131,7 @@
 ## 5. 目标文件布局
 
 ```
-PhotoViewer.Desktop/
+PhotoViewer.Windows/
   Program.cs                     # 分流(--native / --legacy-ui)✅ W-M0
   Native/
     WindowsNativeApplication.cs  # WinUI Application、门面注入、生命周期 ✅ W-M0 骨架
@@ -187,18 +186,21 @@ PhotoViewer.Desktop/
 - 文本框/录制控件获焦时暂停全局照片快捷键;`FormatGesture` 输出 Windows 显示文本。
 - **门**:`WindowsInputAcceptance` 覆盖映射、不抛异常、空首屏点击开文件、右键菜单、方向键被消费。
 
-**W-M5 原生设置窗口(SETTINGS-01/02)**
+**W-M5 原生设置窗口(SETTINGS-01/02)** ✅ 2026-10-17(方案 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md);落地记录见 §17)。
 - `WindowsNativeSettingsPresenter : INativeSettingsPresenter` + `NativeSettingsSession` 工作副本 + 关闭回写,不改 JSON 字段名/默认值。
-- 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页 P3 项禁用且保留原值;清库二次确认。
-- **门**:五分类渲染、动作往返、关闭回写重开恢复、隔离设置、窄宽不溢出。
+- 独立 960×720 窗口(Mica + `TitleBar` + `NavigationView` 240 + 五页 `SettingsCard`、不进任务栏);控件与尺寸/行模型见 §17。
+- 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页全部可用(P3 已落地);清库二次确认。
+- **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待作者手验。
 
 **W-M6 验收 harness 与文档同步**
 - CLI(与 Mac 同形):`--pv-native-smoke` + `--pv-native-layout` / `--pv-native-filmstrip` / `--pv-native-input` / `--pv-native-toolbar`,以及 `--legacy-ui --pv-legacy-layout`;隔离设置/数据库落 `release/native-win-acceptance/`,**不写用户照片、不动用户设置**。
 - 几何对拍:3 尺寸(1200×850 / 830×650 / 700×480)× 2 方向,旧壳 JSON ↔ 原生实测 `Exact = 0.01`。
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
-- 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、根 `AGENTS.md` §4 平台矩阵 + 模块索引、新建 `PhotoViewer.Desktop/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
+- 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、根 `AGENTS.md` §4 平台矩阵 + 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
 
 **W-M7(独立立项)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)+ Windows `LibRawDecoder`(`Sdcb.LibRaw`)。
+
+**W-M8 工具窗口(P3 收口)** ✅ 2026-10-17 — 方案、实现与验收见 §18;`--pv-native-tools` 5 项 PASS,主冒烟/设置回归无变化。
 
 ## 7. 实现约定
 
@@ -233,15 +235,15 @@ PhotoViewer.Desktop/
 ## 10. W-M1 首屏进展(2026-10-16)
 
 **已跑通**:原生壳启动序(门面注入 + `MainViewModel(nativePresentation:true)` + 外部打开)与**四分区主窗口**
-(筛选条 / 胶片条 / 主图 / 控制栏),默认左右布局,实机 1200×850 截图见 `PhotoViewer.Desktop/bin/Debug/first-screen.png`。
+(筛选条 / 胶片条 / 主图 / 控制栏),默认左右布局,实机 1200×850 截图见 `PhotoViewer.Windows/bin/Debug/first-screen.png`。
 
 已落地并与旧壳对标的几何:文件栏 116(+1 分隔线)、筛选下拉 90×32 与间距 5、卡片 90×138(缩略图 80、四周 3 占位)、
 EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏底 `#111111` 与 1px `#333333` 分隔线。
 命令分发**复用共享 `ControlViewModel`**(Open/Previous/Next/Exchange/SetRating 与旧壳同一份实现),
 只有视口相关命令(Fit/Zoom*）由壳实现;滚轮与键盘统一走共享手势表,P3 命令既不显示也不消费按键。
 
-**本轮新增的 Windows 侧硬约束**(详见 [PhotoViewer.Desktop/AGENTS.md](../PhotoViewer.Desktop/AGENTS.md)):
-`ProgressBar` 不能进虚拟化卡片(会 `E_FAIL` 整窗崩溃,已二分定位,加载态改静态细条);
+**本轮新增的 Windows 侧硬约束**(详见 [PhotoViewer.Windows/AGENTS.md](../PhotoViewer.Windows/AGENTS.md)):
+`ProgressBar` 的旧 `E_FAIL` 结论已由 W-M5 根因纠正(缺 `App.xaml`,控件现可用);相似聚类进度仍保留自绘两条 `Border` 作视觉定制;
 虚拟化 `ScrollViewer` 必须 `ZoomMode=Disabled`;`Border`/`ScrollViewer` 在 WinUI 3 是 sealed;
 `Windows.UI.Color` 会被本仓 `PhotoViewer.Windows` 命名空间遮蔽。
 
@@ -344,6 +346,9 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 16 | **FILM-06**:星级写回失败在窗口内可见(底部状态提示),不呈现虚假成功 | ✅ 定向 | §14;共享 `MainViewModel.RatingWriteFailed` + 只读素材触发,harness 断言提示可见且星色未变 |
 | 17 | 窗口态闭环:自绘按钮的最大化/还原/全屏/退出全屏与 presenter 状态一致 | ✅ 定向 | §14;harness 断言四态往返;真实跨屏/贴靠布局差异仍属 13.2 #2/#16 |
 | 18 | 八方向 + 带 EXIF 素材:自生成方向 1–8 JPEG(含 f/2.8、1/250、ISO 400、75mm)验证方向链与控制栏取值 | ✅ 定向 | §14;GPU 表面四角回读 + 导航图四角回读逐方向核对、方向 6 的 `DisplayCrop` 象限与增强帧朝向断言;EXIF 块显示真实取值;真实相机素材与旧壳逐项对拍仍待做(见 13.2 #3/#5) |
+| 19 | **原生设置窗口(W-M5)**:Mica + TitleBar + NavigationView + SettingsCard/五分类/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
+| 20 | INPUT-01:设置窗口独立于主窗口,录制态吞键 | ✅ 定向 | 主窗口 `_root.KeyDown` 收不到设置窗口按键;录制态 `e.Handled` + 失活取消 |
+| 21 | **原生工具窗口(P3 收口)**:Mica + TitleBar + NavigationView(EXIF 详情/照片统计/DINO 诊断)+ SettingsCard;7 列 EXIF、DINO 5 瓦片、CSV 导出 | ✅ 定向 | §18;`--pv-native-tools` 5 项 PASS,主冒烟 24 项 + 设置 7 项无回归;真实多格式切换/文件夹与 CSV 选择器/视觉手感待手验 |
 
 ### 13.2 待完成
 
@@ -353,9 +358,8 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 2 | 真实跨屏(不同 scale 显示器间迁移) | W-M6 / W-M7 | 双显示器且缩放不同 | `XamlRoot` 变化后 caption 与代理重算、100% 口径不变 |
 | 3 | 八方向 + 带 EXIF 的**真实素材**与旧壳逐项对拍 | W-M6 | 相机素材(自生成素材已覆盖方向链与控制栏取值,见 §14) | 每个方向朝向/几何与旧壳一致 |
 | 5 | 相机 EXIF 取值与旧壳对拍(自生成素材已证明取值链路) | W-M6 | 真实素材 | 光圈/快门/ISO/等效焦距与旧壳完全一致 |
-| 8 | INPUT-01 文本框/录制控件获焦时暂停照片快捷键 | W-M4 | 依赖 W-M5 录制控件 | 录制/输入时不误触快捷键 |
-| 9 | 原生设置窗口(W-M5) | W-M5 | ⬜ 未开始;届时放开设置入口 | 五分类渲染/动作往返/关闭回写/窄宽不溢出 |
-| 10 | 工具页(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | 分析栏/相似聚类/增强已落地(§15–§16),工具页仍未原生 | 各页契约另立 |
+| 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地/视觉重构见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS(含 Mica/NavigationView/TitleBar/NumberBox/InfoBar);真实拖拽/录制/清库/预设增删待手验 |
+| 10 | 工具窗口(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | ✅ 2026-10-17,见 §18 | `--pv-native-tools` 5 项 PASS(深色/Mica/三分类、EXIF 分组/标签、DINO 5 瓦片与 cosine、统计导出、关闭重开);真实多格式切换/文件夹与 CSV 选择器待手验 |
 | 11 | W-M6 专项 harness + 旧壳几何 JSON 对拍 | W-M6 | ⬜ 未开始 | `--pv-native-layout/filmstrip/input/toolbar`、`--legacy-ui --pv-legacy-layout`、`Exact=0.01` |
 | 12 | 色彩正确性(ICC/广色域标签/ACM 探测/Win10 烘焙回退) | W-M7 | 独立立项 | 见色彩计划 |
 | 13 | Windows RAW 解码(`Sdcb.LibRaw`) | W-M7 | 独立立项 | RAW 主图 + 缩略图 |
@@ -367,16 +371,14 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 13.3 有意延期(不算待办)
 
-- P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16),不再延期;工具页仍待做。
-- 原生设置窗口未做前不显示设置入口。
+- P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16);工具窗口已落地(§18),不再延期。
 - 系统标题栏按钮改为自绘(为满足自动显隐),代价是失去最大化按钮的系统贴靠布局,与旧壳一致。
 
 ### 13.4 建议推进顺序
 
 1. **W-M6 专项 harness + 旧壳几何 JSON 对拍**(#11):把"对拍"从一次性人工变成可回归,现在主屏功能已闭环,这是下一块硬骨头。
-2. **W-M5 设置窗口**(#9):同时解锁 INPUT-01 的录制态暂停(#8)。
-3. **手测与设备矩阵**:200%/175% 缩放(#1)、真实跨屏(#2)、真实相机素材(#3/#5)、鼠标/触控板手感(#16)。
-4. **W-M7 色彩 / RAW**(#12/#13):独立立项,与上面几条并行不冲突。
+2. **手测与设备矩阵**:200%/175% 缩放(#1)、真实跨屏(#2)、真实相机素材(#3/#5)、鼠标/触控板手感(#16)、设置窗口真实拖拽/录制/清库/预设增删。
+3. **W-M7 色彩 / RAW**(#12/#13):独立立项,与上面几条并行不冲突。
 
 ## 14. 主屏功能对标收口(2026-10-17 第二轮)
 
@@ -409,7 +411,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 14.4 仍待验(不因本轮通过而关闭)
 
-200%/175% 缩放、真实跨屏、真实相机八方向素材、相机 EXIF 取值与旧壳逐项对拍、真实鼠标/触控板手感、W-M5 设置窗口、W-M6 专项 harness 与旧壳几何 JSON。
+200%/175% 缩放、真实跨屏、真实相机八方向素材、相机 EXIF 取值与旧壳逐项对拍、真实鼠标/触控板手感、设置窗口真实拖拽/录制手感、W-M6 专项 harness 与旧壳几何 JSON。
 
 
 
@@ -432,7 +434,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 1. ~~**诊断瓦片始终基于原片**~~ **已由 §16 同步解决**:上一轮因增强图 CV 路径在冒烟中复现崩溃,临时改为诊断固定读原片(增强只影响主图、细节预览与直方图)。同步共享架构后,`AnalysisPresenter` 直接对增强帧实时重算(与旧壳/Mac/iPad 同一份),冒烟新增"增强态诊断重算"覆盖;此处保留差异历史,不再作为当前实现。
 2. **抖动瓦片**用 Skia 把 `ShakeField` 光栅化成 32×8 px 箭头位图(旧壳是自绘控件),颜色/方向/边宽口径相同。
 3. **细节预览不因代理档隐藏**:旧壳在代理期显示空占位,原生壳直接裁当前会话帧;分析栏可见会驱动 Full 解码,几帧后自动变成全分辨率裁剪。
-4. `ProgressBar` 在本工程首次布局即抛 `XamlParseException`(缺 `TabViewScrollButtonBackground`)→ 相似聚类的进度改两条 `Border` 自绘;该硬约束已写入 `PhotoViewer.Desktop/AGENTS.md`。
+4. `ProgressBar` 的旧 `XamlParseException` 已定位为缺根 `App.xaml`/`XamlControlsResources`(W-M5 根因);控件现可用,相似聚类进度仍用两条 `Border` 自绘作视觉定制。
 
 ### 15.3 新增验收(harness 19 → 22 项,§15.5 后 23 项,§16 同步后 24 项,150% 实机连续多轮稳定)
 
@@ -446,7 +448,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 15.4 仍待验
 
-增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具页(EXIF 详情/照片统计/DINO 调试)与设置窗口(W-M5)仍未原生;200%/跨屏/手感与 W-M7 色彩/RAW 不变。
+增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具窗口已原生(§18);200%/跨屏/手感与 W-M7 色彩/RAW 不变。
 
 ### 15.5 收尾缺陷修复(作者回报"提取后切相似聚类卡死")
 
@@ -516,5 +518,112 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **主图编码**:新增 `Core/WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB),`WindowsNativeApplication` 注入 `WindowsPresentationDecoder` + policy;`DecodeAsync` 改为共享四参签名(带 `PixelEncoding`),非 `RgbaF16` 显式拒绝,`BytesPerPixel` 删除,`BitmapLoader.PresentationBytesPerPixel` 由 policy 计算。
 - **共享修复保留**:Windows 分支对共享层的修复随合并进入——`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留(增强 F16 方向,冒烟在方向 6 用增强帧四角回读覆盖)、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载;不另开 Windows 分叉。
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
-- **待办不变**:W-M5 设置窗口、工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。
+- **待办不变**:W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON;工具窗口已于 §18 落地。
+
+## 17. W-M5 设置窗口落地与视觉重构(2026-10-17)
+
+按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现。W-M5 首次落地时误判了一批 WinUI 控件不可用，改用 ListView/Slider/自绘 Border；同日复核发现根因是**缺少根 `App.xaml` / `IXamlMetadataProvider`**，补 `XamlControlsResources` 后已回到方案原结构并完成 Mica/Fluent 视觉重构。
+
+### 17.1 根因(不是控件限制)
+
+| 旧报告 | 实际根因 | 现状 |
+|---|---|---|
+| `NavigationView` 首次布局缺 `TabViewScrollButtonBackground` | 无 `XamlControlsResources`/XAML 元数据提供器，Fluent 模板未装载 | 已用 `NavigationView` |
+| `TitleBar` 同上 | 同上 | 已用 `TitleBar` + 透明 caption |
+| `NumberBox` 同上 | 同上 | 数值项已恢复 `NumberBox` |
+| `TextBox`/`RichEditBox` `E_FAIL` | 同上 | `TextBox` 只由 `NumberBox` 内部使用，无独立文本页 |
+| `InfoBar` 缺 TabView 资源 | 同上 | 清库状态已恢复 `InfoBar` |
+| `ProgressBar` `E_FAIL` | 同上 | 控件可用；主屏仍保留自绘进度作为视觉定制 |
+
+修复：根 `App.xaml` 合并 `XamlControlsResources` 并设 `RequestedTheme="Dark"`；`App.xaml.cs` 承接原 `NativeApplication` 的 `OnLaunched`/外部打开/窗口生命周期。页面仍全部 C# 构建，`App.xaml` 只做资源引导。
+
+### 17.2 实现要点
+
+- **窗口**：960×720（min 720×560），`MicaBackdrop` + `TitleBar`（齿轮图标 + 设置，caption 按钮透明），系统标准边框；不进任务栏，单例；主窗口关闭先关设置以回写。
+- **尺寸**：激活**前**用主窗口 `GetDpiForWindow` 定物理尺寸；激活后再 `Resize` 不刷新内容岛（实测 `ActualWidth` 停在旧值）。960 DIP 外层对应 945 DIP 内容。
+- **导航**：`NavigationView` 五类（`OpenPaneLength=240`，无汉堡/返回），选中态用 WinUI 默认 accent 药丸 + 左缘指示条；覆盖 `NavigationViewContentGridBorderThickness/CornerRadius=0`、`NavigationViewContentBackground=透明`，Mica 平铺内容区。
+- **卡片**：`CommunityToolkit.WinUI.Controls.SettingsControls` 的 `SettingsCard`；主题材质/描边/圆角/文字层级由 WinUI 提供，整块列表卡 `Padding=4`。
+- **列表**：`ListView.ItemsSource` 直接放 `UIElement` 行（`ContainerContentChanging` 替换 `Content` 不显示）；`ReorderMode=Enabled`；拖后按行顺序逐项 `Move` 回写共享集合。
+- **数值**：线程/预载/最多数量/缩放预设用 `NumberBox`（140 宽，Inline spin）；缓存/延时/阈值保留 `Slider`，数值放在 Content 顶部右对齐。
+- **录制**：窗口根 `PreviewKeyDown`/`KeyDown`/滚轮/中键；Esc 取消、Delete 清空、冲突色取 `SystemFillColorCautionBrush`；窗口失活取消；主窗口快捷键因独立窗口天然不受影响。
+- **清库**：`ContentDialog` 确认 + 共享两段确认命令 + `InfoBar` 状态。
+- **入口**：右键菜单「设置…」→ `MainViewModel.OpenSettingWindow` → `NativeWindowPresenter` → presenter；只此一条路。
+- **图标**：`WindowsIcons.FluentFontFamily` 用 `Segoe Fluent Icons,Segoe MDL2 Assets` 回退链，五个分类字形。
+
+### 17.3 验收
+
+- `--pv-native-settings` **7 项 PASS**：深色/Mica、`NavigationView`+`TitleBar`+`NumberBox`+`InfoBar` 已加载、五分类/960 外层 945 内容、开关+`NumberBox`+滑条回写、UI 行重排回写、录制开始取消/手势显示、关闭回写。
+- `--pv-native-smoke` **24 项全 PASS**（无回归）。
+- 截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
+- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感、125/150/200% 文本缩放。
+
+### 17.4 与方案的偏差(已修正)
+
+- ~~`NavigationView` → `ListView`；`TitleBar` → 系统 caption；`NumberBox` → `Slider`；`InfoBar` → `Border`~~：已恢复原生控件。
+- 窗口尺寸在激活前定，而非 `Loaded` 后。
+- Mica 与标题栏为 2026-10-17 视觉重构新增，属于方案 D4/D7 的修订。
+- 排序整行拖 + 行尾把手视觉、无前进/后退、无 Apple 映射段——与方案一致。
+
+## 18. 工具窗口落地(2026-10-17,P3 收口)
+
+作者口径:**参考设置窗口的做法和结构,用原生控件复刻工具页功能**。本轮把 Windows 最后一个 P3 缺口(EXIF 详情 / 照片数据统计 / DINO 诊断)做成独立 Win11 工具窗口。
+
+### 18.1 结构与复用
+
+- **独立窗口** `WindowsToolsWindow`:960×720(min 800×560、不进任务栏、可缩放不可最大化),Mica + WinUI `TitleBar`(扳手 `E90F`)+ `NavigationView` 左栏三分类 + `SettingsCard` 页面;窗口壳与设置窗口共用 `WindowsWindowChrome`(深色 caption/DPI 当前置尺寸/居中),页面容器与行原语共用 `WindowsSettingsCard`。
+- **导航**复用共享 `ToolsViewModel`:分类切换走 `OpenExifDetail` / `OpenPhotoStats` / `OpenDinoDebug` 写回 `CurrentTool`,共享 `SyncCurrentFile` 的联动条件不变;默认 EXIF(无 EXIF 时回落照片统计),已打开再次请求时恢复上次分类;单例由 `WindowsNativeToolsPresenter` 管理,主窗口关闭一并释放。
+- **EXIF 详情** `WindowsExifToolPage`:不带头后缀文件名 + `SelectorBar` 多格式切换 + 7 列分组表格(ID 60 / 名称 2 / 中文名 2 / 值 3,值最多 3 行);订阅 `ExifDetailViewModel` 的格式/分组/加载状态,合并到一次 dispatcher turn 重建。
+- **照片数据统计** `WindowsStatsToolPage`:文件夹列表(UIElement 行 + 选中移除)、通配符 `TextBox`、`FileSavePicker` 导出 CSV、取消/进度/状态;文件夹与保存选择器都绑定**工具窗口自身**句柄,避免对话框落在主窗口后面。业务仍全部在 `PhotoStatsViewModel`/`PhotoStatsService`。
+- **DINO 诊断** `WindowsDinoToolPage`:直接消费共享 `DinoDiagnosticPresenter`,不经过旧壳 `DinoDebugViewModel`;3 列 DINO patch 瓦片(缩略图/PCA/Cosine)+ 2 列 CV 瓦片(锐度/抖动拖影)+ 全宽刚体拟合文本;点击回传 presenter 重算 cosine 参考点。
+- **入口**:主图右键「工具…」+ 控制栏 EXIF 信息块整组 `Tapped`,两者共用 `MainViewModel.OpenToolsWindow` → `NativeWindowPresenter` → `WindowsNativeToolsPresenter`。
+
+### 18.2 抽出的共享控件
+
+| 文件 | 内容 |
+|---|---|
+| `Native/WindowsDiagnosticTile.cs` | 自 `WindowsAnalysisPanel` 的私有瓦片抽出:正方形 + `ContentHost` 按 `AspectRatio` letterbox + 压暗背景/主图/矢量叠加/准星/药丸标签/占位/底部说明;Measure/Arrange 直接给出几何,不在 `SizeChanged` 里回写子元素尺寸。分析栏与 DINO 页共用。 |
+| `Native/WindowsDiagnosticBitmap.cs` | 诊断网格按纵横比最近邻放大到长边 512;两处共用。 |
+| `Native/WindowsShakeFieldView.cs` | 32×32 抖动矢量线,颜色统一走 `CvHeatmap.ColorForShake`;分析栏不再用 Skia 光栅化箭头位图。 |
+| `Native/WindowsWindowChrome.cs` | 设置/工具窗口共用的深色 caption、任务栏隐藏、DPI 尺寸与居中。 |
+
+### 18.3 与旧壳/macOS 的有意差异
+
+1. **Windows 用设置页结构,不是"列表 + 返回"两态**:三分类常驻左栏,EXIF/统计/DINO 直接是页;macOS/iPad 保留工具列表页。这是"参考设置窗口"的直接结果,也是 Win11 工具的常见形态。
+2. **DINO 五张瓦片按 3+2 同宽网格排列,第六格留空;刚体拟合面板占满下方整行**:首版试过 CV 行 2 列 + 面板占第三格,实机(作者 2026-10-17 截图反馈)暴露出两排瓦片宽度不同、无说明文字的缩略图因总高较矮被垂直居中而比同排其它瓦片上沿低约 20px。现两排都用三列、五张瓦片同宽,瓦片统一 `VerticalAlignment=Top` 保证两排正方形上沿齐平;第六格空位保留,刚体拟合文本以全宽卡片放在第二排瓦片之后。
+3. **工具窗口最小宽 800**(设置 720):EXIF 7 列表格在 720 下会把 `Compression` 一类单词折断;800 下名称列约 105 DIP,配合 `WrapWholeWords` 只按词换行。
+4. **EXIF 表格取 WinUI 主题色**,不再维护旧壳 `#222/#3a3a3a` 第二套灰度;ID 列用 `ControlFillColorDefaultBrush`,分隔线用 `DividerStrokeColorDefaultBrush`。
+
+### 18.4 验收
+
+- `--pv-native-tools`(隔离设置/数据库/日志、自建带 EXIF 的 400×300 素材)**5 项 PASS**,输出 `release/native-win-acceptance/tools-checks.json`:
+  1. 深色/Mica/NavigationView + TitleBar/三分类/960 DIP/不进任务栏;
+  2. EXIF 6 组 / 25 标签 + 单格式标签(文件名去后缀);
+  3. DINO 5 瓦片出图、3+2 同宽网格(206 DIP)且两排上沿齐平、状态 = 文件名、点击瓦片把 cosine 参考点设为 8,8;
+  4. 照片统计文件夹行/通配符写回/CSV 导出/移除;
+  5. 关闭重开:新窗口、默认 EXIF、共享统计状态保留。
+- 主冒烟 `--pv-native-smoke` **24 项无回归**(分析栏抽瓦片后含增强态诊断、两向等边长仍 PASS);`--pv-native-settings` **7 项无回归**(设置窗口改用共享 `WindowsWindowChrome`/页容器后)。
+- 150% 实机截图:`release/native-win-acceptance/tools-page-{exif,dino,stats}.png`;最小 800×560 的 EXIF 排版另行目视。
+- 主图右键「工具…」与控制栏 EXIF 块点击均实机验证可打开工具窗口。
+- 仍待作者手验:真实多格式(RAW+JPG/HEIF)切换、真实文件夹选择器与 CSV 保存对话框、工具页视觉/手感、125/150/200% 文本缩放。
+
+### 18.5 已知边界与未做
+
+- 多格式 EXIF 的 `SelectorBar` 程序化只覆盖了单格式素材;多格式的真实伴侣切换需作者用手头 RAW+JPG 验证。
+- 照片统计的文件夹/CSV 选择器是 WinRT 系统对话框,程序化无法可靠驱动;验收只覆盖 VM 与列表/导出数据路径。
+- 工具窗口不进入任务栏、随主窗口关闭;若作者希望它像普通文档窗口一样出现在 Alt+Tab,需要单独改 `IsShownInSwitchers` 与关闭策略。
+- UIA 的 `TransformPattern.Resize` 在本窗口上会导致窗口关闭(疑似 WinUI/UIA 组合问题),抓图用 `SetWindowPos`;这是验收工具的限制,不是产品行为。
+
+### 18.6 作者截图反馈修正(2026-10-17)
+
+作者用真实 `A7C01482.HIF` 截图反馈 DINO 页两处问题:
+
+1. **两排瓦片大小不同**:首版 CV 行用 2 列,第二排瓦片明显比第一排的三列瓦片宽。
+2. **高度不对齐**:第一排缩略图瓦片没有底部说明文字,总高较矮,在 Grid 行里被垂直居中,正方形上沿比 PCA/Cosine 低约 20px。
+
+修正:
+
+- CV 行也改三列,五张瓦片按 **3+2** 排列,第六格留空;刚体拟合面板仍全宽放在第二排下方。
+- 五张瓦片统一 `VerticalAlignment=Top`,两排正方形上沿齐平;说明文字长短只影响瓦片底部,不再影响正方形起点。
+- `--pv-native-tools` 的 DINO 检查新增布局断言:五张瓦片宽度差 ≤1 DIP、两排各自上沿差 ≤1 DIP;当前 150% 下五张均 206 DIP 宽。
+- 重新截图:`tools-page-dino.png`(默认窗高)、`tools-page-dino-full.png`(加高窗口显示完整刚体拟合面板)。
 
