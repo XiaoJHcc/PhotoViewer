@@ -10,7 +10,7 @@ namespace PhotoViewer.iOS.Native;
 /// 控制栏（[TOOLBAR-01]）：EXIF 信息块 / 评分 / 命令三个整体分组，分组尺寸、按空间整组换行或换列、
 /// 行内居中与交叉轴拉伸全部由共享 <see cref="ControlBarLayout"/> 计算，本类只落 UIKit frame 与系统符号。
 /// 显隐与顺序来自共享设置；评分方向随布局方向（横排 0→5、竖排 5→0）。
-/// I5 之前不可用的命令（分析栏 / 增强预览 / 工具页）不生成按钮，符合 SCOPE-01。
+/// I5 起分析栏 / 增强预览 / 工具页全部可用：命令按钮由共享设置生成，EXIF 信息块点击打开工具页。
 /// </summary>
 internal sealed class iOSControlBar : UIView
 {
@@ -20,6 +20,8 @@ internal sealed class iOSControlBar : UIView
     private readonly List<SettingsViewModel.HotkeyItem> _hotkeys = [];
     private readonly Dictionary<string, UIButton> _commands = new(StringComparer.Ordinal);
     private readonly List<UIButton> _ratings = [];
+    private UIView? _exifGroup;
+    private Action? _openTools;
     private bool _horizontal;
 
     /// <summary>业务分组视图（EXIF / 评分 / 命令，按顺序）。</summary>
@@ -28,6 +30,11 @@ internal sealed class iOSControlBar : UIView
     internal IReadOnlyDictionary<string, UIButton> Commands => _commands;
     /// <summary>评分按钮按星级索引（视觉顺序由布局方向决定）。</summary>
     internal IReadOnlyList<UIButton> Ratings => _ratings;
+    /// <summary>EXIF 信息块分组（点击打开工具页；验收核对入口）。</summary>
+    internal UIView? ExifGroup => _exifGroup;
+
+    /// <summary>EXIF 信息块点按入口（识别器与验收共用）：打开工具页。</summary>
+    internal void TapExifGroup() => _openTools?.Invoke();
 
     /// <summary>建立深色控制文档。</summary>
     /// <param name="changed">设置变化时请求宿主合并刷新。</param>
@@ -37,28 +44,31 @@ internal sealed class iOSControlBar : UIView
         BackgroundColor = UIColor.FromWhiteAlpha(.07f, 1);
     }
 
-    /// <summary>I3 阶段是否提供该命令的入口：分析栏 / 增强预览属 I5，不生成死按钮（SCOPE-01）。</summary>
+    /// <summary>是否提供该命令的入口：I5 起分析栏 / 增强预览 / 其余共享命令都有原生实现。</summary>
     /// <param name="command">共享命令标识。</param>
-    /// <returns>本阶段是否有可用实现。</returns>
-    internal static bool IsCommandAvailable(string command) => command switch
-    {
-        "ToggleAnalysisView" or "ToggleEnhance" => false,
-        _ => true,
-    };
+    /// <returns>是否有可用实现。</returns>
+    internal static bool IsCommandAvailable(string command) => true;
 
     /// <summary>按共享设置重建三组控件：保留显隐/顺序、缺少照片时的禁用态与编号评分命令的星数语义。</summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="execute">命令执行入口（与 Mac 同一份命令语义）。</param>
     /// <param name="rate">评分写回入口。</param>
-    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate)
+    /// <param name="openTools">EXIF 信息块点击（打开工具页）；null 表示本壳无工具页。</param>
+    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null)
     {
         ClearGroups();
+        _openTools = openTools;
         var entries = main.ControlVM.EnabledExifItems;
         if (entries.Count > 0)
         {
             var exif = new UIView();
             exif.BackgroundColor = UIColor.Clear;
             foreach (var entry in entries) exif.AddSubview(new ExifTile(entry));
+            var tap = new UITapGestureRecognizer(_ => TapExifGroup());
+            exif.AddGestureRecognizer(tap);
+            exif.UserInteractionEnabled = true;
+            exif.AccessibilityLabel = "EXIF 信息，点击打开工具";
+            _exifGroup = exif;
             AddGroup(exif, ControlBarGroupKind.Exif);
         }
         if (main.Settings.ShowRating)
@@ -204,6 +214,7 @@ internal sealed class iOSControlBar : UIView
         _hotkeys.Clear();
         foreach (var group in _groups) group.Dispose();
         _groups.Clear();
+        _exifGroup = null;
         _specs.Clear();
         _commands.Clear();
         _ratings.Clear();

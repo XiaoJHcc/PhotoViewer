@@ -18,14 +18,6 @@ public sealed class MacMainWindow : IDisposable
 {
     /// <summary>列布局下筛选条顶边:为隐藏标题栏的交通灯让位(旧壳平台标题栏设置);其余几何取共享 <see cref="MainScreenLayout"/>。</summary>
     private const double FilterTopInset = 34;
-    /// <summary>相似面板 MinWidth(旧壳 <c>SimilarityListView</c>)。</summary>
-    private const double SimilarityMinWidth = 106;
-    /// <summary>相似面板右侧外边距(旧壳 <c>Margin="0,0,4,0"</c>)。</summary>
-    private const double SimilarityMargin = 4;
-    /// <summary>相似列表两侧内边距合计(旧壳行布局 ItemsPanel <c>Margin="4,4,4,4"</c>)。</summary>
-    private const double SimilarityListPadding = 8;
-    /// <summary>相似面板左右各 1 点描边。</summary>
-    private const double SimilarityBorderWidth = 1;
     /// <summary>系统“双击窗口标题栏”偏好键(NSUserDefaults 全局域，取值 Maximize / Minimize / None)。</summary>
     internal const string TitlebarDoubleClickPreference = "AppleActionOnDoubleClick";
     /// <summary>AppKit 全屏样式位 <c>NSWindowStyleMaskFullScreen</c>（.NET 绑定的 <see cref="NSWindowStyle"/> 未导出该成员，按位取值）。</summary>
@@ -444,7 +436,7 @@ public sealed class MacMainWindow : IDisposable
             // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
             bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
-            double similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityMargin) : 0;
+            double similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityPanelGeometry.Margin) : 0;
             _similarityPane.Hidden = !similarityOpen;
             double fileSize = _main.IsThumbnailViewVisible
                 ? MainScreenLayout.FileBarMainLength(row, filterHeight, similarityColumn)
@@ -492,7 +484,7 @@ public sealed class MacMainWindow : IDisposable
             if (similarityOpen)
             {
                 _similarityPane.Frame = row
-                    ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityMargin), (nfloat)_similarityPane.CrossSize)
+                    ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
                     : new CGRect(MainScreenLayout.FileBarContentWidth, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
             }
             bool axisChanged = _filmstripLayout.Horizontal != row;
@@ -531,10 +523,7 @@ public sealed class MacMainWindow : IDisposable
     private double SimilarityRowWidth(double paneWidth)
     {
         var panel = _main.FileVM.SimilarityPanel;
-        double content = panel.HasItems
-            ? panel.SimilarItems.Count * FilmstripGeometry.CardWidth + SimilarityListPadding + SimilarityBorderWidth * 2
-            : SimilarityMinWidth;
-        return Math.Min(Math.Max(SimilarityMinWidth, content), paneWidth / 2) + SimilarityMargin;
+        return SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, paneWidth);
     }
 
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>

@@ -39,6 +39,10 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     private Action<ImageFile>? _selectFile;
     private Action<ImageFile, int>? _rate;
     private iOSContextMenuDelegate? _menuDelegate;
+    private string? _secondLineText;
+    private double? _secondLineProgress;
+    /// <summary>选中态取主图身份（相似聚类）还是列表锚点（胶片栏）。</summary>
+    private bool _selectByDisplayedImage;
 
     /// <summary>卡片当前绑定的业务身份（验收核对视图与顺序不错位）。</summary>
     internal ImageFile? BoundFile => _file;
@@ -54,6 +58,12 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     internal UIView Surface => _surface;
     /// <summary>照片区（80 方形）。</summary>
     internal UIView ThumbnailView => _thumbnail;
+    /// <summary>第二行覆盖文字（相似聚类为百分比；null 表示显示拍摄时间）。</summary>
+    internal string? SecondLineText => _secondLineText;
+    /// <summary>第二行柱状条占比（null 表示不显示柱状条）。</summary>
+    internal double? SecondLineProgress => _secondLineProgress;
+    /// <summary>第二行柱状条是否可见。</summary>
+    internal bool IsSecondLineBarVisible => !_secondLineBar.Hidden;
 
     /// <summary>原生复用池按 frame 构造卡片。</summary>
     /// <param name="frame">卡片外框。</param>
@@ -154,12 +164,19 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     /// <param name="showRating">是否显示星级按钮。</param>
     /// <param name="select">整卡点选回调。</param>
     /// <param name="rate">星级点击回调。</param>
-    public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate)
+    /// <param name="secondLineText">第二行文字；null 显示拍摄时间。</param>
+    /// <param name="secondLineProgress">第二行柱状条占比（0~1）；null 只显示文字（相似聚类用 75% 起的占比）。</param>
+    /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>（相似聚类面板）而非列表锚点 <see cref="ImageFile.IsCurrent"/>（胶片栏）。</param>
+    public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
+        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = file;
         _selectFile = select;
         _rate = rate;
+        _secondLineText = secondLineText;
+        _secondLineProgress = secondLineProgress;
+        _selectByDisplayedImage = selectByDisplayedImage;
         _lastThumbnail = null;
         file.PropertyChanged += OnFileChanged;
         foreach (var star in _stars) star.Hidden = !showRating;
@@ -177,8 +194,11 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     {
         if (_file == null) return;
         _name.Text = _file.DisplayName;
-        _date.Text = _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
-        IsHighlighted = _file.IsCurrent;
+        _date.Text = _secondLineText ?? _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
+        _secondLineBar.Hidden = _secondLineProgress == null;
+        if (_secondLineProgress is { } fraction)
+            _secondLineFill.Frame = new CGRect(0, 0, (nfloat)(Math.Clamp(fraction, 0.0, 1.0) * SecondLineWidth), 11);
+        IsHighlighted = _selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent;
         _surface.Layer.BorderColor = IsHighlighted ? UIColor.SystemBlue.CGColor : UIColor.Clear.CGColor;
         _thumbnail.Layer.BorderColor = _file.IsInCache ? UIColor.FromRGBA(70, 130, 180, 180).CGColor : UIColor.Clear.CGColor;
         _placeholder.Hidden = !_file.ShowThumbnailPlaceholder;
@@ -219,6 +239,9 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         _lastThumbnail = null;
         _progress.StopAnimating();
         _secondLineBar.Hidden = true;
+        _secondLineText = null;
+        _secondLineProgress = null;
+        _selectByDisplayedImage = false;
     }
 
     /// <summary>销毁时解除订阅并从常驻集合移除。</summary>

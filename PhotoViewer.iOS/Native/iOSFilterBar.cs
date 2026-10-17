@@ -10,13 +10,13 @@ namespace PhotoViewer.iOS.Native;
 /// 文件栏筛选条（[FILTER-01]）：排序 / 升降序 / 星级筛选三个 UIButton 走原生下拉菜单
 /// （<c>ShowsMenuAsPrimaryAction</c> + UIMenu），外加计数文本；几何全部取共享 <see cref="MainScreenLayout"/>，
 /// 与 Mac 原生壳同一份 90×32 / 间距 5 / 外边距 10 的口径，只把结果落成 UIKit frame。
-/// 相似聚类 toggle 只保留接线（写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>）且本阶段隐藏：
-/// 面板要到 I5 才有内容，按 SCOPE-01 不显示不可用入口。
+/// 相似聚类 toggle（90×27）在 I5 起显示，点击写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>，
+/// 面板本体由 <see cref="iOSSimilarityPanel"/> 渲染。
 /// </summary>
 internal sealed class iOSFilterBar : UIView
 {
-    /// <summary>相似聚类 toggle 是否显示（I5 落地面板后打开）。</summary>
-    internal const bool ShowsSimilarityToggle = false;
+    /// <summary>相似聚类 toggle 是否参与筛选条布局（I5 起显示）。</summary>
+    internal const bool ShowsSimilarityToggle = true;
 
     private readonly MainViewModel _main;
     private readonly UIButton _sort;
@@ -33,7 +33,7 @@ internal sealed class iOSFilterBar : UIView
     internal UIButton RatingControl => _rating;
     /// <summary>筛选后计数文本。</summary>
     internal UILabel CountLabel => _count;
-    /// <summary>相似聚类 toggle（本阶段隐藏）。</summary>
+    /// <summary>相似聚类 toggle。</summary>
     internal UIButton SimilarityToggle => _similarity;
     /// <summary>计数文本的自然宽度（本轮布局用）。</summary>
     internal double CountWidth { get; private set; }
@@ -55,6 +55,7 @@ internal sealed class iOSFilterBar : UIView
         _similarity.AccessibilityHint = "展开/关闭相似聚类面板";
         _similarity.Hidden = !ShowsSimilarityToggle;
         _similarity.TouchUpInside += (_, _) => _main.FileVM.FilterBar.IsSimilarityPanelOpen = !_main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        SyncToggle();
         AddSubview(_sort);
         AddSubview(_order);
         AddSubview(_rating);
@@ -71,9 +72,18 @@ internal sealed class iOSFilterBar : UIView
         _sort.SetTitle(filter.SortModes.FirstOrDefault(option => (SortMode)option.Value == filter.SortMode)?.DisplayName ?? "", UIControlState.Normal);
         _order.SetTitle(filter.SortOrders.FirstOrDefault(option => (SortOrder)option.Value == filter.SortOrder)?.DisplayName ?? "", UIControlState.Normal);
         _rating.SetTitle(filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "", UIControlState.Normal);
+        SyncToggle();
         BindMenu(_sort, filter.SortModes.Select(option => (option.DisplayName, (object)(SortMode)option.Value)).ToArray(), filter.SortMode);
         BindMenu(_order, filter.SortOrders.Select(option => (option.DisplayName, (object)(SortOrder)option.Value)).ToArray(), filter.SortOrder);
         BindMenu(_rating, filter.RatingFilters.Select(option => (option.DisplayName, (object)option.Key)).ToArray(), filter.SelectedRatingFilter);
+    }
+
+    /// <summary>同步相似聚类 toggle 的勾选态（点亮时用系统蓝底白字，与筛选条其他控件区分）。</summary>
+    private void SyncToggle()
+    {
+        bool open = _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+        _similarity.BackgroundColor = open ? UIColor.SystemBlue : UIColor.FromWhiteAlpha(2f / 15, 1);
+        _similarity.AccessibilityValue = open ? "已展开" : "已收起";
     }
 
     /// <summary>按共享几何落位五个控件，并把计数文本量得的自然宽度交回布局。</summary>

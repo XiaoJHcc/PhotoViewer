@@ -57,6 +57,12 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     internal double PhysicalScale => _viewport.PhysicalScale;
     /// <summary>当前全分辨率细节需求。</summary>
     internal bool NeedsFull => _viewport.NeedsFull;
+    /// <summary>显示朝向的逻辑图像宽（像素）。</summary>
+    internal double DisplayWidth => _viewport.ImageWidth;
+    /// <summary>显示朝向的逻辑图像高（像素）。</summary>
+    internal double DisplayHeight => _viewport.ImageHeight;
+    /// <summary>图像像素到视图点的当前缩放（点/像素）。</summary>
+    internal double PointScale => _viewport.Scale;
     /// <summary>内存客户端名称。</summary>
     public string Name => "iOSPhotoView";
     /// <summary>纹理与三重缓冲的估算 GPU 字节（绘制目标恒为 RGBA16F）。</summary>
@@ -163,6 +169,29 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         SyncScrollFromViewport();
         DrawFrame();
         ViewportChanged?.Invoke();
+    }
+
+    /// <summary>按物理倍率缩放并把显示朝向的归一化点移到视口中心（分析栏细节预览双击用）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    /// <param name="physicalScale">目标物理倍率（1 = 源像素对屏幕物理像素 1:1）。</param>
+    public void FocusOnPoint(double u, double v, double physicalScale)
+    {
+        _viewport.FocusOnPoint(u, v, physicalScale);
+        // 视口状态即时生效；滚动视图的视觉位移走 UIKit 动画（与双击缩放同一映射）。
+        AnimateScrollToViewport();
+        DrawFrame();
+        ViewportChanged?.Invoke();
+    }
+
+    /// <summary>显示朝向的归一化点 → 主图视图坐标（分析栏绿框定位用）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    /// <returns>视图坐标。</returns>
+    internal CGPoint ViewPoint(double u, double v)
+    {
+        var (x, y) = _viewport.ViewPoint(u, v);
+        return new CGPoint(x, y);
     }
 
     /// <summary>宿主布局变化：刷新物理尺寸、按当前状态归位并重绘。</summary>

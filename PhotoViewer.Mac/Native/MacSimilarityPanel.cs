@@ -21,10 +21,10 @@ namespace PhotoViewer.Mac.Native;
 /// </summary>
 internal sealed class MacSimilarityPanel : NSView
 {
-    /// <summary>旧壳面板 MinWidth。</summary>
-    private const double MinWidth = 106;
-    /// <summary>旧壳面板 MinHeight。</summary>
-    private const double MinHeight = 154;
+    /// <summary>旧壳面板 MinWidth（共享几何）。</summary>
+    private const double MinWidth = SimilarityPanelGeometry.MinWidth;
+    /// <summary>旧壳面板 MinHeight（共享几何）。</summary>
+    private const double MinHeight = SimilarityPanelGeometry.MinHeight;
     /// <summary>外框 1 点描边。</summary>
     private const double BorderWidth = 1;
     /// <summary>外框圆角。</summary>
@@ -44,10 +44,10 @@ internal sealed class MacSimilarityPanel : NSView
     private const double MeasureLimit = 10000;
     /// <summary>错误提示的最大宽度(旧壳 MaxWidth 120)。</summary>
     private const double ErrorMaxWidth = 120;
-    /// <summary>列布局下面板宽度:卡片 96 + 列表左右内边距 4/8 + 两侧 1 点描边。</summary>
-    private const double PanelWidth = FilmstripGeometry.CardWidth + 4 + 8 + BorderWidth * 2;
-    /// <summary>行布局下列表交叉轴长度:卡片高 + 上下内边距 + 两侧描边。</summary>
-    private static readonly double ListCross = FilmstripGeometry.CardHeight + FilmstripGeometry.TopPadding + FilmstripGeometry.BottomPadding + BorderWidth * 2;
+    /// <summary>列布局下面板宽度（共享几何：卡片 96 + 列表左右内边距 4/8 + 两侧 1 点描边）。</summary>
+    private const double PanelWidth = SimilarityPanelGeometry.PanelWidth;
+    /// <summary>行布局下列表交叉轴长度（共享几何：卡片高 + 上下内边距 + 两侧描边）。</summary>
+    private static readonly double ListCross = SimilarityPanelGeometry.ListCross;
     /// <summary>行布局停靠区左右外边距。</summary>
     private const double DockRowMargin = 3;
     /// <summary>行布局停靠区下外边距(旧壳 Margin='3,3,3,8')。</summary>

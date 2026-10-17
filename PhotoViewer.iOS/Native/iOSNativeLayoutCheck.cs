@@ -63,6 +63,7 @@ internal static class iOSNativeLayoutCheck
         try
         {
             var main = iOSNativeShell.Main ?? throw new InvalidOperationException("原生壳主 VM 未就绪");
+            bool entrySimilarity = main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (!Path.GetFullPath(directory).StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), StringComparison.Ordinal))
                 throw new InvalidOperationException($"布局验收只允许使用 App 沙盒内的自有夹具目录：{directory}");
             await WaitAsync(() => root.View!.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
@@ -73,7 +74,10 @@ internal static class iOSNativeLayoutCheck
                 main.Settings.ShowRating = true;
                 main.IsThumbnailViewVisible = true;
                 main.IsControlViewVisible = true;
+                main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
                 main.FileVM.FilterBar.SelectedRatingFilter = "All";
+                foreach (var format in main.Settings.FileFormats)
+                    if (format.DisplayName == "JPG") format.IsEnabled = true;
             });
             await main.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
             await WaitAsync(() => main.FolderVM.AllFiles.Count >= 12, "夹具目录枚举");
@@ -106,7 +110,7 @@ internal static class iOSNativeLayoutCheck
             // 三、卡片星级写回与筛选连续性（[FILM-05/06]）
             await VerifyRatingAsync(root, main, lines, directory);
 
-            await RestoreAsync(root, main);
+            await RestoreAsync(root, main, entrySimilarity);
             lines.Add($"PASS 收尾还原：布局模式/栏位显隐/筛选/评级已回到进入本检查时的状态");
             await File.WriteAllLinesAsync(report, lines);
             Console.WriteLine($"[NativeSmoke] PASS layout ({lines.Count} checks)");
@@ -195,10 +199,10 @@ internal static class iOSNativeLayoutCheck
         var bounds = view.Bounds;
         var safe = view.SafeAreaInsets;
         var panes = root.Panes;
-        // 分析栏在 I5 之前不占空间：行布局看交叉轴高度、列布局看交叉轴宽度。
+        // 分析栏默认隐藏：本套件不打开它，槽位必须被压成零并把空间让给主图（打开态的几何由 --pv-native-analysis-check 核对）。
         double analysisBand = row ? (double)panes.Analysis.Height : (double)panes.Analysis.Width;
         if (analysisBand > Exact)
-            throw new InvalidOperationException($"{scope} 分析栏未落地却占用了空间：{panes.Analysis}");
+            throw new InvalidOperationException($"{scope} 分析栏隐藏时仍占用了空间：{panes.Analysis}");
         double mainLength = row ? (double)bounds.Height : (double)bounds.Width;
         double contentWidth = (double)bounds.Width - (double)safe.Left - (double)safe.Right;
         double contentHeight = (double)bounds.Height - (double)safe.Top - (double)safe.Bottom;
@@ -269,7 +273,7 @@ internal static class iOSNativeLayoutCheck
     private static double FilterMain(iOSNativeRootViewController root, bool row)
         => row ? MainScreenLayout.FilterBarMainLength(true, 0) : (double)root.FilterBar.Frame.Height;
 
-    /// <summary>核对筛选条：三个 90×32 下拉、90×27 toggle（本阶段隐藏）、计数自然宽度、5 点间距与居中。</summary>
+    /// <summary>核对筛选条：三个 90×32 下拉、90×27 相似聚类 toggle（I5 起显示）、计数自然宽度、5 点间距与居中。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="row">是否行布局。</param>
     /// <param name="scope">报告范围标签。</param>
@@ -285,7 +289,7 @@ internal static class iOSNativeLayoutCheck
         }
         RequireFrame(bar.SimilarityToggle.Frame, new CGRect(bar.SimilarityToggle.Frame.X, bar.SimilarityToggle.Frame.Y, MainScreenLayout.FilterControlWidth, MainScreenLayout.FilterToggleHeight),
             $"{scope} 相似聚类 toggle 未保持 90×27");
-        if (!bar.SimilarityToggle.Hidden) throw new InvalidOperationException($"{scope} I5 之前相似聚类入口必须隐藏（面板无内容，SCOPE-01）");
+        if (bar.SimilarityToggle.Hidden) throw new InvalidOperationException($"{scope} I5 起相似聚类入口必须显示（面板已落地，SCOPE-01 解禁）");
         if (Math.Abs((double)bar.CountLabel.Frame.Width - bar.CountWidth) > Exact || bar.CountWidth <= 0)
             throw new InvalidOperationException($"{scope} 计数文本宽度不是自然宽度：{bar.CountLabel.Frame.Width}/{bar.CountWidth}");
         for (int index = 1; index < controls.Length; index++)
@@ -302,7 +306,8 @@ internal static class iOSNativeLayoutCheck
                 throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
             if (Math.Abs((double)bar.SimilarityToggle.Frame.X - (double)bar.CountLabel.Frame.Right - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{bar.SimilarityToggle.Frame}");
-            double center = ((double)controls[0].Frame.X + (double)bar.CountLabel.Frame.Right) / 2;
+            // I5 起相似聚类 toggle 参与整组居中（与共享 FilterBarFrames 的 includeSimilarityToggle 同口径）。
+            double center = ((double)controls[0].Frame.X + (double)bar.SimilarityToggle.Frame.Right) / 2;
             if (Math.Abs(center - (double)bar.Bounds.Width / 2) > .5)
                 throw new InvalidOperationException($"{scope} 筛选条未水平居中：{center}/{(double)bar.Bounds.Width / 2}");
             foreach (var control in controls)
@@ -327,7 +332,7 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs(center - MainScreenLayout.FileBarContentWidth / 2) > Exact)
                 throw new InvalidOperationException($"{scope} 左右布局筛选条中心不在 58：{center}");
         }
-        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(隐藏)；间距 5、{(row ? "横向居中且贴顶 10" : "116 栏内居中、纵向节距 37")}");
+        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "横向居中且贴顶 10" : "116 栏内居中、纵向节距 37")}");
     }
 
     /// <summary>核对控制栏：三分组、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>
@@ -351,7 +356,8 @@ internal static class iOSNativeLayoutCheck
             foreach (var other in bar.Groups.Where(other => !ReferenceEquals(other, group)))
                 if (Overlaps(frame, other.Frame)) throw new InvalidOperationException($"{scope} 控制组重叠：{frame} / {other.Frame}");
         }
-        int[] childCounts = [4, 6, 6];
+        // I5 起 ToggleEnhance 进入默认显示的命令组（此前被 SCOPE-01 过滤），命令数 6→7。
+        int[] childCounts = [4, 6, 7];
         for (int index = 0; index < bar.Groups.Count; index++)
             if (bar.Groups[index].Subviews.Length != childCounts[index])
                 throw new InvalidOperationException($"{scope} 控制组 {index} 子项数量 {bar.Groups[index].Subviews.Length}，预期 {childCounts[index]}");
@@ -373,9 +379,10 @@ internal static class iOSNativeLayoutCheck
             if (!row && (double)bar.Ratings[index].Frame.Y >= (double)bar.Ratings[index - 1].Frame.Y)
                 throw new InvalidOperationException($"{scope} 竖排评分方向不是 5→0");
         }
-        if (bar.Commands.ContainsKey("ToggleAnalysisView") || bar.Commands.ContainsKey("ToggleEnhance"))
-            throw new InvalidOperationException($"{scope} I5 之前不得显示分析栏/增强预览入口（SCOPE-01）");
-        lines.Add($"PASS {scope} 控制栏：3 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、无 I5 死入口");
+        // I5 起分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
+        if (!iOSControlBar.IsCommandAvailable("ToggleAnalysisView") || !iOSControlBar.IsCommandAvailable("ToggleEnhance"))
+            throw new InvalidOperationException($"{scope} I5 起分析栏/增强预览命令必须有原生实现（SCOPE-01 解禁）");
+        lines.Add($"PASS {scope} 控制栏：3 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用");
     }
 
     /// <summary>核对卡片几何（96×144 外框 / 90×138 占位区 / 80 方形照片区 / 星级与文字位置）与身份绑定。</summary>
@@ -686,12 +693,16 @@ internal static class iOSNativeLayoutCheck
     /// <summary>收尾：布局模式、栏位显隐与筛选还原到验收默认值。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
-    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main)
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="similarity">进入检查时的相似面板状态。</param>
+    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, bool similarity)
     {
         await UiDispatcher.InvokeAsync(() =>
         {
             main.IsThumbnailViewVisible = true;
             main.IsControlViewVisible = true;
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = similarity;
             main.FileVM.FilterBar.SelectedRatingFilter = "All";
         });
         await SettleAsync(root);

@@ -109,7 +109,7 @@ internal static class iOSNativeInputCheck
                 await SettleAsync(root);
                 lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}）→ 工作副本 {workspace}");
 
-                await VerifyPhotoContextMenuAsync(root, main, lines);
+                await VerifyPhotoContextMenuAsync(root, main, session, lines);
                 await VerifyCardContextMenuAsync(root, main, lines, workspace);
                 await VerifySwipeAsync(root, main, lines);
                 await VerifyKeyboardAsync(root, main, lines);
@@ -138,20 +138,20 @@ internal static class iOSNativeInputCheck
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
+    /// <param name="session">原生展示会话（增强预览勾选态）。</param>
     /// <param name="lines">报告行。</param>
-    private static async Task VerifyPhotoContextMenuAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    private static async Task VerifyPhotoContextMenuAsync(iOSNativeRootViewController root, MainViewModel main, PhotoLoadSession session, List<string> lines)
     {
         var built = RequirePhotoMenu(root);
         var actions = Flatten(built.Menu);
-        string[] expected = ["photo.open-folder", "photo.film", "photo.control", "photo.settings.open"];
+        string[] expected = ["photo.open-folder", "photo.film", "photo.analysis", "photo.control", "photo.enhance", "photo.tools", "photo.settings.open"];
         if (!actions.Select(action => action.Id).SequenceEqual(expected))
             throw new InvalidOperationException($"主图菜单项与约定不符：{string.Join(",", actions.Select(action => action.Id))}");
         if (actions.Any(action => !action.HasImage)) throw new InvalidOperationException("主图菜单存在无 SF Symbols 图标的项");
-        if (actions.Any(action => action.Title is "分析栏" or "工具" or "增强预览"))
-            throw new InvalidOperationException("主图菜单出现了 I5 才可用的死项");
-        if (actions[1].State != State(main.IsThumbnailViewVisible) || actions[2].State != State(main.IsControlViewVisible))
-            throw new InvalidOperationException("主图菜单勾选态与栏位显隐不一致");
-        lines.Add($"PASS 主图上下文菜单：{actions.Count} 项（{string.Join(" / ", actions.Select(action => action.Title))}），图标与勾选态正确，无 I5 死项");
+        if (actions[1].State != State(main.IsThumbnailViewVisible) || actions[2].State != State(main.IsAnalysisViewVisible)
+            || actions[3].State != State(main.IsControlViewVisible) || actions[4].State != State(session.IsEnhanced))
+            throw new InvalidOperationException("主图菜单勾选态与栏位显隐/增强开关不一致");
+        lines.Add($"PASS 主图上下文菜单：{actions.Count} 项（{string.Join(" / ", actions.Select(action => action.Title))}），图标与勾选态正确（I5 入口均可用）");
 
         bool film = main.IsThumbnailViewVisible;
         built.Handlers["photo.film"]();
@@ -167,7 +167,18 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => main.IsControlViewVisible != control && root.ControlScroll.Hidden == !main.IsControlViewVisible, "控制栏显隐切换");
         built.Handlers["photo.control"]();
         await WaitAsync(() => main.IsControlViewVisible == control, "控制栏恢复");
-        lines.Add("PASS 主图菜单动作：胶片栏/控制栏真实切换共享状态与原生视图，重新弹出时勾选态同步");
+        // 分析栏与增强预览（I5）：走菜单同一份回调，共享状态与会话开关随之变化。
+        bool analysis = main.IsAnalysisViewVisible;
+        built.Handlers["photo.analysis"]();
+        await WaitAsync(() => main.IsAnalysisViewVisible != analysis && !root.AnalysisPane.Hidden, "分析栏显隐切换");
+        built.Handlers["photo.analysis"]();
+        await WaitAsync(() => main.IsAnalysisViewVisible == analysis && root.AnalysisPane.Hidden, "分析栏恢复");
+        bool enhanced = session.IsEnhanced;
+        built.Handlers["photo.enhance"]();
+        await WaitAsync(() => session.IsEnhanced != enhanced, "增强预览切换");
+        built.Handlers["photo.enhance"]();
+        await WaitAsync(() => session.IsEnhanced == enhanced, "增强预览恢复");
+        lines.Add("PASS 主图菜单动作：胶片栏/分析栏/控制栏真实切换共享状态与原生视图，增强预览经展示会话生效并还原，重新弹出时勾选态同步");
 
         var stub = new RecordingFilePicker();
         FilePicker.Initialize(stub);
@@ -549,6 +560,8 @@ internal static class iOSNativeInputCheck
             main.FileVM.FilterBar.SelectedRatingFilter = "All";
         });
         await SettleAsync(root);
+        // 验收进程随后会被强杀；同步落盘避免"测试中临时关闭文件格式"被遗留为持久状态。
+        PhotoViewer.Core.Settings.SettingsService.Instance.SaveAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
     }
 
     /// <summary>经主图交互委托重建一次菜单（等价于一次新的长按弹出），返回菜单与回调。</summary>

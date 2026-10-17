@@ -6,6 +6,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
 using System.ComponentModel;
 using UIKit;
 using UniformTypeIdentifiers;
@@ -18,7 +19,9 @@ namespace PhotoViewer.iOS.Native;
 /// 旋转、Split View、Stage Manager 的任意尺寸都重算几何。栏位背景铺到屏幕边缘、内容收在安全区内；
 /// 主图仍由 <see cref="iOSPhotoView"/> 渲染，物理视口照旧上报共享展示会话。
 /// 输入（I4）：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
-/// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。分析栏与工具页属 I5，不生成入口与死项。
+/// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。
+/// P3 功能（I5）：分析栏（细节预览 / 直方图 / DINO-CV 诊断，可见时主图升 Full）、相似聚类面板、
+/// 增强预览（<see cref="PhotoLoadSession"/>）与工具页（sheet + 导航控制器）；细节预览手指点按定格主图绿框。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
 {
@@ -40,6 +43,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSControlBar _controlBar;
     private readonly iOSFilterBar _filterBar;
     private readonly iOSFilmstripView _filmstrip;
+    private readonly iOSAnalysisPanel _analysisPane;
+    private readonly iOSSimilarityPanel _similarityPane;
+    private readonly UIView _detailHighlight = new();
     private readonly UILabel _hintLabel = new();
     private readonly UILabel _hintDetail = new();
     private readonly iOSContextMenuDelegate _photoMenu;
@@ -54,6 +60,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private NSTimer? _repeatTimer;
     private int _repeatUsage = -1;
     private ulong _repeatModifiers;
+    private double _detailU = .5, _detailV = .5;
+    private double? _detailFrameWidth, _detailFrameHeight;
+    private bool _detailVisible;
     private iOSPaneFrames _panes;
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
@@ -87,6 +96,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSContextMenuDelegate PhotoMenuDelegate => _photoMenu;
     /// <summary>拖放交互（验收核对委托在根视图上）。</summary>
     internal UIDropInteraction DropInteraction => _drop;
+    /// <summary>分析栏（验收读取瓦片几何、presenter 状态与细节预览）。</summary>
+    internal iOSAnalysisPanel AnalysisPane => _analysisPane;
+    /// <summary>相似聚类面板（验收读取卡片、交叉轴与列表态）。</summary>
+    internal iOSSimilarityPanel SimilarityPane => _similarityPane;
+    /// <summary>主图绿框叠加层（细节预览 hover / 定格的联动目标）。</summary>
+    internal UIView DetailHighlightView => _detailHighlight;
+    /// <summary>主图绿框当前是否可见。</summary>
+    internal bool DetailHighlightVisible => !_detailHighlight.Hidden;
+    /// <summary>主图分区沿主轴的长度（行布局取高度，列布局取宽度），供验收核对栏位显隐与让位。</summary>
+    /// <param name="row">是否行布局。</param>
+    /// <returns>主轴长度。</returns>
+    internal double PhotoMainLength(bool row) => row ? (double)_photoPane.Frame.Height : (double)_photoPane.Frame.Width;
 
     /// <summary>用共享主 VM 与展示会话构建原生主屏。</summary>
     /// <param name="main">共享主 VM。</param>
@@ -99,6 +120,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _automatedValidation = automatedValidation;
         _filterBar = new iOSFilterBar(main);
         _filmstrip = new iOSFilmstripView(main);
+        _analysisPane = new iOSAnalysisPanel(main, session);
+        _analysisPane.DetailHighlight = UpdateDetailHighlight;
+        _analysisPane.DetailFocusRequested = FocusDetailPoint;
+        _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
         _controlBar = new iOSControlBar(ScheduleControlsRefresh);
         _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu());
         _drop = new UIDropInteraction(new iOSDropDelegate(this));
@@ -106,6 +131,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 若等到 ViewWillAppear 再订阅会漏掉那次 CurrentFile 变化而永不加载。
         _session.Changed += OnSessionChanged;
         _photo.ViewportChanged += ReportViewport;
+        _photo.ViewportChanged += ApplyDetailHighlight;
         _photo.SwipeRequested += OnSwipeRequested;
         _photo.WheelScrolled += OnWheelScrolled;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
@@ -115,6 +141,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
+        _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _filmstrip.RateRequested += OnRateRequested;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
@@ -142,6 +169,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _hintDetail.Lines = 0;
         _photoPane.AddSubview(_hintLabel);
         _photoPane.AddSubview(_hintDetail);
+        // 细节预览绿框：3 点绿色描边，纯展示、不拦触摸。
+        _detailHighlight.UserInteractionEnabled = false;
+        _detailHighlight.Layer.BorderColor = UIColor.FromRGB(0, 255, 0).CGColor;
+        _detailHighlight.Layer.BorderWidth = 3;
+        _detailHighlight.Hidden = true;
+        _photoPane.AddSubview(_detailHighlight);
         _photoPane.AddGestureRecognizer(new UITapGestureRecognizer(OnPhotoTapped));
         // 主图上下文菜单：手指长按与触控板/鼠标辅助点按同一入口；滚动/捏合/双击由各自的识别器负责，互不抢占。
         _photoPane.AddInteraction(new UIContextMenuInteraction(_photoMenu));
@@ -161,6 +194,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         root.AddSubview(_controlScroll);
         root.AddSubview(_filterBar);
         root.AddSubview(_filmstrip);
+        root.AddSubview(_similarityPane);
+        root.AddSubview(_analysisPane);
         // 拖入：整个主屏都接收"文件"里的文件/文件夹（与 Mac 根视图同一语义）。
         root.AddInteraction(_drop);
         BuildControls();
@@ -290,7 +325,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.ControlVM.PropertyChanged -= OnControlChanged;
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
+            _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
             _filmstrip.RateRequested -= OnRateRequested;
+            _photo.ViewportChanged -= ApplyDetailHighlight;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             ClearHeldKeys();
             var center = NSNotificationCenter.DefaultCenter;
@@ -300,6 +337,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             if (_textEditEndView != null) center.RemoveObserver(_textEditEndView);
             _textEditBeginField = _textEditBeginView = _textEditEndField = _textEditEndView = null;
             _controlBar.Dispose();
+            _analysisPane.Dispose();
+            _similarityPane.Dispose();
             _photo.Dispose();
             _session.Dispose();
         }
@@ -323,17 +362,39 @@ internal sealed class iOSNativeRootViewController : UIViewController
             double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset);
             bool filmVisible = _main.IsThumbnailViewVisible;
             bool controlVisible = _main.IsControlViewVisible;
-            double fileMain = filmVisible ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : (double)safe.Left) : 0;
             double availableMain = row
                 ? Math.Max(1, width - (double)safe.Left - (double)safe.Right)
                 : Math.Max(1, height - (double)safe.Top - (double)safe.Bottom);
+            // 相似聚类：行布局从胶片栏右侧切出一段（含旧壳 MaxWidth 规则），列布局扩宽文件栏。
+            bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            if (similarityOpen) _similarityPane.SetLayout(row, row ? MainScreenLayout.FilmstripBand : availableMain);
+            double similarityColumn = similarityOpen
+                ? (row
+                    ? SimilarityPanelGeometry.RowWidth(_main.FileVM.SimilarityPanel.HasItems, _main.FileVM.SimilarityPanel.SimilarItems.Count, availableMain)
+                    : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
+                : 0;
+            _similarityPane.Hidden = !similarityOpen;
+            double fileMain = filmVisible
+                ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : (double)safe.Left + similarityColumn)
+                : 0;
             var measure = controlVisible ? _controlBar.Measure(row, availableMain) : CGSize.Empty;
             double controlMain = controlVisible ? MainScreenLayout.ControlBarMainLength(row ? (double)measure.Height : (double)measure.Width) : 0;
-            // 分析栏（I5）交叉轴恒为 0：槽位保留在共享分区数学里，空间归主图。
-            _panes = iOSMainScreenLayout.Compute(row, width, height, safe, fileMain, controlMain, 0);
+            // 分析栏占主图与相邻栏位之间的一条：行布局在主图下方、列布局在主图右侧，
+            // 主轴可用长度取安全区内的内容长度，交叉轴尺寸（瓦片边长 + 20）与旧壳 AnalysisView 同口径。
+            bool analysisVisible = _main.IsAnalysisViewVisible;
+            double analysisSize = analysisVisible ? _analysisPane.CrossSize(availableMain) : 0;
+            _panes = iOSMainScreenLayout.Compute(row, width, height, safe, fileMain, controlMain, analysisSize);
 
             _photoPane.Frame = ToFrame(_panes.Photo);
             _photo.Frame = _photoPane.Bounds;
+            _analysisPane.Frame = ToFrame(_panes.Analysis);
+            _analysisPane.Hidden = !analysisVisible;
+            if (analysisVisible) _analysisPane.Arrange(row, availableMain, row ? (double)safe.Left : (double)safe.Top);
+            else
+            {
+                _analysisPane.ClearDetailHighlight();
+                HideDetailHighlight();
+            }
             _fileBar.Frame = ToFrame(_panes.FileBar);
             _fileBar.Hidden = !filmVisible;
             _fileDivider.Frame = ToFrame(_panes.FileDivider);
@@ -353,8 +414,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 double contentWidth = row ? content.Width : MainScreenLayout.FileBarContentWidth;
                 _filterBar.Frame = new CGRect(content.X, content.Y, contentWidth, filterMain);
                 _filterBar.Arrange(row, contentWidth, leadingInset);
-                _filmstrip.Frame = new CGRect(content.X, content.Y + filterMain, contentWidth, Math.Max(1, content.Height - filterMain));
+                double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
+                _filmstrip.Frame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
+                if (similarityOpen)
+                {
+                    _similarityPane.Frame = row
+                        ? new CGRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
+                            Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
+                        : new CGRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
+                            (nfloat)_similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
+                    _similarityPane.LayoutIfNeeded();
+                }
             }
+            ApplyDetailHighlight();
             bool axisChanged = _filmstrip.Horizontal != row;
             _filmstrip.SetAxis(row);
             // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
@@ -390,10 +462,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <returns>UIKit frame。</returns>
     private static CGRect ToFrame(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
 
-    /// <summary>按共享设置与当前照片重建控制栏。</summary>
-    private void BuildControls()
+    /// <summary>按共享设置与当前照片重建控制栏（验收与设置回写共用同一入口）。</summary>
+    internal void BuildControls()
     {
-        _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); });
+        _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
         Layout();
     }
     /// <summary>执行共享命令；本阶段未接入的命令（缩放预设等）不生成按钮，故不会走到这里。</summary>
@@ -411,6 +483,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             case "ZoomOutScale": _photo.ZoomBy(.8); break;
             case "ZoomInPreset": ZoomPreset(1); break;
             case "ZoomOutPreset": ZoomPreset(-1); break;
+            case "ToggleAnalysisView": _main.ToggleAnalysisView(); break;
+            case "ToggleEnhance": _session.ToggleEnhanced(); break;
             default:
                 if (command.StartsWith("SetRating", StringComparison.Ordinal) && int.TryParse(command[9..], out int rating) && _main.CurrentFile != null)
                     _ = RateAsync(_main.CurrentFile, rating);
@@ -459,21 +533,37 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="rating">星级。</param>
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
-    /// <summary>主图区点击：空态时打开文件夹选择器（与 Mac 空首屏点开文件同义）。</summary>
+    /// <summary>
+    /// 主图区点击：细节预览定格绿框时先解除（"点空白清除"）；否则空态时打开文件夹选择器
+    /// （与 Mac 空首屏点开文件同义）。
+    /// </summary>
     /// <param name="recognizer">点击识别器。</param>
-    private void OnPhotoTapped(UITapGestureRecognizer recognizer)
+    private void OnPhotoTapped(UITapGestureRecognizer recognizer) => TapPhoto();
+
+    /// <summary>主图点按入口（识别器与验收共用）：解除定格绿框优先，其次空态打开文件夹。</summary>
+    internal void TapPhoto()
     {
+        if (_detailVisible || !_detailHighlight.Hidden)
+        {
+            _analysisPane.ClearDetailHighlight();
+            HideDetailHighlight();
+            return;
+        }
         if (_session.Image == null) _ = OpenFolderPickerAsync();
     }
 
     /// <summary>
-    /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐一致；
-    /// 只登记本壳已实现的功能（分析栏、工具、增强预览属 I5，不出现死项）。
+    /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐/增强开关一致；
+    /// I5 起分析栏、增强预览与工具页都是真实入口。
     /// </summary>
     /// <returns>菜单构建产物。</returns>
-    private iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(
-        _main.IsThumbnailViewVisible, _main.IsControlViewVisible,
-        () => _ = OpenFolderPickerAsync(), _main.ToggleThumbnailView, _main.ToggleControlView, _main.OpenSettingWindow);
+    internal iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(
+        _main.IsThumbnailViewVisible, _main.IsControlViewVisible, _main.IsAnalysisViewVisible, _session.IsEnhanced,
+        () => _ = OpenFolderPickerAsync(), _main.ToggleThumbnailView, _main.ToggleControlView, _main.ToggleAnalysisView,
+        () => _session.ToggleEnhanced(), ShowTools, _main.OpenSettingWindow);
+
+    /// <summary>打开/前置原生工具页（主图菜单与 EXIF 信息块共用同一门面入口）。</summary>
+    internal void ShowTools() => NativeWindowPresenter.ShowOrActivateToolsWindow(_main.Tools);
 
     /// <summary>适应态横向轻扫翻页：走共享命令表（上一张/下一张），由共享 Move 完成显式定位（[FILM-01]）。</summary>
     /// <param name="direction">-1 上一张、+1 下一张。</param>
@@ -595,6 +685,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+                // 切图后细节预览的定格/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
+                HideDetailHighlight();
                 _session.SetFile(_main.CurrentFile?.File);
                 BuildControls();
                 UpdateHint();
@@ -606,6 +698,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UiDispatcher.Post(() =>
         {
             if (!_main.IsThumbnailViewVisible) _filmstrip.CancelScrollUpToNow();
+            if (!_main.IsAnalysisViewVisible)
+            {
+                _analysisPane.ClearDetailHighlight();
+                HideDetailHighlight();
+            }
             Layout();
             SaveWindowPreferences();
             // 重新显示胶片栏是显式定位条件（Mac 已登记的增强，iPad 同口径）。
@@ -679,6 +776,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="args">属性变化参数。</param>
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(RefreshScreen);
 
+    /// <summary>
+    /// 相似项集合变化后重排主屏：行布局面板宽度按卡片数从胶片栏右侧切出（旧壳 MaxWidth 规则），
+    /// 集合由空变有/由有变空时必须重新计算，否则面板停在 106 点最小宽、列表区被停靠动作区挤成零宽。
+    /// </summary>
+    /// <param name="sender">事件源（相似面板 VM）。</param>
+    /// <param name="args">属性变化参数。</param>
+    private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is not (nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems))) return;
+        UiDispatcher.Post(Layout);
+    }
+
     /// <summary>显式定位请求（上一张/下一张、打开文件、外部打开）。</summary>
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();
 
@@ -690,6 +799,61 @@ internal sealed class iOSNativeRootViewController : UIViewController
         Layout();
         _filmstrip.ReportVisibleRange();
     }
+
+    /// <summary>
+    /// 细节预览高亮：把命中的细节预览中心/对焦框换算成主图上的 3 点绿框。
+    /// 来自触控板 hover 或手指定格（两者都经细节预览的 <c>HighlightChanged</c>）。
+    /// </summary>
+    /// <param name="visible">是否显示绿框。</param>
+    /// <param name="u">裁剪中心归一化横坐标。</param>
+    /// <param name="v">裁剪中心归一化纵坐标。</param>
+    /// <param name="frameWidth">对焦框归一化宽；null 表示用裁剪区。</param>
+    /// <param name="frameHeight">对焦框归一化高。</param>
+    private void UpdateDetailHighlight(bool visible, double u, double v, double? frameWidth, double? frameHeight)
+    {
+        _detailU = u;
+        _detailV = v;
+        _detailFrameWidth = frameWidth;
+        _detailFrameHeight = frameHeight;
+        _detailVisible = visible;
+        ApplyDetailHighlight();
+    }
+
+    /// <summary>按当前视口与细节中心重算绿框（缩放/平移、切图与栏位显隐后都调用）。</summary>
+    private void ApplyDetailHighlight()
+    {
+        if (!_detailVisible || !_main.IsAnalysisViewVisible || _session.Image == null)
+        {
+            _detailHighlight.Hidden = true;
+            return;
+        }
+        double scale = _photo.PointScale;
+        double boxWidth, boxHeight;
+        if (_detailFrameWidth is { } width && _detailFrameHeight is { } height)
+        {
+            boxWidth = width * _photo.DisplayWidth * scale;
+            boxHeight = height * _photo.DisplayHeight * scale;
+        }
+        else
+        {
+            boxWidth = boxHeight = _analysisPane.CropPixels * scale;
+        }
+        var center = _photo.ViewPoint(_detailU, _detailV);
+        _detailHighlight.Frame = new CGRect(center.X - boxWidth / 2, center.Y - boxHeight / 2, boxWidth, boxHeight);
+        _detailHighlight.Hidden = false;
+    }
+
+    /// <summary>收起主图绿框（分析栏隐藏、切图或点空白时）。</summary>
+    private void HideDetailHighlight()
+    {
+        _detailVisible = false;
+        _detailHighlight.Hidden = true;
+    }
+
+    /// <summary>细节预览双击：把主图定位到该归一化点并放大到物理 100%（与旧壳 FocusOnImagePoint 同义）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    private void FocusDetailPoint(double u, double v) => _photo.FocusOnPoint(u, v, 1);
 
     /// <summary>
     /// 视口首次有效后启动展示会话（先上报视口再发起解码：代理目标必须来自真实视口，
@@ -710,6 +874,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photo.SetImage(_session.Image);
         UpdateHint();
         LayoutOverlays();
+        ApplyDetailHighlight();
     }
 
     /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时对焦点仍是空值。</summary>
@@ -725,7 +890,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         => _session.UpdateViewport(
             (double)_photo.Bounds.Width * _photo.TraitCollection.DisplayScale,
             (double)_photo.Bounds.Height * _photo.TraitCollection.DisplayScale,
-            _photo.NeedsFull);
+            _photo.NeedsFull || _main.IsAnalysisViewVisible);
 
     /// <summary>空态提示文案（空目录、可打开文件夹或加载失败）。</summary>
     /// <returns>提示文本；有照片且无错误时为空串。</returns>

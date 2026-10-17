@@ -2,6 +2,7 @@ using System.ComponentModel;
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Tools;
@@ -42,20 +43,20 @@ internal sealed class MacExifDetailView : NSView
     /// <summary>卡片的下外边距。</summary>
     private const double CardBottomMargin = 4;
 
-    /// <summary>Tag ID 列宽（旧壳 ColumnDefinitions 首列 60）。</summary>
-    private const double IdColumnWidth = 60;
+    /// <summary>Tag ID 列宽（共享 7 列几何：旧壳 ColumnDefinitions 首列 60）。</summary>
+    private const double IdColumnWidth = ExifTableGeometry.IdColumnWidth;
 
-    /// <summary>列分隔线与行分隔线厚度。</summary>
-    private const double DividerThickness = 1;
+    /// <summary>列分隔线与行分隔线厚度（共享 7 列几何）。</summary>
+    private const double DividerThickness = ExifTableGeometry.DividerThickness;
 
-    /// <summary>名称/中文名/值单元格的左右内边距（旧壳 Padding 10,8）。</summary>
-    private const double CellPaddingX = 10;
+    /// <summary>名称/中文名/值单元格的左右内边距（共享 7 列几何）。</summary>
+    private const double CellPaddingX = ExifTableGeometry.CellPaddingX;
 
-    /// <summary>名称/中文名/值单元格的上下内边距。</summary>
-    private const double CellPaddingY = 8;
+    /// <summary>名称/中文名/值单元格的上下内边距（共享 7 列几何）。</summary>
+    private const double CellPaddingY = ExifTableGeometry.CellPaddingY;
 
-    /// <summary>值列最多显示三行（旧壳 MaxLines=3）。</summary>
-    private const int ValueMaxLines = 3;
+    /// <summary>值列最多显示三行（共享 7 列几何：旧壳 MaxLines=3）。</summary>
+    private const int ValueMaxLines = ExifTableGeometry.ValueMaxLines;
 
     /// <summary>测量换行高度的宽度上限。</summary>
     private const double MeasureLimit = 10000;
@@ -364,14 +365,12 @@ internal sealed class MacExifDetailView : NSView
     /// <returns>卡片高度。</returns>
     private static double RelayoutCard(GroupBlock block, double cardWidth)
     {
-        double columns = Math.Max(0, cardWidth - IdColumnWidth - DividerThickness * 3);
-        double unit = columns / 7;
-        double nameColumn = unit * 2;
-        double chineseColumn = unit * 2;
-        double valueColumn = Math.Max(0, columns - nameColumn - chineseColumn);
-        double nameTextWidth = Math.Max(1, nameColumn - CellPaddingX * 2);
-        double chineseTextWidth = Math.Max(1, chineseColumn - CellPaddingX * 2);
-        double valueTextWidth = Math.Max(1, valueColumn - CellPaddingX * 2);
+        var columns = ExifTableGeometry.Compute(cardWidth);
+        double nameColumn = columns.NameColumn;
+        double chineseColumn = columns.ChineseColumn;
+        double nameTextWidth = columns.NameTextWidth;
+        double chineseTextWidth = columns.ChineseTextWidth;
+        double valueTextWidth = columns.ValueTextWidth;
         double y = 0;
         foreach (var row in block.Rows)
         {

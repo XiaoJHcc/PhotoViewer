@@ -192,17 +192,23 @@ public sealed class iOSAppResources : IAppResourceProvider
 }
 
 /// <summary>
-/// 共享窗口门面在 iOS 原生壳的实现：设置页走原生半屏浮窗；
-/// 工具页（EXIF 详情 / DINO 诊断）留待 I5 里程碑，调用即显式失败而非静默无效。
+/// 共享窗口门面在 iOS 原生壳的实现：设置页走原生半屏浮窗；工具页由
+/// <see cref="iOSNativeToolsPresenter"/> 以 sheet + 导航控制器承载（EXIF 详情 / DINO 诊断）。
 /// </summary>
-public sealed class iOSWindowPresenter(iOSNativeSettingsPresenter settings) : INativeWindowPresenter
+public sealed class iOSWindowPresenter : INativeWindowPresenter
 {
+    private readonly iOSNativeSettingsPresenter _settings;
+    private readonly iOSNativeToolsPresenter _tools = new();
+
+    /// <summary>绑定原生设置展示器。</summary>
+    /// <param name="settings">原生设置半屏浮窗展示器。</param>
+    public iOSWindowPresenter(iOSNativeSettingsPresenter settings) => _settings = settings;
+
     /// <summary>展示原生设置页。</summary>
     /// <param name="viewModel">共享设置 ViewModel。</param>
-    public void ShowSettingsWindow(SettingsViewModel viewModel) => settings.TryPresent(viewModel);
+    public void ShowSettingsWindow(SettingsViewModel viewModel) => _settings.TryPresent(viewModel);
 
-    /// <summary>iOS 原生工具页尚未实现（I5 里程碑）。</summary>
+    /// <summary>展示或前置原生工具页。</summary>
     /// <param name="tools">工具壳 ViewModel。</param>
-    public void ShowOrActivateToolsWindow(ToolsViewModel tools)
-        => throw new NotSupportedException("iOS 原生工具页未实现（I5 里程碑）：EXIF 详情与 DINO 诊断届时接入 UIKit 承载页。");
+    public void ShowOrActivateToolsWindow(ToolsViewModel tools) => _tools.ShowOrActivate(tools);
 }

@@ -57,6 +57,7 @@ public static class iOSNativeShell
         InitializePlatform();
         var main = InitializeMainViewModel(args);
         ApplyLaunchLayoutMode(args, main);
+        ApplyLaunchAnalysisOpen(args, main);
         _session = new PhotoLoadSession();
         _rootViewController = new iOSNativeRootViewController(main, _session, IsAutomatedValidation(args));
         BootTrace.MarkAvaloniaAssemblies("native shell: root view controller ready");
@@ -66,6 +67,9 @@ public static class iOSNativeShell
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeInputCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeSimilarityCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeToolsCheck.MaybeStart(args, _rootViewController, _session);
         iOSDinoCheck.MaybeStart(args);
         return _rootViewController;
     }
@@ -96,6 +100,19 @@ public static class iOSNativeShell
             };
             Console.WriteLine($"[Native] --pv-layout-mode {args[index + 1]}");
         }
+    }
+
+    /// <summary>
+    /// 验收专用（非产品行为）：<c>--pv-analysis-open</c> 启动即展开分析栏，
+    /// 供真机压测在"分析栏可见（每张升 Full）"条件下采集内存与延迟；产品路径无此开关。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <param name="main">共享主 VM。</param>
+    private static void ApplyLaunchAnalysisOpen(string[] args, MainViewModel main)
+    {
+        if (!args.Contains("--pv-analysis-open", StringComparer.Ordinal)) return;
+        main.IsAnalysisViewVisible = true;
+        Console.WriteLine("[Native] --pv-analysis-open：分析栏启动即展开（验收会话）");
     }
 
     /// <summary>

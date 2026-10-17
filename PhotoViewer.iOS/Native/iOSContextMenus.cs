@@ -7,7 +7,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 原生上下文菜单构建（[INPUT-01] 的触屏入口）：
-/// 主图菜单与 Mac 原生右键菜单同序（打开文件夹、栏位显隐、设置），只登记 iOS 当前可用的功能（分析栏/工具页/增强预览属 I5，不生成死项）；
+/// 主图菜单与 Mac 原生右键菜单同序（打开文件夹、栏位显隐、增强、工具、设置），I5 起分析栏/增强/工具页都是真实可用项；
 /// 胶片栏卡片菜单提供评分 0–5，并以菜单标题承载完整文件名与拍摄时间（[FILM-05] 的触屏 tooltip 等价物）。
 /// 菜单在每次弹出时现建，勾选态与星级直接读共享状态，不做缓存。
 /// </summary>
@@ -30,30 +30,40 @@ internal static class iOSContextMenus
     }
 
     /// <summary>
-    /// 主图上下文菜单：打开文件夹、胶片栏/控制栏显隐（勾选态取当前共享状态）、设置。
-    /// 分组用 <see cref="UIMenuOptions.DisplayInline"/> 形成系统分隔段，不伪造不可用入口。
+    /// 主图上下文菜单：打开文件夹、胶片栏/分析栏/控制栏显隐（勾选态取当前共享状态）、增强预览、
+    /// 工具页与设置。分组用 <see cref="UIMenuOptions.DisplayInline"/> 形成系统分隔段。
     /// </summary>
     /// <param name="filmVisible">胶片栏当前是否可见。</param>
     /// <param name="controlVisible">控制栏当前是否可见。</param>
+    /// <param name="analysisVisible">分析栏当前是否可见。</param>
+    /// <param name="enhanced">增强预览当前是否开启。</param>
     /// <param name="openFolder">打开文件夹回调。</param>
     /// <param name="toggleFilm">切换胶片栏回调。</param>
     /// <param name="toggleControl">切换控制栏回调。</param>
+    /// <param name="toggleAnalysis">切换分析栏回调。</param>
+    /// <param name="toggleEnhance">切换增强预览回调。</param>
+    /// <param name="openTools">打开工具页回调。</param>
     /// <param name="openSettings">打开设置回调。</param>
     /// <returns>菜单与同源回调。</returns>
-    internal static MenuResult Photo(bool filmVisible, bool controlVisible, Action openFolder, Action toggleFilm, Action toggleControl, Action openSettings)
+    internal static MenuResult Photo(bool filmVisible, bool controlVisible, bool analysisVisible, bool enhanced,
+        Action openFolder, Action toggleFilm, Action toggleControl, Action toggleAnalysis, Action toggleEnhance,
+        Action openTools, Action openSettings)
     {
         var handlers = new Dictionary<string, Action>(StringComparer.Ordinal);
         var open = Item(handlers, "photo.open-folder", "打开文件夹…", "folder", null, openFolder);
         var toggles = UIMenu.Create(string.Empty, null!, new NSString("photo.panes"), UIMenuOptions.DisplayInline,
         [
             Item(handlers, "photo.film", "胶片栏", "rectangle.stack", filmVisible, toggleFilm),
+            Item(handlers, "photo.analysis", "分析栏", "square.grid.2x2", analysisVisible, toggleAnalysis),
             Item(handlers, "photo.control", "控制栏", "slider.horizontal.3", controlVisible, toggleControl),
         ]);
+        var enhance = Item(handlers, "photo.enhance", "增强", "wand.and.stars", enhanced, toggleEnhance);
         var settings = UIMenu.Create(string.Empty, null!, new NSString("photo.settings"), UIMenuOptions.DisplayInline,
         [
+            Item(handlers, "photo.tools", "工具…", "wrench.and.screwdriver", null, openTools),
             Item(handlers, "photo.settings.open", "设置…", "gearshape", null, openSettings),
         ]);
-        var menu = UIMenu.Create(string.Empty, null!, new NSString(PhotoIdentifier), default, [open, toggles, settings]);
+        var menu = UIMenu.Create(string.Empty, null!, new NSString(PhotoIdentifier), default, [open, toggles, enhance, settings]);
         return new MenuResult(PhotoIdentifier, menu, handlers);
     }
 
