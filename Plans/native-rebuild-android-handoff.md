@@ -8,7 +8,8 @@
 - 计划评审已完成，结论：技术路线可执行；原 1 个硬阻塞（A1 的 Mac/iOS 回归门）已于 2026-10-18 在本机执行，评审修订见 §3。
 - Windows 基线：`dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug` = **0 错误 / 21 警告**（含既有 NU1903、CS86xx、CA1422、XA4301；计划里的「14 条」已过时）。
 - Windows 已下载 API 24/28/33/35 的 `google_apis;x86_64` 镜像；**这些镜像不能带到 Apple Silicon Mac**，Mac 已重新下载 `arm64-v8a`（见 §4）。
-- **Mac 本机（2026-10-18）**：Apple Silicon / macOS 26.6.2 / Xcode 27.1 / .NET SDK 10.0.402 / ios + macos workload 27.0.10722 / JDK 21 Temurin；**android workload 仍未安装**（需管理员）；SDK 已补 `platforms;android-35`、`emulator`、`system-images;android-35;google_apis;arm64-v8a`，并已创建 AVD `pv-api35`（pixel_7）。
+- **Mac 本机（2026-10-18）**：Apple Silicon / macOS 26.6.2 / Xcode 27.1 / .NET SDK **10.0.402（默认）与 10.0.201** / ios + macos workload 27.0.10722 / JDK 21 Temurin。**android workload 只装在 10.0.201 下**（36.1.53）；默认 10.0.402 下没有，`dotnet build` 会报 NETSDK1147。SDK 已补 `platforms;android-35`、`emulator`、`system-images;android-35;google_apis;arm64-v8a`，并已创建 AVD `pv-api35`（pixel_7）。
+- **Android 构建/启动已验证（2026-10-18）**：在临时目录用 `global.json` pin 10.0.201（不改仓库 `global.json`，Apple 头仍用 10.0.402）构建 Android 头 = **0 错误 / 21 警告**；APK 267MB 安装到 API 35 arm64 模拟器，旧壳 `MainActivity` 正常启动并显示 Avalonia 主界面（全屏系统提示可关）。构建命令见 §4 末尾。
 - **A1a 已落地**：7 个几何文件移入 `PhotoViewer.Shared/`（命名空间 `PhotoViewer.Shared`），`InputCommandMap.CommandForGesture` 抽出；Mac/iOS/Android 三个 csproj 已链接共享源。Mac 与 iOS Debug 构建 0 错误。
 - **A1a 回归（2026-10-18）**：Mac `--pv-native-smoke` **39 checks PASS**，`input / toolbar / layout / analysis / similarity / tools / filmstrip` 七套专项 PASS；iOS 模拟器（iPad mini A17 Pro）七套全 PASS：photo **10** / gesture **24** / layout **24** / input **29** / analysis **18** / similarity **10** / tools **7**。
 - **settings 套件假阴性**：`--pv-native-settings` 在“勾选后重绘”断言失败，原因是本机未授予屏幕录制权限，`screencapture -l` 失败后 SwiftUI 图层的 `cacheDisplay` 导出空白；迁移前基线（`3ce703a` + 仅修最低系统版本）同断言同样失败，且 KimiCU 目视窗口内容正常。**不是 A1a 行为变化**，已登记，待补抓屏权限或修复离屏渲染后复跑。
@@ -67,6 +68,10 @@ SDK="$HOME/Library/Android/sdk"
 - **Android SDK 路径**：csproj 已回退 `$(HOME)/Library/Android/sdk`；若用其他路径，设 `AndroidSdkDirectory` 或 `ANDROID_HOME`。
 - **模拟器镜像**：Apple Silicon 必须 `arm64-v8a`；API 24/28/33/35/36 的 `google_apis;arm64-v8a` 均可用（已核对仓库列表）。Windows 已下的 `x86_64` 不要拷。
 - **AVD 数量**：至少 API 35 一台日常用；A6 再补 24/28/33/36。DPI/fontScale 用 `wm density` / `settings put system font_scale` 调，不必为每档建 AVD。
+- **构建命令（默认 10.0.402 缺 android workload 时）**：不要改仓库 `global.json`（Apple 头需要 10.0.402 的 27 工作负载）。在任意临时目录放 `{"sdk":{"version":"10.0.201","rollForward":"disable"}}`，从该目录用绝对路径构建：
+  `cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug`。
+  长期仍建议 `sudo dotnet workload install android` 到 10.0.402，使默认 `dotnet build` 一致。
+- **AVD 启动**：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`；无窗口验收可加 `-no-window -no-audio -no-boot-anim -gpu swiftshader_indirect`。
 - **素材**：`/release/` 在 [.gitignore](../.gitignore) 里，**新 clone 不会有**。本机已有 `release/native-p2-fixtures`（含 `orientation-1..8.jpg`、四张色卡）、`release/native-p2-large-fixtures/color-p3-large.jpg`、`release/native-p2-raw/A7C01489.ARW`、`release/native-p2-toolbar-fixtures`。A1 的 iOS 回归需要 `focus-src.ARW`（由 `release/native-p2-raw/A7C01489.ARW` 改名）。缺素材时不要让回归静默跳过。
 
 ## 5. A1 执行顺序（建议拆两笔提交）

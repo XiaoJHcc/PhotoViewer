@@ -46,11 +46,13 @@
 *前提：手机已通过 ADB 连接。*
 
 > **macOS 前置依赖**
-> 1. **JDK 17+**：`dotnet build` 内部需要 keytool / javac。推荐通过 [Adoptium](https://adoptium.net) 安装，或 `brew install temurin`。安装后确认 `keytool -version` 可用。
-> 2. **Android SDK**：首次使用请通过 [Android Studio](https://developer.android.com/studio) 安装，SDK 默认落在 `~/Library/Android/sdk`；项目已内置该路径的备用寻址，无需额外设置环境变量。
-> 3. **ADB**：Tasks 已硬编码使用 `~/Library/Android/sdk/platform-tools/adb`，无需将其加入 PATH。
+> 1. **Android workload**：`sudo dotnet workload install android`（本机 dotnet 在 `/usr/local/share/dotnet`，需要管理员）。`dotnet workload list` 出现 `android` 后 Android 头才能构建；否则报 `NETSDK1147`。**本机 10.0.201 下已装 android workload，默认 10.0.402 下没有**：临时用后者构建时，在临时目录放 `{"sdk":{"version":"10.0.201","rollForward":"disable"}}` 的 `global.json`，再从该目录用绝对路径 `dotnet build`；不要改仓库 `global.json`（Apple 头需要 10.0.402 的 27 工作负载）。
+> 2. **JDK 17+**：`dotnet build` 内部需要 keytool / javac。推荐通过 [Adoptium](https://adoptium.net) 安装，或 `brew install temurin`。安装后确认 `keytool -version` 可用（本机为 Temurin 21）。
+> 3. **Android SDK**：可用 [Android Studio](https://developer.android.com/studio)，也可只用 cmdline-tools。SDK 默认落在 `~/Library/Android/sdk`，项目已内置该路径的备用寻址，无需额外设置环境变量。
+> 4. **模拟器（Apple Silicon）**：镜像必须 `arm64-v8a`，`x86_64` 镜像不可用。本机已装 `platforms;android-35`、`emulator`、`system-images;android-35;google_apis;arm64-v8a` 并创建 AVD `pv-api35`；启动：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`。
+> 5. **ADB**：Tasks 已硬编码使用 `~/Library/Android/sdk/platform-tools/adb`，无需将其加入 PATH。
 
-- ⚡ **Debug Android**：编译并自动将新版推送到已连接手机上直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
+- ⚡ **Debug Android**：编译并自动将新版推送到已连接设备（真机或模拟器）直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
 - ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
 
 ### 3. Mac

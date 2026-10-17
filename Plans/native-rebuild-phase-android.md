@@ -217,7 +217,7 @@
 | 6 | Android 构建基线不是 phase-2 记录的 14 条：Windows 2026-10-18 实测 **21 警告 / 0 错误**（NU1903、CS86xx、CA1422、XA4301），Mac 侧本机为 9 警告 | 以最新构建日志冻结基线，不把既有警告算新增 |
 | 7 | Mac/iOS workload 27.0.10722 把 macOS 最低部署版本抬到 **14.0**，Mac head 原写 12.0，`dotnet build` 直接报 `SupportedOSPlatformVersion ... lower than the minimum value '14.0'`；`Info.plist` 的 `LSMinimumSystemVersion` 也需同步 | 2026-10-18 已把 Mac csproj 与 Info.plist 对齐 14.0（设置窗口 SwiftUI 本就以 macOS 26 为目标） |
 | 8 | workload 升级后首次构建 iOS 会因旧 `obj/bin` 残留报 `Undefined symbols for architecture arm64: _xamarin_*` | 删除 `PhotoViewer.iOS/obj`、`bin` 后重建即通过；升级工具链后先做一次干净构建 |
-| 9 | 本机 macOS 环境缺 Android 工具链：无 `android` workload、SDK 只有 platform 36 / build-tools 36 / platform-tools，**无 emulator 与 system-images**，也未装 Android Studio | 2026-10-18 已补 platform 35 / emulator / arm64-v8a 镜像与 AVD `pv-api35`；`android` workload 仍需管理员安装 |
+| 9 | 本机 macOS 环境缺 Android 工具链：默认 SDK 10.0.402 无 `android` workload，SDK 只有 platform 36 / build-tools 36 / platform-tools，**无 emulator 与 system-images** | 2026-10-18 已补 platform 35 / emulator / arm64-v8a 镜像与 AVD `pv-api35`；**10.0.201 下已有 android workload 36.1.53**，用临时 `global.json` pin 10.0.201 构建 Android 头 0 错误 / 21 警告并成功启动旧壳；10.0.402 仍需 `sudo dotnet workload install android` |
 | 10 | `--pv-native-settings` 的“勾选后重绘”断言依赖 `screencapture -l`：本机未授予屏幕录制权限时回退到 `cacheDisplay`，SwiftUI 图层导出为空白，断言必失败；迁移前基线同样失败，KimiCU 目视窗口内容正常 | 登记为假阴性；授予权限或改用可捕获图层树的离屏渲染后复跑。A1a 结论不据此改判 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
