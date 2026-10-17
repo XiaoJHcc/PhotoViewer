@@ -123,7 +123,7 @@ Apple 选 16float extended sRGB 而非 8bit P3：无 banding、装得下 >P3 内
 2. **新增 `ColorEngine`**（Core/Color/）：skcms 封装 —— `ToScRgb16(src, srcProfile)`、`ToSrgb8(...)`、profile 解析/缓存（sRGB/P3/AdobeRGB 常见 profile 常驻）。
 3. **解码器接口扩展**：`IHeifDecoder`/`IRawDecoder`/JPEG 解码统一返回携带色彩空间的中间产物；JPEG 无 profile 推断规则集中在 ColorEngine。
 4. **DecodeScheduler / 预取 / 淘汰保护 / 指纹 / DB / EXIF / XMP / 设置存储**：逻辑不变，仅适配新像素类型与内存估算。
-5. **新增 Windows RAW**：`PhotoViewer.Desktop` 侧 `LibRawDecoder : IRawDecoder`（Sdcb.LibRaw），与 MacRawDecoder/iOSRawDecoder 对齐。注意确认 win-arm64 运行时包；LibRaw CVE 频发，纳入依赖更新纪律。
+5. **新增 Windows RAW**：`PhotoViewer.Windows` 侧 `LibRawDecoder : IRawDecoder`（Sdcb.LibRaw），与 MacRawDecoder/iOSRawDecoder 对齐。注意确认 win-arm64 运行时包；LibRaw CVE 频发，纳入依赖更新纪律。
 
 ---
 

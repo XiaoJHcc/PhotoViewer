@@ -11,42 +11,42 @@
     {
       "label": "Debug Windows",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Run Windows",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop --no-build -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Debug Windows (Legacy)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop -c Debug -- --legacy-ui",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --legacy-ui",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Run Windows (Legacy)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop --no-build -c Debug -- --legacy-ui",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug -- --legacy-ui",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Check Windows Native",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --native --pv-native-smoke",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Compare Windows (Native + Legacy)",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj -c Debug && powershell -NoProfile -Command \"Start-Process 'PhotoViewer.Desktop/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Desktop.exe' -ArgumentList '--legacy-ui'; Start-Process 'PhotoViewer.Desktop/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Desktop.exe'\"",
+      "command": "dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Debug && powershell -NoProfile -Command \"Start-Process 'PhotoViewer.Windows/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe' -ArgumentList '--legacy-ui'; Start-Process 'PhotoViewer.Windows/bin/Debug/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe'\"",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
@@ -180,7 +180,7 @@
     {
       "label": "Publish Windows EXE (Release)",
       "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1",
       "group": "build",
       "problemMatcher": "$msCompile"
     },

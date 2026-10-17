@@ -70,7 +70,7 @@
 
 ### 验证
 
-- `dotnet build PhotoViewer/PhotoViewer.csproj`（核心库）+ `dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj` 通过。
+- `dotnet build PhotoViewer/PhotoViewer.csproj`（核心库）+ `dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj` 通过。
 - 手测清单：
   1. 打开文件夹 → 首图上屏后立即开始预载邻居（缩略图缓存边框/日志可观测）；
   2. 打开单个文件 → 同上（阶段2 补触发）；

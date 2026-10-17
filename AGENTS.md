@@ -28,7 +28,7 @@ For build / run / publish workflow (VS Code Tasks), see [DEV.md](DEV.md).
 
 ```
 PhotoViewer/              # Shared Avalonia project (UI + business logic, no platform code)
-PhotoViewer.Desktop/      # Windows head (net10.0-windows)
+PhotoViewer.Windows/      # Windows head (net10.0-windows)
 PhotoViewer.Mac/          # macOS head (net10.0-macos)
 PhotoViewer.Apple/        # Apple 共享源（纯源目录，Compile Include 链接进 Mac/iOS head，不新增程序集）
 PhotoViewer.iOS/          # iOS / iPadOS head (net10.0-ios)：I1–I5 原生 UIKit 壳 + 迁移期 Avalonia 旧壳
@@ -68,7 +68,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳（旧壳不参与产品验收） |
 | [PhotoViewer.Apple/](PhotoViewer.Apple/) | [PhotoViewer.Apple/AGENTS.md](PhotoViewer.Apple/AGENTS.md) | Apple 平台共享源：展示解码器与编码策略、Metal 渲染核心、视口/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何、主屏分区几何、验收判定、命令符号与手势映射（供 Mac 与 iOS 原生壳链接） |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/) | [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳：UIKit 生命周期、原生存储引用/文档选择器/外部打开、主图 Metal 链路、主屏布局（胶片栏/筛选条/控制栏）、输入、P3 功能（分析栏/相似聚类/工具页/增强预览）；迁移期保留 Avalonia 旧壳 |
-| [PhotoViewer.Desktop/](PhotoViewer.Desktop/) | [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md) | Windows 头工程：迁移期旧壳 + WinUI 3 原生壳（五分区主窗口 + 自绘自动显隐标题栏 + D3D11 主图 + 导航图 + 分析栏 + 相似聚类 + 增强预览 + 设置窗口 W-M5 + 工具窗口；分析栏/增强与 Mac/iPad 共用 `AnalysisPresenter`/`PhotoLoadSession`，DINO 诊断共用 `DinoDiagnosticPresenter`；W-M7 色彩/RAW 未做；方案与逐项对拍见 [Plans/native-rebuild-windows-p2.md](Plans/native-rebuild-windows-p2.md)） |
+| [PhotoViewer.Windows/](PhotoViewer.Windows/) | [PhotoViewer.Windows/AGENTS.md](PhotoViewer.Windows/AGENTS.md) | Windows 头工程：迁移期旧壳 + WinUI 3 原生壳（五分区主窗口 + 自绘自动显隐标题栏 + D3D11 主图 + 导航图 + 分析栏 + 相似聚类 + 增强预览 + 设置窗口 W-M5 + 工具窗口；分析栏/增强与 Mac/iPad 共用 `AnalysisPresenter`/`PhotoLoadSession`，DINO 诊断共用 `DinoDiagnosticPresenter`；W-M7 色彩/RAW 未做；方案与逐项对拍见 [Plans/native-rebuild-windows-p2.md](Plans/native-rebuild-windows-p2.md)） |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -206,7 +206,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 ### 5.8 Windows P2 原生看图链路
 
-1. **壳与启动**：Debug 默认 WinUI 3 原生壳（`--legacy-ui` 回退），Release 默认旧壳（`--native` 显式进入）；原生路径不创建 Avalonia 对象。启动序：`WindowsUiDispatcher` + `SynchronizationContext` → ReactiveUI → 门面（展示解码器/编码策略/HEIF/预算/Governor/存储/设置/ONNX）→ `MainViewModel(nativePresentation: true)` → `WindowsNativeSettingsPresenter` + `WindowsNativeToolsPresenter` + `NativeWindowPresenter` → `WindowsMainWindow` → 外部打开注册。文件清单见 [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md)。
+1. **壳与启动**：Debug 默认 WinUI 3 原生壳（`--legacy-ui` 回退），Release 默认旧壳（`--native` 显式进入）；原生路径不创建 Avalonia 对象。启动序：`WindowsUiDispatcher` + `SynchronizationContext` → ReactiveUI → 门面（展示解码器/编码策略/HEIF/预算/Governor/存储/设置/ONNX）→ `MainViewModel(nativePresentation: true)` → `WindowsNativeSettingsPresenter` + `WindowsNativeToolsPresenter` + `NativeWindowPresenter` → `WindowsMainWindow` → 外部打开注册。文件清单见 [PhotoViewer.Windows/AGENTS.md](PhotoViewer.Windows/AGENTS.md)。
 2. **主图**：`WindowsPhotoView` = `SwapChainPanel` + D3D11 合成翻转链 `R16G16B16A16_FLOAT`；EXIF 方向在顶点着色器做 UV 置换（绝不旋转像素），三线性 mipmap；`PhotoLoadSession` 管代际/代理↔Full/租约；100% 口径 = 1 源像素对 1 物理像素；导航图由会话帧经 Skia 缩到导航尺寸，白框/百分比由原生控件绘制。
 3. **增强与分析**：增强预览已下移到 `PhotoLoadSession`（跨切图持续、压力 Warning 自动关闭）；`WindowsAnalysisPanel` 实现 `IAnalysisHost` 并消费共享 `AnalysisPresenter`，细节预览用 `DisplayCrop` 从容器朝向裁出显示朝向 1:1 方块；直方图/诊断瓦片/未提取回退与 Mac/iPad 同一份编排，不再保留 Windows 专属分析缓存或即时计算实现。
 4. **布局**：五分区（筛选 / 胶片条+相似聚类 / 主图 / 分析栏 / 控制栏），自绘标题栏 50 DIP 热区自动显隐，caption 区域按实际按钮边界避让；文件栏内容宽 116 + 1 分隔线、卡片 90×138/项距 96·144、控制栏三组整组换行居中。

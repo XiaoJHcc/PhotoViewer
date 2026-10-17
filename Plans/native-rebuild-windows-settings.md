@@ -184,16 +184,16 @@ Window 960×720（min 720×560，Mica，标准边框 + 系统 caption）
 
 | 文件 | 职责 |
 |---|---|
-| `PhotoViewer.Desktop/App.xaml` / `App.xaml.cs` | WinUI `Application` + `XamlControlsResources` + 深色主题；`OnLaunched` 装配门面、`MainViewModel`、主窗口、外部打开。 |
-| `PhotoViewer.Desktop/Native/WindowsNativeApplication.cs` | `Application.Start` + DispatcherQueue/同步上下文、门面注入、窗口句柄。 |
-| `PhotoViewer.Desktop/Native/WindowsNativeSettingsPresenter.cs` | `INativeSettingsPresenter`：工作副本、单例、打开/关闭回写、生命周期 |
-| `PhotoViewer.Desktop/Native/WindowsSettingsWindow.cs` | 窗口壳：Mica、`TitleBar`、`NavigationView`、页面宿主、关闭事件、尺寸/居中 |
-| `PhotoViewer.Desktop/Native/WindowsSettingsCard.cs` | 页面/分组标题、`SettingsCard`、开关/滑块行、提示、分隔线、把手、图标按钮 |
-| `PhotoViewer.Desktop/Native/WindowsSettingsList.cs` | 可排序表：`ListView` 装配、UIElement 行、把手、容器属性、空态 |
-| `PhotoViewer.Desktop/Native/WindowsHotkeyRecorder.cs` | 录制按钮、捕获、格式化、冲突态 |
-| `PhotoViewer.Desktop/Native/WindowsSettingsPage.File.cs` 等五个 partial | 五页内容：`File` / `Preview` / `Control` / `Exif` / `Ai` |
-| `PhotoViewer.Desktop/Native/WindowsSettingsAcceptance.cs` | `--pv-native-settings` 定向验收（隔离设置、自检、收尾还原） |
-| `PhotoViewer.Desktop/Native/WindowsLayout.cs` | 设置窗口几何：窗口/导航/标题栏/页宽/卡片圆角/行高/NumberBox 宽 |
+| `PhotoViewer.Windows/App.xaml` / `App.xaml.cs` | WinUI `Application` + `XamlControlsResources` + 深色主题；`OnLaunched` 装配门面、`MainViewModel`、主窗口、外部打开。 |
+| `PhotoViewer.Windows/Native/WindowsNativeApplication.cs` | `Application.Start` + DispatcherQueue/同步上下文、门面注入、窗口句柄。 |
+| `PhotoViewer.Windows/Native/WindowsNativeSettingsPresenter.cs` | `INativeSettingsPresenter`：工作副本、单例、打开/关闭回写、生命周期 |
+| `PhotoViewer.Windows/Native/WindowsSettingsWindow.cs` | 窗口壳：Mica、`TitleBar`、`NavigationView`、页面宿主、关闭事件、尺寸/居中 |
+| `PhotoViewer.Windows/Native/WindowsSettingsCard.cs` | 页面/分组标题、`SettingsCard`、开关/滑块行、提示、分隔线、把手、图标按钮 |
+| `PhotoViewer.Windows/Native/WindowsSettingsList.cs` | 可排序表：`ListView` 装配、UIElement 行、把手、容器属性、空态 |
+| `PhotoViewer.Windows/Native/WindowsHotkeyRecorder.cs` | 录制按钮、捕获、格式化、冲突态 |
+| `PhotoViewer.Windows/Native/WindowsSettingsPage.File.cs` 等五个 partial | 五页内容：`File` / `Preview` / `Control` / `Exif` / `Ai` |
+| `PhotoViewer.Windows/Native/WindowsSettingsAcceptance.cs` | `--pv-native-settings` 定向验收（隔离设置、自检、收尾还原） |
+| `PhotoViewer.Windows/Native/WindowsLayout.cs` | 设置窗口几何：窗口/导航/标题栏/页宽/卡片圆角/行高/NumberBox 宽 |
 | `Directory.Packages.props` | `Microsoft.WindowsAppSDK` + `CommunityToolkit.WinUI.Controls.SettingsControls` 版本 |
 
 ## 10. 系统基线与回退
@@ -249,7 +249,7 @@ Window 960×720（min 720×560，Mica，标准边框 + 系统 caption）
 
 ## 14. 文档同步（实现收尾必须一起改）
 
-- `PhotoViewer.Desktop/AGENTS.md`：文件清单、WinUI 硬约束、设置窗口验收。
+- `PhotoViewer.Windows/AGENTS.md`：文件清单、WinUI 硬约束、设置窗口验收。
 - 根 `AGENTS.md` §5.8：设置窗口原生链路一句话 + 入口 + 根因结论。
 - [native-rebuild-windows-p2.md](native-rebuild-windows-p2.md)：§0.2 控件事实、§6 W-M5、§13.2 #9、§17。
 - [Design/ui-contract.md](../Design/ui-contract.md)：SETTINGS-01/02/03 Windows 列（NavigationView / Mica / SettingsCard / 整行拖）。
@@ -307,7 +307,7 @@ W-M5 原先声称 `NavigationView` / `TitleBar` / `NumberBox` / `TextBox` / `Ric
 
 ## 17. 验证（2026-10-17）
 
-- `dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj -c Debug`：0 error；新增代码 0 warning（仓库既有 `NU1903` SQLite 告警不计入本次改动）。
+- `dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Debug`：0 error；新增代码 0 warning（仓库既有 `NU1903` SQLite 告警不计入本次改动）。
 - `--pv-native-smoke`：**24 项 PASS**（主屏无回归）。
 - `--pv-native-settings`：**7 项 PASS**（深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar、五分类/尺寸、开关+NumberBox+Slider、列表重排、录制开始取消/手势显示、关闭回写）。
 - 150% 实机截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`）。

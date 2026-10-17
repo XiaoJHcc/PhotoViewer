@@ -6,17 +6,17 @@
 
 ## 0. W-M0 可行性闸门:结论(2026-10-16 已过)
 
-在 `PhotoViewer.Desktop` 上原地验证三项,全部通过:
+在 `PhotoViewer.Windows` 上原地验证三项,全部通过:
 
 | 闸门 | 结果 | 证据 |
 |---|---|---|
-| ① 同一工程加入 WinUI 3 后,旧 Avalonia 壳仍能构建与启动 | ✅ | `dotnet build PhotoViewer.Desktop` 0 错误 / 4 条既有 NU1903;`--legacy-ui` 启动窗口标题 `PhotoViewer 图片查看器` |
+| ① 同一工程加入 WinUI 3 后,旧 Avalonia 壳仍能构建与启动 | ✅ | `dotnet build PhotoViewer.Windows` 0 错误 / 4 条既有 NU1903;`--legacy-ui` 启动窗口标题 `PhotoViewer 图片查看器` |
 | ② 自写 `Main` + `Application.Start` 能起原生窗口 | ✅ | 窗口标题 `PhotoViewer`,`PrintWindow` 导出 `bin/Debug/spike-window.png`,深色 Fluent 按钮/下拉/复选框渲染正常 |
 | ③ 自包含单文件发布产物能启动 | ✅ | 单文件 exe **239 MB**(`PublishSingleFile` + 压缩 + 自包含 WinAppSDK),`--native` 启动并渲染同一深色界面(`bin/Debug/publish-native.png`);对照现役 Release **166 MB**(0.7.1) |
 
 ### 0.1 定下来的构建配置(踩过的坑,不要重走)
 
-`PhotoViewer.Desktop.csproj`:
+`PhotoViewer.Windows.csproj`:
 
 ```xml
 <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -58,11 +58,11 @@
 ### 0.3 其它 W-M0 观测
 
 - WinUI 原生启动失败是 stowed exception(`0xC000027B`),**无控制台输出**。因此新增 `Native/NativeStartupLog.cs`(写 `%LOCALAPPDATA%\PhotoViewer\native-startup.log` + 未处理异常钩子);没有它无法区分"起不来"与"起来后崩"。这是常驻诊断,不是临时脚手架。
-- 固定 `RuntimeIdentifier` 后 Debug 输出路径变为 `bin/Debug/net10.0-windows10.0.19041.0/win-x64/`;引用旧路径的 `.run/PhotoViewer.Desktop.run.xml`(本就停留在 `net9.0-windows`)与脚本需在 W-M1 同步。
+- 固定 `RuntimeIdentifier` 后 Debug 输出路径变为 `bin/Debug/net10.0-windows10.0.19041.0/win-x64/`;引用旧路径的 `.run/PhotoViewer.Windows.run.xml`(本就停留在 `net9.0-windows`)与脚本需在 W-M1 同步。
 - 未显式设尺寸时 WinUI 窗口按屏幕宽度开(实测 1920×1015);W-M1 必须显式 `AppWindow.Resize`。
 - Git Bash 里 `dotnet publish` 必须用 `-p:Foo=bar`,写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`(PowerShell 脚本不受影响)。
 - **体积**:自包含发布目录(未单文件化)约 **563 MB** —— 含 .NET 运行时、WinAppSDK 解包内容(101 MB)、ONNX/DirectML、Avalonia 全系;单文件压缩后 **239 MB**(脚本另删 `*.pdb`,实测这些 pdb 约 111 MB)。对照现役 0.7.1 Release 单文件 166 MB(+44%)。体积增量来自 WinAppSDK 自包含,后续可按需裁剪未用组件(Widgets/WebView2 投影等);是否接受由作者定夺。
-- **原生壳单文件发布复核(2026-10-17)**:Debug 单文件试发布产物不含 `PhotoViewer.Desktop.pri`,启动在 `Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 已通过。Release 仍默认旧 Avalonia 壳,单文件 native 通道未启用;切 Release 前需单独修 PRI/运行时打包(参见 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720))。
+- **原生壳单文件发布复核(2026-10-17)**:Debug 单文件试发布产物不含 `PhotoViewer.Windows.pri`,启动在 `Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 已通过。Release 仍默认旧 Avalonia 壳,单文件 native 通道未启用;切 Release 前需单独修 PRI/运行时打包(参见 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720))。
 
 ## 1. 范围与非目标
 
@@ -87,13 +87,13 @@
 | UI 框架 | WinUI 3(Windows App SDK 1.8),非打包自包含 |
 | 主图表面 | `SwapChainPanel` + 合成 DXGI 翻转链,`R16G16B16A16_FLOAT`(与 Metal 侧同口径) |
 | UI 构建方式 | **C# 代码构建,不写 `.xaml`**(与 Mac 的程序化 AppKit 一致;规避与 Avalonia 的 XAML 编译目标冲突,几何常量可被 harness 直接断言) |
-| 头工程 | `PhotoViewer.Desktop` 单工程 + 运行期开关(与 `PhotoViewer.Mac` 结构一致) |
+| 头工程 | `PhotoViewer.Windows` 单工程 + 运行期开关(与 `PhotoViewer.Mac` 结构一致) |
 
 **否决项**:WPF(D3D 只能走 D3DImage/HwndHost,拿不到干净的 `DXGI + scRGB 标签` 路径;仅在 W-M0 失败时才考虑);Win32 + Direct2D 全手绘(结构最像 Mac 壳、零打包风险,但下拉框/菜单/滚动条/DPI/无障碍全自建,工作量显著更大);半原生(总纲 §3 已否决)。
 
 ## 3. 现状事实
 
-- 改造前 `PhotoViewer.Desktop/Program.cs` 只有 Avalonia 一条路径;平台实现仅 `Core/LibHeifDecoder.cs` 与 `Core/WindowsXmpWriter.cs`。
+- 改造前 `PhotoViewer.Windows/Program.cs` 只有 Avalonia 一条路径;平台实现仅 `Core/LibHeifDecoder.cs` 与 `Core/WindowsXmpWriter.cs`。
 - 未注入的共享门面(回落默认):`BitmapLoader.InitializePresentationDecoder`(**Windows 无 `IPresentationImageDecoder`**)、`RawLoader.Initialize`、`NativeSettingsPresenter`、`StorageAccessManager`(Windows 用 `Noop` 正确)。
 - `DirectNStandard`、`WicNet` 已在 csproj 与中心版本表里但**代码零引用**(W-M2 主图解码/W-M7 色彩会用到,届时转正)。
 - 共享层可直接复用:`MainViewModel(nativePresentation: true)` 本身无 Avalonia 依赖;`ImageViewModel` 在 native 模式构造即 early-return,不产生 `WriteableBitmap`;`PhotoLoadSession`、`BitmapLoader/DecodeScheduler/MemoryGovernor`、`ThumbnailService`、`FolderViewModel/FileViewModel/FilterBarViewModel/ThumbnailListViewModel`、`SettingsViewModel`(全文件无 Avalonia)、`NativeSettingsSession`、`ExternalOpenService`、`Core/Input/GestureModels.cs`、`Core/Color/ColorEngine.cs`、`PhotoDatabase`、`XmpWriter`。
@@ -131,7 +131,7 @@
 ## 5. 目标文件布局
 
 ```
-PhotoViewer.Desktop/
+PhotoViewer.Windows/
   Program.cs                     # 分流(--native / --legacy-ui)✅ W-M0
   Native/
     WindowsNativeApplication.cs  # WinUI Application、门面注入、生命周期 ✅ W-M0 骨架
@@ -196,7 +196,7 @@ PhotoViewer.Desktop/
 - CLI(与 Mac 同形):`--pv-native-smoke` + `--pv-native-layout` / `--pv-native-filmstrip` / `--pv-native-input` / `--pv-native-toolbar`,以及 `--legacy-ui --pv-legacy-layout`;隔离设置/数据库落 `release/native-win-acceptance/`,**不写用户照片、不动用户设置**。
 - 几何对拍:3 尺寸(1200×850 / 830×650 / 700×480)× 2 方向,旧壳 JSON ↔ 原生实测 `Exact = 0.01`。
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
-- 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、根 `AGENTS.md` §4 平台矩阵 + 模块索引、新建 `PhotoViewer.Desktop/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
+- 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、根 `AGENTS.md` §4 平台矩阵 + 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
 
 **W-M7(独立立项)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)+ Windows `LibRawDecoder`(`Sdcb.LibRaw`)。
 
@@ -235,14 +235,14 @@ PhotoViewer.Desktop/
 ## 10. W-M1 首屏进展(2026-10-16)
 
 **已跑通**:原生壳启动序(门面注入 + `MainViewModel(nativePresentation:true)` + 外部打开)与**四分区主窗口**
-(筛选条 / 胶片条 / 主图 / 控制栏),默认左右布局,实机 1200×850 截图见 `PhotoViewer.Desktop/bin/Debug/first-screen.png`。
+(筛选条 / 胶片条 / 主图 / 控制栏),默认左右布局,实机 1200×850 截图见 `PhotoViewer.Windows/bin/Debug/first-screen.png`。
 
 已落地并与旧壳对标的几何:文件栏 116(+1 分隔线)、筛选下拉 90×32 与间距 5、卡片 90×138(缩略图 80、四周 3 占位)、
 EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏底 `#111111` 与 1px `#333333` 分隔线。
 命令分发**复用共享 `ControlViewModel`**(Open/Previous/Next/Exchange/SetRating 与旧壳同一份实现),
 只有视口相关命令(Fit/Zoom*）由壳实现;滚轮与键盘统一走共享手势表,P3 命令既不显示也不消费按键。
 
-**本轮新增的 Windows 侧硬约束**(详见 [PhotoViewer.Desktop/AGENTS.md](../PhotoViewer.Desktop/AGENTS.md)):
+**本轮新增的 Windows 侧硬约束**(详见 [PhotoViewer.Windows/AGENTS.md](../PhotoViewer.Windows/AGENTS.md)):
 `ProgressBar` 的旧 `E_FAIL` 结论已由 W-M5 根因纠正(缺 `App.xaml`,控件现可用);相似聚类进度仍保留自绘两条 `Border` 作视觉定制;
 虚拟化 `ScrollViewer` 必须 `ZoomMode=Disabled`;`Border`/`ScrollViewer` 在 WinUI 3 是 sealed;
 `Windows.UI.Color` 会被本仓 `PhotoViewer.Windows` 命名空间遮蔽。

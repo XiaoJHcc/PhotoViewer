@@ -5,7 +5,7 @@
 >
 > **铁律**:
 > 1. **零行为变化** —— 不改任何用户可感知行为;不做顺手优化;bug 留记录不修(另开清单)。
-> 2. 每个里程碑:`dotnet build PhotoViewer.Desktop` 零错误、无新增警告(基线见 §1)→ 审查 → 单独提交。
+> 2. 每个里程碑:`dotnet build PhotoViewer.Windows` 零错误、无新增警告(基线见 §1)→ 审查 → 单独提交。
 > 3. 注释规范:函数 XML 注释 + 中文;不改 UI 字符串。
 > 4. 碰到计划外耦合点 → 记录在本文 §5"发现清单",不擅自扩大范围。
 
@@ -15,14 +15,14 @@
 
 - [x] `PhotoViewer/Core/` 全目录 grep `Avalonia` 零命中(代码层面;残留均为注释文本)—— M4 达成;
 - [x] ViewModels 全目录无 `Dispatcher.UIThread`、无 `Avalonia.Controls.Window` 直接构造、无 `Avalonia.Media` 笔刷、无 `Avalonia.Input`(快捷键)—— M1/M2 达成;唯一豁免:`AnalysisItem.Overlay` 持有 Avalonia `Control` 实例(抖动瓦片),归原生壳阶段处理(§5 已记录);
-- [x] `PhotoViewer.Desktop` 构建零错误、无新增警告 —— 每个里程碑均过;Android/Training.sln/Tools 同步验证通过;
+- [x] `PhotoViewer.Windows` 构建零错误、无新增警告 —— 每个里程碑均过;Android/Training.sln/Tools 同步验证通过;
 - [ ] **人工/跨平台验收(交回用户)**:Mac 构建 `PhotoViewer.Mac` + `PhotoViewer.iOS`(M3/M4 盲改区);四平台人工冒烟(打开文件夹、翻图、缩放、评分、设置页、相似聚类、分析栏);DINO 渲染缓存抽样对比(verify_onnx_parity 口径)。
 - [x] Windows 冒烟(2026-10-19 已完成):CLI 外部打开 JPG(城市图,竖图 EXIF 旋转正确)+ HIF(水乡图,LibHeif 链路)均正常显示,胶片条/EXIF/评分栏渲染正常。
 - [ ] 物理拆分 `PhotoViewer.Core.csproj`(编译器强制隔离)**不在本阶段** —— 推迟到 Phase 2 首个原生壳开工时(Mac 上验证四头工程)。
 
 ## 2. 基线
 
-- 构建命令:`dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj -v minimal`
+- 构建命令:`dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj -v minimal`
 - 基线(2026-10-19 记录):EXIT=0,**代码警告 0 条**;仅 NU1903 包警告(SQLitePCLRaw.lib.e_sqlite3 2.1.11 已知漏洞,跨项目重复共 8 行,与本次重构无关,另行升级)。门禁:里程碑结束后不得出现任何新的 CS/AVLN 等代码警告。
 
 ## 3. 里程碑

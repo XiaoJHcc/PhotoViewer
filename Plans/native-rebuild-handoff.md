@@ -107,4 +107,4 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 - `AndroidHeifDecoder` 通道序依赖历史口径(行为不变保留),Phase 2 色彩管线统一。
 - 适配层 CWT 双份缓冲(当前图 DecodedImage + WriteableBitmap 并存),Phase 1 记账、Phase 2 消除。
 - `BitmapLoader` 淘汰路径的阻塞 `GC.Collect ×2` 保留到 Phase 1 M3 拆。
-- Windows 侧构建命令:`dotnet build PhotoViewer.Desktop/PhotoViewer.Desktop.csproj`;Mac 侧一切走 VS Code Tasks(DEV.md)。
+- Windows 侧构建命令:`dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj`;Mac 侧一切走 VS Code Tasks(DEV.md)。

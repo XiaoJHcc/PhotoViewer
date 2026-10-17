@@ -159,7 +159,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     }
 
     // ────────────────────────────────────────────────────────────────────────────
-    // 内部实现：LibHeifSharp 解码逻辑（与 Desktop/LibHeifDecoder 一致）
+    // 内部实现：LibHeifSharp 解码逻辑（与 Windows/LibHeifDecoder 一致）
     // ────────────────────────────────────────────────────────────────────────────
 
     /// <summary>

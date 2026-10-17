@@ -1,12 +1,12 @@
 # ViewModels/Settings — 设置页 VM
 
-> 模块内手册。`SettingsViewModel` 是 partial 类,按分类拆 9 个文件,共享同一份 VM 实例。Views 在 [Views/Settings/](../../Views/Settings/);iOS 走原生设置页([PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs](../../../PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs)),Windows 走原生设置窗口([PhotoViewer.Desktop/Native/WindowsNativeSettingsPresenter.cs](../../../PhotoViewer.Desktop/Native/WindowsNativeSettingsPresenter.cs)),都共享本 VM。
+> 模块内手册。`SettingsViewModel` 是 partial 类,按分类拆 9 个文件,共享同一份 VM 实例。Views 在 [Views/Settings/](../../Views/Settings/);iOS 走原生设置页([PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs](../../../PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs)),Windows 走原生设置窗口([PhotoViewer.Windows/Native/WindowsNativeSettingsPresenter.cs](../../../PhotoViewer.Windows/Native/WindowsNativeSettingsPresenter.cs)),都共享本 VM。
 
 `namespace PhotoViewer.ViewModels.Settings`
 
 五个分页:**文件 / 预览 / 控制 / EXIF / AI**。每个 partial 持有一类设置项,改动通过 `SettingsService` 持久化到 JSON。
 
-macOS P2 通过 Core/Settings/NativeSettingsSession 建工作副本，`applyRuntimeSettings: false` 隔离缓存/解码/键盘映射副作用，原生窗口关闭后 ApplySnapshot 一次回写；副本 Dispose 释放全局内存通知与保存订阅。Windows W-M5 用同一 `NativeSettingsSession` 与 `WindowsNativeSettingsPresenter`：独立窗口、五分类、关闭一次性回写；WinUI 模板由根 `App.xaml` + `XamlControlsResources` 提供，界面用 `NavigationView` + `SettingsCard` + `NumberBox`/`InfoBar`（见 [PhotoViewer.Desktop/AGENTS.md](../../../PhotoViewer.Desktop/AGENTS.md)）。预算提示读取实际展示编码字节数（原生 F16=8B）。UI 实现见 PhotoViewer.Mac/AGENTS.md。
+macOS P2 通过 Core/Settings/NativeSettingsSession 建工作副本，`applyRuntimeSettings: false` 隔离缓存/解码/键盘映射副作用，原生窗口关闭后 ApplySnapshot 一次回写；副本 Dispose 释放全局内存通知与保存订阅。Windows W-M5 用同一 `NativeSettingsSession` 与 `WindowsNativeSettingsPresenter`：独立窗口、五分类、关闭一次性回写；WinUI 模板由根 `App.xaml` + `XamlControlsResources` 提供，界面用 `NavigationView` + `SettingsCard` + `NumberBox`/`InfoBar`（见 [PhotoViewer.Windows/AGENTS.md](../../../PhotoViewer.Windows/AGENTS.md)）。预算提示读取实际展示编码字节数（原生 F16=8B）。UI 实现见 PhotoViewer.Mac/AGENTS.md。
 
 | File | 分类 | Responsibility |
 |---|---|---|
