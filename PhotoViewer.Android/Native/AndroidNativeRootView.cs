@@ -4,9 +4,11 @@ using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
+using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
@@ -14,6 +16,7 @@ using PhotoViewer.Core;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Android.Native;
 
@@ -39,6 +42,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AndroidFilterBar _filterBar;
     private readonly AndroidFilmstripView _filmstrip;
     private readonly AndroidControlBar _controlBar;
+    private readonly AndroidAnalysisHost _analysisHost;
+    private readonly AnalysisPresenter _analysisPresenter;
+    private readonly AndroidAnalysisPanel _analysisPane;
+    private readonly AndroidSimilarityPanel _similarityPane;
+    private readonly View _detailHighlight;
     private readonly TextView _hintLabel;
     private readonly TextView _hintDetail;
     private readonly TextView _enhanceBusy;
@@ -112,6 +120,25 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
         AddView(_controlBar);
 
+        _analysisHost = new AndroidAnalysisHost(main, session);
+        _analysisPresenter = new AnalysisPresenter(_analysisHost);
+        _analysisPane = new AndroidAnalysisPanel(activity, _analysisPresenter, session);
+        _analysisPane.TileCountChanged += RequestLayout;
+        _analysisPane.DetailChanged += UpdateDetailHighlight;
+        _analysisPane.Visibility = ViewStates.Gone;
+        AddView(_analysisPane);
+        _similarityPane = new AndroidSimilarityPanel(activity, main);
+        _similarityPane.Visibility = ViewStates.Gone;
+        AddView(_similarityPane);
+        _detailHighlight = new View(activity);
+        var highlightBackground = new GradientDrawable();
+        highlightBackground.SetColor(Color.Transparent);
+        highlightBackground.SetStroke((int)Math.Max(3, AndroidUiTheme.Dp(activity, 3)), Color.Rgb(0, 255, 0)!);
+        _detailHighlight.Background = highlightBackground;
+        _detailHighlight.Visibility = ViewStates.Gone;
+        _detailHighlight.Clickable = false;
+        AddView(_detailHighlight);
+
         _hintLabel = new TextView(activity)
         {
             Text = "PhotoViewer",
@@ -173,6 +200,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
+        _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _main.RatingWriteFailed += OnRatingWriteFailed;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
@@ -185,8 +213,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     public override WindowInsets? OnApplyWindowInsets(WindowInsets? insets)
     {
         if (insets == null) return base.OnApplyWindowInsets(insets);
-        var compat = WindowInsetsCompat.ToWindowInsetsCompat(insets, this);
-        var safe = compat.GetInsets(WindowInsetsCompat.Type.SystemBars() | WindowInsetsCompat.Type.DisplayCutout());
+        var compat = WindowInsetsCompat.ToWindowInsetsCompat(insets, this)!;
+        var safe = compat.GetInsets(WindowInsetsCompat.Type.SystemBars() | WindowInsetsCompat.Type.DisplayCutout())!;
         double density = AndroidUiTheme.Density(Context!);
         var next = new AndroidInsets(safe.Left / density, safe.Top / density, safe.Right / density, safe.Bottom / density);
         if (Math.Abs(next.Left - _insets.Left) > .01 || Math.Abs(next.Top - _insets.Top) > .01
@@ -236,8 +264,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
             double availableMain = row
                 ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
                 : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
+            bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            double similarityColumn = similarityOpen
+                ? (row
+                    ? SimilarityPanelGeometry.RowWidth(_main.FileVM.SimilarityPanel.HasItems,
+                        _main.FileVM.SimilarityPanel.SimilarItems.Count, availableMain)
+                    : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
+                : 0;
             double fileMain = filmVisible
-                ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : _insets.Left)
+                ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : _insets.Left + similarityColumn)
                 : 0;
             var controlMeasure = controlVisible
                 ? _controlBar.MeasureDocument(row, availableMain)
@@ -245,13 +280,24 @@ internal sealed class AndroidNativeRootView : FrameLayout
             double controlMain = controlVisible
                 ? MainScreenLayout.ControlBarMainLength(controlMeasure.Main)
                 : 0;
-            _panes = AndroidMainScreenLayout.Compute(row, widthDp, heightDp, _insets, fileMain, controlMain, 0);
+            bool analysisVisible = _main.IsAnalysisViewVisible;
+            _analysisHost.SetVisible(analysisVisible);
+            double analysisSize = analysisVisible
+                ? AnalysisPanelGeometry.CrossSize(availableMain, Math.Max(1, _analysisPane.TileCount))
+                : 0;
+            _panes = AndroidMainScreenLayout.Compute(row, widthDp, heightDp, _insets, fileMain, controlMain, analysisSize);
 
             LayoutChild(_photoPane, _panes.Photo, density);
             LayoutChild(_fileBar, _panes.FileBar, density);
             _fileBar.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
             LayoutChild(_fileDivider, _panes.FileDivider, density);
             _fileDivider.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+            _analysisPane.Visibility = analysisVisible ? ViewStates.Visible : ViewStates.Gone;
+            if (analysisVisible)
+            {
+                LayoutChild(_analysisPane, _panes.Analysis, density);
+                _analysisPane.Arrange(row, availableMain, row ? _insets.Left : _insets.Top);
+            }
             LayoutChild(_controlBackground, _panes.ControlBackground, density);
             _controlBackground.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
             LayoutChild(_controlDivider, _panes.ControlDivider, density);
@@ -259,17 +305,29 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
             _filterBar.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
             _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+            _similarityPane.Visibility = similarityOpen ? ViewStates.Visible : ViewStates.Gone;
             if (filmVisible)
             {
                 var content = _panes.FileContent;
                 double contentWidth = row ? Math.Max(1, content.Width) : MainScreenLayout.FileBarContentWidth;
                 LayoutChild(_filterBar, new LayoutRect(content.X, content.Y, contentWidth, filterMain), density);
                 _filterBar.Arrange(row, contentWidth, leadingInset);
-                LayoutChild(_filmstrip, new LayoutRect(content.X, content.Y + filterMain, contentWidth,
+                double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
+                LayoutChild(_filmstrip, new LayoutRect(content.X, content.Y + filterMain, filmWidth,
                     Math.Max(1, content.Height - filterMain)), density);
-                bool axisChanged = _filmstrip.Horizontal != row;
+                bool axisChanged = _filmstrip.IsHorizontal != row;
                 _filmstrip.SetAxis(row);
                 if (axisChanged) _filmstrip.ScrollToCurrent();
+                if (similarityOpen)
+                {
+                    _similarityPane.SetLayout(row);
+                    var similarityRect = row
+                        ? new LayoutRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
+                            Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), _similarityPane.CrossSize)
+                        : new LayoutRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
+                            _similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
+                    LayoutChild(_similarityPane, similarityRect, density);
+                }
             }
 
             _controlBar.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
@@ -280,6 +338,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             }
 
             LayoutOverlays(density, row);
+            UpdateDetailHighlight();
             UpdateNavigationIndicator();
         }
         finally { _layingOut = false; }
@@ -369,13 +428,16 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnPhotoViewportChanged()
     {
         if (_photo.Width < 1 || _photo.Height < 1) return;
-        _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull);
+        _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
         if (_main.Settings.ShowZoomIndicator) UpdateNavigationIndicator();
+        _analysisHost.Raise();
     }
 
     private void OnSessionChanged()
     {
         _photo.SetImage(_session.Image);
+        _analysisHost.Raise();
+        UpdateDetailHighlight();
         UpdateHint();
         _enhanceBusy.Visibility = _session.IsEnhancing ? ViewStates.Visible : ViewStates.Gone;
         UpdateNavigationIndicator();
@@ -383,6 +445,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnPhotoTapped()
     {
+        if (_analysisPane.DetailActive)
+        {
+            _analysisPane.ClearDetail();
+            return;
+        }
         if (_session.Image == null) _ = _main.FolderVM.OpenFilePickerAsync();
     }
 
@@ -402,18 +469,22 @@ internal sealed class AndroidNativeRootView : FrameLayout
         var activity = Context as Activity;
         if (activity == null) return;
         var menu = new PopupMenu(activity, _photo);
-        menu.Menu.Add(0, 0, 0, "打开文件夹…");
-        var film = menu.Menu.Add(0, 1, 1, "胶片栏");
+        var menuItems = menu.Menu!;
+        menuItems.Add(0, 0, 0, "打开文件夹…");
+        var film = menuItems.Add(0, 1, 1, "胶片栏")!;
         film.SetCheckable(true);
         film.SetChecked(_main.IsThumbnailViewVisible);
-        var control = menu.Menu.Add(0, 2, 2, "控制栏");
+        var control = menuItems.Add(0, 2, 2, "控制栏")!;
         control.SetCheckable(true);
         control.SetChecked(_main.IsControlViewVisible);
-        var enhance = menu.Menu.Add(0, 3, 3, "增强预览");
+        var analysis = menuItems.Add(0, 3, 3, "分析栏")!;
+        analysis.SetCheckable(true);
+        analysis.SetChecked(_main.IsAnalysisViewVisible);
+        var enhance = menuItems.Add(0, 4, 4, "增强预览")!;
         enhance.SetCheckable(true);
         enhance.SetChecked(_session.IsEnhanced);
-        menu.Menu.Add(0, 4, 4, "工具…");
-        menu.Menu.Add(0, 5, 5, "设置…");
+        menuItems.Add(0, 5, 5, "工具…");
+        menuItems.Add(0, 6, 6, "设置…");
         menu.MenuItemClick += (_, args) =>
         {
             switch (args.Item?.ItemId ?? -1)
@@ -421,16 +492,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 case 0: _ = _main.FolderVM.OpenFilePickerAsync(); break;
                 case 1: _main.ToggleThumbnailView(); break;
                 case 2: _main.ToggleControlView(); break;
-                case 3: _session.ToggleEnhanced(); break;
-                case 4: ShowTools(); break;
-                case 5: _main.OpenSettingWindow(); break;
+                case 3: _main.ToggleAnalysisView(); break;
+                case 4: _session.ToggleEnhanced(); break;
+                case 5: ShowTools(); break;
+                case 6: _main.OpenSettingWindow(); break;
             }
         };
         menu.Show();
     }
 
     /// <summary>打开/前置原生工具页（A5 前由窗口门面给出可见反馈）。</summary>
-    internal void ShowTools() => NativeWindowPresenter.ShowOrActivateToolsWindow(_main.Tools);
+    internal void ShowTools() => _main.OpenToolsWindow();
 
     /// <summary>执行共享命令：主图相关走原生视口，其余走共享命令 VM。</summary>
     /// <param name="command">共享命令标识。</param>
@@ -539,13 +611,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsAnalysisViewVisible):
+                _analysisHost.SetVisible(_main.IsAnalysisViewVisible);
                 OnPhotoViewportChanged();
+                RequestLayout();
                 break;
         }
     }
 
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute) or nameof(SettingsViewModel.ShowZoomIndicator))
+            _analysisHost.Raise();
         _controlBar.MarkDirty();
         _filterBar.Refresh();
         _controlBar.Invalidate();
@@ -580,6 +656,18 @@ internal sealed class AndroidNativeRootView : FrameLayout
         UpdateHint();
     }
 
+    /// <summary>相似项集合/动作区变化后重排主屏（面板宽度随卡片数变化）。</summary>
+    private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        _similarityPane.Refresh();
+        if (args.PropertyName is nameof(SimilarityPanelViewModel.SimilarItems)
+            or nameof(SimilarityPanelViewModel.HasItems)
+            or nameof(SimilarityPanelViewModel.ShowActionArea)
+            or nameof(SimilarityPanelViewModel.IsStateIndexing)
+            or nameof(SimilarityPanelViewModel.UnindexedCount))
+            RequestLayout();
+    }
+
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();
 
     private void OnCurrentFileChanged(object? sender, PropertyChangedEventArgs args)
@@ -589,9 +677,28 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _controlBar.MarkDirty();
             _controlBar.Invalidate();
         }
+        if (args.PropertyName is nameof(ImageFile.ExifData)) _analysisHost.Raise();
     }
 
     /// <summary>更新空态/错误提示；有图时全部隐藏。</summary>
+    /// <summary>细节预览定格时在主图上画绿色方框（点主图空白或再点瓦片解除）。</summary>
+    private void UpdateDetailHighlight()
+    {
+        if (!_analysisPane.DetailActive || _session.Image == null)
+        {
+            _detailHighlight.Visibility = ViewStates.Gone;
+            return;
+        }
+        var (u, v) = _analysisPane.DetailPoint;
+        var (centerX, centerY) = _photo.ViewPoint(u, v);
+        const double size = 120;
+        var rect = new LayoutRect(centerX - size / 2, centerY - size / 2, size, size);
+        LayoutChild(_detailHighlight, new LayoutRect(
+            _panes.Photo.X + rect.X, _panes.Photo.Y + rect.Y, rect.Width, rect.Height),
+            AndroidUiTheme.Density(Context!));
+        _detailHighlight.Visibility = ViewStates.Visible;
+    }
+
     private void UpdateHint()
     {
         bool show = _session.Image == null;
@@ -681,9 +788,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
+            _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
             _main.RatingWriteFailed -= OnRatingWriteFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _filmstrip.RateRequested -= OnRateRequested;
+            _analysisPane.TileCountChanged -= RequestLayout;
+            _analysisPane.DetailChanged -= UpdateDetailHighlight;
+            _analysisPresenter.Dispose();
             _photo.Dispose();
             _navigationToken++;
             _navigationBitmap?.Dispose();

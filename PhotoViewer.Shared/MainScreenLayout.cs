@@ -92,37 +92,40 @@ public static class MainScreenLayout
     /// <param name="countWidth">计数文本的自然宽度。</param>
     /// <param name="includeSimilarityToggle">相似聚类 toggle 是否参与整组居中（隐藏时不占位，但位置照常给出）。</param>
     /// <param name="alignLeading">行布局是否从内容前导边起排而不是整组居中。</param>
+    /// <param name="controlWidth">下拉控件宽度（默认 90 点；手机窄屏可传紧凑值，不改变其他平台默认口径）。</param>
+    /// <param name="toggleWidth">相似聚类 toggle 宽度（默认 90 点）。</param>
     /// <returns>五个控件的矩形。</returns>
     public static FilterFrames FilterBarFrames(bool horizontal, double contentWidth, double leadingInset, double countWidth,
-        bool includeSimilarityToggle, bool alignLeading = false)
+        bool includeSimilarityToggle, bool alignLeading = false, double controlWidth = FilterControlWidth,
+        double toggleWidth = FilterControlWidth)
     {
         double toggleHeight = FilterToggleHeight;
         double controlGap = FilterGap;
         if (horizontal)
         {
-            double controlsWidth = FilterControlWidth * 3 + controlGap * 2 + controlGap + countWidth;
-            double contentWidthUsed = includeSimilarityToggle ? controlsWidth + controlGap + FilterControlWidth : controlsWidth;
+            double controlsWidth = controlWidth * 3 + controlGap * 2 + controlGap + countWidth;
+            double contentWidthUsed = includeSimilarityToggle ? controlsWidth + controlGap + toggleWidth : controlsWidth;
             double start = alignLeading ? FilterMargin : (contentWidth - contentWidthUsed) / 2;
             double controlY = FilterMargin;
-            double countX = start + (FilterControlWidth + controlGap) * 3;
+            double countX = start + (controlWidth + controlGap) * 3;
             double toggleX = countX + countWidth + controlGap;
             return new FilterFrames(
-                new LayoutRect(start, controlY, FilterControlWidth, FilterControlHeight),
-                new LayoutRect(start + FilterControlWidth + controlGap, controlY, FilterControlWidth, FilterControlHeight),
-                new LayoutRect(start + (FilterControlWidth + controlGap) * 2, controlY, FilterControlWidth, FilterControlHeight),
+                new LayoutRect(start, controlY, controlWidth, FilterControlHeight),
+                new LayoutRect(start + controlWidth + controlGap, controlY, controlWidth, FilterControlHeight),
+                new LayoutRect(start + (controlWidth + controlGap) * 2, controlY, controlWidth, FilterControlHeight),
                 new LayoutRect(countX, controlY + (FilterControlHeight - FilterCountHeight) / 2, countWidth, FilterCountHeight),
-                new LayoutRect(toggleX, controlY + (FilterControlHeight - toggleHeight) / 2, FilterControlWidth, toggleHeight));
+                new LayoutRect(toggleX, controlY + (FilterControlHeight - toggleHeight) / 2, toggleWidth, toggleHeight));
         }
         // 列布局的 toggle 始终紧随计数下方，与是否参与整组居中无关。
-        double left = (FileBarContentWidth - FilterControlWidth) / 2;
+        double left = (FileBarContentWidth - controlWidth) / 2;
         double top = leadingInset;
         double countY = top + (FilterControlHeight + controlGap) * 3;
         return new FilterFrames(
-            new LayoutRect(left, top, FilterControlWidth, FilterControlHeight),
-            new LayoutRect(left, top + FilterControlHeight + controlGap, FilterControlWidth, FilterControlHeight),
-            new LayoutRect(left, top + (FilterControlHeight + controlGap) * 2, FilterControlWidth, FilterControlHeight),
+            new LayoutRect(left, top, controlWidth, FilterControlHeight),
+            new LayoutRect(left, top + FilterControlHeight + controlGap, controlWidth, FilterControlHeight),
+            new LayoutRect(left, top + (FilterControlHeight + controlGap) * 2, controlWidth, FilterControlHeight),
             new LayoutRect((FileBarContentWidth - countWidth) / 2, countY, countWidth, FilterCountHeight),
-            new LayoutRect(left, countY + FilterCountHeight + controlGap, FilterControlWidth, toggleHeight));
+            new LayoutRect(left, countY + FilterCountHeight + controlGap, toggleWidth, toggleHeight));
     }
 
     /// <summary>

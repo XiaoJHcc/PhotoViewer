@@ -98,6 +98,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         public override void HandleOnBackPressed()
         {
             if (Native.AndroidNativeSettingsPresenter.HandleBack()) return;
+            if (Native.AndroidToolsPresenter.HandleBack()) return;
             _activity.Finish();
         }
     }

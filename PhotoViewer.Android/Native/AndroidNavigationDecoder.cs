@@ -36,8 +36,8 @@ internal static class AndroidNavigationDecoder
                     InPreferredConfig = Bitmap.Config.Argb8888,
                     InSampleSize = sample,
                 };
-                if (global::Android.OS.Build.VERSION.SdkInt >= global::Android.OS.BuildVersionCodes.O)
-                    options.InPreferredColorSpace = AndroidColorSpace.Get(AndroidColorSpace.Named.Srgb);
+                if (OperatingSystem.IsAndroidVersionAtLeast(26))
+                    options.InPreferredColorSpace = AndroidColorSpace.Get(AndroidColorSpace.Named.Srgb!)!;
                 using var stream2 = file.OpenReadAsync().GetAwaiter().GetResult();
                 using var decoded = BitmapFactory.DecodeStream(stream2, null, options);
                 if (decoded == null) return null;

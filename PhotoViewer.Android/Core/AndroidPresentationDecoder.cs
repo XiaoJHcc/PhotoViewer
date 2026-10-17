@@ -148,12 +148,12 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder
             InPreferredConfig = Bitmap.Config.Argb8888,
             InSampleSize = sample,
         };
-        if (global::Android.OS.Build.VERSION.SdkInt >= global::Android.OS.BuildVersionCodes.O)
+        if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
             var named = AndroidDisplayCapabilities.SurfaceIsP3
                 ? AndroidColorSpace.Named.DisplayP3
                 : AndroidColorSpace.Named.Srgb;
-            options.InPreferredColorSpace = AndroidColorSpace.Get(named);
+            options.InPreferredColorSpace = AndroidColorSpace.Get(named!)!;
         }
         using var read = file.OpenReadAsync().GetAwaiter().GetResult();
         var bitmap = BitmapFactory.DecodeStream(read, null, options);
@@ -195,7 +195,9 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder
             {
                 var resolver = Application.Context.ContentResolver;
                 if (resolver == null) return 1;
-                using var descriptor = resolver.OpenFileDescriptor(AndroidUri.Parse(path.AbsoluteUri), "r");
+                var contentUri = AndroidUri.Parse(path.AbsoluteUri);
+                if (contentUri == null) return 1;
+                using var descriptor = resolver.OpenFileDescriptor(contentUri, "r");
                 if (descriptor?.FileDescriptor == null) return 1;
                 using var exif = new ExifInterface(descriptor.FileDescriptor);
                 orientation = exif.GetAttributeInt(ExifInterface.TagOrientation, 1);

@@ -391,8 +391,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     /// <returns>是否消费。</returns>
     public override bool OnGenericMotionEvent(MotionEvent? e)
     {
-        if (e != null && e.ActionMasked == MotionEventActions.Scroll && e.Source != null
-            && (e.Source & InputSourceType.ClassPointer) == InputSourceType.ClassPointer)
+        if (e != null && e.ActionMasked == MotionEventActions.Scroll
+            && (e.Source & InputSourceType.ClassPointer) != 0)
         {
             float value = e.GetAxisValue(Axis.Vscroll);
             if (Math.Abs(value) > .01f)
@@ -428,7 +428,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             return;
         }
         _viewport.ApplyGestureView(startScale, startX, startY, interactive: false);
-        var animator = ValueAnimator.OfFloat(0f, 1f);
+        var animator = ValueAnimator.OfFloat(0f, 1f)!;
         animator.SetDuration((long)(AnimationSeconds * 1000));
         animator.Update += (_, args) =>
         {

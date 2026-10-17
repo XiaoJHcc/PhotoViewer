@@ -105,7 +105,7 @@ public sealed class AndroidFileRef : PhotoViewer.Core.Storage.IFileRef
             return Task.FromResult(new PhotoViewer.Core.Storage.StorageItemBasicProperties(_size, _modified));
         try
         {
-            using var cursor = _resolver.Query(_uri, [OpenableColumns.Size, OpenableColumns.DisplayName], null, null, null);
+            using var cursor = _resolver.Query(_uri, ["_size", "_display_name"], null, null, null);
             if (cursor != null && cursor.MoveToFirst())
             {
                 ulong? size = cursor.IsNull(0) ? null : (ulong)cursor.GetLong(0);

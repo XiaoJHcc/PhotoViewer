@@ -5,7 +5,8 @@
 
 ## 1. 当前状态
 
-- **A2 + A3 + A4 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：主图（`AndroidPresentationDecoder`/`AndroidPresentationEncodingPolicy` + 自有 EGL14/GLES 渲染 + `PhotoViewport` 手势）、主屏（`AndroidMainScreenLayout` 叠加系统 insets、自绘筛选条、RecyclerView 胶片栏/自绘卡片、置中控制栏、导航图）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 工作副本关闭回写）均已落地。**A5（分析栏/相似聚类/工具页）与 A6（程序化 harness/矩阵/文档收口）未开始**。自验：原生壳加载 13 张夹具、方向 6 朝向正确、代理 2706×1804 → Full 6000×4000、导航图/百分比正确、卡片星级 XMP 写回不改主图、键盘 Right/F、设置关闭回写后评分分组与卡片星级即时消失；均为**目视/日志核对，不是程序化验收**。
+- **A5 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：分析栏（`AndroidAnalysisHost` + 共享 `AnalysisPresenter`，6 瓦片/细节定格绿框/准星）、相似聚类（窄屏紧凑筛选条 toggle、真实“提取全部”后 100% 分数卡片与柱状条）、工具页（EXIF 详情分组表格/多格式；DINO 5 瓦片 + 刚体拟合）、增强预览均已落地；均为**目视/日志核对**。新增警告清零，重建 20 警告 / 0 错误（低于 A1b 基线 21）。**A6（程序化 harness/矩阵/真机门）未开始**。
+- **A2 + A3 + A4 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：主图（`AndroidPresentationDecoder`/`AndroidPresentationEncodingPolicy` + 自有 EGL14/GLES 渲染 + `PhotoViewport` 手势）、主屏（`AndroidMainScreenLayout` 叠加系统 insets、自绘筛选条、RecyclerView 胶片栏/自绘卡片、置中控制栏、导航图）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 工作副本关闭回写）均已落地。**A5 已完成；A6（程序化 harness/矩阵/真机门/文档收口）未开始**。自验：原生壳加载 13 张夹具、方向 6 朝向正确、代理 2706×1804 → Full 6000×4000、导航图/百分比正确、卡片星级 XMP 写回不改主图、键盘 Right/F、设置关闭回写后评分分组与卡片星级即时消失；均为**目视/日志核对，不是程序化验收**。
 - **A2-A4 期间修掉两个真问题**：① 3+3 邻居预取同时解 Full 导致 13 张夹具（含 6000×4000）启动后 SIGSEGV；共享 `BitmapLoader.PrefetchFullNeighbors` 默认 true，Android 壳置 false，邻居统一代理档，Mac/iOS/Windows 行为不变。② 导航图 FBO 回读内容错位，改为 BitmapFactory 子采样 + 方向转正（长边 300dp），登记为平台实现差异。③ 主题显式蓝色主色，避免 Material 默认紫色。
 - 计划评审已完成，结论：技术路线可执行；原 1 个硬阻塞（A1 的 Mac/iOS 回归门）已于 2026-10-18 在本机执行，评审修订见 §3。
 - Windows 基线：`dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug` = **0 错误 / 21 警告**（含既有 NU1903、CS86xx、CA1422、XA4301；计划里的「14 条」已过时）。
@@ -16,10 +17,11 @@
 - **A1a 回归（2026-10-18）**：Mac `--pv-native-smoke` **39 checks PASS**，`input / toolbar / layout / analysis / similarity / tools / filmstrip` 七套专项 PASS；iOS 模拟器（iPad mini A17 Pro）七套全 PASS：photo **10** / gesture **24** / layout **24** / input **29** / analysis **18** / similarity **10** / tools **7**。
 - **settings 套件假阴性**：`--pv-native-settings` 在“勾选后重绘”断言失败，原因是本机未授予屏幕录制权限，`screencapture -l` 失败后 SwiftUI 图层的 `cacheDisplay` 导出空白；迁移前基线（`3ce703a` + 仅修最低系统版本）同断言同样失败，且 KimiCU 目视窗口内容正常。**不是 A1a 行为变化**，已登记，待补抓屏权限或修复离屏渲染后复跑。
 - **Mac 构建阻塞已修**：workload 27.0.10722 要求 macOS 最低 14.0，Mac head 原写 12.0；已把 `PhotoViewer.Mac.csproj` 与 `Info.plist` 对齐 14.0。workload 升级后 iOS 首次构建需先删 `obj/bin`（否则 `_xamarin_*` 未定义符号）。
-- **A1b 基座已完成（2026-10-18）**：`AndroidApp` 改普通 `Application`（不初始化 Avalonia）；`AndroidBootstrapActivity` 接管 launcher 与 `ACTION_VIEW`/`SEND`/`SEND_MULTIPLE` 并分派；`AndroidNativeActivity` + `AndroidNativeShell`（dispatcher/ReactiveUI/门面/`MainViewModel`/占位根视图）；`Theme.PhotoViewer.Native`（Material 3 固定深色，无 DynamicColors）；Material/RecyclerView/Window/Fragment 依赖；`AndroidAppResourceProvider`/`AndroidUiDispatcher`/`AndroidFilePicker`/`AndroidNativeWindowPresenter` 落地（后两者为 A2/A4/A5 占位，有可见反馈）。
+- **A1b 基座已完成（2026-10-18）**：`AndroidApp` 改普通 `Application`（不初始化 Avalonia）；`AndroidBootstrapActivity` 接管 launcher 与 `ACTION_VIEW`/`SEND`/`SEND_MULTIPLE` 并分派；`AndroidNativeActivity` + `AndroidNativeShell`（dispatcher/ReactiveUI/门面/`MainViewModel`/占位根视图）；`Theme.PhotoViewer.Native`（Material 3 固定深色，无 DynamicColors）；Material/RecyclerView/Window/Fragment 依赖；`AndroidAppResourceProvider`/`AndroidUiDispatcher`/`AndroidFilePicker`/`AndroidNativeWindowPresenter` 落地（A2–A5 已替换为真实 SAF/设置/工具展示）。
 - **A1b 自验**：默认启动 → `[Bootstrap] → native`、`[Native] DINO 模型资源=ok`、`[Native] Avalonia.Application.Current=null`、`AndroidNativeActivity 就绪`；`--legacy-ui` → `[Bootstrap] → legacy`、`[Legacy] 主视图挂载完成（mainView=True）`，Avalonia 主界面正常。首次启动 `Displayed`：native **+940ms** / legacy **+1.09s**。manifest 已移除 MANAGE/WRITE 宽权限。
 - **A1b 期间修掉两个真问题**：① Avalonia 12 lifetime 接口 `NotClientImplementable`，旧壳实例化 Avalonia.Android internal `ApplicationLifetime` 并走 `IActivityApplicationLifetime.MainViewFactory`；`AvaloniaActivity` 必须在 `base.OnCreate` 之后写 `Content` 才会 `SetContentView`（否则白屏）。② ONNX Runtime 1.24.4 把 Linux glibc `libonnxruntime.so` 误打进 APK 并盖掉 AAR bionic 版，`libonnxruntime4j_jni.so` 启动即 `UnsatisfiedLinkError`；csproj 的 `_PvRemoveLinuxOnnxFromApk` 已移除 Linux 资产。
-- **A4 偏差**：数值设置用 +/- 步进（非滑条）、列表排序用上下按钮（非拖拽）、拖入未接；A5 前主屏菜单隐藏「分析栏」、「工具…」仍为占位。
+- **A4 偏差**：数值设置用 +/- 步进（非滑条）、列表排序用上下按钮（非拖拽）、拖入未接。
+- **A5 偏差**：手机分析栏约 58dp 瓦片未做手机专用放大/横滑；相似面板空态动作按钮在占位下方、进度用文本；EXIF 表 4 可见列承载共享 7 列几何、未做水平滚动；DINO 抖动矢量线为简化绘制。
 
 ## 2. 为什么曾在 Windows 暂停
 
@@ -101,10 +103,10 @@ SDK="$HOME/Library/Android/sdk"
 
 - **A1a**：已完成（Mac 七套专项 + base 39，iOS 七套全 PASS；settings 为抓屏权限假阴性）。
 - **A1b**：已完成（原生/旧壳均可启动，0 错误 / 21 警告）。
-- **A2-A4**：功能已落地并在 API 35 模拟器目视/日志自验；**A5-A6 未开始**。未关闭：程序化 harness、两向/栏位显隐/卡片几何/八方向/双击物理 100% 断言、fontScale 1.3、拖拽排序、拖入、真实 P3 面板、真机手感/SAF/杀后台、工具页。
-- **Android 警告**：A2-A4 引入了新的可空性/平台版本分析警告（CS86xx/CA1416 等），提交前按构建日志清理；不得把新增警告算作通过。
+- **A2-A5**：功能已落地并在 API 35 模拟器目视/日志自验；**A6 未开始**。未关闭：程序化 harness、两向/栏位显隐/卡片几何/八方向/双击物理 100% 断言、fontScale 1.3、拖拽排序、拖入、真实 P3 面板、真机手感/SAF/杀后台。
+- **Android 警告**：A2–A5 新增警告已清零；重建 **20 警告 / 0 错误**（低于 A1b 基线 21，剩余为既有 `AndroidExternalOpenBridge`/`AndroidHeifDecoder`/`AndroidSettingsStorage` 的 CS86xx/CA1422）。
 - **Android workload**：默认 10.0.402 仍缺；当前用 10.0.201 的 workload（§4 构建命令）。要让默认 `dotnet build` 一致，仍需 `sudo dotnet workload install android`。
-- **DINO**：模型资产与 ONNX bionic 库已修到可加载，但尚未跑端到端推理（A5 验收）。
+- **DINO**：模型资产与 ONNX bionic 库已修到可加载；A5 工具页已跑真实 DINO 诊断（模拟器 CPU，5 瓦片 + 刚体文本），NNAPI EP 在模拟器不可用并按既有路径回退 CPU。
 - **Mac 工具链**：workload 27.0.10722 要求 macOS 14.0，已把 Mac head 与 Info.plist 对齐；升级 Apple workload 后先删 iOS `obj/bin` 再构建。
 - P3 正向路径在模拟器上大概率不可得，真机验收清单已列。
 - iOS 回归素材不在 git；本机已有色卡/ARW，`focus-src.ARW` 需由 `release/native-p2-raw/A7C01489.ARW` 改名。

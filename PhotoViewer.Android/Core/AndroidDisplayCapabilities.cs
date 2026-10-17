@@ -32,7 +32,7 @@ public static class AndroidDisplayCapabilities
     {
         try
         {
-            if (Build.VERSION.SdkInt < BuildVersionCodes.O)
+            if (!OperatingSystem.IsAndroidVersionAtLeast(27))
             {
                 DisplaySupportsP3 = false;
                 return;
@@ -43,8 +43,7 @@ public static class AndroidDisplayCapabilities
                 DisplaySupportsP3 = false;
                 return;
             }
-            bool wideGamut = activity.Window?.IsWideColorGamut == true || display.IsWideColorGamut;
-            DisplaySupportsP3 = wideGamut;
+            DisplaySupportsP3 = activity.Window?.IsWideColorGamut == true || display.IsWideColorGamut;
         }
         catch (Exception exception)
         {

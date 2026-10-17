@@ -113,10 +113,10 @@ internal sealed class AndroidThumbnailCard : View
 
     /// <summary>绘制整卡。</summary>
     /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas? canvas)
+    protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (canvas == null || _file == null) return;
+        if ( _file == null) return;
         float density = (float)AndroidUiTheme.Density(Context!);
         float width = Width, height = Height;
         // 卡片内容按 96×144 参考缩放：列布局里卡片视图比内容宽时仍居中。
@@ -282,12 +282,13 @@ internal sealed class AndroidThumbnailCard : View
     {
         if (_file == null) return;
         var menu = new PopupMenu(Context!, this);
-        menu.Menu.Add(_file.DisplayName);
-        menu.Menu.Add(_file.PhotoDate?.ToString("yyyy-MM-dd HH:mm") ?? "");
+        var menuItems = menu.Menu!;
+        menuItems.Add(_file.DisplayName);
+        menuItems.Add(_file.PhotoDate?.ToString("yyyy-MM-dd HH:mm") ?? "");
         for (int rating = 0; rating <= 5; rating++)
         {
             int value = rating;
-            var item = menu.Menu.Add(rating == 0 ? "无星级" : $"{rating} 星");
+            var item = menuItems.Add(rating == 0 ? "无星级" : $"{rating} 星")!;
             item.SetCheckable(true);
             item.SetChecked(_file.Rating == rating);
             menu.MenuItemClick += (_, args) =>

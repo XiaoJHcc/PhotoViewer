@@ -31,6 +31,8 @@ public static class AndroidNativeShell
     private static MainViewModel? _main;
     private static PhotoLoadSession? _session;
     private static AndroidNativeRootView? _root;
+    private static AndroidNativeSettingsPresenter? _settingsPresenter;
+    private static AndroidToolsPresenter? _toolsPresenter;
     private static bool _externalHandlerRegistered;
 
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
@@ -75,6 +77,8 @@ public static class AndroidNativeShell
             Console.WriteLine("[Native] 共享 MainViewModel 就绪（nativePresentation=true）");
         }
         _session ??= new PhotoLoadSession();
+        _toolsPresenter = new AndroidToolsPresenter(activity, _main);
+        NativeWindowPresenter.Initialize(new AndroidNativeWindowPresenter(activity, _settingsPresenter!, _toolsPresenter));
         RegisterExternalOpen(_main);
 
         Console.WriteLine($"[Native] Android 原生壳就绪（Avalonia.Application.Current={(Avalonia.Application.Current == null ? "null" : "非 null")}）；intent action={intent?.Action}");
@@ -121,9 +125,8 @@ public static class AndroidNativeShell
         StorageAccessManager.Initialize(new AndroidStorageAccessManager());
         XmpWriter.Initialize(new AndroidXmpWriter(activity.ContentResolver!));
         SettingsService.ConfigureStorage(new AndroidSettingsStorage());
-        var settingsPresenter = new AndroidNativeSettingsPresenter(activity);
-        NativeSettingsPresenter.Initialize(settingsPresenter);
-        NativeWindowPresenter.Initialize(new AndroidNativeWindowPresenter(activity, settingsPresenter));
+        _settingsPresenter = new AndroidNativeSettingsPresenter(activity);
+        NativeSettingsPresenter.Initialize(_settingsPresenter);
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_Nnapi());
         Console.WriteLine("[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/xmp/settings/dino）");
     }
@@ -252,7 +255,7 @@ public static class AndroidNativeShell
                 if (uri != null && seen.Add(uri.ToString()!)) yield return uri;
             }
         }
-        if (Build.VERSION.SdkInt >= BuildVersionCodes.Tiramisu)
+        if (OperatingSystem.IsAndroidVersionAtLeast(33))
         {
             if (intent.GetParcelableExtra(Intent.ExtraStream, Java.Lang.Class.FromType(typeof(global::Android.Net.Uri))) is global::Android.Net.Uri single
                 && seen.Add(single.ToString()!)) yield return single;

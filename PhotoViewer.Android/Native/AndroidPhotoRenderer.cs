@@ -55,7 +55,6 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private int _program;
     private int _positionHandle = -1;
     private int _texCoordHandle = -1;
-    private int _textureHandle = -1;
     private int[] _texture = [];
     private int[] _framebuffer = [];
     private int _textureWidth;
@@ -395,15 +394,13 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                     for (int x = 0; x < width; x++)
                     {
                         int index = sourceRow + x * 4;
-                        colors[y * width + x] = (pixels.Get(index + 3) << 24)
-                            | (pixels.Get(index) << 16)
-                            | (pixels.Get(index + 1) << 8)
-                            | pixels.Get(index + 2);
+                        colors[y * width + x] = Color.Argb(pixels.Get(index + 3),
+                            pixels.Get(index), pixels.Get(index + 1), pixels.Get(index + 2));
                     }
                 }
-                bitmap = global::Android.OS.Build.VERSION.SdkInt >= global::Android.OS.BuildVersionCodes.O
+                bitmap = OperatingSystem.IsAndroidVersionAtLeast(26)
                     ? Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!, false,
-                        ColorSpace.Get(_surfaceP3 ? ColorSpace.Named.DisplayP3 : ColorSpace.Named.Srgb))
+                        ColorSpace.Get((_surfaceP3 ? ColorSpace.Named.DisplayP3 : ColorSpace.Named.Srgb)!)!)
                     : Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
                 bitmap.SetPixels(colors, 0, width, 0, 0, width, height);
             }

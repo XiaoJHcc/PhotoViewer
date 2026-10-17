@@ -130,7 +130,7 @@ internal sealed class AndroidControlBar : View
     /// <summary>是否提供该命令入口；A5 之前分析栏没有面板，先不显示该入口。</summary>
     /// <param name="command">共享命令标识。</param>
     /// <returns>是否显示。</returns>
-    internal static bool IsCommandAvailable(string command) => command != "ToggleAnalysisView";
+    internal static bool IsCommandAvailable(string command) => true;
 
     /// <summary>量文档主轴/交叉轴长度（dp）；行布局主轴为高、列布局主轴为宽。</summary>
     /// <param name="horizontal">是否行布局。</param>
@@ -191,10 +191,9 @@ internal sealed class AndroidControlBar : View
 
     /// <summary>绘制分组与子控件。</summary>
     /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas? canvas)
+    protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (canvas == null) return;
         if (_dirty) Rebuild();
         float density = (float)AndroidUiTheme.Density(Context!);
         foreach (var group in _groups)

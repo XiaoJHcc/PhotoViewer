@@ -36,9 +36,9 @@ internal sealed class AndroidFilmstripView : RecyclerView
     internal event Action<ImageFile, int>? RateRequested;
 
     /// <summary>是否横向单行。</summary>
-    internal bool Horizontal => _horizontal;
+    internal bool IsHorizontal => _horizontal;
     /// <summary>定位动画是否仍在播放（验收区分自动定位与用户滚动）。</summary>
-    internal bool IsAnimating => _animation != null;
+    internal bool IsScrollAnimating => _animation != null;
     /// <summary>当前主轴滚动偏移（px）。</summary>
     internal int MainOffset => _horizontal ? ComputeHorizontalScrollOffset() : ComputeVerticalScrollOffset();
     /// <summary>文档主轴长度（px，验收读取）。</summary>
@@ -73,7 +73,7 @@ internal sealed class AndroidFilmstripView : RecyclerView
         if (_axisInitialized && _horizontal == horizontal) return;
         _axisInitialized = true;
         _horizontal = horizontal;
-        var manager = new LinearLayoutManager(Context, horizontal ? LinearLayoutManager.Horizontal : LinearLayoutManager.Vertical, false);
+        var manager = new LinearLayoutManager(Context!, horizontal ? LinearLayoutManager.Horizontal : LinearLayoutManager.Vertical, false);
         SetLayoutManager(manager);
         HorizontalScrollBarEnabled = horizontal;
         VerticalScrollBarEnabled = !horizontal;
@@ -209,7 +209,7 @@ internal sealed class AndroidFilmstripView : RecyclerView
             return;
         }
         CancelAnimation();
-        var animator = ValueAnimator.OfFloat(0f, 1f);
+        var animator = ValueAnimator.OfFloat(0f, 1f)!;
         animator.SetDuration((long)(FilmstripAnimation.DurationSeconds * 1000));
         animator.Update += (_, args) =>
         {

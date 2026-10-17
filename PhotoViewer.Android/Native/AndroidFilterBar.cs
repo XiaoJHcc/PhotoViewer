@@ -18,7 +18,7 @@ namespace PhotoViewer.Android.Native;
 internal sealed class AndroidFilterBar : View
 {
     /// <summary>相似聚类 toggle 是否参与布局（A5 面板落地前置 false，避免出现点了无反应的入口）。</summary>
-    internal static bool ShowsSimilarityToggle { get; set; }
+    internal static bool ShowsSimilarityToggle { get; set; } = true;
 
     private readonly MainViewModel _main;
     private readonly Paint _textPaint;
@@ -30,6 +30,7 @@ internal sealed class AndroidFilterBar : View
     private double _leadingInset;
     private double _countWidth = 60;
     private bool _menuOpen;
+    private bool _compact;
 
     /// <summary>排序控件矩形（dp，验收读取）。</summary>
     internal LayoutRect SortFrame => _frames.Sort;
@@ -64,8 +65,8 @@ internal sealed class AndroidFilterBar : View
     internal void Refresh()
     {
         var filter = _main.FileVM.FilterBar;
-        string count = $"共 {filter.FilteredCount} 张";
-        _countWidth = Math.Ceiling((_countPaint.MeasureText(count) + 2) / (float)AndroidUiTheme.Density(Context)) + 2;
+        string count = _compact ? $"{filter.FilteredCount} 张" : $"共 {filter.FilteredCount} 张";
+        _countWidth = Math.Ceiling((_countPaint.MeasureText(count) + 2) / (float)AndroidUiTheme.Density(Context!)) + 2;
         Invalidate();
     }
 
@@ -78,26 +79,30 @@ internal sealed class AndroidFilterBar : View
         _horizontal = horizontal;
         _contentWidth = Math.Max(1, contentWidth);
         _leadingInset = leadingInset;
+        // 手机窄屏：三个下拉与 toggle 按紧凑宽度排布，避免 toggle 被挤出屏幕（其他平台保持 90 点默认）。
+        _compact = horizontal && _contentWidth < 600;
         Refresh();
         _frames = MainScreenLayout.FilterBarFrames(horizontal, _contentWidth, leadingInset, _countWidth,
-            ShowsSimilarityToggle, alignLeading: true);
+            ShowsSimilarityToggle, alignLeading: true,
+            controlWidth: _compact ? 84 : MainScreenLayout.FilterControlWidth,
+            toggleWidth: _compact ? 76 : MainScreenLayout.FilterControlWidth);
         Invalidate();
     }
 
     /// <summary>自绘三个下拉控件、计数与 toggle。</summary>
     /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas? canvas)
+    protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (canvas == null) return;
-        float density = (float)AndroidUiTheme.Density(Context);
+        float density = (float)AndroidUiTheme.Density(Context!);
         var filter = _main.FileVM.FilterBar;
         DrawControl(canvas, _frames.Sort, TitleForSort(filter.SortMode), density);
         DrawControl(canvas, _frames.Order, TitleForOrder(filter.SortOrder), density);
         DrawControl(canvas, _frames.Rating, TitleForRating(filter.SelectedRatingFilter), density);
         float countCenterX = (float)((_frames.Count.X + _frames.Count.Width / 2) * density);
         float countBaseline = (float)((_frames.Count.Y + _frames.Count.Height * .78) * density);
-        AndroidUiTheme.DrawCentered(canvas, $"共 {filter.FilteredCount} 张", _countPaint, countCenterX, countBaseline,
+        string countText = _compact ? $"{filter.FilteredCount} 张" : $"共 {filter.FilteredCount} 张";
+        AndroidUiTheme.DrawCentered(canvas, countText, _countPaint, countCenterX, countBaseline,
             (float)(_frames.Count.Width * density) + 4);
         if (ShowsSimilarityToggle)
         {
@@ -134,7 +139,7 @@ internal sealed class AndroidFilterBar : View
         if (e == null) return false;
         if (e.ActionMasked == MotionEventActions.Up && !_menuOpen)
         {
-            double density = AndroidUiTheme.Density(Context);
+            double density = AndroidUiTheme.Density(Context!);
             double x = e.GetX() / density, y = e.GetY() / density;
             if (Contains(_frames.Sort, x, y)) ShowMenu(FilterMenu.Sort);
             else if (Contains(_frames.Order, x, y)) ShowMenu(FilterMenu.Order);
@@ -142,6 +147,7 @@ internal sealed class AndroidFilterBar : View
             else if (ShowsSimilarityToggle && Contains(_frames.Toggle, x, y))
             {
                 var filter = _main.FileVM.FilterBar;
+                Console.WriteLine($"[Native] 相似聚类 toggle 点击：{filter.IsSimilarityPanelOpen} → {!filter.IsSimilarityPanelOpen}（local {x:0.#},{y:0.#} frame={_frames.Toggle}）");
                 filter.IsSimilarityPanelOpen = !filter.IsSimilarityPanelOpen;
                 Invalidate();
             }
@@ -155,12 +161,13 @@ internal sealed class AndroidFilterBar : View
     {
         var filter = _main.FileVM.FilterBar;
         var menu = new PopupMenu(Context!, this);
+        var menuItems = menu.Menu!;
         var values = new List<object>();
         if (kind == FilterMenu.Sort)
         {
             foreach (var option in filter.SortModes)
             {
-                var item = menu.Menu.Add(option.DisplayName);
+                var item = menuItems.Add(option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals((SortMode)option.Value, filter.SortMode));
                 values.Add((SortMode)option.Value);
@@ -170,7 +177,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.SortOrders)
             {
-                var item = menu.Menu.Add(option.DisplayName);
+                var item = menuItems.Add(option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals((SortOrder)option.Value, filter.SortOrder));
                 values.Add((SortOrder)option.Value);
@@ -180,7 +187,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.RatingFilters)
             {
-                var item = menu.Menu.Add(option.DisplayName);
+                var item = menuItems.Add(option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals(option.Key, filter.SelectedRatingFilter));
                 values.Add(option.Key);

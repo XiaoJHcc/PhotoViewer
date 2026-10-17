@@ -8,9 +8,11 @@
 > 3. **无论 ROM 与系统版本，视觉设计与空间操作一致对标**。
 > 4. 能用原生最好；原生不可靠再议。
 >
-> **进度**：**A1a + A1b + A2 + A3 + A4 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，Android 原生壳基座，主图（EGL/GLES + 8 位 P3/sRGB + 代理↔Full）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、输入（硬件键盘/滚轮/长按菜单/轻扫/返回）与半屏设置（五分类、关闭回写）均已落地并在 API 35 arm64 模拟器自验。**A5–A6 未开始**（分析栏/相似聚类/工具页/增强入口未解禁；程序化验收 harness 未落地）。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
+> **进度**：**A1a–A5 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，Android 原生壳基座，主图（EGL/GLES + 8 位 P3/sRGB + 代理↔Full）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、输入（硬件键盘/滚轮/长按菜单/轻扫/返回）、半屏设置（五分类、关闭回写）以及 P3 功能（分析栏/相似聚类/工具页 EXIF+DINO/增强预览）均已落地并在 API 35 arm64 模拟器自验。**A6 未开始**（程序化验收 harness/矩阵/真机门/文档收口）。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
 >
-> **模拟器自验基线（2026-10-18，1080×2400 / density 2.625 / fontScale 1.0）**：原生壳默认启动、旧壳 `--legacy-ui` 可回退；应用内文件夹经 `@files/...` 启动参数加载；八方向 6 的 GPU 朝向、Fit/100% 热替换（代理 2706×1804 → Full 6000×4000）、导航图（长边 150 点 + 可见框 + 百分比）、卡片星级 XMP 写回（不改主图）、硬件键盘 Right/F、设置五分类打开/关闭回写（ShowRating 关闭后评分分组与卡片星级即时消失）均已目视/日志核对。**程序化 harness 与真机门未做**，不能记作通过。
+> **模拟器自验基线（2026-10-18，1080×2400 / density 2.625 / fontScale 1.0）**：原生壳默认启动、旧壳 `--legacy-ui` 可回退；应用内文件夹经 `@files/...` 启动参数加载；八方向 6 的 GPU 朝向、Fit/100% 热替换（代理 2706×1804 → Full 6000×4000）、导航图（长边 150 点 + 可见框 + 百分比）、卡片星级 XMP 写回（不改主图）、硬件键盘 Right/F、设置五分类打开/关闭回写（ShowRating 关闭后评分分组与卡片星级即时消失）均已目视/日志核对。**A5**：分析栏开合/细节定格绿框/诊断瓦片、相似聚类 toggle → 空态 → 真实“提取全部” → 100% 分数卡片与柱状条、工具页 EXIF 详情（分组/列/格式切换）与 DINO 诊断（5 瓦片 + 刚体文本）、增强预览像素变化均已目视/日志核对。**程序化 harness 与真机门未做**，不能记作通过。
+>
+> **警告基线（2026-10-18 重建）**：Android Debug **20 警告 / 0 错误**（低于 A1b 基线 21；剩余均为既有 `AndroidExternalOpenBridge`/`AndroidHeifDecoder`/`AndroidSettingsStorage` 的 CS86xx/CA1422，A2–A5 新增警告已清零）。
 
 ## 0. 范围
 
@@ -183,9 +185,12 @@
 - **状态**：**已完成（2026-10-18，模拟器目视/日志）**；真实键鼠手感、fontScale 1.3、拖入与真机返回手势待 A6/作者。
 
 ### A5 P3 功能
-- 分析栏（`IAnalysisHost` 宿主视图 + 共享 presenter）、相似聚类面板、增强预览（`PhotoLoadSession`）。
-- 工具页：`BottomSheetDialogFragment` 内的 EXIF 详情 / DINO 诊断（复用 `DinoDiagnosticPresenter` 与共享诊断瓦片几何）。
-- **状态**：未开始。
+- 分析栏：`AndroidAnalysisHost` 实现共享 `IAnalysisHost`，`AndroidAnalysisPanel` 消费 `AnalysisPresenter`（只读库快路径 / 增强联动 / 未提取回退全部复用），按 `AnalysisPanelGeometry` 自绘中心/对焦细节预览、直方图与 4 张 DINO-CV 瓦片；细节裁剪走 `DisplayCrop`（代理期留空）、诊断瓦片点按落准星、细节点按定格并在主图画 3dp 绿框、点主图空白解除；分析栏可见时视口上报 `NeedsFull`。
+- 相似聚类：筛选条 toggle（行布局在窄屏用紧凑宽度，保证不越界）→ `AndroidSimilarityPanel`（RecyclerView + 复用卡片，第二行分数 % + 75% 起柱状条；空态/未提取/动作区/进度读共享 VM；“提取全部”真实触发批量索引，完成后卡片出分数）；行布局从胶片栏右侧切出 `SimilarityPanelGeometry.RowWidth` 宽度，列布局接在文件栏后。
+- 工具页：`AndroidToolsPresenter` + `BottomSheetDialog`；列表页只有 EXIF 详情 / DINO 诊断（照片数据统计不建入口）；EXIF 页按 `ExifTableGeometry` 的 60dp ID 列 + 2:2:3 文本列渲染分组表格，支持同名多格式切换；DINO 页只消费共享 `DinoDiagnosticPresenter`（5 瓦片 3+2 + 刚体拟合文本 + 点按准星）。入口：主图长按菜单「工具…」与控制栏 EXIF 信息块。
+- 增强预览：`PhotoLoadSession.ToggleEnhanced` 已可用，主图与导航图随增强图替换；`IsEnhancing` 显示“计算中…”。
+- **偏差**：分析栏在手机上按共享几何排 6–7 个瓦片（约 58dp），未做手机专用放大/横滑；相似面板空态动作按钮位于占位下方（列表态停靠尾部）；工具页 EXIF 表用 4 个可见列承载共享 7 列几何，手机宽度下不做水平滚动；DINO 抖动瓦片矢量线为简化绘制。
+- **状态**：**已完成（2026-10-18，模拟器目视/日志）**；A5 程序化 harness（分析栏两向、细节/直方图像素、相似让位、DINO 5 瓦片）随 A6 补。
 
 ### A6 验收与文档
 - 模拟器验收驱动器：`--pv-native-{photo,layout,input,analysis,similarity,tools}-check` 同级，结果写 `Documents/PhotoViewer/android-checks.txt` 并 `adb pull`；隔离自有设置/数据库/素材。
@@ -240,7 +245,11 @@
 | 19 | Material 默认紫色主色与 iOS 系统蓝不一致 | 主题与 BottomSheet 显式 `colorPrimary/Secondary=#0A84FF`；开关/复选框跟随；不使用 DynamicColors |
 | 20 | 安装 APK 可能清空 App 私有目录（增量安装/数据清理），夹具与设置会丢 | 验收夹具每次用 `run-as` 重新拷入 `files/pv-fixtures`；程序化 harness 需自建隔离目录（A6） |
 | 21 | 设置列表排序暂用上下按钮，拖拽排序未接；拖入未接 | 记为 A4 偏差；A6 前补 `ItemTouchHelper` 与 `OnDragListener`，或作者裁定接受按钮排序 |
-| 22 | 主屏上下文菜单暂未含「分析栏」（A5 前该命令隐藏），「工具…」仍为占位 | A5 解禁分析栏/工具页后补菜单项与真实入口 |
+| 22 | 主屏上下文菜单暂未含「分析栏」（A5 前该命令隐藏），「工具…」仍为占位 | **已解决（A5）**：菜单补分析栏勾选项，控制栏命令解禁，工具页真实入口 |
+| 23 | 手机宽度 411dp 放不下 3×90dp 筛选控件 + 计数 + 90dp 相似 toggle | 共享 `FilterBarFrames` 增加可选 `controlWidth/toggleWidth`（默认 90 不变）；Android 行布局窄屏用 84/76dp 与“13 张”紧凑计数，其他平台行为不变 |
+| 24 | 分析栏在手机上瓦片仅约 58dp，细节预览可用但不适合多点操作 | 沿用共享几何与 iPhone/iPad 同构；手机专用放大/横滑未做，登记为 A5 偏差，待作者裁定 |
+| 25 | 相似面板空态动作按钮位于占位下方、列表态停靠在尾部；无进度条（用文本进度） | 功能等价；进度条与拖拽排序一样留 A6/作者裁定 |
+| 26 | 工具页 EXIF 表只显示 ID/名称/中文名/值四列，未做 7 列水平滚动；格式切换按钮为自绘胶囊 | 功能对齐（分组/格式切换/值 3 行截断），视觉差异登记 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 

@@ -78,10 +78,9 @@ internal sealed class AndroidNavigationOverlay : View
 
     /// <summary>绘制底、缩略图、可见框与百分比。</summary>
     /// <param name="canvas">画布。</param>
-    protected override void OnDraw(Canvas? canvas)
+    protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (canvas == null) return;
         float density = (float)AndroidUiTheme.Density(Context!);
         var host = new RectF(0, 0, Width, Height);
         AndroidUiTheme.DrawRounded(canvas, host, 6 * density, Color.Argb(200, 34, 34, 34)!);
