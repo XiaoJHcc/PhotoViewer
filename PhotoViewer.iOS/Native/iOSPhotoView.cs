@@ -17,17 +17,40 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
 {
     /// <summary>双击切换的物理倍率上限（与共享视口锚点缩放的 16 倍上限同口径）。</summary>
     private const double MaximumPhysicalScale = 16;
+    /// <summary>横向轻扫翻页的最小水平位移（点）：低于该值视为点按抖动。</summary>
+    private const double SwipeThreshold = 24;
+    /// <summary>横向分量需超过纵向分量的倍数，避免斜向拖动误翻页。</summary>
+    private const double SwipeDominance = 1.5;
 
     private readonly PhotoViewport _viewport = new();
     private readonly MetalPhotoRenderer _renderer;
     private readonly UIScrollView _scroll = new();
+    private readonly UIPanGestureRecognizer _swipe;
+    private readonly UIPanGestureRecognizer _wheel;
+    private readonly UITapGestureRecognizer _doubleTap;
     private bool _syncingScroll;
+    private bool _swipeStartedFit;
+    private double _wheelTranslation;
 
     /// <summary>视口变化通知，加载会话据此决定代理尺寸与 Full 升级。</summary>
     public event Action? ViewportChanged;
 
+    /// <summary>适应态横向轻扫请求：-1 上一张、+1 下一张（由宿主走共享命令表）。</summary>
+    internal event Action<int>? SwipeRequested;
+
+    /// <summary>离散滚轮事件：向上/向下与原生修饰键掩码（宿主查共享命令表）。</summary>
+    internal event Action<bool, ulong>? WheelScrolled;
+
     /// <summary>共享视口（验收读取缩放/平移状态）。</summary>
     internal PhotoViewport Viewport => _viewport;
+    /// <summary>手势滚动容器（验收核对系统捏合仍在）。</summary>
+    internal UIScrollView ScrollView => _scroll;
+    /// <summary>轻扫翻页识别器（验收核对单指与同时识别配置）。</summary>
+    internal UIPanGestureRecognizer SwipeRecognizer => _swipe;
+    /// <summary>触控板/鼠标滚轮识别器（验收核对只接收离散滚动）。</summary>
+    internal UIPanGestureRecognizer WheelRecognizer => _wheel;
+    /// <summary>双击识别器（验收核对与轻扫/上下文菜单共存）。</summary>
+    internal UITapGestureRecognizer DoubleTapRecognizer => _doubleTap;
     /// <summary>缩放是否处于适应状态。</summary>
     internal bool IsFit => _viewport.IsFit;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
@@ -70,7 +93,33 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         AddSubview(_scroll);
 
         var doubleTap = new UITapGestureRecognizer(OnDoubleTap) { NumberOfTapsRequired = 2 };
+        _doubleTap = doubleTap;
         AddGestureRecognizer(doubleTap);
+
+        // 适应态单指横向轻扫 = 上一张/下一张（放大态交给滚动视图平移）；最多一指，
+        // 双指捏合一开始就不会落到本识别器，杜绝捏合起手误翻页。
+        _swipe = new UIPanGestureRecognizer(OnSwipePan)
+        {
+            MinimumNumberOfTouches = 1,
+            MaximumNumberOfTouches = 1,
+            CancelsTouchesInView = false,
+            DelaysTouchesBegan = false,
+        };
+        _swipe.Delegate = new SimultaneousRecognizerDelegate();
+        AddGestureRecognizer(_swipe);
+
+        // 离散滚轮（鼠标滚轮）按用户绑定执行命令，与 Mac 的“非精确滚轮走命令表”同口径；
+        // 触控板（连续滚动）仍交给滚动视图平移，捏合不受影响。
+        _wheel = new UIPanGestureRecognizer(OnWheelPan)
+        {
+            MinimumNumberOfTouches = 0,
+            MaximumNumberOfTouches = 0,
+            AllowedScrollTypesMask = UIScrollTypeMask.Discrete,
+        };
+        AddGestureRecognizer(_wheel);
+        // 离散滚轮只走命令表（与 Mac 一致）：滚动视图的触摸平移对该识别器 require-to-fail，
+        // 手指拖动时本识别器因 0 触点上限定直接失败，滚动视图照常平移；捏合不受影响。
+        _scroll.PanGestureRecognizer.RequireGestureRecognizerToFail(_wheel);
         MemoryGovernor.Register(this);
     }
 
@@ -167,6 +216,58 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
             double scale = TraitCollection.DisplayScale;
             return scale > 0 ? scale : 1;
         }
+    }
+
+    /// <summary>
+    /// 单指轻扫判定入口（识别器与验收共用）：只有适应态、水平位移达到阈值且明显大于纵向位移时才翻页；
+    /// 放大态的滑动保持平移语义，不产生翻页。
+    /// </summary>
+    /// <param name="dx">水平位移（点，右正）。</param>
+    /// <param name="dy">纵向位移（点，下正）。</param>
+    /// <param name="velocityX">水平速度（点/秒，右正）。</param>
+    /// <returns>是否发起了翻页请求。</returns>
+    internal bool ApplySwipe(double dx, double dy, double velocityX)
+    {
+        if (!_viewport.IsFit) return false;
+        if (Math.Abs(dx) < SwipeThreshold || Math.Abs(dx) < Math.Abs(dy) * SwipeDominance) return false;
+        if (velocityX != 0 && Math.Sign(velocityX) != Math.Sign(dx)) return false;
+        SwipeRequested?.Invoke(dx < 0 ? 1 : -1);
+        return true;
+    }
+
+    /// <summary>轻扫识别器：起手记录是否处于适应态，抬手时按同一位移口径判定。</summary>
+    /// <param name="recognizer">轻扫识别器。</param>
+    private void OnSwipePan(UIPanGestureRecognizer recognizer)
+    {
+        if (recognizer.State == UIGestureRecognizerState.Began)
+        {
+            _swipeStartedFit = _viewport.IsFit;
+            return;
+        }
+        if (recognizer.State != UIGestureRecognizerState.Ended || !_swipeStartedFit) return;
+        var translation = recognizer.TranslationInView(this);
+        var velocity = recognizer.VelocityInView(this);
+        ApplySwipe((double)translation.X, (double)translation.Y, (double)velocity.X);
+    }
+
+    /// <summary>
+    /// 离散滚轮：按增量方向交共享手势映射（含修饰键与苹果键盘映射），再查用户绑定；
+    /// 与 Mac 一致，没绑定任何命令时滚轮留在照片上无动作。
+    /// </summary>
+    /// <param name="recognizer">滚轮识别器。</param>
+    private void OnWheelPan(UIPanGestureRecognizer recognizer)
+    {
+        if (recognizer.State is UIGestureRecognizerState.Began or UIGestureRecognizerState.Changed)
+        {
+            var translation = recognizer.TranslationInView(this);
+            double delta = (double)translation.Y - _wheelTranslation;
+            _wheelTranslation = (double)translation.Y;
+            if (Math.Abs(delta) < 1) return;
+            WheelScrolled?.Invoke(delta > 0, (ulong)recognizer.ModifierFlags);
+            return;
+        }
+        if (recognizer.State is UIGestureRecognizerState.Ended or UIGestureRecognizerState.Cancelled or UIGestureRecognizerState.Failed)
+            _wheelTranslation = 0;
     }
 
     /// <summary>双击：适应态 → 点按位置的物理 100%，否则回适应；两条路径都带 UIKit 动画。</summary>
@@ -301,5 +402,15 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         /// <summary>位移（拖动、惯性、回弹）回调。</summary>
         /// <param name="scrollView">滚动视图。</param>
         public override void Scrolled(UIScrollView scrollView) => _owner.OnScrolled(scrollView);
+    }
+
+    /// <summary>轻扫与滚动视图平移并存：适应态轻扫翻页时背景仍可做回弹，两者都拿到完整手势。</summary>
+    private sealed class SimultaneousRecognizerDelegate : UIGestureRecognizerDelegate
+    {
+        /// <summary>允许与滚动视图的平移识别器同时识别。</summary>
+        /// <param name="gestureRecognizer">本识别器。</param>
+        /// <param name="otherGestureRecognizer">其他识别器。</param>
+        /// <returns>始终允许。</returns>
+        public override bool ShouldRecognizeSimultaneously(UIGestureRecognizer gestureRecognizer, UIGestureRecognizer otherGestureRecognizer) => true;
     }
 }

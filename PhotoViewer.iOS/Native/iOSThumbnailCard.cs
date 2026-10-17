@@ -38,9 +38,12 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     private UIImage? _nativeThumbnail;
     private Action<ImageFile>? _selectFile;
     private Action<ImageFile, int>? _rate;
+    private iOSContextMenuDelegate? _menuDelegate;
 
     /// <summary>卡片当前绑定的业务身份（验收核对视图与顺序不错位）。</summary>
     internal ImageFile? BoundFile => _file;
+    /// <summary>卡片上下文菜单委托（验收经系统入口读取菜单内容与回调）。</summary>
+    internal iOSContextMenuDelegate? MenuDelegate => _menuDelegate;
     /// <summary>是否处于当前项高亮态（身份来自共享 <see cref="ImageFile.IsCurrent"/>）。</summary>
     internal bool IsHighlighted { get; private set; }
     /// <summary>整卡选择按钮（点选只改当前照片，由调用方保证不主动居中）。</summary>
@@ -125,6 +128,10 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
             _surface.AddSubview(button);
         }
         _select.TouchUpInside += (_, _) => { if (_file != null) _selectFile?.Invoke(_file); };
+        // 触屏 tooltip 等价物：长按卡片出菜单（完整文件名/拍摄时间 + 评分 0–5），评分走共享写回且不切主图。
+        _menuDelegate = new iOSContextMenuDelegate(_ => _file == null ? null
+            : iOSContextMenus.Card(_file, rating => _rate?.Invoke(_file, rating)));
+        _surface.AddInteraction(new UIContextMenuInteraction(_menuDelegate));
     }
 
     /// <summary>居中原生标签（尾部截断，超宽文件名先截断显示，完整名走 I4 的上下文菜单）。</summary>

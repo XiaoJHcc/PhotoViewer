@@ -194,11 +194,13 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
     }
 
     /// <summary>
-    /// 页面加载后挂接系统 dismiss 回调。
+    /// 页面即将显示时挂接系统 dismiss 回调：presentation controller 在展示开始时才存在，
+    /// 放在 viewDidLoad 会拿不到它，导致系统下拉关闭不回写设置。
     /// </summary>
-    public override void ViewDidLoad()
+    /// <param name="animated">系统动画标记。</param>
+    public override void ViewWillAppear(bool animated)
     {
-        base.ViewDidLoad();
+        base.ViewWillAppear(animated);
         if (PresentationController != null)
         {
             PresentationController.Delegate = _dismissDelegate;
@@ -243,6 +245,9 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     private readonly SettingsViewModel _settings;
 
     private readonly (string Title, string? Subtitle, Func<UIViewController> Factory)[] _items;
+
+    /// <summary>当前编辑会话（测试缝：验收核对关闭回写后的设置传播）。</summary>
+    internal iOSNativeSettingsSession Session => _session;
 
     /// <summary>
     /// 初始化原生设置页根控制器。

@@ -4,21 +4,29 @@ using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
+using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using System.ComponentModel;
 using UIKit;
+using UniformTypeIdentifiers;
 
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// iPad 原生主屏（I3）：按共享 <see cref="MainScreenLayout"/> 与 <see cref="iOSMainScreenLayout"/> 拼合
+/// iPad 原生主屏（I3/I4）：按共享 <see cref="MainScreenLayout"/> 与 <see cref="iOSMainScreenLayout"/> 拼合
 /// 文件栏（筛选条 + 胶片栏）、主图区与控制栏，栏位可独立显隐并把空间让给主图；行/列/自动布局只看窗口方向，
 /// 旋转、Split View、Stage Manager 的任意尺寸都重算几何。栏位背景铺到屏幕边缘、内容收在安全区内；
 /// 主图仍由 <see cref="iOSPhotoView"/> 渲染，物理视口照旧上报共享展示会话。
-/// 分析栏（I5）、输入与工具页（I4/I5）不在此实现：控制栏不生成对应入口，布局数学里保留其槽位。
+/// 输入（I4）：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
+/// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。分析栏与工具页属 I5，不生成入口与死项。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
 {
+    /// <summary>按住方向键的首次重复延迟（秒）；iOS 无读取系统键盘重复速率的公开接口。</summary>
+    private const double KeyRepeatDelay = .35;
+    /// <summary>按住方向键的重复间隔（秒）。</summary>
+    private const double KeyRepeatInterval = .06;
+
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
     private readonly bool _automatedValidation;
@@ -34,7 +42,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSFilmstripView _filmstrip;
     private readonly UILabel _hintLabel = new();
     private readonly UILabel _hintDetail = new();
-    private readonly UIButton _settingsButton;
+    private readonly iOSContextMenuDelegate _photoMenu;
+    private readonly UIDropInteraction _drop;
+    private readonly HashSet<NSObject> _editingTextInputs = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<int, ulong> _heldKeys = [];
+    private NSObject? _textEditBeginField;
+    private NSObject? _textEditBeginView;
+    private NSObject? _textEditEndField;
+    private NSObject? _textEditEndView;
+    private NSTimer? _repeatDelay;
+    private NSTimer? _repeatTimer;
+    private int _repeatUsage = -1;
+    private ulong _repeatModifiers;
     private iOSPaneFrames _panes;
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
@@ -64,6 +83,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSPaneFrames Panes => _panes;
     /// <summary>空态提示与错误详情所在的分区视图。</summary>
     internal UIView HintHost => _photoPane;
+    /// <summary>主图上下文菜单委托（验收经系统入口读取菜单内容与回调）。</summary>
+    internal iOSContextMenuDelegate PhotoMenuDelegate => _photoMenu;
+    /// <summary>拖放交互（验收核对委托在根视图上）。</summary>
+    internal UIDropInteraction DropInteraction => _drop;
 
     /// <summary>用共享主 VM 与展示会话构建原生主屏。</summary>
     /// <param name="main">共享主 VM。</param>
@@ -77,11 +100,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _filterBar = new iOSFilterBar(main);
         _filmstrip = new iOSFilmstripView(main);
         _controlBar = new iOSControlBar(ScheduleControlsRefresh);
-        _settingsButton = CreateSettingsButton();
+        _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu());
+        _drop = new UIDropInteraction(new iOSDropDelegate(this));
         // 订阅在构造期完成：启动参数（--pv-open / 外部打开）可能在根控制器上屏前就选中了首图，
         // 若等到 ViewWillAppear 再订阅会漏掉那次 CurrentFile 变化而永不加载。
         _session.Changed += OnSessionChanged;
         _photo.ViewportChanged += ReportViewport;
+        _photo.SwipeRequested += OnSwipeRequested;
+        _photo.WheelScrolled += OnWheelScrolled;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
@@ -117,6 +143,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photoPane.AddSubview(_hintLabel);
         _photoPane.AddSubview(_hintDetail);
         _photoPane.AddGestureRecognizer(new UITapGestureRecognizer(OnPhotoTapped));
+        // 主图上下文菜单：手指长按与触控板/鼠标辅助点按同一入口；滚动/捏合/双击由各自的识别器负责，互不抢占。
+        _photoPane.AddInteraction(new UIContextMenuInteraction(_photoMenu));
+        SubscribeTextEditing();
         _fileBar.BackgroundColor = UIColor.FromWhiteAlpha(.067f, 1);
         _controlBackground.BackgroundColor = UIColor.FromWhiteAlpha(.067f, 1);
         _fileDivider.BackgroundColor = UIColor.FromWhiteAlpha(.2f, 1);
@@ -132,7 +161,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         root.AddSubview(_controlScroll);
         root.AddSubview(_filterBar);
         root.AddSubview(_filmstrip);
-        root.AddSubview(_settingsButton);
+        // 拖入：整个主屏都接收"文件"里的文件/文件夹（与 Mac 根视图同一语义）。
+        root.AddInteraction(_drop);
         BuildControls();
         OnSessionChanged();
         UpdateHint();
@@ -155,6 +185,94 @@ internal sealed class iOSNativeRootViewController : UIViewController
         View!.SetNeedsLayout();
     }
 
+    /// <summary>主屏是硬件键盘的默认第一响应者（设置页收起、文本输入结束后都重新取得焦点）。</summary>
+    public override bool CanBecomeFirstResponder => true;
+
+    /// <summary>重新可见时取回键盘焦点：设置 sheet 关闭后由系统调用，保证快捷键立即可用。</summary>
+    /// <param name="animated">系统动画标记。</param>
+    public override void ViewDidAppear(bool animated)
+    {
+        base.ViewDidAppear(animated);
+        BecomeFirstResponder();
+    }
+
+    /// <summary>
+    /// 硬件键盘按下：HID usage → 共享手势 → 用户主/次绑定 → 共享命令表（与 Mac 同一张表）。
+    /// 已按住的键再次到来视为系统按键重复，忽略之——重复由本类计时器统一驱动，避免双倍步进。
+    /// </summary>
+    /// <param name="presses">本次按下的按键集合。</param>
+    /// <param name="evt">按键事件。</param>
+    public override void PressesBegan(NSSet<UIPress> presses, UIPressesEvent evt)
+    {
+        bool consumed = false;
+        foreach (var press in presses)
+        {
+            if (press.Key is not { } key) continue;
+            int usage = (int)key.KeyCode;
+            if (_heldKeys.ContainsKey(usage))
+            {
+                // 系统按键重复：已消费过，重复节奏由本类计时器统一驱动。
+                consumed = true;
+                continue;
+            }
+            ulong modifiers = (ulong)key.ModifierFlags;
+            if (!TryExecuteKey(usage, modifiers)) continue;
+            consumed = true;
+            _heldKeys[usage] = modifiers;
+            StartKeyRepeat(usage, modifiers);
+        }
+        if (!consumed) base.PressesBegan(presses, evt);
+    }
+
+    /// <summary>硬件键盘抬起：停止该键的重复计时；未登记的按键交还系统。</summary>
+    /// <param name="presses">本次抬起的按键集合。</param>
+    /// <param name="evt">按键事件。</param>
+    public override void PressesEnded(NSSet<UIPress> presses, UIPressesEvent evt)
+    {
+        bool handled = false;
+        foreach (var press in presses)
+        {
+            if (press.Key is not { } key) continue;
+            int usage = (int)key.KeyCode;
+            if (!_heldKeys.Remove(usage)) continue;
+            if (_repeatUsage == usage) StopKeyRepeat();
+            handled = true;
+        }
+        if (!handled) base.PressesEnded(presses, evt);
+    }
+
+    /// <summary>系统取消按键（来电、切后台）：清空按住状态，避免重复计时器空转。</summary>
+    /// <param name="presses">被取消的按键集合。</param>
+    /// <param name="evt">按键事件。</param>
+    public override void PressesCancelled(NSSet<UIPress> presses, UIPressesEvent evt)
+    {
+        ClearHeldKeys();
+        base.PressesCancelled(presses, evt);
+    }
+
+    /// <summary>
+    /// 键盘派发入口（<see cref="PressesBegan"/> 与验收共用）：INPUT-01 守卫之后按共享映射查用户绑定，
+    /// 只执行本壳已实现（且控制栏可见性同一口径）的命令。
+    /// </summary>
+    /// <param name="usage">HID usage。</param>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    /// <returns>是否命中并执行了命令。</returns>
+    internal bool TryExecuteKey(int usage, ulong modifierFlags)
+    {
+        if (KeyboardInputBlocked) return false;
+        var gesture = AppleInputMapping.FromHidUsage(usage, modifierFlags, _main.Settings);
+        string? command = AppleInputMapping.CommandForGesture(gesture, _main.Settings);
+        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null) return false;
+        Execute(command);
+        return true;
+    }
+
+    /// <summary>
+    /// INPUT-01：输入控件获焦或系统模态（设置页、文档选择器、上下文菜单提交页）展示期间，
+    /// 照片快捷键一律不派发。
+    /// </summary>
+    internal bool KeyboardInputBlocked => PresentedViewController != null || _editingTextInputs.Count > 0;
+
     /// <summary>释放会话与所有原生订阅（壳退出路径）。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -163,6 +281,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         {
             _session.Changed -= OnSessionChanged;
             _photo.ViewportChanged -= ReportViewport;
+            _photo.SwipeRequested -= OnSwipeRequested;
+            _photo.WheelScrolled -= OnWheelScrolled;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PropertyChanged -= OnSettingsChanged;
@@ -172,6 +292,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _filmstrip.RateRequested -= OnRateRequested;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
+            ClearHeldKeys();
+            var center = NSNotificationCenter.DefaultCenter;
+            if (_textEditBeginField != null) center.RemoveObserver(_textEditBeginField);
+            if (_textEditBeginView != null) center.RemoveObserver(_textEditBeginView);
+            if (_textEditEndField != null) center.RemoveObserver(_textEditEndField);
+            if (_textEditEndView != null) center.RemoveObserver(_textEditEndView);
+            _textEditBeginField = _textEditBeginView = _textEditEndField = _textEditEndView = null;
             _controlBar.Dispose();
             _photo.Dispose();
             _session.Dispose();
@@ -245,7 +372,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         finally { _layingOut = false; }
     }
 
-    /// <summary>摆好主图区的空态提示/错误详情与临时设置按钮（I4 上下文菜单落地后移除按钮）。</summary>
+    /// <summary>摆好主图区的空态提示与错误详情（设置入口已由长按上下文菜单承担）。</summary>
     private void LayoutOverlays()
     {
         if (!IsViewLoaded || _panes.Photo.Width <= 0) return;
@@ -256,31 +383,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double hintTop = Math.Max(0, ((double)pane.Height - (hasDetail ? 80 : 20)) / 2);
         _hintLabel.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
         _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-        var photo = _panes.Photo;
-        var safe = View!.SafeAreaInsets;
-        double top = Math.Max(photo.Y + 12, (double)safe.Top + 12);
-        double right = Math.Min(photo.MaxX, (double)View.Bounds.Width - (double)safe.Right) - 12;
-        _settingsButton.Frame = new CGRect(Math.Max(photo.X, right - 40), top, 40, 40);
     }
 
     /// <summary>共享布局矩形 → UIKit frame。</summary>
     /// <param name="rect">共享布局矩形。</param>
     /// <returns>UIKit frame。</returns>
     private static CGRect ToFrame(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
-
-    /// <summary>临时设置入口：I4 的长按上下文菜单落地前保持设置可达（共享命令表中没有设置命令）。</summary>
-    /// <returns>配置完成的齿轮按钮。</returns>
-    private UIButton CreateSettingsButton()
-    {
-        var button = new UIButton(new CGRect(0, 0, 40, 40));
-        button.SetImage(iOSSymbols.Symbol("gearshape", 18), UIControlState.Normal);
-        button.TintColor = UIColor.Label;
-        button.BackgroundColor = UIColor.FromWhiteAlpha(.08f, .6f);
-        button.Layer.CornerRadius = 6;
-        button.AccessibilityLabel = "设置";
-        button.TouchUpInside += (_, _) => _main.OpenSettingWindow();
-        return button;
-    }
 
     /// <summary>按共享设置与当前照片重建控制栏。</summary>
     private void BuildControls()
@@ -358,6 +466,102 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (_session.Image == null) _ = OpenFolderPickerAsync();
     }
 
+    /// <summary>
+    /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐一致；
+    /// 只登记本壳已实现的功能（分析栏、工具、增强预览属 I5，不出现死项）。
+    /// </summary>
+    /// <returns>菜单构建产物。</returns>
+    private iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(
+        _main.IsThumbnailViewVisible, _main.IsControlViewVisible,
+        () => _ = OpenFolderPickerAsync(), _main.ToggleThumbnailView, _main.ToggleControlView, _main.OpenSettingWindow);
+
+    /// <summary>适应态横向轻扫翻页：走共享命令表（上一张/下一张），由共享 Move 完成显式定位（[FILM-01]）。</summary>
+    /// <param name="direction">-1 上一张、+1 下一张。</param>
+    private void OnSwipeRequested(int direction) => Execute(direction < 0 ? "Previous" : "Next");
+
+    /// <summary>
+    /// 离散滚轮：按用户鼠标绑定执行命令（与 Mac 的非精确滚轮口径一致）；
+    /// 无绑定时留在照片上不动作，触控板连续滚动仍由滚动视图平移。
+    /// </summary>
+    /// <param name="up">滚轮方向是否向上。</param>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    private void OnWheelScrolled(bool up, ulong modifierFlags)
+    {
+        if (KeyboardInputBlocked) return;
+        var gesture = AppleInputMapping.FromRaw(AppleInputMapping.ScrollWheel, 0, modifierFlags, 0, up ? 1 : -1, false, null, _main.Settings);
+        string? command = AppleInputMapping.CommandForGesture(gesture, _main.Settings);
+        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null) return;
+        Execute(command);
+    }
+
+    /// <summary>订阅输入控件编辑通知，作为 INPUT-01 的"文本输入获焦"判据。</summary>
+    private void SubscribeTextEditing()
+    {
+        var center = NSNotificationCenter.DefaultCenter;
+        _textEditBeginField = center.AddObserver(UITextField.TextDidBeginEditingNotification,
+            notification => { if (notification.Object is { } target) _editingTextInputs.Add(target); });
+        _textEditBeginView = center.AddObserver(UITextView.TextDidBeginEditingNotification,
+            notification => { if (notification.Object is { } target) _editingTextInputs.Add(target); });
+        _textEditEndField = center.AddObserver(UITextField.TextDidEndEditingNotification,
+            notification => OnTextEditingEnded(notification));
+        _textEditEndView = center.AddObserver(UITextView.TextDidEndEditingNotification,
+            notification => OnTextEditingEnded(notification));
+    }
+
+    /// <summary>文本输入结束：清焦点记录，并在没有模态展示时把键盘焦点还给主屏。</summary>
+    /// <param name="notification">结束编辑通知。</param>
+    private void OnTextEditingEnded(NSNotification notification)
+    {
+        if (notification.Object is { } target) _editingTextInputs.Remove(target);
+        if (!KeyboardInputBlocked) BecomeFirstResponder();
+    }
+
+    /// <summary>按住键的首次延迟计时；到点后转入固定间隔的重复执行。</summary>
+    /// <param name="usage">HID usage。</param>
+    /// <param name="modifierFlags">按下时的修饰键掩码。</param>
+    private void StartKeyRepeat(int usage, ulong modifierFlags)
+    {
+        StopKeyRepeat();
+        _repeatUsage = usage;
+        _repeatModifiers = modifierFlags;
+        _repeatDelay = NSTimer.CreateScheduledTimer(KeyRepeatDelay, false, _ => StartRepeatTicks());
+    }
+
+    /// <summary>启动固定间隔重复：每次重新查共享绑定，设置变化或按键抬起即停。</summary>
+    private void StartRepeatTicks()
+    {
+        _repeatDelay = null;
+        if (_repeatUsage < 0) return;
+        _repeatTimer = NSTimer.CreateScheduledTimer(KeyRepeatInterval, true, _ =>
+        {
+            if (_repeatUsage < 0 || !_heldKeys.ContainsKey(_repeatUsage) || KeyboardInputBlocked)
+            {
+                StopKeyRepeat();
+                return;
+            }
+            TryExecuteKey(_repeatUsage, _repeatModifiers);
+        });
+    }
+
+    /// <summary>停止重复计时并清空重复目标。</summary>
+    private void StopKeyRepeat()
+    {
+        _repeatDelay?.Invalidate();
+        _repeatDelay?.Dispose();
+        _repeatDelay = null;
+        _repeatTimer?.Invalidate();
+        _repeatTimer?.Dispose();
+        _repeatTimer = null;
+        _repeatUsage = -1;
+    }
+
+    /// <summary>清空按住状态与重复计时（系统取消按键、设置回写后绑定可能已变）。</summary>
+    private void ClearHeldKeys()
+    {
+        _heldKeys.Clear();
+        StopKeyRepeat();
+    }
+
     /// <summary>原生文件夹选择器 → 共享文件源。</summary>
     internal async Task OpenFolderPickerAsync()
     {
@@ -419,10 +623,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)) BuildControls();
     });
 
-    /// <summary>设置回写后重建按钮并重排（显隐/顺序/快捷键都影响控制栏）。</summary>
+    /// <summary>设置回写后重建按钮并重排（显隐/顺序/快捷键/文件格式都影响主屏）。</summary>
     /// <param name="sender">事件源（设置 VM）。</param>
     /// <param name="args">属性变化参数。</param>
-    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args) => ScheduleControlsRefresh();
+    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        // 绑定可能已在设置页里改写：按住状态的重复目标立即作废，避免按旧命令继续翻页。
+        ClearHeldKeys();
+        ScheduleControlsRefresh();
+    }
 
     /// <summary>共享控制摘要变化通知。</summary>
     /// <param name="sender">事件源（控制 VM）。</param>
@@ -442,8 +651,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _refreshPending = false;
             BuildControls();
             _filmstrip.ReloadData();
-            Layout();
-            _filmstrip.ReportVisibleRange();
+            // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
+            RefreshScreen();
         });
     }
 
@@ -548,5 +757,58 @@ internal sealed class iOSNativeRootViewController : UIViewController
         var defaults = NSUserDefaults.StandardUserDefaults;
         defaults.SetBool(_main.IsThumbnailViewVisible, "PhotoViewer.Native.ShowFilm");
         defaults.SetBool(_main.IsControlViewVisible, "PhotoViewer.Native.ShowControls");
+    }
+
+    /// <summary>
+    /// 拖入会话落地：逐项读取文件 URL（不可读项记录后跳过，属不可信外部输入），
+    /// 再交原生外部打开路径——与 I1b 的 openURL / "打开方式"完全同一条共享链路。
+    /// </summary>
+    /// <param name="session">系统拖入会话。</param>
+    private async Task HandleDropSessionAsync(IUIDropSession session)
+    {
+        var urls = new List<NSUrl>();
+        foreach (var item in session.Items)
+        {
+            try
+            {
+                if (await item.ItemProvider.LoadObjectAsync(new ObjCRuntime.Class(typeof(NSUrl))) is NSUrl url) urls.Add(url);
+            }
+            catch (Exception exception)
+            {
+                Console.Error.WriteLine($"[Native] 拖入项读取失败：{exception.Message}");
+            }
+        }
+        PublishDroppedUrlsAsync(urls);
+    }
+
+    /// <summary>把拖入的原生 URL 发布为外部打开请求（验收与 <see cref="HandleDropSessionAsync"/> 共用）。</summary>
+    /// <param name="urls">文件/文件夹 URL。</param>
+    /// <returns>是否成功投递。</returns>
+    internal bool PublishDroppedUrlsAsync(IReadOnlyList<NSUrl> urls)
+        => urls.Count > 0 && iOSExternalOpenBridge.PublishNativeFromUrls(urls, "iOS:Drop");
+
+    /// <summary>拖放委托：只接受文件 URL，拖动中给"拷贝"指示，落地后交共享打开路径。</summary>
+    private sealed class iOSDropDelegate(iOSNativeRootViewController owner) : UIDropInteractionDelegate
+    {
+        /// <summary>会话是否携带可读取的文件/文件夹 URL。</summary>
+        /// <param name="interaction">拖放交互。</param>
+        /// <param name="session">拖入会话。</param>
+        /// <returns>可接收时为 true。</returns>
+        public override bool CanHandleSession(UIDropInteraction interaction, IUIDropSession session)
+            => session.Items.Length > 0 && session.Items.All(item =>
+                item.ItemProvider.HasItemConformingTo(UTTypes.FileUrl.Identifier) ||
+                item.ItemProvider.CanLoadObject(new ObjCRuntime.Class(typeof(NSUrl))));
+
+        /// <summary>拖动经过主屏时显示拷贝指示，不接受时给禁止态。</summary>
+        /// <param name="interaction">拖放交互。</param>
+        /// <param name="session">拖入会话。</param>
+        /// <returns>系统拖放提案。</returns>
+        public override UIDropProposal SessionDidUpdate(UIDropInteraction interaction, IUIDropSession session)
+            => new(CanHandleSession(interaction, session) ? UIDropOperation.Copy : UIDropOperation.Forbidden);
+
+        /// <summary>松手落地：读取 URL 并发布到共享外部打开链路。</summary>
+        /// <param name="interaction">拖放交互。</param>
+        /// <param name="session">拖入会话。</param>
+        public override void PerformDrop(UIDropInteraction interaction, IUIDropSession session) => _ = owner.HandleDropSessionAsync(session);
     }
 }

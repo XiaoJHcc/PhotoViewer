@@ -43,13 +43,7 @@ public static class AppleInputMapping
     public static AppGesture? FromRaw(int eventType, ushort keyCode, ulong modifierFlags, nint buttonNumber, double scrollingDeltaY,
         bool hasPreciseScrollingDeltas, string? charactersIgnoringModifiers, SettingsViewModel? captureSettings = null)
     {
-        GestureModifiers modifiers = 0;
-        if ((modifierFlags & ShiftMask) != 0) modifiers |= GestureModifiers.Shift;
-        if ((modifierFlags & ControlMask) != 0) modifiers |= GestureModifiers.Control;
-        if ((modifierFlags & AlternateMask) != 0) modifiers |= GestureModifiers.Alt;
-        if ((modifierFlags & CommandMask) != 0) modifiers |= GestureModifiers.Meta;
-        modifiers = captureSettings == null ? AppleKeyboardMapping.ApplyForRuntime(modifiers)
-            : AppleKeyboardMapping.ApplyForRuntime(modifiers, captureSettings.UseAppleKeyboard, captureSettings.MapCommandTarget, captureSettings.MapOptionTarget, captureSettings.MapControlTarget);
+        GestureModifiers modifiers = DecodeModifiers(modifierFlags, captureSettings);
         if (eventType == ScrollWheel)
         {
             if ((hasPreciseScrollingDeltas && modifiers == 0) || scrollingDeltaY == 0) return null;
@@ -67,6 +61,86 @@ public static class AppleInputMapping
         if (eventType != KeyDown) return null;
         var key = KeyFromRaw(keyCode, charactersIgnoringModifiers);
         return key.HasValue ? AppGesture.FromKey(new AppKeyGesture(key.Value, modifiers)) : null;
+    }
+
+    /// <summary>
+    /// iOS 硬件键盘按键 → 共享手势：<c>UIKey.KeyCode</c> 直接给出 HID usage 数值，
+    /// 修饰键位与 macOS 的 <c>NSEventModifierFlags</c> 同值，故苹果键盘映射口径完全复用。
+    /// </summary>
+    /// <param name="usage">HID usage（USB HID Usage Tables 0x07 键盘页）。</param>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    /// <param name="captureSettings">录制所用的工作副本，决定苹果键盘映射口径。</param>
+    /// <returns>匹配到的共享手势；未登记的 usage 返回 null。</returns>
+    public static AppGesture? FromHidUsage(int usage, ulong modifierFlags, SettingsViewModel? captureSettings = null)
+    {
+        GestureKey? key = KeyFromHidUsage(usage);
+        return key.HasValue ? AppGesture.FromKey(new AppKeyGesture(key.Value, DecodeModifiers(modifierFlags, captureSettings))) : null;
+    }
+
+    /// <summary>按用户主/次绑定查找命令；各平台的事件解包之后共用这一张命令表。</summary>
+    /// <param name="gesture">共享手势（可为 null）。</param>
+    /// <param name="settings">当前设置。</param>
+    /// <returns>匹配到的命令标识；没有绑定返回 null。</returns>
+    public static string? CommandForGesture(AppGesture? gesture, SettingsViewModel settings)
+        => gesture is { } value ? settings.GetCommandByGesture(value) : null;
+
+    /// <summary>
+    /// HID usage → 共享键映射表（纯数据）。逐条登记而不做区间算术，
+    /// 避免依赖 <see cref="GestureKey"/> 的成员顺序；未登记返回 null，由调用方把按键交还系统。
+    /// </summary>
+    /// <param name="usage">HID usage 数值。</param>
+    /// <returns>对应的共享键；未定义时为 null。</returns>
+    public static GestureKey? KeyFromHidUsage(int usage) => usage switch
+    {
+        4 => GestureKey.A, 5 => GestureKey.B, 6 => GestureKey.C, 7 => GestureKey.D, 8 => GestureKey.E,
+        9 => GestureKey.F, 10 => GestureKey.G, 11 => GestureKey.H, 12 => GestureKey.I, 13 => GestureKey.J,
+        14 => GestureKey.K, 15 => GestureKey.L, 16 => GestureKey.M, 17 => GestureKey.N, 18 => GestureKey.O,
+        19 => GestureKey.P, 20 => GestureKey.Q, 21 => GestureKey.R, 22 => GestureKey.S, 23 => GestureKey.T,
+        24 => GestureKey.U, 25 => GestureKey.V, 26 => GestureKey.W, 27 => GestureKey.X, 28 => GestureKey.Y,
+        29 => GestureKey.Z,
+        30 => GestureKey.D1, 31 => GestureKey.D2, 32 => GestureKey.D3, 33 => GestureKey.D4, 34 => GestureKey.D5,
+        35 => GestureKey.D6, 36 => GestureKey.D7, 37 => GestureKey.D8, 38 => GestureKey.D9, 39 => GestureKey.D0,
+        40 => GestureKey.Return, 41 => GestureKey.Escape, 42 => GestureKey.Back, 43 => GestureKey.Tab,
+        44 => GestureKey.Space,
+        45 => GestureKey.OemMinus, 46 => GestureKey.OemPlus, 47 => GestureKey.OemOpenBrackets,
+        48 => GestureKey.OemCloseBrackets, 49 => GestureKey.OemPipe,
+        51 => GestureKey.OemSemicolon, 52 => GestureKey.OemQuotes, 53 => GestureKey.OemTilde,
+        54 => GestureKey.OemComma, 55 => GestureKey.OemPeriod, 56 => GestureKey.OemQuestion,
+        57 => GestureKey.CapsLock,
+        58 => GestureKey.F1, 59 => GestureKey.F2, 60 => GestureKey.F3, 61 => GestureKey.F4,
+        62 => GestureKey.F5, 63 => GestureKey.F6, 64 => GestureKey.F7, 65 => GestureKey.F8,
+        66 => GestureKey.F9, 67 => GestureKey.F10, 68 => GestureKey.F11, 69 => GestureKey.F12,
+        70 => GestureKey.PrintScreen, 71 => GestureKey.Scroll, 72 => GestureKey.Pause, 73 => GestureKey.Insert,
+        74 => GestureKey.Home, 75 => GestureKey.PageUp, 76 => GestureKey.Delete, 77 => GestureKey.End,
+        78 => GestureKey.PageDown,
+        79 => GestureKey.Right, 80 => GestureKey.Left, 81 => GestureKey.Down, 82 => GestureKey.Up,
+        83 => GestureKey.NumLock, 84 => GestureKey.Divide, 85 => GestureKey.Multiply, 86 => GestureKey.Subtract,
+        87 => GestureKey.Add, 88 => GestureKey.Return,
+        89 => GestureKey.NumPad1, 90 => GestureKey.NumPad2, 91 => GestureKey.NumPad3, 92 => GestureKey.NumPad4,
+        93 => GestureKey.NumPad5, 94 => GestureKey.NumPad6, 95 => GestureKey.NumPad7, 96 => GestureKey.NumPad8,
+        97 => GestureKey.NumPad9, 98 => GestureKey.NumPad0, 99 => GestureKey.Decimal,
+        104 => GestureKey.F13, 105 => GestureKey.F14, 106 => GestureKey.F15, 107 => GestureKey.F16,
+        108 => GestureKey.F17, 109 => GestureKey.F18, 110 => GestureKey.F19, 111 => GestureKey.F20,
+        112 => GestureKey.F21, 113 => GestureKey.F22, 114 => GestureKey.F23, 115 => GestureKey.F24,
+        224 => GestureKey.LeftCtrl, 225 => GestureKey.LeftShift, 226 => GestureKey.LeftAlt, 227 => GestureKey.LWin,
+        228 => GestureKey.RightCtrl, 229 => GestureKey.RightShift, 230 => GestureKey.RightAlt, 231 => GestureKey.RWin,
+        _ => null,
+    };
+
+    /// <summary>把原生修饰键掩码还原为共享修饰键（含苹果键盘映射，各事件类型共用一份）。</summary>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    /// <param name="captureSettings">录制所用的工作副本；null 时用全局运行时映射。</param>
+    /// <returns>映射后的共享修饰键。</returns>
+    private static GestureModifiers DecodeModifiers(ulong modifierFlags, SettingsViewModel? captureSettings)
+    {
+        GestureModifiers modifiers = 0;
+        if ((modifierFlags & ShiftMask) != 0) modifiers |= GestureModifiers.Shift;
+        if ((modifierFlags & ControlMask) != 0) modifiers |= GestureModifiers.Control;
+        if ((modifierFlags & AlternateMask) != 0) modifiers |= GestureModifiers.Alt;
+        if ((modifierFlags & CommandMask) != 0) modifiers |= GestureModifiers.Meta;
+        return captureSettings == null ? AppleKeyboardMapping.ApplyForRuntime(modifiers)
+            : AppleKeyboardMapping.ApplyForRuntime(modifiers, captureSettings.UseAppleKeyboard, captureSettings.MapCommandTarget,
+                captureSettings.MapOptionTarget, captureSettings.MapControlTarget);
     }
 
     /// <summary>优先读取特殊键/数字键盘，普通字符按持久化键名转换。</summary>

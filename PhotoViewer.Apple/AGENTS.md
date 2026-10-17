@@ -16,5 +16,5 @@
 | MainScreenLayout.cs | 主屏分区几何：文件栏内容宽 116、筛选条五个控件位置（90×32 / 90×27 / 间距 5 / 外边距 10，行布局横向居中、列布局 116 栏内纵排）、文件栏与控制栏主轴长度、两向分区矩形（文件栏/分隔线/主图/分析栏/控制栏，任一处长度为 0 即隐藏并把空间让给主图）。Mac 与 iPad 原生壳共用同一份数学，平台差异（macOS 隐藏标题栏让位、iOS 真实安全区）留在各自 head。 |
 | ControlBarLayout.cs | 控制栏几何：分组类型（EXIF/评分/命令）的子控件尺寸与内边距、分组主轴/交叉轴长度、整组换行/换列、行内居中、文档尺寸与子控件偏移。宿主只落 frame。 |
 | AnalysisPanelGeometry.cs | 分析栏瓦片几何：边长 `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`、交叉轴 = 边长 + 20、槽位起点。 |
-| AppleInputMapping.cs | 原生事件码 + 修饰键掩码 → 共享 `AppGesture` 映射（含键码表），供各平台事件解包与 SwiftUI 录制复用同一口径；数值即契约。 |
+| AppleInputMapping.cs | 原生事件码 + 修饰键掩码 → 共享 `AppGesture` 映射，供各平台事件解包与 SwiftUI 录制复用同一口径；数值即契约。**HID usage → `GestureKey` 映射表**（iOS `UIKey.KeyCode`，方向/字母/数字/符号/功能键/编辑键/数字键盘/修饰键逐条登记，未登记返回 null）与 `FromHidUsage` 入口；修饰键解码（含苹果键盘映射）与"手势 → 用户命令"查询 `CommandForGesture` 也在共享源，Mac 的 `MacInput.FromEvent/ResolveCommand` 与 iOS `PressesBegan` 共用同一张命令表。 |
 | AppleSymbolNames.cs | 业务命令 → SF Symbols 名称字符串映射；系统图标对象的创建留在各平台头部。 |

@@ -61,7 +61,7 @@
 - 旋转、Split View、Stage Manager 任意尺寸下几何正确。
 
 ### I4 输入
-- 主图 `UIContextMenuInteraction`（打开、栏位显隐、分析栏、工具、设置；长按/辅助点按触发）；卡片上下文菜单含评分 0–5。
+- 主图 `UIContextMenuInteraction`（打开文件夹、栏位显隐、设置；长按/辅助点按触发）；分析栏/工具/增强预览属 I5，不生成死项。卡片上下文菜单含评分 0–5。
 - 硬件键盘：`pressesBegan`/`UIKeyCommand` → `AppGesture`（HID usage 映射表，持久化字段不变）；输入控件获焦不误触（INPUT-01）。
 - 触控板滚动/悬停、`UIDropInteraction` 从"文件"拖入、Fit 下横向轻扫翻页。
 - 原生设置接线（`iOSNativeSettingsPresenter` 从根 VC 弹出），关闭回写后主屏即时刷新。
@@ -126,3 +126,8 @@
 | 2026-10-17 | **共享 VM 在每次切图都尝试 DINO 提取**：`SimilarityPanelViewModel.RecomputeAsync` 由 `CurrentFile` 驱动，与面板是否展开无关，故原生 iOS 壳每次切图都会解码缩略图 + 算指纹 + 走一次（失败的）推理；500 连翻即 500 条 extract failed 日志。真机 p50 716–738ms 高于 P1-M5 旧壳同素材集的 356.7ms（另一因素是 I2 代理档为 F16，每张解码字节是旧壳 8 位路径的两倍） | **已修（2026-10-17，SCOPE-01）**：`SimilarityPanelViewModel` 只在 `IsSimilarityPanelOpen && IsThumbnailViewVisible` 时随 `CurrentFile` / 筛选池 / 阈值重算；收起即取消在途 CTS，重新展开时 `OnPanelOpened` 按当前图重算。`ShakeFlagService` 仍只读库、`AnalysisPresenter` 仍只在分析栏可见时工作。真机 500 连翻复测的 p50/p95 与"零 DinoFeatureCache extract"证据见下方 2026-10-17 复测行 |
 | 2026-10-17 | `PhotoLoadSession.LoadAsync` 里 `if (_needsFull && IsProxy) UpdateViewport(_proxyLongEdge / 2.0, 0, true)` 在零尺寸守卫落地后已成空操作（`heightPixels = 0` 被忽略） | **已删（2026-10-17）**：确认该调用唯一的第二实参为 0、必被 `UpdateViewport` 的 `< 1` 守卫丢弃；宿主在 `Replace` 之后立即用真实尺寸再上报，Full 升级仍走主路径 |
 | 2026-10-17 | **ONNX + 相似度触发修复后真机复测**：Release ios-arm64 安装到 iPad mini 7，`--pv-dino-check photo-check/color-srgb.jpg` → `PASS cls=384 ep=CPU ms=629.0`；`--pv-stress=stress --pv-stress-count=500`（450 HEIC + 50 ARW）**500/500 零超时、500 条全 Normal、0 条 DinoFeatureCache 日志**，p50 **323.2ms** / p95 **418.5ms** / max 543.5ms（elapsed 157.5s） | 与 I2 基线 716.4/775.3ms 相比大幅下降（除隐式推理外，Release 编码路径未变；代理仍 F16，450/500 条 `proxy=true`）。模拟器侧 photo/layout/dino 三套 PASS；Mac 四套回归 PASS，`git status release/` 干净（评级已还原） |
+| 2026-10-17 | **设置页关闭回写代理在 `ViewDidLoad` 拿不到 presentation controller**：`iOSNativeSettingsNavigationController` 原在 `ViewDidLoad` 里设 `PresentationController.Delegate = _dismissDelegate`；实测此时 `PresentationController` 仍为 null（sheet 在展示开始时才装配），系统下拉关闭不会回写设置，只有关闭按钮回写 | **已修（I4）**：改在 `ViewWillAppear` 挂接；`--pv-native-input-check` 断言真实弹出的设置页 `PresentationController.Delegate` 为关闭回写代理，并经该代理应用工作副本后核对主屏传播 |
+| 2026-10-17 | **devicectl 拷入的夹具目录属 root（0755），App 无目录写权限**：评分写回的安全写路径会在同目录新建 `<file>.xmp_backup`，真机 `--pv-native-input-check layout-fixtures` 因此 `UnauthorizedAccess_IODenied_Path` 失败（模拟器容器目录属 App，现象不出现） | 输入验收与 Mac 各套件同口径：先把 `*.jpg` 复制到 App 自建 `Documents/input-fixtures` 工作副本再运行（目录属 App UID），评级仍只写自有副本。真机复跑 PASS 27 checks |
+| 2026-10-17 | **iOS 没有读取系统键盘重复速率的公开接口**：`UIPress` 不提供 repeat 标志，`UIKey` 也不暴露系统键盘偏好 | 按住键的重复由本壳 `NSTimer` 以固定节奏（首次 350ms、随后 60ms）驱动；系统若重复派发同一按键被去重。速率与 Mac（跟随系统偏好）不同，记为 iOS 平台差异；`UIPress` 无法合成，重复节奏未做程序化断言 |
+| 2026-10-17 | **真实鼠标滚轮与触控板滚动无法在模拟器/检查里合成**：UIPan 的 `AllowedScrollTypesMask` 只影响原生事件源 | 滚轮识别器限定离散滚动（`Minimum/MaximumNumberOfTouches = 0`）并按用户鼠标绑定查命令表；程序化覆盖映射与识别器配置，滚轮方向与"绑定存在时不同时平移"（`RequireGestureRecognizerToFail`）留作者真机手验 |
+| 2026-10-17 | **I4 输入落地与验收**：主图/卡片上下文菜单（SF Symbols + 原生勾选态，不含 I5 死项）、适应态轻扫翻页（单指、24 点阈值、走共享 Previous/Next）、HID usage 映射表（47 键）与合成派发、INPUT-01 守卫、拖入走 `ExternalOpenService`、设置关闭回写后六类设置传播 | 模拟器 `--pv-native-input-check layout-fixtures` **PASS 27 checks**；真机（iPad mini 7 / iPadOS 26，Release ios-arm64）`--pv-native-input-check photo-check` **PASS 27 checks**；同轮模拟器 photo **10** / layout **24** checks PASS，Mac `--pv-native-input`/`--pv-native-toolbar`/`--pv-native-settings` 与 base smoke PASS。模拟器上另以真实 UI 事件目视：主图长按、卡片长按、适应态左滑、放大态左滑不翻页 |
