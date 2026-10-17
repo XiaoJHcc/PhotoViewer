@@ -148,6 +148,14 @@
 7. **编码与色彩**：`WindowsPresentationEncodingPolicy` 本阶段恒 RGBA16F 线性 scRGB；W-M7 的 ICC/ACM/广色域标签与 Windows RAW 解码未做。
 8. **验收**：`--pv-native-smoke` 隔离设置/数据库/日志并生成自有素材；24 项覆盖 150% 下三尺寸×两向、caption、代理→Full、八方向（主图/导航图/`DisplayCrop`）、FILM-03/06、外部打开定位、相似聚类、分析栏（含增强态重算）、窗口四态与关闭释放；`--pv-native-settings` 7 项覆盖设置窗口深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar 已加载、五分类/尺寸、开关+数值框+滑条、重排、录制状态与关闭回写；`--pv-native-tools` 5 项覆盖工具窗口深色/Mica/三分类、EXIF 分组/标签、DINO 5 瓦片与余弦参考点、照片统计文件夹/通配符/CSV 导出与单例重开。200% DPI、真实跨屏、真实相机八方向素材、系统色彩、真实拖拽/录制/文件选择器手感仍待验；程序化通过不等于完整 W-M6 验收。
 
+### 5.9 Android 原生启动链（A1b，2026-10-18）
+
+1. **壳分派**：`AndroidApp` 是普通 `Android.App.Application`，**不初始化 Avalonia**。唯一 launcher 是 `AndroidBootstrapActivity`（同时接管 `ACTION_VIEW` / `ACTION_SEND` / `ACTION_SEND_MULTIPLE`），解析 `pv-flags` 后转发原始 Intent 到 `AndroidNativeActivity`（Debug 默认）或 `MainActivity`（`--legacy-ui`），自身立即结束。目标 Activity 不再带 launcher/filter，避免点图标绕过分派。
+2. **原生壳**：`AndroidNativeActivity : AppCompatActivity` + 固定深色 `Theme.PhotoViewer.Native`（Material 3，颜色走自有 `colors.xml`，不调用 DynamicColors）。`AndroidNativeShell` 的启动序对齐 iOS：`AndroidUiDispatcher`（主 Looper + `SynchronizationContext`）→ ReactiveUI builder → 平台门面（FilePicker/AppResources/Heif/PerformanceBudget/MemoryGovernor/XmpWriter/SettingsService/NativeWindowPresenter/DINO-NNAPI）→ `MainViewModel(nativePresentation: true)` → 根视图。A1b 根视图是深色占位，A2/A3 换共享 `PhotoViewport`/`MainScreenLayout` 驱动的真实主图与主屏。
+3. **旧壳**：`MainActivity : AvaloniaActivity` 在 `base.OnCreate` 前用 `AppBuilder.Configure<App>().UseAndroid()...SetupWithLifetime(...)` 自建 Avalonia；`base.OnCreate` 后写 `Content` 触发 `SetContentView`。Avalonia 12 把 lifetime 接口标为 `NotClientImplementable`，所以实例化 `Avalonia.Android` 自带的 internal `ApplicationLifetime`（与 `AvaloniaAndroidApplication` 同一类型），并走 `IActivityApplicationLifetime.MainViewFactory`。旧壳的存储权限仅保留 API ≤ 32，33+ 交给 SAF（A2/A3）。
+4. **资源与依赖**：DINO 模型以 `AndroidAsset` 打进 APK（`assets/Models/`，约 +83MB），`AndroidAppResourceProvider` 把 `avares://PhotoViewer/Assets/...` 映射到 AssetManager 根。`Microsoft.ML.OnnxRuntime` 1.24.4 在 net10.0-android 下误把 `runtimes/linux-arm64/native/*.so` 放进 `FrameworkNativeLibrary`；csproj 的 `_PvRemoveLinuxOnnxFromApk` 在 APK 打包前移除 Linux glibc 版本，保留 AAR 的 Android bionic `libonnxruntime.so`。
+5. **构建与验证**：本机 10.0.201 有 android workload，默认 10.0.402 没有；用临时 `global.json` pin 10.0.201 构建（Apple 头仍用 10.0.402），Debug **0 错误 / 21 警告**。API 35 arm64 模拟器上默认启动 → `[Bootstrap] → native`、`[Native] Avalonia.Application.Current=null`、`DINO 模型资源=ok`；`--legacy-ui` → `[Bootstrap] → legacy`、`MainView=True`、Avalonia 主界面正常。A2–A6 未开始；SAF 选择器/设置/工具页仍是占位。
+
 ## 6. 共享控件 / 转换器 / 行为
 
 - [Controls/](../PhotoViewer/Controls/):

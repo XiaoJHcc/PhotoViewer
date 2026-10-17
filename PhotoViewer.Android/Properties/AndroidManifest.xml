@@ -1,8 +1,7 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" android:installLocation="auto">
 	<uses-permission android:name="android.permission.INTERNET" />
-	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
-	<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-	<uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
+	<!-- API ≤ 32 的旧壳/缩略图路径仍用 READ；33+ 由 SAF 接管。MANAGE/WRITE 已按 A1 计划移除。 -->
+	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 	<application android:label="PhotoViewer" android:icon="@drawable/Icon" android:largeHeap="true" />
 </manifest>

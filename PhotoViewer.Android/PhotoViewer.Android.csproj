@@ -36,10 +36,24 @@
         </AndroidResource>
     </ItemGroup>
 
+    <!--
+      DINO 模型：原生壳不加载 Avalonia，旧 avares 资源不可用；
+      按 Mac/iOS 同口径把 ONNX 模型作为 AndroidAsset 打进 APK（约 +83MB）。
+      原生资源提供器按 avares://PhotoViewer/Assets/Models/... 的路径部分读取 Assets/Models/...
+    -->
+    <ItemGroup>
+        <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
+    </ItemGroup>
+
     <ItemGroup>
         <PackageReference Include="Avalonia.Android"/>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
+        <!-- 原生壳：Material 3 主题/控件、胶片栏 RecyclerView、edge-to-edge insets、设置 BottomSheet -->
+        <PackageReference Include="Xamarin.Google.Android.Material" />
+        <PackageReference Include="Xamarin.AndroidX.RecyclerView" />
+        <PackageReference Include="Xamarin.AndroidX.Window" />
+        <PackageReference Include="Xamarin.AndroidX.Fragment" />
         <!-- LibHeifSharp：libheif 软件解码器，支持 HEIF YUV 4:2:2 等系统不支持的格式 -->
         <!-- 需配套将 libheif.so + libde265.so 放入 NativeLibs/{abi}/ 目录（见下方） -->
         <PackageReference Include="LibHeifSharp"/>
@@ -103,4 +117,16 @@
         <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
         <Using Include="PhotoViewer.Shared"/>
     </ItemGroup>
+<!--
+  Microsoft.ML.OnnxRuntime 1.24.4 在 net10.0-android 下把 runtimes/linux-arm64/native/*.so
+  误放进 FrameworkNativeLibrary。这些是 glibc 构建（依赖 libdl.so.2），会被打进
+  lib/arm64-v8a 并盖掉 AAR 里的 Android bionic 版本，导致 libonnxruntime4j_jni.so
+  启动即 UnsatisfiedLinkError（DINO 不可用）。这里在 APK 打包前移除 Linux 资产，
+  使用 AAR 的 jni/<abi>/libonnxruntime.so。
+-->
+<Target Name="_PvRemoveLinuxOnnxFromApk" BeforeTargets="_BuildApkEmbed">
+  <ItemGroup>
+    <FrameworkNativeLibrary Remove="$(NuGetPackageRoot)microsoft.ml.onnxruntime/*/runtimes/linux-arm64/native/*.so" />
+  </ItemGroup>
+</Target>
 </Project>

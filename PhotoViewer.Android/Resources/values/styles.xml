@@ -9,4 +9,19 @@
     <item name="android:windowBackground">@drawable/splash_screen</item>
     <item name="android:windowNoTitle">true</item>
   </style>
+
+  <!--
+    原生壳主题：固定深色 Material 3，不依赖 OEM 主题派生色。
+    颜色全部走自有常量（不引用 ?attr/colorPrimary / ?attr/colorSurface），
+    并禁用 Material You 动态取色（代码里也不调用 DynamicColors）。
+  -->
+  <style name="Theme.PhotoViewer.Native" parent="Theme.Material3.Dark.NoActionBar">
+    <item name="android:windowActionBar">false</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowBackground">@color/native_background</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+    <item name="android:windowLightStatusBar">false</item>
+    <item name="android:windowLightNavigationBar">false</item>
+  </style>
 </resources>

@@ -9,12 +9,15 @@
 - Windows 基线：`dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug` = **0 错误 / 21 警告**（含既有 NU1903、CS86xx、CA1422、XA4301；计划里的「14 条」已过时）。
 - Windows 已下载 API 24/28/33/35 的 `google_apis;x86_64` 镜像；**这些镜像不能带到 Apple Silicon Mac**，Mac 已重新下载 `arm64-v8a`（见 §4）。
 - **Mac 本机（2026-10-18）**：Apple Silicon / macOS 26.6.2 / Xcode 27.1 / .NET SDK **10.0.402（默认）与 10.0.201** / ios + macos workload 27.0.10722 / JDK 21 Temurin。**android workload 只装在 10.0.201 下**（36.1.53）；默认 10.0.402 下没有，`dotnet build` 会报 NETSDK1147。SDK 已补 `platforms;android-35`、`emulator`、`system-images;android-35;google_apis;arm64-v8a`，并已创建 AVD `pv-api35`（pixel_7）。
-- **Android 构建/启动已验证（2026-10-18）**：在临时目录用 `global.json` pin 10.0.201（不改仓库 `global.json`，Apple 头仍用 10.0.402）构建 Android 头 = **0 错误 / 21 警告**；APK 267MB 安装到 API 35 arm64 模拟器，旧壳 `MainActivity` 正常启动并显示 Avalonia 主界面（全屏系统提示可关）。构建命令见 §4 末尾。
+- **Android 构建/启动已验证（2026-10-18）**：在临时目录用 `global.json` pin 10.0.201（不改仓库 `global.json`，Apple 头仍用 10.0.402）构建 Android 头 = **0 错误 / 21 警告**；APK 约 362MB（含 86MB DINO 模型）安装到 API 35 arm64 模拟器，原生壳与旧壳均可启动。构建命令见 §4 末尾。
 - **A1a 已落地**：7 个几何文件移入 `PhotoViewer.Shared/`（命名空间 `PhotoViewer.Shared`），`InputCommandMap.CommandForGesture` 抽出；Mac/iOS/Android 三个 csproj 已链接共享源。Mac 与 iOS Debug 构建 0 错误。
 - **A1a 回归（2026-10-18）**：Mac `--pv-native-smoke` **39 checks PASS**，`input / toolbar / layout / analysis / similarity / tools / filmstrip` 七套专项 PASS；iOS 模拟器（iPad mini A17 Pro）七套全 PASS：photo **10** / gesture **24** / layout **24** / input **29** / analysis **18** / similarity **10** / tools **7**。
 - **settings 套件假阴性**：`--pv-native-settings` 在“勾选后重绘”断言失败，原因是本机未授予屏幕录制权限，`screencapture -l` 失败后 SwiftUI 图层的 `cacheDisplay` 导出空白；迁移前基线（`3ce703a` + 仅修最低系统版本）同断言同样失败，且 KimiCU 目视窗口内容正常。**不是 A1a 行为变化**，已登记，待补抓屏权限或修复离屏渲染后复跑。
 - **Mac 构建阻塞已修**：workload 27.0.10722 要求 macOS 最低 14.0，Mac head 原写 12.0；已把 `PhotoViewer.Mac.csproj` 与 `Info.plist` 对齐 14.0。workload 升级后 iOS 首次构建需先删 `obj/bin`（否则 `_xamarin_*` 未定义符号）。
-- 未做：`AndroidBootstrapActivity`、普通 `Application`/`AvaloniaActivity` 改造、主题、依赖、任何 A2–A6 代码。
+- **A1b 基座已完成（2026-10-18）**：`AndroidApp` 改普通 `Application`（不初始化 Avalonia）；`AndroidBootstrapActivity` 接管 launcher 与 `ACTION_VIEW`/`SEND`/`SEND_MULTIPLE` 并分派；`AndroidNativeActivity` + `AndroidNativeShell`（dispatcher/ReactiveUI/门面/`MainViewModel`/占位根视图）；`Theme.PhotoViewer.Native`（Material 3 固定深色，无 DynamicColors）；Material/RecyclerView/Window/Fragment 依赖；`AndroidAppResourceProvider`/`AndroidUiDispatcher`/`AndroidFilePicker`/`AndroidNativeWindowPresenter` 落地（后两者为 A2/A4/A5 占位，有可见反馈）。
+- **A1b 自验**：默认启动 → `[Bootstrap] → native`、`[Native] DINO 模型资源=ok`、`[Native] Avalonia.Application.Current=null`、`AndroidNativeActivity 就绪`；`--legacy-ui` → `[Bootstrap] → legacy`、`[Legacy] 主视图挂载完成（mainView=True）`，Avalonia 主界面正常。首次启动 `Displayed`：native **+940ms** / legacy **+1.09s**。manifest 已移除 MANAGE/WRITE 宽权限。
+- **A1b 期间修掉两个真问题**：① Avalonia 12 lifetime 接口 `NotClientImplementable`，旧壳实例化 Avalonia.Android internal `ApplicationLifetime` 并走 `IActivityApplicationLifetime.MainViewFactory`；`AvaloniaActivity` 必须在 `base.OnCreate` 之后写 `Content` 才会 `SetContentView`（否则白屏）。② ONNX Runtime 1.24.4 把 Linux glibc `libonnxruntime.so` 误打进 APK 并盖掉 AAR bionic 版，`libonnxruntime4j_jni.so` 启动即 `UnsatisfiedLinkError`；csproj 的 `_PvRemoveLinuxOnnxFromApk` 已移除 Linux 资产。
+- **未做**：A2–A6（主图/主屏/输入/设置/工具/验收）；SAF 选择器、设置 BottomSheet、工具页仍是占位。
 
 ## 2. 为什么曾在 Windows 暂停
 
@@ -94,10 +97,12 @@ SDK="$HOME/Library/Android/sdk"
 
 ## 7. 未关闭 / 风险
 
-- **A1a**：Mac 八套 + iOS 七套回归正在本机执行（结果见 §1；未全过不得进 A1b）。
-- **A1b 前置**：本机缺 `android` workload、emulator 与 system image（§4 有安装命令）；补齐前 Android 构建会报 `NETSDK1147`。
+- **A1a**：已完成（Mac 七套专项 + base 39，iOS 七套全 PASS；settings 为抓屏权限假阴性）。
+- **A1b**：已完成（原生/旧壳均可启动，0 错误 / 21 警告）。**A2–A6 未开始**；SAF 选择器、设置 BottomSheet、工具页仍是占位。
+- **Android workload**：默认 10.0.402 仍缺；当前用 10.0.201 的 workload（§4 构建命令）。要让默认 `dotnet build` 一致，仍需 `sudo dotnet workload install android`。
+- **DINO**：模型资产与 ONNX bionic 库已修到可加载，但尚未跑端到端推理（A5 验收）。
 - **Mac 工具链**：workload 27.0.10722 要求 macOS 14.0，已把 Mac head 与 Info.plist 对齐；升级 Apple workload 后先删 iOS `obj/bin` 再构建。
 - P3 正向路径在模拟器上大概率不可得，真机验收清单已列。
 - iOS 回归素材不在 git；本机已有色卡/ARW，`focus-src.ARW` 需由 `release/native-p2-raw/A7C01489.ARW` 改名。
-- `PhotoViewer.Android` 当前 APK 约 280MB；再加 DINO 模型副本会更大，安装/冷启动时间要记录。
+- `PhotoViewer.Android` 当前 Debug APK 约 362MB（含 86MB DINO 模型）；冷启动 native +940ms / legacy +1.09s，Release/AOT 与真实设备待测。
 - ARW 在 Android 的 libheif/系统解码链路未验；验收清单第 40 项要求记录是否只有内嵌预览。

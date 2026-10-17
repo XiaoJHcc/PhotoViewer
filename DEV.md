@@ -55,6 +55,10 @@
 - ⚡ **Debug Android**：编译并自动将新版推送到已连接设备（真机或模拟器）直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
 - ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
 
+> **原生壳 / 旧壳分派（A1b 起）**：Debug 默认原生壳；旧壳显式回退：
+> `adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-flags "--legacy-ui"`。
+> Release 默认旧壳，`--es pv-flags "--native"` 进入原生壳。唯一 launcher 是 `AndroidBootstrapActivity`，目标 Activity 不带 launcher/filter。
+
 ### 3. Mac
 - ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动启动原生版 `.app`，解决原生的系统签名拦截。
 - ⚡ **Run Mac**：**仅启动**，不触发构建，直接打开上次已编译签名完毕的原生版 `.app`。

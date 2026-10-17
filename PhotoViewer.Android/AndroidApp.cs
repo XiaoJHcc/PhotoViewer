@@ -1,54 +1,24 @@
 using System;
 using Android.App;
 using Android.Runtime;
-using Avalonia;
-using Avalonia.Android;
-using Avalonia.Media;
-using ReactiveUI.Avalonia;
-using PhotoViewer.Android.Core;
-using PhotoViewer.Core;
-using PhotoViewer.Core.Platform;
-using PhotoViewer.Core.Image;
-using PhotoViewer.Core.Settings;
-using PhotoViewer.Core.AI;
-using PhotoViewer.Core.Memory;
-using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Android;
 
+/// <summary>
+/// Android 进程级 Application。
+/// **这里不初始化 Avalonia**：原生壳不应为了启动而创建任何 Avalonia 对象；
+/// 旧壳的 Avalonia 由 <see cref="MainActivity"/> 在 <c>OnCreate</c> 前自建。
+/// </summary>
 [Application]
-public class AndroidApp : AvaloniaAndroidApplication<App>
+public sealed class AndroidApp : Application
 {
     /// <summary>
-    /// 初始化 Android Avalonia 应用宿主。
+    /// Java 侧构造入口（Android 运行时调用）。
     /// </summary>
+    /// <param name="javaReference">Java 对象引用。</param>
+    /// <param name="transfer">引用所有权。</param>
     public AndroidApp(IntPtr javaReference, JniHandleOwnership transfer)
         : base(javaReference, transfer)
     {
-    }
-
-    /// <summary>
-    /// 构建 Avalonia AppBuilder，并注入 Android 平台能力实现。
-    /// </summary>
-    protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
-    {
-        return base.CustomizeAppBuilder(builder)
-            .With(new FontManagerOptions
-            {
-                DefaultFamilyName = "sans-serif"
-            })
-            .UseReactiveUI(_ => { })
-            .AfterSetup(_ =>
-            {
-                HeifLoader.Initialize(new AndroidLibHeifDecoder());
-                PerformanceBudget.Initialize(new AndroidPerformanceBudget());
-                MemoryGovernor.Initialize(new AndroidMemoryBudgetProvider());
-                XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
-                SettingsService.ConfigureStorage(new AndroidSettingsStorage());
-                DinoFeatureExtractor.ConfigureSession(options =>
-                {
-                    options.AppendExecutionProvider_Nnapi();
-                });
-            });
     }
 }

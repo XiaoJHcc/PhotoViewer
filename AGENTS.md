@@ -24,7 +24,7 @@ PhotoViewer.Mac/              # macOS 头工程：AppKit + Metal 原生壳 + 迁
 PhotoViewer.Apple/            # Apple 专属共享源（解码/Metal/验收，链接进 Mac/iOS）
 PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链接进 Mac/iOS/Android）
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳 + 迁移期旧壳
-PhotoViewer.Android/          # Android 头工程
+PhotoViewer.Android/          # Android 头工程：原生壳（A1b 基座）+ 迁移期旧壳
 Tools/                        # 诊断与维护工具
 Training/                     # AI 训练独立 git 仓库（主库忽略）
 Design/                       # 架构说明与 UI 契约
@@ -57,5 +57,6 @@ release/                      # 发布产物
 | [PhotoViewer.Shared/](PhotoViewer.Shared/AGENTS.md) | 跨壳纯 C# 共享源：视口/主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳与平台接线 |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳与平台接线 |
+| [PhotoViewer.Android/](PhotoViewer.Android/AGENTS.md) | Android 原生壳（A1b 基座：bootstrap/主题/门面）与迁移期旧壳 |
 | [PhotoViewer.Windows/](PhotoViewer.Windows/AGENTS.md) | Windows 原生壳与平台接线 |
 | [Training/](Training/AGENTS.md) | 训练数据、模型导出与数据契约 |

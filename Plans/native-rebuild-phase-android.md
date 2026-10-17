@@ -153,7 +153,9 @@
 - 按 §1.11 改普通 `Application` + `AvaloniaActivity` 旧壳；bootstrap 接管 launcher / 外部打开 filter。
 - `Theme.PhotoViewer.Native` 落地（§1.3），`AndroidNativeActivity` 上用。
 - 补 §1.12 依赖与 `AndroidAppResourceProvider`/门面，构建零错误零新增警告。
-- **状态**：A1a（共享源 + `InputCommandMap`）2026-10-18 已完成——Mac base **39 checks** + `input/toolbar/layout/analysis/similarity/tools/filmstrip` 七套 PASS，iOS 模拟器七套全 PASS（photo 10 / gesture 24 / layout 24 / input 29 / analysis 18 / similarity 10 / tools 7）；`--pv-native-settings` 因本机未授予屏幕录制权限、SwiftUI 离屏导出空白而假阴性（迁移前基线同样失败，窗口目视正常），见 §6#10。A1b 未开始（本机 android workload 待装）。
+- **状态**：**A1a + A1b 已完成（2026-10-18）**。
+  - A1a：Mac base **39 checks** + `input/toolbar/layout/analysis/similarity/tools/filmstrip` 七套 PASS，iOS 模拟器七套全 PASS（photo 10 / gesture 24 / layout 24 / input 29 / analysis 18 / similarity 10 / tools 7）；`--pv-native-settings` 为抓屏权限假阴性（迁移前基线同，窗口目视正常，§6#10）。
+  - A1b：普通 `Application` + `AndroidBootstrapActivity` + `AndroidNativeActivity`/`AndroidNativeShell` + `Theme.PhotoViewer.Native` + `AndroidAppResourceProvider`/`AndroidUiDispatcher`/门面占位落地；旧壳 `MainActivity : AvaloniaActivity` 自建 Avalonia。Debug 构建 **0 错误 / 21 警告**（与基线一致）；API 35 arm64 模拟器默认启动 `[Native] Avalonia.Application.Current=null`、`DINO 模型资源=ok`，`--legacy-ui` 旧壳 `MainView=True` 正常；首次启动 native `+940ms` / legacy `+1.09s`。ONNX Linux glibc `.so` 误打包已修（§6#11）。A2 未开始。
 
 ### A2 主图
 - `AndroidPresentationDecoder`（`BitmapFactory` + libheif，产出 8 位 sRGB 或 Display P3）+ `AndroidPresentationEncodingPolicy`；`BitmapLoader` 注入。
@@ -219,6 +221,12 @@
 | 8 | workload 升级后首次构建 iOS 会因旧 `obj/bin` 残留报 `Undefined symbols for architecture arm64: _xamarin_*` | 删除 `PhotoViewer.iOS/obj`、`bin` 后重建即通过；升级工具链后先做一次干净构建 |
 | 9 | 本机 macOS 环境缺 Android 工具链：默认 SDK 10.0.402 无 `android` workload，SDK 只有 platform 36 / build-tools 36 / platform-tools，**无 emulator 与 system-images** | 2026-10-18 已补 platform 35 / emulator / arm64-v8a 镜像与 AVD `pv-api35`；**10.0.201 下已有 android workload 36.1.53**，用临时 `global.json` pin 10.0.201 构建 Android 头 0 错误 / 21 警告并成功启动旧壳；10.0.402 仍需 `sudo dotnet workload install android` |
 | 10 | `--pv-native-settings` 的“勾选后重绘”断言依赖 `screencapture -l`：本机未授予屏幕录制权限时回退到 `cacheDisplay`，SwiftUI 图层导出为空白，断言必失败；迁移前基线同样失败，KimiCU 目视窗口内容正常 | 登记为假阴性；授予权限或改用可捕获图层树的离屏渲染后复跑。A1a 结论不据此改判 |
+
+| 11 | `Microsoft.ML.OnnxRuntime` 1.24.4 在 net10.0-android 下把 `runtimes/linux-arm64/native/*.so` 放进 `FrameworkNativeLibrary`，APK 的 `lib/arm64-v8a/libonnxruntime.so` 因而是 glibc 版（依赖 `libdl.so.2`），AAR 的 bionic 版被忽略，`libonnxruntime4j_jni.so` 启动即 `UnsatisfiedLinkError` | **已修**：csproj `_PvRemoveLinuxOnnxFromApk` 在 `_BuildApkEmbed` 前移除 `runtimes/linux-arm64/native/*.so`；APK 现为 AAR 的 bionic 版（md5 5316513a…），启动无该错误 |
+| 12 | Avalonia 12 的 `ISingleViewApplicationLifetime`/`IApplicationLifetime` 标为 `NotClientImplementable`，手写 lifetime 无法编译 | 旧壳实例化 `Avalonia.Android.ApplicationLifetime`（internal）并走 `IActivityApplicationLifetime.MainViewFactory`；待上游公开 API 后移除反射 |
+| 13 | `AvaloniaActivity.InitializeAvaloniaView` 只创建 `AvaloniaView`，不调用 `SetContentView`；在 `base.OnCreate` 前写 `Content` 会白屏 | 旧壳在 `base.OnCreate` 后写 `Content`，触发 setter 的 `SetContentView` 分支；已实测主界面正常 |
+| 14 | `AndroidAsset` 打进 APK 的实际路径是 `assets/Models/...`，共享 URI 是 `avares://PhotoViewer/Assets/Models/...` | `AndroidAppResourceProvider` 去掉开头 `Assets/`；原生壳启动日志 `DINO 模型资源=ok` 验证 |
+| 15 | SAF 选择器、设置 BottomSheet、工具页当前是占位（返回 null / Toast） | A2/A3/A4/A5 按计划替换；占位有日志与可见反馈，不冒充已实现 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 
