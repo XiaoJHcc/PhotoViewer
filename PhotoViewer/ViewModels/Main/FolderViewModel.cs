@@ -305,7 +305,10 @@ public class FolderViewModel : ReactiveObject
 
         if (targetFile == null)
         {
-            var firstFile = _allFiles.FirstOrDefault();
+            // AllFilesChanged 已同步重建筛选列表:首张取筛选后列表的首项,同名合并时即为代表文件
+            // (如 HIF+ARW 同名时取 HIF),不能取枚举顺序首项——那可能是被合并隐藏的伴侣文件。
+            // 筛选结果为空(如星级筛选排除全部)时沿用原行为打开枚举首张。
+            var firstFile = Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault() ?? _allFiles.FirstOrDefault();
             if (firstFile != null)
             {
                 firstFile.UpdateCacheStatus();

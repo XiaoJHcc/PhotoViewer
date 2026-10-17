@@ -187,4 +187,6 @@
 7. **Release 通道默认仍旧壳**：`Debug iOS` 构建 Release 配置，默认进入 Avalonia 旧壳；原生壳用 `Debug iOS (Native)` 或显式 `--native`。切默认通道属主计划 Phase 6，待作者决定。
 8. **iPhone 紧凑布局不在本轮范围**：同一原生壳可启动，不做专项适配。
 9. **设置页逐条契约**：I4 只验证"关闭回写后主屏传播"；设置页视觉/输入体验逐条验收待作者手验。
-10. **共享 EXIF 伴侣时序**：打开文件夹时当前项落在同名组非代表项会导致工具页只显示单一格式（共享层时序，Mac 同源）；产品修复留待共享层专项。
+10. ~~**共享 EXIF 伴侣时序**~~ **已修（2026-10-18）**：根因同"首图落在同名组非代表项"——`FolderViewModel.LoadFolderAsync` 无指定目标时取枚举顺序首张，同名 HIF+ARW 时常是被合并隐藏的 ARW（iOS 上 ARW 只有 1616×1080 内嵌预览，作者因此看到"首张双击 100% 只放大一点点"）。改为取同步重建后的筛选列表首项（即代表文件，按格式顺序 HIF 优先），筛选为空时回退枚举首张。Mac 实跑 HIF+ARW 同名目录 `CurrentFile => A7C01489.HIF`；Mac base/filmstrip/similarity PASS。
+11. **100% 口径已与作者确认（2026-10-18）**：100% = 照片源像素与屏幕物理像素点对点（IMAGE-02），旧 Avalonia 逻辑点口径的差异按意图差异保留，不再对齐。
+12. **待收尾统一清理的差异/遗留**：Mac 细节预览双击会清 `FollowsFocus`（Avalonia 保留）；Windows `ToggleFit` 无对焦点优先、无对焦跟随切图（W-M6）；iOS `UseInterpreter=true` 致增强等热循环慢（真机 24MP Full 约 1.7s，是否改纯 AOT 待定）；"增强后竖拍变横"未复现，待作者提供原图；iOS RAW 全分辨率（`CIRAWFilter`）待定（见第 2 条）。
