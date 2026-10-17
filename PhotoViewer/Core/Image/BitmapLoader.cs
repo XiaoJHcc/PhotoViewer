@@ -649,7 +649,13 @@ public static class BitmapLoader
             var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
                 () => LoadAndCacheAsync(file, filePath, PresentationEncoding(ImageSizeClass.Full), ct, priority),
                 LazyThreadSafetyMode.ExecutionAndPublication));
-            var img = await AwaitInFlightAsync(filePath, lazy, lazy.Value).ConfigureAwait(false);
+            DecodedImage? img;
+            try { img = await AwaitInFlightAsync(filePath, lazy, lazy.Value).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // 合并任务的原请求已取消，当前请求仍有效：重走本流程，不把取消误判为解码失败
+                continue;
+            }
 
             if (img == null)
             {

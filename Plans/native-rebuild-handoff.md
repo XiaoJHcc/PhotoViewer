@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-17(iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收；I6 文档收尾完成，作者手验与发布通道仍在作者手上)。
+> 最后更新:2026-10-17(iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收；I6 文档收尾完成；Windows 原生壳已同步共享 `c0567c6`，`--pv-native-smoke` 24 项通过)。作者手验与发布通道仍在作者手上。
 
 ## 1. 为什么重构(决策语境)
 
@@ -10,6 +10,18 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 一句话:**色彩管理、切图性能、iPad 内存、UI 原生感、App Store 上架五个问题共用一套底层重构来根治**,不打补丁。阅读顺序:master plan → phase-0 清单(含发现清单,很多坑在那里)→ 本文。
 
 ## 2. 当前状态
+
+- **Windows 同步共享分支（2026-10-17，`native-rebuild-win-sync`）**：Windows 原生壳并入共享基线 `c0567c6`（Windows 壳 `b0caf32` 与共享基线的合并）。分析栏改为实现共享 `IAnalysisHost`、消费 `AnalysisPresenter`/`AnalysisTile`，细节预览用共享 `DisplayCrop`，直方图由 presenter 的 `HistogramRenderer` 生成，Windows 侧不再自持分析数据链与即时计算编排；增强预览下移 `PhotoLoadSession`（跨切图持续、压力 Warning 自动关闭）；主图解码改用共享四参 `DecodeAsync` 并注入 `WindowsPresentationEncodingPolicy`（恒 RGBA16F 线性 scRGB）。保留 Windows 分支对共享层的修复（`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载）。`--pv-native-smoke` **24 项全 PASS**（150%，新增 NumberPad3→SetRating3、方向 6 `DisplayCrop` 象限、方向 6 增强帧朝向、增强帧诊断重算）。**待办不变**：W-M5 设置窗口、工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。细节见 [Windows P2-W §16](native-rebuild-windows-p2.md)。
+
+- **Windows 主屏视觉细节修复（2026-10-17 第五轮，`native-rebuild`）**：作者回报五处 UI 细节（续报三轮）。①**缩略图盖掉「已缓存」浅蓝描边**——描边原画在槽位 Border 上，80 宽图片按 Uniform 铺满后左右两边被覆盖；改为独立一层压在图片之上。②**分析栏瓦片内容自带圆角 + 拉满方形**——诊断瓦片与细节预览各套了一层 `CornerRadius=5` 的内容 Border（移植旧壳"外框 6 + InnerClip 5"），150% 下呈"卡里套卡"；改为内容贴外框内沿、圆角只由外框裁切产生；作者二次回报"分析图应是原比例置入"，于是诊断位图不再强制 512×512 方形，改按 `entry.AspectRatio` 生成非方形（长边 512，抖动箭头 cellX/cellY 分开算），瓦片里 `Stretch=Uniform` 居中留边，准星与点击 uv 走同一 `_aspect` 推的 `ContentRect()`。③**分析栏首开偶发"挤成一坨、大小错位"**——原实现"读 `ActualWidth` → 推迟回调 → 回写每个瓦片 `Width/Height`"，那一拍若赶在布局给出宽度之前读到 0，瓦片就退回各自内容尺寸且事后不保证再有 `SizeChanged` 纠正；新增 `WindowsAnalysisTilePanel` 在 Measure/Arrange 里直接排等边长条带，布局回调里不再改子元素尺寸与位图。④**绿框每换一张照片都亮**——`SetImage`/`SetCenter` 结尾无条件推高亮，而换图必重建裁剪图；改为瓦片自持悬停态，只有指针真在预览瓦片里才推，`ResetHover()` 兜住面板收起拿不到 `PointerExited` 的情况（与旧壳"仅高亮态才推"同口径）。验证：0 错 0 警、冒烟 **23 项全 PASS**（含两向"瓦片等边长"断言）、150% 实机开合分析栏 4 次尺寸一致、原比例留边与准星落点逐像素核对、绿框四步（开面板→换图→悬停→离开再换图）符合预期。细节见 [Windows P2-W §15.6](native-rebuild-windows-p2.md)、契约 `ANL-02`/`ANL-03`/`ANL-04` 与 `FILM-05`。
+
+- **Windows 主屏 P3 收尾修复（2026-10-17 第四轮，`native-rebuild-win`）**：作者回报"提取特征后点相似聚类开关卡死"，实机复现为**进程直接消失**（WinUI `0xC000027B`，WER HRESULT `0x80131509`）。根因：旧壳 `AnalysisViewModel` 在原生壳里照常订阅并在展开分析栏时用 `DecodedImageAdapter` 建 **Avalonia 位图**，而原生壳不初始化 Avalonia 渲染接口，`InvalidOperationException` 抛在 WinUI 回调里跨 COM 边界即退进程（空库不崩，因为有数据才会建位图）。修复：`AnalysisViewModel` 在 `UsesNativePresentation` 下完全惰性；同时修掉两处卡死诱因——`PhotoDatabase` 每条连接重复写 `PRAGMA journal_mode=WAL` 导致并发抢库锁、`SimilarityService` 一候选一 `Task.Run` 压满连接池与 UI 队列（改 `Parallel.ForEachAsync` 并有界并发），并顺带剔除相似列表里 100% 相似的伴侣文件。诊断手段：`NativeStartupLog` 增加 `FirstChanceException` 留痕 + 相似面板工厂/分析栏可见性的 COM 边界兜底。验证：0 错 0 警、冒烟 **23 项全 PASS**、345 张（已提取）与 1395 张图库实机压测存活。细节见 [Windows P2-W §15.5](native-rebuild-windows-p2.md)。
+
+- **Windows 主屏 P3 入口落地（2026-10-17 第三轮，`native-rebuild-win`）**：解除 `SCOPE-01` 对 Windows 主屏的限制——**分析栏**（细节预览/直方图/DINO PCA/Cosine/锐度/抖动、准星与 cosine 重算、双击对准主图、悬停绿框）、**相似聚类**（筛选条开关、相似项分数卡片、空态/提取全部/进度、点选保留锚点；聚类只在面板展开时计算）、**增强预览**（CLHE 增强帧上屏，可切回原片）全部原生落地；控制栏恢复「分析栏/增强预览」两个命令按钮，右键菜单补「分析栏」勾选。`--pv-native-smoke` 扩到 **22 项**（新增相似聚类三态、分析栏六瓦片/即时计算/准星、增强开关），150% 实机连续多轮稳定。已知差异与仍待验见 [Windows P2-W §15](native-rebuild-windows-p2.md)：分析诊断固定读原片（增强图 CV 路径在冒烟中复现崩溃）、抖动瓦片用 Skia 光栅化箭头、`ProgressBar` 在本工程不可用改自绘进度；工具页与设置窗口仍未原生。
+
+- **Windows 主屏功能对标收口（2026-10-17 第二轮，`native-rebuild-win`）**：把计划 §13.2 里属于主屏的缺口全部落地——**缩放指示器导航图**（150 长边缩略图 + 2 px 白色可见框 + 百分比，Skia 直接缩到导航尺寸，不吃指针）、**FILM-03 用户接管 + 系统减少动态效果**、**FILM-06 星级写回失败窗口内可见**（共享 `MainViewModel.RatingWriteFailed` + 底部 4 s 状态提示）、**外部打开/拖放文件夹**、**最大化/全屏/退出全屏闭环**、卡片 `DisplayName`、第二行完整时间 tooltip、右键菜单"缩略图栏"文案、空筛选结果状态；同时修掉"列表重建清掉排队定位请求导致外部打开非首张停在列表头部"的回归。`--pv-native-smoke` 从 13 项扩到 **19 项**（150% 实机连续多轮稳定）：导航图几何/百分比/设置开关、**自生成八方向 EXIF 素材**（方向 + f/2.8 + 1/250 + ISO 400 + 75mm）在主图交换链四角回读与导航图四角采样逐方向核对、FILM-03 两条分支、外部打开定位、写回失败提示、窗口四态往返。导航图实现与 §6 W-M2 原文（"同一交换链内合成"）有一处偏离，理由见 [Windows P2-W §14.2](native-rebuild-windows-p2.md)。仍待验：200%/175% 缩放、真实跨屏、真实相机素材、手感、W-M5 设置窗口、W-M6 专项 harness。
+
+- **Windows 四分区 + 对标纠偏（2026-10-16 首屏 / 2026-10-17 纠偏，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片，并在 150% 缩放下与旧壳同尺寸逐项对拍。本轮修掉五类根因:自备 `app.manifest` 漏 DPI 声明导致进程 DPI-unaware（整套 UI 被系统位图拉伸）、文件选择器扩展名模式被补点成非法形式致「打开文件」静默失效、文件栏 `Border.Width` 含边框致卡片被压窄 + 卡片重复叠外边距致项距 150、缩略图未限幅撑出 80×80 槽位、控制栏 EXIF/评分组间距与底色失配；并按要求把标题栏改成**自绘四按钮 + 50 DIP 热区自动显隐**（覆盖计划 §9 待确认项 1 的「保留系统按钮」推荐值）。`--pv-native-smoke` 现覆盖 3 尺寸 × 2 方向的自动显隐 caption 契约（隐藏态零拖动区、显示态不压按钮），150% DPI 实机通过；200% DPI、实际跨屏、系统色彩、鼠标手感与八方向仍待验。已完成 / 待完成总表见 [Windows P2-W §13](native-rebuild-windows-p2.md#13-已完成--待完成清单)，逐项对拍见 §12。
 
 - **分支**:`refactor/native-rebuild`(远端 github 已推送;`main` 保持可发布,未合并)。
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
@@ -45,6 +57,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | Windows Desktop 构建 + 冒烟 | ✅ 2026-10-19 | CLI 开 JPG(竖图旋转正确)+ HIF(LibHeif),翻图/胶片条/EXIF/评分渲染正常 |
+| **Windows 原生壳同步共享分支** | ✅ 程序化 2026-10-17 | 合并 `c0567c6`:分析栏/增强/编码接共享架构，Windows 侧不再自持分析数据链；`--pv-native-smoke` **24 项全 PASS**（150%）。W-M5 设置窗口/工具页/W-M7/200%·175% DPI/真实跨屏·相机素材·手感/W-M6 专项 harness 未关闭 |
 | **Windows 桌面回归(P1 门④ Windows)** | ✅ 程序化部分 2026-10-13 | `--pv-stress` 18/18 零超时(冷启 p50≈3.5s = libheif 全解码口径)+ 告警注入级联/恢复观察期日志断言 + 评分 XmpWriter 读写回环 PASS;缩放/设置/聚类/分析栏交互项作者手测中 |
 | Android 构建 | ✅ | 真机冒烟未做;P1 桌面回归与 `--pv-stress` 接线待办 |
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |
@@ -54,7 +67,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | **P2 产品/色彩/性能** | ✅ 色彩/画质/手感/拖放 2026-10-16 作者验收通过；性能门未关 | 色彩跨屏对拍、画质、手感（含触控板）、真实鼠标拖放由作者实跑通过；大图性能门（RAW 冷图 1.7–1.9s <100ms）与真实素材矩阵仍未关闭。发布通道（dmg 默认是否切原生）待作者决定，属主计划 Phase 6 |
 | **P3 作者复验** | ✅ 2026-10-16 通过（含两处修复） | 作者实跑：色彩/画质/手感/真实鼠标拖放通过；退出崩溃与标题栏双击两缺陷已修并复验（八套原生回归 PASS、四平台 0 错误、真实 AppleEvent 退出两种路径无崩溃报告、"双击标题栏"真机双向切换）；系统"减弱动态效果"开启态作者实测通过。未修（作者判定共享层另立项）：切图卡顿；未关闭：大图性能门 |
 | **FILM-05 / FILM-06 程序化补齐** | ✅ 2026-10-16 | ui-contract 里 macOS 最后两个"待核验"格子补成断言：filmstrip 套件加 FILM-05（自有素材上验身份/几何不等解码、缩略图与日期异步补齐、滚动不等解码、不可解码文件仍可选主图且无伪造图像）；toolbar 套件加 FILM-06（卡片星级真实点击 → 文件读回一致 + 主图身份不变 + 点星不选中父卡片，改星落出筛选仍暂留 / 切走后移除 / 计数一致）。八套回归 PASS，Mac 构建 0 错误 |
-| **旧壳（Avalonia）验收** | ⛔ 不再验收 | 作者裁定旧壳将被原生壳替换、不做产品验收；各平台验收在各自原生壳落地后单独建立（macOS 已完成；iPad 程序化已完成、作者手验待做；Windows/Android 原生待迁移） |
+| **旧壳（Avalonia）验收** | ⛔ 不再验收 | 作者裁定旧壳将被原生壳替换、不做产品验收；各平台验收在各自原生壳落地后单独建立（macOS 已完成；iPad 程序化已完成、作者手验待做；Windows 原生主屏程序化已完成、设置/工具/色彩未做；Android 原生待迁移） |
 | **macOS 冒烟(首轮)** | ✅ 2026-10-12 | CLI 开 ARW:MacRawDecoder 链路主图/胶片条/EXIF/评分栏渲染正常;交互逐项(翻图/缩放/评分写回/设置)待人工 |
 | **iOS 构建** | ✅ 2026-10-13 | 模拟器+真机(ios-arm64 Release)均 0 错误 |
 | **iPad mini 7 真机验收(I2 主图：编码协商 + Metal 主图 + UIScrollView 手势)** | ✅ 2026-10-17 | 提交 41abd7b，设备 E71A131A（解锁后一次通过）。`--pv-native-photo-check` **PASS 10 checks**（代理 4532×3021 `RgbaF16` → 物理 100% 热替换 `Rgba8/DisplayP3` 且变换保持 scale=0.5 pan=(0,0)、代理↔Full 中心线性 Δ=0.0001、八方向 GPU 角点、四色卡线性值）；`--pv-stress-count=500`（450 HEIC+50 ARW）**500/500 零超时零闪退恒 Normal**（p50 716ms/p95 775ms/max 799ms、gc 峰 1620MB）；`--pv-stress-warn=100` → 代理降 8 位 P3（`enc=Rgba8`）+ 30s 恢复观察期实证；无新 .ips。**未关闭**：iOS ImageIO 读 ARW 只给内嵌预览（1.7MP），见 [phase-ipad §6](native-rebuild-phase-ipad.md) |

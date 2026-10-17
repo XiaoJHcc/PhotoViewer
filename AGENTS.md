@@ -13,7 +13,7 @@
 
 PhotoViewer is a cross-platform photo culling app for photographers, optimized for the **选片 (culling) workflow** — browse JPG/HEIF on the go, sync star ratings back to RAW, fast keyboard-driven UX.
 
-- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS 原生壳 AppKit + Metal（P2/P3）、iPad 原生壳 UIKit + Metal（I1–I5）。两个原生壳均 Debug 默认原生、Release 默认旧壳，发布通道切换待作者决定。**旧壳不再做产品验收，将被原生壳替换**。
+- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS 原生壳 AppKit + Metal（P2/P3）、iPad 原生壳 UIKit + Metal（I1–I5）、Windows 原生壳 WinUI 3 + D3D11。三个原生壳均 Debug 默认原生、Release 默认旧壳，发布通道切换待作者决定。**旧壳不再做产品验收，将被原生壳替换**。
 - **Platforms**: Windows / macOS / iOS / Android (one shared `PhotoViewer/` project + four head projects)
 - **No DI container**: core services are static facades; platform capabilities are injected at startup via `Initialize(...)`.
 - **HEIF decoding**: `LibHeifSharp` on Windows/Android, native `ImageIO`/`AVIF` on macOS/iOS.
@@ -68,6 +68,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳（旧壳不参与产品验收） |
 | [PhotoViewer.Apple/](PhotoViewer.Apple/) | [PhotoViewer.Apple/AGENTS.md](PhotoViewer.Apple/AGENTS.md) | Apple 平台共享源：展示解码器与编码策略、Metal 渲染核心、视口/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何、主屏分区几何、验收判定、命令符号与手势映射（供 Mac 与 iOS 原生壳链接） |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/) | [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳：UIKit 生命周期、原生存储引用/文档选择器/外部打开、主图 Metal 链路、主屏布局（胶片栏/筛选条/控制栏）、输入、P3 功能（分析栏/相似聚类/工具页/增强预览）；迁移期保留 Avalonia 旧壳 |
+| [PhotoViewer.Desktop/](PhotoViewer.Desktop/) | [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md) | Windows 头工程：迁移期旧壳 + WinUI 3 原生壳（五分区主窗口 + 自绘自动显隐标题栏 + D3D11 主图 + 导航图 + 分析栏 + 相似聚类 + 增强预览；分析栏/增强与 Mac/iPad 共用 `AnalysisPresenter`/`PhotoLoadSession`；工具页与设置窗口 W-M5、W-M7 色彩/RAW 未做；方案与逐项对拍见 [Plans/native-rebuild-windows-p2.md](Plans/native-rebuild-windows-p2.md)） |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 
@@ -81,7 +82,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 |---|---|---|---|---|
 | HEIF decoder | `LibHeifDecoder` | `MacHeifDecoder` | `AndroidHeifDecoder` | `iOSHeifDecoder`（旧壳与缩略图既有路径；原生主图走展示解码器） |
 | RAW decoder | — | `MacRawDecoder`（复用 ImageIO，系统 RAW 引擎） | — | `iOSRawDecoder`（复用 ImageIO；**ImageIO 对 Sony ARW 只返回内嵌预览**，原生主图恒为预览档，待作者裁定是否改全分辨率解码） |
-| Presentation decoder / encoding | — | `ApplePresentationDecoder` + `MacPresentationEncodingPolicy`（恒 RGBA16F 扩展线性 sRGB） | — | `ApplePresentationDecoder` + `iOSPresentationEncodingPolicy`（代理 F16 / Full 8 位 Display P3 / 压力 ≥ Warning 代理也降 8 位） |
+| Presentation decoder / encoding | `WindowsPresentationDecoder` + `WindowsPresentationEncodingPolicy`（恒 RGBA16F 线性 scRGB；W-M7 前不做 8 位/广色域） | `ApplePresentationDecoder` + `MacPresentationEncodingPolicy`（恒 RGBA16F 扩展线性 sRGB） | — | `ApplePresentationDecoder` + `iOSPresentationEncodingPolicy`（代理 F16 / Full 8 位 Display P3 / 压力 ≥ Warning 代理也降 8 位） |
 | Performance budget | `DefaultPerformanceBudget` | `DefaultPerformanceBudget` | `AndroidPerformanceBudget` | `iOSPerformanceBudget` |
 | ONNX Execution Provider | DirectML EP | CoreML EP | NNAPI EP | **CPU**（CoreML EP 在 iOS 原生库中不受支持，注册失败记日志后回退，不静默） |
 | Settings storage | `FileStorage` (default) | `MacSettingsStorage` | `AndroidSettingsStorage` | `iOSSettingsStorage` |
@@ -202,6 +203,15 @@ Each head project's `Core/` folder contains platform-specific implementations in
 5. **输入**：主图与卡片各挂原生 `UIContextMenuInteraction`（主图菜单与 Mac 右键菜单同序；卡片菜单标题含完整文件名+拍摄时间与"评分 0–5"）；硬件键盘 `UIKey.KeyCode`（HID usage）→ 共享 `AppleInputMapping` → `AppGesture` → 用户主/次绑定，固定节奏重复（350ms/60ms），INPUT-01 守卫；离散滚轮走用户鼠标绑定；适应态单指横向轻扫 = 上一张/下一张（走共享 Previous/Next 并显式定位，放大态仍是平移）；`UIDropInteraction` 拖入走共享 `ExternalOpenService`；设置页关闭回写后主屏即时刷新。
 6. **P3 功能（I5，与 Mac 共用 presenter）**：分析栏（`iOSAnalysisHost` + `AnalysisPresenter`，细节预览触控板悬停 + 手指点按定格）、相似聚类（复用胶片栏卡片/布局，行让位、列扩宽）、工具页（sheet + 导航控制器：EXIF 详情 7 列 / DINO 诊断）、增强预览（`PhotoLoadSession`）。入口为主图长按菜单、控制栏命令、筛选条 toggle 与 EXIF 信息块。
 7. **限制与验收**：iOS 的 ImageIO 对 Sony ARW 只给内嵌预览（约 1.7MP，作者待裁是否改 CIRAWFilter 全分辨率）；CoreML EP 在 iOS 原生库不受支持，DINO 走 CPU；原生壳另把 ONNX 模型作 `BundleResource` 拷入 app bundle（与 avares 资源重复约 86MB，旧壳退役后消除）。`--pv-native-{photo,layout,input,analysis,similarity,tools}-check` 与 `--pv-dino-check` 报告写 `Documents/PhotoViewer/`；iPadOS 26 拒绝程序化改方向，两向用 `--pv-layout-mode` 核对。程序化证据见 [执行清单 §7](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)，作者手验清单见 [iPad 验收](Plans/native-rebuild-phase-ipad-acceptance.md)。
+
+### 5.8 Windows P2 原生看图链路
+
+1. **壳与启动**：Debug 默认 WinUI 3 原生壳（`--legacy-ui` 回退），Release 默认旧壳（`--native` 显式进入）；原生路径不创建 Avalonia 对象。启动序：`WindowsUiDispatcher` + `SynchronizationContext` → ReactiveUI → 门面（展示解码器/编码策略/HEIF/预算/Governor/存储/设置/ONNX）→ `MainViewModel(nativePresentation: true)` → `WindowsMainWindow` → 外部打开注册。文件清单见 [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md)。
+2. **主图**：`WindowsPhotoView` = `SwapChainPanel` + D3D11 合成翻转链 `R16G16B16A16_FLOAT`；EXIF 方向在顶点着色器做 UV 置换（绝不旋转像素），三线性 mipmap；`PhotoLoadSession` 管代际/代理↔Full/租约；100% 口径 = 1 源像素对 1 物理像素；导航图由会话帧经 Skia 缩到导航尺寸，白框/百分比由原生控件绘制。
+3. **增强与分析**：增强预览已下移到 `PhotoLoadSession`（跨切图持续、压力 Warning 自动关闭）；`WindowsAnalysisPanel` 实现 `IAnalysisHost` 并消费共享 `AnalysisPresenter`，细节预览用 `DisplayCrop` 从容器朝向裁出显示朝向 1:1 方块；直方图/诊断瓦片/未提取回退与 Mac/iPad 同一份编排，不再保留 Windows 专属分析缓存或即时计算实现。
+4. **布局**：五分区（筛选 / 胶片条+相似聚类 / 主图 / 分析栏 / 控制栏），自绘标题栏 50 DIP 热区自动显隐，caption 区域按实际按钮边界避让；文件栏内容宽 116 + 1 分隔线、卡片 90×138/项距 96·144、控制栏三组整组换行居中。设置窗口（W-M5）与工具页尚未原生。
+5. **编码与色彩**：`WindowsPresentationEncodingPolicy` 本阶段恒 RGBA16F 线性 scRGB；W-M7 的 ICC/ACM/广色域标签与 Windows RAW 解码未做。
+6. **验收**：`--pv-native-smoke` 隔离设置/数据库/日志并生成自有素材；24 项覆盖 150% 下三尺寸×两向、caption、代理→Full、八方向（主图/导航图/`DisplayCrop`）、FILM-03/06、外部打开定位、相似聚类、分析栏（含增强态重算）、窗口四态与关闭释放。200% DPI、真实跨屏、真实相机八方向素材、系统色彩与鼠标手感仍待验；程序化通过不等于完整 W-M6 验收。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 

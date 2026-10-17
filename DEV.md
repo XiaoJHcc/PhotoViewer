@@ -32,8 +32,14 @@
 
 ### 1. Windows
 - 💻 在文件边栏 EXPLORER 底部的 SOLUTION EXPLORER 中，右键点击项目 `PhotoViewer.Desktop`，选择 Debug > **Start New Instance**。或：
-- ⚡ **Debug Windows**：完整发版构建并以此为新实例启动。
-- ⚡ **Run Windows**：**仅启动**，不触发构建，直接启动上次构建版本。
+- ⚡ **Debug Windows**：完整发版构建并启动**原生壳**（WinUI 3）。
+- ⚡ **Run Windows**：**仅启动**，不触发构建，直接启动上次构建版本的**原生壳**。
+- ⚡ **Debug Windows (Legacy)** / **Run Windows (Legacy)**：同上的旧壳（Avalonia）路径，追加 `--legacy-ui`。
+- ⚡ **Compare Windows (Native + Legacy)**：构建后先后启动两壳，用于原生与旧壳的对拍（几何/交互回归）。
+- ⚡ **Check Windows Native**：构建并运行定向原生冒烟，隔离设置/数据库/日志和自有照片，结束后自动关闭；报告在 `release/native-win-acceptance/checks.json`，失败退出码 1。覆盖调度/模型/两向 resize/标题栏/Full 热替换，不替代完整 UI、跨屏与色彩验收。
+
+> Debug 默认原生壳，`--legacy-ui` 显式退回旧壳；Release 相反（默认旧壳，`--native` 进原生），与 macOS 同一套口径。
+> 需要直接打开某张照片时在命令末尾追加路径：`dotnet run --project PhotoViewer.Desktop -c Debug -- D:\path\a.jpg`。
 
 ### 2. Android
 *前提：手机已通过 ADB 连接。*

@@ -4,13 +4,15 @@
 
 `namespace PhotoViewer.Core.Image`
 
-P2 原生新增：`IPresentationImageDecoder`（平台主图解码注入口）+ `IPresentationEncodingPolicy`（展示编码协商，I2 起；按尺寸档与压力返回编码，Core 内不含平台判断）；`PhotoLoadSession` 只持展示租约与代际/代理/Full 加载状态，视口变换由原生层负责。原生端到端流程见根 §5.6（macOS）与 §5.7（iOS），旧壳仍走原有 ImageViewModel/适配器。`IDisplayLoadSignal` 让压测驱动器（`PhotoViewer/StressFlipDriver.cs`）对"旧壳 ImageViewModel / 原生 PhotoLoadSession"同一口径计时。
+P2 原生新增：`IPresentationImageDecoder`（平台主图解码注入口）+ `IPresentationEncodingPolicy`（展示编码协商，I2 起；按尺寸档与压力返回编码，Core 内不含平台判断）；`PhotoLoadSession` 只持展示租约与代际/代理/Full 加载状态，视口变换由原生层负责。原生端到端流程见根 §5.6（macOS）、§5.7（iOS）与 §5.8（Windows），旧壳仍走原有 ImageViewModel/适配器。`IDisplayLoadSignal` 让压测驱动器（`PhotoViewer/StressFlipDriver.cs`）对"旧壳 ImageViewModel / 原生 PhotoLoadSession"同一口径计时。
 
-`DecodedImage` P2 扩展：保留 Bgra32/Rgb24，新增 RgbaF16 与 **Rgba8**（I2 起 8 位展示编码，RGBA 字节序，色彩空间由 `ImageColorSpace` 声明）；`PresentationFidelity` 给出展示编码保真度序（F16 可覆盖 8 位请求，反之不可）。色彩标签（Core/Color）、源尺寸、待应用方向与可选 ICC 均显式携带。缓存大小按 `ByteCount` 实际池化分配记账；原生启动期注入后 Thumb 仍是 sRGB8，小图缺少内嵌来源时允许原生子采样，不回退原图全解码。PhotoLoadSession 保持同代际代理覆盖单调增长，不让慢的小代理覆盖大代理/Full；放大态切图直接请求 Full。代理在途原请求取消而新调用仍有效时重发代理，取消不当作解码错误回退 Full；并发入库用原子更新保留更大代理与缓存租约。
+`SkiaImageCodec.DecodeToWidth/DecodeToLongEdge` 从 codec 原始尺寸填充 `SourceWidth/SourceHeight`，`ScaleToLongEdge` 继续保留这两项；无 EXIF 尺寸的照片也不能把代理尺寸当成 Full 几何。像素缩放算法和模型输入字节口径不变。
+
+`DecodedImage` P2 扩展：保留 Bgra32/Rgb24，新增 RgbaF16 与 **Rgba8**（I2 起 8 位展示编码，RGBA 字节序，色彩空间由 `ImageColorSpace` 声明）；`PresentationFidelity` 给出展示编码保真度序（F16 可覆盖 8 位请求，反之不可）。色彩标签（Core/Color）、源尺寸、待应用方向与可选 ICC 均显式携带。缓存大小按 `ByteCount` 实际池化分配记账；原生启动期注入后 Thumb 仍是 sRGB8，小图缺少内嵌来源时允许原生子采样，不回退原图全解码。PhotoLoadSession 保持同代际代理覆盖单调增长，不让慢的小代理覆盖大代理/Full；放大态切图直接请求 Full。代理在途原请求取消而新调用仍有效时重发代理，取消不当作解码错误回退 Full；当前代际被外部取消时复位状态并给出可见错误，不再静默黑屏。并发入库用原子更新保留更大代理与缓存租约。
 
 | File | 模块 | Responsibility |
 |---|---|---|
-| [IPresentationEncodingPolicy.cs](IPresentationEncodingPolicy.cs) | 展示编码协商 | `Select(ImageSizeClass, PressureLevel) → PixelEncoding`；macOS 恒 F16、iPad 代理 F16 / Full 8 位 Display P3 / 压力 ≥ Warning 时代理也降 8 位 P3（平台各自实现，Core 不判平台）。 |
+| [IPresentationEncodingPolicy.cs](IPresentationEncodingPolicy.cs) | 展示编码协商 | `Select(ImageSizeClass, PressureLevel) → PixelEncoding`；macOS 与 Windows 恒 F16、iPad 代理 F16 / Full 8 位 Display P3 / 压力 ≥ Warning 时代理也降 8 位 P3（平台各自实现，Core 不判平台）。 |
 | [IDisplayLoadSignal.cs](IDisplayLoadSignal.cs) | 上屏信号契约 | `CurrentIsProxy` + `Subscribe(handler)`（退订句柄）；`ImageViewModel`（旧壳）与 `PhotoLoadSession`（原生）各实现一份，供压测驱动器跨壳计时。 |
 | [BitmapLoader.cs](BitmapLoader.cs) | 图片加载器 | Decode pipeline + **统一 LRU(键 = 路径 + `ImageSizeClass` 尺寸档,P1-M2 起)**:Thumb/Proxy/Full 同驻,缩略图分区独立张数/字节双限,主分区(Full/Proxy)走 MaxCacheCount/MaxCacheSize。EXIF rotation 内置,全程 `DecodedImage`。在途去重,解码本体在线程池执行;**解码准入**(P1-M3):一切解码先 `MemoryGovernor.TryAcquire`(P0 豁免/非 P0 拒而不排),解码完成按实际字节复核;命中返回携带调用方租约(用完 `Release`),淘汰只归还缓存自己那份(租约归零才真正归还缓冲池),淘汰路径无 GC.Collect、无 UI 线程同步 Dispose。淘汰保护集按路径对所有档生效。**I2 编码协商**:每次请求按尺寸档 + 当前压力协商编码,准入估算按该编码的每像素字节;**同一 (路径,尺寸档) 至多一条缓存条目**——编码不进缓存键,复用要求"长边足够且保真度不低于需求"(F16 可满足 8 位请求),否则原地替换(长边更大、或等长边而保真度更高才取代),故压力升降不会产生同档多份编码副本。命中/miss 计时写 `PerfTrace`。内存客户端自登记,压力级联 `TrimForPressure`:Caution 缩略图只留保护集 / Warning 主分区留保护集内最近 2 张 / Critical 全库只留最近 1 张 Full。 |
 | [ImageSizeClass.cs](ImageSizeClass.cs) | 尺寸档枚举 | `Thumb` / `Proxy`(P1-M4 起用)/ `Full`;统一 LRU 键的一维。 |
