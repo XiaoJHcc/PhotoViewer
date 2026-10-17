@@ -35,6 +35,7 @@ internal sealed class WindowsSettingsList : Grid
         _source = source;
         _move = move;
         _rowHeight = rowHeight;
+        HorizontalAlignment = HorizontalAlignment.Stretch;
 
         foreach (var item in source)
         {

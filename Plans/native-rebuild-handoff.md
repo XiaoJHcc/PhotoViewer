@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-17(iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收；I6 文档收尾完成；Windows 原生壳已同步共享 `c0567c6`、`--pv-native-smoke` 24 项通过，W-M5 设置窗口已落地并通过 7 项定向验收)。作者手验与发布通道仍在作者手上。
+> 最后更新:2026-10-17(iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收；I6 文档收尾完成；Windows 原生壳已同步共享 `c0567c6`、`--pv-native-smoke` 24 项通过；W-M5 设置窗口已落地、同日完成 Win11 视觉重构并通过 7 项定向验收)。作者手验与发布通道仍在作者手上。
 
 ## 1. 为什么重构(决策语境)
 
@@ -11,7 +11,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 2. 当前状态
 
-- **Windows W-M5 设置窗口落地（2026-10-17）**：按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现；实测本工程无法加载 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar` 模板，改为 ListView 导航、系统 caption 深色、Slider 数值、自绘状态条（详见 [Windows P2-W §17](native-rebuild-windows-p2.md)）。`--pv-native-settings` **7 项 PASS**、`--pv-native-smoke` **24 项无回归**；真实拖拽排序、真实键鼠录制、清库确认、预设增删待作者手验。
+- **Windows W-M5 设置窗口落地 + Win11 视觉重构（2026-10-17）**：按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现。首次落地误判 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar` 不可用，改用 ListView/Slider/自绘 Border；复核发现根因是缺根 `App.xaml`/`IXamlMetadataProvider`，补 `XamlControlsResources` 后回到方案原结构，并完成 Mica + `TitleBar` + `NavigationView` + CommunityToolkit `SettingsCard` 视觉重构（详见 [Windows P2-W §17](native-rebuild-windows-p2.md)）。`--pv-native-settings` **7 项 PASS**、`--pv-native-smoke` **24 项无回归**；真实拖拽排序、真实键鼠录制、清库确认、预设增删待作者手验。
 
 - **Windows 同步共享分支（2026-10-17，`native-rebuild-win-sync`）**：Windows 原生壳并入共享基线 `c0567c6`（Windows 壳 `b0caf32` 与共享基线的合并）。分析栏改为实现共享 `IAnalysisHost`、消费 `AnalysisPresenter`/`AnalysisTile`，细节预览用共享 `DisplayCrop`，直方图由 presenter 的 `HistogramRenderer` 生成，Windows 侧不再自持分析数据链与即时计算编排；增强预览下移 `PhotoLoadSession`（跨切图持续、压力 Warning 自动关闭）；主图解码改用共享四参 `DecodeAsync` 并注入 `WindowsPresentationEncodingPolicy`（恒 RGBA16F 线性 scRGB）。保留 Windows 分支对共享层的修复（`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载）。`--pv-native-smoke` **24 项全 PASS**（150%，新增 NumberPad3→SetRating3、方向 6 `DisplayCrop` 象限、方向 6 增强帧朝向、增强帧诊断重算）。**待办**：工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、设置真实拖拽/录制手感、W-M6 专项 harness 与旧壳几何 JSON。细节见 [Windows P2-W §16](native-rebuild-windows-p2.md)。
 
@@ -19,9 +19,9 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 - **Windows 主屏 P3 收尾修复（2026-10-17 第四轮，`native-rebuild-win`）**：作者回报"提取特征后点相似聚类开关卡死"，实机复现为**进程直接消失**（WinUI `0xC000027B`，WER HRESULT `0x80131509`）。根因：旧壳 `AnalysisViewModel` 在原生壳里照常订阅并在展开分析栏时用 `DecodedImageAdapter` 建 **Avalonia 位图**，而原生壳不初始化 Avalonia 渲染接口，`InvalidOperationException` 抛在 WinUI 回调里跨 COM 边界即退进程（空库不崩，因为有数据才会建位图）。修复：`AnalysisViewModel` 在 `UsesNativePresentation` 下完全惰性；同时修掉两处卡死诱因——`PhotoDatabase` 每条连接重复写 `PRAGMA journal_mode=WAL` 导致并发抢库锁、`SimilarityService` 一候选一 `Task.Run` 压满连接池与 UI 队列（改 `Parallel.ForEachAsync` 并有界并发），并顺带剔除相似列表里 100% 相似的伴侣文件。诊断手段：`NativeStartupLog` 增加 `FirstChanceException` 留痕 + 相似面板工厂/分析栏可见性的 COM 边界兜底。验证：0 错 0 警、冒烟 **23 项全 PASS**、345 张（已提取）与 1395 张图库实机压测存活。细节见 [Windows P2-W §15.5](native-rebuild-windows-p2.md)。
 
-- **Windows 主屏 P3 入口落地（2026-10-17 第三轮，`native-rebuild-win`）**：解除 `SCOPE-01` 对 Windows 主屏的限制——**分析栏**（细节预览/直方图/DINO PCA/Cosine/锐度/抖动、准星与 cosine 重算、双击对准主图、悬停绿框）、**相似聚类**（筛选条开关、相似项分数卡片、空态/提取全部/进度、点选保留锚点；聚类只在面板展开时计算）、**增强预览**（CLHE 增强帧上屏，可切回原片）全部原生落地；控制栏恢复「分析栏/增强预览」两个命令按钮，右键菜单补「分析栏」勾选。`--pv-native-smoke` 扩到 **22 项**（新增相似聚类三态、分析栏六瓦片/即时计算/准星、增强开关），150% 实机连续多轮稳定。已知差异与仍待验见 [Windows P2-W §15](native-rebuild-windows-p2.md)：分析诊断固定读原片（增强图 CV 路径在冒烟中复现崩溃）、抖动瓦片用 Skia 光栅化箭头、`ProgressBar` 在本工程不可用改自绘进度；工具页与设置窗口仍未原生。
+- **Windows 主屏 P3 入口落地（2026-10-17 第三轮，`native-rebuild-win`）**：解除 `SCOPE-01` 对 Windows 主屏的限制——**分析栏**（细节预览/直方图/DINO PCA/Cosine/锐度/抖动、准星与 cosine 重算、双击对准主图、悬停绿框）、**相似聚类**（筛选条开关、相似项分数卡片、空态/提取全部/进度、点选保留锚点；聚类只在面板展开时计算）、**增强预览**（CLHE 增强帧上屏，可切回原片）全部原生落地；控制栏恢复「分析栏/增强预览」两个命令按钮，右键菜单补「分析栏」勾选。`--pv-native-smoke` 扩到 **22 项**（新增相似聚类三态、分析栏六瓦片/即时计算/准星、增强开关），150% 实机连续多轮稳定。已知差异与仍待验见 [Windows P2-W §15](native-rebuild-windows-p2.md)：分析诊断固定读原片（增强图 CV 路径在冒烟中复现崩溃）、抖动瓦片用 Skia 光栅化箭头；该轮因缺 `App.xaml` 误判 `ProgressBar` 不可用而改自绘进度（根因已于 W-M5 修正，控件现可用；主屏仍保留自绘作为视觉定制），工具页当时未原生（设置窗口随后在 W-M5 落地）。
 
-- **Windows 主屏功能对标收口（2026-10-17 第二轮，`native-rebuild-win`）**：把计划 §13.2 里属于主屏的缺口全部落地——**缩放指示器导航图**（150 长边缩略图 + 2 px 白色可见框 + 百分比，Skia 直接缩到导航尺寸，不吃指针）、**FILM-03 用户接管 + 系统减少动态效果**、**FILM-06 星级写回失败窗口内可见**（共享 `MainViewModel.RatingWriteFailed` + 底部 4 s 状态提示）、**外部打开/拖放文件夹**、**最大化/全屏/退出全屏闭环**、卡片 `DisplayName`、第二行完整时间 tooltip、右键菜单"缩略图栏"文案、空筛选结果状态；同时修掉"列表重建清掉排队定位请求导致外部打开非首张停在列表头部"的回归。`--pv-native-smoke` 从 13 项扩到 **19 项**（150% 实机连续多轮稳定）：导航图几何/百分比/设置开关、**自生成八方向 EXIF 素材**（方向 + f/2.8 + 1/250 + ISO 400 + 75mm）在主图交换链四角回读与导航图四角采样逐方向核对、FILM-03 两条分支、外部打开定位、写回失败提示、窗口四态往返。导航图实现与 §6 W-M2 原文（"同一交换链内合成"）有一处偏离，理由见 [Windows P2-W §14.2](native-rebuild-windows-p2.md)。仍待验：200%/175% 缩放、真实跨屏、真实相机素材、手感、W-M5 设置窗口、W-M6 专项 harness。
+- **Windows 主屏功能对标收口（2026-10-17 第二轮，`native-rebuild-win`）**：把计划 §13.2 里属于主屏的缺口全部落地——**缩放指示器导航图**（150 长边缩略图 + 2 px 白色可见框 + 百分比，Skia 直接缩到导航尺寸，不吃指针）、**FILM-03 用户接管 + 系统减少动态效果**、**FILM-06 星级写回失败窗口内可见**（共享 `MainViewModel.RatingWriteFailed` + 底部 4 s 状态提示）、**外部打开/拖放文件夹**、**最大化/全屏/退出全屏闭环**、卡片 `DisplayName`、第二行完整时间 tooltip、右键菜单"缩略图栏"文案、空筛选结果状态；同时修掉"列表重建清掉排队定位请求导致外部打开非首张停在列表头部"的回归。`--pv-native-smoke` 从 13 项扩到 **19 项**（150% 实机连续多轮稳定）：导航图几何/百分比/设置开关、**自生成八方向 EXIF 素材**（方向 + f/2.8 + 1/250 + ISO 400 + 75mm）在主图交换链四角回读与导航图四角采样逐方向核对、FILM-03 两条分支、外部打开定位、写回失败提示、窗口四态往返。导航图实现与 §6 W-M2 原文（"同一交换链内合成"）有一处偏离，理由见 [Windows P2-W §14.2](native-rebuild-windows-p2.md)。仍待验：200%/175% 缩放、真实跨屏、真实相机素材、手感、W-M6 专项 harness；W-M5 设置窗口随后已落地。
 
 - **Windows 四分区 + 对标纠偏（2026-10-16 首屏 / 2026-10-17 纠偏，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片，并在 150% 缩放下与旧壳同尺寸逐项对拍。本轮修掉五类根因:自备 `app.manifest` 漏 DPI 声明导致进程 DPI-unaware（整套 UI 被系统位图拉伸）、文件选择器扩展名模式被补点成非法形式致「打开文件」静默失效、文件栏 `Border.Width` 含边框致卡片被压窄 + 卡片重复叠外边距致项距 150、缩略图未限幅撑出 80×80 槽位、控制栏 EXIF/评分组间距与底色失配；并按要求把标题栏改成**自绘四按钮 + 50 DIP 热区自动显隐**（覆盖计划 §9 待确认项 1 的「保留系统按钮」推荐值）。`--pv-native-smoke` 现覆盖 3 尺寸 × 2 方向的自动显隐 caption 契约（隐藏态零拖动区、显示态不压按钮），150% DPI 实机通过；200% DPI、实际跨屏、系统色彩、鼠标手感与八方向仍待验。已完成 / 待完成总表见 [Windows P2-W §13](native-rebuild-windows-p2.md#13-已完成--待完成清单)，逐项对拍见 §12。
 
@@ -59,7 +59,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | 范围 | 状态 | 说明 |
 |---|---|---|
 | Windows Desktop 构建 + 冒烟 | ✅ 2026-10-19 | CLI 开 JPG(竖图旋转正确)+ HIF(LibHeif),翻图/胶片条/EXIF/评分渲染正常 |
-| **Windows 原生壳同步共享分支** | ✅ 程序化 2026-10-17 | 合并 `c0567c6`:分析栏/增强/编码接共享架构，Windows 侧不再自持分析数据链；`--pv-native-smoke` **24 项全 PASS**（150%）；W-M5 设置窗口 `--pv-native-settings` **7 项 PASS**（独立窗口/五分类/开关滑条/重排/录制状态/关闭回写）。工具页/W-M7/200%·175% DPI/真实跨屏·相机素材/设置真实拖拽与录制手感/W-M6 专项 harness 未关闭 |
+| **Windows 原生壳同步共享分支** | ✅ 程序化 2026-10-17 | 合并 `c0567c6`:分析栏/增强/编码接共享架构，Windows 侧不再自持分析数据链；`--pv-native-smoke` **24 项全 PASS**（150%）；W-M5 设置窗口 `--pv-native-settings` **7 项 PASS**（Mica/NavigationView/TitleBar/NumberBox/InfoBar、五分类/开关+数值框+滑条/重排/录制状态/关闭回写）。工具页/W-M7/200%·175% DPI/真实跨屏·相机素材/设置真实拖拽与录制手感/W-M6 专项 harness 未关闭 |
 | **Windows 桌面回归(P1 门④ Windows)** | ✅ 程序化部分 2026-10-13 | `--pv-stress` 18/18 零超时(冷启 p50≈3.5s = libheif 全解码口径)+ 告警注入级联/恢复观察期日志断言 + 评分 XmpWriter 读写回环 PASS;缩放/设置/聚类/分析栏交互项作者手测中 |
 | Android 构建 | ✅ | 真机冒烟未做;P1 桌面回归与 `--pv-stress` 接线待办 |
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |

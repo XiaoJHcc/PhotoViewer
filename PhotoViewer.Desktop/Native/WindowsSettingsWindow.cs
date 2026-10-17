@@ -13,15 +13,19 @@ using Windows.UI;
 namespace PhotoViewer.Desktop.Native;
 
 /// <summary>
-/// 设置窗口壳:左侧 ListView 分类栏 + 右侧五页卡片内容,系统标题栏深色着色。
+/// 设置窗口壳:Win11 设置页结构(Mica + TitleBar + NavigationView),五页内容在 C# 中构建。
 /// 关闭即应用(工作副本由 presenter 回写),没有 Apply/Cancel。
-/// 本工程的非 XAML 资源加载下 <c>NavigationView</c>/<c>TitleBar</c>/<c>NumberBox</c>/<c>InfoBar</c>/<c>TextBox</c>
-/// 模板不可用(实测缺 TabView 资源或 E_FAIL),因此外壳用 ListView + 系统 caption,数值项用 Slider。
 /// </summary>
 internal sealed class WindowsSettingsWindow
 {
-    private static readonly string[] CategoryTitles = ["文件", "预览", "控制", "EXIF", "AI"];
-    private static readonly string[] CategoryKeys = ["File", "Preview", "Control", "Exif", "Ai"];
+    private static readonly (string Title, string Key)[] Categories =
+    [
+        ("文件", "File"),
+        ("预览", "Preview"),
+        ("控制", "Control"),
+        ("EXIF", "Exif"),
+        ("AI", "Ai"),
+    ];
 
     private readonly Window _window;
     private readonly SettingsViewModel _settings;
@@ -29,8 +33,9 @@ internal sealed class WindowsSettingsWindow
     private readonly WindowsHotkeyRecorder _recorder;
     private readonly WindowsSettingsPages _pages;
     private readonly Grid _root;
+    private readonly TitleBar _titleBar;
+    private readonly NavigationView _nav;
     private readonly Grid _pageHost;
-    private readonly ListView _nav;
     private bool _sized;
     private bool _attached;
 
@@ -39,80 +44,88 @@ internal sealed class WindowsSettingsWindow
     /// <param name="ownerHandle">主窗口句柄(取其显示器 DPI 与工作区)</param>
     public WindowsSettingsWindow(SettingsViewModel settings, IntPtr ownerHandle)
     {
-        _window = new Window { Title = "设置" };
         _settings = settings;
         _ownerHandle = ownerHandle;
         _recorder = new WindowsHotkeyRecorder(settings);
 
+        var transparent = new SolidColorBrush(Color.FromArgb(0x00, 0x00, 0x00, 0x00));
         _root = new Grid
         {
-            Background = new SolidColorBrush(WindowsLayout.BarBackground),
+            Background = transparent,
             RequestedTheme = ElementTheme.Dark,
             IsTabStop = true,
         };
-        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(WindowsLayout.SettingsNavWidth) });
-        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1) });
-        _root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(WindowsLayout.SettingsTitleBarHeight) });
+        _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
-        _nav = new ListView
+        _window = new Window
         {
-            SelectionMode = ListViewSelectionMode.Single,
-            IsItemClickEnabled = false,
-            Background = new SolidColorBrush(WindowsLayout.BarBackground),
-            BorderThickness = new Thickness(0),
-            Padding = new Thickness(0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
+            Title = "设置",
+            SystemBackdrop = new MicaBackdrop(),
+            ExtendsContentIntoTitleBar = true,
         };
-        ScrollViewer.SetVerticalScrollMode(_nav, ScrollMode.Disabled);
-        ScrollViewer.SetVerticalScrollBarVisibility(_nav, ScrollBarVisibility.Hidden);
-        ScrollViewer.SetHorizontalScrollMode(_nav, ScrollMode.Disabled);
-        ScrollViewer.SetHorizontalScrollBarVisibility(_nav, ScrollBarVisibility.Hidden);
-        _nav.ContainerContentChanging += OnNavContainerContentChanging;
-        _nav.SelectionChanged += (_, _) =>
+        _window.Content = _root;
+
+        _titleBar = new TitleBar
         {
-            if (_nav.SelectedIndex >= 0)
+            Title = "设置",
+            IsBackButtonVisible = false,
+            IsPaneToggleButtonVisible = false,
+            IconSource = new FontIconSource
             {
-                ShowPage(_nav.SelectedIndex);
-            }
+                Glyph = "\uE713",
+                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+                FontSize = 16,
+            },
         };
+        _root.Children.Add(_titleBar);
+        _window.SetTitleBar(_titleBar);
 
-        var navRows = new List<UIElement>();
-        for (var index = 0; index < CategoryTitles.Length; index++)
-        {
-            navRows.Add(BuildNavRow(CategoryTitles[index], CategoryKeys[index]));
-        }
-
-        _nav.ItemsSource = navRows;
-        _root.Children.Add(_nav);
-
-        var divider = new Border
-        {
-            Width = 1,
-            Background = new SolidColorBrush(WindowsLayout.Divider),
-            HorizontalAlignment = HorizontalAlignment.Right,
-        };
-        Grid.SetColumn(divider, 1);
-        _root.Children.Add(divider);
-
-        _pageHost = new Grid
-        {
-            Background = new SolidColorBrush(WindowsLayout.BarBackground),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Stretch,
-        };
         _pages = new WindowsSettingsPages(settings, _recorder, _window);
+        _pageHost = new Grid { Background = transparent };
         foreach (var page in _pages.Pages)
         {
             _pageHost.Children.Add(page);
         }
 
-        Grid.SetColumn(_pageHost, 2);
-        _root.Children.Add(_pageHost);
-        _nav.SelectedIndex = 0;
+        _nav = new NavigationView
+        {
+            PaneDisplayMode = NavigationViewPaneDisplayMode.Left,
+            IsPaneOpen = true,
+            OpenPaneLength = WindowsLayout.SettingsNavWidth,
+            IsSettingsVisible = false,
+            IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
+            IsPaneToggleButtonVisible = false,
+            CompactModeThresholdWidth = 0,
+            ExpandedModeThresholdWidth = 0,
+            IsTitleBarAutoPaddingEnabled = false,
+            AlwaysShowHeader = false,
+            Header = null,
+            Background = transparent,
+            Content = _pageHost,
+        };
+        // 设置页不使用 NavigationView 的“内容岛”圆角边框,让 Mica 平铺到整块内容区。
+        _nav.Resources["NavigationViewContentGridBorderThickness"] = new Thickness(0);
+        _nav.Resources["NavigationViewContentGridCornerRadius"] = new CornerRadius(0);
+        _nav.Resources["NavigationViewContentBackground"] = transparent;
+
+        for (var index = 0; index < Categories.Length; index++)
+        {
+            _nav.MenuItems.Add(new NavigationViewItem
+            {
+                Content = Categories[index].Title,
+                Icon = new FontIcon { Glyph = WindowsIcons.ForCategory(Categories[index].Key) },
+                Tag = index,
+            });
+        }
+
+        _nav.SelectionChanged += OnNavigationSelectionChanged;
+        Grid.SetRow(_nav, 1);
+        _root.Children.Add(_nav);
+
+        _nav.SelectedItem = _nav.MenuItems[0];
         ShowPage(0);
 
-        _window.Content = _root;
         _window.Closed += OnClosed;
         _window.Activated += OnActivated;
         _root.Loaded += OnLoaded;
@@ -136,8 +149,11 @@ internal sealed class WindowsSettingsWindow
     /// <summary>窗口根元素(验收读尺寸/主题)。</summary>
     internal Grid Root => _root;
 
-    /// <summary>左侧分类列表(验收读分类数与切换)。</summary>
-    internal ListView Navigation => _nav;
+    /// <summary>左侧分类导航(验收读分类数与切换)。</summary>
+    internal NavigationView Navigation => _nav;
+
+    /// <summary>窗口标题栏控件(验收确认 TitleBar 可用)。</summary>
+    internal TitleBar TitleBarControl => _titleBar;
 
     /// <summary>五页内容。</summary>
     internal IReadOnlyList<UIElement> Pages => _pages.Pages;
@@ -161,7 +177,7 @@ internal sealed class WindowsSettingsWindow
     /// <summary>关闭窗口。</summary>
     public void Close() => _window.Close();
 
-    /// <summary>深色系统标题栏:背景与按钮跟随应用深色,不改高度。</summary>
+    /// <summary>深色标题栏:扩展内容区后让系统 caption 按钮与 Mica 融合。</summary>
     private void ConfigureCaption()
     {
         if (!AppWindowTitleBar.IsCustomizationSupported())
@@ -170,16 +186,17 @@ internal sealed class WindowsSettingsWindow
         }
 
         var titleBar = _window.AppWindow.TitleBar;
-        titleBar.BackgroundColor = Color.FromArgb(0xFF, 0x11, 0x11, 0x11);
-        titleBar.InactiveBackgroundColor = Color.FromArgb(0xFF, 0x11, 0x11, 0x11);
-        titleBar.ButtonBackgroundColor = Color.FromArgb(0xFF, 0x11, 0x11, 0x11);
-        titleBar.ButtonInactiveBackgroundColor = Color.FromArgb(0xFF, 0x11, 0x11, 0x11);
+        var transparent = Color.FromArgb(0x00, 0x00, 0x00, 0x00);
+        titleBar.BackgroundColor = transparent;
+        titleBar.InactiveBackgroundColor = transparent;
+        titleBar.ButtonBackgroundColor = transparent;
+        titleBar.ButtonInactiveBackgroundColor = transparent;
         titleBar.ButtonForegroundColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0xFF, 0xAA, 0xAA, 0xAA);
-        titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0xFF, 0x1F, 0x1F, 0x1F);
+        titleBar.ButtonInactiveForegroundColor = Color.FromArgb(0x99, 0xFF, 0xFF, 0xFF);
+        titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF);
+        titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x0A, 0xFF, 0xFF, 0xFF);
         titleBar.ButtonHoverForegroundColor = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0xFF, 0x15, 0x15, 0x15);
-        titleBar.ButtonPressedForegroundColor = Color.FromArgb(0xFF, 0xEE, 0xEE, 0xEE);
+        titleBar.ButtonPressedForegroundColor = Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF);
     }
 
     /// <summary>按窗口 DPI 设定物理尺寸、最小尺寸与居中位置(激活前调用)。</summary>
@@ -216,57 +233,6 @@ internal sealed class WindowsSettingsWindow
             work.Y + Math.Max(0, (work.Height - height) / 2)));
     }
 
-    /// <summary>分类行容器:去掉默认内边距,内容由 UIElement 直接呈现。</summary>
-    /// <param name="sender">列表</param>
-    /// <param name="args">容器参数</param>
-    private static void OnNavContainerContentChanging(ListViewBase sender, ContainerContentChangingEventArgs args)
-    {
-        if (args.InRecycleQueue)
-        {
-            return;
-        }
-
-        args.ItemContainer.Padding = new Thickness(0);
-        args.ItemContainer.MinHeight = 44;
-        args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-        args.ItemContainer.VerticalContentAlignment = VerticalAlignment.Center;
-    }
-
-    /// <summary>构建一个分类行(图标 + 文本)。</summary>
-    /// <param name="title">标题</param>
-    /// <param name="key">图标键</param>
-    /// <returns>行元素</returns>
-    private static Grid BuildNavRow(string title, string key)
-    {
-        var row = new Grid
-        {
-            Height = 44,
-            Padding = new Thickness(14, 0, 12, 0),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Center,
-        };
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        row.Children.Add(new FontIcon
-        {
-            Glyph = WindowsIcons.ForCategory(key),
-            FontSize = 16,
-            VerticalAlignment = VerticalAlignment.Center,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.ExifLabelForeground),
-        });
-        var label = new TextBlock
-        {
-            Text = title,
-            FontSize = WindowsLayout.SettingsRowTitleFontSize,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.CardNameForeground),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 0, 0),
-        };
-        Grid.SetColumn(label, 1);
-        row.Children.Add(label);
-        return row;
-    }
-
     /// <summary>首次布局后挂录制捕获并把焦点给根元素。</summary>
     /// <param name="sender">根元素</param>
     /// <param name="args">加载参数</param>
@@ -301,6 +267,17 @@ internal sealed class WindowsSettingsWindow
         _recorder.Detach();
         _pages.Detach();
         Closed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>分类切换:选中项 Tag 即页索引。</summary>
+    /// <param name="sender">导航</param>
+    /// <param name="args">选择参数</param>
+    private void OnNavigationSelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItem is NavigationViewItem { Tag: int index })
+        {
+            ShowPage(index);
+        }
     }
 
     /// <summary>只显示指定页。</summary>

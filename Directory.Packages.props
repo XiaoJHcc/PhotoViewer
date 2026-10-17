@@ -12,6 +12,8 @@
     <PackageVersion Include="Avalonia.Desktop" Version="12.0.2" />
     <!-- Windows 原生壳:WinUI 3(Windows App SDK)、DirectN(D3D11/DXGI/WIC P/Invoke) -->
     <PackageVersion Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
+    <!-- WinUI 3 官方设置卡片行(SettingsCard/SettingsExpander),与 Win11 设置页同源样式 -->
+    <PackageVersion Include="CommunityToolkit.WinUI.Controls.SettingsControls" Version="8.2.251219" />
     <PackageVersion Include="Avalonia.Headless" Version="12.0.2" />
     <PackageVersion Include="Avalonia.iOS" Version="12.0.2" />
     <PackageVersion Include="Avalonia.Browser" Version="12.0.2" />

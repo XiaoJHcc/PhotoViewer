@@ -484,47 +484,29 @@ internal static class WindowsLayout
     /// <summary>设置窗口最小高。</summary>
     public const double SettingsWindowMinHeight = 560;
 
-    /// <summary>设置窗口左侧分类栏宽。</summary>
-    public const double SettingsNavWidth = 220;
+    /// <summary>设置窗口左侧分类栏宽(Win11 设置页左栏口径,窗口 960 DIP 下留足内容宽)。</summary>
+    public const double SettingsNavWidth = 240;
+
+    /// <summary>设置窗口标题栏高度。</summary>
+    public const double SettingsTitleBarHeight = 48;
 
     /// <summary>设置页内容最大宽(窗口变宽时不铺满)。</summary>
     public const double SettingsPageMaxWidth = 800;
 
-    /// <summary>设置页内容四周留白。</summary>
-    public const double SettingsPagePadding = 24;
+    /// <summary>设置页内容左右留白。</summary>
+    public const double SettingsPagePadding = 36;
 
-    /// <summary>设置卡片最小高。</summary>
-    public const double SettingsCardMinHeight = 64;
+    /// <summary>设置页内容顶部留白。</summary>
+    public const double SettingsPageTopPadding = 28;
 
     /// <summary>设置卡片圆角(Win11 control radius)。</summary>
     public const double SettingsCardCornerRadius = 4;
-
-    /// <summary>设置卡片水平内边距。</summary>
-    public const double SettingsCardPaddingX = 16;
-
-    /// <summary>设置卡片垂直内边距。</summary>
-    public const double SettingsCardPaddingY = 12;
 
     /// <summary>相邻卡片间距。</summary>
     public const double SettingsCardGap = 4;
 
     /// <summary>分组之间的间距。</summary>
     public const double SettingsSectionGap = 24;
-
-    /// <summary>页面标题字号(Win11 Title)。</summary>
-    public const double SettingsPageTitleFontSize = 28;
-
-    /// <summary>页面标题行高。</summary>
-    public const double SettingsPageTitleLineHeight = 36;
-
-    /// <summary>分组标题字号(Win11 BodyStrong)。</summary>
-    public const double SettingsSectionHeaderFontSize = 14;
-
-    /// <summary>设置行标题字号。</summary>
-    public const double SettingsRowTitleFontSize = 14;
-
-    /// <summary>设置行描述字号。</summary>
-    public const double SettingsRowDescriptionFontSize = 12;
 
     /// <summary>可排序列表单行行高。</summary>
     public const double SettingsListRowHeight = 48;
@@ -535,18 +517,15 @@ internal static class WindowsLayout
     /// <summary>快捷键录制按钮宽度。</summary>
     public const double SettingsHotkeyButtonWidth = 120;
 
-    /// <summary>快捷键录制按钮高度。</summary>
-    public const double SettingsHotkeyButtonHeight = 28;
+    /// <summary>快捷键录制按钮高度(Win11 控件高度)。</summary>
+    public const double SettingsHotkeyButtonHeight = 32;
+
+    /// <summary>数值输入框宽度。</summary>
+    public const double SettingsNumberBoxWidth = 140;
 
     /// <summary>行标题与描述之间的间距。</summary>
     public const double SettingsCardDescriptionGap = 2;
 
-    /// <summary>行左侧文字与右侧控件之间的间距。</summary>
-    public const double SettingsControlGap = 16;
-
     /// <summary>滑块行右侧数值文本宽度。</summary>
-    public const double SettingsSliderValueWidth = 64;
-
-    /// <summary>录制冲突/警告色(橙)。</summary>
-    public static readonly Color SettingsConflictForeground = Color.FromArgb(0xFF, 0xFF, 0x8C, 0x00);
+    public const double SettingsSliderValueWidth = 72;
 }

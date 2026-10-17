@@ -26,20 +26,13 @@ internal sealed partial class WindowsSettingsPages
 
         OnSetting(nameof(SettingsViewModel.SimilarityThreshold), RefreshThreshold);
 
-        var maxValue = WindowsSettingsCard.ValueText($"{_settings.SimilarityMaxResults} 张");
-        var maxSlider = NewSlider(
+        var maxResults = NewNumberBox(_settings.SimilarityMaxResults,
             SettingsViewModel.SimilarityMaxResultsMin,
             SettingsViewModel.SimilarityMaxResultsMax,
             1,
-            _settings.SimilarityMaxResults,
             value => _settings.SimilarityMaxResults = (int)Math.Round(value));
-        void RefreshMaxResults()
-        {
-            maxSlider.Value = _settings.SimilarityMaxResults;
-            maxValue.Text = $"{_settings.SimilarityMaxResults} 张";
-        }
-
-        OnSetting(nameof(SettingsViewModel.SimilarityMaxResults), RefreshMaxResults);
+        OnSetting(nameof(SettingsViewModel.SimilarityMaxResults),
+            () => maxResults.Value = _settings.SimilarityMaxResults);
 
         var immediate = NewToggle(_settings.AnalysisImmediateCompute,
             value => _settings.AnalysisImmediateCompute = value);
@@ -51,35 +44,17 @@ internal sealed partial class WindowsSettingsPages
         OnSetting(nameof(SettingsViewModel.ClearDbBusy),
             () => clearButton.IsEnabled = !_settings.ClearDbBusy);
 
-        var statusText = new TextBlock
+        var statusBar = new InfoBar
         {
-            Text = _settings.ClearDbStatus,
-            FontSize = WindowsLayout.SettingsRowDescriptionFontSize,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.ExifLabelForeground),
-            TextWrapping = TextWrapping.Wrap,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 0, 0),
+            IsOpen = !string.IsNullOrEmpty(_settings.ClearDbStatus),
+            Message = _settings.ClearDbStatus,
+            Severity = InfoBarSeverity.Informational,
+            IsClosable = false,
         };
-        var statusContent = new StackPanel { Orientation = Orientation.Horizontal };
-        statusContent.Children.Add(new FontIcon
-        {
-            Glyph = "\uE946",
-            FontSize = 14,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.ExifLabelForeground),
-            VerticalAlignment = VerticalAlignment.Center,
-        });
-        statusContent.Children.Add(statusText);
-        var statusBorder = WindowsSettingsCard.Card(statusContent, new Thickness(12));
-        statusBorder.Visibility = string.IsNullOrEmpty(_settings.ClearDbStatus)
-            ? Visibility.Collapsed
-            : Visibility.Visible;
-
         OnSetting(nameof(SettingsViewModel.ClearDbStatus), () =>
         {
-            statusText.Text = _settings.ClearDbStatus;
-            statusBorder.Visibility = string.IsNullOrEmpty(_settings.ClearDbStatus)
-                ? Visibility.Collapsed
-                : Visibility.Visible;
+            statusBar.Message = _settings.ClearDbStatus;
+            statusBar.IsOpen = !string.IsNullOrEmpty(_settings.ClearDbStatus);
         });
 
         var clearRow = WindowsSettingsCard.Row(
@@ -89,16 +64,18 @@ internal sealed partial class WindowsSettingsPages
 
         var similarityGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         similarityGroup.Children.Add(WindowsSettingsCard.SliderRow("相似度阈值", threshold, thresholdValue));
-        similarityGroup.Children.Add(WindowsSettingsCard.SliderRow("最多数量", maxSlider, maxValue));
+        similarityGroup.Children.Add(WindowsSettingsCard.Row(
+            "最多数量", "相似聚类面板最多显示的相似照片数", NumberBoxWithUnit(maxResults, "张")));
 
         var diagnosisGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         diagnosisGroup.Children.Add(WindowsSettingsCard.ToggleRow("即时计算DINO/CV", null, immediate));
 
         var databaseGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         databaseGroup.Children.Add(clearRow);
-        databaseGroup.Children.Add(statusBorder);
+        databaseGroup.Children.Add(statusBar);
 
-        return Page(            "AI",
+        return Page(
+            "AI",
             WindowsSettingsCard.SectionHeader("相似聚类"),
             similarityGroup,
             WindowsSettingsCard.SectionHeader("分析诊断"),
@@ -106,6 +83,7 @@ internal sealed partial class WindowsSettingsPages
             WindowsSettingsCard.SectionHeader("特征数据库"),
             databaseGroup);
     }
+
     /// <summary>清库:ContentDialog 确认后走共享两段确认命令。</summary>
     /// <returns>任务</returns>
     private async Task ClearDatabaseAsync()

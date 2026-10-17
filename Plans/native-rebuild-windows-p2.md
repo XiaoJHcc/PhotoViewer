@@ -49,13 +49,11 @@
 才补上 TFM/RID 段,在工程体里读它得到的是空串(实测 `MsixContent` 落到工程根目录,排除静默失效)。
 用 `ExcludeAssets="all"` 排掉 `Microsoft.WindowsAppSDK.ML`/`.AI` 包**无效**:该 MSIX 是框架单体包,内容与包资产无关。
 
-### 0.2 三条硬事实(非 XAML 工程必须先知道)
+### 0.2 三条硬事实(WinUI 工程,2026-10-17 更正)
 
-1. **`Application.Resources` 在构造期完全不可用**:读(get_Resources)或写(set_Resources)都抛 `COMException 0x8000FFFF`。只能在 `OnLaunched` 之后访问。
-2. **`XamlControlsResources` 不需要,且构造即崩**:非 XAML 工程里 `new XamlControlsResources()` 抛
-   `Cannot find a resource with the given key: AcrylicBackgroundFillColorDefaultBrush`。
-   WinUI 1.8 的控件样式由框架自带 —— 不并入任何字典,`Button`/`ComboBox`/`CheckBox` 已渲染为标准 Fluent 外观(见 spike 截图)。**不要照抄 XAML 模板里的 App.xaml 写法。**
-3. **深色外观按元素设置**:`Application.RequestedTheme` 对已建元素树不生效(实测控件仍为浅色);把根元素 `RequestedTheme = ElementTheme.Dark` 才生效(实测深色控件)。窗口标题栏/系统按钮颜色另需 `AppWindow.TitleBar` 显式设置(隐藏式标题栏在 W-M1 处理)。
+1. **`Application.Resources` 在 XAML 引导前不可用**:在没有 `App.xaml` 时直接读/写会抛 `COMException 0x8000FFFF`;把 `XamlControlsResources` 放进根 `App.xaml` 后,由 `App.InitializeComponent()` 在构造期装载,`OnLaunched` 及之后可正常访问。
+2. **`XamlControlsResources` 是 Fluent 控件模板的必需项**:没有 `App.xaml` 的纯 C# 工程直接 `new XamlControlsResources()` 会抛 `Cannot find a resource with the given key: AcrylicBackgroundFillColorDefaultBrush`,根因是缺少 XAML 元数据提供器(`IXamlMetadataProvider`)。补根 `App.xaml` 后 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar`/`ProgressBar` 全部可用;**不要**照旧结论退回 ListView/Slider/自绘 Border。
+3. **深色外观**:根 `App.xaml` 设 `Application.RequestedTheme="Dark"`(Mica 与主题资源取深色),窗口根元素仍设 `ElementTheme.Dark`。主窗口是自绘标题栏;设置窗口用 `MicaBackdrop` + `ExtendsContentIntoTitleBar` + `TitleBar` + `SetTitleBar`,系统 caption 按钮背景设透明(见 §17)。
 
 ### 0.3 其它 W-M0 观测
 
@@ -64,6 +62,7 @@
 - 未显式设尺寸时 WinUI 窗口按屏幕宽度开(实测 1920×1015);W-M1 必须显式 `AppWindow.Resize`。
 - Git Bash 里 `dotnet publish` 必须用 `-p:Foo=bar`,写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`(PowerShell 脚本不受影响)。
 - **体积**:自包含发布目录(未单文件化)约 **563 MB** —— 含 .NET 运行时、WinAppSDK 解包内容(101 MB)、ONNX/DirectML、Avalonia 全系;单文件压缩后 **239 MB**(脚本另删 `*.pdb`,实测这些 pdb 约 111 MB)。对照现役 0.7.1 Release 单文件 166 MB(+44%)。体积增量来自 WinAppSDK 自包含,后续可按需裁剪未用组件(Widgets/WebView2 投影等);是否接受由作者定夺。
+- **原生壳单文件发布复核(2026-10-17)**:Debug 单文件试发布产物不含 `PhotoViewer.Desktop.pri`,启动在 `Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 已通过。Release 仍默认旧 Avalonia 壳,单文件 native 通道未启用;切 Release 前需单独修 PRI/运行时打包(参见 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720))。
 
 ## 1. 范围与非目标
 
@@ -189,7 +188,7 @@ PhotoViewer.Desktop/
 
 **W-M5 原生设置窗口(SETTINGS-01/02)** ✅ 2026-10-17(方案 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md);落地记录见 §17)。
 - `WindowsNativeSettingsPresenter : INativeSettingsPresenter` + `NativeSettingsSession` 工作副本 + 关闭回写,不改 JSON 字段名/默认值。
-- 独立 960×720 窗口(系统标题栏深色配色、不进任务栏),左侧 ListView 分类 + 五页卡片;控件替换与尺寸/行模型见 §17。
+- 独立 960×720 窗口(Mica + `TitleBar` + `NavigationView` 240 + 五页 `SettingsCard`、不进任务栏);控件与尺寸/行模型见 §17。
 - 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页全部可用(P3 已落地);清库二次确认。
 - **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待作者手验。
 
@@ -242,7 +241,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 只有视口相关命令(Fit/Zoom*）由壳实现;滚轮与键盘统一走共享手势表,P3 命令既不显示也不消费按键。
 
 **本轮新增的 Windows 侧硬约束**(详见 [PhotoViewer.Desktop/AGENTS.md](../PhotoViewer.Desktop/AGENTS.md)):
-`ProgressBar` 不能进虚拟化卡片(会 `E_FAIL` 整窗崩溃,已二分定位,加载态改静态细条);
+`ProgressBar` 的旧 `E_FAIL` 结论已由 W-M5 根因纠正(缺 `App.xaml`,控件现可用);相似聚类进度仍保留自绘两条 `Border` 作视觉定制;
 虚拟化 `ScrollViewer` 必须 `ZoomMode=Disabled`;`Border`/`ScrollViewer` 在 WinUI 3 是 sealed;
 `Windows.UI.Color` 会被本仓 `PhotoViewer.Windows` 命名空间遮蔽。
 
@@ -345,7 +344,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 16 | **FILM-06**:星级写回失败在窗口内可见(底部状态提示),不呈现虚假成功 | ✅ 定向 | §14;共享 `MainViewModel.RatingWriteFailed` + 只读素材触发,harness 断言提示可见且星色未变 |
 | 17 | 窗口态闭环:自绘按钮的最大化/还原/全屏/退出全屏与 presenter 状态一致 | ✅ 定向 | §14;harness 断言四态往返;真实跨屏/贴靠布局差异仍属 13.2 #2/#16 |
 | 18 | 八方向 + 带 EXIF 素材:自生成方向 1–8 JPEG(含 f/2.8、1/250、ISO 400、75mm)验证方向链与控制栏取值 | ✅ 定向 | §14;GPU 表面四角回读 + 导航图四角回读逐方向核对、方向 6 的 `DisplayCrop` 象限与增强帧朝向断言;EXIF 块显示真实取值;真实相机素材与旧壳逐项对拍仍待做(见 13.2 #3/#5) |
-| 19 | **原生设置窗口(W-M5)**:五分类/卡片/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
+| 19 | **原生设置窗口(W-M5)**:Mica + TitleBar + NavigationView + SettingsCard/五分类/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
 | 20 | INPUT-01:设置窗口独立于主窗口,录制态吞键 | ✅ 定向 | 主窗口 `_root.KeyDown` 收不到设置窗口按键;录制态 `e.Handled` + 失活取消 |
 
 ### 13.2 待完成
@@ -356,7 +355,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 2 | 真实跨屏(不同 scale 显示器间迁移) | W-M6 / W-M7 | 双显示器且缩放不同 | `XamlRoot` 变化后 caption 与代理重算、100% 口径不变 |
 | 3 | 八方向 + 带 EXIF 的**真实素材**与旧壳逐项对拍 | W-M6 | 相机素材(自生成素材已覆盖方向链与控制栏取值,见 §14) | 每个方向朝向/几何与旧壳一致 |
 | 5 | 相机 EXIF 取值与旧壳对拍(自生成素材已证明取值链路) | W-M6 | 真实素材 | 光圈/快门/ISO/等效焦距与旧壳完全一致 |
-| 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS;真实拖拽/录制/清库/预设增删待手验 |
+| 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地/视觉重构见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS(含 Mica/NavigationView/TitleBar/NumberBox/InfoBar);真实拖拽/录制/清库/预设增删待手验 |
 | 10 | 工具页(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | 分析栏/相似聚类/增强已落地(§15–§16),工具页仍未原生 | 各页契约另立 |
 | 11 | W-M6 专项 harness + 旧壳几何 JSON 对拍 | W-M6 | ⬜ 未开始 | `--pv-native-layout/filmstrip/input/toolbar`、`--legacy-ui --pv-legacy-layout`、`Exact=0.01` |
 | 12 | 色彩正确性(ICC/广色域标签/ACM 探测/Win10 烘焙回退) | W-M7 | 独立立项 | 见色彩计划 |
@@ -432,7 +431,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 1. ~~**诊断瓦片始终基于原片**~~ **已由 §16 同步解决**:上一轮因增强图 CV 路径在冒烟中复现崩溃,临时改为诊断固定读原片(增强只影响主图、细节预览与直方图)。同步共享架构后,`AnalysisPresenter` 直接对增强帧实时重算(与旧壳/Mac/iPad 同一份),冒烟新增"增强态诊断重算"覆盖;此处保留差异历史,不再作为当前实现。
 2. **抖动瓦片**用 Skia 把 `ShakeField` 光栅化成 32×8 px 箭头位图(旧壳是自绘控件),颜色/方向/边宽口径相同。
 3. **细节预览不因代理档隐藏**:旧壳在代理期显示空占位,原生壳直接裁当前会话帧;分析栏可见会驱动 Full 解码,几帧后自动变成全分辨率裁剪。
-4. `ProgressBar` 在本工程首次布局即抛 `XamlParseException`(缺 `TabViewScrollButtonBackground`)→ 相似聚类的进度改两条 `Border` 自绘;该硬约束已写入 `PhotoViewer.Desktop/AGENTS.md`。
+4. `ProgressBar` 的旧 `XamlParseException` 已定位为缺根 `App.xaml`/`XamlControlsResources`(W-M5 根因);控件现可用,相似聚类进度仍用两条 `Border` 自绘作视觉定制。
 
 ### 15.3 新增验收(harness 19 → 22 项,§15.5 后 23 项,§16 同步后 24 项,150% 实机连续多轮稳定)
 
@@ -518,45 +517,47 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
 - **待办不变**:工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。
 
-## 17. W-M5 设置窗口落地(2026-10-17)
+## 17. W-M5 设置窗口落地与视觉重构(2026-10-17)
 
-按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现。开工先做空白窗口逐控件冒烟,发现本工程（非 XAML / 非打包 / 自包含）有一批 WinUI 控件无法加载,方案随之替换。
+按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现。W-M5 首次落地时误判了一批 WinUI 控件不可用，改用 ListView/Slider/自绘 Border；同日复核发现根因是**缺少根 `App.xaml` / `IXamlMetadataProvider`**，补 `XamlControlsResources` 后已回到方案原结构并完成 Mica/Fluent 视觉重构。
 
-### 17.1 控件可用性实测
+### 17.1 根因(不是控件限制)
 
-| 控件 | 结果 | 替代 |
+| 旧报告 | 实际根因 | 现状 |
 |---|---|---|
-| `NavigationView` | 首次布局 `XamlParseException`（缺 `TabViewScrollButtonBackground`） | 左侧 `ListView` + UIElement 行 |
-| `TitleBar` | 同上 | 系统标题栏 + `AppWindowTitleBar` 配色 |
-| `NumberBox` | 同上 | `Slider`（线程/预载/最多数量/缩放预设） |
-| `TextBox` / `RichEditBox` | `E_FAIL(0x80004005)` | 不使用文本输入 |
-| `InfoBar` | 同上（缺 TabView 资源） | `Border` 状态条 |
-| `ProgressBar` | 既有结论：`E_FAIL` / 缺 TabView 资源 | 自绘进度（既有） |
+| `NavigationView` 首次布局缺 `TabViewScrollButtonBackground` | 无 `XamlControlsResources`/XAML 元数据提供器，Fluent 模板未装载 | 已用 `NavigationView` |
+| `TitleBar` 同上 | 同上 | 已用 `TitleBar` + 透明 caption |
+| `NumberBox` 同上 | 同上 | 数值项已恢复 `NumberBox` |
+| `TextBox`/`RichEditBox` `E_FAIL` | 同上 | `TextBox` 只由 `NumberBox` 内部使用，无独立文本页 |
+| `InfoBar` 缺 TabView 资源 | 同上 | 清库状态已恢复 `InfoBar` |
+| `ProgressBar` `E_FAIL` | 同上 | 控件可用；主屏仍保留自绘进度作为视觉定制 |
 
-可用且已验证：`ContentDialog`、`ListView`、`ComboBox`、`Slider`、`ToggleSwitch`、`CheckBox`、`Button`、`TextBlock`、`FontIcon`、`ScrollViewer`、`StackPanel`、`Border`、`Grid`。`XamlControlsResources` 在 `OnLaunched` 之后合并仍抛 `AcrylicBackgroundFillColorDefaultBrush`。
+修复：根 `App.xaml` 合并 `XamlControlsResources` 并设 `RequestedTheme="Dark"`；`App.xaml.cs` 承接原 `NativeApplication` 的 `OnLaunched`/外部打开/窗口生命周期。页面仍全部 C# 构建，`App.xaml` 只做资源引导。
 
 ### 17.2 实现要点
 
-- **窗口**：960×720（min 720×560），系统标题栏深色（`AppWindowTitleBar` 颜色可用；`PreferredHeightOption` 抛 `0x8007139F`，不调高度），不进任务栏，单例；主窗口关闭先关设置以回写。
+- **窗口**：960×720（min 720×560），`MicaBackdrop` + `TitleBar`（齿轮图标 + 设置，caption 按钮透明），系统标准边框；不进任务栏，单例；主窗口关闭先关设置以回写。
 - **尺寸**：激活**前**用主窗口 `GetDpiForWindow` 定物理尺寸；激活后再 `Resize` 不刷新内容岛（实测 `ActualWidth` 停在旧值）。960 DIP 外层对应 945 DIP 内容。
-- **导航**：`ListView` 五行（图标 + 文本），`SelectionMode=Single`，容器只改 `Padding/MinHeight`；不再依赖 `NavigationView`。
+- **导航**：`NavigationView` 五类（`OpenPaneLength=240`，无汉堡/返回），选中态用 WinUI 默认 accent 药丸 + 左缘指示条；覆盖 `NavigationViewContentGridBorderThickness/CornerRadius=0`、`NavigationViewContentBackground=透明`，Mica 平铺内容区。
+- **卡片**：`CommunityToolkit.WinUI.Controls.SettingsControls` 的 `SettingsCard`；主题材质/描边/圆角/文字层级由 WinUI 提供，整块列表卡 `Padding=4`。
 - **列表**：`ListView.ItemsSource` 直接放 `UIElement` 行（`ContainerContentChanging` 替换 `Content` 不显示）；`ReorderMode=Enabled`；拖后按行顺序逐项 `Move` 回写共享集合。
-- **数值**：`Slider`；线程/预载/最多数量线性，缓存/延时/缩放预设指数（缩放预设 1%~1600%）。
-- **录制**：窗口根 `PreviewKeyDown`/`KeyDown`/滚轮/中键；Esc 取消、Delete 清空、冲突橙；窗口失活取消；主窗口快捷键因独立窗口天然不受影响。
-- **清库**：`ContentDialog` 确认 + 共享两段确认命令 + `Border` 状态条。
+- **数值**：线程/预载/最多数量/缩放预设用 `NumberBox`（140 宽，Inline spin）；缓存/延时/阈值保留 `Slider`，数值放在 Content 顶部右对齐。
+- **录制**：窗口根 `PreviewKeyDown`/`KeyDown`/滚轮/中键；Esc 取消、Delete 清空、冲突色取 `SystemFillColorCautionBrush`；窗口失活取消；主窗口快捷键因独立窗口天然不受影响。
+- **清库**：`ContentDialog` 确认 + 共享两段确认命令 + `InfoBar` 状态。
 - **入口**：右键菜单「设置…」→ `MainViewModel.OpenSettingWindow` → `NativeWindowPresenter` → presenter；只此一条路。
-- **图标**：`WindowsIcons.FluentFontFamily` 改 `Segoe Fluent Icons,Segoe MDL2 Assets` 回退链，并新增五个分类字形。
+- **图标**：`WindowsIcons.FluentFontFamily` 用 `Segoe Fluent Icons,Segoe MDL2 Assets` 回退链，五个分类字形。
 
 ### 17.3 验收
 
-- `--pv-native-settings` **7 项 PASS**：深色/五分类/960 外层 945 内容/开关+滑条回写/UI 行重排回写/录制开始取消/手势显示/关闭回写。
+- `--pv-native-settings` **7 项 PASS**：深色/Mica、`NavigationView`+`TitleBar`+`NumberBox`+`InfoBar` 已加载、五分类/960 外层 945 内容、开关+`NumberBox`+滑条回写、UI 行重排回写、录制开始取消/手势显示、关闭回写。
 - `--pv-native-smoke` **24 项全 PASS**（无回归）。
 - 截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
-- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感。
+- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感、125/150/200% 文本缩放。
 
-### 17.4 与方案的偏离
+### 17.4 与方案的偏差(已修正)
 
-- `NavigationView` → `ListView`；`TitleBar` → 系统 caption；`NumberBox` → `Slider`；`InfoBar` → `Border`；无文本输入控件。
+- ~~`NavigationView` → `ListView`；`TitleBar` → 系统 caption；`NumberBox` → `Slider`；`InfoBar` → `Border`~~：已恢复原生控件。
 - 窗口尺寸在激活前定，而非 `Loaded` 后。
+- Mica 与标题栏为 2026-10-17 视觉重构新增，属于方案 D4/D7 的修订。
 - 排序整行拖 + 行尾把手视觉、无前进/后退、无 Apple 映射段——与方案一致。
 

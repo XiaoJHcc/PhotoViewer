@@ -38,11 +38,15 @@ internal static class WindowsSettingsAcceptance
             var windowWidth = window.Window.AppWindow.Size.Width / scale;
 
             Require(window.Root.RequestedTheme == ElementTheme.Dark, "设置窗口不是深色主题");
-            Require(window.Navigation.Items.Count == 5, "分类数不是 5");
+            Require(window.Navigation is NavigationView, "设置窗口分类不是 NavigationView");
+            Require(window.TitleBarControl is TitleBar, "设置窗口没有 TitleBar 控件");
+            Require(window.Window.SystemBackdrop is MicaBackdrop, "设置窗口没有 Mica 背景");
+            Require(window.Navigation.MenuItems.Count == 5, "分类数不是 5");
             Require(window.Pages.Count == 5, "页面数不是 5");
+            Require(FindDescendant<NumberBox>(window.Pages[0]) != null, "文件页没有 NumberBox");
             Require(Math.Abs(windowWidth - WindowsLayout.SettingsWindowWidth) < 4,
                 $"窗口宽度不是 960 DIP: {windowWidth:0.0}");
-            checks.Add($"PASS window: dark, 5 categories, window={windowWidth:0} DIP, content={window.Root.ActualWidth:0} DIP");
+            checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar + NumberBox, 5 categories, window={windowWidth:0} DIP, content={window.Root.ActualWidth:0} DIP");
 
             Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.Left))) == "←",
                 "方向键显示文本不是箭头");
@@ -52,7 +56,7 @@ internal static class WindowsSettingsAcceptance
 
             for (var index = 0; index < 5; index++)
             {
-                window.Navigation.SelectedIndex = index;
+                window.Navigation.SelectedItem = window.Navigation.MenuItems[index];
                 await Task.Delay(40);
                 window.Root.UpdateLayout();
                 Require(window.Pages[index].Visibility == Visibility.Visible, $"分类 {index} 页面未显示");
@@ -67,9 +71,11 @@ internal static class WindowsSettingsAcceptance
             }
 
             checks.Add("PASS navigation: every category shows exactly one page");
+            window.Pages[4].UpdateLayout();
+            Require(FindDescendant<InfoBar>(window.Pages[4]) != null, "AI 页没有 InfoBar");
 
             // 回到文件页做控件绑定检查。
-            window.Navigation.SelectedIndex = 0;
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[0];
             await Task.Delay(60);
             window.Root.UpdateLayout();
 
@@ -80,12 +86,19 @@ internal static class WindowsSettingsAcceptance
             Require(window.Settings.SameNameAsOnePhoto == toggle.IsOn, "开关没有写回工作副本");
             Require(main.Settings.SameNameAsOnePhoto != toggle.IsOn, "工作副本泄漏到主设置");
 
+            var numberBox = FindDescendant<NumberBox>(window.Pages[0])
+                ?? throw new InvalidOperationException("文件页没有数值框");
+            numberBox.Value = 3;
+            await Task.Delay(20);
+            Require(window.Settings.NativePreloadParallelism == 3, "数值框没有写回工作副本");
+
             var slider = FindDescendant<Slider>(window.Pages[0])
                 ?? throw new InvalidOperationException("文件页没有数值滑条");
-            slider.Value = 2;
+            var memoryBefore = window.Settings.BitmapCacheMaxMemory;
+            slider.Value = slider.Value >= 0.5 ? 0.25 : 0.75;
             await Task.Delay(20);
-            Require(window.Settings.NativePreloadParallelism == 2, "数值滑条没有写回工作副本");
-            checks.Add("PASS controls: toggle + slider write through to work copy");
+            Require(window.Settings.BitmapCacheMaxMemory != memoryBefore, "数值滑条没有写回工作副本");
+            checks.Add("PASS controls: toggle + NumberBox + slider write through to work copy");
 
             var list = FindDescendant<ListView>(window.Pages[2]);
             if (list == null)

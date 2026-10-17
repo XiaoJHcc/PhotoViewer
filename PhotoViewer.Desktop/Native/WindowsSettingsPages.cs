@@ -5,6 +5,7 @@ using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using PhotoViewer.ViewModels.Settings;
+using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
 
@@ -60,7 +61,11 @@ internal sealed partial class WindowsSettingsPages
         var stack = new StackPanel
         {
             MaxWidth = WindowsLayout.SettingsPageMaxWidth,
-            Padding = new Thickness(WindowsLayout.SettingsPagePadding),
+            Padding = new Thickness(
+                WindowsLayout.SettingsPagePadding,
+                WindowsLayout.SettingsPageTopPadding,
+                WindowsLayout.SettingsPagePadding,
+                WindowsLayout.SettingsPagePadding),
             HorizontalAlignment = HorizontalAlignment.Stretch,
         };
         stack.Children.Add(WindowsSettingsCard.PageTitle(title));
@@ -78,7 +83,7 @@ internal sealed partial class WindowsSettingsPages
             ZoomMode = ZoomMode.Disabled,
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
-            Background = WindowsSettingsCard.Brush(WindowsLayout.BarBackground),
+            Background = WindowsSettingsCard.Brush(Color.FromArgb(0, 0, 0, 0)),
         };
     }
 
@@ -133,11 +138,64 @@ internal sealed partial class WindowsSettingsPages
         var button = new Button
         {
             Content = text,
-            Padding = new Thickness(12, 5, 12, 5),
             VerticalAlignment = VerticalAlignment.Center,
         };
         button.Click += (_, _) => action();
         return button;
+    }
+
+    /// <summary>数值输入框(整数或小数),提交时写回。</summary>
+    /// <param name="value">初始值</param>
+    /// <param name="minimum">最小值</param>
+    /// <param name="maximum">最大值</param>
+    /// <param name="step">步进</param>
+    /// <param name="changed">变化回调</param>
+    /// <returns>数值框</returns>
+    private static NumberBox NewNumberBox(
+        double value, double minimum, double maximum, double step, Action<double> changed)
+    {
+        var box = new NumberBox
+        {
+            Value = Math.Clamp(value, minimum, maximum),
+            Minimum = minimum,
+            Maximum = maximum,
+            SmallChange = step,
+            LargeChange = step * 5,
+            SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Inline,
+            Width = WindowsLayout.SettingsNumberBoxWidth,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        box.ValueChanged += (_, args) =>
+        {
+            if (!double.IsNaN(args.NewValue))
+            {
+                changed(args.NewValue);
+            }
+        };
+        return box;
+    }
+
+    /// <summary>给数值框加单位文本(如“线程”“张”)。</summary>
+    /// <param name="box">数值框</param>
+    /// <param name="unit">单位</param>
+    /// <returns>水平排列的控件</returns>
+    private static StackPanel NumberBoxWithUnit(NumberBox box, string unit)
+    {
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        panel.Children.Add(box);
+        panel.Children.Add(new TextBlock
+        {
+            Text = unit,
+            VerticalAlignment = VerticalAlignment.Center,
+            Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorSecondaryBrush"),
+        });
+        return panel;
     }
 
     /// <summary>订阅设置属性变化,窗口关闭时自动退订。</summary>

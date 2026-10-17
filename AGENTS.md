@@ -210,9 +210,9 @@ Each head project's `Core/` folder contains platform-specific implementations in
 2. **主图**：`WindowsPhotoView` = `SwapChainPanel` + D3D11 合成翻转链 `R16G16B16A16_FLOAT`；EXIF 方向在顶点着色器做 UV 置换（绝不旋转像素），三线性 mipmap；`PhotoLoadSession` 管代际/代理↔Full/租约；100% 口径 = 1 源像素对 1 物理像素；导航图由会话帧经 Skia 缩到导航尺寸，白框/百分比由原生控件绘制。
 3. **增强与分析**：增强预览已下移到 `PhotoLoadSession`（跨切图持续、压力 Warning 自动关闭）；`WindowsAnalysisPanel` 实现 `IAnalysisHost` 并消费共享 `AnalysisPresenter`，细节预览用 `DisplayCrop` 从容器朝向裁出显示朝向 1:1 方块；直方图/诊断瓦片/未提取回退与 Mac/iPad 同一份编排，不再保留 Windows 专属分析缓存或即时计算实现。
 4. **布局**：五分区（筛选 / 胶片条+相似聚类 / 主图 / 分析栏 / 控制栏），自绘标题栏 50 DIP 热区自动显隐，caption 区域按实际按钮边界避让；文件栏内容宽 116 + 1 分隔线、卡片 90×138/项距 96·144、控制栏三组整组换行居中。工具页尚未原生。
-5. **设置窗口（W-M5，2026-10-17）**：独立 960×720 窗口（min 720×560，系统标题栏深色配色、不进任务栏），左侧 ListView 分类 + 五页卡片（文件/预览/控制/EXIF/AI），右键菜单「设置…」入口；共享 `NativeSettingsSession` 工作副本，关闭一次性回写。本工程无法加载 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar` 模板（缺 TabView 资源或 E_FAIL），实际用 ListView 导航、Slider 数值项、`Border` 状态条；详见 [Windows P2-W §17](Plans/native-rebuild-windows-p2.md)。
+5. **设置窗口（W-M5，2026-10-17；同日 Win11 视觉重构）**：独立 960×720 窗口（min 720×560、不进任务栏），Win11 设置页结构：Mica 背景 + WinUI `TitleBar`（齿轮图标、透明 caption 按钮）+ `NavigationView` 左栏（240）+ 五页 `SettingsCard` 卡片（文件/预览/控制/EXIF/AI），右键菜单「设置…」入口；共享 `NativeSettingsSession` 工作副本，关闭一次性回写。应用级 `App.xaml` 只合并 `XamlControlsResources` 并固定深色主题，页面仍全部 C# 构建。此前记录的「本工程无法加载 `NavigationView`/`TitleBar`/`NumberBox`/`TextBox`/`InfoBar`」是缺 XAML 元数据提供器（无 `App.xaml`）导致的假象，**不是控件限制**；详见 [Windows P2-W §17](Plans/native-rebuild-windows-p2.md) 与 [设置窗口方案](Plans/native-rebuild-windows-settings.md)。
 6. **编码与色彩**：`WindowsPresentationEncodingPolicy` 本阶段恒 RGBA16F 线性 scRGB；W-M7 的 ICC/ACM/广色域标签与 Windows RAW 解码未做。
-7. **验收**：`--pv-native-smoke` 隔离设置/数据库/日志并生成自有素材；24 项覆盖 150% 下三尺寸×两向、caption、代理→Full、八方向（主图/导航图/`DisplayCrop`）、FILM-03/06、外部打开定位、相似聚类、分析栏（含增强态重算）、窗口四态与关闭释放；`--pv-native-settings` 7 项覆盖设置窗口深色/五分类/尺寸/开关滑条/重排/录制状态/关闭回写。200% DPI、真实跨屏、真实相机八方向素材、系统色彩、真实拖拽/录制手感仍待验；程序化通过不等于完整 W-M6 验收。
+7. **验收**：`--pv-native-smoke` 隔离设置/数据库/日志并生成自有素材；24 项覆盖 150% 下三尺寸×两向、caption、代理→Full、八方向（主图/导航图/`DisplayCrop`）、FILM-03/06、外部打开定位、相似聚类、分析栏（含增强态重算）、窗口四态与关闭释放；`--pv-native-settings` 7 项覆盖设置窗口深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar 已加载、五分类/尺寸、开关+数值框+滑条、重排、录制状态与关闭回写。200% DPI、真实跨屏、真实相机八方向素材、系统色彩、真实拖拽/录制手感仍待验；程序化通过不等于完整 W-M6 验收。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 

@@ -1,5 +1,5 @@
 using System;
-using Microsoft.UI.Text;
+using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -10,8 +10,8 @@ using Windows.UI;
 namespace PhotoViewer.Desktop.Native;
 
 /// <summary>
-/// 设置页行原语:页面标题、分组标题、卡片、开关行、滑块行、提示与图标按钮。
-/// 统一走 <see cref="WindowsLayout"/> 的设置 token,避免每页各写一套边距/字号。
+/// 设置页行原语:页面标题、分组标题、Win11 设置卡片、开关/滑块/数值行与提示。
+/// 颜色、字号、圆角与卡片材质全部取 WinUI 3 主题资源,不再维护第二套灰度。
 /// </summary>
 internal static class WindowsSettingsCard
 {
@@ -21,10 +21,8 @@ internal static class WindowsSettingsCard
     public static TextBlock PageTitle(string text) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsPageTitleFontSize,
-        LineHeight = WindowsLayout.SettingsPageTitleLineHeight,
-        FontWeight = FontWeights.SemiBold,
-        Foreground = Brush(WindowsLayout.CardNameForeground),
+        Style = Style("TitleTextBlockStyle"),
+        Foreground = ThemeBrush("TextFillColorPrimaryBrush"),
         Margin = new Thickness(0, 0, 0, 8),
     };
 
@@ -34,67 +32,38 @@ internal static class WindowsSettingsCard
     public static TextBlock SectionHeader(string text) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsSectionHeaderFontSize,
-        FontWeight = FontWeights.SemiBold,
-        Foreground = Brush(WindowsLayout.CardNameForeground),
+        Style = Style("BodyStrongTextBlockStyle"),
+        Foreground = ThemeBrush("TextFillColorPrimaryBrush"),
         Margin = new Thickness(0, WindowsLayout.SettingsSectionGap, 0, 8),
     };
 
-    /// <summary>卡片外壳:深色底 + 1px 描边 + 4px 圆角。</summary>
-    /// <param name="content">卡片内容</param>
-    /// <param name="padding">内边距;null 用默认</param>
-    /// <returns>卡片边框</returns>
-    public static Border Card(UIElement content, Thickness? padding = null) => new()
-    {
-        Background = Brush(WindowsLayout.BlockBackground),
-        BorderBrush = Brush(WindowsLayout.Divider),
-        BorderThickness = new Thickness(1),
-        CornerRadius = new CornerRadius(WindowsLayout.SettingsCardCornerRadius),
-        MinHeight = WindowsLayout.SettingsCardMinHeight,
-        Padding = padding ?? new Thickness(
-            WindowsLayout.SettingsCardPaddingX,
-            WindowsLayout.SettingsCardPaddingY,
-            WindowsLayout.SettingsCardPaddingX,
-            WindowsLayout.SettingsCardPaddingY),
-        Child = content,
-    };
-
-    /// <summary>左标题/描述 + 右控件的设置行。</summary>
+    /// <summary>Win11 设置卡片:左标题/描述 + 右控件。</summary>
     /// <param name="header">行标题</param>
     /// <param name="description">行描述;null 表示单行</param>
     /// <param name="control">右侧控件;null 表示纯文本行</param>
-    /// <returns>卡片</returns>
-    public static Border Row(string header, string? description, FrameworkElement? control)
+    /// <returns>设置卡片</returns>
+    public static SettingsCard Row(string header, string? description, FrameworkElement? control)
     {
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(RowTitle(header));
-        if (!string.IsNullOrEmpty(description))
-        {
-            text.Children.Add(RowDescription(description));
-        }
-
-        var grid = new Grid();
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(text);
-
         if (control != null)
         {
             control.VerticalAlignment = VerticalAlignment.Center;
-            control.Margin = new Thickness(WindowsLayout.SettingsControlGap, 0, 0, 0);
-            Grid.SetColumn(control, 1);
-            grid.Children.Add(control);
         }
 
-        return Card(grid);
+        return new SettingsCard
+        {
+            Header = header,
+            Description = description!,
+            Content = control,
+        };
     }
 
     /// <summary>整卡可点的开关行;点文字区域等同切换开关。</summary>
     /// <param name="header">行标题</param>
     /// <param name="description">行描述;null 表示单行</param>
     /// <param name="toggle">开关</param>
-    /// <returns>卡片</returns>
-    public static Border ToggleRow(string header, string? description, ToggleSwitch toggle)    {
+    /// <returns>设置卡片</returns>
+    public static SettingsCard ToggleRow(string header, string? description, ToggleSwitch toggle)
+    {
         toggle.OnContent = string.Empty;
         toggle.OffContent = string.Empty;
         toggle.MinWidth = 0;
@@ -118,39 +87,56 @@ internal static class WindowsSettingsCard
     /// <param name="header">行标题</param>
     /// <param name="slider">滑块</param>
     /// <param name="valueText">右侧数值文本</param>
-    /// <returns>卡片</returns>
-    public static Border SliderRow(string header, Slider slider, TextBlock valueText)
+    /// <returns>设置卡片</returns>
+    public static SettingsCard SliderRow(string header, Slider slider, TextBlock valueText)
     {
-        var headerRow = new Grid();
-        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        headerRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        headerRow.Children.Add(RowTitle(header));
+        valueText.Style = Style("BodyTextBlockStyle");
+        valueText.Foreground = ThemeBrush("TextFillColorSecondaryBrush");
+        valueText.HorizontalAlignment = HorizontalAlignment.Right;
+        valueText.Margin = new Thickness(0, 0, 0, 8);
 
-        valueText.Foreground = Brush(WindowsLayout.ExifLabelForeground);
-        valueText.VerticalAlignment = VerticalAlignment.Center;
-        valueText.MinWidth = WindowsLayout.SettingsSliderValueWidth;
-        valueText.TextAlignment = TextAlignment.Right;
-        Grid.SetColumn(valueText, 1);
-        headerRow.Children.Add(valueText);
+        slider.HorizontalAlignment = HorizontalAlignment.Stretch;
+        slider.MinWidth = 0;
 
-        slider.Margin = new Thickness(0, 8, 0, 0);
-        var content = new StackPanel();
-        content.Children.Add(headerRow);
+        var content = new Grid();
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+        content.Children.Add(valueText);
+        Grid.SetRow(slider, 1);
         content.Children.Add(slider);
-        return Card(content);
+
+        return new SettingsCard
+        {
+            Header = header,
+            ContentAlignment = ContentAlignment.Vertical,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Content = content,
+        };
     }
 
-    /// <summary>提示文本;按语义级别取色。</summary>
+    /// <summary>整块内容卡片(排序表、预设列表等);内容自己决定内边距。</summary>
+    /// <param name="content">卡片内容</param>
+    /// <param name="padding">内边距;null 用 0</param>
+    /// <returns>设置卡片</returns>
+    public static SettingsCard Card(UIElement content, Thickness? padding = null) => new()
+    {
+        ContentAlignment = ContentAlignment.Vertical,
+        HorizontalContentAlignment = HorizontalAlignment.Stretch,
+        Content = content,
+        Padding = padding ?? new Thickness(0),
+    };
+
+    /// <summary>提示文本;按语义级别取 WinUI 系统色。</summary>
     /// <param name="text">提示文本</param>
     /// <param name="level">语义级别</param>
     /// <returns>提示控件</returns>
     public static TextBlock Hint(string text, PerfInfoLevel level) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsRowDescriptionFontSize,
+        Style = Style("CaptionTextBlockStyle"),
         TextWrapping = TextWrapping.Wrap,
-        Foreground = Brush(LevelColor(level)),
-        Margin = new Thickness(WindowsLayout.SettingsCardPaddingX, 4, WindowsLayout.SettingsCardPaddingX, 0),
+        Foreground = LevelBrush(level),
+        Margin = new Thickness(0, 8, 0, 0),
     };
 
     /// <summary>行标题。</summary>
@@ -159,8 +145,8 @@ internal static class WindowsSettingsCard
     public static TextBlock RowTitle(string text) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsRowTitleFontSize,
-        Foreground = Brush(WindowsLayout.CardNameForeground),
+        Style = Style("BodyTextBlockStyle"),
+        Foreground = ThemeBrush("TextFillColorPrimaryBrush"),
         TextWrapping = TextWrapping.Wrap,
     };
 
@@ -170,8 +156,8 @@ internal static class WindowsSettingsCard
     public static TextBlock RowDescription(string text) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsRowDescriptionFontSize,
-        Foreground = Brush(WindowsLayout.ExifLabelForeground),
+        Style = Style("CaptionTextBlockStyle"),
+        Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
         TextWrapping = TextWrapping.Wrap,
         Margin = new Thickness(0, WindowsLayout.SettingsCardDescriptionGap, 0, 0),
     };
@@ -181,7 +167,7 @@ internal static class WindowsSettingsCard
     public static Border RowDivider() => new()
     {
         Height = 1,
-        Background = Brush(WindowsLayout.Divider),
+        Background = ThemeBrush("DividerStrokeColorDefaultBrush"),
         Margin = new Thickness(0, 8, 0, 8),
     };
 
@@ -192,7 +178,7 @@ internal static class WindowsSettingsCard
         Text = "\uE76F",
         FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
         FontSize = 12,
-        Foreground = Brush(WindowsLayout.SimilarityCaptionForeground),
+        Foreground = ThemeBrush("TextFillColorTertiaryBrush"),
         VerticalAlignment = VerticalAlignment.Center,
         HorizontalAlignment = HorizontalAlignment.Right,
         Margin = new Thickness(8, 0, 0, 0),
@@ -205,8 +191,8 @@ internal static class WindowsSettingsCard
     public static TextBlock ValueText(string text) => new()
     {
         Text = text,
-        FontSize = WindowsLayout.SettingsRowDescriptionFontSize,
-        Foreground = Brush(WindowsLayout.ExifLabelForeground),
+        Style = Style("BodyTextBlockStyle"),
+        Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
         VerticalAlignment = VerticalAlignment.Center,
         TextAlignment = TextAlignment.Right,
         MinWidth = WindowsLayout.SettingsSliderValueWidth,
@@ -219,51 +205,66 @@ internal static class WindowsSettingsCard
     /// <returns>按钮</returns>
     public static Button IconButton(string glyph, string tooltip, Action action)
     {
+        var transparent = ThemeBrush("SubtleFillColorTransparentBrush");
         var button = new Button
         {
-            Width = 28,
-            Height = 28,
+            Width = 32,
+            Height = 32,
             Padding = new Thickness(0),
             BorderThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(Color.FromArgb(0x00, 0, 0, 0)),
-            Content = new TextBlock
+            CornerRadius = new CornerRadius(WindowsLayout.SettingsCardCornerRadius),
+            Background = transparent,
+            Content = new FontIcon
             {
-                Text = glyph,
-                FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
-                FontSize = 12,
-                Foreground = Brush(WindowsLayout.ExifLabelForeground),
+                Glyph = glyph,
+                FontSize = 14,
+                Foreground = ThemeBrush("TextFillColorSecondaryBrush"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },
         };
         ToolTipService.SetToolTip(button, tooltip);
-
-        var transparent = new SolidColorBrush(Color.FromArgb(0x00, 0, 0, 0));
-        var hover = new SolidColorBrush(Color.FromArgb(0x18, 0xFF, 0xFF, 0xFF));
-        button.Resources["ButtonBackground"] = transparent;
-        button.Resources["ButtonBackgroundPointerOver"] = hover;
-        button.Resources["ButtonBackgroundPressed"] = hover;
-        button.Resources["ButtonBorderBrush"] = transparent;
-        button.Resources["ButtonBorderBrushPointerOver"] = transparent;
-        button.Resources["ButtonBorderBrushPressed"] = transparent;
+        ApplySubtleButtonColors(button);
         button.Click += (_, _) => action();
         return button;
     }
 
-    /// <summary>按语义级别取提示颜色。</summary>
-    /// <param name="level">语义级别</param>
-    /// <returns>颜色</returns>
-    public static Color LevelColor(PerfInfoLevel level) => level switch
+    /// <summary>把图标按钮的主题画刷键设为 WinUI Subtle 状态色。</summary>
+    /// <param name="button">按钮</param>
+    public static void ApplySubtleButtonColors(Button button)
     {
-        PerfInfoLevel.Warning => WindowsLayout.SettingsConflictForeground,
-        PerfInfoLevel.Error => WindowsLayout.SimilarityErrorForeground,
-        _ => WindowsLayout.ExifLabelForeground,
+        var transparent = ThemeBrush("SubtleFillColorTransparentBrush");
+        var hover = ThemeBrush("SubtleFillColorSecondaryBrush");
+        var pressed = ThemeBrush("SubtleFillColorTertiaryBrush");
+        button.Resources["ButtonBackground"] = transparent;
+        button.Resources["ButtonBackgroundPointerOver"] = hover;
+        button.Resources["ButtonBackgroundPressed"] = pressed;
+        button.Resources["ButtonBorderBrush"] = transparent;
+        button.Resources["ButtonBorderBrushPointerOver"] = transparent;
+        button.Resources["ButtonBorderBrushPressed"] = transparent;
+        button.Resources["ButtonForeground"] = ThemeBrush("TextFillColorPrimaryBrush");
+        button.Resources["ButtonForegroundPointerOver"] = ThemeBrush("TextFillColorPrimaryBrush");
+        button.Resources["ButtonForegroundPressed"] = ThemeBrush("TextFillColorSecondaryBrush");
+    }
+
+    /// <summary>按语义级别取提示画刷。</summary>
+    /// <param name="level">语义级别</param>
+    /// <returns>画刷</returns>
+    public static Brush LevelBrush(PerfInfoLevel level) => level switch
+    {
+        PerfInfoLevel.Warning => ThemeBrush("SystemFillColorCautionBrush"),
+        PerfInfoLevel.Error => ThemeBrush("SystemFillColorCriticalBrush"),
+        _ => ThemeBrush("TextFillColorSecondaryBrush"),
     };
 
-    /// <summary>把颜色包成纯色画刷。</summary>
-    /// <param name="color">颜色</param>
+    /// <summary>读取 WinUI 主题画刷。</summary>
+    /// <param name="key">资源键</param>
     /// <returns>画刷</returns>
+    public static Brush ThemeBrush(string key) => Resource<Brush>(key);
+
+    /// <summary>把颜色包成纯色画刷(仅用于内容高亮等应用自有语义)。</summary>
+    /// <param name="color">颜色</param>
+    /// <returns>纯色画刷</returns>
     public static SolidColorBrush Brush(Color color) => new(color);
 
     /// <summary>判断元素是否位于指定祖先之内(用于整卡点击时避开开关自身)。</summary>
@@ -282,4 +283,23 @@ internal static class WindowsSettingsCard
 
         return false;
     }
+
+    /// <summary>读取 WinUI 主题资源,缺失即报错(不允许静默回退到第二套颜色/样式)。</summary>
+    /// <typeparam name="T">资源类型</typeparam>
+    /// <param name="key">资源键</param>
+    /// <returns>资源</returns>
+    private static T Resource<T>(string key) where T : class
+    {
+        if (Application.Current.Resources.TryGetValue(key, out var value) && value is T typed)
+        {
+            return typed;
+        }
+
+        throw new InvalidOperationException($"WinUI 主题资源缺失: {key}");
+    }
+
+    /// <summary>读取 WinUI 文本样式。</summary>
+    /// <param name="key">样式键</param>
+    /// <returns>样式</returns>
+    private static Style Style(string key) => Resource<Style>(key);
 }

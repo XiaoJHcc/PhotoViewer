@@ -1,11 +1,11 @@
 using System;
 using System.ComponentModel;
+using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Input;
 using PhotoViewer.ViewModels.Settings;
-using Windows.UI;
 
 namespace PhotoViewer.Desktop.Native;
 
@@ -50,15 +50,12 @@ internal sealed partial class WindowsSettingsPages
             }
         });
 
-        var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-        left.Children.Add(WindowsSettingsCard.RowTitle("布局模式"));
-        left.Children.Add(description);
-        var layoutGrid = new Grid();
-        layoutGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        layoutGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        layoutGrid.Children.Add(left);
-        Grid.SetColumn(combo, 1);
-        layoutGrid.Children.Add(combo);
+        var layoutCard = new SettingsCard
+        {
+            Header = "布局模式",
+            Description = description,
+            Content = combo,
+        };
 
         var hotkeys = new WindowsSettingsList(
             _settings.Hotkeys,
@@ -70,9 +67,9 @@ internal sealed partial class WindowsSettingsPages
         return Page(
             "控制",
             WindowsSettingsCard.SectionHeader("控制栏布局位置"),
-            WindowsSettingsCard.Card(layoutGrid),
+            layoutCard,
             WindowsSettingsCard.SectionHeader("控制栏功能与快捷键"),
-            WindowsSettingsCard.Card(hotkeys, new Thickness(8)));
+            WindowsSettingsCard.Card(hotkeys, new Thickness(4)));
     }
 
     /// <summary>当前布局模式在选项里的索引。</summary>
@@ -98,11 +95,10 @@ internal sealed partial class WindowsSettingsPages
         var checkbox = new CheckBox
         {
             IsChecked = hotkey.IsDisplay,
-            Width = 28,
             MinWidth = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 12, 0),
         };
         var updating = false;
         checkbox.Checked += (_, _) =>
@@ -137,13 +133,14 @@ internal sealed partial class WindowsSettingsPages
 
         var name = WindowsSettingsCard.RowTitle(hotkey.Name);
         name.VerticalAlignment = VerticalAlignment.Center;
+        name.TextWrapping = TextWrapping.NoWrap;
         name.TextTrimming = TextTrimming.CharacterEllipsis;
-        name.MaxWidth = 220;
+        name.MaxWidth = 160;
 
         var grid = new Grid
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 8, 0),
+            Margin = new Thickness(12, 0, 12, 0),
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -216,8 +213,8 @@ internal sealed partial class WindowsSettingsPages
     {
         var text = new TextBlock
         {
-            FontSize = 11,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.CardNameForeground),
+            FontSize = 12,
+            Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorPrimaryBrush"),
             TextTrimming = TextTrimming.CharacterEllipsis,
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
@@ -232,11 +229,14 @@ internal sealed partial class WindowsSettingsPages
             HorizontalContentAlignment = HorizontalAlignment.Center,
             VerticalContentAlignment = VerticalAlignment.Center,
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(4),
-            Background = new SolidColorBrush(Color.FromArgb(0xFF, 0x2A, 0x2A, 0x2A)),
+            CornerRadius = new CornerRadius(WindowsLayout.SettingsCardCornerRadius),
+            Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorPrimaryBrush"),
         };
         ToolTipService.SetToolTip(button, "点击录制；Delete 清空，Esc 取消");
-        ApplyHotkeyButtonColors(button, Color.FromArgb(0xFF, 0x33, 0x33, 0x33));
+        ApplyHotkeyButtonColors(
+            button,
+            WindowsSettingsCard.ThemeBrush("ControlStrokeColorDefaultBrush"),
+            WindowsSettingsCard.ThemeBrush("TextFillColorPrimaryBrush"));
         return button;
     }
 
@@ -256,36 +256,39 @@ internal sealed partial class WindowsSettingsPages
 
         if (recording)
         {
-            text.Foreground = WindowsSettingsCard.Brush(WindowsLayout.CardNameForeground);
-            ApplyHotkeyButtonColors(button, WindowsLayout.CurrentBorder);
+            var accent = WindowsSettingsCard.ThemeBrush("AccentTextFillColorPrimaryBrush");
+            text.Foreground = accent;
+            ApplyHotkeyButtonColors(button, WindowsSettingsCard.ThemeBrush("AccentFillColorDefaultBrush"), accent);
             return;
         }
 
         if (conflict)
         {
-            text.Foreground = WindowsSettingsCard.Brush(WindowsLayout.SettingsConflictForeground);
-            ApplyHotkeyButtonColors(button, WindowsLayout.SettingsConflictForeground);
+            var caution = WindowsSettingsCard.ThemeBrush("SystemFillColorCautionBrush");
+            text.Foreground = caution;
+            ApplyHotkeyButtonColors(button, caution, caution);
             return;
         }
 
-        text.Foreground = WindowsSettingsCard.Brush(WindowsLayout.CardNameForeground);
-        ApplyHotkeyButtonColors(button, WindowsLayout.Divider);
+        var foreground = WindowsSettingsCard.ThemeBrush("TextFillColorPrimaryBrush");
+        text.Foreground = foreground;
+        ApplyHotkeyButtonColors(button, WindowsSettingsCard.ThemeBrush("ControlStrokeColorDefaultBrush"), foreground);
     }
 
     /// <summary>按钮模板用主题画刷覆盖背景/描边,必须同时改写资源键。</summary>
     /// <param name="button">按钮</param>
-    /// <param name="border">描边色</param>
-    private static void ApplyHotkeyButtonColors(Button button, Color border)
+    /// <param name="border">描边画刷</param>
+    /// <param name="foreground">前景画刷</param>
+    private static void ApplyHotkeyButtonColors(Button button, Brush border, Brush foreground)
     {
-        var background = new SolidColorBrush(Color.FromArgb(0xFF, 0x2A, 0x2A, 0x2A));
-        var hover = new SolidColorBrush(Color.FromArgb(0xFF, 0x33, 0x33, 0x33));
-        var borderBrush = new SolidColorBrush(border);
-        button.Resources["ButtonBackground"] = background;
-        button.Resources["ButtonBackgroundPointerOver"] = hover;
-        button.Resources["ButtonBackgroundPressed"] = hover;
-        button.Resources["ButtonBorderBrush"] = borderBrush;
-        button.Resources["ButtonBorderBrushPointerOver"] = borderBrush;
-        button.Resources["ButtonBorderBrushPressed"] = borderBrush;
-        button.Resources["ButtonForeground"] = WindowsSettingsCard.Brush(WindowsLayout.CardNameForeground);
+        button.Resources["ButtonBackground"] = WindowsSettingsCard.ThemeBrush("ControlFillColorDefaultBrush");
+        button.Resources["ButtonBackgroundPointerOver"] = WindowsSettingsCard.ThemeBrush("ControlFillColorSecondaryBrush");
+        button.Resources["ButtonBackgroundPressed"] = WindowsSettingsCard.ThemeBrush("ControlFillColorTertiaryBrush");
+        button.Resources["ButtonBorderBrush"] = border;
+        button.Resources["ButtonBorderBrushPointerOver"] = border;
+        button.Resources["ButtonBorderBrushPressed"] = border;
+        button.Resources["ButtonForeground"] = foreground;
+        button.Resources["ButtonForegroundPointerOver"] = foreground;
+        button.Resources["ButtonForegroundPressed"] = foreground;
     }
 }

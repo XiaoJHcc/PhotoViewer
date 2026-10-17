@@ -34,7 +34,7 @@ internal sealed partial class WindowsSettingsPages
         return Page(
             "EXIF",
             WindowsSettingsCard.SectionHeader("EXIF 显示/收纳"),
-            WindowsSettingsCard.Card(items, new Thickness(8)),
+            WindowsSettingsCard.Card(items, new Thickness(4)),
             WindowsSettingsCard.SectionHeader("评分与写回"),
             ratingGroup);
     }
@@ -47,11 +47,10 @@ internal sealed partial class WindowsSettingsPages
         var checkbox = new CheckBox
         {
             IsChecked = item.IsEnabled,
-            Width = 28,
             MinWidth = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 12, 0),
         };
         var updating = false;
         checkbox.Checked += (_, _) =>
@@ -75,7 +74,7 @@ internal sealed partial class WindowsSettingsPages
         var grid = new Grid
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 8, 0),
+            Margin = new Thickness(12, 0, 12, 0),
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

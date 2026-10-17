@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Specialized;
 using System.ComponentModel;
+using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using PhotoViewer.ViewModels.Settings;
@@ -20,7 +21,7 @@ internal sealed partial class WindowsSettingsPages
         var showZoom = NewToggle(_settings.ShowZoomIndicator, value => _settings.ShowZoomIndicator = value);
         OnSetting(nameof(SettingsViewModel.ShowZoomIndicator), () => showZoom.IsOn = _settings.ShowZoomIndicator);
 
-        _presetHost = new StackPanel { Spacing = 6 };
+        _presetHost = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         _presetCollectionHandler = (_, _) => RebuildPresets();
         RebuildPresets();
         OnSetting(nameof(SettingsViewModel.ScalePresets), RebuildPresets);
@@ -40,7 +41,7 @@ internal sealed partial class WindowsSettingsPages
             WindowsSettingsCard.SectionHeader("缩放位置显示"),
             toggleGroup,
             WindowsSettingsCard.SectionHeader("缩放比例预设"),
-            WindowsSettingsCard.Card(_presetHost, new Thickness(8)));
+            WindowsSettingsCard.Card(_presetHost, new Thickness(4)));
     }
 
     /// <summary>重建预设行:集合被排序替换时也要更换订阅。</summary>
@@ -70,7 +71,7 @@ internal sealed partial class WindowsSettingsPages
 
         var add = NewButton("添加预设", _settings.AddScalePreset);
         add.HorizontalAlignment = HorizontalAlignment.Right;
-        add.Margin = new Thickness(0, 4, 0, 0);
+        add.Margin = new Thickness(8, 4, 8, 8);
         _presetHost.Children.Add(add);
     }
 
@@ -79,38 +80,54 @@ internal sealed partial class WindowsSettingsPages
     /// <returns>行元素</returns>
     private UIElement BuildPresetRow(SettingsViewModel.ScalePreset preset)
     {
-        var value = double.TryParse(preset.Text, out var parsed) ? Math.Clamp(parsed, 1, 1600) : 100;
-        var slider = NewSlider(0, 1, 0.001, ToExp(value, 1, 1600), newValue =>
+        var value = double.TryParse(preset.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
+            ? Math.Round(Math.Clamp(parsed, 1, 1600), 1)
+            : 100;
+        var box = NewNumberBox(value, 1, 1600, 1, newValue =>
         {
-            preset.Text = FormatNumber(FromExp(newValue, 1, 1600));
+            if (!double.IsNaN(newValue))
+            {
+                preset.Text = FormatNumber(Math.Round(newValue, 1));
+            }
         });
-        slider.Width = 220;
-        slider.Margin = new Thickness(0, 0, 8, 0);
 
-        var display = new TextBlock
+        var percent = new TextBlock
         {
-            Text = preset.Display,
-            Foreground = WindowsSettingsCard.Brush(WindowsLayout.ExifLabelForeground),
+            Text = "%",
             VerticalAlignment = VerticalAlignment.Center,
-            MinWidth = 64,
+            Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorSecondaryBrush"),
+            Margin = new Thickness(4, 0, 12, 0),
         };
 
-        var grid = new Grid { Margin = new Thickness(8, 0, 8, 0) };
+        var grid = new Grid
+        {
+            Height = WindowsLayout.SettingsListRowHeight,
+            Margin = new Thickness(8, 0, 8, 0),
+        };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        grid.Children.Add(slider);
-        Grid.SetColumn(display, 1);
-        grid.Children.Add(display);
+        grid.Children.Add(box);
+        Grid.SetColumn(percent, 1);
+        grid.Children.Add(percent);
         var delete = WindowsSettingsCard.IconButton("\uE74D", "移除预设", () => _settings.RemoveScalePreset(preset));
-        Grid.SetColumn(delete, 2);
+        Grid.SetColumn(delete, 3);
         grid.Children.Add(delete);
 
+        var updating = false;
         PropertyChangedEventHandler handler = (_, args) =>
         {
-            if (args.PropertyName == nameof(SettingsViewModel.ScalePreset.Display))
+            if (args.PropertyName != nameof(SettingsViewModel.ScalePreset.Text) || updating)
             {
-                display.Text = preset.Display;
+                return;
+            }
+
+            if (double.TryParse(preset.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var textValue))
+            {
+                updating = true;
+                box.Value = Math.Round(Math.Clamp(textValue, 1, 1600), 1);
+                updating = false;
             }
         };
         preset.PropertyChanged += handler;

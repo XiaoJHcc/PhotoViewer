@@ -22,25 +22,19 @@ internal sealed partial class WindowsSettingsPages
         var sameName = NewToggle(_settings.SameNameAsOnePhoto, value => _settings.SameNameAsOnePhoto = value);
         OnSetting(nameof(SettingsViewModel.SameNameAsOnePhoto), () => sameName.IsOn = _settings.SameNameAsOnePhoto);
 
-        var nativeThreads = NewSlider(1, _settings.NativePreloadParallelismMaximum, 1,
-            _settings.NativePreloadParallelism,
+        var nativeThreads = NewNumberBox(_settings.NativePreloadParallelism,
+            1, _settings.NativePreloadParallelismMaximum, 1,
             value => _settings.NativePreloadParallelism = (int)Math.Round(value));
-        var nativeThreadsValue = WindowsSettingsCard.ValueText($"{_settings.NativePreloadParallelism} 线程");
-        OnSetting(nameof(SettingsViewModel.NativePreloadParallelism), () =>
-        {
-            nativeThreads.Value = _settings.NativePreloadParallelism;
-            nativeThreadsValue.Text = $"{_settings.NativePreloadParallelism} 线程";
-        });
+        nativeThreads.Value = _settings.NativePreloadParallelism;
+        OnSetting(nameof(SettingsViewModel.NativePreloadParallelism),
+            () => nativeThreads.Value = _settings.NativePreloadParallelism);
 
-        var cpuThreads = NewSlider(1, _settings.CpuPreloadParallelismMaximum, 1,
-            _settings.CpuPreloadParallelism,
+        var cpuThreads = NewNumberBox(_settings.CpuPreloadParallelism,
+            1, _settings.CpuPreloadParallelismMaximum, 1,
             value => _settings.CpuPreloadParallelism = (int)Math.Round(value));
-        var cpuThreadsValue = WindowsSettingsCard.ValueText($"{_settings.CpuPreloadParallelism} 线程");
-        OnSetting(nameof(SettingsViewModel.CpuPreloadParallelism), () =>
-        {
-            cpuThreads.Value = _settings.CpuPreloadParallelism;
-            cpuThreadsValue.Text = $"{_settings.CpuPreloadParallelism} 线程";
-        });
+        cpuThreads.Value = _settings.CpuPreloadParallelism;
+        OnSetting(nameof(SettingsViewModel.CpuPreloadParallelism),
+            () => cpuThreads.Value = _settings.CpuPreloadParallelism);
 
         var memoryValue = WindowsSettingsCard.ValueText($"{_settings.BitmapCacheMaxMemory} MB");
         var memorySlider = NewSlider(0, 1, 0.01, _settings.BitmapCacheMaxMemoryExp,
@@ -54,30 +48,18 @@ internal sealed partial class WindowsSettingsPages
         OnSetting(nameof(SettingsViewModel.BitmapCacheMaxCount),
             () => countValue.Text = $"{_settings.BitmapCacheMaxCount} 张");
 
-        var forward = NewSlider(0, _settings.PreloadMaximum, 1, _settings.PreloadForwardCount,
+        var forward = NewNumberBox(_settings.PreloadForwardCount, 0, _settings.PreloadMaximum, 1,
             value => _settings.PreloadForwardCount = (int)Math.Round(value));
-        var backward = NewSlider(0, _settings.PreloadMaximum, 1, _settings.PreloadBackwardCount,
+        var backward = NewNumberBox(_settings.PreloadBackwardCount, 0, _settings.PreloadMaximum, 1,
             value => _settings.PreloadBackwardCount = (int)Math.Round(value));
-        var center = NewSlider(0, _settings.PreloadMaximum, 1, _settings.VisibleCenterPreloadCount,
+        var center = NewNumberBox(_settings.VisibleCenterPreloadCount, 0, _settings.PreloadMaximum, 1,
             value => _settings.VisibleCenterPreloadCount = (int)Math.Round(value));
-        var forwardValue = WindowsSettingsCard.ValueText($"{_settings.PreloadForwardCount} 张");
-        var backwardValue = WindowsSettingsCard.ValueText($"{_settings.PreloadBackwardCount} 张");
-        var centerValue = WindowsSettingsCard.ValueText($"{_settings.VisibleCenterPreloadCount} 张");
-        OnSetting(nameof(SettingsViewModel.PreloadForwardCount), () =>
-        {
-            forward.Value = _settings.PreloadForwardCount;
-            forwardValue.Text = $"{_settings.PreloadForwardCount} 张";
-        });
-        OnSetting(nameof(SettingsViewModel.PreloadBackwardCount), () =>
-        {
-            backward.Value = _settings.PreloadBackwardCount;
-            backwardValue.Text = $"{_settings.PreloadBackwardCount} 张";
-        });
-        OnSetting(nameof(SettingsViewModel.VisibleCenterPreloadCount), () =>
-        {
-            center.Value = _settings.VisibleCenterPreloadCount;
-            centerValue.Text = $"{_settings.VisibleCenterPreloadCount} 张";
-        });
+        OnSetting(nameof(SettingsViewModel.PreloadForwardCount),
+            () => forward.Value = _settings.PreloadForwardCount);
+        OnSetting(nameof(SettingsViewModel.PreloadBackwardCount),
+            () => backward.Value = _settings.PreloadBackwardCount);
+        OnSetting(nameof(SettingsViewModel.VisibleCenterPreloadCount),
+            () => center.Value = _settings.VisibleCenterPreloadCount);
         OnSetting(nameof(SettingsViewModel.PreloadMaximum), () =>
         {
             forward.Maximum = _settings.PreloadMaximum;
@@ -96,8 +78,7 @@ internal sealed partial class WindowsSettingsPages
         void UpdateBudget()
         {
             budgetHint.Text = _settings.PerformanceBudgetInfo;
-            budgetHint.Foreground = WindowsSettingsCard.Brush(
-                WindowsSettingsCard.LevelColor(_settings.PerformanceBudgetInfoLevel));
+            budgetHint.Foreground = WindowsSettingsCard.LevelBrush(_settings.PerformanceBudgetInfoLevel);
         }
 
         OnSetting(nameof(SettingsViewModel.PerformanceBudgetInfo), UpdateBudget);
@@ -108,25 +89,29 @@ internal sealed partial class WindowsSettingsPages
         void UpdateCountHint()
         {
             countHint.Text = _settings.BitmapCacheCountInfo;
-            countHint.Foreground = WindowsSettingsCard.Brush(
-                WindowsSettingsCard.LevelColor(_settings.BitmapCacheCountInfoLevel));
+            countHint.Foreground = WindowsSettingsCard.LevelBrush(_settings.BitmapCacheCountInfoLevel);
         }
 
         OnSetting(nameof(SettingsViewModel.BitmapCacheCountInfo), UpdateCountHint);
         OnSetting(nameof(SettingsViewModel.BitmapCacheCountInfoLevel), UpdateCountHint);
 
         var cacheCards = CardGroup();
-        cacheCards.Children.Add(WindowsSettingsCard.SliderRow("原生解码线程", nativeThreads, nativeThreadsValue));
-        cacheCards.Children.Add(WindowsSettingsCard.SliderRow("软件解码线程", cpuThreads, cpuThreadsValue));
+        cacheCards.Children.Add(WindowsSettingsCard.Row(
+            "原生解码线程", "HEIF / RAW 解码并行度", NumberBoxWithUnit(nativeThreads, "线程")));
+        cacheCards.Children.Add(WindowsSettingsCard.Row(
+            "软件解码线程", "JPEG / PNG 解码并行度", NumberBoxWithUnit(cpuThreads, "线程")));
         cacheCards.Children.Add(WindowsSettingsCard.SliderRow("缓存内存上限", memorySlider, memoryValue));
         cacheCards.Children.Add(WindowsSettingsCard.SliderRow("缓存数量上限", countSlider, countValue));
-        cacheCards.Children.Add(WindowsSettingsCard.SliderRow("下一张预载数量", forward, forwardValue));
-        cacheCards.Children.Add(WindowsSettingsCard.SliderRow("上一张预载数量", backward, backwardValue));
-        cacheCards.Children.Add(WindowsSettingsCard.SliderRow("列表滚动预载数量", center, centerValue));
+        cacheCards.Children.Add(WindowsSettingsCard.Row(
+            "下一张预载数量", null, NumberBoxWithUnit(forward, "张")));
+        cacheCards.Children.Add(WindowsSettingsCard.Row(
+            "上一张预载数量", null, NumberBoxWithUnit(backward, "张")));
+        cacheCards.Children.Add(WindowsSettingsCard.Row(
+            "列表滚动预载数量", null, NumberBoxWithUnit(center, "张")));
         cacheCards.Children.Add(WindowsSettingsCard.SliderRow("滚动预载延时", delaySlider, delayValue));
 
         var formatGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
-        formatGroup.Children.Add(WindowsSettingsCard.Card(formats, new Thickness(8)));
+        formatGroup.Children.Add(WindowsSettingsCard.Card(formats, new Thickness(4)));
 
         var toggleGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         toggleGroup.Children.Add(WindowsSettingsCard.ToggleRow(
@@ -154,11 +139,10 @@ internal sealed partial class WindowsSettingsPages
         var checkbox = new CheckBox
         {
             IsChecked = format.IsEnabled,
-            Width = 28,
             MinWidth = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 8, 0),
+            Margin = new Thickness(0, 0, 12, 0),
         };
         var updating = false;
         checkbox.Checked += (_, _) =>
@@ -176,14 +160,14 @@ internal sealed partial class WindowsSettingsPages
             }
         };
 
-        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
+        var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         text.Children.Add(WindowsSettingsCard.RowTitle(format.DisplayName));
         text.Children.Add(WindowsSettingsCard.RowDescription(format.ExtensionsText));
 
         var grid = new Grid
         {
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(8, 0, 8, 0),
+            Margin = new Thickness(12, 0, 12, 0),
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });

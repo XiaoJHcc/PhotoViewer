@@ -13,6 +13,9 @@
 
         <!-- WinUI 3 原生壳:非打包(unpackaged)部署;入口由本工程自写(见 Program.cs) -->
         <UseWinUI>true</UseWinUI>
+        <!-- 根 App.xaml 只承载 XamlControlsResources(见 App.xaml);不要删:
+             没有它就没有 IXamlMetadataProvider,Fluent 控件模板(NavigationView/TitleBar/NumberBox/
+             TextBox/InfoBar/ProgressBar)会缺 TabView* / AcrylicBackgroundFillColorDefaultBrush 资源。 -->
         <WindowsPackageType>None</WindowsPackageType>
         <!-- 非打包 WinUI 必须开启 MSIX 工具链,否则不会生成名为 resources.pri 的应用资源包 -->
         <EnableMsixTooling>true</EnableMsixTooling>
@@ -31,6 +34,7 @@
     <ItemGroup>
         <PackageReference Include="Avalonia.Desktop"/>
         <PackageReference Include="Microsoft.WindowsAppSDK"/>
+        <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
         <PackageReference Include="DirectNStandard" />
         <PackageReference Include="LibHeifSharp" />
         <PackageReference Include="LibHeif.Native.win-x64" />

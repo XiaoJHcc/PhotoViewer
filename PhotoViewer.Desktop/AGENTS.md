@@ -8,7 +8,7 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 标题栏为**自绘四按钮 + 50 DIP 热区自动显隐**(不再使用系统标题栏)。主屏功能对标已完成:缩放指示器(导航图)、
 FILM-03 用户接管与"减少动态效果"、FILM-06 星级写回失败窗口内可见、外部打开/拖放文件夹、最大化/全屏/还原闭环、
 空筛选结果状态都在原生壳内实现并被 `--pv-native-smoke` 覆盖(见 [Windows P2-W §14](../Plans/native-rebuild-windows-p2.md))。
-P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**同步到共享分支 `c0567c6`**:分析栏实现 `IAnalysisHost`、消费共享 `AnalysisPresenter`/`AnalysisTile`,细节预览用共享 `DisplayCrop`,Windows 侧不再自持分析数据链与即时计算编排;增强态归 `PhotoLoadSession`;主图解码注入 `WindowsPresentationDecoder` + `WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB)(§16)。**设置窗口(W-M5)已原生**:独立窗口 + 左侧 ListView 分类 + 五页卡片,右键菜单「设置…」入口,`--pv-native-settings` 7 项定向验收通过(§17);**工具页(EXIF 详情/照片统计/DINO 调试)、色彩与 RAW(W-M7)尚未原生**;显隐与命令表沿用共享设置。
+P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**同步到共享分支 `c0567c6`**:分析栏实现 `IAnalysisHost`、消费共享 `AnalysisPresenter`/`AnalysisTile`,细节预览用共享 `DisplayCrop`,Windows 侧不再自持分析数据链与即时计算编排;增强态归 `PhotoLoadSession`;主图解码注入 `WindowsPresentationDecoder` + `WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB)(§16)。**设置窗口(W-M5)已原生并完成 Win11 视觉重构**:独立窗口 + Mica + WinUI `TitleBar` + `NavigationView` 分类 + 五页 `SettingsCard` 卡片,右键菜单「设置…」入口,`--pv-native-settings` 7 项定向验收通过(§17);**工具页(EXIF 详情/照片统计/DINO 调试)、色彩与 RAW(W-M7)尚未原生**;显隐与命令表沿用共享设置。
 已完成 / 待完成总表见 [Windows P2-W §13](../Plans/native-rebuild-windows-p2.md#13-已完成--待完成清单)。
 
 ## 文件清单
@@ -16,9 +16,10 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 | 文件 | 职责 |
 |---|---|
 | Program.cs | 入口分流(**Debug 默认原生壳**,`--legacy-ui` 退回旧壳;Release 默认旧壳,`--native` 进原生,与 macOS 同一套口径);原生分支**不创建任何 Avalonia 对象**。 |
-| Native/WindowsNativeApplication.cs | WinUI `Application`、`Application.Start` + `DispatcherQueueSynchronizationContext`、门面注入顺序(含 `WindowsPresentationDecoder` + `WindowsPresentationEncodingPolicy`)、外部打开、窗口生命周期。 |
+| App.xaml / App.xaml.cs | WinUI `Application` + 应用级 `XamlControlsResources`(Fluent 控件模板/主题资源唯一入口);`OnLaunched` 装配门面、`MainViewModel`、主窗口与外部打开。XAML 只承载资源,页面仍全 C# 构建。 |
+| Native/WindowsNativeApplication.cs | 原生入口:`Application.Start` + `DispatcherQueueSynchronizationContext`、窗口句柄状态、门面注入顺序(含 `WindowsPresentationDecoder` + `WindowsPresentationEncodingPolicy`)。Application 对象已移到 App.xaml.cs。 |
 | Native/WindowsUiServices.cs | `IUiDispatcher`(Normal → Normal、Background → Low，UI 线程后台调用也入队)、同步上下文、`IFilePickerService`(WinRT 选择器 + 窗口句柄绑定 + 过滤器模式规范化)、`IAppResourceProvider`(avares URI → Windows 头工程清单资源，支持单文件发布)。 |
-| Native/WindowsLayout.cs | **几何与配色常量唯一来源**:栏宽 116 + 1 分隔线、下拉 90×32、卡片 90×138(项距 96/144)、EXIF 50×40、评分 30×30、命令 40×40、标题栏 48/热区 50/按钮 36×32、窗口 1200×850(min 560×480)、设置窗口 960×720(min 720×560)/导航 220/页宽 800/卡片 64 与 4 圆角等。harness 反查这里。 |
+| Native/WindowsLayout.cs | **几何与配色常量唯一来源**:栏宽 116 + 1 分隔线、下拉 90×32、卡片 90×138(项距 96/144)、EXIF 50×40、评分 30×30、命令 40×40、标题栏 48/热区 50/按钮 36×32、窗口 1200×850(min 560×480)、设置窗口 960×720(min 720×560)/导航 240/标题栏 48/页宽 800/卡片 4 圆角等。harness 反查这里。 |
 | Native/WindowsWrapPanel.cs | WinUI 没有 WrapPanel;控制栏三分组"整组换行/换列 + 行内居中"依赖这个自建面板。 |
 | Native/WindowsTitleBar.cs | 自绘标题栏:标题文本 + 最小化/最大化/全屏/关闭四按钮，指针进热区显示、移开或窗口失活隐藏；覆盖层背景为 null 只让按钮吃指针，拖动区由主窗口登记为系统 caption。 |
 | Native/WindowsMainWindow.cs | 主窗口:去掉系统标题栏与系统按钮(`OverlappedPresenter.SetBorderAndTitleBar(true, false)`)、两向五分区布局、标题栏显隐与物理像素拖动区登记(caption 边界取实际按钮布局)、右键菜单、空首屏提示、窗口内状态提示、拖放/外部打开(文件夹也进文件夹模式)、键盘/滚轮 → 共享手势表、命令分发、`PhotoLoadSession` 接线(增强态不在此层)。 |
@@ -28,12 +29,12 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 | Native/WindowsNavigator.cs | 缩放指示器(导航图):右下角缩略图 + 白色可见框 + 百分比;缩略图由会话线性 RGBA16F 帧用 Skia 直接缩到导航尺寸并转 sRGB8(只处理导航像素),旧壳同款显示条件(设置开启且非适应态),不可交互。 |
 | Native/WindowsNativeAcceptance.cs | 主窗口的定向验收 partial；显式 `--pv-native-smoke` 隔离设置/数据库/日志(每轮清空自有库)并创建自有棋盘/方向素材，验证真实队列顺序、内嵌模型 SHA256 与 DirectML 双输出、两向三尺寸往返 resize、标题栏自动显隐下的 caption 契约、无 EXIF 源尺寸、物理 100% Full 热替换、导航图、**NumberPad3→SetRating3 映射**、八方向 EXIF(主图交换链四角回读 + 导航图四角采样 + 方向 6 `DisplayCrop` 象限与增强帧朝向)与控制栏取值、FILM-03 接管/减少动态效果、FILM-06 写回失败提示、外部打开非首张定位、**相似聚类三态与提取全部**、**分析栏细节预览/直方图/四张诊断瓦片/即时计算/准星重算**（含两向"瓦片等边长"断言）、**增强预览开关与增强帧诊断重算**、**分析栏已提取(DB 派生)路径**、最大化/全屏/还原与关闭释放(共 24 项)。输出 `release/native-win-acceptance/checks.json`，失败退出码 1；不代表完整 W-M6 或跨屏色彩验收。 |
 | Native/WindowsNativeSettingsPresenter.cs | `INativeSettingsPresenter`：设置工作副本（`NativeSettingsSession`）、单例窗口、关闭回写；只由共享 `NativeWindowPresenter` 调用。 |
-| Native/WindowsSettingsWindow.cs | 设置窗口壳：960×720（min 720×560）、左侧 ListView 分类、右侧五页、系统标题栏深色着色、按主窗口 DPI 在激活前定尺寸、关闭事件。`--pv-native-settings-hold` 保持窗口供人工目视。 |
-| Native/WindowsSettingsCard.cs | 设置行原语：页面/分组标题、卡片、开关行、滑块行、提示、分隔线、把手、图标按钮；颜色沿用 `WindowsLayout` 深色 token。 |
+| Native/WindowsSettingsWindow.cs | 设置窗口壳：960×720（min 720×560）、Mica 背景 + WinUI `TitleBar`（齿轮图标、透明 caption 按钮）+ `NavigationView` 分类（240）+ 五页 `SettingsCard` 内容、按主窗口 DPI 在激活前定尺寸、关闭事件。`--pv-native-settings-hold` 保持窗口供人工目视。 |
+| Native/WindowsSettingsCard.cs | 设置行原语：页面/分组标题、`CommunityToolkit.WinUI.Controls.SettingsCard` 卡片、开关/滑块行、提示、分隔线、把手、图标按钮；颜色/字号/圆角全部取 WinUI 主题资源（`CardBackgroundFillColorDefaultBrush`、`TextFillColorPrimaryBrush`、`ControlCornerRadius` 等），不再维护第二套灰度。 |
 | Native/WindowsSettingsList.cs | 可排序列表：`ListView`（`ReorderMode=Enabled`）+ **UIElement 行**（本工程容器内容注入不生效）；拖后把行顺序回写共享集合。 |
 | Native/WindowsHotkeyRecorder.cs | 快捷键录制：窗口根捕获键/滚轮/中键，Esc 取消、Delete 清空、冲突重算；录制态吞键。 |
-| Native/WindowsSettingsPages.cs / .File / .Preview / .Control / .Exif / .Ai | 五页内容与共享 VM 订阅：格式勾选/重排、同名合并、缓存/预载滑块、缩放预设（指数滑条）、布局与快捷键表、EXIF 显示项、AI 阈值/最多数量/即时计算/清库。 |
-| Native/WindowsSettingsAcceptance.cs | 显式 `--pv-native-settings`：隔离设置下验证五分类、深色、尺寸、开关/滑条回写、列表重排回写、录制开始/取消、手势显示、关闭回写（7 项），输出 `settings-checks.json`。 |
+| Native/WindowsSettingsPages.cs / .File / .Preview / .Control / .Exif / .Ai | 五页内容与共享 VM 订阅：格式勾选/重排、同名合并、缓存/预载（NumberBox + Slider）、缩放预设（NumberBox）、布局与快捷键表、EXIF 显示项、AI 阈值/最多数量（NumberBox）/即时计算/清库（InfoBar）。 |
+| Native/WindowsSettingsAcceptance.cs | 显式 `--pv-native-settings`：隔离设置下验证深色/Mica、`NavigationView` + `TitleBar` + `NumberBox` + `InfoBar` 已加载、五分类、尺寸、开关/数值框/滑条回写、列表重排回写、录制开始/取消、手势显示、关闭回写（7 项），输出 `settings-checks.json`。 |
 | Native/WindowsFilterBar.cs | 排序方式 / 升降序 / 星级筛选 + 筛选后计数;名称与取值语义与旧壳一致(`FILTER-01`)。 |
 | Native/WindowsFilmstripView.cs | 胶片条:`ItemsRepeater` + 卡片池 + 可见区上报 + 350ms 三次缓出定位(`FILM-01/02/04`);用户接管(点选/滚轮/拖动滚动条/触摸)撤销在途动画与排队请求,系统"减少动态效果"直接到终点(`FILM-03`);空筛选结果显示简短状态。 |
 | Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名(DisplayName) / 拍摄时间(含完整时间 tooltip) / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。"已缓存"描边单独一层压在缩略图**之上**:80 宽的图片按 Uniform 铺满槽位,画在槽位里的描边左右两条边会被图片盖掉。 |
@@ -55,36 +56,28 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 - **`app.manifest` 必须自己声明 DPI 感知**:本工程自备清单会**替换** Windows App SDK 的默认清单,漏掉
   `dpiAwareness=PerMonitorV2` 时进程是 DPI-unaware(`GetProcessDpiAwareness=0`),在 150% 屏上整套 UI 被系统
   按位图拉伸 —— 表现为控件发虚、边距与窗口对不齐。旧壳 Avalonia 自行设置 DPI 感知,两者不冲突。
-- **UI 全部用 C# 代码构建,不写 `.xaml`**(与 macOS 壳的程序化 AppKit 一致)。
+- **UI 全部用 C# 代码构建,不写页面 `.xaml`**;根 `App.xaml` 只承载应用级 `XamlControlsResources` 引导,不承载任何页面控件布局(与 macOS 壳的程序化 AppKit 一致)。
 - **WinAppSDK 框架包自带 ONNX Runtime(1.23.x)**,与本工程的 `Microsoft.ML.OnnxRuntime.DirectML`(native 1.24.x)撞名;
   csproj 用 SDK 的 `MicrosoftWindowsAppSDKFilesExcluded` 钩子显式排除框架侧副本,详见 csproj 注释 —— 不要删。
-- 版本集中在 `Directory.Packages.props`(`Microsoft.WindowsAppSDK`)。
+- 版本集中在 `Directory.Packages.props`(`Microsoft.WindowsAppSDK`、`CommunityToolkit.WinUI.Controls.SettingsControls`)。
 - DINO 模型在 Windows 头工程显式作为 `EmbeddedResource` 编入，原生不读取松散文件或初始化 Avalonia；迁移期旧壳仍保留原 AvaloniaResource，同源模型会有两份打包副本（原始模型约 86.6 MB），随双壳依赖拆分再统一资源归属。
 
-## WinUI 非 XAML 工程硬约束(实测)
+## WinUI 工程硬约束(实测;UI 仍全 C# 构建)
 
-- `Application.Resources` 在构造期不可访问(读/写都抛 `0x8000FFFF`),只能在 `OnLaunched` 之后用。
-- **不要**并入 `XamlControlsResources`:非 XAML 工程里构造即抛找不到 `AcrylicBackgroundFillColorDefaultBrush`;
-  WinUI 1.8 的控件样式由框架自带。
-- 深色外观把 `RequestedTheme = ElementTheme.Dark` 设在**根元素**上。原生壳已去掉系统标题栏(`OverlappedPresenter.SetBorderAndTitleBar(hasBorder:true, hasTitleBar:false)`),系统最小/最大/关闭按钮不再存在,`AppWindow.TitleBar` 配色也就不再需要设置。
+- **`App.xaml` 是 Fluent 控件模板的硬依赖**:`App.xaml` 作为 `ApplicationDefinition` 合并 `XamlControlsResources`,并设 `Application.RequestedTheme="Dark"`。没有它时 WinUI 只加载基础模板,`NavigationView` / `TitleBar` / `NumberBox` / `TextBox` / `RichEditBox` / `InfoBar` / `ProgressBar` 首次布局会缺 `TabViewScrollButtonBackground` / `TabViewButtonBackground` 或 `AcrylicBackgroundFillColorDefaultBrush`。**不要删除或绕过 App.xaml**,也不要退回 ListView / Slider / 自绘 Border 的替代实现;页面内容仍全部在 C# 中构建。
+- `Application.Resources` 只有在 `App.InitializeComponent()` 之后可用;XAML 引导之前直接读/写会抛 `0x8000FFFF`。
+- 深色外观:`App.xaml` 设 `Application.RequestedTheme="Dark"`(Mica 与主题资源取深色),窗口根元素再设 `ElementTheme.Dark`。主窗口仍为自绘标题栏;设置窗口用 `MicaBackdrop` + `ExtendsContentIntoTitleBar` + `TitleBar` + `SetTitleBar`,caption 按钮背景设透明与 Mica 融合。
 - **`OverlappedPresenter` 没有全屏 API**:全屏 = `SetBorderAndTitleBar(false, false)` + `Maximize()`,退出时 `SetBorderAndTitleBar(true, false)` + `Restore()`。
 - **自绘标题栏的按钮悬停色要改写主题键**:WinUI 的 `Button` 模板用 `ButtonBackground*` 画刷覆盖 `Background`,只设 `Background` 会被默认亮色顶掉;按元素写 `button.Resources["ButtonBackgroundPointerOver"]` 等键才生效。覆盖层根元素背景必须为 **null** —— 设成透明画刷会吃掉顶部 48 DIP 的全部指针,筛选条与照片手势全被吞掉。
-- **`ProgressBar` 在本工程不可用**:进虚拟化卡片会 `E_FAIL(0x80004005)`;即使独立放置,首次布局也会抛
-  `XamlParseException`(找不到 `TabViewScrollButtonBackground`)→ 进程 stowed exception `0xC000027B` 直接退出。
-  一律用两条 `Border`(底槽 + 按比例填充)自绘进度,卡片加载态也是静态细条。`DebugSettings.XamlResourceReferenceFailed`
-  已接到启动日志,以后再遇到资源缺失可直接定位。
-- **W-M5 实测：下列 WinUI 控件在本工程（非 XAML / 非打包 / 自包含）同样加载失败**：`NavigationView`、`TitleBar`、
-  `NumberBox`、`TextBox`、`RichEditBox` 首次布局抛 `XamlParseException`（缺 `TabViewScrollButtonBackground` /
-  `TabViewButtonBackground`）或 `E_FAIL(0x80004005)`；`InfoBar` 同样缺 TabView 资源。设置窗口因此用
-  **`ListView` 导航 + 系统标题栏配色 + `Slider` 数值项 + `Border` 状态条**。`ContentDialog` / `ListView` /
-  `ComboBox` / `Slider` / `ToggleSwitch` / `CheckBox` / `Button` / `TextBlock` / `FontIcon` 正常。
-- `AppWindowTitleBar.PreferredHeightOption` 在本机 150% 下抛 `0x8007139F`（构造期与激活后都失败），但
-  `BackgroundColor` / `Button*Color` 可用；设置窗口只设颜色，不调标题栏高度。
-- **内容岛尺寸**：`AppWindow.Resize` 在窗口激活后再调用不会让 XAML 内容重新布局（`ActualWidth` 停在旧值）；
-  设置窗口在 `Activate()` **前**用主窗口 DPI（`GetDpiForWindow(主窗口句柄)`）定物理尺寸，首帧即按 960 DIP 布局。
-- **ListView 自定义行**：`ContainerContentChanging` 里替换 `ItemContainer.Content` 不显示（`Handled=true` 也一样）；
-  可行做法是 `ItemsSource` 直接放 `UIElement` 行，事件里只改容器 `Padding/MinHeight/对齐`。拖拽重排后按行顺序回写共享集合。
-- `XamlControlsResources` 在 `OnLaunched` 之后合并也抛 `AcrylicBackgroundFillColorDefaultBrush`（与构造期一致），不要尝试用它补齐上述控件。
+- **`ProgressBar` 在 App.xaml 后可用**:旧结论来自早期缺 `App.xaml`/`XamlControlsResources` 的工程状态;主屏进度条仍保留自绘 Border(卡片内布局/视觉定制),设置页未使用 `ProgressBar`。
+- **设置窗口原生控件已验证**:`NavigationView`、`TitleBar`、`NumberBox`、`InfoBar`、`TextBox`、`ContentDialog`、`ListView`、`ComboBox`、`Slider`、`ToggleSwitch`、`CheckBox`、`Button`、`FontIcon` 均可用;没有独立文本输入页,`TextBox` 只出现在 `NumberBox` 内部。
+- **设置卡片**:用 `CommunityToolkit.WinUI.Controls.SettingsControls` 的 `SettingsCard`;整块列表/滑块行必须 `ContentAlignment=Vertical` + `HorizontalContentAlignment=Stretch`(默认 Right 会按自然宽度右对齐,列表缩到右侧);列表卡 `Padding=4`。颜色/字号/圆角全部取 WinUI 主题资源,不再新增灰度。
+- **`NavigationView` 内容岛**:WinUI 默认给内容区 1px 圆角边框;设置页要平铺 Mica 时覆盖 `NavigationViewContentGridBorderThickness=0`、`NavigationViewContentGridCornerRadius=0`、`NavigationViewContentBackground=透明`。WinUI 1.8 的 `NavigationView` **没有 `PaneBackground` 属性**(编译错误);左栏背景走主题资源。
+- **`SettingsCard` 的 `Header` 不撑满**:需要右对齐的数值/滑块放进 `Content`(垂直布局)再右对齐,不要把需要撑满的 Grid 放进 `Header`。
+- **`NumberBox`**:`SpinButtonPlacementMode=Inline`,宽度 140(`WindowsLayout.SettingsNumberBoxWidth`),否则 `33.333` 一类值会被内联按钮挤掉;缩放预设按 1 位小数显示。
+- **`TitleBar` 与 caption**:`ExtendsContentIntoTitleBar=true` + `Window.SetTitleBar(titleBar)`,`AppWindow.TitleBar` 背景/按钮背景设透明;`PreferredHeightOption` 仍抛 `0x8007139F`,不设置。
+- **内容岛尺寸**:`AppWindow.Resize` 在窗口激活后再调用不会让 XAML 内容重新布局(`ActualWidth` 停在旧值);设置窗口在 `Activate()` **前**用主窗口 DPI(`GetDpiForWindow(主窗口句柄)`)定物理尺寸,首帧即按 960 DIP 布局。
+- **ListView 自定义行**:`ContainerContentChanging` 里替换 `ItemContainer.Content` 不显示(`Handled=true` 也一样);可行做法是 `ItemsSource` 直接放 `UIElement` 行,事件里只改容器 `Padding/MinHeight/对齐`。拖拽重排后按行顺序回写共享集合。
 - `ScrollViewer.ZoomMode` 必须设 `Disabled`,否则虚拟化内容的测量用无限尺寸。
 - `Border` / `ScrollViewer` 在 WinUI 3 里是 **sealed**,不能继承;自定义容器只能继承 `Panel`、`ContentControl` 或 `Grid`
   (导航图因此是 `Grid` + 内部 `Border`,不是 `Border` 子类)。
@@ -117,8 +110,9 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 - 原生壳:`dotnet run --project PhotoViewer.Desktop -c Debug -- --native`(可跟图片路径或文件夹路径直接打开)。
 - 主屏 P3 入口:右键菜单"分析栏/缩略图栏/控制栏"勾选、筛选条"相似聚类"开关、控制栏"分析栏/增强预览"按钮(快捷键 Ctrl+Oem… 见设置;增强默认 `E`)。
 - 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke`）；当前设备 150% 缩放(PerMonitorV2)已过，**24 项**覆盖两向三尺寸 resize、caption 契约、物理 100% 升级、导航图、NumberPad3→SetRating3、八方向 EXIF(主图四角回读 + 导航图四角 + 方向 6 `DisplayCrop`/增强帧朝向)、FILM-03、FILM-06、外部打开定位、相似聚类(空态→提取全部→列表→点选)、分析栏(预览/直方图/即时计算/准星 cosine/两向 + 已提取 DB 派生路径)、增强预览(含增强帧诊断重算)、窗口四态与文件选择器；200%/175% DPI、真实跨屏、真实相机八方向素材、系统色彩、增强态 + 分析栏同时开启的长时间稳定性与真实鼠标手感仍待验；工具页、W-M7 色彩/RAW 与 W-M6 专项 harness 仍未做。
-- 设置窗口验收:`--pv-native-settings`(隔离设置/数据库,7 项:深色/五分类/尺寸/开关+滑条/列表重排/录制开始取消/手势显示/关闭回写,输出 `settings-checks.json`);`--pv-native-settings-hold` 保持窗口供截图与人工目视。**真实拖拽排序、真实键鼠录制、清库确认与预设增删仍待作者手验**。
+- 设置窗口验收:`--pv-native-settings`(隔离设置/数据库,7 项:深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar 已加载、五分类/尺寸、开关+数值框+滑条回写、列表重排、录制开始取消、手势显示、关闭回写,输出 `settings-checks.json`);`--pv-native-settings-hold` 保持窗口供截图与人工目视。**真实拖拽排序、真实键鼠录制、清库确认与预设增删仍待作者手验**。
 - 与旧壳对拍的方法(本轮用的那一套):窗口设成**同一物理尺寸**截图后按 1.5 比 DIP 换算。抓图脚本必须先把**自身**设成 Per-Monitor-V2 感知,否则 Win32 会把所有矩形按 96/dpi 虚拟化,两壳数据不可比。
 - 辅助脚本(均在 `bin/`,被忽略不进库):`runcheck.ps1`(启动 + 存活性/窗口 + 抓窗口位图 + 收尾)、`compare/wincheck.ps1`(按指定物理尺寸抓窗口/客户区位图)、`compare/profile.py` / `bands.py`(按像素剖面比对两壳几何)。
   `wincheck.ps1` 的 `-HoverY`(直接 `SetCursorPos`)只能移动光标,**不会**触发 WinUI 的 `PointerMoved` —— 要验标题栏自动显隐必须用真实输入注入(本轮用 KimiCU 的 click/drag)。
+- 原生壳单文件发布尚未打通(2026-10-17 Debug 复核:产物缺 `PhotoViewer.Desktop.pri`,`Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 通过)。Release 仍默认旧 Avalonia 壳,切换 native Release 前需单独修 PRI/运行时打包。
 - 发布:仍走 [DEV.md](../DEV.md) 的 `Publish Windows EXE (Release)`。
