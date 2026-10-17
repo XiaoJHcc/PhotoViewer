@@ -27,6 +27,15 @@ public static class ColorEngine
     public static DecodedImage ToScRgb16(DecodedImage source)
         => Convert(source, PixelEncoding.RgbaF16, ImageColorSpace.LinearSrgb, LinearSrgb);
 
+    /// <summary>转换为线性 scRGB16，并显式指定源尺寸与待应用方向（供原生主图解码器：8 位解码路径不携带这两项）。</summary>
+    /// <param name="source">已解码且携带色彩标签的图像，像素为未旋转状态。</param>
+    /// <param name="sourceWidth">源（未旋转）全分辨率宽。</param>
+    /// <param name="sourceHeight">源（未旋转）全分辨率高。</param>
+    /// <param name="orientation">EXIF 方向 1-8，由渲染层消费，不做像素旋转。</param>
+    /// <returns>须由调用方释放的浮点图像。</returns>
+    public static DecodedImage ToScRgb16(DecodedImage source, int sourceWidth, int sourceHeight, int orientation)
+        => Convert(source, PixelEncoding.RgbaF16, ImageColorSpace.LinearSrgb, LinearSrgb, sourceWidth, sourceHeight, orientation);
+
     /// <summary>转换为 BGRA8 sRGB，保留旧分析与模型输入所需的字节布局。</summary>
     /// <param name="source">已解码图像。</param>
     /// <returns>须由调用方释放的 sRGB 图像。</returns>
@@ -35,18 +44,38 @@ public static class ColorEngine
 
     /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径（含 8 位 Display P3 展示产物）。</summary>
     public static DecodedImage ToAnalysisSrgb8(DecodedImage source)
+        => RotateForAnalysis(ToSrgb8(source), source.Orientation);
+
+    /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，方向由调用方给出（供原生壳：8 位解码路径不带方向）。</summary>
+    /// <param name="source">已解码的未旋转图像。</param>
+    /// <param name="orientation">EXIF 方向 1-8。</param>
+    /// <returns>须由调用方释放的 sRGB 图像。</returns>
+    public static DecodedImage ToAnalysisSrgb8(DecodedImage source, int orientation)
+        => RotateForAnalysis(ToSrgb8(source), orientation);
+
+    /// <summary>按 EXIF 方向旋转已转换的图像；方向 1 直通。</summary>
+    private static DecodedImage RotateForAnalysis(DecodedImage converted, int orientation)
     {
-        var converted = ToSrgb8(source);
-        var (rotationCw, mirror) = ImageOrientationMapping.ToDisplay(source.Orientation);
+        var (rotationCw, mirror) = ImageOrientationMapping.ToDisplay(orientation);
         if (rotationCw == 0 && !mirror) return converted;
         try { return SkiaImageCodec.ApplyOrientation(converted, rotationCw, mirror) ?? throw new InvalidOperationException("分析图方向变换失败"); }
         finally { converted.Release(); }
     }
 
     /// <summary>在 pinned 像素间进行色域与位深转换，失败显式抛出并归还目标缓冲。</summary>
-    private static unsafe DecodedImage Convert(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace, SKColorSpace targetSpace)
+    /// <param name="source">源图像。</param>
+    /// <param name="encoding">目标像素编码。</param>
+    /// <param name="colorSpace">目标色彩标签。</param>
+    /// <param name="targetSpace">目标 skcms 色彩空间。</param>
+    /// <param name="sourceWidth">源全分辨率宽;null 表示沿用源图像元数据。</param>
+    /// <param name="sourceHeight">源全分辨率高;null 表示沿用源图像元数据。</param>
+    /// <param name="orientation">EXIF 方向;null 表示沿用源图像元数据。</param>
+    private static unsafe DecodedImage Convert(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace, SKColorSpace targetSpace,
+        int? sourceWidth = null, int? sourceHeight = null, int? orientation = null)
     {
-        if (source.Encoding == encoding && source.ColorSpace == colorSpace)
+        // 元数据不可变:要求覆盖元数据时不能走"原格式直通"快路径。
+        if (sourceWidth == null && sourceHeight == null && orientation == null &&
+            source.Encoding == encoding && source.ColorSpace == colorSpace)
         {
             if (!source.TryAcquire()) throw new ObjectDisposedException(nameof(source));
             return source;
@@ -81,7 +110,10 @@ public static class ColorEngine
                     throw new InvalidOperationException("skcms 像素色彩转换失败");
             }
             return DecodedImage.CreatePooled(buffer, source.Width, source.Height, stride, encoding,
-                colorSpace, source.SourceWidth, source.SourceHeight, source.Orientation);
+                colorSpace,
+                sourceWidth ?? source.SourceWidth,
+                sourceHeight ?? source.SourceHeight,
+                orientation ?? source.Orientation);
         }
         catch
         {

@@ -53,6 +53,11 @@ public static class SimilarityService
 
         maxResults = Math.Clamp(maxResults, 1, HardMaxResults);
 
+        // 锚点指纹:同次曝光的 RAW/HIF/JPG 共享指纹,候选池里必有它的伴侣文件,
+        // 这些"自己"必须剔除,否则面板会出现 100% 相似的自己(HIF 当锚点、ARW 当候选)。
+        var anchorFingerprint = await DinoFeatureCache.GetFingerprintAsync(current, ct).ConfigureAwait(false);
+        if (anchorFingerprint == null) return Array.Empty<SimilarityItem>();
+
         var anchor = await DinoFeatureCache.GetOrComputeAsync(current, ct).ConfigureAwait(false);
         if (anchor == null) return Array.Empty<SimilarityItem>();
 
@@ -61,15 +66,23 @@ public static class SimilarityService
 
         // 候选池"只读缓存 + miss 后台补算"：当前调用只看数据库已有的项，保证面板响应时间稳定；
         // 新滑到的图片在被查看时由 anchor 路径带入数据库，下一次就能参与聚类。
-        var tasks = new List<Task>(pool.Count);
-        foreach (var candidate in pool)
+        // 并发度必须封顶:大文件夹(数千张)一张 Task 一个候选会把连接池和 UI 线程一起压垮,
+        // 表现就是打开/切换相似聚类面板后整窗卡死。
+        var options = new ParallelOptions
         {
-            if (ReferenceEquals(candidate, current)) continue;
-
-            tasks.Add(Task.Run(async () =>
+            MaxDegreeOfParallelism = Math.Clamp(Environment.ProcessorCount / 2, 2, 8),
+            CancellationToken = ct,
+        };
+        try
+        {
+            await Parallel.ForEachAsync(pool, options, async (candidate, token) =>
             {
-                ct.ThrowIfCancellationRequested();
-                var vector = await DinoFeatureCache.TryReadAsync(candidate, ct).ConfigureAwait(false);
+                if (ReferenceEquals(candidate, current)) return;
+
+                var fingerprint = await DinoFeatureCache.GetFingerprintAsync(candidate, token).ConfigureAwait(false);
+                if (fingerprint == null || fingerprint == anchorFingerprint) return;
+
+                var vector = await DinoFeatureCache.ReadAsync(fingerprint, token).ConfigureAwait(false);
                 if (vector == null) return;
 
                 var score = CosineToUnit(Cosine(anchor, vector));
@@ -77,12 +90,7 @@ public static class SimilarityService
                 {
                     results.Add(new SimilarityItem(candidate, score));
                 }
-            }, ct));
-        }
-
-        try
-        {
-            await Task.WhenAll(tasks).ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

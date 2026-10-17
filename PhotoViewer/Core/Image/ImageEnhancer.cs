@@ -52,7 +52,8 @@ public static class ImageEnhancer
 
         EqualizeLuminance(pixels, byteCount, bpp, rIdx, bIdx);
 
-        return DecodedImage.CreatePooled(pixels, w, h, stride, source.Encoding);
+        return DecodedImage.CreatePooled(pixels, w, h, stride, source.Encoding,
+            source.ColorSpace, source.SourceWidth, source.SourceHeight, source.Orientation);
     }
 
     /// <summary>

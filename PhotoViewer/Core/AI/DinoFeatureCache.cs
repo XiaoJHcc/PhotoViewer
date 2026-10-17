@@ -107,13 +107,38 @@ public static class DinoFeatureCache
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        var fingerprint = await ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
+        var fingerprint = await GetFingerprintAsync(file, ct).ConfigureAwait(false);
         if (fingerprint == null) return null;
+
+        return await ReadAsync(fingerprint, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 按指纹读已有特征(进程缓存 → 数据库),不触发推理;未命中返回 null。
+    /// </summary>
+    /// <param name="fingerprint">照片指纹</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>L2 归一化向量,未入库时为 null</returns>
+    public static async Task<float[]?> ReadAsync(string fingerprint, CancellationToken ct = default)
+    {
         if (_memoryCache.TryGetValue(fingerprint, out var cached)) return cached;
 
+        ct.ThrowIfCancellationRequested();
         var vector = await ReadFromDatabaseAsync(fingerprint).ConfigureAwait(false);
         if (vector != null) _memoryCache[fingerprint] = vector;
         return vector;
+    }
+
+    /// <summary>
+    /// 计算指纹(依赖 EXIF;为此确保 EXIF 已加载)。无法取到稳定时间戳时返回 null。
+    /// 供相似聚类在读取向量前先做"同次曝光/伴侣文件"剔除。
+    /// </summary>
+    /// <param name="file">照片文件</param>
+    /// <param name="ct">取消令牌</param>
+    public static async Task<string?> GetFingerprintAsync(ImageFile file, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return await ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
     }
 
     /// <summary>

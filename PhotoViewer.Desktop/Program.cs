@@ -22,11 +22,30 @@ sealed class Program
     // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
     // yet and stuff might break.
     /// <summary>
-    /// Windows 桌面入口。
-    /// 这里会先接收系统传入的图片路径，再启动 Avalonia 主界面。
+    /// Windows 桌面入口。Debug 默认原生壳(<c>--legacy-ui</c> 退出);Release 默认旧壳(<c>--native</c> 进入)。
+    /// 与 macOS 同一套分流口径;原生分支不创建任何 Avalonia 对象。
     /// </summary>
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp()
+    public static void Main(string[] args)
+    {
+        var native = args.Contains("--native");
+#if DEBUG
+        native = !args.Contains("--legacy-ui");
+#endif
+        if (native)
+        {
+            Native.WindowsNativeApplication.Run(args);
+            return;
+        }
+
+        RunLegacy(args);
+    }
+
+    /// <summary>
+    /// 启动迁移期旧壳(Avalonia):先接收系统传入的图片路径,再启动 Avalonia 主界面。
+    /// </summary>
+    /// <param name="args">命令行参数</param>
+    private static void RunLegacy(string[] args) => BuildAvaloniaApp()
         .AfterSetup(_ =>
         {
             HeifLoader.Initialize(new LibHeifDecoder());
