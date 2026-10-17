@@ -2,6 +2,8 @@
 
 I1 起：Debug 默认 **UIKit 原生壳**（不创建任何 Avalonia 对象），旧壳经启动参数 `--legacy-ui` 或 NSUserDefaults 开关 `PVLegacyUI`（`defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`）回退；Release 默认旧壳，`--native` 启动原生。最低系统版本 **iOS 17**。执行清单见 [Plans/native-rebuild-phase-ipad.md](../Plans/native-rebuild-phase-ipad.md)，程序化验收状态与其 §7 一致，作者手验步骤见 [Plans/native-rebuild-phase-ipad-acceptance.md](../Plans/native-rebuild-phase-ipad-acceptance.md)；I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）、I4 输入（上下文菜单、硬件键盘、滚轮、轻扫翻页、拖入、设置写回刷新）与 **I5 P3 功能（分析栏 / 相似聚类 / 工具页 / 增强预览）** 已落地：控制栏与主图菜单的 P3 入口按 SCOPE-01 解禁，分析栏按共享几何真正参与分区。
 
+**真机覆盖（2026-10-18）**：iPhone 17（iOS 27.0.1）与 iPad mini（iOS 26.6）均已验证可安装并以原生壳启动（iPhone 启动日志 `window visible 402×874`）。工具链为 **Xcode 27.1 + .NET SDK 10.0.402 + ios workload 27.0.10722**；该 workload 的精确 Xcode 校验不认 27.1，两个 Apple head 的 csproj 设 `ValidateXcodeVersion=false`，见 [DEV.md](../DEV.md) iOS 节。**主屏分区仍按 iPad 调校**：iPhone 竖屏走列布局（文件栏 116 点 + 主图），尚未做 iPhone 专用适配；iPhone 的 USB-C 数据链路对 USB 3.0 线缆存在枚举失败（实测换 USB 2.0 线后正常），排查时优先怀疑线材。
+
 **启动参数来源**：iOS 不填充托管 `Main(string[] args)`（实测为空数组），一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch <udid> <bundleId> <args…>` 会传入）。
 
 **Apple 共享源**：`../PhotoViewer.Apple/` 纯源目录由 csproj `<Compile Include="..\PhotoViewer.Apple\**\*.cs"/>` 链接编译（展示解码器、Metal 渲染核心、视口/胶片栏/控制栏/分析栏几何、验收判定、命令符号与手势映射），与 [PhotoViewer.Mac](../PhotoViewer.Mac/AGENTS.md) 共用同一份，见 [其手册](../PhotoViewer.Apple/AGENTS.md)。本壳只保留 UIKit 宿主。改共享源需同时复核 Mac 的 `--pv-native-*` 回归。

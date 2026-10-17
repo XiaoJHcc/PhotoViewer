@@ -8,6 +8,12 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!--
+          .NET for macOS 27.0.10722 声明需要 Xcode 27.0，_ValidateXcodeVersion 做 major.minor 精确比较，
+          App Store 提供的 Xcode 27.1 会被直接判为不匹配。与 PhotoViewer.iOS 同口径关闭该精确版本校验；
+          待发布支持 Xcode 27.1 的 workload 后移除本项。
+        -->
+        <ValidateXcodeVersion>false</ValidateXcodeVersion>
     </PropertyGroup>
 
     <ItemGroup>

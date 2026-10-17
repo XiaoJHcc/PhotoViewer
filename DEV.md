@@ -87,7 +87,9 @@
 
 > **首次真机运行须信任开发者证书**：安装后如果应用无法启动，在 iPhone 进入 **设置 → 通用 → VPN 与设备管理** 找到对应的开发者帐号，点击**信任**后重新执行 **Install iOS** 即可。
 
-> **多台设备**：执行 Debug iOS / Install iOS 时会弹窗显示所有已配置的设备名供选择（默认 XJH-mini7）。如需增减设备，在 `.vscode/tasks.json` 的 `inputs[iosDevice].options` 数组中编辑。
+> **多台设备**：执行 Debug iOS / Install iOS 时会弹窗显示所有已配置的设备名供选择（默认 XJH-mini7，另一项为 iPhone 17 `XJH-17`）。如需增减设备，在 `.vscode/tasks.json` 的 `inputs[iosDevice].options` 数组中编辑。
+
+> **工具链版本（2026-10-18）**：iOS/macOS 构建使用 **Xcode 27.1 + .NET SDK 10.0.402 + ios/macos workload 27.0.10722**。该 workload 声明需要 Xcode 27.0，SDK 的 `_ValidateXcodeVersion` 做 major.minor 精确比较，会把 27.1 判为不匹配；两个 head 的 csproj 因此设了 `ValidateXcodeVersion=false`（27.1 已实测构建、安装、在 iPhone 17 / iOS 27.0.1 与 iPad mini / iOS 26.6 上启动正常）。发布支持 Xcode 27.1 的 workload 后应删除该属性，恢复版本校验。
 
 ---
 
