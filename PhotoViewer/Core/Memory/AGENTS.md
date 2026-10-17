@@ -1,10 +1,10 @@
 # Core/Memory — 统一内存管控(MemoryGovernor)
 
-> 模块内手册。压力响应矩阵与跨模块联动(预取节制/缓存收窄/批量索引暂停)见根 `AGENTS.md` §5 与 [Plans/native-rebuild-phase-1.md](../../../Plans/native-rebuild-phase-1.md)。
+> 模块内手册。压力响应矩阵与跨模块联动(预取节制/缓存收窄/批量索引暂停)见[架构文档](../../../Design/architecture.md) §5 与 [Plans/native-rebuild-phase-1.md](../../../Plans/native-rebuild-phase-1.md)。
 
 `namespace PhotoViewer.Core.Memory`
 
-| File | Responsibility |
+| 文件 | 职责 |
 |---|---|
 | [MemoryGovernor.cs](MemoryGovernor.cs) | 统一内存管家(静态门面 + 平台注入预算源):client 登记表、压力状态机(周期探测 `ProbeInterval` 2s + OS 事件双源,进入/退出阈值迟滞 5%、好转逐级退)、解码准入 `TryAcquire`(**P0 豁免放行但记账;非 P0 预算不足直接拒绝不排队**;Warning 拒 P2/P3、Critical 拒一切非 P0)、在途账本(`AdmissionPermit.SetActual` 解码后复核、Dispose 归还)、压力事件快照 JSONL(`SettingsPathHelper` 目录下 `memory-events.jsonl`,级别迁移与拒批落盘供闪退回放)、`RecoveryHold`(Normal 恢复后 30s 渐进观察期)。**升级级联**:`SetLevel` 升档时对所有登记 client 同步 `Trim(level)`(契约:不阻塞)。已登记 client:BitmapLoader(统一 LRU)、AnalysisResultCache、DinoFeatureCache、ShakeFlagService、DinoFeatureExtractor(ONNX session)、ImageViewModel(增强位图)、ImageBufferPool(像素缓冲池)。**准入调用点**(P1-M3):BitmapLoader 主图解码、ThumbnailService 缩略图、BitmapPrefetcher 预取(经解码内准入)、FolderFeatureIndexer(DINO 缩略图 P3 + CV 大图 P3)。未初始化时(工具/测试进程)准入全放行、恒 Normal。 |
 | [IMemoryClient.cs](IMemoryClient.cs) | 内存客户端契约:`Name` / `FootprintBytes` / `Trim(level)`。实现须线程安全、Trim 不阻塞(探测线程上调用)。 |

@@ -1,10 +1,10 @@
 # ViewModels/Main — 主窗口 VM
 
-> 模块内手册。VM 间联动(MainViewModel 怎么组合子 VM、文件源事件如何驱动文件栏)写在根 `AGENTS.md` §4 UI 模块对应。Helpers / Controls 在根 §6。
+> 模块内手册。VM 间联动(MainViewModel 怎么组合子 VM、文件源事件如何驱动文件栏)见[架构文档](../../../Design/architecture.md)；Helpers / Controls 见同文档 §6。
 
 `namespace PhotoViewer.ViewModels.Main`
 
-P2 原生模式：`MainViewModel.UsesNativePresentation` 使旧 ImageViewModel 的位图/缩放展示订阅退场；共享文件、筛选、评分及设置不变。加载由 Core/Image/PhotoLoadSession 编排，原生层持视口状态。P3 起分析栏与相似聚类在原生壳可用：分析栏编排逻辑在 Core/AI/AnalysisPresenter（旧 VM、macOS/iPad 与 Windows 原生壳共用，各自只做位图格式适配），相似聚类面板注释见下。跨模块链路见根 §5.6/§5.7。
+P2 原生模式：`MainViewModel.UsesNativePresentation` 使旧 ImageViewModel 的位图/缩放展示订阅退场；共享文件、筛选、评分及设置不变。加载由 Core/Image/PhotoLoadSession 编排，原生层持视口状态。P3 起分析栏与相似聚类在原生壳可用：分析栏编排逻辑在 Core/AI/AnalysisPresenter（旧 VM、macOS/iPad 与 Windows 原生壳共用，各自只做位图格式适配），相似聚类面板注释见下。跨模块链路见[架构文档](../../../Design/architecture.md) §5.6/§5.7。
 
 | 模块 | ViewModel | View | Notes |
 |---|---|---|---|

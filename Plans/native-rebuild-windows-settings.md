@@ -250,7 +250,7 @@ Window 960×720（min 720×560，Mica，标准边框 + 系统 caption）
 ## 14. 文档同步（实现收尾必须一起改）
 
 - `PhotoViewer.Windows/AGENTS.md`：文件清单、WinUI 硬约束、设置窗口验收。
-- 根 `AGENTS.md` §5.8：设置窗口原生链路一句话 + 入口 + 根因结论。
+- [Design/architecture.md](../Design/architecture.md) §5.8：设置窗口原生链路一句话 + 入口 + 根因结论。
 - [native-rebuild-windows-p2.md](native-rebuild-windows-p2.md)：§0.2 控件事实、§6 W-M5、§13.2 #9、§17。
 - [Design/ui-contract.md](../Design/ui-contract.md)：SETTINGS-01/02/03 Windows 列（NavigationView / Mica / SettingsCard / 整行拖）。
 - `PhotoViewer/ViewModels/Settings/AGENTS.md`：去掉「无法加载控件」的旧结论。

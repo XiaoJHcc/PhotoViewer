@@ -1,10 +1,10 @@
 # Core/Exif — 元数据读写
 
-> 模块内手册。评分回写到 RAW 的端到端流程(键盘 1~5 → XmpWriter → 筛选刷新)见根 `AGENTS.md` §5 关键流程。
+> 模块内手册。评分回写到 RAW 的端到端流程(键盘 1~5 → XmpWriter → 筛选刷新)见 [架构文档](../../../Design/architecture.md) §5 关键流程。
 
 `namespace PhotoViewer.Core`(Exif 文件沿用根命名空间)
 
-| File | 模块 | Responsibility |
+| 文件 | 模块 | 职责 |
 |---|---|---|
 | [ExifLoader.cs](ExifLoader.cs) | 元数据读取 | EXIF/XMP 顶层读取编排；子任务委派给 `ExifMetadataGrouper` / `SonyMakernoteParser`。 |
 | [ExifModels.cs](ExifModels.cs) | 元数据模型 | `ExifData` / `MetadataGroup` / `MetadataTag` POCO。 |

@@ -1,6 +1,6 @@
 # Core/Color — 色彩解释与转换
 
-`namespace PhotoViewer.Core.Color`；无 UI 框架引用。原生主图流程见根 AGENTS.md §5.6。
+`namespace PhotoViewer.Core.Color`；无 UI 框架引用。原生主图流程见[架构文档](../../../Design/architecture.md) §5.6。
 
 | 文件 | 职责 |
 |---|---|

@@ -1,6 +1,6 @@
 # Core/AI — DINOv3 特征 + CV 网格 + 相似聚类
 
-> 模块内手册。跨模块联动(批量索引被谁触发、抖动徽标怎么回填到 UI、清库按钮如何级联)写在根 `AGENTS.md` §5 关键流程。
+> 模块内手册。跨模块联动(批量索引被谁触发、抖动徽标怎么回填到 UI、清库按钮如何级联)见 [架构文档](../../../Design/architecture.md) §5 关键流程。
 
 `namespace PhotoViewer.Core.AI`
 
@@ -8,7 +8,7 @@ P2 原生索引适配：FolderFeatureIndexer 从主缓存取得 RgbaF16 时，�
 
 > 二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](../../../Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](../../../Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。
 
-| File | 模块 | Responsibility |
+| 文件 | 模块 | 职责 |
 |---|---|---|
 | [DinoModelResources.cs](DinoModelResources.cs) | 模型资源常量 | ONNX 资源 URI、输入规格(518/ImageNet mean-std)、I/O 端口名、`PatchSize`/`PatchGrid`/`PatchTokenCount`、`ModelId`(当前 `dinov3_vits16_f32_518_v2`，含显示朝向/解码版本变化)。改动此处需同步两个 Python 工具。 |
 | [DinoFeatureExtractor.cs](DinoFeatureExtractor.cs) | DINOv3 推理门面 | ONNX Runtime 静态门面;`ConfigureSession(Action<SessionOptions>)` 接受平台注入的 GPU EP(Windows DirectML / macOS+iOS CoreML / Android NNAPI),未注入时 fallback CPU;延迟建 session + `EnsureDualOutputSchema` 早失败;**输入边长按 ONNX 元数据自适应(`DetectInputSize`,产品 518 默认,升级梯 1024 免改代码)**;`ExtractAsync` 只取 L2 归一化的 CLS 向量;`ExtractDualAsync(..., includePatches)` 同时返回 patch token(网格随输入边长),供诊断工具页与 indexer 消费。`UsesGpuExecutionProvider` 暴露当前会话是否成功注册 GPU EP(注册失败/回退 CPU 后为 false),供验收钩子与诊断读取。 |

@@ -4,6 +4,6 @@
 
 `namespace PhotoViewer.Core.Tools`
 
-| File | 模块 | Responsibility |
+| 文件 | 模块 | 职责 |
 |---|---|---|
 | [PhotoStatsService.cs](PhotoStatsService.cs) | 照片数据统计服务 | 递归扫描多文件夹，读取等效焦距与星级，导出 CSV。仅 Windows 启用（`OperatingSystem.IsWindows()`）。 |

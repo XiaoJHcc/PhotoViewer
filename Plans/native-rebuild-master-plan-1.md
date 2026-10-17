@@ -200,6 +200,8 @@ MemoryGovernor(Core/Platform 或 Core/Memory,静态门面 + 平台注入)
 ### Phase 4 — Windows(WinUI3 + DXGI FP16 + ACM/烘焙回退 + LibRawDecoder)
 ### Phase 5 — Android(Views + GLSurfaceView P3 探测 + SAF 迁移)
 
+> 2026-10-18 立项：执行清单见 [native-rebuild-phase-android.md](native-rebuild-phase-android.md)，作者验收见 [native-rebuild-phase-android-acceptance.md](native-rebuild-phase-android-acceptance.md)。已定决策：Views + Material 3（不用 Compose）、主题固定深色且禁用 DynamicColors、7 个纯几何文件提为 `PhotoViewer.Shared/` 供三壳共用、`SurfaceView` + 自有 EGL14 做 P3 探测（`GLSurfaceView` 不暴露色彩空间属性）、设置走半屏 Bottom Sheet、SAF 取代宽存储权限。
+
 ### Phase 6 — 退役 Avalonia + iOS App Store 上架
 删四平台 Avalonia 壳、共享 UI 工程、适配层;`Directory.Packages.props` 移除 Avalonia 全系;iOS 合规冲刺(权限字符串、隐私清单、TestFlight、审核材料);README/DEV/AGENTS 全面改写。
 

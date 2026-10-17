@@ -80,7 +80,7 @@
 ### I6 验收与文档
 - UIKit 验收驱动器 `--pv-native-*`（模拟器跑几何/布局/胶片栏/工具栏/分析/相似；devicectl 传参真机跑内存与 Full 热替换），只写自有测试副本与独立设置/数据库。
 - 作者真机验收：色彩、画质、触摸手感（缩放/惯性/翻页/胶片栏）、键盘与触控板、拖入、旋转与多任务。
-- 文档：ui-contract iOS 列与新增 iOS 差异条目；新建 `PhotoViewer.iOS/AGENTS.md`、`PhotoViewer.Apple/` 文件表；根 AGENTS.md §4/§5（新增 iOS 原生链路小节）、DEV.md 任务、handoff 状态与验证矩阵。
+- 文档：ui-contract iOS 列与新增 iOS 差异条目；新建 `PhotoViewer.iOS/AGENTS.md`、`PhotoViewer.Apple/` 文件表；[Design/architecture.md](../Design/architecture.md) §4/§5（新增 iOS 原生链路小节）、DEV.md 任务、handoff 状态与验证矩阵。
 - **状态：程序化部分完成（I2–I5 各阶段随里程碑落地）；作者手验待执行**，清单见 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)，逐项状态见 §7。
 
 ## 4. 验收门
@@ -112,13 +112,13 @@
 | 2026-10-17 | 托管 `Main(string[] args)` 在 iOS 上为空数组 | 启动参数一律读 `NSProcessInfo.ProcessInfo.Arguments`（`simctl launch` 会传入） |
 | 2026-10-17 | ONNX Runtime 原生库在 iOS 模拟器上类型初始化失败（真机 P1-M5 正常） | 已由下方 2026-10-17 "ONNX 推理在 iOS 上模拟器与真机都失败" 行处理（静态链接 + `DllImportResolver`）；CoreML EP 仍不受支持，推理走 CPU |
 | 2026-10-17 | 原生壳不加载 Avalonia，无法用 avares 资源读 DINO 模型 | 模型另作 BundleResource 拷入 app bundle（与 Mac 同口径；包内出现 avares + bundle 两份，约 86 MB） |
-| 2026-10-17 | **I2 编码协商落地**：Core 新增 `PixelEncoding.Rgba8` + `IPresentationEncodingPolicy`（平台注入）+ `IDisplayLoadSignal`；`IPresentationImageDecoder` 改为按请求编码解码；编码**不进缓存键**（同档至多一条，长边足够且保真度不低于需求即复用，否则原地替换），准入与 GPU 记账按实际编码字节 | 见根 AGENTS §5.7；Mac 九套 `--pv-native-*` 复跑全 PASS |
+| 2026-10-17 | **I2 编码协商落地**：Core 新增 `PixelEncoding.Rgba8` + `IPresentationEncodingPolicy`（平台注入）+ `IDisplayLoadSignal`；`IPresentationImageDecoder` 改为按请求编码解码；编码**不进缓存键**（同档至多一条，长边足够且保真度不低于需求即复用，否则原地替换），准入与 GPU 记账按实际编码字节 | 见[架构文档](../Design/architecture.md) §5.7；Mac 九套 `--pv-native-*` 复跑全 PASS |
 | 2026-10-17 | **8 位 P3 立方体的原色边界**：Adobe RGB 红原色在扩展线性 sRGB 下需 1.3985（F16 档实测 1.387），8 位 Display P3 装不下、只能钳到 P3 红原色（≈1.2145，由共享 P3→scRGB 矩阵与立方体上界解析给出）。sRGB/P3 原色不受影响 | 属 8 位 P3 编码的既有边界，不做隐藏处理；`AppleAcceptanceChecks.ColorExpectation` 按编码取不同下界并在报告里记录实测值 |
 | 2026-10-17 | **视口未知时不得改写代理目标**：`PhotoLoadSession.UpdateViewport` 原会把 0 尺寸视口钳成 1 像素目标，解码出 1×1 的"合格代理"（`IsProxy` 判据是"小于源尺寸"，1×1 满足）且因 `IsProxy` 为假永不重载 → 主图恒为一片平均色 | 已修：`UpdateViewport` 忽略尺寸 < 1 的上报；iOS 根控制器改为"先上报视口再 `SetFile`"（`StartSession`） |
 | 2026-10-17 | **UIScrollView 程序化缩放会被偏移动画取消**：双击放大时先 `SetZoomScale(animated:)` 再 `SetContentOffset(animated:)`，实测缩放停在原值只动偏移（偏移 setter 中断在途缩放动画） | 改为 `ZoomToRect`（缩放+偏移一次动画），缩回适应只需 `SetZoomScale(1, animated:)` |
 | 2026-10-17 | **iOS 启动参数可能在根控制器上屏前就选中首图**（`--pv-open` 在壳初始化期投递），若在 `ViewWillAppear` 才订阅 `CurrentFile` 会漏掉该次变化 → 永不加载 | 根控制器改为**构造期**订阅（会话/VM/文件夹），布局完成后再启动会话 |
 | 2026-10-17 | **`--pv-native-photo-check` 需要"比 2× 视口更大"的素材**才能出现真实代理档：1200×800 夹具在 iPad 上 2× 目标 ≈ 4532，解码器不放大 → 直接是满尺寸产物（`IsProxy` 为假），代理/F16 路径根本没被走到 | 夹具加 `color-p3-large.jpg`（6000×4000 Display P3 色卡，缺一即 FAIL），代理档与 Full 档在此素材上才成立。生成法：按 `Tools/generate-native-color-fixtures.py` 的色块布局放大 5 倍（PIL，`icc_profile=` 读 `/System/Library/ColorSync/Profiles/Display P3.icc`、quality=100/subsampling=0） |
-| 2026-10-17 | **I3 共享几何抽取**：`MacMainWindow.Layout()` 的两向分区（文件栏/分隔线/主图/分析栏/控制栏，含"隐藏即让空间给主图"）与筛选条五个控件几何是纯尺寸数学，抽到共享 `MainScreenLayout`（并给 `FilmstripGeometry` 加 `CenterOffset`，Mac 定位改为共用） | Mac 复跑 `--pv-native-smoke/layout/filmstrip/toolbar` 全 PASS，零行为变化；见根 AGENTS §5.7 与 [PhotoViewer.Apple/AGENTS.md](../PhotoViewer.Apple/AGENTS.md) |
+| 2026-10-17 | **I3 共享几何抽取**：`MacMainWindow.Layout()` 的两向分区（文件栏/分隔线/主图/分析栏/控制栏，含"隐藏即让空间给主图"）与筛选条五个控件几何是纯尺寸数学，抽到共享 `MainScreenLayout`（并给 `FilmstripGeometry` 加 `CenterOffset`，Mac 定位改为共用） | Mac 复跑 `--pv-native-smoke/layout/filmstrip/toolbar` 全 PASS，零行为变化；见[架构文档](../Design/architecture.md) §5.7 与 [PhotoViewer.Apple/AGENTS.md](../PhotoViewer.Apple/AGENTS.md) |
 | 2026-10-17 | **iPadOS 26 拒绝程序化改方向**：`RequestGeometryUpdate(UIWindowSceneGeometryPreferencesIOS)` 返回 `The current windowing mode does not allow for programmatic changes to interface orientation.` | 两向布局改用显式 `--pv-layout-mode row\|col` + 与真实尺寸/安全区一致的布局数学核对（`--pv-native-layout-check`），并新增 `--pv-layout-mode` 供两向截图；真机旋转与手感留给作者手验 |
 | 2026-10-17 | **`CADisplayLink` 不 retain 自己的 target**：`CADisplayLink.Create(Action)` 的回调可能在动画途中被回收，350ms 定位动画静默停住（现象：同一流程偶发"一次动一次不动"） | 胶片栏自持 `DisplayLinkTarget`（`[Export("handleDisplayLink:")]`）改用选择器入口；验收断言中间帧与终点，动画停住即 FAIL |
 | 2026-10-17 | **`UICollectionView.NumberOfItemsInSection` 在 `reloadData` 之后、下一次布局之前返回过期条目数（实测 0）**：自定义布局据此算文档长度会把文档压成视口大小，紧接着的偏移约束（列表变短只做边界限制）会把刚发起的显式定位清零，上一张/下一张看起来没反应 | 布局条目数改由业务筛选列表提供（`iOSFilmstripLayout.CountProvider`），数据源与布局同源 |
