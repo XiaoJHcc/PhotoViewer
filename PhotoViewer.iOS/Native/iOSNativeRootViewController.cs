@@ -1,6 +1,7 @@
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -48,6 +49,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UIView _detailHighlight = new();
     private readonly UILabel _hintLabel = new();
     private readonly UILabel _hintDetail = new();
+    /// <summary>导航图宿主：非适应态时显示在主图区右下角（半透明 #222、圆角 6）。</summary>
+    private readonly UIView _navigationHost = new();
+    /// <summary>导航图小图（GPU 小目标渲染 → sRGB8 → PNG）。</summary>
+    private readonly UIImageView _navigationImage = new();
+    /// <summary>导航图内的可见区域白框（1 点描边）。</summary>
+    private readonly UIView _navigationFrame = new();
+    /// <summary>当前物理缩放百分比标签。</summary>
+    private readonly UILabel _zoomLabel = new();
+    /// <summary>增强计算中的提示（真机解释器模式下 24MP 档需要约 1–2 秒，必须给可见反馈）。</summary>
+    private readonly UILabel _enhanceBusy = new();
+    private UIImage? _navigationBitmap;
+    private DecodedImage? _navigationSource;
     private readonly iOSContextMenuDelegate _photoMenu;
     private readonly UIDropInteraction _drop;
     private readonly HashSet<NSObject> _editingTextInputs = new(ReferenceEqualityComparer.Instance);
@@ -104,6 +117,16 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UIView DetailHighlightView => _detailHighlight;
     /// <summary>主图绿框当前是否可见。</summary>
     internal bool DetailHighlightVisible => !_detailHighlight.Hidden;
+    /// <summary>导航图宿主（验收读取可见性、位置与尺寸）。</summary>
+    internal UIView NavigationHost => _navigationHost;
+    /// <summary>导航图小图视图（验收核对与导航几何一致的显示尺寸）。</summary>
+    internal UIImageView NavigationImageView => _navigationImage;
+    /// <summary>导航图可见区域白框（验收核对矩形与共享 NavigationViewport 一致）。</summary>
+    internal UIView NavigationFrameView => _navigationFrame;
+    /// <summary>物理缩放百分比标签（验收核对文本）。</summary>
+    internal UILabel ZoomLabel => _zoomLabel;
+    /// <summary>增强计算中的提示标签（验收核对可见性）。</summary>
+    internal UILabel EnhanceBusyLabel => _enhanceBusy;
     /// <summary>主图分区沿主轴的长度（行布局取高度，列布局取宽度），供验收核对栏位显隐与让位。</summary>
     /// <param name="row">是否行布局。</param>
     /// <returns>主轴长度。</returns>
@@ -176,6 +199,37 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _detailHighlight.Layer.BorderWidth = 3;
         _detailHighlight.Hidden = true;
         _photoPane.AddSubview(_detailHighlight);
+        // 导航图（缩略图 + 可见框 + 百分比）：缩略图来自 GPU 小目标渲染（与 Mac 同一份共享代码路径），
+        // 只在非适应态显示；点按/拖动导航图把照片居中到该位置（触屏增强，Mac 无此交互）。
+        _navigationHost.BackgroundColor = UIColor.FromWhiteAlpha(.13f, .78f);
+        _navigationHost.Layer.CornerRadius = 6;
+        _navigationHost.ClipsToBounds = true;
+        _navigationHost.Hidden = true;
+        _navigationImage.ContentMode = UIViewContentMode.ScaleToFill;
+        _navigationFrame.BackgroundColor = UIColor.Clear;
+        _navigationFrame.UserInteractionEnabled = false;
+        _navigationFrame.Layer.BorderColor = UIColor.White.CGColor;
+        _navigationFrame.Layer.BorderWidth = 1;
+        _zoomLabel.TextColor = UIColor.White;
+        _zoomLabel.Font = UIFont.SystemFontOfSize(12, UIFontWeight.Semibold);
+        _zoomLabel.TextAlignment = UITextAlignment.Center;
+        _navigationHost.AddSubview(_navigationImage);
+        _navigationHost.AddSubview(_navigationFrame);
+        _navigationHost.AddSubview(_zoomLabel);
+        _photoPane.AddSubview(_navigationHost);
+        _navigationHost.AddGestureRecognizer(new UIPanGestureRecognizer(OnNavigationPan));
+        _navigationHost.AddGestureRecognizer(new UITapGestureRecognizer(OnNavigationPan));
+        // 增强计算提示：与旧壳同一语义（开关立即生效、增强图随后替换），只是把等待显式化。
+        _enhanceBusy.Text = "计算中…";
+        _enhanceBusy.Font = UIFont.SystemFontOfSize(13, UIFontWeight.Medium);
+        _enhanceBusy.TextColor = UIColor.White;
+        _enhanceBusy.TextAlignment = UITextAlignment.Center;
+        _enhanceBusy.BackgroundColor = UIColor.FromWhiteAlpha(.13f, .85f);
+        _enhanceBusy.Layer.CornerRadius = 11;
+        _enhanceBusy.ClipsToBounds = true;
+        _enhanceBusy.UserInteractionEnabled = false;
+        _enhanceBusy.Hidden = true;
+        _photoPane.AddSubview(_enhanceBusy);
         _photoPane.AddGestureRecognizer(new UITapGestureRecognizer(OnPhotoTapped));
         // 主图上下文菜单：手指长按与触控板/鼠标辅助点按同一入口；滚动/捏合/双击由各自的识别器负责，互不抢占。
         _photoPane.AddInteraction(new UIContextMenuInteraction(_photoMenu));
@@ -453,7 +507,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         finally { _layingOut = false; }
     }
 
-    /// <summary>摆好主图区的空态提示与错误详情（设置入口已由长按上下文菜单承担）。</summary>
+    /// <summary>摆好主图区的空态提示、错误详情与导航图（设置入口已由长按上下文菜单承担）。</summary>
     private void LayoutOverlays()
     {
         if (!IsViewLoaded || _panes.Photo.Width <= 0) return;
@@ -464,6 +518,66 @@ internal sealed class iOSNativeRootViewController : UIViewController
         double hintTop = Math.Max(0, ((double)pane.Height - (hasDetail ? 80 : 20)) / 2);
         _hintLabel.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
         _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
+        const double busyWidth = 96, busyHeight = 28;
+        _enhanceBusy.Frame = new CGRect(Math.Max(0, ((double)pane.Width - busyWidth) / 2),
+            Math.Max(0, (double)pane.Height - busyHeight - 24), busyWidth, busyHeight);
+        UpdateNavigationIndicator();
+    }
+
+    /// <summary>
+    /// 导航图（与 Mac 同语义）：非适应态且设置开启时显示在主图区右下角，避开安全区与控制栏/分析栏；
+    /// 小图只在展示图引用变化（切图/换档/增强）时用 GPU 小目标渲染重出，可见框与百分比每个视口回调都更新。
+    /// </summary>
+    private void UpdateNavigationIndicator()
+    {
+        if (!IsViewLoaded) return;
+        bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
+        _navigationHost.Hidden = !show;
+        if (!show) return;
+        var size = _photo.NavigationSize;
+        double width = (double)size.Width, height = (double)size.Height;
+        const double padding = 8;
+        double hostWidth = width + padding * 2;
+        double hostHeight = height + padding * 2 + 8 + 15 + 2;
+        var pane = _photoPane.Bounds;
+        // 主图分区可能铺到屏幕边缘：右下角的让位按安全区与本分区的交叠部分计算。
+        var safe = View!.SafeAreaInsets;
+        double rightInset = Math.Max(0, (double)safe.Right - (double)_photoPane.Frame.X);
+        double bottomInset = Math.Max(0, (double)safe.Bottom - ((double)View!.Bounds.Height - _photoPane.Frame.GetMaxY()));
+        _navigationHost.Frame = new CGRect(
+            Math.Max(0, (double)pane.Width - hostWidth - 12 - rightInset),
+            Math.Max(0, (double)pane.Height - hostHeight - 12 - bottomInset), hostWidth, hostHeight);
+        _navigationImage.Frame = new CGRect(padding, padding, width, height);
+        _zoomLabel.Frame = new CGRect(padding, height + padding * 2, width, 15);
+        if (!ReferenceEquals(_navigationSource, _session.Image))
+        {
+            using var frame = _photo.CaptureLinearFrame(navigation: true);
+            using var srgb = ColorEngine.ToSrgb8(frame);
+            var previous = _navigationBitmap;
+            _navigationBitmap = iOSSymbols.CreateThumbnail(srgb);
+            _navigationImage.Image = _navigationBitmap;
+            previous?.Dispose();
+            _navigationSource = _session.Image;
+        }
+        var rectangle = _photo.NavigationViewport;
+        _navigationFrame.Frame = new CGRect(padding + (double)rectangle.X, padding + (double)rectangle.Y,
+            (double)rectangle.Width, (double)rectangle.Height);
+        _zoomLabel.Text = $"{_photo.PhysicalScale * 100:0.##}%";
+    }
+
+    /// <summary>
+    /// 导航图点按/拖动：把触点对应的归一化图像点移到视口中心（仍经滚动视图位移，视口由回调派生）。
+    /// 这是触屏相对 Mac 的增强——Mac 的导航图只展示、不接受点按。
+    /// </summary>
+    /// <param name="recognizer">导航图手势识别器。</param>
+    private void OnNavigationPan(UIGestureRecognizer recognizer)
+    {
+        if (recognizer.State is UIGestureRecognizerState.Cancelled or UIGestureRecognizerState.Failed) return;
+        var size = _photo.NavigationSize;
+        var point = recognizer.LocationInView(_navigationImage);
+        double u = (double)size.Width > 0 ? Math.Clamp((double)point.X / (double)size.Width, 0, 1) : .5;
+        double v = (double)size.Height > 0 ? Math.Clamp((double)point.Y / (double)size.Height, 0, 1) : .5;
+        _photo.CenterOnNormalizedPoint(u, v);
     }
 
     /// <summary>共享布局矩形 → UIKit frame。</summary>
@@ -881,6 +995,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         UpdateFocusPoint();
         _photo.SetImage(_session.Image);
+        _enhanceBusy.Hidden = !_session.IsEnhancing;
         UpdateHint();
         LayoutOverlays();
         ApplyDetailHighlight();
@@ -894,12 +1009,16 @@ internal sealed class iOSNativeRootViewController : UIViewController
             ? new CGPoint(position.FocusX / (double)position.ImageWidth, position.FocusY / (double)position.ImageHeight) : null;
     }
 
-    /// <summary>把主图物理视口与细节需求上报共享会话（代理目标 = 2× 物理视口，物理 100% 触发 Full 热替换）。</summary>
+    /// <summary>把主图物理视口与细节需求上报共享会话（代理目标 = 2× 物理视口，物理 100% 触发 Full 热替换），
+    /// 并同步导航图的可见框与百分比（视口变化是唯一驱动源）。</summary>
     private void ReportViewport()
-        => _session.UpdateViewport(
+    {
+        _session.UpdateViewport(
             (double)_photo.Bounds.Width * _photo.TraitCollection.DisplayScale,
             (double)_photo.Bounds.Height * _photo.TraitCollection.DisplayScale,
             _photo.NeedsFull || _main.IsAnalysisViewVisible);
+        UpdateNavigationIndicator();
+    }
 
     /// <summary>空态提示文案（空目录、可打开文件夹或加载失败）。</summary>
     /// <returns>提示文本；有照片且无错误时为空串。</returns>

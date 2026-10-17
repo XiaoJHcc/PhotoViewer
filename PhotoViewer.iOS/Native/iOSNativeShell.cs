@@ -65,6 +65,7 @@ public static class iOSNativeShell
         // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳 ImageViewModel。
         StressFlipDriver.MaybeStart(main, _session);
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeGestureCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeInputCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);

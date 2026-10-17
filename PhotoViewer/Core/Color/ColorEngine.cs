@@ -42,6 +42,12 @@ public static class ColorEngine
     public static DecodedImage ToSrgb8(DecodedImage source)
         => Convert(source, PixelEncoding.Bgra32, ImageColorSpace.Srgb, Srgb);
 
+    /// <summary>转换为 8 位 Display P3（RGBA 字节序、sRGB 传递曲线），供 8 位展示档在保色处理后回到原展示编码。</summary>
+    /// <param name="source">已解码图像（通常是刚处理过的 sRGB8 副本）。</param>
+    /// <returns>须由调用方释放的 8 位 Display P3 图像。</returns>
+    public static DecodedImage ToDisplayP3(DecodedImage source)
+        => Convert(source, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3, DisplayP3);
+
     /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径（含 8 位 Display P3 展示产物）。</summary>
     public static DecodedImage ToAnalysisSrgb8(DecodedImage source)
         => RotateForAnalysis(ToSrgb8(source), source.Orientation);

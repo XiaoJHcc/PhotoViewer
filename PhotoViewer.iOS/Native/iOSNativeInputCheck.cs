@@ -348,8 +348,9 @@ internal static class iOSNativeInputCheck
         if (list.FilteredFiles.IndexOf(main.CurrentFile!) != index) throw new InvalidOperationException("阈值判定后当前照片被意外切换");
         lines.Add("PASS 轻扫阈值：水平位移不足或纵向占优时不翻页");
 
-        await UiDispatcher.InvokeAsync(() => photo.ZoomToPhysical(1));
-        await WaitAsync(() => !photo.IsFit, "放大态");
+        // 小夹具在适应态的物理倍率已大于 1，物理 100% 反而在适应态之下；这里用相对放大进入放大态。
+        await UiDispatcher.InvokeAsync(() => photo.ZoomBy(2));
+        await WaitAsync(() => !photo.IsFit && (double)photo.ScrollView.ZoomScale > 1.5, "放大态");
         if (photo.ApplySwipe(-160, 0, -900)) throw new InvalidOperationException("放大态横向拖动仍触发了翻页");
         if (list.FilteredFiles.IndexOf(main.CurrentFile!) != index) throw new InvalidOperationException("放大态拖动切换了当前照片");
         lines.Add("PASS 放大态：横向拖动保持平移语义，不翻页");

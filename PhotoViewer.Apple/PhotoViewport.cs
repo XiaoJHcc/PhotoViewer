@@ -129,6 +129,10 @@ public sealed class PhotoViewport
         }
     }
 
+    /// <summary>同一张照片的纹理替换（代理 ↔ Full 热替换）：只更新纹理宽度并复核细节需求，绝不改动缩放/平移/适应状态。</summary>
+    /// <param name="textureWidth">新纹理宽度（未应用 EXIF 方向）；0 表示没有纹理。</param>
+    public void ApplyTexture(int textureWidth) => TextureWidth = textureWidth;
+
     /// <summary>纹理被移除（无照片）时清除纹理宽度；保留上一次源尺寸供导航图占位，与移除前的行为一致。</summary>
     public void ClearTexture() => TextureWidth = 0;
 

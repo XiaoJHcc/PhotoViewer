@@ -99,6 +99,33 @@ internal static class NativeAnalysisAcceptance
                         $"关闭增强后未还原原片：平均差 {restoreDifference.Mean:0.##}、最大差 {restoreDifference.Max}");
                 checks.Add($"enhance: GPU frame changed (mean {difference.Mean:0.##}, max {difference.Max}, {enhancedBytes} bytes) and restored exactly");
             }
+            // 5b) 增强不得改变方向：EXIF 6 竖拍素材增强前后源尺寸/方向与导航帧四角分类必须一致
+            //     （方向丢失时画面会转 90°，四角红/蓝/白/灰的排列随之改变）。
+            string portrait = Path.Combine(output, "enhance-portrait-6.jpg");
+            EnhancementAcceptance.CreateOrientationJpeg(portrait, 6);
+            await main.FolderVM.OpenImageAsync(new MacFileRef(portrait));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(portrait) && window.Session.Image != null, "竖拍素材上屏");
+            await SettleAsync(window);
+            var portraitOriginal = window.Session.Image ?? throw new InvalidOperationException("竖拍素材展示图为空");
+            string[] signatureBefore;
+            using (var navigation = CaptureNavigationSrgb(window)) signatureBefore = EnhancementAcceptance.CornerSignatures(navigation);
+            window.Execute("ToggleEnhance");
+            await WaitAsync(() => window.Session.EnhancedDisplay, "竖拍素材增强图就绪");
+            await SettleAsync(window);
+            var portraitEnhanced = window.Session.Image ?? throw new InvalidOperationException("竖拍素材增强图为空");
+            if (portraitEnhanced.Orientation != portraitOriginal.Orientation
+                || portraitEnhanced.SourceWidth != portraitOriginal.SourceWidth
+                || portraitEnhanced.SourceHeight != portraitOriginal.SourceHeight)
+                throw new InvalidOperationException(
+                    $"增强改写了照片几何：方向 {portraitOriginal.Orientation}→{portraitEnhanced.Orientation}、" +
+                    $"源 {portraitOriginal.SourceWidth}×{portraitOriginal.SourceHeight}→{portraitEnhanced.SourceWidth}×{portraitEnhanced.SourceHeight}");
+            string[] signatureAfter;
+            using (var navigation = CaptureNavigationSrgb(window)) signatureAfter = EnhancementAcceptance.CornerSignatures(navigation);
+            if (!signatureBefore.SequenceEqual(signatureAfter))
+                throw new InvalidOperationException($"增强后四角分类改变（画面被旋转/转置）：{string.Join(",", signatureBefore)} → {string.Join(",", signatureAfter)}");
+            window.Execute("ToggleEnhance");
+            await WaitAsync(() => !window.Session.IsEnhanced, "竖拍素材增强关闭");
+            checks.Add($"enhance orientation: EXIF {portraitEnhanced.Orientation} portrait keeps source size and corner layout ({string.Join("/", signatureAfter)})");
             NativeSnapshots.SaveMain(window, Path.Combine(output, "native-analysis-row.png"));
 
             // 6) 列布局：瓦片纵向排列，交叉轴尺寸 = 边长 + 20。
@@ -178,6 +205,15 @@ internal static class NativeAnalysisAcceptance
     private static DecodedImage CaptureSrgbFrame(MacMainWindow window)
     {
         using var linear = window.Photo.CaptureLinearFrame();
+        return ColorEngine.ToSrgb8(linear);
+    }
+
+    /// <summary>抓取导航图尺寸的 GPU 帧并归一为 BGRA8 sRGB（照片铺满小图，四角就是照片四角）。</summary>
+    /// <param name="window">原生主窗口。</param>
+    /// <returns>由调用方释放的 BGRA8 导航帧。</returns>
+    private static DecodedImage CaptureNavigationSrgb(MacMainWindow window)
+    {
+        using var linear = window.Photo.CaptureLinearFrame(navigation: true);
         return ColorEngine.ToSrgb8(linear);
     }
 

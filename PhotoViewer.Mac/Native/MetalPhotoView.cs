@@ -13,6 +13,8 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     private readonly PhotoViewport _viewport = new();
     private readonly MetalPhotoRenderer _renderer;
     private CGPoint _lastDrag;
+    /// <summary>已上传的展示产物引用：同一对象再次上屏（会话状态通知）时只重绘，不重复上传整张纹理。</summary>
+    private DecodedImage? _textureSource;
 
     /// <summary>视口变化通知，加载会话据此决定代理尺寸与 Full 升级。</summary>
     public event Action? ViewportChanged;
@@ -91,6 +93,20 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。编码支持范围由渲染核心判定。</summary>
     public void SetImage(DecodedImage? image)
     {
+        if (image == null)
+        {
+            _textureSource = null;
+        }
+        else if (ReferenceEquals(image, _textureSource))
+        {
+            // 会话只是状态通知（例如"增强计算中"）：同一份产物已在纹理里，重绘即可。
+            DrawFrame();
+            return;
+        }
+        else
+        {
+            _textureSource = image;
+        }
         _viewport.BeginImageChange();
         _renderer.SetTexture(image);
         if (image == null) _viewport.ClearTexture();

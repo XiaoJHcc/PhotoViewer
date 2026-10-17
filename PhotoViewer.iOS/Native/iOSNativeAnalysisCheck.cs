@@ -222,6 +222,10 @@ internal static class iOSNativeAnalysisCheck
                     lines.Add($"PASS 增强预览：低对比度素材上屏像素明显变化（平均差 {difference.Mean:0.##}、最大差 {difference.Max}，{enhancedBytes} 字节），关闭后完全还原");
                 }
 
+                // 七之二、增强不得改变方向：orientation-6/8 真实夹具（F16 代理）与一张 4000×3000 的
+                // EXIF 6 竖拍素材（8 位 P3 Full）都要保持"源尺寸/方向 + 导航帧四角分类"不变。
+                await VerifyEnhancedOrientationAsync(root, main, session, directory, workspace, lines);
+
                 // 八、手指点按定格绿框：再点或点空白解除。
                 await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
                 await WaitAsync(() => root.AnalysisPane.DetailPreviews.Count > 0, "细节预览瓦片就绪");
@@ -279,6 +283,87 @@ internal static class iOSNativeAnalysisCheck
             await File.WriteAllLinesAsync(report, lines);
             Console.Error.WriteLine("[NativeSmoke] FAIL analysis " + exception);
         }
+    }
+
+
+    /// <summary>
+    /// 增强预览不得旋转照片：对 EXIF 方向 6/8 的夹具分别核对增强前后
+    /// ① 展示产物元数据（Orientation / SourceWidth / SourceHeight）一致；
+    /// ② 导航帧四角颜色分类（红/蓝/白/灰）排列一致——方向丢失或被转置时排列必变；
+    /// ③ 增强确实生效（帧像素有变化）。再补一张 4000×3000、EXIF 6 的竖拍素材走 8 位 P3 Full 档。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="session">展示会话。</param>
+    /// <param name="directory">夹具目录（含 orientation-6/8.jpg）。</param>
+    /// <param name="workspace">App 自建工作目录（生成大竖拍素材用）。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyEnhancedOrientationAsync(iOSNativeRootViewController root, MainViewModel main,
+        PhotoLoadSession session, string directory, string workspace, List<string> lines)
+    {
+        foreach (string name in new[] { "orientation-6.jpg", "orientation-8.jpg" })
+        {
+            string path = Path.Combine(directory, name);
+            if (!File.Exists(path)) throw new FileNotFoundException($"增强方向回归需要 {name}", path);
+            await main.FolderVM.OpenImageAsync(new iOSFileRef(path));
+            await WaitAsync(() => main.CurrentFile?.Name == name && session.Image != null, $"{name} 上屏");
+            await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+            await SettleAsync(root);
+            var original = session.Image ?? throw new InvalidOperationException($"{name} 展示图为空");
+            string[] before;
+            using (var frame = CaptureNavigationSrgb(root)) before = EnhancementAcceptance.CornerSignatures(frame);
+            await UiDispatcher.InvokeAsync(() => { if (!session.IsEnhanced) session.ToggleEnhanced(); });
+            await WaitAsync(() => session.EnhancedDisplay, $"{name} 增强图就绪");
+            await SettleAsync(root);
+            var enhanced = session.Image ?? throw new InvalidOperationException($"{name} 增强图为空");
+            if (enhanced.Orientation != original.Orientation || enhanced.SourceWidth != original.SourceWidth || enhanced.SourceHeight != original.SourceHeight)
+                throw new InvalidOperationException(
+                    $"{name} 增强改写了照片几何：方向 {original.Orientation}→{enhanced.Orientation}、源 {original.SourceWidth}×{original.SourceHeight}→{enhanced.SourceWidth}×{enhanced.SourceHeight}");
+            string[] after;
+            using (var frame = CaptureNavigationSrgb(root)) after = EnhancementAcceptance.CornerSignatures(frame);
+            if (!before.SequenceEqual(after))
+                throw new InvalidOperationException($"{name} 增强后四角分类改变（画面被旋转/转置）：{string.Join(",", before)} → {string.Join(",", after)}");
+            await UiDispatcher.InvokeAsync(() => { if (session.IsEnhanced) session.ToggleEnhanced(); });
+            await WaitAsync(() => !session.IsEnhanced, $"{name} 增强关闭");
+            lines.Add($"PASS 增强方向 {name}：方向 {enhanced.Orientation}、源 {enhanced.SourceWidth}×{enhanced.SourceHeight}，四角 {string.Join("/", after)} 与增强前一致");
+        }
+
+        // 8 位 P3 Full 档：生成 4000×3000（容器横向）的 EXIF 6 竖拍素材，放大到物理 100% 触发 Full 后再增强。
+        string portrait = Path.Combine(workspace, "enhance-portrait-6.jpg");
+        EnhancementAcceptance.CreateOrientationJpeg(portrait, 6, 4000, 3000);
+        await main.FolderVM.OpenImageAsync(new iOSFileRef(portrait));
+        await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(portrait) && session.Image != null, "竖拍大素材上屏");
+        await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1.1));
+        await WaitAsync(() => !session.IsProxy && session.Image is { Encoding: PixelEncoding.Rgba8 }, "竖拍素材 Full 8 位 P3");
+        await SettleAsync(root);
+        var fullOriginal = session.Image ?? throw new InvalidOperationException("竖拍素材展示图为空");
+        string[] fullBefore;
+        using (var frame = CaptureNavigationSrgb(root)) fullBefore = EnhancementAcceptance.CornerSignatures(frame);
+        await UiDispatcher.InvokeAsync(() => { if (!session.IsEnhanced) session.ToggleEnhanced(); });
+        await WaitAsync(() => session.EnhancedDisplay, "竖拍 Full 档增强图就绪");
+        await SettleAsync(root);
+        var fullEnhanced = session.Image ?? throw new InvalidOperationException("竖拍增强图为空");
+        if (fullEnhanced.Encoding != PixelEncoding.Rgba8)
+            throw new InvalidOperationException($"8 位 P3 Full 档增强后应保持 8 位展示编码，实际 {fullEnhanced.Encoding}");
+        if (fullEnhanced.Orientation != 6 || fullEnhanced.SourceWidth != 4000 || fullEnhanced.SourceHeight != 3000)
+            throw new InvalidOperationException(
+                $"竖拍 Full 档增强改写了几何：方向 {fullEnhanced.Orientation}、源 {fullEnhanced.SourceWidth}×{fullEnhanced.SourceHeight}");
+        string[] fullAfter;
+        using (var frame = CaptureNavigationSrgb(root)) fullAfter = EnhancementAcceptance.CornerSignatures(frame);
+        if (!fullBefore.SequenceEqual(fullAfter))
+            throw new InvalidOperationException($"竖拍 Full 档增强后四角分类改变：{string.Join(",", fullBefore)} → {string.Join(",", fullAfter)}");
+        await UiDispatcher.InvokeAsync(() => { if (session.IsEnhanced) session.ToggleEnhanced(); });
+        await WaitAsync(() => !session.IsEnhanced, "竖拍 Full 档增强关闭");
+        lines.Add($"PASS 增强方向（Full 8 位 P3）：方向 6、源 4000×3000 保持，四角 {string.Join("/", fullAfter)} 不变，编码 {fullEnhanced.Encoding}");
+    }
+
+    /// <summary>抓取导航图尺寸的 GPU 帧并归一为 BGRA8 sRGB（照片铺满小图，四角就是照片四角）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>由调用方释放的 BGRA8 导航帧。</returns>
+    private static DecodedImage CaptureNavigationSrgb(iOSNativeRootViewController root)
+    {
+        using var linear = root.Photo.CaptureLinearFrame(navigation: true);
+        return ColorEngine.ToSrgb8(linear);
     }
 
     /// <summary>核对两向瓦片几何：交叉轴 = 边长 + 20，瓦片正方形、间距 8、内边距 10、主轴起点含安全区让位。</summary>

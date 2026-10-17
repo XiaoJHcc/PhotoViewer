@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 
 namespace PhotoViewer.Core.Image;
 
@@ -20,60 +21,96 @@ public static class ImageEnhancer
     /// 替代旧的 (newY+ε)/(oldY+ε) 等比增益：加性重建无除法、深阴影不放大彩噪，故 ε 一并取消。
     /// public：同 ClipFactor，随增强 model_id 契约一并冻结记录。</summary>
     public const double SaturationScale = 1.0;
+
+    /// <summary>直方图分区数：每区独立统计后合并，合并结果与单线程逐像素统计完全一致（整数加法）。</summary>
+    private const int HistogramPartitions = 8;
+
     /// <summary>
     /// 对源图像做全局限对比直方图均衡（CLHE），返回新的增强图像（调用方负责 Dispose）。
     /// 按 ch' = Y' + s·(ch − Y) 保色度重建（恒定色度、色相不变）。
+    /// 源图像不被修改；像素先按行拷贝到自有租约缓冲，再就地处理。
     /// </summary>
     /// <param name="source">原片解码图像（由 BitmapLoader 缓存所有，本方法只读不释放）。</param>
     /// <returns>增强后的图像。</returns>
     public static DecodedImage Enhance(DecodedImage source)
     {
-        int w = source.Width, h = source.Height;
+        ValidateEncoding(source);
         int bpp = DecodedImage.BytesPerPixel(source.Encoding);
-
-        // 算法定义在 8 位单字节通道上：F16 线性表面必须先经调用方转 sRGB8，误传时显式抛出而非按字节误算。
-        bool isBgr = source.Encoding switch
+        int stride = source.Width * bpp;
+        var pixels = DecodedImage.RentPixels(checked(stride * source.Height));
+        try
         {
-            PixelEncoding.Bgra32 => true,
-            PixelEncoding.Rgb24 or PixelEncoding.Rgba8 => false,
-            _ => throw new ArgumentOutOfRangeException(nameof(source), $"增强预览只接受 8 位编码，实际 {source.Encoding}"),
-        };
-        int rIdx = isBgr ? 2 : 0;
-        int bIdx = isBgr ? 0 : 2;
-
-        // 拷贝源像素到自有缓冲（按行,考虑 stride;缓冲池租用,P1-M3）：此后与源图像解耦，即便源被 LRU 淘汰释放也不影响后续运算。
-        int stride = w * bpp;
-        int byteCount = stride * h;
-        var pixels = DecodedImage.RentPixels(byteCount);
-        for (int y = 0; y < h; y++)
-        {
-            Array.Copy(source.Pixels, (long)y * source.Stride, pixels, (long)y * stride, stride);
+            // 按行拷贝（考虑源 stride 的对齐填充）：此后与源图像解耦，即便源被 LRU 淘汰释放也不影响后续运算。
+            for (int y = 0; y < source.Height; y++)
+                Array.Copy(source.Pixels, (long)y * source.Stride, pixels, (long)y * stride, stride);
+            EqualizeLuminance(pixels, source.Width, source.Height, stride, source.Encoding);
+            return DecodedImage.CreatePooled(pixels, source.Width, source.Height, stride, source.Encoding,
+                source.ColorSpace, source.SourceWidth, source.SourceHeight, source.Orientation);
         }
+        catch
+        {
+            ImageBufferPool.Return(pixels);
+            throw;
+        }
+    }
 
-        EqualizeLuminance(pixels, byteCount, bpp, rIdx, bIdx);
+    /// <summary>
+    /// 在调用方独占的 8 位图像上**就地**做同一 CLHE（输出与 <see cref="Enhance"/> 逐字节一致，只是省掉一次整图拷贝）。
+    /// 只在调用方已持有独立缓冲时使用（例如展示会话刚转换出来的 sRGB8 副本），共享缓存里的原图绝不可走这条路径。
+    /// </summary>
+    /// <param name="image">调用方独占且可写的 8 位图像（允许非紧凑 stride）。</param>
+    public static void EnhanceInPlace(DecodedImage image)
+    {
+        ValidateEncoding(image);
+        EqualizeLuminance(image.Pixels, image.Width, image.Height, image.Stride, image.Encoding);
+    }
 
-        return DecodedImage.CreatePooled(pixels, w, h, stride, source.Encoding,
-            source.ColorSpace, source.SourceWidth, source.SourceHeight, source.Orientation);
+    /// <summary>算法定义在 8 位单字节通道上：F16 线性表面必须先经调用方转 sRGB8，误传时显式抛出而非按字节误算。</summary>
+    /// <param name="source">待处理的图像。</param>
+    private static void ValidateEncoding(DecodedImage source)
+    {
+        if (source.Encoding is not (PixelEncoding.Bgra32 or PixelEncoding.Rgb24 or PixelEncoding.Rgba8))
+            throw new ArgumentOutOfRangeException(nameof(source), $"增强预览只接受 8 位编码，实际 {source.Encoding}");
     }
 
     /// <summary>
     /// 在像素缓冲上原地做全局限对比直方图均衡（CLHE）：亮度直方图 → 限对比裁剪回填 → 累积分布 LUT → 保色度重建 ch' = Y' + s·(ch − Y)。
     /// 裁剪封住 LUT 斜率：极窄高尖峰不被强行摊平（防断层）、大面积同色尖峰不独吞输出范围（防主体挤压 / 亮度漂移）。
+    /// 两个逐像素阶段都按行并行；直方图分区统计后整数合并，结果与串行完全一致。
     /// </summary>
-    /// <param name="pixels">紧凑排列的像素缓冲（stride = 宽 × bpp）。</param>
-    /// <param name="byteCount">缓冲有效字节数。</param>
-    /// <param name="bpp">每像素字节数（3 或 4）。</param>
-    /// <param name="rIdx">R 通道在像素内的字节下标。</param>
-    /// <param name="bIdx">B 通道在像素内的字节下标。</param>
-    private static void EqualizeLuminance(byte[] pixels, int byteCount, int bpp, int rIdx, int bIdx)
+    /// <param name="pixels">像素缓冲（允许行间有对齐填充）。</param>
+    /// <param name="width">像素宽。</param>
+    /// <param name="height">像素高。</param>
+    /// <param name="stride">每行字节数。</param>
+    /// <param name="encoding">8 位像素编码（决定通道顺序与每像素字节数）。</param>
+    private static void EqualizeLuminance(byte[] pixels, int width, int height, int stride, PixelEncoding encoding)
     {
-        // 1) 亮度直方图（BT.601：0.299R + 0.587G + 0.114B，定点近似）
+        int bpp = DecodedImage.BytesPerPixel(encoding);
+        bool isBgr = encoding == PixelEncoding.Bgra32;
+        int rIdx = isBgr ? 2 : 0;
+        int bIdx = isBgr ? 0 : 2;
+
+        // 1) 亮度直方图（BT.601：0.299R + 0.587G + 0.114B，定点近似）；分区统计后合并。
         var hist = new int[256];
-        for (int i = 0; i + bpp <= byteCount; i += bpp)
-        {
-            int y = (pixels[i + rIdx] * 77 + pixels[i + 1] * 150 + pixels[i + bIdx] * 29) >> 8;
-            hist[y]++;
-        }
+        int partitions = Math.Min(HistogramPartitions, Math.Max(1, height));
+        Parallel.For(0, partitions, () => new int[256],
+            (partition, _, local) =>
+            {
+                int start = (int)((long)height * partition / partitions);
+                int end = (int)((long)height * (partition + 1) / partitions);
+                for (int y = start; y < end; y++)
+                {
+                    int row = y * stride;
+                    for (int x = 0; x < width; x++)
+                    {
+                        int i = row + x * bpp;
+                        int luminance = (pixels[i + rIdx] * 77 + pixels[i + 1] * 150 + pixels[i + bIdx] * 29) >> 8;
+                        local[luminance]++;
+                    }
+                }
+                return local;
+            },
+            local => { lock (hist) for (int k = 0; k < 256; k++) hist[k] += local[k]; });
 
         long total = 0;
         for (int k = 0; k < 256; k++) total += hist[k];
@@ -105,29 +142,30 @@ public static class ImageEnhancer
             lut[k] = mapped < 0 ? 0 : mapped > 255 ? 255 : mapped;
         }
 
-        // 4) 保色度重建：ch' = Y' + s·(ch − Y)。
-        //    此式对亮度权重求和恒得 Σw·ch' = Y'（彩度向量在亮度方向的投影为 0），故结果亮度精确命中 LUT[Y] →
-        //    亮暗关系严格单调、色相不变（彩度向量只被标量缩放）。s = SaturationScale 保绝对彩度，暗部不再随亮度塌缩发灰。
-        //    极端处（Y' 很小 / 很大）绝对彩度会越界，逐像素把 s 收到"恰好不越界"的 sMax → 物理被迫的最小去饱和，无硬钳位、无色相偏移。
-        for (int i = 0; i + bpp <= byteCount; i += bpp)
+        // 4) 保色度重建：ch' = Y' + s·(ch − Y)。逐行并行，逐像素逻辑见 <see cref="ReconstructRow"/>。
+        Parallel.For(0, height, y => ReconstructRow(pixels, width, stride, bpp, rIdx, bIdx, lut, y));
+    }
+
+    /// <summary>保色度重建单行（并行任务按行调用，逐行无共享写）。</summary>
+    private static void ReconstructRow(byte[] pixels, int width, int stride, int bpp, int rIdx, int bIdx, int[] lut, int y)
+    {
+        int row = y * stride;
+        for (int x = 0; x < width; x++)
         {
+            int i = row + x * bpp;
             int r = pixels[i + rIdx];
             int g = pixels[i + 1];
             int b = pixels[i + bIdx];
             int oldY = (r * 77 + g * 150 + b * 29) >> 8;
             int newY = lut[oldY];
-
             int cr = r - oldY, cg = g - oldY, cb = b - oldY;
-            // 求保持三通道均落 [0,255] 的最大 s（Y' ∈ [0,255] 故各上界 ≥ 0，s 必 ≥ 0）
             double s = SaturationScale;
             s = LimitScale(newY, cr, s);
             s = LimitScale(newY, cg, s);
             s = LimitScale(newY, cb, s);
-
             pixels[i + rIdx] = ReconClamp(newY, cr, s);
             pixels[i + 1] = ReconClamp(newY, cg, s);
             pixels[i + bIdx] = ReconClamp(newY, cb, s);
-            // alpha 通道（若有）保持不变
         }
     }
 

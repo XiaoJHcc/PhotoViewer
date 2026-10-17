@@ -26,6 +26,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
 
     /// <summary>增强预览开关是否处于开启状态（与增强图是否已就绪无关）。</summary>
     public bool IsEnhanced => _enhanceRequested;
+    /// <summary>增强图是否正在计算（已开启但尚未上屏）；宿主可据此显示"计算中"反馈，失败/取消后归 false。</summary>
+    public bool IsEnhancing { get; private set; }
     /// <summary>当前展示图是否已是增强图。</summary>
     public bool EnhancedDisplay => _enhanced != null;
     /// <summary>当前会话持有的展示图像（增强开启且就绪时为增强图），仅 UI 线程借用，外部不能归还其租约。</summary>
@@ -88,18 +90,28 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         int token = ++_enhanceToken;
         if (!_enhanceRequested)
         {
+            IsEnhancing = false;
             ReleaseEnhanced();
             Changed?.Invoke();
             return;
         }
-        if (_image != null) _ = ApplyEnhancementAsync(_image, token);
+        if (_image != null)
+        {
+            IsEnhancing = true;
+            Changed?.Invoke();
+            _ = ApplyEnhancementAsync(_image, token);
+        }
         else Changed?.Invoke();
     }
 
     /// <summary>后台算增强图；竞态闸或开关已关闭时丢弃结果。</summary>
     private async Task ApplyEnhancementAsync(DecodedImage source, int token)
     {
-        if (!source.TryAcquire()) return;
+        if (!source.TryAcquire())
+        {
+            await FinishEnhancementAsync(token).ConfigureAwait(false);
+            return;
+        }
         DecodedImage? enhanced = null;
         try
         {
@@ -113,7 +125,11 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         {
             source.Release();
         }
-        if (enhanced == null) return;
+        if (enhanced == null)
+        {
+            await FinishEnhancementAsync(token).ConfigureAwait(false);
+            return;
+        }
         var result = enhanced;
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -124,20 +140,36 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             }
             var previous = _enhanced;
             _enhanced = result;
+            IsEnhancing = false;
             try { Changed?.Invoke(); }
             finally { previous?.Dispose(); }
         }).ConfigureAwait(false);
     }
 
+    /// <summary>增强任务未产出结果（异常/源已失效）时清除"计算中"状态并通知宿主，不静默停留。</summary>
+    /// <param name="token">发起时的竞态令牌；已被后续请求取代时由新任务负责收尾。</param>
+    private Task FinishEnhancementAsync(int token)
+        => UiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed || token != _enhanceToken || !_enhanceRequested || !IsEnhancing) return;
+            IsEnhancing = false;
+            Changed?.Invoke();
+        });
+
     /// <summary>
-    /// 增强算法只在 8 位 sRGB 口径上有定义（256 级直方图 + LUT），原生 F16 线性表面因此经 sRGB 往返一次；
-    /// 往返缓冲都是池化租约，用完即还，不驻留额外中间态。
+    /// 增强算法只在 8 位 sRGB 口径上有定义（256 级直方图 + LUT），因此先转 sRGB8 副本、就地均衡，再回到源展示编码：
+    /// 8 位展示档（iPad Full / 压力降级）回到 8 位 Display P3，不扩大成 F16（24MP 可省约 96MB 与一次整图转换）；
+    /// F16 线性表面（Mac 全档、iPad 代理）仍回 F16 线性 scRGB。算法输出语义与编码口径都不变，只是不再多拷一份整图。
     /// </summary>
+    /// <param name="source">当前展示档的解码产物（会话持有，本方法只读）。</param>
+    /// <returns>增强图（调用方负责释放）。</returns>
     private static DecodedImage EnhanceForDisplay(DecodedImage source)
     {
         using var srgb = ColorEngine.ToSrgb8(source);
-        using var enhanced = ImageEnhancer.Enhance(srgb);
-        return ColorEngine.ToScRgb16(enhanced);
+        ImageEnhancer.EnhanceInPlace(srgb);
+        return source.Encoding == PixelEncoding.Rgba8
+            ? ColorEngine.ToDisplayP3(srgb)
+            : ColorEngine.ToScRgb16(srgb);
     }
 
     /// <summary>释放增强图并作废在途增强任务。</summary>
@@ -239,6 +271,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         int token = ++_enhanceToken;
         var previousEnhanced = _enhanced;
         _enhanced = null;
+        // 增强开着时新展示档还要再算一次：保持"计算中"直到新增强图就绪，避免反馈闪烁。
+        bool willEnhance = _enhanceRequested && image != null;
+        IsEnhancing = willEnhance;
         var previous = _image;
         _image = image;
         IsProxy = proxy;
@@ -248,7 +283,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             previous?.Release();
             previousEnhanced?.Dispose();
         }
-        if (_enhanceRequested && image != null) _ = ApplyEnhancementAsync(image, token);
+        if (willEnhance) _ = ApplyEnhancementAsync(image!, token);
     }
 
     /// <summary>关闭会话并取消在途任务，归还当前图像与增强图。</summary>
@@ -262,6 +297,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _cancellation.Dispose();
         _enhanced?.Dispose();
         _enhanced = null;
+        IsEnhancing = false;
         _image?.Release();
         _image = null;
     }
