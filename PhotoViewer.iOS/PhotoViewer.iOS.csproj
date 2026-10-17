@@ -58,12 +58,14 @@
     </ItemGroup>
 
     <!--
-      Apple 共享源：PhotoViewer.Apple/ 是纯源文件目录（不是独立程序集），
-      与 PhotoViewer.Mac 链接同一份源；该目录不得出现 AppKit/UIKit 类型，
-      平台专属宿主留在各 head 的 Native/ 下。
+      共享几何源：PhotoViewer.Shared/ 由 Mac / iOS / Android 三个原生头共同链接，
+      PhotoViewer.Apple/ 继续承载 Apple 专属的展示解码、Metal 渲染与验收判定。
+      两个目录都不得出现 AppKit/UIKit 类型，平台专属宿主留在各 head 的 Native/ 下。
     -->
     <ItemGroup>
         <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
     </ItemGroup>
 
     <!--

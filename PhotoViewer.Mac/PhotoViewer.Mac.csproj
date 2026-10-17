@@ -2,7 +2,12 @@
     <PropertyGroup>
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
-        <SupportedOSPlatformVersion>12.0</SupportedOSPlatformVersion>
+        <!--
+          .NET for macOS 27.0.10722（Xcode 27.x）把最低部署版本抬到 macOS 14.0；
+          SupportedOSPlatformVersion 低于该值时 CompileAppManifest 直接报错。
+          设置窗口的 SwiftUI 动态库本就以 macOS 26 为目标，12/13 实际不可用，故显式对齐 14.0。
+        -->
+        <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
         <UseAppHost>true</UseAppHost>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
@@ -26,12 +31,15 @@
     </ItemGroup>
 
     <!--
-      Apple 共享源：PhotoViewer.Apple/ 是纯源文件目录（不是独立程序集），
-      以 Compile Include 链接进 macOS 原生壳；iOS 原生壳后续以同样方式链接同一目录，
-      因此这里的代码不得引用 AppKit/UIKit，平台专属部分留在各自 head 的 Native/ 下。
+      共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
+      由 Mac / iOS / Android 三个原生头共同链接；PhotoViewer.Apple/ 继续承载
+      Apple 专属的展示解码、Metal 渲染与验收判定。
+      这两个目录都不得出现 AppKit/UIKit 类型，平台专属部分留在各自 head 的 Native/ 下。
     -->
     <ItemGroup>
         <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
     </ItemGroup>
 
     <PropertyGroup Condition="'$(Configuration)'=='Release'">

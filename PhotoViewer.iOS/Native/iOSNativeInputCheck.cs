@@ -393,7 +393,7 @@ internal static class iOSNativeInputCheck
         (int Usage, string Command)[] bindings = [(80, "Previous"), (79, "Next"), (9, "Fit"), (29, "Exchange"), (30, "SetRating1")];
         foreach (var (usage, command) in bindings)
         {
-            var resolved = AppleInputMapping.CommandForGesture(AppleInputMapping.FromHidUsage(usage, 0, main.Settings), main.Settings);
+            var resolved = InputCommandMap.CommandForGesture(AppleInputMapping.FromHidUsage(usage, 0, main.Settings), main.Settings);
             if (resolved != command) throw new InvalidOperationException($"HID {usage} 往返应解析到 {command}，实际 {resolved ?? "null"}");
         }
         lines.Add("PASS 键映射往返：方向键/F/Z/数字键经共享手势查用户绑定，与默认命令表一致");
@@ -406,7 +406,7 @@ internal static class iOSNativeInputCheck
             var expected = AppleKeyboardMapping.ApplyForRuntime(GestureModifiers.Meta, main.Settings.UseAppleKeyboard,
                 main.Settings.MapCommandTarget, main.Settings.MapOptionTarget, main.Settings.MapControlTarget);
             if (mapped?.Key?.Modifiers != expected) throw new InvalidOperationException($"Cmd 映射未按用户设置生效：{mapped?.Key?.Modifiers} != {expected}");
-            if (AppleInputMapping.CommandForGesture(mapped, main.Settings) != null)
+            if (InputCommandMap.CommandForGesture(mapped, main.Settings) != null)
                 throw new InvalidOperationException("映射后的 Cmd+← 不应命中默认无修饰的上一张绑定");
             await UiDispatcher.InvokeAsync(() => main.Settings.UseAppleKeyboard = false);
             var raw = AppleInputMapping.FromHidUsage(80, AppleInputMapping.CommandMask, main.Settings);
@@ -470,10 +470,10 @@ internal static class iOSNativeInputCheck
             root.Photo.WheelRecognizer.MinimumNumberOfTouches != 0 || root.Photo.WheelRecognizer.MaximumNumberOfTouches != 0)
             throw new InvalidOperationException("滚轮识别器未限定为离散滚动");
         var wheel = AppleInputMapping.FromRaw(AppleInputMapping.ScrollWheel, 0, 0, 0, 1, false, null, main.Settings);
-        if (AppleInputMapping.CommandForGesture(wheel, main.Settings) != "Previous")
+        if (InputCommandMap.CommandForGesture(wheel, main.Settings) != "Previous")
             throw new InvalidOperationException("滚轮向上的默认绑定未解析到上一张");
         var wheelDown = AppleInputMapping.FromRaw(AppleInputMapping.ScrollWheel, 0, 0, 0, -1, false, null, main.Settings);
-        if (AppleInputMapping.CommandForGesture(wheelDown, main.Settings) != "Next")
+        if (InputCommandMap.CommandForGesture(wheelDown, main.Settings) != "Next")
             throw new InvalidOperationException("滚轮向下的默认绑定未解析到下一张");
         lines.Add("PASS 离散滚轮：识别器只收离散滚动（触控板连续滚动/捏合仍归滚动视图），默认绑定解析为上一张/下一张");
         lines.Add("NOTE 按键重复由 NSTimer（350ms 延迟 / 60ms 间隔）驱动：UIPress 无法合成，本检查未做重复速率断言");

@@ -1,0 +1,98 @@
+# Android 原生壳交接（Windows 评审 → Mac 执行）
+
+> 状态真源：本文件 + [native-rebuild-phase-android.md](native-rebuild-phase-android.md)。2026-10-18：Windows 评审结论已并入 `refactor/native-rebuild`，`native-rebuild-android` 分支用完即删；A1 在 Mac 本机继续。
+> 来源：自 `refactor/native-rebuild` 的 `12cf71a` 切出，Windows 侧只做计划评审、Android Debug 基线构建与模拟器镜像下载，**没有改共享源、没有开始 A1**。本文件保留评审结论与 Mac 执行记录。
+
+## 1. 当前状态
+
+- 计划评审已完成，结论：技术路线可执行；原 1 个硬阻塞（A1 的 Mac/iOS 回归门）已于 2026-10-18 在本机执行，评审修订见 §3。
+- Windows 基线：`dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug` = **0 错误 / 21 警告**（含既有 NU1903、CS86xx、CA1422、XA4301；计划里的「14 条」已过时）。
+- Windows 已下载 API 24/28/33/35 的 `google_apis;x86_64` 镜像；**这些镜像不能带到 Apple Silicon Mac**，Mac 已重新下载 `arm64-v8a`（见 §4）。
+- **Mac 本机（2026-10-18）**：Apple Silicon / macOS 26.6.2 / Xcode 27.1 / .NET SDK 10.0.402 / ios + macos workload 27.0.10722 / JDK 21 Temurin；**android workload 仍未安装**（需管理员）；SDK 已补 `platforms;android-35`、`emulator`、`system-images;android-35;google_apis;arm64-v8a`，并已创建 AVD `pv-api35`（pixel_7）。
+- **A1a 已落地**：7 个几何文件移入 `PhotoViewer.Shared/`（命名空间 `PhotoViewer.Shared`），`InputCommandMap.CommandForGesture` 抽出；Mac/iOS/Android 三个 csproj 已链接共享源。Mac 与 iOS Debug 构建 0 错误。
+- **A1a 回归（2026-10-18）**：Mac `--pv-native-smoke` **39 checks PASS**，`input / toolbar / layout / analysis / similarity / tools / filmstrip` 七套专项 PASS；iOS 模拟器（iPad mini A17 Pro）七套全 PASS：photo **10** / gesture **24** / layout **24** / input **29** / analysis **18** / similarity **10** / tools **7**。
+- **settings 套件假阴性**：`--pv-native-settings` 在“勾选后重绘”断言失败，原因是本机未授予屏幕录制权限，`screencapture -l` 失败后 SwiftUI 图层的 `cacheDisplay` 导出空白；迁移前基线（`3ce703a` + 仅修最低系统版本）同断言同样失败，且 KimiCU 目视窗口内容正常。**不是 A1a 行为变化**，已登记，待补抓屏权限或修复离屏渲染后复跑。
+- **Mac 构建阻塞已修**：workload 27.0.10722 要求 macOS 最低 14.0，Mac head 原写 12.0；已把 `PhotoViewer.Mac.csproj` 与 `Info.plist` 对齐 14.0。workload 升级后 iOS 首次构建需先删 `obj/bin`（否则 `_xamarin_*` 未定义符号）。
+- 未做：`AndroidBootstrapActivity`、普通 `Application`/`AvaloniaActivity` 改造、主题、依赖、任何 A2–A6 代码。
+
+## 2. 为什么曾在 Windows 暂停
+
+[native-rebuild-phase-android.md](native-rebuild-phase-android.md) §3 A1 的迁移门是「Mac 八套 + iOS 七套 `--pv-native-*` 回归零行为变化」。Windows 没有 Mac/iOS 构建链与模拟器，无法执行；按作者选择暂停，不用「静态看起来没问题」冒充回归通过。
+
+Mac 上可以一次做完 A1 门，这是推荐路径（2026-10-18 已在本机执行）。若没有 Mac，唯一可解锁的替代方案是：Android csproj 直接逐文件链接 `PhotoViewer.Apple/` 下 7 个纯数学源，不改 Apple 两头；但这偏离计划的 `PhotoViewer.Shared/` 结构，需作者书面同意。
+
+## 3. 开工前必须写回计划的修订
+
+| # | 计划位置 | 发现 | 处理 |
+|---|---|---|---|
+| 1 | §1.11 | 「原生路径不构造任何 Avalonia 对象（不构造 `AndroidApp`）」在 Android 上字面不可实现：清单里的 Application 类由系统在 Activity 之前实例化；当前 [AndroidApp.cs](../PhotoViewer.Android/AndroidApp.cs) 继承 `AvaloniaAndroidApplication<App>`，`OnCreate` 就初始化 Avalonia | 改为普通 `Application`；旧壳 [MainActivity.cs](../PhotoViewer.Android/MainActivity.cs) 改 `AvaloniaActivity`，在 `OnCreate` 前用 `AppBuilder.Configure<App>().UseAndroid().SetupWithLifetime(自定义 ISingleViewApplicationLifetime)` 自建 Avalonia。`AvaloniaMainActivity` 依赖 internal `IAndroidApplication.Lifetime`，普通 Application 下不能用它；`AvaloniaActivity` 只要求 `Avalonia.Application.Current`，可行。必须实测旧壳 `--legacy-ui` 仍启动 |
+| 2 | §1.5 / §1.7 | 没写明 Android 视图坐标空间。共享几何（116dp 栏、96×144 卡片）按点算，Android `View` 坐标是 px；混用会让 Fit、物理 100%、卡片几何全部偏 | 明确：共享几何一律以 **dp 当点**；`PhotoViewport.ViewWidth/Height` 用 dp，`BackingScale = DisplayMetrics.Density`，`Scale = 1/density` 时 `PhysicalScale == 1`；仅在 View 边界做 px↔dp，触摸坐标先转 dp |
+| 3 | §1.6 | `InputCommandMap` 若把 Apple 的修饰键解码一起搬走，Android 会继承 Cmd/Option 语义 | 共享 `InputCommandMap` 只放 `CommandForGesture`（以及通用的位掩码→`GestureModifiers`）；`AppleKeyboardMapping`、HID usage 表、`FromRaw`/`FromHidUsage` 留在 `AppleInputMapping`；Android 新写 `AndroidInputMapping`，按 `KeyEvent` 的 Ctrl/Alt/Shift/Meta 语义重写，`GestureKey` 名称复用 |
+| 4 | §1.11 / Manifest | 只说了新增 bootstrap activity，没列 launcher 与 IntentFilter 迁移 | `AndroidBootstrapActivity` 接管 `MainLauncher=true` 与 `ACTION_VIEW`/`ACTION_SEND`/`ACTION_SEND_MULTIPLE`（`image/*`）；`MainActivity` 去掉 launcher 与外部打开 filter；bootstrap 解析 `--pv-flags` 后决定壳，并把 Intent 转发给对应壳。否则点图标会直接进旧壳，外部打开也绕过 bootstrap |
+| 5 | §2 / §1.12 | DINO 模型 86MB 在 `PhotoViewer` 的 Avalonia 资源里；原生壳不加载 Avalonia，`AppResources` 旧路径不可用 | 新增 `AndroidAppResourceProvider`（`AssetManager.Open`）+ csproj `AndroidAsset` 打包 `..\PhotoViewer\Assets\Models\*.onnx`；APK 会多约 86MB。同时补 `AndroidUiDispatcher`、`AndroidFilePicker`、`AndroidNativeWindowPresenter`、`AndroidNativeSettingsPresenter`、`StorageAccessManager`、`OnTrimMemory` 压力上报 |
+| 6 | §3 A2/A3 | 验收项 19 要求导航图方向正确，但「缩放指示器」没有明确落在 A2 还是 A3 | 归 A3：`PhotoViewport.NavigationSize/NavigationViewport`，覆盖在 `SurfaceView` 之上的普通 View，长边 150dp、百分比、可见框；点按/拖动导航图定位可作为平台增强 |
+| 7 | §1.7 | 没提筛选条行布局左对齐。共享 `MainScreenLayout.FilterBarFrames` 默认给 macOS 交通灯居中 | Android 行布局显式 `alignLeading: true`，与 iPad 同口径，左上不留空带 |
+| 8 | §1.10 / A2 | SAF 写回链路没验：现有 [AndroidXmpWriter.cs](../PhotoViewer.Android/Core/AndroidXmpWriter.cs) 已支持 `content://`（`OpenFileDescriptor("rw")`），但需要 `IFileRef.Path` 返回 content URI，且 Intent 要带写授权 | `ACTION_OPEN_DOCUMENT_TREE` 用 `takePersistableUriPermission(Read|Write)`；`ACTION_OPEN_DOCUMENT` 加 `FLAG_GRANT_WRITE_URI_PERMISSION`；SD 卡上若 `"rw"` 失败改 `"rwt"`；外部打开走原生 `IFileRef`，不要调 `AndroidExternalOpenBridge` 的 Avalonia 反射路径 |
+| 9 | §3 A6 | 「5 API × DPI 两档 × fontScale 两档 × 两向」= 40 种组合，没写抽样规则 | 建议：5 个 API 只跑纵向启动/几何；API 35 + 24 补横向；fontScale 1.0/1.3 与两档 DPI 只在 API 35 跑；真机只补手感/色彩/SAF/杀后台 |
+| 10 | 全篇 | 基线警告写 14 条；当前是 21 警告 / 0 错误；iOS 回归套件实际是 7 套（photo/gesture/layout/input/analysis/similarity/tools），不是 6 套 | 以本次构建日志冻结基线；A1 门按 Mac 八套 + iOS 七套排时间；不要把既有警告算成新增 |
+| 11 | §1.12 | Material 依赖版本未定；Material 1.14 可能和 Avalonia 12.0.2 带来的 AndroidX 版本冲突 | 先钉 `Xamarin.Google.Android.Material`（1.14.0.6，冲突则退 1.13.0.6）、`RecyclerView` 1.4.0.6、`Window` 1.5.1.3、`Fragment` 1.9.0；A1 立即构建验证 `Theme.Material3.Dark.NoActionBar` 与 `postSplashScreenTheme` 原生链 |
+
+## 4. Mac 环境准备（2026-10-18 实测）
+
+- **架构**：`PhotoViewer.Mac.csproj` 只声明 `<RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>`。本机是 Apple Silicon，无需改；Intel Mac 需先加 `osx-x64` 并验证。
+- **本机已具备**：Xcode 27.1（`/Applications/Xcode.app`）、.NET SDK 10.0.402、`ios`/`macos` workload 27.0.10722、JDK 21 Temurin、Android SDK 目录与 licenses。
+- **本机缺**：`android` workload、Android emulator、system image。按下面步骤补齐：
+
+```bash
+# 1) Android workload（dotnet 在 /usr/local/share/dotnet，需要管理员）
+sudo dotnet workload install android
+dotnet workload list          # 应出现 android
+
+# 2) SDK 组件（Apple Silicon 必须 arm64-v8a；x86_64 镜像不可用）
+SDK="$HOME/Library/Android/sdk"
+"$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses
+"$SDK/cmdline-tools/latest/bin/sdkmanager" \
+  "platforms;android-35" "emulator" \
+  "system-images;android-35;google_apis;arm64-v8a"
+
+# 3) AVD（先建 API 35 日常用；A6 再补 24/28/33/36）
+"$SDK/cmdline-tools/latest/bin/avdmanager" create avd \
+  -n pv-api35 -k "system-images;android-35;google_apis;arm64-v8a" -d pixel_7
+
+# 4) 启动与确认
+"$SDK/emulator/emulator" -avd pv-api35 &
+"$SDK/platform-tools/adb" devices
+```
+
+- **Android SDK 路径**：csproj 已回退 `$(HOME)/Library/Android/sdk`；若用其他路径，设 `AndroidSdkDirectory` 或 `ANDROID_HOME`。
+- **模拟器镜像**：Apple Silicon 必须 `arm64-v8a`；API 24/28/33/35/36 的 `google_apis;arm64-v8a` 均可用（已核对仓库列表）。Windows 已下的 `x86_64` 不要拷。
+- **AVD 数量**：至少 API 35 一台日常用；A6 再补 24/28/33/36。DPI/fontScale 用 `wm density` / `settings put system font_scale` 调，不必为每档建 AVD。
+- **素材**：`/release/` 在 [.gitignore](../.gitignore) 里，**新 clone 不会有**。本机已有 `release/native-p2-fixtures`（含 `orientation-1..8.jpg`、四张色卡）、`release/native-p2-large-fixtures/color-p3-large.jpg`、`release/native-p2-raw/A7C01489.ARW`、`release/native-p2-toolbar-fixtures`。A1 的 iOS 回归需要 `focus-src.ARW`（由 `release/native-p2-raw/A7C01489.ARW` 改名）。缺素材时不要让回归静默跳过。
+
+## 5. A1 执行顺序（建议拆两笔提交）
+
+1. **直接在本机 `refactor/native-rebuild` 工作**：原 `native-rebuild-android` 分支的内容（本文件）已并入，分支已删除；不再另开 Android 分支。
+2. **A1a 共享源迁移（2026-10-18 已完成）**：7 个几何文件移入 `PhotoViewer.Shared/`，命名空间改 `PhotoViewer.Shared`；Mac/iOS/Android 三个 csproj 加 `Compile Include="..\PhotoViewer.Shared\**\*.cs"`；Mac/iOS/Android 加 `<Using Include="PhotoViewer.Shared" />`。`InputCommandMap.CommandForGesture` 抽出，Apple 侧保留修饰键/HID 解码。用 `git diff --color-moved` + 文件哈希确认只有 namespace/using 变化。
+3. **A1a 回归门**：Mac 构建 + 八套 `--pv-native-*`；iOS 构建 + 七套 `--pv-*check`（模拟器即可；真机项留给作者）。零行为变化后提交，例如 `A1a: 共享几何源迁移 + InputCommandMap（Mac/iOS 回归通过）`。
+4. **A1b Android 基座**：普通 `Application` + 旧壳 `AvaloniaActivity` 自建（§3#1）、`AndroidBootstrapActivity`/`AndroidNativeActivity`/`AndroidNativeShell`、`Theme.PhotoViewer.Native` 与独立 splash 链、manifest/launcher/IntentFilter 迁移、Material/RecyclerView/Window/Fragment 依赖、`AndroidAppResourceProvider`、`AndroidUiDispatcher`/`FilePicker`/`WindowPresenter`/`SettingsPresenter` 接线。
+5. **A1b 自验**：Android Debug 构建零错误零新增警告；`--legacy-ui` 旧壳可启动；原生壳可启动且日志证明未初始化 Avalonia；主题深色、无 DynamicColors；记录首次启动耗时。提交 `A1b: Android 原生壳基座（bootstrap/主题/门面）`。
+6. 再进 A2。A1 门未过不得进 A2。
+
+## 6. A2–A6 交接要点
+
+- A2：`AndroidPresentationDecoder`/`EncodingPolicy` 走 8 位 sRGB 或 Display P3；纹理 `GL_RGBA8`；八方向 UV；代理↔Full 只换纹理。模拟器只验 sRGB 回退 + EGL P3 协商代码，P3 正向留真机门。
+- A3：几何全部 dp；导航图与筛选条左对齐按 §3#6/#7；`RecyclerView` 卡片状态只读不可变快照。
+- A4：设置 BottomSheet 半屏，五分类；`OnDismiss` 一次性回写；返回手势先关 sheet；fontScale 1.3 要实测控制栏不截断。
+- A5：分析栏/相似/工具页复用共享 presenter；DINO 模型按 §3#5；工具页只有 EXIF/DINO，无照片数据统计。
+- A6：验收驱动器写 App 外部文件目录（`GetExternalFilesDir`），`adb pull`；矩阵按 §3#9 抽样；`PhotoViewer.Android/AGENTS.md`、根 `AGENTS.md`、`Design/architecture.md`、`ui-contract` Android 列、`DEV.md`、handoff 同步。
+- 提交：每里程碑一笔，**分支 `refactor/native-rebuild`**；原 `native-rebuild-android` 已并入并删除，不再单独维护 Android 分支。
+
+## 7. 未关闭 / 风险
+
+- **A1a**：Mac 八套 + iOS 七套回归正在本机执行（结果见 §1；未全过不得进 A1b）。
+- **A1b 前置**：本机缺 `android` workload、emulator 与 system image（§4 有安装命令）；补齐前 Android 构建会报 `NETSDK1147`。
+- **Mac 工具链**：workload 27.0.10722 要求 macOS 14.0，已把 Mac head 与 Info.plist 对齐；升级 Apple workload 后先删 iOS `obj/bin` 再构建。
+- P3 正向路径在模拟器上大概率不可得，真机验收清单已列。
+- iOS 回归素材不在 git；本机已有色卡/ARW，`focus-src.ARW` 需由 `release/native-p2-raw/A7C01489.ARW` 改名。
+- `PhotoViewer.Android` 当前 APK 约 280MB；再加 DINO 模型副本会更大，安装/冷启动时间要记录。
+- ARW 在 Android 的 libheif/系统解码链路未验；验收清单第 40 项要求记录是否只有内嵌预览。

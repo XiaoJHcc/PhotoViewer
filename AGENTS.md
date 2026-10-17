@@ -21,7 +21,8 @@ PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评�
 PhotoViewer/                  # 共享工程：Core、ViewModels、Views、Controls、Platform
 PhotoViewer.Windows/          # Windows 头工程：WinUI 3 原生壳 + 迁移期旧壳
 PhotoViewer.Mac/              # macOS 头工程：AppKit + Metal 原生壳 + 迁移期旧壳
-PhotoViewer.Apple/            # Apple 共享源（链接进 Mac/iOS，不单独成程序集）
+PhotoViewer.Apple/            # Apple 专属共享源（解码/Metal/验收，链接进 Mac/iOS）
+PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链接进 Mac/iOS/Android）
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳 + 迁移期旧壳
 PhotoViewer.Android/          # Android 头工程
 Tools/                        # 诊断与维护工具
@@ -52,7 +53,8 @@ release/                      # 发布产物
 | [PhotoViewer/Views/Main/](PhotoViewer/Views/Main/AGENTS.md) | 主窗口视图 |
 | [PhotoViewer/Views/Settings/](PhotoViewer/Views/Settings/AGENTS.md) | 设置页视图 |
 | [PhotoViewer/Views/Tools/](PhotoViewer/Views/Tools/AGENTS.md) | 工具页视图 |
-| [PhotoViewer.Apple/](PhotoViewer.Apple/AGENTS.md) | Apple 共享解码、Metal、几何与输入映射 |
+| [PhotoViewer.Apple/](PhotoViewer.Apple/AGENTS.md) | Apple 专属共享源：展示解码、Metal 渲染、Apple 验收与输入映射 |
+| [PhotoViewer.Shared/](PhotoViewer.Shared/AGENTS.md) | 跨壳纯 C# 共享源：视口/主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳与平台接线 |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳与平台接线 |
 | [PhotoViewer.Windows/](PhotoViewer.Windows/AGENTS.md) | Windows 原生壳与平台接线 |

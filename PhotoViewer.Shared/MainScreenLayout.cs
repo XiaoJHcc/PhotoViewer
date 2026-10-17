@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>平台中立的矩形（左上角原点、单位为逻辑点），两个原生壳的布局数学共用同一结果类型。</summary>
 /// <param name="X">左边缘。</param>

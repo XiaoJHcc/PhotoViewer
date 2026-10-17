@@ -93,4 +93,14 @@
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
     </ItemGroup>
+
+    <!--
+      共享几何源：PhotoViewer.Shared/ 以 Compile Include 链接进 Android 头（不新增程序集），
+      与 Mac / iOS 共用视口、主屏分区、胶片栏、控制栏、分析栏、相似面板与 EXIF 表几何。
+      这些文件是纯 double 数学，不得引用 Apple/Android 平台类型。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
+    </ItemGroup>
 </Project>

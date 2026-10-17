@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>
 /// 胶片栏的平台中立几何：单轴列表的卡片尺寸、内边距、跨轴居中、文档长度与可见项范围。

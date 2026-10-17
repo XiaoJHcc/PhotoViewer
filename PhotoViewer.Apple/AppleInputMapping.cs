@@ -77,13 +77,6 @@ public static class AppleInputMapping
         return key.HasValue ? AppGesture.FromKey(new AppKeyGesture(key.Value, DecodeModifiers(modifierFlags, captureSettings))) : null;
     }
 
-    /// <summary>按用户主/次绑定查找命令；各平台的事件解包之后共用这一张命令表。</summary>
-    /// <param name="gesture">共享手势（可为 null）。</param>
-    /// <param name="settings">当前设置。</param>
-    /// <returns>匹配到的命令标识；没有绑定返回 null。</returns>
-    public static string? CommandForGesture(AppGesture? gesture, SettingsViewModel settings)
-        => gesture is { } value ? settings.GetCommandByGesture(value) : null;
-
     /// <summary>
     /// HID usage → 共享键映射表（纯数据）。逐条登记而不做区间算术，
     /// 避免依赖 <see cref="GestureKey"/> 的成员顺序；未登记返回 null，由调用方把按键交还系统。

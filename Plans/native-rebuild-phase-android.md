@@ -8,7 +8,7 @@
 > 3. **无论 ROM 与系统版本，视觉设计与空间操作一致对标**。
 > 4. 能用原生最好；原生不可靠再议。
 >
-> **进度**：仅本清单，尚未开工。
+> **进度**：A1a（共享几何源迁移 + `InputCommandMap`）已于 2026-10-18 在 Mac 本机落地并通过 Mac/iOS 构建；评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。A1b/A2–A6 未开始。
 
 ## 0. 范围
 
@@ -64,13 +64,14 @@
 - **EXIF 方向在顶点着色器做 UV 置换**，绝不旋转像素（与 Mac/Windows 同口径）；三线性 + mipmap。
 - **100% 口径**与 Mac/iPad 一致：1 源像素对 1 屏幕**物理**像素（`density` 参与换算），不是 1 对 1 dp。
 - **视口数学复用共享 `PhotoViewport`**：手势算完写 `ApplyGestureView`，宿主只落结果。双击/Fit 走 `ToggleFit`（对焦点优先）。
+- **坐标空间（2026-10-18 评审补充）**：共享几何与 `PhotoViewport` 一律以 **dp 当点**（116dp 文件栏、96×144dp 卡片与 iPad 点值同口径）；Android `View` 坐标是 px，只在 View 边界做 px↔dp。`PhotoViewport.ViewWidth/Height` 传 dp，`BackingScale = DisplayMetrics.Density`，`Scale = 1/density` 时 `PhysicalScale == 1`；触摸坐标先转 dp 再进共享数学，否则 Fit、物理 100% 与卡片几何会整体偏。
 - **覆盖层**（导航图、绿框、分析栏、状态提示）放在 `SurfaceView` 之上的普通 `ViewGroup`，不在 GL 里画；`SurfaceView` 用默认 `setZOrderOnTop(false)` + 覆盖层同窗口合成。
 
 ### 1.6 共享源：把 Apple 共享源提成"壳共享源"
 
 - 新建 `PhotoViewer.Shared/`（纯源目录，`Compile Include` 链接，不新增程序集），迁入 7 个**零 Apple 依赖**的纯数学文件（已核 `using` 为空）：`PhotoViewport`、`MainScreenLayout`、`FilmstripGeometry`（含 `FilmstripAnimation`）、`ControlBarLayout`、`AnalysisPanelGeometry`、`SimilarityPanelGeometry`、`ExifTableGeometry`。
-- `PhotoViewer.Apple/` 改为链接 `PhotoViewer.Shared/`，Mac/iOS 两个 csproj 各加一行；`PhotoViewer.Android/` 同样链接。**迁移门 = Mac 八套 + iOS 六套 `--pv-native-*` 回归零行为变化**。
-- 拆 `AppleInputMapping.cs`：`CommandForGesture` 与修饰键解码进 `PhotoViewer.Shared/InputCommandMap.cs`；HID usage → `GestureKey` 表留在 Apple；Android 新写 `AndroidInputMapping`（`KeyEvent` → 同一张 `AppGesture` 表）。
+- `PhotoViewer.Apple/` 改为链接 `PhotoViewer.Shared/`，Mac/iOS 两个 csproj 各加一行；`PhotoViewer.Android/` 同样链接。**迁移门 = Mac 八套 + iOS 七套（photo/gesture/layout/input/analysis/similarity/tools）`--pv-native-*` 回归零行为变化**。
+- 拆 `AppleInputMapping.cs`：`CommandForGesture` 移入 `PhotoViewer.Shared/InputCommandMap.cs`；**只放命令查询与通用的位掩码→`GestureModifiers`**。苹果的 `AppleKeyboardMapping`、HID usage 表、`FromRaw`/`FromHidUsage` 留在 Apple 侧，避免 Android 继承 Cmd/Option 语义；Android 另写 `AndroidInputMapping`（`KeyEvent` 的 Ctrl/Alt/Shift/Meta），`GestureKey` 名称复用。
 - 留在 Apple 的：`MetalPhotoRenderer`、`ApplePresentationDecoder`、`AppleAcceptanceChecks`、`EnhancementAcceptance`、`AppleSymbolNames`。
 - 命名空间随之改为 `PhotoViewer.Shared`（Apple/Android 头各加一个 `global using` 或直接改引用）。
 
@@ -79,7 +80,8 @@
 - 复用共享 `MainScreenLayout` 全量数学，不抄常量。手机纵向 400dp 宽放不下 116dp 文件栏 + 主图，故纵向恒为行布局（文件栏在上、控制栏在下）；横向按 `IsRowLayout` 的 Auto 规则走列布局，此时 116dp 栏可用。
 - **不新增**手机专属布局模式；若作者后续认为"胶片栏应在下方"，作为平台差异单独立项。
 - **insets**：`WindowCompat.setDecorFitsSystemWindows(window, false)` + `OnApplyWindowInsetsListener` 吃 `systemBars()` 与 `displayCutout()`；栏位背景铺到屏幕边缘、内容收进安全区（与 iPad 同口径）。Android 15（API 35）强制 edge-to-edge，此路径是必做项。
-- 刘海：`displayCutout` 的 left/right 在横屏时计入内容内边距。
+- **刘海**：`displayCutout` 的 left/right 在横屏时计入内容内边距。
+- **筛选条行布局左对齐**：共享 `MainScreenLayout.FilterBarFrames` 默认给 macOS 交通灯居中；Android 行布局显式 `alignLeading: true`（与 iPad 同口径，左上不留空带）。
 
 ### 1.8 设置：半屏 Bottom Sheet
 
@@ -114,17 +116,23 @@
 
 - 实现 `IFileRef` / `IFolderRef`（对标 `MacStorageRefs` / `iOSStorageRefs`）：`ACTION_OPEN_DOCUMENT_TREE` 选文件夹，`takePersistableUriPermission` 持久授权，`DocumentsContract` 遍历与读写。
 - **移除** `MANAGE_EXTERNAL_STORAGE` / `WRITE_EXTERNAL_STORAGE`；`READ_EXTERNAL_STORAGE` 只在 API ≤ 32 保留（供旧壳与缩略图既有路径）。
+- **写回链路（2026-10-18 评审补充）**：`ACTION_OPEN_DOCUMENT_TREE` 用 `takePersistableUriPermission(Read|Write)`；单文件 `ACTION_OPEN_DOCUMENT` 加 `FLAG_GRANT_WRITE_URI_PERMISSION`。现有 `AndroidXmpWriter` 已支持 `content://`（`OpenFileDescriptor("rw")`），但 `IFileRef.Path` 必须返回 content URI；SD 卡上 `"rw"` 失败改 `"rwt"`。外部打开走原生 `IFileRef`，不调 `AndroidExternalOpenBridge` 的 Avalonia 反射路径。
 - 外部打开：`AndroidExternalOpenBridge` 改为直发原生存储引用（不再经 Avalonia 反射）。
 
 ### 1.11 入口切换
 
-- 新增 `AndroidBootstrapActivity`（launcher，不继承 Avalonia）：读启动开关后分派到 `AndroidNativeActivity`（原生壳）或 `MainActivity`（`AvaloniaMainActivity`，旧壳）。
+- 新增 `AndroidBootstrapActivity`（launcher，不继承 Avalonia）：读启动开关后分派到 `AndroidNativeActivity`（原生壳）或 `MainActivity`（旧壳）。
+- **Manifest / launcher 迁移**：bootstrap 接管 `MainLauncher=true` 与 `ACTION_VIEW` / `ACTION_SEND` / `ACTION_SEND_MULTIPLE`（`image/*`）；`MainActivity` 去掉 launcher 与外部打开 filter；bootstrap 解析 `--pv-flags` 后决定壳并把 Intent 转发给对应壳。否则点图标会直接进旧壳，外部打开也绕过 bootstrap。
+- **Application 不能晚于 Activity**：清单里的 Application 类由系统在 Activity 之前实例化，当前 `AndroidApp` 继承 `AvaloniaAndroidApplication<App>`，`OnCreate` 就会初始化 Avalonia。改为普通 `Application`；旧壳 `MainActivity` 改 `AvaloniaActivity`，在 `OnCreate` 前用 `AppBuilder.Configure<App>().UseAndroid().SetupWithLifetime(自定义 ISingleViewApplicationLifetime)` 自建 Avalonia。`AvaloniaMainActivity` 依赖 internal `IAndroidApplication.Lifetime`，普通 Application 下不可用；`AvaloniaActivity` 只要求 `Avalonia.Application.Current`，可行。必须实测 `--legacy-ui` 旧壳仍启动。
 - Debug 默认原生；`--legacy-ui` 回退。Android 无托管 `Main(args)`，开关从 Intent extra 读：`adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-flags "--legacy-ui"`。
-- 原生路径不创建任何 Avalonia 对象（不构造 `AndroidApp`）。
+- 原生路径**不初始化 Avalonia**（不创建 `Application` / `AppBuilder` / 窗口 / 位图适配器）；“不构造 `AndroidApp`”按上一条改成“普通 `Application` 不触碰 Avalonia”。
 
 ### 1.12 依赖
 
-`Directory.Packages.props` 补：`Xamarin.Google.Android.Material`、`Xamarin.AndroidX.RecyclerView`、`Xamarin.AndroidX.Window`（insets 兼容层）、`Xamarin.AndroidX.Fragment`。`minSdk` 维持 24（ONNX Runtime AAR 门槛），P3 探测在 API < 28 上直接回退 sRGB。
+`Directory.Packages.props` 补：`Xamarin.Google.Android.Material`（先钉 1.14.0.6，与 Avalonia 12.0.2 的 AndroidX 冲突则退 1.13.0.6）、`Xamarin.AndroidX.RecyclerView`（1.4.0.6）、`Xamarin.AndroidX.Window`（1.5.1.3，insets 兼容层）、`Xamarin.AndroidX.Fragment`（1.9.0）。A1 立即构建验证 `Theme.Material3.Dark.NoActionBar` 与独立 `postSplashScreenTheme` 链。`minSdk` 维持 24（ONNX Runtime AAR 门槛），P3 探测在 API < 28 上直接回退 sRGB。
+
+- **DINO 模型（2026-10-18 评审补充）**：模型 86MB 在 `PhotoViewer` 的 Avalonia 资源里，原生壳不加载 Avalonia，旧 `AppResources` 路径不可用。新增 `AndroidAppResourceProvider`（`AssetManager.Open`），csproj 用 `AndroidAsset` 打包 `..\PhotoViewer\Assets\Models\*.onnx`；APK 会多约 86MB，安装/冷启动时间要记录。
+- **平台门面**：补 `AndroidUiDispatcher`、`AndroidFilePicker`、`AndroidNativeWindowPresenter`、`AndroidNativeSettingsPresenter`、`StorageAccessManager`、`OnTrimMemory` 压力上报。
 
 ## 2. 复用边界
 
@@ -139,12 +147,13 @@
 ## 3. 里程碑
 
 ### A1 基座 + 共享源拆分
-- 新建 `PhotoViewer.Shared/`，迁入 §1.6 的 7 个几何文件；`PhotoViewer.Apple/` 与三个 head 改链接方式；Mac 八套 + iOS 六套 `--pv-native-*` 回归零行为变化（**前置门**）。
-- 拆 `AppleInputMapping`，抽 `InputCommandMap`。
+- 新建 `PhotoViewer.Shared/`，迁入 §1.6 的 7 个几何文件；`PhotoViewer.Apple/` 与三个 head 改链接方式；Mac 八套 + iOS 七套 `--pv-native-*` 回归零行为变化（**前置门**）。
+- 拆 `AppleInputMapping`，抽 `InputCommandMap`（只放 `CommandForGesture`）。
 - `AndroidBootstrapActivity` + `AndroidNativeActivity` + `AndroidNativeShell`：启动序对齐 `iOSNativeShell`（主线程 `SynchronizationContext` → ReactiveUI → 门面注入 → `MainViewModel` → 根视图）；`--legacy-ui` 回退；旧壳回归可启动。
+- 按 §1.11 改普通 `Application` + `AvaloniaActivity` 旧壳；bootstrap 接管 launcher / 外部打开 filter。
 - `Theme.PhotoViewer.Native` 落地（§1.3），`AndroidNativeActivity` 上用。
-- 补 §1.12 依赖，构建零错误零新增警告。
-- **状态**：未开始。
+- 补 §1.12 依赖与 `AndroidAppResourceProvider`/门面，构建零错误零新增警告。
+- **状态**：A1a（共享源 + `InputCommandMap`）2026-10-18 已完成——Mac base **39 checks** + `input/toolbar/layout/analysis/similarity/tools/filmstrip` 七套 PASS，iOS 模拟器七套全 PASS（photo 10 / gesture 24 / layout 24 / input 29 / analysis 18 / similarity 10 / tools 7）；`--pv-native-settings` 因本机未授予屏幕录制权限、SwiftUI 离屏导出空白而假阴性（迁移前基线同样失败，窗口目视正常），见 §6#10。A1b 未开始（本机 android workload 待装）。
 
 ### A2 主图
 - `AndroidPresentationDecoder`（`BitmapFactory` + libheif，产出 8 位 sRGB 或 Display P3）+ `AndroidPresentationEncodingPolicy`；`BitmapLoader` 注入。
@@ -171,7 +180,7 @@
 
 ### A6 验收与文档
 - 模拟器验收驱动器：`--pv-native-{photo,layout,input,analysis,similarity,tools}-check` 同级，结果写 `Documents/PhotoViewer/android-checks.txt` 并 `adb pull`；隔离自有设置/数据库/素材。
-- 模拟器矩阵：API 24 / 28 / 33 / 35 / 36 × DPI 两档 × fontScale 1.0 / 1.3 × 两向。
+- 模拟器矩阵按抽样跑（2026-10-18 评审补充，避免 40 种组合全跑）：API 24 / 28 / 33 / 35 / 36 只跑纵向启动/几何；API 35 + 24 补横向；fontScale 1.0 / 1.3 与两档 DPI 只在 API 35 跑；真机只补手感/色彩/SAF/杀后台。
 - 真机门：在作者安卓手机上执行，见 [验收清单 §6–§8](native-rebuild-phase-android-acceptance.md)；多 ROM / 多系统版本覆盖需借机，未覆盖机型保持未关闭。
 - 文档：新建 `PhotoViewer.Android/AGENTS.md`；根 `AGENTS.md` 项目结构/模块索引、[架构文档](../Design/architecture.md) §4/§5（新增 Android 原生链路小节）；`PhotoViewer.Shared/` 文件表；ui-contract Android 列；DEV.md 任务；handoff 状态与验证矩阵。
 - **状态**：未开始。
@@ -205,4 +214,26 @@
 | 3 | `application android:largeHeap="true"` 在原生壳下是否仍需要，需按 `MemoryGovernor` 实测复核 | A2 复核 |
 | 4 | 旧壳 `MainActivity` 继承 `AvaloniaMainActivity`，原生分派必须走独立 bootstrap activity，不能在同 activity 内切 | 已在 §1.11 定案 |
 | 5 | 现有 `values-v31/styles.xml` 的 `postSplashScreenTheme` 指向 `MyTheme.Main`，原生主题需另一条 splash 链 | A1 处理 |
-| 6 | Android 构建有 14 条既有基线警告（phase-2 已登记） | 保持基线，不压警告 |
+| 6 | Android 构建基线不是 phase-2 记录的 14 条：Windows 2026-10-18 实测 **21 警告 / 0 错误**（NU1903、CS86xx、CA1422、XA4301），Mac 侧本机为 9 警告 | 以最新构建日志冻结基线，不把既有警告算新增 |
+| 7 | Mac/iOS workload 27.0.10722 把 macOS 最低部署版本抬到 **14.0**，Mac head 原写 12.0，`dotnet build` 直接报 `SupportedOSPlatformVersion ... lower than the minimum value '14.0'`；`Info.plist` 的 `LSMinimumSystemVersion` 也需同步 | 2026-10-18 已把 Mac csproj 与 Info.plist 对齐 14.0（设置窗口 SwiftUI 本就以 macOS 26 为目标） |
+| 8 | workload 升级后首次构建 iOS 会因旧 `obj/bin` 残留报 `Undefined symbols for architecture arm64: _xamarin_*` | 删除 `PhotoViewer.iOS/obj`、`bin` 后重建即通过；升级工具链后先做一次干净构建 |
+| 9 | 本机 macOS 环境缺 Android 工具链：无 `android` workload、SDK 只有 platform 36 / build-tools 36 / platform-tools，**无 emulator 与 system-images**，也未装 Android Studio | 2026-10-18 已补 platform 35 / emulator / arm64-v8a 镜像与 AVD `pv-api35`；`android` workload 仍需管理员安装 |
+| 10 | `--pv-native-settings` 的“勾选后重绘”断言依赖 `screencapture -l`：本机未授予屏幕录制权限时回退到 `cacheDisplay`，SwiftUI 图层导出为空白，断言必失败；迁移前基线同样失败，KimiCU 目视窗口内容正常 | 登记为假阴性；授予权限或改用可捕获图层树的离屏渲染后复跑。A1a 结论不据此改判 |
+
+## 7. Windows 评审修订写回（2026-10-18）
+
+> 来源：[native-rebuild-android-handoff.md](native-rebuild-android-handoff.md) §3（Windows 侧只做计划评审与基线构建）。以下 11 条已写回正文；与正文早期文字冲突时，以本节为准。
+
+| # | 结论 | 落点 |
+|---|---|---|
+| 1 | Android 的 Application 由系统在 Activity 前实例化，「原生路径不构造 `AndroidApp`」字面不可实现。改普通 `Application`；旧壳 `MainActivity` 改 `AvaloniaActivity` 并在 `OnCreate` 前自建 Avalonia；必须实测 `--legacy-ui` 仍启动 | §1.11、A1 |
+| 2 | 共享几何一律 **dp 当点**；`PhotoViewport` 用 dp，`BackingScale = Density`，只在 View 边界做 px↔dp | §1.5、A2 |
+| 3 | `InputCommandMap` 只放 `CommandForGesture`；Apple 的修饰键解码/HID 表留在 `AppleInputMapping`；Android 另写 `AndroidInputMapping` | §1.6、A1/A4 |
+| 4 | `AndroidBootstrapActivity` 接管 launcher 与 `ACTION_VIEW`/`SEND`/`SEND_MULTIPLE`；`MainActivity` 去掉 launcher 与外部打开 filter | §1.11、A1 |
+| 5 | DINO 模型走 `AndroidAppResourceProvider` + `AndroidAsset`（约 +86MB）；补 `AndroidUiDispatcher`/`AndroidFilePicker`/`AndroidNativeWindowPresenter`/`AndroidNativeSettingsPresenter`/`StorageAccessManager`/`OnTrimMemory` | §1.12、A1 |
+| 6 | 缩放指示器归 A3：`NavigationSize`/`NavigationViewport`，覆盖在 `SurfaceView` 上的普通 View，长边 150dp；点按/拖动定位可作平台增强 | A3 |
+| 7 | 行布局筛选条显式 `alignLeading: true`，与 iPad 同口径 | §1.7、A3 |
+| 8 | SAF 写回：`takePersistableUriPermission(Read\|Write)`、`FLAG_GRANT_WRITE_URI_PERMISSION`、SD 卡 `"rw"` 失败改 `"rwt"`；`IFileRef.Path` 返回 content URI | §1.10、A2 |
+| 9 | A6 矩阵抽样：5 个 API 只跑纵向；API 35 + 24 补横向；fontScale 与 DPI 只在 API 35；真机补手感/色彩/SAF/杀后台 | A6 |
+| 10 | 基线冻结为「Android 21 警告 / 0 错误」「iOS 7 套回归」，不再沿用 14 条/6 套的旧数字 | §6、A1/A6 |
+| 11 | Material 版本先钉 Material 1.14.0.6（冲突退 1.13.0.6）、RecyclerView 1.4.0.6、Window 1.5.1.3、Fragment 1.9.0；A1 立即构建验证主题与 splash 链 | §1.12、A1 |

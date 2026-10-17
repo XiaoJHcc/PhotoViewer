@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>
 /// 相似聚类面板的平台中立几何（与旧壳 <c>SimilarityListView</c> 同口径，Mac 与 iPad 原生壳共用）：

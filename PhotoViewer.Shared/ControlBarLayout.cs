@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>控制栏业务分组类型；决定分组内子控件尺寸、内边距与间距口径。</summary>
 public enum ControlBarGroupKind

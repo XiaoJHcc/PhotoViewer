@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>
 /// 照片视口的平台中立数学：适应缩放、锚点缩放、平移钳制、导航图几何与 100% 细节判定。

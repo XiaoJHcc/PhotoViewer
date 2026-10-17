@@ -49,7 +49,7 @@ public static class MacInput
     /// <param name="settings">当前设置。</param>
     /// <returns>匹配到的命令标识；没有绑定返回 null。</returns>
     public static string? ResolveCommand(NSEvent nativeEvent, SettingsViewModel settings)
-        => AppleInputMapping.CommandForGesture(FromEvent(nativeEvent), settings);
+        => InputCommandMap.CommandForGesture(FromEvent(nativeEvent), settings);
 
     /// <summary>按当前设置工作副本生成 macOS 快捷键符号，显示转换不改变持久化手势。</summary>
     /// <param name="gesture">共享手势。</param>

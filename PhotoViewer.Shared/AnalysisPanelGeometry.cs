@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>
 /// 分析栏的平台中立几何（与旧壳 <c>AnalysisView</c> 同口径）：

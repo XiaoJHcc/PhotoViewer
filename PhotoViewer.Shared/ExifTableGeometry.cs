@@ -1,4 +1,4 @@
-namespace PhotoViewer.Apple;
+namespace PhotoViewer.Shared;
 
 /// <summary>
 /// EXIF 详情页的 7 列行几何（平台中立，Mac 与 iPad 工具页共用旧壳口径）：
