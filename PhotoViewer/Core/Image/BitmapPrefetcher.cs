@@ -128,7 +128,8 @@ public class BitmapPrefetcher
 
                 // P1-M4b 分级预取:±1 邻居取 Full(变焦连续性),其余取代理(省内存);代理目标未知时全部 Full(旧行为)
                 int proxyTarget = BitmapLoader.ProxyTargetLongEdge;
-                var items = ordered.Select(t => (file: files[t.i], full: proxyTarget <= 0 || t.dist == 1)).ToList();
+                var items = ordered.Select(t => (file: files[t.i],
+                    full: proxyTarget <= 0 || (t.dist == 1 && BitmapLoader.PrefetchFullNeighbors))).ToList();
                 await RunQueuedAsync(items, ct);
             }
             catch { /* 忽略 */ }

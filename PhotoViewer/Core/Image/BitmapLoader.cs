@@ -57,6 +57,11 @@ public class BitmapCacheItem
 public static class BitmapLoader
 {
     private static IPresentationImageDecoder? _presentationDecoder;
+    /// <summary>
+    /// 邻居预取是否允许 ±1 档取 Full（默认 true，Mac/iPad/Windows 口径）。
+    /// Android 手机内存档位更低，预取统一走代理档，Full 只在当前图放大时按需加载。
+    /// </summary>
+    public static bool PrefetchFullNeighbors { get; set; } = true;
     private static IPresentationEncodingPolicy? _encodingPolicy;
 
     /// <summary>
