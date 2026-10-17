@@ -25,6 +25,8 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     private readonly PhotoViewport _viewport = new();
     private readonly MetalPhotoRenderer _renderer;
     private readonly UIScrollView _scroll = new();
+    /// <summary>缩放内容视图：尺寸 = 适应态显示尺寸，由 UIScrollView 缩放；没有它 UIKit 永远不会捏合缩放。</summary>
+    private readonly UIView _zoomContent = new();
     private readonly UIPanGestureRecognizer _swipe;
     private readonly UIPanGestureRecognizer _wheel;
     private readonly UITapGestureRecognizer _doubleTap;
@@ -96,6 +98,11 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         _scroll.DecelerationRate = UIScrollView.DecelerationRateNormal;
         _scroll.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
         _scroll.Delegate = new ScrollDelegate(this);
+        // 透明的缩放内容视图：UIScrollView 通过它承载 zoomScale（缩放只改变该视图的变换），
+        // 照片仍由 Metal 图层按视口变换绘制。尺寸在 SyncScrollFromViewport 里设为适应态显示尺寸。
+        _zoomContent.BackgroundColor = UIColor.Clear;
+        _zoomContent.UserInteractionEnabled = false;
+        _scroll.AddSubview(_zoomContent);
         AddSubview(_scroll);
 
         var doubleTap = new UITapGestureRecognizer(OnDoubleTap) { NumberOfTapsRequired = 2 };
@@ -317,9 +324,14 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         ViewportChanged?.Invoke();
     }
 
-    /// <summary>滚动视图完成捏合后：把缩放后的显示尺寸写回视口并在同一回调里重绘。</summary>
+    /// <summary>滚动视图完成捏合后：重算居中内边距并把缩放后的显示尺寸写回视口并在同一回调里重绘。</summary>
     /// <param name="scrollView">发送事件的滚动视图。</param>
-    private void OnDidZoom(UIScrollView scrollView) => PullViewportFromScroll();
+    private void OnDidZoom(UIScrollView scrollView)
+    {
+        if (_syncingScroll) return;
+        UpdateCenteringInsets();
+        PullViewportFromScroll();
+    }
 
     /// <summary>滚动视图位移（拖动、惯性、回弹）后同步视口并重绘。</summary>
     /// <param name="scrollView">发送事件的滚动视图。</param>
@@ -340,14 +352,16 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         double displayedHeight = _viewport.ImageHeight * scale;
         double panX = displayedWidth / 2 - (double)_scroll.ContentOffset.X - (double)Bounds.Width / 2;
         double panY = displayedHeight / 2 - (double)_scroll.ContentOffset.Y - (double)Bounds.Height / 2;
+        if (Math.Abs(scale - _viewport.Scale) < 1e-9 && Math.Abs(panX - _viewport.PanX) < 1e-6 && Math.Abs(panY - _viewport.PanY) < 1e-6) return;
         _viewport.ApplyGestureView(scale, panX, panY);
         DrawFrame();
         ViewportChanged?.Invoke();
     }
 
     /// <summary>
-    /// 把当前视口状态写回滚动视图：内容尺寸/居中内边距/缩放范围/zoomScale/contentOffset 一次配置。
-    /// 内边距按适应态显示尺寸固定（不随捏合变化），否则缩放跨过视图尺寸时内容会突然跳动。
+    /// 把当前视口状态写回滚动视图：缩放内容视图尺寸/缩放范围/zoomScale/居中内边距/contentOffset 一次配置。
+    /// 内容视图尺寸固定为适应态显示尺寸（zoomScale=1 的基准），UIKit 在捏合时只改它的变换，
+    /// 因此 contentSize 随缩放倍率自动变化、平移/惯性由系统负责。
     /// </summary>
     private void SyncScrollFromViewport()
     {
@@ -358,19 +372,40 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
             double fit = _viewport.FitScale;
             // 该内容尺寸即"适应态下的显示尺寸"：它是 zoomScale=1 的基准，也是滚动位移的坐标系。
             var display = new CGSize(_viewport.ImageWidth * fit, _viewport.ImageHeight * fit);
-            _scroll.ContentSize = display;
-            _scroll.ContentInset = new UIEdgeInsets(
-                (nfloat)Math.Max(0, ((double)Bounds.Height - (double)display.Height) / 2),
-                (nfloat)Math.Max(0, ((double)Bounds.Width - (double)display.Width) / 2), 0, 0);
+            double maximumZoom = Math.Max(1, MaximumPhysicalScale / _viewport.BackingScale / Math.Max(1e-6, fit));
+            double targetZoom = Math.Clamp(_viewport.Scale / Math.Max(1e-6, fit), 1, maximumZoom);
+            _zoomContent.Frame = new CGRect(CGPoint.Empty, display);
             _scroll.MinimumZoomScale = 1;
-            _scroll.MaximumZoomScale = (nfloat)Math.Max(1, MaximumPhysicalScale / _viewport.BackingScale / Math.Max(1e-6, fit));
-            _scroll.ZoomScale = (nfloat)Math.Max(1, _viewport.Scale / Math.Max(1e-6, fit));
+            _scroll.MaximumZoomScale = (nfloat)maximumZoom;
+            // 缩放态由 UIKit 按"内容视图尺寸 × zoomScale"维护 contentSize，此处只固定 zoomScale=1 的基准尺寸。
+            if (targetZoom <= 1 + 1e-9) _scroll.ContentSize = display;
+            if (Math.Abs((double)_scroll.ZoomScale - targetZoom) > 1e-9) _scroll.ZoomScale = (nfloat)targetZoom;
+            UpdateCenteringInsets(targetZoom, display);
             _scroll.ContentOffset = ContentOffsetForViewport();
         }
         finally
         {
             _syncingScroll = false;
         }
+    }
+
+    /// <summary>
+    /// 居中内边距：内容在某一轴上小于视口时，用等量内边距把它居中（UIScrollView 的标准居中模式）。
+    /// 缩放跨过视图尺寸时内边距连续趋近 0，不产生内容跳动；捏合回调与视口同步时更新。
+    /// </summary>
+    private void UpdateCenteringInsets()
+        => UpdateCenteringInsets((double)_scroll.ZoomScale,
+            new CGSize(_viewport.ImageWidth * _viewport.FitScale, _viewport.ImageHeight * _viewport.FitScale));
+
+    /// <summary>按给定缩放倍率与适应态内容尺寸重算居中内边距。</summary>
+    /// <param name="zoom">相对适应态的缩放倍率。</param>
+    /// <param name="display">适应态（zoomScale=1）内容尺寸。</param>
+    private void UpdateCenteringInsets(double zoom, CGSize display)
+    {
+        double horizontal = Math.Max(0, ((double)Bounds.Width - (double)display.Width * zoom) / 2);
+        double vertical = Math.Max(0, ((double)Bounds.Height - (double)display.Height * zoom) / 2);
+        var insets = new UIEdgeInsets((nfloat)vertical, (nfloat)horizontal, (nfloat)vertical, (nfloat)horizontal);
+        if (_scroll.ContentInset != insets) _scroll.ContentInset = insets;
     }
 
     /// <summary>按当前视口状态算出滚动视图应处的 contentOffset（与 <see cref="PullViewportFromScroll"/> 互为逆映射）。</summary>
@@ -423,6 +458,11 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         /// <summary>绑定宿主视图。</summary>
         /// <param name="owner">主图宿主。</param>
         public ScrollDelegate(iOSPhotoView owner) => _owner = owner;
+
+        /// <summary>声明透明内容视图为缩放目标；没有它 UIKit 不会响应捏合，zoomScale 永不变化。</summary>
+        /// <param name="scrollView">滚动视图。</param>
+        /// <returns>缩放内容视图。</returns>
+        public override UIView ViewForZoomingInScrollView(UIScrollView scrollView) => _owner._zoomContent;
 
         /// <summary>捏合缩放中每帧回调。</summary>
         /// <param name="scrollView">滚动视图。</param>

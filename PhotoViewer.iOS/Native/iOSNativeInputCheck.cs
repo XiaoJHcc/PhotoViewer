@@ -31,6 +31,8 @@ internal static class iOSNativeInputCheck
     private static readonly TimeSpan Settle = TimeSpan.FromMilliseconds(160);
     /// <summary>胶片栏定位到中心的允许误差（点）。</summary>
     private const double CenterTolerance = 1.5;
+    /// <summary>控制栏结构核对的几何容差（点）：只允许贴边与取整误差，真实重叠必须被拦下。</summary>
+    private const double Exact = .5;
 
     /// <summary>解析验收开关；命中即以给定目录启动异步核对。</summary>
     /// <param name="args">进程启动参数。</param>
@@ -256,6 +258,45 @@ internal static class iOSNativeInputCheck
     }
 
     /// <summary>
+    /// 捏合/平移驱动回归（作者报告"只有双击有效、捏合与拖动无反应"）：
+    /// 滚动视图必须有缩放内容视图（没有它 UIKit 不响应捏合、zoomScale 恒为 1），
+    /// 程序化改 zoomScale 后视口缩放必须跟随、改 contentOffset 后视口平移必须跟随，回适应态时缩放回到 1。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyScrollGestureDriverAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    {
+        var photo = root.Photo;
+        var scroll = photo.ScrollView;
+        await UiDispatcher.InvokeAsync(photo.FitToView);
+        await WaitAsync(() => photo.IsFit && HasDisplayedImage(main), "捏合驱动回归的适应态");
+        await SettleAsync(root);
+        var zoomTarget = scroll.Delegate?.ViewForZoomingInScrollView(scroll)
+            ?? throw new InvalidOperationException("滚动视图没有缩放内容视图：UIKit 不会响应捏合，zoomScale 永远不会变化");
+        if (zoomTarget.Superview != scroll)
+            throw new InvalidOperationException("缩放内容视图不在滚动视图内");
+        double fitContentWidth = photo.DisplayWidth * photo.PointScale;
+        double fitScale = photo.PointScale;
+        if (Math.Abs((double)zoomTarget.Frame.Width - fitContentWidth) > 1)
+            throw new InvalidOperationException($"缩放内容视图不是适应态显示尺寸：{zoomTarget.Frame.Width} vs {fitContentWidth:0.##}");
+        await UiDispatcher.InvokeAsync(() => scroll.SetZoomScale(2, false));
+        await WaitAsync(() => !photo.IsFit && Math.Abs((double)scroll.ZoomScale - 2) < .02, "程序化捏合缩放生效");
+        await SettleAsync(root);
+        if (Math.Abs(photo.PointScale - fitScale * 2) > fitScale * .05)
+            throw new InvalidOperationException($"zoomScale 2 未映射到视口：{photo.PointScale:0.####} vs {fitScale * 2:0.####}");
+        double panBefore = photo.Viewport.PanX;
+        await UiDispatcher.InvokeAsync(() => scroll.SetContentOffset(new CGPoint((double)scroll.ContentOffset.X + 120, scroll.ContentOffset.Y), false));
+        await SettleAsync(root);
+        if (Math.Abs(photo.Viewport.PanX - panBefore) < 20)
+            throw new InvalidOperationException($"拖动 contentOffset 后视口平移未跟随：{panBefore:0.##} → {photo.Viewport.PanX:0.##}");
+        await UiDispatcher.InvokeAsync(photo.FitToView);
+        await WaitAsync(() => photo.IsFit && Math.Abs((double)scroll.ZoomScale - 1) < .02, "回适应态后 zoomScale 归 1");
+        await SettleAsync(root);
+        lines.Add($"PASS 捏合/平移驱动：缩放内容视图 {fitContentWidth:0.##}×{(double)zoomTarget.Frame.Height:0.##}、zoomScale 2 → 视口跟随、contentOffset 拖动 → 平移跟随、回适应归 1（缩放后 {photo.PointScale:0.###}）");
+    }
+
+    /// <summary>
     /// 适应态横向轻扫：上一张/下一张经共享命令表并触发显式定位；放大态与不足阈值时不翻页；
     /// 识别器为单指且与滚动视图平移同时识别（捏合起手不会翻页）。
     /// </summary>
@@ -266,6 +307,7 @@ internal static class iOSNativeInputCheck
     {
         var photo = root.Photo;
         var list = main.FileVM.ThumbnailList;
+        await VerifyScrollGestureDriverAsync(root, main, lines);
         if (photo.SwipeRecognizer.MinimumNumberOfTouches != 1 || photo.SwipeRecognizer.MaximumNumberOfTouches != 1)
             throw new InvalidOperationException("轻扫识别器不是单指，捏合起手可能误翻页");
         if (photo.DoubleTapRecognizer.NumberOfTapsRequired != 2) throw new InvalidOperationException("主图双击识别器未保持两击");
@@ -490,6 +532,29 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => main.Settings.Hotkeys.First(hotkey => hotkey.Command == "Next").PrimaryHotkey?.Key?.Key == GestureKey.F5, "快捷键绑定传播");
         await WaitAsync(() => root.ControlBar.Ratings.Count == 0 && main.ControlVM.EnabledExifItems.Count == 0, "评分与 EXIF 分组传播");
         lines.Add($"PASS 设置写回①：布局模式→{(expectedRow ? "行" : "列")}、控制栏命令显隐/顺序（ZoomInScale 置顶）、Next 重绑 F5、评分与 EXIF 分组即时消失");
+        RequireControlBarStructure(root, main, "设置写回①");
+
+        // 控制栏重建幂等性：反复改变 EXIF 项与命令显隐（正是作者报告的"多块 EXIF/按钮重叠"触发路径），
+        // 每次重建后核对子视图数 == 分组数、无旧分组残留、分组与组内控件都不重叠。
+        var fit = main.Settings.Hotkeys.First(hotkey => hotkey.Command == "Fit");
+        for (int round = 0; round < 3; round++)
+        {
+            int exifCount = round == 1 ? 2 : round == 2 ? 7 : 11;
+            bool rating = round != 1;
+            bool fitVisible = round == 2;
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                for (int index = 0; index < main.Settings.ExifDisplayItems.Count; index++)
+                    main.Settings.ExifDisplayItems[index].IsEnabled = index < exifCount;
+                main.Settings.ShowRating = rating;
+                fit.IsDisplay = fitVisible;
+            });
+            await WaitAsync(() => main.ControlVM.EnabledExifItems.Count == exifCount
+                && root.ControlBar.Subviews.Length == root.ControlBar.Groups.Count, $"控制栏第 {round + 1} 轮重建");
+            await SettleAsync(root);
+            RequireControlBarStructure(root, main, $"控制栏重建第 {round + 1} 轮");
+        }
+        lines.Add("PASS 控制栏重建：EXIF 项/评分/命令显隐连续三轮切换后子视图数始终等于分组数，无旧分组残留、分组与组内控件零重叠");
 
         var list = main.FileVM.ThumbnailList;
         int index = list.FilteredFiles.IndexOf(main.CurrentFile!);
@@ -510,6 +575,54 @@ internal static class iOSNativeInputCheck
             throw new InvalidOperationException("JPG 关闭后仍出现在已选格式中");
         lines.Add($"PASS 设置写回②：关闭 JPG 后胶片栏筛选列表即时清空（计数 {list.FilteredFiles.Count}），已选格式同步");
     }
+
+    /// <summary>
+    /// 控制栏重建后的结构核对（回归"设置回写后多块 EXIF/按钮重叠"）：
+    /// 视图树里只能有一套分组（子视图数 == 分组数）、分组顺序与共享设置一致、分组之间与组内控件之间零重叠。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="label">报告/报错标签。</param>
+    private static void RequireControlBarStructure(iOSNativeRootViewController root, MainViewModel main, string label)
+    {
+        var bar = root.ControlBar;
+        var groups = bar.Groups.ToArray();
+        int expected = (main.ControlVM.EnabledExifItems.Count > 0 ? 1 : 0)
+            + (main.Settings.ShowRating ? 1 : 0)
+            + (main.ControlVM.EnabledControls.Count(hotkey => AppleSymbolNames.ForCommand(hotkey.Command) != null) > 0 ? 1 : 0);
+        if (groups.Length != expected)
+            throw new InvalidOperationException($"{label} 控制栏分组数 {groups.Length} != 期望 {expected}");
+        if (bar.Subviews.Length != groups.Length)
+            throw new InvalidOperationException($"{label} 控制栏残留旧分组：子视图 {bar.Subviews.Length} 个 / 分组 {groups.Length} 个");
+        foreach (var group in groups)
+        {
+            if (!ReferenceEquals(group.Superview, bar))
+                throw new InvalidOperationException($"{label} 分组不在控制栏视图树内：{group.Frame}");
+            var children = group.Subviews;
+            foreach (var child in children)
+                if ((double)child.Frame.X < -Exact || (double)child.Frame.Y < -Exact
+                    || (double)child.Frame.Right > (double)group.Bounds.Width + Exact
+                    || (double)child.Frame.Bottom > (double)group.Bounds.Height + Exact)
+                    throw new InvalidOperationException($"{label} 组内控件越出分组：{child.Frame} / {group.Bounds}");
+            for (int first = 0; first < children.Length; first++)
+                for (int second = first + 1; second < children.Length; second++)
+                    if (Overlaps(children[first].Frame, children[second].Frame))
+                        throw new InvalidOperationException($"{label} 组内控件重叠：{children[first].Frame} × {children[second].Frame}");
+        }
+        for (int first = 0; first < groups.Length; first++)
+            for (int second = first + 1; second < groups.Length; second++)
+                if (Overlaps(groups[first].Frame, groups[second].Frame))
+                    throw new InvalidOperationException($"{label} 控制栏分组重叠：{groups[first].Frame} × {groups[second].Frame}");
+    }
+
+    /// <summary>两个矩形是否真实相交（忽略零尺寸与 0.5 点以内的贴边）。</summary>
+    /// <param name="first">第一个矩形。</param>
+    /// <param name="second">第二个矩形。</param>
+    /// <returns>重叠面积大于零时为 true。</returns>
+    private static bool Overlaps(CGRect first, CGRect second)
+        => (double)first.Width > Exact && (double)first.Height > Exact && (double)second.Width > Exact && (double)second.Height > Exact
+            && (double)first.X < (double)second.Right - Exact && (double)second.X < (double)first.Right - Exact
+            && (double)first.Y < (double)second.Bottom - Exact && (double)second.Y < (double)first.Bottom - Exact;
 
     /// <summary>
     /// 从主图菜单动作打开设置页并定位到编辑会话；返回设置根控制器（其 <c>Session</c> 是测试缝）。

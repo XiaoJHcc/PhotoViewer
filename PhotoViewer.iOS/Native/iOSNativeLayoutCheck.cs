@@ -78,6 +78,10 @@ internal static class iOSNativeLayoutCheck
                 main.FileVM.FilterBar.SelectedRatingFilter = "All";
                 foreach (var format in main.Settings.FileFormats)
                     if (format.DisplayName == "JPG") format.IsEnabled = true;
+                // FILM-02 端点用真实上一张/下一张按钮：用户可能在设置里隐藏了它们，验收会话临时打开（收尾由快照还原）。
+                foreach (var hotkey in main.Settings.Hotkeys)
+                    if (hotkey.Command is "Previous" or "Next") hotkey.IsDisplay = true;
+                root.BuildControls();
             });
             await main.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
             await WaitAsync(() => main.FolderVM.AllFiles.Count >= 12, "夹具目录枚举");
@@ -138,7 +142,7 @@ internal static class iOSNativeLayoutCheck
             if (main.IsRowLayout != (mode == LayoutMode.Row)) throw new InvalidOperationException($"{label}/{mode} 布局方向未按设置生效");
             VerifyPartition(root, main, mode == LayoutMode.Row, $"{label}/{mode}", lines);
             VerifyFilterBar(root, mode == LayoutMode.Row, $"{label}/{mode}", lines);
-            VerifyControlBar(root, mode == LayoutMode.Row, $"{label}/{mode}", lines);
+            VerifyControlBar(root, main, mode == LayoutMode.Row, $"{label}/{mode}", lines);
             await VerifyFilmstripGeometryAsync(root, main, mode == LayoutMode.Row, $"{label}/{mode}", lines);
             await VerifyPaneReleaseAsync(root, main, mode == LayoutMode.Row, $"{label}/{mode}", lines);
         }
@@ -306,10 +310,13 @@ internal static class iOSNativeLayoutCheck
                 throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
             if (Math.Abs((double)bar.SimilarityToggle.Frame.X - (double)bar.CountLabel.Frame.Right - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{bar.SimilarityToggle.Frame}");
-            // I5 起相似聚类 toggle 参与整组居中（与共享 FilterBarFrames 的 includeSimilarityToggle 同口径）。
-            double center = ((double)controls[0].Frame.X + (double)bar.SimilarityToggle.Frame.Right) / 2;
-            if (Math.Abs(center - (double)bar.Bounds.Width / 2) > .5)
-                throw new InvalidOperationException($"{scope} 筛选条未水平居中：{center}/{(double)bar.Bounds.Width / 2}");
+            // iPad 没有 macOS 的交通灯：整组从内容前导边（外边距 10）起排，左上不得留空带。
+            // 文件栏内容区已收在安全区内，故绝对起点 = 安全区边缘 + 普通外边距（与旧壳 FileView/FilterBarView 的 10 点一致）。
+            var fileContent = root.Panes.FileContent;
+            if (Math.Abs((double)bar.Frame.X - (double)fileContent.X) > Exact)
+                throw new InvalidOperationException($"{scope} 筛选条未贴安全区前导边：{bar.Frame.X} vs {fileContent.X}");
+            if (Math.Abs((double)controls[0].Frame.X - MainScreenLayout.FilterMargin) > Exact)
+                throw new InvalidOperationException($"{scope} 上下布局筛选条未从前导外边距 10 点起排（左上留空）：{controls[0].Frame}");
             foreach (var control in controls)
                 if (Math.Abs((double)control.Frame.Y - MainScreenLayout.FilterMargin) > Exact)
                     throw new InvalidOperationException($"{scope} 上下布局筛选条未贴顶 10 点：{control.Frame}");
@@ -332,20 +339,27 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs(center - MainScreenLayout.FileBarContentWidth / 2) > Exact)
                 throw new InvalidOperationException($"{scope} 左右布局筛选条中心不在 58：{center}");
         }
-        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "横向居中且贴顶 10" : "116 栏内居中、纵向节距 37")}");
+        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "从安全区前导边 + 10 点起排且贴顶 10（无交通灯空带）" : "116 栏内居中、纵向节距 37")}");
     }
 
-    /// <summary>核对控制栏：三分组、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>
+    /// <summary>核对控制栏：分组数量/子项与共享设置一致、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>
     /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM（分组组成以当前设置为准，硬编码数量会把设置回写误判为回归）。</param>
     /// <param name="row">是否行布局。</param>
     /// <param name="scope">报告范围标签。</param>
     /// <param name="lines">报告行。</param>
-    private static void VerifyControlBar(iOSNativeRootViewController root, bool row, string scope, List<string> lines)
+    private static void VerifyControlBar(iOSNativeRootViewController root, MainViewModel main, bool row, string scope, List<string> lines)
     {
         var bar = root.ControlBar;
         var bounds = bar.Bounds;
-        if (bar.Groups.Count != 3 || bar.Ratings.Count != 6)
-            throw new InvalidOperationException($"{scope} 控制栏未保留 EXIF/评分/命令三个完整分组：{bar.Groups.Count}/{bar.Ratings.Count}");
+        int exifCount = main.ControlVM.EnabledExifItems.Count;
+        int ratingCount = main.Settings.ShowRating ? 6 : 0;
+        int commandCount = main.ControlVM.EnabledControls.Count(hotkey =>
+            iOSControlBar.IsCommandAvailable(hotkey.Command) && AppleSymbolNames.ForCommand(hotkey.Command) != null);
+        int expectedGroups = (exifCount > 0 ? 1 : 0) + (ratingCount > 0 ? 1 : 0) + (commandCount > 0 ? 1 : 0);
+        if (bar.Groups.Count != expectedGroups || bar.Ratings.Count != ratingCount)
+            throw new InvalidOperationException(
+                $"{scope} 控制栏分组与共享设置不一致：组 {bar.Groups.Count}/{expectedGroups}、评分 {bar.Ratings.Count}/{ratingCount}（EXIF {exifCount}、命令 {commandCount}）");
         foreach (var group in bar.Groups)
         {
             var frame = group.Frame;
@@ -356,12 +370,15 @@ internal static class iOSNativeLayoutCheck
             foreach (var other in bar.Groups.Where(other => !ReferenceEquals(other, group)))
                 if (Overlaps(frame, other.Frame)) throw new InvalidOperationException($"{scope} 控制组重叠：{frame} / {other.Frame}");
         }
-        // I5 起 ToggleEnhance 进入默认显示的命令组（此前被 SCOPE-01 过滤），命令数 6→7。
-        int[] childCounts = [4, 6, 7];
+        // 子项数量直接取共享设置（EXIF 显隐/评分显隐/命令显隐与顺序都可被用户改写）。
+        var childCounts = new List<int>();
+        if (exifCount > 0) childCounts.Add(exifCount);
+        if (ratingCount > 0) childCounts.Add(ratingCount);
+        if (commandCount > 0) childCounts.Add(commandCount);
         for (int index = 0; index < bar.Groups.Count; index++)
             if (bar.Groups[index].Subviews.Length != childCounts[index])
                 throw new InvalidOperationException($"{scope} 控制组 {index} 子项数量 {bar.Groups[index].Subviews.Length}，预期 {childCounts[index]}");
-        foreach (var tile in bar.Groups[0].Subviews)
+        if (exifCount > 0) foreach (var tile in bar.Groups[0].Subviews)
         {
             RequireFrame(tile.Frame, new CGRect(tile.Frame.X, tile.Frame.Y, 50, 40), $"{scope} EXIF 信息块未保持 50×40");
             var labels = tile.Subviews.OfType<UILabel>().ToArray();
@@ -382,7 +399,7 @@ internal static class iOSNativeLayoutCheck
         // I5 起分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
         if (!iOSControlBar.IsCommandAvailable("ToggleAnalysisView") || !iOSControlBar.IsCommandAvailable("ToggleEnhance"))
             throw new InvalidOperationException($"{scope} I5 起分析栏/增强预览命令必须有原生实现（SCOPE-01 解禁）");
-        lines.Add($"PASS {scope} 控制栏：3 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用");
+        lines.Add($"PASS {scope} 控制栏：{bar.Groups.Count} 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用");
     }
 
     /// <summary>核对卡片几何（96×144 外框 / 90×138 占位区 / 80 方形照片区 / 星级与文字位置）与身份绑定。</summary>

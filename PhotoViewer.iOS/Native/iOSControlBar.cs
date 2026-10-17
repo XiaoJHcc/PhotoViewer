@@ -207,12 +207,20 @@ internal sealed class iOSControlBar : UIView
         }
     }
 
-    /// <summary>重建或关闭时释放控件并解除模型订阅。</summary>
+    /// <summary>
+    /// 重建或关闭时移除并释放控件、解除模型订阅。
+    /// <c>UIView.Dispose</c> 只释放托管句柄，原生视图仍被父视图持有并留在视图树里；
+    /// 必须先 <c>RemoveFromSuperview</c>，否则每次设置回写都会把新分组叠在旧分组上（重叠且不可用）。
+    /// </summary>
     private void ClearGroups()
     {
         foreach (var hotkey in _hotkeys) hotkey.PropertyChanged -= OnHotkeyChanged;
         _hotkeys.Clear();
-        foreach (var group in _groups) group.Dispose();
+        foreach (var group in _groups)
+        {
+            group.RemoveFromSuperview();
+            group.Dispose();
+        }
         _groups.Clear();
         _exifGroup = null;
         _specs.Clear();

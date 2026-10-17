@@ -81,14 +81,20 @@ public static class MainScreenLayout
     /// <returns>控制栏主轴长度。</returns>
     public static double ControlBarMainLength(double measuredMain) => measuredMain + Divider;
 
-    /// <summary>筛选条五个控件的位置：行布局整组横向居中、计数与 toggle 与控件垂直居中；列布局固定在 116 栏内纵向排列。</summary>
+    /// <summary>
+    /// 筛选条五个控件的位置：行布局默认整组横向居中（macOS 隐藏标题栏的交通灯让位），
+    /// <paramref name="alignLeading"/> 时从内容前导边（外边距 10）起排（iPad：没有交通灯，不留左侧空带）；
+    /// 列布局固定在 116 栏内纵向排列。计数与 toggle 与控件垂直居中。
+    /// </summary>
     /// <param name="horizontal">是否行布局。</param>
     /// <param name="contentWidth">文件栏内容区宽度（行布局用其居中，列布局固定 116）。</param>
     /// <param name="leadingInset">列布局首控件的前导让位。</param>
     /// <param name="countWidth">计数文本的自然宽度。</param>
     /// <param name="includeSimilarityToggle">相似聚类 toggle 是否参与整组居中（隐藏时不占位，但位置照常给出）。</param>
+    /// <param name="alignLeading">行布局是否从内容前导边起排而不是整组居中。</param>
     /// <returns>五个控件的矩形。</returns>
-    public static FilterFrames FilterBarFrames(bool horizontal, double contentWidth, double leadingInset, double countWidth, bool includeSimilarityToggle)
+    public static FilterFrames FilterBarFrames(bool horizontal, double contentWidth, double leadingInset, double countWidth,
+        bool includeSimilarityToggle, bool alignLeading = false)
     {
         double toggleHeight = FilterToggleHeight;
         double controlGap = FilterGap;
@@ -96,7 +102,7 @@ public static class MainScreenLayout
         {
             double controlsWidth = FilterControlWidth * 3 + controlGap * 2 + controlGap + countWidth;
             double contentWidthUsed = includeSimilarityToggle ? controlsWidth + controlGap + FilterControlWidth : controlsWidth;
-            double start = (contentWidth - contentWidthUsed) / 2;
+            double start = alignLeading ? FilterMargin : (contentWidth - contentWidthUsed) / 2;
             double controlY = FilterMargin;
             double countX = start + (FilterControlWidth + controlGap) * 3;
             double toggleX = countX + countWidth + controlGap;

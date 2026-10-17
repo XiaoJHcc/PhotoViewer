@@ -177,7 +177,7 @@ internal static class iOSNativeAnalysisCheck
                 await SettleAsync(root);
                 lines.Add("PASS 展示编码：F16 代理（HistogramRenderer + DisplayCrop）与 8 位 P3 Full（直方图/细节预览瓦片）均可用，裁剪中心与帧读回一致");
 
-                // 七、增强预览：控制栏命令 → 会话增强图就绪 → 再关一次还原。
+                // 七、增强预览：控制栏命令 → 会话增强图就绪 → **GPU 帧像素明显变化** → 再关一次还原。
                 // 用户设置可能隐藏了增强按钮；验收按控制栏命令路径执行，临时打开显隐（收尾还原）。
                 await UiDispatcher.InvokeAsync(() =>
                 {
@@ -187,18 +187,40 @@ internal static class iOSNativeAnalysisCheck
                 await SettleAsync(root);
                 if (!root.ControlBar.Commands.TryGetValue("ToggleEnhance", out var enhanceButton))
                     throw new InvalidOperationException("控制栏未生成 ToggleEnhance 命令入口");
-                // 增强算法只在 8 位口径有定义：这里必须由会话把 8 位 P3 Full 正确转成 sRGB8 往返，不得静默回退。
-                if (session.Image?.Encoding != PixelEncoding.Rgba8)
-                    throw new InvalidOperationException($"增强前展示图不是 8 位 P3 Full：{session.Image?.Encoding}");
-                await UiDispatcher.InvokeAsync(() => enhanceButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
-                if (!session.IsEnhanced) throw new InvalidOperationException("ToggleEnhance 未开启增强预览");
-                await WaitAsync(() => session.EnhancedDisplay, "增强图就绪（不静默回退）");
-                long enhancedBytes = session.Image?.ByteCount ?? 0;
-                if (enhancedBytes <= 0) throw new InvalidOperationException("增强图缺少像素数据");
-                await UiDispatcher.InvokeAsync(() => enhanceButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+                // 低对比度素材（确定性生成、写自有沙盒）才能证明"像素真的变了"：
+                // 高对比色卡的直方图接近端点饱和，增强前后可能几乎一致，无法回归"点了没反应"。
+                string workspace = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "analysis-fixtures");
+                Directory.CreateDirectory(workspace);
+                string lowContrast = Path.Combine(workspace, "enhance-lowcontrast.jpg");
+                EnhancementAcceptance.CreateLowContrastJpeg(lowContrast);
+                await main.FolderVM.OpenImageAsync(new iOSFileRef(lowContrast));
+                await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(lowContrast), "低对比度素材成为当前照片");
+                await WaitAsync(() => session.Image is { Encoding: PixelEncoding.Rgba8 } && !session.IsProxy, "低对比度素材 Full 档（8 位 P3）");
                 await SettleAsync(root);
-                if (session.IsEnhanced || session.EnhancedDisplay) throw new InvalidOperationException("再次 ToggleEnhance 未还原原片");
-                lines.Add($"PASS 增强预览：经 PhotoLoadSession 打开（{enhancedBytes} 字节）并还原");
+                (double Mean, int Max) difference;
+                using (var before = CaptureSrgbFrame(root))
+                {
+                    await UiDispatcher.InvokeAsync(() => enhanceButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+                    if (!session.IsEnhanced) throw new InvalidOperationException("ToggleEnhance 未开启增强预览");
+                    await WaitAsync(() => session.EnhancedDisplay, "增强图就绪（不静默回退）");
+                    long enhancedBytes = session.Image?.ByteCount ?? 0;
+                    if (enhancedBytes <= 0) throw new InvalidOperationException("增强图缺少像素数据");
+                    await SettleAsync(root);
+                    using var after = CaptureSrgbFrame(root);
+                    difference = EnhancementAcceptance.MeasureDifference(before, after);
+                    if (difference.Mean < 6 || difference.Max < 30)
+                        throw new InvalidOperationException(
+                            $"增强预览未改变上屏像素：平均差 {difference.Mean:0.##}、最大差 {difference.Max}（要求 ≥6 / ≥30）");
+                    await UiDispatcher.InvokeAsync(() => enhanceButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+                    await SettleAsync(root);
+                    if (session.IsEnhanced || session.EnhancedDisplay) throw new InvalidOperationException("再次 ToggleEnhance 未还原原片");
+                    using var restored = CaptureSrgbFrame(root);
+                    var restoreDifference = EnhancementAcceptance.MeasureDifference(before, restored);
+                    if (restoreDifference.Mean > 2 || restoreDifference.Max > 12)
+                        throw new InvalidOperationException(
+                            $"关闭增强后未还原原片：平均差 {restoreDifference.Mean:0.##}、最大差 {restoreDifference.Max}");
+                    lines.Add($"PASS 增强预览：低对比度素材上屏像素明显变化（平均差 {difference.Mean:0.##}、最大差 {difference.Max}，{enhancedBytes} 字节），关闭后完全还原");
+                }
 
                 // 八、手指点按定格绿框：再点或点空白解除。
                 await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
@@ -349,6 +371,15 @@ internal static class iOSNativeAnalysisCheck
             lines.Add($"PASS 裁剪像素 {label}：crop={cropPixel} frame={framePixel} Δ={diff}（{crop.Width}×{crop.Height}）");
         }
         finally { crop.Dispose(); }
+    }
+
+    /// <summary>抓取主图当前 GPU 帧并归一为 BGRA8 sRGB，供增强前后逐像素比较。</summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <returns>由调用方释放的 BGRA8 帧。</returns>
+    private static DecodedImage CaptureSrgbFrame(iOSNativeRootViewController root)
+    {
+        using var linear = root.Photo.CaptureLinearFrame();
+        return ColorEngine.ToSrgb8(linear);
     }
 
     /// <summary>读取 BGRA8 图像的中心像素（R/G/B）。</summary>

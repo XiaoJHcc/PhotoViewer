@@ -125,7 +125,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
         _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
         _controlBar = new iOSControlBar(ScheduleControlsRefresh);
-        _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu());
+        // 主图菜单用触点处的 1 点透明预览：长按只弹菜单，照片不抬升、不缩小。
+        _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu(), stablePreview: true);
         _drop = new UIDropInteraction(new iOSDropDelegate(this));
         // 订阅在构造期完成：启动参数（--pv-open / 外部打开）可能在根控制器上屏前就选中了首图，
         // 若等到 ViewWillAppear 再订阅会漏掉那次 CurrentFile 变化而永不加载。
@@ -222,6 +223,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>主屏是硬件键盘的默认第一响应者（设置页收起、文本输入结束后都重新取得焦点）。</summary>
     public override bool CanBecomeFirstResponder => true;
+
+    /// <summary>
+    /// 观片主屏隐藏状态栏（与 Info.plist 的 <c>UIStatusBarHidden</c> 同义）：
+    /// <c>UIViewControllerBasedStatusBarAppearance</c> 为 true 时该键被忽略，必须由根控制器显式声明，
+    /// 否则状态栏会漂在文件栏内容上（安全区顶边为 0，筛选条贴顶后与其重叠）。
+    /// </summary>
+    /// <returns>始终隐藏。</returns>
+    public override bool PrefersStatusBarHidden() => true;
 
     /// <summary>重新可见时取回键盘焦点：设置 sheet 关闭后由系统调用，保证快捷键立即可用。</summary>
     /// <param name="animated">系统动画标记。</param>

@@ -94,7 +94,9 @@ internal sealed class iOSFilterBar : UIView
     {
         _count.SizeToFit();
         CountWidth = Math.Ceiling((double)_count.Frame.Width);
-        var frames = MainScreenLayout.FilterBarFrames(horizontal, contentWidth, leadingInset, CountWidth, ShowsSimilarityToggle);
+        // iPad 没有 macOS 的交通灯：行布局从安全区前导边 + 普通外边距起排，不在左上留空带。
+        var frames = MainScreenLayout.FilterBarFrames(horizontal, contentWidth, leadingInset, CountWidth, ShowsSimilarityToggle,
+            alignLeading: true);
         _sort.Frame = ToCGRect(frames.Sort);
         _order.Frame = ToCGRect(frames.Order);
         _rating.Frame = ToCGRect(frames.Rating);

@@ -117,10 +117,18 @@ internal static class iOSContextMenus
 internal sealed class iOSContextMenuDelegate : UIContextMenuInteractionDelegate
 {
     private readonly Func<CGPoint, iOSContextMenus.MenuResult?> _build;
+    private readonly bool _stablePreview;
+    private CGPoint _location;
+    private UIView? _previewView;
 
     /// <summary>绑定菜单构建函数。</summary>
     /// <param name="build">按触点构建菜单；返回 null 表示本次不弹菜单。</param>
-    internal iOSContextMenuDelegate(Func<CGPoint, iOSContextMenus.MenuResult?> build) => _build = build;
+    /// <param name="stablePreview">是否用"触点处 1 点透明预览"代替系统整视图预览（主图长按不再抬升/缩小照片）。</param>
+    internal iOSContextMenuDelegate(Func<CGPoint, iOSContextMenus.MenuResult?> build, bool stablePreview = false)
+    {
+        _build = build;
+        _stablePreview = stablePreview;
+    }
 
     /// <summary>最近一次经系统入口构建的菜单（测试缝：验收读取菜单内容与回调）。</summary>
     internal iOSContextMenus.MenuResult? Menu { get; private set; }
@@ -131,9 +139,38 @@ internal sealed class iOSContextMenuDelegate : UIContextMenuInteractionDelegate
     /// <returns>菜单配置；构建函数放弃时返回 null。</returns>
     public override UIContextMenuConfiguration? GetConfigurationForMenu(UIContextMenuInteraction interaction, CGPoint location)
     {
+        _location = location;
         var result = _build(location);
         Menu = result;
         return result == null ? null
             : UIContextMenuConfiguration.Create(new NSString(result.Identifier), null!, _ => result.Menu);
+    }
+
+    /// <summary>高亮预览：主图用触点处 1 点透明视图——菜单以手指为锚点，照片本身不抬升、不缩小、不位移。</summary>
+    /// <param name="interaction">上下文菜单交互。</param>
+    /// <param name="configuration">本次菜单配置。</param>
+    /// <returns>稳定预览；卡片等沿用系统默认时返回 null。</returns>
+    public override UITargetedPreview? GetPreviewForHighlightingMenu(UIContextMenuInteraction interaction, UIContextMenuConfiguration configuration)
+        => _stablePreview ? StablePreview(interaction) : null;
+
+    /// <summary>消失预览与高亮预览同源，避免菜单收起时照片再被整体动画一次。</summary>
+    /// <param name="interaction">上下文菜单交互。</param>
+    /// <param name="configuration">本次菜单配置。</param>
+    /// <returns>稳定预览；卡片等沿用系统默认时返回 null。</returns>
+    public override UITargetedPreview? GetPreviewForDismissingMenu(UIContextMenuInteraction interaction, UIContextMenuConfiguration configuration)
+        => _stablePreview ? StablePreview(interaction) : null;
+
+    /// <summary>在触点处放置 1 点透明视图并生成定向预览（菜单锚点 = 手指位置）。</summary>
+    /// <param name="interaction">上下文菜单交互。</param>
+    /// <returns>定向预览；交互视图缺失时为 null。</returns>
+    private UITargetedPreview? StablePreview(UIContextMenuInteraction interaction)
+    {
+        if (interaction.View is not { } container) return null;
+        var preview = _previewView ??= new UIView { BackgroundColor = UIColor.Clear, UserInteractionEnabled = false };
+        if (!ReferenceEquals(preview.Superview, container)) container.AddSubview(preview);
+        preview.Frame = new CGRect(_location.X, _location.Y, 1, 1);
+        using var path = UIBezierPath.FromRect(new CGRect(0, 0, 1, 1));
+        var parameters = new UIPreviewParameters { BackgroundColor = UIColor.Clear, VisiblePath = path };
+        return new UITargetedPreview(preview, parameters, new UIPreviewTarget(container, _location));
     }
 }

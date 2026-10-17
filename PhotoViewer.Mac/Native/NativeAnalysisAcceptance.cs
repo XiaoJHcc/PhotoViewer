@@ -2,6 +2,8 @@ using AppKit;
 using CoreGraphics;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -65,17 +67,39 @@ internal static class NativeAnalysisAcceptance
             await WaitAsync(() => DetailHasContent(panel), "细节预览出图");
             checks.Add($"ready: histogram and detail preview rendered (proxy={window.Session.IsProxy})");
 
-            // 5) 增强预览：命令经共享展示会话生效，再关一次还原原片。
-            window.Execute("ToggleEnhance");
-            if (!window.Session.IsEnhanced) throw new InvalidOperationException("ToggleEnhance 未开启增强预览");
-            await WaitAsync(() => window.Session.EnhancedDisplay, "增强图就绪");
-            var enhancedBytes = window.Session.Image?.ByteCount ?? 0;
-            if (enhancedBytes <= 0) throw new InvalidOperationException("增强图缺少像素数据");
-            window.Execute("ToggleEnhance");
+            // 5) 增强预览：命令经共享展示会话生效 → 低对比度素材的 GPU 帧像素明显变化 → 再关一次还原原片。
+            string lowContrast = Path.Combine(output, "enhance-lowcontrast.jpg");
+            EnhancementAcceptance.CreateLowContrastJpeg(lowContrast);
+            await main.FolderVM.OpenImageAsync(new MacFileRef(lowContrast));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(lowContrast), "低对比度素材成为当前照片");
+            // Mac 展示编码恒为 F16 线性 scRGB；这里只要求已是全分辨率（代理档不参与增强回归）。
+            await WaitAsync(() => window.Session.Image != null && !window.Session.IsProxy, "低对比度素材 Full 档");
             await SettleAsync(window);
-            if (window.Session.IsEnhanced || window.Session.EnhancedDisplay) throw new InvalidOperationException("再次 ToggleEnhance 未还原原片");
+            (double Mean, int Max) difference;
+            using (var before = CaptureSrgbFrame(window))
+            {
+                window.Execute("ToggleEnhance");
+                if (!window.Session.IsEnhanced) throw new InvalidOperationException("ToggleEnhance 未开启增强预览");
+                await WaitAsync(() => window.Session.EnhancedDisplay, "增强图就绪");
+                var enhancedBytes = window.Session.Image?.ByteCount ?? 0;
+                if (enhancedBytes <= 0) throw new InvalidOperationException("增强图缺少像素数据");
+                await SettleAsync(window);
+                using var after = CaptureSrgbFrame(window);
+                difference = EnhancementAcceptance.MeasureDifference(before, after);
+                if (difference.Mean < 6 || difference.Max < 30)
+                    throw new InvalidOperationException(
+                        $"增强预览未改变上屏像素：平均差 {difference.Mean:0.##}、最大差 {difference.Max}（要求 ≥6 / ≥30）");
+                window.Execute("ToggleEnhance");
+                await SettleAsync(window);
+                if (window.Session.IsEnhanced || window.Session.EnhancedDisplay) throw new InvalidOperationException("再次 ToggleEnhance 未还原原片");
+                using var restored = CaptureSrgbFrame(window);
+                var restoreDifference = EnhancementAcceptance.MeasureDifference(before, restored);
+                if (restoreDifference.Mean > 2 || restoreDifference.Max > 12)
+                    throw new InvalidOperationException(
+                        $"关闭增强后未还原原片：平均差 {restoreDifference.Mean:0.##}、最大差 {restoreDifference.Max}");
+                checks.Add($"enhance: GPU frame changed (mean {difference.Mean:0.##}, max {difference.Max}, {enhancedBytes} bytes) and restored exactly");
+            }
             NativeSnapshots.SaveMain(window, Path.Combine(output, "native-analysis-row.png"));
-            checks.Add($"enhance: toggled on through PhotoLoadSession then restored ({enhancedBytes} bytes)");
 
             // 6) 列布局：瓦片纵向排列，交叉轴尺寸 = 边长 + 20。
             settings.LayoutMode = LayoutMode.Col;
@@ -146,6 +170,15 @@ internal static class NativeAnalysisAcceptance
         if (panel.Presenter.Tiles.Any(tile => tile.Kind == AnalysisTileKind.Detail) is false)
             throw new InvalidOperationException("分析栏缺少细节预览瓦片");
         checks.Add($"tiles: order and labels match the Avalonia analysis panel (shake label = {labels[5]})");
+    }
+
+    /// <summary>抓取主图当前 GPU 帧并归一为 BGRA8 sRGB，供增强前后逐像素比较。</summary>
+    /// <param name="window">原生主窗口。</param>
+    /// <returns>由调用方释放的 BGRA8 帧。</returns>
+    private static DecodedImage CaptureSrgbFrame(MacMainWindow window)
+    {
+        using var linear = window.Photo.CaptureLinearFrame();
+        return ColorEngine.ToSrgb8(linear);
     }
 
     /// <summary>细节预览是否已贴上裁剪内容（代理期按旧壳口径留空）。</summary>
