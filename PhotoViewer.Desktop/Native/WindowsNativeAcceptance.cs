@@ -162,30 +162,43 @@ internal sealed partial class WindowsMainWindow
         encoded.SaveTo(stream);
     }
 
-    /// <summary>读取系统实际登记的物理标题栏区域，核对边界及筛选条避让。</summary>
+    /// <summary>读取系统实际登记的物理标题栏区域，核对自动显隐、边界及筛选条避让。</summary>
     private void CheckCaptionRegion()
     {
         var source = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
-        var regions = source.GetRegionRects(NonClientRegionKind.Caption);
         var scale = _root.XamlRoot.RasterizationScale;
         var width = (int)Math.Round(_root.ActualWidth * scale);
         var height = (int)Math.Round(Math.Min(WindowsLayout.CaptionHeight, _root.ActualHeight) * scale);
+        var buttonLeft = (int)Math.Round((_root.ActualWidth - _titleBar.ButtonsWidth) * scale);
+
+        // 标题栏自动显隐:隐藏时不得登记任何拖动区域(顶部不可拖动),显示时才登记
+        UpdateTitleBarVisibility(false);
+        RequireSmoke(source.GetRegionRects(NonClientRegionKind.Caption).Length == 0, "标题栏隐藏时仍登记了拖动区域");
+
+        UpdateTitleBarVisibility(true);
+        RequireSmoke(_titleBar.IsVisible, "标题栏未进入显示态");
+        var regions = source.GetRegionRects(NonClientRegionKind.Caption);
         RequireSmoke(regions.Length > 0, "标题栏没有可拖动区域");
         foreach (var region in regions)
         {
             RequireSmoke(region.X >= 0 && region.Y == 0 && region.Width > 0 && region.Height == height
                 && region.X + region.Width <= width,
                 $"标题栏物理区域越界：region={region.X},{region.Y},{region.Width},{region.Height}; expected={width}x{height}; mode={_main.Settings.LayoutMode}");
+            RequireSmoke(region.X + region.Width <= buttonLeft,
+                $"标题栏拖动区压住标题栏按钮：region={region.X}+{region.Width} > {buttonLeft}; mode={_main.Settings.LayoutMode}");
         }
 
         if (!_main.IsThumbnailViewVisible)
         {
-            RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].Width == width, "隐藏胶片条后拖动区未覆盖全宽");
+            RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].Width == buttonLeft,
+                "隐藏胶片条后拖动区未覆盖到标题栏按钮左侧");
         }
         else if (!_isRowLayout)
         {
             RequireSmoke(regions[0].X == (int)Math.Ceiling(_filePaneFrame.ActualWidth * scale), "标题栏未避让物理文件栏");
         }
+
+        UpdateTitleBarVisibility(false);
     }
 
     /// <summary>限时等待异步解码或真实布局，不把超时当成通过。</summary>

@@ -23,6 +23,9 @@ internal sealed class WindowsFilmstripView : Grid
     /// <summary>可见区外额外加载的卡片数。</summary>
     private const int VisibleRangeOverscan = 2;
 
+    /// <summary>一次定位请求最多启动的动画次数(列表在动画期间重建会把偏移清回 0,需要补做)。</summary>
+    private const int LocateMaxAttempts = 4;
+
     private readonly MainViewModel _main;
     private readonly ThumbnailListViewModel _list;
     private readonly Action<ImageFile> _select;
@@ -37,6 +40,9 @@ internal sealed class WindowsFilmstripView : Grid
     private double _animationFrom;
     private double _animationTo;
     private bool _isRowLayout = true;
+    private bool _isAnimating;
+    private bool _locatePending;
+    private int _locateAttempts;
     private int _reportedFirst = -1;
     private int _reportedLast = -1;
 
@@ -75,11 +81,15 @@ internal sealed class WindowsFilmstripView : Grid
             VerticalScrollMode = ScrollMode.Disabled,
             // ZoomMode 默认 Enabled,会让 ScrollViewer 用无限尺寸测量内容,虚拟化容器的测量因此失败
             ZoomMode = ZoomMode.Disabled,
+            // 上下布局时文件栏行高由胶片条决定,旧壳 ScrollViewer 固定 MinHeight=148
+            MinHeight = WindowsLayout.FilmstripMinHeight,
             Content = _repeater,
         };
         _scroll.ViewChanged += (_, _) => ReportVisibleRange();
         Children.Add(_scroll);
 
+        // 定位请求可能先于布局到达(启动期/换文件夹),布局每轮结束补做一次
+        LayoutUpdated += OnLayoutUpdated;
         _list.ScrollToCurrentRequested += ScrollToCurrentAnimated;
         _list.PropertyChanged += OnListChanged;
         _main.PropertyChanged += OnMainChanged;
@@ -94,6 +104,7 @@ internal sealed class WindowsFilmstripView : Grid
     /// </summary>
     public void Detach()
     {
+        LayoutUpdated -= OnLayoutUpdated;
         _list.ScrollToCurrentRequested -= ScrollToCurrentAnimated;
         _list.PropertyChanged -= OnListChanged;
         _main.PropertyChanged -= OnMainChanged;
@@ -113,32 +124,79 @@ internal sealed class WindowsFilmstripView : Grid
 
         _isRowLayout = isRowLayout;
         ApplyOrientation();
-        _scroll.ChangeView(0, 0, null, true);
+        // 项距随方向变化(96 ↔ 144),旧偏移已无意义;按当前项重新定位,而不是把列表甩回顶部
+        ScrollToCurrentAnimated();
         ReportVisibleRange();
     }
 
     /// <summary>
     /// 按当前照片定位(350ms 三次缓出;仅显式翻页/打开调用,FILM-01)。
+    /// 请求可能早于布局到达(启动期/换文件夹时 extent 与 viewport 还是 0),也可能被紧随其后的
+    /// 列表重建把偏移清回 0(`ReloadItems` 会重置 ItemsSource)。因此请求记账后由布局回调收敛:
+    /// 偏移真正落到目标才销账,否则下一次布局继续补做,最多 <see cref="LocateMaxAttempts"/> 次。
     /// </summary>
     public void ScrollToCurrentAnimated()
     {
+        _locatePending = true;
+        _locateAttempts = 0;
+        TryApplyLocate();
+    }
+
+    /// <summary>尝试兑现未完成的定位请求;几何未就绪或动画在途就等下一轮。</summary>
+    private void TryApplyLocate()
+    {
+        if (!_locatePending || _isAnimating)
+        {
+            return;
+        }
+
         var files = _list.FilteredFiles;
         var index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
         if (index < 0)
         {
+            _locatePending = false;
             return;
         }
 
         var pitch = _isRowLayout ? WindowsLayout.CardPitchHorizontal : WindowsLayout.CardPitchVertical;
         var viewport = _isRowLayout ? _scroll.ViewportWidth : _scroll.ViewportHeight;
         var extent = _isRowLayout ? _scroll.ExtentWidth : _scroll.ExtentHeight;
+        if (viewport <= 0 || extent <= 0)
+        {
+            return;
+        }
+
+        // 虚拟化列表的 extent 随项实现逐轮增长:extent 还没盖住目标项时算出来的目标一定是被夹短的,
+        // 这时候不能销账(否则远端定位会静默停在列表头部),等下一轮布局再算。
+        var covered = extent + 1 >= ((index + 1) * pitch);
+        var current = _isRowLayout ? _scroll.HorizontalOffset : _scroll.VerticalOffset;
         var target = Math.Clamp(
             (index * pitch) - ((viewport - pitch) / 2),
             0,
             Math.Max(0, extent - viewport));
+        if (Math.Abs(current - target) < 1)
+        {
+            if (covered)
+            {
+                _locatePending = false;
+            }
 
-        StartAnimation(_isRowLayout ? _scroll.HorizontalOffset : _scroll.VerticalOffset, target);
+            return;
+        }
+
+        if (_locateAttempts >= LocateMaxAttempts)
+        {
+            _locatePending = false;
+            NativeStartupLog.Write($"胶片条定位未生效: index={index} target={target} current={current} extent={extent} viewport={viewport}");
+            return;
+        }
+
+        _locateAttempts++;
+        StartAnimation(current, target);
     }
+
+    /// <summary>布局每轮结束补做挂起的定位请求(无事可做时开销为一次布尔判断)。</summary>
+    private void OnLayoutUpdated(object? sender, object e) => TryApplyLocate();
 
     /// <summary>应用当前方向的排布与滚动轴。</summary>
     private void ApplyOrientation()
@@ -223,6 +281,7 @@ internal sealed class WindowsFilmstripView : Grid
         _animationFrom = from;
         _animationTo = to;
         _animationStartedAt = DateTime.UtcNow;
+        _isAnimating = true;
 
         _animationTimer ??= DispatcherQueue.CreateTimer();
         _animationTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 60);
@@ -235,6 +294,7 @@ internal sealed class WindowsFilmstripView : Grid
     /// <summary>停止定位动画。</summary>
     private void StopAnimation()
     {
+        _isAnimating = false;
         if (_animationTimer == null)
         {
             return;
@@ -261,10 +321,15 @@ internal sealed class WindowsFilmstripView : Grid
             _scroll.ChangeView(null, offset, null, true);
         }
 
-        if (progress >= 1)
+        if (progress < 1)
         {
-            StopAnimation();
+            return;
         }
+
+        StopAnimation();
+
+        // 动画期间列表可能被重建(ItemsSource 归零会把偏移清回 0),收尾时复核一次
+        TryApplyLocate();
     }
 
     /// <summary>列表属性变化:筛选结果变化时重建。</summary>

@@ -4,8 +4,9 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 方案、里程碑与作者待确认项见 [Plans/native-rebuild-windows-p2.md](../Plans/native-rebuild-windows-p2.md)。
 
 **当前状态**:原生壳已具备**四分区主窗口**(筛选条 / 胶片条 / 主图 / 控制栏),主图走 D3D11 + DXGI 合成交换链,
-尺寸、边距与配色按旧 Avalonia 设计对标。设置窗口(W-M5)、分析栏/聚类/工具/增强(P3)尚未原生;
-显隐与命令表沿用共享设置。
+尺寸、边距与配色按旧 Avalonia 设计对标(2026-10-17 在 150% 缩放下与旧壳同尺寸逐项实测,见 [Windows P2-W §12](../Plans/native-rebuild-windows-p2.md))。
+标题栏为**自绘四按钮 + 50 DIP 热区自动显隐**(不再使用系统标题栏)。设置窗口(W-M5)、分析栏/聚类/工具/增强(P3)尚未原生;
+显隐与命令表沿用共享设置。已完成 / 待完成总表见 [Windows P2-W §13](../Plans/native-rebuild-windows-p2.md#13-已完成--待完成清单)。
 
 ## 文件清单
 
@@ -13,11 +14,12 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 |---|---|
 | Program.cs | 入口分流(**Debug 默认原生壳**,`--legacy-ui` 退回旧壳;Release 默认旧壳,`--native` 进原生,与 macOS 同一套口径);原生分支**不创建任何 Avalonia 对象**。 |
 | Native/WindowsNativeApplication.cs | WinUI `Application`、`Application.Start` + `DispatcherQueueSynchronizationContext`、门面注入顺序、外部打开、窗口生命周期。 |
-| Native/WindowsUiServices.cs | `IUiDispatcher`(Normal → Normal、Background → Low，UI 线程后台调用也入队)、同步上下文、`IFilePickerService`(WinRT 选择器 + 窗口句柄绑定)、`IAppResourceProvider`(avares URI → Windows 头工程清单资源，支持单文件发布)。 |
-| Native/WindowsLayout.cs | **几何与配色常量唯一来源**:栏宽 116、下拉 90×32、卡片 90×138(缩略图 80)、EXIF 50×40、评分 30×30、命令 40×40、窗口 1200×850(min 560×480)等。harness 反查这里。 |
+| Native/WindowsUiServices.cs | `IUiDispatcher`(Normal → Normal、Background → Low，UI 线程后台调用也入队)、同步上下文、`IFilePickerService`(WinRT 选择器 + 窗口句柄绑定 + 过滤器模式规范化)、`IAppResourceProvider`(avares URI → Windows 头工程清单资源，支持单文件发布)。 |
+| Native/WindowsLayout.cs | **几何与配色常量唯一来源**:栏宽 116(外框 117)、下拉 90×32、卡片 90×138(项距 96/144)、EXIF 50×40、评分 30×30、命令 40×40、标题栏 48/热区 50/按钮 36×32、窗口 1200×850(min 560×480)等。harness 反查这里。 |
 | Native/WindowsWrapPanel.cs | WinUI 没有 WrapPanel;控制栏三分组"整组换行/换列 + 行内居中"依赖这个自建面板。 |
-| Native/WindowsMainWindow.cs | 主窗口:隐藏式标题栏(按物理像素避让实际筛选控件，监听 XamlRoot DPI 与筛选条布局变化)、两向四分区布局、右键菜单、空首屏提示、拖放、键盘/滚轮 → 共享手势表、命令分发、`PhotoLoadSession` 接线。 |
-| Native/WindowsNativeAcceptance.cs | 主窗口的定向验收 partial；显式 `--pv-native-smoke` 隔离设置/数据库/日志并创建自有棋盘 JPEG，验证真实队列顺序、内嵌模型 SHA256 与 DirectML 双输出、两向三尺寸往返 resize、标题栏区域、无 EXIF 源尺寸、物理 100% Full 热替换和关闭释放。输出 `release/native-win-acceptance/checks.json`，失败退出码 1；不代表完整 W-M6 或跨屏色彩验收。 |
+| Native/WindowsTitleBar.cs | 自绘标题栏:标题文本 + 最小化/最大化/全屏/关闭四按钮，指针进热区显示、移开或窗口失活隐藏；覆盖层背景为 null 只让按钮吃指针，拖动区由主窗口登记为系统 caption。 |
+| Native/WindowsMainWindow.cs | 主窗口:去掉系统标题栏与系统按钮(`OverlappedPresenter.SetBorderAndTitleBar(true, false)`)、两向四分区布局、标题栏显隐与物理像素拖动区登记、右键菜单、空首屏提示、拖放、键盘/滚轮 → 共享手势表、命令分发、`PhotoLoadSession` 接线。 |
+| Native/WindowsNativeAcceptance.cs | 主窗口的定向验收 partial；显式 `--pv-native-smoke` 隔离设置/数据库/日志并创建自有棋盘 JPEG，验证真实队列顺序、内嵌模型 SHA256 与 DirectML 双输出、两向三尺寸往返 resize、标题栏自动显隐下的 caption 契约(隐藏零区域/显示不压按钮)、无 EXIF 源尺寸、物理 100% Full 热替换和关闭释放。输出 `release/native-win-acceptance/checks.json`，失败退出码 1；不代表完整 W-M6 或跨屏色彩验收。 |
 | Native/WindowsFilterBar.cs | 排序方式 / 升降序 / 星级筛选 + 筛选后计数;名称与取值语义与旧壳一致(`FILTER-01`)。 |
 | Native/WindowsFilmstripView.cs | 胶片条:`ItemsRepeater` + 卡片池 + 可见区上报 + 350ms 三次缓出定位(`FILM-01/02/04`)。 |
 | Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名 / 拍摄时间 / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。 |
@@ -35,6 +37,9 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
   输出目录是 `bin/<cfg>/net10.0-windows10.0.19041.0/win-x64/`,**不是**旧路径 `bin/<cfg>/net10.0-windows/`。
 - WinUI 非打包自包含:`UseWinUI` + `WindowsPackageType=None` + `EnableMsixTooling` + `WindowsAppSDKSelfContained`
   + `DISABLE_XAML_GENERATED_MAIN`(入口自写)。
+- **`app.manifest` 必须自己声明 DPI 感知**:本工程自备清单会**替换** Windows App SDK 的默认清单,漏掉
+  `dpiAwareness=PerMonitorV2` 时进程是 DPI-unaware(`GetProcessDpiAwareness=0`),在 150% 屏上整套 UI 被系统
+  按位图拉伸 —— 表现为控件发虚、边距与窗口对不齐。旧壳 Avalonia 自行设置 DPI 感知,两者不冲突。
 - **UI 全部用 C# 代码构建,不写 `.xaml`**(与 macOS 壳的程序化 AppKit 一致)。
 - **WinAppSDK 框架包自带 ONNX Runtime(1.23.x)**,与本工程的 `Microsoft.ML.OnnxRuntime.DirectML`(native 1.24.x)撞名;
   csproj 用 SDK 的 `MicrosoftWindowsAppSDKFilesExcluded` 钩子显式排除框架侧副本,详见 csproj 注释 —— 不要删。
@@ -46,11 +51,14 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 - `Application.Resources` 在构造期不可访问(读/写都抛 `0x8000FFFF`),只能在 `OnLaunched` 之后用。
 - **不要**并入 `XamlControlsResources`:非 XAML 工程里构造即抛找不到 `AcrylicBackgroundFillColorDefaultBrush`;
   WinUI 1.8 的控件样式由框架自带。
-- 深色外观把 `RequestedTheme = ElementTheme.Dark` 设在**根元素**上;标题栏/系统按钮颜色另需 `AppWindow.TitleBar` 显式设置。
+- 深色外观把 `RequestedTheme = ElementTheme.Dark` 设在**根元素**上。原生壳已去掉系统标题栏(`OverlappedPresenter.SetBorderAndTitleBar(hasBorder:true, hasTitleBar:false)`),系统最小/最大/关闭按钮不再存在,`AppWindow.TitleBar` 配色也就不再需要设置。
+- **`OverlappedPresenter` 没有全屏 API**:全屏 = `SetBorderAndTitleBar(false, false)` + `Maximize()`,退出时 `SetBorderAndTitleBar(true, false)` + `Restore()`。
+- **自绘标题栏的按钮悬停色要改写主题键**:WinUI 的 `Button` 模板用 `ButtonBackground*` 画刷覆盖 `Background`,只设 `Background` 会被默认亮色顶掉;按元素写 `button.Resources["ButtonBackgroundPointerOver"]` 等键才生效。覆盖层根元素背景必须为 **null** —— 设成透明画刷会吃掉顶部 48 DIP 的全部指针,筛选条与照片手势全被吞掉。
 - **`ProgressBar` 不能放进虚拟化卡片**:无论 indeterminate 还是 determinate,进入 `ItemsRepeater` 的项模板都会让布局测量抛
   `E_FAIL(0x80004005)` 整窗崩溃(已二分定位)。卡片加载态改用静态细条。
 - `ScrollViewer.ZoomMode` 必须设 `Disabled`,否则虚拟化内容的测量用无限尺寸。
 - `Border` / `ScrollViewer` 在 WinUI 3 里是 **sealed**,不能继承;自定义容器只能继承 `Panel`、`ContentControl` 或 `Grid`。
+- **`Border.Width` 含 `BorderThickness`**:写得跟旧壳的数字一样会让内容少 1~2 DIP(文件栏内容因此从 116 变 115,胶片条卡片被压窄)。带边框的占位一律用 `WindowsLayout.RailFrameWidth` 这类"含边框"常量。
 - 在 `namespace PhotoViewer.Desktop.Native` 里写 `Windows.UI.Color` 会被解析成本仓的 `PhotoViewer.Windows`;
   统一 `using Windows.UI;` + 裸 `Color`。
 - Git Bash 调 `dotnet publish` 必须用 `-p:Foo=bar`(写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`);
@@ -60,6 +68,8 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 
 - 旧壳:`Debug Windows (Legacy)` / `Run Windows (Legacy)`。
 - 原生壳:`dotnet run --project PhotoViewer.Desktop -c Debug -- --native`(可跟图片路径直接打开)。
-- 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke`）；当前设备 100% DPI 已过，两向三尺寸及物理 100% 升级已验证；150%/200% DPI、真实跨屏、八方向和系统色彩仍待验。
-- 辅助脚本:`PhotoViewer.Desktop/bin/runcheck.ps1`(启动 + 存活性/窗口 + 抓窗口位图 + 收尾;被 `bin/` 忽略,不进库)。
+- 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke`）；当前设备 150% 缩放(PerMonitorV2)已过，覆盖两向三尺寸 resize、标题栏自动显隐的 caption 契约、物理 100% 升级与文件选择器可弹出；200% DPI、真实跨屏、八方向、系统色彩与鼠标手感仍待验。
+- 与旧壳对拍的方法(本轮用的那一套):窗口设成**同一物理尺寸**截图后按 1.5 比 DIP 换算。抓图脚本必须先把**自身**设成 Per-Monitor-V2 感知,否则 Win32 会把所有矩形按 96/dpi 虚拟化,两壳数据不可比。
+- 辅助脚本(均在 `bin/`,被忽略不进库):`runcheck.ps1`(启动 + 存活性/窗口 + 抓窗口位图 + 收尾)、`compare/wincheck.ps1`(按指定物理尺寸抓窗口/客户区位图)、`compare/profile.py` / `bands.py`(按像素剖面比对两壳几何)。
+  `wincheck.ps1` 的 `-HoverY`(直接 `SetCursorPos`)只能移动光标,**不会**触发 WinUI 的 `PointerMoved` —— 要验标题栏自动显隐必须用真实输入注入(本轮用 KimiCU 的 click/drag)。
 - 发布:仍走 [DEV.md](../DEV.md) 的 `Publish Windows EXE (Release)`。

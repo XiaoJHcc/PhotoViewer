@@ -26,6 +26,9 @@ namespace PhotoViewer.Desktop.Native;
 /// </summary>
 internal sealed partial class WindowsMainWindow : Window
 {
+    /// <summary>窗口标题(与旧壳一致,标题栏覆盖层与系统窗口标题共用)。</summary>
+    private const string WindowTitle = "PhotoViewer 图片查看器";
+
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session = new();
     private readonly WindowsPhotoView _photo;
@@ -44,9 +47,11 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly TextBlock _hintTitle;
     private readonly TextBlock _hintDetail;
     private readonly MenuFlyout _contextMenu;
+    private readonly WindowsTitleBar _titleBar;
 
     private bool _isRowLayout = true;
     private bool _sized;
+    private bool _isFullScreen;
     private XamlRoot? _xamlRoot;
 
     /// <summary>
@@ -56,7 +61,7 @@ internal sealed partial class WindowsMainWindow : Window
     public WindowsMainWindow(MainViewModel main)
     {
         _main = main;
-        Title = "PhotoViewer";
+        Title = WindowTitle;
 
         _photo = new WindowsPhotoView();
         _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile);
@@ -89,13 +94,13 @@ internal sealed partial class WindowsMainWindow : Window
         _hintPanel.Children.Add(_hintTitle);
         _hintPanel.Children.Add(_hintDetail);
 
-        // 空首屏:透明命中层盖住主图区,点击即打开文件选择器
+        // 空首屏:透明命中层盖住主图区,左键打开文件选择器;右键留给右键菜单(不能同时弹选择器)
         _emptyHitArea = new Border
         {
             Background = new SolidColorBrush(Color.FromArgb(0x01, 0, 0, 0)),
             Visibility = Visibility.Collapsed,
         };
-        _emptyHitArea.PointerPressed += (_, _) => _ = _main.FolderVM.OpenFilePickerAsync();
+        _emptyHitArea.PointerPressed += OnEmptyAreaPressed;
 
         _photoHost = new Grid { Background = new SolidColorBrush(WindowsLayout.ViewerBackground) };
         _photoHost.Children.Add(_photo);
@@ -113,6 +118,7 @@ internal sealed partial class WindowsMainWindow : Window
         _rowHost = new Grid();
         _colHost = new Grid();
         _contextMenu = BuildContextMenu();
+        _titleBar = new WindowsTitleBar(WindowTitle, MinimizeWindow, ToggleMaximizeWindow, ToggleFullScreenWindow, Close);
 
         _root = new Grid
         {
@@ -124,11 +130,14 @@ internal sealed partial class WindowsMainWindow : Window
         };
         _root.Children.Add(_rowHost);
         _root.Children.Add(_colHost);
+        _root.Children.Add(_titleBar.Root);
         Content = _root;
 
         _root.Loaded += OnRootLoaded;
         _root.SizeChanged += OnRootSizeChanged;
         _root.KeyDown += OnKeyDown;
+        _root.PointerMoved += OnRootPointerMoved;
+        Activated += OnWindowActivated;
         _photoHost.PointerWheelChanged += OnPhotoWheel;
         _root.DragOver += OnDragOver;
         _root.Drop += OnDrop;
@@ -231,7 +240,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         var menu = new MenuFlyout();
         var openFile = new MenuFlyoutItem { Text = "打开文件…" };
-        openFile.Click += (_, _) => _ = _main.FolderVM.OpenFilePickerAsync();
+        openFile.Click += (_, _) => OpenFilePicker();
         var openFolder = new MenuFlyoutItem { Text = "打开文件夹…" };
         openFolder.Click += async (_, _) =>
         {
@@ -255,33 +264,81 @@ internal sealed partial class WindowsMainWindow : Window
         return menu;
     }
 
-    /// <summary>配置隐藏式标题栏与深色系统按钮。</summary>
+    /// <summary>
+    /// 去掉系统标题栏与系统最小/最大/关闭按钮,改用自绘按钮 + 自动显隐(SHELL-02)。
+    /// <c>hasBorder: true</c> 保留窗口边框与拖拽改尺寸;<c>hasTitleBar: false</c> 让内容直接顶到窗口上边缘。
+    /// </summary>
     private void ConfigureTitleBar()
     {
-        ExtendsContentIntoTitleBar = true;
-
-        if (!AppWindowTitleBar.IsCustomizationSupported())
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
         {
-            NativeStartupLog.Write("系统不支持标题栏自定义,退回系统默认标题栏");
+            throw new InvalidOperationException("原生壳要求 OverlappedPresenter,无法配置隐藏式标题栏。");
+        }
+
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+        NativeStartupLog.Write("title bar: 系统标题栏已移除,使用自绘自动显隐标题栏");
+    }
+
+    /// <summary>最小化窗口。</summary>
+    private void MinimizeWindow()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.Minimize();
+        }
+    }
+
+    /// <summary>最大化 / 还原窗口(全屏态下先退出全屏)。</summary>
+    private void ToggleMaximizeWindow()
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
             return;
         }
 
-        var titleBar = AppWindow.TitleBar;
-        var transparent = Color.FromArgb(0x00, 0x00, 0x00, 0x00);
-        var white = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-        var dim = Color.FromArgb(0xFF, 0xAA, 0xAA, 0xAA);
-        titleBar.BackgroundColor = transparent;
-        titleBar.InactiveBackgroundColor = transparent;
-        titleBar.ForegroundColor = white;
-        titleBar.InactiveForegroundColor = dim;
-        titleBar.ButtonBackgroundColor = transparent;
-        titleBar.ButtonInactiveBackgroundColor = transparent;
-        titleBar.ButtonForegroundColor = white;
-        titleBar.ButtonInactiveForegroundColor = dim;
-        titleBar.ButtonHoverBackgroundColor = Color.FromArgb(0x33, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonHoverForegroundColor = white;
-        titleBar.ButtonPressedBackgroundColor = Color.FromArgb(0x22, 0xFF, 0xFF, 0xFF);
-        titleBar.ButtonPressedForegroundColor = white;
+        if (_isFullScreen)
+        {
+            ExitFullScreen(presenter);
+            return;
+        }
+
+        if (presenter.State == OverlappedPresenterState.Maximized)
+        {
+            presenter.Restore();
+        }
+        else
+        {
+            presenter.Maximize();
+        }
+    }
+
+    /// <summary>全屏 / 退出全屏(旧壳 BtnFull 语义:进入前记住原窗口态)。</summary>
+    private void ToggleFullScreenWindow()
+    {
+        if (AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
+            return;
+        }
+
+        if (_isFullScreen)
+        {
+            ExitFullScreen(presenter);
+            return;
+        }
+
+        // 全屏 = 去掉边框与标题栏后最大化(OverlappedPresenter 没有独立的全屏 API)
+        presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
+        presenter.Maximize();
+        _isFullScreen = true;
+    }
+
+    /// <summary>退出全屏,恢复有边框的可缩放窗口。</summary>
+    /// <param name="presenter">窗口呈现器</param>
+    private void ExitFullScreen(OverlappedPresenter presenter)
+    {
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+        presenter.Restore();
+        _isFullScreen = false;
     }
 
     /// <summary>窗口首次布局完成后设定初始尺寸并让根元素获得键盘焦点。</summary>
@@ -386,7 +443,7 @@ internal sealed partial class WindowsMainWindow : Window
             _colHost.Children.Add(_controlBar);
 
             // 左右布局:文件栏内容宽 116,右侧一条分隔线
-            _filePaneFrame.Width = WindowsLayout.RailWidth;
+            _filePaneFrame.Width = WindowsLayout.RailFrameWidth;
             _filePaneFrame.BorderThickness = new Thickness(0, 0, WindowsLayout.DividerThickness, 0);
             _rowHost.Visibility = Visibility.Collapsed;
             _colHost.Visibility = Visibility.Visible;
@@ -407,10 +464,39 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateCaptionRegions();
     }
 
-    /// <summary>隐藏式标题栏的拖动区:避让筛选条与文件栏,不吞掉控件手势(SHELL-02)。</summary>
+    /// <summary>指针移动:进入顶部热区显示标题栏,离开隐藏(旧壳 HotZoneHeight=50)。</summary>
+    private void OnRootPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        var y = e.GetCurrentPoint(_root).Position.Y;
+        UpdateTitleBarVisibility(y <= WindowsLayout.CaptionHotZoneHeight);
+    }
+
+    /// <summary>窗口失活时隐藏标题栏(旧壳 Deactivated 同口径);激活不主动显示。</summary>
+    private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState == WindowActivationState.Deactivated)
+        {
+            UpdateTitleBarVisibility(false);
+        }
+    }
+
+    /// <summary>
+    /// 标题栏显隐:标题栏不可见时不登记系统 caption 区域,顶部因此不可拖动(旧壳同口径)。
+    /// </summary>
+    /// <param name="visible">是否显示</param>
+    private void UpdateTitleBarVisibility(bool visible)
+    {
+        _titleBar.SetVisible(visible);
+        UpdateCaptionRegions();
+    }
+
+    /// <summary>
+    /// 隐藏式标题栏的拖动区:避让筛选条与文件栏,不吞掉控件手势(SHELL-02);
+    /// 隐藏时清空全部区域。
+    /// </summary>
     private void UpdateCaptionRegions()
     {
-        if (!AppWindowTitleBar.IsCustomizationSupported() || _root.ActualWidth <= 0)
+        if (_root.ActualWidth <= 0)
         {
             return;
         }
@@ -421,32 +507,47 @@ internal sealed partial class WindowsMainWindow : Window
         var nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
 
         var rects = new List<RectInt32>();
+        if (!_titleBar.IsVisible)
+        {
+            nonClient.SetRegionRects(NonClientRegionKind.Caption, rects.ToArray());
+            return;
+        }
+
+        var buttonsWidth = _titleBar.ButtonsWidth;
         if (!_main.IsThumbnailViewVisible)
         {
-            rects.Add(new RectInt32(0, 0, width, height));
+            var right = (int)Math.Clamp(Math.Floor((_root.ActualWidth - buttonsWidth) * scale), 0, width);
+            rects.Add(new RectInt32(0, 0, right, height));
+            _titleBar.SetTitleInset(0);
         }
         else if (_isRowLayout)
         {
             var bounds = _filterBar.GetInteractiveBounds(_root);
             var left = (int)Math.Clamp(Math.Floor(bounds.X * scale), 0, width);
             var right = (int)Math.Clamp(Math.Ceiling((bounds.X + bounds.Width) * scale), left, width);
+            var buttonLeft = (int)Math.Clamp(Math.Floor((_root.ActualWidth - buttonsWidth) * scale), 0, width);
             if (left > 0)
             {
                 rects.Add(new RectInt32(0, 0, left, height));
             }
 
-            if (right < width)
+            if (right < buttonLeft)
             {
-                rects.Add(new RectInt32(right, 0, width - right, height));
+                rects.Add(new RectInt32(right, 0, buttonLeft - right, height));
             }
+
+            _titleBar.SetTitleInset(0);
         }
         else
         {
-            var left = (int)Math.Min(width, Math.Ceiling(_filePaneFrame.ActualWidth * scale));
-            if (left < width)
+            var left = (int)Math.Clamp(Math.Ceiling(_filePaneFrame.ActualWidth * scale), 0, width);
+            var buttonLeft = (int)Math.Clamp(Math.Floor((_root.ActualWidth - buttonsWidth) * scale), left, width);
+            if (left < buttonLeft)
             {
-                rects.Add(new RectInt32(left, 0, width - left, height));
+                rects.Add(new RectInt32(left, 0, buttonLeft - left, height));
             }
+
+            _titleBar.SetTitleInset(_filePaneFrame.ActualWidth);
         }
 
         nonClient.SetRegionRects(NonClientRegionKind.Caption, rects.ToArray());
@@ -584,6 +685,35 @@ internal sealed partial class WindowsMainWindow : Window
 
     /// <summary>选中胶片条卡片(FILM-01:不主动居中)。</summary>
     private void SelectFile(ImageFile file) => _main.FileVM.ThumbnailList.SelectImageCommand(file);
+
+    /// <summary>
+    /// 空首屏按下:鼠标只响应左键,右键交给窗口的右键菜单(旧壳 <c>ImageView</c> 同口径:
+    /// <c>IsRightButtonPressed</c> 先弹菜单、<c>IsLeftButtonPressed</c> 才打开文件);触摸/笔直接打开。
+    /// </summary>
+    private void OnEmptyAreaPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(_emptyHitArea);
+        if (point.PointerDeviceType == PointerDeviceType.Mouse && !point.Properties.IsLeftButtonPressed)
+        {
+            return;
+        }
+
+        e.Handled = true;
+        OpenFilePicker();
+    }
+
+    /// <summary>打开文件选择器;失败必须留痕,不能静默无响应。</summary>
+    private async void OpenFilePicker()
+    {
+        try
+        {
+            await _main.FolderVM.OpenFilePickerAsync();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("打开文件选择器失败", ex);
+        }
+    }
 
     /// <summary>胶片条卡片评分。</summary>
     private Task RateFile(ImageFile file, int rating) => _main.SetRatingAsync(file, rating);

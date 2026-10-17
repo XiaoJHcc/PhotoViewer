@@ -45,9 +45,10 @@ internal sealed class WindowsThumbnailCard : Grid
         _select = select;
         _rate = rate;
 
-        Margin = new Thickness(WindowsLayout.CardMargin);
-        Width = WindowsLayout.CardWidth + (WindowsLayout.CardMargin * 2);
-        Height = WindowsLayout.CardHeight + (WindowsLayout.CardMargin * 2);
+        // 96×144 = 旧壳卡片 90×138 加四周 3 占位;这里整格就是占位后的尺寸,
+        // 不能再叠一层 Margin(旧壳的 3 是 Button.Margin,与卡片外框的 90 相加才是 96)。
+        Width = WindowsLayout.CardPitchHorizontal;
+        Height = WindowsLayout.CardPitchVertical;
 
         var content = new StackPanel
         {
@@ -102,16 +103,20 @@ internal sealed class WindowsThumbnailCard : Grid
             },
         };
 
-        var photoHost = new Grid();
-        _photoWell = new Border
+        // 缩略图槽的尺寸就是照片的可见边界:Image 不设尺寸时会按位图自然大小铺开(实测 83×58 DIP),
+        // 撑出 80×80 的槽位。给容器定死尺寸,Image 与槽、抖动徽标共用同一坐标系。
+        var photoHost = new Grid
         {
             Width = WindowsLayout.ThumbnailSize,
             Height = WindowsLayout.ThumbnailSize,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        _photoWell = new Border
+        {
             Background = new SolidColorBrush(WindowsLayout.ThumbnailWell),
             CornerRadius = new CornerRadius(WindowsLayout.ThumbnailCornerRadius),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
-            HorizontalAlignment = HorizontalAlignment.Center,
         };
         photoHost.Children.Add(_photoWell);
         photoHost.Children.Add(_photo);
@@ -270,7 +275,9 @@ internal sealed class WindowsThumbnailCard : Grid
                 Text = glyph,
                 FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
                 FontSize = size,
-                Foreground = new SolidColorBrush(star > 0 && on ? WindowsLayout.StarOn : WindowsLayout.StarOff),
+                Foreground = new SolidColorBrush(star == 0
+                    ? WindowsLayout.StarClear
+                    : on ? WindowsLayout.StarOn : WindowsLayout.StarOff),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             };

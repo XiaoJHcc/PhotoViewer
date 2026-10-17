@@ -215,7 +215,9 @@ internal sealed class WindowsFilePicker : IFilePickerService
     }
 
     /// <summary>
-    /// 把共享层的过滤器转成 Windows 选择器需要的显式扩展名。
+    /// 把共享层的过滤器转成 Windows 选择器要求的显式扩展名(形如 ".jpg")。
+    /// 共享层给的是 glob(`*.jpg`)或裸扩展名,WinRT 的 <c>FileTypeFilter</c> 只接受前导点的形式,
+    /// 直接塞 `*.jpg` 会抛 <c>ArgumentException</c>(实测:文件选择器静默打不开)。
     /// </summary>
     /// <param name="filter">共享层过滤器</param>
     /// <returns>扩展名集合(形如 ".jpg")</returns>
@@ -227,17 +229,33 @@ internal sealed class WindowsFilePicker : IFilePickerService
         }
 
         var extensions = new List<string>(filter.Extensions.Count);
-        foreach (var extension in filter.Extensions)
+        foreach (var pattern in filter.Extensions)
         {
-            if (string.IsNullOrWhiteSpace(extension))
-            {
-                continue;
-            }
-
-            extensions.Add(extension.StartsWith('.') ? extension : "." + extension);
+            extensions.Add(NormalizeExtension(pattern));
         }
 
         return extensions;
+    }
+
+    /// <summary>把单个过滤器模式规范化成 ".扩展名";非法模式直接抛异常,不静默丢项。</summary>
+    /// <param name="pattern">过滤器模式(如 "*.jpg"、".jpg"、"jpg")</param>
+    /// <returns>规范化后的扩展名</returns>
+    private static string NormalizeExtension(string? pattern)
+    {
+        var value = pattern?.Trim() ?? string.Empty;
+        var separator = value.LastIndexOf('.');
+        if (separator < 0 || separator == value.Length - 1)
+        {
+            throw new InvalidOperationException($"文件选择器过滤器「{pattern}」缺少扩展名,无法转成 Windows 选择器形式。");
+        }
+
+        var extension = value[separator..];
+        if (extension.Contains('*') || extension.Contains('?'))
+        {
+            throw new InvalidOperationException($"文件选择器过滤器「{pattern}」含通配符,Windows 选择器只接受具体扩展名。");
+        }
+
+        return extension;
     }
 }
 

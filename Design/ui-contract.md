@@ -76,7 +76,7 @@ macOS 当前保留前轮已实现的增强：**重新显示胶片栏、切换列
 | ID | 共同行为或明确平台要求 | 实现与验收入口 |
 |---|---|---|
 | SHELL-01 | 两向/自动布局、独立栏位显隐；空间释放给主图；方形照片区与按钮不因原生化拉长 | macOS 尺寸表见 P2 UI §1；其他平台原生壳逐项核对 |
-| SHELL-02 | 主窗口隐藏式标题栏，系统窗口能力保留，拖动区域不得吞筛选或照片手势 | macOS P2 UI §1.1；移动端窗口装饰属于平台差异 |
+| SHELL-02 | 主窗口隐藏式标题栏，系统窗口能力保留，拖动区域不得吞筛选或照片手势；标题栏随指针自动显隐 | macOS P2 UI §1.1；Windows 自绘按钮方案与热区见 P2-W §12.2；移动端窗口装饰属于平台差异 |
 | FILTER-01 | 排序/升降序/星级筛选/计数同一业务语义，菜单选择更新共享状态 | 原生控件可不同；macOS 菜单对齐与间距见 P2 UI §1.3 |
 | INPUT-01 | 快捷键沿用用户主/次绑定；输入或录制控件获焦时不误触照片快捷键 | `AppGesture`、苹果键盘映射；各平台事件核验 |
 | SETTINGS-01 | 控制列表每行包含显隐、名称、主/次快捷键与右侧拖拽把手；无老式表头、无内部嵌套滚动，整表内嵌卡片平铺 | 原生控件由平台选择；macOS 用 SwiftUI `List`/`Form` 内嵌分组行（`.onMove` 拖拽排序） |
@@ -95,21 +95,25 @@ macOS 对拍几何：EXIF 小块 50×40，按钮点击区 40×40，评分 30×30
 
 EXIF 与评分块沿用原设计 #222 深灰底，文字保留系统层级；避免动态 NSColor 在无外观上下文时被固定为白色。SmallSquare 系统按钮保留方形实际绘制与原生反馈。菜单、字体、边框、圆角可按本轮原生表现判断；P3 EXIF 详情、分析、增强入口仍按阶段隐藏，不补回失效入口。
 
+Windows 对拍几何（2026-10-17，150% 缩放实机）：同一套数值成立 —— EXIF 小块 50×40、命令 40×40、评分 30×30、外 padding 10、组间距 10、EXIF 每块主轴两端 4 + 块间另隔 4、评分组主轴两端 8、命令间隔 8；
+竖排组高 EXIF 204 / 评分 196、横排组宽 EXIF 244 / 评分 196，与旧壳实测一致。Windows 侧按 `SCOPE-01` 隐藏「分析栏展开/收纳」「增强预览」两个命令，命令组比旧壳短 120 DIP：
+**同一套换行规则因此让旧壳的上下布局控制栏折成两行、Windows 保持一行**，属于按钮数差异而非布局差异，不按"未对齐"处理。图标集取平台原生（Windows Segoe Fluent Icons ↔ 旧壳 uicons），与 macOS 用 SF Symbols 同策略。
+
 ## 4. 四平台对账表
 
 “共享旧壳代码核对”表示阅读 Avalonia/VM 源码，尚不能替代该平台实机验收。macOS 下表的程序化状态由 `NativeFilmstripAcceptance` 对真实 AppKit 窗口验证，证据在 `release/native-p2-acceptance/filmstrip-*-checks.txt`。
 
 | 契约 | Windows | macOS 原生 | iOS/iPadOS | Android |
 |---|---|---|---|---|
-| FILM-01 触发条件 | 共享旧壳代码核对 | 本轮实机程序化验证 | 共享旧壳代码核对 | 共享旧壳代码核对 |
-| FILM-02 350ms/边界/末次请求 | 共享旧壳代码核对 | 本轮实机程序化验证，手感待作者验收 | 共享旧壳代码核对 | 共享旧壳代码核对 |
-| FILM-03 用户接管/减少动态效果 | 旧壳缺口，待补 | 本轮验证接管；减少动态效果读取系统值，开启后的独立操作待核验 | 旧壳缺口，待补 | 旧壳缺口，待补 |
-| FILM-04 两向顺序/滚轮 | 平台实机待核验 | 既有与本轮程序化验证；显隐/换向定位为已登记差异 | 触摸及显隐待核验 | 触摸及显隐待核验 |
+| FILM-01 触发条件 | P2-W:外部打开非首张定位目标已实机验证（空首屏/右键菜单/`Open` 命令的文件选择器同时修好）；点选/筛选不居中与共享 VM 同源 | 本轮实机程序化验证 | 共享旧壳代码核对 | 共享旧壳代码核对 |
+| FILM-02 350ms/边界/末次请求 | 原生定位用 350ms 三次缓出 + 端点夹取，定位改成收敛式（布局未就绪/列表重建后补做），行为与旧壳实测一致；手感待作者验收 | 本轮实机程序化验证，手感待作者验收 | 共享旧壳代码核对 | 共享旧壳代码核对 |
+| FILM-03 用户接管/减少动态效果 | 旧壳缺口，原生待补（本轮未做接管） | 本轮验证接管；减少动态效果读取系统值，开启后的独立操作待核验 | 旧壳缺口，待补 | 旧壳缺口，待补 |
+| FILM-04 两向顺序/滚轮 | P2-W:两向顺序与滚轮轴已实机验证；换向不再甩回顶部，改为按当前项重新定位（项距 96↔144 变化后旧偏移无意义） | 既有与本轮程序化验证；显隐/换向定位为已登记差异 | 触摸及显隐待核验 | 触摸及显隐待核验 |
 | FILM-05 信息与标识 | 共享旧壳代码核对 | 已补 PhotoDate 回退/完整时间 tooltip、原生占位/加载状态；卡片几何与真窗口对拍通过，延迟加载专项仍待核验 | 平台实机待核验 | 平台实机待核验 |
 | FILM-06 评分筛选连续性 | 共享 VM 代码核对 | 共用 VM；完整真实改星交互待核验 | 平台实机待核验 | 平台实机待核验 |
 | SETTINGS-01/02 | 旧壳；原生待迁移 | SwiftUI 原生设置（macOS 26）：程序化核验通过（五分类渲染/历史导航/勾选往返重绘/真实 NSEvent 录制/排序/缩放/关闭回写），真实鼠标拖放待作者验收 | 原生设置已存在，逐条契约验收待做 | 旧壳；原生待迁移 |
 | IMAGE-01 | P2-W 定向实机程序化：无 EXIF 棋盘 JPEG 的源尺寸/代理/Full 及物理 100% 热替换通过；八方向、150%/200% DPI、跨屏和色彩待验 | 见 P2，系统色彩/跨屏人工门未关闭 | 见 P1/后续原生阶段 | 见 P1，原生待迁移 |
-| SHELL-02 隐藏标题栏 | P2-W 两向三尺寸与隐藏胶片条的物理拖动区程序化验证通过（100% DPI）；高 DPI/跨屏和实际鼠标手感待验 | 见 P2 主窗口对拍；跨屏产品验收待做 | 移动端不适用 | 移动端不适用 |
+| SHELL-02 隐藏标题栏 | P2-W 自绘标题栏：指针进 50 DIP 热区显示、移开/失活隐藏；拖动区只在可见时登记（隐藏态零区域），不压标题栏按钮、不吞筛选条。150% DPI 下两向三尺寸 + 隐藏胶片条的 caption 契约程序化通过，真实鼠标拖动/最大化/还原实机验证；200% DPI、跨屏与手感待验 | 见 P2 主窗口对拍；跨屏产品验收待做 | 移动端不适用 | 移动端不适用 |
 
 发现登记：Avalonia 可见范围估算代码存在方向判断不一致，不能复制为设计；可见中心预取与 macOS 每帧上报节奏也尚未专项对齐。本轮修定位条件和动画，不借此重写共享预取。
 
@@ -135,4 +139,5 @@ EXIF 与评分块沿用原设计 #222 深灰底，文字保留系统层级；避
 - 基线定位/动画：[ThumbnailListView.axaml.cs](../PhotoViewer/Views/Main/File/ThumbnailListView.axaml.cs)。
 - 基线触发：[ThumbnailListViewModel.cs](../PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs)、[ControlViewModel.cs](../PhotoViewer/ViewModels/Main/ControlViewModel.cs)、[FolderViewModel.cs](../PhotoViewer/ViewModels/Main/FolderViewModel.cs)。
 - macOS 实现：[MacMainWindow.cs](../PhotoViewer.Mac/Native/MacMainWindow.cs)、[MacFilmstripView.cs](../PhotoViewer.Mac/Native/MacFilmstripView.cs)。
+- Windows 原生实现：[WindowsMainWindow.cs](../PhotoViewer.Desktop/Native/WindowsMainWindow.cs)、[WindowsLayout.cs](../PhotoViewer.Desktop/Native/WindowsLayout.cs)(几何常量唯一来源)、[WindowsTitleBar.cs](../PhotoViewer.Desktop/Native/WindowsTitleBar.cs)。
 - macOS 控件/几何：[P2 UI 方案](../Plans/native-rebuild-phase-2-ui.md)；阶段验收：[P2 验收](../Plans/native-rebuild-phase-2-acceptance.md)；进度：[handoff](../Plans/native-rebuild-handoff.md)。

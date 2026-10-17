@@ -11,7 +11,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 2. 当前状态
 
-- **Windows 首屏与首轮纠偏（2026-10-16，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片；定向修复后台调度优先级、无 EXIF 代理源尺寸、标题栏物理坐标与实际控件避让、原生模型资源读取，补齐 resize/关闭的 GPU 引用释放。`--pv-native-smoke` 使用专用设置/数据库/日志与自有棋盘 JPEG，当前 100% DPI 的 13 项定向检查与 ColorTestTool 27 项通过；完整 W-M6、150%/200% DPI、实际跨屏/色彩/手感仍待验。详见 [Windows P2-W §11](native-rebuild-windows-p2.md)。
+- **Windows 四分区 + 对标纠偏（2026-10-16 首屏 / 2026-10-17 纠偏，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片，并在 150% 缩放下与旧壳同尺寸逐项对拍。本轮修掉五类根因:自备 `app.manifest` 漏 DPI 声明导致进程 DPI-unaware（整套 UI 被系统位图拉伸）、文件选择器扩展名模式被补点成非法形式致「打开文件」静默失效、文件栏 `Border.Width` 含边框致卡片被压窄 + 卡片重复叠外边距致项距 150、缩略图未限幅撑出 80×80 槽位、控制栏 EXIF/评分组间距与底色失配；并按要求把标题栏改成**自绘四按钮 + 50 DIP 热区自动显隐**（覆盖计划 §9 待确认项 1 的「保留系统按钮」推荐值）。`--pv-native-smoke` 现覆盖 3 尺寸 × 2 方向的自动显隐 caption 契约（隐藏态零拖动区、显示态不压按钮），150% DPI 实机通过；200% DPI、实际跨屏、系统色彩、鼠标手感与八方向仍待验。已完成 / 待完成总表见 [Windows P2-W §13](native-rebuild-windows-p2.md#13-已完成--待完成清单)，逐项对拍见 §12。
 
 - **分支**:`refactor/native-rebuild`(远端 github 已推送;`main` 保持可发布,未合并)。
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。

@@ -13,7 +13,7 @@
 
 PhotoViewer is a cross-platform photo culling app for photographers, optimized for the **选片 (culling) workflow** — browse JPG/HEIF on the go, sync star ratings back to RAW, fast keyboard-driven UX.
 
-- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS P2 原生壳 AppKit + Metal（Debug 默认原生，Release 通道等待作者验收）。
+- **Framework**: .NET 10 · MVVM (ReactiveUI)；迁移期旧壳 Avalonia 12，macOS P2 原生壳 AppKit + Metal，Windows 原生壳 WinUI 3 + D3D11（两平台均 Debug 默认原生，Release 通道等待作者验收）。
 - **Platforms**: Windows / macOS / iOS / Android (one shared `PhotoViewer/` project + four head projects)
 - **No DI container**: core services are static facades; platform capabilities are injected at startup via `Initialize(...)`.
 - **HEIF decoding**: `LibHeifSharp` on Windows/Android, native `ImageIO`/`AVIF` on macOS/iOS.
@@ -65,7 +65,7 @@ Directory.Packages.props  # Central NuGet version pinning
 | [PhotoViewer/ViewModels/Settings/](PhotoViewer/ViewModels/Settings/) | [ViewModels/Settings/AGENTS.md](PhotoViewer/ViewModels/Settings/AGENTS.md) | 设置页 VM(9 个 partial,共享 iOS 原生设置页) |
 | [Training/](Training/) | [Training/AGENTS.md](Training/AGENTS.md) | AI 训练一等模块:数据集提取 CLI、特征可行性探针、ONNX 导出/校验、三期计划、数据契约 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/) | [PhotoViewer.Mac/AGENTS.md](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳、Metal 照片层与平台接线；迁移期保留旧壳 |
-| [PhotoViewer.Desktop/](PhotoViewer.Desktop/) | [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md) | Windows 头工程：迁移期旧壳 + WinUI 3 原生壳（W-M0 骨架起步，方案见 [Plans/native-rebuild-windows-p2.md](Plans/native-rebuild-windows-p2.md)） |
+| [PhotoViewer.Desktop/](PhotoViewer.Desktop/) | [PhotoViewer.Desktop/AGENTS.md](PhotoViewer.Desktop/AGENTS.md) | Windows 头工程：迁移期旧壳 + WinUI 3 原生壳（四分区主窗口 + 自绘自动显隐标题栏 + D3D11 主图，W-M1/W-M2 进行中；方案与逐项对拍见 [Plans/native-rebuild-windows-p2.md](Plans/native-rebuild-windows-p2.md)） |
 
 > Core 层规则:UI-independent business logic,**不引用 Avalonia 控件**。
 

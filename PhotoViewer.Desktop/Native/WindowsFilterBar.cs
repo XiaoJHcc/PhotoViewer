@@ -33,15 +33,15 @@ internal sealed class WindowsFilterBar : Grid
     {
         _filter = filter;
 
-        _sortMode = CreateComboBox(90);
+        _sortMode = CreateComboBox();
         _sortMode.ItemsSource = _filter.SortModes.Select(option => option.DisplayName).ToList();
         _sortMode.SelectionChanged += OnSortModeChanged;
 
-        _sortOrder = CreateComboBox(90);
+        _sortOrder = CreateComboBox();
         _sortOrder.ItemsSource = _filter.SortOrders.Select(option => option.DisplayName).ToList();
         _sortOrder.SelectionChanged += OnSortOrderChanged;
 
-        _ratingFilter = CreateComboBox(90);
+        _ratingFilter = CreateComboBox();
         _ratingFilter.ItemsSource = _filter.RatingFilters.Select(option => option.DisplayName).ToList();
         _ratingFilter.SelectionChanged += OnRatingFilterChanged;
 
@@ -63,7 +63,6 @@ internal sealed class WindowsFilterBar : Grid
             VerticalAlignment = VerticalAlignment.Top,
             Children = { _sortMode, _sortOrder, _ratingFilter, _count },
         };
-
         Children.Add(_panel);
 
         _filter.PropertyChanged += OnFilterChanged;
@@ -77,24 +76,16 @@ internal sealed class WindowsFilterBar : Grid
 
     /// <summary>
     /// 切换排布方向:上下布局纵向排列,左右布局横向排列(与旧壳同一套占位与间距)。
+    /// 旧壳 <c>Margin="10"</c> 两个方向都一样,计数文本没有额外外边距 —— 这里不做方向补偿,
+    /// 否则左右布局会多出一份 5 的间距。
     /// </summary>
     /// <param name="isRowLayout">是否为上下布局</param>
     public void SetOrientation(bool isRowLayout)
     {
         _panel.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
-        if (isRowLayout)
-        {
-            _panel.Margin = new Thickness(WindowsLayout.FilterMargin);
-            _count.Margin = new Thickness(0);
-            HorizontalAlignment = HorizontalAlignment.Stretch;
-        }
-        else
-        {
-            // 左右布局:筛选条压在 116 宽的胶片栏上方,纵向堆叠
-            _panel.Margin = new Thickness(0, WindowsLayout.FilterMargin, 0, 0);
-            _count.Margin = new Thickness(0, WindowsLayout.FilterSpacing, 0, 0);
-            HorizontalAlignment = HorizontalAlignment.Stretch;
-        }
+        _panel.Margin = new Thickness(WindowsLayout.FilterMargin);
+        _count.Margin = new Thickness(0);
+        HorizontalAlignment = HorizontalAlignment.Stretch;
 
         foreach (var combo in new[] { _sortMode, _sortOrder, _ratingFilter })
         {
@@ -111,10 +102,11 @@ internal sealed class WindowsFilterBar : Grid
     internal Rect GetInteractiveBounds(UIElement relativeTo)
         => _panel.TransformToVisual(relativeTo).TransformBounds(new Rect(0, 0, _panel.ActualWidth, _panel.ActualHeight));
 
-    /// <summary>创建统一外观的下拉框。</summary>
-    private static ComboBox CreateComboBox(double width) => new()
+    /// <summary>创建统一外观的下拉框(占位与旧壳同为 90×32)。</summary>
+    private static ComboBox CreateComboBox() => new()
     {
-        Width = width,
+        Width = WindowsLayout.FilterItemWidth,
+        Height = WindowsLayout.FilterItemHeight,
         FontSize = 13,
         HorizontalAlignment = HorizontalAlignment.Center,
         CornerRadius = new CornerRadius(6),

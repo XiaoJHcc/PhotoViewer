@@ -26,6 +26,7 @@ internal sealed class WindowsControlBar : Grid
     private readonly StackPanel _exifStack;
     private readonly StackPanel _ratingStack;
     private readonly StackPanel _commandStack;
+    private readonly List<Border> _exifBlocks = new();
     private readonly List<Button> _starButtons = new();
     private bool _refreshPending;
     private bool _isRowLayout = true;
@@ -40,15 +41,27 @@ internal sealed class WindowsControlBar : Grid
         _main = main;
         _execute = execute;
 
-        _exifStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+        _exifStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = WindowsLayout.ExifStackSpacing,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        // 旧壳的 EXIF 分组边框没有底色,只有每个信息块自己是 #222;
+        // 给分组加底色会把块间 12 的留白填成一片,看起来像一整块长条。
         _exifGroup = new Border
         {
-            Background = new SolidColorBrush(WindowsLayout.BlockBackground),
-            CornerRadius = new CornerRadius(6),
             Child = _exifStack,
         };
 
-        _ratingStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 0 };
+        _ratingStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 0,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            // 旧壳把这 8 加在星条(DockPanel)上而不是分组边框上,分组边框本身没有外边距
+            Margin = new Thickness(0, WindowsLayout.RatingGroupMargin, 0, WindowsLayout.RatingGroupMargin),
+        };
         _ratingGroup = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.BlockBackground),
@@ -64,7 +77,12 @@ internal sealed class WindowsControlBar : Grid
             _ratingStack.Children.Add(button);
         }
 
-        _commandStack = new StackPanel { Orientation = Orientation.Horizontal, Spacing = WindowsLayout.CommandSpacing };
+        _commandStack = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = WindowsLayout.CommandSpacing,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
         _groups = new WindowsWrapPanel
         {
             Orientation = Orientation.Horizontal,
@@ -111,7 +129,7 @@ internal sealed class WindowsControlBar : Grid
         _commandStack.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         _ratingStack.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         ApplyRatingOrder();
-        ApplyGroupMargins();
+        ApplyOrientationMargins();
     }
 
     /// <summary>
@@ -133,13 +151,14 @@ internal sealed class WindowsControlBar : Grid
         RefreshCommands();
         RefreshRating();
         ApplyRatingOrder();
-        ApplyGroupMargins();
+        ApplyOrientationMargins();
     }
 
     /// <summary>重建 EXIF 信息块(保留标签与强调值的信息层级与完整内容 tooltip)。</summary>
     private void RefreshExif()
     {
         _exifStack.Children.Clear();
+        _exifBlocks.Clear();
         foreach (var entry in _main.ControlVM.EnabledExifItems)
         {
             var stack = new StackPanel
@@ -173,9 +192,11 @@ internal sealed class WindowsControlBar : Grid
                 Child = stack,
             };
             ToolTipService.SetToolTip(block, $"{entry.DisplayName}:{entry.DisplayValue}");
+            _exifBlocks.Add(block);
             _exifStack.Children.Add(block);
         }
 
+        ApplyOrientationMargins();
         _exifGroup.Visibility = _exifStack.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -268,7 +289,9 @@ internal sealed class WindowsControlBar : Grid
         {
             var button = _starButtons[star];
             var on = star > 0 && rating >= star;
-            var tint = star > 0 && on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
+            var tint = star == 0
+                ? WindowsLayout.StarClear
+                : on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
             var glyph = star == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
             var size = star == 0 ? 12 : WindowsLayout.RatingGlyphFontSize;
             button.Opacity = _main.ControlVM.StarOpacity;
@@ -298,18 +321,26 @@ internal sealed class WindowsControlBar : Grid
         }
     }
 
-    /// <summary>分组在主轴两端的留白(EXIF 4、评分 8、命令 8)。</summary>
-    private void ApplyGroupMargins()
+    /// <summary>
+    /// 主轴方向相关的留白:
+    /// EXIF 块 = 旧壳 WebMarginConverter '0,4|4,0'(横排 4,0,4,0 / 竖排 0,4,0,4);
+    /// 星条 = '0,8|8,0';命令组无额外留白。三个分组边框本身都没有外边距。
+    /// </summary>
+    private void ApplyOrientationMargins()
     {
-        _exifGroup.Margin = _isRowLayout
-            ? new Thickness(WindowsLayout.ExifBlockMargin / 2, 0, WindowsLayout.ExifBlockMargin / 2, 0)
-            : new Thickness(0, WindowsLayout.ExifBlockMargin / 2, 0, WindowsLayout.ExifBlockMargin / 2);
-        _ratingGroup.Margin = _isRowLayout
-            ? new Thickness(0, 0, WindowsLayout.RatingGroupMargin, 0)
-            : new Thickness(0, WindowsLayout.RatingGroupMargin, 0, 0);
-        _commandStack.Margin = _isRowLayout
-            ? new Thickness(0, 0, WindowsLayout.CommandSpacing, 0)
-            : new Thickness(0, WindowsLayout.CommandSpacing, 0, 0);
+        var exifMargin = _isRowLayout
+            ? new Thickness(WindowsLayout.ExifBlockMargin, 0, WindowsLayout.ExifBlockMargin, 0)
+            : new Thickness(0, WindowsLayout.ExifBlockMargin, 0, WindowsLayout.ExifBlockMargin);
+        foreach (var block in _exifBlocks)
+        {
+            block.Margin = exifMargin;
+        }
+
+        _exifGroup.Margin = new Thickness(0);
+        _ratingStack.Margin = _isRowLayout
+            ? new Thickness(WindowsLayout.RatingGroupMargin, 0, WindowsLayout.RatingGroupMargin, 0)
+            : new Thickness(0, WindowsLayout.RatingGroupMargin, 0, WindowsLayout.RatingGroupMargin);
+        _commandStack.Margin = new Thickness(0);
     }
 
     /// <summary>创建设置字体的字形文本。</summary>
