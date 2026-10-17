@@ -141,6 +141,110 @@ internal static class WindowsInput
     }
 
     /// <summary>
+    /// 手势 → 设置页显示文本(Windows 键名,不使用 ⌘/⌥ 符号)。
+    /// </summary>
+    /// <param name="gesture">手势</param>
+    /// <returns>显示文本;未设置时为"未设置"</returns>
+    public static string FormatGesture(AppGesture? gesture)
+    {
+        if (gesture?.Key is { } key)
+        {
+            var parts = ModifierParts(key.Modifiers);
+            parts.Add(KeyName(key.Key));
+            return string.Join("+", parts);
+        }
+
+        if (gesture?.Mouse is { } mouse)
+        {
+            var parts = ModifierParts(mouse.Modifiers);
+            parts.Add(mouse.Action switch
+            {
+                MouseAction.LeftClick => "左键",
+                MouseAction.RightClick => "右键",
+                MouseAction.MiddleClick => "中键",
+                MouseAction.XButton1Click => "侧键1",
+                MouseAction.XButton2Click => "侧键2",
+                MouseAction.WheelUp => "滚轮上",
+                MouseAction.WheelDown => "滚轮下",
+                _ => "鼠标",
+            });
+            return string.Join("+", parts);
+        }
+
+        return "未设置";
+    }
+
+    /// <summary>把修饰键转成显示片段。</summary>
+    /// <param name="modifiers">修饰键</param>
+    /// <returns>片段列表</returns>
+    private static List<string> ModifierParts(GestureModifiers modifiers)
+    {
+        var parts = new List<string>();
+        if (modifiers.HasFlag(GestureModifiers.Control)) parts.Add("Ctrl");
+        if (modifiers.HasFlag(GestureModifiers.Alt)) parts.Add("Alt");
+        if (modifiers.HasFlag(GestureModifiers.Shift)) parts.Add("Shift");
+        if (modifiers.HasFlag(GestureModifiers.Meta)) parts.Add("Win");
+        return parts;
+    }
+
+    /// <summary>共享键的 Windows 显示名。</summary>
+    /// <param name="key">键</param>
+    /// <returns>显示名</returns>
+    private static string KeyName(GestureKey key)
+    {
+        var name = key.ToString();
+        if (name.Length == 2 && name[0] == 'D' && char.IsDigit(name[1]))
+        {
+            return name[1].ToString();
+        }
+
+        if (name.StartsWith("NumPad", StringComparison.Ordinal))
+        {
+            return "小键盘" + name["NumPad".Length..];
+        }
+
+        return KeyDisplayNames.TryGetValue(name, out var display) ? display : name;
+    }
+
+    /// <summary>特殊键显示名。</summary>
+    private static readonly Dictionary<string, string> KeyDisplayNames = new(StringComparer.Ordinal)
+    {
+        ["Space"] = "空格",
+        ["Return"] = "回车",
+        ["Back"] = "退格",
+        ["Escape"] = "Esc",
+        ["Tab"] = "Tab",
+        ["Delete"] = "Delete",
+        ["Insert"] = "Insert",
+        ["Home"] = "Home",
+        ["End"] = "End",
+        ["PageUp"] = "PgUp",
+        ["PageDown"] = "PgDn",
+        ["CapsLock"] = "Caps",
+        ["NumLock"] = "Num",
+        ["Left"] = "←",
+        ["Right"] = "→",
+        ["Up"] = "↑",
+        ["Down"] = "↓",
+        ["OemPlus"] = "+",
+        ["OemMinus"] = "-",
+        ["OemComma"] = ",",
+        ["OemPeriod"] = ".",
+        ["OemQuestion"] = "/",
+        ["OemSemicolon"] = ";",
+        ["OemTilde"] = "`",
+        ["OemOpenBrackets"] = "[",
+        ["OemCloseBrackets"] = "]",
+        ["OemPipe"] = "\\",
+        ["OemQuotes"] = "'",
+        ["Add"] = "+",
+        ["Subtract"] = "-",
+        ["Multiply"] = "*",
+        ["Divide"] = "/",
+        ["Decimal"] = ".",
+    };
+
+    /// <summary>
     /// 判断虚拟键是否按下。
     /// </summary>
     /// <param name="key">虚拟键</param>

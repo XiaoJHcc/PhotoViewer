@@ -338,7 +338,7 @@ internal sealed partial class WindowsMainWindow : Window
         return pane;
     }
 
-    /// <summary>构建右键菜单(设置入口在 W-M5 前不显示,P3 入口不显示)。</summary>
+    /// <summary>构建右键菜单(设置窗口随 W-M5 开放)。</summary>
     private MenuFlyout BuildContextMenu()
     {
         var menu = new MenuFlyout();
@@ -373,6 +373,10 @@ internal sealed partial class WindowsMainWindow : Window
         menu.Items.Add(_thumbnailMenuToggle);
         menu.Items.Add(_analysisMenuToggle);
         menu.Items.Add(_controlMenuToggle);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        var settings = new MenuFlyoutItem { Text = "设置…" };
+        settings.Click += (_, _) => _main.OpenSettingWindow();
+        menu.Items.Add(settings);
         return menu;
     }
 

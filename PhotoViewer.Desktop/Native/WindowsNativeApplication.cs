@@ -38,7 +38,9 @@ internal static class WindowsNativeApplication
     public static void Run(string[] args)
     {
         var smoke = args.Contains("--pv-native-smoke");
-        NativeStartupLog.BeginSession(args, smoke
+        var settingsCheck = args.Contains("--pv-native-settings");
+        var settingsHold = args.Contains("--pv-native-settings-hold");
+        NativeStartupLog.BeginSession(args, smoke || settingsCheck || settingsHold
             ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "native-startup.log")
             : null);
         NativeStartupLog.InstallHooks();
@@ -109,6 +111,7 @@ internal static class WindowsNativeApplication
     {
         private WindowsMainWindow? _window;
         private MainViewModel? _main;
+        private WindowsNativeSettingsPresenter? _settingsPresenter;
 
         /// <summary>
         /// 初始化应用对象。
@@ -132,14 +135,17 @@ internal static class WindowsNativeApplication
             try
             {
                 var smoke = LaunchArgs.Contains("--pv-native-smoke");
+                var settingsCheck = LaunchArgs.Contains("--pv-native-settings");
+                var settingsHold = LaunchArgs.Contains("--pv-native-settings-hold");
                 DebugSettings.XamlResourceReferenceFailed += (_, e) =>
                     NativeStartupLog.Write("xaml resource failed: " + e.Message);
                 DebugSettings.BindingFailed += (_, e) =>
                     NativeStartupLog.Write("xaml binding failed: " + e.Message);
-                InitializeFacades(smoke);
+                InitializeFacades(smoke || settingsCheck || settingsHold);
 
                 _main = new MainViewModel(nativePresentation: true);
-                NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl());
+                _settingsPresenter = new WindowsNativeSettingsPresenter(() => _windowHandle);
+                NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl(_settingsPresenter));
                 _window = new WindowsMainWindow(_main);
                 _window.Closed += OnWindowClosed;
                 _window.Activate();
@@ -151,6 +157,19 @@ internal static class WindowsNativeApplication
                 if (smoke)
                 {
                     await _window.RunSmokeAsync();
+                    return;
+                }
+
+                if (settingsCheck)
+                {
+                    await WindowsSettingsAcceptance.RunAsync(_main, _settingsPresenter!);
+                    _window.Close();
+                    return;
+                }
+
+                if (settingsHold)
+                {
+                    _settingsPresenter!.TryPresent(_main.Settings);
                     return;
                 }
 
@@ -225,22 +244,30 @@ internal static class WindowsNativeApplication
             NativeStartupLog.Write($"外部打开未解析出可用项({request.Source})");
         }
 
-        /// <summary>关闭窗口:释放 GPU 资源与订阅(设置由共享视图模型自身的延迟落盘负责,与旧壳同口径)。</summary>
+        /// <summary>关闭窗口:先关设置窗口回写工作副本,再释放 GPU 资源与订阅。</summary>
         private void OnWindowClosed(object sender, WindowEventArgs args)
         {
+            _settingsPresenter?.CloseIfOpen();
             _window?.Detach();
             NativeStartupLog.Write("window closed");
         }
     }
 
     /// <summary>
-    /// 原生壳的窗口门面:设置窗口属 W-M5、工具页属 P3,本阶段调用即为漂移,直接报错而不是静默无响应。
+    /// 原生壳的窗口门面:设置窗口转交 presenter;工具页属 P3,本阶段调用即为漂移,直接报错而不是静默无响应。
     /// </summary>
     private sealed class NativeWindowPresenterImpl : INativeWindowPresenter
     {
+        private readonly WindowsNativeSettingsPresenter _settings;
+
+        /// <summary>
+        /// 创建窗口门面。
+        /// </summary>
+        /// <param name="settings">设置窗口展示器</param>
+        public NativeWindowPresenterImpl(WindowsNativeSettingsPresenter settings) => _settings = settings;
+
         /// <inheritdoc/>
-        public void ShowSettingsWindow(SettingsViewModel settings)
-            => throw new InvalidOperationException("原生设置窗口属 W-M5;在此之前原生壳不显示设置入口。");
+        public void ShowSettingsWindow(SettingsViewModel settings) => _settings.TryPresent(settings);
 
         /// <inheritdoc/>
         public void ShowOrActivateToolsWindow(ToolsViewModel tools)

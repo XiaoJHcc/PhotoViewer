@@ -10,8 +10,8 @@ namespace PhotoViewer.Desktop.Native;
 /// </summary>
 internal static class WindowsIcons
 {
-    /// <summary>Windows 11 图标字体。</summary>
-    public const string FluentFontFamily = "Segoe Fluent Icons";
+    /// <summary>Windows 11 图标字体。带 MDL2 回退链,旧系统缺 Fluent 字体时不至于出现空框。</summary>
+    public const string FluentFontFamily = "Segoe Fluent Icons,Segoe MDL2 Assets";
 
     /// <summary>已评分星形字形。</summary>
     public const string StarGlyph = "\uE735";
@@ -67,6 +67,21 @@ internal static class WindowsIcons
 
         return null;
     }
+
+    /// <summary>
+    /// 设置分类 → 导航图标字形。分类键由设置窗口固定使用(File/Preview/Control/Exif/Ai)。
+    /// </summary>
+    /// <param name="category">分类键</param>
+    /// <returns>Segoe Fluent Icons 字形</returns>
+    public static string ForCategory(string category) => category switch
+    {
+        "File" => "\uE8B7",
+        "Preview" => "\uE8B9",
+        "Control" => "\uE765",
+        "Exif" => "\uE946",
+        "Ai" => "\uE945",
+        _ => "\uE713",
+    };
 
     /// <summary>
     /// 判断命令是否为"显示星数"的评分命令

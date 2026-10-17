@@ -187,10 +187,11 @@ PhotoViewer.Desktop/
 - 文本框/录制控件获焦时暂停全局照片快捷键;`FormatGesture` 输出 Windows 显示文本。
 - **门**:`WindowsInputAcceptance` 覆盖映射、不抛异常、空首屏点击开文件、右键菜单、方向键被消费。
 
-**W-M5 原生设置窗口(SETTINGS-01/02)**
+**W-M5 原生设置窗口(SETTINGS-01/02)** ✅ 2026-10-17(方案 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md);落地记录见 §17)。
 - `WindowsNativeSettingsPresenter : INativeSettingsPresenter` + `NativeSettingsSession` 工作副本 + 关闭回写,不改 JSON 字段名/默认值。
-- 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页 P3 项禁用且保留原值;清库二次确认。
-- **门**:五分类渲染、动作往返、关闭回写重开恢复、隔离设置、窄宽不溢出。
+- 独立 960×720 窗口(系统标题栏深色配色、不进任务栏),左侧 ListView 分类 + 五页卡片;控件替换与尺寸/行模型见 §17。
+- 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页全部可用(P3 已落地);清库二次确认。
+- **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待作者手验。
 
 **W-M6 验收 harness 与文档同步**
 - CLI(与 Mac 同形):`--pv-native-smoke` + `--pv-native-layout` / `--pv-native-filmstrip` / `--pv-native-input` / `--pv-native-toolbar`,以及 `--legacy-ui --pv-legacy-layout`;隔离设置/数据库落 `release/native-win-acceptance/`,**不写用户照片、不动用户设置**。
@@ -344,6 +345,8 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 16 | **FILM-06**:星级写回失败在窗口内可见(底部状态提示),不呈现虚假成功 | ✅ 定向 | §14;共享 `MainViewModel.RatingWriteFailed` + 只读素材触发,harness 断言提示可见且星色未变 |
 | 17 | 窗口态闭环:自绘按钮的最大化/还原/全屏/退出全屏与 presenter 状态一致 | ✅ 定向 | §14;harness 断言四态往返;真实跨屏/贴靠布局差异仍属 13.2 #2/#16 |
 | 18 | 八方向 + 带 EXIF 素材:自生成方向 1–8 JPEG(含 f/2.8、1/250、ISO 400、75mm)验证方向链与控制栏取值 | ✅ 定向 | §14;GPU 表面四角回读 + 导航图四角回读逐方向核对、方向 6 的 `DisplayCrop` 象限与增强帧朝向断言;EXIF 块显示真实取值;真实相机素材与旧壳逐项对拍仍待做(见 13.2 #3/#5) |
+| 19 | **原生设置窗口(W-M5)**:五分类/卡片/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
+| 20 | INPUT-01:设置窗口独立于主窗口,录制态吞键 | ✅ 定向 | 主窗口 `_root.KeyDown` 收不到设置窗口按键;录制态 `e.Handled` + 失活取消 |
 
 ### 13.2 待完成
 
@@ -353,8 +356,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 2 | 真实跨屏(不同 scale 显示器间迁移) | W-M6 / W-M7 | 双显示器且缩放不同 | `XamlRoot` 变化后 caption 与代理重算、100% 口径不变 |
 | 3 | 八方向 + 带 EXIF 的**真实素材**与旧壳逐项对拍 | W-M6 | 相机素材(自生成素材已覆盖方向链与控制栏取值,见 §14) | 每个方向朝向/几何与旧壳一致 |
 | 5 | 相机 EXIF 取值与旧壳对拍(自生成素材已证明取值链路) | W-M6 | 真实素材 | 光圈/快门/ISO/等效焦距与旧壳完全一致 |
-| 8 | INPUT-01 文本框/录制控件获焦时暂停照片快捷键 | W-M4 | 依赖 W-M5 录制控件 | 录制/输入时不误触快捷键 |
-| 9 | 原生设置窗口(W-M5) | W-M5 | ⬜ 未开始;届时放开设置入口 | 五分类渲染/动作往返/关闭回写/窄宽不溢出 |
+| 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS;真实拖拽/录制/清库/预设增删待手验 |
 | 10 | 工具页(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | 分析栏/相似聚类/增强已落地(§15–§16),工具页仍未原生 | 各页契约另立 |
 | 11 | W-M6 专项 harness + 旧壳几何 JSON 对拍 | W-M6 | ⬜ 未开始 | `--pv-native-layout/filmstrip/input/toolbar`、`--legacy-ui --pv-legacy-layout`、`Exact=0.01` |
 | 12 | 色彩正确性(ICC/广色域标签/ACM 探测/Win10 烘焙回退) | W-M7 | 独立立项 | 见色彩计划 |
@@ -368,15 +370,13 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 ### 13.3 有意延期(不算待办)
 
 - P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16),不再延期;工具页仍待做。
-- 原生设置窗口未做前不显示设置入口。
 - 系统标题栏按钮改为自绘(为满足自动显隐),代价是失去最大化按钮的系统贴靠布局,与旧壳一致。
 
 ### 13.4 建议推进顺序
 
 1. **W-M6 专项 harness + 旧壳几何 JSON 对拍**(#11):把"对拍"从一次性人工变成可回归,现在主屏功能已闭环,这是下一块硬骨头。
-2. **W-M5 设置窗口**(#9):同时解锁 INPUT-01 的录制态暂停(#8)。
-3. **手测与设备矩阵**:200%/175% 缩放(#1)、真实跨屏(#2)、真实相机素材(#3/#5)、鼠标/触控板手感(#16)。
-4. **W-M7 色彩 / RAW**(#12/#13):独立立项,与上面几条并行不冲突。
+2. **手测与设备矩阵**:200%/175% 缩放(#1)、真实跨屏(#2)、真实相机素材(#3/#5)、鼠标/触控板手感(#16)、设置窗口真实拖拽/录制/清库/预设增删。
+3. **W-M7 色彩 / RAW**(#12/#13):独立立项,与上面几条并行不冲突。
 
 ## 14. 主屏功能对标收口(2026-10-17 第二轮)
 
@@ -409,7 +409,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 14.4 仍待验(不因本轮通过而关闭)
 
-200%/175% 缩放、真实跨屏、真实相机八方向素材、相机 EXIF 取值与旧壳逐项对拍、真实鼠标/触控板手感、W-M5 设置窗口、W-M6 专项 harness 与旧壳几何 JSON。
+200%/175% 缩放、真实跨屏、真实相机八方向素材、相机 EXIF 取值与旧壳逐项对拍、真实鼠标/触控板手感、设置窗口真实拖拽/录制手感、W-M6 专项 harness 与旧壳几何 JSON。
 
 
 
@@ -446,7 +446,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 15.4 仍待验
 
-增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具页(EXIF 详情/照片统计/DINO 调试)与设置窗口(W-M5)仍未原生;200%/跨屏/手感与 W-M7 色彩/RAW 不变。
+增强态 + 分析栏同时开启的**长时间**稳定性(同步前冒烟曾因增强图 CV 路径硬崩溃,15.2 #1 曾临时规避;§16 后共享 presenter 对增强帧重算已过冒烟,长时间交互仍待手测);工具页(EXIF 详情/照片统计/DINO 调试)仍未原生;200%/跨屏/手感与 W-M7 色彩/RAW 不变。
 
 ### 15.5 收尾缺陷修复(作者回报"提取后切相似聚类卡死")
 
@@ -516,5 +516,47 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **主图编码**:新增 `Core/WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB),`WindowsNativeApplication` 注入 `WindowsPresentationDecoder` + policy;`DecodeAsync` 改为共享四参签名(带 `PixelEncoding`),非 `RgbaF16` 显式拒绝,`BytesPerPixel` 删除,`BitmapLoader.PresentationBytesPerPixel` 由 policy 计算。
 - **共享修复保留**:Windows 分支对共享层的修复随合并进入——`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留(增强 F16 方向,冒烟在方向 6 用增强帧四角回读覆盖)、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载;不另开 Windows 分叉。
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
-- **待办不变**:W-M5 设置窗口、工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。
+- **待办不变**:工具页、W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON。
+
+## 17. W-M5 设置窗口落地(2026-10-17)
+
+按 [native-rebuild-windows-settings.md](native-rebuild-windows-settings.md) 实现。开工先做空白窗口逐控件冒烟,发现本工程（非 XAML / 非打包 / 自包含）有一批 WinUI 控件无法加载,方案随之替换。
+
+### 17.1 控件可用性实测
+
+| 控件 | 结果 | 替代 |
+|---|---|---|
+| `NavigationView` | 首次布局 `XamlParseException`（缺 `TabViewScrollButtonBackground`） | 左侧 `ListView` + UIElement 行 |
+| `TitleBar` | 同上 | 系统标题栏 + `AppWindowTitleBar` 配色 |
+| `NumberBox` | 同上 | `Slider`（线程/预载/最多数量/缩放预设） |
+| `TextBox` / `RichEditBox` | `E_FAIL(0x80004005)` | 不使用文本输入 |
+| `InfoBar` | 同上（缺 TabView 资源） | `Border` 状态条 |
+| `ProgressBar` | 既有结论：`E_FAIL` / 缺 TabView 资源 | 自绘进度（既有） |
+
+可用且已验证：`ContentDialog`、`ListView`、`ComboBox`、`Slider`、`ToggleSwitch`、`CheckBox`、`Button`、`TextBlock`、`FontIcon`、`ScrollViewer`、`StackPanel`、`Border`、`Grid`。`XamlControlsResources` 在 `OnLaunched` 之后合并仍抛 `AcrylicBackgroundFillColorDefaultBrush`。
+
+### 17.2 实现要点
+
+- **窗口**：960×720（min 720×560），系统标题栏深色（`AppWindowTitleBar` 颜色可用；`PreferredHeightOption` 抛 `0x8007139F`，不调高度），不进任务栏，单例；主窗口关闭先关设置以回写。
+- **尺寸**：激活**前**用主窗口 `GetDpiForWindow` 定物理尺寸；激活后再 `Resize` 不刷新内容岛（实测 `ActualWidth` 停在旧值）。960 DIP 外层对应 945 DIP 内容。
+- **导航**：`ListView` 五行（图标 + 文本），`SelectionMode=Single`，容器只改 `Padding/MinHeight`；不再依赖 `NavigationView`。
+- **列表**：`ListView.ItemsSource` 直接放 `UIElement` 行（`ContainerContentChanging` 替换 `Content` 不显示）；`ReorderMode=Enabled`；拖后按行顺序逐项 `Move` 回写共享集合。
+- **数值**：`Slider`；线程/预载/最多数量线性，缓存/延时/缩放预设指数（缩放预设 1%~1600%）。
+- **录制**：窗口根 `PreviewKeyDown`/`KeyDown`/滚轮/中键；Esc 取消、Delete 清空、冲突橙；窗口失活取消；主窗口快捷键因独立窗口天然不受影响。
+- **清库**：`ContentDialog` 确认 + 共享两段确认命令 + `Border` 状态条。
+- **入口**：右键菜单「设置…」→ `MainViewModel.OpenSettingWindow` → `NativeWindowPresenter` → presenter；只此一条路。
+- **图标**：`WindowsIcons.FluentFontFamily` 改 `Segoe Fluent Icons,Segoe MDL2 Assets` 回退链，并新增五个分类字形。
+
+### 17.3 验收
+
+- `--pv-native-settings` **7 项 PASS**：深色/五分类/960 外层 945 内容/开关+滑条回写/UI 行重排回写/录制开始取消/手势显示/关闭回写。
+- `--pv-native-smoke` **24 项全 PASS**（无回归）。
+- 截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
+- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感。
+
+### 17.4 与方案的偏离
+
+- `NavigationView` → `ListView`；`TitleBar` → 系统 caption；`NumberBox` → `Slider`；`InfoBar` → `Border`；无文本输入控件。
+- 窗口尺寸在激活前定，而非 `Loaded` 后。
+- 排序整行拖 + 行尾把手视觉、无前进/后退、无 Apple 映射段——与方案一致。
 
