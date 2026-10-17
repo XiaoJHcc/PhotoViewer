@@ -26,6 +26,12 @@ public static class DinoFeatureExtractor
     private static long _sessionFootprintBytes; // 内存账本:模型字节 + 会话工作区估算
     private static int _inputSize = DinoModelResources.InputSize;   // 模型实际输入边长（518；升级梯换大分辨率模型时按 ONNX 输入元数据自适应）
 
+    /// <summary>
+    /// 当前 ONNX 会话是否成功注册了平台 GPU Execution Provider（诊断/验收用）。
+    /// GPU EP 注册抛错或推理失败回退 CPU 后为 false。
+    /// </summary>
+    public static bool UsesGpuExecutionProvider { get; private set; }
+
     static DinoFeatureExtractor()
     {
         MemoryGovernor.Register(new CacheMemoryClient());
@@ -74,6 +80,7 @@ public static class DinoFeatureExtractor
         lock (_sessionLock)
         {
             _gpuFailed = true;
+            UsesGpuExecutionProvider = false;
             _session?.Dispose();
             _session = null;
         }
@@ -98,11 +105,13 @@ public static class DinoFeatureExtractor
             try
             {
                 _configureSession(options);
+                UsesGpuExecutionProvider = true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DinoFeatureExtractor] GPU EP 注册失败，回退 CPU: {ex.Message}");
                 _gpuFailed = true;
+                UsesGpuExecutionProvider = false;
                 options = new SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,

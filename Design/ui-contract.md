@@ -85,7 +85,7 @@ macOS 当前保留前轮已实现的增强：**重新显示胶片栏、切换列
 | IMAGE-01 | 100% 使用源像素对应屏幕物理像素；Full 热替换位置/朝向/缩放不跳变 | 主流程见根 AGENTS.md §5.1/§5.6；色彩门单独验收 |
 | SIM-01 | 相似聚类面板由筛选条 toggle 显隐，状态持久化；面板三态（空 / 部分提取 / 有相似项）与未提取计数、`提取全部`/`补齐全部` 按钮或进度一致；卡片第二行显示相似度百分比与柱状占比（75% 起）；**点击卡片切主图但保留原锚点**——被点中的卡片自身高亮（取主图身份 `IsCurrentImage`），胶片栏锚点卡片继续高亮（`IsCurrent`），两处同时可见；卡片星级只改评分不切图 | 共同语义与计数/按钮文案来自共享 `SimilarityPanelViewModel` 与 `SimilarityService`；macOS 原生面板 `Native/MacSimilarityPanel.cs`，几何与旧壳 `SimilarityListView` 同口径（列布局扩宽文件栏、行布局从胶片栏右侧切出，MinWidth 106），展开/收起与选中并存由 `--pv-native-similarity` 回归 |
 | ANALYSIS-01 | 分析栏由主图右键菜单与命令 `ToggleAnalysisView` 显隐；瓦片顺序为 对焦点（仅有 Sony 对焦数据时）/ 中心 / 直方图 / DINO PCA / Cosine x,y / 锐度 / 抖动拖影；正方形瓦片边长 = `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`；诊断瓦片共享准星与 cosine 参考点，细节预览 hover 联动主图绿框、双击定位到裁剪中心；库/cache 无结果时显示 `未提取`，开启"即时计算DINO/CV"后改占位 `计算中…` 并回退现算；**批量提取写库后当前照片的诊断瓦片立即自行出图**（不需切图） | 编排在共享 `Core/AI/AnalysisPresenter`（旧壳 VM 与 macOS 原生分析栏共用）；入库经由 `FolderFeatureIndexer.FeaturesWritten` 让分析栏作废该指纹缓存并重路由；macOS 几何与旧壳 `AnalysisView` 同口径（行布局在主图下方、列布局在其右侧，交叉轴 = 边长 + 20），回归 `--pv-native-analysis` |
-| SCOPE-01 | 延期功能保留配置，原生壳不显示不可用入口、不在切图隐式推理 | macOS P3 已落地分析栏 / 相似聚类 / 工具窗口 / 增强预览（照片数据统计仍为 Windows 专属，macOS 不显示入口）；阶段边界见 [P3 清单](Plans/native-rebuild-phase-3.md) |
+| SCOPE-01 | 延期功能保留配置，原生壳不显示不可用入口、不在切图隐式推理 | macOS P3 已落地分析栏 / 相似聚类 / 工具窗口 / 增强预览（照片数据统计仍为 Windows 专属，macOS 不显示入口）；阶段边界见 [P3 清单](Plans/native-rebuild-phase-3.md)。**切图不隐式推理**：相似聚类只在面板展开且文件栏可见时重算（`SimilarityPanelViewModel`），收起即取消在途任务；抖动徽标只读库、分析栏只在可见时工作 |
 
 这些条目混合已确认要求与待分类的对拍参考，不代表全部为硬约束或相应平台已验证通过。后续主图手势、错误状态、触摸交互及设置项可继续补充与分类。
 

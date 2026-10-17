@@ -1,4 +1,6 @@
+using System.Runtime.InteropServices;
 using Foundation;
+using Microsoft.ML.OnnxRuntime;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
@@ -63,6 +65,7 @@ public static class iOSNativeShell
         StressFlipDriver.MaybeStart(main, _session);
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
+        iOSDinoCheck.MaybeStart(args);
         return _rootViewController;
     }
 
@@ -125,8 +128,22 @@ public static class iOSNativeShell
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         NativeWindowPresenter.Initialize(new iOSWindowPresenter(_settingsPresenter));
         SettingsService.ConfigureStorage(new iOSSettingsStorage());
+        InstallOnnxRuntimeStaticResolver();
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_CoreML());
         BootTrace.Mark("native shell: platform facades ready");
+    }
+
+    /// <summary>
+    /// onnxruntime.xcframework 内是静态库，App 链接后没有独立动态镜像；托管侧 DllImport 名仍为
+    /// "onnxruntime"。把该程序集的 DllImport 解析映射到主程序句柄（等价于 <c>__Internal</c>），
+    /// 入口符号由 csproj 写入 <c>_ProcessedReferenceNativeSymbol</c>（即 mtouch-symbols.list）显式导出。
+    /// </summary>
+    private static void InstallOnnxRuntimeStaticResolver()
+    {
+        NativeLibrary.SetDllImportResolver(typeof(InferenceSession).Assembly, static (name, _, _) =>
+            string.Equals(name, "onnxruntime", StringComparison.Ordinal)
+                ? NativeLibrary.GetMainProgramHandle()
+                : IntPtr.Zero);
     }
 
     /// <summary>

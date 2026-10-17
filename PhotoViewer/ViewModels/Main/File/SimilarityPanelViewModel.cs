@@ -15,9 +15,10 @@ namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 相似聚类面板的视图模型。
-/// 订阅 <see cref="MainViewModel.CurrentFile"/> 切换,异步调用 <see cref="SimilarityService"/>
-/// 计算相似项并暴露给 <c>SimilarityListView</c>;同时通过 <see cref="ThumbnailListViewModel"/>
-/// 的加载队列,触发相似项的缩略图加载。
+/// 仅当面板展开且文件栏可见时,才在 <see cref="MainViewModel.CurrentFile"/> 切换后异步调用
+/// <see cref="SimilarityService"/> 计算相似项(切图不隐式推理,SCOPE-01),并暴露给
+/// <c>SimilarityListView</c>;同时通过 <see cref="ThumbnailListViewModel"/> 的加载队列,
+/// 触发相似项的缩略图加载。面板关闭时取消在途计算,重新展开后按当前图重算。
 /// 面板由两组正交开关驱动:<see cref="HasItems"/> 控制列表/占位,
 /// <see cref="ShowActionArea"/>(= <see cref="HasUnindexed"/> 或 <see cref="IsStateIndexing"/>) 控制按钮/进度条区域。
 /// </summary>
@@ -41,6 +42,9 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// 点击相似项切主图时锚点不变,仅在主缩略图列表正常切图时更新。
     /// </summary>
     private ImageFile? _anchorFile;
+
+    /// <summary>面板是否展开且文件栏可见（面板真正可见的唯一判据；不可见时不触发任何隐式推理）。</summary>
+    private bool IsPanelVisible => _main.Settings.SimilarityPanelExpanded && _main.IsThumbnailViewVisible;
 
     private IReadOnlyList<SimilarityItem> _similarItems = Array.Empty<SimilarityItem>();
     /// <summary>当前相似项列表(已按分数降序),绑定到 SimilarityListView 的 ItemsSource。</summary>
@@ -182,6 +186,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         _main.WhenAnyValue(x => x.IsRowLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
+        // 切图只在面板展开且可见时重算;关闭状态下仅记住锚点,不触发任何解码或推理。
         _main.WhenAnyValue(x => x.CurrentFile)
             .Subscribe(file =>
             {
@@ -191,7 +196,7 @@ public class SimilarityPanelViewModel : ReactiveObject
                     return;
                 }
                 _anchorFile = file;
-                _ = RecomputeAsync(file);
+                if (IsPanelVisible) _ = RecomputeAsync(file);
             });
 
         // 候选池来自主缩略图列表的 FilteredFiles(已应用同名分组与筛选);
@@ -199,19 +204,32 @@ public class SimilarityPanelViewModel : ReactiveObject
         // 使用 _anchorFile 而非 CurrentFile,避免用户从相似列表选中某项后改星级触发 FilteredFiles 重建时锚点漂移。
         _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
             .Skip(1)
-            .Subscribe(__ => { _ = RecomputeAsync(_anchorFile); });
+            .Subscribe(__ => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
 
         // 设置变化（阈值 / 最多数量）即时重算当前列表。
         _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
             .Skip(1)
             .Throttle(TimeSpan.FromMilliseconds(150))
             .ObserveOn(UiDispatcher.MainThreadScheduler)
-            .Subscribe(tuple => { _ = RecomputeAsync(_anchorFile); });
+            .Subscribe(tuple => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
+
+        // 面板展开（或文件栏重新可见）时按当前图重算;关闭时取消在途任务。
+        _main.Settings.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(SettingsViewModel.SimilarityPanelExpanded))
+                OnPanelVisibilityChanged();
+        };
+
+        _main.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainViewModel.IsThumbnailViewVisible))
+                OnPanelVisibilityChanged();
+        };
 
         // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
         _folder.AllFilesChanged += () =>
         {
-            if (_main.Settings.SimilarityPanelExpanded)
+            if (IsPanelVisible)
                 _ = EvaluateUnindexedAsync();
         };
     }
@@ -234,11 +252,32 @@ public class SimilarityPanelViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 面板展开时调用:重新统计当前文件夹未提取张数。
+    /// 面板展开时调用:按当前图重算相似列表,并重新统计当前文件夹未提取张数。
+    /// 旧壳的 toggle 与原生面板首次可见都走这里;面板已关闭时由 <see cref="OnPanelVisibilityChanged"/> 丢弃。
     /// </summary>
     public void OnPanelOpened()
     {
+        _anchorFile = _main.CurrentFile;
         _ = EvaluateUnindexedAsync();
+        _ = RecomputeAsync(_anchorFile);
+    }
+
+    /// <summary>
+    /// 面板可见性变化:展开且文件栏可见时按当前图重算;否则取消在途计算,后续切图不再触发推理。
+    /// </summary>
+    private void OnPanelVisibilityChanged()
+    {
+        if (IsPanelVisible)
+            OnPanelOpened();
+        else
+            CancelPendingCompute();
+    }
+
+    /// <summary>取消在途相似度计算(面板关闭或文件栏隐藏)。</summary>
+    private void CancelPendingCompute()
+    {
+        _computeCts?.Cancel();
+        _computeCts = null;
     }
 
     /// <summary>
@@ -332,7 +371,8 @@ public class SimilarityPanelViewModel : ReactiveObject
         await EvaluateUnindexedAsync().ConfigureAwait(false);
         // 新数据已落库,按指纹批量回填 ImageFile.IsShake — 直接读 CV grid + 尺寸,不再触发解码
         await ShakeFlagService.EvaluateAsync(_folder.AllFiles).ConfigureAwait(false);
-        _ = RecomputeAsync(_main.CurrentFile);
+        // 提取完成时面板可能已被收起,只在真正可见时重算相似列表。
+        if (IsPanelVisible) _ = RecomputeAsync(_main.CurrentFile);
     }
 
     private void OnIndexProgress(IndexProgress progress)

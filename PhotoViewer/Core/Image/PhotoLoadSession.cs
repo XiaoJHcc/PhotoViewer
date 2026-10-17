@@ -203,7 +203,6 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 }
                 bool proxy = target.HasValue && image != null && (image.Width < image.SourceWidth || image.Height < image.SourceHeight);
                 Replace(image, proxy);
-                if (_needsFull && IsProxy) UpdateViewport(_proxyLongEdge / 2.0, 0, true);
             }).ConfigureAwait(false);
         }
         catch (OperationCanceledException) { }

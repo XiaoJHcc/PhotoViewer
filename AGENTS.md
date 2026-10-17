@@ -149,6 +149,7 @@ Each head project's `Core/` folder contains platform-specific implementations in
 
 **单图懒加载**(相似聚类切图时锚点没入库):
 - `DinoFeatureCache.GetOrComputeAsync` → 进程缓存 → DB → 解码缩略图 → ONNX 推理 → 后台 `WriteFeatureAsync`(只写 CLS,不写 patch);`Lazy` 闸门保证同指纹并发只算一次。
+- **触发条件(SCOPE-01)**:`SimilarityPanelViewModel` 只在面板展开且文件栏可见时随 `CurrentFile` / 筛选池 / 阈值变化重算;收起即取消在途计算,切图不再隐式推理。面板重新展开时按当前图重算一次。
 
 **诊断页读库快路径**(DINO 诊断工具页):
 - `TryReadCachedAsync` 同时取 patch token 与 cv_grid 7 标量;命中即跳过推理与 CV 计算,不回写库(回写归 indexer 主路径)。
@@ -198,7 +199,8 @@ Each head project's `Core/` folder contains platform-specific implementations in
 3. **手势**：透明 `UIScrollView` 只作手势与物理驱动（内容尺寸 = 适应态显示尺寸），`zoomScale`/`contentOffset` 与 `PhotoViewport` 变换互为逆映射并在同一回调内重绘；双击在适应与物理 100%（点按位置锚点）间动画切换，`minimumZoomScale` = 适应，`maximumZoomScale` = 物理 16 倍（与共享视口上限同口径）。
 4. **`NeedsFull` 与热替换**：宿主把物理视口（bounds × displayScale）与 `NeedsFull` 上报 `PhotoLoadSession.UpdateViewport`，代理目标 = 2× 物理视口；物理 100% 触发 Full，热替换沿用当前视口变换（含 `PhotoViewport.ApplyGestureView` 的手势态）。**视口未成形（尺寸 < 1）时禁止改写代理目标**，否则目标被钳成 1 像素会解码出 1×1 的"合格代理"并永不重载。
 5. **主屏布局（I3）**：分区几何与 Mac 原生壳共用共享 [MainScreenLayout](PhotoViewer.Apple/AGENTS.md)（文件栏内容宽 116、筛选控件 90×32、toggle 90×27、间距 5、外边距 10、两向分区与"隐藏即让空间给主图"），iOS 侧在 `iOSMainScreenLayout` 叠加真实 `SafeAreaInsets`：栏位背景铺到屏幕边缘、栏位内容收在安全区内、主图满幅。两向只看窗口尺寸，隐藏栏位释放空间，分析栏留槽位但 I5 前交叉轴为 0。胶片栏为 `UICollectionView` + 共享 `FilmstripGeometry` 布局（96×144 卡片、FILM-01–06 语义、350ms 三次缓出定位、用户接管、减少动态效果直达终点、重新显示与换向定位当前项）；筛选条为 `UIButton`+`UIMenu`；控制栏复用共享 `ControlBarLayout`（分组显隐/顺序来自共享设置，未实现的 I5 命令不生成按钮）。临时保留主图区空态提示（点击打开文件夹）与最小设置入口，I4 上下文菜单落地后删除。
-6. **验收**：`--pv-native-photo-check <目录>`（代理先行/编码/热替换变换/八方向 GPU 角点/色卡线性值）与 `--pv-native-layout-check <目录>`（两向与自动布局、安全区、栏位显隐、筛选条/控制栏几何、卡片几何、FILM-01–06 交互），报告写 `Documents/PhotoViewer/native-{photo,layout}-checks.txt`；`--pv-layout-mode row|col` 供两向截图（iPadOS 不允许程序化改方向，见执行清单发现清单）。Mac 与 iOS 共用 [PhotoViewer.Apple/AppleAcceptanceChecks.cs](PhotoViewer.Apple/AGENTS.md)。素材与真机步骤见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)。
+6. **验收**：`--pv-native-photo-check <目录>`（代理先行/编码/热替换变换/八方向 GPU 角点/色卡线性值）、`--pv-native-layout-check <目录>`（两向与自动布局、安全区、栏位显隐、筛选条/控制栏几何、卡片几何、FILM-01–06 交互）与 `--pv-dino-check <文件>`（onnxruntime 静态链接 + 一次 DINO 推理的 CLS/EP/耗时），报告写 `Documents/PhotoViewer/native-{photo,layout}-checks.txt` 与 `dino-check.txt`；`--pv-layout-mode row|col` 供两向截图（iPadOS 不允许程序化改方向，见执行清单发现清单）。Mac 与 iOS 共用 [PhotoViewer.Apple/AppleAcceptanceChecks.cs](PhotoViewer.Apple/AGENTS.md)。素材与真机步骤见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md) 与 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md)。
+7. **DINO / ONNX Runtime（I2 后补）**：`onnxruntime.xcframework` 的 iOS 切片是 ar 静态库，iOS head 的 `_PvExpandOnnxRuntimeNativeReference` 在原生链接前排好 `NativeReference` 展开、把切片按 `Kind=Static + ForceLoad` 链接，并把 `_OrtGetApiBase` / CoreML 入口写进 `mtouch-symbols.list`（Release strip 会保留）；`iOSNativeShell` 用 `DllImportResolver` 把 `onnxruntime` 映射到主程序。CoreML EP 在 `Microsoft.ML.OnnxRuntime` 1.24.4/1.25.1 的 iOS 原生库中均返回 not supported → 推理走 CPU（注册失败会记录日志并按既有逻辑回退，不静默）。相似聚类只在面板展开且文件栏可见时触发（§5.4）。
 
 ## 6. UI Helpers 共享控件 / 转换器 / 行为
 

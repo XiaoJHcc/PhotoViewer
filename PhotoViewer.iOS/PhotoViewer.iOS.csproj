@@ -68,6 +68,43 @@
         <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
     </ItemGroup>
 
+    <!--
+      ONNX Runtime 原生库：包自带的 net9.0-ios18.0 目标会把
+      runtimes/ios/native/onnxruntime.xcframework.zip 作为 NativeReference(Kind=Static) 加进来，
+      但 .NET 10 iOS SDK 的构建图中 _ExpandNativeReferences 不在 _ComputeLinkNativeExecutableInputs
+      之前执行 —— 压缩包因此从未解析成设备/模拟器切片，主执行文件里没有 onnxruntime 符号，
+      DllImport 在运行时抛 TypeInitialization(Microsoft.ML.OnnxRuntime.NativeMethods)。
+      显式把 SDK 自己的展开目标提到原生链接输入计算之前（切片解包到 obj，再静态链接进主执行文件；
+      该 xcframework 内是 ar 静态库，不存在可嵌入的 Frameworks/onnxruntime.framework）。
+    -->
+    <Target Name="_PvExpandOnnxRuntimeNativeReference"
+            BeforeTargets="_ComputeLinkNativeExecutableInputs;_ComputeFrameworkFilesToPublish;_ComputeDynamicLibrariesToPublish"
+            DependsOnTargets="_ExpandNativeReferences">
+        <!--
+          ResolveNativeReferences 会把 xcframework 里的静态切片归类为 Kind=Framework；
+          原生链接任务对 Framework 只加 -framework，不会 -force_load，托管侧 P/Invoke 没有静态引用，
+          归档成员会被全部丢弃。把 onnxruntime 切片改回 Kind=Static + ForceLoad，走与包原始意图
+          （打包目标声明 Kind=Static）一致的静态链接路径。
+        -->
+        <ItemGroup>
+            <_PvOnnxRuntimeStaticSlice Include="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
+            <_FrameworkNativeReference Remove="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
+            <_FileNativeReference Include="@(_PvOnnxRuntimeStaticSlice)" Kind="Static" ForceLoad="True" IsCxx="True" SmartLink="True" LinkerFlags="-lc++" WeakFrameworks="CoreML" />
+            <_PvOnnxRuntimeStaticSlice Remove="@(_PvOnnxRuntimeStaticSlice)" />
+        </ItemGroup>
+
+        <!--
+          静态库没有独立的动态镜像；managed 侧 DllImport 名仍是 "onnxruntime"，
+          由 iOSNativeShell 注册的 DllImport resolver 映射到主程序。静态链接后必须让
+          __Internal 的 dlsym 能看到入口，并把符号写进 mtouch-symbols.list —— Release 的
+          _NativeStripFiles 只保留该导出列表里的符号，否则会把它们从 app 可执行文件里剥掉。
+        -->
+        <ItemGroup>
+            <_ProcessedReferenceNativeSymbol Include="_OrtGetApiBase" />
+            <_ProcessedReferenceNativeSymbol Include="_OrtSessionOptionsAppendExecutionProvider_CoreML" />
+        </ItemGroup>
+    </Target>
+
     <!-- Linker preservation: protect reflection-used types (ViewLocator, ReactiveUI, DI) -->
     <ItemGroup>
         <LinkDescription Include="Linker.xml"/>
