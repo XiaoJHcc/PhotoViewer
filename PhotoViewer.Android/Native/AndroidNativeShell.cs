@@ -85,6 +85,7 @@ public static class AndroidNativeShell
         _root?.Dispose();
         _root = new AndroidNativeRootView(activity, _main, _session);
         HandleIntent(intent);
+        AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
         return _root;
     }
 

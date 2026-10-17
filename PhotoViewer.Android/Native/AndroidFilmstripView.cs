@@ -46,6 +46,15 @@ internal sealed class AndroidFilmstripView : RecyclerView
     /// <summary>业务列表（验收读取顺序）。</summary>
     internal System.Collections.Generic.IReadOnlyList<ImageFile> Files => _main.FileVM.ThumbnailList.FilteredFiles;
 
+    /// <summary>取某一项已创建的卡片（验收核对卡片几何与绑定身份）；未创建返回 null。</summary>
+    /// <param name="index">业务索引。</param>
+    /// <returns>卡片或 null。</returns>
+    internal AndroidThumbnailCard? CardAt(int index)
+    {
+        var holder = FindViewHolderForAdapterPosition(index);
+        return (holder as CardHolder)?.Card;
+    }
+
     /// <summary>构建 RecyclerView 与卡片适配器。</summary>
     /// <param name="context">宿主上下文。</param>
     /// <param name="main">共享主 VM。</param>

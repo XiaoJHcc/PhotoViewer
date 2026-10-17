@@ -75,6 +75,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | Android A3 主屏 | ◐ 模拟器目视 2026-10-18 | 竖屏行布局、insets、筛选条/胶片栏/控制栏/导航图/栏位显隐目视正确；两向与卡片几何断言待 A6 |
 | Android A4 输入 + 设置 | ◐ 模拟器目视 2026-10-18 | 半屏五分类设置、关闭回写、ShowRating 传播、键盘 Right/F、返回、卡片星级写回通过目视/日志；真实键鼠/拖拽排序/拖入/真机手感未做 |
 | Android A5 P3 功能 | ◐ 模拟器目视 2026-10-18 | 分析栏/细节定格/诊断瓦片、相似 toggle/空态/真实提取全部/分数卡片、工具页 EXIF+DINO、增强预览均通过目视/日志；程序化 harness 待 A6 |
+| Android A6 程序化检查 | ◐ 2026-10-18 | `--es pv-check <mode>` 五模式 API 35 arm64 **PASS 14/18/15/16/16**（主屏几何/Fit↔100%/Full/分析栏/相似面板/设置/工具）；`all` 连跑偶发 SIGSEGV，分模式稳定；API 矩阵/两向/fontScale/DPI/真机未做 |
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |
 | **macOS 构建** | ✅ 2026-10-12 | 0 错误,仅 NU1903 基线警告 |
 | **P2 四平台构建** | ✅ 2026-10-14 | Windows/iOS 0 警告；Mac 仅 NU1903，Android 14 条既有警告；全部零错误 |

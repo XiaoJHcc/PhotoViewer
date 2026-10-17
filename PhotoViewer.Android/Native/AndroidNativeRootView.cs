@@ -79,6 +79,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal FrameLayout PhotoPane => _photoPane;
     /// <summary>当前安全区（dp）。</summary>
     internal AndroidInsets SafeInsets => _insets;
+    /// <summary>分析栏（验收读取瓦片/可见性）。</summary>
+    internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
+    /// <summary>相似聚类面板（验收读取可见性/列表）。</summary>
+    internal AndroidSimilarityPanel SimilarityPane => _similarityPane;
+    /// <summary>细节定格绿框视图。</summary>
+    internal View DetailHighlightView => _detailHighlight;
 
     /// <summary>建立主屏视图树并接线共享 VM 与会话。</summary>
     /// <param name="activity">宿主 Activity。</param>

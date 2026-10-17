@@ -8,7 +8,7 @@
 > 3. **无论 ROM 与系统版本，视觉设计与空间操作一致对标**。
 > 4. 能用原生最好；原生不可靠再议。
 >
-> **进度**：**A1a–A5 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，Android 原生壳基座，主图（EGL/GLES + 8 位 P3/sRGB + 代理↔Full）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、输入（硬件键盘/滚轮/长按菜单/轻扫/返回）、半屏设置（五分类、关闭回写）以及 P3 功能（分析栏/相似聚类/工具页 EXIF+DINO/增强预览）均已落地并在 API 35 arm64 模拟器自验。**A6 未开始**（程序化验收 harness/矩阵/真机门/文档收口）。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
+> **进度**：**A1a–A5 已完成，A6 部分完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，Android 原生壳基座，主图（EGL/GLES + 8 位 P3/sRGB + 代理↔Full）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、输入（硬件键盘/滚轮/长按菜单/轻扫/返回）、半屏设置（五分类、关闭回写）以及 P3 功能（分析栏/相似聚类/工具页 EXIF+DINO/增强预览）均已落地并在 API 35 arm64 模拟器自验。**A6 已起步**：程序化检查驱动器 `--es pv-check <main|analysis|similarity|settings|tools>` 已落地，五个模式在 API 35 arm64 模拟器分别 **PASS 14 / 18 / 15 / 16 / 16**；矩阵（API 24/28/33/36、两向、fontScale、DPI）与真机门仍未做，`all` 连跑模式在模拟器上出现一次 SIGSEGV（分模式跑稳定，登记为发现 #27）。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
 >
 > **模拟器自验基线（2026-10-18，1080×2400 / density 2.625 / fontScale 1.0）**：原生壳默认启动、旧壳 `--legacy-ui` 可回退；应用内文件夹经 `@files/...` 启动参数加载；八方向 6 的 GPU 朝向、Fit/100% 热替换（代理 2706×1804 → Full 6000×4000）、导航图（长边 150 点 + 可见框 + 百分比）、卡片星级 XMP 写回（不改主图）、硬件键盘 Right/F、设置五分类打开/关闭回写（ShowRating 关闭后评分分组与卡片星级即时消失）均已目视/日志核对。**A5**：分析栏开合/细节定格绿框/诊断瓦片、相似聚类 toggle → 空态 → 真实“提取全部” → 100% 分数卡片与柱状条、工具页 EXIF 详情（分组/列/格式切换）与 DINO 诊断（5 瓦片 + 刚体文本）、增强预览像素变化均已目视/日志核对。**程序化 harness 与真机门未做**，不能记作通过。
 >
@@ -193,11 +193,12 @@
 - **状态**：**已完成（2026-10-18，模拟器目视/日志）**；A5 程序化 harness（分析栏两向、细节/直方图像素、相似让位、DINO 5 瓦片）随 A6 补。
 
 ### A6 验收与文档
-- 模拟器验收驱动器：`--pv-native-{photo,layout,input,analysis,similarity,tools}-check` 同级，结果写 `Documents/PhotoViewer/android-checks.txt` 并 `adb pull`；隔离自有设置/数据库/素材。
+- 模拟器验收驱动器：**已实现 `AndroidNativeChecks`**（启动参数 `--es pv-check main|analysis|similarity|settings|tools`；报告写 App 内部 `files/PhotoViewer/android-checks-<mode>.txt`，`adb exec-out run-as ... cat` 取回）。覆盖主屏分区/安全区、筛选条/卡片/控制栏几何、胶片栏项数与绑定、Fit↔100% 往返与 Full、分析栏开合/瓦片数/边长、相似面板可见性、设置/工具 sheet 真实开合。五模式 API 35 arm64 模拟器分别 PASS 14/18/15/16/16（2026-10-18）。
+- 原计划的 `--pv-native-*` 多套驱动器、隔离设置/数据库/素材、矩阵与真机门仍待补；`all` 连跑在模拟器上出现 SIGSEGV（分模式稳定），见 §6#27。
 - 模拟器矩阵按抽样跑（2026-10-18 评审补充，避免 40 种组合全跑）：API 24 / 28 / 33 / 35 / 36 只跑纵向启动/几何；API 35 + 24 补横向；fontScale 1.0 / 1.3 与两档 DPI 只在 API 35 跑；真机只补手感/色彩/SAF/杀后台。
 - 真机门：在作者安卓手机上执行，见 [验收清单 §6–§8](native-rebuild-phase-android-acceptance.md)；多 ROM / 多系统版本覆盖需借机，未覆盖机型保持未关闭。
 - 文档：新建 `PhotoViewer.Android/AGENTS.md`；根 `AGENTS.md` 项目结构/模块索引、[架构文档](../Design/architecture.md) §4/§5（新增 Android 原生链路小节）；`PhotoViewer.Shared/` 文件表；ui-contract Android 列；DEV.md 任务；handoff 状态与验证矩阵。
-- **状态**：未开始。
+- **状态**：**部分完成（2026-10-18）**；矩阵/真机门/组合模式稳定性和文档收口未完成。
 
 ## 4. 验收门
 
@@ -250,6 +251,8 @@
 | 24 | 分析栏在手机上瓦片仅约 58dp，细节预览可用但不适合多点操作 | 沿用共享几何与 iPhone/iPad 同构；手机专用放大/横滑未做，登记为 A5 偏差，待作者裁定 |
 | 25 | 相似面板空态动作按钮位于占位下方、列表态停靠在尾部；无进度条（用文本进度） | 功能等价；进度条与拖拽排序一样留 A6/作者裁定 |
 | 26 | 工具页 EXIF 表只显示 ID/名称/中文名/值四列，未做 7 列水平滚动；格式切换按钮为自绘胶囊 | 功能对齐（分组/格式切换/值 3 行截断），视觉差异登记 |
+| 27 | `pv-check all` 在 API 35 模拟器连跑五组检查时偶发 SIGSEGV；分模式（main/analysis/similarity/settings/tools）均 PASS | 分模式稳定，`all` 暂不作为验收口径；疑为模拟器上连续分析栏/相似聚类/DINO 与位图分配叠加的 native 崩溃，真机与 A6 矩阵时复测 |
+| 28 | 程序化检查目前只覆盖开发机 API 35 / 竖屏 / fontScale 1.0 / density 2.625 | A6 矩阵（API 24/28/33/36、两向、fontScale 1.3、两档 DPI）未跑；真机门未做 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 

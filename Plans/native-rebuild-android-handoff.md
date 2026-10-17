@@ -5,6 +5,7 @@
 
 ## 1. 当前状态
 
+- **A6 起步（2026-10-18）**：`AndroidNativeChecks` 以 `--es pv-check <mode>` 跑主屏几何/Fit↔100%/Full/分析栏/相似面板/设置/工具页开合；API 35 arm64 五模式 **PASS 14/18/15/16/16**，报告 `files/PhotoViewer/android-checks-<mode>.txt`。`all` 连跑偶发 SIGSEGV（分模式稳定，§7）；API 矩阵、两向、fontScale/DPI、真机门未做。
 - **A5 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：分析栏（`AndroidAnalysisHost` + 共享 `AnalysisPresenter`，6 瓦片/细节定格绿框/准星）、相似聚类（窄屏紧凑筛选条 toggle、真实“提取全部”后 100% 分数卡片与柱状条）、工具页（EXIF 详情分组表格/多格式；DINO 5 瓦片 + 刚体拟合）、增强预览均已落地；均为**目视/日志核对**。新增警告清零，重建 20 警告 / 0 错误（低于 A1b 基线 21）。**A6（程序化 harness/矩阵/真机门）未开始**。
 - **A2 + A3 + A4 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：主图（`AndroidPresentationDecoder`/`AndroidPresentationEncodingPolicy` + 自有 EGL14/GLES 渲染 + `PhotoViewport` 手势）、主屏（`AndroidMainScreenLayout` 叠加系统 insets、自绘筛选条、RecyclerView 胶片栏/自绘卡片、置中控制栏、导航图）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 工作副本关闭回写）均已落地。**A5 已完成；A6（程序化 harness/矩阵/真机门/文档收口）未开始**。自验：原生壳加载 13 张夹具、方向 6 朝向正确、代理 2706×1804 → Full 6000×4000、导航图/百分比正确、卡片星级 XMP 写回不改主图、键盘 Right/F、设置关闭回写后评分分组与卡片星级即时消失；均为**目视/日志核对，不是程序化验收**。
 - **A2-A4 期间修掉两个真问题**：① 3+3 邻居预取同时解 Full 导致 13 张夹具（含 6000×4000）启动后 SIGSEGV；共享 `BitmapLoader.PrefetchFullNeighbors` 默认 true，Android 壳置 false，邻居统一代理档，Mac/iOS/Windows 行为不变。② 导航图 FBO 回读内容错位，改为 BitmapFactory 子采样 + 方向转正（长边 300dp），登记为平台实现差异。③ 主题显式蓝色主色，避免 Material 默认紫色。
@@ -103,7 +104,7 @@ SDK="$HOME/Library/Android/sdk"
 
 - **A1a**：已完成（Mac 七套专项 + base 39，iOS 七套全 PASS；settings 为抓屏权限假阴性）。
 - **A1b**：已完成（原生/旧壳均可启动，0 错误 / 21 警告）。
-- **A2-A5**：功能已落地并在 API 35 模拟器目视/日志自验；**A6 未开始**。未关闭：程序化 harness、两向/栏位显隐/卡片几何/八方向/双击物理 100% 断言、fontScale 1.3、拖拽排序、拖入、真实 P3 面板、真机手感/SAF/杀后台。
+- **A2-A5**：功能已落地并在 API 35 模拟器目视/日志自验；**A6 部分完成**（五模式程序化 PASS，矩阵/真机未做）。未关闭：程序化 harness、两向/栏位显隐/卡片几何/八方向/双击物理 100% 断言、fontScale 1.3、拖拽排序、拖入、真实 P3 面板、真机手感/SAF/杀后台。
 - **Android 警告**：A2–A5 新增警告已清零；重建 **20 警告 / 0 错误**（低于 A1b 基线 21，剩余为既有 `AndroidExternalOpenBridge`/`AndroidHeifDecoder`/`AndroidSettingsStorage` 的 CS86xx/CA1422）。
 - **Android workload**：默认 10.0.402 仍缺；当前用 10.0.201 的 workload（§4 构建命令）。要让默认 `dotnet build` 一致，仍需 `sudo dotnet workload install android`。
 - **DINO**：模型资产与 ONNX bionic 库已修到可加载；A5 工具页已跑真实 DINO 诊断（模拟器 CPU，5 瓦片 + 刚体文本），NNAPI EP 在模拟器不可用并按既有路径回退 CPU。

@@ -1,6 +1,6 @@
 # PhotoViewer.Android — Android 原生壳与迁移期旧壳
 
-**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 默认原生壳，`--legacy-ui` 回退 Avalonia 旧壳；Release 默认旧壳，`--native` 进入原生壳（与 Mac/iOS 同口径）。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6（程序化 harness/矩阵/真机门/文档收口）未开始**。
+**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 默认原生壳，`--legacy-ui` 回退 Avalonia 旧壳；Release 默认旧壳，`--native` 进入原生壳（与 Mac/iOS 同口径）。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6 部分完成**：程序化检查驱动器已落地（五模式 API 35 模拟器 PASS），矩阵/真机门/组合模式稳定性未完成。
 
 ## 启动与主屏（A1b–A5）
 
@@ -56,6 +56,19 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 - 3+3 邻居预取在 13 张夹具下曾 SIGSEGV；`BitmapLoader.PrefetchFullNeighbors=false`（Android）后稳定，Mac/iOS/Windows 行为不变。
 - 分析栏：范围 + 细节定格绿框 + 诊断瓦片点按；相似聚类：toggle → 空态 → 真实“提取全部” → 100% 分数卡片/柱状条；工具页：EXIF 详情分组/列/格式切换、DINO 5 瓦片 + 刚体文本；增强预览像素变亮（均为目视/日志，不是程序化通过）。
 
+## 程序化检查（A6 起步）
+
+```bash
+# 安装并准备夹具后（应用内部 files/pv-fixtures）：
+adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
+  --es pv-open @files/pv-fixtures --es pv-check main
+# 报告：files/PhotoViewer/android-checks-<mode>.txt
+adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-main.txt
+```
+
+- 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；2026-10-18 API 35 arm64 分别 **PASS 14 / 18 / 15 / 16 / 16**。
+- `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。
+
 ## 发现清单（A1b–A5）
 
 | # | 现象 | 处理 |
@@ -72,3 +85,5 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 | 10 | 设置五分类页面的列表项较多（文件格式/EXIF/快捷键），需滚动；无搜索 | 与 iOS 设置同口径（滚动表单）；搜索非本轮范围 |
 | 11 | 手机 411dp 放不下 3×90dp 筛选控件 + 计数 + 90dp 相似 toggle | 共享 `FilterBarFrames` 增加可选宽度（默认 90 不变）；Android 窄屏 84/76dp + “13 张”紧凑计数 |
 | 12 | 手机分析栏瓦片约 58dp；相似空态按钮在占位下方；EXIF 表只显示 4 列；DINO 抖动线为简化绘制 | A5 偏差，登记待作者裁定/A6 视觉收口 |
+| 13 | `pv-check all` 连跑五组检查偶发 SIGSEGV；分模式均 PASS | 分模式作为验收口径；矩阵/真机复测 |
+| 14 | 检查矩阵只覆盖 API 35 / 竖屏 / fontScale 1.0 / density 2.625 | A6 矩阵未跑；真机门未做 |
