@@ -64,7 +64,7 @@
 - ⚡ **Install iOS Stable (Release)**：将 `release/ios-stable/PhotoViewer.iOS.app` 中归档的稳定包重新安装到真机并启动，不依赖当前 Release 输出目录。
 - ⚡ **Debug iOS Simulator (Legacy)**：与 **Debug iOS Simulator** 相同，但带 `--legacy-ui` 启动 Avalonia 旧壳，便于与原生壳对照。
 
-> `refactor/native-rebuild` 的 I1：**Debug 默认 UIKit 原生壳**（不创建 Avalonia 对象；当前只到占位主屏，主图与主屏布局在 I2/I3）；旧壳启动加 `--legacy-ui`，或写入开关 `defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`。Release 默认旧壳，原生壳用 `--native`（模拟器与真机同规则）。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --native --pv-open <路径>` 可直接验证原生壳的外部打开链路（`--pv-open` 为验收专用入口，非产品行为）。详见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) 与 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)。
+> `refactor/native-rebuild` 的 I1–I3 已落地：**Debug 默认 UIKit 原生壳**（不创建 Avalonia 对象）——I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）；输入（I4）与工具页（I5）未落地，控制栏不生成对应入口。旧壳启动加 `--legacy-ui`，或写入开关 `defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`。Release 默认旧壳，原生壳用 `--native`（模拟器与真机同规则）。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --native --pv-open <路径>` 可直接验证原生壳的外部打开链路（`--pv-open` 为验收专用入口，非产品行为）。详见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) 与 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)。
 
 - ⚡ **Refresh iOS Profile**：免费 Apple ID 的 Provisioning Profile 每 7 天过期一次，过期后 **Debug iOS** 会构建失败（`找不到任何可用预配配置文件`）。执行此 Task 调用占位 Xcode 工程 `Tools/RefreshIosProfile/` 触发 `xcodebuild -allowProvisioningUpdates` 续期同 bundle id 的 Profile，随后再跑 **Debug iOS** 即可正常安装到真机。
   - **首次使用**：先复制本地配置并填入你的 Apple Developer Team ID：

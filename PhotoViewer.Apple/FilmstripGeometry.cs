@@ -71,6 +71,18 @@ public static class FilmstripGeometry
         int last = Math.Min(count - 1, (int)Math.Floor((end - itemStart) / step));
         return (first, last);
     }
+
+    /// <summary>
+    /// 把某一项的中心移到视口中心所需的主轴滚动偏移（FILM-02）：目标 = 卡片起点 + (卡片长度 − 视口长度) / 2，
+    /// 限制在 <c>[0, max(0, 文档长度 − 视口长度)]</c>，故首尾允许偏离中心、短列表不制造空白。
+    /// </summary>
+    /// <param name="itemStart">卡片沿主轴的起点。</param>
+    /// <param name="itemLength">卡片沿主轴的长度。</param>
+    /// <param name="viewportLength">视口沿主轴的长度。</param>
+    /// <param name="documentLength">文档沿主轴的长度。</param>
+    /// <returns>合法的滚动偏移。</returns>
+    public static double CenterOffset(double itemStart, double itemLength, double viewportLength, double documentLength)
+        => Math.Clamp(itemStart + (itemLength - viewportLength) / 2, 0, Math.Max(0, documentLength - viewportLength));
 }
 
 /// <summary>胶片栏定位动画的平台中立曲线：350ms 三次缓出。</summary>

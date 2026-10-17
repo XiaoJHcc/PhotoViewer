@@ -16,15 +16,7 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>AppKit 主窗口；复用共享业务 VM，加载与展示通过 PhotoLoadSession/MetalPhotoView 分离。</summary>
 public sealed class MacMainWindow : IDisposable
 {
-    private const double FilterWidth = 90;
-    private const double FilterHeight = 32;
-    /// <summary>筛选条内容间距(旧壳 <c>StackPanel Spacing=5</c>)。</summary>
-    private const double FilterGap = 5;
-    /// <summary>相似聚类 toggle 高度(旧壳 12 点字 + 6,4 内边距的实际量得值)。</summary>
-    private const double FilterToggleHeight = 27;
-    /// <summary>行布局下筛选条四周外边距(旧壳 <c>Margin=10</c>)。</summary>
-    private const double FilterMargin = 10;
-    /// <summary>列布局下筛选条顶边:为隐藏标题栏的交通灯让位(旧壳平台标题栏设置)。</summary>
+    /// <summary>列布局下筛选条顶边:为隐藏标题栏的交通灯让位(旧壳平台标题栏设置);其余几何取共享 <see cref="MainScreenLayout"/>。</summary>
     private const double FilterTopInset = 34;
     /// <summary>相似面板 MinWidth(旧壳 <c>SimilarityListView</c>)。</summary>
     private const double SimilarityMinWidth = 106;
@@ -273,7 +265,7 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>创建固定位置的原生下拉框。</summary>
     private static NSPopUpButton Popup(string[] titles)
     {
-        var popup = new FilterPopUpButton(new CGRect(0, 0, FilterWidth, FilterHeight))
+        var popup = new FilterPopUpButton(new CGRect(0, 0, MainScreenLayout.FilterControlWidth, MainScreenLayout.FilterControlHeight))
         {
             Cell = new FilterPopUpCell(),
             ControlSize = NSControlSize.Regular,
@@ -447,20 +439,20 @@ public sealed class MacMainWindow : IDisposable
             bool row = _main.IsRowLayout;
             _count.SizeToFit();
             double countWidth = Math.Ceiling((double)_count.Frame.Width);
-            const double countHeight = 17;
-            double filterContentWidth = FilterWidth * 4 + FilterGap * 4 + countWidth;
-            double filterHeight = row
-                ? FilterHeight + FilterMargin * 2
-                : FilterTopInset + FilterHeight * 3 + FilterGap * 3 + countHeight + FilterGap + FilterToggleHeight + FilterMargin;
-            double filmstripHeight = FilmstripGeometry.CardHeight + FilmstripGeometry.TopPadding + FilmstripGeometry.BottomPadding;
+            double filterHeight = MainScreenLayout.FilterBarMainLength(row, FilterTopInset);
+            double filmstripHeight = MainScreenLayout.FilmstripBand;
             // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
             bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
             double similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityMargin) : 0;
             _similarityPane.Hidden = !similarityOpen;
-            double fileSize = _main.IsThumbnailViewVisible ? (row ? filterHeight + filmstripHeight + 1 : 117 + similarityColumn) : 0;
+            double fileSize = _main.IsThumbnailViewVisible
+                ? MainScreenLayout.FileBarMainLength(row, filterHeight, similarityColumn)
+                : 0;
             var controlMeasure = _controlPane.Measure(row, row ? width : height);
-            double controlSize = _main.IsControlViewVisible ? (row ? (double)controlMeasure.Height : (double)controlMeasure.Width) + 1 : 0;
+            double controlSize = _main.IsControlViewVisible
+                ? MainScreenLayout.ControlBarMainLength(row ? (double)controlMeasure.Height : (double)controlMeasure.Width)
+                : 0;
             // 分析栏占主图与相邻栏位之间的一条：行布局在主图下方、列布局在主图右侧，
             // 主轴可用长度与交叉轴尺寸（瓦片边长 + 20）都和旧壳 AnalysisView 同口径。
             bool analysisVisible = _main.IsAnalysisViewVisible;
@@ -473,16 +465,14 @@ public sealed class MacMainWindow : IDisposable
             _filePane.Layer!.BackgroundColor = NSColor.FromWhite(.067f, 1).CGColor;
             _photoPane.Layer!.BackgroundColor = NSColor.Black.CGColor;
             _controlScroll.BackgroundColor = NSColor.FromWhite(.067f, 1);
-            _filePane.Frame = row ? new CGRect(0, 0, width, Math.Max(0, fileSize - 1)) : new CGRect(0, 0, Math.Max(0, fileSize - 1), height);
-            _fileDivider.Frame = row ? new CGRect(0, fileSize - 1, width, 1) : new CGRect(fileSize - 1, 0, 1, height);
-            _controlScroll.Frame = row ? new CGRect(0, height - controlSize + 1, width, Math.Max(0, controlSize - 1)) : new CGRect(width - controlSize + 1, 0, Math.Max(0, controlSize - 1), height);
-            _controlDivider.Frame = row ? new CGRect(0, height - controlSize, width, 1) : new CGRect(width - controlSize, 0, 1, height);
-            double photoWidth = row ? width : Math.Max(1, width - fileSize - analysisSize - controlSize);
-            double photoHeight = row ? Math.Max(1, height - fileSize - analysisSize - controlSize) : height;
-            _photoPane.Frame = row ? new CGRect(0, fileSize, photoWidth, photoHeight) : new CGRect(fileSize, 0, photoWidth, photoHeight);
-            _analysisPane.Frame = row
-                ? new CGRect(0, fileSize + photoHeight, width, analysisSize)
-                : new CGRect(fileSize + photoWidth, 0, analysisSize, photoHeight);
+            // 两向分区与分隔线由共享 MainScreenLayout 计算（与 iPad 原生壳同一份数学），本壳只落原生 frame。
+            var panes = MainScreenLayout.Partition(row, width, height, fileSize, controlSize, analysisSize);
+            _filePane.Frame = ToFrame(panes.FileBar);
+            _fileDivider.Frame = ToFrame(panes.FileDivider);
+            _controlScroll.Frame = ToFrame(panes.ControlBar);
+            _controlDivider.Frame = ToFrame(panes.ControlDivider);
+            _photoPane.Frame = ToFrame(panes.Photo);
+            _analysisPane.Frame = ToFrame(panes.Analysis);
             if (analysisVisible) _analysisPane.Arrange(row, analysisMain);
             Photo.Frame = _photoPane.Bounds;
             double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
@@ -490,32 +480,20 @@ public sealed class MacMainWindow : IDisposable
             double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
             _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
             _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-            double filterTop = row ? FilterMargin : FilterTopInset;
-            if (row)
-            {
-                double start = (width - filterContentWidth) / 2;
-                _sort.Frame = new CGRect(start, filterTop, FilterWidth, FilterHeight);
-                _order.Frame = new CGRect(start + FilterWidth + FilterGap, filterTop, FilterWidth, FilterHeight);
-                _ratingFilter.Frame = new CGRect(start + (FilterWidth + FilterGap) * 2, filterTop, FilterWidth, FilterHeight);
-                _count.Frame = new CGRect(start + (FilterWidth + FilterGap) * 3, filterTop + (FilterHeight - countHeight) / 2, countWidth, countHeight);
-                _similarityToggle.Frame = new CGRect(start + (FilterWidth + FilterGap) * 3 + countWidth + FilterGap, filterTop + (FilterHeight - FilterToggleHeight) / 2, FilterWidth, FilterToggleHeight);
-                _scroll.Frame = new CGRect(0, filterHeight, Math.Max(1, width - similarityColumn), filmstripHeight);
-            }
-            else
-            {
-                double filterLeft = (116 - FilterWidth) / 2;
-                _sort.Frame = new CGRect(filterLeft, filterTop, FilterWidth, FilterHeight);
-                _order.Frame = new CGRect(filterLeft, filterTop + FilterHeight + FilterGap, FilterWidth, FilterHeight);
-                _ratingFilter.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + FilterGap) * 2, FilterWidth, FilterHeight);
-                _count.Frame = new CGRect((116 - countWidth) / 2, filterTop + (FilterHeight + FilterGap) * 3, countWidth, countHeight);
-                _similarityToggle.Frame = new CGRect(filterLeft, filterTop + (FilterHeight + FilterGap) * 3 + countHeight + FilterGap, FilterWidth, FilterToggleHeight);
-                _scroll.Frame = new CGRect(0, filterHeight, 116, Math.Max(1, height - filterHeight));
-            }
+            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, FilterTopInset, countWidth, includeSimilarityToggle: true);
+            _sort.Frame = ToFrame(filterFrames.Sort);
+            _order.Frame = ToFrame(filterFrames.Order);
+            _ratingFilter.Frame = ToFrame(filterFrames.Rating);
+            _count.Frame = ToFrame(filterFrames.Count);
+            _similarityToggle.Frame = ToFrame(filterFrames.Toggle);
+            _scroll.Frame = row
+                ? new CGRect(0, filterHeight, Math.Max(1, width - similarityColumn), filmstripHeight)
+                : new CGRect(0, filterHeight, MainScreenLayout.FileBarContentWidth, Math.Max(1, height - filterHeight));
             if (similarityOpen)
             {
                 _similarityPane.Frame = row
                     ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityMargin), (nfloat)_similarityPane.CrossSize)
-                    : new CGRect(116, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
+                    : new CGRect(MainScreenLayout.FileBarContentWidth, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
             }
             bool axisChanged = _filmstripLayout.Horizontal != row;
             if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size) CancelFilmstripScroll();
@@ -541,6 +519,11 @@ public sealed class MacMainWindow : IDisposable
         }
         finally { _layingOut = false; }
     }
+
+    /// <summary>把共享布局矩形落成原生 frame（两个原生壳共用同一份几何数学）。</summary>
+    /// <param name="rect">共享布局矩形。</param>
+    /// <returns>原生 frame。</returns>
+    private static CGRect ToFrame(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
 
     /// <summary>行布局下相似面板占用的水平长度:与旧壳 <c>SimilarityListView</c> 的 MaxWidth 规则一致 ——
     /// 内容宽(卡片数 × 96 + 列表两侧内边距 8 + 面板描边 2,下限 MinWidth 106)与文件栏一半取小,再叠加面板右侧 4 点外边距。</summary>
@@ -835,12 +818,15 @@ public sealed class MacMainWindow : IDisposable
             if (attributes == null) return;
             var frame = attributes.Frame;
             var clip = _scroll.ContentView.Bounds;
-            double horizontal = _filmstripLayout.Horizontal ? (double)(frame.X + (frame.Width - clip.Width) / 2) : (double)clip.X;
-            double vertical = _filmstripLayout.Horizontal ? (double)clip.Y : (double)(frame.Y + (frame.Height - clip.Height) / 2);
             var document = _filmstripLayout.CollectionViewContentSize;
-            _scroll.AnimateTo(new CGPoint(
-                Math.Clamp(horizontal, 0, Math.Max(0, (double)(document.Width - clip.Width))),
-                Math.Clamp(vertical, 0, Math.Max(0, (double)(document.Height - clip.Height)))));
+            bool horizontal = _filmstripLayout.Horizontal;
+            // 主轴目标由共享 FilmstripGeometry 给出（与 iPad 原生壳同一份 FILM-02 几何）。
+            double main = FilmstripGeometry.CenterOffset(
+                horizontal ? (double)frame.X : (double)frame.Y,
+                horizontal ? (double)frame.Width : (double)frame.Height,
+                horizontal ? (double)clip.Width : (double)clip.Height,
+                horizontal ? (double)document.Width : (double)document.Height);
+            _scroll.AnimateTo(horizontal ? new CGPoint(main, clip.Y) : new CGPoint(clip.X, main));
         });
     }
 

@@ -106,6 +106,16 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
         ViewportChanged?.Invoke();
     }
 
+    /// <summary>按比例放大或缩小（锚定视口中心）；触屏由捏合驱动，此入口服务共享命令表中的比例缩放命令。</summary>
+    /// <param name="factor">倍率因子（&gt;1 放大）。</param>
+    public void ZoomBy(double factor)
+    {
+        _viewport.ZoomBy(factor, null);
+        SyncScrollFromViewport();
+        DrawFrame();
+        ViewportChanged?.Invoke();
+    }
+
     /// <summary>宿主布局变化：刷新物理尺寸、按当前状态归位并重绘。</summary>
     public override void LayoutSubviews()
     {

@@ -9,6 +9,7 @@ using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Settings;
 using ReactiveUI;
 using ReactiveUI.Builder;
 using UIKit;
@@ -53,14 +54,44 @@ public static class iOSNativeShell
         BootTrace.MarkAvaloniaAssemblies("native shell: bootstrap begin");
         InitializePlatform();
         var main = InitializeMainViewModel(args);
+        ApplyLaunchLayoutMode(args, main);
         _session = new PhotoLoadSession();
-        _rootViewController = new iOSNativeRootViewController(main, _session);
+        _rootViewController = new iOSNativeRootViewController(main, _session, IsAutomatedValidation(args));
         BootTrace.MarkAvaloniaAssemblies("native shell: root view controller ready");
         Console.WriteLine("[Native] UIKit 原生壳就绪（不创建 Avalonia 对象）");
         // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳 ImageViewModel。
         StressFlipDriver.MaybeStart(main, _session);
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
         return _rootViewController;
+    }
+
+    /// <summary>是否程序化验收会话：带 <c>--pv-*</c> 启动参数时不读写用户窗口偏好。</summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <returns>是否为验收会话。</returns>
+    private static bool IsAutomatedValidation(string[] args)
+        => args.Any(argument => argument.StartsWith("--pv-", StringComparison.Ordinal));
+
+    /// <summary>
+    /// 验收专用（非产品行为）：<c>--pv-layout-mode row|col</c> 在启动期固定布局方向，
+    /// 供模拟器截图核对两向主屏（iPadOS 不允许 <c>requestGeometryUpdate</c> 触发旋转，
+    /// 见 Plans/native-rebuild-phase-ipad.md 发现清单）。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <param name="main">共享主 VM。</param>
+    private static void ApplyLaunchLayoutMode(string[] args, MainViewModel main)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+        {
+            if (!string.Equals(args[index], "--pv-layout-mode", StringComparison.Ordinal)) continue;
+            main.Settings.LayoutMode = args[index + 1] switch
+            {
+                "row" => LayoutMode.Row,
+                "col" => LayoutMode.Col,
+                _ => throw new InvalidOperationException($"--pv-layout-mode 只接受 row/col：{args[index + 1]}"),
+            };
+            Console.WriteLine($"[Native] --pv-layout-mode {args[index + 1]}");
+        }
     }
 
     /// <summary>
