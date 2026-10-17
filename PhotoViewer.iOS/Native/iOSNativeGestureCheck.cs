@@ -1,6 +1,7 @@
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.iOS.Core;
@@ -17,10 +18,16 @@ namespace PhotoViewer.iOS.Native;
 /// <para>与旧检查的区别：不再只"调视口 API 看视口对不对"，而是按 UIKit 捏合/平移的真实序列驱动
 /// <see cref="UIScrollView"/>（SetZoomScale 后按 UIKit 语义调整 contentOffset、再 SetContentOffset 平移），
 /// 断言**屏幕上**的图像点（由视口映射给出）确实留在手指下，并覆盖真实使用中必然发生的后续事件：
-/// 捏合触发的 Full 热替换、布局/旋转、双击、适应态轻扫、放大态拖动、增强开关，以及导航图的可见性与几何。</para>
+/// 捏合触发的 Full 热替换、布局/旋转、双击、Fit 命令切换、放大态切图（保持倍率与归一化中心，含对焦跟随）、
+/// 适应态轻扫、放大态拖动、增强开关，以及导航图的可见性与几何。</para>
 ///
-/// 素材要求：目录内必须有 <c>color-p3-large.jpg</c>（长边 ≥ 4000，制造真实代理档与 100% 物理 Full），
-/// 且位于 App 沙盒内（不写用户照片 / TestCase）。报告写 Documents/PhotoViewer/native-gesture-checks.txt，
+/// <para>带 <c>--pv-open</c> 启动时先核对**冷启动首图**：尚未发生任何缩放的双击必须精确到物理 100%
+/// （滚动视图 zoomScale == 1/(BackingScale×FitScale)），这是作者真机"首图双击只放大一点点"的复现口径。</para>
+///
+/// 素材要求：目录内必须有 <c>color-p3-large.jpg</c>（长边 ≥ 4000，制造真实代理档与 100% 物理 Full）与
+/// <c>focus-src.ARW</c>（Sony MakerNote 0x2027 提供对焦位置）；验收会把大色卡复制成三份同分辨率副本、
+/// 并把 ARW 复制两份分别改写到不同对焦点，全部写入 App 自建的 <c>Documents/gesture-fixtures-work</c>
+/// （输入目录、用户照片与 TestCase 一律只读）。报告写 Documents/PhotoViewer/native-gesture-checks.txt，
 /// 打印 <c>[NativeSmoke] PASS gesture (n)</c> / FAIL。
 /// </summary>
 internal static class iOSNativeGestureCheck
@@ -77,6 +84,15 @@ internal static class iOSNativeGestureCheck
             var originalFile = main.CurrentFile;
             try
             {
+                // 冷启动首图：启动参数（--pv-open）把照片直接上屏时，必须在任何 Fit/缩放之前核对
+                // "首图双击到物理 100%"，这正是作者在真机上遇到"只放大一点点"的现场。
+                if (main.CurrentFile != null)
+                {
+                    await WaitAsync(() => session.Image != null, "冷启动首图上屏", TimeSpan.FromSeconds(30));
+                    lines.Add($"冷启动首图：{main.CurrentFile.Name}");
+                    await VerifyColdStartFirstPhotoAsync(root, session, main, lines);
+                }
+                await PrepareFixturesAsync(directory, lines);
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     main.Settings.ShowRating = true;
@@ -88,8 +104,11 @@ internal static class iOSNativeGestureCheck
                     main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
                     EnsureJpegEnabled(main);
                 });
-                await main.FolderVM.OpenImageAsync(new iOSFileRef(large));
-                await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(large) && session.Image != null, "大色卡上屏");
+                await main.FolderVM.OpenFolderAsync(new iOSFolderRef(WorkDirectory));
+                var largeFile = await UiDispatcher.InvokeAsync(() =>
+                    main.FolderVM.AllFiles.FirstOrDefault(item => item.Name == Path.GetFileName(large)));
+                if (largeFile == null) throw new InvalidOperationException("打开夹具目录后找不到大色卡（color-p3-large.jpg）");
+                await SelectFileAsync(main, session, largeFile, "大色卡上屏");
                 await SettleAsync(root);
                 var proxy = session.Image ?? throw new InvalidOperationException("大色卡未上屏");
                 if (!session.IsProxy) throw new InvalidOperationException($"大色卡未走代理档（{proxy.Width}×{proxy.Height}，长边需 ≥ 4000）");
@@ -229,6 +248,135 @@ internal static class iOSNativeGestureCheck
                 VerifyNavigationIndicator(root, visible: false, lines);
                 lines.Add($"PASS 双击：物理 100% 锚点保持 ({tapAnchor.U:0.####},{tapAnchor.V:0.####})，回适应后导航图隐藏");
 
+                // 七之二、Fit 命令：原 Avalonia 语义是"适应 ⇄ 物理 100%"切换（不是无条件回适应）。
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
+                await WaitAsync(() => !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - 1) < .01, "Fit 命令放大到物理 100%");
+                await SettleAsync(root);
+                var fitCommand = await UiDispatcher.InvokeAsync(() => (Fit: root.Photo.IsFit, Physical: root.Photo.PhysicalScale,
+                    Center: root.Photo.Viewport.CenterUV, HostHidden: root.NavigationHost.Hidden));
+                if (fitCommand.Fit) throw new InvalidOperationException("Fit 命令在适应态没有放大（仍是适应态）");
+                if (fitCommand.HostHidden) throw new InvalidOperationException("Fit 命令放大后导航图未显示");
+                if (Math.Abs(fitCommand.Center.U - .5) > .02 || Math.Abs(fitCommand.Center.V - .5) > .02)
+                    throw new InvalidOperationException($"无对焦点时 Fit 命令应从视口中心放大，实际中心 ({fitCommand.Center.U:0.###},{fitCommand.Center.V:0.###})");
+                await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
+                await WaitAsync(() => root.Photo.IsFit, "Fit 命令回适应态");
+                await SettleAsync(root);
+                VerifyNavigationIndicator(root, visible: false, lines);
+                lines.Add($"PASS Fit 命令：适应 ⇄ 物理 {fitCommand.Physical * 100:0.#}% 双向切换（无对焦点以视口中心放大，导航图随态显隐）");
+
+                // 七之三、放大态切图：保持倍率与同一归一化中心点（原 Avalonia OnBitmapChanged / Mac ApplyImage 同语义）；
+                //       切图首帧若是代理、随后升 Full，热替换不得改动滚动状态。
+                var sameLarge = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "gesture-b-large.jpg"));
+                var secondLarge = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "gesture-c-large.jpg"));
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1));
+                await WaitAsync(() => Math.Abs(root.Photo.PhysicalScale - 1) < .02, "切图前 100%");
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.82, .22));
+                await SettleAsync(root);
+                var beforeFlip = await UiDispatcher.InvokeAsync(() => (Scale: root.Photo.PhysicalScale,
+                    Center: root.Photo.Viewport.CenterUV, Zoom: (double)root.Photo.ScrollView.ZoomScale));
+                await SelectFileAsync(main, session, sameLarge, "切到同分辨率副本");
+                await SettleAsync(root);
+                var afterFlip = await UiDispatcher.InvokeAsync(() => (Scale: root.Photo.PhysicalScale,
+                    Center: root.Photo.Viewport.CenterUV, Zoom: (double)root.Photo.ScrollView.ZoomScale,
+                    Proxy: session.IsProxy));
+                if (Math.Abs(afterFlip.Scale - beforeFlip.Scale) > .01)
+                    throw new InvalidOperationException($"放大态切图未保持倍率：{beforeFlip.Scale:0.###} → {afterFlip.Scale:0.###}");
+                if (Math.Abs(afterFlip.Center.U - beforeFlip.Center.U) > .01 || Math.Abs(afterFlip.Center.V - beforeFlip.Center.V) > .01)
+                    throw new InvalidOperationException(
+                        $"放大态切图未保持归一化中心：({beforeFlip.Center.U:0.####},{beforeFlip.Center.V:0.####}) → ({afterFlip.Center.U:0.####},{afterFlip.Center.V:0.####})");
+                await AssertScrollInvariantsAsync(root, "切图后");
+                var landed = await SnapshotAsync(root);
+                await WaitAsync(() => !session.IsProxy, "切图后升 Full");
+                await SettleAsync(root);
+                AssertSnapshot(landed, await SnapshotAsync(root), "切图后代理→Full");
+                lines.Add($"PASS 放大态切图：{beforeFlip.Scale * 100:0.#}% 与中心 ({afterFlip.Center.U:0.###},{afterFlip.Center.V:0.###}) 保持" +
+                    (afterFlip.Proxy ? "，代理→Full 热替换不改变滚动状态" : "，直接落 Full 且无跳变"));
+
+                // 半倍率切图：新照片先代理上屏（未达 Full 门槛），再放大到 100% 触发 Full；
+                // 热替换只换纹理，视口中心对应的图像点不得移动。
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(.5));
+                await WaitAsync(() => Math.Abs(root.Photo.PhysicalScale - .5) < .02, "切图前 50%");
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.6, .58));
+                await SettleAsync(root);
+                await SelectFileAsync(main, session, secondLarge, "切到第三张大色卡");
+                await SettleAsync(root);
+                var half = await UiDispatcher.InvokeAsync(() => (Scale: root.Photo.PhysicalScale, Proxy: session.IsProxy,
+                    Center: root.Photo.Viewport.CenterUV));
+                if (Math.Abs(half.Scale - .5) > .02) throw new InvalidOperationException($"半倍率切图未保持倍率：{half.Scale:0.###}");
+                if (Math.Abs(half.Center.U - .6) > .01 || Math.Abs(half.Center.V - .58) > .01)
+                    throw new InvalidOperationException($"半倍率切图未保持归一化中心：({half.Center.U:0.####},{half.Center.V:0.####})");
+                if (!half.Proxy) throw new InvalidOperationException($"半倍率切图应落代理档，实际已是非代理（{session.Image?.Width}×{session.Image?.Height}）");
+                await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1));
+                await WaitAsync(() => !session.IsProxy && Math.Abs(root.Photo.PhysicalScale - 1) < .02, "切图后放大触发 Full");
+                await SettleAsync(root);
+                var upgraded = await UiDispatcher.InvokeAsync(() => root.Photo.Viewport.CenterUV);
+                if (Math.Abs(upgraded.U - .6) > .01 || Math.Abs(upgraded.V - .58) > .01)
+                    throw new InvalidOperationException($"代理→Full 热替换移动了视口中心：({upgraded.U:0.####},{upgraded.V:0.####})");
+                await AssertScrollInvariantsAsync(root, "切图后升 Full");
+                lines.Add($"PASS 半倍率切图：代理档落地并保持中心 ({upgraded.U:0.###},{upgraded.V:0.###})，升 Full 不移动视口");
+
+                // 七之四、对焦跟随切图（真实 Sony EXIF 0x2027）：视口中心在 1600% 下对准对焦点后切图，
+                //       新照片必须保持倍率并居中到它自己的对焦点（原 Avalonia _isFocusedOnFocusPoint 语义）。
+                var focusA = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "focus-a.ARW"));
+                var focusB = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "focus-b.ARW"));
+                await focusA.LoadExifDataAsync();
+                await focusB.LoadExifDataAsync();
+                await SelectFileAsync(main, session, focusA, "对焦素材 A 上屏");
+                await SettleAsync(root);
+                var focusPoint = await UiDispatcher.InvokeAsync(() => root.Photo.FocusPoint);
+                var focusExpected = await FocusUVAsync(focusA);
+                if (focusPoint is not { } actualFocus
+                    || Math.Abs((double)actualFocus.X - focusExpected.U) > .01 || Math.Abs((double)actualFocus.Y - focusExpected.V) > .01)
+                    throw new InvalidOperationException($"对焦点未按 Sony EXIF 解析：期望 ({focusExpected.U:0.####},{focusExpected.V:0.####})，实际 {focusPoint}");
+                // Fit 命令在有对焦点时必须优先居中到对焦点（无锚点），而不是视口中心。
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
+                await WaitAsync(() => !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - 1) < .02, "对焦素材 Fit 到物理 100%");
+                var focusFit = await UiDispatcher.InvokeAsync(() => (Center: root.Photo.Viewport.CenterUV,
+                    Follows: root.Photo.Viewport.FollowsFocus));
+                if (!focusFit.Follows) throw new InvalidOperationException("有对焦点时 Fit 命令应开启跟随对焦");
+                if (Math.Abs(focusFit.Center.U - focusExpected.U) > Math.Abs(.5 - focusExpected.U) + 1e-6
+                    || Math.Abs(focusFit.Center.V - focusExpected.V) > Math.Abs(.5 - focusExpected.V) + 1e-6)
+                    throw new InvalidOperationException(
+                        $"Fit 命令未把视口中心移向对焦点：中心 ({focusFit.Center.U:0.###},{focusFit.Center.V:0.###})，对焦点 ({focusExpected.U:0.###},{focusExpected.V:0.###})");
+                await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
+                await WaitAsync(() => root.Photo.IsFit, "对焦素材 Fit 回适应");
+                await SettleAsync(root);
+                lines.Add($"PASS Fit 命令（有对焦点）：居中到对焦点 ({focusExpected.U:0.###},{focusExpected.V:0.###}) 并开启跟随，双向切换正常");
+
+                await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(16));
+                await WaitAsync(() => Math.Abs(root.Photo.PhysicalScale - 16) < .1, "对焦素材放大到 1600%");
+                await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(focusExpected.U, focusExpected.V));
+                await SettleAsync(root);
+                var focusBefore = await UiDispatcher.InvokeAsync(() => (Center: root.Photo.Viewport.CenterUV,
+                    Follows: root.Photo.Viewport.FollowsFocus, Scale: root.Photo.PhysicalScale));
+                if (!focusBefore.Follows) throw new InvalidOperationException("视口中心落在对焦点上时 FollowsFocus 应为 true");
+                var nextFocus = await FocusUVAsync(focusB);
+                await SelectFileAsync(main, session, focusB, "对焦素材 B 上屏");
+                await SettleAsync(root);
+                var focusAfter = await UiDispatcher.InvokeAsync(() => (Center: root.Photo.Viewport.CenterUV,
+                    Follows: root.Photo.Viewport.FollowsFocus, Scale: root.Photo.PhysicalScale));
+                if (Math.Abs(focusAfter.Scale - focusBefore.Scale) > .05)
+                    throw new InvalidOperationException($"对焦跟随切图未保持倍率：{focusBefore.Scale:0.##} → {focusAfter.Scale:0.##}");
+                if (Math.Abs(focusAfter.Center.U - nextFocus.U) > .02 || Math.Abs(focusAfter.Center.V - nextFocus.V) > .02)
+                    throw new InvalidOperationException(
+                        $"对焦跟随切图未居中到新照片对焦点：期望 ({nextFocus.U:0.####},{nextFocus.V:0.####})，实际 ({focusAfter.Center.U:0.####},{focusAfter.Center.V:0.####})");
+                lines.Add($"PASS 对焦跟随切图：EXIF 对焦点 ({focusExpected.U:0.###},{focusExpected.V:0.###})，切图保持 {focusAfter.Scale * 100:0}% 并居中到新对焦点 ({nextFocus.U:0.###},{nextFocus.V:0.###})");
+
+                // 回到大色卡与适应态，后续轻扫/增强用例沿用原有前提。
+                await SelectFileAsync(main, session, largeFile, "回到大色卡（适应态）");
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+
                 // 八、轻扫翻页只在适应态生效；放大态拖动仍是平移。
                 bool swipeFired = false;
                 void OnSwipe(int _) => swipeFired = true;
@@ -236,7 +384,9 @@ internal static class iOSNativeGestureCheck
                 try
                 {
                     await UiDispatcher.InvokeAsync(() => root.Photo.ApplySwipe(-60, 4, -900));
-                    if (!swipeFired) throw new InvalidOperationException("适应态横向轻扫未触发翻页");
+                    if (!swipeFired)
+                        throw new InvalidOperationException($"适应态横向轻扫未触发翻页（fit={root.Photo.IsFit}，" +
+                            $"scale={root.Photo.PhysicalScale:0.####}，file={main.CurrentFile?.Name}）");
                     swipeFired = false;
                     await PinchAsync(root, new CGPoint((double)root.Photo.Bounds.Width * .5, (double)root.Photo.Bounds.Height * .5), 2.5);
                     await UiDispatcher.InvokeAsync(() => root.Photo.ApplySwipe(-60, 4, -900));
@@ -250,9 +400,7 @@ internal static class iOSNativeGestureCheck
 
                 // 九、增强开关不得移动照片（旧实现会经 SyncScrollFromViewport 把内容拽回左上角）；
                 //     顺手测量 Full 与代理两档的切换时延。轻扫会切图，这里先回到大色卡。
-                var largeFile = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == Path.GetFileName(large)));
-                await UiDispatcher.InvokeAsync(() => main.CurrentFile = largeFile);
-                await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(large) && session.Image != null, "回到大色卡");
+                await SelectFileAsync(main, session, largeFile, "回到大色卡");
                 await Task.Delay(500);
                 await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1.2));
                 await SettleAsync(root);
@@ -307,6 +455,188 @@ internal static class iOSNativeGestureCheck
             await File.WriteAllLinesAsync(report, lines);
             Console.Error.WriteLine("[NativeSmoke] FAIL gesture " + exception);
         }
+    }
+
+    /// <summary>
+    /// 选择当前照片并等待会话真正把新产物上屏（会话重置换图经 UI 线程排队，切到与已有产物相同的引用时只等非空）。
+    /// </summary>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="session">展示会话。</param>
+    /// <param name="file">目标文件。</param>
+    /// <param name="stage">阶段名（等待超时提示）。</param>
+    private static async Task SelectFileAsync(MainViewModel main, PhotoLoadSession session, ImageFile file, string stage)
+    {
+        bool shown = false;
+        using var subscription = session.Subscribe(source => { if (source.PathKey == file.File.PathKey) shown = true; });
+        bool same = ReferenceEquals(main.CurrentFile, file);
+        await UiDispatcher.InvokeAsync(() => main.CurrentFile = file);
+        if (!same) await WaitAsync(() => ReferenceEquals(main.CurrentFile, file) && shown, stage);
+        // 切图请求与原生壳的会话重置都经 UI 线程排队；留出一轮排空后再确认产物仍在（避免读到旧图或重置窗口）。
+        await Task.Delay(200);
+        await WaitAsync(() => session.Image != null, stage);
+    }
+
+    /// <summary>等待主图分区尺寸连续 500ms 不变（启动期控制栏/文件栏定型会改变主图可用高度）。</summary>
+    /// <param name="root">原生根控制器。</param>
+    private static async Task WaitStablePhotoBoundsAsync(iOSNativeRootViewController root)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        CGSize last = CGSize.Empty;
+        TimeSpan stableSince = stopwatch.Elapsed;
+        while (stopwatch.Elapsed < TimeSpan.FromSeconds(20))
+        {
+            var size = await UiDispatcher.InvokeAsync(() => root.Photo.Bounds.Size);
+            if (Math.Abs((double)size.Width - (double)last.Width) > .5 || Math.Abs((double)size.Height - (double)last.Height) > .5)
+            {
+                last = size;
+                stableSince = stopwatch.Elapsed;
+            }
+            else if (stopwatch.Elapsed - stableSince > TimeSpan.FromMilliseconds(500)) return;
+            await Task.Delay(50);
+        }
+        throw new TimeoutException("主图分区尺寸未稳定");
+    }
+
+    /// <summary>夹具工作副本目录（App 自建；设备上的输入目录由 devicectl 拷入、属 root，App 不可写）。</summary>
+    private static string WorkDirectory => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "gesture-fixtures-work");
+
+    /// <summary>
+    /// 冷启动首图（启动参数直接上屏、尚未发生任何缩放）双击必须精确到物理 100%：
+    /// 断言滚动视图的 zoomScale 恰为 1/(BackingScale×FitScale)、触点下的图像点保持、滚动基准全部合规。
+    /// 这是作者真机"首图双击只放大一点点"的现场复现口径。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="session">展示会话。</param>
+    /// <param name="main">共享主 VM（读取当前照片的 EXIF 就绪状态）。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyColdStartFirstPhotoAsync(iOSNativeRootViewController root, PhotoLoadSession session,
+        MainViewModel main, List<string> lines)
+    {
+        // 启动后控制栏要等当前照片的 EXIF 组就绪才定型（主图分区会先高后矮）；必须等它定型再双击，
+        // 否则量到的是过渡布局的适应倍率，和用户真正看到的画面不是一回事。
+        await WaitAsync(() => main.CurrentFile?.IsExifLoaded == true, "冷启动首图 EXIF 就绪", TimeSpan.FromSeconds(20));
+        await WaitStablePhotoBoundsAsync(root);
+        await SettleAsync(root);
+        if (!root.Photo.IsFit)
+            throw new InvalidOperationException("冷启动首图不是适应态（启动后不应带任何缩放）");
+        var start = await UiDispatcher.InvokeAsync(() => (Physical: root.Photo.PhysicalScale,
+            Image: session.Image!, Bounds: root.Photo.Bounds.Size));
+        var tap = new CGPoint((double)start.Bounds.Width * .62, (double)start.Bounds.Height * .58);
+        if (start.Physical >= .99)
+        {
+            // 预览尺寸素材（iOS RAW 走 ImageIO 内嵌预览，1616×1080 在 iPad 上适应态就已 ≥ 物理 100%）：
+            // 物理 100% 不高于适应态，双击不得产生任何放大或跳动——作者真机"首图双击只放大一点点"即此口径。
+            await UiDispatcher.InvokeAsync(() => root.Photo.DoubleTapAt(tap));
+            await SettleAsync(root);
+            var unchanged = await UiDispatcher.InvokeAsync(() => (Fit: root.Photo.IsFit, Physical: root.Photo.PhysicalScale));
+            if (!unchanged.Fit || Math.Abs(unchanged.Physical - start.Physical) > .01)
+                throw new InvalidOperationException(
+                    $"无放大余量的首图双击不应改变视图：适应 {start.Physical * 100:0.#}% → fit={unchanged.Fit} {unchanged.Physical * 100:0.#}%");
+            lines.Add($"PASS 冷启动首图双击：{start.Image.Width}×{start.Image.Height} 适应 {start.Physical * 100:0.#}% " +
+                "已不低于物理 100%（iOS RAW 内嵌预览，无放大余量），双击保持适应态不跳动");
+            return;
+        }
+        var anchor = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(tap));
+        await UiDispatcher.InvokeAsync(() => root.Photo.DoubleTapAt(tap));
+        await WaitAsync(() => Math.Abs(root.Photo.PhysicalScale - 1) < .01, "冷启动首图双击到物理 100%");
+        await SettleAsync(root);
+        var state = await UiDispatcher.InvokeAsync(() => (Zoom: (double)root.Photo.ScrollView.ZoomScale,
+            Max: (double)root.Photo.ScrollView.MaximumZoomScale, Fit: root.Photo.IsFit,
+            Bs: root.Photo.Viewport.BackingScale, FitScale: root.Photo.Viewport.FitScale,
+            Physical: root.Photo.PhysicalScale));
+        if (state.Fit) throw new InvalidOperationException("冷启动首图双击后仍判定为适应态");
+        double expectedZoom = 1 / (state.Bs * state.FitScale);
+        if (Math.Abs(state.Zoom - expectedZoom) > expectedZoom * .01)
+            throw new InvalidOperationException(
+                $"冷启动首图双击后 zoomScale {state.Zoom:0.####} 不是物理 100% 的 {expectedZoom:0.####}" +
+                $"（max={state.Max:0.####}，fit={state.FitScale:0.####}，bs={state.Bs:0.##}）");
+        if (state.Max < expectedZoom - 1e-3)
+            throw new InvalidOperationException($"滚动视图最大缩放 {state.Max:0.####} 小于物理 100% 目标 {expectedZoom:0.####}");
+        var after = await UiDispatcher.InvokeAsync(() => root.Photo.ImagePointAt(tap));
+        AssertImagePoint(anchor, after, 2.5, root.Photo, "冷启动首图双击后触点下的图像点");
+        await AssertScrollInvariantsAsync(root, "冷启动首图双击后");
+        if (root.NavigationHost.Hidden) throw new InvalidOperationException("冷启动首图双击到 100% 后导航图未显示");
+        lines.Add($"PASS 冷启动首图双击：{start.Image.Width}×{start.Image.Height} 适应 {start.Physical * 100:0.#}% → " +
+            $"物理 {state.Physical * 100:0.##}%（zoomScale {state.Zoom:0.####} = 1/({state.Bs:0.##}×{state.FitScale:0.####})），触点图像点保持");
+        await UiDispatcher.InvokeAsync(() => root.Photo.DoubleTapAt(tap));
+        await WaitAsync(() => root.Photo.IsFit, "冷启动首图双击回适应态");
+        await SettleAsync(root);
+    }
+
+    /// <summary>
+    /// 在工作副本目录里准备手势验收夹具：3 张同分辨率大色卡（切图保持倍率）与 2 张改过对焦点的 Sony ARW 副本。
+    /// 只写 App 自建目录，输入目录与 TestCase/用户照片一律只读；ARW 副本仅改 MakerNote 0x2027 的 8 字节对焦位置。
+    /// </summary>
+    /// <param name="directory">输入夹具目录（只读）。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task PrepareFixturesAsync(string directory, List<string> lines)
+    {
+        string large = Path.Combine(directory, "color-p3-large.jpg");
+        string sourceRaw = Path.Combine(directory, "focus-src.ARW");
+        if (!File.Exists(sourceRaw))
+            throw new FileNotFoundException("手势验收需要 focus-src.ARW（Sony MakerNote 0x2027 提供对焦位置）", sourceRaw);
+        Directory.CreateDirectory(WorkDirectory);
+        string workLarge = Path.Combine(WorkDirectory, "color-p3-large.jpg");
+        CopyIfNeeded(large, workLarge);
+        CopyIfNeeded(large, Path.Combine(WorkDirectory, "gesture-b-large.jpg"));
+        CopyIfNeeded(large, Path.Combine(WorkDirectory, "gesture-c-large.jpg"));
+        var exif = await ExifLoader.LoadExifDataAsync(new iOSFileRef(sourceRaw));
+        if (exif?.SonyFocusPosition is not { } focus || focus.ImageWidth <= 0 || focus.ImageHeight <= 0)
+            throw new InvalidOperationException("focus-src.ARW 没有 Sony 对焦位置（MakerNote 0x2027），无法核对对焦跟随");
+        WriteFocusCopy(sourceRaw, Path.Combine(WorkDirectory, "focus-a.ARW"), focus, 1500, 3400);
+        WriteFocusCopy(sourceRaw, Path.Combine(WorkDirectory, "focus-b.ARW"), focus, 5200, 1200);
+        lines.Add($"夹具工作副本：{WorkDirectory}（3 张大色卡 + 2 张对焦点 ARW 副本，对焦点改写仅在副本内）");
+    }
+
+    /// <summary>文件内容不同（或目标不存在）时才复制，避免每轮验收重写 44MB 夹具。</summary>
+    /// <param name="source">源文件。</param>
+    /// <param name="destination">目标文件。</param>
+    private static void CopyIfNeeded(string source, string destination)
+    {
+        if (File.Exists(destination) && new FileInfo(destination).Length == new FileInfo(source).Length) return;
+        File.Copy(source, destination, true);
+    }
+
+    /// <summary>
+    /// 复制 Sony ARW 副本并改写 MakerNote 0x2027 的 8 字节对焦位置（图像宽高 + 对焦 XY，均为 int16 小端）。
+    /// 先按源文件的真实取值定位唯一字节序列，再替换 XY；找不到即显式失败（不接受静默跳过）。
+    /// </summary>
+    /// <param name="source">源 ARW（只读）。</param>
+    /// <param name="destination">副本路径。</param>
+    /// <param name="focus">源文件的 MakerNote 对焦数据（用于定位字节序列）。</param>
+    /// <param name="focusX">新的对焦横坐标（源图像素）。</param>
+    /// <param name="focusY">新的对焦纵坐标（源图像素）。</param>
+    private static void WriteFocusCopy(string source, string destination,
+        (int ImageWidth, int ImageHeight, int FocusX, int FocusY) focus, int focusX, int focusY)
+    {
+        byte[] data = File.ReadAllBytes(source);
+        byte[] pattern =
+        [
+            (byte)focus.ImageWidth, (byte)(focus.ImageWidth >> 8),
+            (byte)focus.ImageHeight, (byte)(focus.ImageHeight >> 8),
+            (byte)focus.FocusX, (byte)(focus.FocusX >> 8),
+            (byte)focus.FocusY, (byte)(focus.FocusY >> 8),
+        ];
+        int index = data.AsSpan().IndexOf(pattern);
+        if (index < 0) throw new InvalidOperationException("focus-src.ARW 未找到 MakerNote 0x2027 原始字节，无法生成对焦夹具");
+        data[index + 4] = (byte)focusX;
+        data[index + 5] = (byte)(focusX >> 8);
+        data[index + 6] = (byte)focusY;
+        data[index + 7] = (byte)(focusY >> 8);
+        File.WriteAllBytes(destination, data);
+    }
+
+    /// <summary>读取文件 EXIF 的归一化对焦点（显示朝向 0–1）；缺失时显式失败。</summary>
+    /// <param name="file">图像文件（EXIF 已加载）。</param>
+    private static Task<(double U, double V)> FocusUVAsync(ImageFile file)
+    {
+        return UiDispatcher.InvokeAsync(() =>
+        {
+            if (file.ExifData?.SonyFocusPosition is not { } position || position.ImageWidth <= 0 || position.ImageHeight <= 0)
+                throw new InvalidOperationException($"{file.Name} 缺少 Sony 对焦点");
+            return ((double)position.FocusX / position.ImageWidth, (double)position.FocusY / position.ImageHeight);
+        });
     }
 
     /// <summary>验收环境自愈：确保 JPEG 格式启用（历史验收会话被强杀可能遗留全格式关闭）。</summary>
@@ -499,12 +829,14 @@ internal static class iOSNativeGestureCheck
     /// <summary>等待条件成立并设有限超时。</summary>
     /// <param name="condition">条件。</param>
     /// <param name="name">条件名称。</param>
-    private static async Task WaitAsync(Func<bool> condition, string name)
+    /// <param name="timeout">超时；null 表示默认 60 秒。</param>
+    private static async Task WaitAsync(Func<bool> condition, string name, TimeSpan? timeout = null)
     {
         var stopwatch = Stopwatch.StartNew();
+        TimeSpan limit = timeout ?? TimeSpan.FromSeconds(60);
         while (!condition())
         {
-            if (stopwatch.Elapsed > TimeSpan.FromSeconds(60)) throw new TimeoutException(name);
+            if (stopwatch.Elapsed > limit) throw new TimeoutException(name);
             await Task.Delay(20);
         }
     }

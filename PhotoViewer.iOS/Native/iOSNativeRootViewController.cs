@@ -601,7 +601,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             case "Previous": Move(-1); break;
             case "Next": Move(1); break;
             case "Exchange": if (_main.LastFile != null) _main.CurrentFile = _main.LastFile; break;
-            case "Fit": _photo.FitToView(); break;
+            case "Fit": _photo.ToggleFit(); break;
             case "ZoomInScale": _photo.ZoomBy(1.25); break;
             case "ZoomOutScale": _photo.ZoomBy(.8); break;
             case "ZoomInPreset": ZoomPreset(1); break;

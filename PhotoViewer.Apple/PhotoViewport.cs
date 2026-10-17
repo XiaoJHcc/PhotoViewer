@@ -55,6 +55,32 @@ public sealed class PhotoViewport
     public bool NeedsFull => !IsFit && (PhysicalScale >= 1
         || (TextureWidth > 0 && PhysicalScale > (double)TextureWidth / Math.Max(1, SourceWidth)));
 
+    /// <summary>视口中心对应的归一化图像点（显示朝向 0–1 区间）；无图像时为视口中心。</summary>
+    public (double U, double V) CenterUV
+    {
+        get
+        {
+            double width = ImageWidth * Scale, height = ImageHeight * Scale;
+            if (width <= 0 || height <= 0) return (.5, .5);
+            return (.5 - PanX / width, .5 - PanY / height);
+        }
+    }
+
+    /// <summary>
+    /// 视口中心是否落在对焦点附近（两轴归一化偏差均小于 5%，与原 Avalonia <c>IsViewCenteredOnFocusPoint</c> 同口径）。
+    /// 每次移动/缩放后重算，供切图时决定"跟随新照片对焦点"还是"保持同一归一化位置"。
+    /// </summary>
+    public bool IsViewCenteredOnFocusPoint
+    {
+        get
+        {
+            if (IsFit || FocusX is not { } focusX || FocusY is not { } focusY) return false;
+            var (u, v) = CenterUV;
+            const double tolerance = .05;
+            return Math.Abs(u - focusX) < tolerance && Math.Abs(v - focusY) < tolerance;
+        }
+    }
+
     /// <summary>导航图逻辑点尺寸：长边 150、按显示朝向照片比例缩小，不补方形衬边；无照片时为 150 方形占位。</summary>
     public (double Width, double Height) NavigationSize
     {
@@ -146,8 +172,12 @@ public sealed class PhotoViewport
         PanY = 0;
     }
 
-    /// <summary>在适应与物理 100% 间切换；给定锚点或存在对焦点时保留对焦位置。</summary>
-    /// <param name="anchor">视图坐标锚点；null 表示使用视口中心或对焦点。</param>
+    /// <summary>
+    /// 在适应与物理 100% 间切换（原 Avalonia <c>ToggleFit</c> 语义）：已放大 → 回适应；
+    /// 处于适应态时无锚点且照片有对焦点 → 以对焦点为中心放大到物理 100% 并开启跟随对焦，
+    /// 否则以锚点（无锚点取视口中心）为不动点放大到物理 100%。
+    /// </summary>
+    /// <param name="anchor">视图坐标锚点；null 表示使用对焦点或视口中心。</param>
     public void ToggleFit((double X, double Y)? anchor)
     {
         if (!IsFit)
@@ -191,32 +221,38 @@ public sealed class PhotoViewport
     /// <param name="scale">目标物理倍率。</param>
     public void ZoomToPhysical(double scale) => ZoomTo(scale / BackingScale, ViewWidth / 2, ViewHeight / 2);
 
-    /// <summary>按视图点位移平移照片（拖动/触控板），跟随对焦随之取消并保持边缘钳制。</summary>
+    /// <summary>按视图点位移平移照片（拖动/触控板），跟随对焦在移动后按 5% UV 容差重算并保持边缘钳制。</summary>
     /// <param name="deltaX">横向位移（逻辑点）。</param>
     /// <param name="deltaY">纵向位移（逻辑点）。</param>
     public void PanBy(double deltaX, double deltaY)
     {
-        FollowsFocus = false;
         PanX += deltaX;
         PanY += deltaY;
         ClampPan();
+        FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
     /// <summary>
     /// 宿主手势驱动（iOS 用 UIScrollView 提供回弹/惯性/捏合，把 zoomScale 与 contentOffset 换算后写入这里）：
     /// 缩放与平移一律按视口范围钳制，缩放贴合适应值即视为适应态，缩放上限与锚点缩放共用同一常量。
+    /// 跟随对焦在每帧手势后按 5% UV 容差重算（与原 Avalonia 每次移动/缩放后的重估同口径）。
     /// </summary>
     /// <param name="scale">图像像素到逻辑点的缩放。</param>
     /// <param name="panX">照片中心相对视口中心的横向偏移（逻辑点）。</param>
     /// <param name="panY">照片中心相对视口中心的纵向偏移（逻辑点）。</param>
-    public void ApplyGestureView(double scale, double panX, double panY)
+    /// <param name="interactive">
+    /// 是否来自用户手势（拖动/捏合）。只有用户移动/缩放才按 5% UV 重估跟随对焦；
+    /// 程序化缩放/切图重建派生出的状态不得清掉 <see cref="ToggleFit"/> 或 <see cref="ApplyImage"/> 刚做出的跟随决定
+    /// （原 Avalonia 只在 Move/ZoomTo 里重估，程序化动画不经过它们）。
+    /// </param>
+    public void ApplyGestureView(double scale, double panX, double panY, bool interactive = true)
     {
         Scale = Math.Clamp(scale, .01 / BackingScale, 16 / BackingScale);
         PanX = panX;
         PanY = panY;
-        FollowsFocus = false;
         IsFit = Scale <= FitScale + 1e-6;
         ClampPan();
+        if (interactive) FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
     /// <summary>使至少一部分照片保持在视口中；小于视口的轴居中。</summary>
@@ -238,7 +274,7 @@ public sealed class PhotoViewport
         return (ViewWidth / 2 - width / 2 + PanX + u * width, ViewHeight / 2 - height / 2 + PanY + v * height);
     }
 
-    /// <summary>按锚点计算缩放后的平移，限制缩放范围。</summary>
+    /// <summary>按锚点计算缩放后的平移，限制缩放范围；缩放后按 5% UV 容差重算跟随对焦。</summary>
     /// <param name="scale">目标点缩放。</param>
     /// <param name="anchorX">视图坐标锚点横坐标。</param>
     /// <param name="anchorY">视图坐标锚点纵坐标。</param>
@@ -250,8 +286,8 @@ public sealed class PhotoViewport
         PanY = anchorY - ViewHeight / 2 - (anchorY - ViewHeight / 2 - PanY) * ratio;
         Scale = scale;
         IsFit = false;
-        FollowsFocus = false;
         ClampPan();
+        FollowsFocus = IsViewCenteredOnFocusPoint;
     }
 
     /// <summary>以显示朝向的归一化对焦位置为视口中心，并约束边缘平移。</summary>

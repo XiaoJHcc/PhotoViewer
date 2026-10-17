@@ -15,6 +15,8 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     private CGPoint _lastDrag;
     /// <summary>已上传的展示产物引用：同一对象再次上屏（会话状态通知）时只重绘，不重复上传整张纹理。</summary>
     private DecodedImage? _textureSource;
+    /// <summary>当前照片的未旋转源尺寸与 EXIF 方向；用于区分"切图"与"代理↔Full 热替换"。</summary>
+    private (int Width, int Height, int Orientation) _identity;
 
     /// <summary>视口变化通知，加载会话据此决定代理尺寸与 Full 升级。</summary>
     public event Action? ViewportChanged;
@@ -91,10 +93,16 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     }
 
     /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。编码支持范围由渲染核心判定。</summary>
+    /// <remarks>
+    /// 同一张照片的代理 ↔ Full 热替换只更新纹理宽度（<see cref="PhotoViewport.ApplyTexture"/>），绝不重跑切图定位：
+    /// 视口中心可能恰好落在对焦点 5% 邻域（跟随对焦），重跑 <see cref="PhotoViewport.ApplyImage"/> 会把画面吸到对焦点，
+    /// 在升 Full 时表现为一次可见跳动。只有照片身份 / 逻辑尺寸 / 方向变化才走切图语义。
+    /// </remarks>
     public void SetImage(DecodedImage? image)
     {
         if (image == null)
         {
+            _identity = default;
             _textureSource = null;
         }
         else if (ReferenceEquals(image, _textureSource))
@@ -107,10 +115,25 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
         {
             _textureSource = image;
         }
-        _viewport.BeginImageChange();
         _renderer.SetTexture(image);
-        if (image == null) _viewport.ClearTexture();
-        else _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
+        if (image == null)
+        {
+            _viewport.ClearTexture();
+        }
+        else
+        {
+            var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
+            if (identity == _identity)
+            {
+                _viewport.ApplyTexture(_renderer.TextureWidth);
+            }
+            else
+            {
+                _identity = identity;
+                _viewport.BeginImageChange();
+                _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
+            }
+        }
         DrawFrame();
         ViewportChanged?.Invoke();
     }
