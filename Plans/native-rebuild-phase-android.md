@@ -8,7 +8,7 @@
 > 3. **无论 ROM 与系统版本，视觉设计与空间操作一致对标**。
 > 4. 能用原生最好；原生不可靠再议。
 >
-> **进度**：A1a（共享几何源迁移 + `InputCommandMap`）已于 2026-10-18 在 Mac 本机落地并通过 Mac/iOS 构建；评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。A1b/A2–A6 未开始。
+> **进度**：**A1a + A1b 已完成（2026-10-18）**——共享几何源迁移、`InputCommandMap`、Mac/iOS 回归门，以及 Android 普通 `Application`/bootstrap/原生壳基座/主题/门面/资源均已落地；A2–A6 未开始。评审修订见 §7，执行记录见 [native-rebuild-android-handoff.md](native-rebuild-android-handoff.md)。
 
 ## 0. 范围
 
