@@ -58,6 +58,11 @@
 > **原生壳 / 旧壳分派（A1b 起）**：Debug 默认原生壳；旧壳显式回退：
 > `adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-flags "--legacy-ui"`。
 > Release 默认旧壳，`--es pv-flags "--native"` 进入原生壳。唯一 launcher 是 `AndroidBootstrapActivity`，目标 Activity 不带 launcher/filter。
+>
+> **原生壳验收（A6 起步）**：夹具先推到 App 内部目录（`adb push` 到 `/data/local/tmp` 后 `run-as cc.xiaojh.PhotoViewer cp` 到 `files/pv-fixtures`），再：
+> `adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-open @files/pv-fixtures --es pv-check main`
+> （`pv-check` 可取 `main|analysis|similarity|settings|tools`；报告 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt`）。
+> 设置半屏可直接用 `--ez pv-settings true` 在启动后打开。
 
 ### 3. Mac
 - ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动启动原生版 `.app`，解决原生的系统签名拦截。
