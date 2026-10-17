@@ -155,6 +155,9 @@ public sealed class AnalysisViewModel : ReactiveObject
             _shakeItem,
         };
 
+        // 原生壳:分析栏由 WindowsAnalysisPanel 自绘,本 VM 不订阅任何信号(见 IsInactive 说明)。
+        if (IsInactive) return;
+
         _main.WhenAnyValue(vm => vm.IsRowLayout)
             .Subscribe(Observer.Create<bool>(_ => this.RaisePropertyChanged(nameof(IsRowLayout))));
 
@@ -211,10 +214,19 @@ public sealed class AnalysisViewModel : ReactiveObject
             }));
     }
 
+    /// <summary>
+    /// 原生壳(true)下本 VM 完全惰性:原生分析栏由 <c>WindowsAnalysisPanel</c> 自绘,
+    /// 这里若继续跑会走 <see cref="DecodedImageAdapter"/> 创建 Avalonia 位图 ——
+    /// 原生壳不初始化 Avalonia 平台渲染接口,抛出的 InvalidOperationException 一旦跨 COM 边界
+    /// 就是进程级 0xC000027B(切图/展开分析栏即崩)。</summary>
+    private bool IsInactive => _main.UsesNativePresentation;
+
     /// <summary>外部入口:换图时刷新整个分析栏。可见性关闭时早退,避免后台读库泄漏。
     /// 所有实际工作推迟到 Background 优先级,绝不阻塞主图加载。</summary>
     public void SetSource(ImageFile? file)
     {
+        if (IsInactive) return;
+
         _cts?.Cancel();
         _loadingFile = file;
 
@@ -284,6 +296,8 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// </summary>
     public void OnTileClicked(double u, double v)
     {
+        if (IsInactive) return;
+
         u = Math.Clamp(u, 0, 1);
         v = Math.Clamp(v, 0, 1);
         Crosshair = new Point(u, v);
@@ -575,6 +589,8 @@ public sealed class AnalysisViewModel : ReactiveObject
     /// <summary>从当前主图(原片或增强图)现算 RGB 直方图,随主图 / 可见性变化触发;不可见或无图时清空。</summary>
     private async void RefreshHistogram()
     {
+        if (IsInactive) return;
+
         int token = ++_histogramToken;
         var source = _main.ImageVM.CurrentDecodedImage;
         if (!_main.IsAnalysisViewVisible || source == null)

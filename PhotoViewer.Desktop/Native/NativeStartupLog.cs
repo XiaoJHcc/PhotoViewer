@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace PhotoViewer.Desktop.Native;
@@ -52,7 +53,42 @@ internal static class NativeStartupLog
             Append($"UNHANDLED {e.ExceptionObject}");
         TaskScheduler.UnobservedTaskException += (_, e) =>
             Append($"UNOBSERVED {e.Exception}");
+        AppDomain.CurrentDomain.FirstChanceException += (_, e) => LogFirstChance(e.Exception);
     }
+
+    /// <summary>
+    /// 首次异常留痕:WinUI 里从托管回调跨 COM 边界抛出的异常会变成 stowed exception(0xC000027B)
+    /// 直接终止进程,<c>Application.UnhandledException</c> 根本不会触发。
+    /// 这里在异常抛出的瞬间记一条(限流避免刷爆日志),让下次崩溃能定位到抛出点。
+    /// </summary>
+    /// <param name="ex">刚抛出的异常</param>
+    private static void LogFirstChance(Exception ex)
+    {
+        // 取消是正常控制流,不记
+        if (ex is OperationCanceledException or TaskCanceledException)
+        {
+            return;
+        }
+
+        // ExifTool 表的编码名探测会稳定抛一批 ArgumentException,属于噪音
+        if (ex is ArgumentException && ex.Message.Contains("encoding name", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var stack = ex.StackTrace;
+        if (Interlocked.Increment(ref _firstChanceLogged) > MaxFirstChanceEntries)
+        {
+            return;
+        }
+
+        var text = $"FIRSTCHANCE {ex.GetType().FullName}: {ex.Message}{Environment.NewLine}{stack}";
+        Append(text);
+        Console.Error.WriteLine(text);
+    }
+
+    private static int _firstChanceLogged;
+    private const int MaxFirstChanceEntries = 200;
 
     /// <summary>记录并吞掉异常，返回异常文本。</summary>
     /// <param name="stage">发生阶段</param>

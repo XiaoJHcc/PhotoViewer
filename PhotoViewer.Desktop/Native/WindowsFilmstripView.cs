@@ -5,9 +5,12 @@ using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
+using Windows.UI.ViewManagement;
 
 namespace PhotoViewer.Desktop.Native;
 
@@ -34,6 +37,8 @@ internal sealed class WindowsFilmstripView : Grid
     private readonly ItemsRepeater _repeater;
     private readonly StackLayout _stackLayout;
     private readonly Stack<WindowsThumbnailCard> _pool = new();
+    private readonly UISettings _uiSettings = new();
+    private readonly TextBlock _emptyState;
 
     private DispatcherQueueTimer? _animationTimer;
     private DateTime _animationStartedAt;
@@ -86,7 +91,30 @@ internal sealed class WindowsFilmstripView : Grid
             Content = _repeater,
         };
         _scroll.ViewChanged += (_, _) => ReportVisibleRange();
+
+        // FILM-03 用户接管:点选卡片、拖动滚动条、滚轮或触摸滚动都立刻撤销在途定位与排队请求。
+        // 卡片与滚动条各自的 PointerPressed 都会冒泡到这里,因此用 handledEventsToo 抓全。
+        _scroll.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler(OnScrollPointerPressed), true);
+        _scroll.AddHandler(UIElement.PointerMovedEvent, new PointerEventHandler(OnScrollPointerMoved), true);
+        _scroll.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnScrollPointerWheelChanged), true);
+        _scroll.ManipulationStarted += (_, _) => CancelLocate();
+
+        _emptyState = new TextBlock
+        {
+            Text = "无匹配照片",
+            FontSize = WindowsLayout.FilmstripEmptyFontSize,
+            Foreground = new SolidColorBrush(WindowsLayout.FilmstripEmptyForeground),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = WindowsLayout.CardSecondLineWidth,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+        };
+
         Children.Add(_scroll);
+        Children.Add(_emptyState);
 
         // 定位请求可能先于布局到达(启动期/换文件夹),布局每轮结束补做一次
         LayoutUpdated += OnLayoutUpdated;
@@ -134,12 +162,45 @@ internal sealed class WindowsFilmstripView : Grid
     /// 请求可能早于布局到达(启动期/换文件夹时 extent 与 viewport 还是 0),也可能被紧随其后的
     /// 列表重建把偏移清回 0(`ReloadItems` 会重置 ItemsSource)。因此请求记账后由布局回调收敛:
     /// 偏移真正落到目标才销账,否则下一次布局继续补做,最多 <see cref="LocateMaxAttempts"/> 次。
+    /// 系统启用"减少动态效果"时直接落到终点,触发条件不变(FILM-03)。
     /// </summary>
     public void ScrollToCurrentAnimated()
     {
         _locatePending = true;
         _locateAttempts = 0;
         TryApplyLocate();
+    }
+
+    /// <summary>
+    /// 验收专用:"减少动态效果"判定覆盖(<c>true</c>/<c>false</c>);生产路径始终为 null,
+    /// 由 <see cref="ReduceMotionEnabled"/> 读系统设置。仅定向验收使用。
+    /// </summary>
+    internal static bool? ReduceMotionOverrideForAcceptance;
+
+    /// <summary>当前是否有定位动画在播放(供定向验收断言接管效果)。</summary>
+    internal bool IsLocateAnimating => _isAnimating;
+
+    /// <summary>当前系统是否要求减少动态效果(Windows 的"动画效果"开关)。</summary>
+    internal bool ReduceMotionEnabled => ReduceMotionOverrideForAcceptance ?? !_uiSettings.AnimationsEnabled;
+
+    /// <summary>列表主轴(横向布局取 X、纵向布局取 Y)的当前滚动偏移,供定向验收断言接管与终点。</summary>
+    internal double MainAxisOffset => _isRowLayout ? _scroll.HorizontalOffset : _scroll.VerticalOffset;
+
+    /// <summary>
+    /// 用户接管列表(FILM-03):撤销正在播放的动画与排队未执行的定位请求,位置停在用户手动到达处。
+    /// 点选卡片、拖动滚动条、滚轮与触摸滚动都走这里;下一次显式请求按最新几何重新计算。
+    /// 已在途的一帧 <c>ChangeView</c> 无法取消,所以撤销后用同位置的无动画请求把它压掉。
+    /// </summary>
+    internal void CancelLocate()
+    {
+        bool interrupt = _isAnimating || _locatePending;
+        _locatePending = false;
+        StopAnimation();
+        if (interrupt)
+        {
+            _scroll.ChangeView(_isRowLayout ? _scroll.HorizontalOffset : null,
+                _isRowLayout ? null : _scroll.VerticalOffset, null, true);
+        }
     }
 
     /// <summary>尝试兑现未完成的定位请求;几何未就绪或动画在途就等下一轮。</summary>
@@ -192,6 +253,18 @@ internal sealed class WindowsFilmstripView : Grid
         }
 
         _locateAttempts++;
+        if (ReduceMotionEnabled)
+        {
+            // 减少动态效果:同一触发条件,直接到终点;到位后由下一轮布局复核销账。
+            _scroll.ChangeView(_isRowLayout ? target : null, _isRowLayout ? null : target, null, true);
+            if (covered)
+            {
+                _locatePending = false;
+            }
+
+            return;
+        }
+
         StartAnimation(current, target);
     }
 
@@ -210,7 +283,11 @@ internal sealed class WindowsFilmstripView : Grid
         _repeater.VerticalAlignment = VerticalAlignment.Top;
     }
 
-    /// <summary>重建列表(筛选结果或排序变化)。</summary>
+    /// <summary>
+    /// 重建列表(筛选结果或排序变化)。在途动画立即停止;排队的定位请求保留 ——
+    /// 外部打开/翻页的请求常常先于这次重建到达,清掉会让"打开非首张"静默停在列表头部;
+    /// 用户接管与栏位隐藏才真正撤销请求(FILM-03)。
+    /// </summary>
     /// <param name="scrollToCurrent">重建后是否定位当前项</param>
     private void ReloadItems(bool scrollToCurrent)
     {
@@ -220,6 +297,7 @@ internal sealed class WindowsFilmstripView : Grid
         _reportedFirst = -1;
         _reportedLast = -1;
         _repeater.ItemsSource = _list.FilteredFiles;
+        _emptyState.Visibility = _list.FilteredFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ReportVisibleRange();
         if (scrollToCurrent)
         {
@@ -267,6 +345,27 @@ internal sealed class WindowsFilmstripView : Grid
         _reportedLast = last;
         _list.ReportVisibleRange(first, last);
         _list.LoadVisibleThumbnails(files.Skip(first).Take(last - first + 1));
+    }
+
+    /// <summary>滚轮滚动列表:用户接管,撤销在途定位(FILM-03)。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">滚轮参数。</param>
+    private void OnScrollPointerWheelChanged(object sender, PointerRoutedEventArgs e) => CancelLocate();
+
+    /// <summary>指针按下(点选卡片或拖动滚动条):用户接管列表(FILM-03)。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针参数。</param>
+    private void OnScrollPointerPressed(object sender, PointerRoutedEventArgs e) => CancelLocate();
+
+    /// <summary>按住指针拖动(拖动滚动条或触摸滚动):用户接管列表(FILM-03)。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针参数。</param>
+    private void OnScrollPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.GetCurrentPoint(_scroll).Properties.IsLeftButtonPressed)
+        {
+            CancelLocate();
+        }
     }
 
     /// <summary>启动定位动画(三次缓出,latest-wins)。</summary>

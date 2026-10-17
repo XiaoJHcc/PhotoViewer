@@ -157,6 +157,66 @@ internal static class WindowsLayout
     /// <summary>空首屏提示副标题字号。</summary>
     public const double HintDetailFontSize = 11;
 
+    // ===== 缩放指示器(导航图) =====
+
+    /// <summary>导航图长边(旧壳 ImageView 缩放指示器的 maxThumbnailSize)。</summary>
+    public const double NavigatorLongEdge = 150;
+
+    /// <summary>导航图距主图区右下角的边距。</summary>
+    public const double NavigatorMargin = 12;
+
+    /// <summary>导航图外框内边距(旧壳 Border Padding=8)。</summary>
+    public const double NavigatorPadding = 8;
+
+    /// <summary>导航图外框圆角。</summary>
+    public const double NavigatorCornerRadius = 8;
+
+    /// <summary>导航图可见框描边厚度。</summary>
+    public const double NavigatorFrameThickness = 2;
+
+    /// <summary>导航图百分比字号。</summary>
+    public const double NavigatorPercentFontSize = 12;
+
+    /// <summary>导航图百分比与缩略图的上间距(旧壳 TextBlock Margin="0,8,0,2")。</summary>
+    public const double NavigatorPercentTopMargin = 8;
+
+    /// <summary>导航图百分比的下间距。</summary>
+    public const double NavigatorPercentBottomMargin = 2;
+
+    /// <summary>导航图外框底色(旧壳 Border Background="#9222":57% 不透明的 #222222)。</summary>
+    public static readonly Color NavigatorBackground = Color.FromArgb(0x92, 0x22, 0x22, 0x22);
+
+    // ===== 胶片条空筛选结果 =====
+
+    /// <summary>空筛选结果提示字号。</summary>
+    public const double FilmstripEmptyFontSize = 11;
+
+    /// <summary>空筛选结果提示文字色。</summary>
+    public static readonly Color FilmstripEmptyForeground = Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
+
+    // ===== 窗口内状态提示(星级写回失败等可见反馈,FILM-06) =====
+
+    /// <summary>状态提示字号。</summary>
+    public const double StatusToastFontSize = 12;
+
+    /// <summary>状态提示水平内边距。</summary>
+    public const double StatusToastPaddingX = 12;
+
+    /// <summary>状态提示垂直内边距。</summary>
+    public const double StatusToastPaddingY = 6;
+
+    /// <summary>状态提示圆角。</summary>
+    public const double StatusToastCornerRadius = 6;
+
+    /// <summary>状态提示距主图区底边的距离。</summary>
+    public const double StatusToastBottomMargin = 24;
+
+    /// <summary>状态提示停留时长(毫秒)。</summary>
+    public const double StatusToastMilliseconds = 4000;
+
+    /// <summary>状态提示底色(深灰,略高于卡片底色以便在照片上可读)。</summary>
+    public static readonly Color StatusToastBackground = Color.FromArgb(0xF0, 0x22, 0x22, 0x22);
+
     // ===== 窗口 =====
 
     /// <summary>默认窗口宽。</summary>
@@ -200,6 +260,145 @@ internal static class WindowsLayout
 
     /// <summary>标题文本字号(旧 Avalonia 文本默认 12)。</summary>
     public const double TitleTextFontSize = 12;
+
+    // ===== 相似聚类面板 =====
+
+    /// <summary>相似聚类面板外框底色(旧壳 #1E1E1E)。</summary>
+    public static readonly Color SimilarityPanelBackground = Color.FromArgb(0xFF, 0x1E, 0x1E, 0x1E);
+
+    /// <summary>相似聚类面板外框描边(旧壳 #404040)。</summary>
+    public static readonly Color SimilarityPanelBorder = Color.FromArgb(0xFF, 0x40, 0x40, 0x40);
+
+    /// <summary>相似聚类面板最小宽度。</summary>
+    public const double SimilarityMinWidth = 106;
+
+    /// <summary>相似聚类面板最小高度。</summary>
+    public const double SimilarityMinHeight = 154;
+
+    /// <summary>相似聚类面板说明/占位字号。</summary>
+    public const double SimilarityCaptionFontSize = 11;
+
+    /// <summary>相似聚类"未提取"等说明文字色(旧壳 #777)。</summary>
+    public static readonly Color SimilarityCaptionForeground = Color.FromArgb(0xFF, 0x77, 0x77, 0x77);
+
+    /// <summary>相似聚类占位文字色(旧壳 #555)。</summary>
+    public static readonly Color SimilarityPlaceholderForeground = Color.FromArgb(0xFF, 0x55, 0x55, 0x55);
+
+    /// <summary>提取按钮宽(与卡片 90 对齐)。</summary>
+    public const double SimilarityActionWidth = 90;
+
+    /// <summary>提取按钮/进度条高。</summary>
+    public const double SimilarityActionHeight = 28;
+
+    /// <summary>提取按钮字号。</summary>
+    public const double SimilarityActionFontSize = 11;
+
+    /// <summary>提取按钮底色(旧壳 #2A2A2A)。</summary>
+    public static readonly Color SimilarityActionBackground = Color.FromArgb(0xFF, 0x2A, 0x2A, 0x2A);
+
+    /// <summary>提取按钮描边(旧壳 #555)。</summary>
+    public static readonly Color SimilarityActionBorder = Color.FromArgb(0xFF, 0x55, 0x55, 0x55);
+
+    /// <summary>提取按钮文字色(旧壳 #CCC)。</summary>
+    public static readonly Color SimilarityActionForeground = Color.FromArgb(0xFF, 0xCC, 0xCC, 0xCC);
+
+    /// <summary>提取进度条前景(旧壳 #4A7A4A)。</summary>
+    public static readonly Color SimilarityProgressForeground = Color.FromArgb(0xFF, 0x4A, 0x7A, 0x4A);
+
+    /// <summary>提取进度文字字号。</summary>
+    public const double SimilarityProgressFontSize = 10;
+
+    /// <summary>相似聚类错误文字字号。</summary>
+    public const double SimilarityErrorFontSize = 10;
+
+    /// <summary>相似聚类错误文字色(旧壳 #CC4444)。</summary>
+    public static readonly Color SimilarityErrorForeground = Color.FromArgb(0xFF, 0xCC, 0x44, 0x44);
+
+    /// <summary>相似聚类错误文字最大宽度。</summary>
+    public const double SimilarityErrorMaxWidth = 120;
+
+    // ===== 分析栏 =====
+
+    /// <summary>分析栏内边距(旧壳 AnalysisView Border Padding=10)。</summary>
+    public const double AnalysisPadding = 10;
+
+    /// <summary>分析栏瓦片间距(旧壳 StackPanel Spacing=8)。</summary>
+    public const double AnalysisSpacing = 8;
+
+    /// <summary>瓦片外框描边厚度。</summary>
+    public const double AnalysisTileBorderThickness = 1;
+
+    /// <summary>瓦片外框圆角(内容不带自己的圆角,圆角只来自外框裁切)。</summary>
+    public const double AnalysisTileCornerRadius = 6;
+
+    /// <summary>瓦片药丸标签字号。</summary>
+    public const double AnalysisLabelFontSize = 12;
+
+    /// <summary>瓦片占位文字字号。</summary>
+    public const double AnalysisPlaceholderFontSize = 12;
+
+    /// <summary>准星单臂长度。</summary>
+    public const double AnalysisCrosshairArm = 12;
+
+    /// <summary>细节预览与主图联动绿框的描边厚度(旧壳 StrokeThickness=3)。</summary>
+    public const double AnalysisHighlightThickness = 3;
+
+    /// <summary>抖动矢量场位图的每格像素(32 格 × 8 = 256,便于看清箭头)。</summary>
+    public const int AnalysisShakeCellPixels = 8;
+
+    /// <summary>分析栏隐藏回退计算前的延迟(旧壳 FallbackDelayMs=500)。</summary>
+    public const int AnalysisFallbackDelayMilliseconds = 500;
+
+    /// <summary>分析栏直方图取样的长边上限(直方图形状与分辨率无关,避免整幅转换)。</summary>
+    public const int AnalysisHistogramSampleLongEdge = 1024;
+
+    /// <summary>诊断瓦片位图的长边像素(网格最近邻放大到可读尺寸,另一向按照片比例收)。</summary>
+    public const int AnalysisDiagnosticLongEdge = 512;
+
+    /// <summary>分析栏瓦片外框描边色(旧壳 #444)。</summary>
+    public static readonly Color AnalysisTileBorder = Color.FromArgb(0xFF, 0x44, 0x44, 0x44);
+
+    /// <summary>分析栏瓦片底色(旧壳 #222)。</summary>
+    public static readonly Color AnalysisTileBackground = Color.FromArgb(0xFF, 0x22, 0x22, 0x22);
+
+    /// <summary>瓦片药丸标签底色(旧壳 #88000000)。</summary>
+    public static readonly Color AnalysisLabelBackground = Color.FromArgb(0x88, 0x00, 0x00, 0x00);
+
+    /// <summary>瓦片药丸标签文字色(旧壳 #aaffffff)。</summary>
+    public static readonly Color AnalysisLabelForeground = Color.FromArgb(0xAA, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>瓦片占位文字色(旧壳 #777)。</summary>
+    public static readonly Color AnalysisPlaceholderForeground = Color.FromArgb(0xFF, 0x77, 0x77, 0x77);
+
+    /// <summary>细节预览联动绿框色(旧壳 #00FF00)。</summary>
+    public static readonly Color AnalysisHighlightStroke = Color.FromArgb(0xFF, 0x00, 0xFF, 0x00);
+
+    /// <summary>准星线条色。</summary>
+    public static readonly Color AnalysisCrosshairStroke = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>相似聚类开关字号(旧壳 ToggleButton FontSize=12)。</summary>
+    public const double SimilarityToggleFontSize = 12;
+
+    /// <summary>相似聚类开关未选中悬停底色(旧壳 #333)。</summary>
+    public static readonly Color SimilarityToggleHover = Color.FromArgb(0xFF, 0x33, 0x33, 0x33);
+
+    /// <summary>相似聚类开关选中底色(旧壳 #1F3A5F)。</summary>
+    public static readonly Color SimilarityToggleCheckedBackground = Color.FromArgb(0xFF, 0x1F, 0x3A, 0x5F);
+
+    /// <summary>相似聚类开关选中悬停底色(旧壳 #26477A)。</summary>
+    public static readonly Color SimilarityToggleCheckedHover = Color.FromArgb(0xFF, 0x26, 0x47, 0x7A);
+
+    /// <summary>相似聚类开关描边(旧壳 #555)。</summary>
+    public static readonly Color SimilarityToggleBorder = Color.FromArgb(0xFF, 0x55, 0x55, 0x55);
+
+    /// <summary>相似聚类开关选中描边(旧壳 #3A6FA8)。</summary>
+    public static readonly Color SimilarityToggleCheckedBorder = Color.FromArgb(0xFF, 0x3A, 0x6F, 0xA8);
+
+    /// <summary>相似聚类开关文字色(旧壳 #AAA)。</summary>
+    public static readonly Color SimilarityToggleForeground = Color.FromArgb(0xFF, 0xAA, 0xAA, 0xAA);
+
+    /// <summary>相似聚类开关选中文字色(旧壳 #AECBEE)。</summary>
+    public static readonly Color SimilarityToggleCheckedForeground = Color.FromArgb(0xFF, 0xAE, 0xCB, 0xEE);
 
     // ===== 配色 =====
 
@@ -262,6 +461,12 @@ internal static class WindowsLayout
 
     /// <summary>提示副标题文字色。</summary>
     public static readonly Color HintDetailForeground = Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
+
+    /// <summary>卡片第二行柱状进度槽底色(旧壳 #444444)。</summary>
+    public static readonly Color SecondLineTrack = Color.FromArgb(0xFF, 0x44, 0x44, 0x44);
+
+    /// <summary>卡片第二行柱状进度填充(旧壳 #991e90ff)。</summary>
+    public static readonly Color SecondLineFill = Color.FromArgb(0x99, 0x1E, 0x90, 0xFF);
 
     /// <summary>文件名文字色。</summary>
     public static readonly Color CardNameForeground = Color.FromArgb(0xFF, 0xEE, 0xEE, 0xEE);

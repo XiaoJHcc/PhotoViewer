@@ -60,7 +60,7 @@ macOS 当前保留前轮已实现的增强：**重新显示胶片栏、切换列
 |---|---|---|
 | 照片区 | macOS 对拍为 80×80，90×138 卡片外框加四周 3 点占位；原比例适应留边、不拉伸 | 系统描边与圆角；其他平台尺寸另评估 |
 | 当前项 | 外卡片蓝色高亮，身份来自 `IsCurrent` | 蓝色取平台语义色 |
-| 主图缓存 | 图片内部蓝色细边，独立于当前项；仅 Full 缓存触发 | 透明度与细边绘制 |
+| 主图缓存 | 图片内部蓝色细边，独立于当前项；仅 Full 缓存触发；细边必须完整可见（压在缩略图之上，不能被图片盖掉左右两边） | 透明度与细边绘制 |
 | 文件名 | 与同名合并身份一致，截断可查看完整名 | tooltip 或触摸等价入口 |
 | 第二行日期 | 读取共享 `PhotoDate`，不要只取 EXIF 后把回退日期丢掉；完整时间可查看 | 时间格式可随布局调整 |
 | 评分 | 0–5，金色实心 / 灰色空心，独立清零；点星不选择父卡片 | 平台符号与控件 |
@@ -83,7 +83,11 @@ macOS 当前保留前轮已实现的增强：**重新显示胶片栏、切换列
 | SETTINGS-02 | 分类/分组、主副标题、开关/步进器/拉条/缩放预设卡片与 iOS 原生设置逐项对齐，保留桌面快捷键/键盘映射/清库；工作副本关闭回写，不改 JSON 字段 | macOS 用 SwiftUI 原生设置（C# 持工作副本与派生文本）；iOS 原生设置；旧 Avalonia 设置不是原生视觉规格 |
 | SETTINGS-03 | macOS 设置采用 macOS 26 系统设置样式：`NavigationSplitView` 系统 Sidebar（彩色圆角图标底板、隐藏折叠按钮）、工具栏前进/后退与分页标题、右侧 `Form(.grouped)` 原生分组表单（不再手绘卡片框） | macOS 专属视觉约束，不能直接强制其他平台也用 SwiftUI 样式 |
 | IMAGE-01 | 100% 使用源像素对应屏幕物理像素；Full 热替换位置/朝向/缩放不跳变 | 主流程见根 AGENTS.md §5.1/§5.6；色彩门单独验收 |
-| SCOPE-01 | 延期功能保留配置，原生壳不显示不可用入口、不在切图隐式推理 | macOS P3：分析/聚类/工具/增强；阶段边界见 handoff |
+| ANL-01 | 原生分析栏只由平台自绘面板承载；旧壳绑定 Avalonia 位图的分析 VM 必须在原生壳里惰性（不订阅、不建位图） | Windows 第三轮实机崩溃根因：`AnalysisViewModel` 在 WinUI 回调里建 Avalonia 位图 → `0xC000027B`。仅在库里有提取结果时触发。见 P2-W §15.5 |
+| ANL-02 | 分析栏瓦片：内容不带自己的圆角（贴外框内沿，圆角只由外框 `CornerRadius` 裁切产生），且按**照片原比例**置入（居中留边），不拉满方形瓦片 | 旧壳 `DiagnosticTile` 曾用"外框 6 + 内层 InnerClip 5"双层圆角，150% 下呈"卡里套卡"；Windows 已改为单层裁切 + `entry.AspectRatio` 非方形位图（见 P2-W §15.6）。直方图瓦片保持 1:1（旧壳同为 `AspectRatio="1"`），旧壳待退役前统一 |
+| ANL-03 | 分析栏瓦片一律等边长，边长由布局系统在测量/排列时给出；首开、换向、窗口变形后不得出现"挤成一坨 / 大小错位" | Windows 用 `WindowsAnalysisTilePanel` 在 Measure/Arrange 里排布，harness 两向断言等边长（P2-W §15.6）；禁止"读实际宽度再推迟回写子项尺寸"的写法 |
+| ANL-04 | 主图绿框只在指针悬停细节预览瓦片时显示；换图、代理→全分辨率、瓦片尺寸变化等重建裁剪图的行为不得自动点亮绿框 | 旧壳同口径（`DetailPreview` 仅高亮态推 `SetDetailHighlight`，`ImageViewModel` 图片尺寸变化时先置 null）。Windows 由瓦片自持悬停态 + `ResetHover()` 实现，见 P2-W §15.6 第 4 条 |
+| SCOPE-01 | 延期功能保留配置，原生壳不显示不可用入口、不在切图隐式推理 | macOS P3：分析/聚类/工具/增强；Windows 主屏 P3 入口已落地：分析栏/相似聚类/增强预览可用,相似聚类只在面板展开时计算(切图不隐式推理);工具页与设置窗口仍未原生。阶段边界见 handoff |
 
 这些条目混合已确认要求与待分类的对拍参考，不代表全部为硬约束或相应平台已验证通过。后续主图手势、错误状态、触摸交互及设置项可继续补充与分类。
 
@@ -105,15 +109,15 @@ Windows 对拍几何（2026-10-17，150% 缩放实机）：同一套数值成立
 
 | 契约 | Windows | macOS 原生 | iOS/iPadOS | Android |
 |---|---|---|---|---|
-| FILM-01 触发条件 | P2-W:外部打开非首张定位目标已实机验证（空首屏/右键菜单/`Open` 命令的文件选择器同时修好）；点选/筛选不居中与共享 VM 同源 | 本轮实机程序化验证 | 共享旧壳代码核对 | 共享旧壳代码核对 |
+| FILM-01 触发条件 | P2-W 第二轮:外部打开非首张定位目标由 harness 断言(偏移离开列表头部);点选/筛选不居中与共享 VM 同源;外部打开文件夹走文件夹模式 | 本轮实机程序化验证 | 共享旧壳代码核对 | 共享旧壳代码核对 |
 | FILM-02 350ms/边界/末次请求 | 原生定位用 350ms 三次缓出 + 端点夹取，定位改成收敛式（布局未就绪/列表重建后补做），行为与旧壳实测一致；手感待作者验收 | 本轮实机程序化验证，手感待作者验收 | 共享旧壳代码核对 | 共享旧壳代码核对 |
-| FILM-03 用户接管/减少动态效果 | 旧壳缺口，原生待补（本轮未做接管） | 本轮验证接管；减少动态效果读取系统值，开启后的独立操作待核验 | 旧壳缺口，待补 | 旧壳缺口，待补 |
+| FILM-03 用户接管/减少动态效果 | P2-W 第二轮:点选/滚轮/拖动滚动条/触摸接管即撤销动画与排队请求(已在途的一帧用同位置无动画请求压掉);系统"减少动态效果"直接到终点。harness 覆盖两条分支 | 本轮验证接管；减少动态效果读取系统值，开启后的独立操作待核验 | 旧壳缺口，待补 | 旧壳缺口，待补 |
 | FILM-04 两向顺序/滚轮 | P2-W:两向顺序与滚轮轴已实机验证；换向不再甩回顶部，改为按当前项重新定位（项距 96↔144 变化后旧偏移无意义） | 既有与本轮程序化验证；显隐/换向定位为已登记差异 | 触摸及显隐待核验 | 触摸及显隐待核验 |
-| FILM-05 信息与标识 | 共享旧壳代码核对 | 已补 PhotoDate 回退/完整时间 tooltip、原生占位/加载状态；卡片几何与真窗口对拍通过，延迟加载专项仍待核验 | 平台实机待核验 | 平台实机待核验 |
-| FILM-06 评分筛选连续性 | 共享 VM 代码核对 | 共用 VM；完整真实改星交互待核验 | 平台实机待核验 | 平台实机待核验 |
+| FILM-05 信息与标识 | P2-W 第二轮:文件名取 `DisplayName`、第二行"拍摄时间"带完整时间 tooltip;空筛选结果给"无匹配照片";卡片几何与真窗口对拍通过;第四轮把「已缓存」描边改成独立一层压在缩略图之上(此前左右两边被图片盖掉,150% 实机确认四边可见) | 已补 PhotoDate 回退/完整时间 tooltip、原生占位/加载状态；卡片几何与真窗口对拍通过，延迟加载专项仍待核验 | 平台实机待核验 | 平台实机待核验 |
+| FILM-06 评分筛选连续性 | P2-W 第二轮:写回失败 → 主图区底部 4 s 状态提示,星色不变(harness 用只读素材触发) | 共用 VM；完整真实改星交互待核验 | 平台实机待核验 | 平台实机待核验 |
 | SETTINGS-01/02 | 旧壳；原生待迁移 | SwiftUI 原生设置（macOS 26）：程序化核验通过（五分类渲染/历史导航/勾选往返重绘/真实 NSEvent 录制/排序/缩放/关闭回写），真实鼠标拖放待作者验收 | 原生设置已存在，逐条契约验收待做 | 旧壳；原生待迁移 |
-| IMAGE-01 | P2-W 定向实机程序化：无 EXIF 棋盘 JPEG 的源尺寸/代理/Full 及物理 100% 热替换通过；八方向、150%/200% DPI、跨屏和色彩待验 | 见 P2，系统色彩/跨屏人工门未关闭 | 见 P1/后续原生阶段 | 见 P1，原生待迁移 |
-| SHELL-02 隐藏标题栏 | P2-W 自绘标题栏：指针进 50 DIP 热区显示、移开/失活隐藏；拖动区只在可见时登记（隐藏态零区域），不压标题栏按钮、不吞筛选条。150% DPI 下两向三尺寸 + 隐藏胶片条的 caption 契约程序化通过，真实鼠标拖动/最大化/还原实机验证；200% DPI、跨屏与手感待验 | 见 P2 主窗口对拍；跨屏产品验收待做 | 移动端不适用 | 移动端不适用 |
+| IMAGE-01 | P2-W 定向实机程序化：无 EXIF 棋盘 JPEG 的源尺寸/代理/Full 及物理 100% 热替换通过；第二轮用自生成八方向素材(含最小 EXIF)从**主图交换链四角回读线性像素**并核对导航图缩略图四角，方向 1–8 全部与显示朝向一致；导航图长边 150/白框/百分比已落地；第三轮补分析栏(细节预览 1:1 裁剪/直方图/诊断瓦片)与增强预览(CLHE)。真实相机素材、150%/200% DPI、跨屏和色彩仍待验 | 见 P2，系统色彩/跨屏人工门未关闭 | 见 P1/后续原生阶段 | 见 P1，原生待迁移 |
+| SHELL-02 隐藏标题栏 | P2-W 自绘标题栏：指针进 50 DIP 热区显示、移开/失活隐藏；拖动区只在可见时登记（隐藏态零区域），不压标题栏按钮、不吞筛选条。150% DPI 下两向三尺寸 + 隐藏胶片条的 caption 契约程序化通过，真实鼠标拖动/最大化/还原实机验证；第二轮补 harness 四态(最大化/还原/全屏/退出全屏)往返断言。200% DPI、跨屏与手感待验 | 见 P2 主窗口对拍；跨屏产品验收待做 | 移动端不适用 | 移动端不适用 |
 
 发现登记：Avalonia 可见范围估算代码存在方向判断不一致，不能复制为设计；可见中心预取与 macOS 每帧上报节奏也尚未专项对齐。本轮修定位条件和动画，不借此重写共享预取。
 
@@ -132,12 +136,12 @@ Windows 对拍几何（2026-10-17，150% 缩放实机）：同一套数值成立
 9. macOS 隐藏后显示/换向定位当前项；普通 resize 不抢位置；动画中隐藏或关闭无残留回调（FILM-03/04）。
 10. 开启系统减少动态效果：同样的显式请求直接到终点，点选仍不定位（FILM-03）。
 
-程序化已覆盖的部分见平台验收报告；外部打开参数、短/空结果、真实滚动条拖动、开启减少动态效果和触控板手感仍须独立记录，不因清单存在就标通过。
+程序化已覆盖的部分见平台验收报告；外部打开参数、短/空结果、真实滚动条拖动、开启减少动态效果和触控板手感仍须独立记录，不因清单存在就标通过。Windows 侧第 4/7/10 条已由 `--pv-native-smoke` 覆盖(接管后偏移不再推进、外部打开非首张定位、减少动态效果直接到终点)；第 2/3/6/8/9 条仍以作者手测为准。
 
 ## 6. 追溯入口
 
 - 基线定位/动画：[ThumbnailListView.axaml.cs](../PhotoViewer/Views/Main/File/ThumbnailListView.axaml.cs)。
 - 基线触发：[ThumbnailListViewModel.cs](../PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs)、[ControlViewModel.cs](../PhotoViewer/ViewModels/Main/ControlViewModel.cs)、[FolderViewModel.cs](../PhotoViewer/ViewModels/Main/FolderViewModel.cs)。
 - macOS 实现：[MacMainWindow.cs](../PhotoViewer.Mac/Native/MacMainWindow.cs)、[MacFilmstripView.cs](../PhotoViewer.Mac/Native/MacFilmstripView.cs)。
-- Windows 原生实现：[WindowsMainWindow.cs](../PhotoViewer.Desktop/Native/WindowsMainWindow.cs)、[WindowsLayout.cs](../PhotoViewer.Desktop/Native/WindowsLayout.cs)(几何常量唯一来源)、[WindowsTitleBar.cs](../PhotoViewer.Desktop/Native/WindowsTitleBar.cs)。
+- Windows 原生实现：[WindowsMainWindow.cs](../PhotoViewer.Desktop/Native/WindowsMainWindow.cs)、[WindowsLayout.cs](../PhotoViewer.Desktop/Native/WindowsLayout.cs)(几何常量唯一来源)、[WindowsTitleBar.cs](../PhotoViewer.Desktop/Native/WindowsTitleBar.cs)、[WindowsNavigator.cs](../PhotoViewer.Desktop/Native/WindowsNavigator.cs)(缩放指示器)、[WindowsFilmstripView.cs](../PhotoViewer.Desktop/Native/WindowsFilmstripView.cs)(定位/接管/减少动态效果)。
 - macOS 控件/几何：[P2 UI 方案](../Plans/native-rebuild-phase-2-ui.md)；阶段验收：[P2 验收](../Plans/native-rebuild-phase-2-acceptance.md)；进度：[handoff](../Plans/native-rebuild-handoff.md)。

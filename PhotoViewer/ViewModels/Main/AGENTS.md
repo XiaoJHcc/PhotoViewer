@@ -4,7 +4,9 @@
 
 `namespace PhotoViewer.ViewModels.Main`
 
-P2 原生模式：`MainViewModel.UsesNativePresentation` 使旧 ImageViewModel 的位图/缩放展示订阅退场；共享文件、筛选、评分及设置不变。加载由 Core/Image/PhotoLoadSession 编排，Mac 原生层持视口状态。P2 原生相似面板不执行隐藏的 RecomputeAsync，P3 接回分析功能时需重新启用。跨模块链路见根 §5.6。
+P2 原生模式：`MainViewModel.UsesNativePresentation` 使旧 ImageViewModel 的位图/缩放展示订阅退场；共享文件、筛选、评分及设置不变。加载由 Core/Image/PhotoLoadSession 编排，Mac 原生层持视口状态。P2 原生相似面板早期完全不执行 RecomputeAsync；Windows 第三轮起改为"面板展开才计算"（`Settings.SimilarityPanelExpanded`，折叠时不隐式推理），展开瞬间按锚点重算一次。跨模块链路见根 §5.6。
+
+**原生模式下 `AnalysisViewModel` 必须完全惰性**：它整条链路绑 Avalonia `Bitmap`（`DecodedImageAdapter.ToBitmap`），而原生壳不初始化 Avalonia 渲染接口。第三轮实机崩溃（WinUI `0xC000027B`、WER HRESULT `0x80131509`）就是展开分析栏时它去建 Avalonia 位图触发的 `InvalidOperationException` 跨 COM 边界。现在构造器在 `UsesNativePresentation` 时直接跳过全部订阅，`SetSource` / `RefreshHistogram` / `OnTileClicked` 一律早退；原生分析栏由 `WindowsAnalysisPanel` 自绘。新增依赖分析的共享逻辑时，禁止在原生壳里复活该 VM。
 
 | 模块 | ViewModel | View | Notes |
 |---|---|---|---|

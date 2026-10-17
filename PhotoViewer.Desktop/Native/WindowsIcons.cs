@@ -41,9 +41,9 @@ internal static class WindowsIcons
         ["SetRating4"] = StarGlyph,
         ["SetRating5"] = StarGlyph,
 
-        // P3 延期:原生壳不显示入口,热键也不消费(与 macOS 的 MacSymbols 同策略)
-        ["ToggleAnalysisView"] = null,
-        ["ToggleEnhance"] = null,
+        // 主屏 P3 入口(第二轮补齐):分析栏开关与增强预览
+        ["ToggleAnalysisView"] = "\uE9D9",
+        ["ToggleEnhance"] = "\uE945",
     };
 
     /// <summary>

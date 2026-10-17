@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -23,6 +24,7 @@ internal sealed class WindowsFilterBar : Grid
     private readonly ComboBox _sortOrder;
     private readonly ComboBox _ratingFilter;
     private readonly TextBlock _count;
+    private readonly ToggleButton _similarityToggle;
     private bool _syncing;
 
     /// <summary>
@@ -45,6 +47,7 @@ internal sealed class WindowsFilterBar : Grid
         _ratingFilter.ItemsSource = _filter.RatingFilters.Select(option => option.DisplayName).ToList();
         _ratingFilter.SelectionChanged += OnRatingFilterChanged;
 
+        _similarityToggle = CreateSimilarityToggle();
         _count = new TextBlock
         {
             FontSize = 12,
@@ -61,7 +64,7 @@ internal sealed class WindowsFilterBar : Grid
             Margin = new Thickness(WindowsLayout.FilterMargin),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Top,
-            Children = { _sortMode, _sortOrder, _ratingFilter, _count },
+            Children = { _sortMode, _sortOrder, _ratingFilter, _count, _similarityToggle },
         };
         Children.Add(_panel);
 
@@ -91,6 +94,8 @@ internal sealed class WindowsFilterBar : Grid
         {
             combo.HorizontalAlignment = HorizontalAlignment.Center;
         }
+
+        _similarityToggle.HorizontalAlignment = HorizontalAlignment.Center;
     }
 
     /// <summary>刷新计数文本。</summary>
@@ -112,6 +117,48 @@ internal sealed class WindowsFilterBar : Grid
         CornerRadius = new CornerRadius(6),
         BorderBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x44, 0x44, 0x44)),
     };
+
+    /// <summary>
+    /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×32、选中态走蓝底蓝框,
+    /// 直接写回 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>(持久化在设置里)。
+    /// WinUI 的 ToggleButton 模板用主题键画背景,必须按元素改键而不是只设 Background。
+    /// </summary>
+    private ToggleButton CreateSimilarityToggle()
+    {
+        var toggle = new ToggleButton
+        {
+            Content = "相似聚类",
+            Width = WindowsLayout.FilterItemWidth,
+            Height = WindowsLayout.FilterItemHeight,
+            FontSize = WindowsLayout.SimilarityToggleFontSize,
+            CornerRadius = new CornerRadius(6),
+            BorderThickness = new Thickness(1),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Center,
+            VerticalContentAlignment = VerticalAlignment.Center,
+        };
+        ToolTipService.SetToolTip(toggle, "展开/关闭相似聚类面板");
+        toggle.Resources["ToggleButtonBackground"] = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0));
+        toggle.Resources["ToggleButtonBackgroundPointerOver"] = new SolidColorBrush(WindowsLayout.SimilarityToggleHover);
+        toggle.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedBackground);
+        toggle.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedHover);
+        toggle.Resources["ToggleButtonBackgroundCheckedPressed"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedHover);
+        toggle.Resources["ToggleButtonBorderBrush"] = new SolidColorBrush(WindowsLayout.SimilarityToggleBorder);
+        toggle.Resources["ToggleButtonBorderBrushPointerOver"] = new SolidColorBrush(Color.FromArgb(0xFF, 0x66, 0x66, 0x66));
+        toggle.Resources["ToggleButtonBorderBrushChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedBorder);
+        toggle.Resources["ToggleButtonForeground"] = new SolidColorBrush(WindowsLayout.SimilarityToggleForeground);
+        toggle.Resources["ToggleButtonForegroundPointerOver"] = new SolidColorBrush(Color.FromArgb(0xFF, 0xCC, 0xCC, 0xCC));
+        toggle.Resources["ToggleButtonForegroundChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedForeground);
+        toggle.Checked += (_, _) =>
+        {
+            if (!_syncing) _filter.IsSimilarityPanelOpen = true;
+        };
+        toggle.Unchecked += (_, _) =>
+        {
+            if (!_syncing) _filter.IsSimilarityPanelOpen = false;
+        };
+        return toggle;
+    }
 
     /// <summary>排序方式变化。</summary>
     private void OnSortModeChanged(object sender, SelectionChangedEventArgs e)
@@ -154,6 +201,7 @@ internal sealed class WindowsFilterBar : Grid
             case nameof(FilterBarViewModel.SortMode):
             case nameof(FilterBarViewModel.SortOrder):
             case nameof(FilterBarViewModel.SelectedRatingFilter):
+            case nameof(FilterBarViewModel.IsSimilarityPanelOpen):
                 SyncFromViewModel();
                 break;
             case nameof(FilterBarViewModel.FilteredCount):
@@ -171,6 +219,7 @@ internal sealed class WindowsFilterBar : Grid
             _sortMode.SelectedIndex = IndexOf(_filter.SortModes.Select(option => (object)option.Value).ToList(), _filter.SortMode);
             _sortOrder.SelectedIndex = IndexOf(_filter.SortOrders.Select(option => (object)option.Value).ToList(), _filter.SortOrder);
             _ratingFilter.SelectedIndex = IndexOf(_filter.RatingFilters.Select(option => (object)option.Key).ToList(), _filter.SelectedRatingFilter);
+            _similarityToggle.IsChecked = _filter.IsSimilarityPanelOpen;
             RefreshCount();
         }
         finally

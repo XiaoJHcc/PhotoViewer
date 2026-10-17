@@ -37,6 +37,25 @@ internal static class WindowsImageAdapter
     }
 
     /// <summary>
+    /// 用已就绪的 BGRA8 像素(如 Skia 缩放的导航图)创建 XAML 位图源。
+    /// </summary>
+    /// <param name="width">像素宽</param>
+    /// <param name="height">像素高</param>
+    /// <param name="bgra">紧排的 BGRA8 像素(长度 ≥ 宽 × 高 × 4)</param>
+    /// <returns>位图源</returns>
+    public static WriteableBitmap ToSource(int width, int height, ReadOnlySpan<byte> bgra)
+    {
+        var bitmap = new WriteableBitmap(width, height);
+        using (var buffer = bitmap.PixelBuffer.AsStream())
+        {
+            buffer.Write(bgra);
+        }
+
+        bitmap.Invalidate();
+        return bitmap;
+    }
+
+    /// <summary>
     /// 按 Windows 位图格式(BGRA8,预乘)写出像素。
     /// </summary>
     /// <param name="image">解码产物</param>

@@ -132,6 +132,10 @@ internal static class WindowsNativeApplication
             try
             {
                 var smoke = LaunchArgs.Contains("--pv-native-smoke");
+                DebugSettings.XamlResourceReferenceFailed += (_, e) =>
+                    NativeStartupLog.Write("xaml resource failed: " + e.Message);
+                DebugSettings.BindingFailed += (_, e) =>
+                    NativeStartupLog.Write("xaml binding failed: " + e.Message);
                 InitializeFacades(smoke);
 
                 _main = new MainViewModel(nativePresentation: true);

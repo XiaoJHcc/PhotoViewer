@@ -20,12 +20,15 @@ internal sealed class WindowsThumbnailCard : Grid
 {
     private readonly Border _surface;
     private readonly Border _photoWell;
+    private readonly Border _photoFrame;
     private readonly Image _photo;
     private readonly Border _loading;
     private readonly TextBlock _placeholder;
     private readonly Border _shakeBadge;
     private readonly TextBlock _name;
     private readonly TextBlock _secondLine;
+    private readonly Border _secondLineTrack;
+    private readonly Border _secondLineFill;
     private readonly StackPanel _stars;
     private readonly Button[] _starButtons = new Button[6];
     private readonly Action<ImageFile> _select;
@@ -33,6 +36,9 @@ internal sealed class WindowsThumbnailCard : Grid
 
     private ImageFile? _file;
     private bool _showRating = true;
+    private bool _highlightMainImage;
+    private string? _secondLineText;
+    private double? _secondLineProgress;
     private DecodedImage? _lastThumbnail;
 
     /// <summary>
@@ -115,11 +121,18 @@ internal sealed class WindowsThumbnailCard : Grid
         {
             Background = new SolidColorBrush(WindowsLayout.ThumbnailWell),
             CornerRadius = new CornerRadius(WindowsLayout.ThumbnailCornerRadius),
+        };
+        // 描边单独一层压在图片之上:缩略图按 Uniform 铺满 80 宽,画在槽位边框里的描边四边会被图片盖掉(FILM-05)。
+        _photoFrame = new Border
+        {
+            CornerRadius = new CornerRadius(WindowsLayout.ThumbnailCornerRadius),
             BorderThickness = new Thickness(1),
             BorderBrush = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
+            IsHitTestVisible = false,
         };
         photoHost.Children.Add(_photoWell);
         photoHost.Children.Add(_photo);
+        photoHost.Children.Add(_photoFrame);
         photoHost.Children.Add(_loading);
         photoHost.Children.Add(_placeholder);
         photoHost.Children.Add(_shakeBadge);
@@ -145,8 +158,35 @@ internal sealed class WindowsThumbnailCard : Grid
             Foreground = new SolidColorBrush(WindowsLayout.CardNameForeground),
             TextAlignment = TextAlignment.Center,
             HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
         };
-        content.Children.Add(_secondLine);
+        // 相似聚类用:第二行文本叠在 80 宽的柱状进度条上(Excel 风格);主缩略图列表不显示条。
+        _secondLineTrack = new Border
+        {
+            Background = new SolidColorBrush(WindowsLayout.SecondLineTrack),
+            CornerRadius = new CornerRadius(4),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Visibility = Visibility.Collapsed,
+        };
+        _secondLineFill = new Border
+        {
+            Background = new SolidColorBrush(WindowsLayout.SecondLineFill),
+            CornerRadius = new CornerRadius(4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Stretch,
+            Width = 0,
+            Visibility = Visibility.Collapsed,
+        };
+        var secondLineHost = new Grid
+        {
+            Width = WindowsLayout.CardSecondLineWidth,
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        secondLineHost.Children.Add(_secondLineTrack);
+        secondLineHost.Children.Add(_secondLineFill);
+        secondLineHost.Children.Add(_secondLine);
+        content.Children.Add(secondLineHost);
 
         _stars = new StackPanel
         {
@@ -194,7 +234,11 @@ internal sealed class WindowsThumbnailCard : Grid
     /// </summary>
     /// <param name="file">文件</param>
     /// <param name="showRating">是否显示星级</param>
-    public void Bind(ImageFile file, bool showRating)
+    /// <param name="secondLineText">第二行文本(默认显示拍摄时间;相似聚类传分数)</param>
+    /// <param name="secondLineProgress">第二行柱状进度 0-1;null 不显示柱条</param>
+    /// <param name="highlightMainImage">选中描边是否按"当前主图"而不是"主列表锚点"</param>
+    public void Bind(ImageFile file, bool showRating, string? secondLineText = null, double? secondLineProgress = null,
+        bool highlightMainImage = false)
     {
         if (!ReferenceEquals(_file, file))
         {
@@ -209,6 +253,9 @@ internal sealed class WindowsThumbnailCard : Grid
         }
 
         _showRating = showRating;
+        _secondLineText = secondLineText;
+        _secondLineProgress = secondLineProgress;
+        _highlightMainImage = highlightMainImage;
         Refresh();
     }
 
@@ -236,14 +283,23 @@ internal sealed class WindowsThumbnailCard : Grid
         }
 
         var file = _file;
-        _name.Text = file.Name;
-        ToolTipService.SetToolTip(_name, file.Name);
-        _secondLine.Text = file.PhotoDate?.ToString("MM-dd HH:mm") ?? string.Empty;
+        _name.Text = file.DisplayName;
+        ToolTipService.SetToolTip(_name, file.DisplayName);
+        var secondLine = _secondLineText ?? file.PhotoDate?.ToString("MM-dd HH:mm") ?? string.Empty;
+        _secondLine.Text = secondLine;
+        ToolTipService.SetToolTip(_secondLine, _secondLineText == null ? file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss") : null);
+        bool hasProgress = _secondLineProgress.HasValue;
+        _secondLineTrack.Visibility = hasProgress ? Visibility.Visible : Visibility.Collapsed;
+        _secondLineFill.Visibility = hasProgress ? Visibility.Visible : Visibility.Collapsed;
+        _secondLineFill.Width = hasProgress
+            ? Math.Clamp(_secondLineProgress!.Value, 0, 1) * WindowsLayout.CardSecondLineWidth
+            : 0;
 
-        _surface.BorderBrush = new SolidColorBrush(file.IsCurrent
+        var isCurrent = _highlightMainImage ? file.IsCurrentImage : file.IsCurrent;
+        _surface.BorderBrush = new SolidColorBrush(isCurrent
             ? WindowsLayout.CurrentBorder
             : Color.FromArgb(0, 0, 0, 0));
-        _photoWell.BorderBrush = new SolidColorBrush(file.IsInCache
+        _photoFrame.BorderBrush = new SolidColorBrush(file.IsInCache
             ? WindowsLayout.CachedBorder
             : Color.FromArgb(0, 0, 0, 0));
 

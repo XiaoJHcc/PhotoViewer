@@ -27,6 +27,12 @@ public class MainViewModel : ViewModelBase
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
 
+    /// <summary>
+    /// 星级写回文件失败时触发(UI 线程);界面据此给出可见提示,不呈现虚假成功(FILM-06)。
+    /// 参数为原照片与本次请求的星级。
+    /// </summary>
+    public event Action<ImageFile, int>? RatingWriteFailed;
+
     // 当前状态
     public ImageFile? LastFile;
     private ImageFile? _currentFile;
@@ -411,6 +417,9 @@ public class MainViewModel : ViewModelBase
         var ratingSw = Stopwatch.StartNew();
         Console.WriteLine($"[Rating] === BEGIN SetRating({file.Name}, {rating}) ===");
 
+        // 文件是否已写成功:为 true 时后续 UI 刷新异常不得再报"写回失败"(界面不能报假失败)
+        var written = false;
+
         // 先在 UI 线程收集需要的引用，再整体下放到后台执行文件 I/O。
         var safeMode = Settings.SafeSetRating;
         var syncTargets = GetRatingSyncTargets(file);
@@ -461,10 +470,12 @@ public class MainViewModel : ViewModelBase
             if (!success || syncedFiles == null)
             {
                 Console.WriteLine($"[Rating] FAIL for {file.Name}. Total: {ratingSw.ElapsedMilliseconds}ms");
+                RatingWriteFailed?.Invoke(file, rating);
                 return;
             }
 
             Console.WriteLine($"[Rating] Write done. Elapsed: {ratingSw.ElapsedMilliseconds}ms. Updating UI caches...");
+            written = true;
 
             // 回到 UI 线程刷新内存缓存与界面。
             await UiDispatcher.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
@@ -497,6 +508,10 @@ public class MainViewModel : ViewModelBase
         catch (Exception ex)
         {
             Console.WriteLine("Error setting rating for " + file.Name + ": " + ex.Message);
+            if (!written)
+            {
+                RatingWriteFailed?.Invoke(file, rating);
+            }
         }
         finally
         {

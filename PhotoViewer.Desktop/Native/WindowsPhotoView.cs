@@ -132,6 +132,148 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <summary>视口物理尺寸或 LOD 需求变化时触发(首次布局前不触发),供上层驱动 <c>PhotoLoadSession.UpdateViewport</c>。</summary>
     public event Action? ViewportChanged;
 
+    /// <summary>缩放/平移/照片几何变化时触发(每帧重绘前),供导航图刷新可见框与百分比。</summary>
+    public event Action? RenderStateChanged;
+
+    /// <summary>当前是否处于适应态(导航图只在非适应态显示)。</summary>
+    public bool IsFit => _fit;
+
+    /// <summary>当前是否已上传照片纹理。</summary>
+    public bool HasImage => _textureView != null;
+
+    /// <summary>
+    /// 读取主图表面在给定显示相对坐标(u,v ∈ [0,1],相对照片显示区域)上的像素。
+    /// 仅定向验收使用(核对 EXIF 方向在主图上的实际朝向);产品路径不读回像素。
+    /// </summary>
+    /// <param name="u">显示区域横向相对位置 0-1。</param>
+    /// <param name="v">显示区域纵向相对位置 0-1。</param>
+    /// <param name="color">线性 RGB(0-1)。</param>
+    /// <returns>坐标落在视口内且回读成功时为 true。</returns>
+    internal unsafe bool TryReadDisplayPixel(double u, double v, out (float R, float G, float B) color)
+    {
+        color = default;
+        if (_disposed || _renderTarget == null || _textureView == null || _pixelWidth == 0 || _pixelHeight == 0)
+        {
+            return false;
+        }
+
+        double raster = PhysicalPixelsPerDip;
+        double x = (ActualWidth / 2) + ((u - 0.5) * DisplayWidth * _scale) + _panX;
+        double y = (ActualHeight / 2) + ((v - 0.5) * DisplayHeight * _scale) + _panY;
+        var px = (int)Math.Round(x * raster);
+        var py = (int)Math.Round(y * raster);
+        if (px < 0 || py < 0 || px >= _pixelWidth || py >= _pixelHeight)
+        {
+            return false;
+        }
+
+        using var staging = _device.CreateTexture2D(new D3D11_TEXTURE2D_DESC
+        {
+            Width = _pixelWidth,
+            Height = _pixelHeight,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+            Usage = D3D11_USAGE.D3D11_USAGE_STAGING,
+            BindFlags = 0,
+            CPUAccessFlags = (uint)D3D11_CPU_ACCESS_FLAG.D3D11_CPU_ACCESS_READ,
+            MiscFlags = 0,
+        }, null);
+        using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+        RenderScene();
+        _context.Object.CopyResource(staging.Object, backBuffer.Object);
+        var mapped = _context.Object.Map(staging.Object, 0, D3D11_MAP.D3D11_MAP_READ, 0);
+        try
+        {
+            var pixel = (ushort*)IntPtr.Add(mapped.pData, (int)((py * mapped.RowPitch) + (px * 8)));
+            color = (HalfToFloat(pixel[0]), HalfToFloat(pixel[1]), HalfToFloat(pixel[2]));
+            return true;
+        }
+        finally
+        {
+            _context.Object.Unmap(staging.Object, 0);
+            _swapChain.Present(1, 0);
+        }
+    }
+
+    /// <summary>
+    /// 把主图对准给定图像点:该点在视口居中,并按给定物理缩放呈现(1.0 = 100%)。
+    /// 供分析栏细节预览双击使用(旧壳 <c>FocusOnImagePoint(point, 1.0)</c>)。
+    /// </summary>
+    /// <param name="u">图像点横向相对位置 0-1(显示朝向)</param>
+    /// <param name="v">图像点纵向相对位置 0-1(显示朝向)</param>
+    /// <param name="physicalScale">目标物理缩放(1.0 = 100%)</param>
+    public void FocusOnImagePoint(double u, double v, double physicalScale = 1.0)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        double raster = PhysicalPixelsPerDip;
+        _scale = Math.Clamp(physicalScale / raster, MinScale / raster, MaxScale / raster);
+        _fit = false;
+        _panX = (0.5 - u) * DisplayWidth * _scale;
+        _panY = (0.5 - v) * DisplayHeight * _scale;
+        ClampPan();
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>
+    /// 把图像相对矩形(uv)换算成视口逻辑坐标矩形,供主图绿框等叠加层定位。
+    /// </summary>
+    /// <param name="uv">图像相对矩形</param>
+    /// <param name="rect">视口逻辑坐标矩形</param>
+    /// <returns>无图时为 false</returns>
+    public bool TryGetImageRect(Rect uv, out Rect rect)
+    {
+        rect = default;
+        if (_textureView == null || ActualWidth <= 0 || ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        double x = (ActualWidth / 2) + (((uv.X - 0.5) * DisplayWidth * _scale) + _panX);
+        double y = (ActualHeight / 2) + (((uv.Y - 0.5) * DisplayHeight * _scale) + _panY);
+        rect = new Rect(x, y, uv.Width * DisplayWidth * _scale, uv.Height * DisplayHeight * _scale);
+        return true;
+    }
+
+    /// <summary>半精度浮点转 float。</summary>
+    private static float HalfToFloat(ushort value) => (float)BitConverter.UInt16BitsToHalf(value);
+
+    /// <summary>
+    /// 导航图逻辑尺寸(长边 150、按显示朝向比例缩小,不补方形衬边),与旧壳缩放指示器一致;
+    /// 无照片时返回 150 方形占位。
+    /// </summary>
+    public (double Width, double Height) NavigationSize
+    {
+        get
+        {
+            if (DisplayWidth <= 0 || DisplayHeight <= 0)
+            {
+                return (WindowsLayout.NavigatorLongEdge, WindowsLayout.NavigatorLongEdge);
+            }
+
+            double factor = WindowsLayout.NavigatorLongEdge / Math.Max(DisplayWidth, DisplayHeight);
+            return (DisplayWidth * factor, DisplayHeight * factor);
+        }
+    }
+
+    /// <summary>
+    /// 导航图(逻辑坐标,无外框内边距)内的可见区域;缩放小于适应时退化为整幅照片。
+    /// </summary>
+    public Rect NavigationViewport
+    {
+        get
+        {
+            var size = NavigationSize;
+            double displayedWidth = Math.Max(1, DisplayWidth * _scale);
+            double displayedHeight = Math.Max(1, DisplayHeight * _scale);
+            var horizontal = NavigationAxis(size.Width, ActualWidth / displayedWidth, 0.5 - (_panX / displayedWidth));
+            var vertical = NavigationAxis(size.Height, ActualHeight / displayedHeight, 0.5 - (_panY / displayedHeight));
+            return new Rect(horizontal.Offset, vertical.Offset, horizontal.Extent, vertical.Extent);
+        }
+    }
+
     /// <summary>当前视口的物理像素尺寸;面板完成首次布局前为 <c>(0, 0)</c>。</summary>
     public (double Width, double Height) PhysicalViewport => _laidOut ? (_pixelWidth, _pixelHeight) : (0, 0);
 
@@ -369,6 +511,17 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         _device.Dispose();
     }
 
+    /// <summary>把一条轴上的可见比例与中心比例换算成导航图内的偏移和长度,并钳制在导航图范围内。</summary>
+    /// <param name="navigationExtent">该轴的导航图逻辑长度。</param>
+    /// <param name="visibleFraction">可见部分占整幅照片的比例(未夹取)。</param>
+    /// <param name="centerFraction">视口中心在照片上的相对位置。</param>
+    private static (double Offset, double Extent) NavigationAxis(double navigationExtent, double visibleFraction, double centerFraction)
+    {
+        double extent = Math.Clamp(Math.Clamp(visibleFraction, 0, 1) * navigationExtent, Math.Min(1, navigationExtent), navigationExtent);
+        double offset = (centerFraction * navigationExtent) - (extent / 2);
+        return (Math.Clamp(offset, 0, navigationExtent - extent), extent);
+    }
+
     /// <summary>以锚点为中心落到指定逻辑缩放,并重建平移、上报展示需求。</summary>
     private void ZoomTo(double scale, double anchorX, double anchorY)
     {
@@ -470,7 +623,15 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     }
 
     /// <summary>按当前几何重绘一帧并呈现;无纹理时只清屏。</summary>
-    private unsafe void Draw()
+    private void Draw()
+    {
+        RenderScene();
+        _swapChain.Present(1, 0);
+        RenderStateChanged?.Invoke();
+    }
+
+    /// <summary>只把当前几何画进后台缓冲(不呈现);回读像素的验收入口在呈现前调用它。</summary>
+    private unsafe void RenderScene()
     {
         if (_disposed || _renderTarget == null) return;
         _context.Object.OMSetRenderTargets(1, [_renderTarget.Object], null);
@@ -498,7 +659,6 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             _context.Object.PSSetSamplers(0, 1, [_sampler.Object]);
             _context.Object.Draw(4, 0);
         }
-        _swapChain.Present(1, 0);
     }
 
     /// <summary>视口物理尺寸或 LOD 需求变化时上报一次(重复值不重报,避免每帧打扰加载会话)。</summary>

@@ -51,6 +51,7 @@ public static class PhotoDatabase
             }
 
             using var conn = OpenConnectionInternal();
+            EnsureWalMode(conn);
             EnsureSchema(conn);
             _initialized = true;
         }
@@ -91,6 +92,7 @@ public static class PhotoDatabase
                 DeleteDbFiles();
 
                 using var conn = OpenConnectionInternal();
+                EnsureWalMode(conn);
                 EnsureSchema(conn);
                 _initialized = true;
             }
@@ -470,14 +472,29 @@ public static class PhotoDatabase
         return n is long l ? l : Convert.ToInt64(n, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// 在首次建库连接上写一次 WAL 日志模式。journal_mode 持久化在库文件里,
+    /// 之后每条连接继承它,不需要(也不应该)在并发连接上重复设置。
+    /// </summary>
+    /// <param name="conn">已打开的建库连接</param>
+    private static void EnsureWalMode(SqliteConnection conn)
+    {
+        using var pragma = conn.CreateCommand();
+        pragma.CommandText = "PRAGMA journal_mode=WAL;";
+        pragma.ExecuteNonQuery();
+    }
+
     private static SqliteConnection OpenConnectionInternal()
     {
         if (_dbPath == null) _dbPath = ResolvePath();
         var conn = new SqliteConnection($"Data Source={_dbPath}");
         conn.Open();
+        // journal_mode 是持久化到库文件的设置,只能在 Initialize 的单连接上设一次;
+        // 每次开连接都设它会要求库级写锁 — 并发开几十上百个连接时互相 SQLITE_BUSY,
+        // 表现为面板/索引整窗卡死。这里只留连接级(不需要库锁)的两个 pragma。
         using (var pragma = conn.CreateCommand())
         {
-            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
+            pragma.CommandText = "PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
             pragma.ExecuteNonQuery();
         }
         return conn;

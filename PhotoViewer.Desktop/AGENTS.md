@@ -3,10 +3,13 @@
 Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinUI 3 原生壳**。
 方案、里程碑与作者待确认项见 [Plans/native-rebuild-windows-p2.md](../Plans/native-rebuild-windows-p2.md)。
 
-**当前状态**:原生壳已具备**四分区主窗口**(筛选条 / 胶片条 / 主图 / 控制栏),主图走 D3D11 + DXGI 合成交换链,
+**当前状态**:原生壳已具备**五分区主窗口**(筛选 / 胶片条+相似聚类 / 主图 / 分析栏 / 控制栏),主图走 D3D11 + DXGI 合成交换链,
 尺寸、边距与配色按旧 Avalonia 设计对标(2026-10-17 在 150% 缩放下与旧壳同尺寸逐项实测,见 [Windows P2-W §12](../Plans/native-rebuild-windows-p2.md))。
-标题栏为**自绘四按钮 + 50 DIP 热区自动显隐**(不再使用系统标题栏)。设置窗口(W-M5)、分析栏/聚类/工具/增强(P3)尚未原生;
-显隐与命令表沿用共享设置。已完成 / 待完成总表见 [Windows P2-W §13](../Plans/native-rebuild-windows-p2.md#13-已完成--待完成清单)。
+标题栏为**自绘四按钮 + 50 DIP 热区自动显隐**(不再使用系统标题栏)。主屏功能对标已完成:缩放指示器(导航图)、
+FILM-03 用户接管与"减少动态效果"、FILM-06 星级写回失败窗口内可见、外部打开/拖放文件夹、最大化/全屏/还原闭环、
+空筛选结果状态都在原生壳内实现并被 `--pv-native-smoke` 覆盖(见 [Windows P2-W §14](../Plans/native-rebuild-windows-p2.md))。
+P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15);**设置窗口(W-M5)、工具页(EXIF 详情/照片统计/DINO 调试)、色彩与 RAW(W-M7)尚未原生**;显隐与命令表沿用共享设置。
+已完成 / 待完成总表见 [Windows P2-W §13](../Plans/native-rebuild-windows-p2.md#13-已完成--待完成清单)。
 
 ## 文件清单
 
@@ -18,11 +21,15 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 | Native/WindowsLayout.cs | **几何与配色常量唯一来源**:栏宽 116(外框 117)、下拉 90×32、卡片 90×138(项距 96/144)、EXIF 50×40、评分 30×30、命令 40×40、标题栏 48/热区 50/按钮 36×32、窗口 1200×850(min 560×480)等。harness 反查这里。 |
 | Native/WindowsWrapPanel.cs | WinUI 没有 WrapPanel;控制栏三分组"整组换行/换列 + 行内居中"依赖这个自建面板。 |
 | Native/WindowsTitleBar.cs | 自绘标题栏:标题文本 + 最小化/最大化/全屏/关闭四按钮，指针进热区显示、移开或窗口失活隐藏；覆盖层背景为 null 只让按钮吃指针，拖动区由主窗口登记为系统 caption。 |
-| Native/WindowsMainWindow.cs | 主窗口:去掉系统标题栏与系统按钮(`OverlappedPresenter.SetBorderAndTitleBar(true, false)`)、两向四分区布局、标题栏显隐与物理像素拖动区登记、右键菜单、空首屏提示、拖放、键盘/滚轮 → 共享手势表、命令分发、`PhotoLoadSession` 接线。 |
-| Native/WindowsNativeAcceptance.cs | 主窗口的定向验收 partial；显式 `--pv-native-smoke` 隔离设置/数据库/日志并创建自有棋盘 JPEG，验证真实队列顺序、内嵌模型 SHA256 与 DirectML 双输出、两向三尺寸往返 resize、标题栏自动显隐下的 caption 契约(隐藏零区域/显示不压按钮)、无 EXIF 源尺寸、物理 100% Full 热替换和关闭释放。输出 `release/native-win-acceptance/checks.json`，失败退出码 1；不代表完整 W-M6 或跨屏色彩验收。 |
+| Native/WindowsMainWindow.cs | 主窗口:去掉系统标题栏与系统按钮(`OverlappedPresenter.SetBorderAndTitleBar(true, false)`)、两向四分区布局、标题栏显隐与物理像素拖动区登记、右键菜单、空首屏提示、窗口内状态提示、拖放/外部打开(文件夹也进文件夹模式)、键盘/滚轮 → 共享手势表、命令分发、`PhotoLoadSession` 接线。 |
+| Native/WindowsSimilarityPanel.cs | 相似聚类面板:相似项列表(分数百分比 + 75%~100% 柱条)、空态/未提取占位、"提取全部/补齐全部"按钮原地换进度条(自绘两条 Border,见硬约束)。点选走 `SimilarityPanelViewModel.SelectItemCommand` 切主图但保留主列表锚点。 |
+| Native/WindowsAnalysisPanel.cs | 分析栏:细节预览(中心 + 索尼对焦点,源像素 1:1 方形裁剪)、直方图、DINO PCA / Cosine / 锐度 / 抖动矢量场瓦片、准星与瓦片点击重算 cosine、双击预览对准主图、悬停联动主图绿框(**只在指针停在细节预览瓦片里时推送**;重建裁剪图、换图都不点亮,面板收起时丢弃悬停态)。数据链路复用 `AnalysisDataReader/AnalysisComputer/AnalysisResultCache/HeatmapBitmapBuilder/PatchHeatmap`;诊断**始终基于原片**(增强只影响主图/预览/直方图)。瓦片内容不带自己的圆角,圆角只来自外框裁切;诊断位图按 `entry.AspectRatio` 生成非方形(长边 512),瓦片里按原比例居中留边,不拉满方形。 |
+| Native/WindowsAnalysisTilePanel.cs | 分析栏瓦片容器:Measure/Arrange 把子项直接排成等边长正方形条带(主轴均分、另一向钳制、条带居中),换向即 `InvalidateMeasure`;边长变化后 `SideChanged` 异步通知细节预览重裁。 |
+| Native/WindowsNavigator.cs | 缩放指示器(导航图):右下角缩略图 + 白色可见框 + 百分比;缩略图由会话线性 RGBA16F 帧用 Skia 直接缩到导航尺寸并转 sRGB8(只处理导航像素),旧壳同款显示条件(设置开启且非适应态),不可交互。 |
+| Native/WindowsNativeAcceptance.cs | 主窗口的定向验收 partial；显式 `--pv-native-smoke` 隔离设置/数据库/日志(每轮清空自有库)并创建自有棋盘/方向素材，验证真实队列顺序、内嵌模型 SHA256 与 DirectML 双输出、两向三尺寸往返 resize、标题栏自动显隐下的 caption 契约、无 EXIF 源尺寸、物理 100% Full 热替换、导航图、八方向 EXIF(主图交换链四角回读 + 导航图四角采样)与控制栏取值、FILM-03 接管/减少动态效果、FILM-06 写回失败提示、外部打开非首张定位、**相似聚类三态与提取全部**、**分析栏六瓦片/直方图/即时计算/准星重算**（含两向"瓦片等边长"断言）、**增强预览开关**、**分析栏已提取(DB 派生)路径**、最大化/全屏/还原与关闭释放(共 23 项)。输出 `release/native-win-acceptance/checks.json`，失败退出码 1；不代表完整 W-M6 或跨屏色彩验收。 |
 | Native/WindowsFilterBar.cs | 排序方式 / 升降序 / 星级筛选 + 筛选后计数;名称与取值语义与旧壳一致(`FILTER-01`)。 |
-| Native/WindowsFilmstripView.cs | 胶片条:`ItemsRepeater` + 卡片池 + 可见区上报 + 350ms 三次缓出定位(`FILM-01/02/04`)。 |
-| Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名 / 拍摄时间 / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。 |
+| Native/WindowsFilmstripView.cs | 胶片条:`ItemsRepeater` + 卡片池 + 可见区上报 + 350ms 三次缓出定位(`FILM-01/02/04`);用户接管(点选/滚轮/拖动滚动条/触摸)撤销在途动画与排队请求,系统"减少动态效果"直接到终点(`FILM-03`);空筛选结果显示简短状态。 |
+| Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名(DisplayName) / 拍摄时间(含完整时间 tooltip) / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。"已缓存"描边单独一层压在缩略图**之上**:80 宽的图片按 Uniform 铺满槽位,画在槽位里的描边左右两条边会被图片盖掉。 |
 | Native/WindowsControlBar.cs | EXIF·评分·命令三个整体分组,整组换行换列居中,评分方向按布局翻转(`TOOLBAR-01`)。 |
 | Native/WindowsPhotoView.cs | GPU 照片表面:合成交换链(F16)、EXIF 方向顶点变换、fit/100%/滚轮缩放/拖动平移、视口上报驱动代理与全分辨率。 |
 | Native/WindowsInput.cs | Windows 虚拟键/滚轮 → 共享 `AppGesture`;不改持久化字码。 |
@@ -54,21 +61,43 @@ Windows 头工程。迁移期同时承载两条路径:旧 Avalonia 壳与 **WinU
 - 深色外观把 `RequestedTheme = ElementTheme.Dark` 设在**根元素**上。原生壳已去掉系统标题栏(`OverlappedPresenter.SetBorderAndTitleBar(hasBorder:true, hasTitleBar:false)`),系统最小/最大/关闭按钮不再存在,`AppWindow.TitleBar` 配色也就不再需要设置。
 - **`OverlappedPresenter` 没有全屏 API**:全屏 = `SetBorderAndTitleBar(false, false)` + `Maximize()`,退出时 `SetBorderAndTitleBar(true, false)` + `Restore()`。
 - **自绘标题栏的按钮悬停色要改写主题键**:WinUI 的 `Button` 模板用 `ButtonBackground*` 画刷覆盖 `Background`,只设 `Background` 会被默认亮色顶掉;按元素写 `button.Resources["ButtonBackgroundPointerOver"]` 等键才生效。覆盖层根元素背景必须为 **null** —— 设成透明画刷会吃掉顶部 48 DIP 的全部指针,筛选条与照片手势全被吞掉。
-- **`ProgressBar` 不能放进虚拟化卡片**:无论 indeterminate 还是 determinate,进入 `ItemsRepeater` 的项模板都会让布局测量抛
-  `E_FAIL(0x80004005)` 整窗崩溃(已二分定位)。卡片加载态改用静态细条。
+- **`ProgressBar` 在本工程不可用**:进虚拟化卡片会 `E_FAIL(0x80004005)`;即使独立放置,首次布局也会抛
+  `XamlParseException`(找不到 `TabViewScrollButtonBackground`)→ 进程 stowed exception `0xC000027B` 直接退出。
+  一律用两条 `Border`(底槽 + 按比例填充)自绘进度,卡片加载态也是静态细条。`DebugSettings.XamlResourceReferenceFailed`
+  已接到启动日志,以后再遇到资源缺失可直接定位。
 - `ScrollViewer.ZoomMode` 必须设 `Disabled`,否则虚拟化内容的测量用无限尺寸。
-- `Border` / `ScrollViewer` 在 WinUI 3 里是 **sealed**,不能继承;自定义容器只能继承 `Panel`、`ContentControl` 或 `Grid`。
+- `Border` / `ScrollViewer` 在 WinUI 3 里是 **sealed**,不能继承;自定义容器只能继承 `Panel`、`ContentControl` 或 `Grid`
+  (导航图因此是 `Grid` + 内部 `Border`,不是 `Border` 子类)。
 - **`Border.Width` 含 `BorderThickness`**:写得跟旧壳的数字一样会让内容少 1~2 DIP(文件栏内容因此从 116 变 115,胶片条卡片被压窄)。带边框的占位一律用 `WindowsLayout.RailFrameWidth` 这类"含边框"常量。
 - 在 `namespace PhotoViewer.Desktop.Native` 里写 `Windows.UI.Color` 会被解析成本仓的 `PhotoViewer.Windows`;
-  统一 `using Windows.UI;` + 裸 `Color`。
+  统一 `using Windows.UI;` + 裸 `Color`(`Colors` 类反而取不到,用 `Color.FromArgb`)。
+- `DispatcherQueueTimer` 在同时 `using Windows.System;` 的文件里会二义,显式写 `Microsoft.UI.Dispatching.DispatcherQueueTimer`。
+- **布局回调里不要改子元素尺寸**:`SizeChanged` 里直接改尺寸会触发布局环(Windows fail-fast)。分析栏瓦片的边长因此
+  由 `WindowsAnalysisTilePanel` 的 Measure/Arrange 直接给出(布局系统给多少就用多少,子项不再有自己的 `Width/Height`),
+  换向或窗口变形只 `InvalidateMeasure`。**禁止**回到"读 `ActualWidth` → `UiDispatcher.Post` 推迟 → 回写子项尺寸"的老写法:
+  那一拍只要赶在布局之前读到 0,瓦片就退回各自内容尺寸(表现为"挤成一坨、大小错位",偶发),而且事后可能不再有
+  `SizeChanged` 来纠正。边长变化后的副作用(细节预览重裁)用面板的 `SideChanged` 异步回调,不在布局回调里碰位图。
+- `WriteableBitmap` **只能在 UI 线程创建**(后台线程会 `RPC_E_WRONG_THREAD`);Skia 降采样/直方图渲染放后台,回来再建位图。
+- 分析栏现算的 CV/DINO 推理用 `SemaphoreSlim` 串行(两个并发 DirectML 推理会崩进程),分析图在现算期间持 `DecodedImage` 租约,
+  避免主图热替换把像素缓冲归还进池。
+- **旧壳 `AnalysisViewModel` 在原生壳里必须惰性**:它整条链路绑 Avalonia `Bitmap`(`DecodedImageAdapter.ToBitmap`),
+  而原生壳没有 Avalonia 渲染接口。只要它还在订阅 `IsAnalysisViewVisible` / `CurrentFile`,展开分析栏(或切图)就会在
+  WinUI 回调里抛 `InvalidOperationException: Unable to locate 'Avalonia.Platform.IPlatformRenderInterface'`,
+  跨 COM 边界变成 `0xC000027B` 直接退进程(WER 签名:combase `0x80131509`)。诊断要点:这类崩溃**不会**触发
+  `Application.UnhandledException`,`native-startup.log` 里的 `FIRSTCHANCE` 行是唯一线索(已装钩子,限流 200 条)。
+  实机复现顺序:先提取特征 → 再展开分析栏;空库不崩,是因为 `SetSource` 没有数据可建位图。
+- 导航图缩略图**不走 D3D 回读**:直接把会话的线性 RGBA16F 帧包成 `SKImage`,用 Skia 绘到导航尺寸的 sRGB8 `SKBitmap`
+  (只处理导航像素,成本与照片分辨率无关),再由 `WindowsImageAdapter.ToSource(width, height, span)` 交 XAML。
+  EXIF 方向在绘制矩阵里应用,口径与顶点着色器一致。文字、圆角与可见框由原生控件绘制。
 - Git Bash 调 `dotnet publish` 必须用 `-p:Foo=bar`(写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`);
   PowerShell 脚本传参数组用空格分隔的字符串(逗号数组会被 bash 吞成一个 token)。
 
 ## 运行与验收
 
 - 旧壳:`Debug Windows (Legacy)` / `Run Windows (Legacy)`。
-- 原生壳:`dotnet run --project PhotoViewer.Desktop -c Debug -- --native`(可跟图片路径直接打开)。
-- 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke`）；当前设备 150% 缩放(PerMonitorV2)已过，覆盖两向三尺寸 resize、标题栏自动显隐的 caption 契约、物理 100% 升级与文件选择器可弹出；200% DPI、真实跨屏、八方向、系统色彩与鼠标手感仍待验。
+- 原生壳:`dotnet run --project PhotoViewer.Desktop -c Debug -- --native`(可跟图片路径或文件夹路径直接打开)。
+- 主屏 P3 入口:右键菜单"分析栏/缩略图栏/控制栏"勾选、筛选条"相似聚类"开关、控制栏"分析栏/增强预览"按钮(快捷键 Ctrl+Oem… 见设置;增强默认 `E`)。
+- 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Desktop -c Debug -- --native --pv-native-smoke`）；当前设备 150% 缩放(PerMonitorV2)已过，**23 项**覆盖两向三尺寸 resize、caption 契约、物理 100% 升级、导航图、八方向 EXIF(主图四角回读)、FILM-03、FILM-06、外部打开定位、相似聚类(空态→提取全部→列表→点选)、分析栏(预览/直方图/即时计算/准星 cosine/两向 + 已提取 DB 派生路径)、增强预览、窗口四态与文件选择器；200% DPI、真实跨屏、系统色彩、增强态 + 分析栏同时开启的长时间稳定性与真实鼠标手感仍待验。
 - 与旧壳对拍的方法(本轮用的那一套):窗口设成**同一物理尺寸**截图后按 1.5 比 DIP 换算。抓图脚本必须先把**自身**设成 Per-Monitor-V2 感知,否则 Win32 会把所有矩形按 96/dpi 虚拟化,两壳数据不可比。
 - 辅助脚本(均在 `bin/`,被忽略不进库):`runcheck.ps1`(启动 + 存活性/窗口 + 抓窗口位图 + 收尾)、`compare/wincheck.ps1`(按指定物理尺寸抓窗口/客户区位图)、`compare/profile.py` / `bands.py`(按像素剖面比对两壳几何)。
   `wincheck.ps1` 的 `-HoverY`(直接 `SetCursorPos`)只能移动光标,**不会**触发 WinUI 的 `PointerMoved` —— 要验标题栏自动显隐必须用真实输入注入(本轮用 KimiCU 的 click/drag)。
