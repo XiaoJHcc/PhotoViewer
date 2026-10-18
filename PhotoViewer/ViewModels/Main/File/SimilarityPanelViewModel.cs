@@ -88,6 +88,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             this.RaiseAndSetIfChanged(ref _isStateIndexing, value);
             this.RaisePropertyChanged(nameof(ShowActionArea));
             this.RaisePropertyChanged(nameof(ShowActionButton));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
         }
     }
 
@@ -125,6 +126,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(HasUnindexed));
             this.RaisePropertyChanged(nameof(ShowActionArea));
             this.RaisePropertyChanged(nameof(ShowActionButton));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
             this.RaisePropertyChanged(nameof(ShowFullPlaceholder));
             this.RaisePropertyChanged(nameof(ShowUnindexedPlaceholder));
             this.RaisePropertyChanged(nameof(ActionButtonText));
@@ -156,7 +158,9 @@ public class SimilarityPanelViewModel : ReactiveObject
     public bool ShowUnindexedPlaceholder => !HasItems && HasUnindexed;
 
     private string? _indexError;
-    /// <summary>批量提取失败时的错误信息;无错误时为 null。</summary>
+    /// <summary>
+    /// 批量提取失败时的错误信息;空态与列表态共用同一份,不只在无相似项时赋值(SIM-10)。
+    /// </summary>
     public string? IndexError
     {
         get => _indexError;
@@ -164,11 +168,18 @@ public class SimilarityPanelViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _indexError, value);
             this.RaisePropertyChanged(nameof(HasIndexError));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
         }
     }
 
     /// <summary>是否存在提取错误(便于绑定 IsVisible)。</summary>
     public bool HasIndexError => _indexError != null;
+
+    /// <summary>
+    /// 错误文案是否应显示在动作区:列表态(有相似项)与空态都可绑定,
+    /// 让错误不再只挂在空态栈里(SIM-10)。
+    /// </summary>
+    public bool ShowActionAreaError => HasIndexError && ShowActionArea;
 
     private FolderFeatureIndexer? _indexer;
 

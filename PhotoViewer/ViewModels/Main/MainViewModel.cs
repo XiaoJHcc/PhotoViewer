@@ -111,9 +111,12 @@ public class MainViewModel : ViewModelBase
         Settings.WhenAnyValue(s => s.LayoutMode)
             .Subscribe(_ => UpdateLayoutFromSettings());
 
-        // 当前图片切换、或 ExifData 异步加载完成时，同步刷新工具状态。
+        // 当前图片切换、或 ExifData / EXIF 加载完成时，同步刷新工具状态。
+        // 无 EXIF 的照片加载完成时 ExifData 仍为 null（值未变化），必须同时监听 IsExifLoaded 才能区分“加载中”和“无 EXIF”。
         this.WhenAnyValue(m => m.CurrentFile)
-            .Select(file => file?.WhenAnyValue(f => f.ExifData) ?? Observable.Return<ExifData?>(null))
+            .Select(file => file == null
+                ? Observable.Return<ImageFile?>(null)
+                : file.WhenAnyValue(f => f.ExifData, f => f.IsExifLoaded).Select(_ => file))
             .Switch()
             .Subscribe(_ => Tools.SyncCurrentFile(CurrentFile));
 
@@ -138,11 +141,12 @@ public class MainViewModel : ViewModelBase
     public void OpenSettingWindow() => NativeWindowPresenter.ShowSettingsWindow(Settings);
 
     /// <summary>
-    /// 打开工具窗口并显示工具首页（桌面端单例）。已打开时直接前置，不重复创建。
+    /// 打开工具窗口（桌面端单例）。未打开时回到工具首页；已打开时只前置并保留当前页（TOOLS-01）。
     /// </summary>
     public void OpenToolsWindow()
     {
-        Tools.ShowList();
+        if (!Tools.IsPresented)
+            Tools.ShowList();
         NativeWindowPresenter.ShowOrActivateToolsWindow(Tools);
     }
 
@@ -210,11 +214,12 @@ public class MainViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// 打开工具弹窗并显示工具首页（移动端）。
+    /// 打开工具弹窗（移动端）。未展示时回到工具首页；已展示时保留当前页（TOOLS-01）。
     /// </summary>
     public void OpenToolsModal()
     {
-        Tools.ShowList();
+        if (!Tools.IsPresented)
+            Tools.ShowList();
         ModalContentType = "Tools";
         ModalTitle = "工具";
         ShowModal();
