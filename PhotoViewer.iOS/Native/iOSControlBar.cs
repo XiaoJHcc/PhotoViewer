@@ -1,5 +1,6 @@
 using CoreGraphics;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
@@ -41,7 +42,8 @@ internal sealed class iOSControlBar : UIView
     public iOSControlBar(Action changed) : base(CGRect.Empty)
     {
         _changed = changed;
-        BackgroundColor = UIColor.FromWhiteAlpha(.07f, 1);
+        // SHELL-01：控制栏底色与窗口/栏位同一令牌（#111111）。
+        BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
     }
 
     /// <summary>是否提供该命令的入口：I5 起分析栏 / 增强预览 / 其余共享命令都有原生实现。</summary>
@@ -74,8 +76,9 @@ internal sealed class iOSControlBar : UIView
         if (main.Settings.ShowRating)
         {
             var ratingGroup = new UIView();
-            ratingGroup.BackgroundColor = UIColor.FromWhiteAlpha(2f / 15, 1);
-            ratingGroup.Layer.CornerRadius = 6;
+            // TOOLBAR-10：EXIF/评分块统一取 color.toolbar.block.background（#222222）。
+            ratingGroup.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorToolbarBlockBackground);
+            ratingGroup.Layer.CornerRadius = (nfloat)DesignTokens.ToolbarCornerRadius;
             for (int rating = 0; rating < 6; rating++)
             {
                 int value = rating;
@@ -98,13 +101,17 @@ internal sealed class iOSControlBar : UIView
             if (!IsCommandAvailable(hotkey.Command)) continue;
             string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
             if (symbol == null) continue;
-            var button = new UIButton(new CGRect(0, 0, 40, 40));
+            var button = new UIButton(new CGRect(0, 0, DesignTokens.ToolbarCommandButtonSize, DesignTokens.ToolbarCommandButtonSize));
             button.SetImage(iOSSymbols.Symbol(symbol, 18), UIControlState.Normal);
             button.TintColor = UIColor.Label;
-            button.BackgroundColor = UIColor.FromRGB(0x33, 0x33, 0x33);
-            button.Layer.CornerRadius = 6;
+            // TOOLBAR-10：命令按钮 #333333 底 + #555555 描边，圆角只由控件自身裁切一次。
+            button.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorToolbarCommandBackground);
+            button.Layer.BorderColor = iOSColors.FromToken(DesignTokens.ColorToolbarCommandBorder).CGColor;
+            button.Layer.BorderWidth = (nfloat)DesignTokens.ShellDividerThickness;
+            button.Layer.CornerRadius = (nfloat)DesignTokens.ToolbarCornerRadius;
             button.Layer.MasksToBounds = true;
-            button.AccessibilityLabel = hotkey.Name;
+            // TOOLBAR-04：读屏名称含命令名与当前主/次绑定（未设置的绑定不显示占位）。
+            button.AccessibilityLabel = CommandAccessibilityLabel(hotkey);
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
             button.TouchUpInside += (_, _) => execute(hotkey.Command);
             if (hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal))
@@ -122,6 +129,19 @@ internal sealed class iOSControlBar : UIView
             _hotkeys.Add(hotkey);
             hotkey.PropertyChanged += OnHotkeyChanged;
         }
+    }
+
+    /// <summary>
+    /// 命令按钮的读屏名称：命令名 + 实际主/次绑定；未设置的绑定不出现"未设置"占位（TOOLBAR-04）。
+    /// </summary>
+    /// <param name="hotkey">共享快捷键项。</param>
+    /// <returns>无障碍名称。</returns>
+    private static string CommandAccessibilityLabel(SettingsViewModel.HotkeyItem hotkey)
+    {
+        var parts = new List<string> { hotkey.Name };
+        if (hotkey.PrimaryHotkey != null) parts.Add($"主 {hotkey.PrimaryHotkeyText}");
+        if (hotkey.SecondaryHotkey != null) parts.Add($"次 {hotkey.SecondaryHotkeyText}");
+        return string.Join("，", parts);
     }
 
     /// <summary>显隐、名称或快捷键变化时请求宿主合并刷新。</summary>
@@ -241,13 +261,16 @@ internal sealed class iOSControlBar : UIView
     {
         /// <summary>以 50×40 参考规模创建信息块。</summary>
         /// <param name="entry">共享 EXIF 展示条目。</param>
-        internal ExifTile(ExifDisplayEntry entry) : base(new CGRect(0, 0, 50, 40))
+        internal ExifTile(ExifDisplayEntry entry)
+            : base(new CGRect(0, 0, DesignTokens.ToolbarExifBlockWidth, DesignTokens.ToolbarExifBlockHeight))
         {
-            BackgroundColor = UIColor.FromWhiteAlpha(2f / 15, 1);
-            Layer.CornerRadius = 6;
+            BackgroundColor = iOSColors.FromToken(DesignTokens.ColorToolbarBlockBackground);
+            Layer.CornerRadius = (nfloat)DesignTokens.ToolbarCornerRadius;
             AccessibilityLabel = $"{entry.DisplayName} {entry.DisplayValue}";
-            AddSubview(Text(entry.DisplayName, new CGRect(0, 4, 50, 13), 10, false));
-            AddSubview(Text(entry.DisplayValue, new CGRect(0, 19, 50, 17), 12, true));
+            AddSubview(Text(entry.DisplayName, new CGRect(0, 4, DesignTokens.ToolbarExifBlockWidth, 13),
+                DesignTokens.ToolbarExifLabelFontSize, false));
+            AddSubview(Text(entry.DisplayValue, new CGRect(0, 19, DesignTokens.ToolbarExifBlockWidth, 17),
+                DesignTokens.ToolbarExifValueFontSize, true));
         }
 
         /// <summary>生成居中原生标签，值使用较高字重。</summary>

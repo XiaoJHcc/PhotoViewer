@@ -37,6 +37,7 @@ internal static class iOSContextMenus
     /// <param name="controlVisible">控制栏当前是否可见。</param>
     /// <param name="analysisVisible">分析栏当前是否可见。</param>
     /// <param name="enhanced">增强预览当前是否开启。</param>
+    /// <param name="hasPhoto">当前是否有照片（MENU-07：无照片时增强置灰，其余项照常）。</param>
     /// <param name="openFolder">打开文件夹回调。</param>
     /// <param name="toggleFilm">切换胶片栏回调。</param>
     /// <param name="toggleControl">切换控制栏回调。</param>
@@ -45,7 +46,7 @@ internal static class iOSContextMenus
     /// <param name="openTools">打开工具页回调。</param>
     /// <param name="openSettings">打开设置回调。</param>
     /// <returns>菜单与同源回调。</returns>
-    internal static MenuResult Photo(bool filmVisible, bool controlVisible, bool analysisVisible, bool enhanced,
+    internal static MenuResult Photo(bool filmVisible, bool controlVisible, bool analysisVisible, bool enhanced, bool hasPhoto,
         Action openFolder, Action toggleFilm, Action toggleControl, Action toggleAnalysis, Action toggleEnhance,
         Action openTools, Action openSettings)
     {
@@ -57,7 +58,7 @@ internal static class iOSContextMenus
             Item(handlers, "photo.analysis", "分析栏", "square.grid.2x2", analysisVisible, toggleAnalysis),
             Item(handlers, "photo.control", "控制栏", "slider.horizontal.3", controlVisible, toggleControl),
         ]);
-        var enhance = Item(handlers, "photo.enhance", "增强", "wand.and.stars", enhanced, toggleEnhance);
+        var enhance = Item(handlers, "photo.enhance", "增强", "wand.and.stars", enhanced, toggleEnhance, enabled: hasPhoto);
         var settings = UIMenu.Create(string.Empty, null!, new NSString("photo.settings"), UIMenuOptions.DisplayInline,
         [
             Item(handlers, "photo.tools", "工具…", "wrench.and.screwdriver", null, openTools),
@@ -99,12 +100,14 @@ internal static class iOSContextMenus
     /// <param name="symbol">SF Symbols 名称。</param>
     /// <param name="check">勾选态；null 表示不显示勾选。</param>
     /// <param name="handler">执行动作。</param>
+    /// <param name="enabled">是否可用；false 时保留项但置灰（MENU-07）。</param>
     /// <returns>系统 action 对象。</returns>
     private static UIAction Item(Dictionary<string, Action> handlers, string identifier, string title, string symbol,
-        bool? check, Action handler)
+        bool? check, Action handler, bool enabled = true)
     {
         var action = UIAction.Create(title, iOSSymbols.Symbol(symbol), identifier, _ => handler());
         if (check.HasValue) action.State = check.Value ? UIMenuElementState.On : UIMenuElementState.Off;
+        if (!enabled) action.Attributes |= UIMenuElementAttributes.Disabled;
         handlers[identifier] = handler;
         return action;
     }

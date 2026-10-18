@@ -112,6 +112,7 @@ internal static class iOSNativeInputCheck
                 lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}）→ 工作副本 {workspace}");
 
                 await VerifyPhotoContextMenuAsync(root, main, session, lines);
+                await VerifyStatusToastAsync(root, lines);
                 await VerifyCardContextMenuAsync(root, main, lines, workspace);
                 await VerifySwipeAsync(root, main, lines);
                 await VerifyKeyboardAsync(root, main, lines);
@@ -155,6 +156,22 @@ internal static class iOSNativeInputCheck
             throw new InvalidOperationException("主图菜单勾选态与栏位显隐/增强开关不一致");
         lines.Add($"PASS 主图上下文菜单：{actions.Count} 项（{string.Join(" / ", actions.Select(action => action.Title))}），图标与勾选态正确（I5 入口均可用）");
 
+        // MENU-07：无照片时只置灰"增强"，其余项照常可用（工具仍可打开空态）。
+        var noPhoto = iOSContextMenus.Photo(true, true, false, false, hasPhoto: false,
+            () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { });
+        var noPhotoActions = Flatten(noPhoto.Menu);
+        if (!noPhotoActions[4].Attributes.HasFlag(UIMenuElementAttributes.Disabled))
+            throw new InvalidOperationException("MENU-07：无照片时「增强」仍可用");
+        if (noPhotoActions.Where((_, index) => index != 4).Any(action => action.Attributes.HasFlag(UIMenuElementAttributes.Disabled)))
+            throw new InvalidOperationException("MENU-07：无照片时除「增强」外的项不应禁用");
+        if (noPhotoActions.Single(action => action.Id == "photo.tools").Attributes.HasFlag(UIMenuElementAttributes.Disabled))
+            throw new InvalidOperationException("MENU-07：无照片时「工具…」应保持可用（打开空态）");
+        var withPhoto = iOSContextMenus.Photo(true, true, false, false, hasPhoto: true,
+            () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { });
+        if (Flatten(withPhoto.Menu)[4].Attributes.HasFlag(UIMenuElementAttributes.Disabled))
+            throw new InvalidOperationException("MENU-07：有照片时「增强」不应禁用");
+        lines.Add("PASS MENU-07：无照片时仅「增强」置灰，「工具…」保持可用；有照片时增强恢复可用");
+
         bool film = main.IsThumbnailViewVisible;
         built.Handlers["photo.film"]();
         await WaitAsync(() => main.IsThumbnailViewVisible != film && root.FileBarView.Hidden == !main.IsThumbnailViewVisible, "胶片栏显隐切换");
@@ -194,6 +211,25 @@ internal static class iOSNativeInputCheck
             FilePicker.Initialize(new iOSFilePicker());
         }
         lines.Add("PASS 主图菜单动作：打开文件夹命中原生文件夹选择器（桩实现，免模态）");
+    }
+
+    /// <summary>
+    /// STATE-03 提示条：评分写回失败/Full 升级失败/内存提示共用同一控件；新提示替换旧提示且不拦触摸。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyStatusToastAsync(iOSNativeRootViewController root, List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() => root.ShowToast("验收提示：评分写回失败"));
+        if (!root.Toast.IsVisible || root.Toast.Message != "验收提示：评分写回失败")
+            throw new InvalidOperationException("STATE-03：提示条未显示或文本不正确");
+        await UiDispatcher.InvokeAsync(() => root.ShowToast("验收提示：新提示替换旧提示"));
+        if (root.Toast.Message != "验收提示：新提示替换旧提示")
+            throw new InvalidOperationException("STATE-03：新提示未替换旧提示");
+        if (root.Toast.UserInteractionEnabled)
+            throw new InvalidOperationException("STATE-03：提示条不应拦截手势");
+        await UiDispatcher.InvokeAsync(() => root.Toast.Hide());
+        lines.Add("PASS STATE-03：提示条显示、新替旧且不拦触摸（4 s 自动消失由 NSTimer 驱动）");
     }
 
     /// <summary>
@@ -476,7 +512,14 @@ internal static class iOSNativeInputCheck
         if (InputCommandMap.CommandForGesture(wheelDown, main.Settings) != "Next")
             throw new InvalidOperationException("滚轮向下的默认绑定未解析到下一张");
         lines.Add("PASS 离散滚轮：识别器只收离散滚动（触控板连续滚动/捏合仍归滚动视图），默认绑定解析为上一张/下一张");
-        lines.Add("NOTE 按键重复由 NSTimer（350ms 延迟 / 60ms 间隔）驱动：UIPress 无法合成，本检查未做重复速率断言");
+        // INPUT-05：只有固定节奏有意义的命令才重复；节奏取设计令牌（350ms/60ms）。
+        string[] repeatable = ["Previous", "Next", "ZoomInPreset", "ZoomOutPreset"];
+        foreach (string command in repeatable)
+            if (!InputCommandMap.IsRepeatable(command)) throw new InvalidOperationException($"INPUT-05：{command} 应可重复");
+        foreach (string command in new[] { "Fit", "Exchange", "ToggleEnhance", "SetRating1", "Open" })
+            if (InputCommandMap.IsRepeatable(command)) throw new InvalidOperationException($"INPUT-05：{command} 不应进入按住重复");
+        lines.Add("PASS INPUT-05：仅 Previous/Next/ZoomInPreset/ZoomOutPreset 进入固定节奏重复（350ms/60ms 令牌）");
+        lines.Add("NOTE UIPress 无法合成，本检查未直接测量重复定时器的实际触发节奏");
     }
 
     /// <summary>
@@ -694,9 +737,9 @@ internal static class iOSNativeInputCheck
     /// <summary>展平菜单为可核对的 action 列表（含内联分组）。</summary>
     /// <param name="menu">菜单。</param>
     /// <returns>按显示顺序的 action 列表。</returns>
-    private static List<(string Id, string Title, UIMenuElementState? State, bool HasImage)> Flatten(UIMenu menu)
+    private static List<(string Id, string Title, UIMenuElementState? State, bool HasImage, UIMenuElementAttributes Attributes)> Flatten(UIMenu menu)
     {
-        var result = new List<(string, string, UIMenuElementState?, bool)>();
+        var result = new List<(string, string, UIMenuElementState?, bool, UIMenuElementAttributes)>();
         foreach (var child in menu.Children)
         {
             if (child is UIMenu submenu)
@@ -705,7 +748,7 @@ internal static class iOSNativeInputCheck
                 continue;
             }
             if (child is not UIAction action) continue;
-            result.Add((action.Identifier ?? "", action.Title, action.State, action.Image != null));
+            result.Add((action.Identifier ?? "", action.Title, action.State, action.Image != null, action.Attributes));
         }
         return result;
     }

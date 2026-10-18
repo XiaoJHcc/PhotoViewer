@@ -64,6 +64,7 @@ internal sealed class iOSSimilarityPanel : UIView
     private readonly UILabel _notExtracted;
     private readonly UILabel _noSimilar;
     private readonly UILabel _indexError;
+    private readonly UILabel _dockError;
     private readonly UILabel _unindexed;
     private readonly ActionArea _emptyAction;
     private readonly ActionArea _dockAction;
@@ -101,6 +102,9 @@ internal sealed class iOSSimilarityPanel : UIView
     /// <summary>列表态"补齐全部"按钮（验收触发真实点击）。</summary>
     internal UIButton DockActionButton => _dockAction.Button;
 
+    /// <summary>列表态动作区的错误标签（SIM-10：与当前状态同时可见）。</summary>
+    internal UILabel DockErrorLabel => _dockError;
+
     /// <summary>建立原生视图树并订阅相似面板 VM 的属性变化；构造函数除订阅外不触发推理、解码或读写文件。</summary>
     /// <param name="main">共享主 VM，面板状态取自 <c>main.FileVM.SimilarityPanel</c>。</param>
     internal iOSSimilarityPanel(MainViewModel main) : base(CGRect.Empty)
@@ -116,6 +120,7 @@ internal sealed class iOSSimilarityPanel : UIView
         _notExtracted = WrappedLabel("尚未提取特征", 11, PlaceholderColor);
         _noSimilar = WrappedLabel("无相似照片", 11, PlaceholderColor);
         _indexError = WrappedLabel("", 10, IndexErrorColor);
+        _dockError = WrappedLabel("", 10, IndexErrorColor);
         _unindexed = WrappedLabel("", 10, UnindexedColor);
         _emptyAction = new ActionArea(StartIndexing);
         _dockAction = new ActionArea(StartIndexing);
@@ -126,6 +131,7 @@ internal sealed class iOSSimilarityPanel : UIView
         _emptyStack.AddSubview(_indexError);
         AddSubview(_emptyStack);
 
+        _listDock.AddSubview(_dockError);
         _listDock.AddSubview(_unindexed);
         _listDock.AddSubview(_dockAction);
         _layout.Horizontal = true;
@@ -182,6 +188,9 @@ internal sealed class iOSSimilarityPanel : UIView
         _noSimilar.Hidden = !_panel.ShowFullPlaceholder;
         _indexError.Hidden = !_panel.HasIndexError;
         _indexError.Text = _panel.IndexError ?? "";
+        // SIM-10：列表态的错误与当前状态同时可见，显示在停靠动作区。
+        _dockError.Hidden = !_panel.ShowActionAreaError;
+        _dockError.Text = _panel.IndexError ?? "";
         UpdateAction(_emptyAction);
         UpdateAction(_dockAction);
 
@@ -307,7 +316,9 @@ internal sealed class iOSSimilarityPanel : UIView
         UpdateListLayout(list);
     }
 
-    /// <summary>摆放停靠区内的"未提取张数 + 动作"两行内容；行布局把整块内容贴底（旧壳 VerticalAlignment=Bottom）。</summary>
+    /// <summary>
+    /// 摆放停靠区内的"错误文案 + 未提取张数 + 动作"内容；行布局把整块内容贴底（旧壳 VerticalAlignment=Bottom）。
+    /// </summary>
     /// <param name="region">停靠区。</param>
     /// <param name="left">左外边距。</param>
     /// <param name="top">上外边距。</param>
@@ -317,9 +328,17 @@ internal sealed class iOSSimilarityPanel : UIView
     private void ArrangeDockContent(CGRect region, double left, double top, double right, double bottom, bool bottomAligned)
     {
         double width = Math.Max(1, region.Width - left - right);
+        double errorWidth = Math.Min(ErrorMaxWidth, width);
+        double errorHeight = _dockError.Hidden ? 0 : MeasureHeight(_dockError, errorWidth);
         double labelHeight = _unindexed.Hidden ? 0 : MeasureHeight(_unindexed, width);
-        double contentHeight = (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight;
+        double contentHeight = (errorHeight > 0 ? errorHeight + DockSpacing : 0)
+            + (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight;
         double y = bottomAligned ? Math.Max(top, region.Height - bottom - contentHeight) : top;
+        if (errorHeight > 0)
+        {
+            _dockError.Frame = new CGRect(region.X + (region.Width - errorWidth) / 2, y, errorWidth, errorHeight);
+            y += errorHeight + DockSpacing;
+        }
         if (labelHeight > 0)
         {
             _unindexed.Frame = new CGRect(region.X + left, y, width, labelHeight);
@@ -328,20 +347,26 @@ internal sealed class iOSSimilarityPanel : UIView
         _dockAction.Frame = new CGRect(region.X + (region.Width - ActionWidth) / 2, y, ActionWidth, ActionHeight);
     }
 
-    /// <summary>行布局停靠区宽度：按钮与未提取文字较宽者加左右外边距。</summary>
+    /// <summary>行布局停靠区宽度：按钮、未提取文字与错误文案较宽者加左右外边距。</summary>
     /// <param name="innerWidth">列表内容宽。</param>
     /// <returns>停靠区宽度。</returns>
     private double DockWidth(double innerWidth)
-        => Math.Min(innerWidth, Math.Max(ActionWidth, MeasureWidth(_unindexed, innerWidth)) + DockRowMargin * 2);
+    {
+        double errorWidth = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, MeasureWidth(_dockError, innerWidth));
+        return Math.Min(innerWidth,
+            Math.Max(ActionWidth, Math.Max(MeasureWidth(_unindexed, innerWidth), errorWidth)) + DockRowMargin * 2);
+    }
 
-    /// <summary>列布局停靠区高度：两行内容加左右外边距 8、上下外边距 3。</summary>
+    /// <summary>列布局停靠区高度：错误文案、未提取张数与动作区加左右外边距 8、上下外边距 3。</summary>
     /// <param name="innerWidth">列表内容宽。</param>
     /// <returns>停靠区高度。</returns>
     private double DockHeight(double innerWidth)
     {
         double width = Math.Max(1, innerWidth - DockColumnMargin * 2);
+        double errorHeight = _dockError.Hidden ? 0 : MeasureHeight(_dockError, Math.Min(ErrorMaxWidth, width));
         double labelHeight = _unindexed.Hidden ? 0 : MeasureHeight(_unindexed, width);
-        return (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight + DockColumnMarginVertical * 2;
+        return (errorHeight > 0 ? errorHeight + DockSpacing : 0)
+            + (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight + DockColumnMarginVertical * 2;
     }
 
     /// <summary>把列表容器贴合到指定区域，并按当前轴刷新收集区内容尺寸与滚动范围。</summary>

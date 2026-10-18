@@ -198,6 +198,9 @@ internal static class iOSNativeSimilarityCheck
                 await SettleAsync(root);
                 if (!similarity.HasItems) throw new InvalidOperationException("索引后仍无相似项");
                 if (!panel.IsListVisible) throw new InvalidOperationException("有相似项时列表态未显示");
+                // SIM-10：列表态错误文案绑定在停靠动作区（没有错误时收起）。
+                if (panel.DockErrorLabel.Hidden != !similarity.ShowActionAreaError)
+                    throw new InvalidOperationException("SIM-10：列表态错误标签未与共享动作区错误状态绑定");
                 await WaitAsync(() => panel.List.VisibleCells.OfType<iOSThumbnailCard>().Any(), "相似卡片可见");
                 // 行布局面板宽度必须在项目出现后按卡片数重新切出（否则停靠在右的动作区会把列表挤成零宽）。
                 if (main.IsRowLayout)
