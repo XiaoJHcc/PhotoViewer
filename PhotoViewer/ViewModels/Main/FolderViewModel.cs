@@ -36,7 +36,8 @@ public class FolderViewModel : ReactiveObject
     public IReadOnlyList<ImageFile> AllFiles => _allFiles;
 
     private IFolderRef? _currentFolder;
-    private bool _isExifLoadingInProgress;
+    /// <summary>打开代际:每次重新加载列表/单图时自增,旧代际的枚举与补齐结果据此丢弃。</summary>
+    private int _openGeneration;
 
     private string _folderName = "";
     /// <summary>当前文件夹名称(若为单图模式则为文件名)</summary>
@@ -68,6 +69,19 @@ public class FolderViewModel : ReactiveObject
     /// 触发滚动到当前文件事件。
     /// </summary>
     public void ScrollToCurrent() => ScrollToCurrentRequested?.Invoke();
+
+    /// <summary>
+    /// 开启新的打开代际。
+    /// </summary>
+    /// <returns>本次打开代际编号。</returns>
+    private int BeginOpenGeneration() => Interlocked.Increment(ref _openGeneration);
+
+    /// <summary>
+    /// 判断给定代际是否仍是当前代际;旧代际的后台结果不得再写入列表或当前照片。
+    /// </summary>
+    /// <param name="generation">要校验的代际编号</param>
+    /// <returns>代际仍有效时为 true</returns>
+    private bool IsCurrentOpenGeneration(int generation) => generation == Volatile.Read(ref _openGeneration);
 
     ////////////////
     // 打开文件
@@ -125,12 +139,16 @@ public class FolderViewModel : ReactiveObject
             return;
         }
 
+        // OPEN-08：这次请求捕获当前代际作为护栏;若期间有新的列表加载开始,父目录结果直接作废。
+        // 同目录内选图不开启新代际,避免误伤该目录仍在进行的补齐任务。
+        var generation = Volatile.Read(ref _openGeneration);
+
         StorageAccessManager.Retain(file);
         Main.ImageVM.Fit = true;
 
-        await OpenImageWithFolderFallbackAsync(file);
+        generation = await OpenImageWithFolderFallbackAsync(file, generation);
 
-        if (scrollToCurrent)
+        if (scrollToCurrent && IsCurrentOpenGeneration(generation))
         {
             ScrollToCurrent();
         }
@@ -146,12 +164,20 @@ public class FolderViewModel : ReactiveObject
         StorageAccessManager.Retain(folder);
         Main.ImageVM.Fit = true;
 
-        // P1-M3:文件夹切换显式整批释放旧文件夹缩略图(统一缓存 Thumb 档清空,不依赖淘汰)
-        BitmapLoader.ClearThumbnailClass();
+        // OPEN-08：同目录重开视为刷新,以当前照片为首选目标,且保留缩略图缓存。
+        var isSameFolder = IsSameStorageItem(folder, _currentFolder);
+        var preferredFile = isSameFolder && Main.CurrentFile != null && _allFiles.Contains(Main.CurrentFile)
+            ? Main.CurrentFile.File
+            : null;
+        if (!isSameFolder)
+        {
+            // 仅切换文件夹时整批释放旧缩略图(统一缓存 Thumb 档清空,不依赖淘汰)。
+            BitmapLoader.ClearThumbnailClass();
+        }
 
-        await LoadFolderAsync(folder);
+        var generation = await LoadFolderAsync(folder, preferredFile);
 
-        if (scrollToCurrent)
+        if (scrollToCurrent && IsCurrentOpenGeneration(generation))
         {
             ScrollToCurrent();
         }
@@ -201,14 +227,20 @@ public class FolderViewModel : ReactiveObject
     /// 优先尝试以"文件夹上下文"打开图片;若无法获取父目录,则回退为单图模式。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
-    private async Task OpenImageWithFolderFallbackAsync(IFileRef file)
+    /// <param name="generation">发起本次打开时捕获的代际</param>
+    /// <returns>本次打开实际生效的代际</returns>
+    private async Task<int> OpenImageWithFolderFallbackAsync(IFileRef file, int generation)
     {
         var folder = await file.GetParentAsync();
 
+        if (!IsCurrentOpenGeneration(generation))
+        {
+            return generation;
+        }
+
         if (folder == null)
         {
-            await OpenSingleImageAsync(file);
-            return;
+            return await OpenSingleImageAsync(file);
         }
 
         if (IsSameStorageItem(folder, _currentFolder) && _allFiles.Count > 0)
@@ -222,23 +254,31 @@ public class FolderViewModel : ReactiveObject
                 existingFile = new ImageFile(file);
                 _allFiles.Insert(0, existingFile);
                 await existingFile.LoadRatingOnlyAsync();
+                if (!IsCurrentOpenGeneration(generation))
+                {
+                    return generation;
+                }
+
                 existingFile.UpdateCacheStatus();
                 AllFilesChanged?.Invoke();
             }
 
-            await SetCurrentFileAsync(existingFile);
-            return;
+            await SetCurrentFileAsync(existingFile, generation);
+            return generation;
         }
 
-        await LoadFolderAsync(folder, file);
+        return await LoadFolderAsync(folder, file);
     }
 
     /// <summary>
     /// 以单图模式打开图片。当平台只授予单文件访问权限时,保证用户至少能看到当前图片。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
-    private async Task OpenSingleImageAsync(IFileRef file)
+    /// <returns>本次打开代际</returns>
+    private async Task<int> OpenSingleImageAsync(IFileRef file)
     {
+        var generation = BeginOpenGeneration();
+
         StorageAccessManager.Retain(file);
 
         _currentFolder = null;
@@ -249,10 +289,16 @@ public class FolderViewModel : ReactiveObject
         _allFiles.Add(imageFile);
 
         await imageFile.LoadRatingOnlyAsync();
+        if (!IsCurrentOpenGeneration(generation))
+        {
+            return generation;
+        }
+
         AllFilesChanged?.Invoke();
 
         imageFile.UpdateCacheStatus();
-        await SetCurrentFileAsync(imageFile);
+        await SetCurrentFileAsync(imageFile, generation);
+        return generation;
     }
 
     /// <summary>
@@ -260,8 +306,11 @@ public class FolderViewModel : ReactiveObject
     /// </summary>
     /// <param name="folder">要加载的文件夹</param>
     /// <param name="preferredFile">优先定位的图片;为空时打开第一张</param>
-    private async Task LoadFolderAsync(IFolderRef folder, IFileRef? preferredFile = null)
+    /// <returns>本次打开代际</returns>
+    private async Task<int> LoadFolderAsync(IFolderRef folder, IFileRef? preferredFile = null)
     {
+        var generation = BeginOpenGeneration();
+
         var sw = System.Diagnostics.Stopwatch.StartNew();
         Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.Path);
 
@@ -280,19 +329,56 @@ public class FolderViewModel : ReactiveObject
             _allFiles.Add(targetFile);
             AllFilesChanged?.Invoke();
             targetFile.UpdateCacheStatus();
-            await SetCurrentFileAsync(targetFile);
+            await SetCurrentFileAsync(targetFile, generation);
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return generation;
+            }
+
             Console.WriteLine($"[Folder] Phase1 (first image): {sw.ElapsedMilliseconds}ms");
         }
 
         // ── 阶段 2:枚举文件夹所有文件 ──
         var allNewFiles = new List<ImageFile>();
-        var items = folder.GetItemsAsync();
-        await foreach (var storageItem in items)
+        try
         {
-            if (storageItem is not IFileRef item) continue;
-            if (!IsImageFile(item.Name)) continue;
-            if (preferredFile != null && IsSameStorageItem(item, preferredFile)) continue;
-            allNewFiles.Add(new ImageFile(item));
+            await foreach (var storageItem in folder.GetItemsAsync())
+            {
+                if (!IsCurrentOpenGeneration(generation))
+                {
+                    return generation;
+                }
+
+                if (storageItem is not IFileRef item) continue;
+                if (!IsImageFile(item.Name)) continue;
+                if (preferredFile != null && IsSameStorageItem(item, preferredFile)) continue;
+                allNewFiles.Add(new ImageFile(item));
+            }
+        }
+        catch (Exception ex)
+        {
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return generation;
+            }
+
+            Console.Error.WriteLine($"[Folder] 枚举文件夹失败: {folder.Path} — {ex.Message}");
+            if (preferredFile != null)
+            {
+                // OPEN-03：目录枚举被拒/失败时回退为单图模式,至少让用户看到目标图片。
+                return await OpenSingleImageAsync(preferredFile);
+            }
+
+            // OPEN-02/OPEN-08：没有可回退的单张文件时保持空态,不残留半张列表。
+            _allFiles.Clear();
+            Main.CurrentFile = null;
+            AllFilesChanged?.Invoke();
+            return generation;
+        }
+
+        if (!IsCurrentOpenGeneration(generation))
+        {
+            return generation;
         }
 
         Console.WriteLine($"[Folder] Phase2 (enumerate {allNewFiles.Count} files): {sw.ElapsedMilliseconds}ms");
@@ -305,15 +391,26 @@ public class FolderViewModel : ReactiveObject
 
         if (targetFile == null)
         {
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return generation;
+            }
+
             // AllFilesChanged 已同步重建筛选列表:首张取筛选后列表的首项,同名合并时即为代表文件
             // (如 HIF+ARW 同名时取 HIF),不能取枚举顺序首项——那可能是被合并隐藏的伴侣文件。
-            // 筛选结果为空(如星级筛选排除全部)时沿用原行为打开枚举首张。
-            var firstFile = Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault() ?? _allFiles.FirstOrDefault();
+            // OPEN-04：筛选结果为空(如星级筛选排除全部)时,回退到枚举首项所属合并组的代表文件。
+            var firstFile = Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault()
+                ?? FindFirstGroupRepresentative();
             if (firstFile != null)
             {
                 firstFile.UpdateCacheStatus();
-                await SetCurrentFileAsync(firstFile);
+                await SetCurrentFileAsync(firstFile, generation);
             }
+        }
+
+        if (!IsCurrentOpenGeneration(generation))
+        {
+            return generation;
         }
 
         // 列表已完整(第二次 AllFilesChanged 已同步重建 FilteredFiles)且当前图已定,
@@ -322,38 +419,69 @@ public class FolderViewModel : ReactiveObject
 
         Console.WriteLine($"[Folder] Phase2 (UI updated): {sw.ElapsedMilliseconds}ms");
 
-        // ── 阶段 3:后台加载基本属性和星级 ──
-        foreach (var imageFile in _allFiles) imageFile.UpdateCacheStatus();
+        // ── 阶段 3:后台加载基本属性和星级(只作用于本代际的快照) ──
+        var filesSnapshot = _allFiles.ToList();
+        foreach (var imageFile in filesSnapshot) imageFile.UpdateCacheStatus();
 
         _ = Task.Run(async () =>
         {
             using var semaphore = new SemaphoreSlim(8);
-            var propTasks = _allFiles.Select(async f =>
+            var propTasks = filesSnapshot.Select(async f =>
             {
                 await semaphore.WaitAsync();
-                try { await f.LoadBasicPropertiesAsync(); }
+                try
+                {
+                    if (IsCurrentOpenGeneration(generation))
+                    {
+                        await f.LoadBasicPropertiesAsync();
+                    }
+                }
                 finally { semaphore.Release(); }
             }).ToList();
             await Task.WhenAll(propTasks);
+
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return;
+            }
+
             Console.WriteLine($"[Folder] Phase3 (basic props loaded): {sw.ElapsedMilliseconds}ms");
         });
 
         _ = Task.Run(async () =>
         {
-            await LoadAllExifRatingsAsync();
-            await UiDispatcher.InvokeAsync(() => AllFilesChanged?.Invoke());
+            await LoadAllExifRatingsAsync(filesSnapshot, generation);
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return;
+            }
+
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                if (IsCurrentOpenGeneration(generation))
+                {
+                    AllFilesChanged?.Invoke();
+                }
+            });
             Console.WriteLine($"[Folder] Phase3 (ratings loaded): {sw.ElapsedMilliseconds}ms");
         });
 
         Console.WriteLine($"[Folder] === END OpenFolder (sync portion): {sw.ElapsedMilliseconds}ms ===");
+        return generation;
     }
 
     /// <summary>
     /// 切换当前图片,并触发当前图的 EXIF 加载与缩略图优先加载。
     /// </summary>
     /// <param name="imageFile">要设为当前的图片</param>
-    private Task SetCurrentFileAsync(ImageFile? imageFile)
+    /// <param name="generation">当前打开代际;旧代际的结果不再写入当前照片</param>
+    private Task SetCurrentFileAsync(ImageFile? imageFile, int generation)
     {
+        if (!IsCurrentOpenGeneration(generation))
+        {
+            return Task.CompletedTask;
+        }
+
         Main.CurrentFile = imageFile;
         if (imageFile == null)
         {
@@ -364,8 +492,18 @@ public class FolderViewModel : ReactiveObject
         {
             await imageFile.LoadExifDataAsync();
 
+            if (!IsCurrentOpenGeneration(generation) || !ReferenceEquals(Main.CurrentFile, imageFile))
+            {
+                return;
+            }
+
             await UiDispatcher.InvokeAsync(() =>
             {
+                if (!IsCurrentOpenGeneration(generation) || !ReferenceEquals(Main.CurrentFile, imageFile))
+                {
+                    return;
+                }
+
                 imageFile.RaisePropertyChanged(nameof(imageFile.PhotoDate));
 
                 Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
@@ -373,7 +511,10 @@ public class FolderViewModel : ReactiveObject
             });
         });
 
-        PriorityThumbnailRequested?.Invoke(imageFile);
+        if (IsCurrentOpenGeneration(generation))
+        {
+            PriorityThumbnailRequested?.Invoke(imageFile);
+        }
 
         return Task.CompletedTask;
     }
@@ -385,6 +526,39 @@ public class FolderViewModel : ReactiveObject
     private ImageFile? FindLoadedFile(IFileRef file)
     {
         return _allFiles.FirstOrDefault(imageFile => IsSameStorageItem(imageFile.File, file));
+    }
+
+    /// <summary>
+    /// 取枚举首项所属同名合并组的代表文件(按设置中的格式优先级)。
+    /// </summary>
+    /// <returns>代表文件;列表为空时为 null</returns>
+    private ImageFile? FindFirstGroupRepresentative()
+    {
+        var first = _allFiles.FirstOrDefault();
+        if (first == null)
+        {
+            return null;
+        }
+
+        if (!Main.Settings.SameNameAsOnePhoto)
+        {
+            return first;
+        }
+
+        var baseName = System.IO.Path.GetFileNameWithoutExtension(first.Name);
+        var order = Main.Settings.SelectedFormats;
+        return _allFiles
+            .Where(file => string.Equals(
+                System.IO.Path.GetFileNameWithoutExtension(file.Name),
+                baseName,
+                StringComparison.OrdinalIgnoreCase))
+            .OrderBy(file =>
+            {
+                var extension = System.IO.Path.GetExtension(file.Name)?.ToLowerInvariant() ?? string.Empty;
+                var index = order.IndexOf(extension);
+                return index < 0 ? int.MaxValue : index;
+            })
+            .FirstOrDefault() ?? first;
     }
 
     /// <summary>
@@ -416,48 +590,54 @@ public class FolderViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 加载所有文件的 EXIF 星级数据,用于准确的星级筛选。
+    /// 加载给定文件快照的 EXIF 星级数据,用于准确的星级筛选。
     /// </summary>
-    private async Task LoadAllExifRatingsAsync()
+    /// <param name="files">本轮代际的文件快照</param>
+    /// <param name="generation">打开代际;旧代际的补齐结果不再写入</param>
+    private async Task LoadAllExifRatingsAsync(IReadOnlyList<ImageFile> files, int generation)
     {
-        if (_isExifLoadingInProgress) return;
-
-        _isExifLoadingInProgress = true;
-
-        try
+        using var semaphore = new SemaphoreSlim(8);
+        var tasks = files.Select(async file =>
         {
-            using var semaphore = new SemaphoreSlim(8);
-            var tasks = _allFiles.Select(async file =>
+            await semaphore.WaitAsync();
+            try
             {
-                await semaphore.WaitAsync();
-                try
+                if (!IsCurrentOpenGeneration(generation))
                 {
-                    await file.LoadRatingOnlyAsync();
+                    return;
                 }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"加载文件 {file.Name} 星级失败: {ex.Message}");
-                }
-                finally
-                {
-                    semaphore.Release();
-                }
-            }).ToList();
 
-            await Task.WhenAll(tasks);
-
-            await UiDispatcher.InvokeAsync(() =>
+                await file.LoadRatingOnlyAsync();
+            }
+            catch (Exception ex)
             {
-                foreach (var file in _allFiles)
-                {
-                    file.RaisePropertyChanged(nameof(file.Rating));
-                }
-            });
-        }
-        finally
+                Console.WriteLine($"加载文件 {file.Name} 星级失败: {ex.Message}");
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }).ToList();
+
+        await Task.WhenAll(tasks);
+
+        if (!IsCurrentOpenGeneration(generation))
         {
-            _isExifLoadingInProgress = false;
+            return;
         }
+
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (!IsCurrentOpenGeneration(generation))
+            {
+                return;
+            }
+
+            foreach (var file in files)
+            {
+                file.RaisePropertyChanged(nameof(file.Rating));
+            }
+        });
     }
 
     /// <summary>
