@@ -13,13 +13,13 @@ public class Application
         BootTrace.Install();
         BootTrace.Mark("Main enter");
 
-        // iOS 不填充托管 Main 的 args（实测为空数组），启动参数一律从 NSProcessInfo 读取（与旧壳压测/外部打开同口径）。
+        // iOS 不填充托管 Main 的 args（实测为空数组），启动参数一律从 NSProcessInfo 读取。
         var launchArguments = NSProcessInfo.ProcessInfo.Arguments;
         BootTrace.Mark("args: " + string.Join(" ", launchArguments));
         BootTrace.MarkAvaloniaAssemblies("Main enter(before UIApplication.Main)");
 
-        // 壳选择：Debug 默认原生壳，Release 默认旧壳；--native / --legacy-ui / NSUserDefaults(PVLegacyUI) 可覆盖。
-        // 未选中的壳委托类型不会被加载，因此原生路径不会载入 Avalonia 类型。
-        UIApplication.Main(args, null, iOSShellSwitch.SelectDelegateType(launchArguments));
+        // 一律启动 UIKit 原生壳；--native 等历史参数不再参与壳选择，传入时按普通启动参数忽略。
+        BootTrace.Mark("shell: native (UIKit)");
+        UIApplication.Main(args, null, typeof(iOSNativeAppDelegate));
     }
 }

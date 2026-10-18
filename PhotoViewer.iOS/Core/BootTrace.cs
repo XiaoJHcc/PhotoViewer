@@ -36,7 +36,7 @@ internal static class BootTrace
 
     /// <summary>
     /// 写一个启动里程碑，并附带当前已加载的 Avalonia 程序集清单。
-    /// 原生壳要求不创建 Avalonia 对象；iOS 注册器会在启动期加载含旧壳 NSObject 子类的程序集，
+    /// 原生壳要求不创建 Avalonia 对象；共享工程当前仍引用 Avalonia，注册器可能在启动期加载其程序集，
     /// 这里按阶段取值可区分"注册器加载"与"原生路径自己加载"。
     /// </summary>
     /// <param name="stage">阶段名。</param>
