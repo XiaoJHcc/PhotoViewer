@@ -91,6 +91,7 @@ internal sealed class AndroidThumbnailCard : View
         _secondLineText = secondLineText;
         _secondLineProgress = secondLineProgress;
         _selectByDisplayedImage = selectByDisplayedImage;
+        _longPressConsumed = false;
         _thumbnail = null;
         _thumbnailSource = null;
         file.PropertyChanged += OnFileChanged;
@@ -274,11 +275,7 @@ internal sealed class AndroidThumbnailCard : View
         if (e == null || _file == null) return false;
         if (e.ActionMasked == MotionEventActions.Down) _longPressConsumed = false;
         _gestures.OnTouchEvent(e);
-        if (e.ActionMasked == MotionEventActions.Cancel)
-        {
-            _longPressConsumed = false;
-            return true;
-        }
+        if (e.ActionMasked == MotionEventActions.Cancel) return true;
         if (e.ActionMasked == MotionEventActions.Up)
         {
             // MENU-05：长按只弹菜单，抬手不再被点选或星级命中消费。
