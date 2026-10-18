@@ -21,7 +21,7 @@
 - **L0 原则**：产品目标与不可违背的体验原则，例如键盘优先、空间优先给主图、选片进度不丢失、画质红线。
 - **L1 分区**：屏幕与窗口的分区及各自职责（窗口外壳、文件栏、筛选条、胶片栏、主图、分析栏、控制栏、相似面板；设置窗口、工具窗口）。
 - **L2 行为规则**：每条一个设计 ID，写清意图、触发条件、不触发的操作、边界、并发与中断、无障碍、持久化和错误状态。只比较截图不算规则。
-- **L3 设计令牌**：规则里出现的数值写成令牌名，可附当前值，如 `film.scroll.duration`（现 350ms）；两处不一致时以 `tokens.json` 为准。
+- **L3 设计令牌**：规则里出现的数值写成令牌名，可附当前值，如 `motion.film.scroll.duration`（现 350ms）；两处不一致时以 `tokens.json` 为准。
 - **L4 平台实现**：同一规则在各平台用什么控件、入口在哪个文件、哪里有登记过的差异。
 
 ## 3. 规范等级与对标强度
@@ -39,7 +39,7 @@
 
 - **设计 ID**：`<模块>-<两位序号>`，如 `FILM-03`。ID 永不复用；废弃时标"已退役"并指向替代条目。条款内的细项不另编号，需要单独引用时拆成新 ID。
 - **平台差异**：`<ID>@<平台>`，平台取 `win` / `mac` / `ios` / `android`，如 `FILM-04@mac`。
-- **令牌名**：点分 `域.元素.属性`，段内 lowerCamelCase，如 `film.card.width`、`nav.longEdge`。域：`shell` `filter` `film` `image` `nav` `analysis` `toolbar` `sim` `status` `exiftable` `motion` `color`。设置项的取值范围与默认值属于设置模型，不进令牌。
+- **令牌名**：点分 `域.元素.属性`，段内 lowerCamelCase，如 `film.card.width`、`nav.longEdge`。域：`shell` `filter` `film` `image` `nav` `analysis` `toolbar` `sim` `status` `exiftable` `tools` `motion` `color`。设置项的取值范围与默认值属于设置模型，不进令牌。
 - **阶段号**（`P1-M4`、`I5`、`A3`、`W-M7` 等）只出现在 `Plans/` 与提交信息里，不进 `Design/` 与代码注释。
 - **代码注释**：在实现某条规则的关键分支、或偏离通常写法的地方写 `// FILM-03：<为什么>`；验收断言名与报告同样引用 ID。不必逐行标注。
 - 不使用 `P` 字头前缀，避免与解码优先级 `P0`–`P3`、Display P3 色域混淆。

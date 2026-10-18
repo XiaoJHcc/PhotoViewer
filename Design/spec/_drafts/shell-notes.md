@@ -74,7 +74,7 @@
 9. **窗口按钮无障碍**：SHELL-06 要求自绘按钮有可读名称，Windows 只有 tooltip（`WindowsTitleBar.cs:157`），没有 `AutomationProperties.Name`。是新增要求还是降为 `可以`？
 10. **全屏与最大化语义**：Windows 自绘全屏按钮与 `OverlappedPresenter` 状态机在 smoke 中四态往返通过，但“退出全屏回到还原态而非最大化态”是否覆盖“从最大化进入全屏”的路径？代码按 `_isFullScreen` 记录前一态，仍需作者手验。
 11. **自动布局的等宽高**：`MainViewModel.UpdateScreenOrientation` 用 `width > height` 判横屏，`Auto => !IsScreenLandscape`，即 **宽 == 高时取行布局**（`MainViewModel.cs:300-315`）。这是有意还是应保持上一方向？
-12. **交通灯让位令牌**：`shell.filter.leadingInset`（34）与 `shell.filter.margin`（10）并存，前者只在 macOS 列布局生效；iPad/Android 行布局用 10。令牌名未体现平台限定，是否改为 `shell.filter.trafficLightInset`？
+12. **交通灯让位令牌**：`shell.filter.leadingInset`（34）与 `filter.margin`（10）并存，前者只在 macOS 列布局生效；iPad/Android 行布局用 10。令牌名未体现平台限定，是否改为仅列布局生效的独立令牌？
 13. **相似面板与 116 栏**：列布局相似面板“扩宽文件栏”后，文件栏总宽 = 116 + 面板宽 + 分隔线？正文只写 116 是内容基准；具体总宽由 `SimilarityPanelGeometry.PanelWidth`（110）与 `MainScreenLayout.FileBarMainLength(extraCross)` 给出，需与 SIM 文件对齐口径。
 14. **最小尺寸与文本缩放**：560×480 是 100% 文本缩放下的值；Windows 125/150/200% 文本缩放、macOS 辅助功能大字体、Android fontScale 1.3 下是否仍以逻辑点 560×480 为最小，还是允许内容压缩/滚动？
 15. **减少动态效果与布局**：SHELL-06 写“布局切换、全屏切换直接到位”，但当前四端布局切换本就没有过渡动画，规则是否只是声明性条款？若未来加过渡，需在这里补时长/缓动令牌。

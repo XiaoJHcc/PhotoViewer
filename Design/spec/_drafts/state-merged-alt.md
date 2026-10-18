@@ -4,7 +4,7 @@
 
 **意图**：四端用同一套分区、命令与状态语义完成选片；规则只写可核对的行为，控件选型与验收记录分属 platforms.md 与 status.md。
 
-数值令牌：`shell.*`、`filter.*`、`image.*`、`nav.*`、`toolbar.*`、`analysis.*`、`sim.*`、`status.*`、`exiftable.*`、`motion.*`（见 [tokens.json](../tokens.json)）。平台差异见 [platforms.md](../platforms.md)，验收状态见 [status.md](../status.md)。
+数值令牌：`shell.*`、`filter.*`、`image.*`、`nav.*`、`toolbar.*`、`analysis.*`、`sim.*`、`status.*`、`exiftable.*`、`motion.*`（见 [tokens.json](../../tokens.json)）。平台差异见 [platforms.md](../../platforms.md)，验收状态见 [status.md](../../status.md)。
 
 ## SHELL-01 布局模式与分区显隐 · 必须
 - 行布局（文件栏在上、控制栏在下）、列布局（文件栏在左、控制栏在右）、自动；自动只看窗口内容区宽高比（宽 > 高取列布局），不按照片横竖。改尺寸、旋转只重算布局，不重置栏位显隐、当前照片与列表位置。

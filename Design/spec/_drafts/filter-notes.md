@@ -42,5 +42,5 @@
 8. **计数包含暂留项**：改星落出筛选的当前照片被强制保留（`ThumbnailListViewModel.cs:273`），而计数取 `FilteredFiles.Count`（同文件 72、309），于是计数比筛选条件多 1；FILM-06 写“计数与筛选一致”，两处表述需对齐（是“可见列表数”还是“命中数”）。
 9. **ShowRating 关闭后星级筛选仍可用**：筛选条与 `Settings.ShowRating` 无绑定（`SettingsViewModel.Rating.cs:12`、`FilterBarViewModel.cs`），用户可在看不到星级时按星级筛选；FILTER-03 以“应当”保留，需作者确认。
 10. **行布局对齐的文档冲突**：`Design/ui-contract.md:82` 写 iPad“行布局横向居中”，但同日修复记录与实现为 `alignLeading: true`（`Plans/native-rebuild-phase-ipad.md:149`、`iOSFilterBar.cs:97-99`）。规范按“无窗口装饰的平台可前导对齐”表述，platforms.md 需以实现为准。
-11. **Android 紧凑宽度未进令牌**：84/76dp 与“N 张”只在壳内常量与计划偏差里（`AndroidFilterBar.cs:89-93`、`Plans/native-rebuild-phase-android.md:252`），tokens 是否需要 `filter.control.width.compact` 等命名待与 tokens 负责人对齐。
+11. **Android 紧凑宽度未进令牌**：84/76dp 与“N 张”只在壳内常量与计划偏差里（`AndroidFilterBar.cs:89-93`、`Plans/native-rebuild-phase-android.md:252`），tokens 是否需要 `filter.compact.control.width` 等命名待与 tokens 负责人对齐。
 12. **macOS 计数宽度差异**：旧壳基线按系统字体测得约 3.5 点差异（`Plans/native-rebuild-phase-3.md:73`），属已登记视觉差异还是待修，未在规范中判定。

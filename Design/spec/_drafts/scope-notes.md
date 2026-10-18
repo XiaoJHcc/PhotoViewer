@@ -85,7 +85,7 @@
 
 1. **照片数据统计的等级**：`ToolsViewModel.IsPhotoStatsAvailable` 用平台判断（`PhotoViewer/ViewModels/Tools/ToolsViewModel.cs:35`），`MacToolsWindow.cs:89` 注释写"仅 Windows 可用"。spec 里我按「平台专属、可以」写；如果它是"待补齐缺口"，等级应改为「应当」并进 status 缺口，请作者裁定。
 2. **SCOPE-01 的"延期"分支目前没有活跃实例**：四端四项 P3 入口都已解禁，唯一被隐藏的是照片统计（且是平台判断）。这条规则是保留为前瞻约定，还是收敛为"平台能力差异 + 配置保留"？两者写法差别在是否还要强调"阶段隐藏"。
-3. **推理失败与"未提取"不可区分**：`AnalysisPresenter.cs:375-379` 与 `:424-425` 在推理/计算失败后回落"未提取"占位，用户无法区分"还没提取"与"算不出来"（缺模型、EXE 资源缺失）。这与 SCOPE-04"缺模型不长期停在计算中、不冒充成功"张力明显；是否需要独立失败占位（由 [state](state.md) 收口）？
+3. **推理失败与"未提取"不可区分**：`AnalysisPresenter.cs:375-379` 与 `:424-425` 在推理/计算失败后回落"未提取"占位，用户无法区分"还没提取"与"算不出来"（缺模型、EXE 资源缺失）。这与 SCOPE-04"缺模型不长期停在计算中、不冒充成功"张力明显；是否需要独立失败占位（由 [state](../state.md) 收口）？
 4. **增强被内存压力自动关闭无提示**：`PhotoLoadSession.Trim` 在压力 ≥ Warning 时静默关闭增强并释放增强图（`PhotoViewer/Core/Image/PhotoLoadSession.cs:313-321`）。这是系统触发的"用户没要求的状态变更"；是否需要一条可见提示（与 SCOPE-02/04 的"状态变更可见"一致）？
 5. **增强入口的跨端一致性**：macOS 主图右键菜单没有「增强」（`PhotoViewer.Mac/Native/MacMainWindow.cs:884-899`，只有命令/控制栏入口），iPad 菜单有「增强」（`iOSContextMenus.cs:60`），Android 也有（`AndroidNativeRootView.cs:552`）。SCOPE-01 要求"同一会话内三处可见性一致"，同一功能在四端菜单结构上也应一致；以哪端为准？（可能属 MENU，但缺项本质是功能入口可见性。）
 6. **Mac 菜单与 iPad 菜单结构差异**：Mac 有「打开文件…」+「打开文件夹…」两项且无 inline 分组，iPad/Android 只有「打开文件夹…」并把三个栏位开关并成一组（`iOSContextMenus.cs:53-66` vs `MacMainWindow.cs:888-896`）。这是平台惯例（桌面可选文件/文件夹）还是应统一？OPEN/MENU 需要同一结论。

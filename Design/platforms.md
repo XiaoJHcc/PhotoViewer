@@ -2,7 +2,7 @@
 
 本文件记录同一设计规则在四端用什么控件、实现入口在哪里、哪些差异已经登记。分层定义见 [README §2](README.md#2-分层)：L4 只回答"怎么做"，不写规则本身，也不写验收状态（见 [status.md](status.md)）。平台代号取 `win` / `mac` / `ios` / `android`（[README §4](README.md#4-编号)）。
 
-实现入口均为工作区相对路径；行号指向类声明或关键分支，便于跳转。已登记差异写成 `**ID@平台**：…`；只存在于代码、尚未裁定的差异标 `（未登记，待裁定）`。
+实现入口均为工作区相对路径；行号指向类声明或关键分支，便于跳转。已登记差异写成 `**ID@平台**：…（已登记 10-18）`，来源为 [rulings-G1](spec/_drafts/rulings-G1.md)…[rulings-G6](spec/_drafts/rulings-G6.md) 与 [rulings-overrides](spec/_drafts/rulings-overrides.md)。未登记的偏离不再写在本文件，一律进 [status.md](status.md) 的缺口列与 [Phase 6 统一清单](../Plans/native-rebuild-phase-6-unify.md)。
 
 ## 控件选型总览
 
@@ -19,51 +19,25 @@
 | 主图 / 卡片菜单 | `NSMenu` | `UIContextMenuInteraction` + `UIMenu` | `MenuFlyout` | 自绘 `PopupWindow` |
 | 设置窗口 | SwiftUI `NavigationSplitView` + `Form(.grouped)` | UIKit 半屏 `PageSheet` | WinUI `NavigationView` + `SettingsCard` | Material 3 `BottomSheetDialog` |
 | 工具窗口 | 独立 AppKit `NSWindow`（列表 + 子页） | `PageSheet` + `UINavigationController` | 独立 WinUI 窗口（常驻三分类） | `BottomSheetDialog`（root / exif / dino 三态） |
-| 状态提示 | 评分失败用 `NSAlert`，无统一 toast | 无可见 toast，评分失败只写日志 | 自绘状态提示条，4 s | `TextView` 提示条，4 s |
+| 状态提示 | 自绘提示条 4 s | 自绘提示条 4 s | 自绘状态提示条，4 s | `TextView` 提示条，4 s |
 | 输入 | `NSEvent` + `MacInput` | `UIPress` + `AppleInputMapping` | `WindowsInput`（虚拟键 / 滚轮） | `AndroidInputMapping`（`KeyEvent`） |
-| 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入未接） |
-| EXIF 详情表 | 自绘 `NSView` + `ExifTableGeometry`（7 列） | `UITableView`（7 列几何） | `Grid`（7 列） | 线性行（4 个内容列承载 7 列几何） |
+| 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入见 OPEN-07@android） |
+| EXIF 详情表 | 自绘 `NSView` + `ExifTableGeometry`（7 列） | `UITableView`（7 列几何） | `Grid`（7 列） | 线性行（4 个内容列承载 7 列几何，见 TOOLS-03@android） |
 
 ## 令牌层平台差异（tokens.json `platforms`）
 
-下表只是把 `tokens.json` 已登记的平台值集中呈现；是否长期接受由作者裁定，本文件不替它决定。
+下表只是把 `tokens.json` 已登记的 `platforms` 值集中呈现。2026-10-18 令牌对账后只保留输入方式、文字度量与控件结构造成的平台值；**其余 30 项原先的平台值已统一为令牌单值**（逐项来源与缺口见 [Phase 6 统一清单](../Plans/native-rebuild-phase-6-unify.md)），不再按平台保留。
 
 | 令牌 | 平台值 | 说明 |
 |---|---|---|
-| `filter.toggle.height` | `win` 32 | Windows 复用 32 高筛选控件 |
-| `filter.toggle.width` | `android` 76 | 手机窄屏紧凑宽 |
-| `film.card.name.width` | `win` 90 | Windows `TextBlock` 直接取内层宽 |
-| `image.hint.detail.gap` | `android` 24 | Android 提示行高 24，无 28 偏移 |
-| `image.busy.cornerRadius` | `android` 0 | Android 直接给 `TextView` 上底色 |
-| `image.busy.bottomOffset` | `android` 20 | 另叠加底部安全区 |
-| `nav.cornerRadius` | `win` 8 | Windows 导航图宿主圆角 |
-| `nav.frame.thickness` | `win` 2 | Windows 白色可见框厚 |
-| `analysis.tile.innerCornerRadius` | `win` 0 | Windows 已改单层裁切 |
-| `color.nav.background.alpha` | `ios` 0.78 / `android` 0.784 / `win` 0.573 | 导航图宿主不透明度 |
-| `sim.action.width` | `android` 64 | 动作文本宽 |
-| `status.toast.fontSize` | `android` 13 | 状态提示字号 |
-| `status.toast.cornerRadius` | `android` 0 | 无圆角 |
-| `status.toast.maxWidth` | `android` 260 | 固定最大宽 |
-| `color.filter.toggle.checked.background` | `ios` system-accent / `android` #0A84FF | 选中底色 |
-| `color.filter.toggle.checked.border` | `ios` system-accent / `android` #0A84FF | 选中描边 |
-| `color.filter.toggle.checked.foreground` | `android` #FFFFFF | 选中文字 |
-| `color.filter.toggle.foreground` | `android` #EEEEEE | 未选中文字 |
-| `color.film.card.background` | `android` #262626 | 卡片 / EXIF 块底色 |
-| `color.film.card.currentBorder` | `win` #1E90FF / `android` #0A84FF | 当前项描边 |
-| `color.star.on` | `win` #FFD700 | 已评分金色 |
-| `color.star.off` | `android` #888888 | 未评分灰星 |
-| `color.star.clear` | `macos` system-secondary-label / `android` #888888 | 清零叉 |
-| `color.toolbar.block.background` | `android` #262626 | EXIF / 评分块底色 |
-| `color.sim.action.background` | `android` transparent | 动作文本无底色 |
-| `color.sim.action.border` | `android` transparent | 动作文本无描边 |
-| `color.sim.action.foreground` | `android` #0A84FF | 系统强调蓝 |
-| `color.status.toast.background` | `android` #282828 | 提示底色 |
-| `color.status.toast.background.alpha` | `android` 0.902 | 提示不透明度 |
-| `color.status.toast.foreground` | `android` #FFFFFF | 提示文字 |
-| `color.bar.background` | `ios` #121212 / `android` #1A1A1A | 栏位底色 |
-| `exiftable.cell.paddingX` | `win` 8 | 工具页单元格内边距 |
-| `exiftable.cell.paddingY` | `win` 6 | 工具页单元格内边距 |
-| `color.text.secondary` | `macos` / `ios` system-secondary-label | 次要文字 |
+| `filter.toggle.width` | `android` 76 | 仅 <600 宽手机用紧凑宽（FILTER-01@android） |
+| `image.hint.detail.gap` | `android` 24 | 行高 24 + 内边距 6，视觉等效 28（IMAGE-01@android） |
+| `analysis.tile.innerCornerRadius` | `win` 0 | 单层裁切（ANALYSIS-02@windows） |
+| `color.text.secondary` | `macos` / `ios` system-secondary-label | Apple 系统次级文字色，与 #AAA 肉眼差 ≤2 阶（G6-34@mac/@ios） |
+| `tools.window.default.width` | `win` 960 | 常驻侧栏 240 + EXIF 表格 720（TOOLS-01@win） |
+| `tools.window.default.height` | `win` 720 | 与 macOS 同高 |
+| `tools.window.min.width` | `win` 800 | 7 列 EXIF 表格最小宽 |
+| `tools.window.min.height` | `win` 560 | 侧栏 + 表格的最小高 |
 
 ## film
 
@@ -75,15 +49,14 @@
   - Windows：`PhotoViewer.Windows/Native/WindowsFilmstripView.cs:21`（`Grid` 宿主）、`:37`/`:68`（`ItemsRepeater` + `StackLayout`）、`:24`/`:413`（350 ms 与三次缓出）。
   - Android：`PhotoViewer.Android/Native/AndroidFilmstripView.cs:20`（`RecyclerView`）、`:231`/`:240`（定位与缓动）。
 - **FILM-04**：方向与滚轮。行/列方向由各宿主切换；普通纵向滚轮在横向列表上滚列表，见各平台滚轮入口（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs` 的 `ScrollWheel`、iOS 的 `UIScrollView` 委托、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs`）。
-  - **FILM-04@mac / @ios**：重新显示胶片栏、切换列表方向时显式定位当前项（ui-contract §2 FILM-04、§3 iOS 差异）；其他平台尚未采用。
+  - **FILM-04@mac / @ios**：重新显示胶片栏、切换列表方向时显式定位当前项（已登记 10-18）。
 - **FILM-05**：卡片内容与命中。
   - macOS：`PhotoViewer.Mac/Native/MacThumbnailItem.cs:12`（`NSCollectionViewItem`）、`:64-99`（几何、星级、徽标）。
   - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs:20`（几何）、`:101-134`（文件名 / 第二行 / 星级）。
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs:164`（文件名）、`:183`（相似度条）、`PhotoViewer.Windows/Native/WindowsLayout.cs:51-90`（几何常量）。
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs:139`（缩略图圆角）、`:171`（第二行 y）、`:288-307`（卡片菜单）。
-  - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足（ui-contract §3 iOS 差异、MENU-05）。
-- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回失败提示见 [state](#state)。
-  - **FILM-06@ios**：写回失败只写 `Console.Error`（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:650`），与 FILM-06 的"可见提示"不一致（未登记，待裁定）。
+  - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足（已登记 10-18）。
+- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS/iOS 待改，见 status.md）。
 - **追溯（ui-contract §6）**：基线定位/动画 `PhotoViewer/Views/Main/File/ThumbnailListView.axaml.cs`；触发 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
 
 ## shell
@@ -93,23 +66,19 @@
   - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:27`、`PhotoViewer.Shared/MainScreenLayout.cs` + 真实安全区。
   - Windows：`PhotoViewer.Windows/Native/WindowsLayout.cs:216-237`、`PhotoViewer.Windows/Native/WindowsMainWindow.cs`。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` + `AndroidMainScreenLayout`。
-  - **SHELL-01@android**：手机纵向只走行布局，不新增手机专属模式。
-  - **SHELL-01@mac**：列布局筛选条前导 34 让交通灯；**SHELL-01@ios / @android**：行布局从内容前导边 + 10 起排。
+  - **SHELL-01@mac**：列布局筛选条前导 34 让交通灯（已登记 10-18，见 FILTER-07）。
 - **SHELL-02**：隐藏式标题栏与拖动区。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs:111-115`（`FullSizeContentView`）、`:173-191`（顶部监视器）、`:223-246`（双击）、`:500-508`（拖动区）。
-  - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs:11-18`（自绘按钮与热区）、`:35-71`（caption 区域）、`PhotoViewer.Windows/Native/WindowsMainWindow.cs:390+`（显示/隐藏）。
+  - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs:11-18`（自绘按钮与热区）、`:35-71`（caption 区域）、`PhotoViewer.Windows/Native/WindowsMainWindow.cs:390+`（显示/隐藏）；拖动与双击委托系统 caption（`NonClientRegionKind.Caption`）。
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
   - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义。
-  - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异。
-  - **SHELL-02@win**：自绘标题栏未见双击处理（`PhotoViewer.Windows/Native/WindowsTitleBar.cs` 只有按钮与 tooltip）（未登记，待裁定）。
+  - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异（已登记 10-18）。
 - **SHELL-03**：全屏与尺寸。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:189-190`/`:208-219`，Windows `OverlappedPresenter` 四态，iOS/Android 无应用内全屏入口。
-  - **SHELL-03@ios / @android**：不提供应用内全屏入口。
-- **SHELL-04**：持久化。macOS `FrameAutosaveName` + `ShowFilm`/`ShowControls`/`Fullscreen` 偏好；iOS `RestoreWindowPreferences`；Windows 栏位显隐仅内存态；Android 不额外持久化。
-  - **SHELL-04@win**：无栏位显隐持久化、窗口帧不持久化（未登记，待裁定）。
-  - **SHELL-04@android**：无栏位显隐 / 窗口帧持久化（未登记，待裁定）。
+  - **SHELL-03@ios / @android**：不提供应用内全屏入口（已登记 10-18）。
+- **SHELL-04**：持久化。四端栏位显隐都写平台偏好存储（键名 `PhotoViewer.Native.ShowFilm` / `ShowControls`），分析栏为会话态；窗口帧 macOS 用 `FrameAutosaveName`，iOS 用 `RestoreWindowPreferences`。
+  - **SHELL-04@mac / @ios**：偏好存储承载栏位显隐与窗口帧（已登记 10-18）；Windows/Android 补齐前为缺口（见 status.md）。
 - **SHELL-05**：跨屏与显示变化。macOS `DidChangeBackingProperties`；iPad 旋转/分屏重建滚动基准；Windows `XamlRoot`/DPI 变化；Android `OnSizeChanged`/`SurfaceChanged`。
-- **SHELL-06**：窗口级无障碍。macOS 系统交通灯；Windows 自绘按钮只有 tooltip；触屏由长按菜单承担。
-  - **SHELL-06@win**：自绘窗口按钮缺 `AutomationProperties.Name`（未登记，待裁定）。
+- **SHELL-06**：窗口级无障碍。macOS 系统交通灯；Windows 自绘按钮待补 `AutomationProperties.Name`（缺口，见 status.md）；触屏由长按菜单承担。
 
 ## filter
 
@@ -118,15 +87,15 @@
   - iOS：`PhotoViewer.iOS/Native/iOSFilterBar.cs:16`（`UIView`）、`:43-79`（`UIButton` + `UIMenu`）、`:82-88`（toggle）。
   - Windows：`PhotoViewer.Windows/Native/WindowsFilterBar.cs:19`（`Grid`）、`:34-67`（`ComboBox`×3）、`:126-133`（`ToggleButton`）。
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs:20`（自绘 `View`）、`:148-255`（自绘 `PopupWindow`）。
+  - **FILTER-01@android**：<600 宽手机 toggle 76、下拉 84，计数用紧凑文案（已登记 10-18）。
 - **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:270-339`（筛选、排序、当前项映射）。
 - **FILTER-04**：计数文案 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:665`、iOS `PhotoViewer.iOS/Native/iOSFilterBar.cs:71`、Windows `PhotoViewer.Windows/Native/WindowsFilterBar.cs:102`、Android `PhotoViewer.Android/Native/AndroidFilterBar.cs:89-93`。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/Core/Settings/SettingsModel.cs:28`；可见性 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`。
 - **FILTER-07**：共享 `PhotoViewer.Shared/MainScreenLayout.cs:29-39`、`:66-69`。
-  - **FILTER-01@windows**：相似聚类 toggle 用 32 高（`filter.toggle.height` platforms）。
-  - **FILTER-01@android**：窄屏紧凑宽 84 / 76，计数文案 `N 张`（`filter.compact.*`）。
-  - **FILTER-07@ios / @android**：行布局 `alignLeading`，从安全区前导边 + 10 起排。
-  - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`（未登记，待裁定）。
+  - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`；几何值与令牌一致（已登记 10-18）。
+  - **FILTER-07@ios / @android**：行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
+  - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议（已登记 10-18）。
 
 ## image
 
@@ -135,19 +104,17 @@
   - iOS：`PhotoViewer.iOS/Native/iOSPhotoView.cs`（`UIScrollView` 为交互真源）。
   - Windows：`PhotoViewer.Windows/Native/WindowsPhotoView.cs`（`SwapChainPanel` + D3D11）。
   - Android：`PhotoViewer.Android/Native/AndroidPhotoView.cs`（`SurfaceView` + EGL14/GLES）。
+  - **IMAGE-01@android**：空首屏副文偏移取 24（行高 24 + 内边距 6），已登记 10-18。
 - **IMAGE-02**：`PhotoViewport.ToggleFit` / `ApplyImage`。
-  - **IMAGE-02@win**：`WindowsPhotoView.ToggleFit` 只用视口中心，无对焦点优先；`SetImage` 无对焦跟随（`PhotoViewer.Windows/Native/WindowsPhotoView.cs:475-483`、`:406-447`）（未登记，待裁定）。
-  - **IMAGE-02@ios / @android**：触屏最小缩放为适应态，小图/RAW 预览夹回适应。
+  - **IMAGE-04@ios / @android**：触屏最小缩放为适应态，小图/RAW 预览夹回适应（已登记 10-18）。
 - **IMAGE-04**：缩放范围 `PhotoViewer.Shared/PhotoViewport.cs:250`/`:283`；预设与比例缩放入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。
-  - **IMAGE-04@mac**：导航图只展示，不接受点按。
-  - **IMAGE-06@ios / @android**：导航图点按/拖动定位；**IMAGE-06@win**：不吃指针。
+  - **IMAGE-04@mac**：导航图只展示，不接受点按（已登记 10-18）。
 - **IMAGE-06**：导航图。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:717-738`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:531-581`；Windows `PhotoViewer.Windows/Native/WindowsNavigator.cs:23`；Android `PhotoViewer.Android/Native/AndroidNavigationOverlay.cs:15`。
-  - **IMAGE-06@win**：圆角 8、白框 2（`nav.cornerRadius` / `nav.frame.thickness` platforms）。
-  - **IMAGE-06@android**：缩略图用 `AndroidNavigationDecoder` 重新解码，不经 GPU 小目标渲染（未登记，待裁定）。
-- **IMAGE-07**：增强状态 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；药丸仅 iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:222-232` 与 Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:170-176`，macOS/Windows 无（未登记，待裁定）。
+  - **IMAGE-06@ios / @android**：导航图点按/拖动定位（已登记 10-18）；**IMAGE-06@win**：不吃指针（已登记 10-18）。
+  - Android 导航缩略图仍走 `AndroidNavigationDecoder` 二次解码（应改为当前展示产物，见 status.md 缺口）。
+- **IMAGE-07**：增强状态 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；药丸 `image.busy.*`、门槛 `image.busy.delay`（500ms）四端同一；macOS/Windows 待补控件（见 status.md）。
 - **IMAGE-09**：定位入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:774`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:979`、Windows `PhotoViewer.Windows/Native/WindowsPhotoView.cs:207`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:137`。
 - **IMAGE-10**：空态/失败文案 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:135`/`:700-703`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:1025-1035`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:858`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:865-885`。
-  - **IMAGE-10@android**：有当前文件但图未上屏时立即显示「正在载入…」，其余三端留空（未登记，待裁定）。
 - **IMAGE-11**：缩放/平移/适应/跟随只存会话；导航图开关与缩放预设走设置（`PhotoViewer/ViewModels/Settings/SettingsViewModel.ImagePreview.cs:10-30`），增强开关不持久化（`PhotoViewer/Core/Image/PhotoLoadSession.cs`）。
 
 ## analysis
@@ -157,18 +124,17 @@
   - iOS：`PhotoViewer.iOS/Native/iOSAnalysisPanel.cs:22`、`iOSDiagnosticTile`。
   - Windows：`PhotoViewer.Windows/Native/WindowsAnalysisPanel.cs:25`（`Grid` + `IAnalysisHost`）、`WindowsAnalysisTilePanel`。
   - Android：`PhotoViewer.Android/Native/AndroidAnalysisPanel.cs:67`（自绘 `View`）。
-  - **ANALYSIS-05@ios / @android**：分析栏参与真实安全区布局。
-- **ANALYSIS-02**：瓦片外观。Windows 单层裁切、内层圆角 0；macOS/iOS/Android 仍保留外层 6 + 内层 5。
-  - **ANALYSIS-02@windows**：内层圆角 0（`analysis.tile.innerCornerRadius` platforms）。
-  - **ANALYSIS-02@android**：抖动拖影矢量线为简化绘制（未登记，待裁定）。
+  - **ANALYSIS-05@ios / @android**：分析栏参与真实安全区布局（已登记 10-18）。
+- **ANALYSIS-02**：瓦片外观。圆角只由外框一层裁切产生。
+  - **ANALYSIS-02@windows**：内层圆角 0，单层裁切（已登记 10-18）。
+  - **ANALYSIS-02@android**：抖动拖影矢量线为简化绘制（已登记 10-18）。
 - **ANALYSIS-03**：等边长由 `AnalysisPanelGeometry` 或 Windows `WindowsAnalysisTilePanel` 的 Measure/Arrange 给出。
-  - **ANALYSIS-03@android**：手机纵向按共享公式排 6–7 张，约 58dp（未登记，待裁定）。
+  - **ANALYSIS-03@android**：手机纵向按共享公式排 6–7 张，约 58dp；不为手机另设布局（已登记 10-18）。
 - **ANALYSIS-04**：绿框联动。macOS/iOS/Windows hover 或点按；Android 点按定格。
-  - **ANALYSIS-04@ios / @android**：点按定格、再点或点主图空白解除。
-  - **ANALYSIS-04@mac**：细节预览双击清 `FollowsFocus`（未登记，待裁定）。
+  - **ANALYSIS-04@ios / @android**：点按定格、再点或点主图空白解除（已登记 10-18）。
 - **ANALYSIS-06**：细节裁剪各端 `DisplayCrop`；代理期留空。
 - **ANALYSIS-07**：直方图由当前上屏图现算，入口在同一瓦片宿主。
-- **ANALYSIS-08**：准星与 cosine 参考点。Windows/Android/iOS 点按内容矩形落准星；macOS 瓦片吞左键，点 letterbox/角标不清除准星（`PhotoViewer.Mac/Native/MacDiagnosticTile.cs:11`、`PhotoViewer.Mac/Native/MacAnalysisPanel.cs:107`）（未登记，待裁定）。
+- **ANALYSIS-08**：准星与 cosine 参考点。四端点按内容矩形落准星；letterbox/角标等同面板空白（macOS 待改，见 status.md）。
 - **ANALYSIS-09**：推理提供器 macOS=CoreML、Windows=DirectML、Android=NNAPI、iOS=CPU；编排共享 `AnalysisPresenter`。
 - **ANALYSIS-10、ANALYSIS-11**：状态与无障碍由各端瓦片宿主承担，未专项实现。
 
@@ -176,18 +142,19 @@
 
 - **TOOLBAR-01、TOOLBAR-02**：共享 `PhotoViewer.Shared/ControlBarLayout.cs:21-44`。
   - macOS：`PhotoViewer.Mac/Native/MacControlBar.cs:11`（`NSView`），置于 `NSScrollView`。
-  - iOS：`PhotoViewer.iOS/Native/iOSControlBar.cs:15`（`UIView`），置于 `UIScrollView`。
-  - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs:18`（`Grid` + `WindowsWrapPanel`）。
-  - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs:17`（单个自绘 `View`）。
-- **TOOLBAR-03**：评分组。**TOOLBAR-03@win**：列布局星序由子控件逆序加入；无照片时用 `Opacity=0.1`（`PhotoViewer.Windows/Native/WindowsControlBar.cs:319`、`:326-344`）。macOS/iOS 用 `Enabled=false`；Android 评分外观不变、点按在宿主层被吞。
-- **TOOLBAR-04**：命令组。**TOOLBAR-04@mac**：tooltip = 命令名 + 绑定；**@win** 用 `AppGesture.ToDisplayString()`；**@ios** 只有 `AccessibilityLabel`；**@android** 无 tooltip、无无障碍名称。评分快捷命令 macOS/iOS/Android 画数字，Windows 画星/叉。
-- **TOOLBAR-05**：EXIF 摘要。**TOOLBAR-05@mac**：tooltip `标签 · 值`；**@win** `标签:值`；**@ios** 只进 `AccessibilityLabel`；**@android** 自绘截断，无完整值入口。
-- **TOOLBAR-06**：EXIF 整组命中打开工具。macOS `PhotoViewer.Mac/Native/MacControlBar.cs:44`/`:217-221`；iOS `PhotoViewer.iOS/Native/iOSControlBar.cs:67-71`；Windows `PhotoViewer.Windows/Native/WindowsControlBar.cs:62-66`；Android `PhotoViewer.Android/Native/AndroidControlBar.cs:290-292`。
-- **TOOLBAR-07**：重建。**TOOLBAR-07@ios**：先 `RemoveFromSuperview` 再 `Dispose`；**@win** 按影响范围合并 dispatcher turn；**@android** `MarkDirty` + `OnDraw` 补齐 `Arrange`。
-- **TOOLBAR-08**：溢出。**TOOLBAR-08@mac / @ios** 有溢出滚动；**@win / @android** 无滚动宿主（未登记，待裁定）。
+  - iOS：`PhotoViewer.iOS/Native/iOSControlBar.cs:15`（`UIView`），置于 `UIScrollView`（`ContentSize` 待补）。
+  - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs:18`（`Grid` + `WindowsWrapPanel`），无滚动宿主（缺口）。
+  - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs:17`（单个自绘 `View`），无障碍树与滚动待补。
+- **TOOLBAR-03**：评分组。禁用统一用系统禁用态（降强调、不隐藏）；评分快捷命令统一画数字（0=叉）。
+  - **TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点，接受为平台差异，不做长按补偿（已登记 10-18）。
+- **TOOLBAR-04**：命令组。桌面 tooltip = 命令名 + 实际主/次绑定；移动端不另造长按浮层，读屏名称含命令名与绑定。
+- **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担，读屏名称含标签与值。
+- **TOOLBAR-06**：EXIF 整组命中打开工具。macOS `PhotoViewer.Mac/Native/MacControlBar.cs:44`/`:217-221`；iOS `PhotoViewer.iOS/Native/iOSControlBar.cs:67-71`；Windows `PhotoViewer.Windows/Native/WindowsControlBar.cs:62-66`；Android `PhotoViewer.Android/Native/AndroidControlBar.cs:290-292`（已接线，待实机核对）。
+- **TOOLBAR-07**：重建。**TOOLBAR-07@ios**：先 `RemoveFromSuperview` 再 `Dispose`（已登记 10-18）；**@win** 按影响范围合并 dispatcher turn；**@android** `MarkDirty` + `OnDraw` 补齐 `Arrange`。
+- **TOOLBAR-08**：溢出。四端都必须有滚动宿主，溢出时可滚、保存并夹取滚动偏移（Windows/Android/iOS 待补，见 status.md）。
 - **TOOLBAR-09**：无照片/空控制栏。三组为空时只保留四周 `toolbar.padding`；各端由 `ControlBarLayout` 或 `WindowsLayout` 计算文档长度。
 - **TOOLBAR-10**：视觉与反馈。底色/描边取 `color.toolbar.*`，圆角 `toolbar.cornerRadius`；星形与清零叉字号分别取 `toolbar.rating.glyph.fontSize` / `toolbar.rating.clearGlyph.fontSize`。
-- **TOOLBAR-11**：无障碍。**TOOLBAR-11@android**：整栏一个 `View`，无子节点 / `ContentDescription` / `Focusable`（未登记，待裁定）。
+- **TOOLBAR-11**：无障碍。每个控件暴露名称、禁用态与焦点顺序；Android 待补虚拟节点（见 status.md）。
 - **TOOLBAR-12**：开关型命令的按钮态。四端当前都不在按钮上表达按下态/强调色，状态只在菜单勾选与面板可见性上。
 
 ## similarity
@@ -196,13 +163,12 @@
 
 - **SIM-01**：入口与开合。共享 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`；各端面板类 `PhotoViewer.Mac/Native/MacSimilarityPanel.cs:22`、`PhotoViewer.iOS/Native/iOSSimilarityPanel.cs:23`、`PhotoViewer.Windows/Native/WindowsSimilarityPanel.cs:21`、`PhotoViewer.Android/Native/AndroidSimilarityPanel.cs:22`。
 - **SIM-02、SIM-03**：空态与动作。macOS 空态常量 `PhotoViewer.Mac/Native/MacSimilarityPanel.cs:33`/`:35`；动作按钮与进度各端自绘。
-  - **SIM-02@android**：空态动作按钮在占位文字下方（与"整体居中"同义但顺序不同）。
-  - **SIM-03@android**：动作按钮为 40×28 纯文本、进度仅文本，无 90×28 按钮外观与不定态进度条（未登记，待裁定）。
+  - **SIM-03@android**：Material 文本动作（64/整宽）与文本进度，信息等价，点按区不小于 44dp（已登记 10-18）。
 - **SIM-04、SIM-05**：卡片复用胶片栏卡片；点选走 `MainViewModel.SetCurrentImageKeepAnchor`，双高亮由各端绑定 `IsCurrent` / `IsCurrentImage`。
 - **SIM-06、SIM-08**：计算与结果。阈值/数量 `PhotoViewer/ViewModels/Settings/SettingsViewModel.AI.cs:17-26`；服务 `PhotoViewer/Core/AI/SimilarityService.cs`。
 - **SIM-09**：面板内改星走与胶片栏同一写回路径，锚点不变；筛选落出由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 处理。
-- **SIM-07**：几何。共享 `PhotoViewer.Shared/SimilarityPanelGeometry.cs:12-46`；macOS/iOS/Android 用 `RowWidth`，Windows 面板是文件栏 `Auto` 列，只有 `MinWidth 106`（`PhotoViewer.Windows/Native/WindowsSimilarityPanel.cs:118`）（未登记，待裁定）。
-- **SIM-10、SIM-11**：错误与无障碍。错误标签四端只挂在空态栈；列表态失败无承载（未登记，待裁定）。
+- **SIM-07**：几何。共享 `PhotoViewer.Shared/SimilarityPanelGeometry.cs:12-46`；四端一律用 `RowWidth` 夹到可用宽一半。Windows 面板当前是文件栏 `Auto` 列、只有 `MinWidth 106`（`PhotoViewer.Windows/Native/WindowsSimilarityPanel.cs:118`），见 status.md 缺口。
+- **SIM-10、SIM-11**：错误与无障碍。列表态与空态的动作区都必须承载错误标签（四端待补，见 status.md）。
 
 ## menu
 
@@ -212,22 +178,20 @@
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs:342-384`（`MenuFlyout`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs:478-583`（自绘 `PopupWindow`）。
 - **MENU-03、MENU-04**：弹出与收回。macOS/iOS/Windows 用系统菜单；Android 自绘并夹取到屏幕内（`PhotoViewer.Android/Native/AndroidNativeRootView.cs:566-568`）。
+  - **MENU-03@android**：自绘弹层，定位与夹取自实现（已登记 10-18）。
+  - **MENU-04@ios**：卡片菜单保留系统抬升，不移动列表布局（已登记 10-18）。
 - **MENU-05**：卡片菜单。iOS `PhotoViewer.iOS/Native/iOSContextMenus.cs:77-93`；Android `PhotoViewer.Android/Native/AndroidThumbnailCard.cs:288-307`；桌面无卡片菜单，用 tooltip + 星级按钮。
-- **MENU-07**：不可用项与并发。各端菜单项集合不随照片/列表内容增删；当前实现未对「增强」做无照片禁用（未登记，待裁定）。
-  - **MENU-01@mac**：菜单无「增强」项（未登记，待裁定）。
-  - **MENU-01@win**：菜单无「增强」项，栏位项文案为「缩略图栏」（未登记，待裁定）。
-  - **MENU-05@android**：卡片菜单标题为两条普通菜单行、时间格式 `yyyy-MM-dd HH:mm`（未登记，待裁定）。
-  - **MENU-06@mac**：「工具」缺省略号；**MENU-06@android**：文案为「增强预览」（未登记，待裁定）。
+  - **MENU-05@android**：标题与时间可拆成两行原生外观；标题行不可点击，时间补秒与时区（已登记 10-18）。
+- **MENU-07**：不可用项与并发。各端菜单项集合不随照片/列表内容增删；无照片时「增强」置灰、工具打开空态（iOS/Android/mac/Windows 待补，见 status.md）。
 
 ## input
 
 - **INPUT-01、INPUT-02**：手势到命令。macOS `PhotoViewer.Mac/Native/MacInput.cs:11`；iOS `PhotoViewer.Apple/AppleInputMapping.cs:11`；Windows `PhotoViewer.Windows/Native/WindowsInput.cs:14`；Android `PhotoViewer.Android/Native/AndroidInputMapping.cs:11`；共享命令表 `PhotoViewer.Shared/InputCommandMap.cs`。
-- **INPUT-03、INPUT-04、INPUT-06**：主图手势。macOS `MetalPhotoView.ScrollWheel`/`MagnifyWithEvent`；iOS `UIScrollView` + 单指轻扫；Android `ScaleGestureDetector` + `GestureDetector`；Windows `WindowsPhotoView` 指针手势。
-  - **INPUT-04@win / @android**：未分精确/离散滚轮，触控板滚动会执行上一张/下一张（未登记，待裁定）。
-- **INPUT-05**：按键重复。iOS 固定 350 ms / 60 ms（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:30`/`:32`）；macOS/Windows/Android 跟系统重复。
-  - **INPUT-05@ios**：固定节奏，属平台差异。
-- **INPUT-07、INPUT-08**：菜单与录制。macOS 真实 `NSEvent` 录制；Windows `WindowsHotkeyRecorder`；iOS/Android 无录制。
-  - **INPUT-08@ios / @android**：无录制入口（iOS 只读、Android 未实现）。
+- **INPUT-03、INPUT-04、INPUT-06**：主图手势。macOS `MetalPhotoView.ScrollWheel`/`MagnifyWithEvent`；iOS `UIScrollView` + 单指轻扫；Android `ScaleGestureDetector` + `GestureDetector`；Windows `WindowsPhotoView` 指针手势。滚轮精度分流四端统一（Windows/Android 待补，见 status.md）。
+- **INPUT-05**：按键重复。只对可重复命令重复（`InputCommandMap` 的 Repeatable 标记）；macOS/Windows/Android 跟系统重复，iOS 用固定节奏。
+  - **INPUT-05@ios**：固定 350 ms / 60 ms 节奏（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:30`/`:32`），属平台差异（已登记 10-18）。
+- **INPUT-07、INPUT-08**：菜单与录制。macOS 真实 `NSEvent` 录制；Windows `WindowsHotkeyRecorder`。
+  - **INPUT-08@ios / @android**：无录制入口（iOS 只读、Android 未实现）（已登记 10-18）。
 - **INPUT-09**：预设/比例缩放入口。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。
 - **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
@@ -240,23 +204,16 @@
   - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:779-795`（`UIDocumentPicker`）、`:1084-1106`（`UIDropInteraction`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs:345-355`（选择器）、`:194-208`（拖入）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs:164`（SAF）、`PhotoViewer.Android/Native/AndroidNativeShell.cs:157-169`（`ACTION_VIEW/SEND`）。
-  - **OPEN-01@ios / @android**：只有文件夹选择器。
-  - **OPEN-07@android**：未接 `OnDragListener`，拖入未实现（未登记，待裁定）。
+  - **OPEN-01@ios / @android**：只有文件夹选择器（已登记 10-18）。
+  - **OPEN-07@android**：未接 `OnDragListener`，手机无常见拖入来源，不建拖入入口（已登记 10-18）。
 - **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。
-  - **OPEN-05@mac / @ios**：显式打开前调用 `FitToView()`；Windows/Android 不重置视口（未登记，待裁定）。
-  - **OPEN-08**：`LoadFolderAsync` 无代际/取消，后发起胜出未实现（未登记，待裁定）。
+  - 显式打开前调用 `FitToView()` 回到适应态（macOS/iOS 已实现）；Windows/Android 未重置视口为缺口（见 status.md）。
 - **OPEN-03、OPEN-09**：单图模式与派生状态由共享 VM 承担；平台父目录可得性见各端安全作用域 / SAF 授权。
 
 ## state
 
-- **STATE-01、STATE-02**：提示与空态。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:135`/`:700-703`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:1025-1035`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:858`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:865-885`。
-  - **STATE-01@android**：有当前文件且图未上屏时立即显示「正在载入…」；macOS/iOS/Windows 不显示加载提示。
-  - **STATE-01**：四端均无加载提示延迟实现（`status.loading.delay` 待定）。
-- **STATE-03**：操作结果提示。
-  - macOS：评分失败用模态 `NSAlert`（`PhotoViewer.Mac/Native/MacMainWindow.cs:852-856`）。
-  - iOS：评分失败只写 `Console.Error`（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:650`），与 STATE-03 不一致（未登记，待裁定）。
-  - Windows：状态提示条 4 s（`PhotoViewer.Windows/Native/WindowsMainWindow.cs:798-812`）；Android：`TextView` 提示 4 s（`PhotoViewer.Android/Native/AndroidNativeRootView.cs:682-693`）。
-  - **STATE-03@mac**：模态提示与规范的非模态提示条不一致（未登记，待裁定）。
+- **STATE-01、STATE-02**：提示与空态。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:135`/`:700-703`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:1025-1035`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:858`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:865-885`。加载提示延迟统一取 `status.loading.delay`（300ms），由共享加载会话提供；四端待绑定（见 status.md）。
+- **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条；macOS 现为模态 `NSAlert`（`PhotoViewer.Mac/Native/MacMainWindow.cs:852-856`）、iOS 只写 `Console.Error`（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:650`），均为缺口。Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:798-812`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:682-693`。
 - **STATE-04**：模型/推理/数据库不可用由共享 `AnalysisPresenter`、`SimilarityPanelViewModel` 与设置清库路径承担。
 
 ## settings
@@ -266,18 +223,17 @@
   - iOS：`PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:17`（`PageSheet`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsSettingsWindow.cs:15`（`NavigationView` + `SettingsCard`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`（`BottomSheetDialog`）。
-  - **SETTINGS-01@ios**：快捷键行只有勾选 + 名称，不显示绑定、无录制（`PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:1469`）（未登记，待裁定）。
-  - **SETTINGS-01@android**：只有勾选 + 名称 + 上下按钮，无绑定、无录制（`PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:319-323`）（未登记，待裁定）。
-- **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。
+  - **SETTINGS-01@ios / @android**：无录制，行只读显示主/次绑定与冲突（已登记 10-18）。
+- **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页固定深色（iOS 设 `OverrideUserInterfaceStyle = Dark`）。
+  - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色（已登记 10-18）。
 - **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.Apply()`（幂等）。
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs:40`）。
-- **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-14、SETTINGS-15**：控件与持久化。
-  - **SETTINGS-06@ios / @android**：数值用 `UIStepper`/`UISlider` 或 `+/-`；Android 列表用上下按钮排序。
-  - **SETTINGS-07@mac**：预设上限 1600%（`PhotoViewer.Mac/Native/MacNativeSettingsPresenter.cs:368`）；iOS 只校验 > 0，Windows/Android 未设上限（未登记，待裁定）。
-  - **SETTINGS-10@ios / @android**：AI 页无「清空特征数据库」，移动端可以不提供。
-  - **SETTINGS-11@ios / @android**：无录制控件。
-  - **SETTINGS-14@ios / @android**：JSON 分别存 `NSUserDefaults` 与 `SharedPreferences`，字段不变。
-  - **SETTINGS-15@android**：上下按钮代替拖拽；每次移动后重建整页（未登记，待裁定）。
+- **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-12、SETTINGS-14、SETTINGS-15**：控件与持久化。
+  - **SETTINGS-12@android**：数值用 `+/-` 步进（与 iOS `UIStepper` 同类）；步进控件不改变取值范围（已登记 10-18）。
+  - **SETTINGS-10@ios / @android**：AI 页无「清空特征数据库」；移动端长期不提供，配置保留、入口不显示（已登记 10-18）。
+  - **SETTINGS-11@ios / @android**：无录制控件（已登记 10-18）。
+  - **SETTINGS-14@ios / @android**：JSON 分别存 `NSUserDefaults` 与 `SharedPreferences`，字段不变（已登记 10-18）。
+  - 排序四端统一为拖拽（Android 用 `ItemTouchHelper` + 行尾把手，待补，见 status.md）。
 - **SETTINGS-12**：数值校验。范围夹取在各设置视图模型（如 `PhotoViewer/ViewModels/Settings/SettingsViewModel.BitmapCache.cs`、`SettingsViewModel.AI.cs`），非法输入不写入。
 - **SETTINGS-13**：键盘与无障碍。桌面由系统控件提供 Tab/方向键语义；触屏由各端设置列表承担，四端均无专项断言。
 
@@ -288,21 +244,22 @@
   - iOS：`PhotoViewer.iOS/Native/iOSToolsPresenter.cs`（`PageSheet` + `UINavigationController`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsToolsWindow.cs:16`（`NavigationView` 三分类，无首页）。
   - Android：`PhotoViewer.Android/Native/AndroidToolsPresenter.cs:24`（`BottomSheetDialog`，root / exif / dino）。
-  - **TOOLS-01@mac / @ios / @android**：不建「照片数据统计」入口。
-  - **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序 EXIF → 统计 → DINO。
+  - **TOOLS-01@win**：工具窗口 960×720、最小 800×560，因常驻侧栏 240 + EXIF 表格 720；普通窗口（进任务栏/Alt-Tab、可最大化）（已登记 10-18）。
+  - **TOOLS-01@mac / @ios / @android**：不建「照片数据统计」入口（已登记 10-18）。
+- **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序与其他端一致为 EXIF → DINO → 照片数据统计（已登记 10-18）。
 - **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 自绘 `NSView` + `ExifTableGeometry`；iOS `UITableView`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
-  - **TOOLS-03@android**：4 个内容列承载 7 列几何（已登记为平台差异）。
-  - **TOOLS-03@win / @ios / @android**：文本不可选中；仅 macOS `Selectable=true`（未登记，待裁定）。
-- **TOOLS-05**：DINO 五瓦片。共享 `PhotoViewer/Core/AI/DinoDiagnosticPresenter.cs`；**TOOLS-05@win** 3+2 等宽、第六格留空、刚体文本全宽。
-- **TOOLS-06**：计算时机。共享 presenter 先读库；离开页面/关闭窗口不取消在途任务（四端一致，未登记，待裁定）。
+  - **TOOLS-03@android**：4 个内容列承载 7 列几何，手机与平板同口径（已登记 10-18）。
+- **TOOLS-05**：DINO 五瓦片。共享 `PhotoViewer/Core/AI/DinoDiagnosticPresenter.cs`；五瓦片 3+2，第六格留空，刚体拟合文本以整宽块置于网格下方（四端统一）。
+- **TOOLS-06**：计算时机。共享 presenter 先读库；离开页面或关闭窗口即取消在途任务（四端待补，见 status.md）。
 - **TOOLS-07**：照片数据统计，仅 Windows（`PhotoViewer/ViewModels/Tools/ToolsViewModel.cs:35`）。
+  - **TOOLS-07@win**：平台专属工具，其他端不建入口（已登记 10-18）。
 
 ## scope
 
 - **SCOPE-01**：可见性由共享 VM 布尔属性决定；照片数据统计 `ToolsViewModel.IsPhotoStatsAvailable => OperatingSystem.IsWindows()`（`PhotoViewer/ViewModels/Tools/ToolsViewModel.cs:35`）。
-  - **SCOPE-01@mac / @ios / @android**：不建照片数据统计入口。
+  - **SCOPE-01@mac / @ios / @android**：不建照片数据统计入口（已登记 10-18，同 TOOLS-07@win）。
 - **SCOPE-02**：计算门控。相似 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`；分析 `PhotoViewer/Core/AI/AnalysisPresenter.cs:136-142`；回退 `FallbackDelayMs = 500`（`PhotoViewer/Core/AI/AnalysisPresenter.cs:34`）。
 - **SCOPE-03**：入库与现算。批量提取 `PhotoViewer/Core/AI/FolderFeatureIndexer.cs`；即时缓存 `AnalysisResultCache`。
-- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`；CoreML EP 不可用，回退 CPU。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB。
+- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`，CoreML EP 不可用回退 CPU（已登记 10-18；是否改用 `CIRAWFilter` 待作者）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
 - **SCOPE-05**：文件写操作。评分写回 `XmpWriter.WriteRatingAsync`；无删除/重命名/移动/导出命令。
-- **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**）；Windows 照片统计；Android 设置 `+/-` 与列表上下按钮（未登记，待裁定）。
+- **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**，已登记 10-18）；Windows 照片统计；Android 设置数值步进见 SETTINGS-12@android。

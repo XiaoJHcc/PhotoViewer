@@ -5,8 +5,8 @@
 数值令牌：`image.hint.*`、`status.*`、`motion.status.*`（见 [tokens.json](../tokens.json)）。平台实现与差异见 [platforms.md](../platforms.md)，验收状态见 [status.md](../status.md)。
 
 ## STATE-01 加载提示与延迟 · 必须
-- 无照片：主图区居中显示短标题（桌面「点击打开文件 或 拖拽图片到此处」，触屏「点击打开文件夹」）与可选副提示；标题 `image.hint.title.fontSize`（16）、副文 `image.hint.detail.fontSize`（11）、最大宽 `image.hint.maxWidth`（500）、间距 `image.hint.detail.gap`（28），提示层不挡空态点击与拖入。
-- 有照片但展示图未就绪：立即清旧图，加载提示延迟出现、图一到即撤下，避免快速翻页闪烁（延迟记作 `status.loading.delay`，当前实现无延迟）。
+- 无照片：主图区居中显示短标题（桌面「点击打开文件 或 拖拽图片到此处」，触屏「点击打开文件夹」）与可选副提示；标题 `image.hint.title.fontSize`（16）、副文 `image.hint.detail.fontSize`（11）、最大宽 `image.hint.maxWidth`（500）、间距 `image.hint.detail.gap`（28 = 标题行高 20 + 间距 8），提示层不挡空态点击与拖入。
+- 有照片但展示图未就绪：切图立即清旧图；加载提示延迟 `status.loading.delay`（300ms）后出现，图一到即撤下，快速翻页在延迟内完成时不显示提示。延迟态由共享加载会话统一提供，四端只绑定同一状态。
 - 代理→Full、增强计算等后台工作不用阻塞式加载；缩略图、EXIF、缓存状态异步补齐，不阻塞列表与主图。
 
 ## STATE-02 空、失败与不可解码 · 必须
@@ -17,7 +17,7 @@
 ## STATE-03 操作结果提示条 · 必须
 - 操作结果（评分写回失败等）用主图区底部提示条：单行或自动换行，最大宽 `status.toast.maxWidth`（500），距底 `status.toast.bottomMargin`（24），字号 `status.toast.fontSize`（12），内边距 12/6，圆角 6。
 - `motion.status.toast.duration`（4000）后自动消失，新提示替换旧提示并重置计时，不抢焦点、不阻断手势。
-- 失败不显示虚假成功：星级保持原值（FILM-06），文案含操作对象与原因要点。平台差异见 platforms.md（state-03@mac / @ios）。
+- 失败不显示虚假成功：星级保持原值（FILM-06），文案含操作对象与原因要点。提示条是唯一形式：不得用模态对话框，也不得以「只写日志」代替。
 
 ## STATE-04 模型、推理与数据库不可用 · 应当
 - DINO 模型缺失或推理失败：不做隐式计算、不弹全局错误；相似聚类在面板内显示可读失败文案，DINO 诊断页显示状态文本与空瓦片。

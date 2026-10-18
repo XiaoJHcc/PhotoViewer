@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 6A 基线冻结 | 旧壳几何/截图入 `Design/baseline/avalonia/`；tag `avalonia-final` | — | ✅ 2026-10-18 |
 | 6B 设计体系 | Design/README 规则；tokens 草稿；ui-contract 拆分为 spec/platforms/status；L0–L2 功能清单 | 6A | 草稿完成，待作者审阅与裁定 |
-| 6C 功能审查 | 按 L2 清单四端逐条审查，产出缺口表并裁定 | 6B 清单 | 未开始 |
+| 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | 裁定完成 10-18（仅 B30 待作者），代码未开始 |
 | 6D Avalonia 退役 | 见 §3 | 6E-1 | 未开始 |
 | 6E 发布就绪 | 见 §4 | 6C 阻塞项 | 未开始 |
 | 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | 未开始 |
@@ -30,7 +30,8 @@
 - [x] `Design/spec/` 草稿（2026-10-18）：L0 原则 9 条、L1 分区、L2 14 个模块共 127 条规则（原 ui-contract 22 个 ID 全部保留，新增 `MENU`/`OPEN`/`STATE` 等）。尚需作者审阅。
 - [x] `Design/platforms.md`、`Design/status.md` 草稿（2026-10-18）：按模块锚点组织；状态格只写状态词 + 日期 + 短语，证据链接计划文档。
 - [x] ID 迁移：`ANL-02`–`04` → `ANALYSIS-02`–`04`，`ANL-01` 退役。
-- [ ] 作者审阅 spec，裁定 [questions.md](../Design/spec/_drafts/questions.md)（A 6 / B 37 / C 30 / D 30），裁定结果回写 spec 与 status 后删除 `_drafts/`。
+- [x] 裁定 [questions.md](../Design/spec/_drafts/questions.md)（2026-10-18）：作者授权按"多数 / 更优 / 原版"综合规则代为决策，桌面与移动可分开；结果回写 spec、tokens、platforms、status，代码改动列入 [统一清单](native-rebuild-phase-6-unify.md)。仅 B30（iPad ARW 全分辨率）留作者。
+- [ ] 作者抽查裁定（重点看 [rulings-overrides.md](../Design/spec/_drafts/rulings-overrides.md) 与各 rulings 文件的"更优"判定），之后删除 `_drafts/`。
 - [ ] ui-contract.md 只保留跳转；根 AGENTS.md、DEV.md 与模块 AGENTS 改指向。
 
 已裁定（2026-10-18）：显式打开（文件/文件夹/外部打开/拖入）主图回适应态（OPEN-05）；切图保持倍率只限批内（IMAGE-02）。
