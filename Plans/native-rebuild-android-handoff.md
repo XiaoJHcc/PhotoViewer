@@ -5,7 +5,7 @@
 
 ## 1. 当前状态
 
-- **真机反馈修复（2026-10-18，25128PNA1C / API 36）**：P3 表面 True；筛选下拉/列布局卡片居中/相似面板宽度/长按菜单位置均已修，待作者解锁目视。
+- **真机反馈修复（2026-10-18，25128PNA1C / API 36）**：P3 表面 True；列布局/筛选菜单/长按菜单已修；后续又补菜单分组分隔线、筛选下拉自绘定位、卡片 80dp 上下左右对称、栏位开关补帧、分析栏细节语义按 iOS 重做、控制栏空分组兜底；真机 P3 表面导致主图整体抬亮，默认回退 sRGB（`pv-p3` 仅诊断）；控制栏空容器根因（OnDraw 只 Rebuild 未 Arrange）已修；胶片等比、HIF 导航兜底（真实 HIF 验证）、同名 HIF/ARW 优先与 CurrentFile 代表同步（真实夹具验证）已核对；HIF 缩略图改为优先提取容器内 JPEG item（160×120），胶片/导航跳过全图，再走 512 代理缓存；主图 Full 仍一次全图。
 - **A6 起步（2026-10-18）**：`AndroidNativeChecks` 以 `--es pv-check <mode>` 跑主屏几何/Fit↔100%/Full/分析栏/相似面板/设置/工具页开合；API 35 arm64 五模式 **PASS 14/18/15/16/16**，报告 `files/PhotoViewer/android-checks-<mode>.txt`。`all` 连跑偶发 SIGSEGV（分模式稳定，§7）；API 矩阵、两向、fontScale/DPI、真机门未做。
 - **A5 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：分析栏（`AndroidAnalysisHost` + 共享 `AnalysisPresenter`，6 瓦片/细节定格绿框/准星）、相似聚类（窄屏紧凑筛选条 toggle、真实“提取全部”后 100% 分数卡片与柱状条）、工具页（EXIF 详情分组表格/多格式；DINO 5 瓦片 + 刚体拟合）、增强预览均已落地；均为**目视/日志核对**。新增警告清零，重建 20 警告 / 0 错误（低于 A1b 基线 21）。**A6（程序化 harness/矩阵/真机门）未开始**。
 - **A2 + A3 + A4 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：主图（`AndroidPresentationDecoder`/`AndroidPresentationEncodingPolicy` + 自有 EGL14/GLES 渲染 + `PhotoViewport` 手势）、主屏（`AndroidMainScreenLayout` 叠加系统 insets、自绘筛选条、RecyclerView 胶片栏/自绘卡片、置中控制栏、导航图）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 工作副本关闭回写）均已落地。**A5 已完成；A6（程序化 harness/矩阵/真机门/文档收口）未开始**。自验：原生壳加载 13 张夹具、方向 6 朝向正确、代理 2706×1804 → Full 6000×4000、导航图/百分比正确、卡片星级 XMP 写回不改主图、键盘 Right/F、设置关闭回写后评分分组与卡片星级即时消失；均为**目视/日志核对，不是程序化验收**。

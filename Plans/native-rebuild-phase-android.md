@@ -260,6 +260,22 @@
 | 31 | 列布局筛选条顶部大片空白（被误认为 mac 红绿灯避让） | `safe.Top` 在 FileContent 与 leadingInset 二次计入；列布局 leadingInset 只留 10dp |
 | 32 | 列布局卡片未居中、相似面板过宽、卡内元素偏左 | 卡片项宽 96→116（列布局）并在 bind 时同步；相似面板 CrossSize 列布局 106 |
 | 33 | 主图长按菜单飞出屏幕 | `_photo.Left/Top` 是相对 photoPane；改屏幕坐标 + 自绘 PopupWindow 夹取/滚动/返回关闭 |
+| 34 | 自绘长按菜单无分隔线、首行顶距小、底部空 | 行高 44dp、上下 4dp 对称、1px 分隔线、文字垂直居中 |
+| 35 | 筛选下拉位置无规律 | 自绘 PopupWindow，锚在被点下拉框下方 2dp；空间不足翻上方，返回键先关 |
+| 36 | 卡片图片仍偏左 | 80dp 图片改 8..88 在 96dp 内容居中，星级整体居中，日期中心 48dp |
+| 37 | P3/sRGB 测试图看起来相同，Adobe 略灰 | P3 表面 True 只解决输出端；测试图同 RGB 不同 ICC，正确管理下应不同。`BitmapFactory` 对 P3 ICC 的转换待改用共享 `ColorEngine`/Skia skcms 验证；真机解锁后先取解码色彩日志 |
+| 38 | 缩略图图片不偏左但偏上 | 图片/第二行改 8..88，标题 103、日期 115、星级 126，上边距与左右 8dp 一致 |
+| 39 | 开关胶片栏/控制栏后主图偏 | SurfaceView 新缓冲晚一帧 + 视口不保留中心；保留 `CenterUV`，OnSizeChanged/SurfaceChanged 补帧 |
+| 40 | 分析栏绿框随机、小图也出框、双击位置怪 | 按 iOS 重做：点按只定格瓦片中心，双击定位；绿框按对焦框/裁剪像素×Scale；切图/关闭清除；小图隐藏；FocusOnPoint 小图夹回适应 |
+| 41 | 长按菜单分隔线过多 | 只按 打开｜栏位｜增强｜工具/设置 分组，顺序改 胶片/分析/控制 |
+| 42 | 初次打开文件夹控制栏只剩容器 | 空分组强制 Rebuild；文件/CurrentFile 补 MarkDirty；更新后 120ms 再建；SAF 返回 OnResume 强制刷新 |
+| 43 | 主图整体发白（任何格式） | 真机 EGL P3 表面使主图抬亮；同一 JPEG 强制 sRGB 后正常。默认 sRGB 表面/解码，`--ez pv-p3 true` 保留 P3 诊断；P3 EGL/合成传递函数待查 |
+| 44 | 控制栏偶现只剩容器 | `OnDraw` 的兜底 `Rebuild` 未算 Rect，分组全被跳过；改为 `Arrange` 后绘制 |
+| 45 | 胶片栏图片拉伸 | 卡片按位图比例等比装入 80 方形 |
+| 46 | HIF 导航图无缩略图 | 真因是 HIF bounds 为 0 时未进回退；已修并用真实 HIF 验证导航图出图 |
+| 47 | 同名 HIF/ARW | 真实 same.hif+same.arw 实测 HIF 代表/主图；JPG+HIF 实测 JPG 代表；CurrentFile 映射回代表 |
+| 48 | HIF 缩略图/导航等待 | Sony HIF thmb 无 libheif 插件；新增 iinf/iloc JPEG item 提取（实测 160×120），缩略图/导航跳过全图，再走 512 代理缓存。主图 Full 仍一次全图 |
+| 49 | HIF 胶片横竖错乱 | ThumbnailService 将 HEIF 平台源写死为已预旋转；改为按 `HeifLoader.OutputPreRotated`，Android 走容器方向对齐；irot=90 的 HIF 实测卡片/主图同向 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 
@@ -278,3 +294,5 @@
 | 9 | A6 矩阵抽样：5 个 API 只跑纵向；API 35 + 24 补横向；fontScale 与 DPI 只在 API 35；真机补手感/色彩/SAF/杀后台 | A6 |
 | 10 | 基线冻结为「Android 21 警告 / 0 错误」「iOS 7 套回归」，不再沿用 14 条/6 套的旧数字 | §6、A1/A6 |
 | 11 | Material 版本先钉 Material 1.14.0.6（冲突退 1.13.0.6）、RecyclerView 1.4.0.6、Window 1.5.1.3、Fragment 1.9.0；A1 立即构建验证主题与 splash 链 | §1.12、A1 |
+| 50 | HIF 首张缩略图偶发方向错 | 元数据未就绪时直接读文件头 irot 兜底；A7C09124.HIF irot=1→270°，首卡/主图同向 |
+| 51 | HIF 同文件缩略图方向不一致 | 不同 thumbnail item 有已旋转/未旋转两种；按原始与显示横竖相反才转。同进程切换文件夹首卡验证通过 |

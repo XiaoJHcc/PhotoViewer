@@ -293,6 +293,19 @@ public class ThumbnailListViewModel : ReactiveObject
         filtered = SortFileList(filtered);
         FilteredFiles = filtered;
 
+        // 同名合并后，文件夹打开时可能把“被隐藏”的 ARW/HIF 设为 CurrentFile；
+        // 主图与卡片会因此不是同一张。把当前文件映射回它所在组的代表文件。
+        if (_main.CurrentFile is { } current && !filtered.Contains(current))
+        {
+            var representative = filtered.FirstOrDefault(f =>
+                f.HiddenFiles.Any(hidden => string.Equals(hidden.PathKey, current.File.PathKey, StringComparison.Ordinal)));
+            if (representative != null)
+            {
+                _main.CurrentFile = representative;
+                return;
+            }
+        }
+
         _filter.RaiseFilteredCountChanged();
     }
 

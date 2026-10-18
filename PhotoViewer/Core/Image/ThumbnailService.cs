@@ -97,6 +97,23 @@ public static class ThumbnailService
         }
 
         var orientation = ImageOrientationInfo.FromDirectories(directories, isHeif);
+        // HEIF 的 irot 是容器真实方向：能读到就直接以它为准，避免首张元数据尚未就绪
+        // 或不同读取路径给出不一致角度。
+        if (isHeif)
+        {
+            try
+            {
+                await using var probe = await file.OpenReadAsync();
+                int? directRotation = HeifOrientationReader.TryReadRotationDegreesCw(probe);
+                if (directRotation.HasValue)
+                    orientation = new ImageOrientationInfo(directRotation.Value, false,
+                        orientation.SensorWidth, orientation.SensorHeight);
+            }
+            catch
+            {
+                // 保持元数据结果。
+            }
+        }
         var sources = isHeif
             ? await EnumerateHeifSourcesAsync(file, directories).ConfigureAwait(false)
             : EnumerateNonHeifSources(file, directories);
@@ -198,7 +215,9 @@ public static class ThumbnailService
         // 平台解码器兜底:Default Rotation 已被平台解码器内部应用,标记 IsPreRotated=true
         result.Add(new ThumbnailSource(
             width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
-            isPreRotated: true,
+            // 各平台 HEIF 解码器是否已预旋转不同：Android 的 libheif/JPEG item 路径未旋转，
+            // 必须让 ThumbnailService 按容器方向再做方向对齐。
+            isPreRotated: HeifLoader.OutputPreRotated,
             loaderAsync: target => HeifLoader.DecodeAsync(file, target)));
 
         return result;
@@ -460,6 +479,17 @@ public static class ThumbnailService
     {
         if (src.IsPreRotated) return raw;
         if (orientation.RotationDegreesCw == 0 && !orientation.MirrorHorizontal) return raw;
+
+        // 同一 HEIF 内不同缩略图 item 的存储方向并不一致：Sony 有些 item 已按显示方向存成竖图，
+        // 有些仍是传感器横向。仅当“原始横竖”与“显示横竖”相反时才旋转，避免把已竖存的 item 再转 90°。
+        if (orientation.RotationDegreesCw is 90 or 270
+            && orientation.SensorWidth > 0 && orientation.SensorHeight > 0)
+        {
+            bool sensorPortrait = orientation.SensorHeight > orientation.SensorWidth;
+            bool displayPortrait = !sensorPortrait;
+            bool rawPortrait = raw.Height > raw.Width;
+            if (rawPortrait == displayPortrait) return raw;
+        }
 
         try
         {

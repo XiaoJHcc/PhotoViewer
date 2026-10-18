@@ -34,6 +34,9 @@ internal static class AndroidBitmapConverter
         }
     }
 
+    /// <summary>不进入缓存的一次性转换（导航图等短期位图）；调用方负责释放。</summary>
+    internal static Bitmap? ConvertDetached(DecodedImage image) => Convert(image);
+
     /// <summary>清空缓存并释放位图。</summary>
     internal static void Clear()
     {

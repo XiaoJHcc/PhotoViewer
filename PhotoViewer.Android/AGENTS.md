@@ -92,3 +92,22 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 17 | 列布局筛选条顶部有大段“mac 红绿灯”空白 | `FileContent` 已含 `safe.Top`，`leadingInset` 又加一次 `safe.Top`；列布局只传 `FilterMargin` |
 | 18 | 列布局缩略卡未居中、相似面板过宽；卡片内容偏左 | 卡片项宽行布局 96、列布局 116 并在 `OnBind` 同步；相似面板列布局交叉轴改用 `PanelWidth(106)` 而非 `ListCross(154)` |
 | 19 | 主图长按菜单飞到屏幕角落/屏幕外 | 原先用 `_photo.Left/Top`（相对 photoPane，非根视图）且 PopupMenu 开到锚点上方；改为自绘 `PopupWindow`，屏幕坐标夹取、超高度可滚，返回键先关菜单 |
+| 20 | 自绘长按菜单无分隔线、首行顶距小、底部空 | 行高 44dp、内容上下 4dp 对称 padding、项间 1px `Divider`，文字 `CenterVertical`；菜单仍夹在屏幕内 |
+| 21 | 筛选下拉位置无规律 | 改为自绘 `PopupWindow`，按被点下拉框 frame 精确落在框下方 2dp；下方放不下翻到框上方，返回键先关 |
+| 22 | 缩略图卡片图片仍偏左 | 图片/第二行从 5..85 改 8..88（80dp 在 96dp 内容内居中），星级 6 颗整体居中，日期中心 48dp |
+| 23 | P3 测试图只有 Adobe 略灰，P3/sRGB 看起来一样 | P3 表面已 True；但测试图是同一组 RGB 分别带 Adobe/P3/sRGB ICC，正确管理下 P3 与 sRGB 应不同。当前 `BitmapFactory` 的 ICC→P3 转换仍可疑，下一步用共享 `ColorEngine`/Skia skcms 接管；真机锁屏暂未取到解码色彩日志 |
+| 24 | 缩略图图片不偏左但偏上 | 图片/第二行改 8..88，标题基线 103、日期 115、星级 126，使上边距与左右 8dp 一致 |
+| 25 | 开关胶片栏/控制栏后主图严重偏移 | 两因：SurfaceView 新缓冲晚一帧（旧尺寸帧残留）+ 视口不保留中心。`OnSizeChanged` 保留 `CenterUV` 并 Post/PostDelayed 重绘；SurfaceChanged 也补两帧 |
+| 26 | 分析栏细节绿框随机乱飞、小图也出框、双击位置怪 | 按 iOS 语义重做：点按瓦片只切换定格（中心恒为瓦片自身 CenterU/V，不取手指落点）；双击才定位到瓦片中心；绿框大小 = 对焦框或 1:1 裁剪像素×视口 Scale；切图/关闭分析栏清除；适应态已大于物理 100% 的小图不画绿框；`FocusOnPoint` 小图夹回适应 |
+| 27 | 长按菜单每个项之间都有分隔线 | 按 iOS/旧壳分组：打开文件夹｜胶片栏/分析栏/控制栏｜增强预览｜工具/设置；顺序也改为 胶片/分析/控制 |
+| 28 | 初次打开文件夹控制栏只剩容器 | 空分组兜底重建 + 文件/CurrentFile 补 MarkDirty + 文件夹 UI 更新 120ms 后再重建；SAF 选择器返回时 Activity `OnResume` 再强制刷新控制栏与主图一帧 |
+| 29 | 主图色彩整体发白，任何格式 | 不是 ICC：真机 EGL P3 表面把主图整体抬亮（同一 JPEG 强制 sRGB 表面后正常，缩略图也正常）。默认改为 sRGB 表面/解码（`ForceSrgb`），广色域保留 `--ez pv-p3 true` 诊断；待确认 P3 EGL/合成传递函数后再默认开启 |
+| 30 | 控制栏偶现“只剩容器” | 真正根因：`OnDraw` 在 dirty/空分组时只 `Rebuild`，新分组 `Rect` 还是 0，绘制循环全部 `continue`。现改为在 `OnDraw` 内调用 `Arrange`（重建并算出矩形）再绘制；配合 SAF 返回刷新 |
+| 31 | 胶片栏图片被拉成 80 方形 | 卡片绘制改为按位图比例等比装入 80×80 并居中，非方形预览不再拉伸 |
+| 32 | HIF 导航指示器无缩略图 | 真因：HIF 的 `BitmapFactory` 连 bounds 都返回 0，旧代码在进入回退前就 return。现 bounds 无效/解码失败都走展示解码器（libheif）；真实 HIF `A7C05520.HIF` 已实测导航图出图 |
+| 33 | 同名 HIF/ARW 优先级 | 真实 `same.hif + same.arw` 实测：卡片 `same.hif(RAW)`、主图 HIF；`same.jpg + same.hif` 实测代表与主图均为 JPG。小组代表仍按 `SelectedFormats` 顺序 |
+| 34 | 同名合并后主图可能是被隐藏文件 | 文件夹打开时 CurrentFile 可能先指向 ARW/HIF，卡片却显示代表；`ApplyFilter` 末尾把隐藏的 CurrentFile 映射回其代表，实测 JPG/HIF/ARW 主图与卡片一致 |
+| 35 | HIF 缩略图/指示器等待久 | Sony HIF 的 `thmb` item 用 libheif thumbnail 插件解不了；但容器里有独立的 JPEG item（实测 160×120）。新增 `HeifJpegThumbnailExtractor` 解析 iinf/iloc 提取 JPEG item，胶片/导航优先用它，跳过 7008×4672 全图；随后 512 代理缓存复用。主图 Full 仍需一次全图 libheif（另一条路径），首张小图已不再等全图 |
+| 38 | HIF 同一文件缩略图横竖不一致 | 同一 HIF 内不同 thumbnail item 方向不一致：160×120 是传感器横向，373×560 已是显示竖图；统一按容器 270° 转会把后者转横。改为先比较“原始横竖”和“显示横竖”，相反才转。同进程先开 A670 文件夹再开 A7C09124，首卡已与主图同向 |
+| 37 | HIF 首张缩略图方向偶发错 | 首张走优先加载时 MetadataExtractor 可能还没给出 Default Rotation；新增 `HeifOrientationReader` 直接从文件头 irot 读角度，元数据为 0 时兜底。用 `/sdcard/PhotoViewerTest/12760425/A7C09124.HIF`（irot=1→270°）验证首卡与主图同向 |
+| 36 | HIF 胶片缩略图横竖错乱 | JPEG 缩略图 item 存储方向与主图不同。`ThumbnailService` 之前把 HEIF 平台源硬编码 `isPreRotated:true`；改为 `HeifLoader.OutputPreRotated`，Android libheif/JPEG item 路径按容器 Default Rotation 再做方向对齐。用改 `irot=90°` 的 HIF 验证主图与卡片同向 |

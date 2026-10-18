@@ -29,7 +29,8 @@ internal static class AndroidNavigationDecoder
                 var bounds = new BitmapFactory.Options { InJustDecodeBounds = true };
                 using (var stream = file.OpenReadAsync().GetAwaiter().GetResult())
                     BitmapFactory.DecodeStream(stream, null, bounds);
-                if (bounds.OutWidth <= 0 || bounds.OutHeight <= 0) return null;
+                if (bounds.OutWidth <= 0 || bounds.OutHeight <= 0)
+                    return DecodePresentationFallback(file, cancellationToken);
                 int sample = 1;
                 while (Math.Max(bounds.OutWidth, bounds.OutHeight) / (sample * 2) >= longEdgePx) sample *= 2;
                 var options = new BitmapFactory.Options
@@ -42,7 +43,8 @@ internal static class AndroidNavigationDecoder
                         (AndroidDisplayCapabilities.SurfaceIsP3 ? AndroidColorSpace.Named.DisplayP3 : AndroidColorSpace.Named.Srgb)!)!;
                 using var stream2 = file.OpenReadAsync().GetAwaiter().GetResult();
                 using var decoded = BitmapFactory.DecodeStream(stream2, null, options);
-                if (decoded == null) return null;
+                if (decoded == null)
+                    return DecodePresentationFallback(file, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
                 using var scaled = ScaleToLongEdge(decoded, longEdgePx);
                 return RotateForDisplay(scaled ?? decoded, orientation);
@@ -54,6 +56,20 @@ internal static class AndroidNavigationDecoder
                 return null;
             }
         }, cancellationToken);
+
+    /// <summary>BitmapFactory 连 bounds 都不出（HIF/HEIF）时，用展示解码器（含 libheif）生成导航图。</summary>
+    private static Bitmap? DecodePresentationFallback(IFileRef file, CancellationToken cancellationToken)
+    {
+        using var presentation = new AndroidPresentationDecoder()
+            .DecodeThumbnailAsync(file, 100, cancellationToken).GetAwaiter().GetResult();
+        if (presentation == null)
+        {
+            Console.WriteLine($"[Native] 导航图回退解码为空（{file.Name}）");
+            return null;
+        }
+        cancellationToken.ThrowIfCancellationRequested();
+        return AndroidBitmapConverter.ConvertDetached(presentation);
+    }
 
     /// <summary>按目标长边等比缩小；无需缩放时返回 null。</summary>
     private static Bitmap? ScaleToLongEdge(Bitmap bitmap, int longEdge)
