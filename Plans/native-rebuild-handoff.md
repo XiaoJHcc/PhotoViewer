@@ -66,7 +66,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 2.2 下一步（2026-10-19）
 
-1. **6F HTML 样机**：`Design/prototype/` 主窗口样机（行/列/自动布局、三档尺寸、栏位显隐、胶片栏定位动画与减少动态效果），读 `tokens.json` 并导出几何 JSON 供四端比对；见 [Design/README.md §8](../Design/README.md#8-样机与基线)。
+1. **6F 已完成（2026-10-19）**：主窗口样机 `Design/prototype/index.html`（行/列/自动、三档尺寸、栏位显隐、胶片栏定位动画与减少动态效果）；`node Design/prototype/export-geometry.mjs` 导出几何，`python3 Tools/compare-layout-geometry.py` 与 Mac `--pv-native-layout` 比对共有 381 节点 0 差异。后续可让 iOS/Android/Windows 验收导出同格式几何纳入比对。
 2. **6E 其余发布就绪项**：Windows 单文件 `.pri`（`0x80040111`）、macOS Developer ID 签名 + 公证、iOS App Store 合规冲刺（权限用途字符串/隐私清单/ATS/TestFlight、批量写回进度与失败汇总）、`SQLitePCLRaw.lib.e_sqlite3` 2.1.11 的 NU1903 高危。见 [phase-6 §4](native-rebuild-phase-6.md#4-6e-发布就绪)。
 3. **作者手验**：按 [统一清单「待作者手验」](native-rebuild-phase-6-unify.md#待作者手验)、[iPad 验收清单](native-rebuild-phase-ipad-acceptance.md) 与 [Android 验收清单](native-rebuild-phase-android-acceptance.md) 逐项确认后回填 [Design/status.md](../Design/status.md)。
 4. **性能专项（置后）**：大图性能门、切图卡顿、RAW 冷图剖面、iPad ARW 全分辨率（`CIRAWFilter`）、分析栏可见翻页 p95、CoreML EP；Training `DatasetBuilder` 去 Avalonia 也归此处（须先跑 `verify_onnx_parity.py`）。

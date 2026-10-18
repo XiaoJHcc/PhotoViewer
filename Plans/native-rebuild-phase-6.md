@@ -18,7 +18,7 @@
 | 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | ✅ 2026-10-19 四端统一完成；Windows 已由作者在 Windows 本机验收并合入主线；剩余作者手验见统一清单 |
 | 6D Avalonia 退役 | 见 §3 | 6E-1 | ✅ 2026-10-19（合并 `640d52d`；Mac/iOS/Android 程序化 PASS，Windows 仅 macOS 类型检查 0/0，待作者在 Windows 复核） |
 | 6E 发布就绪 | 见 §4 | 6C 阻塞项 | ◐ 6E-1 随 6D 完成（Release 默认原生壳）；6E-2～6E-7 待办 |
-| 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | ◐ 令牌生成器 `Tools/generate-design-tokens.py` 与四端接入完成 10-18；HTML 样机未开始 |
+| 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | ✅ 2026-10-19：令牌生成器（C# + 样机 `tokens.js`）、`Design/prototype/` 主窗口样机、`Tools/compare-layout-geometry.py`；样机 vs Mac 9 布局 381 节点 0 差异。其余三端尚无同格式几何导出 |
 | 6G 台账与文档 | 遗留 backlog、文档矛盾修正、阶段文档归档、阶段号注释清理 | 穿插 | ◐ 2026-10-19：退役后文档收口与 §6 可核实矛盾已修；其余见 §6 保留项 |
 
 > 2026-10-19 执行顺序调整为：6B → 6C/6D（6E-1 随 6D 成立）→ 6F 与 6E 其余 → 6G 收尾。
