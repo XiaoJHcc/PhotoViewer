@@ -9,7 +9,7 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 原生 DINO 诊断页（UIKit 版）：与旧壳 <c>DinoDebugView</c>/Mac 原生页同构 —— 标题与状态文本、
 /// DINO patch 三列瓦片（原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格三列瓦片
-/// （锐度 / 抖动拖影矢量 / 刚体拟合文本面板）。
+/// （锐度 / 抖动拖影矢量，第六格留空），刚体拟合文本以整宽块放在网格下方。
 /// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/>（读库快路径与推理都在那里完成），
 /// 本视图只做位图适配与点击回传，绝不自行驱动推理。
 /// </summary>
@@ -113,6 +113,12 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
 
     /// <summary>共享 DINO 诊断 presenter（导航栏与验收读取状态）。</summary>
     internal DinoDiagnosticPresenter Presenter => _presenter;
+
+    /// <summary>刚体拟合标题块（验收核对整宽块位于网格下方，TOOLS-05）。</summary>
+    internal CGRect RigidTitleFrame => _rigidTitle.Frame;
+
+    /// <summary>第二行瓦片底边（验收核对刚体拟合块不挤进第六格）。</summary>
+    internal double SecondRowBottom => Math.Max(_sharpnessTile.Frame.GetMaxY(), _shakeTile.Frame.GetMaxY());
 
     /// <summary>建立滚动容器、五个诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
     /// <param name="presenter">共享 DINO 诊断 presenter（由工具壳持有）。</param>
@@ -252,8 +258,8 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
 
         rowTop = y;
         double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _sharpnessTile, _shakeTile, null);
-        double panelBottom = PlaceRigidPanel(rowTop, cell);
-        y = rowTop + Math.Max(tileRowHeight, panelBottom - rowTop);
+        // TOOLS-05：第六格留空，刚体拟合文本以整宽块放在网格下方，不挤进瓦片格。
+        y = PlaceRigidPanel(rowTop + tileRowHeight, contentWidth);
         _document.Frame = new CGRect(0, 0, width, Math.Max(1, y + PageMarginBottom));
         _scroll.ContentSize = _document.Frame.Size;
     }
@@ -264,7 +270,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     /// <param name="tileWidth">瓦片宽度。</param>
     /// <param name="first">第一列瓦片。</param>
     /// <param name="second">第二列瓦片。</param>
-    /// <param name="third">第三列瓦片；null 表示该格由刚体拟合面板另排。</param>
+    /// <param name="third">第三列瓦片；null 表示该格留空（TOOLS-05 第六格）。</param>
     /// <returns>行高度。</returns>
     private static double PlaceTiles(double top, double cell, double tileWidth, iOSDiagnosticTile first, iOSDiagnosticTile second, iOSDiagnosticTile? third)
     {
@@ -282,14 +288,14 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         }
     }
 
-    /// <summary>摆放第三列的刚体拟合文本面板（标题、量纲说明与多行判定文本），返回面板底边纵坐标。</summary>
-    /// <param name="top">行顶边纵坐标。</param>
-    /// <param name="cell">单列宽度。</param>
+    /// <summary>摆放网格下方的整宽刚体拟合文本面板（标题、量纲说明与多行判定文本），返回面板底边纵坐标。</summary>
+    /// <param name="top">面板顶边纵坐标。</param>
+    /// <param name="contentWidth">页面内容宽度（整宽块）。</param>
     /// <returns>面板底边纵坐标。</returns>
-    private double PlaceRigidPanel(double top, double cell)
+    private double PlaceRigidPanel(double top, double contentWidth)
     {
-        double panelX = PageMarginX + cell * 2 + TileMargin;
-        double panelWidth = Math.Max(1, cell - TileMargin * 2);
+        double panelX = PageMarginX;
+        double panelWidth = Math.Max(1, contentWidth);
         double y = top + TileMargin;
         _rigidTitle.Frame = new CGRect(panelX, y, panelWidth, LineHeight(SectionFont));
         y += LineHeight(SectionFont) + PanelSpacing;

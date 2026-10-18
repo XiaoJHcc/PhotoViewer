@@ -111,6 +111,8 @@ internal static class iOSNativeToolsCheck
             if (presenter.IsPresented) throw new InvalidOperationException("工具页在入口调用前已展示");
             await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
             await WaitAsync(() => presenter.IsPresented && root.PresentedViewController is UINavigationController, "控制栏 EXIF 块打开工具页");
+            // TOOLS-01：展示时写共享展示态，主窗口入口据此只前置。
+            if (!mainVm.Tools.IsPresented) throw new InvalidOperationException("工具页展示后共享 ToolsViewModel.IsPresented 仍为 false");
             var navigation = presenter.Navigation ?? throw new InvalidOperationException("工具页缺少导航控制器");
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && navigation.ViewIfLoaded?.Window != null, "工具列表页上屏");
             if (navigation.OverrideUserInterfaceStyle != UIUserInterfaceStyle.Dark)
@@ -130,6 +132,12 @@ internal static class iOSNativeToolsCheck
             var exif = presenter.ExifPage!;
             await WaitAsync(() => exif.Table.Bounds.Width > 100, "EXIF 表格布局");
             await WaitAsync(() => exif.GroupCount > 0 && exif.TagCount > 0, "EXIF 分组加载");
+            // TOOLS-01：已展示时再次从主窗口入口打开只前置，保留当前页（不回列表）。
+            await UiDispatcher.InvokeAsync(root.ShowTools);
+            await Task.Delay(150);
+            if (navigation.TopViewController is not iOSExifDetailView || !mainVm.Tools.CanGoBack)
+                throw new InvalidOperationException("已打开工具页时再次打开被复位到列表（TOOLS-01）");
+            lines.Add("PASS TOOLS-01：已展示时主窗口入口只前置并保留当前 EXIF 详情页");
             await WaitAsync(() => exif.Table.NumberOfSections() == exif.GroupCount, "EXIF 分区渲染");
             int renderedRows = 0;
             for (int section = 0; section < exif.Table.NumberOfSections(); section++) renderedRows += (int)exif.Table.NumberOfRowsInSection(section);
@@ -141,7 +149,10 @@ internal static class iOSNativeToolsCheck
             var ids = visibleCells.SelectMany(cell => Labels(cell)).ToArray();
             if (!ids.Any(text => text.StartsWith("0x", StringComparison.Ordinal)))
                 throw new InvalidOperationException($"EXIF 可见行缺少 Tag ID：{string.Join(" | ", ids.Take(10))}");
-            lines.Add($"PASS EXIF 详情：{exif.GroupCount} 组 / {exif.TagCount} 标签，表格分区/行数与共享 VM 一致，可见行含 ID/名称/值");
+            var selectable = visibleCells.SelectMany(Descendants).OfType<iOSExifDetailView.SelectableTextView>().FirstOrDefault();
+            if (selectable is not { Selectable: true, Editable: false })
+                throw new InvalidOperationException("TOOLS-03：EXIF 标签文本不是可长按选择的只读文本");
+            lines.Add($"PASS EXIF 详情：{exif.GroupCount} 组 / {exif.TagCount} 标签，表格分区/行数与共享 VM 一致，可见行含 ID/名称/值且可长按选择复制");
 
             if (exif.ViewModel?.HasMultipleFormats == true)
             {
@@ -169,20 +180,29 @@ internal static class iOSNativeToolsCheck
             await WaitAsync(() => mainVm.Tools.DinoPresenter.Status == mainVm.CurrentFile!.Name, "DINO 状态就绪");
             await WaitAsync(() => dino.Tiles.Count == 5, "DINO 五张瓦片");
             await WaitAsync(() => dino.Tiles[0].HasContent, "DINO 缩略图瓦片出图");
-            lines.Add($"PASS DINO 诊断：5 张瓦片，状态 = {mainVm.Tools.DinoPresenter.Status}");
+            await UiDispatcher.InvokeAsync(() => dino.View!.LayoutIfNeeded());
+            double pageWidth = (double)dino.View!.Bounds.Width;
+            // TOOLS-05：刚体拟合文本是网格下方的整宽块（左右 16 点页边距），不占第六格。
+            if (Math.Abs((double)dino.RigidTitleFrame.X - 16) > .5
+                || Math.Abs((double)dino.RigidTitleFrame.Width - Math.Max(1, pageWidth - 32)) > .5
+                || (double)dino.RigidTitleFrame.Y < dino.SecondRowBottom)
+                throw new InvalidOperationException($"TOOLS-05：刚体拟合文本未以整宽块位于网格下方：{dino.RigidTitleFrame}（页宽 {pageWidth}）");
+            lines.Add($"PASS DINO 诊断：5 张瓦片，状态 = {mainVm.Tools.DinoPresenter.Status}；刚体拟合文本为网格下方整宽块");
             await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "返回列表页（DINO）");
 
             // 五、关闭后可重开（对象保留、导航栈复位到列表页）。
             await UiDispatcher.InvokeAsync(presenter.Dismiss);
-            await WaitAsync(() => !presenter.IsPresented, "工具页关闭");
+            await WaitAsync(() => !presenter.IsPresented && !mainVm.Tools.IsPresented, "工具页关闭并复位共享展示态");
+            await WaitAsync(() => mainVm.Tools.DinoPresenter.Status == "未加载", "关闭工具页取消在途 DINO");
+            lines.Add("PASS TOOLS-06：关闭工具页写回 IsPresented=false 并取消在途 DINO 任务");
             await UiDispatcher.InvokeAsync(root.ShowTools);
             await WaitAsync(() => presenter.IsPresented, "工具页重开");
             await WaitAsync(() => presenter.Navigation!.TopViewController is iOSNativeToolsListViewController, "重开后回到列表页");
             lines.Add("PASS 生命周期：关闭释放展示、可重开并回到列表页");
 
             await UiDispatcher.InvokeAsync(() => presenter.Dismiss());
-            await WaitAsync(() => !presenter.IsPresented, "收尾关闭工具页");
+            await WaitAsync(() => !presenter.IsPresented && !mainVm.Tools.IsPresented, "收尾关闭工具页");
             await UiDispatcher.InvokeAsync(() =>
             {
                 mainVm.IsThumbnailViewVisible = entryFilm;
@@ -209,8 +229,11 @@ internal static class iOSNativeToolsCheck
     private static IEnumerable<string> Labels(UIView root)
     {
         foreach (var view in Descendants(root))
-            if (view is UILabel label && !string.IsNullOrEmpty(label.Text))
-                yield return label.Text;
+        {
+            // TOOLS-03 起元数据行用可选文本视图承载标签，验收同时收集其文本。
+            if (view is UILabel label && !string.IsNullOrEmpty(label.Text)) yield return label.Text;
+            else if (view is UITextView text && !string.IsNullOrEmpty(text.Text)) yield return text.Text;
+        }
     }
 
     /// <summary>深度遍历视图树。</summary>

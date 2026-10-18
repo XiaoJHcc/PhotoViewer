@@ -2,6 +2,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.iOS.Core;
@@ -788,8 +789,16 @@ internal static class iOSNativeGestureCheck
         if (enabled)
         {
             if (!busy) throw new InvalidOperationException("增强开关按下后未进入计算态（IsEnhancing=false）");
-            bool labelShown = await UiDispatcher.InvokeAsync(() => !root.EnhanceBusyLabel.Hidden);
-            if (!labelShown) throw new InvalidOperationException("增强计算期间未显示\"计算中\"提示");
+            // IMAGE-07：药丸接共享 500ms 门槛，按下当刻不得显示。
+            bool labelShownImmediately = await UiDispatcher.InvokeAsync(() => !root.EnhanceBusyLabel.Hidden);
+            if (labelShownImmediately) throw new InvalidOperationException("增强按下当刻即显示\"计算中\"（未走 500ms 门槛）");
+            await Task.Delay(DesignTokens.ImageBusyDelay + 200);
+            bool stillEnhancing = await UiDispatcher.InvokeAsync(() => session.IsEnhancing);
+            if (stillEnhancing)
+            {
+                bool labelShown = await UiDispatcher.InvokeAsync(() => session.IsEnhancingVisible && !root.EnhanceBusyLabel.Hidden);
+                if (!labelShown) throw new InvalidOperationException("增强计算超过 500ms 仍未显示\"计算中\"");
+            }
             await WaitAsync(() => session.EnhancedDisplay, "增强图就绪");
             await WaitAsync(() => !session.IsEnhancing && root.EnhanceBusyLabel.Hidden, "计算中提示收起");
         }

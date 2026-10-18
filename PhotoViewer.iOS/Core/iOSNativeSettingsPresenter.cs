@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Foundation;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
@@ -39,6 +40,8 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
             var session = new iOSNativeSettingsSession(settings);
             var rootController = new iOSNativeSettingsRootViewController(session);
             var navigationController = new iOSNativeSettingsNavigationController(rootController, session);
+            // SETTINGS-03：设置页固定深色，不随系统亮/暗切换（与工具页同一口径）。
+            navigationController.OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
             ConfigureSheetPresentation(navigationController.SheetPresentationController);
             if (iOSViewControllerLocator.GetTopMostViewController() is not { } topController)
             {
@@ -117,6 +120,11 @@ internal sealed class iOSNativeSettingsSession
     /// 当前会话使用的工作设置副本。
     /// </summary>
     public SettingsViewModel WorkingSettings { get; }
+
+    /// <summary>
+    /// 共享层当前生效的设置实例；持久化状态只从源实例读取（工作副本用临时存储，永远没有失败状态）。
+    /// </summary>
+    public SettingsViewModel Source => _source;
 
     /// <summary>
     /// 初始化原生设置编辑会话。
@@ -249,11 +257,16 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
 {
     private readonly iOSNativeSettingsSession _session;
     private readonly SettingsViewModel _settings;
+    private readonly UIView _statusHeader = new();
+    private readonly UILabel _statusLabel = new();
 
     private readonly (string Title, string? Subtitle, Func<UIViewController> Factory)[] _items;
 
     /// <summary>当前编辑会话（测试缝：验收核对关闭回写后的设置传播）。</summary>
     internal iOSNativeSettingsSession Session => _session;
+
+    /// <summary>设置页顶部的持久化失败状态行（SETTINGS-14，测试缝）。</summary>
+    internal UILabel PersistenceStatusLabel => _statusLabel;
 
     /// <summary>
     /// 初始化原生设置页根控制器。
@@ -287,6 +300,75 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
             DismissViewController(true, null);
         });
         TableView.CellLayoutMarginsFollowReadableWidth = false;
+        // SETTINGS-14：读取/保存失败在设置页顶部显示一行可见状态（源设置实例才有真实持久化状态）。
+        _statusLabel.Font = UIFont.SystemFontOfSize(12)!;
+        _statusLabel.TextColor = UIColor.SystemRed;
+        _statusLabel.Lines = 0;
+        _statusLabel.LineBreakMode = UILineBreakMode.WordWrap;
+        _statusLabel.BackgroundColor = UIColor.Clear;
+        _statusHeader.BackgroundColor = UIColor.Clear;
+        _statusHeader.AddSubview(_statusLabel);
+        TableView.TableHeaderView = _statusHeader;
+        RefreshPersistenceStatus();
+    }
+
+    /// <summary>页面出现时跟随源设置的持久化状态；离开时解除订阅。</summary>
+    /// <param name="animated">系统动画标记。</param>
+    public override void ViewWillAppear(bool animated)
+    {
+        base.ViewWillAppear(animated);
+        _session.Source.PropertyChanged += OnSourceSettingsChanged;
+        RefreshPersistenceStatus();
+    }
+
+    /// <summary>页面离开时解除源设置订阅。</summary>
+    /// <param name="animated">系统动画标记。</param>
+    public override void ViewWillDisappear(bool animated)
+    {
+        _session.Source.PropertyChanged -= OnSourceSettingsChanged;
+        base.ViewWillDisappear(animated);
+    }
+
+    /// <summary>表格宽度变化后重算状态行高度，避免状态文本被截断。</summary>
+    public override void ViewDidLayoutSubviews()
+    {
+        base.ViewDidLayoutSubviews();
+        LayoutStatusHeader();
+    }
+
+    /// <summary>源设置持久化状态变化（跨线程）后回到 UI 线程刷新。</summary>
+    /// <param name="sender">事件源（源设置 VM）。</param>
+    /// <param name="args">属性变化参数。</param>
+    private void OnSourceSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) UiDispatcher.Post(RefreshPersistenceStatus);
+    }
+
+    /// <summary>同步设置页顶部状态行：没有失败信息时整行收起。</summary>
+    private void RefreshPersistenceStatus()
+    {
+        string? status = _session.Source.PersistenceStatus;
+        _statusLabel.Text = status ?? string.Empty;
+        _statusLabel.Hidden = string.IsNullOrWhiteSpace(status);
+        LayoutStatusHeader();
+    }
+
+    /// <summary>按文本换行测量状态行高度并挂回表格头。</summary>
+    private void LayoutStatusHeader()
+    {
+        double width = Math.Max(1, (double)TableView.Bounds.Width);
+        double textWidth = Math.Max(1, width - 32);
+        double height = _statusLabel.Hidden
+            ? 0
+            : Math.Ceiling((double)_statusLabel.SizeThatFits(new CoreGraphics.CGSize(textWidth, 10000)).Height) + 16;
+        _statusLabel.Frame = new CoreGraphics.CGRect(16, 8, textWidth, Math.Max(1, height - 16));
+        var size = new CoreGraphics.CGSize(width, height);
+        // 只比较尺寸：UIKit 自己会把表格头原点挪到内容起点（y=35），比较原点会让每次布局都重挂表头并无限重排。
+        if (!ReferenceEquals(TableView.TableHeaderView, _statusHeader) || _statusHeader.Frame.Size != size)
+        {
+            _statusHeader.Frame = new CoreGraphics.CGRect(0, 0, width, height);
+            TableView.TableHeaderView = _statusHeader;
+        }
     }
 
     /// <summary>
@@ -1281,8 +1363,11 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
         };
         deleteButton.SetTitle("-", UIControlState.Normal);
         deleteButton.TitleLabel.Font = UIFont.SystemFontOfSize(22, UIFontWeight.Semibold);
+        // SETTINGS-07：只剩一项时删除入口禁用，不允许进入空表。
+        deleteButton.Enabled = Settings.CanRemoveScalePreset;
         deleteButton.TouchUpInside += (_, _) =>
         {
+            if (!Settings.CanRemoveScalePreset) return;
             Settings.RemoveScalePreset(preset);
             RebuildContent();
         };
@@ -1338,7 +1423,8 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
     {
         if (!TryParsePercentage(text, out var normalizedText))
         {
-            PresentValidationAlert("请输入大于 0 的数字，例如 100 或 66.7。", textFieldResponder: textFieldResponder);
+            PresentValidationAlert($"请输入大于 0 且不超过 {SettingsViewModel.ScalePresetPercentMax:0} 的数字，例如 100 或 66.7。",
+                textFieldResponder: textFieldResponder);
             return false;
         }
 
@@ -1356,15 +1442,12 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
     private static bool TryParsePercentage(string text, out string normalizedText)
     {
         normalizedText = string.Empty;
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var invariantValue) && invariantValue > 0)
+        // SETTINGS-07：四端共用同一校验（有限值、>0 且 ≤1600），不再只检查正数。
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value))
         {
-            normalizedText = invariantValue.ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
-        }
-
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out var localValue) && localValue > 0)
-        {
-            normalizedText = localValue.ToString("0.###", CultureInfo.InvariantCulture);
+            if (!SettingsViewModel.IsValidScalePresetPercent(value)) return false;
+            normalizedText = value.ToString("0.###", CultureInfo.InvariantCulture);
             return true;
         }
 
@@ -1475,12 +1558,25 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
                 new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
                     itemsProvider: () => Settings.Hotkeys,
                     titleSelector: item => item.Name,
-                    subtitleSelector: _ => null,
+                    // SETTINGS-01@ios：无录制能力，但行副标题只读显示主/次绑定与冲突。
+                    subtitleSelector: HotkeySubtitle,
                     isEnabledGetter: item => item.IsDisplay,
                     isEnabledSetter: (item, value) => item.IsDisplay = value,
                     moveAction: Settings.MoveHotkey,
                     rowHeight: 52,
-                    cellStyle: UITableViewCellStyle.Default)));
+                    cellStyle: UITableViewCellStyle.Subtitle)));
+    }
+
+    /// <summary>
+    /// 快捷键行的只读副标题：主/次绑定与冲突标记（未绑定显示"未设置"，与共享口径一致）。
+    /// </summary>
+    /// <param name="item">共享快捷键项。</param>
+    /// <returns>副标题文本。</returns>
+    private static string HotkeySubtitle(SettingsViewModel.HotkeyItem item)
+    {
+        string primary = item.PrimaryHotkeyText + (item.HasPrimaryConflict ? "（冲突）" : string.Empty);
+        string secondary = item.SecondaryHotkeyText + (item.HasSecondaryConflict ? "（冲突）" : string.Empty);
+        return $"主 {primary} · 次 {secondary}";
     }
 
     /// <summary>

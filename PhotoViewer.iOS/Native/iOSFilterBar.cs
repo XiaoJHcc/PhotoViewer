@@ -1,5 +1,6 @@
 using CoreGraphics;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using UIKit;
@@ -78,11 +79,21 @@ internal sealed class iOSFilterBar : UIView
         BindMenu(_rating, filter.RatingFilters.Select(option => (option.DisplayName, (object)option.Key)).ToArray(), filter.SelectedRatingFilter);
     }
 
-    /// <summary>同步相似聚类 toggle 的勾选态（点亮时用系统蓝底白字，与筛选条其他控件区分）。</summary>
+    /// <summary>
+    /// 同步相似聚类 toggle 的勾选态：FILTER-01 视觉取令牌四色（深蓝底/蓝边/浅蓝字，未选中 #AAA 字）。
+    /// </summary>
     private void SyncToggle()
     {
         bool open = _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-        _similarity.BackgroundColor = open ? UIColor.SystemBlue : UIColor.FromWhiteAlpha(2f / 15, 1);
+        _similarity.BackgroundColor = open
+            ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedBackground)
+            : UIColor.FromWhiteAlpha(2f / 15, 1);
+        _similarity.Layer.BorderColor = (open
+            ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedBorder)
+            : iOSColors.FromToken(DesignTokens.ColorFilterToggleBorder)).CGColor;
+        _similarity.SetTitleColor(open
+            ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedForeground)
+            : iOSColors.FromToken(DesignTokens.ColorFilterToggleForeground), UIControlState.Normal);
         _similarity.AccessibilityValue = open ? "已展开" : "已收起";
     }
 

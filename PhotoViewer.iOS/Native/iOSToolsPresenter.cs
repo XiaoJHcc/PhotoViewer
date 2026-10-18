@@ -21,6 +21,7 @@ internal sealed class iOSNativeToolsPresenter
     private iOSNativeToolsListViewController? _list;
     private iOSExifDetailView? _exif;
     private iOSDinoDiagnosticView? _dino;
+    private ToolsDismissDelegate? _dismissDelegate;
 
     /// <summary>当前进程里的工具页宿主（验收读取真实导航栈与页面）。</summary>
     internal static iOSNativeToolsPresenter? Current { get; private set; }
@@ -60,13 +61,24 @@ internal sealed class iOSNativeToolsPresenter
         {
             throw new InvalidOperationException("工具页没有可展示的宿主控制器");
         }
-        host.PresentViewController(_navigation!, true, null);
+        _dismissDelegate ??= new ToolsDismissDelegate(this);
+        // 展示控制器只在展示时存在：接着挂自适应关闭代理，覆盖下滑关闭与关闭按钮两条路径。
+        if (_navigation!.PresentationController is { } presentation)
+            presentation.Delegate = _dismissDelegate;
+        // TOOLS-01：主窗口据此判断"已展示只前置、未展示才回首页"。
+        tools.IsPresented = true;
+        host.PresentViewController(_navigation, true, () =>
+        {
+            if (_navigation.PresentationController is { } controller) controller.Delegate = _dismissDelegate;
+        });
     }
 
     /// <summary>关闭工具页（sheet 下拉关闭同样走系统路径）；对象保留可重开。</summary>
     internal void Dismiss()
     {
         if (!IsPresented) return;
+        // 关闭按钮/程序化关闭立即复位共享状态；下滑关闭由 DidDismiss 走同一收口（重复调用幂等）。
+        HandleDismissed();
         _navigation!.DismissViewController(true, null);
     }
 
@@ -149,6 +161,25 @@ internal sealed class iOSNativeToolsPresenter
         if (args.PropertyName == nameof(ToolsViewModel.ExifDetail) && _exif != null && _tools?.ExifDetail != null)
             _exif.Show(_tools.ExifDetail);
         if (args.PropertyName == nameof(ToolsViewModel.DinoDebug)) _dino?.Sync();
+    }
+
+    /// <summary>
+    /// sheet 已关闭（下滑、关闭按钮或程序化 Dismiss 的统一收口）：清除共享展示态并取消在途 DINO 任务，
+    /// 页面对象保留以便重开（TOOLS-01/TOOLS-06）。
+    /// </summary>
+    private void HandleDismissed()
+    {
+        if (_tools == null) return;
+        _tools.IsPresented = false;
+        _tools.Deactivate();
+    }
+
+    /// <summary>自适应展示代理：把系统关闭路径转交给宿主统一处理。</summary>
+    private sealed class ToolsDismissDelegate(iOSNativeToolsPresenter owner) : UIAdaptivePresentationControllerDelegate
+    {
+        /// <summary>系统完成关闭后复位共享状态并取消后台计算。</summary>
+        /// <param name="presentationController">本次展示控制器。</param>
+        public override void DidDismiss(UIPresentationController presentationController) => owner.HandleDismissed();
     }
 }
 

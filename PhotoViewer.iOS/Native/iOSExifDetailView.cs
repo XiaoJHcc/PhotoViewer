@@ -345,10 +345,10 @@ internal sealed class iOSExifDetailView : UIViewController
 
         private readonly UIView _card = new();
         private readonly UIView _idCell = new();
-        private readonly UILabel _idText;
-        private readonly UILabel _name;
-        private readonly UILabel _chinese;
-        private readonly UILabel _value;
+        private readonly SelectableTextView _idText;
+        private readonly SelectableTextView _name;
+        private readonly SelectableTextView _chinese;
+        private readonly SelectableTextView _value;
         private readonly UIView[] _dividers = [new UIView(), new UIView(), new UIView()];
         private readonly UIView _rowDivider = new();
 
@@ -364,10 +364,11 @@ internal sealed class iOSExifDetailView : UIViewController
             _card.Layer.CornerRadius = 6;
             _card.ClipsToBounds = true;
             _idCell.BackgroundColor = IdCellColor;
-            _idText = Label(IdFont, IdTextColor, UITextAlignment.Center, 1, UILineBreakMode.TailTruncation);
-            _name = Label(CellFont, NameColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
-            _chinese = Label(CellFont, ChineseColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
-            _value = Label(CellFont, ValueColor, UITextAlignment.Left, ExifTableGeometry.ValueMaxLines, UILineBreakMode.TailTruncation);
+            // TOOLS-03：标签文本可长按选择复制，故用只读可选文本视图而不是 UILabel。
+            _idText = SelectableText(IdFont, IdTextColor, UITextAlignment.Center, 1, UILineBreakMode.TailTruncation);
+            _name = SelectableText(CellFont, NameColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
+            _chinese = SelectableText(CellFont, ChineseColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
+            _value = SelectableText(CellFont, ValueColor, UITextAlignment.Left, ExifTableGeometry.ValueMaxLines, UILineBreakMode.TailTruncation);
             foreach (var divider in _dividers) divider.BackgroundColor = DividerColor;
             _rowDivider.BackgroundColor = DividerColor;
             _card.AddSubview(_idCell);
@@ -407,7 +408,7 @@ internal sealed class iOSExifDetailView : UIViewController
             var card = new CGRect(SideMargin, 0, cardWidth, (double)ContentView.Bounds.Height);
             _card.Frame = card;
             var columns = ExifTableGeometry.Compute(cardWidth);
-            double idHeight = Math.Min((double)_idText.Font.LineHeight, (double)card.Height);
+            double idHeight = Math.Min((double)_idText.Font!.LineHeight, (double)card.Height);
             _idCell.Frame = new CGRect(0, 0, ExifTableGeometry.IdColumnWidth, (nfloat)card.Height);
             _idText.Frame = new CGRect(0, ((nfloat)card.Height - idHeight) / 2, IdColumnWidth, idHeight);
 
@@ -429,22 +430,54 @@ internal sealed class iOSExifDetailView : UIViewController
             _rowDivider.Frame = new CGRect(0, (nfloat)card.Height - DividerWidth, (nfloat)cardWidth, DividerWidth);
         }
 
-        /// <summary>只读文本标签；值列超过三行时尾部截断。</summary>
+        /// <summary>只读可选文本；值列超过三行时尾部截断。</summary>
         /// <param name="font">字体。</param>
         /// <param name="color">颜色。</param>
         /// <param name="alignment">对齐方式。</param>
         /// <param name="lines">行数上限；0 表示不限。</param>
         /// <param name="mode">换行模式。</param>
-        /// <returns>标签。</returns>
-        private static UILabel Label(UIFont font, UIColor color, UITextAlignment alignment, int lines, UILineBreakMode mode) => new()
+        /// <returns>可选文本视图。</returns>
+        private static SelectableTextView SelectableText(UIFont font, UIColor color, UITextAlignment alignment, int lines,
+            UILineBreakMode mode) => new()
         {
             Font = font,
             TextColor = color,
             TextAlignment = alignment,
             Lines = lines,
             LineBreakMode = mode,
-            BackgroundColor = UIColor.Clear,
         };
+    }
+
+    /// <summary>
+    /// TOOLS-03 的只读可选文本：外观与 UILabel 一致，但长按可选中复制（UITextView 提供原生选择菜单）。
+    /// </summary>
+    internal sealed class SelectableTextView : UITextView
+    {
+        /// <summary>以标签语义创建文本视图：禁用编辑与滚动，去掉文本容器内边距。</summary>
+        public SelectableTextView() : base(CGRect.Empty)
+        {
+            Editable = false;
+            Selectable = true;
+            ScrollEnabled = false;
+            UserInteractionEnabled = true;
+            BackgroundColor = UIColor.Clear;
+            ClipsToBounds = true;
+            DataDetectorTypes = UIDataDetectorType.None;
+            TextContainerInset = UIEdgeInsets.Zero;
+            TextContainer.LineFragmentPadding = 0;
+        }
+
+        /// <summary>行数上限；0 表示不限（对齐 UILabel.Lines）。</summary>
+        internal int Lines
+        {
+            set => TextContainer.MaximumNumberOfLines = (nuint)Math.Max(0, value);
+        }
+
+        /// <summary>换行模式（对齐 UILabel.LineBreakMode）。</summary>
+        internal UILineBreakMode LineBreakMode
+        {
+            set => TextContainer.LineBreakMode = value;
+        }
     }
 
     /// <summary>文件名 + 格式切换头：单格式显示文字标签，多格式显示扁平按钮（选中 #505050、圆角 6）。</summary>

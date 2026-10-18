@@ -2,6 +2,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -26,10 +27,10 @@ namespace PhotoViewer.iOS.Native;
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
 {
-    /// <summary>按住方向键的首次重复延迟（秒）；iOS 无读取系统键盘重复速率的公开接口。</summary>
-    private const double KeyRepeatDelay = .35;
+    /// <summary>按住方向键的首次重复延迟（秒）；节奏取设计令牌（iOS 无读取系统键盘重复速率的公开接口）。</summary>
+    private static readonly double KeyRepeatDelay = DesignTokens.ImageKeyRepeatDelay / 1000.0;
     /// <summary>按住方向键的重复间隔（秒）。</summary>
-    private const double KeyRepeatInterval = .06;
+    private static readonly double KeyRepeatInterval = DesignTokens.ImageKeyRepeatInterval / 1000.0;
 
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
@@ -59,6 +60,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UILabel _zoomLabel = new();
     /// <summary>增强计算中的提示（真机解释器模式下 24MP 档需要约 1–2 秒，必须给可见反馈）。</summary>
     private readonly UILabel _enhanceBusy = new();
+    /// <summary>STATE-03 提示条：评分写回失败、Full 升级失败与内存自动关闭增强共用。</summary>
+    private readonly iOSStatusToast _toast = new();
+    private string _lastFullError = string.Empty;
     private UIImage? _navigationBitmap;
     private DecodedImage? _navigationSource;
     private readonly iOSContextMenuDelegate _photoMenu;
@@ -125,8 +129,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UIView NavigationFrameView => _navigationFrame;
     /// <summary>物理缩放百分比标签（验收核对文本）。</summary>
     internal UILabel ZoomLabel => _zoomLabel;
-    /// <summary>增强计算中的提示标签（验收核对可见性）。</summary>
+    /// <summary>增强计算中的提示标签（验收核对 500ms 门槛后的可见性）。</summary>
     internal UILabel EnhanceBusyLabel => _enhanceBusy;
+    /// <summary>STATE-03 提示条（验收读取当前文本与可见性）。</summary>
+    internal iOSStatusToast Toast => _toast;
+    /// <summary>空态/加载/失败标题（STATE-01/02）。</summary>
+    internal UILabel HintLabel => _hintLabel;
+    /// <summary>解码失败详情文本。</summary>
+    internal UILabel HintDetailLabel => _hintDetail;
     /// <summary>主图分区沿主轴的长度（行布局取高度，列布局取宽度），供验收核对栏位显隐与让位。</summary>
     /// <param name="row">是否行布局。</param>
     /// <returns>主轴长度。</returns>
@@ -154,6 +164,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         // 订阅在构造期完成：启动参数（--pv-open / 外部打开）可能在根控制器上屏前就选中了首图，
         // 若等到 ViewWillAppear 再订阅会漏掉那次 CurrentFile 变化而永不加载。
         _session.Changed += OnSessionChanged;
+        // SCOPE-02：内存压力自动关闭增强等一次性结果由会话发出，壳只负责用 STATE-03 提示条呈现。
+        _session.Notice += OnSessionNotice;
         _photo.ViewportChanged += ReportViewport;
         _photo.ViewportChanged += ApplyDetailHighlight;
         _photo.SwipeRequested += OnSwipeRequested;
@@ -177,17 +189,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         base.ViewDidLoad();
         var root = View!;
-        root.BackgroundColor = UIColor.FromRGB(18, 18, 18);
-        _photoPane.BackgroundColor = UIColor.Black;
+        // SHELL-01：栏位与窗口底统一取 color.bar.background（#111111）。
+        root.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
+        _photoPane.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorViewerBackground);
         _photo.AutoresizingMask = UIViewAutoresizing.FlexibleWidth | UIViewAutoresizing.FlexibleHeight;
         _photo.Frame = _photoPane.Bounds;
         _photoPane.AddSubview(_photo);
         _hintLabel.Text = HintText();
-        _hintLabel.Font = UIFont.SystemFontOfSize(16);
+        _hintLabel.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ImageHintTitleFontSize);
         _hintLabel.TextColor = UIColor.SecondaryLabel;
         _hintLabel.TextAlignment = UITextAlignment.Center;
         _hintLabel.Lines = 0;
-        _hintDetail.Font = UIFont.SystemFontOfSize(13);
+        _hintDetail.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.ImageHintDetailFontSize);
         _hintDetail.TextColor = UIColor.SecondaryLabel;
         _hintDetail.TextAlignment = UITextAlignment.Center;
         _hintDetail.Lines = 0;
@@ -201,17 +214,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photoPane.AddSubview(_detailHighlight);
         // 导航图（缩略图 + 可见框 + 百分比）：缩略图来自 GPU 小目标渲染（与 Mac 同一份共享代码路径），
         // 只在非适应态显示；点按/拖动导航图把照片居中到该位置（触屏增强，Mac 无此交互）。
-        _navigationHost.BackgroundColor = UIColor.FromWhiteAlpha(.13f, .78f);
-        _navigationHost.Layer.CornerRadius = 6;
+        _navigationHost.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorNavBackground, DesignTokens.ColorNavBackgroundAlpha);
+        _navigationHost.Layer.CornerRadius = (nfloat)DesignTokens.NavCornerRadius;
         _navigationHost.ClipsToBounds = true;
         _navigationHost.Hidden = true;
         _navigationImage.ContentMode = UIViewContentMode.ScaleToFill;
         _navigationFrame.BackgroundColor = UIColor.Clear;
         _navigationFrame.UserInteractionEnabled = false;
-        _navigationFrame.Layer.BorderColor = UIColor.White.CGColor;
-        _navigationFrame.Layer.BorderWidth = 1;
+        _navigationFrame.Layer.BorderColor = iOSColors.FromToken(DesignTokens.ColorNavFrame).CGColor;
+        _navigationFrame.Layer.BorderWidth = (nfloat)DesignTokens.NavFrameThickness;
         _zoomLabel.TextColor = UIColor.White;
-        _zoomLabel.Font = UIFont.SystemFontOfSize(12, UIFontWeight.Semibold);
+        _zoomLabel.Font = UIFont.SystemFontOfSize((nfloat)DesignTokens.NavPercentFontSize, UIFontWeight.Semibold);
         _zoomLabel.TextAlignment = UITextAlignment.Center;
         _navigationHost.AddSubview(_navigationImage);
         _navigationHost.AddSubview(_navigationFrame);
@@ -225,17 +238,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _enhanceBusy.TextColor = UIColor.White;
         _enhanceBusy.TextAlignment = UITextAlignment.Center;
         _enhanceBusy.BackgroundColor = UIColor.FromWhiteAlpha(.13f, .85f);
-        _enhanceBusy.Layer.CornerRadius = 11;
+        _enhanceBusy.Layer.CornerRadius = (nfloat)DesignTokens.ImageBusyCornerRadius;
         _enhanceBusy.ClipsToBounds = true;
         _enhanceBusy.UserInteractionEnabled = false;
         _enhanceBusy.Hidden = true;
         _photoPane.AddSubview(_enhanceBusy);
+        // STATE-03：提示条压在主图区底部，纯展示、不接收触摸。
+        _photoPane.AddSubview(_toast);
         _photoPane.AddGestureRecognizer(new UITapGestureRecognizer(OnPhotoTapped));
         // 主图上下文菜单：手指长按与触控板/鼠标辅助点按同一入口；滚动/捏合/双击由各自的识别器负责，互不抢占。
         _photoPane.AddInteraction(new UIContextMenuInteraction(_photoMenu));
         SubscribeTextEditing();
-        _fileBar.BackgroundColor = UIColor.FromWhiteAlpha(.067f, 1);
-        _controlBackground.BackgroundColor = UIColor.FromWhiteAlpha(.067f, 1);
+        _fileBar.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
+        _controlBackground.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
         _fileDivider.BackgroundColor = UIColor.FromWhiteAlpha(.2f, 1);
         _controlDivider.BackgroundColor = UIColor.FromWhiteAlpha(.2f, 1);
         _controlScroll.BackgroundColor = UIColor.Clear;
@@ -314,10 +329,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 continue;
             }
             ulong modifiers = (ulong)key.ModifierFlags;
-            if (!TryExecuteKey(usage, modifiers)) continue;
+            if (!TryExecuteKey(usage, modifiers, out string? command)) continue;
             consumed = true;
             _heldKeys[usage] = modifiers;
-            StartKeyRepeat(usage, modifiers);
+            // INPUT-05：只有固定节奏有意义的命令（翻页/预设缩放）才进入按住重复。
+            if (InputCommandMap.IsRepeatable(command)) StartKeyRepeat(usage, modifiers);
+            else if (_repeatUsage == usage) StopKeyRepeat();
         }
         if (!consumed) base.PressesBegan(presses, evt);
     }
@@ -355,12 +372,26 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="usage">HID usage。</param>
     /// <param name="modifierFlags">原生修饰键掩码。</param>
     /// <returns>是否命中并执行了命令。</returns>
-    internal bool TryExecuteKey(int usage, ulong modifierFlags)
+    internal bool TryExecuteKey(int usage, ulong modifierFlags) => TryExecuteKey(usage, modifierFlags, out _);
+
+    /// <summary>
+    /// 键盘派发入口（带命中的命令标识）：按住重复只对 <see cref="InputCommandMap.IsRepeatable"/> 的命令启动。
+    /// </summary>
+    /// <param name="usage">HID usage。</param>
+    /// <param name="modifierFlags">原生修饰键掩码。</param>
+    /// <param name="command">命中的共享命令标识；未命中为 null。</param>
+    /// <returns>是否命中并执行了命令。</returns>
+    private bool TryExecuteKey(int usage, ulong modifierFlags, out string? command)
     {
+        command = null;
         if (KeyboardInputBlocked) return false;
         var gesture = AppleInputMapping.FromHidUsage(usage, modifierFlags, _main.Settings);
-        string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null) return false;
+        command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
+        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null)
+        {
+            command = null;
+            return false;
+        }
         Execute(command);
         return true;
     }
@@ -378,6 +409,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (disposing)
         {
             _session.Changed -= OnSessionChanged;
+            _session.Notice -= OnSessionNotice;
             _photo.ViewportChanged -= ReportViewport;
             _photo.SwipeRequested -= OnSwipeRequested;
             _photo.WheelScrolled -= OnWheelScrolled;
@@ -500,7 +532,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 double measuredMain = row ? (double)measure.Width : (double)measure.Height;
                 _controlScroll.ShowsHorizontalScrollIndicator = row && measuredMain > availableMain;
                 _controlScroll.ShowsVerticalScrollIndicator = !row && measuredMain > availableMain;
+                // TOOLBAR-08：控制栏自绘文档必须显式上报内容尺寸，滚动位置属于用户——重排后只夹到合法范围。
+                var offset = _controlScroll.ContentOffset;
                 _controlBar.Arrange(_controlScroll.Bounds.Size);
+                _controlScroll.ContentSize = _controlBar.Frame.Size;
+                var clamped = new CGPoint(
+                    Math.Clamp((double)offset.X, 0, Math.Max(0, (double)_controlScroll.ContentSize.Width - (double)_controlScroll.Bounds.Width)),
+                    Math.Clamp((double)offset.Y, 0, Math.Max(0, (double)_controlScroll.ContentSize.Height - (double)_controlScroll.Bounds.Height)));
+                if (clamped != offset) _controlScroll.SetContentOffset(clamped, false);
             }
             LayoutOverlays();
         }
@@ -512,15 +551,25 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         if (!IsViewLoaded || _panes.Photo.Width <= 0) return;
         var pane = _photoPane.Bounds;
-        double hintWidth = Math.Max(1, Math.Min(500, (double)pane.Width - 20));
+        double horizontalMargin = MainScreenLayout.FilterMargin;
+        double hintWidth = Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, (double)pane.Width - horizontalMargin * 2));
         double hintLeft = ((double)pane.Width - hintWidth) / 2;
         bool hasDetail = _hintDetail.Text?.Length > 0;
-        double hintTop = Math.Max(0, ((double)pane.Height - (hasDetail ? 80 : 20)) / 2);
-        _hintLabel.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
-        _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-        const double busyWidth = 96, busyHeight = 28;
-        _enhanceBusy.Frame = new CGRect(Math.Max(0, ((double)pane.Width - busyWidth) / 2),
-            Math.Max(0, (double)pane.Height - busyHeight - 24), busyWidth, busyHeight);
+        double titleHeight = Math.Ceiling((double)_hintLabel.Font.LineHeight);
+        double detailHeight = Math.Max(1, Math.Ceiling((double)pane.Height - DesignTokens.ImageHintDetailGap - titleHeight));
+        double hintTop = Math.Max(0, ((double)pane.Height - (hasDetail ? DesignTokens.ImageHintDetailGap + Math.Min(52, detailHeight) : titleHeight)) / 2);
+        _hintLabel.Frame = new CGRect(hintLeft, hintTop, hintWidth, titleHeight);
+        _hintDetail.Frame = new CGRect(hintLeft, hintTop + DesignTokens.ImageHintDetailGap, hintWidth, Math.Min(52, detailHeight));
+        _enhanceBusy.Frame = new CGRect(
+            Math.Max(0, ((double)pane.Width - DesignTokens.ImageBusyWidth) / 2),
+            Math.Max(0, (double)pane.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset),
+            DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight);
+        // STATE-03：最大宽 500，距主图区底 24，水平居中。
+        double toastLimit = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, (double)pane.Width - horizontalMargin * 2));
+        var toastSize = _toast.Measure(toastLimit);
+        _toast.Frame = new CGRect(Math.Max(0, ((double)pane.Width - toastSize.Width) / 2),
+            Math.Max(0, (double)pane.Height - toastSize.Height - DesignTokens.StatusToastBottomMargin),
+            toastSize.Width, toastSize.Height);
         UpdateNavigationIndicator();
     }
 
@@ -536,19 +585,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (!show) return;
         var size = _photo.NavigationSize;
         double width = (double)size.Width, height = (double)size.Height;
-        const double padding = 8;
+        double padding = DesignTokens.NavPadding;
         double hostWidth = width + padding * 2;
-        double hostHeight = height + padding * 2 + 8 + 15 + 2;
+        double hostHeight = height + padding * 2 + DesignTokens.NavPercentTopGap + DesignTokens.NavLabelHeight + DesignTokens.NavPercentBottomGap;
         var pane = _photoPane.Bounds;
         // 主图分区可能铺到屏幕边缘：右下角的让位按安全区与本分区的交叠部分计算。
         var safe = View!.SafeAreaInsets;
         double rightInset = Math.Max(0, (double)safe.Right - (double)_photoPane.Frame.X);
         double bottomInset = Math.Max(0, (double)safe.Bottom - ((double)View!.Bounds.Height - _photoPane.Frame.GetMaxY()));
         _navigationHost.Frame = new CGRect(
-            Math.Max(0, (double)pane.Width - hostWidth - 12 - rightInset),
-            Math.Max(0, (double)pane.Height - hostHeight - 12 - bottomInset), hostWidth, hostHeight);
+            Math.Max(0, (double)pane.Width - hostWidth - DesignTokens.NavMargin - rightInset),
+            Math.Max(0, (double)pane.Height - hostHeight - DesignTokens.NavMargin - bottomInset), hostWidth, hostHeight);
         _navigationImage.Frame = new CGRect(padding, padding, width, height);
-        _zoomLabel.Frame = new CGRect(padding, height + padding * 2, width, 15);
+        _zoomLabel.Frame = new CGRect(padding, height + padding * 2, width, DesignTokens.NavLabelHeight);
         if (!ReferenceEquals(_navigationSource, _session.Image))
         {
             using var frame = _photo.CaptureLinearFrame(navigation: true);
@@ -628,15 +677,30 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (target is double value) _photo.ZoomToPhysical(value);
     }
 
-    /// <summary>评分写回经共享 XMP/同步逻辑；失败保留原星级并给出可见错误。</summary>
+    /// <summary>评分写回经共享 XMP/同步逻辑；失败保留原星级并用 STATE-03 提示条说明对象与原因。</summary>
     /// <param name="file">目标照片。</param>
     /// <param name="rating">星级。</param>
     internal async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating) Console.Error.WriteLine($"[Native] 无法写入星级：{file.Name}");
+        if (file.Rating != rating) ShowToast($"评分写回失败：{file.Name}");
         BuildControls();
     }
+
+    /// <summary>
+    /// 显示 STATE-03 提示条（评分/Full 升级/内存提示共用）：新提示替换旧提示并重置 4 s 计时。
+    /// </summary>
+    /// <param name="message">提示文本。</param>
+    internal void ShowToast(string message)
+    {
+        if (!IsViewLoaded || string.IsNullOrWhiteSpace(message)) return;
+        _toast.Show(message);
+        LayoutOverlays();
+    }
+
+    /// <summary>会话的一次性非阻塞提示（内存压力自动关闭增强）。</summary>
+    /// <param name="message">提示文本。</param>
+    private void OnSessionNotice(string message) => UiDispatcher.Post(() => ShowToast(message));
 
     /// <summary>卡片星级按钮写回（[FILM-05] 点星不选择父卡片，改星不切主图）。</summary>
     /// <param name="file">目标照片。</param>
@@ -669,11 +733,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <returns>菜单构建产物。</returns>
     internal iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(
         _main.IsThumbnailViewVisible, _main.IsControlViewVisible, _main.IsAnalysisViewVisible, _session.IsEnhanced,
+        _main.CurrentFile != null,
         () => _ = OpenFolderPickerAsync(), _main.ToggleThumbnailView, _main.ToggleControlView, _main.ToggleAnalysisView,
         () => _session.ToggleEnhanced(), ShowTools, _main.OpenSettingWindow);
 
-    /// <summary>打开/前置原生工具页（主图菜单与 EXIF 信息块共用同一门面入口）。</summary>
-    internal void ShowTools() => NativeWindowPresenter.ShowOrActivateToolsWindow(_main.Tools);
+    /// <summary>
+    /// 打开/前置原生工具页（主图菜单与 EXIF 信息块共用同一门面入口）。
+    /// 经共享 <c>OpenToolsWindow</c>：未展示时回到列表首页，已展示时保留当前页（TOOLS-01）。
+    /// </summary>
+    internal void ShowTools() => _main.OpenToolsWindow();
 
     /// <summary>适应态横向轻扫翻页：走共享命令表（上一张/下一张），由共享 Move 完成显式定位（[FILM-01]）。</summary>
     /// <param name="direction">-1 上一张、+1 下一张。</param>
@@ -739,7 +807,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 StopKeyRepeat();
                 return;
             }
-            TryExecuteKey(_repeatUsage, _repeatModifiers);
+            // 绑定可能在按住期间被设置页改写：改到不可重复命令时立即停表。
+            if (!TryExecuteKey(_repeatUsage, _repeatModifiers, out string? command) || !InputCommandMap.IsRepeatable(command))
+                StopKeyRepeat();
         });
     }
 
@@ -977,15 +1047,33 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _session.SetFile(_main.CurrentFile?.File);
     }
 
-    /// <summary>会话产物变化：产物直接交 Metal 上传（不建第二份主图缓冲），并刷新空态/错误提示。</summary>
+    /// <summary>会话产物变化：产物直接交 Metal 上传（不建第二份主图缓冲），并刷新空态/加载/错误提示。</summary>
     private void OnSessionChanged()
     {
         UpdateFocusPoint();
         _photo.SetImage(_session.Image);
-        _enhanceBusy.Hidden = !_session.IsEnhancing;
+        // IMAGE-07：药丸只跟随共享 500ms 门槛后的可见态，避免快速增强闪烁。
+        _enhanceBusy.Hidden = !_session.IsEnhancingVisible;
         UpdateHint();
+        UpdateFullErrorToast();
         LayoutOverlays();
         ApplyDetailHighlight();
+    }
+
+    /// <summary>
+    /// IMAGE-03：屏上有代理时 Full 升级失败只给 STATE-03 非阻塞提示，不覆盖"无法打开该图片"；
+    /// 同一次失败只提示一次，成功或换文件后重新允许提示。
+    /// </summary>
+    private void UpdateFullErrorToast()
+    {
+        if (_session.FullError.Length == 0)
+        {
+            _lastFullError = string.Empty;
+            return;
+        }
+        if (_session.FullError == _lastFullError) return;
+        _lastFullError = _session.FullError;
+        ShowToast(_session.FullError);
     }
 
     /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时对焦点仍是空值。</summary>
@@ -1007,12 +1095,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
         UpdateNavigationIndicator();
     }
 
-    /// <summary>空态提示文案（空目录、可打开文件夹或加载失败）。</summary>
-    /// <returns>提示文本；有照片且无错误时为空串。</returns>
+    /// <summary>空态/加载提示文案（STATE-01：加载态由共享会话的 300ms 延迟态驱动）。</summary>
+    /// <returns>提示文本；有照片且不在加载时为空串。</returns>
     private string HintText() => _session.Error.Length > 0 ? "无法打开该图片"
+        : _session.IsLoadingVisible ? "载入中…"
         : _main.CurrentFile == null ? "点击打开文件夹" : "";
 
-    /// <summary>同步空态提示与错误详情（有主图且无错误时两者都收起）。</summary>
+    /// <summary>同步空态/加载提示与解码失败详情（Full 升级失败走提示条，不占用此处）。</summary>
     private void UpdateHint()
     {
         _hintLabel.Text = HintText();
