@@ -484,7 +484,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         dialog.Show();
         var positive = dialog.GetButton((int)DialogButtonType.Positive);
         if (positive == null) return;
-        positive.Click += (_, _) =>
+        // 替换 AlertDialog 的默认“点按即关闭”监听，非法输入时保留对话框并恢复原值。
+        positive.SetOnClickListener(new ButtonClickListener(() =>
         {
             // SETTINGS-07：输入必须 > 0 且 ≤ 1600%；非法时不写入，提示一次并恢复原值。
             if (!double.TryParse(input.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
@@ -500,7 +501,19 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             Settings.ApplyScalePreset();
             dialog.Dismiss();
             BuildPage("preview");
-        };
+        }));
+    }
+
+    /// <summary>按钮点击监听，用于替换对话框默认的关闭行为。</summary>
+    private sealed class ButtonClickListener : Java.Lang.Object, View.IOnClickListener
+    {
+        private readonly Action _action;
+
+        internal ButtonClickListener(Action action) => _action = action;
+
+        /// <summary>执行动作。</summary>
+        /// <param name="view">被点按钮。</param>
+        public void OnClick(View? view) => _action();
     }
 
     /// <summary>分类入口行。</summary>
