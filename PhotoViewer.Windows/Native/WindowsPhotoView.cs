@@ -88,12 +88,6 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <summary>交换链缓冲数(翻转模型要求 ≥ 2)。</summary>
     private const uint BufferCount = 2;
 
-    /// <summary>缩放下限(每源像素的逻辑单位数),再除以栅格化比。</summary>
-    private const double MinScale = 0.01;
-
-    /// <summary>缩放上限(每源像素的逻辑单位数),再除以栅格化比。</summary>
-    private const double MaxScale = 16;
-
     /// <summary>画布底色(照片外沿用设计稿的 #000000)。</summary>
     private static readonly float[] ClearColor = [0f, 0f, 0f, 1f];
 
@@ -111,21 +105,12 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     private IComObject<ID3D11RenderTargetView>? _renderTarget;
     private IComObject<ID3D11Texture2D>? _texture;
     private IComObject<ID3D11ShaderResourceView>? _textureView;
+    private readonly PhotoViewport _viewport = new();
     private uint _pixelWidth = 1;
     private uint _pixelHeight = 1;
-    private int _textureWidth;
-    private int _textureHeight;
-    private int _sourceWidth;
-    private int _sourceHeight;
-    private int _orientation = 1;
-    private double _scale = 1;
-    private double _panX;
-    private double _panY;
-    private bool _fit = true;
     private bool _panning;
     private bool _laidOut;
     private Point _lastPointer;
-    private double _lastRasterization = 1;
     private (uint Width, uint Height, bool NeedsFull)? _reported;
     private bool _disposed;
 
@@ -136,10 +121,15 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     public event Action? RenderStateChanged;
 
     /// <summary>当前是否处于适应态(导航图只在非适应态显示)。</summary>
-    public bool IsFit => _fit;
+    public bool IsFit => _viewport.IsFit;
 
     /// <summary>当前是否已上传照片纹理。</summary>
     public bool HasImage => _textureView != null;
+
+    /// <summary>设置当前照片的对焦点(归一化显示朝向);两个分量都为 null 表示没有对焦点。</summary>
+    /// <param name="x">归一化横坐标。</param>
+    /// <param name="y">归一化纵坐标。</param>
+    public void SetFocus(double? x, double? y) => _viewport.SetFocus(x, y);
 
     /// <summary>
     /// 读取主图表面在给定显示相对坐标(u,v ∈ [0,1],相对照片显示区域)上的像素。
@@ -158,8 +148,8 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         }
 
         double raster = PhysicalPixelsPerDip;
-        double x = (ActualWidth / 2) + ((u - 0.5) * DisplayWidth * _scale) + _panX;
-        double y = (ActualHeight / 2) + ((v - 0.5) * DisplayHeight * _scale) + _panY;
+        double x = (ActualWidth / 2) + ((u - 0.5) * _viewport.ImageWidth * _viewport.Scale) + _viewport.PanX;
+        double y = (ActualHeight / 2) + ((v - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY;
         var px = (int)Math.Round(x * raster);
         var py = (int)Math.Round(y * raster);
         if (px < 0 || py < 0 || px >= _pixelWidth || py >= _pixelHeight)
@@ -207,12 +197,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     public void FocusOnImagePoint(double u, double v, double physicalScale = 1.0)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        double raster = PhysicalPixelsPerDip;
-        _scale = Math.Clamp(physicalScale / raster, MinScale / raster, MaxScale / raster);
-        _fit = false;
-        _panX = (0.5 - u) * DisplayWidth * _scale;
-        _panY = (0.5 - v) * DisplayHeight * _scale;
-        ClampPan();
+        _viewport.FocusOnPoint(u, v, physicalScale);
         Draw();
         NotifyViewportChanged();
     }
@@ -231,9 +216,9 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             return false;
         }
 
-        double x = (ActualWidth / 2) + (((uv.X - 0.5) * DisplayWidth * _scale) + _panX);
-        double y = (ActualHeight / 2) + (((uv.Y - 0.5) * DisplayHeight * _scale) + _panY);
-        rect = new Rect(x, y, uv.Width * DisplayWidth * _scale, uv.Height * DisplayHeight * _scale);
+        double x = (ActualWidth / 2) + (((uv.X - 0.5) * _viewport.ImageWidth * _viewport.Scale) + _viewport.PanX);
+        double y = (ActualHeight / 2) + (((uv.Y - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY);
+        rect = new Rect(x, y, uv.Width * _viewport.ImageWidth * _viewport.Scale, uv.Height * _viewport.ImageHeight * _viewport.Scale);
         return true;
     }
 
@@ -244,19 +229,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     /// 导航图逻辑尺寸(长边 150、按显示朝向比例缩小,不补方形衬边),与旧壳缩放指示器一致;
     /// 无照片时返回 150 方形占位。
     /// </summary>
-    public (double Width, double Height) NavigationSize
-    {
-        get
-        {
-            if (DisplayWidth <= 0 || DisplayHeight <= 0)
-            {
-                return (WindowsLayout.NavigatorLongEdge, WindowsLayout.NavigatorLongEdge);
-            }
-
-            double factor = WindowsLayout.NavigatorLongEdge / Math.Max(DisplayWidth, DisplayHeight);
-            return (DisplayWidth * factor, DisplayHeight * factor);
-        }
-    }
+    public (double Width, double Height) NavigationSize => _viewport.NavigationSize;
 
     /// <summary>
     /// 导航图(逻辑坐标,无外框内边距)内的可见区域;缩放小于适应时退化为整幅照片。
@@ -265,12 +238,8 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     {
         get
         {
-            var size = NavigationSize;
-            double displayedWidth = Math.Max(1, DisplayWidth * _scale);
-            double displayedHeight = Math.Max(1, DisplayHeight * _scale);
-            var horizontal = NavigationAxis(size.Width, ActualWidth / displayedWidth, 0.5 - (_panX / displayedWidth));
-            var vertical = NavigationAxis(size.Height, ActualHeight / displayedHeight, 0.5 - (_panY / displayedHeight));
-            return new Rect(horizontal.Offset, vertical.Offset, horizontal.Extent, vertical.Extent);
+            var (x, y, width, height) = _viewport.NavigationViewport;
+            return new Rect(x, y, width, height);
         }
     }
 
@@ -278,18 +247,10 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     public (double Width, double Height) PhysicalViewport => _laidOut ? (_pixelWidth, _pixelHeight) : (0, 0);
 
     /// <summary>当前物理缩放(每个源像素占多少物理屏幕像素)。</summary>
-    public double PhysicalScale => _scale * PhysicalPixelsPerDip;
+    public double PhysicalScale => _viewport.PhysicalScale;
 
     /// <summary>是否需要全分辨率:非适应态且已达/超过 100%,或放大超出代理纹理能力。</summary>
-    public bool NeedsFull
-    {
-        get
-        {
-            if (_fit || _textureView == null) return false;
-            double physical = PhysicalScale;
-            return physical >= 1 || physical > TextureDisplayWidth / Math.Max(1.0, DisplayWidth);
-        }
-    }
+    public bool NeedsFull => _textureView != null && _viewport.NeedsFull;
 
     /// <summary>显示百分比(1.0 = 100%,与物理缩放同口径)。</summary>
     public double ZoomRatio => PhysicalScale;
@@ -305,13 +266,10 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     }
 
     /// <summary>显示朝向的源像素宽(EXIF 方向 5–8 交换横纵)。</summary>
-    private double DisplayWidth => _orientation >= 5 ? _sourceHeight : _sourceWidth;
+    private double DisplayWidth => _viewport.ImageWidth;
 
     /// <summary>显示朝向的源像素高。</summary>
-    private double DisplayHeight => _orientation >= 5 ? _sourceWidth : _sourceHeight;
-
-    /// <summary>代理纹理在显示朝向横轴上的像素宽,用于判断代理是否够撑满当前缩放。</summary>
-    private double TextureDisplayWidth => _orientation >= 5 ? _textureHeight : _textureWidth;
+    private double DisplayHeight => _viewport.ImageHeight;
 
     /// <summary>
     /// 建立 D3D11 设备、着色器、合成交换链并挂到本面板;仅在 UI 线程调用。
@@ -403,19 +361,16 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             if (image.Pixels.Length == 0) throw new ArgumentException("像素租约已归零", nameof(image));
         }
 
-        double relativePanX = _panX / Math.Max(1.0, DisplayWidth);
-        double relativePanY = _panY / Math.Max(1.0, DisplayHeight);
+        // IMAGE-02：切图走共享 ApplyImage（适应态重新适应 / 跟随对焦 / 保持同一归一化中心）；
+        // 代理↔Full 的源尺寸与对焦点相同，还原结果与热替换一致。
+        _viewport.BeginImageChange();
+
         var previousTexture = _texture;
         var previousView = _textureView;
         _texture = null;
         _textureView = null;
         if (image != null)
         {
-            _textureWidth = image.Width;
-            _textureHeight = image.Height;
-            _sourceWidth = image.SourceWidth;
-            _sourceHeight = image.SourceHeight;
-            _orientation = image.Orientation;
             var texture = _device.CreateTexture2D(new D3D11_TEXTURE2D_DESC
             {
                 Width = (uint)image.Width,
@@ -436,15 +391,14 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             _context.Object.GenerateMips(view.Object);
             _texture = texture;
             _textureView = view;
+            // IMAGE-02：切图沿用共享视口语义（适应态重新适应 / 跟随对焦 / 保持同一归一化中心）。
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
             NativeStartupLog.Write($"photo view: 上传照片 纹理={image.Width}x{image.Height} 源={image.SourceWidth}x{image.SourceHeight} " +
                 $"方向={image.Orientation} 显示={DisplayWidth}x{DisplayHeight} 视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
-            if (_fit) UpdateFitScale();
-            else
-            {
-                _panX = relativePanX * DisplayWidth;
-                _panY = relativePanY * DisplayHeight;
-                ClampPan();
-            }
+        }
+        else
+        {
+            _viewport.ClearTexture();
         }
 
         if (previousView != null)
@@ -461,25 +415,22 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     public void FitToView()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        _fit = true;
-        _panX = 0;
-        _panY = 0;
-        UpdateFitScale();
+        _viewport.FitToView();
         Draw();
         NotifyViewportChanged();
     }
 
-    /// <summary>在“适应”与“100%”之间切换;切到 100% 时以给定视口坐标(默认视口中心)为锚点。</summary>
-    /// <param name="anchorX">锚点 X(逻辑单位);null 取视口中心。</param>
-    /// <param name="anchorY">锚点 Y(逻辑单位);null 取视口中心。</param>
+    /// <summary>
+    /// 在“适应”与“100%”之间切换;切到 100% 时优先回到照片对焦点,否则以给定视口坐标(默认视口中心)为锚点。
+    /// </summary>
+    /// <param name="anchorX">锚点 X(逻辑单位);null 取视口中心或对焦点。</param>
+    /// <param name="anchorY">锚点 Y(逻辑单位);null 取视口中心或对焦点。</param>
     public void ToggleFit(double? anchorX = null, double? anchorY = null)
     {
-        if (!_fit)
-        {
-            FitToView();
-            return;
-        }
-        ZoomTo(1 / PhysicalPixelsPerDip, anchorX ?? ActualWidth / 2, anchorY ?? ActualHeight / 2);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _viewport.ToggleFit(anchorX.HasValue && anchorY.HasValue ? (anchorX.Value, anchorY.Value) : null);
+        Draw();
+        NotifyViewportChanged();
     }
 
     /// <summary>以视口坐标为锚点按比例缩放。</summary>
@@ -489,7 +440,23 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     public void ZoomBy(double factor, double? anchorX = null, double? anchorY = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ZoomTo(_scale * factor, anchorX ?? ActualWidth / 2, anchorY ?? ActualHeight / 2);
+        _viewport.ZoomBy(factor, anchorX.HasValue && anchorY.HasValue ? (anchorX.Value, anchorY.Value) : null);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>精确滚动(触控板/高精度滚轮)平移照片;平移不改变视口与 LOD 需求,故不上报。</summary>
+    /// <param name="deltaX">横向位移(逻辑单位)。</param>
+    /// <param name="deltaY">纵向位移(逻辑单位)。</param>
+    public void PanBy(double deltaX, double deltaY)
+    {
+        if (_disposed || _viewport.IsFit || _textureView == null)
+        {
+            return;
+        }
+
+        _viewport.PanBy(deltaX, deltaY);
+        Draw();
     }
 
     /// <summary>释放全部 GPU 资源(按创建逆序),不触碰可视树。</summary>
@@ -509,49 +476,6 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         _vertexShader.Dispose();
         _context.Dispose();
         _device.Dispose();
-    }
-
-    /// <summary>把一条轴上的可见比例与中心比例换算成导航图内的偏移和长度,并钳制在导航图范围内。</summary>
-    /// <param name="navigationExtent">该轴的导航图逻辑长度。</param>
-    /// <param name="visibleFraction">可见部分占整幅照片的比例(未夹取)。</param>
-    /// <param name="centerFraction">视口中心在照片上的相对位置。</param>
-    private static (double Offset, double Extent) NavigationAxis(double navigationExtent, double visibleFraction, double centerFraction)
-    {
-        double extent = Math.Clamp(Math.Clamp(visibleFraction, 0, 1) * navigationExtent, Math.Min(1, navigationExtent), navigationExtent);
-        double offset = (centerFraction * navigationExtent) - (extent / 2);
-        return (Math.Clamp(offset, 0, navigationExtent - extent), extent);
-    }
-
-    /// <summary>以锚点为中心落到指定逻辑缩放,并重建平移、上报展示需求。</summary>
-    private void ZoomTo(double scale, double anchorX, double anchorY)
-    {
-        double raster = PhysicalPixelsPerDip;
-        scale = Math.Clamp(scale, MinScale / raster, MaxScale / raster);
-        double centerX = ActualWidth / 2, centerY = ActualHeight / 2;
-        double ratio = scale / Math.Max(1e-6, _scale);
-        _panX = (anchorX - centerX) - ((anchorX - centerX) - _panX) * ratio;
-        _panY = (anchorY - centerY) - ((anchorY - centerY) - _panY) * ratio;
-        _scale = scale;
-        _fit = false;
-        ClampPan();
-        Draw();
-        NotifyViewportChanged();
-    }
-
-    /// <summary>按适应态重算逻辑缩放;尺寸未就绪时保持原值。</summary>
-    private void UpdateFitScale()
-    {
-        if (DisplayWidth <= 0 || DisplayHeight <= 0 || ActualWidth <= 0 || ActualHeight <= 0) return;
-        _scale = Math.Min(ActualWidth / DisplayWidth, ActualHeight / DisplayHeight);
-    }
-
-    /// <summary>约束平移,使照片不会整个被拖出视口;小于视口的轴居中。</summary>
-    private void ClampPan()
-    {
-        double maxX = Math.Max(0, (DisplayWidth * _scale - ActualWidth) / 2);
-        double maxY = Math.Max(0, (DisplayHeight * _scale - ActualHeight) / 2);
-        _panX = Math.Clamp(_panX, -maxX, maxX);
-        _panY = Math.Clamp(_panY, -maxY, maxY);
     }
 
     /// <summary>视口物理尺寸变化:重建缓冲与渲染目标、重设合成矩阵、重算适应缩放并重绘。</summary>
@@ -580,8 +504,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
                 return;
             }
             double raster = PhysicalPixelsPerDip;
-            if (!_fit && raster != _lastRasterization) _scale *= _lastRasterization / raster;
-            _lastRasterization = raster;
+            _viewport.ResizeView(ActualWidth, ActualHeight, raster);
             _laidOut = true;
             uint width = (uint)Math.Round(ActualWidth * raster);
             uint height = (uint)Math.Round(ActualHeight * raster);
@@ -596,8 +519,8 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
                 CreateRenderTarget();
             }
             ApplyCompositionTransform();
-            if (_fit) UpdateFitScale();
-            else ClampPan();
+            if (_viewport.IsFit) _viewport.FitToView();
+            else _viewport.ClampPan();
             Draw();
             NotifyViewportChanged();
         }
@@ -642,10 +565,10 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             _parameterData[1] = _pixelHeight;
             _parameterData[4] = (float)DisplayWidth;
             _parameterData[5] = (float)DisplayHeight;
-            _parameterData[8] = (float)_scale;
-            _parameterData[9] = (float)_panX;
-            _parameterData[10] = (float)_panY;
-            _parameterData[11] = _orientation;
+            _parameterData[8] = (float)_viewport.Scale;
+            _parameterData[9] = (float)_viewport.PanX;
+            _parameterData[10] = (float)_viewport.PanY;
+            _parameterData[11] = _viewport.Orientation;
             _parameterData[12] = (float)PhysicalPixelsPerDip;
             fixed (float* pointer = _parameterData)
                 _context.Object.UpdateSubresource(_parameters.Object, 0, IntPtr.Zero, (IntPtr)pointer, 0, 0);
@@ -699,15 +622,13 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         try
         {
             var position = e.GetCurrentPoint(this).Position;
-            if (_fit)
+            if (_viewport.IsFit)
             {
                 _lastPointer = position;
                 return;
             }
-            _panX += position.X - _lastPointer.X;
-            _panY += position.Y - _lastPointer.Y;
+            _viewport.PanBy(position.X - _lastPointer.X, position.Y - _lastPointer.Y);
             _lastPointer = position;
-            ClampPan();
             Draw();
             e.Handled = true;
         }

@@ -36,7 +36,7 @@ internal sealed class WindowsNativeSettingsPresenter : INativeSettingsPresenter
         }
 
         _session = new NativeSettingsSession(settings);
-        _window = new WindowsSettingsWindow(_session.WorkingSettings, _ownerHandle());
+        _window = new WindowsSettingsWindow(_session.WorkingSettings, settings, _ownerHandle());
         _window.Closed += OnWindowClosed;
         _window.Show();
         return true;

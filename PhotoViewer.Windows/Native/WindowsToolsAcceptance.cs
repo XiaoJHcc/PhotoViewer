@@ -53,11 +53,19 @@ internal static class WindowsToolsAcceptance
             Require(window.TitleBarControl is TitleBar, "工具窗口没有 TitleBar 控件");
             Require(window.Navigation.MenuItems.Count == 3, "工具窗口分类数不是 3");
             Require(window.Pages.Count == 3, "工具窗口页面数不是 3");
-            Require(!window.Window.AppWindow.IsShownInSwitchers, "工具窗口不应进入任务栏");
+            // TOOLS-01：工具窗口按普通窗口处理（任务栏/Alt-Tab、可最大化）。
+            Require(window.Window.AppWindow.IsShownInSwitchers, "工具窗口应进入任务栏/Alt-Tab");
+            Require(window.Window.AppWindow.Presenter is Microsoft.UI.Windowing.OverlappedPresenter { IsMaximizable: true },
+                "工具窗口应允许最大化");
+            // TOOLS-02：分类顺序 EXIF → DINO → 照片数据统计。
+            var categories = window.Navigation.MenuItems.OfType<NavigationViewItem>()
+                .Select(item => item.Content?.ToString()).ToArray();
+            Require(categories.SequenceEqual(new[] { "EXIF 详情", "DINO 诊断", "照片数据统计" }),
+                "工具窗口分类顺序不是 EXIF → DINO → 照片数据统计");
             Require(Math.Abs(windowWidth - WindowsLayout.ToolsWindowWidth) < 4,
                 $"工具窗口宽度不是 960 DIP: {windowWidth:0.0}");
             Require(window.SelectedPage == ToolsPage.Exif, "默认页不是 EXIF 详情");
-            checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar, 3 categories, window={windowWidth:0} DIP");
+            checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar, 3 categories (EXIF/DINO/Stats), taskbar + maximizable, window={windowWidth:0} DIP");
 
             Require(window.ExifPage.FileNameText == Path.GetFileNameWithoutExtension(fixture),
                 "EXIF 页文件名不含后缀");
@@ -67,7 +75,8 @@ internal static class WindowsToolsAcceptance
                 "单格式素材不应显示格式切换器");
             checks.Add($"PASS EXIF detail: {window.ExifPage.GroupCount} groups / {window.ExifPage.TagCount} tags, single format label");
 
-            window.Navigation.SelectedItem = window.Navigation.MenuItems[(int)ToolsPage.Dino];
+            window.Navigation.SelectedItem = window.Navigation.MenuItems.OfType<NavigationViewItem>()
+                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Dino);
             await WaitAsync(() => window.SelectedPage == ToolsPage.Dino && main.Tools.CurrentTool is DinoDebugViewModel, "切到 DINO 诊断");
             await WaitAsync(() => main.Tools.DinoPresenter.Status == Path.GetFileName(fixture), "DINO 诊断计算", 120);
             await WaitAsync(() => window.DinoPage.HasAllTiles, "DINO 五张瓦片出图", 30);
@@ -97,7 +106,8 @@ internal static class WindowsToolsAcceptance
                 "DINO 瓦片点击重算 cosine 参考点");
             checks.Add($"PASS DINO diagnostics: 5 tiles ({maxSide:0}px wide, 3+2 top-aligned), status = {window.DinoPage.StatusText}, click sets reference patch 8,8");
 
-            window.Navigation.SelectedItem = window.Navigation.MenuItems[(int)ToolsPage.Stats];
+            window.Navigation.SelectedItem = window.Navigation.MenuItems.OfType<NavigationViewItem>()
+                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Stats);
             await WaitAsync(() => window.SelectedPage == ToolsPage.Stats && main.Tools.CurrentTool is PhotoStatsViewModel, "切到照片数据统计");
             window.Root.UpdateLayout();
             Require(window.StatsPage.FolderRowCount == 0, "统计页初始文件夹列表不为空");

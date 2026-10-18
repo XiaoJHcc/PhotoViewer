@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using Windows.UI;
@@ -74,7 +75,7 @@ internal sealed class WindowsThumbnailCard : Grid
 
         var content = new StackPanel
         {
-            Margin = new Thickness(0, 3, 0, 0),
+            Margin = new Thickness(0, WindowsLayout.CardMargin, 0, 0),
             Spacing = 4,
         };
 
@@ -109,7 +110,7 @@ internal sealed class WindowsThumbnailCard : Grid
             Width = WindowsLayout.ShakeBadgeSize,
             Height = WindowsLayout.ShakeBadgeSize,
             Background = new SolidColorBrush(WindowsLayout.ShakeBadgeBackground),
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardBadgeCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 2, 2),
@@ -180,7 +181,7 @@ internal sealed class WindowsThumbnailCard : Grid
         _secondLineTrack = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.SecondLineTrack),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardSecondLineBarCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Visibility = Visibility.Collapsed,
@@ -188,7 +189,7 @@ internal sealed class WindowsThumbnailCard : Grid
         _secondLineFill = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.SecondLineFill),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardSecondLineBarCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Stretch,
             Width = 0,

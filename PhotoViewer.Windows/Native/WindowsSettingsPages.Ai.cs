@@ -114,12 +114,7 @@ internal sealed partial class WindowsSettingsPages
             return;
         }
 
-        // 共享命令是两段确认:第一次只 arm,第二次才真正执行。
-        if (!_settings.ClearDbConfirming)
-        {
-            await _settings.ClearDatabaseCommand.Execute();
-        }
-
-        await _settings.ClearDatabaseCommand.Execute();
+        // SETTINGS-10：已有系统确认对话框，直接调用共享“已确认”入口，不进入不可见的 arm 态。
+        await _settings.ClearFeatureDatabaseConfirmedAsync();
     }
 }

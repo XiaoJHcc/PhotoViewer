@@ -81,13 +81,15 @@ internal sealed partial class WindowsSettingsPages
     private UIElement BuildPresetRow(SettingsViewModel.ScalePreset preset)
     {
         var value = double.TryParse(preset.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var parsed)
-            ? Math.Round(Math.Clamp(parsed, 1, 1600), 1)
+            && SettingsViewModel.IsValidScalePresetPercent(parsed)
+            ? Math.Round(parsed, 3)
             : 100;
-        var box = NewNumberBox(value, 1, 1600, 1, newValue =>
+        var box = NewNumberBox(value, 0.001, SettingsViewModel.ScalePresetPercentMax, 1, newValue =>
         {
-            if (!double.IsNaN(newValue))
+            // SETTINGS-07：只接受 >0 且 ≤1600 的值；非法输入不写入共享预设。
+            if (SettingsViewModel.IsValidScalePresetPercent(newValue))
             {
-                preset.Text = FormatNumber(Math.Round(newValue, 1));
+                preset.Text = FormatNumber(Math.Round(newValue, 3));
             }
         });
 
@@ -112,6 +114,8 @@ internal sealed partial class WindowsSettingsPages
         Grid.SetColumn(percent, 1);
         grid.Children.Add(percent);
         var delete = WindowsSettingsCard.IconButton("\uE74D", "移除预设", () => _settings.RemoveScalePreset(preset));
+        // SETTINGS-07：只剩一项时删除无效，入口直接禁用。
+        delete.IsEnabled = _settings.CanRemoveScalePreset;
         Grid.SetColumn(delete, 3);
         grid.Children.Add(delete);
 
@@ -123,10 +127,11 @@ internal sealed partial class WindowsSettingsPages
                 return;
             }
 
-            if (double.TryParse(preset.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var textValue))
+            if (double.TryParse(preset.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var textValue)
+                && SettingsViewModel.IsValidScalePresetPercent(textValue))
             {
                 updating = true;
-                box.Value = Math.Round(Math.Clamp(textValue, 1, 1600), 1);
+                box.Value = Math.Round(textValue, 3);
                 updating = false;
             }
         };

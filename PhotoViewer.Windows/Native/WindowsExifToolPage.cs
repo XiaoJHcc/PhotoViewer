@@ -387,6 +387,7 @@ internal sealed class WindowsExifToolPage : Grid
                 FontSize = 11,
                 FontWeight = FontWeights.SemiBold,
                 Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorTertiaryBrush"),
+                IsTextSelectionEnabled = true,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },

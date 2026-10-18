@@ -5,6 +5,8 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using Windows.Foundation;
@@ -14,18 +16,20 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 原生筛选条:排序方式、升降序、星级筛选与筛选后计数,名称与取值语义与旧壳一致(契约 FILTER-01)。
-/// 相似聚类开关属 P3,原生壳不显示入口。
+/// 控件位置直接消费共享 <see cref="MainScreenLayout.FilterBarFrames"/>:行布局整组居中、
+/// 列布局在 116 栏内纵排,相似聚类 toggle 高 27,不再维护第二套间距。
 /// </summary>
-internal sealed class WindowsFilterBar : Grid
+internal sealed class WindowsFilterBar : Panel
 {
     private readonly FilterBarViewModel _filter;
-    private readonly StackPanel _panel;
     private readonly ComboBox _sortMode;
     private readonly ComboBox _sortOrder;
     private readonly ComboBox _ratingFilter;
     private readonly TextBlock _count;
     private readonly ToggleButton _similarityToggle;
     private bool _syncing;
+    private bool _isRowLayout = true;
+    private MainScreenLayout.FilterFrames _frames;
 
     /// <summary>
     /// 创建筛选条。
@@ -57,16 +61,11 @@ internal sealed class WindowsFilterBar : Grid
             TextAlignment = TextAlignment.Center,
         };
 
-        _panel = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Spacing = WindowsLayout.FilterSpacing,
-            Margin = new Thickness(WindowsLayout.FilterMargin),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Top,
-            Children = { _sortMode, _sortOrder, _ratingFilter, _count, _similarityToggle },
-        };
-        Children.Add(_panel);
+        Children.Add(_sortMode);
+        Children.Add(_sortOrder);
+        Children.Add(_ratingFilter);
+        Children.Add(_count);
+        Children.Add(_similarityToggle);
 
         _filter.PropertyChanged += OnFilterChanged;
         SyncFromViewModel();
@@ -78,24 +77,20 @@ internal sealed class WindowsFilterBar : Grid
     public void Detach() => _filter.PropertyChanged -= OnFilterChanged;
 
     /// <summary>
-    /// 切换排布方向:上下布局纵向排列,左右布局横向排列(与旧壳同一套占位与间距)。
-    /// 旧壳 <c>Margin="10"</c> 两个方向都一样,计数文本没有额外外边距 —— 这里不做方向补偿,
-    /// 否则左右布局会多出一份 5 的间距。
+    /// 切换排布方向:上下布局横排居中,左右布局在文件栏单列内纵排。
+    /// 位置统一由 <see cref="MainScreenLayout.FilterBarFrames"/> 给出。
     /// </summary>
     /// <param name="isRowLayout">是否为上下布局</param>
     public void SetOrientation(bool isRowLayout)
     {
-        _panel.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
-        _panel.Margin = new Thickness(WindowsLayout.FilterMargin);
-        _count.Margin = new Thickness(0);
-        HorizontalAlignment = HorizontalAlignment.Stretch;
-
-        foreach (var combo in new[] { _sortMode, _sortOrder, _ratingFilter })
+        if (_isRowLayout == isRowLayout)
         {
-            combo.HorizontalAlignment = HorizontalAlignment.Center;
+            return;
         }
 
-        _similarityToggle.HorizontalAlignment = HorizontalAlignment.Center;
+        _isRowLayout = isRowLayout;
+        InvalidateMeasure();
+        InvalidateArrange();
     }
 
     /// <summary>刷新计数文本。</summary>
@@ -105,7 +100,74 @@ internal sealed class WindowsFilterBar : Grid
     /// <param name="relativeTo">用于表示边界坐标的参考元素。</param>
     /// <returns>实际控件组合在参考元素内的逻辑坐标边界。</returns>
     internal Rect GetInteractiveBounds(UIElement relativeTo)
-        => _panel.TransformToVisual(relativeTo).TransformBounds(new Rect(0, 0, _panel.ActualWidth, _panel.ActualHeight));
+    {
+        var sort = _frames.Sort;
+        var order = _frames.Order;
+        var rating = _frames.Rating;
+        var count = _frames.Count;
+        var toggle = _frames.Toggle;
+        double left = Math.Min(Math.Min(sort.X, order.X), Math.Min(rating.X, Math.Min(count.X, toggle.X)));
+        double top = Math.Min(Math.Min(sort.Y, order.Y), Math.Min(rating.Y, Math.Min(count.Y, toggle.Y)));
+        double right = Math.Max(Math.Max(sort.MaxX, order.MaxX), Math.Max(rating.MaxX, Math.Max(count.MaxX, toggle.MaxX)));
+        double bottom = Math.Max(Math.Max(sort.MaxY, order.MaxY), Math.Max(rating.MaxY, Math.Max(count.MaxY, toggle.MaxY)));
+        return TransformToVisual(relativeTo).TransformBounds(new Rect(left, top, right - left, bottom - top));
+    }
+
+    /// <inheritdoc/>
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        foreach (var child in Children)
+        {
+            child.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        }
+
+        double countWidth = Math.Max(1, _count.DesiredSize.Width);
+        if (_isRowLayout)
+        {
+            double width = double.IsInfinity(availableSize.Width) ? DesiredRowWidth(countWidth) : availableSize.Width;
+            _frames = MainScreenLayout.FilterBarFrames(true, width, 0, countWidth, true);
+            return new Size(width, MainScreenLayout.FilterControlHeight + MainScreenLayout.FilterMargin * 2);
+        }
+
+        _frames = MainScreenLayout.FilterBarFrames(
+            false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, true);
+        return new Size(
+            MainScreenLayout.FileBarContentWidth,
+            MainScreenLayout.FilterBarMainLength(false, MainScreenLayout.FilterMargin));
+    }
+
+    /// <inheritdoc/>
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        double countWidth = Math.Max(1, _count.DesiredSize.Width);
+        _frames = _isRowLayout
+            ? MainScreenLayout.FilterBarFrames(true, finalSize.Width, 0, countWidth, true)
+            : MainScreenLayout.FilterBarFrames(
+                false, MainScreenLayout.FileBarContentWidth, MainScreenLayout.FilterMargin, countWidth, true);
+
+        ArrangeChild(_sortMode, _frames.Sort);
+        ArrangeChild(_sortOrder, _frames.Order);
+        ArrangeChild(_ratingFilter, _frames.Rating);
+        ArrangeChild(_count, _frames.Count);
+        ArrangeChild(_similarityToggle, _frames.Toggle);
+        return finalSize;
+    }
+
+    /// <summary>行布局在未知宽度下的自然宽:三个控件 + 计数 + toggle + 间距与两侧外边距。</summary>
+    /// <param name="countWidth">计数文本自然宽。</param>
+    /// <returns>自然宽。</returns>
+    private static double DesiredRowWidth(double countWidth)
+        => MainScreenLayout.FilterMargin * 2
+            + MainScreenLayout.FilterControlWidth * 3
+            + MainScreenLayout.FilterGap * 4
+            + countWidth
+            + WindowsLayout.FilterToggleWidth;
+
+    /// <summary>把子控件落到共享几何给出的矩形。</summary>
+    /// <param name="child">子控件。</param>
+    /// <param name="rect">目标矩形。</param>
+    private static void ArrangeChild(UIElement child, LayoutRect rect)
+        => child.Arrange(new Rect(rect.X, rect.Y, rect.Width, rect.Height));
 
     /// <summary>创建统一外观的下拉框(占位与旧壳同为 90×32)。</summary>
     private static ComboBox CreateComboBox() => new()
@@ -114,12 +176,12 @@ internal sealed class WindowsFilterBar : Grid
         Height = WindowsLayout.FilterItemHeight,
         FontSize = 13,
         HorizontalAlignment = HorizontalAlignment.Center,
-        CornerRadius = new CornerRadius(6),
+        CornerRadius = new CornerRadius(DesignTokens.FilterControlCornerRadius),
         BorderBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x44, 0x44, 0x44)),
     };
 
     /// <summary>
-    /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×32、选中态走蓝底蓝框,
+    /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×27、选中态走蓝底蓝框,
     /// 直接写回 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>(持久化在设置里)。
     /// WinUI 的 ToggleButton 模板用主题键画背景,必须按元素改键而不是只设 Background。
     /// </summary>
@@ -128,10 +190,12 @@ internal sealed class WindowsFilterBar : Grid
         var toggle = new ToggleButton
         {
             Content = "相似聚类",
-            Width = WindowsLayout.FilterItemWidth,
-            Height = WindowsLayout.FilterItemHeight,
+            Width = WindowsLayout.FilterToggleWidth,
+            Height = WindowsLayout.FilterToggleHeight,
+            MinWidth = 0,
+            MinHeight = 0,
             FontSize = WindowsLayout.SimilarityToggleFontSize,
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(DesignTokens.FilterToggleCornerRadius),
             BorderThickness = new Thickness(1),
             HorizontalAlignment = HorizontalAlignment.Center,
             HorizontalContentAlignment = HorizontalAlignment.Center,

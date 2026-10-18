@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -21,7 +22,7 @@ namespace PhotoViewer.Windows.Native;
 internal sealed class WindowsFilmstripView : Grid
 {
     /// <summary>定位动画时长(契约 FILM-02)。</summary>
-    private const double LocateAnimationMilliseconds = 350;
+    private const double LocateAnimationMilliseconds = DesignTokens.MotionFilmScrollDuration;
 
     /// <summary>可见区外额外加载的卡片数。</summary>
     private const int VisibleRangeOverscan = 2;
@@ -386,7 +387,7 @@ internal sealed class WindowsFilmstripView : Grid
         _isAnimating = true;
 
         _animationTimer ??= DispatcherQueue.CreateTimer();
-        _animationTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / 60);
+        _animationTimer.Interval = TimeSpan.FromMilliseconds(DesignTokens.MotionFilmScrollTick);
         _animationTimer.IsRepeating = true;
         _animationTimer.Tick -= OnAnimationTick;
         _animationTimer.Tick += OnAnimationTick;

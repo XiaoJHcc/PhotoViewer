@@ -1,5 +1,6 @@
 using System;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using Windows.Foundation;
@@ -155,6 +156,8 @@ internal sealed class WindowsTitleBar
             },
         };
         ToolTipService.SetToolTip(button, tooltip);
+        // SHELL-06：自绘窗口按钮必须向辅助技术暴露名称。
+        AutomationProperties.SetName(button, tooltip);
 
         // WinUI 的 Button 模板用主题画刷覆盖 Background,悬停/按下必须改写这几个键才不被默认亮色顶掉
         var hover = hoverBackground ?? WindowsLayout.CaptionButtonHover;
