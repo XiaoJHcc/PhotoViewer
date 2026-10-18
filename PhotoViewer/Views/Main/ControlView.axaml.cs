@@ -216,7 +216,6 @@ public class ExifValueConverter : IMultiValueConverter
                     Converters.FocalLengthConverter.Instance.Convert(exifData.EquivFocalLength, targetType, parameter, culture) : "--",
                 "FocalLength" => exifData.FocalLength != null ? 
                     Converters.FocalLengthConverter.Instance.Convert(exifData.FocalLength, targetType, parameter, culture) : "--",
-                "CameraMake" => exifData.CameraMake ?? "--",
                 "CameraModel" => exifData.CameraModel ?? "--",
                 "LensModel" => exifData.LensModel ?? "--",
                 "DateTimeOriginal" => exifData.DateTimeOriginal != null ? 

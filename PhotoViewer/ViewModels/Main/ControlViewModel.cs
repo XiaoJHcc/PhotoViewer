@@ -255,7 +255,6 @@ public class ControlViewModel : ReactiveObject
                 "FocalLength" => exifData.FocalLength != null
                     ? Converters.FocalLengthConverter.Instance.Convert(exifData.FocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
                     : "--",
-                "CameraMake" => exifData.CameraMake ?? "--",
                 "CameraModel" => exifData.CameraModel ?? "--",
                 "LensModel" => exifData.LensModel ?? "--",
                 "DateTimeOriginal" => exifData.DateTimeOriginal != null
@@ -277,26 +276,14 @@ public class ControlViewModel : ReactiveObject
     
     private void ExecutePrevious()
     {
-        // 上一张
-        var list = Main.FileVM.ThumbnailList;
-        if (list.HasPreviousFile() && Main.CurrentFile != null)
-        {
-            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = list.FilteredFiles[currentIndex - 1];
-            list.ScrollToCurrent();
-        }
+        // FILTER-05：翻页统一走共享实现，当前照片被筛掉时按锚点落到最近的前一项。
+        Main.FileVM.ThumbnailList.MoveCurrent(-1);
     }
 
     private void ExecuteNext()
     {
-        // 下一张
-        var list = Main.FileVM.ThumbnailList;
-        if (list.HasNextFile() && Main.CurrentFile != null)
-        {
-            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = list.FilteredFiles[currentIndex + 1];
-            list.ScrollToCurrent();
-        }
+        // FILTER-05：翻页统一走共享实现，当前照片被筛掉时按锚点落到最近的后一项。
+        Main.FileVM.ThumbnailList.MoveCurrent(1);
     }
 
     /// <summary>

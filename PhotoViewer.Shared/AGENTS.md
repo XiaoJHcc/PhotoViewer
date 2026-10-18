@@ -17,6 +17,6 @@
 | AnalysisPanelGeometry.cs | 分析栏瓦片几何：边长 `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`、交叉轴 = 边长 + 20、槽位起点。Mac / iPad 共用；Android 分析栏按同一份数学。 |
 | SimilarityPanelGeometry.cs | 相似聚类面板几何：MinWidth 106 / MinHeight 154、外边距 4、列表内边距 8、列布局面板宽（卡片 96 + 内边距 + 描边）与行布局「从胶片栏右侧切出」的宽度规则（卡片数 × 96，封顶可用宽度一半）。 |
 | ExifTableGeometry.cs | EXIF 详情页 7 列行几何：Tag ID 60 点、其余 2:2:3、列间 1 点分隔线、单元格内边距 10/8、值列最多 3 行；给出卡片宽度下的列宽与可用文本宽。 |
-| InputCommandMap.cs | 平台中立的「手势 → 用户命令」查询（`CommandForGesture`）。Apple 的 `AppleInputMapping` 与 Android 的 `AndroidInputMapping` 各自把原生事件解包成共享 `AppGesture`，再共用这一张用户主/次绑定表。 |
+| InputCommandMap.cs | 平台中立的「手势 → 用户命令」查询（`CommandForGesture`）与命令元数据 `IsRepeatable`（INPUT-05：仅上一张/下一张/预设缩放可按住重复）。Apple 的 `AppleInputMapping` 与 Android 的 `AndroidInputMapping` 各自把原生事件解包成共享 `AppGesture`，再共用这一张用户主/次绑定表。 |
 
 > 2026-10-18 A1a：以上 7 个几何文件从 `PhotoViewer.Apple/` 迁入本目录，命名空间改 `PhotoViewer.Shared`；除 namespace 外内容未改。执行记录见 [Android 交接](../Plans/native-rebuild-android-handoff.md) 与 [执行清单 §7](../Plans/native-rebuild-phase-android.md)。

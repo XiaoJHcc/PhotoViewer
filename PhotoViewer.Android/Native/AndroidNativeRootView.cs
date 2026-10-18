@@ -634,37 +634,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
     }
 
-    private void Move(int offset)
-    {
-        var files = _main.FileVM.ThumbnailList.FilteredFiles;
-        int index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
-        int target = index + offset;
-        if (target >= 0 && target < files.Count)
-        {
-            _main.CurrentFile = files[target];
-            _main.FileVM.ThumbnailList.ScrollToCurrent();
-        }
-    }
+    /// <summary>在已筛选列表中翻页，列表端点不环绕（FILTER-05：当前照片被筛掉时按重算前索引定位）。</summary>
+    private void Move(int offset) => _main.FileVM.ThumbnailList.MoveCurrent(offset);
 
+    /// <summary>按用户预设选择邻近倍率（IMAGE-04：端点或未命中时不动作）。</summary>
     private void ZoomPreset(int direction)
     {
-        var values = new System.Collections.Generic.List<double>();
-        foreach (var preset in _main.Settings.ScalePresets) values.Add(preset.Value);
-        values.Sort();
-        double current = _photo.PhysicalScale;
-        double target = 0;
-        bool found = false;
-        if (direction > 0)
-        {
-            foreach (double value in values)
-                if (value > current + .001) { target = value; found = true; break; }
-        }
-        else
-        {
-            for (int i = values.Count - 1; i >= 0; i--)
-                if (values[i] < current - .001) { target = values[i]; found = true; break; }
-        }
-        if (found) _photo.ZoomToPhysical(target);
+        double? target = ZoomPresets.Next(
+            _main.Settings.ScalePresets.Select(preset => preset.Value), _photo.PhysicalScale, direction);
+        if (target is double value) _photo.ZoomToPhysical(value);
     }
 
     /// <summary>评分写回经共享 XMP/同步逻辑；失败保留原星级并给出可见错误。</summary>

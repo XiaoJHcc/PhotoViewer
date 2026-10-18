@@ -562,21 +562,14 @@ public sealed class MacMainWindow : IDisposable
                 break;
         }
     }
-    /// <summary>在已筛选列表中翻页，列表端点不环绕。</summary>
-    public void Move(int offset)
-    {
-        var files = _main.FileVM.ThumbnailList.FilteredFiles;
-        int index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
-        int target = index + offset;
-        if (target >= 0 && target < files.Count) { _main.CurrentFile = files[target]; _main.FileVM.ThumbnailList.ScrollToCurrent(); }
-    }
-    /// <summary>按用户预设选择邻近倍率。</summary>
+    /// <summary>在已筛选列表中翻页，列表端点不环绕（FILTER-05：当前照片被筛掉时按重算前索引定位）。</summary>
+    public void Move(int offset) => _main.FileVM.ThumbnailList.MoveCurrent(offset);
+    /// <summary>按用户预设选择邻近倍率（IMAGE-04：端点或未命中时不动作）。</summary>
     private void ZoomPreset(int direction)
     {
-        var values = _main.Settings.ScalePresets.Select(preset => preset.Value).Order().ToArray();
-        double? target = direction > 0 ? values.Where(value => value > Photo.PhysicalScale + .001).Cast<double?>().FirstOrDefault()
-            : values.Where(value => value < Photo.PhysicalScale - .001).Reverse().Cast<double?>().FirstOrDefault();
-        if (target.HasValue) Photo.ZoomToPhysical(target.Value);
+        double? target = ZoomPresets.Next(
+            _main.Settings.ScalePresets.Select(preset => preset.Value), Photo.PhysicalScale, direction);
+        if (target is double value) Photo.ZoomToPhysical(value);
     }
     /// <summary>匹配原生事件；系统设置入口及 Escape 保留，普通事件按用户手势表，无图时左键打开文件。</summary>
     private bool HandleInput(NSEvent nativeEvent)

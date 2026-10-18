@@ -617,28 +617,15 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>在已筛选列表中翻页；选图后显式定位（[FILM-01] 上一张/下一张），列表端点不环绕。</summary>
     /// <param name="offset">±1 的方向偏移。</param>
-    private void Move(int offset)
-    {
-        var files = _main.FileVM.ThumbnailList.FilteredFiles;
-        int index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
-        int target = index + offset;
-        if (target >= 0 && target < files.Count)
-        {
-            _main.CurrentFile = files[target];
-            _main.FileVM.ThumbnailList.ScrollToCurrent();
-        }
-    }
+    private void Move(int offset) => _main.FileVM.ThumbnailList.MoveCurrent(offset);
 
-    /// <summary>按用户预设选择邻近倍率。</summary>
+    /// <summary>按用户预设选择邻近倍率（IMAGE-04：端点或未命中时不动作）。</summary>
     /// <param name="direction">正数放大、负数缩小。</param>
     private void ZoomPreset(int direction)
     {
-        var values = _main.Settings.ScalePresets.Select(preset => preset.Value).Order().ToArray();
-        double current = _photo.PhysicalScale;
-        double? target = direction > 0
-            ? values.Where(value => value > current + .001).Cast<double?>().FirstOrDefault()
-            : values.Where(value => value < current - .001).Reverse().Cast<double?>().FirstOrDefault();
-        if (target.HasValue) _photo.ZoomToPhysical(target.Value);
+        double? target = ZoomPresets.Next(
+            _main.Settings.ScalePresets.Select(preset => preset.Value), _photo.PhysicalScale, direction);
+        if (target is double value) _photo.ZoomToPhysical(value);
     }
 
     /// <summary>评分写回经共享 XMP/同步逻辑；失败保留原星级并给出可见错误。</summary>

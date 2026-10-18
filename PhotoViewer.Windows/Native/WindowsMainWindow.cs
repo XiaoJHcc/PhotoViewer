@@ -982,22 +982,14 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>按预设档位缩放(相对当前物理缩放取上/下一档)。</summary>
     private void ZoomPreset(int direction)
     {
-        var presets = _main.Settings.ScalePresets.Select(preset => preset.Value).OrderBy(value => value).ToList();
-        if (presets.Count == 0)
-        {
-            NativeStartupLog.Write("缩放预设为空,忽略按档位缩放");
-            return;
-        }
-
         var current = _photo.ZoomRatio;
-        var target = direction > 0
-            ? presets.FirstOrDefault(value => value > current + 1e-6, presets[^1])
-            : presets.LastOrDefault(value => value < current - 1e-6, presets[0]);
-        if (Math.Abs(target - current) < 1e-6)
+        var target = ZoomPresets.Next(
+            _main.Settings.ScalePresets.Select(preset => preset.Value), current, direction);
+        if (target is not double preset)
         {
             return;
         }
 
-        _photo.ZoomBy(target / current);
+        _photo.ZoomBy(preset / current);
     }
 }

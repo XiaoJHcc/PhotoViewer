@@ -58,6 +58,13 @@ public class ThumbnailListViewModel : ReactiveObject
     private ImageFile? _retainedFile;
 
     /// <summary>
+    /// 当前照片仍在新筛选结果中时的旧列表快照与索引，供当前照片被筛掉后定位上一张/下一张。
+    /// 连续改筛选时保留最近一次仍包含当前照片的列表，锚点语义始终指向它被排除前的位置。
+    /// </summary>
+    private List<ImageFile>? _anchorSnapshot;
+    private int _anchorIndex = -1;
+
+    /// <summary>
     /// 构造主缩略图列表视图模型。
     /// </summary>
     /// <param name="main">主视图模型</param>
@@ -93,6 +100,10 @@ public class ThumbnailListViewModel : ReactiveObject
         _main.WhenAnyValue(m => m.CurrentFile)
             .Subscribe(file =>
             {
+                // FILTER-05：切图后锚点失效，翻页重新以当前照片的列表索引为准。
+                _anchorSnapshot = null;
+                _anchorIndex = -1;
+
                 _bitmapPrefetcher.PrefetchAroundCurrent();
                 UpdateProtectedPaths(file);
                 if (_retainedFile != null && !ReferenceEquals(file, _retainedFile))
@@ -192,6 +203,18 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     public void ApplyFilter()
     {
+        // FILTER-05：记录重算前当前照片在旧列表中的索引；只有它仍在旧列表中时才更新锚点，
+        // 这样连续改筛选时锚点始终指向当前照片被排除前的位置。
+        if (_main.CurrentFile is { } anchorFile)
+        {
+            var oldIndex = _filteredFiles.IndexOf(anchorFile);
+            if (oldIndex >= 0)
+            {
+                _anchorSnapshot = _filteredFiles;
+                _anchorIndex = oldIndex;
+            }
+        }
+
         var allFiles = _folder.AllFiles;
 
         var filtered = allFiles.Where(f =>
@@ -291,10 +314,12 @@ public class ThumbnailListViewModel : ReactiveObject
         }).ToList();
 
         filtered = SortFileList(filtered);
+        // FILTER-04：先提交列表再通知计数，保证同一帧内列表与文本一致。
         FilteredFiles = filtered;
 
         // 同名合并后，文件夹打开时可能把“被隐藏”的 ARW/HIF 设为 CurrentFile；
         // 主图与卡片会因此不是同一张。把当前文件映射回它所在组的代表文件。
+        // FILTER-04：映射后仍要发出计数通知，列表与文本在同一次刷新中一起提交。
         if (_main.CurrentFile is { } current && !filtered.Contains(current))
         {
             var representative = filtered.FirstOrDefault(f =>
@@ -302,7 +327,6 @@ public class ThumbnailListViewModel : ReactiveObject
             if (representative != null)
             {
                 _main.CurrentFile = representative;
-                return;
             }
         }
 
@@ -319,11 +343,12 @@ public class ThumbnailListViewModel : ReactiveObject
 
     private List<ImageFile> SortFileList(List<ImageFile> files)
     {
+        // FILTER-02：名称比较固定用序数忽略大小写，四端同序且不随系统区域设置变化。
         IEnumerable<ImageFile> sorted = _filter.SortMode switch
         {
             SortMode.Name => _filter.SortOrder == SortOrder.Ascending
-                ? files.OrderBy(f => f.Name)
-                : files.OrderByDescending(f => f.Name),
+                ? files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                : files.OrderByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase),
 
             SortMode.Date => _filter.SortOrder == SortOrder.Ascending
                 ? files.OrderBy(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue)
@@ -333,7 +358,7 @@ public class ThumbnailListViewModel : ReactiveObject
                 ? files.OrderBy(f => f.FileSize)
                 : files.OrderByDescending(f => f.FileSize),
 
-            _ => files.OrderBy(f => f.Name)
+            _ => files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
         };
         return sorted.ToList();
     }
@@ -350,21 +375,62 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 当前文件之前是否还存在已筛选项。
+    /// 当前文件之前是否还存在可移动到的项。
     /// </summary>
-    public bool HasPreviousFile()
+    public bool HasPreviousFile() => ResolveMoveTarget(-1) != null;
+
+    /// <summary>
+    /// 当前文件之后是否还存在可移动到的项。
+    /// </summary>
+    public bool HasNextFile() => ResolveMoveTarget(1) != null;
+
+    /// <summary>
+    /// 在当前筛选结果中移动当前照片（上一张/下一张）。
+    /// 当前照片已被筛选排除时，以它在重算前列表中的索引为参照，落到新列表中最近的前/后项，
+    /// 不从列表首尾重新开始；端点不环绕。成功后设置 <see cref="MainViewModel.CurrentFile"/> 并滚动到该项。
+    /// </summary>
+    /// <param name="offset">方向偏移（-1 上一张，+1 下一张）。</param>
+    /// <returns>是否发生了移动。</returns>
+    public bool MoveCurrent(int offset)
     {
-        if (_main.CurrentFile == null || _filteredFiles.Count == 0) return false;
-        return _filteredFiles.IndexOf(_main.CurrentFile) > 0;
+        var target = ResolveMoveTarget(offset);
+        if (target == null) return false;
+
+        _main.CurrentFile = target;
+        ScrollToCurrent();
+        return true;
     }
 
     /// <summary>
-    /// 当前文件之后是否还存在已筛选项。
+    /// 解析移动目标：当前照片仍在列表时取其相邻项；已不在列表时从锚点快照向 offset 方向
+    /// 找第一个仍在新列表中的项。端点返回 null（不环绕）。
     /// </summary>
-    public bool HasNextFile()
+    private ImageFile? ResolveMoveTarget(int offset)
     {
-        if (_main.CurrentFile == null || _filteredFiles.Count == 0) return false;
-        return _filteredFiles.IndexOf(_main.CurrentFile) < _filteredFiles.Count - 1;
+        if (offset == 0) return null;
+
+        var current = _main.CurrentFile;
+        if (current == null || _filteredFiles.Count == 0) return null;
+
+        int index = _filteredFiles.IndexOf(current);
+        if (index >= 0)
+        {
+            int target = index + offset;
+            return target >= 0 && target < _filteredFiles.Count ? _filteredFiles[target] : null;
+        }
+
+        // FILTER-05：锚点是当前照片被排除前的列表与索引；锚点自身已不在新列表，
+        // 因此从相邻位置开始向目标方向查找。
+        if (_anchorSnapshot == null || _anchorIndex < 0) return null;
+
+        int step = Math.Sign(offset);
+        for (int i = _anchorIndex + step; i >= 0 && i < _anchorSnapshot.Count; i += step)
+        {
+            var candidate = _anchorSnapshot[i];
+            if (_filteredFiles.Contains(candidate)) return candidate;
+        }
+
+        return null;
     }
 
     /// <summary>

@@ -16,4 +16,16 @@ public static class InputCommandMap
     /// <returns>匹配到的命令标识；没有绑定返回 null。</returns>
     public static string? CommandForGesture(AppGesture? gesture, SettingsViewModel settings)
         => gesture is { } value ? settings.GetCommandByGesture(value) : null;
+
+    /// <summary>
+    /// 按住按键/滚轮时是否允许重复执行该命令（INPUT-05）。
+    /// 只有上一张、下一张与预设缩放可连续执行；评分、打开、切换、显隐等只执行一次。
+    /// </summary>
+    /// <param name="command">命令标识（可为 null）。</param>
+    /// <returns>可重复返回 true；未知命令或 null 返回 false。</returns>
+    public static bool IsRepeatable(string? command) => command switch
+    {
+        "Previous" or "Next" or "ZoomInPreset" or "ZoomOutPreset" => true,
+        _ => false
+    };
 }
