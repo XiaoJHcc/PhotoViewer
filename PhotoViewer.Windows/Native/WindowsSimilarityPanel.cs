@@ -6,8 +6,10 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 
@@ -34,6 +36,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     private readonly TextBlock _unindexedPlaceholder;
     private readonly TextBlock _fullPlaceholder;
     private readonly TextBlock _errorText;
+    private readonly TextBlock _dockedError;
     private readonly SimilarityActionView _emptyActions;
     private readonly SimilarityActionView _dockedActions;
 
@@ -67,10 +70,22 @@ internal sealed class WindowsSimilarityPanel : Grid
             HorizontalAlignment = HorizontalAlignment.Center,
             Visibility = Visibility.Collapsed,
         };
+        // SIM-10：列表态的动作区同样承载提取错误，错误不再只挂空态栈。
+        _dockedError = new TextBlock
+        {
+            FontSize = WindowsLayout.SimilarityErrorFontSize,
+            Foreground = new SolidColorBrush(WindowsLayout.SimilarityErrorForeground),
+            TextAlignment = TextAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            MaxWidth = WindowsLayout.SimilarityErrorMaxWidth,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Visibility = Visibility.Collapsed,
+        };
+        _dockedActions.Children.Add(_dockedError);
         _emptyPanel = new StackPanel
         {
-            Spacing = 8,
-            Margin = new Thickness(4),
+            Spacing = DesignTokens.SimEmptySpacing,
+            Margin = new Thickness(DesignTokens.SimEmptyMargin),
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
             Visibility = Visibility.Collapsed,
@@ -85,7 +100,7 @@ internal sealed class WindowsSimilarityPanel : Grid
         {
             Layout = _stackLayout,
             ItemTemplate = new ItemFactory(this),
-            Margin = new Thickness(4),
+            Margin = new Thickness(DesignTokens.SimEmptyMargin),
             VerticalAlignment = VerticalAlignment.Top,
         };
         _scroll = new ScrollViewer
@@ -112,9 +127,9 @@ internal sealed class WindowsSimilarityPanel : Grid
         {
             Background = new SolidColorBrush(WindowsLayout.SimilarityPanelBackground),
             BorderBrush = new SolidColorBrush(WindowsLayout.SimilarityPanelBorder),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Margin = new Thickness(0, 0, 4, 0),
+            BorderThickness = new Thickness(WindowsLayout.SimilarityPanelBorderWidth),
+            CornerRadius = new CornerRadius(DesignTokens.SimPanelCornerRadius),
+            Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0),
             MinWidth = WindowsLayout.SimilarityMinWidth,
             MinHeight = WindowsLayout.SimilarityMinHeight,
             Child = _content,
@@ -155,6 +170,40 @@ internal sealed class WindowsSimilarityPanel : Grid
         _isRowLayout = isRowLayout;
         ApplyOrientation();
         ReloadItems();
+    }
+
+    /// <summary>
+    /// 按可用宽度落面板宽度(SIM-01/SIM-07):行布局取共享 <see cref="SimilarityPanelGeometry.RowWidth"/>
+    /// 并夹到可用宽一半;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
+    /// </summary>
+    /// <param name="availableWidth">文件栏/窗口可用宽度。</param>
+    /// <param name="hasItems">是否有相似项。</param>
+    /// <param name="itemCount">相似项数量。</param>
+    internal void SetAvailableWidth(double availableWidth, bool hasItems, int itemCount)
+    {
+        if (availableWidth <= 1)
+        {
+            // 首帧布局前宽度未知：交给内容自然宽度,布局完成后再夹到一半。
+            Width = double.NaN;
+            MaxWidth = double.PositiveInfinity;
+            return;
+        }
+
+        double half = Math.Max(1, availableWidth / 2);
+        if (_isRowLayout)
+        {
+            double width = Math.Min(
+                SimilarityPanelGeometry.RowWidth(hasItems, itemCount, availableWidth) - SimilarityPanelGeometry.Margin,
+                half);
+            Width = Math.Max(0, width);
+            MaxWidth = Math.Max(0, width);
+            _frame.Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0);
+            return;
+        }
+
+        Width = SimilarityPanelGeometry.PanelWidth;
+        MaxWidth = SimilarityPanelGeometry.PanelWidth;
+        _frame.Margin = new Thickness(0);
     }
 
     /// <summary>应用当前方向的列表轴与动作区停靠位置。</summary>
@@ -221,6 +270,8 @@ internal sealed class WindowsSimilarityPanel : Grid
             _fullPlaceholder.Visibility = _panel.ShowFullPlaceholder ? Visibility.Visible : Visibility.Collapsed;
             _errorText.Text = _panel.IndexError ?? string.Empty;
             _errorText.Visibility = _panel.HasIndexError ? Visibility.Visible : Visibility.Collapsed;
+            _dockedError.Text = _panel.IndexError ?? string.Empty;
+            _dockedError.Visibility = _panel.ShowActionAreaError ? Visibility.Visible : Visibility.Collapsed;
 
             _emptyActions.Refresh(_panel);
             _dockedActions.Refresh(_panel);
@@ -275,7 +326,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     /// <summary>分数 → 柱条占比(75% 以下为 0,100% 为 1),与旧壳 SimilarityScoreToProgressFractionConverter 一致。</summary>
     private static double SimilarityProgressFraction(double score)
     {
-        const double lowerBound = 0.75;
+        double lowerBound = DesignTokens.SimScoreLowerBound;
         return (Math.Clamp(score, lowerBound, 1) - lowerBound) / (1 - lowerBound);
     }
 
@@ -310,7 +361,7 @@ internal sealed class WindowsSimilarityPanel : Grid
         /// <param name="start">开始提取回调</param>
         public SimilarityActionView(Action start)
         {
-            Spacing = 6;
+            Spacing = WindowsLayout.SimilarityActionSpacing;
             HorizontalAlignment = HorizontalAlignment.Center;
             _caption = new TextBlock
             {
@@ -326,7 +377,7 @@ internal sealed class WindowsSimilarityPanel : Grid
                 Width = WindowsLayout.SimilarityActionWidth,
                 Height = WindowsLayout.SimilarityActionHeight,
                 FontSize = WindowsLayout.SimilarityActionFontSize,
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(WindowsLayout.SimilarityActionCornerRadius),
                 BorderThickness = new Thickness(1),
                 BorderBrush = new SolidColorBrush(WindowsLayout.SimilarityActionBorder),
                 Background = new SolidColorBrush(WindowsLayout.SimilarityActionBackground),
@@ -340,7 +391,7 @@ internal sealed class WindowsSimilarityPanel : Grid
             _progressTrack = new Border
             {
                 Background = new SolidColorBrush(WindowsLayout.SimilarityActionBackground),
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(WindowsLayout.SimilarityActionCornerRadius),
                 BorderBrush = new SolidColorBrush(WindowsLayout.SimilarityActionBorder),
                 BorderThickness = new Thickness(1),
                 HorizontalAlignment = HorizontalAlignment.Stretch,

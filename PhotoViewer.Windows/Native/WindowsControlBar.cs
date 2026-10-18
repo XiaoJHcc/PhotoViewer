@@ -2,9 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using Windows.UI;
@@ -21,6 +24,7 @@ internal sealed class WindowsControlBar : Grid
     private readonly Action<string> _execute;
     private readonly Action? _openTools;
     private readonly Border _frame;
+    private readonly ScrollViewer _scroll;
     private readonly WindowsWrapPanel _groups;
     private readonly Border _exifGroup;
     private readonly Border _ratingGroup;
@@ -34,6 +38,9 @@ internal sealed class WindowsControlBar : Grid
     private bool _ratingRefreshPending;
     private bool _commandsRefreshPending;
     private bool _isRowLayout = true;
+    private bool _restoreScrollPending;
+    private double _savedHorizontalOffset;
+    private double _savedVerticalOffset;
 
     /// <summary>
     /// 创建控制栏。
@@ -47,10 +54,14 @@ internal sealed class WindowsControlBar : Grid
         _execute = execute;
         _openTools = openTools;
 
+        var exifMetrics = ControlBarLayout.GetMetrics(ControlBarGroupKind.Exif);
+        var ratingMetrics = ControlBarLayout.GetMetrics(ControlBarGroupKind.Rating);
+        var commandMetrics = ControlBarLayout.GetMetrics(ControlBarGroupKind.Command);
+
         _exifStack = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = WindowsLayout.ExifStackSpacing,
+            Spacing = exifMetrics.Spacing,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         // 旧壳的 EXIF 分组边框没有底色,只有每个信息块自己是 #222;
@@ -68,21 +79,21 @@ internal sealed class WindowsControlBar : Grid
         _ratingStack = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 0,
+            Spacing = ratingMetrics.Spacing,
             HorizontalAlignment = HorizontalAlignment.Center,
             // 旧壳把这 8 加在星条(DockPanel)上而不是分组边框上,分组边框本身没有外边距
-            Margin = new Thickness(0, WindowsLayout.RatingGroupMargin, 0, WindowsLayout.RatingGroupMargin),
+            Margin = new Thickness(0, ratingMetrics.Inset, 0, ratingMetrics.Inset),
         };
         _ratingGroup = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.BlockBackground),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(DesignTokens.ToolbarCornerRadius),
             Child = _ratingStack,
         };
         for (var star = 0; star <= 5; star++)
         {
             var value = star;
-            var button = CreateGlyphButton(WindowsLayout.RatingButtonSize, WindowsLayout.RatingGlyphFontSize, null);
+            var button = CreateGlyphButton(ratingMetrics.Width, DesignTokens.ToolbarRatingGlyphFontSize, null);
             button.Click += (_, _) => RateCurrent(value);
             _starButtons.Add(button);
             _ratingStack.Children.Add(button);
@@ -91,7 +102,7 @@ internal sealed class WindowsControlBar : Grid
         _commandStack = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            Spacing = WindowsLayout.CommandSpacing,
+            Spacing = commandMetrics.Spacing,
             HorizontalAlignment = HorizontalAlignment.Center,
         };
         _groups = new WindowsWrapPanel
@@ -111,7 +122,20 @@ internal sealed class WindowsControlBar : Grid
             Padding = new Thickness(WindowsLayout.ControlBarPadding),
             Child = _groups,
         };
-        Children.Add(_frame);
+        // TOOLBAR-08：单组超长时沿主轴滚动；内容不超出时不显示滚动条。
+        _scroll = new ScrollViewer
+        {
+            Content = _frame,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            HorizontalScrollMode = ScrollMode.Enabled,
+            VerticalScrollMode = ScrollMode.Disabled,
+            ZoomMode = ZoomMode.Disabled,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            VerticalContentAlignment = VerticalAlignment.Stretch,
+        };
+        _scroll.LayoutUpdated += (_, _) => ApplyPendingScroll();
+        Children.Add(_scroll);
 
         _main.PropertyChanged += OnMainChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
@@ -134,13 +158,59 @@ internal sealed class WindowsControlBar : Grid
             return;
         }
 
+        SaveScrollOffset();
         _isRowLayout = isRowLayout;
         _groups.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         _exifStack.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         _commandStack.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
         _ratingStack.Orientation = isRowLayout ? Orientation.Horizontal : Orientation.Vertical;
+        _scroll.HorizontalScrollMode = isRowLayout ? ScrollMode.Enabled : ScrollMode.Disabled;
+        _scroll.VerticalScrollMode = isRowLayout ? ScrollMode.Disabled : ScrollMode.Enabled;
+        _scroll.HorizontalScrollBarVisibility = isRowLayout ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
+        _scroll.VerticalScrollBarVisibility = isRowLayout ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         ApplyRatingOrder();
         ApplyOrientationMargins();
+        RestoreScrollOffset();
+    }
+
+    /// <summary>换向前记住用户滚动位置(TOOLBAR-08)。</summary>
+    private void SaveScrollOffset()
+    {
+        _savedHorizontalOffset = _scroll.HorizontalOffset;
+        _savedVerticalOffset = _scroll.VerticalOffset;
+    }
+
+    /// <summary>布局稳定后把偏移约束到新几何的合法范围;不主动回到起点。</summary>
+    private void RestoreScrollOffset()
+    {
+        _restoreScrollPending = true;
+    }
+
+    /// <summary>新几何就绪后应用保存的偏移;内容尚未测量时等下一轮布局。</summary>
+    private void ApplyPendingScroll()
+    {
+        if (!_restoreScrollPending)
+        {
+            return;
+        }
+
+        double maxHorizontal = _scroll.ScrollableWidth;
+        double maxVertical = _scroll.ScrollableHeight;
+        // 只恢复新方向的主轴偏移；旧方向的偏移在新几何里没有意义。
+        double wantedHorizontal = _isRowLayout ? _savedHorizontalOffset : 0;
+        double wantedVertical = _isRowLayout ? 0 : _savedVerticalOffset;
+        if (wantedHorizontal > maxHorizontal + 0.5 || wantedVertical > maxVertical + 0.5)
+        {
+            // 内容仍在逐轮测量,此时夹取会把远端偏移永久压回 0。
+            return;
+        }
+
+        _restoreScrollPending = false;
+        _scroll.ChangeView(
+            Math.Clamp(wantedHorizontal, 0, maxHorizontal),
+            Math.Clamp(wantedVertical, 0, maxVertical),
+            null,
+            disableAnimation: true);
     }
 
     /// <summary>
@@ -172,8 +242,22 @@ internal sealed class WindowsControlBar : Grid
     {
         RefreshExif();
         RefreshRating();
+        UpdateCommandAvailability();
         ApplyRatingOrder();
         ApplyOrientationMargins();
+    }
+
+    /// <summary>无照片时除“打开文件”外的命令按钮走系统禁用态(TOOLBAR-04)。</summary>
+    private void UpdateCommandAvailability()
+    {
+        bool hasFile = _main.CurrentFile != null;
+        foreach (var child in _commandStack.Children)
+        {
+            if (child is Button { Tag: string command } button)
+            {
+                button.IsEnabled = hasFile || command == "Open";
+            }
+        }
     }
 
     /// <summary>重建 EXIF 信息块(保留标签与强调值的信息层级与完整内容 tooltip)。</summary>
@@ -210,7 +294,7 @@ internal sealed class WindowsControlBar : Grid
                 Width = WindowsLayout.ExifBlockWidth,
                 Height = WindowsLayout.ExifBlockHeight,
                 Background = new SolidColorBrush(WindowsLayout.BlockBackground),
-                CornerRadius = new CornerRadius(6),
+                CornerRadius = new CornerRadius(DesignTokens.ToolbarCornerRadius),
                 Child = stack,
             };
             ToolTipService.SetToolTip(block, $"{entry.DisplayName}:{entry.DisplayValue}");
@@ -237,10 +321,11 @@ internal sealed class WindowsControlBar : Grid
             _commandStack.Children.Add(CreateCommandButton(item, glyph));
         }
 
+        UpdateCommandAvailability();
         _commandStack.Visibility = _commandStack.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>创建一个命令按钮;评分命令按星数绘制星形(TOOLBAR-01)。</summary>
+    /// <summary>创建一个命令按钮;评分命令画数字(0 为叉,TOOLBAR-03)。</summary>
     private Button CreateCommandButton(SettingsViewModel.HotkeyItem item, string glyph)
     {
         var content = new StackPanel
@@ -253,16 +338,21 @@ internal sealed class WindowsControlBar : Grid
 
         if (WindowsIcons.TryGetRatingStars(item.Command, out var stars))
         {
+            // TOOLBAR-03：评分快捷命令统一画数字（0 显示为叉），不用星形替代。
             if (stars == 0)
             {
-                content.Children.Add(CreateGlyph(WindowsIcons.ClearGlyph, 12, WindowsLayout.StarOff));
+                content.Children.Add(CreateGlyph(WindowsIcons.ClearGlyph, DesignTokens.ToolbarRatingClearGlyphFontSize, WindowsLayout.StarClear));
             }
             else
             {
-                for (var i = 0; i < stars; i++)
+                content.Children.Add(new TextBlock
                 {
-                    content.Children.Add(CreateGlyph(WindowsIcons.StarGlyph, 10, WindowsLayout.StarOn));
-                }
+                    Text = stars.ToString(),
+                    FontSize = WindowsLayout.CommandGlyphFontSize,
+                    Foreground = new SolidColorBrush(WindowsLayout.ExifValueForeground),
+                    HorizontalAlignment = HorizontalAlignment.Center,
+                    VerticalAlignment = VerticalAlignment.Center,
+                });
             }
         }
         else
@@ -278,10 +368,15 @@ internal sealed class WindowsControlBar : Grid
             Background = new SolidColorBrush(WindowsLayout.CommandButtonBackground),
             BorderBrush = new SolidColorBrush(WindowsLayout.CommandButtonBorder),
             BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
+            CornerRadius = new CornerRadius(DesignTokens.ToolbarCornerRadius),
             Content = content,
+            Tag = item.Command,
+            IsEnabled = _main.CurrentFile != null || item.Command == "Open",
         };
-        ToolTipService.SetToolTip(button, BuildTooltip(item));
+        var tooltip = BuildTooltip(item);
+        ToolTipService.SetToolTip(button, tooltip);
+        // TOOLBAR-04：读屏名称与悬停提示同源，含命令名与当前主/次绑定。
+        AutomationProperties.SetName(button, tooltip);
         button.Click += (_, _) => _execute(item.Command);
         return button;
     }
@@ -303,10 +398,11 @@ internal sealed class WindowsControlBar : Grid
         return string.Join(" · ", parts);
     }
 
-    /// <summary>按当前照片评分刷新星色。</summary>
+    /// <summary>按当前照片评分刷新星色；无照片时整组走系统禁用态，不用透明度近似隐藏。</summary>
     private void RefreshRating()
     {
         var rating = _main.CurrentFile?.Rating ?? 0;
+        bool hasFile = _main.CurrentFile != null;
         for (var star = 0; star <= 5; star++)
         {
             var button = _starButtons[star];
@@ -315,8 +411,8 @@ internal sealed class WindowsControlBar : Grid
                 ? WindowsLayout.StarClear
                 : on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
             var glyph = star == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
-            var size = star == 0 ? 12 : WindowsLayout.RatingGlyphFontSize;
-            button.Opacity = _main.ControlVM.StarOpacity;
+            var size = star == 0 ? DesignTokens.ToolbarRatingClearGlyphFontSize : WindowsLayout.RatingGlyphFontSize;
+            button.IsEnabled = hasFile;
             button.Content = CreateGlyph(glyph, size, tint);
         }
 

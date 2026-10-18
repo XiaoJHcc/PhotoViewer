@@ -49,6 +49,17 @@
     </ItemGroup>
 
     <!--
+      共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
+      由 Mac / iOS / Android 三个原生头共同链接；Windows 头同样链接同一份视口、
+      主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表，避免第四套并行常量。
+      该目录不得出现 WinUI 类型，平台专属宿主留在 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
+    </ItemGroup>
+
+    <!--
       WinAppSDK 1.8 的框架包自带一份 Windows ML 运行时(onnxruntime.dll 1.23.x + 自带 DirectML.dll),
       与本工程的 ONNX Runtime 1.24.4(DirectML EP)同名。两者版本与字节都不同:实测自包含发布时
       onnxruntime.dll 取到本工程版本、DirectML.dll 却取到框架版本,即结果靠运气 —— 一旦 managed

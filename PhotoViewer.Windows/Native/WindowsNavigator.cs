@@ -55,7 +55,7 @@ internal sealed class WindowsNavigator : Grid
         _frame = new Rectangle
         {
             Fill = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
-            Stroke = new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)),
+            Stroke = new SolidColorBrush(WindowsLayout.NavigatorFrameForeground),
             StrokeThickness = WindowsLayout.NavigatorFrameThickness,
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Top,
@@ -69,7 +69,7 @@ internal sealed class WindowsNavigator : Grid
         {
             FontSize = WindowsLayout.NavigatorPercentFontSize,
             FontWeight = Microsoft.UI.Text.FontWeights.Bold,
-            Foreground = new SolidColorBrush(Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF)),
+            Foreground = new SolidColorBrush(WindowsLayout.NavigatorFrameForeground),
             HorizontalAlignment = HorizontalAlignment.Center,
             TextAlignment = TextAlignment.Center,
             Margin = new Thickness(0, WindowsLayout.NavigatorPercentTopMargin, 0, WindowsLayout.NavigatorPercentBottomMargin),

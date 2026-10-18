@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Input;
@@ -10,10 +11,14 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Foundation;
@@ -54,10 +59,12 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly TextBlock _hintDetail;
     private readonly Border _statusToast;
     private readonly TextBlock _statusText;
+    private readonly Border _busyPill;
     private readonly MenuFlyout _contextMenu;
     private ToggleMenuFlyoutItem _thumbnailMenuToggle = null!;
     private ToggleMenuFlyoutItem _analysisMenuToggle = null!;
     private ToggleMenuFlyoutItem _controlMenuToggle = null!;
+    private ToggleMenuFlyoutItem _enhanceMenuToggle = null!;
     private readonly WindowsTitleBar _titleBar;
     private readonly Rectangle _detailHighlight;
     private readonly Canvas _highlightLayer;
@@ -68,6 +75,8 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _sized;
     private bool _isFullScreen;
     private XamlRoot? _xamlRoot;
+    private bool _preferencesLoaded;
+    private string _lastFullError = string.Empty;
 
     /// <summary>
     /// 创建主窗口。
@@ -113,7 +122,7 @@ internal sealed partial class WindowsMainWindow : Window
         _statusText = new TextBlock
         {
             FontSize = WindowsLayout.StatusToastFontSize,
-            Foreground = new SolidColorBrush(WindowsLayout.HintTitleForeground),
+            Foreground = new SolidColorBrush(WindowsLayout.StatusToastForeground),
             TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
         };
@@ -123,13 +132,34 @@ internal sealed partial class WindowsMainWindow : Window
             CornerRadius = new CornerRadius(WindowsLayout.StatusToastCornerRadius),
             Padding = new Thickness(WindowsLayout.StatusToastPaddingX, WindowsLayout.StatusToastPaddingY,
                 WindowsLayout.StatusToastPaddingX, WindowsLayout.StatusToastPaddingY),
-            MaxWidth = WindowsLayout.HintMaxWidth,
+            MaxWidth = WindowsLayout.StatusToastMaxWidth,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 0, WindowsLayout.StatusToastBottomMargin),
             Visibility = Visibility.Collapsed,
             IsHitTestVisible = false,
             Child = _statusText,
+        };
+        // IMAGE-07：增强计算超过 500ms 门槛才显示“计算中…”药丸，状态由共享会话给出。
+        _busyPill = new Border
+        {
+            Width = WindowsLayout.BusyPillWidth,
+            Height = WindowsLayout.BusyPillHeight,
+            Background = new SolidColorBrush(WindowsLayout.StatusToastBackground),
+            CornerRadius = new CornerRadius(WindowsLayout.BusyPillCornerRadius),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Bottom,
+            Margin = new Thickness(0, 0, 0, WindowsLayout.BusyPillBottomOffset),
+            Visibility = Visibility.Collapsed,
+            IsHitTestVisible = false,
+            Child = new TextBlock
+            {
+                Text = "计算中…",
+                FontSize = WindowsLayout.StatusToastFontSize,
+                Foreground = new SolidColorBrush(WindowsLayout.StatusToastForeground),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
         };
 
         // 空首屏:透明命中层盖住主图区,左键打开文件选择器;右键留给右键菜单(不能同时弹选择器)
@@ -157,11 +187,15 @@ internal sealed partial class WindowsMainWindow : Window
         _photoHost.Children.Add(_highlightLayer);
         _photoHost.Children.Add(_navigator);
         _photoHost.Children.Add(_hintPanel);
+        _photoHost.Children.Add(_busyPill);
         _photoHost.Children.Add(_statusToast);
         _photoHost.Children.Add(_emptyHitArea);
         // 主图区不裁剪时,分析栏 hover 绿框在放大/平移后会画到相邻栏位上。
         _photoHost.SizeChanged += (_, e) =>
+        {
             _photoHost.Clip = new RectangleGeometry { Rect = new Rect(0, 0, e.NewSize.Width, e.NewSize.Height) };
+            UpdateStatusToastWidth();
+        };
 
         _similarity = new WindowsSimilarityPanel(main, RateFile);
         _analysis = new WindowsAnalysisPanel(main, _session,
@@ -210,10 +244,13 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _main.RatingWriteFailed += OnRatingWriteFailed;
+        _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _session.Changed += OnImageChanged;
+        _session.Notice += OnSessionNotice;
         _photo.ViewportChanged += OnViewportChanged;
         _photo.RenderStateChanged += OnPhotoRenderStateChanged;
 
+        LoadUiPreferences();
         _session.SetFile(_main.CurrentFile?.File);
         ApplyLayout();
         ApplyVisibility();
@@ -236,7 +273,9 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
         _main.RatingWriteFailed -= OnRatingWriteFailed;
+        _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _session.Changed -= OnImageChanged;
+        _session.Notice -= OnSessionNotice;
         _photo.ViewportChanged -= OnViewportChanged;
         _photo.RenderStateChanged -= OnPhotoRenderStateChanged;
         _statusTimer?.Stop();
@@ -261,6 +300,8 @@ internal sealed partial class WindowsMainWindow : Window
                 OpenFilePicker();
                 return;
             case "Fit":
+                // EXIF 可能异步晚到：执行适应/100% 前刷新一次对焦点。
+                UpdateFocusPoint();
                 _photo.ToggleFit();
                 return;
             case "ZoomInPreset":
@@ -292,25 +333,31 @@ internal sealed partial class WindowsMainWindow : Window
         shared.Execute(null);
     }
 
-    /// <summary>打开外部传入的路径(命令行/拖放/文件关联):文件夹进入文件夹模式,图片进父文件夹并选中。</summary>
+    /// <summary>
+    /// 打开外部传入的路径(命令行/拖放/文件关联):按入参顺序取首个可打开项,其余忽略(OPEN-01)。
+    /// 文件夹进入文件夹模式,图片进父文件夹并选中。
+    /// </summary>
     /// <param name="paths">路径集合</param>
     public async Task OpenPathsAsync(IEnumerable<string> paths)
     {
-        var list = paths.ToList();
-        var refs = list
-            .Where(System.IO.File.Exists)
-            .Select(path => (IFileRef)new LocalFileRef(path))
-            .ToList();
-        if (refs.Count > 0)
+        foreach (var path in paths)
         {
-            await _main.FolderVM.OpenExternalFilesAsync(refs);
-            return;
-        }
+            if (System.IO.File.Exists(path))
+            {
+                if (!_main.FolderVM.IsImageFile(System.IO.Path.GetFileName(path)))
+                {
+                    continue;
+                }
 
-        var folder = list.FirstOrDefault(System.IO.Directory.Exists);
-        if (folder != null)
-        {
-            await _main.FolderVM.OpenFolderAsync(new LocalFolderRef(folder));
+                await _main.FolderVM.OpenExternalFilesAsync(new[] { (IFileRef)new LocalFileRef(path) });
+                return;
+            }
+
+            if (System.IO.Directory.Exists(path))
+            {
+                await _main.FolderVM.OpenFolderAsync(new LocalFolderRef(path));
+                return;
+            }
         }
     }
 
@@ -354,17 +401,22 @@ internal sealed partial class WindowsMainWindow : Window
             }
         };
 
-        _thumbnailMenuToggle = new ToggleMenuFlyoutItem { Text = "缩略图栏", IsChecked = _main.IsThumbnailViewVisible };
+        _thumbnailMenuToggle = new ToggleMenuFlyoutItem { Text = "胶片栏", IsChecked = _main.IsThumbnailViewVisible };
         _thumbnailMenuToggle.Click += (_, _) => _main.ToggleThumbnailView();
         _analysisMenuToggle = new ToggleMenuFlyoutItem { Text = "分析栏", IsChecked = _main.IsAnalysisViewVisible };
         _analysisMenuToggle.Click += (_, _) => _main.ToggleAnalysisView();
         _controlMenuToggle = new ToggleMenuFlyoutItem { Text = "控制栏", IsChecked = _main.IsControlViewVisible };
         _controlMenuToggle.Click += (_, _) => _main.ToggleControlView();
+        _enhanceMenuToggle = new ToggleMenuFlyoutItem { Text = "增强", IsChecked = _session.IsEnhanced };
+        _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
         menu.Opening += (_, _) =>
         {
             _thumbnailMenuToggle.IsChecked = _main.IsThumbnailViewVisible;
             _analysisMenuToggle.IsChecked = _main.IsAnalysisViewVisible;
             _controlMenuToggle.IsChecked = _main.IsControlViewVisible;
+            _enhanceMenuToggle.IsChecked = _session.IsEnhanced;
+            // MENU-07：无当前照片时增强置灰，其余项照常可用。
+            _enhanceMenuToggle.IsEnabled = _main.CurrentFile != null;
         };
 
         menu.Items.Add(openFile);
@@ -373,6 +425,8 @@ internal sealed partial class WindowsMainWindow : Window
         menu.Items.Add(_thumbnailMenuToggle);
         menu.Items.Add(_analysisMenuToggle);
         menu.Items.Add(_controlMenuToggle);
+        menu.Items.Add(new MenuFlyoutSeparator());
+        menu.Items.Add(_enhanceMenuToggle);
         menu.Items.Add(new MenuFlyoutSeparator());
         var tools = new MenuFlyoutItem { Text = "工具…" };
         tools.Click += (_, _) => _main.OpenToolsWindow();
@@ -496,6 +550,7 @@ internal sealed partial class WindowsMainWindow : Window
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
+        UpdateSimilarityWidth();
         UpdateCaptionRegions();
     }
 
@@ -585,6 +640,7 @@ internal sealed partial class WindowsMainWindow : Window
         _controlBar.SetOrientation(_isRowLayout);
         _similarity.SetOrientation(_isRowLayout);
         _analysis.SetOrientation(_isRowLayout);
+        UpdateSimilarityWidth();
         // 构造期 ActualWidth/Height 还是 0;此时别更新方向,否则 Auto 布局会先按竖屏建一遍再切列布局。
         if (_root.ActualWidth > 0 && _root.ActualHeight > 0)
         {
@@ -594,7 +650,7 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateCaptionRegions();
     }
 
-    /// <summary>栏位显隐(会话内状态,与旧壳一致)。</summary>
+    /// <summary>栏位显隐(跨会话持久化 SHELL-04;分析栏仍为会话态)。</summary>
     private void ApplyVisibility()
     {
         // 由 ToggleButton.Checked / 设置变化直接调用,异常一旦跨 COM 边界就是进程级崩溃,这里兜住。
@@ -612,11 +668,62 @@ internal sealed partial class WindowsMainWindow : Window
                 _filmstrip.CancelLocate();
             }
 
+            UpdateSimilarityWidth();
             UpdateCaptionRegions();
+            SaveUiPreferences();
         }
         catch (Exception ex)
         {
             NativeStartupLog.Fail("apply visibility", ex);
+        }
+    }
+
+    /// <summary>读取栏位显隐的平台偏好(SHELL-04);缺失时保留共享默认值。</summary>
+    private void LoadUiPreferences()
+    {
+        var (showFilm, showControls) = WindowsNativePreferences.Load();
+        if (showFilm.HasValue)
+        {
+            _main.IsThumbnailViewVisible = showFilm.Value;
+        }
+
+        if (showControls.HasValue)
+        {
+            _main.IsControlViewVisible = showControls.Value;
+        }
+
+        _preferencesLoaded = true;
+    }
+
+    /// <summary>写入栏位显隐的平台偏好;首帧读取前不写入。</summary>
+    private void SaveUiPreferences()
+    {
+        if (!_preferencesLoaded)
+        {
+            return;
+        }
+
+        WindowsNativePreferences.Save(_main.IsThumbnailViewVisible, _main.IsControlViewVisible);
+    }
+
+    /// <summary>按可用宽度落相似面板宽度(SIM-01/SIM-07):行布局取共享 RowWidth 并夹到一半。</summary>
+    private void UpdateSimilarityWidth()
+    {
+        var panel = _main.FileVM.SimilarityPanel;
+        _similarity.SetAvailableWidth(
+            Math.Max(0, _root.ActualWidth),
+            panel.HasItems,
+            panel.SimilarItems.Count);
+    }
+
+    /// <summary>相似面板内容变化时同步宽度(项数会改变行布局切出的宽度)。</summary>
+    private void OnSimilarityPanelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(SimilarityPanelViewModel.HasItems)
+            or nameof(SimilarityPanelViewModel.SimilarItems)
+            or nameof(SimilarityPanelViewModel.ShowActionArea))
+        {
+            UpdateSimilarityWidth();
         }
     }
 
@@ -719,6 +826,8 @@ internal sealed partial class WindowsMainWindow : Window
         switch (e.PropertyName)
         {
             case nameof(MainViewModel.CurrentFile):
+                _lastFullError = string.Empty;
+                UpdateFocusPoint();
                 _session.SetFile(_main.CurrentFile?.File);
                 UpdateHint();
                 break;
@@ -735,20 +844,49 @@ internal sealed partial class WindowsMainWindow : Window
         }
     }
 
-    /// <summary>解码会话变化:同步展示帧与提示(回调内同步上传,不跨下一次 Changed 持引用)。</summary>
+    /// <summary>解码会话变化:同步展示帧、增强计算态与提示(回调内同步上传,不跨下一次 Changed 持引用)。</summary>
     private void OnImageChanged()
     {
+        // EXIF 可能晚于主图到达;每次会话变化都重读对焦点,ToggleFit 才能在 F 上按对焦点放大。
+        UpdateFocusPoint();
         // 会话自己管理增强态:Image 在增强就绪后返回增强图,切图/清空时立即回到新图或 null。
         _photo.SetImage(_session.Image);
+        _busyPill.Visibility = _session.IsEnhancingVisible ? Visibility.Visible : Visibility.Collapsed;
+        // IMAGE-03：有代理时 Full 升级失败只走非阻塞提示，不覆盖主图错误标题；同一错误只提示一次。
+        if (_session.FullError.Length > 0 && _session.FullError != _lastFullError)
+        {
+            ShowStatus(_session.FullError);
+        }
+
+        _lastFullError = _session.FullError;
         UpdateHint();
         UpdateNavigator();
         UpdateDetailHighlight();
+    }
+
+    /// <summary>SCOPE-02/STATE-03：会话的一次性提示(如内存压力自动关闭增强)走现有提示条。</summary>
+    private void OnSessionNotice(string message) => ShowStatus(message);
+
+    /// <summary>把当前文件的 Sony 对焦点同步给共享视口(归一化显示朝向)。</summary>
+    private void UpdateFocusPoint()
+    {
+        var focus = _main.CurrentFile?.ExifData?.SonyFocusPosition;
+        if (focus is { ImageWidth: > 0, ImageHeight: > 0 } position)
+        {
+            _photo.SetFocus(
+                position.FocusX / (double)position.ImageWidth,
+                position.FocusY / (double)position.ImageHeight);
+            return;
+        }
+
+        _photo.SetFocus(null, null);
     }
 
     /// <summary>切换增强预览(增强态由共享 PhotoLoadSession 持有,模式跨切图持续)。</summary>
     private void ToggleEnhance()
     {
         _session.ToggleEnhanced();
+        _enhanceMenuToggle.IsChecked = _session.IsEnhanced;
         ShowStatus(_session.IsEnhanced ? "增强预览:开" : "增强预览:关");
     }
 
@@ -803,6 +941,7 @@ internal sealed partial class WindowsMainWindow : Window
     private void ShowStatus(string message)
     {
         _statusText.Text = message;
+        UpdateStatusToastWidth();
         _statusToast.Visibility = Visibility.Visible;
 
         _statusTimer ??= DispatcherQueue.CreateTimer();
@@ -812,6 +951,15 @@ internal sealed partial class WindowsMainWindow : Window
         _statusTimer.Tick -= OnStatusTimerTick;
         _statusTimer.Tick += OnStatusTimerTick;
         _statusTimer.Start();
+    }
+
+    /// <summary>STATE-03：提示条宽取 min(500, 主图区可用宽),不超出观片区。</summary>
+    private void UpdateStatusToastWidth()
+    {
+        double available = _photoHost.ActualWidth;
+        _statusToast.MaxWidth = available > 0
+            ? Math.Min(WindowsLayout.StatusToastMaxWidth, available)
+            : WindowsLayout.StatusToastMaxWidth;
     }
 
     /// <summary>状态提示到期后收起。</summary>
@@ -863,6 +1011,12 @@ internal sealed partial class WindowsMainWindow : Window
             _hintTitle.Text = error;
             _hintDetail.Text = file.Name;
         }
+        else if (_session.IsLoadingVisible)
+        {
+            // STATE-01：共享会话延迟 300ms 才暴露加载态，快速翻页不闪提示。
+            _hintTitle.Text = "正在载入…";
+            _hintDetail.Text = file.Name;
+        }
         else
         {
             _hintTitle.Text = string.Empty;
@@ -889,14 +1043,26 @@ internal sealed partial class WindowsMainWindow : Window
             return;
         }
 
+        // INPUT-05：只有上一张/下一张/预设缩放允许按住重复，其余命令的重复按键直接吞掉。
+        if (e.KeyStatus.WasKeyDown && !InputCommandMap.IsRepeatable(command))
+        {
+            e.Handled = true;
+            return;
+        }
+
         e.Handled = true;
         Execute(command);
     }
 
-    /// <summary>主图区滚轮:交给共享手势表(默认上下滚轮翻页、Ctrl+滚轮缩放),不在壳里自定语义。</summary>
+    /// <summary>
+    /// 主图区滚轮(INPUT-04):精确滚动(触控板/高精度滚轮)平移照片;离散滚轮按格查共享手势表。
+    /// 带用户绑定的修饰键手势优先，仍由同一张绑定表决定。
+    /// </summary>
     private void OnPhotoWheel(object sender, PointerRoutedEventArgs e)
     {
-        var delta = e.GetCurrentPoint(_photoHost).Properties.MouseWheelDelta;
+        var point = e.GetCurrentPoint(_photoHost);
+        var properties = point.Properties;
+        var delta = properties.MouseWheelDelta;
         if (delta == 0)
         {
             return;
@@ -904,14 +1070,71 @@ internal sealed partial class WindowsMainWindow : Window
 
         var gesture = WindowsInput.FromWheel(delta);
         var command = _main.Settings.GetCommandByGesture(gesture);
-        if (command == null || WindowsIcons.ForCommand(command) == null)
+        bool commandAvailable = command != null && WindowsIcons.ForCommand(command) != null;
+        // INPUT-04：带修饰键的用户绑定优先于精确/离散分流（如 Ctrl+滚轮缩放）。
+        if (commandAvailable && gesture.Mouse is { Modifiers: not GestureModifiers.None })
+        {
+            e.Handled = true;
+            Execute(command!);
+            return;
+        }
+
+        if (IsPreciseWheel(delta))
+        {
+            e.Handled = true;
+            if (_photo.IsFit)
+            {
+                return;
+            }
+
+            double step = delta / 120.0 * 50;
+            if (properties.IsHorizontalMouseWheel)
+            {
+                _photo.PanBy(step, 0);
+            }
+            else
+            {
+                _photo.PanBy(0, step);
+            }
+
+            return;
+        }
+
+        if (!commandAvailable)
         {
             return;
         }
 
         e.Handled = true;
-        Execute(command);
+        int notches = Math.Clamp(Math.Abs(delta) / 120, 1, 3);
+        if (!InputCommandMap.IsRepeatable(command))
+        {
+            notches = 1;
+        }
+
+        for (var index = 0; index < notches; index++)
+        {
+            Execute(command!);
+        }
     }
+
+    /// <summary>精确滚动判据:Win32 精度触控板签名,或小于一格的增量(高精度滚轮)。</summary>
+    /// <param name="delta">滚轮增量。</param>
+    /// <returns>精确滚动返回 true。</returns>
+    private static bool IsPreciseWheel(int delta)
+    {
+        long extra = GetMessageExtraInfo().ToInt64();
+        bool precisionTouchpad = (extra & 0xFFFFFF00L) == PrecisionTouchpadSignature;
+        return precisionTouchpad || Math.Abs(delta) < 120;
+    }
+
+    /// <summary>精度触控板滚轮消息的 extra-info 签名。</summary>
+    private const long PrecisionTouchpadSignature = 0xFF515700L;
+
+    /// <summary>读取当前窗口消息的 extra-info(Win32);用于区分精度触控板。</summary>
+    /// <returns>消息 extra-info。</returns>
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetMessageExtraInfo();
 
     /// <summary>拖放进入窗口:接受复制。</summary>
     private void OnDragOver(object sender, DragEventArgs e)

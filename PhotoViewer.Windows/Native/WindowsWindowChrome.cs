@@ -15,14 +15,15 @@ namespace PhotoViewer.Windows.Native;
 internal static class WindowsWindowChrome
 {
     /// <summary>
-    /// 配置 Win11 风格的深色标题栏与窗口能力:caption 按钮透明融入 Mica、不进任务栏。
+    /// 配置 Win11 风格的深色标题栏与窗口能力:caption 按钮透明融入 Mica;任务栏/Alt-Tab 可见性可按窗口类型切换。
     /// </summary>
     /// <param name="window">目标窗口</param>
     /// <param name="resizable">是否允许缩放</param>
     /// <param name="maximizable">是否允许最大化</param>
-    public static void Configure(Window window, bool resizable = true, bool maximizable = false)
+    /// <param name="showInSwitchers">是否进入任务栏与 Alt-Tab(TOOLS-01:工具窗口按普通窗口处理)</param>
+    public static void Configure(Window window, bool resizable = true, bool maximizable = false, bool showInSwitchers = false)
     {
-        window.AppWindow.IsShownInSwitchers = false;
+        window.AppWindow.IsShownInSwitchers = showInSwitchers;
         if (window.AppWindow.Presenter is OverlappedPresenter presenter)
         {
             presenter.IsResizable = resizable;

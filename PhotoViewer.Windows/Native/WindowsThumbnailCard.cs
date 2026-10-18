@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using Windows.UI;
@@ -19,6 +20,7 @@ namespace PhotoViewer.Windows.Native;
 internal sealed class WindowsThumbnailCard : Grid
 {
     private readonly Border _surface;
+    private readonly Border _surfaceFrame;
     private readonly Border _photoWell;
     private readonly Border _photoFrame;
     private readonly Image _photo;
@@ -72,10 +74,14 @@ internal sealed class WindowsThumbnailCard : Grid
         Width = WindowsLayout.CardPitchHorizontal;
         Height = WindowsLayout.CardPitchVertical;
 
+        // 90×138 是"内层占位面"的可见尺寸,必须整块可见:WinUI 的 Border.Width 含 BorderThickness,
+        // 若把 2 DIP 当前项描边画在 _surface 上,内容会被压成 86×134,且描边透明时那一圈露出栏位底色,
+        // 未选中卡片看起来比选中卡片小一圈(2026-10-18 作者目视发现)。描边因此改为叠加层,不占布局。
+        // 纵向节奏对齐 macOS 卡片坐标:照片 5..85、文件名 89(高 12)、第二行 103(高 11)、星级 116(高 14),底部留 8。
         var content = new StackPanel
         {
-            Margin = new Thickness(0, 3, 0, 0),
-            Spacing = 4,
+            Margin = new Thickness(0, (WindowsLayout.CardWidth - WindowsLayout.ThumbnailSize) / 2, 0, 0),
+            Spacing = 0,
         };
 
         _photo = new Image
@@ -109,7 +115,7 @@ internal sealed class WindowsThumbnailCard : Grid
             Width = WindowsLayout.ShakeBadgeSize,
             Height = WindowsLayout.ShakeBadgeSize,
             Background = new SolidColorBrush(WindowsLayout.ShakeBadgeBackground),
-            CornerRadius = new CornerRadius(2),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardBadgeCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Right,
             VerticalAlignment = VerticalAlignment.Bottom,
             Margin = new Thickness(0, 0, 2, 2),
@@ -163,6 +169,8 @@ internal sealed class WindowsThumbnailCard : Grid
             TextAlignment = TextAlignment.Center,
             MaxWidth = WindowsLayout.CardWidth,
             HorizontalAlignment = HorizontalAlignment.Center,
+            // 照片底边 85 → 文件名顶 89(macOS 卡片坐标)。
+            Margin = new Thickness(0, 4, 0, 0),
         };
         content.Children.Add(_name);
 
@@ -180,7 +188,7 @@ internal sealed class WindowsThumbnailCard : Grid
         _secondLineTrack = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.SecondLineTrack),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardSecondLineBarCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Stretch,
             VerticalAlignment = VerticalAlignment.Stretch,
             Visibility = Visibility.Collapsed,
@@ -188,7 +196,7 @@ internal sealed class WindowsThumbnailCard : Grid
         _secondLineFill = new Border
         {
             Background = new SolidColorBrush(WindowsLayout.SecondLineFill),
-            CornerRadius = new CornerRadius(4),
+            CornerRadius = new CornerRadius(DesignTokens.FilmCardSecondLineBarCornerRadius),
             HorizontalAlignment = HorizontalAlignment.Left,
             VerticalAlignment = VerticalAlignment.Stretch,
             Width = 0,
@@ -198,6 +206,8 @@ internal sealed class WindowsThumbnailCard : Grid
         {
             Width = WindowsLayout.CardSecondLineWidth,
             HorizontalAlignment = HorizontalAlignment.Center,
+            // 文件名行(约 13.3 高)之后落到 macOS 的 103。
+            Margin = new Thickness(0, 1, 0, 0),
         };
         secondLineHost.Children.Add(_secondLineTrack);
         secondLineHost.Children.Add(_secondLineFill);
@@ -209,6 +219,8 @@ internal sealed class WindowsThumbnailCard : Grid
             Orientation = Orientation.Horizontal,
             Spacing = 0,
             HorizontalAlignment = HorizontalAlignment.Center,
+            // 第二行(约 12 高)之后落到 macOS 的星级 116;底部余 8,不压 7 DIP 圆角。
+            Margin = new Thickness(0, 1, 0, 0),
         };
         for (var star = 0; star <= 5; star++)
         {
@@ -238,15 +250,27 @@ internal sealed class WindowsThumbnailCard : Grid
 
         content.Children.Add(_stars);
 
+        // 当前项描边单独一层:2 DIP 描边画在 90×138 内边缘,不参与布局(否则内容被压成 86×134,
+        // 且描边透明时外圈露出栏位底色,未选中卡片看起来更小)。
+        _surfaceFrame = new Border
+        {
+            BorderThickness = new Thickness(WindowsLayout.CardBorderThickness),
+            CornerRadius = new CornerRadius(WindowsLayout.CardCornerRadius),
+            BorderBrush = _transparentBorderBrush,
+            IsHitTestVisible = false,
+        };
+
+        var surfaceHost = new Grid();
+        surfaceHost.Children.Add(content);
+        surfaceHost.Children.Add(_surfaceFrame);
+
         _surface = new Border
         {
             Width = WindowsLayout.CardWidth,
             Height = WindowsLayout.CardHeight,
             Background = new SolidColorBrush(WindowsLayout.BlockBackground),
             CornerRadius = new CornerRadius(WindowsLayout.CardCornerRadius),
-            BorderThickness = new Thickness(WindowsLayout.CardBorderThickness),
-            BorderBrush = _transparentBorderBrush,
-            Child = content,
+            Child = surfaceHost,
         };
 
         Children.Add(_surface);
@@ -325,7 +349,7 @@ internal sealed class WindowsThumbnailCard : Grid
             : 0;
 
         var isCurrent = _highlightMainImage ? file.IsCurrentImage : file.IsCurrent;
-        _surface.BorderBrush = isCurrent ? _currentBorderBrush : _transparentBorderBrush;
+        _surfaceFrame.BorderBrush = isCurrent ? _currentBorderBrush : _transparentBorderBrush;
         _photoFrame.BorderBrush = file.IsInCache ? _cachedBorderBrush : _transparentBorderBrush;
 
         _shakeBadge.Visibility = file.IsShake == true ? Visibility.Visible : Visibility.Collapsed;

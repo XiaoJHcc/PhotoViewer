@@ -11,6 +11,7 @@ internal sealed class WindowsNativeToolsPresenter
 {
     private readonly Func<IntPtr> _ownerHandle;
     private WindowsToolsWindow? _window;
+    private ToolsViewModel? _presentedTools;
 
     /// <summary>创建展示器。</summary>
     /// <param name="ownerHandle">主窗口句柄提供者(取显示器 DPI 与工作区)</param>
@@ -29,10 +30,13 @@ internal sealed class WindowsNativeToolsPresenter
     {
         if (_window != null)
         {
+            tools.IsPresented = true;
             _window.Activate();
             return true;
         }
 
+        _presentedTools = tools;
+        tools.IsPresented = true;
         _window = new WindowsToolsWindow(tools, _ownerHandle());
         _window.Closed += OnWindowClosed;
         _window.Show();
@@ -49,6 +53,12 @@ internal sealed class WindowsNativeToolsPresenter
         {
             _window.Closed -= OnWindowClosed;
             _window = null;
+        }
+
+        if (_presentedTools != null)
+        {
+            _presentedTools.IsPresented = false;
+            _presentedTools = null;
         }
     }
 }

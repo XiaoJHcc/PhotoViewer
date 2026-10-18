@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -18,8 +19,8 @@ internal sealed class WindowsToolsWindow
     private static readonly (string Title, string Key, ToolsPage Page)[] Categories =
     [
         ("EXIF 详情", "Exif", ToolsPage.Exif),
-        ("照片数据统计", "Stats", ToolsPage.Stats),
         ("DINO 诊断", "Dino", ToolsPage.Dino),
+        ("照片数据统计", "Stats", ToolsPage.Stats),
     ];
 
     private readonly Window _window;
@@ -133,7 +134,7 @@ internal sealed class WindowsToolsWindow
         _tools.PropertyChanged += OnToolsChanged;
         _window.Closed += OnClosed;
         _root.Loaded += OnLoaded;
-        WindowsWindowChrome.Configure(_window);
+        WindowsWindowChrome.Configure(_window, maximizable: true, showInSwitchers: true);
 
         UpdateAvailability();
         SelectInitialPage();
@@ -231,6 +232,12 @@ internal sealed class WindowsToolsWindow
             page = ToolsPage.Stats;
         }
 
+        // TOOLS-06：离开 DINO 页即取消在途任务，重回页面时由共享 Open 重新触发。
+        if (_selected == ToolsPage.Dino && page != ToolsPage.Dino)
+        {
+            _tools.Deactivate();
+        }
+
         // 先落 UI 再调用共享 Open:共享状态变化会同步回来,此时 _selected 已一致,不会递归重排。
         _selected = page;
         for (var index = 0; index < _pages.Count; index++)
@@ -244,7 +251,7 @@ internal sealed class WindowsToolsWindow
         }
 
         _suppressSelection = true;
-        _nav.SelectedItem = _navItems[(int)page];
+        _nav.SelectedItem = NavItemFor(page);
         _suppressSelection = false;
 
         if (!openShared)
@@ -269,8 +276,14 @@ internal sealed class WindowsToolsWindow
     /// <summary>按共享状态刷新分类可用性(EXIF 需要当前照片已有 EXIF 数据)。</summary>
     private void UpdateAvailability()
     {
-        _navItems[(int)ToolsPage.Exif].IsEnabled = _tools.IsExifDetailEnabled;
+        NavItemFor(ToolsPage.Exif).IsEnabled = _tools.IsExifDetailEnabled;
     }
+
+    /// <summary>按分类页取导航项(导航顺序与 <see cref="ToolsPage"/> 数值不再相同)。</summary>
+    /// <param name="page">目标页。</param>
+    /// <returns>对应导航项。</returns>
+    private NavigationViewItem NavItemFor(ToolsPage page)
+        => _navItems.First(item => item.Tag is ToolsPage value && value == page);
 
     /// <summary>共享工具状态变化:分类可用性与当前页跟随。</summary>
     private void OnToolsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
@@ -328,6 +341,8 @@ internal sealed class WindowsToolsWindow
     private void OnClosed(object sender, WindowEventArgs args)
     {
         NativeStartupLog.Write("tools window closed");
+        // TOOLS-06：关闭窗口即取消在途 DINO 任务，不在后台续算。
+        _tools.Deactivate();
         _tools.PropertyChanged -= OnToolsChanged;
         _exifPage.Detach();
         _statsPage.Detach();
