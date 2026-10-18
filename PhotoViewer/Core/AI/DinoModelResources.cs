@@ -9,7 +9,7 @@ namespace PhotoViewer.Core.AI;
 /// </summary>
 public static class DinoModelResources
 {
-    /// <summary>模型资源 URI（Avalonia AssetLoader 路径）。</summary>
+    /// <summary>模型资源 URI（路径部分由各平台资源提供器解析）。</summary>
     public static readonly Uri ModelAssetUri = new("avares://PhotoViewer/Assets/Models/dinov3_vits16.onnx");
 
     /// <summary>正方形输入边长（像素）。</summary>

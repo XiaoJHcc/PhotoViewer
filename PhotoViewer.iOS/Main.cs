@@ -16,9 +16,8 @@ public class Application
         // iOS 不填充托管 Main 的 args（实测为空数组），启动参数一律从 NSProcessInfo 读取。
         var launchArguments = NSProcessInfo.ProcessInfo.Arguments;
         BootTrace.Mark("args: " + string.Join(" ", launchArguments));
-        BootTrace.MarkAvaloniaAssemblies("Main enter(before UIApplication.Main)");
 
-        // 一律启动 UIKit 原生壳；--native 等历史参数不再参与壳选择，传入时按普通启动参数忽略。
+        // 启动 UIKit 原生壳；--native 等历史参数不再参与壳选择，传入时按普通启动参数忽略。
         BootTrace.Mark("shell: native (UIKit)");
         UIApplication.Main(args, null, typeof(iOSNativeAppDelegate));
     }

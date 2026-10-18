@@ -12,7 +12,7 @@ namespace PhotoViewer.Core.AI;
 
 /// <summary>
 /// 平台中立的分析栏状态机:把"细节预览"(对焦点 / 中心)与"DINO/CV 诊断"(PCA / Cosine / 锐度 / 抖动)
-/// 合并成一个常驻侧栏,由旧壳 <c>AnalysisViewModel</c> 与 macOS 原生分析栏共用同一份编排逻辑。
+/// 合并成一个常驻侧栏,由 macOS / iOS / Android / Windows 原生分析栏共用同一份编排逻辑。
 /// 诊断瓦片有三条数据来源路径:
 /// 1. 只读库:指纹 → <see cref="AnalysisResultCache"/> → DB,不触发解码 / ONNX 推理 / CV 重算;
 /// 2. 增强预览联动:增强图就绪时对增强位图立即重算(CV + DINO 推理),不走 DB;

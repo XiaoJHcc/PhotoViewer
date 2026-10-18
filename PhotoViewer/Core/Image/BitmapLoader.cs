@@ -339,7 +339,7 @@ public static class BitmapLoader
         return total / count;
     }
 
-    /// <summary>当前渲染表面的代理目标长边(物理像素 × overscan;由 ImageViewModel 下发,0 = 未知)。</summary>
+    /// <summary>当前渲染表面的代理目标长边(物理像素 × overscan;由展示会话下发,0 = 未知)。</summary>
     public static int ProxyTargetLongEdge { get; set; }
 
     /// <summary>

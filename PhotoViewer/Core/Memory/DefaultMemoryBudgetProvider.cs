@@ -31,7 +31,7 @@ public sealed class DefaultMemoryBudgetProvider : IMemoryBudgetProvider
 
     /// <summary>
     /// 可用 = 预算 − 当前托管占用。桌面端只看托管账本:大图缓冲全在托管堆(byte[]),
-    /// 原生侧(Avalonia/Skia)压力不显著;低估是可接受的——压力大时 Governor 早抬级即可。
+    /// 原生侧(Skia 位图)压力不显著;低估是可接受的——压力大时 Governor 早抬级即可。
     /// </summary>
     public long GetAvailableBytes()
     {

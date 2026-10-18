@@ -285,7 +285,7 @@ internal static class WindowsLayout
     /// <summary>标题文本距其宿主左边缘(旧壳 Grid Margin="8,0,4,0" + TextBlock Margin="4,0,0,0")。</summary>
     public const double TitleTextLeftInset = DesignTokens.ShellTitlebarTitleLeftInset;
 
-    /// <summary>标题文本字号(旧 Avalonia 文本默认 12)。</summary>
+    /// <summary>标题文本字号(旧壳文本默认 12)。</summary>
     public const double TitleTextFontSize = DesignTokens.ShellTitlebarTitleFontSize;
 
     // ===== 相似聚类面板 =====

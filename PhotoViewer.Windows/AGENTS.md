@@ -108,8 +108,7 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 - `WriteableBitmap` **只能在 UI 线程创建**(后台线程会 `RPC_E_WRONG_THREAD`);Skia 降采样/直方图渲染放后台,回来再建位图。
 - 分析栏现算的 CV/DINO 推理用 `SemaphoreSlim` 串行(两个并发 DirectML 推理会崩进程),分析图在现算期间持 `DecodedImage` 租约,
   避免主图热替换把像素缓冲归还进池。
-- **共享 `AnalysisViewModel` 不得在原生壳里激活**:它已退化为共享 presenter 的薄适配器,但链路仍绑 Avalonia `Bitmap`(`DecodedImageAdapter.ToBitmap`);原生壳由 `WindowsAnalysisPanel` 实现 `IAnalysisHost`、直接消费共享 `AnalysisPresenter`,该宿主的 `AnalysisVisible` 在 `UsesNativePresentation` 下恒 false。**不要**把它重新接成原生数据源或让它可见:一旦它走到建位图,WinUI 回调会抛
-  `InvalidOperationException: Unable to locate 'Avalonia.Platform.IPlatformRenderInterface'`,
+- **分析栏不走旧壳适配层**:共享层已不再包含分析栏显示适配器；原生壳由 `WindowsAnalysisPanel` 实现 `IAnalysisHost`、直接消费共享 `AnalysisPresenter`，分析位图只在原生适配器里转换。**不要**把共享展示适配器重新引入原生壳:一旦调用到旧 UI 位图接口，WinUI 回调会抛 `InvalidOperationException`，
   跨 COM 边界变成 `0xC000027B` 直接退进程(WER 签名:combase `0x80131509`)。诊断要点:这类崩溃**不会**触发
   `Application.UnhandledException`,`native-startup.log` 里的 `FIRSTCHANCE` 行是唯一线索(已装钩子,限流 200 条)。
   实机复现顺序:先提取特征 → 再展开分析栏;空库不崩,是因为 `SetSource` 没有数据可建位图。

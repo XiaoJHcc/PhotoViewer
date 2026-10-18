@@ -45,7 +45,7 @@ public static class CvGridExtractor
         return Task.Run(() => Extract(image, cancellationToken), cancellationToken);
     }
 
-    /// <summary>调试入口:直接喂 8-bit luma 平面(行优先),跳过 Avalonia 解码路径。CvDebugTool 等命令行工具用。</summary>
+    /// <summary>调试入口:直接喂 8-bit luma 平面(行优先),跳过文件解码路径。CvDebugTool 等命令行工具用。</summary>
     public static CvGridResult ExtractFromLuma(float[] luma, int w, int h, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(luma);

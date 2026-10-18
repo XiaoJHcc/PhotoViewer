@@ -108,6 +108,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _photoPane.SetClipChildren(true);
         _photoPane.SetBackgroundColor(AndroidUiTheme.PhotoBackground);
         _photo = new AndroidPhotoView(activity);
+        _main.FitToViewRequested += OnFitToViewRequested;
         _photoPane.AddView(_photo, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
         AddView(_photoPane, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
 
@@ -1009,6 +1010,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
             (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
     }
 
+    /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
+    private void OnFitToViewRequested() => _photo.FitToView();
+
     /// <summary>释放全部订阅与子视图资源。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -1016,6 +1020,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (disposing && !_disposed)
         {
             _disposed = true;
+            _main.FitToViewRequested -= OnFitToViewRequested;
             _photo.SurfaceReady -= OnSurfaceReady;
             _photo.ViewportChanged -= OnPhotoViewportChanged;
             _session.Changed -= OnSessionChanged;

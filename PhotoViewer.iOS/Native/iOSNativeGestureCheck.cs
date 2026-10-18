@@ -249,7 +249,7 @@ internal static class iOSNativeGestureCheck
                 VerifyNavigationIndicator(root, visible: false, lines);
                 lines.Add($"PASS 双击：物理 100% 锚点保持 ({tapAnchor.U:0.####},{tapAnchor.V:0.####})，回适应后导航图隐藏");
 
-                // 七之二、Fit 命令：原 Avalonia 语义是"适应 ⇄ 物理 100%"切换（不是无条件回适应）。
+                // 七之二、Fit 命令：语义是"适应 ⇄ 物理 100%"切换（不是无条件回适应）。
                 await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
                 await SettleAsync(root);
                 await UiDispatcher.InvokeAsync(() => root.Photo.ToggleFit());
@@ -267,7 +267,7 @@ internal static class iOSNativeGestureCheck
                 VerifyNavigationIndicator(root, visible: false, lines);
                 lines.Add($"PASS Fit 命令：适应 ⇄ 物理 {fitCommand.Physical * 100:0.#}% 双向切换（无对焦点以视口中心放大，导航图随态显隐）");
 
-                // 七之三、放大态切图：保持倍率与同一归一化中心点（原 Avalonia OnBitmapChanged / Mac ApplyImage 同语义）；
+                // 七之三、放大态切图：保持倍率与同一归一化中心点（旧壳 OnBitmapChanged / Mac ApplyImage 同语义）；
                 //       切图首帧若是代理、随后升 Full，热替换不得改动滚动状态。
                 var sameLarge = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "gesture-b-large.jpg"));
                 var secondLarge = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "gesture-c-large.jpg"));
@@ -325,7 +325,7 @@ internal static class iOSNativeGestureCheck
                 lines.Add($"PASS 半倍率切图：代理档落地并保持中心 ({upgraded.U:0.###},{upgraded.V:0.###})，升 Full 不移动视口");
 
                 // 七之四、对焦跟随切图（真实 Sony EXIF 0x2027）：视口中心在 1600% 下对准对焦点后切图，
-                //       新照片必须保持倍率并居中到它自己的对焦点（原 Avalonia _isFocusedOnFocusPoint 语义）。
+                //       新照片必须保持倍率并居中到它自己的对焦点（旧壳 _isFocusedOnFocusPoint 语义）。
                 var focusA = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "focus-a.ARW"));
                 var focusB = await UiDispatcher.InvokeAsync(() => main.FolderVM.AllFiles.First(item => item.Name == "focus-b.ARW"));
                 await focusA.LoadExifDataAsync();
@@ -729,7 +729,7 @@ internal static class iOSNativeGestureCheck
         if (!visible)
         {
             if (root.Photo.IsFit != true) throw new InvalidOperationException("适应态判定异常：导航图隐藏但不是适应态");
-            lines.Add("PASS 导航图：适应态隐藏（与原 Avalonia 缩放指示器一致）");
+            lines.Add("PASS 导航图：适应态隐藏（与旧壳缩放指示器一致）");
         }
     }
 

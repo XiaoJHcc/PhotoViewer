@@ -103,7 +103,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
 
     /// <summary>
     /// 切换增强预览：开启后对当前展示图后台算增强版本并原地替换，关闭则还原原片；模式跨切图持续生效。
-    /// 与旧壳 <c>ImageViewModel.ToggleEnhanceAsync</c> 语义一致，只作用于当前解码产物（代理或 Full）。
+    /// 与旧壳增强开关语义一致，只作用于当前解码产物（代理或 Full）。
     /// </summary>
     public void ToggleEnhanced()
     {

@@ -9,7 +9,7 @@ namespace PhotoViewer.Core.Image;
 /// </summary>
 public enum PixelEncoding
 {
-    /// <summary>BGRA8888,预乘 alpha,4 字节/像素(与 Avalonia ImmutableBitmap 内存布局一致)。</summary>
+    /// <summary>BGRA8888,预乘 alpha,4 字节/像素(与 Skia 位图内存布局一致)。</summary>
     Bgra32,
 
     /// <summary>RGB888,3 字节/像素(libheif 等无 alpha 通道来源)。</summary>

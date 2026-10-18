@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using System.Reactive;
-using PhotoViewer.Controls;
 using ReactiveUI;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Settings;

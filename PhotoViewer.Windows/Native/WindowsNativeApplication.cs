@@ -18,7 +18,7 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// Windows 原生壳启动器。
-/// 原生模式不创建 Avalonia 应用、窗口与调度器;生命周期由 WinUI 3 承载,平台门面在这里注入。
+/// 原生模式不创建旧壳应用、窗口与调度器;生命周期由 WinUI 3 承载,平台门面在这里注入。
 /// </summary>
 internal static class WindowsNativeApplication
 {

@@ -6,7 +6,7 @@ namespace PhotoViewer.Shared;
 /// </summary>
 public sealed class PhotoViewport
 {
-    /// <summary>导航图长边逻辑点，与原 Avalonia 缩放指示器一致。</summary>
+    /// <summary>导航图长边逻辑点，与旧壳缩放指示器一致。</summary>
     private const double NavigationLongEdge = 150;
 
     private double _relativePanX;
@@ -67,7 +67,7 @@ public sealed class PhotoViewport
     }
 
     /// <summary>
-    /// 视口中心是否落在对焦点附近（两轴归一化偏差均小于 5%，与原 Avalonia <c>IsViewCenteredOnFocusPoint</c> 同口径）。
+    /// 视口中心是否落在对焦点附近（两轴归一化偏差均小于 5%，与旧壳 <c>IsViewCenteredOnFocusPoint</c> 同口径）。
     /// 每次移动/缩放后重算，供切图时决定"跟随新照片对焦点"还是"保持同一归一化位置"。
     /// </summary>
     public bool IsViewCenteredOnFocusPoint
@@ -173,7 +173,7 @@ public sealed class PhotoViewport
     }
 
     /// <summary>
-    /// 在适应与物理 100% 间切换（原 Avalonia <c>ToggleFit</c> 语义）：已放大 → 回适应；
+    /// 在适应与物理 100% 间切换（旧壳 <c>ToggleFit</c> 语义）：已放大 → 回适应；
     /// 处于适应态时无锚点且照片有对焦点 → 以对焦点为中心放大到物理 100% 并开启跟随对焦，
     /// 否则以锚点（无锚点取视口中心）为不动点放大到物理 100%。
     /// </summary>
@@ -241,7 +241,7 @@ public sealed class PhotoViewport
     /// <summary>
     /// 宿主手势驱动（iOS 用 UIScrollView 提供回弹/惯性/捏合，把 zoomScale 与 contentOffset 换算后写入这里）：
     /// 缩放与平移一律按视口范围钳制，缩放贴合适应值即视为适应态，缩放上限与锚点缩放共用同一常量。
-    /// 跟随对焦在每帧手势后按 5% UV 容差重算（与原 Avalonia 每次移动/缩放后的重估同口径）。
+    /// 跟随对焦在每帧手势后按 5% UV 容差重算（与旧壳每次移动/缩放后的重估同口径）。
     /// </summary>
     /// <param name="scale">图像像素到逻辑点的缩放。</param>
     /// <param name="panX">照片中心相对视口中心的横向偏移（逻辑点）。</param>
@@ -249,7 +249,7 @@ public sealed class PhotoViewport
     /// <param name="interactive">
     /// 是否来自用户手势（拖动/捏合）。只有用户移动/缩放才按 5% UV 重估跟随对焦；
     /// 程序化缩放/切图重建派生出的状态不得清掉 <see cref="ToggleFit"/> 或 <see cref="ApplyImage"/> 刚做出的跟随决定
-    /// （原 Avalonia 只在 Move/ZoomTo 里重估，程序化动画不经过它们）。
+    /// （旧壳只在 Move/ZoomTo 里重估，程序化动画不经过它们）。
     /// </param>
     public void ApplyGestureView(double scale, double panX, double panY, bool interactive = true)
     {

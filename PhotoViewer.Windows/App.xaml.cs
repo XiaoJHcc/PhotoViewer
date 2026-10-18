@@ -59,7 +59,7 @@ public partial class App : Application
             WindowsNativeApplication.InitializeFacades(
                 smoke || settingsCheck || settingsHold || toolsCheck || toolsHold);
 
-            _main = new MainViewModel(nativePresentation: true);
+            _main = new MainViewModel();
             _settingsPresenter = new WindowsNativeSettingsPresenter(() => WindowsNativeApplication.WindowHandle);
             _toolsPresenter = new WindowsNativeToolsPresenter(() => WindowsNativeApplication.WindowHandle);
             NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl(_settingsPresenter, _toolsPresenter));

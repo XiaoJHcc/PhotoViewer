@@ -18,7 +18,7 @@ using ReactiveUI.Builder;
 
 namespace PhotoViewer.Mac.Native;
 
-/// <summary>独立 AppKit 启动路径，不创建 Avalonia 应用、窗口或主图适配位图。</summary>
+/// <summary>独立 AppKit 启动路径，不创建旧壳应用、窗口或主图适配位图。</summary>
 public static class MacNativeApplication
 {
     /// <summary>初始化原生平台门面并运行 NSApplication；历史启动参数由本路径忽略。</summary>
@@ -71,7 +71,7 @@ public static class MacNativeApplication
         {
             try
             {
-                var main = new MainViewModel(nativePresentation: true);
+                var main = new MainViewModel();
                 _mainWindow = new MacMainWindow(main, args.Contains("--pv-native-smoke"));
                 _settings = new MacNativeSettingsPresenter();
                 _mainWindow.SetSettingsPresenter(_settings);

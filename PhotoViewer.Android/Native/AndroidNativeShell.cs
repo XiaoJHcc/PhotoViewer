@@ -22,7 +22,7 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// Android 原生壳启动路径：直接构建原生根视图。
 /// 顺序对齐 iOS <c>iOSNativeShell</c>：主线程调度 → ReactiveUI → 平台门面 →
-/// 共享 <see cref="MainViewModel"/>（`nativePresentation: true`） → 根视图。
+/// 共享 <see cref="MainViewModel"/> → 根视图。
 /// </summary>
 public static class AndroidNativeShell
 {
@@ -90,8 +90,8 @@ public static class AndroidNativeShell
 
         if (_main == null)
         {
-            _main = new MainViewModel(nativePresentation: true);
-            Console.WriteLine("[Native] 共享 MainViewModel 就绪（nativePresentation=true）");
+            _main = new MainViewModel();
+            Console.WriteLine("[Native] 共享 MainViewModel 就绪");
         }
         _session ??= new PhotoLoadSession();
         _toolsPresenter = new AndroidToolsPresenter(activity, _main);

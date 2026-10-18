@@ -223,11 +223,11 @@ internal sealed class MacAnalysisPanel : NSView
         finally { crop.Dispose(); }
     }
 
-    /// <summary>主 VM 状态变化：可见性 / 布局 / 当前图 / 原生展示切换都会重新路由。</summary>
+    /// <summary>主 VM 状态变化：可见性 / 布局 / 当前图都会重新路由。</summary>
     private void OnMainChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName is nameof(MainViewModel.CurrentFile) or nameof(MainViewModel.IsRowLayout)
-            or nameof(MainViewModel.IsAnalysisViewVisible) or nameof(MainViewModel.UsesNativePresentation))
+            or nameof(MainViewModel.IsAnalysisViewVisible))
             _host.Raise();
     }
 

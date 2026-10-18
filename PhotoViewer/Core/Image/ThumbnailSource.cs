@@ -39,7 +39,7 @@ public sealed class ThumbnailSource
     /// <summary>
     /// 该来源解码出的位图是否已经预先应用了显示旋转（true=显示朝向；false=传感器朝向，调用方需自行补旋转）。
     /// 平台 HEIF 解码器返回的位图通常已应用 Default Rotation，故为 true；
-    /// 任何"按字节直读 + Avalonia 解码"的来源都是 false。
+    /// 任何"按字节直读 + 平台解码"的来源都是 false。
     /// </summary>
     public bool IsPreRotated { get; }
 

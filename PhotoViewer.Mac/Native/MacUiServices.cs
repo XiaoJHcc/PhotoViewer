@@ -29,7 +29,7 @@ public sealed class MacUiDispatcher : IUiDispatcher
         return completion.Task;
     }
 
-    /// <summary>将 .NET 异步续体封送到 AppKit，不借用 Avalonia 调度器。</summary>
+    /// <summary>将 .NET 异步续体封送到 AppKit。</summary>
     private sealed class MacSynchronizationContext : SynchronizationContext
     {
         /// <summary>异步投递 .NET 回调。</summary>

@@ -5,8 +5,8 @@ using System.Text;
 namespace PhotoViewer.Core.Input;
 
 /// <summary>
-/// 平台中立的修饰键标志。<b>数值与 Avalonia.Input.KeyModifiers 完全一致</b>,
-/// 设置 JSON 中以数值持久化,改动数值会破坏用户既有配置。
+/// 平台中立的修饰键标志。<b>数值是设置 JSON 的持久化契约</b>(Alt=1 / Ctrl=2 / Shift=4 / Meta=8),
+/// 改动数值会破坏用户既有配置。
 /// </summary>
 [Flags]
 public enum GestureModifiers
@@ -24,8 +24,8 @@ public enum GestureModifiers
 }
 
 /// <summary>
-/// 平台中立的键枚举。<b>成员名与 Avalonia.Input.Key 逐一对应</b>(UI 层按名称互转,
-/// 设置 JSON 以名称字符串持久化);数值不保证与 Avalonia 相同,禁止按数值转换。
+/// 平台中立的键枚举。<b>成员名是设置 JSON 的持久化键名,禁止改名</b>;
+/// 数值不参与持久化,禁止按数值转换。
 /// </summary>
 public enum GestureKey
 {
@@ -100,7 +100,7 @@ public sealed class AppKeyGesture
     }
 
     /// <summary>
-    /// 生成显示文本(与 Avalonia KeyGesture.ToString 同格式:修饰键 + 键名,如 "Ctrl+N")。
+    /// 生成显示文本(修饰键 + 键名,如 "Ctrl+N")。
     /// </summary>
     /// <returns>显示文本。</returns>
     public string ToDisplayString()

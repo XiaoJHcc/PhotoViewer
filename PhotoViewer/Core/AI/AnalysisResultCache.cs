@@ -6,11 +6,10 @@ namespace PhotoViewer.Core.AI;
 
 /// <summary>
 /// 分析栏派生结果缓存:按指纹 LRU 缓存"读库 + 派生层现算"的全部产物 — 4 张诊断位图 + ShakeField + 判定文字 +
-/// patch tokens(供 cosine 切参考点)+ aspect/CV 尺寸。命中即可让 <see cref="ViewModels.Main.AnalysisViewModel"/>
-/// 直接 UI swap,不再走 SVD/锐度/抖动场重算。
+/// patch tokens(供 cosine 切参考点)+ aspect/CV 尺寸。命中即可让分析栏直接 UI swap,不再走 SVD/锐度/抖动场重算。
 ///
 /// 由两条路径填充:
-/// 1. <see cref="ViewModels.Main.AnalysisViewModel"/> 切图 miss 后现算入缓存(主路径)。
+/// 1. 分析栏宿主切图 miss 后现算入缓存(主路径)。
 /// 2. <see cref="PhotoViewer.Core.Image.BitmapPrefetcher"/> 预取邻居位图时顺手预热(预热路径)。
 ///
 /// 容量按指纹计算,LRU 淘汰。**淘汰不主动 Dispose 位图** —— 32×32 BGRA 图像为纯托管 byte[](DecodedImage),

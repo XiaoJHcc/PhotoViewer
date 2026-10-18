@@ -144,7 +144,8 @@ public class FolderViewModel : ReactiveObject
         var generation = Volatile.Read(ref _openGeneration);
 
         StorageAccessManager.Retain(file);
-        Main.ImageVM.Fit = true;
+        // OPEN-05：显式打开开始新的观片，主图回到适应态。
+        Main.RequestFitToView();
 
         generation = await OpenImageWithFolderFallbackAsync(file, generation);
 
@@ -162,7 +163,8 @@ public class FolderViewModel : ReactiveObject
     public async Task OpenFolderAsync(IFolderRef folder, bool scrollToCurrent = true)
     {
         StorageAccessManager.Retain(folder);
-        Main.ImageVM.Fit = true;
+        // OPEN-05：显式打开开始新的观片，主图回到适应态。
+        Main.RequestFitToView();
 
         // OPEN-08：同目录重开视为刷新,以当前照片为首选目标,且保留缩略图缓存。
         var isSameFolder = IsSameStorageItem(folder, _currentFolder);

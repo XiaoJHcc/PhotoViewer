@@ -2,17 +2,12 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <!-- 纯 P/Invoke + Avalonia，无需 macOS workload（避免依赖 Xcode 配置） -->
+    <!-- 纯 P/Invoke + Core 解码，无需 macOS workload（避免依赖 Xcode 配置） -->
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
-
-  <ItemGroup>
-    <PackageReference Include="Avalonia.Desktop" />
-    <PackageReference Include="Avalonia.Headless" />
-  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />

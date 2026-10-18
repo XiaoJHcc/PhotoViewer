@@ -624,7 +624,7 @@ internal sealed partial class WindowsMainWindow
 
     /// <summary>
     /// 分析栏"已提取"路径:特征已入库时展开分析栏必须直接贴 DB 派生诊断(不走即时计算)。
-    /// 这条路径只有真机库命中才走得到 —— 第三轮进程级崩溃(旧 AnalysisViewModel 建 Avalonia 位图)就藏在这里,
+    /// 这条路径只有真机库命中才走得到 —— 第三轮进程级崩溃(旧分析适配层建位图)就藏在这里,
     /// 之前的冒烟序列在空库上跑的是即时计算,覆盖不到。
     /// </summary>
     /// <param name="checks">验收结果收集器</param>

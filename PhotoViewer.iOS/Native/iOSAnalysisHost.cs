@@ -6,7 +6,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// iPad 分析栏宿主状态：把主 VM 的可见性 / 布局 / 当前图与原生展示会话的位图上报给
-/// <see cref="AnalysisPresenter"/>，与旧壳 <c>AnalysisViewModel</c>、Mac 原生 <c>MacAnalysisHost</c>
+/// <see cref="AnalysisPresenter"/>，与旧壳分析展示层、Mac 原生 <c>MacAnalysisHost</c>
 /// 使用同一份编排逻辑。展示图是 GPU 方向未应用的 F16 线性表面或 8 位 Display P3 表面，
 /// presenter 与细节裁剪按同一份 <c>DisplayCrop</c>/<c>ColorEngine</c> 口径转换到分析要求的 sRGB8。
 /// </summary>

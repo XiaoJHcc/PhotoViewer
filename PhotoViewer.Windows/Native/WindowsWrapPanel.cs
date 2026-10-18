@@ -7,7 +7,7 @@ using Windows.Foundation;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 可换行排布的容器,语义对齐旧 Avalonia 的 <c>WrapPanel(ItemsAlignment=Center)</c>:
+/// 可换行排布的容器,语义对齐旧壳的 <c>WrapPanel(ItemsAlignment=Center)</c>:
 /// 一行放不下就整项换到下一行,行内居中,行间距与项间距分别可配。
 /// WinUI 没有现成的 WrapPanel,控制栏三分组的换行/换列居中依赖这个容器。
 /// </summary>

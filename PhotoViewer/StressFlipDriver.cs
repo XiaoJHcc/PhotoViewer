@@ -17,20 +17,16 @@ namespace PhotoViewer;
 /// <summary>
 /// P1-M5 真机压测翻页驱动器:仅当头工程解析到 --pv-stress 启动参数时激活,常规运行完全惰性。
 /// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路);
-/// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取"当前壳的展示路径"——旧壳是 ImageViewModel、原生壳是 PhotoLoadSession，
-/// 故原生壳（macOS/iOS）压测同样覆盖真实 P0 解码链路而非空跑。
+/// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取当前壳的展示会话(各原生壳均为 PhotoLoadSession),
+/// 覆盖真实 P0 解码链路而非空跑。
 /// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
 /// 日志位于 settings 同目录 stress-flip.jsonl,供真机 42MP 连翻验收回放。
-/// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N、
-/// --pv-stress-full(跳过代理档,模拟 Phase 0 每翻全尺寸解码,作 A/B 对照组;仅旧壳 ImageViewModel 生效)。
+/// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N。
 /// </summary>
 public static class StressFlipDriver
 {
     /// <summary>待压测文件夹绝对路径(头工程启动参数注入;null = 不激活)。</summary>
     public static string? PendingFolderPath;
-
-    /// <summary>true 时主图跳过代理档直接全尺寸解码(Phase 0 行为对照组)。</summary>
-    public static bool ForceFullDecode;
 
     /// <summary>翻页上限;0 = 整个文件夹翻一遍。</summary>
     public static int MaxFlips;
@@ -56,10 +52,6 @@ public static class StressFlipDriver
                 var raw = arg["--pv-stress=".Length..];
                 PendingFolderPath = Path.IsPathRooted(raw) ? raw : resolveRelativePath(raw);
             }
-            else if (string.Equals(arg, "--pv-stress-full", StringComparison.Ordinal))
-            {
-                ForceFullDecode = true;
-            }
             else if (arg.StartsWith("--pv-stress-count=", StringComparison.Ordinal)
                      && int.TryParse(arg["--pv-stress-count=".Length..], out var count))
             {
@@ -79,7 +71,7 @@ public static class StressFlipDriver
     /// 框架初始化完成后调用:存在注入路径则异步执行压测,否则立即返回。
     /// </summary>
     /// <param name="vm">主窗口 VM。</param>
-    /// <param name="signal">当前壳的主图上屏信号源（旧壳 ImageViewModel / 原生壳 PhotoLoadSession）。</param>
+    /// <param name="signal">当前壳的主图上屏信号源（PhotoLoadSession）。</param>
     public static void MaybeStart(MainViewModel vm, IDisplayLoadSignal signal)
     {
         var path = PendingFolderPath;
@@ -102,7 +94,7 @@ public static class StressFlipDriver
 
         var runSw = Stopwatch.StartNew();
         File.WriteAllText(logPath, string.Empty);
-        Log($"{{\"type\":\"begin\",\"folder\":\"{Esc(folderPath)}\",\"forceFull\":{B(ForceFullDecode)},\"maxFlips\":{MaxFlips},\"warnAt\":{WarnAtSeq}}}");
+        Log($"{{\"type\":\"begin\",\"folder\":\"{Esc(folderPath)}\",\"maxFlips\":{MaxFlips},\"warnAt\":{WarnAtSeq}}}");
 
         try
         {

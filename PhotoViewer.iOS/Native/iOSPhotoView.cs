@@ -18,7 +18,7 @@ namespace PhotoViewer.iOS.Native;
 /// 并且对带缩放变换的视图写 Frame 会让 contentSize 崩掉（旧实现"放大后被拽到左上角"的根因）。</para>
 ///
 /// <para>代理 ↔ Full 热替换（同一张照片、ImageSize 恒定）只换纹理，完全不碰滚动状态；照片身份或逻辑尺寸变化（切图，
-/// 含方向码变化）沿用原 Avalonia / Mac 的 <see cref="PhotoViewport.ApplyImage"/> 语义：适应态重新适应、跟随对焦时
+/// 含方向码变化）沿用旧壳 / Mac 的 <see cref="PhotoViewport.ApplyImage"/> 语义：适应态重新适应、跟随对焦时
 /// 保持倍率并居中到新照片对焦点、其余情况保持倍率与同一归一化中心点（不重置到适应态）。</para>
 /// </summary>
 internal sealed class iOSPhotoView : UIView, IMemoryClient
@@ -210,7 +210,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
             return;
         }
         _identity = identity;
-        // 新照片沿用原 Avalonia / Mac 的切图语义（共享视口 ApplyImage）：适应态重新适应；
+        // 新照片沿用旧壳 / Mac 的切图语义（共享视口 ApplyImage）：适应态重新适应；
         // 对焦跟随开启时保持缩放倍率并居中到新照片对焦点；否则保持缩放倍率与同一归一化中心点。
         // 几何基准始终取全分辨率逻辑尺寸（SourceWidth/Height），与代理纹理尺寸无关。
         _viewport.BeginImageChange();
@@ -229,7 +229,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     }
 
     /// <summary>
-    /// 适应 ↔ 物理 100% 切换（控制栏 Fit 命令与热键；原 Avalonia <c>ToggleFit()</c> 语义）：
+    /// 适应 ↔ 物理 100% 切换（控制栏 Fit 命令与热键；旧壳 <c>ToggleFit()</c> 语义）：
     /// 适应态且照片有对焦点时以对焦点为中心放大到 100% 并开启跟随对焦，无对焦点时从视口中心放大；
     /// 已放大时回适应。视图状态一律经共享视口决定，再由滚动视图执行（动画与双击同一路径）。
     /// </summary>
@@ -289,7 +289,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
 
     /// <summary>
     /// 双击落点（识别器与验收共用）：走共享 <see cref="PhotoViewport.ToggleFit"/>——适应态以触点为中心放大到物理 100%，
-    /// 放大态回适应（原 Avalonia 双击 <c>ToggleFit(center)</c> 同一语义）。
+    /// 放大态回适应（旧壳双击 <c>ToggleFit(center)</c> 同一语义）。
     /// </summary>
     /// <param name="point">主图视图坐标（点）。</param>
     internal void DoubleTapAt(CGPoint point)

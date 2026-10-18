@@ -5,7 +5,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生壳（UIKit）应用委托：只负责接线（平台门面、共享 VM、外部打开），启动全程不创建 Avalonia 对象。
+/// 原生壳（UIKit）应用委托：只负责接线（平台门面、共享 VM、外部打开），启动全程不创建旧壳对象。
 /// 窗口由 <see cref="iOSNativeSceneDelegate"/> 在 scene 连接时创建：本 app 用 iOS 26 SDK 构建，
 /// 系统按 UIScene 生命周期连接 scene（应用委托窗口路径在该 SDK 下已废弃），故窗口只有一条创建口径。
 /// </summary>
@@ -23,7 +23,7 @@ public sealed class iOSNativeAppDelegate : UIApplicationDelegate
         ObjCRuntime.Runtime.MarshalObjectiveCException += (_, args) => Console.Error.WriteLine("[NativeObjCException] " + args.Exception.Reason);
         iOSNativeShell.CreateRootViewController(NSProcessInfo.ProcessInfo.Arguments);
         BootTrace.Mark("native shell: waiting for scene connection");
-        Console.WriteLine($"[Native] UIKit 原生壳接线完成（无 Avalonia 对象）：{iOSNativeShell.Main?.CurrentFile?.Name ?? "未打开文件"}");
+        Console.WriteLine($"[Native] UIKit 原生壳接线完成：{iOSNativeShell.Main?.CurrentFile?.Name ?? "未打开文件"}");
         return true;
     }
 
