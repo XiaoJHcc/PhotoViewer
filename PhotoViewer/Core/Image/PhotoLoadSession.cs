@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -22,12 +23,18 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     private bool _fullLoading;
     private bool _enhanceRequested;
     private int _enhanceToken;
+    private int _enhanceVisibleToken;
     private bool _disposed;
 
     /// <summary>增强预览开关是否处于开启状态（与增强图是否已就绪无关）。</summary>
     public bool IsEnhanced => _enhanceRequested;
     /// <summary>增强图是否正在计算（已开启但尚未上屏）；宿主可据此显示"计算中"反馈，失败/取消后归 false。</summary>
     public bool IsEnhancing { get; private set; }
+    /// <summary>
+    /// 增强计算是否已持续超过 <see cref="DesignTokens.ImageBusyDelay"/>；宿主据此显示 IMAGE-07 的"计算中"药丸，
+    /// 不足门槛或计算结束立即归 false（<see cref="IsEnhancing"/> 语义不变）。
+    /// </summary>
+    public bool IsEnhancingVisible { get; private set; }
     /// <summary>当前展示图是否已是增强图。</summary>
     public bool EnhancedDisplay => _enhanced != null;
     /// <summary>当前会话持有的展示图像（增强开启且就绪时为增强图），仅 UI 线程借用，外部不能归还其租约。</summary>
@@ -38,10 +45,19 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     bool IDisplayLoadSignal.CurrentIsProxy => IsProxy;
     /// <summary>压测口径的编码（当前展示产物，无图时为 null）。</summary>
     PixelEncoding? IDisplayLoadSignal.CurrentEncoding => Image?.Encoding;
-    /// <summary>图像、代理状态、增强态或错误变化后在 UI 线程触发。</summary>
+    /// <summary>图像、代理状态、加载/增强可见态或错误变化后在 UI 线程触发。</summary>
     public event Action? Changed;
-    /// <summary>当前解码错误，无错误时为空。</summary>
+    /// <summary>需要以 STATE-03 提示条呈现的一次性非阻塞提示（如内存压力自动关闭增强），在 UI 线程触发。</summary>
+    public event Action<string>? Notice;
+    /// <summary>屏上无可用图时的解码错误，无错误时为空；屏上已有代理时的 Full 升级失败记录在 <see cref="FullError"/>。</summary>
     public string Error { get; private set; } = string.Empty;
+    /// <summary>Full 升级失败的非阻塞提示；屏上代理保持显示，等待下一次触发重试，成功上屏或换文件后清空。</summary>
+    public string FullError { get; private set; } = string.Empty;
+    /// <summary>
+    /// 切图后超过 <see cref="DesignTokens.StatusLoadingDelay"/> 仍无展示图且无错误时为 true；
+    /// 图一到、出错或换文件立即归 false。宿主据此显示 STATE-01 的加载提示。
+    /// </summary>
+    public bool IsLoadingVisible { get; private set; }
 
     /// <summary>订阅"本会话已把某文件上屏"（压测驱动器计时用），退订句柄可重复释放。</summary>
     /// <param name="handler">上屏完成回调，参数为该次上屏的文件引用。</param>
@@ -70,12 +86,16 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _file = file;
         _fullLoading = false;
         Error = string.Empty;
+        FullError = string.Empty;
         Replace(null, false);
         if (file != null)
         {
+            var cancellationToken = _cancellation.Token;
             int? target = !_needsFull && _proxyLongEdge > 0 ? _proxyLongEdge : null;
             _fullLoading = !target.HasValue;
-            _ = LoadAsync(file, _generation, target, _cancellation.Token);
+            _ = LoadAsync(file, _generation, target, cancellationToken);
+            // STATE-01：延迟暴露加载态，快速翻页在门槛内完成时不显示提示。
+            _ = ShowLoadingAfterDelayAsync(_generation, cancellationToken);
         }
     }
 
@@ -90,14 +110,14 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         int token = ++_enhanceToken;
         if (!_enhanceRequested)
         {
-            IsEnhancing = false;
+            SetEnhancing(false);
             ReleaseEnhanced();
             Changed?.Invoke();
             return;
         }
         if (_image != null)
         {
-            IsEnhancing = true;
+            SetEnhancing(true);
             Changed?.Invoke();
             _ = ApplyEnhancementAsync(_image, token);
         }
@@ -140,7 +160,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             }
             var previous = _enhanced;
             _enhanced = result;
-            IsEnhancing = false;
+            SetEnhancing(false);
             try { Changed?.Invoke(); }
             finally { previous?.Dispose(); }
         }).ConfigureAwait(false);
@@ -152,9 +172,55 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         => UiDispatcher.InvokeAsync(() =>
         {
             if (_disposed || token != _enhanceToken || !_enhanceRequested || !IsEnhancing) return;
-            IsEnhancing = false;
+            SetEnhancing(false);
             Changed?.Invoke();
         });
+
+    /// <summary>更新增强计算态；变 false 立即收起可见态，变 true 后延迟 <see cref="DesignTokens.ImageBusyDelay"/> 才暴露。</summary>
+    private void SetEnhancing(bool value)
+    {
+        if (IsEnhancing == value) return;
+        IsEnhancing = value;
+        int token = ++_enhanceVisibleToken;
+        if (!value)
+        {
+            IsEnhancingVisible = false;
+            return;
+        }
+        _ = ShowEnhancingAfterDelayAsync(token);
+    }
+
+    /// <summary>IMAGE-07：计算持续超过门槛才置可见，代际或状态已变时丢弃。</summary>
+    private async Task ShowEnhancingAfterDelayAsync(int token)
+    {
+        await Task.Delay(DesignTokens.ImageBusyDelay).ConfigureAwait(false);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed || token != _enhanceVisibleToken || !IsEnhancing || IsEnhancingVisible) return;
+            IsEnhancingVisible = true;
+            Changed?.Invoke();
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>STATE-01：切图后延迟暴露加载态，旧代际或图已上屏/出错时丢弃。</summary>
+    private async Task ShowLoadingAfterDelayAsync(int generation, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(DesignTokens.StatusLoadingDelay, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed || generation != _generation || _file == null || _image != null
+                || !string.IsNullOrEmpty(Error) || IsLoadingVisible) return;
+            IsLoadingVisible = true;
+            Changed?.Invoke();
+        }).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// 增强算法只在 8 位 sRGB 口径上有定义（256 级直方图 + LUT），因此先转 sRGB8 副本、就地均衡，再回到源展示编码：
@@ -189,11 +255,14 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         if (widthPixels < 1 || heightPixels < 1) return;
         int target = Math.Max(1, checked((int)Math.Ceiling(Math.Max(widthPixels, heightPixels) * 2)));
         bool grow = target > _proxyLongEdge;
+        bool wasNeedsFull = _needsFull;
         _proxyLongEdge = target;
         BitmapLoader.ProxyTargetLongEdge = target;
         _needsFull = needsFull;
         if (_file == null || !string.IsNullOrEmpty(Error)) return;
-        if (needsFull && IsProxy && !_fullLoading)
+        // IMAGE-03：Full 失败后等待下一次触发；只在需求上升沿或代理目标增长时重试，避免每次布局刷新都重试。
+        bool fullTrigger = needsFull && (!wasNeedsFull || grow);
+        if (fullTrigger && IsProxy && !_fullLoading)
         {
             _fullLoading = true;
             _ = LoadAsync(_file, _generation, null, _cancellation.Token);
@@ -229,10 +298,14 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 }
                 if (image == null)
                 {
-                    Error = "无法打开该图片";
+                    // 屏上已有可用图时不报"无法打开该图片"；仅 Full 升级失败给出非阻塞提示，代理刷新失败保持静默。
+                    if (_image == null) Error = "无法打开该图片";
+                    else if (!target.HasValue) FullError = "无法载入全分辨率";
+                    IsLoadingVisible = false;
                     Changed?.Invoke();
                     return;
                 }
+                if (!target.HasValue) FullError = string.Empty;
                 bool proxy = target.HasValue && image != null && (image.Width < image.SourceWidth || image.Height < image.SourceHeight);
                 Replace(image, proxy);
             }).ConfigureAwait(false);
@@ -246,7 +319,10 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     _fullLoading = false;
-                    Error = "解码被中断，请重新选择照片";
+                    // IMAGE-03/IMAGE-10：屏上已有代理时升级失败只报非阻塞的 Full 提示，保留代理。
+                    if (_image == null) Error = "解码被中断，请重新选择照片";
+                    else if (!target.HasValue) FullError = "无法载入全分辨率";
+                    IsLoadingVisible = false;
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
             }
@@ -258,7 +334,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             {
                 if (generation != _generation) return;
                 _fullLoading = false;
-                Error = exception.Message;
+                if (_image == null) Error = exception.Message;
+                else if (!target.HasValue) FullError = $"无法载入全分辨率：{exception.Message}";
+                IsLoadingVisible = false;
                 Changed?.Invoke();
             }).ConfigureAwait(false);
         }
@@ -273,10 +351,12 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _enhanced = null;
         // 增强开着时新展示档还要再算一次：保持"计算中"直到新增强图就绪，避免反馈闪烁。
         bool willEnhance = _enhanceRequested && image != null;
-        IsEnhancing = willEnhance;
+        SetEnhancing(willEnhance);
         var previous = _image;
         _image = image;
         IsProxy = proxy;
+        // STATE-01：图一到（或换图清空）即撤下加载提示。
+        IsLoadingVisible = false;
         try { Changed?.Invoke(); }
         finally
         {
@@ -297,7 +377,10 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _cancellation.Dispose();
         _enhanced?.Dispose();
         _enhanced = null;
+        ++_enhanceVisibleToken;
         IsEnhancing = false;
+        IsEnhancingVisible = false;
+        IsLoadingVisible = false;
         _image?.Release();
         _image = null;
     }
@@ -318,8 +401,11 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         {
             if (!_enhanceRequested) return;
             _enhanceRequested = false;
+            SetEnhancing(false);
             ReleaseEnhanced();
             Changed?.Invoke();
+            // SCOPE-02/STATE-03：自动关闭是一次性事件，由各壳显示提示条；每轮关闭只发一次。
+            Notice?.Invoke("内存不足，已关闭增强预览");
         });
     }
 }
