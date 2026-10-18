@@ -10,6 +10,7 @@ using Android.Views;
 using Android.Widget;
 using AndroidX.Core.View;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
@@ -29,9 +30,6 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 internal sealed class AndroidNativeRootView : FrameLayout
 {
-    /// <summary>星级写回失败提示的展示时长（ms）。</summary>
-    private const int StatusDurationMs = 4000;
-
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
     private readonly AndroidPhotoView _photo;
@@ -43,6 +41,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AndroidFilterBar _filterBar;
     private readonly AndroidFilmstripView _filmstrip;
     private readonly AndroidControlBar _controlBar;
+    private readonly AndroidControlBarScrollHost _controlScrollHost;
     private readonly AndroidAnalysisHost _analysisHost;
     private readonly AnalysisPresenter _analysisPresenter;
     private readonly AndroidAnalysisPanel _analysisPane;
@@ -62,6 +61,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private DecodedImage? _navigationSource;
     private Bitmap? _navigationBitmap;
     private int _navigationToken;
+    private string _lastFullError = string.Empty;
     private bool _photoReady;
     private bool _startPending;
     private bool _layingOut;
@@ -98,6 +98,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         _main = main;
         _session = session;
+        // SHELL-04：栏位显隐从平台偏好恢复（分析栏仍为会话态）。
+        _main.IsThumbnailViewVisible = AndroidShellPreferences.LoadShowFilm();
+        _main.IsControlViewVisible = AndroidShellPreferences.LoadShowControls();
         SetBackgroundColor(AndroidUiTheme.Background);
         SetClipChildren(true);
 
@@ -128,7 +131,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _filmstrip.RateRequested += OnRateRequested;
         _controlBar = new AndroidControlBar(activity, main);
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
-        AddView(_controlBar);
+        _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
+        AddView(_controlScrollHost);
 
         _analysisHost = new AndroidAnalysisHost(main, session);
         _analysisPresenter = new AnalysisPresenter(_analysisHost);
@@ -149,18 +153,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _hintLabel = new TextView(activity)
         {
             Text = "PhotoViewer",
-            TextSize = 17,
+            TextSize = (float)DesignTokens.ImageHintTitleFontSize,
             Gravity = GravityFlags.Center,
         };
         _hintLabel.SetTextColor(AndroidUiTheme.TextPrimary);
         _hintDetail = new TextView(activity)
         {
             Text = "点按选择文件夹",
-            TextSize = 13,
+            TextSize = (float)DesignTokens.ImageHintDetailFontSize,
             Gravity = GravityFlags.Center,
         };
         _hintDetail.SetTextColor(AndroidUiTheme.TextSecondary);
-        _hintDetail.SetPadding(0, (int)AndroidUiTheme.Dp(activity, 6), 0, 0);
         _hintLabel.Clickable = true;
         _hintLabel.Click += (_, _) => { if (_session.Image == null) _ = _main.FolderVM.OpenFilePickerAsync(); };
         AddView(_hintLabel);
@@ -173,18 +176,27 @@ internal sealed class AndroidNativeRootView : FrameLayout
             Gravity = GravityFlags.Center,
             Visibility = ViewStates.Gone,
         };
-        _enhanceBusy.SetTextColor(Color.White);
-        _enhanceBusy.SetBackgroundColor(Color.Argb(217, 34, 34, 34)!);
+        _enhanceBusy.SetTextColor(FromToken(DesignTokens.ColorStatusToastForeground));
+        var busyBackground = new GradientDrawable();
+        busyBackground.SetColor(Color.Argb(217, 34, 34, 34)!);
+        busyBackground.SetCornerRadius(AndroidUiTheme.Dp(activity, DesignTokens.ImageBusyCornerRadius));
+        _enhanceBusy.Background = busyBackground;
         AddView(_enhanceBusy);
 
         _statusLabel = new TextView(activity)
         {
-            TextSize = 13,
+            TextSize = (float)DesignTokens.StatusToastFontSize,
             Gravity = GravityFlags.Center,
             Visibility = ViewStates.Gone,
         };
-        _statusLabel.SetTextColor(Color.White);
-        _statusLabel.SetBackgroundColor(Color.Argb(230, 40, 40, 40)!);
+        _statusLabel.SetTextColor(FromToken(DesignTokens.ColorStatusToastForeground));
+        var statusBackground = new GradientDrawable();
+        statusBackground.SetColor(WithAlpha(DesignTokens.ColorStatusToastBackground, DesignTokens.ColorStatusToastBackgroundAlpha));
+        statusBackground.SetCornerRadius((float)AndroidUiTheme.Dp(activity, DesignTokens.StatusToastCornerRadius));
+        _statusLabel.Background = statusBackground;
+        int statusPaddingX = AndroidUiTheme.DpPx(this, DesignTokens.StatusToastPaddingX);
+        int statusPaddingY = AndroidUiTheme.DpPx(this, DesignTokens.StatusToastPaddingY);
+        _statusLabel.SetPadding(statusPaddingX, statusPaddingY, statusPaddingX, statusPaddingY);
         AddView(_statusLabel);
 
         _navigation = new AndroidNavigationOverlay(activity);
@@ -200,6 +212,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _photo.WheelScrolled += OnWheelScrolled;
 
         _session.Changed += OnSessionChanged;
+        _session.Notice += OnSessionNotice;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
@@ -338,11 +351,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 }
             }
 
-            _controlBar.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
+            _controlScrollHost.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
             if (controlVisible)
             {
-                _controlBar.Arrange(row, row ? _panes.ControlContent.Width : _panes.ControlContent.Height);
-                LayoutChild(_controlBar, _panes.ControlContent, density);
+                var content = _panes.ControlContent;
+                double viewportCross = row ? content.Width : content.Height;
+                // TOOLBAR-08：单组本身超出可用主轴时，控制栏沿主轴滚动而不是被分区裁切。
+                bool scrollable = controlMeasure.Cross > viewportCross + .5;
+                _controlBar.Arrange(row, scrollable ? controlMeasure.Cross : Math.Max(1, viewportCross));
+                _controlScrollHost.Configure(row, (int)Math.Round(viewportCross * density),
+                    (int)Math.Round(controlMeasure.Cross * density));
+                LayoutChild(_controlScrollHost, content, density);
             }
 
             LayoutOverlays(density, row);
@@ -352,39 +371,56 @@ internal sealed class AndroidNativeRootView : FrameLayout
         finally { _layingOut = false; }
     }
 
-    /// <summary>摆好空态提示、增强提示、状态提示与导航图。</summary>
+    /// <summary>摆好空态提示、增强提示、状态提示与导航图；提示都落在主图分区内，不重复扣底部安全区。</summary>
     private void LayoutOverlays(double density, bool row)
     {
         var pane = _panes.Photo;
-        double hintWidth = Math.Max(1, Math.Min(500, pane.Width - 20));
-        double hintLeft = pane.X + (pane.Width - hintWidth) / 2;
-        double centerY = pane.Y + pane.Height / 2;
+        double bottomInset = row ? 0 : Math.Max(0, _insets.Bottom);
+        int hintWidthPx = Math.Max(1, (int)Math.Round(
+            Math.Max(1, Math.Min(DesignTokens.ImageHintMaxWidth, pane.Width - 2 * MainScreenLayout.FilterMargin)) * density));
+        int hintMaxHeightPx = Math.Max(1, (int)Math.Round(pane.Height * density));
+        _hintLabel.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
+        _hintDetail.Measure(MeasureSpec.MakeMeasureSpec(hintWidthPx, MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec(hintMaxHeightPx, MeasureSpecMode.AtMost));
+        double hintWidth = hintWidthPx / density;
+        double labelHeight = _hintLabel.MeasuredHeight / density;
         bool hasDetail = !string.IsNullOrEmpty(_hintDetail.Text);
-        double labelHeight = 24, detailHeight = hasDetail ? 20 : 0;
-        double hintTop = centerY - (labelHeight + detailHeight) / 2;
+        double detailHeight = hasDetail ? _hintDetail.MeasuredHeight / density : 0;
+        double gap = DesignTokens.ImageHintDetailGapAndroid;
+        double blockHeight = hasDetail ? Math.Max(labelHeight, gap + detailHeight) : labelHeight;
+        double hintLeft = pane.X + (pane.Width - hintWidth) / 2;
+        double hintTop = pane.Y + Math.Max(0, (pane.Height - blockHeight) / 2);
         LayoutChild(_hintLabel, new LayoutRect(hintLeft, hintTop, hintWidth, labelHeight), density);
-        LayoutChild(_hintDetail, new LayoutRect(hintLeft, hintTop + labelHeight, hintWidth, detailHeight), density);
+        LayoutChild(_hintDetail, new LayoutRect(hintLeft, hintTop + gap, hintWidth, detailHeight), density);
 
-        const double busyWidth = 96, busyHeight = 28;
-        LayoutChild(_enhanceBusy, new LayoutRect(pane.X + (pane.Width - busyWidth) / 2,
-            pane.Y + pane.Height - busyHeight - 20 - _insets.Bottom, busyWidth, busyHeight), density);
+        LayoutChild(_enhanceBusy, new LayoutRect(
+            pane.X + (pane.Width - DesignTokens.ImageBusyWidth) / 2,
+            pane.Y + pane.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset - bottomInset,
+            DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight), density);
 
-        double statusWidth = Math.Min(260, pane.Width - 40), statusHeight = 32;
-        LayoutChild(_statusLabel, new LayoutRect(pane.X + (pane.Width - statusWidth) / 2,
-            pane.Y + pane.Height - statusHeight - 24 - _insets.Bottom, statusWidth, statusHeight), density);
+        // STATE-03：单行或自动换行，最大宽 min(500, 宽−40)，高按实际文本量出。
+        double statusMaxWidth = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, pane.Width - 40));
+        _statusLabel.Measure(
+            MeasureSpec.MakeMeasureSpec((int)Math.Round(statusMaxWidth * density), MeasureSpecMode.AtMost),
+            MeasureSpec.MakeMeasureSpec((int)Math.Round(pane.Height * density), MeasureSpecMode.AtMost));
+        double statusWidth = _statusLabel.MeasuredWidth / density;
+        double statusHeight = _statusLabel.MeasuredHeight / density;
+        LayoutChild(_statusLabel, new LayoutRect(
+            pane.X + (pane.Width - statusWidth) / 2,
+            pane.Y + pane.Height - statusHeight - DesignTokens.StatusToastBottomMargin - bottomInset,
+            statusWidth, statusHeight), density);
 
         bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
         _navigation.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         if (show)
         {
             var (navWidth, navHeight) = _photo.NavigationSize;
-            double hostWidth = navWidth + 16;
-            double hostHeight = navHeight + 16 + 8 + 15 + 2;
+            var (hostWidth, hostHeight) = AndroidNavigationOverlay.HostSizeFor(navWidth, navHeight);
             double rightInset = Math.Max(0, _insets.Right);
-            double bottomInset = Math.Max(0, _insets.Bottom - (Height - pane.MaxY));
             var rect = new LayoutRect(
-                pane.X + pane.Width - hostWidth - 12 - rightInset,
-                pane.Y + pane.Height - hostHeight - 12 - bottomInset,
+                pane.MaxX - hostWidth - DesignTokens.NavMargin - rightInset,
+                pane.MaxY - hostHeight - DesignTokens.NavMargin - bottomInset,
                 hostWidth, hostHeight);
             LayoutChild(_navigation, rect, density);
             _navigation.SetState(null, navWidth, navHeight, _photo.NavigationViewport,
@@ -413,6 +449,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
         _startPending = false;
         var file = _main.CurrentFile;
+        _lastFullError = string.Empty;
+        UpdateFocusPoint();
         if (file == null)
         {
             _session.SetFile(null);
@@ -449,9 +487,21 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _analysisHost.Raise();
         UpdateDetailHighlight();
         UpdateHint();
-        _enhanceBusy.Visibility = _session.IsEnhancing ? ViewStates.Visible : ViewStates.Gone;
+        // IMAGE-07：药丸只在增强计算持续超过共享门槛时显示。
+        _enhanceBusy.Visibility = _session.IsEnhancingVisible ? ViewStates.Visible : ViewStates.Gone;
+        // IMAGE-03：屏上已有代理时的 Full 失败只走提示条，不覆盖主图错误标题。
+        if (_session.FullError != _lastFullError)
+        {
+            _lastFullError = _session.FullError;
+            if (!string.IsNullOrEmpty(_lastFullError))
+                ShowStatus(_lastFullError, DesignTokens.MotionStatusToastDuration);
+        }
         UpdateNavigationIndicator();
     }
+
+    /// <summary>SCOPE-02：共享会话的一次性提示（如内存压力自动关闭增强）走 STATE-03 提示条。</summary>
+    /// <param name="text">提示文本。</param>
+    private void OnSessionNotice(string text) => ShowStatus(text, DesignTokens.MotionStatusToastDuration);
 
     private void OnPhotoTapped()
     {
@@ -512,20 +562,23 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, dividerHeight));
         }
 
-        void AddItem(string label, bool? check, Action action)
+        void AddItem(string label, bool? check, Action action, bool enabled = true)
         {
             var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
             row.SetGravity(GravityFlags.CenterVertical);
             row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(10 * density), 0);
-            row.Clickable = true;
-            row.Focusable = true;
+            row.Clickable = enabled;
+            row.Focusable = enabled;
+            row.Enabled = enabled;
+            row.ContentDescription = check == true ? $"{label}，已勾选" : label;
             var text = new TextView(activity)
             {
                 Text = label,
                 TextSize = 15,
             };
-            text.SetTextColor(AndroidUiTheme.TextPrimary);
+            text.SetTextColor(enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary);
             text.Gravity = GravityFlags.CenterVertical;
+            text.Enabled = enabled;
             row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.MatchParent) { Weight = 1 });
             var mark = new TextView(activity)
             {
@@ -533,10 +586,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 TextSize = 15,
                 Gravity = GravityFlags.Center,
             };
-            mark.SetTextColor(AndroidUiTheme.Accent);
+            mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
             row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
             row.Click += (_, _) =>
             {
+                if (!enabled) return;
                 DismissPhotoMenu();
                 action();
             };
@@ -550,7 +604,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         AddItem("分析栏", _main.IsAnalysisViewVisible, () => _main.ToggleAnalysisView());
         AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
         AddDivider();
-        AddItem("增强预览", _session.IsEnhanced, () => _session.ToggleEnhanced());
+        // MENU-06/07：文案为「增强」；无当前照片时置灰，工具仍可打开并显示空态。
+        AddItem("增强", _session.IsEnhanced, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
         AddDivider();
         AddItem("工具…", null, ShowTools);
         AddItem("设置…", null, () => _main.OpenSettingWindow());
@@ -620,7 +675,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
             case "Previous": Move(-1); break;
             case "Next": Move(1); break;
             case "Exchange": if (_main.LastFile != null) _main.CurrentFile = _main.LastFile; break;
-            case "Fit": _photo.ToggleFit(); break;
+            // IMAGE-02：Fit 命令在 EXIF 异步到达后也使用最新对焦点（无对焦点回退视口中心）。
+            case "Fit": UpdateFocusPoint(); _photo.ToggleFit(); break;
             case "ZoomInScale": _photo.ZoomBy(1.25); break;
             case "ZoomOutScale": _photo.ZoomBy(.8); break;
             case "ZoomInPreset": ZoomPreset(1); break;
@@ -659,7 +715,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
     private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus($"无法写入星级：{file.Name}", StatusDurationMs);
+        => ShowStatus($"无法写入星级：{file.Name}", DesignTokens.MotionStatusToastDuration);
 
     /// <summary>短暂显示状态提示（与旧壳底部提示同义）。</summary>
     /// <param name="text">文本。</param>
@@ -668,8 +724,14 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         _statusLabel.Text = text;
         _statusLabel.Visibility = ViewStates.Visible;
+        RequestLayout();
         int token = ++_statusToken;
-        PostDelayed(() => { if (token == _statusToken) _statusLabel.Visibility = ViewStates.Gone; }, durationMs);
+        PostDelayed(() =>
+        {
+            if (token != _statusToken) return;
+            _statusLabel.Visibility = ViewStates.Gone;
+            RequestLayout();
+        }, durationMs);
     }
 
     private int _statusToken;
@@ -691,8 +753,14 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 break;
             case nameof(MainViewModel.IsRowLayout):
             case nameof(MainViewModel.IsScreenLandscape):
+                RequestLayout();
+                break;
             case nameof(MainViewModel.IsThumbnailViewVisible):
+                AndroidShellPreferences.SaveShowFilm(_main.IsThumbnailViewVisible);
+                RequestLayout();
+                break;
             case nameof(MainViewModel.IsControlViewVisible):
+                AndroidShellPreferences.SaveShowControls(_main.IsControlViewVisible);
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsAnalysisViewVisible):
@@ -769,7 +837,22 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _controlBar.MarkDirty();
             _controlBar.Invalidate();
         }
-        if (args.PropertyName is nameof(ImageFile.ExifData)) _analysisHost.Raise();
+        if (args.PropertyName is nameof(ImageFile.ExifData))
+        {
+            // IMAGE-02：EXIF（Sony 对焦点）异步到达后同步到共享视口，下一次 Fit/切图即用新值。
+            UpdateFocusPoint();
+            _analysisHost.Raise();
+        }
+    }
+
+    /// <summary>把当前照片的 EXIF 对焦点换算成显示朝向归一化坐标交给共享视口；无数据时清空。</summary>
+    private void UpdateFocusPoint()
+    {
+        var focus = _main.CurrentFile?.ExifData?.SonyFocusPosition;
+        if (focus is { ImageWidth: > 0, ImageHeight: > 0 } position)
+            _photo.SetFocus(position.FocusX / (double)position.ImageWidth, position.FocusY / (double)position.ImageHeight);
+        else
+            _photo.SetFocus(null, null);
     }
 
     /// <summary>更新空态/错误提示；有图时全部隐藏。</summary>
@@ -843,27 +926,31 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void UpdateHint()
     {
-        bool show = _session.Image == null;
+        bool hasImage = _session.Image != null;
+        bool hasFile = _main.CurrentFile != null;
+        bool hasError = !string.IsNullOrEmpty(_session.Error);
+        // STATE-01：加载提示由共享会话的 300ms 延迟态驱动，有文件但未到门槛时不显示任何文案。
+        bool show = !hasImage && (hasError || _session.IsLoadingVisible || !hasFile);
         _hintLabel.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         _hintDetail.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         if (!show) return;
-        if (!string.IsNullOrEmpty(_session.Error))
+        if (hasError)
         {
             _hintLabel.Text = "无法显示照片";
             _hintDetail.Text = _session.Error;
             return;
         }
-        if (_main.CurrentFile != null)
+        if (_session.IsLoadingVisible)
         {
             _hintLabel.Text = "正在载入…";
-            _hintDetail.Text = _main.CurrentFile.Name;
+            _hintDetail.Text = _main.CurrentFile?.Name ?? string.Empty;
             return;
         }
         _hintLabel.Text = "PhotoViewer";
         _hintDetail.Text = "点按选择文件夹，或长按打开菜单";
     }
 
-    /// <summary>导航图缩略图只在展示图引用变化时重出；可见框与百分比每帧更新。</summary>
+    /// <summary>导航图缩略图取当前展示产物（含增强），只在产物引用变化时重出；可见框与百分比每帧更新。</summary>
     private void UpdateNavigationIndicator()
     {
         bool show = _session.Image != null && _main.Settings.ShowZoomIndicator && !_photo.IsFit;
@@ -874,23 +961,21 @@ internal sealed class AndroidNativeRootView : FrameLayout
             RequestLayout();
         }
         if (!show) return;
-        if (!ReferenceEquals(_navigationSource, _session.Image))
+        var image = _session.Image;
+        if (!ReferenceEquals(_navigationSource, image))
         {
-            _navigationSource = _session.Image;
+            _navigationSource = image;
             var previous = _navigationBitmap;
             _navigationBitmap = null;
             previous?.Dispose();
             _navigation.Clear();
-            var file = _main.CurrentFile?.File;
-            var image = _session.Image;
             int token = ++_navigationToken;
-            if (file != null && image != null)
+            if (image != null)
             {
-                int longEdge = (int)Math.Round(300 * AndroidUiTheme.Density(Context!));
-                _ = AndroidNavigationDecoder.DecodeAsync(file, image.Orientation, longEdge, CancellationToken.None)
+                _ = AndroidNavigationDecoder.CreateFromDisplayAsync(image, AndroidUiTheme.Density(Context!), CancellationToken.None)
                     .ContinueWith(task =>
                     {
-                        var bitmap = task.Result;
+                        var bitmap = task.IsFaulted || task.IsCanceled ? null : task.Result;
                         UiDispatcher.Post(() =>
                         {
                             if (token != _navigationToken || !ReferenceEquals(_navigationSource, image))
@@ -913,6 +998,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
             $"{_photo.PhysicalScale * 100:0.#}%");
     }
 
+    /// <summary>设计令牌 0xAARRGGBB → Android 颜色。</summary>
+    private static Color FromToken(uint argb) => new(unchecked((int)argb));
+
+    /// <summary>设计令牌颜色按给定不透明度叠加（0–1）。</summary>
+    private static Color WithAlpha(uint argb, double alpha)
+    {
+        int value = unchecked((int)argb);
+        return Color.Argb((int)Math.Round(Math.Clamp(alpha, 0, 1) * 255),
+            (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
+    }
+
     /// <summary>释放全部订阅与子视图资源。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -923,6 +1019,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _photo.SurfaceReady -= OnSurfaceReady;
             _photo.ViewportChanged -= OnPhotoViewportChanged;
             _session.Changed -= OnSessionChanged;
+            _session.Notice -= OnSessionNotice;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PropertyChanged -= OnSettingsChanged;
             _main.ControlVM.PropertyChanged -= OnControlChanged;

@@ -9,14 +9,15 @@
 | AndroidApp.cs | 普通 `Android.App.Application`，**不初始化 Avalonia**；不得改回 `AvaloniaAndroidApplication`。 |
 | AndroidBootstrapActivity.cs | 唯一 `MainLauncher` 与 `ACTION_VIEW`/`ACTION_SEND`/`ACTION_SEND_MULTIPLE`（`image/*`）入口；读 `pv-flags`（`--legacy-ui` / `--native`）后转发 Action/Data/ClipData/Extras 到目标壳并 `Finish()`。 |
 | AndroidNativeActivity.cs | 原生壳 Activity（`AppCompatActivity` + `@style/Theme.PhotoViewer.Native`），不创建 Avalonia；挂 `AndroidNativeShell` 根视图，转发 SAF 结果、硬件键盘与返回键。 |
-| Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel(nativePresentation: true)` → `PhotoLoadSession` → 根视图；外部打开与 `pv-open`/`pv-settings` 启动参数也在这里收口。日志必须出现 `[Native] ... Avalonia.Application.Current=null`。 |
-| Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏；接线会话、栏位显隐、导航图、长按菜单、评分失败提示；物理视口上报 `PhotoLoadSession`。 |
+| Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel(nativePresentation: true)` → `PhotoLoadSession` → 根视图；外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，启动参数 `pv-settings` 也在这里收口。日志必须出现 `[Native] ... Avalonia.Application.Current=null`。 |
+| Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性提示条；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
 | Native/AndroidMainScreenLayout.cs | 主屏分区纯函数：共享分区数学 + 系统栏/刘海 insets；栏位背景铺到屏幕边缘、内容收在安全区。 |
-| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）、物理 100% 触发 Full。 |
+| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。 |
 | Native/AndroidFilterBar.cs | 自绘下拉 ×3 + 计数 + 相似聚类 toggle（窄屏紧凑宽度 84/76dp）；原生 PopupMenu 写回共享筛选 VM。 |
 | Native/AndroidFilmstripView.cs / AndroidThumbnailCard.cs / AndroidBitmapConverter.cs | RecyclerView 胶片栏 + 自绘卡片（96×144 / 80 方形 / 星级 / 抖动徽标 / 第二行）、350ms 三次缓出定位/用户接管/减少动态效果、可见范围上报、星星写回不切图。 |
 | Native/AndroidControlBar.cs | 共享 `ControlBarLayout` 的 EXIF/评分/命令三分组、换行/居中；命令显隐/顺序来自共享设置（含分析栏/增强）。 |
-| Native/AndroidNavigationOverlay.cs / AndroidNavigationDecoder.cs | 缩放指示器（长边 150dp + 可见框 + 百分比，点按/拖动定位）；缩略图用 BitmapFactory 子采样 + 方向转正（不是 GPU 回读）。 |
+| Native/AndroidControlBarScrollHost.cs | 控制栏滚动宿主（TOOLBAR-08）：文档超出可用主轴时拖动/惯性滚动，普通重建不回到起点，偏移按新几何夹取；未溢出时行为与原先一致。 |
+| Native/AndroidNavigationOverlay.cs / AndroidNavigationDecoder.cs | 缩放指示器（长边 150dp + 可见框 + 百分比，宿主不透明度 0.6，点按/拖动定位）；缩略图取当前展示产物（含增强预览）抽样转正，不二次解码文件、不回读 GPU。 |
 | Native/AndroidNativeSettingsPresenter.cs | 半屏 Material 3 BottomSheet：五分类（文件/预览/控制/EXIF/AI）、共享 `NativeSettingsSession` 工作副本、关闭/下滑/返回统一回写。 |
 | Native/AndroidAnalysisPanel.cs / AndroidAnalysisHost | 分析栏：共享 `AnalysisPresenter` 宿主，细节预览/直方图/DINO-CV 瓦片自绘，细节定格绿框与准星；可见时主图升 Full。 |
 | Native/AndroidSimilarityPanel.cs | 相似聚类面板：复用卡片 + 分数条，三态/动作区/真实“提取全部”，行布局从胶片栏右侧让位。 |
@@ -79,7 +80,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 4 | `AndroidAsset` 实际打进 `assets/Models/...`，而共享 URI 是 `avares://PhotoViewer/Assets/Models/...` | `AndroidAppResourceProvider` 去掉开头 `Assets/`；原生壳启动日志打印 `DINO 模型资源=ok` 验证 |
 | 5 | SAF 选择器/设置页/工具页已全部替换 | A5 工具页已落地；无占位入口 |
 | 6 | 3+3 邻居预取同时解 Full 时 13 张夹具（含 6000×4000）启动约 0.5s SIGSEGV | 共享 `BitmapLoader.PrefetchFullNeighbors` 默认 true；Android 壳置 false，邻居统一代理档（Full 只在当前图放大时按需）。Mac/iOS/Windows 行为不变 |
-| 7 | 导航图 FBO `glReadPixels` 回读内容错位/通道异常 | 改 `AndroidNavigationDecoder`（BitmapFactory 子采样 + 方向转正，长边 300dp），导航图 150dp 显示不变；登记为 Android 实现差异 |
+| 7 | 导航图 FBO `glReadPixels` 回读内容错位/通道异常 | 改为不依赖 GPU 回读：当前取展示产物（代理/Full/增强）抽样转正生成导航图，长边仍为 150dp 显示 |
 | 8 | 模拟器为 ANGLE，EGL P3 协商回退 sRGB；真实 P3 面板未验 | 解码器按实际表面色彩空间选择 P3/sRGB；真机门补 P3 正向与色卡 |
 | 9 | 数值设置用 +/- 步进、列表排序用上下按钮、拖入未接 | A4 偏差；`ItemTouchHelper` 拖拽排序与 `OnDragListener` 拖入待补，或作者裁定接受按钮排序 |
 | 10 | 设置五分类页面的列表项较多（文件格式/EXIF/快捷键），需滚动；无搜索 | 与 iOS 设置同口径（滚动表单）；搜索非本轮范围 |
@@ -104,7 +105,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 29 | 主图色彩整体发白，任何格式 | 不是 ICC：真机 EGL P3 表面把主图整体抬亮（同一 JPEG 强制 sRGB 表面后正常，缩略图也正常）。默认改为 sRGB 表面/解码（`ForceSrgb`），广色域保留 `--ez pv-p3 true` 诊断；待确认 P3 EGL/合成传递函数后再默认开启 |
 | 30 | 控制栏偶现“只剩容器” | 真正根因：`OnDraw` 在 dirty/空分组时只 `Rebuild`，新分组 `Rect` 还是 0，绘制循环全部 `continue`。现改为在 `OnDraw` 内调用 `Arrange`（重建并算出矩形）再绘制；配合 SAF 返回刷新 |
 | 31 | 胶片栏图片被拉成 80 方形 | 卡片绘制改为按位图比例等比装入 80×80 并居中，非方形预览不再拉伸 |
-| 32 | HIF 导航指示器无缩略图 | 真因：HIF 的 `BitmapFactory` 连 bounds 都返回 0，旧代码在进入回退前就 return。现 bounds 无效/解码失败都走展示解码器（libheif）；真实 HIF `A7C05520.HIF` 已实测导航图出图 |
+| 32 | HIF 导航指示器无缩略图 | 导航图改取当前展示产物（HIF 主图由 libheif 解出），不再单独走 BitmapFactory；真实 HIF `A7C05520.HIF` 已实测导航图出图 |
 | 33 | 同名 HIF/ARW 优先级 | 真实 `same.hif + same.arw` 实测：卡片 `same.hif(RAW)`、主图 HIF；`same.jpg + same.hif` 实测代表与主图均为 JPG。小组代表仍按 `SelectedFormats` 顺序 |
 | 34 | 同名合并后主图可能是被隐藏文件 | 文件夹打开时 CurrentFile 可能先指向 ARW/HIF，卡片却显示代表；`ApplyFilter` 末尾把隐藏的 CurrentFile 映射回其代表，实测 JPG/HIF/ARW 主图与卡片一致 |
 | 35 | HIF 缩略图/指示器等待久 | Sony HIF 的 `thmb` item 用 libheif thumbnail 插件解不了；但容器里有独立的 JPEG item（实测 160×120）。新增 `HeifJpegThumbnailExtractor` 解析 iinf/iloc 提取 JPEG item，胶片/导航优先用它，跳过 7008×4672 全图；随后 512 代理缓存复用。主图 Full 仍需一次全图 libheif（另一条路径），首张小图已不再等全图 |

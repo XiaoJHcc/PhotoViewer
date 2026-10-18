@@ -77,7 +77,8 @@ public sealed class AndroidNativeActivity : AppCompatActivity
             if (keyCode is not (Keycode.Back or Keycode.VolumeUp or Keycode.VolumeDown or Keycode.VolumeMute
                 or Keycode.Camera or Keycode.Power))
             {
-                if (Native.AndroidNativeShell.HandleHardwareKey(keyCode, (int)e.MetaState)) return true;
+                if (Native.AndroidNativeShell.HandleHardwareKey(keyCode, (int)e.MetaState,
+                    e.Action == KeyEventActions.Multiple)) return true;
             }
         }
         return base.DispatchKeyEvent(e);
