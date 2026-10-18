@@ -38,6 +38,10 @@ public static class AndroidNativeShell
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
     public static MainViewModel? Main => _main;
 
+    /// <summary>关闭主图长按菜单；返回键优先消费。</summary>
+    /// <returns>关闭了菜单返回 true。</returns>
+    public static bool DismissPhotoMenu() => _root?.DismissPhotoMenu() == true;
+
     /// <summary>当前原生壳的展示加载会话。</summary>
     public static PhotoLoadSession? Session => _session;
 

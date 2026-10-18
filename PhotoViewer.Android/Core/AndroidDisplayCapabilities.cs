@@ -43,7 +43,10 @@ public static class AndroidDisplayCapabilities
                 DisplaySupportsP3 = false;
                 return;
             }
-            DisplaySupportsP3 = activity.Window?.IsWideColorGamut == true || display.IsWideColorGamut;
+            bool windowWide = activity.Window?.IsWideColorGamut == true;
+            bool displayWide = display.IsWideColorGamut;
+            DisplaySupportsP3 = windowWide || displayWide;
+            Console.WriteLine($"[Native] 色域探测：displayWide={displayWide} windowWide={windowWide} windowColorMode={activity.Window?.ColorMode}");
         }
         catch (Exception exception)
         {

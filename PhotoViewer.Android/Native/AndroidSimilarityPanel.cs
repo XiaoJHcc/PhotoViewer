@@ -38,7 +38,7 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     private bool _disposed;
 
     /// <summary>行布局交叉轴高度（列表 154；空态/动作区同高）。</summary>
-    internal double CrossSize => SimilarityPanelGeometry.ListCross;
+    internal double CrossSize => _horizontal ? SimilarityPanelGeometry.ListCross : SimilarityPanelGeometry.PanelWidth;
     /// <summary>当前是否横向列表。</summary>
     internal bool Horizontal => _horizontal;
     /// <summary>列表是否可见（与空态互斥）。</summary>

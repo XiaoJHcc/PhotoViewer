@@ -2,6 +2,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Android.Graphics;
+using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 using AndroidColorSpace = Android.Graphics.ColorSpace;
@@ -37,7 +38,8 @@ internal static class AndroidNavigationDecoder
                     InSampleSize = sample,
                 };
                 if (OperatingSystem.IsAndroidVersionAtLeast(26))
-                    options.InPreferredColorSpace = AndroidColorSpace.Get(AndroidColorSpace.Named.Srgb!)!;
+                    options.InPreferredColorSpace = AndroidColorSpace.Get(
+                        (AndroidDisplayCapabilities.SurfaceIsP3 ? AndroidColorSpace.Named.DisplayP3 : AndroidColorSpace.Named.Srgb)!)!;
                 using var stream2 = file.OpenReadAsync().GetAwaiter().GetResult();
                 using var decoded = BitmapFactory.DecodeStream(stream2, null, options);
                 if (decoded == null) return null;

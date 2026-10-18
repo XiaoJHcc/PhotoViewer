@@ -22,7 +22,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     /// <summary>EGL_KHR_gl_colorspace 的属性名。</summary>
     private const int EglGlColorspaceKhr = 0x309D;
     /// <summary>EGL_EXT_gl_colorspace_display_p3 的 P3 值。</summary>
-    private const int EglGlColorspaceDisplayP3Ext = 0x30BF;
+    private const int EglGlColorspaceDisplayP3Ext = 0x3363;
     private const int EglOpenGles3Bit = 0x40;
     private const int EglNone = 0x3038;
 
@@ -151,7 +151,11 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 p3 = true;
                 return candidate;
             }
-            EGL14.EglGetError();
+            Console.WriteLine($"[Native] P3 窗口表面创建失败，回退 sRGB（EGL error=0x{EGL14.EglGetError():X}）");
+        }
+        else if (allowP3)
+        {
+            Console.WriteLine($"[Native] P3 不可用：display={AndroidDisplayCapabilities.DisplaySupportsP3} extension={SupportsP3Colorspace(_display)}，回退 sRGB");
         }
         return EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!, [EglNone], 0);
     }
@@ -164,9 +168,12 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         try
         {
             string? extensions = EGL14.EglQueryString(display, EGL14.EglExtensions);
-            return extensions != null
+            bool supported = extensions != null
                 && extensions.Contains("EGL_EXT_gl_colorspace_display_p3", StringComparison.Ordinal)
                 && extensions.Contains("EGL_KHR_gl_colorspace", StringComparison.Ordinal);
+            if (!supported)
+                Console.WriteLine($"[Native] EGL 无 P3 色彩空间扩展：EGL_EXT_gl_colorspace_display_p3={(extensions?.Contains("EGL_EXT_gl_colorspace_display_p3", StringComparison.Ordinal) == true)} EGL_KHR_gl_colorspace={(extensions?.Contains("EGL_KHR_gl_colorspace", StringComparison.Ordinal) == true)}");
+            return supported;
         }
         catch { return false; }
     }

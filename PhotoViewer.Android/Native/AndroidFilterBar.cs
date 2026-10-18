@@ -167,7 +167,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.SortModes)
             {
-                var item = menuItems.Add(option.DisplayName)!;
+                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals((SortMode)option.Value, filter.SortMode));
                 values.Add((SortMode)option.Value);
@@ -177,7 +177,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.SortOrders)
             {
-                var item = menuItems.Add(option.DisplayName)!;
+                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals((SortOrder)option.Value, filter.SortOrder));
                 values.Add((SortOrder)option.Value);
@@ -187,7 +187,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.RatingFilters)
             {
-                var item = menuItems.Add(option.DisplayName)!;
+                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
                 item.SetCheckable(true);
                 item.SetChecked(Equals(option.Key, filter.SelectedRatingFilter));
                 values.Add(option.Key);
@@ -199,6 +199,7 @@ internal sealed class AndroidFilterBar : View
         {
             int index = args.Item?.ItemId ?? -1;
             if (index < 0 || index >= values.Count) return;
+            Console.WriteLine($"[Native] 筛选选择 {kind} #{index} = {values[index]}");
             if (kind == FilterMenu.Sort) filter.SortMode = (SortMode)values[index];
             else if (kind == FilterMenu.Order) filter.SortOrder = (SortOrder)values[index];
             else filter.SelectedRatingFilter = (string)values[index];

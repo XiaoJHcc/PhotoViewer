@@ -33,6 +33,9 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     {
         base.OnCreate(savedInstanceState);
         WindowCompat.SetDecorFitsSystemWindows(Window!, false);
+        // 明确请求广色域窗口（API 26+）；不设置时窗口默认按 sRGB 合成，EGL 也拿不到 P3 表面。
+        if (OperatingSystem.IsAndroidVersionAtLeast(26))
+            Window!.ColorMode = ActivityColorMode.WideColorGamut;
         var root = Native.AndroidNativeShell.CreateRootView(this, Intent);
         SetContentView(root);
         OnBackPressedDispatcher.AddCallback(this, new NativeBackCallback(this));
@@ -97,6 +100,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         /// <summary>返回处理。</summary>
         public override void HandleOnBackPressed()
         {
+            if (Native.AndroidNativeShell.DismissPhotoMenu()) return;
             if (Native.AndroidNativeSettingsPresenter.HandleBack()) return;
             if (Native.AndroidToolsPresenter.HandleBack()) return;
             _activity.Finish();

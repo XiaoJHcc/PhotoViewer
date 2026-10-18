@@ -72,17 +72,36 @@ internal static class AndroidNativeChecks
         Check("安全区非负", root.SafeInsets.Left >= 0 && root.SafeInsets.Top >= 0 && root.SafeInsets.Right >= 0 && root.SafeInsets.Bottom >= 0,
             $"{root.SafeInsets}");
         var panes = root.Panes;
-        Check("文件栏背景铺边", Math.Abs(panes.FileBar.X) < .5 && Math.Abs(panes.FileBar.Y) < .5 && Math.Abs(panes.FileBar.Width - root.Width / AndroidUiTheme.Density(root.Context!)) < .5,
-            $"{panes.FileBar}");
-        Check("分区无重叠且顺序正确",
-            Near(panes.FileBar.MaxY, panes.FileDivider.Y) && Near(panes.FileDivider.MaxY, panes.Photo.Y)
-            && Near(panes.Photo.MaxY, panes.ControlDivider.Y) && Near(panes.ControlDivider.Y, panes.ControlBackground.Y),
-            $"file={panes.FileBar.MaxY:0.#} div={panes.FileDivider.Y:0.#} photo={panes.Photo.Y:0.#}..{panes.Photo.MaxY:0.#} controlDiv={panes.ControlDivider.Y:0.#}");
+        bool layoutRow = main.IsRowLayout;
+        double screenWidthDp = root.Width / AndroidUiTheme.Density(root.Context!);
+        double screenHeightDp = root.Height / AndroidUiTheme.Density(root.Context!);
+        Check("文件栏背景铺边",
+            Math.Abs(panes.FileBar.X) < .5 && Math.Abs(panes.FileBar.Y) < .5
+            && (layoutRow
+                ? Math.Abs(panes.FileBar.Width - screenWidthDp) < .5
+                : Math.Abs(panes.FileBar.Height - screenHeightDp) < .5),
+            $"{panes.FileBar} row={layoutRow}");
+        if (layoutRow)
+        {
+            Check("分区无重叠且顺序正确",
+                Near(panes.FileBar.MaxY, panes.FileDivider.Y) && Near(panes.FileDivider.MaxY, panes.Photo.Y)
+                && Near(panes.Photo.MaxY, panes.ControlDivider.Y) && Near(panes.ControlDivider.Y, panes.ControlBackground.Y),
+                $"file={panes.FileBar.MaxY:0.#} div={panes.FileDivider.Y:0.#} photo={panes.Photo.Y:0.#}..{panes.Photo.MaxY:0.#} controlDiv={panes.ControlDivider.Y:0.#}");
+        }
+        else
+        {
+            Check("分区无重叠且顺序正确",
+                Near(panes.FileBar.MaxX, panes.FileDivider.X) && Near(panes.FileDivider.MaxX, panes.Photo.X)
+                && Near(panes.Photo.MaxX, panes.ControlDivider.X) && Near(panes.ControlDivider.MaxX, panes.ControlBackground.X),
+                $"file={panes.FileBar.MaxX:0.#} div={panes.FileDivider.X:0.#} photo={panes.Photo.X:0.#}..{panes.Photo.MaxX:0.#} controlDiv={panes.ControlDivider.X:0.#}");
+        }
 
         var content = panes.FileContent;
         var filter = root.FilterBar;
         Check("筛选条在文件栏内容区内",
-            filter.SortFrame.X >= content.X - .5 && filter.SimilarityFrame.MaxX <= content.MaxX + .5
+            (layoutRow
+                ? filter.SortFrame.X >= 0 && filter.SimilarityFrame.MaxX <= content.Width + .5
+                : filter.SortFrame.Y >= 0 && filter.SimilarityFrame.MaxY <= content.Height + .5)
             && filter.SortFrame.Height is >= 31 and <= 33 && filter.SimilarityFrame.Height is >= 26 and <= 28,
             $"sort={filter.SortFrame} toggle={filter.SimilarityFrame} content={content}");
         Check("筛选条计数宽度有限", filter.CountWidthDp is > 8 and < 200, $"{filter.CountWidthDp:0.#}dp");
@@ -91,7 +110,9 @@ internal static class AndroidNativeChecks
         Check("胶片栏项数=筛选列表", root.Filmstrip.Files.Count == files.Count && files.Count > 0, $"{files.Count}");
         var card = root.Filmstrip.CardAt(0);
         double density = AndroidUiTheme.Density(root.Context!);
-        Check("卡片 96×144dp", card != null && Math.Abs(card.Width / density - 96) < 1.5 && Math.Abs(card.Height / density - 144) < 1.5,
+        double expectedCardWidth = layoutRow ? 96 : 116;
+        Check($"卡片 {expectedCardWidth:0}×144dp", card != null
+            && Math.Abs(card.Width / density - expectedCardWidth) < 1.5 && Math.Abs(card.Height / density - 144) < 1.5,
             card == null ? "首卡未创建" : $"{card.Width / density:0.#}×{card.Height / density:0.#}dp");
         Check("首卡绑定筛选首项", card != null && ReferenceEquals(card.BoundFile, files[0]), card?.BoundFile?.Name ?? "null");
 

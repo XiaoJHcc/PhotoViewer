@@ -3,5 +3,5 @@
 	<uses-permission android:name="android.permission.INTERNET" />
 	<!-- API ≤ 32 的旧壳/缩略图路径仍用 READ；33+ 由 SAF 接管。MANAGE/WRITE 已按 A1 计划移除。 -->
 	<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-	<application android:label="PhotoViewer" android:icon="@drawable/Icon" android:largeHeap="true" />
+	<application android:label="PhotoViewer" android:icon="@drawable/Icon" android:largeHeap="true" android:colorMode="wideColorGamut" />
 </manifest>

@@ -283,19 +283,19 @@ internal sealed class AndroidThumbnailCard : View
         if (_file == null) return;
         var menu = new PopupMenu(Context!, this);
         var menuItems = menu.Menu!;
-        menuItems.Add(_file.DisplayName);
-        menuItems.Add(_file.PhotoDate?.ToString("yyyy-MM-dd HH:mm") ?? "");
+        menuItems.Add(0, 0, 0, _file.DisplayName);
+        menuItems.Add(0, 1, 1, _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm") ?? "");
         for (int rating = 0; rating <= 5; rating++)
         {
-            int value = rating;
-            var item = menuItems.Add(rating == 0 ? "无星级" : $"{rating} 星")!;
+            var item = menuItems.Add(0, 2 + rating, 2 + rating, rating == 0 ? "无星级" : $"{rating} 星")!;
             item.SetCheckable(true);
             item.SetChecked(_file.Rating == rating);
-            menu.MenuItemClick += (_, args) =>
-            {
-                if ((args.Item?.ItemId ?? -1) >= 2) _rate?.Invoke(_file, value);
-            };
         }
+        menu.MenuItemClick += (_, args) =>
+        {
+            int id = args.Item?.ItemId ?? -1;
+            if (id >= 2) _rate?.Invoke(_file, id - 2);
+        };
         menu.Show();
     }
 

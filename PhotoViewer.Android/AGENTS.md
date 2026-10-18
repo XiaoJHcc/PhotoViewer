@@ -1,6 +1,6 @@
 # PhotoViewer.Android — Android 原生壳与迁移期旧壳
 
-**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 默认原生壳，`--legacy-ui` 回退 Avalonia 旧壳；Release 默认旧壳，`--native` 进入原生壳（与 Mac/iOS 同口径）。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6 部分完成**：程序化检查驱动器已落地（五模式 API 35 模拟器 PASS），矩阵/真机门/组合模式稳定性未完成。
+**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 默认原生壳，`--legacy-ui` 回退 Avalonia 旧壳；Release 默认旧壳，`--native` 进入原生壳（与 Mac/iOS 同口径）。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6 部分完成**：程序化检查驱动器已落地（五模式 API 35 模拟器 PASS），矩阵/真机门/组合模式稳定性未完成。**真机（25128PNA1C / API 36）已验 P3 表面=True**；列布局/筛选菜单/长按菜单项已按作者反馈修复。
 
 ## 启动与主屏（A1b–A5）
 
@@ -67,7 +67,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 ```
 
 - 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；2026-10-18 API 35 arm64 分别 **PASS 14 / 18 / 15 / 16 / 16**。
-- `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。
+- `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。检查已按行/列布局分别核对分区与卡片宽度。
 
 ## 发现清单（A1b–A5）
 
@@ -87,3 +87,8 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 12 | 手机分析栏瓦片约 58dp；相似空态按钮在占位下方；EXIF 表只显示 4 列；DINO 抖动线为简化绘制 | A5 偏差，登记待作者裁定/A6 视觉收口 |
 | 13 | `pv-check all` 连跑五组检查偶发 SIGSEGV；分模式均 PASS | 分模式作为验收口径；矩阵/真机复测 |
 | 14 | 检查矩阵只覆盖 API 35 / 竖屏 / fontScale 1.0 / density 2.625 | A6 矩阵未跑；真机门未做 |
+| 15 | 真机（Xiaomi 25128PNA1C / API 36）P3 表面始终 False | 补 `android:colorMode="wideColorGamut"` + `Window.ColorMode`；关键修正是 `EGL_GL_COLORSPACE_DISPLAY_P3_EXT` 常量应为 **0x3363**（此前误用 0x30BF → EGL_BAD_ATTRIBUTE）；真机日志已 `P3表面=True` |
+| 16 | 筛选下拉点击不切换 | `IMenu.Add(title)` 的 itemId 恒为 0；改为 `Add(0, index, index, title)`，卡片评分菜单同样改唯一 id 并合并单一 `MenuItemClick`（原先每个评分项各挂一个 handler，点击会串写） |
+| 17 | 列布局筛选条顶部有大段“mac 红绿灯”空白 | `FileContent` 已含 `safe.Top`，`leadingInset` 又加一次 `safe.Top`；列布局只传 `FilterMargin` |
+| 18 | 列布局缩略卡未居中、相似面板过宽；卡片内容偏左 | 卡片项宽行布局 96、列布局 116 并在 `OnBind` 同步；相似面板列布局交叉轴改用 `PanelWidth(106)` 而非 `ListCross(154)` |
+| 19 | 主图长按菜单飞到屏幕角落/屏幕外 | 原先用 `_photo.Left/Top`（相对 photoPane，非根视图）且 PopupMenu 开到锚点上方；改为自绘 `PopupWindow`，屏幕坐标夹取、超高度可滚，返回键先关菜单 |

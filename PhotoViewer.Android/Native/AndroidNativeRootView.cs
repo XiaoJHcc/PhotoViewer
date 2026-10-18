@@ -52,6 +52,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly TextView _enhanceBusy;
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
+    private PopupWindow? _photoMenu;
     private AndroidInsets _insets;
     private AndroidPaneFrames _panes;
     private ImageFile? _observedFile;
@@ -263,7 +264,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
             double widthDp = Width / density, heightDp = Height / density;
             _main.UpdateScreenOrientation(widthDp, heightDp);
             bool row = _main.IsRowLayout;
-            double leadingInset = _insets.Top + MainScreenLayout.FilterMargin;
+            // FileContent 已从安全区顶部起排；筛选条内部只再加普通外边距，避免列布局把 safe.Top 计两次。
+            double leadingInset = MainScreenLayout.FilterMargin;
             double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset);
             bool filmVisible = _main.IsThumbnailViewVisible;
             bool controlVisible = _main.IsControlViewVisible;
@@ -271,6 +273,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
                 : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
             bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
+            if (similarityOpen) _similarityPane.SetLayout(row);
             double similarityColumn = similarityOpen
                 ? (row
                     ? SimilarityPanelGeometry.RowWidth(_main.FileVM.SimilarityPanel.HasItems,
@@ -326,7 +329,6 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 if (axisChanged) _filmstrip.ScrollToCurrent();
                 if (similarityOpen)
                 {
-                    _similarityPane.SetLayout(row);
                     var similarityRect = row
                         ? new LayoutRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
                             Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), _similarityPane.CrossSize)
@@ -459,7 +461,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (_session.Image == null) _ = _main.FolderVM.OpenFilePickerAsync();
     }
 
-    private void OnPhotoLongPressed() => ShowPhotoMenu();
+    private void OnPhotoLongPressed(float x, float y) => ShowPhotoMenu(x, y);
 
     private void OnWheelScrolled(bool up, int metaState)
     {
@@ -469,42 +471,110 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (command != null && AndroidControlBar.IsCommandAvailable(command)) Execute(command);
     }
 
-    /// <summary>主图长按菜单：打开文件夹 / 栏位显隐 / 增强 / 设置（勾选态每次现读共享状态）。</summary>
-    internal void ShowPhotoMenu()
+    /// <summary>主图长按菜单：在手指处弹出自绘面板；面板整体夹在屏幕内，超出高度时可滚动。</summary>
+    /// <param name="localX">触点在本视图内的像素横坐标。</param>
+    /// <param name="localY">触点在本视图内的像素纵坐标。</param>
+    internal void ShowPhotoMenu(float localX, float localY)
     {
-        var activity = Context as Activity;
-        if (activity == null) return;
-        var menu = new PopupMenu(activity, _photo);
-        var menuItems = menu.Menu!;
-        menuItems.Add(0, 0, 0, "打开文件夹…");
-        var film = menuItems.Add(0, 1, 1, "胶片栏")!;
-        film.SetCheckable(true);
-        film.SetChecked(_main.IsThumbnailViewVisible);
-        var control = menuItems.Add(0, 2, 2, "控制栏")!;
-        control.SetCheckable(true);
-        control.SetChecked(_main.IsControlViewVisible);
-        var analysis = menuItems.Add(0, 3, 3, "分析栏")!;
-        analysis.SetCheckable(true);
-        analysis.SetChecked(_main.IsAnalysisViewVisible);
-        var enhance = menuItems.Add(0, 4, 4, "增强预览")!;
-        enhance.SetCheckable(true);
-        enhance.SetChecked(_session.IsEnhanced);
-        menuItems.Add(0, 5, 5, "工具…");
-        menuItems.Add(0, 6, 6, "设置…");
-        menu.MenuItemClick += (_, args) =>
+        if (Context is not Activity activity) return;
+        DismissPhotoMenu();
+        var photoLocation = new int[2];
+        _photo.GetLocationOnScreen(photoLocation);
+        int touchX = photoLocation[0] + (int)localX;
+        int touchY = photoLocation[1] + (int)localY;
+        double density = AndroidUiTheme.Density(activity);
+        var metrics = Resources?.DisplayMetrics;
+        int screenWidth = metrics?.WidthPixels ?? Width;
+        int screenHeight = metrics?.HeightPixels ?? Height;
+        int menuWidth = (int)Math.Round(224 * density);
+        int itemHeight = (int)Math.Round(42 * density);
+        int padding = (int)Math.Round(6 * density);
+        int contentHeight = itemHeight * 7 + padding * 2;
+        int maxHeight = Math.Max(itemHeight * 2, screenHeight - (int)Math.Round(16 * density));
+        int menuHeight = Math.Min(contentHeight, maxHeight);
+
+        var content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
+        var background = new GradientDrawable();
+        background.SetColor(AndroidUiTheme.ControlFill);
+        background.SetCornerRadius((float)(8 * density));
+        content.Background = background;
+        content.SetPadding(padding, padding, padding, padding);
+        content.Elevation = (float)(12 * density);
+
+        void AddItem(string label, bool? check, Action action)
         {
-            switch (args.Item?.ItemId ?? -1)
+            var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
+            row.SetGravity(GravityFlags.CenterVertical);
+            row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(10 * density), 0);
+            row.Clickable = true;
+            row.Focusable = true;
+            var text = new TextView(activity)
             {
-                case 0: _ = _main.FolderVM.OpenFilePickerAsync(); break;
-                case 1: _main.ToggleThumbnailView(); break;
-                case 2: _main.ToggleControlView(); break;
-                case 3: _main.ToggleAnalysisView(); break;
-                case 4: _session.ToggleEnhanced(); break;
-                case 5: ShowTools(); break;
-                case 6: _main.OpenSettingWindow(); break;
-            }
+                Text = label,
+                TextSize = 15,
+            };
+            text.SetTextColor(AndroidUiTheme.TextPrimary);
+            row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.MatchParent) { Weight = 1 });
+            var mark = new TextView(activity)
+            {
+                Text = check == true ? "✓" : "",
+                TextSize = 15,
+                Gravity = GravityFlags.Center,
+            };
+            mark.SetTextColor(AndroidUiTheme.Accent);
+            row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
+            row.Click += (_, _) =>
+            {
+                DismissPhotoMenu();
+                action();
+            };
+            content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
+        }
+
+        AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
+        AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
+        AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
+        AddItem("分析栏", _main.IsAnalysisViewVisible, () => _main.ToggleAnalysisView());
+        AddItem("增强预览", _session.IsEnhanced, () => _session.ToggleEnhanced());
+        AddItem("工具…", null, ShowTools);
+        AddItem("设置…", null, () => _main.OpenSettingWindow());
+
+        ScrollView? scroll = null;
+        View popupContent = content;
+        if (contentHeight > maxHeight)
+        {
+            scroll = new ScrollView(activity) { VerticalScrollBarEnabled = true };
+            scroll.AddView(content);
+            popupContent = scroll;
+        }
+
+        int margin = (int)Math.Round(8 * density);
+        int x = Math.Clamp(touchX, margin, Math.Max(margin, screenWidth - menuWidth - margin));
+        int y = Math.Clamp(touchY, margin, Math.Max(margin, screenHeight - menuHeight - margin));
+        var popup = new PopupWindow(popupContent, menuWidth, menuHeight, true)
+        {
+            OutsideTouchable = true,
+            Focusable = true,
+            Elevation = (float)(12 * density),
         };
-        menu.Show();
+        popup.SetBackgroundDrawable(new ColorDrawable(Color.Transparent));
+        popup.DismissEvent += (_, _) =>
+        {
+            if (ReferenceEquals(_photoMenu, popup)) _photoMenu = null;
+        };
+        _photoMenu = popup;
+        Console.WriteLine($"[Native] 主图菜单 touch=({touchX},{touchY}) show=({x},{y}) size={menuWidth}x{menuHeight} screen={screenWidth}x{screenHeight}");
+        popup.ShowAtLocation(_photo, GravityFlags.Top | GravityFlags.Start, x, y);
+    }
+
+    /// <summary>关闭主图长按菜单（返回键优先消费）。</summary>
+    /// <returns>关闭了菜单返回 true。</returns>
+    internal bool DismissPhotoMenu()
+    {
+        if (_photoMenu?.IsShowing != true) return false;
+        _photoMenu.Dismiss();
+        _photoMenu = null;
+        return true;
     }
 
     /// <summary>打开/前置原生工具页（A5 前由窗口门面给出可见反馈）。</summary>

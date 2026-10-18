@@ -52,7 +52,16 @@ internal sealed class AndroidFilmstripView : RecyclerView
     internal AndroidThumbnailCard? CardAt(int index)
     {
         var holder = FindViewHolderForAdapterPosition(index);
-        return (holder as CardHolder)?.Card;
+        if (holder is CardHolder cardHolder) return cardHolder.Card;
+        // 部分布局切换后 RecyclerView 的 holder 位置未刷新，按绑定身份回退找可见卡片。
+        var files = Files;
+        if (index < 0 || index >= files.Count) return null;
+        for (int i = 0; i < ChildCount; i++)
+        {
+            if (GetChildAt(i) is AndroidThumbnailCard card && ReferenceEquals(card.BoundFile, files[index]))
+                return card;
+        }
+        return null;
     }
 
     /// <summary>构建 RecyclerView 与卡片适配器。</summary>
@@ -296,6 +305,16 @@ internal sealed class AndroidFilmstripView : RecyclerView
             var files = _owner._main.FileVM.ThumbnailList.FilteredFiles;
             if (position < 0 || position >= files.Count || holder is not CardHolder cardHolder) return;
             var file = files[position];
+            double density = AndroidUiTheme.Density(_owner.Context!);
+            int expectedWidth = (int)Math.Round((_owner.IsHorizontal
+                ? AndroidThumbnailCard.CardWidthDp
+                : MainScreenLayout.FileBarContentWidth) * density);
+            var parameters = cardHolder.Card.LayoutParameters;
+            if (parameters != null && parameters.Width != expectedWidth)
+            {
+                parameters.Width = expectedWidth;
+                cardHolder.Card.LayoutParameters = parameters;
+            }
             cardHolder.Card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner._main.FileVM.ThumbnailList.SelectImageCommand(selected),
                 (selected, rating) => _owner.RateRequested?.Invoke(selected, rating));

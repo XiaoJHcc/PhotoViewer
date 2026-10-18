@@ -12,6 +12,8 @@
 >
 > **模拟器自验基线（2026-10-18，1080×2400 / density 2.625 / fontScale 1.0）**：原生壳默认启动、旧壳 `--legacy-ui` 可回退；应用内文件夹经 `@files/...` 启动参数加载；八方向 6 的 GPU 朝向、Fit/100% 热替换（代理 2706×1804 → Full 6000×4000）、导航图（长边 150 点 + 可见框 + 百分比）、卡片星级 XMP 写回（不改主图）、硬件键盘 Right/F、设置五分类打开/关闭回写（ShowRating 关闭后评分分组与卡片星级即时消失）均已目视/日志核对。**A5**：分析栏开合/细节定格绿框/诊断瓦片、相似聚类 toggle → 空态 → 真实“提取全部” → 100% 分数卡片与柱状条、工具页 EXIF 详情（分组/列/格式切换）与 DINO 诊断（5 瓦片 + 刚体文本）、增强预览像素变化均已目视/日志核对。**程序化 harness 与真机门未做**，不能记作通过。
 >
+> **真机反馈修复（2026-10-18，25128PNA1C / API 36）**：P3 表面已从 False 修到 **True**（manifest `colorMode` + `Window.ColorMode` + `EGL_GL_COLORSPACE_DISPLAY_P3_EXT=0x3363`）；筛选下拉 itemId 全 0 导致点击不切换已修；列布局筛选条 `safe.Top` 二次计入的“mac 红绿灯”空白已修；列布局卡片 116dp 项宽居中、相似面板 106dp；主图长按菜单改为手指处自绘 PopupWindow（夹在屏幕内、可滚动、返回键先关）。真机 UI 复验需解锁后目视。
+>
 > **警告基线（2026-10-18 重建）**：Android Debug **20 警告 / 0 错误**（低于 A1b 基线 21；剩余均为既有 `AndroidExternalOpenBridge`/`AndroidHeifDecoder`/`AndroidSettingsStorage` 的 CS86xx/CA1422，A2–A5 新增警告已清零）。
 
 ## 0. 范围
@@ -253,6 +255,11 @@
 | 26 | 工具页 EXIF 表只显示 ID/名称/中文名/值四列，未做 7 列水平滚动；格式切换按钮为自绘胶囊 | 功能对齐（分组/格式切换/值 3 行截断），视觉差异登记 |
 | 27 | `pv-check all` 在 API 35 模拟器连跑五组检查时偶发 SIGSEGV；分模式（main/analysis/similarity/settings/tools）均 PASS | 分模式稳定，`all` 暂不作为验收口径；疑为模拟器上连续分析栏/相似聚类/DINO 与位图分配叠加的 native 崩溃，真机与 A6 矩阵时复测 |
 | 28 | 程序化检查目前只覆盖开发机 API 35 / 竖屏 / fontScale 1.0 / density 2.625 | A6 矩阵（API 24/28/33/36、两向、fontScale 1.3、两档 DPI）未跑；真机门未做 |
+| 29 | 真机 P3 表面 False | 窗口广色域声明 + EGL P3 常量 0x3363；真机已 `P3表面=True`，待解锁目视色卡 |
+| 30 | 筛选下拉点击不切换 | PopupMenu itemId 恒 0；改唯一 id；卡片评分菜单同步修 |
+| 31 | 列布局筛选条顶部大片空白（被误认为 mac 红绿灯避让） | `safe.Top` 在 FileContent 与 leadingInset 二次计入；列布局 leadingInset 只留 10dp |
+| 32 | 列布局卡片未居中、相似面板过宽、卡内元素偏左 | 卡片项宽 96→116（列布局）并在 bind 时同步；相似面板 CrossSize 列布局 106 |
+| 33 | 主图长按菜单飞出屏幕 | `_photo.Left/Top` 是相对 photoPane；改屏幕坐标 + 自绘 PopupWindow 夹取/滚动/返回关闭 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 

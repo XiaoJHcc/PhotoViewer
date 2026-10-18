@@ -60,8 +60,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     internal event Action<int>? SwipeRequested;
     /// <summary>离散滚轮（鼠标）：方向与原生修饰键掩码。</summary>
     internal event Action<bool, int>? WheelScrolled;
-    /// <summary>主图长按：弹上下文菜单。</summary>
-    internal event Action? LongPressRequested;
+    /// <summary>主图长按：弹上下文菜单；参数为触点在本视图内的像素坐标。</summary>
+    internal event Action<float, float>? LongPressRequested;
     /// <summary>主图单击（空态打开文件夹 / 点空白清除细节预览）。</summary>
     internal event Action? TapRequested;
 
@@ -504,7 +504,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         public override void OnLongPress(MotionEvent? e)
         {
             _owner._moved = true;
-            _owner.LongPressRequested?.Invoke();
+            _owner.LongPressRequested?.Invoke(e?.GetX() ?? 0, e?.GetY() ?? 0);
         }
 
         /// <summary>双击切换适应/100%。</summary>
