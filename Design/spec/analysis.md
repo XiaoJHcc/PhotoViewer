@@ -4,7 +4,7 @@
 
 数值令牌：`analysis.*`、`color.analysis.*`、`shell.analysis.divider.thickness`、`motion.analysis.fallback.delay`（见 [tokens.json](../tokens.json)）。平台实现与差异见 [platforms.md](../platforms.md#analysis)，验收状态见 [status.md](../status.md#analysis)。
 
-> 退役：`ANL-01`（原生路径不得运行旧壳分析视图模型）只约束 Avalonia 实现，随旧壳退役；原 `ANL-02`–`ANL-04` 的规则保留为 `ANALYSIS-02`–`ANALYSIS-04`。
+> 退役：`ANL-01`（原生路径不得运行旧壳分析视图模型）只约束 Avalonia 实现，随旧壳退役；原 `ANL-02`–`ANL-04` 的规则保留为 `ANALYSIS-02`–`ANALYSIS-04`。原 Avalonia 分析栏的冻结几何与截图见 [baseline/avalonia/](../baseline/avalonia/README.md)，只作追溯基线，不作验收标准。
 
 ## ANALYSIS-01 入口、显隐与内容构成 · 必须
 

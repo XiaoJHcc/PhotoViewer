@@ -1,8 +1,8 @@
 # PhotoViewer.Shared — 跨壳共享源（几何 / 命令表）
 
-`PhotoViewer.Shared/` 是**纯源文件目录**（不是独立 csproj/程序集）。`PhotoViewer.Mac`、`PhotoViewer.iOS`、`PhotoViewer.Android` 三个头都以 `<Compile Include="..\PhotoViewer.Shared\**\*.cs"/>` 链接编译，并以 `<Using Include="PhotoViewer.Shared"/>` 引入命名空间（Android 头同样启用）。
+`PhotoViewer.Shared/` 是**纯源文件目录**（不是独立 csproj/程序集）。`PhotoViewer.Mac`、`PhotoViewer.iOS`、`PhotoViewer.Android`、`PhotoViewer.Windows` 四个头都以 `<Compile Include="..\PhotoViewer.Shared\**\*.cs"/>` 链接编译，并以 `<Using Include="PhotoViewer.Shared"/>` 引入命名空间。
 
-**硬规则**：本目录只允许纯 C#（`double` 数学 / 记录 / 静态表），不得出现 AppKit、UIKit、Android 或 Windows 平台类型，也不得引用 Avalonia。平台事件解包、原生视图、坐标换算留在各 head。
+**硬规则**：本目录只允许纯 C#（`double` 数学 / 记录 / 静态表），不得出现 AppKit、UIKit、Android 或 Windows 平台类型，也不得引入任何 UI 框架依赖。平台事件解包、原生视图、坐标换算留在各 head。
 
 **坐标空间**：共享几何一律以「点」为单位。Apple 头直接用逻辑点；Android 头**把 dp 当点**（`View` 的 px 只在边界换算，`PhotoViewport.ViewWidth/Height` 传 dp、`BackingScale = DisplayMetrics.Density`）。100% 口径仍是 1 源像素对 1 屏幕物理像素。
 
@@ -10,7 +10,7 @@
 
 | 文件 | 职责 |
 |---|---|
-| PhotoViewport.cs | 视口纯数学（纯 double）：适应缩放（`FitScale`）、锚点缩放与对焦点居中、平移钳制、导航图尺寸/可见范围（`NavigationSize`/`NavigationViewport`）、`NeedsFull`（物理 100% 或代理不足）；`ApplyGestureView(scale, panX, panY)` 供宿主手势（iOS `UIScrollView` 的 zoomScale/contentOffset）直接写入并统一钳制；`ApplyTexture(textureWidth)` 供**同一张照片的代理↔Full 热替换**只更新纹理宽度、不碰缩放/平移；`ApplyImage(...)` 供**切图**沿用原 Avalonia `OnBitmapChanged` 语义（适应态重新适应 / 跟随对焦时保持倍率并居中到新照片对焦点 / 否则保持倍率与同一归一化中心点，几何基准恒为全分辨率 `SourceWidth/Height`）；`ToggleFit(anchor?)` 是控制栏 Fit 命令与双击的共同语义（已放大 → 回适应；适应态无锚点且照片有对焦点 → 以对焦点为中心到物理 100% 并开启跟随；否则以锚点/视口中心放大；物理 100% 不高于适应倍率的小图保持适应）；`CenterUV` 与 `IsViewCenteredOnFocusPoint`（两轴 5% UV）在每次缩放/平移后重算 `FollowsFocus`。**100% 口径**：原生视口 = 1 源像素对 1 屏幕物理像素（`ZoomToPhysical`/`ToggleFit` 用 `1 / BackingScale`）；旧 Avalonia `Scale = 1` 是 1 源像素对 1 逻辑点（Retina 上等于 200% 物理像素），差异登记在 [ui-contract IMAGE-02](../Design/ui-contract.md)。 |
+| PhotoViewport.cs | 视口纯数学（纯 double）：适应缩放（`FitScale`）、锚点缩放与对焦点居中、平移钳制、导航图尺寸/可见范围（`NavigationSize`/`NavigationViewport`）、`NeedsFull`（物理 100% 或代理不足）；`ApplyGestureView(scale, panX, panY)` 供宿主手势（iOS `UIScrollView` 的 zoomScale/contentOffset）直接写入并统一钳制；`ApplyTexture(textureWidth)` 供**同一张照片的代理↔Full 热替换**只更新纹理宽度、不碰缩放/平移；`ApplyImage(...)` 供**切图**沿用原 Avalonia `OnBitmapChanged` 语义（适应态重新适应 / 跟随对焦时保持倍率并居中到新照片对焦点 / 否则保持倍率与同一归一化中心点，几何基准恒为全分辨率 `SourceWidth/Height`）；`ToggleFit(anchor?)` 是控制栏 Fit 命令与双击的共同语义（已放大 → 回适应；适应态无锚点且照片有对焦点 → 以对焦点为中心到物理 100% 并开启跟随；否则以锚点/视口中心放大；物理 100% 不高于适应倍率的小图保持适应）；`CenterUV` 与 `IsViewCenteredOnFocusPoint`（两轴 5% UV）在每次缩放/平移后重算 `FollowsFocus`。**100% 口径**：原生视口 = 1 源像素对 1 屏幕物理像素（`ZoomToPhysical`/`ToggleFit` 用 `1 / BackingScale`）；原 Avalonia `Scale = 1` 是 1 源像素对 1 逻辑点（Retina 上等于 200% 物理像素），差异登记在 [IMAGE-02](../Design/spec/image.md)。 |
 | MainScreenLayout.cs | 主屏分区几何：文件栏内容宽 116、筛选条五个控件位置（90×32 / 90×27 / 间距 5 / 外边距 10；行布局默认横向居中给 macOS 交通灯让位，`FilterBarFrames(alignLeading: true)` 时从内容前导边 + 10 起排，iPad/Android 用此模式；列布局 116 栏内纵排）、文件栏与控制栏主轴长度、两向分区矩形（文件栏/分隔线/主图/分析栏/控制栏，任一处长度为 0 即隐藏并把空间让给主图）。平台差异（macOS 隐藏标题栏让位、iOS/Android 真实安全区/无交通灯）留在各自 head。 |
 | FilmstripGeometry.cs | 胶片栏几何（96×144 卡片、10/5/10 内边距、横向首项居中、文档长度、可见项范围、FILM-02 居中偏移）与 `FilmstripAnimation`（350ms 三次缓出曲线、进度与 1 点阈值判定）。 |
 | ControlBarLayout.cs | 控制栏几何：分组类型（EXIF/评分/命令）的子控件尺寸与内边距、分组主轴/交叉轴长度、整组换行/换列、行内居中、文档尺寸与子控件偏移。宿主只落 frame。 |

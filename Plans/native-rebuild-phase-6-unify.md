@@ -42,6 +42,8 @@
 
 ### 共享层进度（10-18 完成）
 
+> 下表的 `file:line` 是当轮入口记录；其中 `PhotoViewer/Views/...`、`ImageViewModel.cs` 等旧壳文件已于 2026-10-19 随 6D 删除，保留只为追溯（等价实现见 `PhotoViewer.Shared/PhotoViewport.cs`、`Core/Exif/ExifDisplayConverters.cs` 等）。
+
 S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/filmstrip/toolbar/analysis/similarity/tools/settings 九套 PASS；iOS 模拟器、Android Debug 构建通过且无新增警告。已顺带改好四端 `Move` → `ThumbnailList.MoveCurrent`、`ZoomPreset` → `ZoomPresets.Next`（含 W4）。各壳还需接线的新 API：
 
 | API | 用途 | 壳侧接线 |
@@ -77,7 +79,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## Windows
 
-**进度（10-18 改完，未合入）**：W1–W19 全部改完，但只在 `native-rebuild-win` 分支（提交 e695a8b），**未合入主线**；开发机为 macOS，只做过 C# 类型检查（0 错误），未在 Windows 运行。验收待作者在 Windows 本机执行 `Check Windows Native`、`--pv-native-settings`、`--pv-native-tools` 并目视。W1 链接 `PhotoViewer.Shared`、视口改用共享 `PhotoViewport` 后，下列数值随令牌变化：
+**进度（2026-10-19 完成并合入）**：W1–W19 全部改完，原先在 `native-rebuild-win`（提交 e695a8b）做的类型检查（0 错误），已由作者在 Windows 本机验收后合入 `refactor/native-rebuild`（随 6C 收口）。W1 链接 `PhotoViewer.Shared`、视口改用共享 `PhotoViewport` 后，下列数值随令牌变化：
 
 - 导航图：圆角 8→6、可见框描边 2→1、宿主 alpha→0.6
 - 胶片带高 148→159
@@ -189,7 +191,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 - macOS：设置页顶部状态行的排版；提示条与「计算中」药丸同时出现时可能重叠；DINO 整宽刚体文本的换行。
 - iOS·iPadOS：真机提示条；损坏设置的状态行；下滑关闭工具页后重开的落点；EXIF 长按复制；500ms 药丸时机；新色值；Stage Manager 下控制栏滚动。
 - Android：设置三张表的拖拽与把手菜单；缩放预设边界；TalkBack 下控制栏虚拟节点与设置行；相似面板错误标签与 44dp 点击区；工具 sheet 关闭取消 DINO；触控板/滚轮分流；Sony ARW 对焦跟随；增强后的导航图。
-- Windows：`native-rebuild-win` 合入后跑 `Check Windows Native`、`--pv-native-settings`、`--pv-native-tools`，并按上文数值清单目视。
+- Windows：~~合入后跑三套检查~~ → **已完成**（作者 2026-10-19 在 Windows 本机验收并合入）。剩余手验：200%/175% DPI、真实跨屏、真实相机八方向素材、真实拖拽/录制/文件选择器手感、W-M7 色彩/RAW。
 
 遗留（本次未处理，需另立条目）：
 

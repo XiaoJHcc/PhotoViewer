@@ -13,7 +13,6 @@
 2. **必装 VS Code 扩展**
    - **C# Dev Kit** (`ms-dotnettools.csdevkit`)
    - **C#** (`ms-dotnettools.csharp`) 
-   - **Avalonia for VS Code** (`avalonia.avalonia-vscode`)
 
 *注：首次安装 C# Dev Kit 后需登录账号，等待依赖加载完毕，使智能提示生效。*
 
@@ -32,14 +31,12 @@
 
 ### 1. Windows
 - 💻 在文件边栏 EXPLORER 底部的 SOLUTION EXPLORER 中，右键点击项目 `PhotoViewer.Windows`，选择 Debug > **Start New Instance**。或：
-- ⚡ **Debug Windows**：完整发版构建并启动**原生壳**（WinUI 3）。
-- ⚡ **Run Windows**：**仅启动**，不触发构建，直接启动上次构建版本的**原生壳**。
-- ⚡ **Debug Windows (Legacy)** / **Run Windows (Legacy)**：同上的旧壳（Avalonia）路径，追加 `--legacy-ui`。
-- ⚡ **Compare Windows (Native + Legacy)**：构建后先后启动两壳，用于原生与旧壳的对拍（几何/交互回归）。
+- ⚡ **Debug Windows**：完整构建并启动 **WinUI 3 原生壳**。
+- ⚡ **Run Windows**：**仅启动**，不触发构建，直接启动上次构建版本的原生壳。
 - ⚡ **Check Windows Native**：构建并运行定向原生冒烟，隔离设置/数据库/日志和自有照片，结束后自动关闭；报告在 `release/native-win-acceptance/checks.json`，失败退出码 1。覆盖调度/模型/两向 resize/标题栏/Full 热替换，不替代完整 UI、跨屏与色彩验收。
-  - 专项（命令行从仓库根运行，参数在 `--native` 后追加）：`--pv-native-settings`（设置窗口 7 项，报告 `settings-checks.json`）、`--pv-native-settings-hold`（保持设置窗口供目视）、`--pv-native-tools`（工具窗口 5 项，报告 `tools-checks.json`）、`--pv-native-tools-hold`（保持工具窗口供截图/目视）。
+  - 专项（命令行从仓库根运行，参数直接追加在 `--` 后）：`--pv-native-settings`（设置窗口 7 项，报告 `settings-checks.json`）、`--pv-native-settings-hold`（保持设置窗口供目视）、`--pv-native-tools`（工具窗口 5 项，报告 `tools-checks.json`）、`--pv-native-tools-hold`（保持工具窗口供截图/目视）。
 
-> Debug 默认原生壳，`--legacy-ui` 显式退回旧壳；Release 相反（默认旧壳，`--native` 进原生），与 macOS 同一套口径。
+> Debug 与 Release 都直接进原生壳，没有旧壳入口或分流参数（历史 `--native` / `--legacy-ui` 传入时被忽略）。
 > 需要直接打开某张照片时在命令末尾追加路径：`dotnet run --project PhotoViewer.Windows -c Debug -- D:\path\a.jpg`。
 
 ### 2. Android
@@ -55,9 +52,7 @@
 - ⚡ **Debug Android**：编译并自动将新版推送到已连接设备（真机或模拟器）直接启动，并在随后启动独立终端附加捕捉 Logcat 打印。
 - ⚡ **Install Android**：**仅安装**，不触发构建，直接安装上次构建版本。
 
-> **原生壳 / 旧壳分派（A1b 起）**：Debug 默认原生壳；旧壳显式回退：
-> `adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-flags "--legacy-ui"`。
-> Release 默认旧壳，`--es pv-flags "--native"` 进入原生壳。唯一 launcher 是 `AndroidBootstrapActivity`，目标 Activity 不带 launcher/filter。
+> **唯一入口**：Debug 与 Release 都只启动原生壳。唯一 launcher 是 `AndroidBootstrapActivity`（转发 `ACTION_VIEW` / `ACTION_SEND` 到 `AndroidNativeActivity`），目标 Activity 不带 launcher/filter；历史 `pv-flags` 分流参数已不存在。
 >
 > **原生壳验收（A6 起步）**：夹具先推到 App 内部目录（`adb push` 到 `/data/local/tmp` 后 `run-as cc.xiaojh.PhotoViewer cp` 到 `files/pv-fixtures`），再：
 > `adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-open @files/pv-fixtures --es pv-check main`
@@ -67,25 +62,21 @@
 ### 3. Mac
 - ⚡ **Debug Mac**：完整触发 `dotnet build` 后，自动启动原生版 `.app`，解决原生的系统签名拦截。
 - ⚡ **Run Mac**：**仅启动**，不触发构建，直接打开上次已编译签名完毕的原生版 `.app`。
-- ⚡ **Debug Mac (Legacy)** / **Run Mac (Legacy)**：带 `--legacy-ui` 编译或直接启动 Avalonia 旧壳实例。
-- ⚡ **Compare Mac (Native + Legacy)**：编译并同时拉起原生版与 Avalonia 旧壳两个实例，便于同屏对比。
 
-> `refactor/native-rebuild` 的 P2：Debug 默认 AppKit + Metal 原生壳；对照旧壳使用 `open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app --args --legacy-ui`。Release 默认旧壳，验收前不切换发布通道；Release 原生验证用 `--native`。产品验收与程序化冒烟见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
+> Debug 与 Release 都直接进 AppKit + Metal 原生壳（历史 `--legacy-ui` / `--native` 参数被忽略）。产品验收与程序化冒烟见 [Plans/native-rebuild-phase-2-acceptance.md](Plans/native-rebuild-phase-2-acceptance.md)。
 
 ### 4. iOS
 *前提：安装 Xcode。模拟器调试需开启任意一台 Simulator (`open -a Simulator`)。真机需配置 Developer Certificate（在 Xcode 中登录 Apple ID 即可自动管理签名）。*
 - ⚡ **Clean Build Caches (All Platforms)**：清理仓库内所有平台的 `bin/obj`，并清空 NuGet 临时/http 缓存、Xcode DerivedData、Xamarin iOS/macOS 本机构建缓存；适合版本回退、SDK 升降级、疑似脏缓存时执行。
-- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起（Debug 默认 UIKit 原生壳）。
+- ⚡ **Debug iOS Simulator**：构建完毕后，自动透过 `simctl` 覆写推入当前运行的模拟器并拉起（UIKit 原生壳）。
 - ⚡ **Install iOS Simulator**：**仅安装**上一次构建产物至当前运行的模拟器，不重新构建。
-- ⚡ **Debug iOS**：构建 arm64 **Release** 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动；Release 默认进 Avalonia 旧壳。
-- ⚡ **Debug iOS (Native)**：与 **Debug iOS** 相同，但以 `--native` 启动 iPad 原生壳（Release 配置、真机程序化验收用这条）。
+- ⚡ **Debug iOS**：构建 arm64 **Release** 产物后，弹窗选择目标设备，使用 `xcrun devicectl` 安装并启动（Release 配置同样直接进原生壳，真机程序化验收用这条）。
 - ⚡ **Install iOS**：弹窗选择目标设备，将上一次构建产物覆写安装至真机并启动，不重新构建。
 - ⚡ **Install iOS Stable (Release)**：将 `release/ios-stable/PhotoViewer.iOS.app` 中归档的稳定包重新安装到真机并启动，不依赖当前 Release 输出目录。
-- ⚡ **Debug iOS Simulator (Legacy)**：与 **Debug iOS Simulator** 相同，但带 `--legacy-ui` 启动 Avalonia 旧壳，便于与原生壳对照。
 
-> `refactor/native-rebuild` 的 I1–I5 已落地：**Debug 默认 UIKit 原生壳**（不创建 Avalonia 对象），I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）、I4 输入（上下文菜单/硬件键盘/滚轮/轻扫翻页/拖入/设置回写）、I5 P3 功能（分析栏/相似聚类/工具页/增强预览）全部可用。旧壳启动加 `--legacy-ui`，或写入开关 `defaults write cc.xiaojh.PhotoViewer PVLegacyUI -bool YES`。**Release 默认旧壳**，模拟器与真机同规则：原生壳用 `--native`（真机开发用 **Debug iOS (Native)**）。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --pv-open <路径>` 可直接验证原生壳的外部打开链路。
+> I1–I5 已落地，Debug 与 Release 都只启动 **UIKit 原生壳**（历史 `--native` / `--legacy-ui` 参数与 `PVLegacyUI` 偏好不再参与壳选择）：I1 基座、I2 主图（Metal + `UIScrollView` 手势 + 编码协商）、I3 主屏布局（文件栏/胶片栏/筛选条/控制栏、安全区、两向与自动布局）、I4 输入（上下文菜单/硬件键盘/滚轮/轻扫翻页/拖入/设置回写）、I5 P3 功能（分析栏/相似聚类/工具页/增强预览）全部可用。启动参数由 `NSProcessInfo` 传入，故 `xcrun simctl launch <udid> cc.xiaojh.PhotoViewer --pv-open <路径>` 可直接验证外部打开链路。
 >
-> **程序化验收钩子**（参数只在验收会话生效，报告写 App 沙盒 `Documents/PhotoViewer/`）：`--pv-native-photo-check <目录>`、`--pv-native-layout-check <目录>`、`--pv-native-input-check <目录>`、`--pv-native-analysis-check <目录>`、`--pv-native-similarity-check <目录>`、`--pv-native-tools-check <目录>`、`--pv-dino-check <文件>`；辅助开关 `--pv-layout-mode row|col`、`--pv-analysis-open`。素材要求、真机 `devicectl` 步骤与各套件断言见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) "验收线索"；计划与结果见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)，作者手验见 [Plans/native-rebuild-phase-ipad-acceptance.md](Plans/native-rebuild-phase-ipad-acceptance.md)。
+> **程序化验收钩子**（参数只在验收会话生效，报告写 App 沙盒 `Documents/PhotoViewer/`）：`--pv-native-photo-check <目录>`、`--pv-native-gesture-check <目录>`、`--pv-native-layout-check <目录>`、`--pv-native-input-check <目录>`、`--pv-native-analysis-check <目录>`、`--pv-native-similarity-check <目录>`、`--pv-native-tools-check <目录>`、`--pv-dino-check <文件>`；辅助开关 `--pv-layout-mode row|col`、`--pv-analysis-open`。素材要求、真机 `devicectl` 步骤与各套件断言见 [PhotoViewer.iOS/AGENTS.md](PhotoViewer.iOS/AGENTS.md) "验收线索"；计划与结果见 [Plans/native-rebuild-phase-ipad.md](Plans/native-rebuild-phase-ipad.md)，作者手验见 [Plans/native-rebuild-phase-ipad-acceptance.md](Plans/native-rebuild-phase-ipad-acceptance.md)。
 
 - ⚡ **Refresh iOS Profile**：免费 Apple ID 的 Provisioning Profile 每 7 天过期一次，过期后 **Debug iOS** 会构建失败（`找不到任何可用预配配置文件`）。执行此 Task 调用占位 Xcode 工程 `Tools/RefreshIosProfile/` 触发 `xcodebuild -allowProvisioningUpdates` 续期同 bundle id 的 Profile，随后再跑 **Debug iOS** 即可正常安装到真机。
   - **首次使用**：先复制本地配置并填入你的 Apple Developer Team ID：
@@ -110,7 +101,8 @@
 
 ### 1. Windows 单文件
 - ⚡ Task: **`Publish Windows EXE (Release)`**
-- 原生支持剪裁，打包成真正的单文件免依赖执行程序。
+- 原生支持剪裁，打包成单文件免依赖执行程序。
+- **已知限制（2026-10-19）**：单文件产物缺 `PhotoViewer.Windows.pri` 时 `Application.Start` 抛 `0x80040111`，单文件发布尚未打通；多文件发布可用。单文件发布前需先修 PRI/运行时打包（见 [PhotoViewer.Windows/AGENTS.md](PhotoViewer.Windows/AGENTS.md) 与 [Plans/native-rebuild-phase-6.md](Plans/native-rebuild-phase-6.md) 6E-2）。
 
 ### 2. Android APK
 - ⚡ Task: **`Publish Android APK (Release)`**

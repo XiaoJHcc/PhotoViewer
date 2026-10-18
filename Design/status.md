@@ -4,7 +4,7 @@
 
 **证据规则**：每个格子只写"状态 + 日期 + 一句短语"，完整 OS、设备、素材与证据路径见对应计划文档；程序化通过不等于作者手验，不能把一个平台的结果复制给另一个平台。未登记的 ID 一律写 `待核验`。平台实现入口见 [platforms.md](platforms.md)。
 
-证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Android](../Plans/native-rebuild-phase-android.md) · [ui-contract §4](ui-contract.md#4-四平台对账表)。
+证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Android](../Plans/native-rebuild-phase-android.md)。
 
 ## film
 

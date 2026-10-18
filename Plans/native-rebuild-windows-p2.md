@@ -196,7 +196,7 @@ PhotoViewer.Windows/
 - CLI(与 Mac 同形):`--pv-native-smoke` + `--pv-native-layout` / `--pv-native-filmstrip` / `--pv-native-input` / `--pv-native-toolbar`,以及 `--legacy-ui --pv-legacy-layout`;隔离设置/数据库落 `release/native-win-acceptance/`,**不写用户照片、不动用户设置**。
 - 几何对拍:3 尺寸(1200×850 / 830×650 / 700×480)× 2 方向,旧壳 JSON ↔ 原生实测 `Exact = 0.01`。
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
-- 文档:本文、`Plans/native-rebuild-phase-4-windows-acceptance.md`、`Design/ui-contract.md` Windows 列(**编译通过≠验收通过**)、[架构文档](../Design/architecture.md) §4 平台矩阵 + 根 `AGENTS.md` 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md` 增 `Debug Windows (Legacy UI)`。
+- 文档:本文（§12–§18 即 Windows 验收记录）、`Design/status.md` 的 Windows 列(**编译通过≠验收通过**)、[架构文档](../Design/architecture.md) §4 平台矩阵 + 根 `AGENTS.md` 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md`（旧壳 `Debug Windows (Legacy UI)` 任务已随 6D 删除）。
 
 **W-M7(独立立项)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)+ Windows `LibRawDecoder`(`Sdcb.LibRaw`)。
 

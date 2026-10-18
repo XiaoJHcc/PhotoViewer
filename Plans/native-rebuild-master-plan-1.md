@@ -86,10 +86,10 @@ plan-1 §0 调查结论不变:Avalonia 全平台零色彩管理、解码端丢 I
 
 | 平台 | 全分辨率产物 | 代理图产物 | 说明 |
 |---|---|---|---|
-| macOS | 16float scRGB | 8bit sRGB | 桌面内存宽松,全量 plan-1 配置 |
-| iOS | **按机型/压力二选一**:16float scRGB(高预算机型)或 8bit P3 + 抖动(低预算/压力下) | 8bit sRGB | 由 MemoryGovernor 依据预算实时决策;8bit P3 在 Apple 屏上仍全色域正确,损失仅为超 P3 内容与平滑渐变余量 |
-| Windows | 16float scRGB(ACM)/ 8bit 烘焙(Win10 回退,plan-1 §3.2) | 8bit sRGB | — |
-| Android | 8bit P3(探测失败回退 sRGB)+ 抖动 | 8bit sRGB | plan-1 已定 Android SDR 只有 8bit P3 |
+| macOS | 16float 扩展线性 sRGB | 16float 扩展线性 sRGB | 桌面内存宽松,全量 plan-1 配置 |
+| iOS | **8bit Display P3**(抖动) | **16float 扩展线性 sRGB**;压力 ≥ Warning 时降 8bit P3 | 现行口径（I2 落地）：Full 档 8bit P3、代理档 F16，压力下代理也降 8 位；8bit P3 在 Apple 屏上仍全色域正确,损失仅为超 P3 内容与平滑渐变余量 |
+| Windows | 16float 线性 scRGB（本阶段恒 F16） | 16float 线性 scRGB | ACM/8bit 烘焙回退（W-M7）尚未实现 |
+| Android | 8bit P3(探测失败回退 sRGB) | 8bit P3/sRGB（与 Full 同档） | 恒 Rgba8；plan-1 已定 Android SDR 只有 8bit P3 |
 
 **派生功能输入口径**:直方图/分析栏/DINO 诊断的输入从"全分辨率位图"改为"代理图 + 必要的全分辨率按需取样"(DINO 本来就只吃 560 短边缩略图,直方图用代理图统计视觉无差)——消灭 §2.1-P6 的整图拷贝。
 
@@ -198,7 +198,7 @@ MemoryGovernor(Core/Platform 或 Core/Memory,静态门面 + 平台注入)
 复用 Phase 2 的 Metal 渲染器;另一个平台的设置页/胶片条/工具页归位。
 
 ### Phase 4 — Windows(WinUI3 + DXGI FP16 + ACM/烘焙回退 + LibRawDecoder)
-### Phase 5 — Android(Views + GLSurfaceView P3 探测 + SAF 迁移)
+### Phase 5 — Android(Views + SurfaceView/自有 EGL14 P3 探测 + SAF 迁移)
 
 > 2026-10-18 立项：执行清单见 [native-rebuild-phase-android.md](native-rebuild-phase-android.md)，作者验收见 [native-rebuild-phase-android-acceptance.md](native-rebuild-phase-android-acceptance.md)。已定决策：Views + Material 3（不用 Compose）、主题固定深色且禁用 DynamicColors、7 个纯几何文件提为 `PhotoViewer.Shared/` 供三壳共用、`SurfaceView` + 自有 EGL14 做 P3 探测（`GLSurfaceView` 不暴露色彩空间属性）、设置走半屏 Bottom Sheet、SAF 取代宽存储权限。
 

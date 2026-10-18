@@ -24,7 +24,7 @@
 | 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入见 OPEN-07@android） |
 | EXIF 详情表 | 自绘 `NSView` + `ExifTableGeometry`（7 列） | `UITableView`（7 列几何） | `Grid`（7 列） | 线性行（4 个内容列承载 7 列几何，见 TOOLS-03@android） |
 
-> Windows 列记录 `native-rebuild-win` 分支（提交 e695a8b，尚未合入主线）的接线：该分支链接 `PhotoViewer.Shared`、主图视口改用共享 `PhotoViewport`，`WindowsLayout` 从「并行常量」改为转接共享几何与令牌；主线仍为旧实现，未在 Windows 本机运行验证。
+> Windows 列记录 `native-rebuild-win` 分支（已于 2026-10-18 合入 `refactor/native-rebuild`，作者在 Windows 本机验收）的接线：头工程链接 `PhotoViewer.Shared`、主图视口使用共享 `PhotoViewport`，`WindowsLayout` 从「并行常量」改为转接共享几何与令牌。
 
 ## 令牌层平台差异（tokens.json `platforms`）
 
@@ -59,7 +59,7 @@
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs:139`（缩略图圆角）、`:171`（第二行 y）、`:288-307`（卡片菜单）。
   - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足（已登记 10-18）。
 - **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:581`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:686`）。
-- **追溯（ui-contract §6）**：基线定位/动画 `PhotoViewer/Views/Main/File/ThumbnailListView.axaml.cs`；触发 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
+- **追溯**：旧壳定位/动画的冻结几何与截图见 `Design/baseline/avalonia/`（旧视图源码只存在于 tag `avalonia-final` 之前的历史）；现行触发与定位逻辑在共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
 
 ## shell
 
@@ -101,7 +101,7 @@
 
 ## image
 
-- **IMAGE-01、IMAGE-03、IMAGE-05、IMAGE-08**：共享视口数学 `PhotoViewer.Shared/PhotoViewport.cs:7`；加载会话 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；代理 overscan `PhotoViewer/ViewModels/Main/ImageViewModel.cs:34`。
+- **IMAGE-01、IMAGE-03、IMAGE-05、IMAGE-08**：共享视口数学 `PhotoViewer.Shared/PhotoViewport.cs:7`；加载会话 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；代理 overscan 由各壳下发给 `BitmapLoader`（代理目标长边 = 渲染表面物理像素 × `image.proxy.overscan`，见 `PhotoViewer/Core/Image/BitmapLoader.cs:342`）。
   - macOS：`PhotoViewer.Mac/Native/MetalPhotoView.cs` + `PhotoViewer.Apple/MetalPhotoRenderer.cs`。
   - iOS：`PhotoViewer.iOS/Native/iOSPhotoView.cs`（`UIScrollView` 为交互真源）。
   - Windows：`PhotoViewer.Windows/Native/WindowsPhotoView.cs`（`SwapChainPanel` + D3D11）。

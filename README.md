@@ -1,6 +1,6 @@
 # PhotoViewer
 
-一个基于 Avalonia 开发的全平台照片查看器，专为摄影选片流程优化设计。
+一个基于 .NET 10 与四端原生界面（Windows / macOS / iPadOS / Android）的全平台照片查看器，专为摄影选片流程优化设计。
 
 ![image](README-IMG/PhotoViewer-Mockup.jpg)
 

@@ -2,7 +2,7 @@
 
 本目录是四端（Windows / macOS / iOS·iPadOS / Android）UI 与交互的唯一设计基准。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
 
-> 迁移期说明：`spec/`、`tokens.json`、`platforms.md`、`status.md` 由 [ui-contract.md](ui-contract.md) 拆分建立（见 [Phase 6 清单](../Plans/native-rebuild-phase-6.md) 6B）。拆分完成前 ui-contract.md 继续有效；完成后它只保留跳转说明。
+> 迁移完成（2026-10-19，[Phase 6 清单](../Plans/native-rebuild-phase-6.md) 6B）：`spec/`、`tokens.json`、`platforms.md`、`status.md` 已从原 `ui-contract.md` 拆分并成为唯一真源；旧文件只保留跳转说明。
 
 ## 1. 组成
 
