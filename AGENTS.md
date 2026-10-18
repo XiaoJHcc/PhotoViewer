@@ -11,8 +11,9 @@ PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评�
 - 产品范围、截图与支持格式：[README.md](README.md)
 - 构建、运行与发布：[DEV.md](DEV.md)（统一使用 VS Code Tasks）
 - 跨模块架构、平台差异与关键流程：[Design/architecture.md](Design/architecture.md)
-- UI 行为契约与验收状态：[Design/ui-contract.md](Design/ui-contract.md)
-- 当前重构进度、分支与下一步：[Plans/native-rebuild-handoff.md](Plans/native-rebuild-handoff.md)
+- **设计规范总则（UI 改动先改设计再四端执行、设计 ID、令牌、样机）**：[Design/README.md](Design/README.md)
+- UI 行为契约与验收状态（拆分迁移中）：[Design/ui-contract.md](Design/ui-contract.md)
+- 当前重构进度、分支与下一步：[Plans/native-rebuild-handoff.md](Plans/native-rebuild-handoff.md) · 收尾阶段：[Plans/native-rebuild-phase-6.md](Plans/native-rebuild-phase-6.md)
 - AI 训练独立仓：[Training/README.md](Training/README.md) · [Training/AGENTS.md](Training/AGENTS.md)
 
 ## 项目结构
@@ -27,7 +28,7 @@ PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（A1b 基座）+ 迁移期旧壳
 Tools/                        # 诊断与维护工具
 Training/                     # AI 训练独立 git 仓库（主库忽略）
-Design/                       # 架构说明与 UI 契约
+Design/                       # 设计规范（总则/令牌/样机/冻结基线）、架构说明与 UI 契约
 Plans/                        # 方案、阶段清单与任务进度
 release/                      # 发布产物
 ```
