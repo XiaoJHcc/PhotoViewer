@@ -9,9 +9,10 @@ using Android.Text;
 using Android.Views;
 using Android.Widget;
 using AndroidX.Core.Content;
+using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.BottomSheet;
-using Google.Android.Material.CheckBox;
 using Google.Android.Material.SwitchMaterial;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
@@ -55,7 +56,7 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
         try
         {
             var session = new NativeSettingsSession(settings);
-            var content = new AndroidSettingsSheetView(_activity, session, Dismiss);
+            var content = new AndroidSettingsSheetView(_activity, settings, session, Dismiss);
             var dialog = new BottomSheetDialog(_activity, Resource.Style.Theme_PhotoViewer_BottomSheet);
             var metrics = _activity.Resources?.DisplayMetrics;
             int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
@@ -106,11 +107,13 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
 internal sealed class AndroidSettingsSheetView : FrameLayout
 {
     private readonly Activity _activity;
+    private readonly SettingsViewModel _source;
     private readonly NativeSettingsSession _session;
     private readonly Action _dismiss;
     private readonly LinearLayout _content;
     private readonly TextView _title;
     private readonly TextView _back;
+    private readonly TextView _persistenceStatus;
     private readonly List<(TextView Label, Func<string> Text)> _dynamicTexts = [];
     private string _page = "root";
     private bool _closed;
@@ -122,11 +125,14 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     /// <summary>建立 sheet 视图树。</summary>
     /// <param name="activity">宿主 Activity。</param>
+    /// <param name="source">源设置 ViewModel（持久化状态与工作副本的提交目标）。</param>
     /// <param name="session">设置工作副本会话。</param>
     /// <param name="dismiss">关闭回调。</param>
-    public AndroidSettingsSheetView(Activity activity, NativeSettingsSession session, Action dismiss) : base(activity)
+    public AndroidSettingsSheetView(Activity activity, SettingsViewModel source,
+        NativeSettingsSession session, Action dismiss) : base(activity)
     {
         _activity = activity;
+        _source = source;
         _session = session;
         _dismiss = dismiss;
         double density = AndroidUiTheme.Density(activity);
@@ -166,6 +172,15 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         root.AddView(header, new LinearLayout.LayoutParams(LayoutParams.MatchParent, (int)(48 * density)));
 
+        // SETTINGS-14：读取/保存失败在设置页顶部显示一行可见状态。
+        _persistenceStatus = Text("", 12, AndroidUiTheme.ErrorText);
+        _persistenceStatus.SetPadding((int)(16 * density), (int)(6 * density),
+            (int)(16 * density), (int)(6 * density));
+        root.AddView(_persistenceStatus, new LinearLayout.LayoutParams(
+            LayoutParams.MatchParent, LayoutParams.WrapContent));
+        _source.PropertyChanged += OnSourceChanged;
+        RefreshPersistenceStatus();
+
         var scroll = new ScrollView(activity) { FillViewport = true };
         scroll.SetBackgroundColor(Color.Transparent);
         _content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
@@ -198,6 +213,30 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _closed = true;
         _session.Apply();
         _dismiss();
+    }
+
+    /// <summary>源设置持久化状态变化时刷新顶部状态行。</summary>
+    private void OnSourceChanged(object? sender, global::System.ComponentModel.PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) Post(RefreshPersistenceStatus);
+    }
+
+    /// <summary>显示或隐藏设置页顶部的持久化失败状态行。</summary>
+    private void RefreshPersistenceStatus()
+    {
+        string? status = _source.PersistenceStatus;
+        _persistenceStatus.Text = status ?? "";
+        _persistenceStatus.Visibility = string.IsNullOrWhiteSpace(status)
+            ? ViewStates.Gone
+            : ViewStates.Visible;
+    }
+
+    /// <summary>释放时解除源设置订阅。</summary>
+    /// <param name="disposing">是否释放托管资源。</param>
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _source.PropertyChanged -= OnSourceChanged;
+        base.Dispose(disposing);
     }
 
     /// <summary>重建页面内容。</summary>
@@ -244,19 +283,17 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         Add(_content, Section(null, null, SwitchRow("同名文件视为同一张图片",
             "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
             () => Settings.SameNameAsOnePhoto, value => Settings.SameNameAsOnePhoto = value)));
-        var formatRows = new List<View>();
-        var formats = Settings.FileFormats;
-        for (int index = 0; index < formats.Count; index++)
-        {
-            int captured = index;
-            var item = formats[index];
-            formatRows.Add(CheckableRow(item.DisplayName, item.ExtensionsText, () => item.IsEnabled,
-                value => item.IsEnabled = value,
-                () => { Settings.MoveFileFormat(captured, captured - 1); BuildPage("files"); },
-                () => { Settings.MoveFileFormat(captured, captured + 1); BuildPage("files"); },
-                enabledUp: captured > 0, enabledDown: captured < formats.Count - 1));
-        }
-        Add(_content, Section("支持的文件格式", null, Card(formatRows)));
+        var formats = new AndroidSettingsReorderList(_activity,
+            () => Settings.FileFormats.Count,
+            index =>
+            {
+                var item = Settings.FileFormats[index];
+                return new AndroidSettingsReorderList.SettingsReorderItem(
+                    item.DisplayName, item.ExtensionsText,
+                    () => item.IsEnabled, value => item.IsEnabled = value);
+            },
+            (from, to) => Settings.MoveFileFormat(from, to));
+        Add(_content, SectionView("支持的文件格式", null, formats));
         var info = new List<View>();
         var performance = InfoLabel(() => Settings.PerformanceBudgetInfo);
         var cache = InfoLabel(() => Settings.BitmapCacheCountInfo);
@@ -310,37 +347,39 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     {
         Add(_content, Section("控制栏布局位置", null,
             NavigationRow("布局模式", null, CurrentLayoutModeName(), ShowLayoutModePicker)));
-        var rows = new List<View>();
-        var hotkeys = Settings.Hotkeys;
-        for (int index = 0; index < hotkeys.Count; index++)
-        {
-            int captured = index;
-            var item = hotkeys[index];
-            rows.Add(CheckableRow(item.Name, null, () => item.IsDisplay,
-                value => item.IsDisplay = value,
-                () => { Settings.MoveHotkey(captured, captured - 1); BuildPage("control"); },
-                () => { Settings.MoveHotkey(captured, captured + 1); BuildPage("control"); },
-                enabledUp: captured > 0, enabledDown: captured < hotkeys.Count - 1));
-        }
-        Add(_content, Section("控制栏功能", "勾选决定是否显示在控制栏，上下按钮调整顺序。", Card(rows)));
+        var hotkeys = new AndroidSettingsReorderList(_activity,
+            () => Settings.Hotkeys.Count,
+            index =>
+            {
+                var item = Settings.Hotkeys[index];
+                string primary = HotkeyBinding(item.PrimaryHotkeyText, item.HasPrimaryConflict);
+                string secondary = HotkeyBinding(item.SecondaryHotkeyText, item.HasSecondaryConflict);
+                // SETTINGS-01：移动端只读显示主/次绑定与冲突；冲突用文本表达，不只换颜色。
+                return new AndroidSettingsReorderList.SettingsReorderItem(
+                    item.Name, $"主 {primary} · 次 {secondary}",
+                    () => item.IsDisplay, value => item.IsDisplay = value,
+                    $"{item.Name}，{(item.IsDisplay ? "已启用" : "未启用")}，主绑定 {primary}，次绑定 {secondary}");
+            },
+            (from, to) => Settings.MoveHotkey(from, to));
+        Add(_content, SectionView("控制栏功能",
+            "勾选决定是否显示在控制栏；拖动手柄排序，轻点手柄可用上移/下移菜单。", hotkeys));
     }
 
     /// <summary>EXIF 页：显示项勾选/排序、评分显示与安全写回。</summary>
     private void BuildExifPage()
     {
-        var rows = new List<View>();
-        var items = Settings.ExifDisplayItems;
-        for (int index = 0; index < items.Count; index++)
-        {
-            int captured = index;
-            var item = items[index];
-            rows.Add(CheckableRow(item.DisplayName, null, () => item.IsEnabled,
-                value => item.IsEnabled = value,
-                () => { Settings.MoveExifDisplay(captured, captured - 1); BuildPage("exif"); },
-                () => { Settings.MoveExifDisplay(captured, captured + 1); BuildPage("exif"); },
-                enabledUp: captured > 0, enabledDown: captured < items.Count - 1));
-        }
-        Add(_content, Section("EXIF 显示/收纳", "勾选决定是否显示在控制栏，上下按钮调整顺序。", Card(rows)));
+        var items = new AndroidSettingsReorderList(_activity,
+            () => Settings.ExifDisplayItems.Count,
+            index =>
+            {
+                var item = Settings.ExifDisplayItems[index];
+                return new AndroidSettingsReorderList.SettingsReorderItem(
+                    item.DisplayName, null,
+                    () => item.IsEnabled, value => item.IsEnabled = value);
+            },
+            (from, to) => Settings.MoveExifDisplay(from, to));
+        Add(_content, SectionView("EXIF 显示/收纳",
+            "勾选决定是否显示在控制栏；拖动手柄排序，轻点手柄可用上移/下移菜单。", items));
         Add(_content, Section("评分与写回", null,
             SwitchRow("显示星级评分", null, () => Settings.ShowRating, value => Settings.ShowRating = value),
             SwitchRow("安全修改文件星级", "检验文件字节变化再写回，降低损坏原文件概率",
@@ -396,29 +435,40 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return Settings.LayoutMode.ToString();
     }
 
-    /// <summary>缩放预设行：数值、编辑、删除。</summary>
+    /// <summary>快捷键副标题中的绑定文本；冲突在同一绑定后标注（SETTINGS-11）。</summary>
+    /// <param name="text">绑定显示文本。</param>
+    /// <param name="conflict">该绑定是否冲突。</param>
+    /// <returns>带冲突标记的文本。</returns>
+    private static string HotkeyBinding(string text, bool conflict) => conflict ? $"{text}（冲突）" : text;
+
+    /// <summary>缩放预设行：数值、编辑、删除；只剩一项时删除无效。</summary>
     private View ScalePresetRow(SettingsViewModel.ScalePreset preset)
     {
         var row = Row();
         var text = Text($"{preset.Display}", 15, AndroidUiTheme.TextPrimary);
         text.Clickable = true;
         text.Click += (_, _) => EditScalePreset(preset, isNew: false);
+        bool canRemove = Settings.CanRemoveScalePreset;
         var delete = Button("−", 18, () =>
         {
             Settings.RemoveScalePreset(preset);
             BuildPage("preview");
         });
+        delete.Enabled = canRemove;
+        delete.Alpha = canRemove ? 1f : .35f;
+        delete.ContentDescription = $"删除缩放比例 {preset.Text}%";
         row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
         row.AddView(delete, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
         return row;
     }
 
-    /// <summary>编辑/新增缩放预设（输入百分比，>0）。</summary>
+    /// <summary>编辑/新增缩放预设；百分比必须 &gt;0 且 ≤1600，非法输入不写入并恢复原值（SETTINGS-07）。</summary>
     private void EditScalePreset(SettingsViewModel.ScalePreset preset, bool isNew)
     {
+        string original = preset.Text;
         var input = new EditText(_activity)
         {
-            Text = preset.Text,
+            Text = original,
             InputType = InputTypes.ClassNumber | InputTypes.NumberFlagDecimal,
         };
         input.SetTextColor(AndroidUiTheme.TextPrimary);
@@ -427,21 +477,30 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var builder = new AlertDialog.Builder(_activity);
         builder.SetTitle(isNew ? "添加缩放比例" : "编辑缩放比例");
         builder.SetView(input);
-        builder.SetPositiveButton("确定", (_, _) =>
+        builder.SetPositiveButton("确定", (_, _) => { });
+        builder.SetNegativeButton("取消", (_, _) => { });
+        var dialog = builder.Create();
+        if (dialog == null) return;
+        dialog.Show();
+        var positive = dialog.GetButton((int)DialogButtonType.Positive);
+        if (positive == null) return;
+        positive.Click += (_, _) =>
         {
+            // SETTINGS-07：输入必须 > 0 且 ≤ 1600%；非法时不写入，提示一次并恢复原值。
             if (!double.TryParse(input.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-                || value <= 0)
+                || !SettingsViewModel.IsValidScalePresetPercent(value))
             {
-                Toast.MakeText(_activity, "请输入大于 0 的数字", ToastLength.Short)?.Show();
+                Toast.MakeText(_activity, "请输入大于 0 且不超过 1600 的数字", ToastLength.Short)?.Show();
+                input.Text = original;
+                input.SetSelection(input.Text?.Length ?? 0);
                 return;
             }
             preset.Text = value.ToString("0.###", CultureInfo.InvariantCulture);
             if (isNew) Settings.ScalePresets.Add(preset);
             Settings.ApplyScalePreset();
+            dialog.Dismiss();
             BuildPage("preview");
-        });
-        builder.SetNegativeButton("取消", (_, _) => { });
-        builder.Show();
+        };
     }
 
     /// <summary>分类入口行。</summary>
@@ -525,27 +584,6 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return row;
     }
 
-    /// <summary>可勾选 + 上下排序行。</summary>
-    private View CheckableRow(string title, string? subtitle, Func<bool> getter, Action<bool> setter,
-        Action moveUp, Action moveDown, bool enabledUp, bool enabledDown)
-    {
-        var row = Row();
-        var check = new MaterialCheckBox(_activity) { Checked = getter() };
-        check.CheckedChange += (_, args) => setter(args.IsChecked);
-        var column = TextColumn(title, subtitle);
-        row.AddView(check, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
-        row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
-        var up = Button("↑", 16, moveUp);
-        up.Enabled = enabledUp;
-        up.Alpha = enabledUp ? 1f : .35f;
-        var down = Button("↓", 16, moveDown);
-        down.Enabled = enabledDown;
-        down.Alpha = enabledDown ? 1f : .35f;
-        row.AddView(up, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
-        row.AddView(down, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
-        return row;
-    }
-
     /// <summary>整行按钮（添加预设等）。</summary>
     private View TextButtonRow(string title, Action action)
     {
@@ -560,6 +598,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     /// <summary>分区：可选标题 + 卡片 + 可选脚注。</summary>
     private View Section(string? title, string? footer, params View[] rows)
+        => SectionView(title, footer, Card(rows));
+
+    /// <summary>分区：标题 + 现成卡片（可排序表自带圆角卡片）+ 脚注。</summary>
+    private View SectionView(string? title, string? footer, View card)
     {
         var section = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         section.SetPadding(0, (int)AndroidUiTheme.Dp(_activity, 10), 0, 0);
@@ -569,7 +611,6 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             header.SetPadding((int)AndroidUiTheme.Dp(_activity, 4), 0, 0, (int)AndroidUiTheme.Dp(_activity, 6));
             section.AddView(header);
         }
-        var card = Card(rows);
         section.AddView(card);
         if (!string.IsNullOrWhiteSpace(footer))
         {

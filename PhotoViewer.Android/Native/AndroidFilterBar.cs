@@ -6,6 +6,7 @@ using Android.Graphics;
 using Android.Graphics.Drawables;
 using Android.Views;
 using Android.Widget;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -88,8 +89,8 @@ internal sealed class AndroidFilterBar : View
         Refresh();
         _frames = MainScreenLayout.FilterBarFrames(horizontal, _contentWidth, leadingInset, _countWidth,
             ShowsSimilarityToggle, alignLeading: true,
-            controlWidth: _compact ? 84 : MainScreenLayout.FilterControlWidth,
-            toggleWidth: _compact ? 76 : MainScreenLayout.FilterControlWidth);
+            controlWidth: _compact ? DesignTokens.FilterCompactControlWidth : MainScreenLayout.FilterControlWidth,
+            toggleWidth: _compact ? DesignTokens.FilterCompactToggleWidth : MainScreenLayout.FilterControlWidth);
         Invalidate();
     }
 
@@ -112,10 +113,15 @@ internal sealed class AndroidFilterBar : View
         {
             bool open = filter.IsSimilarityPanelOpen;
             var rect = ToRectF(_frames.Toggle, density);
-            AndroidUiTheme.DrawRounded(canvas, rect, 6 * density,
-                open ? AndroidUiTheme.Accent : AndroidUiTheme.ControlFill,
-                open ? AndroidUiTheme.Accent : AndroidUiTheme.ControlBorder, Math.Max(1, density));
-            _togglePaint.Color = open ? Color.White : AndroidUiTheme.TextPrimary;
+            // FILTER-01：选中用 #1F3A5F 底 + #3A6FA8 描边 + #AECBEE 字，未选中用 #AAAAAA 字与 #555555 描边。
+            AndroidUiTheme.DrawRounded(canvas, rect,
+                (float)(DesignTokens.FilterToggleCornerRadius * density),
+                open ? AndroidUiTheme.FilterToggleCheckedBackground : AndroidUiTheme.ControlFill,
+                open ? AndroidUiTheme.FilterToggleCheckedBorder : AndroidUiTheme.FilterToggleBorder,
+                Math.Max(1, density));
+            _togglePaint.Color = open
+                ? AndroidUiTheme.FilterToggleCheckedForeground
+                : AndroidUiTheme.FilterToggleForeground;
             AndroidUiTheme.DrawCentered(canvas, "相似聚类", _togglePaint, rect.CenterX(),
                 rect.CenterY() + _togglePaint.TextSize * .36f, rect.Width() - 6 * density);
         }

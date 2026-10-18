@@ -2,7 +2,13 @@ using System;
 using System.Collections.Generic;
 using Android.Content;
 using Android.Graphics;
+using Android.OS;
 using Android.Views;
+using AndroidX.Core.View;
+using AndroidX.Core.View.Accessibility;
+using AndroidX.CustomView.Widget;
+using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -23,7 +29,8 @@ internal sealed class AndroidControlBar : View
     private readonly Paint _numberPaint;
     private readonly Paint _starActive;
     private readonly Paint _starInactive;
-    private readonly Paint _starFill;
+    private readonly Paint _starClear;
+    private readonly ControlBarExploreByTouchHelper _accessibility;
     private readonly List<Group> _groups = [];
     private readonly List<ControlBarLayout.GroupSpec> _specs = [];
     private List<List<int>> _lines = [];
@@ -59,16 +66,20 @@ internal sealed class AndroidControlBar : View
     public AndroidControlBar(Context context, MainViewModel main) : base(context)
     {
         _main = main;
-        _textPaint = AndroidUiTheme.TextPaint(context, 10, AndroidUiTheme.TextSecondary);
-        _valuePaint = AndroidUiTheme.TextPaint(context, 12, AndroidUiTheme.TextPrimary, bold: true);
+        _textPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifLabelFontSize, AndroidUiTheme.TextSecondary);
+        _valuePaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarExifValueFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _iconPaint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
-        _iconPaint.TextSize = AndroidUiTheme.Sp(context, 18);
+        _iconPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize);
         _iconPaint.TextAlign = Paint.Align.Center;
         _numberPaint = AndroidUiTheme.TextPaint(context, 11, AndroidUiTheme.TextPrimary);
         _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
-        _starFill = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
+        _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
         SetWillNotDraw(false);
+        Focusable = true;
+        ImportantForAccessibility = ImportantForAccessibility.Yes;
+        _accessibility = new ControlBarExploreByTouchHelper(this);
+        ViewCompat.SetAccessibilityDelegate(this, _accessibility);
     }
 
     /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页。</summary>
@@ -99,8 +110,13 @@ internal sealed class AndroidControlBar : View
         if (_main.Settings.ShowRating)
         {
             var children = new List<Child>(6);
+            bool hasPhoto = _main.CurrentFile != null;
             int rating = _main.CurrentFile?.Rating ?? 0;
-            for (int value = 0; value < 6; value++) children.Add(new Child { Rating = value, Active = value > 0 && value <= rating });
+            for (int value = 0; value < 6; value++)
+            {
+                // TOOLBAR-03：无照片时整组禁用，按钮保留几何可见。
+                children.Add(new Child { Rating = value, Active = value > 0 && value <= rating, Enabled = hasPhoto });
+            }
             _groups.Add(new Group(ControlBarGroupKind.Rating, children));
             _specs.Add(new ControlBarLayout.GroupSpec(ControlBarGroupKind.Rating, 6));
         }
@@ -113,6 +129,8 @@ internal sealed class AndroidControlBar : View
                 Command = hotkey.Command,
                 Icon = hotkey.DisplaySymbol,
                 Number = hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal) ? hotkey.Command[9..] : null,
+                Label = hotkey.Name,
+                Binding = BindingText(hotkey),
                 Enabled = hotkey.Command == "Open" || _main.CurrentFile != null,
             });
         }
@@ -131,6 +149,17 @@ internal sealed class AndroidControlBar : View
     /// <param name="command">共享命令标识。</param>
     /// <returns>是否显示。</returns>
     internal static bool IsCommandAvailable(string command) => true;
+
+    /// <summary>命令的读屏文本：名称 + 已设置的绑定（TOOLBAR-04，未设置不占位）。</summary>
+    /// <param name="hotkey">共享快捷键项。</param>
+    /// <returns>读屏文本。</returns>
+    private static string BindingText(SettingsViewModel.HotkeyItem hotkey)
+    {
+        string text = hotkey.Name;
+        if (hotkey.PrimaryHotkey?.ToDisplayString() is { Length: > 0 } primary) text += $" {primary}";
+        if (hotkey.SecondaryHotkey?.ToDisplayString() is { Length: > 0 } secondary) text += $" / {secondary}";
+        return text;
+    }
 
     /// <summary>量文档主轴/交叉轴长度（dp）；行布局主轴为高、列布局主轴为宽。</summary>
     /// <param name="horizontal">是否行布局。</param>
@@ -186,6 +215,7 @@ internal sealed class AndroidControlBar : View
             }
             cross += lineCross + ControlBarLayout.GroupSpacing;
         }
+        _accessibility.InvalidateRoot();
         Invalidate();
     }
 
@@ -203,7 +233,9 @@ internal sealed class AndroidControlBar : View
             if (group.Kind == ControlBarGroupKind.Rating)
             {
                 var rect = ToRectF(group.Rect, density);
-                AndroidUiTheme.DrawRounded(canvas, rect, 6 * density, AndroidUiTheme.ControlFill);
+                // TOOLBAR-10：评分块与 EXIF 块共用 #222222 底色。
+                AndroidUiTheme.DrawRounded(canvas, rect,
+                    (float)(DesignTokens.ToolbarCornerRadius * density), AndroidUiTheme.CardBackground);
             }
             foreach (var child in group.Children)
             {
@@ -228,7 +260,8 @@ internal sealed class AndroidControlBar : View
     private void DrawExif(Canvas canvas, Child child, float density)
     {
         var rect = ToRectF(child.Rect, density);
-        AndroidUiTheme.DrawRounded(canvas, rect, 6 * density, AndroidUiTheme.ControlFill);
+        AndroidUiTheme.DrawRounded(canvas, rect,
+            (float)(DesignTokens.ToolbarCornerRadius * density), AndroidUiTheme.CardBackground);
         var entry = child.Exif;
         if (entry == null) return;
         AndroidUiTheme.DrawCentered(canvas, entry.DisplayName, _textPaint, rect.CenterX(),
@@ -242,25 +275,41 @@ internal sealed class AndroidControlBar : View
     {
         var rect = ToRectF(child.Rect, density);
         float cx = rect.CenterX(), cy = rect.CenterY();
+        int alpha = child.Enabled ? 255 : 97;
         if (child.Rating == 0)
         {
             float arm = 4.5f * density;
-            var paint = AndroidUiTheme.Paint(Color.ParseColor("#888888")!, Math.Max(1, density));
-            canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, paint);
-            canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, paint);
+            _starClear.Alpha = alpha;
+            canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _starClear);
+            canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _starClear);
             return;
         }
+        _starActive.Alpha = alpha;
+        _starInactive.Alpha = alpha;
         using var star = StarPath(cx, cy, 7 * density, 3.2f * density);
-        canvas.DrawPath(star, child.Active ? _starFill : _starInactive);
+        canvas.DrawPath(star, child.Active ? _starActive : _starInactive);
     }
 
     /// <summary>命令按钮：40×40 圆角底 + 图标字体（评分命令显示数字）。</summary>
     private void DrawCommand(Canvas canvas, Child child, float density)
     {
         var rect = ToRectF(child.Rect, density);
-        AndroidUiTheme.DrawRounded(canvas, rect, 6 * density, Color.ParseColor("#333333")!);
+        float cx = rect.CenterX(), cy = rect.CenterY();
+        AndroidUiTheme.DrawRounded(canvas, rect,
+            (float)(DesignTokens.ToolbarCornerRadius * density),
+            AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
         if (child.Number != null)
         {
+            // TOOLBAR-03：评分快捷命令画数字，0 号画叉，不用星形。
+            if (child.Number == "0")
+            {
+                float arm = 4.5f * density;
+                _starClear.Alpha = child.Enabled ? 255 : 97;
+                canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _starClear);
+                canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _starClear);
+                return;
+            }
+            _numberPaint.Alpha = child.Enabled ? 255 : 97;
             AndroidUiTheme.DrawCentered(canvas, child.Number, _numberPaint, rect.CenterX(),
                 rect.CenterY() + _numberPaint.TextSize * .36f, rect.Width());
             return;
@@ -291,7 +340,7 @@ internal sealed class AndroidControlBar : View
                         _openTools?.Invoke();
                         break;
                     case ControlBarGroupKind.Rating:
-                        _rate?.Invoke(child.Rating);
+                        if (child.Enabled) _rate?.Invoke(child.Rating);
                         break;
                     default:
                         if (child.Enabled && child.Command != null) _execute?.Invoke(child.Command);
@@ -301,6 +350,70 @@ internal sealed class AndroidControlBar : View
             }
         }
         return true;
+    }
+
+    /// <summary>命中的虚拟节点 id（按分组与子控件顺序展平）；未命中返回 -1。</summary>
+    /// <param name="x">本地横坐标（dp）。</param>
+    /// <param name="y">本地纵坐标（dp）。</param>
+    /// <returns>虚拟节点 id 或 -1。</returns>
+    private int VirtualViewIdAt(double x, double y)
+    {
+        int id = 0;
+        foreach (var group in _groups)
+        {
+            foreach (var child in group.Children)
+            {
+                if (child.Rect.Width > 0 && Contains(child.Rect, x, y)) return id;
+                id++;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>按展平 id 取子控件。</summary>
+    /// <param name="id">虚拟节点 id。</param>
+    /// <returns>分组与子控件；越界返回 null。</returns>
+    private (Group Group, Child Child)? ChildAt(int id)
+    {
+        int index = 0;
+        foreach (var group in _groups)
+        {
+            foreach (var child in group.Children)
+            {
+                if (index == id) return (group, child);
+                index++;
+            }
+        }
+        return null;
+    }
+
+    /// <summary>虚拟节点的读屏名称（TOOLBAR-11）。</summary>
+    private static string AccessibleName(Group group, Child child) => group.Kind switch
+    {
+        ControlBarGroupKind.Exif => child.Exif == null
+            ? ""
+            : $"{child.Exif.DisplayName} {child.Exif.DisplayValue}",
+        ControlBarGroupKind.Rating => child.Rating == 0 ? "无星级" : $"{child.Rating} 星",
+        _ => child.Binding ?? child.Label ?? child.Command ?? "",
+    };
+
+    /// <summary>执行虚拟节点动作（与点按命中同一入口）。</summary>
+    private bool PerformVirtualAction(Group group, Child child)
+    {
+        if (!child.Enabled) return false;
+        switch (group.Kind)
+        {
+            case ControlBarGroupKind.Exif:
+                _openTools?.Invoke();
+                return true;
+            case ControlBarGroupKind.Rating:
+                _rate?.Invoke(child.Rating);
+                return true;
+            default:
+                if (child.Command == null) return false;
+                _execute?.Invoke(child.Command);
+                return true;
+        }
     }
 
     private static bool Contains(LayoutRect rect, double x, double y)
@@ -324,6 +437,81 @@ internal sealed class AndroidControlBar : View
         }
         path.Close();
         return path;
+    }
+
+    /// <summary>
+    /// 控制栏虚拟节点（TOOLBAR-11）：按视觉顺序暴露 EXIF 块、评分 0–5 与命令，
+    /// 每个节点带名称、禁用态与位置，点按/回车走与触摸相同的执行入口。
+    /// </summary>
+    private sealed class ControlBarExploreByTouchHelper : ExploreByTouchHelper
+    {
+        private readonly AndroidControlBar _owner;
+
+        /// <summary>绑定控制栏。</summary>
+        /// <param name="owner">控制栏视图。</param>
+        public ControlBarExploreByTouchHelper(AndroidControlBar owner) : base(owner) => _owner = owner;
+
+        /// <summary>按本地像素坐标找虚拟节点。</summary>
+        protected override int GetVirtualViewAt(float x, float y)
+        {
+            double density = AndroidUiTheme.Density(_owner.Context!);
+            return _owner.VirtualViewIdAt(x / density, y / density);
+        }
+
+        /// <summary>按视觉顺序列出可见虚拟节点。</summary>
+        protected override void GetVisibleVirtualViews(IList<Java.Lang.Integer>? virtualViewIds)
+        {
+            if (virtualViewIds == null) return;
+            int id = 0;
+            foreach (var group in _owner._groups)
+            {
+                foreach (var child in group.Children)
+                {
+                    if (child.Rect.Width > 0 && child.Rect.Height > 0)
+                        virtualViewIds.Add(Java.Lang.Integer.ValueOf(id));
+                    id++;
+                }
+            }
+        }
+
+        /// <summary>填充节点名称、禁用态、选中态与边界。</summary>
+        protected override void OnPopulateNodeForVirtualView(int virtualViewId, AccessibilityNodeInfoCompat? node)
+        {
+            if (node == null) return;
+            var pair = _owner.ChildAt(virtualViewId);
+            if (pair == null)
+            {
+                node.ContentDescription = "";
+                node.SetBoundsInScreen(new Rect());
+                return;
+            }
+
+            var (group, child) = pair.Value;
+            node.ContentDescription = AccessibleName(group, child);
+            node.Enabled = child.Enabled;
+            node.Clickable = child.Enabled;
+            node.Focusable = true;
+            node.VisibleToUser = true;
+            if (group.Kind == ControlBarGroupKind.Rating) node.Selected = child.Active;
+            if (child.Enabled) node.AddAction((int)global::Android.Views.Accessibility.Action.Click);
+            double density = AndroidUiTheme.Density(_owner.Context!);
+            // 虚拟节点边界用屏幕坐标，避免已弃用的 parent bounds。
+            var location = new int[2];
+            _owner.GetLocationOnScreen(location);
+            node.SetBoundsInScreen(new Rect(
+                location[0] + (int)Math.Round(child.Rect.X * density),
+                location[1] + (int)Math.Round(child.Rect.Y * density),
+                location[0] + (int)Math.Round(child.Rect.MaxX * density),
+                location[1] + (int)Math.Round(child.Rect.MaxY * density)));
+        }
+
+        /// <summary>读屏点按：复用控制栏的点按执行路径。</summary>
+        protected override bool OnPerformActionForVirtualView(int virtualViewId, int action, Bundle? arguments)
+        {
+            if (action != (int)global::Android.Views.Accessibility.Action.Click) return false;
+            var pair = _owner.ChildAt(virtualViewId);
+            return pair != null && _owner.PerformVirtualAction(pair.Value.Group, pair.Value.Child);
+        }
     }
 
     /// <summary>业务分组。</summary>
@@ -353,6 +541,8 @@ internal sealed class AndroidControlBar : View
         internal string? Command { get; init; }
         internal string? Icon { get; init; }
         internal string? Number { get; init; }
+        internal string? Label { get; init; }
+        internal string? Binding { get; init; }
         internal bool Enabled { get; init; } = true;
         internal LayoutRect Rect { get; set; }
     }

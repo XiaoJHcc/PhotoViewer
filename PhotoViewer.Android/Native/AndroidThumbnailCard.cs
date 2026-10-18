@@ -4,6 +4,7 @@ using Android.Content;
 using Android.Graphics;
 using Android.Views;
 using Android.Widget;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 
@@ -37,6 +38,7 @@ internal sealed class AndroidThumbnailCard : View
     private string? _secondLineText;
     private double? _secondLineProgress;
     private bool _selectByDisplayedImage;
+    private bool _longPressConsumed;
     private bool _disposed;
 
     /// <summary>当前绑定的业务身份（验收核对复用不错位）。</summary>
@@ -52,16 +54,17 @@ internal sealed class AndroidThumbnailCard : View
     /// <param name="context">宿主上下文。</param>
     public AndroidThumbnailCard(Context context) : base(context)
     {
-        _surfacePaint = AndroidUiTheme.Paint(AndroidUiTheme.ControlFill);
-        _thumbnailBackground = AndroidUiTheme.Paint(Color.ParseColor("#333333")!);
-        _textPaint = AndroidUiTheme.TextPaint(context, 10, AndroidUiTheme.TextPrimary, bold: true);
-        _datePaint = AndroidUiTheme.TextPaint(context, 9, AndroidUiTheme.TextPrimary, bold: true);
+        _surfacePaint = AndroidUiTheme.Paint(AndroidUiTheme.CardBackground);
+        _thumbnailBackground = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorFilmThumbnailWell));
+        _textPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardNameFontSize, AndroidUiTheme.TextPrimary, bold: true);
+        _datePaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardSecondLineFontSize, AndroidUiTheme.TextPrimary, bold: true);
         _starPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
         _starPaint.SetStyle(Paint.Style.Stroke);
         _starFillPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _badgePaint = AndroidUiTheme.Paint(AndroidUiTheme.ShakeBadge);
-        _badgeTextPaint = AndroidUiTheme.TextPaint(context, 11, Color.White, bold: true);
-        _linePaint = AndroidUiTheme.Paint(Color.ParseColor("#444444")!, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
+        _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
+        // FILM-05：清零叉使用中性图形色，不随评分点亮。
+        _linePaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
@@ -128,8 +131,9 @@ internal sealed class AndroidThumbnailCard : View
         var surfaceRect = new RectF((float)(Inset * d), (float)(Inset * d),
             (float)((Inset + SurfaceWidth) * d), (float)((Inset + SurfaceHeight) * d));
         bool selected = _selectByDisplayedImage ? _file.IsCurrentImage : _file.IsCurrent;
-        AndroidUiTheme.DrawRounded(canvas, surfaceRect, 7 * d, AndroidUiTheme.ControlFill,
-            selected ? AndroidUiTheme.Accent : null, 2 * d);
+        AndroidUiTheme.DrawRounded(canvas, surfaceRect, (float)(DesignTokens.FilmCardCornerRadius * d),
+            AndroidUiTheme.CardBackground, selected ? AndroidUiTheme.Accent : null,
+            (float)(DesignTokens.FilmCardBorderWidth * d));
 
         // 照片区 80 方形；缩略图已由共享服务 letterbox 到 80 方形。
         // 80dp 图片在 96dp 卡片内水平居中（左右各 8dp），与标题/星级同轴。
@@ -161,7 +165,9 @@ internal sealed class AndroidThumbnailCard : View
         canvas.Restore();
         if (_file.IsInCache)
         {
-            var cachePaint = AndroidUiTheme.Paint(Color.ParseColor("#4682B4")!, Math.Max(1, d));
+            // FILM-05：主图已缓存细边取令牌（含 70.6% 不透明度）。
+            var cachePaint = AndroidUiTheme.Paint(
+                AndroidUiTheme.FromToken(DesignTokens.ColorFilmCardCachedBorder), Math.Max(1, d));
             canvas.DrawRoundRect(imageRect, 4 * d, 4 * d, cachePaint);
         }
 
@@ -171,12 +177,14 @@ internal sealed class AndroidThumbnailCard : View
         var secondLineRect = new RectF((float)(8 * d), (float)(106 * d), (float)(88 * d), (float)(117 * d));
         if (_secondLineProgress is { } fraction)
         {
-            canvas.DrawRoundRect(secondLineRect, 4 * d, 4 * d, AndroidUiTheme.Paint(Color.ParseColor("#444444")!));
+            float barRadius = (float)(DesignTokens.FilmCardSecondLineBarCornerRadius * d);
+            canvas.DrawRoundRect(secondLineRect, barRadius, barRadius,
+                AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorFilmCardSecondLineTrack)));
             var fill = new RectF((float)(8 * d), (float)(106 * d),
                 (float)((8 + Math.Clamp(fraction, 0, 1) * SecondLineWidth) * d), (float)(117 * d));
-            using var fillPaint = AndroidUiTheme.Paint(Color.ParseColor("#1E90FF")!);
-            fillPaint.Alpha = 153;
-            canvas.DrawRoundRect(fill, 4 * d, 4 * d, fillPaint);
+            using var fillPaint = AndroidUiTheme.Paint(
+                AndroidUiTheme.FromToken(DesignTokens.ColorFilmCardSecondLineFill));
+            canvas.DrawRoundRect(fill, barRadius, barRadius, fillPaint);
             AndroidUiTheme.DrawCentered(canvas, _secondLineText, _datePaint, (float)(48 * d), (float)(112 * d),
                 (float)(80 * d));
         }
@@ -264,9 +272,21 @@ internal sealed class AndroidThumbnailCard : View
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null || _file == null) return false;
+        if (e.ActionMasked == MotionEventActions.Down) _longPressConsumed = false;
         _gestures.OnTouchEvent(e);
+        if (e.ActionMasked == MotionEventActions.Cancel)
+        {
+            _longPressConsumed = false;
+            return true;
+        }
         if (e.ActionMasked == MotionEventActions.Up)
         {
+            // MENU-05：长按只弹菜单，抬手不再被点选或星级命中消费。
+            if (_longPressConsumed)
+            {
+                _longPressConsumed = false;
+                return true;
+            }
             float density = (float)AndroidUiTheme.Density(Context!);
             float x = e.GetX(), y = e.GetY();
             float starLeft = (float)(Inset * density);
@@ -290,8 +310,12 @@ internal sealed class AndroidThumbnailCard : View
         if (_file == null) return;
         var menu = new PopupMenu(Context!, this);
         var menuItems = menu.Menu!;
-        menuItems.Add(0, 0, 0, _file.DisplayName);
-        menuItems.Add(0, 1, 1, _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm") ?? "");
+        // MENU-05：标题一行承载完整文件名与拍摄时间，标题行不可点击。
+        var title = menuItems.Add(0, 0, 0, _file.DisplayName)!;
+        title.SetEnabled(false);
+        var time = menuItems.Add(0, 1, 1,
+            _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "")!;
+        time.SetEnabled(false);
         for (int rating = 0; rating <= 5; rating++)
         {
             var item = menuItems.Add(0, 2 + rating, 2 + rating, rating == 0 ? "无星级" : $"{rating} 星")!;
@@ -332,8 +356,12 @@ internal sealed class AndroidThumbnailCard : View
         /// <returns>消费。</returns>
         public override bool OnSingleTapUp(MotionEvent? e) => true;
 
-        /// <summary>长按：弹评分菜单。</summary>
+        /// <summary>长按：弹评分菜单，并让本次抬手不再触发点选或改星（MENU-05）。</summary>
         /// <param name="e">事件。</param>
-        public override void OnLongPress(MotionEvent? e) => _owner.ShowCardMenu();
+        public override void OnLongPress(MotionEvent? e)
+        {
+            _owner._longPressConsumed = true;
+            _owner.ShowCardMenu();
+        }
     }
 }

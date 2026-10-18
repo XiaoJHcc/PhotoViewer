@@ -3,6 +3,7 @@ using Android.Content;
 using Android.Graphics;
 using Android.Util;
 using Android.Views;
+using PhotoViewer.Core.Design;
 
 namespace PhotoViewer.Android.Native;
 
@@ -13,35 +14,78 @@ namespace PhotoViewer.Android.Native;
 internal static class AndroidUiTheme
 {
     /// <summary>窗口背景。</summary>
-    internal static readonly Color Background = Color.ParseColor("#111111")!;
+    internal static readonly Color Background = FromToken(DesignTokens.ColorBarBackground);
     /// <summary>主图区背景。</summary>
     internal static readonly Color PhotoBackground = Color.Black!;
-    /// <summary>栏位底色（白 6.7% 叠在 #111 上）。</summary>
-    internal static readonly Color BarBackground = Color.ParseColor("#1A1A1A")!;
+    /// <summary>栏位底色（SHELL-01）。</summary>
+    internal static readonly Color BarBackground = FromToken(DesignTokens.ColorBarBackground);
     /// <summary>分隔线。</summary>
-    internal static readonly Color Divider = Color.ParseColor("#333333")!;
-    /// <summary>控件底色（白 2/15）。</summary>
+    internal static readonly Color Divider = FromToken(DesignTokens.ColorDivider);
+    /// <summary>控件底色（白 2/15，浮层与下拉等系统外观）。</summary>
     internal static readonly Color ControlFill = Color.ParseColor("#262626")!;
     /// <summary>控件描边。</summary>
     internal static readonly Color ControlBorder = Color.ParseColor("#444444")!;
+    /// <summary>卡片与 EXIF/评分块底色（FILM-05、TOOLBAR-10）。</summary>
+    internal static readonly Color CardBackground = FromToken(DesignTokens.ColorFilmCardBackground);
     /// <summary>主文字。</summary>
-    internal static readonly Color TextPrimary = Color.ParseColor("#EEEEEE")!;
+    internal static readonly Color TextPrimary = FromToken(DesignTokens.ColorTextPrimary);
     /// <summary>次要文字。</summary>
-    internal static readonly Color TextSecondary = Color.ParseColor("#AAAAAA")!;
-    /// <summary>蓝色高亮（当前卡片、相似聚类开关）。</summary>
-    internal static readonly Color Accent = Color.ParseColor("#0A84FF")!;
-    /// <summary>星级金色。</summary>
-    internal static readonly Color StarActive = Color.ParseColor("#FFD214")!;
-    /// <summary>星级未点亮。</summary>
-    internal static readonly Color StarInactive = Color.ParseColor("#888888")!;
+    internal static readonly Color TextSecondary = FromToken(DesignTokens.ColorTextSecondary);
+    /// <summary>蓝色高亮（当前卡片）。</summary>
+    internal static readonly Color Accent = FromToken(DesignTokens.ColorFilmCardCurrentBorder);
+    /// <summary>星级金色（FILM-05）。</summary>
+    internal static readonly Color StarActive = FromToken(DesignTokens.ColorStarOn);
+    /// <summary>星级未点亮（FILM-05）。</summary>
+    internal static readonly Color StarInactive = FromToken(DesignTokens.ColorStarOff);
+    /// <summary>0 星清零叉（FILM-05）。</summary>
+    internal static readonly Color StarClear = FromToken(DesignTokens.ColorStarClear);
     /// <summary>抖动徽标橙色。</summary>
-    internal static readonly Color ShakeBadge = Color.ParseColor("#FF5500")!;
+    internal static readonly Color ShakeBadge = FromToken(DesignTokens.ColorFilmShakeBadge);
+    /// <summary>相似聚类面板底色（SIM-01）。</summary>
+    internal static readonly Color SimPanelBackground = FromToken(DesignTokens.ColorSimPanelBackground);
+    /// <summary>相似聚类面板描边（SIM-01）。</summary>
+    internal static readonly Color SimPanelBorder = FromToken(DesignTokens.ColorSimPanelBorder);
+    /// <summary>相似聚类说明文字（SIM-01）。</summary>
+    internal static readonly Color SimCaption = FromToken(DesignTokens.ColorSimCaption);
+    /// <summary>相似聚类空态占位文字（SIM-02）。</summary>
+    internal static readonly Color SimPlaceholder = FromToken(DesignTokens.ColorSimPlaceholder);
+    /// <summary>相似聚类错误文字（SIM-10）。</summary>
+    internal static readonly Color SimError = FromToken(DesignTokens.ColorSimError);
+    /// <summary>相似聚类动作按钮底色（SIM-03）。</summary>
+    internal static readonly Color SimActionBackground = FromToken(DesignTokens.ColorSimActionBackground);
+    /// <summary>相似聚类动作按钮描边（SIM-03）。</summary>
+    internal static readonly Color SimActionBorder = FromToken(DesignTokens.ColorSimActionBorder);
+    /// <summary>相似聚类动作按钮文字（SIM-03）。</summary>
+    internal static readonly Color SimActionForeground = FromToken(DesignTokens.ColorSimActionForeground);
+    /// <summary>相似聚类提取进度文字（SIM-03）。</summary>
+    internal static readonly Color SimProgress = FromToken(DesignTokens.ColorSimProgress);
+    /// <summary>相似聚类开关选中底色（FILTER-01）。</summary>
+    internal static readonly Color FilterToggleCheckedBackground = FromToken(DesignTokens.ColorFilterToggleCheckedBackground);
+    /// <summary>相似聚类开关选中描边（FILTER-01）。</summary>
+    internal static readonly Color FilterToggleCheckedBorder = FromToken(DesignTokens.ColorFilterToggleCheckedBorder);
+    /// <summary>相似聚类开关选中文字（FILTER-01）。</summary>
+    internal static readonly Color FilterToggleCheckedForeground = FromToken(DesignTokens.ColorFilterToggleCheckedForeground);
+    /// <summary>相似聚类开关未选中描边（FILTER-01）。</summary>
+    internal static readonly Color FilterToggleBorder = FromToken(DesignTokens.ColorFilterToggleBorder);
+    /// <summary>相似聚类开关未选中文字（FILTER-01）。</summary>
+    internal static readonly Color FilterToggleForeground = FromToken(DesignTokens.ColorFilterToggleForeground);
+    /// <summary>设置页持久化失败状态文字（SETTINGS-14）。</summary>
+    internal static readonly Color ErrorText = FromToken(DesignTokens.ColorSimError);
 
     /// <summary>图标字体（uicons）在 Assets 中的路径。</summary>
     internal const string IconFontAsset = "Fonts/uicons-regular-rounded.ttf";
 
     private static Typeface? _iconTypeface;
     private static bool _iconLoadFailed;
+
+    /// <summary>把设计令牌的 0xAARRGGBB 数值转成 Android 颜色。</summary>
+    /// <param name="argb">设计令牌颜色。</param>
+    /// <returns>Android 颜色。</returns>
+    internal static Color FromToken(uint argb) => Color.Argb(
+        (int)((argb >> 24) & 0xFF),
+        (int)((argb >> 16) & 0xFF),
+        (int)((argb >> 8) & 0xFF),
+        (int)(argb & 0xFF))!;
 
     /// <summary>dp → px 转换。</summary>
     /// <param name="context">上下文。</param>
