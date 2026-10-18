@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    macOS 上的 Windows 壳 C# 类型检查：WinUI XAML 编译器只能在 Windows 运行，完整构建在 macOS 上止于 XamlCompiler，
+    C# 编译根本不会开始。本工程链接 PhotoViewer.Windows 的全部 .cs 与 PhotoViewer.Shared，排除 App.xaml，
+    用 AppStub.cs 补 App.InitializeComponent，只做编译检查，不产出可运行程序。
+    用法（仓库根）：dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compile -v:m
+    包与目标框架须与 PhotoViewer.Windows.csproj 保持一致；在 Windows 上仍以真实构建与 harness 为准。
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <OutputType>Library</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
+    <EnableDefaultPageItems>false</EnableDefaultPageItems>
+    <DisableXbfGeneration>true</DisableXbfGeneration>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <EnableMsixTooling>false</EnableMsixTooling>
+    <EnablePriGenTooling>false</EnablePriGenTooling>
+    <AppxPackage>false</AppxPackage>
+    <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <WinSrc>$(MSBuildThisFileDirectory)..\..\PhotoViewer.Windows\</WinSrc>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="AppStub.cs" />
+    <Compile Include="$(WinSrc)**\*.cs" Exclude="$(WinSrc)bin\**;$(WinSrc)obj\**" />
+    <Compile Include="$(MSBuildThisFileDirectory)..\..\PhotoViewer.Shared\**\*.cs" />
+    <Using Include="PhotoViewer.Shared" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Desktop" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
+    <PackageReference Include="DirectNStandard" />
+    <PackageReference Include="LibHeifSharp" />
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
+    <PackageReference Include="WicNet" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+  </ItemGroup>
+</Project>

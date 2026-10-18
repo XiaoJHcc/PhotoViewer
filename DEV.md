@@ -132,6 +132,23 @@
 
 ## 五、 手动维护/更新数据
 
+### 设计令牌
+
+`Design/tokens.json` 是尺寸、颜色、动效数值的唯一来源；改值后重新生成共享常量 `PhotoViewer/Core/Design/DesignTokens.g.cs`（请勿手改）：
+```
+python3 Tools/generate-design-tokens.py          # 生成
+python3 Tools/generate-design-tokens.py --check  # 校验是否最新
+```
+
+### 在 macOS 上类型检查 Windows 壳
+
+WinUI XAML 编译器只能在 Windows 运行，macOS 上完整构建 `PhotoViewer.Windows` 会止于 XamlCompiler。改 Windows 壳代码后至少跑一次 C# 类型检查（不产出可运行程序，不替代 Windows 本机构建与 harness）：
+```
+dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compile -v:m
+```
+
+---
+
 ### EXIF 字段名称（英文）
 
 EXIF 字段英文名由两层决定：

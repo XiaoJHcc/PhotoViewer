@@ -15,10 +15,10 @@
 |---|---|---|---|
 | 6A 基线冻结 | 旧壳几何/截图入 `Design/baseline/avalonia/`；tag `avalonia-final` | — | ✅ 2026-10-18 |
 | 6B 设计体系 | Design/README 规则；tokens 草稿；ui-contract 拆分为 spec/platforms/status；L0–L2 功能清单 | 6A | ✅ 2026-10-18（裁定经作者通过；ui-contract 跳转化待做） |
-| 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | 裁定经作者通过 10-18，代码未开始 |
+| 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | 10-18 共享层与 Mac/iOS/Android 已合入并程序化通过；Windows 在 `native-rebuild-win`（类型检查 0 错），待 Windows 本机验证后合入；作者手验清单见统一清单 |
 | 6D Avalonia 退役 | 见 §3 | 6E-1 | 未开始 |
 | 6E 发布就绪 | 见 §4 | 6C 阻塞项 | 未开始 |
-| 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | 未开始 |
+| 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | 令牌生成器 `Tools/generate-design-tokens.py` 与四端接入完成 10-18；HTML 样机未开始 |
 | 6G 台账与文档 | 遗留 backlog、文档矛盾修正、阶段文档归档、阶段号注释清理 | 穿插 | 未开始 |
 
 建议执行顺序：6B → 6C 与 6F 并行 → 6E-1（Release 切原生）→ 6D → 6E 其余 → 6G 收尾。
