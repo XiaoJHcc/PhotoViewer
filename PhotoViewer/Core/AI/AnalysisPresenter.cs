@@ -105,7 +105,7 @@ public sealed class AnalysisPresenter : IDisposable
         _host = host;
         _focusTile = new AnalysisTile(AnalysisTileKind.Detail, "对焦点") { Placeholder = null };
         _centerTile = new AnalysisTile(AnalysisTileKind.Detail, "中心") { Placeholder = null };
-        _histogramTile = new AnalysisTile(AnalysisTileKind.Histogram, "直方图") { Placeholder = "计算中" };
+        _histogramTile = new AnalysisTile(AnalysisTileKind.Histogram, "直方图") { Placeholder = null };
         _pcaTile = new AnalysisTile(AnalysisTileKind.Diagnostic, "DINO PCA");
         _cosineTile = new AnalysisTile(AnalysisTileKind.Diagnostic, FormatCosineLabel(RefGridX, RefGridY));
         _sharpnessTile = new AnalysisTile(AnalysisTileKind.Diagnostic, "锐度");
@@ -206,7 +206,7 @@ public sealed class AnalysisPresenter : IDisposable
             else
             {
                 SetPlaceholder("计算中…");
-                _ = ComputeDiagnosticsAsync(enhanced, enhancedKey, ct);
+                _ = RunImmediateAsync(enhanced, enhancedKey, ct);
             }
             return;
         }
@@ -291,6 +291,8 @@ public sealed class AnalysisPresenter : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"[Analysis] load failed: {ex.Message}");
+            // ANALYSIS-10：失败不得停在“计算中”，清掉旧瓦片并进入独立失败态。
+            PostFailure("分析失败", ct);
         }
     }
 
@@ -333,15 +335,23 @@ public sealed class AnalysisPresenter : IDisposable
         TilesChanged?.Invoke();
     }
 
+    /// <summary>立即计算的三种结果:成功 / 被取消 / 失败(用于把失败与“未提取”区分开,ANALYSIS-10)。</summary>
+    private enum ComputeOutcome
+    {
+        Success,
+        Canceled,
+        Failed,
+    }
+
     /// <summary>
     /// 立即计算:对指定位图跑 CV 7 标量 + DINO patch 推理 → 复用 <see cref="AnalysisComputer.Compute"/> 出诊断瓦片。
     /// 增强预览联动与未提取回退共用;不读库、不写库。产物按 <paramref name="cacheKey"/> 落即时缓存。
     /// 展示图先转成 CV/DINO 需要的 8 位显示朝向口径(已符合时复用同一对象),后台读取前先取一份租约,
     /// 避免宿主在计算期间释放展示图。
     /// </summary>
-    private async Task<bool> ComputeDiagnosticsAsync(DecodedImage image, string cacheKey, CancellationToken ct)
+    private async Task<ComputeOutcome> ComputeDiagnosticsAsync(DecodedImage image, string cacheKey, CancellationToken ct)
     {
-        if (!image.TryAcquire()) return false;
+        if (!image.TryAcquire()) return ComputeOutcome.Failed;
         DecodedImage? analysis = null;
         try
         {
@@ -366,22 +376,30 @@ public sealed class AnalysisPresenter : IDisposable
             ct.ThrowIfCancellationRequested();
             AnalysisResultCache.PutImmediate(cacheKey, entry);
             PostEntry(entry, ct);
-            return true;
+            return ComputeOutcome.Success;
         }
         catch (OperationCanceledException)
         {
-            return false;
+            return ComputeOutcome.Canceled;
         }
         catch (Exception ex)
         {
             Console.WriteLine($"[Analysis] immediate compute failed: {ex.Message}");
-            return false;
+            return ComputeOutcome.Failed;
         }
         finally
         {
             analysis?.Release();
             image.Release();
         }
+    }
+
+    /// <summary>增强图即时计算:失败时进入独立失败态,不把“计算中…”留在界面上(ANALYSIS-10)。</summary>
+    private async Task RunImmediateAsync(DecodedImage image, string cacheKey, CancellationToken ct)
+    {
+        var outcome = await ComputeDiagnosticsAsync(image, cacheKey, ct).ConfigureAwait(false);
+        if (outcome == ComputeOutcome.Failed && !ct.IsCancellationRequested)
+            PostFailure("分析失败", ct);
     }
 
     /// <summary>
@@ -420,9 +438,9 @@ public sealed class AnalysisPresenter : IDisposable
                 return;
             }
 
-            bool ok = await ComputeDiagnosticsAsync(source, cacheKey, ct).ConfigureAwait(false);
-            if (!ok && !ct.IsCancellationRequested)
-                PostPlaceholder("未提取", ct);
+            var outcome = await ComputeDiagnosticsAsync(source, cacheKey, ct).ConfigureAwait(false);
+            if (outcome == ComputeOutcome.Failed && !ct.IsCancellationRequested)
+                PostFailure("分析失败", ct);
         }
         catch (OperationCanceledException)
         {
@@ -431,6 +449,7 @@ public sealed class AnalysisPresenter : IDisposable
         catch (Exception ex)
         {
             Console.WriteLine($"[Analysis] fallback compute failed: {ex.Message}");
+            PostFailure("分析失败", ct);
         }
     }
 
@@ -439,10 +458,17 @@ public sealed class AnalysisPresenter : IDisposable
     {
         int token = ++_histogramToken;
         var source = _host.DisplayImage;
-        if (!_host.AnalysisVisible || source == null || !source.TryAcquire())
+        if (!_host.AnalysisVisible || _host.CurrentFile == null || source == null || !source.TryAcquire())
         {
+            // ANALYSIS-07：无展示图或面板隐藏时清空直方图，不残留上一张的图形或“计算中”。
+            _histogramTile.Placeholder = null;
             SwapHistogram(null, token);
             return;
+        }
+        if (_histogramTile.Placeholder != "计算中")
+        {
+            _histogramTile.Placeholder = "计算中";
+            TilesChanged?.Invoke();
         }
         _ = Task.Run(() =>
         {
@@ -453,11 +479,21 @@ public sealed class AnalysisPresenter : IDisposable
             if (task.IsFaulted)
             {
                 Console.WriteLine($"[Analysis] histogram failed: {task.Exception?.GetBaseException().Message}");
+                UiDispatcher.Post(() => FailHistogram(token));
                 return;
             }
             var decoded = task.Result;
             UiDispatcher.Post(() => SwapHistogram(decoded, token));
         });
+    }
+
+    /// <summary>直方图计算失败:清空图形并显示独立失败文案,不停在“计算中”(ANALYSIS-07/10)。</summary>
+    private void FailHistogram(int token)
+    {
+        if (token != _histogramToken) return;
+        SwapHistogram(null, token);
+        _histogramTile.Placeholder = "分析失败";
+        TilesChanged?.Invoke();
     }
 
     /// <summary>替换直方图位图(presenter 所有),过期 token 直接丢弃;旧位图延后一拍释放。</summary>
@@ -518,6 +554,18 @@ public sealed class AnalysisPresenter : IDisposable
         => UiDispatcher.Post(() =>
         {
             if (ct.IsCancellationRequested) return;
+            SetPlaceholder(text);
+        }, UiPriority.Background);
+
+    /// <summary>
+    /// 后台失败态:清空诊断瓦片与旧结果后显示失败文案,避免把上一张的图挂在当前照片下、
+    /// 也避免无限停在“计算中”(ANALYSIS-10)。
+    /// </summary>
+    private void PostFailure(string text, CancellationToken ct)
+        => UiDispatcher.Post(() =>
+        {
+            if (ct.IsCancellationRequested) return;
+            ClearDiagnostics();
             SetPlaceholder(text);
         }, UiPriority.Background);
 

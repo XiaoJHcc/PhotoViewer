@@ -102,6 +102,7 @@ internal sealed class MacToolsWindow : IDisposable
         if (_disposed) return;
         if (_window == null) BuildWindow();
         _open = true;
+        _main.Tools.IsPresented = true;
         Render();
         _window!.MakeKeyAndOrderFront(null);
         if (_automatedValidation) return;
@@ -129,6 +130,7 @@ internal sealed class MacToolsWindow : IDisposable
     {
         if (_disposed || _window == null) return;
         _open = false;
+        _main.Tools.IsPresented = false;
         _window.Close();
     }
 
@@ -138,6 +140,7 @@ internal sealed class MacToolsWindow : IDisposable
         if (_disposed) return;
         _disposed = true;
         _open = false;
+        _main.Tools.IsPresented = false;
         _main.Tools.PropertyChanged -= OnToolsChanged;
         _exifPage?.Dispose();
         _exifPage = null;
@@ -275,7 +278,11 @@ internal sealed class MacToolsWindow : IDisposable
     private sealed class ToolsWindowDelegate(MacToolsWindow owner) : NSWindowDelegate
     {
         /// <summary>用户关闭窗口（红点或 Cmd+W）后标记为已关闭。</summary>
-        public override void WillClose(NSNotification notification) => owner._open = false;
+        public override void WillClose(NSNotification notification)
+        {
+            owner._open = false;
+            owner._main.Tools.IsPresented = false;
+        }
     }
 
     /// <summary>顶边为原点的窗口内容容器，尺寸变化驱动外壳布局。</summary>

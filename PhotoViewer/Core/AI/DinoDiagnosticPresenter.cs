@@ -111,6 +111,23 @@ public sealed class DinoDiagnosticPresenter : IDisposable
         _ = LoadAsync(file, cts.Token);
     }
 
+    /// <summary>
+    /// 取消在途推理/诊断任务并回到「未加载」:用于离开诊断页或关闭工具窗口(TOOLS-06)。
+    /// 过期结果由取消令牌丢弃,不会把上一张照片的结果挂在新文件名下。
+    /// </summary>
+    public void Cancel()
+    {
+        var cts = _cts;
+        _cts = null;
+        cts?.Cancel();
+        cts?.Dispose();
+
+        if (UiDispatcher.CheckAccess())
+            ClearAll("未加载");
+        else
+            UiDispatcher.Post(() => ClearAll("未加载"));
+    }
+
     /// <summary>点击任意瓦片:落十字准星 + 以点击位置作 cosine 参考点(映射到 32×32)。</summary>
     /// <param name="u">归一化横坐标。</param>
     /// <param name="v">归一化纵坐标。</param>
