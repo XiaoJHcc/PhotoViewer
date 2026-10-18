@@ -37,18 +37,16 @@
     </ItemGroup>
 
     <!--
-      DINO 模型：原生壳不加载 Avalonia，旧 avares 资源不可用；
-      按 Mac/iOS 同口径把 ONNX 模型作为 AndroidAsset 打进 APK（约 +83MB）。
+      DINO 模型作为 AndroidAsset 打进 APK（约 +83MB）；
       原生资源提供器按 avares://PhotoViewer/Assets/Models/... 的路径部分读取 Assets/Models/...
     -->
     <ItemGroup>
         <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
-        <!-- 控制栏命令图标沿用 Avalonia 的 uicons 字体，随 APK 打包；与壳无关。 -->
+        <!-- 控制栏命令图标沿用共享 uicons 字体，随 APK 打包。 -->
         <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\*.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia.Android"/>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
         <!-- 原生壳：Material 3 主题/控件、胶片栏 RecyclerView、edge-to-edge insets、设置 BottomSheet -->

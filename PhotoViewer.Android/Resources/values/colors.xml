@@ -1,7 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <color name="splash_background">#111111</color>
-  <!-- 原生壳固定色：与 Avalonia 主界面/共享几何口径一致 -->
+  <!-- 原生壳固定色：与共享设计令牌/几何口径一致 -->
   <color name="native_background">#111111</color>
   <color name="native_divider">#333333</color>
   <color name="native_photo">#000000</color>

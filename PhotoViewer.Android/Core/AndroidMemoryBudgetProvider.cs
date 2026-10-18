@@ -8,7 +8,7 @@ namespace PhotoViewer.Android.Core;
 /// <summary>
 /// Android 内存预算提供者:按系统水位(ActivityManager.GetMemoryInfo)。
 /// Android 没有 per-app jetsam 预算,LMK 按系统可用内存杀进程,故以系统 totalMem/availMem 为口径;
-/// 另由 MainActivity.OnTrimMemory 事件直报抬级补偿。
+/// 另由 AndroidNativeActivity.OnTrimMemory 事件直报抬级补偿。
 /// </summary>
 public sealed class AndroidMemoryBudgetProvider : IMemoryBudgetProvider
 {

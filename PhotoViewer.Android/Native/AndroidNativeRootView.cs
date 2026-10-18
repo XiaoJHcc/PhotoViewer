@@ -597,7 +597,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
         }
 
-        // 与 iOS/旧壳分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
+        // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
         AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
         AddDivider();
         AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
@@ -717,7 +717,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnRatingWriteFailed(ImageFile file, int rating)
         => ShowStatus($"无法写入星级：{file.Name}", DesignTokens.MotionStatusToastDuration);
 
-    /// <summary>短暂显示状态提示（与旧壳底部提示同义）。</summary>
+    /// <summary>短暂显示状态提示（与共享底部提示同义）。</summary>
     /// <param name="text">文本。</param>
     /// <param name="durationMs">时长（ms）。</param>
     internal void ShowStatus(string text, int durationMs)

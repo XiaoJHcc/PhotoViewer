@@ -6,8 +6,8 @@ namespace PhotoViewer.Android;
 
 /// <summary>
 /// Android 进程级 Application。
-/// **这里不初始化 Avalonia**：原生壳不应为了启动而创建任何 Avalonia 对象；
-/// 旧壳的 Avalonia 由 <see cref="MainActivity"/> 在 <c>OnCreate</c> 前自建。
+/// 这里不初始化任何 UI 框架；原生壳由 <see cref="AndroidBootstrapActivity"/> /
+/// <see cref="AndroidNativeActivity"/> 启动。
 /// </summary>
 [Application]
 public sealed class AndroidApp : Application

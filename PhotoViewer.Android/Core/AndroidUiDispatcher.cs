@@ -10,7 +10,7 @@ namespace PhotoViewer.Android.Core;
 
 /// <summary>
 /// Android 主线程调度器：只使用 <see cref="Looper.MainLooper"/> 与 <see cref="Handler"/>，
-/// 不依赖 Avalonia 的 Android 调度器（原生壳启动时 Avalonia 尚未初始化）。
+/// 不依赖第三方 UI 框架的调度器。
 /// </summary>
 public sealed class AndroidUiDispatcher : IUiDispatcher
 {
@@ -70,7 +70,7 @@ public sealed class AndroidUiDispatcher : IUiDispatcher
     /// <summary>在创建共享 VM 前安装 .NET 主线程上下文。</summary>
     public void InstallSynchronizationContext() => SynchronizationContext.SetSynchronizationContext(_context);
 
-    /// <summary>把 .NET 异步续体封送到主 Looper，不借用 Avalonia 调度器。</summary>
+    /// <summary>把 .NET 异步续体封送到主 Looper。</summary>
     private sealed class AndroidSynchronizationContext : SynchronizationContext
     {
         private readonly Handler _handler;

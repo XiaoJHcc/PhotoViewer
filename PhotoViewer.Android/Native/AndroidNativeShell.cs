@@ -20,10 +20,9 @@ using ReactiveUI.Builder;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// Android 原生壳启动路径：不创建 Avalonia 应用/窗口/AvaloniaView。
+/// Android 原生壳启动路径：直接构建原生根视图。
 /// 顺序对齐 iOS <c>iOSNativeShell</c>：主线程调度 → ReactiveUI → 平台门面 →
 /// 共享 <see cref="MainViewModel"/>（`nativePresentation: true`） → 根视图。
-/// A1b 只给基座占位视图；A2/A3 再接入主图与主屏。
 /// </summary>
 public static class AndroidNativeShell
 {
@@ -80,7 +79,7 @@ public static class AndroidNativeShell
     /// 初始化原生壳并返回根视图；重复调用返回同一 VM 的新视图。
     /// </summary>
     /// <param name="activity">宿主 Activity（提供 ContentResolver/Toast 上下文）。</param>
-    /// <param name="intent">启动 Intent（A2 起用于外部打开；A1b 只记录）。</param>
+    /// <param name="intent">启动 Intent（外部打开、验收参数与诊断开关）。</param>
     /// <returns>可直接交给 <c>SetContentView</c> 的根视图。</returns>
     public static View CreateRootView(Activity activity, Intent? intent)
     {
@@ -99,7 +98,7 @@ public static class AndroidNativeShell
         NativeWindowPresenter.Initialize(new AndroidNativeWindowPresenter(activity, _settingsPresenter!, _toolsPresenter));
         RegisterExternalOpen(_main);
 
-        Console.WriteLine($"[Native] Android 原生壳就绪（Avalonia.Application.Current={(Avalonia.Application.Current == null ? "null" : "非 null")}）；intent action={intent?.Action}");
+        Console.WriteLine($"[Native] Android 原生壳就绪；intent action={intent?.Action}");
         _root?.Dispose();
         _root = new AndroidNativeRootView(activity, _main, _session);
         HandleIntent(intent);
@@ -108,7 +107,7 @@ public static class AndroidNativeShell
     }
 
     /// <summary>
-    /// 平台门面与 ONNX 执行提供程序注入；A1b 先用占位实现，A2/A3/A4 替换。
+    /// 平台门面与 ONNX 执行提供程序注入。
     /// </summary>
     /// <param name="activity">宿主 Activity。</param>
     private static void InitializePlatform(Activity activity)

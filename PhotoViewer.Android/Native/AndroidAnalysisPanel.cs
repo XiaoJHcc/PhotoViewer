@@ -14,7 +14,7 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// Android 分析栏宿主（A5）：把主 VM 的可见性、即时计算开关、当前图与展示会话的图像上报共享
-/// <see cref="AnalysisPresenter"/>，与旧壳/macOS/iPad/Windows 共用同一份编排。
+/// <see cref="AnalysisPresenter"/>，与 macOS/iPad/Windows 共用同一份编排。
 /// </summary>
 internal sealed class AndroidAnalysisHost : IAnalysisHost
 {
