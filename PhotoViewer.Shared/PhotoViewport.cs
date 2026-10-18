@@ -185,6 +185,12 @@ public sealed class PhotoViewport
             FitToView();
             return;
         }
+        // IMAGE-02：适应倍率已达物理 100% 以上（小图、RAW 内嵌预览）时保持适应，不缩到比适应更小。
+        if (FitScale * BackingScale >= 1)
+        {
+            FitToView();
+            return;
+        }
         if (anchor == null && FocusX.HasValue && FocusY.HasValue)
         {
             Scale = 1 / BackingScale;
