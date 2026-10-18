@@ -71,7 +71,7 @@
 - **macOS**：~~细节预览双击会清 `FollowsFocus`~~ → **已按规格统一**：`ANALYSIS-04` 规定"双击即结束跟随（显式定位优先），四端一致"，status.md macOS 程序化通过 10-16。
 - **共享**：RAW 自动 sidecar 未实现。
 
-作者手验待办（不阻塞开发，阻塞"作者手验通过"状态）：iPad 清单 39 项；Windows 200%/175% DPI、真实跨屏、八方向真实素材、W-M7 色彩/RAW（设置拖拽/录制与工具多格式/选择器已于 2026-10-18 由作者验收）；Android 验收清单全部；统一清单中 macOS/iOS 余项。
+作者手验待办（不阻塞开发，阻塞"作者手验通过"状态）：iPad 清单 39 项；Windows 200%/175% DPI、真实跨屏、八方向真实素材、W-M7 色彩/RAW（设置拖拽/录制与工具多格式/选择器已于 2026-10-18 由作者验收）；Android 验收清单全部；统一清单中 macOS/iOS 余项。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**（不再计入待办；对应 status.md 的 INPUT-04 / SHELL-06 / TOOLBAR-04 已注明）。
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 
