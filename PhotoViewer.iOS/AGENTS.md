@@ -86,7 +86,7 @@ I1 起：Debug 默认 **UIKit 原生壳**（不创建任何 Avalonia 对象）�
 | Core/iOSHeifDecoder.cs / Core/iOSRawDecoder.cs | 旧壳与既有缩略图路径的 ImageIO 解码（8 位口径）。 |
 | Core/iOSPerformanceBudget.cs / Core/iOSMemoryBudgetProvider.cs | 机型表预算 / `os_proc_available_memory` 实测预算（P/Invoke 全部指针化）。 |
 | Core/iOSNativeSettingsPresenter.cs | 原生设置半屏浮窗（Debug/Release 两壳共用）：工作副本编辑、关闭（下拉 `DidDismiss` 或关闭按钮）一次性回写。关闭代理在 `ViewWillAppear` 挂接——presentation controller 在展示开始时才存在，放在 `ViewDidLoad` 会拿不到它（I4 修正）。`iOSNativeSettingsRootViewController.Session` 是验收读取工作副本的测试缝。 |
-| Core/iOSSettingsStorage.cs / Core/iOSXmpWriter.cs / Core/iOSStorageAccessManager.cs | 设置存 NSUserDefaults、XMP 原位写入、安全作用域保留。 |
+| Core/iOSSettingsStorage.cs / Core/iOSXmpWriter.cs / Core/iOSStorageAccessManager.cs | 设置存 NSUserDefaults、XMP 原位写入、安全作用域保留；设置 JSON 损坏时另存带时间戳的偏好备份键再以默认值启动（SETTINGS-14）。 |
 
 ## 验收线索
 

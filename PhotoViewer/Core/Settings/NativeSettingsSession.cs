@@ -28,6 +28,12 @@ public sealed class NativeSettingsSession : System.IDisposable
     /// <summary>工作副本临时保存通道；实际持久化归源设置，非文件存储替代品。</summary>
     private sealed class TransientSettingsService : ISettingsService
     {
+        /// <summary>工作副本读取始终成功，没有读取错误。</summary>
+        public string? LastLoadError => null;
+
+        /// <summary>工作副本不落盘，没有保存错误。</summary>
+        public string? LastSaveError => null;
+
         /// <summary>副本已由构造快照填充，读取为空模型。</summary>
         public Task<SettingsModel> LoadAsync() => Task.FromResult(new SettingsModel());
         /// <summary>编辑期不落盘。</summary>

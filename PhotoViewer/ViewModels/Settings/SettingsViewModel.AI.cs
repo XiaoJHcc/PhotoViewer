@@ -116,6 +116,8 @@ public partial class SettingsViewModel
     /// AI 设置页"清除特征数据库"按钮命令。
     /// 首次点击进入确认态(3 秒内有效);确认态再次点击才真正执行 — 关闭连接、删 photos.db / -wal / -shm、
     /// 清空 <see cref="DinoFeatureCache"/> 进程缓存,然后重建空库。
+    /// 没有系统确认控件的壳使用本命令；有系统确认控件的壳改用
+    /// <see cref="ClearFeatureDatabaseConfirmedAsync"/>，不进入对用户不可见的 arm 态。
     /// 不重启应用;相似聚类面板会在下次 OnPanelOpened 时自动统计未提取数。
     /// 用 lazy-init 避免触碰主 ctor — partial 类同义。
     /// </summary>
@@ -138,6 +140,20 @@ public partial class SettingsViewModel
             });
             return;
         }
+
+        await ExecuteClearDatabaseCoreAsync().ConfigureAwait(true);
+    }
+
+    /// <summary>
+    /// 已确认的“清除特征数据库”入口：调用方负责系统确认，直接执行，不经过 3 秒 arm 态。
+    /// 执行期间 <see cref="ClearDbBusy"/> 为 true，状态文本沿用 <see cref="ClearDbStatus"/>。
+    /// </summary>
+    /// <returns>清库任务。</returns>
+    public Task ClearFeatureDatabaseConfirmedAsync() => ExecuteClearDatabaseCoreAsync();
+
+    private async Task ExecuteClearDatabaseCoreAsync()
+    {
+        if (_clearDbBusy) return;
 
         ClearDbConfirming = false;
         ClearDbBusy = true;

@@ -1,4 +1,6 @@
-﻿using System.Collections.ObjectModel;
+using System;
+using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
 using ReactiveUI;
 
@@ -6,6 +8,20 @@ namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {
+    /// <summary>缩放比例预设的百分比上限（SETTINGS-07：&gt;0 且 ≤1600%）。</summary>
+    public const double ScalePresetPercentMax = 1600;
+
+    private const double ScalePresetPercentMin = 0.001;
+
+    /// <summary>
+    /// 校验缩放比例预设的百分比数值（SETTINGS-07）：必须为有限数值、&gt;0 且 ≤1600。
+    /// 入参单位是百分比（100 表示 100%），不是 <see cref="ScalePreset.Value"/> 使用的倍率。
+    /// </summary>
+    /// <param name="percent">百分比数值，例如 33.333。</param>
+    /// <returns>合法返回 true。</returns>
+    public static bool IsValidScalePresetPercent(double percent)
+        => double.IsFinite(percent) && percent > 0 && percent <= ScalePresetPercentMax;
+
         
     private bool _showZoomIndicator = true;
     public bool ShowZoomIndicator
@@ -31,13 +47,24 @@ public partial class SettingsViewModel
     public ObservableCollection<ScalePreset> ScalePresets
     {
         get => _scalePresets;
-        set => this.RaiseAndSetIfChanged(ref _scalePresets, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _scalePresets, value);
+            this.RaisePropertyChanged(nameof(CanRemoveScalePreset));
+        }
     }
+
+    /// <summary>是否允许删除缩放比例预设（SETTINGS-07：至少保留一项）。</summary>
+    public bool CanRemoveScalePreset => ScalePresets.Count > 1;
+
     // 添加预设 +
     public void AddScalePreset() => ScalePresets.Add(new("100"));
-    // 删除预设 -
+
+    /// <summary>删除缩放比例预设；只剩一项时删除无效（SETTINGS-07）。</summary>
+    /// <param name="item">要删除的预设。</param>
     public void RemoveScalePreset(ScalePreset item)
     {
+        if (!CanRemoveScalePreset) return;
         ScalePresets.Remove(item);
         RequestSave();
     }
@@ -75,9 +102,12 @@ public partial class SettingsViewModel
         RequestSave();
     }
 
+    /// <summary>缩放比例预设；<see cref="Value"/> 为倍率，<see cref="Text"/> 为百分比文本。</summary>
     public class ScalePreset : ReactiveObject
     {
         private double _value;
+
+        /// <summary>倍率（0.125 表示 12.5%），供缩放命令直接使用。</summary>
         public double Value
         {
             get => _value;
@@ -89,22 +119,25 @@ public partial class SettingsViewModel
         }
 
         private string _text = null!;
+
+        /// <summary>
+        /// 百分比文本（100 表示 100%）。非法输入（无法解析、≤0 或 &gt;1600）不写入，
+        /// 只回推一次属性变更，让壳把输入框恢复为原值（SETTINGS-07）。
+        /// </summary>
         public string Text
         {
             get => _text;
             set
             {
-                double newValue;
-                if (double.TryParse(value, out newValue))
+                var text = value?.Trim() ?? string.Empty;
+                if (!IsValidScalePresetPercentText(text, out var percent))
                 {
-                    Value = newValue / 100;
-                    this.RaiseAndSetIfChanged(ref _text, value);
+                    this.RaisePropertyChanged();
+                    return;
                 }
-                else
-                {
-                    Display = "Error";
-                    this.RaiseAndSetIfChanged(ref _text, value);
-                }
+
+                Value = percent / 100;
+                this.RaiseAndSetIfChanged(ref _text, text);
             }
         }
 
@@ -123,9 +156,29 @@ public partial class SettingsViewModel
             set => this.RaiseAndSetIfChanged(ref _editing, value);
         }
 
+        /// <summary>用百分比文本创建预设；初值非法时回落到 100%，保证列表不出现空文本或 0 倍率。</summary>
+        /// <param name="text">百分比文本。</param>
         public ScalePreset(string text)
         {
-            Text = text;
+            if (IsValidScalePresetPercentText(text, out var percent))
+            {
+                Value = percent / 100;
+                _text = text.Trim();
+            }
+            else
+            {
+                Value = 1;
+                _text = "100";
+            }
+        }
+
+        private static bool IsValidScalePresetPercentText(string? text, out double percent)
+        {
+            percent = 0;
+            return !string.IsNullOrWhiteSpace(text)
+                && (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out percent)
+                    || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out percent))
+                && SettingsViewModel.IsValidScalePresetPercent(percent);
         }
     }
 }

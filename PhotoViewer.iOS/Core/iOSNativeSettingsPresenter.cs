@@ -152,6 +152,12 @@ internal sealed class iOSNativeSettingsSession
 /// </summary>
 internal sealed class iOSNativeTransientSettingsService : ISettingsService
 {
+    /// <summary>工作副本读取始终成功，没有读取错误。</summary>
+    public string? LastLoadError => null;
+
+    /// <summary>工作副本不落盘，没有保存错误。</summary>
+    public string? LastSaveError => null;
+
     /// <summary>
     /// 读取临时设置。
     /// 工作副本通过初始快照同步，这里始终返回空模型。

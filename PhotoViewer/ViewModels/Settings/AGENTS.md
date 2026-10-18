@@ -13,10 +13,10 @@ macOS P2 通过 Core/Settings/NativeSettingsSession 建工作副本，`applyRunt
 | [SettingsViewModel.cs](SettingsViewModel.cs) | 主类 | 共享构造、`SettingsService` 注入、各 partial 共用的 `RaisePropertyChanged` 与持久化触发逻辑。 |
 | [SettingsViewModel.FileFormats.cs](SettingsViewModel.FileFormats.cs) | 文件 | 启用/禁用各扩展名,文件后缀解析顺序。 |
 | [SettingsViewModel.BitmapCache.cs](SettingsViewModel.BitmapCache.cs) | 预览 | 内存上限、解码并发、预取邻居数。 |
-| [SettingsViewModel.ImagePreview.cs](SettingsViewModel.ImagePreview.cs) | 预览 | 主图区显示选项、letterbox 行为。 |
+| [SettingsViewModel.ImagePreview.cs](SettingsViewModel.ImagePreview.cs) | 预览 | 主图区显示选项、letterbox 行为；缩放预设校验（百分比 >0 且 ≤1600，非法输入不写入并恢复原值）与至少保留一项（`CanRemoveScalePreset`，SETTINGS-07）。 |
 | [SettingsViewModel.Layout.cs](SettingsViewModel.Layout.cs) | 控制 | 文件栏行/列布局、显示选项。 |
 | [SettingsViewModel.Hotkeys.cs](SettingsViewModel.Hotkeys.cs) | 控制 | 快捷键绑定,用 `HotkeyButton` 捕获。 |
 | [SettingsViewModel.Rating.cs](SettingsViewModel.Rating.cs) | 控制 | 星级显示与安全原位写回开关；当前没有自动 RAW sidecar 创建/关联（见[架构文档](../../../Design/architecture.md) §5.3）。 |
 | [SettingsViewModel.ExifDisplay.cs](SettingsViewModel.ExifDisplay.cs) | EXIF | EXIF 详情页的字段展示开关、汉化偏好。 |
-| [SettingsViewModel.AI.cs](SettingsViewModel.AI.cs) | AI | 相似聚类阈值(75%~95% / 默认 85%)、最多数量(1~32 / 默认 8，NumberBox)、**分析诊断"即时计算DINO/CV"开关**(默认关;门控分析栏增强实时重算与未提取回退,iOS 原生设置页同步)、**"清除特征数据库"按钮**(开发者用,二次确认后调 `PhotoDatabase.DeleteDatabaseAsync` + `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll`)。 |
-| [SettingsViewModel.Persistence.cs](SettingsViewModel.Persistence.cs) | 共用 | 各 partial 的 JSON 读写、默认值回滚、跨会话状态保留(如 `SimilarityPanelExpanded`)。 |
+| [SettingsViewModel.AI.cs](SettingsViewModel.AI.cs) | AI | 相似聚类阈值(75%~95% / 默认 85%)、最多数量(1~32 / 默认 8，NumberBox)、**分析诊断"即时计算DINO/CV"开关**(默认关;门控分析栏增强实时重算与未提取回退,iOS 原生设置页同步)、**"清除特征数据库"按钮**(开发者用;有系统确认控件的壳调 `ClearFeatureDatabaseConfirmedAsync` 直接执行，无系统确认控件的壳沿用 3 秒 arm 态 `ClearDatabaseCommand`;均调 `PhotoDatabase.DeleteDatabaseAsync` + `DinoFeatureCache.InvalidateAll` + `ShakeFlagService.InvalidateAll`)。 |
+| [SettingsViewModel.Persistence.cs](SettingsViewModel.Persistence.cs) | 共用 | 各 partial 的 JSON 读写、默认值回滚、跨会话状态保留(如 `SimilarityPanelExpanded`)；`PersistenceStatus` 显示读取失败/损坏备份/保存失败，保存成功后清除保存错误（SETTINGS-14）。 |
