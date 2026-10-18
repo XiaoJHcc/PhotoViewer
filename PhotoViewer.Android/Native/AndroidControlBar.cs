@@ -74,7 +74,7 @@ internal sealed class AndroidControlBar : View
         _numberPaint = AndroidUiTheme.TextPaint(context, 11, AndroidUiTheme.TextPrimary);
         _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
-        _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear);
+        _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
         SetWillNotDraw(false);
         Focusable = true;
         ImportantForAccessibility = ImportantForAccessibility.Yes;
