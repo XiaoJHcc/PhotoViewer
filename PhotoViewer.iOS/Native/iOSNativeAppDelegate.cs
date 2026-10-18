@@ -57,7 +57,7 @@ public sealed class iOSNativeAppDelegate : UIApplicationDelegate
 }
 
 /// <summary>
-/// 原生壳 scene 委托：scene 连接时经 <see cref="iOSSceneBridge"/> 建立窗口并挂上当前活动壳的根视图
+/// 原生壳 scene 委托：scene 连接时经 <see cref="iOSSceneBridge"/> 建立窗口并挂上原生壳根视图
 /// （iOS 26 SDK 下的唯一窗口口径），同时处理冷启动与热启动随 scene 到达的文件 URL。
 /// </summary>
 [Register("iOSNativeSceneDelegate")]
