@@ -399,7 +399,15 @@ internal static class iOSNativeLayoutCheck
         // I5 起分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
         if (!iOSControlBar.IsCommandAvailable("ToggleAnalysisView") || !iOSControlBar.IsCommandAvailable("ToggleEnhance"))
             throw new InvalidOperationException($"{scope} I5 起分析栏/增强预览命令必须有原生实现（SCOPE-01 解禁）");
-        lines.Add($"PASS {scope} 控制栏：{bar.Groups.Count} 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用");
+        // TOOLBAR-08：滚动宿主的内容尺寸与控制栏文档一致，偏移落在合法范围（重排只夹取，不重置）。
+        if (root.ControlScroll.ContentSize != bar.Frame.Size)
+            throw new InvalidOperationException($"{scope} 控制栏滚动内容尺寸 {Size(root.ControlScroll.ContentSize)} 与文档 {Size(bar.Frame.Size)} 不一致");
+        var offset = root.ControlScroll.ContentOffset;
+        if ((double)offset.X < 0 || (double)offset.Y < 0
+            || (double)offset.X > Math.Max(0, (double)root.ControlScroll.ContentSize.Width - (double)root.ControlScroll.Bounds.Width)
+            || (double)offset.Y > Math.Max(0, (double)root.ControlScroll.ContentSize.Height - (double)root.ControlScroll.Bounds.Height))
+            throw new InvalidOperationException($"{scope} 控制栏滚动偏移越界：{offset}");
+        lines.Add($"PASS {scope} 控制栏：{bar.Groups.Count} 组({string.Join("/", bar.Groups.Select(group => group.Subviews.Length))}) 文档 {Size(bounds)} 裁剪区 {Size(root.ControlScroll.Bounds)}；10 点外边距、组内 50×40/30×30/40×40、{(row ? "横排评分 0→5" : "竖排评分 5→0")}、I5 命令入口可用、滚动内容尺寸与偏移合规");
     }
 
     /// <summary>核对卡片几何（96×144 外框 / 90×138 占位区 / 80 方形照片区 / 星级与文字位置）与身份绑定。</summary>
