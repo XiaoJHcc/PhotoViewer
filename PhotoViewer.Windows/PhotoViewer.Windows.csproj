@@ -32,7 +32,6 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia.Desktop"/>
         <PackageReference Include="Microsoft.WindowsAppSDK"/>
         <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
         <PackageReference Include="DirectNStandard" />
