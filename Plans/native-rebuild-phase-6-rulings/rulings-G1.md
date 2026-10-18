@@ -1,6 +1,6 @@
 # G1 裁定：主图 / 导航图 / 增强 / 状态（B01 B02 B03 B04 B05 B16 B30 C25 C26 C29 C32 D26 D32 D36）
 
-> 2026-10-18。事实按当前工作区代码逐条核对（`file:line` 见文末脚注）；Avalonia 旧壳按“原版”计入判断但不作为长期实现。规范等级见 [Design/README.md](../../README.md) §3，原则见 [00-principles.md](../00-principles.md)。
+> 2026-10-18。事实按当前工作区代码逐条核对（`file:line` 见文末脚注）；Avalonia 旧壳按“原版”计入判断但不作为长期实现。规范等级见 [Design/README.md](../../README.md) §3，原则见 [00-principles.md](../../Design/spec/00-principles.md)。
 > 类别：**U** 行为/信息差异必须统一；**P** 平台差异（输入方式或平台能力，无优劣）；**X** 规范与代码矛盾或缺陷（改代码或改规范）。
 
 | Q | 类别 | Avalonia | mac | win | iOS | android | 裁定 | 依据 | 后续（谁改什么） | 需作者 |

@@ -2,7 +2,7 @@
 
 本文件记录同一设计规则在四端用什么控件、实现入口在哪里、哪些差异已经登记。分层定义见 [README §2](README.md#2-分层)：L4 只回答"怎么做"，不写规则本身，也不写验收状态（见 [status.md](status.md)）。平台代号取 `win` / `mac` / `ios` / `android`（[README §4](README.md#4-编号)）。
 
-实现入口均为工作区相对路径；行号指向类声明或关键分支，便于跳转。已登记差异写成 `**ID@平台**：…（已登记 10-18）`，来源为 [rulings-G1](spec/_drafts/rulings-G1.md)…[rulings-G6](spec/_drafts/rulings-G6.md) 与 [rulings-overrides](spec/_drafts/rulings-overrides.md)。未登记的偏离不再写在本文件，一律进 [status.md](status.md) 的缺口列与 [Phase 6 统一清单](../Plans/native-rebuild-phase-6-unify.md)。
+实现入口均为工作区相对路径；行号指向类声明或关键分支，便于跳转。已登记差异写成 `**ID@平台**：…（已登记 10-18）`，来源为 [rulings-G1](../Plans/native-rebuild-phase-6-rulings/rulings-G1.md)…[rulings-G6](../Plans/native-rebuild-phase-6-rulings/rulings-G6.md) 与 [rulings-overrides](../Plans/native-rebuild-phase-6-rulings/rulings-overrides.md)。未登记的偏离不再写在本文件，一律进 [status.md](status.md) 的缺口列与 [Phase 6 统一清单](../Plans/native-rebuild-phase-6-unify.md)。
 
 ## 控件选型总览
 
@@ -260,6 +260,6 @@
   - **SCOPE-01@mac / @ios / @android**：不建照片数据统计入口（已登记 10-18，同 TOOLS-07@win）。
 - **SCOPE-02**：计算门控。相似 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`；分析 `PhotoViewer/Core/AI/AnalysisPresenter.cs:136-142`；回退 `FallbackDelayMs = 500`（`PhotoViewer/Core/AI/AnalysisPresenter.cs:34`）。
 - **SCOPE-03**：入库与现算。批量提取 `PhotoViewer/Core/AI/FolderFeatureIndexer.cs`；即时缓存 `AnalysisResultCache`。
-- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`，CoreML EP 不可用回退 CPU（已登记 10-18；是否改用 `CIRAWFilter` 待作者）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
+- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`，CoreML EP 不可用回退 CPU（已登记 10-18；`CIRAWFilter` 全分辨率解码暂缓，并入性能专项）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
 - **SCOPE-05**：文件写操作。评分写回 `XmpWriter.WriteRatingAsync`；无删除/重命名/移动/导出命令。
 - **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**，已登记 10-18）；Windows 照片统计；Android 设置数值步进见 SETTINGS-12@android。

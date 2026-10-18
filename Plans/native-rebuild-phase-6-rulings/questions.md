@@ -42,7 +42,7 @@
 - **B27 TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点建议，控制栏没有卡片菜单式的补偿入口；是否登记差异。`PhotoViewer.iOS/Native/iOSControlBar.cs:83`。（已裁定 10-18：接受 30×30，登记 @ios）
 - **B28 OPEN-01@ios / @android**：移动端只有文件夹选择器，菜单/空态文案仍写「打开」；是否把「打开文件」标为桌面专属。`PhotoViewer/ViewModels/Main/FolderViewModel.cs:81-99`。（已裁定 10-18：移动端只有文件夹选择器）
 - **B29 OPEN-04**：多项外部打开取舍顺序不同：Windows 先文件后目录，iOS/Android 先目录后文件，macOS 按路径顺序。`PhotoViewer.Windows/Native/WindowsMainWindow.cs:301-314`、`PhotoViewer.iOS/Native/iOSNativeShell.cs:236-245`。（已裁定 10-18：按投递顺序取首个）
-- **B30 SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览，`IsProxy=false`，物理 100% 与细节预览以预览尺寸为基准；是否改 `CIRAWFilter`。`Plans/native-rebuild-phase-ipad.md:133`、`:182`。（待作者）
+- **B30 SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览，`IsProxy=false`，物理 100% 与细节预览以预览尺寸为基准；是否改 `CIRAWFilter`。`Plans/native-rebuild-phase-ipad.md:133`、`:182`。（已裁定 10-18：作者定暂缓，性能未测，并入性能专项）
 - **B31 ANALYSIS-03@android**：手机纵向 6–7 张瓦片约 58dp，细节预览「可用但不适合多点操作」；是否接受为平台差异。`Plans/native-rebuild-phase-android.md:194`、`:253`。（已裁定 10-18：接受手机 58dp 同公式）
 - **B32 ANALYSIS-04@mac**：细节预览双击会清 `FollowsFocus`（Avalonia 保留），是否登记为 `ANALYSIS-04@mac`。`Plans/native-rebuild-phase-ipad.md:192`。（已裁定 10-18：双击结束跟随，非 mac 专属）
 - **B33 FILTER-07@ios**：实现为 `alignLeading: true`，`Design/ui-contract.md:82` 仍写「行布局横向居中」；规范已按前导对齐表述，旧契约待改。`PhotoViewer.iOS/Native/iOSFilterBar.cs:97-99`、`Plans/native-rebuild-phase-ipad.md:149`。（已裁定 10-18：前导对齐，改旧契约）

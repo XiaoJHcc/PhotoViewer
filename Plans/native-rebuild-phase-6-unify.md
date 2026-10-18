@@ -3,8 +3,8 @@
 目的：把 2026-10-18 的 103 条设计裁定与 34 项令牌对账落成可执行的代码清单。规范侧（`Design/spec/`、`tokens.json`、`platforms.md`、`status.md`）已同步；本文件只列**代码改动**，按平台归口、按优先级排序。
 
 来源：
-- 问题：[`Design/spec/_drafts/questions.md`](../Design/spec/_drafts/questions.md)
-- 裁定：[G1](../Design/spec/_drafts/rulings-G1.md) · [G2](../Design/spec/_drafts/rulings-G2.md) · [G3](../Design/spec/_drafts/rulings-G3.md) · [G4](../Design/spec/_drafts/rulings-G4.md) · [G5](../Design/spec/_drafts/rulings-G5.md) · [G6](../Design/spec/_drafts/rulings-G6.md) · [复核改判](../Design/spec/_drafts/rulings-overrides.md)
+- 问题：[`questions.md`](native-rebuild-phase-6-rulings/questions.md)
+- 裁定：[G1](native-rebuild-phase-6-rulings/rulings-G1.md) · [G2](native-rebuild-phase-6-rulings/rulings-G2.md) · [G3](native-rebuild-phase-6-rulings/rulings-G3.md) · [G4](native-rebuild-phase-6-rulings/rulings-G4.md) · [G5](native-rebuild-phase-6-rulings/rulings-G5.md) · [G6](native-rebuild-phase-6-rulings/rulings-G6.md) · [复核改判](native-rebuild-phase-6-rulings/rulings-overrides.md)
 - 规则与编号：[`Design/README.md`](../Design/README.md)；平台登记：[`platforms.md`](../Design/platforms.md)；状态：[`status.md`](../Design/status.md)
 
 方法：分类取 **多数**（Avalonia 原版 + 四端实现）、**更优**（按 L0 原则）、**原版**（兜底）；只有输入方式或平台能力确有优劣差别时才登记为 `ID@平台`，其余一律同标准。桌面与移动可分开执行，但不得把"某端现状"当成标准。每段内按 **功能/行为缺陷 → 无障碍 → 视觉令牌** 排序；不同平台可并行。
@@ -143,11 +143,11 @@
 | A26 | SHELL-01（视觉） | 栏位底 #1A1A1A→#111111 | `PhotoViewer.Android/Native/AndroidUiTheme.cs:20` | G6-33 |
 | A27 | IMAGE-06（视觉） | 导航图宿主 alpha 0.784→0.6 | `PhotoViewer.Android/Native/AndroidNavigationOverlay.cs:39` | G6-09 |
 
-## 待作者
+## 已暂缓
 
-| Q | 问题 | 现状 | 建议 |
-|---|---|---|---|
-| B30 | `SCOPE-04@ios`：ImageIO 对 Sony ARW 只给内嵌预览，`IsProxy=false`，物理 100% 与细节预览以预览尺寸为基准；是否改用 `CIRAWFilter` | 已按平台限制登记（`platforms.md` / `status.md`），代码未改 | 先维持登记；若 iPad 看 RAW 是目标场景，单独立项 `CIRAWFilter` 全分辨率解码并另评内存与性能 |
+| Q | 事项 | 处置 |
+|---|---|---|
+| B30 | `SCOPE-04@ios`：iOS ImageIO 对 Sony ARW 只给内嵌预览（1616×1080），物理 100% 与细节预览以预览尺寸为基准 | 作者 2026-10-18 定暂缓：`CIRAWFilter` 全分辨率解码性能未测，并入后续性能专项；现按平台限制登记 |
 
 ## 验收
 
