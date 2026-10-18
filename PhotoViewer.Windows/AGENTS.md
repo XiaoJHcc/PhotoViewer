@@ -48,7 +48,7 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 | Native/WindowsToolsAcceptance.cs | 显式 `--pv-native-tools`：隔离设置/数据库/日志 + 自有带 EXIF 素材，验证工具窗口深色/Mica/三分类顺序(EXIF→DINO→统计)/进任务栏且可最大化/尺寸、EXIF 分组/标签/单格式、DINO 5 瓦片与余弦参考点、照片统计文件夹/通配符/CSV 导出/移除、关闭重开（5 项），输出 `tools-checks.json`；`--pv-native-tools-hold` 保持窗口供截图与人工目视。 |
 | Native/WindowsFilterBar.cs | 排序方式 / 升降序 / 星级筛选 + 筛选后计数;名称与取值语义与旧壳一致(`FILTER-01`)。位置直接消费共享 `MainScreenLayout.FilterBarFrames`(行布局居中、列布局 116 栏内纵排),toggle 90×27 与四色取令牌。 |
 | Native/WindowsFilmstripView.cs | 胶片条:`ItemsRepeater` + 卡片池 + 可见区上报 + 350ms 三次缓出定位(`FILM-01/02/04`);用户接管(点选/滚轮/拖动滚动条/触摸)撤销在途动画与排队请求,系统"减少动态效果"直接到终点(`FILM-03`);空筛选结果显示简短状态;滚动区最小高取 `film.band.height`(159)。 |
-| Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名(DisplayName) / 拍摄时间(含完整时间 tooltip) / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。"已缓存"描边单独一层压在缩略图**之上**:80 宽的图片按 Uniform 铺满槽位,画在槽位里的描边左右两条边会被图片盖掉。几何/星色/描边全部取 `film.*`、`color.star.*`。 |
+| Native/WindowsThumbnailCard.cs | 卡片:缩略图 / 文件名(DisplayName) / 拍摄时间(含完整时间 tooltip) / 0-5 星 / 抖动徽标 / 两态描边(`FILM-05`)。"已缓存"描边单独一层压在缩略图**之上**:80 宽的图片按 Uniform 铺满槽位,画在槽位里的描边左右两条边会被图片盖掉。当前项描边走 `_surfaceFrame` **叠加层**(2 DIP 画在 90×138 内边缘,不占布局);纵向坐标对齐 macOS:照片 5..85、文件名 89、第二行 103、星级 116、底部留 8。几何/星色/描边全部取 `film.*`、`color.star.*`。 |
 | Native/WindowsControlBar.cs | EXIF·评分·命令三个整体分组,分组尺寸/间距取共享 `ControlBarLayout`,整组换行换列居中,评分方向按布局翻转(`TOOLBAR-01`);包 `ScrollViewer` 保存并夹取偏移(`TOOLBAR-08`);无照片走系统禁用态、评分快捷命令画数字(0=叉)、命令 tooltip/读屏名称含主次绑定。EXIF 信息块整组可点,与主图右键「工具…」共用 `MainViewModel.OpenToolsWindow`。 |
 | Native/WindowsPhotoView.cs | GPU 照片表面:合成交换链(F16)、EXIF 方向顶点变换;缩放/平移/适应/100%/导航图数学全部委托共享 `PhotoViewport`(100% = 1 源像素对 1 物理像素,`ToggleFit` 对焦优先,切图按共享语义重新适应/跟随对焦/保持归一化中心);视口上报驱动代理与全分辨率。 |
 | Native/WindowsInput.cs | Windows 虚拟键/滚轮 → 共享 `AppGesture`;不改持久化字码。 |
@@ -95,7 +95,7 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 - `ScrollViewer.ZoomMode` 必须设 `Disabled`,否则虚拟化内容的测量用无限尺寸。
 - `Border` / `ScrollViewer` 在 WinUI 3 里是 **sealed**,不能继承;自定义容器只能继承 `Panel`、`ContentControl` 或 `Grid`
   (导航图因此是 `Grid` + 内部 `Border`,不是 `Border` 子类)。
-- **`Border.Width` 含 `BorderThickness`**:写得跟旧壳的数字一样会让内容少 1~2 DIP(文件栏内容因此从 116 变 115,胶片条卡片被压窄)。当前文件栏宽度交给内容计算,不再写死外框宽;新增带边框占位时按"内容宽 + BorderThickness"算,不要只抄旧壳的内容宽。
+- **`Border.Width` 含 `BorderThickness`**:写得跟旧壳的数字一样会让内容少 1~2 DIP(文件栏内容因此从 116 变 115,胶片条卡片被压窄)。当前文件栏宽度交给内容计算,不再写死外框宽;新增带边框占位时按"内容宽 + BorderThickness"算,不要只抄旧壳的内容宽。**缩略图卡片已踩过**:90×138 内层占位面直接在 `Border` 上画 2 DIP 当前项描边时,内容被压成 86×134,且描边透明的那一圈露出栏位底色,未选中卡片看起来比选中卡片小一圈(2026-10-18 作者目视发现)。现把当前项描边放到 `_surfaceFrame` 叠加层(不占布局),90×138 整块可见;纵向坐标同时对齐 macOS(照片 5、文件名 89、第二行 103、星级 116)。
 - 本工程根命名空间 `PhotoViewer.Windows` 会遮蔽 `Windows.*`(共享项目里另有同名的 Avalonia 旧窗口命名空间,分属两个程序集):
   在 `namespace PhotoViewer.Windows.Native` 里写 `Windows.UI.Color` 时 `Windows` 会先绑定到本工程命名空间,`.UI` 不存在而编译失败。
   统一在文件顶部(命名空间声明之前)`using Windows.UI;` + 裸 `Color`(`Colors` 类反而取不到,用 `Color.FromArgb`)。
@@ -125,8 +125,8 @@ P3 主屏入口(分析栏、相似聚类、增强预览)已落地(§15),并已**
 - 原生壳:`dotnet run --project PhotoViewer.Windows -c Debug -- --native`(可跟图片路径或文件夹路径直接打开)。
 - 主屏 P3 入口:右键菜单"分析栏/缩略图栏/控制栏"勾选、筛选条"相似聚类"开关、控制栏"分析栏/增强预览"按钮(快捷键 Ctrl+Oem… 见设置;增强默认 `E`);工具窗口入口为主图右键「工具…」与控制栏 EXIF 信息块点击。
 - 定向验收:`Check Windows Native` Task（或从仓库根运行 `dotnet run --project PhotoViewer.Windows -c Debug -- --native --pv-native-smoke`）；当前设备 150% 缩放(PerMonitorV2)已过，**24 项**覆盖两向三尺寸 resize、caption 契约、物理 100% 升级、导航图、NumberPad3→SetRating3、八方向 EXIF(主图四角回读 + 导航图四角 + 方向 6 `DisplayCrop`/增强帧朝向)、FILM-03、FILM-06、外部打开定位、相似聚类(空态→提取全部→列表→点选)、分析栏(预览/直方图/即时计算/准星 cosine/两向 + 已提取 DB 派生路径)、增强预览(含增强帧诊断重算)、窗口四态与文件选择器；200%/175% DPI、真实跨屏、真实相机八方向素材、系统色彩、增强态 + 分析栏同时开启的长时间稳定性与真实鼠标手感仍待验；W-M7 色彩/RAW 与 W-M6 专项 harness 仍未做。
-- 设置窗口验收:`--pv-native-settings`(隔离设置/数据库,7 项:深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar 已加载、五分类/尺寸、开关+数值框+滑条回写、列表重排、录制开始取消、手势显示、关闭回写,输出 `settings-checks.json`);`--pv-native-settings-hold` 保持窗口供截图与人工目视。**真实拖拽排序、真实键鼠录制、清库确认与预设增删仍待作者手验**。
-- 工具窗口验收:`--pv-native-tools`(隔离设置/数据库/日志 + 自有带 EXIF 素材,5 项:深色/Mica/NavigationView+TitleBar/三分类/960 DIP、EXIF 6 组/25 标签、DINO 5 瓦片与余弦参考点、照片统计文件夹/通配符/CSV 导出/移除、关闭重开,输出 `tools-checks.json`);`--pv-native-tools-hold` 保持窗口供截图与人工目视。**真实多格式切换、真实文件夹/CSV 选择器、作者视觉手感仍待手验**;截图 `release/native-win-acceptance/tools-page-{exif,dino,stats}.png`(150%)。
+- 设置窗口验收:`--pv-native-settings`(隔离设置/数据库,7 项:深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar 已加载、五分类/尺寸、开关+数值框+滑条回写、列表重排、录制开始取消、手势显示、关闭回写,输出 `settings-checks.json`);`--pv-native-settings-hold` 保持窗口供截图与人工目视。**作者 2026-10-18 手验通过**(真实拖拽排序、键鼠录制、清库确认、预设增删);触控板本机无设备未验。
+- 工具窗口验收:`--pv-native-tools`(隔离设置/数据库/日志 + 自有带 EXIF 素材,5 项:深色/Mica/NavigationView+TitleBar/三分类/960 DIP、EXIF 6 组/25 标签、DINO 5 瓦片与余弦参考点、照片统计文件夹/通配符/CSV 导出/移除、关闭重开,输出 `tools-checks.json`);`--pv-native-tools-hold` 保持窗口供截图与人工目视。**作者 2026-10-18 手验通过**(真实多格式切换、文件夹/CSV 选择器、视觉手感);截图 `release/native-win-acceptance/tools-page-{exif,dino,stats}.png`(150%)。
 - 与旧壳对拍的方法(本轮用的那一套):窗口设成**同一物理尺寸**截图后按 1.5 比 DIP 换算。抓图脚本必须先把**自身**设成 Per-Monitor-V2 感知,否则 Win32 会把所有矩形按 96/dpi 虚拟化,两壳数据不可比。
 - 辅助脚本(均在 `bin/`,被忽略不进库):`runcheck.ps1`(启动 + 存活性/窗口 + 抓窗口位图 + 收尾)、`compare/wincheck.ps1`(按指定物理尺寸抓窗口/客户区位图)、`compare/profile.py` / `bands.py`(按像素剖面比对两壳几何)。
   `wincheck.ps1` 的 `-HoverY`(直接 `SetCursorPos`)只能移动光标,**不会**触发 WinUI 的 `PointerMoved` —— 要验标题栏自动显隐必须用真实输入注入(本轮用 KimiCU 的 click/drag)。
