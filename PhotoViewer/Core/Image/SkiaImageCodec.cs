@@ -6,7 +6,7 @@ namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 基于 SkiaSharp 的解码/缩放/旋转/裁剪像素原语,Core 层唯一的像素操作出口。
-/// 输出统一为 <see cref="PixelEncoding.Bgra32"/>(BGRA8888 premul,与原 Avalonia 位图内存布局一致)。
+/// 输出统一为 <see cref="PixelEncoding.Bgra32"/>(BGRA8888 premul,与 Skia 位图内存布局一致)。
 /// 解码产物缓冲经 <see cref="ImageBufferPool"/> 租用(P1-M3)。
 /// </summary>
 public static class SkiaImageCodec
@@ -37,7 +37,7 @@ public static class SkiaImageCodec
     }
 
     /// <summary>
-    /// 按目标宽度等比缩解码(等价于原 Avalonia <c>Bitmap.DecodeToWidth</c>):
+    /// 按目标宽度等比缩解码(语义同 <c>Bitmap.DecodeToWidth</c>):
     /// 先按 codec 支持的采样率解码,必要时再做一次高质量精确缩放。
     /// </summary>
     /// <param name="stream">图像字节流。</param>
@@ -302,7 +302,7 @@ public static class SkiaImageCodec
     }
 
     /// <summary>
-    /// 拉伸缩放到精确尺寸(可改变纵横比;线性采样,与原 Avalonia DrawImage 默认采样口径一致,
+    /// 拉伸缩放到精确尺寸(可改变纵横比;线性采样,与旧壳默认采样口径一致,
     /// DINO 模型输入等像素契约场景依赖此口径)。缓冲池租用。
     /// </summary>
     /// <param name="src">源图像,所有权不转移。</param>

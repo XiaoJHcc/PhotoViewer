@@ -427,13 +427,13 @@ public class SimilarityPanelViewModel : ReactiveObject
 
     /// <summary>
     /// 重新计算当前图片的相似项;旧的计算被取消。
-    /// 原生壳只在面板展开时计算(共享 5.4/SCOPE-01:切图不隐式推理);旧壳照旧随切图计算。
+    /// 只在面板展开时计算(共享 5.4/SCOPE-01:切图不隐式推理)。
     /// 面板收起时先取消在途计算再返回 — 否则收起后那一轮仍会在后台扫全文件夹。
     /// </summary>
     private async Task RecomputeAsync(ImageFile? current)
     {
         _computeCts?.Cancel();
-        if (_main.UsesNativePresentation && !_main.Settings.SimilarityPanelExpanded) return;
+        if (!_main.Settings.SimilarityPanelExpanded) return;
 
         var cts = new CancellationTokenSource();
         _computeCts = cts;

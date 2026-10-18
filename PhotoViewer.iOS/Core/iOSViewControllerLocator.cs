@@ -7,7 +7,7 @@ namespace PhotoViewer.iOS.Core;
 /// <summary>
 /// iOS 前台控制器定位器。
 /// 弹窗类平台能力（设置页、文档选择器）统一从这里拿宿主控制器，
-/// 原生壳与旧壳（Avalonia 单视图同样挂在窗口根控制器下）共用同一口径。
+/// 原生壳的根控制器挂在窗口根控制器下。
 /// </summary>
 internal static class iOSViewControllerLocator
 {

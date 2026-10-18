@@ -15,7 +15,7 @@ public readonly record struct LayoutRect(double X, double Y, double Width, doubl
 
 /// <summary>
 /// 主屏分区几何（平台中立）：文件栏/控制栏/分析栏的主轴长度、筛选条五个控件的位置与两向分区矩形。
-/// 尺寸口径与 Avalonia 主界面对拍一致（文件栏内容宽 116、卡片 96×144、筛选控件 90×32、
+/// 尺寸口径与旧壳主界面对拍一致（文件栏内容宽 116、卡片 96×144、筛选控件 90×32、
 /// 相似聚类 toggle 90×27、间距 5、外边距 10）；Mac 与 iPad 原生壳只把结果落成各自的原生 frame，
 /// 平台特有部分（macOS 隐藏式标题栏让位、iOS 安全区铺满边缘）留在各 head 内。
 /// </summary>

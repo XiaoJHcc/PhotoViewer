@@ -12,7 +12,7 @@ using UniformTypeIdentifiers;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// UIKit 主线程调度器，供共享 Core/ReactiveUI 使用；原生壳不借用 Avalonia 调度器。
+/// UIKit 主线程调度器，供共享 Core/ReactiveUI 使用。
 /// </summary>
 public sealed class iOSUiDispatcher : IUiDispatcher
 {
@@ -52,7 +52,7 @@ public sealed class iOSUiDispatcher : IUiDispatcher
     /// <summary>在创建 VM 前安装 .NET 原生主线程上下文。</summary>
     public void InstallSynchronizationContext() => SynchronizationContext.SetSynchronizationContext(_context);
 
-    /// <summary>将 .NET 异步续体封送到 UIKit 主队列，不借用 Avalonia 调度器。</summary>
+    /// <summary>将 .NET 异步续体封送到 UIKit 主队列。</summary>
     private sealed class iOSSynchronizationContext : SynchronizationContext
     {
         /// <summary>异步投递 .NET 回调。</summary>
@@ -176,7 +176,7 @@ public sealed class iOSFilePicker : IFilePickerService
 
 /// <summary>
 /// 原生壳打包资源读取：从 app bundle 读模型等资源。
-/// 旧壳经 Avalonia avares 资源读取，原生壳不加载 Avalonia，故模型按 BundleResource 拷入 bundle（与 Mac 同口径）。
+/// 模型按 BundleResource 拷入 bundle（与 Mac 同口径）。
 /// </summary>
 public sealed class iOSAppResources : IAppResourceProvider
 {

@@ -3,7 +3,6 @@ using System.ComponentModel;
 using System.Linq;
 using ReactiveUI;
 using System.Reactive;
-using PhotoViewer.Controls;
 using System;
 using PhotoViewer.Core.Input;
 

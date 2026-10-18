@@ -17,13 +17,9 @@ namespace PhotoViewer.ViewModels.Main;
 
 public class MainViewModel : ViewModelBase
 {
-    /// <summary>原生壳使用独立展示会话，旧 ImageVM 展示状态不参与原生加载。</summary>
-    public bool UsesNativePresentation { get; }
     public FolderViewModel FolderVM { get; }
     public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
-    public ImageViewModel ImageVM { get; }
-    public AnalysisViewModel AnalysisVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
 
@@ -32,6 +28,11 @@ public class MainViewModel : ViewModelBase
     /// 参数为原照片与本次请求的星级。
     /// </summary>
     public event Action<ImageFile, int>? RatingWriteFailed;
+
+    /// <summary>
+    /// 显式打开（文件/文件夹/外部打开/拖入）开始时触发：主图回到适应态，不沿用上一批照片的倍率与对焦跟随（OPEN-05）。
+    /// </summary>
+    public event Action? FitToViewRequested;
 
     // 当前状态
     public ImageFile? LastFile;
@@ -56,7 +57,7 @@ public class MainViewModel : ViewModelBase
         get => _currentFile;
         set
         {
-            // 切图取证(常驻,一行):与 ImageVM 的 show 日志对表可还原错位/丢显事故
+            // 切图取证(常驻,一行):与展示会话的加载日志对表可还原错位/丢显事故
             Console.WriteLine($"CurrentFile => {(value?.Name ?? "null")}");
             if (_currentFile != null) _currentFile.IsCurrentImage = false;
             if (_currentFile != value) LastFile = _currentFile;
@@ -92,17 +93,14 @@ public class MainViewModel : ViewModelBase
         finally { _suppressAnchorUpdate = false; }
     }
 
-    /// <summary>建立共享业务 VM；原生壳可接管图片展示，文件、评分与设置行为不变。</summary>
-    public MainViewModel(bool nativePresentation = false)
+    /// <summary>建立共享业务 VM；文件、评分与设置行为不变。</summary>
+    public MainViewModel()
     {
-        UsesNativePresentation = nativePresentation;
         // 先创建设置 ViewModel
         Settings = new SettingsViewModel();
         Tools = new ToolsViewModel(this);
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
-        ImageVM = new ImageViewModel(this);
-        AnalysisVM = new AnalysisViewModel(this);
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
         FileVM = new FileViewModel(this);
@@ -130,11 +128,11 @@ public class MainViewModel : ViewModelBase
     }
     
     ////////////////
-    /// 打开设置模态
+    /// 窗口与主图
     ////////////////
     
-    #region OpenSettingsModal
-    
+    #region Windows
+
     /// <summary>
     /// 打开设置窗口（桌面端）。窗口构建由平台窗口展示器完成。
     /// </summary>
@@ -150,97 +148,11 @@ public class MainViewModel : ViewModelBase
         NativeWindowPresenter.ShowOrActivateToolsWindow(Tools);
     }
 
-    // 模态显示
-    private bool _isModalVisible = false;
-    public bool IsModalVisible
-    {
-        get => _isModalVisible;
-        set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
-    }
-    // 模态显示时 遮罩不透明度
-    private double _modalMaskOpacity = 0.5;
-    public double ModalMaskOpacity
-    {
-        get => _modalMaskOpacity;
-        set => this.RaiseAndSetIfChanged(ref _modalMaskOpacity, value);
-    }
-    // 模态显示时 模态弹出
-    private double _modalMarginTop = 2000;
-    public double ModalMarginTop
-    {
-        get => _modalMarginTop;
-        set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
-    }
-    
     /// <summary>
-    /// 当前模态内容类型：Settings 或 Tools
+    /// 请求主图回到适应态（OPEN-05）。由平台壳订阅 <see cref="FitToViewRequested"/> 后执行。
     /// </summary>
-    private string _modalContentType = "Settings";
-    public string ModalContentType
-    {
-        get => _modalContentType;
-        set
-        {
-            this.RaiseAndSetIfChanged(ref _modalContentType, value);
-            this.RaisePropertyChanged(nameof(IsModalSettings));
-            this.RaisePropertyChanged(nameof(IsModalTools));
-        }
-    }
-    
-    /// <summary>模态内容是否为设置页</summary>
-    public bool IsModalSettings => _modalContentType == "Settings";
-    
-    /// <summary>模态内容是否为工具页</summary>
-    public bool IsModalTools => _modalContentType == "Tools";
+    public void RequestFitToView() => FitToViewRequested?.Invoke();
 
-    /// <summary>
-    /// 模态标题文本
-    /// </summary>
-    private string _modalTitle = "设置";
-    public string ModalTitle
-    {
-        get => _modalTitle;
-        set => this.RaiseAndSetIfChanged(ref _modalTitle, value);
-    }
-    
-    /// <summary>
-    /// 打开设置弹窗
-    /// </summary>
-    public void OpenSettingModal()
-    {
-        ModalContentType = "Settings";
-        ModalTitle = "设置";
-        ShowModal();
-    }
-
-    /// <summary>
-    /// 打开工具弹窗（移动端）。未展示时回到工具首页；已展示时保留当前页（TOOLS-01）。
-    /// </summary>
-    public void OpenToolsModal()
-    {
-        if (!Tools.IsPresented)
-            Tools.ShowList();
-        ModalContentType = "Tools";
-        ModalTitle = "工具";
-        ShowModal();
-    }
-
-    public void ShowModal()
-    {
-        IsModalVisible = true;
-        
-        ModalMaskOpacity = 0.5;
-        ModalMarginTop = 80;
-    }
-    public async void HideModal()
-    {
-        ModalMaskOpacity = 0;
-        ModalMarginTop = 2000;
-        
-        await Task.Delay(400);
-        IsModalVisible = false;
-    }
-    
     #endregion
     
     
@@ -295,7 +207,6 @@ public class MainViewModel : ViewModelBase
 
             // 通知相关视图模型布局已变化
             ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsRowLayout));
-            AnalysisVM?.RaisePropertyChanged(nameof(AnalysisVM.IsRowLayout));
         }
     }
 

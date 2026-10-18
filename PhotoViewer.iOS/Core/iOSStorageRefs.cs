@@ -3,7 +3,7 @@ using PhotoViewer.Core.Storage;
 namespace PhotoViewer.iOS.Core;
 
 /// <summary>
-/// iOS 原生壳本地文件引用，使用共享存储契约而不依赖 Avalonia StorageProvider。
+/// iOS 原生壳本地文件引用，使用共享存储契约。
 /// 安全作用域由 <see cref="iOSStorageAccessManager"/> 统一保留（打开文件/文件夹时由共享层触发），
 /// 因此本类型只按真实路径读写。
 /// </summary>

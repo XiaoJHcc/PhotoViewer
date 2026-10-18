@@ -39,7 +39,7 @@ public sealed class MacShakeFieldView : NSView
 
     /// <summary>
     /// 按网格中心绘制矢量线段:长度固定、颜色携带全部信息,背景不填充(底色由父级图像层决定)。
-    /// 与 Avalonia 版逐格同源:掩膜为假、读数 NaN、drag_r 低于显示阈值或线段过短(<see cref="NSView.Bounds"/> 太小时)均不画。
+    /// 与旧壳逐格同源:掩膜为假、读数 NaN、drag_r 低于显示阈值或线段过短(<see cref="NSView.Bounds"/> 太小时)均不画。
     /// </summary>
     public override void DrawRect(CGRect dirtyRect)
     {

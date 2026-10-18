@@ -194,8 +194,7 @@ public static class NativeAcceptanceRunner
                 if (Convert.ToInt64(query.ExecuteScalar()) != 3) throw new InvalidOperationException("指纹缓存 schema 不完整");
                 results.Add(new NativeCheck { Check = "database-schema", JsonRoundTrip = true });
             }
-            if (window.Main.ImageVM.SourceBitmap != null) throw new InvalidOperationException("原生壳仍创建 Avalonia 主图");
-            results.Add(new NativeCheck { Check = "native-boundary", NoAvaloniaMainBitmap = true, GpuBytes = window.Photo.FootprintBytes });
+            results.Add(new NativeCheck { Check = "native-boundary", GpuBytes = window.Photo.FootprintBytes });
             string report = JsonSerializer.Serialize(results, NativeSmokeJsonContext.Default.ListNativeCheck);
             await File.WriteAllTextAsync(System.IO.Path.Combine(output, "native-smoke.json"), report);
             string reportName = rawCopy ? "native-smoke-raw.json" : first.Name.EndsWith(".heic", StringComparison.OrdinalIgnoreCase) ? "native-smoke-heif.json" : "native-smoke-fixtures.json";
@@ -262,7 +261,6 @@ public sealed class NativeCheck
     public string? Mode { get; set; }
     public int Categories { get; set; }
     public bool JsonRoundTrip { get; set; }
-    public bool NoAvaloniaMainBitmap { get; set; }
     public long GpuBytes { get; set; }
 }
 

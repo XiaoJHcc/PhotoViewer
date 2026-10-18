@@ -440,7 +440,7 @@ public sealed class MacDiagnosticTile : NSView
         /// <summary>装饰层与瓦片共用自上而下的坐标。</summary>
         public override bool IsFlipped => true;
 
-        /// <summary>先画准星再画药丸底,与 Avalonia 版的内容层顺序一致。</summary>
+        /// <summary>先画准星再画药丸底,与旧壳的内容层顺序一致。</summary>
         public override void DrawRect(CGRect dirtyRect)
         {
             DrawCrosshair();

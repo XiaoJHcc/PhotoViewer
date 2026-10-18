@@ -6,7 +6,7 @@ namespace PhotoViewer.Mac.Native;
 
 /// <summary>
 /// 原生分析栏宿主状态：把主 VM 的可见性 / 布局 / 当前图与原生展示会话的位图上报给
-/// <see cref="AnalysisPresenter"/>，与旧壳 <c>AnalysisViewModel</c> 使用同一份编排逻辑。
+/// <see cref="AnalysisPresenter"/>，与旧壳分析展示层使用同一份编排逻辑。
 /// 原生展示图是 GPU 方向未应用的 F16 线性表面，presenter 按需转换到分析口径。
 /// </summary>
 internal sealed class MacAnalysisHost : IAnalysisHost

@@ -170,6 +170,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photo.ViewportChanged += ApplyDetailHighlight;
         _photo.SwipeRequested += OnSwipeRequested;
         _photo.WheelScrolled += OnWheelScrolled;
+        _main.FitToViewRequested += OnFitToViewRequested;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
@@ -402,6 +403,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// </summary>
     internal bool KeyboardInputBlocked => PresentedViewController != null || _editingTextInputs.Count > 0;
 
+    /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
+    private void OnFitToViewRequested() => _photo.FitToView();
+
     /// <summary>释放会话与所有原生订阅（壳退出路径）。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -413,6 +417,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _photo.ViewportChanged -= ReportViewport;
             _photo.SwipeRequested -= OnSwipeRequested;
             _photo.WheelScrolled -= OnWheelScrolled;
+            _main.FitToViewRequested -= OnFitToViewRequested;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PropertyChanged -= OnSettingsChanged;

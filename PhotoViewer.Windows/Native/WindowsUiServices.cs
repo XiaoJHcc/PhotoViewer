@@ -13,7 +13,7 @@ namespace PhotoViewer.Windows.Native;
 
 /// <summary>
 /// 把 .NET 的 async/await 续体排到 WinUI 的 DispatcherQueue 上。
-/// 原生壳不创建 Avalonia,因此必须自己安装这个上下文,否则 await 之后的代码会跑到线程池上。
+/// 原生壳不创建旧壳调度器,因此必须自己安装这个上下文,否则 await 之后的代码会跑到线程池上。
 /// </summary>
 internal sealed class WindowsSynchronizationContext : SynchronizationContext
 {
@@ -261,7 +261,7 @@ internal sealed class WindowsFilePicker : IFilePickerService
 
 /// <summary>
 /// 原生壳的资源读取：将共享 avares URI 映射到 Windows 头工程的清单资源。
-/// 不依赖运行目录、松散文件或单文件发布的解压位置，也不初始化 Avalonia。
+/// 不依赖运行目录、松散文件或单文件发布的解压位置，也不初始化旧壳。
 /// </summary>
 internal sealed class WindowsAppResources : IAppResourceProvider
 {

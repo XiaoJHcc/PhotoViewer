@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reactive;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
@@ -81,13 +82,14 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>
     /// 创建主窗口。
     /// </summary>
-    /// <param name="main">主视图模型(必须以 nativePresentation: true 构造)</param>
+    /// <param name="main">主视图模型</param>
     public WindowsMainWindow(MainViewModel main)
     {
         _main = main;
         Title = WindowTitle;
 
         _photo = new WindowsPhotoView();
+        _main.FitToViewRequested += OnFitToViewRequested;
         _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile);
         _filterBar = new WindowsFilterBar(main.FileVM.FilterBar);
         _controlBar = new WindowsControlBar(main, Execute, main.OpenToolsWindow);
@@ -270,6 +272,7 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         _filterBar.SizeChanged -= OnFilterBarSizeChanged;
+        _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
         _main.RatingWriteFailed -= OnRatingWriteFailed;
@@ -287,6 +290,9 @@ internal sealed partial class WindowsMainWindow : Window
         _session.Dispose();
         _photo.Dispose();
     }
+
+    /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
+    private void OnFitToViewRequested() => _photo.FitToView();
 
     /// <summary>
     /// 执行命令(与旧壳同一份语义:可复用的命令交给共享 ControlViewModel,视口相关命令由壳实现)。
@@ -330,7 +336,7 @@ internal sealed partial class WindowsMainWindow : Window
             return;
         }
 
-        shared.Execute(null);
+        shared.Execute(Unit.Default);
     }
 
     /// <summary>

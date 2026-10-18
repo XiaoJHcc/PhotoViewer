@@ -1,13 +1,13 @@
-# PhotoViewer.Mac — 原生与迁移期旧壳
+# PhotoViewer.Mac — 原生壳
 
-P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 默认旧壳，`--native` 启动原生；**发布通道切原生的时机由作者决定**。**作者 2026-10-16 裁定：Avalonia 旧壳不做产品验收（将被原生壳替换），验收只在各平台原生壳上进行**；macOS 原生壳的色彩、画质、手感、减少动态效果开启态与真实鼠标拖放已验收通过。构建/运行仍走根 DEV.md 的 Tasks。
+macOS 头工程只提供 AppKit + Metal 原生壳：Debug 与 Release 都从 `Program.cs` 直接进入原生启动，不再有 Avalonia 旧壳入口或构建通道分流；历史 `--native` 参数会被原生路径无害忽略。**作者 2026-10-16 裁定：Avalonia 旧壳不做产品验收（将被原生壳替换），验收只在各平台原生壳上进行**；macOS 原生壳的色彩、画质、手感、减少动态效果开启态与真实鼠标拖放已验收通过。构建/运行仍走根 DEV.md 的 Tasks。
 
 **Apple 共享源**：展示解码器、Metal 渲染核心与视口/胶片栏/控制栏/分析栏几何、命令符号与手势映射已迁到 `../PhotoViewer.Apple/`（纯源目录，由 csproj `<Compile Include="..\PhotoViewer.Apple\**\*.cs"/>` 链接编译，见 [其手册](../PhotoViewer.Apple/AGENTS.md)）。本壳只保留 AppKit 宿主：事件、命中测试、图层挂载、原生控件的 frame 落位与系统图标对象。改动共享源后必须复跑本壳八套 `--pv-native-*` 回归。
 
 | 文件/目录 | 职责 |
 |---|---|
-| Program.cs | 原生/旧壳入口分流，禁止启动原生时再创建 Avalonia 应用。 |
-| Core/MacHeifDecoder.cs / MacRawDecoder.cs | 旧壳及已有缩略图路径，维持原有 8 位口径。 |
+| Program.cs | 原生 AppKit 启动入口，直接交给 `MacNativeApplication.Run`。 |
+| Core/MacHeifDecoder.cs / MacRawDecoder.cs | 原生壳与已有缩略图路径，维持原有 8 位口径。 |
 | Core/MacStorageRefs.cs | 原生本地存储引用，复用共享文件源、评分及元数据服务。 |
 | Core/MacPresentationEncodingPolicy.cs | Mac 展示编码策略：任何尺寸档与压力级别都返回 RGBA16F 扩展线性 sRGB（I2 编码协商不改变 Mac 产物；iPad 的 8 位 P3 路径只在 iOS 策略启用）。 |
 | Native/MacNativeApplication.cs | AppKit 生命周期、ReactiveUI builder、平台门面、Finder/Dock/URL 打开接线。 |
@@ -15,7 +15,6 @@ P2 起：Debug 默认原生 AppKit；`--legacy-ui` 显式启动旧壳。Release 
 | Native/MacMainWindow.cs | 隐藏标题栏、系统菜单、两向布局、筛选、可滚动控制栏、原生右键菜单、评分/打开、对焦缩放/导航图；跨屏物理尺寸刷新与全屏/显隐状态保存。主图菜单与系统「显示」菜单含胶片栏/分析栏/控制栏/增强勾选，无照片时增强置灰；主图区底部为 STATE-03 非模态提示条（评分失败/Full 升级失败/内存自动关闭增强），加载提示绑定共享 300ms 延迟态，增强药丸绑定共享 500ms 门槛；键盘按住重复按共享 `InputCommandMap.IsRepeatable` 设闸。控制栏滚动偏移在重建/换向后只夹取不重置。窗口级事件监视器还负责顶边拖动区内的**标题栏双击**（隐藏式标题栏不会自带系统行为）：按 `AppleActionOnDoubleClick` 缩放/最小化/不动作并吞掉事件，全屏无标题栏故不接管；判定挂在监视器而非拖动区视图，因为拖动区只在悬停时显示，靠命中测试会漏掉未预热鼠标的双击。 |
 | Native/MacControlBar.cs | EXIF 信息块、评分与命令三个原生分组；分组尺寸、换行/换列与行内居中由共享 `ControlBarLayout` 计算，本壳只落原生 frame；保留评分方向、显隐/顺序、编号评分快捷命令及苹果主次绑定提示，命令读屏名称与悬停提示同源（含当前主/次绑定）。 |
 | Native/NativeMainLayoutAcceptance.cs | 显式 --pv-native-smoke --pv-native-layout 验证两向/三尺寸主界面几何、栏位显隐、自动方向、导航图与真实命令；筛选条核对三个 90×32 下拉、计数与 90×27 相似聚类 toggle 的 5 点节距与居中；--pv-layout-hold 在 830×650 暂停供系统截图。 |
-| Native/LegacyLayoutAcceptance.cs | 显式 --legacy-ui --pv-legacy-layout 采集同配置旧壳的两向/三尺寸实际几何和控件渲染（含筛选条相似聚类 toggle，P3 起不再按延期隐藏）；隔离设置与数据库。 |
 | Native/NativeToolbarAcceptance.cs | 显式 --pv-native-smoke --pv-native-toolbar 验证两向/窄宽窗分组几何、信息层级、形状、评分方向、显隐/排序/主次绑定及真实按钮事件；只对自有 toolbar-fixtures 素材执行评分写回。另覆盖 [TOOLBAR-08](../Design/ui-contract.md)：控制栏重建保持用户滚动偏移、换向后按新几何夹取；命令读屏名称含当前绑定。另覆盖 [FILM-06](../Design/ui-contract.md)：胶片栏卡片星级按钮真实点击 → 文件级写回一致 + 主图身份不变 + 点星不选中父卡片，改星后落出筛选**仍暂留**、切走后移除且计数与筛选一致；入参不是自有副本时自行打开副本目录，收尾还原评级/筛选/打开状态。 |
 | Native/MacThumbnailItem.cs | NSCollectionView 虚拟化卡片，80 方形图片/选中与缓存描边/评级/抖动；清零叉取 `color.star.clear`（#666666），不随评分与系统次级色变化。保留 `init`/`initWithNibName:bundle:`/`NativeHandle`/`LoadView` 幂等初始化与 `LiveItems` 托管常驻，防止复用池卡片被 GC 回收后重建 View 导致空缺。可选第二行覆盖（文本 + 柱状占比）供相似聚类卡片显示分数；`selectByDisplayedImage` 决定选中描边取 `IsCurrentImage`（相似聚类）还是列表锚点 `IsCurrent`（胶片栏），胶片栏调用点不变。 |
 | Native/MacAnalysisHost.cs | 分析栏宿主：把主 VM 的可见性、即时计算开关、当前图与 `PhotoLoadSession` 的展示位图上报给共享 `Core/AI/AnalysisPresenter`（与旧壳 `AnalysisViewModel` 同一份编排）。 |

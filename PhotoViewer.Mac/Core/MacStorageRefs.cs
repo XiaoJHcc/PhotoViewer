@@ -2,7 +2,7 @@ using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Mac.Core;
 
-/// <summary>Mac 原生壳本地文件引用，使用共享存储契约而不依赖 Avalonia StorageProvider。</summary>
+/// <summary>Mac 原生壳本地文件引用，使用共享存储契约。</summary>
 public sealed class MacFileRef : IFileRef
 {
     private readonly string _path;

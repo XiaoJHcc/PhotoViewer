@@ -8,7 +8,7 @@ namespace PhotoViewer.Core.AI;
 /// 执行 PCA-RGB / 默认中心 cosine / 锐度图 / 抖动矢量场 / 抖动判定文字。线程安全(纯函数 + 内部不持有状态)。
 ///
 /// 抽出来给两条调用路径共享:
-/// 1. <see cref="ViewModels.Main.AnalysisViewModel"/> 切图 cache miss 后落 cache。
+/// 1. 分析栏宿主切图 cache miss 后落 cache。
 /// 2. <see cref="PhotoViewer.Core.Image.BitmapPrefetcher"/> 后台预热邻居指纹。
 ///
 /// PCA SVD 是切图卡顿的主因(几十 ms),全部塞进 cache 后切图变成纯 UI 线程 swap。

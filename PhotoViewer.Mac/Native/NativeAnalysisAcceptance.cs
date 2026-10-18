@@ -210,7 +210,7 @@ internal static class NativeAnalysisAcceptance
             throw new InvalidOperationException($"抖动瓦片角标既不是占位也不是判定文字：{labels[5]}");
         if (panel.Presenter.Tiles.Any(tile => tile.Kind == AnalysisTileKind.Detail) is false)
             throw new InvalidOperationException("分析栏缺少细节预览瓦片");
-        checks.Add($"tiles: order and labels match the Avalonia analysis panel (shake label = {labels[5]})");
+        checks.Add($"tiles: order and labels match the old analysis panel (shake label = {labels[5]})");
     }
 
     /// <summary>抓取主图当前 GPU 帧并归一为 BGRA8 sRGB，供增强前后逐像素比较。</summary>

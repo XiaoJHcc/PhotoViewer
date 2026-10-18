@@ -1,14 +1,13 @@
-﻿using System;
+using System;
 using System.Globalization;
-using Avalonia.Data.Converters;
 using MetadataExtractor;
 
-namespace PhotoViewer.Converters;
+namespace PhotoViewer.Core.Exif;
 
 /// <summary>
-/// 光圈值转换器
+/// 控制栏 EXIF 展示值格式化。原 UI 转换器随旧壳删除，这里保留同一套文本口径供共享 VM 使用。
 /// </summary>
-public class ApertureConverter : IValueConverter
+public class ApertureConverter
 {
     public static readonly ApertureConverter Instance = new();
 
@@ -16,21 +15,16 @@ public class ApertureConverter : IValueConverter
     {
         if (value is Rational aperture)
         {
-            return $"f/{(double)aperture.Numerator/aperture.Denominator}";
+            return $"f/{(double)aperture.Numerator / aperture.Denominator}";
         }
         return "--";
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
     }
 }
 
 /// <summary>
-/// 快门速度转换器
+/// 快门速度格式化。
 /// </summary>
-public class ExposureTimeConverter : IValueConverter
+public class ExposureTimeConverter
 {
     public static readonly ExposureTimeConverter Instance = new();
 
@@ -41,21 +35,16 @@ public class ExposureTimeConverter : IValueConverter
             if (exposureTime.Numerator == 1)
                 return $"1/{exposureTime.Denominator}";
             else
-                return $"{(double)exposureTime.Numerator/exposureTime.Denominator}s";
+                return $"{(double)exposureTime.Numerator / exposureTime.Denominator}s";
         }
         return "--";
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
     }
 }
 
 /// <summary>
-/// 焦距转换器
+/// 焦距格式化。
 /// </summary>
-public class FocalLengthConverter : IValueConverter
+public class FocalLengthConverter
 {
     public static readonly FocalLengthConverter Instance = new();
 
@@ -63,21 +52,16 @@ public class FocalLengthConverter : IValueConverter
     {
         if (value is Rational focalLength)
         {
-            return $"{focalLength.Numerator/focalLength.Denominator}mm";
+            return $"{focalLength.Numerator / focalLength.Denominator}mm";
         }
         return "--";
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
     }
 }
 
 /// <summary>
-/// 曝光补偿转换器
+/// 曝光补偿格式化。
 /// </summary>
-public class ExposureBiasConverter : IValueConverter
+public class ExposureBiasConverter
 {
     public static readonly ExposureBiasConverter Instance = new();
 
@@ -91,17 +75,12 @@ public class ExposureBiasConverter : IValueConverter
         }
         return "--";
     }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
-    }
 }
 
 /// <summary>
-/// 日期时间转换器
+/// 日期时间格式化。
 /// </summary>
-public class DateTimeConverter : IValueConverter
+public class DateTimeConverter
 {
     public static readonly DateTimeConverter Instance = new();
 
@@ -112,10 +91,5 @@ public class DateTimeConverter : IValueConverter
             return dateTime.ToString("yyyy-MM-dd HH:mm");
         }
         return "--";
-    }
-
-    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        throw new NotSupportedException();
     }
 }

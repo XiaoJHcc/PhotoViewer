@@ -7,7 +7,7 @@ namespace PhotoViewer.Core.Storage;
 
 /// <summary>
 /// 平台中立的存储项引用(文件或文件夹)。
-/// 语义逐项对应 Avalonia.Platform.Storage.IStorageItem,UI 层经适配器包装得到。
+/// 语义逐项对应通用文件选择器的存储项,UI 层经适配器包装得到。
 /// </summary>
 public interface IStorageItemRef
 {

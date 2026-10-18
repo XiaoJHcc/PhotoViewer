@@ -479,7 +479,7 @@ internal sealed class iOSDiagnosticTile : UIView
             set { }
         }
 
-        /// <summary>先画准星再画药丸底，与 Mac/Avalonia 版的内容层顺序一致。</summary>
+        /// <summary>先画准星再画药丸底，与 Mac/旧壳版的内容层顺序一致。</summary>
         /// <param name="rect">脏矩形。</param>
         public override void Draw(CGRect rect)
         {

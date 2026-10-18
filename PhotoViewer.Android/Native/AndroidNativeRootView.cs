@@ -108,6 +108,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _photoPane.SetClipChildren(true);
         _photoPane.SetBackgroundColor(AndroidUiTheme.PhotoBackground);
         _photo = new AndroidPhotoView(activity);
+        _main.FitToViewRequested += OnFitToViewRequested;
         _photoPane.AddView(_photo, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
         AddView(_photoPane, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
 
@@ -597,7 +598,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
         }
 
-        // 与 iOS/旧壳分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
+        // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
         AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
         AddDivider();
         AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
@@ -717,7 +718,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnRatingWriteFailed(ImageFile file, int rating)
         => ShowStatus($"无法写入星级：{file.Name}", DesignTokens.MotionStatusToastDuration);
 
-    /// <summary>短暂显示状态提示（与旧壳底部提示同义）。</summary>
+    /// <summary>短暂显示状态提示（与共享底部提示同义）。</summary>
     /// <param name="text">文本。</param>
     /// <param name="durationMs">时长（ms）。</param>
     internal void ShowStatus(string text, int durationMs)
@@ -1009,6 +1010,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
             (value >> 16) & 0xFF, (value >> 8) & 0xFF, value & 0xFF);
     }
 
+    /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
+    private void OnFitToViewRequested() => _photo.FitToView();
+
     /// <summary>释放全部订阅与子视图资源。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -1016,6 +1020,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (disposing && !_disposed)
         {
             _disposed = true;
+            _main.FitToViewRequested -= OnFitToViewRequested;
             _photo.SurfaceReady -= OnSurfaceReady;
             _photo.ViewportChanged -= OnPhotoViewportChanged;
             _session.Changed -= OnSessionChanged;

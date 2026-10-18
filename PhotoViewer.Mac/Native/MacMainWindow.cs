@@ -130,6 +130,7 @@ public sealed class MacMainWindow : IDisposable
         _dragLeft = new DragZone(); _dragRight = new DragZone();
         _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
+        _main.FitToViewRequested += OnFitToViewRequested;
         _photoPane.AddSubview(Photo);
         _detailHighlight = new PassThroughPane();
         _detailHighlight.Layer!.BorderColor = NSColor.FromRgb(0, 255, 0).CGColor;
@@ -968,6 +969,9 @@ public sealed class MacMainWindow : IDisposable
         return menu;
     }
 
+    /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
+    private void OnFitToViewRequested() => Photo.FitToView();
+
     /// <summary>释放窗口观察者与渲染器，取消所有在途展示任务。</summary>
     public void Dispose()
     {
@@ -975,6 +979,7 @@ public sealed class MacMainWindow : IDisposable
         CancelFilmstripScroll();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();
+        _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;

@@ -12,8 +12,7 @@ using PhotoViewer.Core.Memory;
 namespace PhotoViewer.Android;
 
 /// <summary>
-/// Android 原生壳 Activity：不继承 AvaloniaActivity，也不创建任何 Avalonia 对象。
-/// A1b 只承载 <see cref="Native.AndroidNativeShell"/> 的基座根视图；A2/A3 再接主图与主屏。
+/// Android 原生壳 Activity：直接承载 <see cref="Native.AndroidNativeShell"/> 的根视图。
 /// </summary>
 [Activity(
     Name = "cc.xiaojh.PhotoViewer.AndroidNativeActivity",
@@ -26,7 +25,7 @@ namespace PhotoViewer.Android;
 public sealed class AndroidNativeActivity : AppCompatActivity
 {
     /// <summary>
-    /// 创建原生壳根视图；这里不调用 Avalonia。
+    /// 创建原生壳根视图。
     /// </summary>
     /// <param name="savedInstanceState">系统恢复状态。</param>
     protected override void OnCreate(Bundle? savedInstanceState)
@@ -43,7 +42,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         {
             Window?.DecorView?.Post(() => Native.AndroidNativeShell.Main?.OpenSettingWindow());
         }
-        Console.WriteLine("[Native] AndroidNativeActivity 就绪（未初始化 Avalonia）");
+        Console.WriteLine("[Native] AndroidNativeActivity 就绪");
     }
 
     /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
@@ -117,7 +116,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     }
 
     /// <summary>
-    /// 系统内存 trim 事件直报统一内存管家（与旧壳同口径，见 MainActivity）。
+    /// 系统内存 trim 事件直报统一内存管家（只升不降，周期探测负责降级）。
     /// </summary>
     /// <param name="level">系统 trim 级别。</param>
     public override void OnTrimMemory(TrimMemory level)

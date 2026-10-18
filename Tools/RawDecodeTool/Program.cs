@@ -1,8 +1,6 @@
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Mac.Core;
-using PhotoViewer.Platform;
 
 // ========================================================
 // RAW 解码验证工具
@@ -32,7 +30,7 @@ foreach (var rawPath in args.Skip(1))
     var name = Path.GetFileNameWithoutExtension(full);
     Console.WriteLine($"=== {name} ===");
 
-    IFileRef file = new AvaloniaFileRef(CreateStorageFile(full));
+    IFileRef file = new LocalFileRef(full);
     Console.WriteLine($"IsRawFile: {RawLoader.IsRawFile(file)}, IsSupported: {RawLoader.IsSupported}");
 
     // 1) 全尺寸解码
@@ -100,22 +98,6 @@ foreach (var rawPath in args.Skip(1))
 
 Console.WriteLine(failures == 0 ? "全部成功" : $"有 {failures} 项失败");
 return failures == 0 ? 0 : 2;
-
-/// <summary>
-/// Avalonia 12 的 IStorageFile 不允许用户代码实现，BclStorageFile 为 internal；
-/// 测试工具里用反射创建它（仅限本 harness，不动生产代码）。
-/// </summary>
-static IStorageFile CreateStorageFile(string fullPath)
-{
-    var type = typeof(IStorageFile).Assembly.GetType("Avalonia.Platform.Storage.FileIO.BclStorageFile")
-        ?? throw new InvalidOperationException("找不到 BclStorageFile 类型");
-    return (IStorageFile)Activator.CreateInstance(
-        type,
-        System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public,
-        binder: null,
-        args: new object[] { new FileInfo(fullPath) },
-        culture: null)!;
-}
 
 /// <summary>
 /// 用 ImageIO（CGImageDestination）把 Bgra32 像素缓冲落盘 PNG。

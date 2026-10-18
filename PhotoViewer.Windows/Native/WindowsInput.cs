@@ -55,13 +55,13 @@ internal static class WindowsInput
             return mismatched;
         }
 
-        // 其余键在共享模型里与 Windows 虚拟键同名(GestureKey 与 Avalonia Key 同名对齐)
+        // 其余键在共享模型里与 Windows 虚拟键同名(GestureKey 成员名与平台键名对齐)
         return Enum.TryParse<GestureKey>(key.ToString(), out var mapped) ? mapped : null;
     }
 
     /// <summary>
     /// 映射 WinRT 与共享键模型命名不一致的键。
-    /// 共享模型成员名镜像 Avalonia Key:小键盘数字叫 NumPad0-9、回车叫 Return、
+    /// 共享模型成员名镜像平台键名:小键盘数字叫 NumPad0-9、回车叫 Return、
     /// 大写锁定叫 CapsLock、数字锁定叫 NumLock;WinRT 对应的名字分别是
     /// NumberPad0-9 / Enter / CapitalLock / NumberKeyLock,名称对不上,
     /// 靠 <c>Enum.TryParse</c> 兜底会失败(默认次级评分快捷键 NumPad0-5 会因此失效)。

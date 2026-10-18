@@ -19,7 +19,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// UIKit 原生壳启动路径：不创建任何 Avalonia 应用、窗口或主图适配位图。
+/// UIKit 原生壳启动路径：不创建任何旧壳应用、窗口或主图适配位图。
 /// 启动顺序与 <c>PhotoViewer.Mac/Native/MacNativeApplication.cs</c> 一致：
 /// 主线程调度器 → ReactiveUI builder → 平台门面 → 共享 <see cref="MainViewModel"/> → 根控制器。
 /// </summary>
@@ -53,16 +53,14 @@ public static class iOSNativeShell
         }
 
         BootTrace.Mark("native shell: bootstrap begin");
-        BootTrace.MarkAvaloniaAssemblies("native shell: bootstrap begin");
         InitializePlatform();
         var main = InitializeMainViewModel(args);
         ApplyLaunchLayoutMode(args, main);
         ApplyLaunchAnalysisOpen(args, main);
         _session = new PhotoLoadSession();
         _rootViewController = new iOSNativeRootViewController(main, _session, IsAutomatedValidation(args));
-        BootTrace.MarkAvaloniaAssemblies("native shell: root view controller ready");
-        Console.WriteLine("[Native] UIKit 原生壳就绪（不创建 Avalonia 对象）");
-        // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳 ImageViewModel。
+        Console.WriteLine("[Native] UIKit 原生壳就绪");
+        // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳展示适配器。
         StressFlipDriver.MaybeStart(main, _session);
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeGestureCheck.MaybeStart(args, _rootViewController, _session);
@@ -172,7 +170,7 @@ public static class iOSNativeShell
     /// <returns>共享主 VM。</returns>
     private static MainViewModel InitializeMainViewModel(string[] args)
     {
-        var main = new MainViewModel(nativePresentation: true);
+        var main = new MainViewModel();
         _main = main;
         ExternalOpenService.RegisterHandler(request => HandleExternalOpenAsync(main, request));
         SubscribeMemoryWarning();
@@ -220,7 +218,7 @@ public static class iOSNativeShell
     }
 
     /// <summary>
-    /// 共享外部打开请求的 iOS 原生处理：使用原生存储引用直接进入共享文件源，不经过 Avalonia 反射或 StorageProvider。
+    /// 共享外部打开请求的 iOS 原生处理：使用原生存储引用直接进入共享文件源，不经过反射或 StorageProvider。
     /// </summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="request">外部打开请求。</param>
