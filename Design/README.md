@@ -84,5 +84,11 @@
 ## 8. 样机与基线
 
 - 样机只覆盖主窗口：行/列/自动布局、三档窗口尺寸、栏位显隐、胶片栏定位动画与减少动态效果。设置、菜单等原生控件不做样机。纯 HTML/CSS/JS，不引入框架。
-- 样机导出的几何 JSON 与各平台验收程序导出的格式一致，用脚本比对，不需要两台机器同时运行。
+- 打开方式：直接以 `file://` 打开 `prototype/index.html`（无需安装依赖）；窗口外的控制面板提供布局、尺寸、栏位、照片数与演示开关，以及上一张/下一张与几何导出。
+- 样机导出的几何 JSON 与各平台验收程序导出的格式一致，用脚本比对，不需要两台机器同时运行：
+  ```
+  node Design/prototype/export-geometry.mjs --out /tmp/proto-geometry.json
+  python3 Tools/compare-layout-geometry.py /tmp/proto-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
+  ```
+  比对脚本自动识别 JSON 与 `native-layout-geometry.txt`；只比较双方共有布局/节点，单轴容差默认 0.5 点（`--tolerance` 可调），单方独有节点只列出、不算失败。
 - `baseline/avalonia/` 冻结后不再更新，不作为验收标准；样机校准完成后，基线只用于追溯原设计意图。

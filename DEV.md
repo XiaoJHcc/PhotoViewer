@@ -126,10 +126,16 @@
 
 ### 设计令牌
 
-`Design/tokens.json` 是尺寸、颜色、动效数值的唯一来源；改值后重新生成共享常量 `PhotoViewer/Core/Design/DesignTokens.g.cs`（请勿手改）：
+`Design/tokens.json` 是尺寸、颜色、动效数值的唯一来源；改值后重新生成共享常量 `PhotoViewer/Core/Design/DesignTokens.g.cs` 与主窗口样机令牌 `Design/prototype/tokens.js`（两份都请勿手改，`--check` 同时校验）：
 ```
 python3 Tools/generate-design-tokens.py          # 生成
 python3 Tools/generate-design-tokens.py --check  # 校验是否最新
+```
+
+主窗口样机几何与 macOS 验收基准比对（`release/` 产物不提交）：
+```
+node Design/prototype/export-geometry.mjs --out /tmp/proto-geometry.json
+python3 Tools/compare-layout-geometry.py /tmp/proto-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
 ```
 
 ### 在 macOS 上类型检查 Windows 壳

@@ -1,0 +1,708 @@
+/*
+ * 主窗口样机样式。结构位置由 geometry.js 以点为单位落位；
+ * 颜色、字号、圆角从 tokens.js 注入的 CSS 变量读取，不在这里另写数值。
+ */
+
+* {
+    box-sizing: border-box;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+}
+
+body {
+    display: flex;
+    overflow: hidden;
+    background: #0b0b0b;
+    color: var(--pv-text-primary);
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 窗口外的控制面板（不参与导出几何） ---------- */
+
+#panel {
+    flex: 0 0 324px;
+    width: 324px;
+    height: 100%;
+    overflow: auto;
+    padding: 18px 18px 28px;
+    background: #171717;
+    border-right: 1px solid #2c2c2c;
+}
+
+#panel h1 {
+    margin: 0 0 4px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: .02em;
+}
+
+#panel .lede {
+    margin: 0 0 18px;
+    color: var(--pv-text-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+#panel section {
+    margin: 0 0 16px;
+    padding-top: 14px;
+    border-top: 1px solid #262626;
+}
+
+#panel h2 {
+    margin: 0 0 10px;
+    color: #9c9c9c;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+}
+
+#panel label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    color: #d6d6d6;
+    font-size: 12px;
+}
+
+#panel label.stack {
+    display: block;
+}
+
+#panel input[type="number"],
+#panel select {
+    width: 132px;
+    height: 28px;
+    padding: 0 8px;
+    color: var(--pv-text-primary);
+    background: #242424;
+    border: 1px solid #3d3d3d;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+}
+
+#panel input[type="number"] {
+    width: 76px;
+}
+
+#panel .pair {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+#panel .checks {
+    display: grid;
+    gap: 7px;
+}
+
+#panel .checks label {
+    justify-content: flex-start;
+    margin: 0;
+    color: #c8c8c8;
+}
+
+#panel input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #0a84ff;
+}
+
+#panel button {
+    height: 30px;
+    padding: 0 12px;
+    color: var(--pv-text-primary);
+    background: #2a2a2a;
+    border: 1px solid #464646;
+    border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+#panel button:hover {
+    background: #343434;
+}
+
+#panel button:active {
+    background: #242424;
+}
+
+#panel button.primary {
+    width: 100%;
+    height: 34px;
+    margin-top: 4px;
+    color: #dce9ff;
+    background: var(--pv-filter-checked-bg);
+    border-color: var(--pv-filter-checked-border);
+}
+
+#panel .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+#panel .row button {
+    flex: 1;
+}
+
+#panel .note {
+    margin: 8px 0 0;
+    color: #858585;
+    font-size: 11px;
+    line-height: 1.5;
+}
+
+#status {
+    margin: 14px 0 0;
+    padding: 10px;
+    min-height: 66px;
+    overflow: hidden;
+    color: #9fb2c8;
+    background: #101010;
+    border: 1px solid #262626;
+    border-radius: 6px;
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+/* ---------- 舞台与窗口本体 ---------- */
+
+#stage {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(circle at 50% 40%, #151515, #090909 70%);
+}
+
+#mock-window {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transform-origin: top left;
+    background: var(--pv-bar-bg);
+    box-shadow: 0 0 0 1px #3a3a3a, 0 26px 80px rgba(0, 0, 0, .8);
+    overflow: hidden;
+}
+
+.pane {
+    position: absolute;
+    overflow: hidden;
+}
+
+#file-pane {
+    background: var(--pv-bar-bg);
+}
+
+#photo-pane {
+    background: var(--pv-viewer-bg);
+}
+
+#control-scroll {
+    position: absolute;
+    background: var(--pv-bar-bg);
+    overflow: hidden;
+}
+
+#analysis-pane {
+    position: absolute;
+    background: var(--pv-bar-bg);
+    overflow: hidden;
+}
+
+.divider {
+    position: absolute;
+    background: var(--pv-divider);
+}
+
+/* ---------- 筛选条 ---------- */
+
+/* FILTER-01/PRIN-08：下拉与开关外观属平台原生控件，样机用深色近似；几何与状态仍取令牌。 */
+.filter-control {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 0 7px;
+    color: var(--pv-text-primary);
+    background: #262626;
+    border: 1px solid #4a4a4a;
+    border-radius: var(--pv-filter-radius);
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.filter-control .chevron {
+    color: var(--pv-text-secondary);
+    font-size: 9px;
+}
+
+.filter-count {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--pv-text-secondary);
+    font-size: 12px;
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.filter-toggle {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--pv-filter-fg);
+    background: transparent;
+    border: 1px solid var(--pv-filter-border);
+    border-radius: var(--pv-filter-radius);
+    font-size: 11px;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.filter-toggle:hover {
+    background: var(--pv-filter-hover);
+}
+
+.filter-toggle[aria-pressed="true"] {
+    color: var(--pv-filter-checked-fg);
+    background: var(--pv-filter-checked-bg);
+    border-color: var(--pv-filter-checked-border);
+}
+
+/* ---------- 胶片栏 ---------- */
+
+#filmstrip-scroll {
+    position: absolute;
+    overflow: hidden;
+}
+
+#filmstrip-doc {
+    position: absolute;
+    top: 0;
+    left: 0;
+    will-change: transform;
+}
+
+.film-card {
+    position: absolute;
+    background: var(--pv-film-card-bg);
+    border-radius: var(--pv-film-card-radius);
+}
+
+.film-card.current {
+    box-shadow: inset 0 0 0 var(--pv-film-card-border) var(--pv-film-current);
+}
+
+.film-surface {
+    position: absolute;
+    overflow: hidden;
+    border-radius: calc(var(--pv-film-card-radius) - 2px);
+}
+
+.film-thumb {
+    position: absolute;
+    overflow: hidden;
+    border-radius: var(--pv-film-thumb-radius);
+    background:
+        linear-gradient(145deg, rgba(255, 255, 255, .10), rgba(255, 255, 255, 0) 55%),
+        radial-gradient(circle at 30% 28%, #6d6d6d, #3b3b3b 58%, #292929 100%);
+}
+
+.film-thumb::after {
+    content: "";
+    position: absolute;
+    left: 8%;
+    right: 8%;
+    bottom: 12%;
+    height: 34%;
+    background: linear-gradient(180deg, #565656, #2f2f2f);
+    clip-path: polygon(0 100%, 26% 18%, 46% 62%, 66% 0, 100% 100%);
+    opacity: .75;
+}
+
+.film-thumb.cached {
+    box-shadow: inset 0 0 0 1px var(--pv-film-cached);
+}
+
+.film-name,
+.film-date {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    text-align: center;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.film-name {
+    color: var(--pv-film-name);
+    font-size: var(--pv-font-film-name);
+}
+
+.film-date {
+    color: var(--pv-text-secondary);
+    font-size: var(--pv-font-film-second);
+}
+
+.film-shake {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: var(--pv-film-shake);
+    border-radius: var(--pv-film-badge-radius);
+    font-size: var(--pv-font-film-badge);
+    line-height: 1;
+    pointer-events: none;
+}
+
+.film-star {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--pv-star-off);
+    background: transparent;
+    border: 0;
+    font-size: var(--pv-font-film-star);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.film-star.on {
+    color: var(--pv-star-on);
+}
+
+.film-star.clear {
+    color: var(--pv-star-clear);
+    font-size: var(--pv-font-film-star);
+}
+
+/* ---------- 控制栏 ---------- */
+
+#control-doc {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: var(--pv-bar-bg);
+}
+
+.control-group {
+    position: absolute;
+}
+
+.control-group.rating {
+    background: var(--pv-toolbar-block-bg);
+    border-radius: var(--pv-toolbar-radius);
+}
+
+.control-exif-block {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    overflow: hidden;
+    background: var(--pv-toolbar-block-bg);
+    border-radius: var(--pv-toolbar-radius);
+}
+
+.control-exif-block .label {
+    color: var(--pv-text-secondary);
+    font-size: var(--pv-font-exif-label);
+    line-height: 1;
+}
+
+.control-exif-block .value {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--pv-text-primary);
+    font-size: var(--pv-font-exif-value);
+    font-weight: 600;
+    line-height: 1;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.rating-button {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--pv-star-off);
+    background: transparent;
+    border: 0;
+    font-size: var(--pv-font-rating);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.rating-button.on {
+    color: var(--pv-star-on);
+}
+
+.rating-button.clear {
+    color: var(--pv-star-clear);
+    font-size: var(--pv-font-rating-clear);
+}
+
+.rating-button:disabled,
+.command-button:disabled {
+    opacity: .42;
+    cursor: default;
+}
+
+.command-button {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--pv-text-primary);
+    background: var(--pv-command-bg);
+    border: 1px solid var(--pv-command-border);
+    border-radius: var(--pv-toolbar-radius);
+    font-size: var(--pv-font-command);
+    line-height: 1;
+    cursor: pointer;
+}
+
+.command-button:hover {
+    background: #3d3d3d;
+}
+
+/* ---------- 主图、导航图、提示 ---------- */
+
+#photo-image {
+    position: absolute;
+    background:
+        linear-gradient(150deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, 0) 46%),
+        radial-gradient(circle at 34% 30%, #6a6a6a, #444 52%, #303030 100%);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .04);
+}
+
+#photo-image::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 46%;
+    background: linear-gradient(180deg, transparent, rgba(0, 0, 0, .35));
+}
+
+#photo-placeholder-label {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, .32);
+    font-size: 13px;
+    letter-spacing: .12em;
+    white-space: nowrap;
+}
+
+.photo-hint {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: min(var(--pv-hint-max-width), calc(100% - 40px));
+    transform: translate(-50%, -50%);
+    text-align: center;
+    pointer-events: none;
+}
+
+.photo-hint .title {
+    color: var(--pv-text-primary);
+    font-size: var(--pv-font-hint-title);
+    line-height: 1.25;
+}
+
+.photo-hint .detail {
+    margin-top: 8px;
+    color: var(--pv-text-secondary);
+    font-size: var(--pv-font-hint-detail);
+    line-height: 1.5;
+}
+
+#nav-host {
+    position: absolute;
+    background: var(--pv-nav-bg);
+    border-radius: var(--pv-nav-radius);
+}
+
+#nav-image {
+    position: absolute;
+    overflow: hidden;
+    background:
+        radial-gradient(circle at 32% 30%, #777, #444 55%, #2e2e2e 100%);
+}
+
+#nav-frame {
+    position: absolute;
+    border: var(--pv-nav-frame-thickness) solid var(--pv-nav-frame);
+}
+
+#nav-label {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--pv-text-primary);
+    font-size: var(--pv-font-nav-percent);
+    font-weight: 600;
+    line-height: 1;
+}
+
+/* IMAGE-07：药丸尺寸、圆角与距底取令牌；底色无令牌，按主图区深色基调近似。 */
+#busy-pill {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    background: rgba(33, 33, 33, .85);
+    border-radius: var(--pv-busy-radius);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1;
+    pointer-events: none;
+}
+
+#toast {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--pv-toast-padding-x);
+    color: var(--pv-toast-fg);
+    background: var(--pv-toast-bg);
+    border-radius: var(--pv-toast-radius);
+    font-size: var(--pv-font-toast);
+    line-height: 1.25;
+    text-align: center;
+    pointer-events: none;
+}
+
+/* ---------- 分析栏 ---------- */
+
+.analysis-tile {
+    position: absolute;
+    overflow: hidden;
+    background: var(--pv-analysis-tile-bg);
+    border: var(--pv-analysis-border) solid var(--pv-analysis-tile-border);
+    border-radius: var(--pv-analysis-radius);
+}
+
+.analysis-tile .content {
+    position: absolute;
+    inset: 0;
+    background:
+        repeating-linear-gradient(0deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 9px),
+        repeating-linear-gradient(90deg, rgba(255, 255, 255, .035) 0 1px, transparent 1px 9px),
+        radial-gradient(circle at 45% 45%, #3b3b3b, #1d1d1d 70%);
+}
+
+.analysis-tile.histogram .content {
+    background:
+        linear-gradient(90deg, transparent 0 4%, rgba(255, 255, 255, .55) 4% 7%, transparent 7% 12%,
+            rgba(255, 255, 255, .32) 12% 20%, transparent 20% 31%, rgba(255, 255, 255, .7) 31% 38%,
+            transparent 38% 52%, rgba(255, 255, 255, .48) 52% 63%, transparent 63% 76%,
+            rgba(255, 255, 255, .26) 76% 84%, transparent 84%),
+        linear-gradient(180deg, #232323, #171717);
+    clip-path: inset(12% 6% 12% 6%);
+}
+
+.analysis-badge {
+    position: absolute;
+    top: 0;
+    left: 0;
+    padding: var(--pv-analysis-badge-pad-y) var(--pv-analysis-badge-pad-x);
+    color: var(--pv-analysis-badge-fg);
+    background: var(--pv-analysis-badge-bg);
+    border-radius: var(--pv-analysis-badge-radius) 0 var(--pv-analysis-badge-radius) 0;
+    font-size: var(--pv-font-analysis-caption);
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.analysis-divider {
+    position: absolute;
+    background: var(--pv-analysis-divider);
+}
+
+/* ---------- 相似面板 ---------- */
+
+#similarity-pane {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    overflow: hidden;
+    background: var(--pv-sim-bg);
+    border: var(--pv-sim-border-thickness) solid var(--pv-sim-border);
+    border-radius: var(--pv-sim-radius);
+}
+
+#similarity-pane .placeholder {
+    color: var(--pv-sim-placeholder);
+    font-size: 11px;
+    line-height: 1.4;
+    text-align: center;
+}
+
+#similarity-pane .caption {
+    color: var(--pv-sim-caption);
+    font-size: 10px;
+    line-height: 1.2;
+}
+
+#similarity-pane .action {
+    width: var(--pv-sim-action-width);
+    height: var(--pv-sim-action-height);
+    color: var(--pv-sim-action-fg);
+    background: var(--pv-sim-action-bg);
+    border: 1px solid var(--pv-sim-action-border);
+    border-radius: var(--pv-sim-action-radius);
+    font: inherit;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+#similarity-pane .action:hover {
+    background: var(--pv-sim-action-hover);
+}
