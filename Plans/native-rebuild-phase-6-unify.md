@@ -59,6 +59,8 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## macOS
 
+**进度（10-18 完成）**：M1–M11 全部完成并已合入 `refactor/native-rebuild` 集成分支；另补 INPUT-05（按键重复只放行 Repeatable 命令）、STATE-01（加载提示绑 300ms 延迟态）、SCOPE-02（内存自动关闭增强的提示条）、TOOLS-06（关闭工具窗即取消 DINO）、SIM-10（列表态错误标签）、STATE-03（新提示条组件 `MacStatusToast`）。验证：2026-10-18 `--pv-native-smoke` 基线 PASS 39，layout / input / filmstrip / toolbar / analysis / similarity / tools / settings 八套 PASS。
+
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
 |---|---|---|---|---|
 | M1 | MENU-01 / MENU-06 | 主图菜单栏位组后补「增强」勾选；系统「显示」菜单补分析栏与增强；「工具」改为「工具…」 | `PhotoViewer.Mac/Native/MacMainWindow.cs:885`、`:866`、`:895` | B06、B08、C08 |
@@ -74,6 +76,16 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | M11 | FILM-05 | 清零叉改为显式 `color.star.clear` #666666，不再取系统次级色 | `PhotoViewer.Mac/Native/MacThumbnailItem.cs:99` | G6-31 |
 
 ## Windows
+
+**进度（10-18 改完，未合入）**：W1–W19 全部改完，但只在 `native-rebuild-win` 分支（提交 e695a8b），**未合入主线**；开发机为 macOS，只做过 C# 类型检查（0 错误），未在 Windows 运行。验收待作者在 Windows 本机执行 `Check Windows Native`、`--pv-native-settings`、`--pv-native-tools` 并目视。W1 链接 `PhotoViewer.Shared`、视口改用共享 `PhotoViewport` 后，下列数值随令牌变化：
+
+- 导航图：圆角 8→6、可见框描边 2→1、宿主 alpha→0.6
+- 胶片带高 148→159
+- 当前项描边 `#1E90FF`→`#0A84FF`；星色 `#FFD700`→`#FFD214`
+- 筛选 toggle 高 32→27
+- EXIF 单元格内边距 8/6→10/8；EXIF 值文字 `#FFFFFF`→`#EEEEEE`
+- 相似面板列布局宽 106→110
+- 提示条字色 `#808080`→`#FFFFFF`，宽取 min(500, 可用宽)
 
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
 |---|---|---|---|---|
@@ -106,6 +118,8 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## iOS·iPadOS
 
+**进度（10-18 完成）**：I1–I19 全部完成并已合入 `refactor/native-rebuild` 集成分支；另补 INPUT-05（按键重复只放行 Repeatable 命令）、STATE-01（加载提示绑 300ms 延迟态）、SCOPE-02（内存自动关闭增强的提示条）。验证：2026-10-18 iPad mini (A17 Pro) 模拟器 photo PASS 10、layout PASS 21、input PASS 31、analysis PASS 18、similarity PASS 10、tools PASS 8、gesture PASS 22，均 0 FAIL。
+
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
 |---|---|---|---|---|
 | I1 | MENU-07 | 无照片时「增强」action 置灰；「工具…」仍开空态 | `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:683` | C08 |
@@ -129,6 +143,8 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | I19 | TOOLBAR-10（视觉） | 控制栏块底统一 `color.toolbar.block.background` #222222 | `PhotoViewer.iOS/Native/iOSControlBar.cs:246` | G6-32 |
 
 ## Android
+
+**进度（10-18 完成）**：A1–A27 全部完成并已合入主线（`refactor/native-rebuild`）。A18 用 `RecyclerView` + `ItemTouchHelper`，把手轻点给上移/下移菜单；A20 接 `ExploreByTouchHelper`；A9 栏位显隐存 `SharedPreferences`（`PhotoViewer.Native.ShowFilm` / `ShowControls`）；A2 导航图取展示产物抽样，不再二次解码文件。验证：2026-10-18 模拟器 `pv-api35` `pv-check` main PASS 14、analysis PASS 18、similarity PASS 15、settings PASS 16、tools PASS 16，均 0 FAIL；TalkBack、真实拖拽、触控板等需作者手验（见文末「待作者手验」）。
 
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
 |---|---|---|---|---|
@@ -165,6 +181,20 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | Q | 事项 | 处置 |
 |---|---|---|
 | B30 | `SCOPE-04@ios`：iOS ImageIO 对 Sony ARW 只给内嵌预览（1616×1080），物理 100% 与细节预览以预览尺寸为基准 | 作者 2026-10-18 定暂缓：`CIRAWFilter` 全分辨率解码性能未测，并入后续性能专项；现按平台限制登记 |
+
+## 待作者手验
+
+程序化 harness 覆盖不到的项，按平台汇总（确认后回填 [status.md](../Design/status.md) 为「作者手验通过」）：
+
+- macOS：设置页顶部状态行的排版；提示条与「计算中」药丸同时出现时可能重叠；DINO 整宽刚体文本的换行。
+- iOS·iPadOS：真机提示条；损坏设置的状态行；下滑关闭工具页后重开的落点；EXIF 长按复制；500ms 药丸时机；新色值；Stage Manager 下控制栏滚动。
+- Android：设置三张表的拖拽与把手菜单；缩放预设边界；TalkBack 下控制栏虚拟节点与设置行；相似面板错误标签与 44dp 点击区；工具 sheet 关闭取消 DINO；触控板/滚轮分流；Sony ARW 对焦跟随；增强后的导航图。
+- Windows：`native-rebuild-win` 合入后跑 `Check Windows Native`、`--pv-native-settings`、`--pv-native-tools`，并按上文数值清单目视。
+
+遗留（本次未处理，需另立条目）：
+
+- S8：文件夹枚举失败时共享层没有可见错误状态，只落 `Console.Error` 并保持空态。
+- macOS 其他错误路径（文件选择器失败、外部打开失败）仍走模态 `ShowError`，与 STATE-02「错误不升级为模态」不符。
 
 ## 验收
 
