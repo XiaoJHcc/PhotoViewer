@@ -10,6 +10,7 @@ using Android.Widget;
 using Google.Android.Material.BottomSheet;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -55,7 +56,11 @@ public sealed class AndroidToolsPresenter
     /// <param name="tools">共享工具 VM。</param>
     public void ShowOrActivate(ToolsViewModel tools)
     {
-        if (_dialog?.IsShowing == true) return;
+        if (_dialog?.IsShowing == true)
+        {
+            tools.IsPresented = true;
+            return;
+        }
         try
         {
             var content = new AndroidToolsSheetView(_activity, _main, tools, Dismiss);
@@ -66,6 +71,9 @@ public sealed class AndroidToolsPresenter
             dialog.DismissEvent += (_, _) =>
             {
                 if (ReferenceEquals(_current, content)) _current = null;
+                // TOOLS-01/TOOLS-06：关闭浮层即取消在途 DINO 任务，主窗口入口据此回到首页。
+                tools.IsPresented = false;
+                tools.Deactivate();
             };
             dialog.Show();
             if (content.Parent is View parent)
@@ -80,6 +88,7 @@ public sealed class AndroidToolsPresenter
             }
             _dialog = dialog;
             _current = content;
+            tools.IsPresented = true;
             Console.WriteLine($"[Native] 工具页已打开：{tools.CurrentTool?.GetType().Name ?? "列表"}");
         }
         catch (Exception exception)
@@ -279,16 +288,26 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         double density = AndroidUiTheme.Density(_activity);
-        row.SetPadding((int)(10 * density), (int)(8 * density), (int)(10 * density), (int)(8 * density));
+        // TOOLS-03：单元格内边距与 ID 列宽取设计令牌。
+        int paddingX = (int)AndroidUiTheme.Dp(_activity, DesignTokens.ExiftableCellPaddingX);
+        int paddingY = (int)AndroidUiTheme.Dp(_activity, DesignTokens.ExiftableCellPaddingY);
+        row.SetPadding(paddingX, paddingY, paddingX, paddingY);
         var id = Text(tag.TagIdHex, 9, AndroidUiTheme.TextSecondary);
         id.SetTypeface(Typeface.Monospace, TypefaceStyle.Normal);
         id.SetSingleLine(true);
-        row.AddView(id, new LinearLayout.LayoutParams((int)(60 * density), LayoutParams.WrapContent));
-        row.AddView(Text(tag.Name, 11, AndroidUiTheme.TextPrimary), new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 2));
-        row.AddView(Text(tag.ChineseName ?? "", 11, AndroidUiTheme.TextSecondary), new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 2));
+        row.AddView(id, new LinearLayout.LayoutParams(
+            (int)AndroidUiTheme.Dp(_activity, DesignTokens.ExiftableIdWidth), LayoutParams.WrapContent));
+        var name = Text(tag.Name, 11, AndroidUiTheme.TextPrimary);
+        name.SetTextIsSelectable(true);
+        row.AddView(name, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 2));
+        var chinese = Text(tag.ChineseName ?? "", 11, AndroidUiTheme.TextSecondary);
+        chinese.SetTextIsSelectable(true);
+        row.AddView(chinese, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 2));
         var value = Text(tag.Value, 12, AndroidUiTheme.TextPrimary);
         value.SetMaxLines(ExifTableGeometry.ValueMaxLines);
         value.Ellipsize = global::Android.Text.TextUtils.TruncateAt.End;
+        // TOOLS-03：值列可长按选择复制。
+        value.SetTextIsSelectable(true);
         row.AddView(value, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 3));
         return row;
     }
