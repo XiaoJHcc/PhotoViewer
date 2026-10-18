@@ -9,6 +9,7 @@ using System.Reactive.Linq;
 using System.Reactive.Subjects;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using ReactiveUI;
 
@@ -17,6 +18,19 @@ namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {
+    private string? _loadPersistenceStatus;
+    private string? _persistenceStatus;
+
+    /// <summary>
+    /// 设置页顶部的一行持久化状态：读取失败（含损坏备份）或保存失败时非空（SETTINGS-14）。
+    /// 保存成功后清除保存错误；本次会话的读取失败提示保留到再次读取。
+    /// </summary>
+    public string? PersistenceStatus
+    {
+        get => _persistenceStatus;
+        private set => this.RaiseAndSetIfChanged(ref _persistenceStatus, value);
+    }
+
      private IDisposable InitializePersistence()
     {
         var subscription = _saveRequests
@@ -41,6 +55,8 @@ public partial class SettingsViewModel
         try
         {
             var model = await _settingsService.LoadAsync().ConfigureAwait(false);
+            _loadPersistenceStatus = _settingsService.LastLoadError;
+            SetPersistenceStatus(_loadPersistenceStatus);
             if (model.Version > 0)
             {
                 ApplyModel(model);
@@ -48,6 +64,8 @@ public partial class SettingsViewModel
         }
         catch (Exception ex)
         {
+            _loadPersistenceStatus = $"读取设置失败：{ex.Message}";
+            SetPersistenceStatus(_loadPersistenceStatus);
             Console.WriteLine($"SettingsViewModel.LoadSettingsAsync failed: {ex.Message}");
         }
         finally
@@ -64,11 +82,27 @@ public partial class SettingsViewModel
         {
             var model = ToModel();
             await _settingsService.SaveAsync(model).ConfigureAwait(false);
+            SetPersistenceStatus(_settingsService.LastSaveError is { } error
+                ? $"保存设置失败：{error}"
+                : _loadPersistenceStatus);
         }
         catch (Exception ex)
         {
+            SetPersistenceStatus($"保存设置失败：{ex.Message}");
             Console.WriteLine($"SettingsViewModel.PersistAsync failed: {ex.Message}");
         }
+    }
+
+    /// <summary>持久化发生在后台线程；状态变更统一回 UI 线程，避免原生壳直接更新控件时跨线程。</summary>
+    private void SetPersistenceStatus(string? status)
+    {
+        if (UiDispatcher.CheckAccess())
+        {
+            PersistenceStatus = status;
+            return;
+        }
+
+        UiDispatcher.Post(() => PersistenceStatus = status);
     }
 
     private void RequestSave()
@@ -234,7 +268,11 @@ public partial class SettingsViewModel
         ScalePresets.Clear();
         foreach (var value in presets)
         {
-            var text = (value * 100).ToString("0.###", CultureInfo.InvariantCulture);
+            // SETTINGS-14：历史文档中的越界数值按范围夹取，不因单个坏值丢弃整份设置。
+            var percent = value * 100;
+            if (!double.IsFinite(percent)) percent = 100;
+            percent = Math.Clamp(percent, ScalePresetPercentMin, ScalePresetPercentMax);
+            var text = percent.ToString("0.###", CultureInfo.InvariantCulture);
             ScalePresets.Add(new ScalePreset(text));
         }
 
@@ -245,6 +283,7 @@ public partial class SettingsViewModel
             preset.PropertyChanged += OnScalePresetPropertyChanged;
         }
         ScalePresets.CollectionChanged += OnScalePresetsChanged;
+        this.RaisePropertyChanged(nameof(CanRemoveScalePreset));
     }
 
     private void ResetFileFormats(IEnumerable<FileFormatModel> formats)
@@ -398,6 +437,7 @@ public partial class SettingsViewModel
             }
         }
 
+        this.RaisePropertyChanged(nameof(CanRemoveScalePreset));
         RequestSave();
     }
 

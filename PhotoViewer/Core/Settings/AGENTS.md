@@ -8,6 +8,6 @@ P2 新增 `NativeSettingsSession.cs`：Mac 原生设置复用快照-工作副本
 
 | 文件 | 模块 | 职责 |
 |---|---|---|
-| [SettingsService.cs](SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). |
+| [SettingsService.cs](SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). 读取损坏文档先由 `ISettingsStorage.BackupCorruptAsync` 备份（文件改名 `settings.json.corrupt-<yyyyMMdd-HHmmss>`；Apple 偏好/Android SharedPreferences 写带时间戳的备份键）再以默认值启动；`LastLoadError`/`LastSaveError` 暴露最近一次失败（SETTINGS-14）。 |
 | [SettingsModel.cs](SettingsModel.cs) | 设置模型 | 序列化 POCO，定义所有持久化字段及默认值。 |
 | [NativeSettingsPresenter.cs](NativeSettingsPresenter.cs) | 原生设置展示器 | `INativeSettingsPresenter` 接口 + `TryPresent` 静态调用入口；平台层实现原生弹窗，移动端回退到 Avalonia 模态。 |

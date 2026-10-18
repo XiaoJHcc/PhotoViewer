@@ -27,7 +27,7 @@
 | Core/AndroidStorageRefs.cs / AndroidFilePicker.cs / AndroidStorageAccessManager.cs | SAF `content://` 与本地 `IFileRef`/`IFolderRef`；`ACTION_OPEN_DOCUMENT_TREE`/`ACTION_OPEN_DOCUMENT` + 持久授权。 |
 | Core/AndroidNativeWindowPresenter.cs | 设置走原生 BottomSheet；工具页交 `AndroidToolsPresenter`。 |
 | MainActivity.cs | 迁移期 Avalonia 旧壳。`AvaloniaActivity` 子类；在 `base.OnCreate` **前**自建 Avalonia，`base.OnCreate` **后**写 `Content` 触发 `SetContentView`。保留存储权限（≤ API 32）与 `AndroidExternalOpenBridge` 旧路径。 |
-| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / Android{Heif,LibHeif}Decoder.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力，继续复用。 |
+| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / Android{Heif,LibHeif}Decoder.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力，继续复用；设置 JSON 损坏时另存带时间戳的 SharedPreferences 备份键再以默认值启动（SETTINGS-14）。 |
 
 ## 主题与资源
 
