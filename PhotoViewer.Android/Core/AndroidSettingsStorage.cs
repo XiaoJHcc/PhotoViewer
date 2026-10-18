@@ -25,7 +25,7 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
             string? json = null;
             try
             {
-                var prefs = Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private);
+                var prefs = Preferences();
                 json = prefs.GetString(SettingsKey, null);
                 if (string.IsNullOrWhiteSpace(json)) return (SettingsModel?)null;
 
@@ -54,9 +54,9 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
                 throw new InvalidOperationException("设置 JSON 尚未备份，拒绝覆盖损坏内容");
             }
 
-            var prefs = Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private);
+            var prefs = Preferences();
             var json = JsonSerializer.Serialize(model, SettingsJsonContext.Default.SettingsModel);
-            using var editor = prefs.Edit();
+            using var editor = prefs.Edit() ?? throw new InvalidOperationException("无法编辑设置偏好存储");
             editor.PutString(SettingsKey, json);
             editor.Apply();
         });
@@ -71,9 +71,9 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
                 var json = _corruptJson;
                 if (string.IsNullOrEmpty(json)) return null;
 
-                var prefs = Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private);
+                var prefs = Preferences();
                 var backupKey = BuildBackupKey(prefs);
-                using var editor = prefs.Edit();
+                using var editor = prefs.Edit() ?? throw new InvalidOperationException("无法编辑设置偏好存储");
                 editor.PutString(backupKey, json);
                 editor.Remove(SettingsKey);
                 editor.Apply();
@@ -88,6 +88,10 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
             }
         });
     }
+
+    private static ISharedPreferences Preferences()
+        => Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private)
+           ?? throw new InvalidOperationException("无法打开设置偏好存储");
 
     private static string BuildBackupKey(ISharedPreferences prefs)
     {

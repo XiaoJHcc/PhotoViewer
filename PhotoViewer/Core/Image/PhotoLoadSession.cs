@@ -21,6 +21,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     private int _proxyLongEdge;
     private bool _needsFull;
     private bool _fullLoading;
+    private bool _fullFailed;
     private bool _enhanceRequested;
     private int _enhanceToken;
     private int _enhanceVisibleToken;
@@ -87,6 +88,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _fullLoading = false;
         Error = string.Empty;
         FullError = string.Empty;
+        _fullFailed = false;
         Replace(null, false);
         if (file != null)
         {
@@ -260,9 +262,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         BitmapLoader.ProxyTargetLongEdge = target;
         _needsFull = needsFull;
         if (_file == null || !string.IsNullOrEmpty(Error)) return;
-        // IMAGE-03：Full 失败后等待下一次触发；只在需求上升沿或代理目标增长时重试，避免每次布局刷新都重试。
-        bool fullTrigger = needsFull && (!wasNeedsFull || grow);
-        if (fullTrigger && IsProxy && !_fullLoading)
+        // IMAGE-03：Full 失败后等待下一次触发（需求上升沿或代理目标增长）再重试，避免每次布局刷新都重试。
+        if (_fullFailed && needsFull && (!wasNeedsFull || grow)) _fullFailed = false;
+        if (needsFull && IsProxy && !_fullLoading && !_fullFailed)
         {
             _fullLoading = true;
             _ = LoadAsync(_file, _generation, null, _cancellation.Token);
@@ -300,7 +302,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 {
                     // 屏上已有可用图时不报"无法打开该图片"；仅 Full 升级失败给出非阻塞提示，代理刷新失败保持静默。
                     if (_image == null) Error = "无法打开该图片";
-                    else if (!target.HasValue) FullError = "无法载入全分辨率";
+                    else if (!target.HasValue) { FullError = "无法载入全分辨率"; _fullFailed = true; }
                     IsLoadingVisible = false;
                     Changed?.Invoke();
                     return;
@@ -321,7 +323,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                     _fullLoading = false;
                     // IMAGE-03/IMAGE-10：屏上已有代理时升级失败只报非阻塞的 Full 提示，保留代理。
                     if (_image == null) Error = "解码被中断，请重新选择照片";
-                    else if (!target.HasValue) FullError = "无法载入全分辨率";
+                    else if (!target.HasValue) { FullError = "无法载入全分辨率"; _fullFailed = true; }
                     IsLoadingVisible = false;
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
@@ -335,7 +337,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 if (generation != _generation) return;
                 _fullLoading = false;
                 if (_image == null) Error = exception.Message;
-                else if (!target.HasValue) FullError = $"无法载入全分辨率：{exception.Message}";
+                else if (!target.HasValue) { FullError = $"无法载入全分辨率：{exception.Message}"; _fullFailed = true; }
                 IsLoadingVisible = false;
                 Changed?.Invoke();
             }).ConfigureAwait(false);

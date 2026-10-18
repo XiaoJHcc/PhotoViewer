@@ -40,6 +40,23 @@
 | S25 | TOOLS-07 | CSV 末列追加「文件夹」，前三列不动 | `PhotoViewer/Core/Tools/PhotoStatsService.cs:73` | D09 |
 | S26 | IMAGE-04 | 预设查询改可空：端点与未命中直接不动作，Windows 复用 | `PhotoViewer/ViewModels/Main/ImageViewModel.cs:769` | C26 |
 
+### 共享层进度（10-18 完成）
+
+S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/filmstrip/toolbar/analysis/similarity/tools/settings 九套 PASS；iOS 模拟器、Android Debug 构建通过且无新增警告。已顺带改好四端 `Move` → `ThumbnailList.MoveCurrent`、`ZoomPreset` → `ZoomPresets.Next`（含 W4）。各壳还需接线的新 API：
+
+| API | 用途 | 壳侧接线 |
+|---|---|---|
+| `PhotoLoadSession.IsLoadingVisible` | STATE-01 300ms 延迟加载提示 | M/I/A3/W：替换各自"立即显示/不显示"的加载文案 |
+| `PhotoLoadSession.FullError` | IMAGE-03 有代理时的非阻塞提示 | M4/I3/W6：走提示条，不覆盖主图错误标题 |
+| `PhotoLoadSession.IsEnhancingVisible` | IMAGE-07 500ms 药丸门槛 | M3/I4/A21/W5 |
+| `PhotoLoadSession.Notice` | SCOPE-02 内存自动关闭增强提示 | 四端提示条订阅 |
+| `InputCommandMap.IsRepeatable` | INPUT-05 按住重复设闸 | W3/A8；Mac、iOS 键盘重复入口同补 |
+| `ToolsViewModel.IsPresented` / `Deactivate()` | TOOLS-01 已开留页、TOOLS-06 关闭取消 | Mac 已写 `IsPresented`，`ShowTools` 需改调 `_main.OpenToolsWindow()`（M5）；I6/I9、A12、W14 写入标志并在关闭时 `Deactivate()` |
+| `SimilarityPanelViewModel.ShowActionAreaError` | SIM-10 列表态错误 | Mac 补一项；I10/A15/W15 |
+| `SettingsViewModel.CanRemoveScalePreset` / `IsValidScalePresetPercent` / `PersistenceStatus` / `ClearFeatureDatabaseConfirmedAsync()` | SETTINGS-07/14/10 | M9/W16/I12/I14/A17/A19；原生设置是工作副本，`PersistenceStatus` 要从源 VM 取 |
+
+遗留：S8 纯文件夹枚举失败时共享层没有可见错误状态，现只落 `Console.Error` 并保持空态；需要可见提示时另立条目（STATE-02）。
+
 ## macOS
 
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
