@@ -2,84 +2,89 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Android.Graphics;
-using PhotoViewer.Android.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
-using PhotoViewer.Core.Storage;
-using AndroidColorSpace = Android.Graphics.ColorSpace;
 
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 缩放指示器（导航图）的缩略图解码（A3）：用 BitmapFactory 按目标长边子采样后转正 EXIF 方向，
-/// 避免为一张 150 点指示图走 GPU 离屏回读；只读取文件流，不改动主图纹理与视口。
+/// 缩放指示器（导航图）缩略图来源：直接取当前展示产物（代理/Full/增强预览）的像素，
+/// 按显示朝向抽样到目标长边；不再二次解码原始文件，也不回读 GPU 纹理。
 /// </summary>
 internal static class AndroidNavigationDecoder
 {
-    /// <summary>解码导航图（显示朝向），失败返回 null。</summary>
-    /// <param name="file">当前照片文件引用。</param>
-    /// <param name="orientation">EXIF 方向。</param>
-    /// <param name="longEdgePx">目标长边（物理像素）。</param>
+    /// <summary>与屏幕物理像素的倍率：导航图显示长边 150dp，位图按 2× 生成以保证清晰度。</summary>
+    private const int BitmapOverscan = 2;
+
+    /// <summary>把当前展示产物转成显示朝向的导航图位图。</summary>
+    /// <param name="image">当前展示产物（会话持有所有权；本方法先取得租约再转后台执行）。</param>
+    /// <param name="density">屏幕密度（dp → px）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>位图，调用方负责释放。</returns>
-    internal static Task<Bitmap?> DecodeAsync(IFileRef file, int orientation, int longEdgePx, CancellationToken cancellationToken)
-        => Task.Run<Bitmap?>(() =>
+    /// <returns>位图（调用方负责释放）；产物不可用或不支持该编码时返回 null。</returns>
+    internal static Task<Bitmap?> CreateFromDisplayAsync(DecodedImage image, double density, CancellationToken cancellationToken)
+    {
+        // 在调用线程先借一份租约，避免后台转换期间会话替换产物后缓冲被归还。
+        if (!image.TryAcquire()) return Task.FromResult<Bitmap?>(null);
+        int longEdge = Math.Max(1, (int)Math.Round(DesignTokens.NavLongEdge * BitmapOverscan * density));
+        return Task.Run<Bitmap?>(() =>
         {
             try
             {
-                var bounds = new BitmapFactory.Options { InJustDecodeBounds = true };
-                using (var stream = file.OpenReadAsync().GetAwaiter().GetResult())
-                    BitmapFactory.DecodeStream(stream, null, bounds);
-                if (bounds.OutWidth <= 0 || bounds.OutHeight <= 0)
-                    return DecodePresentationFallback(file, cancellationToken);
-                int sample = 1;
-                while (Math.Max(bounds.OutWidth, bounds.OutHeight) / (sample * 2) >= longEdgePx) sample *= 2;
-                var options = new BitmapFactory.Options
-                {
-                    InPreferredConfig = Bitmap.Config.Argb8888,
-                    InSampleSize = sample,
-                };
-                if (OperatingSystem.IsAndroidVersionAtLeast(26))
-                    options.InPreferredColorSpace = AndroidColorSpace.Get(
-                        (AndroidDisplayCapabilities.SurfaceIsP3 ? AndroidColorSpace.Named.DisplayP3 : AndroidColorSpace.Named.Srgb)!)!;
-                using var stream2 = file.OpenReadAsync().GetAwaiter().GetResult();
-                using var decoded = BitmapFactory.DecodeStream(stream2, null, options);
-                if (decoded == null)
-                    return DecodePresentationFallback(file, cancellationToken);
-                cancellationToken.ThrowIfCancellationRequested();
-                using var scaled = ScaleToLongEdge(decoded, longEdgePx);
-                return RotateForDisplay(scaled ?? decoded, orientation);
+                return CreateFromDisplay(image, longEdge, cancellationToken);
             }
-            catch (System.OperationCanceledException) { throw; }
+            catch (OperationCanceledException) { throw; }
             catch (Exception exception)
             {
-                Console.WriteLine($"[Native] 导航图解码失败（{file.Name}）：{exception.Message}");
+                Console.WriteLine($"[Native] 导航图转换失败：{exception.Message}");
                 return null;
             }
-        }, cancellationToken);
-
-    /// <summary>BitmapFactory 连 bounds 都不出（HIF/HEIF）时，用展示解码器（含 libheif）生成导航图。</summary>
-    private static Bitmap? DecodePresentationFallback(IFileRef file, CancellationToken cancellationToken)
-    {
-        using var presentation = new AndroidPresentationDecoder()
-            .DecodeThumbnailAsync(file, 100, cancellationToken).GetAwaiter().GetResult();
-        if (presentation == null)
-        {
-            Console.WriteLine($"[Native] 导航图回退解码为空（{file.Name}）");
-            return null;
-        }
-        cancellationToken.ThrowIfCancellationRequested();
-        return AndroidBitmapConverter.ConvertDetached(presentation);
+            finally
+            {
+                image.Release();
+            }
+        });
     }
 
-    /// <summary>按目标长边等比缩小；无需缩放时返回 null。</summary>
-    private static Bitmap? ScaleToLongEdge(Bitmap bitmap, int longEdge)
+    /// <summary>按目标长边等距抽样并转正到显示朝向（调用方必须持有租约）。</summary>
+    private static Bitmap? CreateFromDisplay(DecodedImage image, int longEdgePx, CancellationToken cancellationToken)
     {
-        int current = Math.Max(bitmap.Width, bitmap.Height);
-        if (current <= longEdge) return null;
-        double ratio = (double)longEdge / current;
-        int width = Math.Max(1, (int)Math.Round(bitmap.Width * ratio));
-        int height = Math.Max(1, (int)Math.Round(bitmap.Height * ratio));
-        return Bitmap.CreateScaledBitmap(bitmap, width, height, true);
+        if (image.Width <= 0 || image.Height <= 0) return null;
+        var pixels = image.Pixels;
+        if (pixels.Length < image.Height * image.Stride) return null;
+        int displayLongEdge = Math.Max(image.Width, image.Height);
+        int sample = Math.Max(1, (int)Math.Ceiling(displayLongEdge / (double)Math.Max(1, longEdgePx)));
+        int width = Math.Max(1, image.Width / sample), height = Math.Max(1, image.Height / sample);
+        var colors = new int[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            if ((y & 0x3F) == 0) cancellationToken.ThrowIfCancellationRequested();
+            int row = y * sample * image.Stride;
+            int output = y * width;
+            for (int x = 0; x < width; x++)
+            {
+                int index = row + x * sample * DecodedImage.BytesPerPixel(image.Encoding);
+                switch (image.Encoding)
+                {
+                    case PixelEncoding.Bgra32:
+                        colors[output++] = (pixels[index + 3] << 24) | (pixels[index + 2] << 16)
+                            | (pixels[index + 1] << 8) | pixels[index];
+                        break;
+                    case PixelEncoding.Rgba8:
+                        colors[output++] = (pixels[index + 3] << 24) | (pixels[index] << 16)
+                            | (pixels[index + 1] << 8) | pixels[index + 2];
+                        break;
+                    case PixelEncoding.Rgb24:
+                        colors[output++] = unchecked((int)0xFF000000) | (pixels[index] << 16)
+                            | (pixels[index + 1] << 8) | pixels[index + 2];
+                        break;
+                    default:
+                        return null;
+                }
+            }
+        }
+        using var sampled = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
+        sampled.SetPixels(colors, 0, width, 0, 0, width, height);
+        return RotateForDisplay(sampled, image.Orientation);
     }
 
     /// <summary>按共享方向表（先镜像后顺时针旋转）把解码位图转成显示朝向。</summary>

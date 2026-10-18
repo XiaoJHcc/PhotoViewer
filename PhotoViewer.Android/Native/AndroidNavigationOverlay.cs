@@ -2,21 +2,21 @@ using System;
 using Android.Content;
 using Android.Graphics;
 using Android.Views;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Shared;
 
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 缩放指示器（导航图，A3）：非适应态时显示在主图区右下角——半透明 #222 圆角宿主、GPU 小目标渲染的
+/// 缩放指示器（导航图）：非适应态时显示在主图区右下角——半透明 #222 圆角宿主、当前展示产物生成的
 /// 等比缩略图、白色 1 点可见框与物理缩放百分比；点按/拖动导航图把照片居中到对应位置（触屏增强）。
+/// 几何与颜色取 IMAGE-06 令牌，宿主不透明度 0.6。
 /// </summary>
 internal sealed class AndroidNavigationOverlay : View
 {
-    private const double Padding = 8;
-    private const double LabelHeight = 15;
-    private readonly Paint _backgroundPaint;
     private readonly Paint _framePaint;
     private readonly Paint _labelPaint;
+    private readonly Color _backgroundColor;
     private Bitmap? _bitmap;
     private double _navWidthDp, _navHeightDp;
     private (double X, double Y, double Width, double Height) _viewport;
@@ -36,11 +36,14 @@ internal sealed class AndroidNavigationOverlay : View
     /// <param name="context">宿主上下文。</param>
     public AndroidNavigationOverlay(Context context) : base(context)
     {
-        _backgroundPaint = AndroidUiTheme.Paint(Color.Argb(200, 34, 34, 34)!);
-        _framePaint = AndroidUiTheme.Paint(Color.White, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _labelPaint = AndroidUiTheme.TextPaint(context, 12, Color.White, bold: true);
+        _backgroundColor = WithAlpha(FromToken(DesignTokens.ColorNavBackground), DesignTokens.ColorNavBackgroundAlpha);
+        _framePaint = AndroidUiTheme.Paint(FromToken(DesignTokens.ColorNavFrame),
+            Math.Max(1, AndroidUiTheme.Dp(context, DesignTokens.NavFrameThickness)));
+        _labelPaint = AndroidUiTheme.TextPaint(context, DesignTokens.NavPercentFontSize,
+            FromToken(DesignTokens.ColorNavFrame), bold: true);
         SetWillNotDraw(false);
         Clickable = true;
+        ContentDescription = "缩放指示器";
     }
 
     /// <summary>绑定导航图定位回调。</summary>
@@ -61,6 +64,7 @@ internal sealed class AndroidNavigationOverlay : View
         _navHeightDp = navHeight;
         _viewport = viewport;
         _zoomText = zoomText;
+        ContentDescription = $"缩放指示器 {zoomText}";
         Invalidate();
     }
 
@@ -71,10 +75,17 @@ internal sealed class AndroidNavigationOverlay : View
         Invalidate();
     }
 
-    /// <summary>导航图宿主总尺寸（dp）。</summary>
-    /// <returns>宽高。</returns>
-    internal (double Width, double Height) HostSize => (_navWidthDp + Padding * 2,
-        _navHeightDp + Padding * 2 + 8 + LabelHeight + 2);
+    /// <summary>导航图宿主总尺寸（dp）：上下内边距 + 缩略图 + 百分比行与余量。</summary>
+    internal (double Width, double Height) HostSize => HostSizeFor(_navWidthDp, _navHeightDp);
+
+    /// <summary>按缩略图尺寸计算宿主外框（dp）。</summary>
+    /// <param name="navWidth">缩略图宽（dp）。</param>
+    /// <param name="navHeight">缩略图高（dp）。</param>
+    /// <returns>宿主宽高。</returns>
+    internal static (double Width, double Height) HostSizeFor(double navWidth, double navHeight)
+        => (navWidth + DesignTokens.NavPadding * 2,
+            navHeight + DesignTokens.NavPadding + DesignTokens.NavPercentTopGap
+            + DesignTokens.NavLabelHeight + DesignTokens.NavPercentBottomGap);
 
     /// <summary>绘制底、缩略图、可见框与百分比。</summary>
     /// <param name="canvas">画布。</param>
@@ -83,9 +94,10 @@ internal sealed class AndroidNavigationOverlay : View
         base.OnDraw(canvas);
         float density = (float)AndroidUiTheme.Density(Context!);
         var host = new RectF(0, 0, Width, Height);
-        AndroidUiTheme.DrawRounded(canvas, host, 6 * density, Color.Argb(200, 34, 34, 34)!);
-        var imageRect = new RectF((float)(Padding * density), (float)(Padding * density),
-            (float)((Padding + _navWidthDp) * density), (float)((Padding + _navHeightDp) * density));
+        AndroidUiTheme.DrawRounded(canvas, host, (float)(DesignTokens.NavCornerRadius * density), _backgroundColor);
+        var imageRect = new RectF((float)(DesignTokens.NavPadding * density), (float)(DesignTokens.NavPadding * density),
+            (float)((DesignTokens.NavPadding + _navWidthDp) * density),
+            (float)((DesignTokens.NavPadding + _navHeightDp) * density));
         if (_bitmap != null && !_bitmap.IsRecycled)
             canvas.DrawBitmap(_bitmap, new Rect(0, 0, _bitmap.Width, _bitmap.Height), imageRect, null);
         var frame = new RectF(
@@ -94,7 +106,7 @@ internal sealed class AndroidNavigationOverlay : View
             imageRect.Left + (float)((_viewport.X + _viewport.Width) * density),
             imageRect.Top + (float)((_viewport.Y + _viewport.Height) * density));
         if (frame.Width() >= 1 && frame.Height() >= 1) canvas.DrawRect(frame, _framePaint);
-        float labelTop = (float)((Padding + _navHeightDp + Padding) * density);
+        float labelTop = (float)((DesignTokens.NavPadding + _navHeightDp + DesignTokens.NavPercentTopGap) * density);
         AndroidUiTheme.DrawCentered(canvas, _zoomText, _labelPaint, host.CenterX(),
             labelTop + _labelPaint.TextSize, host.Width() - 4 * density);
     }
@@ -108,11 +120,16 @@ internal sealed class AndroidNavigationOverlay : View
         if (e.ActionMasked is MotionEventActions.Down or MotionEventActions.Move)
         {
             double density = AndroidUiTheme.Density(Context!);
-            double u = (e.GetX() / density - Padding) / Math.Max(1, _navWidthDp);
-            double v = (e.GetY() / density - Padding) / Math.Max(1, _navHeightDp);
+            double u = (e.GetX() / density - DesignTokens.NavPadding) / Math.Max(1, _navWidthDp);
+            double v = (e.GetY() / density - DesignTokens.NavPadding) / Math.Max(1, _navHeightDp);
             _centerRequested?.Invoke(Math.Clamp(u, 0, 1), Math.Clamp(v, 0, 1));
             return true;
         }
         return e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel;
     }
+
+    private static Color FromToken(uint argb) => new(unchecked((int)argb));
+
+    private static Color WithAlpha(Color color, double alpha)
+        => Color.Argb((int)Math.Round(Math.Clamp(alpha, 0, 1) * 255), color.R, color.G, color.B);
 }

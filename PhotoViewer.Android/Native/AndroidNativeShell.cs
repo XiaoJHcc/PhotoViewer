@@ -54,11 +54,13 @@ public static class AndroidNativeShell
 
     /// <summary>
     /// 硬件键盘派发：设置 sheet/文本输入期间不抢键；命中用户绑定且命令可用时执行并消费。
+    /// 系统重复（<see cref="KeyEventActions.Multiple"/>）只对共享命令表标记为可重复的命令执行（INPUT-05）。
     /// </summary>
     /// <param name="keyCode">原生键码。</param>
     /// <param name="metaState">原生修饰键状态。</param>
+    /// <param name="repeated">是否为按住产生的系统重复事件。</param>
     /// <returns>是否消费该按键。</returns>
-    public static bool HandleHardwareKey(Keycode keyCode, int metaState)
+    public static bool HandleHardwareKey(Keycode keyCode, int metaState, bool repeated = false)
     {
         if (_main == null || _root == null) return false;
         if (AndroidNativeSettingsPresenter.IsOpen) return false;
@@ -67,7 +69,9 @@ public static class AndroidNativeShell
         var gesture = AndroidInputMapping.FromKeyEvent(keyCode, metaState);
         string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
         if (command == null || !AndroidControlBar.IsCommandAvailable(command)) return false;
-        Console.WriteLine($"[Native] 键盘命令：{keyCode} → {command}");
+        // INPUT-05：不可重复的命令按住只执行一次；已消费的重复事件不再交回系统。
+        if (repeated && !InputCommandMap.IsRepeatable(command)) return true;
+        Console.WriteLine($"[Native] 键盘命令：{keyCode} → {command}{(repeated ? "（重复）" : "")}");
         _root.Execute(command);
         return true;
     }
@@ -158,14 +162,16 @@ public static class AndroidNativeShell
         {
             try
             {
-                var folder = request.Items.Select(item => item.StorageItem).OfType<IFolderRef>().FirstOrDefault();
-                if (folder != null)
+                // OPEN-01：多项按投递顺序取首个可打开项（文件夹或受支持图片），其余忽略。
+                var first = request.Items.FirstOrDefault(item => item.StorageItem is IFolderRef
+                    || item.StorageItem is IFileRef file && main.FolderVM.IsImageFile(file.Name));
+                if (first?.StorageItem is IFolderRef folder)
                 {
                     await main.FolderVM.OpenFolderAsync(folder);
                     return;
                 }
-                var files = request.Items.Select(item => item.StorageItem).OfType<IFileRef>().ToList();
-                if (files.Count > 0) await main.FolderVM.OpenExternalFilesAsync(files);
+                if (first?.StorageItem is IFileRef target)
+                    await main.FolderVM.OpenExternalFilesAsync([target]);
             }
             catch (Exception exception)
             {
@@ -175,21 +181,22 @@ public static class AndroidNativeShell
     }
 
     /// <summary>
-    /// 处理启动/新 Intent：<c>pv-open</c> 验收路径优先，其次 ACTION_VIEW/SEND 的 content Uri。
+    /// 处理启动/新 Intent：<c>pv-open</c> 验收路径优先，其次 ACTION_VIEW/SEND 的 content Uri；
+    /// 全部合并为一次外部打开请求（OPEN-01），不逐项投递。
     /// </summary>
     /// <param name="intent">系统 Intent。</param>
     public static void HandleIntent(Intent? intent)
     {
         if (intent == null || _main == null) return;
-        var items = new List<PhotoViewer.Core.Storage.IStorageItemRef>();
+        var items = new List<ExternalOpenItem>();
         string? openPath = ResolveLaunchPath(intent.GetStringExtra("pv-open"));
         if (!string.IsNullOrWhiteSpace(openPath))
         {
             try
             {
-                items.Add(System.IO.Directory.Exists(openPath)
+                items.Add(new ExternalOpenItem(System.IO.Directory.Exists(openPath)
                     ? new AndroidFolderRef(openPath)
-                    : new AndroidFileRef(openPath));
+                    : new AndroidFileRef(openPath)));
                 Console.WriteLine($"[Native] pv-open：{openPath}");
             }
             catch (Exception exception)
@@ -204,8 +211,8 @@ public static class AndroidNativeShell
                 if (uri == null) continue;
                 try
                 {
-                    items.Add(new AndroidFileRef(Application.Context.ContentResolver!, uri, null,
-                        uri.LastPathSegment, null, null));
+                    items.Add(new ExternalOpenItem(new AndroidFileRef(Application.Context.ContentResolver!, uri, null,
+                        uri.LastPathSegment, null, null)));
                 }
                 catch (Exception exception)
                 {
@@ -213,7 +220,7 @@ public static class AndroidNativeShell
                 }
             }
         }
-        foreach (var item in items) ExternalOpenService.PublishStorageItem(item, "android-intent");
+        if (items.Count > 0) ExternalOpenService.Publish(new ExternalOpenRequest(items, "android-intent"));
         if (intent.GetBooleanExtra("pv-settings", false))
         {
             Console.WriteLine("[Native] pv-settings：启动后打开设置 sheet（验收）");

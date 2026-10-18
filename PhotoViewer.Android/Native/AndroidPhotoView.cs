@@ -38,6 +38,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private readonly ScaleGestureDetector _scaleDetector;
     private readonly double _density;
     private readonly int _touchSlop;
+    private readonly float _scrollFactorPx;
     private AndroidPhotoRenderer _renderer = new();
     private DecodedImage? _image;
     private (int Width, int Height, int Orientation) _identity;
@@ -51,6 +52,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private bool _moved;
     private float _downX, _downY, _lastX, _lastY, _lastFocusX, _lastFocusY;
     private bool _hasLastFocus;
+    /// <summary>离散滚轮尚未累积到一格的增量（INPUT-04）。</summary>
+    private double _wheelAccumulator;
 
     /// <summary>EGL 窗口表面就绪（首图必须等表面就绪后再解码，保证 P3 协商结果参与编码选择）。</summary>
     internal event Action? SurfaceReady;
@@ -96,6 +99,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     {
         _density = Resources?.DisplayMetrics?.Density ?? 1;
         _touchSlop = ViewConfiguration.Get(context)?.ScaledTouchSlop ?? 8;
+        // API 26 起提供滚动因子；更低版本回退到系统默认的 64px/格。
+        _scrollFactorPx = OperatingSystem.IsAndroidVersionAtLeast(26)
+            ? ViewConfiguration.Get(context)?.ScaledVerticalScrollFactor ?? 64
+            : 64;
         SetBackgroundColor(Color.Black);
         _surfaceView = new SurfaceView(context);
         _surfaceView.SetZOrderOnTop(false);
@@ -115,6 +122,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         {
             _image = null;
             _identity = default;
+            _wheelAccumulator = 0;
             _renderer.SetImage(null);
             Draw();
             ViewportChanged?.Invoke();
@@ -135,6 +143,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             }
         }
         _identity = identity;
+        _wheelAccumulator = 0;
         _viewport.BeginImageChange();
         _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
         Draw();
@@ -407,23 +416,42 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         return true;
     }
 
-    /// <summary>鼠标离散滚轮按用户绑定走命令表（Ctrl+滚轮等由修饰键决定）。</summary>
+    /// <summary>滚轮分流（INPUT-04）：精确滚动平移照片，离散滚轮累积到一格才派发一次命令。</summary>
     /// <param name="e">通用运动事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnGenericMotionEvent(MotionEvent? e)
     {
-        if (e != null && e.ActionMasked == MotionEventActions.Scroll
-            && (e.Source & InputSourceType.ClassPointer) != 0)
+        if (e == null || e.ActionMasked != MotionEventActions.Scroll)
+            return base.OnGenericMotionEvent(e);
+        if ((e.Source & (InputSourceType.ClassPointer | InputSourceType.Touchpad)) == 0)
+            return base.OnGenericMotionEvent(e);
+        float vertical = e.GetAxisValue(Axis.Vscroll), horizontal = e.GetAxisValue(Axis.Hscroll);
+        if (Math.Abs(vertical) < .01f && Math.Abs(horizontal) < .01f) return base.OnGenericMotionEvent(e);
+        if (IsPreciseScroll(e, vertical))
         {
-            float value = e.GetAxisValue(Axis.Vscroll);
-            if (Math.Abs(value) > .01f)
+            if (!_viewport.IsFit)
             {
-                WheelScrolled?.Invoke(value < 0, (int)e.MetaState);
-                return true;
+                _viewport.PanBy(-horizontal * _scrollFactorPx / _density, -vertical * _scrollFactorPx / _density);
+                Draw();
+                ViewportChanged?.Invoke();
             }
+            return true;
         }
-        return base.OnGenericMotionEvent(e);
+        if (Math.Abs(vertical) < .01f) return true;
+        _wheelAccumulator += vertical;
+        if (Math.Abs(_wheelAccumulator) >= 1)
+        {
+            bool up = _wheelAccumulator < 0;
+            _wheelAccumulator = 0;
+            WheelScrolled?.Invoke(up, (int)e.MetaState);
+        }
+        return true;
     }
+
+    /// <summary>精确滚动判据：触控板来源，或轴增量本身是连续的非整数。</summary>
+    private static bool IsPreciseScroll(MotionEvent e, float vertical)
+        => (e.Source & InputSourceType.Touchpad) != 0
+            || Math.Abs(vertical) > .01f && Math.Abs(vertical - Math.Round(vertical)) > .01f;
 
     /// <summary>点击可访问性。</summary>
     /// <returns>是否处理。</returns>
