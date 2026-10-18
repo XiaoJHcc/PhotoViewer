@@ -13,6 +13,8 @@ internal sealed class MacSettingsStateDto
     public int Category { get; set; }
     /// <summary>当前分类标题。</summary>
     public string Title { get; set; } = string.Empty;
+    /// <summary>设置页顶部的一行持久化状态（读取失败/损坏备份/保存失败）；为空表示正常（SETTINGS-14）。</summary>
+    public string PersistenceStatus { get; set; } = string.Empty;
     /// <summary>历史后退是否可用。</summary>
     public bool CanGoBack { get; set; }
     /// <summary>历史前进是否可用。</summary>

@@ -1,4 +1,5 @@
 using AppKit;
+using System.ComponentModel;
 using System.Globalization;
 using System.Reactive.Linq;
 using System.Text.Json;
@@ -17,6 +18,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private static readonly string[] CategoryNames = ["文件", "预览", "控制", "EXIF", "AI"];
 
     private NativeSettingsSession? _session;
+    private SettingsViewModel? _sourceSettings;
     private bool _presenting;
     private bool _closing;
     private int _category = -1;
@@ -82,6 +84,9 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         if (!_presenting)
         {
             _session = new NativeSettingsSession(settings);
+            _sourceSettings = settings;
+            // SETTINGS-14：工作副本的持久化状态恒为空，顶部状态行必须读源设置。
+            _sourceSettings.PropertyChanged += OnSourceSettingsChanged;
             MacSettingsNative.ActionSink = HandleAction;
             MacSettingsNative.CloseSink = HandleClose;
             _category = 0;
@@ -93,6 +98,12 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
 
     private SettingsViewModel Settings => _session?.WorkingSettings ?? throw new InvalidOperationException("设置会话未建立");
 
+    /// <summary>源设置的持久化状态变化时刷新设置页顶部状态行。</summary>
+    private void OnSourceSettingsChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) PushState();
+    }
+
     /// <summary>窗口关闭：完成一次性回写并释放工作副本，等待下次展示重建。</summary>
     private void HandleClose()
     {
@@ -101,6 +112,11 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         _session?.Apply();
         _session?.Dispose();
         _session = null;
+        if (_sourceSettings != null)
+        {
+            _sourceSettings.PropertyChanged -= OnSourceSettingsChanged;
+            _sourceSettings = null;
+        }
         _presenting = false;
         _category = -1;
         _recordingIndex = -1;
@@ -152,6 +168,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         {
             Category = _category,
             Title = _category >= 0 ? CategoryNames[_category] : string.Empty,
+            PersistenceStatus = _sourceSettings?.PersistenceStatus ?? string.Empty,
             CanGoBack = _historyBack.Count > 0,
             CanGoForward = _historyForward.Count > 0,
             File = new MacFileStateDto
@@ -372,12 +389,10 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         Settings.ApplyScalePreset();
     }
 
-    /// <summary>系统确认后顺序完成共享两段确认命令，避免 ReactiveCommand 执行状态竞态。</summary>
+    /// <summary>系统确认后直接走共享"已确认"入口，不再调用不可见的 arm 命令（SETTINGS-10）。</summary>
     private async Task ClearDatabaseAsync()
     {
-        var settings = Settings;
-        if (!settings.ClearDbConfirming) await settings.ClearDatabaseCommand.Execute();
-        await settings.ClearDatabaseCommand.Execute();
+        await Settings.ClearFeatureDatabaseConfirmedAsync();
         PushState();
     }
 

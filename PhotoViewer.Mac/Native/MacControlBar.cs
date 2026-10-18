@@ -71,6 +71,8 @@ internal sealed class MacControlBar : NSView
             if (symbol == null) continue;
             string tooltip = CommandTooltip(hotkey, main.Settings);
             var button = MacSymbols.Button(symbol, tooltip, () => execute(hotkey.Command));
+            // TOOLBAR-04：读屏名称与悬停提示一致，包含当前主/次绑定。
+            ((NSView)button).AccessibilityLabel = tooltip;
             button.BezelStyle = NSBezelStyle.SmallSquare;
             button.WantsLayer = true;
             button.Layer!.CornerRadius = 6;

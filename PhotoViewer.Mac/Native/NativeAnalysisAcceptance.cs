@@ -57,8 +57,22 @@ internal static class NativeAnalysisAcceptance
             if (panel.Presenter.CrosshairU is not { } u || Math.Abs(u - 0.25) > 0.001
                 || panel.Presenter.CrosshairV is not { } v || Math.Abs(v - 0.75) > 0.001)
                 throw new InvalidOperationException($"诊断瓦片点击未落准星：{panel.Presenter.CrosshairU},{panel.Presenter.CrosshairV}");
-            panel.Presenter.ClearCrosshair();
-            checks.Add("tiles: click sets normalised crosshair and clear resets it");
+            // ANALYSIS-08：瓦片角标/letterbox 点击等同面板空白——清准星但保留 cosine 参考点。
+            int referenceX = panel.Presenter.RefGridX, referenceY = panel.Presenter.RefGridY;
+            var diagnosticTile = panel.TileViews.OfType<MacDiagnosticTile>().First(tile => tile.TileClicked != null);
+            var pillPoint = diagnosticTile.ConvertPointToView(new CGPoint(4, 4), null);
+            using (var blankClick = NSEvent.MouseEvent(NSEventType.LeftMouseDown, pillPoint, 0,
+                NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, 1, 1, 1))
+            {
+                if (blankClick == null) throw new InvalidOperationException("角标点击事件创建失败");
+                diagnosticTile.MouseDown(blankClick);
+            }
+            await SettleAsync(window);
+            if (panel.Presenter.CrosshairU != null || panel.Presenter.CrosshairV != null)
+                throw new InvalidOperationException("角标/letterbox 点击未清空准星");
+            if (panel.Presenter.RefGridX != referenceX || panel.Presenter.RefGridY != referenceY)
+                throw new InvalidOperationException("角标/letterbox 点击错误改动了 cosine 参考点");
+            checks.Add("tiles: click sets normalised crosshair; blank/corner click clears it without moving the cosine reference");
 
             // 4) 直方图与细节预览在照片就绪后出内容（直方图来自当前展示图，细节来自全分辨率裁剪）。
             await WaitAsync(() => panel.Presenter.HistogramTile.Source != null, "直方图出图");

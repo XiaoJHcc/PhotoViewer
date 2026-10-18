@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
@@ -46,19 +47,22 @@ public sealed class MacMainWindow : IDisposable
     private readonly FilterToggleButton _similarityToggle;
     private readonly MacSimilarityPanel _similarityPane;
     private readonly NSTextField _hint;
+    private readonly NSTextField _busyPill;
+    private readonly MacStatusToast _toast = new();
     private readonly NSView _navigationHost;
     private readonly NSImageView _navigationImage;
     private readonly NSView _navigationFrame;
     private readonly NSTextField _zoomLabel;
     private NSImage? _navigationBitmap;
     private DecodedImage? _navigationSource;
-    private readonly List<(NSMenuItem Item, Func<bool> Checked)> _menuChecks = [];
+    private readonly List<(NSMenuItem Item, Func<bool> Checked, Func<bool>? Enabled)> _menuChecks = [];
     private readonly NSObject _scrollObserver;
     private readonly NSObject _liveScrollObserver;
     private readonly NSObject _inputMonitor;
     private readonly SemaphoreSlim _openGate = new(1, 1);
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
+    private string? _lastFullError;
     private bool _layingOut;
     private bool _refreshPending;
     private bool _disposed;
@@ -92,6 +96,10 @@ public sealed class MacMainWindow : IDisposable
     internal NSButton SimilarityToggle => _similarityToggle;
     /// <summary>相似聚类 toggle 的勾选态（按钮自持，验收读取）。</summary>
     internal bool SimilarityToggleIsOn => _similarityToggle.IsOn;
+    /// <summary>增强"计算中"药丸，供验收核对 500ms 门槛后的可见性。</summary>
+    internal NSTextField EnhanceBusyPill => _busyPill;
+    /// <summary>主图区底部提示条，供验收核对非模态反馈。</summary>
+    internal MacStatusToast StatusToast => _toast;
     /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
     internal IReadOnlyList<NSView> DragZones => [_dragLeft, _dragRight];
 
@@ -147,6 +155,17 @@ public sealed class MacMainWindow : IDisposable
         _zoomLabel.Font = NSFont.SystemFontOfSize(12, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");
         _navigationHost.AddSubview(_navigationImage); _navigationHost.AddSubview(_navigationFrame); _navigationHost.AddSubview(_zoomLabel);
         _photoPane.AddSubview(_navigationHost); _navigationHost.Hidden = true;
+        _busyPill = Label("计算中…", 13);
+        _busyPill.Alignment = NSTextAlignment.Center;
+        _busyPill.Font = NSFont.SystemFontOfSize(13, NSFontWeight.Medium) ?? throw new InvalidOperationException("系统字体不可用");
+        _busyPill.TextColor = NSColor.White;
+        _busyPill.WantsLayer = true;
+        _busyPill.Layer!.BackgroundColor = NSColor.FromWhite(.13f, .85f).CGColor;
+        _busyPill.Layer.CornerRadius = (nfloat)DesignTokens.ImageBusyCornerRadius;
+        _busyPill.Layer.MasksToBounds = true;
+        _busyPill.Hidden = true;
+        _photoPane.AddSubview(_busyPill);
+        _photoPane.AddSubview(_toast);
         _sort = Popup(_main.FileVM.FilterBar.SortModes.Select(item => item.DisplayName).ToArray());
         _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
@@ -190,6 +209,7 @@ public sealed class MacMainWindow : IDisposable
         Window.DidExitFullScreen += (_, _) => SaveFullscreen(false);
         Window.DidResignKey += (_, _) => { _dragLeft.Hidden = true; _dragRight.Hidden = true; };
         Session.Changed += OnImageChanged;
+        Session.Notice += ShowToast;
         _root.Resized = Layout;
         _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths);
         _main.PropertyChanged += OnMainChanged;
@@ -467,6 +487,12 @@ public sealed class MacMainWindow : IDisposable
             _analysisPane.Frame = ToFrame(panes.Analysis);
             if (analysisVisible) _analysisPane.Arrange(row, analysisMain);
             Photo.Frame = _photoPane.Bounds;
+            _busyPill.Frame = new CGRect(
+                Math.Max(0, ((double)_photoPane.Bounds.Width - DesignTokens.ImageBusyWidth) / 2),
+                Math.Max(0, (double)_photoPane.Bounds.Height - DesignTokens.ImageBusyBottomOffset - DesignTokens.ImageBusyHeight),
+                DesignTokens.ImageBusyWidth,
+                DesignTokens.ImageBusyHeight);
+            _toast.Layout(_photoPane.Bounds);
             double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
             double hintLeft = ((double)_photoPane.Bounds.Width - hintWidth) / 2;
             double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
@@ -497,6 +523,18 @@ public sealed class MacMainWindow : IDisposable
             if (axisChanged) ScrollToCurrent();
             _controlScroll.HasHorizontalScroller = row && controlMeasure.Width > width;
             _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size);
+            // TOOLBAR-08：重建/换向只夹取到合法范围，不把用户滚动位置重置回起点。
+            var controlOffset = _controlScroll.ContentView.Bounds.Location;
+            var controlDocument = _controlPane.Frame.Size;
+            var controlViewport = _controlScroll.ContentView.Bounds.Size;
+            var clampedOffset = new CGPoint(
+                Math.Clamp((double)controlOffset.X, 0, Math.Max(0, (double)(controlDocument.Width - controlViewport.Width))),
+                Math.Clamp((double)controlOffset.Y, 0, Math.Max(0, (double)(controlDocument.Height - controlViewport.Height))));
+            if (clampedOffset != controlOffset)
+            {
+                _controlScroll.ContentView.ScrollToPoint(clampedOffset);
+                _controlScroll.ReflectScrolledClipView(_controlScroll.ContentView);
+            }
             double dragHeight = row ? 44 : 24;
             // 拖动区必须绕开筛选条的全部可点控件：右区从最后一个控件（相似聚类 toggle）右边缘起，
             // 否则悬停显隐的拖动层会盖住 toggle，让它"有时可点、有时不可点"。
@@ -533,13 +571,21 @@ public sealed class MacMainWindow : IDisposable
         Layout();
     }
 
-    /// <summary>评分经共享 XMP/同步逻辑写回，失败保留原星级并给出可见错误。</summary>
+    /// <summary>评分经共享 XMP/同步逻辑写回，失败保留原星级并给出非模态提示（STATE-03）。</summary>
     public async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating) ShowError("无法写入星级，请检查文件权限或文件格式");
+        if (file.Rating != rating)
+        {
+            Console.Error.WriteLine("[Native] 无法写入星级，请检查文件权限或文件格式");
+            ShowToast("无法写入星级，请检查文件权限或文件格式");
+        }
         BuildControls();
     }
+
+    /// <summary>在主图区底部显示一条 STATE-03 提示；新提示替换旧提示并重置计时。</summary>
+    /// <param name="message">提示正文。</param>
+    internal void ShowToast(string message) => _toast.Show(message);
     /// <summary>执行本阶段可用命令，缩放命令直接作用于原生视口。</summary>
     public void Execute(string command)
     {
@@ -576,6 +622,8 @@ public sealed class MacMainWindow : IDisposable
     {
         if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.ModifierFlags.HasFlag(NSEventModifierMask.CommandKeyMask) && nativeEvent.CharactersIgnoringModifiers == ",") { ShowSettings(); return true; }
         string? command = MacInput.ResolveCommand(nativeEvent, _main.Settings);
+        // INPUT-05：按住重复只放行可连续执行的命令；其余重复事件消费掉但不执行。
+        if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.IsARepeat && command != null && !InputCommandMap.IsRepeatable(command)) return true;
         if (command != null && AppleSymbolNames.ForCommand(command) != null) { Execute(command); return true; }
         if (nativeEvent.Type == NSEventType.LeftMouseDown && Session.Image == null && (nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) == 0)
         {
@@ -690,10 +738,23 @@ public sealed class MacMainWindow : IDisposable
     {
         UpdateFocusPoint();
         Photo.SetImage(Session.Image);
-        _hint.StringValue = Session.Error.Length > 0 ? "无法打开该图片" : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处" : "";
+        // STATE-01：有照片但图未就绪时只在共享 300ms 延迟态可见后提示；STATE-02 的解码失败仍优先。
+        _hint.StringValue = Session.Error.Length > 0 ? "无法打开该图片"
+            : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处"
+            : Session.IsLoadingVisible ? "正在载入…" : "";
         _hintDetail.StringValue = Session.Error;
         _hint.Hidden = _hint.StringValue.Length == 0;
         _hintDetail.Hidden = Session.Error.Length == 0;
+        // IMAGE-07：只有共享会话越过 500ms 门槛才显示"计算中…"。
+        _busyPill.Hidden = !Session.IsEnhancingVisible;
+        // IMAGE-03：屏上已有代理时 Full 升级失败只报非阻塞提示，不覆盖主图错误标题。
+        string? fullError = Session.FullError.Length > 0 ? Session.FullError : null;
+        if (fullError != _lastFullError)
+        {
+            _lastFullError = fullError;
+            if (fullError != null) ShowToast(fullError);
+        }
+        UpdateMenuChecks();
         Layout();
     }
     /// <summary>EXIF 异步到达后同步对焦位置，避免主图先完成时 F 仍使用过期空值。</summary>
@@ -766,8 +827,8 @@ public sealed class MacMainWindow : IDisposable
     /// <param name="v">归一化纵坐标。</param>
     private void FocusDetailPoint(double u, double v) => Photo.FocusOnPoint(u, v, 1);
 
-    /// <summary>打开/前置原生工具窗口，与旧壳右键菜单「工具」同一入口。</summary>
-    public void ShowTools() => NativeWindowPresenter.ShowOrActivateToolsWindow(_main.Tools);
+    /// <summary>打开/前置原生工具窗口；未打开时回到工具首页，已打开时只前置并保留当前页（TOOLS-01）。</summary>
+    public void ShowTools() => _main.OpenToolsWindow();
 
     /// <summary>把原生可见卡片交共享缩略图调度器，以 P1 优先级加载。</summary>
     private void ReportVisible()
@@ -860,21 +921,35 @@ public sealed class MacMainWindow : IDisposable
         menu.AddItem(new NSMenuItem("文件") { Submenu = file });
         var view = new NSMenu("显示");
         AddCheck(view, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
+        AddCheck(view, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView);
         AddCheck(view, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
         foreach (var layout in _main.Settings.LayoutModes) AddCheck(view, layout.DisplayName, () => _main.Settings.LayoutMode == layout.Value, () => _main.Settings.LayoutMode = layout.Value);
+        AddCheck(view, "增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null);
         view.AddItem(new NSMenuItem("全屏", (_, _) => Window.ToggleFullScreen(null)));
         menu.AddItem(new NSMenuItem("显示") { Submenu = view });
         NSApplication.SharedApplication.MainMenu = menu;
         UpdateMenuChecks();
     }
-    /// <summary>原生显示菜单勾选状态复用同一业务属性。</summary>
-    private void AddCheck(NSMenu menu, string title, Func<bool> isChecked, Action action)
+    /// <summary>原生菜单项勾选与可用性复用同一业务属性（MENU-07：无照片时增强置灰）。</summary>
+    /// <param name="menu">目标菜单。</param>
+    /// <param name="title">菜单项文案。</param>
+    /// <param name="isChecked">勾选态来源。</param>
+    /// <param name="action">执行入口。</param>
+    /// <param name="isEnabled">可用性来源；null 表示始终可用。</param>
+    private void AddCheck(NSMenu menu, string title, Func<bool> isChecked, Action action, Func<bool>? isEnabled = null)
     {
-        var item = new NSMenuItem(title, (_, _) => action()); menu.AddItem(item); _menuChecks.Add((item, isChecked));
+        var item = new NSMenuItem(title, (_, _) => action()); menu.AddItem(item); _menuChecks.Add((item, isChecked, isEnabled));
     }
-    /// <summary>同步菜单当前勾选，避免按钮、菜单与布局状态分叉。</summary>
-    private void UpdateMenuChecks() { foreach (var check in _menuChecks) check.Item.State = check.Checked() ? NSCellStateValue.On : NSCellStateValue.Off; }
-    /// <summary>照片原生右键菜单，顺序与旧壳一致：打开、栏位显隐（胶片/分析/控制）、工具、设置。</summary>
+    /// <summary>同步菜单当前勾选与可用性，避免按钮、菜单与布局状态分叉。</summary>
+    private void UpdateMenuChecks()
+    {
+        foreach (var check in _menuChecks)
+        {
+            check.Item.State = check.Checked() ? NSCellStateValue.On : NSCellStateValue.Off;
+            check.Item.Enabled = check.Enabled?.Invoke() ?? true;
+        }
+    }
+    /// <summary>照片原生右键菜单，顺序与设计一致：打开、栏位显隐、增强、工具、设置。</summary>
     private NSMenu ContextMenu()
     {
         var menu = new NSMenu();
@@ -885,7 +960,9 @@ public sealed class MacMainWindow : IDisposable
         AddCheck(menu, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView);
         AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
         menu.AddItem(NSMenuItem.SeparatorItem);
-        menu.AddItem(new NSMenuItem("工具", (_, _) => ShowTools()));
+        AddCheck(menu, "增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null);
+        menu.AddItem(NSMenuItem.SeparatorItem);
+        menu.AddItem(new NSMenuItem("工具…", (_, _) => ShowTools()));
         menu.AddItem(new NSMenuItem("设置…", (_, _) => ShowSettings()));
         UpdateMenuChecks();
         return menu;
@@ -903,6 +980,8 @@ public sealed class MacMainWindow : IDisposable
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
         Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();
+        Session.Notice -= ShowToast;
+        _toast.Dispose(); _busyPill.Dispose();
     }
 
     /// <summary>CollectionView 按需创建卡片，不为全部文件创建视图。</summary>

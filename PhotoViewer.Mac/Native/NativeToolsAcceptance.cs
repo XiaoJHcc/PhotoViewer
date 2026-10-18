@@ -68,7 +68,16 @@ internal static class NativeToolsAcceptance
             await WaitAsync(() => tools.DinoPresenter.ThumbnailTile.Source != null, "DINO 缩略图就绪");
             int tiles = Descendants(content).OfType<MacDiagnosticTile>().Count();
             if (tiles != 5) throw new InvalidOperationException($"DINO 诊断页瓦片数不是 5：{tiles}");
-            checks.Add($"dino: 5 diagnostic tiles, status = {tools.DinoPresenter.Status}, verify text ready");
+            var dinoView = Descendants(content).OfType<MacDinoDiagnosticView>().Single();
+            var tileViews = Descendants(content).OfType<MacDiagnosticTile>().ToArray();
+            var rigid = dinoView.RigidText;
+            double tileBottom = tileViews.Max(tile => (double)tile.Frame.Y + (double)tile.Frame.Height);
+            if ((double)rigid.Frame.Y < tileBottom)
+                throw new InvalidOperationException($"刚体拟合文本仍占瓦片格：text={rigid.Frame}, tileBottom={tileBottom}");
+            if (Math.Abs((double)rigid.Frame.X - 16) > .5 || rigid.Superview == null
+                || Math.Abs((double)(rigid.Frame.Width - (rigid.Superview.Bounds.Width - 32))) > 1)
+                throw new InvalidOperationException($"刚体拟合文本不是网格下方整宽块：text={rigid.Frame}, document={rigid.Superview?.Bounds}");
+            checks.Add($"dino: 5 diagnostic tiles, status = {tools.DinoPresenter.Status}, rigid text is a full-width block below the grid");
 
             // 5) 返回列表页并关闭；重开后仍可用。
             Click(FindButton(content, "返回"));
@@ -78,6 +87,16 @@ internal static class NativeToolsAcceptance
             NativeWindowPresenter.ShowOrActivateToolsWindow(tools);
             await WaitAsync(() => FindToolsWindow() is { Window.IsVisible: true }, "工具窗口重开");
             checks.Add("lifecycle: close releases the window and the presenter reopens it");
+
+            // 5b) TOOLS-01：停留在子页时关闭，再从主窗口入口打开应回到列表首页。
+            Click(FindButton(content, "DINO 诊断"));
+            await WaitAsync(() => tools.CanGoBack, "重开后进入 DINO 页");
+            toolsWindow.CloseWindow();
+            await WaitAsync(() => FindToolsWindow() is not { Window.IsVisible: true }, "子页状态下关闭");
+            window.ShowTools();
+            await WaitAsync(() => FindToolsWindow() is { Window.IsVisible: true }, "主窗口入口重开工具窗口");
+            if (tools.CanGoBack) throw new InvalidOperationException("从主窗口重新打开工具窗口未回到列表首页");
+            checks.Add("entry: reopening from the main window resets a closed window to the tools list");
 
             // 6) 控制栏 EXIF 信息块点击是另一条入口（与右键菜单「工具」共用同一门面调用）。
             toolsWindow.CloseWindow();

@@ -125,12 +125,13 @@ internal sealed class MacToolsWindow : IDisposable
         }
     }
 
-    /// <summary>关闭窗口；对象与子页面保留，可再次打开。</summary>
+    /// <summary>关闭窗口并取消在途 DINO 任务（TOOLS-06）；对象与子页面保留，可再次打开。</summary>
     public void CloseWindow()
     {
         if (_disposed || _window == null) return;
         _open = false;
         _main.Tools.IsPresented = false;
+        _main.Tools.Deactivate();
         _window.Close();
     }
 
@@ -141,6 +142,7 @@ internal sealed class MacToolsWindow : IDisposable
         _disposed = true;
         _open = false;
         _main.Tools.IsPresented = false;
+        _main.Tools.Deactivate();
         _main.Tools.PropertyChanged -= OnToolsChanged;
         _exifPage?.Dispose();
         _exifPage = null;
@@ -282,6 +284,8 @@ internal sealed class MacToolsWindow : IDisposable
         {
             owner._open = false;
             owner._main.Tools.IsPresented = false;
+            // TOOLS-06：用户关窗（红点/Cmd+W）即取消在途 DINO 任务。
+            owner._main.Tools.Deactivate();
         }
     }
 

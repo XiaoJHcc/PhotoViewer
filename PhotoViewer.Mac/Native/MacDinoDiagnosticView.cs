@@ -8,7 +8,7 @@ namespace PhotoViewer.Mac.Native;
 
 /// <summary>
 /// 原生 DINO 诊断页：与旧壳 <c>DinoDebugView</c> 同构 —— 标题与状态文本、DINO patch 三列瓦片
-/// （原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格三列瓦片（锐度 / 抖动拖影矢量 / 刚体拟合文本面板）。
+/// （原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格瓦片（锐度 / 抖动拖影矢量）与网格下方的刚体拟合整宽文本块。
 /// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/>（读库快路径与推理都在那里完成），
 /// 本视图只做位图适配与点击回传，绝不自行驱动推理。
 /// </summary>
@@ -110,6 +110,9 @@ internal sealed class MacDinoDiagnosticView : NSView
     private string? _rigidSource;
     private bool _disposed;
 
+    /// <summary>刚体拟合文本标签，供验收核对它位于网格下方且为整宽块。</summary>
+    internal NSTextField RigidText => _rigidText;
+
     /// <summary>建立滚动容器、五个诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
     /// <param name="presenter">共享 DINO 诊断 presenter（由工具壳持有）。</param>
     public MacDinoDiagnosticView(DinoDiagnosticPresenter presenter)
@@ -133,7 +136,11 @@ internal sealed class MacDinoDiagnosticView : NSView
             _document.AddSubview(view);
         _shakeTile.Overlay = _shakeOverlay;
         foreach (var tile in new[] { _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+        {
             tile.TileClicked = presenter.OnTileClicked;
+            // TOOLS-05/ANALYSIS-08：瓦片内空白等同页面空白，清准星但保留 cosine 参考点。
+            tile.BlankClicked = presenter.ClearCrosshair;
+        }
         presenter.Changed += Sync;
         presenter.CrosshairChanged += Sync;
         Sync();
@@ -245,8 +252,9 @@ internal sealed class MacDinoDiagnosticView : NSView
 
         rowTop = y;
         double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _sharpnessTile, _shakeTile, null);
-        double panelBottom = PlaceRigidPanel(rowTop, cell);
-        y = rowTop + Math.Max(tileRowHeight, panelBottom - rowTop);
+        // TOOLS-05：刚体拟合文本是网格下方的整宽块，不再占第三列瓦片格。
+        y = rowTop + tileRowHeight + GridGap;
+        y = PlaceRigidPanel(y, contentWidth);
         _document.Frame = new CGRect(0, 0, width, Math.Max(1, y + PageMarginBottom));
     }
 
@@ -274,22 +282,22 @@ internal sealed class MacDinoDiagnosticView : NSView
         }
     }
 
-    /// <summary>摆放第三列的刚体拟合文本面板（标题、量纲说明与多行判定文本），返回面板底边纵坐标。</summary>
-    /// <param name="top">行顶边纵坐标。</param>
-    /// <param name="cell">单列宽度。</param>
-    /// <returns>面板底边纵坐标。</returns>
-    private double PlaceRigidPanel(double top, double cell)
+    /// <summary>摆放网格下方的刚体拟合整宽文本块（标题、量纲说明与多行判定文本），返回块底边纵坐标。</summary>
+    /// <param name="top">块顶边纵坐标。</param>
+    /// <param name="width">整宽块的可用宽度。</param>
+    /// <returns>块底边纵坐标。</returns>
+    private double PlaceRigidPanel(double top, double width)
     {
-        double panelX = PageMarginX + cell * 2 + TileMargin;
-        double panelWidth = Math.Max(1, cell - TileMargin * 2);
-        double y = top + TileMargin;
+        double panelX = PageMarginX;
+        double panelWidth = Math.Max(1, width);
+        double y = top;
         _rigidTitle.Frame = new CGRect(panelX, y, panelWidth, LineHeight(PanelTitleFont));
         y += LineHeight(PanelTitleFont) + PanelSpacing;
         _rigidMetrics.Frame = new CGRect(panelX, y, panelWidth, LineHeight(PanelMetricsFont));
         y += LineHeight(PanelMetricsFont) + PanelSpacing + RigidTextTopMargin;
         double textHeight = MeasureRigidText(panelWidth);
         _rigidText.Frame = new CGRect(panelX, y, panelWidth, textHeight);
-        return y + textHeight + TileMargin;
+        return y + textHeight;
     }
 
     /// <summary>量出刚体拟合文本在给定宽度下的高度（按 20 点行高，至少覆盖全部显式换行）。</summary>

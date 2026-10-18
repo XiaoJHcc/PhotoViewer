@@ -430,6 +430,30 @@ internal static class NativeFilmstripAcceptance
                 throw new InvalidOperationException($"{context} 第 {itemIndex} 项可见卡片未挂载或被隐藏");
             if (Math.Abs((double)(card.View.Frame.X - attr.Frame.X)) > .5 || Math.Abs((double)(card.View.Frame.Y - attr.Frame.Y)) > .5)
                 throw new InvalidOperationException($"{context} 第 {itemIndex} 项可见卡片 Frame 错位：actual={card.View.Frame}, expected={attr.Frame}, clip={clip}");
+            VerifyClearStarColor(card);
+        }
+    }
+
+    /// <summary>FILM-05：清零叉固定使用 color.star.clear（#666666），不取系统次级色。</summary>
+    private static void VerifyClearStarColor(MacThumbnailItem card)
+    {
+        var clear = Descendants(card.View).OfType<NSButton>().FirstOrDefault(button => button.ToolTip == "无星级");
+        if (clear?.ContentTintColor == null) throw new InvalidOperationException("卡片缺少清零叉");
+        var color = clear.ContentTintColor;
+        int red = (int)Math.Round((double)color.RedComponent * 255);
+        int green = (int)Math.Round((double)color.GreenComponent * 255);
+        int blue = (int)Math.Round((double)color.BlueComponent * 255);
+        if (red != 0x66 || green != 0x66 || blue != 0x66)
+            throw new InvalidOperationException($"清零叉颜色不是 #666666：({red},{green},{blue})");
+    }
+
+    /// <summary>递归枚举视图树的后代。</summary>
+    private static IEnumerable<NSView> Descendants(NSView view)
+    {
+        foreach (var child in view.Subviews)
+        {
+            yield return child;
+            foreach (var nested in Descendants(child)) yield return nested;
         }
     }
 

@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using System.ComponentModel;
 
@@ -96,7 +97,10 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
             int value = rating;
             var button = MacSymbols.Button(rating == 0 ? "xmark" : "star", rating == 0 ? "无星级" : rating + " 星", () => { if (_file != null) _rate?.Invoke(_file, value); }, 14, false);
             button.Frame = new CGRect(3 + rating * 14, 116, 14, 14);
-            button.ContentTintColor = NSColor.SecondaryLabel;
+            // FILM-05：清零叉固定中性色 color.star.clear，不取系统次级色。
+            button.ContentTintColor = rating == 0
+                ? MacDesignColors.Argb(DesignTokens.ColorStarClear)
+                : NSColor.SecondaryLabel;
             _stars[rating] = button;
             _surface.AddSubview(button);
         }

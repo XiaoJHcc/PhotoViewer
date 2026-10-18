@@ -71,6 +71,7 @@ internal sealed class MacSimilarityPanel : NSView
     private readonly NSTextField _notExtracted;
     private readonly NSTextField _noSimilar;
     private readonly NSTextField _indexError;
+    private readonly NSTextField _dockError;
     private readonly NSTextField _unindexed;
     private readonly ActionArea _emptyAction;
     private readonly ActionArea _dockAction;
@@ -113,6 +114,7 @@ internal sealed class MacSimilarityPanel : NSView
         _notExtracted = WrappedLabel("尚未提取特征", 11, PlaceholderColor);
         _noSimilar = WrappedLabel("无相似照片", 11, PlaceholderColor);
         _indexError = WrappedLabel("", 10, IndexErrorColor);
+        _dockError = WrappedLabel("", 10, IndexErrorColor);
         _unindexed = WrappedLabel("", 10, UnindexedColor);
         _emptyAction = new ActionArea(StartIndexing);
         _dockAction = new ActionArea(StartIndexing);
@@ -128,6 +130,7 @@ internal sealed class MacSimilarityPanel : NSView
         _listDock.WantsLayer = true;
         _listDock.AddSubview(_unindexed);
         _listDock.AddSubview(_dockAction);
+        _listDock.AddSubview(_dockError);
         _layout = new MacFilmstripLayout { Horizontal = true };
         _collection = new NSCollectionView(new CGRect(0, 0, PanelWidth, ListCross))
         {
@@ -191,6 +194,9 @@ internal sealed class MacSimilarityPanel : NSView
         _noSimilar.Hidden = !_panel.ShowFullPlaceholder;
         _indexError.Hidden = !_panel.HasIndexError;
         _indexError.StringValue = _panel.IndexError ?? "";
+        // SIM-10：列表态的错误挂在动作区，和空态错误互斥。
+        _dockError.Hidden = !_panel.ShowActionAreaError;
+        _dockError.StringValue = _panel.IndexError ?? "";
         UpdateAction(_emptyAction);
         UpdateAction(_dockAction);
 
@@ -318,12 +324,14 @@ internal sealed class MacSimilarityPanel : NSView
         UpdateListLayout(list);
     }
 
-    /// <summary>摆放停靠区内的"未提取张数 + 动作"两行内容;行布局把整块内容贴底(旧壳 VerticalAlignment=Bottom)。</summary>
+    /// <summary>摆放停靠区内的"未提取张数 + 动作 + 错误"内容;行布局把整块内容贴底(旧壳 VerticalAlignment=Bottom)。</summary>
     private void ArrangeDockContent(CGRect region, double left, double top, double right, double bottom, bool bottomAligned)
     {
         double width = Math.Max(1, region.Width - left - right);
         double labelHeight = _unindexed.Hidden ? 0 : MeasureHeight(_unindexed, width);
-        double contentHeight = (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight;
+        double errorHeight = _dockError.Hidden ? 0 : MeasureHeight(_dockError, Math.Min(ErrorMaxWidth, width));
+        double contentHeight = (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight
+            + (errorHeight > 0 ? DockSpacing + errorHeight : 0);
         double y = bottomAligned ? Math.Max(top, region.Height - bottom - contentHeight) : top;
         if (labelHeight > 0)
         {
@@ -331,18 +339,30 @@ internal sealed class MacSimilarityPanel : NSView
             y += labelHeight + DockSpacing;
         }
         _dockAction.Frame = new CGRect(region.X + (region.Width - ActionWidth) / 2, y, ActionWidth, ActionHeight);
+        if (errorHeight > 0)
+        {
+            y += ActionHeight + DockSpacing;
+            _dockError.Frame = new CGRect(region.X + (region.Width - Math.Min(ErrorMaxWidth, width)) / 2, y,
+                Math.Min(ErrorMaxWidth, width), errorHeight);
+        }
     }
 
-    /// <summary>行布局停靠区宽度:按钮与未提取文字较宽者加左右外边距。</summary>
+    /// <summary>行布局停靠区宽度:按钮、未提取文字与错误提示较宽者加左右外边距。</summary>
     private double DockWidth(double innerWidth)
-        => Math.Min(innerWidth, Math.Max(ActionWidth, MeasureWidth(_unindexed, innerWidth)) + DockRowMargin * 2);
+    {
+        double errorWidth = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, Math.Max(1, innerWidth - DockRowMargin * 2));
+        return Math.Min(innerWidth,
+            Math.Max(Math.Max(ActionWidth, MeasureWidth(_unindexed, innerWidth)), errorWidth) + DockRowMargin * 2);
+    }
 
-    /// <summary>列布局停靠区高度:两行内容加左右外边距 8、上下外边距 3。</summary>
+    /// <summary>列布局停靠区高度:全部内容行加左右外边距 8、上下外边距 3。</summary>
     private double DockHeight(double innerWidth)
     {
         double width = Math.Max(1, innerWidth - DockColumnMargin * 2);
         double labelHeight = _unindexed.Hidden ? 0 : MeasureHeight(_unindexed, width);
-        return (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight + DockColumnMarginVertical * 2;
+        double errorHeight = _dockError.Hidden ? 0 : MeasureHeight(_dockError, Math.Min(ErrorMaxWidth, width));
+        return (labelHeight > 0 ? labelHeight + DockSpacing : 0) + ActionHeight
+            + (errorHeight > 0 ? errorHeight + DockSpacing : 0) + DockColumnMarginVertical * 2;
     }
 
     /// <summary>把列表容器贴合到指定区域,并按当前轴刷新收集区内容尺寸与滚动范围。</summary>

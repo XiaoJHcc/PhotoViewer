@@ -57,10 +57,13 @@ internal static class NativeToolbarAcceptance
             var expected = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay && AppleSymbolNames.ForCommand(hotkey.Command) != null).Select(hotkey => hotkey.Command);
             if (!window.ControlBar.Commands.Keys.SequenceEqual(expected)) throw new InvalidOperationException("工具栏未保留设置排序");
             string tooltip = window.ControlBar.Commands["Next"].ToolTip ?? "";
+            string spoken = window.ControlBar.Commands["Next"].AccessibilityLabel ?? "";
             if (!tooltip.Contains(MacInput.FormatGesture(next.PrimaryHotkey, settings), StringComparison.Ordinal) ||
                 !tooltip.Contains(MacInput.FormatGesture(next.SecondaryHotkey, settings), StringComparison.Ordinal) || tooltip.Contains("未设置", StringComparison.Ordinal))
                 throw new InvalidOperationException("工具栏提示未正确显示苹果主次快捷键");
-            observations.Add("display/order bindings and both Apple gesture tooltips update without changing photos");
+            if (spoken != tooltip)
+                throw new InvalidOperationException($"命令读屏名称未包含当前主次绑定：{spoken}");
+            observations.Add("display/order bindings and both Apple gesture tooltips update without changing photos; accessibility label matches tooltip");
 
             window.Main.CurrentFile = window.Main.FileVM.ThumbnailList.FilteredFiles[0];
             await Task.Delay(100);
@@ -127,6 +130,7 @@ internal static class NativeToolbarAcceptance
                 throw new InvalidOperationException("超长命令分组没有可操作的横向滚动");
             window.ControlScroll.ContentView.ScrollToPoint(new CGPoint(window.ControlBar.Frame.Width - window.ControlScroll.ContentView.Bounds.Width, 0));
             if (window.ControlScroll.ContentView.Bounds.X <= 0) throw new InvalidOperationException("超长分组不能滚入");
+            await VerifyControlScrollOffsetAsync(window, settings, observations);
             observations.Add("all enabled commands remain grouped and scroll instead of clipping inaccessible actions");
         }
         finally
@@ -236,6 +240,37 @@ internal static class NativeToolbarAcceptance
         if (Math.Abs((double)(actual.X - expected.X)) > .01 || Math.Abs((double)(actual.Y - expected.Y)) > .01 ||
             Math.Abs((double)(actual.Width - expected.Width)) > .01 || Math.Abs((double)(actual.Height - expected.Height)) > .01)
             throw new InvalidOperationException($"{context}：实际 {actual}，预期 {expected}");
+    }
+
+    /// <summary>TOOLBAR-08：重建不重置用户滚动位置，换向或尺寸变化后只夹取到合法范围。</summary>
+    private static async Task VerifyControlScrollOffsetAsync(MacMainWindow window, SettingsViewModel settings, List<string> observations)
+    {
+        var scroll = window.ControlScroll;
+        double rowOffset = (double)scroll.ContentView.Bounds.X;
+        if (rowOffset <= 0) throw new InvalidOperationException("控制栏横向滚动未生效，无法核对偏移保持");
+        var next = settings.Hotkeys.Single(hotkey => hotkey.Command == "Next");
+        var originalPrimary = next.PrimaryHotkey;
+        next.PrimaryHotkey = AppGesture.FromKey(new AppKeyGesture(GestureKey.D9, GestureModifiers.Control));
+        await Task.Delay(150);
+        next.PrimaryHotkey = originalPrimary;
+        await Task.Delay(200);
+        double rebuiltOffset = (double)scroll.ContentView.Bounds.X;
+        if (Math.Abs(rebuiltOffset - rowOffset) > 1)
+            throw new InvalidOperationException($"控制栏重建把滚动位置从 {rowOffset:0.##} 重置为 {rebuiltOffset:0.##}");
+
+        // 换向前把位置推到行布局的末端；换向后的文档尺寸不同，必须夹到列布局的合法范围。
+        double rowMaximum = Math.Max(0, (double)window.ControlBar.Frame.Width - (double)scroll.ContentView.Bounds.Width);
+        scroll.ContentView.ScrollToPoint(new CGPoint(rowMaximum, 0));
+        scroll.ReflectScrolledClipView(scroll.ContentView);
+        settings.LayoutMode = LayoutMode.Col;
+        window.Window.SetContentSize(new CGSize(650, 480));
+        await Task.Delay(250);
+        var bounds = scroll.ContentView.Bounds;
+        double maximumX = Math.Max(0, (double)window.ControlBar.Frame.Width - (double)bounds.Width);
+        double maximumY = Math.Max(0, (double)window.ControlBar.Frame.Height - (double)bounds.Height);
+        if (bounds.X < -.5 || bounds.X > maximumX + .5 || bounds.Y < -.5 || bounds.Y > maximumY + .5)
+            throw new InvalidOperationException($"控制栏换向后的滚动偏移未被夹取：offset={bounds.Location}, max=({maximumX:0.##},{maximumY:0.##})");
+        observations.Add($"scroll offset kept across rebuild ({rowOffset:0.##}→{rebuiltOffset:0.##}) and clamped after direction change to ({bounds.X:0.##},{bounds.Y:0.##}) within ({maximumX:0.##},{maximumY:0.##})");
     }
 
     /// <summary>读取真实按钮绘制像素，避免 40×40 外框通过但系统边框仍只画成矮条。</summary>

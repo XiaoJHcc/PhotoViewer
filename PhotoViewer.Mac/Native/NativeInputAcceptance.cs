@@ -46,6 +46,23 @@ internal static class NativeInputAcceptance
         }
         checks.Add("keyboard: bound arrow key reaches shared command table through photo input handler");
 
+        // 3b) INPUT-05：按住重复只放行上一张/下一张/预设缩放；增强这类命令只执行一次。
+        bool enhanced = window.Session.IsEnhanced;
+        using (var repeated = NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+                   window.Window.WindowNumber, null!, "e", "e", true, 14))
+        {
+            if (photo.InputHandler?.Invoke(repeated!) != true) throw new InvalidOperationException("非可重复命令的重复按键未被消费");
+            if (window.Session.IsEnhanced != enhanced) throw new InvalidOperationException("按住重复错误触发了不可重复命令");
+        }
+        using (var first = NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+                   window.Window.WindowNumber, null!, "e", "e", false, 14))
+        {
+            if (photo.InputHandler?.Invoke(first!) != true) throw new InvalidOperationException("首次按键未被主窗口消费");
+            if (window.Session.IsEnhanced == enhanced) throw new InvalidOperationException("首次按键未执行增强命令");
+        }
+        window.Session.ToggleEnhanced();
+        checks.Add("key repeat: non-repeatable command consumes repeats without executing; first press still runs");
+
         // 4) 空首屏左键打开文件选择器（用桩实现避免模态面板阻塞）。
         var stub = new RecordingFilePicker();
         FilePicker.Initialize(stub);
@@ -62,6 +79,15 @@ internal static class NativeInputAcceptance
 
         // 5) 主图右键弹出原生上下文菜单（放行到 base.RightMouseDown 的路径）。
         VerifyContextMenu(window, photo, location, checks);
+
+        // 5b) STATE-03：评分失败等非模态提示条替换旧提示、4 秒后自动消失，不抢焦点。
+        window.ShowToast("提示 A");
+        window.ShowToast("提示 B");
+        if (!window.StatusToast.IsVisible || window.StatusToast.Text != "提示 B")
+            throw new InvalidOperationException("新提示未替换旧提示");
+        await Task.Delay(PhotoViewer.Core.Design.DesignTokens.MotionStatusToastDuration + 300);
+        if (window.StatusToast.IsVisible) throw new InvalidOperationException("提示条未在停留时长后自动消失");
+        checks.Add("toast: new message replaces the old one and auto-hides after the 4s dwell");
 
         // 6) 隐藏式标题栏(FullSizeContentView)不会自带系统“双击标题栏”动作，验证顶边拖动区自实现。
         await VerifyTitlebarDoubleClick(window, checks);
@@ -192,6 +218,21 @@ internal static class NativeInputAcceptance
     private static void VerifyContextMenu(MacMainWindow window, MetalPhotoView photo, CGPoint location, List<string> checks)
     {
         var menu = photo.Menu ?? throw new InvalidOperationException("主图未设置上下文菜单");
+        // MENU-01/MENU-06：项、顺序与固定文案；无照片时增强置灰，工具仍可打开空态。
+        string[] expected = ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "增强", "工具…", "设置…"];
+        var titles = menu.Items.Where(item => item.Title.Length > 0).Select(item => item.Title).ToArray();
+        if (!titles.SequenceEqual(expected))
+            throw new InvalidOperationException($"主图菜单项或顺序不符：{string.Join(" | ", titles)}");
+        var enhance = menu.Items.First(item => item.Title == "增强");
+        if (window.Main.CurrentFile == null && enhance.Enabled) throw new InvalidOperationException("无照片时菜单增强仍可用");
+        var display = NSApplication.SharedApplication.MainMenu?.Items.Select(item => item.Submenu).FirstOrDefault(submenu => submenu?.Title == "显示")
+            ?? throw new InvalidOperationException("系统菜单缺少显示菜单");
+        var displayTitles = display.Items.Where(item => item.Title.Length > 0).Select(item => item.Title).ToArray();
+        if (!displayTitles.Contains("分析栏", StringComparer.Ordinal) || !displayTitles.Contains("增强", StringComparer.Ordinal))
+            throw new InvalidOperationException($"系统显示菜单缺少分析栏/增强：{string.Join(" | ", displayTitles)}");
+        if (window.Main.CurrentFile == null && display.Items.First(item => item.Title == "增强").Enabled)
+            throw new InvalidOperationException("无照片时系统菜单增强仍可用");
+        checks.Add("menu: fixed item order, 工具…, enhance check present in both menus and disabled without a photo");
         var probe = new MenuOpenProbe();
         menu.Delegate = probe;
         try

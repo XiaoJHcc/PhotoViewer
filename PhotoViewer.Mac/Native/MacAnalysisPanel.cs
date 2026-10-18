@@ -165,7 +165,11 @@ internal sealed class MacAnalysisPanel : NSView
             {
                 var diagnostic = new MacDiagnosticTile();
                 if (tile.Kind == AnalysisTileKind.Diagnostic)
+                {
                     diagnostic.TileClicked = (u, v) => _presenter.OnTileClicked(u, v);
+                    // ANALYSIS-08：瓦片内 letterbox/角标点击等同面板空白，只清准星并保留 cosine 参考点。
+                    diagnostic.BlankClicked = _presenter.ClearCrosshair;
+                }
                 if (ReferenceEquals(tile, _presenter.ShakeTile))
                     diagnostic.Overlay = new MacShakeFieldView();
                 view = diagnostic;

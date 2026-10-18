@@ -8,7 +8,7 @@ namespace PhotoViewer.Mac.Native;
 /// (横图取满宽、竖图取满高,不裁切不变形),说明文字排在正方形下方、仍属瓦片自身范围。
 /// 绘制层自下而上:外框与内层圆角裁剪 → 压暗背景图(<see cref="BackgroundSource"/>,alpha 0.30)→ 主图(<see cref="Source"/>,不做插值)
 /// → 叠加视图 <see cref="Overlay"/> → 装饰层(占位文本、十字准星、左上角药丸标签)。
-/// 瓦片吞掉自身范围内的所有左键按下,只有命中内容矩形时才把归一化坐标交给 <see cref="TileClicked"/>。
+/// 瓦片吞掉自身范围内的所有左键按下,内容矩形内交给 <see cref="TileClicked"/>,其余位置（letterbox/说明区/角标）交给 <see cref="BlankClicked"/>。
 /// 收到的 <see cref="NSImage"/> 由调用方持有,本类只引用、从不释放。
 /// </summary>
 public sealed class MacDiagnosticTile : NSView
@@ -188,6 +188,8 @@ public sealed class MacDiagnosticTile : NSView
 
     /// <summary>内容矩形内点击回调,参数为归一化图像坐标(0 左/上,1 右/下)。</summary>
     public Action<double, double>? TileClicked { get; set; }
+    /// <summary>点击内容矩形之外（letterbox、说明区或角标）时触发，等同面板空白（ANALYSIS-08）。</summary>
+    public Action? BlankClicked { get; set; }
 
     /// <summary>设置归一化准星位置;任一坐标为 null 即隐藏,取值不变时不重绘。</summary>
     public void SetCrosshair(double? u, double? v)
@@ -260,15 +262,19 @@ public sealed class MacDiagnosticTile : NSView
     public override NSView? HitTest(CGPoint point) => Frame.Contains(point) ? this : null;
 
     /// <summary>
-    /// 左键按下时吞掉事件;只有落在内容矩形内才换算成归一化坐标抛出 <see cref="TileClicked"/>,
-    /// letterbox 黑边与说明文字区的点击只被消费、不上报。
+    /// 左键按下时吞掉事件;只有落在内容矩形内（且不在角标药丸上）才换算成归一化坐标抛出 <see cref="TileClicked"/>,
+    /// letterbox 黑边、说明文字区与角标按下按面板空白处理，抛出 <see cref="BlankClicked"/>（ANALYSIS-08）。
     /// </summary>
     public override void MouseDown(NSEvent theEvent)
     {
-        var content = _contentRect;
-        if (content.Width <= 0 || content.Height <= 0) return;
         var point = ConvertPointFromView(theEvent.LocationInWindow, null);
-        if (!content.Contains(point)) return;
+        var content = _contentRect;
+        bool onPill = _chrome.PillRect.Width > 0 && _chrome.PillRect.Height > 0 && _chrome.PillRect.Contains(point);
+        if (content.Width <= 0 || content.Height <= 0 || !content.Contains(point) || onPill)
+        {
+            BlankClicked?.Invoke();
+            return;
+        }
         double u = Math.Clamp(((double)point.X - (double)content.X) / (double)content.Width, 0, 1);
         double v = Math.Clamp(((double)point.Y - (double)content.Y) / (double)content.Height, 0, 1);
         TileClicked?.Invoke(u, v);
