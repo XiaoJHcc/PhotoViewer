@@ -195,8 +195,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 ib.Get(pixels);
             }
 
-            // 字节布局与原 ToAvaloniaBitmap 完全一致(Android 端位图通道顺序的既有口径,不做改动)
-            // 缓冲池租用(P1-M3)
+            // 字节布局沿用 Android 位图通道顺序的既有口径，不做改动；缓冲池租用
             var bgra = DecodedImage.RentPixels(pixels.Length * 4);
             for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
             {
