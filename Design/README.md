@@ -9,7 +9,7 @@
 | 位置 | 层 | 内容 |
 |---|---|---|
 | `spec/` | L0–L2 | 原则、分区、行为规则（按模块分文件） |
-| `tokens.json` | L3 | 尺寸、间距、动效、颜色语义、字号层级等数值的唯一来源；生成 `PhotoViewer.Shared/DesignTokens.g.cs` 与样机数据 |
+| `tokens.json` | L3 | 尺寸、间距、动效、颜色语义、字号层级等数值的唯一来源；由 `python3 Tools/generate-design-tokens.py` 生成 `PhotoViewer/Core/Design/DesignTokens.g.cs`（共享程序集，四端与共享会话均可引用；`--check` 校验是否最新）与样机数据 |
 | `platforms.md` | L4 | 各平台控件选型、实现入口与已登记的平台差异 |
 | `status.md` | — | 按设计 ID 记录四端实现与验收状态；规则正文不写状态 |
 | `prototype/` | — | 主窗口 HTML 样机，读 tokens，可导出几何 JSON 供各平台比对 |

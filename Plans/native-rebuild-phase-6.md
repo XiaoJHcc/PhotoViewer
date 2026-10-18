@@ -5,7 +5,7 @@
 ## 0. 已定决策（2026-10-18）
 
 1. **退役方式**：一次性删除。6E 发布就绪后删 Avalonia，以 git tag `avalonia-final` 回溯，不保留双壳过渡。
-2. **令牌**：`Design/tokens.json` 为唯一数值来源，生成 `PhotoViewer.Shared/DesignTokens.g.cs`；Windows 改为链接 `PhotoViewer.Shared/`，替换 `WindowsLayout.cs` 的自持常量。
+2. **令牌**：`Design/tokens.json` 为唯一数值来源，生成 `PhotoViewer/Core/Design/DesignTokens.g.cs`（放共享程序集，共享会话与 Windows 不链接 Shared 也能引用）；Windows 改为链接 `PhotoViewer.Shared/`，替换 `WindowsLayout.cs` 的自持常量。
 3. **优先级**：性能类（总纲 §8 性能门、切图卡顿、RAW 冷图）与 Training 仓 `DatasetBuilder` 去 Avalonia 不阻塞 UI 设计与功能可用性，置后。性能门不再作为切换发布通道的前置（总纲 §6 "未达标前不切换发布通道"按此修订）。
 4. **对标强度**：主窗口几何/动效对齐令牌与样机；小控件、设置、工具只对齐功能与操作（Design/README §3）。
 
