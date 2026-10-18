@@ -132,7 +132,8 @@ internal sealed class AndroidThumbnailCard : View
             selected ? AndroidUiTheme.Accent : null, 2 * d);
 
         // 照片区 80 方形；缩略图已由共享服务 letterbox 到 80 方形。
-        var imageRect = new RectF((float)(5 * d), (float)(5 * d), (float)(85 * d), (float)(85 * d));
+        // 80dp 图片在 96dp 卡片内水平居中（左右各 8dp），与标题/星级同轴。
+        var imageRect = new RectF((float)(8 * d), (float)(8 * d), (float)(88 * d), (float)(88 * d));
         canvas.Save();
         using var clip = new Path();
         clip.AddRoundRect(imageRect, 4 * d, 4 * d, Path.Direction.Cw!);
@@ -141,8 +142,14 @@ internal sealed class AndroidThumbnailCard : View
         var thumbnail = EnsureThumbnail();
         if (thumbnail != null)
         {
+            // 位图可能不是 1:1（HIF/RAW 内嵌预览、非方形缩略图）：等比装入 80 方形，不拉伸。
             var src = new Rect(0, 0, thumbnail.Width, thumbnail.Height);
-            canvas.DrawBitmap(thumbnail, src, imageRect, null);
+            float fit = Math.Min(imageRect.Width() / thumbnail.Width, imageRect.Height() / thumbnail.Height);
+            float drawWidth = thumbnail.Width * fit, drawHeight = thumbnail.Height * fit;
+            var dst = new RectF(imageRect.CenterX() - drawWidth / 2, imageRect.CenterY() - drawHeight / 2,
+                imageRect.CenterX() + drawWidth / 2, imageRect.CenterY() + drawHeight / 2);
+            using var paint = new Paint(PaintFlags.FilterBitmap) { FilterBitmap = true };
+            canvas.DrawBitmap(thumbnail, src, dst, paint);
         }
         else
         {
@@ -160,29 +167,29 @@ internal sealed class AndroidThumbnailCard : View
 
         // 文件名 / 第二行。
         AndroidUiTheme.DrawCentered(canvas, _file.DisplayName, _textPaint, (float)(48 * d),
-            (float)(100 * d), (float)(86 * d));
-        var secondLineRect = new RectF((float)(5 * d), (float)(103 * d), (float)(85 * d), (float)(114 * d));
+            (float)(103 * d), (float)(86 * d));
+        var secondLineRect = new RectF((float)(8 * d), (float)(106 * d), (float)(88 * d), (float)(117 * d));
         if (_secondLineProgress is { } fraction)
         {
             canvas.DrawRoundRect(secondLineRect, 4 * d, 4 * d, AndroidUiTheme.Paint(Color.ParseColor("#444444")!));
-            var fill = new RectF((float)(5 * d), (float)(103 * d),
-                (float)((5 + Math.Clamp(fraction, 0, 1) * SecondLineWidth) * d), (float)(114 * d));
+            var fill = new RectF((float)(8 * d), (float)(106 * d),
+                (float)((8 + Math.Clamp(fraction, 0, 1) * SecondLineWidth) * d), (float)(117 * d));
             using var fillPaint = AndroidUiTheme.Paint(Color.ParseColor("#1E90FF")!);
             fillPaint.Alpha = 153;
             canvas.DrawRoundRect(fill, 4 * d, 4 * d, fillPaint);
-            AndroidUiTheme.DrawCentered(canvas, _secondLineText, _datePaint, (float)(45 * d), (float)(112 * d),
-                (float)(74 * d));
+            AndroidUiTheme.DrawCentered(canvas, _secondLineText, _datePaint, (float)(48 * d), (float)(112 * d),
+                (float)(80 * d));
         }
         else
         {
             string date = _secondLineText ?? _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
-            AndroidUiTheme.DrawCentered(canvas, date, _datePaint, (float)(45 * d), (float)(112 * d), (float)(80 * d));
+            AndroidUiTheme.DrawCentered(canvas, date, _datePaint, (float)(48 * d), (float)(115 * d), (float)(80 * d));
         }
 
         // 抖动徽标。
         if (_file.IsShake == true)
         {
-            var badge = new RectF((float)(67 * d), (float)(67 * d), (float)(83 * d), (float)(83 * d));
+            var badge = new RectF((float)(70 * d), (float)(70 * d), (float)(86 * d), (float)(86 * d));
             AndroidUiTheme.DrawRounded(canvas, badge, 2 * d, AndroidUiTheme.ShakeBadge);
             AndroidUiTheme.DrawCentered(canvas, "抖", _badgeTextPaint, badge.CenterX(),
                 badge.CenterY() + _badgeTextPaint.TextSize * .36f, badge.Width());
@@ -193,8 +200,8 @@ internal sealed class AndroidThumbnailCard : View
         {
             for (int rating = 0; rating < 6; rating++)
             {
-                float cx = (float)((Inset + rating * StarSize + StarSize / 2) * d);
-                float cy = (float)((116 + StarSize / 2) * d);
+                float cx = (float)(((96 - StarSize * 6) / 2 + rating * StarSize + StarSize / 2) * d);
+                float cy = (float)((119 + StarSize / 2) * d);
                 if (rating == 0)
                 {
                     float arm = 3.2f * d;

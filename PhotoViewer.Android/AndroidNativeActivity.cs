@@ -46,6 +46,13 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         Console.WriteLine("[Native] AndroidNativeActivity 就绪（未初始化 Avalonia）");
     }
 
+    /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
+    protected override void OnResume()
+    {
+        base.OnResume();
+        Native.AndroidNativeShell.RefreshAfterResume();
+    }
+
     /// <summary>
     /// 运行期新 Intent（外部打开）：交给原生壳解析并投递共享外部打开链路。
     /// </summary>
@@ -101,6 +108,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         public override void HandleOnBackPressed()
         {
             if (Native.AndroidNativeShell.DismissPhotoMenu()) return;
+            if (Native.AndroidNativeShell.DismissFilterDropdown()) return;
             if (Native.AndroidNativeSettingsPresenter.HandleBack()) return;
             if (Native.AndroidToolsPresenter.HandleBack()) return;
             _activity.Finish();

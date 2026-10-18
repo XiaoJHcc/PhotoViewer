@@ -42,6 +42,13 @@ public static class AndroidNativeShell
     /// <returns>关闭了菜单返回 true。</returns>
     public static bool DismissPhotoMenu() => _root?.DismissPhotoMenu() == true;
 
+    /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
+    public static void RefreshAfterResume() => _root?.RefreshAfterResume();
+
+    /// <summary>关闭筛选下拉；返回键优先消费。</summary>
+    /// <returns>关闭了返回 true。</returns>
+    public static bool DismissFilterDropdown() => _root?.DismissFilterDropdown() == true;
+
     /// <summary>当前原生壳的展示加载会话。</summary>
     public static PhotoLoadSession? Session => _session;
 
@@ -73,6 +80,9 @@ public static class AndroidNativeShell
     /// <returns>可直接交给 <c>SetContentView</c> 的根视图。</returns>
     public static View CreateRootView(Activity activity, Intent? intent)
     {
+        // 真机 EGL P3 表面在当前合成路径下会把主图整体抬亮（缩略图正常）；默认走 sRGB 保正确，
+        // 广色域留 --ez pv-p3 true 诊断，待 EGL/合成传递函数确认后再默认开启。
+        AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-p3", false) != true;
         InitializePlatform(activity);
 
         if (_main == null)

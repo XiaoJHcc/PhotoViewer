@@ -46,7 +46,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AnalysisPresenter _analysisPresenter;
     private readonly AndroidAnalysisPanel _analysisPane;
     private readonly AndroidSimilarityPanel _similarityPane;
-    private readonly View _detailHighlight;
+    private readonly DetailFrameView _detailHighlight;
+    private LayoutRect _detailRect;
+    private bool _detailVisible;
     private readonly TextView _hintLabel;
     private readonly TextView _hintDetail;
     private readonly TextView _enhanceBusy;
@@ -132,16 +134,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _analysisPane = new AndroidAnalysisPanel(activity, _analysisPresenter, session);
         _analysisPane.TileCountChanged += RequestLayout;
         _analysisPane.DetailChanged += UpdateDetailHighlight;
+        _analysisPane.DetailFocusRequested += (u, v) => _photo.FocusOnPoint(u, v, 1);
         _analysisPane.Visibility = ViewStates.Gone;
         AddView(_analysisPane);
         _similarityPane = new AndroidSimilarityPanel(activity, main);
         _similarityPane.Visibility = ViewStates.Gone;
         AddView(_similarityPane);
-        _detailHighlight = new View(activity);
-        var highlightBackground = new GradientDrawable();
-        highlightBackground.SetColor(Color.Transparent);
-        highlightBackground.SetStroke((int)Math.Max(3, AndroidUiTheme.Dp(activity, 3)), Color.Rgb(0, 255, 0)!);
-        _detailHighlight.Background = highlightBackground;
+        _detailHighlight = new DetailFrameView(activity);
         _detailHighlight.Visibility = ViewStates.Gone;
         _detailHighlight.Clickable = false;
         AddView(_detailHighlight);
@@ -420,6 +419,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             UpdateHint();
             return;
         }
+        RefreshControlBarHard();
         OnPhotoViewportChanged();
         Console.WriteLine($"[Native] 主图加载：{file.Name}（{file.File.PathKey}）");
         _session.SetFile(file.File);
@@ -438,6 +438,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (_photo.Width < 1 || _photo.Height < 1) return;
         _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
         if (_main.Settings.ShowZoomIndicator) UpdateNavigationIndicator();
+        UpdateDetailHighlight();
         _analysisHost.Raise();
     }
 
@@ -487,9 +488,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
         int screenWidth = metrics?.WidthPixels ?? Width;
         int screenHeight = metrics?.HeightPixels ?? Height;
         int menuWidth = (int)Math.Round(224 * density);
-        int itemHeight = (int)Math.Round(42 * density);
-        int padding = (int)Math.Round(6 * density);
-        int contentHeight = itemHeight * 7 + padding * 2;
+        int itemHeight = (int)Math.Round(44 * density);
+        int padding = (int)Math.Round(4 * density);
+        int dividerHeight = Math.Max(1, (int)Math.Round(density));
+        int contentHeight = itemHeight * 7 + dividerHeight * 6 + padding * 2;
         int maxHeight = Math.Max(itemHeight * 2, screenHeight - (int)Math.Round(16 * density));
         int menuHeight = Math.Min(contentHeight, maxHeight);
 
@@ -497,9 +499,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
         var background = new GradientDrawable();
         background.SetColor(AndroidUiTheme.ControlFill);
         background.SetCornerRadius((float)(8 * density));
+        background.SetStroke(Math.Max(1, (int)Math.Round(density)), AndroidUiTheme.ControlBorder);
         content.Background = background;
         content.SetPadding(padding, padding, padding, padding);
         content.Elevation = (float)(12 * density);
+
+        void AddDivider()
+        {
+            var divider = new View(activity);
+            divider.SetBackgroundColor(AndroidUiTheme.Divider);
+            content.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, dividerHeight));
+        }
 
         void AddItem(string label, bool? check, Action action)
         {
@@ -514,6 +524,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 TextSize = 15,
             };
             text.SetTextColor(AndroidUiTheme.TextPrimary);
+            text.Gravity = GravityFlags.CenterVertical;
             row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.MatchParent) { Weight = 1 });
             var mark = new TextView(activity)
             {
@@ -531,11 +542,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
         }
 
+        // 与 iOS/旧壳分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
         AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
+        AddDivider();
         AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
-        AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
         AddItem("分析栏", _main.IsAnalysisViewVisible, () => _main.ToggleAnalysisView());
+        AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
+        AddDivider();
         AddItem("增强预览", _session.IsEnhanced, () => _session.ToggleEnhanced());
+        AddDivider();
         AddItem("工具…", null, ShowTools);
         AddItem("设置…", null, () => _main.OpenSettingWindow());
 
@@ -566,6 +581,20 @@ internal sealed class AndroidNativeRootView : FrameLayout
         Console.WriteLine($"[Native] 主图菜单 touch=({touchX},{touchY}) show=({x},{y}) size={menuWidth}x{menuHeight} screen={screenWidth}x{screenHeight}");
         popup.ShowAtLocation(_photo, GravityFlags.Top | GravityFlags.Start, x, y);
     }
+
+    /// <summary>Activity 恢复（SAF 返回）后恢复栏位内容与主图：选择器期间可能丢失一帧/一次重建。</summary>
+    internal void RefreshAfterResume()
+    {
+        RefreshControlBarHard();
+        _filterBar.Refresh();
+        UpdateHint();
+        RequestLayout();
+        _photo.Post(_photo.Draw);
+    }
+
+    /// <summary>关闭筛选下拉（返回键优先消费）。</summary>
+    /// <returns>关闭了返回 true。</returns>
+    internal bool DismissFilterDropdown() => _filterBar.DismissDropdown();
 
     /// <summary>关闭主图长按菜单（返回键优先消费）。</summary>
     /// <returns>关闭了菜单返回 true。</returns>
@@ -675,6 +704,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+                _analysisPane.ClearDetail();
                 _filmstrip.CancelScrollUpToNow();
                 _controlBar.MarkDirty();
                 StartSession();
@@ -687,6 +717,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsAnalysisViewVisible):
+                if (!_main.IsAnalysisViewVisible) _analysisPane.ClearDetail();
                 _analysisHost.SetVisible(_main.IsAnalysisViewVisible);
                 OnPhotoViewportChanged();
                 RequestLayout();
@@ -698,18 +729,21 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute) or nameof(SettingsViewModel.ShowZoomIndicator))
             _analysisHost.Raise();
-        _controlBar.MarkDirty();
         _filterBar.Refresh();
-        _controlBar.Invalidate();
-        RequestLayout();
+        RefreshControlBarHard();
         UpdateHint();
     }
 
-    private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
+    /// <summary>控制栏立即重建并在一帧后再补一次（设置/文件/选择器返回等异步变更都走这里）。</summary>
+    private void RefreshControlBarHard()
     {
         _controlBar.MarkDirty();
+        _controlBar.Invalidate();
         RequestLayout();
+        PostDelayed(() => { _controlBar.MarkDirty(); _controlBar.Invalidate(); RequestLayout(); }, 120);
     }
+
+    private void OnControlChanged(object? sender, PropertyChangedEventArgs args) => RefreshControlBarHard();
 
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -722,6 +756,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (args.PropertyName != nameof(ThumbnailListViewModel.FilteredFiles)) return;
         _filmstrip.ReloadData();
         _filterBar.Refresh();
+        RefreshControlBarHard();
         UpdateHint();
         RequestLayout();
     }
@@ -729,6 +764,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnAllFilesChanged()
     {
         _filterBar.Refresh();
+        _controlBar.MarkDirty();
+        _controlBar.Invalidate();
         UpdateHint();
     }
 
@@ -757,22 +794,72 @@ internal sealed class AndroidNativeRootView : FrameLayout
     }
 
     /// <summary>更新空态/错误提示；有图时全部隐藏。</summary>
-    /// <summary>细节预览定格时在主图上画绿色方框（点主图空白或再点瓦片解除）。</summary>
+    /// <summary>细节预览定格时在主图上画绿色方框：中心取瓦片中心，大小取对焦框或 1:1 裁剪方块在当前视口下的投影。</summary>
     private void UpdateDetailHighlight()
     {
-        if (!_analysisPane.DetailActive || _session.Image == null)
+        if (!_analysisPane.DetailActive || !_main.IsAnalysisViewVisible || _session.Image == null || _session.IsProxy)
         {
-            _detailHighlight.Visibility = ViewStates.Gone;
+            HideDetailFrame();
+            return;
+        }
+        // 小图在适应态已经大于物理 100%，没有可对应的 1:1 放大细节；不显示无意义的绿框。
+        var fitViewport = _photo.Viewport;
+        if (fitViewport.IsFit && fitViewport.FitScale > 1 / fitViewport.BackingScale + 1e-9)
+        {
+            HideDetailFrame();
             return;
         }
         var (u, v) = _analysisPane.DetailPoint;
+        var viewport = _photo.Viewport;
+        double scale = viewport.Scale;
+        double boxWidth, boxHeight;
+        if (_analysisPane.DetailFrameWidth is { } frameWidth && _analysisPane.DetailFrameHeight is { } frameHeight)
+        {
+            boxWidth = frameWidth * viewport.ImageWidth * scale;
+            boxHeight = frameHeight * viewport.ImageHeight * scale;
+        }
+        else
+        {
+            boxWidth = boxHeight = _analysisPane.CropPixels * scale;
+        }
+        boxWidth = Math.Max(6, boxWidth);
+        boxHeight = Math.Max(6, boxHeight);
+        double density = AndroidUiTheme.Density(Context!);
+        double viewWidth = _photo.Width / density, viewHeight = _photo.Height / density;
         var (centerX, centerY) = _photo.ViewPoint(u, v);
-        const double size = 120;
-        var rect = new LayoutRect(centerX - size / 2, centerY - size / 2, size, size);
-        LayoutChild(_detailHighlight, new LayoutRect(
-            _panes.Photo.X + rect.X, _panes.Photo.Y + rect.Y, rect.Width, rect.Height),
-            AndroidUiTheme.Density(Context!));
+        if (centerX < -boxWidth / 2 || centerY < -boxHeight / 2
+            || centerX > viewWidth + boxWidth / 2 || centerY > viewHeight + boxHeight / 2)
+        {
+            HideDetailFrame();
+            return;
+        }
+        _detailRect = new LayoutRect(centerX - boxWidth / 2, centerY - boxHeight / 2, boxWidth, boxHeight);
+        _detailVisible = true;
         _detailHighlight.Visibility = ViewStates.Visible;
+        Invalidate();
+    }
+
+    private void HideDetailFrame()
+    {
+        _detailVisible = false;
+        _detailHighlight.Visibility = ViewStates.Gone;
+        Invalidate();
+    }
+
+    /// <summary>绿框画在根视图最上层：SurfaceView 与子视图的裁剪/层级不该吃掉右边或下边。</summary>
+    protected override void DispatchDraw(Canvas canvas)
+    {
+        base.DispatchDraw(canvas);
+        if (!_detailVisible) return;
+        float density = (float)AndroidUiTheme.Density(Context!);
+        var rect = new RectF(
+            (float)((_panes.Photo.X + _detailRect.X) * density),
+            (float)((_panes.Photo.Y + _detailRect.Y) * density),
+            (float)((_panes.Photo.X + _detailRect.MaxX) * density),
+            (float)((_panes.Photo.Y + _detailRect.MaxY) * density));
+        using var paint = AndroidUiTheme.Paint(Color.Rgb(0, 255, 0)!, Math.Max(2, 3 * density));
+        paint.SetStyle(global::Android.Graphics.Paint.Style.Stroke);
+        canvas.DrawRect(rect, paint);
     }
 
     private void UpdateHint()
@@ -878,5 +965,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _navigationSource = null;
         }
         base.Dispose(disposing);
+    }
+
+    /// <summary>绿框的可见性标记；实际绘制在根视图 DispatchDraw，避免被 SurfaceView 子层裁剪。</summary>
+    private sealed class DetailFrameView : View
+    {
+        public DetailFrameView(global::Android.Content.Context context) : base(context)
+        {
+        }
     }
 }

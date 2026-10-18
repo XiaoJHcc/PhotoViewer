@@ -199,6 +199,12 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     public void FocusOnPoint(double u, double v, double physicalScale)
     {
         if (_image == null) return;
+        // 小图/内嵌预览的物理 100% 可能低于适应态：按既有小图口径留在适应态，不缩小、不跳位。
+        if (_viewport.FitScale > 1 / _viewport.BackingScale + 1e-9)
+        {
+            FitToView();
+            return;
+        }
         AnimateViewport(() => _viewport.FocusOnPoint(u, v, physicalScale));
     }
 
@@ -289,6 +295,9 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     {
         _renderer.Resize(width, height);
         Draw();
+        // 栏位显隐后 SurfaceView 的新缓冲可能在本帧尚未就绪：下一帧再绘制一次，避免停在旧尺寸的帧上。
+        Post(Draw);
+        PostDelayed(Draw, 32);
     }
 
     /// <summary>Surface 销毁：释放 EGL，等待下一次创建后重传纹理。</summary>
@@ -312,10 +321,22 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         double widthDp = w / _density, heightDp = h / _density;
         bool sizeChanged = Math.Abs(_viewport.ViewWidth - widthDp) > .01 || Math.Abs(_viewport.ViewHeight - heightDp) > .01;
         if (!sizeChanged) return;
+        var center = _viewport.CenterUV;
         _viewport.ResizeView(widthDp, heightDp, _density);
-        if (_viewport.IsFit) _viewport.FitToView();
-        else _viewport.ClampPan();
+        if (_viewport.IsFit)
+        {
+            _viewport.FitToView();
+        }
+        else
+        {
+            // 栏位显隐/旋转会改主图分区：保持原来落在视口中心的图像点仍在中心，再按新边界钳制。
+            double width = _viewport.ImageWidth * _viewport.Scale;
+            double height = _viewport.ImageHeight * _viewport.Scale;
+            _viewport.ApplyGestureView(_viewport.Scale, (.5 - center.U) * width, (.5 - center.V) * height, interactive: false);
+        }
         Draw();
+        // 布局变化后 SurfaceView 的缓冲可能在下一帧才跟上：再补一帧，避免缩略图/控制栏/分析栏开合时停在旧尺寸。
+        Post(Draw);
         ViewportChanged?.Invoke();
     }
 

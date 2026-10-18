@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using Android.App;
 using Android.Content;
 using Android.Graphics;
+using Android.Graphics.Drawables;
 using Android.Views;
 using Android.Widget;
 using PhotoViewer.Shared;
@@ -31,6 +33,7 @@ internal sealed class AndroidFilterBar : View
     private double _countWidth = 60;
     private bool _menuOpen;
     private bool _compact;
+    private PopupWindow? _dropdown;
 
     /// <summary>排序控件矩形（dp，验收读取）。</summary>
     internal LayoutRect SortFrame => _frames.Sort;
@@ -76,6 +79,7 @@ internal sealed class AndroidFilterBar : View
     /// <param name="leadingInset">列布局首控件的前导让位（dp）。</param>
     internal void Arrange(bool horizontal, double contentWidth, double leadingInset)
     {
+        DismissDropdown();
         _horizontal = horizontal;
         _contentWidth = Math.Max(1, contentWidth);
         _leadingInset = leadingInset;
@@ -155,21 +159,26 @@ internal sealed class AndroidFilterBar : View
         return true;
     }
 
-    /// <summary>弹原生下拉菜单，当前项带勾选标记。</summary>
+    /// <summary>在点击的下拉框正下方弹出自绘下拉（夹在屏幕内；空间不足时翻到框上方）。</summary>
     /// <param name="kind">菜单类型。</param>
     private void ShowMenu(FilterMenu kind)
     {
+        if (Context is not Activity activity) return;
+        DismissDropdown();
         var filter = _main.FileVM.FilterBar;
-        var menu = new PopupMenu(Context!, this);
-        var menuItems = menu.Menu!;
+        var labels = new List<string>();
         var values = new List<object>();
+        var frame = kind switch
+        {
+            FilterMenu.Sort => _frames.Sort,
+            FilterMenu.Order => _frames.Order,
+            _ => _frames.Rating,
+        };
         if (kind == FilterMenu.Sort)
         {
             foreach (var option in filter.SortModes)
             {
-                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
-                item.SetCheckable(true);
-                item.SetChecked(Equals((SortMode)option.Value, filter.SortMode));
+                labels.Add(option.DisplayName);
                 values.Add((SortMode)option.Value);
             }
         }
@@ -177,9 +186,7 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.SortOrders)
             {
-                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
-                item.SetCheckable(true);
-                item.SetChecked(Equals((SortOrder)option.Value, filter.SortOrder));
+                labels.Add(option.DisplayName);
                 values.Add((SortOrder)option.Value);
             }
         }
@@ -187,24 +194,115 @@ internal sealed class AndroidFilterBar : View
         {
             foreach (var option in filter.RatingFilters)
             {
-                var item = menuItems.Add(0, values.Count, values.Count, option.DisplayName)!;
-                item.SetCheckable(true);
-                item.SetChecked(Equals(option.Key, filter.SelectedRatingFilter));
+                labels.Add(option.DisplayName);
                 values.Add(option.Key);
             }
         }
-        _menuOpen = true;
-        menu.DismissEvent += (_, _) => { _menuOpen = false; Refresh(); };
-        menu.MenuItemClick += (_, args) =>
+        if (labels.Count == 0) return;
+
+        double density = AndroidUiTheme.Density(activity);
+        var barLocation = new int[2];
+        GetLocationOnScreen(barLocation);
+        var metrics = Resources?.DisplayMetrics;
+        int screenWidth = metrics?.WidthPixels ?? Width;
+        int screenHeight = metrics?.HeightPixels ?? Height;
+        int menuWidth = Math.Max((int)Math.Round(112 * density), (int)Math.Round(frame.Width * density));
+        int itemHeight = (int)Math.Round(40 * density);
+        int padding = (int)Math.Round(4 * density);
+        int contentHeight = labels.Count * itemHeight + padding * 2;
+        int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
+        int menuHeight = Math.Min(contentHeight, maxHeight);
+
+        var content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
+        var background = new GradientDrawable();
+        background.SetColor(AndroidUiTheme.ControlFill);
+        background.SetCornerRadius((float)(6 * density));
+        background.SetStroke(Math.Max(1, (int)Math.Round(density)), AndroidUiTheme.ControlBorder);
+        content.Background = background;
+        content.SetPadding(padding, padding, padding, padding);
+
+        for (int index = 0; index < labels.Count; index++)
         {
-            int index = args.Item?.ItemId ?? -1;
-            if (index < 0 || index >= values.Count) return;
-            Console.WriteLine($"[Native] 筛选选择 {kind} #{index} = {values[index]}");
-            if (kind == FilterMenu.Sort) filter.SortMode = (SortMode)values[index];
-            else if (kind == FilterMenu.Order) filter.SortOrder = (SortOrder)values[index];
-            else filter.SelectedRatingFilter = (string)values[index];
+            int captured = index;
+            bool selected = kind switch
+            {
+                FilterMenu.Sort => Equals(values[index], filter.SortMode),
+                FilterMenu.Order => Equals(values[index], filter.SortOrder),
+                _ => Equals(values[index], filter.SelectedRatingFilter),
+            };
+            var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
+            row.SetGravity(GravityFlags.CenterVertical);
+            row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(8 * density), 0);
+            row.Clickable = true;
+            row.Focusable = true;
+            var text = new TextView(activity) { Text = labels[index], TextSize = 13 };
+            text.SetTextColor(AndroidUiTheme.TextPrimary);
+            text.Gravity = GravityFlags.CenterVertical;
+            row.AddView(text, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MatchParent) { Weight = 1 });
+            var mark = new TextView(activity)
+            {
+                Text = selected ? "✓" : "",
+                TextSize = 13,
+                Gravity = GravityFlags.Center,
+            };
+            mark.SetTextColor(AndroidUiTheme.Accent);
+            row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(20 * density), LinearLayout.LayoutParams.MatchParent));
+            row.Click += (_, _) =>
+            {
+                Console.WriteLine($"[Native] 筛选选择 {kind} #{captured} = {values[captured]}");
+                if (kind == FilterMenu.Sort) filter.SortMode = (SortMode)values[captured];
+                else if (kind == FilterMenu.Order) filter.SortOrder = (SortOrder)values[captured];
+                else filter.SelectedRatingFilter = (string)values[captured];
+                DismissDropdown();
+                Refresh();
+            };
+            content.AddView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MatchParent, itemHeight));
+        }
+
+        View popupContent = content;
+        if (contentHeight > maxHeight)
+        {
+            var scroll = new ScrollView(activity);
+            scroll.AddView(content);
+            popupContent = scroll;
+        }
+
+        int margin = (int)Math.Round(8 * density);
+        int x = barLocation[0] + (int)Math.Round(frame.X * density);
+        int below = barLocation[1] + (int)Math.Round(frame.MaxY * density) + (int)Math.Round(2 * density);
+        int above = barLocation[1] + (int)Math.Round(frame.Y * density) - menuHeight - (int)Math.Round(2 * density);
+        int y = below;
+        if (y + menuHeight > screenHeight - margin) y = above;
+        x = Math.Clamp(x, margin, Math.Max(margin, screenWidth - menuWidth - margin));
+        y = Math.Clamp(y, margin, Math.Max(margin, screenHeight - menuHeight - margin));
+
+        var popup = new PopupWindow(popupContent, menuWidth, menuHeight, true)
+        {
+            OutsideTouchable = true,
+            Focusable = true,
+            Elevation = (float)(8 * density),
         };
-        menu.Show();
+        popup.SetBackgroundDrawable(new ColorDrawable(Color.Transparent));
+        popup.DismissEvent += (_, _) =>
+        {
+            if (ReferenceEquals(_dropdown, popup)) _dropdown = null;
+            _menuOpen = false;
+            Refresh();
+        };
+        _dropdown = popup;
+        _menuOpen = true;
+        Console.WriteLine($"[Native] 筛选下拉 {kind} show=({x},{y}) size={menuWidth}x{menuHeight} frame={frame} bar=({barLocation[0]},{barLocation[1]})");
+        popup.ShowAtLocation(this, GravityFlags.Top | GravityFlags.Start, x, y);
+    }
+
+    /// <summary>关闭筛选下拉（返回键优先消费）。</summary>
+    /// <returns>关闭了返回 true。</returns>
+    internal bool DismissDropdown()
+    {
+        if (_dropdown?.IsShowing != true) return false;
+        _dropdown.Dismiss();
+        _dropdown = null;
+        return true;
     }
 
     private static string? TitleForSort(SortMode mode) => mode switch

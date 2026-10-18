@@ -138,7 +138,7 @@ internal sealed class AndroidControlBar : View
     /// <returns>文档尺寸。</returns>
     internal (double Main, double Cross) MeasureDocument(bool horizontal, double availableMain)
     {
-        if (_dirty) Rebuild();
+        if (_dirty || _groups.Count == 0) Rebuild();
         _horizontal = horizontal;
         _availableMain = Math.Max(1, availableMain);
         _lines = ControlBarLayout.PackLines(_specs, horizontal, Math.Max(1, _availableMain - ControlBarLayout.Padding * 2));
@@ -151,7 +151,7 @@ internal sealed class AndroidControlBar : View
     /// <param name="availableMain">主轴可用长度（dp）。</param>
     internal void Arrange(bool horizontal, double availableMain)
     {
-        if (_dirty) Rebuild();
+        if (_dirty || _groups.Count == 0) Rebuild();
         _horizontal = horizontal;
         _availableMain = Math.Max(1, availableMain);
         _lines = ControlBarLayout.PackLines(_specs, horizontal, Math.Max(1, _availableMain - ControlBarLayout.Padding * 2));
@@ -194,7 +194,8 @@ internal sealed class AndroidControlBar : View
     protected override void OnDraw(Canvas canvas)
     {
         base.OnDraw(canvas);
-        if (_dirty) Rebuild();
+        // 不能只 Rebuild：新分组还没有 Rect，OnDraw 会全部跳过，表现就是“只剩容器”。
+        if (_dirty || _groups.Count == 0) Arrange(_horizontal, _availableMain);
         float density = (float)AndroidUiTheme.Density(Context!);
         foreach (var group in _groups)
         {

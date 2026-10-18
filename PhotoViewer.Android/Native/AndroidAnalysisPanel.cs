@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Android.Content;
 using Android.Graphics;
+using Android.OS;
 using Android.Views;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
@@ -87,7 +89,8 @@ internal sealed class AndroidAnalysisPanel : View
 
     private AnalysisTile? _detailTile;
     private DecodedImage? _histogramLogged;
-    private double _detailU = .5, _detailV = .5;
+    private AnalysisTile? _pendingDetailTile;
+    private long _lastDetailTapTime;
     private bool _detailActive;
     private Bitmap? _detailBitmap;
     private (DecodedImage? Source, double U, double V, int Pixels) _detailKey;
@@ -96,13 +99,21 @@ internal sealed class AndroidAnalysisPanel : View
     internal event Action? TileCountChanged;
     /// <summary>细节预览定格/解除后通知宿主更新主图绿框。</summary>
     internal event Action? DetailChanged;
+    /// <summary>细节预览双击：把主图定位到该瓦片中心并放大到物理 100%。</summary>
+    internal event Action<double, double>? DetailFocusRequested;
 
     /// <summary>瓦片数量（当前 presenter 顺序）。</summary>
     internal int TileCount => _presenter.Tiles.Count;
     /// <summary>当前细节预览是否定格。</summary>
     internal bool DetailActive => _detailActive;
-    /// <summary>定格中心归一化坐标。</summary>
-    internal (double U, double V) DetailPoint => (_detailU, _detailV);
+    /// <summary>定格瓦片的裁剪中心（归一化），不取手指在瓦片内的落点。</summary>
+    internal (double U, double V) DetailPoint => _detailTile is { } tile ? (tile.CenterU, tile.CenterV) : (.5, .5);
+    /// <summary>定格瓦片的 Sony 对焦框宽（归一化）；无对焦框为 null。</summary>
+    internal double? DetailFrameWidth => _detailTile?.FocusFrameWidth;
+    /// <summary>定格瓦片的 Sony 对焦框高（归一化）；无对焦框为 null。</summary>
+    internal double? DetailFrameHeight => _detailTile?.FocusFrameHeight;
+    /// <summary>细节裁剪方形边长（源像素）；主图绿框按它乘当前视口缩放。</summary>
+    internal int CropPixels => Math.Max(1, (int)Math.Round(_tileSize * AndroidUiTheme.Density(Context!)));
     /// <summary>当前瓦片边长（dp，验收读取）。</summary>
     internal double TileSize => _tileSize;
 
@@ -137,9 +148,11 @@ internal sealed class AndroidAnalysisPanel : View
     /// <summary>解除细节预览定格。</summary>
     internal void ClearDetail()
     {
+        CancelPendingDetailTap();
         if (!_detailActive) return;
         _detailActive = false;
         _detailTile = null;
+        _detailKey = default;
         DetailChanged?.Invoke();
         Invalidate();
     }
@@ -150,6 +163,7 @@ internal sealed class AndroidAnalysisPanel : View
         {
             if (_disposed) return;
             Invalidate();
+            if (_detailTile != null && !_presenter.Tiles.Contains(_detailTile)) ClearDetail();
             if (_presenterTileCount != _presenter.Tiles.Count)
             {
                 _presenterTileCount = _presenter.Tiles.Count;
@@ -221,9 +235,18 @@ internal sealed class AndroidAnalysisPanel : View
                 DrawShake(canvas, tile, content, density);
             if (tile.Kind != AnalysisTileKind.Detail && _presenter.CrosshairU is { } u && _presenter.CrosshairV is { } v)
                 DrawCrosshair(canvas, content, u, v);
-            if (tile.Kind == AnalysisTileKind.Detail && (_detailActive && ReferenceEquals(tile, _detailTile)
-                || tile.FocusFrameWidth != null))
-                DrawFocusFrame(canvas, content, tile);
+            if (tile.Kind == AnalysisTileKind.Detail)
+            {
+                if (tile.FocusFrameWidth is { } frameWidth && tile.FocusFrameHeight is { } frameHeight)
+                    DrawFocusFrame(canvas, content, frameWidth, frameHeight);
+                if (_detailActive && ReferenceEquals(tile, _detailTile))
+                {
+                    using var highlight = new Paint(PaintFlags.AntiAlias) { StrokeWidth = 2 * density };
+                    highlight.SetStyle(global::Android.Graphics.Paint.Style.Stroke);
+                    highlight.Color = Color.Rgb(0, 255, 0)!;
+                    canvas.DrawRoundRect(content, (TileRadiusDp - 1) * density, (TileRadiusDp - 1) * density, highlight);
+                }
+            }
             canvas.Restore();
 
             // 左上角药丸角标。
@@ -258,8 +281,9 @@ internal sealed class AndroidAnalysisPanel : View
     {
         var source = _session.IsProxy ? null : _session.Image;
         int pixels = Math.Max(1, (int)Math.Round(_tileSize * AndroidUiTheme.Density(Context!)));
-        double u = _detailActive && ReferenceEquals(tile, _detailTile) ? _detailU : tile.CenterU;
-        double v = _detailActive && ReferenceEquals(tile, _detailTile) ? _detailV : tile.CenterV;
+        // 裁剪中心恒为该瓦片自身的中心（对焦点/画面中心）；手指落点只决定“定格/解除”，不移动裁剪中心。
+        double u = tile.CenterU;
+        double v = tile.CenterV;
         var key = (source, u, v, pixels);
         if (_detailKey == key && _detailBitmap != null) return _detailBitmap;
         _detailKey = key;
@@ -307,10 +331,8 @@ internal sealed class AndroidAnalysisPanel : View
     }
 
     /// <summary>绘制对焦框/定格框（绿色 1px 方框）。</summary>
-    private void DrawFocusFrame(Canvas canvas, RectF content, AnalysisTile tile)
+    private void DrawFocusFrame(Canvas canvas, RectF content, double width, double height)
     {
-        double width = tile.FocusFrameWidth ?? .3;
-        double height = tile.FocusFrameHeight ?? .3;
         float cx = content.CenterX(), cy = content.CenterY();
         float halfWidth = (float)(width * content.Width() / 2);
         float halfHeight = (float)(height * content.Height() / 2);
@@ -349,7 +371,7 @@ internal sealed class AndroidAnalysisPanel : View
         }
     }
 
-    /// <summary>点按命中：细节预览定格/解除、诊断瓦片落准星并重算。</summary>
+    /// <summary>点按命中：细节预览单指点按定格/解除、双击定位；诊断瓦片落准星并重算。</summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
@@ -367,20 +389,10 @@ internal sealed class AndroidAnalysisPanel : View
             double localV = (y - frame.Y - contentInset) / Math.Max(1, _tileSize - contentInset * 2);
             if (tile.Kind == AnalysisTileKind.Detail)
             {
-                if (_detailActive && ReferenceEquals(_detailTile, tile))
-                {
-                    ClearDetail();
-                    return true;
-                }
-                _detailTile = tile;
-                _detailU = Math.Clamp(localU, 0, 1);
-                _detailV = Math.Clamp(localV, 0, 1);
-                _detailActive = true;
-                _detailKey = default;
-                DetailChanged?.Invoke();
-                Invalidate();
+                HandleDetailTap(tile);
                 return true;
             }
+            CancelPendingDetailTap();
             if (tile.Kind == AnalysisTileKind.Diagnostic)
             {
                 _presenter.OnTileClicked(Math.Clamp(localU, 0, 1), Math.Clamp(localV, 0, 1));
@@ -388,7 +400,55 @@ internal sealed class AndroidAnalysisPanel : View
             }
             return true;
         }
-        return false;
+        ClearDetail();
+        _presenter.ClearCrosshair();
+        return true;
+    }
+
+    /// <summary>细节瓦片单/双击判定：单点延时 280ms 定格，双击改为定位主图（不先定格）。</summary>
+    private void HandleDetailTap(AnalysisTile tile)
+    {
+        long now = SystemClock.UptimeMillis();
+        if (ReferenceEquals(_pendingDetailTile, tile) && now - _lastDetailTapTime <= 280)
+        {
+            CancelPendingDetailTap();
+            DetailFocusRequested?.Invoke(tile.CenterU, tile.CenterV);
+            return;
+        }
+        CancelPendingDetailTap();
+        _pendingDetailTile = tile;
+        _lastDetailTapTime = now;
+        Action pending = () =>
+        {
+            if (!ReferenceEquals(_pendingDetailTile, tile)) return;
+            _pendingDetailTile = null;
+            ToggleDetail(tile);
+        };
+        _pendingTap = pending;
+        PostDelayed(pending, 280);
+    }
+
+    private Action? _pendingTap;
+
+    private void CancelPendingDetailTap()
+    {
+        if (_pendingTap != null) RemoveCallbacks(_pendingTap);
+        _pendingTap = null;
+        _pendingDetailTile = null;
+    }
+
+    private void ToggleDetail(AnalysisTile tile)
+    {
+        if (_detailActive && ReferenceEquals(_detailTile, tile))
+        {
+            ClearDetail();
+            return;
+        }
+        _detailTile = tile;
+        _detailActive = true;
+        _detailKey = default;
+        DetailChanged?.Invoke();
+        Invalidate();
     }
 
     private static RectF ToRectF(LayoutRect rect, float density) => new(

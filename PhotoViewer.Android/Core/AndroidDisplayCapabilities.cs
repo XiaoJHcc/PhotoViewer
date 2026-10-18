@@ -17,6 +17,9 @@ public static class AndroidDisplayCapabilities
     /// <summary>设备显示是否声明支持 Display P3（API 26+ 且 wide color gamut 包含 P3）。</summary>
     public static bool DisplaySupportsP3 { get; private set; }
 
+    /// <summary>诊断用：强制按 sRGB 表面/解码（pv-srgb 启动参数）。</summary>
+    public static bool ForceSrgb { get; set; }
+
     /// <summary>当前照片表面是否以 Display P3 显示；EGL 创建成功后由渲染器写入。</summary>
     public static bool SurfaceIsP3 { get; set; }
 
@@ -45,7 +48,7 @@ public static class AndroidDisplayCapabilities
             }
             bool windowWide = activity.Window?.IsWideColorGamut == true;
             bool displayWide = display.IsWideColorGamut;
-            DisplaySupportsP3 = windowWide || displayWide;
+            DisplaySupportsP3 = (windowWide || displayWide) && !ForceSrgb;
             Console.WriteLine($"[Native] 色域探测：displayWide={displayWide} windowWide={windowWide} windowColorMode={activity.Window?.ColorMode}");
         }
         catch (Exception exception)
