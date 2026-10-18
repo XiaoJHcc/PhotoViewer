@@ -243,7 +243,7 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
 
         internal Divider(Context context)
         {
-            _height = Math.Max(1, (int)AndroidUiTheme.Dp(context, DesignTokens.ExiftableDividerThickness));
+            _height = Math.Max(1, (int)AndroidUiTheme.Dp(context, DesignTokens.ShellDividerThickness));
             _paint = AndroidUiTheme.Paint(AndroidUiTheme.FromToken(DesignTokens.ColorDivider));
         }
 
