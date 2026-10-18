@@ -21,7 +21,7 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>独立 AppKit 启动路径，不创建 Avalonia 应用、窗口或主图适配位图。</summary>
 public static class MacNativeApplication
 {
-    /// <summary>初始化原生平台门面并运行 NSApplication，旧壳由显式启动开关保留。</summary>
+    /// <summary>初始化原生平台门面并运行 NSApplication；历史启动参数由本路径忽略。</summary>
     public static void Run(string[] args)
     {
         string workingDirectory = Environment.GetEnvironmentVariable("PWD") ?? Environment.CurrentDirectory;

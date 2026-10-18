@@ -31,8 +31,8 @@ internal static class NativeMainLayoutAcceptance
             settings.ShowRating = true;
             window.Main.IsThumbnailViewVisible = true;
             window.Main.IsControlViewVisible = true;
-            // 旧壳基线（LegacyLayoutAcceptance）把相似聚类面板设为收起，原生侧必须同口径，
-            // 否则文件栏宽度会多出面板的交叉轴长度，整组几何对不上。
+            // 旧壳基线（Design/baseline/avalonia/legacy-layout-geometry.json）把相似聚类面板设为收起，
+            // 原生侧必须同口径，否则文件栏宽度会多出面板的交叉轴长度，整组几何对不上。
             window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             foreach (var entry in settings.ExifDisplayItems)
                 entry.IsEnabled = entry.PropertyName is "Aperture" or "ExposureTime" or "Iso" or "EquivFocalLength";
