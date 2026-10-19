@@ -84,6 +84,7 @@ Debug 与 Release 都只启动 **UIKit 原生壳**（不创建旧壳对象）；
 | Core/iOSPerformanceBudget.cs / Core/iOSMemoryBudgetProvider.cs | 机型表预算 / `os_proc_available_memory` 实测预算（P/Invoke 全部指针化）。 |
 | Core/iOSNativeSettingsPresenter.cs | 原生设置半屏浮窗：固定深色（`OverrideUserInterfaceStyle = Dark`）、工作副本编辑、关闭（下拉 `DidDismiss` 或关闭按钮）一次性回写；顶部显示源 `SettingsViewModel.PersistenceStatus` 失败行（工作副本无持久化）。快捷键行副标题只读显示主/次绑定与冲突；缩放预设校验 `>0 且 ≤1600` 且只剩一项时禁用删除。关闭代理在 `ViewWillAppear` 挂接——presentation controller 在展示开始时才存在，放在 `ViewDidLoad` 会拿不到它（I4 修正）。`iOSNativeSettingsRootViewController.Session` 是验收读取工作副本的测试缝。 |
 | Core/iOSSettingsStorage.cs / Core/iOSXmpWriter.cs / Core/iOSStorageAccessManager.cs | 设置存 NSUserDefaults、XMP 原位写入、安全作用域保留；设置 JSON 损坏时另存带时间戳的偏好备份键再以默认值启动（SETTINGS-14）。 |
+| PrivacyInfo.xcprivacy / Info.plist | App Store 合规：隐私清单以 `BundleResource LogicalName` 放 bundle 根，不追踪、不收集数据；required-reason 原因码 FileTimestamp `C617.1`+`3B52.1`、SystemBootTime `35F9.1`、DiskSpace `E174.1`（.NET 运行时固有）、UserDefaults `CA92.1`（设置存储）。新增此类 API 时同步更新。`ITSAppUsesNonExemptEncryption=false`（无加密通信）。不访问相册/相机/定位/网络，故无 `NS*UsageDescription` 与 ATS 例外；文件访问走文件选择器授权，无需用途字符串。`UIRequiredDeviceCapabilities=arm64`。 |
 
 ## 验收线索
 

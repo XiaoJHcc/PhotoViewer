@@ -73,6 +73,13 @@
     <ItemGroup>
         <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
     </ItemGroup>
+    <!--
+      App Store 隐私清单：放在 app bundle 根目录。原因码覆盖 .NET 运行时/BCL 固有调用（文件时间戳、开机时间、磁盘空间）、
+      用户经文件选择器授权的照片时间戳（3B52.1）与设置存储（NSUserDefaults，CA92.1）。新增 required-reason API 时同步更新。
+    -->
+    <ItemGroup>
+        <BundleResource Include="PrivacyInfo.xcprivacy" LogicalName="PrivacyInfo.xcprivacy" />
+    </ItemGroup>
 
     <!--
       ONNX Runtime 原生库：包自带的 net9.0-ios18.0 目标会把
