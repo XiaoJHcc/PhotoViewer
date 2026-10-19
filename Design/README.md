@@ -1,6 +1,6 @@
 # PhotoViewer 设计规范总则
 
-本目录是四端（Windows / macOS / iOS·iPadOS / Android）UI 与交互的唯一设计基准。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
+本目录是四端（Windows / macOS / iOS·iPadOS / Android）与 Web 参考壳 UI 与交互的唯一设计基准。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
 
 > 迁移完成（2026-10-19，[Phase 6 清单](../Plans/native-rebuild-phase-6.md) 6B）：`spec/`、`tokens.json`、`platforms.md`、`status.md` 已从原 `ui-contract.md` 拆分并成为唯一真源；旧文件只保留跳转说明。
 
@@ -38,7 +38,7 @@
 ## 4. 编号
 
 - **设计 ID**：`<模块>-<两位序号>`，如 `FILM-03`。ID 永不复用；废弃时标"已退役"并指向替代条目。条款内的细项不另编号，需要单独引用时拆成新 ID。
-- **平台差异**：`<ID>@<平台>`，平台取 `win` / `mac` / `ios` / `android`，如 `FILM-04@mac`。
+- **平台差异**：`<ID>@<平台>`，平台取 `win` / `mac` / `ios` / `android` / `web`，如 `FILM-04@mac`。`web` 是只依据本目录实现的浏览器参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)），用于在线试用与检验本规范能否独立约束实现。
 - **令牌名**：点分 `域.元素.属性`，段内 lowerCamelCase，如 `film.card.width`、`nav.longEdge`。域：`shell` `filter` `film` `image` `nav` `analysis` `toolbar` `sim` `status` `exiftable` `tools` `motion` `color`。设置项的取值范围与默认值属于设置模型，不进令牌。
 - **阶段号**（`P1-M4`、`I5`、`A3`、`W-M7` 等）只出现在 `Plans/` 与提交信息里，不进 `Design/` 与代码注释。
 - **代码注释**：在实现某条规则的关键分支、或偏离通常写法的地方写 `// FILM-03：<为什么>`；验收断言名与报告同样引用 ID。不必逐行标注。

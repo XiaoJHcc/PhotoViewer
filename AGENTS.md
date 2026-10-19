@@ -4,7 +4,7 @@
 
 ## 项目概览
 
-PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评分写回 RAW、键盘优先）。技术栈为 .NET 10 + ReactiveUI；共享代码在 `PhotoViewer/`，Windows / macOS / iOS / Android 为原生平台头工程。共享工程不依赖任何 UI 框架，平台能力在启动时注入。
+PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评分写回 RAW、键盘优先）。技术栈为 .NET 10 + ReactiveUI；共享代码在 `PhotoViewer/`，Windows / macOS / iOS / Android 为原生平台头工程。共享工程不依赖任何 UI 框架，平台能力在启动时注入。`PhotoViewer.Web/` 是只依据 `Design/` 实现的浏览器参考壳（纯 JS，不链接 .NET 代码）。
 
 ## 文档入口
 
@@ -26,6 +26,7 @@ PhotoViewer.Apple/            # Apple 专属共享源（解码/Metal/验收，�
 PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链接进 Mac/iOS/Android/Windows）
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（Bootstrap/主题/门面）
+PhotoViewer.Web/              # Web 参考壳：只依据 Design/ 实现的主屏（ES module，零依赖，合成照片）
 Tools/                        # 诊断与维护工具
 Training/                     # AI 训练独立 git 仓库（主库忽略）
 Design/                       # 设计规范（总则/spec/令牌/样机/冻结基线）、架构说明与验收状态
@@ -57,4 +58,5 @@ release/                      # 发布产物
 | [PhotoViewer.iOS/](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳与平台接线 |
 | [PhotoViewer.Android/](PhotoViewer.Android/AGENTS.md) | Android 原生壳（Bootstrap/主题/门面）与平台接线 |
 | [PhotoViewer.Windows/](PhotoViewer.Windows/AGENTS.md) | Windows 原生壳与平台接线 |
+| [PhotoViewer.Web/](PhotoViewer.Web/AGENTS.md) | Web 参考壳：只依据设计文档实现的主屏，在线试用与规范检验 |
 | [Training/](Training/AGENTS.md) | 训练数据、模型导出与数据契约 |

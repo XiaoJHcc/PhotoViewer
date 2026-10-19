@@ -56,6 +56,15 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 | **Debug Mac** | 构建、签名并启动原生 `.app`。 |
 | **Run Mac** | 启动已有构建，不重新编译。 |
 
+### Web 参考壳
+
+| Task | 用途 |
+|---|---|
+| **Serve Web** | 在 `PhotoViewer.Web/` 起本地静态服务，浏览器打开 `http://localhost:8080/`（ES module 不能经 `file://` 加载）。 |
+| **Test Web** | 校验令牌产物最新并运行 `node --test` 纯逻辑单测。 |
+
+只需 Node 18+ 与 Python 3，无其他依赖。页面参数与实现约束见 [Web 模块手册](PhotoViewer.Web/AGENTS.md)。
+
 ### iOS / iPadOS
 
 模拟器需先在 Xcode 中启动；真机需配置开发者证书和 Provisioning Profile。
@@ -110,7 +119,7 @@ bash PhotoViewer.Android/setup-android-signing.sh
 
 ### 设计令牌与几何
 
-`Design/tokens.json` 是设计数值的唯一来源；生成的 C# / 样机令牌文件不得手改：
+`Design/tokens.json` 是设计数值的唯一来源；生成的 C# / 样机 / Web 令牌文件不得手改：
 
 ```bash
 python3 Tools/generate-design-tokens.py

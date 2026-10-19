@@ -1,6 +1,6 @@
 # 平台实现（L4）
 
-本文件记录同一设计规则在四端用什么控件、实现入口在哪里、哪些差异已经登记。分层定义见 [README §2](README.md#2-分层)：L4 只回答"怎么做"，不写规则本身，也不写验收状态（见 [status.md](status.md)）。平台代号取 `win` / `mac` / `ios` / `android`（[README §4](README.md#4-编号)）。
+本文件记录同一设计规则在四端用什么控件、实现入口在哪里、哪些差异已经登记。分层定义见 [README §2](README.md#2-分层)：L4 只回答"怎么做"，不写规则本身，也不写验收状态（见 [status.md](status.md)）。平台代号取 `win` / `mac` / `ios` / `android` / `web`（[README §4](README.md#4-编号)）。
 
 实现入口均为工作区相对路径；行号指向类声明或关键分支，便于跳转。已登记差异写成 `**ID@平台**：…（已登记 10-18）`，来源为 [rulings-G1](../Plans/native-rebuild-phase-6-rulings/rulings-G1.md)…[rulings-G6](../Plans/native-rebuild-phase-6-rulings/rulings-G6.md) 与 [rulings-overrides](../Plans/native-rebuild-phase-6-rulings/rulings-overrides.md)。未登记的偏离不再写在本文件，一律进 [status.md](status.md) 的缺口列与 [Phase 6 统一清单](../Plans/native-rebuild-phase-6-unify.md)。
 

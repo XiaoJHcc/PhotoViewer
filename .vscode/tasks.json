@@ -30,6 +30,22 @@
       "problemMatcher": "$msCompile"
     },
     {
+      "label": "Serve Web",
+      "type": "shell",
+      "command": "python3 -m http.server 8080",
+      "options": { "cwd": "${workspaceFolder}/PhotoViewer.Web" },
+      "isBackground": true,
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test Web",
+      "type": "shell",
+      "command": "python3 Tools/generate-design-tokens.py --check && node --test \"PhotoViewer.Web/tests/**/*.test.js\"",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "Build Mac (Debug)",
       "type": "shell",
       "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64",
