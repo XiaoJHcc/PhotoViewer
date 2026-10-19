@@ -33,7 +33,7 @@ public static class DesignTokens
     public const double AnalysisTileBorderWidth = 1.0;
     /// <summary>analysis.tile.cornerRadius（pt） ANALYSIS-02：瓦片外框圆角；内容不带自己的圆角，圆角只由外框裁切产生。</summary>
     public const double AnalysisTileCornerRadius = 6.0;
-    /// <summary>analysis.tile.innerCornerRadius（pt） ANALYSIS-02：旧壳双层圆角的内层裁切半径；Windows 单层裁切不设内层圆角（ANALYSIS-02@windows）。</summary>
+    /// <summary>analysis.tile.innerCornerRadius（pt） ANALYSIS-02：外框描边内侧的同心内容裁切半径（= analysis.tile.cornerRadius − analysis.tile.border.width），属同一层圆框；Windows 不设内层裁切（ANALYSIS-02@windows）。</summary>
     public const double AnalysisTileInnerCornerRadius = 5.0;
     /// <summary>analysis.tile.innerCornerRadius@windows（pt）：windows 平台差异值（见 Design/platforms.md）。</summary>
     public const double AnalysisTileInnerCornerRadiusWindows = 0.0;

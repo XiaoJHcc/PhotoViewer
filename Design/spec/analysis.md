@@ -29,7 +29,7 @@
 ## ANALYSIS-02 瓦片外观与内容比例 · 必须
 
 - 每张瓦片是正方形外框：底色 `color.analysis.tile.background`（#222222）、描边 `color.analysis.tile.border`（#444444）`analysis.tile.border.width`（1 点）、圆角 `analysis.tile.cornerRadius`（6）。
-- 内容不带自己的圆角；圆角只由外框**一层**裁切产生。不得出现"卡里套卡"的双层圆角，也不得以内容自己的内圆角伪造裁切。
+- 内容不带自己的圆角；圆角只由外框**一层**裁切产生。不得出现"卡里套卡"的双层圆角，也不得以内容自己的内圆角伪造裁切。紧贴描边内侧、半径为外圆角减描边宽的同心裁切属于同一层圆框，允许。
 - 诊断瓦片（DINO PCA / Cosine / 锐度 / 抖动拖影）按当前照片的 DINO/CV 网格宽高比居中置入（letterbox），不裁切、不拉伸；细节预览与直方图固定 1:1 铺满。
 - 诊断图（热力图 / PCA-RGB）不插值放大（最近邻），保留逐格可读；抖动拖影瓦片把原图缩略图以 `analysis.background.alpha`（0.3）压暗作底，矢量线画在其上。
 - 左上角药丸角标：底色 `color.analysis.badge.background`（#88000000）、文字 `color.analysis.badge.foreground`、内边距 `analysis.badge.paddingX`/`paddingY`（8/4）、圆角 `analysis.badge.cornerRadius`（5，只圆外侧两角）、字号 `analysis.caption.fontSize`（12）；对焦点/中心写名称，Cosine 写坐标，抖动拖影写判定文字，过长截断。
