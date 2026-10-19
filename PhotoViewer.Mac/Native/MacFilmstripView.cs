@@ -139,6 +139,16 @@ internal sealed class MacFilmstripScrollView : NSScrollView
         ReflectScrolledClipView(ContentView);
     }
 
+    /// <summary>
+    /// FILM-05：接入鼠标时系统会把滚动条切回占位的 legacy 样式并挤窄裁剪区，卡片跨轴偏离居中；
+    /// 每次重新排布前都锁回悬浮样式，裁剪区始终铺满文件栏。
+    /// </summary>
+    public override void Tile()
+    {
+        if (ScrollerStyle != NSScrollerStyle.Overlay) ScrollerStyle = NSScrollerStyle.Overlay;
+        base.Tile();
+    }
+
     /// <summary>释放滚动视图时终止计时器，避免已关闭窗口继续收到动画回调。</summary>
     protected override void Dispose(bool disposing)
     {
