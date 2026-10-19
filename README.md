@@ -84,7 +84,7 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 ### 下载安装
 [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) 
 
-- **Windows** : 下载 `PhotoViewer.Windows.exe` 直接运行
+- **Windows** : 下载 `PhotoViewer-<版本>-win-x64.exe`，双击运行。
 - **Android** : 下载 `PhotoViewer.Android.apk` 并安装
 - **macOS** : 下载 `PhotoViewer.Mac.dmg`，打开映像，将 `PhotoViewer.Mac.app` 拖入右侧 `Applications` 文件夹。首次启动若提示"Apple 无法验证…移到废纸篓"，有以下两种方法解除：
   - **方法一**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开

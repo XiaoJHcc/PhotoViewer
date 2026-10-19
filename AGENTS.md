@@ -1,10 +1,10 @@
 # AGENTS.md — PhotoViewer
 
-> 只做入口索引。详细上下文按任务与目录读取；不要在这里追加实现细节或阶段状态。
+> 本文件只做入口索引，详细上下文按任务与目录读取。各级 `AGENTS.md` 与 `DEV.md` 只维护长期有效的职责、约束和操作方式；任务过程、阶段状态、验收结果及待办写入 `Plans/`，设计验收状态写入 `Design/status.md`。
 
 ## 项目概览
 
-PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评分写回 RAW、键盘优先）。技术栈为 .NET 10 + ReactiveUI；共享代码在 `PhotoViewer/`，Windows / macOS / iOS / Android 为平台头工程（四端都只有原生壳，Avalonia 旧壳已于 2026-10-19 退役）。共享工程不依赖任何 UI 框架，平台能力在启动时注入。
+PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评分写回 RAW、键盘优先）。技术栈为 .NET 10 + ReactiveUI；共享代码在 `PhotoViewer/`，Windows / macOS / iOS / Android 为原生平台头工程。共享工程不依赖任何 UI 框架，平台能力在启动时注入。
 
 ## 文档入口
 

@@ -3,6 +3,8 @@
         <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
         <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
         <OutputType>WinExe</OutputType>
+        <RootNamespace>PhotoViewer.Windows</RootNamespace>
+        <AssemblyName Condition="'$(WindowsReleaseAssemblyName)' != ''">$(WindowsReleaseAssemblyName)</AssemblyName>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
@@ -17,7 +19,7 @@
              没有它就没有 IXamlMetadataProvider,Fluent 控件模板(NavigationView/TitleBar/NumberBox/
              TextBox/InfoBar/ProgressBar)会缺 TabView* / AcrylicBackgroundFillColorDefaultBrush 资源。 -->
         <WindowsPackageType>None</WindowsPackageType>
-        <!-- 非打包 WinUI 必须开启 MSIX 工具链,否则不会生成名为 resources.pri 的应用资源包 -->
+        <!-- 开启 PRI 发布接线;非打包应用的资源包名为 $(TargetName).pri,单文件发布时一并解包。 -->
         <EnableMsixTooling>true</EnableMsixTooling>
         <!-- 自包含 Windows App SDK 运行时:免装运行时依赖(直发 exe 的用户机器上没有它),
              并让 WinUI 自带的 Microsoft.UI.Xaml.Controls.pri 随输出就位(Fluent 资源查找依赖它)。 -->
@@ -46,6 +48,26 @@
         <EmbeddedResource Include="..\PhotoViewer\Assets\Models\dinov3_vits16.onnx"
                           LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"/>
     </ItemGroup>
+
+    <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
+        <_WindowsVCRedistFile Include="msvcp140.dll;msvcp140_1.dll;vcruntime140.dll;vcruntime140_1.dll" />
+        <Content Include="@(_WindowsVCRedistFile->'$(WindowsVCRedistDirectory)\%(Identity)')"
+                 Condition="'$(WindowsVCRedistDirectory)' != ''"
+                 Link="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
+    </ItemGroup>
+
+    <Target Name="ValidateWindowsVCRedist" BeforeTargets="PrepareForBuild;ComputeFilesToPublish"
+            Condition="'$(PublishSingleFile)' == 'true'">
+        <Error Condition="'$(RuntimeIdentifier)' != 'win-x64'" Text="Windows single-file CRT deployment requires win-x64." />
+        <Error Condition="'$(WindowsVCRedistDirectory)' == ''" Text="Use publish-win-x64-singlefile.ps1 or supply WindowsVCRedistDirectory with the validated Visual Studio Release x64 CRT directory." />
+        <Error Condition="!$([System.IO.Path]::IsPathRooted('$(WindowsVCRedistDirectory)'))" Text="WindowsVCRedistDirectory must be an absolute path." />
+        <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(WindowsVCRedistDirectory)', '(?i)(^|[\\/])debug_nonredist([\\/]|$)'))" Text="debug_nonredist is not redistributable." />
+        <Error Condition="'$(IncludeAllContentForSelfExtract)' != 'true'" Text="Windows single-file CRT deployment requires IncludeAllContentForSelfExtract=true." />
+        <Error Condition="!Exists('$(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)')" Text="Missing CRT file: $(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)" />
+    </Target>
 
     <!--
       共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
@@ -76,4 +98,5 @@
         <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime_providers_shared.dll"/>
         <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)DirectML.dll"/>
     </ItemGroup>
+    <Import Project="PortableSingleFile.targets" />
 </Project>

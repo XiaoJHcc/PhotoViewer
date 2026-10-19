@@ -2,7 +2,10 @@
 
 > 2026-10-16 立项。隶属总纲 [native-rebuild-master-plan-1.md](native-rebuild-master-plan-1.md) §6 **Phase 4**,做法平移 macOS P2(见 [native-rebuild-phase-2-ui.md](native-rebuild-phase-2-ui.md) 与 [PhotoViewer.Mac/AGENTS.md](../PhotoViewer.Mac/AGENTS.md))。
 > 作者要求:**用 Windows 原生方式把主窗口内容重构成原生,尽可能与旧 Avalonia 设计对标**。设置页、分析栏、聚类、工具页按 macOS 同样口径延期(后续均已落地:设置 §17、分析栏/聚类/增强 §15–§16、工具窗口 §18)。
-> 跨平台对账真源:[Design/ui-contract.md](../Design/ui-contract.md)(Windows 列在 W-M6 补齐)。
+> 跨平台对账真源:[Design/spec/](../Design/spec/00-principles.md) / [Design/status.md](../Design/status.md)。下文早期双壳与旧壳对拍为历史记录；6D 已退役旧壳，现行待办以 §13 为准。
+>
+> **2026-10-19 最新单 EXE 修复**：WinAppSDK 1.8 支持非打包自包含单文件，PRI 随包解出；清旧清单修复 `0x80040111`，全内容解包、不 trim/R2R、WinPS 5.1 BOM 保留。四个官方 Release x64 CRT 14.44.35211.0 现已随包，用户不需安装运行库；`PortableSingleFile.targets` 加固定 `resources.pri` 回退名，原来的改名限制已解除，不更改生产 App.xaml 引导。
+> `release/PhotoViewer-0.8.0-win-x64.exe` 为 230,753,372 字节。原名及中文/空格改名各自独立目录/空缓存 **32/7/5，共 88 项全 PASS**：真实 HEVC 生产解码与 GPU/缩略图回读、DirectML 推理，并证明 CRT/libheif/ONNX/DirectML 均从解包目录实际加载。无现成干净机环境，因此干净 Windows 全系统验收仍未关闭，不以本机来源检查替代；Win10、相机真实素材、未签名/SmartScreen 仍保留。详见 [收尾记录、许可与 SHA256](native-rebuild-windows-release-closeout.md)。
 
 ## 0. W-M0 可行性闸门:结论(2026-10-16 已过)
 
@@ -61,8 +64,8 @@
 - 固定 `RuntimeIdentifier` 后 Debug 输出路径变为 `bin/Debug/net10.0-windows10.0.19041.0/win-x64/`;引用旧路径的 `.run/PhotoViewer.Windows.run.xml`(本就停留在 `net9.0-windows`)与脚本需在 W-M1 同步。
 - 未显式设尺寸时 WinUI 窗口按屏幕宽度开(实测 1920×1015);W-M1 必须显式 `AppWindow.Resize`。
 - Git Bash 里 `dotnet publish` 必须用 `-p:Foo=bar`,写 `/p:Foo=bar` 会被 MSYS 改写成路径导致 `MSB1008`(PowerShell 脚本不受影响)。
-- **体积**:自包含发布目录(未单文件化)约 **563 MB** —— 含 .NET 运行时、WinAppSDK 解包内容(101 MB)、ONNX/DirectML、Avalonia 全系;单文件压缩后 **239 MB**(脚本另删 `*.pdb`,实测这些 pdb 约 111 MB)。对照现役 0.7.1 Release 单文件 166 MB(+44%)。体积增量来自 WinAppSDK 自包含,后续可按需裁剪未用组件(Widgets/WebView2 投影等);是否接受由作者定夺。
-- **原生壳单文件发布复核(2026-10-17)**:Debug 单文件试发布产物不含 `PhotoViewer.Windows.pri`,启动在 `Application.Start` 抛 `0x80040111`;多文件发布 + `--pv-native-settings` 已通过。Release 仍默认旧 Avalonia 壳,单文件 native 通道未启用;切 Release 前需单独修 PRI/运行时打包(参见 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720))。
+- **体积口径**：W-M0 多文件约 563 MB、单文件 239 MB（含 Avalonia）仅为历史记录。当前不 trim、不 R2R，已内置四个官方 x64 CRT，0.8.0 最终 EXE 为 230,753,372 字节（230.8 MB / 220.1 MiB），体积接受由作者决定。
+- **单文件复核更正（2026-10-19）**：旧多文件清单缺 `loadFrom` 导致的 `0x80040111` 已修；PRI 固定回退名解除改名限制。最新正式包原名/中文改名各 32/7/5，共 88 项 PASS；干净机门仍待环境。证据见篇首及 [收尾记录](native-rebuild-windows-release-closeout.md)。
 
 ## 1. 范围与非目标
 
@@ -76,7 +79,7 @@
 **本轮不做**
 - 分析栏 / 相似聚类 / 工具页 / 增强预览(P3):入口隐藏、配置保留(`SCOPE-01`)。（后续已落地：分析栏/聚类/增强见 §15–§16，工具窗口见 §18）
 - 色彩正确性(ICC 广色域、ACM 探测、Win10 烘焙回退、`DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709` 标签验证)→ W-M7;本轮只保证**与旧壳行为一致**。
-- Windows RAW 解码(`Sdcb.LibRaw`):既有缺口(Windows 现在完全没有 RAW 解码器),随 W-M7 或单独立项。
+- Windows RAW **主图**解码(`Sdcb.LibRaw`)为既有缺口，随 W-M7 独立立项；内嵌缩略图、列表与星级写回可用。
 - 原生设置窗口 → W-M5;在此之前原生壳不显示设置入口(`SCOPE-01`)。
 - Avalonia 退役(总纲 Phase 6)。
 
@@ -190,11 +193,11 @@ PhotoViewer.Windows/
 - `WindowsNativeSettingsPresenter : INativeSettingsPresenter` + `NativeSettingsSession` 工作副本 + 关闭回写,不改 JSON 字段名/默认值。
 - 独立 960×720 窗口(Mica + `TitleBar` + `NavigationView` 240 + 五页 `SettingsCard`、不进任务栏);控件与尺寸/行模型见 §17。
 - 五分类分组表单;控制列表行 = 显隐 + 名称 + 主/次快捷键 + 拖动重排(同一行);录制与冲突高亮;AI 页全部可用(P3 已落地);清库二次确认。
-- **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待作者手验。
+- **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删已由作者 2026-10-18 手验。
 
-**W-M6 验收 harness 与文档同步**
-- CLI(与 Mac 同形):`--pv-native-smoke` + `--pv-native-layout` / `--pv-native-filmstrip` / `--pv-native-input` / `--pv-native-toolbar`,以及 `--legacy-ui --pv-legacy-layout`;隔离设置/数据库落 `release/native-win-acceptance/`,**不写用户照片、不动用户设置**。
-- 几何对拍:3 尺寸(1200×850 / 830×650 / 700×480)× 2 方向,旧壳 JSON ↔ 原生实测 `Exact = 0.01`。
+**W-M6 验收 harness 与文档同步**（专项/几何导出未做）
+- 已有 `--pv-native-smoke/settings/tools`；计划的 `--pv-native-layout/filmstrip/input/toolbar` 专项尚未实现。隔离设置/数据库落 `release/native-win-acceptance/`，**不写用户照片、不动用户设置**。
+- 几何对拍：按 6F 导出与样机同格式的 Windows 原生几何，覆盖三尺寸 × 两方向。旧壳与 `--legacy-ui --pv-legacy-layout` 已随 6D 退役，原旧壳 JSON 对拍任务失效，不再建设。
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
 - 文档:本文（§12–§18 即 Windows 验收记录）、`Design/status.md` 的 Windows 列(**编译通过≠验收通过**)、[架构文档](../Design/architecture.md) §4 平台矩阵 + 根 `AGENTS.md` 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md`（旧壳 `Debug Windows (Legacy UI)` 任务已随 6D 删除）。
 
@@ -338,47 +341,39 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 8 | 空首屏左右键分工(右键只出菜单、左键开文件) | ✅ | 实机三场景(空态右键/空态左键/载图后右键) |
 | 9 | 主图 GPU 表面:D3D11 交换链 F16、EXIF 方向顶点变换、fit/100%/滚轮/拖动、代理→Full 热替换、resize 同步 | ✅ 定向 | harness:无 EXIF 3600×2400 源尺寸、`PhysicalScale=1.0`、视口与交换链尺寸一致;展示解码经 `WindowsPresentationDecoder`(四参签名,拒绝非 `RgbaF16`)+ `WindowsPresentationEncodingPolicy`(恒 F16) |
 | 10 | 胶片条虚拟化(ItemsRepeater + 卡片池 + 可见区上报 + 350ms 三次缓出定位 + 收敛式定位) | ✅ 定向 | 卡片几何/项距/打开定位/换向重定位已对拍;用户接管与"减少动态效果"见 §14(harness 覆盖) |
-| 11 | 输入:键盘/滚轮 → 共享手势表 → 共享命令表;P3 命令不显示也不消费 | 🟡 | 实机;harness 覆盖 NumberPad3→SetRating3 映射;文本框获焦暂停未做(见 13.2 #8) |
+| 11 | 输入:键盘/滚轮 → 共享手势表 → 共享命令表 | 🟡 | NumberPad3→SetRating3 映射已过；`INPUT-01` 整体仍待核验，不直接认定缺功能（设置窗口隔离见 #20） |
 | 12 | 命令分发复用共享 `ControlViewModel`(Open/Previous/Next/Exchange/SetRating 与旧壳同源) | ✅ | 单测式对拍 + 实机 |
-| 13 | 定向验收 harness(`--pv-native-smoke`,隔离设置/数据库/日志 + 自有素材) | ✅ 定向 | **24 项全过(150%)**;覆盖 §12/§14/§15 + §16 新增项;专项 harness 与旧壳几何 JSON 仍缺(见 13.2 #11) |
+| 13 | 定向验收 harness(`--pv-native-smoke`,隔离设置/数据库/日志 + 自有素材) | ✅ 定向 | **24 项全过(150%)**；专项 harness 与 6F 几何导出仍缺，见 13.2 |
 | 14 | **缩放指示器(导航图)**:长边 150 缩略图 + 2 px 白色可见框 + 百分比,显示条件与旧壳一致、不可交互 | ✅ | §14;harness 断言 fit 隐藏/非 fit 显示、像素尺寸、白框在缩略图内、百分比与 `PhysicalScale` 同口径、设置关闭即隐藏;缩略帧取 `PhotoLoadSession.Image`(含增强态),`SKImage` pin 覆盖 `DrawImage` 全程,栅格化比例变化时重建 |
 | 15 | **FILM-03**:点选/滚轮/拖动滚动条/触摸接管撤销动画与排队请求;系统"减少动态效果"直接到终点 | ✅ 定向 | §14;harness 断言动画中接管后位置不再推进、减少动态效果两次请求终点一致;真实手感待手测 |
 | 16 | **FILM-06**:星级写回失败在窗口内可见(底部状态提示),不呈现虚假成功 | ✅ 定向 | §14;共享 `MainViewModel.RatingWriteFailed` + 只读素材触发,harness 断言提示可见且星色未变 |
-| 17 | 窗口态闭环:自绘按钮的最大化/还原/全屏/退出全屏与 presenter 状态一致 | ✅ 定向 | §14;harness 断言四态往返;真实跨屏/贴靠布局差异仍属 13.2 #2/#16 |
-| 18 | 八方向 + 带 EXIF 素材:自生成方向 1–8 JPEG(含 f/2.8、1/250、ISO 400、75mm)验证方向链与控制栏取值 | ✅ 定向 | §14;GPU 表面四角回读 + 导航图四角回读逐方向核对、方向 6 的 `DisplayCrop` 象限与增强帧朝向断言;EXIF 块显示真实取值;真实相机素材与旧壳逐项对拍仍待做(见 13.2 #3/#5) |
-| 19 | **原生设置窗口(W-M5)**:Mica + TitleBar + NavigationView + SettingsCard/五分类/排序/录制/清库/关闭回写 | ✅ 定向 | §17;`--pv-native-settings` 7 项 PASS,主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删待手验 |
+| 17 | 窗口态闭环:自绘按钮的最大化/还原/全屏/退出全屏与 presenter 状态一致 | ✅ 定向 | §14;harness 四态往返；真实跨屏待验，贴靠布局为有意差异 |
+| 18 | 八方向 + 带 EXIF 自生成素材验证方向链与控制栏取值 | ✅ 定向 | GPU/导航图四角回读、方向 6 `DisplayCrop`/增强帧朝向已过；真实相机素材仍待验，见 13.2 |
+| 19 | **原生设置窗口(W-M5)**:Mica + TitleBar + NavigationView + SettingsCard/五分类/排序/录制/清库/关闭回写 | ✅ | §17;settings 7 项 PASS；真实拖拽/录制/清库/预设增删已由作者 2026-10-18 手验 |
 | 20 | INPUT-01:设置窗口独立于主窗口,录制态吞键 | ✅ 定向 | 主窗口 `_root.KeyDown` 收不到设置窗口按键;录制态 `e.Handled` + 失活取消 |
-| 21 | **原生工具窗口(P3 收口)**:Mica + TitleBar + NavigationView(EXIF 详情/照片统计/DINO 诊断)+ SettingsCard;7 列 EXIF、DINO 5 瓦片、CSV 导出 | ✅ 定向 | §18;`--pv-native-tools` 5 项 PASS,主冒烟 24 项 + 设置 7 项无回归;真实多格式切换/文件夹与 CSV 选择器/视觉手感待手验 |
+| 21 | **原生工具窗口(P3 收口)**:Mica + TitleBar + NavigationView/7 列 EXIF/DINO 5 瓦片/CSV 导出 | ✅ | §18;tools 5 项 PASS；多格式/文件夹与 CSV 选择器/视觉手感已由作者 2026-10-18 手验 |
 
-### 13.2 待完成
+### 13.2 剩余事项（2026-10-19 分类）
 
-| # | 项 | 归属 | 前提 / 阻塞 | 验收口径 |
-|---|---|---|---|---|
-| 1 | 200% / 175% 等非整数缩放的实机验证 | W-M6 | 需要对应显示环境 | 三尺寸 × 两方向 caption 区域、代理尺寸、物理 100% 断言 |
-| 2 | 真实跨屏(不同 scale 显示器间迁移) | W-M6 / W-M7 | 双显示器且缩放不同 | `XamlRoot` 变化后 caption 与代理重算、100% 口径不变 |
-| 3 | 八方向 + 带 EXIF 的**真实素材**与旧壳逐项对拍 | W-M6 | 相机素材(自生成素材已覆盖方向链与控制栏取值,见 §14) | 每个方向朝向/几何与旧壳一致 |
-| 5 | 相机 EXIF 取值与旧壳对拍(自生成素材已证明取值链路) | W-M6 | 真实素材 | 光圈/快门/ISO/等效焦距与旧壳完全一致 |
-| 9 | 原生设置窗口(W-M5) | W-M5 | ✅ 2026-10-17;方案/落地/视觉重构见 [settings](native-rebuild-windows-settings.md) / §17 | `--pv-native-settings` 7 项 PASS(含 Mica/NavigationView/TitleBar/NumberBox/InfoBar);真实拖拽/录制/清库/预设增删待手验 |
-| 10 | 工具窗口(EXIF 详情 / 照片统计 / DINO 诊断) | P3 | ✅ 2026-10-17,见 §18 | `--pv-native-tools` 5 项 PASS(深色/Mica/三分类、EXIF 分组/标签、DINO 5 瓦片与 cosine、统计导出、关闭重开);真实多格式切换/文件夹与 CSV 选择器待手验 |
-| 11 | W-M6 专项 harness + 旧壳几何 JSON 对拍 | W-M6 | ⬜ 未开始 | `--pv-native-layout/filmstrip/input/toolbar`、`--legacy-ui --pv-legacy-layout`、`Exact=0.01` |
-| 12 | 色彩正确性(ICC/广色域标签/ACM 探测/Win10 烘焙回退) | W-M7 | 独立立项 | 见色彩计划 |
-| 13 | Windows RAW 解码(`Sdcb.LibRaw`) | W-M7 | 独立立项 | RAW 主图 + 缩略图 |
-| 14 | 单文件发布形态与体积复核(239 MB vs 现役 166 MB) | 收尾 | 双壳拆分后 | 产物可启动 + 体积记录 |
-| 15 | 双壳资源副本收敛(模型两份 86.6 MB) | 收尾 / Phase 6 | Avalonia 退役 | 单份模型资源 |
-| 16 | 真实鼠标手感、触控板滚轮、触控 | W-M6 | 作者手测 | 手感验收 |
+| 分类 | 剩余事项 | 边界 |
+|---|---|---|
+| 发布风险 | 未签名/SmartScreen；干净 Windows 全系统、Win10 未验 | 原名/改名共 88 项与模块来源检查不替代干净机；最低声明 Win10 1809 与实测 Win11 不矛盾，仅发布 x64 原生产物 |
+| 作者决策 | 最终单文件体积是否接受 | 230,753,372 字节（230.8 MB / 220.1 MiB），已内置 CRT；工程修复通过，干净机门仍待环境 |
+| 硬件/素材验收 | 175%/200% DPI、真实跨屏、相机八方向与 EXIF、增强 + 分析长稳 | 150% 与自生成八方向已覆盖；无设备的触控板分流/Narrator 不阻塞 |
+| W-M6 验收欠账 | 专项 harness 与 Windows 同格式几何导出未做 | 旧壳已退役，不再建设旧壳 JSON 对拍；按 6F 样机导出并比较 |
+| 状态核验/小缺口 | status Windows 38 格待核验（其中 18 格四端共欠账）；`INPUT-01` 待判定 | 不是 38 个缺功能；`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 无障碍名称/键盘重排序小缺口审查发现未修 |
 
-> 原 13.2 #4(导航图)/#6(FILM-03 接管与减少动态效果)/#7(FILM-06 写回失败可见)已在 §14 关闭并移入 13.1(#14–#16);#3/#5 由自生成素材覆盖方向链与取值,真实相机素材对拍仍列在此。
+> 设置真实拖拽/键鼠录制/清库确认/预设增删，工具真实多格式/文件夹与 CSV 选择器/视觉手感，均已由作者 2026-10-18 手验，不再挂起。模型重复打包已随 6D 消除。早期 #4/#6/#7 主屏缺口已关闭，#14 单文件工程阻塞也已关闭。
 
-### 13.3 有意延期(不算待办)
+### 13.3 独立延期与非目标
 
-- P3 主屏入口(相似聚类开关、分析栏展开/收纳、增强预览)已落地(§15–§16);工具窗口已落地(§18),不再延期。
-- 系统标题栏按钮改为自绘(为满足自动显隐),代价是失去最大化按钮的系统贴靠布局,与旧壳一致。
+- **W-M7 色彩/RAW 原本独立立项**：ICC/广色域/ACM/Win10 回退与 RAW 主图解码未做；RAW 内嵌缩略图、列表与星级写回可用，不是完全不支持 RAW。
+- **性能门以后再做，不计发布前置**：原生 `--pv-stress` 接线、p50/p95 基线与性能优化置后。
+- P3 主屏、设置与工具已落地；自绘标题栏失去系统最大化按钮的贴靠布局为有意差异。
 
 ### 13.4 建议推进顺序
 
-1. **W-M6 专项 harness + 旧壳几何 JSON 对拍**(#11):把"对拍"从一次性人工变成可回归,现在主屏功能已闭环,这是下一块硬骨头。
-2. **手测与设备矩阵**:200%/175% 缩放(#1)、真实跨屏(#2)、真实相机素材(#3/#5)、鼠标/触控板手感(#16)、设置窗口真实拖拽/录制/清库/预设增删。
-3. **W-M7 色彩 / RAW**(#12/#13):独立立项,与上面几条并行不冲突。
+先由作者确认体积与发布风险，再按条件补设备/素材验收及 W-M6 专项、6F 样机几何导出；W-M7 与性能另立项，不重新挂已通过的设置/工具手验。
 
 ## 14. 主屏功能对标收口(2026-10-17 第二轮)
 
@@ -411,7 +406,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 14.4 仍待验(不因本轮通过而关闭)
 
-200%/175% 缩放、真实跨屏、真实相机八方向素材、相机 EXIF 取值与旧壳逐项对拍、真实鼠标/触控板手感、设置窗口真实拖拽/录制手感、W-M6 专项 harness 与旧壳几何 JSON。
+当轮待验项现按 §13 收口：175%/200% DPI、真实跨屏/相机八方向与 EXIF、增强 + 分析长稳；设置拖拽/录制已由作者 10-18 手验。W-M6 专项与 6F 样机几何导出未做，旧壳 JSON 对拍已失效。
 
 
 
@@ -518,7 +513,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **主图编码**:新增 `Core/WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB),`WindowsNativeApplication` 注入 `WindowsPresentationDecoder` + policy;`DecodeAsync` 改为共享四参签名(带 `PixelEncoding`),非 `RgbaF16` 显式拒绝,`BytesPerPixel` 删除,`BitmapLoader.PresentationBytesPerPixel` 由 policy 计算。
 - **共享修复保留**:Windows 分支对共享层的修复随合并进入——`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留(增强 F16 方向,冒烟在方向 6 用增强帧四角回读覆盖)、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载;不另开 Windows 分叉。
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
-- **待办不变**:W-M7 色彩/RAW、200%/175% DPI、真实跨屏、真实相机八方向素材、真实手感、W-M6 专项 harness 与旧壳几何 JSON;工具窗口已于 §18 落地。
+- **待办更新（10-19）**：现行分类见 §13；W-M7 色彩/RAW 独立延期，DPI/跨屏/相机素材与长稳待条件，W-M6 专项/6F 样机几何导出未做，不再建设旧壳对拍；设置/工具已实现并由作者手验。
 
 ## 17. W-M5 设置窗口落地与视觉重构(2026-10-17)
 
@@ -555,7 +550,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - `--pv-native-settings` **7 项 PASS**：深色/Mica、`NavigationView`+`TitleBar`+`NumberBox`+`InfoBar` 已加载、五分类/960 外层 945 内容、开关+`NumberBox`+滑条回写、UI 行重排回写、录制开始取消/手势显示、关闭回写。
 - `--pv-native-smoke` **24 项全 PASS**（无回归）。
 - 截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
-- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感、125/150/200% 文本缩放。
+- **作者 2026-10-18 手验通过**：真实拖拽排序、键鼠录制、清库确认、预设增删与真实手感；未覆盖的 DPI/文本缩放矩阵按 §13 补验。
 
 ### 17.4 与方案的偏差(已修正)
 
@@ -604,13 +599,12 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - 主冒烟 `--pv-native-smoke` **24 项无回归**(分析栏抽瓦片后含增强态诊断、两向等边长仍 PASS);`--pv-native-settings` **7 项无回归**(设置窗口改用共享 `WindowsWindowChrome`/页容器后)。
 - 150% 实机截图:`release/native-win-acceptance/tools-page-{exif,dino,stats}.png`;最小 800×560 的 EXIF 排版另行目视。
 - 主图右键「工具…」与控制栏 EXIF 块点击均实机验证可打开工具窗口。
-- 仍待作者手验:真实多格式(RAW+JPG/HEIF)切换、真实文件夹选择器与 CSV 保存对话框、工具页视觉/手感、125/150/200% 文本缩放。
+- **作者 2026-10-18 手验通过**：真实多格式(RAW+JPG/HEIF)切换、文件夹/CSV 选择器与视觉手感；未覆盖的 DPI/文本缩放矩阵按 §13 补验。
 
-### 18.5 已知边界与未做
+### 18.5 验收边界与后续更新
 
-- 多格式 EXIF 的 `SelectorBar` 程序化只覆盖了单格式素材;多格式的真实伴侣切换需作者用手头 RAW+JPG 验证。
-- 照片统计的文件夹/CSV 选择器是 WinRT 系统对话框,程序化无法可靠驱动;验收只覆盖 VM 与列表/导出数据路径。
-- 工具窗口不进入任务栏、随主窗口关闭;若作者希望它像普通文档窗口一样出现在 Alt+Tab,需要单独改 `IsShownInSwitchers` 与关闭策略。
+- `SelectorBar` 程序化只覆盖单格式、选择器程序化只覆盖 VM 与列表/导出路径；真实多格式与系统选择器已由作者 10-18 手验补齐，不再挂起。
+- 工具窗口已于 10-18 改为普通窗口，进任务栏/Alt+Tab 且可最大化；仍随主窗口关闭。§18.1/18.4 为初轮记录。
 - UIA 的 `TransformPattern.Resize` 在本窗口上会导致窗口关闭(疑似 WinUI/UIA 组合问题),抓图用 `SetWindowPos`;这是验收工具的限制,不是产品行为。
 
 ### 18.6 作者截图反馈修正(2026-10-17)

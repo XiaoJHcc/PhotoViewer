@@ -16,8 +16,8 @@
 | 6A 基线冻结 | 旧壳几何/截图入 `Design/baseline/avalonia/`；tag `avalonia-final` | — | ✅ 2026-10-18 |
 | 6B 设计体系 | Design/README 规则；tokens 草稿；ui-contract 拆分为 spec/platforms/status；L0–L2 功能清单 | 6A | ✅ 2026-10-18（裁定经作者通过）；**ui-contract 跳转化完成 2026-10-19**（全仓链接改指 `spec/`、README、platforms、status） |
 | 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | ✅ 2026-10-19 四端统一完成；Windows 已由作者在 Windows 本机验收并合入主线；剩余作者手验见统一清单 |
-| 6D Avalonia 退役 | 见 §3 | 6E-1 | ✅ 2026-10-19（合并 `640d52d`；Mac/iOS/Android 程序化 PASS，Windows 仅 macOS 类型检查 0/0，待作者在 Windows 复核） |
-| 6E 发布就绪 | 见 §4 | 6C 阻塞项 | ◐ 6E-1 随 6D 完成；6E-5 与 6E-4 本机部分 2026-10-19 完成；6E-2/3/6/7 与 6E-4 余项待办 |
+| 6D Avalonia 退役 | 见 §3 | 6E-1 | ✅ 2026-10-19（合并 `640d52d`；Mac/iOS/Android 程序化 PASS，Windows 已本机复核，单文件三套共 36 项 PASS） |
+| 6E 发布就绪 | 见 §4 | 6C 阻塞项 | ◐ 6E-1/5 完成，6E-2 单文件工程阻塞已关、体积接受待作者决定；6E-3/6/7 与 6E-4 余项待办，Windows 发布风险见 §4 |
 | 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | ✅ 2026-10-19：令牌生成器（C# + 样机 `tokens.js`）、`Design/prototype/` 主窗口样机、`Tools/compare-layout-geometry.py`；样机 vs Mac 9 布局 381 节点 0 差异。其余三端尚无同格式几何导出 |
 | 6G 台账与文档 | 遗留 backlog、文档矛盾修正、阶段文档归档、阶段号注释清理 | 穿插 | ◐ 2026-10-19：退役后文档收口与 §6 可核实矛盾已修；其余见 §6 保留项 |
 
@@ -46,7 +46,7 @@
 4. ✅ **包与资源**：`Directory.Packages.props` 删除 Avalonia 全系、`ReactiveUI.Avalonia`、`Xaml.Behaviors.Interactions.Custom`、`Avalonia.Browser`；共享工程直接引用 `ReactiveUI 23.2.1`；DINO 模型改由各头 bundle/asset/嵌入资源打包（`PhotoViewer.dll` 不再内嵌，iOS/Windows 重复打包消除）；`uicons-solid-straight.ttf` 删除，`uicons-regular-rounded.ttf` 保留（Android 使用）。~~**保留项**：`Directory.Packages.props` 仍保留 `Avalonia` / `Avalonia.Desktop` 两个版本条目，仅供独立仓 `Training/DatasetBuilder` 使用~~ → 2026-10-19 已删（`a0a1878`）；`avares://` 资源 URI 约定保留，作为各壳 `IAppResourceProvider` 的路径约定（不再指向 Avalonia 资源系统）。
 5. ✅ **工具**：`Tools/RawDecodeTool` 改用 `LocalStorageRefs`；ColorTest/CvDebug/ExifTest 只依赖 Core。
 6. ✅ **工程配置**：`.vscode/tasks.json` 删除 Legacy/Compare 任务、Release 任务去 `--native`（`Debug iOS (Native)` 并入 `Debug iOS`）；`.vscode/extensions.json` 删 Avalonia 扩展；`.run/` 修 `net9.0` 路径；DEV.md、README、根与模块 AGENTS 改写。
-7. ✅ **验收门**：Mac Debug/Release 0 错误；Mac 九套 harness PASS（smoke 39）；iOS 模拟器七套（photo 10 / layout 21 / input 31 / analysis 18 / similarity 9+NOTE / tools 8 / gesture 22）；Android 五模式 main 14 / analysis 18 / similarity 15 / settings 16 / tools 16；Windows **仅 macOS 类型检查 0/0，需作者在 Windows 本机复核**；各平台产物内无 `Avalonia*`。
+7. ✅ **验收门**：Mac Debug/Release 0 错误；Mac 九套 harness PASS（smoke 39）；iOS 模拟器七套（photo 10 / layout 21 / input 31 / analysis 18 / similarity 9+NOTE / tools 8 / gesture 22）；Android 五模式 main 14 / analysis 18 / similarity 15 / settings 16 / tools 16；Windows **本机 Debug/Release 0 错 0 警、smoke 24 / settings 7 / tools 5 PASS；正式单文件亦在全新目录/缓存通过同三套 36 项**；各平台产物内无 `Avalonia*`。
 
 旧壳专属待办随删除关闭：已缓存描边被覆盖、分析瓦片双层圆角、纵向可见范围估算、`--pv-legacy-layout` 采集、双份 `DecodedImage`+`WriteableBitmap` 缓冲。**保留项**：`avares://` URI 约定。~~`Training/DatasetBuilder` 去 Avalonia~~ → **2026-10-19 完成**（Training `ed033fc`）：其像素路径自 `6276c6b` 起已全走 Core `SkiaImageCodec`，Avalonia 只剩空转的 `AppBuilder`/`Dispatcher`，删除后 DINO 输入口径不变（无需重跑 `verify_onnx_parity.py`，该脚本校验的是 PyTorch↔ONNX 而非解码）；macOS `EnableWindowsTargeting` 构建通过，Windows 实跑待作者复核（小文件夹 `--dump-render` 与既有缓存比对哈希）。全仓构建文件中已无 Avalonia 包。
 
@@ -55,7 +55,7 @@
 | # | 事项 | 平台 | 备注 |
 |---|---|---|---|
 | 6E-1 | ✅ **已完成 2026-10-19**：Release 默认进原生壳（随 6D 删除分流后自然成立） | 全部 | 发布脚本与 tasks 已同步；四平台 Release 都直接进原生壳 |
-| 6E-2 | 原生单文件发布：缺 `.pri` 致 `Application.Start` 抛 `0x80040111`；体积 239MB 是否接受 | Windows | P2-W §1；多文件发布可用，单文件未打通 |
+| 6E-2 | ◐ **单 EXE 工程修复通过，干净机门待验（2026-10-19）**：内置四个官方 CRT，固定 `resources.pri` 解除改名限制；原名/中文改名各 32/7/5，共 88 项全 PASS，实际 HEVC/DirectML 与模块来源检查通过；归档 `release/PhotoViewer-0.8.0-win-x64.exe` | Windows | 230,753,372 字节（230.8 MB / 220.1 MiB）；运行库从解包目录加载，不要求用户安装。构建端使用官方 Release x64 Redist 并遵守许可。无现成干净机环境，未冒称全系统验收；Win10、真实相机素材、未签名/SmartScreen 仍据实登记。完整 SHA256、CRT 来源与证据见 [收尾记录](native-rebuild-windows-release-closeout.md) |
 | 6E-3 | Developer ID 签名 + 公证（现 adhoc） | macOS | 待作者决定是否立项 |
 | 6E-4 | ◐ App Store 合规冲刺。**已完成 2026-10-19**：`PrivacyInfo.xcprivacy`（不追踪/不收集；FileTimestamp C617.1+3B52.1、SystemBootTime 35F9.1、DiskSpace E174.1、UserDefaults CA92.1）、`ITSAppUsesNonExemptEncryption=false`、设备能力 arm64；核对确认不访问相册/相机/定位/网络，无需用途字符串与 ATS 例外。**余项**：TestFlight 上传与审核材料（作者）；Release 真机构建验证清单入包。批量评分写回：产品目前没有多选批量评分入口（评分只作用于单张及其同名伴侣，失败已走 STATE-03 提示条），此项待出现批量入口时再立 | iOS | 总纲 §4.5 |
 | 6E-5 | ✅ **已完成 2026-10-19**（`df16c77`）：`Microsoft.Data.Sqlite` 10.0.13 → SQLitePCLRaw 2.1.13，GHSA-2m69-gcr7-jv3q 消除，`dotnet list --vulnerable` 无 | 全部 | Mac smoke 39、iOS similarity 9、Android main 14 / similarity 15、Windows 类型检查 0/0 |
@@ -66,16 +66,16 @@
 
 完整清单由 2026-10-18 文档盘点产生，6G 合并为单一 backlog。2026-10-19 按 `Design/status.md` 复核后：
 
-- **Windows**：`INPUT-01` 文本框获焦不暂停全局快捷键（状态仍为待核验）；W-M7 色彩（ICC/ACM/跨屏）与 RAW 解码（LibRaw）缺失。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit` 对焦优先，status.md Windows IMAGE-02 程序化通过 10-18，F 键对焦优先已作者手验）。
+- **Windows**：`INPUT-01` 仍待核验，不直接认定功能缺失；W-M6 专项与几何导出未做，旧壳对拍随 6D 失效，后续按 6F 样机导出。status Windows **38 格待核验，不是 38 个缺功能**，其中 18 格四端共欠账；审查发现 `FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 无障碍名称/键盘重排序小缺口未修。W-M7 色彩与 RAW 主图解码独立延期（RAW 内嵌缩略图、列表与星级写回可用）。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit`，程序化与作者手验通过）。
 - **Android**：~~列表上下按钮排序~~ → **已改为拖拽**（`ItemTouchHelper` + 行尾把手，status.md SETTINGS-15 代码核对 10-18）；数值用 +/- 与拖入未接已登记为平台差异（SETTINGS-12@android / OPEN-07@android）；真机 P3 表面抬亮（现回退 sRGB）；`pv-check all` 偶发 SIGSEGV；API/方向/字体缩放/DPI 矩阵与真机门未跑。
 - **macOS**：~~细节预览双击会清 `FollowsFocus`~~ → **已按规格统一**：`ANALYSIS-04` 规定"双击即结束跟随（显式定位优先），四端一致"，status.md macOS 程序化通过 10-16。
 - **共享**：RAW 自动 sidecar 未实现。
 
-作者手验待办（不阻塞开发，阻塞"作者手验通过"状态）：iPad 清单 39 项；Windows 200%/175% DPI、真实跨屏、八方向真实素材、W-M7 色彩/RAW（设置拖拽/录制与工具多格式/选择器已于 2026-10-18 由作者验收）；Android 验收清单全部；统一清单中 macOS/iOS 余项。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**（不再计入待办；对应 status.md 的 INPUT-04 / SHELL-06 / TOOLBAR-04 已注明）。
+作者手验待办（不阻塞开发，阻塞"作者手验通过"状态）：iPad 清单 39 项；Windows 175%/200% DPI、真实跨屏、相机八方向素材与增强 + 分析长稳待硬件/素材（W-M7 色彩/RAW 独立延期；设置拖拽/录制与工具多格式/选择器已于 2026-10-18 由作者验收）；Android 验收清单全部；统一清单中 macOS/iOS 余项。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**（不再计入待办；对应 status.md 的 INPUT-04 / SHELL-06 / TOOLBAR-04 已注明）。
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 
-置后：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
+置后（作者明确以后再做，**不计发布前置**）：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
 
 ### 5.1 性能专项首批（2026-10-19）
 
@@ -97,7 +97,7 @@
 | 7 | Phase 0/2 验收勾选未回写 | ⏳ **待核实**：Phase 0/2 为历史阶段文档，勾选状态是否需按最终结果回填未定；本轮不动其正文（改动会篡改历史验收记录） |
 | 8 | ui-contract SHELL-01/TOOLBAR-01 的 Android 格子过期 | ✅ 随 6B 关闭：`ui-contract.md` 已跳转化，Android 现行状态以 `Design/status.md` 为准（SHELL-01 / TOOLBAR-01 为代码核对 10-18） |
 | 9 | architecture §4 Android 展示解码为空 | ✅ 已修：补 `AndroidPresentationDecoder` + `AndroidPresentationEncodingPolicy`（恒 8 位 Rgba8） |
-| 10 | DEV.md 称 Windows 原生单文件可用 | ✅ 已修：DEV.md 发布章节加"单文件缺 `.pri`、`0x80040111`、多文件可用"的已知限制 |
+| 10 | Windows 单文件误登记为缺 PRI，后又误判 WinUI 不支持单文件 | ✅ 2026-10-19 实测更正：WinAppSDK 1.8 支持，旧多文件 WinRT 清单缺 `loadFrom` 才是 `0x80040111` 根因；PRI 在 bundle 中。正式最终命名 EXE 三套 36 项 PASS，6E-2 工程阻塞关闭；[原调查保留并置顶更正](native-rebuild-windows-release-closeout.md) |
 | 11 | iPad/Android 发现清单表格被空行截断 | ✅ 复核未见空行截断（iPad `native-rebuild-phase-ipad.md` §6、Android AGENTS 发现清单连续）；若后续再出现，按表格连续性修正 |
 
 ## 7. 发现清单
@@ -106,3 +106,4 @@
 |---|---|---|---|
 | 1 | 2026-10-18 | 旧壳 Mac 主图已无法加载："展示编码策略未注入"。`41abd7b`（2026-10-17）把 `BitmapLoader.PresentationEncoding` 改为强制策略，旧壳路径未注入；`--pv-legacy-layout` 因此超时。旧 Release 包（默认旧壳）若基于当前代码构建同样受影响 | 不修：旧壳不再验收且已删除；基线沿用 2026-10-16 采集（旧壳视图代码此后未改）。**已随 6D 关闭（2026-10-19）**：旧壳与分流参数一并删除，Release 默认原生壳，不再存在"用当前代码发布默认旧壳"的路径 |
 | 2 | 2026-10-18 | `avalonia-final` 之前的提交在当前工具链（Xcode 27.1 / macOS workload 27，最低 14.0）下无法直接构建 | 基线只能保存产物，不能依赖重新构建 |
+| 3 | 2026-10-19 | Windows 单文件曾误判缺 PRI/不支持；改名导致资源缺失，原生库还依赖宿主 CRT | 清旧清单修复激活，`resources.pri` 固定回退解除改名限制，官方 Release x64 CRT 原样内置。最新正式包原名/改名各 32/7/5，共 88 项 PASS，实际模块来源全为解包目录；干净机门未冒称完成，详见 [收尾记录](native-rebuild-windows-release-closeout.md) |

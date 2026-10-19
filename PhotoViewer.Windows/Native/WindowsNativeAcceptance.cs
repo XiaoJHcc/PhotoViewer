@@ -71,10 +71,12 @@ internal sealed partial class WindowsMainWindow
             var modelHash = await Task.Run(CheckModel);
             checks.Add("PASS embedded model: SHA256=" + modelHash + "; DirectML dual-output inference");
 
+            await RunDeploymentChecksAsync(checks);
+
             var fixture = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
             await Task.Run(() => CreateFixture(fixture));
             await OpenPathsAsync(new[] { fixture });
-            await WaitForSmokeAsync(() => _session.Image != null, "首次照片解码");
+            await WaitForSmokeAsync(() => _session.Image is { SourceWidth: 3600, SourceHeight: 2400 }, "首次照片解码");
             RequireSmoke(_session.Image!.SourceWidth == 3600 && _session.Image.SourceHeight == 2400, "无 EXIF 尺寸时丢失真实源尺寸");
 
             foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
@@ -364,6 +366,7 @@ internal sealed partial class WindowsMainWindow
     /// <param name="orientation">EXIF 方向(1-8)</param>
     internal static void CreateExifFixture(string path, int orientation)
     {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using var bitmap = new SKBitmap(400, 300);
         using (var canvas = new SKCanvas(bitmap))
         {
