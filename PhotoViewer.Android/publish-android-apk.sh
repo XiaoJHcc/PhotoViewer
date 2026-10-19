@@ -36,10 +36,10 @@ fi
 # ──────────────────────────────────────────────────────────────
 SIGNING_ARGS=()
 if [[ -f "$SIGNING_JSON" ]]; then
-    KEYSTORE_FILE=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON')); print(d['keystoreFile'])")
-    KEYSTORE_PASS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON')); print(d['keystorePassword'])")
-    KEY_ALIAS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON')); print(d['keyAlias'])")
-    KEY_PASS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON')); print(d['keyPassword'])")
+    KEYSTORE_FILE=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON', encoding='utf-8-sig')); print(d['keystoreFile'])")
+    KEYSTORE_PASS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON', encoding='utf-8-sig')); print(d['keystorePassword'])")
+    KEY_ALIAS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON', encoding='utf-8-sig')); print(d['keyAlias'])")
+    KEY_PASS=$(python3 -c "import json,sys; d=json.load(open('$SIGNING_JSON', encoding='utf-8-sig')); print(d['keyPassword'])")
     # 将相对路径解析为绝对路径
     if [[ "$KEYSTORE_FILE" != /* ]]; then
         KEYSTORE_FILE="$SCRIPT_DIR/$KEYSTORE_FILE"
