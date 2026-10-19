@@ -83,6 +83,8 @@ public static class MacNativeApplication
                 await _mainWindow.OpenPathsAsync(args.Where(path => !path.StartsWith("--", StringComparison.Ordinal)));
                 Console.WriteLine("[Native] AppKit + Metal 主窗口启动成功，打开路径：" + string.Join(" | ", args.Where(path => !path.StartsWith("--", StringComparison.Ordinal))));
                 if (args.Contains("--pv-native-smoke")) _ = NativeAcceptanceRunner.RunAsync(_mainWindow, _settings, args);
+                if (StressFlipDriver.TryParseArgs(args, relative => System.IO.Path.GetFullPath(relative)))
+                    StressFlipDriver.MaybeStart(main, _mainWindow.Session);
             }
             catch (Exception exception)
             {

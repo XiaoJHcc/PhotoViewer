@@ -77,6 +77,13 @@
 
 置后：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
 
+### 5.1 性能专项首批（2026-10-19）
+
+- **度量入口**：Mac 已接共享 `StressFlipDriver`（`--pv-stress=<文件夹>`），与 iOS 同一指标口径；Windows/Android 原生壳尚无压测入口（只需 `MainViewModel` + `PhotoLoadSession`，接线成本低）。
+- **Mac 基线**（Debug，M 系列，17 张：JPG/HEIC 色卡 + 2 张 Sony ARW 7008×4672）：p50 **132ms**，p95/max **4546ms**（首张 ARW 冷读）；第二张 ARW 1569ms；JPG/HEIC 71–393ms，均为 Full（非代理）。
+- **RAW 冷图剖面**：ARW 代理档走 `CGImageSource.CreateThumbnail` + `CreateThumbnailFromImageAlways` + `MaxPixelSize 2560`，强制 RAW 解马赛克——冷 3106ms / 热 383ms（`ApplePresentationDecoder.cs:57-64`）。同文件改 `FromImageIfAbsent` 取内嵌预览 10–18ms，但只有 1616×1080（与 iOS `SCOPE-04@ios` 同一份预览）。
+- **候选方案（待设计裁定，不在本轮改）**：RAW 代理先上内嵌预览（毫秒级上屏），再由既有"代理→Full 单调升级"补全分辨率；需在 IMAGE 规格写明"RAW 首帧可为内嵌预览、短暂低于目标代理尺寸"，并核对导航图/分析栏/100% 判定不以预览尺寸为基准。
+
 ## 6. 6G 文档矛盾（2026-10-19 复核）
 
 | # | 矛盾 | 处置 |
