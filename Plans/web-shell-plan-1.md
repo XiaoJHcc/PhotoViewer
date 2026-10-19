@@ -156,3 +156,4 @@ PhotoViewer.Web/
 |---|---|---|
 | W0 | ✅ 10-20 | 骨架、`tokens.g.js`（含平台覆盖）、Serve/Test Web 任务、台账建档；Mac `--pv-native-layout` 重跑 PASS，报告与旧版逐字节相同 → 17 点差异坐实为 Mac 缺口（G6，`-AppleShowScrollBars WhenScrolling` 下 0 差异） |
 | W1 | ✅ 10-20 | `core/` 12 个模块 + `layout/` 7 个文件，227 个单测全绿（测试名带设计 ID）；七个子代理只读 `Design/` 独立实现。按文档重写的几何与 Mac（悬浮滚动条偏好）9 布局 363 节点比对仅 18 处差异，全部来自计数文本宽（G11）；新增缺口 G11–G23 |
+| W2a | ✅ 10-20 | `core/app.js` 主屏模型（状态快照/动作/事件/菜单模型/持久化）+ `exifformat.js`；`render/` 程序化照片、解码器、特征库、缩略图队列；281 单测全绿；`dev/render-preview.html` 目视确认方向码、代理/Full 构图一致、增强与连拍；新增缺口 G24–G27 |

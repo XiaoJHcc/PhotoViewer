@@ -38,12 +38,14 @@ src/
     session.js          # 加载/代理→Full/增强/药丸/提示条时序
     analysis.js         # 分析栏瓦片集合、三态、准星、cosine
     similarity.js       # 相似面板三态、计算/取消、提取进度
+    exifformat.js       # 控制栏 EXIF 值与卡片时间格式化
     app.js              # 主屏模型：整合以上模块，对外只暴露状态快照、动作与事件
     layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js
-  render/procedural.js  # 程序化照片：同一场景可按任意倍率矢量重绘
+  render/               # 浏览器实现：procedural（矢量程序化照片，存储朝向）、decoder（代理/Full/增强）、store（特征库）、thumbs（缩略图队列）
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
+dev/render-preview.html  # 开发用：方向码、代理/Full、增强、连拍的目视检查（不进产品）
 tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对，Design/README §8）
 ```
 
