@@ -232,6 +232,10 @@ internal static class WindowsLayout
     /// <summary>状态提示距主图区底边的距离。</summary>
     public const double StatusToastBottomMargin = DesignTokens.StatusToastBottomMargin;
 
+    /// <summary>状态提示与“计算中”药丸同时可见时的底边距（药丸底距 + 药丸高 + 叠放间距）。</summary>
+    public const double StatusToastStackMargin =
+        DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap;
+
     /// <summary>状态提示最大宽(FILM-06:min(500, 可用宽))。</summary>
     public const double StatusToastMaxWidth = DesignTokens.StatusToastMaxWidth;
 

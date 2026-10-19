@@ -191,6 +191,7 @@
         "status.toast.maxWidth": 500,
         "status.toast.paddingX": 12,
         "status.toast.paddingY": 6,
+        "status.toast.stackGap": 8,
         "toolbar.command.button.size": 40,
         "toolbar.command.glyph.fontSize": 18,
         "toolbar.command.spacing": 8,

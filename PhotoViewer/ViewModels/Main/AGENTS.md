@@ -8,7 +8,7 @@
 
 | 模块 | ViewModel | 职责 |
 |---|---|---|
-| **主窗口 / Main shell** | [MainViewModel.cs](MainViewModel.cs) | 组合文件源、文件栏、控制栏、设置与工具 VM；维护 `CurrentFile` / `LastFile` / 锚点高亮（`IsCurrent` 与 `IsCurrentImage` 双身份，`SetCurrentImageKeepAnchor` 供相似聚类保留锚点）；`RatingWriteFailed` 事件供各端提示条（FILM-06），`FitToViewRequested` 供显式打开回适应态（OPEN-05）。`OpenToolsWindow` 仅在 `Tools.IsPresented == false` 时回工具首页，已打开只前置并保留当前页（TOOLS-01）。 |
+| **主窗口 / Main shell** | [MainViewModel.cs](MainViewModel.cs) | 组合文件源、文件栏、控制栏、设置与工具 VM；维护 `CurrentFile` / `LastFile` / 锚点高亮（`IsCurrent` 与 `IsCurrentImage` 双身份，`SetCurrentImageKeepAnchor` 供相似聚类保留锚点）；`RatingWriteFailed` 事件供各端提示条（FILM-06），`OpenFailed` 事件承载共享层统一给出的打开失败文案（STATE-02，壳以 STATE-03 提示条显示），`FitToViewRequested` 供显式打开回适应态（OPEN-05）。`OpenToolsWindow` 仅在 `Tools.IsPresented == false` 时回工具首页，已打开只前置并保留当前页（TOOLS-01）。 |
 | **文件源** | [FolderViewModel.cs](FolderViewModel.cs) | 仅负责打开文件/文件夹与维护 `AllFiles`；通过 `AllFilesChanged` / `ScrollToCurrentRequested` / `PriorityThumbnailRequested` 事件通知文件栏。打开文件夹且未指定目标时，首张取筛选后列表首项（同名合并下即代表文件，如 HIF 而非隐藏的 ARW），筛选为空时回退枚举首项所属合并组的代表文件（OPEN-04）。打开带代际护栏（旧代际枚举/补齐结果不写入）与同目录重开保留缩略图缓存（OPEN-08）；枚举被拒/失败时回退单图模式（OPEN-03）。 |
 | **文件栏-容器** | [File/FileViewModel.cs](File/FileViewModel.cs) | 组合筛选条、主缩略图列表与相似聚类面板；`IsRowLayout` / `IsSimilarityPanelOpen` 直通共享状态，供各端原生文件栏决定分区与让位。 |
 | **文件栏-筛选** | [File/FilterBarViewModel.cs](File/FilterBarViewModel.cs) | 排序方式 / 方向 / 星级筛选 + 计数 + 相似聚类 toggle。变化通过 `FilterChanged` / `SortChanged` / `SimilarityPanelToggled` 事件通知下游；`IsSimilarityPanelOpen` 直通 `SettingsModel.SimilarityPanelExpanded`（跨会话保留）；`FilteredCount` 由 `BindFilteredCountProvider` 注入并可与列表同帧刷新（FILTER-04）。 |

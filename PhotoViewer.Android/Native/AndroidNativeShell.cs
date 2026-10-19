@@ -175,6 +175,7 @@ public static class AndroidNativeShell
             catch (Exception exception)
             {
                 Console.Error.WriteLine($"[Native] 外部打开失败：{exception}");
+                main.ReportOpenFailure($"无法打开：{request.Items.FirstOrDefault()?.StorageItem?.Name ?? "所选项目"}");
             }
         });
     }

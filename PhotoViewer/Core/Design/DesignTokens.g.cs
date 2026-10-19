@@ -385,6 +385,8 @@ public static class DesignTokens
     public const double StatusToastPaddingX = 12.0;
     /// <summary>status.toast.paddingY（pt） FILM-06：Windows 状态提示垂直内边距。</summary>
     public const double StatusToastPaddingY = 6.0;
+    /// <summary>status.toast.stackGap（pt） STATE-03：提示条与计算中药丸同时可见时，提示条底边与药丸顶边的间距；提示条底距 = image.busy.bottomOffset + image.busy.height + 本值。</summary>
+    public const double StatusToastStackGap = 8.0;
     /// <summary>toolbar.command.button.size（pt） TOOLBAR-01：命令按钮方形点击区域边长，不因文字长度拉宽。</summary>
     public const double ToolbarCommandButtonSize = 40.0;
     /// <summary>toolbar.command.glyph.fontSize（pt） TOOLBAR-01：命令按钮图标字号。</summary>

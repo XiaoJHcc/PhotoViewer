@@ -223,6 +223,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _main.RatingWriteFailed += OnRatingWriteFailed;
+        _main.OpenFailed += OnOpenFailed;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
         UpdateHint();
@@ -407,9 +408,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             MeasureSpec.MakeMeasureSpec((int)Math.Round(pane.Height * density), MeasureSpecMode.AtMost));
         double statusWidth = _statusLabel.MeasuredWidth / density;
         double statusHeight = _statusLabel.MeasuredHeight / density;
+        // STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到距底 24。
+        double statusBottom = _enhanceBusy.Visibility == ViewStates.Visible
+            ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
+            : DesignTokens.StatusToastBottomMargin;
         LayoutChild(_statusLabel, new LayoutRect(
             pane.X + (pane.Width - statusWidth) / 2,
-            pane.Y + pane.Height - statusHeight - DesignTokens.StatusToastBottomMargin - bottomInset,
+            pane.Y + pane.Height - statusHeight - statusBottom - bottomInset,
             statusWidth, statusHeight), density);
 
         bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
@@ -717,6 +722,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnRatingWriteFailed(ImageFile file, int rating)
         => ShowStatus($"无法写入星级：{file.Name}", DesignTokens.MotionStatusToastDuration);
+
+    /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
+    /// <param name="message">失败提示正文。</param>
+    private void OnOpenFailed(string message)
+        => ShowStatus(message, DesignTokens.MotionStatusToastDuration);
 
     /// <summary>短暂显示状态提示（与共享底部提示同义）。</summary>
     /// <param name="text">文本。</param>
@@ -1034,6 +1044,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
             _main.RatingWriteFailed -= OnRatingWriteFailed;
+            _main.OpenFailed -= OnOpenFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _filmstrip.RateRequested -= OnRateRequested;
             _analysisPane.TileCountChanged -= RequestLayout;

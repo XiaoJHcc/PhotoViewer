@@ -246,6 +246,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _main.RatingWriteFailed += OnRatingWriteFailed;
+        _main.OpenFailed += OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _session.Changed += OnImageChanged;
         _session.Notice += OnSessionNotice;
@@ -276,6 +277,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
         _main.RatingWriteFailed -= OnRatingWriteFailed;
+        _main.OpenFailed -= OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _session.Changed -= OnImageChanged;
         _session.Notice -= OnSessionNotice;
@@ -858,6 +860,7 @@ internal sealed partial class WindowsMainWindow : Window
         // 会话自己管理增强态:Image 在增强就绪后返回增强图,切图/清空时立即回到新图或 null。
         _photo.SetImage(_session.Image);
         _busyPill.Visibility = _session.IsEnhancingVisible ? Visibility.Visible : Visibility.Collapsed;
+        UpdateStatusToastBottomMargin();
         // IMAGE-03：有代理时 Full 升级失败只走非阻塞提示，不覆盖主图错误标题；同一错误只提示一次。
         if (_session.FullError.Length > 0 && _session.FullError != _lastFullError)
         {
@@ -941,6 +944,17 @@ internal sealed partial class WindowsMainWindow : Window
     /// <param name="rating">本次请求的星级</param>
     private void OnRatingWriteFailed(ImageFile file, int rating)
         => ShowStatus($"无法写入星级({file.Name} → {rating} 星),请检查文件权限或格式");
+
+    /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
+    /// <param name="message">失败提示正文</param>
+    private void OnOpenFailed(string message) => ShowStatus(message);
+
+    /// <summary>STATE-03：药丸可见时提示条整体上移到药丸上方，药丸收起后回到常规底边距。</summary>
+    private void UpdateStatusToastBottomMargin()
+        => _statusToast.Margin = new Thickness(0, 0, 0,
+            _busyPill.Visibility == Visibility.Visible
+                ? WindowsLayout.StatusToastStackMargin
+                : WindowsLayout.StatusToastBottomMargin);
 
     /// <summary>在主图区底部显示一条短提示,数秒后自动消失。</summary>
     /// <param name="message">提示内容</param>
@@ -1202,6 +1216,7 @@ internal sealed partial class WindowsMainWindow : Window
         catch (Exception ex)
         {
             NativeStartupLog.Fail("打开文件选择器失败", ex);
+            _main.ReportOpenFailure($"无法打开所选项目：{ex.Message}");
         }
     }
 

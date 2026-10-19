@@ -365,6 +365,8 @@ public class FolderViewModel : ReactiveObject
             }
 
             Console.Error.WriteLine($"[Folder] 枚举文件夹失败: {folder.Path} — {ex.Message}");
+            // STATE-02：打开失败必须让用户看见对象与原因，不能只写日志。
+            Main.ReportOpenFailure($"无法读取文件夹：{folder.Name}");
             if (preferredFile != null)
             {
                 // OPEN-03：目录枚举被拒/失败时回退为单图模式,至少让用户看到目标图片。

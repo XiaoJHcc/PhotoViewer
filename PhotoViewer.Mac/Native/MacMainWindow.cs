@@ -131,6 +131,7 @@ public sealed class MacMainWindow : IDisposable
         _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _main.FitToViewRequested += OnFitToViewRequested;
+        _main.OpenFailed += ShowToast;
         _photoPane.AddSubview(Photo);
         _detailHighlight = new PassThroughPane();
         _detailHighlight.Layer!.BorderColor = NSColor.FromRgb(0, 255, 0).CGColor;
@@ -493,6 +494,7 @@ public sealed class MacMainWindow : IDisposable
                 Math.Max(0, (double)_photoPane.Bounds.Height - DesignTokens.ImageBusyBottomOffset - DesignTokens.ImageBusyHeight),
                 DesignTokens.ImageBusyWidth,
                 DesignTokens.ImageBusyHeight);
+            _toast.StackOverBusyPill = !_busyPill.Hidden;
             _toast.Layout(_photoPane.Bounds);
             double hintWidth = Math.Max(1, Math.Min(500, (double)_photoPane.Bounds.Width - 20));
             double hintLeft = ((double)_photoPane.Bounds.Width - hintWidth) / 2;
@@ -882,34 +884,39 @@ public sealed class MacMainWindow : IDisposable
             if (folder) { var selected = await FilePicker.PickFolderAsync("选择图片文件夹"); if (selected != null) { Photo.FitToView(); await _main.FolderVM.OpenFolderAsync(selected); } }
             else { Photo.FitToView(); await _main.FolderVM.OpenFilePickerAsync(); }
         }
-        catch (Exception exception) { Console.Error.WriteLine(exception); ShowError(exception.Message); }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            if (_automatedValidation) throw new InvalidOperationException(exception.Message);
+            ShowToast($"无法打开所选项目：{exception.Message}");
+        }
     }
     /// <summary>串行接收 Finder/命令行/拖入路径，确保最后选中的是请求目标。</summary>
     public async Task OpenPathsAsync(IEnumerable<string> paths)
     {
         await _openGate.WaitAsync();
+        string? targetName = null;
         try
         {
             foreach (var path in paths)
             {
+                targetName = System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
                 if (Directory.Exists(path)) { Photo.FitToView(); await _main.FolderVM.OpenFolderAsync(new MacFolderRef(path)); break; }
                 if (File.Exists(path) && _main.FolderVM.IsImageFile(System.IO.Path.GetFileName(path))) { Photo.FitToView(); await _main.FolderVM.OpenImageAsync(new MacFileRef(path)); break; }
             }
             Window.MakeKeyAndOrderFront(null);
         }
-        catch (Exception exception) { Console.Error.WriteLine(exception); ShowError(exception.Message); }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine(exception);
+            if (_automatedValidation) throw new InvalidOperationException(exception.Message);
+            ShowToast($"无法打开：{targetName ?? "所选项目"}");
+        }
         finally { _openGate.Release(); }
     }
     /// <summary>共享外部打开桥接消费入口。</summary>
     private Task HandleExternalOpenAsync(ExternalOpenRequest request)
         => UiDispatcher.InvokeAsync(() => OpenPathsAsync(request.Items.Select(item => item.Path.LocalPath))).Unwrap();
-    /// <summary>简短原生错误警告。</summary>
-    private void ShowError(string message)
-    {
-        Console.Error.WriteLine("[Native] " + message);
-        if (_automatedValidation) throw new InvalidOperationException(message);
-        using var alert = new NSAlert { MessageText = "PhotoViewer", InformativeText = message, AlertStyle = NSAlertStyle.Warning }; alert.RunModal();
-    }
 
     /// <summary>系统应用菜单，所有查看操作共享与按钮相同的执行入口。</summary>
     private void BuildMenus()
@@ -980,6 +987,7 @@ public sealed class MacMainWindow : IDisposable
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
+        _main.OpenFailed -= ShowToast;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;

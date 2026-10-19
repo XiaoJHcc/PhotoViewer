@@ -30,6 +30,12 @@ public class MainViewModel : ViewModelBase
     public event Action<ImageFile, int>? RatingWriteFailed;
 
     /// <summary>
+    /// 显式打开失败时触发(UI 线程);文案由共享层统一给出,界面据此显示 STATE-03 提示条(STATE-02)。
+    /// 参数为完整的失败提示正文。
+    /// </summary>
+    public event Action<string>? OpenFailed;
+
+    /// <summary>
     /// 显式打开（文件/文件夹/外部打开/拖入）开始时触发：主图回到适应态，不沿用上一批照片的倍率与对焦跟随（OPEN-05）。
     /// </summary>
     public event Action? FitToViewRequested;
@@ -152,6 +158,12 @@ public class MainViewModel : ViewModelBase
     /// 请求主图回到适应态（OPEN-05）。由平台壳订阅 <see cref="FitToViewRequested"/> 后执行。
     /// </summary>
     public void RequestFitToView() => FitToViewRequested?.Invoke();
+
+    /// <summary>
+    /// 上报显式打开失败（STATE-02），由平台壳订阅 <see cref="OpenFailed"/> 后以 STATE-03 提示条呈现。
+    /// </summary>
+    /// <param name="message">完整的失败提示正文。</param>
+    public void ReportOpenFailure(string message) => OpenFailed?.Invoke(message);
 
     #endregion
     

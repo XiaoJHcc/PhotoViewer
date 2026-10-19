@@ -23,6 +23,10 @@ internal sealed class MacStatusToast : NSView
     internal bool IsVisible => !Hidden;
     /// <summary>当前提示文本，供验收读取。</summary>
     internal string Text => _label.StringValue;
+    /// <summary>
+    /// STATE-03：与「计算中」药丸同时可见时为 true，提示条整体上移到药丸上方。
+    /// </summary>
+    internal bool StackOverBusyPill { get; set; }
 
     /// <summary>建立深色圆角提示条与只读文本。</summary>
     public MacStatusToast()
@@ -71,7 +75,7 @@ internal sealed class MacStatusToast : NSView
         _ = HideAfterDelayAsync(version);
     }
 
-    /// <summary>提示条随主图分区尺寸重新落位：最大宽 500、水平居中、距底 24。</summary>
+    /// <summary>提示条随主图分区尺寸重新落位：最大宽 500、水平居中；药丸可见时上移到药丸上方（STATE-03）。</summary>
     /// <param name="photoBounds">主图分区当前边界。</param>
     internal void Layout(CGRect photoBounds)
     {
@@ -80,9 +84,12 @@ internal sealed class MacStatusToast : NSView
         double textWidth = Math.Max(1, width - DesignTokens.StatusToastPaddingX * 2);
         double textHeight = Measure(textWidth);
         double height = textHeight + DesignTokens.StatusToastPaddingY * 2;
+        double bottomMargin = StackOverBusyPill
+            ? DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap
+            : DesignTokens.StatusToastBottomMargin;
         Frame = new CGRect(
             (photoBounds.Width - width) / 2,
-            Math.Max(0, photoBounds.Height - DesignTokens.StatusToastBottomMargin - height),
+            Math.Max(0, photoBounds.Height - bottomMargin - height),
             width,
             height);
         _label.Frame = new CGRect(DesignTokens.StatusToastPaddingX, DesignTokens.StatusToastPaddingY, textWidth, textHeight);

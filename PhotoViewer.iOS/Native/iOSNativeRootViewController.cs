@@ -171,6 +171,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _photo.SwipeRequested += OnSwipeRequested;
         _photo.WheelScrolled += OnWheelScrolled;
         _main.FitToViewRequested += OnFitToViewRequested;
+        _main.OpenFailed += OnOpenFailed;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
@@ -418,6 +419,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _photo.SwipeRequested -= OnSwipeRequested;
             _photo.WheelScrolled -= OnWheelScrolled;
             _main.FitToViewRequested -= OnFitToViewRequested;
+            _main.OpenFailed -= OnOpenFailed;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
             _main.Settings.PropertyChanged -= OnSettingsChanged;
@@ -569,11 +571,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Math.Max(0, ((double)pane.Width - DesignTokens.ImageBusyWidth) / 2),
             Math.Max(0, (double)pane.Height - DesignTokens.ImageBusyHeight - DesignTokens.ImageBusyBottomOffset),
             DesignTokens.ImageBusyWidth, DesignTokens.ImageBusyHeight);
-        // STATE-03：最大宽 500，距主图区底 24，水平居中。
+        // STATE-03：最大宽 500，水平居中；药丸可见时整体上移到药丸上方，药丸收起后回到距底 24。
         double toastLimit = Math.Max(1, Math.Min(DesignTokens.StatusToastMaxWidth, (double)pane.Width - horizontalMargin * 2));
         var toastSize = _toast.Measure(toastLimit);
+        double toastBottom = _enhanceBusy.Hidden
+            ? DesignTokens.StatusToastBottomMargin
+            : DesignTokens.ImageBusyBottomOffset + DesignTokens.ImageBusyHeight + DesignTokens.StatusToastStackGap;
         _toast.Frame = new CGRect(Math.Max(0, ((double)pane.Width - toastSize.Width) / 2),
-            Math.Max(0, (double)pane.Height - toastSize.Height - DesignTokens.StatusToastBottomMargin),
+            Math.Max(0, (double)pane.Height - toastSize.Height - toastBottom),
             toastSize.Width, toastSize.Height);
         UpdateNavigationIndicator();
     }
@@ -706,6 +711,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>会话的一次性非阻塞提示（内存压力自动关闭增强）。</summary>
     /// <param name="message">提示文本。</param>
     private void OnSessionNotice(string message) => UiDispatcher.Post(() => ShowToast(message));
+
+    /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
+    /// <param name="message">失败提示正文。</param>
+    private void OnOpenFailed(string message) => UiDispatcher.Post(() => ShowToast(message));
 
     /// <summary>卡片星级按钮写回（[FILM-05] 点星不选择父卡片，改星不切主图）。</summary>
     /// <param name="file">目标照片。</param>
@@ -850,6 +859,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         catch (Exception exception)
         {
             Console.Error.WriteLine(exception);
+            _main.ReportOpenFailure($"无法打开所选项目：{exception.Message}");
         }
     }
 
