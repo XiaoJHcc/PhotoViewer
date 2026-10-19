@@ -25,23 +25,26 @@ index.html
 src/
   tokens.g.js           # 生成；默认导出基准值，platformTokens 导出平台覆盖
   core/                 # 纯逻辑：无 DOM、无全局状态，可在 Node 里单测
+    types.js            # 模块间共用数据形状（JSDoc）
     tokens.js           # 按平台配置档取令牌（缺令牌立即抛错）
     clock.js            # 可注入的时间源与定时器（单测用假时钟）
     settings.js         # 设置模型默认值（只取 spec/settings.md 中影响主屏的项）
     library.js          # 合成照片库
     filter.js           # 同名合并、格式、星级筛选、排序、暂留、锚点翻页
     viewport.js         # 主图视口数学
-    filmscroll.js       # 胶片栏定位动画器
+    filmscroll.js       # 胶片栏几何（步长/内容长/居中偏移）、定位动画器与定位门控
+    features.js         # 合成 DINO/CV 特征（同一连拍场景彼此相似）
     input.js            # 手势编码、主/次绑定、Repeatable、滚轮分流
     session.js          # 加载/代理→Full/增强/药丸/提示条时序
     analysis.js         # 分析栏瓦片集合、三态、准星、cosine
     similarity.js       # 相似面板三态、计算/取消、提取进度
     app.js              # 主屏模型：整合以上模块，对外只暴露状态快照、动作与事件
-    layout/             # 分区与各区几何（只依据 spec + tokens 推导）
+    layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js
   render/procedural.js  # 程序化照片：同一场景可按任意倍率矢量重绘
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
+tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对，Design/README §8）
 ```
 
 - **依赖方向**：`shell/ → core/app.js → core/*`；`core/` 不得引用 `shell/`、`document`、`window`。时间一律经 `clock.js`，便于假时钟断言 300/350/500/4000 ms 等门槛。
