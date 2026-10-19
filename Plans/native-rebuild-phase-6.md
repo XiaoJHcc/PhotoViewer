@@ -17,7 +17,7 @@
 | 6B 设计体系 | Design/README 规则；tokens 草稿；ui-contract 拆分为 spec/platforms/status；L0–L2 功能清单 | 6A | ✅ 2026-10-18（裁定经作者通过）；**ui-contract 跳转化完成 2026-10-19**（全仓链接改指 `spec/`、README、platforms、status） |
 | 6C 功能审查与统一 | 按 L2 清单四端逐条审查，产出缺口表并裁定；按 [统一清单](native-rebuild-phase-6-unify.md) 四端改代码 | 6B 清单 | ✅ 2026-10-19 四端统一完成；Windows 已由作者在 Windows 本机验收并合入主线；剩余作者手验见统一清单 |
 | 6D Avalonia 退役 | 见 §3 | 6E-1 | ✅ 2026-10-19（合并 `640d52d`；Mac/iOS/Android 程序化 PASS，Windows 仅 macOS 类型检查 0/0，待作者在 Windows 复核） |
-| 6E 发布就绪 | 见 §4 | 6C 阻塞项 | ◐ 6E-1 随 6D 完成（Release 默认原生壳）；6E-2～6E-7 待办 |
+| 6E 发布就绪 | 见 §4 | 6C 阻塞项 | ◐ 6E-1 随 6D 完成；6E-5 与 6E-4 本机部分 2026-10-19 完成；6E-2/3/6/7 与 6E-4 余项待办 |
 | 6F 样机与令牌落地 | HTML 样机、几何导出比对、令牌代码生成与四端接入 | 6B | ✅ 2026-10-19：令牌生成器（C# + 样机 `tokens.js`）、`Design/prototype/` 主窗口样机、`Tools/compare-layout-geometry.py`；样机 vs Mac 9 布局 381 节点 0 差异。其余三端尚无同格式几何导出 |
 | 6G 台账与文档 | 遗留 backlog、文档矛盾修正、阶段文档归档、阶段号注释清理 | 穿插 | ◐ 2026-10-19：退役后文档收口与 §6 可核实矛盾已修；其余见 §6 保留项 |
 
@@ -43,12 +43,12 @@
 1. ✅ **VM 去 Avalonia 类型**：`ControlViewModel.PointerContext` 与视口命令删除；`ImageViewModel`、`AnalysisViewModel`/`AnalysisItem` 删除；`MainViewModel` 去掉 `UsesNativePresentation`/`nativePresentation`/`ImageVM`/`AnalysisVM` 与旧壳模态状态，新增 `FitToViewRequested`/`RequestFitToView()`（OPEN-05）；`DinoDebugViewModel` 只剩对 `DinoDiagnosticPresenter` 的中性转发；`ToolsViewModel` 仍持有它，但各壳不再 `is` 判型。
 2. ✅ **头工程**：`--legacy-ui`/`--native`/`PVLegacyUI`/`pv-flags` 分流与 `#if DEBUG` 默认值全部删除；Mac `RunLegacy`/`LegacyLayoutAcceptance`/`MacExternalOpenBridge`、iOS 旧 `AppDelegate`/`PhotoViewerSceneDelegate`/旧外部打开路径/`Linker.xml` Avalonia 项、Android `MainActivity`/旧主题、Windows `RunLegacy` 已删。历史 `--native` 参数传入被无害忽略。
 3. ✅ **共享工程**：`Views/`、`Controls/`、`Converters/`、`Behaviors/`、`Platform/Avalonia*`、`DecodedImageAdapter`、`Windows/`、`App.axaml*`、`ViewLocator.cs` 已删；剩余工程未改名（仍为 `PhotoViewer/`，`Views*` 三个模块 AGENTS 一并删除）；EXIF 格式化器移到 `Core/Exif/ExifDisplayConverters.cs`，排序参数在 `ViewModels/Settings/MoveCommandParameter.cs`。
-4. ✅ **包与资源**：`Directory.Packages.props` 删除 Avalonia 全系、`ReactiveUI.Avalonia`、`Xaml.Behaviors.Interactions.Custom`、`Avalonia.Browser`；共享工程直接引用 `ReactiveUI 23.2.1`；DINO 模型改由各头 bundle/asset/嵌入资源打包（`PhotoViewer.dll` 不再内嵌，iOS/Windows 重复打包消除）；`uicons-solid-straight.ttf` 删除，`uicons-regular-rounded.ttf` 保留（Android 使用）。**保留项**：`Directory.Packages.props` 仍保留 `Avalonia` / `Avalonia.Desktop` 两个版本条目，仅供独立仓 `Training/DatasetBuilder` 使用（去 Avalonia 置后）；`avares://` 资源 URI 约定保留，作为各壳 `IAppResourceProvider` 的路径约定（不再指向 Avalonia 资源系统）。
+4. ✅ **包与资源**：`Directory.Packages.props` 删除 Avalonia 全系、`ReactiveUI.Avalonia`、`Xaml.Behaviors.Interactions.Custom`、`Avalonia.Browser`；共享工程直接引用 `ReactiveUI 23.2.1`；DINO 模型改由各头 bundle/asset/嵌入资源打包（`PhotoViewer.dll` 不再内嵌，iOS/Windows 重复打包消除）；`uicons-solid-straight.ttf` 删除，`uicons-regular-rounded.ttf` 保留（Android 使用）。~~**保留项**：`Directory.Packages.props` 仍保留 `Avalonia` / `Avalonia.Desktop` 两个版本条目，仅供独立仓 `Training/DatasetBuilder` 使用~~ → 2026-10-19 已删（`a0a1878`）；`avares://` 资源 URI 约定保留，作为各壳 `IAppResourceProvider` 的路径约定（不再指向 Avalonia 资源系统）。
 5. ✅ **工具**：`Tools/RawDecodeTool` 改用 `LocalStorageRefs`；ColorTest/CvDebug/ExifTest 只依赖 Core。
 6. ✅ **工程配置**：`.vscode/tasks.json` 删除 Legacy/Compare 任务、Release 任务去 `--native`（`Debug iOS (Native)` 并入 `Debug iOS`）；`.vscode/extensions.json` 删 Avalonia 扩展；`.run/` 修 `net9.0` 路径；DEV.md、README、根与模块 AGENTS 改写。
 7. ✅ **验收门**：Mac Debug/Release 0 错误；Mac 九套 harness PASS（smoke 39）；iOS 模拟器七套（photo 10 / layout 21 / input 31 / analysis 18 / similarity 9+NOTE / tools 8 / gesture 22）；Android 五模式 main 14 / analysis 18 / similarity 15 / settings 16 / tools 16；Windows **仅 macOS 类型检查 0/0，需作者在 Windows 本机复核**；各平台产物内无 `Avalonia*`。
 
-旧壳专属待办随删除关闭：已缓存描边被覆盖、分析瓦片双层圆角、纵向可见范围估算、`--pv-legacy-layout` 采集、双份 `DecodedImage`+`WriteableBitmap` 缓冲。**保留项**：`Training/DatasetBuilder` 去 Avalonia（独立仓，置后，须先跑 `verify_onnx_parity.py`）；`avares://` URI 约定；`Directory.Packages.props` 为 Training 保留的 `Avalonia` / `Avalonia.Desktop` 版本。
+旧壳专属待办随删除关闭：已缓存描边被覆盖、分析瓦片双层圆角、纵向可见范围估算、`--pv-legacy-layout` 采集、双份 `DecodedImage`+`WriteableBitmap` 缓冲。**保留项**：`avares://` URI 约定。~~`Training/DatasetBuilder` 去 Avalonia~~ → **2026-10-19 完成**（Training `ed033fc`）：其像素路径自 `6276c6b` 起已全走 Core `SkiaImageCodec`，Avalonia 只剩空转的 `AppBuilder`/`Dispatcher`，删除后 DINO 输入口径不变（无需重跑 `verify_onnx_parity.py`，该脚本校验的是 PyTorch↔ONNX 而非解码）；macOS `EnableWindowsTargeting` 构建通过，Windows 实跑待作者复核（小文件夹 `--dump-render` 与既有缓存比对哈希）。全仓构建文件中已无 Avalonia 包。
 
 ## 4. 6E 发布就绪
 
@@ -57,8 +57,8 @@
 | 6E-1 | ✅ **已完成 2026-10-19**：Release 默认进原生壳（随 6D 删除分流后自然成立） | 全部 | 发布脚本与 tasks 已同步；四平台 Release 都直接进原生壳 |
 | 6E-2 | 原生单文件发布：缺 `.pri` 致 `Application.Start` 抛 `0x80040111`；体积 239MB 是否接受 | Windows | P2-W §1；多文件发布可用，单文件未打通 |
 | 6E-3 | Developer ID 签名 + 公证（现 adhoc） | macOS | 待作者决定是否立项 |
-| 6E-4 | App Store 合规冲刺：权限用途字符串、隐私清单、ATS、TestFlight、审核材料；批量评分写回进度与失败汇总 | iOS | 总纲 §4.5 |
-| 6E-5 | `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 高危（NU1903） | 全部 | iOS 上架前必须处理 |
+| 6E-4 | ◐ App Store 合规冲刺。**已完成 2026-10-19**：`PrivacyInfo.xcprivacy`（不追踪/不收集；FileTimestamp C617.1+3B52.1、SystemBootTime 35F9.1、DiskSpace E174.1、UserDefaults CA92.1）、`ITSAppUsesNonExemptEncryption=false`、设备能力 arm64；核对确认不访问相册/相机/定位/网络，无需用途字符串与 ATS 例外。**余项**：TestFlight 上传与审核材料（作者）；Release 真机构建验证清单入包。批量评分写回：产品目前没有多选批量评分入口（评分只作用于单张及其同名伴侣，失败已走 STATE-03 提示条），此项待出现批量入口时再立 | iOS | 总纲 §4.5 |
+| 6E-5 | ✅ **已完成 2026-10-19**（`df16c77`）：`Microsoft.Data.Sqlite` 10.0.13 → SQLitePCLRaw 2.1.13，GHSA-2m69-gcr7-jv3q 消除，`dotnet list --vulnerable` 无 | 全部 | Mac smoke 39、iOS similarity 9、Android main 14 / similarity 15、Windows 类型检查 0/0 |
 | 6E-6 | Release 签名材料、真机冒烟 | Android | `signing.json` 本机配置 |
 | 6E-7 | `ValidateXcodeVersion=false` 在 workload 支持 Xcode 27.1 后移除 | Mac/iOS | 非阻塞 |
 
@@ -75,7 +75,7 @@
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 
-置后：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP、Training `DatasetBuilder --dump-render` 去 Avalonia（牵涉 DINO 输入口径，须先跑 `verify_onnx_parity.py` 对照）。
+置后：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
 
 ## 6. 6G 文档矛盾（2026-10-19 复核）
 

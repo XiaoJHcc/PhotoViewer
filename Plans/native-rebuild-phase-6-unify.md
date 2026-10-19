@@ -188,15 +188,16 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 程序化 harness 覆盖不到的项，按平台汇总（确认后回填 [status.md](../Design/status.md) 为「作者手验通过」）：
 
-- macOS：设置页顶部状态行的排版；提示条与「计算中」药丸同时出现时可能重叠；DINO 整宽刚体文本的换行。
+- macOS：设置页顶部状态行的排版；DINO 整宽刚体文本的换行。~~提示条与「计算中」药丸重叠~~ → 2026-10-19 按 STATE-03 叠放规则四端统一（`status.toast.stackGap`）。
 - iOS·iPadOS：真机提示条；损坏设置的状态行；下滑关闭工具页后重开的落点；EXIF 长按复制；500ms 药丸时机；新色值；Stage Manager 下控制栏滚动。
 - Android：设置三张表的拖拽与把手菜单；缩放预设边界；TalkBack 下控制栏虚拟节点与设置行；相似面板错误标签与 44dp 点击区；工具 sheet 关闭取消 DINO；触控板/滚轮分流；Sony ARW 对焦跟随；增强后的导航图。
 - Windows：~~合入后跑三套检查~~ → **已完成并复核**（2026-10-19 `b4a8248` 本机复跑：Debug/Release 0 错 0 警，smoke **24/24**、settings **7/7**、tools **5/5**，Release 启动正常；OPEN-05「打开照片回适应态」作者手验通过）。剩余手验：200%/175% DPI、真实跨屏、真实相机八方向素材、真实拖拽/录制/文件选择器手感、W-M7 色彩/RAW。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**。
 
 遗留（本次未处理，需另立条目）：
 
-- S8：文件夹枚举失败时共享层没有可见错误状态，只落 `Console.Error` 并保持空态。
-- macOS 其他错误路径（文件选择器失败、外部打开失败）仍走模态 `ShowError`，与 STATE-02「错误不升级为模态」不符。
+- ~~S8：文件夹枚举失败时共享层没有可见错误状态~~ → 2026-10-19 已解决：STATE-02 补「打开失败走提示条、文案由共享层给出」，`MainViewModel.OpenFailed` / `ReportOpenFailure`，四端订阅显示。
+- ~~macOS 选择器/外部打开失败走模态 `ShowError`~~ → 2026-10-19 已改为提示条，`ShowError` 删除（自动验收仍抛出）。
+- 余项：Android `AndroidFilePicker` 的 SAF 启动失败仍只记日志（服务层无 VM 引用，边缘路径）。
 
 ## 验收
 

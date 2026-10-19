@@ -48,7 +48,6 @@
 
     <ItemGroup>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
-        <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
         <!-- 原生壳：Material 3 主题/控件、胶片栏 RecyclerView、edge-to-edge insets、设置 BottomSheet -->
         <PackageReference Include="Xamarin.Google.Android.Material" />
         <PackageReference Include="Xamarin.AndroidX.RecyclerView" />
