@@ -1,12 +1,13 @@
 /**
  * 分析栏编排（ANALYSIS-01–11）。
  *
- * new AnalysisPresenter({ t, clock, store, onChange, onLocate })
+ * new AnalysisPresenter({ t, clock, store, onChange, onLocate, thumbnailsBusy })
  *   t(name)                 设计令牌创建的函数
  *   clock                   可注入时间源（clock.js）
  *   store                   { read(photo, { signal }), compute(photo, { signal, variant }), extractGroup(photos) }
  *   onChange()              对外状态变化后的回调
  *   onLocate(u, v)          双击细节预览时抛出的定位事件（显示朝向归一化坐标）
+ *   thumbnailsBusy()        ANALYSIS-09：缩略图通道是否忙，未提取回退让位时一并等待
  *
  * 公开 API：
  *   setVisible(v) / setPhoto(photo|null) / setImmediateCompute(v) / setEnhanced(v) / setDisplaySurfaceReady(v)
@@ -27,6 +28,8 @@ import { cosine } from "./features.js";
 
 const DETAIL_KINDS = ["focus", "center"];
 const DIAGNOSTIC_KINDS = ["pca", "cosine", "sharpness", "shake"];
+// ANALYSIS-09：让位等待同时观察主图上屏与缩略图通道，轮询间隔只需覆盖肉眼可辨的变化。
+const YIELD_POLL_MS = 50;
 
 export function isValidFocus(focus) {
     if (!focus) return false;
@@ -72,12 +75,14 @@ function buildHistogram(pixels, width, height) {
 }
 
 export class AnalysisPresenter {
-    constructor({ t, clock, store, onChange = null, onLocate = null }) {
+    constructor({ t, clock, store, onChange = null, onLocate = null, thumbnailsBusy = () => false }) {
         this.t = t;
         this.clock = clock;
         this.store = store;
         this.onChange = onChange;
         this.onLocate = onLocate;
+        // ANALYSIS-09：未提取回退让位时，缩略图通道也必须空闲。
+        this.thumbnailsBusy = typeof thumbnailsBusy === "function" ? thumbnailsBusy : () => false;
 
         this.visible = false;
         this.photo = null;
@@ -375,26 +380,54 @@ export class AnalysisPresenter {
     }
 
     waitForDisplayYield() {
-        if (this.displaySurfaceReady) return Promise.resolve(true);
+        if (this.displayReady()) return Promise.resolve(true);
         return new Promise((resolve) => {
-            let timer = null;
-            const done = () => {
+            let settled = false;
+            let poll = null;
+            let deadline = null;
+            const finish = () => {
+                if (settled) return;
+                settled = true;
                 this.surfaceWaiter = null;
-                if (timer !== null) {
-                    this.clock.clearTimeout(timer);
-                    this.timers.delete(timer);
-                    timer = null;
+                if (poll !== null) {
+                    this.clock.clearTimeout(poll);
+                    this.timers.delete(poll);
+                    poll = null;
+                }
+                if (deadline !== null) {
+                    this.clock.clearTimeout(deadline);
+                    this.timers.delete(deadline);
+                    deadline = null;
                 }
                 resolve(true);
             };
-            timer = this.clock.setTimeout(done, this.t("motion.analysis.fallback.yieldTimeout"));
-            this.timers.add(timer);
-            this.surfaceWaiter = done;
+            const tick = () => {
+                poll = null;
+                if (settled) return;
+                if (this.displayReady()) {
+                    finish();
+                    return;
+                }
+                poll = this.clock.setTimeout(tick, YIELD_POLL_MS);
+                this.timers.add(poll);
+            };
+            // ANALYSIS-09：最长等待 motion.analysis.fallback.yieldTimeout，超时后照常计算。
+            deadline = this.clock.setTimeout(finish, this.t("motion.analysis.fallback.yieldTimeout"));
+            this.timers.add(deadline);
+            poll = this.clock.setTimeout(tick, YIELD_POLL_MS);
+            this.timers.add(poll);
+            this.surfaceWaiter = (force) => {
+                if (force || this.displayReady()) finish();
+            };
         });
     }
 
-    resumeSurfaceWaiter() {
-        if (this.surfaceWaiter) this.surfaceWaiter();
+    displayReady() {
+        return this.displaySurfaceReady && !this.thumbnailsBusy();
+    }
+
+    resumeSurfaceWaiter(force = false) {
+        if (this.surfaceWaiter) this.surfaceWaiter(force);
     }
 
     cancelInFlight() {
@@ -404,7 +437,8 @@ export class AnalysisPresenter {
         }
         for (const id of this.timers) this.clock.clearTimeout(id);
         this.timers.clear();
-        this.resumeSurfaceWaiter();
+        // 取消时强制解开让位等待，避免被清掉定时器后 Promise 永远挂起。
+        this.resumeSurfaceWaiter(true);
     }
 
     applyRender(features, route) {

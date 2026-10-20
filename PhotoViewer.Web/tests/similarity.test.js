@@ -258,7 +258,7 @@ test("SIM-03：关闭面板不中断提取，但不再重算列表", async () =>
     assert.equal(store.calls.read.length, reads);
 });
 
-test("SIM-04：柱长公式以下限为基准，百分比四舍五入", async () => {
+test("SIM-04/SIM-08：归一分数 = (cos+1)/2，柱长以下限为基准，百分比四舍五入", async () => {
     const clock = manualClock();
     const anchor = photo("anchor");
     const p90 = photo("p90");
@@ -281,17 +281,18 @@ test("SIM-04：柱长公式以下限为基准，百分比四舍五入", async ()
 
     const items = panel.snapshot().items;
     assert.deepEqual(items.map((item) => item.card.photo.id), ["p100", "p90", "p75"]);
-    assert.equal(items.find((item) => item.card.photo.id === "p90").percent, 90);
-    assert.equal(items.find((item) => item.card.photo.id === "p75").percent, 75);
-    assert.ok(Math.abs(items.find((item) => item.card.photo.id === "p90").barRatio - 0.6) < 1e-5);
-    assert.equal(items.find((item) => item.card.photo.id === "p75").barRatio, 0);
+    assert.ok(Math.abs(items.find((item) => item.card.photo.id === "p90").score - 0.95) < 1e-6);
+    assert.equal(items.find((item) => item.card.photo.id === "p90").percent, 95);
+    assert.equal(items.find((item) => item.card.photo.id === "p75").percent, 88);
+    assert.ok(Math.abs(items.find((item) => item.card.photo.id === "p90").barRatio - 0.8) < 1e-5);
+    assert.ok(Math.abs(items.find((item) => item.card.photo.id === "p75").barRatio - 0.5) < 1e-5);
     assert.equal(items.find((item) => item.card.photo.id === "p100").barRatio, 1);
 
-    panel.setParams({ threshold: 0.85 });
+    panel.setParams({ threshold: 0.9 });
     clock.advance(150);
     await flush();
     assert.deepEqual(ids(panel), ["p100", "p90"]);
-    assert.ok(Math.abs(panel.snapshot().items[1].barRatio - 0.6) < 1e-5);
+    assert.ok(Math.abs(panel.snapshot().items[1].barRatio - 0.8) < 1e-5);
 });
 
 test("SIM-05：锚点只由胶片栏切图与重新打开改变，显示身份只用于面板内高亮", async () => {
@@ -368,7 +369,55 @@ test("SIM-06：新计算取消旧计算，计算中保留上一次结果", async
     assert.deepEqual(ids(panel), ["d"]);
 });
 
-test("SIM-08：排除自身与同指纹、阈值、上限、同分按拍摄时间更近优先", async () => {
+test("SIM-06：没有上一次结果时按 SIM-02 显示空态文案，不留白", async () => {
+    const clock = manualClock();
+    const anchor = photo("a");
+    const b = photo("b");
+    const store = makeStore(clock, {
+        featuresById: new Map([[anchor.id, features([1, 0])], [b.id, features([1, 0.2])]]),
+        readDelay: 30,
+    });
+    const panel = new SimilarityPanel({ t, clock, store });
+    panel.setPool([card(anchor), card(b)]);
+    panel.setAnchor(anchor);
+    panel.setExpanded(true);
+    const snapshot = panel.snapshot();
+    assert.equal(snapshot.calculating, true);
+    assert.equal(snapshot.emptyText, "无相似照片");
+    assert.equal(snapshot.state, "empty");
+
+    clock.advance(30);
+    await flush();
+    clock.advance(30);
+    await flush();
+    assert.deepEqual(ids(panel), ["b"]);
+    assert.equal(panel.snapshot().emptyText, null);
+});
+
+test("SIM-02/03：未提取计数与提取范围取整个文件夹，候选池仍为筛选结果", async () => {
+    const clock = manualClock();
+    const anchor = photo("anchor");
+    const shown = photo("shown", { fingerprint: "g1", extracted: true });
+    const hidden = photo("hidden", { fingerprint: "g2", extracted: false });
+    const store = makeStore(clock, {
+        featuresById: new Map([[anchor.id, features([1, 0])], [shown.id, features([1, 0.2])]]),
+    });
+    const panel = new SimilarityPanel({ t, clock, store });
+    panel.setPool([card(anchor), card(shown)]);
+    panel.setFolderCards([card(anchor), card(shown), card(hidden)]);
+    panel.setAnchor(anchor);
+    panel.setExpanded(true);
+    await flush();
+    assert.equal(panel.snapshot().unextracted, 1);
+    assert.deepEqual(ids(panel), ["shown"]);
+
+    await panel.extractAll();
+    assert.deepEqual(store.calls.extract, [["hidden"]]);
+    assert.equal(hidden.extracted, true);
+    assert.equal(panel.snapshot().unextracted, 0);
+});
+
+test("SIM-08：排除自身与同指纹、归一阈值、上限、同分按拍摄时间更近优先", async () => {
     const clock = manualClock();
     const anchor = photo("a");
     const clone = photo("clone", { fingerprint: "fp-a" });
@@ -383,9 +432,9 @@ test("SIM-08：排除自身与同指纹、阈值、上限、同分按拍摄时�
             [clone.id, features([1, 0])],
             [b.id, features([0.9, Math.sqrt(1 - 0.81)])],
             [d.id, features([0.9, Math.sqrt(1 - 0.81)])],
-            [e.id, features([0.95, Math.sqrt(1 - 0.9025)])],
+            [e.id, features([0.96, Math.sqrt(1 - 0.9216)])],
             [f.id, features([0.92, Math.sqrt(1 - 0.8464)])],
-            [low.id, features([0.8, Math.sqrt(1 - 0.64)])],
+            [low.id, features([0.6, Math.sqrt(1 - 0.36)])],
         ]),
     });
     const panel = new SimilarityPanel({ t, clock, store });
@@ -395,7 +444,8 @@ test("SIM-08：排除自身与同指纹、阈值、上限、同分按拍摄时�
     panel.setExpanded(true);
     await flush();
     assert.deepEqual(ids(panel), ["e", "f", "d", "b"]);
-    assert.equal(panel.snapshot().items[0].percent, 95);
+    assert.equal(panel.snapshot().items[0].percent, 98);
+    assert.ok(Math.abs(panel.snapshot().items.find((item) => item.card.photo.id === "b").score - 0.95) < 1e-6);
 
     panel.setParams({ maxResults: 2 });
     clock.advance(150);

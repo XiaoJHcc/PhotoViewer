@@ -268,6 +268,19 @@ test("INPUT-04：零位移滚轮不产生事件", () => {
     assert.equal(wheel.feed(null), null);
 });
 
+test("INPUT-04：物理 Ctrl 的精确滚动交给绑定表，不再解释为捏合", () => {
+    const wheel = new WheelInterpreter(manualClock());
+    wheel.noteModifierKeys({ ctrl: true });
+    const up = wheel.feed({ deltaX: 0, deltaY: -10, deltaMode: 0, ctrlKey: true });
+    assert.equal(up.kind, "precise");
+    assert.equal(up.gesture, "Ctrl+WheelUp");
+    assert.equal(up.pinch, undefined);
+    const down = wheel.feed({ deltaX: 0, deltaY: 10, deltaMode: 0, ctrlKey: true });
+    assert.equal(down.gesture, "Ctrl+WheelDown");
+    assert.equal(new CommandMap(HOTKEYS).commandFor(up.gesture), "ZoomInScale");
+    assert.equal(new CommandMap(HOTKEYS).commandFor(down.gesture), "ZoomOutScale");
+});
+
 test("INPUT-06：向左滑=下一张，向右滑=上一张", () => {
     const swipe = new SwipeRecognizer(createTokens());
     swipe.start(1, 100, 100);
@@ -360,6 +373,23 @@ test("INPUT-07：超出 slop 取消长按，slop 内移动不取消", () => {
     assert.equal(fired, 1);
 });
 
+test("INPUT-07：长按阈值取 input.longPress.delay/slop 令牌", () => {
+    const t = createTokens();
+    const clock = manualClock();
+    const press = new LongPressRecognizer(clock, { delay: t("input.longPress.delay"), slop: t("input.longPress.slop") });
+    let fired = 0;
+    press.start(0, 0, () => { fired++; });
+    clock.advance(t("input.longPress.delay") - 1);
+    assert.equal(fired, 0);
+    clock.advance(1);
+    assert.equal(fired, 1);
+
+    press.start(0, 0, () => { fired++; });
+    press.move(t("input.longPress.slop") + 1, 0);
+    clock.advance(1000);
+    assert.equal(fired, 1);
+});
+
 test("SETTINGS-11：手势文本按平台命名，鼠标手势用语义名", () => {
     assert.equal(gestureText("ArrowLeft"), "←");
     assert.equal(gestureText("ArrowRight"), "→");
@@ -384,11 +414,14 @@ test("SETTINGS-11：Apple 手势文本用 ⌘⌥⌃⇧，其余用 Ctrl/Alt/Win"
     assert.equal(gestureText("Alt+Shift+KeyZ", { apple: true }), "⌥⇧Z");
 });
 
-test("TOOLBAR-04：提示包含命令名与实际主/次绑定，空槽不显示", () => {
+test("TOOLBAR-04：提示格式「命令名 · 主 / 次」，空槽省略并去重", () => {
     const map = new CommandMap(HOTKEYS);
-    assert.equal(tooltipText("Previous", "上一张", map), "上一张（← / 滚轮上）");
-    assert.equal(tooltipText("ZoomInPreset", "放大（预设）", map), "放大（预设）（Ctrl++）");
+    assert.equal(tooltipText("Previous", "上一张", map), "上一张 · ← / 滚轮上");
+    assert.equal(tooltipText("ZoomInPreset", "放大（预设）", map), "放大（预设） · Ctrl++");
     assert.equal(tooltipText("ToggleAnalysisView", "分析栏展开/收纳", map), "分析栏展开/收纳");
-    assert.equal(tooltipText("Fit", "缩放适应", map, { apple: true }), "缩放适应（⌘0 / F）");
+    assert.equal(tooltipText("Fit", "缩放适应", map, { apple: true }), "缩放适应 · ⌘0 / F");
     assert.equal(tooltipText("NoSuchCommand", "未知", map), "未知");
+
+    const same = new CommandMap([{ command: "Same", primary: "KeyQ", secondary: "KeyQ" }]);
+    assert.equal(tooltipText("Same", "同名绑定", same), "同名绑定 · Q");
 });

@@ -243,6 +243,42 @@ test("ANALYSIS-09：增强联动优先于只读库，按 enhanced 变体现算",
     assert.equal(tile(presenter, "pca").state, "content");
 });
 
+test("ANALYSIS-09：未提取回退让位同时等缩略图通道空闲，超时后照常计算", async () => {
+    const clock = manualClock();
+    let busy = true;
+    const store = makeStore(clock);
+    const presenter = new AnalysisPresenter({ t, clock, store, thumbnailsBusy: () => busy });
+    presenter.setImmediateCompute(true);
+    presenter.setDisplaySurfaceReady(true);
+    presenter.setVisible(true);
+    presenter.setPhoto(photo("a"));
+    await flush();
+
+    clock.advance(500);
+    await flush();
+    clock.advance(300);
+    await flush();
+    assert.equal(store.calls.compute.length, 0, "缩略图通道忙时不应开始计算");
+
+    busy = false;
+    clock.advance(100);
+    await flush();
+    assert.equal(store.calls.compute.length, 1, "通道空闲后应开始计算");
+
+    const timeoutStore = makeStore(clock);
+    const stuck = new AnalysisPresenter({ t, clock, store: timeoutStore, thumbnailsBusy: () => true });
+    stuck.setImmediateCompute(true);
+    stuck.setDisplaySurfaceReady(true);
+    stuck.setVisible(true);
+    stuck.setPhoto(photo("b"));
+    await flush();
+    clock.advance(500);
+    await flush();
+    clock.advance(t("motion.analysis.fallback.yieldTimeout"));
+    await flush();
+    assert.equal(timeoutStore.calls.compute.length, 1, "超过让位上限后仍应计算");
+});
+
 test("ANALYSIS-09：未提取回退先延迟 500ms，快速切图期间零计算", async () => {
     const clock = manualClock();
     const first = photo("a");

@@ -7,8 +7,10 @@ import {
     formatFocal,
     formatEv,
     formatTakenShort,
+    formatTakenSummary,
     formatTakenFull,
     formatExifValue,
+    formatExifDetail,
 } from "../src/core/exifformat.js";
 
 function photo(overrides = {}) {
@@ -32,22 +34,27 @@ function photo(overrides = {}) {
     };
 }
 
-test("TOOLBAR-05：光圈去尾零，缺失写 --", () => {
+test("TOOLBAR-05：光圈与焦距至多 1 位小数去尾零", () => {
     assert.equal(formatAperture(2.8), "f/2.8");
     assert.equal(formatAperture(4), "f/4");
     assert.equal(formatAperture(1.4), "f/1.4");
     assert.equal(formatAperture(11), "f/11");
+    assert.equal(formatAperture(2.85), "f/2.9");
     assert.equal(formatAperture(null), "--");
     assert.equal(formatAperture(0), "--");
+    assert.equal(formatFocal(10.5), "10.5mm");
+    assert.equal(formatFocal(10.04), "10mm");
 });
 
-test("TOOLBAR-05：快门不足 1 秒写 1/n，1 秒以上写秒数", () => {
+test("TOOLBAR-05：快门不足 1 秒写 1/n（偏差 ≤2%）或小数秒，1 秒以上写秒数", () => {
     assert.equal(formatShutter(1 / 250), "1/250");
     assert.equal(formatShutter(1 / 8000), "1/8000");
     assert.equal(formatShutter(0.5), "1/2");
     assert.equal(formatShutter(1 / 3), "1/3");
+    assert.equal(formatShutter(0.3), "0.3s");
     assert.equal(formatShutter(1), "1s");
     assert.equal(formatShutter(2), "2s");
+    assert.equal(formatShutter(1.5), "1.5s");
     assert.equal(formatShutter(2.5), "2.5s");
     assert.equal(formatShutter(null), "--");
     assert.equal(formatShutter(0), "--");
@@ -66,13 +73,16 @@ test("TOOLBAR-05：ISO、焦距与曝光补偿按摄影习惯格式化", () => {
     assert.equal(formatEv(null), "--");
 });
 
-test("FILM-05 / MENU-05：拍摄时间短格式 MM-dd HH:mm、完整格式 yyyy-MM-dd HH:mm:ss zzz", () => {
+test("FILM-05 / MENU-05 / TOOLBAR-05：卡片 MM-dd HH:mm、控制栏摘要 yyyy-MM-dd HH:mm、完整格式 zzz", () => {
     const taken = Date.UTC(2026, 9, 12, 5, 40, 30);
     assert.equal(formatTakenShort(taken, 480), "10-12 13:40");
+    assert.equal(formatTakenSummary(taken, 480), "2026-10-12 13:40");
     assert.equal(formatTakenFull(taken, 480), "2026-10-12 13:40:30 +08:00");
     assert.equal(formatTakenFull(taken, -300), "2026-10-12 00:40:30 -05:00");
     assert.equal(formatTakenFull(taken, 0), "2026-10-12 05:40:30 +00:00");
     assert.equal(formatTakenShort(null, 480), "--");
+    assert.equal(formatTakenShort(undefined, 480), "--");
+    assert.equal(formatTakenSummary(undefined, 480), "--");
     assert.equal(formatTakenFull(undefined, 480), "--");
 });
 
@@ -85,7 +95,9 @@ test("TOOLBAR-05：EXIF 项按 id 取值，字符串缺失与未知项一律 --"
     assert.equal(formatExifValue("focal", target), "50mm");
     assert.equal(formatExifValue("camera", target), "ILCE-7M4");
     assert.equal(formatExifValue("lens", target), "FE 50mm F1.2 GM");
-    assert.equal(formatExifValue("taken", target), "2026-10-12 13:40:30 +08:00");
+    assert.equal(formatExifValue("taken", target), "2026-10-12 13:40");
+    assert.equal(formatExifDetail("taken", target), "2026-10-12 13:40:30 +08:00");
+    assert.equal(formatExifDetail("aperture", target, "f/2.8"), "f/2.8");
     assert.equal(formatExifValue("ev", target), "-0.7 EV");
     assert.equal(formatExifValue("wb", target), "日光");
     assert.equal(formatExifValue("flash", target), "未闪光");

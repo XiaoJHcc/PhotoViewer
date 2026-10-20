@@ -1,6 +1,7 @@
 import { el, place, setText } from "./dom.js";
 import { cardFrames } from "../core/layout/card.js";
 import { formatTakenFull, formatTakenShort } from "../core/exifformat.js";
+import { LongPressRecognizer } from "../core/input.js";
 
 const RATING_LABELS = ["无星级", "1 星", "2 星", "3 星", "4 星", "5 星"];
 const PRIORITY_RANK = { visible: 0, near: 1, far: 2 };
@@ -29,7 +30,7 @@ function clampRatio(value) {
 }
 
 export function createCard(ctx, { mode = "film" } = {}) {
-    const { app, t, thumbs } = ctx;
+    const { app, t, thumbs, clock, menu } = ctx;
     const frames = cardFrames(t);
     const similarity = mode === "similarity";
 
@@ -104,6 +105,52 @@ export function createCard(ctx, { mode = "film" } = {}) {
     let lastPhotoId = null;
     let lastPriority = null;
     let thumbToken = 0;
+    let suppressClickUntil = 0;
+
+    const longPress = clock && menu
+        ? new LongPressRecognizer(clock, {
+            delay: t("input.longPress.delay"),
+            slop: t("input.longPress.slop"),
+        })
+        : null;
+
+    function menuPoint(event) {
+        const host = ctx.windowEl ?? document.documentElement;
+        const rect = host.getBoundingClientRect();
+        return { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    }
+
+    function openCardMenu(point) {
+        if (!currentCard || !menu) return;
+        const photo = currentCard.photo;
+        const taken = takenOf(photo);
+        const items = [
+            {
+                // MENU-05：卡片菜单标题为完整文件名 + 完整拍摄时间，不可点击。
+                type: "header",
+                label: currentCard.displayName,
+                detail: taken === null || taken === undefined ? "" : formatTakenFull(taken, photo.tzOffset),
+            },
+            { type: "separator" },
+        ];
+        const rating = ratingValue(photo.rating);
+        for (let index = 0; index < 6; index += 1) {
+            items.push({
+                id: `rate-${index}`,
+                type: "radio",
+                label: RATING_LABELS[index],
+                checked: rating === index,
+            });
+        }
+        menu.open(items, point, {
+            label: "照片操作",
+            returnFocus: root,
+            onSelect: (id) => {
+                const value = Number(String(id).replace("rate-", ""));
+                if (Number.isFinite(value)) app.rate(photo.id, value);
+            },
+        });
+    }
 
     function ensureCanvas() {
         const dpr = Math.max(1, globalThis.devicePixelRatio || 1);
@@ -171,12 +218,43 @@ export function createCard(ctx, { mode = "film" } = {}) {
         else app.selectCard(currentCard.photo.id);
     }
 
-    root.addEventListener("click", select);
+    root.addEventListener("click", (event) => {
+        // MENU-05：长按抬起不触发点选（只吞掉紧随其后的视点点击）。
+        if (suppressClickUntil > 0 && performance.now() < suppressClickUntil) {
+            suppressClickUntil = 0;
+            event.stopPropagation();
+            event.preventDefault();
+            return;
+        }
+        select();
+    });
     root.addEventListener("keydown", (event) => {
         if (event.target !== root) return;
         if (event.key !== "Enter" && event.key !== " " && event.key !== "Spacebar") return;
         event.preventDefault();
         select();
+    });
+
+    // INPUT-07 / MENU-05：触屏长按弹卡片菜单；桌面右键仍走主图菜单，不建卡片菜单。
+    root.addEventListener("pointerdown", (event) => {
+        if (!longPress || event.pointerType !== "touch" || event.button !== 0) return;
+        suppressClickUntil = 0;
+        const point = menuPoint(event);
+        longPress.start(event.clientX, event.clientY, () => {
+            suppressClickUntil = performance.now() + 700;
+            openCardMenu(point);
+        });
+    });
+    root.addEventListener("pointermove", (event) => {
+        if (!longPress || event.pointerType !== "touch") return;
+        longPress.move(event.clientX, event.clientY);
+    });
+    root.addEventListener("pointerup", (event) => {
+        if (!longPress || event.pointerType !== "touch") return;
+        longPress.end();
+    });
+    root.addEventListener("pointercancel", () => {
+        longPress?.cancel();
     });
 
     function bind(card, state, info = {}) {

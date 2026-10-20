@@ -203,6 +203,17 @@ const CHECKS = [
                 h.assert(badge.hidden === (card.photo.shake !== true),
                     `${card.displayName} 抖动徽标可见性 ${!badge.hidden} 与 shake=${card.photo.shake} 不符`);
             }
+
+            // FILM-05：第二行与文件名同色粗体，清零叉字形取 film.card.clearGlyph.size。
+            const styleCard = currentCard;
+            const dateStyle = getComputedStyle(styleCard.querySelector(".pv-card-date"));
+            h.assert(dateStyle.fontWeight === "700", `第二行字重 ${dateStyle.fontWeight}`);
+            h.assert(dateStyle.color === getComputedStyle(styleCard.querySelector(".pv-card-name")).color,
+                "第二行颜色与文件名不一致");
+            const clear = styleCard.querySelector(".pv-card-star.is-clear");
+            h.assert(getComputedStyle(clear).fontSize === `${shell.t("film.card.clearGlyph.size")}px`,
+                `清零叉字号 ${getComputedStyle(clear).fontSize}`);
+            h.assert(styleCard.querySelector(".pv-card-date").textContent.length > 0, "第二行未显示日期或 --");
         },
     },
     {
@@ -250,6 +261,9 @@ const CHECKS = [
             h.assert(h.filmScroller().parentElement.contains(popups[0]), "筛选条不在文件栏");
             const count = h.dom(".pv-filter-count");
             h.assert(count.textContent === `共 ${app.state.count} 张`, `计数文本 ${count.textContent}`);
+            // FILTER-04：计数字号取 filter.count.fontSize。
+            h.assert(getComputedStyle(count).fontSize === `${shell.t("filter.count.fontSize")}px`,
+                `计数字号 ${getComputedStyle(count).fontSize}`);
             const toggle = h.dom(".pv-filter-toggle");
             h.assert(toggle.getAttribute("role") === "switch", "相似聚类开关缺少 switch 语义");
             h.assert(toggle.getAttribute("aria-label") === "相似聚类", "相似聚类开关名称不符");
@@ -287,6 +301,30 @@ const CHECKS = [
             h.assert(app.state.ratingFilter === "5", "选中即应用失败");
             h.assert(h.menu() === null, "选中后菜单未关闭");
             h.assert(h.dom(".pv-filter-count").textContent === `共 ${app.state.count} 张`, "应用后的计数不一致");
+        },
+    },
+    {
+        id: "FILTER-06",
+        title: "相似聚类开关为药丸四态，常态/勾选取新令牌颜色",
+        async run(shell, h) {
+            const { app } = shell;
+            const toggle = h.dom(".pv-filter-toggle");
+            const style = () => getComputedStyle(toggle);
+            const uncheckedBackground = style().backgroundColor;
+            const uncheckedColor = style().color;
+            h.assert(uncheckedBackground === "rgba(0, 0, 0, 0)", `未勾选底色 ${uncheckedBackground}`);
+            h.assert(toggle.getAttribute("aria-checked") === String(Boolean(app.settings.similarityPanelExpanded)), "勾选态与设置不一致");
+
+            h.click(toggle);
+            await h.tick(80);
+            h.assert(app.settings.similarityPanelExpanded === true, "点击未勾选相似聚类");
+            h.assert(style().backgroundColor !== uncheckedBackground, "勾选态底色未变化");
+            h.assert(style().color !== uncheckedColor, "勾选态文字色未变化");
+            h.assert(toggle.getAttribute("aria-checked") === "true", "勾选态未更新为 true");
+
+            h.click(toggle);
+            await h.tick(80);
+            h.assert(app.settings.similarityPanelExpanded === false, "再次点击未取消相似聚类");
         },
     },
     {
@@ -387,6 +425,55 @@ const CHECKS = [
             h.assert(h.menuItem("enhance").classList.contains("is-disabled"), "增强缺少禁用样式");
             h.assert(h.menuItem("film").getAttribute("aria-disabled") === "false", "无照片时胶片栏被禁用");
             h.assert(h.menuItem("open-file").getAttribute("aria-disabled") === "false", "无照片时打开文件被禁用");
+        },
+    },
+    {
+        id: "MENU-05",
+        title: "触屏长按胶片栏与相似卡片弹出卡片菜单，标题含完整文件名与时间，选择即评分",
+        async run(shell, h) {
+            const { app } = shell;
+            const cards = app.state.cards.filter((card) => !card.photo.fault?.write);
+            h.assert(cards.length > 1, "harbor 可写卡片不足");
+            const target = cards[1];
+            const node = h.filmCardAt(app.state.cards.indexOf(target));
+            h.assert(node, "目标卡片未渲染");
+            const rect = node.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            const displayed = app.state.displayedId;
+
+            h.pointer(node, "pointerdown", x, y, { pointerType: "touch" });
+            await h.wait(650);
+            h.assert(h.menu() !== null, "胶片栏卡片长按未弹出卡片菜单");
+            const header = h.dom(".pv-menu-header");
+            h.assert(header.textContent.includes(target.displayName), `卡片菜单标题缺少文件名：${header.textContent}`);
+            const detail = header.querySelector(".pv-menu-header-detail");
+            h.assert(detail && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2}$/.test(detail.textContent),
+                `卡片菜单时间格式不符：${detail ? detail.textContent : "缺失"}`);
+
+            h.pointer(node, "pointerup", x, y, { pointerType: "touch" });
+            h.click(node);
+            await h.tick(80);
+            h.assert(app.state.displayedId === displayed, "长按抬起触发了点选");
+
+            h.click(h.menuItem("rate-3"));
+            await h.until(() => target.photo.rating === 3, 4000);
+            h.assert(h.menu() === null, "选择评分后菜单未关闭");
+
+            h.click(h.dom(".pv-filter-toggle"));
+            await h.until(() => app.state.similarity.items.length > 0, 4000);
+            await h.tick(80);
+            const simCard = h.domAll(".pv-sim-item .pv-card")[0];
+            const simRect = simCard.getBoundingClientRect();
+            h.pointer(simCard, "pointerdown", simRect.left + simRect.width / 2, simRect.top + simRect.height / 2, { pointerType: "touch" });
+            await h.wait(650);
+            h.assert(h.menu() !== null, "相似卡片长按未弹出卡片菜单");
+            h.assert(h.dom(".pv-menu-header-title").textContent.length > 0, "相似卡片菜单缺少标题");
+            h.assert(h.menuItem("rate-0") !== null, "相似卡片菜单缺少无星级项");
+            h.pointer(simCard, "pointerup", simRect.left + simRect.width / 2, simRect.top + simRect.height / 2, { pointerType: "touch" });
+            h.key("Escape");
+            await h.tick(40);
+            h.assert(h.menu() === null, "Esc 未关闭卡片菜单");
         },
     },
     {
@@ -583,12 +670,15 @@ const CHECKS = [
     },
     {
         id: "TOOLBAR-04",
-        title: "命令按钮提示含绑定、下一张切图并定位、无照片禁用",
+        title: "命令按钮提示为「命令名 · 主 / 次」、下一张切图并定位、无照片禁用",
         async run(shell, h) {
             const { app } = shell;
             const next = h.dom('.pv-control-command-button[data-command="Next"]');
-            h.assert(next.title.includes("下一张"), `按钮提示缺少命令名：${next.title}`);
-            h.assert(next.title.includes("→") && next.title.includes("滚轮下"), `按钮提示缺少绑定：${next.title}`);
+            // TOOLBAR-04：格式 `命令名 · 主 / 次`，不含「未设置」占位。
+            h.assert(next.title === "下一张 · → / 滚轮下", `按钮提示格式不符：${next.title}`);
+            const fit = h.dom('.pv-control-command-button[data-command="Fit"]');
+            h.assert(fit.title === "缩放适应 · Ctrl+0 / F", `按钮提示格式不符：${fit.title}`);
+            h.assert(!next.title.includes("未设置"), "提示出现未设置占位");
             const before = app.state.displayedId;
             h.click(next);
             await h.tick(100);
@@ -635,7 +725,8 @@ const CHECKS = [
             h.click(h.ratingButton(target));
             const toast = h.dom(".pv-photo-toast");
             await h.until(() => toast.hidden === false, 4000);
-            h.assert(toast.textContent.includes("无法写入星级"), `提示条文案不符：${toast.textContent}`);
+            // STATE-03：文案统一为「动作：对象（原因）」。
+            h.assert(toast.textContent === `无法写入星级：${photo.name}（文件只读）`, `提示条文案不符：${toast.textContent}`);
             h.assert(app.state.photo.rating === original, `写回失败后星级变为 ${app.state.photo.rating}`);
             await h.until(() => toast.hidden === true, 6000);
         },
@@ -653,7 +744,7 @@ const CHECKS = [
             await h.tick(80);
             const toast = h.dom(".pv-photo-toast");
             await h.until(() => toast.hidden === false, 5000);
-            h.assert(toast.textContent.includes("无法载入全分辨率"), `提示条文案不符：${toast.textContent}`);
+            h.assert(toast.textContent === `无法载入全分辨率：${photo.name}`, `提示条文案不符：${toast.textContent}`);
             h.assert(app.state.session.surface !== null, "全分辨率失败后代理图被清空");
             h.assert(app.state.session.tier !== "full", "全分辨率失败却标记为 full");
         },
@@ -724,12 +815,13 @@ const CHECKS = [
             await h.until(() => app.state.similarity.visible === true, 4000);
             await h.tick(80);
             h.assert(h.dom(".pv-sim").hidden === false, "相似面板未显示");
-            h.assert(Math.abs(h.paneRect("file").width - (before + shell.t("sim.panel.width"))) <= 1,
-                `文件栏宽度 ${h.paneRect("file").width} ≠ ${before + shell.t("sim.panel.width")}`);
+            // SIM-07：列布局文件栏加宽 = 面板宽 + sim.panel.margin。
+            h.assert(Math.abs(h.paneRect("file").width - (before + shell.t("sim.panel.width") + shell.t("sim.panel.margin"))) <= 1,
+                `文件栏宽度 ${h.paneRect("file").width} ≠ ${before + shell.t("sim.panel.width") + shell.t("sim.panel.margin")}`);
             h.assert(h.dom(".pv-filter-count").textContent === countText, "打开面板改变了计数");
             h.assert(app.state.displayedId === app.state.anchorId, "打开面板改变了当前照片");
             h.assert(app.state.sortKey === sortKey, "打开面板改变了排序");
-            await h.until(() => app.state.similarity.items.length > 0, 4000);
+            await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
             h.assert(h.domAll(".pv-sim-item").length === app.state.similarity.items.length, "相似列表与状态不一致");
             const anchorId = app.state.anchorId;
             const self = app.state.similarity.items.find((item) => item.card.photo.id === anchorId
@@ -737,7 +829,43 @@ const CHECKS = [
             h.assert(!self, `相似列表包含锚点自身：${self ? self.card.displayName : ""}`);
             const scores = app.state.similarity.items.map((item) => item.score);
             h.assert(scores.every((score, index) => index === 0 || score <= scores[index - 1] + 1e-9), "相似列表未按分数降序");
-            h.assert(scores.every((score) => score >= 0.85), "相似列表包含低于阈值的项");
+            // SIM-08：阈值与百分比都按归一分数 (cos+1)/2。
+            h.assert(scores.every((score) => score >= 0.85 && score <= 1), `相似列表分数越界：${scores.join(",")}`);
+            h.assert(app.state.similarity.items.every((item) => item.percent === Math.round(item.score * 100)), "百分比不是归一分数");
+        },
+    },
+    {
+        id: "SIM-07",
+        title: "列布局面板与胶片栏同顶到文件栏底，行布局高 159、宽含停靠区",
+        async run(shell, h) {
+            const { app } = shell;
+            h.click(h.dom(".pv-filter-toggle"));
+            await h.until(() => app.state.similarity.visible === true, 4000);
+            await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
+            await h.tick(80);
+
+            const file = h.paneRect("file");
+            const panel = h.dom(".pv-sim").getBoundingClientRect();
+            const filter = app.state.layout.filter;
+            h.assert(Math.abs(panel.left - file.left - shell.t("shell.filebar.content.width")) <= 1,
+                `列布局面板未接在 116 宽文件栏右侧：${panel.left - file.left}`);
+            h.assert(Math.abs(panel.top - file.top - filter.bar.h) <= 1, `列布局面板未与胶片栏同顶：${panel.top - file.top} ≠ ${filter.bar.h}`);
+            h.assert(Math.abs(panel.bottom - file.bottom) <= 1, `列布局面板未到文件栏底：${panel.bottom} ≠ ${file.bottom}`);
+            h.assert(Math.abs(file.width - (shell.t("shell.filebar.content.width") + panel.width + shell.t("sim.panel.margin"))) <= 1,
+                `文件栏加宽不含外边距：${file.width}`);
+
+            shell.setWindowSize(700, 850);
+            await h.tick(160);
+            h.assert(app.state.layout.layoutMode === "row", "700×850 未进入行布局");
+            const rowFile = h.paneRect("file");
+            const rowPanel = h.dom(".pv-sim").getBoundingClientRect();
+            h.assert(Math.abs(rowPanel.height - shell.t("sim.list.cross")) <= 1, `行布局面板高 ${rowPanel.height} ≠ ${shell.t("sim.list.cross")}`);
+            h.assert(Math.abs(rowFile.right - rowPanel.right - shell.t("sim.panel.margin")) <= 1, "行布局面板右侧未留外边距");
+            h.assert(Math.abs(app.state.layout.similarity.width - rowPanel.width) <= 1, "行布局面板宽与布局不一致");
+            h.assert(app.state.layout.similarity.dockWidth >= shell.t("sim.action.width") + 2 * shell.t("sim.dock.margin"),
+                `停靠区宽 ${app.state.layout.similarity.dockWidth} 未含动作区`);
+            shell.setWindowSize(1200, 850);
+            await h.tick(120);
         },
     },
     {
@@ -746,7 +874,7 @@ const CHECKS = [
         async run(shell, h) {
             const { app } = shell;
             h.click(h.dom(".pv-filter-toggle"));
-            await h.until(() => app.state.similarity.items.length > 0, 4000);
+            await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
             await h.tick(80);
             const anchor = app.state.anchorId;
             const anchorKey = h.cardByPhotoId(anchor).key;

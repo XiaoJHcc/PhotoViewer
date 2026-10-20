@@ -77,7 +77,7 @@
     align-items: center;
     justify-content: center;
     color: var(--pv-color-text-secondary);
-    font-size: 12px;
+    font-size: var(--pv-filter-count-fontSize);
     line-height: 1;
     white-space: nowrap;
     pointer-events: none;
@@ -101,16 +101,23 @@
 }
 
 .pv-filter-toggle:hover {
+    /* FILTER-06：未勾选悬停取 hover 底 + hover 描边/文字。 */
+    border-color: var(--pv-color-filter-toggle-hover-border);
     background: var(--pv-color-filter-toggle-hover);
-    color: var(--pv-color-text-primary);
+    color: var(--pv-color-filter-toggle-hover-foreground);
 }
 
-/* 勾选态压在悬停之上：勾选外观不因悬停改变（无 *-checked.hover 令牌）。 */
-.pv-filter-toggle[aria-checked="true"],
-.pv-filter-toggle[aria-checked="true"]:hover {
+/* 勾选态压在悬停之上：勾选悬停取 checked.hover.*。 */
+.pv-filter-toggle[aria-checked="true"] {
     border-color: var(--pv-color-filter-toggle-checked-border);
     background: var(--pv-color-filter-toggle-checked-background);
     color: var(--pv-color-filter-toggle-checked-foreground);
+}
+
+.pv-filter-toggle[aria-checked="true"]:hover {
+    border-color: var(--pv-color-filter-toggle-checked-hover-border);
+    background: var(--pv-color-filter-toggle-checked-hover-background);
+    color: var(--pv-color-filter-toggle-checked-hover-foreground);
 }
 
 .pv-filter-toggle-label {

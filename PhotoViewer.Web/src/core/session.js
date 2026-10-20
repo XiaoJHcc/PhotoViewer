@@ -191,11 +191,14 @@ export class PhotoSession {
         if (this._setToast(text)) this._emit();
     }
 
-    openFailed(name, kind = "file") {
+    openFailed(name, kind = "file", reason = null) {
+        // STATE-03：文案统一为「动作：对象（原因）」，原因不可得时省略括号。
         const target = String(name ?? "");
-        const text = kind === "folder" || kind === "directory"
-            ? `无法读取文件夹：${target}`
-            : `无法打开：${target}`;
+        const action = kind === "folder" || kind === "directory" ? "无法读取文件夹" : "无法打开";
+        const detail = reason === null || reason === undefined || String(reason).trim() === ""
+            ? ""
+            : `（${String(reason)}）`;
+        const text = `${action}：${target}${detail}`;
         this.toast(text);
         return text;
     }
@@ -483,7 +486,8 @@ export class RatingWriter {
         for (const file of [card.photo, ...companions]) {
             await this._delay();
             if (file.fault && file.fault.write === true) {
-                this._onToast(`无法写入星级：${file.name}`);
+                // STATE-03：评分写回失败「无法写入星级：<文件名>（<原因>）」，合成故障原因写「文件只读」。
+                this._onToast(`无法写入星级：${file.name}（文件只读）`);
                 return false;
             }
         }

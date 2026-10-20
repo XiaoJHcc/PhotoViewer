@@ -432,17 +432,29 @@ test("IMAGE-06：可见框与视口比例一致并夹在缩略图内", () => {
     assert.ok(corner.frame.y + corner.frame.h <= 112.5 + 1e-9);
 });
 
-test("IMAGE-03：needsFull 到物理 100% 或超出代理覆盖", () => {
+test("IMAGE-03：适应态不因倍率升级；非适应态按物理 100% 与代理覆盖", () => {
     const viewport = open(make());
+    assert.equal(viewport.isFit, true);
     assert.equal(viewport.needsFull(2000), false);
-    assert.equal(viewport.needsFull(900), true);
-    assert.equal(viewport.needsFull(null), true);
+    assert.equal(viewport.needsFull(null), false);
     viewport.toggleFit();
     assert.equal(viewport.needsFull(100000), true);
+    viewport.zoomBy(0.5);
+    assert.equal(viewport.isFit, false);
+    assert.equal(viewport.needsFull(900), true);
+    assert.equal(viewport.needsFull(4000), false);
+
+    const small = open(make(), { width: 600, height: 400 });
+    assert.ok(small.physicalScale > 1);
+    assert.equal(small.isFit, true);
+    assert.equal(small.needsFull(2000), false, "适应态倍率高于 100% 也不升 Full");
+    assert.equal(small.needsFull(null), false);
 
     const hidpi = open(make({ dpr: 2 }));
     assert.equal(hidpi.needsFull(2000), false);
-    assert.equal(hidpi.needsFull(1500), true);
+    hidpi.toggleFit();
+    assert.equal(hidpi.physicalScale, 1);
+    assert.equal(hidpi.needsFull(2000), true);
 });
 
 test("IMAGE-03：代理目标长边 = 视口长边物理像素 × overscan", () => {

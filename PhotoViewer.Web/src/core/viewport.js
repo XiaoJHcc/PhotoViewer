@@ -336,7 +336,8 @@ export class Viewport {
 
     needsFull(proxyLongEdgePx) {
         if (!this.hasImage) return false;
-        // IMAGE-03：物理倍率到 100% 一律需要全分辨率。
+        // IMAGE-03：适应态不因倍率升级（小图的适应倍率可能已高于 100%）；分析栏可见由集成方另加。
+        if (this._fit) return false;
         if (this.physicalScale >= 1 - 1e-6) return true;
         if (!finite(proxyLongEdgePx) || proxyLongEdgePx <= 0) return true;
         const needed = Math.max(this._srcW, this._srcH) * this.physicalScale;

@@ -85,10 +85,20 @@ public static class DesignTokens
     public const uint ColorFilterToggleCheckedBorder = 0xFF3A6FA8u;
     /// <summary>color.filter.toggle.checked.foreground（color） FILTER-01：相似聚类 toggle 选中文字色。</summary>
     public const uint ColorFilterToggleCheckedForeground = 0xFFAECBEEu;
+    /// <summary>color.filter.toggle.checked.hover.background（color） FILTER-06：相似聚类开关勾选悬停底色。</summary>
+    public const uint ColorFilterToggleCheckedHoverBackground = 0xFF26477Au;
+    /// <summary>color.filter.toggle.checked.hover.border（color） FILTER-06：相似聚类开关勾选悬停描边。</summary>
+    public const uint ColorFilterToggleCheckedHoverBorder = 0xFF4A85C4u;
+    /// <summary>color.filter.toggle.checked.hover.foreground（color） FILTER-06：相似聚类开关勾选悬停文字。</summary>
+    public const uint ColorFilterToggleCheckedHoverForeground = 0xFFCFE0F5u;
     /// <summary>color.filter.toggle.foreground（color） FILTER-01：相似聚类 toggle 未选中文字色（次要色）。</summary>
     public const uint ColorFilterToggleForeground = 0xFFAAAAAAu;
     /// <summary>color.filter.toggle.hover（color） FILTER-01：相似聚类 toggle 未选中悬停底色。</summary>
     public const uint ColorFilterToggleHover = 0xFF333333u;
+    /// <summary>color.filter.toggle.hover.border（color） FILTER-06：相似聚类开关未勾选悬停描边。</summary>
+    public const uint ColorFilterToggleHoverBorder = 0xFF666666u;
+    /// <summary>color.filter.toggle.hover.foreground（color） FILTER-06：相似聚类开关未勾选悬停文字。</summary>
+    public const uint ColorFilterToggleHoverForeground = 0xFFCCCCCCu;
     /// <summary>color.nav.background（color） IMAGE-01：导航图宿主底色（半透明，见 color.nav.background.alpha）。</summary>
     public const uint ColorNavBackground = 0xFF222222u;
     /// <summary>color.nav.background.alpha（ratio） IMAGE-01：导航图宿主底色不透明度。</summary>
@@ -155,10 +165,14 @@ public static class DesignTokens
     public const double FilmCardBadgeCornerRadius = 2.0;
     /// <summary>film.card.badge.fontSize（pt） FILM-05：抖动徽标“抖”字号。</summary>
     public const double FilmCardBadgeFontSize = 11.0;
+    /// <summary>film.card.badge.inset（pt） FILM-05：抖动徽标相对照片区右下角的内缩。</summary>
+    public const double FilmCardBadgeInset = 2.0;
     /// <summary>film.card.badge.size（pt） FILM-05：抖动徽标正方形边长，位于照片区右下角。</summary>
     public const double FilmCardBadgeSize = 16.0;
     /// <summary>film.card.border.width（pt） FILM-05：内层占位区描边厚度（当前项蓝色高亮；未选中透明）。</summary>
     public const double FilmCardBorderWidth = 2.0;
+    /// <summary>film.card.clearGlyph.size（pt） FILM-05：卡片清零叉字形大小（按钮仍为 film.card.star.size 见方）。</summary>
+    public const double FilmCardClearGlyphSize = 8.0;
     /// <summary>film.card.cornerRadius（pt） FILM-05：内层占位区圆角。</summary>
     public const double FilmCardCornerRadius = 7.0;
     /// <summary>film.card.height（pt） FILM-05：胶片栏卡片外框 96×144 的高（含四周 3 点占位）；内层占位面 90×138。WindowsLayout.CardHeight=138 表示内层占位面，外框高由 CardPitchVertical=144 给出。</summary>
@@ -167,12 +181,18 @@ public static class DesignTokens
     public const double FilmCardInset = 3.0;
     /// <summary>film.card.name.fontSize（pt） FILM-05：卡片文件名行字号（半粗，尾部截断）。</summary>
     public const double FilmCardNameFontSize = 10.0;
+    /// <summary>film.card.name.height（pt） FILM-05：文件名行高。</summary>
+    public const double FilmCardNameHeight = 12.0;
     /// <summary>film.card.name.width（pt） FILM-05：文件名文本宽（内层占位区 90 左右各留 2）。</summary>
     public const double FilmCardNameWidth = 86.0;
+    /// <summary>film.card.name.y（pt） FILM-05：文件名行相对内层占位面的纵坐标。</summary>
+    public const double FilmCardNameY = 89.0;
     /// <summary>film.card.secondLine.bar.cornerRadius（pt） FILM-05：相似度柱状条（槽与填充）圆角。</summary>
     public const double FilmCardSecondLineBarCornerRadius = 4.0;
     /// <summary>film.card.secondLine.fontSize（pt） FILM-05：卡片第二行字号。</summary>
     public const double FilmCardSecondLineFontSize = 9.0;
+    /// <summary>film.card.secondLine.height（pt） FILM-05：第二行（拍摄时间/相似度柱条）行高。</summary>
+    public const double FilmCardSecondLineHeight = 11.0;
     /// <summary>film.card.secondLine.width（pt） FILM-05：卡片第二行（拍摄时间/相似度）宽，也是相似度柱状条宽。</summary>
     public const double FilmCardSecondLineWidth = 80.0;
     /// <summary>film.card.secondLine.y（pt） FILM-05：第二行相对内层占位区原点的纵坐标（Android 在外框坐标画 106，内层占位从 3 起算即同一位置）。</summary>
@@ -183,10 +203,14 @@ public static class DesignTokens
     public const double FilmCardStarFontSize = 10.0;
     /// <summary>film.card.star.size（pt） FILM-05：卡片星级按钮点击区域边长（触屏不放大，触控目标由上下文菜单补足）。</summary>
     public const double FilmCardStarSize = 14.0;
+    /// <summary>film.card.star.y（pt） FILM-05：星级行相对内层占位面的纵坐标；六个按钮按 film.card.star.size 步距在内层宽内居中。</summary>
+    public const double FilmCardStarY = 116.0;
     /// <summary>film.card.surface.height（pt） FILM-05：卡片内层占位面（90×138）高。</summary>
     public const double FilmCardSurfaceHeight = 138.0;
     /// <summary>film.card.surface.width（pt） FILM-05：卡片内层占位面（90×138，自带 2 点描边）宽，四角圆角 7。</summary>
     public const double FilmCardSurfaceWidth = 90.0;
+    /// <summary>film.card.thumb.inset（pt） FILM-05：照片区相对内层占位面左上的偏移（2 点描边 + 3 点内距）。</summary>
+    public const double FilmCardThumbInset = 5.0;
     /// <summary>film.card.width（pt） FILM-05：胶片栏卡片外框 96×144 的宽（含四周 3 点占位）；内层占位面 90×138。WindowsLayout.CardWidth=90 表示内层占位面，外框宽由 CardPitchHorizontal=96 给出。</summary>
     public const double FilmCardWidth = 96.0;
     /// <summary>film.list.padBottom（pt） FILM-04：列表下内边距（纵向列表底边，也是横向列表的交叉轴尾距）。</summary>
@@ -213,6 +237,8 @@ public static class DesignTokens
     public const double FilterControlHeight = 32.0;
     /// <summary>filter.control.width（pt） FILTER-01：排序/升降序/星级筛选三个下拉控件的占位宽。</summary>
     public const double FilterControlWidth = 90.0;
+    /// <summary>filter.count.fontSize（pt） FILTER-04：筛选条计数文本字号；宽度按平台字体自然宽度测量。</summary>
+    public const double FilterCountFontSize = 12.0;
     /// <summary>filter.count.height（pt） FILTER-01：计数文本槽高（旧壳 12 点字的量得值），与 32 高控件垂直居中。</summary>
     public const double FilterCountHeight = 17.0;
     /// <summary>filter.gap（pt） FILTER-01：筛选条控件之间的间距。</summary>
@@ -245,6 +271,8 @@ public static class DesignTokens
     public const double ImageHintDetailGap = 28.0;
     /// <summary>image.hint.detail.gap@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
     public const double ImageHintDetailGapAndroid = 24.0;
+    /// <summary>image.hint.inset（pt） STATE-01：空态/失败提示块左右最小留白（提示宽 = min(image.hint.maxWidth, 主图宽 − 2 × 本值)）。</summary>
+    public const double ImageHintInset = 10.0;
     /// <summary>image.hint.maxWidth（pt） IMAGE-01：空首屏/错误提示区最大宽度。</summary>
     public const double ImageHintMaxWidth = 500.0;
     /// <summary>image.hint.title.fontSize（pt） IMAGE-01：空首屏提示标题字号。</summary>
@@ -265,6 +293,10 @@ public static class DesignTokens
     public const double ImageZoomStepIn = 1.25;
     /// <summary>image.zoom.step.out（ratio） INPUT-09：比例缩小命令的每步倍数，以视口中心为锚。</summary>
     public const double ImageZoomStepOut = 0.8;
+    /// <summary>input.longPress.delay（ms） INPUT-07：触屏长按弹出菜单的按住时长。</summary>
+    public const int InputLongPressDelay = 500;
+    /// <summary>input.longPress.slop（pt） INPUT-07：长按判定的移动容差；超过即转为平移或滚动。</summary>
+    public const double InputLongPressSlop = 8.0;
     /// <summary>motion.analysis.fallback.delay（ms） ANALYSIS-01：分析栏回退计算前的延迟（先保主图浏览性能）；WindowsLayout 与共享 AnalysisPresenter 各存一份。</summary>
     public const int MotionAnalysisFallbackDelay = 500;
     /// <summary>motion.analysis.fallback.yieldTimeout（ms） ANALYSIS-09：未提取回退在让位等待主图上屏与缩略图通道空闲时的最长等待。</summary>
@@ -279,6 +311,8 @@ public static class DesignTokens
     public const double MotionFilmScrollTick = 16.667;
     /// <summary>motion.image.zoom.duration（ms） IMAGE-02：Android 主图程序化缩放的动画时长（iOS 用 ZoomToRect 系统动画，Mac 直接落位）。</summary>
     public const int MotionImageZoomDuration = 250;
+    /// <summary>motion.sim.params.throttle（ms） SIM-08：相似度阈值/数量连续调整的合并间隔，结束后按当前锚点重算一次。</summary>
+    public const int MotionSimParamsThrottle = 150;
     /// <summary>motion.status.toast.duration（ms） FILM-06：窗口内状态提示停留时长。</summary>
     public const int MotionStatusToastDuration = 4000;
     /// <summary>nav.cornerRadius（pt） IMAGE-01：导航图半透明宿主圆角。</summary>
@@ -343,6 +377,10 @@ public static class DesignTokens
     public const uint SimActionHover = 0xFF3A3A3Au;
     /// <summary>sim.action.width（pt） SIM-01：提取全部/补齐全部按钮或进度条宽（与卡片内层 90 对齐）。</summary>
     public const double SimActionWidth = 90.0;
+    /// <summary>sim.dock.fontSize（pt） SIM-07：相似面板停靠区与空态的说明文本（未提取计数、错误）字号；行布局停靠区按此测量自然宽。</summary>
+    public const double SimDockFontSize = 11.0;
+    /// <summary>sim.dock.margin（pt） SIM-07：相似面板列表态行布局停靠区（未提取计数/按钮/进度/错误）左右外边距；停靠区宽 = max(sim.action.width, 文本自然宽) + 2 × 本值。</summary>
+    public const double SimDockMargin = 3.0;
     /// <summary>sim.dock.spacing（pt） SIM-01：列表态动作区两行内容的间距。</summary>
     public const double SimDockSpacing = 6.0;
     /// <summary>sim.empty.margin（pt） SIM-02：相似面板空态内容四周内边距。</summary>
@@ -351,8 +389,8 @@ public static class DesignTokens
     public const double SimEmptySpacing = 8.0;
     /// <summary>sim.error.maxWidth（pt） SIM-01：错误文本最大宽。</summary>
     public const double SimErrorMaxWidth = 120.0;
-    /// <summary>sim.list.cross（pt） SIM-01：行布局列表交叉轴长度：卡片高 144 + 上 5 + 下 10 + 两侧描边 2。</summary>
-    public const double SimListCross = 161.0;
+    /// <summary>sim.list.cross（pt） SIM-07：行布局相似面板交叉轴 = 胶片带高 film.band.height（159）；1 点描边内收，卡片在列表内交叉轴居中。</summary>
+    public const double SimListCross = 159.0;
     /// <summary>sim.list.padding（pt） SIM-01：行布局列表两侧内边距合计（左右各 4）。</summary>
     public const double SimListPadding = 8.0;
     /// <summary>sim.panel.border.width（pt） SIM-01：面板四周描边厚度。</summary>
@@ -363,7 +401,7 @@ public static class DesignTokens
     public const double SimPanelMargin = 4.0;
     /// <summary>sim.panel.maxWidthRatio（ratio） SIM-07：行布局相似面板宽度上限占可用宽度的比例；小于最小宽时以可用宽度一半为准。</summary>
     public const double SimPanelMaxWidthRatio = 0.5;
-    /// <summary>sim.panel.minHeight（pt） SIM-01：相似聚类面板最小高。</summary>
+    /// <summary>sim.panel.minHeight（pt） SIM-01：相似聚类面板最小高（共享几何仍引用）；SIM-07 行布局面板高取 sim.list.cross，本值不再约束主屏几何。</summary>
     public const double SimPanelMinHeight = 154.0;
     /// <summary>sim.panel.minWidth（pt） SIM-01：相似聚类面板最小宽（空态占位与行布局封顶下限）。</summary>
     public const double SimPanelMinWidth = 106.0;

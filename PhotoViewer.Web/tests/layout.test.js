@@ -187,25 +187,40 @@ test("ANALYSIS-03：瓦片等边长公式 n=6/7，交叉轴加两侧内边距", 
     assert.equal(visible.panes.analysisDivider.w, 1);
 });
 
-test("SIM-07：行布局宽夹到最小宽与可用宽一半，列布局固定宽", () => {
-    assert.deepEqual(columnSimilarity(t), { axis: "vertical", width: 110, occupation: 110, minWidth: 106, maxWidth: null });
+test("SIM-07：行布局宽含停靠区并夹到最小宽与可用宽一半，列布局加外边距", () => {
+    assert.deepEqual(columnSimilarity(t), {
+        axis: "vertical", width: 110, occupation: 114, minWidth: 106, maxWidth: null, dockWidth: 0,
+    });
 
+    // 列表态停靠区 = max(动作按钮宽 90, 文本自然宽) + 2 × 3。
     const two = rowSimilarityWidth({ availableWidth: 600, itemCount: 2 }, t);
-    assert.equal(two.width, 2 * 96 + 8 + 2);
-    assert.equal(two.occupation, 202 + 4);
+    assert.equal(two.dockWidth, 96);
+    assert.equal(two.width, 2 * 96 + 8 + 2 + 96);
+    assert.equal(two.occupation, 298 + 4);
     assert.equal(rowSimilarityWidth({ availableWidth: 600, itemCount: 0 }, t).width, 106);
+    assert.equal(rowSimilarityWidth({ availableWidth: 600, itemCount: 0 }, t).dockWidth, 0);
     assert.equal(rowSimilarityWidth({ availableWidth: 200, itemCount: 2 }, t).width, 100);
     assert.equal(rowSimilarityWidth({ availableWidth: 1000, itemCount: 8 }, t).width, 500);
-    assert.equal(rowSimilarityHeight(t), 161);
+    assert.equal(rowSimilarityHeight(t), 159);
+
+    const wideText = rowSimilarityWidth({
+        availableWidth: 900,
+        itemCount: 1,
+        dockTexts: ["12 组提取失败，可再次尝试"],
+        measureText: approximateTextWidth,
+    }, t);
+    const expectedDock = Math.max(t("sim.action.width"), approximateTextWidth("12 组提取失败，可再次尝试", 11)) + 6;
+    assert.equal(wideText.dockWidth, expectedDock);
+    assert.equal(wideText.width, 96 + 8 + 2 + expectedDock);
 
     const colOpen = layout({ similarityExpanded: true, similarityItemCount: 2 });
-    assert.equal(colOpen.similarity.occupation, 110);
-    assert.equal(colOpen.panes.filePane.w, 226);
-    assert.equal(colOpen.panes.photoPane.w, 902);
+    assert.equal(colOpen.similarity.occupation, 114);
+    assert.equal(colOpen.panes.filePane.w, 230);
+    assert.equal(colOpen.panes.photoPane.w, 898);
 
     const rowOpen = layout({ width: 1200, height: 850, layoutMode: "row", similarityExpanded: true, similarityItemCount: 2 });
-    assert.equal(rowOpen.similarity.occupation, 206);
-    assert.equal(rowOpen.film.scroll.w, 1200 - 206);
+    assert.equal(rowOpen.similarity.occupation, 302);
+    assert.equal(rowOpen.film.scroll.w, 1200 - 302);
 });
 
 test("STATE-03：药丸可见时提示条整体上移，底距为 60", () => {
@@ -252,8 +267,8 @@ test("IMAGE-10：空态提示居中，副文相对标题顶边下移 28", () => 
     assert.equal(hint.detail.y - hint.title.y, 28);
     assert.equal(hint.detail.h, 11);
     const narrow = layout().overlays.hintFrames({ x: 0, y: 0, w: 300, h: 400 });
-    assert.equal(narrow.title.w, 300);
-    assert.equal(narrow.title.x, 0);
+    assert.equal(narrow.title.w, 300 - 2 * 10);
+    assert.equal(narrow.title.x, 10);
 });
 
 test("FILM-02/04：内容长度与卡片步长，短列表在视口内居中不放空白滚动", () => {

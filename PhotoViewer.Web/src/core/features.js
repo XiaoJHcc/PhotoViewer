@@ -45,7 +45,11 @@ export function featuresFor(photo) {
     const spread = 0.18 + 0.12 * mulberry32(photo.scene.base + 5)();
 
     const cls = new Float32Array(CLS_DIM);
-    for (let i = 0; i < CLS_DIM; i++) cls[i] = gaussian(baseRand) + spread * photo.scene.variant * 0.35 * gaussian(varRand);
+    // SIM-08：同一连拍场景共享基向量，帧差按 variant^0.4 增长，使归一分数落在 0.85–0.99。
+    const variantSpread = Math.pow(photo.scene.variant, 0.4) * 1.13;
+    for (let i = 0; i < CLS_DIM; i++) {
+        cls[i] = gaussian(baseRand) + spread * variantSpread * gaussian(varRand);
+    }
     normalize(cls);
 
     const cells = GRID * GRID;

@@ -209,7 +209,7 @@ test("OPEN-06：同一照片重复 show 幂等，不重解码", async () => {
     assert.equal(h.session.snapshot().photoId, "folder/A.JPG");
 });
 
-test("STATE-02：打开失败的提示条文案区分文件夹与文件", () => {
+test("STATE-02/03：打开失败的提示条文案区分文件夹与文件，原因不可得时省略括号", () => {
     const h = harness();
     assert.equal(h.session.openFailed("图集", "folder"), "无法读取文件夹：图集");
     assert.equal(h.session.snapshot().toast.text, "无法读取文件夹：图集");
@@ -218,6 +218,9 @@ test("STATE-02：打开失败的提示条文案区分文件夹与文件", () => 
     assert.equal(h.session.openFailed("A.JPG", "file"), "无法打开：A.JPG");
     assert.equal(h.session.snapshot().toast.text, "无法打开：A.JPG");
     assert.notEqual(h.session.snapshot().toast.id, firstId);
+
+    assert.equal(h.session.openFailed("B.JPG", "file", "权限不足"), "无法打开：B.JPG（权限不足）");
+    assert.equal(h.session.openFailed("图集", "folder", "目录已删除"), "无法读取文件夹：图集（目录已删除）");
 });
 
 test("STATE-03：提示条 4 s 自动消失，新提示替换旧提示并重置计时", () => {
@@ -542,7 +545,7 @@ test("FILM-06：伴侣写回失败时星级保持原值并提示失败文件", a
     assert.equal(await result, false);
     assert.equal(card.photo.rating, 2);
     assert.equal(card.companions[0].rating, 2);
-    assert.deepEqual(toasts, ["无法写入星级：A.ARW"]);
+    assert.deepEqual(toasts, ["无法写入星级：A.ARW（文件只读）"]);
 });
 
 test("FILM-06：代表写回失败即停止，不继续写伴侣", async () => {
@@ -559,7 +562,7 @@ test("FILM-06：代表写回失败即停止，不继续写伴侣", async () => {
     assert.equal(await result, false);
     assert.equal(clock.pendingTimers(), 0);
     assert.equal(card.photo.rating, 0);
-    assert.deepEqual(toasts, ["无法写入星级：A.JPG"]);
+    assert.deepEqual(toasts, ["无法写入星级：A.JPG（文件只读）"]);
 });
 
 test("FILM-06：写回期间第二次写入排队，按最后一次为准", async () => {

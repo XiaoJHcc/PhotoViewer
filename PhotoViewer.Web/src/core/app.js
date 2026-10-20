@@ -1,7 +1,7 @@
 /**
  * 主屏模型：把业务状态集中在一个对象里，壳层只读快照、翻译输入、注入 DOM 能力。
  *
- * createApp({ t, clock, profile, library, decoder, store, storage, settings, dpr, reducedMotion, measureText })
+ * createApp({ t, clock, profile, library, decoder, store, storage, settings, dpr, reducedMotion, measureText, thumbnailsBusy })
  *   app.state                    只读快照（window/layout/folder/cards/current/viewport/session/toolbar/...）
  *   app.settings                 当前生效设置（只读）
  *   app.on(name, fn) / off       事件："change"(Set<区域>) 与 "request-open"({ kind })
@@ -20,10 +20,10 @@ import { FilmScroller, FilmPositioner, contentLength } from "./filmscroll.js";
 import { PhotoSession, RatingWriter } from "./session.js";
 import { AnalysisPresenter } from "./analysis.js";
 import { SimilarityPanel } from "./similarity.js";
-import { CommandMap, KeyDispatcher, WheelInterpreter, gestureFromMouse, gestureText, tooltipText } from "./input.js";
+import { CommandMap, KeyDispatcher, WheelInterpreter, gestureFromMouse, gestureText, tooltipText, WHEEL_PIXEL_NOTCH } from "./input.js";
 import { defaultSettings } from "./settings.js";
 import { computeLayout, approximateTextWidth } from "./layout/index.js";
-import { formatExifValue } from "./exifformat.js";
+import { formatExifDetail, formatExifValue } from "./exifformat.js";
 
 const SETTINGS_KEY = "PhotoViewer.Settings";
 const SHOW_FILM_KEY = "PhotoViewer.Native.ShowFilm";
@@ -152,6 +152,7 @@ class MainApp {
         dpr = 1,
         reducedMotion = () => false,
         measureText = approximateTextWidth,
+        thumbnailsBusy = () => false,
     } = {}) {
         if (typeof t !== "function") throw new TypeError("createApp 需要令牌函数 t");
         if (!clock) throw new TypeError("createApp 需要 clock");
@@ -162,6 +163,7 @@ class MainApp {
         this._storage = storage;
         this._reducedMotion = typeof reducedMotion === "function" ? reducedMotion : () => false;
         this._measureText = typeof measureText === "function" ? measureText : approximateTextWidth;
+        this._thumbnailsBusy = typeof thumbnailsBusy === "function" ? thumbnailsBusy : () => false;
         this._library = library && Array.isArray(library.folders) ? library : { folders: [] };
         this._decoder = decoder;
         this._store = store ?? NULL_STORE;
@@ -195,7 +197,7 @@ class MainApp {
         this._scroller = null;
         this._filmViewportLength = null;
         this._analysisTileCount = 6;
-        this._similarityLayout = { visible: false, count: 0 };
+        this._similarityLayout = { visible: false, count: 0, dockKey: "" };
 
         this._fileList = new FileList({
             formats: this._settings.formats,
@@ -217,6 +219,7 @@ class MainApp {
             store: this._store,
             onChange: () => this._onAnalysisChange(),
             onLocate: (u, v) => this.centerOn(u, v),
+            thumbnailsBusy: () => Boolean(this._thumbnailsBusy()),
         });
         this._analysis.setImmediateCompute(this._settings.analysisImmediateCompute);
         this._analysisTileCount = this._analysis.tiles().length;
@@ -244,6 +247,7 @@ class MainApp {
             isSuppressed: () => this._menuOpen || this._dropdownOpen || this._textFocus,
         });
         this._wheel = new WheelInterpreter(clock);
+        this._preciseWheel = { gesture: null, amount: 0 };
 
         this._recomputeLayout();
         this._syncProxyAndWantFull();
@@ -404,7 +408,7 @@ class MainApp {
         // FILM-01：排序只更新列表，不抢用户位置；只把偏移夹到合法范围。
         this._positioner?.onSortOrFilter();
         this.filmResized();
-        this._similarity.setPool(this._fileList.cards);
+        this._syncSimilarityPool();
         this._invalidate(["list", "similarity"]);
         return changed;
     }
@@ -414,7 +418,7 @@ class MainApp {
         // FILTER-05：筛选不改主图、不定位；保留偏移并只夹到新范围，候选池随筛选更新。
         this._positioner?.onSortOrFilter();
         this.filmResized();
-        this._similarity.setPool(this._fileList.cards);
+        this._syncSimilarityPool();
         this._invalidate(["list", "toolbar", "layout", "similarity"]);
         return changed;
     }
@@ -433,7 +437,7 @@ class MainApp {
             }
             this._fileList.noteRatingWritten(card.photo.id);
             this._positioner?.onRatingRefresh();
-            this._similarity.setPool(this._fileList.cards);
+            this._syncSimilarityPool();
             this._similarity.rated(card.photo.id);
             this._invalidate(["list", "toolbar", "current", "similarity"]);
             return true;
@@ -616,9 +620,35 @@ class MainApp {
         }
         if (result.kind === "precise") {
             if (!this._displayedPhoto()) return { handled: false };
-            if (result.pinch) this.zoomBy(result.pinch, anchor);
+            if (result.pinch) {
+                this.zoomBy(result.pinch, anchor);
+                return { handled: true };
+            }
+            if (result.gesture) {
+                // INPUT-04：物理修饰键的精确滚动按绑定表执行。
+                const command = this._commandMap.commandFor(result.gesture);
+                if (!command) return { handled: true };
+                if (command === "ZoomInScale" || command === "ZoomOutScale") {
+                    const up = result.gesture.endsWith("WheelUp");
+                    const zoomIn = command === "ZoomInScale";
+                    // 等效 exp(-dy·k)：滚轮上滚放大，锚点为指针。
+                    this.zoomBy(Math.exp((up === zoomIn ? 1 : -1) * Math.abs(result.dy) * this._wheel.pinchScale), anchor);
+                    return { handled: true };
+                }
+                const delta = Math.abs(result.dy);
+                if (this._preciseWheel.gesture !== result.gesture) {
+                    this._preciseWheel = { gesture: result.gesture, amount: 0 };
+                }
+                this._preciseWheel.amount += delta;
+                // INPUT-04：绑定到其他命令时每累积 120 px 触发一次。
+                while (this._preciseWheel.amount >= WHEEL_PIXEL_NOTCH) {
+                    this._preciseWheel.amount -= WHEEL_PIXEL_NOTCH;
+                    this.runCommand(command);
+                }
+                return { handled: true };
+            }
             // INPUT-03：精确滚动平移照片，方向与内容滚动一致。
-            else this.pan(-result.dx, -result.dy);
+            this.pan(-result.dx, -result.dy);
             return { handled: true };
         }
         return { handled: false };
@@ -716,6 +746,7 @@ class MainApp {
             formats: this._settings.formats,
             sameNameAsOne: this._settings.sameNameAsOne,
         });
+        this._syncSimilarityPool();
         this._commandMap.setHotkeys(this._settings.hotkeys);
         this._similarity.setParams({
             threshold: this._settings.similarityThreshold,
@@ -786,6 +817,12 @@ class MainApp {
         ];
     }
 
+    _syncSimilarityPool() {
+        // SIM-02/03：候选池取筛选结果；提取范围与未提取计数取同名合并后的整个文件夹。
+        this._similarity.setPool(this._fileList.cards);
+        this._similarity.setFolderCards(this._fileList.groups);
+    }
+
     _applySimilarityExpanded(value, persist) {
         this._settings.similarityPanelExpanded = Boolean(value);
         this._similarity.setExpanded(Boolean(value));
@@ -804,7 +841,7 @@ class MainApp {
         this._singleMode = Boolean(single);
         this._history = [];
         this._fileList.setPhotos(this._photos);
-        this._similarity.setPool(this._fileList.cards);
+        this._syncSimilarityPool();
         const card = preferred && this._fileList.cardOf(preferred.id)
             ? this._fileList.cardOf(preferred.id)
             : this._fileList.firstCard();
@@ -972,6 +1009,12 @@ class MainApp {
     _scene() {
         const toolbar = this._buildToolbar();
         const similarity = this._similarity.snapshot();
+        // SIM-07：行布局停靠区文本（列表态才有）参与面板宽计算。
+        const similarityDockTexts = [];
+        if (similarity.state === "list") {
+            if (similarity.unextracted > 0) similarityDockTexts.push(`${similarity.unextracted} 张未提取`);
+            if (similarity.error) similarityDockTexts.push(similarity.error);
+        }
         return {
             width: this._window.width,
             height: this._window.height,
@@ -981,6 +1024,7 @@ class MainApp {
             showAnalysis: this._panes.analysis,
             similarityExpanded: similarity.visible,
             similarityItemCount: similarity.items.length,
+            similarityDockTexts,
             photoCount: this._fileList.count,
             countText: `共 ${this._fileList.count} 张`,
             exifCount: toolbar.exif.length,
@@ -1011,7 +1055,8 @@ class MainApp {
                     id: item.id,
                     label: item.label,
                     value,
-                    tooltip: `${item.label} · ${value}`,
+                    // TOOLBAR-05：拍摄时间摘要进控制栏，完整值留在悬停提示。
+                    tooltip: `${item.label} · ${formatExifDetail(item.id, photo, value)}`,
                 };
             });
         const rating = {
@@ -1167,13 +1212,19 @@ class MainApp {
 
     _onSimilarityChange() {
         const snapshot = this._similarity.snapshot();
+        // SIM-07：行布局面板宽由相似项数与停靠区文本共同决定，任一变化都要重算让位。
+        const dockKey = `${snapshot.unextracted}|${snapshot.error ?? ""}`;
         const layoutChanged = snapshot.visible !== this._similarityLayout.visible
-            || snapshot.items.length !== this._similarityLayout.count;
-        this._similarityLayout = { visible: snapshot.visible, count: snapshot.items.length };
+            || snapshot.items.length !== this._similarityLayout.count
+            || dockKey !== this._similarityLayout.dockKey;
+        this._similarityLayout = {
+            visible: snapshot.visible,
+            count: snapshot.items.length,
+            dockKey,
+        };
         const regions = ["similarity"];
         if (layoutChanged) {
             if (this._layout) {
-                // SIM-07：行布局面板宽度由相似项数决定，变化时重算让位并夹取胶片栏偏移。
                 this._recomputeLayout();
                 this.filmResized();
                 this._syncProxyAndWantFull();

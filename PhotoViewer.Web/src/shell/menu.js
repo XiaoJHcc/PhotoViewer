@@ -31,9 +31,17 @@ export function createMenu({ host, onOpenChange = () => {} }) {
         const shield = el("div", { class: "pv-menu-shield" });
         const list = el("div", { class: "pv-menu", role: "menu", "aria-label": options.label ?? "" });
         const rows = [];
+        const rowItems = [];
         for (const item of items) {
             if (item.type === "separator") {
                 list.append(el("div", { class: "pv-menu-sep", role: "separator" }));
+                continue;
+            }
+            if (item.type === "header") {
+                // MENU-05：卡片菜单标题行不可点击、不参与键盘移动。
+                list.append(el("div", { class: "pv-menu-header", role: "presentation" },
+                    el("span", { class: "pv-menu-header-title" }, item.label ?? ""),
+                    item.detail ? el("span", { class: "pv-menu-header-detail" }, item.detail) : null));
                 continue;
             }
             const role = item.type === "check" ? "menuitemcheckbox" : item.type === "radio" ? "menuitemradio" : "menuitem";
@@ -56,6 +64,7 @@ export function createMenu({ host, onOpenChange = () => {} }) {
                 select(item.id);
             });
             rows.push(row);
+            rowItems.push(item);
             list.append(row);
         }
         const root = el("div", { class: "pv-menu-layer" }, list);
@@ -71,7 +80,7 @@ export function createMenu({ host, onOpenChange = () => {} }) {
         if (anchor.rect) {
             const r = anchor.rect;
             x = r.x;
-            const checkedIndex = items.filter((i) => i.type !== "separator").findIndex((i) => i.checked);
+            const checkedIndex = rowItems.findIndex((item) => item.checked);
             y = r.y + r.h + 2;
             if (checkedIndex >= 0 && options.alignChecked) {
                 const rowTop = rows[checkedIndex].offsetTop;
@@ -150,7 +159,7 @@ export function createMenu({ host, onOpenChange = () => {} }) {
             },
         };
         onOpenChange(true);
-        const initial = items.filter((i) => i.type !== "separator").findIndex((i) => i.checked && i.type !== "check");
+        const initial = rowItems.findIndex((item) => item.checked && item.type !== "check");
         if (options.focusFirst !== false) {
             if (initial >= 0) focusRow(initial);
             else step(1);

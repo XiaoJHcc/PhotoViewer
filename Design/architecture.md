@@ -29,7 +29,7 @@
 
 1. **触发**：`MainViewModel.CurrentFile` 变化（用户切换图片）。
 2. **分发**：各原生壳在 `CurrentFile` 变化时调用 `PhotoLoadSession.SetFile`，会话递增单调的**代际计数器**并调用 `BitmapLoader.GetBitmapAsync`；若新图片不在缓存中，立即把屏上产物置空（旧图不会停留上屏）。
-3. **分级代理解码**(P1-M4b 起):适应态/浏览先解码**代理图**(长边 = 渲染表面物理像素 × overscan 2.0——2× 超采样抗"解码降采样+上屏降采样"双重软化,守画质红线;Apple 走 `CGImageSourceCreateThumbnailAtIndex` 编解码器级子采样,JPEG 走 Skia codec 子采样,Windows libheif 全解码+Mitchell 精缩)数十~数百 ms 上屏;**缩放超出代理能力 / 分析栏可见(细节预览要 100% 源)** 时后台解码 Full,就绪后**同变换热替换**(几何基准 = 全分辨率逻辑尺寸,EXIF/`ImageOrientationInfo` 推导,`ImageSize` 恒定故无跳变);快速翻页代际闸作废在途 Full。100% 及以上放大永远以 Full 呈现(硬约束)。缓存层两级条目同驻统一 LRU(`(路径, 尺寸档)` 键,Proxy 档命中规则:已有代理长边 ≥ 需求即复用)。P0 失败时代理自动回退 Full。
+3. **分级代理解码**(P1-M4b 起):适应态/浏览先解码**代理图**(长边 = 渲染表面物理像素 × overscan 2.0——2× 超采样抗"解码降采样+上屏降采样"双重软化,守画质红线;Apple 走 `CGImageSourceCreateThumbnailAtIndex` 编解码器级子采样,JPEG 走 Skia codec 子采样,Windows libheif 全解码+Mitchell 精缩)数十~数百 ms 上屏;**缩放超出代理能力 / 分析栏可见(细节预览要 100% 源)** 时后台解码 Full,就绪后**同变换热替换**(几何基准 = 全分辨率逻辑尺寸,EXIF/`ImageOrientationInfo` 推导,`ImageSize` 恒定故无跳变);快速翻页代际闸作废在途 Full。100% 及以上放大永远以 Full 呈现(硬约束)。缓存层两级条目同驻统一 LRU(`(路径, 尺寸档)` 键,Proxy 档命中规则:已有代理长边 ≥ 需求即复用)。当前图（P0）代理解码失败时解码器自动回退解码 Full；两档都失败才由加载会话报「无法打开该图片」，屏上已有代理而 Full 失败只给非阻塞提示（IMAGE-03、STATE-02）。
 4. **缓存 / 解码**（`BitmapLoader.GetBitmapAsync` 以 **P0** 运行，并由 `DecodeScheduler.TrackP0` 包裹，使后台工作线程在期间暂停）：
    - 先查 **LRU 内存缓存**，命中立即返回。
    - 未命中：进行**在途去重**（同路径请求共享一个解码任务）→ **解码准入 `MemoryGovernor.TryAcquire`**（P1-M3 起；P0 豁免，非 P0 预算不足时直接拒绝）→ 在线程池执行解码本体（`Task.Run`，续体保持在 UI 线程之外）：读取流 → 识别格式（JPG / HEIF）→ 解码 → **应用 EXIF 旋转** → 写入缓存 → 返回。P0-M4 起 Core 全程使用平台中立 `DecodedImage`（SkiaSharp 解码/旋转），由 `IFileRef` 提供流；原生壳直接把 `DecodedImage` 交 GPU 纹理上传，不再有 UI 位图适配层。P1-M3 起返回值携带**调用方租约**（用完调用 `Release`；淘汰只归还缓存自己持有的那份，租约归零后缓冲才归还 `ImageBufferPool`）。

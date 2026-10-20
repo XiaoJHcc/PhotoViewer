@@ -2,12 +2,8 @@
  * 胶片栏卡片内部节点（FILM-05）。
  * cardFrames(t) → { root, surface, image, name, date, shake, stars }；
  * root 相对文档，surface 相对 root，image/name/date/shake/star{k} 相对内层占位面（surface）。
+ * 坐标与行高直接取令牌，不再由字号行高比例推导。
  */
-
-const NAME_GAP = 4;
-const BADGE_INSET = 2;
-const STAR_GAP = 2;
-const LINE_HEIGHT_RATIO = 1.2;
 
 export function cardFrames(t) {
     const cardWidth = t("film.card.width");
@@ -16,33 +12,37 @@ export function cardFrames(t) {
     const surfaceWidth = t("film.card.surface.width");
     const surfaceHeight = t("film.card.surface.height");
     const thumb = t("film.thumb.size");
-    const edge = t("film.card.border.width") + inset;
+    const thumbInset = t("film.card.thumb.inset");
 
-    const image = { x: edge, y: edge, w: thumb, h: thumb };
+    const image = { x: thumbInset, y: thumbInset, w: thumb, h: thumb };
     const nameWidth = t("film.card.name.width");
-    const nameHeight = Math.ceil(t("film.card.name.fontSize") * LINE_HEIGHT_RATIO);
     const name = {
         x: (surfaceWidth - nameWidth) / 2,
-        y: image.y + thumb + NAME_GAP,
+        y: t("film.card.name.y"),
         w: nameWidth,
-        h: nameHeight,
+        h: t("film.card.name.height"),
     };
 
     const secondLineWidth = t("film.card.secondLine.width");
-    const secondLineHeight = Math.ceil(t("film.card.secondLine.fontSize") * LINE_HEIGHT_RATIO);
     const date = {
         x: (surfaceWidth - secondLineWidth) / 2,
         y: t("film.card.secondLine.y"),
         w: secondLineWidth,
-        h: secondLineHeight,
+        h: t("film.card.secondLine.height"),
     };
 
     const badge = t("film.card.badge.size");
-    const shake = { x: image.x + thumb - badge - BADGE_INSET, y: image.y + thumb - badge - BADGE_INSET, w: badge, h: badge };
+    const badgeInset = t("film.card.badge.inset");
+    const shake = {
+        x: image.x + thumb - badge - badgeInset,
+        y: image.y + thumb - badge - badgeInset,
+        w: badge,
+        h: badge,
+    };
 
     const starSize = t("film.card.star.size");
     const starStart = (surfaceWidth - starSize * 6) / 2;
-    const starY = date.y + secondLineHeight + STAR_GAP;
+    const starY = t("film.card.star.y");
     const stars = [];
     for (let index = 0; index < 6; index++) {
         stars.push({ x: starStart + index * starSize, y: starY, w: starSize, h: starSize });

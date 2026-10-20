@@ -73,8 +73,10 @@
 .pv-card-date {
     position: absolute;
     inset: 0;
-    color: var(--pv-color-text-secondary);
+    /* FILM-05：第二行与文件名同色、粗体。 */
+    color: var(--pv-color-film-card-name);
     font-size: var(--pv-film-card-secondLine-fontSize);
+    font-weight: 700;
     line-height: 1.2;
     text-align: center;
     white-space: nowrap;
@@ -150,7 +152,8 @@
 
 .pv-card-star.is-clear {
     color: var(--pv-color-star-clear);
-    font-size: calc(var(--pv-film-card-star-fontSize) + 2px);
+    /* FILM-05：清零叉字形大小取 film.card.clearGlyph.size，按钮仍为 star.size 见方。 */
+    font-size: var(--pv-film-card-clearGlyph-size);
 }
 
 .pv-card-surface.is-rating-hidden .pv-card-star {

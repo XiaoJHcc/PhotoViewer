@@ -42,6 +42,7 @@ body.append(stage);
 applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
 
 const measureText = createTextMeasurer();
+const thumbs = createThumbnailQueue({ t, dpr: devicePixelRatio, decoder, clock });
 const app = createApp({
     t,
     clock,
@@ -53,8 +54,9 @@ const app = createApp({
     dpr: devicePixelRatio,
     reducedMotion,
     measureText,
+    // ANALYSIS-09：未提取回退让位时等待缩略图通道空闲。
+    thumbnailsBusy: () => thumbs.stats().running > 0 || thumbs.stats().pending > 0,
 });
-const thumbs = createThumbnailQueue({ t, dpr: devicePixelRatio, decoder, clock });
 
 const panes = {
     file: el("div", { class: "pv-pane pv-pane-file" }),

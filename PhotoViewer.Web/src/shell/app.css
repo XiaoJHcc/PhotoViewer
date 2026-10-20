@@ -168,3 +168,25 @@ html, body {
     margin: 5px 6px;
     background: rgba(255, 255, 255, 0.12);
 }
+
+.pv-menu-header {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    padding: 4px 10px 5px 4px;
+}
+
+.pv-menu-header-title {
+    overflow: hidden;
+    color: rgba(255, 255, 255, 0.9);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.pv-menu-header-detail {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 11px;
+    white-space: nowrap;
+}

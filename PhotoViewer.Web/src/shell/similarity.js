@@ -48,17 +48,18 @@ export function mountSimilarity(host, ctx) {
         // SIM-01：面板可见性只由共享状态决定，不可见时不占位。
         if (!sim || !pane || !sim.expanded || !state.similarity.visible) return null;
         if (sim.axis === "vertical") {
-            // SIM-07：列布局接在 116 宽文件栏右侧，从文件栏顶到底。
-            return { x: t("shell.filebar.content.width"), y: 0, w: sim.width, h: pane.h };
+            // SIM-07：列布局面板接在 116 宽文件栏右侧，与胶片栏同顶（筛选条下方）到文件栏底。
+            const top = layout.filter?.bar.h ?? 0;
+            return { x: t("shell.filebar.content.width"), y: top, w: sim.width, h: Math.max(0, pane.h - top) };
         }
         const band = layout.film?.scroll;
         if (!band) return null;
-        // SIM-07：行布局从胶片带右端切出，右侧留 sim.panel.margin。
+        // SIM-07：行布局从胶片带右端切出，右侧留 sim.panel.margin，面板高 = sim.list.cross。
         return {
             x: pane.w - t("sim.panel.margin") - sim.width,
             y: band.y,
             w: sim.width,
-            h: Math.min(band.h, sim.height ?? band.h),
+            h: sim.height ?? band.h,
         };
     }
 
@@ -104,6 +105,13 @@ export function mountSimilarity(host, ctx) {
         panel.hidden = false;
         place(panel, rect);
         panel.dataset.axis = state.layout.similarity.axis;
+        // SIM-07：行布局停靠区宽由布局按文本自然宽与动作按钮宽算出，列表内容宽据此留位。
+        const simLayout = state.layout.similarity;
+        if (simLayout.axis === "horizontal" && simLayout.dockWidth > 0) {
+            dock.style.width = `${simLayout.dockWidth}px`;
+        } else {
+            dock.style.width = "";
+        }
 
         const inList = snapshot.state === "list";
         panel.classList.toggle("is-empty", !inList);

@@ -49,7 +49,7 @@ src/
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
 dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
-tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对，Design/README §8）
+tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对；--count-width 固定计数宽，Design/README §8）
 ```
 
 - **依赖方向**：`shell/ → core/app.js → core/*`；`core/` 不得引用 `shell/`、`document`、`window`。时间一律经 `clock.js`，便于假时钟断言 300/350/500/4000 ms 等门槛。

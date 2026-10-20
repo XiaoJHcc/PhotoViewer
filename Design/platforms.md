@@ -24,6 +24,8 @@
 | 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入见 OPEN-07@android） |
 | EXIF 详情表 | 自绘 `NSView` + `ExifTableGeometry`（7 列） | `UITableView`（7 列几何） | `Grid`（7 列） | 线性行（4 个内容列承载 7 列几何，见 TOOLS-03@android） |
 
+Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本目录实现，所有分区都是 DOM 组件（`PhotoViewer.Web/src/shell/*.js`），业务与几何在 `PhotoViewer.Web/src/core/`（`app.js` 主屏模型、`layout/` 几何）。它不进入四端验收，`status.md` 不设 Web 列；行为由 `?check=all` 页内检查覆盖。主图用 Canvas 2D 按方向码变换绘制，下拉与菜单自绘，选择器为应用内合成文件夹列表。
+
 > Windows 列记录 `native-rebuild-win` 分支（已于 2026-10-18 合入 `refactor/native-rebuild`，作者在 Windows 本机验收）的接线：头工程链接 `PhotoViewer.Shared`、主图视口使用共享 `PhotoViewport`，`WindowsLayout` 从「并行常量」改为转接共享几何与令牌。
 
 ## 令牌层平台差异（tokens.json `platforms`）
@@ -52,6 +54,7 @@
   - Android：`PhotoViewer.Android/Native/AndroidFilmstripView.cs:20`（`RecyclerView`）、`:231`/`:240`（定位与缓动）。
 - **FILM-04**：方向与滚轮。行/列方向由各宿主切换；普通纵向滚轮在横向列表上滚列表，见各平台滚轮入口（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs` 的 `ScrollWheel`、iOS 的 `UIScrollView` 委托、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs`）。
   - **FILM-04@mac / @ios**：重新显示胶片栏、切换列表方向时显式定位当前项（已登记 10-18）。
+- **FILM-04@web**：浏览器胶片栏为原生 `overflow` 滚动 + 自绘悬浮滚动条，横向列表把鼠标纵向滚轮映射为横向滚动。
 - **FILM-05**：卡片内容与命中。
   - macOS：`PhotoViewer.Mac/Native/MacThumbnailItem.cs:12`（`NSCollectionViewItem`）、`:64-99`（几何、星级、徽标）。
   - iOS：`PhotoViewer.iOS/Native/iOSThumbnailCard.cs:20`（几何）、`:101-134`（文件名 / 第二行 / 星级）。
@@ -81,6 +84,9 @@
   - **SHELL-04@mac / @ios**：偏好存储承载栏位显隐与窗口帧（已登记 10-18）；Windows 走 `PhotoViewer.Windows/Native/WindowsNativePreferences.cs:13`、Android 走 `PhotoViewer.Android/Native/AndroidShellPreferences.cs:14`，键名与 macOS/iOS 相同。
 - **SHELL-05**：跨屏与显示变化。macOS `DidChangeBackingProperties`；iPad 旋转/分屏重建滚动基准；Windows `XamlRoot`/DPI 变化；Android `OnSizeChanged`/`SurfaceChanged`。
 - **SHELL-06**：窗口级无障碍。macOS 系统交通灯；Windows 自绘按钮 `PhotoViewer.Windows/Native/WindowsTitleBar.cs:157` 起补 `AutomationProperties.Name`；触屏由长按菜单承担。
+- **SHELL-02@web**：浏览器标签页没有窗口装饰、隐藏标题栏、拖动区与标题栏双击；`?platform=mac` 配置档只用于与 macOS 几何比对。
+- **SHELL-03@web**：浏览器视口即窗口，允许小于 `shell.window.min.*`，布局按实际尺寸计算（主图至少 1 点）；不提供应用内全屏入口。
+- **SHELL-04@web**：栏位显隐与设置文档写 `localStorage`（键名同四端偏好存储）。
 
 ## filter
 
@@ -98,6 +104,7 @@
   - **FILTER-07@ios / @android**：行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议（已登记 10-18）。
+- **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；三个下拉为自绘仿 `NSPopUpButton`，菜单自绘（键盘、勾选、Esc 与 MENU-03 同一组件）。
 
 ## image
 
@@ -159,6 +166,8 @@
 - **TOOLBAR-11**：无障碍。每个控件暴露名称、禁用态与焦点顺序；Android 由 `ExploreByTouchHelper` 虚拟节点给出（`PhotoViewer.Android/Native/AndroidControlBar.cs:446`）。
 - **TOOLBAR-12**：开关型命令的按钮态。四端当前都不在按钮上表达按下态/强调色，状态只在菜单勾选与面板可见性上。
 
+- **TOOLBAR-06@web**：没有工具窗口，控制栏 EXIF 组不可点击、无命中区域。
+
 ## similarity
 
 <a id="sim"></a>
@@ -185,6 +194,9 @@
 - **MENU-05**：卡片菜单。iOS `PhotoViewer.iOS/Native/iOSContextMenus.cs:77-93`；Android `PhotoViewer.Android/Native/AndroidThumbnailCard.cs:288-307`；桌面无卡片菜单，用 tooltip + 星级按钮。
   - **MENU-05@android**：标题与时间可拆成两行原生外观；标题行不可点击，时间补秒与时区（已登记 10-18）。
 - **MENU-07**：不可用项与并发。各端菜单项集合不随照片/列表内容增删；无照片时「增强」置灰、工具打开空态（macOS `MacMainWindow.cs:933`、iOS `iOSContextMenus.cs:40`、Windows `WindowsMainWindow.cs:418`、Android `AndroidNativeRootView.cs:607`）。
+- **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
+- **MENU-03@web**：主图菜单与卡片菜单为自绘弹层，夹在窗口内，键盘与读屏语义按 MENU-03。
+- **MENU-05@web**：触屏（`pointerType=touch`）长按卡片弹卡片菜单；桌面右键卡片仍弹主图菜单。
 
 ## input
 
@@ -198,6 +210,8 @@
 - **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
 - **INPUT-12**：触屏等价入口。卡片评分由卡片菜单补足（iOS `PhotoViewer.iOS/Native/iOSContextMenus.cs`、Android `PhotoViewer.Android/Native/AndroidThumbnailCard.cs:288-307`）；焦点顺序无专项实现。
+- **INPUT-01@web**：浏览器保留 Ctrl/⌘+N，「打开文件」主绑定不可用，次绑定 Ctrl+O 与空态点击、菜单为等价入口。
+- **INPUT-04@web**：`WheelEvent` 没有精确/离散标志：`deltaMode` 为行/页，或像素模式下 `wheelDeltaY` 为 120 的整数倍且增量足够大时视为离散，其余为精确；Chromium/Safari 把触控板捏合投递为 ctrl+wheel，未按下物理 Ctrl 时按捏合处理。
 
 ## open
 
@@ -211,6 +225,7 @@
 - **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。
   - 显式打开前调用 `FitToView()` 回到适应态（macOS/iOS 已实现）；Windows/Android 未重置视口为缺口（见 status.md）。
 - **OPEN-03、OPEN-09**：单图模式与派生状态由共享 VM 承担；平台父目录可得性见各端安全作用域 / SAF 授权。
+- **OPEN-01@web / OPEN-07@web**：没有真实文件系统，打开文件/文件夹使用应用内选择器浏览合成文件夹；拖入按文件名匹配合成库，否则打开首个合成文件夹。
 
 ## state
 
@@ -238,6 +253,7 @@
   - 排序四端统一为拖拽（Android 用 `ItemTouchHelper` + 行尾把手，把手轻点给上移/下移菜单，`PhotoViewer.Android/Native/AndroidSettingsReorderList.cs`）。
 - **SETTINGS-12**：数值校验。范围夹取在各设置视图模型（如 `PhotoViewer/ViewModels/Settings/SettingsViewModel.BitmapCache.cs`、`SettingsViewModel.AI.cs`），非法输入不写入。
 - **SETTINGS-13**：键盘与无障碍。桌面由系统控件提供 Tab/方向键语义；触屏由各端设置列表承担，四端均无专项断言。
+- **SETTINGS-14@web**：Web 参考壳只持久化影响主屏的设置项，列表项使用壳内 id，文档结构不与四端设置 JSON 互换。
 
 ## tools
 
@@ -255,6 +271,7 @@
 - **TOOLS-06**：计算时机。共享 presenter 先读库；离开页面或关闭窗口即取消在途任务（`ToolsViewModel.Deactivate()`，macOS `MacToolsWindow`、iOS `iOSToolsPresenter.cs:65`、Windows `WindowsToolsWindow.cs:328`、Android `AndroidToolsPresenter.cs:171`）。
 - **TOOLS-07**：照片数据统计，仅 Windows（`PhotoViewer/ViewModels/Tools/ToolsViewModel.cs:35`）。
   - **TOOLS-07@win**：平台专属工具，其他端不建入口（已登记 10-18）。
+- **TOOLS-01@web**：不实现工具窗口。
 
 ## scope
 
@@ -265,3 +282,5 @@
 - **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`，CoreML EP 不可用回退 CPU（已登记 10-18；`CIRAWFilter` 全分辨率解码暂缓，并入性能专项）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
 - **SCOPE-05**：文件写操作。评分写回 `XmpWriter.WriteRatingAsync`；无删除/重命名/移动/导出命令。
 - **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**，已登记 10-18）；Windows 照片统计；Android 设置数值步进见 SETTINGS-12@android。
+- **SCOPE-01@web**：设置窗口、工具窗口、真实解码/写回/推理均不实现，相应入口不显示；照片、特征与故障均为合成数据。
+

@@ -135,9 +135,8 @@ function filmViewport(app) {
     return app.state.layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
 }
 
-function harness({ storage = createStorage(), settings = null, width = 1200, height = 850 } = {}) {
+function harness({ storage = createStorage(), settings = null, width = 1200, height = 850, library = makeLibrary() } = {}) {
     const clock = manualClock();
-    const library = makeLibrary();
     const film = createFilmHost();
     const app = createApp({
         t,
@@ -401,6 +400,42 @@ test("IMAGE-03/FILM-05：分析栏可见触发 Full 升级并记入主图缓存"
     assert.ok(app.state.analysis.tiles.length >= 6);
 });
 
+test("IMAGE-03：小图适应倍率高于 100% 不升 Full，分析栏可见仍升级", async () => {
+    const small = makePhoto("small", "SMALL.JPG", 0, { width: 600, height: 400 });
+    const library = { folders: [{ id: "small", name: "小图", photos: [small], enumerable: true }] };
+    const { app, clock } = harness({ library });
+    app.openFolder("small", { target: "small/SMALL.JPG" });
+    await settle(clock, 2);
+    assert.equal(app.state.viewport.isFit, true);
+    assert.ok(app.state.viewport.physicalScale > 1, "小图适应倍率应高于物理 100%");
+    assert.equal(app.state.session.tier, "proxy", "适应态不应因倍率升 Full");
+
+    app.toggleAnalysis();
+    await settle(clock, 3);
+    assert.equal(app.state.session.tier, "full", "分析栏可见时应升 Full");
+});
+
+test("INPUT-04：物理 Ctrl 的精确滚动按绑定连续缩放，120 px 累积触发其他命令", () => {
+    const { app } = harness();
+    app.openFolder("f1", { target: "f1/P010.JPG" });
+    app.setModifierState({ ctrl: true });
+    const before = app.state.viewport.physicalScale;
+    assert.deepEqual(app.wheelOnPhoto({ deltaMode: 0, deltaY: -10, ctrlKey: true }), { handled: true });
+    const after = app.state.viewport.physicalScale;
+    assert.ok(Math.abs(after / before - Math.exp(10 * 0.01)) < 1e-6, `连续缩放倍率 ${after / before}`);
+
+    const mapped = harness({
+        settings: { hotkeys: [{ command: "Next", primary: "Ctrl+WheelUp", secondary: null }] },
+    });
+    mapped.app.openFolder("f1", { target: "f1/P010.JPG" });
+    mapped.app.setModifierState({ ctrl: true });
+    const start = mapped.app.state.displayedId;
+    mapped.app.wheelOnPhoto({ deltaMode: 0, deltaY: -50, ctrlKey: true });
+    assert.equal(mapped.app.state.displayedId, start, "未满 120 px 不应触发命令");
+    mapped.app.wheelOnPhoto({ deltaMode: 0, deltaY: -70, ctrlKey: true });
+    assert.notEqual(mapped.app.state.displayedId, start, "累积 120 px 应触发一次命令");
+});
+
 test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前绑定，EXIF 取自当前照片", () => {
     const { app } = harness();
     const defaults = defaultSettings();
@@ -415,7 +450,7 @@ test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前�
         app.state.toolbar.commands.slice(0, 2).map((item) => item.command),
         ["Open", "Next"],
     );
-    assert.equal(app.state.toolbar.commands[1].tooltip, "下一张（N）");
+    assert.equal(app.state.toolbar.commands[1].tooltip, "下一张 · N");
     assert.equal(app.state.toolbar.commands[0].enabled, true);
     assert.equal(app.state.toolbar.commands[1].enabled, false);
 
@@ -439,7 +474,7 @@ test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前�
         app.state.toolbar.commands.slice(0, 2).map((item) => item.command),
         ["Next", "Open"],
     );
-    assert.equal(app.state.toolbar.commands[0].tooltip, "下一张（N / 滚轮下）");
+    assert.equal(app.state.toolbar.commands[0].tooltip, "下一张 · N / 滚轮下");
 });
 
 test("MENU-01/02/06/07：固定项与实时勾选，无照片增强置灰，Web 不显示工具与设置", () => {
@@ -504,7 +539,7 @@ test("STATE-03/FILM-06：星级写回失败保持原值并给出提示条", asyn
     assert.equal(await writing, false);
     assert.equal(app.state.photo.rating, 4);
     assert.equal(app.state.toolbar.rating.value, 4);
-    assert.equal(app.state.session.toast.text, "无法写入星级：D004.JPG");
+    assert.equal(app.state.session.toast.text, "无法写入星级：D004.JPG（文件只读）");
 });
 
 test("change 事件：同一 tick 内多次变化合并为一次派发", async () => {
@@ -531,7 +566,8 @@ test("FILTER-06/SIM-07：相似开关写入设置并扩宽文件栏，关闭后�
     app.openFolder("f1", { target: "f1/A001.JPG" });
     assert.equal(app.state.layout.panes.filePane.w, 116);
     app.setSimilarityExpanded(true);
-    assert.equal(app.state.layout.panes.filePane.w, 226);
+    // SIM-07：文件栏加宽 = 116 + 面板宽 110 + 外边距 4。
+    assert.equal(app.state.layout.panes.filePane.w, 230);
     assert.equal(app.settings.similarityPanelExpanded, true);
     app.setSimilarityExpanded(false);
     assert.equal(app.state.layout.panes.filePane.w, 116);

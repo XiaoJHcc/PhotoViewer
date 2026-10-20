@@ -7,11 +7,14 @@
  *
  * 公开 API：
  *   setExpanded(v) / setFilebarVisible(v) / setAnchor(photo|null) / setDisplayed(photoId)
- *   setPool(cards) / setParams({ threshold, maxResults }) / rated(photoId)
+ *   setPool(cards) / setFolderCards(cards) / setParams({ threshold, maxResults }) / rated(photoId)
  *   snapshot() -> { visible, state: "empty"|"list", emptyText, calculating,
  *                   items: [{ card, score, percent, barRatio, current }],
  *                   unextracted, action: { label, visible }, progress: {done,total}|null, error }
  *   extractAll() -> Promise<void>
+ *
+ * setPool 是候选池（当前筛选结果）；setFolderCards 是整个文件夹（同名合并后、未经星级筛选），
+ * 用于未提取计数与批量提取。分数为 SIM-08 的归一余弦 clamp((cos+1)/2, 0, 1)。
  */
 import { cosine } from "./features.js";
 import { defaultSettings } from "./settings.js";
@@ -97,6 +100,7 @@ export class SimilarityPanel {
         this.anchor = null;
         this.displayedId = null;
         this.pool = [];
+        this.folderCards = null;
         this.items = [];
         this.unextracted = 0;
         this.progress = null;
@@ -174,6 +178,17 @@ export class SimilarityPanel {
         this.recount();
         if (this.visible) this.requestCompute();
         this.emit();
+    }
+
+    setFolderCards(cards) {
+        // SIM-02/03：提取全部、补齐全部与未提取计数都覆盖整个文件夹（同名合并后、未经星级筛选）。
+        this.folderCards = Array.isArray(cards) ? cards.slice() : [];
+        this.recount();
+        this.emit();
+    }
+
+    _scopeCards() {
+        return this.folderCards ?? this.pool;
     }
 
     setParams(next = {}) {
@@ -261,7 +276,8 @@ export class SimilarityPanel {
                 const photo = pickExtractedPhoto(card);
                 const features = await this.store.read(photo, { signal });
                 if (!features) return null;
-                return { card, score: cosine(anchorFeatures.cls, features.cls) };
+                // SIM-08：分数 = clamp((cos + 1) / 2, 0, 1)，阈值与百分比都按归一分数。
+                return { card, score: clamp((cosine(anchorFeatures.cls, features.cls) + 1) / 2, 0, 1) };
             }));
             if (gen !== this.generation) return;
             this.finish(this.buildItems(entries));
@@ -305,13 +321,13 @@ export class SimilarityPanel {
     }
 
     recount() {
-        this.unextracted = countUnextracted(this.pool);
+        this.unextracted = countUnextracted(this._scopeCards());
     }
 
     extractAll() {
         // SIM-03：提取中重复触发无效。
         if (this.progress) return Promise.resolve();
-        const groups = collectGroups(this.pool).filter((group) => !groupExtracted(group.photos));
+        const groups = collectGroups(this._scopeCards()).filter((group) => !groupExtracted(group.photos));
         this.error = null;
         this.progress = { done: 0, total: groups.length };
         this.emit();
@@ -358,9 +374,8 @@ export class SimilarityPanel {
         const hasAnchor = Boolean(this.anchor);
         let emptyText = null;
         if (items.length === 0) {
-            if (this.calculating) {
-                emptyText = null;
-            } else if (!hasAnchor || this.pool.length === 0) {
+            // SIM-06：没有上一次结果时按 SIM-02 显示空态文案，不留白；有上一次结果则保留到新结果落地。
+            if (!hasAnchor || this.pool.length === 0) {
                 emptyText = "无相似照片";
             } else {
                 // SIM-02：两种空态互斥。

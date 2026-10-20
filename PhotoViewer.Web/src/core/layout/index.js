@@ -12,17 +12,11 @@ import { filmGeometry } from "./film.js";
 import { cardFrames, cardNodes } from "./card.js";
 import { analysisCrossSize, analysisGeometry } from "./analysis.js";
 import { similarityGeometry } from "./similarity.js";
+import { approximateTextWidth } from "./text.js";
 
-const COUNT_FONT_SIZE = 12;
+export { approximateTextWidth } from "./text.js";
+
 const HINT_TITLE_LINE_HEIGHT = 20;
-
-export function approximateTextWidth(text, fontSizePt) {
-    let units = 0;
-    for (const char of String(text)) {
-        units += char.codePointAt(0) < 0x2e80 ? 0.55 : 1;
-    }
-    return units * fontSizePt;
-}
 
 export function computeLayout(scene, { t, profile = "web", measureText = approximateTextWidth } = {}) {
     if (typeof t !== "function") throw new Error("computeLayout 需要令牌函数 t");
@@ -38,7 +32,8 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     const commandCount = scene.commandCount ?? 0;
     const tileCount = scene.analysisTileCount ?? 6;
     const countText = scene.countText ?? `共 ${photoCount} 张`;
-    const countWidth = measureText(countText, COUNT_FONT_SIZE, 400);
+    // FILTER-04：计数字号取 filter.count.fontSize，宽度按平台字体自然宽度测量。
+    const countWidth = measureText(countText, t("filter.count.fontSize"), 400);
 
     const control = computeControlBar({
         axis,
@@ -68,7 +63,8 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
         axis,
         availableWidth: width,
         itemCount: scene.similarityItemCount ?? 0,
-    }, t);
+        dockTexts: scene.similarityDockTexts ?? [],
+    }, t, measureText);
 
     const { panes } = computePanes({
         width,
@@ -171,16 +167,18 @@ function createOverlays(t, profile, layout, panes) {
     }
 
     function hintFrames(pane) {
-        const width = Math.min(t("image.hint.maxWidth"), pane.w);
+        // STATE-01：提示块（标题 + 副文自然高）整体垂直居中，左右各留 ≥ image.hint.inset。
+        const width = Math.max(0, Math.min(t("image.hint.maxWidth"), pane.w - 2 * t("image.hint.inset")));
         const detailHeight = t("image.hint.detail.fontSize");
-        const total = t("image.hint.detail.gap") + detailHeight;
+        const gap = t("image.hint.detail.gap");
+        const total = HINT_TITLE_LINE_HEIGHT + (gap - HINT_TITLE_LINE_HEIGHT) + detailHeight;
         const top = pane.y + (pane.h - total) / 2;
         const x = pane.x + (pane.w - width) / 2;
         return {
             title: { x, y: top, w: width, h: HINT_TITLE_LINE_HEIGHT },
             detail: {
                 x,
-                y: top + t("image.hint.detail.gap"),
+                y: top + gap,
                 w: width,
                 h: detailHeight,
             },
