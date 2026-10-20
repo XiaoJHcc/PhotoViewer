@@ -129,6 +129,12 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <summary>验收专用:直方图瓦片是否已出图。</summary>
     internal bool HasHistogram => _histogramTile.HasBitmap;
 
+    /// <summary>验收专用:直方图是否绘制了准星(应为 false,ANALYSIS-08)。</summary>
+    internal bool HistogramCrosshairVisible => _histogramTile.CrosshairVisible;
+
+    /// <summary>验收专用:诊断瓦片是否绘制了准星。</summary>
+    internal bool DiagnosticCrosshairVisible => _pcaTile.CrosshairVisible;
+
     /// <summary>验收专用:四张诊断瓦片是否都已有内容(即时计算完成)。</summary>
     internal bool HasDiagnostics => _pcaTile.HasBitmap && _cosineTile.HasBitmap && _sharpnessTile.HasBitmap && _shakeOverlay.HasField;
 
@@ -354,12 +360,13 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
     }
 
-    /// <summary>把 presenter 的准星同步到全部诊断瓦片。</summary>
+    /// <summary>把 presenter 的准星同步到四张诊断瓦片；直方图与细节预览不显示准星(ANALYSIS-08)。</summary>
     private void SyncCrosshair()
     {
         double? u = _presenter.CrosshairU;
         double? v = _presenter.CrosshairV;
-        foreach (var tile in new[] { _histogramTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
+        _histogramTile.SetCrosshair(null, null);
+        foreach (var tile in new[] { _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
         {
             tile.SetCrosshair(u, v);
         }

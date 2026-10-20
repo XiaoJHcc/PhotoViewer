@@ -22,15 +22,18 @@ internal static class WindowsIcons
     /// <summary>命令 → 单字形映射。null 表示该命令在本阶段不显示/不可达(P3 延期)。</summary>
     private static readonly Dictionary<string, string?> Glyphs = new(StringComparer.Ordinal)
     {
-        ["Open"] = "\uE8E5",
+        // 打开用文件夹而不是“带箭头文档”，与旧壳和新手预期一致。
+        ["Open"] = "\uE8B7",
         ["Previous"] = "\uE76B",
         ["Next"] = "\uE76C",
         ["Exchange"] = "\uE8AB",
-        ["Fit"] = "\uE9A6",
-        ["ZoomInPreset"] = "\uE8A3",
-        ["ZoomOutPreset"] = "\uE71F",
-        ["ZoomInScale"] = "\uE8A3",
-        ["ZoomOutScale"] = "\uE71F",
+        // 缩放适应沿用旧壳的对外双对角箭头（BackToWindow），不用带方框的 FitPage。
+        ["Fit"] = "\uE73F",
+        // 放大/缩小用纯加号/减号，不用放大镜（放大镜在 18 点尺寸下与“适应”难区分）。
+        ["ZoomInPreset"] = "\uE710",
+        ["ZoomOutPreset"] = "\uE738",
+        ["ZoomInScale"] = "\uE710",
+        ["ZoomOutScale"] = "\uE738",
         ["SetRating0"] = ClearGlyph,
         ["SetRating1"] = StarGlyph,
         ["SetRating2"] = StarGlyph,
@@ -40,7 +43,8 @@ internal static class WindowsIcons
 
         // 主屏 P3 入口(第二轮补齐):分析栏开关与增强预览
         ["ToggleAnalysisView"] = "\uE9D9",
-        ["ToggleEnhance"] = "\uE945",
+        // 增强预览画对比度半圆（旧壳字形同义），比闪电更贴近“明暗增强”而不是“性能/加速”。
+        ["ToggleEnhance"] = "\uE7A1",
     };
 
     /// <summary>已记录过缺失图标的命令,避免用户配置漂移时每次按键都写日志。</summary>

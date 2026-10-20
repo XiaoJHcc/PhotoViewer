@@ -348,6 +348,12 @@ internal static class WindowsLayout
     /// <summary>提取按钮文字色(旧壳 #CCC)。</summary>
     public static readonly Color SimilarityActionForeground = Token(DesignTokens.ColorSimActionForeground);
 
+    /// <summary>提取按钮悬停底色(旧壳 #3A3A3A)。</summary>
+    public static readonly Color SimilarityActionHover = Token(DesignTokens.ColorSimActionHover);
+
+    /// <summary>提取按钮按下底色。</summary>
+    public static readonly Color SimilarityActionPressed = Token(DesignTokens.ColorSimActionPressed);
+
     /// <summary>提取进度条前景(旧壳 #4A7A4A)。</summary>
     public static readonly Color SimilarityProgressForeground = Token(DesignTokens.ColorSimProgress);
 
@@ -449,8 +455,14 @@ internal static class WindowsLayout
     /// <summary>相似聚类开关文字色(旧壳 #AAA)。</summary>
     public static readonly Color SimilarityToggleForeground = Token(DesignTokens.ColorFilterToggleForeground);
 
+    /// <summary>相似聚类开关悬停文字色。</summary>
+    public static readonly Color SimilarityToggleHoverForeground = Token(DesignTokens.ColorFilterToggleHoverForeground);
+
     /// <summary>相似聚类开关选中文字色(旧壳 #AECBEE)。</summary>
     public static readonly Color SimilarityToggleCheckedForeground = Token(DesignTokens.ColorFilterToggleCheckedForeground);
+
+    /// <summary>相似聚类开关选中悬停/按下文字色。</summary>
+    public static readonly Color SimilarityToggleCheckedHoverForeground = Token(DesignTokens.ColorFilterToggleCheckedHoverForeground);
 
     // ===== 配色 =====
 
@@ -492,6 +504,24 @@ internal static class WindowsLayout
 
     /// <summary>命令按钮描边。</summary>
     public static readonly Color CommandButtonBorder = Token(DesignTokens.ColorToolbarCommandBorder);
+
+    /// <summary>命令按钮悬停底色。</summary>
+    public static readonly Color CommandButtonHoverBackground = Token(DesignTokens.ColorToolbarCommandHoverBackground);
+
+    /// <summary>命令按钮悬停描边。</summary>
+    public static readonly Color CommandButtonHoverBorder = Token(DesignTokens.ColorToolbarCommandHoverBorder);
+
+    /// <summary>命令按钮按下底色。</summary>
+    public static readonly Color CommandButtonPressedBackground = Token(DesignTokens.ColorToolbarCommandPressedBackground);
+
+    /// <summary>评分按钮悬停底色。</summary>
+    public static readonly Color RatingHoverBackground = Token(DesignTokens.ColorToolbarRatingHoverBackground);
+
+    /// <summary>评分按钮按下底色。</summary>
+    public static readonly Color RatingPressedBackground = Token(DesignTokens.ColorToolbarRatingPressedBackground);
+
+    /// <summary>禁用控件的内容不透明度；底色与描边保持常态。</summary>
+    public const double DisabledContentAlpha = DesignTokens.ColorToolbarDisabledContentAlpha;
 
     /// <summary>标题栏按钮底色(旧壳默认按钮底色实测 #393939)。</summary>
     public static readonly Color CaptionButtonBackground = Color.FromArgb(0xFF, 0x39, 0x39, 0x39);

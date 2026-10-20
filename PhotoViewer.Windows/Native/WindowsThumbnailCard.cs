@@ -239,8 +239,10 @@ internal sealed class WindowsThumbnailCard : Grid
                 Padding = new Thickness(0),
                 Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
                 BorderThickness = new Thickness(0),
+                CornerRadius = new CornerRadius(4),
                 Content = glyph,
             };
+            WindowsControlStyles.ApplyTransparentSquareButton(button);
             // 星级点击只改评分,不冒泡成"切换主图"(FILM-05)
             button.PointerPressed += (_, e) => e.Handled = true;
             button.Click += (_, _) => RateAsync(value);

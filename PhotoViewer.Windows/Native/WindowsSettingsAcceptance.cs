@@ -50,6 +50,10 @@ internal static class WindowsSettingsAcceptance
 
             Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.Left))) == "←",
                 "方向键显示文本不是箭头");
+            Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.D2))) == "2",
+                "数字键显示文本仍是枚举名");
+            Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.Oem3))) == "`",
+                "OEM 键显示文本仍是枚举名");
             Require(WindowsInput.FormatGesture(AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp))) == "滚轮上",
                 "滚轮显示文本不是“滚轮上”");
             checks.Add("PASS gesture text: arrows and mouse wheel format");

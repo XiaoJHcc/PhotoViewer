@@ -137,6 +137,7 @@
 - **ANALYSIS-06**：细节裁剪各端 `DisplayCrop`；代理期留空。
 - **ANALYSIS-07**：直方图由当前上屏图现算，入口在同一瓦片宿主。
 - **ANALYSIS-08**：准星与 cosine 参考点。四端点按内容矩形落准星；letterbox/角标等同面板空白（macOS 在 `PhotoViewer.Mac/Native/MacDiagnosticTile.cs` 与 `MacAnalysisPanel.cs` 的空白命中里清准星、保留 cosine 参考点）。
+  - **ANALYSIS-08@win / @android**：直方图不显示准星（Windows `SyncCrosshair` 只同步四张诊断瓦片；Android 只对 `Diagnostic` 画准星），与 Mac/iOS 对齐；直方图点按仍是吞掉事件、不改准星。
 - **ANALYSIS-09**：推理提供器 macOS=CoreML、Windows=DirectML、Android=NNAPI、iOS=CPU；编排共享 `AnalysisPresenter`。
 - **ANALYSIS-10、ANALYSIS-11**：状态与无障碍由各端瓦片宿主承担，未专项实现。
 
@@ -147,15 +148,19 @@
   - iOS：`PhotoViewer.iOS/Native/iOSControlBar.cs:15`（`UIView`），置于 `UIScrollView`，`Arrange` 后写 `ContentSize` 并夹取偏移（`iOSNativeRootViewController.cs:538`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs:18`（`Grid` + `WindowsWrapPanel`），控制栏自带 `ScrollViewer`（`:126`）保存并夹取偏移。
   - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs:17`（单个自绘 `View`），置于 `AndroidControlBarScrollHost`（`AndroidNativeRootView.cs:134`）滚动，无障碍由 `ExploreByTouchHelper` 虚拟节点承载（`AndroidControlBar.cs:446`）。
-- **TOOLBAR-03**：评分组。禁用统一用系统禁用态（降强调、不隐藏）；评分快捷命令统一画数字（0=叉）。
+- **TOOLBAR-03**：评分组。禁用不换底色、只降内容强调（与 TOOLBAR-10 同一口径，不用系统禁用灰底）；评分快捷命令统一画数字（0=叉）。
   - **TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点，接受为平台差异，不做长按补偿（已登记 10-18）。
 - **TOOLBAR-04**：命令组。桌面 tooltip = 命令名 + 实际主/次绑定；移动端不另造长按浮层，读屏名称含命令名与绑定。
+  - **TOOLBAR-04@win**：命令图标显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
 - **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担，读屏名称含标签与值。
+  - **TOOLBAR-05@win**：值文本取 Bold（12 点 SemiBold 在 Windows 上肉眼与正文同重），标签保持 10 点次要色。
 - **TOOLBAR-06**：EXIF 整组命中打开工具。macOS `PhotoViewer.Mac/Native/MacControlBar.cs:44`/`:217-221`；iOS `PhotoViewer.iOS/Native/iOSControlBar.cs:67-71`；Windows `PhotoViewer.Windows/Native/WindowsControlBar.cs:62-66`；Android `PhotoViewer.Android/Native/AndroidControlBar.cs:290-292`（已接线，待实机核对）。
 - **TOOLBAR-07**：重建。**TOOLBAR-07@ios**：先 `RemoveFromSuperview` 再 `Dispose`（已登记 10-18）；**@win** 按影响范围合并 dispatcher turn；**@android** `MarkDirty` + `OnDraw` 补齐 `Arrange`。
-- **TOOLBAR-08**：溢出。四端都必须有滚动宿主，溢出时可滚、保存并夹取滚动偏移（macOS `NSScrollView`、iOS `UIScrollView`、Windows 控制栏自带 `ScrollViewer`、Android `AndroidControlBarScrollHost`）。
+- **TOOLBAR-08**：溢出。四端都必须有滚动宿主，溢出时可滚、保存并夹取滚动偏移（macOS `NSScrollView`、iOS `UIScrollView`、Windows 控制栏自带 `ScrollViewer`、Android `AndroidControlBarScrollHost`）。滚动只在"单组本身超长"时出现，能换行时必须换行。
+  - **TOOLBAR-08@win**：`WindowsWrapPanel.MainLimit` 由 `ScrollViewer` 视口主轴驱动，滚动宿主测量内容时不再拿到无限主轴，因此列布局按组换列、行布局按组换行；`ScrollableMain` 在能容纳时为 0（smoke 断言 700 宽两向均 ≥2 行且不可滚）。
 - **TOOLBAR-09**：无照片/空控制栏。三组为空时只保留四周 `toolbar.padding`；各端由 `ControlBarLayout` 或 `WindowsLayout` 计算文档长度。
 - **TOOLBAR-10**：视觉与反馈。底色/描边取 `color.toolbar.*`，圆角 `toolbar.cornerRadius`；星形与清零叉字号分别取 `toolbar.rating.glyph.fontSize` / `toolbar.rating.clearGlyph.fontSize`。
+  - **TOOLBAR-10@win**：状态外观集中在 `PhotoViewer.Windows/Native/WindowsControlStyles.cs`：按元素覆盖 WinUI 模板的 Button/ToggleButton 全部状态主题键，禁用底色与描边保持常态、只把内容降到 `color.toolbar.disabled.content.alpha`（0.42），悬停/按下取 `color.toolbar.command.*` / `color.toolbar.rating.*`；相似聚类开关补齐 `Checked/PointerOver/Pressed/Disabled` 前景，悬停不发黑。筛选下拉去掉自定义描边/圆角/字号，回到 WinUI 原生外观，只保留 90×32 占位。
 - **TOOLBAR-11**：无障碍。每个控件暴露名称、禁用态与焦点顺序；Android 由 `ExploreByTouchHelper` 虚拟节点给出（`PhotoViewer.Android/Native/AndroidControlBar.cs:446`）。
 - **TOOLBAR-12**：开关型命令的按钮态。四端当前都不在按钮上表达按下态/强调色，状态只在菜单勾选与面板可见性上。
 
@@ -169,7 +174,7 @@
 - **SIM-04、SIM-05**：卡片复用胶片栏卡片；点选走 `MainViewModel.SetCurrentImageKeepAnchor`，双高亮由各端绑定 `IsCurrent` / `IsCurrentImage`。
 - **SIM-06、SIM-08**：计算与结果。阈值/数量 `PhotoViewer/ViewModels/Settings/SettingsViewModel.AI.cs:17-26`；服务 `PhotoViewer/Core/AI/SimilarityService.cs`。
 - **SIM-09**：面板内改星走与胶片栏同一写回路径，锚点不变；筛选落出由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 处理。
-- **SIM-07**：几何。共享 `PhotoViewer.Shared/SimilarityPanelGeometry.cs:12-46`；四端一律用 `RowWidth` 夹到可用宽一半。Windows 面板的 `SetAvailableWidth` 按 `RowWidth(hasItems, itemCount, availableWidth)` 落宽，列宽 110、`MaxWidth` 同步夹到可用宽一半。
+- **SIM-07**：几何。共享 `PhotoViewer.Shared/SimilarityPanelGeometry.cs:12-46`；四端一律用 `RowWidth` 夹到可用宽一半。Windows 面板的 `SetAvailableWidth` 按 `RowWidth(hasItems, itemCount, availableWidth)` 全额落宽（行布局）或 `PanelWidth`（列布局），外框再让出 4 点右边距；`MaxWidth` 同步夹到可用宽一半。
 - **SIM-10、SIM-11**：错误与无障碍。列表态与空态的动作区都必须承载错误标签，列表态由共享 `ShowActionAreaError` 驱动；macOS `MacSimilarityPanel`、iOS `iOSSimilarityPanel.cs:126`、Windows `WindowsSimilarityPanel` 的停靠错误标签、Android `AndroidSimilarityPanel.cs:96` 各自绑定。
 
 ## menu

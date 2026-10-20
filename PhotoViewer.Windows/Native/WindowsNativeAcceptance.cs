@@ -97,6 +97,14 @@ internal sealed partial class WindowsMainWindow
                     _photo.ZoomBy(1.1);
                     _photo.FitToView();
                     CheckCaptionRegion();
+                    // TOOLBAR-08：空间不足先按组换行/换列；只有单组超长才允许沿主轴滚动。
+                    if (size.Width == 700)
+                    {
+                        RequireSmoke(_controlBar.GroupLineCount >= 2, $"{mode} 700 宽下控制栏未按组换行");
+                        RequireSmoke(_controlBar.ScrollableMain <= 0.5,
+                            $"{mode} 700 宽下控制栏仍以滚动代替换行: {_controlBar.ScrollableMain}");
+                    }
+
                     checks.Add($"PASS resize/present/caption: {mode} {size.Width}x{size.Height} scale={scale}");
                 }
             }
@@ -683,6 +691,9 @@ internal sealed partial class WindowsMainWindow
         _analysis.TriggerTileClickForAcceptance(0.25, 0.25);
         await Task.Delay(120);
         RequireSmoke(_analysis.CosineLabel == "Cosine 8,8", $"cosine 参考点未按点击重算: {_analysis.CosineLabel}");
+        RequireSmoke(_analysis.DiagnosticCrosshairVisible, "诊断瓦片未落准星");
+        // ANALYSIS-08：直方图与细节预览不显示准星。
+        RequireSmoke(!_analysis.HistogramCrosshairVisible, "直方图仍显示准星");
         RequireSmoke(_analysis.ShakeLabel.Length > 0, "抖动判定标签为空");
 
         // 换向:上下布局下分析栏横排,瓦片按宽度均分

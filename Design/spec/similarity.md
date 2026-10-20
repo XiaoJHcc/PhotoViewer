@@ -62,7 +62,8 @@
 
 ## SIM-07 让位几何与列表 · 必须
 
-- 列布局：面板接在 116 宽文件栏右侧，文件栏整体加宽，主图让出等宽空间；面板宽 `sim.panel.width`（110，卡片 96 + 列表内边距 8 + 两侧描边 2），不小于 `sim.panel.minWidth`（106）。
+- 列布局：面板接在 116 宽文件栏右侧，文件栏整体加宽，主图让出等宽空间；面板宽 `sim.panel.width`（110，含 4 点外边距；内容 = 卡片 96 + 列表内边距 8 + 两侧描边 2），不小于 `sim.panel.minWidth`（106）。
+- 两种布局下面板右缘与主图/分隔线之间都必须保留 `sim.panel.margin`（4）的空隙；外边距算在 `RowWidth` 与 `PanelWidth` 之内，不能再从内容宽里扣一次，否则最后一张卡片会被裁掉 4 点。
 - 行布局：从胶片栏右侧切出一段。宽度 = `clamp(卡片数 × 96 + sim.list.padding（8） + 2 × sim.panel.border.width（1）, sim.panel.minWidth（106）, 可用宽度 × sim.panel.maxWidthRatio（0.5）) + sim.panel.margin（4）`；可用宽度一半小于最小宽时以可用宽度一半为准（宁可窄，也不挤占主图）。项目数变化（尤其相似项从无到有）必须重算，否则停靠的动作区会把列表挤成零宽。
 - 行布局面板宽由共享 `RowWidth` 计算：上限为可用宽一半、下限 `sim.panel.minWidth`；四端同一公式，不另设只保证最小宽的列。
 - 面板交叉轴：列布局 = 面板宽；行布局 = 内容高（卡片 144 + 上下内边距 15 + 两侧描边 2），不小于 `sim.panel.minHeight`（154），空态按内容自然高。外观：底色 `color.sim.panel.background`（#1E1E1E）、1 点描边 `color.sim.panel.border`（#404040）、圆角 `sim.panel.cornerRadius`（6）。
