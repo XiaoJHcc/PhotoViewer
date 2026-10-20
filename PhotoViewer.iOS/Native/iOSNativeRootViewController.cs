@@ -642,17 +642,19 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
         var point = recognizer.LocationInView(_navigationImage);
         var navSize = _photo.NavigationSize;
-        if ((double)point.X < 0 || (double)point.Y < 0
-            || (double)point.X > (double)navSize.Width || (double)point.Y > (double)navSize.Height)
+        bool outside = (double)point.X < 0 || (double)point.Y < 0
+            || (double)point.X > (double)navSize.Width || (double)point.Y > (double)navSize.Height;
+        // 起手落在百分比标签或宿主内边距：不属于缩略图拖动区域；拖动中越出缩略图则继续按边界夹取。
+        bool starting = recognizer is UITapGestureRecognizer || recognizer.State == UIGestureRecognizerState.Began;
+        if (outside && starting)
         {
-            // 点到百分比标签或宿主内边距：不属于缩略图拖动区域。
             _navDragging = false;
             return;
         }
 
-        if (recognizer.State == UIGestureRecognizerState.Recognized)
+        if (recognizer is UITapGestureRecognizer)
         {
-            // 点按：框外点按把框心移到该点；框内点按保持原位置。
+            // 点按（UIKit 的 Recognized 与拖动的 Ended 同值，按识别器类型区分）：框外点按把框心移到该点；框内点按保持原位置。
             var tapRect = _photo.NavigationViewport;
             bool tapInside = (double)point.X >= (double)tapRect.X && (double)point.X <= (double)tapRect.X + (double)tapRect.Width
                 && (double)point.Y >= (double)tapRect.Y && (double)point.Y <= (double)tapRect.Y + (double)tapRect.Height;

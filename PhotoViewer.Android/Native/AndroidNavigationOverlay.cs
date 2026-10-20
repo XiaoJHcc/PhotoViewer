@@ -123,9 +123,9 @@ internal sealed class AndroidNavigationOverlay : View
         double density = AndroidUiTheme.Density(Context!);
         double x = e.GetX() / density - DesignTokens.NavPadding;
         double y = e.GetY() / density - DesignTokens.NavPadding;
-        if (x < 0 || y < 0 || x > _navWidthDp || y > _navHeightDp)
+        if (e.ActionMasked == MotionEventActions.Down && (x < 0 || y < 0 || x > _navWidthDp || y > _navHeightDp))
         {
-            // 点到百分比标签或宿主内边距：不属于缩略图拖动区域。
+            // 起手落在百分比标签或宿主内边距：不属于缩略图拖动区域；拖动中越出缩略图则继续按边界夹取。
             _dragging = false;
             return false;
         }

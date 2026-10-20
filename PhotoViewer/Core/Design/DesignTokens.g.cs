@@ -61,6 +61,22 @@ public static class DesignTokens
     public const uint ColorBarBackground = 0xFF111111u;
     /// <summary>color.divider（color） SHELL-01：分区/控件分隔线与描边色。</summary>
     public const uint ColorDivider = 0xFF333333u;
+    /// <summary>color.dropdown.background（color） FILTER-08：下拉按钮常态底（黑 40%）。</summary>
+    public const uint ColorDropdownBackground = 0x66000000u;
+    /// <summary>color.dropdown.background.hover（color） FILTER-08：下拉按钮悬停底（黑 60%）。</summary>
+    public const uint ColorDropdownBackgroundHover = 0x99000000u;
+    /// <summary>color.dropdown.background.pressed（color） FILTER-08：下拉按钮按下底（白 20%）。</summary>
+    public const uint ColorDropdownBackgroundPressed = 0x33FFFFFFu;
+    /// <summary>color.dropdown.border（color） FILTER-08：下拉按钮常态描边。</summary>
+    public const uint ColorDropdownBorder = 0xFF444444u;
+    /// <summary>color.dropdown.border.hover（color） FILTER-08：下拉按钮悬停描边（白 80%）。</summary>
+    public const uint ColorDropdownBorderHover = 0xCCFFFFFFu;
+    /// <summary>color.dropdown.chevron（color） FILTER-08：下拉箭头色（白 80%）。</summary>
+    public const uint ColorDropdownChevron = 0xCCFFFFFFu;
+    /// <summary>color.dropdown.item.selected（color） FILTER-08：下拉当前项底（强调色 60%），整行直角高亮，无勾号。</summary>
+    public const uint ColorDropdownItemSelected = 0x990078D7u;
+    /// <summary>color.dropdown.item.selected.hover（color） FILTER-08：下拉当前项悬停底（强调色 80%）。</summary>
+    public const uint ColorDropdownItemSelectedHover = 0xCC0078D7u;
     /// <summary>color.film.card.background（color） FILM-05：卡片内层占位区 / EXIF 与评分块底色。</summary>
     public const uint ColorFilmCardBackground = 0xFF222222u;
     /// <summary>color.film.card.cachedBorder（color） FILM-05：主图已缓存的淡蓝细边（70.6% 不透明的 #4682B4），独立一层压在缩略图上。</summary>
@@ -99,12 +115,26 @@ public static class DesignTokens
     public const uint ColorFilterToggleHoverBorder = 0xFF666666u;
     /// <summary>color.filter.toggle.hover.foreground（color） FILTER-06：相似聚类开关未勾选悬停文字。</summary>
     public const uint ColorFilterToggleHoverForeground = 0xFFCCCCCCu;
+    /// <summary>color.menu.foreground.disabled（color） MENU-07：菜单与下拉禁用文字（白 40%）。</summary>
+    public const uint ColorMenuForegroundDisabled = 0x66FFFFFFu;
+    /// <summary>color.menu.item.hover（color） MENU-03：菜单项/下拉项悬停底（白 10%），直角。</summary>
+    public const uint ColorMenuItemHover = 0x19FFFFFFu;
+    /// <summary>color.menu.item.pressed（color） MENU-03：菜单项/下拉项按下底（白 20%）。</summary>
+    public const uint ColorMenuItemPressed = 0x33FFFFFFu;
+    /// <summary>color.menu.separator（color） MENU-03：菜单分隔线（白 40%）。</summary>
+    public const uint ColorMenuSeparator = 0x66FFFFFFu;
+    /// <summary>color.menu.shortcut（color） MENU-06：菜单快捷键文字（白 60%）。</summary>
+    public const uint ColorMenuShortcut = 0x99FFFFFFu;
     /// <summary>color.nav.background（color） IMAGE-01：导航图宿主底色（半透明，见 color.nav.background.alpha）。</summary>
     public const uint ColorNavBackground = 0xFF222222u;
     /// <summary>color.nav.background.alpha（ratio） IMAGE-01：导航图宿主底色不透明度。</summary>
     public const double ColorNavBackgroundAlpha = 0.6;
     /// <summary>color.nav.frame（color） IMAGE-01：导航图内可见框描边色。</summary>
     public const uint ColorNavFrame = 0xFFFFFFFFu;
+    /// <summary>color.popup.background（color） MENU-03：弹层底色。</summary>
+    public const uint ColorPopupBackground = 0xFF2B2B2Bu;
+    /// <summary>color.popup.border（color） MENU-03：弹层 1 点描边（黑 36%）。</summary>
+    public const uint ColorPopupBorder = 0x5C000000u;
     /// <summary>color.sim.action.background（color） SIM-01：提取全部/补齐全部按钮与进度条底色。</summary>
     public const uint ColorSimActionBackground = 0xFF2A2A2Au;
     /// <summary>color.sim.action.border（color） SIM-01：动作按钮描边。</summary>
@@ -163,6 +193,18 @@ public static class DesignTokens
     public const uint ColorToolbarRatingPressedBackground = 0xFF3A3A3Au;
     /// <summary>color.viewer.background（color） IMAGE-01：主图观片区底色。</summary>
     public const uint ColorViewerBackground = 0xFF000000u;
+    /// <summary>dropdown.chevron.rightInset（pt） FILTER-08：下拉箭头距按钮右边。</summary>
+    public const double DropdownChevronRightInset = 10.0;
+    /// <summary>dropdown.chevron.size（pt） FILTER-08：下拉箭头（向下 V 形）边长。</summary>
+    public const double DropdownChevronSize = 12.0;
+    /// <summary>dropdown.cornerRadius（pt） FILTER-08：自绘下拉按钮圆角。</summary>
+    public const double DropdownCornerRadius = 6.0;
+    /// <summary>dropdown.fontSize（pt） FILTER-08：自绘下拉按钮文字字号（筛选条）。</summary>
+    public const double DropdownFontSize = 13.0;
+    /// <summary>dropdown.item.paddingX（pt） FILTER-08：下拉项左右内边距；项高 = 文字行高 + 上 5 下 7。</summary>
+    public const double DropdownItemPaddingX = 11.0;
+    /// <summary>dropdown.paddingLeft（pt） FILTER-08：自绘下拉文字左内边距。</summary>
+    public const double DropdownPaddingLeft = 12.0;
     /// <summary>exiftable.cell.paddingX（pt）：名称/中文名/值单元格左右内边距。</summary>
     public const double ExiftableCellPaddingX = 10.0;
     /// <summary>exiftable.cell.paddingY（pt）：名称/中文名/值单元格上下内边距。</summary>
@@ -215,7 +257,7 @@ public static class DesignTokens
     public const double FilmCardSecondLineY = 103.0;
     /// <summary>film.card.spacing（pt） FILM-05：卡片间距；3 点占位已含在卡片外框内，步长即卡片尺寸。</summary>
     public const double FilmCardSpacing = 0.0;
-    /// <summary>film.card.star.fontSize（pt） FILM-05：卡片星级字形字号。</summary>
+    /// <summary>film.card.star.fontSize（pt） FILM-05：卡片星级字形字号（uicons 星形与清零叉，按钮仍为 film.card.star.size 见方）。</summary>
     public const double FilmCardStarFontSize = 10.0;
     /// <summary>film.card.star.size（pt） FILM-05：卡片星级按钮点击区域边长（触屏不放大，触控目标由上下文菜单补足）。</summary>
     public const double FilmCardStarSize = 14.0;
@@ -269,6 +311,40 @@ public static class DesignTokens
     public const double FilterToggleWidth = 90.0;
     /// <summary>filter.toggle.width@android（pt）：android 平台差异值（见 Design/platforms.md）。</summary>
     public const double FilterToggleWidthAndroid = 76.0;
+    /// <summary>icon.check MENU-02：菜单勾选（fi-rr-check）。</summary>
+    public const string IconCheck = "U+F3C8";
+    /// <summary>icon.chevronDown FILTER-08：下拉箭头（fi-rr-angle-small-down）。</summary>
+    public const string IconChevronDown = "U+F153";
+    /// <summary>icon.clear TOOLBAR-03：清零叉（fi-rr-cross）。</summary>
+    public const string IconClear = "U+F4F7";
+    /// <summary>icon.command.exchange TOOLBAR-04：命令 Exchange 图标：uicons fi-rr-exchange。</summary>
+    public const string IconCommandExchange = "U+F5EA";
+    /// <summary>icon.command.fit TOOLBAR-04：命令 Fit 图标：uicons fi-rr-arrow-up-right-and-arrow-down-left-from-center。</summary>
+    public const string IconCommandFit = "U+F1B2";
+    /// <summary>icon.command.next TOOLBAR-04：命令 Next 图标：uicons fi-rr-angle-right。</summary>
+    public const string IconCommandNext = "U+F152";
+    /// <summary>icon.command.open TOOLBAR-04：命令 Open 图标：uicons fi-rr-folder-open。</summary>
+    public const string IconCommandOpen = "U+F6B5";
+    /// <summary>icon.command.previous TOOLBAR-04：命令 Previous 图标：uicons fi-rr-angle-left。</summary>
+    public const string IconCommandPrevious = "U+F151";
+    /// <summary>icon.command.toggleAnalysisView TOOLBAR-04：命令 ToggleAnalysisView 图标：uicons fi-rr-preview。</summary>
+    public const string IconCommandToggleAnalysisView = "U+FAD2";
+    /// <summary>icon.command.toggleEnhance TOOLBAR-04：命令 ToggleEnhance 图标：uicons fi-rr-circle-half-stroke。</summary>
+    public const string IconCommandToggleEnhance = "U+F406";
+    /// <summary>icon.command.zoomInPreset TOOLBAR-04：命令 ZoomInPreset 图标：uicons fi-rr-plus。</summary>
+    public const string IconCommandZoomInPreset = "U+FAAC";
+    /// <summary>icon.command.zoomInScale TOOLBAR-04：命令 ZoomInScale 图标：uicons fi-rr-plus。</summary>
+    public const string IconCommandZoomInScale = "U+FAAC";
+    /// <summary>icon.command.zoomOutPreset TOOLBAR-04：命令 ZoomOutPreset 图标：uicons fi-rr-minus。</summary>
+    public const string IconCommandZoomOutPreset = "U+F94E";
+    /// <summary>icon.command.zoomOutScale TOOLBAR-04：命令 ZoomOutScale 图标：uicons fi-rr-minus。</summary>
+    public const string IconCommandZoomOutScale = "U+F94E";
+    /// <summary>icon.font TOOLBAR-04：主屏图标字体：Flaticon UIcons Regular Rounded，四端与 Web 共用同一 ttf（PhotoViewer/Assets/Fonts）。</summary>
+    public const string IconFont = "uicons-regular-rounded";
+    /// <summary>icon.photoPlaceholder FILM-05：缩略图未就绪/失败占位（fi-rr-picture）。</summary>
+    public const string IconPhotoPlaceholder = "U+FA78";
+    /// <summary>icon.star TOOLBAR-04：星形（fi-rr-star 描边；点亮用同字形填色 color.star.on）。评分快捷命令为星形内叠数字（0 为叉 fi-rr-cross U+F4F7）。</summary>
+    public const string IconStar = "U+FCE9";
     /// <summary>image.busy.bottomOffset（pt） IMAGE-01：增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
     public const double ImageBusyBottomOffset = 24.0;
     /// <summary>image.busy.cornerRadius（pt） IMAGE-01：增强提示药丸圆角。</summary>
@@ -313,6 +389,20 @@ public static class DesignTokens
     public const int InputLongPressDelay = 500;
     /// <summary>input.longPress.slop（pt） INPUT-07：长按判定的移动容差；超过即转为平移或滚动。</summary>
     public const double InputLongPressSlop = 8.0;
+    /// <summary>menu.check.gap（pt） MENU-03：勾选列与文本的间距。</summary>
+    public const double MenuCheckGap = 12.0;
+    /// <summary>menu.check.size（pt） MENU-03：菜单勾选列宽；菜单中有任一勾选项时所有项文本让出该列 + menu.check.gap。</summary>
+    public const double MenuCheckSize = 16.0;
+    /// <summary>menu.item.fontSize（pt） MENU-03：菜单项字号。</summary>
+    public const double MenuItemFontSize = 14.0;
+    /// <summary>menu.item.height（pt） MENU-03：菜单项高（14 点字：上 4 + 行高 20 + 下 7）。</summary>
+    public const double MenuItemHeight = 31.0;
+    /// <summary>menu.item.paddingX（pt） MENU-03：菜单项左右内边距。</summary>
+    public const double MenuItemPaddingX = 11.0;
+    /// <summary>menu.separator.inset（pt） MENU-03：分隔线左右内缩；上下各 4、线厚 1。</summary>
+    public const double MenuSeparatorInset = 12.0;
+    /// <summary>menu.shortcut.gap（pt） MENU-06：快捷键列与文本的最小间距（快捷键右对齐）。</summary>
+    public const double MenuShortcutGap = 24.0;
     /// <summary>motion.analysis.fallback.delay（ms） ANALYSIS-01：分析栏回退计算前的延迟（先保主图浏览性能）；WindowsLayout 与共享 AnalysisPresenter 各存一份。</summary>
     public const int MotionAnalysisFallbackDelay = 500;
     /// <summary>motion.analysis.fallback.yieldTimeout（ms） ANALYSIS-09：未提取回退在让位等待主图上屏与缩略图通道空闲时的最长等待。</summary>
@@ -331,6 +421,8 @@ public static class DesignTokens
     public const int MotionSimParamsThrottle = 150;
     /// <summary>motion.status.toast.duration（ms） FILM-06：窗口内状态提示停留时长。</summary>
     public const int MotionStatusToastDuration = 4000;
+    /// <summary>motion.tooltip.delay（ms） TOOLBAR-04：悬停到提示出现的延迟；连续划过其他控件时 100ms。</summary>
+    public const int MotionTooltipDelay = 400;
     /// <summary>nav.cornerRadius（pt） IMAGE-01：导航图半透明宿主圆角。</summary>
     public const double NavCornerRadius = 6.0;
     /// <summary>nav.frame.thickness（pt） IMAGE-01：导航图内白色可见框描边厚度。</summary>
@@ -349,6 +441,10 @@ public static class DesignTokens
     public const double NavPercentFontSize = 12.0;
     /// <summary>nav.percent.topGap（pt） IMAGE-01：百分比文本与缩略图之间的上间距。</summary>
     public const double NavPercentTopGap = 8.0;
+    /// <summary>popup.cornerRadius（pt） MENU-03：弹层（下拉列表、菜单、提示）圆角；弹层无阴影。</summary>
+    public const double PopupCornerRadius = 5.0;
+    /// <summary>popup.padding（pt） MENU-03：弹层上下内边距（左右为 0）。</summary>
+    public const double PopupPadding = 4.0;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>
@@ -469,6 +565,8 @@ public static class DesignTokens
     public const double ToolbarRatingButtonSize = 30.0;
     /// <summary>toolbar.rating.clearGlyph.fontSize（pt） TOOLBAR-10：0 星清零叉的字形字号；星形仍用 toolbar.rating.glyph.fontSize。</summary>
     public const double ToolbarRatingClearGlyphFontSize = 12.0;
+    /// <summary>toolbar.rating.digit.fontSize（pt） TOOLBAR-04：评分快捷命令星形内叠的数字字号（半粗，按钮背景色）。</summary>
+    public const double ToolbarRatingDigitFontSize = 9.0;
     /// <summary>toolbar.rating.glyph.fontSize（pt） TOOLBAR-01：评分星形字形字号；0 星清零叉为 12。</summary>
     public const double ToolbarRatingGlyphFontSize = 16.0;
     /// <summary>toolbar.rating.group.inset（pt） TOOLBAR-01：评分分组主轴两端留白（加在星条自身，不加在分组边框上）。</summary>
@@ -489,4 +587,8 @@ public static class DesignTokens
     public const double ToolsWindowMinWidth = 560.0;
     /// <summary>tools.window.min.width@windows（pt）：windows 平台差异值（见 Design/platforms.md）。</summary>
     public const double ToolsWindowMinWidthWindows = 800.0;
+    /// <summary>tooltip.fontSize（pt） TOOLBAR-04：提示文字字号；内边距 8/5/8/7，最大宽 tooltip.maxWidth。</summary>
+    public const double TooltipFontSize = 12.0;
+    /// <summary>tooltip.maxWidth（pt） TOOLBAR-04：提示最大宽，超出换行。</summary>
+    public const double TooltipMaxWidth = 320.0;
 }

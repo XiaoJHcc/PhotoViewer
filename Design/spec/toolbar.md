@@ -39,7 +39,7 @@
 
 - 六个等宽按钮：0 号为清零叉，1–5 为星。点击第 n 星把**当前照片**写成 n 星，点击清零叉写成 0 星；不做第二次点击取消（取消走清零叉）。
 - 顺序随方向：行布局自左向右 0→5；列布局自上而下 5→0（0 号在底端）。同一行/列内不得出现两种方向。
-- 星色取当前照片评分：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。
+- 星色取当前照片评分：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。星形取 `icon.star`、清零叉取 `icon.clear`，字号见 TOOLBAR-10。
 - 点星只改评分：不切图、不改变当前照片身份、不抢胶片栏位置（PRIN-02、FILM-06）。评分对象是当前照片，不取鼠标悬停的卡片。
 - 写回失败时星级保持原值，并给出状态提示（停留 `motion.status.toast.duration`，4000；见 [state](state.md)）；不得先点亮再静默回滚，也不得显示虚假成功。
 - 无照片时整组禁用：按钮保留几何可见，但不可点。禁用按 TOOLBAR-10 的统一禁用态处理（底色描边不变、只降内容强调，不隐藏、不改尺寸），不得用 `Opacity≈0.1` 近似隐藏，也不用系统禁用灰底。
@@ -49,10 +49,11 @@
 ## TOOLBAR-04 命令组：显隐、顺序、图标与提示 · 必须
 
 - 内容 = 设置中"在控制栏显示"的命令，按用户排序；壳不写死第二份命令列表，也不因按钮少而补占位按钮。
-- 每个命令 `toolbar.command.button.size`（40）见方、间距 `toolbar.command.spacing`（8），图标字号 `toolbar.command.glyph.fontSize`（18）；图标取平台原生图标集（语义一致，字形平台自定）；按钮尺寸不随名称或文字长度拉宽。
+- 每个命令 `toolbar.command.button.size`（40）见方、间距 `toolbar.command.spacing`（8），图标字号 `toolbar.command.glyph.fontSize`（18）；按钮尺寸不随名称或文字长度拉宽。
+- 图标统一取 `icon.font`（uicons Regular Rounded，`PhotoViewer/Assets/Fonts/uicons-regular-rounded.ttf`）的 `icon.command.*` 码位，四端与 Web 同一字形，居中绘制于 40 见方按钮内，颜色取 `color.text.primary`（禁用按 TOOLBAR-10 降强调）。平台改用系统图标集（SF Symbols、Segoe Fluent Icons 等）须登记为平台差异，且语义须与下条一致。
 - 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；增强预览用**对比度半圆**，不用闪电/加速类字形。
 - 桌面悬停提示包含**命令名 + 实际主/次绑定**，格式 `命令名 · 主 / 次`，按键用可读键名（数字键 `2`、符号键 `;` `=` `` ` `` 等），不得出现 `D2`、`Oem3` 这类枚举名；未设置的槽省略，主次相同只显示一次，不能出现"未设置"字样。绑定改变后提示立即更新。触屏没有悬停，绑定以设置页快捷键列表为等价入口；四端都不做长按浮层，读屏名称必须含命令名与当前绑定。
-- 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，统一画数字（0 显示为叉），四端一致；星形不作为替代字形，0 星与 1–5 星必须可辨。
+- 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，1–5 为**星形内叠数字**：`icon.star` 星形按 `toolbar.command.glyph.fontSize` 画在按钮中心，数字 `toolbar.rating.digit.fontSize`（9）半粗、取按钮底色，叠在星形中心；0 为清零叉 `icon.clear`。0 星与 1–5 星必须可辨。图标字体无法叠字的平台可以只画数字（0=叉），须登记为平台差异。
 - 当前壳未实现、或按 SCOPE-01 未开放的命令不生成按钮，也不显示禁用死按钮。
 - 无照片时除"打开文件"外全部禁用。
 - 命令点击与键盘快捷键执行同一条命令（同一命令 ID、同一语义），按钮不复制业务逻辑。
@@ -61,7 +62,7 @@
 ## TOOLBAR-05 EXIF 摘要：内容、格式与更新 · 必须
 
 - 内容 = 设置启用的 EXIF 项，按设置顺序；默认光圈、快门、ISO、等效焦距。
-- 每块尺寸见 TOOLBAR-02（`toolbar.exif.block.*`）：标签 `toolbar.exif.label.fontSize`（10）次要色，值 `toolbar.exif.value.fontSize`（12）**加粗**主色；两者居中、尾部截断，标签不得与值同字号同色。小字号下"半粗"在部分平台看起来与常规无异，故统一取加粗。
+- 每块尺寸见 TOOLBAR-02（`toolbar.exif.block.*`）：标签 `toolbar.exif.label.fontSize`（10）次要色，值 `toolbar.exif.value.fontSize`（12）半粗主色；两者居中、尾部截断，标签不得与值同字号同色。小字号下半粗与常规难以区分的平台可以取加粗（TOOLBAR-05@win）。
 - 值按摄影习惯格式化：光圈 `f/2.8`（至多 1 位小数、去尾零）；快门 <1 s 且接近 1/n（偏差 ≤2%）写 `1/250`，否则写小数秒（至多 2 位，`0.3s`），≥1 s 写 `2s`、`1s`、`1.5s`；ISO 整数；焦距 `14mm`、`10.5mm`（至多 1 位小数、去尾零）；曝光补偿 `+0.7 EV`；拍摄时间摘要 `yyyy-MM-dd HH:mm`（完整值见悬停提示）；缺失值显示 `--`，不留空块、不猜测、不用别的字段顶替。
 - 完整值必须可查看：桌面悬停提示 `标签 · 值`；触屏没有悬停，完整值由整组点击进入的 EXIF 详情承担（TOOLBAR-06），触控读屏名称包含标签与值。
 - 切图后不得残留上一张照片的 EXIF 值：先显示占位或新值，EXIF 异步就绪后再更新；更新只改文本，不改变分组数量与几何。
@@ -105,10 +106,10 @@
 - 常态/悬停/按下：
   - 命令按钮：悬停 `color.toolbar.command.hover.background`（#3D3D3D）+ 描边 `color.toolbar.command.hover.border`（#666666），按下 `color.toolbar.command.pressed.background`（#2A2A2A）。
   - 评分按钮：常态与禁用均为透明底，悬停 `color.toolbar.rating.hover.background`（#333333），按下 `color.toolbar.rating.pressed.background`（#3A3A3A）。
-  - 相似聚类开关：未选中悬停 `color.filter.toggle.hover`（#333333）/文字 `color.filter.toggle.hover.foreground`（#CCCCCC）；选中悬停底色 `#26477A`、文字 `color.filter.toggle.checked.hover.foreground`（#FFFFFF）。任何状态都不得让文字回落到黑色。
+  - 相似聚类开关：未选中悬停 `color.filter.toggle.hover`（#333333）/文字 `color.filter.toggle.hover.foreground`（#CCCCCC）；选中悬停底色 `color.filter.toggle.checked.hover.background`（#26477A）、文字 `color.filter.toggle.checked.hover.foreground`（#CFE0F5）。任何状态都不得让文字回落到黑色。
 - 禁用**不换底色、不换描边、不改尺寸**，只把内容（字形/文字）降到 `color.toolbar.disabled.content.alpha`（0.42）；不得出现系统禁用灰底，也不得用 `Opacity≈0.1` 近似隐藏。无照片时评分组与照片相关命令呈禁用态，"打开文件"仍可用。
 - 控件保持方形实际绘制区域（`toolbar.command.button.size`，40），原生按钮边框不得只画出扁条。
-- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；不得为了"套设计"另画一套下拉。
+- 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生控件、只能自绘的平台按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`），不模仿某个平台的原生外观（README §3）。
 - 观片环境固定深色，语义色取平台（PRIN-08、PRIN-09）。
 
 ## TOOLBAR-11 无障碍与焦点 · 必须

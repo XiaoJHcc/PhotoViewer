@@ -104,7 +104,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **FILTER-07@ios / @android**：行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议（已登记 10-18）。
-- **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；三个下拉为自绘仿 `NSPopUpButton`，菜单自绘（键盘、勾选、Esc 与 MENU-03 同一组件）。
+- **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；浏览器无原生下拉弹层，三个下拉按 FILTER-08 自绘外观（旧壳 Avalonia Fluent 深色），菜单与 MENU-03 共用同一自绘弹层组件。
 
 ## image
 
@@ -117,7 +117,6 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **IMAGE-02**：`PhotoViewport.ToggleFit` / `ApplyImage`。
   - **IMAGE-04@ios / @android**：触屏最小缩放为适应态，小图/RAW 预览夹回适应（已登记 10-18）。
 - **IMAGE-04**：缩放范围 `PhotoViewer.Shared/PhotoViewport.cs:250`/`:283`；预设与比例缩放入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。
-  - **IMAGE-04@mac**：导航图白框可拖动定位（IMAGE-06，10-20 起桌面与触屏同一交互）。
 - **IMAGE-06**：导航图。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs`（`NavigatorHostView`）+ `MetalPhotoView.CenterOnNormalizedPoint`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `UpdateNavigationIndicator`/`OnNavigationPan`；Windows `PhotoViewer.Windows/Native/WindowsNavigator.cs`（`PressAt`/`DragTo`）+ `WindowsPhotoView.CenterOnNormalizedPoint`；Android `PhotoViewer.Android/Native/AndroidNavigationOverlay.cs`（`OnTouchEvent`）+ `AndroidPhotoView.CenterOnNormalizedPoint`。
   - 四端白框都可拖动定位（桌面鼠标 / 触屏手指）；拖框只改视口中心，滚轮与捏合仍归主图缩放松手。
   - **IMAGE-06@android**：点按 = 把该点直接移到视口中心（`AndroidNavigationOverlay` 的 Down/Move 同一路径，已登记 10-18）。
@@ -145,7 +144,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **ANALYSIS-06**：细节裁剪各端 `DisplayCrop`；代理期留空。
 - **ANALYSIS-07**：直方图由当前上屏图现算，入口在同一瓦片宿主。
 - **ANALYSIS-08**：准星与 cosine 参考点。四端点按内容矩形落准星；letterbox/角标等同面板空白（macOS 在 `PhotoViewer.Mac/Native/MacDiagnosticTile.cs` 与 `MacAnalysisPanel.cs` 的空白命中里清准星、保留 cosine 参考点）。
-  - **ANALYSIS-08@win / @android**：直方图不显示准星（Windows `SyncCrosshair` 只同步四张诊断瓦片；Android 只对 `Diagnostic` 画准星），与 Mac/iOS 对齐；直方图点按仍是吞掉事件、不改准星。
+  - 直方图不显示准星（Windows `SyncCrosshair` 只同步四张诊断瓦片；Android 只对 `Diagnostic` 画准星），四端一致；直方图点按吞掉事件、不改准星。
 - **ANALYSIS-09**：推理提供器 macOS=CoreML、Windows=DirectML、Android=NNAPI、iOS=CPU；编排共享 `AnalysisPresenter`。
 - **ANALYSIS-10、ANALYSIS-11**：状态与无障碍由各端瓦片宿主承担，未专项实现。
 
@@ -159,7 +158,10 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **TOOLBAR-03**：评分组。禁用不换底色、只降内容强调（与 TOOLBAR-10 同一口径，不用系统禁用灰底）；评分快捷命令统一画数字（0=叉）。
   - **TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点，接受为平台差异，不做长按补偿（已登记 10-18）。
 - **TOOLBAR-04**：命令组。桌面 tooltip = 命令名 + 实际主/次绑定；移动端不另造长按浮层，读屏名称含命令名与绑定。
-  - **TOOLBAR-04@win**：命令图标显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
+  - 图标基准为 `icon.font`（uicons Regular Rounded）与 `icon.command.*` 码位；Android 与 Web 直接使用该字体（Android `AndroidUiTheme.IconFontAsset`）。
+  - **TOOLBAR-04@mac / @ios**：命令图标用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`；评分快捷命令为星形符号与数字标题并排（不是星内叠字）。
+  - **TOOLBAR-04@android**：评分快捷命令只画数字（0=叉），不叠星形。
+  - **TOOLBAR-04@win**：命令图标用 Segoe Fluent Icons，评分快捷命令只画数字（0=叉）；显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
 - **TOOLBAR-05**：EXIF 摘要。桌面 tooltip `标签 · 值`；触屏完整值由 TOOLBAR-06 的详情页承担，读屏名称含标签与值。
   - **TOOLBAR-05@win**：值文本取 Bold（12 点 SemiBold 在 Windows 上肉眼与正文同重），标签保持 10 点次要色。
 - **TOOLBAR-06**：EXIF 整组命中打开工具。macOS `PhotoViewer.Mac/Native/MacControlBar.cs:44`/`:217-221`；iOS `PhotoViewer.iOS/Native/iOSControlBar.cs:67-71`；Windows `PhotoViewer.Windows/Native/WindowsControlBar.cs:62-66`；Android `PhotoViewer.Android/Native/AndroidControlBar.cs:290-292`（已接线，待实机核对）。
@@ -201,7 +203,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **MENU-05@android**：标题与时间可拆成两行原生外观；标题行不可点击，时间补秒与时区（已登记 10-18）。
 - **MENU-07**：不可用项与并发。各端菜单项集合不随照片/列表内容增删；无照片时「增强」置灰、工具打开空态（macOS `MacMainWindow.cs:933`、iOS `iOSContextMenus.cs:40`、Windows `WindowsMainWindow.cs:418`、Android `AndroidNativeRootView.cs:607`）。
 - **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
-- **MENU-03@web**：主图菜单与卡片菜单为自绘弹层，夹在窗口内，键盘与读屏语义按 MENU-03。
+- **MENU-03@web**：主图菜单与卡片菜单为自绘弹层（MENU-03 自绘外观），夹在窗口内，键盘与读屏语义按 MENU-03；悬停提示同样自绘（`tooltip.*`）。
 - **MENU-05@web**：触屏（`pointerType=touch`）长按卡片弹卡片菜单；桌面右键卡片仍弹主图菜单。
 
 ## input
