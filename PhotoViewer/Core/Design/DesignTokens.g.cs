@@ -185,7 +185,7 @@ public static class DesignTokens
     public const uint ColorToolbarCommandHoverBorder = 0xFF666666u;
     /// <summary>color.toolbar.command.pressed.background（color） TOOLBAR-10：命令按钮按下底色，比常态更深，与悬停拉开层次。</summary>
     public const uint ColorToolbarCommandPressedBackground = 0xFF2A2A2Au;
-    /// <summary>color.toolbar.disabled.content.alpha（ratio） TOOLBAR-10：禁用控件只把内容降到该不透明度，底色与描边保持常态（不用系统禁用灰底）。</summary>
+    /// <summary>color.toolbar.disabled.content.alpha（ratio） TOOLBAR-10：自绘控件禁用只把内容降到该不透明度，底色与描边保持常态；原生控件可用系统禁用外观，但须仍清楚可辨。</summary>
     public const double ColorToolbarDisabledContentAlpha = 0.42;
     /// <summary>color.toolbar.rating.hover.background（color） TOOLBAR-10：评分按钮悬停底色（旧壳 StarButton:pointerover #333）。</summary>
     public const uint ColorToolbarRatingHoverBackground = 0xFF333333u;
@@ -303,7 +303,7 @@ public static class DesignTokens
     public const double FilterCountHeight = 17.0;
     /// <summary>filter.gap（pt） FILTER-01：筛选条控件之间的间距。</summary>
     public const double FilterGap = 5.0;
-    /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局从内容前导边起排的起点）。</summary>
+    /// <summary>filter.margin（pt） FILTER-01：筛选条四周外边距（列布局为尾部外边距；行布局整组居中的最小边距，Android 前导对齐时为起点）。</summary>
     public const double FilterMargin = 10.0;
     /// <summary>filter.toggle.cornerRadius（pt） FILTER-01：相似聚类 toggle 自绘药丸圆角。</summary>
     public const double FilterToggleCornerRadius = 6.0;
@@ -467,7 +467,7 @@ public static class DesignTokens
     public const double ShellDragzoneRowHeight = 44.0;
     /// <summary>shell.filebar.content.width（pt） SHELL-01：文件栏内容宽（筛选条与胶片栏共用，分隔线另计 1）。</summary>
     public const double ShellFilebarContentWidth = 116.0;
-    /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位（隐藏标题栏交通灯）；iOS/Android 改用真实安全区，行布局从内容前导边 + 10 起排。</summary>
+    /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位（隐藏标题栏交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
     public const double ShellFilterLeadingInset = 34.0;
     /// <summary>shell.titlebar.button.cornerRadius（pt） SHELL-02：Windows 标题栏按钮圆角（WinUI 控件圆角口径）；代码中为字面量，未进 WindowsLayout。</summary>
     public const double ShellTitlebarButtonCornerRadius = 4.0;

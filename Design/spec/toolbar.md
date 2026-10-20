@@ -42,7 +42,7 @@
 - 星色取当前照片评分：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。点亮的星取实心 `icon.starFilled`（`icon.fontSolid`），未点亮取描边 `icon.star`，清零叉取 `icon.clear`，字号见 TOOLBAR-10。
 - 点星只改评分：不切图、不改变当前照片身份、不抢胶片栏位置（PRIN-02、FILM-06）。评分对象是当前照片，不取鼠标悬停的卡片。
 - 写回失败时星级保持原值，并给出状态提示（停留 `motion.status.toast.duration`，4000；见 [state](state.md)）；不得先点亮再静默回滚，也不得显示虚假成功。
-- 无照片时整组禁用：按钮保留几何可见，但不可点。禁用按 TOOLBAR-10 的统一禁用态处理（底色描边不变、只降内容强调，不隐藏、不改尺寸），不得用 `Opacity≈0.1` 近似隐藏，也不用系统禁用灰底。
+- 无照片时整组禁用：按钮保留几何可见，但不可点。禁用按 TOOLBAR-10：自绘控件保持底色、描边与尺寸，只降内容强调；原生控件可用系统禁用外观（系统色），但仍须清楚可辨，不得用 `Opacity≈0.1` 近似隐藏，也不得改变尺寸或布局。
 - 评分按钮 `toolbar.rating.button.size`（30×30）四端一致；触屏不做长按补偿，低于 44 点由卡片菜单与评分快捷命令承担（平台差异见 platforms.md：TOOLBAR-03@ios）。
 - 关闭评分显示后整组移除，命令组前移，不留空条。
 
@@ -50,9 +50,9 @@
 
 - 内容 = 设置中"在控制栏显示"的命令，按用户排序；壳不写死第二份命令列表，也不因按钮少而补占位按钮。
 - 每个命令 `toolbar.command.button.size`（40）见方、间距 `toolbar.command.spacing`（8），图标字号 `toolbar.command.glyph.fontSize`（18）；按钮尺寸不随名称或文字长度拉宽。
-- 图标统一取 `icon.font`（uicons Regular Rounded，`PhotoViewer/Assets/Fonts/uicons-regular-rounded.ttf`）的 `icon.command.*` 码位，四端与 Web 同一字形，居中绘制于 40 见方按钮内，颜色取 `color.text.primary`（禁用按 TOOLBAR-10 降强调）。平台改用系统图标集（SF Symbols、Segoe Fluent Icons 等）须登记为平台差异，且语义须与下条一致。
+- 图标统一取 `icon.font`（uicons Regular Rounded，`PhotoViewer/Assets/Fonts/uicons-regular-rounded.ttf`）的 `icon.command.*` 码位，四端与 Web 同一字形，居中绘制于 40 见方按钮内，颜色取 `color.text.primary`（自绘禁用按 TOOLBAR-10 降内容强调；原生控件按 TOOLBAR-10 使用系统禁用外观）。平台改用系统图标集（SF Symbols、Segoe Fluent Icons 等）须登记为平台差异，且语义须与下条一致。
 - 图标语义固定，不得用容易误读的抽象字形替代：打开文件用**文件夹**；上一张/下一张用单向箭头；交换用双向箭头；缩放适应用**向外双对角箭头**（“回到窗口大小”），不用带方框的适配图标；放大/缩小用**纯加号/减号**，不用放大镜；增强预览用**对比度半圆**，不用闪电/加速类字形。
-- 桌面悬停提示包含**命令名 + 实际主/次绑定**，格式 `命令名 · 主 / 次`，按键用可读键名（数字键 `2`、符号键 `;` `=` `` ` `` 等），不得出现 `D2`、`Oem3` 这类枚举名；未设置的槽省略，主次相同只显示一次，不能出现"未设置"字样。绑定改变后提示立即更新。提示相对指针偏移 `tooltip.offset.x` / `tooltip.offset.y`，超过宿主时向内夹取；等待 `motion.tooltip.delay`，从一个提示连续划到下一个控件时改为 `motion.tooltip.chainDelay`。触屏没有悬停，绑定以设置页快捷键列表为等价入口；四端都不做长按浮层，读屏名称必须含命令名与当前绑定。
+- 桌面悬停提示包含**命令名 + 实际主/次绑定**，格式 `命令名 · 主 / 次`，按键用可读键名（数字键 `2`、符号键 `;` `=` `` ` `` 等），不得出现 `D2`、`Oem3` 这类枚举名；未设置的槽省略，主次相同只显示一次，不能出现"未设置"字样。绑定改变后提示立即更新。提示相对指针偏移 `tooltip.offset.x` / `tooltip.offset.y`，超过宿主时向内夹取；等待 `motion.tooltip.delay`，从一个提示连续划到下一个控件时改为 `motion.tooltip.chainDelay`。触屏没有悬停；连接键鼠外设时，绑定以设置页快捷键列表为等价入口，读屏名称含命令名与当前绑定；仅直接触控时设置页与按钮均不展示键鼠绑定。四端都不做长按浮层。
 - 评分快捷命令（`SetRating0`–`SetRating5`）显示在命令组时，1–5 为**星形内叠数字**：实心 `icon.starFilled` 星形按 `toolbar.command.glyph.fontSize` 画在按钮中心，数字 `toolbar.rating.digit.fontSize`（9）半粗、取按钮底色，叠在星形中心；0 为清零叉 `icon.clear`。0 星与 1–5 星必须可辨。图标字体无法叠字的平台可以只画数字（0=叉），须登记为平台差异。
 - 当前壳未实现、或按 SCOPE-01 未开放的命令不生成按钮，也不显示禁用死按钮。
 - 无照片时除"打开文件"外全部禁用。
@@ -100,21 +100,23 @@
 
 ## TOOLBAR-10 视觉与反馈 · 应当
 
-- EXIF 块与评分组共用深色底 `color.toolbar.block.background`（#222222）；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身裁切一次，不叠双层圆角。
+- EXIF 块与评分组共用深色底 `color.toolbar.block.background`（#222222）；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
 - 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12）；星形不因按钮 30 见方而缩小到不可辨。
-- 每个小控件只有常态、悬停、按下、禁用四态；**状态切换只改底色、描边与前景色**，不改尺寸、不缩放、不加过渡动画，避免连续划过按钮时闪烁。
+- 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
+- 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
 - 常态/悬停/按下：
   - 命令按钮：悬停 `color.toolbar.command.hover.background`（#3D3D3D）+ 描边 `color.toolbar.command.hover.border`（#666666），按下 `color.toolbar.command.pressed.background`（#2A2A2A）。
   - 评分按钮：常态与禁用均为透明底，悬停 `color.toolbar.rating.hover.background`（#333333），按下 `color.toolbar.rating.pressed.background`（#3A3A3A）。
   - 相似聚类开关：未选中悬停 `color.filter.toggle.hover`（#333333）/文字 `color.filter.toggle.hover.foreground`（#CCCCCC）；选中悬停底色 `color.filter.toggle.checked.hover.background`（#26477A）、文字 `color.filter.toggle.checked.hover.foreground`（#CFE0F5）。任何状态都不得让文字回落到黑色。
-- 禁用**不换底色、不换描边、不改尺寸**，只把内容（字形/文字）降到 `color.toolbar.disabled.content.alpha`（0.42）；不得出现系统禁用灰底，也不得用 `Opacity≈0.1` 近似隐藏。无照片时评分组与照片相关命令呈禁用态，"打开文件"仍可用。
+- 自绘控件禁用**不换底色、不换描边、不改尺寸**，只把内容（字形/文字）降到 `color.toolbar.disabled.content.alpha`（0.42）；不得用 `Opacity≈0.1` 近似隐藏。原生控件可用系统禁用外观（系统色），但必须仍清楚可辨、尺寸与占位不变，不得近似隐藏。无照片时评分组与照片相关命令呈禁用态，"打开文件"仍可用。
+- 焦点态取系统焦点色或平台焦点描边；焦点环不改变几何、不被父容器裁切，鼠标点击不强制留下常驻焦点环。
 - 控件保持方形实际绘制区域（`toolbar.command.button.size`，40），原生按钮边框不得只画出扁条。
 - 小型控件（下拉、菜单、tooltip）外观可以走平台原生，但占位尺寸必须与 TOOLBAR-02 / FILTER 的几何一致；有原生控件的平台不另画一套下拉。没有原生控件、只能自绘的平台按旧壳 Avalonia Fluent 深色外观（`dropdown.*`、`popup.*`、`menu.*`、`tooltip.*`），不模仿某个平台的原生外观（README §3）。
 - 观片环境固定深色，语义色取平台（PRIN-08、PRIN-09）。
 
 ## TOOLBAR-11 无障碍与焦点 · 必须
 
-- 每个控件有可读名称：EXIF 块读"标签 + 值"，评分读"无星级"或"n 星"，命令读命令名与绑定。
+- 每个控件有可读名称：EXIF 块读"标签 + 值"，评分读"无星级"或"n 星"；命令读命令名，显示键鼠控件时附当前绑定。
 - 焦点顺序 = 视觉顺序：EXIF 组 → 评分 0–5 → 命令顺序；平台焦点模型可到达，Enter/Space（或平台等价键）触发。
 - 文本输入或快捷键录制控件获焦时不派发控制栏命令快捷键（INPUT-01）。
 - 禁用控件仍可被读屏识别并报出禁用状态，不因不可用而从无障碍树消失。

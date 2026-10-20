@@ -18,7 +18,7 @@
 | 相似面板 | `MacSimilarityPanel` + `NSCollectionView` | `iOSSimilarityPanel` + `UICollectionView` | `WindowsSimilarityPanel`（`Grid`） | `AndroidSimilarityPanel`（`LinearLayout` + `RecyclerView`） |
 | 主图 / 卡片菜单 | `NSMenu` | `UIContextMenuInteraction` + `UIMenu` | `MenuFlyout` | 自绘 `PopupWindow` |
 | 设置窗口 | SwiftUI `NavigationSplitView` + `Form(.grouped)` | UIKit 半屏 `PageSheet` | WinUI `NavigationView` + `SettingsCard` | Material 3 `BottomSheetDialog` |
-| 工具窗口 | 独立 AppKit `NSWindow`（列表 + 子页） | `PageSheet` + `UINavigationController` | 独立 WinUI 窗口（常驻三分类） | `BottomSheetDialog`（root / exif / dino 三态） |
+| 工具窗口 | 独立 AppKit `NSWindow`（原生侧栏 + 详情） | 设置同款 `PageSheet` + `UINavigationController`（分组列表导航） | 独立 WinUI 窗口（常驻三分类） | 设置同款 `BottomSheetDialog`（分组列表导航） |
 | 状态提示 | 自绘提示条 4 s | 自绘提示条 4 s | 自绘状态提示条，4 s | `TextView` 提示条，4 s |
 | 输入 | `NSEvent` + `MacInput` | `UIPress` + `AppleInputMapping` | `WindowsInput`（虚拟键 / 滚轮） | `AndroidInputMapping`（`KeyEvent`） |
 | 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入见 OPEN-07@android） |
@@ -101,7 +101,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/Core/Settings/SettingsModel.cs:28`；可见性 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`。
 - **FILTER-07**：共享 `PhotoViewer.Shared/MainScreenLayout.cs:29-39`、`:66-69`。
   - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`；几何值与令牌一致（已登记 10-18）。
-  - **FILTER-07@ios / @android**：行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）。
+  - **FILTER-07@android**：手机行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）；iPad 与四端一致，五项整组在安全内容区内居中，不设前导对齐差异。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议（已登记 10-18）。
 - **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；浏览器无原生下拉弹层，三个下拉按 FILTER-08 自绘外观（旧壳 Avalonia Fluent 深色），菜单与 MENU-03 共用同一自绘弹层组件。
@@ -139,8 +139,9 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **ANALYSIS-02@android**：抖动拖影矢量线为简化绘制（已登记 10-18）。
 - **ANALYSIS-03**：等边长由 `AnalysisPanelGeometry` 或 Windows `WindowsAnalysisTilePanel` 的 Measure/Arrange 给出。
   - **ANALYSIS-03@android**：手机纵向按共享公式排 6–7 张，约 58dp；不为手机另设布局（已登记 10-18）。
-- **ANALYSIS-04**：绿框联动。macOS/iOS/Windows hover 或点按；Android 点按定格。
-  - **ANALYSIS-04@ios / @android**：点按定格、再点或点主图空白解除（已登记 10-18）。
+- **ANALYSIS-04**：绿框联动。桌面用指针悬停，直接触控用按下；抬起/取消清除，滑入另一瓦片切换活动目标，四端与 Web 共用一个活动目标状态机，平台只提供事件来源。
+  - 触控平台没有指针悬停，事件来源为按下/拖动/抬起/取消；不另设触控专属的固定选择状态。辅助技术通过瓦片动作显示/清除绿框，走同一状态机。
+  - **ANALYSIS-04@web**：`PointerEvent` 的 `pointerType` 分流；`mouse` 走悬停，`touch`/`pen` 走按下/拖动/抬起/取消，旧指针的抬起事件按指针 id 忽略，不能清除新目标。
 - **ANALYSIS-06**：细节裁剪各端 `DisplayCrop`；代理期留空。
 - **ANALYSIS-07**：直方图由当前上屏图现算，入口在同一瓦片宿主。
 - **ANALYSIS-08**：准星与 cosine 参考点。四端点按内容矩形落准星；letterbox/角标等同面板空白（macOS 在 `PhotoViewer.Mac/Native/MacDiagnosticTile.cs` 与 `MacAnalysisPanel.cs` 的空白命中里清准星、保留 cosine 参考点）。
@@ -155,9 +156,9 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Native/iOSControlBar.cs:15`（`UIView`），置于 `UIScrollView`，`Arrange` 后写 `ContentSize` 并夹取偏移（`iOSNativeRootViewController.cs:538`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsControlBar.cs:18`（`Grid` + `WindowsWrapPanel`），控制栏自带 `ScrollViewer`（`:126`）保存并夹取偏移。
   - Android：`PhotoViewer.Android/Native/AndroidControlBar.cs:17`（单个自绘 `View`），置于 `AndroidControlBarScrollHost`（`AndroidNativeRootView.cs:134`）滚动，无障碍由 `ExploreByTouchHelper` 虚拟节点承载（`AndroidControlBar.cs:446`）。
-- **TOOLBAR-03**：评分组。禁用不换底色、只降内容强调（与 TOOLBAR-10 同一口径，不用系统禁用灰底）；评分快捷命令统一画数字（0=叉）。
+- **TOOLBAR-03**：评分组。自绘控件禁用不换底色、只降内容强调；原生控件可用系统禁用外观但保持可辨、不近似隐藏（与 TOOLBAR-10 同一口径）；评分快捷命令统一画数字（0=叉）。
   - **TOOLBAR-03@ios**：评分按钮 30×30 低于 44 点，接受为平台差异，不做长按补偿（已登记 10-18）。
-- **TOOLBAR-04**：命令组。桌面 tooltip = 命令名 + 实际主/次绑定；移动端不另造长按浮层，读屏名称含命令名与绑定。
+- **TOOLBAR-04**：命令组。桌面 tooltip = 命令名 + 实际主/次绑定；连接键鼠外设时读屏名称含命令名与绑定，仅直接触控不含绑定；移动端不另造长按浮层。
   - 图标基准为 `icon.font`（uicons Regular Rounded）/ `icon.fontSolid`（实心星）与 `icon.*` 码位；Android 与 Web 直接使用该字体（Android `AndroidUiTheme.IconFontAsset`；Web 由 `PhotoViewer.Web/tools/subset-icons.py` 按令牌码位生成 woff2 子集）。
   - **TOOLBAR-04@mac / @ios**：命令图标与评分星用 SF Symbols（`PhotoViewer.Apple/AppleSymbolNames.cs`），语义同 `icon.command.*`。评分快捷命令为 `star.fill` 内叠数字（`PhotoViewer.Mac/Native/MacControlBar.cs`、`PhotoViewer.iOS/Native/iOSControlBar.cs` 的 `RatingDigitLabel`），0 为 `xmark`。
   - **TOOLBAR-04@win**：命令图标用 Segoe Fluent Icons，评分快捷命令为实心星 FavoriteStarFill `E735` 内叠数字（0=清零叉）；显式映射在 `PhotoViewer.Windows/Native/WindowsIcons.cs`：打开=Folder `E8B7`、缩放适应=BackToWindow `E73F`（双对角箭头）、放大/缩小=Add `E710` / Remove `E738`、增强=Contrast `E7A1`。tooltip 绑定经 `WindowsInput.FormatGesture` 显示可读键名（`D2`→`2`、`Oem3`→`` ` ``，并补 Oem1–Oem8 别名），不再出现枚举名。
@@ -169,7 +170,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **TOOLBAR-08@win**：`WindowsWrapPanel.MainLimit` 由 `ScrollViewer` 视口主轴驱动，滚动宿主测量内容时不再拿到无限主轴，因此列布局按组换列、行布局按组换行；`ScrollableMain` 在能容纳时为 0（smoke 断言 700 宽两向均 ≥2 行且不可滚）。
 - **TOOLBAR-09**：无照片/空控制栏。三组为空时只保留四周 `toolbar.padding`；各端由 `ControlBarLayout` 或 `WindowsLayout` 计算文档长度。
 - **TOOLBAR-10**：视觉与反馈。底色/描边取 `color.toolbar.*`，圆角 `toolbar.cornerRadius`；星形与清零叉字号分别取 `toolbar.rating.glyph.fontSize` / `toolbar.rating.clearGlyph.fontSize`。
-  - **TOOLBAR-10@win**：状态外观集中在 `PhotoViewer.Windows/Native/WindowsControlStyles.cs`：按元素覆盖 WinUI 模板的 Button/ToggleButton 全部状态主题键，禁用底色与描边保持常态、只把内容降到 `color.toolbar.disabled.content.alpha`（0.42），悬停/按下取 `color.toolbar.command.*` / `color.toolbar.rating.*`；相似聚类开关补齐 `Checked/PointerOver/Pressed/Disabled` 前景，悬停不发黑。筛选下拉去掉自定义描边/圆角/字号，回到 WinUI 原生外观，只保留 90×32 占位。
+  - **TOOLBAR-10@mac / @win / @ios / @android**：原生按钮/开关可用系统悬停、按下、禁用、焦点色与轻量状态动效（L4）；占位、命中区与令牌几何一致，状态切换不引起布局抖动、残留或裁切。自绘控件按 `color.toolbar.*` 规则绘制，禁用只降内容，圆角不与系统 bezel 裁切叠加。
+  - **TOOLBAR-10@win**：控件状态外观集中在 `PhotoViewer.Windows/Native/WindowsControlStyles.cs`：在 WinUI 模板上按元素覆盖 Button/ToggleButton 的状态主题键，禁用底色与描边保持常态、只把内容降到 `color.toolbar.disabled.content.alpha`（0.42），悬停/按下取 `color.toolbar.command.*` / `color.toolbar.rating.*`；相似聚类开关补齐 `Checked/PointerOver/Pressed/Disabled` 前景，悬停不发黑。筛选下拉去掉自定义描边/圆角/字号，回到 WinUI 原生外观，只保留 90×32 占位。
 - **TOOLBAR-11**：无障碍。每个控件暴露名称、禁用态与焦点顺序；Android 由 `ExploreByTouchHelper` 虚拟节点给出（`PhotoViewer.Android/Native/AndroidControlBar.cs:446`）。
 - **TOOLBAR-12**：开关型命令的按钮态。四端当前都不在按钮上表达按下态/强调色，状态只在菜单勾选与面板可见性上。
 
@@ -211,8 +213,12 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **INPUT-03、INPUT-04、INPUT-06**：主图手势。macOS `MetalPhotoView.ScrollWheel`/`MagnifyWithEvent`；iOS `UIScrollView` + 单指轻扫；Android `ScaleGestureDetector` + `GestureDetector`；Windows `WindowsPhotoView` 指针手势。滚轮精度分流四端统一：精确滚动走平移、离散一格一命令（Windows `WindowsInput.cs:125` 的 `FromWheel`、Android `AndroidPhotoView.cs:422` 的 `OnGenericMotionEvent`）。
 - **INPUT-05**：按键重复。只对可重复命令重复（`InputCommandMap` 的 Repeatable 标记，四端重复入口统一按此设闸）；macOS/Windows/Android 跟系统重复节奏，iOS 用固定节奏。
   - **INPUT-05@ios**：固定 350 ms / 60 ms 节奏（`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:30`/`:32`），属平台差异（已登记 10-18）。
-- **INPUT-07、INPUT-08**：菜单与录制。macOS 真实 `NSEvent` 录制；Windows `WindowsHotkeyRecorder`。
-  - **INPUT-08@ios / @android**：无录制入口（iOS 只读、Android 未实现）（已登记 10-18）。
+- **INPUT-07、INPUT-08**：菜单与录制。macOS 真实 `NSEvent` 录制；Windows `WindowsHotkeyRecorder`；触控优先设备在连接键盘/鼠标/触控板时使用同一录制语义。
+- **INPUT-13**：外设能力与快捷键控件可见性。桌面始终完整；触控优先设备按系统报告的连接状态增删键鼠专用控件。
+  - **INPUT-13@ios**：键盘/鼠标/触控板连接状态取系统通知；连接任一完整显示主/次绑定、录制、清空与冲突，仅直接触控隐藏全部键鼠相关控件但保留模型中的绑定配置；断开最后一个外设取消未完成录制并保留原绑定。Apple 修饰键映射在同一可见条件下显示。
+  - **INPUT-13@android**：连接状态取 `InputManager` 的设备增删；可见性与录制语义同 iOS，动态连接不重置工作副本、不弹软键盘。
+  - **INPUT-13@mac / @win**：桌面保持完整快捷键设置；Apple 修饰键映射只在 macOS 且外设可见条件满足时显示（`PhotoViewer.Apple/AppleInputMapping.cs`）。
+  - 直接触控的手势入口（按压显示绿框、长按菜单、单指轻扫翻页）按实际事件类型处理；连接鼠标或触控板后仍可使用悬停，不能把“触控平台”视为无悬停能力。具体事件映射见各端入口；键鼠设置可见性独立按 INPUT-13 的外设连接状态决定。
 - **INPUT-09**：预设/比例缩放入口。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。
 - **INPUT-10**：无照片时按钮禁用不隐藏、打开类命令始终可用；入口由各端控制栏与空态命中层实现。
 - **INPUT-11**：Android `OnBackPressedCallback` 先关设置/工具 sheet 与菜单。
@@ -247,15 +253,15 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:17`（`PageSheet`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsSettingsWindow.cs:15`（`NavigationView` + `SettingsCard`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`（`BottomSheetDialog`）。
-  - **SETTINGS-01@ios / @android**：无录制，行只读显示主/次绑定与冲突（已登记 10-18）。
+  - iOS / Android：行结构随 INPUT-13 外设能力变化；连接硬件键盘/鼠标/触控板任一显示完整绑定、录制、清空与冲突，仅直接触控隐藏绑定文本、录制、清空、冲突与键盘映射等全部键鼠相关控件，保留命令显隐、排序与模型中的绑定配置。
 - **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页固定深色（iOS 设 `OverrideUserInterfaceStyle = Dark`）。
   - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色（已登记 10-18）。
 - **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.Apply()`（幂等）。
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs:40`）。
 - **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-12、SETTINGS-14、SETTINGS-15**：控件与持久化。
-  - **SETTINGS-12@android**：数值用 `+/-` 步进（与 iOS `UIStepper` 同类）；步进控件不改变取值范围（已登记 10-18）。
+  - **SETTINGS-12@android**：一般数值用 `+/-` 步进（与 iOS `UIStepper` 同类），步进控件不改变取值范围（已登记 10-18）。缩放比例预设行例外：单一数值输入 + `%`，数字居中，`+`/`−` 只做新增 100% 项与删除项，不是步进（SETTINGS-07）。
   - **SETTINGS-10@ios / @android**：AI 页无「清空特征数据库」；移动端长期不提供，配置保留、入口不显示（已登记 10-18）。
-  - **SETTINGS-11@ios / @android**：无录制控件（已登记 10-18）。
+  - iOS / Android：绑定文本、录制、清空与冲突按 INPUT-13 外设能力显示；仅直接触控全部隐藏，断开最后一个外设时取消未完成录制并保留原绑定，不按平台固定为只读。
   - **SETTINGS-14@ios / @android**：JSON 分别存 `NSUserDefaults` 与 `SharedPreferences`，字段不变（已登记 10-18）。
   - 排序四端统一为拖拽（Android 用 `ItemTouchHelper` + 行尾把手，把手轻点给上移/下移菜单，`PhotoViewer.Android/Native/AndroidSettingsReorderList.cs`）。
 - **SETTINGS-12**：数值校验。范围夹取在各设置视图模型（如 `PhotoViewer/ViewModels/Settings/SettingsViewModel.BitmapCache.cs`、`SettingsViewModel.AI.cs`），非法输入不写入。
@@ -265,13 +271,15 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 ## tools
 
 - **TOOLS-01、TOOLS-02**：外壳与入口。
-  - macOS：`PhotoViewer.Mac/Native/MacToolsWindow.cs:16`（独立 `NSWindow`，列表 + 子页）。
-  - iOS：`PhotoViewer.iOS/Native/iOSToolsPresenter.cs`（`PageSheet` + `UINavigationController`）。
+  - macOS：`PhotoViewer.Mac/Native/MacToolsWindow.cs:16`（独立 `NSWindow`，原生侧栏 + 详情；默认 EXIF，无可用 EXIF 时落 DINO）。
+  - iOS / iPadOS：`PhotoViewer.iOS/Native/iOSToolsPresenter.cs`（设置同款 `PageSheet` + `UINavigationController` 分组列表导航；初次打开显示工具列表，不自动进入 DINO）。
   - Windows：`PhotoViewer.Windows/Native/WindowsToolsWindow.cs:16`（`NavigationView` 三分类，无首页）。
-  - Android：`PhotoViewer.Android/Native/AndroidToolsPresenter.cs:24`（`BottomSheetDialog`，root / exif / dino）。
+  - Android：`PhotoViewer.Android/Native/AndroidToolsPresenter.cs:24`（设置同款 `BottomSheetDialog` + 分组列表导航；初次打开显示工具列表，系统返回先回列表再关闭浮层）。
   - **TOOLS-01@win**：工具窗口 960×720、最小 800×560，因常驻侧栏 240 + EXIF 表格 720；普通窗口（进任务栏/Alt-Tab、可最大化）（已登记 10-18）。
   - **TOOLS-01@mac / @ios / @android**：不建「照片数据统计」入口（已登记 10-18）。
 - **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序与其他端一致为 EXIF → DINO → 照片数据统计（已登记 10-18）。
+- **TOOLS-02@mac**：原生侧栏常驻，不设工具首页；默认 EXIF，无可用 EXIF 时落 DINO。
+- **TOOLS-02@ios / @android**：分组列表导航，初次打开显示工具列表，不自动进入 DINO；无当前照片或 EXIF 详情不可用时退回列表。只读边界、生命周期、7 列 EXIF 与 3+2 瓦片不变；原生表格分隔线/分组材质可按 L4 取平台样式，业务列比例与内容不随之改变，也不新增功能。
 - **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 自绘 `NSView` + `ExifTableGeometry`；iOS `UITableView`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
   - **TOOLS-03@android**：4 个内容列承载 7 列几何，手机与平板同口径（已登记 10-18）。
 - **TOOLS-05**：DINO 五瓦片。共享 `PhotoViewer/Core/AI/DinoDiagnosticPresenter.cs`；五瓦片 3+2，第六格留空，刚体拟合文本以整宽块置于网格下方（四端统一）。
