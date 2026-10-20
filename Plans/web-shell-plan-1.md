@@ -160,3 +160,4 @@ PhotoViewer.Web/
 | W2b | ✅ 10-20 | 七个分区组件并行接线 + 共用菜单/选择器/演示面板；核心集成修正（换向定位用最新布局视口等） |
 | W3 | ✅ 10-20 | `?check=all` 页内行为检查 32/32（真实 DOM 事件驱动，覆盖 FILM/FILTER/MENU/INPUT/IMAGE/TOOLBAR/STATE/ANALYSIS/SIM/OPEN/SHELL）；修复 FILM-04 重显/换向定位须等壳层落位后再发（`onReshow` 延到 `layoutReady`）；281 单测全绿；目视走查列/行布局、窄视口、空态、100% 导航图、分析栏、相似面板、1000 张滚动 |
 | W4 | ✅ 10-20 | 审计子代理（可读全仓）逐条对照 Web 与 Mac，46 条差异（文档缺口 23 / 文档错误 6 / Mac 缺口 5 / web 缺陷 7 / web 差异 4），裁定见 [web-shell-gaps.md](web-shell-gaps.md)；令牌 +19、spec 13 个文件修订、platforms 增 `@web` 条目、status 记 Mac 缺口；Web 按新文档修正 15 项；288 单测、`?check=all` 35/35、几何比对（计数宽固定 52）9 布局 363 节点 0 差异 |
+| W5 | ✅ 10-20 | `Design/prototype/` 退役（令牌生成器去掉其产物，几何导出与比对改用 `PhotoViewer.Web/tools/export-geometry.mjs`），Design/README §1/§3/§5/§6/§8、DEV、根 AGENTS 改写；`.github/workflows/web-pages.yml`（推 main 时令牌校验 + 单测 → 发布 Pages），本地模拟发布产物 `?check=all` 35/35。上线需作者在仓库设置开启 Pages（来源 GitHub Actions）并合并到 main |

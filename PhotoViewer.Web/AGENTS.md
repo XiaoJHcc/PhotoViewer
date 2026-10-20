@@ -1,10 +1,10 @@
 # PhotoViewer.Web — Web 参考壳
 
-浏览器里的第五个壳（平台代号 `web`）：完整复刻主屏的业务行为与 macOS 视觉，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、几何比对的样机来源。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与进度见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)，文档缺口台账见 [Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
+浏览器里的第五个壳（平台代号 `web`）：完整复刻主屏的业务行为与 macOS 视觉，照片为程序化合成数据。它同时是三样东西：免下载的在线试用、设计规则的可执行基准（规则变更可先在这里验证再分发四端）、各平台几何比对的基准来源（替代原 `Design/prototype/` 样机）。设置窗口与工具窗口不做（`SCOPE-01@web`）。计划与进度见 [Plans/web-shell-plan-1.md](../Plans/web-shell-plan-1.md)，文档缺口台账见 [Plans/web-shell-gaps.md](../Plans/web-shell-gaps.md)。
 
 ## 唯一依据：Design/
 
-**硬规则**：本壳只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，**不读取** `PhotoViewer/`、`PhotoViewer.*/`（本目录除外）、`Design/prototype/`、`Design/baseline/`、`release/` 下的源码与验收常量，也不照搬其他平台的写法。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与 Mac 的每一处差异都能定位到"文档没写清"或"某端没照文档做"。
+**硬规则**：本壳只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，**不读取** `PhotoViewer/`、`PhotoViewer.*/`（本目录除外）、`Design/baseline/`、`release/` 下的源码与验收常量，也不照搬其他平台的写法。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与 Mac 的每一处差异都能定位到"文档没写清"或"某端没照文档做"。
 
 ## 运行与测试
 

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""比对两份主窗口几何：样机 JSON 与 macOS 验收文本（自动识别格式）。
+"""比对两份主窗口几何：Web 参考壳导出的 JSON 与 macOS 验收文本（自动识别格式）。
 
 用法：
   python3 Tools/compare-layout-geometry.py <a> <b> [--tolerance 0.5]
 
 输入：
-  - 样机 JSON：{"source":"prototype","layouts":{"Col-1200x850":{"root.filePane":[x,y,w,h],...},...}}
+  - 几何 JSON：{"source":"web","layouts":{"Col-1200x850":{"root.filePane":[x,y,w,h],...},...}}
+    （node PhotoViewer.Web/tools/export-geometry.mjs 导出）
   - macOS 验收文本：每行 `布局<TAB>节点名<TAB>(x,y,w,h)`
     （PhotoViewer.Mac --pv-native-layout 导出的 native-layout-geometry.txt）
 
@@ -65,8 +66,8 @@ def load(path: Path) -> dict[str, dict[str, list[float]]]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="比对主窗口几何")
-    parser.add_argument("a", type=Path, help="第一份几何（样机 JSON 或 Mac 文本）")
-    parser.add_argument("b", type=Path, help="第二份几何（样机 JSON 或 Mac 文本）")
+    parser.add_argument("a", type=Path, help="第一份几何（JSON 或 Mac 文本）")
+    parser.add_argument("b", type=Path, help="第二份几何（JSON 或 Mac 文本）")
     parser.add_argument("--tolerance", type=float, default=0.5, help="单轴允许误差（点），默认 0.5")
     args = parser.parse_args()
 

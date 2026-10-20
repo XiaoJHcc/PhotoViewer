@@ -63,7 +63,7 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 | **Serve Web** | 在 `PhotoViewer.Web/` 起本地静态服务，浏览器打开 `http://localhost:8080/`（ES module 不能经 `file://` 加载）。 |
 | **Test Web** | 校验令牌产物最新并运行 `node --test` 纯逻辑单测。 |
 
-只需 Node 18+ 与 Python 3，无其他依赖。页面参数与实现约束见 [Web 模块手册](PhotoViewer.Web/AGENTS.md)。
+只需 Node 18+ 与 Python 3，无其他依赖。推到 `main` 后由 `.github/workflows/web-pages.yml` 先跑令牌校验与单测，再发布到 GitHub Pages（需在仓库设置中把 Pages 来源设为 GitHub Actions）。页面参数与实现约束见 [Web 模块手册](PhotoViewer.Web/AGENTS.md)。
 
 ### iOS / iPadOS
 
@@ -119,13 +119,13 @@ bash PhotoViewer.Android/setup-android-signing.sh
 
 ### 设计令牌与几何
 
-`Design/tokens.json` 是设计数值的唯一来源；生成的 C# / 样机 / Web 令牌文件不得手改：
+`Design/tokens.json` 是设计数值的唯一来源；生成的 C# / Web 令牌文件不得手改：
 
 ```bash
 python3 Tools/generate-design-tokens.py
 python3 Tools/generate-design-tokens.py --check
-node Design/prototype/export-geometry.mjs --out /tmp/proto-geometry.json
-python3 Tools/compare-layout-geometry.py /tmp/proto-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
+node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52 --out /tmp/web-geometry.json
+python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
 ```
 
 ### 在 macOS 类型检查 Windows 壳
