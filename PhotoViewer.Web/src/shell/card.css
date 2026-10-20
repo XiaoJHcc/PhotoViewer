@@ -118,7 +118,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: calc(var(--pv-film-thumb-size) * 0.32);
+    font-size: var(--pv-film-card-placeholderGlyph-fontSize);
     color: var(--pv-color-text-secondary);
     pointer-events: none;
 }

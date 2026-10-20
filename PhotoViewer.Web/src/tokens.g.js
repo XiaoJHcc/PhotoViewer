@@ -120,6 +120,7 @@ const tokens = Object.freeze({
     "film.card.name.height": 12,
     "film.card.name.width": 86,
     "film.card.name.y": 89,
+    "film.card.placeholderGlyph.fontSize": 25.6,
     "film.card.secondLine.bar.cornerRadius": 4,
     "film.card.secondLine.fontSize": 9,
     "film.card.secondLine.height": 11,
@@ -192,11 +193,13 @@ const tokens = Object.freeze({
     "image.zoom.step.out": 0.8,
     "input.longPress.delay": 500,
     "input.longPress.slop": 8,
+    "menu.check.fontSize": 12,
     "menu.check.gap": 12,
     "menu.check.size": 16,
     "menu.item.fontSize": 14,
     "menu.item.height": 31,
     "menu.item.paddingX": 11,
+    "menu.minWidth": 160,
     "menu.separator.inset": 12,
     "menu.shortcut.gap": 24,
     "motion.analysis.fallback.delay": 500,
@@ -208,6 +211,7 @@ const tokens = Object.freeze({
     "motion.image.zoom.duration": 250,
     "motion.sim.params.throttle": 150,
     "motion.status.toast.duration": 4000,
+    "motion.tooltip.chainDelay": 100,
     "motion.tooltip.delay": 400,
     "nav.cornerRadius": 6,
     "nav.frame.thickness": 1,
@@ -289,6 +293,8 @@ const tokens = Object.freeze({
     "tools.window.min.width": 560,
     "tooltip.fontSize": 12,
     "tooltip.maxWidth": 320,
+    "tooltip.offset.x": 12,
+    "tooltip.offset.y": 16,
 });
 export const platformTokens = Object.freeze({
     "android": Object.freeze({

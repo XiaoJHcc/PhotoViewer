@@ -856,7 +856,7 @@ const CHECKS = [
     },
     {
         id: "IMAGE-06",
-        title: "导航图白框可拖动：只改视口中心、不改倍率；按在别处先把框心移过去",
+        title: "导航图白框可拖动：只改视口中心、不改倍率；按在别处先把框心移过去；第二指让位捏合",
         async run(shell, h) {
             const { app } = shell;
             const canvas = h.photoCanvas();
@@ -899,6 +899,44 @@ const CHECKS = [
             h.assert(Math.abs(centerU - expectU) <= 0.02 && Math.abs(centerV - expectV) <= 0.02,
                 `按在别处未把框心移过去：${centerU.toFixed(2)}, ${centerV.toFixed(2)} ≠ ${expectU.toFixed(2)}, ${expectV.toFixed(2)}`);
             h.assert(app.state.viewport.percentText === percent, "点按导航图改变了倍率");
+
+            // 导航图拖动中第二指按下：取消拖动，两指交给主图捏合。
+            const navRect = nav.getBoundingClientRect();
+            const navX = navRect.left + navRect.width / 2;
+            const navY = navRect.top + navRect.height / 2;
+            const canvasRect = canvas.getBoundingClientRect();
+            const canvasX = canvasRect.left + canvasRect.width / 2;
+            const canvasY = canvasRect.top + canvasRect.height / 2;
+            // 第二指沿两指连线向外移动，保证间距增大。
+            const spanX = canvasX - navX;
+            const spanY = canvasY - navY;
+            const span = Math.hypot(spanX, spanY) || 1;
+            const outX = canvasX + spanX / span * 80;
+            const outY = canvasY + spanY / span * 80;
+            h.pointer(nav, "pointerdown", navX, navY, { pointerType: "touch", pointerId: 21 });
+            await h.tick(20);
+            h.assert(nav.classList.contains("is-dragging"), "单指按在导航图未开始拖动");
+            const frameBeforeSecond = { ...app.state.viewport.navigator.frame };
+            const scaleBefore = app.state.viewport.scale;
+
+            h.pointer(canvas, "pointerdown", canvasX, canvasY, { pointerType: "touch", pointerId: 22 });
+            await h.tick(20);
+            h.assert(!nav.classList.contains("is-dragging"), "第二指按下未取消导航图拖动");
+            const frameAfterSecond = app.state.viewport.navigator.frame;
+            h.assert(frameAfterSecond.x === frameBeforeSecond.x && frameAfterSecond.y === frameBeforeSecond.y,
+                "第二指按下时导航图仍移动了视口");
+
+            h.pointer(canvas, "pointermove", outX, outY, { pointerType: "touch", pointerId: 22 });
+            await h.tick(20);
+            h.assert(app.state.viewport.scale > scaleBefore,
+                `两指未缩放主图：${scaleBefore} → ${app.state.viewport.scale}`);
+            h.pointer(canvas, "pointerup", outX, outY, { pointerType: "touch", pointerId: 22 });
+            h.pointer(nav, "pointerup", navX, navY, { pointerType: "touch", pointerId: 21 });
+            await h.tick(20);
+            // 恢复指针类型：后续检查模拟的是鼠标双击。
+            h.pointer(canvas, "pointerdown", canvasX, canvasY);
+            h.pointer(canvas, "pointerup", canvasX, canvasY);
+            await h.tick(20);
         },
     },
     {
@@ -1316,6 +1354,81 @@ const CHECKS = [
             const settings = JSON.parse(localStorage.getItem("PhotoViewer.Settings"));
             h.assert(!("sortKey" in settings) && !("ratingFilter" in settings), "排序/筛选被写入设置");
             h.assert(app.state.sortKey === "size", "排序未应用");
+        },
+    },
+    {
+        id: "SHELL-06",
+        title: "图标字形只出现在 aria-hidden 文本中，纯字形控件由 aria-label 命名",
+        async run(shell, h) {
+            const { app } = shell;
+            const windowEl = h.dom(".pv-window");
+
+            function isPrivateUse(code) {
+                return (code >= 0xE000 && code <= 0xF8FF) || code >= 0xF0000;
+            }
+
+            function privateUseOf(text) {
+                for (const character of String(text ?? "")) {
+                    if (isPrivateUse(character.codePointAt(0))) return character;
+                }
+                return null;
+            }
+
+            // 可读文本：跳过 aria-hidden 子树的文本内容。
+            function readableText(node) {
+                let text = "";
+                for (const child of node.childNodes) {
+                    if (child.nodeType === Node.TEXT_NODE) text += child.nodeValue;
+                    else if (child.nodeType === Node.ELEMENT_NODE && child.getAttribute("aria-hidden") !== "true") {
+                        text += readableText(child);
+                    }
+                }
+                return text.trim();
+            }
+
+            function scan() {
+                const offenders = [];
+                let glyphs = 0;
+                const walker = document.createTreeWalker(windowEl, NodeFilter.SHOW_TEXT);
+                for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+                    const character = privateUseOf(node.nodeValue);
+                    if (!character) continue;
+                    glyphs += 1;
+                    // 字形必须单独落在 aria-hidden 的 span 里，不与可读文字混排。
+                    const holder = node.parentElement?.closest('span[aria-hidden="true"]');
+                    const alone = holder && [...holder.textContent].every((entry) => isPrivateUse(entry.codePointAt(0)));
+                    if (!alone) {
+                        offenders.push(`「${character}」@ ${node.parentElement?.className || node.parentElement?.tagName}`);
+                    }
+                }
+                // 纯字形按钮：去掉 aria-hidden 子树后没有文字时，名称必须由 aria-label 提供。
+                for (const button of windowEl.querySelectorAll("button")) {
+                    if (!button.querySelector(".pv-icon")) continue;
+                    if (readableText(button)) continue;
+                    if (button.getAttribute("aria-label") || button.getAttribute("aria-labelledby")) continue;
+                    offenders.push(`按钮无名称 @ ${button.className}`);
+                }
+                return { offenders, glyphs };
+            }
+
+            let result = scan();
+            h.assert(result.glyphs > 0, "主屏没有图标字形，检查无效");
+            h.assert(result.offenders.length === 0, `字形进入可读文本：${result.offenders.slice(0, 4).join("；")}`);
+
+            // 菜单勾选字形只在菜单打开时存在。
+            await h.openMainMenu();
+            result = scan();
+            h.assert(result.offenders.length === 0, `菜单字形进入可读文本：${result.offenders.slice(0, 4).join("；")}`);
+            h.key("Escape");
+            await h.tick(20);
+
+            // 相似面板复用卡片组件；打开一次确认列表态也满足同一条约束。
+            app.setSimilarityExpanded(true);
+            await h.tick(160);
+            result = scan();
+            h.assert(result.offenders.length === 0, `相似面板字形进入可读文本：${result.offenders.slice(0, 4).join("；")}`);
+            app.setSimilarityExpanded(false);
+            await h.tick(40);
         },
     },
 ];

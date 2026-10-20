@@ -41,7 +41,7 @@
 - 菜单已展开时不叠加弹出第二个菜单；拖入文件、切换栏位导致主图区重建时先关闭菜单。
 - 菜单展开期间暂停照片全局快捷键（与文本输入、录制控件同一守卫，[input](input.md) INPUT-01），关闭后恢复；菜单内部的方向键、回车、Esc 由菜单消费。
 - **应当**：使用平台原生菜单控件；自绘实现须登记为平台差异，并同样满足本条的定位、勾选、键盘与无障碍要求（MENU-03@android、MENU-03@web）。
-- 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `icon.check` 占左侧 `menu.check.size` 列（菜单内有任一勾选项时所有项让出该列）；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针。
+- 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影、最小宽 `menu.minWidth`；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `icon.check` 占左侧 `menu.check.size` 列、字号 `menu.check.fontSize`（菜单内有任一勾选项时所有项让出该列）；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针；下拉弹层以按钮宽为最小宽，不取 `menu.minWidth`。
 - 平台差异见 platforms.md（MENU-03@android）。
 
 ## MENU-04 弹出不改变观片布局 · 必须

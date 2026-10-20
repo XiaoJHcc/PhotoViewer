@@ -55,7 +55,7 @@ tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告�
 tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
 
-图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
+图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。字形一律放在单独的 `aria-hidden="true"` span 里，纯字形控件的可访问名称由 `aria-label` 提供，不得让私有区字符进入 `role="application"` 容器的可读文本；`?check=shell` 的 SHELL-06 会遍历窗口文本节点拦截回归。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
 
 ```bash
 python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli，pyftsubset 可用 PYFTSUBSET 指定
@@ -68,6 +68,7 @@ python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli
 - **单位**：几何一律为逻辑点（CSS px = pt）；物理 100% 用 `devicePixelRatio` 换算（IMAGE-01）。
 - **注释**：默认不写；只在实现某条规则的关键分支写 `// FILM-03：<为什么>`。不写阶段号。
 - **风格**：4 空格缩进、双引号、分号；命名导出；不引入任何第三方依赖。
+- **主图手势**：`core/input.js` 的 `PhotoGesture` 判定单指/鼠标的平移、轻扫、导航图拖动与捏合；导航图只接单指/鼠标拖动，第二指按下即取消拖动并把两指交给主图捏合（IMAGE-06），DOM 捕获与导航图命中留在 `shell/photo.js`。
 
 ## 平台差异（`@web`）
 

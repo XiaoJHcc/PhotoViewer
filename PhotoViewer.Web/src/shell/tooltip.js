@@ -2,17 +2,16 @@
  * 自绘悬停提示（TOOLBAR-04@web、MENU-03@web）：浏览器原生 title 外观不受控，改为统一组件。
  * createTooltip({ host, t }) → { destroy }
  * 触发：任意带 data-tooltip 的元素（宿主内全局委托）；延迟 motion.tooltip.delay，
- * 从上一个提示连续划到下一个控件时取 100ms；出现于指针右下，超出宿主向内夹取。
- * 按下、滚轮、离开控件、键盘操作、滚动、窗口失焦均隐藏；提示层 pointer-events: none。
+ * 从上一个提示连续划到下一个控件时取 motion.tooltip.chainDelay；出现于指针右下（tooltip.offset.*），
+ * 超出宿主向内夹取。按下、滚轮、离开控件、键盘操作、滚动、窗口失焦均隐藏；提示层 pointer-events: none。
  */
 import { el } from "./dom.js";
 
-const OFFSET_X = 12;
-const OFFSET_Y = 16;
-const CHAIN_MS = 400;
-const CHAIN_DELAY = 100;
-
 export function createTooltip({ host, t }) {
+    const offsetX = t("tooltip.offset.x");
+    const offsetY = t("tooltip.offset.y");
+    const chainDelay = t("motion.tooltip.chainDelay");
+    const chainWindow = t("motion.tooltip.delay");
     const node = el("div", { class: "pv-tooltip", role: "tooltip", hidden: true });
     host.append(node);
 
@@ -43,8 +42,8 @@ export function createTooltip({ host, t }) {
         const width = node.offsetWidth;
         const height = node.offsetHeight;
         // 出现在指针右下；超出宿主时向内夹取。
-        const left = Math.min(x + OFFSET_X, Math.max(0, hostRect.width - width));
-        const top = Math.min(y + OFFSET_Y, Math.max(0, hostRect.height - height));
+        const left = Math.min(x + offsetX, Math.max(0, hostRect.width - width));
+        const top = Math.min(y + offsetY, Math.max(0, hostRect.height - height));
         node.style.left = `${Math.max(0, left)}px`;
         node.style.top = `${Math.max(0, top)}px`;
     }
@@ -62,8 +61,8 @@ export function createTooltip({ host, t }) {
         const text = target.dataset.tooltip ?? "";
         if (!text) return;
         // TOOLBAR-04：连续划过相邻控件时缩短等待，避免提示逐条重等。
-        const chained = performance.now() - lastHiddenAt <= CHAIN_MS;
-        const delay = chained ? CHAIN_DELAY : t("motion.tooltip.delay");
+        const chained = performance.now() - lastHiddenAt <= chainWindow;
+        const delay = chained ? chainDelay : t("motion.tooltip.delay");
         timer = setTimeout(() => {
             timer = null;
             if (current !== target) return;

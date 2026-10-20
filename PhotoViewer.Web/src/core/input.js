@@ -6,7 +6,7 @@
  * （"WheelUp"、"WheelDown"、"MiddleClick"），例："Ctrl+KeyN"、"Ctrl+WheelUp"。
  *
  * 公开 API：gestureFromKey / gestureFromMouse / WheelInterpreter / CommandMap / isRepeatable /
- * KeyDispatcher / gestureText / tooltipText / SwipeRecognizer / LongPressRecognizer。
+ * KeyDispatcher / gestureText / tooltipText / SwipeRecognizer / LongPressRecognizer / PhotoGesture。
  */
 
 const MODIFIER_ORDER = ["ctrl", "alt", "shift", "meta"];
@@ -433,5 +433,130 @@ export class LongPressRecognizer {
     cancel() {
         if (this.active && this.active.timer !== null) this.clock.clearTimeout(this.active.timer);
         this.active = null;
+    }
+}
+
+/**
+ * 主图指针手势状态机（INPUT-03/06、IMAGE-06）：
+ * 单指/鼠标落在导航图上进入导航图拖动；任何第二根手指按下都取消导航图拖动并改为两指捏合，
+ * 锚点取两指中点。鼠标只有平移与导航图拖动，触摸另有轻扫。
+ * 只负责状态与几何，DOM 捕获、导航图命中与命令派发留在壳层。
+ */
+export class PhotoGesture {
+    constructor({ tapSlop = 6 } = {}) {
+        this.tapSlop = tapSlop;
+        this.pointers = new Map();
+        this.mode = "none";
+        this.nav = null;
+        this.pan = null;
+        this.pinch = null;
+        this.down = null;
+        this.tap = true;
+    }
+
+    get pointerCount() {
+        return this.pointers.size;
+    }
+
+    begin({ id, x, y, touch = false, zoomed = false, navigator = null }) {
+        this.pointers.set(id, { x, y, touch });
+        this.down = { x, y };
+        this.tap = true;
+        if (touch && this.pointers.size > 1) {
+            const navigatorCanceled = this.nav !== null;
+            this.nav = null;
+            this.mode = "pinch";
+            this.pan = null;
+            this.pinch = this._geometry();
+            this.tap = false;
+            return { mode: "pinch", navigatorCanceled };
+        }
+        if (navigator) {
+            this.mode = "navigator";
+            this.nav = { pointerId: id, offsetU: navigator.offsetU, offsetV: navigator.offsetV };
+            return { mode: "navigator" };
+        }
+        if (touch) {
+            this.mode = zoomed ? "pan" : "swipe";
+            this.pan = zoomed ? { x, y } : null;
+            return { mode: this.mode };
+        }
+        this.mode = zoomed ? "pan" : "none";
+        this.pan = zoomed ? { x, y } : null;
+        return { mode: this.mode };
+    }
+
+    move({ id, x, y }) {
+        const entry = this.pointers.get(id);
+        if (!entry) return null;
+        entry.x = x;
+        entry.y = y;
+        if (this.down && Math.hypot(x - this.down.x, y - this.down.y) > this.tapSlop) this.tap = false;
+        if (this.mode === "pinch" && this.pointers.size >= 2) {
+            const next = this._geometry();
+            const previous = this.pinch;
+            this.pinch = next;
+            if (!next || !previous || !(previous.distance > 0) || !(next.distance > 0)) {
+                return { mode: "pinch" };
+            }
+            return { mode: "pinch", ratio: next.distance / previous.distance, center: next.center };
+        }
+        if (this.mode === "navigator" && this.nav && this.nav.pointerId === id) {
+            return { mode: "navigator", offsetU: this.nav.offsetU, offsetV: this.nav.offsetV };
+        }
+        if (this.mode === "pan" && this.pan) {
+            const dx = x - this.pan.x;
+            const dy = y - this.pan.y;
+            this.pan = { x, y };
+            return { mode: "pan", dx, dy };
+        }
+        return { mode: this.mode };
+    }
+
+    end(id) {
+        return this._release(id, true);
+    }
+
+    cancel(id) {
+        return this._release(id, false);
+    }
+
+    _release(id, allowTap) {
+        const entry = this.pointers.get(id);
+        if (!entry) return null;
+        const mode = this.mode;
+        this.pointers.delete(id);
+        let navigatorEnded = false;
+        if (this.nav && this.nav.pointerId === id) {
+            this.nav = null;
+            navigatorEnded = true;
+        }
+        let pinchEnded = false;
+        if (mode === "pinch") {
+            if (this.pointers.size < 2) {
+                this.pinch = null;
+                this.mode = "none";
+                pinchEnded = true;
+            }
+            return { mode, touch: entry.touch, tap: false, navigatorEnded, pinchEnded, done: this.pointers.size === 0 };
+        }
+        // INPUT-07：轻点仅在单指起落、全程未超出容差时成立；导航图上的按压归拖动。
+        const tap = allowTap && mode !== "navigator" && entry.touch && this.tap && this.pointers.size === 0;
+        const done = this.pointers.size === 0;
+        if (done) {
+            this.mode = "none";
+            this.pan = null;
+        }
+        return { mode, touch: entry.touch, tap, navigatorEnded, pinchEnded, done };
+    }
+
+    _geometry() {
+        const points = [...this.pointers.values()];
+        if (points.length < 2) return null;
+        const [a, b] = points;
+        return {
+            distance: Math.hypot(a.x - b.x, a.y - b.y),
+            center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
+        };
     }
 }

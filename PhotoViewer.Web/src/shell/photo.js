@@ -7,7 +7,7 @@
  */
 import { el, place, setText, touches } from "./dom.js";
 import { orientationMatrix } from "../render/procedural.js";
-import { SwipeRecognizer } from "../core/input.js";
+import { PhotoGesture, SwipeRecognizer } from "../core/input.js";
 
 const REGIONS = ["layout", "window", "viewport", "image", "current", "toast", "analysis", "settings"];
 const DRAW_REGIONS = ["layout", "window", "viewport", "image", "current", "settings"];
@@ -59,8 +59,7 @@ export function mountPhoto(host, ctx) {
     host.classList.add("pv-photo");
 
     const swipe = new SwipeRecognizer(t);
-    const pointers = new Map();
-    const gesture = { mode: "none", pan: null, pinch: null, down: null, tap: true };
+    const gesture = new PhotoGesture({ tapSlop: TAP_SLOP });
     let lastTap = null;
     let lastPointerType = "mouse";
     let gestureScale = 1;
@@ -68,7 +67,6 @@ export function mountPhoto(host, ctx) {
     let frame = 0;
     let navSurface = null;
     let navSignature = "";
-    let navDrag = null;
 
     function draw() {
         frame = 0;
@@ -257,52 +255,25 @@ export function mountPhoto(host, ctx) {
         };
     }
 
-    function dragNavigator(point) {
-        if (!navDrag) return;
-        app.navigateTo(clamp01(point.u - navDrag.offsetU), clamp01(point.v - navDrag.offsetV));
+    function dragNavigator(point, offsetU, offsetV) {
+        app.navigateTo(clamp01(point.u - offsetU), clamp01(point.v - offsetV));
     }
 
-    // IMAGE-06：白框可拖动。按在框内保留抓取偏移；按在缩略图其他位置先把框心移到该点再继续拖。
-    function onNavPointerDown(event) {
-        if (event.button !== 0) return;
+    // IMAGE-06：按在框内保留抓取偏移；按在缩略图其他位置先把框心移到该点。
+    function navigatorGrab(event) {
+        if (navEl.hidden || !navEl.contains(event.target)) return null;
         const point = navPointOf(event);
-        if (!point) return;
-        event.preventDefault();
-        event.stopPropagation();
+        if (!point) return null;
         const frame = point.navigator.frame;
         const inside = point.localX >= frame.x && point.localX <= frame.x + frame.w
             && point.localY >= frame.y && point.localY <= frame.y + frame.h;
         const centerU = (frame.x + frame.w / 2) / point.navigator.thumbWidth;
         const centerV = (frame.y + frame.h / 2) / point.navigator.thumbHeight;
-        navDrag = {
-            pointerId: event.pointerId,
+        return {
+            point,
             offsetU: inside ? point.u - centerU : 0,
             offsetV: inside ? point.v - centerV : 0,
         };
-        try {
-            navEl.setPointerCapture(event.pointerId);
-        } catch {
-            // 浏览器不支持指针捕获时继续用冒泡事件
-        }
-        navEl.classList.add("is-dragging");
-        dragNavigator(point);
-    }
-
-    function onNavPointerMove(event) {
-        if (!navDrag || event.pointerId !== navDrag.pointerId) return;
-        const point = navPointOf(event);
-        if (!point) return;
-        event.preventDefault();
-        event.stopPropagation();
-        dragNavigator(point);
-    }
-
-    function onNavPointerUp(event) {
-        if (!navDrag || event.pointerId !== navDrag.pointerId) return;
-        event.stopPropagation();
-        if (navEl.hasPointerCapture?.(event.pointerId)) navEl.releasePointerCapture(event.pointerId);
-        navDrag = null;
-        navEl.classList.remove("is-dragging");
     }
 
     function syncBusy(state, pane) {
@@ -370,16 +341,6 @@ export function mountPhoto(host, ctx) {
         return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     }
 
-    function pinchGeometry() {
-        const points = [...pointers.values()];
-        if (points.length < 2) return null;
-        const [a, b] = points;
-        return {
-            distance: Math.hypot(a.x - b.x, a.y - b.y),
-            center: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 },
-        };
-    }
-
     function capture(event) {
         try {
             host.setPointerCapture(event.pointerId);
@@ -419,52 +380,51 @@ export function mountPhoto(host, ctx) {
         lastPointerType = event.pointerType || "mouse";
         const point = pointOf(event);
         const zoomed = state.viewport.hasImage && !state.viewport.isFit;
-        pointers.set(event.pointerId, point);
+        const touch = event.pointerType === "touch";
+        const grab = navigatorGrab(event);
         capture(event);
-        gesture.down = point;
-        gesture.tap = true;
-        if (event.pointerType === "touch") {
-            swipe.start(event.pointerId, point.x, point.y);
-            if (pointers.size === 1) {
-                gesture.mode = zoomed ? "pan" : "swipe";
-                gesture.pan = zoomed ? point : null;
-            } else {
-                gesture.mode = "pinch";
-                gesture.pan = null;
-                gesture.pinch = pinchGeometry();
-                gesture.tap = false;
-            }
-            return;
+        const result = gesture.begin({
+            id: event.pointerId,
+            x: point.x,
+            y: point.y,
+            touch,
+            zoomed,
+            navigator: grab,
+        });
+        // IMAGE-06：导航图拖动中出现第二指即让位，两指交给主图捏合。
+        if (result.navigatorCanceled) navEl.classList.remove("is-dragging");
+        if (result.mode === "navigator") {
+            navEl.classList.add("is-dragging");
+            host.classList.remove("is-panning");
+            if (grab) dragNavigator(grab.point, grab.offsetU, grab.offsetV);
+        } else if (result.mode === "pan") {
+            host.classList.add("is-panning");
+        } else {
+            host.classList.remove("is-panning");
         }
-        gesture.mode = zoomed ? "pan" : "none";
-        gesture.pan = zoomed ? point : null;
-        if (zoomed) host.classList.add("is-panning");
+        if (touch) swipe.start(event.pointerId, point.x, point.y);
     }
 
     function onPointerMove(event) {
-        if (!pointers.has(event.pointerId)) return;
         const point = pointOf(event);
-        pointers.set(event.pointerId, point);
-        if (gesture.down && Math.hypot(point.x - gesture.down.x, point.y - gesture.down.y) > TAP_SLOP) {
-            gesture.tap = false;
-        }
-        if (gesture.mode === "pinch" && pointers.size >= 2) {
-            const next = pinchGeometry();
-            if (next && gesture.pinch && next.distance > 0 && gesture.pinch.distance > 0) {
-                // INPUT-03：捏合锚点在两指中点。
-                app.zoomBy(next.distance / gesture.pinch.distance, next.center);
-            }
-            gesture.pinch = next;
+        const result = gesture.move({ id: event.pointerId, x: point.x, y: point.y });
+        if (!result) return;
+        if (result.mode === "pinch") {
+            // INPUT-03：捏合锚点在两指中点。
+            if (result.ratio) app.zoomBy(result.ratio, result.center);
             return;
         }
-        if (gesture.mode === "pan" && gesture.pan) {
-            const dx = point.x - gesture.pan.x;
-            const dy = point.y - gesture.pan.y;
-            gesture.pan = point;
-            if (dx !== 0 || dy !== 0) app.pan(dx, dy);
+        if (result.mode === "navigator") {
+            const navPoint = navPointOf(event);
+            event.preventDefault();
+            if (navPoint) dragNavigator(navPoint, result.offsetU, result.offsetV);
             return;
         }
-        swipe.move(event.pointerId, point.x, point.y);
+        if (result.mode === "pan") {
+            if (result.dx || result.dy) app.pan(result.dx, result.dy);
+            return;
+        }
+        if (result.mode === "swipe") swipe.move(event.pointerId, point.x, point.y);
     }
 
     function handleTap(point) {
@@ -480,49 +440,31 @@ export function mountPhoto(host, ctx) {
 
     function onPointerUp(event) {
         const id = event.pointerId;
-        if (!pointers.has(id)) return;
         const point = pointOf(event);
-        pointers.set(id, point);
-        const touch = event.pointerType === "touch";
-        if (touch && gesture.mode === "swipe") {
-            // INPUT-06：适应态单指横滑翻页；放大态横滑是平移，不翻页。
-            const result = swipe.end(id);
-            if (result === "next") {
-                gesture.tap = false;
-                app.navigate(1);
-            } else if (result === "previous") {
-                gesture.tap = false;
-                app.navigate(-1);
-            }
-        } else if (touch) {
-            swipe.end(id);
-        }
-        pointers.delete(id);
+        const result = gesture.end(id);
+        if (!result) return;
         release(event);
-        if (gesture.mode === "pinch") {
-            if (pointers.size < 2) {
-                gesture.mode = "none";
-                gesture.pinch = null;
+        if (result.navigatorEnded) navEl.classList.remove("is-dragging");
+        if (result.touch) {
+            const swipeResult = swipe.end(id);
+            // INPUT-06：适应态单指横滑翻页；放大态横滑是平移，不翻页。
+            if (result.mode === "swipe" && swipeResult) {
+                app.navigate(swipeResult === "next" ? 1 : -1);
+                result.tap = false;
             }
-            return;
         }
-        if (touch && gesture.tap && pointers.size === 0) handleTap(point);
-        if (pointers.size === 0) {
-            gesture.mode = "none";
-            endPan();
-        }
+        if (result.mode === "pinch") return;
+        if (result.touch && result.tap) handleTap(point);
+        if (result.done) endPan();
     }
 
     function onPointerCancel(event) {
         const id = event.pointerId;
-        if (pointers.has(id)) pointers.delete(id);
+        const result = gesture.cancel(id);
         if (event.pointerType === "touch") swipe.end(id);
         release(event);
-        if (pointers.size === 0) {
-            gesture.mode = "none";
-            gesture.pinch = null;
-            endPan();
-        }
+        if (result?.navigatorEnded) navEl.classList.remove("is-dragging");
+        if (result?.done) endPan();
     }
 
     function onWheel(event) {
@@ -617,10 +559,6 @@ export function mountPhoto(host, ctx) {
     host.addEventListener("pointermove", onPointerMove);
     host.addEventListener("pointerup", onPointerUp);
     host.addEventListener("pointercancel", onPointerCancel);
-    navEl.addEventListener("pointerdown", onNavPointerDown);
-    navEl.addEventListener("pointermove", onNavPointerMove);
-    navEl.addEventListener("pointerup", onNavPointerUp);
-    navEl.addEventListener("pointercancel", onNavPointerUp);
     host.addEventListener("wheel", onWheel, { passive: false });
     host.addEventListener("dblclick", onDoubleClick);
     host.addEventListener("click", onClick);
@@ -639,10 +577,6 @@ export function mountPhoto(host, ctx) {
             host.removeEventListener("pointermove", onPointerMove);
             host.removeEventListener("pointerup", onPointerUp);
             host.removeEventListener("pointercancel", onPointerCancel);
-            navEl.removeEventListener("pointerdown", onNavPointerDown);
-            navEl.removeEventListener("pointermove", onNavPointerMove);
-            navEl.removeEventListener("pointerup", onNavPointerUp);
-            navEl.removeEventListener("pointercancel", onNavPointerUp);
             host.removeEventListener("wheel", onWheel);
             host.removeEventListener("dblclick", onDoubleClick);
             host.removeEventListener("click", onClick);

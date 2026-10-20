@@ -245,6 +245,8 @@ public static class DesignTokens
     public const double FilmCardNameWidth = 86.0;
     /// <summary>film.card.name.y（pt） FILM-05：文件名行相对内层占位面的纵坐标。</summary>
     public const double FilmCardNameY = 89.0;
+    /// <summary>film.card.placeholderGlyph.fontSize（pt） FILM-05：缩略图未就绪或解码失败的占位字形字号（Web 参考壳取缩略图边长 × 0.32 的现值）。</summary>
+    public const double FilmCardPlaceholderGlyphFontSize = 25.6;
     /// <summary>film.card.secondLine.bar.cornerRadius（pt） FILM-05：相似度柱状条（槽与填充）圆角。</summary>
     public const double FilmCardSecondLineBarCornerRadius = 4.0;
     /// <summary>film.card.secondLine.fontSize（pt） FILM-05：卡片第二行字号。</summary>
@@ -393,6 +395,8 @@ public static class DesignTokens
     public const int InputLongPressDelay = 500;
     /// <summary>input.longPress.slop（pt） INPUT-07：长按判定的移动容差；超过即转为平移或滚动。</summary>
     public const double InputLongPressSlop = 8.0;
+    /// <summary>menu.check.fontSize（pt） MENU-03：菜单勾选字形字号；勾选列宽仍为 menu.check.size。Web 参考壳现值，旧壳基线未采集菜单内部字号。</summary>
+    public const double MenuCheckFontSize = 12.0;
     /// <summary>menu.check.gap（pt） MENU-03：勾选列与文本的间距。</summary>
     public const double MenuCheckGap = 12.0;
     /// <summary>menu.check.size（pt） MENU-03：菜单勾选列宽；菜单中有任一勾选项时所有项文本让出该列 + menu.check.gap。</summary>
@@ -403,6 +407,8 @@ public static class DesignTokens
     public const double MenuItemHeight = 31.0;
     /// <summary>menu.item.paddingX（pt） MENU-03：菜单项左右内边距。</summary>
     public const double MenuItemPaddingX = 11.0;
+    /// <summary>menu.minWidth（pt） MENU-03：自绘右键菜单最小宽；下拉弹层另以按钮宽为最小宽。Web 参考壳现值，旧壳基线未采集菜单宽。</summary>
+    public const double MenuMinWidth = 160.0;
     /// <summary>menu.separator.inset（pt） MENU-03：分隔线左右内缩；上下各 4、线厚 1。</summary>
     public const double MenuSeparatorInset = 12.0;
     /// <summary>menu.shortcut.gap（pt） MENU-06：快捷键列与文本的最小间距（快捷键右对齐）。</summary>
@@ -425,7 +431,9 @@ public static class DesignTokens
     public const int MotionSimParamsThrottle = 150;
     /// <summary>motion.status.toast.duration（ms） FILM-06：窗口内状态提示停留时长。</summary>
     public const int MotionStatusToastDuration = 4000;
-    /// <summary>motion.tooltip.delay（ms） TOOLBAR-04：悬停到提示出现的延迟；连续划过其他控件时 100ms。</summary>
+    /// <summary>motion.tooltip.chainDelay（ms） TOOLBAR-04：从上一个提示连续划到下一个控件的等待；其余情况取 motion.tooltip.delay。Web 参考壳现值，旧壳基线未采集该切换延迟。</summary>
+    public const int MotionTooltipChainDelay = 100;
+    /// <summary>motion.tooltip.delay（ms） TOOLBAR-04：悬停到提示出现的延迟。</summary>
     public const int MotionTooltipDelay = 400;
     /// <summary>nav.cornerRadius（pt） IMAGE-01：导航图半透明宿主圆角。</summary>
     public const double NavCornerRadius = 6.0;
@@ -595,4 +603,8 @@ public static class DesignTokens
     public const double TooltipFontSize = 12.0;
     /// <summary>tooltip.maxWidth（pt） TOOLBAR-04：提示最大宽，超出换行。</summary>
     public const double TooltipMaxWidth = 320.0;
+    /// <summary>tooltip.offset.x（pt） TOOLBAR-04：提示相对指针的横向偏移；超出宿主时向内夹取。Web 参考壳现值，旧壳基线未采集提示偏移。</summary>
+    public const double TooltipOffsetX = 12.0;
+    /// <summary>tooltip.offset.y（pt） TOOLBAR-04：提示相对指针的纵向偏移；超出宿主时向内夹取。Web 参考壳现值，旧壳基线未采集提示偏移。</summary>
+    public const double TooltipOffsetY = 16.0;
 }
