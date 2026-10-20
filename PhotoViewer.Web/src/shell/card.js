@@ -193,6 +193,7 @@ export function createCard(ctx, { mode = "film" } = {}) {
         const taken = takenOf(photo);
 
         setText(name, card.displayName);
+        root.dataset.key = card.key;
         root.title = taken === undefined || taken === null
             ? card.displayName
             : `${card.displayName}\n${formatTakenFull(taken, photo.tzOffset)}`;

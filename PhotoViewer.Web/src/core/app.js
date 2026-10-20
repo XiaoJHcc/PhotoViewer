@@ -727,7 +727,8 @@ class MainApp {
         this._recomputeLayout();
         if (previousMode && this._layout.layoutMode !== previousMode) {
             this._positioner?.onAxisChanged();
-            this._requestLocate("navigate");
+            // FILM-04：换向后等壳层把新方向的滚动几何落位，再显式定位当前项。
+            this._requestLocate("reshow");
         } else {
             this.filmResized();
         }

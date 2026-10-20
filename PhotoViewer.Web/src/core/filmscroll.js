@@ -158,7 +158,8 @@ export class FilmPositioner {
     }
 
     onReshow() {
-        this._request();
+        // FILM-04：重新显示/换向时列表几何尚未落到 DOM，等 layoutReady 后再按新几何定位。
+        this._pending = true;
     }
 
     onSelectByClick() {

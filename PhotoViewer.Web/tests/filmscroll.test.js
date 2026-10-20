@@ -322,6 +322,8 @@ test("FILM-01：列表替换、换向、隐藏取消；重新显示后 onReshow 
     positioner.onShown();
     assert.deepEqual(scroller.calls.requested, []);
     positioner.onReshow();
+    assert.deepEqual(scroller.calls.requested, []);
+    positioner.layoutReady();
     assert.deepEqual(scroller.calls.requested, [geometry(3, 10, "y", 440)]);
 });
 
@@ -415,7 +417,7 @@ test("FILM-01：排队期间普通尺寸变化只夹取，不提前执行请求"
     assert.equal(positioner.isPending, true);
 });
 
-test("FILM-04：换向后 onReshow 使用新方向的卡片几何", () => {
+test("FILM-04：换向后 onReshow 等布局就绪再按新方向定位", () => {
     const { clock, state, scroller } = createScroller();
     let current = geometry(5, 10, "x", 500);
     const positioner = new FilmPositioner({ scroller, geometry: () => current });
@@ -423,6 +425,11 @@ test("FILM-04：换向后 onReshow 使用新方向的卡片几何", () => {
     positioner.onAxisChanged();
     current = geometry(5, 10, "y", 500);
     positioner.onReshow();
+    clock.advance(350);
+    assert.equal(state.offset, 0);
+    assert.equal(positioner.isPending, true);
+
+    positioner.layoutReady();
     clock.advance(350);
     assert.equal(state.offset, centerOffset(5, 10, "y", 500, t));
 });

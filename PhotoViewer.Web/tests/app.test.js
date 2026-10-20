@@ -241,11 +241,14 @@ test("FILM-04：隐藏后重新显示定位当前项，换向按新方向重算"
     assert.equal(film.state.writes.length, baseline);
     app.toggleFilmbar();
     assert.equal(app.state.panes.film, true);
+    // FILM-04：显隐请求按布局就绪后的新几何定位（壳层在落位后调用 layoutReady）。
+    app.layoutReady();
     const expectedY = 5 + 19 * 144 + (144 - filmViewport(app)) / 2;
     assert.equal(film.state.writes.at(-1), expectedY);
 
     app.setWindowSize(700, 850);
     assert.equal(app.state.layout.layoutMode, "row");
+    app.layoutReady();
     // 换向按新方向与新视口（行布局胶片带宽）重算，不沿用旧视口长度。
     const expectedX = 10 + 19 * 96 + (96 - filmViewport(app)) / 2;
     assert.equal(film.state.writes.at(-1), expectedX);
