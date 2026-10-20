@@ -65,6 +65,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private string _lastFullError = string.Empty;
     private UIImage? _navigationBitmap;
     private DecodedImage? _navigationSource;
+    private bool _navDragging;
+    private double _navGrabX;
+    private double _navGrabY;
     private readonly iOSContextMenuDelegate _photoMenu;
     private readonly UIDropInteraction _drop;
     private readonly HashSet<NSObject> _editingTextInputs = new(ReferenceEqualityComparer.Instance);
@@ -215,7 +218,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _detailHighlight.Hidden = true;
         _photoPane.AddSubview(_detailHighlight);
         // 导航图（缩略图 + 可见框 + 百分比）：缩略图来自 GPU 小目标渲染（与 Mac 同一份共享代码路径），
-        // 只在非适应态显示；点按/拖动导航图把照片居中到该位置（触屏增强，Mac 无此交互）。
+        // 只在非适应态显示；白框可拖动定位（IMAGE-06），按下框内保留抓取偏移。
         _navigationHost.BackgroundColor = iOSColors.FromToken(DesignTokens.ColorNavBackground, DesignTokens.ColorNavBackgroundAlpha);
         _navigationHost.Layer.CornerRadius = (nfloat)DesignTokens.NavCornerRadius;
         _navigationHost.ClipsToBounds = true;
@@ -625,18 +628,88 @@ internal sealed class iOSNativeRootViewController : UIViewController
     }
 
     /// <summary>
-    /// 导航图点按/拖动：把触点对应的归一化图像点移到视口中心（仍经滚动视图位移，视口由回调派生）。
-    /// 这是触屏相对 Mac 的增强——Mac 的导航图只展示、不接受点按。
+    /// 导航图点按/拖动：白框可拖动定位（IMAGE-06）。按下框内保留抓取偏移，
+    /// 按在缩略图其他位置先把框心移到该点；仍经滚动视图位移，视口由回调派生。
     /// </summary>
     /// <param name="recognizer">导航图手势识别器。</param>
     private void OnNavigationPan(UIGestureRecognizer recognizer)
     {
-        if (recognizer.State is UIGestureRecognizerState.Cancelled or UIGestureRecognizerState.Failed) return;
-        var size = _photo.NavigationSize;
+        if (recognizer.State is UIGestureRecognizerState.Cancelled or UIGestureRecognizerState.Failed)
+        {
+            _navDragging = false;
+            return;
+        }
+
         var point = recognizer.LocationInView(_navigationImage);
-        double u = (double)size.Width > 0 ? Math.Clamp((double)point.X / (double)size.Width, 0, 1) : .5;
-        double v = (double)size.Height > 0 ? Math.Clamp((double)point.Y / (double)size.Height, 0, 1) : .5;
-        _photo.CenterOnNormalizedPoint(u, v);
+        var navSize = _photo.NavigationSize;
+        if ((double)point.X < 0 || (double)point.Y < 0
+            || (double)point.X > (double)navSize.Width || (double)point.Y > (double)navSize.Height)
+        {
+            // 点到百分比标签或宿主内边距：不属于缩略图拖动区域。
+            _navDragging = false;
+            return;
+        }
+
+        if (recognizer.State == UIGestureRecognizerState.Recognized)
+        {
+            // 点按：框外点按把框心移到该点；框内点按保持原位置。
+            var tapRect = _photo.NavigationViewport;
+            bool tapInside = (double)point.X >= (double)tapRect.X && (double)point.X <= (double)tapRect.X + (double)tapRect.Width
+                && (double)point.Y >= (double)tapRect.Y && (double)point.Y <= (double)tapRect.Y + (double)tapRect.Height;
+            if (!tapInside)
+            {
+                _navGrabX = (double)tapRect.Width / 2;
+                _navGrabY = (double)tapRect.Height / 2;
+                CenterNavigatorAt(point);
+            }
+
+            _navDragging = false;
+            return;
+        }
+
+        if (recognizer.State == UIGestureRecognizerState.Began)
+        {
+            var rect = _photo.NavigationViewport;
+            bool inside = (double)point.X >= (double)rect.X && (double)point.X <= (double)rect.X + (double)rect.Width
+                && (double)point.Y >= (double)rect.Y && (double)point.Y <= (double)rect.Y + (double)rect.Height;
+            _navGrabX = inside ? (double)point.X - (double)rect.X : (double)rect.Width / 2;
+            _navGrabY = inside ? (double)point.Y - (double)rect.Y : (double)rect.Height / 2;
+            _navDragging = true;
+            if (!inside)
+            {
+                CenterNavigatorAt(point);
+            }
+
+            return;
+        }
+
+        if ((recognizer.State is UIGestureRecognizerState.Changed or UIGestureRecognizerState.Ended) && _navDragging)
+        {
+            CenterNavigatorAt(point);
+        }
+
+        if (recognizer.State is UIGestureRecognizerState.Ended)
+        {
+            _navDragging = false;
+        }
+    }
+
+    /// <summary>把白框拖到触点位置，并把框心换算成归一化图像点。</summary>
+    /// <param name="point">导航图内的触点。</param>
+    private void CenterNavigatorAt(CGPoint point)
+    {
+        var size = _photo.NavigationSize;
+        var rect = _photo.NavigationViewport;
+        if ((double)size.Width <= 0 || (double)size.Height <= 0 || (double)rect.Width <= 0 || (double)rect.Height <= 0)
+        {
+            return;
+        }
+
+        double left = Math.Clamp((double)point.X - _navGrabX, 0, Math.Max(0, (double)size.Width - (double)rect.Width));
+        double top = Math.Clamp((double)point.Y - _navGrabY, 0, Math.Max(0, (double)size.Height - (double)rect.Height));
+        _photo.CenterOnNormalizedPoint(
+            (left + (double)rect.Width / 2) / (double)size.Width,
+            (top + (double)rect.Height / 2) / (double)size.Height);
     }
 
     /// <summary>共享布局矩形 → UIKit frame。</summary>

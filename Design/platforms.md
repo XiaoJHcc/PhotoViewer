@@ -12,7 +12,7 @@
 | 胶片栏 | `NSCollectionView` + `MacFilmstripLayout` | `UICollectionView` + `iOSFilmstripLayout` | `ItemsRepeater` + `StackLayout` + `ScrollViewer` | `RecyclerView` + `AndroidFilmstripView` |
 | 筛选条 | `NSPopUpButton`×3 + 自绘 `FilterToggleButton` | `UIButton` + `UIMenu` | `ComboBox`×3 + `ToggleButton` | 自绘 `View` + 自绘 `PopupWindow` |
 | 主图 | `MetalPhotoView`（`CAMetalLayer`）+ 共享 `MetalPhotoRenderer` | `UIScrollView` + 透明 `CAMetalLayer` 子层 | `SwapChainPanel` + D3D11 F16 | `SurfaceView` + EGL14/GLES |
-| 导航图 | 自绘 `NSView`，只展示 | 自绘 `UIView`，点按/拖动定位 | `WindowsNavigator`，不吃指针 | `AndroidNavigationOverlay`，点按/拖动定位 |
+| 导航图 | 自绘 `NSView`（`NavigatorHostView`），白框可拖动定位 | 自绘 `UIView`，白框可拖动定位 | `WindowsNavigator`，白框可拖动定位 | `AndroidNavigationOverlay`，白框可拖动定位 |
 | 分析栏 | `MacAnalysisPanel`（`NSView`） | `iOSAnalysisPanel`（`UIView`） | `WindowsAnalysisPanel`（`Grid` + `IAnalysisHost`） | `AndroidAnalysisPanel`（自绘 `View`） |
 | 控制栏 | `MacControlBar`（`NSView`） | `iOSControlBar`（`UIView`） | `WindowsControlBar`（`Grid` + `WindowsWrapPanel`） | `AndroidControlBar`（单个自绘 `View`） |
 | 相似面板 | `MacSimilarityPanel` + `NSCollectionView` | `iOSSimilarityPanel` + `UICollectionView` | `WindowsSimilarityPanel`（`Grid`） | `AndroidSimilarityPanel`（`LinearLayout` + `RecyclerView`） |
@@ -110,9 +110,10 @@
 - **IMAGE-02**：`PhotoViewport.ToggleFit` / `ApplyImage`。
   - **IMAGE-04@ios / @android**：触屏最小缩放为适应态，小图/RAW 预览夹回适应（已登记 10-18）。
 - **IMAGE-04**：缩放范围 `PhotoViewer.Shared/PhotoViewport.cs:250`/`:283`；预设与比例缩放入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。
-  - **IMAGE-04@mac**：导航图只展示，不接受点按（已登记 10-18）。
-- **IMAGE-06**：导航图。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:717-738`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:531-581`；Windows `PhotoViewer.Windows/Native/WindowsNavigator.cs:23`；Android `PhotoViewer.Android/Native/AndroidNavigationOverlay.cs:15`。
-  - **IMAGE-06@ios / @android**：导航图点按/拖动定位（已登记 10-18）；**IMAGE-06@win**：不吃指针（已登记 10-18）。
+  - **IMAGE-04@mac**：导航图白框可拖动定位（IMAGE-06，10-20 起桌面与触屏同一交互）。
+- **IMAGE-06**：导航图。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs`（`NavigatorHostView`）+ `MetalPhotoView.CenterOnNormalizedPoint`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `UpdateNavigationIndicator`/`OnNavigationPan`；Windows `PhotoViewer.Windows/Native/WindowsNavigator.cs`（`PressAt`/`DragTo`）+ `WindowsPhotoView.CenterOnNormalizedPoint`；Android `PhotoViewer.Android/Native/AndroidNavigationOverlay.cs`（`OnTouchEvent`）+ `AndroidPhotoView.CenterOnNormalizedPoint`。
+  - 四端白框都可拖动定位（桌面鼠标 / 触屏手指）；拖框只改视口中心，滚轮与捏合仍归主图缩放松手。
+  - **IMAGE-06@android**：点按 = 把该点直接移到视口中心（`AndroidNavigationOverlay` 的 Down/Move 同一路径，已登记 10-18）。
   - Android 导航缩略图取当前展示产物（代理/Full/增强），按显示朝向抽样，不再二次解码原文件（`PhotoViewer.Android/Native/AndroidNavigationDecoder.cs:12` 的 `CreateFromDisplayAsync`）。
 - **IMAGE-07**：增强状态 `PhotoViewer/Core/Image/PhotoLoadSession.cs`；药丸 `image.busy.*`、门槛 `image.busy.delay`（500ms）四端同一：macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:749`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs` 的 `EnhanceBusyLabel`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs` 的 `_busyPill`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs` 的药丸标签。
 - **IMAGE-09**：定位入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:774`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:979`、Windows `PhotoViewer.Windows/Native/WindowsPhotoView.cs:207`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:137`。

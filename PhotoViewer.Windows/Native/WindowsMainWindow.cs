@@ -120,7 +120,11 @@ internal sealed partial class WindowsMainWindow : Window
         _hintPanel.Children.Add(_hintTitle);
         _hintPanel.Children.Add(_hintDetail);
 
-        _navigator = new WindowsNavigator();
+        _navigator = new WindowsNavigator
+        {
+            // 导航图拖动定位（IMAGE-06）：保持当前缩放，把框心移到指针下的归一化图像点。
+            CenterRequested = (u, v) => _photo.CenterOnNormalizedPoint(u, v),
+        };
         _statusText = new TextBlock
         {
             FontSize = WindowsLayout.StatusToastFontSize,

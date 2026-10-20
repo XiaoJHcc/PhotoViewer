@@ -49,7 +49,7 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSTextField _hint;
     private readonly NSTextField _busyPill;
     private readonly MacStatusToast _toast = new();
-    private readonly NSView _navigationHost;
+    private readonly NavigatorHostView _navigationHost;
     private readonly NSImageView _navigationImage;
     private readonly NSView _navigationFrame;
     private readonly NSTextField _zoomLabel;
@@ -149,7 +149,8 @@ public sealed class MacMainWindow : IDisposable
         _hintDetail.LineBreakMode = NSLineBreakMode.ByWordWrapping;
         _hintDetail.MaximumNumberOfLines = 4;
         _photoPane.AddSubview(_hint); _photoPane.AddSubview(_hintDetail);
-        _navigationHost = Pane(NSColor.FromWhite(2f / 15, .6f));
+        _navigationHost = new NavigatorHostView { WantsLayer = true, CenterRequested = OnNavigatorCenterRequested };
+        _navigationHost.Layer!.BackgroundColor = NSColor.FromWhite(2f / 15, .6f).CGColor;
         _navigationHost.Layer!.CornerRadius = 6;
         _navigationImage = new NSImageView { ImageScaling = NSImageScale.ProportionallyUpOrDown };
         _navigationFrame = Pane(NSColor.Clear); _navigationFrame.Layer!.BorderColor = NSColor.White.CGColor; _navigationFrame.Layer.BorderWidth = 1;
@@ -791,8 +792,15 @@ public sealed class MacMainWindow : IDisposable
         }
         var rectangle = Photo.NavigationViewport;
         _navigationFrame.Frame = new CGRect(rectangle.X + 8, rectangle.Y + 8, rectangle.Width, rectangle.Height);
+        _navigationHost.ContentSize = new CGSize(width, height);
+        _navigationHost.FrameRect = _navigationFrame.Frame;
         _zoomLabel.StringValue = $"{Photo.PhysicalScale * 100:0.##}%";
     }
+
+    /// <summary>导航图拖动定位（IMAGE-06）：保持当前缩放，把框心移到指针下的归一化图像点。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    private void OnNavigatorCenterRequested(double u, double v) => Photo.CenterOnNormalizedPoint(u, v);
     /// <summary>细节预览高亮：在主图上叠加 3 点绿框（对焦框优先，否则为裁剪窗口）。</summary>
     /// <param name="visible">是否显示绿框。</param>
     /// <param name="u">裁剪中心归一化横坐标。</param>
@@ -1045,6 +1053,74 @@ public sealed class MacMainWindow : IDisposable
 
     /// <summary>文件与控制分区采用顶部为原点的布局坐标。</summary>
     private sealed class FlippedPane : NSView { public override bool IsFlipped => true; }
+
+    /// <summary>
+    /// 缩放指示器宿主（IMAGE-06）：白框可拖动定位。
+    /// 按下框内保留抓取偏移，按在缩略图其他位置先把框心移到该点；拖动中把框心换算成归一化图像点回传。
+    /// </summary>
+    private sealed class NavigatorHostView : NSView
+    {
+        /// <summary>白框拖动请求（归一化图像坐标）。</summary>
+        public Action<double, double>? CenterRequested { get; set; }
+
+        /// <summary>白框在宿主坐标内的 frame。</summary>
+        public CGRect FrameRect { get; set; }
+
+        /// <summary>缩略图逻辑尺寸。</summary>
+        public CGSize ContentSize { get; set; }
+
+        /// <summary>缩略图距宿主左上角的内边距（nav.padding）。</summary>
+        private const double ContentInset = 8;
+
+        private bool _dragging;
+        private double _grabX;
+        private double _grabY;
+
+        /// <summary>顶部为原点，与导航图几何一致。</summary>
+        public override bool IsFlipped => true;
+
+        /// <inheritdoc/>
+        public override void MouseDown(NSEvent e)
+        {
+            var point = ConvertPointFromView(e.LocationInWindow, null);
+            Begin(point.X - ContentInset, point.Y - ContentInset);
+        }
+
+        /// <inheritdoc/>
+        public override void MouseDragged(NSEvent e)
+        {
+            if (!_dragging) return;
+            var point = ConvertPointFromView(e.LocationInWindow, null);
+            Emit(point.X - ContentInset, point.Y - ContentInset);
+        }
+
+        /// <inheritdoc/>
+        public override void MouseUp(NSEvent e) => _dragging = false;
+
+        private void Begin(double x, double y)
+        {
+            double contentWidth = ContentSize.Width, contentHeight = ContentSize.Height;
+            if (x < 0 || y < 0 || x > contentWidth || y > contentHeight) return;
+            double left = FrameRect.X - ContentInset, top = FrameRect.Y - ContentInset;
+            double width = FrameRect.Width, height = FrameRect.Height;
+            if (width <= 0 || height <= 0) return;
+            bool inside = x >= left && x <= left + width && y >= top && y <= top + height;
+            _grabX = inside ? x - left : width / 2;
+            _grabY = inside ? y - top : height / 2;
+            _dragging = true;
+            if (!inside) Emit(x, y);
+        }
+
+        private void Emit(double x, double y)
+        {
+            double contentWidth = ContentSize.Width, contentHeight = ContentSize.Height;
+            double frameWidth = FrameRect.Width, frameHeight = FrameRect.Height;
+            if (contentWidth <= 0 || contentHeight <= 0 || frameWidth <= 0 || frameHeight <= 0) return;
+            double left = Math.Clamp(x - _grabX, 0, Math.Max(0, contentWidth - frameWidth));
+            double top = Math.Clamp(y - _grabY, 0, Math.Max(0, contentHeight - frameHeight));
+            CenterRequested?.Invoke((left + frameWidth / 2) / contentWidth, (top + frameHeight / 2) / contentHeight);
+        }
+    }
 
     /// <summary>透明叠加层（细节预览绿框）：顶边为原点且不拦截鼠标，事件透传给下层主图。</summary>
     private sealed class PassThroughPane : NSView

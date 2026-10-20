@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices.WindowsRuntime;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Imaging;
 using Microsoft.UI.Xaml.Shapes;
@@ -20,7 +21,8 @@ namespace PhotoViewer.Windows.Native;
 /// 缩略图由当前主图会话的线性 RGBA16F 代理帧经 Skia 直接缩到导航尺寸并转 sRGB8
 /// (与 macOS 的 <c>MetalPhotoView.CaptureLinearFrame(navigation: true)</c> 同口径:
 /// 只处理导航尺寸的像素,不做全分辨率 CPU 转换),白框与百分比由原生控件绘制。
-/// 旧壳的导航图不可交互,这里同样不吃指针(<see cref="UIElement.IsHitTestVisible"/> 为 false)。
+/// 白框可拖动定位(IMAGE-06):按下框内保留抓取偏移,按在缩略图其他位置先把框心移到该点;
+/// 滚轮仍冒泡给主图做缩放。
 /// </summary>
 internal sealed class WindowsNavigator : Grid
 {
@@ -32,6 +34,9 @@ internal sealed class WindowsNavigator : Grid
     private WriteableBitmap? _bitmap;
     private int _pixelWidth;
     private int _pixelHeight;
+    private bool _dragging;
+    private double _grabX;
+    private double _grabY;
     /// <summary>上次重建缩略图时的 XamlRoot 光栅化比例;跨屏或系统缩放变化即重建。</summary>
     private double _rasterization;
 
@@ -43,7 +48,6 @@ internal sealed class WindowsNavigator : Grid
         HorizontalAlignment = HorizontalAlignment.Right;
         VerticalAlignment = VerticalAlignment.Bottom;
         Margin = new Thickness(WindowsLayout.NavigatorMargin);
-        IsHitTestVisible = false;
         Visibility = Visibility.Collapsed;
 
         _image = new Image
@@ -61,9 +65,17 @@ internal sealed class WindowsNavigator : Grid
             VerticalAlignment = VerticalAlignment.Top,
             Visibility = Visibility.Collapsed,
         };
-        _canvas = new Canvas();
+        _canvas = new Canvas
+        {
+            // 透明底让整个缩略图区域参与命中测试（按下框外也能定位）。
+            Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
+        };
         _canvas.Children.Add(_image);
         _canvas.Children.Add(_frame);
+        _canvas.PointerPressed += OnPointerPressed;
+        _canvas.PointerMoved += OnPointerMoved;
+        _canvas.PointerReleased += OnPointerReleased;
+        _canvas.PointerCaptureLost += (_, _) => Release();
 
         _percent = new TextBlock
         {
@@ -103,6 +115,106 @@ internal sealed class WindowsNavigator : Grid
 
     /// <summary>百分比文本(含 % 号)。</summary>
     public string PercentageText => _percent.Text;
+
+    /// <summary>白框拖动请求：参数为显示朝向的归一化图像点，宿主据此把视口中心移过去。</summary>
+    public Action<double, double>? CenterRequested { get; set; }
+
+    /// <summary>是否正在拖动白框（验收与宿主判断用）。</summary>
+    public bool IsDragging => _dragging;
+
+    /// <summary>
+    /// 按下导航图：框内按下保留抓取偏移，框外按下先把框心移到该点；返回是否开始拖动。
+    /// </summary>
+    /// <param name="x">导航图逻辑坐标 X。</param>
+    /// <param name="y">导航图逻辑坐标 Y。</param>
+    /// <returns>白框可见且尺寸有效时为 true。</returns>
+    internal bool PressAt(double x, double y)
+    {
+        if (_frame.Visibility != Visibility.Visible)
+        {
+            return false;
+        }
+
+        double frameX = Canvas.GetLeft(_frame);
+        double frameY = Canvas.GetTop(_frame);
+        double frameWidth = _frame.Width, frameHeight = _frame.Height;
+        if (frameWidth <= 0 || frameHeight <= 0)
+        {
+            return false;
+        }
+
+        bool inside = x >= frameX && x <= frameX + frameWidth && y >= frameY && y <= frameY + frameHeight;
+        _grabX = inside ? x - frameX : frameWidth / 2;
+        _grabY = inside ? y - frameY : frameHeight / 2;
+        _dragging = true;
+        if (!inside)
+        {
+            DragTo(x, y);
+        }
+
+        return true;
+    }
+
+    /// <summary>把白框拖到导航图逻辑坐标 (x, y)，并把框心换算成归一化图像点上报。</summary>
+    /// <param name="x">导航图逻辑坐标 X。</param>
+    /// <param name="y">导航图逻辑坐标 Y。</param>
+    internal void DragTo(double x, double y)
+    {
+        if (!_dragging)
+        {
+            return;
+        }
+
+        double width = _canvas.Width, height = _canvas.Height;
+        double frameWidth = _frame.Width, frameHeight = _frame.Height;
+        if (width <= 0 || height <= 0 || frameWidth <= 0 || frameHeight <= 0)
+        {
+            return;
+        }
+
+        double left = Math.Clamp(x - _grabX, 0, Math.Max(0, width - frameWidth));
+        double top = Math.Clamp(y - _grabY, 0, Math.Max(0, height - frameHeight));
+        CenterRequested?.Invoke((left + frameWidth / 2) / width, (top + frameHeight / 2) / height);
+    }
+
+    /// <summary>结束拖动。</summary>
+    internal void Release() => _dragging = false;
+
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(_canvas).Position;
+        if (!PressAt(point.X, point.Y))
+        {
+            return;
+        }
+
+        _canvas.CapturePointer(e.Pointer);
+        e.Handled = true;
+    }
+
+    private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_dragging)
+        {
+            return;
+        }
+
+        var point = e.GetCurrentPoint(_canvas).Position;
+        DragTo(point.X, point.Y);
+        e.Handled = true;
+    }
+
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_dragging)
+        {
+            return;
+        }
+
+        Release();
+        _canvas.ReleasePointerCapture(e.Pointer);
+        e.Handled = true;
+    }
 
     /// <summary>
     /// 读取当前导航图缩略图的 BGRA8 像素(定向验收用:核对 EXIF 方向在缩略图上的实际朝向)。
@@ -167,6 +279,7 @@ internal sealed class WindowsNavigator : Grid
     /// <summary>清空并隐藏(无图、适应态或设置关闭时)。</summary>
     public void Reset()
     {
+        Release();
         _source = null;
         _bitmap = null;
         _image.Source = null;

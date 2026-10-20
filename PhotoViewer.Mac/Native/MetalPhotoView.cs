@@ -71,6 +71,8 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
             return new CGRect(x, y, width, height);
         }
     }
+    /// <summary>视口中心对应的归一化图像点（显示朝向），供导航图拖动验收核对落点。</summary>
+    public (double U, double V) ViewCenter => _viewport.CenterUV;
     private double BackingScale => (double)(Window?.BackingScaleFactor ?? 1);
 
     /// <summary>把显示朝向的归一化图像点换算成视图坐标（点）。</summary>
@@ -161,6 +163,21 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     public void FocusOnPoint(double u, double v, double physicalScale)
     {
         _viewport.FocusOnPoint(u, v, physicalScale);
+        DrawFrame();
+        ViewportChanged?.Invoke();
+    }
+
+    /// <summary>保持当前缩放，把显示朝向的归一化图像点移到视口中心（导航图拖动定位，IMAGE-06）。</summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    public void CenterOnNormalizedPoint(double u, double v)
+    {
+        if (_viewport.IsFit)
+        {
+            return;
+        }
+
+        _viewport.CenterOnNormalizedPoint(u, v);
         DrawFrame();
         ViewportChanged?.Invoke();
     }

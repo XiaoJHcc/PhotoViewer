@@ -511,6 +511,20 @@ internal sealed partial class WindowsMainWindow
             && frame.X + frame.Width <= size.Width + 0.5 && frame.Y + frame.Height <= size.Height + 0.5,
             $"导航图可见框越界: {frame} vs {size.Width}x{size.Height}");
 
+        // IMAGE-06：白框拖动定位——框内按下并拖动后，视口中心朝目标归一化点移动。
+        var beforeCenter = _photo.ViewCenter;
+        RequireSmoke(_navigator.PressAt(frame.X + frame.Width / 2, frame.Y + frame.Height / 2), "导航图白框按下未开始拖动");
+        _navigator.DragTo(Math.Max(1, frame.X + frame.Width / 2 - size.Width * 0.18),
+            Math.Max(1, frame.Y + frame.Height / 2 - size.Height * 0.18));
+        _navigator.Release();
+        await Task.Delay(150);
+        var afterCenter = _photo.ViewCenter;
+        RequireSmoke(!_navigator.IsDragging, "导航图拖动未结束");
+        RequireSmoke(afterCenter.U < beforeCenter.U - 0.05 && afterCenter.V < beforeCenter.V - 0.05,
+            $"导航图拖动未移动视口中心: {beforeCenter} → {afterCenter}");
+        RequireSmoke(_navigator.FrameBounds.X < frame.X - 0.5 && _navigator.FrameBounds.Y < frame.Y - 0.5,
+            "导航图白框未跟随拖动");
+
         _photo.ZoomBy(0.5);
         await Task.Delay(120);
         var smaller = $"{_photo.PhysicalScale * 100:0.##}%";
@@ -529,7 +543,7 @@ internal sealed partial class WindowsMainWindow
         _main.Settings.ShowZoomIndicator = true;
         _photo.FitToView();
         await Task.Delay(120);
-        checks.Add("PASS navigator: fit hides; zoom shows 150-long-edge thumbnail, in-bounds frame, live percentage; setting respected");
+        checks.Add("PASS navigator: fit hides; zoom shows 150-long-edge thumbnail, in-bounds frame, live percentage; white frame drags the viewport center; setting respected");
     }
 
     /// <summary>胶片条用户接管与减少动态效果(FILM-03):动画中接管即停,减少动态效果直接到终点。</summary>

@@ -203,6 +203,24 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     }
 
     /// <summary>
+    /// 保持当前缩放，把显示朝向的归一化图像点移到视口中心（导航图拖动定位）。
+    /// </summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    public void CenterOnNormalizedPoint(double u, double v)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_viewport.IsFit)
+        {
+            return;
+        }
+
+        _viewport.CenterOnNormalizedPoint(u, v);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>
     /// 把图像相对矩形(uv)换算成视口逻辑坐标矩形,供主图绿框等叠加层定位。
     /// </summary>
     /// <param name="uv">图像相对矩形</param>
@@ -245,6 +263,9 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
 
     /// <summary>当前视口的物理像素尺寸;面板完成首次布局前为 <c>(0, 0)</c>。</summary>
     public (double Width, double Height) PhysicalViewport => _laidOut ? (_pixelWidth, _pixelHeight) : (0, 0);
+
+    /// <summary>视口中心对应的归一化图像点(显示朝向),供导航图拖动验收核对落点。</summary>
+    public (double U, double V) ViewCenter => _viewport.CenterUV;
 
     /// <summary>当前物理缩放(每个源像素占多少物理屏幕像素)。</summary>
     public double PhysicalScale => _viewport.PhysicalScale;
