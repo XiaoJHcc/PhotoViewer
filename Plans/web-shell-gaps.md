@@ -61,7 +61,21 @@
 | G45 | SETTINGS-14 | Web 设置文档字段与四端不互通 | web 差异 | ✅ `SETTINGS-14@web` |
 | G46 | TOOLBAR-04 | tooltip 分隔符与重复绑定处理未定义 | 文档缺口 | ✅ TOOLBAR-04：`命令名 · 主 / 次`，重复只显示一次 |
 
+## 作者验收返工（R 轮）
+
+| # | ID | 现象 | 分类 | 裁定与落点 |
+|---|---|---|---|---|
+| R1 | FILTER-08、MENU-03、TOOLBAR-04 | Web 下拉、右键菜单与 tooltip 仿 macOS 原生，属 Mac 平台差异，不应作为 Web 基准 | 文档缺口 | ✅ README §3：无原生控件的平台以旧壳 Avalonia Fluent 深色外观为准；考古补 `dropdown.*`/`popup.*`/`menu.*`/`tooltip.*`；Web 改为自绘 Fluent 外观并自绘 tooltip |
+| R2 | TOOLBAR-04、FILM-05 | 图标无统一体系、尺寸缺定义，Web 仿 SF Symbols | 文档缺口 | ✅ `icon.font`/`icon.fontSolid` + `icon.*` 码位（取自旧壳命令表），各控件 glyph 字号令牌；平台系统图标集登记差异；Web 改用 uicons 子集（`tools/subset-icons.py`） |
+| R3 | TOOLBAR-04 | 评分快捷命令标准：星形内叠数字（原规则"只画数字"） | 文档错误 | ✅ TOOLBAR-04 改为实心星内叠数字（`toolbar.rating.digit.fontSize`）；macOS、Web 已实现，iOS/Windows/Android 登记差异 |
+| R4 | FILM-05、STATE-02 | 列表为空不应显示「无匹配照片」 | 文档错误 | ✅ 规则改为留空；Web 去掉，Windows 待实现 |
+| R5 | INPUT-03/10 | Mac 空态点击任何地方（含交通灯）都打开选择器 | Mac 缺口 | ✅ 规则写明只有主图分区响应；Mac 修复并加反例断言 |
+| R6 | IMAGE-06 | fix/windows-main-controls 分支把导航图白框可拖动改为四端必须 | 审查通过 | ✅ 保留；修 IMAGE-02→IMAGE-05 引用与过期平台差异；iOS 点按/拖动判别、iOS/Android 拖出缩略图中断的问题已修；Web 补实现 |
+| R7 | TOOLBAR-05、FILTER-06、ANALYSIS-08 | 分支改动：EXIF 加粗、相似开关勾选悬停文字 #FFFFFF、直方图无准星 | 审查裁定 | ✅ 基准恢复半粗、加粗登记 TOOLBAR-05@win；勾选悬停文字取旧壳 #CFE0F5；直方图无准星作为四端一致规则 |
+| R8 | TOOLBAR-08、ANALYSIS-06、TOOLBAR-03、SIM-07 | 待修的 Mac 缺口（G6、G32、G36、G21） | Mac 缺口 | ✅ 已修并加断言；layout 验收需大图素材（现有 1200×800 夹具让导航图拖动断言无处可平移，既有问题） |
+
 ## 后续（不在本计划内）
 
-- Mac 侧缺口（G4、G6、G32、G36、G37 与 FILM-05/SIM-07/STATE-03/TOOLBAR-04/05 的修订条目）按 status.md 进入四端待办；iOS/Windows/Android 的同名条目按"待实现"复核。
+- 其余三端待实现：评分快捷命令星内叠数字（TOOLBAR-04）、相似面板 `RowWidth` 传入停靠区宽（SIM-07）、Windows 去掉「无匹配照片」（FILM-05）、提示条文案模板（STATE-03）；统一图标字体是否推到 macOS/iOS/Windows 由作者决定（当前登记为平台差异）。
+- Mac layout 验收素材补一张大图，使导航图拖动断言可用默认夹具运行。
 - G26 缓存数量默认值待作者确认。

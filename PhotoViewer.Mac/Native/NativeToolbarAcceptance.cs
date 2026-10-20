@@ -3,6 +3,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Mac.Core;
@@ -31,6 +32,8 @@ internal static class NativeToolbarAcceptance
                 entry.IsEnabled = entry.PropertyName is "Aperture" or "ExposureTime" or "Iso" or "EquivFocalLength";
             await Task.Delay(250);
             VerifyReferenceLayouts(window, observations);
+            VerifyRatingGroupColors(window);
+            observations.Add("rating group: lit stars use color.star.on, hollow stars color.star.off, clear cross color.star.clear (no system secondary colour)");
             foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
             {
                 settings.LayoutMode = mode;
@@ -96,8 +99,13 @@ internal static class NativeToolbarAcceptance
             settings.ShowRating = true;
             var ratingCommand = settings.Hotkeys.Single(hotkey => hotkey.Command == "SetRating3");
             ratingCommand.IsDisplay = true;
+            var clearRatingCommand = settings.Hotkeys.Single(hotkey => hotkey.Command == "SetRating0");
+            clearRatingCommand.IsDisplay = true;
             await Task.Delay(150);
-            if (window.ControlBar.Commands["SetRating3"].Title != "3") throw new InvalidOperationException("评分快捷命令丢失星数语义");
+            VerifyRatingCommand(window.ControlBar.Commands["SetRating3"], "3");
+            VerifyClearRatingCommand(window.ControlBar.Commands["SetRating0"]);
+            NativeSnapshots.SaveView(window.ControlBar, System.IO.Path.Combine(output, "toolbar-rating-commands.png"));
+            observations.Add("rating shortcut commands draw a star.fill / clear cross with the 9pt digit stacked in the centre (TOOLBAR-04)");
             settings.Hotkeys.Single(hotkey => hotkey.Command == "Open").IsDisplay = true;
             window.Main.CurrentFile = null;
             await Task.Delay(150);
@@ -158,6 +166,7 @@ internal static class NativeToolbarAcceptance
                 if (frame.IntersectsWith(other.Frame)) throw new InvalidOperationException("工具栏分组重叠");
         }
         VerifyGroupContents(bar, horizontal);
+        VerifyControlScroller(window);
         foreach (var button in bar.Commands.Values)
             if (button.BezelStyle != NSBezelStyle.SmallSquare)
                 throw new InvalidOperationException("工具按钮使用了固定高度边框");
@@ -233,6 +242,92 @@ internal static class NativeToolbarAcceptance
             bar.Arrange(viewport);
         }
         observations.Add("fixed geometry: row wrap thresholds 760/470, column thresholds 720/430; exact fit and one point below; 10 point padding/spacing; per-tile EXIF margins; main-axis rating insets; line cross-axis stretch");
+    }
+
+    /// <summary>
+    /// TOOLBAR-08：控制栏宿主的裁剪区不得被常驻竖向滚动条挤窄。这里把样式强制设成 legacy 再排布一次，
+    /// 宿主必须锁回 Overlay（接入鼠标的系统偏好就等效于 legacy），且竖向滚动条只出现在列布局且文档溢出时。
+    /// </summary>
+    private static void VerifyControlScroller(MacMainWindow window)
+    {
+        var scroll = window.ControlScroll;
+        // 自然状态（进程带 -AppleShowScrollBars Always 时系统偏好就是 legacy）：宿主应在排布时已锁回 Overlay。
+        if (scroll.ScrollerStyle != NSScrollerStyle.Overlay)
+            throw new InvalidOperationException($"控制栏滚动条样式不是 Overlay：{scroll.ScrollerStyle}");
+        RequireNoGutter(scroll, "自然排布");
+        // 再把样式强制成 legacy 后重新排布一次，验证宿主每次都锁回 Overlay。
+        scroll.ScrollerStyle = NSScrollerStyle.Legacy;
+        scroll.Tile();
+        if (scroll.ScrollerStyle != NSScrollerStyle.Overlay)
+            throw new InvalidOperationException($"控制栏滚动条样式未锁回 Overlay：{scroll.ScrollerStyle}");
+        RequireNoGutter(scroll, "legacy 偏好强制后");
+        bool overflow = (double)window.ControlBar.Frame.Height > (double)scroll.ContentView.Bounds.Height + .5;
+        bool expectedScroller = !window.Main.IsRowLayout && overflow;
+        if (scroll.HasVerticalScroller != expectedScroller)
+            throw new InvalidOperationException(
+                $"控制栏竖向滚动条开关与布局/溢出不符：row={window.Main.IsRowLayout}, overflow={overflow}, has={scroll.HasVerticalScroller}");
+    }
+
+    /// <summary>裁剪区宽度必须等于滚动宿主宽度（竖向滚动条不得挤窄内容）。</summary>
+    private static void RequireNoGutter(NSScrollView scroll, string stage)
+    {
+        double gutter = (double)scroll.Bounds.Width - (double)scroll.ContentView.Bounds.Width;
+        if (Math.Abs(gutter) > .5)
+            throw new InvalidOperationException($"{stage}控制栏裁剪区被竖向滚动条挤窄 {gutter:0.##} 点：clip {scroll.ContentView.Bounds.Width} / bar {scroll.Bounds.Width}");
+    }
+
+    /// <summary>TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear。</summary>
+    private static void VerifyRatingGroupColors(MacMainWindow window)
+    {
+        var bar = window.ControlBar;
+        if (bar.Ratings.Count != 6) throw new InvalidOperationException("评分组按钮数量不是 6");
+        int rating = window.Main.CurrentFile?.Rating ?? 0;
+        RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "评分组清零叉");
+        for (int value = 1; value < 6; value++)
+            RequireColor(bar.Ratings[value].ContentTintColor,
+                MacDesignColors.Argb(value <= rating ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff), $"评分组 {value} 星");
+    }
+
+    /// <summary>TOOLBAR-04：评分快捷命令为星形内叠数字，数字 9 点半粗、取按钮底色并居中，且不拦截按钮点击。</summary>
+    private static void VerifyRatingCommand(NSButton button, string digit)
+    {
+        var label = button.Subviews.OfType<NSTextField>().SingleOrDefault(field => field.StringValue == digit)
+            ?? throw new InvalidOperationException($"评分快捷命令 {digit} 缺少星形内叠数字");
+        if (Math.Abs((double)label.Font.PointSize - DesignTokens.ToolbarRatingDigitFontSize) > .01)
+            throw new InvalidOperationException($"评分快捷命令数字字号 {label.Font.PointSize} 不是 {DesignTokens.ToolbarRatingDigitFontSize}");
+        RequireColor(label.TextColor, MacDesignColors.Argb(DesignTokens.ColorToolbarCommandBackground), "评分快捷命令数字");
+        if (Math.Abs((double)(label.Frame.X + label.Frame.Width / 2) - (double)button.Bounds.Width / 2) > .75
+            || Math.Abs((double)(label.Frame.Y + label.Frame.Height / 2) - (double)button.Bounds.Height / 2) > .75)
+            throw new InvalidOperationException($"评分快捷命令数字未叠在星形中心：{label.Frame} / {button.Bounds}");
+        if (button.Image == null || button.Title.Length != 0)
+            throw new InvalidOperationException("评分快捷命令仍把数字作为并排标题显示");
+        var center = button.ConvertPointToView(new CGPoint(button.Bounds.Width / 2, button.Bounds.Height / 2), null);
+        var hit = button.Window?.ContentView?.HitTest(center);
+        if (!ReferenceEquals(hit, button))
+            throw new InvalidOperationException($"评分快捷命令中心命中不到按钮本身（星内数字拦截了点击）：{hit?.GetType().Name ?? "null"}");
+        if (!ReferenceEquals(button.ContentTintColor, NSColor.Label))
+            throw new InvalidOperationException("评分快捷命令星形未取主文字色 color.text.primary");
+    }
+
+    /// <summary>TOOLBAR-04：0 星是清零叉，不带叠层数字。</summary>
+    private static void VerifyClearRatingCommand(NSButton button)
+    {
+        if (button.Image == null || button.Subviews.OfType<NSTextField>().Any())
+            throw new InvalidOperationException("0 星评分快捷命令不是纯清零叉");
+        if (!ReferenceEquals(button.ContentTintColor, NSColor.Label))
+            throw new InvalidOperationException("0 星评分快捷命令未取主文字色 color.text.primary");
+    }
+
+    /// <summary>把两个 AppKit 颜色都转到 sRGB 后逐分量比较（令牌颜色经 MacDesignColors 生成，同一色空间）。</summary>
+    private static void RequireColor(NSColor? actual, NSColor expected, string context)
+    {
+        var lhs = actual?.UsingColorSpace(NSColorSpace.SRGBColorSpace)?.CGColor.Components;
+        var rhs = expected.UsingColorSpace(NSColorSpace.SRGBColorSpace)?.CGColor.Components;
+        if (lhs == null || rhs == null || lhs.Length < 4 || rhs.Length < 4)
+            throw new InvalidOperationException($"{context}颜色无法换算到 sRGB");
+        for (int channel = 0; channel < 4; channel++)
+            if (Math.Abs((double)lhs[channel] - (double)rhs[channel]) > .004)
+                throw new InvalidOperationException($"{context}颜色不符：{actual} 预期 {expected}");
     }
 
     private static void RequireFrame(CGRect actual, CGRect expected, string context)

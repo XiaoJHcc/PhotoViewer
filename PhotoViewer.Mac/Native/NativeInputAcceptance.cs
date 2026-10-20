@@ -71,11 +71,14 @@ internal static class NativeInputAcceptance
             using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
                 window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("左键事件创建失败");
             photo.MouseDown(click);
-            for (int attempt = 0; attempt < 40 && !stub.FileRequested; attempt++) await Task.Delay(25);
-            if (!stub.FileRequested) throw new InvalidOperationException("空首屏左键未打开文件选择器");
+            for (int attempt = 0; attempt < 40 && !stub.Requested; attempt++) await Task.Delay(25);
+            if (!stub.Requested) throw new InvalidOperationException("空首屏左键未打开文件选择器");
             checks.Add("empty state: left click opens file picker");
         }
         finally { FilePicker.Initialize(new MacFilePicker()); }
+
+        // 4b) INPUT-03/10：只有主图分区内的左键打开选择器；筛选条、控制栏、标题栏与窗口外都不响应。
+        await VerifyEmptyStateClickScopeAsync(window, photo, checks);
 
         // 5) 主图右键弹出原生上下文菜单（放行到 base.RightMouseDown 的路径）。
         VerifyContextMenu(window, photo, location, checks);
@@ -101,6 +104,56 @@ internal static class NativeInputAcceptance
         await File.WriteAllLinesAsync(Path.Combine(output, "native-input-checks.txt"), checks);
         Console.WriteLine("[NativeSmoke] PASS input");
     }
+
+    /// <summary>
+    /// INPUT-03/10：空态只有主图分区内的左键打开文件选择器。筛选条控件、控制栏命令按钮、标题栏（交通灯）
+    /// 区域与窗口外都不打开选择器，点击照常归各自控件；主图分区内（包括提示文字所在位置）只打开一次。
+    /// </summary>
+    private static async Task VerifyEmptyStateClickScopeAsync(MacMainWindow window, MetalPhotoView photo, List<string> checks)
+    {
+        var stub = new RecordingFilePicker();
+        FilePicker.Initialize(stub);
+        try
+        {
+            var command = window.ControlBar.Commands.Values.FirstOrDefault()
+                ?? throw new InvalidOperationException("控制栏没有可点的命令按钮");
+            var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
+            (string Name, CGPoint Point)[] blocked =
+            [
+                ("筛选条", CenterInWindow(window.SimilarityToggle)),
+                ("控制栏", CenterInWindow(command)),
+                ("标题栏", new CGPoint(30, (double)root.Bounds.Height - 15)),
+                ("窗口外", new CGPoint(-20, 20)),
+            ];
+            foreach (var (name, point) in blocked)
+            {
+                using var click = Click(window, point);
+                if (window.TryOpenEmptyStatePicker(click))
+                    throw new InvalidOperationException($"空态点击{name}打开了文件选择器（应交给该分区自己的控件）");
+            }
+            await Task.Delay(120);
+            if (stub.FileRequested != 0)
+                throw new InvalidOperationException($"空态点击主图以外的分区仍请求了 {stub.FileRequested} 次文件选择器");
+
+            using var photoClick = Click(window, CenterInWindow(photo));
+            if (!window.TryOpenEmptyStatePicker(photoClick))
+                throw new InvalidOperationException("空态主图分区内的左键未打开文件选择器");
+            for (int attempt = 0; attempt < 40 && stub.FileRequested == 0; attempt++) await Task.Delay(25);
+            if (stub.FileRequested != 1)
+                throw new InvalidOperationException($"空态点击主图应只打开一次文件选择器（实际 {stub.FileRequested}）");
+            checks.Add("empty state: picker opens only inside the photo pane; filter bar / control bar / titlebar / outside stay with their own controls");
+        }
+        finally { FilePicker.Initialize(new MacFilePicker()); }
+    }
+
+    /// <summary>视图中心在窗口坐标中的位置。</summary>
+    private static CGPoint CenterInWindow(NSView view)
+        => view.ConvertPointToView(new CGPoint(view.Bounds.Width / 2, view.Bounds.Height / 2), null);
+
+    /// <summary>在窗口坐标处合成一次真实左键按下。</summary>
+    private static NSEvent Click(MacMainWindow window, CGPoint point)
+        => NSEvent.MouseEvent(NSEventType.LeftMouseDown, point, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+            window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("左键事件创建失败");
 
     /// <summary>标题栏双击回归：顶边拖动区内的左键双击经窗口级监视器按系统偏好 AppleActionOnDoubleClick
     /// 分派缩放/最小化/不动作，区外双击不得被接管。
@@ -258,11 +311,13 @@ internal static class NativeInputAcceptance
     /// <summary>记录选择器调用而不弹出模态面板。</summary>
     private sealed class RecordingFilePicker : IFilePickerService
     {
-        public bool FileRequested;
+        /// <summary>已请求打开文件选择器的次数（负例回归逐点清零比对）。</summary>
+        public int FileRequested;
+        public bool Requested => FileRequested > 0;
         public Task<IFolderRef?> PickFolderAsync(string title) => Task.FromResult<IFolderRef?>(null);
         public Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters)
         {
-            FileRequested = true;
+            FileRequested++;
             return Task.FromResult<IFileRef?>(null);
         }
     }

@@ -8,7 +8,7 @@ namespace PhotoViewer.Mac.Native;
 /// 原生细节预览瓦片（中心 / 对焦点）。外观完全复用 <see cref="MacDiagnosticTile"/> 的外框、内层圆角裁切、
 /// 左上角药丸角标与 1:1 内容绘制，只额外加上：鼠标进入/离开切换绿色高亮描边并把绿框位置回报给主图、
 /// 双击请求主图定位到裁剪中心并放大到 100%。
-/// 缩放按 1:1 呈现（裁剪边长 = 瓦片边长，与旧壳 <c>DetailPreview</c> 的 1:1 细节口径一致）。
+/// 缩放按物理 1:1 呈现（裁剪边长 = 瓦片逻辑边长 × 窗口物理倍率，见 ANALYSIS-06）。
 /// 位图由调用方传入并持有，本视图只引用不释放。
 /// </summary>
 internal sealed class MacDetailPreview : NSView
@@ -51,6 +51,12 @@ internal sealed class MacDetailPreview : NSView
 
     /// <summary>当前是否已贴上裁剪内容（代理期按旧壳口径留空）。</summary>
     public bool HasContent => _tile.Source != null;
+
+    /// <summary>已贴上的裁剪位图的源像素边长（供验收核对物理 1:1）；无内容时为 0。</summary>
+    internal int ContentPixels => (int)(_tile.Source?.CGImage?.Width ?? 0);
+
+    /// <summary>绿框是否使用裁剪窗口（该瓦片不是对焦点瓦片，没有独立对焦框）。</summary>
+    internal bool UsesCropWindow => _frameWidth == null;
 
     /// <summary>设置裁剪中心与对焦框（归一化）；用于双击定位与主图绿框。</summary>
     /// <param name="u">归一化中心横坐标。</param>

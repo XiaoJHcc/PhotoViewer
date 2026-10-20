@@ -4,6 +4,7 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
+using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;
@@ -186,8 +187,10 @@ internal static class NativeSimilarityAcceptance
     }
 
     /// <summary>
-    /// 相似项卡片选中语义：在独立探针子目录里放两份唯一名字的素材（指纹互不相同，入库后互为相似项）→
-    /// 走共享"提取全部"入口建库 → 点相似面板里的另一张 → 断言面板卡片与胶片栏卡片同时高亮、锚点身份与显示身份分离。
+    /// 相似项卡片选中语义：在独立探针子目录里放三份唯一名字的素材（指纹互不相同，入库后互为相似项）
+    /// 加一个无法解码的孤立文件（永远计入未提取，让列表态动作区可见）→ 走共享"提取全部"入口建库 →
+    /// 先核对行布局宽度含停靠区（1/2 项时列表能完整显示卡片）→ 点相似面板里的另一张 →
+    /// 断言面板卡片与胶片栏卡片同时高亮、锚点身份与显示身份分离。
     /// 探针目录写在验收输出目录下并在结束时删除。
     /// </summary>
     private static async Task VerifyCardSelectionAsync(MainViewModel main, MacMainWindow window, string output, List<string> checks)
@@ -197,8 +200,13 @@ internal static class NativeSimilarityAcceptance
         Directory.CreateDirectory(probeFolder);
         string first = Path.Combine(probeFolder, "probe-a.jpg");
         string second = Path.Combine(probeFolder, "probe-b.jpg");
+        string third = Path.Combine(probeFolder, "probe-c.jpg");
+        string orphan = Path.Combine(probeFolder, "probe-d.jpg");
         File.Copy(fixture.File.Path.LocalPath, first, true);
         File.Copy(fixture.File.Path.LocalPath, second, true);
+        File.Copy(fixture.File.Path.LocalPath, third, true);
+        // 不可解码且没有拍摄时间的孤立文件：SIM-02 视为未提取，列表态停靠区因此可见（SIM-07 的宽度条件）。
+        await File.WriteAllTextAsync(orphan, "not an image");
         try
         {
             await main.FolderVM.OpenImageAsync(new MacFileRef(first));
@@ -206,8 +214,10 @@ internal static class NativeSimilarityAcceptance
             var similarity = main.FileVM.SimilarityPanel;
             similarity.StartIndexingCommand();
             var pool = main.FolderVM.AllFiles;
-            await WaitAsync(() => similarity.SimilarItems.Count > 0
+            await WaitAsync(() => similarity.SimilarItems.Count >= 2
                 && similarity.SimilarItems.All(entry => pool.Contains(entry.File)), "探针目录的相似项出现");
+            await VerifyRowListWidthsAsync(main, window, similarity, checks);
+            await WaitAsync(() => similarity.SimilarItems.Count >= 2, "两个相似项就绪");
 
             var anchor = main.CurrentFile!;
             var item = similarity.SimilarItems.First(entry => !ReferenceEquals(entry.File, anchor));
@@ -227,6 +237,57 @@ internal static class NativeSimilarityAcceptance
         finally
         {
             Directory.Delete(probeFolder, true);
+        }
+    }
+
+    /// <summary>
+    /// SIM-07：行布局面板宽度必须含列表态右侧停靠区。两个相似项时列表容得下两张卡（2 × 96 + 列表内边距 8），
+    /// 收窄到 1 项时仍不小于单卡宽 96——未预留停靠区时列表会被动作区挤成几点的窄条。
+    /// </summary>
+    private static async Task VerifyRowListWidthsAsync(MainViewModel main, MacMainWindow window,
+        SimilarityPanelViewModel similarity, List<string> checks)
+    {
+        var mode = main.Settings.LayoutMode;
+        int maxResults = main.Settings.SimilarityMaxResults;
+        var list = window.Similarity.List ?? throw new InvalidOperationException("相似面板缺少列表");
+        var scroll = list.EnclosingScrollView ?? throw new InvalidOperationException("相似面板列表缺少滚动宿主");
+        double ListWidth()
+        {
+            window.Window.ContentView?.LayoutSubtreeIfNeeded();
+            list.LayoutSubtreeIfNeeded();
+            return (double)scroll.ContentView.Bounds.Width;
+        }
+        try
+        {
+            main.Settings.SimilarityMaxResults = Math.Max(2, maxResults);
+            main.Settings.LayoutMode = LayoutMode.Row;
+            await SettleAsync(window);
+            await WaitAsync(() => similarity.SimilarItems.Count == 2, "两个相似项");
+            await WaitAsync(() => similarity.HasUnindexed && !similarity.IsStateIndexing, "列表态停靠区（未提取计数）出现");
+            if (!similarity.ShowActionArea) throw new InvalidOperationException("列表态动作区未显示，无法核对停靠区宽度");
+            double twoItemList = ListWidth();
+            double twoItemExpected = 2 * FilmstripGeometry.CardWidth + SimilarityPanelGeometry.ListPadding;
+            if (Math.Abs(twoItemList - twoItemExpected) > 1.5)
+                throw new InvalidOperationException($"行布局 2 项时列表宽 {twoItemList:0.##} 不是卡片 + 内边距的 {twoItemExpected:0.##}（停靠区未计入面板宽度）");
+            if (list.IndexPathsForVisibleItems.Count < 2)
+                throw new InvalidOperationException($"行布局 2 项时只显示 {list.IndexPathsForVisibleItems.Count} 张卡片");
+
+            main.Settings.SimilarityMaxResults = 1;
+            await WaitAsync(() => similarity.SimilarItems.Count == 1, "最多返回 1 项");
+            await SettleAsync(window);
+            double oneItemList = ListWidth();
+            if (oneItemList + .5 < FilmstripGeometry.CardWidth)
+                throw new InvalidOperationException($"行布局 1 项时列表宽 {oneItemList:0.##} 小于卡片宽 {FilmstripGeometry.CardWidth}（停靠区未计入面板宽度）");
+            double oneItemExpected = FilmstripGeometry.CardWidth + SimilarityPanelGeometry.ListPadding;
+            if (Math.Abs(oneItemList - oneItemExpected) > 1.5)
+                throw new InvalidOperationException($"行布局 1 项时列表宽 {oneItemList:0.##} 不是单卡 + 内边距的 {oneItemExpected:0.##}");
+            checks.Add($"row width: 1 item list {oneItemList:0} and 2 items list {twoItemList:0} both fit their cards (dock width reserved, SIM-07)");
+        }
+        finally
+        {
+            main.Settings.SimilarityMaxResults = maxResults;
+            main.Settings.LayoutMode = mode;
+            await SettleAsync(window);
         }
     }
 

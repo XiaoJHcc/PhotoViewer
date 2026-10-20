@@ -4,6 +4,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -48,8 +49,8 @@ internal sealed class MacSimilarityPanel : NSView
     private const double PanelWidth = SimilarityPanelGeometry.PanelWidth;
     /// <summary>行布局下列表交叉轴长度（共享几何：卡片高 + 上下内边距 + 两侧描边）。</summary>
     private static readonly double ListCross = SimilarityPanelGeometry.ListCross;
-    /// <summary>行布局停靠区左右外边距。</summary>
-    private const double DockRowMargin = 3;
+    /// <summary>行布局停靠区左右外边距（令牌 sim.dock.margin，与 SIM-07 的停靠区宽度公式同源）。</summary>
+    private static readonly double DockRowMargin = DesignTokens.SimDockMargin;
     /// <summary>行布局停靠区下外边距(旧壳 Margin='3,3,3,8')。</summary>
     private const double DockRowBottom = 8;
     /// <summary>列布局停靠区左右外边距(旧壳 Margin='8,3,8,3')。</summary>
@@ -353,6 +354,17 @@ internal sealed class MacSimilarityPanel : NSView
         double errorWidth = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, Math.Max(1, innerWidth - DockRowMargin * 2));
         return Math.Min(innerWidth,
             Math.Max(Math.Max(ActionWidth, MeasureWidth(_unindexed, innerWidth)), errorWidth) + DockRowMargin * 2);
+    }
+
+    /// <summary>
+    /// 行布局列表态停靠区的自然宽度（SIM-07）：max(sim.action.width, 未提取计数/错误文本的自然宽) + 2 × sim.dock.margin。
+    /// 主窗口用它给共享 <c>RowWidth</c> 预留停靠区，否则 1–2 项列表会被动作区挤成零宽。
+    /// </summary>
+    internal double DockMeasureWidth()
+    {
+        double text = Math.Max(ActionWidth, MeasureWidth(_unindexed, MeasureLimit));
+        double error = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, MeasureWidth(_dockError, MeasureLimit));
+        return Math.Max(text, error) + DockRowMargin * 2;
     }
 
     /// <summary>列布局停靠区高度:全部内容行加左右外边距 8、上下外边距 3。</summary>

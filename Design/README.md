@@ -32,7 +32,7 @@
 | 主窗口分区结构、几何、占位、边距、方形约束、动效参数 | 必须对齐 tokens 与 Web 参考壳导出的几何 |
 | 主窗口内的小型控件（下拉、菜单、按钮外观、tooltip、滚动条） | 功能与操作必须一致；外观可以原生。没有原生控件、需要自绘的平台（Web、Android 自绘弹层）以旧壳 Avalonia Fluent 深色外观为准，数值见 `dropdown.*`、`popup.*`、`menu.*`、`tooltip.*` 令牌 |
 | 设置窗口、工具窗口 | 分类、项目、行为与持久化必须一致；视觉应当遵循各平台规范（macOS 系统设置、Win11 设置、iOS 设置、Material 3） |
-| 主屏图标 | 语义与字形必须一致：四端与 Web 共用 `icon.font`（uicons Regular Rounded）与 `icon.*` 码位，尺寸取各控件的 glyph 字号令牌；平台系统图标集只能作为已登记的平台差异 |
+| 主屏图标 | 语义与字形必须一致：四端与 Web 共用 `icon.font`（uicons Regular Rounded，描边）/ `icon.fontSolid`（uicons Solid Straight，只用于实心星）与 `icon.*` 码位，尺寸取各控件的 glyph 字号令牌；平台系统图标集只能作为已登记的平台差异 |
 | 色彩、画质、物理 100% | 必须一致，由验收素材与色卡判定，不由 Web 参考壳判定（其照片为合成数据） |
 
 ## 4. 编号

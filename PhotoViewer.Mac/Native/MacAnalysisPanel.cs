@@ -45,8 +45,11 @@ internal sealed class MacAnalysisPanel : NSView
     /// <summary>当前瓦片数（决定边长分配的 n）。</summary>
     public int TileCount => _order.Count;
 
-    /// <summary>细节预览的裁剪窗口边长（源像素），与旧壳 <c>CropSize</c> 同口径。</summary>
-    public int CropPixels => Math.Max(1, (int)Math.Round(_tileSize));
+    /// <summary>细节预览的裁剪窗口边长（源像素）：瓦片逻辑边长 × 窗口物理倍率，使细节预览为物理 1:1（ANALYSIS-06）。</summary>
+    public int CropPixels => Math.Max(1, (int)Math.Round(_tileSize * BackingScale));
+
+    /// <summary>当前窗口的物理倍率；未挂窗口时按 1 处理，挂上后由 <c>ViewDidMoveToWindow</c> 重算裁剪。</summary>
+    private double BackingScale => (double)(Window?.BackingScaleFactor ?? 1);
 
     /// <summary>共享分析状态机，供验收读取瓦片数据与准星。</summary>
     internal AnalysisPresenter Presenter => _presenter;
@@ -195,12 +198,12 @@ internal sealed class MacAnalysisPanel : NSView
         return image;
     }
 
-    /// <summary>细节预览的裁剪内容：从展示会话的全分辨率图按显示朝向裁 1:1 方块；代理期留空。</summary>
+    /// <summary>细节预览的裁剪内容：从展示会话的全分辨率图按显示朝向裁物理 1:1 方块；代理期留空。</summary>
     private void UpdateDetailCrop(AnalysisTile tile)
     {
         var preview = (MacDetailPreview)_views[tile];
         var source = _session.IsProxy ? null : _session.Image;
-        int pixels = Math.Max(1, (int)Math.Round(_tileSize));
+        int pixels = CropPixels;
         var key = (source, tile.CenterU, tile.CenterV, pixels);
         if (_cropKeys.TryGetValue(tile, out var previous) && previous == key) return;
         _cropKeys[tile] = key;
@@ -231,6 +234,21 @@ internal sealed class MacAnalysisPanel : NSView
             _host.Raise();
     }
 
+    /// <summary>挂到窗口后按真实物理倍率重裁细节预览（瓦片边长在窗口挂载前只能按 1× 估计）。</summary>
+    public override void ViewDidMoveToWindow()
+    {
+        base.ViewDidMoveToWindow();
+        RefreshDetailCrops();
+    }
+
+    /// <summary>跨屏改变窗口物理倍率后由主窗口调用，按新倍率重裁细节预览（ANALYSIS-06，物理 1:1）。</summary>
+    internal void RefreshDetailCrops()
+    {
+        if (_disposed) return;
+        foreach (var tile in _order)
+            if (tile.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(tile);
+    }
+
     /// <summary>「即时计算DINO/CV」开关变化后重新路由。</summary>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -241,8 +259,7 @@ internal sealed class MacAnalysisPanel : NSView
     private void OnSessionChanged()
     {
         if (_disposed) return;
-        foreach (var tile in _order)
-            if (tile.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(tile);
+        RefreshDetailCrops();
         _host.Raise();
     }
 

@@ -79,6 +79,7 @@ internal static class NativeAnalysisAcceptance
             if (panel.TileViews.OfType<MacDetailPreview>().Any() is false)
                 throw new InvalidOperationException("分析栏缺少细节预览瓦片");
             await WaitAsync(() => DetailHasContent(panel), "细节预览出图");
+            VerifyDetailPhysics(window, panel, checks);
             checks.Add($"ready: histogram and detail preview rendered (proxy={window.Session.IsProxy})");
 
             // 5) 增强预览：命令经共享展示会话生效 → 低对比度素材的 GPU 帧像素明显变化 → 再关一次还原原片。
@@ -168,6 +169,37 @@ internal static class NativeAnalysisAcceptance
             await File.WriteAllLinesAsync(Path.Combine(output, "native-analysis-checks.txt"), checks);
         }
         Console.WriteLine("[NativeSmoke] PASS analysis");
+    }
+
+    /// <summary>
+    /// ANALYSIS-06：细节裁剪窗口 = 瓦片逻辑边长 × 窗口物理倍率（Retina 上不再把细节放大 2×）；
+    /// 悬停细节预览时主图绿框框住的源像素范围必须等于该裁剪窗口，离开即清除。
+    /// </summary>
+    private static void VerifyDetailPhysics(MacMainWindow window, MacAnalysisPanel panel, List<string> checks)
+    {
+        var preview = panel.TileViews.OfType<MacDetailPreview>().FirstOrDefault(item => item.UsesCropWindow)
+            ?? throw new InvalidOperationException("分析栏没有使用裁剪窗口的细节预览瓦片");
+        double backing = (double)window.Window.BackingScaleFactor;
+        double tile = (double)preview.Bounds.Width;
+        int expected = Math.Max(1, (int)Math.Round(tile * backing));
+        if (panel.CropPixels != expected)
+            throw new InvalidOperationException($"细节裁剪边长 {panel.CropPixels} 不是瓦片 {tile}×{backing} 倍率（应为 {expected}）");
+        if (preview.ContentPixels != expected)
+            throw new InvalidOperationException($"细节预览位图边长 {preview.ContentPixels} 不是物理 1:1 的 {expected} 源像素");
+        var center = preview.ConvertPointToView(new CGPoint(preview.Bounds.Width / 2, preview.Bounds.Height / 2), null);
+        using var hover = NSEvent.MouseEvent(NSEventType.LeftMouseDown, center, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+            window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("细节预览悬停事件创建失败");
+        preview.MouseEntered(hover);
+        if (!window.DetailHighlightVisible) throw new InvalidOperationException("悬停细节预览未点亮主图绿框");
+        var frame = window.DetailHighlightFrame;
+        double scale = window.Photo.PointScale;
+        double sourceWidth = (double)frame.Width / scale, sourceHeight = (double)frame.Height / scale;
+        if (Math.Abs(sourceWidth - panel.CropPixels) > 1.5 || Math.Abs(sourceHeight - panel.CropPixels) > 1.5)
+            throw new InvalidOperationException(
+                $"主图绿框 {frame} 框住 {sourceWidth:0.##}×{sourceHeight:0.##} 源像素，与裁剪窗口 {panel.CropPixels} 不符");
+        preview.MouseExited(hover);
+        if (window.DetailHighlightVisible) throw new InvalidOperationException("离开细节预览后主图绿框未清除");
+        checks.Add($"detail physics: tile {tile}×{backing}x → {expected}px crop, preview bitmap {preview.ContentPixels}px, green box frames {sourceWidth:0.##}px");
     }
 
     /// <summary>核对分析栏在主图与相邻栏位之间的实际几何：交叉轴尺寸、边长、间距与内边距。</summary>

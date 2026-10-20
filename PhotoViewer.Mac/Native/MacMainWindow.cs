@@ -102,6 +102,10 @@ public sealed class MacMainWindow : IDisposable
     internal MacStatusToast StatusToast => _toast;
     /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
     internal IReadOnlyList<NSView> DragZones => [_dragLeft, _dragRight];
+    /// <summary>主图上的细节预览绿框（ANALYSIS-04/06），供验收核对它框住的源像素范围等于裁剪窗口。</summary>
+    internal CGRect DetailHighlightFrame => _detailHighlight.Frame;
+    /// <summary>细节预览绿框是否可见。</summary>
+    internal bool DetailHighlightVisible => !_detailHighlight.Hidden;
 
     /// <summary>创建窗口、筛选、虚拟化胶片栏与控制栏，并连接共享通知。</summary>
     public MacMainWindow(MainViewModel main, bool automatedValidation = false)
@@ -124,7 +128,7 @@ public sealed class MacMainWindow : IDisposable
         _root = new RootView(new CGRect(0, 0, 1200, 850));
         Window.ContentView = _root;
         _filePane = Pane(); _controlPane = new MacControlBar(ScheduleControlsRefresh); _photoPane = Pane(NSColor.Black);
-        _controlScroll = new NSScrollView { DocumentView = _controlPane, HasVerticalScroller = true, DrawsBackground = true, BackgroundColor = NSColor.FromWhite(.07f, 1), BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
+        _controlScroll = new MacControlScrollView { DocumentView = _controlPane, HasVerticalScroller = false, DrawsBackground = true, BackgroundColor = NSColor.FromWhite(.07f, 1), BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
         _root.AddSubview(_filePane); _root.AddSubview(_photoPane); _root.AddSubview(_controlScroll);
         _root.AddSubview(_fileDivider); _root.AddSubview(_controlDivider);
         _dragLeft = new DragZone(); _dragRight = new DragZone();
@@ -207,7 +211,7 @@ public sealed class MacMainWindow : IDisposable
         });
         Photo.InputHandler = HandleInput;
         Photo.ViewportChanged += UpdateViewport;
-        Window.DidChangeBackingProperties += (_, _) => Photo.SetFrameSize(Photo.Frame.Size);
+        Window.DidChangeBackingProperties += (_, _) => { Photo.SetFrameSize(Photo.Frame.Size); _analysisPane.RefreshDetailCrops(); };
         Window.DidEnterFullScreen += (_, _) => SaveFullscreen(true);
         Window.DidExitFullScreen += (_, _) => SaveFullscreen(false);
         Window.DidResignKey += (_, _) => { _dragLeft.Hidden = true; _dragRight.Hidden = true; };
@@ -219,6 +223,7 @@ public sealed class MacMainWindow : IDisposable
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
+        _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += ScrollToCurrent;
         BuildControls();
@@ -298,24 +303,24 @@ public sealed class MacMainWindow : IDisposable
     }
 
     /// <summary>筛选条相似聚类原生 toggle：无边框自绘药丸，12 点居中标题、圆角 6、1 点描边；
-    /// 勾选态按旧壳 <c>ToggleButton.SimToggle</c> 换成 <c>#1F3A5F</c> 底 / <c>#3A6FA8</c> 边 / <c>#AECBEE</c> 字，
-    /// 未勾选为透明底 / <c>#555</c> 边 / <c>#AAA</c> 字。
+    /// 勾选态取 <c>color.filter.toggle.checked.*</c>（#1F3A5F 底 / #3A6FA8 边 / #AECBEE 字），
+    /// 未勾选为透明底 / #555 边 / #AAA 字；悬停色同样取令牌（FILTER-01/FILTER-06）。
     /// 勾选状态由本类自己持有（不用 <c>NSButtonType.Toggle</c>）：旧写法的 getter 读私有字段而点击翻转的是 cell 状态，
     /// 导致点一次读回旧值、按钮表现为"点不动"；同时 Toggle 态会取 alternateTitle，只设 AttributedTitle 会露出系统占位串 "Button"。</summary>
     private sealed class FilterToggleButton : NSButton
     {
-        private const double CornerRadius = 6;
-        private static readonly NSColor BorderOff = NSColor.FromRgb(0x55, 0x55, 0x55);
-        private static readonly NSColor TextOff = NSColor.FromRgb(0xAA, 0xAA, 0xAA);
-        private static readonly NSColor FillOn = NSColor.FromRgb(0x1F, 0x3A, 0x5F);
-        private static readonly NSColor BorderOn = NSColor.FromRgb(0x3A, 0x6F, 0xA8);
-        private static readonly NSColor TextOn = NSColor.FromRgb(0xAE, 0xCB, 0xEE);
-        private static readonly NSColor FillOffHover = NSColor.FromRgb(0x33, 0x33, 0x33);
-        private static readonly NSColor BorderOffHover = NSColor.FromRgb(0x66, 0x66, 0x66);
-        private static readonly NSColor TextOffHover = NSColor.FromRgb(0xCC, 0xCC, 0xCC);
-        private static readonly NSColor FillOnHover = NSColor.FromRgb(0x26, 0x47, 0x7A);
-        private static readonly NSColor BorderOnHover = NSColor.FromRgb(0x4A, 0x85, 0xC4);
-        private static readonly NSColor TextOnHover = NSColor.FromRgb(0xCF, 0xE0, 0xF5);
+        private static readonly double CornerRadius = DesignTokens.FilterToggleCornerRadius;
+        private static readonly NSColor BorderOff = MacDesignColors.Argb(DesignTokens.ColorFilterToggleBorder);
+        private static readonly NSColor TextOff = MacDesignColors.Argb(DesignTokens.ColorFilterToggleForeground);
+        private static readonly NSColor FillOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedBackground);
+        private static readonly NSColor BorderOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedBorder);
+        private static readonly NSColor TextOn = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedForeground);
+        private static readonly NSColor FillOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHover);
+        private static readonly NSColor BorderOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHoverBorder);
+        private static readonly NSColor TextOffHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleHoverForeground);
+        private static readonly NSColor FillOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverBackground);
+        private static readonly NSColor BorderOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverBorder);
+        private static readonly NSColor TextOnHover = MacDesignColors.Argb(DesignTokens.ColorFilterToggleCheckedHoverForeground);
         private readonly string _title;
         private bool _isOn;
         private bool _hover;
@@ -444,7 +449,7 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>依据共享上下/左右/自动布局排列；主图延伸到顶部，局部避让交通灯。</summary>
     private void Layout()
     {
-        if (_layingOut) return;
+        if (_disposed || _layingOut) return;
         _layingOut = true;
         try
         {
@@ -526,6 +531,9 @@ public sealed class MacMainWindow : IDisposable
                 UpdateFilmstripLayout();
             if (axisChanged) ScrollToCurrent();
             _controlScroll.HasHorizontalScroller = row && controlMeasure.Width > width;
+            // TOOLBAR-08：只有列布局且整条文档在竖轴溢出时才开竖向滚动条；行布局不需要竖向滚动，
+            // 开着它会让系统在 legacy 滚动条偏好下常驻 17 点竖槽并挤窄裁剪区。
+            _controlScroll.HasVerticalScroller = !row && controlMeasure.Height > height;
             _controlPane.Arrange(_controlScroll.ContentView.Bounds.Size);
             // TOOLBAR-08：重建/换向只夹取到合法范围，不把用户滚动位置重置回起点。
             var controlOffset = _controlScroll.ContentView.Bounds.Location;
@@ -559,13 +567,16 @@ public sealed class MacMainWindow : IDisposable
     /// <returns>原生 frame。</returns>
     private static CGRect ToFrame(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
 
-    /// <summary>行布局下相似面板占用的水平长度:与旧壳 <c>SimilarityListView</c> 的 MaxWidth 规则一致 ——
-    /// 内容宽(卡片数 × 96 + 列表两侧内边距 8 + 面板描边 2,下限 MinWidth 106)与文件栏一半取小,再叠加面板右侧 4 点外边距。</summary>
+    /// <summary>行布局下相似面板占用的水平长度（SIM-07）：内容宽 = 卡片数 × 96 + 列表两侧内边距 8 + 面板描边 2
+    /// + 列表态右侧停靠区宽，下限 MinWidth 106 且不超过可用宽度一半，最后叠加面板右侧 4 点外边距。
+    /// 停靠区（未提取计数 / 按钮 / 进度 / 错误）不预留就会把 1–2 项列表挤成零宽。</summary>
     /// <param name="paneWidth">文件栏可用宽度。</param>
     private double SimilarityRowWidth(double paneWidth)
     {
         var panel = _main.FileVM.SimilarityPanel;
-        return SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, paneWidth);
+        // 停靠区只在列表态且动作区（未提取计数/按钮/进度/错误）真的显示时占宽；全部已入库且无错误时没有停靠区。
+        double dockWidth = panel.HasItems && panel.ShowActionArea ? _similarityPane.DockMeasureWidth() : 0;
+        return SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, paneWidth, dockWidth);
     }
 
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
@@ -629,12 +640,29 @@ public sealed class MacMainWindow : IDisposable
         // INPUT-05：按住重复只放行可连续执行的命令；其余重复事件消费掉但不执行。
         if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.IsARepeat && command != null && !InputCommandMap.IsRepeatable(command)) return true;
         if (command != null && AppleSymbolNames.ForCommand(command) != null) { Execute(command); return true; }
-        if (nativeEvent.Type == NSEventType.LeftMouseDown && Session.Image == null && (nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) == 0)
-        {
-            _ = OpenPickerAsync(false);
-            return true;
-        }
+        if (TryOpenEmptyStatePicker(nativeEvent)) return true;
         return false;
+    }
+
+    /// <summary>
+    /// INPUT-03/10：无照片时只有主图分区内的左键打开文件选择器。命中视图必须就是主图本身——
+    /// 空态提示是透传标签（命中落到主图上），导航图、提示条、文件栏、控制栏、分析栏、顶边拖动区与
+    /// 窗口按钮（交通灯）都按各自控件处理；带修饰键的左键也不接管。
+    /// </summary>
+    /// <param name="nativeEvent">进入窗口派发链的原生事件。</param>
+    /// <returns>事件是否已被消费。</returns>
+    internal bool TryOpenEmptyStatePicker(NSEvent nativeEvent)
+    {
+        if (nativeEvent.Type != NSEventType.LeftMouseDown || Session.Image != null || nativeEvent.Window != Window) return false;
+        if ((nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask
+            | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) != 0) return false;
+        // 命中测试的点在视图的父视图坐标系里：根视图坐标即观片分区的父坐标系。
+        var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
+        if (!_photoPane.Frame.Contains(point)) return false;
+        // 提示文字与绿框是透传叠加层，命中测试会落到下层主图；导航图/提示条等真实控件仍会自己命中。
+        if (!ReferenceEquals(_photoPane.HitTest(point), Photo)) return false;
+        _ = OpenPickerAsync(false);
+        return true;
     }
 
     /// <summary>当前照片变更时只重置加载代际，不改变原生缩放状态。</summary>
@@ -721,6 +749,14 @@ public sealed class MacMainWindow : IDisposable
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
         if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
+    }
+    /// <summary>项目数与停靠区内容变化时重算行布局面板宽度（SIM-07 要求这两者变化都重算）。</summary>
+    private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is nameof(SimilarityPanelViewModel.HasItems) or nameof(SimilarityPanelViewModel.SimilarItems)
+            or nameof(SimilarityPanelViewModel.UnindexedCount) or nameof(SimilarityPanelViewModel.ShowActionArea)
+            or nameof(SimilarityPanelViewModel.ShowActionAreaError))
+            UiDispatcher.Post(Layout);
     }
     /// <summary>项目数与视口共同决定文档尺寸，重排不把滚动主轴截短成窗口高度。</summary>
     internal void UpdateFilmstripLayout()
@@ -998,6 +1034,7 @@ public sealed class MacMainWindow : IDisposable
         _main.OpenFailed -= ShowToast;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
+        _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
         Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();

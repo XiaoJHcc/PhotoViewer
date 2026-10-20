@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
@@ -57,7 +58,9 @@ internal sealed class MacControlBar : NSView
                 var button = MacSymbols.Button(rating == 0 ? "xmark" : active ? "star.fill" : "star",
                     rating == 0 ? "无星级" : rating + " 星", () => rate(value), 30, false);
                 button.Tag = rating;
-                button.ContentTintColor = active ? NSColor.FromRgb(255, 210, 20) : NSColor.SecondaryLabel;
+                // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear。
+                button.ContentTintColor = MacDesignColors.Argb(rating == 0 ? DesignTokens.ColorStarClear
+                    : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
                 button.Enabled = main.CurrentFile != null;
                 ratingGroup.AddSubview(button);
                 _ratings.Add(button);
@@ -81,9 +84,14 @@ internal sealed class MacControlBar : NSView
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
             if (hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal))
             {
-                button.Title = hotkey.Command[9..];
-                button.ImagePosition = NSCellImagePosition.ImageLeft;
-                button.Font = NSFont.SystemFontOfSize(11) ?? throw new InvalidOperationException("系统字体不可用");
+                // TOOLBAR-04：评分快捷命令 = 星形内叠数字（0 为清零叉），不再用星形图标与数字并排。
+                bool clear = hotkey.Command == "SetRating0";
+                button.Title = "";
+                button.Image = MacSymbols.Get(clear ? "xmark" : "star.fill");
+                button.ImagePosition = NSCellImagePosition.ImageOnly;
+                button.SymbolConfiguration = NSImageSymbolConfiguration.Create(
+                    (nfloat)DesignTokens.ToolbarCommandGlyphFontSize, (double)NSFontWeight.Regular);
+                if (!clear) button.AddSubview(RatingDigitLabel.Create(hotkey.Command[9..]));
             }
             commandGroup.AddSubview(button);
             _commands.Add(hotkey.Command, button);
@@ -209,6 +217,40 @@ internal sealed class MacControlBar : NSView
         base.Dispose(disposing);
     }
 
+    /// <summary>
+    /// 评分快捷命令星形内叠的数字：9 点半粗、颜色取命令按钮底色，居中叠在 40 见方按钮上（TOOLBAR-04）。
+    /// 不参与命中测试，点击数字仍落到按钮本身。
+    /// </summary>
+    private sealed class RatingDigitLabel : NSTextField
+    {
+        /// <summary>按令牌字号与按钮底色创建居中的只读数字标签。</summary>
+        /// <param name="digit">星数（1–5）。</param>
+        /// <returns>已按命令按钮尺寸居中的标签。</returns>
+        internal static RatingDigitLabel Create(string digit)
+        {
+            var label = new RatingDigitLabel
+            {
+                StringValue = digit,
+                Editable = false,
+                Selectable = false,
+                Bordered = false,
+                DrawsBackground = false,
+                Alignment = NSTextAlignment.Center,
+                Font = NSFont.SystemFontOfSize((nfloat)DesignTokens.ToolbarRatingDigitFontSize, NSFontWeight.Semibold)
+                    ?? throw new InvalidOperationException("系统字体不可用"),
+                TextColor = MacDesignColors.Argb(DesignTokens.ColorToolbarCommandBackground),
+            };
+            label.SizeToFit();
+            double button = DesignTokens.ToolbarCommandButtonSize;
+            label.Frame = new CGRect((button - (double)label.Frame.Width) / 2, (button - (double)label.Frame.Height) / 2,
+                label.Frame.Width, label.Frame.Height);
+            return label;
+        }
+
+        /// <summary>不拦截鼠标：数字盖在按钮中心，点击仍交给按钮。</summary>
+        public override NSView? HitTest(CGPoint point) => null;
+    }
+
     /// <summary>三个业务分组均以左上角作为布局原点；EXIF 分组可点击打开工具窗口（与旧壳 EXIF 信息块同义）。</summary>
     private sealed class GroupView : NSView
     {
@@ -241,5 +283,20 @@ internal sealed class MacControlBar : NSView
                 Alignment = NSTextAlignment.Center, LineBreakMode = NSLineBreakMode.TruncatingTail,
                 Font = (emphasized ? NSFont.BoldSystemFontOfSize((nfloat)size) : NSFont.SystemFontOfSize((nfloat)size)) ?? throw new InvalidOperationException("系统字体不可用"),
                 TextColor = emphasized ? NSColor.Label : NSColor.SecondaryLabel };
+    }
+}
+
+/// <summary>
+/// 控制栏的滚动宿主（TOOLBAR-08）：接入鼠标后系统会把滚动条切回常驻的 legacy 样式，
+/// 即使内容不溢出也常驻 17 点竖向槽并挤窄裁剪区。与胶片栏同一做法，每次重新排布前锁回悬浮样式，
+/// 裁剪区始终铺满控制栏；是否显示滚动条由主窗口按"列布局且内容溢出"决定。
+/// </summary>
+internal sealed class MacControlScrollView : NSScrollView
+{
+    /// <summary>排布前锁回悬浮滚动条样式，避免系统偏好把裁剪区挤窄。</summary>
+    public override void Tile()
+    {
+        if (ScrollerStyle != NSScrollerStyle.Overlay) ScrollerStyle = NSScrollerStyle.Overlay;
+        base.Tile();
     }
 }
