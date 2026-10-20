@@ -78,6 +78,9 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     internal UITapGestureRecognizer DoubleTapRecognizer => _doubleTap;
     /// <summary>缩放是否处于适应状态。</summary>
     internal bool IsFit => _viewport.IsFit;
+    internal DecodedImage? DisplayedImage => _textureSource;
+    internal bool PresentationReady => _textureSource != null && _identity != default && _scrollGeometryValid
+        && _renderer.TextureWidth > 0 && Bounds.Width > 0 && Bounds.Height > 0;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
     internal double PhysicalScale => _viewport.PhysicalScale;
     /// <summary>当前全分辨率细节需求。</summary>

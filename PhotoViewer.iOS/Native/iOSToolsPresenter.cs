@@ -67,6 +67,8 @@ internal sealed class iOSNativeToolsPresenter
             presentation.Delegate = _dismissDelegate;
         // TOOLS-01：主窗口据此判断"已展示只前置、未展示才回首页"。
         tools.IsPresented = true;
+        _navigation.SetViewControllers([_list!], false);
+        tools.ShowList();
         host.PresentViewController(_navigation, true, () =>
         {
             if (_navigation.PresentationController is { } controller) controller.Delegate = _dismissDelegate;
@@ -92,18 +94,7 @@ internal sealed class iOSNativeToolsPresenter
             ModalPresentationStyle = UIModalPresentationStyle.PageSheet,
             OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark,
         };
-        // iOS 26 的导航栏默认取系统材质（浅色），必须显式给深色不透明外观才能与工具页深色表单一致。
-        var appearance = new UINavigationBarAppearance();
-        appearance.ConfigureWithOpaqueBackground();
-        appearance.BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12);
-        appearance.ShadowColor = UIColor.FromRGB(0x33, 0x33, 0x33);
-        appearance.TitleTextAttributes = new UIStringAttributes { ForegroundColor = UIColor.FromRGB(0xEE, 0xEE, 0xEE) };
-        _navigation.NavigationBar.StandardAppearance = appearance;
-        _navigation.NavigationBar.ScrollEdgeAppearance = appearance;
-        _navigation.NavigationBar.CompactAppearance = appearance;
-        _navigation.NavigationBar.TintColor = UIColor.FromRGB(0xEE, 0xEE, 0xEE);
-        _navigation.NavigationBar.BarStyle = UIBarStyle.Black;
-        _navigation.NavigationBar.Translucent = false;
+        iOSNativeSettingsPresenter.ConfigureSheetPresentation(_navigation.SheetPresentationController);
         Subscribe(tools);
     }
 
@@ -184,76 +175,41 @@ internal sealed class iOSNativeToolsPresenter
 }
 
 /// <summary>工具列表首页：EXIF 详情 / DINO 诊断两个入口（照片数据统计为 Windows 专属，不建入口）。</summary>
-internal sealed class iOSNativeToolsListViewController : UIViewController
+internal sealed class iOSNativeToolsListViewController : UITableViewController
 {
-    /// <summary>入口按钮高度。</summary>
-    private const double ButtonHeight = 32;
-
-    /// <summary>工具列表外边距（旧壳 Margin 16）。</summary>
-    private const double ListMargin = 16;
-
-    /// <summary>工具列表按钮间距（旧壳 Spacing 8）。</summary>
-    private const double ListSpacing = 8;
-
     private readonly ToolsViewModel _tools;
     private readonly iOSNativeToolsPresenter _owner;
-    private readonly UIButton _exif;
-    private readonly UIButton _dino;
-
-    /// <summary>列表页的两个入口按钮（验收读取标题与触发真实点击）。</summary>
-    internal IReadOnlyList<UIButton> Entries => [_exif, _dino];
-
-    /// <summary>构造列表页与两个入口按钮。</summary>
-    /// <param name="tools">共享工具壳 ViewModel。</param>
-    /// <param name="owner">工具页宿主。</param>
-    internal iOSNativeToolsListViewController(ToolsViewModel tools, iOSNativeToolsPresenter owner) : base(null, null)
+    internal IReadOnlyList<string> Entries => ["EXIF 详情", "DINO 诊断"];
+    internal iOSNativeToolsListViewController(ToolsViewModel tools, iOSNativeToolsPresenter owner) : base(UITableViewStyle.InsetGrouped)
     {
         _tools = tools;
         _owner = owner;
         Title = "工具";
-        _exif = Entry("EXIF 详情", owner.OpenExif);
-        _dino = Entry("DINO 诊断", owner.OpenDino);
-        View!.BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12);
-        View.AddSubview(_exif);
-        View.AddSubview(_dino);
-        NavigationItem.RightBarButtonItem = new UIBarButtonItem("关闭", UIBarButtonItemStyle.Plain, (_, _) => owner.Dismiss());
+        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
+        NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => owner.Dismiss());
     }
-
-    /// <summary>每次回到列表页都把共享导航状态复位到首页并刷新入口可用性。</summary>
-    /// <param name="animated">系统动画标记。</param>
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
         _owner.BackToList();
-        _exif.Enabled = _tools.IsExifDetailEnabled;
+        TableView.ReloadData();
     }
-
-    /// <summary>两个入口按 16 点外边距与 8 点间距纵向排列。</summary>
-    public override void ViewDidLayoutSubviews()
+    public override nint RowsInSection(UITableView tableView, nint section) => 2;
+    public override UITableViewCell GetCell(UITableView tableView, NSIndexPath indexPath)
     {
-        base.ViewDidLayoutSubviews();
-        double width = Math.Max(1, (double)View!.Bounds.Width - ListMargin * 2);
-        _exif.Frame = new CGRect(ListMargin, ListMargin, width, ButtonHeight);
-        _dino.Frame = new CGRect(ListMargin, ListMargin + ButtonHeight + ListSpacing, width, ButtonHeight);
+        var cell = new UITableViewCell(UITableViewCellStyle.Default, null);
+        var config = UIListContentConfiguration.CellConfiguration;
+        config.Text = Entries[indexPath.Row];
+        config.TextProperties.Color = indexPath.Row == 0 && !_tools.IsExifDetailEnabled ? UIColor.TertiaryLabel : UIColor.Label;
+        cell.ContentConfiguration = config;
+        cell.Accessory = UITableViewCellAccessory.DisclosureIndicator;
+        return cell;
     }
-
-    /// <summary>创建深色圆角入口按钮。</summary>
-    /// <param name="title">按钮标题。</param>
-    /// <param name="action">点击动作。</param>
-    /// <returns>入口按钮。</returns>
-    private static UIButton Entry(string title, Action action)
+    public override void RowSelected(UITableView tableView, NSIndexPath indexPath)
     {
-        var button = new UIButton(UIButtonType.Custom);
-        button.SetTitle(title, UIControlState.Normal);
-        button.SetTitleColor(UIColor.FromRGB(0xEE, 0xEE, 0xEE), UIControlState.Normal);
-        button.SetTitleColor(UIColor.FromRGB(0x77, 0x77, 0x77), UIControlState.Disabled);
-        button.TitleLabel!.Font = UIFont.SystemFontOfSize(13);
-        button.BackgroundColor = UIColor.FromRGB(0x2A, 0x2A, 0x2A);
-        button.Layer.CornerRadius = 6;
-        button.Layer.BorderWidth = 1;
-        button.Layer.BorderColor = UIColor.FromRGB(0x44, 0x44, 0x44).CGColor;
-        button.TouchUpInside += (_, _) => action();
-        button.AccessibilityLabel = title;
-        return button;
+        tableView.DeselectRow(indexPath, true);
+        if (indexPath.Row == 0) { if (_tools.IsExifDetailEnabled) _owner.OpenExif(); }
+        else _owner.OpenDino();
     }
 }

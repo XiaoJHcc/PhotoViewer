@@ -54,7 +54,7 @@ internal sealed class iOSAnalysisPanel : UIView
     /// <summary>按 presenter 顺序排列的原生瓦片视图，供几何验收读取。</summary>
     internal IReadOnlyList<UIView> TileViews => _order.Select(tile => _views[tile]).ToArray();
 
-    /// <summary>细节预览瓦片（供验收核对定格/高亮与内容）。</summary>
+    /// <summary>细节预览瓦片（供验收核对活动目标/高亮与内容）。</summary>
     internal IReadOnlyList<iOSDetailPreview> DetailPreviews
         => _order.Where(tile => tile.Kind == AnalysisTileKind.Detail).Select(tile => (iOSDetailPreview)_views[tile]).ToArray();
 
@@ -82,6 +82,11 @@ internal sealed class iOSAnalysisPanel : UIView
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _session.Changed += OnSessionChanged;
+        _inactiveObserver = NSNotificationCenter.DefaultCenter.AddObserver(UIApplication.WillResignActiveNotification, _ => ClearDetailHighlight());
+        _sceneInactiveObserver = NSNotificationCenter.DefaultCenter.AddObserver(UIScene.WillDeactivateNotification, notification =>
+        {
+            if (notification.Object?.Handle == Window?.WindowScene?.Handle) ClearDetailHighlight();
+        });
         Sync();
     }
 
@@ -116,9 +121,52 @@ internal sealed class iOSAnalysisPanel : UIView
     }
 
     /// <summary>清除全部细节预览的绿框（分析栏隐藏或切图时由宿主调用）。</summary>
+    private iOSDetailPreview? _activeDetail;
+    private long _activityOwner;
+    private long? _touchOwner;
+    private NSObject? _inactiveObserver;
+    private NSObject? _sceneInactiveObserver;
+
     internal void ClearDetailHighlight()
     {
+        _touchOwner = null;
+        _activityOwner = 0;
+        _activeDetail = null;
         foreach (var detail in DetailPreviews) detail.ClearHighlight();
+    }
+
+    internal void SetDetailActivity(iOSDetailPreview preview, bool active, long owner)
+    {
+        if (!active)
+        {
+            if (_activityOwner != owner || !ReferenceEquals(_activeDetail, preview)) return;
+            _activeDetail = null;
+            preview.SetHighlighted(false);
+            return;
+        }
+        if (Hidden || _touchOwner is { } touchOwner && touchOwner != owner) return;
+        if (!ReferenceEquals(_activeDetail, preview)) _activeDetail?.SetHighlighted(false);
+        _activeDetail = preview;
+        _activityOwner = owner;
+        preview.SetHighlighted(true);
+    }
+
+    internal void RouteDetailTouch(long owner, CGPoint point, UITouchPhase phase)
+    {
+        if (phase == UITouchPhase.Began) _touchOwner = owner;
+        if (_touchOwner != owner) return;
+        if (phase is UITouchPhase.Ended or UITouchPhase.Cancelled)
+        {
+            ClearDetailHighlight();
+            return;
+        }
+        var target = DetailPreviews.FirstOrDefault(preview => !preview.Hidden && preview.Frame.Contains(point));
+        if (target == null)
+        {
+            _activeDetail?.SetHighlighted(false);
+            _activeDetail = null;
+        }
+        else SetDetailActivity(target, true, owner);
     }
 
     /// <summary>把 presenter 的瓦片状态同步到原生视图（位图按引用比较，未变化不重编码）。</summary>
@@ -156,6 +204,7 @@ internal sealed class iOSAnalysisPanel : UIView
     /// <param name="tiles">presenter 当前的瓦片顺序。</param>
     private void RebuildViews(IReadOnlyList<AnalysisTile> tiles)
     {
+        ClearDetailHighlight();
         foreach (var view in _views.Values)
         {
             view.RemoveFromSuperview();
@@ -174,6 +223,8 @@ internal sealed class iOSAnalysisPanel : UIView
             {
                 var preview = new iOSDetailPreview();
                 preview.HighlightChanged = (on, u, v, frameWidth, frameHeight) => DetailHighlight?.Invoke(on, u, v, frameWidth, frameHeight);
+                preview.ActivityChanged = SetDetailActivity;
+                preview.TouchChanged = RouteDetailTouch;
                 preview.FocusRequested = (u, v) => DetailFocusRequested?.Invoke(u, v);
                 view = preview;
             }
@@ -181,7 +232,10 @@ internal sealed class iOSAnalysisPanel : UIView
             {
                 var diagnostic = new iOSDiagnosticTile();
                 if (tile.Kind == AnalysisTileKind.Diagnostic)
+                {
                     diagnostic.TileClicked = (u, v) => _presenter.OnTileClicked(u, v);
+                    diagnostic.BlankClicked = _presenter.ClearCrosshair;
+                }
                 if (ReferenceEquals(tile, _presenter.ShakeTile))
                     diagnostic.Overlay = new iOSShakeFieldView();
                 view = diagnostic;
@@ -242,6 +296,9 @@ internal sealed class iOSAnalysisPanel : UIView
     /// <param name="args">属性变化参数。</param>
     private void OnMainChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (args.PropertyName == nameof(MainViewModel.CurrentFile)
+            || args.PropertyName == nameof(MainViewModel.IsAnalysisViewVisible) && !_main.IsAnalysisViewVisible)
+            ClearDetailHighlight();
         if (args.PropertyName is nameof(MainViewModel.CurrentFile) or nameof(MainViewModel.IsRowLayout)
             or nameof(MainViewModel.IsAnalysisViewVisible))
             _host.Raise();
@@ -271,6 +328,9 @@ internal sealed class iOSAnalysisPanel : UIView
         if (disposing && !_disposed)
         {
             _disposed = true;
+            ClearDetailHighlight();
+            if (_inactiveObserver != null) NSNotificationCenter.DefaultCenter.RemoveObserver(_inactiveObserver);
+            if (_sceneInactiveObserver != null) NSNotificationCenter.DefaultCenter.RemoveObserver(_sceneInactiveObserver);
             _main.PropertyChanged -= OnMainChanged;
             _main.Settings.PropertyChanged -= OnSettingsChanged;
             _session.Changed -= OnSessionChanged;
@@ -281,7 +341,7 @@ internal sealed class iOSAnalysisPanel : UIView
         base.Dispose(disposing);
     }
 
-    /// <summary>空白点击委托：命中诊断瓦片或细节预览时不接收，保证瓦片点按与预览定格优先。</summary>
+    /// <summary>空白点击委托：命中诊断瓦片或细节预览时不接收，保证瓦片点按与预览活动目标优先。</summary>
     private sealed class BlankTapDelegate : UIGestureRecognizerDelegate
     {
         /// <summary>只在空白处接收触摸。</summary>

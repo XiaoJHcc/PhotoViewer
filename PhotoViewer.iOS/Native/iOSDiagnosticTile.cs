@@ -302,14 +302,13 @@ internal sealed class iOSDiagnosticTile : UIView
         border.Stroke();
     }
 
-    /// <summary>命中测试只在正方形（不含说明文字以外的透明区）内吞掉触摸，具体判定交给点击识别器。</summary>
-    /// <param name="point">触点（父视图坐标）。</param>
+    /// <summary>瓦片接收本地坐标命中，图像与装饰子视图不截走事件。</summary>
+    /// <param name="point">触点（本视图坐标）。</param>
     /// <param name="evt">触摸事件。</param>
     /// <returns>命中视图。</returns>
     public override UIView? HitTest(CGPoint point, UIEvent? evt)
     {
-        var local = ConvertPointFromView(point, Superview);
-        return Bounds.Contains(local) ? base.HitTest(point, evt) : null;
+        return Hidden || !UserInteractionEnabled || Alpha < .01f || !Bounds.Contains(point) ? null : this;
     }
 
     /// <summary>把正方形、内容矩形、装饰子视图、叠加视图与说明文字按当前尺寸和数据同步。</summary>
@@ -423,14 +422,21 @@ internal sealed class iOSDiagnosticTile : UIView
         return (double)_caption.SizeThatFits(new CGSize(width, MeasureLimit)).Height;
     }
 
-    /// <summary>点击：只有落在内容矩形内才换算成归一化坐标抛出，letterbox 黑边与说明文字区的点击只被消费。</summary>
+    /// <summary>内容区点击换算为归一化坐标，边框、角标、letterbox与说明区转交空白回调。</summary>
     /// <param name="recognizer">点击识别器。</param>
-    private void OnTapped(UITapGestureRecognizer recognizer)
+    private void OnTapped(UITapGestureRecognizer recognizer) => TapAt(recognizer.LocationInView(this));
+
+    internal Action? BlankClicked { get; set; }
+    internal CGRect ImageContentRect => _contentRect;
+    internal void TapAt(CGPoint point)
     {
         var content = _contentRect;
         if (content.Width <= 0 || content.Height <= 0) return;
-        var point = recognizer.LocationInView(this);
-        if (!content.Contains(point)) return;
+        if (!content.Contains(point) || _chrome.PillRect.Contains(point))
+        {
+            BlankClicked?.Invoke();
+            return;
+        }
         double u = Math.Clamp(((double)point.X - (double)content.X) / (double)content.Width, 0, 1);
         double v = Math.Clamp(((double)point.Y - (double)content.Y) / (double)content.Height, 0, 1);
         TileClicked?.Invoke(u, v);

@@ -54,38 +54,17 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     /// <summary>测量换行高度的宽度上限。</summary>
     private const double MeasureLimit = 10000;
 
-    /// <summary>标题颜色 #EEE。</summary>
-    private static readonly UIColor TitleColor = UIColor.FromRGB(0xEE, 0xEE, 0xEE);
-
-    /// <summary>状态文本颜色 #888。</summary>
-    private static readonly UIColor StatusColor = UIColor.FromRGB(0x88, 0x88, 0x88);
-
-    /// <summary>栏目标题颜色 #AAA。</summary>
-    private static readonly UIColor SectionColor = UIColor.FromRGB(0xAA, 0xAA, 0xAA);
-
-    /// <summary>面板标题颜色 #CCC。</summary>
-    private static readonly UIColor PanelTitleColor = UIColor.FromRGB(0xCC, 0xCC, 0xCC);
-
-    /// <summary>面板量纲说明颜色 #666。</summary>
-    private static readonly UIColor PanelMetricsColor = UIColor.FromRGB(0x66, 0x66, 0x66);
-
-    /// <summary>刚体拟合文本颜色 #DDD。</summary>
-    private static readonly UIColor RigidTextColor = UIColor.FromRGB(0xDD, 0xDD, 0xDD);
-
-    /// <summary>标题 16 点半粗字体。</summary>
-    private static readonly UIFont TitleFont = UIFont.SystemFontOfSize(16, UIFontWeight.Semibold);
-
-    /// <summary>状态文本 12 点字体。</summary>
-    private static readonly UIFont StatusFont = UIFont.SystemFontOfSize(12);
-
-    /// <summary>栏目标题 13 点中粗字体。</summary>
-    private static readonly UIFont SectionFont = UIFont.SystemFontOfSize(13, UIFontWeight.Medium);
-
-    /// <summary>面板量纲说明 11 点字体。</summary>
-    private static readonly UIFont PanelMetricsFont = UIFont.SystemFontOfSize(11);
-
-    /// <summary>刚体拟合文本 12 点等宽字体。</summary>
-    private static readonly UIFont RigidTextFont = UIFont.FromName("Menlo", 12) ?? UIFont.SystemFontOfSize(12);
+    private static readonly UIColor TitleColor = UIColor.Label;
+    private static readonly UIColor StatusColor = UIColor.SecondaryLabel;
+    private static readonly UIColor SectionColor = UIColor.SecondaryLabel;
+    private static readonly UIColor PanelTitleColor = UIColor.Label;
+    private static readonly UIColor PanelMetricsColor = UIColor.SecondaryLabel;
+    private static readonly UIFont TitleFont = UIFont.PreferredHeadline!;
+    private static readonly UIFont StatusFont = UIFont.PreferredFootnote!;
+    private static readonly UIFont SectionFont = UIFont.PreferredSubheadline!;
+    private static readonly UIFont PanelMetricsFont = UIFont.PreferredCaption1!;
+    private static readonly UIFont RigidTextFont = UIFont.FromName("Menlo", 12) ?? UIFont.SystemFontOfSize(12)!;
+    private static readonly UIColor RigidTextColor = UIColor.Label;
 
     private readonly DinoDiagnosticPresenter _presenter;
     private readonly UIScrollView _scroll;
@@ -96,7 +75,13 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     private readonly UILabel _cvHeader = SingleLineLabel("CV 网格诊断（32×32 中心采样，像素单位）", SectionFont, SectionColor);
     private readonly UILabel _rigidTitle = SingleLineLabel("抖动分析（刚体拟合）", SectionFont, PanelTitleColor);
     private readonly UILabel _rigidMetrics = SingleLineLabel("|T| / |ω| / residual", PanelMetricsFont, PanelMetricsColor);
-    private readonly UILabel _rigidText = WrappedLabel("", RigidTextFont, RigidTextColor);
+    private readonly UITextView _rigidText = new()
+    {
+        Editable = false, Selectable = true, ScrollEnabled = false,
+        BackgroundColor = UIColor.SecondarySystemGroupedBackground,
+        Font = RigidTextFont, TextColor = UIColor.Label,
+        TextContainerInset = new UIEdgeInsets(12, 12, 12, 12),
+    };
     private readonly iOSDiagnosticTile _thumbnailTile = new();
     private readonly iOSDiagnosticTile _pcaTile = new();
     private readonly iOSDiagnosticTile _cosineTile = new();
@@ -126,7 +111,11 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     {
         _presenter = presenter;
         Title = "DINO 诊断";
-        _scroll = new UIScrollView { BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12), AlwaysBounceVertical = true };
+        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+        var groupedBackground = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
+        View!.BackgroundColor = groupedBackground;
+        _scroll = new UIScrollView { BackgroundColor = groupedBackground, AlwaysBounceVertical = true };
+        _rigidText.Layer.CornerRadius = 12;
         _scroll.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
         _document = new DocumentView(presenter.ClearCrosshair);
         _scroll.AddSubview(_document);
@@ -135,7 +124,11 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
             _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
             _document.AddSubview(view);
         _shakeTile.Overlay = _shakeOverlay;
-        foreach (var tile in Tiles) tile.TileClicked = presenter.OnTileClicked;
+        foreach (var tile in Tiles)
+        {
+            tile.TileClicked = presenter.OnTileClicked;
+            tile.BlankClicked = presenter.ClearCrosshair;
+        }
         presenter.Changed += Sync;
         presenter.CrosshairChanged += Sync;
         Sync();
@@ -146,7 +139,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
-        _scroll.Frame = View!.Bounds;
+        _scroll.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
         Sync();
     }
 
@@ -155,7 +148,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     public override void ViewDidLayoutSubviews()
     {
         base.ViewDidLayoutSubviews();
-        _scroll.Frame = View!.Bounds;
+        _scroll.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
         Relayout();
     }
 
@@ -337,21 +330,6 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         BackgroundColor = UIColor.Clear,
     };
 
-    /// <summary>创建刚体拟合文本标签（按词换行、不限行数）。</summary>
-    /// <param name="text">初始文本。</param>
-    /// <param name="font">字体。</param>
-    /// <param name="color">文字颜色。</param>
-    /// <returns>标签。</returns>
-    private static UILabel WrappedLabel(string text, UIFont font, UIColor color) => new()
-    {
-        Text = text,
-        Font = font,
-        TextColor = color,
-        Lines = 0,
-        LineBreakMode = UILineBreakMode.WordWrap,
-        BackgroundColor = UIColor.Clear,
-    };
-
     /// <summary>解除 presenter 订阅并释放位图与原生视图。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
@@ -399,7 +377,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         /// <param name="clearCrosshair">空白点击动作。</param>
         public DocumentView(Action clearCrosshair)
         {
-            BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12);
+            BackgroundColor = UIColor.SystemGroupedBackground;
             _blankTap = new UITapGestureRecognizer(clearCrosshair);
             _blankTap.Delegate = new TileExcludingDelegate();
             AddGestureRecognizer(_blankTap);

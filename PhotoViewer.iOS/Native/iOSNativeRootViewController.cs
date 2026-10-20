@@ -23,7 +23,7 @@ namespace PhotoViewer.iOS.Native;
 /// 输入（I4）：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
 /// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。
 /// P3 功能（I5）：分析栏（细节预览 / 直方图 / DINO-CV 诊断，可见时主图升 Full）、相似聚类面板、
-/// 增强预览（<see cref="PhotoLoadSession"/>）与工具页（sheet + 导航控制器）；细节预览手指点按定格主图绿框。
+/// 增强预览（<see cref="PhotoLoadSession"/>）与工具页（sheet + 导航控制器）；细节预览手指点按触控活动主图绿框。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
 {
@@ -120,7 +120,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSAnalysisPanel AnalysisPane => _analysisPane;
     /// <summary>相似聚类面板（验收读取卡片、交叉轴与列表态）。</summary>
     internal iOSSimilarityPanel SimilarityPane => _similarityPane;
-    /// <summary>主图绿框叠加层（细节预览 hover / 定格的联动目标）。</summary>
+    /// <summary>主图绿框叠加层（细节预览 hover / 触控活动的联动目标）。</summary>
     internal UIView DetailHighlightView => _detailHighlight;
     /// <summary>主图绿框当前是否可见。</summary>
     internal bool DetailHighlightVisible => !_detailHighlight.Hidden;
@@ -800,13 +800,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
     /// <summary>
-    /// 主图区点击：细节预览定格绿框时先解除（"点空白清除"）；否则空态时打开文件夹选择器
+    /// 主图区点击：细节预览触控活动绿框时先解除（"点空白清除"）；否则空态时打开文件夹选择器
     /// （与 Mac 空首屏点开文件同义）。
     /// </summary>
     /// <param name="recognizer">点击识别器。</param>
     private void OnPhotoTapped(UITapGestureRecognizer recognizer) => TapPhoto();
 
-    /// <summary>主图点按入口（识别器与验收共用）：解除定格绿框优先，其次空态打开文件夹。</summary>
+    /// <summary>主图点按入口（识别器与验收共用）：解除触控活动绿框优先，其次空态打开文件夹。</summary>
     internal void TapPhoto()
     {
         if (_detailVisible || !_detailHighlight.Hidden)
@@ -958,7 +958,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
-                // 切图后细节预览的定格/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
+                // 切图后细节预览的触控活动/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
                 HideDetailHighlight();
                 _session.SetFile(_main.CurrentFile?.File);
                 BuildControls();
@@ -1078,7 +1078,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>
     /// 细节预览高亮：把命中的细节预览中心/对焦框换算成主图上的 3 点绿框。
-    /// 来自触控板 hover 或手指定格（两者都经细节预览的 <c>HighlightChanged</c>）。
+    /// 来自触控板 hover 或手指触控活动（两者都经细节预览的 <c>HighlightChanged</c>）。
     /// </summary>
     /// <param name="visible">是否显示绿框。</param>
     /// <param name="u">裁剪中心归一化横坐标。</param>

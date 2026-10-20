@@ -19,7 +19,7 @@ namespace PhotoViewer.iOS.Native;
 /// 分析栏与增强预览——入口（主图菜单 + 控制栏命令）、两向瓦片几何（边长/间距 8/内边距 10/交叉轴）、
 /// 瓦片顺序与角标、诊断瓦片点击落准星、F16 代理与 8 位 P3 Full 两种展示编码下的直方图/细节裁剪
 /// （细节裁剪中心像素与主图帧读回对比）、"未提取"→ 真实批量索引后瓦片自行出图且不切图、
-/// 增强预览经 <see cref="PhotoLoadSession"/> 生效并还原、关闭后主图恢复占满、手指点按定格绿框与点空白解除。
+/// 增强预览经 <see cref="PhotoLoadSession"/> 生效并还原、关闭后主图恢复占满、细节活动目标的触控序列与过期事件隔离。
 /// 素材要求：目录内至少一张 jpg 与 <c>color-p3-large.jpg</c>（长边 ≥ 4000，用于制造真实代理档与 8 位 P3 Full），
 /// 且必须位于 App 沙盒内 —— 不写用户照片或 TestCase。报告写 Documents/PhotoViewer/native-analysis-checks.txt。
 /// </summary>
@@ -143,14 +143,20 @@ internal static class iOSNativeAnalysisCheck
                 await UiDispatcher.InvokeAsync(() => main.Settings.LayoutMode = LayoutMode.Row);
                 await SettleAsync(root);
 
-                // 四、诊断瓦片点击 → 归一化准星；空白清空。
-                root.AnalysisPane.Presenter.OnTileClicked(0.25, 0.75);
-                if (root.AnalysisPane.Presenter.CrosshairU is not { } u || Math.Abs(u - 0.25) > 0.001
-                    || root.AnalysisPane.Presenter.CrosshairV is not { } v || Math.Abs(v - 0.75) > 0.001)
-                    throw new InvalidOperationException($"诊断瓦片点击未落准星：{root.AnalysisPane.Presenter.CrosshairU},{root.AnalysisPane.Presenter.CrosshairV}");
-                root.AnalysisPane.Presenter.ClearCrosshair();
-                if (root.AnalysisPane.Presenter.CrosshairU != null) throw new InvalidOperationException("清空准星失败");
-                lines.Add("PASS 诊断瓦片：点击落归一化准星，清空复位");
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    var diagnostics = root.AnalysisPane.TileViews.OfType<iOSDiagnosticTile>().Skip(1).ToArray();
+                    foreach (var diagnostic in diagnostics)
+                    {
+                        iOSNativeTapProbe.Tap(diagnostic, .25, .75);
+                        if (root.AnalysisPane.Presenter.CrosshairU is not { } u || Math.Abs(u - .25) > .001
+                            || root.AnalysisPane.Presenter.CrosshairV is not { } v || Math.Abs(v - .75) > .001)
+                            throw new InvalidOperationException("诊断瓦片命中链路没有落共享准星");
+                        diagnostic.TapAt(CGPoint.Empty);
+                        if (root.AnalysisPane.Presenter.CrosshairU != null) throw new InvalidOperationException("边框未清空准星");
+                    }
+                });
+                lines.Add("PASS 诊断四瓦片：UIKit Window.HitTest逐层命中+瓦片事件处理注入，落共享准星/边框清空（非系统触摸注入）");
 
                 // 五、F16 代理（分析栏关闭，避免其 needsFull 直接升级 Full）：
                 //     直方图渲染器与 DisplayCrop 按 F16 口径直接出图。
@@ -226,22 +232,33 @@ internal static class iOSNativeAnalysisCheck
                 // EXIF 6 竖拍素材（8 位 P3 Full）都要保持"源尺寸/方向 + 导航帧四角分类"不变。
                 await VerifyEnhancedOrientationAsync(root, main, session, directory, workspace, lines);
 
-                // 八、手指点按定格绿框：再点或点空白解除。
-                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
-                await WaitAsync(() => root.AnalysisPane.DetailPreviews.Count > 0, "细节预览瓦片就绪");
-                var preview = root.AnalysisPane.DetailPreviews[^1];
-                await UiDispatcher.InvokeAsync(preview.ToggleFrozen);
-                await WaitAsync(() => preview.IsFrozen && root.DetailHighlightVisible, "点按定格绿框");
-                var highlight = root.DetailHighlightView.Frame;
-                if ((double)highlight.Width < 1 || (double)highlight.Height < 1)
-                    throw new InvalidOperationException($"定格绿框尺寸非法：{highlight}");
-                await UiDispatcher.InvokeAsync(root.TapPhoto);
-                await WaitAsync(() => !preview.IsFrozen && !root.DetailHighlightVisible, "点空白解除定格");
-                await UiDispatcher.InvokeAsync(preview.ToggleFrozen);
-                await WaitAsync(() => preview.IsFrozen, "再次定格");
-                await UiDispatcher.InvokeAsync(preview.ToggleFrozen);
-                await WaitAsync(() => !preview.IsFrozen && !root.DetailHighlightVisible, "再点一次解除定格");
-                lines.Add("PASS 细节预览：手指点按定格主图绿框，再点/点空白均可解除");
+                string focusFixture = Path.Combine(directory, "focus-src.ARW");
+                string detailTrace = Path.Combine(output, "native-analysis-race-diagnostics.txt");
+                File.WriteAllText(detailTrace, string.Empty);
+                string? displayedFileKey = null;
+                using var displaySignal = await UiDispatcher.InvokeAsync(() => session.Subscribe(file => displayedFileKey = file.PathKey));
+                void TraceDetail(string stage, iOSDetailPreview? selected = null)
+                {
+                    string text = stage + " " + DescribeDetailProbe(root, main, session, displayedFileKey, selected);
+                    File.AppendAllText(detailTrace, text + Environment.NewLine);
+                    Console.WriteLine("[NativeRace] " + text);
+                }
+                bool hasFocusFixture = File.Exists(focusFixture);
+                string expectedFileKey;
+                if (hasFocusFixture)
+                {
+                    var focusFile = new iOSFileRef(focusFixture);
+                    expectedFileKey = focusFile.PathKey;
+                    await main.FolderVM.OpenImageAsync(focusFile);
+                }
+                else expectedFileKey = await UiDispatcher.InvokeAsync(() =>
+                {
+                    displayedFileKey = main.CurrentFile!.File.PathKey;
+                    return displayedFileKey;
+                });
+                int detailCount = await VerifyDetailActivityAsync(root, main, session, expectedFileKey,
+                    hasFocusFixture ? 2 : 1, () => displayedFileKey, TraceDetail);
+                lines.Add($"PASS 细节预览事件注入（{detailCount}瓦片）：当前文件/Full/纹理/当前瓦片/布局就绪后在同一UI调用获取并测试；Down/滑入切换/移出移入/Up/多指旧Cancel隔离/触控优先/抬手无粘框/后续hover/失活（非硬件实测）");
 
                 // 九、未提取 → 真实索引：探针副本入库后诊断瓦片自行出图，期间不切图。
                 var indexing = await VerifyIndexRefreshAsync(root, main, directory, lines);
@@ -584,9 +601,118 @@ internal static class iOSNativeAnalysisCheck
         return result;
     }
 
-    /// <summary>轮询等待条件成立，超时即失败。</summary>
-    /// <param name="condition">条件。</param>
-    /// <param name="label">等待标签。</param>
+    private static async Task<int> VerifyDetailActivityAsync(iOSNativeRootViewController root, MainViewModel main,
+        PhotoLoadSession session, string expectedFileKey, int expectedCount, Func<string?> displayedFileKey,
+        Action<string, iOSDetailPreview?> trace)
+    {
+        bool clearStateProved = false;
+        string? previousWait = null;
+        for (int attempt = 0; attempt < 2400; attempt++)
+        {
+            int result = await UiDispatcher.InvokeAsync(() =>
+            {
+                root.View!.LayoutIfNeeded();
+                var pane = root.AnalysisPane;
+                var previews = pane.DetailPreviews;
+                bool ready = main.CurrentFile?.File.PathKey == expectedFileKey && displayedFileKey() == expectedFileKey
+                    && session.Image != null && !session.IsProxy && ReferenceEquals(root.Photo.DisplayedImage, session.Image)
+                    && root.Photo.PresentationReady && main.IsAnalysisViewVisible && !pane.Hidden && previews.Count == expectedCount
+                    && previews.All(value => (nint)value.Handle != 0 && ReferenceEquals(value.Superview, pane)
+                        && value.Window != null && value.Frame.Width > 0 && value.Frame.Height > 0 && value.HasContent);
+                if (!ready)
+                {
+                    string state = DescribeDetailProbe(root, main, session, displayedFileKey(), previews.LastOrDefault());
+                    if (state != previousWait) { trace("waiting-ready", previews.LastOrDefault()); previousWait = state; }
+                    return 0;
+                }
+                if (!clearStateProved)
+                {
+                    bool observed = false;
+                    void OnReload()
+                    {
+                        if (observed || session.Image != null) return;
+                        observed = true;
+                        var current = pane.DetailPreviews;
+                        if (current.Count != expectedCount) throw new InvalidOperationException("清空态未保留EXIF细节瓦片，需重新核对旧前置");
+                        var target = current[^1];
+                        trace("controlled-clear-before-down", target);
+                        var point = new CGPoint(target.Frame.GetMidX(), target.Frame.GetMidY());
+                        pane.RouteDetailTouch(101, point, UITouchPhase.Began);
+                        trace("controlled-clear-after-down", target);
+                        if (!target.IsHighlighted || root.DetailHighlightVisible || root.Photo.PresentationReady)
+                            throw new InvalidOperationException("无展示图时的细节活动状态不符合预期");
+                        pane.RouteDetailTouch(101, point, UITouchPhase.Ended);
+                    }
+                    session.Changed += OnReload;
+                    try { session.SetFile(main.CurrentFile!.File); }
+                    finally { session.Changed -= OnReload; }
+                    if (!observed) throw new InvalidOperationException("未观察到真实SetFile清空态");
+                    clearStateProved = true;
+                    return 0;
+                }
+                root.Photo.FitToView();
+                var preview = pane.DetailPreviews[^1];
+                trace("atomic-ready-before-down", preview);
+                var location = new CGPoint(preview.Frame.GetMidX(), preview.Frame.GetMidY());
+                pane.RouteDetailTouch(1, location, UITouchPhase.Began);
+                trace("atomic-ready-after-down", preview);
+                if (!preview.IsHighlighted || !root.DetailHighlightVisible) throw new InvalidOperationException("已就绪视图Down未立即点亮：" + DescribeDetailProbe(root, main, session, displayedFileKey(), preview));
+                if (pane.DetailPreviews.Count == 2)
+                {
+                    var other = pane.DetailPreviews[0];
+                    pane.RouteDetailTouch(1, new CGPoint(other.Frame.GetMidX(), other.Frame.GetMidY()), UITouchPhase.Moved);
+                    if (!other.IsHighlighted || preview.IsHighlighted || pane.DetailPreviews.Count(value => value.IsHighlighted) != 1)
+                        throw new InvalidOperationException("滑入另一细节瓦片未切换唯一目标");
+                    pane.RouteDetailTouch(1, location, UITouchPhase.Moved);
+                }
+                pane.RouteDetailTouch(2, location, UITouchPhase.Began);
+                pane.RouteDetailTouch(1, location, UITouchPhase.Cancelled);
+                if (!preview.IsHighlighted) throw new InvalidOperationException("旧Cancel清除了新目标");
+                pane.RouteDetailTouch(2, CGPoint.Empty, UITouchPhase.Moved);
+                if (preview.IsHighlighted || root.DetailHighlightVisible) throw new InvalidOperationException("移出未清除");
+                pane.RouteDetailTouch(2, location, UITouchPhase.Moved);
+                pane.RouteDetailTouch(2, location, UITouchPhase.Ended);
+                if (preview.IsHighlighted || root.DetailHighlightVisible) throw new InvalidOperationException("Up未立即清除");
+                pane.SetDetailActivity(preview, true, -3);
+                pane.SetDetailActivity(preview, false, -3);
+                if (preview.IsHighlighted) throw new InvalidOperationException("Hover离开未清除");
+                pane.RouteDetailTouch(4, location, UITouchPhase.Began);
+                var hoverTarget = pane.DetailPreviews[0];
+                pane.SetDetailActivity(hoverTarget, true, -5);
+                pane.SetDetailActivity(preview, false, -3);
+                if (!preview.IsHighlighted || pane.DetailPreviews.Any(value => !ReferenceEquals(value, preview) && value.IsHighlighted))
+                    throw new InvalidOperationException("触控按住时hover抢走了活动目标");
+                pane.RouteDetailTouch(4, location, UITouchPhase.Ended);
+                if (pane.DetailPreviews.Any(value => value.IsHighlighted) || root.DetailHighlightVisible)
+                    throw new InvalidOperationException("触控抬起后因hover混合事件残留绿框");
+                pane.SetDetailActivity(hoverTarget, true, -6);
+                if (!hoverTarget.IsHighlighted) throw new InvalidOperationException("触控结束后新的hover无法恢复");
+                NSNotificationCenter.DefaultCenter.PostNotificationName(UIApplication.WillResignActiveNotification, null);
+                if (pane.DetailPreviews.Any(value => value.IsHighlighted) || root.DetailHighlightVisible)
+                    throw new InvalidOperationException("失活通知未清除");
+                return previews.Count;
+            });
+            if (result > 0) return result;
+            await Task.Delay(25);
+        }
+        throw new InvalidOperationException("等待当前细节与主图就绪超时：" + previousWait);
+    }
+
+    private static string DescribeDetailProbe(iOSNativeRootViewController root, MainViewModel main, PhotoLoadSession session,
+        string? displayedFileKey, iOSDetailPreview? preview = null)
+    {
+        static string Id(object? value) => value == null ? "null" : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(value).ToString();
+        var pane = root.AnalysisPane;
+        var image = session.Image;
+        bool live = preview != null && (nint)preview.Handle != 0;
+        return $"current={main.CurrentFile?.File.PathKey} signal={displayedFileKey ?? "none"} image={Id(image)} "
+            + $"imageSize={image?.Width}x{image?.Height} proxy={session.IsProxy} error={session.Error} texture={Id(root.Photo.DisplayedImage)} ready={root.Photo.PresentationReady} "
+            + $"photo={root.Photo.Bounds} display={root.Photo.DisplayWidth}x{root.Photo.DisplayHeight} analysis={main.IsAnalysisViewVisible}/{!pane.Hidden} count={pane.DetailPreviews.Count} "
+            + $"preview={Id(preview)} currentPreview={pane.DetailPreviews.Any(value => ReferenceEquals(value, preview))} live={live} "
+            + $"attached={live && ReferenceEquals(preview!.Superview, pane) && preview.Window != null} frame={(live ? preview!.Frame.ToString() : "none")} "
+            + $"content={live && preview!.HasContent} tileHighlight={live && preview!.IsHighlighted} mainHighlight={root.DetailHighlightVisible}";
+    }
+
     private static async Task WaitAsync(Func<bool> condition, string label)
     {
         for (int attempt = 0; attempt < 2400; attempt++)

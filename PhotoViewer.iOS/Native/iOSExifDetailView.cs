@@ -61,14 +61,9 @@ internal sealed class iOSExifDetailView : UIViewController
     /// <summary>分组标题颜色 #EEE。</summary>
     private static readonly UIColor GroupHeaderColor = UIColor.FromRGB(0xEE, 0xEE, 0xEE);
 
-    /// <summary>卡片底色 #2a2a2a。</summary>
-    private static readonly UIColor CardColor = UIColor.FromRGB(0x2A, 0x2A, 0x2A);
-
-    /// <summary>Tag ID 单元格底色 #222。</summary>
-    private static readonly UIColor IdCellColor = UIColor.FromRGB(0x22, 0x22, 0x22);
-
-    /// <summary>分隔线颜色 #3a3a3a。</summary>
-    private static readonly UIColor DividerColor = UIColor.FromRGB(0x3A, 0x3A, 0x3A);
+    private static readonly UIColor CardColor = UIColor.SecondarySystemGroupedBackground;
+    private static readonly UIColor IdCellColor = UIColor.SecondarySystemGroupedBackground;
+    private static readonly UIColor DividerColor = UIColor.Separator;
 
     /// <summary>Tag ID 文字颜色 #555。</summary>
     private static readonly UIColor IdTextColor = UIColor.FromRGB(0x55, 0x55, 0x55);
@@ -135,9 +130,9 @@ internal sealed class iOSExifDetailView : UIViewController
     {
         Title = "EXIF 详情";
         View!.BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12);
-        _table = new UITableView(CGRect.Empty, UITableViewStyle.Plain)
+        _table = new UITableView(CGRect.Empty, UITableViewStyle.InsetGrouped)
         {
-            BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12),
+            BackgroundColor = UIColor.SystemGroupedBackground,
             SeparatorStyle = UITableViewCellSeparatorStyle.None,
             RowHeight = 0,
             EstimatedRowHeight = 0,
@@ -174,7 +169,7 @@ internal sealed class iOSExifDetailView : UIViewController
     public override void ViewDidLayoutSubviews()
     {
         base.ViewDidLayoutSubviews();
-        _table.Frame = View!.Bounds;
+        _table.Frame = View!.SafeAreaLayoutGuide.LayoutFrame;
         LayoutHeader();
     }
 
@@ -305,7 +300,7 @@ internal sealed class iOSExifDetailView : UIViewController
         public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
         {
             var group = owner._viewModel!.Groups![(int)indexPath.Section];
-            double cardWidth = Math.Max(1, (double)tableView.Bounds.Width - SideMargin * 2);
+            double cardWidth = Math.Max(1, (double)tableView.Bounds.Width - (double)tableView.LayoutMargins.Left - (double)tableView.LayoutMargins.Right - SideMargin * 2);
             return (nfloat)(RowHeight(group.Tags[(int)indexPath.Row], cardWidth) + ExifTableGeometry.DividerThickness);
         }
 
@@ -527,12 +522,12 @@ internal sealed class iOSExifDetailView : UIViewController
             {
                 foreach (var entry in viewModel.Formats)
                 {
-                    var button = new UIButton(UIButtonType.Custom);
-                    button.SetTitle(entry.Label, UIControlState.Normal);
-                    button.SetTitleColor(FormatTextColor, UIControlState.Normal);
-                    button.TitleLabel!.Font = FormatFont;
-                    button.BackgroundColor = entry.IsSelected ? FormatSelectedColor : UIColor.Clear;
-                    button.Layer.CornerRadius = 6;
+                    var configuration = entry.IsSelected ? UIButtonConfiguration.TintedButtonConfiguration : UIButtonConfiguration.PlainButtonConfiguration;
+                    configuration.Title = entry.Label;
+                    configuration.ButtonSize = UIButtonConfigurationSize.Small;
+                    configuration.ContentInsets = new NSDirectionalEdgeInsets(2, 8, 2, 8);
+                    var button = new UIButton(UIButtonType.System) { Configuration = configuration };
+                    button.AccessibilityValue = entry.IsSelected ? "已选择" : "未选择";
                     var capture = entry;
                     button.TouchUpInside += (_, _) => _select(capture);
                     AddSubview(button);
@@ -552,7 +547,7 @@ internal sealed class iOSExifDetailView : UIViewController
         internal double RequiredHeight(double width)
         {
             double lineHeight = Math.Ceiling((double)FileNameFont.LineHeight);
-            double formatHeight = Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2;
+            double formatHeight = Math.Max(32, Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2);
             double height = HeaderTopMargin + Math.Max(lineHeight, formatHeight) + HeaderBottomMargin;
             if (_showLoading) height += LoadingMargin + Math.Ceiling((double)FormatFont.LineHeight) + LoadingMargin;
             return Math.Max(1, height);
@@ -564,7 +559,7 @@ internal sealed class iOSExifDetailView : UIViewController
             base.LayoutSubviews();
             double width = Math.Max(1, (double)Bounds.Width);
             double lineHeight = Math.Ceiling((double)FileNameFont.LineHeight);
-            double formatHeight = Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2;
+            double formatHeight = Math.Max(32, Math.Ceiling((double)FormatFont.LineHeight) + FormatPaddingY * 2);
             double headerHeight = Math.Max(lineHeight, formatHeight);
             double fileNameWidth = MeasureWidth(_fileName);
             double formatWidth = 0;

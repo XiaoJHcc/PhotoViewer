@@ -85,15 +85,14 @@ internal sealed class iOSFilterBar : UIView
     private void SyncToggle()
     {
         bool open = _main.FileVM.FilterBar.IsSimilarityPanelOpen;
-        _similarity.BackgroundColor = open
+        var configuration = _similarity.Configuration!;
+        configuration.BaseBackgroundColor = open
             ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedBackground)
-            : UIColor.FromWhiteAlpha(2f / 15, 1);
-        _similarity.Layer.BorderColor = (open
-            ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedBorder)
-            : iOSColors.FromToken(DesignTokens.ColorFilterToggleBorder)).CGColor;
-        _similarity.SetTitleColor(open
+            : UIColor.SecondarySystemFill;
+        configuration.BaseForegroundColor = open
             ? iOSColors.FromToken(DesignTokens.ColorFilterToggleCheckedForeground)
-            : iOSColors.FromToken(DesignTokens.ColorFilterToggleForeground), UIControlState.Normal);
+            : iOSColors.FromToken(DesignTokens.ColorFilterToggleForeground);
+        _similarity.Configuration = configuration;
         _similarity.AccessibilityValue = open ? "已展开" : "已收起";
     }
 
@@ -105,9 +104,7 @@ internal sealed class iOSFilterBar : UIView
     {
         _count.SizeToFit();
         CountWidth = Math.Ceiling((double)_count.Frame.Width);
-        // iPad 没有 macOS 的交通灯：行布局从安全区前导边 + 普通外边距起排，不在左上留空带。
-        var frames = MainScreenLayout.FilterBarFrames(horizontal, contentWidth, leadingInset, CountWidth, ShowsSimilarityToggle,
-            alignLeading: true);
+        var frames = MainScreenLayout.FilterBarFrames(horizontal, contentWidth, leadingInset, CountWidth, ShowsSimilarityToggle);
         _sort.Frame = ToCGRect(frames.Sort);
         _order.Frame = ToCGRect(frames.Order);
         _rating.Frame = ToCGRect(frames.Rating);
@@ -120,21 +117,20 @@ internal sealed class iOSFilterBar : UIView
     /// <returns>UIKit frame。</returns>
     private static CGRect ToCGRect(LayoutRect rect) => new(rect.X, rect.Y, rect.Width, rect.Height);
 
-    /// <summary>生成与 Mac 下拉同一外观定位的筛选按钮：90×32、圆角 6、深色底与描边。</summary>
+    /// <summary>生成90×32原生configuration筛选按钮，状态外观由UIKit统一管理。</summary>
     /// <returns>配置完成的按钮。</returns>
     private static UIButton Control()
     {
+        var configuration = UIButtonConfiguration.GrayButtonConfiguration;
+        configuration.ButtonSize = UIButtonConfigurationSize.Small;
+        configuration.CornerStyle = UIButtonConfigurationCornerStyle.Medium;
+        configuration.BaseForegroundColor = UIColor.Label;
+        configuration.ContentInsets = new NSDirectionalEdgeInsets(0, 4, 0, 4);
         var button = new UIButton(UIButtonType.System)
         {
-            BackgroundColor = UIColor.FromWhiteAlpha(2f / 15, 1),
+            Configuration = configuration,
             AccessibilityHint = "下拉选择",
         };
-        button.Layer.CornerRadius = 6;
-        button.Layer.BorderWidth = 1;
-        button.Layer.BorderColor = UIColor.FromRGB(0x44, 0x44, 0x44).CGColor;
-        button.SetTitleColor(UIColor.White, UIControlState.Normal);
-        button.TitleLabel!.Font = UIFont.SystemFontOfSize(13);
-        button.TitleLabel.LineBreakMode = UILineBreakMode.TailTruncation;
         button.ShowsMenuAsPrimaryAction = true;
         return button;
     }

@@ -89,7 +89,7 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
     /// 配置 iOS 半屏浮窗的 detents 与交互参数。
     /// </summary>
     /// <param name="sheetPresentationController">系统 Sheet 控制器。</param>
-    private static void ConfigureSheetPresentation(UISheetPresentationController? sheetPresentationController)
+    internal static void ConfigureSheetPresentation(UISheetPresentationController? sheetPresentationController)
     {
         if (sheetPresentationController == null)
         {
@@ -135,7 +135,7 @@ internal sealed class iOSNativeSettingsSession
         _source = source;
         WorkingSettings = new SettingsViewModel(
             settingsService: new iOSNativeTransientSettingsService(),
-            initialModel: source.CreateSnapshot());
+            initialModel: source.CreateSnapshot(), applyRuntimeSettings: false);
     }
 
     /// <summary>
@@ -149,6 +149,7 @@ internal sealed class iOSNativeSettingsSession
             return;
         }
 
+        iOSViewControllerLocator.GetTopMostViewController()?.View?.EndEditing(true);
         _source.ApplySnapshot(WorkingSettings.CreateSnapshot());
         _hasApplied = true;
     }
@@ -281,7 +282,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         [
             ("文件", "同名合并、文件格式与缓存预加载", () => new iOSNativeFileSettingsViewController(_settings)),
             ("预览", "缩放指示器与缩放比例预设", () => new iOSNativePreviewSettingsViewController(_settings)),
-            ("控制", "布局、控制栏显示与快捷键只读查看", () => new iOSNativeControlSettingsViewController(_settings)),
+            ("控制", "布局、控制栏显示、快捷键与键盘映射", () => new iOSNativeControlSettingsViewController(_settings)),
             ("EXIF", "EXIF 显示项与评分写回策略", () => new iOSNativeExifSettingsViewController(_settings)),
             ("AI", null, () => new iOSNativeAiSettingsViewController(_settings)),
         ];
@@ -455,19 +456,16 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
-        View!.BackgroundColor = UIColor.SystemGroupedBackground;
+        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+        View!.BackgroundColor = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
         ConfigureLayout();
         RebuildContent();
     }
 
-    /// <summary>
-    /// 页面重新出现时刷新表单内容，保证动态列表与说明文字为最新状态。
-    /// </summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewWillAppear(bool animated)
+    public override void ViewWillDisappear(bool animated)
     {
-        base.ViewWillAppear(animated);
-        RebuildContent();
+        View?.EndEditing(true);
+        base.ViewWillDisappear(animated);
     }
 
     /// <summary>
@@ -496,6 +494,10 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     private void ConfigureLayout()
     {
         _scrollView.TranslatesAutoresizingMaskIntoConstraints = false;
+        var dismissKeyboard = new UITapGestureRecognizer(() => View?.EndEditing(true)) { CancelsTouchesInView = false };
+        dismissKeyboard.Delegate = new iOSNonControlTapDelegate();
+        _scrollView.AddGestureRecognizer(dismissKeyboard);
+        _scrollView.KeyboardDismissMode = UIScrollViewKeyboardDismissMode.Interactive;
         _contentStack.TranslatesAutoresizingMaskIntoConstraints = false;
         _contentStack.Axis = UILayoutConstraintAxis.Vertical;
         _contentStack.Spacing = 20;
@@ -1275,195 +1277,12 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
                 CreateScalePresetEditor()));
     }
 
-    /// <summary>
-    /// 创建缩放比例预设编辑器。
-    /// </summary>
-    /// <returns>可直接编辑的原生列表。</returns>
-    private UIView CreateScalePresetEditor()
+    private UIView CreateScalePresetEditor() => new iOSScalePresetEditor(Settings);
+
+    public override void ViewWillDisappear(bool animated)
     {
-        var stack = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Vertical,
-            Spacing = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        for (var index = 0; index < Settings.ScalePresets.Count; index++)
-        {
-            if (index > 0)
-            {
-                stack.AddArrangedSubview(CreateSeparator());
-            }
-
-            stack.AddArrangedSubview(CreateScalePresetRow(Settings.ScalePresets[index]));
-        }
-
-        if (Settings.ScalePresets.Count > 0)
-        {
-            stack.AddArrangedSubview(CreateSeparator());
-        }
-
-        stack.AddArrangedSubview(CreateAddScalePresetRow());
-        return stack;
-    }
-
-    /// <summary>
-    /// 创建单个缩放比例预设行。
-    /// </summary>
-    /// <param name="preset">当前预设。</param>
-    /// <returns>可编辑行。</returns>
-    private UIView CreateScalePresetRow(SettingsViewModel.ScalePreset preset)
-    {
-        var content = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        var textField = new UITextField
-        {
-            Text = preset.Text,
-            KeyboardType = UIKeyboardType.DecimalPad,
-            BorderStyle = UITextBorderStyle.RoundedRect,
-            TextAlignment = UITextAlignment.Center,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        textField.WidthAnchor.ConstraintEqualTo(96).Active = true;
-        textField.InputAccessoryView = CreateDoneToolbar(textField);
-
-        void ApplyText()
-        {
-            if (TryApplyScalePresetValue(textField.Text ?? string.Empty, preset, textField))
-            {
-                RebuildContent();
-                return;
-            }
-
-            textField.Text = preset.Text;
-        }
-
-        textField.EditingDidEnd += (_, _) => ApplyText();
-
-        var percentLabel = new UILabel
-        {
-            Text = "%",
-            Font = UIFont.SystemFontOfSize(16, UIFontWeight.Medium),
-            TextColor = UIColor.SecondaryLabel,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        var displayLabel = CreateTrailingValueLabel();
-        displayLabel.Text = preset.Display;
-
-        var deleteButton = new UIButton(UIButtonType.System)
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        deleteButton.SetTitle("-", UIControlState.Normal);
-        deleteButton.TitleLabel.Font = UIFont.SystemFontOfSize(22, UIFontWeight.Semibold);
-        // SETTINGS-07：只剩一项时删除入口禁用，不允许进入空表。
-        deleteButton.Enabled = Settings.CanRemoveScalePreset;
-        deleteButton.TouchUpInside += (_, _) =>
-        {
-            if (!Settings.CanRemoveScalePreset) return;
-            Settings.RemoveScalePreset(preset);
-            RebuildContent();
-        };
-
-        content.AddArrangedSubview(textField);
-        content.AddArrangedSubview(percentLabel);
-        content.AddArrangedSubview(displayLabel);
-        content.AddArrangedSubview(CreateFlexibleSpacer());
-        content.AddArrangedSubview(deleteButton);
-
-        return CreateCustomRow(content);
-    }
-
-    /// <summary>
-    /// 创建新增缩放比例行。
-    /// </summary>
-    /// <returns>新增按钮行。</returns>
-    private UIView CreateAddScalePresetRow()
-    {
-        var content = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Center,
-            Spacing = 12,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        var addButton = new UIButton(UIButtonType.System)
-        {
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        addButton.SetTitle("+", UIControlState.Normal);
-        addButton.TitleLabel.Font = UIFont.SystemFontOfSize(22, UIFontWeight.Semibold);
-        addButton.TouchUpInside += (_, _) =>
-        {
-            Settings.AddScalePreset();
-            RebuildContent();
-        };
-
-        content.AddArrangedSubview(CreateFlexibleSpacer());
-        content.AddArrangedSubview(addButton);
-        return CreateCustomRow(content);
-    }
-
-    /// <summary>
-    /// 将文本输入应用到缩放预设。
-    /// </summary>
-    /// <param name="text">用户输入的百分比文本。</param>
-    /// <param name="preset">目标预设。</param>
-    /// <param name="textFieldResponder">校验失败后重新聚焦的输入框。</param>
-    /// <returns>应用成功返回 true，否则返回 false。</returns>
-    private bool TryApplyScalePresetValue(string text, SettingsViewModel.ScalePreset preset, UIView textFieldResponder)
-    {
-        if (!TryParsePercentage(text, out var normalizedText))
-        {
-            PresentValidationAlert($"请输入大于 0 且不超过 {SettingsViewModel.ScalePresetPercentMax:0} 的数字，例如 100 或 66.7。",
-                textFieldResponder: textFieldResponder);
-            return false;
-        }
-
-        preset.Text = normalizedText;
-        Settings.ApplyScalePreset();
-        return true;
-    }
-
-    /// <summary>
-    /// 解析百分比输入并标准化字符串。
-    /// </summary>
-    /// <param name="text">原始文本。</param>
-    /// <param name="normalizedText">标准化后的文本。</param>
-    /// <returns>解析成功返回 true，否则返回 false。</returns>
-    private static bool TryParsePercentage(string text, out string normalizedText)
-    {
-        normalizedText = string.Empty;
-        // SETTINGS-07：四端共用同一校验（有限值、>0 且 ≤1600），不再只检查正数。
-        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
-            || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value))
-        {
-            if (!SettingsViewModel.IsValidScalePresetPercent(value)) return false;
-            normalizedText = value.ToString("0.###", CultureInfo.InvariantCulture);
-            return true;
-        }
-
-        return false;
-    }
-
-    /// <summary>
-    /// 弹出输入校验失败提示。
-    /// </summary>
-    /// <param name="message">提示内容。</param>
-    /// <param name="textFieldResponder">关闭后重新聚焦的目标视图。</param>
-    private void PresentValidationAlert(string message, UIView textFieldResponder)
-    {
-        var alert = UIAlertController.Create("输入无效", message, UIAlertControllerStyle.Alert);
-        alert.AddAction(UIAlertAction.Create("确定", UIAlertActionStyle.Default, _ => textFieldResponder.BecomeFirstResponder()));
-        PresentViewController(alert, true, null);
+        View?.EndEditing(true);
+        base.ViewWillDisappear(animated);
     }
 }
 
@@ -1525,95 +1344,97 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
 /// </summary>
 internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
-    /// <summary>
-    /// 初始化控制设置页。
-    /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeControlSettingsViewController(SettingsViewModel settings)
-        : base(settings)
-    {
-    }
+    private readonly iOSInputCapabilities _capabilities = new();
+    private iOSHotkeyEditor? _hotkeys;
+    private UIView? _mapping;
+    internal iOSHotkeyEditor? HotkeyEditor => _hotkeys;
+    internal iOSInputCapabilities Capabilities => _capabilities;
+    public iOSNativeControlSettingsViewController(SettingsViewModel settings) : base(settings) { }
+    public override bool CanBecomeFirstResponder => true;
 
-    /// <summary>
-    /// 构建控制设置内容。
-    /// </summary>
-    /// <param name="contentStack">页面主内容栈。</param>
     protected override void BuildContent(UIStackView contentStack)
     {
         Title = "控制";
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "控制栏布局位置",
-                null,
-                CreateNavigationRow(
-                    "布局模式",
-                    null,
-                    GetLayoutModeDisplayName(Settings.LayoutMode),
-                    PresentLayoutModePicker)));
-
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "控制栏功能",
-                null,
-                new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
-                    itemsProvider: () => Settings.Hotkeys,
-                    titleSelector: item => item.Name,
-                    // SETTINGS-01@ios：无录制能力，但行副标题只读显示主/次绑定与冲突。
-                    subtitleSelector: HotkeySubtitle,
-                    isEnabledGetter: item => item.IsDisplay,
-                    isEnabledSetter: (item, value) => item.IsDisplay = value,
-                    moveAction: Settings.MoveHotkey,
-                    rowHeight: 52,
-                    cellStyle: UITableViewCellStyle.Subtitle)));
-    }
-
-    /// <summary>
-    /// 快捷键行的只读副标题：主/次绑定与冲突标记（未绑定显示"未设置"，与共享口径一致）。
-    /// </summary>
-    /// <param name="item">共享快捷键项。</param>
-    /// <returns>副标题文本。</returns>
-    private static string HotkeySubtitle(SettingsViewModel.HotkeyItem item)
-    {
-        string primary = item.PrimaryHotkeyText + (item.HasPrimaryConflict ? "（冲突）" : string.Empty);
-        string secondary = item.SecondaryHotkeyText + (item.HasSecondaryConflict ? "（冲突）" : string.Empty);
-        return $"主 {primary} · 次 {secondary}";
-    }
-
-    /// <summary>
-    /// 弹出布局模式选择对话框。
-    /// </summary>
-    private void PresentLayoutModePicker()
-    {
-        var alert = UIAlertController.Create("布局模式", null, UIAlertControllerStyle.ActionSheet);
-        foreach (var item in Settings.LayoutModes)
+        contentStack.AddArrangedSubview(CreateSection("布局模式", null, new iOSLayoutModePicker(Settings)));
+        _hotkeys = new iOSHotkeyEditor(Settings, _capabilities, () => BecomeFirstResponder());
+        contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _hotkeys));
+        var rows = new List<UIView>
         {
-            alert.AddAction(UIAlertAction.Create(item.DisplayName, UIAlertActionStyle.Default, _ => Settings.LayoutMode = item.Value));
-        }
-
-        alert.AddAction(UIAlertAction.Create("取消", UIAlertActionStyle.Cancel, null));
-
-        if (alert.PopoverPresentationController != null)
+            CreateSwitchRow("使用苹果键盘", null, () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value, () => _hotkeys.RefreshBindings()),
+        };
+        foreach (var (name, get, set) in new (string, Func<PhotoViewer.Core.Input.AppleMappingTarget>, Action<PhotoViewer.Core.Input.AppleMappingTarget>)[]
         {
-            var rootView = View!;
-            alert.PopoverPresentationController.SourceView = rootView;
-            alert.PopoverPresentationController.SourceRect = new CoreGraphics.CGRect(
-                rootView.Bounds.X + (rootView.Bounds.Width / 2),
-                rootView.Bounds.Y + (rootView.Bounds.Height / 2),
-                1,
-                1);
+            ("Command", () => Settings.MapCommandTarget, value => Settings.MapCommandTarget = value),
+            ("Option", () => Settings.MapOptionTarget, value => Settings.MapOptionTarget = value),
+            ("Control", () => Settings.MapControlTarget, value => Settings.MapControlTarget = value),
+        })
+        {
+            var button = new UIButton(UIButtonType.System) { ShowsMenuAsPrimaryAction = true };
+            void Refresh()
+            {
+                button.SetTitle(get().ToString(), UIControlState.Normal);
+                button.Menu = UIMenu.Create(Settings.AppleMappingTargets.Select(target =>
+                {
+                    var action = UIAction.Create(target.ToString(), null, null, _ => { set(target); Refresh(); _hotkeys.RefreshBindings(); });
+                    action.State = target == get() ? UIMenuElementState.On : UIMenuElementState.Off;
+                    return (UIMenuElement)action;
+                }).ToArray());
+            }
+            Refresh();
+            rows.Add(CreateCustomRow(new UIStackView([new UILabel { Text = name }, button])
+            { Axis = UILayoutConstraintAxis.Horizontal, Distribution = UIStackViewDistribution.EqualSpacing, TranslatesAutoresizingMaskIntoConstraints = false }));
         }
-
-        PresentViewController(alert, true, null);
+        _mapping = CreateSection("键盘映射", null, rows.ToArray());
+        contentStack.AddArrangedSubview(_mapping);
+        _capabilities.Changed += RefreshCapabilities;
+        RefreshCapabilities();
     }
 
-    /// <summary>
-    /// 获取布局模式的当前展示名称。
-    /// </summary>
-    /// <param name="layoutMode">当前布局模式。</param>
-    /// <returns>用于右侧摘要展示的文本。</returns>
-    private string GetLayoutModeDisplayName(LayoutMode layoutMode)
+    internal UIView? KeyboardMappingSection => _mapping;
+    private void RefreshCapabilities()
     {
-        return Settings.LayoutModes.FirstOrDefault(item => item.Value == layoutMode)?.DisplayName ?? layoutMode.ToString();
+        if (_mapping == null) return;
+        _mapping.Hidden = !_capabilities.HasExternalInput;
+        _mapping.AccessibilityElementsHidden = !_capabilities.HasExternalInput;
+    }
+    public override void ViewDidDisappear(bool animated)
+    {
+        base.ViewDidDisappear(animated);
+        if (NavigationController == null || NavigationController.PresentingViewController == null)
+        {
+            _hotkeys?.StopObserving();
+            _capabilities.Dispose();
+        }
+    }
+    public override void ViewWillDisappear(bool animated)
+    {
+        _hotkeys?.CancelRecording();
+        base.ViewWillDisappear(animated);
+    }
+    public override void PressesBegan(NSSet<UIPress> presses, UIPressesEvent? evt)
+    {
+        if (_hotkeys?.IsRecording == true)
+        {
+            foreach (var press in presses)
+                if (press.Key is { } key)
+                {
+                    if ((int)key.KeyCode == 43) { base.PressesBegan(presses, evt!); return; }
+                    _hotkeys.CaptureKey((int)key.KeyCode, (ulong)key.ModifierFlags);
+                }
+            return;
+        }
+        base.PressesBegan(presses, evt!);
+    }
+    public override void PressesEnded(NSSet<UIPress> presses, UIPressesEvent? evt)
+    {
+        foreach (var press in presses)
+            if (press.Key is { } key) _hotkeys?.UpdateModifiers((ulong)key.ModifierFlags);
+        if (_hotkeys?.IsRecording != true) base.PressesEnded(presses, evt!);
+    }
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) { _capabilities.Changed -= RefreshCapabilities; _hotkeys?.Dispose(); _capabilities.Dispose(); }
+        base.Dispose(disposing);
     }
 }
 

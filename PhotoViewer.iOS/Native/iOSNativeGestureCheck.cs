@@ -767,7 +767,7 @@ internal static class iOSNativeGestureCheck
 
     /// <summary>
     /// 切换增强并测时：从发起开关到增强图真正上屏（EnhancedDisplay）的墙钟时间。
-    /// 开启方向同时断言"计算中"反馈：开关一按即进入计算态、提示标签可见，增强图就绪后提示收起（真机 24MP 档约 1–2 秒，不能无反馈）。
+    /// 开启时立即进入计算态，超过500ms才显示药丸；计算态、门槛可见态与原生标签取同一UI快照，完成后收起。
     /// </summary>
     /// <param name="root">原生根控制器（提供计算中提示标签）。</param>
     /// <param name="session">展示会话。</param>
@@ -778,33 +778,52 @@ internal static class iOSNativeGestureCheck
         bool enabled, PixelEncoding? expectedSource = null)
     {
         var stopwatch = Stopwatch.StartNew();
-        bool busy = await UiDispatcher.InvokeAsync(() =>
+        var timeline = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        double toggledAt = 0;
+        (double At, bool Enhancing, bool Visible, bool Hidden, bool Enhanced) Snapshot()
+            => (stopwatch.Elapsed.TotalMilliseconds, session.IsEnhancing, session.IsEnhancingVisible,
+                root.EnhanceBusyLabel.Hidden, session.EnhancedDisplay);
+        void OnChanged() => timeline.Enqueue($"changed {Snapshot()}");
+        var initial = await UiDispatcher.InvokeAsync(() =>
         {
             if (enabled && expectedSource is { } expected && session.Image?.Encoding != expected)
                 throw new InvalidOperationException(
                     $"增强发起时展示档编码 {session.Image?.Encoding} 不是期望的 {expected}（proxy={session.IsProxy}）");
+            session.Changed += OnChanged;
+            toggledAt = stopwatch.Elapsed.TotalMilliseconds;
             session.ToggleEnhanced();
-            return session.IsEnhancing;
+            return Snapshot();
         });
-        if (enabled)
+        try
         {
-            if (!busy) throw new InvalidOperationException("增强开关按下后未进入计算态（IsEnhancing=false）");
-            // IMAGE-07：药丸接共享 500ms 门槛，按下当刻不得显示。
-            bool labelShownImmediately = await UiDispatcher.InvokeAsync(() => !root.EnhanceBusyLabel.Hidden);
-            if (labelShownImmediately) throw new InvalidOperationException("增强按下当刻即显示\"计算中\"（未走 500ms 门槛）");
-            await Task.Delay(DesignTokens.ImageBusyDelay + 200);
-            bool stillEnhancing = await UiDispatcher.InvokeAsync(() => session.IsEnhancing);
-            if (stillEnhancing)
+            timeline.Enqueue($"initial enabled={enabled} expected={expectedSource} toggle-at={toggledAt:0.###} {initial}");
+            if (enabled)
             {
-                bool labelShown = await UiDispatcher.InvokeAsync(() => session.IsEnhancingVisible && !root.EnhanceBusyLabel.Hidden);
-                if (!labelShown) throw new InvalidOperationException("增强计算超过 500ms 仍未显示\"计算中\"");
+                if (!initial.Enhancing) throw new InvalidOperationException("增强开关按下后未进入计算态（IsEnhancing=false）");
+                if (initial.Visible || !initial.Hidden) throw new InvalidOperationException("增强按下当刻即显示\"计算中\"（未走 500ms 门槛）");
+                await Task.Delay(DesignTokens.ImageBusyDelay + 200);
+                var current = await UiDispatcher.InvokeAsync(Snapshot);
+                timeline.Enqueue($"atomic-deadline {current}");
+                if (current.Enhancing && (!current.Visible || current.Hidden))
+                    throw new InvalidOperationException($"增强计算超过500ms仍未显示计算中：原子快照={current}");
+                if (!current.Enhancing && (current.Visible || !current.Hidden))
+                    throw new InvalidOperationException($"增强结束后计算中未收起：原子快照={current}");
+                await WaitAsync(() => session.EnhancedDisplay, "增强图就绪");
+                await WaitAsync(() => !session.IsEnhancing && root.EnhanceBusyLabel.Hidden, "计算中提示收起");
+                var completed = await UiDispatcher.InvokeAsync(Snapshot);
+                timeline.Enqueue($"completed {completed}; mixed-old-busy-with-new-visibility-would-fail={current.Enhancing && !(completed.Visible && !completed.Hidden)}");
             }
-            await WaitAsync(() => session.EnhancedDisplay, "增强图就绪");
-            await WaitAsync(() => !session.IsEnhancing && root.EnhanceBusyLabel.Hidden, "计算中提示收起");
+            else await WaitAsync(() => !session.EnhancedDisplay && !session.IsEnhanced, "增强图还原");
+            stopwatch.Stop();
+            return stopwatch.Elapsed.TotalMilliseconds;
         }
-        else await WaitAsync(() => !session.EnhancedDisplay && !session.IsEnhanced, "增强图还原");
-        stopwatch.Stop();
-        return stopwatch.Elapsed.TotalMilliseconds;
+        finally
+        {
+            await UiDispatcher.InvokeAsync(() => session.Changed -= OnChanged);
+            string text = string.Join(Environment.NewLine, timeline) + Environment.NewLine;
+            Console.WriteLine("[NativeRace] " + text);
+            File.AppendAllText(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer", "native-gesture-race-diagnostics.txt"), text);
+        }
     }
 
     /// <summary>归一化图像点漂移换算成屏幕点后与容差比较（"手指下的图像点还在手指下"的判定口径）。</summary>

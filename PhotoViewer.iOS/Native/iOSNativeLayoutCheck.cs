@@ -310,16 +310,15 @@ internal static class iOSNativeLayoutCheck
                 throw new InvalidOperationException($"{scope} 计数未紧随星级筛选 5 点：{bar.CountLabel.Frame}");
             if (Math.Abs((double)bar.SimilarityToggle.Frame.X - (double)bar.CountLabel.Frame.Right - MainScreenLayout.FilterGap) > Exact)
                 throw new InvalidOperationException($"{scope} 相似聚类 toggle 未紧随计数 5 点：{bar.SimilarityToggle.Frame}");
-            // iPad 没有 macOS 的交通灯：整组从内容前导边（外边距 10）起排，左上不得留空带。
-            // 文件栏内容区已收在安全区内，故绝对起点 = 安全区边缘 + 普通外边距（与旧壳 FileView/FilterBarView 的 10 点一致）。
-            var fileContent = root.Panes.FileContent;
-            if (Math.Abs((double)bar.Frame.X - (double)fileContent.X) > Exact)
-                throw new InvalidOperationException($"{scope} 筛选条未贴安全区前导边：{bar.Frame.X} vs {fileContent.X}");
-            if (Math.Abs((double)controls[0].Frame.X - MainScreenLayout.FilterMargin) > Exact)
-                throw new InvalidOperationException($"{scope} 上下布局筛选条未从前导外边距 10 点起排（左上留空）：{controls[0].Frame}");
-            foreach (var control in controls)
-                if (Math.Abs((double)control.Frame.Y - MainScreenLayout.FilterMargin) > Exact)
-                    throw new InvalidOperationException($"{scope} 上下布局筛选条未贴顶 10 点：{control.Frame}");
+            double groupCenter = ((double)controls[0].Frame.Left + (double)bar.SimilarityToggle.Frame.Right) / 2;
+            if (Math.Abs(groupCenter - (double)bar.Bounds.Width / 2) > Exact)
+                throw new InvalidOperationException($"{scope} 五项未在安全内容区整组居中");
+            foreach (var control in controls.Cast<UIView>().Concat([bar.CountLabel, bar.SimilarityToggle]))
+                if (Math.Abs((double)control.Frame.GetMidY() - (double)bar.Bounds.Height / 2) > Exact)
+                    throw new InvalidOperationException($"{scope} 筛选项交叉轴未居中：{control.Frame}");
+            foreach (var control in controls.Append(bar.SimilarityToggle))
+                if (control.Configuration == null || control.Layer.BorderWidth != 0)
+                    throw new InvalidOperationException($"{scope} 筛选按钮未使用单一原生configuration");
         }
         else
         {
@@ -339,7 +338,7 @@ internal static class iOSNativeLayoutCheck
             if (Math.Abs(center - MainScreenLayout.FileBarContentWidth / 2) > Exact)
                 throw new InvalidOperationException($"{scope} 左右布局筛选条中心不在 58：{center}");
         }
-        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "从安全区前导边 + 10 点起排且贴顶 10（无交通灯空带）" : "116 栏内居中、纵向节距 37")}");
+        lines.Add($"PASS {scope} 筛选条：3×(90×32) + 计数 {bar.CountWidth:0.##} 自然宽 + toggle 90×27(显示)；间距 5、{(row ? "五项整组在安全内容区水平居中、交叉轴居中" : "116 栏内居中、纵向节距 37")}");
     }
 
     /// <summary>核对控制栏：分组数量/子项与共享设置一致、分组外边距与不重叠、子控件尺寸、评分方向随布局方向。</summary>
