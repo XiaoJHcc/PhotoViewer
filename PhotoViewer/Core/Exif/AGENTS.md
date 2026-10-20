@@ -12,6 +12,7 @@
 | [ExifChinese.cs](ExifChinese.cs) | 元数据汉化 | Chinese tag-name overrides; generated baseline in `ExifChinese.Generated.cs`. |
 | [ExifToolTags.cs](ExifToolTags.cs) | 标签库 | English tag-name overrides + brand override tables. Generated baseline in `ExifToolTags.Generated.cs`. |
 | [ExifToolValues.cs](ExifToolValues.cs) | 取值翻译 | Enum-style EXIF value translations; generated baseline in `*.Generated.cs`. |
+| [ExifDisplayConverters.cs](ExifDisplayConverters.cs) | 摘要格式 | `ExifDisplayFormat`：控制栏 EXIF 摘要取值格式（TOOLBAR-05：光圈/快门/焦距/曝光补偿/拍摄时间），缺失为 `--`。 |
 | [XmpWriter.cs](XmpWriter.cs) | 标星评分写入 | XMP rating writes — in-place edit + sidecar fallback for RAW. |
 | [Sony/SonyMakernoteParser.cs](Sony/SonyMakernoteParser.cs) | Sony MakerNote 解析 | 对焦点位置/对焦框尺寸、LensSpec BCD 解码、加密 tag 调度（含 0x940F 加速度计姿态）。 |
 | [Sony/SonyCipherTags.cs](Sony/SonyCipherTags.cs) | Sony 加密 tag 解码 | Decrypt Sony 0x94xx / 0x9050 MakerNote blocks；`DecodeAccelerometer940F` 只负责显示格式化，数值真源在 `SonyAttitudeDecoder`。**Generated table** is in `*.Generated.cs` — do not edit by hand; regenerate via `Tools/generate-sony-cipher-tags.py`. |

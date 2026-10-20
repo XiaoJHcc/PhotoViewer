@@ -592,8 +592,9 @@ public sealed class MacMainWindow : IDisposable
         await _main.SetRatingAsync(file, rating);
         if (file.Rating != rating)
         {
-            Console.Error.WriteLine("[Native] 无法写入星级，请检查文件权限或文件格式");
-            ShowToast("无法写入星级，请检查文件权限或文件格式");
+            string message = StatusMessages.RatingWriteFailed(file.Name);
+            Console.Error.WriteLine($"[Native] {message}");
+            ShowToast(message);
         }
         BuildControls();
     }
@@ -932,7 +933,7 @@ public sealed class MacMainWindow : IDisposable
         {
             Console.Error.WriteLine(exception);
             if (_automatedValidation) throw new InvalidOperationException(exception.Message);
-            ShowToast($"无法打开所选项目：{exception.Message}");
+            ShowToast(StatusMessages.OpenFailed(null, exception.Message));
         }
     }
     /// <summary>串行接收 Finder/命令行/拖入路径，确保最后选中的是请求目标。</summary>
@@ -954,7 +955,7 @@ public sealed class MacMainWindow : IDisposable
         {
             Console.Error.WriteLine(exception);
             if (_automatedValidation) throw new InvalidOperationException(exception.Message);
-            ShowToast($"无法打开：{targetName ?? "所选项目"}");
+            ShowToast(StatusMessages.OpenFailed(targetName, exception.Message));
         }
         finally { _openGate.Release(); }
     }

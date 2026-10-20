@@ -11,3 +11,4 @@
 | [StorageAccessManager.cs](StorageAccessManager.cs) | 存储访问门面 | Platform security-scoped access (iOS sandbox, Android SAF)。入参为平台中立 `IStorageItemRef`(Core/Storage)，由 `iOSStorageAccessManager` / `AndroidStorageAccessManager` 原生实现；macOS 的安全作用域书签直接在 `MacStorageRefs` 内处理，桌面端不注入本门面。 |
 | [NativeWindowPresenter.cs](NativeWindowPresenter.cs) | 原生窗口展示门面 | `INativeWindowPresenter` 设置/工具窗口展示;启动期由各端 UI 层注入（VM 不直接构造原生窗口）。 |
 | [UiDispatcher.cs](UiDispatcher.cs) | UI 线程调度门面 | `IUiDispatcher` + 静态门面,启动期由各端 UI 层注入(Core/ViewModels 不直接引用平台调度器);附带 Rx 流用的 `MainThreadScheduler`。 |
+| [StatusMessages.cs](StatusMessages.cs) | 提示条文案 | STATE-03 操作结果提示条文案（`动作：对象（原因）`）：评分写回、全分辨率升级、打开文件/文件夹失败与内存关闭增强；共享层与四端壳一律从这里取文案，壳只负责显示。 |

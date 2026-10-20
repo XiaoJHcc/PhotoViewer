@@ -5,91 +5,59 @@ using MetadataExtractor;
 namespace PhotoViewer.Core.Exif;
 
 /// <summary>
-/// 控制栏 EXIF 展示值格式化。原 UI 转换器随旧壳删除，这里保留同一套文本口径供共享 VM 使用。
+/// 控制栏 EXIF 摘要的取值格式（TOOLBAR-05），四端与 Web 同一口径：
+/// 光圈 <c>f/2.8</c>、快门 <c>1/250</c> / <c>0.3s</c> / <c>1s</c>、焦距 <c>10.5mm</c>、曝光补偿 <c>+0.7 EV</c>、时间 <c>yyyy-MM-dd HH:mm</c>；缺失或非法值为 <c>--</c>。
 /// </summary>
-public class ApertureConverter
+public static class ExifDisplayFormat
 {
-    public static readonly ApertureConverter Instance = new();
+    /// <summary>缺失值占位。</summary>
+    public const string Missing = "--";
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    /// <summary>不足 1 秒的快门与 1/n 的最大相对偏差。</summary>
+    private const double ShutterFractionTolerance = 0.02;
+
+    /// <summary>光圈：至多 1 位小数、去尾零。</summary>
+    public static string Aperture(Rational? value)
+        => ToDouble(value) is double f && f > 0 ? $"f/{Trim(f, 1)}" : Missing;
+
+    /// <summary>快门：不足 1 秒且接近 1/n（偏差 ≤2%）写分数，否则写至多 2 位小数的秒数。</summary>
+    public static string ExposureTime(Rational? value)
     {
-        if (value is Rational aperture)
-        {
-            return $"f/{(double)aperture.Numerator / aperture.Denominator}";
-        }
-        return "--";
+        if (ToDouble(value) is not double seconds || seconds <= 0) return Missing;
+        if (seconds >= 1) return $"{Trim(seconds, 2)}s";
+        double reciprocal = Math.Round(1 / seconds, MidpointRounding.AwayFromZero);
+        if (reciprocal >= 1 && Math.Abs(1 / reciprocal - seconds) <= seconds * ShutterFractionTolerance)
+            return $"1/{reciprocal.ToString("0", CultureInfo.InvariantCulture)}";
+        return $"{Trim(seconds, 2)}s";
     }
-}
 
-/// <summary>
-/// 快门速度格式化。
-/// </summary>
-public class ExposureTimeConverter
-{
-    public static readonly ExposureTimeConverter Instance = new();
+    /// <summary>焦距：至多 1 位小数、去尾零。</summary>
+    public static string FocalLength(Rational? value)
+        => ToDouble(value) is double mm && mm > 0 ? $"{Trim(mm, 1)}mm" : Missing;
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    /// <summary>曝光补偿：至多 1 位小数，正值带 <c>+</c>。</summary>
+    public static string ExposureBias(Rational? value)
     {
-        if (value is Rational exposureTime)
-        {
-            if (exposureTime.Numerator == 1)
-                return $"1/{exposureTime.Denominator}";
-            else
-                return $"{(double)exposureTime.Numerator / exposureTime.Denominator}s";
-        }
-        return "--";
+        if (ToDouble(value) is not double ev) return Missing;
+        string text = Trim(ev, 1);
+        return $"{(ev > 0 && text != "0" ? "+" : "")}{text} EV";
     }
-}
 
-/// <summary>
-/// 焦距格式化。
-/// </summary>
-public class FocalLengthConverter
-{
-    public static readonly FocalLengthConverter Instance = new();
+    /// <summary>拍摄时间摘要。</summary>
+    public static string DateTime(DateTime? value)
+        => value is { } dateTime ? dateTime.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture) : Missing;
 
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    private static double? ToDouble(Rational? value)
     {
-        if (value is Rational focalLength)
-        {
-            return $"{focalLength.Numerator / focalLength.Denominator}mm";
-        }
-        return "--";
+        if (value is not { } rational || rational.Denominator == 0) return null;
+        double result = (double)rational.Numerator / rational.Denominator;
+        return double.IsFinite(result) ? result : null;
     }
-}
 
-/// <summary>
-/// 曝光补偿格式化。
-/// </summary>
-public class ExposureBiasConverter
-{
-    public static readonly ExposureBiasConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    private static string Trim(double value, int digits)
     {
-        if (value is Rational exposureBias)
-        {
-            var biasValue = (double)exposureBias.Numerator / exposureBias.Denominator;
-            var sign = biasValue >= 0 ? "+" : "";
-            return $"{sign}{biasValue:F1} EV";
-        }
-        return "--";
-    }
-}
-
-/// <summary>
-/// 日期时间格式化。
-/// </summary>
-public class DateTimeConverter
-{
-    public static readonly DateTimeConverter Instance = new();
-
-    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
-    {
-        if (value is DateTime dateTime)
-        {
-            return dateTime.ToString("yyyy-MM-dd HH:mm");
-        }
-        return "--";
+        double rounded = Math.Round(value, digits, MidpointRounding.AwayFromZero);
+        if (rounded == 0) rounded = 0;
+        return rounded.ToString(digits == 1 ? "0.#" : "0.##", CultureInfo.InvariantCulture);
     }
 }

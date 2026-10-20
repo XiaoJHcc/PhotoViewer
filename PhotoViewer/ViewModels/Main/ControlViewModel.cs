@@ -216,27 +216,15 @@ public class ControlViewModel : ReactiveObject
         {
             return propertyName switch
             {
-                "Aperture" => exifData.Aperture != null
-                    ? ApertureConverter.Instance.Convert(exifData.Aperture, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "ExposureTime" => exifData.ExposureTime != null
-                    ? ExposureTimeConverter.Instance.Convert(exifData.ExposureTime, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
+                "Aperture" => ExifDisplayFormat.Aperture(exifData.Aperture),
+                "ExposureTime" => ExifDisplayFormat.ExposureTime(exifData.ExposureTime),
                 "Iso" => exifData.Iso?.ToString() ?? "--",
-                "EquivFocalLength" => exifData.EquivFocalLength != null
-                    ? FocalLengthConverter.Instance.Convert(exifData.EquivFocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "FocalLength" => exifData.FocalLength != null
-                    ? FocalLengthConverter.Instance.Convert(exifData.FocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
+                "EquivFocalLength" => ExifDisplayFormat.FocalLength(exifData.EquivFocalLength),
+                "FocalLength" => ExifDisplayFormat.FocalLength(exifData.FocalLength),
                 "CameraModel" => exifData.CameraModel ?? "--",
                 "LensModel" => exifData.LensModel ?? "--",
-                "DateTimeOriginal" => exifData.DateTimeOriginal != null
-                    ? DateTimeConverter.Instance.Convert(exifData.DateTimeOriginal, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "ExposureBias" => exifData.ExposureBias != null
-                    ? ExposureBiasConverter.Instance.Convert(exifData.ExposureBias, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
+                "DateTimeOriginal" => ExifDisplayFormat.DateTime(exifData.DateTimeOriginal),
+                "ExposureBias" => ExifDisplayFormat.ExposureBias(exifData.ExposureBias),
                 "WhiteBalance" => exifData.WhiteBalance ?? "--",
                 "Flash" => exifData.Flash ?? "--",
                 _ => "--"

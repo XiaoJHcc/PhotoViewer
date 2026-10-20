@@ -302,7 +302,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 {
                     // 屏上已有可用图时不报"无法打开该图片"；仅 Full 升级失败给出非阻塞提示，代理刷新失败保持静默。
                     if (_image == null) Error = "无法打开该图片";
-                    else if (!target.HasValue) { FullError = "无法载入全分辨率"; _fullFailed = true; }
+                    else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
                     IsLoadingVisible = false;
                     Changed?.Invoke();
                     return;
@@ -323,7 +323,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                     _fullLoading = false;
                     // IMAGE-03/IMAGE-10：屏上已有代理时升级失败只报非阻塞的 Full 提示，保留代理。
                     if (_image == null) Error = "解码被中断，请重新选择照片";
-                    else if (!target.HasValue) { FullError = "无法载入全分辨率"; _fullFailed = true; }
+                    else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
                     IsLoadingVisible = false;
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
@@ -337,7 +337,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 if (generation != _generation) return;
                 _fullLoading = false;
                 if (_image == null) Error = exception.Message;
-                else if (!target.HasValue) { FullError = $"无法载入全分辨率：{exception.Message}"; _fullFailed = true; }
+                else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
                 IsLoadingVisible = false;
                 Changed?.Invoke();
             }).ConfigureAwait(false);
@@ -407,7 +407,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             ReleaseEnhanced();
             Changed?.Invoke();
             // SCOPE-02/STATE-03：自动关闭是一次性事件，由各壳显示提示条；每轮关闭只发一次。
-            Notice?.Invoke("内存不足，已关闭增强预览");
+            Notice?.Invoke(StatusMessages.EnhanceClosedForMemory);
         });
     }
 }

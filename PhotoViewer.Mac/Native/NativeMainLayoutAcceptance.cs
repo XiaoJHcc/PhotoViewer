@@ -340,6 +340,9 @@ internal static class NativeMainLayoutAcceptance
             throw new InvalidOperationException($"放大后导航框超出 NavigationSize：{viewport}/{navigation}");
 
         // IMAGE-06：白框拖动定位走共享 CenterOnNormalizedPoint，拖动后视口中心落在目标归一化点附近。
+        // 小素材在物理 100% 下可能整幅装进视口、无处可平移，先放到 4 倍保证两轴都能移动。
+        photo.ZoomToPhysical(4);
+        await Task.Delay(120);
         photo.CenterOnNormalizedPoint(.62, .58);
         await Task.Delay(120);
         var center = photo.ViewCenter;
