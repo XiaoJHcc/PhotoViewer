@@ -100,14 +100,26 @@
     text-overflow: ellipsis;
 }
 
-/* IMAGE-06：导航图只展示，不吃指针（桌面） */
+/* IMAGE-06：导航图可拖动白框；滚轮/捏合仍归主图（事件继续冒泡，拖动事件在组件内截断） */
 .pv-photo-nav {
     position: absolute;
     overflow: hidden;
     border-radius: var(--pv-nav-cornerRadius);
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
     background-color: var(--pv-color-nav-background);
     background-color: color-mix(in srgb, var(--pv-color-nav-background) calc(var(--pv-color-nav-background-alpha) * 100%), transparent);
+}
+
+.pv-photo-nav.is-dragging {
+    cursor: grabbing;
+}
+
+.pv-photo-nav-thumb,
+.pv-photo-nav-frame,
+.pv-photo-nav-label {
+    pointer-events: none;
 }
 
 .pv-photo-nav-thumb {

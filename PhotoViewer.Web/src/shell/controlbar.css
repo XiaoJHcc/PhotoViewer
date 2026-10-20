@@ -95,26 +95,18 @@
     background: rgba(255, 255, 255, 0.14);
 }
 
-.pv-control-rating-button svg {
+/* TOOLBAR-03/04：星与叉取 icon.* 字体字形；点亮用实心星、未点亮用描边星。 */
+.pv-rating-glyph {
     display: block;
-    width: var(--pv-toolbar-rating-glyph-fontSize);
-    height: var(--pv-toolbar-rating-glyph-fontSize);
+    font-size: var(--pv-toolbar-rating-glyph-fontSize);
 }
 
-.pv-control-rating-button.is-clear svg {
-    width: var(--pv-toolbar-rating-clearGlyph-fontSize);
-    height: var(--pv-toolbar-rating-clearGlyph-fontSize);
+.pv-rating-clear {
+    font-size: var(--pv-toolbar-rating-clearGlyph-fontSize);
 }
 
 .pv-control-rating-button.is-clear {
     color: var(--pv-color-star-clear);
-}
-
-.pv-control-rating-button.is-clear svg path {
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.8;
-    stroke-linecap: round;
 }
 
 .pv-control-rating-button.is-on {
@@ -125,16 +117,9 @@
     color: var(--pv-color-star-off);
 }
 
-.pv-control-rating-button.is-on svg path {
-    fill: currentColor;
-    stroke: none;
-}
-
-.pv-control-rating-button.is-off svg path {
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linejoin: round;
+.pv-control-rating-button.is-off .pv-rating-solid,
+.pv-control-rating-button.is-on .pv-rating-outline {
+    display: none;
 }
 
 /* TOOLBAR-03：无照片时保留几何，只降强调。 */
@@ -186,21 +171,32 @@
     color: rgba(255, 255, 255, 0.3);
 }
 
-.pv-control-command-button svg {
+.pv-command-icon {
     display: block;
-    width: var(--pv-toolbar-command-glyph-fontSize);
-    height: var(--pv-toolbar-command-glyph-fontSize);
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    font-size: var(--pv-toolbar-command-glyph-fontSize);
 }
 
-.pv-control-command-digit {
+/* TOOLBAR-04：评分快捷命令为实心星内叠数字，数字取按钮底色。 */
+.pv-command-rating {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: var(--pv-toolbar-command-glyph-fontSize);
-    font-weight: 500;
     line-height: 1;
+}
+
+.pv-command-rating-digit {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--pv-font);
+    font-size: var(--pv-toolbar-rating-digit-fontSize);
+    font-weight: 600;
+    line-height: 1;
+    color: var(--pv-color-toolbar-command-background);
 }
 
 .pv-control-indicator {

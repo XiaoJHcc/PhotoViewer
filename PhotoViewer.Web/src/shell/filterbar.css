@@ -1,4 +1,4 @@
-/* 筛选条（FILTER-01/04/06/07/08）：仿 macOS 深色 NSPopUpButton + 自绘药丸开关；几何一律来自布局，这里只写视觉。 */
+/* 筛选条（FILTER-01/04/06/07/08）：自绘下拉取旧壳 Avalonia Fluent 深色外观；几何一律来自布局，这里只写视觉。 */
 .pv-popup,
 .pv-filter-count,
 .pv-filter-toggle {
@@ -7,18 +7,18 @@
     font-family: inherit;
 }
 
+/* FILTER-08：底 color.dropdown.background（悬停/按下）翻色，1 点描边，圆角 dropdown.cornerRadius */
 .pv-popup {
     display: flex;
     align-items: center;
     gap: 4px;
     margin: 0;
-    padding: 0 7px 0 8px;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: var(--pv-filter-control-cornerRadius);
-    background: linear-gradient(180deg, #47474b 0%, #39393d 100%);
-    box-shadow: inset 0 0.5px 0 rgba(255, 255, 255, 0.14), 0 0.5px 1px rgba(0, 0, 0, 0.45);
+    padding: 0 var(--pv-dropdown-chevron-rightInset) 0 var(--pv-dropdown-paddingLeft);
+    border: 1px solid var(--pv-color-dropdown-border);
+    border-radius: var(--pv-dropdown-cornerRadius);
+    background: var(--pv-color-dropdown-background);
     color: var(--pv-color-text-primary);
-    font-size: 13px;
+    font-size: var(--pv-dropdown-fontSize);
     line-height: 1;
     text-align: left;
     cursor: default;
@@ -27,12 +27,13 @@
 }
 
 .pv-popup:hover {
-    background: linear-gradient(180deg, #55555a 0%, #454549 100%);
+    background: var(--pv-color-dropdown-background-hover);
+    border-color: var(--pv-color-dropdown-border-hover);
 }
 
 .pv-popup:active,
 .pv-popup[aria-expanded="true"] {
-    background: linear-gradient(180deg, #2e2e32 0%, #3a3a3e 100%);
+    background: var(--pv-color-dropdown-background-pressed);
 }
 
 .pv-popup:focus-visible,
@@ -48,28 +49,10 @@
     text-overflow: ellipsis;
 }
 
-.pv-popup-arrows {
-    display: flex;
+.pv-popup-chevron {
     flex: none;
-    flex-direction: column;
-    justify-content: center;
-    gap: 1px;
-    color: rgba(255, 255, 255, 0.5);
-}
-
-.pv-popup-arrow {
-    width: 4px;
-    height: 4px;
-    border-top: 1px solid currentColor;
-    border-left: 1px solid currentColor;
-}
-
-.pv-popup-arrow.is-up {
-    transform: rotate(45deg);
-}
-
-.pv-popup-arrow.is-down {
-    transform: rotate(225deg);
+    font-size: var(--pv-dropdown-chevron-size);
+    color: var(--pv-color-dropdown-chevron);
 }
 
 .pv-filter-count {

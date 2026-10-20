@@ -112,6 +112,17 @@
     text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
 }
 
+.pv-card-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: calc(var(--pv-film-thumb-size) * 0.32);
+    color: var(--pv-color-text-secondary);
+    pointer-events: none;
+}
+
 .pv-card-star {
     position: absolute;
     display: flex;
@@ -137,22 +148,30 @@
 
 .pv-card-star-glyph {
     display: block;
-    width: 100%;
-    height: 100%;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.1;
-    stroke-linejoin: round;
+    font-size: var(--pv-film-card-star-fontSize);
 }
 
-.pv-card-star.is-on .pv-card-star-glyph {
-    fill: currentColor;
-    stroke: none;
+/* FILM-05：金色实心 / 灰色空心，同一码位按字形与颜色区分。 */
+.pv-card-star-solid {
+    display: none;
+}
+
+.pv-card-star.is-on .pv-card-star-solid {
+    display: block;
+}
+
+.pv-card-star.is-on .pv-card-star-outline {
+    display: none;
 }
 
 .pv-card-star.is-clear {
     color: var(--pv-color-star-clear);
     /* FILM-05：清零叉字形大小取 film.card.clearGlyph.size，按钮仍为 star.size 见方。 */
+    font-size: var(--pv-film-card-clearGlyph-size);
+}
+
+.pv-card-clear {
+    display: block;
     font-size: var(--pv-film-card-clearGlyph-size);
 }
 

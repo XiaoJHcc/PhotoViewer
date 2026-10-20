@@ -352,7 +352,7 @@ export function mountAnalysis(host, ctx) {
         if (node.canvas.style.width !== width) node.canvas.style.width = width;
         if (node.canvas.style.height !== height) node.canvas.style.height = height;
         setText(node.badge, tile.label);
-        node.root.title = tile.label;
+        node.root.dataset.tooltip = tile.label;
         const status = statusOf(tile);
         const label = status ? `${tile.label}，${status}` : tile.label;
         if (node.root.getAttribute("aria-label") !== label) node.root.setAttribute("aria-label", label);

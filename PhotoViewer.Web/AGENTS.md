@@ -44,13 +44,24 @@ src/
   render/               # 浏览器实现：procedural（矢量程序化照片，存储朝向）、decoder（代理/Full/增强）、store（特征库）、thumbs（缩略图队列）
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
     dom.js / menu.js    # 组件约定与工具（el/place/令牌 CSS 变量 --pv-<点分名转连字符，保留驼峰>）；共用弹出菜单
+    icons.js / tooltip.js  # 图标字形（icon.* 令牌）与自绘悬停提示（data-tooltip 全局委托）
     filterbar / filmstrip / card / similarity / photo / analysis / controlbar / picker  # 各分区组件与 .css
   checks/               # ?check=<模块|all> 页内行为检查，按设计 ID 出报告
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
 dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
+assets/                 # 图标字体子集：uicons-pv.woff2（描边）、uicons-pv-solid.woff2（实心星/叉）
 tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对；--count-width 固定计数宽，Design/README §8）
+tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
+
+图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
+
+```bash
+python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli，pyftsubset 可用 PYFTSUBSET 指定
+```
+
+实心字形（点亮星、评分快捷命令星内叠数字）取自 uicons solid-straight（`U+FCD7` 实心星、`U+F4F8` 实心叉）；该字体已不在工作树，脚本回退到 git 历史 `78ed013^`，或用 `--solid-source` 指定。
 
 - **依赖方向**：`shell/ → core/app.js → core/*`；`core/` 不得引用 `shell/`、`document`、`window`。时间一律经 `clock.js`，便于假时钟断言 300/350/500/4000 ms 等门槛。
 - **状态唯一**：业务状态只在 `app.js`；组件不缓存第二份（菜单勾选每次弹出重读快照，MENU-02）。

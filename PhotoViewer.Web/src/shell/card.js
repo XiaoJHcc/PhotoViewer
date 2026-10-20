@@ -1,13 +1,11 @@
 import { el, place, setText } from "./dom.js";
+import { codepoint, icon, solidIcon } from "./icons.js";
 import { cardFrames } from "../core/layout/card.js";
 import { formatTakenFull, formatTakenShort } from "../core/exifformat.js";
 import { LongPressRecognizer } from "../core/input.js";
 
 const RATING_LABELS = ["无星级", "1 星", "2 星", "3 星", "4 星", "5 星"];
 const PRIORITY_RANK = { visible: 0, near: 1, far: 2 };
-const FAILURE_STROKE = "rgba(255, 255, 255, 0.28)";
-const SVG_NS = "http://www.w3.org/2000/svg";
-const STAR_PATH = "M7 0.7 L8.47 4.98 L12.99 5.05 L9.38 7.77 L10.7 12.1 L7 9.5 L3.3 12.1 L4.62 7.77 L1.01 5.05 L5.53 4.98 Z";
 
 function takenOf(photo) {
     return photo.taken ?? photo.modified;
@@ -42,6 +40,11 @@ export function createCard(ctx, { mode = "film" } = {}) {
     const surface = el("div", { class: "pv-card-surface" });
     const well = el("div", { class: "pv-card-well" });
     const canvas = el("canvas", { class: "pv-card-image" });
+    // FILM-05：缩略图未就绪与解码失败显示 icon.photoPlaceholder，不伪造图像。
+    const placeholder = el("span", {
+        class: "pv-card-placeholder pv-icon",
+        "aria-hidden": "true",
+    }, codepoint(t("icon.photoPlaceholder")));
     const cached = el("div", { class: "pv-card-cached" });
     const badge = el("div", { class: "pv-card-badge" }, "抖");
     const name = el("div", { class: "pv-card-name" });
@@ -56,26 +59,23 @@ export function createCard(ctx, { mode = "film" } = {}) {
     second.append(dateText, bar);
     dateText.hidden = similarity;
     bar.hidden = !similarity;
-    well.append(canvas, cached);
+    well.append(canvas, placeholder, cached);
     surface.append(well, badge, name, second);
     root.append(surface);
 
     const stars = [];
     for (let index = 0; index < 6; index += 1) {
         const button = el("button", { type: "button", class: "pv-card-star", tabindex: "-1" });
-        button.setAttribute("aria-label", index === 0 ? "无星级" : `${index} 星`);
+        const label = index === 0 ? "无星级" : `${index} 星`;
+        button.setAttribute("aria-label", label);
+        button.dataset.tooltip = label;
         if (index === 0) {
             button.classList.add("is-clear");
-            setText(button, "×");
+            button.append(icon(t, "icon.clear", "pv-card-clear"));
         } else {
-            const glyph = document.createElementNS(SVG_NS, "svg");
-            glyph.setAttribute("viewBox", "0 0 14 14");
-            glyph.setAttribute("class", "pv-card-star-glyph");
-            glyph.setAttribute("aria-hidden", "true");
-            const outline = document.createElementNS(SVG_NS, "path");
-            outline.setAttribute("d", STAR_PATH);
-            glyph.append(outline);
-            button.append(glyph);
+            button.append(
+                icon(t, "icon.star", "pv-card-star-glyph pv-card-star-outline"),
+                solidIcon(t, "icon.starFilled", "pv-card-star-glyph pv-card-star-solid"));
         }
         button.addEventListener("pointerdown", (event) => event.stopPropagation());
         button.addEventListener("click", (event) => {
@@ -164,6 +164,7 @@ export function createCard(ctx, { mode = "film" } = {}) {
     function clearCanvas() {
         const { width, height } = ensureCanvas();
         paint.clearRect(0, 0, width, height);
+        placeholder.hidden = false;
     }
 
     function drawSurface(source) {
@@ -178,22 +179,12 @@ export function createCard(ctx, { mode = "film" } = {}) {
         const drawHeight = sourceHeight * scale;
         paint.imageSmoothingQuality = "high";
         paint.drawImage(source, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+        placeholder.hidden = true;
     }
 
     function drawFailure() {
-        const { width, height } = ensureCanvas();
-        paint.clearRect(0, 0, width, height);
-        // FILM-05：解码失败只画中性细线叉，不伪造图像
-        paint.strokeStyle = FAILURE_STROKE;
-        paint.lineWidth = Math.max(1, width / frames.image.w);
-        const insetX = width * 0.32;
-        const insetY = height * 0.32;
-        paint.beginPath();
-        paint.moveTo(insetX, insetY);
-        paint.lineTo(width - insetX, height - insetY);
-        paint.moveTo(width - insetX, insetY);
-        paint.lineTo(insetX, height - insetY);
-        paint.stroke();
+        // FILM-05：解码失败显示占位字形，不伪造图像
+        clearCanvas();
     }
 
     function loadThumbnail(photo, priority) {
@@ -272,7 +263,8 @@ export function createCard(ctx, { mode = "film" } = {}) {
 
         setText(name, card.displayName);
         root.dataset.key = card.key;
-        root.title = taken === undefined || taken === null
+        // FILM-05：完整文件名与时间走自绘悬停提示（data-tooltip），不再用浏览器原生 title。
+        root.dataset.tooltip = taken === undefined || taken === null
             ? card.displayName
             : `${card.displayName}\n${formatTakenFull(taken, photo.tzOffset)}`;
         const label = `${card.displayName}，${RATING_LABELS[rating]}`;

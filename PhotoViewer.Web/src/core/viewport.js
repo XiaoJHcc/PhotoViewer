@@ -16,6 +16,7 @@
  *   vp.zoomBy(factor, anchor?) → boolean
  *   vp.panBy(dx, dy) → boolean
  *   vp.centerOnPoint(u, v) → boolean
+ *   vp.centerOnNormalized(u, v) → boolean       只改中心、保持倍率（导航图拖动，IMAGE-06）
  *   vp.imageRect() → { x, y, w, h }
  *   vp.viewToImage(x, y) → { u, v }；vp.imageToView(u, v) → { x, y }
  *   vp.percentText() → string
@@ -272,6 +273,17 @@ export class Viewport {
             this._offY = (0.5 - v) * this._displayHeight();
             this._applyOffsets();
         }
+        return !this._sameState(before);
+    }
+
+    centerOnNormalized(u, v) {
+        // IMAGE-06：拖动导航图只改视口中心，倍率与适应态不变；中心按 IMAGE-05 钳制。
+        if (!this.hasImage || !finite(u) || !finite(v)) return false;
+        const before = this._state();
+        this._offX = (0.5 - u) * this._displayWidth();
+        this._offY = (0.5 - v) * this._displayHeight();
+        this._applyOffsets();
+        this._recomputeFollow();
         return !this._sameState(before);
     }
 

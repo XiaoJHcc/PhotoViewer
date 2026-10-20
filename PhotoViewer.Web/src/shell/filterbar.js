@@ -1,4 +1,5 @@
 import { el, place, setText, touches } from "./dom.js";
+import { icon } from "./icons.js";
 import { SORT_KEYS, SORT_ORDERS, RATING_FILTERS } from "../core/filter.js";
 
 // FILTER-01：排序方式 → 排序方向 → 星级筛选 → 计数 → 相似聚类开关，顺序由布局给出。
@@ -8,23 +9,20 @@ const MENUS = {
     rating: { label: "星级筛选", options: RATING_FILTERS, valueOf: (state) => state.ratingFilter },
 };
 
-function chevron(className) {
-    return el("span", { class: `pv-popup-arrow ${className}` });
-}
-
 export function mountFilterBar(host, ctx) {
-    const { app, menu } = ctx;
+    const { app, menu, t } = ctx;
 
     const popups = ["sort", "order", "rating"].map((kind) => {
         const spec = MENUS[kind];
         const text = el("span", { class: "pv-popup-label" });
-        const arrows = el("span", { class: "pv-popup-arrows", "aria-hidden": "true" }, chevron("is-up"), chevron("is-down"));
+        // FILTER-08：右侧单个向下 V 形（icon.chevronDown），不再画上下双箭头。
+        const chevron = icon(t, "icon.chevronDown", "pv-popup-chevron");
         const button = el("button", {
             class: "pv-popup",
             type: "button",
             "aria-haspopup": "menu",
             "aria-expanded": "false",
-        }, text, arrows);
+        }, text, chevron);
         button.addEventListener("click", () => openPopup(kind, button));
         button.addEventListener("keydown", (event) => {
             if (event.key !== "ArrowDown") return;
@@ -44,7 +42,7 @@ export function mountFilterBar(host, ctx) {
         role: "switch",
         "aria-checked": "false",
         "aria-label": "相似聚类",
-        title: "展开/关闭相似聚类面板",
+        "data-tooltip": "展开/关闭相似聚类面板",
     }, el("span", { class: "pv-filter-toggle-label" }, "相似聚类"));
     toggle.addEventListener("click", () => {
         // FILTER-06：勾选态即设置里的展开状态，与面板当前可见性无关。
@@ -70,7 +68,7 @@ export function mountFilterBar(host, ctx) {
         app.setDropdownOpen(true);
         button.setAttribute("aria-expanded", "true");
         menu.open(items, { rect: { x: pane.x + frame.x, y: pane.y + frame.y, w: frame.w, h: frame.h } }, {
-            alignChecked: true,
+            style: "dropdown",
             label: spec.label,
             returnFocus: button,
             onSelect: (id) => applyChoice(kind, id),

@@ -29,6 +29,34 @@ const KEY_OF = {
     Digit5: "5",
 };
 
+// 令牌颜色是 #AARRGGBB，getComputedStyle 返回 rgb()/rgba()；逐通道比较，允许 1/255 的取整误差。
+function parseColor(value) {
+    const source = String(value ?? "").trim();
+    if (source.startsWith("#")) {
+        const hex = source.slice(1);
+        const alpha = hex.length === 8 ? parseInt(hex.slice(0, 2), 16) / 255 : 1;
+        const body = hex.length === 8 ? hex.slice(2) : hex;
+        return {
+            r: parseInt(body.slice(0, 2), 16),
+            g: parseInt(body.slice(2, 4), 16),
+            b: parseInt(body.slice(4, 6), 16),
+            a: alpha,
+        };
+    }
+    const match = /rgba?\(([^)]+)\)/.exec(source);
+    if (!match) return null;
+    const parts = match[1].split(/[,/\s]+/).filter(Boolean).map(Number);
+    return { r: parts[0], g: parts[1], b: parts[2], a: parts[3] ?? 1 };
+}
+
+function colorMatches(actual, expected) {
+    const a = parseColor(actual);
+    const b = parseColor(expected);
+    if (!a || !b) return false;
+    return Math.abs(a.r - b.r) <= 1 && Math.abs(a.g - b.g) <= 1
+        && Math.abs(a.b - b.b) <= 1 && Math.abs(a.a - b.a) <= 0.01;
+}
+
 // ?check=all 的执行顺序：先读状态，再做会改变内存数据的提取，最后跑外壳持久化。
 const CHECKS = [
     {
@@ -214,6 +242,21 @@ const CHECKS = [
             h.assert(getComputedStyle(clear).fontSize === `${shell.t("film.card.clearGlyph.size")}px`,
                 `清零叉字号 ${getComputedStyle(clear).fontSize}`);
             h.assert(styleCard.querySelector(".pv-card-date").textContent.length > 0, "第二行未显示日期或 --");
+            const placeholder = styleCard.querySelector(".pv-card-placeholder");
+            h.assert(placeholder !== null, "缩略图占位字形未渲染");
+            h.assert(placeholder.hidden === true, "缩略图就绪后仍显示占位字形");
+        },
+    },
+    {
+        id: "FILM-05b",
+        title: "空列表在胶片栏留空，不写「无匹配照片」",
+        async run(shell, h) {
+            const { app } = shell;
+            app.openFolder("empty");
+            await h.tick(120);
+            h.assert(app.state.count === 0, `空文件夹计数 ${app.state.count} ≠ 0`);
+            h.assert(h.dom(".pv-film-scroll").textContent.trim() === "", "空列表仍显示占位文字");
+            h.assert(document.querySelector(".pv-film-empty") === null, "空列表仍存在占位元素");
         },
     },
     {
@@ -329,6 +372,64 @@ const CHECKS = [
     },
     {
         id: "FILTER-08",
+        title: "自绘下拉外观与弹层位置：贴按钮下方居中、不覆盖按钮、当前项整行强调色",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            const button = h.domAll(".pv-popup")[0];
+            const buttonStyle = getComputedStyle(button);
+            h.assert(colorMatches(buttonStyle.backgroundColor, t("color.dropdown.background")),
+                `下拉按钮底色 ${buttonStyle.backgroundColor}`);
+            h.assert(colorMatches(buttonStyle.borderTopColor, t("color.dropdown.border")),
+                `下拉按钮描边 ${buttonStyle.borderTopColor}`);
+            h.assert(buttonStyle.borderTopWidth === "1px", `下拉按钮描边宽 ${buttonStyle.borderTopWidth}`);
+            h.assert(buttonStyle.borderTopLeftRadius === `${t("dropdown.cornerRadius")}px`, `下拉圆角 ${buttonStyle.borderTopLeftRadius}`);
+            h.assert(buttonStyle.fontSize === `${t("dropdown.fontSize")}px`, `下拉字号 ${buttonStyle.fontSize}`);
+            h.assert(buttonStyle.paddingLeft === `${t("dropdown.paddingLeft")}px`, `下拉左内边距 ${buttonStyle.paddingLeft}`);
+            h.assert(buttonStyle.backgroundImage === "none", "下拉按钮仍用渐变");
+            const chevron = button.querySelector(".pv-popup-chevron");
+            h.assert(chevron !== null, "下拉缺少 icon.chevronDown 字形");
+            h.assert(getComputedStyle(chevron).fontSize === `${t("dropdown.chevron.size")}px`, `箭头字号 ${getComputedStyle(chevron).fontSize}`);
+            h.assert(button.querySelector(".pv-popup-arrows") === null, "下拉仍画上下双箭头");
+
+            await h.openFilter("sort");
+            const rect = button.getBoundingClientRect();
+            const menu = h.menu();
+            const menuRect = menu.getBoundingClientRect();
+            const menuStyle = getComputedStyle(menu);
+            h.assert(Math.abs((menuRect.left + menuRect.width / 2) - (rect.left + rect.width / 2)) <= 1,
+                `弹层未以按钮水平居中：${menuRect.left + menuRect.width / 2} ≠ ${rect.left + rect.width / 2}`);
+            h.assert(menuRect.top >= rect.bottom - 1, `弹层覆盖按钮：top ${menuRect.top} < 按钮底 ${rect.bottom}`);
+            h.assert(menuRect.top - rect.bottom <= 1, `弹层未贴在按钮正下方：间隙 ${menuRect.top - rect.bottom}`);
+            h.assert(menuRect.width >= rect.width - 0.5, `弹层最小宽不足：${menuRect.width} < ${rect.width}`);
+            h.assert(colorMatches(menuStyle.backgroundColor, t("color.popup.background")), `弹层底色 ${menuStyle.backgroundColor}`);
+            h.assert(colorMatches(menuStyle.borderTopColor, t("color.popup.border")), `弹层描边 ${menuStyle.borderTopColor}`);
+            h.assert(menuStyle.boxShadow === "none", `弹层仍有阴影：${menuStyle.boxShadow}`);
+            h.assert(menuStyle.borderTopLeftRadius === `${t("popup.cornerRadius")}px`, `弹层圆角 ${menuStyle.borderTopLeftRadius}`);
+            h.assert(menuStyle.paddingTop === `${t("popup.padding")}px`, `弹层上内边距 ${menuStyle.paddingTop}`);
+
+            const items = h.domAll(".pv-menu .pv-menu-item");
+            const first = items[0];
+            h.assert(first.offsetHeight === 31, `下拉项高 ${first.offsetHeight} ≠ 31`);
+            h.assert(getComputedStyle(first).paddingLeft === `${t("dropdown.item.paddingX")}px`, "下拉项左内边距不符");
+            const selected = items.find((node) => node.classList.contains("is-selected"));
+            h.assert(selected !== null, "当前项未整行强调");
+            // 键盘焦点即悬停态：当前项带焦点时取 selected.hover。
+            const selectedToken = selected.classList.contains("is-focused")
+                ? "color.dropdown.item.selected.hover"
+                : "color.dropdown.item.selected";
+            h.assert(colorMatches(getComputedStyle(selected).backgroundColor, t(selectedToken)),
+                `当前项底色 ${getComputedStyle(selected).backgroundColor}`);
+            h.assert(menu.querySelector(".pv-menu-mark") === null, "下拉仍画勾号");
+
+            h.key("Escape");
+            await h.tick(40);
+            h.assert(h.menu() === null, "Esc 未关闭下拉");
+            h.assert(app.state.sortKey === "name", "Esc 改变了下拉取值");
+        },
+    },
+    {
+        id: "FILTER-08b",
         title: "键盘 ↓ 打开菜单，上下键移动、回车确认",
         async run(shell, h) {
             const { app } = shell;
@@ -347,7 +448,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-10",
-        title: "空结果显示「无匹配照片」与「共 0 张」，筛选条件保留",
+        title: "空结果计数「共 0 张」、胶片栏留空，筛选条件保留",
         async run(shell, h) {
             const { app } = shell;
             app.updateSettings({ sameNameAsOne: false });
@@ -357,9 +458,9 @@ const CHECKS = [
             await h.tick(100);
             h.assert(app.state.count === 0, `空结果计数 ${app.state.count} ≠ 0`);
             h.assert(app.state.countText === "共 0 张", `空结果计数文本 ${app.state.countText}`);
-            const empty = h.dom(".pv-film-empty");
-            h.assert(empty.hidden === false, "胶片栏空状态不可见");
-            h.assert(empty.textContent.includes("无匹配照片"), `空状态文案不符：${empty.textContent}`);
+            // FILM-05 / STATE-02：空结果胶片栏留空，不写占位文字。
+            h.assert(h.filmScroller().textContent.trim() === "", `胶片栏空态有文字：${h.filmScroller().textContent}`);
+            h.assert(document.querySelector(".pv-film-empty") === null, "胶片栏仍有空状态元素");
             h.assert(h.domAll(".pv-popup").every((node) => !node.disabled), "空结果时筛选控件被禁用");
             h.assert(h.domAll(".pv-popup")[2].querySelector(".pv-popup-label").textContent === "星级冲突", "空结果时筛选条件未保留");
         },
@@ -410,6 +511,85 @@ const CHECKS = [
             h.assert(h.menu() === null, "Esc 未关闭主图菜单");
             h.assert(app.state.displayedId === displayed, "Esc 穿透到底层照片");
             h.assert(JSON.stringify(app.state.viewport) === viewport, "Esc 改变了主图视口");
+        },
+    },
+    {
+        id: "MENU-03",
+        title: "自绘菜单外观：弹层无阴影、项高 31、整行悬停、勾选列共享、快捷键右对齐",
+        async run(shell, h) {
+            const t = (name) => shell.t(name);
+            const windowEl = h.dom(".pv-window");
+            const canvas = h.photoCanvas();
+            const photoRect = canvas.getBoundingClientRect();
+            const windowRect = windowEl.getBoundingClientRect();
+            const pointerX = photoRect.left + photoRect.width / 2;
+            const pointerY = photoRect.top + photoRect.height / 2;
+            h.contextmenu(canvas, pointerX, pointerY);
+            await h.tick(20);
+
+            const menu = h.menu();
+            const menuRect = menu.getBoundingClientRect();
+            const menuStyle = getComputedStyle(menu);
+            h.assert(Math.abs(menuRect.left - (pointerX - windowRect.left)) <= 1,
+                `右键菜单位置 ${menuRect.left - windowRect.left} ≠ 指针 ${pointerX - windowRect.left}`);
+            h.assert(Math.abs(menuRect.top - (pointerY - windowRect.top)) <= 1,
+                `右键菜单位置 ${menuRect.top - windowRect.top} ≠ 指针 ${pointerY - windowRect.top}`);
+            h.assert(colorMatches(menuStyle.backgroundColor, t("color.popup.background")), `弹层底色 ${menuStyle.backgroundColor}`);
+            h.assert(colorMatches(menuStyle.borderTopColor, t("color.popup.border")), `弹层描边 ${menuStyle.borderTopColor}`);
+            h.assert(menuStyle.boxShadow === "none", `弹层仍有阴影：${menuStyle.boxShadow}`);
+            h.assert(menuStyle.borderTopLeftRadius === `${t("popup.cornerRadius")}px`, `弹层圆角 ${menuStyle.borderTopLeftRadius}`);
+            h.assert(menuStyle.fontSize === `${t("menu.item.fontSize")}px`, `菜单字号 ${menuStyle.fontSize}`);
+
+            const items = h.domAll(".pv-menu .pv-menu-item");
+            h.assert(items.every((node) => node.offsetHeight === t("menu.item.height")),
+                `菜单项高 ${items.map((node) => node.offsetHeight).join(",")} ≠ ${t("menu.item.height")}`);
+            const itemStyle = getComputedStyle(items[0]);
+            h.assert(itemStyle.paddingLeft === `${t("menu.item.paddingX")}px`, `菜单项左内边距 ${itemStyle.paddingLeft}`);
+            h.assert(itemStyle.paddingRight === `${t("menu.item.paddingX")}px`, `菜单项右内边距 ${itemStyle.paddingRight}`);
+
+            // 勾选列：菜单中有勾选项时所有项都让出 menu.check.size + menu.check.gap。
+            h.assert(menu.classList.contains("has-check"), "含勾选项的菜单未启用勾选列");
+            for (const item of items) {
+                const mark = item.querySelector(".pv-menu-mark");
+                h.assert(mark !== null, `菜单项 ${item.dataset.id} 未让出勾选列`);
+                h.assert(mark.offsetWidth === t("menu.check.size"), `勾选列宽 ${mark.offsetWidth}`);
+                h.assert(getComputedStyle(mark).marginRight === `${t("menu.check.gap")}px`, "勾选列间距不符");
+            }
+            const checkedMark = h.menuItem("film").querySelector(".pv-menu-mark");
+            h.assert(checkedMark.textContent.codePointAt(0) === parseInt(t("icon.check").slice(2), 16),
+                `勾选字形不是 icon.check：U+${checkedMark.textContent.codePointAt(0).toString(16)}`);
+            h.assert(h.menuItem("analysis").querySelector(".pv-menu-mark").textContent === "", "未勾选项仍画勾号");
+
+            // 快捷键右对齐、颜色取 color.menu.shortcut，与文字间距 ≥ menu.shortcut.gap。
+            const nextItem = h.menuItem("analysis");
+            const shortcut = nextItem.querySelector(".pv-menu-shortcut");
+            const label = nextItem.querySelector(".pv-menu-label");
+            const gap = shortcut.getBoundingClientRect().left - label.getBoundingClientRect().right;
+            h.assert(gap >= t("menu.shortcut.gap") - 0.5, `快捷键与文字间距 ${gap} < ${t("menu.shortcut.gap")}`);
+            h.assert(colorMatches(getComputedStyle(shortcut).color, t("color.menu.shortcut")),
+                `快捷键颜色 ${getComputedStyle(shortcut).color}`);
+
+            // 悬停整行直角高亮、文字不变色。
+            const row = h.menuItem("enhance");
+            const textColor = getComputedStyle(row).color;
+            row.dispatchEvent(new PointerEvent("pointerenter", { bubbles: false }));
+            await h.tick(20);
+            h.assert(row.classList.contains("is-focused"), "悬停未高亮整行");
+            h.assert(colorMatches(getComputedStyle(row).backgroundColor, t("color.menu.item.hover")),
+                `悬停底色 ${getComputedStyle(row).backgroundColor}`);
+            h.assert(getComputedStyle(row).color === textColor, "悬停改变了文字颜色");
+            h.assert(getComputedStyle(row).borderTopLeftRadius === "0px", `悬停高亮不是直角：${getComputedStyle(row).borderTopLeftRadius}`);
+
+            // 分隔线与禁用文字。
+            const separator = h.dom(".pv-menu-sep");
+            const separatorStyle = getComputedStyle(separator);
+            h.assert(separatorStyle.height === "1px", `分隔线厚 ${separatorStyle.height}`);
+            h.assert(separatorStyle.marginLeft === `${t("menu.separator.inset")}px`, `分隔线内缩 ${separatorStyle.marginLeft}`);
+            h.assert(colorMatches(separatorStyle.backgroundColor, t("color.menu.separator")), "分隔线颜色不符");
+
+            h.key("Escape");
+            await h.tick(40);
+            h.assert(h.menu() === null, "Esc 未关闭菜单");
         },
     },
     {
@@ -599,6 +779,34 @@ const CHECKS = [
         },
     },
     {
+        id: "INPUT-10",
+        title: "空态只有主图分区点击打开选择器，文件栏/控制栏/分析栏空白处不响应",
+        async run(shell, h) {
+            const { app } = shell;
+            app.openFolder("empty");
+            await h.tick(120);
+            h.assert(app.state.photo === null, "空文件夹仍有当前照片");
+            const picker = h.dom(".pv-picker");
+            const closed = () => picker.hidden === true;
+
+            for (const [name, selector] of [["文件栏", ".pv-pane-file"], ["控制栏", ".pv-pane-control"], ["分析栏", ".pv-pane-analysis"]]) {
+                const pane = h.dom(selector);
+                if (pane.hidden) continue;
+                // 直接点在分区根节点上，等同空白处点击。
+                h.click(pane);
+                await h.tick(40);
+                h.assert(closed(), `${name}空白处点击打开了选择器`);
+            }
+
+            h.click(h.photoCanvas());
+            await h.tick(40);
+            h.assert(picker.hidden === false, "主图区点击未打开选择器");
+            h.click(h.dom(".pv-picker-button:not(.is-primary)"));
+            await h.tick(40);
+            h.assert(closed(), "取消后选择器未关闭");
+        },
+    },
+    {
         id: "IMAGE-02",
         title: "双击 100% ⇄ 适应，切图保持倍率，打开文件夹回适应",
         async run(shell, h) {
@@ -647,6 +855,53 @@ const CHECKS = [
         },
     },
     {
+        id: "IMAGE-06",
+        title: "导航图白框可拖动：只改视口中心、不改倍率；按在别处先把框心移过去",
+        async run(shell, h) {
+            const { app } = shell;
+            const canvas = h.photoCanvas();
+            h.dblclick(canvas);
+            await h.tick(80);
+            const nav = h.dom(".pv-photo-nav");
+            h.assert(nav.hidden === false, "放大态未显示导航图");
+            h.assert(getComputedStyle(nav).pointerEvents !== "none", "导航图不吃指针，无法拖动");
+            const percent = app.state.viewport.percentText;
+            const before = { ...app.state.viewport.navigator.frame };
+
+            const frame = h.dom(".pv-photo-nav-frame").getBoundingClientRect();
+            const startX = frame.left + frame.width / 2;
+            const startY = frame.top + frame.height / 2;
+            h.pointer(nav, "pointerdown", startX, startY);
+            h.pointer(nav, "pointermove", startX + 30, startY + 20);
+            h.pointer(nav, "pointerup", startX + 30, startY + 20);
+            await h.tick(80);
+            const after = app.state.viewport.navigator.frame;
+            h.assert(after.x !== before.x || after.y !== before.y, "拖动白框未改变视口中心");
+            const dx = (after.x + after.w / 2) - (before.x + before.w / 2);
+            const dy = (after.y + after.h / 2) - (before.y + before.h / 2);
+            h.assert(dx > 0 && dy > 0, `白框未跟随指针方向：dx ${dx}, dy ${dy}`);
+            h.assert(app.state.viewport.percentText === percent, `拖动改变了倍率：${percent} → ${app.state.viewport.percentText}`);
+            h.assert(app.state.viewport.isFit === false, "拖动回到了适应态");
+
+            // 按在缩略图其他位置：先把框心移到该点，再继续拖。
+            const thumb = h.dom(".pv-photo-nav-thumb").getBoundingClientRect();
+            const blankX = thumb.left + thumb.width * 0.15;
+            const blankY = thumb.top + thumb.height * 0.15;
+            h.pointer(nav, "pointerdown", blankX, blankY);
+            h.pointer(nav, "pointerup", blankX, blankY);
+            await h.tick(80);
+            const jumped = app.state.viewport.navigator.frame;
+            const centerU = (jumped.x + jumped.w / 2) / thumb.width;
+            const centerV = (jumped.y + jumped.h / 2) / thumb.height;
+            // 靠近缩略图边缘时中心受钳制，框留在缩略图内。
+            const expectU = Math.max(0.15, jumped.w / (2 * thumb.width));
+            const expectV = Math.max(0.15, jumped.h / (2 * thumb.height));
+            h.assert(Math.abs(centerU - expectU) <= 0.02 && Math.abs(centerV - expectV) <= 0.02,
+                `按在别处未把框心移过去：${centerU.toFixed(2)}, ${centerV.toFixed(2)} ≠ ${expectU.toFixed(2)}, ${expectV.toFixed(2)}`);
+            h.assert(app.state.viewport.percentText === percent, "点按导航图改变了倍率");
+        },
+    },
+    {
         id: "TOOLBAR-03",
         title: "评分点亮、列布局 5→0，点星不切图",
         async run(shell, h) {
@@ -674,11 +929,12 @@ const CHECKS = [
         async run(shell, h) {
             const { app } = shell;
             const next = h.dom('.pv-control-command-button[data-command="Next"]');
-            // TOOLBAR-04：格式 `命令名 · 主 / 次`，不含「未设置」占位。
-            h.assert(next.title === "下一张 · → / 滚轮下", `按钮提示格式不符：${next.title}`);
+            // TOOLBAR-04：格式 `命令名 · 主 / 次`，不含「未设置」占位；提示走 data-tooltip。
+            h.assert(next.dataset.tooltip === "下一张 · → / 滚轮下", `按钮提示格式不符：${next.dataset.tooltip}`);
             const fit = h.dom('.pv-control-command-button[data-command="Fit"]');
-            h.assert(fit.title === "缩放适应 · Ctrl+0 / F", `按钮提示格式不符：${fit.title}`);
-            h.assert(!next.title.includes("未设置"), "提示出现未设置占位");
+            h.assert(fit.dataset.tooltip === "缩放适应 · Ctrl+0 / F", `按钮提示格式不符：${fit.dataset.tooltip}`);
+            h.assert(!next.dataset.tooltip.includes("未设置"), "提示出现未设置占位");
+            h.assert(next.getAttribute("title") === null, "命令按钮仍用浏览器原生 title");
             const before = app.state.displayedId;
             h.click(next);
             await h.tick(100);
@@ -693,6 +949,81 @@ const CHECKS = [
             h.assert(commands.every((node) => node.disabled), "空态仍有点得动的命令按钮");
             h.assert(h.domAll(".pv-control-rating-button").every((node) => node.disabled), "空态评分组未禁用");
             h.assert(h.domAll(".pv-control-exif-block").every((node) => node.textContent.includes("--")), "空态 EXIF 未显示 --");
+        },
+    },
+    {
+        id: "TOOLBAR-04a",
+        title: "自绘悬停提示：延迟后出现于指针右下，按下即隐藏，不挡指针",
+        async run(shell, h) {
+            const t = (name) => shell.t(name);
+            // 清掉上一条检查可能留下的提示与「连续划过」窗口，从独立悬停开始计时。
+            document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+            await h.wait(t("motion.tooltip.delay") + 50);
+            const button = h.dom('.pv-control-command-button[data-command="Next"]');
+            const rect = button.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            h.pointer(button, "pointermove", x, y);
+            h.pointer(button, "pointerover", x, y);
+            await h.wait(t("motion.tooltip.delay") - 120);
+            const tooltip = h.dom(".pv-tooltip");
+            h.assert(tooltip.hidden === true, "悬停未满延迟就显示了提示");
+
+            await h.until(() => tooltip.hidden === false, 1200);
+            h.assert(tooltip.textContent === button.dataset.tooltip, `提示内容 ${tooltip.textContent}`);
+            const hostRect = h.dom(".pv-window").getBoundingClientRect();
+            const tooltipRect = tooltip.getBoundingClientRect();
+            const expectedLeft = Math.min(x + 12, hostRect.right - tooltipRect.width);
+            const expectedTop = Math.min(y + 16, hostRect.bottom - tooltipRect.height);
+            h.assert(tooltipRect.left >= expectedLeft - 1.5,
+                `提示未出现在指针右下：left ${tooltipRect.left}, x ${x}, 宽 ${tooltipRect.width}, 左右界 ${hostRect.right}`);
+            h.assert(tooltipRect.top >= expectedTop - 1.5,
+                `提示未出现在指针右下：top ${tooltipRect.top}, y ${y}, 高 ${tooltipRect.height}, 下界 ${hostRect.bottom}`);
+            const style = getComputedStyle(tooltip);
+            h.assert(colorMatches(style.backgroundColor, t("color.popup.background")), `提示底色 ${style.backgroundColor}`);
+            h.assert(colorMatches(style.borderTopColor, t("color.popup.border")), `提示描边 ${style.borderTopColor}`);
+            h.assert(style.borderTopLeftRadius === `${t("popup.cornerRadius")}px`, `提示圆角 ${style.borderTopLeftRadius}`);
+            h.assert(style.fontSize === `${t("tooltip.fontSize")}px`, `提示字号 ${style.fontSize}`);
+            h.assert(style.maxWidth === `${t("tooltip.maxWidth")}px`, `提示最大宽 ${style.maxWidth}`);
+            h.assert(style.pointerEvents === "none", `提示阻挡指针：${style.pointerEvents}`);
+
+            // 按下即隐藏；窗口内不再残留原生 title。
+            h.pointer(button, "pointerdown", x, y);
+            await h.tick(20);
+            h.assert(tooltip.hidden === true, "按下后提示未隐藏");
+            h.pointer(button, "pointerup", x, y);
+            h.assert(document.querySelectorAll(".pv-window [title]").length === 0, "窗口内仍有原生 title 属性");
+        },
+    },
+    {
+        id: "TOOLBAR-04b",
+        title: "评分快捷命令为星形内叠数字（SetRating3），0 为叉",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            const original = app.settings.hotkeys.map((row) => ({ ...row }));
+            try {
+                app.updateSettings({
+                    hotkeys: original.map((row) => (row.command === "SetRating3" ? { ...row, display: true } : { ...row })),
+                });
+                await h.tick(120);
+                const button = h.dom('.pv-control-command-button[data-command="SetRating3"]');
+                const star = button.querySelector(".pv-icon-solid");
+                const digit = button.querySelector(".pv-command-rating-digit");
+                h.assert(star !== null, "评分快捷命令缺少实心星字形");
+                h.assert(digit !== null && digit.textContent === "3", `星内数字 ${digit ? digit.textContent : "缺失"}`);
+                h.assert(getComputedStyle(star).fontSize === `${t("toolbar.command.glyph.fontSize")}px`,
+                    `星形字号 ${getComputedStyle(star).fontSize}`);
+                h.assert(getComputedStyle(digit).fontSize === `${t("toolbar.rating.digit.fontSize")}px`,
+                    `数字字号 ${getComputedStyle(digit).fontSize}`);
+                h.assert(getComputedStyle(digit).fontWeight === "600", `数字字重 ${getComputedStyle(digit).fontWeight}`);
+                h.assert(colorMatches(getComputedStyle(digit).color, t("color.toolbar.command.background")),
+                    `数字颜色 ${getComputedStyle(digit).color}`);
+                h.assert(button.querySelector("svg") === null, "评分快捷命令仍用内联 SVG");
+            } finally {
+                app.updateSettings({ hotkeys: original });
+                await h.tick(80);
+            }
         },
     },
     {

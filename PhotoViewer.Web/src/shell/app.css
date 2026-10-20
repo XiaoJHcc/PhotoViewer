@@ -6,6 +6,34 @@
     -webkit-font-smoothing: antialiased;
 }
 
+/* TOOLBAR-04：主屏图标字体，子集由 tools/subset-icons.py 生成（只含 icon.* 码位） */
+@font-face {
+    font-family: "uicons-pv";
+    src: url("../assets/uicons-pv.woff2") format("woff2");
+    font-display: block;
+}
+
+/* 实心星/实心叉（uicons solid-straight 同码位），用于点亮态与星内叠数字 */
+@font-face {
+    font-family: "uicons-pv-solid";
+    src: url("../assets/uicons-pv-solid.woff2") format("woff2");
+    font-display: block;
+}
+
+.pv-icon {
+    display: inline-block;
+    font-family: "uicons-pv";
+    font-style: normal;
+    font-weight: 400;
+    line-height: 1;
+    -webkit-font-smoothing: antialiased;
+}
+
+.pv-icon-solid {
+    font-family: "uicons-pv-solid";
+}
+
+
 html, body {
     margin: 0;
     height: 100%;
@@ -49,7 +77,6 @@ html, body {
 }
 
 #app.is-demo .pv-window {
-    border-radius: 10px;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 50px rgba(0, 0, 0, 0.55);
 }
 
@@ -91,7 +118,7 @@ html, body {
     outline-offset: 1px;
 }
 
-/* 共用菜单（MENU-03@web）：仿 macOS 深色菜单 */
+/* 共用弹层（MENU-03@web、FILTER-08@web）：旧壳 Avalonia Fluent 深色外观，无阴影、无毛玻璃 */
 .pv-menu-shield {
     position: absolute;
     inset: 0;
@@ -108,85 +135,135 @@ html, body {
 .pv-menu {
     position: absolute;
     min-width: 160px;
-    padding: 5px;
+    box-sizing: border-box;
+    padding: var(--pv-popup-padding) 0;
     overflow-y: auto;
     pointer-events: auto;
-    background: rgba(40, 40, 42, 0.96);
-    border: 0.5px solid rgba(255, 255, 255, 0.16);
-    border-radius: 8px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    font-size: 13px;
-    color: #ececec;
+    background: var(--pv-color-popup-background);
+    border: 1px solid var(--pv-color-popup-border);
+    border-radius: var(--pv-popup-cornerRadius);
+    font-size: var(--pv-menu-item-fontSize);
+    color: var(--pv-color-text-primary);
     outline: none;
 }
 
+/* MENU-03：项高固定、左右内边距、整行直角高亮，文字不变色 */
 .pv-menu-item {
-    display: grid;
-    grid-template-columns: 16px 1fr auto;
+    display: flex;
     align-items: center;
-    gap: 2px;
-    height: 22px;
-    padding: 0 10px 0 4px;
-    border-radius: 4px;
+    box-sizing: border-box;
+    height: var(--pv-menu-item-height);
+    padding: 0 var(--pv-menu-item-paddingX);
     white-space: nowrap;
     cursor: default;
     outline: none;
 }
 
-.pv-menu-item.is-focused {
-    background: var(--pv-accent);
-    color: #fff;
+.pv-menu-item.is-focused,
+.pv-menu-item.is-pressed {
+    background: var(--pv-color-menu-item-hover);
+}
+
+.pv-menu-item.is-pressed {
+    background: var(--pv-color-menu-item-pressed);
 }
 
 .pv-menu-item.is-disabled {
-    color: rgba(255, 255, 255, 0.3);
+    color: var(--pv-color-menu-foreground-disabled);
 }
 
 .pv-menu-item.is-disabled.is-focused {
     background: transparent;
 }
 
+/* MENU-03：勾选标记占左侧 menu.check.size 列，菜单内有勾选项时所有项都让出该列 + menu.check.gap */
 .pv-menu-mark {
-    font-size: 11px;
+    flex: none;
+    width: var(--pv-menu-check-size);
+    margin-right: var(--pv-menu-check-gap);
+    font-family: "uicons-pv";
+    font-size: 12px;
+    line-height: 1;
     text-align: center;
 }
 
-.pv-menu-shortcut {
-    padding-left: 24px;
-    color: rgba(255, 255, 255, 0.45);
-    font-size: 12px;
+.pv-menu-label {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
-.pv-menu-item.is-focused .pv-menu-shortcut {
-    color: rgba(255, 255, 255, 0.85);
+.pv-menu-shortcut {
+    flex: none;
+    margin-left: auto;
+    padding-left: var(--pv-menu-shortcut-gap);
+    color: var(--pv-color-menu-shortcut);
+    font-size: 12px;
 }
 
 .pv-menu-sep {
     height: 1px;
-    margin: 5px 6px;
-    background: rgba(255, 255, 255, 0.12);
+    margin: 4px var(--pv-menu-separator-inset);
+    background: var(--pv-color-menu-separator);
+}
+
+/* FILTER-08：下拉项高 = 行高 + 上 5 下 7；当前项整行强调色，无勾号 */
+.pv-menu.is-dropdown {
+    font-size: var(--pv-dropdown-fontSize);
+}
+
+.pv-menu.is-dropdown .pv-menu-item {
+    height: auto;
+    padding: 5px var(--pv-dropdown-item-paddingX) 7px;
+    line-height: 19px;
+}
+
+.pv-menu.is-dropdown .pv-menu-item.is-selected {
+    background: var(--pv-color-dropdown-item-selected);
+}
+
+.pv-menu.is-dropdown .pv-menu-item.is-selected.is-focused {
+    background: var(--pv-color-dropdown-item-selected-hover);
 }
 
 .pv-menu-header {
     display: flex;
     flex-direction: column;
     gap: 1px;
-    padding: 4px 10px 5px 4px;
+    padding: 4px var(--pv-menu-item-paddingX) 5px;
 }
 
 .pv-menu-header-title {
     overflow: hidden;
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 13px;
+    color: var(--pv-color-text-secondary);
+    font-size: var(--pv-dropdown-fontSize);
     font-weight: 600;
     white-space: nowrap;
     text-overflow: ellipsis;
 }
 
 .pv-menu-header-detail {
-    color: rgba(255, 255, 255, 0.45);
+    color: var(--pv-color-menu-shortcut);
     font-size: 11px;
     white-space: nowrap;
+}
+
+/* TOOLBAR-04@web：自绘悬停提示，不挡指针 */
+.pv-tooltip {
+    position: absolute;
+    z-index: 950;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: var(--pv-tooltip-maxWidth);
+    padding: 8px 5px 8px 7px;
+    background: var(--pv-color-popup-background);
+    border: 1px solid var(--pv-color-popup-border);
+    border-radius: var(--pv-popup-cornerRadius);
+    color: #fff;
+    font-size: var(--pv-tooltip-fontSize);
+    line-height: 1.35;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    pointer-events: none;
 }

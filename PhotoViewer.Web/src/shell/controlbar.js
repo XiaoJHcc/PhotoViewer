@@ -1,114 +1,54 @@
 import { el, place, setText, touches } from "./dom.js";
+import { icon, solidIcon } from "./icons.js";
 
 const REGIONS = ["layout", "toolbar", "current", "settings", "panes", "window"];
 const RATING_COUNT = 6;
 const GROUP_ORDER = ["exif", "rating", "command"];
-const SVG_NS = "http://www.w3.org/2000/svg";
-const STAR_PATH = "M12 2.6 L14.85 8.38 L21.2 9.3 L16.6 13.78 L17.69 20.1 L12 17.1 L6.31 20.1 L7.4 13.78 L2.8 9.3 L9.15 8.38 Z";
-const CROSS_PATH = "M6.5 6.5 L13.5 13.5 M13.5 6.5 L6.5 13.5";
 
+// TOOLBAR-04：命令 → icon.* 令牌；四端与 Web 同一字形。
 const COMMAND_ICONS = {
-    Open: "folder",
-    Previous: "previous",
-    Next: "next",
-    Exchange: "exchange",
-    Fit: "fit",
-    ZoomInPreset: "zoomIn",
-    ZoomOutPreset: "zoomOut",
-    ZoomInScale: "zoomScaleIn",
-    ZoomOutScale: "zoomScaleOut",
-    ToggleAnalysisView: "sidebar",
-    ToggleEnhance: "wand",
+    Open: "icon.command.open",
+    Previous: "icon.command.previous",
+    Next: "icon.command.next",
+    Exchange: "icon.command.exchange",
+    Fit: "icon.command.fit",
+    ZoomInPreset: "icon.command.zoomInPreset",
+    ZoomOutPreset: "icon.command.zoomOutPreset",
+    ZoomInScale: "icon.command.zoomInScale",
+    ZoomOutScale: "icon.command.zoomOutScale",
+    ToggleAnalysisView: "icon.command.toggleAnalysisView",
+    ToggleEnhance: "icon.command.toggleEnhance",
 };
 
-function svgNode(children, viewBox = "0 0 20 20") {
-    const svg = document.createElementNS(SVG_NS, "svg");
-    svg.setAttribute("viewBox", viewBox);
-    svg.setAttribute("aria-hidden", "true");
-    svg.setAttribute("focusable", "false");
-    for (const child of children) svg.append(child);
-    return svg;
-}
-
-function pathNode(d) {
-    const node = document.createElementNS(SVG_NS, "path");
-    node.setAttribute("d", d);
-    return node;
-}
-
-function circleNode(cx, cy, r) {
-    const node = document.createElementNS(SVG_NS, "circle");
-    node.setAttribute("cx", String(cx));
-    node.setAttribute("cy", String(cy));
-    node.setAttribute("r", String(r));
-    return node;
-}
-
-function magnifier(inner) {
-    return svgNode([
-        circleNode(8.8, 8.8, 4.6),
-        pathNode("M12.3 12.3 L16.4 16.4"),
-        ...inner.map((d) => pathNode(d)),
-    ]);
-}
-
-const ICON_BUILDERS = {
-    previous: () => svgNode([pathNode("M12.5 4.5 L7 10 L12.5 15.5")]),
-    next: () => svgNode([pathNode("M7.5 4.5 L13 10 L7.5 15.5")]),
-    exchange: () => svgNode([
-        pathNode("M15.5 6.5 H5.5"),
-        pathNode("M8.5 3.5 L5.5 6.5 L8.5 9.5"),
-        pathNode("M4.5 13.5 H14.5"),
-        pathNode("M11.5 10.5 L14.5 13.5 L11.5 16.5"),
-    ]),
-    fit: () => svgNode([
-        pathNode("M4 8 V4 H8"),
-        pathNode("M4.4 4.4 L9.4 9.4"),
-        pathNode("M16 12 V16 H12"),
-        pathNode("M15.6 15.6 L10.6 10.6"),
-    ]),
-    zoomIn: () => magnifier(["M8.8 6.4 V11", "M6.5 8.8 H11.1"]),
-    zoomOut: () => magnifier(["M6.5 8.8 H11.1"]),
-    zoomScaleIn: () => magnifier(["M6.6 11 L11 6.6", "M8.4 6.6 H11 V9.2"]),
-    zoomScaleOut: () => magnifier(["M6.6 9 L11 13.4", "M8.4 13.4 H11 V10.8"]),
-    sidebar: () => svgNode([
-        pathNode("M5 5 H15 A1.5 1.5 0 0 1 16.5 6.5 V13.5 A1.5 1.5 0 0 1 15 15 H5 A1.5 1.5 0 0 1 3.5 13.5 V6.5 A1.5 1.5 0 0 1 5 5 Z"),
-        pathNode("M8.4 5 V15"),
-    ]),
-    wand: () => svgNode([
-        pathNode("M3.8 16.2 L12.2 7.8"),
-        pathNode("M14.4 3.8 V7.6"),
-        pathNode("M12.5 5.7 H16.3"),
-        pathNode("M16 10 V12.6"),
-        pathNode("M14.7 11.3 H17.3"),
-    ]),
-    folder: () => svgNode([
-        pathNode("M3.5 6.2 C3.5 5.6 3.9 5.2 4.5 5.2 H7.8 L9.4 6.9 H15.5 C16.1 6.9 16.5 7.3 16.5 7.9 V14.4 C16.5 15 16.1 15.4 15.5 15.4 H4.5 C3.9 15.4 3.5 15 3.5 14.4 Z"),
-    ]),
-};
+// 实心星（fi-ss-star，uicons solid-straight）：点亮态、评分快捷命令星内叠数字。
 
 function ratingValueOf(command) {
     const match = /^SetRating([0-5])$/.exec(command);
     return match ? Number(match[1]) : null;
 }
 
-function commandGlyph(command) {
+function commandGlyph(command, t) {
     const value = ratingValueOf(command);
     if (value !== null) {
-        // TOOLBAR-04：评分快捷命令统一画数字，0 画叉。
-        if (value === 0) return svgNode([pathNode(CROSS_PATH)]);
-        return el("span", { class: "pv-control-command-digit", "aria-hidden": "true" }, String(value));
+        if (value === 0) return icon(t, "icon.clear", "pv-command-icon");
+        // TOOLBAR-04：1–5 为星形内叠数字，数字取按钮底色。
+        return el("span", { class: "pv-command-rating", "aria-hidden": "true" },
+            solidIcon(t, "icon.starFilled", "pv-command-rating-star"),
+            el("span", { class: "pv-command-rating-digit" }, String(value)));
     }
-    const builder = ICON_BUILDERS[COMMAND_ICONS[command]];
-    return builder ? builder() : null;
+    const token = COMMAND_ICONS[command];
+    return token ? icon(t, token, "pv-command-icon") : null;
 }
 
-function createStarGlyph() {
-    return svgNode([pathNode(STAR_PATH)], "0 0 24 24");
+function createStarGlyph(t) {
+    return [
+        icon(t, "icon.star", "pv-rating-glyph pv-rating-outline"),
+        solidIcon(t, "icon.starFilled", "pv-rating-glyph pv-rating-solid"),
+    ];
 }
 
-function createClearGlyph() {
-    return svgNode([pathNode(CROSS_PATH)]);
+function createClearGlyph(t) {
+    return icon(t, "icon.clear", "pv-rating-glyph pv-rating-clear");
 }
 
 function coordinateOf(axis, child) {
@@ -126,6 +66,7 @@ function reorder(container, nodes) {
 }
 
 export function mountControlBar(host, ctx) {
+    const { t } = ctx;
     const scroll = el("div", {
         class: "pv-control-scroll is-row",
         role: "group",
@@ -175,12 +116,13 @@ export function mountControlBar(host, ctx) {
     }
 
     function createRatingButton(value) {
-        const glyph = value === 0 ? createClearGlyph() : createStarGlyph();
+        const label = value === 0 ? "无星级" : `${value} 星`;
+        const glyph = value === 0 ? createClearGlyph(t) : createStarGlyph(t);
         const button = el("button", {
             type: "button",
             class: value === 0 ? "pv-control-rating-button is-clear" : "pv-control-rating-button is-off",
-            "aria-label": value === 0 ? "无星级" : `${value} 星`,
-            title: value === 0 ? "无星级" : `${value} 星`,
+            "aria-label": label,
+            "data-tooltip": label,
         }, glyph);
         button.dataset.rating = String(value);
         button.addEventListener("click", () => ctx.app.rate(undefined, value));
@@ -188,7 +130,7 @@ export function mountControlBar(host, ctx) {
     }
 
     function createCommandButton(command) {
-        const glyph = commandGlyph(command);
+        const glyph = commandGlyph(command, t);
         const button = el("button", { type: "button", class: "pv-control-command-button" });
         if (glyph) button.append(glyph);
         button.dataset.command = command;
@@ -213,7 +155,7 @@ export function mountControlBar(host, ctx) {
             place(block, child);
             setText(block.labelNode, items[index].label);
             setText(block.valueNode, items[index].value);
-            block.title = items[index].tooltip;
+            block.dataset.tooltip = items[index].tooltip;
             block.setAttribute("aria-label", items[index].tooltip);
         }
         for (let index = items.length; index < exifBlocks.length; index += 1) {
@@ -240,7 +182,8 @@ export function mountControlBar(host, ctx) {
     }
 
     function updateCommandButton(button, item) {
-        button.title = item.tooltip;
+        // TOOLBAR-04：悬停提示自绘（data-tooltip），读屏名称同文案。
+        button.dataset.tooltip = item.tooltip;
         button.setAttribute("aria-label", item.tooltip);
         button.disabled = item.enabled === false;
         if ("active" in item) button.setAttribute("aria-pressed", item.active ? "true" : "false");

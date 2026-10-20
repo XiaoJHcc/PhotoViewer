@@ -40,7 +40,7 @@ const host = el("div", { class: "pv-pane pv-pane-file h-host" });
 windowEl.append(contextStrip, host);
 stage.append(windowEl);
 
-const menu = createMenu({ host: windowEl, onOpenChange: (open) => app.setMenuOpen(open) });
+const menu = createMenu({ host: windowEl, t, onOpenChange: (open) => app.setMenuOpen(open) });
 const ctx = {
     app,
     t,

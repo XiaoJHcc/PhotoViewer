@@ -8,7 +8,7 @@
  *
  * 动作：setWindowSize/openFolder/openFile/selectCard/selectSimilar/navigate/exchange/setSort/
  * setRatingFilter/rate/toggleFilmbar/toggleControlbar/toggleAnalysis/setSimilarityExpanded/
- * fit/zoomPreset/zoomScale/zoomBy/pan/centerOn/toggleEnhance/runCommand/runMenu/requestOpen/
+ * fit/zoomPreset/zoomScale/zoomBy/pan/centerOn/navigateTo/toggleEnhance/runCommand/runMenu/requestOpen/
  * keyDown/keyUp/blur/setModifierState/wheelOnPhoto/mouseOnPhoto/filmUserScrolled/filmResized/bindFilmScroller/layoutReady/
  * setMenuOpen/setDropdownOpen/setTextFocus/updateSettings/hoverDetail/clickDiagnostic/
  * clickAnalysisBlank/locateDetail/extractAll/setHistogramSource/simulateMemoryWarning/setDpr/menuModel/notify/canOpen
@@ -513,6 +513,11 @@ class MainApp {
     centerOn(u, v) {
         // IMAGE-09：以显示朝向归一化点为中心到物理 100%，退出跟随对焦。
         return this._afterViewport(this._viewport.centerOnPoint(u, v));
+    }
+
+    navigateTo(u, v) {
+        // IMAGE-06：拖动导航图白框，只改视口中心、不改倍率。
+        return this._afterViewport(this._viewport.centerOnNormalized(u, v));
     }
 
     toggleEnhance() {

@@ -43,7 +43,7 @@
     <ItemGroup>
         <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
         <!-- 控制栏命令图标沿用共享 uicons 字体，随 APK 打包。 -->
-        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\*.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-regular-rounded.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
     </ItemGroup>
 
     <ItemGroup>

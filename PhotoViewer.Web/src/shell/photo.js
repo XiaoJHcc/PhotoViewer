@@ -22,6 +22,10 @@ const LOADING_TEXT = "正在载入…";
 const NO_LINE_START = "、。，．,.;:：；！？!?）)】」』》〉”’…—～";
 const IMAGE_FILE = /\.(jpe?g|png|heic|heif|hif|tiff?|dng|arw|cr2|cr3|nef|raf|orf|rw2)$/i;
 
+function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+}
+
 function rel(rect, pane) {
     return { x: rect.x - pane.x, y: rect.y - pane.y, w: rect.w, h: rect.h };
 }
@@ -64,6 +68,7 @@ export function mountPhoto(host, ctx) {
     let frame = 0;
     let navSurface = null;
     let navSignature = "";
+    let navDrag = null;
 
     function draw() {
         frame = 0;
@@ -235,6 +240,69 @@ export function mountPhoto(host, ctx) {
         });
         setText(navLabel, state.viewport.percentText);
         drawNavigator(state, hostFrame.thumb, state.viewport.dpr || 1);
+    }
+
+    function navPointOf(event) {
+        const navigator = app.state.viewport.navigator;
+        if (!navigator || !(navigator.thumbWidth > 0) || !(navigator.thumbHeight > 0)) return null;
+        const rect = navEl.getBoundingClientRect();
+        const localX = event.clientX - rect.left - navThumb.offsetLeft;
+        const localY = event.clientY - rect.top - navThumb.offsetTop;
+        return {
+            navigator,
+            localX,
+            localY,
+            u: clamp01(localX / navigator.thumbWidth),
+            v: clamp01(localY / navigator.thumbHeight),
+        };
+    }
+
+    function dragNavigator(point) {
+        if (!navDrag) return;
+        app.navigateTo(clamp01(point.u - navDrag.offsetU), clamp01(point.v - navDrag.offsetV));
+    }
+
+    // IMAGE-06：白框可拖动。按在框内保留抓取偏移；按在缩略图其他位置先把框心移到该点再继续拖。
+    function onNavPointerDown(event) {
+        if (event.button !== 0) return;
+        const point = navPointOf(event);
+        if (!point) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const frame = point.navigator.frame;
+        const inside = point.localX >= frame.x && point.localX <= frame.x + frame.w
+            && point.localY >= frame.y && point.localY <= frame.y + frame.h;
+        const centerU = (frame.x + frame.w / 2) / point.navigator.thumbWidth;
+        const centerV = (frame.y + frame.h / 2) / point.navigator.thumbHeight;
+        navDrag = {
+            pointerId: event.pointerId,
+            offsetU: inside ? point.u - centerU : 0,
+            offsetV: inside ? point.v - centerV : 0,
+        };
+        try {
+            navEl.setPointerCapture(event.pointerId);
+        } catch {
+            // 浏览器不支持指针捕获时继续用冒泡事件
+        }
+        navEl.classList.add("is-dragging");
+        dragNavigator(point);
+    }
+
+    function onNavPointerMove(event) {
+        if (!navDrag || event.pointerId !== navDrag.pointerId) return;
+        const point = navPointOf(event);
+        if (!point) return;
+        event.preventDefault();
+        event.stopPropagation();
+        dragNavigator(point);
+    }
+
+    function onNavPointerUp(event) {
+        if (!navDrag || event.pointerId !== navDrag.pointerId) return;
+        event.stopPropagation();
+        if (navEl.hasPointerCapture?.(event.pointerId)) navEl.releasePointerCapture(event.pointerId);
+        navDrag = null;
+        navEl.classList.remove("is-dragging");
     }
 
     function syncBusy(state, pane) {
@@ -549,6 +617,10 @@ export function mountPhoto(host, ctx) {
     host.addEventListener("pointermove", onPointerMove);
     host.addEventListener("pointerup", onPointerUp);
     host.addEventListener("pointercancel", onPointerCancel);
+    navEl.addEventListener("pointerdown", onNavPointerDown);
+    navEl.addEventListener("pointermove", onNavPointerMove);
+    navEl.addEventListener("pointerup", onNavPointerUp);
+    navEl.addEventListener("pointercancel", onNavPointerUp);
     host.addEventListener("wheel", onWheel, { passive: false });
     host.addEventListener("dblclick", onDoubleClick);
     host.addEventListener("click", onClick);
@@ -567,6 +639,10 @@ export function mountPhoto(host, ctx) {
             host.removeEventListener("pointermove", onPointerMove);
             host.removeEventListener("pointerup", onPointerUp);
             host.removeEventListener("pointercancel", onPointerCancel);
+            navEl.removeEventListener("pointerdown", onNavPointerDown);
+            navEl.removeEventListener("pointermove", onNavPointerMove);
+            navEl.removeEventListener("pointerup", onNavPointerUp);
+            navEl.removeEventListener("pointercancel", onNavPointerUp);
             host.removeEventListener("wheel", onWheel);
             host.removeEventListener("dblclick", onDoubleClick);
             host.removeEventListener("click", onClick);

@@ -8,6 +8,7 @@ import { createStore } from "./render/store.js";
 import { createThumbnailQueue } from "./render/thumbs.js";
 import { el, place, applyTokenVariables, createTextMeasurer } from "./shell/dom.js";
 import { createMenu } from "./shell/menu.js";
+import { createTooltip } from "./shell/tooltip.js";
 import { mountFilterBar } from "./shell/filterbar.js";
 import { mountFilmstrip } from "./shell/filmstrip.js";
 import { mountSimilarity } from "./shell/similarity.js";
@@ -72,8 +73,10 @@ windowEl.append(panes.file, panes.fileDivider, panes.photo, panes.analysisDivide
 const overlay = el("div", { class: "pv-overlay" });
 windowEl.append(overlay);
 
-const menu = createMenu({ host: windowEl, onOpenChange: (open) => app.setMenuOpen(open) });
-const ctx = { app, t, clock, thumbs, decoder, library, measureText, menu, overlay, windowEl, reducedMotion };
+const menu = createMenu({ host: windowEl, t, onOpenChange: (open) => app.setMenuOpen(open) });
+// TOOLBAR-04@web：data-tooltip 的全局委托，替换浏览器原生 title。
+const tooltip = createTooltip({ host: windowEl, t });
+const ctx = { app, t, clock, thumbs, decoder, library, measureText, menu, tooltip, overlay, windowEl, reducedMotion };
 
 const components = [
     mountFilterBar(panes.file, ctx),

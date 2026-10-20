@@ -1,17 +1,20 @@
 /**
  * 共用弹出菜单（筛选下拉与主图右键菜单，MENU-03@web / FILTER-08@web：浏览器无原生弹层，自绘）。
  * createMenu({ host, onOpenChange }) → { open(items, anchor, options), close(), isOpen }
- *   items: [{ id, label, type: "command"|"check"|"radio"|"separator", checked, enabled, shortcut }]
- *   anchor: { x, y }（窗口坐标点，右键）或 { rect }（下拉控件矩形，菜单贴在其下方并让当前项对齐）
- *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label }
+ *   items: [{ id, label, type: "command"|"check"|"radio"|"separator"|"header", checked, enabled, shortcut }]
+ *   anchor: { x, y }（窗口坐标点，右键：菜单左上角对齐指针）或 { rect }（下拉控件矩形：
+ *     菜单贴按钮正下方、以按钮水平居中，最小宽 = 按钮宽，下方不足翻到上方）
+ *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label, style: "menu"|"dropdown", focusFirst }
  * 行为：夹在宿主内（MENU-03）；上下键移动、回车/空格选择、Esc/点外部关闭且不穿透（MENU-03、FILTER-08）；
  * 选择即关闭；同时只开一个；关闭后焦点回到 returnFocus。
+ * 外观（旧壳 Avalonia Fluent 深色）：弹层 popup.*，菜单项 menu.*；下拉项 dropdown.*（当前项整行强调色、无勾号）。
  */
 import { el } from "./dom.js";
+import { codepoint } from "./icons.js";
 
 const EDGE = 4;
 
-export function createMenu({ host, onOpenChange = () => {} }) {
+export function createMenu({ host, t, onOpenChange = () => {} }) {
     let current = null;
 
     function close(reason = "dismiss") {
@@ -28,8 +31,18 @@ export function createMenu({ host, onOpenChange = () => {} }) {
 
     function open(items, anchor, options = {}) {
         close("replaced");
+        const dropdown = options.style === "dropdown";
+        const checkable = items.some((item) => item.type === "check" || item.type === "radio");
+        // MENU-03：菜单内有任一勾选项时所有项都让出勾选列 + 间距；下拉用整行选中色，不画勾号。
+        const hasCheckColumn = checkable && !dropdown;
+        const checkGlyph = codepoint(t("icon.check"));
         const shield = el("div", { class: "pv-menu-shield" });
-        const list = el("div", { class: "pv-menu", role: "menu", "aria-label": options.label ?? "" });
+        const list = el("div", {
+            class: dropdown ? "pv-menu is-dropdown" : "pv-menu",
+            role: "menu",
+            "aria-label": options.label ?? "",
+        });
+        if (hasCheckColumn) list.classList.add("has-check");
         const rows = [];
         const rowItems = [];
         for (const item of items) {
@@ -52,12 +65,28 @@ export function createMenu({ host, onOpenChange = () => {} }) {
                 "aria-disabled": item.enabled === false ? "true" : "false",
                 "aria-checked": item.type === "check" || item.type === "radio" ? String(Boolean(item.checked)) : null,
                 dataset: { id: item.id },
-            },
-            el("span", { class: "pv-menu-mark", "aria-hidden": "true" }, item.checked ? "✓" : ""),
-            el("span", { class: "pv-menu-label" }, item.label),
-            el("span", { class: "pv-menu-shortcut" }, item.shortcut ?? ""));
+            });
+            if (hasCheckColumn) {
+                row.append(el("span", {
+                    class: "pv-menu-mark",
+                    "aria-hidden": "true",
+                }, item.checked ? checkGlyph : ""));
+            }
+            row.append(
+                el("span", { class: "pv-menu-label" }, item.label),
+                el("span", { class: "pv-menu-shortcut" }, item.shortcut ?? ""));
+            if (dropdown && item.checked) row.classList.add("is-selected");
             if (item.enabled === false) row.classList.add("is-disabled");
             row.addEventListener("pointerenter", () => focusRow(rows.indexOf(row)));
+            row.addEventListener("pointerdown", (event) => {
+                event.stopPropagation();
+                if (item.enabled === false) return;
+                row.classList.add("is-pressed");
+            });
+            const release = () => row.classList.remove("is-pressed");
+            row.addEventListener("pointerup", release);
+            row.addEventListener("pointercancel", release);
+            row.addEventListener("pointerleave", release);
             row.addEventListener("click", (event) => {
                 event.stopPropagation();
                 if (item.enabled === false) return;
@@ -71,23 +100,21 @@ export function createMenu({ host, onOpenChange = () => {} }) {
         host.append(shield, root);
 
         const hostRect = host.getBoundingClientRect();
-        const menuRect = list.getBoundingClientRect();
         const maxH = Math.max(40, hostRect.height - EDGE * 2);
-        if (menuRect.height > maxH) list.style.maxHeight = `${maxH}px`;
-        const height = Math.min(menuRect.height, maxH);
+        if (list.getBoundingClientRect().height > maxH) list.style.maxHeight = `${maxH}px`;
+        const height = Math.min(list.getBoundingClientRect().height, maxH);
         let x;
         let y;
         if (anchor.rect) {
             const r = anchor.rect;
-            x = r.x;
-            const checkedIndex = rowItems.findIndex((item) => item.checked);
-            y = r.y + r.h + 2;
-            if (checkedIndex >= 0 && options.alignChecked) {
-                const rowTop = rows[checkedIndex].offsetTop;
-                y = r.y + (r.h - rows[checkedIndex].offsetHeight) / 2 - rowTop;
-            }
             list.style.minWidth = `${r.w}px`;
+            const width = list.getBoundingClientRect().width;
+            // FILTER-08：贴在按钮正下方、水平居中；下方不足翻到上方。
+            x = r.x + r.w / 2 - width / 2;
+            y = r.y + r.h;
+            if (y + height > hostRect.height - EDGE) y = r.y - height;
         } else {
+            // MENU-03：右键菜单左上角对齐指针。
             x = anchor.x;
             y = anchor.y;
         }

@@ -20,12 +20,11 @@ export function mountFilmstrip(host, ctx) {
         tabindex: "-1",
     });
     const documentLayer = el("div", { class: "pv-film-document" });
-    const empty = el("div", { class: "pv-film-empty", role: "status" }, "无匹配照片");
     const track = el("div", { class: "pv-film-scrollbar is-x", "aria-hidden": "true" });
     const thumb = el("div", { class: "pv-film-scrollbar-thumb" });
     track.append(thumb);
     scroller.append(documentLayer);
-    host.append(scroller, empty, track);
+    host.append(scroller, track);
 
     const rendered = new Map();
     const pool = [];
@@ -202,7 +201,6 @@ export function mountFilmstrip(host, ctx) {
         place(documentLayer, nextFilm.document);
         trackRect = trackRectFor(nextFilm.scroll);
         place(track, trackRect);
-        place(empty, nextState.count === 0 ? nextFilm.scroll : null);
         updateScrollbar();
     }
 
@@ -283,7 +281,6 @@ export function mountFilmstrip(host, ctx) {
             if (geometry) {
                 place(scroller, null);
                 place(documentLayer, null);
-                place(empty, null);
                 place(track, null);
                 viewport = 0;
                 documentLength = 0;
@@ -301,10 +298,6 @@ export function mountFilmstrip(host, ctx) {
             app.layoutReady();
         }
 
-        if (geometry || touches(regions, "list")) {
-            place(empty, nextState.count === 0 ? nextFilm.scroll : null);
-        }
-
         if (geometry || touches(regions, "list", "current", "settings", "image")) syncRange();
         updateScrollbar();
     }
@@ -319,7 +312,6 @@ export function mountFilmstrip(host, ctx) {
         for (const card of pool) card.destroy();
         pool.length = 0;
         scroller.remove();
-        empty.remove();
         track.remove();
     }
 

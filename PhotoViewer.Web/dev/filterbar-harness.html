@@ -73,7 +73,7 @@ const app = createApp({
 const overlay = el("div", { class: "pv-overlay" });
 const pane = el("div", { class: "pv-pane pv-pane-file" });
 windowEl.append(pane, overlay);
-const menu = createMenu({ host: windowEl, onOpenChange: (open) => app.setMenuOpen(open) });
+const menu = createMenu({ host: windowEl, t, onOpenChange: (open) => app.setMenuOpen(open) });
 const ctx = { app, t, clock, decoder, library, measureText, menu, overlay, windowEl, reducedMotion: () => false };
 const component = mountFilterBar(pane, ctx);
 

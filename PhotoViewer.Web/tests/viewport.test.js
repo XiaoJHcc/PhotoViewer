@@ -286,6 +286,27 @@ test("IMAGE-05：适应态不可平移", () => {
     assert.deepEqual(viewport.imageRect(), before);
 });
 
+test("IMAGE-06：centerOnNormalized 只改视口中心，保持倍率与适应态", () => {
+    const viewport = open(make());
+    // 适应态没有可移动的余量，框心本来就在中心。
+    assert.equal(viewport.centerOnNormalized(0.2, 0.2), false);
+    assert.equal(viewport.isFit, true);
+
+    viewport.centerOnPoint(0.5, 0.5);
+    const scale = viewport.scale;
+    assert.equal(viewport.centerOnNormalized(0.7, 0.6), true);
+    near(viewport.scale, scale);
+    const center = viewport.viewToImage(500, 400);
+    near(center.u, 0.7);
+    near(center.v, 0.6);
+
+    // 视口中心按 IMAGE-05 钳制在合法范围。
+    viewport.centerOnNormalized(2, -1);
+    const rect = viewport.imageRect();
+    near(rect.x + rect.w, 1000);
+    near(rect.y, 0);
+});
+
 test("IMAGE-05：视口尺寸变化保持中心图像点与倍率", () => {
     const viewport = open(make());
     viewport.centerOnPoint(0.7, 0.3);

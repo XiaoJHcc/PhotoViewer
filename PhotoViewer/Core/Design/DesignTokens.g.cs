@@ -339,12 +339,16 @@ public static class DesignTokens
     public const string IconCommandZoomOutPreset = "U+F94E";
     /// <summary>icon.command.zoomOutScale TOOLBAR-04：命令 ZoomOutScale 图标：uicons fi-rr-minus。</summary>
     public const string IconCommandZoomOutScale = "U+F94E";
-    /// <summary>icon.font TOOLBAR-04：主屏图标字体：Flaticon UIcons Regular Rounded，四端与 Web 共用同一 ttf（PhotoViewer/Assets/Fonts）。</summary>
+    /// <summary>icon.font TOOLBAR-04：主屏图标字体：Flaticon UIcons Regular Rounded（描边字形），四端与 Web 共用 PhotoViewer/Assets/Fonts 下的 ttf；实心星取 icon.fontSolid。</summary>
     public const string IconFont = "uicons-regular-rounded";
+    /// <summary>icon.fontSolid TOOLBAR-03：实心字形字体：Flaticon UIcons Solid Straight（PhotoViewer/Assets/Fonts），只用于点亮的星与评分快捷命令的星底。</summary>
+    public const string IconFontSolid = "uicons-solid-straight";
     /// <summary>icon.photoPlaceholder FILM-05：缩略图未就绪/失败占位（fi-rr-picture）。</summary>
     public const string IconPhotoPlaceholder = "U+FA78";
     /// <summary>icon.star TOOLBAR-04：星形（fi-rr-star 描边；点亮用同字形填色 color.star.on）。评分快捷命令为星形内叠数字（0 为叉 fi-rr-cross U+F4F7）。</summary>
     public const string IconStar = "U+FCE9";
+    /// <summary>icon.starFilled TOOLBAR-03：实心星（icon.fontSolid 的 fi-ss-star）：点亮的星与评分快捷命令星底；未点亮仍用 icon.star 描边字形。</summary>
+    public const string IconStarFilled = "U+FCD7";
     /// <summary>image.busy.bottomOffset（pt） IMAGE-01：增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
     public const double ImageBusyBottomOffset = 24.0;
     /// <summary>image.busy.cornerRadius（pt） IMAGE-01：增强提示药丸圆角。</summary>

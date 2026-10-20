@@ -329,6 +329,26 @@ test("OPEN-05/IMAGE-06：打开回到适应态，导航图只在放大态显示"
     assert.equal(app.state.viewport.isFit, true);
 });
 
+test("IMAGE-06：导航图拖动只改视口中心、保持倍率", () => {
+    const { app } = harness();
+    app.openFolder("f1", { target: "f1/P010.JPG" });
+    assert.equal(app.fit(), true);
+    const percent = app.state.viewport.percentText;
+    const scale = app.state.viewport.scale;
+    const before = app.state.viewport.navigator.frame;
+
+    assert.equal(app.navigateTo(0.8, 0.7), true);
+    const after = app.state.viewport.navigator.frame;
+    assert.ok(after.x > before.x && after.y > before.y, "框心没有跟随归一化点");
+    assert.equal(app.state.viewport.percentText, percent);
+    assert.equal(app.state.viewport.scale, scale);
+
+    const view = app.state.viewport.view;
+    const rect = app.state.viewport.rect;
+    assert.ok(Math.abs((view.width / 2 - rect.x) / rect.w - 0.8) < 1e-6);
+    assert.ok(Math.abs((view.height / 2 - rect.y) / rect.h - 0.7) < 1e-6);
+});
+
 test("SIM-05：相似项点选只改显示身份，锚点与胶片栏位置不动", async () => {
     const { app, clock, film } = harness();
     app.openFolder("f1", { target: "f1/S031.JPG" });
