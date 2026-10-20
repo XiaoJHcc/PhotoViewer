@@ -97,7 +97,7 @@ export function mountAnalysis(host, ctx) {
     let gridImage = null;
     let refSeq = 0;
     let current = null;
-    let lastPointerType = "mouse";
+    let activePointer = null;
     let histSource = null;
 
     function refId(value) {
@@ -356,6 +356,10 @@ export function mountAnalysis(host, ctx) {
         const status = statusOf(tile);
         const label = status ? `${tile.label}，${status}` : tile.label;
         if (node.root.getAttribute("aria-label") !== label) node.root.setAttribute("aria-label", label);
+        if (DETAIL_KINDS.has(tile.kind)) {
+            const active = Boolean(state.analysis.hoverKind === tile.kind);
+            node.root.setAttribute("aria-pressed", active ? "true" : "false");
+        }
         setText(node.placeholder, status);
         node.placeholder.hidden = !status;
         if (tile.state !== "content") {
@@ -431,19 +435,16 @@ export function mountAnalysis(host, ctx) {
         const root = interactive
             ? el("button", { class: "pv-analysis-tile", type: "button", dataset: { kind } }, canvas, badge, placeholder)
             : el("div", { class: "pv-analysis-tile", role: "img", dataset: { kind } }, canvas, badge, placeholder);
-        const node = { kind, root, canvas, badge, placeholder, ctx: canvas.getContext("2d"), sig: null, geom: null, pointerType: "mouse" };
+        const node = { kind, root, canvas, badge, placeholder, ctx: canvas.getContext("2d"), sig: null, geom: null };
         if (interactive) {
             const detail = DETAIL_KINDS.has(kind);
-            root.addEventListener("pointerdown", (event) => {
-                node.pointerType = event.pointerType || "mouse";
-            });
             root.addEventListener("click", (event) => {
                 if (!current) return;
                 event.stopPropagation();
                 if (detail) {
-                    // ANALYSIS-11：触屏点按作为悬停等价入口，再点一次解除定格。
-                    if (node.pointerType !== "mouse" && event.detail !== 0) {
-                        app.hoverDetail(current.analysis.hoverKind === kind ? null : kind);
+                    // ANALYSIS-04：键盘/辅助技术激活等价于显示或清除绿框（鼠标点按不改变悬停）。
+                    if (event.detail === 0) {
+                        app.hoverDetail(app.state.analysis.hoverKind === kind ? null : kind);
                     }
                     return;
                 }
@@ -451,26 +452,22 @@ export function mountAnalysis(host, ctx) {
             });
             root.addEventListener("keydown", (event) => {
                 if (event.key !== "Enter" && event.key !== " ") return;
-                event.preventDefault();
                 event.stopPropagation();
-                if (detail) app.locateDetail(kind);
-                else app.clickDiagnostic(0.5, 0.5);
+                // 细节瓦片保留原生按钮激活产生的 detail=0 click。
+                if (detail) return;
+                event.preventDefault();
+                app.clickDiagnostic(0.5, 0.5);
             });
             if (detail) {
-                let hovered = false;
                 root.addEventListener("pointerenter", (event) => {
-                    if (event.pointerType !== "mouse") return;
-                    hovered = true;
+                    // ANALYSIS-04：只有真实悬停指针点亮绿框，直接触控走按下序列。
+                    if (event.pointerType === "touch" || activePointer) return;
                     app.hoverDetail(kind);
                 });
                 root.addEventListener("pointerleave", (event) => {
-                    if (event.pointerType !== "mouse") return;
-                    hovered = false;
-                    if (document.activeElement !== root) app.hoverDetail(null);
-                });
-                root.addEventListener("focus", () => app.hoverDetail(kind));
-                root.addEventListener("blur", () => {
-                    if (!hovered) app.hoverDetail(null);
+                    if (event.pointerType === "touch" || activePointer) return;
+                    if (app.state.analysis.hoverKind !== kind) return;
+                    app.hoverDetail(null);
                 });
                 root.addEventListener("dblclick", (event) => {
                     event.preventDefault();
@@ -492,6 +489,10 @@ export function mountAnalysis(host, ctx) {
 
     function render(state) {
         current = state;
+        // ANALYSIS-04：隐藏面板或换图立即结束直接触控，旧按下的手指不再点亮新内容。
+        if (activePointer && (!state.panes.analysis || activePointer.photoId !== (state.photo ? state.photo.id : null))) {
+            endPress(true);
+        }
         const layout = state.layout ? state.layout.analysis : null;
         const tiles = state.analysis && state.analysis.tiles ? state.analysis.tiles : [];
         if (!state.panes.analysis || !layout || tiles.length === 0) {
@@ -526,21 +527,85 @@ export function mountAnalysis(host, ctx) {
         event.stopPropagation();
     }
 
+    function detailAt(x, y) {
+        if (!app.state.panes.analysis) return null;
+        for (const node of nodes.values()) {
+            if (!DETAIL_KINDS.has(node.kind) || node.root.hidden) continue;
+            const rect = node.root.getBoundingClientRect();
+            if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) continue;
+            return node.kind;
+        }
+        return null;
+    }
+
+    function endPress(clear) {
+        const pointer = activePointer;
+        activePointer = null;
+        if (pointer && pointer.capture) {
+            try {
+                pointer.capture.releasePointerCapture(pointer.id);
+            } catch {}
+        }
+        if (clear) app.hoverDetail(null);
+    }
+
     function onPointerDown(event) {
-        lastPointerType = event.pointerType || "mouse";
+        // ANALYSIS-04：直接触控按下即点亮落点瓦片；鼠标/悬停指针继续走 pointerenter。
+        if (event.pointerType !== "touch" || event.button !== 0) return;
+        // 任意时刻只有一个活动指针：新按下的手指接管，旧指针后续事件全部失效。
+        if (activePointer) endPress(false);
+        const target = detailAt(event.clientX, event.clientY);
+        const capture = event.target && event.target.closest ? event.target.closest(".pv-analysis-tile") : null;
+        activePointer = { id: event.pointerId, capture: null, fromDetail: target !== null, photoId: app.state.displayedId };
+        const captureNode = capture ?? host;
+        try {
+            captureNode.setPointerCapture(event.pointerId);
+            activePointer.capture = captureNode;
+        } catch {
+            // 合成事件没有真实指针捕获，由 window 监听兜底。
+        }
+        app.hoverDetail(target);
+    }
+
+    function onPointerMove(event) {
+        if (!activePointer || event.pointerId !== activePointer.id) return;
+        // ANALYSIS-04：换图后旧手势不得把绿框带到下一张。
+        if (app.state.displayedId !== activePointer.photoId) {
+            endPress(true);
+            return;
+        }
+        app.hoverDetail(activePointer.fromDetail ? detailAt(event.clientX, event.clientY) : null);
+    }
+
+    function onPointerEnd(event) {
+        if (!activePointer || event.pointerId !== activePointer.id) return;
+        endPress(true);
+    }
+
+    function onWindowBlur() {
+        if (activePointer) endPress(true);
+        else app.hoverDetail(null);
+    }
+
+    function onVisibilityChange() {
+        if (document.visibilityState === "hidden") onWindowBlur();
     }
 
     function onHostClick(event) {
         const tile = event.target.closest ? event.target.closest(".pv-analysis-tile") : null;
         if (tile) return;
         app.clickAnalysisBlank();
-        // ANALYSIS-04：触屏在主图/面板空白点按解除细节预览的定格。
-        if (lastPointerType !== "mouse") app.hoverDetail(null);
     }
 
     host.addEventListener("wheel", onWheel, { passive: false });
     host.addEventListener("pointerdown", onPointerDown);
     host.addEventListener("click", onHostClick);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerEnd);
+    window.addEventListener("pointercancel", onPointerEnd);
+    window.addEventListener("lostpointercapture", onPointerEnd);
+    window.addEventListener("blur", onWindowBlur);
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return {
         update(state, regions) {
@@ -549,9 +614,16 @@ export function mountAnalysis(host, ctx) {
             render(state);
         },
         destroy() {
+            if (activePointer) endPress(false);
             host.removeEventListener("wheel", onWheel);
             host.removeEventListener("pointerdown", onPointerDown);
             host.removeEventListener("click", onHostClick);
+            window.removeEventListener("pointermove", onPointerMove);
+            window.removeEventListener("pointerup", onPointerEnd);
+            window.removeEventListener("pointercancel", onPointerEnd);
+            window.removeEventListener("lostpointercapture", onPointerEnd);
+            window.removeEventListener("blur", onWindowBlur);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
             for (const node of nodes.values()) node.root.remove();
             nodes.clear();
         },

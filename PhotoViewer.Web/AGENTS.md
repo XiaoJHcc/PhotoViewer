@@ -65,6 +65,7 @@ python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli
 
 - **依赖方向**：`shell/ → core/app.js → core/*`；`core/` 不得引用 `shell/`、`document`、`window`。时间一律经 `clock.js`，便于假时钟断言 300/350/500/4000 ms 等门槛。
 - **状态唯一**：业务状态只在 `app.js`；组件不缓存第二份（菜单勾选每次弹出重读快照，MENU-02）。
+- **分析栏细节绿框**：唯一活动目标在 `core/analysis.js`（`hoverDetail`），`shell/analysis.js` 只把指针序列翻译成该状态——悬停指针进入/离开、触控按下即亮、滑入另一细节瓦片切换、抬手/取消/失去捕获/失焦/隐藏/换图清除；任意时刻只有一个活动 pointer，旧 pointer 的抬起、取消或失去捕获不得清除新目标。键盘与辅助技术通过瓦片 `aria-pressed` 与 `detail=0` 激活等价显示/清除；诊断准星与双击定位独立（ANALYSIS-04）。
 - **单位**：几何一律为逻辑点（CSS px = pt）；物理 100% 用 `devicePixelRatio` 换算（IMAGE-01）。
 - **注释**：默认不写；只在实现某条规则的关键分支写 `// FILM-03：<为什么>`。不写阶段号。
 - **风格**：4 空格缩进、双引号、分号；命名导出；不引入任何第三方依赖。

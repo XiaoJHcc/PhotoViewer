@@ -551,6 +551,37 @@ test("ANALYSIS-04：绿框只在悬停/定格细节预览时存在，离开、�
     assert.equal(presenter.hoverDetail("pca"), null);
 });
 
+test("ANALYSIS-04：活动目标唯一，绿框与准星、双击定位互不影响", () => {
+    const clock = manualClock();
+    const calls = [];
+    const presenter = new AnalysisPresenter({
+        t,
+        clock,
+        store: makeStore(clock),
+        onLocate: (u, v) => calls.push({ u, v }),
+    });
+    presenter.setVisible(true);
+    const target = photo("a", { focus: { x: 0.2, y: 0.3, w: 0.1, h: 0.1 } });
+    presenter.setPhoto(target);
+
+    presenter.clickDiagnostic(0.25, 0.75);
+    assert.equal(presenter.hoverKind, null);
+
+    assert.equal(presenter.hoverDetail("center"), "center");
+    assert.deepEqual(presenter.crosshair, { u: 0.25, v: 0.75 });
+    assert.equal(presenter.hoverDetail("focus"), "focus");
+    assert.equal(presenter.hoverKind, "focus");
+
+    presenter.locateDetail("focus");
+    assert.deepEqual(calls, [{ u: 0.2, v: 0.3 }]);
+    assert.equal(presenter.hoverKind, "focus");
+    assert.deepEqual(presenter.crosshair, { u: 0.25, v: 0.75 });
+
+    presenter.hoverDetail(null);
+    assert.equal(presenter.hoverKind, null);
+    assert.deepEqual(presenter.crosshair, { u: 0.25, v: 0.75 });
+});
+
 test("ANALYSIS-04：双击细节预览抛出定位事件，不改变照片与评分", () => {
     const clock = manualClock();
     const calls = [];

@@ -1148,6 +1148,213 @@ const CHECKS = [
         },
     },
     {
+        id: "ANALYSIS-04",
+        title: "触控按下点亮、滑动切换、取消/失焦/隐藏清除，旧指针不清新目标",
+        async run(shell, h) {
+            const { app } = shell;
+            const photo = h.harborPhoto((entry) => entry.focus && entry.extracted === true);
+            h.assert(photo, "harbor 中找不到有对焦点且已提取的照片");
+            app.selectCard(photo.id);
+            await h.tick(60);
+            await h.openMainMenu();
+            h.click(h.menuItem("analysis"));
+            await h.until(() => app.state.panes.analysis && h.domAll(".pv-analysis-tile").length === 7, 4000);
+            await h.until(() => app.state.analysis.diagnostics !== null, 4000);
+
+            const center = h.dom('.pv-analysis-tile[data-kind="center"]');
+            const focus = h.dom('.pv-analysis-tile[data-kind="focus"]');
+            const point = (node) => {
+                const rect = node.getBoundingClientRect();
+                return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+            };
+            const centerPoint = point(center);
+            const focusPoint = point(focus);
+            h.assert(center.getAttribute("aria-pressed") === "false", "细节瓦片未暴露初始未激活状态");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 41 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "触控按下未立即点亮中心瓦片");
+            h.assert(app.state.analysis.highlight !== null, "触控按下未显示主图绿框");
+            h.assert(center.getAttribute("aria-pressed") === "true", "活动瓦片未暴露激活状态");
+            h.assert(focus.getAttribute("aria-pressed") === "false", "非活动瓦片被标记为激活");
+            h.assert(app.state.analysis.crosshair === null, "触控按下细节瓦片落了诊断准星");
+
+            h.pointer(center, "pointermove", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 41 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "滑入对焦点瓦片未切换活动目标");
+            h.assert(focus.getAttribute("aria-pressed") === "true", "切换后新瓦片未标记激活");
+            h.assert(center.getAttribute("aria-pressed") === "false", "切换后旧瓦片仍标记激活");
+
+            const pane = h.paneRect("analysis");
+            h.pointer(center, "pointermove", pane.left + 2, pane.top + pane.height / 2, { pointerType: "touch", pointerId: 41 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "滑出细节瓦片后仍保留活动目标");
+            h.assert(app.state.analysis.highlight === null, "滑出细节瓦片后绿框未清除");
+
+            h.pointer(center, "pointermove", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 41 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "滑回细节瓦片未重新点亮");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 42 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "新触控未接管活动目标");
+            h.pointer(focus, "pointerup", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 41 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "旧指针抬起清除了新目标");
+            h.assert(app.state.analysis.highlight !== null, "旧指针抬起清除了新目标的绿框");
+
+            h.pointer(center, "pointerup", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 42 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "抬手后未清除活动目标");
+            h.assert(app.state.analysis.highlight === null, "抬手后绿框残留");
+            h.assert(center.getAttribute("aria-pressed") === "false", "抬手后瓦片仍标记激活");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 45 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "取消前触控未点亮");
+            h.pointer(center, "pointercancel", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 45 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "pointercancel 未清除活动目标");
+            h.assert(app.state.analysis.highlight === null, "pointercancel 后绿框残留");
+            h.pointer(center, "pointerup", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 45 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "取消后的抬起重新点亮了绿框");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 46 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "失去捕获前触控未点亮");
+            h.pointer(center, "lostpointercapture", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 46 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "lostpointercapture 未清除活动目标");
+            h.assert(app.state.analysis.highlight === null, "lostpointercapture 后绿框残留");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 46 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "旧指针未点亮");
+            h.pointer(focus, "pointerdown", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 47 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "新触控未接管活动目标");
+            h.pointer(center, "lostpointercapture", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 46 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "旧指针的 lostpointercapture 清除了新目标");
+            h.assert(app.state.analysis.highlight !== null, "旧指针的 lostpointercapture 清除了新目标绿框");
+            h.pointer(focus, "lostpointercapture", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 47 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "当前指针的 lostpointercapture 未清除活动目标");
+
+            h.pointer(focus, "pointerenter", focusPoint.x, focusPoint.y, { pointerType: "mouse" });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "鼠标悬停未点亮绿框");
+            h.pointer(focus, "pointerleave", focusPoint.x, focusPoint.y, { pointerType: "mouse" });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "鼠标离开未清除绿框");
+
+            const activate = () => center.dispatchEvent(new MouseEvent("click", {
+                bubbles: true, cancelable: true, detail: 0, view: window,
+            }));
+            activate();
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "辅助技术激活未显示绿框");
+            h.assert(center.getAttribute("aria-pressed") === "true", "辅助技术激活后未暴露活动状态");
+            activate();
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "辅助技术再次激活未清除绿框");
+            h.assert(center.getAttribute("aria-pressed") === "false", "辅助技术清除后仍标记激活");
+
+            const pca = h.dom('.pv-analysis-tile[data-kind="pca"]');
+            h.click(pca);
+            await h.tick(60);
+            const crosshair = app.state.analysis.crosshair;
+            h.assert(crosshair !== null, "点诊断瓦片未落准星");
+            h.assert(app.state.analysis.hoverKind === null, "点诊断瓦片点亮了细节绿框");
+
+            const pcaPoint = point(pca);
+            h.pointer(pca, "pointerdown", pcaPoint.x, pcaPoint.y, { pointerType: "touch", pointerId: 48 });
+            h.pointer(pca, "pointermove", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 48 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "非细节起点的触控滑入细节瓦片点亮了绿框");
+            h.pointer(pca, "pointerup", pcaPoint.x, pcaPoint.y, { pointerType: "touch", pointerId: 48 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "非细节起点的触控抬手后仍点亮");
+
+            h.pointer(pca, "pointerdown", pcaPoint.x, pcaPoint.y, { pointerType: "touch", pointerId: 49 });
+            h.pointer(pca, "pointerup", pcaPoint.x, pcaPoint.y, { pointerType: "touch", pointerId: 49 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "诊断触控点亮了细节绿框");
+            h.click(pca);
+            await h.tick(60);
+            const touchCrosshair = app.state.analysis.crosshair;
+            h.assert(touchCrosshair !== null, "触控点按诊断瓦片未落准星");
+            h.assert(app.state.analysis.hoverKind === null, "触控点按诊断瓦片点亮了细节绿框");
+
+            const beforePhoto = app.state.displayedId;
+            h.dblclick(center, centerPoint.x, centerPoint.y);
+            await h.tick(80);
+            h.assert(app.state.displayedId === beforePhoto, "双击细节预览切换了照片");
+            h.assert(app.state.analysis.hoverKind === null, "双击细节预览点亮了绿框");
+            h.deepEqual(app.state.analysis.crosshair, touchCrosshair, "双击定位改变了诊断准星");
+
+            app.fit();
+            await h.tick(60);
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 50 });
+            h.pointer(center, "pointerup", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 50 });
+            h.click(center);
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 51 });
+            h.pointer(center, "pointerup", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 51 });
+            h.click(center);
+            h.dblclick(center, centerPoint.x, centerPoint.y);
+            await h.tick(100);
+            h.assert(app.state.viewport.percent === "100%", `触控双击细节预览未定位：${app.state.viewport.percent}`);
+            h.assert(app.state.displayedId === beforePhoto, "触控双击细节预览切换了照片");
+            h.assert(app.state.analysis.hoverKind === null, "触控双击后绿框残留");
+            h.deepEqual(app.state.analysis.crosshair, touchCrosshair, "触控双击定位改变了诊断准星");
+
+            h.pointer(focus, "pointerdown", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 52 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "focus", "失焦前触控未点亮");
+            window.dispatchEvent(new Event("blur"));
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "窗口失焦后仍保留活动目标");
+            h.assert(app.state.analysis.highlight === null, "窗口失焦后绿框残留");
+            h.pointer(focus, "pointerup", focusPoint.x, focusPoint.y, { pointerType: "touch", pointerId: 52 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "失焦后的抬起重新点亮了绿框");
+
+            h.pointer(center, "pointerdown", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 53 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "换图前触控未点亮");
+            const other = h.harborPhoto((entry) => h.cardIndex(entry.id) !== h.cardIndex(photo.id));
+            h.assert(other, "harbor 中找不到另一张照片");
+            app.selectCard(other.id);
+            await h.tick(120);
+            h.assert(app.state.displayedId !== beforePhoto, "换图未生效，无法验证清除");
+            h.assert(app.state.analysis.hoverKind === null, "换图后仍保留活动目标");
+            h.assert(app.state.analysis.highlight === null, "换图后绿框残留");
+            h.pointer(center, "pointermove", centerPoint.x, centerPoint.y, { pointerType: "touch", pointerId: 53 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "旧手势把绿框带到了下一张");
+
+            const hiddenTile = h.dom('.pv-analysis-tile[data-kind="center"]');
+            const hiddenPoint = point(hiddenTile);
+            h.pointer(hiddenTile, "pointerdown", hiddenPoint.x, hiddenPoint.y, { pointerType: "touch", pointerId: 54 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === "center", "隐藏前触控未点亮");
+            await h.openMainMenu();
+            h.click(h.menuItem("analysis"));
+            await h.until(() => app.state.panes.analysis === false, 4000);
+            await h.tick(60);
+            h.assert(app.state.analysis.hoverKind === null, "隐藏分析栏后仍保留活动目标");
+            h.assert(app.state.analysis.highlight === null, "隐藏分析栏后绿框残留");
+            await h.openMainMenu();
+            h.click(h.menuItem("analysis"));
+            await h.until(() => app.state.panes.analysis === true, 4000);
+            await h.tick(80);
+            h.pointer(hiddenTile, "pointermove", hiddenPoint.x, hiddenPoint.y, { pointerType: "touch", pointerId: 54 });
+            await h.tick(40);
+            h.assert(app.state.analysis.hoverKind === null, "隐藏前的手势在重新显示后点亮了绿框");
+        },
+    },
+    {
         id: "ANALYSIS-08",
         title: "点诊断瓦片落准星，面板滚轮不翻页",
         async run(shell, h) {
