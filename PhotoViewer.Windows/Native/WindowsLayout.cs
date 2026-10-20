@@ -207,14 +207,6 @@ internal static class WindowsLayout
     /// <summary>导航图可见框与百分比文字色(IMAGE-01:白色)。</summary>
     public static readonly Color NavigatorFrameForeground = Token(DesignTokens.ColorNavFrame);
 
-    // ===== 胶片条空筛选结果 =====
-
-    /// <summary>空筛选结果提示字号。</summary>
-    public const double FilmstripEmptyFontSize = 11;
-
-    /// <summary>空筛选结果提示文字色。</summary>
-    public static readonly Color FilmstripEmptyForeground = Color.FromArgb(0xFF, 0x88, 0x88, 0x88);
-
     // ===== 窗口内状态提示(星级写回失败等可见反馈,FILM-06) =====
 
     /// <summary>状态提示字号。</summary>

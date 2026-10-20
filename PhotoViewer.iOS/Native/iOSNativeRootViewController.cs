@@ -473,9 +473,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
             // 相似聚类：行布局从胶片栏右侧切出一段（含旧壳 MaxWidth 规则），列布局扩宽文件栏。
             bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? MainScreenLayout.FilmstripBand : availableMain);
+            var similarityPanel = _main.FileVM.SimilarityPanel;
+            // SIM-07：列表态右侧停靠区（未提取计数 / 按钮 / 进度 / 错误）要一起预留，否则 1–2 项列表会被挤成零宽。
             double similarityColumn = similarityOpen
                 ? (row
-                    ? SimilarityPanelGeometry.RowWidth(_main.FileVM.SimilarityPanel.HasItems, _main.FileVM.SimilarityPanel.SimilarItems.Count, availableMain)
+                    ? SimilarityPanelGeometry.RowWidth(similarityPanel.HasItems, similarityPanel.SimilarItems.Count, availableMain,
+                        similarityPanel.HasItems && similarityPanel.ShowActionArea ? _similarityPane.DockMeasureWidth() : 0)
                     : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
                 : 0;
             _similarityPane.Hidden = !similarityOpen;
@@ -768,7 +771,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating) ShowToast($"评分写回失败：{file.Name}");
+        if (file.Rating != rating) ShowToast(StatusMessages.RatingWriteFailed(file.Name));
         BuildControls();
     }
 
@@ -934,7 +937,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         catch (Exception exception)
         {
             Console.Error.WriteLine(exception);
-            _main.ReportOpenFailure($"无法打开所选项目：{exception.Message}");
+            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, exception.Message));
         }
     }
 
@@ -1047,14 +1050,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(RefreshScreen);
 
     /// <summary>
-    /// 相似项集合变化后重排主屏：行布局面板宽度按卡片数从胶片栏右侧切出（旧壳 MaxWidth 规则），
-    /// 集合由空变有/由有变空时必须重新计算，否则面板停在 106 点最小宽、列表区被停靠动作区挤成零宽。
+    /// 相似面板状态变化后重排主屏：行布局面板宽度 = 卡片数 × 卡宽 + 列表内边距 + 描边 + 停靠区宽（SIM-07），
+    /// 从胶片栏右侧切出。集合增减或停靠区内容（未提取计数 / 动作区 / 错误文案）变化都必须重算，
+    /// 否则面板停在 106 点最小宽、列表区被停靠动作区挤成零宽。
     /// </summary>
     /// <param name="sender">事件源（相似面板 VM）。</param>
     /// <param name="args">属性变化参数。</param>
     private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is not (nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems))) return;
+        if (args.PropertyName is not (nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems)
+            or nameof(SimilarityPanelViewModel.UnindexedCount) or nameof(SimilarityPanelViewModel.ShowActionArea)
+            or nameof(SimilarityPanelViewModel.ShowActionAreaError))) return;
         UiDispatcher.Post(Layout);
     }
 

@@ -126,8 +126,11 @@ internal static class iOSNativeSimilarityCheck
                     await UiDispatcher.InvokeAsync(() => filter.IsSimilarityPanelOpen = true);
                     await SettleAsync(root);
                     var content = root.Panes.FileContent;
-                    var similarityColumn = main.FileVM.SimilarityPanel.HasItems
-                        ? SimilarityPanelGeometry.RowWidth(true, main.FileVM.SimilarityPanel.SimilarItems.Count, row ? content.Width : content.Height)
+                    var panelState = main.FileVM.SimilarityPanel;
+                    // SIM-07：列表态动作区停靠宽一并计入行布局让位。
+                    double dockWidth = panelState.HasItems && panelState.ShowActionArea ? root.SimilarityPane.DockMeasureWidth() : 0;
+                    var similarityColumn = panelState.HasItems
+                        ? SimilarityPanelGeometry.RowWidth(true, panelState.SimilarItems.Count, row ? content.Width : content.Height, dockWidth)
                         : SimilarityPanelGeometry.RowWidth(false, 0, row ? content.Width : content.Height);
                     if (row)
                     {
@@ -203,14 +206,17 @@ internal static class iOSNativeSimilarityCheck
                     throw new InvalidOperationException("SIM-10：列表态错误标签未与共享动作区错误状态绑定");
                 await WaitAsync(() => panel.List.VisibleCells.OfType<iOSThumbnailCard>().Any(), "相似卡片可见");
                 // 行布局面板宽度必须在项目出现后按卡片数重新切出（否则停靠在右的动作区会把列表挤成零宽）。
+                // SIM-07：宽度 = 卡片数 × 96 + 列表内边距 + 描边 + 停靠区宽（动作区可见时）。
                 if (main.IsRowLayout)
                 {
                     double contentWidth = root.Panes.FileContent.Width;
-                    double expectedPanel = Math.Min(
-                        Math.Max(SimilarityPanelGeometry.MinWidth, panel.Items.Count * FilmstripGeometry.CardWidth + SimilarityPanelGeometry.ListPadding + SimilarityPanelGeometry.BorderWidth * 2),
-                        contentWidth / 2);
+                    double dockWidth = similarity.HasItems && similarity.ShowActionArea ? panel.DockMeasureWidth() : 0;
+                    if (panel.DockMeasureWidth() < 90)
+                        throw new InvalidOperationException($"相似面板停靠区自然宽 {panel.DockMeasureWidth()} 小于动作按钮宽 90");
+                    double expectedColumn = SimilarityPanelGeometry.RowWidth(true, panel.Items.Count, contentWidth, dockWidth);
+                    double expectedPanel = expectedColumn - SimilarityPanelGeometry.Margin;
                     if (Math.Abs((double)panel.Bounds.Width - expectedPanel) > 2)
-                        throw new InvalidOperationException($"行布局面板宽度未随 {panel.Items.Count} 个相似项重算：{panel.Bounds.Width} 预期 {expectedPanel}");
+                        throw new InvalidOperationException($"行布局面板宽度未随 {panel.Items.Count} 个相似项与停靠区 {dockWidth:0} 重算：{panel.Bounds.Width} 预期 {expectedPanel}");
                 }
                 var cards = panel.List.VisibleCells.OfType<iOSThumbnailCard>().ToArray();
                 var card = cards.First(entry => entry.SecondLineProgress != null);

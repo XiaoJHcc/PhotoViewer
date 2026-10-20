@@ -12,6 +12,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
+using Windows.Foundation;
 
 namespace PhotoViewer.Windows.Native;
 
@@ -41,6 +42,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     private readonly SimilarityActionView _dockedActions;
 
     private bool _isRowLayout = true;
+    private double _availableWidth = double.NaN;
     private bool _refreshPending;
     private IReadOnlyList<SimilarityItem> _items = Array.Empty<SimilarityItem>();
 
@@ -174,13 +176,14 @@ internal sealed class WindowsSimilarityPanel : Grid
 
     /// <summary>
     /// 按可用宽度落面板宽度(SIM-01/SIM-07):行布局取共享 <see cref="SimilarityPanelGeometry.RowWidth"/>
-    /// （已含“可用宽一半”上限与 4 点外边距）;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
+    /// （已含停靠区、可用宽一半上限与 4 点外边距）;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
     /// </summary>
     /// <param name="availableWidth">文件栏/窗口可用宽度。</param>
     /// <param name="hasItems">是否有相似项。</param>
     /// <param name="itemCount">相似项数量。</param>
     internal void SetAvailableWidth(double availableWidth, bool hasItems, int itemCount)
     {
+        _availableWidth = availableWidth;
         if (availableWidth <= 1)
         {
             // 首帧布局前宽度未知：交给内容自然宽度,布局完成后再夹到一半。
@@ -191,7 +194,9 @@ internal sealed class WindowsSimilarityPanel : Grid
 
         if (_isRowLayout)
         {
-            double width = Math.Max(0, SimilarityPanelGeometry.RowWidth(hasItems, itemCount, availableWidth));
+            double dockWidth = DockMeasureWidth();
+            double width = Math.Max(0,
+                SimilarityPanelGeometry.RowWidth(hasItems, itemCount, availableWidth, dockWidth));
             Width = width;
             MaxWidth = width;
             // RowWidth 已含 4 点外边距；面板占满该宽度，外框再让出右边距，卡片才不会被裁掉 4 点。
@@ -202,6 +207,24 @@ internal sealed class WindowsSimilarityPanel : Grid
         Width = SimilarityPanelGeometry.PanelWidth;
         MaxWidth = SimilarityPanelGeometry.PanelWidth;
         _frame.Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0);
+    }
+
+    /// <summary>
+    /// 行布局列表态右侧停靠区的自然宽度(SIM-07):max(sim.action.width, 动作区自然宽) + 2 × sim.dock.margin。
+    /// 用无限宽测一次动作区后读 <see cref="UIElement.DesiredSize"/>,面板自身宽度不参与这次测量,
+    /// 因此不会形成"宽度→测量→宽度"的布局循环。空态或动作区未显示时不预留。
+    /// </summary>
+    /// <returns>停靠区宽度;不预留时为 0。</returns>
+    private double DockMeasureWidth()
+    {
+        if (!_isRowLayout || _dockedActions.Visibility != Visibility.Visible)
+        {
+            return 0;
+        }
+
+        _dockedActions.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+        return Math.Max(DesignTokens.SimActionWidth, _dockedActions.DesiredSize.Width)
+            + DesignTokens.SimDockMargin * 2;
     }
 
     /// <summary>应用当前方向的列表轴与动作区停靠位置。</summary>
@@ -216,8 +239,10 @@ internal sealed class WindowsSimilarityPanel : Grid
 
         Grid.SetRow(_dockedActions, _isRowLayout ? 0 : 1);
         Grid.SetColumn(_dockedActions, _isRowLayout ? 1 : 0);
+        // 行布局停靠区的左右留白取 sim.dock.margin，与 RowWidth 预留的停靠区宽度同口径。
         _dockedActions.Margin = _isRowLayout
-            ? new Thickness(8, 3, 8, 3)
+            ? new Thickness(DesignTokens.SimDockMargin, DesignTokens.SimDockMargin,
+                DesignTokens.SimDockMargin, DesignTokens.SimDockMargin)
             : new Thickness(3, 3, 3, 8);
         _dockedActions.VerticalAlignment = _isRowLayout ? VerticalAlignment.Center : VerticalAlignment.Bottom;
     }
@@ -273,6 +298,13 @@ internal sealed class WindowsSimilarityPanel : Grid
 
             _emptyActions.Refresh(_panel);
             _dockedActions.Refresh(_panel);
+
+            // 停靠区内容(未提取张数、按钮、进度、错误)变了，行布局要重算面板宽度(SIM-07)。
+            // 文本在上一步才落定，这里重算才能量到新的自然宽。
+            if (_isRowLayout && _availableWidth > 1)
+            {
+                SetAvailableWidth(_availableWidth, hasItems, _panel.SimilarItems.Count);
+            }
         }
         catch (Exception ex)
         {

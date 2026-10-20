@@ -11,6 +11,8 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
@@ -600,8 +602,34 @@ internal sealed partial class WindowsMainWindow
         RequireSmoke(_filmstrip.MainAxisOffset > 100, $"外部打开非首张未定位到目标: offset={_filmstrip.MainAxisOffset}");
         checks.Add("PASS FILM-01/03: external open of a non-first photo locates to target; user takeover keeps the list put");
 
+        // FILM-05:筛选结果为空时胶片条留空,不显示任何占位文字(计数“共 0 张”已表达)。
+        _main.FileVM.FilterBar.SelectedRatingFilter = "Eq5";
+        await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 0, "五星筛选空列表");
+        await Task.Delay(150);
+        _root.UpdateLayout();
+        RequireSmoke(CountTextBlocks(_filmstrip) == 0, "空胶片条仍显示卡片或占位文字");
+        checks.Add("PASS FILM-05: empty filter result leaves the filmstrip blank");
+        _main.FileVM.FilterBar.SelectedRatingFilter = "All";
+        await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 12, "恢复全部筛选");
+        await Task.Delay(150);
+
         _main.Settings.LayoutMode = LayoutMode.Row;
         await Task.Delay(150);
+    }
+
+    /// <summary>统计元素及其子元素中的文本块数量;空胶片条应当为 0(FILM-05)。</summary>
+    /// <param name="root">起始元素</param>
+    /// <returns>文本块数量</returns>
+    private static int CountTextBlocks(DependencyObject root)
+    {
+        int count = root is TextBlock ? 1 : 0;
+        int children = VisualTreeHelper.GetChildrenCount(root);
+        for (int index = 0; index < children; index++)
+        {
+            count += CountTextBlocks(VisualTreeHelper.GetChild(root, index));
+        }
+
+        return count;
     }
 
     /// <summary>相似聚类面板:开关→占位/提取→列表出分数柱条→点选切主图但保留锚点。</summary>

@@ -895,12 +895,11 @@ internal sealed partial class WindowsMainWindow : Window
         _photo.SetFocus(null, null);
     }
 
-    /// <summary>切换增强预览(增强态由共享 PhotoLoadSession 持有,模式跨切图持续)。</summary>
+    /// <summary>切换增强预览(增强态由共享 PhotoLoadSession 持有,模式跨切图持续;开关状态由菜单勾选表达)。</summary>
     private void ToggleEnhance()
     {
         _session.ToggleEnhanced();
         _enhanceMenuToggle.IsChecked = _session.IsEnhanced;
-        ShowStatus(_session.IsEnhanced ? "增强预览:开" : "增强预览:关");
     }
 
     /// <summary>主图渲染状态变化:导航图与细节预览绿框一起跟随缩放/平移。</summary>
@@ -945,9 +944,9 @@ internal sealed partial class WindowsMainWindow : Window
 
     /// <summary>星级写回失败:窗口内给可见提示,不保留看似成功的星色(FILM-06)。</summary>
     /// <param name="file">写回失败的照片</param>
-    /// <param name="rating">本次请求的星级</param>
+    /// <param name="rating">本次请求的星级(文案由共享 StatusMessages 统一,不再回显)</param>
     private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus($"无法写入星级({file.Name} → {rating} 星),请检查文件权限或格式");
+        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name));
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文</param>
@@ -1220,7 +1219,7 @@ internal sealed partial class WindowsMainWindow : Window
         catch (Exception ex)
         {
             NativeStartupLog.Fail("打开文件选择器失败", ex);
-            _main.ReportOpenFailure($"无法打开所选项目：{ex.Message}");
+            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, ex.Message));
         }
     }
 

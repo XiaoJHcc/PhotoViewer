@@ -6,7 +6,6 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
-using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
@@ -39,7 +38,6 @@ internal sealed class WindowsFilmstripView : Grid
     private readonly StackLayout _stackLayout;
     private readonly Stack<WindowsThumbnailCard> _pool = new();
     private readonly UISettings _uiSettings = new();
-    private readonly TextBlock _emptyState;
 
     private DispatcherQueueTimer? _animationTimer;
     private DateTime _animationStartedAt;
@@ -100,22 +98,7 @@ internal sealed class WindowsFilmstripView : Grid
         _scroll.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(OnScrollPointerWheelChanged), true);
         _scroll.ManipulationStarted += (_, _) => CancelLocate();
 
-        _emptyState = new TextBlock
-        {
-            Text = "无匹配照片",
-            FontSize = WindowsLayout.FilmstripEmptyFontSize,
-            Foreground = new SolidColorBrush(WindowsLayout.FilmstripEmptyForeground),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            TextAlignment = TextAlignment.Center,
-            TextWrapping = TextWrapping.Wrap,
-            MaxWidth = WindowsLayout.CardSecondLineWidth,
-            IsHitTestVisible = false,
-            Visibility = Visibility.Collapsed,
-        };
-
         Children.Add(_scroll);
-        Children.Add(_emptyState);
 
         // 定位请求可能先于布局到达(启动期/换文件夹),布局每轮结束补做一次
         LayoutUpdated += OnLayoutUpdated;
@@ -301,7 +284,6 @@ internal sealed class WindowsFilmstripView : Grid
         _reportedFirst = -1;
         _reportedLast = -1;
         _repeater.ItemsSource = _list.FilteredFiles;
-        _emptyState.Visibility = _list.FilteredFiles.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         ReportVisibleRange();
         if (scrollToCurrent)
         {

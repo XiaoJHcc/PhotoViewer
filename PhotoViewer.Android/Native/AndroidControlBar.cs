@@ -26,6 +26,7 @@ internal sealed class AndroidControlBar : View
     private readonly Paint _textPaint;
     private readonly Paint _valuePaint;
     private readonly Paint _iconPaint;
+    private readonly Paint _solidIconPaint;
     private readonly Paint _numberPaint;
     private readonly Paint _starActive;
     private readonly Paint _starInactive;
@@ -71,7 +72,11 @@ internal sealed class AndroidControlBar : View
         _iconPaint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
         _iconPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize);
         _iconPaint.TextAlign = Paint.Align.Center;
-        _numberPaint = AndroidUiTheme.TextPaint(context, 11, AndroidUiTheme.TextPrimary);
+        _solidIconPaint = AndroidUiTheme.Paint(AndroidUiTheme.TextPrimary);
+        _solidIconPaint.TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize);
+        _solidIconPaint.TextAlign = Paint.Align.Center;
+        _numberPaint = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingDigitFontSize,
+            AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground), bold: true);
         _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
         _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
@@ -290,7 +295,10 @@ internal sealed class AndroidControlBar : View
         canvas.DrawPath(star, child.Active ? _starActive : _starInactive);
     }
 
-    /// <summary>命令按钮：40×40 圆角底 + 图标字体（评分命令显示数字）。</summary>
+    /// <summary>
+    /// 命令按钮：40×40 圆角底 + 图标字体。评分快捷命令 1–5 为实心星内叠数字（数字取按钮底色），
+    /// 0 为描边字体的清零叉；两者与普通命令共用同一前景/禁用强调。
+    /// </summary>
     private void DrawCommand(Canvas canvas, Child child, float density)
     {
         var rect = ToRectF(child.Rect, density);
@@ -298,25 +306,36 @@ internal sealed class AndroidControlBar : View
         AndroidUiTheme.DrawRounded(canvas, rect,
             (float)(DesignTokens.ToolbarCornerRadius * density),
             AndroidUiTheme.FromToken(DesignTokens.ColorToolbarCommandBackground));
+        var foreground = child.Enabled ? AndroidUiTheme.TextPrimary : Color.ParseColor("#666666")!;
+        int alpha = child.Enabled ? 255 : 97;
         if (child.Number != null)
         {
-            // TOOLBAR-03：评分快捷命令画数字，0 号画叉，不用星形。
             if (child.Number == "0")
             {
-                float arm = 4.5f * density;
-                _starClear.Alpha = child.Enabled ? 255 : 97;
-                canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _starClear);
-                canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _starClear);
+                var regular = AndroidUiTheme.IconTypeface(Context!);
+                if (regular != null) _iconPaint.SetTypeface(regular);
+                _iconPaint.Color = foreground;
+                _iconPaint.Alpha = alpha;
+                canvas.DrawText(AndroidUiTheme.IconGlyph(DesignTokens.IconClear), cx,
+                    cy + _iconPaint.TextSize * .36f, _iconPaint);
                 return;
             }
-            _numberPaint.Alpha = child.Enabled ? 255 : 97;
-            AndroidUiTheme.DrawCentered(canvas, child.Number, _numberPaint, rect.CenterX(),
-                rect.CenterY() + _numberPaint.TextSize * .36f, rect.Width());
+            var solid = AndroidUiTheme.IconSolidTypeface(Context!);
+            if (solid != null) _solidIconPaint.SetTypeface(solid);
+            _solidIconPaint.Color = foreground;
+            _solidIconPaint.Alpha = alpha;
+            canvas.DrawText(AndroidUiTheme.IconGlyph(DesignTokens.IconStarFilled), cx,
+                cy + _solidIconPaint.TextSize * .36f, _solidIconPaint);
+            // 数字叠在星形中心，颜色取按钮底色；命中区域仍是整颗按钮，数字不单独拦截点击。
+            _numberPaint.Alpha = alpha;
+            AndroidUiTheme.DrawCentered(canvas, child.Number, _numberPaint, cx,
+                cy + _numberPaint.TextSize * .36f, rect.Width());
             return;
         }
         var typeface = AndroidUiTheme.IconTypeface(Context!);
         if (typeface != null) _iconPaint.SetTypeface(typeface);
-        _iconPaint.Color = child.Enabled ? AndroidUiTheme.TextPrimary : Color.ParseColor("#666666")!;
+        _iconPaint.Color = foreground;
+        _iconPaint.Alpha = 255;
         canvas.DrawText(child.Icon ?? "?", rect.CenterX(), rect.CenterY() + _iconPaint.TextSize * .36f, _iconPaint);
     }
 

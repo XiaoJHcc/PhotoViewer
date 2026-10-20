@@ -73,9 +73,14 @@
 | R6 | IMAGE-06 | fix/windows-main-controls 分支把导航图白框可拖动改为四端必须 | 审查通过 | ✅ 保留；修 IMAGE-02→IMAGE-05 引用与过期平台差异；iOS 点按/拖动判别、iOS/Android 拖出缩略图中断的问题已修；Web 补实现 |
 | R7 | TOOLBAR-05、FILTER-06、ANALYSIS-08 | 分支改动：EXIF 加粗、相似开关勾选悬停文字 #FFFFFF、直方图无准星 | 审查裁定 | ✅ 基准恢复半粗、加粗登记 TOOLBAR-05@win；勾选悬停文字取旧壳 #CFE0F5；直方图无准星作为四端一致规则 |
 | R8 | TOOLBAR-08、ANALYSIS-06、TOOLBAR-03、SIM-07 | 待修的 Mac 缺口（G6、G32、G36、G21） | Mac 缺口 | ✅ 已修并加断言；layout 验收需大图素材（现有 1200×800 夹具让导航图拖动断言无处可平移，既有问题） |
+| R9 | TOOLBAR-04、FILM-05、FILTER-08、MENU-03、SHELL-06 | 图标字形进入 `role=application` 容器的可读文本，纯字形控件名称不稳定 | web 缺陷 | ✅ 字形统一放在单独的 `aria-hidden="true"` span，可访问名称由 `aria-label` 提供；`?check=shell` 增 SHELL-06，遍历窗口文本节点断言私有区字符不落在 aria-hidden 之外 |
+| R10 | TOOLBAR-04、MENU-03、FILM-05 | tooltip 偏移与连续划过延迟、菜单勾字号与最小宽、缩略图占位字形字号硬编码在 Web | 文档缺口 | ✅ tokens 补 `tooltip.offset.x/y`、`motion.tooltip.chainDelay`、`menu.check.fontSize`、`menu.minWidth`、`film.card.placeholderGlyph.fontSize`；TOOLBAR-04、MENU-03、FILM-05 引用令牌；Web 改用令牌并重新生成产物 |
+| R11 | IMAGE-06 | 导航图接管第一指，双指捏合起手失败 | 文档错误 | ✅ IMAGE-06 写明拖动中出现第二指即让位给主图捏合；Web 手势统一由 `PhotoGesture` 判定，单测与 IMAGE-06 页内断言覆盖 |
+
+| R12 | TOOLBAR-04、FILM-05、SIM-07、STATE-03、TOOLBAR-05 | R3/R4/R8 与 G24/G38 修订后三端未跟进 | 平台缺口 | ✅ 共享层新增 `ExifDisplayFormat`（TOOLBAR-05）与 `StatusMessages`（STATE-03），四端只显示；iOS/Windows/Android 评分快捷命令星内叠数字、`RowWidth` 传入停靠区宽，Windows 去掉「无匹配照片」与增强开关提示；Mac layout 导航图拖动断言先放大到 4 倍，默认夹具即可运行。Windows 只过类型检查 |
 
 ## 后续（不在本计划内）
 
-- 其余三端待实现：评分快捷命令星内叠数字（TOOLBAR-04）、相似面板 `RowWidth` 传入停靠区宽（SIM-07）、Windows 去掉「无匹配照片」（FILM-05）、提示条文案模板（STATE-03）；统一图标字体是否推到 macOS/iOS/Windows 由作者决定（当前登记为平台差异）。
-- Mac layout 验收素材补一张大图，使导航图拖动断言可用默认夹具运行。
+- Windows 本机复核 smoke（FILM-05 空列表、评分快捷命令星内数字居中、行布局相似面板停靠区）。
+- 统一图标字体是否推到 macOS/iOS/Windows 由作者决定（当前登记为平台差异）。
 - G26 缓存数量默认值待作者确认。

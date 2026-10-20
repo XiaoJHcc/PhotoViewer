@@ -353,35 +353,18 @@ internal sealed class WindowsControlBar : Grid
         _commandStack.Visibility = _commandStack.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>创建一个命令按钮;评分命令画数字(0 为叉,TOOLBAR-03)。</summary>
+    /// <summary>创建一个命令按钮;评分快捷命令画实心星并在星心叠数字(0 为清零叉,TOOLBAR-04)。</summary>
     private Button CreateCommandButton(SettingsViewModel.HotkeyItem item, string glyph)
     {
-        var content = new StackPanel
+        var content = new Grid
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 1,
             HorizontalAlignment = HorizontalAlignment.Center,
             VerticalAlignment = VerticalAlignment.Center,
         };
 
         if (WindowsIcons.TryGetRatingStars(item.Command, out var stars))
         {
-            // TOOLBAR-03：评分快捷命令统一画数字（0 显示为叉），不用星形替代。
-            if (stars == 0)
-            {
-                content.Children.Add(CreateGlyph(WindowsIcons.ClearGlyph, DesignTokens.ToolbarRatingClearGlyphFontSize, WindowsLayout.StarClear));
-            }
-            else
-            {
-                content.Children.Add(new TextBlock
-                {
-                    Text = stars.ToString(),
-                    FontSize = WindowsLayout.CommandGlyphFontSize,
-                    Foreground = new SolidColorBrush(WindowsLayout.ExifValueForeground),
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center,
-                });
-            }
+            content.Children.Add(CreateRatingCommandGlyph(stars));
         }
         else
         {
@@ -500,6 +483,39 @@ internal sealed class WindowsControlBar : Grid
         HorizontalAlignment = HorizontalAlignment.Center,
         VerticalAlignment = VerticalAlignment.Center,
     };
+
+    /// <summary>
+    /// 评分快捷命令的图标(TOOLBAR-04):实心星按命令字形字号画在按钮中心,1–5 的数字用评分数字字号半粗、
+    /// 取按钮底色叠在星心;0 只画清零叉。数字不参与命中测试,点击仍落到按钮。
+    /// </summary>
+    /// <param name="stars">星数(0–5)</param>
+    private static Grid CreateRatingCommandGlyph(int stars)
+    {
+        var host = new Grid
+        {
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (stars == 0)
+        {
+            host.Children.Add(CreateGlyph(WindowsIcons.ForRatingGlyph(stars),
+                DesignTokens.ToolbarRatingClearGlyphFontSize, WindowsLayout.StarClear));
+            return host;
+        }
+
+        host.Children.Add(CreateGlyph(WindowsIcons.ForRatingGlyph(stars), WindowsLayout.CommandGlyphFontSize, null));
+        host.Children.Add(new TextBlock
+        {
+            Text = stars.ToString(),
+            FontSize = DesignTokens.ToolbarRatingDigitFontSize,
+            FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(WindowsLayout.CommandButtonBackground),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            IsHitTestVisible = false,
+        });
+        return host;
+    }
 
     /// <summary>创建方形字形按钮(透明底,悬停/按下走统一的小型控件状态)。</summary>
     private static Button CreateGlyphButton(double size, double fontSize, Color? tint)

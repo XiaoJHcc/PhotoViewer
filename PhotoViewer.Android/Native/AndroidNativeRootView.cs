@@ -289,10 +289,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
             bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row);
+            var similarityPanel = _main.FileVM.SimilarityPanel;
+            // SIM-07：停靠区只在列表态且动作区（未提取计数/按钮/进度/错误）实际显示时占宽。
+            double similarityDock = similarityPanel.HasItems && similarityPanel.ShowActionArea
+                ? _similarityPane.DockMeasureWidth()
+                : 0;
             double similarityColumn = similarityOpen
                 ? (row
-                    ? SimilarityPanelGeometry.RowWidth(_main.FileVM.SimilarityPanel.HasItems,
-                        _main.FileVM.SimilarityPanel.SimilarItems.Count, availableMain)
+                    ? SimilarityPanelGeometry.RowWidth(similarityPanel.HasItems,
+                        similarityPanel.SimilarItems.Count, availableMain, similarityDock)
                     : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
                 : 0;
             double fileMain = filmVisible
@@ -721,7 +726,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
     private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus($"无法写入星级：{file.Name}", DesignTokens.MotionStatusToastDuration);
+        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name), DesignTokens.MotionStatusToastDuration);
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文。</param>

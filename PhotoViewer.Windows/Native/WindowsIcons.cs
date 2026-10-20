@@ -47,6 +47,17 @@ internal static class WindowsIcons
         ["ToggleEnhance"] = "\uE7A1",
     };
 
+    /// <summary>评分快捷命令底图:0 为清零叉,1–5 为实心星(数字另行叠在星心,TOOLBAR-04)。</summary>
+    private static readonly Dictionary<int, string> RatingGlyphs = new()
+    {
+        [0] = ClearGlyph,
+        [1] = StarGlyph,
+        [2] = StarGlyph,
+        [3] = StarGlyph,
+        [4] = StarGlyph,
+        [5] = StarGlyph,
+    };
+
     /// <summary>已记录过缺失图标的命令,避免用户配置漂移时每次按键都写日志。</summary>
     private static readonly HashSet<string> WarnedMissing = new(StringComparer.Ordinal);
 
@@ -71,6 +82,14 @@ internal static class WindowsIcons
 
         return null;
     }
+
+    /// <summary>
+    /// 取评分快捷命令的底图字形:0 为清零叉,1–5 为实心星;越界星数按实心星兜底。
+    /// </summary>
+    /// <param name="stars">星数(0–5)</param>
+    /// <returns>Segoe Fluent Icons 字形</returns>
+    public static string ForRatingGlyph(int stars)
+        => RatingGlyphs.TryGetValue(stars, out var glyph) ? glyph : StarGlyph;
 
     /// <summary>
     /// 设置分类 → 导航图标字形。分类键由设置窗口固定使用(File/Preview/Control/Exif/Ai)。

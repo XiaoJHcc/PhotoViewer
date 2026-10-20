@@ -357,6 +357,17 @@ internal sealed class iOSSimilarityPanel : UIView
             Math.Max(ActionWidth, Math.Max(MeasureWidth(_unindexed, innerWidth), errorWidth)) + DockRowMargin * 2);
     }
 
+    /// <summary>
+    /// 行布局列表态停靠区的自然宽度（SIM-07）：max(sim.action.width, 未提取计数/错误文本的自然宽) + 2 × sim.dock.margin。
+    /// 主屏用它给共享 <c>RowWidth</c> 预留停靠区，否则 1–2 项列表会被动作区挤成零宽。
+    /// </summary>
+    internal double DockMeasureWidth()
+    {
+        double text = _unindexed.Hidden ? 0 : MeasureWidth(_unindexed, MeasureLimit);
+        double error = _dockError.Hidden ? 0 : Math.Min(ErrorMaxWidth, MeasureWidth(_dockError, MeasureLimit));
+        return Math.Max(ActionWidth, Math.Max(text, error)) + DockRowMargin * 2;
+    }
+
     /// <summary>列布局停靠区高度：错误文案、未提取张数与动作区加左右外边距 8、上下外边距 3。</summary>
     /// <param name="innerWidth">列表内容宽。</param>
     /// <returns>停靠区高度。</returns>

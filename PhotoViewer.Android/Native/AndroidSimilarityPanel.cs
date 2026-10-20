@@ -202,6 +202,31 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         RequestLayout();
     }
 
+    /// <summary>
+    /// 行布局列表态停靠区的自然宽度（SIM-07）：动作按钮、未提取计数与错误文本较宽者加左右外边距。
+    /// 主窗口用它给共享 <see cref="SimilarityPanelGeometry.RowWidth"/> 预留停靠区，否则 1–2 项列表会被动作区挤成零宽。
+    /// </summary>
+    /// <returns>停靠区宽度（dp）；面板未显示动作区时仍返回自然宽，由调用方按状态决定是否计入。</returns>
+    internal double DockMeasureWidth()
+    {
+        double text = Math.Max(DesignTokens.SimActionWidth, MeasureTextWidthDp(_status));
+        double error = _footerError.Visibility == ViewStates.Visible
+            ? Math.Min(DesignTokens.SimErrorMaxWidth, MeasureTextWidthDp(_footerError))
+            : 0;
+        return Math.Max(text, error) + DesignTokens.SimDockMargin * 2;
+    }
+
+    /// <summary>文本控件的自然宽度（dp，不换行）。</summary>
+    /// <param name="view">文本控件。</param>
+    /// <returns>自然宽度（dp）。</returns>
+    private double MeasureTextWidthDp(TextView view)
+    {
+        string text = view.Text ?? "";
+        if (text.Length == 0) return 0;
+        var paint = view.Paint;
+        return paint == null ? 0 : paint.MeasureText(text) / AndroidUiTheme.Density(Context!);
+    }
+
     private void OnPanelChanged(object? sender, PropertyChangedEventArgs args) => Post(Refresh);
 
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
