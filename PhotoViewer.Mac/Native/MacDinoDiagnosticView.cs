@@ -53,23 +53,12 @@ internal sealed class MacDinoDiagnosticView : NSView
     /// <summary>测量换行高度的宽度上限。</summary>
     private const double MeasureLimit = 10000;
 
-    /// <summary>标题颜色 #EEE。</summary>
-    private static readonly NSColor TitleColor = NSColor.FromRgb(0xEE, 0xEE, 0xEE);
-
-    /// <summary>状态文本颜色 #888。</summary>
-    private static readonly NSColor StatusColor = NSColor.FromRgb(0x88, 0x88, 0x88);
-
-    /// <summary>栏目标题颜色 #AAA。</summary>
-    private static readonly NSColor SectionColor = NSColor.FromRgb(0xAA, 0xAA, 0xAA);
-
-    /// <summary>面板标题颜色 #CCC。</summary>
-    private static readonly NSColor PanelTitleColor = NSColor.FromRgb(0xCC, 0xCC, 0xCC);
-
-    /// <summary>面板量纲说明颜色 #666。</summary>
-    private static readonly NSColor PanelMetricsColor = NSColor.FromRgb(0x66, 0x66, 0x66);
-
-    /// <summary>刚体拟合文本颜色 #DDD。</summary>
-    private static readonly NSColor RigidTextColor = NSColor.FromRgb(0xDD, 0xDD, 0xDD);
+    private static readonly NSColor TitleColor = NSColor.Label;
+    private static readonly NSColor StatusColor = NSColor.SecondaryLabel;
+    private static readonly NSColor SectionColor = NSColor.SecondaryLabel;
+    private static readonly NSColor PanelTitleColor = NSColor.Label;
+    private static readonly NSColor PanelMetricsColor = NSColor.SecondaryLabel;
+    private static readonly NSColor RigidTextColor = NSColor.Label;
 
     /// <summary>标题 16 点半粗字体。</summary>
     private static readonly NSFont TitleFont = NSFont.SystemFontOfSize(16, NSFontWeight.Semibold) ?? throw new InvalidOperationException("系统字体不可用");

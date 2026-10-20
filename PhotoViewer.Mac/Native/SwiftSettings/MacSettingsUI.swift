@@ -29,6 +29,7 @@ struct SVExifItem: Codable {
 
 /// 缩放比例预设条目。
 struct SVPreset: Codable {
+    var id: String
     var index: Int
     var text: String
     var display: String
@@ -325,15 +326,30 @@ private func installMonitor() {
     guard PV.monitor == nil else { return }
     let mask: NSEvent.EventTypeMask = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
     PV.monitor = NSEvent.addLocalMonitorForEvents(matching: mask) { event in
-        guard let bridge = PV.bridge, bridge.state.control.recordingActive else { return event }
+        guard let bridge = PV.bridge else { return event }
         if let eventWindow = event.window, eventWindow !== PV.window { return event }
-        return bridge.capture(event) ? nil : event
+        if bridge.state.control.recordingActive { return bridge.capture(event) ? nil : event }
+        if event.type == .leftMouseDown, !bridge.presetDrafts.isEmpty {
+            if let editor = PV.window?.firstResponder as? NSTextView,
+               let field = editor.delegate as? NSTextField {
+                let point = field.convert(event.locationInWindow, from: nil)
+                if !field.bounds.contains(point) { bridge.commitPresets() }
+            } else { bridge.commitPresets() }
+        }
+        return event
     }
 }
 
 /// 窗口关闭代理：清理宿主并通知 C# 完成回写。
 final class WindowCloseDelegate: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
+        PV.bridge?.commitPresets()
+        if PV.bridge?.presetError == true {
+            let alert = NSAlert()
+            alert.messageText = "请输入大于 0 且不超过 1600 的百分比"
+            alert.runModal()
+            PV.bridge?.presetError = false
+        }
         PV.window = nil
         PV.bridge = nil
         PV.closeHandler?()
@@ -346,7 +362,22 @@ final class WindowCloseDelegate: NSObject, NSWindowDelegate {
 final class SettingsBridge: ObservableObject {
     @Published var state: SVState = .empty
     @Published var selectedCategory: Int? = 0
-    @Published var presetDrafts: [Int: String] = [:]
+    @Published var presetDrafts: [String: String] = [:]
+    @Published var presetError = false
+
+    func commitPreset(_ id: String) {
+        guard let draft = presetDrafts.removeValue(forKey: id) else { return }
+        guard let value = Double(draft.trimmingCharacters(in: .whitespacesAndNewlines)),
+              value.isFinite, value > 0, value <= 1600 else {
+            presetError = true
+            return
+        }
+        send(["type": "applyPreset", "presetId": id, "text": draft])
+    }
+
+    func commitPresets() {
+        for id in Array(presetDrafts.keys) { commitPreset(id) }
+    }
 
     /// 应用 C# 推送的完整状态；控件自带的草稿在此复位为权威值。
     func apply(_ json: String) {
@@ -355,7 +386,8 @@ final class SettingsBridge: ObservableObject {
             let decoded = try JSONDecoder().decode(SVState.self, from: data)
             state = decoded
             selectedCategory = decoded.category
-            presetDrafts = [:]
+            let ids = Set(decoded.preview.presets.map(\.id))
+            presetDrafts = presetDrafts.filter { ids.contains($0.key) }
         } catch {
             FileHandle.standardError.write(Data("[MacSettingsUI] state decode failed: \(error)\n".utf8))
         }
@@ -364,6 +396,7 @@ final class SettingsBridge: ObservableObject {
     /// 把动作序列化后交给 C# 处理；返回 C# 的消费标记（录制用）。
     @discardableResult
     func send(_ action: [String: Any]) -> Int32 {
+        if action["type"] as? String != "applyPreset" { commitPresets() }
         guard let data = try? JSONSerialization.data(withJSONObject: action),
               let json = String(data: data, encoding: .utf8) else { return 0 }
         return sendRaw(json)
@@ -490,6 +523,9 @@ struct SettingsRootView: View {
         }
         .preferredColorScheme(.dark)
         .frame(minWidth: 760, minHeight: 540)
+        .alert("请输入大于 0 且不超过 1600 的百分比", isPresented: $vm.presetError) {
+            Button("好", role: .cancel) {}
+        }
     }
 
     /// 侧栏选中绑定：用户点选回传分类动作；C# 推送的分类变更经 getter 反映到侧栏。
@@ -843,42 +879,68 @@ struct PreviewSettingsPage: View {
                     .toggleStyle(.switch)
             }
             Section("缩放比例预设") {
-                ForEach(preview.presets, id: \.index) { preset in
+                ForEach(preview.presets, id: \.id) { preset in
                     HStack(spacing: 8) {
-                        TextField("", text: Binding(
-                            get: { vm.presetDrafts[preset.index] ?? preset.text },
-                            set: { vm.presetDrafts[preset.index] = $0 }))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 90)
-                            .multilineTextAlignment(.center)
-                            .onSubmit {
-                                vm.send(["type": "applyPreset", "index": preset.index,
-                                         "text": vm.presetDrafts[preset.index] ?? preset.text])
-                            }
+                        PresetField(vm: vm, preset: preset)
+                            .frame(width: 90, height: 24)
                         Text("%").foregroundStyle(.secondary)
-                        Text(preset.display).monospacedDigit().foregroundStyle(.secondary)
                         Spacer(minLength: 8)
                         Button {
-                            vm.send(["type": "removePreset", "index": preset.index])
-                        } label: {
-                            Image(systemName: "minus.circle.fill").foregroundStyle(.red)
-                        }
-                        .buttonStyle(.plain)
+                            vm.send(["type": "removePreset", "presetId": preset.id])
+                        } label: { Image(systemName: "minus") }
+                        .buttonStyle(.bordered)
+                        .disabled(preview.presets.count <= 1)
                         .help("移除预设")
+                        .accessibilityLabel("移除预设")
                     }
-                    .labelsHidden()
                 }
                 HStack {
                     Spacer()
-                    Button {
-                        vm.send(["type": "addPreset"])
-                    } label: {
-                        Label("添加预设", systemImage: "plus.circle.fill")
-                    }
+                    Button { vm.send(["type": "addPreset"]) } label: { Image(systemName: "plus") }
+                        .buttonStyle(.bordered)
+                        .help("添加预设")
+                        .accessibilityLabel("添加预设")
                 }
             }
         }
         .formStyle(.grouped)
+        .onDisappear { vm.commitPresets() }
+    }
+}
+
+struct PresetField: NSViewRepresentable {
+    @ObservedObject var vm: SettingsBridge
+    let preset: SVPreset
+
+    func makeCoordinator() -> Coordinator { Coordinator(vm: vm, id: preset.id) }
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.identifier = NSUserInterfaceItemIdentifier("preset-" + preset.id)
+        field.alignment = .center
+        field.isBezeled = true
+        field.bezelStyle = .roundedBezel
+        field.font = .systemFont(ofSize: 13)
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.submit(_:))
+        field.setAccessibilityLabel("缩放比例预设")
+        return field
+    }
+    func updateNSView(_ field: NSTextField, context: Context) {
+        let text = vm.presetDrafts[preset.id] ?? preset.text
+        if field.stringValue != text { field.stringValue = text }
+        if let editor = field.currentEditor(), editor.string != text { editor.string = text }
+    }
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        let vm: SettingsBridge
+        let id: String
+        init(vm: SettingsBridge, id: String) { self.vm = vm; self.id = id }
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else { return }
+            vm.presetDrafts[id] = field.stringValue
+        }
+        func controlTextDidEndEditing(_ notification: Notification) { vm.commitPreset(id) }
+        @objc func submit(_ sender: NSTextField) { vm.commitPreset(id) }
     }
 }
 

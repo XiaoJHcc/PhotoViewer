@@ -69,6 +69,7 @@ internal sealed class MacDetailPreview : NSView
         _centerV = v;
         _frameWidth = frameWidth;
         _frameHeight = frameHeight;
+        if (_highlighted) HighlightChanged?.Invoke(true, _centerU, _centerV, _frameWidth, _frameHeight);
     }
 
     /// <summary>分析栏隐藏时清除高亮（同时清掉主图绿框）。</summary>

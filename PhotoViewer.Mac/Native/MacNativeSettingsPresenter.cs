@@ -26,6 +26,13 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private bool _recordingPrimary;
     private readonly List<int> _historyBack = [];
     private readonly List<int> _historyForward = [];
+    private readonly Dictionary<SettingsViewModel.ScalePreset, string> _presetIds = [];
+
+    internal string PresetId(SettingsViewModel.ScalePreset preset)
+    {
+        if (!_presetIds.TryGetValue(preset, out var id)) _presetIds[preset] = id = Guid.NewGuid().ToString("N");
+        return id;
+    }
 
     /// <summary>当前原生设置窗口是否展示中。</summary>
     internal bool IsPresenting => _presenting;
@@ -123,6 +130,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         _recordingPrimary = false;
         _historyBack.Clear();
         _historyForward.Clear();
+        _presetIds.Clear();
         _closing = false;
     }
 
@@ -199,7 +207,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
                 ShowZoomIndicator = settings.ShowZoomIndicator,
                 Presets = settings.ScalePresets.Select((preset, index) => new MacPresetDto
                 {
-                    Index = index, Text = preset.Text, Display = preset.Display,
+                    Id = PresetId(preset), Index = index, Text = preset.Text, Display = preset.Display,
                 }).ToList(),
             },
             Control = new MacControlStateDto
@@ -295,14 +303,15 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
                 return 0;
             case "addPreset":
                 Settings.AddScalePreset();
+                Settings.SortScalePreset();
                 PushState();
                 return 0;
             case "removePreset":
-                if (action.Index >= 0 && action.Index < Settings.ScalePresets.Count) Settings.RemoveScalePreset(Settings.ScalePresets[action.Index]);
+                if (FindPreset(action) is { } removed) Settings.RemoveScalePreset(removed);
                 PushState();
                 return 0;
             case "applyPreset":
-                ApplyPreset(action.Index, action.Text ?? string.Empty);
+                if (FindPreset(action) is { } edited) ApplyPreset(Settings.ScalePresets.IndexOf(edited), action.Text ?? string.Empty);
                 PushState();
                 return 0;
             case "beginRecord":
@@ -376,6 +385,11 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
             default: throw new InvalidOperationException("未知的整数设置键：" + key);
         }
     }
+
+    private SettingsViewModel.ScalePreset? FindPreset(MacSettingsActionDto action)
+        => action.PresetId != null
+            ? Settings.ScalePresets.FirstOrDefault(preset => PresetId(preset) == action.PresetId)
+            : action.Index >= 0 && action.Index < Settings.ScalePresets.Count ? Settings.ScalePresets[action.Index] : null;
 
     /// <summary>校验缩放比例输入并应用；非法输入保持原值，由状态回推复位界面。</summary>
     private void ApplyPreset(int index, string text)

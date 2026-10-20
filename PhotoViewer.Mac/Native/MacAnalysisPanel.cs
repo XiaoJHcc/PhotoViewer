@@ -106,6 +106,11 @@ internal sealed class MacAnalysisPanel : NSView
             if (detail.Kind == AnalysisTileKind.Detail) UpdateDetailCrop(detail);
     }
 
+    internal void ClearDetailHighlight()
+    {
+        foreach (var preview in _views.Values.OfType<MacDetailPreview>()) preview.ClearHighlight();
+    }
+
     /// <summary>空白处点击：清空诊断瓦片准星。</summary>
     public override void MouseDown(NSEvent theEvent) => _presenter.ClearCrosshair();
 
@@ -143,6 +148,7 @@ internal sealed class MacAnalysisPanel : NSView
     /// <summary>瓦片集合顺序或数量变化（对焦点出现/消失）时重建原生视图。</summary>
     private void RebuildViews(IReadOnlyList<AnalysisTile> tiles)
     {
+        ClearDetailHighlight();
         foreach (var view in _views.Values)
         {
             view.RemoveFromSuperview();
@@ -160,7 +166,15 @@ internal sealed class MacAnalysisPanel : NSView
             if (tile.Kind == AnalysisTileKind.Detail)
             {
                 var preview = new MacDetailPreview();
-                preview.HighlightChanged = (on, u, v, frameWidth, frameHeight) => DetailHighlight?.Invoke(on, u, v, frameWidth, frameHeight);
+                preview.HighlightChanged = (on, u, v, frameWidth, frameHeight) =>
+                {
+                    if (on)
+                    {
+                        foreach (var other in _views.Values.OfType<MacDetailPreview>())
+                            if (!ReferenceEquals(other, preview)) other.ClearHighlight();
+                    }
+                    DetailHighlight?.Invoke(on, u, v, frameWidth, frameHeight);
+                };
                 preview.FocusRequested = (u, v) => DetailFocusRequested?.Invoke(u, v);
                 view = preview;
             }

@@ -55,7 +55,7 @@ internal sealed class MacControlBar : NSView
             {
                 int value = rating;
                 bool active = rating > 0 && rating <= (main.CurrentFile?.Rating ?? 0);
-                var button = MacSymbols.Button(rating == 0 ? "xmark" : active ? "star.fill" : "star",
+                var button = ToolbarButton.Create(rating == 0 ? "xmark" : active ? "star.fill" : "star",
                     rating == 0 ? "无星级" : rating + " 星", () => rate(value), 30, false);
                 button.Tag = rating;
                 // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear。
@@ -73,13 +73,10 @@ internal sealed class MacControlBar : NSView
             string? symbol = AppleSymbolNames.ForCommand(hotkey.Command);
             if (symbol == null) continue;
             string tooltip = CommandTooltip(hotkey, main.Settings);
-            var button = MacSymbols.Button(symbol, tooltip, () => execute(hotkey.Command));
+            var button = ToolbarButton.Create(symbol, tooltip, () => execute(hotkey.Command));
             // TOOLBAR-04：读屏名称与悬停提示一致，包含当前主/次绑定。
             ((NSView)button).AccessibilityLabel = tooltip;
-            button.BezelStyle = NSBezelStyle.SmallSquare;
-            button.WantsLayer = true;
-            button.Layer!.CornerRadius = 6;
-            button.Layer.MasksToBounds = true;
+            button.Bordered = false;
             button.ContentTintColor = NSColor.Label;
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
             if (hotkey.Command.StartsWith("SetRating", StringComparison.Ordinal))
@@ -215,6 +212,59 @@ internal sealed class MacControlBar : NSView
     {
         if (disposing) ClearGroups();
         base.Dispose(disposing);
+    }
+
+    internal sealed class ToolbarButton : NSButton
+    {
+        private bool _hover;
+        private bool _command;
+        private NSTrackingArea? _tracking;
+
+        internal static ToolbarButton Create(string symbol, string tooltip, Action action, double size = 40, bool command = true)
+        {
+            var button = new ToolbarButton
+            {
+                Frame = new CGRect(0, 0, size, size),
+                Image = MacSymbols.Get(symbol), ImagePosition = NSCellImagePosition.ImageOnly,
+                Title = "", Bordered = false, ToolTip = tooltip, _command = command,
+                SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)(size <= 30 ? symbol == "xmark" ? 12 : 16 : 18), (double)NSFontWeight.Regular),
+            };
+            button.SetButtonType(NSButtonType.MomentaryChange);
+            ((NSView)button).AccessibilityLabel = tooltip;
+            button.Activated += (_, _) => action();
+            return button;
+        }
+
+        public override bool AcceptsFirstResponder() => Enabled;
+        public override void UpdateTrackingAreas()
+        {
+            base.UpdateTrackingAreas();
+            if (_tracking != null) { RemoveTrackingArea(_tracking); _tracking.Dispose(); }
+            _tracking = new NSTrackingArea(Bounds, NSTrackingAreaOptions.MouseEnteredAndExited | NSTrackingAreaOptions.ActiveInKeyWindow | NSTrackingAreaOptions.InVisibleRect, this, null);
+            AddTrackingArea(_tracking);
+        }
+        public override void MouseEntered(NSEvent e) { _hover = true; NeedsDisplay = true; }
+        public override void MouseExited(NSEvent e) { _hover = false; NeedsDisplay = true; }
+        public override void DrawRect(CGRect dirtyRect)
+        {
+            bool pressed = Enabled && (Cell?.Highlighted ?? false);
+            bool hover = Enabled && _hover;
+            var fill = _command
+                ? pressed ? DesignTokens.ColorToolbarCommandPressedBackground : hover ? DesignTokens.ColorToolbarCommandHoverBackground : DesignTokens.ColorToolbarCommandBackground
+                : pressed ? DesignTokens.ColorToolbarRatingPressedBackground : hover ? DesignTokens.ColorToolbarRatingHoverBackground : 0u;
+            using var path = NSBezierPath.FromRoundedRect(new CGRect(.5, .5, Bounds.Width - 1, Bounds.Height - 1), 6, 6);
+            MacDesignColors.Argb(fill).SetFill(); path.Fill();
+            if (_command)
+            {
+                MacDesignColors.Argb(hover ? DesignTokens.ColorToolbarCommandHoverBorder : DesignTokens.ColorToolbarCommandBorder).SetStroke();
+                path.LineWidth = 1; path.Stroke();
+            }
+            base.DrawRect(dirtyRect);
+            if (Window?.FirstResponder == this)
+            {
+                NSColor.KeyboardFocusIndicator.SetStroke(); path.LineWidth = 2; path.Stroke();
+            }
+        }
     }
 
     /// <summary>

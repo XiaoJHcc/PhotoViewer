@@ -73,44 +73,13 @@ internal sealed class MacExifDetailView : NSView
     /// <summary>文件名与格式切换之间的间距（旧壳 StackPanel Spacing 8）。</summary>
     private const double HeaderSpacing = 8;
 
-    /// <summary>分组标题颜色 #EEE。</summary>
-    private static readonly NSColor GroupHeaderColor = NSColor.FromRgb(0xEE, 0xEE, 0xEE);
-
-    /// <summary>卡片底色 #2a2a2a。</summary>
-    private static readonly NSColor CardColor = NSColor.FromRgb(0x2A, 0x2A, 0x2A);
-
-    /// <summary>Tag ID 单元格底色 #222。</summary>
-    private static readonly NSColor IdCellColor = NSColor.FromRgb(0x22, 0x22, 0x22);
-
-    /// <summary>分隔线颜色 #3a3a3a。</summary>
-    private static readonly NSColor DividerColor = NSColor.FromRgb(0x3A, 0x3A, 0x3A);
-
-    /// <summary>Tag ID 文字颜色 #555。</summary>
-    private static readonly NSColor IdTextColor = NSColor.FromRgb(0x55, 0x55, 0x55);
-
-    /// <summary>英文名称颜色 #AAA。</summary>
-    private static readonly NSColor NameColor = NSColor.FromRgb(0xAA, 0xAA, 0xAA);
-
-    /// <summary>中文译名颜色 #888。</summary>
-    private static readonly NSColor ChineseColor = NSColor.FromRgb(0x88, 0x88, 0x88);
-
-    /// <summary>值颜色 #FFF。</summary>
-    private static readonly NSColor ValueColor = NSColor.FromRgb(0xFF, 0xFF, 0xFF);
-
-    /// <summary>文件名颜色 #CCC。</summary>
-    private static readonly NSColor FileNameColor = NSColor.FromRgb(0xCC, 0xCC, 0xCC);
-
-    /// <summary>格式切换文字颜色 #AAA。</summary>
-    private static readonly NSColor FormatTextColor = NSColor.FromRgb(0xAA, 0xAA, 0xAA);
-
-    /// <summary>格式选中底色 #505050。</summary>
-    private static readonly NSColor FormatSelectedColor = NSColor.FromRgb(0x50, 0x50, 0x50);
-
-    /// <summary>格式悬停底色 #404040。</summary>
-    private static readonly NSColor FormatHoverColor = NSColor.FromRgb(0x40, 0x40, 0x40);
-
-    /// <summary>加载提示颜色 #666。</summary>
-    private static readonly NSColor LoadingColor = NSColor.FromRgb(0x66, 0x66, 0x66);
+    private static readonly NSColor GroupHeaderColor = NSColor.Label;
+    private static readonly NSColor IdTextColor = NSColor.SecondaryLabel;
+    private static readonly NSColor NameColor = NSColor.SecondaryLabel;
+    private static readonly NSColor ChineseColor = NSColor.SecondaryLabel;
+    private static readonly NSColor ValueColor = NSColor.Label;
+    private static readonly NSColor FileNameColor = NSColor.Label;
+    private static readonly NSColor LoadingColor = NSColor.SecondaryLabel;
 
     /// <summary>文件名 14 点字体。</summary>
     private static readonly NSFont FileNameFont = NSFont.SystemFontOfSize(14) ?? throw new InvalidOperationException("系统字体不可用");
@@ -249,10 +218,13 @@ internal sealed class MacExifDetailView : NSView
     private GroupBlock BuildGroup(MetadataGroup group)
     {
         var header = SingleLineLabel(group.Name, GroupHeaderFont, GroupHeaderColor);
-        var card = new FlippedPane { WantsLayer = true };
-        card.Layer!.BackgroundColor = CardColor.CGColor;
-        card.Layer.CornerRadius = 6;
-        card.Layer.MasksToBounds = true;
+        var card = new NSBox
+        {
+            BoxType = NSBoxType.NSBoxCustom, TitlePosition = NSTitlePosition.NoTitle,
+            BorderColor = NSColor.Separator,
+            FillColor = NSColor.ControlBackground, CornerRadius = 6,
+            ContentViewMargins = CGSize.Empty, ContentView = new FlippedPane(),
+        };
         _built.Add(header);
         _built.Add(card);
         _document.AddSubview(header);
@@ -261,7 +233,7 @@ internal sealed class MacExifDetailView : NSView
         var rows = new List<TagRow>(group.Tags.Count);
         foreach (var tag in group.Tags)
         {
-            var row = BuildRow(card, tag);
+            var row = BuildRow((NSView)card.ContentView!, tag);
             rows.Add(row);
         }
         return new GroupBlock { Header = header, Card = card, Rows = rows };
@@ -273,8 +245,7 @@ internal sealed class MacExifDetailView : NSView
     /// <returns>该行的原生视图集合。</returns>
     private TagRow BuildRow(NSView card, MetadataTag tag)
     {
-        var idCell = new FlippedPane { WantsLayer = true };
-        idCell.Layer!.BackgroundColor = IdCellColor.CGColor;
+        var idCell = new FlippedPane();
         var idText = SingleLineLabel(tag.TagIdHex, IdFont, IdTextColor);
         idText.Alignment = NSTextAlignment.Center;
         var name = WrappedLabel(tag.Name, CellFont, NameColor, 0);
@@ -381,7 +352,7 @@ internal sealed class MacExifDetailView : NSView
             double idHeight = MeasureHeight(row.IdText, IdColumnWidth, 1);
 
             row.IdCell.Frame = new CGRect(0, y, IdColumnWidth, rowHeight);
-            row.IdText.Frame = new CGRect(0, y + (rowHeight - idHeight) / 2, IdColumnWidth, idHeight);
+            row.IdText.Frame = new CGRect(0, (rowHeight - idHeight) / 2, IdColumnWidth, idHeight);
             double x = IdColumnWidth;
             row.Dividers[0].Frame = new CGRect(x, y, DividerThickness, rowHeight);
             x += DividerThickness;
@@ -509,12 +480,7 @@ internal sealed class MacExifDetailView : NSView
 
     /// <summary>创建 1 点宽的分隔线（颜色 #3a3a3a）。</summary>
     /// <returns>原生分隔线视图。</returns>
-    private static NSView Divider()
-    {
-        var view = new FlippedPane { WantsLayer = true };
-        view.Layer!.BackgroundColor = DividerColor.CGColor;
-        return view;
-    }
+    private static NSView Divider() => new NSBox { BoxType = NSBoxType.NSBoxSeparator };
 
     /// <summary>解除订阅并释放全部原生视图。</summary>
     /// <param name="disposing">是否由显式释放触发。</param>
@@ -577,61 +543,18 @@ internal sealed class MacExifDetailView : NSView
         public required NSView RowDivider { get; init; }
     }
 
-    /// <summary>格式切换按钮：无边框自绘，常态透明、悬停 #404040、选中 #505050，圆角 6。</summary>
     private sealed class FormatButton : NSButton
     {
-        private readonly bool _selected;
-        private NSTrackingArea? _tracking;
-        private bool _hover;
-
-        /// <summary>构造按钮并设置 13 点 #AAA 居中标题。</summary>
-        /// <param name="title">格式标签。</param>
-        /// <param name="selected">是否当前选中。</param>
-        /// <param name="clicked">点击回调。</param>
         public FormatButton(string title, bool selected, Action clicked) : base(CGRect.Empty)
         {
-            _selected = selected;
-            Bordered = false;
-            WantsLayer = true;
-            Layer!.CornerRadius = 6;
-            Layer.MasksToBounds = true;
             Title = title;
-            using var paragraph = new NSMutableParagraphStyle { Alignment = NSTextAlignment.Center };
-            using var attributes = new NSDictionary(
-                NSStringAttributeKey.Font, FormatFont,
-                NSStringAttributeKey.ForegroundColor, FormatTextColor,
-                NSStringAttributeKey.ParagraphStyle, paragraph);
-            AttributedTitle = new NSAttributedString(title, attributes);
-            SyncBackground();
+            BezelStyle = NSBezelStyle.TexturedRounded;
+            Font = FormatFont;
+            SetButtonType(NSButtonType.PushOnPushOff);
+            State = selected ? NSCellStateValue.On : NSCellStateValue.Off;
+            ((NSView)this).AccessibilityLabel = title;
             Activated += (_, _) => clicked();
         }
-
-        /// <summary>无边框按钮需自行维护鼠标跟踪区以显示悬停底色。</summary>
-        public override void UpdateTrackingAreas()
-        {
-            base.UpdateTrackingAreas();
-            if (_tracking != null) RemoveTrackingArea(_tracking);
-            _tracking = new NSTrackingArea(Bounds, NSTrackingAreaOptions.MouseEnteredAndExited | NSTrackingAreaOptions.ActiveInKeyWindow, this, null);
-            AddTrackingArea(_tracking);
-        }
-
-        /// <summary>鼠标进入：未选中时显示悬停底色。</summary>
-        public override void MouseEntered(NSEvent theEvent)
-        {
-            _hover = true;
-            SyncBackground();
-        }
-
-        /// <summary>鼠标离开：恢复常态底色。</summary>
-        public override void MouseExited(NSEvent theEvent)
-        {
-            _hover = false;
-            SyncBackground();
-        }
-
-        /// <summary>按选中/悬停状态刷新底色。</summary>
-        private void SyncBackground()
-            => Layer!.BackgroundColor = _selected ? FormatSelectedColor.CGColor : _hover ? FormatHoverColor.CGColor : NSColor.Clear.CGColor;
     }
 
     /// <summary>顶边为原点的容器。</summary>

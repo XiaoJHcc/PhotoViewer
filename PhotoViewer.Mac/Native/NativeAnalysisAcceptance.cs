@@ -81,6 +81,29 @@ internal static class NativeAnalysisAcceptance
             await WaitAsync(() => DetailHasContent(panel), "细节预览出图");
             VerifyDetailPhysics(window, panel, checks);
             checks.Add($"ready: histogram and detail preview rendered (proxy={window.Session.IsProxy})");
+            string narrow = Path.Combine(output, "detail-narrow.jpg");
+            using (var bitmap = new SkiaSharp.SKBitmap(40, 400))
+            {
+                bitmap.Erase(SkiaSharp.SKColors.Gray);
+                using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+                using var encoded = image.Encode(SkiaSharp.SKEncodedImageFormat.Jpeg, 90);
+                using var stream = File.Create(narrow);
+                encoded.SaveTo(stream);
+            }
+            await main.FolderVM.OpenImageAsync(new MacFileRef(narrow));
+            await WaitAsync(() => window.Session.Image is { Width: 40 } && !window.Session.IsProxy
+                && panel.TileViews.OfType<MacDetailPreview>().Any(preview => preview.ContentPixels == 40), "短边小于裁剪边长的细节图");
+            var narrowPreview = panel.TileViews.OfType<MacDetailPreview>().First(preview => preview.UsesCropWindow);
+            using (var hover = NSEvent.MouseEvent(NSEventType.LeftMouseDown, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, 1, 1, 1)!)
+            {
+                narrowPreview.MouseEntered(hover);
+                var box = window.DetailHighlightFrame;
+                double side = 40 * window.Photo.PointScale;
+                if (!window.DetailHighlightVisible || Math.Abs((double)box.Width - side) > 1 || Math.Abs((double)box.Height - side) > 1)
+                    throw new InvalidOperationException("窄图绿框没有与短边夹取后的方形源裁剪一致");
+                narrowPreview.MouseExited(hover);
+            }
+            checks.Add("detail narrow source: a 40×400 image clips both green-box sides to the same 40px square crop");
 
             // 5) 增强预览：命令经共享展示会话生效 → 低对比度素材的 GPU 帧像素明显变化 → 再关一次还原原片。
             string lowContrast = Path.Combine(output, "enhance-lowcontrast.jpg");
@@ -197,8 +220,36 @@ internal static class NativeAnalysisAcceptance
         if (Math.Abs(sourceWidth - panel.CropPixels) > 1.5 || Math.Abs(sourceHeight - panel.CropPixels) > 1.5)
             throw new InvalidOperationException(
                 $"主图绿框 {frame} 框住 {sourceWidth:0.##}×{sourceHeight:0.##} 源像素，与裁剪窗口 {panel.CropPixels} 不符");
+        window.Photo.ZoomToPhysical(2);
+        VerifyBox();
+        window.Photo.CenterOnNormalizedPoint(.6, .4);
+        VerifyBox();
+        var size = window.Window.ContentView!.Bounds.Size;
+        window.Window.SetContentSize(new CGSize(size.Width + 37, size.Height + 19));
+        VerifyBox();
+        window.Window.SetContentSize(size);
+        panel.RefreshDetailCrops();
+        VerifyBox();
         preview.MouseExited(hover);
         if (window.DetailHighlightVisible) throw new InvalidOperationException("离开细节预览后主图绿框未清除");
+        panel.RefreshDetailCrops();
+        window.Photo.ZoomToPhysical(1);
+        if (window.DetailHighlightVisible) throw new InvalidOperationException("重裁或缩放自动激活了绿框");
+        preview.MouseEntered(hover);
+        Foundation.NSNotificationCenter.DefaultCenter.PostNotificationName(NSApplication.DidResignActiveNotification, null);
+        if (window.DetailHighlightVisible) throw new InvalidOperationException("应用失活未清除绿框");
+        checks.Add("detail activity: zoom / pan / resize continuously reproject source rectangle; crop refresh does not reactivate; app deactivation clears");
+
+        void VerifyBox()
+        {
+            var actual = window.DetailHighlightFrame;
+            var point = window.Photo.ViewPoint(.5, .5);
+            double side = panel.CropPixels * window.Photo.PointScale;
+            if (!window.DetailHighlightVisible || Math.Abs((double)actual.Width - side) > 1
+                || Math.Abs((double)(actual.X + actual.Width / 2 - point.X)) > 1
+                || Math.Abs((double)(actual.Y + actual.Height / 2 - point.Y)) > 1)
+                throw new InvalidOperationException($"绿框未随最新视口投影：{actual} / center={point} side={side}");
+        }
         checks.Add($"detail physics: tile {tile}×{backing}x → {expected}px crop, preview bitmap {preview.ContentPixels}px, green box frames {sourceWidth:0.##}px");
     }
 

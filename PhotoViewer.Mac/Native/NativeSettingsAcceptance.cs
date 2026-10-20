@@ -106,6 +106,64 @@ internal static class NativeSettingsAcceptance
         presenter.ApplyAction("{\"type\":\"moveExif\",\"from\":3,\"to\":0}");
         checks.Add("reorder actions: file formats / hotkeys / exif display items");
 
+        presenter.ShowCategory(1);
+        var preset = presenter.WorkingSettings.ScalePresets[0];
+        string presetId = presenter.PresetId(preset);
+        var neighbor = presenter.WorkingSettings.ScalePresets[1];
+        string neighborId = presenter.PresetId(neighbor);
+        var originalPresets = main.Main.Settings.ScalePresets.Select(item => item.Text).ToArray();
+        presenter.ApplyAction($"{{\"type\":\"applyPreset\",\"presetId\":\"{presetId}\",\"text\":\"800\"}}");
+        presenter.ApplyAction($"{{\"type\":\"applyPreset\",\"presetId\":\"{neighborId}\",\"text\":\"33.333\"}}");
+        if (preset.Text != "800" || neighbor.Text != "33.333" || presenter.PresetId(preset) != presetId)
+            throw new InvalidOperationException("预设重排后逻辑身份或相邻编辑丢失");
+        if (!main.Main.Settings.ScalePresets.Select(item => item.Text).SequenceEqual(originalPresets))
+            throw new InvalidOperationException("预设编辑提前影响源设置");
+        presenter.ApplyAction($"{{\"type\":\"applyPreset\",\"presetId\":\"{presetId}\",\"text\":\"1601\"}}");
+        if (preset.Text != "800") throw new InvalidOperationException("非法预设覆盖原值");
+        await Task.Delay(300);
+        var settingsWindow = NSApplication.SharedApplication.KeyWindow ?? throw new InvalidOperationException("设置窗口未获焦");
+        if (settingsWindow.WindowNumber != presenter.WindowNumber) throw new InvalidOperationException("设置窗口不是当前键盘窗口");
+        var field = PresetField(settingsWindow.ContentView!, presetId);
+        settingsWindow.MakeFirstResponder(field);
+        field.SelectText(field);
+        using (var text = new NSString("812")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
+        if (preset.Text == "812") throw new InvalidOperationException("预设草稿在提交前已写入工作副本");
+        PostKey(presenter.WindowNumber, 36, "\r", 0);
+        await Task.Delay(300);
+        if (preset.Text != "812" || !ReferenceEquals(field, PresetField(settingsWindow.ContentView!, presetId)))
+            throw new InvalidOperationException("原生预设 Enter 未提交或重排重建了输入框");
+        field.SelectText(field);
+        using (var text = new NSString("813")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
+        var otherField = PresetField(settingsWindow.ContentView!, neighborId);
+        settingsWindow.MakeFirstResponder(otherField);
+        await Task.Delay(250);
+        if (preset.Text != "813") throw new InvalidOperationException("预设失焦丢失草稿");
+        otherField.SelectText(otherField);
+        using (var text = new NSString("77")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
+        var blank = new CGPoint(settingsWindow.ContentView!.Bounds.Width * .65, 20);
+        foreach (var type in new[] { NSEventType.LeftMouseDown, NSEventType.LeftMouseUp })
+        {
+            var click = NSEvent.MouseEvent(type, blank, 0, NSProcessInfo.ProcessInfo.SystemUptime, settingsWindow.WindowNumber, null!, 1, 1, 1)!;
+            NSApplication.SharedApplication.PostEvent(click, false);
+        }
+        await Task.Delay(250);
+        if (neighbor.Text != "77") throw new InvalidOperationException("点击设置空白未提交草稿");
+        otherField.SelectText(otherField);
+        using (var text = new NSString("77")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
+        presenter.ShowCategory(2);
+        await Task.Delay(300);
+        if (neighbor.Text != "77") throw new InvalidOperationException("分类导航丢失预设草稿");
+        presenter.ShowCategory(1);
+        await Task.Delay(200);
+        checks.Add("preset native editor: real text insertion + Enter / focus loss / category navigation commit drafts; sorting retains native input identity");
+        presenter.ApplyAction($"{{\"type\":\"removePreset\",\"presetId\":\"{neighborId}\"}}");
+        if (presenter.WorkingSettings.ScalePresets.Contains(neighbor) || !presenter.WorkingSettings.ScalePresets.Contains(preset))
+            throw new InvalidOperationException("预设重排后删除误写了索引");
+        foreach (var item in presenter.WorkingSettings.ScalePresets.ToArray())
+            presenter.ApplyAction($"{{\"type\":\"removePreset\",\"presetId\":\"{presenter.PresetId(item)}\"}}");
+        if (presenter.WorkingSettings.ScalePresets.Count != 1) throw new InvalidOperationException("最后一项预设未禁止删除");
+        checks.Add("presets: stable logical IDs survive sort/edit/delete; invalid input retains value; last item cannot be removed; working copy isolated");
+
         foreach (var size in new[] { new CGSize(760, 540), new CGSize(1060, 800), new CGSize(860, 720) })
         {
             presenter.SetContentSize(size.Width, size.Height);
@@ -122,8 +180,17 @@ internal static class NativeSettingsAcceptance
         presenter.RenderTo(Path.Combine(output, "settings-final.png"));
         await File.WriteAllLinesAsync(Path.Combine(output, "settings-ui-checks.txt"), checks);
 
+        presenter.ShowCategory(1);
+        await Task.Delay(200);
+        var lastPreset = presenter.WorkingSettings.ScalePresets.Single();
+        var lastField = PresetField(settingsWindow.ContentView!, presenter.PresetId(lastPreset));
+        settingsWindow.MakeFirstResponder(lastField);
+        lastField.SelectText(lastField);
+        using (var text = new NSString("1333")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
         presenter.CloseWindow();
         await Task.Delay(300);
+        if (!main.Main.Settings.ScalePresets.Any(item => item.Text == "1333")) throw new InvalidOperationException("关闭窗口丢失未提交预设草稿");
+        checks.Add("preset close: uncommitted native editor draft is applied once and survives reopen");
         if (presenter.IsPresenting) throw new InvalidOperationException("关闭后设置窗口仍在展示");
         presenter.TryPresent(main.Main.Settings);
         await Task.Delay(400);
@@ -132,9 +199,23 @@ internal static class NativeSettingsAcceptance
         presenter.ShowCategory(2);
         await Task.Delay(200);
         presenter.RenderTo(Path.Combine(output, "settings-reopen.png"));
+        presenter.WorkingSettings.ScalePresets = new(originalPresets.Select(text => new PhotoViewer.ViewModels.Settings.SettingsViewModel.ScalePreset(text)));
         presenter.CloseWindow();
         checks.Add("close applies working copy / reopen restores all rows");
         await File.WriteAllLinesAsync(Path.Combine(output, "settings-ui-checks.txt"), checks);
+    }
+
+    private static NSTextField PresetField(NSView root, string id)
+    {
+        var field = Walk(root).OfType<NSTextField>().FirstOrDefault(field => field.Identifier == "preset-" + id);
+        return field ?? throw new InvalidOperationException("未找到原生预设输入框：" + id);
+    }
+
+    private static IEnumerable<NSView> Walk(NSView root)
+    {
+        yield return root;
+        foreach (var child in root.Subviews)
+            foreach (var view in Walk(child)) yield return view;
     }
 
     /// <summary>断言截图已生成且有实际内容，避免空渲染冒充通过。</summary>

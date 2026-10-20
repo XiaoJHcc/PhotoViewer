@@ -31,6 +31,8 @@ public static class NativeAcceptanceRunner
         {
             // 冒烟会话从中性布局状态开始：栏位显隐与面板开合由各套件自行设定，
             // 否则上一轮落盘的设置（如相似聚类面板展开）会改变文件栏几何，污染几何对拍。
+            if (window.SimilarityToggleIsOn != window.Main.FileVM.FilterBar.IsSimilarityPanelOpen)
+                throw new InvalidOperationException("启动时相似开关没有同步持久化状态");
             window.Main.IsAnalysisViewVisible = false;
             window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             await Task.Delay(120);

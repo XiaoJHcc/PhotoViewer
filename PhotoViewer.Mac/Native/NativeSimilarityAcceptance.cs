@@ -35,6 +35,17 @@ internal static class NativeSimilarityAcceptance
             var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
             var filePane = root.Subviews.Single(view => view.Subviews.Contains(window.FilmstripScroll));
 
+            await Task.Run(() => filter.IsSimilarityPanelOpen = true);
+            await SettleAsync(window);
+            if (!window.SimilarityToggleIsOn || panel.Hidden) throw new InvalidOperationException("后台相似开关通知未同步到主线程 UI");
+            main.IsThumbnailViewVisible = false;
+            await SettleAsync(window);
+            if (!window.SimilarityToggleIsOn || !panel.Hidden) throw new InvalidOperationException("隐藏文件栏未保留逻辑开关或仍显示面板");
+            main.IsThumbnailViewVisible = true;
+            await SettleAsync(window);
+            if (!window.SimilarityToggleIsOn || panel.Hidden) throw new InvalidOperationException("恢复文件栏未恢复已开启面板");
+            checks.Add("toggle: background notification dispatched to UI; file bar hide/restore retains logical state and restores visible panel");
+
             // 1) toggle 与共享状态双向一致，并真实点击往返（回归"按钮点不动"）。
             filter.IsSimilarityPanelOpen = false;
             await SettleAsync(window);

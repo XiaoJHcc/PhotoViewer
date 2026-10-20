@@ -84,6 +84,7 @@ internal sealed class MacFileStateDto
 /// <summary>缩放比例预设条目。</summary>
 internal sealed class MacPresetDto
 {
+    public string Id { get; set; } = string.Empty;
     /// <summary>预设索引（重排后随之变化）。</summary>
     public int Index { get; set; }
     /// <summary>百分比文本。</summary>
@@ -198,6 +199,7 @@ internal sealed class MacSettingsActionDto
     public string? Key { get; set; }
     /// <summary>文本载荷（applyPreset 使用）。</summary>
     public string? Text { get; set; }
+    public string? PresetId { get; set; }
     /// <summary>录制事件字符载荷。</summary>
     public string? Characters { get; set; }
     /// <summary>布尔值。</summary>

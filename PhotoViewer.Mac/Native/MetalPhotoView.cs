@@ -22,6 +22,7 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     public event Action? ViewportChanged;
     /// <summary>离散滚轮或按键等交由窗口按用户快捷键表匹配。</summary>
     public Func<NSEvent, bool>? InputHandler { get; set; }
+    internal Func<NSEvent, bool>? WindowInputHandler { get; set; }
     /// <summary>当前照片的归一化对焦点；键盘放大与对焦连续翻页复用。</summary>
     public CGPoint? FocusPoint
     {
@@ -255,6 +256,7 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     /// <summary>点击获焦，双击切换适应/100%，单击开始拖动。</summary>
     public override void MouseDown(NSEvent theEvent)
     {
+        if (WindowInputHandler?.Invoke(theEvent) == true) return;
         Window?.MakeFirstResponder(this);
         _lastDrag = ConvertPointFromView(theEvent.LocationInWindow, null);
         if (theEvent.ClickCount == 2) ToggleFit(_lastDrag);

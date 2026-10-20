@@ -131,6 +131,27 @@ internal static class NativeInputAcceptance
                 if (window.TryOpenEmptyStatePicker(click))
                     throw new InvalidOperationException($"空态点击{name}打开了文件选择器（应交给该分区自己的控件）");
             }
+            using (var overlay = new NSButton(new CGRect(photo.Superview!.Frame.X + 20, photo.Superview.Frame.Y + 100, 60, 40)))
+            {
+                root.AddSubview(overlay);
+                using var covered = Click(window, CenterInWindow(overlay));
+                if (window.TryOpenEmptyStatePicker(covered)) throw new InvalidOperationException("主图兄弟控件被空态抢占");
+                overlay.RemoveFromSuperview();
+            }
+            bool film = window.Main.IsThumbnailViewVisible, controls = window.Main.IsControlViewVisible;
+            window.Main.IsThumbnailViewVisible = false;
+            window.Main.IsControlViewVisible = false;
+            await Task.Delay(80);
+            foreach (var kind in new[] { NSWindowButton.CloseButton, NSWindowButton.MiniaturizeButton, NSWindowButton.ZoomButton })
+            {
+                var traffic = window.Window.StandardWindowButton(kind)!;
+                using var trafficClick = Click(window, CenterInWindow(traffic));
+                if (window.TryOpenEmptyStatePicker(trafficClick)) throw new InvalidOperationException("主图铺满时交通灯被空态抢占");
+            }
+            using (var titleClick = Click(window, window.DragZones[0].ConvertPointToView(new CGPoint(100, 10), null)))
+                if (window.TryOpenEmptyStatePicker(titleClick)) throw new InvalidOperationException("未悬停的标题拖动区被空态抢占");
+            window.Main.IsThumbnailViewVisible = film;
+            window.Main.IsControlViewVisible = controls;
             await Task.Delay(120);
             if (stub.FileRequested != 0)
                 throw new InvalidOperationException($"空态点击主图以外的分区仍请求了 {stub.FileRequested} 次文件选择器");
@@ -141,7 +162,17 @@ internal static class NativeInputAcceptance
             for (int attempt = 0; attempt < 40 && stub.FileRequested == 0; attempt++) await Task.Delay(25);
             if (stub.FileRequested != 1)
                 throw new InvalidOperationException($"空态点击主图应只打开一次文件选择器（实际 {stub.FileRequested}）");
-            checks.Add("empty state: picker opens only inside the photo pane; filter bar / control bar / titlebar / outside stay with their own controls");
+            var next = window.Main.Settings.Hotkeys.Single(item => item.Command == "Next");
+            var binding = next.PrimaryHotkey;
+            try
+            {
+                next.PrimaryHotkey = AppGesture.FromMouse(new MouseGestureEx(MouseAction.LeftClick));
+                photo.MouseDown(photoClick);
+                await Task.Delay(100);
+                if (stub.FileRequested != 1) throw new InvalidOperationException("空态拦截破坏了用户左键绑定优先级");
+            }
+            finally { next.PrimaryHotkey = binding; }
+            checks.Add("empty state: full native hit tree excludes sibling overlays, traffic lights and title drag zones even with all bars hidden; user left binding remains first; only valid photo click opens picker once");
         }
         finally { FilePicker.Initialize(new MacFilePicker()); }
     }
@@ -155,7 +186,7 @@ internal static class NativeInputAcceptance
         => NSEvent.MouseEvent(NSEventType.LeftMouseDown, point, 0, NSProcessInfo.ProcessInfo.SystemUptime,
             window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("左键事件创建失败");
 
-    /// <summary>标题栏双击回归：顶边拖动区内的左键双击经窗口级监视器按系统偏好 AppleActionOnDoubleClick
+    /// <summary>标题栏双击回归：顶边拖动区内的左键双击经原生视图回调按系统偏好 AppleActionOnDoubleClick
     /// 分派缩放/最小化/不动作，区外双击不得被接管。
     /// 断言语义 —— 默认(未设或 Maximize)双击把非标准帧放大到标准帧；None 完全不动；Minimize 最小化并可还原；
     /// 主图中心双击既不被消费也不动窗口（主图自己的双击是缩放适应）。
@@ -216,7 +247,7 @@ internal static class NativeInputAcceptance
     /// <summary>拖动区内一点的窗口坐标（取区内左上角内 1 点，避开边界判定）。</summary>
     private static CGPoint ZonePoint(NSView zone) => zone.ConvertPointToView(new CGPoint(1, 1), null);
 
-    /// <summary>合成一次真实左键双击交给窗口级监视器入口，返回是否被标题栏接管。</summary>
+    /// <summary>合成一次真实左键双击交给原生视图回调入口，返回是否被标题栏接管。</summary>
     private static bool DoubleClick(MacMainWindow window, CGPoint windowPoint)
     {
         using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, windowPoint, 0, NSProcessInfo.ProcessInfo.SystemUptime,

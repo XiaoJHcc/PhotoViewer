@@ -79,6 +79,20 @@ internal static class NativeToolbarAcceptance
             previousButton.PerformClick(previousButton);
             await Task.Delay(150);
             if (window.Main.CurrentFile != before) throw new InvalidOperationException("真实上一张按钮未恢复照片");
+            var keyboardButton = window.ControlBar.Commands["Next"];
+            window.Window.MakeKeyAndOrderFront(null);
+            if (!window.Window.MakeFirstResponder(keyboardButton)) throw new InvalidOperationException("工具按钮不能取得键盘焦点");
+            foreach (var type in new[] { NSEventType.KeyDown, NSEventType.KeyUp })
+            {
+                var key = NSEvent.KeyEvent(type, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, " ", " ", false, 49)!;
+                NSApplication.SharedApplication.PostEvent(key, false);
+            }
+            await Task.Delay(250);
+            if (window.Main.CurrentFile == before) throw new InvalidOperationException("工具按钮键盘空格未触发原生动作");
+            window.ControlBar.Commands["Previous"].PerformClick(window.ControlBar.Commands["Previous"]);
+            await Task.Delay(150);
+            if (window.Main.CurrentFile != before) throw new InvalidOperationException("键盘按钮动作改变了导航语义");
+            observations.Add("native NSButton keyboard focus and Space dispatch the same command; hover / press have distinct complete-square surfaces");
 
             settings.ShowRating = false;
             await Task.Delay(150);
@@ -168,8 +182,8 @@ internal static class NativeToolbarAcceptance
         VerifyGroupContents(bar, horizontal);
         VerifyControlScroller(window);
         foreach (var button in bar.Commands.Values)
-            if (button.BezelStyle != NSBezelStyle.SmallSquare)
-                throw new InvalidOperationException("工具按钮使用了固定高度边框");
+            if (button is not MacControlBar.ToolbarButton || button.Bordered || button.Layer?.MasksToBounds == true)
+                throw new InvalidOperationException("工具按钮没有使用单层完整方形边框的原生 NSButton");
         foreach (var tile in bar.Groups[0].Subviews)
         {
             var labels = tile.Subviews.OfType<NSTextField>().ToArray();
@@ -381,6 +395,18 @@ internal static class NativeToolbarAcceptance
         }).ToArray();
         if (painted.Length == 0 || painted[^1] - painted[0] < bitmap.Height * .8)
             throw new InvalidOperationException("系统按钮的实际边框没有覆盖方形区域");
+        using var hover = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime, button.Window!.WindowNumber, null!, 1, 1, 0)!;
+        button.MouseEntered(hover);
+        string hovered = Path.Combine(output, "toolbar-button-hover.png");
+        NativeSnapshots.SaveView(button, hovered);
+        if (File.ReadAllBytes(path).SequenceEqual(File.ReadAllBytes(hovered))) throw new InvalidOperationException("按钮悬停无可见反馈");
+        button.Cell!.Highlighted = true;
+        button.NeedsDisplay = true;
+        string pressed = Path.Combine(output, "toolbar-button-pressed.png");
+        NativeSnapshots.SaveView(button, pressed);
+        if (File.ReadAllBytes(hovered).SequenceEqual(File.ReadAllBytes(pressed))) throw new InvalidOperationException("按钮按下无可见反馈");
+        button.Cell.Highlighted = false;
+        button.MouseExited(hover);
     }
 
     /// <summary>

@@ -69,6 +69,8 @@ public sealed class MacMainWindow : IDisposable
     private int _scrollRequestVersion;
     private readonly bool _automatedValidation;
     private MacNativeSettingsPresenter? _settingsPresenter;
+    private (double U, double V, double? Width, double? Height)? _activeDetail;
+    private readonly NSObject _deactivationObserver;
 
     /// <summary>系统窗口，外部打开和验收工具可据此定位原生界面。</summary>
     public NSWindow Window { get; }
@@ -177,7 +179,10 @@ public sealed class MacMainWindow : IDisposable
         _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
         _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
-        _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板");
+        _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板")
+        {
+            IsOn = _main.FileVM.FilterBar.IsSimilarityPanelOpen,
+        };
         _sort.Activated += (_, _) => _main.FileVM.FilterBar.SortMode = (SortMode)_main.FileVM.FilterBar.SortModes[(int)_sort.IndexOfSelectedItem].Value;
         _order.Activated += (_, _) => _main.FileVM.FilterBar.SortOrder = (SortOrder)_main.FileVM.FilterBar.SortOrders[(int)_order.IndexOfSelectedItem].Value;
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
@@ -196,7 +201,7 @@ public sealed class MacMainWindow : IDisposable
         _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
         _filePane.AddSubview(_similarityPane);
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
-        _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.LeftMouseDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
+        _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
         {
             if (nativeEvent.Type is NSEventType.MouseMoved or NSEventType.MouseExited)
             {
@@ -205,16 +210,19 @@ public sealed class MacMainWindow : IDisposable
                 _dragLeft.Hidden = !show; _dragRight.Hidden = !show;
                 return nativeEvent;
             }
-            if (HandleTitlebarDoubleClick(nativeEvent)) return null!;
-            if (nativeEvent.Window != Window || Window.FirstResponder is NSTextView or NSTextField) return nativeEvent;
+            if (nativeEvent.Type != NSEventType.KeyDown || nativeEvent.Window != Window || Window.FirstResponder is NSTextView or NSTextField) return nativeEvent;
             return HandleInput(nativeEvent) ? null! : nativeEvent;
         });
         Photo.InputHandler = HandleInput;
+        Photo.WindowInputHandler = HandlePhotoWindowInput;
+        _dragLeft.DoubleClick = HandleTitlebarDoubleClick;
+        _dragRight.DoubleClick = HandleTitlebarDoubleClick;
         Photo.ViewportChanged += UpdateViewport;
-        Window.DidChangeBackingProperties += (_, _) => { Photo.SetFrameSize(Photo.Frame.Size); _analysisPane.RefreshDetailCrops(); };
+        Window.DidChangeBackingProperties += (_, _) => { Photo.SetFrameSize(Photo.Frame.Size); _analysisPane.RefreshDetailCrops(); RefreshDetailHighlight(); };
         Window.DidEnterFullScreen += (_, _) => SaveFullscreen(true);
         Window.DidExitFullScreen += (_, _) => SaveFullscreen(false);
-        Window.DidResignKey += (_, _) => { _dragLeft.Hidden = true; _dragRight.Hidden = true; };
+        Window.DidResignKey += (_, _) => { _dragLeft.Hidden = true; _dragRight.Hidden = true; HideDetailHighlight(); };
+        _deactivationObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSApplication.DidResignActiveNotification, _ => HideDetailHighlight());
         Session.Changed += OnImageChanged;
         Session.Notice += ShowToast;
         _root.Resized = Layout;
@@ -258,9 +266,17 @@ public sealed class MacMainWindow : IDisposable
             default: window.Zoom(null); break;
         }
     }
-    /// <summary>顶边拖动区内的标题栏双击：命中即执行系统偏好动作并吞掉事件(否则会落到主图/筛选控件上)。
-    /// 判定挂在窗口级事件监视器上而不是拖动区视图自身 —— 拖动区只在悬停时显示，若靠命中测试，
-    /// 未先移动鼠标就直接双击会落到主图上。返回 true 表示事件已消费。</summary>
+    private bool HandlePhotoWindowInput(NSEvent nativeEvent)
+    {
+        if (nativeEvent.Type != NSEventType.LeftMouseDown || nativeEvent.Window != Window || Window.StyleMask.HasFlag(FullScreenStyleBit)) return false;
+        var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
+        if (!_dragLeft.Frame.Contains(point) && !_dragRight.Frame.Contains(point)) return false;
+        if (HandleTitlebarDoubleClick(nativeEvent)) return true;
+        Window.PerformWindowDrag(nativeEvent);
+        return true;
+    }
+
+    /// <summary>原生拖动区或主图收到的标题栏双击，按系统偏好执行；系统装饰与 resize 优先由 NSWindow 派发。</summary>
     /// <param name="nativeEvent">进入窗口派发链的原生事件。</param>
     internal bool HandleTitlebarDoubleClick(NSEvent nativeEvent)
     {
@@ -269,6 +285,9 @@ public sealed class MacMainWindow : IDisposable
         if (Window.StyleMask.HasFlag(FullScreenStyleBit)) return false;
         var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
         if (!_dragLeft.Frame.Contains(point) && !_dragRight.Frame.Contains(point)) return false;
+        var frameView = _root.Superview;
+        var hit = frameView?.HitTest(frameView.ConvertPointFromView(nativeEvent.LocationInWindow, null));
+        if (hit is NSControl) return false;
         PerformTitlebarDoubleClickAction(Window);
         return true;
     }
@@ -657,11 +676,11 @@ public sealed class MacMainWindow : IDisposable
         if (nativeEvent.Type != NSEventType.LeftMouseDown || Session.Image != null || nativeEvent.Window != Window) return false;
         if ((nativeEvent.ModifierFlags & (NSEventModifierMask.CommandKeyMask | NSEventModifierMask.AlternateKeyMask
             | NSEventModifierMask.ControlKeyMask | NSEventModifierMask.ShiftKeyMask)) != 0) return false;
-        // 命中测试的点在视图的父视图坐标系里：根视图坐标即观片分区的父坐标系。
         var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
         if (!_photoPane.Frame.Contains(point)) return false;
-        // 提示文字与绿框是透传叠加层，命中测试会落到下层主图；导航图/提示条等真实控件仍会自己命中。
-        if (!ReferenceEquals(_photoPane.HitTest(point), Photo)) return false;
+        if (!Window.StyleMask.HasFlag(FullScreenStyleBit) && (_dragLeft.Frame.Contains(point) || _dragRight.Frame.Contains(point))) return false;
+        var frameView = _root.Superview;
+        if (frameView == null || !ReferenceEquals(frameView.HitTest(frameView.ConvertPointFromView(nativeEvent.LocationInWindow, null)), Photo)) return false;
         _ = OpenPickerAsync(false);
         return true;
     }
@@ -742,15 +761,16 @@ public sealed class MacMainWindow : IDisposable
         });
     }
     /// <summary>业务排序/筛选状态同步回原生控件，程序化或文件源刷新不会留下旧选中项；相似聚类开关同时驱动面板显隐与重排。</summary>
-    private void OnFilterChanged(object? sender, PropertyChangedEventArgs args)
+    private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(() =>
     {
+        if (_disposed) return;
         var filter = _main.FileVM.FilterBar;
         _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
         _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
         if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
-    }
+    });
     /// <summary>项目数与停靠区内容变化时重算行布局面板宽度（SIM-07 要求这两者变化都重算）。</summary>
     private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -809,6 +829,7 @@ public sealed class MacMainWindow : IDisposable
     private void UpdateViewport()
     {
         Session.UpdateViewport((double)Photo.Bounds.Width * (double)Window.BackingScaleFactor, (double)Photo.Bounds.Height * (double)Window.BackingScaleFactor, Photo.NeedsFull || _main.IsAnalysisViewVisible);
+        if (_analysisPane != null) RefreshDetailHighlight();
         if (_navigationHost == null) return;
         bool show = _main.Settings.ShowZoomIndicator && !Photo.IsFit && Session.Image != null;
         _navigationHost.Hidden = !show;
@@ -846,36 +867,47 @@ public sealed class MacMainWindow : IDisposable
     /// <param name="frameHeight">对焦框归一化高。</param>
     private void UpdateDetailHighlight(bool visible, double u, double v, double? frameWidth, double? frameHeight)
     {
-        if (!visible || !_main.IsAnalysisViewVisible || Session.Image == null)
+        _activeDetail = visible ? (u, v, frameWidth, frameHeight) : null;
+        RefreshDetailHighlight();
+    }
+
+    private void RefreshDetailHighlight()
+    {
+        if (_activeDetail is not { } source || !_main.IsAnalysisViewVisible || Session.Image == null)
         {
             _detailHighlight.Hidden = true;
             return;
         }
-        double scale = Photo.PointScale;
-        double boxWidth, boxHeight;
-        if (frameWidth is { } width && frameHeight is { } height)
-        {
-            boxWidth = width * Photo.DisplayWidth * scale;
-            boxHeight = height * Photo.DisplayHeight * scale;
-        }
-        else
-        {
-            boxWidth = boxHeight = _analysisPane.CropPixels * scale;
-        }
+        var image = Session.Image;
+        bool swapped = image.Orientation is >= 5 and <= 8;
+        double imageWidth = swapped ? image.Height : image.Width;
+        double imageHeight = swapped ? image.Width : image.Height;
+        double cropSide = Math.Min(_analysisPane.CropPixels, Math.Min(imageWidth, imageHeight));
+        double width = source.Width ?? cropSide / imageWidth;
+        double height = source.Height ?? cropSide / imageHeight;
+        double u = source.Width.HasValue ? source.U : Math.Clamp(source.U, width / 2, 1 - width / 2);
+        double v = source.Height.HasValue ? source.V : Math.Clamp(source.V, height / 2, 1 - height / 2);
+        double boxWidth = width * Photo.DisplayWidth * Photo.PointScale;
+        double boxHeight = height * Photo.DisplayHeight * Photo.PointScale;
         var center = Photo.ViewPoint(u, v);
         _detailHighlight.Frame = new CGRect(center.X - boxWidth / 2, center.Y - boxHeight / 2, boxWidth, boxHeight);
         _detailHighlight.Hidden = false;
     }
 
-    /// <summary>收起主图绿框（分析栏隐藏或切换照片时）。</summary>
-    private void HideDetailHighlight() => _detailHighlight.Hidden = true;
+    /// <summary>收起主图绿框并清除瓦片活动目标。</summary>
+    private void HideDetailHighlight()
+    {
+        _activeDetail = null;
+        _detailHighlight.Hidden = true;
+        _analysisPane.ClearDetailHighlight();
+    }
 
     /// <summary>细节预览双击：把主图定位到该归一化点并放大到物理 100%（与旧壳 FocusOnImagePoint 同义）。</summary>
     /// <param name="u">归一化横坐标。</param>
     /// <param name="v">归一化纵坐标。</param>
     private void FocusDetailPoint(double u, double v) => Photo.FocusOnPoint(u, v, 1);
 
-    /// <summary>打开/前置原生工具窗口；未打开时回到工具首页，已打开时只前置并保留当前页（TOOLS-01）。</summary>
+    /// <summary>打开/前置原生工具窗口；未打开时选择默认可用工具，已打开时只前置并保留当前页（TOOLS-01）。</summary>
     public void ShowTools() => _main.OpenToolsWindow();
 
     /// <summary>把原生可见卡片交共享缩略图调度器，以 P1 优先级加载。</summary>
@@ -1031,6 +1063,7 @@ public sealed class MacMainWindow : IDisposable
         CancelFilmstripScroll();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();
+        NSNotificationCenter.DefaultCenter.RemoveObserver(_deactivationObserver); _deactivationObserver.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.OpenFailed -= ShowToast;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
@@ -1187,7 +1220,11 @@ public sealed class MacMainWindow : IDisposable
     {
         /// <summary>默认收起，不占用布局高度。</summary>
         public DragZone() { Hidden = true; WantsLayer = true; Layer!.BackgroundColor = NSColor.FromWhite(.08f, .55f).CGColor; }
-        /// <summary>拖动交由系统窗口移动，保留原生吸附与屏幕行为；双击由窗口级监视器接管(见 HandleTitlebarDoubleClick)。</summary>
-        public override void MouseDown(NSEvent theEvent) => Window?.PerformWindowDrag(theEvent);
+        internal Func<NSEvent, bool>? DoubleClick { get; set; }
+        /// <summary>真实原生命中后处理拖动与标题栏双击，不在窗口事件监视器中抢占系统命中。</summary>
+        public override void MouseDown(NSEvent theEvent)
+        {
+            if (DoubleClick?.Invoke(theEvent) != true) Window?.PerformWindowDrag(theEvent);
+        }
     }
 }
