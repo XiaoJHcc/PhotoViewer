@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -141,6 +142,7 @@ internal sealed class WindowsSettingsWindow
         ShowPage(0);
 
         _window.Closed += OnClosed;
+        _window.AppWindow.Closing += OnClosing;
         _window.Activated += OnActivated;
         _root.Loaded += OnLoaded;
         WindowsWindowChrome.Configure(_window);
@@ -232,10 +234,19 @@ internal sealed class WindowsSettingsWindow
     /// <param name="args">关闭参数</param>
     private void OnClosed(object sender, WindowEventArgs args)
     {
+        _pages.CommitForClose();
         _sourceSettings.PropertyChanged -= OnSourceSettingsChanged;
         _recorder.Detach();
         _pages.Detach();
         Closed?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>关闭开始前提交未失焦的预设文本;之后不再触发布局或焦点。</summary>
+    /// <param name="sender">AppWindow</param>
+    /// <param name="args">关闭参数</param>
+    private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        _pages.CommitForClose();
     }
 
     /// <summary>源设置的持久化状态变化时刷新顶部状态行(SETTINGS-14)。</summary>
@@ -257,6 +268,7 @@ internal sealed class WindowsSettingsWindow
     {
         if (args.SelectedItem is NavigationViewItem { Tag: int index })
         {
+            _pages.CommitPendingEdits();
             ShowPage(index);
         }
     }

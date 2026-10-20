@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
@@ -104,6 +105,91 @@ internal static class WindowsSettingsAcceptance
             Require(window.Settings.BitmapCacheMaxMemory != memoryBefore, "数值滑条没有写回工作副本");
             checks.Add("PASS controls: toggle + NumberBox + slider write through to work copy");
 
+            // 预览页缩放比例预设(SETTINGS-07):每项一个居中的单值文本输入,Enter/失焦/切换分类/关闭都提交;
+            // 越界与非数字给出可见提示并恢复,提交后排序且不重建行。
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[1];
+            await Task.Delay(80);
+            window.Root.UpdateLayout();
+            var presetEditors = FindDescendants<TextBox>(window.Pages[1]);
+            Require(presetEditors.Count == window.Settings.ScalePresets.Count,
+                $"缩放预设输入框数量 {presetEditors.Count} 与预设数 {window.Settings.ScalePresets.Count} 不一致");
+            Require(presetEditors.Count > 1, "缩放预设没有可切换的多项");
+            Require(FindDescendant<NumberBox>(window.Pages[1]) == null, "缩放预设仍使用 NumberBox/步进器");
+            foreach (var presetEditor in presetEditors)
+            {
+                Require(presetEditor.TextAlignment == TextAlignment.Center,
+                    "缩放预设数字未在输入框内居中");
+            }
+
+            var presetError = FindDescendant<InfoBar>(window.Pages[1])
+                ?? throw new InvalidOperationException("预览页没有预设错误提示");
+            Require(!presetError.IsOpen, "未输入非法值时预设错误提示已显示");
+            var blurTarget = FindDescendant<ToggleSwitch>(window.Pages[1])
+                ?? throw new InvalidOperationException("预览页没有可转移焦点的开关");
+
+            var editor = presetEditors[0];
+            var editedPreset = window.Settings.ScalePresets[0];
+            var mainPresetsBefore = main.Settings.ScalePresets.Select(item => item.Value).ToList();
+            editor.Focus(FocusState.Programmatic);
+            Require(editor.FocusState != FocusState.Unfocused, "预设输入框无法获得焦点");
+            editor.Text = "42.5";
+            blurTarget.Focus(FocusState.Programmatic);
+            Require(blurTarget.FocusState != FocusState.Unfocused, "无法把焦点移出预设输入框");
+            await Task.Delay(80);
+            Require(Math.Abs(editedPreset.Value - 0.425) < 1e-9,
+                $"失焦没有提交缩放预设文本: {editedPreset.Value}");
+            Require(main.Settings.ScalePresets.Select(item => item.Value).SequenceEqual(mainPresetsBefore),
+                "缩放预设编辑泄漏到主设置");
+            Require(!presetError.IsOpen, "合法预设输入仍显示错误提示");
+            Require(window.Settings.ScalePresets.Select(item => item.Value)
+                    .SequenceEqual(window.Settings.ScalePresets.Select(item => item.Value).OrderBy(value => value)),
+                "提交后缩放预设未按数值升序");
+            Require(window.Settings.ScalePresets.Contains(editedPreset), "排序后丢失同一预设项");
+            Require(FindDescendants<TextBox>(window.Pages[1]).Count == window.Settings.ScalePresets.Count,
+                "排序后预设行被重建或丢失");
+            Require(editor.Text == "42.5", $"提交后输入框文本未归一: {editor.Text}");
+
+            async Task RequireRejectedAsync(string text)
+            {
+                editor.Focus(FocusState.Programmatic);
+                Require(editor.FocusState != FocusState.Unfocused, "预设输入框无法获得焦点");
+                editor.Text = text;
+                blurTarget.Focus(FocusState.Programmatic);
+                Require(blurTarget.FocusState != FocusState.Unfocused, "无法把焦点移出预设输入框");
+                await Task.Delay(80);
+                Require(Math.Abs(editedPreset.Value - 0.425) < 1e-9,
+                    $"非法输入“{text}”写入了工作副本: {editedPreset.Value}");
+                Require(editor.Text == "42.5", $"非法输入“{text}”未恢复为已提交值: {editor.Text}");
+                Require(presetError.IsOpen, $"非法输入“{text}”没有可见提示");
+            }
+
+            await RequireRejectedAsync("1601");
+            await RequireRejectedAsync("NaN");
+            await RequireRejectedAsync("abc");
+            await RequireRejectedAsync("0");
+            await RequireRejectedAsync("");
+
+            editor.Focus(FocusState.Programmatic);
+            Require(editor.FocusState != FocusState.Unfocused, "预设输入框无法获得焦点");
+            editor.Text = "55";
+            blurTarget.Focus(FocusState.Programmatic);
+            Require(blurTarget.FocusState != FocusState.Unfocused, "无法把焦点移出预设输入框");
+            await Task.Delay(80);
+            Require(Math.Abs(editedPreset.Value - 0.55) < 1e-9, "合法输入在错误后未重新写入");
+            Require(!presetError.IsOpen, "合法输入后错误提示未关闭");
+
+            // 切换分类前提交尚未失焦的编辑。
+            editor.Focus(FocusState.Programmatic);
+            Require(editor.FocusState != FocusState.Unfocused, "预设输入框无法获得焦点");
+            editor.Text = "60";
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[2];
+            await Task.Delay(120);
+            Require(Math.Abs(editedPreset.Value - 0.6) < 1e-9, "切换分类没有提交预设编辑");
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[1];
+            await Task.Delay(80);
+            window.Root.UpdateLayout();
+            checks.Add("PASS zoom presets: one centered editor per item, text blur/valid commit + sort, 1601/NaN/abc/0/empty rejected with visible prompt and restored, work copy isolated");
+
             var list = FindDescendant<ListView>(window.Pages[2]);
             if (list == null)
             {
@@ -136,13 +222,47 @@ internal static class WindowsSettingsAcceptance
             Require(recordText?.Text != "按下按键…", "取消录制后按钮文本未复位");
             checks.Add("PASS hotkey record: begin/cancel updates button state");
 
+            // 关闭时提交尚未失焦的预设编辑。
+            window.Root.UpdateLayout();
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[1];
+            await Task.Delay(60);
+            editor.Focus(FocusState.Programmatic);
+            Require(editor.FocusState != FocusState.Unfocused, "关闭前预设输入框无法获得焦点");
+            editor.Text = "66.6";
             var beforeClose = main.Settings.SameNameAsOnePhoto;
             var working = window.Settings.SameNameAsOnePhoto;
             window.Close();
             await WaitAsync(() => !presenter.IsOpen, "设置窗口关闭");
             Require(main.Settings.SameNameAsOnePhoto == working, "关闭后工作副本没有回写");
             Require(beforeClose != working, "回写断言前值未变化");
-            checks.Add("PASS lifecycle: work copy applied exactly once on close");
+            Require(main.Settings.ScalePresets.Any(preset => Math.Abs(preset.Value - 0.666) < 1e-9),
+                "关闭设置没有提交尚未失焦的预设编辑");
+
+            // SETTINGS-05/07：关闭提交后缩放预设随设置文档落盘（隔离目录）。
+            var settingsPath = Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "settings-smoke.json");
+            var persisted = false;
+            for (var attempt = 0; attempt < 40 && !persisted; attempt++)
+            {
+                await Task.Delay(100);
+                try
+                {
+                    using var document = JsonDocument.Parse(await File.ReadAllTextAsync(settingsPath));
+                    persisted = document.RootElement.GetProperty("ScalePresets").EnumerateArray()
+                        .Any(value => Math.Abs(value.GetDouble() - 0.666) < 1e-9);
+                }
+                catch (IOException)
+                {
+                }
+                catch (JsonException)
+                {
+                }
+                catch (KeyNotFoundException)
+                {
+                }
+            }
+
+            Require(persisted, "关闭设置后缩放预设没有落盘");
+            checks.Add("PASS lifecycle: work copy applied exactly once on close; focused preset edit committed and persisted to settings.json");
 
             Environment.ExitCode = 0;
         }
@@ -203,6 +323,28 @@ internal static class WindowsSettingsAcceptance
         }
 
         return null;
+    }
+
+    /// <summary>深度优先收集全部指定类型子元素。</summary>
+    /// <typeparam name="T">元素类型</typeparam>
+    /// <param name="root">根</param>
+    /// <returns>按视觉树顺序的全部匹配项</returns>
+    private static List<T> FindDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        var matches = new List<T>();
+        var count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            var child = VisualTreeHelper.GetChild(root, index);
+            if (child is T match)
+            {
+                matches.Add(match);
+            }
+
+            matches.AddRange(FindDescendants<T>(child));
+        }
+
+        return matches;
     }
 
     /// <summary>断言。</summary>

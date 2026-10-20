@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
@@ -21,6 +22,7 @@ using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
 using SkiaSharp;
+using Windows.Foundation;
 using Windows.Graphics;
 using Windows.System;
 
@@ -125,6 +127,7 @@ internal sealed partial class WindowsMainWindow
             await RunEnhancementChecksAsync(checks);
             await RunSimilarityPanelChecksAsync(checks);
             await RunRatingFailureChecksAsync(checks);
+            await RunAnalysisPreviewPointerChecksAsync(checks);
             await RunWindowStateChecksAsync(checks);
 
             _main.ToggleThumbnailView();
@@ -397,6 +400,94 @@ internal sealed partial class WindowsMainWindow
         stream.Write(jpeg, 0, 2);
         stream.Write(BuildExifApp1(orientation));
         stream.Write(jpeg, 2, jpeg.Length - 2);
+    }
+
+    /// <summary>写出带 Sony 对焦数据的四象限照片,使分析栏同时出现「对焦点」与「中心」两枚细节预览。</summary>
+    private static void CreateSonyFocusFixture(string path, int focusX, int focusY)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var bitmap = new SKBitmap(400, 300);
+        using (var canvas = new SKCanvas(bitmap))
+        {
+            using var paint = new SKPaint();
+            paint.Color = SKColors.Red;
+            canvas.DrawRect(0, 0, 200, 150, paint);
+            paint.Color = SKColors.Lime;
+            canvas.DrawRect(200, 0, 200, 150, paint);
+            paint.Color = SKColors.Blue;
+            canvas.DrawRect(0, 150, 200, 150, paint);
+            paint.Color = SKColors.Yellow;
+            canvas.DrawRect(200, 150, 200, 150, paint);
+        }
+
+        using var encoded = bitmap.Encode(SKEncodedImageFormat.Jpeg, 92);
+        var jpeg = encoded.ToArray();
+        using var stream = File.Create(path);
+        stream.Write(jpeg, 0, 2);
+        stream.Write(BuildSonyFocusApp1(400, 300, focusX, focusY, 80, 60));
+        stream.Write(jpeg, 2, jpeg.Length - 2);
+    }
+
+    /// <summary>构造带 Sony Type1 MakerNote 的最小 EXIF APP1(0x2027 对焦位置 / 0x2037 对焦框)。</summary>
+    private static byte[] BuildSonyFocusApp1(
+        int width, int height, int focusX, int focusY, int frameWidth, int frameHeight)
+    {
+        using var tiff = new MemoryStream();
+        using (var writer = new BinaryWriter(tiff, Encoding.ASCII, true))
+        {
+            writer.Write((byte)'I');
+            writer.Write((byte)'I');
+            writer.Write((ushort)42);
+            writer.Write(8u);
+
+            // IFD0: Orientation(SHORT) + ExifIFDPointer(LONG → 38)
+            writer.Write((ushort)2);
+            writer.Write((ushort)0x0112);
+            writer.Write((ushort)3);
+            writer.Write(1u);
+            writer.Write((ushort)1);
+            writer.Write((ushort)0);
+            writer.Write((ushort)0x8769);
+            writer.Write((ushort)4);
+            writer.Write(1u);
+            writer.Write(38u);
+            writer.Write(0u);
+
+            // ExifIFD: MakerNote(UNDEFINED → 56)
+            writer.Write((ushort)1);
+            writer.Write((ushort)0x927C);
+            writer.Write((ushort)7);
+            writer.Write(56u);
+            writer.Write(56u);
+            writer.Write(0u);
+
+            // Sony MakerNote(56): 头 12 字节 + IFD(68) + 两个数组(98 / 106)
+            writer.Write(Encoding.ASCII.GetBytes("SONY DSC "));
+            writer.Write(new byte[3]);
+            writer.Write((ushort)2);
+            writer.Write((ushort)0x2027);
+            writer.Write((ushort)3);
+            writer.Write(4u);
+            writer.Write(98u);
+            writer.Write((ushort)0x2037);
+            writer.Write((ushort)3);
+            writer.Write(3u);
+            writer.Write(106u);
+            writer.Write(0u);
+            writer.Write((ushort)width);
+            writer.Write((ushort)height);
+            writer.Write((ushort)focusX);
+            writer.Write((ushort)focusY);
+            writer.Write((ushort)frameWidth);
+            writer.Write((ushort)frameHeight);
+            writer.Write((ushort)1);
+        }
+
+        var tiffBytes = tiff.ToArray();
+        var payload = new byte[6 + tiffBytes.Length];
+        Encoding.ASCII.GetBytes("Exif").CopyTo(payload, 0);
+        tiffBytes.CopyTo(payload, 6);
+        return payload;
     }
 
     /// <summary>
@@ -749,6 +840,241 @@ internal sealed partial class WindowsMainWindow
         _main.ToggleAnalysisView();
         await Task.Delay(150);
         checks.Add("PASS analysis panel: preview+histogram+tiles, immediate compute, crosshair cosine recompute, both orientations");
+    }
+
+    /// <summary>细节预览指针/键盘联动:悬停、触控、混合指针、唯一目标与各清除时机(ANALYSIS-04/ANALYSIS-11)。</summary>
+    /// <param name="checks">验收结果收集器</param>
+    /// <returns>检查完成后的任务</returns>
+    private async Task RunAnalysisPreviewPointerChecksAsync(List<string> checks)
+    {
+        var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "analysis-focus");
+        var focusPath = Path.Combine(folder, "focus.jpg");
+        var otherPath = Path.Combine(folder, "focus-alt.jpg");
+        await Task.Run(() =>
+        {
+            CreateSonyFocusFixture(focusPath, 300, 75);
+            CreateSonyFocusFixture(otherPath, 120, 220);
+        });
+
+        _main.Settings.AnalysisImmediateCompute = false;
+        await OpenPathsAsync(new[] { focusPath });
+        await WaitForSmokeAsync(() => _main.CurrentFile != null && _photo.HasImage, "对焦素材载入");
+        await WaitForSmokeAsync(() => _main.CurrentFile!.ExifData?.SonyFocusPosition != null, "Sony 对焦 EXIF", 20);
+        if (!_main.IsAnalysisViewVisible)
+        {
+            _main.ToggleAnalysisView();
+        }
+
+        await WaitForSmokeAsync(() => _analysis.Visibility == Visibility.Visible, "指针检查:分析栏可见");
+        _root.UpdateLayout();
+        await WaitForSmokeAsync(
+            () => _analysis.HasFocusPreview && _analysis.HasPreviewImage && _analysis.HasFocusPreviewImage,
+            "指针检查:对焦点/中心双细节预览",
+            20);
+
+        var center = _analysis.PreviewTileCenterForAcceptance(false);
+        var focus = _analysis.PreviewTileCenterForAcceptance(true);
+        var blank = new Point(4, 4);
+        RequireSmoke(!double.IsNaN(center.X) && !double.IsNaN(focus.X), "细节预览瓦片没有布局坐标");
+        RequireSmoke(Math.Abs(center.X - focus.X) > 1 || Math.Abs(center.Y - focus.Y) > 1, "两枚细节预览瓦片位置重叠");
+
+        void RequireActive(string? expected, string message)
+            => RequireSmoke(_analysis.ActivePreviewLabel == expected,
+                $"{message}(active={_analysis.ActivePreviewLabel ?? "null"})");
+
+        void RequireGreenFrame(bool visible, string message)
+            => RequireSmoke((_detailHighlight.Visibility == Visibility.Visible) == visible, message);
+
+        // 先落一次诊断准星,后续验证细节预览的绿框与它互不影响(ANALYSIS-11)。
+        _analysis.TriggerTileClickForAcceptance(0.5, 0.5);
+        await Task.Delay(60);
+        RequireSmoke(_analysis.DiagnosticCrosshairVisible, "诊断瓦片准星未落点");
+
+        // 键盘/辅助技术等价入口:Enter/空格切换、Esc 清除;与悬停共用唯一活动目标。
+        RequireSmoke(_analysis.PreviewTileAutomationNameForAcceptance(false).Contains("细节预览"),
+            "细节预览缺少无障碍名称");
+        RequireSmoke(_analysis.PreviewTileItemStatusForAcceptance(false) == "绿框未显示",
+            "细节预览未暴露初始绿框状态");
+        RequireSmoke(_analysis.InvokePreviewAutomationForAcceptance(false),
+            "细节预览未暴露 Invoke 无障碍动作");
+        RequireActive("中心", "键盘/无障碍固定未点亮绿框");
+        RequireGreenFrame(true, "键盘/无障碍固定后绿框未显示");
+        RequireSmoke(_analysis.PreviewTileItemStatusForAcceptance(false) == "绿框已显示",
+            "辅助技术未读到绿框显示状态");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, focus);
+        RequireActive("对焦点", "悬停未接管键盘固定的活动目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Leave, 1, default);
+        RequireActive("中心", "悬停离开后未恢复键盘固定的目标");
+        RequireSmoke(_analysis.InvokePreviewAutomationForAcceptance(false),
+            "细节预览未暴露清除绿框的 Invoke 动作");
+        RequireActive(null, "再次触发键盘/无障碍动作未清除绿框");
+        RequireGreenFrame(false, "清除键盘固定后绿框残留");
+        RequireSmoke(_analysis.PreviewTileItemStatusForAcceptance(false) == "绿框未显示",
+            "辅助技术未读到绿框清除状态");
+
+        // 鼠标悬停:进入中心瓦片点亮,滑到对焦点瓦片切换,滑到空白清除(ANALYSIS-04)。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, center);
+        await Task.Delay(40);
+        RequireActive("中心", "悬停中心瓦片未点亮绿框");
+        RequireGreenFrame(true, "悬停中心瓦片时主图绿框未显示");
+        // ANALYSIS-11：绿框与诊断准星互相独立。
+        RequireSmoke(_analysis.DiagnosticCrosshairVisible, "细节预览点亮/清除影响了诊断准星");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, focus);
+        await Task.Delay(40);
+        RequireActive("对焦点", "悬停另一细节瓦片未切换活动目标");
+        RequireGreenFrame(true, "切换到对焦点瓦片后绿框消失");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, blank);
+        await Task.Delay(40);
+        RequireActive(null, "悬停到空白未清除活动目标");
+        RequireGreenFrame(false, "悬停到空白后绿框残留");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, focus);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Leave, 1, default);
+        await Task.Delay(40);
+        RequireActive(null, "指针离开分析栏后活动目标未清除");
+        RequireGreenFrame(false, "指针离开分析栏后绿框残留");
+
+        // 起点在诊断瓦片/空白的触控不能滑入点亮细节预览。
+        var diagnostic = _analysis.DiagnosticTileCenterForAcceptance();
+        RequireSmoke(!double.IsNaN(diagnostic.X), "诊断瓦片没有布局坐标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 15, diagnostic);
+        RequireActive(null, "诊断瓦片按下建立了细节预览目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Move, 15, center);
+        RequireActive(null, "起点在诊断瓦片的触控滑入细节预览点亮了绿框");
+        RequireGreenFrame(false, "诊断瓦片起点的触控滑入后绿框残留");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 15, default);
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 16, blank);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Move, 16, focus);
+        RequireActive(null, "起点在面板空白的触控滑入细节预览点亮了绿框");
+        RequireGreenFrame(false, "空白起点的触控滑入后绿框残留");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 16, default);
+
+        // 直接触控:按下立即点亮,滑入另一细节瓦片切换,滑出清除(不依赖悬停)。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 11, center);
+        await Task.Delay(20);
+        RequireActive("中心", "触控按下未立即点亮落点瓦片");
+        RequireGreenFrame(true, "触控按下后绿框未显示");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Move, 11, focus);
+        await Task.Delay(20);
+        RequireActive("对焦点", "触控滑入另一细节瓦片未切换活动目标");
+
+        // 旧指针的结束事件不得清除后来建立的目标。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 10, default);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Cancel, 10, default);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.CaptureLost, 10, default);
+        await Task.Delay(20);
+        RequireActive("对焦点", "旧指针的结束事件清掉了当前活动目标");
+        RequireGreenFrame(true, "旧指针结束后绿框被清除");
+
+        // 同一时刻只允许一个活动目标:第二根手指不抢第一个指针的瓦片。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 12, center);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Move, 12, center);
+        await Task.Delay(20);
+        RequireActive("对焦点", "第二个触控指针抢走了活动目标");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Move, 11, blank);
+        await Task.Delay(20);
+        RequireActive(null, "触控滑出细节预览后活动目标未清除");
+        RequireGreenFrame(false, "触控滑出细节预览后绿框残留");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 11, default);
+        await Task.Delay(20);
+        RequireActive(null, "触控抬起后活动目标未保持清除");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 12, focus);
+        RequireActive("对焦点", "再次触控按下未点亮");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 12, default);
+        await Task.Delay(20);
+        RequireActive(null, "触控抬起后活动目标未清除");
+        RequireGreenFrame(false, "触控抬起后绿框残留");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 13, center);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Cancel, 13, default);
+        await Task.Delay(20);
+        RequireActive(null, "触控取消后活动目标未清除");
+        RequireGreenFrame(false, "触控取消后绿框残留");
+
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 14, focus);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.CaptureLost, 14, default);
+        await Task.Delay(20);
+        RequireActive(null, "指针捕获丢失后活动目标未清除");
+        RequireGreenFrame(false, "指针捕获丢失后绿框残留");
+
+        // 鼠标悬停与触控混合:触控按住优先,抬起后回到悬停,旧指针结束不干扰。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, center);
+        RequireActive("中心", "混合指针测试前无法建立悬停目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Press, 21, focus);
+        RequireActive("对焦点", "触控按下未在鼠标悬停期间接管活动目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, center);
+        RequireActive("对焦点", "触控按住时鼠标移动抢走了活动目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 21, default);
+        RequireActive("中心", "触控抬起后未恢复鼠标悬停目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Release, 21, default);
+        RequireActive("中心", "旧触控结束清掉了鼠标悬停目标");
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Leave, 1, default);
+        RequireActive(null, "混合指针测试结束未清除悬停");
+
+        // 双击定位保留:对准并放大到 100%,且不改变绿框的活动目标(ANALYSIS-04)。
+        _photo.FitToView();
+        await Task.Delay(120);
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, center);
+        RequireActive("中心", "双击定位前无法建立悬停目标");
+
+        // 诊断瓦片落准星只动准星,不改变细节预览活动目标与绿框。
+        _analysis.TriggerTileClickForAcceptance(0.5, 0.5);
+        await Task.Delay(60);
+        RequireSmoke(_analysis.DiagnosticCrosshairVisible, "诊断瓦片准星未落点");
+        RequireActive("中心", "诊断瓦片落准星改变了细节预览活动目标");
+        RequireGreenFrame(true, "诊断瓦片落准星清除了绿框");
+
+        _analysis.TriggerPreviewDoubleTapForAcceptance(true);
+        await Task.Delay(160);
+        RequireSmoke(Math.Abs(_photo.PhysicalScale - 1) < 1e-6,
+            $"双击细节预览未定位到物理 100%: {_photo.PhysicalScale:0.###}");
+        RequireActive("中心", "双击定位改变了绿框活动目标");
+        RequireGreenFrame(true, "双击定位后绿框被清除");
+
+        // 键盘固定状态也必须随换图清除。
+        RequireSmoke(_analysis.InvokePreviewAutomationForAcceptance(false),
+            "换图前无法通过无障碍动作建立固定目标");
+        RequireActive("中心", "换图前无法建立键盘固定目标");
+
+        // 换图立即清除活动目标与绿框。
+        await OpenPathsAsync(new[] { otherPath });
+        await WaitForSmokeAsync(() => _main.CurrentFile != null && _main.CurrentFile.Name == Path.GetFileName(otherPath),
+            "换图(指针检查)");
+        await Task.Delay(120);
+        RequireActive(null, "换图后活动目标未清除");
+        RequireGreenFrame(false, "换图后绿框残留");
+
+        _root.UpdateLayout();
+        await WaitForSmokeAsync(() => _analysis.HasPreviewImage && _analysis.HasFocusPreviewImage,
+            "换图后细节预览", 20);
+        var otherCenter = _analysis.PreviewTileCenterForAcceptance(false);
+
+        // 窗口失活立即清除。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, otherCenter);
+        RequireActive("中心", "失活检查前无法建立悬停目标");
+        SimulateWindowDeactivatedForAcceptance();
+        await Task.Delay(40);
+        RequireActive(null, "窗口失活后活动目标未清除");
+        RequireGreenFrame(false, "窗口失活后绿框残留");
+
+        // 收起分析栏立即清除。
+        _analysis.SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase.Hover, 1, otherCenter);
+        RequireActive("中心", "收起检查前无法建立悬停目标");
+        _main.ToggleAnalysisView();
+        await Task.Delay(120);
+        RequireActive(null, "收起分析栏后活动目标未清除");
+        RequireGreenFrame(false, "收起分析栏后绿框残留");
+        RequireSmoke(_analysis.Visibility == Visibility.Collapsed, "收起分析栏后分析栏仍可见");
+
+        checks.Add("PASS analysis preview pointer: hover enter/switch/leave, touch press/move-out/release/cancel/capture-lost clear, touch starting on diagnostics/blank cannot light by sliding in, single active target with stale pointer ids ignored, mouse+touch mixed priority, keyboard/automation pin toggle, double-tap 100% and diagnostic crosshair independent, photo change / window deactivate / panel hide clear");
     }
 
     /// <summary>增强预览:开→后台 CLHE 增强并上屏(分析栏随之对增强图重算),关→回原片。</summary>

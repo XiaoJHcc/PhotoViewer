@@ -746,13 +746,21 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateTitleBarVisibility(y <= WindowsLayout.CaptionHotZoneHeight);
     }
 
-    /// <summary>窗口失活时隐藏标题栏(旧壳 Deactivated 同口径);激活不主动显示。</summary>
+    /// <summary>窗口失活时隐藏标题栏并撤掉分析栏绿框(旧壳 Deactivated 同口径);激活不主动显示。</summary>
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
     {
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
-            UpdateTitleBarVisibility(false);
+            HandleWindowDeactivated();
         }
+    }
+
+    internal void SimulateWindowDeactivatedForAcceptance() => HandleWindowDeactivated();
+
+    private void HandleWindowDeactivated()
+    {
+        UpdateTitleBarVisibility(false);
+        _analysis.ClearPreviewHighlight();
     }
 
     /// <summary>

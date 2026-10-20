@@ -47,6 +47,8 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 主屏小型控件（命令按钮、评分星、相似聚类开关、动作按钮）的常态/悬停/按下/禁用统一走 `WindowsControlStyles`：按元素覆盖模板状态键，禁用不换底色、只降内容不透明度；只设 `Background` 不够，WinUI 模板会在禁用/悬停时回落到主题资源。
 - 控制栏换行由 `WindowsWrapPanel.MainLimit` 驱动：主轴上限取滚动视口，能整组换行时不得以滚动代替；单组超长才由 `ScrollViewer` 兜底。
 - 导航图白框可拖动：`WindowsNavigator.PressAt/DragTo` 换算归一化点，交 `WindowsPhotoView.CenterOnNormalizedPoint`；滚轮仍冒泡给主图缩放。
+- 分析栏细节预览的指针命中统一在 `WindowsAnalysisPanel` 面板层完成：起点在细节预览的触控由该瓦片显式 `CapturePointer`，滑出瓦片或窗口仍能收到 Up；鼠标与可悬停笔悬停点亮，触控按下点亮、滑动切换、滑出清除、抬起/取消/捕获丢失清除；起点在诊断瓦片或面板空白的触控不会滑入点亮，避免抢诊断点按。按指针 id 维护唯一活动目标（按下 > 悬停 > 键盘固定），旧指针结束不清新目标，换图/隐藏面板/窗口失活立即清除。细节瓦片可 Tab 聚焦，Enter/空格切换绿框、Esc 清除，并暴露名称与“绿框已显示”状态；诊断准星独立。
+- 缩放比例预设每项只有一个居中的单值文本框（不用步进器）：Enter、失焦、切换分类与关闭设置都提交；>1600、≤0、非数字不写入，用页内 `InfoBar` 提示并恢复原值；合法提交调用 `ApplyScalePreset` 排序并复用行（不重建、不夺焦），落盘归关闭设置时的一次提交。
 - `Border` / `ScrollViewer` 是 sealed；自定义容器使用 `Panel`、`Grid` 等。`Border.Width` 包含边框，选中描边用不占布局的叠加层。
 - 虚拟化滚动区禁用 `ScrollViewer.ZoomMode`，避免无限尺寸测量。
 - 自绘标题栏覆盖层背景保持 `null`；按钮悬停色通过主题资源键覆盖，避免覆盖层吞掉照片输入。

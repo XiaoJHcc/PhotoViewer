@@ -1,7 +1,11 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Automation.Peers;
+using Microsoft.UI.Xaml.Automation.Provider;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
@@ -11,6 +15,7 @@ using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using Windows.Foundation;
+using Windows.System;
 
 namespace PhotoViewer.Windows.Native;
 
@@ -19,7 +24,7 @@ namespace PhotoViewer.Windows.Native;
 ///
 /// 数据编排全部交给平台中立的 <see cref="AnalysisPresenter"/>(与旧壳、macOS/iPad 原生分析栏同一份):
 /// 只读库快路径、增强联动实时重算、未提取回退、租约、直方图与 cosine 参考点都在 presenter;
-/// 本类只做 Windows 侧的瓦片渲染、布局、准星与 hover 联动。细节预览用共享 <see cref="DisplayCrop"/>
+/// 本类只做 Windows 侧的瓦片渲染、布局、准星与指针联动。细节预览用共享 <see cref="DisplayCrop"/>
 /// 从容器朝向的展示帧裁出显示朝向的 1:1 方块,不再自己复制方向表。
 /// </summary>
 internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
@@ -39,6 +44,8 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     private readonly WindowsDiagnosticTile _sharpnessTile;
     private readonly WindowsDiagnosticTile _shakeTile;
     private readonly WindowsShakeFieldView _shakeOverlay;
+    private readonly PreviewHighlightTracker _previewTracker;
+    private AnalysisPreviewTile? _capturedPreview;
 
     private DecodedImage? _lastHistogramSource;
     private DecodedImage? _lastPcaSource;
@@ -52,16 +59,24 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <param name="main">主视图模型。</param>
     /// <param name="session">主图加载会话(展示帧与增强状态)。</param>
     /// <param name="focusImagePoint">双击细节预览时把主图对准该显示朝向图像点(uv)。</param>
-    /// <param name="setHighlight">细节预览 hover 联动主图绿框(显示朝向 uv;null 清除)。</param>
+    /// <param name="setHighlight">细节预览活动目标联动主图绿框(显示朝向 uv;null 清除)。</param>
     public WindowsAnalysisPanel(MainViewModel main, PhotoLoadSession session,
         Action<double, double> focusImagePoint, Action<Rect?> setHighlight)
     {
         _main = main;
         _session = session;
         _setHighlight = setHighlight;
+        _previewTracker = new PreviewHighlightTracker(ApplyPreviewTarget);
 
-        _focusTile = new AnalysisPreviewTile("对焦点", focusImagePoint, Highlight);
-        _centerTile = new AnalysisPreviewTile("中心", focusImagePoint, Highlight);
+        var focusTile = new AnalysisPreviewTile("对焦点", focusImagePoint, Highlight);
+        focusTile.PinToggleRequested = () => _previewTracker.TogglePinned(focusTile);
+        focusTile.PinClearRequested = () => _previewTracker.ClearPinned();
+        _focusTile = focusTile;
+
+        var centerTile = new AnalysisPreviewTile("中心", focusImagePoint, Highlight);
+        centerTile.PinToggleRequested = () => _previewTracker.TogglePinned(centerTile);
+        centerTile.PinClearRequested = () => _previewTracker.ClearPinned();
+        _centerTile = centerTile;
         _histogramTile = new WindowsDiagnosticTile();
         _pcaTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
         _cosineTile = new WindowsDiagnosticTile { TileClicked = OnTileClicked, BackgroundClicked = ClearCrosshair };
@@ -87,6 +102,16 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
             Child = _tiles,
         };
         Children.Add(_frame);
+
+        // 命中在面板层统一做;起点在细节预览的触控由该瓦片显式 CapturePointer,
+        // 否则手指滑出瓦片/窗口后可能收不到 Up,绿框会残留。
+        AddHandler(PointerPressedEvent, new PointerEventHandler(OnPreviewPointerPressed), true);
+        AddHandler(PointerMovedEvent, new PointerEventHandler(OnPreviewPointerMoved), true);
+        AddHandler(PointerReleasedEvent, new PointerEventHandler(OnPreviewPointerReleased), true);
+        AddHandler(PointerCanceledEvent, new PointerEventHandler(OnPreviewPointerCanceled), true);
+        AddHandler(PointerCaptureLostEvent, new PointerEventHandler(OnPreviewPointerCaptureLost), true);
+        AddHandler(PointerEnteredEvent, new PointerEventHandler(OnPreviewPointerEntered), true);
+        AddHandler(PointerExitedEvent, new PointerEventHandler(OnPreviewPointerExited), true);
 
         _presenter = new AnalysisPresenter(this);
         _presenter.TilesChanged += SyncTiles;
@@ -183,6 +208,69 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <param name="v">纵向 0-1。</param>
     internal void TriggerTileClickForAcceptance(double u, double v) => _presenter.OnTileClicked(u, v);
 
+    internal bool HasFocusPreview => _presenter.Tiles.Contains(_presenter.FocusTile);
+
+    internal bool HasFocusPreviewImage => _focusTile.HasImage;
+
+    internal string? ActivePreviewLabel => _previewTracker.Active?.Label;
+
+    internal Point PreviewTileCenterForAcceptance(bool focusTile)
+        => CenterOf(focusTile ? _focusTile : _centerTile);
+
+    internal Point DiagnosticTileCenterForAcceptance() => CenterOf(_pcaTile);
+
+    // WinUI 的指针事件参数无法在进程内构造,验收从面板级状态机入口驱动。
+    internal void SimulatePreviewPointerForAcceptance(AnalysisPreviewPhase phase, uint pointerId, Point position)
+        => TrackPreviewPointer(phase, pointerId, position);
+
+    internal bool InvokePreviewAutomationForAcceptance(bool focusTile)
+    {
+        var tile = focusTile ? _focusTile : _centerTile;
+        var peer = FrameworkElementAutomationPeer.CreatePeerForElement(tile)
+            ?? tile.CreatePeerForAcceptance();
+        if (peer.GetPattern(PatternInterface.Invoke) is not IInvokeProvider invoke)
+        {
+            return false;
+        }
+
+        invoke.Invoke();
+        return true;
+    }
+
+    internal string PreviewTileAutomationNameForAcceptance(bool focusTile)
+        => AutomationProperties.GetName(focusTile ? _focusTile : _centerTile);
+
+    internal string PreviewTileItemStatusForAcceptance(bool focusTile)
+        => AutomationProperties.GetItemStatus(focusTile ? _focusTile : _centerTile);
+
+    internal void TriggerPreviewDoubleTapForAcceptance(bool focusTile)
+        => (focusTile ? _focusTile : _centerTile).TriggerFocusForAcceptance();
+
+    internal void ClearPreviewHighlight() => ResetPreviewTracking();
+
+    private Point CenterOf(FrameworkElement tile)
+    {
+        if (!_tiles.Children.Contains(tile) || tile.ActualWidth <= 0)
+        {
+            return new Point(double.NaN, double.NaN);
+        }
+
+        var origin = tile.TransformToVisual(this).TransformPoint(new Point(0, 0));
+        return new Point(origin.X + (tile.ActualWidth / 2), origin.Y + (tile.ActualHeight / 2));
+    }
+
+    private void ResetPreviewTracking()
+    {
+        ReleasePreviewCapture();
+        _previewTracker.Clear();
+    }
+
+    private void ReleasePreviewCapture()
+    {
+        _capturedPreview?.ReleasePointerCaptures();
+        _capturedPreview = null;
+    }
+
     /// <summary>切换上下/左右布局:上下布局瓦片横排(顶部分隔线),左右布局竖排(左侧分隔线)。</summary>
     /// <param name="isRowLayout">是否为上下布局。</param>
     public void SetOrientation(bool isRowLayout)
@@ -205,6 +293,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         _main.Settings.PropertyChanged -= OnSettingsChanged;
         _session.Changed -= OnSessionChanged;
 
+        ResetPreviewTracking();
         _focusTile.Dispose();
         _centerTile.Dispose();
         _pcaTile.Dispose();
@@ -225,6 +314,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
                 return;
             case nameof(MainViewModel.CurrentFile):
             case nameof(MainViewModel.IsAnalysisViewVisible):
+                ResetPreviewTracking();
                 UpdatePreviewTiles();
                 HostChanged?.Invoke();
                 return;
@@ -243,6 +333,11 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <summary>会话帧变化:细节预览与直方图跟随(换图、代理→Full、增强);诊断由 presenter 重路由。</summary>
     private void OnSessionChanged()
     {
+        if (_session.Image == null)
+        {
+            ResetPreviewTracking();
+        }
+
         UpdatePreviewTiles();
         HostChanged?.Invoke();
     }
@@ -269,6 +364,11 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
         else
         {
+            if (_previewTracker.Contains(_focusTile))
+            {
+                ResetPreviewTracking();
+            }
+
             _focusTile.Clear();
         }
 
@@ -437,35 +537,314 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
     /// <summary>空白处点击:清空准星。</summary>
     private void ClearCrosshair() => _presenter.ClearCrosshair();
 
-    /// <summary>细节预览联动:悬停/离开时向主图推送绿框(显示朝向 uv)。</summary>
     private void Highlight(Rect? uv) => _setHighlight(_main.IsAnalysisViewVisible ? uv : null);
 
+    private void ApplyPreviewTarget(AnalysisPreviewTile? tile)
+    {
+        foreach (var candidate in new[] { _focusTile, _centerTile })
+        {
+            if (!ReferenceEquals(candidate, tile))
+            {
+                candidate.SetHighlighted(false);
+            }
+        }
+
+        if (tile == null)
+        {
+            Highlight(null);
+            return;
+        }
+
+        tile.SetHighlighted(true);
+        tile.PushHighlight();
+    }
+
+    private void OnPreviewPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(this);
+        if (point.PointerDeviceType == PointerDeviceType.Mouse)
+        {
+            return;
+        }
+
+        var tile = PreviewTileAt(point.Position);
+        if (!_previewTracker.Press(e.Pointer.PointerId, tile))
+        {
+            return;
+        }
+
+        if (tile == null)
+        {
+            return;
+        }
+
+        if (_capturedPreview is { } previous && !ReferenceEquals(previous, tile))
+        {
+            previous.ReleasePointerCaptures();
+            _capturedPreview = null;
+        }
+
+        if (tile.CapturePointer(e.Pointer))
+        {
+            _capturedPreview = tile;
+        }
+    }
+
+    private void OnPreviewPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(this);
+        if (point.PointerDeviceType == PointerDeviceType.Mouse
+            || (point.PointerDeviceType == PointerDeviceType.Pen && !point.IsInContact))
+        {
+            TrackPreviewPointer(AnalysisPreviewPhase.Hover, e.Pointer.PointerId, point.Position);
+            return;
+        }
+
+        TrackPreviewPointer(AnalysisPreviewPhase.Move, e.Pointer.PointerId, point.Position);
+    }
+
+    private void OnPreviewPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (e.GetCurrentPoint(this).PointerDeviceType == PointerDeviceType.Mouse)
+        {
+            return;
+        }
+
+        if (_previewTracker.End(e.Pointer.PointerId))
+        {
+            ReleasePreviewCapture();
+        }
+    }
+
+    private void OnPreviewPointerCanceled(object sender, PointerRoutedEventArgs e)
+    {
+        if (_previewTracker.End(e.Pointer.PointerId))
+        {
+            ReleasePreviewCapture();
+        }
+    }
+
+    private void OnPreviewPointerCaptureLost(object sender, PointerRoutedEventArgs e)
+    {
+        if (_previewTracker.End(e.Pointer.PointerId))
+        {
+            _capturedPreview = null;
+        }
+    }
+
+    private void OnPreviewPointerEntered(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(this);
+        if (point.PointerDeviceType == PointerDeviceType.Touch
+            || (point.PointerDeviceType == PointerDeviceType.Pen && point.IsInContact))
+        {
+            return;
+        }
+
+        TrackPreviewPointer(AnalysisPreviewPhase.Hover, e.Pointer.PointerId, point.Position);
+    }
+
+    private void OnPreviewPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        var point = e.GetCurrentPoint(this);
+        if (point.PointerDeviceType == PointerDeviceType.Touch)
+        {
+            return;
+        }
+
+        // 子元素之间切换也会冒泡出 PointerExited;真正离开面板才清除悬停。
+        if (!ReferenceEquals(e.OriginalSource, this) && IsInsidePanel(point.Position))
+        {
+            return;
+        }
+
+        TrackPreviewPointer(AnalysisPreviewPhase.Leave, e.Pointer.PointerId, default);
+    }
+
+    private bool IsInsidePanel(Point position)
+        => position.X >= 0 && position.Y >= 0
+            && position.X <= ActualWidth && position.Y <= ActualHeight;
+
+    private void TrackPreviewPointer(AnalysisPreviewPhase phase, uint pointerId, Point position)
+    {
+        switch (phase)
+        {
+            case AnalysisPreviewPhase.Hover:
+                _previewTracker.Hover(PreviewTileAt(position));
+                break;
+            case AnalysisPreviewPhase.Leave:
+                _previewTracker.Leave();
+                break;
+            case AnalysisPreviewPhase.Press:
+                _previewTracker.Press(pointerId, PreviewTileAt(position));
+                break;
+            case AnalysisPreviewPhase.Move:
+                _previewTracker.Move(pointerId, PreviewTileAt(position));
+                break;
+            default:
+                _previewTracker.End(pointerId);
+                break;
+        }
+    }
+
+    private AnalysisPreviewTile? PreviewTileAt(Point position)
+    {
+        foreach (var child in _tiles.Children)
+        {
+            if (child is not AnalysisPreviewTile tile
+                || tile.Visibility != Visibility.Visible
+                || tile.ActualWidth <= 0
+                || tile.ActualHeight <= 0)
+            {
+                continue;
+            }
+
+            var origin = tile.TransformToVisual(this).TransformPoint(new Point(0, 0));
+            if (new Rect(origin.X, origin.Y, tile.ActualWidth, tile.ActualHeight).Contains(position))
+            {
+                return tile;
+            }
+        }
+
+        return null;
+    }
+
+    // 优先级:按下指针 > 悬停 > 键盘固定,任何时刻只有一个活动目标;结束事件按指针 id 过滤。
+    private sealed class PreviewHighlightTracker
+    {
+        private readonly Action<AnalysisPreviewTile?> _changed;
+        private AnalysisPreviewTile? _hoverTile;
+        private AnalysisPreviewTile? _pointerTile;
+        private AnalysisPreviewTile? _pinnedTile;
+        private AnalysisPreviewTile? _announced;
+        private uint? _pointerId;
+        private bool _pointerFromDetail;
+
+        public PreviewHighlightTracker(Action<AnalysisPreviewTile?> changed) => _changed = changed;
+
+        public AnalysisPreviewTile? Active
+            => _pointerId != null ? _pointerTile : _hoverTile ?? _pinnedTile;
+
+        public bool Contains(AnalysisPreviewTile tile)
+            => ReferenceEquals(_pointerTile, tile)
+                || ReferenceEquals(_hoverTile, tile)
+                || ReferenceEquals(_pinnedTile, tile);
+
+        public void Hover(AnalysisPreviewTile? tile)
+        {
+            _hoverTile = tile;
+            if (_pointerId == null)
+            {
+                Announce();
+            }
+        }
+
+        public void Leave() => Hover(null);
+
+        public bool Press(uint pointerId, AnalysisPreviewTile? tile)
+        {
+            if (_pointerId is { } active && active != pointerId)
+            {
+                return false;
+            }
+
+            _pointerId = pointerId;
+            _pointerTile = tile;
+            _pointerFromDetail = tile != null;
+            Announce();
+            return true;
+        }
+
+        // 起点不在细节预览的触控不能滑入点亮,否则会抢走诊断瓦片的点按意图。
+        public void Move(uint pointerId, AnalysisPreviewTile? tile)
+        {
+            if (_pointerId != pointerId || !_pointerFromDetail)
+            {
+                return;
+            }
+
+            _pointerTile = tile;
+            Announce();
+        }
+
+        public bool End(uint pointerId)
+        {
+            if (_pointerId != pointerId)
+            {
+                return false;
+            }
+
+            _pointerId = null;
+            _pointerTile = null;
+            _pointerFromDetail = false;
+            Announce();
+            return true;
+        }
+
+        public void TogglePinned(AnalysisPreviewTile tile)
+        {
+            _pinnedTile = ReferenceEquals(_pinnedTile, tile) ? null : tile;
+            if (_pointerId == null)
+            {
+                Announce();
+            }
+        }
+
+        public void ClearPinned()
+        {
+            _pinnedTile = null;
+            if (_pointerId == null)
+            {
+                Announce();
+            }
+        }
+
+        public void Clear()
+        {
+            _pointerId = null;
+            _pointerTile = null;
+            _pointerFromDetail = false;
+            _hoverTile = null;
+            _pinnedTile = null;
+            _announced = null;
+            _changed(null);
+        }
+
+        private void Announce()
+        {
+            var active = Active;
+            if (ReferenceEquals(active, _announced))
+            {
+                return;
+            }
+
+            _announced = active;
+            _changed(active);
+        }
+    }
+
     /// <summary>
-    /// 细节预览瓦片:源像素 1:1 方形裁剪、左上药丸标签、悬停联动主图绿框、双击把主图对准预览中心。
+    /// 细节预览瓦片:源像素 1:1 方形裁剪、左上药丸标签、活动目标联动主图绿框、双击把主图对准预览中心。
     /// </summary>
     private sealed class AnalysisPreviewTile : Grid
     {
         private readonly Image _image;
         private readonly Action<double, double> _focus;
         private readonly Action<Rect?> _highlight;
+        private readonly string _label;
         private double _centerU = 0.5;
         private double _centerV = 0.5;
         private Rect? _frameRect;
         private int _cropPixels;
         private double _displayWidth;
         private double _displayHeight;
-        private bool _isHovered;
+        private bool _isHighlighted;
 
-        /// <summary>
-        /// 创建细节预览瓦片。
-        /// </summary>
-        /// <param name="label">药丸标签文字。</param>
-        /// <param name="focus">双击回调(对准该图像点)。</param>
-        /// <param name="highlight">悬停联动回调(显示朝向 uv 矩形)。</param>
         public AnalysisPreviewTile(string label, Action<double, double> focus, Action<Rect?> highlight)
         {
             _focus = focus;
             _highlight = highlight;
+            _label = label;
             var labelText = new TextBlock
             {
                 Text = label,
@@ -504,23 +883,77 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
             Children.Add(outer);
             Children.Add(labelHost);
 
-            // 绿框只在指针悬停预览瓦片时出现:换图/换帧会重建裁剪图,但重建本身不得点亮绿框。
-            PointerEntered += (_, _) =>
+            IsTabStop = true;
+            UseSystemFocusVisuals = true;
+            AutomationProperties.SetName(this, label + "细节预览");
+            AutomationProperties.SetHelpText(this, "Enter 或空格显示绿框,再按一次或 Esc 清除");
+            AutomationProperties.SetItemStatus(this, "绿框未显示");
+            KeyDown += (_, e) =>
             {
-                _isHovered = true;
-                PushHighlight();
+                if (e.Key is VirtualKey.Enter or VirtualKey.Space)
+                {
+                    PinToggleRequested?.Invoke();
+                    e.Handled = true;
+                }
+                else if (e.Key == VirtualKey.Escape)
+                {
+                    PinClearRequested?.Invoke();
+                    e.Handled = true;
+                }
             };
-            PointerExited += (_, _) =>
-            {
-                _isHovered = false;
-                _highlight(null);
-            };
+
             DoubleTapped += (_, e) =>
             {
-                _focus(_centerU, _centerV);
+                FocusCenter();
                 e.Handled = true;
             };
         }
+
+        public Action? PinToggleRequested { get; set; }
+
+        public Action? PinClearRequested { get; set; }
+
+        internal void TogglePinnedFromAutomation() => PinToggleRequested?.Invoke();
+
+        internal AutomationPeer CreatePeerForAcceptance() => OnCreateAutomationPeer();
+
+        protected override AutomationPeer OnCreateAutomationPeer()
+            => new AnalysisPreviewTileAutomationPeer(this);
+
+        private sealed class AnalysisPreviewTileAutomationPeer(AnalysisPreviewTile owner)
+            : FrameworkElementAutomationPeer(owner), IInvokeProvider
+        {
+            protected override AutomationControlType GetAutomationControlTypeCore()
+                => AutomationControlType.Button;
+
+            protected override string GetClassNameCore() => nameof(AnalysisPreviewTile);
+
+            protected override object GetPatternCore(PatternInterface patternInterface)
+                => patternInterface == PatternInterface.Invoke
+                    ? this
+                    : base.GetPatternCore(patternInterface);
+
+            public void Invoke()
+            {
+                if (Owner is not AnalysisPreviewTile tile)
+                {
+                    return;
+                }
+
+                if (tile.DispatcherQueue.HasThreadAccess)
+                {
+                    tile.TogglePinnedFromAutomation();
+                }
+                else
+                {
+                    tile.DispatcherQueue.TryEnqueue(tile.TogglePinnedFromAutomation);
+                }
+            }
+        }
+
+        public string Label => _label;
+
+        public void TriggerFocusForAcceptance() => FocusCenter();
 
         /// <summary>是否已贴上裁剪图。</summary>
         public bool HasImage => _image.Source != null;
@@ -560,34 +993,32 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
             _cropPixels = 0;
             _displayWidth = 0;
             _displayHeight = 0;
-            if (_isHovered)
-            {
-                _highlight(null);
-            }
+            // 没有可框选的源像素时撤掉绿框;活动目标本身由面板状态机清除。
+            PushHighlight();
         }
 
         /// <summary>释放自持位图引用。</summary>
         public void Dispose()
         {
             _image.Source = null;
+            _isHighlighted = false;
         }
 
-        /// <summary>丢掉悬停态并撤掉绿框(面板收起等拿不到 PointerExited 的场合用)。</summary>
-        public void ResetHover()
+        /// <summary>标记本瓦片是否为当前唯一活动目标;辅助技术读出相同状态。</summary>
+        public void SetHighlighted(bool highlighted)
         {
-            if (!_isHovered)
-            {
-                return;
-            }
-
-            _isHovered = false;
-            _highlight(null);
+            _isHighlighted = highlighted;
+            AutomationProperties.SetItemStatus(this, highlighted ? "绿框已显示" : "绿框未显示");
+            AutomationProperties.SetHelpText(this, highlighted
+                ? "按 Enter 或空格清除绿框,Esc 也可清除"
+                : "按 Enter 或空格显示绿框");
         }
 
-        /// <summary>计算裁剪区/对焦框在主图上的 uv 矩形并推给主图(仅悬停时;重建裁剪图不点亮绿框)。</summary>
-        private void PushHighlight()
+        private void FocusCenter() => _focus(_centerU, _centerV);
+
+        public void PushHighlight()
         {
-            if (!_isHovered)
+            if (!_isHighlighted)
             {
                 return;
             }
@@ -615,4 +1046,15 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
     }
 
+}
+
+internal enum AnalysisPreviewPhase
+{
+    Hover,
+    Leave,
+    Press,
+    Move,
+    Release,
+    Cancel,
+    CaptureLost,
 }
