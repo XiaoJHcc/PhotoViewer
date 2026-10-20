@@ -97,6 +97,14 @@ internal sealed partial class WindowsMainWindow
                     _photo.ZoomBy(1.1);
                     _photo.FitToView();
                     CheckCaptionRegion();
+                    // TOOLBAR-08：空间不足先按组换行/换列；只有单组超长才允许沿主轴滚动。
+                    if (size.Width == 700)
+                    {
+                        RequireSmoke(_controlBar.GroupLineCount >= 2, $"{mode} 700 宽下控制栏未按组换行");
+                        RequireSmoke(_controlBar.ScrollableMain <= 0.5,
+                            $"{mode} 700 宽下控制栏仍以滚动代替换行: {_controlBar.ScrollableMain}");
+                    }
+
                     checks.Add($"PASS resize/present/caption: {mode} {size.Width}x{size.Height} scale={scale}");
                 }
             }
@@ -503,6 +511,20 @@ internal sealed partial class WindowsMainWindow
             && frame.X + frame.Width <= size.Width + 0.5 && frame.Y + frame.Height <= size.Height + 0.5,
             $"导航图可见框越界: {frame} vs {size.Width}x{size.Height}");
 
+        // IMAGE-06：白框拖动定位——框内按下并拖动后，视口中心朝目标归一化点移动。
+        var beforeCenter = _photo.ViewCenter;
+        RequireSmoke(_navigator.PressAt(frame.X + frame.Width / 2, frame.Y + frame.Height / 2), "导航图白框按下未开始拖动");
+        _navigator.DragTo(Math.Max(1, frame.X + frame.Width / 2 - size.Width * 0.18),
+            Math.Max(1, frame.Y + frame.Height / 2 - size.Height * 0.18));
+        _navigator.Release();
+        await Task.Delay(150);
+        var afterCenter = _photo.ViewCenter;
+        RequireSmoke(!_navigator.IsDragging, "导航图拖动未结束");
+        RequireSmoke(afterCenter.U < beforeCenter.U - 0.05 && afterCenter.V < beforeCenter.V - 0.05,
+            $"导航图拖动未移动视口中心: {beforeCenter} → {afterCenter}");
+        RequireSmoke(_navigator.FrameBounds.X < frame.X - 0.5 && _navigator.FrameBounds.Y < frame.Y - 0.5,
+            "导航图白框未跟随拖动");
+
         _photo.ZoomBy(0.5);
         await Task.Delay(120);
         var smaller = $"{_photo.PhysicalScale * 100:0.##}%";
@@ -521,7 +543,7 @@ internal sealed partial class WindowsMainWindow
         _main.Settings.ShowZoomIndicator = true;
         _photo.FitToView();
         await Task.Delay(120);
-        checks.Add("PASS navigator: fit hides; zoom shows 150-long-edge thumbnail, in-bounds frame, live percentage; setting respected");
+        checks.Add("PASS navigator: fit hides; zoom shows 150-long-edge thumbnail, in-bounds frame, live percentage; white frame drags the viewport center; setting respected");
     }
 
     /// <summary>胶片条用户接管与减少动态效果(FILM-03):动画中接管即停,减少动态效果直接到终点。</summary>
@@ -683,6 +705,9 @@ internal sealed partial class WindowsMainWindow
         _analysis.TriggerTileClickForAcceptance(0.25, 0.25);
         await Task.Delay(120);
         RequireSmoke(_analysis.CosineLabel == "Cosine 8,8", $"cosine 参考点未按点击重算: {_analysis.CosineLabel}");
+        RequireSmoke(_analysis.DiagnosticCrosshairVisible, "诊断瓦片未落准星");
+        // ANALYSIS-08：直方图与细节预览不显示准星。
+        RequireSmoke(!_analysis.HistogramCrosshairVisible, "直方图仍显示准星");
         RequireSmoke(_analysis.ShakeLabel.Length > 0, "抖动判定标签为空");
 
         // 换向:上下布局下分析栏横排,瓦片按宽度均分

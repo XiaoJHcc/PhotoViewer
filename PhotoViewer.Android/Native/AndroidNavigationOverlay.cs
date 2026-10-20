@@ -9,7 +9,8 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// 缩放指示器（导航图）：非适应态时显示在主图区右下角——半透明 #222 圆角宿主、当前展示产物生成的
-/// 等比缩略图、白色 1 点可见框与物理缩放百分比；点按/拖动导航图把照片居中到对应位置（触屏增强）。
+/// 等比缩略图、白色 1 点可见框与物理缩放百分比；白框可拖动定位（IMAGE-06），
+/// 按下框内保留抓取偏移，按在缩略图其他位置先把框心移到该点。
 /// 几何与颜色取 IMAGE-06 令牌，宿主不透明度 0.6。
 /// </summary>
 internal sealed class AndroidNavigationOverlay : View
@@ -22,6 +23,8 @@ internal sealed class AndroidNavigationOverlay : View
     private (double X, double Y, double Width, double Height) _viewport;
     private string _zoomText = "100%";
     private Action<double, double>? _centerRequested;
+    private bool _dragging;
+    private double _grabX, _grabY;
 
     /// <summary>导航图当前位图（验收核对）。</summary>
     internal Bitmap? Bitmap => _bitmap;
@@ -111,21 +114,48 @@ internal sealed class AndroidNavigationOverlay : View
             labelTop + _labelPaint.TextSize, host.Width() - 4 * density);
     }
 
-    /// <summary>点按/拖动导航图：把触点对应的归一化图像点居中到主图视口。</summary>
+    /// <summary>点按/拖动导航图：白框可拖动定位（IMAGE-06），按下框内保留抓取偏移。</summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null) return false;
-        if (e.ActionMasked is MotionEventActions.Down or MotionEventActions.Move)
+        double density = AndroidUiTheme.Density(Context!);
+        double x = e.GetX() / density - DesignTokens.NavPadding;
+        double y = e.GetY() / density - DesignTokens.NavPadding;
+        if (x < 0 || y < 0 || x > _navWidthDp || y > _navHeightDp)
         {
-            double density = AndroidUiTheme.Density(Context!);
-            double u = (e.GetX() / density - DesignTokens.NavPadding) / Math.Max(1, _navWidthDp);
-            double v = (e.GetY() / density - DesignTokens.NavPadding) / Math.Max(1, _navHeightDp);
-            _centerRequested?.Invoke(Math.Clamp(u, 0, 1), Math.Clamp(v, 0, 1));
+            // 点到百分比标签或宿主内边距：不属于缩略图拖动区域。
+            _dragging = false;
+            return false;
+        }
+
+        if (e.ActionMasked == MotionEventActions.Down)
+        {
+            bool inside = x >= _viewport.X && x <= _viewport.X + _viewport.Width
+                && y >= _viewport.Y && y <= _viewport.Y + _viewport.Height;
+            _grabX = inside ? x - _viewport.X : _viewport.Width / 2;
+            _grabY = inside ? y - _viewport.Y : _viewport.Height / 2;
+            _dragging = true;
+        }
+
+        if ((e.ActionMasked is MotionEventActions.Down or MotionEventActions.Move) && _dragging)
+        {
+            double left = Math.Clamp(x - _grabX, 0, Math.Max(0, _navWidthDp - _viewport.Width));
+            double top = Math.Clamp(y - _grabY, 0, Math.Max(0, _navHeightDp - _viewport.Height));
+            _centerRequested?.Invoke(
+                Math.Clamp((left + _viewport.Width / 2) / Math.Max(1, _navWidthDp), 0, 1),
+                Math.Clamp((top + _viewport.Height / 2) / Math.Max(1, _navHeightDp), 0, 1));
             return true;
         }
-        return e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel;
+
+        if (e.ActionMasked is MotionEventActions.Up or MotionEventActions.Cancel)
+        {
+            _dragging = false;
+            return true;
+        }
+
+        return false;
     }
 
     private static Color FromToken(uint argb) => new(unchecked((int)argb));

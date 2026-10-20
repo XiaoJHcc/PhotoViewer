@@ -135,6 +135,7 @@ internal sealed class WindowsControlBar : Grid
             VerticalContentAlignment = VerticalAlignment.Stretch,
         };
         _scroll.LayoutUpdated += (_, _) => ApplyPendingScroll();
+        _scroll.SizeChanged += (_, _) => UpdateWrapLimit();
         Children.Add(_scroll);
 
         _main.PropertyChanged += OnMainChanged;
@@ -170,8 +171,35 @@ internal sealed class WindowsControlBar : Grid
         _scroll.VerticalScrollBarVisibility = isRowLayout ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
         ApplyRatingOrder();
         ApplyOrientationMargins();
+        UpdateWrapLimit();
         RestoreScrollOffset();
     }
+
+    /// <summary>
+    /// 按滚动宿主视口给出换行/换列的主轴上限（TOOLBAR-08）：
+    /// 只要各组能整组换行容纳，就不让 ScrollViewer 以滚动代替换行；单组超长时仍由滚动宿主兜底。
+    /// </summary>
+    private void UpdateWrapLimit()
+    {
+        double viewport = _isRowLayout ? _scroll.ViewportWidth : _scroll.ViewportHeight;
+        if (viewport <= 0)
+        {
+            viewport = _isRowLayout ? _scroll.ActualWidth : _scroll.ActualHeight;
+        }
+
+        if (viewport <= 0)
+        {
+            return;
+        }
+
+        _groups.MainLimit = Math.Max(0, viewport - WindowsLayout.ControlBarPadding * 2);
+    }
+
+    /// <summary>验收专用：当前换行/换列后的行（列）数。</summary>
+    internal int GroupLineCount => _groups.LineCount;
+
+    /// <summary>验收专用：滚动宿主在主轴上还能滚动的长度；换行足够时为 0。</summary>
+    internal double ScrollableMain => _isRowLayout ? _scroll.ScrollableWidth : _scroll.ScrollableHeight;
 
     /// <summary>换向前记住用户滚动位置(TOOLBAR-08)。</summary>
     private void SaveScrollOffset()
@@ -255,7 +283,7 @@ internal sealed class WindowsControlBar : Grid
         {
             if (child is Button { Tag: string command } button)
             {
-                button.IsEnabled = hasFile || command == "Open";
+                WindowsControlStyles.SetContentEnabled(button, hasFile || command == "Open");
             }
         }
     }
@@ -284,7 +312,7 @@ internal sealed class WindowsControlBar : Grid
             {
                 Text = entry.DisplayValue,
                 FontSize = WindowsLayout.ExifValueFontSize,
-                FontWeight = Microsoft.UI.Text.FontWeights.SemiBold,
+                FontWeight = Microsoft.UI.Text.FontWeights.Bold,
                 Foreground = new SolidColorBrush(WindowsLayout.ExifValueForeground),
                 HorizontalAlignment = HorizontalAlignment.Center,
             });
@@ -373,6 +401,7 @@ internal sealed class WindowsControlBar : Grid
             Tag = item.Command,
             IsEnabled = _main.CurrentFile != null || item.Command == "Open",
         };
+        WindowsControlStyles.ApplyCommandButton(button);
         var tooltip = BuildTooltip(item);
         ToolTipService.SetToolTip(button, tooltip);
         // TOOLBAR-04：读屏名称与悬停提示同源，含命令名与当前主/次绑定。
@@ -381,18 +410,18 @@ internal sealed class WindowsControlBar : Grid
         return button;
     }
 
-    /// <summary>拼装 tooltip:命令名 + 主/次绑定实际按键。</summary>
+    /// <summary>拼装 tooltip:命令名 + 主/次绑定实际按键(可读键名,不出现 D2/Oem3 等枚举名)。</summary>
     private static string BuildTooltip(SettingsViewModel.HotkeyItem item)
     {
         var parts = new List<string> { item.Name };
         if (item.PrimaryHotkey != null)
         {
-            parts.Add(item.PrimaryHotkey.ToDisplayString());
+            parts.Add(WindowsInput.FormatGesture(item.PrimaryHotkey));
         }
 
         if (item.SecondaryHotkey != null)
         {
-            parts.Add(item.SecondaryHotkey.ToDisplayString());
+            parts.Add(WindowsInput.FormatGesture(item.SecondaryHotkey));
         }
 
         return string.Join(" · ", parts);
@@ -412,8 +441,8 @@ internal sealed class WindowsControlBar : Grid
                 : on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
             var glyph = star == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
             var size = star == 0 ? DesignTokens.ToolbarRatingClearGlyphFontSize : WindowsLayout.RatingGlyphFontSize;
-            button.IsEnabled = hasFile;
             button.Content = CreateGlyph(glyph, size, tint);
+            WindowsControlStyles.SetContentEnabled(button, hasFile);
         }
 
         _ratingGroup.Visibility = _main.ControlVM.ShowRating ? Visibility.Visible : Visibility.Collapsed;
@@ -472,16 +501,22 @@ internal sealed class WindowsControlBar : Grid
         VerticalAlignment = VerticalAlignment.Center,
     };
 
-    /// <summary>创建方形字形按钮。</summary>
-    private static Button CreateGlyphButton(double size, double fontSize, Color? tint) => new()
+    /// <summary>创建方形字形按钮(透明底,悬停/按下走统一的小型控件状态)。</summary>
+    private static Button CreateGlyphButton(double size, double fontSize, Color? tint)
     {
-        Width = size,
-        Height = size,
-        Padding = new Thickness(0),
-        Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
-        BorderThickness = new Thickness(0),
-        Content = CreateGlyph(WindowsIcons.StarGlyph, fontSize, tint),
-    };
+        var button = new Button
+        {
+            Width = size,
+            Height = size,
+            Padding = new Thickness(0),
+            Background = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0)),
+            BorderThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(DesignTokens.ToolbarCornerRadius),
+            Content = CreateGlyph(WindowsIcons.StarGlyph, fontSize, tint),
+        };
+        WindowsControlStyles.ApplyTransparentSquareButton(button);
+        return button;
+    }
 
     /// <summary>按评分设置当前照片。</summary>
     private async void RateCurrent(int rating)

@@ -169,21 +169,23 @@ internal sealed class WindowsFilterBar : Panel
     private static void ArrangeChild(UIElement child, LayoutRect rect)
         => child.Arrange(new Rect(rect.X, rect.Y, rect.Width, rect.Height));
 
-    /// <summary>创建统一外观的下拉框(占位与旧壳同为 90×32)。</summary>
+    /// <summary>
+    /// 创建下拉框(占位与旧壳同为 90×32)。外观交给 WinUI 原生模板：
+    /// 只保留几何尺寸，不再覆写描边、圆角或字号（Design/README §3 允许小型控件走原生）。
+    /// </summary>
     private static ComboBox CreateComboBox() => new()
     {
         Width = WindowsLayout.FilterItemWidth,
         Height = WindowsLayout.FilterItemHeight,
-        FontSize = 13,
+        MinWidth = 0,
         HorizontalAlignment = HorizontalAlignment.Center,
-        CornerRadius = new CornerRadius(DesignTokens.FilterControlCornerRadius),
-        BorderBrush = new SolidColorBrush(Color.FromArgb(0xFF, 0x44, 0x44, 0x44)),
     };
 
     /// <summary>
     /// 相似聚类开关(旧壳 FilterBarView 的 ToggleButton):90×27、选中态走蓝底蓝框,
     /// 直接写回 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>(持久化在设置里)。
-    /// WinUI 的 ToggleButton 模板用主题键画背景,必须按元素改键而不是只设 Background。
+    /// WinUI 的 ToggleButton 模板用主题键画四态,统一由 <see cref="WindowsControlStyles"/> 覆盖,
+    /// 悬停/按下不会回落到系统主题色。
     /// </summary>
     private ToggleButton CreateSimilarityToggle()
     {
@@ -202,17 +204,7 @@ internal sealed class WindowsFilterBar : Panel
             VerticalContentAlignment = VerticalAlignment.Center,
         };
         ToolTipService.SetToolTip(toggle, "展开/关闭相似聚类面板");
-        toggle.Resources["ToggleButtonBackground"] = new SolidColorBrush(Color.FromArgb(0, 0, 0, 0));
-        toggle.Resources["ToggleButtonBackgroundPointerOver"] = new SolidColorBrush(WindowsLayout.SimilarityToggleHover);
-        toggle.Resources["ToggleButtonBackgroundChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedBackground);
-        toggle.Resources["ToggleButtonBackgroundCheckedPointerOver"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedHover);
-        toggle.Resources["ToggleButtonBackgroundCheckedPressed"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedHover);
-        toggle.Resources["ToggleButtonBorderBrush"] = new SolidColorBrush(WindowsLayout.SimilarityToggleBorder);
-        toggle.Resources["ToggleButtonBorderBrushPointerOver"] = new SolidColorBrush(Color.FromArgb(0xFF, 0x66, 0x66, 0x66));
-        toggle.Resources["ToggleButtonBorderBrushChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedBorder);
-        toggle.Resources["ToggleButtonForeground"] = new SolidColorBrush(WindowsLayout.SimilarityToggleForeground);
-        toggle.Resources["ToggleButtonForegroundPointerOver"] = new SolidColorBrush(Color.FromArgb(0xFF, 0xCC, 0xCC, 0xCC));
-        toggle.Resources["ToggleButtonForegroundChecked"] = new SolidColorBrush(WindowsLayout.SimilarityToggleCheckedForeground);
+        WindowsControlStyles.ApplySimilarityToggle(toggle);
         toggle.Checked += (_, _) =>
         {
             if (!_syncing) _filter.IsSimilarityPanelOpen = true;

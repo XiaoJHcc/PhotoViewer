@@ -233,7 +233,7 @@ internal sealed class AndroidAnalysisPanel : View
             }
             if (tile.Kind == AnalysisTileKind.Diagnostic)
                 DrawShake(canvas, tile, content, density);
-            if (tile.Kind != AnalysisTileKind.Detail && _presenter.CrosshairU is { } u && _presenter.CrosshairV is { } v)
+            if (tile.Kind == AnalysisTileKind.Diagnostic && _presenter.CrosshairU is { } u && _presenter.CrosshairV is { } v)
                 DrawCrosshair(canvas, content, u, v);
             if (tile.Kind == AnalysisTileKind.Detail)
             {

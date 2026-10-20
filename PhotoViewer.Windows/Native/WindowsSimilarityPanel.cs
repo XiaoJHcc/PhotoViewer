@@ -174,7 +174,7 @@ internal sealed class WindowsSimilarityPanel : Grid
 
     /// <summary>
     /// 按可用宽度落面板宽度(SIM-01/SIM-07):行布局取共享 <see cref="SimilarityPanelGeometry.RowWidth"/>
-    /// 并夹到可用宽一半;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
+    /// （已含“可用宽一半”上限与 4 点外边距）;列布局固定 <see cref="SimilarityPanelGeometry.PanelWidth"/>。
     /// </summary>
     /// <param name="availableWidth">文件栏/窗口可用宽度。</param>
     /// <param name="hasItems">是否有相似项。</param>
@@ -189,21 +189,19 @@ internal sealed class WindowsSimilarityPanel : Grid
             return;
         }
 
-        double half = Math.Max(1, availableWidth / 2);
         if (_isRowLayout)
         {
-            double width = Math.Min(
-                SimilarityPanelGeometry.RowWidth(hasItems, itemCount, availableWidth) - SimilarityPanelGeometry.Margin,
-                half);
-            Width = Math.Max(0, width);
-            MaxWidth = Math.Max(0, width);
+            double width = Math.Max(0, SimilarityPanelGeometry.RowWidth(hasItems, itemCount, availableWidth));
+            Width = width;
+            MaxWidth = width;
+            // RowWidth 已含 4 点外边距；面板占满该宽度，外框再让出右边距，卡片才不会被裁掉 4 点。
             _frame.Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0);
             return;
         }
 
         Width = SimilarityPanelGeometry.PanelWidth;
         MaxWidth = SimilarityPanelGeometry.PanelWidth;
-        _frame.Margin = new Thickness(0);
+        _frame.Margin = new Thickness(0, 0, WindowsLayout.SimilarityPanelMargin, 0);
     }
 
     /// <summary>应用当前方向的列表轴与动作区停靠位置。</summary>
@@ -385,6 +383,7 @@ internal sealed class WindowsSimilarityPanel : Grid
                 HorizontalAlignment = HorizontalAlignment.Center,
                 HorizontalContentAlignment = HorizontalAlignment.Center,
             };
+            WindowsControlStyles.ApplyActionButton(_button);
             _button.Click += (_, _) => start();
             // WinUI 的 ProgressBar 模板在本工程(非 XAML 工程)加载即抛 XamlParseException,
             // 这里用两条 Border 自绘进度:底槽 + 按比例填充。

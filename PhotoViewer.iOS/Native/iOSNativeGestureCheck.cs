@@ -189,7 +189,7 @@ internal static class iOSNativeGestureCheck
                 await AssertScrollInvariantsAsync(root, "平移后");
                 lines.Add($"PASS 拖动平移：pan=({panAfterX:0.##},{panAfterY:0.##})，导航框随动到 ({movedViewport.X:0.#},{movedViewport.Y:0.#})");
 
-                // 五、导航图拖动定位：把某归一化图像点移到视口中心（触屏增强，Mac 无此交互）。
+                // 五、导航图白框拖动定位：把某归一化图像点移到视口中心（IMAGE-06，四端同一交互）。
                 await UiDispatcher.InvokeAsync(() => root.Photo.CenterOnNormalizedPoint(.6, .55));
                 await SettleAsync(root);
                 var centered = await UiDispatcher.InvokeAsync(() =>

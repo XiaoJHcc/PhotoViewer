@@ -217,6 +217,25 @@ public sealed class PhotoViewport
         ClampPan();
     }
 
+    /// <summary>
+    /// 保持当前缩放，把显示朝向的归一化图像点移到视口中心（导航图拖动定位）。
+    /// 适应态下导航图不显示，直接忽略。
+    /// </summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    public void CenterOnNormalizedPoint(double u, double v)
+    {
+        if (IsFit)
+        {
+            return;
+        }
+
+        PanX = (.5 - u) * ImageWidth * Scale;
+        PanY = (.5 - v) * ImageHeight * Scale;
+        ClampPan();
+        FollowsFocus = IsViewCenteredOnFocusPoint;
+    }
+
     /// <summary>按比例放大或缩小，锚定指针或视口中心。</summary>
     /// <param name="factor">缩放倍率。</param>
     /// <param name="anchor">视图坐标锚点；null 表示视口中心。</param>

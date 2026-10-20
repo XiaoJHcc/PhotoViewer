@@ -338,6 +338,13 @@ internal static class NativeMainLayoutAcceptance
             (double)viewport.X + (double)viewport.Width > (double)navigation.Width + Exact ||
             (double)viewport.Y + (double)viewport.Height > (double)navigation.Height + Exact)
             throw new InvalidOperationException($"放大后导航框超出 NavigationSize：{viewport}/{navigation}");
+
+        // IMAGE-06：白框拖动定位走共享 CenterOnNormalizedPoint，拖动后视口中心落在目标归一化点附近。
+        photo.CenterOnNormalizedPoint(.62, .58);
+        await Task.Delay(120);
+        var center = photo.ViewCenter;
+        if (Math.Abs(center.U - .62) > .03 || Math.Abs(center.V - .58) > .03)
+            throw new InvalidOperationException($"导航图拖动定位未生效：{center}");
         double backing = (double)window.Window.BackingScaleFactor;
         using var capture = photo.CaptureLinearFrame(navigation: true);
         if (Math.Abs(Math.Max((double)capture.Width, (double)capture.Height) - 150 * backing) > 1.5)

@@ -262,6 +262,9 @@ internal sealed class WindowsDiagnosticTile : Panel
         RenderCrosshair();
     }
 
+    /// <summary>验收专用:准星当前是否绘制。</summary>
+    internal bool CrosshairVisible => _crosshairHorizontal.Visibility == Visibility.Visible;
+
     /// <summary>释放位图引用(位图本身由 presenter 所有)。</summary>
     public void Dispose()
     {

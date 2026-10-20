@@ -28,6 +28,11 @@ internal sealed class WindowsWrapPanel : Panel
         nameof(LineSpacing), typeof(double), typeof(WindowsWrapPanel),
         new PropertyMetadata(0d, OnLayoutPropertyChanged));
 
+    /// <summary>主轴换行上限依赖属性；<see cref="double.PositiveInfinity"/> 表示不限制。</summary>
+    public static readonly DependencyProperty MainLimitProperty = DependencyProperty.Register(
+        nameof(MainLimit), typeof(double), typeof(WindowsWrapPanel),
+        new PropertyMetadata(double.PositiveInfinity, OnLayoutPropertyChanged));
+
     /// <summary>排布方向;Vertical 表示各组纵向换列(对应上下布局)。</summary>
     public Orientation Orientation
     {
@@ -49,11 +54,24 @@ internal sealed class WindowsWrapPanel : Panel
         set => SetValue(LineSpacingProperty, value);
     }
 
+    /// <summary>
+    /// 主轴换行上限（逻辑点）。滚动宿主测量内容时会给出无限主轴，
+    /// 此时用视口主轴作上限，才能按组换行而不是把整条内容交给滚动。
+    /// </summary>
+    public double MainLimit
+    {
+        get => (double)GetValue(MainLimitProperty);
+        set => SetValue(MainLimitProperty, value);
+    }
+
+    /// <summary>最近一次排布的行（列）数，供控制栏验收核对换行确实发生。</summary>
+    internal int LineCount { get; private set; }
+
     /// <inheritdoc/>
     protected override Size MeasureOverride(Size availableSize)
     {
         var horizontal = Orientation == Orientation.Horizontal;
-        var mainLimit = horizontal ? availableSize.Width : availableSize.Height;
+        var mainLimit = EffectiveMainLimit(horizontal ? availableSize.Width : availableSize.Height);
         double mainUsed = 0;
         double crossUsed = 0;
         double lineMain = 0;
@@ -85,16 +103,21 @@ internal sealed class WindowsWrapPanel : Panel
         mainUsed = Math.Max(mainUsed, lineMain);
         crossUsed += lineCross;
 
+        // 内容能换行容纳时把主轴铺满视口（行内容居中且不产生滚动）；
+        // 单个组超长时报告内容长度，让滚动宿主有可滚范围。主轴上限未知时只报告内容长度。
+        var reportedMain = double.IsInfinity(mainLimit) ? mainUsed : Math.Max(mainUsed, mainLimit);
+        LineCount = CountLines(horizontal, mainLimit);
+
         return horizontal
-            ? new Size(mainUsed, crossUsed)
-            : new Size(crossUsed, mainUsed);
+            ? new Size(reportedMain, crossUsed)
+            : new Size(crossUsed, reportedMain);
     }
 
     /// <inheritdoc/>
     protected override Size ArrangeOverride(Size finalSize)
     {
         var horizontal = Orientation == Orientation.Horizontal;
-        var mainLimit = horizontal ? finalSize.Width : finalSize.Height;
+        var mainLimit = EffectiveMainLimit(horizontal ? finalSize.Width : finalSize.Height);
 
         // 先按最终尺寸把项分行,再逐行居中排布(旧壳是"整行居中",不是整体居中)
         var lines = new List<List<UIElement>>();
@@ -122,6 +145,10 @@ internal sealed class WindowsWrapPanel : Panel
             lines.Add(current);
         }
 
+        // 居中按视口主轴计算，不按可能被单个超长组撑大的文档主轴。
+        var availableMain = horizontal ? finalSize.Width : finalSize.Height;
+        var centerLimit = double.IsInfinity(mainLimit) ? availableMain : Math.Min(mainLimit, availableMain);
+
         var cross = 0d;
         foreach (var line in lines)
         {
@@ -137,7 +164,7 @@ internal sealed class WindowsWrapPanel : Panel
             }
 
             lineMainTotal += ItemSpacing * (line.Count - 1);
-            var main = Math.Max(0, (mainLimit - lineMainTotal) / 2);
+            var main = Math.Max(0, (centerLimit - lineMainTotal) / 2);
             foreach (var child in line)
             {
                 if (horizontal)
@@ -163,4 +190,46 @@ internal sealed class WindowsWrapPanel : Panel
     /// <summary>布局相关属性变化时重排。</summary>
     private static void OnLayoutPropertyChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
         => ((WindowsWrapPanel)d).InvalidateMeasure();
+
+    /// <summary>主轴换行上限：取可用主轴与视口上限的较小者；未知（≤0）时视为不限制。</summary>
+    /// <param name="availableMain">宿主给出的可用主轴长度。</param>
+    /// <returns>有效主轴上限。</returns>
+    private double EffectiveMainLimit(double availableMain)
+    {
+        var limit = Math.Min(availableMain, MainLimit);
+        if (double.IsInfinity(limit) || double.IsNaN(limit))
+        {
+            return double.PositiveInfinity;
+        }
+
+        return limit < 1 ? double.PositiveInfinity : limit;
+    }
+
+    /// <summary>按当前子项尺寸与间距统计行（列）数；子项尚未测量时返回 1。</summary>
+    /// <param name="horizontal">是否横排。</param>
+    /// <param name="limit">主轴上限。</param>
+    /// <returns>行（列）数。</returns>
+    private int CountLines(bool horizontal, double limit)
+    {
+        int lines = 1;
+        double lineMain = 0;
+        var first = true;
+        foreach (var child in Children)
+        {
+            var childMain = horizontal ? child.DesiredSize.Width : child.DesiredSize.Height;
+            var next = first ? childMain : lineMain + ItemSpacing + childMain;
+            if (!first && !double.IsInfinity(limit) && next > limit)
+            {
+                lines++;
+                lineMain = childMain;
+            }
+            else
+            {
+                lineMain = next;
+                first = false;
+            }
+        }
+
+        return lines;
+    }
 }

@@ -111,6 +111,10 @@ public static class DesignTokens
     public const uint ColorSimActionBorder = 0xFF555555u;
     /// <summary>color.sim.action.foreground（color） SIM-01：动作按钮文字色。</summary>
     public const uint ColorSimActionForeground = 0xFFCCCCCCu;
+    /// <summary>color.sim.action.hover（color） SIM-03：动作按钮悬停底色（旧壳 #3A3A3A）。</summary>
+    public const uint ColorSimActionHover = 0xFF3A3A3Au;
+    /// <summary>color.sim.action.pressed（color） SIM-03：动作按钮按下底色。</summary>
+    public const uint ColorSimActionPressed = 0xFF333333u;
     /// <summary>color.sim.caption（color） SIM-01：“未提取”等说明文字色。</summary>
     public const uint ColorSimCaption = 0xFF777777u;
     /// <summary>color.sim.error（color） SIM-01：提取失败/错误文字色。</summary>
@@ -145,6 +149,18 @@ public static class DesignTokens
     public const uint ColorToolbarCommandBackground = 0xFF333333u;
     /// <summary>color.toolbar.command.border（color） TOOLBAR-01：命令按钮描边（Windows 显式；Android 只填充不描边）。</summary>
     public const uint ColorToolbarCommandBorder = 0xFF555555u;
+    /// <summary>color.toolbar.command.hover.background（color） TOOLBAR-10：命令按钮悬停底色（旧壳 pointerover #444 与样机 #3D3D3D 的折中值）。</summary>
+    public const uint ColorToolbarCommandHoverBackground = 0xFF3D3D3Du;
+    /// <summary>color.toolbar.command.hover.border（color） TOOLBAR-10：命令按钮悬停描边。</summary>
+    public const uint ColorToolbarCommandHoverBorder = 0xFF666666u;
+    /// <summary>color.toolbar.command.pressed.background（color） TOOLBAR-10：命令按钮按下底色，比常态更深，与悬停拉开层次。</summary>
+    public const uint ColorToolbarCommandPressedBackground = 0xFF2A2A2Au;
+    /// <summary>color.toolbar.disabled.content.alpha（ratio） TOOLBAR-10：禁用控件只把内容降到该不透明度，底色与描边保持常态（不用系统禁用灰底）。</summary>
+    public const double ColorToolbarDisabledContentAlpha = 0.42;
+    /// <summary>color.toolbar.rating.hover.background（color） TOOLBAR-10：评分按钮悬停底色（旧壳 StarButton:pointerover #333）。</summary>
+    public const uint ColorToolbarRatingHoverBackground = 0xFF333333u;
+    /// <summary>color.toolbar.rating.pressed.background（color） TOOLBAR-10：评分按钮按下底色。</summary>
+    public const uint ColorToolbarRatingPressedBackground = 0xFF3A3A3Au;
     /// <summary>color.viewer.background（color） IMAGE-01：主图观片区底色。</summary>
     public const uint ColorViewerBackground = 0xFF000000u;
     /// <summary>exiftable.cell.paddingX（pt）：名称/中文名/值单元格左右内边距。</summary>
