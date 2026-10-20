@@ -1,6 +1,9 @@
 :root {
     color-scheme: dark;
-    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+    --pv-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    --pv-accent: #0A84FF;
+    font-family: var(--pv-font);
+    -webkit-font-smoothing: antialiased;
 }
 
 html, body {
@@ -12,6 +15,156 @@ html, body {
 
 #app {
     position: relative;
+    display: flex;
     width: 100vw;
     height: 100vh;
+}
+
+.pv-stage {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+#app.is-demo .pv-stage {
+    display: flex;
+    align-items: flex-start;
+    justify-content: flex-start;
+    padding: 16px;
+    overflow: auto;
+    background: #2a2a2e;
+}
+
+.pv-window {
+    position: relative;
+    flex: none;
+    overflow: hidden;
+    background: var(--pv-color-bar-background);
+    color: var(--pv-color-text-primary);
+    font-size: 12px;
+    user-select: none;
+    -webkit-user-select: none;
+    outline: none;
+}
+
+#app.is-demo .pv-window {
+    border-radius: 10px;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 50px rgba(0, 0, 0, 0.55);
+}
+
+.pv-pane {
+    position: absolute;
+    overflow: hidden;
+    background: var(--pv-color-bar-background);
+}
+
+.pv-pane-photo {
+    background: var(--pv-color-viewer-background);
+}
+
+.pv-divider {
+    position: absolute;
+    background: var(--pv-color-divider);
+}
+
+.pv-divider-analysis {
+    background: var(--pv-color-analysis-divider);
+}
+
+.pv-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+}
+
+.pv-overlay > * {
+    pointer-events: auto;
+}
+
+[hidden] {
+    display: none !important;
+}
+
+:focus-visible {
+    outline: 2px solid var(--pv-accent);
+    outline-offset: 1px;
+}
+
+/* 共用菜单（MENU-03@web）：仿 macOS 深色菜单 */
+.pv-menu-shield {
+    position: absolute;
+    inset: 0;
+    z-index: 900;
+}
+
+.pv-menu-layer {
+    position: absolute;
+    inset: 0;
+    z-index: 901;
+    pointer-events: none;
+}
+
+.pv-menu {
+    position: absolute;
+    min-width: 160px;
+    padding: 5px;
+    overflow-y: auto;
+    pointer-events: auto;
+    background: rgba(40, 40, 42, 0.96);
+    border: 0.5px solid rgba(255, 255, 255, 0.16);
+    border-radius: 8px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    font-size: 13px;
+    color: #ececec;
+    outline: none;
+}
+
+.pv-menu-item {
+    display: grid;
+    grid-template-columns: 16px 1fr auto;
+    align-items: center;
+    gap: 2px;
+    height: 22px;
+    padding: 0 10px 0 4px;
+    border-radius: 4px;
+    white-space: nowrap;
+    cursor: default;
+    outline: none;
+}
+
+.pv-menu-item.is-focused {
+    background: var(--pv-accent);
+    color: #fff;
+}
+
+.pv-menu-item.is-disabled {
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.pv-menu-item.is-disabled.is-focused {
+    background: transparent;
+}
+
+.pv-menu-mark {
+    font-size: 11px;
+    text-align: center;
+}
+
+.pv-menu-shortcut {
+    padding-left: 24px;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 12px;
+}
+
+.pv-menu-item.is-focused .pv-menu-shortcut {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.pv-menu-sep {
+    height: 1px;
+    margin: 5px 6px;
+    background: rgba(255, 255, 255, 0.12);
 }

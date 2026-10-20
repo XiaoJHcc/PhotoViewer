@@ -16,7 +16,7 @@ node --test "tests/**/*.test.js" # 纯逻辑单测（零依赖）
 
 VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被浏览器拦截，必须经本地服务打开。令牌产物 `src/tokens.g.js` 由 `python3 Tools/generate-design-tokens.py` 生成，不得手改。
 
-页面参数：`?check=<模块>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?empty` 以空态启动。
+页面参数：`?demo` 打开窗口外演示面板（尺寸、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。
 
 ## 结构与分层
 
@@ -43,9 +43,12 @@ src/
     layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js
   render/               # 浏览器实现：procedural（矢量程序化照片，存储朝向）、decoder（代理/Full/增强）、store（特征库）、thumbs（缩略图队列）
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
+    dom.js / menu.js    # 组件约定与工具（el/place/令牌 CSS 变量 --pv-<点分名转连字符，保留驼峰>）；共用弹出菜单
+    filterbar / filmstrip / card / similarity / photo / analysis / controlbar / picker  # 各分区组件与 .css
+  checks/               # ?check=<模块|all> 页内行为检查，按设计 ID 出报告
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
-dev/render-preview.html  # 开发用：方向码、代理/Full、增强、连拍的目视检查（不进产品）
+dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
 tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对，Design/README §8）
 ```
 

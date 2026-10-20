@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="color-scheme" content="dark">
+    <title>分析栏 harness</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/analysis.css">
+    <style>
+        .pv-harness-controls {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            z-index: 10;
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            max-width: 900px;
+            padding: 8px;
+            border-radius: 8px;
+            background: rgba(20, 20, 22, 0.78);
+            font: 12px var(--pv-font);
+            color: #ddd;
+        }
+        .pv-harness-controls button,
+        .pv-harness-controls select {
+            font: inherit;
+            color: inherit;
+            background: #2c2c2e;
+            border: 1px solid #444;
+            border-radius: 5px;
+            padding: 3px 8px;
+        }
+        .pv-harness-readout {
+            margin-left: 6px;
+            color: #9a9a9e;
+        }
+        .pv-harness-log {
+            position: fixed;
+            right: 12px;
+            bottom: 12px;
+            z-index: 10;
+            max-width: 46vw;
+            max-height: 60vh;
+            margin: 0;
+            padding: 8px;
+            overflow: auto;
+            border-radius: 8px;
+            background: rgba(10, 10, 12, 0.9);
+            color: #b8e6b8;
+            font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+            white-space: pre-wrap;
+        }
+        .pv-harness-log:empty {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <main id="app" aria-label="analysis harness"></main>
+    <div class="pv-harness-controls"></div>
+    <script type="module">
+import { createTokens } from "../src/core/tokens.js";
+import baseTokens from "../src/tokens.g.js";
+import { systemClock } from "../src/core/clock.js";
+import { createLibrary } from "../src/core/library.js";
+import { createApp } from "../src/core/app.js";
+import { createDecoder } from "../src/render/decoder.js";
+import { createStore } from "../src/render/store.js";
+import { el, place, applyTokenVariables, createTextMeasurer } from "../src/shell/dom.js";
+import { mountAnalysis } from "../src/shell/analysis.js";
+
+const params = new URLSearchParams(location.search);
+const t = createTokens("web");
+applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
+
+// 隐藏标签页会暂停 requestAnimationFrame，harness 用 setTimeout 代帧以保证直方图等派生结果可验证。
+const clock = {
+    ...systemClock(),
+    requestFrame: (fn) => globalThis.setTimeout(() => fn(performance.now()), 16),
+    cancelFrame: (id) => globalThis.clearTimeout(id),
+};
+const library = createLibrary();
+const decoder = createDecoder({ clock });
+const store = createStore({ clock });
+const measureText = createTextMeasurer();
+const app = createApp({ t, clock, profile: "web", library, decoder, store, dpr: devicePixelRatio, measureText });
+
+const stage = el("div", { class: "pv-stage" });
+document.getElementById("app").append(stage);
+const windowEl = el("div", { class: "pv-window", role: "application", "aria-label": "PhotoViewer" });
+stage.append(windowEl);
+
+const photoPane = el("div", { class: "pv-pane pv-pane-photo" });
+const divider = el("div", { class: "pv-divider pv-divider-analysis" });
+const analysisPane = el("div", { class: "pv-pane pv-pane-analysis" });
+windowEl.append(photoPane, divider, analysisPane);
+
+const component = mountAnalysis(analysisPane, { app, t, clock, decoder, store, library, measureText });
+
+function layoutPanes(state) {
+    const p = state.layout.panes;
+    place(photoPane, p.photoPane);
+    place(divider, state.panes.analysis ? p.analysisDivider : null);
+    place(analysisPane, state.panes.analysis ? p.analysisPane : null);
+}
+
+const controls = document.querySelector(".pv-harness-controls");
+const readout = el("span", { class: "pv-harness-readout" });
+const photoSelect = el("select", { "aria-label": "照片" });
+photoSelect.addEventListener("change", () => app.selectCard(photoSelect.value));
+let listedFolder = null;
+
+function button(label, run) {
+    const node = el("button", { type: "button" }, label);
+    node.addEventListener("click", run);
+    controls.append(node);
+    return node;
+}
+
+function syncControls(state) {
+    if (listedFolder !== state.folder?.id) {
+        listedFolder = state.folder?.id ?? null;
+        photoSelect.replaceChildren();
+        (state.cards ?? []).forEach((card, index) => {
+            photoSelect.append(el("option", { value: card.photo.id }, `${index + 1}. ${card.displayName} · o${card.photo.orientation}`));
+        });
+        if (state.displayedId) photoSelect.value = state.displayedId;
+    }
+    if (state.displayedId) photoSelect.value = state.displayedId;
+    const photo = state.photo;
+    const cross = state.analysis.crosshair;
+    const cosine = state.analysis.tiles.find((tile) => tile.kind === "cosine");
+    readout.textContent = [
+        photo ? `${photo.name} · o${photo.orientation} ${photo.width}×${photo.height}` : "无照片",
+        `tier=${state.session.tier}`,
+        `enhance=${state.session.enhance}`,
+        `即时=${app.settings.analysisImmediateCompute}`,
+        `瓦片=${state.analysis.tiles.length}`,
+        `hover=${state.analysis.hoverKind ?? "-"}`,
+        `绿框=${state.analysis.highlight ? "有" : "无"}`,
+        `准星=${cross ? `${cross.u.toFixed(3)},${cross.v.toFixed(3)}` : "-"}`,
+        `${cosine ? cosine.label : ""}`,
+        `scale=${state.viewport.percent}`,
+    ].join(" | ");
+}
+
+function render(regions) {
+    const state = app.state;
+    if (!regions || regions.has("layout") || regions.has("panes") || regions.has("window")) layoutPanes(state);
+    component.update(state, regions);
+    syncControls(state);
+}
+
+function syncWindow() {
+    const width = Math.max(320, stage.clientWidth);
+    const height = Math.max(240, stage.clientHeight);
+    windowEl.style.width = `${width}px`;
+    windowEl.style.height = `${height}px`;
+    app.setWindowSize(width, height);
+    render(null);
+}
+
+button("上一张", () => app.navigate(-1));
+button("下一张", () => app.navigate(1));
+button("增强", () => app.toggleEnhance());
+button("即时计算", () => app.updateSettings({ analysisImmediateCompute: !app.settings.analysisImmediateCompute }));
+button("分析栏", () => app.toggleAnalysis());
+controls.append(photoSelect, readout);
+
+app.on("change", render);
+app.toggleAnalysis();
+app.openFolder("harbor");
+new ResizeObserver(syncWindow).observe(stage);
+syncWindow();
+globalThis.harness = { app, component };
+
+if (params.has("rotated")) {
+    const card = app.state.cards.find((entry) => entry.photo.orientation >= 5);
+    if (card) app.selectCard(card.photo.id);
+}
+if (params.get("layout") === "row") app.updateSettings({ layoutMode: "row" });
+if (params.get("state") === "empty") app.openFolder("empty");
+
+const debug = el("pre", { class: "pv-harness-log" });
+document.body.append(debug);
+
+function tick(ms = 60) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function clickAt(node, clientX, clientY, detail = 1) {
+    node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, clientX, clientY, detail }));
+}
+
+function contentBox(canvas) {
+    const box = canvas.getBoundingClientRect();
+    const photo = app.state.photo;
+    const aspect = photo
+        ? (photo.orientation >= 5 ? photo.height / photo.width : photo.width / photo.height)
+        : 1;
+    const width = Math.min(box.width, box.height * aspect);
+    const height = width / aspect;
+    return {
+        left: box.left,
+        top: box.top,
+        x: (box.width - width) / 2,
+        y: (box.height - height) / 2,
+        w: width,
+        h: height,
+        cssW: box.width,
+        cssH: box.height,
+    };
+}
+
+async function runSelfTest() {
+    const lines = [];
+    const check = (name, ok, detail = "") => lines.push(`${ok ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`);
+    const tileOf = (kind) => analysisPane.querySelector(`.pv-analysis-tile[data-kind="${kind}"]`);
+    const cross = () => app.state.analysis.crosshair;
+    const cosineLabel = () => (app.state.analysis.tiles.find((tile) => tile.kind === "cosine") || {}).label;
+
+    await tick(120);
+
+    // ANALYSIS-02/03：外观取令牌、瓦片等边长与间距
+    const tileNodes = [...analysisPane.querySelectorAll(".pv-analysis-tile")];
+    const tileStyle = getComputedStyle(tileNodes[0]);
+    const badgeStyle = getComputedStyle(tileOf("pca").querySelector(".pv-analysis-badge"));
+    check("ANALYSIS-02 瓦片外观取令牌",
+        tileStyle.backgroundColor === "rgb(34, 34, 34)" && tileStyle.borderTopColor === "rgb(68, 68, 68)"
+        && tileStyle.borderTopLeftRadius === "6px" && tileStyle.borderTopWidth === "1px" && tileStyle.overflow === "hidden",
+        `${tileStyle.backgroundColor} / ${tileStyle.borderTopColor} / r=${tileStyle.borderTopLeftRadius} / b=${tileStyle.borderTopWidth}`);
+    check("ANALYSIS-02 角标外观取令牌",
+        badgeStyle.backgroundColor.startsWith("rgba(0, 0, 0") && badgeStyle.borderBottomRightRadius === "5px"
+        && badgeStyle.borderTopLeftRadius === "0px" && badgeStyle.paddingTop === "4px"
+        && badgeStyle.paddingLeft === "8px" && badgeStyle.fontSize === "12px" && badgeStyle.pointerEvents === "none",
+        `${badgeStyle.backgroundColor} / br=${badgeStyle.borderBottomRightRadius} / p=${badgeStyle.paddingTop},${badgeStyle.paddingLeft} / ${badgeStyle.fontSize}`);
+    const geo = app.state.layout.analysis;
+    const vertical = geo.axis === "vertical";
+    const offsets = tileNodes.map((node) => (vertical ? node.offsetTop : node.offsetLeft));
+    const sizes = tileNodes.map((node) => `${node.offsetWidth}x${node.offsetHeight}`);
+    check("ANALYSIS-03 等边长与间距",
+        new Set(sizes).size === 1 && offsets[0] === 10 && offsets[1] - offsets[0] === geo.tileSize + 8,
+        `${sizes[0]} start=${offsets[0]} step=${offsets[1] - offsets[0]} tile=${geo.tileSize} axis=${geo.axis}`);
+
+    // ANALYSIS-08：点诊断内容区落准星，cosine 参考点与角标跟随
+    const canvas = tileOf("pca").querySelector("canvas");
+    let box = contentBox(canvas);
+    clickAt(canvas, box.left + box.x + box.w * 0.25, box.top + box.y + box.h * 0.25);
+    await tick();
+    let point = cross();
+    check("ANALYSIS-08 点击诊断内容区落准星", Boolean(point) && Math.abs(point.u - 0.25) < 0.02 && Math.abs(point.v - 0.25) < 0.02,
+        point ? `${point.u.toFixed(3)},${point.v.toFixed(3)}` : "null");
+    check("ANALYSIS-08 cosine 角标跟随参考点", /^Cosine \d+,\d+$/.test(cosineLabel() ?? "") && cosineLabel() !== "Cosine 16,16", cosineLabel());
+
+    // ANALYSIS-08：letterbox 空白与角标按面板空白处理
+    box = contentBox(canvas);
+    clickAt(canvas, box.left + box.cssW * 0.5, box.top + Math.max(1, box.y / 2));
+    await tick();
+    check("ANALYSIS-08 点 letterbox 空白清准星", cross() === null);
+    box = contentBox(canvas);
+    clickAt(canvas, box.left + box.x + box.w * 0.25, box.top + box.y + box.h * 0.25);
+    await tick();
+    const badge = tileOf("pca").querySelector(".pv-analysis-badge").getBoundingClientRect();
+    clickAt(canvas, badge.left + 3, badge.top + 3);
+    await tick();
+    check("ANALYSIS-08 点角标清准星", cross() === null);
+
+    // ANALYSIS-11：键盘可达（诊断瓦片 Enter 落准星）
+    const sharp = tileOf("sharpness");
+    sharp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    await tick();
+    check("ANALYSIS-11 诊断瓦片键盘可达", Boolean(cross()), cross() ? `${cross().u.toFixed(2)},${cross().v.toFixed(2)}` : "null");
+
+    // ANALYSIS-11：面板滚轮不冒泡、不触发默认滚动
+    let leaked = false;
+    const spy = () => { leaked = true; };
+    window.addEventListener("wheel", spy);
+    const wheel = new WheelEvent("wheel", { deltaY: 120, bubbles: true, cancelable: true });
+    analysisPane.dispatchEvent(wheel);
+    await tick();
+    window.removeEventListener("wheel", spy);
+    check("ANALYSIS-11 面板滚轮截断", wheel.defaultPrevented && !leaked, `prevented=${wheel.defaultPrevented} leaked=${leaked}`);
+
+    // ANALYSIS-08：点面板空白清准星
+    const paneBox = analysisPane.getBoundingClientRect();
+    clickAt(analysisPane, paneBox.left + 2, paneBox.top + paneBox.height / 2);
+    await tick();
+    check("ANALYSIS-08 面板空白清准星", cross() === null);
+
+    // ANALYSIS-04：悬停细节预览点亮绿框，离开清除
+    const focusTile = tileOf("focus");
+    focusTile.dispatchEvent(new PointerEvent("pointerenter", { pointerType: "mouse" }));
+    await tick();
+    check("ANALYSIS-04 悬停细节预览点亮绿框",
+        app.state.analysis.hoverKind === "focus" && Boolean(app.state.analysis.highlight));
+    focusTile.dispatchEvent(new PointerEvent("pointerleave", { pointerType: "mouse" }));
+    await tick();
+    check("ANALYSIS-04 离开细节预览清除绿框",
+        app.state.analysis.hoverKind === null && app.state.analysis.highlight === null);
+
+    // ANALYSIS-04：双击细节预览定位到 100%，不换图
+    const before = app.state.displayedId;
+    const focusCanvas = focusTile.querySelector("canvas");
+    const focusBox = focusCanvas.getBoundingClientRect();
+    focusTile.dispatchEvent(new MouseEvent("dblclick", {
+        bubbles: true, cancelable: true, clientX: focusBox.left + focusBox.width / 2, clientY: focusBox.top + focusBox.height / 2,
+    }));
+    await tick();
+    check("ANALYSIS-04 双击细节预览定位 100%", app.state.displayedId === before && app.state.viewport.percent === "100%",
+        `percent=${app.state.viewport.percent} samePhoto=${app.state.displayedId === before}`);
+
+    // ANALYSIS-10：空文件夹保持面板与“未提取”
+    app.openFolder("empty");
+    await tick(120);
+    const emptyStates = app.state.analysis.tiles.map((tile) => `${tile.label}:${tile.state}`);
+    check("ANALYSIS-10 空文件夹保持面板与未提取",
+        app.state.panes.analysis && app.state.analysis.tiles.length > 0 && app.state.analysis.tiles.every((tile) => tile.state === "empty"),
+        emptyStates.join(" | "));
+    const placeholder = tileOf("pca").querySelector(".pv-analysis-placeholder");
+    check("ANALYSIS-10 未提取占位文案", placeholder && !placeholder.hidden && placeholder.textContent === "未提取",
+        placeholder ? placeholder.textContent : "missing");
+
+    // ANALYSIS-06：方向码 ≥5 的照片按显示朝向裁出细节
+    app.openFolder("harbor");
+    await tick(120);
+    const rotated = app.state.cards.find((card) => card.photo.orientation >= 5);
+    if (rotated) {
+        app.selectCard(rotated.photo.id);
+        await tick(500);
+        const center = tileOf("center").querySelector("canvas");
+        let delta = 0;
+        if (!center.hidden && center.width > 0) {
+            const pixels = center.getContext("2d").getImageData(0, 0, center.width, center.height).data;
+            let min = 765;
+            let max = 0;
+            for (let i = 0; i < pixels.length; i += 16) {
+                const sum = pixels[i] + pixels[i + 1] + pixels[i + 2];
+                if (sum < min) min = sum;
+                if (sum > max) max = sum;
+            }
+            delta = max - min;
+        }
+        check("ANALYSIS-06 方向码 ≥5 细节裁剪出图",
+            app.state.session.tier === "full" && !center.hidden && delta > 20,
+            `o=${rotated.photo.orientation} tier=${app.state.session.tier} hidden=${center.hidden} Δ=${delta}`);
+    } else {
+        check("ANALYSIS-06 方向码 ≥5 细节裁剪出图", false, "库中没有旋转照片");
+    }
+
+    // ANALYSIS-07：增强切换重算直方图（等直方图先就绪再比较对象身份）
+    for (let i = 0; i < 30 && !app.state.analysis.histogram; i += 1) await tick(100);
+    const histBefore = app.state.analysis.histogram;
+    app.toggleEnhance();
+    let histAfter = app.state.analysis.histogram;
+    let waited = 0;
+    for (; waited < 4000; waited += 100) {
+        await tick(100);
+        histAfter = app.state.analysis.histogram;
+        if (histAfter && histAfter !== histBefore) break;
+    }
+    check("ANALYSIS-07 增强切换重算直方图",
+        Boolean(histBefore) && Boolean(histAfter) && histAfter !== histBefore,
+        `before=${Boolean(histBefore)} after=${Boolean(histAfter)} waited=${waited}ms enhance=${app.state.session.enhance}`);
+    app.toggleEnhance();
+    await tick(800);
+    for (let i = 0; i < 20 && !app.state.analysis.histogram; i += 1) await tick(100);
+
+    // ANALYSIS-09/10：未提取回退显示“计算中”，回退完成后自行出图
+    app.updateSettings({ analysisImmediateCompute: true });
+    const unextracted = app.state.cards.find((card) => card.photo.taken === null && !card.photo.extracted);
+    if (unextracted) {
+        app.selectCard(unextracted.photo.id);
+        await tick(150);
+        const pendingState = (app.state.analysis.tiles.find((tile) => tile.kind === "pca") || {}).state;
+        const pendingPlaceholder = tileOf("pca").querySelector(".pv-analysis-placeholder");
+        check("ANALYSIS-09 回退期显示计算中",
+            pendingState === "pending" && !pendingPlaceholder.hidden && pendingPlaceholder.textContent === "计算中…",
+            `${pendingState}/${pendingPlaceholder.textContent}`);
+        let done = false;
+        for (let i = 0; i < 40; i += 1) {
+            await tick(150);
+            if ((app.state.analysis.tiles.find((tile) => tile.kind === "pca") || {}).state === "content") {
+                done = true;
+                break;
+            }
+        }
+        check("ANALYSIS-09 回退完成后出图", done, `state=${(app.state.analysis.tiles.find((tile) => tile.kind === "pca") || {}).state}`);
+    } else {
+        check("ANALYSIS-09 回退期显示计算中", false, "库中没有未提取照片");
+    }
+    app.updateSettings({ analysisImmediateCompute: false });
+
+    // 收尾：回到首张照片，留下一个诊断准星供目视核对
+    app.openFolder("harbor");
+    await tick(600);
+    const lastCanvas = tileOf("pca").querySelector("canvas");
+    const lastBox = contentBox(lastCanvas);
+    clickAt(lastCanvas, lastBox.left + lastBox.x + lastBox.w * 0.62, lastBox.top + lastBox.y + lastBox.h * 0.4);
+    await tick(300);
+    document.querySelector(".pv-harness-log").textContent = lines.join("\n");
+    debug.dataset.done = "1";
+    console.log(lines.join("\n"));
+}
+
+if (params.has("selftest")) runSelfTest();
+    </script>
+</body>
+</html>

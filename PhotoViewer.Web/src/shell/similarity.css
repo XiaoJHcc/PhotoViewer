@@ -1,0 +1,191 @@
+.pv-sim {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--pv-color-sim-panel-background);
+    border: var(--pv-sim-panel-border-width) solid var(--pv-color-sim-panel-border);
+    border-radius: var(--pv-sim-panel-cornerRadius);
+    color: var(--pv-color-film-card-name);
+}
+
+.pv-sim[data-axis="horizontal"] {
+    flex-direction: row;
+}
+
+.pv-sim-list {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    align-items: center;
+    padding: 5px 4px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    outline: none;
+}
+
+.pv-sim[data-axis="horizontal"] .pv-sim-list {
+    flex-direction: row;
+    align-items: center;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.pv-sim-list:focus-visible {
+    outline: 2px solid var(--pv-accent);
+    outline-offset: -2px;
+}
+
+.pv-sim-item {
+    flex: none;
+    width: var(--pv-film-card-width);
+    height: var(--pv-film-card-height);
+}
+
+.pv-sim-empty {
+    display: none;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--pv-sim-empty-spacing);
+    padding: var(--pv-sim-empty-margin);
+    text-align: center;
+    overflow: hidden;
+}
+
+.pv-sim.is-empty .pv-sim-empty {
+    display: flex;
+}
+
+.pv-sim.is-empty .pv-sim-list,
+.pv-sim.is-empty .pv-sim-dock {
+    display: none;
+}
+
+.pv-sim-empty-text {
+    max-width: 100%;
+    color: var(--pv-color-sim-placeholder);
+    font-size: 12px;
+    line-height: 16px;
+    overflow-wrap: anywhere;
+}
+
+.pv-sim-dock {
+    display: flex;
+    box-sizing: border-box;
+    flex: none;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--pv-sim-dock-spacing);
+    padding: 6px 4px;
+}
+
+.pv-sim[data-axis="horizontal"] .pv-sim-dock {
+    width: calc(var(--pv-sim-action-width) + 8px);
+    justify-content: center;
+    padding: 4px;
+}
+
+.pv-sim-caption {
+    max-width: 100%;
+    color: var(--pv-color-sim-caption);
+    font-size: 11px;
+    line-height: 15px;
+    white-space: nowrap;
+}
+
+.pv-sim-action-block {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.pv-sim-action {
+    box-sizing: border-box;
+    width: var(--pv-sim-action-width);
+    height: var(--pv-sim-action-height);
+    padding: 0;
+    border: 1px solid var(--pv-color-sim-action-border);
+    border-radius: var(--pv-sim-action-cornerRadius);
+    background: var(--pv-color-sim-action-background);
+    color: var(--pv-color-sim-action-foreground);
+    font-family: var(--pv-font);
+    font-size: 12px;
+    line-height: 1;
+    cursor: default;
+}
+
+.pv-sim-action:hover {
+    background: var(--pv-sim-action-hover);
+}
+
+.pv-sim-action:active {
+    background: var(--pv-color-sim-action-border);
+}
+
+.pv-sim-progress {
+    position: relative;
+    display: flex;
+    box-sizing: border-box;
+    align-items: center;
+    justify-content: center;
+    width: var(--pv-sim-action-width);
+    height: var(--pv-sim-action-height);
+    overflow: hidden;
+    border: 1px solid var(--pv-color-sim-action-border);
+    border-radius: var(--pv-sim-action-cornerRadius);
+    background: var(--pv-color-sim-action-background);
+    color: var(--pv-color-sim-action-foreground);
+    font-size: 11px;
+    line-height: 1;
+}
+
+.pv-sim-progress-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    background: var(--pv-color-sim-progress);
+}
+
+.pv-sim-progress.is-indeterminate .pv-sim-progress-fill {
+    width: 100%;
+    animation: pv-sim-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes pv-sim-indeterminate {
+    0%, 100% {
+        opacity: 0.25;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pv-sim-progress.is-indeterminate .pv-sim-progress-fill {
+        animation: none;
+        opacity: 0.4;
+    }
+}
+
+.pv-sim-progress-text {
+    position: relative;
+    z-index: 1;
+}
+
+.pv-sim-error {
+    max-width: var(--pv-sim-error-maxWidth);
+    color: var(--pv-color-sim-error);
+    font-size: 11px;
+    line-height: 15px;
+    text-align: center;
+    overflow-wrap: anywhere;
+}

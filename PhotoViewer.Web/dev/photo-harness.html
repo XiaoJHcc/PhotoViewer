@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="color-scheme" content="dark">
+    <title>photo harness</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/photo.css">
+    <style>
+        #dev-controls {
+            position: fixed;
+            top: 8px;
+            right: 8px;
+            z-index: 10;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            max-width: 460px;
+            justify-content: flex-end;
+        }
+        #dev-controls button {
+            padding: 3px 7px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 5px;
+            background: rgba(60, 60, 64, 0.92);
+            color: #fff;
+            font: 11px var(--pv-font);
+        }
+        #dev-readout {
+            position: fixed;
+            left: 8px;
+            bottom: 8px;
+            z-index: 10;
+            padding: 6px 8px;
+            border-radius: 6px;
+            background: rgba(0, 0, 0, 0.65);
+            color: rgba(255, 255, 255, 0.75);
+            font: 11px/1.5 var(--pv-font);
+            white-space: pre;
+        }
+    </style>
+</head>
+<body>
+    <main id="app" aria-label="PhotoViewer"></main>
+    <div id="dev-controls"></div>
+    <div id="dev-readout"></div>
+    <script type="module">
+        import { createTokens } from "../src/core/tokens.js";
+        import baseTokens from "../src/tokens.g.js";
+        import { systemClock } from "../src/core/clock.js";
+        import { createLibrary } from "../src/core/library.js";
+        import { createApp } from "../src/core/app.js";
+        import { createDecoder } from "../src/render/decoder.js";
+        import { createStore } from "../src/render/store.js";
+        import { el, place, applyTokenVariables, createTextMeasurer } from "../src/shell/dom.js";
+        import { mountPhoto } from "../src/shell/photo.js";
+
+        const params = new URLSearchParams(location.search);
+        const t = createTokens(params.get("platform") ?? "web");
+        const clock = systemClock();
+        const library = createLibrary();
+        // 增强放慢，便于观察 IMAGE-07 的 500ms 药丸门槛；?slow 放慢代理以观察 STATE-01 加载提示。
+        const decoder = createDecoder({
+            clock,
+            latency: {
+                proxy: params.has("slow") ? [800, 800] : [40, 120],
+                enhance: [4000, 4000],
+            },
+        });
+        const store = createStore({ clock });
+        const measureText = createTextMeasurer();
+
+        const app = createApp({
+            t,
+            clock,
+            profile: t.profile,
+            library,
+            decoder,
+            store,
+            storage: null,
+            dpr: devicePixelRatio,
+            reducedMotion: () => false,
+            measureText,
+        });
+
+        const body = document.getElementById("app");
+        body.dataset.platform = t.profile;
+        const windowEl = el("div", { class: "pv-window", role: "application", "aria-label": "PhotoViewer" });
+        const stage = el("div", { class: "pv-stage" }, windowEl);
+        body.append(stage);
+        applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
+
+        const panes = {
+            file: el("div", { class: "pv-pane pv-pane-file" }),
+            fileDivider: el("div", { class: "pv-divider" }),
+            photo: el("div", { class: "pv-pane pv-pane-photo" }),
+            analysisDivider: el("div", { class: "pv-divider pv-divider-analysis" }),
+            analysis: el("div", { class: "pv-pane pv-pane-analysis" }),
+            controlDivider: el("div", { class: "pv-divider" }),
+            control: el("div", { class: "pv-pane pv-pane-control" }),
+        };
+        windowEl.append(panes.file, panes.fileDivider, panes.photo, panes.analysisDivider, panes.analysis, panes.controlDivider, panes.control);
+
+        const ctx = {
+            app,
+            t,
+            clock,
+            library,
+            decoder,
+            measureText,
+            menu: null,
+            overlay: null,
+            windowEl,
+            reducedMotion: () => false,
+        };
+        const photo = mountPhoto(panes.photo, ctx);
+
+        function layoutPanes(state) {
+            const p = state.layout.panes;
+            place(panes.file, state.panes.film ? p.filePane : null);
+            place(panes.fileDivider, state.panes.film ? p.fileDivider : null);
+            place(panes.photo, p.photoPane);
+            place(panes.analysisDivider, state.panes.analysis ? p.analysisDivider : null);
+            place(panes.analysis, state.panes.analysis ? p.analysisPane : null);
+            place(panes.controlDivider, state.panes.control ? p.controlDivider : null);
+            place(panes.control, state.panes.control ? p.controlPane : null);
+            windowEl.dataset.layout = state.layout.layoutMode;
+        }
+
+        const readout = document.getElementById("dev-readout");
+        let lastOpenRequest = null;
+        app.on("request-open", ({ kind }) => {
+            lastOpenRequest = kind;
+            render();
+        });
+        function render(regions) {
+            const state = app.state;
+            layoutPanes(state);
+            photo.update(state, regions);
+            const p = state.layout.panes.photoPane;
+            const view = state.viewport;
+            readout.textContent = [
+                `photo: ${state.photo ? state.photo.name : "(empty)"} orientation=${state.photo ? state.photo.orientation : "-"}`,
+                `pane: ${p.w.toFixed(1)}x${p.h.toFixed(1)} image: ${view.image.width}x${view.image.height}`,
+                `scale: ${view.scale.toFixed(4)} physical: ${(view.physicalScale * 100).toFixed(2)}% fit=${view.isFit} nav=${view.navigator.visible}`,
+                `rect: ${view.imageRect.x.toFixed(1)},${view.imageRect.y.toFixed(1)} ${view.imageRect.w.toFixed(1)}x${view.imageRect.h.toFixed(1)}`,
+                `session: tier=${state.session.tier} loading=${state.session.loadingHint} busy=${state.session.busy} error=${state.session.error ? state.session.error.title : "-"}`,
+                `toast: ${state.session.toast ? state.session.toast.text : "-"} open-request: ${lastOpenRequest ?? "-"}`,
+            ].join("\n");
+        }
+
+        app.on("change", render);
+
+        function syncWindowSize() {
+            windowEl.style.width = `${stage.clientWidth}px`;
+            windowEl.style.height = `${stage.clientHeight}px`;
+            app.setWindowSize(stage.clientWidth, stage.clientHeight);
+        }
+        new ResizeObserver(syncWindowSize).observe(stage);
+
+        function findPhoto(predicate) {
+            for (const folder of library.folders) {
+                for (const entry of folder.photos ?? []) {
+                    if (predicate(entry)) return entry;
+                }
+            }
+            return null;
+        }
+
+        const controls = document.getElementById("dev-controls");
+        const actions = {
+            empty: () => app.openFolder("empty"),
+            harbor: () => app.openFolder("harbor"),
+            night: () => app.openFolder("night"),
+            single: () => app.openFolder("single"),
+            prev: () => app.navigate(-1),
+            next: () => app.navigate(1),
+            fit: () => app.fit(),
+            preset: () => app.zoomPreset(1),
+            enhance: () => app.toggleEnhance(),
+            analysis: () => app.toggleAnalysis(),
+            highlight: () => app.hoverDetail(app.state.analysis.hoverKind ? null : "focus"),
+            toastShort: () => app._photoSession.toast("无法写入星级：DSC01234.ARW"),
+            toastLong: () => app._photoSession.toast("无法读取文件夹：2026-10-12 海港 · 目录已删除或授权失效，请重新选择可用的目录"),
+            toastWrap: () => app._photoSession.toast("无法写入星级：DSC01234.ARW 与 DSC01234.JPG 的评分同步失败，文件可能已被移动、重命名或当前账号没有写入权限，请检查磁盘状态后重试"),
+            stack: () => {
+                if (!app.state.session.enhance) app.toggleEnhance();
+                app._photoSession.toast("无法写入星级：DSC01234.ARW");
+            },
+            faultPhoto: () => {
+                const entry = findPhoto((item) => item.fault && item.fault.decode === "all");
+                if (entry) app.openFile(entry.id);
+            },
+            rotatedPhoto: () => {
+                const entry = findPhoto((item) => item.orientation >= 5);
+                if (entry) app.openFile(entry.id);
+            },
+        };
+        const labels = {
+            empty: "空态",
+            harbor: "海港",
+            night: "夜景",
+            single: "单图",
+            prev: "←",
+            next: "→",
+            fit: "适应⇄100%",
+            preset: "预设+",
+            enhance: "增强",
+            analysis: "分析栏",
+            highlight: "绿框",
+            toastShort: "短提示",
+            toastLong: "长提示",
+            toastWrap: "换行提示",
+            stack: "药丸+提示",
+            faultPhoto: "失败图",
+            rotatedPhoto: "方向",
+        };
+        for (const [action, handler] of Object.entries(actions)) {
+            controls.append(el("button", { type: "button", "data-action": action, onclick: handler }, labels[action]));
+        }
+
+        syncWindowSize();
+        const folder = params.has("empty") ? null : (params.get("folder") ?? "harbor");
+        if (folder) app.openFolder(folder);
+        render(null);
+    </script>
+</body>
+</html>

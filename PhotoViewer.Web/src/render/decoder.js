@@ -10,6 +10,7 @@
  * latency 可传数字（三档统一）或 { proxy: [min,max], full: [min,max], enhance: [min,max] }；
  * 代理默认 40–120ms，Full 默认 180–420ms，增强默认 300–800ms。延迟按 photo.id 确定性抽取。
  * 未给 longEdge 时代理长边取 2048，避免误把整幅源图当代理。Full 恒为源尺寸（存储朝向）。
+ * setLatencyMultiplier(n) 运行时按倍数缩放三档延迟（演示面板观察 300 ms 加载提示与 500 ms 药丸门槛用）。
  * createSurface/enhanceSurface 用于单测注入，默认实现需要 OffscreenCanvas 或 HTMLCanvasElement。
  */
 import { systemClock } from "../core/clock.js";
@@ -195,7 +196,14 @@ function decodeFailure(photo, tier) {
 
 export function createDecoder(options = {}) {
     const clock = options.clock ?? systemClock();
-    const latency = normalizeLatency(options.latency);
+    const baseLatency = normalizeLatency(options.latency);
+    let multiplier = 1;
+    const scaled = (range) => [range[0] * multiplier, range[1] * multiplier];
+    const latency = {
+        get proxy() { return scaled(baseLatency.proxy); },
+        get full() { return scaled(baseLatency.full); },
+        get enhance() { return scaled(baseLatency.enhance); },
+    };
     const createSurface = typeof options.createSurface === "function" ? options.createSurface : browserSurface;
     const enhanceSurface = typeof options.enhanceSurface === "function" ? options.enhanceSurface : browserEnhance;
     let enhanceSeq = 0;
@@ -245,5 +253,15 @@ export function createDecoder(options = {}) {
         });
     }
 
-    return { decode, enhance };
+    return {
+        decode,
+        enhance,
+        get latencyMultiplier() {
+            return multiplier;
+        },
+        setLatencyMultiplier(value) {
+            const number = Number(value);
+            multiplier = Number.isFinite(number) && number >= 0 ? number : 1;
+        },
+    };
 }

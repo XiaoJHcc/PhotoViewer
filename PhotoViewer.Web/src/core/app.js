@@ -9,9 +9,10 @@
  * 动作：setWindowSize/openFolder/openFile/selectCard/selectSimilar/navigate/exchange/setSort/
  * setRatingFilter/rate/toggleFilmbar/toggleControlbar/toggleAnalysis/setSimilarityExpanded/
  * fit/zoomPreset/zoomScale/zoomBy/pan/centerOn/toggleEnhance/runCommand/runMenu/requestOpen/
- * keyDown/keyUp/blur/setModifierState/wheelOnPhoto/filmUserScrolled/filmResized/bindFilmScroller/layoutReady/
+ * keyDown/keyUp/blur/setModifierState/wheelOnPhoto/mouseOnPhoto/filmUserScrolled/filmResized/bindFilmScroller/layoutReady/
  * setMenuOpen/setDropdownOpen/setTextFocus/updateSettings/hoverDetail/clickDiagnostic/
- * clickAnalysisBlank/locateDetail/extractAll/simulateMemoryWarning/setDpr/menuModel
+ * clickAnalysisBlank/locateDetail/extractAll/setHistogramSource/simulateMemoryWarning/setDpr/menuModel/notify/canOpen
+ *   app.filmAnimating             胶片栏定位动画是否在播放（调试读数）
  */
 import { FileList } from "./filter.js";
 import { Viewport, displaySize } from "./viewport.js";
@@ -19,7 +20,7 @@ import { FilmScroller, FilmPositioner, contentLength } from "./filmscroll.js";
 import { PhotoSession, RatingWriter } from "./session.js";
 import { AnalysisPresenter } from "./analysis.js";
 import { SimilarityPanel } from "./similarity.js";
-import { CommandMap, KeyDispatcher, WheelInterpreter, gestureText, tooltipText } from "./input.js";
+import { CommandMap, KeyDispatcher, WheelInterpreter, gestureFromMouse, gestureText, tooltipText } from "./input.js";
 import { defaultSettings } from "./settings.js";
 import { computeLayout, approximateTextWidth } from "./layout/index.js";
 import { formatExifValue } from "./exifformat.js";
@@ -623,6 +624,30 @@ class MainApp {
         return { handled: false };
     }
 
+    notify(text) {
+        this._photoSession.toast(text);
+    }
+
+    // OPEN-02：隐藏文件与未启用格式不参与列表，选择器等入口用同一判据。
+    canOpen(photo) {
+        return this._allowed(photo);
+    }
+
+    get filmAnimating() {
+        return Boolean(this._scroller?.isAnimating);
+    }
+
+    // INPUT-01/03：鼠标按键手势（默认中键 = 切换上一张）按同一绑定表派发；未绑定原样放行。
+    mouseOnPhoto(desc) {
+        if (!desc || this._menuOpen || this._dropdownOpen) return { handled: false };
+        const gesture = gestureFromMouse(desc, { appleKeyboard: this._settings.appleKeyboard });
+        if (!gesture) return { handled: false };
+        const command = this._commandMap.commandFor(gesture);
+        if (!command) return { handled: false };
+        this.runCommand(command);
+        return { handled: true };
+    }
+
     filmUserScrolled() {
         // FILM-03：用户接管滚动，撤销在途动画与排队请求。
         this._positioner?.onUserScroll();
@@ -729,6 +754,12 @@ class MainApp {
 
     extractAll() {
         return this._similarity.extractAll();
+    }
+
+    // ANALYSIS-07：直方图取当前上屏图像素（壳层从展示表面采样后交给 presenter，面板不可见时忽略）。
+    setHistogramSource(pixels, width, height) {
+        if (!this._panes.analysis) return;
+        this._analysis.setHistogramSource(pixels, width, height);
     }
 
     simulateMemoryWarning() {
@@ -909,6 +940,12 @@ class MainApp {
     }
 
     _filmViewportLengthValue() {
+        // FILM-02：定位按最新布局几何计算；布局在动作内同步重算，壳层回调可能仍是上一帧的尺寸。
+        const film = this._layout?.film;
+        if (film && this._panes.film) {
+            const length = this._layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
+            if (finite(length) && length > 0) return length;
+        }
         if (typeof this._filmViewportLength === "function") {
             try {
                 const value = Number(this._filmViewportLength());
@@ -1035,6 +1072,7 @@ class MainApp {
         const navigator = this._viewport.navigator();
         return {
             ...snapshot,
+            imageRect: this._viewport.imageRect(),
             percentText: snapshot.percent,
             // IMAGE-06：可见框只表达非适应态，叠加设置开关与有图条件。
             navigator: {
@@ -1044,9 +1082,27 @@ class MainApp {
         };
     }
 
+    _detailGeometry(kind) {
+        const photo = this._displayedPhoto();
+        const layout = this._layout?.analysis;
+        if (!photo || !layout || !kind) return null;
+        const source = displaySize(photo.width, photo.height, photo.orientation);
+        const args = [kind, layout.tileSize, this._viewport.snapshot().dpr ?? 1, source];
+        return {
+            source,
+            crop: this._analysis.detailCrop(...args),
+            highlight: this._analysis.highlightRect(...args),
+        };
+    }
+
     _analysisState() {
         const crosshair = this._analysis.crosshair;
+        const hoverKind = this._analysis.hoverKind;
         return {
+            focusDetail: this._detailGeometry("focus"),
+            centerDetail: this._detailGeometry("center"),
+            // ANALYSIS-04：主图绿框只在悬停/定格细节预览时存在，源像素矩形由壳层换算到视口。
+            highlight: hoverKind ? this._detailGeometry(hoverKind)?.highlight ?? null : null,
             visible: this._panes.analysis,
             tiles: this._analysis.tiles(),
             crosshair: crosshair ? { ...crosshair } : null,
@@ -1151,7 +1207,10 @@ class MainApp {
             this._pendingRegions.add(region);
             if (LAYOUT_REGIONS.has(region)) layoutTouched = true;
         }
-        if (layoutTouched) this._layoutDirty = true;
+        if (layoutTouched) {
+            this._layoutDirty = true;
+            this._pendingRegions.add("layout");
+        }
         this._state = null;
         if (this._pendingRegions.size === 0) return;
         if (!this._flushScheduled) {

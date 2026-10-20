@@ -1,0 +1,158 @@
+.pv-card {
+    box-sizing: border-box;
+}
+
+.pv-card-film {
+    position: absolute;
+}
+
+.pv-card-similarity {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+.pv-card-surface {
+    position: absolute;
+    background: var(--pv-color-film-card-background);
+    border-radius: var(--pv-film-card-cornerRadius);
+}
+
+.pv-card-surface.is-current {
+    box-shadow: inset 0 0 0 var(--pv-film-card-border-width) var(--pv-color-film-card-currentBorder);
+}
+
+.pv-card-well {
+    position: absolute;
+    overflow: hidden;
+    border-radius: var(--pv-film-thumb-cornerRadius);
+    background: var(--pv-color-film-thumbnail-well);
+}
+
+.pv-card-image {
+    position: absolute;
+    display: block;
+}
+
+.pv-card-cached {
+    position: absolute;
+    border-radius: var(--pv-film-thumb-cornerRadius);
+    box-shadow: inset 0 0 0 1px var(--pv-color-film-card-cachedBorder);
+    pointer-events: none;
+}
+
+.pv-card-badge {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--pv-color-film-shakeBadge);
+    border-radius: var(--pv-film-card-badge-cornerRadius);
+    color: #fff;
+    font-size: var(--pv-film-card-badge-fontSize);
+    line-height: 1;
+}
+
+.pv-card-name {
+    position: absolute;
+    color: var(--pv-color-film-card-name);
+    font-size: var(--pv-film-card-name-fontSize);
+    font-weight: 600;
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pv-card-second {
+    position: absolute;
+    border-radius: var(--pv-film-card-secondLine-bar-cornerRadius);
+}
+
+.pv-card-date {
+    position: absolute;
+    inset: 0;
+    color: var(--pv-color-text-secondary);
+    font-size: var(--pv-film-card-secondLine-fontSize);
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+}
+
+.pv-card-bar {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    background: var(--pv-color-film-card-secondLine-track);
+    border-radius: var(--pv-film-card-secondLine-bar-cornerRadius);
+}
+
+.pv-card-bar-fill {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 0;
+    background: var(--pv-color-film-card-secondLine-fill);
+}
+
+.pv-card-bar-label {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.94);
+    font-size: var(--pv-film-card-secondLine-fontSize);
+    line-height: 1;
+    text-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+}
+
+.pv-card-star {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--pv-color-star-off);
+    font-family: inherit;
+    font-size: var(--pv-film-card-star-fontSize);
+    line-height: 1;
+    cursor: default;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.pv-card-star.is-on {
+    color: var(--pv-color-star-on);
+}
+
+.pv-card-star-glyph {
+    display: block;
+    width: 100%;
+    height: 100%;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.1;
+    stroke-linejoin: round;
+}
+
+.pv-card-star.is-on .pv-card-star-glyph {
+    fill: currentColor;
+    stroke: none;
+}
+
+.pv-card-star.is-clear {
+    color: var(--pv-color-star-clear);
+    font-size: calc(var(--pv-film-card-star-fontSize) + 2px);
+}
+
+.pv-card-surface.is-rating-hidden .pv-card-star {
+    display: none;
+}

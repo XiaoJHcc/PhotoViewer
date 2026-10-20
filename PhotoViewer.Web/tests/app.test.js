@@ -129,6 +129,12 @@ function createFilmHost({ offset = 0, viewportLength = 600 } = {}) {
     };
 }
 
+function filmViewport(app) {
+    const film = app.state.layout.film;
+    if (!film) return 0;
+    return app.state.layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
+}
+
 function harness({ storage = createStorage(), settings = null, width = 1200, height = 850 } = {}) {
     const clock = manualClock();
     const library = makeLibrary();
@@ -146,6 +152,8 @@ function harness({ storage = createStorage(), settings = null, width = 1200, hei
         measureText,
     });
     app.setWindowSize(width, height);
+    // 假滚动宿主的视口长取布局给出的胶片栏主轴长度，与真实壳层一致。
+    film.state.viewportLength = filmViewport(app);
     app.bindFilmScroller(film);
     return { app, clock, library, film, storage };
 }
@@ -171,7 +179,7 @@ test("FILM-01/OPEN-05：打开文件夹把目标项定位到列表中心", () =>
     assert.equal(app.state.anchorId, "f1/P025.JPG");
     assert.equal(app.state.count, 33);
     // 列布局纵向列表：卡片起点 + (卡片长 − 视口长) / 2，首尾之外不夹取。
-    const expected = 5 + 24 * 144 + (144 - 600) / 2;
+    const expected = 5 + 24 * 144 + (144 - filmViewport(app)) / 2;
     assert.equal(film.state.offset, expected);
     assert.equal(film.state.writes.at(-1), expected);
 });
@@ -189,7 +197,7 @@ test("FILM-01：点选不定位、上一张/下一张定位、Exchange 不定位
     assert.equal(app.state.displayedId, "f1/P011.JPG");
     const nextIndex = cardIndexOf(app, "f1/P011.JPG");
     assert.equal(film.state.writes.length, baseline + 1);
-    assert.equal(film.state.writes.at(-1), 5 + nextIndex * 144 + (144 - 600) / 2);
+    assert.equal(film.state.writes.at(-1), 5 + nextIndex * 144 + (144 - filmViewport(app)) / 2);
 
     const located = film.state.writes.length;
     assert.equal(app.exchange(), true);
@@ -216,7 +224,7 @@ test("FILM-01：排序、筛选与评分刷新不定位，尺寸变化只夹取�
     app.setRatingFilter("all");
     app.filmResized();
     assert.equal(film.state.writes.length, baseline + 1);
-    assert.equal(film.state.offset, 5 + 33 * 144 + 10 - 600);
+    assert.equal(film.state.offset, 5 + 33 * 144 + 10 - filmViewport(app));
 
     const clamped = film.state.writes.length;
     app.setWindowSize(1100, 850);
@@ -233,12 +241,13 @@ test("FILM-04：隐藏后重新显示定位当前项，换向按新方向重算"
     assert.equal(film.state.writes.length, baseline);
     app.toggleFilmbar();
     assert.equal(app.state.panes.film, true);
-    const expectedY = 5 + 19 * 144 + (144 - 600) / 2;
+    const expectedY = 5 + 19 * 144 + (144 - filmViewport(app)) / 2;
     assert.equal(film.state.writes.at(-1), expectedY);
 
     app.setWindowSize(700, 850);
     assert.equal(app.state.layout.layoutMode, "row");
-    const expectedX = 10 + 19 * 96 + (96 - 600) / 2;
+    // 换向按新方向与新视口（行布局胶片带宽）重算，不沿用旧视口长度。
+    const expectedX = 10 + 19 * 96 + (96 - filmViewport(app)) / 2;
     assert.equal(film.state.writes.at(-1), expectedX);
 });
 

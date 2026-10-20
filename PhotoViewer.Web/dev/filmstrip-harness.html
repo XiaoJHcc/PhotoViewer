@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>Filmstrip harness</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/filmstrip.css">
+    <link rel="stylesheet" href="../src/shell/card.css">
+    <style>
+        .harness-bar {
+            position: fixed;
+            left: 12px;
+            bottom: 12px;
+            z-index: 10;
+            display: flex;
+            gap: 8px;
+            padding: 8px;
+            border-radius: 8px;
+            background: rgba(40, 40, 42, 0.92);
+            font: 12px -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+            color: #ddd;
+        }
+        .harness-bar button {
+            padding: 4px 10px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            background: #333;
+            color: #eee;
+            font: inherit;
+            cursor: default;
+        }
+        .harness-bar button:hover {
+            background: #3c3c3c;
+        }
+        .harness-debug {
+            position: fixed;
+            right: 12px;
+            top: 12px;
+            z-index: 10;
+            min-width: 260px;
+            padding: 8px 10px;
+            border-radius: 8px;
+            background: rgba(20, 20, 22, 0.9);
+            color: #9adf9a;
+            font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+            white-space: pre;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <main id="app" aria-label="PhotoViewer"></main>
+    <div class="harness-debug"></div>
+    <div class="harness-bar">
+        <button type="button" data-size="1200x850">列 1200×850</button>
+        <button type="button" data-size="700x850">行 700×850</button>
+        <button type="button" data-size="760x640">行 760×640</button>
+        <button type="button" data-folder="harbor">港</button>
+        <button type="button" data-folder="empty">空</button>
+        <button type="button" data-folder="stress">1000 张</button>
+        <button type="button" data-action="focus-card">焦点第 3 张</button>
+        <button type="button" data-action="zoom">放大</button>
+        <button type="button" data-action="fit">适应</button>
+        <button type="button" data-action="preset">100%</button>
+    </div>
+    <script type="module">
+        import baseTokens from "../src/tokens.g.js";
+        import { createTokens } from "../src/core/tokens.js";
+        import { systemClock } from "../src/core/clock.js";
+        import { createLibrary, generateFolder } from "../src/core/library.js";
+        import { createApp } from "../src/core/app.js";
+        import { createDecoder } from "../src/render/decoder.js";
+        import { createStore } from "../src/render/store.js";
+        import { createThumbnailQueue } from "../src/render/thumbs.js";
+        import { el, place, applyTokenVariables, createTextMeasurer } from "../src/shell/dom.js";
+        import { mountFilmstrip } from "../src/shell/filmstrip.js";
+
+        const t = createTokens("web");
+        const clock = systemClock();
+        const library = createLibrary();
+        library.folders.push(generateFolder({ id: "stress", name: "大量照片", count: 1000, seed: 7 }));
+        const decoder = createDecoder({ clock });
+        const store = createStore({ clock });
+        const measureText = createTextMeasurer();
+
+        const body = document.getElementById("app");
+        body.dataset.platform = t.profile;
+        const windowEl = el("div", { class: "pv-window", role: "application", "aria-label": "PhotoViewer" });
+        const stage = el("div", { class: "pv-stage" }, windowEl);
+        body.append(stage);
+        applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
+
+        const app = createApp({
+            t,
+            clock,
+            profile: t.profile,
+            library,
+            decoder,
+            store,
+            storage: null,
+            dpr: devicePixelRatio,
+            reducedMotion: () => false,
+            measureText,
+        });
+        const thumbs = createThumbnailQueue({ t, dpr: devicePixelRatio, decoder, clock });
+        const ctx = { app, t, clock, thumbs, decoder, library, measureText, menu: null, overlay: null, windowEl, reducedMotion: () => false };
+
+        const filePane = el("div", { class: "pv-pane pv-pane-file" });
+        windowEl.append(filePane);
+        const filmstrip = mountFilmstrip(filePane, ctx);
+
+        let size = { width: 1200, height: 850 };
+
+        function layoutPanes(state) {
+            place(filePane, state.panes.film ? state.layout.panes.filePane : null);
+        }
+
+        function render(regions) {
+            const state = app.state;
+            if (!regions || regions.has("layout") || regions.has("panes") || regions.has("window")) layoutPanes(state);
+            filmstrip.update(state, regions);
+        }
+
+        function syncWindowSize() {
+            windowEl.style.width = `${size.width}px`;
+            windowEl.style.height = `${size.height}px`;
+            app.setWindowSize(size.width, size.height);
+        }
+
+        app.on("change", (regions) => render(regions));
+
+        document.querySelector(".harness-bar").addEventListener("click", (event) => {
+            const button = event.target.closest("button");
+            if (!button) return;
+            if (button.dataset.size) {
+                const [width, height] = button.dataset.size.split("x").map(Number);
+                size = { width, height };
+                syncWindowSize();
+            }
+            if (button.dataset.folder) app.openFolder(button.dataset.folder);
+            if (button.dataset.action === "focus-card") {
+                const cards = filePane.querySelectorAll(".pv-card");
+                cards[Math.min(2, cards.length - 1)]?.focus();
+            }
+            if (button.dataset.action === "zoom") app.zoomScale(1);
+            if (button.dataset.action === "fit") app.fit();
+            if (button.dataset.action === "preset") app.zoomPreset(1);
+        });
+
+        window.addEventListener("keydown", (event) => {
+            if (event.defaultPrevented) return;
+            const result = app.keyDown({
+                code: event.code,
+                key: event.key,
+                ctrlKey: event.ctrlKey,
+                altKey: event.altKey,
+                shiftKey: event.shiftKey,
+                metaKey: event.metaKey,
+                repeat: event.repeat,
+            });
+            if (result.handled) event.preventDefault();
+        });
+
+        syncWindowSize();
+        app.openFolder("harbor");
+        render(null);
+        globalThis.pv = { app, filmstrip };
+
+        const debugNode = document.querySelector(".harness-debug");
+        const scrollerNode = filePane.querySelector(".pv-film-scroll");
+        const trackNode = filePane.querySelector(".pv-film-scrollbar");
+        const thumbNode = filePane.querySelector(".pv-film-scrollbar-thumb");
+        setInterval(() => {
+            const state = app.state;
+            const film = state.layout.film;
+            const trackStyle = getComputedStyle(trackNode);
+            const lines = [
+                `mode ${state.layout.layoutMode} film ${film ? film.axis : "-"}`,
+                `scroll ${scrollerNode.scrollLeft.toFixed(1)} / ${scrollerNode.scrollTop.toFixed(1)}`,
+                `viewport ${film ? `${film.scroll.w}×${film.scroll.h}` : "-"} content ${film ? `${film.document.w}×${film.document.h}` : "-"}`,
+                `cards ${filePane.querySelectorAll(".pv-card").length} / ${state.count}`,
+                `track hidden ${trackNode.hidden} opacity ${trackStyle.opacity}`,
+                `cached ${state.cached.has(state.anchorId) ? "yes" : "no"} ring ${filePane.querySelector(".pv-card-cached:not([hidden])") ? "on" : "off"}`,
+                `thumb ${thumbNode.style.width || "-"} ${thumbNode.style.height || "-"} ${thumbNode.style.transform || "-"}`,
+                `thumbBox ${Math.round(thumbNode.getBoundingClientRect().width)}×${Math.round(thumbNode.getBoundingClientRect().height)} @ ${Math.round(thumbNode.getBoundingClientRect().top)}`,
+                `anchor ${state.anchorId ?? "-"} shown ${state.displayedId ?? "-"}`,
+                `key ${globalThis.__lastKey ?? "-"} focus ${document.activeElement?.className || document.activeElement?.tagName || "-"}`,
+            ];
+            debugNode.textContent = lines.join("\n");
+        }, 200);
+
+        window.addEventListener("keydown", (event) => {
+            globalThis.__lastKey = `${event.code}`;
+        });
+    </script>
+</body>
+</html>
