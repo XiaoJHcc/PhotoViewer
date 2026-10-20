@@ -78,7 +78,7 @@
 - 初次呈现（启动恢复、文件栏重新显示、布局重建）时开关勾选态与面板状态一致：开关打开且文件栏可见即显示面板并按当前照片计算一次；开关关闭即不显示、不计算。文件栏隐藏时只保留逻辑开关值，不显示、不计算、不排队。
 - 相似候选集合取自当前筛选结果；排序不改变候选集合，筛选变化会触发重算（[similarity](similarity.md)、[SCOPE-01](scope.md)）。
 - 开关只由筛选条控件触发，没有默认快捷键；不抢占主图手势或滚轮。
-- 外观为自绘药丸（`filter.toggle.*`），四态取 `color.filter.toggle.*`：未勾选常态透明底 + 描边 / 未勾选悬停 `hover` 底、`hover.border`、`hover.foreground` / 勾选 `checked.*` / 勾选悬停 `checked.hover.*`。
+- 开关必须清楚表达选中与未选中。占位取 `filter.toggle.*`；原生按钮可按 TOOLBAR-10 使用系统状态外观，由同一控件配置管理背景、轮廓与高亮。自绘药丸四态取 `color.filter.toggle.*`：未勾选常态透明底 + 描边 / 未勾选悬停 `hover` 底、`hover.border`、`hover.foreground` / 勾选 `checked.*` / 勾选悬停 `checked.hover.*`。
 - 无障碍：暴露名称“相似聚类”、开关状态（已展开/已收起）与提示“展开/关闭相似聚类面板”。
 
 ## FILTER-07 布局与显隐 · 必须
