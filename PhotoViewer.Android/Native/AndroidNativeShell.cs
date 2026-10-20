@@ -143,6 +143,7 @@ public static class AndroidNativeShell
         StorageAccessManager.Initialize(new AndroidStorageAccessManager());
         XmpWriter.Initialize(new AndroidXmpWriter(activity.ContentResolver!));
         SettingsService.ConfigureStorage(new AndroidSettingsStorage());
+        AndroidInputDevices.Initialize(activity);
         _settingsPresenter = new AndroidNativeSettingsPresenter(activity);
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_Nnapi());

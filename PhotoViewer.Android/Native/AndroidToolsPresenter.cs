@@ -66,7 +66,7 @@ public sealed class AndroidToolsPresenter
             var content = new AndroidToolsSheetView(_activity, _main, tools, Dismiss);
             var dialog = new BottomSheetDialog(_activity, Resource.Style.Theme_PhotoViewer_BottomSheet);
             var metrics = _activity.Resources?.DisplayMetrics;
-            int height = (int)((metrics?.HeightPixels ?? 1920) * .9);
+            int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
             dialog.SetContentView(content, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MatchParent, height));
             dialog.DismissEvent += (_, _) =>
             {
@@ -81,7 +81,7 @@ public sealed class AndroidToolsPresenter
                 var behavior = BottomSheetBehavior.From(parent);
                 if (behavior != null)
                 {
-                    behavior.PeekHeight = (int)((metrics?.HeightPixels ?? 1920) * .55);
+                    behavior.PeekHeight = (int)((metrics?.HeightPixels ?? 1920) * .5);
                     behavior.SkipCollapsed = false;
                     behavior.State = BottomSheetBehavior.StateExpanded;
                 }
@@ -154,12 +154,14 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         {
             Gravity = GravityFlags.CenterHorizontal,
             TopMargin = (int)(8 * density),
+            BottomMargin = (int)(4 * density),
         });
 
         var header = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
         header.SetGravity(GravityFlags.CenterVertical);
         header.SetPadding((int)(12 * density), 0, (int)(12 * density), 0);
         _back = Button("‹", 26, () => { if (!HandleBack()) Dismiss(); });
+        _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
         _title = Text("工具", 17, AndroidUiTheme.TextPrimary, bold: true);
         _title.Gravity = GravityFlags.Center;
         var close = Button("✕", 20, Dismiss);
@@ -218,19 +220,23 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         }
     }
 
-    /// <summary>根页两个入口（照片数据统计为 Windows 专属，不建入口）。</summary>
+    /// <summary>根页两个入口（照片数据统计为 Windows 专属，不建入口；与设置页同款分组卡片）。</summary>
     private void BuildRootPage()
     {
-        Add(Category("EXIF 详情", "查看当前照片的完整元数据，可在同名 RAW/JPG 间切换", () =>
+        var rows = new List<View>
         {
-            _tools.OpenExifDetail();
-            BuildPage();
-        }));
-        Add(Category("DINO 诊断", "PCA-RGB / Cosine / 锐度 / 抖动拖影与刚体拟合", () =>
-        {
-            _tools.OpenDinoDebug();
-            BuildPage();
-        }));
+            Category("EXIF 详情", "查看当前照片的完整元数据，可在同名 RAW/JPG 间切换", () =>
+            {
+                _tools.OpenExifDetail();
+                BuildPage();
+            }),
+            Category("DINO 诊断", "PCA-RGB / Cosine / 锐度 / 抖动拖影与刚体拟合", () =>
+            {
+                _tools.OpenDinoDebug();
+                BuildPage();
+            }),
+        };
+        Add(Card(rows));
     }
 
     /// <summary>EXIF 详情页：格式切换 + 分组表格（ID / 名称 / 中文名 / 值）。</summary>
@@ -349,7 +355,8 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         row.SetGravity(GravityFlags.CenterVertical);
-        row.SetPadding(0, (int)AndroidUiTheme.Dp(_activity, 12), 0, (int)AndroidUiTheme.Dp(_activity, 12));
+        row.SetPadding((int)AndroidUiTheme.Dp(_activity, 16), (int)AndroidUiTheme.Dp(_activity, 12),
+            (int)AndroidUiTheme.Dp(_activity, 12), (int)AndroidUiTheme.Dp(_activity, 12));
         row.Clickable = true;
         var column = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         column.AddView(Text(title, 16, AndroidUiTheme.TextPrimary, bold: true));
@@ -358,6 +365,27 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         row.AddView(Text("›", 22, AndroidUiTheme.TextSecondary), new LinearLayout.LayoutParams((int)AndroidUiTheme.Dp(_activity, 44), LayoutParams.WrapContent));
         row.Click += (_, _) => action();
         return row;
+    }
+
+    /// <summary>圆角卡片 + 行间 1dp 分隔线，与设置页分类列表同一外观。</summary>
+    private LinearLayout Card(List<View> rows)
+    {
+        var card = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
+        var background = new GradientDrawable();
+        background.SetColor(Color.ParseColor("#262626"));
+        background.SetCornerRadius((float)AndroidUiTheme.Dp(_activity, 10));
+        card.Background = background;
+        card.ClipToOutline = true;
+        for (int index = 0; index < rows.Count; index++)
+        {
+            if (index > 0)
+            {
+                var divider = Divider();
+                card.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, 1));
+            }
+            card.AddView(rows[index], new LinearLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+        }
+        return card;
     }
 
     private View SectionHeader(string title)

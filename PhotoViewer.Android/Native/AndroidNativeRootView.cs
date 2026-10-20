@@ -87,8 +87,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
     /// <summary>相似聚类面板（验收读取可见性/列表）。</summary>
     internal AndroidSimilarityPanel SimilarityPane => _similarityPane;
-    /// <summary>细节定格绿框视图。</summary>
+    /// <summary>活动细节绿框视图。</summary>
     internal View DetailHighlightView => _detailHighlight;
+    /// <summary>主图细节绿框当前是否可见（验收读取活动目标联动）。</summary>
+    internal bool DetailFrameVisible => _detailVisible;
+    /// <summary>共享分析编排（验收读取准星）。</summary>
+    internal AnalysisPresenter AnalysisPresenterForChecks => _analysisPresenter;
 
     /// <summary>建立主屏视图树并接线共享 VM 与会话。</summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -872,7 +876,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     }
 
     /// <summary>更新空态/错误提示；有图时全部隐藏。</summary>
-    /// <summary>细节预览定格时在主图上画绿色方框：中心取瓦片中心，大小取对焦框或 1:1 裁剪方块在当前视口下的投影。</summary>
+    /// <summary>细节预览有活动目标时在主图上画绿色方框：中心取瓦片中心，大小取对焦框或 1:1 裁剪方块在当前视口下的投影。</summary>
     private void UpdateDetailHighlight()
     {
         if (!_analysisPane.DetailActive || !_main.IsAnalysisViewVisible || _session.Image == null || _session.IsProxy)

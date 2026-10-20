@@ -21,7 +21,9 @@ namespace PhotoViewer.Android;
     Icon = "@drawable/icon",
     Exported = false,
     LaunchMode = LaunchMode.SingleTask,
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode)]
+    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize | ConfigChanges.UiMode
+        | ConfigChanges.Keyboard | ConfigChanges.KeyboardHidden | ConfigChanges.Navigation
+        | ConfigChanges.Touchscreen)]
 public sealed class AndroidNativeActivity : AppCompatActivity
 {
     /// <summary>

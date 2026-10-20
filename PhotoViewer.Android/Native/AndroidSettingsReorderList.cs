@@ -8,6 +8,7 @@ using Android.Widget;
 using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.CheckBox;
 using PhotoViewer.Core.Design;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Android.Native;
 
@@ -72,6 +73,37 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         _adapter.NotifyItemMoved(from, to);
     }
 
+    /// <summary>重新绑定所有行（外设连接变化或录制状态变化，不重建页面）。</summary>
+    internal void NotifyAllRowsChanged() => _adapter.NotifyDataSetChanged();
+
+    /// <summary>读取指定行真实视图的绑定可见性与读屏文本（验收使用）。</summary>
+    internal RowSnapshot? SnapshotForChecks(int position)
+    {
+        if (position < 0 || position >= _count()) return null;
+        var holder = FindViewHolderForAdapterPosition(position);
+        if (holder?.ItemView is RowView row) return row.Snapshot();
+        for (int index = 0; index < ChildCount; index++)
+        {
+            var child = GetChildAt(index);
+            if (child is RowView candidate && GetChildAdapterPosition(candidate) == position)
+                return candidate.Snapshot();
+        }
+        return null;
+    }
+
+    /// <summary>真实行视图状态；仅供验收断言。</summary>
+    internal readonly record struct RowSnapshot(
+        bool BindingControlsVisible,
+        bool SubtitleVisible,
+        string Subtitle,
+        string AccessibilityText,
+        string PrimaryChipText,
+        string SecondaryChipText,
+        bool PrimaryClearVisible,
+        bool SecondaryClearVisible);
+
+    private static string HotkeyBinding(string text, bool conflict) => conflict ? $"{text}（冲突）" : text;
+
     /// <summary>开始拖动指定行。</summary>
     internal void StartDrag(View row)
     {
@@ -98,17 +130,25 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         menu.Show();
     }
 
-    /// <summary>行模型：勾选、主文本、可选副文本与读屏描述。</summary>
+    /// <summary>行模型：勾选、主文本、可选副文本与读屏描述；快捷键行另带主/次绑定控件。</summary>
     internal sealed class SettingsReorderItem
     {
         internal SettingsReorderItem(string title, string? subtitle, Func<bool> getChecked,
-            Action<bool> setChecked, string? accessibilityDescription = null)
+            Action<bool> setChecked, string? accessibilityDescription = null,
+            SettingsViewModel.HotkeyItem? hotkey = null, Func<bool>? recordingEnabled = null,
+            Action<bool>? beginRecording = null, Action<bool>? clearBinding = null,
+            Func<bool, bool>? isRecording = null)
         {
             Title = title;
             Subtitle = subtitle;
             GetChecked = getChecked;
             SetChecked = setChecked;
             AccessibilityDescription = accessibilityDescription;
+            Hotkey = hotkey;
+            RecordingEnabled = recordingEnabled;
+            BeginRecording = beginRecording;
+            ClearBinding = clearBinding;
+            IsRecording = isRecording;
         }
 
         internal string Title { get; }
@@ -116,6 +156,16 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         internal Func<bool> GetChecked { get; }
         internal Action<bool> SetChecked { get; }
         internal string? AccessibilityDescription { get; }
+        /// <summary>快捷键行对应的共享工作副本项；其他表为 null。</summary>
+        internal SettingsViewModel.HotkeyItem? Hotkey { get; }
+        /// <summary>当前是否应显示录制/清空控件（外设能力实时判断）。</summary>
+        internal Func<bool>? RecordingEnabled { get; }
+        /// <summary>开始录制主/次绑定。</summary>
+        internal Action<bool>? BeginRecording { get; }
+        /// <summary>清空主/次绑定。</summary>
+        internal Action<bool>? ClearBinding { get; }
+        /// <summary>主/次绑定是否正在录制。</summary>
+        internal Func<bool, bool>? IsRecording { get; }
     }
 
     /// <summary>设配器：行数取工作副本，内容在绑定时读取。</summary>
@@ -144,7 +194,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         public RowHolder(RowView row) : base(row) => Row = row;
     }
 
-    /// <summary>行：勾选框、标题/副标题、行尾把手；把手轻点开菜单，长按开始拖拽。</summary>
+    /// <summary>
+    /// 行：勾选框、标题/副标题、行尾把手；快捷键行在标题下按外设能力显示主/次绑定与录制控件。
+    /// 把手轻点开菜单，长按开始拖拽。
+    /// </summary>
     internal sealed class RowView : LinearLayout
     {
         private readonly AndroidSettingsReorderList _owner;
@@ -152,20 +205,26 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         private readonly TextView _title;
         private readonly TextView _subtitle;
         private readonly TextView _handle;
+        private readonly LinearLayout _bindings;
+        private readonly TextView _primaryChip;
+        private readonly TextView _primaryClear;
+        private readonly TextView _secondaryChip;
+        private readonly TextView _secondaryClear;
         private SettingsReorderItem? _item;
         private bool _binding;
 
         internal RowView(Context context, AndroidSettingsReorderList owner) : base(context)
         {
             _owner = owner;
-            Orientation = Orientation.Horizontal;
-            SetGravity(GravityFlags.CenterVertical);
+            Orientation = Orientation.Vertical;
             LayoutParameters = new RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent);
             double density = AndroidUiTheme.Density(context);
-            SetPadding((int)(16 * density), (int)(10 * density), (int)(8 * density), (int)(10 * density));
+            SetPadding((int)(16 * density), (int)(8 * density), (int)(8 * density), (int)(8 * density));
             SetMinimumHeight((int)(52 * density));
 
+            var line = new LinearLayout(context) { Orientation = Orientation.Horizontal };
+            line.SetGravity(GravityFlags.CenterVertical);
             _check = new MaterialCheckBox(context);
             _check.CheckedChange += (_, args) =>
             {
@@ -201,9 +260,69 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             };
 
             var checkboxSize = (int)AndroidUiTheme.Dp(context, 44);
-            AddView(_check, new LayoutParams(checkboxSize, checkboxSize));
-            AddView(column, new LayoutParams(0, LayoutParams.WrapContent, 1));
-            AddView(_handle, new LayoutParams(checkboxSize, checkboxSize));
+            line.AddView(_check, new LayoutParams(checkboxSize, checkboxSize));
+            line.AddView(column, new LayoutParams(0, LayoutParams.WrapContent, 1));
+            line.AddView(_handle, new LayoutParams(checkboxSize, checkboxSize));
+            AddView(line, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+
+            _bindings = new LinearLayout(context) { Orientation = Orientation.Vertical };
+            _bindings.SetPadding((int)(44 * density), (int)(2 * density), 0, (int)(2 * density));
+            _bindings.Visibility = ViewStates.Gone;
+            (_primaryChip, _primaryClear) = BuildBindingLine(context, true);
+            (_secondaryChip, _secondaryClear) = BuildBindingLine(context, false);
+            _bindings.AddView(Line(context, _primaryChip, _primaryClear));
+            _bindings.AddView(Line(context, _secondaryChip, _secondaryClear));
+            AddView(_bindings, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+        }
+
+        /// <summary>构建一行“绑定按钮 + 清空按钮”。</summary>
+        private (TextView Chip, TextView Clear) BuildBindingLine(Context context, bool primary)
+        {
+            var chip = new TextView(context)
+            {
+                TextSize = 12,
+                Gravity = GravityFlags.CenterVertical,
+                Clickable = true,
+                Focusable = true,
+            };
+            chip.SetTextColor(AndroidUiTheme.TextPrimary);
+            var background = new GradientDrawable();
+            background.SetColor(Color.ParseColor("#333333"));
+            background.SetCornerRadius(AndroidUiTheme.Dp(context, 6));
+            background.SetStroke(Math.Max(1, (int)AndroidUiTheme.Dp(context, 1)), Color.ParseColor("#555555"));
+            chip.Background = background;
+            chip.SetPadding((int)AndroidUiTheme.Dp(context, 10), (int)AndroidUiTheme.Dp(context, 6),
+                (int)AndroidUiTheme.Dp(context, 10), (int)AndroidUiTheme.Dp(context, 6));
+            chip.SetMinimumHeight((int)AndroidUiTheme.Dp(context, 44));
+            chip.Click += (_, _) =>
+            {
+                if (_item?.BeginRecording == null) return;
+                _item.BeginRecording(primary);
+            };
+
+            var clear = new TextView(context)
+            {
+                Text = "✕",
+                TextSize = 16,
+                Gravity = GravityFlags.Center,
+                Clickable = true,
+                Focusable = true,
+            };
+            clear.SetTextColor(AndroidUiTheme.TextSecondary);
+            clear.SetMinimumWidth((int)AndroidUiTheme.Dp(context, 44));
+            clear.Click += (_, _) => _item?.ClearBinding?.Invoke(primary);
+            return (chip, clear);
+        }
+
+        /// <summary>把绑定按钮与清空按钮放进一行。</summary>
+        private static LinearLayout Line(Context context, TextView chip, TextView clear)
+        {
+            var line = new LinearLayout(context) { Orientation = Orientation.Horizontal };
+            line.SetGravity(GravityFlags.CenterVertical);
+            var parameters = new LayoutParams(0, LayoutParams.WrapContent, 1);
+            line.AddView(chip, parameters);
+            line.AddView(clear, new LayoutParams((int)AndroidUiTheme.Dp(context, 44), (int)AndroidUiTheme.Dp(context, 44)));
+            return line;
         }
 
         /// <summary>排序把手的锚点视图。</summary>
@@ -220,18 +339,85 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             bool hasSubtitle = !string.IsNullOrWhiteSpace(item.Subtitle);
             _subtitle.Text = item.Subtitle ?? "";
             _subtitle.Visibility = hasSubtitle ? ViewStates.Visible : ViewStates.Gone;
+            RefreshBindings();
+        }
+
+        /// <summary>
+        /// 按实时外设能力刷新绑定区：有键盘/鼠标/触控板时显示主/次录制与清空；
+        /// 纯触控时整块隐藏，不显示绑定文本或冲突。
+        /// </summary>
+        private void RefreshBindings()
+        {
+            var item = _item;
+            var hotkey = item?.Hotkey;
+            if (item == null || hotkey == null)
+            {
+                _bindings.Visibility = ViewStates.Gone;
+                UpdateDescription();
+                return;
+            }
+
+            bool editable = item.RecordingEnabled?.Invoke() ?? false;
+            _bindings.Visibility = editable ? ViewStates.Visible : ViewStates.Gone;
+            if (!editable)
+            {
+                _subtitle.Visibility = ViewStates.Gone;
+                UpdateDescription();
+                return;
+            }
+
+            _subtitle.Visibility = ViewStates.Gone;
+            bool primaryRecording = item.IsRecording?.Invoke(true) ?? false;
+            bool secondaryRecording = item.IsRecording?.Invoke(false) ?? false;
+            string primary = primaryRecording ? "按下按键…" : hotkey.PrimaryHotkeyText;
+            string secondary = secondaryRecording ? "按下按键…" : hotkey.SecondaryHotkeyText;
+            _primaryChip.Text = $"主 {HotkeyBinding(primary, hotkey.HasPrimaryConflict && !primaryRecording)}";
+            _primaryChip.SetTextColor(primaryRecording ? AndroidUiTheme.Accent
+                : hotkey.HasPrimaryConflict ? AndroidUiTheme.ErrorText : AndroidUiTheme.TextPrimary);
+            _primaryChip.ContentDescription = $"{hotkey.Name} 主绑定 {primary}"
+                + (hotkey.HasPrimaryConflict ? "，冲突" : "")
+                + (primaryRecording ? "，正在录制，按 Esc 取消，Delete 清空" : "，点按开始录制");
+            _primaryClear.Enabled = !primaryRecording;
+            _primaryClear.Alpha = primaryRecording ? .35f : 1f;
+            _primaryClear.ContentDescription = $"清空 {hotkey.Name} 主绑定";
+
+            _secondaryChip.Text = $"次 {HotkeyBinding(secondary, hotkey.HasSecondaryConflict && !secondaryRecording)}";
+            _secondaryChip.SetTextColor(secondaryRecording ? AndroidUiTheme.Accent
+                : hotkey.HasSecondaryConflict ? AndroidUiTheme.ErrorText : AndroidUiTheme.TextPrimary);
+            _secondaryChip.ContentDescription = $"{hotkey.Name} 次绑定 {secondary}"
+                + (hotkey.HasSecondaryConflict ? "，冲突" : "")
+                + (secondaryRecording ? "，正在录制，按 Esc 取消，Delete 清空" : "，点按开始录制");
+            _secondaryClear.Enabled = !secondaryRecording;
+            _secondaryClear.Alpha = secondaryRecording ? .35f : 1f;
+            _secondaryClear.ContentDescription = $"清空 {hotkey.Name} 次绑定";
             UpdateDescription();
         }
 
-        /// <summary>同步行与勾选框的读屏描述；勾选变化后立即广播新状态。</summary>
+        /// <summary>同步行与勾选框的读屏描述；纯触控不朗读绑定。</summary>
         private void UpdateDescription()
         {
             if (_item == null) return;
             string description = _item.AccessibilityDescription
                 ?? $"{_item.Title}，{(_item.GetChecked() ? "已启用" : "未启用")}";
+            bool editable = _item.RecordingEnabled?.Invoke() ?? false;
+            if (editable && _item.Hotkey is { } hotkey)
+            {
+                description += $"，主绑定 {HotkeyBinding(hotkey.PrimaryHotkeyText, hotkey.HasPrimaryConflict)}"
+                    + $"，次绑定 {HotkeyBinding(hotkey.SecondaryHotkeyText, hotkey.HasSecondaryConflict)}";
+            }
             ContentDescription = description;
             _check.ContentDescription = description;
             _handle.ContentDescription = $"{_item.Title} 排序把手：轻点打开上移/下移菜单，长按拖动";
+        }
+
+        /// <summary>真实视图状态快照（验收）。</summary>
+        internal RowSnapshot Snapshot()
+        {
+            bool bindings = _bindings.Visibility == ViewStates.Visible;
+            return new RowSnapshot(bindings, _subtitle.Visibility == ViewStates.Visible,
+                _subtitle.Text ?? string.Empty, ContentDescription ?? string.Empty,
+                _primaryChip.Text ?? string.Empty, _secondaryChip.Text ?? string.Empty,
+                bindings, bindings);
         }
     }
 

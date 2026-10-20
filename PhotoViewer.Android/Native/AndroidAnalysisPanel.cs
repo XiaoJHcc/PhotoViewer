@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using Android.Content;
 using Android.Graphics;
-using Android.OS;
 using Android.Views;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
@@ -62,7 +61,7 @@ internal sealed class AndroidAnalysisHost : IAnalysisHost
 /// <summary>
 /// Android 分析栏（A5）：按共享 <see cref="AnalysisPanelGeometry"/> 排布中心/对焦细节预览、直方图与
 /// 4 张 DINO-CV 诊断瓦片；瓦片自绘，细节裁剪走共享 <see cref="DisplayCrop"/>（代理期留空）。
-/// 诊断瓦片点按落准星并重算 cosine；细节预览点按定格、再点或点主图空白解除。
+/// 诊断瓦片点按落准星并重算 cosine；细节预览在按下/真实悬停时点亮绿框，抬起或离开即清除，双击定位主图。
 /// </summary>
 internal sealed class AndroidAnalysisPanel : View
 {
@@ -87,31 +86,45 @@ internal sealed class AndroidAnalysisPanel : View
     private double _startInset;
     private bool _disposed;
 
-    private AnalysisTile? _detailTile;
+    private AnalysisTile? _pointerDetail;
+    private AnalysisTile? _hoverDetail;
+    private AnalysisTile? _pressedTile;
+    private AnalysisTile? _diagnosticDownTile;
+    private AnalysisTile? _lastDetailUpTile;
+    private long _lastDetailUpTime;
+    private int _activePointerId = -1;
+    private long _ownerDownTime;
+    private bool _ownerStartedOnDetail;
+    private float _downX;
+    private float _downY;
+    private bool _pointerMoved;
     private DecodedImage? _histogramLogged;
-    private AnalysisTile? _pendingDetailTile;
-    private long _lastDetailTapTime;
-    private bool _detailActive;
     private Bitmap? _detailBitmap;
     private (DecodedImage? Source, double U, double V, int Pixels) _detailKey;
 
+    private AnalysisTile? ActiveDetail => _activePointerId >= 0 ? _pointerDetail : _hoverDetail;
+
     /// <summary>瓦片数量变化（对焦点出现/消失）时通知宿主重新分区。</summary>
     internal event Action? TileCountChanged;
-    /// <summary>细节预览定格/解除后通知宿主更新主图绿框。</summary>
+    /// <summary>活动细节目标变化后通知宿主更新主图绿框。</summary>
     internal event Action? DetailChanged;
     /// <summary>细节预览双击：把主图定位到该瓦片中心并放大到物理 100%。</summary>
     internal event Action<double, double>? DetailFocusRequested;
 
     /// <summary>瓦片数量（当前 presenter 顺序）。</summary>
     internal int TileCount => _presenter.Tiles.Count;
-    /// <summary>当前细节预览是否定格。</summary>
-    internal bool DetailActive => _detailActive;
-    /// <summary>定格瓦片的裁剪中心（归一化），不取手指在瓦片内的落点。</summary>
-    internal (double U, double V) DetailPoint => _detailTile is { } tile ? (tile.CenterU, tile.CenterV) : (.5, .5);
-    /// <summary>定格瓦片的 Sony 对焦框宽（归一化）；无对焦框为 null。</summary>
-    internal double? DetailFrameWidth => _detailTile?.FocusFrameWidth;
-    /// <summary>定格瓦片的 Sony 对焦框高（归一化）；无对焦框为 null。</summary>
-    internal double? DetailFrameHeight => _detailTile?.FocusFrameHeight;
+    /// <summary>当前是否有活动细节目标（指针悬停或触控按下）。</summary>
+    internal bool DetailActive => ActiveDetail != null;
+    /// <summary>活动瓦片的裁剪中心（归一化），不取手指在瓦片内的落点。</summary>
+    internal (double U, double V) DetailPoint => ActiveDetail is { } tile ? (tile.CenterU, tile.CenterV) : (.5, .5);
+    /// <summary>活动瓦片的 Sony 对焦框宽（归一化）；无对焦框为 null。</summary>
+    internal double? DetailFrameWidth => ActiveDetail?.FocusFrameWidth;
+    /// <summary>活动瓦片的 Sony 对焦框高（归一化）；无对焦框为 null。</summary>
+    internal double? DetailFrameHeight => ActiveDetail?.FocusFrameHeight;
+    /// <summary>当前瓦片布局（dp），验收脚本按它构造落点。</summary>
+    internal IReadOnlyDictionary<AnalysisTile, LayoutRect> Frames => _frames;
+    /// <summary>当前瓦片顺序，验收脚本按它挑细节/诊断瓦片。</summary>
+    internal IReadOnlyList<AnalysisTile> Tiles => _presenter.Tiles;
     /// <summary>细节裁剪方形边长（源像素）；主图绿框按它乘当前视口缩放。</summary>
     internal int CropPixels => Math.Max(1, (int)Math.Round(_tileSize * AndroidUiTheme.Density(Context!)));
     /// <summary>当前瓦片边长（dp，验收读取）。</summary>
@@ -145,13 +158,14 @@ internal sealed class AndroidAnalysisPanel : View
         ClearDetail();
     }
 
-    /// <summary>解除细节预览定格。</summary>
+    /// <summary>清除当前活动细节目标（悬停、按下与诊断落点一并结束）。</summary>
     internal void ClearDetail()
     {
-        CancelPendingDetailTap();
-        if (!_detailActive) return;
-        _detailActive = false;
-        _detailTile = null;
+        _activePointerId = -1;
+        _pressedTile = null;
+        _diagnosticDownTile = null;
+        _pointerDetail = null;
+        _hoverDetail = null;
         _detailKey = default;
         DetailChanged?.Invoke();
         Invalidate();
@@ -163,7 +177,9 @@ internal sealed class AndroidAnalysisPanel : View
         {
             if (_disposed) return;
             Invalidate();
-            if (_detailTile != null && !_presenter.Tiles.Contains(_detailTile)) ClearDetail();
+            if ((_pointerDetail != null && !_presenter.Tiles.Contains(_pointerDetail))
+                || (_hoverDetail != null && !_presenter.Tiles.Contains(_hoverDetail)))
+                ClearDetail();
             if (_presenterTileCount != _presenter.Tiles.Count)
             {
                 _presenterTileCount = _presenter.Tiles.Count;
@@ -239,7 +255,7 @@ internal sealed class AndroidAnalysisPanel : View
             {
                 if (tile.FocusFrameWidth is { } frameWidth && tile.FocusFrameHeight is { } frameHeight)
                     DrawFocusFrame(canvas, content, frameWidth, frameHeight);
-                if (_detailActive && ReferenceEquals(tile, _detailTile))
+                if (ReferenceEquals(tile, ActiveDetail))
                 {
                     using var highlight = new Paint(PaintFlags.AntiAlias) { StrokeWidth = 2 * density };
                     highlight.SetStyle(global::Android.Graphics.Paint.Style.Stroke);
@@ -276,12 +292,12 @@ internal sealed class AndroidAnalysisPanel : View
         return bitmap;
     }
 
-    /// <summary>细节预览裁剪：代理期留空，定格中心优先于 presenter 中心。</summary>
+    /// <summary>细节预览裁剪：代理期留空，裁剪中心恒为该瓦片自身的归一化中心。</summary>
     private Bitmap? DetailSource(AnalysisTile tile)
     {
         var source = _session.IsProxy ? null : _session.Image;
         int pixels = Math.Max(1, (int)Math.Round(_tileSize * AndroidUiTheme.Density(Context!)));
-        // 裁剪中心恒为该瓦片自身的中心（对焦点/画面中心）；手指落点只决定“定格/解除”，不移动裁剪中心。
+        // 裁剪中心恒为该瓦片自身的中心（对焦点/画面中心）；手指落点只决定活动目标，不移动裁剪中心。
         double u = tile.CenterU;
         double v = tile.CenterV;
         var key = (source, u, v, pixels);
@@ -330,7 +346,7 @@ internal sealed class AndroidAnalysisPanel : View
         canvas.DrawLine(x, content.Top, x, content.Bottom, _crosshairPaint);
     }
 
-    /// <summary>绘制对焦框/定格框（绿色 1px 方框）。</summary>
+    /// <summary>绘制对焦框（绿色 1px 方框）。</summary>
     private void DrawFocusFrame(Canvas canvas, RectF content, double width, double height)
     {
         float cx = content.CenterX(), cy = content.CenterY();
@@ -371,84 +387,256 @@ internal sealed class AndroidAnalysisPanel : View
         }
     }
 
-    /// <summary>点按命中：细节预览单指点按定格/解除、双击定位；诊断瓦片落准星并重算。</summary>
+    /// <summary>
+    /// 直接触控：按下即点亮落点瓦片，滑动时切换到新瓦片、滑出即清除，抬起/取消清除；
+    /// 诊断瓦片只把未超过触控容差的完整点按当作落准星，避免滑动释放误点。
+    /// </summary>
     /// <param name="e">事件。</param>
     /// <returns>消费。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
         if (e == null) return false;
-        if (e.ActionMasked != MotionEventActions.Up) return true;
-        float density = (float)AndroidUiTheme.Density(Context!);
-        double x = e.GetX() / density, y = e.GetY() / density;
-        foreach (var tile in _presenter.Tiles)
+        switch (e.ActionMasked)
         {
-            if (!_frames.TryGetValue(tile, out var frame)) continue;
-            if (!(x >= frame.X && x <= frame.MaxX && y >= frame.Y && y <= frame.MaxY)) continue;
-            double contentInset = ContentInsetDp;
-            double localU = (x - frame.X - contentInset) / Math.Max(1, _tileSize - contentInset * 2);
-            double localV = (y - frame.Y - contentInset) / Math.Max(1, _tileSize - contentInset * 2);
-            if (tile.Kind == AnalysisTileKind.Detail)
+            case MotionEventActions.Down:
+                _activePointerId = e.GetPointerId(0);
+                _ownerDownTime = e.EventTime;
+                _downX = e.GetX();
+                _downY = e.GetY();
+                _pointerMoved = false;
+                PressAt(_downX, _downY, IsHoverPointer(e));
+                return true;
+
+            case MotionEventActions.PointerDown:
+                // 只有第一根手指是 owner；后续手指不夺走活动目标。
+                return true;
+
+            case MotionEventActions.Move:
             {
-                HandleDetailTap(tile);
+                int index = e.FindPointerIndex(_activePointerId);
+                if (index < 0) return true;
+                float x = e.GetX(index);
+                float y = e.GetY(index);
+                if (IsHoverPointer(e)) _hoverDetail = HitDetail(x, y);
+                if (!_pointerMoved)
+                {
+                    float slop = ViewConfiguration.Get(Context!)?.ScaledTouchSlop ?? 8;
+                    _pointerMoved = Math.Abs(x - _downX) > slop || Math.Abs(y - _downY) > slop;
+                }
+                MoveTo(x, y);
                 return true;
             }
-            CancelPendingDetailTap();
-            if (tile.Kind == AnalysisTileKind.Diagnostic)
+
+            case MotionEventActions.PointerUp:
             {
-                _presenter.OnTileClicked(Math.Clamp(localU, 0, 1), Math.Clamp(localV, 0, 1));
+                int index = e.ActionIndex;
+                if (index < 0 || index >= e.PointerCount || e.GetPointerId(index) != _activePointerId)
+                    return true;
+                ReleaseAt(e.GetX(index), e.GetY(index), e.EventTime);
                 return true;
             }
-            return true;
+
+            case MotionEventActions.Up:
+            {
+                int index = e.FindPointerIndex(_activePointerId);
+                if (index < 0) return true;
+                ReleaseAt(e.GetX(index), e.GetY(index), e.EventTime);
+                return true;
+            }
+
+            case MotionEventActions.Cancel:
+                if (_activePointerId < 0 || e.EventTime < _ownerDownTime) return true;
+                _activePointerId = -1;
+                _pressedTile = null;
+                _diagnosticDownTile = null;
+                _pointerDetail = null;
+                _hoverDetail = null;
+                RefreshDetail();
+                return true;
+
+            default:
+                return true;
         }
-        ClearDetail();
-        _presenter.ClearCrosshair();
-        return true;
     }
 
-    /// <summary>细节瓦片单/双击判定：单点延时 280ms 定格，双击改为定位主图（不先定格）。</summary>
-    private void HandleDetailTap(AnalysisTile tile)
+    /// <summary>真实鼠标/触控板悬停：进入或移动时点亮细节瓦片，离开时清除；不做触控合成悬停。</summary>
+    /// <param name="e">悬停事件。</param>
+    /// <returns>消费。</returns>
+    public override bool OnHoverEvent(MotionEvent? e)
     {
-        long now = SystemClock.UptimeMillis();
-        if (ReferenceEquals(_pendingDetailTile, tile) && now - _lastDetailTapTime <= 280)
+        if (e == null) return false;
+        if (!IsHoverPointer(e)) return base.OnHoverEvent(e);
+        if (_activePointerId >= 0) return true;
+        switch (e.ActionMasked)
         {
-            CancelPendingDetailTap();
-            DetailFocusRequested?.Invoke(tile.CenterU, tile.CenterV);
-            return;
+            case MotionEventActions.HoverEnter:
+            case MotionEventActions.HoverMove:
+                SetHoverDetail(HitDetail(e.GetX(), e.GetY()));
+                return true;
+            case MotionEventActions.HoverExit:
+                SetHoverDetail(null);
+                return true;
+            default:
+                return base.OnHoverEvent(e);
         }
-        CancelPendingDetailTap();
-        _pendingDetailTile = tile;
-        _lastDetailTapTime = now;
-        Action pending = () =>
-        {
-            if (!ReferenceEquals(_pendingDetailTile, tile)) return;
-            _pendingDetailTile = null;
-            ToggleDetail(tile);
-        };
-        _pendingTap = pending;
-        PostDelayed(pending, 280);
     }
 
-    private Action? _pendingTap;
-
-    private void CancelPendingDetailTap()
+    /// <summary>按下：细节瓦片立即成为 owner 的活动目标；诊断瓦片记录起点；空白保持无目标。</summary>
+    private void PressAt(float x, float y, bool pointerSource)
     {
-        if (_pendingTap != null) RemoveCallbacks(_pendingTap);
-        _pendingTap = null;
-        _pendingDetailTile = null;
+        var tile = HitTile(x, y);
+        _pressedTile = tile;
+        _ownerStartedOnDetail = tile?.Kind == AnalysisTileKind.Detail;
+        _diagnosticDownTile = tile?.Kind == AnalysisTileKind.Diagnostic ? tile : null;
+        _pointerDetail = _ownerStartedOnDetail ? tile : null;
+        _hoverDetail = pointerSource && _ownerStartedOnDetail ? tile : null;
+        RefreshDetail();
     }
 
-    private void ToggleDetail(AnalysisTile tile)
+    /// <summary>滑动：从细节起手才按 frame 命中切换；从诊断/空白起手不自动点亮细节。</summary>
+    private void MoveTo(float x, float y)
     {
-        if (_detailActive && ReferenceEquals(_detailTile, tile))
+        var tile = HitTile(x, y);
+        if (ReferenceEquals(tile, _pressedTile) == false)
         {
-            ClearDetail();
-            return;
+            _pressedTile = tile;
+            _diagnosticDownTile = null;
         }
-        _detailTile = tile;
-        _detailActive = true;
+        _pointerDetail = _ownerStartedOnDetail && tile?.Kind == AnalysisTileKind.Detail ? tile : null;
+        RefreshDetail();
+    }
+
+    /// <summary>抬起：清除活动目标；同一细节瓦片上的快速二次点按定位主图。</summary>
+    private void ReleaseAt(float x, float y, long eventTime)
+    {
+        var tile = HitTile(x, y);
+        var detail = _ownerStartedOnDetail && tile?.Kind == AnalysisTileKind.Detail ? tile : null;
+        var diagnostic = _diagnosticDownTile != null && tile?.Kind == AnalysisTileKind.Diagnostic ? tile : null;
+
+        _pointerDetail = null;
+        _activePointerId = -1;
+        RefreshDetail();
+
+        if (detail != null && !_pointerMoved)
+        {
+            if (ReferenceEquals(_lastDetailUpTile, detail) && eventTime - _lastDetailUpTime <= 280)
+            {
+                _lastDetailUpTile = null;
+                DetailFocusRequested?.Invoke(detail.CenterU, detail.CenterV);
+            }
+            else
+            {
+                _lastDetailUpTile = detail;
+                _lastDetailUpTime = eventTime;
+            }
+        }
+        else
+        {
+            _lastDetailUpTile = null;
+        }
+
+        if (!_pointerMoved && diagnostic != null && ReferenceEquals(diagnostic, _diagnosticDownTile))
+        {
+            var frame = _frames[diagnostic];
+            var content = DiagnosticContentRect(diagnostic, ToRectF(frame, (float)AndroidUiTheme.Density(Context!)));
+            if (content.Contains(x, y))
+            {
+                double u = (x - content.Left) / Math.Max(1, content.Width());
+                double v = (y - content.Top) / Math.Max(1, content.Height());
+                _presenter.OnTileClicked(Math.Clamp(u, 0, 1), Math.Clamp(v, 0, 1));
+            }
+            else
+            {
+                _presenter.ClearCrosshair();
+            }
+        }
+        else if (!_ownerStartedOnDetail && diagnostic == null && tile == null && !_pointerMoved)
+        {
+            _presenter.ClearCrosshair();
+        }
+
+        _pressedTile = null;
+        _diagnosticDownTile = null;
+        _ownerStartedOnDetail = false;
+    }
+
+    /// <summary>活动细节变化时才通知宿主，避免滑动过程中重复重算绿框。</summary>
+    private void RefreshDetail()
+    {
+        var active = ActiveDetail;
+        if (ReferenceEquals(active, _lastNotifiedDetail)) { Invalidate(); return; }
+        _lastNotifiedDetail = active;
         _detailKey = default;
         DetailChanged?.Invoke();
         Invalidate();
+    }
+
+    private AnalysisTile? _lastNotifiedDetail;
+
+    /// <summary>设置悬停目标（仅细节瓦片会点亮）。</summary>
+    private void SetHoverDetail(AnalysisTile? tile)
+    {
+        if (ReferenceEquals(tile, _hoverDetail)) return;
+        _hoverDetail = tile;
+        RefreshDetail();
+    }
+
+    /// <summary>命中的瓦片（不区分类型）。</summary>
+    private AnalysisTile? HitTile(float xPx, float yPx)
+    {
+        float density = (float)AndroidUiTheme.Density(Context!);
+        float x = xPx / density;
+        float y = yPx / density;
+        foreach (var tile in _presenter.Tiles)
+        {
+            if (!_frames.TryGetValue(tile, out var frame)) continue;
+            if (x >= frame.X && x <= frame.MaxX && y >= frame.Y && y <= frame.MaxY) return tile;
+        }
+        return null;
+    }
+
+    /// <summary>命中的细节瓦片（悬停只认细节预览）。</summary>
+    private AnalysisTile? HitDetail(float xPx, float yPx)
+    {
+        var tile = HitTile(xPx, yPx);
+        return tile?.Kind == AnalysisTileKind.Detail ? tile : null;
+    }
+
+    /// <summary>悬停只接受真实指针来源；触屏事件即使伪装成 hover 也不合成。</summary>
+    private static bool IsHoverPointer(MotionEvent e)
+    {
+        var source = e.Source;
+        if ((source & InputSourceType.Touchscreen) == InputSourceType.Touchscreen) return false;
+        return (source & InputSourceType.Mouse) == InputSourceType.Mouse
+            || (source & InputSourceType.Touchpad) == InputSourceType.Touchpad
+            || (source & InputSourceType.Trackball) == InputSourceType.Trackball;
+    }
+
+    /// <summary>诊断瓦片按 letterbox 之后的内容矩形映射准星，空白不落点。</summary>
+    private static RectF DiagnosticContentRect(AnalysisTile tile, RectF content)
+    {
+        var source = tile.Source;
+        if (source == null || source.Width <= 0 || source.Height <= 0) return content;
+        float scale = Math.Min(content.Width() / source.Width, content.Height() / source.Height);
+        float width = source.Width * scale;
+        float height = source.Height * scale;
+        return new RectF(content.CenterX() - width / 2, content.CenterY() - height / 2,
+            content.CenterX() + width / 2, content.CenterY() + height / 2);
+    }
+
+    /// <summary>窗口不可见或失活时立即清除活动目标（ANALYSIS-04）。</summary>
+    protected override void OnWindowVisibilityChanged(ViewStates visibility)
+    {
+        base.OnWindowVisibilityChanged(visibility);
+        if (visibility != ViewStates.Visible) ClearDetail();
+    }
+
+    /// <summary>窗口失去焦点时清除悬停/按下状态，避免残留绿框。</summary>
+    /// <param name="hasWindowFocus">是否仍有窗口焦点。</param>
+    public override void OnWindowFocusChanged(bool hasWindowFocus)
+    {
+        base.OnWindowFocusChanged(hasWindowFocus);
+        if (!hasWindowFocus) ClearDetail();
     }
 
     private static RectF ToRectF(LayoutRect rect, float density) => new(

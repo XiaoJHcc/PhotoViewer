@@ -8,7 +8,7 @@
 |---|---|
 | AndroidApp.cs | 普通 `Android.App.Application`，不初始化任何 UI 框架。 |
 | AndroidBootstrapActivity.cs | 唯一 `MainLauncher` 与 `ACTION_VIEW`/`ACTION_SEND`/`ACTION_SEND_MULTIPLE`（`image/*`）入口；原样转发 Action/Data/ClipData/Extras 到 `AndroidNativeActivity` 并 `Finish()`。 |
-| AndroidNativeActivity.cs | 原生壳 Activity（`AppCompatActivity` + `@style/Theme.PhotoViewer.Native`）；挂 `AndroidNativeShell` 根视图，转发 SAF 结果、硬件键盘与返回键。 |
+| AndroidNativeActivity.cs | 原生壳 Activity（`AppCompatActivity` + `@style/Theme.PhotoViewer.Native`）；挂 `AndroidNativeShell` 根视图，转发 SAF 结果、硬件键盘与返回键；`ConfigurationChanges` 覆盖键盘/键盘隐藏/导航/触摸/方向/尺寸等，外设插拔与软键盘显隐不重建 Activity、不丢设置或工具 sheet。 |
 | Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel()` → `PhotoLoadSession` → 根视图；外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，启动参数 `pv-settings` 也在这里收口。日志出现 `[Native] Android 原生壳就绪`。 |
 | Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性/打开失败（STATE-02）提示条（文案取共享 `StatusMessages`，与「计算中」药丸同时可见时上移到药丸上方）；行布局按共享 `SimilarityPanelGeometry.RowWidth` 给相似面板让宽并计入列表态停靠区；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
 | Native/AndroidMainScreenLayout.cs | 主屏分区纯函数：共享分区数学 + 系统栏/刘海 insets；栏位背景铺到屏幕边缘、内容收在安全区。 |
@@ -18,11 +18,12 @@
 | Native/AndroidControlBar.cs | 共享 `ControlBarLayout` 的 EXIF/评分/命令三分组、换行/居中；命令显隐/顺序来自共享设置（含分析栏/增强）；评分快捷命令为实心星内叠数字（0 为清零叉），数字不拦截点击；`ExploreByTouchHelper` 暴露虚拟节点、名称、禁用态与焦点顺序。 |
 | Native/AndroidControlBarScrollHost.cs | 控制栏滚动宿主（TOOLBAR-08）：文档超出可用主轴时拖动/惯性滚动，普通重建不回到起点，偏移按新几何夹取；未溢出时行为与原先一致。 |
 | Native/AndroidNavigationOverlay.cs / AndroidNavigationDecoder.cs | 缩放指示器（长边 150dp + 可见框 + 百分比，宿主不透明度 0.6；白框可拖动定位，IMAGE-06）；缩略图取当前展示产物（含增强预览）抽样转正，不二次解码文件、不回读 GPU。 |
-| Native/AndroidNativeSettingsPresenter.cs | 半屏 Material 3 BottomSheet：五分类（文件/预览/控制/EXIF/AI）、共享 `NativeSettingsSession` 工作副本、关闭/下滑/返回统一回写；三张可排序表用 `ItemTouchHelper` + 行尾把手（轻点把手是上移/下移菜单），顶部显示源设置的持久化失败状态。 |
-| Native/AndroidAnalysisPanel.cs / AndroidAnalysisHost | 分析栏：共享 `AnalysisPresenter` 宿主，细节预览/直方图/DINO-CV 瓦片自绘，细节定格绿框与准星；可见时主图升 Full。 |
+| Native/AndroidNativeSettingsPresenter.cs | 半屏 Material 3 BottomSheet：五分类（文件/预览/控制/EXIF/AI）、共享 `NativeSettingsSession` 工作副本、关闭/下滑/返回统一回写；三张可排序表用 `ItemTouchHelper` + 行尾把手（轻点把手是上移/下移菜单），顶部显示源设置的持久化失败状态。控制页按 `AndroidInputDevices` 能力显示主/次绑定：有外设时提供录制（`SettingsBottomSheetDialog` 统一截获键盘/滚轮/鼠标按键，录制态左右键不穿透）与清空，纯触控整块隐藏绑定文本、冲突与录制/清空控件，读屏也不朗读绑定；`Esc` 取消、`Delete` 清空、写入共享 `HotkeyItem` 并重算冲突，录制时鼠标按键不穿透到下层控件。缩放预设每行只有一个居中数值框 + 固定 `%`，失焦/空白/Done/导航/关闭统一校验提交，保留输入框实例并原地重排；`＋` 新增 100% 项、`−` 删除项。 |
+| Native/AndroidInputDevices.cs | `InputManager` 设备增删监听：真实字母键盘（排除虚拟设备与非字母键）或鼠标/触控板任一连接即视为具备键鼠录制能力；只按系统连接状态判断，供设置页动态增删控件。 |
+| Native/AndroidAnalysisPanel.cs / AndroidAnalysisHost | 分析栏：共享 `AnalysisPresenter` 宿主，细节预览/直方图/DINO-CV 瓦片自绘；细节绿框按“触控按下立即点亮、滑动切换/空白清除、抬起或取消清除、真实鼠标/触控板悬停、失活/隐藏/换图清除”工作，双击定位与绿框互不影响；诊断瓦片只在未超过触控容差的完整点按时落准星；可见时主图升 Full。 |
 | Native/AndroidSimilarityPanel.cs | 相似聚类面板：复用卡片 + 分数条，三态/动作区/真实“提取全部”，行布局从胶片栏右侧让位；向主屏提供列表态停靠区自然宽度，让 1–2 项列表不被动作区挤窄。 |
-| Native/AndroidToolsPresenter.cs | 工具 BottomSheet：EXIF 详情（分组/格式切换）与 DINO 诊断（5 瓦片 + 刚体拟合），导航状态写共享 `ToolsViewModel`；显示/关闭同步 `IsPresented`，关闭即 `Deactivate()` 取消在途 DINO。 |
-| Native/AndroidInputMapping.cs | `KeyEvent`/修饰键 → 共享 `GestureKey`/`GestureModifiers`；Android 语义另写，不复用苹果修饰键表。 |
+| Native/AndroidToolsPresenter.cs | 工具 BottomSheet：与设置页同款容器尺寸、把手/标题栏与分组卡片导航；根页只有 EXIF 详情（分组/格式切换）与 DINO 诊断（5 瓦片 + 刚体拟合），导航状态写共享 `ToolsViewModel`；显示/关闭同步 `IsPresented`，关闭即 `Deactivate()` 取消在途 DINO。 |
+| Native/AndroidInputMapping.cs | `KeyEvent`/修饰键 → 共享 `GestureKey`/`GestureModifiers`；Android 语义另写，不复用苹果修饰键表。设置页录制复用同一映射生成共享 `AppGesture`，不维护第二套键码。 |
 | Native/AndroidUiTheme.cs | 固定深色、显式圆角/字重/主色；uicons 描边与实心图标字体从 Assets 加载（缺失各自回退并只记录一次），设计令牌的图标码位转字形。 |
 | Core/AndroidPresentationDecoder.cs / AndroidPresentationEncodingPolicy.cs / AndroidDisplayCapabilities.cs | 展示解码（BitmapFactory + libheif 兜底、P3/sRGB、EXIF 方向、源尺寸）与编码协商（恒 Rgba8）、色域探测。 |
 | Core/AndroidStorageRefs.cs / AndroidFilePicker.cs / AndroidStorageAccessManager.cs | SAF `content://` 与本地 `IFileRef`/`IFolderRef`；`ACTION_OPEN_DOCUMENT_TREE`/`ACTION_OPEN_DOCUMENT` + 持久授权。 |
@@ -55,7 +56,7 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 - 卡片星级点击 → `[Rating] SetRating(..., 3)` + XMP 写回 OK，主图身份不变；设置关闭 ShowRating 后控制栏评分分组与卡片星级即时消失（关闭回写传播）。
 - 硬件键盘 Right → Next、F → Fit；设置 sheet 打开时键盘让位；返回键先关 sheet 再结束 Activity。
 - 3+3 邻居预取在 13 张夹具下曾 SIGSEGV；`BitmapLoader.PrefetchFullNeighbors=false`（Android）后稳定，Mac/iOS/Windows 行为不变。
-- 分析栏：范围 + 细节定格绿框 + 诊断瓦片点按；相似聚类：toggle → 空态 → 真实“提取全部” → 100% 分数卡片/柱状条；工具页：EXIF 详情分组/列/格式切换、DINO 5 瓦片 + 刚体文本；增强预览像素变亮（均为目视/日志，不是程序化通过）。
+- 分析栏：范围 + 细节按压/悬停绿框 + 诊断瓦片点按；相似聚类：toggle → 空态 → 真实“提取全部” → 100% 分数卡片/柱状条；工具页：EXIF 详情分组/列/格式切换、DINO 5 瓦片 + 刚体文本；增强预览像素变亮（均为目视/日志，不是程序化通过）。
 
 ## 程序化检查（A6 起步）
 
@@ -67,7 +68,11 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
 adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-main.txt
 ```
 
-- 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；2026-10-18 API 35 arm64 分别 **PASS 14 / 18 / 15 / 16 / 16**。
+- 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；API 35 arm64 模拟器基线与覆盖范围：
+  - `main`：主屏分区、安全区、筛选/卡片/控制栏几何、Fit↔100% 与 Full。
+  - `analysis`：分析栏开合与瓦片几何；运行时生成确定性 Sony 对焦 JPEG，覆盖对焦点/中心两张细节瓦片，验证按下立即点亮、两瓦片切换/回切、滑到空白/诊断清除、抬起与取消清除、真实鼠标/触控板悬停、触屏不合成悬停、触控期间悬停不抢占、双击定位独立于高亮；`owner` pointer 多指规则与旧 PointerUp/Cancel 不清新目标；诊断起手/空白起手不得滑入细节自动点亮；诊断点按落准星且滑动释放不误点；隐藏分析栏清除活动目标。
+  - `settings`：设置 sheet 与工作副本；`AndroidInputDevices` 能力注入（键盘/指针/纯触控），读取真实行视图断言完整绑定控件、纯触控零绑定文字与读屏不泄露；录制/取消/清空/冲突、录制时鼠标左右键被吞、断开最后外设取消录制、连接变化保留草稿且不弹软键盘、虚拟/非字母键盘排除；倍率行单一居中值 + `%`、失焦统一提交、1601/NaN/0 恢复、输入框实例保持、草稿随增删保留、原地重排与至少保留一项。
+  - `similarity` / `tools`：面板与工具 sheet 开合。
 - `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。检查已按行/列布局分别核对分区与卡片宽度。
 
 ## 发现清单（A1b–A5）
@@ -97,7 +102,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 23 | P3 测试图只有 Adobe 略灰，P3/sRGB 看起来一样 | P3 表面已 True；但测试图是同一组 RGB 分别带 Adobe/P3/sRGB ICC，正确管理下 P3 与 sRGB 应不同。当前 `BitmapFactory` 的 ICC→P3 转换仍可疑，下一步用共享 `ColorEngine`/Skia skcms 接管；真机锁屏暂未取到解码色彩日志 |
 | 24 | 缩略图图片不偏左但偏上 | 图片/第二行改 8..88，标题基线 103、日期 115、星级 126，使上边距与左右 8dp 一致 |
 | 25 | 开关胶片栏/控制栏后主图严重偏移 | 两因：SurfaceView 新缓冲晚一帧（旧尺寸帧残留）+ 视口不保留中心。`OnSizeChanged` 保留 `CenterUV` 并 Post/PostDelayed 重绘；SurfaceChanged 也补两帧 |
-| 26 | 分析栏细节绿框随机乱飞、小图也出框、双击位置怪 | 按 iOS 语义重做：点按瓦片只切换定格（中心恒为瓦片自身 CenterU/V，不取手指落点）；双击才定位到瓦片中心；绿框大小 = 对焦框或 1:1 裁剪像素×视口 Scale；切图/关闭分析栏清除；适应态已大于物理 100% 的小图不画绿框；`FocusOnPoint` 小图夹回适应 |
+| 26 | 分析栏细节绿框随机乱飞、小图也出框、双击位置怪 | 按 iOS 语义重做：按下/真实悬停点亮瓦片中心（CenterU/V，不取手指落点）、滑动切换或清除、抬起/取消/失活/切图/关闭分析栏清除；双击定位到瓦片中心；绿框大小 = 对焦框或 1:1 裁剪像素×视口 Scale；适应态已大于物理 100% 的小图不画绿框；`FocusOnPoint` 小图夹回适应 |
 | 27 | 长按菜单每个项之间都有分隔线 | 按 iOS 分组：打开文件夹｜胶片栏/分析栏/控制栏｜增强预览｜工具/设置；顺序也改为 胶片/分析/控制 |
 | 28 | 初次打开文件夹控制栏只剩容器 | 空分组兜底重建 + 文件/CurrentFile 补 MarkDirty + 文件夹 UI 更新 120ms 后再重建；SAF 选择器返回时 Activity `OnResume` 再强制刷新控制栏与主图一帧 |
 | 29 | 主图色彩整体发白，任何格式 | 不是 ICC：真机 EGL P3 表面把主图整体抬亮（同一 JPEG 强制 sRGB 表面后正常，缩略图也正常）。默认改为 sRGB 表面/解码（`ForceSrgb`），广色域保留 `--ez pv-p3 true` 诊断；待确认 P3 EGL/合成传递函数后再默认开启 |

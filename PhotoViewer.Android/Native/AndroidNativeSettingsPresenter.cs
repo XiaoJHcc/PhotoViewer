@@ -7,12 +7,14 @@ using Android.Graphics;
 using Android.Graphics.Drawables;
 using Android.Text;
 using Android.Views;
+using Android.Views.InputMethods;
 using Android.Widget;
 using AndroidX.Core.Content;
 using AndroidX.RecyclerView.Widget;
 using Google.Android.Material.BottomSheet;
 using Google.Android.Material.SwitchMaterial;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
@@ -36,6 +38,9 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
     /// <summary>当前是否已有打开中的设置 sheet。</summary>
     public static bool IsOpen => _current != null;
 
+    /// <summary>当前设置 sheet（验收读取页面与绑定控件状态）。</summary>
+    internal static AndroidSettingsSheetView? CurrentSheet => _current;
+
     /// <summary>返回键优先关闭设置 sheet；返回是否消费。</summary>
     /// <returns>设置页存在并已处理时 true。</returns>
     public static bool HandleBack()
@@ -57,15 +62,20 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
         {
             var session = new NativeSettingsSession(settings);
             var content = new AndroidSettingsSheetView(_activity, settings, session, Dismiss);
-            var dialog = new BottomSheetDialog(_activity, Resource.Style.Theme_PhotoViewer_BottomSheet);
+            // 对话框窗口统一接收录制态键盘/滚轮/鼠标按键，避免控件抢走手势。
+            var dialog = new SettingsBottomSheetDialog(_activity,
+                Resource.Style.Theme_PhotoViewer_BottomSheet, content);
             var metrics = _activity.Resources?.DisplayMetrics;
             int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
             dialog.SetContentView(content, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MatchParent, height));
             dialog.DismissEvent += (_, _) =>
             {
                 if (ReferenceEquals(_current, content)) _current = null;
+                content.CommitPendingEdits();
                 session.Apply();
                 session.Dispose();
+                // 解除外设监听，避免已关闭的 sheet 被静态事件保活。
+                content.Dispose();
             };
             dialog.Show();
             var parent = content.Parent as View;
@@ -101,6 +111,53 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
 }
 
 /// <summary>
+/// 设置 BottomSheet 窗口：录制态下先接收键盘、滚轮与鼠标中/侧键，再交回系统，
+/// 保证 INPUT-08 的“录制期间吞掉滚轮与中键”不依赖具体控件。
+/// </summary>
+internal sealed class SettingsBottomSheetDialog : BottomSheetDialog
+{
+    private readonly AndroidSettingsSheetView _sheet;
+
+    internal SettingsBottomSheetDialog(Context context, int theme, AndroidSettingsSheetView sheet)
+        : base(context, theme) => _sheet = sheet;
+
+    /// <summary>录制态消费按键；否则按对话框默认路径分发。</summary>
+    /// <param name="e">按键事件。</param>
+    /// <returns>是否消费。</returns>
+    public override bool DispatchKeyEvent(KeyEvent? e)
+    {
+        if (e != null && _sheet.HandleRecordingKey(e)) return true;
+        return base.DispatchKeyEvent(e!);
+    }
+
+    /// <summary>录制态吞掉鼠标左/右/中/侧键的触摸事件，避免误触下面的按钮。</summary>
+    /// <param name="e">触摸事件。</param>
+    /// <returns>是否消费。</returns>
+    public override bool DispatchTouchEvent(MotionEvent? e)
+    {
+        if (e != null && _sheet.HandleRecordingMouseTouch(e)) return true;
+        return base.DispatchTouchEvent(e!);
+    }
+
+    /// <summary>录制态消费滚轮与鼠标中/侧键；否则按对话框默认路径分发。</summary>
+    /// <param name="e">通用运动事件。</param>
+    /// <returns>是否消费。</returns>
+    public override bool DispatchGenericMotionEvent(MotionEvent? e)
+    {
+        if (e != null)
+        {
+            if (e.ActionMasked == MotionEventActions.Scroll
+                && _sheet.HandleRecordingWheel(e.GetAxisValue(Axis.Vscroll), (int)e.MetaState))
+                return true;
+            if (e.ActionMasked == MotionEventActions.ButtonPress
+                && _sheet.HandleRecordingButton(e.ActionButton, (int)e.MetaState))
+                return true;
+        }
+        return base.DispatchGenericMotionEvent(e!);
+    }
+}
+
+/// <summary>
 /// 设置 BottomSheet 的视图树：顶部把手 + 标题栏 + 可滚动内容；根页为五分类入口，子页在同一 sheet 内切换。
 /// 所有控件颜色/圆角显式写出，不依赖 OEM 主题派生属性。
 /// </summary>
@@ -117,11 +174,22 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private readonly List<(TextView Label, Func<string> Text)> _dynamicTexts = [];
     private string _page = "root";
     private bool _closed;
+    private AndroidSettingsReorderList? _hotkeyList;
+    private SettingsViewModel.HotkeyItem? _recordingItem;
+    private bool _recordingPrimary;
+    private LinearLayout? _scaleCard;
+    private View? _scaleAddRow;
+    private readonly Dictionary<SettingsViewModel.ScalePreset, ScaleRowView> _scaleRows = [];
+    private bool _committingScalePresets;
 
     /// <summary>当前工作设置副本（验收读取关闭回写后的值）。</summary>
     internal SettingsViewModel Settings => _session.WorkingSettings;
     /// <summary>当前页面标识（root/files/preview/control/exif/ai）。</summary>
     internal string Page => _page;
+    /// <summary>当前是否处于快捷键录制态。</summary>
+    internal bool IsRecording => _recordingItem != null;
+    /// <summary>键鼠录制控件是否可见（外设能力）。</summary>
+    internal bool BindingControlsAvailable => AndroidInputDevices.HasBindingDevice;
 
     /// <summary>建立 sheet 视图树。</summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -185,9 +253,15 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         scroll.SetBackgroundColor(Color.Transparent);
         _content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         _content.SetPadding((int)(16 * density), (int)(4 * density), (int)(16 * density), (int)(24 * density));
+        _content.Clickable = true;
+        _content.Click += (_, _) => CommitScalePresets();
+        scroll.Clickable = true;
+        scroll.Click += (_, _) => CommitScalePresets();
         scroll.AddView(_content, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
         root.AddView(scroll, new LinearLayout.LayoutParams(LayoutParams.MatchParent, 0, 1));
 
+        // INPUT-13：外设连接只增删录制控件，不重置工作副本、不关闭页面、不弹软键盘。
+        AndroidInputDevices.Changed += OnInputDevicesChanged;
         BuildPage("root");
     }
 
@@ -211,8 +285,24 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     {
         if (_closed) return;
         _closed = true;
+        CommitScalePresets();
+        CancelRecording();
         _session.Apply();
         _dismiss();
+    }
+
+    /// <summary>关闭事件（含下滑）统一提交未失焦的预设输入。</summary>
+    internal void CommitPendingEdits() => CommitScalePresets();
+
+    /// <summary>外设连接/断开：取消不再可用的录制，刷新控制页行，不触碰工作副本或草稿。</summary>
+    private void OnInputDevicesChanged()
+    {
+        Post(() =>
+        {
+            if (_closed) return;
+            if (!AndroidInputDevices.HasBindingDevice) CancelRecording();
+            if (_page == "control") _hotkeyList?.NotifyAllRowsChanged();
+        });
     }
 
     /// <summary>源设置持久化状态变化时刷新顶部状态行。</summary>
@@ -235,7 +325,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _source.PropertyChanged -= OnSourceChanged;
+        if (disposing)
+        {
+            _closed = true;
+            _recordingItem = null;
+            _source.PropertyChanged -= OnSourceChanged;
+            AndroidInputDevices.Changed -= OnInputDevicesChanged;
+        }
         base.Dispose(disposing);
     }
 
@@ -243,7 +339,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <param name="page">页面标识。</param>
     private void BuildPage(string page)
     {
+        CommitScalePresets();
+        if (page != "control") CancelRecording();
         _page = page;
+        _hotkeyList = null;
+        _scaleCard = null;
+        _scaleAddRow = null;
+        _scaleRows.Clear();
         _content.RemoveAllViews();
         _dynamicTexts.Clear();
         _back.Visibility = page == "root" ? ViewStates.Invisible : ViewStates.Visible;
@@ -267,14 +369,17 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         }
     }
 
-    /// <summary>根页：五个分类入口（与 iOS 设置根页同序）。</summary>
+    /// <summary>根页：五个分类入口（与工具页同一分组列表导航外观）。</summary>
     private void BuildRootPage()
     {
-        Add(_content, CategoryRow("文件", "同名合并、文件格式与缓存预加载", "files"));
-        Add(_content, CategoryRow("预览", "缩放指示器与缩放比例预设", "preview"));
-        Add(_content, CategoryRow("控制", "布局模式与控制栏显示", "control"));
-        Add(_content, CategoryRow("EXIF", "EXIF 显示项与评分写回策略", "exif"));
-        Add(_content, CategoryRow("AI", "相似聚类阈值与即时计算", "ai"));
+        Add(_content, Card(new List<View>
+        {
+            CategoryRow("文件", "同名合并、文件格式与缓存预加载", "files"),
+            CategoryRow("预览", "缩放指示器与缩放比例预设", "preview"),
+            CategoryRow("控制", "布局模式与控制栏显示", "control"),
+            CategoryRow("EXIF", "EXIF 显示项与评分写回策略", "exif"),
+            CategoryRow("AI", "相似聚类阈值与即时计算", "ai"),
+        }));
     }
 
     /// <summary>文件页：同名合并、文件格式勾选/排序、缓存与预加载。</summary>
@@ -327,42 +432,202 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         Add(_content, Section("缩放位置显示", null,
             SwitchRow("缩放时显示指示器", null, () => Settings.ShowZoomIndicator,
                 value => Settings.ShowZoomIndicator = value)));
-        var rows = new List<View>();
-        var presets = Settings.ScalePresets;
-        for (int index = 0; index < presets.Count; index++)
-        {
-            var preset = presets[index];
-            rows.Add(ScalePresetRow(preset));
-        }
-        rows.Add(TextButtonRow("＋ 添加缩放比例", () =>
-        {
-            var preset = new SettingsViewModel.ScalePreset("100");
-            EditScalePreset(preset, isNew: true);
-        }));
-        Add(_content, Section("缩放比例预设", "点击数值编辑，单位为百分比（100 = 物理 100%）。", Card(rows)));
+        _scaleRows.Clear();
+        _scaleCard = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
+        var background = new GradientDrawable();
+        background.SetColor(Color.ParseColor("#262626"));
+        background.SetCornerRadius((float)AndroidUiTheme.Dp(_activity, 10));
+        _scaleCard.Background = background;
+        _scaleCard.ClipToOutline = true;
+        _scaleAddRow = TextButtonRow("＋ 添加缩放比例", AddScalePreset);
+        RebuildScaleCard();
+        Add(_content, SectionView("缩放比例预设", "点击数值编辑，单位为百分比（100 = 物理 100%）。", _scaleCard));
     }
 
-    /// <summary>控制页：布局模式与控制栏功能（显隐/排序）。</summary>
+    /// <summary>按工作副本顺序原地重排预设行，保留已存在的输入框实例。</summary>
+    private void RebuildScaleCard()
+    {
+        var card = _scaleCard;
+        if (card == null) return;
+        card.RemoveAllViews();
+        bool first = true;
+        foreach (var preset in Settings.ScalePresets)
+        {
+            if (!_scaleRows.TryGetValue(preset, out var row))
+            {
+                row = CreateScalePresetRow(preset);
+                _scaleRows[preset] = row;
+            }
+            if (!first) card.AddView(CreateScaleDivider(), new LinearLayout.LayoutParams(LayoutParams.MatchParent, 1));
+            card.AddView(row.Root, new LinearLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+            first = false;
+        }
+        if (!first) card.AddView(CreateScaleDivider(), new LinearLayout.LayoutParams(LayoutParams.MatchParent, 1));
+        if (_scaleAddRow != null)
+            card.AddView(_scaleAddRow, new LinearLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+        UpdateScaleDeleteButtons();
+    }
+
+    private View CreateScaleDivider()
+    {
+        var divider = new View(_activity);
+        divider.SetBackgroundColor(Color.ParseColor("#333333"));
+        return divider;
+    }
+
+    /// <summary>更新所有预设行的删除可用态（至少保留一项）。</summary>
+    private void UpdateScaleDeleteButtons()
+    {
+        bool canRemove = Settings.CanRemoveScalePreset;
+        foreach (var row in _scaleRows.Values)
+        {
+            row.Delete.Enabled = canRemove;
+            row.Delete.Alpha = canRemove ? 1f : .35f;
+        }
+    }
+
+    /// <summary>控制页：布局模式与控制栏功能（显隐/排序，键鼠外设连接时含主/次绑定录制）。</summary>
     private void BuildControlPage()
     {
         Add(_content, Section("控制栏布局位置", null,
-            NavigationRow("布局模式", null, CurrentLayoutModeName(), ShowLayoutModePicker)));
+            NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker)));
         var hotkeys = new AndroidSettingsReorderList(_activity,
             () => Settings.Hotkeys.Count,
             index =>
             {
                 var item = Settings.Hotkeys[index];
-                string primary = HotkeyBinding(item.PrimaryHotkeyText, item.HasPrimaryConflict);
-                string secondary = HotkeyBinding(item.SecondaryHotkeyText, item.HasSecondaryConflict);
-                // SETTINGS-01：移动端只读显示主/次绑定与冲突；冲突用文本表达，不只换颜色。
+                var captured = item;
+                // SETTINGS-01 / INPUT-13：有键盘/鼠标/触控板时提供完整主/次绑定、录制与清空；
+                // 仅直接触控时由行退回只读摘要，命令显隐与排序不变。
                 return new AndroidSettingsReorderList.SettingsReorderItem(
-                    item.Name, $"主 {primary} · 次 {secondary}",
+                    item.Name, null,
                     () => item.IsDisplay, value => item.IsDisplay = value,
-                    $"{item.Name}，{(item.IsDisplay ? "已启用" : "未启用")}，主绑定 {primary}，次绑定 {secondary}");
+                    hotkey: item,
+                    recordingEnabled: () => AndroidInputDevices.HasBindingDevice,
+                    beginRecording: primary => BeginRecording(captured, primary),
+                    clearBinding: primary => ClearBinding(captured, primary),
+                    isRecording: primary => ReferenceEquals(_recordingItem, captured) && _recordingPrimary == primary);
             },
             (from, to) => Settings.MoveHotkey(from, to));
+        _hotkeyList = hotkeys;
         Add(_content, SectionView("控制栏功能",
             "勾选决定是否显示在控制栏；拖动手柄排序，轻点手柄可用上移/下移菜单。", hotkeys));
+    }
+
+    /// <summary>进入主/次绑定录制态；同一时间只有一行在录制。</summary>
+    /// <param name="item">目标快捷键行。</param>
+    /// <param name="primary">是否录制主绑定。</param>
+    internal void BeginRecording(SettingsViewModel.HotkeyItem item, bool primary)
+    {
+        if (!AndroidInputDevices.HasBindingDevice) return;
+        _recordingItem = item;
+        _recordingPrimary = primary;
+        _hotkeyList?.NotifyAllRowsChanged();
+    }
+
+    /// <summary>取消录制并保留原绑定。</summary>
+    internal void CancelRecording()
+    {
+        if (_recordingItem == null) return;
+        _recordingItem = null;
+        _recordingPrimary = false;
+        _hotkeyList?.NotifyAllRowsChanged();
+    }
+
+    /// <summary>清空主/次绑定并重新检测冲突。</summary>
+    /// <param name="item">目标快捷键行。</param>
+    /// <param name="primary">是否清空主绑定。</param>
+    internal void ClearBinding(SettingsViewModel.HotkeyItem item, bool primary)
+    {
+        if (primary) item.PrimaryHotkey = null;
+        else item.SecondaryHotkey = null;
+        Settings.CheckHotkeyConflicts();
+        if (ReferenceEquals(_recordingItem, item) && _recordingPrimary == primary) CancelRecording();
+        else _hotkeyList?.NotifyAllRowsChanged();
+    }
+
+    /// <summary>录制态键盘：Esc 取消并保留原绑定，Delete/Backspace 清空，其余完整手势写入槽位。</summary>
+    /// <param name="e">按键事件。</param>
+    /// <returns>录制态是否消费该事件。</returns>
+    internal bool HandleRecordingKey(KeyEvent? e)
+    {
+        if (_recordingItem == null || e == null) return false;
+        if (e.Action != KeyEventActions.Down && e.Action != KeyEventActions.Multiple) return true;
+        if (e.KeyCode == Keycode.Escape)
+        {
+            CancelRecording();
+            return true;
+        }
+        if (e.KeyCode is Keycode.Del or Keycode.ForwardDel)
+        {
+            AssignRecordedGesture(null);
+            return true;
+        }
+        // 只按修饰键不产出手势，也不结束录制。
+        if (e.KeyCode is Keycode.ShiftLeft or Keycode.ShiftRight or Keycode.CtrlLeft or Keycode.CtrlRight
+            or Keycode.AltLeft or Keycode.AltRight or Keycode.MetaLeft or Keycode.MetaRight)
+            return true;
+        var gesture = AndroidInputMapping.FromKeyEvent(e.KeyCode, (int)e.MetaState);
+        if (gesture != null) AssignRecordedGesture(gesture);
+        return true;
+    }
+
+    /// <summary>录制态滚轮：上/下滚各成一档，带修饰键时一并记录。</summary>
+    /// <param name="vertical">纵向滚动量，正数为向上。</param>
+    /// <param name="metaState">原生修饰键状态。</param>
+    /// <returns>录制态是否消费。</returns>
+    internal bool HandleRecordingWheel(float vertical, int metaState)
+    {
+        if (_recordingItem == null || Math.Abs(vertical) < .01f) return false;
+        var action = vertical > 0 ? MouseAction.WheelUp : MouseAction.WheelDown;
+        AssignRecordedGesture(AppGesture.FromMouse(
+            new MouseGestureEx(action, AndroidInputMapping.ModifiersOf(metaState))));
+        return true;
+    }
+
+    /// <summary>录制态吞掉来自鼠标/触控板的触摸事件（含左右键），防止触发下层按钮。</summary>
+    /// <param name="e">触摸事件。</param>
+    /// <returns>是否消费。</returns>
+    internal bool HandleRecordingMouseTouch(MotionEvent? e)
+    {
+        if (_recordingItem == null || e == null) return false;
+        var source = e.Source;
+        return (source & InputSourceType.Mouse) == InputSourceType.Mouse
+            || (source & InputSourceType.Touchpad) == InputSourceType.Touchpad;
+    }
+
+    /// <summary>录制态鼠标按键：中键与侧键可录制，左右键不产生绑定。</summary>
+    /// <param name="button">原生按键。</param>
+    /// <param name="metaState">原生修饰键状态。</param>
+    /// <returns>录制态是否消费。</returns>
+    internal bool HandleRecordingButton(MotionEventButtonState button, int metaState)
+    {
+        if (_recordingItem == null) return false;
+        MouseAction? action = button switch
+        {
+            MotionEventButtonState.Tertiary => MouseAction.MiddleClick,
+            MotionEventButtonState.Back => MouseAction.XButton1Click,
+            MotionEventButtonState.Forward => MouseAction.XButton2Click,
+            _ => null,
+        };
+        if (action == null) return false;
+        AssignRecordedGesture(AppGesture.FromMouse(
+            new MouseGestureEx(action.Value, AndroidInputMapping.ModifiersOf(metaState))));
+        return true;
+    }
+
+    /// <summary>把录制结果写入当前槽位、结束录制并刷新行内冲突。</summary>
+    private void AssignRecordedGesture(AppGesture? gesture)
+    {
+        var item = _recordingItem;
+        if (item == null) return;
+        if (_recordingPrimary) item.PrimaryHotkey = gesture;
+        else item.SecondaryHotkey = gesture;
+        _recordingItem = null;
+        _recordingPrimary = false;
+        Settings.CheckHotkeyConflicts();
+        _hotkeyList?.NotifyAllRowsChanged();
+        Console.WriteLine($"[Native] 快捷键录制：{item.Name} {(gesture == null ? "已清空" : gesture.ToDisplayString())}");
     }
 
     /// <summary>EXIF 页：显示项勾选/排序、评分显示与安全写回。</summary>
@@ -435,85 +700,248 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return Settings.LayoutMode.ToString();
     }
 
-    /// <summary>快捷键副标题中的绑定文本；冲突在同一绑定后标注（SETTINGS-11）。</summary>
-    /// <param name="text">绑定显示文本。</param>
-    /// <param name="conflict">该绑定是否冲突。</param>
-    /// <returns>带冲突标记的文本。</returns>
-    private static string HotkeyBinding(string text, bool conflict) => conflict ? $"{text}（冲突）" : text;
+    private string CurrentLayoutModeDescription()
+    {
+        foreach (var item in Settings.LayoutModes)
+            if (item.Value == Settings.LayoutMode) return item.Description;
+        return string.Empty;
+    }
 
-    /// <summary>缩放预设行：数值、编辑、删除；只剩一项时删除无效。</summary>
-    private View ScalePresetRow(SettingsViewModel.ScalePreset preset)
+    /// <summary>单个预设行：唯一居中数值输入框、固定 % 与删除按钮。</summary>
+    private sealed record ScaleRowView(LinearLayout Root, EditText Input, TextView Delete);
+
+    private ScaleRowView CreateScalePresetRow(SettingsViewModel.ScalePreset preset)
     {
         var row = Row();
-        var text = Text($"{preset.Display}", 15, AndroidUiTheme.TextPrimary);
-        text.Clickable = true;
-        text.Click += (_, _) => EditScalePreset(preset, isNew: false);
-        bool canRemove = Settings.CanRemoveScalePreset;
-        var delete = Button("−", 18, () =>
-        {
-            Settings.RemoveScalePreset(preset);
-            BuildPage("preview");
-        });
-        delete.Enabled = canRemove;
-        delete.Alpha = canRemove ? 1f : .35f;
-        delete.ContentDescription = $"删除缩放比例 {preset.Text}%";
-        row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
-        row.AddView(delete, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
-        return row;
-    }
-
-    /// <summary>编辑/新增缩放预设；百分比必须 &gt;0 且 ≤1600，非法输入不写入并恢复原值（SETTINGS-07）。</summary>
-    private void EditScalePreset(SettingsViewModel.ScalePreset preset, bool isNew)
-    {
-        string original = preset.Text;
+        var density = (float)AndroidUiTheme.Density(_activity);
         var input = new EditText(_activity)
         {
-            Text = original,
+            Text = preset.Text,
             InputType = InputTypes.ClassNumber | InputTypes.NumberFlagDecimal,
+            Gravity = GravityFlags.Center,
+            TextSize = 15,
         };
+        input.SetSingleLine(true);
         input.SetTextColor(AndroidUiTheme.TextPrimary);
         input.SetHintTextColor(AndroidUiTheme.TextSecondary);
-        input.SetSingleLine(true);
-        var builder = new AlertDialog.Builder(_activity);
-        builder.SetTitle(isNew ? "添加缩放比例" : "编辑缩放比例");
-        builder.SetView(input);
-        builder.SetPositiveButton("确定", (_, _) => { });
-        builder.SetNegativeButton("取消", (_, _) => { });
-        var dialog = builder.Create();
-        if (dialog == null) return;
-        dialog.Show();
-        var positive = dialog.GetButton((int)DialogButtonType.Positive);
-        if (positive == null) return;
-        // 替换 AlertDialog 的默认“点按即关闭”监听，非法输入时保留对话框并恢复原值。
-        positive.SetOnClickListener(new ButtonClickListener(() =>
+        var inputBackground = new GradientDrawable();
+        inputBackground.SetColor(AndroidUiTheme.ControlFill);
+        inputBackground.SetCornerRadius(6 * density);
+        inputBackground.SetStroke(Math.Max(1, (int)density), AndroidUiTheme.ControlBorder);
+        input.Background = inputBackground;
+        input.SetPadding((int)(8 * density), (int)(6 * density), (int)(8 * density), (int)(6 * density));
+        input.SetMinimumHeight((int)(40 * density));
+        input.ContentDescription = "缩放比例百分比";
+        input.FocusChange += (_, args) =>
         {
-            // SETTINGS-07：输入必须 > 0 且 ≤ 1600%；非法时不写入，提示一次并恢复原值。
-            if (!double.TryParse(input.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
-                || !SettingsViewModel.IsValidScalePresetPercent(value))
-            {
-                Toast.MakeText(_activity, "请输入大于 0 且不超过 1600 的数字", ToastLength.Short)?.Show();
-                input.Text = original;
-                input.SetSelection(input.Text?.Length ?? 0);
-                return;
-            }
-            preset.Text = value.ToString("0.###", CultureInfo.InvariantCulture);
-            if (isNew) Settings.ScalePresets.Add(preset);
-            Settings.ApplyScalePreset();
-            dialog.Dismiss();
-            BuildPage("preview");
-        }));
+            if (args.HasFocus || _committingScalePresets) return;
+            CommitScalePreset(preset, input, reorder: true);
+            HideKeyboard(input);
+        };
+        input.EditorAction += (_, args) =>
+        {
+            if (args.ActionId == ImeAction.Done) CommitScalePresets();
+            args.Handled = true;
+        };
+
+        var percent = Text("%", 15, AndroidUiTheme.TextSecondary);
+        percent.Gravity = GravityFlags.Center;
+        percent.SetPadding((int)(4 * density), 0, (int)(4 * density), 0);
+
+        var delete = Button("−", 18, () => DeleteScalePreset(preset));
+        delete.ContentDescription = "删除缩放比例";
+        row.AddView(input, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
+        row.AddView(percent, new LinearLayout.LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent));
+        row.AddView(delete, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
+        return new ScaleRowView(row, input, delete);
     }
 
-    /// <summary>按钮点击监听，用于替换对话框默认的关闭行为。</summary>
-    private sealed class ButtonClickListener : Java.Lang.Object, View.IOnClickListener
+    /// <summary>校验并写入单个输入框；非法值恢复原文本并提示。</summary>
+    private bool CommitScalePreset(SettingsViewModel.ScalePreset preset, EditText input, bool reorder)
     {
-        private readonly Action _action;
+        string original = preset.Text;
+        string text = input.Text?.Trim() ?? string.Empty;
+        if (!TryParsePresetPercent(text, out double value) || !SettingsViewModel.IsValidScalePresetPercent(value))
+        {
+            Toast.MakeText(_activity, "请输入大于 0 且不超过 1600 的数字", ToastLength.Short)?.Show();
+            input.Text = original;
+            input.SetSelection(input.Text?.Length ?? 0);
+            return false;
+        }
+        string normalized = value.ToString("0.###", CultureInfo.InvariantCulture);
+        if (preset.Text != normalized) preset.Text = normalized;
+        if (input.Text != preset.Text) input.Text = preset.Text;
+        if (reorder && !ScalePresetsAscending()) SortScalePresetsInPlace();
+        return true;
+    }
 
-        internal ButtonClickListener(Action action) => _action = action;
+    /// <summary>提交所有预设输入（失焦、空白点击、导航与关闭共用），再按数值原地重排。</summary>
+    private void CommitScalePresets()
+    {
+        if (_committingScalePresets) return;
+        _committingScalePresets = true;
+        bool valid = true;
+        foreach (var preset in Settings.ScalePresets)
+        {
+            if (!_scaleRows.TryGetValue(preset, out var row)) continue;
+            if (row.Input.HasFocus)
+            {
+                row.Input.ClearFocus();
+                HideKeyboard(row.Input);
+            }
+            valid &= CommitScalePreset(preset, row.Input, reorder: false);
+        }
+        _committingScalePresets = false;
+        if (valid && !ScalePresetsAscending()) SortScalePresetsInPlace();
+        if (!valid) UpdateScaleDeleteButtons();
+    }
 
-        /// <summary>执行动作。</summary>
-        /// <param name="view">被点按钮。</param>
-        public void OnClick(View? view) => _action();
+    /// <summary>排序工作副本并原地重排行视图，不重建页面、不重建输入框。</summary>
+    private void SortScalePresetsInPlace()
+    {
+        Settings.SortScalePreset();
+        RebuildScaleCard();
+    }
+
+    /// <summary>提交后新增默认 100% 项并原地插入排序位置。</summary>
+    private void AddScalePreset()
+    {
+        CommitScalePresets();
+        Settings.AddScalePreset();
+        Settings.SortScalePreset();
+        RebuildScaleCard();
+    }
+
+    /// <summary>提交后删除指定项并原地重排行；至少保留一项。</summary>
+    private void DeleteScalePreset(SettingsViewModel.ScalePreset preset)
+    {
+        CommitScalePresets();
+        if (!Settings.CanRemoveScalePreset) return;
+        Settings.RemoveScalePreset(preset);
+        _scaleRows.Remove(preset);
+        RebuildScaleCard();
+    }
+
+    private static bool TryParsePresetPercent(string text, out double value)
+        => double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out value)
+            || double.TryParse(text, NumberStyles.Float, CultureInfo.CurrentCulture, out value);
+
+    /// <summary>预设是否已按数值升序（重复值允许）。</summary>
+    private bool ScalePresetsAscending()
+    {
+        for (int index = 1; index < Settings.ScalePresets.Count; index++)
+            if (Settings.ScalePresets[index - 1].Value > Settings.ScalePresets[index].Value) return false;
+        return true;
+    }
+
+    /// <summary>收起数值输入框的软键盘。</summary>
+    private void HideKeyboard(View input)
+    {
+        var manager = _activity.GetSystemService(Context.InputMethodService) as InputMethodManager;
+        manager?.HideSoftInputFromWindow(input.WindowToken, 0);
+    }
+
+    /// <summary>验收：切换设置子页。</summary>
+    internal void ShowPageForChecks(string page) => BuildPage(page);
+
+    /// <summary>验收：当前布局模式说明。</summary>
+    internal string LayoutModeDescriptionForChecks() => CurrentLayoutModeDescription();
+
+    /// <summary>验收：读取指定快捷键行真实视图的可见性与读屏文本。</summary>
+    internal AndroidSettingsReorderList.RowSnapshot? HotkeyRowSnapshotForChecks(int index)
+        => _hotkeyList?.SnapshotForChecks(index);
+
+    /// <summary>验收：进入指定行主/次绑定录制。</summary>
+    internal void BeginRecordingForChecks(int index, bool primary)
+    {
+        if (index >= 0 && index < Settings.Hotkeys.Count) BeginRecording(Settings.Hotkeys[index], primary);
+    }
+
+    /// <summary>验收：注入一次按键到录制态。</summary>
+    internal bool FeedRecordingKeyForChecks(Keycode key, KeyEventActions action = KeyEventActions.Down)
+        => HandleRecordingKey(new KeyEvent(action, key));
+
+    /// <summary>验收：注入一次滚轮到录制态。</summary>
+    internal bool FeedRecordingWheelForChecks(float vertical) => HandleRecordingWheel(vertical, 0);
+
+    /// <summary>验收：注入一次鼠标按键到录制态。</summary>
+    internal bool FeedRecordingButtonForChecks(MotionEventButtonState button) => HandleRecordingButton(button, 0);
+
+    /// <summary>验收：写入真实输入框并走完整提交路径；返回该逻辑项提交后的文本。</summary>
+    internal string CommitScalePresetForChecks(int index, string text)
+    {
+        if (index < 0 || index >= Settings.ScalePresets.Count) return string.Empty;
+        var preset = Settings.ScalePresets[index];
+        if (_scaleRows.TryGetValue(preset, out var row)) row.Input.Text = text;
+        CommitScalePresets();
+        return preset.Text;
+    }
+
+    /// <summary>验收：写入真实输入框但不提交（模拟未失焦草稿）。</summary>
+    internal void SetScalePresetInputForChecks(int index, string text)
+    {
+        if (index < 0 || index >= Settings.ScalePresets.Count) return;
+        if (_scaleRows.TryGetValue(Settings.ScalePresets[index], out var row)) row.Input.Text = text;
+    }
+
+    /// <summary>验收：真实输入框实例（用于断言原地提交未重建控件）。</summary>
+    internal object? ScalePresetInputIdentityForChecks(int index)
+        => index >= 0 && index < Settings.ScalePresets.Count
+            && _scaleRows.TryGetValue(Settings.ScalePresets[index], out var row) ? row.Input : null;
+
+    /// <summary>验收：真实输入框文本。</summary>
+    internal string ScalePresetInputTextForChecks(int index)
+        => index >= 0 && index < Settings.ScalePresets.Count
+            && _scaleRows.TryGetValue(Settings.ScalePresets[index], out var row) ? row.Input.Text ?? string.Empty : string.Empty;
+
+    /// <summary>验收：提交全部草稿（空白/导航/关闭共用路径）。</summary>
+    internal void CommitScalePresetsForChecks() => CommitScalePresets();
+
+    /// <summary>验收：当前缩放预设列表文本。</summary>
+    internal string ScalePresetsForChecks()
+    {
+        var parts = new List<string>();
+        foreach (var preset in Settings.ScalePresets) parts.Add(preset.Text);
+        return string.Join(",", parts);
+    }
+
+    /// <summary>验收：读取真实行视图的控件构成。</summary>
+    internal string ScalePresetRowShapeForChecks(int index)
+    {
+        if (index < 0 || index >= Settings.ScalePresets.Count
+            || !_scaleRows.TryGetValue(Settings.ScalePresets[index], out var row)) return "missing";
+        int inputs = 0, percent = 0, deletes = 0, centered = 0;
+        for (int child = 0; child < row.Root.ChildCount; child++)
+        {
+            switch (row.Root.GetChildAt(child))
+            {
+                case EditText input:
+                    inputs++;
+                    if ((input.Gravity & GravityFlags.HorizontalGravityMask) == GravityFlags.CenterHorizontal)
+                        centered++;
+                    break;
+                case TextView text when text.Text == "%":
+                    percent++;
+                    break;
+                case TextView text when text.Text == "−":
+                    deletes++;
+                    break;
+            }
+        }
+        return $"inputs={inputs} centered={centered} percent={percent} delete={deletes}";
+    }
+
+    /// <summary>验收：缩放预设是否按数值升序。</summary>
+    internal bool ScalePresetsAscendingForChecks() => ScalePresetsAscending();
+
+    /// <summary>验收：按“＋”语义新增一项 100% 并原地重排。</summary>
+    internal void AddScalePresetForChecks() => AddScalePreset();
+
+    /// <summary>验收：按“−”语义删除一项并原地重排。</summary>
+    internal void RemoveScalePresetForChecks(int index)
+    {
+        if (index >= 0 && index < Settings.ScalePresets.Count)
+            DeleteScalePreset(Settings.ScalePresets[index]);
     }
 
     /// <summary>分类入口行。</summary>
