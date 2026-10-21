@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-19(Avalonia 旧壳已退役：合并提交 `640d52d`，四头 Debug/Release 都直接进原生壳，`--legacy-ui` / `--native` / `PVLegacyUI` / `pv-flags` 全部移除；6C 四端统一完成、Windows 已由作者验收并合入；发布默认原生壳。此前：Windows 线已合并回共享线，iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收，I6 文档收尾完成)。发布通道已确定为原生壳；作者手验仍在作者手上。
+> 最后更新:2026-10-19(Avalonia 旧壳已退役：合并提交 `640d52d`，四头 Debug/Release 都直接进原生壳，`--legacy-ui` / `--native` / `PVLegacyUI` / `pv-flags` 全部移除；6C 四端统一完成、Windows 已由作者验收并合入；发布默认原生壳。此前：Windows 线已合并回共享线，iPad 原生壳 I1–I5 已落地并完成模拟器 + 真机程序化验收，I6 文档收尾完成)。发布通道已确定为原生壳。2026-10-21：macOS/iPad/Windows 常规 UI 由作者手验通过，Mac 九套、iPad 模拟器七套与 Web `?check=all` 已在新 HEAD 复跑全 PASS，发布产物仍早于 10-20/21 的修复、待重出。
 
 ## 1. 为什么重构(决策语境)
 
@@ -67,9 +67,9 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 2.2 下一步（2026-10-19）
 
-1. **6F 已完成（2026-10-19）**：主窗口样机 `Design/prototype/index.html`（行/列/自动、三档尺寸、栏位显隐、胶片栏定位动画与减少动态效果）；`node Design/prototype/export-geometry.mjs` 导出几何，`python3 Tools/compare-layout-geometry.py` 与 Mac `--pv-native-layout` 比对共有 381 节点 0 差异。后续可让 iOS/Android/Windows 验收导出同格式几何纳入比对。
+1. **6F 已完成**：几何基准由 Web 参考壳承担——`node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52` 导出，`python3 Tools/compare-layout-geometry.py` 与 Mac `--pv-native-layout` 的 `native-layout-geometry.txt` 比对：9 个布局、363 个共有节点、0 差异（容差 0.5 点，2026-10-21 复跑）；原 HTML 样机随 W5 退役。后续可让 iOS/Android/Windows 导出同格式几何纳入比对。
 2. **6E 其余发布就绪项**：6E-2 Windows 单文件工程阻塞已关，体积接受由作者决定；未签名/SmartScreen、无运行时干净机与 Win10 未验仍为发布风险。其余为 macOS Developer ID 签名 + 公证（待立项）、iOS TestFlight 与审核材料、Android Release 签名与真机冒烟；6E-5 与 6E-4 本机部分已完成。见 [phase-6 §4](native-rebuild-phase-6.md#4-6e-发布就绪)。
-3. **作者手验/验收欠账（2026-10-21 更新）**：macOS、iPad、Windows 常规 UI 已由作者手验通过，Windows 175%/200% DPI 通过。Mac/iPad 失败注入已由 faults 套件机测通过（打开失败、评分写回、Full 升级、损坏设置、相似/分析失败）；Windows 失败注入仍为代码核对。仍缺：Windows 真实跨屏、真实相机八方向、增强 + 分析长稳；iPad 广色域对拍、外接显示、500 连翻与内存告警；外设热插拔；Android 全量清单与真机门。W-M6 专项与几何导出未做，旧壳对拍已失效，后续按 6F 样机导出。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏要求已删除，不再作为待办。其余按 [统一清单](native-rebuild-phase-6-unify.md#待作者手验)、[iPad](native-rebuild-phase-ipad-acceptance.md) 与 [Android](native-rebuild-phase-android-acceptance.md) 清单回填状态。
+3. **作者手验/验收欠账（2026-10-21 更新）**：macOS、iPad、Windows 常规 UI 已由作者手验通过，Windows 175%/200% DPI 通过。Mac/iPad 失败注入已由 faults 套件机测通过（打开失败、评分写回、Full 升级、损坏设置、相似/分析失败）；Windows 失败注入仍为代码核对。仍缺：Windows 真实跨屏、真实相机八方向、增强 + 分析长稳；iPad 广色域对拍、外接显示、500 连翻与内存告警；外设热插拔；Android 全量清单与真机门。W-M6 专项与几何导出未做，旧壳对拍已失效，后续按 6F 样机导出。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏要求已删除，不再作为待办。其余按 [统一清单](native-rebuild-phase-6-unify.md#待作者手验)、[iPad](native-rebuild-phase-ipad-acceptance.md) 与 [Android](native-rebuild-phase-android-acceptance.md) 清单回填状态。本轮 HEAD 复跑证据：Mac base 39 + layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全 PASS；iPad 模拟器 photo 10 / layout 24 / input 40 / analysis 18 / similarity 10 / tools 10 / gesture 24；Web `?check=all` 44/44、单测 297。
 4. **独立延期，非发布前置**：W-M7 色彩/RAW 主图解码（Windows 内嵌 RAW 缩略图、列表与星级写回可用）；性能门、切图卡顿、RAW 冷图、iPad ARW Full/分析可见 p95、CoreML EP 明确以后再做，Windows/Android 原生压测入口亦置后。Training `DatasetBuilder` 去 Avalonia 已完成，Windows 实跑复核仍待补。
 
 ## 3. 验证矩阵

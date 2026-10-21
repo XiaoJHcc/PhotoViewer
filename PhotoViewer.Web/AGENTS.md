@@ -18,6 +18,8 @@ VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被
 
 页面参数：`?demo` 打开窗口外演示面板（尺寸、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。
 
+页内检查可无人值守跑：无头 Chrome 的 `--virtual-time-budget` 至少给到 120000 ms，预算偏小时只跑完部分检查（报告是 `done/total`，不是 FAIL）；`--headless=new` 需同时关掉 crashpad（`--disable-breakpad --disable-crash-reporter --disable-features=Crashpad`），否则在沙箱环境里会以 SIGTRAP 退出。
+
 ## 结构与分层
 
 ```text

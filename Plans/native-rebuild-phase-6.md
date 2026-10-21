@@ -56,8 +56,8 @@
 |---|---|---|---|
 | 6E-1 | ✅ **已完成 2026-10-19**：Release 默认进原生壳（随 6D 删除分流后自然成立） | 全部 | 发布脚本与 tasks 已同步；四平台 Release 都直接进原生壳 |
 | 6E-2 | ◐ **单 EXE 工程修复通过，干净机门待验（2026-10-19）**：内置四个官方 CRT，固定 `resources.pri` 解除改名限制；原名/中文改名各 32/7/5，共 88 项全 PASS，实际 HEVC/DirectML 与模块来源检查通过；归档 `release/PhotoViewer-0.8.0-win-x64.exe` | Windows | 230,753,372 字节（230.8 MB / 220.1 MiB）；运行库从解包目录加载，不要求用户安装。构建端使用官方 Release x64 Redist 并遵守许可。无现成干净机环境，未冒称全系统验收；Win10、真实相机素材、未签名/SmartScreen 仍据实登记。完整 SHA256、CRT 来源与证据见 [收尾记录](native-rebuild-windows-release-closeout.md) |
-| 6E-3 | Developer ID 签名 + 公证（现 adhoc） | macOS | 待作者决定是否立项 |
-| 6E-4 | ◐ App Store 合规冲刺。**已完成 2026-10-19**：`PrivacyInfo.xcprivacy`（不追踪/不收集；FileTimestamp C617.1+3B52.1、SystemBootTime 35F9.1、DiskSpace E174.1、UserDefaults CA92.1）、`ITSAppUsesNonExemptEncryption=false`、设备能力 arm64；核对确认不访问相册/相机/定位/网络，无需用途字符串与 ATS 例外。**余项**：TestFlight 上传与审核材料（作者）；Release 真机构建验证清单入包。批量评分写回：产品目前没有多选批量评分入口（评分只作用于单张及其同名伴侣，失败已走 STATE-03 提示条），此项待出现批量入口时再立 | iOS | 总纲 §4.5 |
+| 6E-3 | Developer ID 签名 + 公证（现 adhoc） | macOS | 待作者决定是否立项；**受 Apple Developer Program 付费会员阻塞**——免费账号只能 adhoc/本机开发签名，Developer ID 与 notarytool 均不可用。`publish.sh` 当前是 `codesign -s -` |
+| 6E-4 | ◐ App Store 合规冲刺。**已完成 2026-10-19**：`PrivacyInfo.xcprivacy`（不追踪/不收集；FileTimestamp C617.1+3B52.1、SystemBootTime 35F9.1、DiskSpace E174.1、UserDefaults CA92.1）、`ITSAppUsesNonExemptEncryption=false`、设备能力 arm64；核对确认不访问相册/相机/定位/网络，无需用途字符串与 ATS 例外。**余项**：TestFlight 上传与审核材料（作者）；Release 真机构建验证清单入包。**TestFlight/上架受付费会员阻塞**：当前工程用 `iPhone Developer` 开发签名 + 自动预配（免费账号 7 天 profile），Apple Distribution 证书与 App Store Connect 上传需 Apple Developer Program。批量评分写回：产品目前没有多选批量评分入口（评分只作用于单张及其同名伴侣，失败已走 STATE-03 提示条），此项待出现批量入口时再立 | iOS | 总纲 §4.5 |
 | 6E-5 | ✅ **已完成 2026-10-19**（`df16c77`）：`Microsoft.Data.Sqlite` 10.0.13 → SQLitePCLRaw 2.1.13，GHSA-2m69-gcr7-jv3q 消除，`dotnet list --vulnerable` 无 | 全部 | Mac smoke 39、iOS similarity 9、Android main 14 / similarity 15、Windows 类型检查 0/0 |
 | 6E-6 | Release 签名材料、真机冒烟 | Android | `signing.json` 本机配置 |
 | 6E-7 | `ValidateXcodeVersion=false` 在 workload 支持 Xcode 27.1 后移除 | Mac/iOS | 非阻塞 |
@@ -75,7 +75,7 @@
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 
-置后（作者明确以后再做，**不计发布前置**）：性能门与切图卡顿、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
+置后（作者明确以后再做，**不计发布前置**）：性能门与切图卡顿、iPad 真机 500 连翻/内存告警复跑（作者 10-21 归入性能批次，素材需另行准备）、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
 
 ### 5.1 性能专项首批（2026-10-19）
 
@@ -107,3 +107,5 @@
 | 1 | 2026-10-18 | 旧壳 Mac 主图已无法加载："展示编码策略未注入"。`41abd7b`（2026-10-17）把 `BitmapLoader.PresentationEncoding` 改为强制策略，旧壳路径未注入；`--pv-legacy-layout` 因此超时。旧 Release 包（默认旧壳）若基于当前代码构建同样受影响 | 不修：旧壳不再验收且已删除；基线沿用 2026-10-16 采集（旧壳视图代码此后未改）。**已随 6D 关闭（2026-10-19）**：旧壳与分流参数一并删除，Release 默认原生壳，不再存在"用当前代码发布默认旧壳"的路径 |
 | 2 | 2026-10-18 | `avalonia-final` 之前的提交在当前工具链（Xcode 27.1 / macOS workload 27，最低 14.0）下无法直接构建 | 基线只能保存产物，不能依赖重新构建 |
 | 3 | 2026-10-19 | Windows 单文件曾误判缺 PRI/不支持；改名导致资源缺失，原生库还依赖宿主 CRT | 清旧清单修复激活，`resources.pri` 固定回退解除改名限制，官方 Release x64 CRT 原样内置。最新正式包原名/改名各 32/7/5，共 88 项 PASS，实际模块来源全为解包目录；干净机门未冒称完成，详见 [收尾记录](native-rebuild-windows-release-closeout.md) |
+| 4 | 2026-10-21 | Mac 冒烟各套件共用 `release/native-p2-acceptance/settings-smoke.json`；`--pv-native-settings` 收尾把倍率预设留在「剩 1 项」，之后跑 `--pv-native-layout` 报「真实缩小（预设）按钮未跳回更低预设：13.33 → 13.33」，单独跑 `--pv-native-settings` 也会因列表项不足抛越界 | 属验收夹具状态、非产品缺陷：跑套件前删除该文件即恢复默认（或在 layout 之后再跑 settings）。已在 Mac 手册运行说明中注明，未改产品代码 |
+| 5 | 2026-10-21 | 注释清理后复跑 Mac 套件时 `tools`/`filmstrip` 稳定失败（「点击 EXIF 文本未生成可选覆盖框」/「连续定位未以最后请求为准」），而同代码此前九套全 PASS | 定位为验收时序、非产品缺陷：① 工具窗口 SwiftUI 侧栏收尾会再改一次详情栏宽度，`ApplyWidth` 按设计清掉刚创建的覆盖框——用例改为等表格宽度稳定 300 ms 再点击；② 胶片栏连续定位只等固定 450 ms，缓出动画起手略晚就不够——改用既有 `WaitScrollSettledAsync`（等动画结束并稳定）。只改验收用例（`NativeToolsAcceptance`/`NativeFilmstripAcceptance`），产品代码未动；修复后 tools 连续 2 次、filmstrip 连续 3 次与全套复跑均 PASS |
