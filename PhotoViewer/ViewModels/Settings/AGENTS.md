@@ -13,7 +13,7 @@ macOS P2 通过 Core/Settings/NativeSettingsSession 建工作副本，`applyRunt
 | [MoveCommandParameter.cs](MoveCommandParameter.cs) | 共用 | 三张可排序表（文件格式 / EXIF 显示项 / 控制栏命令）的排序命令参数 `FromIndex` → `ToIndex`，各端原生拖拽结束后回写共享集合。 |
 | [SettingsViewModel.cs](SettingsViewModel.cs) | 主类 | 共享构造、`SettingsService` 注入、各 partial 共用的 `RaisePropertyChanged` 与持久化触发逻辑。 |
 | [SettingsViewModel.FileFormats.cs](SettingsViewModel.FileFormats.cs) | 文件 | 启用/禁用各扩展名,文件后缀解析顺序。 |
-| [SettingsViewModel.BitmapCache.cs](SettingsViewModel.BitmapCache.cs) | 预览 | 内存上限、解码并发、预取邻居数；预算提示第一行为 CPU 核数与运行时内存预算，第二行按实际缓存容量（用户上限与推导上限取小；自动口径只取推导上限）与适屏代理尺寸换算可缓存张数，并与"前后预载 + 当前 + 对比"所需张数比较定级。`ShowsCacheLimits` 为 false（iPad 自动口径）时不显示两项上限，预载上限固定为 10。 |
+| [SettingsViewModel.BitmapCache.cs](SettingsViewModel.BitmapCache.cs) | 预览 | 内存上限、解码并发、预取邻居数；四项默认值由平台预算源 `IPerformanceBudget.GetRecommended*` 给出（Windows 见 `PhotoViewer.Windows/Core/WindowsPerformanceBudget.cs`，其余平台用接口默认实现），已保存的设置覆盖默认值。预载默认值按推荐的缓存张数换算：张数达到基准 30 张时即默认的上一张 10 / 下一张 5 / 列表滚动 5，张数更少时按同一比例收敛并受预载上限（张数 ÷ 3）约束，保证「前后预载 + 当前 + 对比」不超过缓存张数。预算提示第一行为 CPU 核数与运行时内存预算，第二行按实际缓存容量（用户上限与推导上限取小；自动口径只取推导上限）与适屏代理尺寸换算可缓存张数，并与"前后预载 + 当前 + 对比"所需张数比较定级，容量随 `MemoryGovernor.Probed`（限流后经 UI 线程）刷新。`ShowsCacheLimits` 为 false（iPad 自动口径）时不显示两项上限，预载上限固定为 10。 |
 | [SettingsViewModel.ImagePreview.cs](SettingsViewModel.ImagePreview.cs) | 预览 | 主图区显示选项、letterbox 行为；缩放预设校验（百分比 >0 且 ≤1600，非法输入不写入并恢复原值）与至少保留一项（`CanRemoveScalePreset`，SETTINGS-07）。 |
 | [SettingsViewModel.Layout.cs](SettingsViewModel.Layout.cs) | 控制 | 文件栏行/列布局、显示选项。 |
 | [SettingsViewModel.Hotkeys.cs](SettingsViewModel.Hotkeys.cs) | 控制 | 快捷键绑定与主/次绑定冲突检测；录制由各端原生录制控件完成（macOS `NSEvent`、Windows `WindowsHotkeyRecorder`、移动端只读展示），共享层只接收结果。 |

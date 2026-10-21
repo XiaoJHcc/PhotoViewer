@@ -6,6 +6,7 @@ using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
@@ -34,10 +35,17 @@ internal sealed class WindowsFilmstripView : Grid
     private readonly Action<ImageFile> _select;
     private readonly Func<ImageFile, int, Task> _rate;
     private readonly ScrollViewer _scroll;
-    private readonly ItemsRepeater _repeater;
-    private readonly StackLayout _stackLayout;
     private readonly Stack<WindowsThumbnailCard> _pool = new();
     private readonly UISettings _uiSettings = new();
+
+    /// <summary>当前列表容器;换数据源时整体换新(见 <see cref="ReloadItems"/>)。</summary>
+    private ItemsRepeater? _repeater;
+
+    /// <summary>当前容器的排布;每个容器各配一份,虚拟化算法把已实现区间存在它自己身上。</summary>
+    private StackLayout _stackLayout = new();
+
+    /// <summary>换容器后要恢复的主轴偏移(FILM-06:筛选/评分刷新只更新列表,不抢用户位置)。</summary>
+    private double? _pendingOffsetRestore;
 
     private DispatcherQueueTimer? _animationTimer;
     private DateTime _animationStartedAt;
@@ -63,20 +71,6 @@ internal sealed class WindowsFilmstripView : Grid
         _select = select;
         _rate = rate;
 
-        _stackLayout = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 0 };
-        _repeater = new ItemsRepeater
-        {
-            Layout = _stackLayout,
-            ItemTemplate = new CardFactory(this),
-            Margin = new Thickness(
-                WindowsLayout.FilmstripPadLeft,
-                WindowsLayout.FilmstripPadTop,
-                WindowsLayout.FilmstripPadRight,
-                WindowsLayout.FilmstripPadBottom),
-            HorizontalAlignment = HorizontalAlignment.Stretch,
-            VerticalAlignment = VerticalAlignment.Top,
-        };
-
         _scroll = new ScrollViewer
         {
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -87,7 +81,6 @@ internal sealed class WindowsFilmstripView : Grid
             ZoomMode = ZoomMode.Disabled,
             // 上下布局时文件栏行高由胶片条决定,旧壳 ScrollViewer 固定 MinHeight=148
             MinHeight = WindowsLayout.FilmstripMinHeight,
-            Content = _repeater,
         };
         _scroll.ViewChanged += (_, _) => ReportVisibleRange();
 
@@ -107,7 +100,6 @@ internal sealed class WindowsFilmstripView : Grid
         _main.PropertyChanged += OnMainChanged;
 
         _isRowLayout = _main.IsRowLayout;
-        ApplyOrientation();
         ReloadItems(scrollToCurrent: false);
     }
 
@@ -152,6 +144,8 @@ internal sealed class WindowsFilmstripView : Grid
     {
         _locatePending = true;
         _locateAttempts = 0;
+        // 显式定位优先于换容器后的偏移恢复(否则定位到位后又被拉回旧位置)。
+        _pendingOffsetRestore = null;
         TryApplyLocate();
     }
 
@@ -171,6 +165,12 @@ internal sealed class WindowsFilmstripView : Grid
     internal double MainAxisOffset => _isRowLayout ? _scroll.HorizontalOffset : _scroll.VerticalOffset;
 
     /// <summary>
+    /// 滚动视口(剪辑可见区的元素),供定向验收区分"用户看得见的卡片"与
+    /// "虚拟化列表保留的已回收/已滚出视口的卡片"(FILM-05)。
+    /// </summary>
+    internal FrameworkElement VisibleViewport => _scroll;
+
+    /// <summary>
     /// 用户接管列表(FILM-03):撤销正在播放的动画与排队未执行的定位请求,位置停在用户手动到达处。
     /// 点选卡片、拖动滚动条、滚轮与触摸滚动都走这里;下一次显式请求按最新几何重新计算。
     /// 已在途的一帧 <c>ChangeView</c> 无法取消,所以撤销后用同位置的无动画请求把它压掉。
@@ -179,6 +179,8 @@ internal sealed class WindowsFilmstripView : Grid
     {
         bool interrupt = _isAnimating || _locatePending;
         _locatePending = false;
+        // 用户接管:排队的偏移恢复也一并撤销,位置停在用户手动到达处。
+        _pendingOffsetRestore = null;
         StopAnimation();
         if (interrupt)
         {
@@ -255,8 +257,12 @@ internal sealed class WindowsFilmstripView : Grid
         StartAnimation(current, target);
     }
 
-    /// <summary>布局每轮结束补做挂起的定位请求(无事可做时开销为一次布尔判断)。</summary>
-    private void OnLayoutUpdated(object? sender, object e) => TryApplyLocate();
+    /// <summary>布局每轮结束补做挂起的定位请求与偏移恢复(无事可做时开销只是两次布尔判断)。</summary>
+    private void OnLayoutUpdated(object? sender, object e)
+    {
+        TryRestoreOffset();
+        TryApplyLocate();
+    }
 
     /// <summary>应用当前方向的排布与滚动轴。</summary>
     private void ApplyOrientation()
@@ -266,24 +272,64 @@ internal sealed class WindowsFilmstripView : Grid
         _scroll.VerticalScrollMode = _isRowLayout ? ScrollMode.Disabled : ScrollMode.Enabled;
         _scroll.HorizontalScrollBarVisibility = _isRowLayout ? ScrollBarVisibility.Auto : ScrollBarVisibility.Disabled;
         _scroll.VerticalScrollBarVisibility = _isRowLayout ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
-        _repeater.HorizontalAlignment = HorizontalAlignment.Stretch;
-        _repeater.VerticalAlignment = VerticalAlignment.Top;
+    }
+
+    /// <summary>
+    /// 新建列表容器。换数据源必须换新容器:ItemsRepeater 替换 ItemsSource 只重置自己的实现索引,
+    /// 已实现的卡片不会随之撤下,旧卡片会一直留在容器里(见 <see cref="ReloadItems"/>)。
+    /// </summary>
+    private ItemsRepeater CreateRepeater()
+    {
+        // 每个容器各配一份 StackLayout:虚拟化算法把已实现区间存在 Layout 自己身上,
+        // 新旧容器共用一份会把上一个容器的实现状态当成当前状态。
+        _stackLayout = new StackLayout { Spacing = 0 };
+        ApplyOrientation();
+        return new ItemsRepeater
+        {
+            Layout = _stackLayout,
+            ItemTemplate = new CardFactory(this),
+            Margin = new Thickness(
+                WindowsLayout.FilmstripPadLeft,
+                WindowsLayout.FilmstripPadTop,
+                WindowsLayout.FilmstripPadRight,
+                WindowsLayout.FilmstripPadBottom),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+            VerticalAlignment = VerticalAlignment.Top,
+        };
     }
 
     /// <summary>
     /// 重建列表(筛选结果或排序变化)。在途动画立即停止;排队的定位请求保留 ——
     /// 外部打开/翻页的请求常常先于这次重建到达,清掉会让"打开非首张"静默停在列表头部;
     /// 用户接管与栏位隐藏才真正撤销请求(FILM-03)。
+    /// 数据源整体换一份时容器也整体换新:ItemsRepeater 换 ItemsSource 不回收已实现的元素,
+    /// 旧卡片会积在视觉树里(换文件夹越多积越多,卡片还继续持有缩略图位图与文件属性订阅)。
+    /// 旧容器连同它的卡片一起脱离视觉树,卡片逐个解绑;栏位偏移在重建后恢复,刷新不抢用户位置(FILM-06)。
     /// </summary>
     /// <param name="scrollToCurrent">重建后是否定位当前项</param>
     private void ReloadItems(bool scrollToCurrent)
     {
         StopAnimation();
-        _repeater.ItemsSource = null;
+        var files = _list.FilteredFiles;
+        var previousOffset = MainAxisOffset;
+        if (_repeater is { } previous)
+        {
+            _scroll.Content = null;
+            UnbindRealizedCards(previous);
+        }
+
         _pool.Clear();
         _reportedFirst = -1;
         _reportedLast = -1;
-        _repeater.ItemsSource = _list.FilteredFiles;
+
+        var repeater = CreateRepeater();
+        repeater.ItemsSource = files;
+        _scroll.Content = repeater;
+        _repeater = repeater;
+        // 换容器会把偏移夹回 0;列表刷新只更新内容,不抢用户位置(FILM-06)。
+        // 显式定位请求优先,有定位在排队时不恢复旧偏移。
+        _pendingOffsetRestore = !_locatePending && files.Count > 0 && previousOffset > 0 ? previousOffset : null;
+        TryRestoreOffset();
         ReportVisibleRange();
         if (scrollToCurrent)
         {
@@ -291,10 +337,63 @@ internal sealed class WindowsFilmstripView : Grid
         }
     }
 
+    /// <summary>把换容器前的主轴偏移恢复回去;几何未就绪就等下一轮布局。</summary>
+    private void TryRestoreOffset()
+    {
+        if (_pendingOffsetRestore is not { } target || _locatePending)
+        {
+            return;
+        }
+
+        var extent = _isRowLayout ? _scroll.ExtentWidth : _scroll.ExtentHeight;
+        var viewport = _isRowLayout ? _scroll.ViewportWidth : _scroll.ViewportHeight;
+        if (extent <= 0 || viewport <= 0)
+        {
+            return;
+        }
+
+        var clamped = Math.Clamp(target, 0, Math.Max(0, extent - viewport));
+        if (Math.Abs(MainAxisOffset - clamped) < 1)
+        {
+            _pendingOffsetRestore = null;
+            return;
+        }
+
+        _scroll.ChangeView(_isRowLayout ? clamped : null, _isRowLayout ? null : clamped, null, true);
+    }
+
+    /// <summary>解绑被丢弃容器上挂着的卡片,避免残留缩略图位图与文件属性订阅。</summary>
+    private static void UnbindRealizedCards(DependencyObject container)
+    {
+        if (container is WindowsThumbnailCard card)
+        {
+            card.Unbind();
+            return;
+        }
+
+        int children = VisualTreeHelper.GetChildrenCount(container);
+        for (int index = 0; index < children; index++)
+        {
+            UnbindRealizedCards(VisualTreeHelper.GetChild(container, index));
+        }
+    }
+
     /// <summary>取一张卡片:回收池优先,否则新建。</summary>
     private WindowsThumbnailCard RentCard(ImageFile file)
     {
-        var card = _pool.Count > 0 ? _pool.Pop() : new WindowsThumbnailCard(_select, _rate);
+        WindowsThumbnailCard? card = null;
+        while (_pool.Count > 0)
+        {
+            var pooled = _pool.Pop();
+            // 池里的卡片必须已脱离视觉树;仍挂着父容器的那张是没摘干净的残留,丢弃而不是硬塞回去。
+            if (pooled.Parent == null)
+            {
+                card = pooled;
+                break;
+            }
+        }
+
+        card ??= new WindowsThumbnailCard(_select, _rate);
         card.Bind(file, _main.Settings.ShowRating);
         _list.QueueThumbnailLoad(file, true);
         return card;

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 设置页默认值自检：用假预算源建全新 SettingsViewModel，核对缓存/预载默认值是否自洽（不改用户设置、不落盘）。
+       用法（仓库根）：dotnet run 指定本工程目录。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+  </ItemGroup>
+</Project>

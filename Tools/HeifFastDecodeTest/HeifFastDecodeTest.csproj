@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    HEIF 快速解码验证工具:容器解析(YuvImageConverter 的输入)+ YUV→呈现转换的数值与性能验收。
+    刻意不引用 PhotoViewer.csproj / PhotoViewer.Windows.csproj(并行开发中的工程会锁 obj),
+    只把 Core/Heif 下的源文件编进来;因此被验证的代码必须保持零外部依赖。
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>HeifFastDecodeTest</RootNamespace>
+    <AssemblyName>HeifFastDecodeTest</AssemblyName>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+    <!-- 只跑在 Win11 桌面环境,不追加平台版本告警噪音。 -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- FastHeifDecoder 依赖共享工程的 DecodedImage/内存管家,不属于"零外部依赖"的容器/转换器,
+         由 PhotoViewer.Windows 工程本身编译;本工具只验证 HeifContainer + YuvImageConverter。 -->
+    <Compile Include="..\..\PhotoViewer.Windows\Core\Heif\*.cs"
+             Exclude="..\..\PhotoViewer.Windows\Core\Heif\FastHeifDecoder.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibHeifSharp" />
+    <PackageReference Include="LibHeif.Native.win-x64" />
+    <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+
+</Project>

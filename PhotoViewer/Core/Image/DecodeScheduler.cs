@@ -164,9 +164,14 @@ public static class DecodeScheduler
         }
     }
 
-    /// <summary>执行一个已从队列取出的工作项;异常吞掉并记日志,绝不弄死调用方。</summary>
+    /// <summary>
+    /// 执行一个已从队列取出的工作项;异常吞掉并记日志,绝不弄死调用方。
+    /// 工作项的优先级(以及"沿 P0 并行"标记)在这里进入 <see cref="DecodeContext"/>,
+    /// 于是它内部发起的解码在平台解码器那里也按同一优先级排队,不用给每层调用加参数。
+    /// </summary>
     private static async Task RunItemAsync(WorkItem item, bool alongsideLane)
     {
+        using var context = DecodeContext.Enter(item.Priority, alongsideLane);
         try
         {
             await item.Work(_shutdownCts.Token).ConfigureAwait(false);

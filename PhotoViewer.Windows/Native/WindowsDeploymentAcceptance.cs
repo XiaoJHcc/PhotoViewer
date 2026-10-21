@@ -106,7 +106,7 @@ internal sealed partial class WindowsMainWindow
         var modules = process.Modules.Cast<ProcessModule>().ToArray();
         try
         {
-            foreach (var name in new[] { "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll", "libheif.dll", "onnxruntime.dll", "DirectML.dll" })
+            foreach (var name in new[] { "msvcp140.dll", "msvcp140_1.dll", "vcruntime140.dll", "vcruntime140_1.dll", "libheif.dll", "pvhevc.dll", "onnxruntime.dll", "DirectML.dll" })
             {
                 var matches = modules.Where(module => string.Equals(module.ModuleName, name, StringComparison.OrdinalIgnoreCase)).ToArray();
                 RequireSmoke(matches.Length > 0, $"portable 原生模块未实际加载：{name}; base={applicationDirectory}");

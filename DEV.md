@@ -32,6 +32,16 @@ dotnet run --project PhotoViewer.Windows -c Debug -- "D:/photos/a.jpg"
 
 专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。报告位于工作目录的 `release/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
 
+性能与压测入口同样使用隔离设置、数据库与日志（`release/native-win-acceptance/`），不触碰用户设置与照片：
+
+```bash
+dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
+"./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-perf-probe=D:/photos/A7C2"
+"./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-stress=D:/photos/A7C2" --pv-stress-count=100 --pv-stress-mode=ab
+```
+
+探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`，`done` 行的 `extra` 含视口、代理目标与纹理上传耗时统计。
+
 ### Android
 
 设备需通过 ADB 连接，也可先启动 Android 模拟器。
@@ -137,6 +147,11 @@ WinUI XAML 编译器只能在 Windows 上运行。跨平台修改后可先检查
 ```bash
 dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compile -v:m
 ```
+
+### Windows HEVC 解码库
+
+`PhotoViewer.Windows/NativeLibs/win-x64/pvhevc.dll`（静态链接「仅 HEVC 解码器」LGPL FFmpeg）已入库；更换 FFmpeg 版本或工具链后用 MSYS2 CLANG64 重建 `PhotoViewer.Windows/build-native-windows-hevc.ps1`，并把 `pvhevc.dll` 与 `pvhevc.txt` 一起更新。
+重建后在 `Tools/HeifTileBench/` 目录执行 `python pvhevc_check.py`（逐瓦片对照 `heif_tile_extract.py` 的 Annex-B 产物与耗时）复核二进制；托管侧容器解析与 YUV 转换的对照验证用 `Tools/HeifFastDecodeTest`（`selftest`/`smoke`/`parse`/`extract`/`validate`/`bench`）。
 
 ### EXIF 字段名称
 

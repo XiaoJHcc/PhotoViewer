@@ -22,8 +22,9 @@ namespace PhotoViewer;
 /// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取当前壳的展示会话(各原生壳均为 PhotoLoadSession),
 /// 覆盖真实 P0 解码链路而非空跑。
 /// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
-/// 日志位于 settings 同目录 stress-flip.jsonl,供真机 42MP 连翻验收回放。
-/// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N。
+/// 日志默认位于 settings 同目录 stress-flip.jsonl(头工程可改到隔离目录),供真机 42MP 连翻验收回放。
+/// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N、
+/// --pv-stress-warn=N、--pv-stress-mode=ab(最近两张对比切换,默认 sequential)。
 /// </summary>
 public static class StressFlipDriver
 {
@@ -35,6 +36,27 @@ public static class StressFlipDriver
 
     /// <summary>在该 seq 翻页完成后注入一次 OS 内存告警(0 起;-1 = 不注入),验证修剪级联与恢复观察期。</summary>
     public static int WarnAtSeq = -1;
+
+    /// <summary>
+    /// 对比切换模式(<c>--pv-stress-mode=ab</c>):在第 k 与第 k+1 张展示照片之间来回翻,
+    /// 测"最近两张对比"的切换延迟;默认顺序模式不变,Mac/iOS 不传该参数时行为完全一致。
+    /// </summary>
+    public static bool AbMode;
+
+    /// <summary>日志目录覆盖(头工程给隔离目录);null = settings 同目录。</summary>
+    public static string? LogDirectory;
+
+    /// <summary>
+    /// 汇总行附加指标(可选,头工程注入,例如纹理上传计时);返回纯文本,写进 done 行的 extra 字段。
+    /// 未注入时不写该字段,JSONL 保持向后兼容。
+    /// </summary>
+    public static Func<string>? ExtraSummary;
+
+    /// <summary>
+    /// 一轮压测结束(写完 done 行)后的回调(可选,头工程注入)。
+    /// 自动化压测靠它退出进程,否则窗口留在前台、隔离数据库被占用,下一轮无法重置。
+    /// </summary>
+    public static Action? Completed;
 
     /// <summary>单张上屏等待超时(ms),超时记 -1 并继续(卡死是数据而非必然崩溃)。</summary>
     private const int PerFlipTimeoutMs = 15000;
@@ -64,6 +86,11 @@ public static class StressFlipDriver
             {
                 WarnAtSeq = warnAt;
             }
+            else if (arg.StartsWith("--pv-stress-mode=", StringComparison.Ordinal))
+            {
+                // 只认明确写出的顺序/对比模式;未知取值保持默认,避免拼错参数变成静默的另一种压测
+                AbMode = string.Equals(arg["--pv-stress-mode=".Length..], "ab", StringComparison.OrdinalIgnoreCase);
+            }
         }
 
         return PendingFolderPath != null;
@@ -84,9 +111,10 @@ public static class StressFlipDriver
     /// <summary>压测主流程:开文件夹 → 清空当前选中 → 逐张翻页计时 → 写汇总行。</summary>
     private static async Task RunAsync(MainViewModel vm, IDisplayLoadSignal signal, string folderPath)
     {
-        var logPath = Path.Combine(
-            Path.GetDirectoryName(SettingsPathHelper.GetDefaultPath("PhotoViewer"))!,
-            "stress-flip.jsonl");
+        var logDirectory = LogDirectory
+            ?? Path.GetDirectoryName(SettingsPathHelper.GetDefaultPath("PhotoViewer"))!;
+        Directory.CreateDirectory(logDirectory);
+        var logPath = Path.Combine(logDirectory, "stress-flip.jsonl");
 
         void Log(string line)
         {
@@ -96,7 +124,8 @@ public static class StressFlipDriver
 
         var runSw = Stopwatch.StartNew();
         File.WriteAllText(logPath, string.Empty);
-        Log($"{{\"type\":\"begin\",\"folder\":\"{Esc(folderPath)}\",\"maxFlips\":{MaxFlips},\"warnAt\":{WarnAtSeq}}}");
+        Log($"{{\"type\":\"begin\",\"folder\":\"{Esc(folderPath)}\",\"maxFlips\":{MaxFlips},\"warnAt\":{WarnAtSeq}"
+            + ",\"mode\":\"" + (AbMode ? "ab" : "sequential") + "\"}");
 
         try
         {
@@ -121,15 +150,26 @@ public static class StressFlipDriver
             // 开文件夹自动选中了首图,先置空保证第 0 翻是真实切换(其解码可能已在途,延迟略偏乐观)
             await UiDispatcher.InvokeAsync(() => { vm.CurrentFile = null; });
 
+            // 对比模式需要两张相邻照片来回切;不足两张时退回顺序模式,避免原地重设同一文件空等超时
+            var abMode = AbMode && files.Count >= 2;
+            if (AbMode && !abMode)
+            {
+                Log("{\"type\":\"note\",\"reason\":\"ab mode requires >=2 displayed files, fallback to sequential\"}");
+            }
+
             var flips = MaxFlips > 0 ? Math.Min(MaxFlips, files.Count) : files.Count;
-            Log($"{{\"type\":\"plan\",\"files\":{files.Count},\"flips\":{flips}}}");
+            Log($"{{\"type\":\"plan\",\"files\":{files.Count},\"flips\":{flips}"
+                + (abMode ? ",\"abPair\":[0,1]" : "") + "}");
 
             var latencies = new List<double>(flips);
             var timeouts = 0;
+            var proxyShown = 0;
+            var fullShown = 0;
 
             for (var i = 0; i < flips; i++)
             {
-                var target = files[i];
+                // 顺序模式按展示列表逐张;对比模式在第 0/1 张之间来回(最近两张对比切换)
+                var target = files[abMode ? i % 2 : i];
                 var loaded = new TaskCompletionSource();
                 using var subscription = signal.Subscribe(file =>
                 {
@@ -151,6 +191,8 @@ public static class StressFlipDriver
                 {
                     ms = flipSw.Elapsed.TotalMilliseconds;
                     latencies.Add(ms);
+                    if (signal.CurrentIsProxy) proxyShown++;
+                    else fullShown++;
                 }
 
                 Log("{\"seq\":" + i
@@ -175,20 +217,31 @@ public static class StressFlipDriver
 
             latencies.Sort();
             var miss = PerfTrace.RecentMissStats(Math.Min(latencies.Count, 200));
+            var extra = ExtraSummary?.Invoke();
             Log("{\"type\":\"done\""
                 + ",\"flips\":" + flips
                 + ",\"timeouts\":" + timeouts
                 + ",\"p50Ms\":" + F(Pct(latencies, 0.50))
                 + ",\"p95Ms\":" + F(Pct(latencies, 0.95))
                 + ",\"maxMs\":" + F(latencies.Count > 0 ? latencies[^1] : -1)
+                + ",\"minMs\":" + F(latencies.Count > 0 ? latencies[0] : -1)
+                + ",\"proxyShown\":" + proxyShown
+                + ",\"fullShown\":" + fullShown
                 + ",\"decodeMissP50Ms\":" + F(miss.P50)
                 + ",\"decodeMissMeanMs\":" + F(miss.Mean)
-                + ",\"elapsedSec\":" + F(runSw.Elapsed.TotalSeconds) + "}");
+                + ",\"elapsedSec\":" + F(runSw.Elapsed.TotalSeconds)
+                + (string.IsNullOrEmpty(extra) ? "" : ",\"extra\":\"" + Esc(extra) + "\"")
+                + "}");
             Console.WriteLine($"[StressFlip] done: {flips} flips, {timeouts} timeouts");
         }
         catch (Exception ex)
         {
             Log($"{{\"type\":\"error\",\"reason\":\"{Esc(ex.ToString())}\"}}");
+        }
+        finally
+        {
+            try { Completed?.Invoke(); }
+            catch (Exception ex) { Console.WriteLine($"[StressFlip] completed hook failed: {ex.Message}"); }
         }
     }
 

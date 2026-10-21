@@ -49,6 +49,25 @@
                           LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"/>
     </ItemGroup>
 
+    <!--
+      pvhevc.dll:静态链接「仅 HEVC 解码器」LGPL FFmpeg 的最小解码库(源码与构建脚本见 NativeSrc/pvhevc、
+      build-native-windows-hevc.ps1),HEIF 快速解码路径依赖它。与 libheif 一样必须是应用本地模块:
+      单文件发布时随全内容解包落到 EXE 同目录,托管侧按 AppContext.BaseDirectory 解析。
+      许可与构建说明(txt)一并随包分发。
+    -->
+    <ItemGroup>
+        <Content Include="NativeLibs\win-x64\pvhevc.dll"
+                 Link="pvhevc.dll"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false"/>
+        <Content Include="NativeLibs\win-x64\pvhevc.txt;NativeLibs\win-x64\pvhevc-FFmpeg-LICENSE.txt"
+                 Link="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false"/>
+    </ItemGroup>
+
     <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
         <_WindowsVCRedistFile Include="msvcp140.dll;msvcp140_1.dll;vcruntime140.dll;vcruntime140_1.dll" />
         <Content Include="@(_WindowsVCRedistFile->'$(WindowsVCRedistDirectory)\%(Identity)')"

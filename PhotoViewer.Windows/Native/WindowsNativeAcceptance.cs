@@ -82,6 +82,15 @@ internal sealed partial class WindowsMainWindow
             await OpenPathsAsync(new[] { fixture });
             await WaitForSmokeAsync(() => _session.Image is { SourceWidth: 3600, SourceHeight: 2400 }, "首次照片解码");
             RequireSmoke(_session.Image!.SourceWidth == 3600 && _session.Image.SourceHeight == 2400, "无 EXIF 尺寸时丢失真实源尺寸");
+            await WaitForUploadAsync("首次主图上传");
+            // 大图在适应态首次上屏必须走代理档。这条断言只能放在 resize/缩放循环之前:循环里的
+            // ZoomBy 会短暂把 NeedsFull 抬高,会话据此解出 Full,而 Full 一旦满足代理请求就不再降级
+            // 回代理(用已解出的全分辨率显示是更精确的正确行为)。循环之后再断言 IsProxy 只会测到
+            // "不降级",测不到"首屏走代理"这个意图。
+            RequireSmoke(_session.IsProxy, "大图在适应态首次显示未使用代理档");
+            // 代理档必须真的上屏:纹理比源图小,而不是停在上一张(后台/同步上传失败时这里能立刻发现)。
+            RequireSmoke(_photo.CurrentTextureSize.Width < 3600,
+                $"代理档未上屏,主图纹理仍是 {_photo.CurrentTextureSize.Width}x{_photo.CurrentTextureSize.Height}");
 
             foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
             {
@@ -113,11 +122,15 @@ internal sealed partial class WindowsMainWindow
                 }
             }
 
-            RequireSmoke(_session.IsProxy, "大图浏览未使用代理档");
+            RequireSmoke(_session.Image != null, "resize/缩放循环后主图帧丢失");
             _photo.ToggleFit();
             await WaitForSmokeAsync(() => _session.Image != null && !_session.IsProxy, "100% Full 升级");
+            await WaitForUploadAsync("Full 主图上传");
             RequireSmoke(Math.Abs(_photo.PhysicalScale - 1) < 1e-6, "Full 热替换后物理 100% 发生跳变");
             RequireSmoke(_session.Image!.Width == 3600 && _session.Image.Height == 2400, "Full 未取得完整源像素");
+            // Full 必须真的换到主图纹理上(大图走后台上传,失败时会静默停在代理帧)。
+            RequireSmoke(_photo.CurrentTextureSize == (3600, 2400),
+                $"Full 未真正上传到主图纹理: {_photo.CurrentTextureSize.Width}x{_photo.CurrentTextureSize.Height}");
             checks.Add("PASS no-EXIF proxy to Full: 3600x2400 source retained; physical scale remains 1.0");
 
             await RunNavigatorChecksAsync(checks);
@@ -487,7 +500,25 @@ internal sealed partial class WindowsMainWindow
         var payload = new byte[6 + tiffBytes.Length];
         Encoding.ASCII.GetBytes("Exif").CopyTo(payload, 0);
         tiffBytes.CopyTo(payload, 6);
-        return payload;
+        return WrapExifApp1Segment(payload);
+    }
+
+    /// <summary>
+    /// 把 Exif 载荷包成 APP1 段(<c>FF E1</c> + 长度 + 载荷)。缺了段头,JPEG 里紧随 SOI 的 TIFF 头
+    /// 会被解码器当成图像数据,整张图无法打开。
+    /// </summary>
+    /// <param name="payload">"Exif\0\0" 起的载荷</param>
+    /// <returns>完整 APP1 段</returns>
+    private static byte[] WrapExifApp1Segment(byte[] payload)
+    {
+        using var segment = new MemoryStream();
+        segment.WriteByte(0xFF);
+        segment.WriteByte(0xE1);
+        var length = payload.Length + 2;
+        segment.WriteByte((byte)(length >> 8));
+        segment.WriteByte((byte)(length & 0xFF));
+        segment.Write(payload, 0, payload.Length);
+        return segment.ToArray();
     }
 
     /// <summary>
@@ -561,15 +592,7 @@ internal sealed partial class WindowsMainWindow
         payload[4] = 0;
         payload[5] = 0;
         Array.Copy(tiffBytes, 0, payload, 6, tiffBytes.Length);
-
-        using var segment = new MemoryStream();
-        segment.WriteByte(0xFF);
-        segment.WriteByte(0xE1);
-        var length = payload.Length + 2;
-        segment.WriteByte((byte)(length >> 8));
-        segment.WriteByte((byte)(length & 0xFF));
-        segment.Write(payload, 0, payload.Length);
-        return segment.ToArray();
+        return WrapExifApp1Segment(payload);
     }
 
     /// <summary>导航图(缩放指示器):只显示在非适应态,白框在缩略图内,百分比与物理缩放同口径。</summary>
@@ -656,8 +679,9 @@ internal sealed partial class WindowsMainWindow
         _main.FileVM.ThumbnailList.SelectImageCommand(files[^1]);
         await Task.Delay(120);
         _main.FileVM.ThumbnailList.ScrollToCurrent();
-        await Task.Delay(90);
-        RequireSmoke(_filmstrip.IsLocateAnimating, "显式定位请求没有启动动画");
+        // 动画的启动、推进与收尾都靠消息泵调度:机器繁忙时固定延时既可能等不到启动,也可能误判收尾。
+        // 这里一律按可观察状态等待(超时仍然失败),不把调度延迟算成产品缺陷。
+        await WaitForSmokeAsync(() => _filmstrip.IsLocateAnimating, "显式定位请求没有启动动画", 5);
 
         _filmstrip.CancelLocate();
         RequireSmoke(!_filmstrip.IsLocateAnimating, "用户接管后动画仍在播放");
@@ -665,8 +689,10 @@ internal sealed partial class WindowsMainWindow
         await Task.Delay(420);
         RequireSmoke(Math.Abs(_filmstrip.MainAxisOffset - offset) < 1, "用户接管后位置仍在推进");
 
+        // 第二次定位跑到终点,作为"减少动态效果"的直接到终点基准;动画必须真的收尾(停止且偏移不再变化),
+        // 否则重负载下残留的动画会被误判成"减少动态效果下仍启动了动画"。
         _main.FileVM.ThumbnailList.ScrollToCurrent();
-        await Task.Delay(420);
+        await WaitForIdleLocateAsync("定位动画收尾");
         var animatedEnd = _filmstrip.MainAxisOffset;
 
         WindowsFilmstripView.ReduceMotionOverrideForAcceptance = true;
@@ -674,10 +700,9 @@ internal sealed partial class WindowsMainWindow
         {
             _main.FileVM.ThumbnailList.ScrollToCurrent();
             RequireSmoke(!_filmstrip.IsLocateAnimating, "减少动态效果下仍启动了动画");
-            await Task.Delay(120);
-            var immediate = _filmstrip.MainAxisOffset;
-            RequireSmoke(Math.Abs(immediate - animatedEnd) < 1.5,
-                $"减少动态效果未直接到终点: immediate={immediate} animated={animatedEnd}");
+            // 直接到终点是无动画的一次 ChangeView,落到偏移上仍要等下一轮布局;按状态等待而不是定时等待。
+            await WaitForSmokeAsync(() => !_filmstrip.IsLocateAnimating && Math.Abs(_filmstrip.MainAxisOffset - animatedEnd) < 1.5,
+                $"减少动态效果未直接到终点: immediate={_filmstrip.MainAxisOffset} animated={animatedEnd}", 5);
             checks.Add("PASS filmstrip FILM-03: user takeover stops animation; reduce-motion jumps to the same endpoint");
         }
         finally
@@ -694,33 +719,133 @@ internal sealed partial class WindowsMainWindow
         checks.Add("PASS FILM-01/03: external open of a non-first photo locates to target; user takeover keeps the list put");
 
         // FILM-05:筛选结果为空时胶片条留空,不显示任何占位文字(计数“共 0 张”已表达)。
+        // 可见性判定按"用户看得见"走;元素树里也不该残留上一批卡片 —— 虚拟化容器换数据源时不清卡片
+        // 会越积越多,每张还握着缩略图位图与文件属性订阅。
         _main.FileVM.FilterBar.SelectedRatingFilter = "Eq5";
         await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 0, "五星筛选空列表");
         await Task.Delay(150);
         _root.UpdateLayout();
-        RequireSmoke(CountTextBlocks(_filmstrip) == 0, "空胶片条仍显示卡片或占位文字");
-        checks.Add("PASS FILM-05: empty filter result leaves the filmstrip blank");
+        RequireSmoke(_filmstrip.VisibleViewport.ActualWidth > 1 && _filmstrip.VisibleViewport.ActualHeight > 1,
+            "空列表断言时胶片条视口无效");
+        var visibleText = DescribeTextBlocks(_filmstrip, _filmstrip.VisibleViewport, out var visibleCount);
+        var allText = DescribeTextBlocks(_filmstrip, null, out var realizedCount);
+        RequireSmoke(visibleCount == 0 && realizedCount == 0,
+            $"空胶片条仍显示卡片或占位文字: visible={visibleCount} realized={realizedCount} {visibleText}{allText}");
+        checks.Add("PASS FILM-05: empty filter result leaves the filmstrip blank, no cards left in the tree");
         _main.FileVM.FilterBar.SelectedRatingFilter = "All";
         await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 12, "恢复全部筛选");
+        await Task.Delay(150);
+
+        // FILM-01/FILM-06:列表刷新(筛选/评分)只更新内容,不抢用户位置 —— 换容器也要把偏移带过去。
+        _main.FileVM.ThumbnailList.ScrollToCurrent();
+        await WaitForIdleLocateAsync("刷新前定位");
+        var beforeRefresh = _filmstrip.MainAxisOffset;
+        RequireSmoke(beforeRefresh > 100, $"刷新前未定位到列表中部: offset={beforeRefresh}");
+        var listBeforeRefresh = _main.FileVM.ThumbnailList.FilteredFiles;
+        // "未评分"筛选保留全部 12 张(素材均无星级),列表内容与顺序不变,只有数据源整体重建。
+        _main.FileVM.FilterBar.SelectedRatingFilter = "None";
+        await WaitForSmokeAsync(() => !ReferenceEquals(_main.FileVM.ThumbnailList.FilteredFiles, listBeforeRefresh)
+            && _main.FileVM.ThumbnailList.FilteredFiles.Count == 12, "同内容筛选刷新");
+        await WaitForSmokeAsync(() => Math.Abs(_filmstrip.MainAxisOffset - beforeRefresh) < 2,
+            $"列表刷新把胶片条挪位了: before={beforeRefresh} after={_filmstrip.MainAxisOffset}", 5);
+        checks.Add("PASS FILM-01/FILM-06: list refresh keeps the filmstrip offset (no re-anchoring)");
+        _main.FileVM.FilterBar.SelectedRatingFilter = "All";
+        await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 12, "恢复全部筛选(第二次)");
         await Task.Delay(150);
 
         _main.Settings.LayoutMode = LayoutMode.Row;
         await Task.Delay(150);
     }
 
-    /// <summary>统计元素及其子元素中的文本块数量;空胶片条应当为 0(FILM-05)。</summary>
-    /// <param name="root">起始元素</param>
-    /// <returns>文本块数量</returns>
-    private static int CountTextBlocks(DependencyObject root)
+    /// <summary>
+    /// 把胶片条元素树里的文本块拼成诊断文本,并统计其中"用户看得见"的数量(FILM-05)。
+    /// 可见 = 元素自身到视口之间各层都可见、不透明、有实际尺寸,且与滚动视口相交。
+    /// 虚拟化列表允许保留已回收但从未排列、或被裁到视口外的卡片;它们不是可见内容,
+    /// 只有真正贴着列表区显示出来的文字才违反"列表区留空"。
+    /// </summary>
+    /// <param name="root">起始元素(胶片条)</param>
+    /// <param name="viewport">滚动视口;<c>null</c> 表示不做可见性过滤,只列出内容</param>
+    /// <param name="visibleCount">可见文本块数量</param>
+    /// <returns>以竖线分隔的文本块内容</returns>
+    private static string DescribeTextBlocks(DependencyObject root, FrameworkElement? viewport, out int visibleCount)
     {
-        int count = root is TextBlock ? 1 : 0;
-        int children = VisualTreeHelper.GetChildrenCount(root);
-        for (int index = 0; index < children; index++)
+        var texts = new List<string>();
+        var visible = 0;
+        Collect(root);
+        visibleCount = visible;
+        return string.Join(" | ", texts);
+
+        void Collect(DependencyObject element)
         {
-            count += CountTextBlocks(VisualTreeHelper.GetChild(root, index));
+            if (element is TextBlock block)
+            {
+                var shown = viewport != null && IsVisibleInViewport(block, viewport);
+                if (shown)
+                {
+                    visible++;
+                }
+
+                texts.Add("[" + block.Text + ":" + block.Visibility + (shown ? "@visible" : string.Empty) + "]");
+            }
+
+            int children = VisualTreeHelper.GetChildrenCount(element);
+            for (int index = 0; index < children; index++)
+            {
+                Collect(VisualTreeHelper.GetChild(element, index));
+            }
+        }
+    }
+
+    /// <summary>元素是否真的显示在滚动视口里:祖先可见性与不透明度成立,且与视口相交。</summary>
+    /// <param name="element">待判定元素</param>
+    /// <param name="viewport">滚动视口</param>
+    /// <returns>是否可见</returns>
+    private static bool IsVisibleInViewport(FrameworkElement element, FrameworkElement viewport)
+    {
+        if (element.ActualWidth <= 0.5 || element.ActualHeight <= 0.5)
+        {
+            return false;
         }
 
-        return count;
+        // 顺带确认元素确实挂在视口下:已脱离视觉树的旧元素不能参与坐标换算。
+        var attached = false;
+        for (var current = (DependencyObject?)element; current != null; current = VisualTreeHelper.GetParent(current))
+        {
+            if (current is FrameworkElement frame && (frame.Visibility != Visibility.Visible || frame.Opacity <= 0.01))
+            {
+                return false;
+            }
+
+            if (ReferenceEquals(current, viewport))
+            {
+                attached = true;
+                break;
+            }
+        }
+
+        if (!attached)
+        {
+            return false;
+        }
+
+        var bounds = element.TransformToVisual(viewport).TransformBounds(new Rect(0, 0, element.ActualWidth, element.ActualHeight));
+        bounds.Intersect(new Rect(0, 0, viewport.ActualWidth, viewport.ActualHeight));
+        return !bounds.IsEmpty && bounds.Width > 0.5 && bounds.Height > 0.5;
+    }
+
+    /// <summary>等胶片条真正停稳:定位动画已停止,且主轴偏移连续两次采样不再变化。</summary>
+    /// <param name="stage">超时诊断阶段。</param>
+    /// <returns>停稳后的任务。</returns>
+    private async Task WaitForIdleLocateAsync(string stage)
+    {
+        var previous = double.NaN;
+        await WaitForSmokeAsync(() =>
+        {
+            var current = _filmstrip.MainAxisOffset;
+            var idle = !_filmstrip.IsLocateAnimating && Math.Abs(current - previous) < 0.5;
+            previous = current;
+            return idle;
+        }, stage, 10);
     }
 
     /// <summary>相似聚类面板:开关→占位/提取→列表出分数柱条→点选切主图但保留锚点。</summary>
@@ -858,7 +983,18 @@ internal sealed partial class WindowsMainWindow
 
         _main.Settings.AnalysisImmediateCompute = false;
         await OpenPathsAsync(new[] { focusPath });
-        await WaitForSmokeAsync(() => _main.CurrentFile != null && _photo.HasImage, "对焦素材载入");
+        try
+        {
+            await WaitForSmokeAsync(() => _main.CurrentFile != null && _photo.HasImage, "对焦素材载入");
+        }
+        catch (TimeoutException)
+        {
+            // 超时要能区分"没换成这一张"和"换了但没上屏",否则只能靠猜。
+            throw new TimeoutException($"对焦素材载入: current={_main.CurrentFile?.Name ?? "null"}"
+                + $" hasImage={_photo.HasImage} error={_session.Error}"
+                + $" image={_session.Image?.SourceWidth}x{_session.Image?.SourceHeight}"
+                + $" files={_main.FileVM.ThumbnailList.FilteredFiles.Count}");
+        }
         await WaitForSmokeAsync(() => _main.CurrentFile!.ExifData?.SonyFocusPosition != null, "Sony 对焦 EXIF", 20);
         if (!_main.IsAnalysisViewVisible)
         {
@@ -1123,6 +1259,7 @@ internal sealed partial class WindowsMainWindow
         {
             await OpenPathsAsync(new[] { path });
             await WaitForSmokeAsync(() => _main.CurrentFile != null && _session.Image != null, "只读素材载入");
+            await WaitForUploadAsync("只读素材主图上传");
             await Task.Delay(150);
             Execute("SetRating3");
             await WaitForSmokeAsync(() => failed, "只读素材星级写回失败事件");
@@ -1280,6 +1417,11 @@ internal sealed partial class WindowsMainWindow
             await Task.Delay(50);
         }
     }
+
+    /// <summary>等待大图的后台纹理上传完成(期间主图仍停在上一帧,纹理尺寸/物理缩放尚未更新)。</summary>
+    /// <param name="stage">超时诊断阶段。</param>
+    /// <returns>上传完成后的任务。</returns>
+    private Task WaitForUploadAsync(string stage) => WaitForSmokeAsync(() => !_photo.IsUploadPending, stage);
 
     /// <summary>断言验收条件，失败时保留具体原因。</summary>
     /// <param name="condition">预期为真的条件。</param>

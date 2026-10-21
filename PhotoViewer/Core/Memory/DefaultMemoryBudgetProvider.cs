@@ -3,9 +3,9 @@ using System;
 namespace PhotoViewer.Core.Memory;
 
 /// <summary>
-/// 桌面平台默认预算提供者(Windows / macOS):以 CLR 可见内存总量为基准。
-/// 桌面无 jetsam 式硬杀,压力判定主要服务可观测性与预取节制,比例口径即可;
-/// 真机平台(iOS/Android)使用各自的实测提供者。
+/// 兜底预算提供者:以 CLR 可见内存总量为基准,只减托管占用。
+/// 产品壳各自注入实测预算源(Windows = <c>WindowsMemoryBudgetProvider</c>,macOS = <c>MacMemoryBudgetProvider</c>,
+/// iOS/Android 用真机水位);本类留给工具与测试进程 —— 原生解码缓冲不进 GC 账本,拿它给产品壳记账会低估占用。
 /// </summary>
 public sealed class DefaultMemoryBudgetProvider : IMemoryBudgetProvider
 {

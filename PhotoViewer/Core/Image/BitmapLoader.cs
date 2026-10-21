@@ -156,7 +156,7 @@ public static class BitmapLoader
 
     private static readonly ConcurrentDictionary<BitmapCacheKey, BitmapCacheItem> _cache = new();
     // 在途解码去重：同路径请求共享同一任务，完成后移除
-    private static readonly ConcurrentDictionary<string, Lazy<Task<DecodedImage?>>> _inFlight = new();
+    private static readonly ConcurrentDictionary<string, InFlightDecode> _inFlight = new();
     private static readonly object _cleanupLock = new();
 
     // 淘汰保留排名：越靠前的路径越重要（0 = 当前图）。淘汰选择时先淘汰未入排名的 LRU，
@@ -630,11 +630,12 @@ public static class BitmapLoader
             }
 
             var flightKey = filePath + "#proxy" + hint.MaxLongEdge;
-            var lazy = _inFlight.GetOrAdd(flightKey, _ => new Lazy<Task<DecodedImage?>>(
-                () => LoadProxyAndCacheAsync(file, filePath, hint.MaxLongEdge, encoding, ct, priority),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+            var decode = _inFlight.GetOrAdd(flightKey, _ => StartProxyDecode(file, filePath, hint.MaxLongEdge, encoding, ct, priority));
+            // 合并到在途解码的请求提升票面:翻到"预取已经在解的那一张"时,这条解码就地按 P0 排队,
+            // 不会因发起它的是后台预取而继续被后台通道的让位规则挡住。
+            decode.Ticket.Promote(priority, DecodeContext.Alongside);
             DecodedImage? img;
-            try { img = await AwaitInFlightAsync(flightKey, lazy, lazy.Value).ConfigureAwait(false); }
+            try { img = await AwaitInFlightAsync(flightKey, decode, decode.Task.Value).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 // 合并任务的原请求已取消，当前请求仍有效；重发代理，不把取消误判为解码失败升级 Full。
@@ -655,16 +656,54 @@ public static class BitmapLoader
     }
 
     /// <summary>
+    /// 在途解码的登记项:票面(<see cref="DecodeTicket"/>,可被合并进来的请求提升)+ 惰性任务。
+    /// 同路径(同尺寸档)的请求合并到同一条解码,票面共享。
+    /// </summary>
+    private sealed class InFlightDecode
+    {
+        public required DecodeTicket Ticket { get; init; }
+        public required Lazy<Task<DecodedImage?>> Task { get; init; }
+    }
+
+    /// <summary>登记一条在途代理解码:先建票面再包任务,保证合并进来的请求拿到的就是这条解码的票面。</summary>
+    private static InFlightDecode StartProxyDecode(
+        IFileRef file, string filePath, int targetLongEdge, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
+    {
+        var ticket = DecodeContext.CreateTicket(priority);
+        return new InFlightDecode
+        {
+            Ticket = ticket,
+            Task = new Lazy<Task<DecodedImage?>>(
+                () => LoadProxyAndCacheAsync(file, filePath, targetLongEdge, encoding, ticket, ct),
+                LazyThreadSafetyMode.ExecutionAndPublication),
+        };
+    }
+
+    /// <summary>登记一条在途 Full 解码(票面语义同 <see cref="StartProxyDecode"/>)。</summary>
+    private static InFlightDecode StartFullDecode(
+        IFileRef file, string filePath, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
+    {
+        var ticket = DecodeContext.CreateTicket(priority);
+        return new InFlightDecode
+        {
+            Ticket = ticket,
+            Task = new Lazy<Task<DecodedImage?>>(
+                () => LoadAndCacheAsync(file, filePath, encoding, ticket, ct),
+                LazyThreadSafetyMode.ExecutionAndPublication),
+        };
+    }
+
+    /// <summary>
     /// 代理解码路径:准入(按代理估值)→ 平台差异化缩解码 → EXIF 旋转(平台未预旋转时)→ 入 Proxy 档缓存。
     /// 解码产物长边 ≤ targetLongEdge;源已更小时按源尺寸(不放大)。
     /// </summary>
-    private static async Task<DecodedImage?> LoadProxyAndCacheAsync(IFileRef file, string filePath, int targetLongEdge, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
+    private static async Task<DecodedImage?> LoadProxyAndCacheAsync(IFileRef file, string filePath, int targetLongEdge, PixelEncoding encoding, DecodeTicket ticket, CancellationToken ct)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
 
         // 按正方形上界与本次协商编码估算，避免 F16/方形用户素材低估准入预算。
         long estimate = (long)targetLongEdge * targetLongEdge * DecodedImage.BytesPerPixel(encoding);
-        if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
+        if (!MemoryGovernor.TryAcquire(estimate, ticket.Priority, out var permit))
             return null;
 
         using (permit)
@@ -672,11 +711,11 @@ public static class BitmapLoader
             try
             {
                 // 预取/后台在容量不足且腾不出比自己更差的条目时直接跳过(不解码、不记错误)
-                if (!await EnsureCapacityAsync(estimate, priority, filePath).ConfigureAwait(false))
+                if (!await EnsureCapacityAsync(estimate, ticket.Priority, filePath).ConfigureAwait(false))
                     return null;
 
                 var decodeSw = System.Diagnostics.Stopwatch.StartNew();
-                var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, encoding, ct), ct).ConfigureAwait(false);
+                var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, encoding, ticket, ct), ct).ConfigureAwait(false);
                 decodeSw.Stop();
                 if (image == null) return null;
 
@@ -719,10 +758,14 @@ public static class BitmapLoader
     /// 代理缩解码(平台差异化口径):JPEG/PNG → Skia codec 子采样+Mitchell;HEIF/RAW → 平台解码器
     /// (Apple 编解码器级子采样;Windows libheif 全解码+Mitchell;Android InSampleSize)。平台未预旋转的再应用 EXIF 旋转。
     /// </summary>
-    private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, PixelEncoding encoding, CancellationToken ct)
+    private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, PixelEncoding encoding, DecodeTicket ticket, CancellationToken ct)
     {
         if (_presentationDecoder != null)
+        {
+            // 把本请求的优先级带进平台解码器的排队(Windows HEIF 快速路径据此让 P0 越过后台预取)。
+            using var _ = DecodeContext.Enter(ticket);
             return await _presentationDecoder.DecodeAsync(file, targetLongEdge, encoding, ct).ConfigureAwait(false);
+        }
         DecodedImage? proxy = null;
         bool preRotated;
 
@@ -794,11 +837,11 @@ public static class BitmapLoader
             }
 
             // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
-            var lazy = _inFlight.GetOrAdd(filePath, _ => new Lazy<Task<DecodedImage?>>(
-                () => LoadAndCacheAsync(file, filePath, PresentationEncoding(ImageSizeClass.Full), ct, priority),
-                LazyThreadSafetyMode.ExecutionAndPublication));
+            var decode = _inFlight.GetOrAdd(filePath, _ => StartFullDecode(file, filePath, PresentationEncoding(ImageSizeClass.Full), ct, priority));
+            // 合并到在途解码的请求提升票面(P0 翻到预取已在解的那一张时,该解码就地按 P0 排队)
+            decode.Ticket.Promote(priority, DecodeContext.Alongside);
             DecodedImage? img;
-            try { img = await AwaitInFlightAsync(filePath, lazy, lazy.Value).ConfigureAwait(false); }
+            try { img = await AwaitInFlightAsync(filePath, decode, decode.Task.Value).ConfigureAwait(false); }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 // 合并任务的原请求已取消，当前请求仍有效：重走本流程，不把取消误判为解码失败
@@ -818,9 +861,9 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 等待在途任务完成（无论成败）后将其移出去重表；只移除自己那一轮 Lazy，避免误删新一轮请求。
+    /// 等待在途任务完成（无论成败）后将其移出去重表；只移除自己那一轮登记，避免误删新一轮请求。
     /// </summary>
-    private static async Task<DecodedImage?> AwaitInFlightAsync(string filePath, Lazy<Task<DecodedImage?>> lazy, Task<DecodedImage?> task)
+    private static async Task<DecodedImage?> AwaitInFlightAsync(string filePath, InFlightDecode decode, Task<DecodedImage?> task)
     {
         try
         {
@@ -828,7 +871,7 @@ public static class BitmapLoader
         }
         finally
         {
-            _inFlight.TryRemove(new KeyValuePair<string, Lazy<Task<DecodedImage?>>>(filePath, lazy));
+            _inFlight.TryRemove(new KeyValuePair<string, InFlightDecode>(filePath, decode));
         }
     }
 
@@ -836,7 +879,7 @@ public static class BitmapLoader
     /// 缓存未命中路径：解码准入(Governor) → 容量保障 → 线程池解码 → 入缓存。
     /// 准入被拒(非 P0)返回 null;在途账预留于解码期,解码完成按实际字节复核,出方法归还。
     /// </summary>
-    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, PixelEncoding encoding, CancellationToken ct, DecodePriority priority)
+    private static async Task<DecodedImage?> LoadAndCacheAsync(IFileRef file, string filePath, PixelEncoding encoding, DecodeTicket ticket, CancellationToken ct)
     {
         var totalSw = System.Diagnostics.Stopwatch.StartNew();
 
@@ -848,7 +891,7 @@ public static class BitmapLoader
         catch { /* 估算失败按 0(仅记账)走,不阻断解码 */ }
 
         // 解码准入:P0 豁免放行;非 P0 预算不足直接拒绝(不排队)
-        if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
+        if (!MemoryGovernor.TryAcquire(estimate, ticket.Priority, out var permit))
             return null;
 
         using (permit)
@@ -856,7 +899,7 @@ public static class BitmapLoader
             try
             {
                 // 预取/后台在容量不足且腾不出比自己更差的条目时直接跳过(不解码、不记错误)
-                if (!await EnsureCapacityAsync(estimate, priority, filePath).ConfigureAwait(false))
+                if (!await EnsureCapacityAsync(estimate, ticket.Priority, filePath).ConfigureAwait(false))
                     return null;
             }
             catch { /* 容量保障失败不致命，继续尝试加载 */ }
@@ -865,7 +908,7 @@ public static class BitmapLoader
             {
                 // 加载图片（解码本体在线程池执行，续体不回 UI 线程）
                 var decodeSw = System.Diagnostics.Stopwatch.StartNew();
-                var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, encoding, ct), ct).ConfigureAwait(false);
+                var image = await Task.Run(() => LoadBitmapWithExifRotationAsync(file, encoding, ticket, ct), ct).ConfigureAwait(false);
                 decodeSw.Stop();
                 if (image == null) return null;
 
@@ -896,12 +939,15 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 加载图片并应用EXIF旋转
+    /// 加载图片并应用EXIF旋转；平台解码器调用处带上本请求的票面(P0 不排在后台预取之后)。
     /// </summary>
-    private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, PixelEncoding encoding, CancellationToken ct = default)
+    private static async Task<DecodedImage?> LoadBitmapWithExifRotationAsync(IFileRef file, PixelEncoding encoding, DecodeTicket ticket, CancellationToken ct = default)
     {
         if (_presentationDecoder != null)
+        {
+            using var _ = DecodeContext.Enter(ticket);
             return await _presentationDecoder.DecodeAsync(file, null, encoding, ct).ConfigureAwait(false);
+        }
         try
         {
             DecodedImage? originalImage = null;

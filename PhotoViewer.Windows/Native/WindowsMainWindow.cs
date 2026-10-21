@@ -266,6 +266,20 @@ internal sealed partial class WindowsMainWindow : Window
         ConfigureTitleBar();
     }
 
+    /// <summary>主图上屏信号源(压测驱动器按它计时)。</summary>
+    internal PhotoLoadSession Session => _session;
+
+    /// <summary>
+    /// 压测汇总附加指标(写进 stress-flip.jsonl 的 done 行):物理视口、代理目标口径与纹理上传耗时统计。
+    /// 视口 = 主图区的物理像素,代理目标按画质红线为视口长边 × 2。
+    /// </summary>
+    internal string BuildStressSummary()
+    {
+        var viewport = _photo.PhysicalViewport;
+        var longEdge = (int)Math.Max(viewport.Width, viewport.Height);
+        return $"viewport={viewport.Width:0}x{viewport.Height:0} proxyTarget={longEdge * 2} " + WindowsUploadStats.Summary();
+    }
+
     /// <summary>
     /// 释放订阅与 GPU 资源。
     /// </summary>

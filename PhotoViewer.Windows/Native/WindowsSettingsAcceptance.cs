@@ -49,6 +49,16 @@ internal static class WindowsSettingsAcceptance
                 $"窗口宽度不是 960 DIP: {windowWidth:0.0}");
             checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar + NumberBox, 5 categories, window={windowWidth:0} DIP, content={window.Root.ActualWidth:0} DIP");
 
+            // SETTINGS-06：默认值来自平台预算源，提示第一行为运行时预算、第二行按实测有效容量换算张数。
+            Require(!string.IsNullOrWhiteSpace(window.Settings.PerformanceBudgetInfo), "预算提示第一行为空");
+            Require(!string.IsNullOrWhiteSpace(window.Settings.BitmapCacheCountInfo), "预算提示第二行为空");
+            checks.Add(
+                $"PASS budget defaults: 缓存 {window.Settings.BitmapCacheMaxMemory} MB / {window.Settings.BitmapCacheMaxCount} 张"
+                + $"; 原生解码线程 {window.Settings.NativePreloadParallelism}/{window.Settings.NativePreloadParallelismMaximum}"
+                + $"; 软件解码线程 {window.Settings.CpuPreloadParallelism}/{window.Settings.CpuPreloadParallelismMaximum}"
+                + $"; 提示 1: {window.Settings.PerformanceBudgetInfo}"
+                + $"; 提示 2: {window.Settings.BitmapCacheCountInfo}");
+
             Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.Left))) == "←",
                 "方向键显示文本不是箭头");
             Require(WindowsInput.FormatGesture(AppGesture.FromKey(new AppKeyGesture(GestureKey.D2))) == "2",

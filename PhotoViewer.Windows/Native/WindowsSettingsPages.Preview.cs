@@ -92,34 +92,50 @@ internal sealed partial class WindowsSettingsPages
     }
 
     /// <summary>提交尚未失焦的预设编辑;切换分类与关闭设置前调用。</summary>
-    public void CommitPendingEdits()
-    {
-        if (_focusedPresetEditor == null)
-        {
-            return;
-        }
-
-        var row = _presetRows.Values.FirstOrDefault(candidate => ReferenceEquals(candidate.Editor, _focusedPresetEditor));
-        if (row != null)
-        {
-            CommitPreset(row.Editor, row.Preset, updateUi: true);
-        }
-    }
+    public void CommitPendingEdits() => CommitPresetRows(updateUi: true);
 
     /// <summary>关闭前只写工作副本,不再触发布局或焦点操作;排序在源设置提交时完成。</summary>
     public void CommitForClose()
     {
         _closing = true;
-        if (_focusedPresetEditor == null)
+        CommitPresetRows(updateUi: false);
+    }
+
+    /// <summary>
+    /// 提交文本尚未落定的预设行。焦点事件可能还没派发(刚取得焦点就关闭时 <see cref="Control.GotFocus"/> 尚未到达),
+    /// 因此除了记录中的焦点框,还直接向 <see cref="FocusManager"/> 取当前焦点,并把文本与预设不一致的行一并提交。
+    /// 两条路径都不把焦点收回输入框:切换分类与关闭时用户已经离开发那个输入框。
+    /// </summary>
+    /// <param name="updateUi">是否提示非法输入并排序(关闭时为 false)</param>
+    private void CommitPresetRows(bool updateUi)
+    {
+        var focused = FocusedPresetEditor();
+        foreach (var row in _presetRows.Values.ToArray())
         {
-            return;
+            if (!ReferenceEquals(row.Editor, focused) && row.Editor.Text == row.Preset.Text)
+            {
+                continue;
+            }
+
+            CommitPreset(row.Editor, row.Preset, updateUi, keepFocus: false);
+        }
+    }
+
+    /// <summary>当前正在编辑预设的输入框:优先取焦点事件记录的,记录缺失时直接问焦点管理器。</summary>
+    /// <returns>焦点所在的预设输入框;没有返回 null</returns>
+    private TextBox? FocusedPresetEditor()
+    {
+        if (_focusedPresetEditor != null)
+        {
+            return _focusedPresetEditor;
         }
 
-        var row = _presetRows.Values.FirstOrDefault(candidate => ReferenceEquals(candidate.Editor, _focusedPresetEditor));
-        if (row != null)
+        if (_presetHost?.XamlRoot is not { } root || FocusManager.GetFocusedElement(root) is not TextBox focused)
         {
-            CommitPreset(row.Editor, row.Preset, updateUi: false);
+            return null;
         }
+
+        return _presetRows.Values.Any(row => ReferenceEquals(row.Editor, focused)) ? focused : null;
     }
 
     private void OnPreviewPagePressed(object sender, PointerRoutedEventArgs e)
@@ -248,7 +264,8 @@ internal sealed partial class WindowsSettingsPages
                 _focusedPresetEditor = null;
             }
 
-            CommitPreset(editor, preset);
+            // 失焦本身就是用户移焦的结果,提交后不得把焦点收回输入框。
+            CommitPreset(editor, preset, keepFocus: false);
         }
 
         void OnKeyDown(object sender, KeyRoutedEventArgs e)
@@ -258,7 +275,7 @@ internal sealed partial class WindowsSettingsPages
                 return;
             }
 
-            CommitPreset(editor, preset);
+            CommitPreset(editor, preset, keepFocus: true);
             e.Handled = true;
         }
 
@@ -298,7 +315,8 @@ internal sealed partial class WindowsSettingsPages
         }
     }
 
-    private void CommitPreset(TextBox editor, SettingsViewModel.ScalePreset preset, bool updateUi = true)
+    private void CommitPreset(
+        TextBox editor, SettingsViewModel.ScalePreset preset, bool updateUi = true, bool keepFocus = false)
     {
         if (_committingPreset)
         {
@@ -308,7 +326,7 @@ internal sealed partial class WindowsSettingsPages
         _committingPreset = true;
         try
         {
-            CommitPresetCore(editor, preset, updateUi);
+            CommitPresetCore(editor, preset, updateUi, keepFocus);
         }
         finally
         {
@@ -316,7 +334,7 @@ internal sealed partial class WindowsSettingsPages
         }
     }
 
-    private void CommitPresetCore(TextBox editor, SettingsViewModel.ScalePreset preset, bool updateUi)
+    private void CommitPresetCore(TextBox editor, SettingsViewModel.ScalePreset preset, bool updateUi, bool keepFocus)
     {
         bool valid = (double.TryParse(editor.Text, NumberStyles.Float, CultureInfo.InvariantCulture, out var percent)
             || double.TryParse(editor.Text, NumberStyles.Float, CultureInfo.CurrentCulture, out percent))
@@ -340,7 +358,6 @@ internal sealed partial class WindowsSettingsPages
 
         percent = Math.Round(percent, 3);
         var text = FormatNumber(percent);
-        bool hadFocus = updateUi && editor.FocusState != FocusState.Unfocused;
         int caret = editor.SelectionStart;
         if (text != preset.Text)
         {
@@ -357,8 +374,9 @@ internal sealed partial class WindowsSettingsPages
         }
 
         editor.Text = preset.Text;
-        if (hadFocus)
+        if (keepFocus && editor.FocusState == FocusState.Unfocused)
         {
+            // 排序会把行从面板上摘掉再插回,输入框随之失焦;只有用户仍在编辑(Enter 提交)时才把焦点还回去。
             editor.Focus(FocusState.Programmatic);
             editor.SelectionStart = Math.Min(editor.Text.Length, caret);
         }

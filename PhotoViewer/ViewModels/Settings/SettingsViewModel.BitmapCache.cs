@@ -36,6 +36,18 @@ public partial class SettingsViewModel
     /// <summary>自动口径下（缓存张数不参与运行时）的预载数量上限，与默认预载数量一致。</summary>
     private const int AutomaticPreloadMaximum = 10;
 
+    /// <summary>预载默认值的基准缓存张数：张数不少于它时直接用默认份数（上一张 10 / 下一张 5 / 列表滚动 5）。</summary>
+    private const int DefaultPreloadBaselineCount = 30;
+
+    /// <summary>基准张数下的上一张预载默认份数。</summary>
+    private const int DefaultPreloadForwardCount = 10;
+
+    /// <summary>基准张数下的下一张预载默认份数。</summary>
+    private const int DefaultPreloadBackwardCount = 5;
+
+    /// <summary>基准张数下的列表滚动预载默认份数。</summary>
+    private const int DefaultPreloadCenterCount = 5;
+
     /// <summary>按适屏尺寸估算照片字节数时的代理长边兜底（展示会话尚未上报视口时）。</summary>
     private const int UnknownProxyLongEdge = 3840;
 
@@ -63,34 +75,22 @@ public partial class SettingsViewModel
 
     /// <summary>
     /// 初始化数据（缓存数量、内存大小、预载数量）
-    /// 初始化监听（缓存数量、内存大小）
+    /// 初始化监听（缓存数量、内存大小、有效缓存容量）
     /// </summary>
     private void InitializeBitMapCache()
     {
-        // 读取系统内存上限，设置默认值
+        // 读取设备能力，默认值由平台预算源给出（IPerformanceBudget.GetRecommended*）
         try
         {
-            var systemMemoryLimit = PerformanceBudget.AppMemoryLimitMB;
-            _systemMemoryLimitMB = systemMemoryLimit;
+            _systemMemoryLimitMB = PerformanceBudget.AppMemoryLimitMB;
             _systemCpuCoreCount = Math.Max(1, PerformanceBudget.CpuCoreCount);
             _systemNativePreloadLimit = Math.Max(1, PerformanceBudget.NativePreloadThreadLimit);
             _systemCpuPreloadLimit = Math.Max(1, PerformanceBudget.CpuPreloadThreadLimit);
 
-            // 设置默认内存上限为系统限制的 50%，但不超过 4GB
-            var defaultMemory = Math.Min(systemMemoryLimit * 1 / 2, 4096);
-            BitmapCacheMaxMemory = Math.Max(512, defaultMemory);
-
-            if (BitmapCacheMaxMemory < 4096)
-            {
-                BitmapCacheMaxCount = Math.Min(BitmapCacheMaxMemory / 132, 30); // 按 33MP 估算减少张数
-                NativePreloadParallelism = EstimateInitialPreloadParallelism(_systemNativePreloadLimit);
-                CpuPreloadParallelism = EstimateInitialPreloadParallelism(_systemCpuPreloadLimit);
-            }
-            else
-            {
-                NativePreloadParallelism = _systemNativePreloadLimit;
-                CpuPreloadParallelism = _systemCpuPreloadLimit;
-            }
+            BitmapCacheMaxMemory = PerformanceBudget.RecommendedCacheMemoryMB;
+            BitmapCacheMaxCount = PerformanceBudget.RecommendedCacheCount(BitmapCacheMaxMemory);
+            NativePreloadParallelism = PerformanceBudget.RecommendedNativePreloadParallelism(BitmapCacheMaxMemory);
+            CpuPreloadParallelism = PerformanceBudget.RecommendedCpuPreloadParallelism(BitmapCacheMaxMemory);
 
             PerformanceBudgetInfo = BuildPerformanceBudgetInfo();
         }
@@ -120,9 +120,7 @@ public partial class SettingsViewModel
 
         // 初始化三个预载滑条的 百分比 backing 字段（0~33.3333），确保 UI 初始位置正确
         // 注意：百分比是相对总缓存数的百分比（0 ~ 33.3333），实际预载数量由 percent/100 * BitmapCacheMaxCount 计算
-        _preloadForwardPercent = BitmapCacheMaxCount <= 0 ? 0 : Math.Min(33.3333333, _preloadForwardCount * 100.0 / Math.Max(1, BitmapCacheMaxCount));
-        _preloadBackwardPercent = BitmapCacheMaxCount <= 0 ? 0 : Math.Min(33.3333333, _preloadBackwardCount * 100.0 / Math.Max(1, BitmapCacheMaxCount));
-        _visibleCenterPreloadPercent = BitmapCacheMaxCount <= 0 ? 0 : Math.Min(33.3333333, _visibleCenterPreloadCount * 100.0 / Math.Max(1, BitmapCacheMaxCount));
+        InitializePreloadDefaults();
 
         // 监听缓存最大数量变化：保持百分比不变，仅在新域内重算整数
         this.WhenAnyValue(v => v.BitmapCacheMaxCount)
@@ -174,8 +172,54 @@ public partial class SettingsViewModel
 
         this.WhenAnyValue(v => v.CpuPreloadParallelism)
             .Subscribe(v => { if (_applyRuntimeSettings) HeifLoader.SetCpuDecodeParallelism(v); });
+
+        // 有效缓存容量随实测预算与占用变化（MemoryGovernor 每轮探测后重算）：设置页打开时显示当前值。
+        // 探测本身 2s 一轮，这里再限流一次，避免提示行随探测抖动。
+        _runtimeSubscriptions.Add(Observable
+            .FromEvent(h => MemoryGovernor.Probed += h, h => MemoryGovernor.Probed -= h)
+            .Throttle(TimeSpan.FromMilliseconds(500), UiDispatcher.MainThreadScheduler)
+            .ObserveOn(UiDispatcher.MainThreadScheduler)
+            .Subscribe(_ => this.RaisePropertyChanged(nameof(BitmapCacheCountInfo))));
     }
     
+    /// <summary>
+    /// 全新设置的预载默认值：缓存张数达到基准（30 张）时即默认的上一张 10 / 下一张 5 / 列表滚动 5；
+    /// 张数更少时按同一比例收敛到推荐张数，保证不超过预载上限，
+    /// 且「前后预载 + 当前 + 对比」不超过缓存张数（SETTINGS-06 的提示行据此定级）。
+    /// 已保存的设置由 <see cref="SettingsViewModel.Persistence"/> 在之后覆盖，不走这里。
+    /// </summary>
+    private void InitializePreloadDefaults()
+    {
+        var count = Math.Max(1, BitmapCacheMaxCount);
+        var maximum = ShowsCacheLimits ? Math.Max(0, count / 3) : AutomaticPreloadMaximum;
+        PreloadMaximum = maximum;
+
+        _freezePreloadExp = true;
+        try
+        {
+            PreloadForwardCount = ScalePreloadDefault(DefaultPreloadForwardCount);
+            PreloadBackwardCount = ScalePreloadDefault(DefaultPreloadBackwardCount);
+            VisibleCenterPreloadCount = ScalePreloadDefault(DefaultPreloadCenterCount);
+
+            // 滑条位置按张数换算，与默认份数一致；缓存数量上限变化时继续按百分比保持
+            _preloadForwardPercent = PreloadPercent(PreloadForwardCount);
+            _preloadBackwardPercent = PreloadPercent(PreloadBackwardCount);
+            _visibleCenterPreloadPercent = PreloadPercent(VisibleCenterPreloadCount);
+        }
+        finally
+        {
+            _freezePreloadExp = false;
+        }
+
+        // 自动口径下缓存张数不参与运行时，份数保持基准默认值。
+        int ScalePreloadDefault(int baseline) => !ShowsCacheLimits || count >= DefaultPreloadBaselineCount
+            ? Math.Min(baseline, maximum)
+            : Math.Clamp(
+                (int)Math.Round(baseline * (double)count / DefaultPreloadBaselineCount), 0, maximum);
+
+        double PreloadPercent(int value) => Math.Min(33.3333333, value * 100.0 / count);
+    }
+
     // 指数映射工具：t ∈ [0,1]
     private static double ToExp(double value, double min, double max)
     {
@@ -197,17 +241,6 @@ public partial class SettingsViewModel
         if (max < min) max = min;
         var v = min * Math.Pow(max / min, t);
         return (int)Math.Round(v);
-    }
-
-    private int EstimateInitialPreloadParallelism(int maxParallelism)
-    {
-        if (maxParallelism <= 1)
-        {
-            return 1;
-        }
-
-        var scaled = (int)Math.Round(BitmapCacheMaxMemory / 4096.0 * maxParallelism);
-        return Math.Clamp(scaled, 1, maxParallelism);
     }
 
     private string BuildPerformanceBudgetInfo()

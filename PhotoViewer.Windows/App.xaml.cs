@@ -7,6 +7,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
+using PhotoViewer.Windows.Core.Heif;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
@@ -52,12 +53,31 @@ public partial class App : Application
             var settingsHold = LaunchArgs.Contains("--pv-native-settings-hold");
             var toolsCheck = LaunchArgs.Contains("--pv-native-tools");
             var toolsHold = LaunchArgs.Contains("--pv-native-tools-hold");
+            var stress = WindowsNativeApplication.StressRequested;
+            var perfProbeFolder = WindowsNativeApplication.PerfProbeFolder;
+            var thumbProbePaths = WindowsHeifThumbProbe.ParsePaths(LaunchArgs);
             DebugSettings.XamlResourceReferenceFailed += (_, e) =>
                 NativeStartupLog.Write("xaml resource failed: " + e.Message);
             DebugSettings.BindingFailed += (_, e) =>
                 NativeStartupLog.Write("xaml binding failed: " + e.Message);
             WindowsNativeApplication.InitializeFacades(
-                smoke || settingsCheck || settingsHold || toolsCheck || toolsHold);
+                smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
+                || stress || perfProbeFolder != null || thumbProbePaths.Length > 0);
+
+            // HEIF 缩略图项对比探针:不需要窗口与视图模型,门面就绪后直接跑完退出。
+            if (thumbProbePaths.Length > 0)
+            {
+                var thumbReportPath = Path.Combine(
+                    WindowsNativeApplication.IsolatedOutputDirectory,
+                    "heif-thumb-probe.txt");
+                NativeStartupLog.Write($"[HeifThumbProbe] start -> {thumbReportPath}");
+                var failure = await WindowsHeifThumbProbe.RunAsync(thumbProbePaths, thumbReportPath);
+                NativeStartupLog.Write(failure.Length == 0
+                    ? $"[HeifThumbProbe] PASS {thumbReportPath}"
+                    : $"[HeifThumbProbe] FAIL {failure}");
+                Environment.Exit(failure.Length == 0 ? 0 : 1);
+                return;
+            }
 
             _main = new MainViewModel();
             _settingsPresenter = new WindowsNativeSettingsPresenter(() => WindowsNativeApplication.WindowHandle);
@@ -103,9 +123,63 @@ public partial class App : Application
                 return;
             }
 
-            var paths = LaunchArgs.Where(arg => !arg.StartsWith("--", StringComparison.Ordinal)).ToList();
+            // 性能探针独占一轮:不开用户路径、不进交互,测完即退出(与 Mac --pv-perf-probe 同流程)。
+            if (perfProbeFolder != null)
+            {
+                var reportPath = Path.Combine(
+                    WindowsNativeApplication.IsolatedOutputDirectory,
+                    "perf-probe.txt");
+                NativeStartupLog.Write($"[PerfProbe] start {perfProbeFolder} -> {reportPath}");
+                await WindowsPerfProbe.RunAsync(perfProbeFolder, reportPath);
+                NativeStartupLog.Write($"[PerfProbe] done {reportPath}");
+                Environment.Exit(0);
+                return;
+            }
+
+            // 探针目录只作为探针输入,不当成待打开路径;其余非 -- 参数仍按外部打开处理。
+            var paths = LaunchArgs
+                .Where((arg, index) => !arg.StartsWith("--", StringComparison.Ordinal)
+                    && (index == 0 || !string.Equals(LaunchArgs[index - 1], "--pv-perf-probe", StringComparison.Ordinal)))
+                .ToList();
             await _window.OpenPathsAsync(paths);
             NativeStartupLog.Write("startup complete");
+
+            // 压测在窗口与 PhotoLoadSession 就绪后启动(与 Mac 同一注入点)。
+            if (stress)
+            {
+                // 压测期间不跑后台特征索引:索引会解 560 缩略图并抢占解码与 CPU,把翻页延迟混成"索引延迟"。
+                _main.Settings.SimilarityPanelExpanded = false;
+                // 并行度扫描:隔离设置每轮被重置,用启动参数覆盖后台预取并发(BitmapPrefetcher 订阅该属性)。
+                if (WindowsNativeApplication.StressNativeThreads is int stressThreads)
+                {
+                    _main.Settings.NativePreloadParallelism = stressThreads;
+                    NativeStartupLog.Write($"stress: preload parallelism override={stressThreads}");
+                }
+                WindowsUploadStats.Reset();
+                HeifDecodeStats.Reset();
+                StressFlipDriver.LogDirectory = WindowsNativeApplication.IsolatedOutputDirectory;
+                // 汇总行补三项进程级指标:后台预取并发、第二轮 GC 次数增量(长尾归因)、私有内存与峰值工作集。
+                var stressThreadsEffective = _main.Settings.NativePreloadParallelism;
+                var gc2AtStart = GC.CollectionCount(2);
+                StressFlipDriver.ExtraSummary = () =>
+                {
+                    using var process = System.Diagnostics.Process.GetCurrentProcess();
+                    return _window.BuildStressSummary()
+                        + HeifDecodeStats.Summary()
+                        + $" preload={stressThreadsEffective}"
+                        + $" gc2Delta={GC.CollectionCount(2) - gc2AtStart}"
+                        + $" privateMB={process.PrivateMemorySize64 >> 20}"
+                        + $" peakWSMB={process.PeakWorkingSet64 >> 20}";
+                };
+                // 自动化压测:一轮翻完就退出进程,否则窗口留在前台占用隔离数据库,下一轮无法重置。
+                StressFlipDriver.Completed = () =>
+                {
+                    NativeStartupLog.Write("stress: done, exiting");
+                    Environment.Exit(0);
+                };
+                NativeStartupLog.Write("stress: start, similarity panel collapsed, feature indexing off");
+                StressFlipDriver.MaybeStart(_main, _window.Session);
+            }
         }
         catch (Exception ex)
         {

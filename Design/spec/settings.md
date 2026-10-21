@@ -59,7 +59,7 @@
 | 软件解码线程 | 步进器 | 1–设备上限 |
 | 缓存内存上限 | 拉条 + 数值 | 512–32768 MB（`SettingsViewModel.BitmapCache`） |
 | 缓存数量上限 | 拉条/数值 | 1–400 张（`SettingsViewModel.BitmapCache`） |
-| 上一张 / 下一张 / 列表滚动预载 | 步进器 | 0–缓存数量 ÷ 3，即 0–33.3333%（`SettingsViewModel.BitmapCache`） |
+| 上一张 / 下一张 / 列表滚动预载 | 步进器 | 0–缓存数量 ÷ 3，即 0–33.3333%（`SettingsViewModel.BitmapCache`）；默认值按缓存张数换算，30 张及以上为 10 / 5 / 5，更少时按同比例收敛且不超过该上限 |
 | 滚动预载延时 | 拉条 | 100–5000 ms（`SettingsViewModel.BitmapCache`） |
 
 | 格式 | 扩展名 | 默认 |
