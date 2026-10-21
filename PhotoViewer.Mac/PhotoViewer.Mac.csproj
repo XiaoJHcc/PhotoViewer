@@ -67,11 +67,11 @@
     -->
     <Target Name="_BuildSwiftSettingsDylib"
             BeforeTargets="_CodesignAppBundle"
-            Inputs="$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift"
+            Inputs="$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacToolsUI.swift"
             Outputs="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib"
             Condition="$([MSBuild]::IsOSPlatform('osx'))">
         <MakeDir Directories="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle" />
-        <Exec Command="xcrun --sdk macosx swiftc -parse-as-library -emit-library -O -target arm64-apple-macosx26.0 &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift&quot; -o &quot;$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib&quot;"
+        <Exec Command="xcrun --sdk macosx swiftc -parse-as-library -emit-library -O -target arm64-apple-macosx26.0 &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift&quot; &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacToolsUI.swift&quot; -o &quot;$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib&quot;"
               IgnoreExitCode="false" />
         <Message Importance="high" Text="[SwiftSettings] 编译 SwiftUI 设置动态库 → MonoBundle/libMacSettingsUI.dylib" />
     </Target>

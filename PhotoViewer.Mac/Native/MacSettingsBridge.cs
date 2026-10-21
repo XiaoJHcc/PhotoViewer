@@ -254,6 +254,16 @@ internal static unsafe class MacSettingsNative
     private static delegate* unmanaged[Cdecl]<int, int, void> _beginRecording;
     private static delegate* unmanaged[Cdecl]<nint, void> _render;
 
+    /// <summary>已载入的动态库句柄；工具窗口桥接复用同一份。</summary>
+    internal static nint Library
+    {
+        get
+        {
+            EnsureLoaded();
+            return _library;
+        }
+    }
+
     /// <summary>SwiftUI 回传动作的处理入口，由设置展示器在展示时挂接。</summary>
     internal static Func<string, int>? ActionSink { get; set; }
     /// <summary>窗口关闭回调入口，由设置展示器在展示时挂接。</summary>
@@ -335,5 +345,63 @@ internal static unsafe class MacSettingsNative
     {
         try { CloseSink?.Invoke(); }
         catch (Exception exception) { Console.Error.WriteLine("[MacSettingsUI] close failed: " + exception); }
+    }
+}
+
+/// <summary>libMacSettingsUI.dylib 中工具窗口导出的 C ABI 绑定：与设置共用同一动态库句柄。
+/// 每个入口先取 <see cref="MacSettingsNative.Library"/>，确保函数指针已解析。</summary>
+internal static unsafe class MacToolsNative
+{
+    private static delegate* unmanaged[Cdecl]<nint, void> _setSelectHandler;
+    private static delegate* unmanaged[Cdecl]<nint, nint> _create;
+    private static delegate* unmanaged[Cdecl]<nint, void> _updateState;
+    private static delegate* unmanaged[Cdecl]<int, void> _select;
+    private static bool _bound;
+
+    /// <summary>SwiftUI 侧栏分类选择回传入口，由工具窗口在创建时挂接。</summary>
+    internal static Action<int>? SelectSink { get; set; }
+
+    /// <summary>解析工具窗口导出函数并注册选择回调（只做一次）。</summary>
+    private static void EnsureLoaded()
+    {
+        nint library = MacSettingsNative.Library;
+        if (_bound) return;
+        _setSelectHandler = (delegate* unmanaged[Cdecl]<nint, void>)NativeLibrary.GetExport(library, "pv_tools_set_select_handler");
+        _create = (delegate* unmanaged[Cdecl]<nint, nint>)NativeLibrary.GetExport(library, "pv_tools_create");
+        _updateState = (delegate* unmanaged[Cdecl]<nint, void>)NativeLibrary.GetExport(library, "pv_tools_update_state");
+        _select = (delegate* unmanaged[Cdecl]<int, void>)NativeLibrary.GetExport(library, "pv_tools_select");
+        _setSelectHandler((nint)(delegate* unmanaged[Cdecl]<int, void>)&HandleSelect);
+        _bound = true;
+    }
+
+    /// <summary>创建（或复用）工具窗口，返回窗口指针。</summary>
+    internal static nint Create(nint detailView)
+    {
+        EnsureLoaded();
+        return _create(detailView);
+    }
+
+    /// <summary>推送选中分类与 EXIF 可用性状态 JSON。</summary>
+    internal static void UpdateState(string json)
+    {
+        EnsureLoaded();
+        IntPtr pointer = Marshal.StringToCoTaskMemUTF8(json);
+        try { _updateState(pointer); }
+        finally { Marshal.FreeCoTaskMem(pointer); }
+    }
+
+    /// <summary>程序化选择分类（验收用），与用户点击走同一绑定路径。</summary>
+    internal static void Select(int index)
+    {
+        EnsureLoaded();
+        _select(index);
+    }
+
+    /// <summary>SwiftUI 侧栏选择回传入口。</summary>
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    private static void HandleSelect(int index)
+    {
+        try { SelectSink?.Invoke(index); }
+        catch (Exception exception) { Console.Error.WriteLine("[MacToolsUI] select failed: " + exception); }
     }
 }

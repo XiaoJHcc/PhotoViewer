@@ -181,7 +181,7 @@ enum PV {
 }
 
 /// 在必要时切到主线程同步执行，保证 AppKit 调用线程正确。
-private func onMain(_ block: () -> Void) {
+func onMain(_ block: () -> Void) {
     if Thread.isMainThread {
         block()
     } else {
@@ -296,24 +296,40 @@ public func pv_settings_render(_ path: UnsafePointer<CChar>?) {
     }
 }
 
+/// 双栏窗口：固定标题时忽略 SwiftUI navigationTitle 对窗口标题的回写。
+final class SidebarWindow: NSWindow {
+    var pinnedTitle: String?
+
+    override var title: String {
+        get { super.title }
+        set { super.title = pinnedTitle ?? newValue }
+    }
+}
+
+/// 设置与工具窗口共用的双栏窗口外观：统一标题栏、深色外观与工具栏样式。
+func makeSidebarWindow(title: String, size: NSSize, minSize: NSSize, content: NSViewController) -> NSWindow {
+    let window = SidebarWindow(
+        contentRect: NSRect(x: 0, y: 0, width: size.width, height: size.height),
+        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+        backing: .buffered, defer: false)
+    window.title = title
+    window.titlebarAppearsTransparent = true
+    window.appearance = NSAppearance(named: .darkAqua)
+    window.contentViewController = content
+    window.minSize = minSize
+    window.toolbarStyle = .unified
+    window.isReleasedWhenClosed = false
+    window.center()
+    return window
+}
+
 /// 创建窗口、SwiftUI 宿主控制器与本地事件监视器。
 private func ensureWindow() {
     if PV.window != nil { return }
     let bridge = SettingsBridge()
     PV.bridge = bridge
     let hosting = NSHostingController(rootView: SettingsRootView(vm: bridge))
-    let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 880, height: 720),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-        backing: .buffered, defer: false)
-    window.title = "PhotoViewer 设置"
-    window.titlebarAppearsTransparent = true
-    window.appearance = NSAppearance(named: .darkAqua)
-    window.contentViewController = hosting
-    window.minSize = NSSize(width: 760, height: 540)
-    window.toolbarStyle = .unified
-    window.isReleasedWhenClosed = false
-    window.center()
+    let window = makeSidebarWindow(title: "PhotoViewer 设置", size: NSSize(width: 880, height: 720), minSize: NSSize(width: 760, height: 540), content: hosting)
     let delegate = WindowCloseDelegate()
     PV.windowDelegate = delegate
     window.delegate = delegate
@@ -510,7 +526,7 @@ struct SettingsRootView: View {
                     Label {
                         Text(category.title)
                     } icon: {
-                        CategoryIcon(category: category)
+                        CategoryIcon(symbol: category.symbol, color: category.color)
                     }
                     .tag(index)
                 }
@@ -541,15 +557,17 @@ struct SettingsRootView: View {
 }
 
 /// 侧栏分类图标：系统设置风格的彩色圆角图标底板（渐变随强调色保持层次）。
+/// 设置与工具窗口共用同一底板尺寸与圆角。
 struct CategoryIcon: View {
-    let category: SVCategory
+    let symbol: String
+    let color: Color
 
     var body: some View {
-        Image(systemName: category.symbol)
+        Image(systemName: symbol)
             .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 22, height: 22)
-            .background(category.color.gradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .background(color.gradient, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
     }
 }
 
@@ -880,26 +898,32 @@ struct PreviewSettingsPage: View {
             }
             Section("缩放比例预设") {
                 ForEach(preview.presets, id: \.id) { preset in
-                    HStack(spacing: 8) {
-                        PresetField(vm: vm, preset: preset)
-                            .frame(width: 90, height: 24)
-                        Text("%").foregroundStyle(.secondary)
-                        Spacer(minLength: 8)
-                        Button {
-                            vm.send(["type": "removePreset", "presetId": preset.id])
-                        } label: { Image(systemName: "minus") }
-                        .buttonStyle(.bordered)
-                        .disabled(preview.presets.count <= 1)
-                        .help("移除预设")
-                        .accessibilityLabel("移除预设")
+                    ZStack {
+                        HStack(spacing: 6) {
+                            PresetField(vm: vm, preset: preset).frame(width: 90, height: 24)
+                            Text("%").foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Spacer()
+                            Button { vm.send(["type": "removePreset", "presetId": preset.id]) } label: {
+                                Image(systemName: "minus.circle.fill")
+                                    .symbolRenderingMode(.palette)
+                                    .foregroundStyle(.white, .red)
+                                    .font(.system(size: 17))
+                            }
+                            .buttonStyle(.borderless)
+                            .disabled(preview.presets.count <= 1)
+                            .help("移除预设").accessibilityLabel("移除预设")
+                        }
                     }
                 }
                 HStack {
                     Spacer()
-                    Button { vm.send(["type": "addPreset"]) } label: { Image(systemName: "plus") }
-                        .buttonStyle(.bordered)
-                        .help("添加预设")
-                        .accessibilityLabel("添加预设")
+                    Button { vm.send(["type": "addPreset"]) } label: {
+                        Image(systemName: "plus.circle.fill").symbolRenderingMode(.palette)
+                            .foregroundStyle(.white, .green).font(.system(size: 17))
+                    }
+                    .buttonStyle(.borderless).help("添加预设").accessibilityLabel("添加预设")
                 }
             }
         }

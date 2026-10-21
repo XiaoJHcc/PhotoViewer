@@ -8,15 +8,17 @@ using PhotoViewer.ViewModels.Tools;
 
 namespace PhotoViewer.Mac.Native;
 
+/// <summary>
+/// macOS 工具窗口：非模态懒创建单例，外壳由 SwiftUI（NavigationSplitView + 系统侧栏）
+/// 绘制，与设置窗口共用同一套窗口外观；详情栏承载 C# 拥有的 EXIF / DINO 页面视图。
+/// 只有 EXIF 详情 / DINO 诊断两类，没有工具首页或返回按钮；首次或关闭后重开默认 EXIF，
+/// 无可用 EXIF 落 DINO，已打开只前置保留当前页。导航与计算复用共享 <see cref="ToolsViewModel"/>。
+/// </summary>
 internal sealed class MacToolsWindow : IDisposable
 {
     private readonly MainViewModel _main;
     private readonly bool _automatedValidation;
-    private readonly NSSplitViewController _split = new();
-    private readonly NSTableView _sidebar = new();
     private readonly DetailPane _detail = new();
-    private readonly SidebarSource _source;
-    private readonly SidebarDelegate _sidebarDelegate;
     private NSWindow? _window;
     private ToolsWindowDelegate? _windowDelegate;
     private MacExifDetailView? _exifPage;
@@ -24,41 +26,24 @@ internal sealed class MacToolsWindow : IDisposable
     private bool _open;
     private bool _rendering;
     private bool _disposed;
-    private bool? _exifAvailable;
+    private int _selected;
+    private int _pushedSelected = -1;
+    private bool? _pushedExif;
 
     public NSWindow Window => _window ?? throw new InvalidOperationException("工具窗口尚未创建");
     public bool IsOpen => _open;
-    internal NSTableView Sidebar => _sidebar;
+
+    /// <summary>当前选中的工具分类（0 = EXIF 详情，1 = DINO 诊断）。</summary>
+    internal int SelectedCategory => _selected;
 
     public MacToolsWindow(MainViewModel main, bool automatedValidation = false)
     {
         _main = main;
         _automatedValidation = automatedValidation;
-        _source = new SidebarSource();
-        _sidebarDelegate = new SidebarDelegate(this);
-        _sidebar.AddColumn(new NSTableColumn("tool") { Width = 180 });
-        _sidebar.ColumnAutoresizingStyle = NSTableViewColumnAutoresizingStyle.LastColumnOnly;
-        _sidebar.AutoresizingMask = NSViewResizingMask.WidthSizable;
-        _sidebar.HeaderView = null;
-        _sidebar.RowHeight = 34;
-        _sidebar.Style = NSTableViewStyle.Inset;
-        _sidebar.AllowsEmptySelection = false;
-        _sidebar.AllowsMultipleSelection = false;
-        _sidebar.DataSource = _source;
-        _sidebar.Delegate = _sidebarDelegate;
-        ((NSView)_sidebar).AccessibilityLabel = "工具分类";
-        var scroll = new NSScrollView { DocumentView = _sidebar, DrawsBackground = false, BorderType = NSBorderType.NoBorder };
-        var sidebarController = new NSViewController { View = scroll };
-        var sidebarItem = NSSplitViewItem.CreateSidebar(sidebarController);
-        sidebarItem.MinimumThickness = 180;
-        sidebarItem.MaximumThickness = 220;
-        sidebarItem.CanCollapse = false;
-        _split.AddSplitViewItem(sidebarItem);
-        _split.AddSplitViewItem(NSSplitViewItem.FromViewController(new NSViewController { View = _detail }));
-        _split.View.Frame = new CGRect(0, 0, 880, 720);
         _main.Tools.PropertyChanged += OnToolsChanged;
     }
 
+    /// <summary>展示并前置工具窗口；已打开时只前置并保留当前页。</summary>
     public void ShowOrActivate()
     {
         if (_disposed) return;
@@ -74,15 +59,14 @@ internal sealed class MacToolsWindow : IDisposable
         else NSApplication.SharedApplication.ActivateIgnoringOtherApps(true);
     }
 
-    private void SelectDefault()
-    {
-        if (_main.Tools.IsExifDetailEnabled) SelectTool(0);
-        else SelectTool(1);
-    }
+    /// <summary>首次打开或关闭后重开时的默认页：EXIF 可用则 EXIF，否则 DINO。</summary>
+    private void SelectDefault() => SelectTool(_main.Tools.IsExifDetailEnabled ? 0 : 1);
 
+    /// <summary>切换工具分类并刷新页面；EXIF 不可用时忽略该分类。</summary>
     private void SelectTool(int row)
     {
-        if (row == 0 && _main.Tools.IsExifDetailEnabled)
+        if (row == 0 && !_main.Tools.IsExifDetailEnabled) return;
+        if (row == 0)
         {
             if (_main.Tools.CurrentTool is not ExifDetailViewModel)
             {
@@ -92,13 +76,25 @@ internal sealed class MacToolsWindow : IDisposable
         }
         else if (row == 1 && _main.Tools.CurrentTool is not DinoDebugViewModel)
             _main.Tools.OpenDinoDebug();
+        _selected = row;
         Render();
     }
+
+    /// <summary>按 SwiftUI 侧栏的选择结果切换分类（与用户点击同一条绑定路径）。</summary>
+    private void HandleSidebarSelection(int row)
+    {
+        if (_disposed || !_open) return;
+        SelectTool(row);
+    }
+
+    /// <summary>验收用选择入口：经 SwiftUI 选中绑定回传，与真实点击一致。</summary>
+    internal void SelectCategoryForTesting(int row) => MacToolsNative.Select(row);
 
     public void SyncCurrentFile() => Render();
 
     private void OnToolsChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(Render);
 
+    /// <summary>同步共享工具状态到页面视图与 SwiftUI 侧栏。</summary>
     private void Render()
     {
         if (_disposed || !_open || _rendering) return;
@@ -111,12 +107,7 @@ internal sealed class MacToolsWindow : IDisposable
                 else _main.Tools.OpenDinoDebug();
             }
             bool exif = _main.Tools.CurrentTool is ExifDetailViewModel;
-            if (_exifAvailable != _main.Tools.IsExifDetailEnabled)
-            {
-                _exifAvailable = _main.Tools.IsExifDetailEnabled;
-                _sidebar.ReloadData();
-            }
-            if (_sidebar.SelectedRow != (exif ? 0 : 1)) _sidebar.SelectRow(exif ? 0 : 1, false);
+            _selected = exif ? 0 : 1;
             if (exif)
             {
                 _exifPage ??= AddPage(new MacExifDetailView());
@@ -130,9 +121,18 @@ internal sealed class MacToolsWindow : IDisposable
             if (_exifPage != null) _exifPage.Hidden = !exif;
             if (_dinoPage != null) _dinoPage.Hidden = exif;
             _detail.LayoutPages();
-            _sidebar.NeedsDisplay = true;
+            PushState(_main.Tools.IsExifDetailEnabled);
         }
         finally { _rendering = false; }
+    }
+
+    /// <summary>状态确有变化时把选中分类与 EXIF 可用性推给 SwiftUI 侧栏。</summary>
+    private void PushState(bool exifEnabled)
+    {
+        if (_pushedSelected == _selected && _pushedExif == exifEnabled) return;
+        _pushedSelected = _selected;
+        _pushedExif = exifEnabled;
+        MacToolsNative.UpdateState($"{{\"selected\":{_selected},\"exifEnabled\":{(exifEnabled ? "true" : "false")}}}");
     }
 
     private T AddPage<T>(T page) where T : NSView
@@ -141,24 +141,18 @@ internal sealed class MacToolsWindow : IDisposable
         return page;
     }
 
+    /// <summary>经 SwiftUI 创建工具窗口并接管 AppKit 窗口代理。</summary>
     private void BuildWindow()
     {
-        _window = new NSWindow(new CGRect(0, 0, 880, 720),
-            NSWindowStyle.Titled | NSWindowStyle.Closable | NSWindowStyle.Miniaturizable | NSWindowStyle.Resizable | NSWindowStyle.FullSizeContentView,
-            NSBackingStore.Buffered, false)
-        {
-            Title = "工具", TitlebarAppearsTransparent = true,
-            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua),
-            ContentMinSize = new CGSize(560, 420),
-            ContentViewController = _split,
-            Toolbar = new NSToolbar("PhotoViewer.Tools"),
-            ToolbarStyle = NSWindowToolbarStyle.Unified,
-            BackgroundColor = NSColor.WindowBackground,
-        };
-        _window.ReleaseWhenClosed(false);
+        nint pointer = MacToolsNative.Create(_detail.Handle);
+        _window = ObjCRuntime.Runtime.GetNSObject<NSWindow>(pointer)
+            ?? throw new InvalidOperationException("工具窗口创建失败");
+        _window.Title = "工具";
+        _window.ContentMinSize = new CGSize(560, 420);
+        _window.SetContentSize(new CGSize(880, 720));
         _windowDelegate = new ToolsWindowDelegate(this);
         _window.Delegate = _windowDelegate;
-        _window.Center();
+        MacToolsNative.SelectSink = HandleSidebarSelection;
     }
 
     public void CloseWindow()
@@ -173,17 +167,14 @@ internal sealed class MacToolsWindow : IDisposable
         CloseWindow();
         _disposed = true;
         _main.Tools.PropertyChanged -= OnToolsChanged;
+        MacToolsNative.SelectSink = null;
         _exifPage?.Dispose();
         _dinoPage?.Dispose();
         if (_window != null) { _window.Delegate = null; _window.Dispose(); }
         _windowDelegate?.Dispose();
-        _sidebar.Delegate = null;
-        _sidebar.DataSource = null;
-        _sidebarDelegate.Dispose();
-        _source.Dispose();
-        _split.Dispose();
     }
 
+    /// <summary>关闭即退出工具态并取消后台任务，下次打开重新落默认页。</summary>
     private sealed class ToolsWindowDelegate(MacToolsWindow owner) : NSWindowDelegate
     {
         public override void WillClose(NSNotification notification)
@@ -195,48 +186,7 @@ internal sealed class MacToolsWindow : IDisposable
         }
     }
 
-    private sealed class SidebarSource : NSTableViewDataSource
-    {
-        public override nint GetRowCount(NSTableView tableView) => 2;
-    }
-
-    private sealed class SidebarDelegate(MacToolsWindow owner) : NSTableViewDelegate
-    {
-        public override bool ShouldSelectRow(NSTableView tableView, nint row) => row == 1 || owner._main.Tools.IsExifDetailEnabled;
-        public override void SelectionDidChange(NSNotification notification)
-        {
-            if (!owner._rendering && owner._open) owner.SelectTool((int)owner._sidebar.SelectedRow);
-        }
-        public override NSView GetViewForItem(NSTableView tableView, NSTableColumn? column, nint row)
-        {
-            var cell = new NSTableCellView(new CGRect(0, 0, 200, 34));
-            var icon = new SidebarIcon(new CGRect(4, 6, 22, 22))
-            {
-                Image = MacSymbols.Get(row == 0 ? "info.circle.fill" : "sparkles"),
-                ContentTintColor = NSColor.White,
-                WantsLayer = true,
-            };
-            icon.Layer!.BackgroundColor = (row == 0 ? NSColor.SystemOrange : NSColor.SystemPink).CGColor;
-            icon.Layer.CornerRadius = 6;
-            var text = new NSTextField(new CGRect(34, 8, 155, 20))
-            {
-                StringValue = row == 0 ? "EXIF 详情" : "DINO 诊断",
-                Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
-                Font = NSFont.SystemFontOfSize(13) ?? throw new InvalidOperationException("系统字体不可用"),
-                TextColor = row == 0 && !owner._main.Tools.IsExifDetailEnabled ? NSColor.DisabledControlText : NSColor.Label,
-            };
-            cell.ImageView = icon;
-            cell.TextField = text;
-            cell.AddSubview(icon); cell.AddSubview(text);
-            return cell;
-        }
-    }
-
-    private sealed class SidebarIcon(CGRect frame) : NSImageView(frame)
-    {
-        public override bool AllowsVibrancy => false;
-    }
-
+    /// <summary>详情页容器：页面铺满 SwiftUI 详情栏，扣除系统安全区后落位。</summary>
     private sealed class DetailPane : NSView
     {
         public override bool IsFlipped => true;
