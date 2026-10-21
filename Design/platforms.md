@@ -18,7 +18,7 @@
 | 相似面板 | `MacSimilarityPanel` + `NSCollectionView` | `iOSSimilarityPanel` + `UICollectionView` | `WindowsSimilarityPanel`（`Grid`） | `AndroidSimilarityPanel`（`LinearLayout` + `RecyclerView`） |
 | 主图 / 卡片菜单 | `NSMenu` | `UIContextMenuInteraction` + `UIMenu` | `MenuFlyout` | 自绘 `PopupWindow` |
 | 设置窗口 | SwiftUI `NavigationSplitView` + `Form(.grouped)` | UIKit 半屏 `PageSheet` | WinUI `NavigationView` + `SettingsCard` | Material 3 `BottomSheetDialog` |
-| 工具窗口 | 独立 AppKit `NSWindow`（原生侧栏 + 详情） | 设置同款 `PageSheet` + `UINavigationController`（分组列表导航） | 独立 WinUI 窗口（常驻三分类） | 设置同款 `BottomSheetDialog`（分组列表导航） |
+| 工具窗口 | 设置同款 SwiftUI `NavigationSplitView` 外壳 + AppKit 详情 | 设置同款 `PageSheet` + `UINavigationController`（分组列表导航） | 独立 WinUI 窗口（常驻三分类） | 设置同款 `BottomSheetDialog`（分组列表导航） |
 | 状态提示 | 自绘提示条 4 s | 自绘提示条 4 s | 自绘状态提示条，4 s | `TextView` 提示条，4 s |
 | 输入 | `NSEvent` + `MacInput` | `UIPress` + `AppleInputMapping` | `WindowsInput`（虚拟键 / 滚轮） | `AndroidInputMapping`（`KeyEvent`） |
 | 打开 | `NSOpenPanel` + 根视图拖入 | `UIDocumentPicker` + `UIDropInteraction` | `FileOpenPicker` / `FolderPicker` + `Drop` | SAF `ACTION_OPEN_DOCUMENT_TREE` + `ACTION_VIEW/SEND`（拖入见 OPEN-07@android） |
@@ -278,9 +278,9 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **TOOLS-01@win**：工具窗口 960×720、最小 800×560，因常驻侧栏 240 + EXIF 表格 720；普通窗口（进任务栏/Alt-Tab、可最大化）（已登记 10-18）。
   - **TOOLS-01@mac / @ios / @android**：不建「照片数据统计」入口（已登记 10-18）。
 - **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序与其他端一致为 EXIF → DINO → 照片数据统计（已登记 10-18）。
-- **TOOLS-02@mac**：原生侧栏常驻，不设工具首页；默认 EXIF，无可用 EXIF 时落 DINO。
+- **TOOLS-02@mac**：窗口外壳与设置共用同一 SwiftUI 侧栏组件与窗口样式（`PhotoViewer.Mac/Native/SwiftSettings/MacToolsUI.swift`），侧栏几何、选中态与工具栏不另行仿制；详情仍是 AppKit 页面。侧栏常驻、不设工具首页；默认 EXIF，无可用 EXIF 时落 DINO。
 - **TOOLS-02@ios / @android**：分组列表导航，初次打开显示工具列表，不自动进入 DINO；无当前照片或 EXIF 详情不可用时退回列表。只读边界、生命周期、7 列 EXIF 与 3+2 瓦片不变；原生表格分隔线/分组材质可按 L4 取平台样式，业务列比例与内容不随之改变，也不新增功能。
-- **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 自绘 `NSView` + `ExifTableGeometry`；iOS `UITableView`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
+- **TOOLS-03、TOOLS-04**：EXIF 详情。macOS 为虚拟化 `NSTableView`（`PhotoViewer.Mac/Native/MacExifDetailView.cs`）：标签行自绘文本，点击时才在该文本上放置可选中文本框，行高按列宽缓存；iOS `UITableView`；Windows 7 列 `Grid`；Android 线性行 4 个内容列。
   - **TOOLS-03@android**：4 个内容列承载 7 列几何，手机与平板同口径（已登记 10-18）。
 - **TOOLS-05**：DINO 五瓦片。共享 `PhotoViewer/Core/AI/DinoDiagnosticPresenter.cs`；五瓦片 3+2，第六格留空，刚体拟合文本以整宽块置于网格下方（四端统一）。
 - **TOOLS-06**：计算时机。共享 presenter 先读库；离开页面或关闭窗口即取消在途任务（`ToolsViewModel.Deactivate()`，macOS `MacToolsWindow`、iOS `iOSToolsPresenter.cs:65`、Windows `WindowsToolsWindow.cs:328`、Android `AndroidToolsPresenter.cs:171`）。

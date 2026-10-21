@@ -26,6 +26,12 @@
 - Windows：代码与既有验收扩展已实现，父代理复核后类型检查通过：`dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compile -v:m`（退出码0）。包括细节起手显式捕获/滑动唯一目标、取消与旧指针隔离、键盘及 UIA Invoke、失活清理；预设改为单个居中文本框，非法输入提示恢复、失焦/导航/关闭提交工作副本并保持行身份。新增烟测覆盖上述序列与真实文本编辑，但本机 macOS 无法运行 WinUI；`Check Windows Native`、设置专项、真实触控/笔/键盘/读屏均待 Windows 本机验收，暂不提交，不宣称运行通过。
 - Web：按压/滑动/抬手、取消/捕获丢失、隐藏/失活清除及辅助技术已实施；单测297项通过。父代理在恢复的内置浏览器会话运行最新版 `http://localhost:8090/?check=all`：44/44 PASS、FAIL 0，包含 ANALYSIS-04 的取消、stale pointer、隐藏、诊断点按与双击定位序列。截图 `release/native-input-ui-acceptance/web-all.png`。验证标签页与临时服务已关闭。
 
+## 作者验收后返工（设置/工具界面）
+
+- 作者否决上一轮 Mac 预设行、工具侧栏与 EXIF 性能，以及 iPad sheet 背景、控制栏功能列表与预设行；规则改动见 SETTINGS-07（预设组整行居中、行尾圆形增删同列）与 TOOLS-03（大量标签不阻塞）。
+- Mac：工具窗口改用设置同一 SwiftUI 侧栏外壳，侧栏几何与设置截图对拍差 ≤1 px（@2x）；EXIF 改为虚拟化表格，标签行自绘、点击才放置可选文本框。`TestCase/A7C01489.ARW`（276 标签）打开 3437 → 45–65 ms，滚动每步 p50 90 → 11–16 ms、p95 14.6–19.5 ms（随机器负载在 16 ms 边界），标签行文本控件 1118 → 0；预设组偏心 1.5 px、增删图标同列差 0.07 px。tools/settings/input/toolbar 冒烟 PASS，报告与截图在 `PhotoViewer.Mac/release/native-p2-acceptance/`。设置窗口打开为 760×592 是 HEAD 既有行为，未改。作者已验收通过。
+- 未验证：真实外设热插拔、手指与 VoiceOver 手感；Windows / Android 预设行整组居中待同步。
+
 ## 验证与剩余项
 
 - `python3 Tools/generate-design-tokens.py --check`：通过（本次未改令牌数值）。
