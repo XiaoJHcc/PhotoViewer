@@ -30,6 +30,7 @@
 
 - 作者否决上一轮 Mac 预设行、工具侧栏与 EXIF 性能，以及 iPad sheet 背景、控制栏功能列表与预设行；规则改动见 SETTINGS-07（预设组整行居中、行尾圆形增删同列）与 TOOLS-03（大量标签不阻塞）。
 - Mac：工具窗口改用设置同一 SwiftUI 侧栏外壳，侧栏几何与设置截图对拍差 ≤1 px（@2x）；EXIF 改为虚拟化表格，标签行自绘、点击才放置可选文本框。`TestCase/A7C01489.ARW`（276 标签）打开 3437 → 45–65 ms，滚动每步 p50 90 → 11–16 ms、p95 14.6–19.5 ms（随机器负载在 16 ms 边界），标签行文本控件 1118 → 0；预设组偏心 1.5 px、增删图标同列差 0.07 px。tools/settings/input/toolbar 冒烟 PASS，报告与截图在 `PhotoViewer.Mac/release/native-p2-acceptance/`。设置窗口打开为 760×592 是 HEAD 既有行为，未改。作者已验收通过。
+- iPad：应用固定深色（`Info.plist` + 窗口覆盖，系统浅/深截图取样一致）、设置与工具同款半透背景，EXIF 改用系统语义色（ID 列对比度 ≥3:1）；控制栏功能与 Mac 同一行结构，外设时行内主/次绑定按钮录制，长按出清空菜单，录制中手指轻点取消；预设组偏心 0.5 px。input/tools/layout 与 sheet 截图钩子 PASS，证据在 `release/native-input-ui-acceptance/ios-redo/`。待作者验收，未提交。
 - 未验证：真实外设热插拔、手指与 VoiceOver 手感；Windows / Android 预设行整组居中待同步。
 
 ## 验证与剩余项

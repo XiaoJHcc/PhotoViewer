@@ -300,6 +300,8 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
             _session.ApplyPendingChanges();
             DismissViewController(true, null);
         });
+        // 首页与子页、工具页统一用同一层系统分组背景，sheet 玻璃在各页取到相同材质。
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
         TableView.CellLayoutMarginsFollowReadableWidth = false;
         // SETTINGS-14：读取/保存失败在设置页顶部显示一行可见状态（源设置实例才有真实持久化状态）。
         _statusLabel.Font = UIFont.SystemFontOfSize(12)!;
@@ -456,8 +458,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     public override void ViewDidLoad()
     {
         base.ViewDidLoad();
-        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
-        View!.BackgroundColor = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
+        View!.BackgroundColor = UIColor.SystemGroupedBackground;
         ConfigureLayout();
         RebuildContent();
     }
@@ -1340,100 +1341,224 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
 }
 
 /// <summary>
-/// iOS 原生控制设置页。
+/// iOS 原生控制设置页：布局模式三选一、控制栏功能勾选排序列表与键盘映射。
+/// 每行与 Mac 单行布局一致：勾选、名称、主/次快捷键按钮、系统拖拽手柄。纯触控只显示勾选、名称与
+/// 拖拽手柄；连接键盘或鼠标后同一行就地出现两个绑定按钮，点按钮进入录制，Delete/Backspace 清空，
+/// 长按菜单「清空」。外设连接变化就地刷新行，不重建页面、不丢工作副本。
 /// </summary>
 internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettingsFormViewController
 {
     private readonly iOSInputCapabilities _capabilities = new();
-    private iOSHotkeyEditor? _hotkeys;
+    private readonly iOSHotkeyRecorder _recorder;
+    private readonly Dictionary<SettingsViewModel.HotkeyItem, iOSHotkeyBindingButtons> _bindingButtons = [];
+    private iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? _hotkeys;
     private UIView? _mapping;
-    internal iOSHotkeyEditor? HotkeyEditor => _hotkeys;
+
+    public iOSNativeControlSettingsViewController(SettingsViewModel settings) : base(settings)
+    {
+        _recorder = new iOSHotkeyRecorder(settings, _capabilities);
+        _recorder.Changed += RefreshHotkeyRows;
+        _capabilities.Changed += RefreshCapabilities;
+    }
+
+    /// <summary>外设能力（验收注入）。</summary>
     internal iOSInputCapabilities Capabilities => _capabilities;
-    public iOSNativeControlSettingsViewController(SettingsViewModel settings) : base(settings) { }
-    public override bool CanBecomeFirstResponder => true;
+
+    /// <summary>快捷键录制器（行内按钮与验收共用）。</summary>
+    internal iOSHotkeyRecorder Recorder => _recorder;
+
+    /// <summary>控制栏功能列表（验收读取真实单元格）。</summary>
+    internal iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>? HotkeyList => _hotkeys;
+
+    /// <summary>键盘映射分组（验收读取可见性）。</summary>
+    internal UIView? KeyboardMappingSection => _mapping;
 
     protected override void BuildContent(UIStackView contentStack)
     {
         Title = "控制";
         contentStack.AddArrangedSubview(CreateSection("布局模式", null, new iOSLayoutModePicker(Settings)));
-        _hotkeys = new iOSHotkeyEditor(Settings, _capabilities, () => BecomeFirstResponder());
+        _hotkeys = new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
+            itemsProvider: () => Settings.Hotkeys,
+            titleSelector: item => item.Name,
+            subtitleSelector: _ => null,
+            isEnabledGetter: item => item.IsDisplay,
+            isEnabledSetter: (item, value) => item.IsDisplay = value,
+            moveAction: Settings.MoveHotkey,
+            rowHeight: 44,
+            cellStyle: UITableViewCellStyle.Default,
+            trailingAccessorySelector: BindingButtons);
         contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _hotkeys));
+
         var rows = new List<UIView>
         {
-            CreateSwitchRow("使用苹果键盘", null, () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value, () => _hotkeys.RefreshBindings()),
+            CreateSwitchRow("使用苹果键盘", null, () => Settings.UseAppleKeyboard, value => Settings.UseAppleKeyboard = value, RefreshHotkeyRows),
+            CreateMappingRow("Command", () => Settings.MapCommandTarget, value => Settings.MapCommandTarget = value),
+            CreateMappingRow("Option", () => Settings.MapOptionTarget, value => Settings.MapOptionTarget = value),
+            CreateMappingRow("Control", () => Settings.MapControlTarget, value => Settings.MapControlTarget = value),
         };
-        foreach (var (name, get, set) in new (string, Func<PhotoViewer.Core.Input.AppleMappingTarget>, Action<PhotoViewer.Core.Input.AppleMappingTarget>)[]
-        {
-            ("Command", () => Settings.MapCommandTarget, value => Settings.MapCommandTarget = value),
-            ("Option", () => Settings.MapOptionTarget, value => Settings.MapOptionTarget = value),
-            ("Control", () => Settings.MapControlTarget, value => Settings.MapControlTarget = value),
-        })
-        {
-            var button = new UIButton(UIButtonType.System) { ShowsMenuAsPrimaryAction = true };
-            void Refresh()
-            {
-                button.SetTitle(get().ToString(), UIControlState.Normal);
-                button.Menu = UIMenu.Create(Settings.AppleMappingTargets.Select(target =>
-                {
-                    var action = UIAction.Create(target.ToString(), null, null, _ => { set(target); Refresh(); _hotkeys.RefreshBindings(); });
-                    action.State = target == get() ? UIMenuElementState.On : UIMenuElementState.Off;
-                    return (UIMenuElement)action;
-                }).ToArray());
-            }
-            Refresh();
-            rows.Add(CreateCustomRow(new UIStackView([new UILabel { Text = name }, button])
-            { Axis = UILayoutConstraintAxis.Horizontal, Distribution = UIStackViewDistribution.EqualSpacing, TranslatesAutoresizingMaskIntoConstraints = false }));
-        }
         _mapping = CreateSection("键盘映射", null, rows.ToArray());
         contentStack.AddArrangedSubview(_mapping);
-        _capabilities.Changed += RefreshCapabilities;
         RefreshCapabilities();
     }
 
-    internal UIView? KeyboardMappingSection => _mapping;
+    /// <summary>每行的主/次快捷键按钮组：外设连接时创建或复用，纯触控返回 null 表示不显示。</summary>
+    internal iOSHotkeyBindingButtons? BindingButtons(SettingsViewModel.HotkeyItem item)
+    {
+        if (!_capabilities.HasExternalInput) return null;
+        if (!_bindingButtons.TryGetValue(item, out var buttons))
+        {
+            buttons = new iOSHotkeyBindingButtons(item, _recorder, BeginRecording);
+            _bindingButtons.Add(item, buttons);
+        }
+        buttons.SetExternal(true);
+        buttons.Update();
+        return buttons;
+    }
+
+    /// <summary>点击行内按钮开始录制（按钮与验收共用）。</summary>
+    internal void BeginRecording(SettingsViewModel.HotkeyItem item, bool secondary)
+    {
+        if (!_capabilities.HasExternalInput) return;
+        View?.EndEditing(true);
+        _recorder.BeginRecording(item, secondary, View?.Window, () => BecomeFirstResponder());
+    }
+
+    /// <summary>录制期间接管硬件按键：Esc 取消、Delete/Backspace 清空，其余经共享映射写工作副本。</summary>
+    public override bool CanBecomeFirstResponder => true;
+
+    public override void PressesBegan(NSSet<UIPress> presses, UIPressesEvent? evt)
+    {
+        if (_recorder.IsRecording)
+        {
+            foreach (var press in presses)
+            {
+                if (press.Key is { } key) _recorder.CaptureKey((int)key.KeyCode, (ulong)key.ModifierFlags);
+            }
+            return;
+        }
+        base.PressesBegan(presses, evt!);
+    }
+
+    public override void PressesEnded(NSSet<UIPress> presses, UIPressesEvent? evt)
+    {
+        foreach (var press in presses)
+        {
+            if (press.Key is { } key) _recorder.UpdateModifiers((ulong)key.ModifierFlags);
+        }
+        if (!_recorder.IsRecording) base.PressesEnded(presses, evt!);
+    }
+
+    private UIView CreateMappingRow(string title, Func<PhotoViewer.Core.Input.AppleMappingTarget> getter, Action<PhotoViewer.Core.Input.AppleMappingTarget> setter)
+    {
+        var configuration = UIButtonConfiguration.PlainButtonConfiguration;
+        configuration.Indicator = UIButtonConfigurationIndicator.Popup;
+        configuration.BaseForegroundColor = UIColor.SecondaryLabel;
+        configuration.ContentInsets = new NSDirectionalEdgeInsets(6, 0, 6, 0);
+        var button = new UIButton(UIButtonType.System)
+        {
+            Configuration = configuration,
+            ShowsMenuAsPrimaryAction = true,
+            ChangesSelectionAsPrimaryAction = true,
+            AccessibilityLabel = title,
+        };
+        button.SetContentHuggingPriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
+        button.Menu = UIMenu.Create(Settings.AppleMappingTargets.Select(target =>
+        {
+            var action = UIAction.Create(target.ToString(), null, null, _ =>
+            {
+                setter(target);
+                RefreshHotkeyRows();
+            });
+            action.State = target == getter() ? UIMenuElementState.On : UIMenuElementState.Off;
+            return (UIMenuElement)action;
+        }).ToArray());
+
+        var label = new UILabel
+        {
+            Text = title,
+            Font = UIFont.SystemFontOfSize(16)!,
+            TextColor = UIColor.Label,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        var stack = new UIStackView([label, CreateFlexibleSpacer(), button])
+        {
+            Axis = UILayoutConstraintAxis.Horizontal,
+            Alignment = UIStackViewAlignment.Center,
+            Spacing = 12,
+            TranslatesAutoresizingMaskIntoConstraints = false,
+        };
+        var row = new UIView { TranslatesAutoresizingMaskIntoConstraints = false, LayoutMargins = new UIEdgeInsets(4, 16, 4, 16) };
+        row.AddSubview(stack);
+        NSLayoutConstraint.ActivateConstraints(
+        [
+            stack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
+            stack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
+            stack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
+            stack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
+            row.HeightAnchor.ConstraintGreaterThanOrEqualTo(44),
+        ]);
+        return row;
+    }
+
+    /// <summary>就地刷新行与行内按钮（录制、外设能力与验收直接改工作副本后共用）。</summary>
+    internal void RefreshHotkeyRows()
+    {
+        RefreshBindingButtons();
+        _hotkeys?.RefreshInPlace();
+    }
+
+    private void RefreshBindingButtons()
+    {
+        bool external = _capabilities.HasExternalInput;
+        foreach (var buttons in _bindingButtons.Values)
+        {
+            buttons.SetExternal(external);
+            buttons.Update();
+        }
+    }
+
     private void RefreshCapabilities()
     {
-        if (_mapping == null) return;
-        _mapping.Hidden = !_capabilities.HasExternalInput;
-        _mapping.AccessibilityElementsHidden = !_capabilities.HasExternalInput;
+        bool external = _capabilities.HasExternalInput;
+        if (_mapping != null)
+        {
+            _mapping.Hidden = !external;
+            _mapping.AccessibilityElementsHidden = !external;
+        }
+        RefreshHotkeyRows();
     }
+
+    public override void ViewWillAppear(bool animated)
+    {
+        base.ViewWillAppear(animated);
+        RefreshHotkeyRows();
+    }
+
+    public override void ViewWillDisappear(bool animated)
+    {
+        _recorder.CancelRecording();
+        base.ViewWillDisappear(animated);
+    }
+
     public override void ViewDidDisappear(bool animated)
     {
         base.ViewDidDisappear(animated);
         if (NavigationController == null || NavigationController.PresentingViewController == null)
         {
-            _hotkeys?.StopObserving();
+            _recorder.Dispose();
             _capabilities.Dispose();
         }
     }
-    public override void ViewWillDisappear(bool animated)
-    {
-        _hotkeys?.CancelRecording();
-        base.ViewWillDisappear(animated);
-    }
-    public override void PressesBegan(NSSet<UIPress> presses, UIPressesEvent? evt)
-    {
-        if (_hotkeys?.IsRecording == true)
-        {
-            foreach (var press in presses)
-                if (press.Key is { } key)
-                {
-                    if ((int)key.KeyCode == 43) { base.PressesBegan(presses, evt!); return; }
-                    _hotkeys.CaptureKey((int)key.KeyCode, (ulong)key.ModifierFlags);
-                }
-            return;
-        }
-        base.PressesBegan(presses, evt!);
-    }
-    public override void PressesEnded(NSSet<UIPress> presses, UIPressesEvent? evt)
-    {
-        foreach (var press in presses)
-            if (press.Key is { } key) _hotkeys?.UpdateModifiers((ulong)key.ModifierFlags);
-        if (_hotkeys?.IsRecording != true) base.PressesEnded(presses, evt!);
-    }
+
     protected override void Dispose(bool disposing)
     {
-        if (disposing) { _capabilities.Changed -= RefreshCapabilities; _hotkeys?.Dispose(); _capabilities.Dispose(); }
+        if (disposing)
+        {
+            _capabilities.Changed -= RefreshCapabilities;
+            _recorder.Changed -= RefreshHotkeyRows;
+            _recorder.Dispose();
+            _capabilities.Dispose();
+        }
         base.Dispose(disposing);
     }
 }
@@ -1495,7 +1620,8 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
 }
 
 /// <summary>
-/// iOS 内联可勾选可排序列表视图。
+/// iOS 内联可勾选可排序列表视图：勾选位、标题、可选副标题与系统拖拽手柄；
+/// 可选的详情按钮（编辑态 ⓘ）与按行高度由调用方提供。
 /// </summary>
 /// <typeparam name="TItem">列表项类型。</typeparam>
 internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
@@ -1503,6 +1629,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
     private readonly Func<IReadOnlyList<TItem>> _itemsProvider;
     private readonly UITableView _tableView;
     private readonly NSLayoutConstraint _heightConstraint;
+    private readonly iOSNativeEmbeddedCheckableReorderListSource<TItem> _source;
+
+    /// <summary>内部原生表格（验收读取真实单元格）。</summary>
+    internal UITableView TableView => _tableView;
 
     /// <summary>
     /// 初始化内联列表视图。
@@ -1515,7 +1645,13 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         Action<TItem, bool> isEnabledSetter,
         Action<int, int> moveAction,
         double rowHeight = 60,
-        UITableViewCellStyle cellStyle = UITableViewCellStyle.Subtitle)
+        UITableViewCellStyle cellStyle = UITableViewCellStyle.Subtitle,
+        Func<TItem, double>? rowHeightSelector = null,
+        Func<TItem, NSAttributedString?>? attributedSubtitleSelector = null,
+        Func<TItem, string?>? accessibilityValueSelector = null,
+        Func<TItem, bool>? showsDetailButton = null,
+        Action<TItem>? detailAction = null,
+        Func<TItem, UIView?>? trailingAccessorySelector = null)
     {
         _itemsProvider = itemsProvider;
 
@@ -1533,7 +1669,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         _tableView.SetEditing(true, false);
         _tableView.AllowsSelectionDuringEditing = true;
         _tableView.CellLayoutMarginsFollowReadableWidth = false;
-        _tableView.Source = new iOSNativeEmbeddedCheckableReorderListSource<TItem>(
+        _source = new iOSNativeEmbeddedCheckableReorderListSource<TItem>(
             itemsProvider,
             titleSelector,
             subtitleSelector,
@@ -1541,7 +1677,15 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
             isEnabledSetter,
             moveAction,
             cellStyle,
-            Refresh);
+            Refresh,
+            rowHeight,
+            rowHeightSelector,
+            attributedSubtitleSelector,
+            accessibilityValueSelector,
+            showsDetailButton,
+            detailAction,
+            trailingAccessorySelector);
+        _tableView.Source = _source;
 
         AddSubview(_tableView);
         _heightConstraint = _tableView.HeightAnchor.ConstraintEqualTo(1);
@@ -1564,7 +1708,33 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
     public void Refresh()
     {
         _tableView.ReloadData();
-        _heightConstraint.Constant = Math.Max(1, _itemsProvider().Count) * _tableView.RowHeight;
+        UpdateHeight();
+    }
+
+    /// <summary>
+    /// 就地刷新可见行的内容、附件与行高（不重载数据、不复位滚动位置与单元格身份）。
+    /// </summary>
+    public void RefreshInPlace()
+    {
+        foreach (var cell in _tableView.VisibleCells)
+        {
+            if (_tableView.IndexPathForCell(cell) is { } indexPath && cell is iOSNativeEmbeddedCheckableReorderCell reorderCell)
+                _source.ConfigureCell(reorderCell, indexPath);
+        }
+        UIView.PerformWithoutAnimation(() =>
+        {
+            _tableView.BeginUpdates();
+            _tableView.EndUpdates();
+        });
+        UpdateHeight();
+    }
+
+    private void UpdateHeight()
+    {
+        var items = _itemsProvider();
+        double height = 0;
+        for (int index = 0; index < items.Count; index++) height += _source.HeightFor(items[index]);
+        _heightConstraint.Constant = (nfloat)Math.Max(1, height);
     }
 }
 
@@ -1582,6 +1752,13 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     private readonly Action<int, int> _moveAction;
     private readonly UITableViewCellStyle _cellStyle;
     private readonly Action _refreshAction;
+    private readonly double _rowHeight;
+    private readonly Func<TItem, double>? _rowHeightSelector;
+    private readonly Func<TItem, NSAttributedString?>? _attributedSubtitleSelector;
+    private readonly Func<TItem, string?>? _accessibilityValueSelector;
+    private readonly Func<TItem, bool>? _showsDetailButton;
+    private readonly Action<TItem>? _detailAction;
+    private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
 
     /// <summary>
     /// 初始化列表数据源。
@@ -1594,7 +1771,14 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         Action<TItem, bool> isEnabledSetter,
         Action<int, int> moveAction,
         UITableViewCellStyle cellStyle,
-        Action refreshAction)
+        Action refreshAction,
+        double rowHeight,
+        Func<TItem, double>? rowHeightSelector,
+        Func<TItem, NSAttributedString?>? attributedSubtitleSelector,
+        Func<TItem, string?>? accessibilityValueSelector,
+        Func<TItem, bool>? showsDetailButton,
+        Action<TItem>? detailAction,
+        Func<TItem, UIView?>? trailingAccessorySelector)
     {
         _itemsProvider = itemsProvider;
         _titleSelector = titleSelector;
@@ -1604,7 +1788,17 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         _moveAction = moveAction;
         _cellStyle = cellStyle;
         _refreshAction = refreshAction;
+        _rowHeight = rowHeight;
+        _rowHeightSelector = rowHeightSelector;
+        _attributedSubtitleSelector = attributedSubtitleSelector;
+        _accessibilityValueSelector = accessibilityValueSelector;
+        _showsDetailButton = showsDetailButton;
+        _detailAction = detailAction;
+        _trailingAccessorySelector = trailingAccessorySelector;
     }
+
+    /// <summary>指定项的行高。</summary>
+    internal double HeightFor(TItem item) => _rowHeightSelector?.Invoke(item) ?? _rowHeight;
 
     /// <summary>
     /// 返回列表项数量。
@@ -1612,6 +1806,14 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     public override nint RowsInSection(UITableView tableView, nint section)
     {
         return _itemsProvider().Count;
+    }
+
+    /// <summary>
+    /// 返回行高。
+    /// </summary>
+    public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
+    {
+        return (nfloat)HeightFor(_itemsProvider()[indexPath.Row]);
     }
 
     /// <summary>
@@ -1625,15 +1827,35 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
             : "EmbeddedCheckableReorderDefaultCell";
         var cell = tableView.DequeueReusableCell(reuseIdentifier) as iOSNativeEmbeddedCheckableReorderCell
             ?? new iOSNativeEmbeddedCheckableReorderCell(reuseIdentifier, showsSubtitle);
+        ConfigureCell(cell, indexPath);
+        return cell;
+    }
 
+    /// <summary>按当前数据刷新一个单元格（新建与就地刷新共用）。</summary>
+    internal void ConfigureCell(iOSNativeEmbeddedCheckableReorderCell cell, NSIndexPath indexPath)
+    {
+        var showsSubtitle = _cellStyle == UITableViewCellStyle.Subtitle;
         var item = _itemsProvider()[indexPath.Row];
         cell.Configure(
             title: _titleSelector(item),
             subtitle: showsSubtitle ? _subtitleSelector(item) : null,
-            isEnabled: _isEnabledGetter(item));
+            isEnabled: _isEnabledGetter(item),
+            attributedSubtitle: showsSubtitle ? _attributedSubtitleSelector?.Invoke(item) : null,
+            accessibilityValue: _accessibilityValueSelector?.Invoke(item));
         cell.ShowsReorderControl = true;
         cell.BackgroundColor = UIColor.Clear;
-        return cell;
+        cell.EditingAccessory = _showsDetailButton?.Invoke(item) == true
+            ? UITableViewCellAccessory.DetailButton
+            : UITableViewCellAccessory.None;
+        cell.SetTrailingAccessory(_trailingAccessorySelector?.Invoke(item));
+    }
+
+    /// <summary>
+    /// 详情按钮（ⓘ）点击。
+    /// </summary>
+    public override void AccessoryButtonTapped(UITableView tableView, NSIndexPath indexPath)
+    {
+        _detailAction?.Invoke(_itemsProvider()[indexPath.Row]);
     }
 
     /// <summary>
@@ -1691,13 +1913,31 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
 
 /// <summary>
 /// iOS 内联勾选排序列表单元格。
-/// 左侧固定显示勾选位，右侧保留系统拖拽手柄。
+/// 左侧固定显示勾选位，右侧保留系统拖拽手柄；副标题为空时标题垂直居中。
 /// </summary>
 internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
 {
     private readonly UIImageView _checkmarkView;
     private readonly UILabel _titleLabel;
     private readonly UILabel? _subtitleLabel;
+    private readonly NSLayoutConstraint[] _centeredConstraints = [];
+    private readonly NSLayoutConstraint[] _stackedConstraints = [];
+    private readonly NSLayoutConstraint _titleTrailingDefault;
+    private NSLayoutConstraint? _titleTrailingAccessory;
+    private NSLayoutConstraint[] _accessoryConstraints = [];
+    private UIView? _trailingAccessory;
+
+    /// <summary>行尾附加控件（控制栏功能行的主/次快捷键按钮组；验收读取）。</summary>
+    internal UIView? TrailingAccessory => _trailingAccessory;
+
+    /// <summary>标题标签（验收读取）。</summary>
+    internal UILabel TitleLabel => _titleLabel;
+
+    /// <summary>副标题标签；Default 样式为 null（验收读取）。</summary>
+    internal UILabel? SubtitleLabel => _subtitleLabel;
+
+    /// <summary>勾选标记（验收读取）。</summary>
+    internal UIImageView CheckmarkView => _checkmarkView;
 
     /// <summary>
     /// 初始化列表单元格。
@@ -1724,7 +1964,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
             TranslatesAutoresizingMaskIntoConstraints = false,
             Font = UIFont.SystemFontOfSize(16),
             TextColor = UIColor.Label,
-            Lines = 1
+            Lines = 1,
+            LineBreakMode = UILineBreakMode.TailTruncation
         };
 
         ContentView.AddSubview(_checkmarkView);
@@ -1753,24 +1994,60 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _checkmarkView.HeightAnchor.ConstraintEqualTo(22).Active = true;
         _checkmarkView.LeadingAnchor.ConstraintEqualTo(ContentView.LeadingAnchor, leadingInset).Active = true;
         _checkmarkView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
+        _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
+        _titleTrailingDefault = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16);
+        _titleTrailingDefault.Active = true;
 
-        if (_subtitleLabel == null)
+        _centeredConstraints = [_titleLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor)];
+        if (_subtitleLabel != null)
         {
-            _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
-            _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
-            _titleLabel.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
-        }
-        else
-        {
-            _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
-            _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
-            _titleLabel.TopAnchor.ConstraintEqualTo(ContentView.TopAnchor, 10).Active = true;
-
             _subtitleLabel.LeadingAnchor.ConstraintEqualTo(_titleLabel.LeadingAnchor).Active = true;
             _subtitleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16).Active = true;
-            _subtitleLabel.TopAnchor.ConstraintEqualTo(_titleLabel.BottomAnchor, 2).Active = true;
-            _subtitleLabel.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -10).Active = true;
+            _stackedConstraints =
+            [
+                _titleLabel.TopAnchor.ConstraintEqualTo(ContentView.TopAnchor, 10),
+                _subtitleLabel.TopAnchor.ConstraintEqualTo(_titleLabel.BottomAnchor, 2),
+                _subtitleLabel.BottomAnchor.ConstraintLessThanOrEqualTo(ContentView.BottomAnchor, -10),
+            ];
         }
+        NSLayoutConstraint.ActivateConstraints(_subtitleLabel == null ? _centeredConstraints : _stackedConstraints);
+    }
+
+    /// <summary>
+    /// 设置或移除行尾附加控件（控制栏功能行的主/次快捷键按钮组），标题在附加控件前尾部截断。
+    /// </summary>
+    /// <param name="accessory">附加控件；null 表示纯触控列表，不显示任何行尾控件。</param>
+    internal void SetTrailingAccessory(UIView? accessory)
+    {
+        if (ReferenceEquals(_trailingAccessory, accessory)) return;
+        NSLayoutConstraint.DeactivateConstraints(_accessoryConstraints);
+        _accessoryConstraints = [];
+        if (_trailingAccessory != null)
+        {
+            _titleTrailingAccessory?.Active = false;
+            _titleTrailingAccessory = null;
+            _trailingAccessory.RemoveFromSuperview();
+        }
+
+        _trailingAccessory = accessory;
+        if (accessory == null)
+        {
+            _titleTrailingDefault.Active = true;
+            return;
+        }
+
+        _titleTrailingDefault.Active = false;
+        accessory.TranslatesAutoresizingMaskIntoConstraints = false;
+        ContentView.AddSubview(accessory);
+        _titleTrailingAccessory = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(accessory.LeadingAnchor, -8);
+        _accessoryConstraints =
+        [
+            accessory.TrailingAnchor.ConstraintEqualTo(ContentView.TrailingAnchor, -8),
+            accessory.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor),
+            _titleTrailingAccessory,
+        ];
+        NSLayoutConstraint.ActivateConstraints(_accessoryConstraints);
+        SetNeedsLayout();
     }
 
     /// <summary>
@@ -1779,15 +2056,42 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     /// <param name="title">主标题。</param>
     /// <param name="subtitle">副标题。</param>
     /// <param name="isEnabled">是否启用。</param>
-    public void Configure(string title, string? subtitle, bool isEnabled)
+    /// <param name="attributedSubtitle">带样式副标题（优先于纯文本）。</param>
+    /// <param name="accessibilityValue">读屏值；null 时取副标题文本。</param>
+    public void Configure(string title, string? subtitle, bool isEnabled,
+        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null)
     {
         _titleLabel.Text = title;
+        bool hasSubtitle = false;
         if (_subtitleLabel != null)
         {
-            _subtitleLabel.Text = subtitle;
-            _subtitleLabel.Hidden = string.IsNullOrWhiteSpace(subtitle);
+            if (attributedSubtitle != null && attributedSubtitle.Length > 0)
+            {
+                _subtitleLabel.AttributedText = attributedSubtitle;
+                hasSubtitle = true;
+            }
+            else
+            {
+                _subtitleLabel.AttributedText = null;
+                _subtitleLabel.Text = subtitle;
+                hasSubtitle = !string.IsNullOrWhiteSpace(subtitle);
+            }
+            _subtitleLabel.Hidden = !hasSubtitle;
+            _subtitleLabel.IsAccessibilityElement = hasSubtitle;
+            _subtitleLabel.AccessibilityElementsHidden = !hasSubtitle;
+            if (hasSubtitle)
+            {
+                NSLayoutConstraint.DeactivateConstraints(_centeredConstraints);
+                NSLayoutConstraint.ActivateConstraints(_stackedConstraints);
+            }
+            else
+            {
+                NSLayoutConstraint.DeactivateConstraints(_stackedConstraints);
+                NSLayoutConstraint.ActivateConstraints(_centeredConstraints);
+            }
         }
 
         _checkmarkView.Hidden = !isEnabled;
+        AccessibilityValue = hasSubtitle ? accessibilityValue : null;
     }
 }

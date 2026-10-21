@@ -71,7 +71,10 @@ internal sealed class iOSNativeToolsPresenter
         tools.ShowList();
         host.PresentViewController(_navigation, true, () =>
         {
-            if (_navigation.PresentationController is { } controller) controller.Delegate = _dismissDelegate;
+            if (_navigation.PresentationController is { } controller)
+            {
+                controller.Delegate = _dismissDelegate;
+            }
         });
     }
 
@@ -185,8 +188,8 @@ internal sealed class iOSNativeToolsListViewController : UITableViewController
         _tools = tools;
         _owner = owner;
         Title = "工具";
-        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
-        TableView.BackgroundColor = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
+        TableView.BackgroundColor = UIColor.SystemGroupedBackground;
+        TableView.CellLayoutMarginsFollowReadableWidth = false;
         NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) => owner.Dismiss());
     }
     public override void ViewWillAppear(bool animated)

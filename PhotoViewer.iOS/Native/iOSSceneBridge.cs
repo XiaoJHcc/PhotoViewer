@@ -22,7 +22,13 @@ internal static class iOSSceneBridge
             throw new InvalidOperationException("scene 连接时原生壳根控制器尚未接线。");
         }
 
-        var window = new UIWindow(windowScene) { RootViewController = nativeRoot };
+        // 应用固定深色（Info.plist 的 UIUserInterfaceStyle 是应用级口径，窗口再显式声明一次，
+        // 保证窗口及其弹出的所有控制器都不随系统浅色解析动态色）。
+        var window = new UIWindow(windowScene)
+        {
+            RootViewController = nativeRoot,
+            OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark,
+        };
         BootTrace.Mark("scene bridge: 原生壳接窗口");
         return window;
     }

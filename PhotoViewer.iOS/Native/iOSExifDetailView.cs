@@ -58,36 +58,30 @@ internal sealed class iOSExifDetailView : UIViewController
     /// <summary>文件名与格式切换之间的间距（旧壳 StackPanel Spacing 8）。</summary>
     private const double HeaderSpacing = 8;
 
-    /// <summary>分组标题颜色 #EEE。</summary>
-    private static readonly UIColor GroupHeaderColor = UIColor.FromRGB(0xEE, 0xEE, 0xEE);
+    /// <summary>分组标题颜色（深色玻璃上取系统主标签色）。</summary>
+    private static readonly UIColor GroupHeaderColor = UIColor.Label;
 
     private static readonly UIColor CardColor = UIColor.SecondarySystemGroupedBackground;
     private static readonly UIColor IdCellColor = UIColor.SecondarySystemGroupedBackground;
     private static readonly UIColor DividerColor = UIColor.Separator;
 
-    /// <summary>Tag ID 文字颜色 #555。</summary>
-    private static readonly UIColor IdTextColor = UIColor.FromRGB(0x55, 0x55, 0x55);
+    /// <summary>Tag ID 文字取系统次标签色，与 Mac 同口径，在深色卡片上保持可读。</summary>
+    private static readonly UIColor IdTextColor = UIColor.SecondaryLabel;
 
-    /// <summary>英文名称颜色 #AAA。</summary>
-    private static readonly UIColor NameColor = UIColor.FromRGB(0xAA, 0xAA, 0xAA);
+    /// <summary>英文名称取系统次标签色。</summary>
+    private static readonly UIColor NameColor = UIColor.SecondaryLabel;
 
-    /// <summary>中文译名颜色 #888。</summary>
-    private static readonly UIColor ChineseColor = UIColor.FromRGB(0x88, 0x88, 0x88);
+    /// <summary>中文译名取系统三级标签色。</summary>
+    private static readonly UIColor ChineseColor = UIColor.TertiaryLabel;
 
-    /// <summary>值颜色 #FFF。</summary>
-    private static readonly UIColor ValueColor = UIColor.FromRGB(0xFF, 0xFF, 0xFF);
+    /// <summary>值取系统主标签色。</summary>
+    private static readonly UIColor ValueColor = UIColor.Label;
 
-    /// <summary>文件名颜色 #CCC。</summary>
-    private static readonly UIColor FileNameColor = UIColor.FromRGB(0xCC, 0xCC, 0xCC);
+    /// <summary>文件名取系统主标签色。</summary>
+    private static readonly UIColor FileNameColor = UIColor.Label;
 
-    /// <summary>格式切换文字颜色 #AAA。</summary>
-    private static readonly UIColor FormatTextColor = UIColor.FromRGB(0xAA, 0xAA, 0xAA);
-
-    /// <summary>格式选中底色 #505050。</summary>
-    private static readonly UIColor FormatSelectedColor = UIColor.FromRGB(0x50, 0x50, 0x50);
-
-    /// <summary>加载提示颜色 #666。</summary>
-    private static readonly UIColor LoadingColor = UIColor.FromRGB(0x66, 0x66, 0x66);
+    /// <summary>加载提示取系统次标签色。</summary>
+    private static readonly UIColor LoadingColor = UIColor.SecondaryLabel;
 
     /// <summary>文件名 14 点字体。</summary>
     private static readonly UIFont FileNameFont = UIFont.SystemFontOfSize(14);
@@ -129,10 +123,10 @@ internal sealed class iOSExifDetailView : UIViewController
     public iOSExifDetailView() : base(null, null)
     {
         Title = "EXIF 详情";
-        View!.BackgroundColor = UIColor.FromRGB(0x12, 0x12, 0x12);
+        View!.BackgroundColor = UIColor.SystemGroupedBackground;
         _table = new UITableView(CGRect.Empty, UITableViewStyle.InsetGrouped)
         {
-            BackgroundColor = UIColor.SystemGroupedBackground,
+            BackgroundColor = UIColor.Clear,
             SeparatorStyle = UITableViewCellSeparatorStyle.None,
             RowHeight = 0,
             EstimatedRowHeight = 0,

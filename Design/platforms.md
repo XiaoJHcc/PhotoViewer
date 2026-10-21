@@ -254,7 +254,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsSettingsWindow.cs:15`（`NavigationView` + `SettingsCard`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`（`BottomSheetDialog`）。
   - iOS / Android：行结构随 INPUT-13 外设能力变化；连接硬件键盘/鼠标/触控板任一显示完整绑定、录制、清空与冲突，仅直接触控隐藏绑定文本、录制、清空、冲突与键盘映射等全部键鼠相关控件，保留命令显隐、排序与模型中的绑定配置。
-- **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页固定深色（iOS 设 `OverrideUserInterfaceStyle = Dark`）。
+  - **SETTINGS-01@ios**：控制栏功能沿用系统勾选排序列表，与 macOS 同一行结构（勾选 + 命令名 + 主/次绑定按钮 + 系统排序把手）；绑定按钮只在有外设时出现，点按即在行内录制，长按或辅助点按出「清空」菜单。录制期间手指轻点任意处取消录制并保留原绑定。
+- **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页与工具页固定深色；iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），不随系统浅/深切换，页面不铺不透明底以保留 sheet 半透材质。
   - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色（已登记 10-18）。
 - **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.Apply()`（幂等）。
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs:40`）。

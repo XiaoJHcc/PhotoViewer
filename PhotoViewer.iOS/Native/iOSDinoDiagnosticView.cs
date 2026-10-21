@@ -111,10 +111,8 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     {
         _presenter = presenter;
         Title = "DINO 诊断";
-        OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
-        var groupedBackground = UIColor.SystemGroupedBackground.GetResolvedColor(UITraitCollection.FromUserInterfaceStyle(UIUserInterfaceStyle.Dark));
-        View!.BackgroundColor = groupedBackground;
-        _scroll = new UIScrollView { BackgroundColor = groupedBackground, AlwaysBounceVertical = true };
+        View!.BackgroundColor = UIColor.SystemGroupedBackground;
+        _scroll = new UIScrollView { BackgroundColor = UIColor.Clear, AlwaysBounceVertical = true };
         _rigidText.Layer.CornerRadius = 12;
         _scroll.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
         _document = new DocumentView(presenter.ClearCrosshair);
@@ -377,7 +375,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         /// <param name="clearCrosshair">空白点击动作。</param>
         public DocumentView(Action clearCrosshair)
         {
-            BackgroundColor = UIColor.SystemGroupedBackground;
+            BackgroundColor = UIColor.Clear;
             _blankTap = new UITapGestureRecognizer(clearCrosshair);
             _blankTap.Delegate = new TileExcludingDelegate();
             AddGestureRecognizer(_blankTap);
