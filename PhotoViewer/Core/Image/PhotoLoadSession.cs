@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +27,19 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     private int _enhanceToken;
     private int _enhanceVisibleToken;
     private bool _disposed;
+
+    // 最近两份"源展示产物实例 → 增强图":A/B 来回切或代理↔Full 同实例回来时直接复用,不重算也不闪"计算中"。
+    // 源只持 WeakReference(不延长源像素租约),增强图归会话持有;正在上屏的那份永远留在缓存里。
+    private const int EnhancedCacheCapacity = 2;
+    private readonly List<EnhancedEntry> _enhancedCache = new();
+    // 缓存读写都在 UI 线程,但内存管家探测线程会读 FootprintBytes,故用一把短锁保护列表
+    private readonly object _enhancedCacheGate = new();
+
+    private sealed class EnhancedEntry
+    {
+        public required WeakReference<DecodedImage> Source { get; init; }
+        public required DecodedImage Enhanced { get; init; }
+    }
 
     /// <summary>增强预览开关是否处于开启状态（与增强图是否已就绪无关）。</summary>
     public bool IsEnhanced => _enhanceRequested;
@@ -119,6 +133,16 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         }
         if (_image != null)
         {
+            var reused = TryReuseEnhancement(_image);
+            if (reused != null)
+            {
+                var previous = _enhanced;
+                _enhanced = reused;
+                SetEnhancing(false);
+                try { Changed?.Invoke(); }
+                finally { if (previous != null && !ReferenceEquals(previous, reused) && !IsEnhancedCached(previous)) previous.Dispose(); }
+                return;
+            }
             SetEnhancing(true);
             Changed?.Invoke();
             _ = ApplyEnhancementAsync(_image, token);
@@ -161,11 +185,78 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 return;
             }
             var previous = _enhanced;
-            _enhanced = result;
+            _enhanced = RememberEnhancement(source, result);
             SetEnhancing(false);
             try { Changed?.Invoke(); }
-            finally { previous?.Dispose(); }
+            finally
+            {
+                if (previous != null && !ReferenceEquals(previous, _enhanced) && !IsEnhancedCached(previous))
+                    previous.Dispose();
+            }
         }).ConfigureAwait(false);
+    }
+
+    /// <summary>取回同一源产物实例的增强图;命中即提到最近位(源用引用相等判定,源被回收后视为未命中)。</summary>
+    private DecodedImage? TryReuseEnhancement(DecodedImage source)
+    {
+        lock (_enhancedCacheGate)
+        {
+            for (int i = 0; i < _enhancedCache.Count; i++)
+            {
+                var entry = _enhancedCache[i];
+                if (!entry.Source.TryGetTarget(out var target) || !ReferenceEquals(target, source)) continue;
+                if (i > 0)
+                {
+                    _enhancedCache.RemoveAt(i);
+                    _enhancedCache.Insert(0, entry);
+                }
+                return entry.Enhanced;
+            }
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 记录"源 → 增强图"并保持最近 <see cref="EnhancedCacheCapacity"/> 份(同一源替换旧图)。
+    /// 正在上屏的那份不参与淘汰,调用方释放缓存时须先摘掉 <see cref="_enhanced"/>。
+    /// </summary>
+    private DecodedImage RememberEnhancement(DecodedImage source, DecodedImage enhanced)
+    {
+        lock (_enhancedCacheGate)
+        {
+            for (int i = _enhancedCache.Count - 1; i >= 0; i--)
+            {
+                var entry = _enhancedCache[i];
+                if (!entry.Source.TryGetTarget(out var target) || !ReferenceEquals(target, source)) continue;
+                _enhancedCache.RemoveAt(i);
+                if (!ReferenceEquals(entry.Enhanced, enhanced) && !ReferenceEquals(entry.Enhanced, _enhanced))
+                    entry.Enhanced.Dispose();
+            }
+            _enhancedCache.Insert(0, new EnhancedEntry
+            {
+                Source = new WeakReference<DecodedImage>(source),
+                Enhanced = enhanced,
+            });
+            for (int i = _enhancedCache.Count - 1; i >= 0 && _enhancedCache.Count > EnhancedCacheCapacity; i--)
+            {
+                if (ReferenceEquals(_enhancedCache[i].Enhanced, _enhanced)) continue;
+                var evicted = _enhancedCache[i];
+                _enhancedCache.RemoveAt(i);
+                evicted.Enhanced.Dispose();
+            }
+            return enhanced;
+        }
+    }
+
+    /// <summary>该增强图是否仍由会话缓存持有(持有者不重复释放)。</summary>
+    private bool IsEnhancedCached(DecodedImage image)
+    {
+        lock (_enhancedCacheGate)
+        {
+            foreach (var entry in _enhancedCache)
+                if (ReferenceEquals(entry.Enhanced, image)) return true;
+            return false;
+        }
     }
 
     /// <summary>增强任务未产出结果（异常/源已失效）时清除"计算中"状态并通知宿主，不静默停留。</summary>
@@ -240,12 +331,21 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             : ColorEngine.ToScRgb16(srgb);
     }
 
-    /// <summary>释放增强图并作废在途增强任务。</summary>
+    /// <summary>释放增强图与"源 → 增强图"缓存，并作废在途增强任务（关闭增强时缓存一并清空）。</summary>
     private void ReleaseEnhanced()
     {
         ++_enhanceToken;
         var previous = _enhanced;
         _enhanced = null;
+        lock (_enhancedCacheGate)
+        {
+            foreach (var entry in _enhancedCache)
+            {
+                if (ReferenceEquals(entry.Enhanced, previous)) continue;
+                entry.Enhanced.Dispose();
+            }
+            _enhancedCache.Clear();
+        }
         previous?.Dispose();
     }
 
@@ -261,6 +361,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _proxyLongEdge = target;
         BitmapLoader.ProxyTargetLongEdge = target;
         _needsFull = needsFull;
+        // 预取档位跟随实际需求:适应态只预取代理,放大/分析栏可见时才让 ±1 邻居解 Full
+        BitmapLoader.PrefetchFullWanted = needsFull;
         if (_file == null || !string.IsNullOrEmpty(Error)) return;
         // IMAGE-03：Full 失败后等待下一次触发（需求上升沿或代理目标增长）再重试，避免每次布局刷新都重试。
         if (_fullFailed && needsFull && (!wasNeedsFull || grow)) _fullFailed = false;
@@ -345,14 +447,19 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         finally { result?.Release(); }
     }
 
-    /// <summary>交换会话持有者租约并作废旧增强图；通知后归还旧图，保证订阅者同步上传期间源缓冲有效。</summary>
+    /// <summary>
+    /// 交换会话持有者租约并作废旧增强图；通知后归还旧图，保证订阅者同步上传期间源缓冲有效。
+    /// 增强开着时先查"源 → 增强图"缓存：同实例回切直接复用，不重算也不闪"计算中"。
+    /// </summary>
     private void Replace(DecodedImage? image, bool proxy)
     {
         int token = ++_enhanceToken;
         var previousEnhanced = _enhanced;
         _enhanced = null;
-        // 增强开着时新展示档还要再算一次：保持"计算中"直到新增强图就绪，避免反馈闪烁。
-        bool willEnhance = _enhanceRequested && image != null;
+        DecodedImage? reused = _enhanceRequested && image != null ? TryReuseEnhancement(image) : null;
+        _enhanced = reused;
+        // 增强开着时新展示档还要再算一次（缓存未命中时）：保持"计算中"直到新增强图就绪，避免反馈闪烁。
+        bool willEnhance = _enhanceRequested && image != null && reused == null;
         SetEnhancing(willEnhance);
         var previous = _image;
         _image = image;
@@ -363,7 +470,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         finally
         {
             previous?.Release();
-            previousEnhanced?.Dispose();
+            // 上一份增强图留在会话缓存里供 A/B 回切复用（缓存自有生命周期），只有未入缓存才在这里释放。
+            if (previousEnhanced != null && !ReferenceEquals(previousEnhanced, reused) && !IsEnhancedCached(previousEnhanced))
+                previousEnhanced.Dispose();
         }
         if (willEnhance) _ = ApplyEnhancementAsync(image!, token);
     }
@@ -377,8 +486,15 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _generation++;
         _cancellation.Cancel();
         _cancellation.Dispose();
-        _enhanced?.Dispose();
+        var displayedEnhanced = _enhanced;
         _enhanced = null;
+        lock (_enhancedCacheGate)
+        {
+            foreach (var entry in _enhancedCache)
+                if (!ReferenceEquals(entry.Enhanced, displayedEnhanced)) entry.Enhanced.Dispose();
+            _enhancedCache.Clear();
+        }
+        displayedEnhanced?.Dispose();
         ++_enhanceVisibleToken;
         IsEnhancing = false;
         IsEnhancingVisible = false;
@@ -392,23 +508,48 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// <summary>内存客户端名。</summary>
     public string Name => "EnhancedPreview.Native";
 
-    /// <summary>增强图占用的池化字节。</summary>
-    public long FootprintBytes => _enhanced?.ByteCount ?? 0;
+    /// <summary>增强图占用(含"源 → 增强图"缓存里未上屏的那份)的池化字节。</summary>
+    public long FootprintBytes
+    {
+        get
+        {
+            var displayed = _enhanced;
+            long total = displayed?.ByteCount ?? 0;
+            lock (_enhancedCacheGate)
+            {
+                foreach (var entry in _enhancedCache)
+                    if (!ReferenceEquals(entry.Enhanced, displayed)) total += entry.Enhanced.ByteCount;
+            }
+            return total;
+        }
+    }
 
-    /// <summary>Warning 起在 UI 线程关闭增强并释放增强图（等同用户手动关 toggle 的还原路径）。</summary>
+    /// <summary>
+    /// Warning 起在 UI 线程关闭增强并释放增强图与对比缓存（等同用户手动关 toggle 的还原路径）。
+    /// 关闭本身也会清空"源 → 增强图"缓存；只有此前确实开着增强才发一次性提示。
+    /// </summary>
     public void Trim(PressureLevel level)
     {
-        if (level < PressureLevel.Warning || _enhanced == null) return;
+        if (level < PressureLevel.Warning) return;
+        if (_enhanced == null && !HasCachedEnhancement()) return;
         UiDispatcher.Post(() =>
         {
-            if (!_enhanceRequested) return;
+            bool wasEnhanced = _enhanceRequested;
             _enhanceRequested = false;
             SetEnhancing(false);
             ReleaseEnhanced();
+            if (!wasEnhanced) return;
             Changed?.Invoke();
             // SCOPE-02/STATE-03：自动关闭是一次性事件，由各壳显示提示条；每轮关闭只发一次。
             Notice?.Invoke(StatusMessages.EnhanceClosedForMemory);
         });
+    }
+
+    /// <summary>对比缓存里是否还有未上屏的增强图。</summary>
+    private bool HasCachedEnhancement()
+    {
+        lock (_enhancedCacheGate)
+            return _enhancedCache.Count > 0;
     }
 }
 

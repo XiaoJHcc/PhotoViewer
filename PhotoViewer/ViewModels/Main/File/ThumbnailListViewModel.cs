@@ -47,9 +47,12 @@ public class ThumbnailListViewModel : ReactiveObject
     private readonly BitmapPrefetcher _bitmapPrefetcher;
 
     /// <summary>
-    /// 最近浏览过的路径 LRU(新→旧),容量 = 预取前后窗口之和,用于位图淘汰保护集。
+    /// 最近浏览过的路径 LRU(新→旧),容量 = 预取前后窗口之和,用于淘汰保留排名的 ②/⑤/⑦。
     /// </summary>
     private readonly List<string> _recentViewedPaths = new();
+
+    /// <summary>上一次 CurrentFile 在筛选列表中的索引(用于推导翻页方向;-1 = 无历史)。</summary>
+    private int _lastCurrentIndex = -1;
 
     /// <summary>
     /// 被保留的文件:改星级导致不再符合筛选条件时,暂时保留在列表中,
@@ -104,8 +107,9 @@ public class ThumbnailListViewModel : ReactiveObject
                 _anchorSnapshot = null;
                 _anchorIndex = -1;
 
+                // 排名先算:预取顺序与淘汰保护都取同一份排名(含翻页方向)
+                UpdateRetentionRanking(file);
                 _bitmapPrefetcher.PrefetchAroundCurrent();
-                UpdateProtectedPaths(file);
                 if (_retainedFile != null && !ReferenceEquals(file, _retainedFile))
                 {
                     _retainedFile = null;
@@ -115,40 +119,96 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 当前图变更时刷新位图淘汰保护集:FilteredFiles 中当前 ±(PreloadBackward+PreloadForward)
-    /// 范围的路径 + 最近浏览过的 M 张(M = 前后窗口之和)。
+    /// 最近一次 CurrentFile 变化的列表索引差符号（+1 / −1）；无历史时为正向。
+    /// 预取按"方向上前进的那一张优先"排序，方向上的 +1 邻居还能沿 P0 并行解码。
     /// </summary>
-    private void UpdateProtectedPaths(ImageFile? currentFile)
+    public int FlipDirection { get; private set; } = 1;
+
+    /// <summary>
+    /// 当前图变更时刷新淘汰保留排名（最重要在前）:① 当前图；② 上一张浏览过的图(A/B 对比)；
+    /// ③ 翻页方向上的 +1；④ 反方向 −1；⑤ 第二张最近浏览；
+    /// ⑥ 其余邻居按"方向上距离 d 计 d、反方向距离 d 计 2d"升序；⑦ 其余最近浏览（容量 = 前后预载窗口之和）。
+    /// </summary>
+    private void UpdateRetentionRanking(ImageFile? currentFile)
     {
         var settings = _main.Settings;
-        int window = Math.Max(0, settings.PreloadBackwardCount) + Math.Max(0, settings.PreloadForwardCount);
-        var protectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int backward = Math.Max(0, settings.PreloadBackwardCount);
+        int forward = Math.Max(0, settings.PreloadForwardCount);
+        int window = backward + forward;
 
-        if (currentFile != null)
+        var files = _filteredFiles;
+        int idx = currentFile == null ? -1 : files.IndexOf(currentFile);
+
+        // 翻页方向 = 最近一次 CurrentFile 变化的列表索引差符号；无历史时保持正向
+        if (idx >= 0)
         {
-            // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
-            var currentPath = currentFile.File.Path.LocalPath;
-            _recentViewedPaths.Remove(currentPath);
-            _recentViewedPaths.Insert(0, currentPath);
-            int m = Math.Max(1, window);
-            if (_recentViewedPaths.Count > m)
-                _recentViewedPaths.RemoveRange(m, _recentViewedPaths.Count - m);
-
-            var files = _filteredFiles;
-            var idx = files.IndexOf(currentFile);
-            if (idx >= 0)
-            {
-                int start = Math.Max(0, idx - window);
-                int end = Math.Min(files.Count - 1, idx + window);
-                for (int i = start; i <= end; i++)
-                    protectedPaths.Add(files[i].File.Path.LocalPath);
-            }
+            if (_lastCurrentIndex >= 0 && idx != _lastCurrentIndex)
+                FlipDirection = Math.Sign(idx - _lastCurrentIndex);
+            _lastCurrentIndex = idx;
+        }
+        else if (currentFile == null)
+        {
+            _lastCurrentIndex = -1;
         }
 
-        foreach (var p in _recentViewedPaths)
-            protectedPaths.Add(p);
+        var ranking = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddPath(string path)
+        {
+            if (!string.IsNullOrEmpty(path) && seen.Add(path)) ranking.Add(path);
+        }
+        void AddFile(ImageFile? file)
+        {
+            if (file != null) AddPath(file.File.Path.LocalPath);
+        }
 
-        BitmapLoader.SetProtectedPaths(protectedPaths);
+        var recent = new List<string>();
+        if (currentFile != null)
+        {
+            var currentPath = currentFile.File.Path.LocalPath;
+            // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
+            _recentViewedPaths.Remove(currentPath);
+            _recentViewedPaths.Insert(0, currentPath);
+            int capacity = Math.Max(1, window);
+            if (_recentViewedPaths.Count > capacity)
+                _recentViewedPaths.RemoveRange(capacity, _recentViewedPaths.Count - capacity);
+            foreach (var path in _recentViewedPaths)
+                if (!string.Equals(path, currentPath, StringComparison.OrdinalIgnoreCase)) recent.Add(path);
+        }
+
+        AddFile(currentFile);                                 // ①
+        if (recent.Count > 0) AddPath(recent[0]);             // ② 上一张浏览过的图
+        int direction = FlipDirection >= 0 ? 1 : -1;
+        if (idx >= 0)
+        {
+            int ahead = idx + direction;
+            int behind = idx - direction;
+            if (ahead >= 0 && ahead < files.Count) AddFile(files[ahead]);   // ③ 方向 +1
+            if (behind >= 0 && behind < files.Count) AddFile(files[behind]); // ④ 反方向 −1
+        }
+        if (recent.Count > 1) AddPath(recent[1]);             // ⑤ 第二张最近浏览
+        if (idx >= 0)
+        {
+            // ⑥ 其余邻居:方向上距离 d 计 d,反方向距离 d 计 2d
+            var neighbors = new List<(int index, int cost)>();
+            for (int i = 1; i <= forward; i++)
+            {
+                int p = idx + i;
+                if (p >= files.Count) break;
+                neighbors.Add((p, direction > 0 ? i : 2 * i));
+            }
+            for (int i = 1; i <= backward; i++)
+            {
+                int p = idx - i;
+                if (p < 0) break;
+                neighbors.Add((p, direction > 0 ? 2 * i : i));
+            }
+            foreach (var neighbor in neighbors.OrderBy(n => n.cost).ThenBy(n => n.index))
+                AddFile(files[neighbor.index]);
+        }
+        for (int i = 2; i < recent.Count; i++) AddPath(recent[i]); // ⑦ 其余最近浏览
+
+        BitmapLoader.SetRetentionRanking(ranking);
     }
 
     /// <summary>

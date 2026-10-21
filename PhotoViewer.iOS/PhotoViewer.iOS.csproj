@@ -33,8 +33,10 @@
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
         <!-- SdkOnly: 只链接 SDK 程序集，用户代码完整保留 -->
         <MtouchLink>SdkOnly</MtouchLink>
-        <!-- 混合模式：AOT + 解释器回退，防止纯 AOT 对反射密集型代码（ReactiveUI/DI）闪退 -->
+        <!-- 混合模式：全部程序集 AOT，解释器只作回退（ReactiveUI/DI 的动态代码与未预编译泛型），
+             避免纯 AOT 闪退，同时让解码/直方图/增强等托管热循环跑原生代码 -->
         <UseInterpreter>true</UseInterpreter>
+        <MtouchInterpreter>-all</MtouchInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
         <CodesignKey>iPhone Developer</CodesignKey>
         <!-- 允许 .NET iOS 工具链调用 Xcode 自动签名基础设施，Profile 缺失或过期时自动创建 -->

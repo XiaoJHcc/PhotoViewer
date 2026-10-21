@@ -45,7 +45,7 @@ public static class MacNativeApplication
         RawLoader.Initialize(new MacRawDecoder());
         BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new MacPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new DefaultPerformanceBudget());
-        MemoryGovernor.Initialize(new DefaultMemoryBudgetProvider());
+        MemoryGovernor.Initialize(new MacMemoryBudgetProvider());
         XmpWriter.Initialize(new MacXmpWriter());
         if (args.Contains("--pv-native-smoke"))
         {
@@ -58,6 +58,34 @@ public static class MacNativeApplication
         using var appDelegate = new NativeDelegate(args);
         application.Delegate = appDelegate;
         application.Run();
+    }
+
+    /// <summary>验收专用性能探针目录（<c>--pv-perf-probe</c> 的值）；未指定时为 null。</summary>
+    private static string? PerfProbeDirectory(string[] args)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+            if (string.Equals(args[index], "--pv-perf-probe", StringComparison.Ordinal)) return args[index + 1];
+        return null;
+    }
+
+    /// <summary>验收专用 RAW 对拍素材目录（<c>--pv-perf-raw-compare</c> 的值）；未指定时为 null。</summary>
+    private static string? RawCompareDirectory(string[] args)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+            if (string.Equals(args[index], "--pv-perf-raw-compare", StringComparison.Ordinal)) return args[index + 1];
+        return null;
+    }
+
+    /// <summary>非开关参数即打开目标；探针目录只作为探针输入，不交给打开链路。</summary>
+    private static IEnumerable<string> OpenTargets(string[] args)
+    {
+        for (int index = 0; index < args.Length; index++)
+        {
+            if (args[index].StartsWith("--", StringComparison.Ordinal)) continue;
+            if (index > 0 && string.Equals(args[index - 1], "--pv-perf-probe", StringComparison.Ordinal)) continue;
+            if (index > 0 && string.Equals(args[index - 1], "--pv-perf-raw-compare", StringComparison.Ordinal)) continue;
+            yield return args[index];
+        }
     }
 
     /// <summary>AppKit 生命周期与外部打开，持有原生窗口避免托管 GC 回收平台 delegate。</summary>
@@ -80,11 +108,34 @@ public static class MacNativeApplication
                 NativeWindowPresenter.Initialize(_presenter);
                 if (OperatingSystem.IsMacOSVersionAtLeast(14)) NSApplication.SharedApplication.Activate();
                 else NSApplication.SharedApplication.ActivateIgnoringOtherApps(true);
-                await _mainWindow.OpenPathsAsync(args.Where(path => !path.StartsWith("--", StringComparison.Ordinal)));
-                Console.WriteLine("[Native] AppKit + Metal 主窗口启动成功，打开路径：" + string.Join(" | ", args.Where(path => !path.StartsWith("--", StringComparison.Ordinal))));
+                var openTargets = OpenTargets(args);
+                await _mainWindow.OpenPathsAsync(openTargets);
+                Console.WriteLine("[Native] AppKit + Metal 主窗口启动成功，打开路径：" + string.Join(" | ", openTargets));
                 if (args.Contains("--pv-native-smoke")) _ = NativeAcceptanceRunner.RunAsync(_mainWindow, _settings, args);
                 if (StressFlipDriver.TryParseArgs(args, relative => System.IO.Path.GetFullPath(relative)))
                     StressFlipDriver.MaybeStart(main, _mainWindow.Session);
+                if (PerfProbeDirectory(args) is { } probeDirectory)
+                {
+                    string reportPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Library", "Application Support", "PhotoViewer", "perf-probe.txt");
+                    Console.WriteLine($"[PerfProbe] start {probeDirectory} -> {reportPath}");
+                    await ApplePerfProbe.RunAsync(probeDirectory, reportPath, () => (Environment.WorkingSet, -1L));
+                    Console.WriteLine($"[PerfProbe] done {reportPath}");
+                    Environment.Exit(0);
+                }
+
+                if (RawCompareDirectory(args) is { } rawCompareDirectory)
+                {
+                    string reportPath = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Library", "Application Support", "PhotoViewer", "raw-acceptance.txt");
+                    string workDirectory = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pv-raw-acceptance");
+                    Console.WriteLine($"[RawAcceptance] start {rawCompareDirectory} -> {reportPath}");
+                    bool passed = await ApplePerfProbe.RunRawAcceptanceAsync(rawCompareDirectory, workDirectory, reportPath);
+                    Console.WriteLine($"[RawAcceptance] {(passed ? "PASS" : "FAIL")} {reportPath}");
+                    Environment.Exit(passed ? 0 : 1);
+                }
             }
             catch (Exception exception)
             {

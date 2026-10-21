@@ -49,7 +49,8 @@ public class BitmapCacheItem
 /// <summary>
 /// 图片缓存服务（静态类）。
 /// 缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
-/// 缩略图分区有独立张数/字节上限,淘汰保护集按路径对所有档生效。
+/// 缩略图分区有独立张数/字节上限,淘汰保留排名按路径对所有档生效。主分区上限由实测预算推导
+/// (<see cref="EffectiveCacheCapacityBytes"/>),排名外的条目先走,当前图不因容量被淘汰。
 /// 每档至多一条条目：**像素编码不进缓存键**——同一 (路径, 尺寸档) 只保留最新一次解码产物，
 /// 编码变化按"长边足够且保真度不低于需求"(<see cref="Reusable"/>)复用，否则原地替换，
 /// 因此不会出现同档多份编码副本，也不会因压力升降泄漏内存。
@@ -59,9 +60,16 @@ public static class BitmapLoader
     private static IPresentationImageDecoder? _presentationDecoder;
     /// <summary>
     /// 邻居预取是否允许 ±1 档取 Full（默认 true，Mac/iPad/Windows 口径）。
-    /// Android 手机内存档位更低，预取统一走代理档，Full 只在当前图放大时按需加载。
+    /// 实际还要看当前展示是否需要 Full（<see cref="PrefetchFullWanted"/>）：适应态只预取代理，
+    /// 放大/分析栏可见时才为 ±1 邻居解 Full。Android 手机内存档位更低，预取统一走代理档。
     /// </summary>
     public static bool PrefetchFullNeighbors { get; set; } = true;
+
+    /// <summary>
+    /// 当前展示是否需要全分辨率（由 <see cref="PhotoLoadSession.UpdateViewport"/> 按放大/分析栏可见写入）。
+    /// 适应态为 false 时预取不为 ±1 邻居解 Full，避免连翻时白解整幅。
+    /// </summary>
+    public static bool PrefetchFullWanted { get; set; }
     private static IPresentationEncodingPolicy? _encodingPolicy;
 
     /// <summary>
@@ -71,6 +79,16 @@ public static class BitmapLoader
     public static int PresentationBytesPerPixel => _presentationDecoder == null
         ? (IgnoreAlpha ? 3 : 4)
         : DecodedImage.BytesPerPixel(PresentationEncoding(ImageSizeClass.Full));
+
+    /// <summary>
+    /// 代理档在 Normal 压力下的展示编码每像素字节数，用于设置页按适屏尺寸估算可缓存张数；
+    /// 旧壳（未注入展示解码器）保留原透明度口径。
+    /// </summary>
+    public static int ProxyBytesPerPixel => _presentationDecoder == null
+        ? (IgnoreAlpha ? 3 : 4)
+        : DecodedImage.BytesPerPixel(
+            (_encodingPolicy ?? throw new InvalidOperationException("展示编码策略未注入"))
+                .Select(ImageSizeClass.Proxy, PressureLevel.Normal));
 
     /// <summary>启动期注入原生主图解码器与编码协商策略；禁止在已开始解码后更换解释口径。</summary>
     /// <param name="decoder">平台展示解码器。</param>
@@ -141,8 +159,10 @@ public static class BitmapLoader
     private static readonly ConcurrentDictionary<string, Lazy<Task<DecodedImage?>>> _inFlight = new();
     private static readonly object _cleanupLock = new();
 
-    // 淘汰保护集：临近当前图与最近浏览过的路径，淘汰选择时整体排到最后（volatile 整体替换;按路径对所有档生效）
-    private static volatile HashSet<string> _protectedPaths = new(StringComparer.OrdinalIgnoreCase);
+    // 淘汰保留排名：越靠前的路径越重要（0 = 当前图）。淘汰选择时先淘汰未入排名的 LRU，
+    // 再按排名从最不重要到最重要淘汰；volatile 整体替换，读侧无锁。
+    private static volatile string[] _retentionRanking = [];
+    private static volatile Dictionary<string, int> _retentionRank = new(StringComparer.OrdinalIgnoreCase);
 
     // 新增：忽略透明度（默认 false）
     public static bool IgnoreAlpha { get; set; } = false;
@@ -155,11 +175,17 @@ public static class BitmapLoader
     private static int _thumbMaxCount = 2000;
     private static long _thumbMaxBytes = 256L * 1024 * 1024; // 256 MB
 
+    // 有效主分区上限(由实测预算推导,每轮 MemoryGovernor 探测后重算)
+    private const long MinimumCacheBytes = 256L * 1024 * 1024;
+    private const int AutomaticCacheCount = 400;
+    private static long _effectiveCapacityBytes = _maxCacheSize;
+    private static int _effectiveCacheCount = _maxCacheCount;
+
     // 缓存状态变化事件:(路径, 尺寸档, 是否在缓存中)
     public static event Action<string, ImageSizeClass, bool>? CacheStatusChanged;
 
     /// <summary>
-    /// 最大缓存图片数量
+    /// 最大缓存图片数量（自动口径下不生效，见 <see cref="EffectiveCacheCount"/>）
     /// </summary>
     public static int MaxCacheCount
     {
@@ -167,19 +193,21 @@ public static class BitmapLoader
         set
         {
             _maxCacheCount = Math.Max(1, value);
+            RecomputeEffectiveCapacity();
             _ = Task.Run(CleanupCache);
         }
     }
     
     /// <summary>
-    /// 最大缓存大小（字节）
+    /// 最大缓存大小（字节；自动口径下不生效，见 <see cref="EffectiveCacheCapacityBytes"/>）
     /// </summary>
     public static long MaxCacheSize
     {
         get => _maxCacheSize;
         set
         {
-            _maxCacheSize = Math.Max(256L * 1024 * 1024, value); // 最小256MB
+            _maxCacheSize = Math.Max(MinimumCacheBytes, value); // 最小256MB
+            RecomputeEffectiveCapacity();
             _ = Task.Run(CleanupCache);
         }
     }
@@ -303,27 +331,126 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 设置淘汰保护集：临近当前图与最近浏览过的路径。
-    /// 所有淘汰路径（EnsureCapacity / Cleanup / LruRemoveToSize）统一把保护项排到选择序列末尾，
-    /// 只有当非保护项全淘汰完仍不够时才动保护项（保护项之间也按 LRU）。
+    /// 设置淘汰保留排名（最重要在前）：当前图、上一张浏览过的图、翻页方向 ±1、其余邻居、其余最近浏览。
+    /// 所有淘汰路径（EnsureCapacity / Cleanup / LruRemoveToSize / 压力修剪）统一按该顺序决定先淘汰谁：
+    /// 未入排名的按 LRU 先走，排名内从最不重要到最重要；只有当前图（排名 0）不会被容量淘汰动到。
     /// </summary>
-    public static void SetProtectedPaths(IReadOnlyCollection<string> paths)
+    /// <param name="paths">按重要性排列的路径（下标越小越重要，0 = 当前图）。</param>
+    public static void SetRetentionRanking(IReadOnlyList<string> paths)
     {
-        _protectedPaths = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+        var rank = new Dictionary<string, int>(paths.Count, StringComparer.OrdinalIgnoreCase);
+        var ordered = new string[paths.Count];
+        int index = 0;
+        foreach (var path in paths)
+        {
+            if (string.IsNullOrEmpty(path)) continue;
+            ordered[index] = path;
+            rank.TryAdd(path, index);
+            index++;
+        }
+        if (index != ordered.Length) Array.Resize(ref ordered, index);
+        _retentionRank = rank;
+        _retentionRanking = ordered;
+    }
+
+    /// <summary>路径在保留排名中的位置；未入排名返回 <see cref="int.MaxValue"/>（最不重要）。</summary>
+    private static int RetentionRankOf(string path)
+        => _retentionRank.TryGetValue(path, out int rank) ? rank : int.MaxValue;
+
+    /// <summary>路径是否在保留排名内（缩略图分区 Caution 修剪只看这个）。</summary>
+    private static bool IsRetained(string path) => _retentionRank.ContainsKey(path);
+
+    /// <summary>
+    /// 有效主分区字节上限：按实测预算推导并缓存（每轮 MemoryGovernor 探测后重算）。
+    /// 用户上限、256MB 下限、<c>预算 × (1 − (Caution 进入阈值 + 5)/100) − 非缓存占用</c> 三者取夹取结果；
+    /// 非缓存占用 = max(0, 实测 footprint − 主分区缓存 − 缩略图缓存 − 池空闲字节)。
+    /// <see cref="AutomaticCacheLimit"/> 为 true 时忽略用户上限，只按预算推导（iPad 自动口径）。
+    /// </summary>
+    public static long EffectiveCacheCapacityBytes => Interlocked.Read(ref _effectiveCapacityBytes);
+
+    /// <summary>有效主分区张数上限：自动口径视为 400，否则取用户设置。</summary>
+    public static int EffectiveCacheCount => Volatile.Read(ref _effectiveCacheCount);
+
+    /// <summary>
+    /// 缓存容量是否由实测预算自动决定（iPad 壳启动时置 true）：忽略用户的缓存内存/数量上限，
+    /// 只按预算推导；设置页的旧提示与开关由后续任务改为只读口径。
+    /// </summary>
+    public static bool AutomaticCacheLimit
+    {
+        get => _automaticCacheLimit;
+        set
+        {
+            _automaticCacheLimit = value;
+            RecomputeEffectiveCapacity();
+        }
+    }
+    private static volatile bool _automaticCacheLimit;
+
+    /// <summary>
+    /// 按最新预算与实测占用重算有效上限。footprint 未知（如 Android 系统水位口径）时不按预算推导，
+    /// 只用用户上限；自动口径下退回当前用户值/默认值。
+    /// </summary>
+    public static void RecomputeEffectiveCapacity()
+    {
+        long userLimit = _maxCacheSize;
+        bool automatic = _automaticCacheLimit;
+        long budget = MemoryGovernor.BudgetBytes;
+        long footprint = MemoryGovernor.FootprintBytes;
+        long limit;
+        if (budget > 0 && footprint > 0)
+        {
+            long nonCache = Math.Max(0, footprint - FullCacheSize - ThumbCacheSize - ImageBufferPool.IdleBytes);
+            double ratio = 1 - (Math.Clamp(MemoryGovernor.CautionEnterPercent, 0, 90) + 5) / 100.0;
+            long derived = (long)(budget * ratio) - nonCache;
+            limit = automatic ? derived : Math.Min(userLimit, derived);
+        }
+        else
+        {
+            limit = userLimit;
+        }
+        Interlocked.Exchange(ref _effectiveCapacityBytes, Math.Max(MinimumCacheBytes, limit));
+        Volatile.Write(ref _effectiveCacheCount, automatic ? AutomaticCacheCount : _maxCacheCount);
     }
 
     /// <summary>
-    /// 淘汰选择序列：非保护项按 LRU（最后访问时间升序）在前，保护项整体排在末尾（内部同样按 LRU）。
+    /// 淘汰选择序列（第一个最先淘汰）：
+    /// 未入排名的按 LRU 在前 → 排名内从最不重要到最重要（排名数值降序）；
+    /// 同一排名内先淘汰 Full 再淘汰 Proxy（缩略图档不参与主分区淘汰），当前图与排名 ② 的条目同排名内保持 LRU。
     /// </summary>
     /// <param name="thumbScope">true = 只在 Thumb 分区选;false = 只在主分区(Full/Proxy)选。</param>
     private static List<KeyValuePair<BitmapCacheKey, BitmapCacheItem>> OrderForEviction(bool thumbScope)
     {
-        var protectedSet = _protectedPaths;
-        return _cache.ToList()
+        var list = _cache.ToList()
             .Where(kv => (kv.Key.Class == ImageSizeClass.Thumb) == thumbScope)
-            .OrderBy(kv => protectedSet.Contains(kv.Key.Path) ? 1 : 0)
-            .ThenBy(kv => kv.Value.LastAccessTime)
             .ToList();
+        list.Sort(new EvictionOrderComparer(_retentionRank));
+        return list;
+    }
+
+    /// <summary>排名淘汰序比较器（契约见 <see cref="OrderForEviction"/>）。</summary>
+    private sealed class EvictionOrderComparer(Dictionary<string, int> rank) : IComparer<KeyValuePair<BitmapCacheKey, BitmapCacheItem>>
+    {
+        public int Compare(KeyValuePair<BitmapCacheKey, BitmapCacheItem> x, KeyValuePair<BitmapCacheKey, BitmapCacheItem> y)
+        {
+            bool xRanked = rank.TryGetValue(x.Key.Path, out int xRank);
+            bool yRanked = rank.TryGetValue(y.Key.Path, out int yRank);
+            if (xRanked != yRanked) return xRanked ? 1 : -1;
+            if (xRanked && xRank != yRank) return yRank.CompareTo(xRank);
+            // 同排名：当前图(0)与上一张(1)保持 LRU，其余先淘汰 Full
+            if (xRanked && xRank > 1)
+            {
+                int byClass = ClassEvictionOrder(x.Key.Class).CompareTo(ClassEvictionOrder(y.Key.Class));
+                if (byClass != 0) return byClass;
+            }
+            return x.Value.LastAccessTime.CompareTo(y.Value.LastAccessTime);
+        }
+
+        private static int ClassEvictionOrder(ImageSizeClass sizeClass) => sizeClass switch
+        {
+            ImageSizeClass.Full => 0,
+            ImageSizeClass.Proxy => 1,
+            _ => 2,
+        };
     }
     
     // 容量序列化(在途预留账归 MemoryGovernor,不再本类自记)
@@ -399,63 +526,63 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 在解码前确保容量：主分区(缓存 + 在途预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
-    /// 缩略图分区不参与此账(上限自管,见 <see cref="EvictThumbsToFit"/>)。
+    /// 在解码前确保容量：主分区(缓存 + 在途预留 + 需求) 不超过有效上限；必要时先释放空闲大缓冲，
+    /// 再按排名淘汰到安全水位。缩略图分区不参与此账(上限自管,见 <see cref="EvictThumbsToFit"/>)。
     /// 在途预留账归 <see cref="MemoryGovernor"/>;淘汰只做租约归还(纯托管,无 UI 线程同步 Dispose、无阻塞 GC)。
     /// </summary>
-    private static async Task EnsureCapacityAsync(long needBytes)
+    /// <param name="needBytes">本次解码预计字节数。</param>
+    /// <param name="priority">解码优先级：P2/P3 只允许淘汰比目标排名差的条目，腾不出就跳过。</param>
+    /// <param name="filePath">本次解码的目标路径（用于比较保留排名）。</param>
+    /// <returns>是否已腾出足够容量。</returns>
+    private static async Task<bool> EnsureCapacityAsync(long needBytes, DecodePriority priority, string filePath)
     {
-        if (needBytes <= 0) return;
+        if (needBytes <= 0) return true;
 
-        await _capacitySemaphore.WaitAsync();
+        await _capacitySemaphore.WaitAsync().ConfigureAwait(false);
         try
         {
-            long safeLimit = (long)(MaxCacheSize * 0.8);
-            bool tooLarge = needBytes > (long)(MaxCacheSize * 0.6);
+            // 本次解码的估值已在 AdmissionPermit 里计入 ReservedBytes,这里不再重复加 needBytes
+            long limit = EffectiveCacheCapacityBytes;
+            if (FullCacheSize + MemoryGovernor.ReservedBytes <= limit) return true;
 
-            while (true)
+            // 先释放空闲池(同样计入 footprint,大数组要等 major GC 才归还系统):缓冲是纯富余,比淘汰缓存条目的代价低
+            long deficit = FullCacheSize + MemoryGovernor.ReservedBytes - limit;
+            ImageBufferPool.ReleaseIdle(deficit);
+
+            // 大需求按 80% 安全水位修剪，避免刚好卡在边界反复淘汰
+            bool tooLarge = needBytes > (long)(limit * 0.6);
+            long stopAt = tooLarge ? (long)(limit * 0.8) : limit;
+            int targetRank = RetentionRankOf(filePath);
+            // P0/P1 可淘汰任意非当前条目；预取/后台只淘汰比目标更差的条目，绝不挤掉更重要条目
+            bool canEvictAny = priority <= DecodePriority.P1_HighValue;
+
+            while (FullCacheSize + MemoryGovernor.ReservedBytes > stopAt)
             {
-                var currentSize = FullCacheSize;
-                var totalPlanned = currentSize + MemoryGovernor.ReservedBytes + needBytes;
-                long limit = tooLarge ? safeLimit : MaxCacheSize;
-                if (totalPlanned <= limit) break;
-
-                var sorted = OrderForEviction(thumbScope: false);
-
-                if (sorted.Count == 0) break;
-
-                var itemsToRemove = new List<(BitmapCacheKey key, DecodedImage img)>();
-                long willFree = 0;
-
-                foreach (var kv in sorted)
-                {
-                    if (_cache.TryRemove(kv.Key, out var item))
-                    {
-                        itemsToRemove.Add((kv.Key, item.Image));
-                        willFree += item.Size;
-                        if (currentSize - willFree + MemoryGovernor.ReservedBytes + needBytes <= safeLimit)
-                            break;
-                    }
-                }
-
-                if (itemsToRemove.Count == 0) break;
-
-                // 事件回 UI 线程;缓冲归还直接执行(租约语义:只释放缓存自己那份,仍在被借用的缓冲继续存活)
-                var removedKeys = itemsToRemove.Select(t => t.key).ToList();
-                UiDispatcher.Post(() =>
-                {
-                    foreach (var k in removedKeys)
-                        CacheStatusChanged?.Invoke(k.Path, k.Class, false);
-                });
-
-                foreach (var t in itemsToRemove)
-                    t.img.Release();
+                var victim = FindEvictable(thumbScope: false, targetRank, canEvictAny);
+                if (victim == null) break;
+                EvictRange([victim.Value]);
             }
+
+            return FullCacheSize + MemoryGovernor.ReservedBytes <= limit;
         }
         finally
         {
             _capacitySemaphore.Release();
         }
+    }
+
+    /// <summary>按淘汰序找第一个允许淘汰的条目（null = 没有可淘汰项）。</summary>
+    private static KeyValuePair<BitmapCacheKey, BitmapCacheItem>? FindEvictable(
+        bool thumbScope, int targetRank, bool canEvictAny)
+    {
+        foreach (var kv in OrderForEviction(thumbScope))
+        {
+            int rank = RetentionRankOf(kv.Key.Path);
+            if (rank == 0) continue;                        // 当前图不因容量被淘汰
+            if (canEvictAny || rank > targetRank || (targetRank == int.MaxValue && rank == int.MaxValue))
+                return kv;
+        }
+        return null;
     }
 
     /// <summary>
@@ -488,6 +615,18 @@ public static class BitmapLoader
                 cachedItem.UpdateAccessTime();
                 PerfTrace.RecordDecode(file.Name, true, 0, 0, cachedItem.Image.Width, cachedItem.Image.Height);
                 return cachedItem.Image;
+            }
+
+            // 跨档复用:同路径 Full 已够大且保真度不低于本次需求时直接返回 Full,不再解代理
+            // (Mac F16 Full 满足 F16 代理请求;iPad 8 位 Full 不满足 F16 代理请求,不得降保真度)。
+            var fullKey = new BitmapCacheKey(filePath, ImageSizeClass.Full);
+            if (_cache.TryGetValue(fullKey, out var fullItem)
+                && Reusable(fullItem.Image, hint.MaxLongEdge, encoding)
+                && fullItem.Image.TryAcquire())
+            {
+                fullItem.UpdateAccessTime();
+                PerfTrace.RecordDecode(file.Name, true, 0, 0, fullItem.Image.Width, fullItem.Image.Height);
+                return fullItem.Image;
             }
 
             var flightKey = filePath + "#proxy" + hint.MaxLongEdge;
@@ -532,6 +671,10 @@ public static class BitmapLoader
         {
             try
             {
+                // 预取/后台在容量不足且腾不出比自己更差的条目时直接跳过(不解码、不记错误)
+                if (!await EnsureCapacityAsync(estimate, priority, filePath).ConfigureAwait(false))
+                    return null;
+
                 var decodeSw = System.Diagnostics.Stopwatch.StartNew();
                 var image = await Task.Run(() => LoadProxyWithExifRotationAsync(file, targetLongEdge, encoding, ct), ct).ConfigureAwait(false);
                 decodeSw.Stop();
@@ -712,7 +855,9 @@ public static class BitmapLoader
         {
             try
             {
-                await EnsureCapacityAsync(estimate).ConfigureAwait(false);
+                // 预取/后台在容量不足且腾不出比自己更差的条目时直接跳过(不解码、不记错误)
+                if (!await EnsureCapacityAsync(estimate, priority, filePath).ConfigureAwait(false))
+                    return null;
             }
             catch { /* 容量保障失败不致命，继续尝试加载 */ }
 
@@ -921,7 +1066,8 @@ public static class BitmapLoader
     }
     
     /// <summary>
-    /// 清理缓存(仅主分区 Full/Proxy;缩略图分区由 <see cref="EvictThumbsToFit"/> 自管)
+    /// 清理缓存(仅主分区 Full/Proxy;缩略图分区由 <see cref="EvictThumbsToFit"/> 自管)。
+    /// 按排名淘汰序修剪到有效张数/字节上限内（字节超限时收到 80% 安全水位）。
     /// </summary>
     private static void CleanupCache()
     {
@@ -929,65 +1075,37 @@ public static class BitmapLoader
         {
             try
             {
-                var itemsToRemove = new List<BitmapCacheKey>();
-                
-                // 按淘汰选择序列排序（非保护项 LRU 在前，保护项排末尾）
-                var sortedItems = OrderForEviction(thumbScope: false);
-                
-                var currentSize = FullCacheSize;
-                var currentCount = FullCacheCount;
-                
-                // 清理超出数量限制的项
-                if (currentCount > MaxCacheCount)
+                int count = FullCacheCount;
+                long size = FullCacheSize;
+                int maxCount = EffectiveCacheCount;
+                long limit = EffectiveCacheCapacityBytes;
+                if (count <= maxCount && size <= limit) return;
+
+                long targetSize = (long)(limit * 0.8);
+                var removed = new List<(BitmapCacheKey key, BitmapCacheItem item)>();
+                foreach (var kv in OrderForEviction(thumbScope: false))
                 {
-                    var itemsToRemoveByCount = sortedItems
-                        .Take(currentCount - MaxCacheCount)
-                        .Select(kvp => kvp.Key);
-                    itemsToRemove.AddRange(itemsToRemoveByCount);
-                }
-                
-                // 清理超出大小限制的项
-                if (currentSize > MaxCacheSize)
-                {
-                    var remainingItems = sortedItems
-                        .Where(kvp => !itemsToRemove.Contains(kvp.Key))
-                        .ToList();
-                    
-                    long accumulatedSize = 0;
-                    var targetSize = MaxCacheSize * 0.8; // 清理到80%容量
-                    
-                    for (int i = remainingItems.Count - 1; i >= 0; i--)
+                    if (count <= maxCount && size <= targetSize) break;
+                    if (RetentionRankOf(kv.Key.Path) == 0) continue;   // 当前图不因容量被淘汰
+                    if (_cache.TryRemove(kv.Key, out var item))
                     {
-                        var item = remainingItems[i];
-                        accumulatedSize += item.Value.Size;
-                        
-                        if (accumulatedSize > targetSize)
-                        {
-                            // 保留最近访问的项目，移除较旧的
-                            for (int j = 0; j < i; j++)
-                            {
-                                itemsToRemove.Add(remainingItems[j].Key);
-                            }
-                            break;
-                        }
+                        removed.Add((kv.Key, item));
+                        count--;
+                        size -= item.Size;
                     }
                 }
-                
-                // 执行清理:事件回 UI 线程;租约归还直接执行(拆除 UI 线程同步 Dispose)
-                foreach (var key in itemsToRemove.Distinct())
+                if (removed.Count == 0) return;
+
+                UiDispatcher.Post(() =>
                 {
-                    if (_cache.TryRemove(key, out var item))
-                    {
-                        UiDispatcher.Post(() => CacheStatusChanged?.Invoke(key.Path, key.Class, false));
-                        item.Image.Release();
-                    }
-                }
-                
-                if (itemsToRemove.Count > 0)
-                {
-                    Console.WriteLine($"Cache cleanup completed: removed {itemsToRemove.Count} items, " +
-                                      $"current cache: {FullCacheCount} items, {FullCacheSize / (1024 * 1024)} MB");
-                }
+                    foreach (var (key, _) in removed)
+                        CacheStatusChanged?.Invoke(key.Path, key.Class, false);
+                });
+                foreach (var (_, item) in removed)
+                    item.Image.Release();
+
+                Console.WriteLine($"Cache cleanup completed: removed {removed.Count} items, " +
+                                  $"current cache: {FullCacheCount} items, {FullCacheSize / (1024 * 1024)} MB");
             }
             catch (Exception ex)
             {
@@ -1081,7 +1199,8 @@ public static class BitmapLoader
     {
         var count = FullCacheCount;
         var size = FullCacheSize;
-        var info = $"Cache: {count}/{MaxCacheCount} items, {size / (1024 * 1024)}/{MaxCacheSize / (1024 * 1024)} MB"
+        long capacity = EffectiveCacheCapacityBytes;
+        var info = $"Cache: {count}/{EffectiveCacheCount} items, {size / (1024 * 1024)}/{capacity / (1024 * 1024)} MB"
             + $"; thumbs {ThumbCacheCount}/{_thumbMaxCount}, {ThumbCacheSize / (1024 * 1024)}/{_thumbMaxBytes / (1024 * 1024)} MB";
         return (count, size, info);
     }
@@ -1099,17 +1218,19 @@ public static class BitmapLoader
         public void Trim(PressureLevel level) => TrimForPressure(level);
     }
 
-    /// <summary>向 MemoryGovernor 登记本缓存(幂等;静态构造即登记,首次访问本类时生效)。</summary>
+    /// <summary>向 MemoryGovernor 登记本缓存(幂等;静态构造即登记,首次访问本类时生效),并按最新预算算一次有效上限。</summary>
     static BitmapLoader()
     {
         MemoryGovernor.Register(new CacheMemoryClient());
+        MemoryGovernor.Probed += RecomputeEffectiveCapacity;
+        RecomputeEffectiveCapacity();
     }
 
     /// <summary>
-    /// 压力修剪(响应矩阵):
-    /// Caution = 缩略图只留保护集(可视区 ± 预载窗口);
-    /// Warning = 主分区砍到保护集内最近 2 张(当前 +1 邻居),缩略图只留保护集;
-    /// Critical = 全库只留最近访问的 1 张 Full。
+    /// 压力修剪(响应矩阵，按保留排名):
+    /// Caution = 缩略图只留排名内(可视区 ± 预载窗口);
+    /// Warning = 主分区只留排名 ①②③，缩略图只留排名内;
+    /// Critical = 全库只留排名 ①(当前图)；无排名时退回"只留最近访问的 1 张 Full"。
     /// </summary>
     private static void TrimForPressure(PressureLevel level)
     {
@@ -1117,26 +1238,20 @@ public static class BitmapLoader
         {
             try
             {
-                var protectedSet = _protectedPaths;
                 switch (level)
                 {
                     case PressureLevel.Caution:
                         EvictRange(OrderForEviction(thumbScope: true)
-                            .Where(kv => !protectedSet.Contains(kv.Key.Path))
+                            .Where(kv => !IsRetained(kv.Key.Path))
                             .ToList());
                         break;
                     case PressureLevel.Warning:
                     {
                         var victims = OrderForEviction(thumbScope: false)
-                            .Where(kv => !protectedSet.Contains(kv.Key.Path))
+                            .Where(kv => RetentionRankOf(kv.Key.Path) > 2)
                             .ToList();
-                        // 保护集内主分区也只留最近 2 张(当前 + 1 邻居)
-                        victims.AddRange(OrderForEviction(thumbScope: false)
-                            .Where(kv => protectedSet.Contains(kv.Key.Path))
-                            .OrderByDescending(kv => kv.Value.LastAccessTime)
-                            .Skip(2));
                         victims.AddRange(OrderForEviction(thumbScope: true)
-                            .Where(kv => !protectedSet.Contains(kv.Key.Path)));
+                            .Where(kv => !IsRetained(kv.Key.Path)));
                         EvictRange(victims);
                         break;
                     }
@@ -1144,13 +1259,20 @@ public static class BitmapLoader
                     {
                         var all = _cache.ToList();
                         if (all.Count == 0) break;
-                        // 只留最近访问的 1 张 Full(当前纹理)
-                        var newest = all
-                            .Where(kv => kv.Key.Class == ImageSizeClass.Full)
-                            .OrderByDescending(kv => kv.Value.LastAccessTime)
-                            .Select(kv => (BitmapCacheKey?)kv.Key)
-                            .FirstOrDefault();
-                        EvictRange(all.Where(kv => !newest.HasValue || !kv.Key.Equals(newest.Value)).ToList());
+                        if (_retentionRanking.Length > 0)
+                        {
+                            EvictRange(all.Where(kv => RetentionRankOf(kv.Key.Path) != 0).ToList());
+                        }
+                        else
+                        {
+                            // 没有排名(工具/测试进程):只留最近访问的 1 张 Full(当前纹理)
+                            var newest = all
+                                .Where(kv => kv.Key.Class == ImageSizeClass.Full)
+                                .OrderByDescending(kv => kv.Value.LastAccessTime)
+                                .Select(kv => (BitmapCacheKey?)kv.Key)
+                                .FirstOrDefault();
+                            EvictRange(all.Where(kv => !newest.HasValue || !kv.Key.Equals(newest.Value)).ToList());
+                        }
                         break;
                     }
                 }

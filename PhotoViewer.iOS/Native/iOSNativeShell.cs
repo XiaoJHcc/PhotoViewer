@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using CoreFoundation;
 using Foundation;
 using Microsoft.ML.OnnxRuntime;
 using PhotoViewer.Apple;
@@ -30,6 +31,8 @@ public static class iOSNativeShell
     private static iOSNativeSettingsPresenter? _settingsPresenter;
     private static iOSNativeRootViewController? _rootViewController;
     private static PhotoLoadSession? _session;
+    // 系统内存压力源:必须由静态字段持有,否则托管对象被回收后 dispatch source 即失效
+    private static DispatchSource.MemoryPressure? _memoryPressureSource;
 
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
     public static MainViewModel? Main => _main;
@@ -72,7 +75,28 @@ public static class iOSNativeShell
         iOSNativeSheetShotCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeFaultCheck.MaybeStart(args, _rootViewController, _session);
         iOSDinoCheck.MaybeStart(args);
+        StartPerfProbe(args);
         return _rootViewController;
+    }
+
+    /// <summary>
+    /// 验收专用（非产品行为）：<c>--pv-perf-probe &lt;目录&gt;</c> 对目录内图片做分段性能计时，
+    /// 报告写 Documents/PhotoViewer/perf-probe.txt；相对路径按沙盒 Documents 解析。产品路径不调用。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    private static void StartPerfProbe(string[] args)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+        {
+            if (!string.Equals(args[index], "--pv-perf-probe", StringComparison.Ordinal)) continue;
+            string directory = ResolveDocumentsPath(args[index + 1]);
+            string reportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "PhotoViewer", "perf-probe.txt");
+            var budget = new iOSMemoryBudgetProvider();
+            Console.WriteLine($"[PerfProbe] start {directory} -> {reportPath}");
+            _ = ApplePerfProbe.RunAsync(directory, reportPath,
+                () => (AppleMemoryFootprint.GetPhysFootprintBytes(), budget.GetAvailableBytes()));
+        }
     }
 
     /// <summary>是否程序化验收会话：带 <c>--pv-*</c> 启动参数时不读写用户窗口偏好。</summary>
@@ -140,6 +164,8 @@ public static class iOSNativeShell
         RawLoader.Initialize(new iOSRawDecoder());
         BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new iOSPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new iOSPerformanceBudget());
+        // iPad 的缓存容量由实测预算推导,忽略用户缓存上限(自动口径在 BitmapLoader 内生效)
+        BitmapLoader.AutomaticCacheLimit = true;
         MemoryGovernor.Initialize(new iOSMemoryBudgetProvider());
         StorageAccessManager.Initialize(new iOSStorageAccessManager());
         XmpWriter.Initialize(new iOSXmpWriter());
@@ -176,6 +202,7 @@ public static class iOSNativeShell
         _main = main;
         ExternalOpenService.RegisterHandler(request => HandleExternalOpenAsync(main, request));
         SubscribeMemoryWarning();
+        SubscribeMemoryPressure();
         SubscribePersistence(main);
 
         // 压测参数（devicectl/simctl 注入 --pv-stress 系）；相对路径按沙盒 Documents 解析。
@@ -189,6 +216,37 @@ public static class iOSNativeShell
         PublishLaunchArgumentOpenPaths(args);
         BootTrace.Mark("native shell: main view model ready");
         return main;
+    }
+
+    /// <summary>
+    /// 订阅系统内存压力源（DispatchSource）：Warn → Warning、Critical → Critical，
+    /// 经 <see cref="MemoryGovernor.ReportOsEvent"/> 直报（只升不降，回 Normal 交给周期探测的迟滞退级）。
+    /// 与 UIKit 的 DidReceiveMemoryWarning 互补：压力源在系统告警之前就能给出预警。
+    /// 对象由静态字段持有，托管侧回收会让 dispatch source 失效。
+    /// </summary>
+    private static void SubscribeMemoryPressure()
+    {
+        try
+        {
+            var source = new DispatchSource.MemoryPressure(
+                MemoryPressureFlags.Warn | MemoryPressureFlags.Critical,
+                DispatchQueue.MainQueue);
+            source.SetEventHandler(() =>
+            {
+                var flags = source.PressureFlags;
+                var level = flags.HasFlag(MemoryPressureFlags.Critical) ? PressureLevel.Critical
+                    : flags.HasFlag(MemoryPressureFlags.Warn) ? PressureLevel.Warning
+                    : PressureLevel.Normal;
+                if (level == PressureLevel.Normal) return;
+                MemoryGovernor.ReportOsEvent(level);
+            });
+            source.Resume();
+            _memoryPressureSource = source;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[Native] 内存压力源订阅失败: {ex.Message}");
+        }
     }
 
     /// <summary>

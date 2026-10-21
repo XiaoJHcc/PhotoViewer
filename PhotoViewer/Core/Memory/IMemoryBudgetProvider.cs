@@ -18,4 +18,10 @@ public interface IMemoryBudgetProvider
     /// </summary>
     /// <returns>可用字节数;不可得时返回 <see cref="long.MaxValue"/>(视为无压力)。</returns>
     long GetAvailableBytes();
+
+    /// <summary>
+    /// 当前进程占用(与预算同口径的驻留量),供缓存把"非缓存占用"从预算里扣掉。
+    /// </summary>
+    /// <returns>占用字节数;口径不适用或不可得时返回 0(缓存只按用户上限推导,不按预算)。</returns>
+    long GetFootprintBytes();
 }

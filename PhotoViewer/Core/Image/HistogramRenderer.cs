@@ -1,56 +1,86 @@
 using System;
+using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 把一张图像渲染成 RGB 直方图图像（256 级 / 通道，叠加式填充曲线）。纯算法、不改原文件、不入库。
 /// 分析栏的"直方图"瓦片用它：从当前主图（原片或增强图）现算 → 喂给 DiagnosticTile 展示，随增强切换实时重算。
+/// 统计阶段按行分区并行，每分区独立计数后整数合并（结果与串行完全一致）；F16 档走 Half 位模式查表，
+/// 免去逐像素的幂/取整运算，输出与逐值公式逐字节相同。
 /// </summary>
 public static class HistogramRenderer
 {
+    /// <summary>每分区处理多少行检查一次取消，兼顾响应速度与检查开销。</summary>
+    private const int CancelCheckRows = 64;
+
+    /// <summary>Half 全部 65536 个位模式 → sRGB 8 位级；首次使用时构建，之后只读共享。</summary>
+    private static readonly Lazy<byte[]> SrgbLut = new(CreateSrgbLut, LazyThreadSafetyMode.ExecutionAndPublication);
+
     /// <summary>
     /// 计算 source 的 R/G/B 三通道直方图并渲染为 outW×outH 的 BGRA 图像（透明底 + 三通道叠加填充）。
     /// </summary>
     /// <param name="source">主图图像（原片或增强图，本方法只读不释放）。</param>
     /// <param name="outW">输出图像宽（直方图 256 级横向铺满）。</param>
     /// <param name="outH">输出图像高（纵向为归一化频数）。</param>
+    /// <param name="cancellationToken">取消令牌；分区循环定期检查，取消时抛 <see cref="OperationCanceledException"/>。</param>
     /// <returns>渲染好的直方图图像（调用方负责 Dispose）。</returns>
-    public static DecodedImage Render(DecodedImage source, int outW, int outH)
+    public static DecodedImage Render(DecodedImage source, int outW, int outH, CancellationToken cancellationToken = default)
     {
-        var hist = ComputeHistogram(source, out long _);
+        var hist = ComputeHistogram(source, cancellationToken, out long _);
         return RenderImage(hist, outW, outH);
     }
 
     /// <summary>
-    /// 统计 source 的 R/G/B 256 级直方图（含像素总数）。
+    /// 统计 source 的 R/G/B 256 级直方图（含像素总数）。行区间按处理器数均分，
+    /// 每分区独立 int[256]×3 计数，最后整数合并——合并结果与串行单遍一致。
     /// </summary>
-    private static int[][] ComputeHistogram(DecodedImage source, out long pixelCount)
+    private static int[][] ComputeHistogram(DecodedImage source, CancellationToken cancellationToken, out long pixelCount)
     {
         int w = source.Width, h = source.Height;
         int bpp = DecodedImage.BytesPerPixel(source.Encoding);
-
-        var rHist = new int[256];
-        var gHist = new int[256];
-        var bHist = new int[256];
+        int partitions = Math.Max(1, Environment.ProcessorCount);
+        var rParts = new int[partitions][];
+        var gParts = new int[partitions][];
+        var bParts = new int[partitions][];
+        var options = new ParallelOptions { CancellationToken = cancellationToken };
 
         if (source.Encoding == PixelEncoding.RgbaF16)
         {
             // 线性半精度表面（原生主图 F16 档）按线性→sRGB 编码后量化，与 8 位 sRGB 口径可比。
-            var half = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Half>(source.Pixels.AsSpan());
+            // 查表值与逐像素 EncodeSrgb(Half) 完全相同：下标即 Half 的 16 位位模式。
+            var lut = SrgbLut.Value;
+            var pixelBytes = source.Pixels;
             int strideHalf = source.Stride / 2;
-            for (int y = 0; y < h; y++)
+            Parallel.For(0, partitions, options, p =>
             {
-                int rowStart = y * strideHalf;
-                for (int x = 0; x < w; x++)
+                cancellationToken.ThrowIfCancellationRequested();
+                var half = MemoryMarshal.Cast<byte, ushort>(pixelBytes.AsSpan());
+                (int start, int end) = RowRange(h, partitions, p);
+                var r = new int[256];
+                var g = new int[256];
+                var b = new int[256];
+                int rows = 0;
+                for (int y = start; y < end; y++)
                 {
-                    int i = rowStart + x * 4;
-                    rHist[EncodeSrgb(half[i])]++;
-                    gHist[EncodeSrgb(half[i + 1])]++;
-                    bHist[EncodeSrgb(half[i + 2])]++;
+                    if ((++rows & (CancelCheckRows - 1)) == 0) cancellationToken.ThrowIfCancellationRequested();
+                    int rowStart = y * strideHalf;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int i = rowStart + x * 4;
+                        r[lut[half[i]]]++;
+                        g[lut[half[i + 1]]]++;
+                        b[lut[half[i + 2]]]++;
+                    }
                 }
-            }
+                rParts[p] = r;
+                gParts[p] = g;
+                bParts[p] = b;
+            });
             pixelCount = (long)w * h;
-            return new[] { rHist, gHist, bHist };
+            return MergePartitions(rParts, gParts, bParts);
         }
 
         // 8 位展示编码直接按存储通道计数：Bgra32 = B,G,R,A；Rgb24/Rgba8(Display P3，sRGB 传递函数) 均为 R,G,B(,A)。
@@ -66,20 +96,67 @@ public static class HistogramRenderer
         var pixels = source.Pixels;
         int stride = source.Stride;
 
-        for (int y = 0; y < h; y++)
+        Parallel.For(0, partitions, options, p =>
         {
-            long rowStart = (long)y * stride;
-            long rowEnd = rowStart + (long)w * bpp;
-            for (long i = rowStart; i + bpp <= rowEnd; i += bpp)
+            cancellationToken.ThrowIfCancellationRequested();
+            (int start, int end) = RowRange(h, partitions, p);
+            var r = new int[256];
+            var g = new int[256];
+            var b = new int[256];
+            int rows = 0;
+            for (int y = start; y < end; y++)
             {
-                rHist[pixels[i + rIdx]]++;
-                gHist[pixels[i + 1]]++;
-                bHist[pixels[i + bIdx]]++;
+                if ((++rows & (CancelCheckRows - 1)) == 0) cancellationToken.ThrowIfCancellationRequested();
+                long rowStart = (long)y * stride;
+                long rowEnd = rowStart + (long)w * bpp;
+                for (long i = rowStart; i + bpp <= rowEnd; i += bpp)
+                {
+                    r[pixels[i + rIdx]]++;
+                    g[pixels[i + 1]]++;
+                    b[pixels[i + bIdx]]++;
+                }
             }
-        }
+            rParts[p] = r;
+            gParts[p] = g;
+            bParts[p] = b;
+        });
 
         pixelCount = (long)w * h;
+        return MergePartitions(rParts, gParts, bParts);
+    }
+
+    /// <summary>均分行区间：第 p 个分区负责 [start, end) 行。</summary>
+    private static (int Start, int End) RowRange(int height, int partitions, int partition)
+        => ((int)((long)height * partition / partitions), (int)((long)height * (partition + 1) / partitions));
+
+    /// <summary>把各分区的独立计数按通道整数相加。</summary>
+    private static int[][] MergePartitions(int[][] rParts, int[][] gParts, int[][] bParts)
+    {
+        var rHist = new int[256];
+        var gHist = new int[256];
+        var bHist = new int[256];
+        for (int p = 0; p < rParts.Length; p++)
+        {
+            var r = rParts[p];
+            var g = gParts[p];
+            var b = bParts[p];
+            for (int i = 0; i < 256; i++)
+            {
+                rHist[i] += r[i];
+                gHist[i] += g[i];
+                bHist[i] += b[i];
+            }
+        }
         return new[] { rHist, gHist, bHist };
+    }
+
+    /// <summary>构建 Half 位模式 → sRGB 级查表；逐项调用与像素路径相同的编码公式。</summary>
+    private static byte[] CreateSrgbLut()
+    {
+        var lut = new byte[1 << 16];
+        for (int bits = 0; bits < lut.Length; bits++)
+            lut[bits] = (byte)EncodeSrgb(BitConverter.UInt16BitsToHalf((ushort)bits));
+        return lut;
     }
 
     /// <summary>把线性 scRGB 分量编码成 sRGB 传递函数下的 0..255 级(负值与超一按边界钳位)。</summary>

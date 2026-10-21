@@ -261,6 +261,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs:40`）。
 - **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-12、SETTINGS-14、SETTINGS-15**：控件与持久化。
   - **SETTINGS-12@android**：一般数值用 `+/-` 步进（与 iOS `UIStepper` 同类），步进控件不改变取值范围（已登记 10-18）。缩放比例预设行例外：单一数值输入 + `%`，数字居中，`+`/`−` 只做新增 100% 项与删除项，不是步进（SETTINGS-07）。
+  - **SETTINGS-06@ios**：缓存容量由运行时实测预算（`phys_footprint + os_proc_available_memory`，启用 `increased-memory-limit`）自动推导，文件页「缓存与预加载」组不显示「缓存内存上限 / 缓存数量上限」；设置文档中的两项字段保留、不参与 iPad 运行时。
   - **SETTINGS-10@ios / @android**：AI 页无「清空特征数据库」；移动端长期不提供，配置保留、入口不显示（已登记 10-18）。
   - iOS / Android：绑定文本、录制、清空与冲突按 INPUT-13 外设能力显示；仅直接触控全部隐藏，断开最后一个外设时取消未完成录制并保留原绑定，不按平台固定为只读。
   - **SETTINGS-14@ios / @android**：JSON 分别存 `NSUserDefaults` 与 `SharedPreferences`，字段不变（已登记 10-18）。
@@ -295,7 +296,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SCOPE-01@mac / @ios / @android**：不建照片数据统计入口（已登记 10-18，同 TOOLS-07@win）。
 - **SCOPE-02**：计算门控。相似 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`；分析 `PhotoViewer/Core/AI/AnalysisPresenter.cs:136-142`；回退 `FallbackDelayMs = 500`（`PhotoViewer/Core/AI/AnalysisPresenter.cs:34`）。
 - **SCOPE-03**：入库与现算。批量提取 `PhotoViewer/Core/AI/FolderFeatureIndexer.cs`；即时缓存 `AnalysisResultCache`。
-- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：ImageIO 对 Sony ARW 只给内嵌预览、`IsProxy=false`，CoreML EP 不可用回退 CPU（已登记 10-18；`CIRAWFilter` 全分辨率解码暂缓，并入性能专项）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
+- **SCOPE-04**：能力缺失。**SCOPE-04@ios**：RAW 主图/代理经 `CIRawFilter` 全分辨率解码（几何取传感器 `NativeSize`，EXIF 方向交 GPU），只有创建/渲染失败回退 ImageIO 时才可能只得到内嵌预览、`IsProxy=false`，此时如实停在该尺寸；CoreML EP 不可用回退 CPU（已登记 10-18）。**SCOPE-04@android**：模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
 - **SCOPE-05**：文件写操作。评分写回 `XmpWriter.WriteRatingAsync`；无删除/重命名/移动/导出命令。
 - **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**，已登记 10-18）；Windows 照片统计；Android 设置数值步进见 SETTINGS-12@android。
 - **SCOPE-01@web**：设置窗口、工具窗口、真实解码/写回/推理均不实现，相应入口不显示；照片、特征与故障均为合成数据。

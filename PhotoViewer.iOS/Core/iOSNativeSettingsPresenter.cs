@@ -1160,78 +1160,83 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
                     isEnabledSetter: (item, value) => item.IsEnabled = value,
                     moveAction: Settings.MoveFileFormat)));
 
-        contentStack.AddArrangedSubview(
-            CreateSection(
-                "缓存与预加载",
+        // 缓存容量由实测预算自动管理的平台不显示用户上限两项，其余行保持
+        var cacheRows = new List<UIView>
+        {
+            CreateStepperRow(
+                "原生解码线程",
                 null,
-                CreateStepperRow(
-                    "原生解码线程",
-                    null,
-                    () => Settings.NativePreloadParallelism,
-                    value => Settings.NativePreloadParallelism = value,
-                    () => 1,
-                    () => Settings.NativePreloadParallelismMaximum,
-                    valueFormatter: value => $"{value} 线程"),
-                CreateStepperRow(
-                    "软件解码线程",
-                    null,
-                    () => Settings.CpuPreloadParallelism,
-                    value => Settings.CpuPreloadParallelism = value,
-                    () => 1,
-                    () => Settings.CpuPreloadParallelismMaximum,
-                    valueFormatter: value => $"{value} 线程"),
-                CreateSliderRow(
-                    "缓存内存上限",
-                    null,
-                    () => Settings.BitmapCacheMaxMemory,
-                    value => Settings.BitmapCacheMaxMemory = value,
-                    512,
-                    32768,
-                    valueFormatter: value => $"{value} MB",
-                    onValueChanged: RefreshInfoLabels,
-                    onEditingCompleted: RebuildContent),
-                CreateSliderRow(
-                    "缓存数量上限",
-                    null,
-                    () => Settings.BitmapCacheMaxCount,
-                    value => Settings.BitmapCacheMaxCount = value,
-                    1,
-                    400,
-                    valueFormatter: value => $"{value} 张",
-                    onValueChanged: RefreshInfoLabels,
-                    onEditingCompleted: RebuildContent),
-                CreateStepperRow(
-                    "下一张预载数量",
-                    null,
-                    () => Settings.PreloadForwardCount,
-                    value => Settings.PreloadForwardCount = value,
-                    () => 0,
-                    () => Settings.PreloadMaximum,
-                    valueFormatter: value => $"{value} 张"),
-                CreateStepperRow(
-                    "上一张预载数量",
-                    null,
-                    () => Settings.PreloadBackwardCount,
-                    value => Settings.PreloadBackwardCount = value,
-                    () => 0,
-                    () => Settings.PreloadMaximum,
-                    valueFormatter: value => $"{value} 张"),
-                CreateStepperRow(
-                    "列表滚动预载数量",
-                    null,
-                    () => Settings.VisibleCenterPreloadCount,
-                    value => Settings.VisibleCenterPreloadCount = value,
-                    () => 0,
-                    () => Settings.PreloadMaximum,
-                    valueFormatter: value => $"{value} 张"),
-                CreateSliderRow(
-                    "滚动预载延时",
-                    null,
-                    () => Settings.VisibleCenterDelayMs,
-                    value => Settings.VisibleCenterDelayMs = value,
-                    100,
-                    5000,
-                    valueFormatter: value => $"{value} ms")));
+                () => Settings.NativePreloadParallelism,
+                value => Settings.NativePreloadParallelism = value,
+                () => 1,
+                () => Settings.NativePreloadParallelismMaximum,
+                valueFormatter: value => $"{value} 线程"),
+            CreateStepperRow(
+                "软件解码线程",
+                null,
+                () => Settings.CpuPreloadParallelism,
+                value => Settings.CpuPreloadParallelism = value,
+                () => 1,
+                () => Settings.CpuPreloadParallelismMaximum,
+                valueFormatter: value => $"{value} 线程"),
+        };
+        if (Settings.ShowsCacheLimits)
+        {
+            cacheRows.Add(CreateSliderRow(
+                "缓存内存上限",
+                null,
+                () => Settings.BitmapCacheMaxMemory,
+                value => Settings.BitmapCacheMaxMemory = value,
+                512,
+                32768,
+                valueFormatter: value => $"{value} MB",
+                onValueChanged: RefreshInfoLabels,
+                onEditingCompleted: RebuildContent));
+            cacheRows.Add(CreateSliderRow(
+                "缓存数量上限",
+                null,
+                () => Settings.BitmapCacheMaxCount,
+                value => Settings.BitmapCacheMaxCount = value,
+                1,
+                400,
+                valueFormatter: value => $"{value} 张",
+                onValueChanged: RefreshInfoLabels,
+                onEditingCompleted: RebuildContent));
+        }
+        cacheRows.Add(CreateStepperRow(
+            "下一张预载数量",
+            null,
+            () => Settings.PreloadForwardCount,
+            value => Settings.PreloadForwardCount = value,
+            () => 0,
+            () => Settings.PreloadMaximum,
+            valueFormatter: value => $"{value} 张"));
+        cacheRows.Add(CreateStepperRow(
+            "上一张预载数量",
+            null,
+            () => Settings.PreloadBackwardCount,
+            value => Settings.PreloadBackwardCount = value,
+            () => 0,
+            () => Settings.PreloadMaximum,
+            valueFormatter: value => $"{value} 张"));
+        cacheRows.Add(CreateStepperRow(
+            "列表滚动预载数量",
+            null,
+            () => Settings.VisibleCenterPreloadCount,
+            value => Settings.VisibleCenterPreloadCount = value,
+            () => 0,
+            () => Settings.PreloadMaximum,
+            valueFormatter: value => $"{value} 张"));
+        cacheRows.Add(CreateSliderRow(
+            "滚动预载延时",
+            null,
+            () => Settings.VisibleCenterDelayMs,
+            value => Settings.VisibleCenterDelayMs = value,
+            100,
+            5000,
+            valueFormatter: value => $"{value} ms"));
+
+        contentStack.AddArrangedSubview(CreateSection("缓存与预加载", null, cacheRows.ToArray()));
 
         contentStack.AddArrangedSubview(performanceInfo);
         contentStack.AddArrangedSubview(cacheInfo);

@@ -10,7 +10,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 验收专用（测试钩子）：<c>--pv-native-sheet-shots &lt;目录&gt;</c> 在同一张照片上依次打开设置根页、
-/// 设置子页与工具页（列表 / EXIF / DINO），把每个页面停在 <c>--pv-native-ui-snapshots</c> 检查点，
+/// 设置子页（文件 / 预览 / 控制）与工具页（列表 / EXIF / DINO），把每个页面停在 <c>--pv-native-ui-snapshots</c> 检查点，
 /// 供外部截图比对 sheet 背景。只读素材，不写用户照片。
 /// </summary>
 internal static class iOSNativeSheetShotCheck
@@ -63,6 +63,20 @@ internal static class iOSNativeSheetShotCheck
             var settingsNavigation = (UINavigationController)root.PresentedViewController!;
             var settingsRoot = (iOSNativeSettingsRootViewController)settingsNavigation.ViewControllers![0];
             await HoldAsync("settings-root", lines);
+
+            await UiDispatcher.InvokeAsync(() => settingsRoot.RowSelected(settingsRoot.TableView, NSIndexPath.FromRowSection(0, 0)));
+            await WaitAsync(() => settingsNavigation.TopViewController is iOSNativeFileSettingsViewController, "设置文件页");
+            await Task.Delay(400);
+            // 滚到页尾，让「缓存与预加载」分组与两条预算提示完整进画面
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                var scroll = settingsNavigation.TopViewController!.View!.Subviews.OfType<UIScrollView>().Single();
+                double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
+                scroll.SetContentOffset(new CGPoint(0, bottom), false);
+            });
+            await Task.Delay(300);
+            await HoldAsync("settings-file", lines);
+            await UiDispatcher.InvokeAsync(() => settingsNavigation.PopViewController(false));
 
             await UiDispatcher.InvokeAsync(() => settingsRoot.RowSelected(settingsRoot.TableView, NSIndexPath.FromRowSection(1, 0)));
             await WaitAsync(() => settingsNavigation.TopViewController is iOSNativePreviewSettingsViewController, "设置预览页");

@@ -80,13 +80,15 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 
 设备选项在 `.vscode/tasks.json` 的 `inputs[iosDevice]` 中维护。首次真机运行须在系统设置中信任开发者证书。启动参数、程序化验收与素材要求见 [iOS 模块手册](PhotoViewer.iOS/AGENTS.md)。
 
-续期 Profile 前，Xcode 须已登录 Apple ID 并注册设备；首次使用先配置本地 Team ID：
+续期 Profile 前，Xcode 须已登录 Apple ID 并注册设备（Settings → Accounts）；免费账号的 Profile 只有 7 天有效期，过期后真机构建报「在 iOS 上找不到 … 的任何可用预配配置文件」，先跑 **Refresh iOS Profile** 续期，若该项报 `No Accounts` 则说明 Xcode 里没有可用的 Apple ID 会话，须先重新登录再续期。首次使用先配置本地 Team ID：
 
 ```bash
 cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.xcconfig
 ```
 
 编辑 `Local.xcconfig` 的 `DEVELOPMENT_TEAM`；该文件已被忽略，不提交到仓库。
+
+**内存上限 entitlement**：`PhotoViewer.iOS/Entitlements.plist` 声明 `com.apple.developer.kernel.increased-memory-limit`（免费 Apple ID 也可签进 Profile），`Tools/RefreshIosProfile/RefreshIosProfile/Entitlements.plist` 必须与它保持一致，否则续期后的 Profile 不带该能力、真机预算退回小口径。两份文件同改同验；运行时不依赖它生效，缺失时按同一逻辑自动按小预算运行。
 
 ## 打包发布
 

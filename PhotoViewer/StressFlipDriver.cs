@@ -16,7 +16,9 @@ namespace PhotoViewer;
 
 /// <summary>
 /// 真机压测翻页驱动器:仅当头工程解析到 --pv-stress 启动参数时激活,常规运行完全惰性。
-/// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路);
+/// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路),
+/// **翻页顺序取展示列表顺序**(与上一张/下一张命令看到的是同一份筛选/排序列表,
+/// 预取按该列表的翻页方向选邻居;用文件夹枚举顺序翻会让预取的邻居与下一张无关);
 /// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取当前壳的展示会话(各原生壳均为 PhotoLoadSession),
 /// 覆盖真实 P0 解码链路而非空跑。
 /// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
@@ -107,6 +109,8 @@ public static class StressFlipDriver
             var folder = new LocalFolderRef(folderPath);
             await UiDispatcher.InvokeAsync(() => vm.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false)).Unwrap();
 
+            // 连翻顺序取"展示列表顺序"（与键盘/轻扫的上一张/下一张同源），而不是文件夹枚举顺序：
+            // 预取按展示列表的翻页方向选邻居，枚举顺序与之无关，用枚举顺序测不出预取效果。
             var files = await WaitForFilesAsync(vm);
             if (files.Count == 0)
             {
@@ -194,7 +198,13 @@ public static class StressFlipDriver
         for (var attempt = 0; attempt < 150; attempt++)
         {
             var count = await UiDispatcher.InvokeAsync(() => vm.FolderVM.AllFiles.Count);
-            if (count > 0) return vm.FolderVM.AllFiles.ToList();
+            if (count > 0)
+            {
+                var displayed = await UiDispatcher.InvokeAsync(() => vm.FileVM.ThumbnailList.FilteredFiles.ToList());
+                if (displayed.Count > 0) return displayed;
+                return vm.FolderVM.AllFiles.ToList();
+            }
+
             await Task.Delay(100);
         }
 

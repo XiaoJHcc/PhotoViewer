@@ -37,7 +37,10 @@ public sealed class DefaultMemoryBudgetProvider : IMemoryBudgetProvider
     {
         long budget = GetBudgetBytes();
         if (budget <= 0) return long.MaxValue;
-        long used = GC.GetTotalMemory(false);
+        long used = GetFootprintBytes();
         return Math.Max(0, budget - used);
     }
+
+    /// <summary>与可用口径同源:托管堆实际占用(未强制回收,读数为保守估计)。</summary>
+    public long GetFootprintBytes() => GC.GetTotalMemory(false);
 }

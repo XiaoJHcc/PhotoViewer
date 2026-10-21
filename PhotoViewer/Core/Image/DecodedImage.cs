@@ -133,7 +133,7 @@ public sealed class DecodedImage : IDisposable
     };
 
     /// <summary>
-    /// 从 <see cref="ImageBufferPool"/> 租用像素缓冲(2 幂分档,长度 ≥ minBytes)。
+    /// 从 <see cref="ImageBufferPool"/> 租用像素缓冲(尺寸类对齐,长度 ≥ minBytes)。
     /// 调用方必须经 <see cref="CreatePooled"/> 交给 DecodedImage,或自行 <see cref="ImageBufferPool.Return"/>。
     /// </summary>
     public static byte[] RentPixels(int minBytes) => ImageBufferPool.Rent(minBytes);

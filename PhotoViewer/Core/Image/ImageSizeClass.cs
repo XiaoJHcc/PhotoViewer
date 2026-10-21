@@ -2,7 +2,7 @@ namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 位图缓存的尺寸档。<see cref="BitmapLoader"/> 以 (路径, 尺寸档) 为缓存键,
-/// 缩略图/代理图/全分辨率同驻一个统一 LRU(分区预算,淘汰保护集按路径生效)。
+/// 缩略图/代理图/全分辨率同驻一个统一 LRU(分区预算,淘汰按保留排名生效)。
 /// </summary>
 public enum ImageSizeClass
 {

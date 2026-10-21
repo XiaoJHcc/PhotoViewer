@@ -166,7 +166,7 @@
 | 里程碑 | 提交 | 已验证（程序化） | 未关闭 |
 |---|---|---|---|
 | I1 基座 | `d22403e` + `0a4ad1a` | Mac 八套 `--pv-native-*` 回归 PASS、零新增警告；iOS 模拟器/真机构建零错误；原生壳启动不创建 Avalonia 对象；原生存储引用 / 文档选择器 / 外部打开接线 | 无 UI 手验项 |
-| I2 主图 | `41abd7b` + `2245d23` | 模拟器 `photo` 10；真机 `photo` 10、500 连翻 **500/500 零超时恒 Normal**、告警注入降级 + 30s 恢复观察期；F16 代理 ↔ 8 位 P3 Full 热替换变换保持、中心线性色差 ≈0.0001 | 色彩/P3 目视与跨屏；ARW 内嵌预览（暂缓，并入性能专项） |
+| I2 主图 | `41abd7b` + `2245d23` | 模拟器 `photo` 10；真机 `photo` 10、500 连翻 **500/500 零超时恒 Normal**、告警注入降级 + 30s 恢复观察期；F16 代理 ↔ 8 位 P3 Full 热替换变换保持、中心线性色差 ≈0.0001 | 色彩/P3 目视与跨屏；~~ARW 内嵌预览~~ → 已由性能专项改为 `CIRawFilter` 全分辨率（回退才用内嵌预览） |
 | ONNX / SCOPE-01 | `e1f7cef` | 模拟器与真机 `--pv-dino-check` **PASS cls=384 ep=CPU**；真机 500 连翻 0 条 `DinoFeatureCache` 日志，p50 323.2ms / p95 418.5ms | CoreML EP 在 iOS 原生库不可用（上游限制，CPU 推理） |
 | I3 主屏布局 | `6f36d8b` | 两台模拟器 `layout` 24 + `photo` 10：两向/自动布局、真实安全区、栏位显隐释放空间、筛选条/控制栏/卡片几何、FILM-01–06 交互 | 旋转、Split View/Stage Manager、触摸手感 |
 | I4 输入 | `9f20582` + 2026-10-17 缺陷修复 | 模拟器 `input` **28**、真机 `input` **28**（新增捏合/平移驱动、控制栏重建幂等）：两类上下文菜单、轻扫翻页、HID 映射 47 键、INPUT-01、滚轮识别范围、拖入、设置关闭回写传播 | 真实键盘/鼠标/触控板手感、滚轮方向 |
@@ -179,7 +179,7 @@
 **未关闭项（需作者决定或手验）**：
 
 1. **作者手验**：常规 UI（触摸手感、旋转与 Split View/Stage Manager、硬件键盘/鼠标/触控板、文件拖入与"用…打开"）2026-10-21 通过；仍未关闭：色彩与 P3 目视对拍、外接显示、压力/内存、外设热插拔。
-2. **ARW 内嵌预览**：iOS ImageIO 对 Sony ARW 只返回约 1.7MP 内嵌预览（Mac 同文件为 7008×4672），`IsProxy=false` 使 `NeedsFull` 永不升级 Full。作者 2026-10-18 裁定：暂缓 `CIRAWFilter` 全分辨率解码（性能未测），并入后续性能专项；现状登记为 `SCOPE-04@ios` 平台限制。
+2. ~~**ARW 内嵌预览**~~ **已由 [性能与内存专项](apple-performance-memory-plan-1.md) 处理**：RAW 改走共享 `ApplePresentationDecoder` 的 `CIRawFilter` 全分辨率解码（几何取传感器 `NativeSize`、方向交 GPU、Mac/iPad 共用），ImageIO 的约 1.7MP 内嵌预览只在滤镜创建/渲染失败时作为回退，登记为 `SCOPE-04@ios` 回退说明；全幅对拍见 `--pv-perf-raw-compare`。
 3. **CoreML EP 不可用**：`Microsoft.ML.OnnxRuntime` 1.24.4 / 1.25.1 的 iOS 原生库均不支持 CoreML EP，DINO 走 CPU（注册失败记日志后回退）。需等上游包或另立 GPU 方案。
 4. ~~**DINO 模型包内重复**~~ **已随 6D 关闭**：模型不再内嵌 `PhotoViewer.dll`，改由各头 bundle/asset/嵌入资源打包，iOS/Windows 的重复打包已消除。
 5. **8 位 P3 编码边界**：超出 P3 立方体的原色（如 Adobe RGB 红原色）在 Full 档被钳到 P3 边界；属当前编码的既有边界，非 I2 回归。
@@ -189,4 +189,4 @@
 9. **设置页逐条契约**：I4 只验证"关闭回写后主屏传播"；设置页视觉/输入体验 2026-10-21 作者手验通过（真实外接键鼠热插拔除外）。
 10. ~~**共享 EXIF 伴侣时序**~~ **已修（2026-10-18）**：根因同"首图落在同名组非代表项"——`FolderViewModel.LoadFolderAsync` 无指定目标时取枚举顺序首张，同名 HIF+ARW 时常是被合并隐藏的 ARW（iOS 上 ARW 只有 1616×1080 内嵌预览，作者因此看到"首张双击 100% 只放大一点点"）。改为取同步重建后的筛选列表首项（即代表文件，按格式顺序 HIF 优先），筛选为空时回退枚举首张。Mac 实跑 HIF+ARW 同名目录 `CurrentFile => A7C01489.HIF`；Mac base/filmstrip/similarity PASS。
 11. **100% 口径已与作者确认（2026-10-18）**：100% = 照片源像素与屏幕物理像素点对点（IMAGE-02），旧 Avalonia 逻辑点口径的差异按意图差异保留，不再对齐。
-12. **待收尾统一清理的差异/遗留**：iOS `UseInterpreter=true` 致增强等热循环慢（真机 24MP Full 约 1.8s，是否改纯 AOT 待定）；"增强后竖拍变横"未复现，待作者提供原图；iOS RAW 全分辨率（`CIRAWFilter`）暂缓并入性能专项（见第 2 条）。Mac 细节预览双击清 `FollowsFocus` 与 Windows `ToggleFit` 对焦点已按规格统一（ANALYSIS-04、W1），不再挂账。
+12. **待收尾统一清理的差异/遗留**：iOS `UseInterpreter=true` 致增强等热循环慢（真机 24MP Full 约 1.8s，是否改纯 AOT 待定）；"增强后竖拍变横"未复现，待作者提供原图；~~iOS RAW 全分辨率（`CIRAWFilter`）暂缓并入性能专项~~ → **已由 [性能与内存专项](apple-performance-memory-plan-1.md) 处理**（`CIRawFilter` 全分辨率，见第 2 条）。Mac 细节预览双击清 `FollowsFocus` 与 Windows `ToggleFit` 对焦点已按规格统一（ANALYSIS-04、W1），不再挂账。

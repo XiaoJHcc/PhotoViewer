@@ -32,6 +32,16 @@ internal static class NativeSettingsAcceptance
             AssertRendered(page, $"分类 {category} 未渲染出控件");
             CaptureScreen(presenter, Path.Combine(output, $"settings-window-{category}.png"), checks);
             checks.Add($"category {category}: SwiftUI grouped form rendered");
+            if (category == 0)
+            {
+                // 桌面端缓存上限由用户设置生效，提示按实测预算与适屏尺寸给出可缓存张数
+                if (!presenter.WorkingSettings.ShowsCacheLimits) throw new InvalidOperationException("桌面端缓存上限两项不应隐藏");
+                string countInfo = presenter.WorkingSettings.BitmapCacheCountInfo;
+                if (!countInfo.Contains("适屏照片", StringComparison.Ordinal))
+                    throw new InvalidOperationException("缓存提示未按适屏张数口径：" + countInfo);
+                checks.Add("file footer: " + presenter.WorkingSettings.PerformanceBudgetInfo);
+                checks.Add("file footer: " + countInfo);
+            }
             await Task.Delay(300);
         }
         CaptureScreen(presenter, Path.Combine(output, "settings-window.png"), checks);

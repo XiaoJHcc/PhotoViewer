@@ -69,6 +69,33 @@ public static class MemoryGovernor
     /// <summary>在途解码预留总额(字节)。</summary>
     public static long ReservedBytes => Interlocked.Read(ref _reservedBytes);
 
+    /// <summary>当前预算(字节);未注入预算源时为 0。</summary>
+    public static long BudgetBytes
+    {
+        get
+        {
+            IMemoryBudgetProvider? provider;
+            lock (_gate) provider = _provider;
+            try { return provider?.GetBudgetBytes() ?? 0; }
+            catch { return 0; }
+        }
+    }
+
+    /// <summary>当前进程驻留(字节,预算源同口径);口径不适用或未注入时为 0(未知)。</summary>
+    public static long FootprintBytes
+    {
+        get
+        {
+            IMemoryBudgetProvider? provider;
+            lock (_gate) provider = _provider;
+            try { return provider?.GetFootprintBytes() ?? 0; }
+            catch { return 0; }
+        }
+    }
+
+    /// <summary>每轮压力探测结束(含 Initialize 的首轮)后触发,供缓存按最新 footprint 重算容量。回调在线程池线程。</summary>
+    public static event Action? Probed;
+
     /// <summary>
     /// 注入平台预算源并启动周期探测(2s,带水位迟滞防抖)。重复调用以最后一次为准。
     /// </summary>
@@ -83,6 +110,8 @@ public static class MemoryGovernor
             _timer = new Timer(_ => SafeEvaluate(), null, ProbeInterval, ProbeInterval);
         }
         EvaluateNow();
+        // 启动即落一条上限快照:真机据此确认预算是否真按实测(而非回退值)生效。
+        WriteSnapshot("init", "startup");
     }
 
     /// <summary>登记内存客户端。重复登记同一实例无效。</summary>
@@ -183,13 +212,18 @@ public static class MemoryGovernor
 
         long budget = provider.GetBudgetBytes();
         long available = provider.GetAvailableBytes();
-        if (budget <= 0 || available == long.MaxValue) return; // 预算未知,维持现状
+        if (budget > 0 && available != long.MaxValue)
+        {
+            double availPercent = 100.0 * available / budget;
+            var current = CurrentLevel;
+            var target = EvaluateTarget(availPercent, current);
+            if (target != current)
+                SetLevel(target, "probe");
+        }
 
-        double availPercent = 100.0 * available / budget;
-        var current = CurrentLevel;
-        var target = EvaluateTarget(availPercent, current);
-        if (target != current)
-            SetLevel(target, "probe");
+        // 每轮探测都通知容量推导(预算/驻留会随缓存与系统水位漂移,2s 粒度足够)
+        try { Probed?.Invoke(); }
+        catch (Exception ex) { Console.WriteLine($"[MemoryGovernor] Probed subscriber failed: {ex.Message}"); }
     }
 
     /// <summary>
@@ -289,6 +323,7 @@ public static class MemoryGovernor
             {
                 sb.Append(",\"availMB\":").Append(_provider.GetAvailableBytes() / 1048576);
                 sb.Append(",\"budgetMB\":").Append(_provider.GetBudgetBytes() / 1048576);
+                sb.Append(",\"footprintMB\":").Append(_provider.GetFootprintBytes() / 1048576);
             }
             sb.Append(",\"reservedMB\":").Append(ReservedBytes / 1048576);
             sb.Append(",\"decodeMiss\":{ \"n\":").Append(missCount)

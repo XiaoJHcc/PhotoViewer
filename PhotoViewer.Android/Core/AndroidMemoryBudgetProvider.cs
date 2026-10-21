@@ -26,6 +26,12 @@ public sealed class AndroidMemoryBudgetProvider : IMemoryBudgetProvider
         return info?.AvailMem ?? long.MaxValue;
     }
 
+    /// <summary>
+    /// 本进程驻留量:系统水位口径下没有 per-app footprint 读数(总内存 − 系统可用是整机占用,
+    /// 直接当非缓存占用会把缓存压到下限),故返回 0 表示未知——缓存只按用户上限推导,不按预算。
+    /// </summary>
+    public long GetFootprintBytes() => 0;
+
     private static ActivityManager.MemoryInfo? ReadMemoryInfo()
     {
         try

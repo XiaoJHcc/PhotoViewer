@@ -22,7 +22,9 @@ namespace PhotoViewer.Core.AI;
 ///
 /// 派生层按指纹走 <see cref="AnalysisResultCache"/>,与邻居预取同步预热,命中时切图变成纯 UI swap。
 /// 4 张诊断瓦片的位图(PCA / 中心 cosine / 锐度 / 抖动)归 cache 所有 — presenter 仅引用、不 Dispose;
-/// 用户点击诊断瓦片重算 cosine 与直方图位图归 presenter 所有,替换时显式释放。
+/// 用户点击诊断瓦片重算 cosine 的位图归 presenter 所有,替换时显式释放。
+/// 直方图位图同样归 presenter 所有,并按"源位图实例"保留最近 2 份:源用弱引用记录(不延长像素租约),
+/// 同一实例不重复计算,旧实例被挤出缓存且不在显示时才释放。
 /// 细节预览瓦片不携带位图:裁剪源由各平台展示层持有,本类只提供归一化中心与对焦框。
 /// </summary>
 public sealed class AnalysisPresenter : IDisposable
@@ -33,6 +35,9 @@ public sealed class AnalysisPresenter : IDisposable
     /// <summary>未提取回退的启动延迟(ms):快速翻页时在延迟内即被取消,零 CV/推理开销。</summary>
     private const int FallbackDelayMs = 500;
 
+    /// <summary>直方图缓存容量(A/B 对比与增强开关来回切时各留一份)。</summary>
+    private const int HistogramCacheCapacity = 2;
+
     private readonly IAnalysisHost _host;
     private readonly List<AnalysisTile> _tiles;
     private readonly AnalysisTile _focusTile;
@@ -42,13 +47,16 @@ public sealed class AnalysisPresenter : IDisposable
     private readonly AnalysisTile _cosineTile;
     private readonly AnalysisTile _sharpnessTile;
     private readonly AnalysisTile _shakeTile;
+    private readonly List<HistogramEntry> _histogramCache = new(HistogramCacheCapacity);
 
     private CancellationTokenSource? _cts;
     private ImageFile? _loadingFile;
     private ImageFile? _observedFile;
     private float[]? _patchTokens;
     private DecodedImage? _customCosine;   // 用户点击重算的 cosine 图(presenter 所有)
-    private DecodedImage? _histogram;      // 直方图(presenter 所有)
+    private DecodedImage? _histogram;      // 当前显示的直方图(presenter 所有,通常也在缓存里)
+    private DecodedImage? _histogramComputingSource; // 正在算直方图的源实例;仅用于去重
+    private CancellationTokenSource? _histogramCts;
     private int _histogramToken;
     private bool _disposed;
     private bool _focusInserted;
@@ -453,16 +461,43 @@ public sealed class AnalysisPresenter : IDisposable
         }
     }
 
-    /// <summary>从当前展示图现算 RGB 直方图;不可见或无图时清空。</summary>
+    /// <summary>
+    /// 从当前展示图现算 RGB 直方图。同一展示位图实例只算一次:已出结果直接换图,正在计算则不重复投递;
+    /// 新实例接管时取消上一个在途计算。面板隐藏或无展示图时清空图形与「计算中」占位。
+    /// </summary>
     private void RefreshHistogram()
     {
-        int token = ++_histogramToken;
         var source = _host.DisplayImage;
-        if (!_host.AnalysisVisible || _host.CurrentFile == null || source == null || !source.TryAcquire())
+        if (!_host.AnalysisVisible || _host.CurrentFile == null || source == null)
         {
             // ANALYSIS-07：无展示图或面板隐藏时清空直方图，不残留上一张的图形或“计算中”。
-            _histogramTile.Placeholder = null;
-            SwapHistogram(null, token);
+            CancelHistogramCompute();
+            _histogramToken++;
+            ClearHistogram(disposeCache: true);
+            return;
+        }
+
+        // A/B 对比、增强开关来回切:同一展示位图实例已有结果就直接复用,不重算也不闪“计算中”。
+        if (TryGetCachedHistogram(source, out var cached) && cached != null)
+        {
+            CancelHistogramCompute();
+            _histogramToken++;
+            if (!ReferenceEquals(_histogramTile.Source, cached) || _histogramTile.Placeholder != null)
+                ShowHistogram(cached);
+            return;
+        }
+
+        // 同一实例正在计算:保持“计算中”,不重复投递。
+        if (ReferenceEquals(Volatile.Read(ref _histogramComputingSource), source)
+            && Volatile.Read(ref _histogramCts) is { IsCancellationRequested: false })
+            return;
+
+        // 新请求接管:取消上一个在途计算,过期结果按 token 丢弃(仍会留在缓存里供回切复用)。
+        CancelHistogramCompute();
+        int token = ++_histogramToken;
+        if (!source.TryAcquire())
+        {
+            ClearHistogram(disposeCache: false);
             return;
         }
         if (_histogramTile.Placeholder != "计算中")
@@ -470,45 +505,171 @@ public sealed class AnalysisPresenter : IDisposable
             _histogramTile.Placeholder = "计算中";
             TilesChanged?.Invoke();
         }
+
+        var cts = new CancellationTokenSource();
+        Interlocked.Exchange(ref _histogramCts, cts);
+        Interlocked.Exchange(ref _histogramComputingSource, source);
+        var ct = cts.Token;
         _ = Task.Run(() =>
         {
-            try { return HistogramRenderer.Render(source, 512, 512); }
+            try { return HistogramRenderer.Render(source, 512, 512, ct); }
             finally { source.Release(); }
-        }).ContinueWith(task =>
+        }, CancellationToken.None).ContinueWith(task =>
         {
+            FinishHistogramCompute(source, cts);
+            cts.Dispose();
+            if (task.IsCanceled) return;
             if (task.IsFaulted)
             {
-                Console.WriteLine($"[Analysis] histogram failed: {task.Exception?.GetBaseException().Message}");
+                var error = task.Exception?.GetBaseException();
+                if (error is OperationCanceledException) return;
+                Console.WriteLine($"[Analysis] histogram failed: {error?.Message}");
                 UiDispatcher.Post(() => FailHistogram(token));
                 return;
             }
             var decoded = task.Result;
-            UiDispatcher.Post(() => SwapHistogram(decoded, token));
-        });
+            UiDispatcher.Post(() => CompleteHistogram(source, decoded, token));
+        }, TaskScheduler.Default);
+    }
+
+    /// <summary>取消在途直方图计算;结果由任务续体按取消状态丢弃。</summary>
+    private void CancelHistogramCompute()
+    {
+        var cts = Interlocked.Exchange(ref _histogramCts, null);
+        Interlocked.Exchange(ref _histogramComputingSource, null);
+        if (cts == null) return;
+        try { cts.Cancel(); }
+        catch (ObjectDisposedException) { /* 任务已结束并释放,无需再取消 */ }
+    }
+
+    /// <summary>任务结束(成功/取消/失败)后清掉在途标记;不匹配时说明已被新请求接管。</summary>
+    private void FinishHistogramCompute(DecodedImage source, CancellationTokenSource cts)
+    {
+        Interlocked.CompareExchange(ref _histogramComputingSource, null, source);
+        Interlocked.CompareExchange(ref _histogramCts, null, cts);
+    }
+
+    /// <summary>把源实例结果放入 2 项缓存;仍是当前请求时立即上屏。</summary>
+    private void CompleteHistogram(DecodedImage source, DecodedImage bitmap, int token)
+    {
+        if (_disposed)
+        {
+            bitmap.Dispose();
+            return;
+        }
+        AddHistogramEntry(source, bitmap);
+        if (token != _histogramToken) return; // 过期结果留缓存,不覆盖当前上屏内容
+        ShowHistogram(bitmap);
+    }
+
+    /// <summary>显示直方图位图(归 presenter/缓存所有);非缓存所有的旧图在视图更新后释放。</summary>
+    private void ShowHistogram(DecodedImage bitmap)
+    {
+        var old = _histogram;
+        _histogram = bitmap;
+        _histogramTile.Source = bitmap;
+        _histogramTile.Placeholder = null;
+        TilesChanged?.Invoke();
+        if (old != null && !ReferenceEquals(old, bitmap) && !IsHistogramCached(old)) UiDispatcher.Post(old.Dispose);
+    }
+
+    /// <summary>源实例弱引用 → 直方图位图;按最近使用顺序保留最近 2 份。</summary>
+    private void AddHistogramEntry(DecodedImage source, DecodedImage bitmap)
+    {
+        for (int i = 0; i < _histogramCache.Count; i++)
+        {
+            if (ReferenceEquals(_histogramCache[i].Bitmap, bitmap)) return;
+            if (_histogramCache[i].Source.TryGetTarget(out var target) && ReferenceEquals(target, source))
+            {
+                var replaced = _histogramCache[i];
+                _histogramCache.RemoveAt(i);
+                // 正在显示的旧图先留着,等 ShowHistogram 换掉后再按“非缓存所有”释放。
+                if (!ReferenceEquals(replaced.Bitmap, _histogram)) replaced.Bitmap.Dispose();
+                break;
+            }
+        }
+
+        _histogramCache.Add(new HistogramEntry(source, bitmap));
+        while (_histogramCache.Count > HistogramCacheCapacity)
+        {
+            int evict = _histogramCache.FindIndex(entry => !ReferenceEquals(entry.Bitmap, _histogram));
+            if (evict < 0) break;
+            var entry = _histogramCache[evict];
+            _histogramCache.RemoveAt(evict);
+            entry.Bitmap.Dispose();
+        }
+    }
+
+    private bool TryGetCachedHistogram(DecodedImage source, out DecodedImage? bitmap)
+    {
+        for (int i = 0; i < _histogramCache.Count; i++)
+        {
+            if (_histogramCache[i].Source.TryGetTarget(out var target) && ReferenceEquals(target, source))
+            {
+                bitmap = _histogramCache[i].Bitmap;
+                return true;
+            }
+        }
+        bitmap = null;
+        return false;
+    }
+
+    private bool IsHistogramCached(DecodedImage bitmap)
+    {
+        for (int i = 0; i < _histogramCache.Count; i++)
+            if (ReferenceEquals(_histogramCache[i].Bitmap, bitmap)) return true;
+        return false;
+    }
+
+    /// <summary>清空直方图显示;面板隐藏/no-image 时一并释放缓存位图,保留缓存时只清显示。</summary>
+    private void ClearHistogram(bool disposeCache)
+    {
+        var old = _histogram;
+        _histogram = null;
+        _histogramTile.Source = null;
+        _histogramTile.Placeholder = null;
+        TilesChanged?.Invoke();
+        if (disposeCache) ReleaseHistogramCache(old);
+        else if (old != null && !IsHistogramCached(old)) UiDispatcher.Post(old.Dispose);
+    }
+
+    /// <summary>释放直方图缓存与当前显示位图(面板隐藏、presenter 释放时调用)。</summary>
+    private void ReleaseHistogramCache(DecodedImage? displayed)
+    {
+        bool displayedInCache = displayed != null && IsHistogramCached(displayed);
+        foreach (var entry in _histogramCache) entry.Bitmap.Dispose();
+        _histogramCache.Clear();
+        if (displayed != null && !displayedInCache) displayed.Dispose();
     }
 
     /// <summary>直方图计算失败:清空图形并显示独立失败文案,不停在“计算中”(ANALYSIS-07/10)。</summary>
     private void FailHistogram(int token)
     {
         if (token != _histogramToken) return;
-        SwapHistogram(null, token);
+        var old = _histogram;
+        _histogram = null;
+        _histogramTile.Source = null;
         _histogramTile.Placeholder = "分析失败";
         TilesChanged?.Invoke();
+        if (old != null && !IsHistogramCached(old)) UiDispatcher.Post(old.Dispose);
     }
 
-    /// <summary>替换直方图位图(presenter 所有),过期 token 直接丢弃;旧位图延后一拍释放。</summary>
-    private void SwapHistogram(DecodedImage? next, int token)
+    /// <summary>
+    /// 直方图结果缓存项:源位图实例 + 由 presenter 持有的直方图位图。
+    /// </summary>
+    private sealed class HistogramEntry
     {
-        if (token != _histogramToken)
+        public HistogramEntry(DecodedImage source, DecodedImage bitmap)
         {
-            next?.Dispose();
-            return;
+            Source = new WeakReference<DecodedImage>(source);
+            Bitmap = bitmap;
         }
-        var old = _histogram;
-        _histogram = next;
-        _histogramTile.Source = next;
-        if (old != null) UiDispatcher.Post(old.Dispose);
-        TilesChanged?.Invoke();
+
+        /// <summary>源位图弱引用:不延长像素租约;源被回收后该结果只能等待淘汰。</summary>
+        public WeakReference<DecodedImage> Source { get; }
+
+        /// <summary>直方图位图(presenter 所有)。</summary>
+        public DecodedImage Bitmap { get; }
     }
 
     /// <summary>
@@ -644,7 +805,7 @@ public sealed class AnalysisPresenter : IDisposable
     /// <summary>cosine 角标格式:省略"参考点"前缀,只留坐标,与"中心"/"对焦点"风格对齐。</summary>
     private static string FormatCosineLabel(int x, int y) => $"Cosine {x},{y}";
 
-    /// <summary>取消在途任务并释放 presenter 持有的位图。</summary>
+    /// <summary>取消在途任务并释放 presenter 持有的位图(含直方图缓存)。</summary>
     public void Dispose()
     {
         if (_disposed) return;
@@ -657,8 +818,11 @@ public sealed class AnalysisPresenter : IDisposable
         _cts?.Dispose();
         _cts = null;
         _histogramToken++;
-        _histogram?.Dispose();
+        CancelHistogramCompute();
+        var displayed = _histogram;
         _histogram = null;
+        _histogramTile.Source = null;
+        ReleaseHistogramCache(displayed);
         _customCosine?.Dispose();
         _customCosine = null;
     }

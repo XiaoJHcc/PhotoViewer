@@ -75,9 +75,11 @@
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 
-置后（作者明确以后再做，**不计发布前置**）：性能门与切图卡顿、iPad 真机 500 连翻/内存告警复跑（作者 10-21 归入性能批次，素材需另行准备）、iPad ARW 全分辨率解码（`CIRAWFilter`，作者 10-18 定暂缓，现登记为 `SCOPE-04@ios` 平台限制）、iPad 分析栏可见翻页 p95、CoreML EP。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
+置后（作者明确以后再做，**不计发布前置**）：性能门与切图卡顿、iPad 真机 500 连翻/内存告警复跑、iPad ARW 全分辨率解码、iPad 分析栏可见翻页 p95——已由 [Apple 性能与内存专项](apple-performance-memory-plan-1.md) 处理并记录验收结果：RAW 改走 `CIRawFilter` 全分辨率（ImageIO 内嵌预览降为回退说明，见 `SCOPE-04@ios`），预取沿 P0 并行、缓存容量按实测预算推导、直方图查表/并行、增强对比复用均已落地，Mac 八套与 iOS 七套回归 PASS；CoreML EP 仍不可用（回退 CPU）。~~Training `DatasetBuilder` 去 Avalonia~~ 已完成（见 §3）。
 
 ### 5.1 性能专项首批（2026-10-19）
+
+> 本节的度量与候选方案已由 [Apple 性能与内存专项](apple-performance-memory-plan-1.md) 落地并验收（RAW `CIRawFilter`、预取沿 P0 并行、缓存按实测预算推导、直方图查表/并行、增强与直方图对比复用）；以下保留为当时的基线记录。
 
 - **度量入口**：Mac 已接共享 `StressFlipDriver`（`--pv-stress=<文件夹>`），与 iOS 同一指标口径；Windows/Android 原生壳尚无压测入口（只需 `MainViewModel` + `PhotoLoadSession`，接线成本低）。
 - **Mac 基线**（Debug，M 系列，17 张：JPG/HEIC 色卡 + 2 张 Sony ARW 7008×4672）：p50 **132ms**，p95/max **4546ms**（首张 ARW 冷读）；第二张 ARW 1569ms；JPG/HEIC 71–393ms，均为 Full（非代理）。

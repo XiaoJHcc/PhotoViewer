@@ -18,6 +18,7 @@ internal static class iOSNativeSettingsCheck
         var snapshot = settings.CreateSnapshot();
         await Task.Delay(700);
         await SnapshotStageAsync("settings-root");
+        await VerifyFilePageCacheLimitsAsync(root, settings, lines);
         await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(1, 0)));
         await WaitForPage<iOSNativePreviewSettingsViewController>(root);
         await SnapshotStageAsync("settings-preview");
@@ -73,6 +74,43 @@ internal static class iOSNativeSettingsCheck
             root.NavigationController!.PopToViewController(root, false);
             settings.ApplySnapshot(snapshot);
         });
+    }
+
+    /// <summary>
+    /// 文件页缓存项：iPad 的缓存容量由实测预算自动管理，不出现「缓存内存上限 / 缓存数量上限」两项，
+    /// 两条提示保留并改为按实测预算与适屏尺寸表述。
+    /// </summary>
+    private static async Task VerifyFilePageCacheLimitsAsync(
+        iOSNativeSettingsRootViewController root,
+        SettingsViewModel settings,
+        List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(0, 0)));
+        await WaitForPage<iOSNativeFileSettingsViewController>(root);
+        await SnapshotStageAsync("settings-file");
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (settings.ShowsCacheLimits) throw new InvalidOperationException("iPad 缓存容量应由实测预算自动管理");
+            if (settings.PreloadMaximum != 10) throw new InvalidOperationException($"自动口径下预载上限应为 10，实际 {settings.PreloadMaximum}");
+            var page = root.NavigationController!.TopViewController!;
+            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            if (labels.Contains("缓存内存上限") || labels.Contains("缓存数量上限"))
+                throw new InvalidOperationException("自动口径下仍显示缓存上限两项");
+            string budget = labels.FirstOrDefault(text => text.StartsWith("设备性能:", StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("文件页缺少设备性能提示");
+            string count = labels.FirstOrDefault(text => text.StartsWith("✓ 可缓存", StringComparison.Ordinal)
+                || text.StartsWith("⚠ 可缓存", StringComparison.Ordinal))
+                ?? throw new InvalidOperationException("文件页缺少可缓存张数提示");
+            if (budget.Contains("iOS 内存限制", StringComparison.Ordinal))
+                throw new InvalidOperationException("预算提示仍带旧的内存调小说明");
+            if (!budget.Contains("核 / 内存", StringComparison.Ordinal) || !budget.EndsWith(" MB", StringComparison.Ordinal))
+                throw new InvalidOperationException($"设备性能提示未取运行时预算：{budget}");
+            if (!count.Contains("适屏照片", StringComparison.Ordinal))
+                throw new InvalidOperationException($"可缓存张数提示口径不符：{count}");
+        });
+        await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
+        await WaitForPage<iOSNativeSettingsRootViewController>(root);
+        lines.Add("PASS SETTINGS-06@ios：文件页由实测预算自动管理缓存，不显示缓存内存/数量两项，预算与适屏张数两条提示按新口径且无旧说明");
     }
 
     /// <summary>

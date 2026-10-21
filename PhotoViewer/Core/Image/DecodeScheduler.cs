@@ -24,7 +24,9 @@ public enum DecodePriority
 /// <summary>
 /// 统一优先级解码调度器(静态类)。
 /// 收编缩略图加载与位图预取两条后台通道:按优先级排队、同 key 去重、
-/// P0 在途时后台 worker 暂停取新工作(已在跑的不打断)。
+/// P0 在途时后台 worker 暂停取新工作(已在跑的不打断),唯独标记为"可沿 P0 并行"的项例外
+/// (翻页方向上的下一、两张预取)。这类项走**独立通道**立即开跑,不占用后台 worker 池,
+/// 因此不会被缩略图/远邻预取挤到本轮翻页之后(连翻时 P0 几乎一直在途,后台池根本轮不到它们)。
 /// 设计见 Plans/photo-decode-scheduler-plan-1.md §2 Step 4。
 /// </summary>
 public static class DecodeScheduler
@@ -35,6 +37,8 @@ public static class DecodeScheduler
         public required DecodePriority Priority;
         public required Func<CancellationToken, Task> Work;
         public long Seq;
+        /// <summary>P0 在途时仍允许执行（翻页方向上的下一张预取），走独立通道。</summary>
+        public bool RunAlongsideP0;
     }
 
     private static readonly object _gate = new();
@@ -46,11 +50,19 @@ public static class DecodeScheduler
     private static long _seqCounter;
     private static int _workerCount;
     private static int _p0InFlight;
+    // 「可沿 P0 并行」通道当前在执行几个（上限 MaxAlongsideParallelism）
+    private static int _runAlongsideP0Active;
 
     /// <summary>
     /// 后台 worker 并发度上限。由调用侧同步 <c>Settings.NativePreloadParallelism</c>(BitmapPrefetcher 构造时挂钩)。
     /// </summary>
     public static volatile int MaxBackgroundParallelism = 2;
+
+    /// <summary>
+    /// 「可沿 P0 并行」通道的并发上限(翻页方向上的前两张预取):与后台 worker 池互不占用,
+    /// 否则连翻时它们的解码被缩略图/远邻预取挡在队尾,翻到下一张时还没开始。
+    /// </summary>
+    public static int MaxAlongsideParallelism = 2;
 
     /// <summary>P0(当前照片解码)在途计数;> 0 时后台 worker 暂停取新工作</summary>
     public static int P0InFlightCount => Volatile.Read(ref _p0InFlight);
@@ -63,7 +75,11 @@ public static class DecodeScheduler
     /// <param name="key">去重键(如同一路径的缩略图用 path + "#thumb")</param>
     /// <param name="priority">优先级</param>
     /// <param name="work">工作本体,参数为全局停止 token</param>
-    public static void Submit(string key, DecodePriority priority, Func<CancellationToken, Task> work)
+    /// <param name="runAlongsideP0">
+    /// 允许在 P0(当前图解码)在途时执行:只用于"翻页方向上的前两张"预取,并发上限
+    /// <see cref="MaxAlongsideParallelism"/>;其余后台项照旧为 P0 让位。
+    /// </param>
+    public static void Submit(string key, DecodePriority priority, Func<CancellationToken, Task> work, bool runAlongsideP0 = false)
     {
         if (priority == DecodePriority.P0_Current)
         {
@@ -102,7 +118,9 @@ public static class DecodeScheduler
                     existing.Work = work;
                     if (priority < existing.Priority)
                         existing.Priority = priority;
+                    existing.RunAlongsideP0 |= runAlongsideP0;
                 }
+                if (runAlongsideP0) PumpAlongsideLocked();
                 return;
             }
 
@@ -112,11 +130,63 @@ public static class DecodeScheduler
                 Priority = priority,
                 Work = work,
                 Seq = Interlocked.Increment(ref _seqCounter),
+                RunAlongsideP0 = runAlongsideP0,
             };
             _activeKeys.Add(key);
             EnsureWorkersLocked();
+            if (runAlongsideP0) PumpAlongsideLocked();
         }
         _signal.Release();
+    }
+
+    /// <summary>
+    /// 在「可沿 P0 并行」通道有空位时立即开跑队首的同通道工作项(不占用后台 worker 池)。
+    /// 调用方必须持有 <see cref="_gate"/>。
+    /// </summary>
+    private static void PumpAlongsideLocked()
+    {
+        while (Volatile.Read(ref _runAlongsideP0Active) < Math.Max(1, MaxAlongsideParallelism))
+        {
+            WorkItem? next = null;
+            foreach (var item in _queued.Values)
+            {
+                if (!item.RunAlongsideP0) continue;
+                if (next == null || item.Priority < next.Priority ||
+                    (item.Priority == next.Priority && item.Seq < next.Seq))
+                {
+                    next = item;
+                }
+            }
+            if (next == null) return;
+            _queued.Remove(next.Key);
+            _runAlongsideP0Active++;
+            _ = Task.Run(() => RunItemAsync(next, alongsideLane: true));
+        }
+    }
+
+    /// <summary>执行一个已从队列取出的工作项;异常吞掉并记日志,绝不弄死调用方。</summary>
+    private static async Task RunItemAsync(WorkItem item, bool alongsideLane)
+    {
+        try
+        {
+            await item.Work(_shutdownCts.Token).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DecodeScheduler] work failed ({item.Key}): {ex.Message}");
+        }
+        finally
+        {
+            lock (_gate)
+            {
+                _activeKeys.Remove(item.Key);
+                if (alongsideLane)
+                {
+                    _runAlongsideP0Active--;
+                    PumpAlongsideLocked();
+                }
+            }
+        }
     }
 
     /// <summary>
@@ -189,7 +259,8 @@ public static class DecodeScheduler
     }
 
     /// <summary>
-    /// 后台 worker 长期循环:P0 在途则等待(50ms 轮询),否则按优先级取下一个工作项执行。
+    /// 后台 worker 长期循环:P0 在途时暂停取新工作,否则按优先级取下一个工作项执行。
+    /// 「可沿 P0 并行」的项由 <see cref="PumpAlongsideLocked"/> 在独立通道执行,这里只在 P0 空闲时兜底接到它们。
     /// 工作项异常吞掉并记日志,绝不弄死循环。并发度下调时超额 worker 自行退出。
     /// </summary>
     private static async Task WorkerLoopAsync()
@@ -221,18 +292,7 @@ public static class DecodeScheduler
                 continue;
             }
 
-            try
-            {
-                await item.Work(_shutdownCts.Token).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[DecodeScheduler] work failed ({item.Key}): {ex.Message}");
-            }
-            finally
-            {
-                lock (_gate) _activeKeys.Remove(item.Key);
-            }
+            await RunItemAsync(item, alongsideLane: false).ConfigureAwait(false);
         }
     }
 
