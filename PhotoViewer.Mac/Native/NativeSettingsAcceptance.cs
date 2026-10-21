@@ -121,7 +121,24 @@ internal static class NativeSettingsAcceptance
         presenter.ApplyAction($"{{\"type\":\"applyPreset\",\"presetId\":\"{presetId}\",\"text\":\"1601\"}}");
         if (preset.Text != "800") throw new InvalidOperationException("非法预设覆盖原值");
         await Task.Delay(300);
-        var settingsWindow = NSApplication.SharedApplication.KeyWindow ?? throw new InvalidOperationException("设置窗口未获焦");
+        // 后台启动的冒烟进程拿不到 macOS 激活（KeyWindow 可能为空），按窗口号直接取设置窗口并置前；
+        // 取到即继续，键盘事件按窗口号投递，不依赖应用激活。
+        NSWindow? settingsWindow = null;
+        for (int attempt = 0; attempt < 60 && settingsWindow == null; attempt++)
+        {
+            var key = NSApplication.SharedApplication.KeyWindow;
+            settingsWindow = key != null && key.WindowNumber == presenter.WindowNumber
+                ? key
+                : NSApplication.SharedApplication.WindowWithWindowNumber(presenter.WindowNumber);
+            if (settingsWindow != null)
+            {
+                NSApplication.SharedApplication.Activate();
+                settingsWindow.MakeKeyAndOrderFront(null);
+                break;
+            }
+            await Task.Delay(50);
+        }
+        if (settingsWindow == null) throw new InvalidOperationException("设置窗口未获焦");
         if (settingsWindow.WindowNumber != presenter.WindowNumber) throw new InvalidOperationException("设置窗口不是当前键盘窗口");
         var field = PresetField(settingsWindow.ContentView!, presetId);
         settingsWindow.MakeFirstResponder(field);

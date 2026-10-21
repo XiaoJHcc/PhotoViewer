@@ -63,6 +63,8 @@ internal static class NativeToolsAcceptance
             }
 
             {
+                // SwiftUI 侧栏收尾可能再改一次详情栏宽度，宽度变化会按设计清掉现场选择框；先等宽度稳定再点击。
+                await WaitStableAsync(() => (double)exifTable.Frame.Width, 0.5, 300, "EXIF 表格宽度稳定");
                 var scroll = Descendants(page).OfType<NSScrollView>().First();
                 scroll.ContentView.ScrollToPoint(CGPoint.Empty);
                 scroll.ReflectScrolledClipView(scroll.ContentView);
@@ -240,6 +242,22 @@ internal static class NativeToolsAcceptance
             foreach (var nested in Descendants(child)) yield return nested;
         }
     }
+    /// <summary>等待某个尺寸连续 stableMilliseconds 毫秒不再变化。</summary>
+    private static async Task WaitStableAsync(Func<double> value, double tolerance, int stableMilliseconds, string name)
+    {
+        var start = DateTime.UtcNow;
+        double last = value();
+        var changedAt = DateTime.UtcNow;
+        while ((DateTime.UtcNow - start).TotalSeconds < 10)
+        {
+            await Task.Delay(25);
+            double current = value();
+            if (Math.Abs(current - last) > tolerance) { last = current; changedAt = DateTime.UtcNow; }
+            else if ((DateTime.UtcNow - changedAt).TotalMilliseconds >= stableMilliseconds) return;
+        }
+        throw new InvalidOperationException("等待稳定超时：" + name);
+    }
+
     private static async Task WaitAsync(Func<bool> condition, string name, int timeoutSeconds = 60)
     {
         for (int i = 0; i < timeoutSeconds * 40; i++) { if (condition()) return; await Task.Delay(25); }

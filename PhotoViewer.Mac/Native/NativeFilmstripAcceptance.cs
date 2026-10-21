@@ -211,8 +211,8 @@ internal static class NativeFilmstripAcceptance
         await Task.Delay(80);
         window.Main.CurrentFile = files[0];
         window.Main.FileVM.ThumbnailList.ScrollToCurrent();
-        await Task.Delay(450);
-        if (AxisOffset(scroll) > 1) throw new InvalidOperationException("连续定位未以最后请求为准");
+        await WaitScrollSettledAsync(scroll);
+        if (AxisOffset(scroll) > 1) throw new InvalidOperationException($"连续定位未以最后请求为准：offset={AxisOffset(scroll)}, animating={scroll.IsAnimating}");
 
         window.Main.CurrentFile = files[files.Count / 2];
         var filter = window.Main.FileVM.FilterBar;
