@@ -367,6 +367,12 @@ internal sealed class MacSimilarityPanel : NSView
         return Math.Max(text, error) + DockRowMargin * 2;
     }
 
+    /// <summary>验收读取停靠区错误标签的可见态。</summary>
+    internal bool DockErrorVisible => !_listDock.Hidden && !_dockError.Hidden;
+
+    /// <summary>验收读取停靠区错误标签文本。</summary>
+    internal string DockErrorText => _dockError.StringValue;
+
     /// <summary>列布局停靠区高度:全部内容行加左右外边距 8、上下外边距 3。</summary>
     private double DockHeight(double innerWidth)
     {

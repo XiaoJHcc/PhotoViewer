@@ -43,6 +43,13 @@ public static class NativeAcceptanceRunner
                 Environment.ExitCode = 0;
                 return;
             }
+            if (args.Contains("--pv-native-faults"))
+            {
+                await NativeFaultAcceptance.RunAsync(window, output);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Environment.ExitCode = 0;
+                return;
+            }
             await WaitAsync(() => window.Main.CurrentFile != null && window.Session.Image != null, "首图加载");
             if (args.Contains("--pv-native-toolbar"))
             {

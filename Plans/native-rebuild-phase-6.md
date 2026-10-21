@@ -66,12 +66,12 @@
 
 完整清单由 2026-10-18 文档盘点产生，6G 合并为单一 backlog。2026-10-19 按 `Design/status.md` 复核后：
 
-- **Windows**：`INPUT-01` 仍待核验，不直接认定功能缺失；W-M6 专项与几何导出未做，旧壳对拍随 6D 失效，后续按 6F 样机导出。status Windows **38 格待核验，不是 38 个缺功能**，其中 18 格四端共欠账；审查发现 `FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 无障碍名称/键盘重排序小缺口未修。W-M7 色彩与 RAW 主图解码独立延期（RAW 内嵌缩略图、列表与星级写回可用）。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit`，程序化与作者手验通过）。
+- **Windows**：`INPUT-01` 仍待核验，不直接认定功能缺失；W-M6 专项与几何导出未做，旧壳对拍随 6D 失效，后续按 6F 样机导出。status Windows 现仅 **1 格待核验**（SCOPE-04）与 6 格代码核对，不是缺功能；`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。W-M7 色彩与 RAW 主图解码独立延期（RAW 内嵌缩略图、列表与星级写回可用）。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit`，程序化与作者手验通过）。
 - **Android**：~~列表上下按钮排序~~ → **已改为拖拽**（`ItemTouchHelper` + 行尾把手，status.md SETTINGS-15 代码核对 10-18）；数值用 +/- 与拖入未接已登记为平台差异（SETTINGS-12@android / OPEN-07@android）；真机 P3 表面抬亮（现回退 sRGB）；`pv-check all` 偶发 SIGSEGV；API/方向/字体缩放/DPI 矩阵与真机门未跑。
 - **macOS**：~~细节预览双击会清 `FollowsFocus`~~ → **已按规格统一**：`ANALYSIS-04` 规定"双击即结束跟随（显式定位优先），四端一致"，status.md macOS 程序化通过 10-16。
 - **共享**：RAW 自动 sidecar 未实现。
 
-作者手验待办（不阻塞开发，阻塞"作者手验通过"状态）：iPad 清单 39 项；Windows 175%/200% DPI、真实跨屏、相机八方向素材与增强 + 分析长稳待硬件/素材（W-M7 色彩/RAW 独立延期；设置拖拽/录制与工具多格式/选择器已于 2026-10-18 由作者验收）；Android 验收清单全部；统一清单中 macOS/iOS 余项。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**（不再计入待办；对应 status.md 的 INPUT-04 / SHELL-06 / TOOLBAR-04 已注明）。
+作者手验（2026-10-21）：macOS、iPad、Windows 三端常规 UI 已通过，Windows 另含 175%/200% DPI。Mac/iPad 的失败注入已由 faults 套件机测通过；Windows 失败注入仍为代码核对。仍缺：iPad 广色域对拍、外接显示、500 连翻与内存告警；Windows 真实跨屏、相机八方向素材、增强 + 分析长稳；Android 验收清单全部与真机门；统一清单余项。**触控板分流无验收条件，记为不阻塞任务**（对应 status.md 的 INPUT-04 已注明）。
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 

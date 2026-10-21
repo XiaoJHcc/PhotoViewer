@@ -79,7 +79,6 @@
 - 相似候选集合取自当前筛选结果；排序不改变候选集合，筛选变化会触发重算（[similarity](similarity.md)、[SCOPE-01](scope.md)）。
 - 开关只由筛选条控件触发，没有默认快捷键；不抢占主图手势或滚轮。
 - 开关必须清楚表达选中与未选中。占位取 `filter.toggle.*`；原生按钮可按 TOOLBAR-10 使用系统状态外观，由同一控件配置管理背景、轮廓与高亮。自绘药丸四态取 `color.filter.toggle.*`：未勾选常态透明底 + 描边 / 未勾选悬停 `hover` 底、`hover.border`、`hover.foreground` / 勾选 `checked.*` / 勾选悬停 `checked.hover.*`。
-- 无障碍：暴露名称“相似聚类”、开关状态（已展开/已收起）与提示“展开/关闭相似聚类面板”。
 
 ## FILTER-07 布局与显隐 · 必须
 
@@ -93,7 +92,7 @@
 - 行/列切换、窗口缩放只重排控件：不重算筛选、不清空菜单、不改变当前照片。
 - 计数按自然文本宽度占位，不设固定宽；其宽度变化只影响整组居中，不影响控件顺序。
 
-## FILTER-08 菜单交互与无障碍 · 应当
+## FILTER-08 菜单交互 · 应当
 
 - 自绘下拉（无原生下拉的平台）：按钮 90×32、圆角 `dropdown.cornerRadius`、底 `color.dropdown.background`（悬停 `.hover`、按下 `.pressed`）、1 点描边 `color.dropdown.border`（悬停 `.hover`）、文字 `dropdown.fontSize` 左内边距 `dropdown.paddingLeft`、右侧 `icon.chevronDown` 边长 `dropdown.chevron.size`、距右 `dropdown.chevron.rightInset`、色 `color.dropdown.chevron`。弹层贴在按钮正下方并以按钮水平居中（最小宽 = 按钮宽，越界向内夹取，下方不足翻到上方），外观同 MENU-03 自绘弹层；项左右内边距 `dropdown.item.paddingX`，当前项整行底 `color.dropdown.item.selected`（悬停 `.selected.hover`），不画勾号。
 
@@ -101,7 +100,7 @@
 - 桌面支持键盘打开、上下选择、回车确认、Esc 取消，焦点回到原控件；触屏用平台菜单手势。
 - 筛选条控件的悬停、按下、禁用与焦点状态不得引起布局抖动、残留旧态或裁切；原生下拉/菜单可用系统状态色与轻量状态动效（L4），自绘控件按 `dropdown.*` / `color.filter.toggle.*` 令牌。
 - 菜单项与顺序固定（FILTER-03 表），不按使用频率重排，也不隐藏当前不可能命中的项。
-- 每个下拉向无障碍暴露名称（排序方式/排序方向/星级筛选）与当前值；计数作为静态文本可读；开关暴露开关状态。
+- 每个下拉显示当前值（排序方式/排序方向/星级筛选），计数作为静态文本显示；开关的展开/收起状态以可见外观表达。
 - 控件命中区不小于其可见几何；触控下拉的可点区 90×32，低于 44 点时登记为输入方式差异（FILTER-08@ios、FILTER-08@android），不得因此改变视觉占位与间距。
 - 菜单打开期间照片快捷键不生效（[INPUT-01](input.md)）。
 

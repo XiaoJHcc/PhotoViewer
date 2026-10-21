@@ -7,7 +7,7 @@
 - 裁定：[G1](native-rebuild-phase-6-rulings/rulings-G1.md) · [G2](native-rebuild-phase-6-rulings/rulings-G2.md) · [G3](native-rebuild-phase-6-rulings/rulings-G3.md) · [G4](native-rebuild-phase-6-rulings/rulings-G4.md) · [G5](native-rebuild-phase-6-rulings/rulings-G5.md) · [G6](native-rebuild-phase-6-rulings/rulings-G6.md) · [复核改判](native-rebuild-phase-6-rulings/rulings-overrides.md)
 - 规则与编号：[`Design/README.md`](../Design/README.md)；平台登记：[`platforms.md`](../Design/platforms.md)；状态：[`status.md`](../Design/status.md)
 
-方法：分类取 **多数**（Avalonia 原版 + 四端实现）、**更优**（按 L0 原则）、**原版**（兜底）；只有输入方式或平台能力确有优劣差别时才登记为 `ID@平台`，其余一律同标准。桌面与移动可分开执行，但不得把"某端现状"当成标准。每段内按 **功能/行为缺陷 → 无障碍 → 视觉令牌** 排序；不同平台可并行。
+方法：分类取 **多数**（Avalonia 原版 + 四端实现）、**更优**（按 L0 原则）、**原版**（兜底）；只有输入方式或平台能力确有优劣差别时才登记为 `ID@平台`，其余一律同标准。桌面与移动可分开执行，但不得把"某端现状"当成标准。每段内按 **功能/行为缺陷 → 视觉令牌** 排序；不同平台可并行。
 
 ## 共享层
 
@@ -74,7 +74,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | M7 | ANALYSIS-08 | 瓦片内 letterbox/角标点击等同面板空白：清准星、保留 cosine 参考点 | `PhotoViewer.Mac/Native/MacDiagnosticTile.cs:266`、`MacAnalysisPanel.cs:107` | C24 |
 | M8 | TOOLBAR-08 | 补滚动偏移保持的验收断言（重建不回到起点，换向夹取） | `PhotoViewer.Mac/Native/MacControlBar.cs:91`、`MacMainWindow.cs:498` | C14 |
 | M9 | SETTINGS-14 / SETTINGS-10 | 设置页顶部加一行失败/备份状态；清库按钮直调共享"已确认"入口，去掉隐形 arm | `PhotoViewer.Mac/Native/MacNativeSettingsPresenter.cs:15`、`:376` | C27、D27 |
-| M10 | TOOLBAR-04 | 命令读屏名称补当前绑定（现只有 tooltip） | `PhotoViewer.Mac/Native/MacControlBar.cs:99` | B26 |
+| M10 | TOOLBAR-04 | 命令提示补当前绑定（现只有 tooltip） | `PhotoViewer.Mac/Native/MacControlBar.cs:99` | B26 |
 | M11 | FILM-05 | 清零叉改为显式 `color.star.clear` #666666，不再取系统次级色 | `PhotoViewer.Mac/Native/MacThumbnailItem.cs:99` | G6-31 |
 
 ## Windows
@@ -114,8 +114,8 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | W14 | TOOLS-06 | 关闭工具窗即取消在途 DINO 任务 | `PhotoViewer.Windows/Native/WindowsToolsWindow.cs:328` | C21 |
 | W15 | SIM-10 | 列表态动作区补错误标签 | `PhotoViewer.Windows/Native/WindowsSimilarityPanel.cs:81` | C09 |
 | W16 | SETTINGS-14 / SETTINGS-10 / SETTINGS-07 | 设置页顶部失败状态行；清库按钮直调共享"已确认"入口（去隐形 arm）；预设删到剩 1 项时禁用删除 | `PhotoViewer.Windows/Native/WindowsSettingsPages.Ai.cs:115`、`WindowsSettingsPages.Preview.cs:114` | C27、D27、C28 |
-| W17 | SHELL-06 | 自绘窗口按钮补 `AutomationProperties.Name` | `PhotoViewer.Windows/Native/WindowsTitleBar.cs:157` | C16 |
-| W18 | TOOLBAR-04 | 命令提示与读屏名称含主/次绑定（沿用 `AppGesture.ToDisplayString()`） | `PhotoViewer.Windows/Native/WindowsControlBar.cs:290` | B26 |
+| W17 | SHELL-06 | 自绘窗口按钮补悬停提示与可点击语义 | `PhotoViewer.Windows/Native/WindowsTitleBar.cs:157` | C16 |
+| W18 | TOOLBAR-04 | 命令提示含主/次绑定（沿用 `AppGesture.ToDisplayString()`） | `PhotoViewer.Windows/Native/WindowsControlBar.cs:290` | B26 |
 | W19 | STATE-03 | 提示条文字改 `color.status.toast.foreground` #FFFFFF（现 #808080 不达 AA），宽取 min(500, 可用宽) | `PhotoViewer.Windows/Native/WindowsLayout.cs:459`、`:145` | G6-20、G6-17 |
 
 ## iOS·iPadOS
@@ -138,7 +138,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | I12 | SETTINGS-07 | 缩放预设补 >0 且 ≤1600 校验 | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:1348` | B14 |
 | I13 | SETTINGS-03 | 设置展示控制器设 `OverrideUserInterfaceStyle = Dark`（与工具页一致） | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:96` | D07 |
 | I14 | SETTINGS-14 / SETTINGS-07 | 设置页顶部失败状态行；预设删到剩 1 项时禁用删除 | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:17`、`:1280` | C27、C28 |
-| I15 | TOOLBAR-04 | 命令按钮 `AccessibilityLabel` 补主/次绑定（现只有命令名） | `PhotoViewer.iOS/Native/iOSControlBar.cs:107` | B26 |
+| I15 | TOOLBAR-04 | 命令按钮提示补主/次绑定（现只有命令名） | `PhotoViewer.iOS/Native/iOSControlBar.cs:107` | B26 |
 | I16 | FILTER-01（视觉） | 筛选开关选中/未选中四色改令牌值（深蓝底、#AECBEE 字、#AAA 未选中） | `PhotoViewer.iOS/Native/iOSFilterBar.cs:85`、`:114` | G6-23~26 |
 | I17 | IMAGE-06（视觉） | 导航图宿主 alpha 0.78→0.6 | `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:204` | G6-09 |
 | I18 | SHELL-01（视觉） | 栏位底色 #121212→#111111（根视图与控制栏） | `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:180`、`iOSControlBar.cs:44` | G6-33 |
@@ -146,7 +146,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## Android
 
-**进度（10-18 完成）**：A1–A27 全部完成并已合入主线（`refactor/native-rebuild`）。A18 用 `RecyclerView` + `ItemTouchHelper`，把手轻点给上移/下移菜单；A20 接 `ExploreByTouchHelper`；A9 栏位显隐存 `SharedPreferences`（`PhotoViewer.Native.ShowFilm` / `ShowControls`）；A2 导航图取展示产物抽样，不再二次解码文件。验证：2026-10-18 模拟器 `pv-api35` `pv-check` main PASS 14、analysis PASS 18、similarity PASS 15、settings PASS 16、tools PASS 16，均 0 FAIL；TalkBack、真实拖拽、触控板等需作者手验（见文末「待作者手验」）。
+**进度（10-18 完成）**：A1–A27 全部完成并已合入主线（`refactor/native-rebuild`）。A18 用 `RecyclerView` + `ItemTouchHelper`，把手轻点给上移/下移菜单；A20 接 `ExploreByTouchHelper`；A9 栏位显隐存 `SharedPreferences`（`PhotoViewer.Native.ShowFilm` / `ShowControls`）；A2 导航图取展示产物抽样，不再二次解码文件。验证：2026-10-18 模拟器 `pv-api35` `pv-check` main PASS 14、analysis PASS 18、similarity PASS 15、settings PASS 16、tools PASS 16，均 0 FAIL；真实拖拽、触控板等需作者手验（见文末「待作者手验」）。
 
 | # | 设计 ID | 改什么 | 入口 file:line | 来源 Q |
 |---|---|---|---|---|
@@ -169,7 +169,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | A17 | SETTINGS-07 | 缩放预设补 >0 且 ≤1600 校验 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:427` | B14 |
 | A18 | SETTINGS-15 | 控制列表改 `ItemTouchHelper` 拖拽 + 行尾把手，删上下按钮 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:319` | B35 |
 | A19 | SETTINGS-14 / SETTINGS-07 | 设置页顶部失败状态行；预设删到剩 1 项时禁用删除 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`、`:408` | C27、C28 |
-| A20 | TOOLBAR-11 | 接 `ExploreByTouchHelper`：暴露虚拟节点、名称、禁用态与焦点顺序 | `PhotoViewer.Android/Native/AndroidControlBar.cs:194` | C12、B26 |
+| A20 | TOOLBAR-11 | 控制栏焦点顺序与键盘触发 | `PhotoViewer.Android/Native/AndroidControlBar.cs:194` | C12、B26 |
 | A21 | IMAGE-07（视觉） | 药丸：圆角 11dp、距底 24 且不重复扣底部安全区；接 500ms 门槛 | `PhotoViewer.Android/Native/AndroidNativeRootView.cs:168`、`:367` | G6-05、G6-06、B04 |
 | A22 | SIM-03（视觉） | 动作按钮改 90×28：底 #2A2A2A、边 #555555、字 #CCCCCC；文本进度保留 | `PhotoViewer.Android/Native/AndroidSimilarityPanel.cs:77` | G6-11~14 |
 | A23 | STATE-03（视觉） | 提示条：字号 12、圆角 6、最大宽 min(500, 宽−40)、底 #222、alpha 0.94、字 #FFFFFF | `PhotoViewer.Android/Native/AndroidNativeRootView.cs:181` | G6-15~20 |
@@ -186,12 +186,12 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## 待作者手验
 
-程序化 harness 覆盖不到的项，按平台汇总（确认后回填 [status.md](../Design/status.md) 为「作者手验通过」）：
+程序化 harness 覆盖不到的项，按平台汇总（2026-10-21 已将三端常规 UI 回填为「作者手验通过」）：
 
-- macOS：设置页顶部状态行的排版；DINO 整宽刚体文本的换行。~~提示条与「计算中」药丸重叠~~ → 2026-10-19 按 STATE-03 叠放规则四端统一（`status.toast.stackGap`）。
-- iOS·iPadOS：真机提示条；损坏设置的状态行；下滑关闭工具页后重开的落点；EXIF 长按复制；500ms 药丸时机；新色值；Stage Manager 下控制栏滚动。
-- Android：设置三张表的拖拽与把手菜单；缩放预设边界；TalkBack 下控制栏虚拟节点与设置行；相似面板错误标签与 44dp 点击区；工具 sheet 关闭取消 DINO；触控板/滚轮分流；Sony ARW 对焦跟随；增强后的导航图。
-- Windows：~~合入后跑三套检查~~ → **已完成并复核**（2026-10-19 `b4a8248` 本机复跑：Debug/Release 0 错 0 警，smoke **24/24**、settings **7/7**、tools **5/5**，Release 启动正常；OPEN-05「打开照片回适应态」作者手验通过）。剩余手验：200%/175% DPI、真实跨屏、真实相机八方向素材、真实拖拽/录制/文件选择器手感、W-M7 色彩/RAW。**触控板分流与 Narrator 读屏无验收条件，2026-10-19 起记为不阻塞任务**。
+- macOS：常规 UI 已通过；失败注入（打开/评分/Full/损坏设置/相似/分析）已由 `--pv-native-faults` 机测通过。仍缺：外设断开取消录制。
+- iOS·iPadOS：常规 UI 已通过；失败注入已由 `--pv-native-faults-check` 机测通过。仍缺：真实外接键鼠/触控板热插拔与录制；P3/Adobe RGB 与系统预览对拍；外接显示；外设断开后的控件恢复。
+- Android：设置三张表的拖拽与把手菜单；缩放预设边界；相似面板错误标签与 44dp 点击区；工具 sheet 关闭取消 DINO；触控板/滚轮分流；Sony ARW 对焦跟随；增强后的导航图。
+- Windows：常规 UI 与 175%/200% DPI 已通过。仍缺：真实跨屏、真实相机八方向素材、增强 + 分析长稳、W-M7 色彩/RAW；扩展烟测未记证据。**触控板分流无验收条件，记为不阻塞任务**。
 
 遗留（本次未处理，需另立条目）：
 
@@ -201,4 +201,4 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 
 ## 验收
 
-每个条目完成后回填 [`status.md`](../Design/status.md) 对应格子（`程序化通过 <日期>` 或保留 `缺口`），并运行该平台在 [`DEV.md`](../DEV.md) 列出的 harness：macOS `--pv-native-smoke|layout|input|analysis|similarity|toolbar`；Windows **Check Windows Native** 与 `--pv-native-settings|tools`；iOS `--pv-native-photo|layout|input|analysis|similarity|tools-check`；Android `pv-check main|analysis|similarity|settings|tools`。
+每个条目完成后回填 [`status.md`](../Design/status.md) 对应格子（`程序化通过 <日期>` 或保留 `缺口`），并运行该平台在 [`DEV.md`](../DEV.md) 列出的 harness：macOS `--pv-native-smoke|layout|input|analysis|similarity|toolbar|faults`；Windows **Check Windows Native** 与 `--pv-native-settings|tools`；iOS `--pv-native-photo|layout|input|analysis|similarity|tools-check|faults-check`；Android `pv-check main|analysis|similarity|settings|tools`。

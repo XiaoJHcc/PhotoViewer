@@ -32,10 +32,10 @@
 | D3 | **皮肤**：颜色、字号、圆角、卡片材质全部取 WinUI 主题资源（`CardBackgroundFillColorDefaultBrush`、`TextFillColorPrimaryBrush`、`ControlCornerRadius` 等），不再维护 `#111/#222/#333` 第二套灰度 | 卡片/控件状态/强调色/深色回退由 WinUI 统一；应用自有颜色只留给内容高亮 |
 | D4 | **使用 Mica**（2026-10-17 修订） | 原方案担心「像系统设置而非本应用」；视觉验收显示无 Mica 的纯深色底明显缺少 Win11 观感。现用 `MicaBackdrop`，靠本应用的分类、文案与主窗口一致的内容保持身份。旧系统由 `MicaBackdrop` 自动回退，不写 OS 分支 |
 | D5 | **验收基线 Win11，旧系统不设门**：不抬系统、不加分支；设计不为旧系统让步 | 验收只在 Win11；旧系统由平台自动回退，不纳入验收，也不写条件分支 |
-| D6 | **强调色**：原生控件用系统 accent；应用 `#1E90FF` 只作内容高亮（当前照片描边等），不覆盖控件 accent | 原生选中/开关/滑条跟随系统 accent；强行改色会破坏无障碍与系统一致性 |
+| D6 | **强调色**：原生控件用系统 accent；应用 `#1E90FF` 只作内容高亮（当前照片描边等），不覆盖控件 accent | 原生选中/开关/滑条跟随系统 accent；强行改色会与系统控件的状态色不一致 |
 | D7 | **标题栏**：WinUI `TitleBar` 控件 + `ExtendsContentIntoTitleBar`，齿轮图标 + “设置”，caption 按钮透明融入 Mica | 与 Win11 设置页一致；自绘 chrome 只保留主窗口一套 |
 | D8 | **页面仍纯 C# 构建，不写页面 XAML**；根 `App.xaml` 只承载应用级 `XamlControlsResources` 与深色主题 | 与主窗口、macOS 程序化 AppKit 一致；`App.xaml` 是 WinUI 控件模板/`IXamlMetadataProvider` 的必要引导，不承载控件布局 |
-| D9 | **设置卡片用 CommunityToolkit `SettingsCard`**（`CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219） | 与 Win11 设置页同源卡片视觉，避免手写 Border 复刻材质/描边/无障碍/点击态 |
+| D9 | **设置卡片用 CommunityToolkit `SettingsCard`**（`CommunityToolkit.WinUI.Controls.SettingsControls` 8.2.251219） | 与 Win11 设置页同源卡片视觉，避免手写 Border 复刻材质/描边/点击态 |
 
 ## 4. 窗口结构
 
@@ -311,4 +311,4 @@ W-M5 原先声称 `NavigationView` / `TitleBar` / `NumberBox` / `TextBox` / `Ric
 - `--pv-native-smoke`：**24 项 PASS**（主屏无回归）。
 - `--pv-native-settings`：**7 项 PASS**（深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar、五分类/尺寸、开关+NumberBox+Slider、列表重排、录制开始取消/手势显示、关闭回写）。
 - 150% 实机截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`）。
-- 待作者手验：真实拖拽排序、真实键鼠录制（含滚轮/中键）、清库确认、预设增删、真实手感、125/150/200% 文本缩放。
+- 2026-10-21 作者手验通过常规 UI（真实拖拽排序、键鼠录制、清库确认、预设增删、175%/200% DPI）；125% 与外设断开未记证据。

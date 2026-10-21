@@ -40,7 +40,7 @@
 - 收回：选择项、点击菜单外、Esc、触屏返回键均关闭菜单；关闭动作不穿透到底层照片（不翻页、不缩放、不改评分）。
 - 菜单已展开时不叠加弹出第二个菜单；拖入文件、切换栏位导致主图区重建时先关闭菜单。
 - 菜单展开期间暂停照片全局快捷键（与文本输入、录制控件同一守卫，[input](input.md) INPUT-01），关闭后恢复；菜单内部的方向键、回车、Esc 由菜单消费。
-- **应当**：使用平台原生菜单控件；自绘实现须登记为平台差异，并同样满足本条的定位、勾选、键盘与无障碍要求（MENU-03@android、MENU-03@web）。
+- **应当**：使用平台原生菜单控件；自绘实现须登记为平台差异，并同样满足本条的定位、勾选与键盘要求（MENU-03@android、MENU-03@web）。
 - 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影、最小宽 `menu.minWidth`；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `icon.check` 占左侧 `menu.check.size` 列、字号 `menu.check.fontSize`（菜单内有任一勾选项时所有项让出该列）；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针；下拉弹层以按钮宽为最小宽，不取 `menu.minWidth`。
 - 平台差异见 platforms.md（MENU-03@android）。
 
@@ -67,7 +67,7 @@
 - 打开窗口或选择器的项带省略号（…），纯开关项不带；省略号前不留空格，也不使用"..."。
 - **可以**：有用户主/次绑定的项显示当前绑定（平台原生快捷键列），无绑定不显示；绑定修改后下一次弹出即为新值；菜单内不改写或录制绑定（[input](input.md)）。
 - 触屏平台不显示快捷键列；图标是否使用由平台决定，同一项在各平台的图标含义应一致。
-- **应当**：菜单提供系统菜单语义（名称与勾选态可朗读），键盘可完成选择与取消；勾选不只靠颜色或图标表达。
+- **应当**：菜单用平台原生菜单控件，键盘可完成选择与取消；勾选不只靠颜色或图标表达。
 
 ## MENU-07 不可用项、空态与并发 · 应当
 

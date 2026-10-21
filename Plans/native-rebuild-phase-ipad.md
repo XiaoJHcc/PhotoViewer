@@ -63,7 +63,7 @@
 - 胶片栏 `UICollectionView` 按 FILM-01–06；减少动态效果读 `UIAccessibility.IsReduceMotionEnabled`。
 - 筛选条 `UIButton`+`UIMenu` 下拉、计数、相似聚类 toggle；控制栏三分组换行/换列与居中，评分方向、显隐/排序、主次绑定提示。
 - 旋转、Split View、Stage Manager 任意尺寸下几何正确。
-- **状态：已完成** —— `6f36d8b`；两台模拟器 `layout` 24 + `photo` 10，Mac 回归 PASS。旋转/多任务任意尺寸待作者手验。
+- **状态：已完成** —— `6f36d8b`；两台模拟器 `layout` 24 + `photo` 10，Mac 回归 PASS。旋转/多任务任意尺寸 2026-10-21 作者手验通过。
 
 ### I4 输入
 - 主图 `UIContextMenuInteraction`（打开文件夹、栏位显隐、设置；长按/辅助点按触发）；分析栏/工具/增强预览属 I5，不生成死项。卡片上下文菜单含评分 0–5。
@@ -81,7 +81,7 @@
 - UIKit 验收驱动器 `--pv-native-*`（模拟器跑几何/布局/胶片栏/工具栏/分析/相似；devicectl 传参真机跑内存与 Full 热替换），只写自有测试副本与独立设置/数据库。
 - 作者真机验收：色彩、画质、触摸手感（缩放/惯性/翻页/胶片栏）、键盘与触控板、拖入、旋转与多任务。
 - 文档：ui-contract iOS 列与新增 iOS 差异条目；新建 `PhotoViewer.iOS/AGENTS.md`、`PhotoViewer.Apple/` 文件表；[Design/architecture.md](../Design/architecture.md) §4/§5（新增 iOS 原生链路小节）、DEV.md 任务、handoff 状态与验证矩阵。
-- **状态：程序化部分完成（I2–I5 各阶段随里程碑落地）；作者手验待执行**，清单见 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)，逐项状态见 §7。
+- **状态：程序化部分完成（I2–I5 各阶段随里程碑落地）；常规 UI 作者手验 2026-10-21 通过**，清单见 [iPad 验收清单](native-rebuild-phase-ipad-acceptance.md)，逐项状态见 §7；色彩对拍、外接显示与压力项仍未验。
 
 ## 4. 验收门
 
@@ -186,7 +186,7 @@
 6. **分析栏可见压测**：`--pv-analysis-open` + 50 连翻（每张升 Full）p50 447ms / p95 **2660ms** / max 4002ms、1 次超时；gc 峰值 1593MB，全程 Normal。是否优化留给性能专项。
 7. **Release 通道默认仍旧壳**：`Debug iOS` 构建 Release 配置，默认进入 Avalonia 旧壳；原生壳用 `Debug iOS (Native)` 或显式 `--native`。切默认通道属主计划 Phase 6，待作者决定。
 8. **iPhone 紧凑布局不在本轮范围**：同一原生壳可启动，不做专项适配。
-9. **设置页逐条契约**：I4 只验证"关闭回写后主屏传播"；设置页视觉/输入体验逐条验收待作者手验。
+9. **设置页逐条契约**：I4 只验证"关闭回写后主屏传播"；设置页视觉/输入体验 2026-10-21 作者手验通过（真实外接键鼠热插拔除外）。
 10. ~~**共享 EXIF 伴侣时序**~~ **已修（2026-10-18）**：根因同"首图落在同名组非代表项"——`FolderViewModel.LoadFolderAsync` 无指定目标时取枚举顺序首张，同名 HIF+ARW 时常是被合并隐藏的 ARW（iOS 上 ARW 只有 1616×1080 内嵌预览，作者因此看到"首张双击 100% 只放大一点点"）。改为取同步重建后的筛选列表首项（即代表文件，按格式顺序 HIF 优先），筛选为空时回退枚举首张。Mac 实跑 HIF+ARW 同名目录 `CurrentFile => A7C01489.HIF`；Mac base/filmstrip/similarity PASS。
 11. **100% 口径已与作者确认（2026-10-18）**：100% = 照片源像素与屏幕物理像素点对点（IMAGE-02），旧 Avalonia 逻辑点口径的差异按意图差异保留，不再对齐。
 12. **待收尾统一清理的差异/遗留**：Mac 细节预览双击会清 `FollowsFocus`（Avalonia 保留）；Windows `ToggleFit` 无对焦点优先、无对焦跟随切图（W-M6）；iOS `UseInterpreter=true` 致增强等热循环慢（真机 24MP Full 约 1.7s，是否改纯 AOT 待定）；"增强后竖拍变横"未复现，待作者提供原图；iOS RAW 全分辨率（`CIRAWFilter`）暂缓并入性能专项（见第 2 条）。

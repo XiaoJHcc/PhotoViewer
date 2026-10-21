@@ -70,6 +70,7 @@ public static class iOSNativeShell
         iOSNativeSimilarityCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeToolsCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeSheetShotCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeFaultCheck.MaybeStart(args, _rootViewController, _session);
         iOSDinoCheck.MaybeStart(args);
         return _rootViewController;
     }
