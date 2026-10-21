@@ -15,7 +15,7 @@ using PhotoViewer.ViewModels.Main;
 namespace PhotoViewer;
 
 /// <summary>
-/// P1-M5 真机压测翻页驱动器:仅当头工程解析到 --pv-stress 启动参数时激活,常规运行完全惰性。
+/// 真机压测翻页驱动器:仅当头工程解析到 --pv-stress 启动参数时激活,常规运行完全惰性。
 /// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路);
 /// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取当前壳的展示会话(各原生壳均为 PhotoLoadSession),
 /// 覆盖真实 P0 解码链路而非空跑。

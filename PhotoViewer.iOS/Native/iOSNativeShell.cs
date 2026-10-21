@@ -178,7 +178,7 @@ public static class iOSNativeShell
         SubscribeMemoryWarning();
         SubscribePersistence(main);
 
-        // P1-M5 压测参数（devicectl/simctl 注入 --pv-stress 系）；相对路径按沙盒 Documents 解析。
+        // 压测参数（devicectl/simctl 注入 --pv-stress 系）；相对路径按沙盒 Documents 解析。
         // 激活期间禁止自动锁屏，避免压测中途被系统挂起。
         if (StressFlipDriver.TryParseArgs(NSProcessInfo.ProcessInfo.Arguments, ResolveDocumentsPath))
         {

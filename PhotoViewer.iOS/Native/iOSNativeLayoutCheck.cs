@@ -12,7 +12,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I3 验收专用（非产品行为，测试钩子）：`--pv-native-layout-check &lt;目录&gt;` 在模拟器/真机上程序化核对 iPad 主屏——
+/// 验收专用（非产品行为，测试钩子）：`--pv-native-layout-check &lt;目录&gt;` 在模拟器/真机上程序化核对 iPad 主屏——
 /// 两向/自动布局与安全区分区、栏位显隐释放空间、胶片栏卡片几何（96×144 / 80 方形）、筛选条与计数几何、
 /// 控制栏三分组换行居中与评分方向，以及 [FILM-01–06] 的交互语义（点选不居中、显式定位的中间帧与终点、
 /// 用户接管、减少动态效果直接到终点、点星写回自有副本且不切主图、改星后筛选暂留）。
@@ -277,7 +277,7 @@ internal static class iOSNativeLayoutCheck
     private static double FilterMain(iOSNativeRootViewController root, bool row)
         => row ? MainScreenLayout.FilterBarMainLength(true, 0) : (double)root.FilterBar.Frame.Height;
 
-    /// <summary>核对筛选条：三个 90×32 下拉、90×27 相似聚类 toggle（I5 起显示）、计数自然宽度、5 点间距与居中。</summary>
+    /// <summary>核对筛选条：三个 90×32 下拉、90×27 相似聚类 toggle（显示）、计数自然宽度、5 点间距与居中。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="row">是否行布局。</param>
     /// <param name="scope">报告范围标签。</param>
@@ -395,7 +395,7 @@ internal static class iOSNativeLayoutCheck
             if (!row && (double)bar.Ratings[index].Frame.Y >= (double)bar.Ratings[index - 1].Frame.Y)
                 throw new InvalidOperationException($"{scope} 竖排评分方向不是 5→0");
         }
-        // I5 起分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
+        // 分析栏/增强预览命令实现可用；是否出现在控制栏仍由共享设置的显隐决定（默认分析栏不显示）。
         if (!iOSControlBar.IsCommandAvailable("ToggleAnalysisView") || !iOSControlBar.IsCommandAvailable("ToggleEnhance"))
             throw new InvalidOperationException($"{scope} I5 起分析栏/增强预览命令必须有原生实现（SCOPE-01 解禁）");
         // TOOLBAR-08：滚动宿主的内容尺寸与控制栏文档一致，偏移落在合法范围（重排只夹取，不重置）。

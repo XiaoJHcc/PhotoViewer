@@ -1,7 +1,7 @@
 namespace PhotoViewer.Core.Image;
 
 /// <summary>
-/// 解码尺寸档提示(P1-M4):Full = 全分辨率;Proxy = 长边不超过 MaxLongEdge 的代理图
+/// 解码尺寸档提示:Full = 全分辨率;Proxy = 长边不超过 MaxLongEdge 的代理图
 /// (渲染表面物理像素 × overscan,供 fit/浏览快速上屏;100% 及以上放大永远以 Full 呈现)。
 /// </summary>
 public readonly record struct DecodeSizeHint(ImageSizeClass Class, int MaxLongEdge)

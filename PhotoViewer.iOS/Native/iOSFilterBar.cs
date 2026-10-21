@@ -11,12 +11,12 @@ namespace PhotoViewer.iOS.Native;
 /// 文件栏筛选条（[FILTER-01]）：排序 / 升降序 / 星级筛选三个 UIButton 走原生下拉菜单
 /// （<c>ShowsMenuAsPrimaryAction</c> + UIMenu），外加计数文本；几何全部取共享 <see cref="MainScreenLayout"/>，
 /// 与 Mac 原生壳同一份 90×32 / 间距 5 / 外边距 10 的口径，只把结果落成 UIKit frame。
-/// 相似聚类 toggle（90×27）在 I5 起显示，点击写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>，
+/// 相似聚类 toggle（90×27）显示，点击写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>，
 /// 面板本体由 <see cref="iOSSimilarityPanel"/> 渲染。
 /// </summary>
 internal sealed class iOSFilterBar : UIView
 {
-    /// <summary>相似聚类 toggle 是否参与筛选条布局（I5 起显示）。</summary>
+    /// <summary>相似聚类 toggle 是否参与筛选条布局（显示）。</summary>
     internal const bool ShowsSimilarityToggle = true;
 
     private readonly MainViewModel _main;

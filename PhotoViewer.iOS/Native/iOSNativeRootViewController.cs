@@ -16,13 +16,13 @@ using UniformTypeIdentifiers;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// iPad 原生主屏（I3/I4）：按共享 <see cref="MainScreenLayout"/> 与 <see cref="iOSMainScreenLayout"/> 拼合
+/// iPad 原生主屏：按共享 <see cref="MainScreenLayout"/> 与 <see cref="iOSMainScreenLayout"/> 拼合
 /// 文件栏（筛选条 + 胶片栏）、主图区与控制栏，栏位可独立显隐并把空间让给主图；行/列/自动布局只看窗口方向，
 /// 旋转、Split View、Stage Manager 的任意尺寸都重算几何。栏位背景铺到屏幕边缘、内容收在安全区内；
 /// 主图仍由 <see cref="iOSPhotoView"/> 渲染，物理视口照旧上报共享展示会话。
-/// 输入（I4）：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
+/// 输入：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
 /// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。
-/// P3 功能（I5）：分析栏（细节预览 / 直方图 / DINO-CV 诊断，可见时主图升 Full）、相似聚类面板、
+/// P3 功能：分析栏（细节预览 / 直方图 / DINO-CV 诊断，可见时主图升 Full）、相似聚类面板、
 /// 增强预览（<see cref="PhotoLoadSession"/>）与工具页（sheet + 导航控制器）；细节预览手指点按触控活动主图绿框。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
@@ -820,7 +820,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>
     /// 主图上下文菜单（长按 / 辅助点按）：每次弹出时现读共享状态，勾选态与栏位显隐/增强开关一致；
-    /// I5 起分析栏、增强预览与工具页都是真实入口。
+    /// 分析栏、增强预览与工具页都是真实入口。
     /// </summary>
     /// <returns>菜单构建产物。</returns>
     internal iOSContextMenus.MenuResult BuildPhotoMenu() => iOSContextMenus.Photo(

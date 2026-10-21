@@ -82,7 +82,7 @@ public static class DinoFeatureCache
         _inflight.Clear();
     }
 
-    // ---- 统一内存管控(P1-M2)----
+    // ---- 统一内存管控 ----
 
     static DinoFeatureCache()
     {

@@ -12,7 +12,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I5 验收专用（非产品行为，测试钩子）：<c>--pv-native-tools-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
+/// 验收专用（非产品行为，测试钩子）：<c>--pv-native-tools-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
 /// 工具页——sheet + 导航控制器展示/关闭、列表页两个入口（照片数据统计为 Windows 专属，不出现）、
 /// EXIF 详情页按共享 7 列几何渲染分组与标签（多格式时真实切换格式）、DINO 诊断页 5 张瓦片与共享 presenter
 /// 就绪、返回列表页，以及控制栏 EXIF 信息块点击打开工具页。

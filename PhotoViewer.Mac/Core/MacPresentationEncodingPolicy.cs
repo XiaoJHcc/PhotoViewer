@@ -4,7 +4,7 @@ using PhotoViewer.Core.Memory;
 namespace PhotoViewer.Mac.Core;
 
 /// <summary>
-/// macOS 展示编码策略：恒为 RGBA16F 扩展线性 sRGB（P2 起已验收的行为，I2 编码协商不得改变 Mac 产物）。
+/// macOS 展示编码策略：恒为 RGBA16F 扩展线性 sRGB（既有行为，编码协商不得改变 Mac 产物）。
 /// 显示器采样只受显示色彩空间影响，F16 表面同时承载广色域超范围分量与 8 位 sRGB 图源。
 /// </summary>
 public sealed class MacPresentationEncodingPolicy : IPresentationEncodingPolicy

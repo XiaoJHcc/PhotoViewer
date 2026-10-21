@@ -179,7 +179,7 @@ public static class AnalysisResultCache
         }
     }
 
-    // ---- 统一内存管控(P1-M2)----
+    // ---- 统一内存管控 ----
 
     /// <summary>内存客户端:指纹 LRU 与即时缓存合计占用;Warning 起整体清空(派生数据可随时现算重建)。</summary>
     private sealed class CacheMemoryClient : IMemoryClient

@@ -31,7 +31,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 代理图子采样解码(P1-M4):CGImageSourceCreateThumbnailAtIndex + MaxPixelSize,FromImageAlways 从原图渲染,
+    /// 代理图子采样解码:CGImageSourceCreateThumbnailAtIndex + MaxPixelSize,FromImageAlways 从原图渲染,
     /// WithTransform=true 输出即显示朝向;支持路径或内存字节源。内存峰值 ≈ 代理尺寸而非全尺寸。
     /// </summary>
     internal static DecodedImage? DecodeSubsampledWithImageIO(string? path, int maxSize, byte[]? fileBytes = null)
@@ -271,7 +271,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
             }
 
             var bytesPerRow = targetW * 4;
-            var buffer = DecodedImage.RentPixels(targetH * bytesPerRow);   // 缓冲池租用(P1-M3)
+            var buffer = DecodedImage.RentPixels(targetH * bytesPerRow);   // 缓冲池租用
 
             IntPtr colorSpace = IntPtr.Zero;
             IntPtr ctx = IntPtr.Zero;
@@ -559,7 +559,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
     private static extern IntPtr CGImageSourceCreateImageAtIndex(IntPtr isrc, nint index, IntPtr options);
 
-    // 子采样缩略图(P1-M4)
+    // 子采样缩略图
     [DllImport("/System/Library/Frameworks/ImageIO.framework/ImageIO")]
     private static extern IntPtr CGImageSourceCreateThumbnailAtIndex(IntPtr isrc, nint index, IntPtr options);
 

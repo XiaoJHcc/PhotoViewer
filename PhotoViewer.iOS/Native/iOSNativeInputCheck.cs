@@ -16,7 +16,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I4 验收专用（非产品行为，测试钩子）：<c>--pv-native-input-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对 iPad 输入层——
+/// 验收专用（非产品行为，测试钩子）：<c>--pv-native-input-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对 iPad 输入层——
 /// 主图与卡片上下文菜单内容与回调、卡片评分菜单写回且不切主图、适应态轻扫翻页与放大态不翻页、HID 键码映射表与
 /// 合成派发（UIPress 不可合成，直接注入与 <see cref="iOSNativeRootViewController.PressesBegan"/> 共用的派发入口）、
 /// INPUT-01 守卫、拖入走共享外部打开路径，以及设置页关闭回写后各分类在主屏的即时传播。
@@ -186,7 +186,7 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => main.IsControlViewVisible != control && root.ControlScroll.Hidden == !main.IsControlViewVisible, "控制栏显隐切换");
         built.Handlers["photo.control"]();
         await WaitAsync(() => main.IsControlViewVisible == control, "控制栏恢复");
-        // 分析栏与增强预览（I5）：走菜单同一份回调，共享状态与会话开关随之变化。
+        // 分析栏与增强预览：走菜单同一份回调，共享状态与会话开关随之变化。
         bool analysis = main.IsAnalysisViewVisible;
         built.Handlers["photo.analysis"]();
         await WaitAsync(() => main.IsAnalysisViewVisible != analysis && !root.AnalysisPane.Hidden, "分析栏显隐切换");

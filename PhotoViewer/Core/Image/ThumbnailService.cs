@@ -62,12 +62,12 @@ public static class ThumbnailService
     /// </summary>
     /// <param name="file">文件引用。</param>
     /// <param name="targetShortSide">目标短边像素。</param>
-    /// <param name="priority">解码优先级(P1-M3 准入语义;批量索引传 P3)。准入被拒返回 null。</param>
+    /// <param name="priority">解码优先级(准入语义;批量索引传 P3)。准入被拒返回 null。</param>
     public static async Task<DecodedImage?> GetThumbnailAsync(IFileRef file, int targetShortSide, DecodePriority priority = DecodePriority.P1_HighValue)
     {
         if (file == null || targetShortSide <= 0) return null;
 
-        // 解码准入(P1-M3):缩略图按固定估值记账,完成后按实际复核;被拒(非 P0)直接返回
+        // 解码准入:缩略图按固定估值记账,完成后按实际复核;被拒(非 P0)直接返回
         if (!MemoryGovernor.TryAcquire(EstimatedThumbBytes, priority, out var thumbPermit))
             return null;
         using (thumbPermit)

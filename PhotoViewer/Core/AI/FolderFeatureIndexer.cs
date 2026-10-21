@@ -168,7 +168,7 @@ public sealed class FolderFeatureIndexer
 
         foreach (var group in groups)
         {
-            // 压力闸(P1-M2):Caution 起批量索引暂停,恢复到 Normal 再继续(事件驱动轮询,2s 粒度)
+            // 压力闸:Caution 起批量索引暂停,恢复到 Normal 再继续(事件驱动轮询,2s 粒度)
             while (MemoryGovernor.CurrentLevel >= PressureLevel.Caution)
                 await Task.Delay(2000).ConfigureAwait(false);
 

@@ -5,7 +5,7 @@ namespace PhotoViewer.Core.Image;
 
 /// <summary>
 /// 主图"上屏完成"信号源：原生 <see cref="PhotoLoadSession"/> 实现，
-/// 压测驱动器（P1-M5）据此计时与判读代理档，不依赖壳的具体类型。
+/// 压测驱动器据此计时与判读代理档，不依赖壳的具体类型。
 /// </summary>
 public interface IDisplayLoadSignal
 {

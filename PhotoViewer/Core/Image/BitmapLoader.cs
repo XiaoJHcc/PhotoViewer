@@ -23,7 +23,7 @@ public class BitmapCacheItem
     public DateTime LastAccessTime { get; set; }
     public string FilePath { get; set; }
 
-    /// <summary>尺寸档(P1-M2 起缓存键的一维)。</summary>
+    /// <summary>尺寸档(缓存键的一维)。</summary>
     public ImageSizeClass SizeClass { get; }
 
     public BitmapCacheItem(DecodedImage image, string filePath, ImageSizeClass sizeClass = ImageSizeClass.Full)
@@ -48,9 +48,9 @@ public class BitmapCacheItem
 
 /// <summary>
 /// 图片缓存服务（静态类）。
-/// P1-M2 起缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
+/// 缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
 /// 缩略图分区有独立张数/字节上限,淘汰保护集按路径对所有档生效。
-/// I2 起每档至多一条条目：**像素编码不进缓存键**——同一 (路径, 尺寸档) 只保留最新一次解码产物，
+/// 每档至多一条条目：**像素编码不进缓存键**——同一 (路径, 尺寸档) 只保留最新一次解码产物，
 /// 编码变化按"长边足够且保真度不低于需求"(<see cref="Reusable"/>)复用，否则原地替换，
 /// 因此不会出现同档多份编码副本，也不会因压力升降泄漏内存。
 /// </summary>
@@ -254,7 +254,7 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 清空缩略图分区(P1-M3:文件夹切换时整批释放,不依赖 LRU 淘汰与 finalizer)。
+    /// 清空缩略图分区(文件夹切换时整批释放,不依赖 LRU 淘汰与 finalizer)。
     /// </summary>
     public static void ClearThumbnailClass()
     {
@@ -326,7 +326,7 @@ public static class BitmapLoader
             .ToList();
     }
     
-    // 容量序列化(在途预留账 P1-M3 起归 MemoryGovernor,不再本类自记)
+    // 容量序列化(在途预留账归 MemoryGovernor,不再本类自记)
     private static readonly SemaphoreSlim _capacitySemaphore = new(1, 1);
 
     // 新增：平均缓存项大小（字节,仅主分区——缩略图不参与全分辨率估算）
@@ -401,7 +401,7 @@ public static class BitmapLoader
     /// <summary>
     /// 在解码前确保容量：主分区(缓存 + 在途预留 + 需求) 不超过上限；必要时按 LRU 同步释放到安全水位。
     /// 缩略图分区不参与此账(上限自管,见 <see cref="EvictThumbsToFit"/>)。
-    /// P1-M3:在途预留账归 <see cref="MemoryGovernor"/>;淘汰只做租约归还(纯托管,无 UI 线程同步 Dispose、无阻塞 GC)。
+    /// 在途预留账归 <see cref="MemoryGovernor"/>;淘汰只做租约归还(纯托管,无 UI 线程同步 Dispose、无阻塞 GC)。
     /// </summary>
     private static async Task EnsureCapacityAsync(long needBytes)
     {
@@ -459,7 +459,7 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 异步获取图片(分级解码,P1-M4):hint = Full 走全分辨率;Proxy 走代理(缓存已有足够大且保真度足够的代理即复用,否则重解码替换)。
+    /// 异步获取图片(分级解码):hint = Full 走全分辨率;Proxy 走代理(缓存已有足够大且保真度足够的代理即复用,否则重解码替换)。
     /// 本次编码由 <see cref="IPresentationEncodingPolicy"/> 按尺寸档与当前压力协商。
     /// 代理失败自动回退 Full(代理是性能优化,正确性优先)。返回图像携带调用方一份租约,用完 <see cref="DecodedImage.Release"/>。
     /// </summary>
@@ -573,7 +573,7 @@ public static class BitmapLoader
     }
 
     /// <summary>
-    /// 代理缩解码(平台差异化,P1-M4 审查裁定口径):JPEG/PNG → Skia codec 子采样+Mitchell;HEIF/RAW → 平台解码器
+    /// 代理缩解码(平台差异化口径):JPEG/PNG → Skia codec 子采样+Mitchell;HEIF/RAW → 平台解码器
     /// (Apple 编解码器级子采样;Windows libheif 全解码+Mitchell;Android InSampleSize)。平台未预旋转的再应用 EXIF 旋转。
     /// </summary>
     private static async Task<DecodedImage?> LoadProxyWithExifRotationAsync(IFileRef file, int targetLongEdge, PixelEncoding encoding, CancellationToken ct)
@@ -704,7 +704,7 @@ public static class BitmapLoader
         }
         catch { /* 估算失败按 0(仅记账)走,不阻断解码 */ }
 
-        // 解码准入(P1-M3):P0 豁免放行;非 P0 预算不足直接拒绝(不排队)
+        // 解码准入:P0 豁免放行;非 P0 预算不足直接拒绝(不排队)
         if (!MemoryGovernor.TryAcquire(estimate, priority, out var permit))
             return null;
 
@@ -731,7 +731,7 @@ public static class BitmapLoader
                 var cacheItem = new BitmapCacheItem(image, filePath, ImageSizeClass.Full);
                 _cache[new BitmapCacheKey(filePath, ImageSizeClass.Full)] = cacheItem;
 
-                // P0 链路计时埋点(P1-M1):供压力快照与验收门判读
+                // P0 链路计时埋点:供压力快照与验收门判读
                 PerfTrace.RecordDecode(file.Name, false, totalSw.Elapsed.TotalMilliseconds, decodeSw.Elapsed.TotalMilliseconds, image.Width, image.Height);
 
                 // 通知缓存状态变化（在UI线程中触发）
@@ -767,7 +767,7 @@ public static class BitmapLoader
             if (HeifLoader.IsHeifFile(file))
             {
                 originalImage = await HeifLoader.DecodeAsync(file, null).ConfigureAwait(false);
-                // P1-M4 起按解码器能力标记(Apple ImageIO 预旋转;libheif/BitmapFactory 不旋转)
+                // 按解码器能力标记(Apple ImageIO 预旋转;libheif/BitmapFactory 不旋转)
                 decoderPreRotated = HeifLoader.OutputPreRotated;
             }
             else if (RawLoader.IsRawFile(file))
@@ -837,7 +837,7 @@ public static class BitmapLoader
         {
             var w = source.Width;
             var h = source.Height;
-            // 缓冲池租用(P1-M3):归还时回池而非丢 GC
+            // 缓冲池租用:归还时回池而非丢 GC
             var rgb = DecodedImage.RentPixels(w * h * 3);
             for (int y = 0; y < h; y++)
             {
@@ -973,7 +973,7 @@ public static class BitmapLoader
                     }
                 }
                 
-                // 执行清理:事件回 UI 线程;租约归还直接执行(P1-M3 起拆除 UI 线程同步 Dispose)
+                // 执行清理:事件回 UI 线程;租约归还直接执行(拆除 UI 线程同步 Dispose)
                 foreach (var key in itemsToRemove.Distinct())
                 {
                     if (_cache.TryRemove(key, out var item))
@@ -1017,7 +1017,7 @@ public static class BitmapLoader
                     }
                 });
 
-                // 租约归还直接执行(纯托管,P1-M3 起不再回 UI 线程)
+                // 租约归还直接执行(纯托管,不再回 UI 线程)
                 foreach (var kv in items)
                 {
                     kv.Value.Image.Release();
@@ -1089,7 +1089,7 @@ public static class BitmapLoader
     // 内存告警事件载体（UI 仅展示触发时的大小、数量与时间）
     public readonly record struct MemoryWarningEvent(long sizeMB, int count, DateTimeOffset time);
 
-    // ---- 统一内存管控(P1-M2)----
+    // ---- 统一内存管控 ----
 
     /// <summary>主缓存 + 缩略图分区的内存客户端适配器。</summary>
     private sealed class CacheMemoryClient : IMemoryClient

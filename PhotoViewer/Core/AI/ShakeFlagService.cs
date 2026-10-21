@@ -37,7 +37,7 @@ public static class ShakeFlagService
     {
         if (files == null || files.Count == 0) return;
 
-        // 竞态修复(P1-M3):调用方传入的是活动集合(如 FolderViewModel.AllFiles,文件夹加载期会被改写),
+        // 竞态修复:调用方传入的是活动集合(如 FolderViewModel.AllFiles,文件夹加载期会被改写),
         // 本方法同步前导段在调用方线程执行——先做快照,后续枚举不再触碰活动集合。
         files = files.ToArray();
 
@@ -107,7 +107,7 @@ public static class ShakeFlagService
         RecheckRequested?.Invoke();
     }
 
-    // ---- 统一内存管控(P1-M2)----
+    // ---- 统一内存管控 ----
 
     static ShakeFlagService()
     {

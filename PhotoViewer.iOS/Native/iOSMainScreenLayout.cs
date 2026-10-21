@@ -7,7 +7,7 @@ namespace PhotoViewer.iOS.Native;
 /// iPad 主屏分区几何：在共享 <see cref="MainScreenLayout.Partition"/> 之上叠加 UIKit 的安全区口径——
 /// 栏位**背景**铺满屏幕边缘（状态栏、Home 指示条与横屏刘海区都盖住），栏位**内容**（筛选条、胶片栏、控制栏）
 /// 收在安全区内；主图区保持满幅（观片时照片延伸到边缘，与 Mac 主图铺满观片区同义）。
-/// 分析栏的交叉轴长度由调用方传入，I5 之前恒为 0（槽位保留，空间归主图）。
+/// 分析栏的交叉轴长度由调用方传入，未启用时恒为 0（槽位保留，空间归主图）。
 /// </summary>
 /// <param name="FileBar">文件栏背景分区。</param>
 /// <param name="FileContent">文件栏内容区（筛选条与胶片栏的可用范围）。</param>
@@ -30,7 +30,7 @@ internal static class iOSMainScreenLayout
     /// <param name="safe">安全区（真实 <c>SafeAreaInsets</c>）。</param>
     /// <param name="fileMain">文件栏主轴长度（含分隔线；0 表示隐藏）。</param>
     /// <param name="controlMain">控制栏主轴长度（含分隔线；0 表示隐藏）。</param>
-    /// <param name="analysisCross">分析栏交叉轴长度（I5 之前为 0）。</param>
+    /// <param name="analysisCross">分析栏交叉轴长度（未启用时为 0）。</param>
     /// <returns>八个分区矩形。</returns>
     internal static iOSPaneFrames Compute(bool horizontal, double width, double height, UIEdgeInsets safe,
         double fileMain, double controlMain, double analysisCross)

@@ -64,7 +64,7 @@ public class ImageFile : ReactiveObject
     }
         
     /// <summary>
-    /// 列表缩略图。P1-M2 起存储于 <see cref="BitmapLoader"/> 统一缓存(Thumb 档),本属性为查询视图:
+    /// 列表缩略图。存储于 <see cref="BitmapLoader"/> 统一缓存(Thumb 档),本属性为查询视图:
     /// getter 直查缓存,setter 写入/移除缓存项(淘汰与释放归缓存所有)。
     /// 缓存淘汰该档时经 <see cref="NotifyThumbnailChanged"/> 驱动 UI 回到占位符。
     /// </summary>

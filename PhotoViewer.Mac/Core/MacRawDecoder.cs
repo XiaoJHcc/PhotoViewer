@@ -22,7 +22,7 @@ public sealed class MacRawDecoder : IRawDecoder
 
     private static DecodedImage? Decode(IFileRef file, int? maxSize)
     {
-        // P1-M4:maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
+        // maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
         var bmp = maxSize.HasValue
             ? MacHeifDecoder.DecodeSubsampledWithImageIO(file.PathKey, maxSize.Value)
             : MacHeifDecoder.DecodeWithImageIO(file.PathKey, null);

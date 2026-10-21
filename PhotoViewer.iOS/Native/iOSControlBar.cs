@@ -11,7 +11,7 @@ namespace PhotoViewer.iOS.Native;
 /// 控制栏（[TOOLBAR-01]）：EXIF 信息块 / 评分 / 命令三个整体分组，分组尺寸、按空间整组换行或换列、
 /// 行内居中与交叉轴拉伸全部由共享 <see cref="ControlBarLayout"/> 计算，本类只落 UIKit frame 与系统符号。
 /// 显隐与顺序来自共享设置；评分方向随布局方向（横排 0→5、竖排 5→0）。
-/// I5 起分析栏 / 增强预览 / 工具页全部可用：命令按钮由共享设置生成，EXIF 信息块点击打开工具页。
+/// 分析栏 / 增强预览 / 工具页全部可用：命令按钮由共享设置生成，EXIF 信息块点击打开工具页。
 /// </summary>
 internal sealed class iOSControlBar : UIView
 {
@@ -46,7 +46,7 @@ internal sealed class iOSControlBar : UIView
         BackgroundColor = iOSColors.FromToken(DesignTokens.ColorBarBackground);
     }
 
-    /// <summary>是否提供该命令的入口：I5 起分析栏 / 增强预览 / 其余共享命令都有原生实现。</summary>
+    /// <summary>是否提供该命令的入口：分析栏 / 增强预览 / 其余共享命令都有原生实现。</summary>
     /// <param name="command">共享命令标识。</param>
     /// <returns>是否有可用实现。</returns>
     internal static bool IsCommandAvailable(string command) => true;

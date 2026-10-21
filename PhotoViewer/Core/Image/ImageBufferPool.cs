@@ -5,7 +5,7 @@ using PhotoViewer.Core.Memory;
 namespace PhotoViewer.Core.Image;
 
 /// <summary>
-/// 解码像素缓冲池(P1-M3):按 2 的幂分档租用/归还,消灭 42MP 级 byte[] 的 LOH 分配/回收循环
+/// 解码像素缓冲池:按 2 的幂分档租用/归还,消灭 42MP 级 byte[] 的 LOH 分配/回收循环
 /// (基线实测:每张 124MB 分配自然触发 1 次 gen2 GC,连翻 RSS 峰值 3.37GB 不回落)。
 /// 档帽:≥16MB 每档 4 个,≥1MB 每档 16 个,小档 64 个;Critical 压力整池清空。
 /// 约定:解码主路径大图必须经此池;小图/工具图可直接 new(不经 LOH,不 churn)。

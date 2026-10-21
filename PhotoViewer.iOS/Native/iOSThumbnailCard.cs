@@ -144,7 +144,7 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         _surface.AddInteraction(new UIContextMenuInteraction(_menuDelegate));
     }
 
-    /// <summary>居中原生标签（尾部截断，超宽文件名先截断显示，完整名走 I4 的上下文菜单）。</summary>
+    /// <summary>居中原生标签（尾部截断，超宽文件名先截断显示，完整名走卡片上下文菜单）。</summary>
     /// <param name="frame">标签 frame。</param>
     /// <param name="fontSize">字号。</param>
     /// <param name="weight">字重。</param>

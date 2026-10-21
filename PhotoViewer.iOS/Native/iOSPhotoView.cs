@@ -8,7 +8,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// iPad 主图宿主（I2）：共享 <see cref="MetalPhotoRenderer"/> 画在 CAMetalLayer 子层上，视口数学取共享 <see cref="PhotoViewport"/>。
+/// iPad 主图宿主：共享 <see cref="MetalPhotoRenderer"/> 画在 CAMetalLayer 子层上，视口数学取共享 <see cref="PhotoViewport"/>。
 ///
 /// <para>缩放/平移采用 UIKit 的标准照片缩放模式，**单一真源是 <see cref="UIScrollView"/> 的
 /// zoomScale / contentOffset / contentInset**：透明缩放内容视图的尺寸只在 zoomScale=1 时写成"适应态显示尺寸"，

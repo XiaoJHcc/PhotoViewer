@@ -22,7 +22,7 @@ public sealed class iOSRawDecoder : IRawDecoder
     public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
     {
         var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
-        // P1-M4:maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
+        // maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
         var bmp = maxSize.HasValue
             ? iOSHeifDecoder.DecodeSubsampledWithImageIO(path, maxSize.Value, data)
             : iOSHeifDecoder.DecodeWithImageIO(path, null, data);

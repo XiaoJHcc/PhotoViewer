@@ -9,7 +9,7 @@ using PhotoViewer.ViewModels.Main;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I2 验收专用（非产品行为，测试钩子）：`--pv-native-photo-check &lt;目录&gt;` 在真机/模拟器上程序化核对主图链路——
+/// 验收专用（非产品行为，测试钩子）：`--pv-native-photo-check &lt;目录&gt;` 在真机/模拟器上程序化核对主图链路——
 /// 代理先行与 Full 热替换、编码协商（代理 F16 / Full 8 位 Display P3）、热替换变换不变、八方向 GPU 角点、
 /// 四张色卡的线性值，以及 Proxy↔Full 同一文件的颜色一致性。结果写 Documents/PhotoViewer/native-photo-checks.txt。
 /// 必需素材（缺一即失败，不做静默降级）：orientation-1..8.jpg、color-{srgb,p3,adobe,untagged-adobe}.jpg、

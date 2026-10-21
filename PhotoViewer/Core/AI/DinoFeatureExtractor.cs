@@ -148,7 +148,7 @@ public static class DinoFeatureExtractor
         }
     }
 
-    // ---- 统一内存管控(P1-M2)----
+    // ---- 统一内存管控 ----
 
     /// <summary>内存客户端:ONNX 会话占用;Warning 起卸载(下次推理惰性重建)。</summary>
     private sealed class CacheMemoryClient : IMemoryClient

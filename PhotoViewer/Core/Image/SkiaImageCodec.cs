@@ -7,7 +7,7 @@ namespace PhotoViewer.Core.Image;
 /// <summary>
 /// 基于 SkiaSharp 的解码/缩放/旋转/裁剪像素原语,Core 层唯一的像素操作出口。
 /// 输出统一为 <see cref="PixelEncoding.Bgra32"/>(BGRA8888 premul,与 Skia 位图内存布局一致)。
-/// 解码产物缓冲经 <see cref="ImageBufferPool"/> 租用(P1-M3)。
+/// 解码产物缓冲经 <see cref="ImageBufferPool"/> 租用。
 /// </summary>
 public static class SkiaImageCodec
 {
@@ -50,7 +50,7 @@ public static class SkiaImageCodec
     }
 
     /// <summary>
-    /// 按长边上限等比缩解码(P1-M4 代理图口径):codec 子采样 + Mitchell 精修,不放大。
+    /// 按长边上限等比缩解码(代理图口径):codec 子采样 + Mitchell 精修,不放大。
     /// 旋转无关:长边约束对 90° 旋转对称。
     /// </summary>
     /// <param name="stream">图像字节流。</param>
@@ -121,7 +121,7 @@ public static class SkiaImageCodec
 
     /// <summary>
     /// 按长边上限等比缩放已解码图像(Mitchell 三次滤波,不放大;输入支持 Bgra32/Rgb24,输出恒 Bgra32)。
-    /// Windows libheif 无子采样解码,P1-M4 代理图靠"全解码 + 本方法精缩"实现(画质红线:不许最近邻)。
+    /// Windows libheif 无子采样解码,代理图靠"全解码 + 本方法精缩"实现(画质红线:不许最近邻)。
     /// </summary>
     /// <param name="src">源图像,所有权不转移。</param>
     /// <param name="targetLongEdge">目标长边像素。</param>

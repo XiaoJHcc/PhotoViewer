@@ -14,7 +14,7 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// I5 验收专用（非产品行为，测试钩子）：<c>--pv-native-similarity-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
+/// 验收专用（非产品行为，测试钩子）：<c>--pv-native-similarity-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
 /// 相似聚类面板——筛选条 toggle 与共享 <c>IsSimilarityPanelOpen</c> 双向一致并真实点击开合、
 /// 两向让位几何（行布局从胶片栏右侧切出一段、列布局扩宽文件栏）与 106 点最小宽度、收起后逐项还原、
 /// 列表态/空态与共享 VM 一致、卡片第二行分数百分比与柱状条、"提取全部"真实按钮点击、

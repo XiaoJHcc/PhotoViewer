@@ -25,7 +25,7 @@ public enum PixelEncoding
 /// <summary>
 /// 平台中立的已解码图像:托管像素缓冲 + 尺寸 + 行距 + 编码;纯数据载体,无任何 UI 框架依赖。
 ///
-/// P1-M3 起为**引用租约 + 缓冲池**模型:
+/// 采用**引用租约 + 缓冲池**模型:
 /// - 创建时携带 1 份租约(通常归缓存);消费方经 <see cref="TryAcquire"/> 借用、<see cref="Release"/> 归还;
 /// - 最后一份租约释放时,池化缓冲归还 <see cref="ImageBufferPool"/> 而非丢给 GC;
 /// - 租约归零后 <see cref="Pixels"/> 返回空缓冲。读取纪律:先 TryAcquire 成功再使用,用完 Release。
