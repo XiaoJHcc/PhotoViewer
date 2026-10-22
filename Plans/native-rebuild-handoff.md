@@ -34,7 +34,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 - **Windows 四分区 + 对标纠偏（2026-10-16 首屏 / 2026-10-17 纠偏，`native-rebuild-win`）**：WinUI 3 + D3D11 四分区垂直切片，并在 150% 缩放下与旧壳同尺寸逐项对拍。本轮修掉五类根因:自备 `app.manifest` 漏 DPI 声明导致进程 DPI-unaware（整套 UI 被系统位图拉伸）、文件选择器扩展名模式被补点成非法形式致「打开文件」静默失效、文件栏 `Border.Width` 含边框致卡片被压窄 + 卡片重复叠外边距致项距 150、缩略图未限幅撑出 80×80 槽位、控制栏 EXIF/评分组间距与底色失配；并按要求把标题栏改成**自绘四按钮 + 50 DIP 热区自动显隐**（覆盖计划 §9 待确认项 1 的「保留系统按钮」推荐值）。`--pv-native-smoke` 现覆盖 3 尺寸 × 2 方向的自动显隐 caption 契约（隐藏态零拖动区、显示态不压按钮），150% DPI 实机通过；200% DPI、实际跨屏、系统色彩、鼠标手感与八方向仍待验。已完成 / 待完成总表见 [Windows P2-W §13](native-rebuild-windows-p2.md#13-已完成--待完成清单)，逐项对拍见 §12。
 
-- **分支**:`refactor/native-rebuild` = Mac/iPad 共享集成线(远端已推送;`main` 保持可发布,未合并);`native-rebuild-win` = Windows 专用线(自 W-M5 起),定期从共享线快进/合并,**Windows 改动不再直接提到共享线**;`native-rebuild-win-sync` 为一次性同步分支,已并入 win 后退役。
+- **分支**:原生重构线已合回 `main`(合并提交 `7c8e741`,157 个提交;主线构建 0 错误、Mac 原生冒烟 39/39 PASS),后续开发直接在 `main` 进行;`refactor/native-rebuild` 与 `native-rebuild-win` 均已是 `main` 的历史祖先,仅作追溯保留。
 - **Phase 0(Core 平台中立化,零行为变化)已完成且验收门全关**:Core 零 Avalonia 引用;像素货币 `DecodedImage` + SkiaSharp 像素基座;存储/调度/窗口/快捷键/资源五组门面与 Avalonia 适配层齐备;机械门/持久化契约/Mac+iOS 构建/Mac 冒烟/DINO 口径全部通过(细节见 §3 矩阵与 phase-1 §5 发现清单)。里程碑提交 M1→M6 逐笔可查。
 - **Phase 0 定向审查(2026-10-12)已通过**:Phase 0 由同一 agent 实现+自审(mimo 超时),本次补独立审查——机械门复核 PASS(Core 零 Avalonia,残留均注释;VM 零 UI 耦合);手势持久化契约 PASS(`GestureKey` 223 名 ↔ Avalonia 12.0.2 `Key` 223 名双向 diff 为空,`GestureModifiers` 名/值与 `KeyModifiers` 一致,字符串枚举序列化下逐字节兼容);Mac/iOS 构建 0 错误(仅 NU1903 基线警告)。审查发现的 Phase 1 计划修订已全部落回 phase-1 清单(准入口优先级语义、分档缓冲池、解码路径平台差异、统一 LRU 键前置 M2、验收门平台口径)。
 - **Training 仓**:`DatasetBuilder` 已同步适配(独立提交);`docs/HUMAN.md` 有用户自己的未暂存改动,不要动它。
@@ -113,7 +113,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 ## 4. Mac 开工步骤(接手第一天)
 
-1. `git fetch && git checkout refactor/native-rebuild`,通读 §1 的三份文档。
+1. `git fetch && git checkout main`,通读 §1 的三份文档。
 2. ~~`dotnet build PhotoViewer.Mac` + `dotnet build PhotoViewer.iOS`~~ ✅ 2026-10-12:两头工程均 0 错误(仅 NU1903 基线警告),M3/M4 盲改区无编译毛边。
 3. 冒烟:Mac 首轮已过(见 §3);交互逐项(翻图/缩放/评分写回/设置页/聚类/分析栏)人工过;`Debug iOS` 上 iPad 真机。
 4. 跑 DINO 口径验证(§3):`Training/onnx/verify_onnx_parity.py` + `--dump-render` 抽样对比渲染缓存。
