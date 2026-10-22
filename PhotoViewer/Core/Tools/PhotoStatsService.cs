@@ -10,7 +10,11 @@ using MetadataExtractor.Formats.Xmp;
 namespace PhotoViewer.Core.Tools;
 
 /// <summary>照片统计结果行。</summary>
-public record PhotoStatsRow(string FilePath, string FileName, int? EquivFocalLength, int Rating);
+public record PhotoStatsRow(string FilePath, string FileName, int? EquivFocalLength, int Rating)
+{
+    /// <summary>文件所在文件夹名（CSV 末列，用于区分多文件夹下的同名文件）。</summary>
+    public string FolderName => Path.GetFileName(Path.GetDirectoryName(FilePath) ?? string.Empty);
+}
 
 /// <summary>
 /// 照片数据统计服务：批量遍历文件夹、读取 EXIF 关键字段并写出 CSV。
@@ -73,11 +77,12 @@ public static class PhotoStatsService
     public static void WriteCsv(IEnumerable<PhotoStatsRow> rows, string outputPath)
     {
         using var writer = new StreamWriter(outputPath, false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        writer.WriteLine("文件名,等效焦距(mm),星级");
+        // TOOLS-07：前三列与顺序不变，末列追加文件所在文件夹名。
+        writer.WriteLine("文件名,等效焦距(mm),星级,文件夹");
         foreach (var row in rows)
         {
             var focal = row.EquivFocalLength.HasValue ? row.EquivFocalLength.Value.ToString() : "";
-            writer.WriteLine($"{EscapeCsv(row.FileName)},{focal},{row.Rating}");
+            writer.WriteLine($"{EscapeCsv(row.FileName)},{focal},{row.Rating},{EscapeCsv(row.FolderName)}");
         }
     }
 

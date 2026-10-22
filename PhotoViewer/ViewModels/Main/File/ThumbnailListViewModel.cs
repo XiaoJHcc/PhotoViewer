@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.ViewModels.Main.File;
@@ -47,15 +47,25 @@ public class ThumbnailListViewModel : ReactiveObject
     private readonly BitmapPrefetcher _bitmapPrefetcher;
 
     /// <summary>
-    /// 最近浏览过的路径 LRU(新→旧),容量 = 预取前后窗口之和,用于位图淘汰保护集。
+    /// 最近浏览过的路径 LRU(新→旧),容量 = 预取前后窗口之和,用于淘汰保留排名的 ②/⑤/⑦。
     /// </summary>
     private readonly List<string> _recentViewedPaths = new();
+
+    /// <summary>上一次 CurrentFile 在筛选列表中的索引(用于推导翻页方向;-1 = 无历史)。</summary>
+    private int _lastCurrentIndex = -1;
 
     /// <summary>
     /// 被保留的文件:改星级导致不再符合筛选条件时,暂时保留在列表中,
     /// 待用户切走后再移除,避免丢失滚动进度。
     /// </summary>
     private ImageFile? _retainedFile;
+
+    /// <summary>
+    /// 当前照片仍在新筛选结果中时的旧列表快照与索引，供当前照片被筛掉后定位上一张/下一张。
+    /// 连续改筛选时保留最近一次仍包含当前照片的列表，锚点语义始终指向它被排除前的位置。
+    /// </summary>
+    private List<ImageFile>? _anchorSnapshot;
+    private int _anchorIndex = -1;
 
     /// <summary>
     /// 构造主缩略图列表视图模型。
@@ -93,8 +103,13 @@ public class ThumbnailListViewModel : ReactiveObject
         _main.WhenAnyValue(m => m.CurrentFile)
             .Subscribe(file =>
             {
+                // FILTER-05：切图后锚点失效，翻页重新以当前照片的列表索引为准。
+                _anchorSnapshot = null;
+                _anchorIndex = -1;
+
+                // 排名先算:预取顺序与淘汰保护都取同一份排名(含翻页方向)
+                UpdateRetentionRanking(file);
                 _bitmapPrefetcher.PrefetchAroundCurrent();
-                UpdateProtectedPaths(file);
                 if (_retainedFile != null && !ReferenceEquals(file, _retainedFile))
                 {
                     _retainedFile = null;
@@ -104,40 +119,96 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 当前图变更时刷新位图淘汰保护集:FilteredFiles 中当前 ±(PreloadBackward+PreloadForward)
-    /// 范围的路径 + 最近浏览过的 M 张(M = 前后窗口之和)。
+    /// 最近一次 CurrentFile 变化的列表索引差符号（+1 / −1）；无历史时为正向。
+    /// 预取按"方向上前进的那一张优先"排序，方向上的 +1 邻居还能沿 P0 并行解码。
     /// </summary>
-    private void UpdateProtectedPaths(ImageFile? currentFile)
+    public int FlipDirection { get; private set; } = 1;
+
+    /// <summary>
+    /// 当前图变更时刷新淘汰保留排名（最重要在前）:① 当前图；② 上一张浏览过的图(A/B 对比)；
+    /// ③ 翻页方向上的 +1；④ 反方向 −1；⑤ 第二张最近浏览；
+    /// ⑥ 其余邻居按"方向上距离 d 计 d、反方向距离 d 计 2d"升序；⑦ 其余最近浏览（容量 = 前后预载窗口之和）。
+    /// </summary>
+    private void UpdateRetentionRanking(ImageFile? currentFile)
     {
         var settings = _main.Settings;
-        int window = Math.Max(0, settings.PreloadBackwardCount) + Math.Max(0, settings.PreloadForwardCount);
-        var protectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int backward = Math.Max(0, settings.PreloadBackwardCount);
+        int forward = Math.Max(0, settings.PreloadForwardCount);
+        int window = backward + forward;
 
-        if (currentFile != null)
+        var files = _filteredFiles;
+        int idx = currentFile == null ? -1 : files.IndexOf(currentFile);
+
+        // 翻页方向 = 最近一次 CurrentFile 变化的列表索引差符号；无历史时保持正向
+        if (idx >= 0)
         {
-            // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
-            var currentPath = currentFile.File.Path.LocalPath;
-            _recentViewedPaths.Remove(currentPath);
-            _recentViewedPaths.Insert(0, currentPath);
-            int m = Math.Max(1, window);
-            if (_recentViewedPaths.Count > m)
-                _recentViewedPaths.RemoveRange(m, _recentViewedPaths.Count - m);
-
-            var files = _filteredFiles;
-            var idx = files.IndexOf(currentFile);
-            if (idx >= 0)
-            {
-                int start = Math.Max(0, idx - window);
-                int end = Math.Min(files.Count - 1, idx + window);
-                for (int i = start; i <= end; i++)
-                    protectedPaths.Add(files[i].File.Path.LocalPath);
-            }
+            if (_lastCurrentIndex >= 0 && idx != _lastCurrentIndex)
+                FlipDirection = Math.Sign(idx - _lastCurrentIndex);
+            _lastCurrentIndex = idx;
+        }
+        else if (currentFile == null)
+        {
+            _lastCurrentIndex = -1;
         }
 
-        foreach (var p in _recentViewedPaths)
-            protectedPaths.Add(p);
+        var ranking = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddPath(string path)
+        {
+            if (!string.IsNullOrEmpty(path) && seen.Add(path)) ranking.Add(path);
+        }
+        void AddFile(ImageFile? file)
+        {
+            if (file != null) AddPath(file.File.Path.LocalPath);
+        }
 
-        BitmapLoader.SetProtectedPaths(protectedPaths);
+        var recent = new List<string>();
+        if (currentFile != null)
+        {
+            var currentPath = currentFile.File.Path.LocalPath;
+            // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
+            _recentViewedPaths.Remove(currentPath);
+            _recentViewedPaths.Insert(0, currentPath);
+            int capacity = Math.Max(1, window);
+            if (_recentViewedPaths.Count > capacity)
+                _recentViewedPaths.RemoveRange(capacity, _recentViewedPaths.Count - capacity);
+            foreach (var path in _recentViewedPaths)
+                if (!string.Equals(path, currentPath, StringComparison.OrdinalIgnoreCase)) recent.Add(path);
+        }
+
+        AddFile(currentFile);                                 // ①
+        if (recent.Count > 0) AddPath(recent[0]);             // ② 上一张浏览过的图
+        int direction = FlipDirection >= 0 ? 1 : -1;
+        if (idx >= 0)
+        {
+            int ahead = idx + direction;
+            int behind = idx - direction;
+            if (ahead >= 0 && ahead < files.Count) AddFile(files[ahead]);   // ③ 方向 +1
+            if (behind >= 0 && behind < files.Count) AddFile(files[behind]); // ④ 反方向 −1
+        }
+        if (recent.Count > 1) AddPath(recent[1]);             // ⑤ 第二张最近浏览
+        if (idx >= 0)
+        {
+            // ⑥ 其余邻居:方向上距离 d 计 d,反方向距离 d 计 2d
+            var neighbors = new List<(int index, int cost)>();
+            for (int i = 1; i <= forward; i++)
+            {
+                int p = idx + i;
+                if (p >= files.Count) break;
+                neighbors.Add((p, direction > 0 ? i : 2 * i));
+            }
+            for (int i = 1; i <= backward; i++)
+            {
+                int p = idx - i;
+                if (p < 0) break;
+                neighbors.Add((p, direction > 0 ? 2 * i : i));
+            }
+            foreach (var neighbor in neighbors.OrderBy(n => n.cost).ThenBy(n => n.index))
+                AddFile(files[neighbor.index]);
+        }
+        for (int i = 2; i < recent.Count; i++) AddPath(recent[i]); // ⑦ 其余最近浏览
+
+        BitmapLoader.SetRetentionRanking(ranking);
     }
 
     /// <summary>
@@ -158,15 +229,26 @@ public class ThumbnailListViewModel : ReactiveObject
     /// <summary>
     /// 当 BitmapLoader 缓存状态变化时,在 UI 线程同步刷新对应文件的缓存边框。
     /// </summary>
-    private void OnCacheStatusChanged(string filePath, bool isInCache)
+    /// <summary>
+    /// 当 BitmapLoader 缓存状态变化时,在 UI 线程同步刷新对应文件:Full 档 → 缓存边框;Thumb 档 → 重读缩略图视图(淘汰回占位符,就绪上屏)。
+    /// </summary>
+    private void OnCacheStatusChanged(string filePath, ImageSizeClass sizeClass, bool isInCache)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             var imageFile = _folder.AllFiles.FirstOrDefault(f => f.File.Path.LocalPath == filePath);
-            if (imageFile != null)
+            if (imageFile == null) return;
+
+            if (sizeClass == ImageSizeClass.Thumb)
             {
-                imageFile.IsInCache = isInCache;
+                imageFile.NotifyThumbnailChanged();
+                return;
             }
+
+            // 仅 Full 档驱动"已解码"边框;Proxy 档不计入
+            if (sizeClass != ImageSizeClass.Full) return;
+
+            imageFile.IsInCache = isInCache;
         });
     }
 
@@ -181,6 +263,18 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     public void ApplyFilter()
     {
+        // FILTER-05：记录重算前当前照片在旧列表中的索引；只有它仍在旧列表中时才更新锚点，
+        // 这样连续改筛选时锚点始终指向当前照片被排除前的位置。
+        if (_main.CurrentFile is { } anchorFile)
+        {
+            var oldIndex = _filteredFiles.IndexOf(anchorFile);
+            if (oldIndex >= 0)
+            {
+                _anchorSnapshot = _filteredFiles;
+                _anchorIndex = oldIndex;
+            }
+        }
+
         var allFiles = _folder.AllFiles;
 
         var filtered = allFiles.Where(f =>
@@ -280,7 +374,21 @@ public class ThumbnailListViewModel : ReactiveObject
         }).ToList();
 
         filtered = SortFileList(filtered);
+        // FILTER-04：先提交列表再通知计数，保证同一帧内列表与文本一致。
         FilteredFiles = filtered;
+
+        // 同名合并后，文件夹打开时可能把“被隐藏”的 ARW/HIF 设为 CurrentFile；
+        // 主图与卡片会因此不是同一张。把当前文件映射回它所在组的代表文件。
+        // FILTER-04：映射后仍要发出计数通知，列表与文本在同一次刷新中一起提交。
+        if (_main.CurrentFile is { } current && !filtered.Contains(current))
+        {
+            var representative = filtered.FirstOrDefault(f =>
+                f.HiddenFiles.Any(hidden => string.Equals(hidden.PathKey, current.File.PathKey, StringComparison.Ordinal)));
+            if (representative != null)
+            {
+                _main.CurrentFile = representative;
+            }
+        }
 
         _filter.RaiseFilteredCountChanged();
     }
@@ -295,11 +403,12 @@ public class ThumbnailListViewModel : ReactiveObject
 
     private List<ImageFile> SortFileList(List<ImageFile> files)
     {
+        // FILTER-02：名称比较固定用序数忽略大小写，四端同序且不随系统区域设置变化。
         IEnumerable<ImageFile> sorted = _filter.SortMode switch
         {
             SortMode.Name => _filter.SortOrder == SortOrder.Ascending
-                ? files.OrderBy(f => f.Name)
-                : files.OrderByDescending(f => f.Name),
+                ? files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                : files.OrderByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase),
 
             SortMode.Date => _filter.SortOrder == SortOrder.Ascending
                 ? files.OrderBy(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue)
@@ -309,7 +418,7 @@ public class ThumbnailListViewModel : ReactiveObject
                 ? files.OrderBy(f => f.FileSize)
                 : files.OrderByDescending(f => f.FileSize),
 
-            _ => files.OrderBy(f => f.Name)
+            _ => files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
         };
         return sorted.ToList();
     }
@@ -326,21 +435,62 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 当前文件之前是否还存在已筛选项。
+    /// 当前文件之前是否还存在可移动到的项。
     /// </summary>
-    public bool HasPreviousFile()
+    public bool HasPreviousFile() => ResolveMoveTarget(-1) != null;
+
+    /// <summary>
+    /// 当前文件之后是否还存在可移动到的项。
+    /// </summary>
+    public bool HasNextFile() => ResolveMoveTarget(1) != null;
+
+    /// <summary>
+    /// 在当前筛选结果中移动当前照片（上一张/下一张）。
+    /// 当前照片已被筛选排除时，以它在重算前列表中的索引为参照，落到新列表中最近的前/后项，
+    /// 不从列表首尾重新开始；端点不环绕。成功后设置 <see cref="MainViewModel.CurrentFile"/> 并滚动到该项。
+    /// </summary>
+    /// <param name="offset">方向偏移（-1 上一张，+1 下一张）。</param>
+    /// <returns>是否发生了移动。</returns>
+    public bool MoveCurrent(int offset)
     {
-        if (_main.CurrentFile == null || _filteredFiles.Count == 0) return false;
-        return _filteredFiles.IndexOf(_main.CurrentFile) > 0;
+        var target = ResolveMoveTarget(offset);
+        if (target == null) return false;
+
+        _main.CurrentFile = target;
+        ScrollToCurrent();
+        return true;
     }
 
     /// <summary>
-    /// 当前文件之后是否还存在已筛选项。
+    /// 解析移动目标：当前照片仍在列表时取其相邻项；已不在列表时从锚点快照向 offset 方向
+    /// 找第一个仍在新列表中的项。端点返回 null（不环绕）。
     /// </summary>
-    public bool HasNextFile()
+    private ImageFile? ResolveMoveTarget(int offset)
     {
-        if (_main.CurrentFile == null || _filteredFiles.Count == 0) return false;
-        return _filteredFiles.IndexOf(_main.CurrentFile) < _filteredFiles.Count - 1;
+        if (offset == 0) return null;
+
+        var current = _main.CurrentFile;
+        if (current == null || _filteredFiles.Count == 0) return null;
+
+        int index = _filteredFiles.IndexOf(current);
+        if (index >= 0)
+        {
+            int target = index + offset;
+            return target >= 0 && target < _filteredFiles.Count ? _filteredFiles[target] : null;
+        }
+
+        // FILTER-05：锚点是当前照片被排除前的列表与索引；锚点自身已不在新列表，
+        // 因此从相邻位置开始向目标方向查找。
+        if (_anchorSnapshot == null || _anchorIndex < 0) return null;
+
+        int step = Math.Sign(offset);
+        for (int i = _anchorIndex + step; i >= 0 && i < _anchorSnapshot.Count; i += step)
+        {
+            var candidate = _anchorSnapshot[i];
+            if (_filteredFiles.Contains(candidate)) return candidate;
+        }
+
+        return null;
     }
 
     /// <summary>
@@ -450,9 +600,9 @@ public class ThumbnailListViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 后台位图预取检查缩略图通道是否仍在繁忙,以让位于高优先级加载。
+    /// 后台位图预取检查缩略图通道是否仍在繁忙,以让位于高优先级加载;原生分析栏的未提取回退同样需要它。
     /// </summary>
-    internal bool IsThumbnailLoadingBusy()
+    public bool IsThumbnailLoadingBusy()
     {
         if (DecodeScheduler.GetQueuedCount(DecodePriority.P1_HighValue) > 0) return true;
         return _filteredFiles.Any(f => f.IsThumbnailLoading);

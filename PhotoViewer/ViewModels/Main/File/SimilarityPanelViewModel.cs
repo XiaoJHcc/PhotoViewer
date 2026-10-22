@@ -1,24 +1,24 @@
 using ReactiveUI;
-using ReactiveUI.Avalonia;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.ViewModels.Main.File;
 
 /// <summary>
 /// 相似聚类面板的视图模型。
-/// 订阅 <see cref="MainViewModel.CurrentFile"/> 切换,异步调用 <see cref="SimilarityService"/>
-/// 计算相似项并暴露给 <c>SimilarityListView</c>;同时通过 <see cref="ThumbnailListViewModel"/>
-/// 的加载队列,触发相似项的缩略图加载。
+/// 仅当面板展开且文件栏可见时,才在 <see cref="MainViewModel.CurrentFile"/> 切换后异步调用
+/// <see cref="SimilarityService"/> 计算相似项(切图不隐式推理,SCOPE-01),并暴露给
+/// <c>SimilarityListView</c>;同时通过 <see cref="ThumbnailListViewModel"/> 的加载队列,
+/// 触发相似项的缩略图加载。面板关闭时取消在途计算,重新展开后按当前图重算。
 /// 面板由两组正交开关驱动:<see cref="HasItems"/> 控制列表/占位,
 /// <see cref="ShowActionArea"/>(= <see cref="HasUnindexed"/> 或 <see cref="IsStateIndexing"/>) 控制按钮/进度条区域。
 /// </summary>
@@ -29,6 +29,9 @@ public class SimilarityPanelViewModel : ReactiveObject
     private readonly FolderViewModel _folder;
 
     private CancellationTokenSource? _computeCts;
+
+    /// <summary>未提取统计的单飞任务:并发调用共享同一轮扫描。</summary>
+    private Task? _unindexedTask;
 
     /// <summary>
     /// 一次性抑制位:由 <see cref="SelectItemCommand"/> 置位,
@@ -42,6 +45,9 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// 点击相似项切主图时锚点不变,仅在主缩略图列表正常切图时更新。
     /// </summary>
     private ImageFile? _anchorFile;
+
+    /// <summary>面板是否展开且文件栏可见（面板真正可见的唯一判据；不可见时不触发任何隐式推理）。</summary>
+    private bool IsPanelVisible => _main.Settings.SimilarityPanelExpanded && _main.IsThumbnailViewVisible;
 
     private IReadOnlyList<SimilarityItem> _similarItems = Array.Empty<SimilarityItem>();
     /// <summary>当前相似项列表(已按分数降序),绑定到 SimilarityListView 的 ItemsSource。</summary>
@@ -82,6 +88,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             this.RaiseAndSetIfChanged(ref _isStateIndexing, value);
             this.RaisePropertyChanged(nameof(ShowActionArea));
             this.RaisePropertyChanged(nameof(ShowActionButton));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
         }
     }
 
@@ -119,6 +126,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             this.RaisePropertyChanged(nameof(HasUnindexed));
             this.RaisePropertyChanged(nameof(ShowActionArea));
             this.RaisePropertyChanged(nameof(ShowActionButton));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
             this.RaisePropertyChanged(nameof(ShowFullPlaceholder));
             this.RaisePropertyChanged(nameof(ShowUnindexedPlaceholder));
             this.RaisePropertyChanged(nameof(ActionButtonText));
@@ -150,7 +158,9 @@ public class SimilarityPanelViewModel : ReactiveObject
     public bool ShowUnindexedPlaceholder => !HasItems && HasUnindexed;
 
     private string? _indexError;
-    /// <summary>批量提取失败时的错误信息;无错误时为 null。</summary>
+    /// <summary>
+    /// 批量提取失败时的错误信息;空态与列表态共用同一份,不只在无相似项时赋值(SIM-10)。
+    /// </summary>
     public string? IndexError
     {
         get => _indexError;
@@ -158,11 +168,18 @@ public class SimilarityPanelViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _indexError, value);
             this.RaisePropertyChanged(nameof(HasIndexError));
+            this.RaisePropertyChanged(nameof(ShowActionAreaError));
         }
     }
 
     /// <summary>是否存在提取错误(便于绑定 IsVisible)。</summary>
     public bool HasIndexError => _indexError != null;
+
+    /// <summary>
+    /// 错误文案是否应显示在动作区:列表态(有相似项)与空态都可绑定,
+    /// 让错误不再只挂在空态栈里(SIM-10)。
+    /// </summary>
+    public bool ShowActionAreaError => HasIndexError && ShowActionArea;
 
     private FolderFeatureIndexer? _indexer;
 
@@ -183,6 +200,7 @@ public class SimilarityPanelViewModel : ReactiveObject
         _main.WhenAnyValue(x => x.IsRowLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
+        // 切图只在面板展开且可见时重算;关闭状态下仅记住锚点,不触发任何解码或推理。
         _main.WhenAnyValue(x => x.CurrentFile)
             .Subscribe(file =>
             {
@@ -192,7 +210,7 @@ public class SimilarityPanelViewModel : ReactiveObject
                     return;
                 }
                 _anchorFile = file;
-                _ = RecomputeAsync(file);
+                if (IsPanelVisible) _ = RecomputeAsync(file);
             });
 
         // 候选池来自主缩略图列表的 FilteredFiles(已应用同名分组与筛选);
@@ -200,21 +218,44 @@ public class SimilarityPanelViewModel : ReactiveObject
         // 使用 _anchorFile 而非 CurrentFile,避免用户从相似列表选中某项后改星级触发 FilteredFiles 重建时锚点漂移。
         _thumbnailList.WhenAnyValue(x => x.FilteredFiles)
             .Skip(1)
-            .Subscribe(__ => { _ = RecomputeAsync(_anchorFile); });
+            .Subscribe(__ => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
 
         // 设置变化（阈值 / 最多数量）即时重算当前列表。
         _main.Settings.WhenAnyValue(x => x.SimilarityThreshold, x => x.SimilarityMaxResults)
             .Skip(1)
             .Throttle(TimeSpan.FromMilliseconds(150))
-            .ObserveOn(AvaloniaScheduler.Instance)
-            .Subscribe(tuple => { _ = RecomputeAsync(_anchorFile); });
+            .ObserveOn(UiDispatcher.MainThreadScheduler)
+            .Subscribe(tuple => { if (IsPanelVisible) _ = RecomputeAsync(_anchorFile); });
+
+        // 面板展开（或文件栏重新可见）时按当前图重算;关闭时取消在途任务。
+        _main.Settings.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(SettingsViewModel.SimilarityPanelExpanded))
+                OnPanelVisibilityChanged();
+        };
+
+        _main.PropertyChanged += (_, args) =>
+        {
+            if (args.PropertyName == nameof(MainViewModel.IsThumbnailViewVisible))
+                OnPanelVisibilityChanged();
+        };
 
         // 切换/加载文件夹后重新统计未提取数量,避免面板停留在旧文件夹的状态。
         _folder.AllFilesChanged += () =>
         {
-            if (_main.Settings.SimilarityPanelExpanded)
+            if (IsPanelVisible)
                 _ = EvaluateUnindexedAsync();
         };
+
+        // 面板展开即按当前锚点算一次:旧壳靠切图时顺带算,原生壳只在面板可见时算(SCOPE-01 不在切图隐式推理)。
+        _main.Settings.WhenAnyValue(x => x.SimilarityPanelExpanded)
+            .Skip(1)
+            .Where(open => open)
+            .Subscribe(open =>
+            {
+                _ = EvaluateUnindexedAsync();
+                _ = RecomputeAsync(_anchorFile ?? _main.CurrentFile);
+            });
     }
 
     // ── 公共命令 ────────────────────────────────────────────────────────────
@@ -235,11 +276,32 @@ public class SimilarityPanelViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// 面板展开时调用:重新统计当前文件夹未提取张数。
+    /// 面板展开时调用:按当前图重算相似列表,并重新统计当前文件夹未提取张数。
+    /// 旧壳的 toggle 与原生面板首次可见都走这里;面板已关闭时由 <see cref="OnPanelVisibilityChanged"/> 丢弃。
     /// </summary>
     public void OnPanelOpened()
     {
+        _anchorFile = _main.CurrentFile;
         _ = EvaluateUnindexedAsync();
+        _ = RecomputeAsync(_anchorFile);
+    }
+
+    /// <summary>
+    /// 面板可见性变化:展开且文件栏可见时按当前图重算;否则取消在途计算,后续切图不再触发推理。
+    /// </summary>
+    private void OnPanelVisibilityChanged()
+    {
+        if (IsPanelVisible)
+            OnPanelOpened();
+        else
+            CancelPendingCompute();
+    }
+
+    /// <summary>取消在途相似度计算(面板关闭或文件栏隐藏)。</summary>
+    private void CancelPendingCompute()
+    {
+        _computeCts?.Cancel();
+        _computeCts = null;
     }
 
     /// <summary>
@@ -256,17 +318,32 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// <summary>
     /// 扫描当前文件夹,按指纹聚合后更新 <see cref="UnindexedCount"/>。
     /// 同次曝光的 RAW+HEIF/JPG 共享指纹,只计为一张待提取。
+    /// 单飞:展开面板、文件夹变化、提取完成都会调用,大文件夹各跑一遍会叠加成全量 EXIF 风暴。
     /// </summary>
-    private async Task EvaluateUnindexedAsync()
+    private Task EvaluateUnindexedAsync()
+    {
+        if (_unindexedTask is { IsCompleted: false })
+        {
+            return _unindexedTask;
+        }
+
+        _unindexedTask = EvaluateUnindexedCoreAsync();
+        return _unindexedTask;
+    }
+
+    /// <summary>未提取统计的实际工作体。</summary>
+    private async Task EvaluateUnindexedCoreAsync()
     {
         var files = _folder.AllFiles;
         if (files == null || files.Count == 0)
         {
-            Dispatcher.UIThread.Post(() => UnindexedCount = 0);
+            UiDispatcher.Post(() => UnindexedCount = 0);
             return;
         }
 
         var groups = await FolderFeatureIndexer.GroupByFingerprintAsync(files).ConfigureAwait(false);
+
+        // 逐组查询库状态:串行即可,并行开连接反而会撞 SQLite 池上限。
         int unindexed = 0;
 
         foreach (var group in groups)
@@ -291,7 +368,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             }
         }
 
-        Dispatcher.UIThread.Post(() => UnindexedCount = unindexed);
+        UiDispatcher.Post(() => UnindexedCount = unindexed);
     }
 
     // ── 批量提取 ────────────────────────────────────────────────────────────
@@ -322,7 +399,7 @@ public class SimilarityPanelViewModel : ReactiveObject
             var error = _indexer.LastError;
             _indexer.ProgressChanged -= OnIndexProgress;
             _indexer = null;
-            Dispatcher.UIThread.Post(() =>
+            UiDispatcher.Post(() =>
             {
                 IsStateIndexing = false;
                 IndexError = error;
@@ -333,12 +410,13 @@ public class SimilarityPanelViewModel : ReactiveObject
         await EvaluateUnindexedAsync().ConfigureAwait(false);
         // 新数据已落库,按指纹批量回填 ImageFile.IsShake — 直接读 CV grid + 尺寸,不再触发解码
         await ShakeFlagService.EvaluateAsync(_folder.AllFiles).ConfigureAwait(false);
-        _ = RecomputeAsync(_main.CurrentFile);
+        // 提取完成时面板可能已被收起,只在真正可见时重算相似列表。
+        if (IsPanelVisible) _ = RecomputeAsync(_main.CurrentFile);
     }
 
     private void OnIndexProgress(IndexProgress progress)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             IndexProgress = progress.Completed;
             IndexTotal = progress.Total;
@@ -349,10 +427,14 @@ public class SimilarityPanelViewModel : ReactiveObject
 
     /// <summary>
     /// 重新计算当前图片的相似项;旧的计算被取消。
+    /// 只在面板展开时计算(共享 5.4/SCOPE-01:切图不隐式推理)。
+    /// 面板收起时先取消在途计算再返回 — 否则收起后那一轮仍会在后台扫全文件夹。
     /// </summary>
     private async Task RecomputeAsync(ImageFile? current)
     {
         _computeCts?.Cancel();
+        if (!_main.Settings.SimilarityPanelExpanded) return;
+
         var cts = new CancellationTokenSource();
         _computeCts = cts;
         var token = cts.Token;
@@ -393,7 +475,7 @@ public class SimilarityPanelViewModel : ReactiveObject
     /// </summary>
     private void UpdateOnUi(IReadOnlyList<SimilarityItem> results, CancellationToken token)
     {
-        Dispatcher.UIThread.Post(() =>
+        UiDispatcher.Post(() =>
         {
             if (token.IsCancellationRequested) return;
             SimilarItems = results;

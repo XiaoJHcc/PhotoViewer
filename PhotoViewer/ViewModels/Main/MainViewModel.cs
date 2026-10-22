@@ -1,19 +1,16 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reactive.Linq;
 using System.Threading.Tasks;
-using Avalonia.Controls;
-using Avalonia.Threading;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
-using PhotoViewer.Views;
-using PhotoViewer.Views.Tools;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
@@ -23,10 +20,25 @@ public class MainViewModel : ViewModelBase
     public FolderViewModel FolderVM { get; }
     public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
-    public ImageViewModel ImageVM { get; }
-    public AnalysisViewModel AnalysisVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
+
+    /// <summary>
+    /// 星级写回文件失败时触发(UI 线程);界面据此给出可见提示,不呈现虚假成功(FILM-06)。
+    /// 参数为原照片与本次请求的星级。
+    /// </summary>
+    public event Action<ImageFile, int>? RatingWriteFailed;
+
+    /// <summary>
+    /// 显式打开失败时触发(UI 线程);文案由共享层统一给出,界面据此显示 STATE-03 提示条(STATE-02)。
+    /// 参数为完整的失败提示正文。
+    /// </summary>
+    public event Action<string>? OpenFailed;
+
+    /// <summary>
+    /// 显式打开（文件/文件夹/外部打开/拖入）开始时触发：主图回到适应态，不沿用上一批照片的倍率与对焦跟随（OPEN-05）。
+    /// </summary>
+    public event Action? FitToViewRequested;
 
     // 当前状态
     public ImageFile? LastFile;
@@ -51,6 +63,8 @@ public class MainViewModel : ViewModelBase
         get => _currentFile;
         set
         {
+            // 切图取证(常驻,一行):与展示会话的加载日志对表可还原错位/丢显事故
+            Console.WriteLine($"CurrentFile => {(value?.Name ?? "null")}");
             if (_currentFile != null) _currentFile.IsCurrentImage = false;
             if (_currentFile != value) LastFile = _currentFile;
             this.RaiseAndSetIfChanged(ref _currentFile, value);
@@ -70,10 +84,6 @@ public class MainViewModel : ViewModelBase
                 value.IsCurrentImage = true;
                 FileVM.ThumbnailList.PreloadNearbyFiles();
             }
-            else
-            {
-                Console.WriteLine("CurrentFile => null");
-            }
         }
     }
 
@@ -89,6 +99,7 @@ public class MainViewModel : ViewModelBase
         finally { _suppressAnchorUpdate = false; }
     }
 
+    /// <summary>建立共享业务 VM；文件、评分与设置行为不变。</summary>
     public MainViewModel()
     {
         // 先创建设置 ViewModel
@@ -96,8 +107,6 @@ public class MainViewModel : ViewModelBase
         Tools = new ToolsViewModel(this);
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
-        ImageVM = new ImageViewModel(this);
-        AnalysisVM = new AnalysisViewModel(this);
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
         FileVM = new FileViewModel(this);
@@ -106,9 +115,12 @@ public class MainViewModel : ViewModelBase
         Settings.WhenAnyValue(s => s.LayoutMode)
             .Subscribe(_ => UpdateLayoutFromSettings());
 
-        // 当前图片切换、或 ExifData 异步加载完成时，同步刷新工具状态。
+        // 当前图片切换、或 ExifData / EXIF 加载完成时，同步刷新工具状态。
+        // 无 EXIF 的照片加载完成时 ExifData 仍为 null（值未变化），必须同时监听 IsExifLoaded 才能区分“加载中”和“无 EXIF”。
         this.WhenAnyValue(m => m.CurrentFile)
-            .Select(file => file?.WhenAnyValue(f => f.ExifData) ?? Observable.Return<ExifData?>(null))
+            .Select(file => file == null
+                ? Observable.Return<ImageFile?>(null)
+                : file.WhenAnyValue(f => f.ExifData, f => f.IsExifLoaded).Select(_ => file))
             .Switch()
             .Subscribe(_ => Tools.SyncCurrentFile(CurrentFile));
 
@@ -122,139 +134,37 @@ public class MainViewModel : ViewModelBase
     }
     
     ////////////////
-    /// 打开设置模态
+    /// 窗口与主图
     ////////////////
     
-    #region OpenSettingsModal
-    
-    /// <summary>
-    /// 打开设置窗口
-    /// </summary>
-    public void OpenSettingWindow(Window parentWindow)
-    {
-        var settingsWindow = new SettingsWindow
-        {
-            DataContext = Settings
-        };
-        settingsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        settingsWindow.ShowDialog(parentWindow);
-    }
-
-    // 桌面端单例工具窗口引用
-    private ToolsWindow? _toolsWindow;
+    #region Windows
 
     /// <summary>
-    /// 打开工具窗口并显示工具首页（桌面端单例）。已打开时直接前置，不重复创建。
+    /// 打开设置窗口（桌面端）。窗口构建由平台窗口展示器完成。
     /// </summary>
-    public void OpenToolsWindow(Window parentWindow)
-    {
-        Tools.ShowList();
-
-        if (_toolsWindow != null)
-        {
-            _toolsWindow.Activate();
-            return;
-        }
-
-        _toolsWindow = new ToolsWindow
-        {
-            DataContext = Tools
-        };
-        _toolsWindow.WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        _toolsWindow.Closed += (_, _) => _toolsWindow = null;
-        _toolsWindow.Show(parentWindow);
-    }
-
-    // 模态显示
-    private bool _isModalVisible = false;
-    public bool IsModalVisible
-    {
-        get => _isModalVisible;
-        set => this.RaiseAndSetIfChanged(ref _isModalVisible, value);
-    }
-    // 模态显示时 遮罩不透明度
-    private double _modalMaskOpacity = 0.5;
-    public double ModalMaskOpacity
-    {
-        get => _modalMaskOpacity;
-        set => this.RaiseAndSetIfChanged(ref _modalMaskOpacity, value);
-    }
-    // 模态显示时 模态弹出
-    private double _modalMarginTop = 2000;
-    public double ModalMarginTop
-    {
-        get => _modalMarginTop;
-        set => this.RaiseAndSetIfChanged(ref _modalMarginTop, value);
-    }
-    
-    /// <summary>
-    /// 当前模态内容类型：Settings 或 Tools
-    /// </summary>
-    private string _modalContentType = "Settings";
-    public string ModalContentType
-    {
-        get => _modalContentType;
-        set
-        {
-            this.RaiseAndSetIfChanged(ref _modalContentType, value);
-            this.RaisePropertyChanged(nameof(IsModalSettings));
-            this.RaisePropertyChanged(nameof(IsModalTools));
-        }
-    }
-    
-    /// <summary>模态内容是否为设置页</summary>
-    public bool IsModalSettings => _modalContentType == "Settings";
-    
-    /// <summary>模态内容是否为工具页</summary>
-    public bool IsModalTools => _modalContentType == "Tools";
+    public void OpenSettingWindow() => NativeWindowPresenter.ShowSettingsWindow(Settings);
 
     /// <summary>
-    /// 模态标题文本
+    /// 打开工具窗口（桌面端单例）。未打开时回到工具首页；已打开时只前置并保留当前页（TOOLS-01）。
     /// </summary>
-    private string _modalTitle = "设置";
-    public string ModalTitle
+    public void OpenToolsWindow()
     {
-        get => _modalTitle;
-        set => this.RaiseAndSetIfChanged(ref _modalTitle, value);
-    }
-    
-    /// <summary>
-    /// 打开设置弹窗
-    /// </summary>
-    public void OpenSettingModal()
-    {
-        ModalContentType = "Settings";
-        ModalTitle = "设置";
-        ShowModal();
+        if (!Tools.IsPresented)
+            Tools.ShowList();
+        NativeWindowPresenter.ShowOrActivateToolsWindow(Tools);
     }
 
     /// <summary>
-    /// 打开工具弹窗并显示工具首页（移动端）。
+    /// 请求主图回到适应态（OPEN-05）。由平台壳订阅 <see cref="FitToViewRequested"/> 后执行。
     /// </summary>
-    public void OpenToolsModal()
-    {
-        Tools.ShowList();
-        ModalContentType = "Tools";
-        ModalTitle = "工具";
-        ShowModal();
-    }
+    public void RequestFitToView() => FitToViewRequested?.Invoke();
 
-    public void ShowModal()
-    {
-        IsModalVisible = true;
-        
-        ModalMaskOpacity = 0.5;
-        ModalMarginTop = 80;
-    }
-    public async void HideModal()
-    {
-        ModalMaskOpacity = 0;
-        ModalMarginTop = 2000;
-        
-        await Task.Delay(400);
-        IsModalVisible = false;
-    }
-    
+    /// <summary>
+    /// 上报显式打开失败（STATE-02），由平台壳订阅 <see cref="OpenFailed"/> 后以 STATE-03 提示条呈现。
+    /// </summary>
+    /// <param name="message">完整的失败提示正文。</param>
+    public void ReportOpenFailure(string message) => OpenFailed?.Invoke(message);
+
     #endregion
     
     
@@ -309,7 +219,6 @@ public class MainViewModel : ViewModelBase
 
             // 通知相关视图模型布局已变化
             ControlVM?.RaisePropertyChanged(nameof(ControlVM.IsRowLayout));
-            AnalysisVM?.RaisePropertyChanged(nameof(AnalysisVM.IsRowLayout));
         }
     }
 
@@ -436,6 +345,9 @@ public class MainViewModel : ViewModelBase
         var ratingSw = Stopwatch.StartNew();
         Console.WriteLine($"[Rating] === BEGIN SetRating({file.Name}, {rating}) ===");
 
+        // 文件是否已写成功:为 true 时后续 UI 刷新异常不得再报"写回失败"(界面不能报假失败)
+        var written = false;
+
         // 先在 UI 线程收集需要的引用，再整体下放到后台执行文件 I/O。
         var safeMode = Settings.SafeSetRating;
         var syncTargets = GetRatingSyncTargets(file);
@@ -486,13 +398,15 @@ public class MainViewModel : ViewModelBase
             if (!success || syncedFiles == null)
             {
                 Console.WriteLine($"[Rating] FAIL for {file.Name}. Total: {ratingSw.ElapsedMilliseconds}ms");
+                RatingWriteFailed?.Invoke(file, rating);
                 return;
             }
 
             Console.WriteLine($"[Rating] Write done. Elapsed: {ratingSw.ElapsedMilliseconds}ms. Updating UI caches...");
+            written = true;
 
             // 回到 UI 线程刷新内存缓存与界面。
-            await Dispatcher.UIThread.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
+            await UiDispatcher.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
 
             // 顺手同步 photos.rating 快照(Plan-2-4):产品行为以文件为准,DB rating 只是训练用副本。
             // 指纹未入库时 UpdateRatingAsync 静默跳过,无需在 UI 线程等。
@@ -504,9 +418,9 @@ public class MainViewModel : ViewModelBase
                 try
                 {
                     // 在 UI 线程清除 EXIF 标记（涉及 RaisePropertyChanged），再由 LoadExifDataAsync 在后台重新加载
-                    await Dispatcher.UIThread.InvokeAsync(() => file.ClearExifData());
+                    await UiDispatcher.InvokeAsync(() => file.ClearExifData());
                     await file.LoadExifDataAsync();
-                    await Dispatcher.UIThread.InvokeAsync(() =>
+                    await UiDispatcher.InvokeAsync(() =>
                     {
                         ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
                         file.RaisePropertyChanged(nameof(file.Rating));
@@ -522,6 +436,10 @@ public class MainViewModel : ViewModelBase
         catch (Exception ex)
         {
             Console.WriteLine("Error setting rating for " + file.Name + ": " + ex.Message);
+            if (!written)
+            {
+                RatingWriteFailed?.Invoke(file, rating);
+            }
         }
         finally
         {

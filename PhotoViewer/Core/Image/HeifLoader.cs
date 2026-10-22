@@ -1,18 +1,23 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Image;
 
 public interface IHeifDecoder
 {
     bool IsSupported { get; }
-    
-    Task<Bitmap?> LoadBitmapAsync(IStorageFile file);
-    Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize);
+
+    /// <summary>解码产物是否已是显示朝向(解码器内部应用了方向)。true 时 <see cref="BitmapLoader"/> 不再二次旋转。</summary>
+    bool OutputPreRotated { get; }
+
+    /// <summary>
+    /// 解码 HEIF 图像;<paramref name="maxSize"/> 非空时代理缩解码(长边上限像素,质量不低于 Mitchell 级重采样),
+    /// null 时全分辨率。失败返回 null,原因记录到 <see cref="HeifLoader.LastDecodeError"/>。
+    /// </summary>
+    Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize);
 
 }
 
@@ -30,7 +35,7 @@ public static class HeifLoader
 
     /// <summary>
     /// 最近一次 HEIF 解码失败时各回退级别的详细错误描述。
-    /// 当 LoadHeifBitmapAsync 返回 null 时可读取此属性辅助诊断。
+    /// 当 DecodeAsync 返回 null 时可读取此属性辅助诊断。
     /// </summary>
     public static string? LastDecodeError => _lastDecodeError;
 
@@ -45,6 +50,9 @@ public static class HeifLoader
         _decoder = decoder ?? new NoopHeifDecoder();
     }
 
+    /// <summary>当前解码器产物是否已是显示朝向。</summary>
+    public static bool OutputPreRotated => _decoder.IsSupported && _decoder.OutputPreRotated;
+
     public static bool IsHeifFile(string filePath)
     {
         if (string.IsNullOrEmpty(filePath)) return false;
@@ -52,17 +60,17 @@ public static class HeifLoader
         return extension is ".heif" or ".heic" or ".avif" or ".hif";
     }
 
-    public static bool IsHeifFile(IStorageFile file)
+    public static bool IsHeifFile(IFileRef file)
     {
         if (file is null) return false;
         // Android 上可能是 content:// 无法从 LocalPath 识别扩展名，回退到 Name
-        var fromPath = file.Path?.LocalPath ?? string.Empty;
+        var fromPath = file.PathKey;
         if (IsHeifFile(fromPath)) return true;
 
         // 某些平台 Name 可能包含扩展名
         try
         {
-            var name = (file as IStorageItem)?.Name ?? string.Empty;
+            var name = file.Name ?? string.Empty;
             return IsHeifFile(name);
         }
         catch
@@ -71,19 +79,19 @@ public static class HeifLoader
         }
     }
 
-    public static Task<Bitmap?> LoadHeifBitmapAsync(IStorageFile file)
+    /// <summary>
+    /// 解码 HEIF;<paramref name="maxSize"/> 为代理长边上限(null = 全分辨率)。
+    /// </summary>
+    public static Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize = null)
     {
         _lastDecodeError = null;
         if (!_decoder.IsSupported)
         {
             _lastDecodeError = "HEIF 解码器不可用（未初始化或当前平台不支持）";
-            return Task.FromResult<Bitmap?>(null);
+            return Task.FromResult<DecodedImage?>(null);
         }
-        return _decoder.LoadBitmapAsync(file);
+        return _decoder.DecodeAsync(file, maxSize);
     }
-
-    public static Task<Bitmap?> LoadHeifThumbnailAsync(IStorageFile file, int maxSize = 120)
-        => _decoder.IsSupported ? _decoder.LoadThumbnailAsync(file, maxSize) : Task.FromResult<Bitmap?>(null);
 
     /// <summary>
     /// 设置 CPU 软件解码路径的最大并发数。
@@ -116,14 +124,14 @@ public static class HeifLoader
             semaphore.Release();
         }
     }
-    
+
 }
 
 // 为空
 internal sealed class NoopHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => false;
+    public bool OutputPreRotated => false;
 
-    public Task<Bitmap?> LoadBitmapAsync(IStorageFile file) => Task.FromResult<Bitmap?>(null);
-    public Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize) => Task.FromResult<Bitmap?>(null);
+    public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize) => Task.FromResult<DecodedImage?>(null);
 }

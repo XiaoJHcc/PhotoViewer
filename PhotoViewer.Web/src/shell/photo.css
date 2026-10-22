@@ -1,0 +1,191 @@
+/* 主图：canvas、空态/加载/失败提示、导航图、计算中药丸、提示条、分析绿框 */
+.pv-photo {
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.pv-photo.is-zoomed {
+    cursor: grab;
+}
+
+.pv-photo.is-zoomed.is-panning {
+    cursor: grabbing;
+}
+
+.pv-photo-canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block;
+}
+
+.pv-photo.is-drop-target::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    pointer-events: none;
+    box-shadow: inset 0 0 0 2px var(--pv-accent);
+}
+
+/* STATE-01：空态标题与可选副提示，提示层不挡点击 */
+.pv-photo-hint {
+    position: absolute;
+    pointer-events: none;
+}
+
+.pv-photo-hint-title {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: none;
+    appearance: none;
+    -webkit-appearance: none;
+    pointer-events: none;
+    font-family: inherit;
+    font-size: var(--pv-image-hint-title-fontSize);
+    font-weight: 400;
+    color: var(--pv-color-text-secondary);
+    text-align: center;
+    white-space: nowrap;
+    cursor: default;
+}
+
+/* STATE-01：加载提示延迟出现，图一到即撤下 */
+.pv-photo-loading {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    font-size: var(--pv-image-hint-detail-fontSize);
+    color: var(--pv-color-text-secondary);
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* STATE-02：解码失败给标题与详情，不伪造图像 */
+.pv-photo-error {
+    position: absolute;
+    pointer-events: none;
+}
+
+.pv-photo-error-title,
+.pv-photo-error-detail {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    text-align: center;
+}
+
+.pv-photo-error-title {
+    font-size: var(--pv-image-hint-title-fontSize);
+    font-weight: 400;
+    color: var(--pv-color-text-primary);
+    white-space: nowrap;
+}
+
+.pv-photo-error-detail {
+    font-size: var(--pv-image-hint-detail-fontSize);
+    color: var(--pv-color-text-secondary);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* IMAGE-06：导航图可拖动白框；滚轮/捏合仍归主图（事件继续冒泡，拖动事件在组件内截断） */
+.pv-photo-nav {
+    position: absolute;
+    overflow: hidden;
+    border-radius: var(--pv-nav-cornerRadius);
+    pointer-events: auto;
+    cursor: grab;
+    touch-action: none;
+    background-color: var(--pv-color-nav-background);
+    background-color: color-mix(in srgb, var(--pv-color-nav-background) calc(var(--pv-color-nav-background-alpha) * 100%), transparent);
+}
+
+.pv-photo-nav.is-dragging {
+    cursor: grabbing;
+}
+
+.pv-photo-nav-thumb,
+.pv-photo-nav-frame,
+.pv-photo-nav-label {
+    pointer-events: none;
+}
+
+.pv-photo-nav-thumb {
+    position: absolute;
+    display: block;
+}
+
+.pv-photo-nav-frame {
+    position: absolute;
+    box-sizing: border-box;
+    border: var(--pv-nav-frame-thickness) solid var(--pv-color-nav-frame);
+}
+
+.pv-photo-nav-label {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--pv-nav-percent-fontSize);
+    font-weight: 600;
+    line-height: 1;
+    color: var(--pv-color-nav-frame);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* IMAGE-07：计算中药丸，不遮挡主图主体 */
+.pv-photo-busy {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--pv-image-busy-cornerRadius);
+    pointer-events: none;
+    font-size: var(--pv-status-toast-fontSize);
+    color: var(--pv-color-status-toast-foreground);
+    white-space: nowrap;
+    background-color: var(--pv-color-status-toast-background);
+    background-color: color-mix(in srgb, var(--pv-color-status-toast-background) calc(var(--pv-color-status-toast-background-alpha) * 100%), transparent);
+}
+
+/* STATE-03：非模态提示条，自动换行，不抢焦点 */
+.pv-photo-toast {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    padding: var(--pv-status-toast-paddingY) var(--pv-status-toast-paddingX);
+    border-radius: var(--pv-status-toast-cornerRadius);
+    pointer-events: none;
+    font-size: var(--pv-status-toast-fontSize);
+    line-height: 16px;
+    color: var(--pv-color-status-toast-foreground);
+    text-align: center;
+    white-space: pre-line;
+    overflow-wrap: anywhere;
+    background-color: var(--pv-color-status-toast-background);
+    background-color: color-mix(in srgb, var(--pv-color-status-toast-background) calc(var(--pv-color-status-toast-background-alpha) * 100%), transparent);
+}
+
+/* ANALYSIS-04：悬停细节预览时标出源像素矩形 */
+.pv-photo-highlight {
+    position: absolute;
+    box-sizing: border-box;
+    border: var(--pv-analysis-highlight-thickness) solid var(--pv-color-analysis-highlight);
+    pointer-events: none;
+}

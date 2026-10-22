@@ -1,4 +1,5 @@
 using System;
+using PhotoViewer.Core.Image;
 
 namespace PhotoViewer.Core.AI;
 
@@ -7,7 +8,7 @@ namespace PhotoViewer.Core.AI;
 /// 执行 PCA-RGB / 默认中心 cosine / 锐度图 / 抖动矢量场 / 抖动判定文字。线程安全(纯函数 + 内部不持有状态)。
 ///
 /// 抽出来给两条调用路径共享:
-/// 1. <see cref="ViewModels.Main.AnalysisViewModel"/> 切图 cache miss 后落 cache。
+/// 1. 分析栏宿主切图 cache miss 后落 cache。
 /// 2. <see cref="PhotoViewer.Core.Image.BitmapPrefetcher"/> 后台预热邻居指纹。
 ///
 /// PCA SVD 是切图卡顿的主因(几十 ms),全部塞进 cache 后切图变成纯 UI 线程 swap。
@@ -28,7 +29,7 @@ public static class AnalysisComputer
         ArgumentNullException.ThrowIfNull(data);
 
         // CV 派生层(锐度图 / ShakeField / 刚体拟合 + 判定文字)
-        Avalonia.Media.Imaging.Bitmap? sharpnessBmp = null;
+        DecodedImage? sharpnessBmp = null;
         ShakeField? shakeField = null;
         string shakeLabel = "抖动拖影";
         double aspect = 1.0;
@@ -47,8 +48,8 @@ public static class AnalysisComputer
         }
 
         // DINO 派生层(PCA-RGB + 默认中心 cosine 参考点 16,16)
-        Avalonia.Media.Imaging.Bitmap? pcaBmp = null;
-        Avalonia.Media.Imaging.Bitmap? cosineBmp = null;
+        DecodedImage? pcaBmp = null;
+        DecodedImage? cosineBmp = null;
         if (data.Patches != null)
         {
             var pcaRgb = PatchHeatmap.ComputePcaRgb(data.Patches);

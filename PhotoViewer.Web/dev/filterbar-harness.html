@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>FilterBar harness</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/filterbar.css">
+    <style>
+        #app {
+            background: #000;
+        }
+
+        #harness-error:empty {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <main id="app" aria-label="PhotoViewer"></main>
+    <pre id="harness-error" style="position:fixed;inset:auto 0 0 0;margin:0;padding:8px;color:#ff8080;background:#200;font:12px monospace;white-space:pre-wrap;z-index:9999"></pre>
+    <script>
+        const showError = (text) => { document.getElementById("harness-error").textContent = String(text); };
+        addEventListener("error", (event) => showError(`${event.message}\n${event.filename}:${event.lineno}:${event.colno}`));
+        addEventListener("unhandledrejection", (event) => showError(event.reason?.stack ?? event.reason));
+    </script>
+    <script type="module">
+import { createTokens } from "../src/core/tokens.js";
+import baseTokens from "../src/tokens.g.js";
+import { systemClock } from "../src/core/clock.js";
+import { createLibrary } from "../src/core/library.js";
+import { createApp } from "../src/core/app.js";
+import { createDecoder } from "../src/render/decoder.js";
+import { createStore } from "../src/render/store.js";
+import { el, place, applyTokenVariables, createTextMeasurer } from "../src/shell/dom.js";
+import { createMenu } from "../src/shell/menu.js";
+import { mountFilterBar } from "../src/shell/filterbar.js";
+
+// 开发自查页：只挂筛选条，拓扑与 main.js 一致（stage → window → file pane）。
+const params = new URLSearchParams(location.search);
+const t = createTokens(params.get("platform") ?? "web");
+const clock = systemClock();
+const library = createLibrary();
+const decoder = createDecoder({ clock });
+const store = createStore({ clock });
+const storage = {
+    get: () => null,
+    set: () => {},
+};
+
+const body = document.getElementById("app");
+body.dataset.platform = t.profile;
+const windowEl = el("div", { class: "pv-window", role: "application", "aria-label": "PhotoViewer" });
+const stage = el("div", { class: "pv-stage" }, windowEl);
+body.append(stage);
+applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
+
+const measureText = createTextMeasurer();
+const app = createApp({
+    t,
+    clock,
+    profile: t.profile,
+    library,
+    decoder,
+    store,
+    storage,
+    dpr: devicePixelRatio,
+    reducedMotion: () => false,
+    measureText,
+});
+
+const overlay = el("div", { class: "pv-overlay" });
+const pane = el("div", { class: "pv-pane pv-pane-file" });
+windowEl.append(pane, overlay);
+const menu = createMenu({ host: windowEl, t, onOpenChange: (open) => app.setMenuOpen(open) });
+const ctx = { app, t, clock, decoder, library, measureText, menu, overlay, windowEl, reducedMotion: () => false };
+const component = mountFilterBar(pane, ctx);
+
+const mode = params.get("layout");
+if (mode === "row" || mode === "col") app.updateSettings({ layoutMode: mode });
+
+function render(regions) {
+    const state = app.state;
+    place(pane, state.panes.film ? state.layout.panes.filePane : null);
+    component.update(state, regions);
+}
+app.on("change", (regions) => render(regions));
+
+function syncWindowSize() {
+    const width = stage.clientWidth || 1200;
+    const height = stage.clientHeight || 820;
+    windowEl.style.width = `${width}px`;
+    windowEl.style.height = `${height}px`;
+    app.setWindowSize(width, height);
+}
+new ResizeObserver(syncWindowSize).observe(stage);
+
+window.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented) return;
+    const result = app.keyDown({
+        code: event.code,
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        repeat: event.repeat,
+    });
+    if (result.handled) event.preventDefault();
+});
+
+syncWindowSize();
+if (!params.has("empty")) app.openFolder(params.get("folder") ?? "harbor");
+render(null);
+// 开发用：键盘自查时无需先用鼠标取焦。
+if (params.get("focus") === "sort") pane.querySelector(".pv-popup")?.focus();
+
+globalThis.pv = { app, render };
+    </script>
+</body>
+</html>

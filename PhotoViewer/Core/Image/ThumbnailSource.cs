@@ -39,7 +39,7 @@ public sealed class ThumbnailSource
     /// <summary>
     /// 该来源解码出的位图是否已经预先应用了显示旋转（true=显示朝向；false=传感器朝向，调用方需自行补旋转）。
     /// 平台 HEIF 解码器返回的位图通常已应用 Default Rotation，故为 true；
-    /// 任何"按字节直读 + Avalonia 解码"的来源都是 false。
+    /// 任何"按字节直读 + 平台解码"的来源都是 false。
     /// </summary>
     public bool IsPreRotated { get; }
 
@@ -53,14 +53,14 @@ public sealed class ThumbnailSource
     /// 内部加载策略:由具体提取器闭包持有 (file/offset/tagByteArray/解码器引用) 等。
     /// 仅供 ThumbnailService 调用;不暴露给业务层。
     /// </summary>
-    internal Func<int, System.Threading.Tasks.Task<Avalonia.Media.Imaging.Bitmap?>> LoaderAsync { get; }
+    internal Func<int, System.Threading.Tasks.Task<DecodedImage?>> LoaderAsync { get; }
 
     internal ThumbnailSource(
         int width,
         int height,
         ThumbnailOrigin origin,
         bool isPreRotated,
-        Func<int, System.Threading.Tasks.Task<Avalonia.Media.Imaging.Bitmap?>> loaderAsync)
+        Func<int, System.Threading.Tasks.Task<DecodedImage?>> loaderAsync)
     {
         Width = Math.Max(0, width);
         Height = Math.Max(0, height);

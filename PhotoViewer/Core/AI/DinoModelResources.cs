@@ -1,5 +1,5 @@
 using System;
-using Avalonia.Platform;
+using PhotoViewer.Core.Platform;
 
 namespace PhotoViewer.Core.AI;
 
@@ -9,7 +9,7 @@ namespace PhotoViewer.Core.AI;
 /// </summary>
 public static class DinoModelResources
 {
-    /// <summary>模型资源 URI（Avalonia AssetLoader 路径）。</summary>
+    /// <summary>模型资源 URI（路径部分由各平台资源提供器解析）。</summary>
     public static readonly Uri ModelAssetUri = new("avares://PhotoViewer/Assets/Models/dinov3_vits16.onnx");
 
     /// <summary>正方形输入边长（像素）。</summary>
@@ -52,13 +52,14 @@ public static class DinoModelResources
     public const string ModelId = "dinov3_vits16_f32_518_v2";
 
     /// <summary>
-    /// 从 Avalonia 资源读取模型字节；若资源不存在返回 null。
+    /// 从应用打包资源读取模型字节；若资源不存在返回 null。
     /// </summary>
     public static byte[]? TryLoadModelBytes()
     {
         try
         {
-            using var stream = AssetLoader.Open(ModelAssetUri);
+            using var stream = AppResources.OpenAsset(ModelAssetUri);
+            if (stream == null) return null;
             using var ms = new System.IO.MemoryStream();
             stream.CopyTo(ms);
             return ms.ToArray();

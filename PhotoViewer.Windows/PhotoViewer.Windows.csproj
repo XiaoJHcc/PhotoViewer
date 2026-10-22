@@ -1,0 +1,121 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+        <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+        <OutputType>WinExe</OutputType>
+        <RootNamespace>PhotoViewer.Windows</RootNamespace>
+        <AssemblyName Condition="'$(WindowsReleaseAssemblyName)' != ''">$(WindowsReleaseAssemblyName)</AssemblyName>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+        <!-- 固定 win-x64:既有的 LibHeif.Native.win-x64 只支持 x64,发布脚本也已硬拒其他 RID。
+             固定后 Debug 与 Release 都按 win-x64 构建,输出目录为 bin/<cfg>/net10.0-windows10.0.19041.0/win-x64/。 -->
+        <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+
+        <!-- WinUI 3 原生壳:非打包(unpackaged)部署;入口由本工程自写(见 Program.cs) -->
+        <UseWinUI>true</UseWinUI>
+        <!-- 根 App.xaml 只承载 XamlControlsResources(见 App.xaml);不要删:
+             没有它就没有 IXamlMetadataProvider,Fluent 控件模板(NavigationView/TitleBar/NumberBox/
+             TextBox/InfoBar/ProgressBar)会缺 TabView* / AcrylicBackgroundFillColorDefaultBrush 资源。 -->
+        <WindowsPackageType>None</WindowsPackageType>
+        <!-- 开启 PRI 发布接线;非打包应用的资源包名为 $(TargetName).pri,单文件发布时一并解包。 -->
+        <EnableMsixTooling>true</EnableMsixTooling>
+        <!-- 自包含 Windows App SDK 运行时:免装运行时依赖(直发 exe 的用户机器上没有它),
+             并让 WinUI 自带的 Microsoft.UI.Xaml.Controls.pri 随输出就位(Fluent 资源查找依赖它)。 -->
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+        <!-- EXE 图标：引用共享项目中的 icon.ico -->
+        <ApplicationIcon>..\PhotoViewer\Assets\icon.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <ApplicationManifest>app.manifest</ApplicationManifest>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsAppSDK"/>
+        <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
+        <PackageReference Include="DirectNStandard" />
+        <PackageReference Include="LibHeifSharp" />
+        <PackageReference Include="LibHeif.Native.win-x64" />
+        <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
+        <PackageReference Include="WicNet" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+        <EmbeddedResource Include="..\PhotoViewer\Assets\Models\dinov3_vits16.onnx"
+                          LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"/>
+    </ItemGroup>
+
+    <!--
+      pvhevc.dll:静态链接「仅 HEVC 解码器」LGPL FFmpeg 的最小解码库(源码与构建脚本见 NativeSrc/pvhevc、
+      build-native-windows-hevc.ps1),HEIF 快速解码路径依赖它。与 libheif 一样必须是应用本地模块:
+      单文件发布时随全内容解包落到 EXE 同目录,托管侧按 AppContext.BaseDirectory 解析。
+      许可与构建说明(txt)一并随包分发。
+    -->
+    <ItemGroup>
+        <Content Include="NativeLibs\win-x64\pvhevc.dll"
+                 Link="pvhevc.dll"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false"/>
+        <Content Include="NativeLibs\win-x64\pvhevc.txt;NativeLibs\win-x64\pvhevc-FFmpeg-LICENSE.txt"
+                 Link="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false"/>
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
+        <_WindowsVCRedistFile Include="msvcp140.dll;msvcp140_1.dll;vcruntime140.dll;vcruntime140_1.dll" />
+        <Content Include="@(_WindowsVCRedistFile->'$(WindowsVCRedistDirectory)\%(Identity)')"
+                 Condition="'$(WindowsVCRedistDirectory)' != ''"
+                 Link="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
+    </ItemGroup>
+
+    <Target Name="ValidateWindowsVCRedist" BeforeTargets="PrepareForBuild;ComputeFilesToPublish"
+            Condition="'$(PublishSingleFile)' == 'true'">
+        <Error Condition="'$(RuntimeIdentifier)' != 'win-x64'" Text="Windows single-file CRT deployment requires win-x64." />
+        <Error Condition="'$(WindowsVCRedistDirectory)' == ''" Text="Use publish-win-x64-singlefile.ps1 or supply WindowsVCRedistDirectory with the validated Visual Studio Release x64 CRT directory." />
+        <Error Condition="!$([System.IO.Path]::IsPathRooted('$(WindowsVCRedistDirectory)'))" Text="WindowsVCRedistDirectory must be an absolute path." />
+        <Error Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(WindowsVCRedistDirectory)', '(?i)(^|[\\/])debug_nonredist([\\/]|$)'))" Text="debug_nonredist is not redistributable." />
+        <Error Condition="'$(IncludeAllContentForSelfExtract)' != 'true'" Text="Windows single-file CRT deployment requires IncludeAllContentForSelfExtract=true." />
+        <Error Condition="!Exists('$(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)')" Text="Missing CRT file: $(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)" />
+    </Target>
+
+    <!--
+      共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
+      由 Mac / iOS / Android 三个原生头共同链接；Windows 头同样链接同一份视口、
+      主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表，避免第四套并行常量。
+      该目录不得出现 WinUI 类型，平台专属宿主留在 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
+    </ItemGroup>
+
+    <!--
+      WinAppSDK 1.8 的框架包自带一份 Windows ML 运行时(onnxruntime.dll 1.23.x + 自带 DirectML.dll),
+      与本工程的 ONNX Runtime 1.24.4(DirectML EP)同名。两者版本与字节都不同:实测自包含发布时
+      onnxruntime.dll 取到本工程版本、DirectML.dll 却取到框架版本,即结果靠运气 —— 一旦 managed
+      的 Microsoft.ML.OnnxRuntime 1.24.4 配上框架的 1.23.x native,推理会在运行期直接失败。
+      用 SDK 自带的排除钩子(目标内 `MicrosoftWindowsAppSDKFiles Remove="@(MicrosoftWindowsAppSDKFilesExcluded)"`)
+      显式丢弃框架侧的同名副本,固定保留本工程包内的版本。
+    -->
+    <PropertyGroup>
+        <!-- 注意:此处必须用评估期就有的属性拼路径。IntermediateOutputPath 要到 SDK 的
+             Microsoft.Common.targets(工程体之后导入)才补上 TFM/RID 段,在工程体里读它是空的。 -->
+        <WinAppSdkMsixContentDir>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\MsixContent\</WinAppSdkMsixContentDir>
+    </PropertyGroup>
+    <ItemGroup>
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime.dll"/>
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime_providers_shared.dll"/>
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)DirectML.dll"/>
+    </ItemGroup>
+    <Import Project="PortableSingleFile.targets" />
+</Project>

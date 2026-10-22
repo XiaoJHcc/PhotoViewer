@@ -1,0 +1,108 @@
+/* 筛选条（FILTER-01/04/06/07/08）：自绘下拉取旧壳 Avalonia Fluent 深色外观；几何一律来自布局，这里只写视觉。 */
+.pv-popup,
+.pv-filter-count,
+.pv-filter-toggle {
+    position: absolute;
+    box-sizing: border-box;
+    font-family: inherit;
+}
+
+/* FILTER-08：底 color.dropdown.background（悬停/按下）翻色，1 点描边，圆角 dropdown.cornerRadius */
+.pv-popup {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin: 0;
+    padding: 0 var(--pv-dropdown-chevron-rightInset) 0 var(--pv-dropdown-paddingLeft);
+    border: 1px solid var(--pv-color-dropdown-border);
+    border-radius: var(--pv-dropdown-cornerRadius);
+    background: var(--pv-color-dropdown-background);
+    color: var(--pv-color-text-primary);
+    font-size: var(--pv-dropdown-fontSize);
+    line-height: 1;
+    text-align: left;
+    cursor: default;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.pv-popup:hover {
+    background: var(--pv-color-dropdown-background-hover);
+    border-color: var(--pv-color-dropdown-border-hover);
+}
+
+.pv-popup:active,
+.pv-popup[aria-expanded="true"] {
+    background: var(--pv-color-dropdown-background-pressed);
+}
+
+.pv-popup:focus-visible,
+.pv-filter-toggle:focus-visible {
+    outline: 2px solid var(--pv-accent);
+    outline-offset: -2px;
+}
+
+.pv-popup-label {
+    flex: 1 1 auto;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.pv-popup-chevron {
+    flex: none;
+    font-size: var(--pv-dropdown-chevron-size);
+    color: var(--pv-color-dropdown-chevron);
+}
+
+.pv-filter-count {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--pv-color-text-secondary);
+    font-size: var(--pv-filter-count-fontSize);
+    line-height: 1;
+    white-space: nowrap;
+    pointer-events: none;
+}
+
+.pv-filter-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0 8px;
+    border: 1px solid var(--pv-color-filter-toggle-border);
+    border-radius: var(--pv-filter-toggle-cornerRadius);
+    background: transparent;
+    color: var(--pv-color-filter-toggle-foreground);
+    font-size: 12px;
+    line-height: 1;
+    cursor: default;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.pv-filter-toggle:hover {
+    /* FILTER-06：未勾选悬停取 hover 底 + hover 描边/文字。 */
+    border-color: var(--pv-color-filter-toggle-hover-border);
+    background: var(--pv-color-filter-toggle-hover);
+    color: var(--pv-color-filter-toggle-hover-foreground);
+}
+
+/* 勾选态压在悬停之上：勾选悬停取 checked.hover.*。 */
+.pv-filter-toggle[aria-checked="true"] {
+    border-color: var(--pv-color-filter-toggle-checked-border);
+    background: var(--pv-color-filter-toggle-checked-background);
+    color: var(--pv-color-filter-toggle-checked-foreground);
+}
+
+.pv-filter-toggle[aria-checked="true"]:hover {
+    border-color: var(--pv-color-filter-toggle-checked-hover-border);
+    background: var(--pv-color-filter-toggle-checked-hover-background);
+    color: var(--pv-color-filter-toggle-checked-hover-foreground);
+}
+
+.pv-filter-toggle-label {
+    white-space: nowrap;
+}

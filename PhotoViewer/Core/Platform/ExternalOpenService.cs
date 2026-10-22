@@ -1,8 +1,8 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core.Platform;
 
@@ -26,18 +26,18 @@ public sealed class ExternalOpenItem
         Path = path;
     }
 
-    public ExternalOpenItem(IStorageItem storageItem)
+    public ExternalOpenItem(IStorageItemRef storageItem)
     {
         StorageItem = storageItem;
         Path = storageItem.Path;
-        Kind = storageItem is IStorageFolder ? ExternalOpenItemKind.Folder : ExternalOpenItemKind.File;
+        Kind = storageItem is IFolderRef ? ExternalOpenItemKind.Folder : ExternalOpenItemKind.File;
     }
 
     public ExternalOpenItemKind Kind { get; }
 
     public Uri Path { get; }
 
-    public IStorageItem? StorageItem { get; }
+    public IStorageItemRef? StorageItem { get; }
 }
 
 /// <summary>
@@ -104,9 +104,9 @@ public static class ExternalOpenService
 
     /// <summary>
     /// 发布已解析好的存储项打开请求。
-    /// 适用于平台层已持有真实 IStorageItem，且不希望再经过 Path -> StorageProvider 反解的场景。
+    /// 适用于平台层已持有真实 IStorageItemRef，且不希望再经过 Path -> StorageProvider 反解的场景。
     /// </summary>
-    public static void PublishStorageItem(IStorageItem item, string source, bool preferFolderContext = true)
+    public static void PublishStorageItem(IStorageItemRef item, string source, bool preferFolderContext = true)
     {
         Publish(new ExternalOpenRequest([new ExternalOpenItem(item)], source, preferFolderContext));
     }

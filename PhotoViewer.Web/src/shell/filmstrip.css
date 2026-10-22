@@ -1,0 +1,63 @@
+.pv-film-scroll {
+    position: absolute;
+    overflow: hidden;
+    outline: none;
+    overscroll-behavior: contain;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.pv-film-scroll::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+.pv-film-scroll.is-x {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.pv-film-scroll.is-y {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.pv-film-document {
+    position: absolute;
+    left: 0;
+    top: 0;
+}
+
+.pv-film-scrollbar {
+    position: absolute;
+    border-radius: 3px;
+    opacity: 0;
+    transition: opacity 160ms ease;
+    pointer-events: none;
+}
+
+.pv-film-scrollbar.is-active {
+    opacity: 1;
+}
+
+.pv-film-scrollbar-thumb {
+    position: absolute;
+    left: 0;
+    top: 0;
+    background: rgba(255, 255, 255, 0.34);
+    border-radius: 3px;
+    pointer-events: auto;
+    cursor: default;
+}
+
+.pv-film-scrollbar.is-x .pv-film-scrollbar-thumb {
+    left: 0;
+    top: 0;
+    height: 100%;
+}
+
+.pv-film-scrollbar.is-y .pv-film-scrollbar-thumb {
+    left: 0;
+    top: 0;
+    width: 100%;
+}

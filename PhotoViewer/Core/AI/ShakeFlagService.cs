@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -34,6 +36,10 @@ public static class ShakeFlagService
     public static async Task EvaluateAsync(IReadOnlyList<ImageFile> files, CancellationToken ct = default)
     {
         if (files == null || files.Count == 0) return;
+
+        // 竞态修复:调用方传入的是活动集合(如 FolderViewModel.AllFiles,文件夹加载期会被改写),
+        // 本方法同步前导段在调用方线程执行——先做快照,后续枚举不再触碰活动集合。
+        files = files.ToArray();
 
         IReadOnlyList<FingerprintGroup> groups;
         try
@@ -99,6 +105,24 @@ public static class ShakeFlagService
     {
         _cache.Clear();
         RecheckRequested?.Invoke();
+    }
+
+    // ---- 统一内存管控 ----
+
+    static ShakeFlagService()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
+
+    /// <summary>内存客户端:判定缓存(条数 × ~512B 估算);Warning 起清缓存(判定可随时从 DB 重算,不触发 RecheckRequested)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "ShakeFlagService";
+        public long FootprintBytes => _cache.Count * 512L;
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) _cache.Clear();
+        }
     }
 
     /// <summary>把同一指纹组内所有文件的 IsShake 设为同一值。null 表示"未判定"(无 cv_grid 或解码失败)。</summary>

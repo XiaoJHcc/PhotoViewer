@@ -1,52 +1,24 @@
 using System;
 using Android.App;
 using Android.Runtime;
-using Avalonia;
-using Avalonia.Android;
-using Avalonia.Media;
-using ReactiveUI.Avalonia;
-using PhotoViewer.Android.Core;
-using PhotoViewer.Core;
-using PhotoViewer.Core.Platform;
-using PhotoViewer.Core.Image;
-using PhotoViewer.Core.Settings;
-using PhotoViewer.Core.AI;
-using Microsoft.ML.OnnxRuntime;
 
 namespace PhotoViewer.Android;
 
+/// <summary>
+/// Android 进程级 Application。
+/// 这里不初始化任何 UI 框架；原生壳由 <see cref="AndroidBootstrapActivity"/> /
+/// <see cref="AndroidNativeActivity"/> 启动。
+/// </summary>
 [Application]
-public class AndroidApp : AvaloniaAndroidApplication<App>
+public sealed class AndroidApp : Application
 {
     /// <summary>
-    /// 初始化 Android Avalonia 应用宿主。
+    /// Java 侧构造入口（Android 运行时调用）。
     /// </summary>
+    /// <param name="javaReference">Java 对象引用。</param>
+    /// <param name="transfer">引用所有权。</param>
     public AndroidApp(IntPtr javaReference, JniHandleOwnership transfer)
         : base(javaReference, transfer)
     {
-    }
-
-    /// <summary>
-    /// 构建 Avalonia AppBuilder，并注入 Android 平台能力实现。
-    /// </summary>
-    protected override AppBuilder CustomizeAppBuilder(AppBuilder builder)
-    {
-        return base.CustomizeAppBuilder(builder)
-            .With(new FontManagerOptions
-            {
-                DefaultFamilyName = "sans-serif"
-            })
-            .UseReactiveUI(_ => { })
-            .AfterSetup(_ =>
-            {
-                HeifLoader.Initialize(new AndroidLibHeifDecoder());
-                PerformanceBudget.Initialize(new AndroidPerformanceBudget());
-                XmpWriter.Initialize(new AndroidXmpWriter(ContentResolver!));
-                SettingsService.ConfigureStorage(new AndroidSettingsStorage());
-                DinoFeatureExtractor.ConfigureSession(options =>
-                {
-                    options.AppendExecutionProvider_Nnapi();
-                });
-            });
     }
 }

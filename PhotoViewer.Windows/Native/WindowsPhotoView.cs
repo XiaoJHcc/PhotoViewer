@@ -1,0 +1,1400 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using DirectN;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
+using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
+using Windows.Foundation;
+using WinRT;
+
+namespace PhotoViewer.Windows.Native;
+
+/// <summary>
+/// WinUI 3 的 <c>ISwapChainPanelNative</c>。DirectN 只带 UWP 版本的 IID(<c>f92f19d2-…</c>),
+/// WinUI 3 是另一个接口(IID 见 <c>microsoft.ui.xaml.media.dxinterop.h</c>),必须自行声明。
+/// 取接口只能显式调 <c>WinRT.CastExtensions.As&lt;T&gt;(panel)</c>:<c>SwapChainPanel</c> 自带同名静态
+/// <c>As&lt;T&gt;</c>,写成 <c>panel.As&lt;T&gt;()</c> 会绑定到它并 QI 失败(实测 InvalidCastException)。
+/// </summary>
+[ComImport]
+[Guid("63aad0b8-7c24-40ff-85a8-640d944cc325")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface ISwapChainPanelNativeWinUI
+{
+    /// <summary>把合成交换链交给 XAML 合成器;传 null 表示脱开。</summary>
+    /// <param name="swapChain">合成交换链</param>
+    /// <returns>HRESULT。</returns>
+    [PreserveSig]
+    HRESULT SetSwapChain(IDXGISwapChain? swapChain);
+}
+
+/// <summary>
+/// GPU 照片表面(阶段 W-M1/W-M2):D3D11 + DXGI 合成翻转链(<c>R16G16B16A16_FLOAT</c>),
+/// EXIF 方向以 UV 置换在顶点着色器内完成(绝不旋转像素)、三线性 mipmap、适应/100% 缩放与拖动平移。
+///
+/// 契约与 macOS 的 <c>MetalPhotoView</c> 对等:只接受 <c>RgbaF16</c> + <c>LinearSrgb</c> 像素(不降级),
+/// 代理图 → 全分辨率热替换保持相对平移、不跳变,100% 口径为 1 源像素 = 1 物理屏幕像素。
+/// 全部方法只在 UI 线程调用,且 <see cref="SetImage"/> 必须在上层回调内同步完成。
+/// </summary>
+internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
+{
+    /// <summary>着色器:顶点阶段做布局变换与 EXIF 方向的 UV 置换,像素阶段三线性采样。</summary>
+    private const string ShaderSource = """
+        cbuffer PhotoParams : register(b0)
+        {
+            float4 viewportSize;    // xy = 物理视口像素
+            float4 imageSize;       // xy = 显示朝向的源像素尺寸
+            float4 scalePan;        // x = 每源像素的逻辑单位数, yz = 逻辑平移, w = EXIF 方向
+            float4 rasterization;   // x = 物理像素 / 逻辑单位
+        };
+
+        struct VSOutput
+        {
+            float4 position : SV_POSITION;
+            float2 uv : TEXCOORD0;
+        };
+
+        VSOutput VSMain(uint id : SV_VertexID)
+        {
+            float2 corners[4] = { float2(-0.5, -0.5), float2(0.5, -0.5), float2(-0.5, 0.5), float2(0.5, 0.5) };
+            float2 corner = corners[id];
+            float2 physical = (corner * imageSize.xy * scalePan.x + float2(scalePan.y, scalePan.z)) * rasterization.x;
+            VSOutput output;
+            output.position = float4(physical.x * 2.0 / viewportSize.x, -physical.y * 2.0 / viewportSize.y, 0, 1);
+            float2 uv = corner + 0.5;
+            int orientation = (int)scalePan.w;
+            if (orientation == 2) uv = float2(1 - uv.x, uv.y);
+            else if (orientation == 3) uv = 1 - uv;
+            else if (orientation == 4) uv = float2(uv.x, 1 - uv.y);
+            else if (orientation == 5) uv = uv.yx;
+            else if (orientation == 6) uv = float2(uv.y, 1 - uv.x);
+            else if (orientation == 7) uv = float2(1 - uv.y, 1 - uv.x);
+            else if (orientation == 8) uv = float2(1 - uv.y, uv.x);
+            output.uv = uv;
+            return output;
+        }
+
+        Texture2D<float4> photo : register(t0);
+        SamplerState photoSampler : register(s0);
+
+        float4 PSMain(VSOutput input) : SV_Target
+        {
+            return photo.Sample(photoSampler, input.uv);
+        }
+        """;
+
+    /// <summary>交换链缓冲数(翻转模型要求 ≥ 2)。</summary>
+    private const uint BufferCount = 2;
+
+    /// <summary>除当前纹理外保留的最近帧纹理张数(对比切换/来回翻页不必重传)。</summary>
+    private const int RecentTextureCapacity = 2;
+
+    /// <summary>
+    /// 像素数据达到该字节数时改走后台线程上传:整幅 CPU→GPU 拷贝在 UI 线程上会直接计入切换延迟
+    /// (42MP 的 F16 全幅实测 44 ms 中位、首帧 400 ms 级)。
+    /// </summary>
+    private const long BackgroundUploadBytes = 32L * 1024 * 1024;
+
+    /// <summary>画布底色(照片外沿用设计稿的 #000000)。</summary>
+    private static readonly float[] ClearColor = [0f, 0f, 0f, 1f];
+
+    /// <summary>已上传纹理为空时用于解除像素着色器绑定的空槽位。</summary>
+    private static readonly ID3D11ShaderResourceView[] NoShaderResources = new ID3D11ShaderResourceView[1];
+
+    private readonly IComObject<ID3D11Device> _device;
+    private readonly IComObject<ID3D11DeviceContext> _context;
+    private readonly IComObject<ID3D11VertexShader> _vertexShader;
+    private readonly IComObject<ID3D11PixelShader> _pixelShader;
+    private readonly IComObject<ID3D11SamplerState> _sampler;
+    private readonly IComObject<ID3D11Buffer> _parameters;
+    private readonly IComObject<IDXGISwapChain3> _swapChain;
+    private readonly float[] _parameterData = new float[16];
+    private IComObject<ID3D11RenderTargetView>? _renderTarget;
+    /// <summary>当前上屏的纹理条目;null 表示没有照片。</summary>
+    private TextureEntry? _current;
+    /// <summary>最近显示过的纹理(不含当前),按最近使用顺序排列,仅 UI 线程访问。</summary>
+    private readonly List<TextureEntry> _recentTextures = new(RecentTextureCapacity);
+    /// <summary>
+    /// 退下来的同尺寸空纹理(最多一张),给下一次同步上传复用:每次切图新建一张 21 MB 的 mip 链纹理,
+    /// 实测约 10% 的 <c>CreateTexture2D</c> 会在驱动里停 300–500 ms,那一段直接落在 UI 线程与切图延迟上。
+    /// 只留一张、只收小图(大图全分辨率纹理几百 MB,不值得占着),压力 Caution 起随缓存一起清掉。
+    /// </summary>
+    private TextureEntry? _spareTexture;
+    /// <summary>在途的大图暂存上传(同时最多一次),仅 UI 线程访问;后台线程仍在写映射内存时不能释放。</summary>
+    private StagedUpload? _stagedUpload;
+    private readonly PhotoViewport _viewport = new();
+    /// <summary>GPU 纹理占用字节(当前 + 最近缓存),供内存管家读取;UI 线程写入。</summary>
+    private long _gpuBytes;
+    private GpuTextureMemoryClient? _memoryClient;
+    /// <summary>当前期望上屏的帧(按实例);在途上传据此判断是否还要它。</summary>
+    private WeakReference<DecodedImage>? _wanted;
+    /// <summary>当前上屏照片的代际(来自 <see cref="PhotoLoadSession.Generation"/>);代际变化即切图,不是热替换。</summary>
+    private int _generation;
+    /// <summary>是否有当前期望帧的上传在途(0/1,可跨线程读)。</summary>
+    private int _uploadPending;
+    /// <summary>内存压力要求修剪缓存(0/1):Trim 在探测线程上调用,只能标记后由 UI 线程清场。</summary>
+    private int _trimRequested;
+    private uint _pixelWidth = 1;
+    private uint _pixelHeight = 1;
+    private bool _panning;
+    private bool _laidOut;
+    private Point _lastPointer;
+    private (uint Width, uint Height, bool NeedsFull)? _reported;
+    private bool _disposed;
+
+    /// <summary>视口物理尺寸或 LOD 需求变化时触发(首次布局前不触发),供上层驱动 <c>PhotoLoadSession.UpdateViewport</c>。</summary>
+    public event Action? ViewportChanged;
+
+    /// <summary>缩放/平移/照片几何变化时触发(每帧重绘前),供导航图刷新可见框与百分比。</summary>
+    public event Action? RenderStateChanged;
+
+    /// <summary>当前是否处于适应态(导航图只在非适应态显示)。</summary>
+    public bool IsFit => _viewport.IsFit;
+
+    /// <summary>当前是否已上传照片纹理。</summary>
+    public bool HasImage => _current != null;
+
+    /// <summary>
+    /// 是否有大图上传在后台进行:期间画面仍停在上一帧(不铺占位、不清黑),纹理与新几何在完成时一起交换。
+    /// 验收在换图后核对纹理尺寸/物理缩放前应等它结束。
+    /// </summary>
+    public bool IsUploadPending => Volatile.Read(ref _uploadPending) != 0;
+
+    /// <summary>当前上屏纹理的像素尺寸;无纹理时为 <c>(0, 0)</c>。供定向验收核对纹理是否真的换成了新的一帧。</summary>
+    internal (int Width, int Height) CurrentTextureSize => _current is { } current ? (current.Width, current.Height) : (0, 0);
+
+    /// <summary>设置当前照片的对焦点(归一化显示朝向);两个分量都为 null 表示没有对焦点。</summary>
+    /// <param name="x">归一化横坐标。</param>
+    /// <param name="y">归一化纵坐标。</param>
+    public void SetFocus(double? x, double? y) => _viewport.SetFocus(x, y);
+
+    /// <summary>
+    /// 读取主图表面在给定显示相对坐标(u,v ∈ [0,1],相对照片显示区域)上的像素。
+    /// 仅定向验收使用(核对 EXIF 方向在主图上的实际朝向);产品路径不读回像素。
+    /// </summary>
+    /// <param name="u">显示区域横向相对位置 0-1。</param>
+    /// <param name="v">显示区域纵向相对位置 0-1。</param>
+    /// <param name="color">线性 RGB(0-1)。</param>
+    /// <returns>坐标落在视口内且回读成功时为 true。</returns>
+    internal unsafe bool TryReadDisplayPixel(double u, double v, out (float R, float G, float B) color)
+    {
+        color = default;
+        if (_disposed || _renderTarget == null || _current == null || _pixelWidth == 0 || _pixelHeight == 0)
+        {
+            return false;
+        }
+
+        double raster = PhysicalPixelsPerDip;
+        double x = (ActualWidth / 2) + ((u - 0.5) * _viewport.ImageWidth * _viewport.Scale) + _viewport.PanX;
+        double y = (ActualHeight / 2) + ((v - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY;
+        var px = (int)Math.Round(x * raster);
+        var py = (int)Math.Round(y * raster);
+        if (px < 0 || py < 0 || px >= _pixelWidth || py >= _pixelHeight)
+        {
+            return false;
+        }
+
+        using var staging = _device.CreateTexture2D(new D3D11_TEXTURE2D_DESC
+        {
+            Width = _pixelWidth,
+            Height = _pixelHeight,
+            MipLevels = 1,
+            ArraySize = 1,
+            Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+            Usage = D3D11_USAGE.D3D11_USAGE_STAGING,
+            BindFlags = 0,
+            CPUAccessFlags = (uint)D3D11_CPU_ACCESS_FLAG.D3D11_CPU_ACCESS_READ,
+            MiscFlags = 0,
+        }, null);
+        using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+        RenderScene();
+        _context.Object.CopyResource(staging.Object, backBuffer.Object);
+        var mapped = _context.Object.Map(staging.Object, 0, D3D11_MAP.D3D11_MAP_READ, 0);
+        try
+        {
+            var pixel = (ushort*)IntPtr.Add(mapped.pData, (int)((py * mapped.RowPitch) + (px * 8)));
+            color = (HalfToFloat(pixel[0]), HalfToFloat(pixel[1]), HalfToFloat(pixel[2]));
+            return true;
+        }
+        finally
+        {
+            _context.Object.Unmap(staging.Object, 0);
+            _swapChain.Present(1, 0);
+        }
+    }
+
+    /// <summary>
+    /// 把主图对准给定图像点:该点在视口居中,并按给定物理缩放呈现(1.0 = 100%)。
+    /// 供分析栏细节预览双击使用(旧壳 <c>FocusOnImagePoint(point, 1.0)</c>)。
+    /// </summary>
+    /// <param name="u">图像点横向相对位置 0-1(显示朝向)</param>
+    /// <param name="v">图像点纵向相对位置 0-1(显示朝向)</param>
+    /// <param name="physicalScale">目标物理缩放(1.0 = 100%)</param>
+    public void FocusOnImagePoint(double u, double v, double physicalScale = 1.0)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _viewport.FocusOnPoint(u, v, physicalScale);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>
+    /// 保持当前缩放，把显示朝向的归一化图像点移到视口中心（导航图拖动定位）。
+    /// </summary>
+    /// <param name="u">归一化横坐标。</param>
+    /// <param name="v">归一化纵坐标。</param>
+    public void CenterOnNormalizedPoint(double u, double v)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_viewport.IsFit)
+        {
+            return;
+        }
+
+        _viewport.CenterOnNormalizedPoint(u, v);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>
+    /// 把图像相对矩形(uv)换算成视口逻辑坐标矩形,供主图绿框等叠加层定位。
+    /// </summary>
+    /// <param name="uv">图像相对矩形</param>
+    /// <param name="rect">视口逻辑坐标矩形</param>
+    /// <returns>无图时为 false</returns>
+    public bool TryGetImageRect(Rect uv, out Rect rect)
+    {
+        rect = default;
+        if (_current == null || ActualWidth <= 0 || ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        double x = (ActualWidth / 2) + (((uv.X - 0.5) * _viewport.ImageWidth * _viewport.Scale) + _viewport.PanX);
+        double y = (ActualHeight / 2) + (((uv.Y - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY);
+        rect = new Rect(x, y, uv.Width * _viewport.ImageWidth * _viewport.Scale, uv.Height * _viewport.ImageHeight * _viewport.Scale);
+        return true;
+    }
+
+    /// <summary>半精度浮点转 float。</summary>
+    private static float HalfToFloat(ushort value) => (float)BitConverter.UInt16BitsToHalf(value);
+
+    /// <summary>
+    /// 导航图逻辑尺寸(长边 150、按显示朝向比例缩小,不补方形衬边),与旧壳缩放指示器一致;
+    /// 无照片时返回 150 方形占位。
+    /// </summary>
+    public (double Width, double Height) NavigationSize => _viewport.NavigationSize;
+
+    /// <summary>
+    /// 导航图(逻辑坐标,无外框内边距)内的可见区域;缩放小于适应时退化为整幅照片。
+    /// </summary>
+    public Rect NavigationViewport
+    {
+        get
+        {
+            var (x, y, width, height) = _viewport.NavigationViewport;
+            return new Rect(x, y, width, height);
+        }
+    }
+
+    /// <summary>当前视口的物理像素尺寸;面板完成首次布局前为 <c>(0, 0)</c>。</summary>
+    public (double Width, double Height) PhysicalViewport => _laidOut ? (_pixelWidth, _pixelHeight) : (0, 0);
+
+    /// <summary>视口中心对应的归一化图像点(显示朝向),供导航图拖动验收核对落点。</summary>
+    public (double U, double V) ViewCenter => _viewport.CenterUV;
+
+    /// <summary>当前物理缩放(每个源像素占多少物理屏幕像素)。</summary>
+    public double PhysicalScale => _viewport.PhysicalScale;
+
+    /// <summary>是否需要全分辨率:非适应态且已达/超过 100%,或放大超出代理纹理能力。</summary>
+    public bool NeedsFull => _current != null && _viewport.NeedsFull;
+
+    /// <summary>显示百分比(1.0 = 100%,与物理缩放同口径)。</summary>
+    public double ZoomRatio => PhysicalScale;
+
+    /// <summary>每逻辑单位(DIP)对应的物理像素数;不在可视树内时为 1。</summary>
+    private double PhysicalPixelsPerDip
+    {
+        get
+        {
+            double scale = XamlRoot?.RasterizationScale ?? 1;
+            return scale > 0 ? scale : 1;
+        }
+    }
+
+    /// <summary>显示朝向的源像素宽(EXIF 方向 5–8 交换横纵)。</summary>
+    private double DisplayWidth => _viewport.ImageWidth;
+
+    /// <summary>显示朝向的源像素高。</summary>
+    private double DisplayHeight => _viewport.ImageHeight;
+
+    /// <summary>
+    /// 建立 D3D11 设备、着色器、合成交换链并挂到本面板;仅在 UI 线程调用。
+    /// 交换链先按 1×1 建好(构造期尚无布局尺寸),首次 <c>SizeChanged</c> 再 <c>ResizeBuffers</c> 到真实物理尺寸。
+    /// </summary>
+    public WindowsPhotoView()
+    {
+        NativeStartupLog.Write("photo view: 创建 D3D11 设备");
+        _device = D3D11Functions.D3D11CreateDevice(null,
+            D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_HARDWARE,
+            D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            out _context);
+
+        var compileFlags = 0u;
+#if DEBUG
+        compileFlags = (uint)(Constants.D3DCOMPILE_DEBUG | Constants.D3DCOMPILE_SKIP_OPTIMIZATION);
+#endif
+        NativeStartupLog.Write("photo view: 编译着色器");
+        var source = Encoding.UTF8.GetBytes(ShaderSource);
+        _vertexShader = _device.CreateVertexShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "VSMain", "vs_5_0", compileFlags));
+        _pixelShader = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "PSMain", "ps_5_0", compileFlags));
+        _sampler = _device.CreateSamplerState(new D3D11_SAMPLER_DESC
+        {
+            Filter = D3D11_FILTER.D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+            AddressU = D3D11_TEXTURE_ADDRESS_MODE.D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressV = D3D11_TEXTURE_ADDRESS_MODE.D3D11_TEXTURE_ADDRESS_CLAMP,
+            AddressW = D3D11_TEXTURE_ADDRESS_MODE.D3D11_TEXTURE_ADDRESS_CLAMP,
+            ComparisonFunc = D3D11_COMPARISON_FUNC.D3D11_COMPARISON_NEVER,
+            BorderColor = new float[4],
+            MinLOD = 0,
+            MaxLOD = float.MaxValue,
+        });
+        _parameters = _device.CreateBuffer(new D3D11_BUFFER_DESC
+        {
+            ByteWidth = (uint)(_parameterData.Length * sizeof(float)),
+            Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+            BindFlags = (uint)D3D11_BIND_FLAG.D3D11_BIND_CONSTANT_BUFFER,
+        }, null);
+
+        NativeStartupLog.Write("photo view: 创建合成交换链");
+        using (var dxgiDevice = _device.AsComObject<IDXGIDevice1>(true))
+        using (var adapter = dxgiDevice.GetAdapter())
+        using (var factory = adapter.GetFactory2())
+        {
+            _swapChain = factory.CreateSwapChainForComposition<IDXGISwapChain3>(dxgiDevice, new DXGI_SWAP_CHAIN_DESC1
+            {
+                Width = _pixelWidth,
+                Height = _pixelHeight,
+                Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+                Stereo = false,
+                SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+                BufferUsage = (uint)Constants.DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                BufferCount = BufferCount,
+                Scaling = DXGI_SCALING.DXGI_SCALING_STRETCH,
+                SwapEffect = DXGI_SWAP_EFFECT.DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL,
+                AlphaMode = DXGI_ALPHA_MODE.DXGI_ALPHA_MODE_UNSPECIFIED,
+                Flags = 0,
+            }, null);
+        }
+        _swapChain.Object.SetColorSpace1(DXGI_COLOR_SPACE_TYPE.DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709).ThrowOnError();
+        CreateRenderTarget();
+        LogDisplayTopology();
+
+        NativeStartupLog.Write("photo view: 挂载到 SwapChainPanel");
+        // 必须显式走 CsWinRT 的扩展:SwapChainPanel 自带同名静态 As<T>,写成 this.As<T>() 会绑定到它并 QI 失败。
+        CastExtensions.As<ISwapChainPanelNativeWinUI>(this).SetSwapChain(_swapChain.Object).ThrowOnError();
+        ApplyCompositionTransform();
+
+        SizeChanged += OnSizeChanged;
+        CompositionScaleChanged += OnCompositionScaleChanged;
+        PointerPressed += OnPointerPressed;
+        PointerMoved += OnPointerMoved;
+        PointerReleased += OnPointerReleased;
+        PointerCaptureLost += OnPointerCaptureLost;
+        DoubleTapped += OnDoubleTapped;
+
+        // 主图纹理是常驻 GPU 占用(42MP 的 F16 一帧约 350MB 含 mip 链),纳入统一内存管控:
+        // 压力到 Caution 起丢掉非当前帧的缓存纹理。
+        _memoryClient = new GpuTextureMemoryClient(this);
+        MemoryGovernor.Register(_memoryClient);
+    }
+
+    /// <summary>
+    /// 上传并显示一张图(传 null 清屏)。只接受线性 RGBA16F,其余编码/色彩空间直接拒绝。
+    ///
+    /// 三条路径:
+    /// - 当前纹理或最近帧缓存里已有同一 <see cref="DecodedImage"/> 实例(引用相等)时直接复用 GPU 纹理,不上传。
+    ///   实例身份就代表像素内容;缓存只持弱引用,不延长像素租约(纹理是独立的 GPU 副本)。
+    /// - 像素数据小于 <see cref="BackgroundUploadBytes"/>:UI 线程同步建纹理 → UpdateSubresource → mip 链。
+    /// - 更大:上一帧保持不变继续上屏,系统内存暂存纹理由后台线程逐行填满;
+    ///   回到 UI 线程后只做「建带 mip 纹理 → 拷 mip0 → GenerateMips → 交换」。
+    ///   同时只允许一次在途拷贝:切走又切回同一实例就继续用那次在途拷贝,切到别的帧时
+    ///   把接力交给最新期望帧(连翻时不会堆积多份 262MB 拷贝);收尾时已不再期望的成果进最近纹理缓存而不上屏。
+    ///
+    /// STATE-01 / IMAGE-02:缓存命中切图不经过空图,同机型连拍的两张源尺寸与方向相同,只比几何无法区分
+    /// 「切图」与「代理↔Full 热替换」,故按 <paramref name="generation"/> 判定:代际变化一律走切图语义,
+    /// 代际相同而实例变化(代理→Full)才是热替换。
+    /// </summary>
+    /// <param name="image">已解码图像;null 表示清空画面。</param>
+    /// <param name="generation">会话照片代际(<see cref="PhotoLoadSession.Generation"/>)。</param>
+    public void SetImage(DecodedImage? image, int generation)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (image != null)
+        {
+            if (image.Encoding != PixelEncoding.RgbaF16 || image.ColorSpace != ImageColorSpace.LinearSrgb)
+                throw new ArgumentException("Windows 主图必须为线性 RGBA16F", nameof(image));
+            if (image.Pixels.Length == 0) throw new ArgumentException("像素租约已归零", nameof(image));
+        }
+
+        // 期望上屏的帧按实例记录:在途上传据此判断"还要不要"。
+        _wanted = image == null ? null : new WeakReference<DecodedImage>(image);
+        var key = _wanted;
+        bool cut = generation != _generation;
+        _generation = generation;
+
+        // 会话的加载态/增强态等属性变化会带着同一帧重复触发 Changed;同一实例、同一代际没有任何 GPU 工作可做。
+        if (image != null && _current?.Matches(image) == true)
+        {
+            if (!cut)
+            {
+                WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+                return;
+            }
+
+            // STATE-01:重新选中同一文件命中同一缓存实例 —— 纹理无需重传,但几何必须按切图重算
+            // (适应态重新适应、跟随对焦居中到新照片的对焦点)。
+            _viewport.BeginImageChange();
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _current.Width);
+            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            Draw();
+            NotifyViewportChanged();
+            return;
+        }
+
+        // IMAGE-02：切图走共享 ApplyImage（适应态重新适应 / 跟随对焦 / 保持同一归一化中心）；
+        // 代理↔Full 的源尺寸与对焦点相同，还原结果与热替换一致。
+        _viewport.BeginImageChange();
+
+        // 同一实例的后台拷贝仍在途(切走又切回):不重传,等它完成即可;收尾时按切图语义应用几何。
+        if (key != null && _stagedUpload != null && Matches(_stagedUpload.Key, key))
+        {
+            return;
+        }
+
+        if (image == null || key == null)
+        {
+            BindTexture(null);
+            _viewport.ClearTexture();
+            Draw();
+            NotifyViewportChanged();
+            return;
+        }
+
+        if (TakeCached(image) is { } cached)
+        {
+            BindTexture(cached);
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
+            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            NativeStartupLog.Write($"photo view: 复用纹理 纹理={image.Width}x{image.Height} 缓存={_recentTextures.Count} " +
+                $"视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
+            Draw();
+            NotifyViewportChanged();
+            return;
+        }
+
+        if (image.ByteCount < BackgroundUploadBytes)
+        {
+            BindTexture(UploadSynchronously(image, key));
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
+            NativeStartupLog.Write($"photo view: 上传照片 纹理={image.Width}x{image.Height} 源={image.SourceWidth}x{image.SourceHeight} " +
+                $"方向={image.Orientation} 显示={DisplayWidth}x{DisplayHeight} 视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
+            Draw();
+            NotifyViewportChanged();
+            return;
+        }
+
+        // 大图:同时只允许一次在途拷贝。已有别的帧在途时先让画面停在上一帧,
+        // 那次拷贝收尾时会自动接力上传当前期望帧(连翻时不会把几十份 262MB 拷贝一起跑)。
+        TryStartWantedUpload();
+        if (Volatile.Read(ref _uploadPending) != 0)
+        {
+            return;
+        }
+
+        // 接力失败(实例已回收等):保持上一帧,上报状态即可。
+        NativeStartupLog.Write("photo view: 大图上传未能启动,保持上一帧");
+    }
+
+
+    /// <summary>
+    /// 主图纹理描述:自动 mip 链(GENERATE_MIPS,三线性采样用)。
+    /// </summary>
+    /// <param name="width">纹理宽</param>
+    /// <param name="height">纹理高</param>
+    /// <returns>纹理描述</returns>
+    private static D3D11_TEXTURE2D_DESC MippedTextureDescription(uint width, uint height) => new()
+    {
+        Width = width,
+        Height = height,
+        MipLevels = 0,
+        ArraySize = 1,
+        Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+        SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+        Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+        BindFlags = (uint)(D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_FLAG.D3D11_BIND_RENDER_TARGET),
+        MiscFlags = (uint)D3D11_RESOURCE_MISC_FLAG.D3D11_RESOURCE_MISC_GENERATE_MIPS,
+    };
+
+    /// <summary>
+    /// UI 线程同步上传(小图):建纹理、整幅写入、建视图与 mip 链,分段计时进常驻统计。
+    /// UpdateSubresource/GenerateMips 是同步档的 GPU 命令提交,这里量的是 CPU 提交成本(不含 GPU 完成)。
+    /// </summary>
+    /// <param name="image">源图(调用方保证像素租约有效)</param>
+    /// <param name="key">缓存键(源图实例的弱引用)</param>
+    /// <returns>可绑定的纹理条目</returns>
+    private unsafe TextureEntry UploadSynchronously(DecodedImage image, WeakReference<DecodedImage> key)
+    {
+        var uploadSw = Stopwatch.StartNew();
+
+        // 同尺寸空纹理优先复用(整幅 UpdateSubresource 覆写 + 重新生成 mip 链,内容不会残留)。
+        var entry = TakeSpare(image.Width, image.Height);
+        double createMs;
+        if (entry is null)
+        {
+            var texture = _device.CreateTexture2D(MippedTextureDescription((uint)image.Width, (uint)image.Height), null);
+            var view = _device.CreateShaderResourceView(texture, null);
+            entry = new TextureEntry(key, texture, view, image.Width, image.Height);
+            createMs = uploadSw.Elapsed.TotalMilliseconds;
+        }
+        else
+        {
+            entry.Rebind(key);
+            createMs = 0;
+        }
+
+        fixed (byte* pixels = image.Pixels)
+        {
+            _context.Object.UpdateSubresource(entry.Texture.Object, 0, IntPtr.Zero, (IntPtr)pixels, (uint)image.Stride, 0);
+        }
+
+        var updateMs = uploadSw.Elapsed.TotalMilliseconds - createMs;
+        _context.Object.GenerateMips(entry.View.Object);
+        var mipsMs = uploadSw.Elapsed.TotalMilliseconds - createMs - updateMs;
+        WindowsUploadStats.Record(image.Width, image.Height, createMs, updateMs, mipsMs);
+        NativeStartupLog.Write($"photo view: 上传耗时 纹理={image.Width}x{image.Height}"
+            + $" 建纹理={createMs:0.0} 上传={updateMs:0.0} mip={mipsMs:0.0}ms");
+        return entry;
+    }
+
+    /// <summary>取走与目标尺寸一致的空纹理;没有或尺寸不符返回 null。</summary>
+    /// <param name="width">目标宽</param>
+    /// <param name="height">目标高</param>
+    /// <returns>可复用的条目</returns>
+    private TextureEntry? TakeSpare(int width, int height)
+    {
+        var spare = _spareTexture;
+        if (spare is null || spare.Width != width || spare.Height != height) return null;
+        _spareTexture = null;
+        return spare;
+    }
+
+    /// <summary>退掉一张不再需要的纹理:留作同尺寸复用的空纹理,已有空纹理或尺寸过大时直接释放。</summary>
+    /// <param name="entry">退掉的条目</param>
+    private void Retire(TextureEntry entry)
+    {
+        if (_spareTexture is null && entry.Bytes <= BackgroundUploadBytes)
+        {
+            entry.Rebind(null);
+            _spareTexture = entry;
+            return;
+        }
+
+        entry.Dispose();
+    }
+
+    /// <summary>暂存纹理描述:系统内存可写、只作 GPU 内拷贝来源(不绑定任何管线阶段)。</summary>
+    /// <param name="width">纹理宽</param>
+    /// <param name="height">纹理高</param>
+    /// <returns>纹理描述</returns>
+    private static D3D11_TEXTURE2D_DESC StagingTextureDescription(uint width, uint height) => new()
+    {
+        Width = width,
+        Height = height,
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+        SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+        Usage = D3D11_USAGE.D3D11_USAGE_STAGING,
+        BindFlags = 0,
+        CPUAccessFlags = (uint)D3D11_CPU_ACCESS_FLAG.D3D11_CPU_ACCESS_WRITE,
+        MiscFlags = 0,
+    };
+
+    /// <summary>
+    /// 大图上传的第一段(UI 线程):建系统内存暂存纹理并映射一次,不拷任何像素;
+    /// 整幅像素随后由后台线程逐行写进映射内存。
+    ///
+    /// 为什么不是"后台线程自己 CreateTexture2D":DirectN 的 COM 封装是经典 RCW,
+    /// D3D11 接口没有注册 proxy/stub,跨套间调用会 E_NOINTERFACE(实测),
+    /// 所以后台线程只能做纯指针写,任何 D3D/COM 调用都必须留在 UI 线程。
+    /// </summary>
+    /// <param name="key">源图实例的弱引用(缓存键)</param>
+    /// <param name="image">源图(读取尺寸)</param>
+    private unsafe void BeginStagedUpload(WeakReference<DecodedImage> key, DecodedImage image)
+    {
+        IComObject<ID3D11Texture2D>? staging = null;
+        try
+        {
+            var stagingSw = Stopwatch.StartNew();
+            staging = _device.CreateTexture2D(StagingTextureDescription((uint)image.Width, (uint)image.Height), null);
+            var mapped = _context.Object.Map(staging.Object, 0, D3D11_MAP.D3D11_MAP_WRITE, 0);
+            if (mapped.pData == IntPtr.Zero)
+            {
+                throw new InvalidOperationException("主图暂存纹理映射失败");
+            }
+
+            var upload = new StagedUpload(key, staging, stagingSw.Elapsed.TotalMilliseconds);
+            staging = null;
+            _stagedUpload = upload;
+            Volatile.Write(ref upload.Copying, 1);
+            var destination = mapped.pData;
+            var rowPitch = (int)mapped.RowPitch;
+            _ = Task.Run(() => CopyIntoStaging(upload, destination, rowPitch));
+            RefreshUploadPending();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view staged upload", ex);
+            staging?.Dispose();
+            RefreshUploadPending();
+        }
+    }
+
+    /// <summary>
+    /// 大图上传的第二段(后台线程):把源像素逐行写进映射内存。纯指针写,不碰任何 D3D/COM 对象;
+    /// 像素存活由拷贝期间持有的源图租约保证。
+    /// </summary>
+    /// <param name="upload">本次上传的暂存纹理</param>
+    /// <param name="destination">映射内存首地址</param>
+    /// <param name="rowPitch">映射内存行距(可能与源 stride 不同)</param>
+    private void CopyIntoStaging(StagedUpload upload, IntPtr destination, int rowPitch)
+    {
+        var backgroundSw = Stopwatch.StartNew();
+        try
+        {
+            if (upload.Key.TryGetTarget(out var image) && image.TryAcquire())
+            {
+                try
+                {
+                    CopyRows(image, destination, rowPitch);
+                }
+                finally
+                {
+                    image.Release();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view staged copy", ex);
+        }
+
+        Volatile.Write(ref upload.Copying, 0);
+        var backgroundMs = backgroundSw.Elapsed.TotalMilliseconds;
+        if (!TryPostToUiThread(() => CompleteStagedUpload(upload, backgroundMs)))
+        {
+            // 面板已释放:没人会消费这次结果,后台也不再写映射内存,这里可以直接释放暂存纹理。
+            upload.Texture.Dispose();
+            Volatile.Write(ref _uploadPending, 0);
+        }
+    }
+
+    /// <summary>把源图逐行拷进映射内存(行距各自独立)。</summary>
+    /// <param name="image">源图(调用方持租约)</param>
+    /// <param name="destination">映射内存首地址</param>
+    /// <param name="rowPitch">映射内存行距</param>
+    private static unsafe void CopyRows(DecodedImage image, IntPtr destination, int rowPitch)
+    {
+        fixed (byte* source = image.Pixels)
+        {
+            int rowBytes = Math.Min(rowPitch, image.Stride);
+            for (var y = 0; y < image.Height; y++)
+            {
+                Buffer.MemoryCopy(
+                    source + ((long)y * image.Stride),
+                    (void*)(destination + (y * rowPitch)),
+                    rowBytes,
+                    rowBytes);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 大图上传的第三段(UI 线程):解映射、建带 mip 的纹理、把暂存纹理拷进 mip0、生成 mip 链后整体交换上屏。
+    /// 已切到别的帧时不上屏,但成果直接进最近纹理缓存 —— 来回对比时下一次切回来就是零成本命中,
+    /// 否则"请求快于一次拷贝"时每份成果都会被丢掉,永远出不了图。
+    /// </summary>
+    /// <param name="upload">本次上传的暂存纹理</param>
+    /// <param name="backgroundMs">后台逐行拷贝耗时(ms)</param>
+    private void CompleteStagedUpload(StagedUpload upload, double backgroundMs)
+    {
+        IComObject<ID3D11Texture2D>? mipped = null;
+        IComObject<ID3D11ShaderResourceView>? view = null;
+        try
+        {
+            if (ReferenceEquals(_stagedUpload, upload)) _stagedUpload = null;
+            var staging = upload.Texture;
+            _context.Object.Unmap(staging.Object, 0);
+            if (_disposed || !upload.Key.TryGetTarget(out var image))
+            {
+                return;
+            }
+
+            var uploadSw = Stopwatch.StartNew();
+            mipped = _device.CreateTexture2D(MippedTextureDescription((uint)image.Width, (uint)image.Height), null);
+            var createMs = uploadSw.Elapsed.TotalMilliseconds;
+            _context.Object.CopySubresourceRegion(mipped.Object, 0, 0, 0, 0, staging.Object, 0, IntPtr.Zero);
+            var updateMs = uploadSw.Elapsed.TotalMilliseconds - createMs;
+            view = _device.CreateShaderResourceView(mipped, null);
+            _context.Object.GenerateMips(view.Object);
+            var mipsMs = uploadSw.Elapsed.TotalMilliseconds - createMs - updateMs;
+            // 建暂存纹理与映射也是 UI 线程成本,一并记进建纹理段。
+            WindowsUploadStats.Record(image.Width, image.Height, createMs + upload.StagingMs, updateMs, mipsMs, backgroundMs);
+
+            var entry = new TextureEntry(upload.Key, mipped, view, image.Width, image.Height);
+            mipped = null;
+            view = null;
+            if (!IsWanted(upload.Key))
+            {
+                Remember(entry);
+                UpdateGpuBytes();
+                return;
+            }
+
+            BindTexture(entry);
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
+            NativeStartupLog.Write($"photo view: 上传照片(后台) 纹理={image.Width}x{image.Height} 源={image.SourceWidth}x{image.SourceHeight} " +
+                $"方向={image.Orientation} 显示={DisplayWidth}x{DisplayHeight} 视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
+            Draw();
+            NotifyViewportChanged();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view upload complete", ex);
+        }
+        finally
+        {
+            view?.Dispose();
+            mipped?.Dispose();
+            upload.Texture.Dispose();
+            // 这次被取代了就把接力机会交给当前期望帧(连翻时只有最后一次会真正跑完并上屏)。
+            TryStartWantedUpload();
+            RefreshUploadPending();
+        }
+    }
+
+    /// <summary>给定帧是否仍是当前期望上屏的那一帧(在途上传据此决定收尾时是否还要交换上屏)。</summary>
+    /// <param name="key">待判断帧的弱引用</param>
+    /// <returns>仍是期望帧时为 true</returns>
+    private bool IsWanted(WeakReference<DecodedImage> key) => _wanted != null && Matches(_wanted, key);
+
+    /// <summary>两个实例弱引用是否指向同一个 <see cref="DecodedImage"/>。</summary>
+    /// <param name="left">其一</param>
+    /// <param name="right">其二</param>
+    /// <returns>引用相等时为 true</returns>
+    private static bool Matches(WeakReference<DecodedImage> left, WeakReference<DecodedImage> right)
+        => left.TryGetTarget(out var a) && right.TryGetTarget(out var b) && ReferenceEquals(a, b);
+
+    /// <summary>
+    /// 为当前期望帧启动一次大图后台拷贝(同时最多一次在途)。
+    /// 小图、已在屏上、已有缓存或已有在途拷贝时直接返回。
+    /// </summary>
+    private void TryStartWantedUpload()
+    {
+        if (_disposed || _stagedUpload != null || _wanted == null) return;
+        if (!_wanted.TryGetTarget(out var image)) return;
+        if (_current?.Matches(image) == true || image.Pixels.Length == 0) return;
+        if (image.ByteCount < BackgroundUploadBytes) return;
+        if (TakeCached(image) is { } cached)
+        {
+            // 上一次拷贝其实就是这一帧(例如 A→B→A):命中最近纹理,直接上屏。
+            BindTexture(cached);
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
+            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            Draw();
+            NotifyViewportChanged();
+            return;
+        }
+
+        BeginStagedUpload(_wanted, image);
+    }
+
+    /// <summary>按"当前期望帧是否有在途上传"刷新 <see cref="IsUploadPending"/>。</summary>
+    private void RefreshUploadPending()
+    {
+        bool pending = _stagedUpload != null && _wanted != null && Matches(_stagedUpload.Key, _wanted);
+        Volatile.Write(ref _uploadPending, pending ? 1 : 0);
+    }
+
+    /// <summary>把动作投递回 UI 线程(与上层同一调度门面);调度器未就绪/已关闭时返回 false。</summary>
+    /// <param name="action">UI 线程动作</param>
+    /// <returns>投递成功为 true</returns>
+    private static bool TryPostToUiThread(Action action)
+    {
+        try
+        {
+            PhotoViewer.Core.Platform.UiDispatcher.Post(action);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view post to ui thread", ex);
+            return false;
+        }
+    }
+
+    /// <summary>把纹理条目绑到画面:退下来的旧条目转入最近缓存(实例已回收则直接释放)。</summary>
+    /// <param name="entry">新条目;null 表示清空</param>
+    private void BindTexture(TextureEntry? entry)
+    {
+        var previous = _current;
+        if (!ReferenceEquals(previous, entry))
+        {
+            _current = entry;
+            if (previous != null)
+            {
+                // 先解绑再释放:像素着色器仍持有视图引用时释放资源会留下悬空绑定。
+                _context.Object.PSSetShaderResources(0, 1, NoShaderResources);
+                Remember(previous);
+            }
+        }
+
+        UpdateGpuBytes();
+    }
+
+    /// <summary>取走最近缓存里与给定实例同一对象的纹理条目(命中即从缓存摘下)。</summary>
+    /// <param name="image">目标实例</param>
+    /// <returns>命中的条目;未命中为 null</returns>
+    private TextureEntry? TakeCached(DecodedImage image)
+    {
+        for (var index = _recentTextures.Count - 1; index >= 0; index--)
+        {
+            var candidate = _recentTextures[index];
+            if (!candidate.Matches(image)) continue;
+            _recentTextures.RemoveAt(index);
+            UpdateGpuBytes();
+            return candidate;
+        }
+
+        return null;
+    }
+
+    /// <summary>把退下来的纹理收进最近缓存,超出容量淘汰最久未用的一张。</summary>
+    /// <param name="entry">退下来的条目</param>
+    private void Remember(TextureEntry entry)
+    {
+        // 实例已被回收的条目再也不会有命中机会,顺手清掉(数量上限只有两张)。
+        for (var index = _recentTextures.Count - 1; index >= 0; index--)
+        {
+            if (_recentTextures[index].IsAlive) continue;
+            var dead = _recentTextures[index];
+            _recentTextures.RemoveAt(index);
+            Retire(dead);
+        }
+
+        if (!entry.IsAlive)
+        {
+            Retire(entry);
+            return;
+        }
+
+        _recentTextures.Add(entry);
+        while (_recentTextures.Count > RecentTextureCapacity)
+        {
+            var oldest = _recentTextures[0];
+            _recentTextures.RemoveAt(0);
+            Retire(oldest);
+        }
+    }
+
+    /// <summary>刷新内存管家读取的 GPU 纹理占用(当前 + 最近缓存 + 复用空纹理的字节,含 mip 链)。</summary>
+    private void UpdateGpuBytes()
+    {
+        long total = _current?.Bytes ?? 0;
+        foreach (var entry in _recentTextures) total += entry.Bytes;
+        total += _spareTexture?.Bytes ?? 0;
+        Interlocked.Exchange(ref _gpuBytes, total);
+    }
+
+    /// <summary>内存压力下的修剪请求(可能在探测线程调用):只标记,清场交给 UI 线程。</summary>
+    private void RequestTrim()
+    {
+        Interlocked.Exchange(ref _trimRequested, 1);
+        TryPostToUiThread(TrimCachedTextures);
+    }
+
+    /// <summary>丢掉全部非当前纹理(内存压力 Caution 及以上)。</summary>
+    private void TrimCachedTextures()
+    {
+        if (Interlocked.Exchange(ref _trimRequested, 0) == 0 || _disposed) return;
+        foreach (var entry in _recentTextures) entry.Dispose();
+        _recentTextures.Clear();
+        _spareTexture?.Dispose();
+        _spareTexture = null;
+        UpdateGpuBytes();
+    }
+
+    /// <summary>适应视口:整幅照片铺满可见区,居中显示。</summary>
+    public void FitToView()
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _viewport.FitToView();
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>
+    /// 在“适应”与“100%”之间切换;切到 100% 时优先回到照片对焦点,否则以给定视口坐标(默认视口中心)为锚点。
+    /// </summary>
+    /// <param name="anchorX">锚点 X(逻辑单位);null 取视口中心或对焦点。</param>
+    /// <param name="anchorY">锚点 Y(逻辑单位);null 取视口中心或对焦点。</param>
+    public void ToggleFit(double? anchorX = null, double? anchorY = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _viewport.ToggleFit(anchorX.HasValue && anchorY.HasValue ? (anchorX.Value, anchorY.Value) : null);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>以视口坐标为锚点按比例缩放。</summary>
+    /// <param name="factor">缩放倍率。</param>
+    /// <param name="anchorX">锚点 X(逻辑单位);null 取视口中心。</param>
+    /// <param name="anchorY">锚点 Y(逻辑单位);null 取视口中心。</param>
+    public void ZoomBy(double factor, double? anchorX = null, double? anchorY = null)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _viewport.ZoomBy(factor, anchorX.HasValue && anchorY.HasValue ? (anchorX.Value, anchorY.Value) : null);
+        Draw();
+        NotifyViewportChanged();
+    }
+
+    /// <summary>精确滚动(触控板/高精度滚轮)平移照片;平移不改变视口与 LOD 需求,故不上报。</summary>
+    /// <param name="deltaX">横向位移(逻辑单位)。</param>
+    /// <param name="deltaY">纵向位移(逻辑单位)。</param>
+    public void PanBy(double deltaX, double deltaY)
+    {
+        if (_disposed || _viewport.IsFit || _current == null)
+        {
+            return;
+        }
+
+        _viewport.PanBy(deltaX, deltaY);
+        Draw();
+    }
+
+    /// <summary>释放全部 GPU 资源(按创建逆序),不触碰可视树。</summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        // 不再有期望帧:在途拷贝收尾时不会交换上屏(暂存纹理按是否仍在写映射内存决定能否立即释放)。
+        _wanted = null;
+        Volatile.Write(ref _uploadPending, 0);
+        if (_memoryClient != null)
+        {
+            MemoryGovernor.Unregister(_memoryClient);
+            _memoryClient = null;
+        }
+
+        CastExtensions.As<ISwapChainPanelNativeWinUI>(this).SetSwapChain(null).ThrowOnError();
+        _context.Object.ClearState();
+        // 后台仍在写映射内存的暂存纹理不能解映射/释放(会让后台线程写进已释放内存),留给进程回收;
+        // 已经写完的直接清掉。
+        if (_stagedUpload is { } staged)
+        {
+            _stagedUpload = null;
+            if (Volatile.Read(ref staged.Copying) == 0)
+            {
+                _context.Object.Unmap(staged.Texture.Object, 0);
+                staged.Texture.Dispose();
+            }
+        }
+
+        _current?.Dispose();
+        _current = null;
+        foreach (var entry in _recentTextures) entry.Dispose();
+        _recentTextures.Clear();
+        _spareTexture?.Dispose();
+        _spareTexture = null;
+        Interlocked.Exchange(ref _gpuBytes, 0);
+        _renderTarget?.Dispose();
+        _swapChain.Dispose();
+        _parameters.Dispose();
+        _sampler.Dispose();
+        _pixelShader.Dispose();
+        _vertexShader.Dispose();
+        _context.Dispose();
+        _device.Dispose();
+    }
+
+    /// <summary>视口物理尺寸变化:重建缓冲与渲染目标、重设合成矩阵、重算适应缩放并重绘。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">尺寸变化参数。</param>
+    private void OnSizeChanged(object sender, SizeChangedEventArgs e) => UpdateSurface("resize");
+
+    /// <summary>跨屏 DPI 变化:逻辑尺寸可能不变,但物理缓冲必须按新栅格化比重建。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="args">事件参数。</param>
+    private void OnCompositionScaleChanged(SwapChainPanel sender, object args) => UpdateSurface("composition scale");
+
+    /// <summary>物理缓冲重建与几何重算的唯一落点;面板尚无布局尺寸时只标记未布局,不上报视口。</summary>
+    /// <param name="stage">诊断阶段名。</param>
+    private void UpdateSurface(string stage)
+    {
+        if (_disposed) return;
+        try
+        {
+            if (ActualWidth <= 0 || ActualHeight <= 0)
+            {
+                // 首次布局前 ActualWidth/Height 为 0。此时交换链仍是构造期的 1×1 占位尺寸,
+                // 绝不能把它当成真实视口上报:上层 UpdateViewport 会按 max(宽,高)×2 定代理长边,
+                // 1×1 会把整批照片的代理目标压成 2 像素(实测主图退化成 2×2 放大后的色块)。
+                _laidOut = false;
+                return;
+            }
+            double raster = PhysicalPixelsPerDip;
+            _viewport.ResizeView(ActualWidth, ActualHeight, raster);
+            _laidOut = true;
+            uint width = (uint)Math.Round(ActualWidth * raster);
+            uint height = (uint)Math.Round(ActualHeight * raster);
+            if (width != _pixelWidth || height != _pixelHeight)
+            {
+                _context.Object.OMSetRenderTargets(0, null, null);
+                _renderTarget?.Dispose();
+                _renderTarget = null;
+                _swapChain.ResizeBuffers(BufferCount, width, height, DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT, 0);
+                _pixelWidth = width;
+                _pixelHeight = height;
+                CreateRenderTarget();
+            }
+            ApplyCompositionTransform();
+            if (_viewport.IsFit) _viewport.FitToView();
+            else _viewport.ClampPan();
+            Draw();
+            NotifyViewportChanged();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view " + stage, ex);
+        }
+    }
+
+    /// <summary>为 D3D11 自动轮转的 buffer 0 建立渲染目标；仅在 ResizeBuffers 后重建。</summary>
+    private void CreateRenderTarget()
+    {
+        using var buffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+        _renderTarget = _device.CreateRenderTargetView(buffer, null);
+    }
+
+    /// <summary>
+    /// 启动期记一条图形拓扑：D3D11 设备落在哪个适配器、各适配器有哪些输出（谁接着显示器）。
+    /// 设备跟随"接了输出的适配器",远程/虚拟显示会话里输出挂在核显上时设备也落在核显(与解码争系统内存),
+    /// 这类问题只能从这条日志判断，不涉及任何每帧开销。
+    /// </summary>
+    private void LogDisplayTopology()
+    {
+        try
+        {
+            using var dxgiDevice = _device.AsComObject<IDXGIDevice1>(true);
+            using var adapter = dxgiDevice.GetAdapter();
+            var device = adapter.GetDesc();
+            var text = new StringBuilder(256);
+            text.Append("photo view: 设备适配器=").Append(device.Description)
+                .Append(" vendor=0x").Append(device.VendorId.ToString("X4"))
+                .Append(" luid=").Append(device.AdapterLuid.HighPart.ToString("X8")).Append(':').Append(device.AdapterLuid.LowPart.ToString("X8"))
+                .Append(" dedicatedMB=").Append(device.DedicatedVideoMemory.ToInt64() >> 20);
+            using var factory = adapter.GetFactory2();
+            var index = 0;
+            foreach (var each in factory.EnumAdapters())
+            {
+                using (each)
+                {
+                    var desc = each.GetDesc();
+                    text.Append(" | [").Append(index).Append("] ").Append(desc.Description);
+                    foreach (var output in each.EnumOutputs())
+                    {
+                        using (output)
+                        {
+                            var od = output.GetDesc();
+                            text.Append(' ').Append(od.DeviceName)
+                                .Append(' ').Append(od.DesktopCoordinates.right - od.DesktopCoordinates.left)
+                                .Append('x').Append(od.DesktopCoordinates.bottom - od.DesktopCoordinates.top)
+                                .Append(" attached=").Append(od.AttachedToDesktop);
+                        }
+                    }
+                }
+
+                index++;
+            }
+
+            NativeStartupLog.Write(text.ToString());
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("display topology", ex);
+        }
+    }
+
+    /// <summary>告诉合成器交换链缓冲已是物理像素,抵消 XAML 再乘一次的合成缩放。</summary>
+    private void ApplyCompositionTransform()
+    {
+        double raster = PhysicalPixelsPerDip;
+        var matrix = new DXGI_MATRIX_3X2_F { _11 = (float)(1 / raster), _22 = (float)(1 / raster) };
+        _swapChain.Object.SetMatrixTransform(ref matrix).ThrowOnError();
+    }
+
+    /// <summary>按当前几何重绘一帧并呈现;无纹理时只清屏。</summary>
+    private void Draw()
+    {
+        RenderScene();
+        _swapChain.Present(1, 0);
+        RenderStateChanged?.Invoke();
+    }
+
+    /// <summary>只把当前几何画进后台缓冲(不呈现);回读像素的验收入口在呈现前调用它。</summary>
+    private unsafe void RenderScene()
+    {
+        if (_disposed || _renderTarget == null) return;
+        _context.Object.OMSetRenderTargets(1, [_renderTarget.Object], null);
+        _context.Object.ClearRenderTargetView(_renderTarget.Object, ClearColor);
+        if (_current is { } current)
+        {
+            _parameterData[0] = _pixelWidth;
+            _parameterData[1] = _pixelHeight;
+            _parameterData[4] = (float)DisplayWidth;
+            _parameterData[5] = (float)DisplayHeight;
+            _parameterData[8] = (float)_viewport.Scale;
+            _parameterData[9] = (float)_viewport.PanX;
+            _parameterData[10] = (float)_viewport.PanY;
+            _parameterData[11] = _viewport.Orientation;
+            _parameterData[12] = (float)PhysicalPixelsPerDip;
+            fixed (float* pointer = _parameterData)
+                _context.Object.UpdateSubresource(_parameters.Object, 0, IntPtr.Zero, (IntPtr)pointer, 0, 0);
+
+            _context.Object.RSSetViewports(1, [new D3D11_VIEWPORT { Width = _pixelWidth, Height = _pixelHeight, MinDepth = 0, MaxDepth = 1 }]);
+            _context.Object.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY.D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            _context.Object.VSSetShader(_vertexShader.Object, null, 0);
+            _context.Object.PSSetShader(_pixelShader.Object, null, 0);
+            _context.Object.VSSetConstantBuffers(0, 1, [_parameters.Object]);
+            _context.Object.PSSetShaderResources(0, 1, [current.View.Object]);
+            _context.Object.PSSetSamplers(0, 1, [_sampler.Object]);
+            _context.Object.Draw(4, 0);
+        }
+    }
+
+    /// <summary>视口物理尺寸或 LOD 需求变化时上报一次(重复值不重报,避免每帧打扰加载会话)。</summary>
+    private void NotifyViewportChanged()
+    {
+        if (_disposed || !_laidOut) return;
+        bool needsFull = NeedsFull;
+        if (_reported is { } reported && reported.Width == _pixelWidth && reported.Height == _pixelHeight && reported.NeedsFull == needsFull)
+            return;
+        _reported = (_pixelWidth, _pixelHeight, needsFull);
+        ViewportChanged?.Invoke();
+    }
+
+    /// <summary>左键按下开始拖动平移,并捕获指针以接收视口外移动。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针事件参数。</param>
+    private void OnPointerPressed(object sender, PointerRoutedEventArgs e)
+    {
+        try
+        {
+            var point = e.GetCurrentPoint(this);
+            if (!point.Properties.IsLeftButtonPressed) return;
+            _lastPointer = point.Position;
+            _panning = CapturePointer(e.Pointer);
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view press", ex);
+        }
+    }
+
+    /// <summary>拖动平移(仅放大态);平移不改变视口与 LOD 需求,故不上报。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针事件参数。</param>
+    private void OnPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+        try
+        {
+            var position = e.GetCurrentPoint(this).Position;
+            if (_viewport.IsFit)
+            {
+                _lastPointer = position;
+                return;
+            }
+            _viewport.PanBy(position.X - _lastPointer.X, position.Y - _lastPointer.Y);
+            _lastPointer = position;
+            Draw();
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view move", ex);
+        }
+    }
+
+    /// <summary>松开左键结束拖动。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针事件参数。</param>
+    private void OnPointerReleased(object sender, PointerRoutedEventArgs e)
+    {
+        if (!_panning) return;
+        _panning = false;
+        ReleasePointerCapture(e.Pointer);
+    }
+
+    /// <summary>指针捕获丢失(如窗口失活)时同样结束拖动。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">指针事件参数。</param>
+    private void OnPointerCaptureLost(object sender, PointerRoutedEventArgs e) => _panning = false;
+
+    /// <summary>双击在适应与 100% 之间切换,并以双击点作锚点。</summary>
+    /// <param name="sender">事件源。</param>
+    /// <param name="e">双击事件参数。</param>
+    private void OnDoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        try
+        {
+            _panning = false;
+            var position = e.GetPosition(this);
+            ToggleFit(position.X, position.Y);
+            e.Handled = true;
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("photo view double tap", ex);
+        }
+    }
+
+    /// <summary>
+    /// 一次在途的大图暂存上传:系统内存可写纹理 + 建纹理/映射的 UI 线程耗时。
+    /// 后台线程按 <see cref="Copying"/> 标记是否仍在写映射内存(期间不得释放)。
+    /// </summary>
+    private sealed class StagedUpload
+    {
+        /// <summary>构造一次上传。</summary>
+        /// <param name="key">源图实例的弱引用</param>
+        /// <param name="texture">系统内存暂存纹理</param>
+        /// <param name="stagingMs">建纹理 + 映射的 UI 线程耗时(ms)</param>
+        internal StagedUpload(WeakReference<DecodedImage> key, IComObject<ID3D11Texture2D> texture, double stagingMs)
+        {
+            Key = key;
+            Texture = texture;
+            StagingMs = stagingMs;
+        }
+
+        /// <summary>源图实例的弱引用。</summary>
+        internal WeakReference<DecodedImage> Key { get; }
+
+        /// <summary>系统内存暂存纹理。</summary>
+        internal IComObject<ID3D11Texture2D> Texture { get; }
+
+        /// <summary>建纹理 + 映射的 UI 线程耗时(ms),计入上传统计的建纹理段。</summary>
+        internal double StagingMs { get; }
+
+        /// <summary>后台线程是否仍在写映射内存(1 = 在写,0 = 已结束)。</summary>
+        internal int Copying;
+    }
+
+    /// <summary>
+    /// 一帧已上传的 GPU 纹理(纹理 + 着色器视图,已生成 mip 链),按 <see cref="DecodedImage"/> 实例身份缓存。
+    /// 只持实例的弱引用:缓存的是独立的 GPU 副本,不延长像素租约,也不阻止源图回收。
+    /// </summary>
+    private sealed class TextureEntry : IDisposable
+    {
+        /// <summary>构造条目。</summary>
+        /// <param name="key">源图实例的弱引用(引用相等即命中)</param>
+        /// <param name="texture">已上传的主图纹理</param>
+        /// <param name="view">纹理的着色器资源视图</param>
+        /// <param name="width">纹理宽(像素)</param>
+        /// <param name="height">纹理高(像素)</param>
+        internal TextureEntry(
+            WeakReference<DecodedImage> key,
+            IComObject<ID3D11Texture2D> texture,
+            IComObject<ID3D11ShaderResourceView> view,
+            int width,
+            int height)
+        {
+            Key = key;
+            Texture = texture;
+            View = view;
+            Width = width;
+            Height = height;
+            // R16G16B16A16 每像素 8 字节,完整 mip 链约多出 1/3。
+            Bytes = (long)width * height * 8 * 4 / 3;
+        }
+
+        /// <summary>纹理宽(像素)。</summary>
+        internal int Width { get; }
+
+        /// <summary>纹理高(像素)。</summary>
+        internal int Height { get; }
+
+        /// <summary>源图实例的弱引用;null 表示这张纹理已退成等待复用的空纹理。</summary>
+        internal WeakReference<DecodedImage>? Key { get; private set; }
+
+        /// <summary>主图纹理。</summary>
+        internal IComObject<ID3D11Texture2D> Texture { get; }
+
+        /// <summary>纹理的着色器资源视图。</summary>
+        internal IComObject<ID3D11ShaderResourceView> View { get; }
+
+        /// <summary>含 mip 链的显存占用估算(字节)。</summary>
+        internal long Bytes { get; }
+
+        /// <summary>源图实例是否仍存活(已回收的条目不会再命中)。</summary>
+        internal bool IsAlive => Key is not null && Key.TryGetTarget(out _);
+
+        /// <summary>是否就是给定实例上传的那一帧。</summary>
+        /// <param name="image">待比较的已解码图像</param>
+        /// <returns>引用相等时为 true</returns>
+        internal bool Matches(DecodedImage image)
+            => Key is not null && Key.TryGetTarget(out var target) && ReferenceEquals(target, image);
+
+        /// <summary>把条目改挂到另一帧(复用空纹理时)或退成空纹理(<paramref name="key"/> 为 null)。</summary>
+        /// <param name="key">新的源图弱引用;null 表示退成空纹理</param>
+        internal void Rebind(WeakReference<DecodedImage>? key) => Key = key;
+
+        /// <summary>释放 GPU 资源。</summary>
+        public void Dispose()
+        {
+            View.Dispose();
+            Texture.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// 主图纹理的内存客户端:把当前帧与最近缓存帧的显存占用报给内存管家,
+    /// 压力到 Caution 及以上时丢掉非当前帧的缓存纹理(清场在 UI 线程完成)。
+    /// </summary>
+    private sealed class GpuTextureMemoryClient : IMemoryClient
+    {
+        private readonly WindowsPhotoView _view;
+
+        /// <summary>构造客户端。</summary>
+        /// <param name="view">所属主图表面</param>
+        internal GpuTextureMemoryClient(WindowsPhotoView view) => _view = view;
+
+        /// <summary>压力快照里的客户端名。</summary>
+        public string Name => "GpuTextures";
+
+        /// <summary>当前帧与最近缓存帧的纹理字节合计(UI 线程写入,这里只读原子快照)。</summary>
+        public long FootprintBytes => Interlocked.Read(ref _view._gpuBytes);
+
+        /// <summary>按压力级别修剪:标记后由 UI 线程丢掉全部非当前纹理(本方法在探测线程上,不得阻塞)。</summary>
+        /// <param name="level">当前压力级别</param>
+        public void Trim(PressureLevel level) => _view.RequestTrim();
+    }
+}

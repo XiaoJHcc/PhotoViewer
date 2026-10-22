@@ -26,14 +26,24 @@ public static class PhotoDatabase
     private static string? _dbPath;
     private static bool _initialized;
 
-    /// <summary>初始化数据库:确保文件存在并 schema 建好;检测到旧 schema 则删库重建。可重复调用,幂等。</summary>
-    public static void Initialize()
+    /// <summary>初始化数据库与 schema；可在启动期指定隔离目录，后续调用保持同一路径。</summary>
+    /// <param name="databasePath">可选数据库路径；为空时使用应用标准数据目录。</param>
+    public static void Initialize(string? databasePath = null)
     {
-        if (_initialized) return;
+        if (_initialized)
+        {
+            if (databasePath != null && Path.GetFullPath(databasePath) != _dbPath) throw new InvalidOperationException("数据库路径必须在首次读取前配置");
+            return;
+        }
         lock (_initLock)
         {
-            if (_initialized) return;
-            _dbPath = ResolvePath();
+            if (_initialized)
+            {
+                if (databasePath != null && Path.GetFullPath(databasePath) != _dbPath) throw new InvalidOperationException("数据库路径必须在首次读取前配置");
+                return;
+            }
+            _dbPath = databasePath == null ? ResolvePath() : Path.GetFullPath(databasePath);
+            Directory.CreateDirectory(Path.GetDirectoryName(_dbPath)!);
 
             if (ShouldResetDueToLegacySchema())
             {
@@ -41,6 +51,7 @@ public static class PhotoDatabase
             }
 
             using var conn = OpenConnectionInternal();
+            EnsureWalMode(conn);
             EnsureSchema(conn);
             _initialized = true;
         }
@@ -81,6 +92,7 @@ public static class PhotoDatabase
                 DeleteDbFiles();
 
                 using var conn = OpenConnectionInternal();
+                EnsureWalMode(conn);
                 EnsureSchema(conn);
                 _initialized = true;
             }
@@ -460,14 +472,29 @@ public static class PhotoDatabase
         return n is long l ? l : Convert.ToInt64(n, CultureInfo.InvariantCulture);
     }
 
+    /// <summary>
+    /// 在首次建库连接上写一次 WAL 日志模式。journal_mode 持久化在库文件里,
+    /// 之后每条连接继承它,不需要(也不应该)在并发连接上重复设置。
+    /// </summary>
+    /// <param name="conn">已打开的建库连接</param>
+    private static void EnsureWalMode(SqliteConnection conn)
+    {
+        using var pragma = conn.CreateCommand();
+        pragma.CommandText = "PRAGMA journal_mode=WAL;";
+        pragma.ExecuteNonQuery();
+    }
+
     private static SqliteConnection OpenConnectionInternal()
     {
         if (_dbPath == null) _dbPath = ResolvePath();
         var conn = new SqliteConnection($"Data Source={_dbPath}");
         conn.Open();
+        // journal_mode 是持久化到库文件的设置,只能在 Initialize 的单连接上设一次;
+        // 每次开连接都设它会要求库级写锁 — 并发开几十上百个连接时互相 SQLITE_BUSY,
+        // 表现为面板/索引整窗卡死。这里只留连接级(不需要库锁)的两个 pragma。
         using (var pragma = conn.CreateCommand())
         {
-            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
+            pragma.CommandText = "PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON;";
             pragma.ExecuteNonQuery();
         }
         return conn;

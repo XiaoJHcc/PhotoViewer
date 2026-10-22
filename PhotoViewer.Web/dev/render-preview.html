@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>PhotoViewer 程序化渲染预览</title>
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            margin: 24px;
+            background: #111214;
+            color: #d8d9dc;
+            font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+        }
+        h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+        h2 { font-size: 14px; font-weight: 600; margin: 32px 0 10px; padding-bottom: 6px; border-bottom: 1px solid #2b2d31; }
+        p.note { margin: 0 0 10px; color: #8a8d93; font-size: 12px; }
+        .row { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-start; }
+        figure { margin: 0; }
+        figcaption { margin-top: 5px; color: #909399; font-size: 11px; max-width: 480px; }
+        canvas { display: block; background: #000; border: 1px solid #2b2d31; }
+        .status { color: #7f838a; font-size: 11px; }
+        .fail { color: #e08a6a; }
+        #log { margin-top: 28px; padding: 10px 12px; background: #17181b; border: 1px solid #2b2d31; color: #8f939a; font: 11px/1.6 ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>程序化渲染预览</h1>
+    <p class="note">开发用页面，不属于产品界面。画面为纯矢量按需重绘，方向标记（↑ + F）用于核对 EXIF 方向。</p>
+
+    <h2>方向码 1–8（显示朝向）</h2>
+    <p class="note">同一场景按存储朝向绘制；每格套用 EXIF 方向变换。方向码 5–8 显示宽高换轴。</p>
+    <div class="row" id="orientation"></div>
+
+    <h2>代理 vs Full</h2>
+    <p class="note">上排为整幅构图（应完全一致，仅锐度不同）；下排为同一区域的 100%（1 源像素 = 1 画布像素，代理放大后应明显发软）。</p>
+    <div class="row" id="tiers"></div>
+
+    <h2>增强预览</h2>
+    <p class="note">同一代理图，右侧为增强产物（对比度 / 饱和度提升）。</p>
+    <div class="row" id="enhance"></div>
+
+    <h2>连拍组（scene.base 相同，variant 递增）</h2>
+    <p class="note">同一场景的微小位移与亮度变化，应能看出是同一构图。</p>
+    <div class="row" id="burst"></div>
+
+    <h2>胶片栏缩略图队列</h2>
+    <p class="note">长边 = film.thumb.size × dpr，显示朝向；含一张解码失败的照片（只显示失败形态，不伪造图像）。</p>
+    <div class="row" id="thumbs"></div>
+
+    <h2>抖动照片的运动模糊</h2>
+    <p class="note">左为稳定帧，右为 shake = true 的同一场景。</p>
+    <div class="row" id="shake"></div>
+
+    <div id="log"></div>
+
+    <script type="module">
+        import { createTokens } from "../src/core/tokens.js";
+        import { displayDimensions, orientationMatrix } from "../src/render/procedural.js";
+        import { createDecoder } from "../src/render/decoder.js";
+        import { createThumbnailQueue } from "../src/render/thumbs.js";
+
+        const t = createTokens();
+        const decoder = createDecoder();
+        const logLines = [];
+        const log = (text) => {
+            logLines.push(text);
+            document.getElementById("log").textContent = logLines.join("\n");
+        };
+
+        function photo(overrides = {}) {
+            return {
+                id: "dev/DSC1000.ARW",
+                folderId: "dev",
+                name: "DSC1000.ARW",
+                stem: "DSC1000",
+                ext: ".arw",
+                size: 32 * 1024 * 1024,
+                modified: 0,
+                taken: null,
+                tzOffset: 480,
+                rating: 3,
+                width: 6000,
+                height: 4000,
+                orientation: 1,
+                focus: { x: 0.5, y: 0.5, w: 0.16, h: 0.13 },
+                exif: {},
+                shake: false,
+                extracted: true,
+                fingerprint: "dev:scene",
+                fault: {},
+                scene: { base: 101, variant: 0 },
+                ...overrides,
+            };
+        }
+
+        function element(tag, className) {
+            const node = document.createElement(tag);
+            if (className) node.className = className;
+            return node;
+        }
+
+        function figure(canvas, caption) {
+            const fig = element("figure");
+            fig.append(canvas, element("figcaption"));
+            fig.lastChild.textContent = caption;
+            return fig;
+        }
+
+        function canvas(width, height) {
+            const node = document.createElement("canvas");
+            node.width = width;
+            node.height = height;
+            node.style.width = `${width}px`;
+            node.style.height = `${height}px`;
+            return node;
+        }
+
+        function fit(canvasNode, surface, sourceWidth, sourceHeight, orientation = 1) {
+            const ctx = canvasNode.getContext("2d");
+            const dims = displayDimensions(sourceWidth, sourceHeight, orientation);
+            const scale = Math.min(canvasNode.width / dims.width, canvasNode.height / dims.height);
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvasNode.width, canvasNode.height);
+            const matrix = orientationMatrix(orientation, sourceWidth, sourceHeight);
+            ctx.save();
+            ctx.translate((canvasNode.width - dims.width * scale) / 2, (canvasNode.height - dims.height * scale) / 2);
+            ctx.scale(scale, scale);
+            ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(surface, 0, 0, sourceWidth, sourceHeight);
+            ctx.restore();
+        }
+
+        function cropFull(canvasNode, surface, sx, sy) {
+            const ctx = canvasNode.getContext("2d");
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvasNode.width, canvasNode.height);
+            ctx.imageSmoothingEnabled = false;
+            ctx.drawImage(surface, sx, sy, canvasNode.width, canvasNode.height, 0, 0, canvasNode.width, canvasNode.height);
+        }
+
+        function cropProxy(canvasNode, surface, proxyWidth, sourceWidth, sx, sy) {
+            const ratio = proxyWidth / sourceWidth;
+            const ctx = canvasNode.getContext("2d");
+            ctx.fillStyle = "#000";
+            ctx.fillRect(0, 0, canvasNode.width, canvasNode.height);
+            ctx.imageSmoothingEnabled = true;
+            ctx.drawImage(
+                surface,
+                sx * ratio,
+                sy * ratio,
+                canvasNode.width * ratio,
+                canvasNode.height * ratio,
+                0,
+                0,
+                canvasNode.width,
+                canvasNode.height,
+            );
+        }
+
+        function closeSurface(surface) {
+            if (surface && typeof surface.close === "function") surface.close();
+        }
+
+        async function orientationSection() {
+            const host = document.getElementById("orientation");
+            const base = photo({ id: "dev/orient-base", focus: { x: 0.5, y: 0.5, w: 0.18, h: 0.15 } });
+            for (let code = 1; code <= 8; code++) {
+                const target = { ...base, id: `dev/orient-${code}`, orientation: code };
+                const started = performance.now();
+                const result = await decoder.decode(target, "proxy", { longEdge: 900 });
+                const ms = Math.round(performance.now() - started);
+                const dims = displayDimensions(result.width, result.height, code);
+                const node = canvas(200, 160);
+                fit(node, result.surface, result.width, result.height, code);
+                closeSurface(result.surface);
+                host.append(figure(node, `O=${code} · 代理 ${result.width}×${result.height} · 显示 ${dims.width}×${dims.height} · ${ms}ms`));
+                log(`orientation ${code}: ${result.width}×${result.height} -> ${dims.width}×${dims.height} in ${ms}ms`);
+            }
+        }
+
+        async function tierSection() {
+            const host = document.getElementById("tiers");
+            const target = photo({ id: "dev/tiers" });
+            const proxyStarted = performance.now();
+            const proxy = await decoder.decode(target, "proxy", { longEdge: 1600 });
+            const proxyMs = Math.round(performance.now() - proxyStarted);
+            const fullStarted = performance.now();
+            const full = await decoder.decode(target, "full");
+            const fullMs = Math.round(performance.now() - fullStarted);
+
+            const proxyFit = canvas(320, 213);
+            fit(proxyFit, proxy.surface, proxy.width, proxy.height, 1);
+            host.append(figure(proxyFit, `代理整幅 ${proxy.width}×${proxy.height} · ${proxyMs}ms`));
+            const fullFit = canvas(320, 213);
+            fit(fullFit, full.surface, full.width, full.height, 1);
+            host.append(figure(fullFit, `Full 整幅 ${full.width}×${full.height} · ${fullMs}ms`));
+
+            const cropW = 480;
+            const cropH = 320;
+            const sx = Math.round(target.width * 0.72 - cropW / 2);
+            const sy = Math.round(target.height * 0.64 - cropH / 2);
+            const proxyCrop = canvas(cropW, cropH);
+            cropProxy(proxyCrop, proxy.surface, proxy.width, target.width, sx, sy);
+            host.append(figure(proxyCrop, `代理 100%（放大 ${(target.width / proxy.width).toFixed(2)}×）`));
+            const fullCrop = canvas(cropW, cropH);
+            cropFull(fullCrop, full.surface, sx, sy);
+            host.append(figure(fullCrop, "Full 100%（1:1）"));
+
+            const focusCrop = canvas(cropW, cropH);
+            cropFull(focusCrop, full.surface, Math.round(target.width * 0.5 - cropW / 2), Math.round(target.height * 0.5 - cropH / 2));
+            host.append(figure(focusCrop, "Full 100%：对焦点主体"));
+            log(`proxy ${proxy.width}×${proxy.height} in ${proxyMs}ms; full ${full.width}×${full.height} in ${fullMs}ms`);
+
+            await enhanceSection(proxy, target);
+            closeSurface(proxy.surface);
+            closeSurface(full.surface);
+        }
+
+        async function enhanceSection(proxy, target) {
+            const host = document.getElementById("enhance");
+            const before = canvas(320, 213);
+            fit(before, proxy.surface, proxy.width, proxy.height, 1);
+            host.append(figure(before, "原片"));
+            const started = performance.now();
+            const enhanced = await decoder.enhance(proxy.surface);
+            const ms = Math.round(performance.now() - started);
+            const after = canvas(320, 213);
+            fit(after, enhanced, proxy.width, proxy.height, 1);
+            host.append(figure(after, `增强（${ms}ms）`));
+            closeSurface(enhanced);
+            log(`enhance in ${ms}ms`);
+        }
+
+        async function burstSection() {
+            const host = document.getElementById("burst");
+            for (let variant = 0; variant < 5; variant++) {
+                const target = photo({
+                    id: `dev/burst-${variant}`,
+                    name: `DSC20${variant}0.ARW`,
+                    scene: { base: 102, variant },
+                    fingerprint: `dev:burst:${variant}`,
+                });
+                const result = await decoder.decode(target, "proxy", { longEdge: 400 });
+                const node = canvas(200, 133);
+                fit(node, result.surface, result.width, result.height, 1);
+                closeSurface(result.surface);
+                host.append(figure(node, `base 102 · variant ${variant}`));
+            }
+        }
+
+        async function thumbSection() {
+            const host = document.getElementById("thumbs");
+            const dpr = Math.min(window.devicePixelRatio || 1, 2);
+            const queue = createThumbnailQueue({ t, dpr, decoder });
+            const photos = [];
+            for (let i = 0; i < 4; i++) {
+                photos.push(photo({
+                    id: `dev/thumb-${i}`,
+                    name: `DSC30${i}0.JPG`,
+                    scene: { base: 110 + i, variant: 0 },
+                    fingerprint: `dev:thumb:${i}`,
+                    orientation: i === 2 ? 6 : 1,
+                    focus: { x: 0.35 + i * 0.1, y: 0.45, w: 0.12, h: 0.1 },
+                }));
+            }
+            photos.push(photo({
+                id: "dev/thumb-shake",
+                name: "DSC3100.JPG",
+                scene: { base: 120, variant: 0 },
+                fingerprint: "dev:thumb:shake",
+                shake: true,
+            }));
+            photos.push(photo({
+                id: "dev/thumb-fail",
+                name: "DSC3200.JPG",
+                scene: { base: 130, variant: 0 },
+                fingerprint: "dev:thumb:fail",
+                fault: { decode: "all" },
+            }));
+            photos.push(photo({
+                id: "dev/thumb-portrait",
+                name: "DSC3300.JPG",
+                width: 4000,
+                height: 6000,
+                orientation: 6,
+                scene: { base: 140, variant: 0 },
+                fingerprint: "dev:thumb:portrait",
+            }));
+
+            await Promise.all(photos.map(async (target) => {
+                const started = performance.now();
+                const holder = canvas(80, 80);
+                try {
+                    const surface = await queue.request(target, true);
+                    const dims = displayDimensions(surface.width ?? 0, surface.height ?? 0, 1);
+                    fit(holder, surface, surface.width ?? 1, surface.height ?? 1, 1);
+                    const ms = Math.round(performance.now() - started);
+                    host.append(figure(holder, `${target.name}\n长边 ${t("film.thumb.size") * dpr} · ${ms}ms`));
+                    log(`thumb ${target.name}: ${dims.width}×${dims.height} in ${ms}ms`);
+                } catch (error) {
+                    const ctx = holder.getContext("2d");
+                    ctx.fillStyle = "#1b1c1f";
+                    ctx.fillRect(0, 0, 80, 80);
+                    ctx.strokeStyle = "#5a5d63";
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    ctx.moveTo(24, 24);
+                    ctx.lineTo(56, 56);
+                    ctx.moveTo(56, 24);
+                    ctx.lineTo(24, 56);
+                    ctx.stroke();
+                    host.append(figure(holder, `${target.name}\n解码失败（FILM-05）`));
+                    log(`thumb ${target.name}: ${error.message}`);
+                }
+            }));
+            log(`thumbnail queue: ${JSON.stringify(queue.stats())}`);
+        }
+
+        async function shakeSection() {
+            const host = document.getElementById("shake");
+            for (const shaken of [false, true]) {
+                const target = photo({
+                    id: `dev/shake-${shaken}`,
+                    scene: { base: 151, variant: 0 },
+                    fingerprint: `dev:shake:${shaken}`,
+                    shake: shaken,
+                });
+                const result = await decoder.decode(target, "proxy", { longEdge: 640 });
+                const node = canvas(240, 160);
+                fit(node, result.surface, result.width, result.height, 1);
+                closeSurface(result.surface);
+                host.append(figure(node, shaken ? "shake = true（方向性运动模糊）" : "shake = false"));
+            }
+        }
+
+        async function main() {
+            await orientationSection();
+            await tierSection();
+            await burstSection();
+            await thumbSection();
+            await shakeSection();
+            log("完成");
+        }
+
+        main().catch((error) => {
+            log(`失败：${error && error.stack ? error.stack : error}`);
+        });
+    </script>
+</body>
+</html>

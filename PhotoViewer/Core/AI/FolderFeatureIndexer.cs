@@ -4,9 +4,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -57,6 +57,12 @@ public sealed class FolderFeatureIndexer
 
     /// <summary>进度事件:每组完成(成功或跳过)后触发。</summary>
     public event Action<IndexProgress>? ProgressChanged;
+
+    /// <summary>
+    /// 每次成功写入一组特征后触发（静态，库内容变化是全局事实）；
+    /// 分析栏据此对当前照片重新路由，避免把「提取全部」之前的空结果继续贴在诊断瓦片上。
+    /// </summary>
+    public static event Action? FeaturesWritten;
 
     /// <summary>
     /// 把文件列表按指纹聚合:同指纹的多个文件合并为一组,代表文件按解码代价升序(HEIF/HIF → JPG → 其他 → RAW),
@@ -162,6 +168,10 @@ public sealed class FolderFeatureIndexer
 
         foreach (var group in groups)
         {
+            // 压力闸:Caution 起批量索引暂停,恢复到 Normal 再继续(事件驱动轮询,2s 粒度)
+            while (MemoryGovernor.CurrentLevel >= PressureLevel.Caution)
+                await Task.Delay(2000).ConfigureAwait(false);
+
             var g = group;
             tasks.Add(Task.Run(async () =>
             {
@@ -213,13 +223,13 @@ public sealed class FolderFeatureIndexer
             int cvWidth = 0;
             int cvHeight = 0;
 
-            Bitmap? thumbnail = null;
+            DecodedImage? thumbnail = null;
             try
             {
                 bool needDino = missing.NeedCls || missing.NeedPatches;
                 if (needDino)
                 {
-                    thumbnail = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide).ConfigureAwait(false);
+                    thumbnail = await ThumbnailService.GetThumbnailAsync(representative.File, FeaturingShortSide, DecodePriority.P3_Background).ConfigureAwait(false);
                     if (thumbnail == null)
                     {
                         // 缩略图都拿不到,直接放弃整组(CV 大图通常更难解码)
@@ -247,22 +257,29 @@ public sealed class FolderFeatureIndexer
 
                 if (missing.NeedCv)
                 {
-                    Bitmap? cvBitmap = null;
+                    DecodedImage? cvBitmap = null;
                     try
                     {
-                        cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File).ConfigureAwait(false);
+                        // CV 大图:P3 优先级准入(批量索引);携带调用方租约,用完归还
+                        cvBitmap = await BitmapLoader.GetBitmapAsync(representative.File, DecodePriority.P3_Background, CancellationToken.None).ConfigureAwait(false);
+                        if (cvBitmap?.Encoding == PixelEncoding.RgbaF16)
+                        {
+                            var analysisBitmap = PhotoViewer.Core.Color.ColorEngine.ToAnalysisSrgb8(cvBitmap);
+                            cvBitmap.Release();
+                            cvBitmap = analysisBitmap;
+                        }
                         if (cvBitmap != null)
                         {
                             var cvResult = await CvGridExtractor.ExtractAsync(cvBitmap).ConfigureAwait(false);
                             cvBlob = cvResult.Encode();
                             cvSpec = CvGridResult.CurrentVersion;
-                            cvWidth = cvBitmap.PixelSize.Width;
-                            cvHeight = cvBitmap.PixelSize.Height;
+                            cvWidth = cvBitmap.Width;
+                            cvHeight = cvBitmap.Height;
                         }
                     }
                     finally
                     {
-                        // CV 大图来自 BitmapLoader 的 LRU 缓存,由 ImageView 共用,这里不 Dispose
+                        cvBitmap?.Release();
                     }
                 }
 
@@ -273,6 +290,11 @@ public sealed class FolderFeatureIndexer
                 await PhotoDatabase.WriteIndexedAsync(
                     group.Input, group.Fingerprint, DinoModelResources.ModelId,
                     clsBlob, patchBlob, cvBlob, cvSpec, cvWidth, cvHeight, exifSnapshot).ConfigureAwait(false);
+
+                // 库里已有该指纹的派生层结果,旧的分析栏缓存(含"未提取"空 entry)必须作废,
+                // 否则分析栏会一直贴旧的空结果,直到 LRU 淘汰才恢复。
+                AnalysisResultCache.Invalidate(group.Fingerprint);
+                FeaturesWritten?.Invoke();
 
                 ReportProgress();
             }

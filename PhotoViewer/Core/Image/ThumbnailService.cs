@@ -3,10 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform;
-using Avalonia.Platform.Storage;
+using PhotoViewer.Core.Memory;
+using PhotoViewer.Core.Storage;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Exif;
 
@@ -18,18 +16,21 @@ namespace PhotoViewer.Core.Image;
 /// 2) <see cref="GetThumbnailAsync"/>:按目标短边挑一个尺寸合适的来源解码,并完成"方向对齐 + letterbox 裁剪"。
 /// 设计约束：
 /// - 仅从广义 EXIF/容器元数据里列出"已知尺寸的缩略图条目",绝不触发原图全分辨率解码。
-/// - 方向与裁剪全部依赖容器/EXIF 元数据声明（HEIF Default Rotation / EXIF Orientation + Sensor W/H）,
+/// - 方向与裁剪全部依赖容器/EXIF 元数据声明（HEIF Default Rotation / EXIF Orientation + Sensor W/H），
 ///   不做任何启发式的像素亮度检测。
 /// - HEIF 路径优先按 Thumbnail Data 字节嗅探,JPEG 字节直接读 SOF 拿真实尺寸；HEVC/未知字节走平台解码器兜底。
 /// - 选源规则:显示短边必须 ≥ target,不够大的来源整体舍弃,确保始终是缩图（never 放大）。
 /// </summary>
 public static class ThumbnailService
 {
+    private static IPresentationImageDecoder? _missingPreviewDecoder;
+    /// <summary>注入原生缩略子采样通道，仅在用户图片没有内嵌预览来源时使用。</summary>
+    public static void InitializeMissingPreviewDecoder(IPresentationImageDecoder decoder) => _missingPreviewDecoder = decoder;
     /// <summary>
     /// 列出该文件所有可用的缩略图来源（尺寸由容器/EXIF 元数据读取；不做任何图像解码）。
     /// 顺序由具体提取器决定;尺寸未知时 <see cref="ThumbnailSource.Width"/> / <see cref="ThumbnailSource.Height"/> 为 0。
     /// </summary>
-    public static async Task<IReadOnlyList<ThumbnailSource>> GetAvailableSourcesAsync(IStorageFile file)
+    public static async Task<IReadOnlyList<ThumbnailSource>> GetAvailableSourcesAsync(IFileRef file)
     {
         if (file == null) return Array.Empty<ThumbnailSource>();
 
@@ -59,10 +60,29 @@ public static class ThumbnailService
     /// 解码完成后,根据容器声明的方向与传感器比例完成"方向对齐 + letterbox 裁剪"。
     /// 任何来源都不会触发原图全分辨率解码；所有来源都失败时返回 null。
     /// </summary>
-    public static async Task<Bitmap?> GetThumbnailAsync(IStorageFile file, int targetShortSide)
+    /// <param name="file">文件引用。</param>
+    /// <param name="targetShortSide">目标短边像素。</param>
+    /// <param name="priority">解码优先级(准入语义;批量索引传 P3)。准入被拒返回 null。</param>
+    public static async Task<DecodedImage?> GetThumbnailAsync(IFileRef file, int targetShortSide, DecodePriority priority = DecodePriority.P1_HighValue)
     {
         if (file == null || targetShortSide <= 0) return null;
 
+        // 解码准入:缩略图按固定估值记账,完成后按实际复核;被拒(非 P0)直接返回
+        if (!MemoryGovernor.TryAcquire(EstimatedThumbBytes, priority, out var thumbPermit))
+            return null;
+        using (thumbPermit)
+        {
+            var result = await GetThumbnailCoreAsync(file, targetShortSide).ConfigureAwait(false);
+            thumbPermit!.SetActual(result?.ByteCount ?? 0);
+            return result;
+        }
+    }
+
+    /// <summary>缩略图解码准入的固定估值(内嵌预览/小尺寸解码,完成后按实际复核)。</summary>
+    private const long EstimatedThumbBytes = 4L * 1024 * 1024;
+
+    private static async Task<DecodedImage?> GetThumbnailCoreAsync(IFileRef file, int targetShortSide)
+    {
         IReadOnlyList<MetadataExtractor.Directory> directories;
         bool isHeif = HeifLoader.IsHeifFile(file);
         try
@@ -77,10 +97,31 @@ public static class ThumbnailService
         }
 
         var orientation = ImageOrientationInfo.FromDirectories(directories, isHeif);
+        // HEIF 的 irot 是容器真实方向：能读到就直接以它为准，避免首张元数据尚未就绪
+        // 或不同读取路径给出不一致角度。
+        if (isHeif)
+        {
+            try
+            {
+                await using var probe = await file.OpenReadAsync();
+                int? directRotation = HeifOrientationReader.TryReadRotationDegreesCw(probe);
+                if (directRotation.HasValue)
+                    orientation = new ImageOrientationInfo(directRotation.Value, false,
+                        orientation.SensorWidth, orientation.SensorHeight);
+            }
+            catch
+            {
+                // 保持元数据结果。
+            }
+        }
         var sources = isHeif
             ? await EnumerateHeifSourcesAsync(file, directories).ConfigureAwait(false)
             : EnumerateNonHeifSources(file, directories);
-        if (sources.Count == 0) return null;
+        if (sources.Count == 0)
+        {
+            if (_missingPreviewDecoder == null) return null;
+            return await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, CancellationToken.None).ConfigureAwait(false);
+        }
 
         foreach (var src in OrderByPriority(sources, targetShortSide))
         {
@@ -120,7 +161,7 @@ public static class ThumbnailService
     // ============================================================
 
     private static async Task<IReadOnlyList<ThumbnailSource>> EnumerateHeifSourcesAsync(
-        IStorageFile file,
+        IFileRef file,
         IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         var result = new List<ThumbnailSource>();
@@ -174,8 +215,10 @@ public static class ThumbnailService
         // 平台解码器兜底:Default Rotation 已被平台解码器内部应用,标记 IsPreRotated=true
         result.Add(new ThumbnailSource(
             width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
-            isPreRotated: true,
-            loaderAsync: target => HeifLoader.LoadHeifThumbnailAsync(file, target)));
+            // 各平台 HEIF 解码器是否已预旋转不同：Android 的 libheif/JPEG item 路径未旋转，
+            // 必须让 ThumbnailService 按容器方向再做方向对齐。
+            isPreRotated: HeifLoader.OutputPreRotated,
+            loaderAsync: target => HeifLoader.DecodeAsync(file, target)));
 
         return result;
     }
@@ -183,7 +226,7 @@ public static class ThumbnailService
     /// <summary>
     /// 按 (offset, length) 从文件里截取一段字节,嗅探为合法 JPEG 后按目标短边解码。
     /// </summary>
-    private static async Task<Bitmap?> ReadRangeAndDecodeAsync(IStorageFile file, int offset, int length, int targetShortSide)
+    private static async Task<DecodedImage?> ReadRangeAndDecodeAsync(IFileRef file, int offset, int length, int targetShortSide)
     {
         try
         {
@@ -222,7 +265,7 @@ public static class ThumbnailService
     // 尺寸全部从字节本身读取（SOF 解析）,不再用元数据贴标签。
     // ============================================================
 
-    private static IReadOnlyList<ThumbnailSource> EnumerateNonHeifSources(IStorageFile file, IReadOnlyList<MetadataExtractor.Directory> directories)
+    private static IReadOnlyList<ThumbnailSource> EnumerateNonHeifSources(IFileRef file, IReadOnlyList<MetadataExtractor.Directory> directories)
     {
         var result = new List<ThumbnailSource>();
 
@@ -255,7 +298,7 @@ public static class ThumbnailService
             result.Add(new ThumbnailSource(
                 width: 0, height: 0, origin: ThumbnailOrigin.FullImage,
                 isPreRotated: true,
-                loaderAsync: target => RawLoader.LoadRawThumbnailAsync(file, target)));
+                loaderAsync: target => RawLoader.DecodeAsync(file, target)));
         }
 
         return result;
@@ -294,7 +337,7 @@ public static class ThumbnailService
     /// 从 ExifThumbnailDirectory 读取嵌入缩略图字节:先按常见字节 tag,再按 (Offset 0x0201, Length 0x0202) 偏移读取。
     /// 始终只解码嵌入字节;任何情况都不会触发原图解码。
     /// </summary>
-    private static async Task<Bitmap?> ReadEmbeddedFromExifThumbnailDirectoryAsync(IStorageFile file, ExifThumbnailDirectory dir, int targetShortSide)
+    private static async Task<DecodedImage?> ReadEmbeddedFromExifThumbnailDirectoryAsync(IFileRef file, ExifThumbnailDirectory dir, int targetShortSide)
     {
         int[] thumbnailTags = { 0x0201, 0x0202, 0x0103 };
         foreach (var tag in thumbnailTags)
@@ -341,7 +384,7 @@ public static class ThumbnailService
     /// 动机:IFD1 的 ThumbnailOffset 口径因相机/软件而异（TIFF-相对 vs 文件-绝对）,
     /// 还常有 firmware quirk 偏移几字节（实测 Sony ILCE-6100 偏 +6）。
     /// </summary>
-    private static async Task<byte[]?> ReadJpegAroundAsync(IStorageFile file, int hintOffset, int length)
+    private static async Task<byte[]?> ReadJpegAroundAsync(IFileRef file, int hintOffset, int length)
     {
         const int windowPad = 64;
         try
@@ -382,12 +425,12 @@ public static class ThumbnailService
     }
 
     /// <summary>
-    /// 把 JPEG 字节解码为目标短边 <paramref name="targetShortSide"/> 附近的位图。
-    /// Avalonia 只提供 <c>DecodeToWidth</c>,我们用 SOF 解出来的真实宽高换算成等效"短边 = target"的目标宽度,
+    /// 把 JPEG 字节解码为目标短边 <paramref name="targetShortSide"/> 附近的图像。
+    /// 用 SOF 解出来的真实宽高换算成等效"短边 = target"的目标宽度,
     /// 这样横竖图都能保证解码后短边 ≈ target,避免按宽度直接传 target 在横图上缩过头。
     /// 若字节本身短边已经 ≤ target（不需要缩小）,1:1 解码避免插值损失。
     /// </summary>
-    private static Bitmap? DecodeJpegToShortSide(byte[]? data, int targetShortSide)
+    private static DecodedImage? DecodeJpegToShortSide(byte[]? data, int targetShortSide)
     {
         if (data == null || data.Length < 100 || !IsJpegBytes(data)) return null;
         try
@@ -406,7 +449,7 @@ public static class ThumbnailService
                 decodeWidth = targetShortSide;
             }
             using var ms = new MemoryStream(data);
-            return Bitmap.DecodeToWidth(ms, decodeWidth);
+            return SkiaImageCodec.DecodeToWidth(ms, decodeWidth);
         }
         catch (Exception ex)
         {
@@ -429,17 +472,28 @@ public static class ThumbnailService
     // ============================================================
 
     /// <summary>
-    /// 若来源声明 IsPreRotated=true（如 HEIF 平台解码器）,bitmap 已是显示朝向,直接返回。
-    /// 否则按 orientation 中的 (RotationCw, MirrorHorizontal) 把传感器朝向位图旋转/镜像到显示朝向。
+    /// 若来源声明 IsPreRotated=true（如 HEIF 平台解码器）,图像已是显示朝向,直接返回。
+    /// 否则按 orientation 中的 (RotationCw, MirrorHorizontal) 把传感器朝向图像旋转/镜像到显示朝向。
     /// </summary>
-    private static Bitmap AlignOrientationIfNeeded(Bitmap raw, ThumbnailSource src, ImageOrientationInfo orientation)
+    private static DecodedImage AlignOrientationIfNeeded(DecodedImage raw, ThumbnailSource src, ImageOrientationInfo orientation)
     {
         if (src.IsPreRotated) return raw;
         if (orientation.RotationDegreesCw == 0 && !orientation.MirrorHorizontal) return raw;
 
+        // 同一 HEIF 内不同缩略图 item 的存储方向并不一致：Sony 有些 item 已按显示方向存成竖图，
+        // 有些仍是传感器横向。仅当“原始横竖”与“显示横竖”相反时才旋转，避免把已竖存的 item 再转 90°。
+        if (orientation.RotationDegreesCw is 90 or 270
+            && orientation.SensorWidth > 0 && orientation.SensorHeight > 0)
+        {
+            bool sensorPortrait = orientation.SensorHeight > orientation.SensorWidth;
+            bool displayPortrait = !sensorPortrait;
+            bool rawPortrait = raw.Height > raw.Width;
+            if (rawPortrait == displayPortrait) return raw;
+        }
+
         try
         {
-            var rotated = ApplyOrientation(raw, orientation.RotationDegreesCw, orientation.MirrorHorizontal);
+            var rotated = SkiaImageCodec.ApplyOrientation(raw, orientation.RotationDegreesCw, orientation.MirrorHorizontal);
             if (rotated == null) return raw;
             if (!ReferenceEquals(rotated, raw)) raw.Dispose();
             return rotated;
@@ -452,16 +506,16 @@ public static class ThumbnailService
     }
 
     /// <summary>
-    /// 用容器声明的显示纵横比作目标,从位图中央居中裁出最大内接矩形,去掉 letterbox 黑边。
+    /// 用容器声明的显示纵横比作目标,从图像中央居中裁出最大内接矩形,去掉 letterbox 黑边。
     /// 比例已相符（容差 1%）时跳过裁剪。容器未声明传感器尺寸时跳过裁剪。
     /// </summary>
-    private static Bitmap CropLetterboxByMetadata(Bitmap aligned, ImageOrientationInfo orientation)
+    private static DecodedImage CropLetterboxByMetadata(DecodedImage aligned, ImageOrientationInfo orientation)
     {
         double displayAspect = orientation.DisplayAspect;
         if (displayAspect <= 0) return aligned;
 
-        int bw = aligned.PixelSize.Width;
-        int bh = aligned.PixelSize.Height;
+        int bw = aligned.Width;
+        int bh = aligned.Height;
         if (bw <= 0 || bh <= 0) return aligned;
 
         double curAspect = (double)bw / bh;
@@ -486,67 +540,18 @@ public static class ThumbnailService
 
         int offX = (bw - targetW) / 2;
         int offY = (bh - targetH) / 2;
-        var sourceRect = new PixelRect(offX, offY, targetW, targetH);
 
         try
         {
-            var format = aligned is WriteableBitmap wb && wb.Format.HasValue
-                ? wb.Format.Value
-                : PixelFormats.Bgra8888;
-            var alphaFormat = aligned.AlphaFormat ?? AlphaFormat.Premul;
-            var target = new WriteableBitmap(new PixelSize(targetW, targetH), aligned.Dpi, format, alphaFormat);
-            using (var locked = target.Lock())
-            {
-                aligned.CopyPixels(sourceRect, locked.Address, locked.RowBytes * targetH, locked.RowBytes);
-            }
+            var cropped = SkiaImageCodec.Crop(aligned, offX, offY, targetW, targetH);
+            if (cropped == null) return aligned;
             aligned.Dispose();
-            return target;
+            return cropped;
         }
         catch (Exception ex)
         {
             Console.WriteLine("ThumbnailService: letterbox crop failed: " + ex.Message);
             return aligned;
         }
-    }
-
-    /// <summary>
-    /// 把传感器朝向的位图按 (rotationCw, mirror) 变换到显示朝向,返回新位图。
-    /// 变换顺序:平移到源中心 → （水平镜像）→ （顺时针旋转）→ 平移到目标中心。
-    /// </summary>
-    /// <param name="source">传感器朝向位图，不转移所有权。</param>
-    /// <param name="rotationCw">顺时针旋转角度，须为 0、90、180 或 270。</param>
-    /// <param name="mirror">旋转前是否水平镜像。</param>
-    /// <returns>显示朝向的新位图；无效尺寸返回 null。</returns>
-    public static Bitmap? ApplyOrientation(Bitmap source, int rotationCw, bool mirror)
-    {
-        if (rotationCw is not (0 or 90 or 180 or 270))
-            throw new ArgumentOutOfRangeException(nameof(rotationCw));
-        int sw = source.PixelSize.Width;
-        int sh = source.PixelSize.Height;
-        if (sw <= 0 || sh <= 0) return null;
-
-        bool swap = rotationCw == 90 || rotationCw == 270;
-        int dw = swap ? sh : sw;
-        int dh = swap ? sw : sh;
-
-        var rt = new RenderTargetBitmap(new PixelSize(dw, dh), new Vector(96, 96));
-        using var ctx = rt.CreateDrawingContext();
-
-        var transform = Matrix.CreateTranslation(-sw / 2.0, -sh / 2.0);
-        if (mirror)
-        {
-            transform *= Matrix.CreateScale(-1, 1);
-        }
-        if (rotationCw != 0)
-        {
-            transform *= Matrix.CreateRotation(Math.PI * rotationCw / 180.0);
-        }
-        transform *= Matrix.CreateTranslation(dw / 2.0, dh / 2.0);
-
-        using (ctx.PushTransform(transform))
-        {
-            ctx.DrawImage(source, new Rect(0, 0, sw, sh), new Rect(0, 0, sw, sh));
-        }
-        return rt;
     }
 }

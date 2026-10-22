@@ -1,6 +1,6 @@
 # PhotoViewer
 
-一个基于 Avalonia 开发的全平台照片查看器，专为摄影选片流程优化设计。
+一个基于 .NET 10 与四端原生界面（Windows / macOS / iPadOS / Android）的全平台照片查看器，专为摄影选片流程优化设计。
 
 ![image](README-IMG/PhotoViewer-Mockup.jpg)
 
@@ -70,8 +70,8 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 | 功能 | Windows | macOS | iOS/iPadOS | Android |
 |-----|---------|-------|------------|---------|
 | JPG 预览 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| HEIF 预览 | ✅ LibHeif | ✅ 原生 | ✅ 原生 | ✅ LibHeif |
-| RAW 预览 | 暂不支持 | ✅ 原生 | ✅ 原生 | 暂不支持 |
+| HEIF 预览 | ✅ pvhevc + LibHeif | ✅ 原生 | ✅ 原生 | ✅ LibHeif |
+| RAW 预览 | ✅ 系统 RAW 引擎 | ✅ 原生 | ✅ 原生 | 暂不支持 |
 | SONY ARW 标星 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
 | 其他 RAW 标星 | 未测试 | 未测试 | 未测试 | 未测试 |
 | EXIF 解析 | ✅ 支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
@@ -84,7 +84,7 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 ### 下载安装
 [Releases 页面](https://github.com/XiaoJHcc/PhotoViewer/releases) 
 
-- **Windows** : 下载 `PhotoViewer.Windows.exe` 直接运行
+- **Windows** : 下载 `PhotoViewer-<版本>-win-x64.exe`，双击运行。
 - **Android** : 下载 `PhotoViewer.Android.apk` 并安装
 - **macOS** : 下载 `PhotoViewer.Mac.dmg`，打开映像，将 `PhotoViewer.Mac.app` 拖入右侧 `Applications` 文件夹。首次启动若提示"Apple 无法验证…移到废纸篓"，有以下两种方法解除：
   - **方法一**：双击 DMG 中的 `安装 PhotoViewer.command`，按提示完成后即可正常打开
@@ -103,4 +103,4 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 
 ## 许可证
 
-本项目使用 [LibHeif](https://github.com/strukturag/libheif) 开源库解码 HEIF 格式照片，使用 [ExifTool](https://github.com/exiftool/exiftool) 的源码参数用于补充解析 EXIF 信息，遵循协议采用 [GPL 许可证](LICENSE)。
+本项目使用 [LibHeif](https://github.com/strukturag/libheif) 开源库解码 HEIF 格式照片，使用 [ExifTool](https://github.com/exiftool/exiftool) 的源码参数用于补充解析 EXIF 信息，遵循协议采用 [GPL 许可证](LICENSE)。Windows 与 Android 端打包仅含 HEVC 解码器的 [FFmpeg](https://ffmpeg.org/)（LGPL-2.1，许可原文随原生库附带）并行解码 HEIF 瓦片；Android 端另打包 [LibRaw](https://www.libraw.org/)（0.22.2，双许可 LGPL-2.1 / CDDL-1.0，许可原文见 `PhotoViewer.Android/NativeLibs/arm64-v8a/pvraw-LibRaw-LICENSE.txt`）解码 RAW 格式照片。

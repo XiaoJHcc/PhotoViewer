@@ -1,21 +1,19 @@
 using System.Collections.Generic;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
 /// 分析栏派生结果缓存:按指纹 LRU 缓存"读库 + 派生层现算"的全部产物 — 4 张诊断位图 + ShakeField + 判定文字 +
-/// patch tokens(供 cosine 切参考点)+ aspect/CV 尺寸。命中即可让 <see cref="ViewModels.Main.AnalysisViewModel"/>
-/// 直接 UI swap,不再走 SVD/锐度/抖动场重算。
+/// patch tokens(供 cosine 切参考点)+ aspect/CV 尺寸。命中即可让分析栏直接 UI swap,不再走 SVD/锐度/抖动场重算。
 ///
 /// 由两条路径填充:
-/// 1. <see cref="ViewModels.Main.AnalysisViewModel"/> 切图 miss 后现算入缓存(主路径)。
+/// 1. 分析栏宿主切图 miss 后现算入缓存(主路径)。
 /// 2. <see cref="PhotoViewer.Core.Image.BitmapPrefetcher"/> 预取邻居位图时顺手预热(预热路径)。
 ///
-/// 容量按指纹计算,LRU 淘汰。**淘汰不主动 Dispose 位图** —— 32×32 BGRA 位图本体仅几 KB,native 资源由
-/// <see cref="WriteableBitmap"/> finalizer 兜底回收;相对地,我们换来"VM/Prefetcher 并发 TryGet/Put 不会出现
-/// use-after-dispose"的简单语义。
+/// 容量按指纹计算,LRU 淘汰。**淘汰不主动 Dispose 位图** —— 32×32 BGRA 图像为纯托管 byte[](DecodedImage),
+/// GC 兜底回收;相对地,我们换来"VM/Prefetcher 并发 TryGet/Put 不会出现 use-after-dispose"的简单语义。
 ///
 /// 另有按文件路径键的**即时计算缓存**(增强预览联动 / 未提取回退的产物):
 /// - 与指纹缓存同 Entry 形状、同"不主动 Dispose"语义,但不走 LRU — 生命周期跟随主图缓存:
@@ -40,13 +38,13 @@ public static class AnalysisResultCache
         public double AspectRatio { get; init; } = 1.0;
 
         /// <summary>PCA-RGB(DINO patch token 前 3 主成分),null 表示未提取 patch。</summary>
-        public Bitmap? PcaBmp { get; init; }
+        public DecodedImage? PcaBmp { get; init; }
 
         /// <summary>默认中心参考点(16,16)的 cosine 热力图,null 表示未提取 patch。</summary>
-        public Bitmap? CenterCosineBmp { get; init; }
+        public DecodedImage? CenterCosineBmp { get; init; }
 
         /// <summary>锐度图,null 表示未提取 CV。</summary>
-        public Bitmap? SharpnessBmp { get; init; }
+        public DecodedImage? SharpnessBmp { get; init; }
 
         /// <summary>抖动矢量场结构,null 表示未提取 CV。</summary>
         public ShakeField? ShakeField { get; init; }
@@ -68,12 +66,14 @@ public static class AnalysisResultCache
     /// <summary>即时计算缓存(文件路径键,含增强变体);生命周期跟随主图缓存,不走 LRU。</summary>
     private static readonly Dictionary<string, Entry> _immediate = new(System.StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>挂主图缓存失效事件:主图位图被淘汰 / 清空时,同步移除该路径(含增强变体)的即时缓存项。</summary>
+    /// <summary>挂主图缓存失效事件:主图位图(Full 档)被淘汰 / 清空时,同步移除该路径(含增强变体)的即时缓存项。</summary>
     static AnalysisResultCache()
     {
-        BitmapLoader.CacheStatusChanged += (path, inCache) =>
+        MemoryGovernor.Register(new CacheMemoryClient());
+
+        BitmapLoader.CacheStatusChanged += (path, cls, inCache) =>
         {
-            if (inCache) return;
+            if (inCache || cls != ImageSizeClass.Full) return;
             lock (_lock)
             {
                 _immediate.Remove(path);
@@ -161,6 +161,39 @@ public static class AnalysisResultCache
             _order.Clear();
             _index.Clear();
             _immediate.Clear();
+        }
+    }
+
+    /// <summary>
+    /// 作废单个指纹的派生层缓存。特征入库后必须调用：入库前算出的空 entry（"未提取"）会被缓存住，
+    /// 不作废的话分析栏即使重新路由也只会再贴一次旧结果。只清引用，不 Dispose（与整体清空同语义）。
+    /// </summary>
+    /// <param name="fingerprint">指纹；空值忽略。</param>
+    public static void Invalidate(string? fingerprint)
+    {
+        if (string.IsNullOrEmpty(fingerprint)) return;
+        lock (_lock)
+        {
+            if (!_index.Remove(fingerprint, out var node)) return;
+            _order.Remove(node);
+        }
+    }
+
+    // ---- 统一内存管控 ----
+
+    /// <summary>内存客户端:指纹 LRU 与即时缓存合计占用;Warning 起整体清空(派生数据可随时现算重建)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        // 每项 ≈ 16KB 派生位图 + 1.5MB patch tokens(见类头注释)
+        private const long EstimatedEntryBytes = 3L * 1024 * 1024 / 2;
+        public string Name => "AnalysisResultCache";
+        public long FootprintBytes
+        {
+            get { lock (_lock) return (_index.Count + _immediate.Count) * EstimatedEntryBytes; }
+        }
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) InvalidateAll();
         }
     }
 }

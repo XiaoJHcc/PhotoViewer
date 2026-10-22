@@ -1,0 +1,209 @@
+.pv-control-scroll {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    scrollbar-width: none;
+    overscroll-behavior: contain;
+}
+
+.pv-control-scroll.is-row {
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.pv-control-scroll.is-col {
+    overflow-x: hidden;
+    overflow-y: auto;
+}
+
+.pv-control-scroll::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+}
+
+.pv-control-document {
+    position: relative;
+    min-width: 100%;
+    min-height: 100%;
+}
+
+.pv-control-group {
+    position: absolute;
+}
+
+/* TOOLBAR-10：EXIF 块与评分组同用深色块底，命令按钮单独带描边。 */
+.pv-control-exif-block {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    padding: 0 3px;
+    overflow: hidden;
+    background: var(--pv-color-toolbar-block-background);
+    border-radius: var(--pv-toolbar-cornerRadius);
+}
+
+.pv-control-exif-label,
+.pv-control-exif-value {
+    display: block;
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.1;
+    text-align: center;
+}
+
+.pv-control-exif-label {
+    font-size: var(--pv-toolbar-exif-label-fontSize);
+    color: var(--pv-color-text-secondary);
+}
+
+.pv-control-exif-value {
+    font-size: var(--pv-toolbar-exif-value-fontSize);
+    font-weight: 600;
+    color: var(--pv-color-text-primary);
+}
+
+.pv-control-rating {
+    background: var(--pv-color-toolbar-block-background);
+    border-radius: var(--pv-toolbar-cornerRadius);
+}
+
+.pv-control-rating-button {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    cursor: default;
+}
+
+.pv-control-rating-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.pv-control-rating-button:active:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+/* TOOLBAR-03/04：星与叉取 icon.* 字体字形；点亮用实心星、未点亮用描边星。 */
+.pv-rating-glyph {
+    display: block;
+    font-size: var(--pv-toolbar-rating-glyph-fontSize);
+}
+
+.pv-rating-clear {
+    font-size: var(--pv-toolbar-rating-clearGlyph-fontSize);
+}
+
+.pv-control-rating-button.is-clear {
+    color: var(--pv-color-star-clear);
+}
+
+.pv-control-rating-button.is-on {
+    color: var(--pv-color-star-on);
+}
+
+.pv-control-rating-button.is-off {
+    color: var(--pv-color-star-off);
+}
+
+.pv-control-rating-button.is-off .pv-rating-solid,
+.pv-control-rating-button.is-on .pv-rating-outline {
+    display: none;
+}
+
+/* TOOLBAR-03：无照片时保留几何，只降强调。 */
+.pv-control-rating-button:disabled {
+    background: transparent;
+}
+
+.pv-control-rating-button:disabled.is-on,
+.pv-control-rating-button:disabled.is-off {
+    color: rgba(128, 128, 128, 0.45);
+}
+
+.pv-control-rating-button:disabled.is-clear {
+    color: rgba(102, 102, 102, 0.5);
+}
+
+.pv-control-command-button {
+    position: absolute;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0;
+    background: var(--pv-color-toolbar-command-background);
+    border: 1px solid var(--pv-color-toolbar-command-border);
+    border-radius: var(--pv-toolbar-cornerRadius);
+    color: var(--pv-color-text-primary);
+    cursor: default;
+}
+
+.pv-control-command-button:hover:not(:disabled) {
+    background: #3d3d3d;
+}
+
+.pv-control-command-button:active:not(:disabled) {
+    background: #292929;
+}
+
+/* TOOLBAR-12：开关型命令用按下态表达，状态始终来自 app。 */
+.pv-control-command-button[aria-pressed="true"] {
+    background: rgba(10, 132, 255, 0.22);
+    border-color: rgba(10, 132, 255, 0.7);
+}
+
+.pv-control-command-button:disabled {
+    background: #2b2b2b;
+    border-color: rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.3);
+}
+
+.pv-command-icon {
+    display: block;
+    font-size: var(--pv-toolbar-command-glyph-fontSize);
+}
+
+/* TOOLBAR-04：评分快捷命令为实心星内叠数字，数字取按钮底色。 */
+.pv-command-rating {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: var(--pv-toolbar-command-glyph-fontSize);
+    line-height: 1;
+}
+
+.pv-command-rating-digit {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--pv-font);
+    font-size: var(--pv-toolbar-rating-digit-fontSize);
+    font-weight: 600;
+    line-height: 1;
+    color: var(--pv-color-toolbar-command-background);
+}
+
+.pv-control-indicator {
+    position: absolute;
+    z-index: 1;
+    background: rgba(255, 255, 255, 0.3);
+    border-radius: 3px;
+    cursor: default;
+    touch-action: none;
+}

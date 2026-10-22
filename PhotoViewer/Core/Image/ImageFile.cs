@@ -1,10 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
-using Avalonia.Threading;
+using PhotoViewer.Core.Storage;
+using PhotoViewer.Core.Platform;
 using ReactiveUI;
 
 namespace PhotoViewer.Core.Image;
@@ -14,7 +12,6 @@ public class ImageFile : ReactiveObject
     /// <summary>列表用缩略图的目标短边像素值。</summary>
     private const int ListThumbnailShortSide = 120;
 
-    private Bitmap? _thumbnail;
     private bool _isCurrent;
     private bool _isCurrentImage;
     private ExifData? _exifData;
@@ -30,7 +27,7 @@ public class ImageFile : ReactiveObject
     private bool _basicPropsLoaded;
     private bool? _isShake;
 
-    public IStorageFile File { get; }
+    public IFileRef File { get; }
     public string Name => File.Name;
 
     /// <summary>
@@ -66,14 +63,30 @@ public class ImageFile : ReactiveObject
         }
     }
         
-    public Bitmap? Thumbnail
+    /// <summary>
+    /// 列表缩略图。存储于 <see cref="BitmapLoader"/> 统一缓存(Thumb 档),本属性为查询视图:
+    /// getter 直查缓存,setter 写入/移除缓存项(淘汰与释放归缓存所有)。
+    /// 缓存淘汰该档时经 <see cref="NotifyThumbnailChanged"/> 驱动 UI 回到占位符。
+    /// </summary>
+    public DecodedImage? Thumbnail
     {
-        get => _thumbnail;
+        get => BitmapLoader.TryGetCached(File.PathKey, ImageSizeClass.Thumb);
         private set
         {
-            this.RaiseAndSetIfChanged(ref _thumbnail, value);
+            if (value != null)
+                BitmapLoader.StoreThumbnail(File.PathKey, value);
+            else
+                BitmapLoader.RemoveCached(File.PathKey, ImageSizeClass.Thumb);
+            this.RaisePropertyChanged(nameof(Thumbnail));
             this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
         }
+    }
+
+    /// <summary>缓存侧缩略图就绪/被淘汰时,驱动绑定重新读取 <see cref="Thumbnail"/> 视图。</summary>
+    public void NotifyThumbnailChanged()
+    {
+        this.RaisePropertyChanged(nameof(Thumbnail));
+        this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
     }
         
     public bool IsCurrent
@@ -163,7 +176,7 @@ public class ImageFile : ReactiveObject
     }
 
     // 被同名合并隐藏的其它格式文件
-    public List<IStorageFile> HiddenFiles { get; } = new();
+    public List<IFileRef> HiddenFiles { get; } = new();
 
     /// <summary>
     /// 隐藏文件的星级缓存（key = 文件名，value = 星级），
@@ -187,12 +200,12 @@ public class ImageFile : ReactiveObject
         DisplayName = Name;
     }
 
-    public ImageFile(IStorageFile file)
+    public ImageFile(IFileRef file)
     {
         File = file;
 
         // 延迟初始化缓存状态，避免在静态类还未完全初始化时调用
-        Dispatcher.UIThread.Post(() => UpdateCacheStatus());
+        UiDispatcher.Post(() => UpdateCacheStatus());
     }
 
     /// <summary>
@@ -204,7 +217,7 @@ public class ImageFile : ReactiveObject
         try
         {
             var props = await File.GetBasicPropertiesAsync();
-            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
             // 调用方在全部加载完成后统一在 UI 线程批量通知。
             _modifiedDate = props.DateModified;
             _fileSize = props.Size;
@@ -223,7 +236,7 @@ public class ImageFile : ReactiveObject
     {
         try
         {
-            var filePath = File.Path.LocalPath;
+            var filePath = File.PathKey;
             IsInCache = BitmapLoader.IsInCache(filePath);
         }
         catch (Exception ex)
@@ -244,7 +257,7 @@ public class ImageFile : ReactiveObject
             var bitmap = await Task.Run(() => ThumbnailService.GetThumbnailAsync(File, ListThumbnailShortSide));
             
             // 在UI线程中设置结果
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 if (bitmap != null)
                 {
@@ -302,7 +315,7 @@ public class ImageFile : ReactiveObject
             });
 
             // 在UI线程中设置结果
-            await Dispatcher.UIThread.InvokeAsync(() =>
+            await UiDispatcher.InvokeAsync(() =>
             {
                 ExifData = exifData;
                 IsExifLoaded = true;
@@ -351,13 +364,13 @@ public class ImageFile : ReactiveObject
                 }
             });
             
-            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 Dispatcher.UIThread.InvokeAsync。
+            // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
             // 调用方 LoadAllExifRatingsAsync 在全部加载完成后统一在 UI 线程批量通知。
             if (_exifData == null)
             {
                 _exifData = new ExifData 
                 { 
-                    FilePath = File.Path.LocalPath,
+                    FilePath = File.PathKey,
                     Rating = rating 
                 };
             }
@@ -392,7 +405,7 @@ public class ImageFile : ReactiveObject
         {
             ExifData = new ExifData
             {
-                FilePath = File.Path.LocalPath,
+                FilePath = File.PathKey,
                 Rating = rating
             };
         }
@@ -417,16 +430,6 @@ public class ImageFile : ReactiveObject
         {
             _exifLoadTask = null;
         }
-    }
-    
-    /// <summary>
-    /// 清除缩略图
-    /// </summary>
-    public void ClearThumbnail()
-    {
-        Thumbnail?.Dispose();
-        Thumbnail = null;
-        IsThumbnailLoading = false;
     }
     
     /// <summary>

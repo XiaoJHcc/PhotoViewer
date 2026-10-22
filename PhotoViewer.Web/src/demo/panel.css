@@ -1,0 +1,211 @@
+/* 演示面板（仅 ?demo）：开发者侧栏，不属于产品 UI。 */
+.pv-demo-panel {
+    flex: none;
+    box-sizing: border-box;
+    width: 280px;
+    height: 100vh;
+    padding: 14px 14px 24px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: #1c1c1f;
+    border-left: 1px solid rgba(255, 255, 255, 0.08);
+    color: #d8d8dc;
+    font-size: 12px;
+    line-height: 1.4;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.pv-demo-panel::-webkit-scrollbar {
+    width: 10px;
+}
+
+.pv-demo-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.pv-demo-panel::-webkit-scrollbar-thumb {
+    border: 2px solid transparent;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.2) padding-box;
+}
+
+.pv-demo-group {
+    margin-bottom: 10px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    background: #232327;
+}
+
+.pv-demo-summary {
+    position: relative;
+    padding: 8px 10px 8px 22px;
+    background: #28282c;
+    color: #ececf0;
+    font-weight: 600;
+    cursor: default;
+    list-style: none;
+}
+
+.pv-demo-summary::-webkit-details-marker {
+    display: none;
+}
+
+.pv-demo-summary::before {
+    content: "›";
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #8a8a90;
+    transition: transform 120ms ease;
+}
+
+.pv-demo-group[open] > .pv-demo-summary::before {
+    transform: translateY(-50%) rotate(90deg);
+}
+
+.pv-demo-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+}
+
+.pv-demo-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.pv-demo-button {
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid #3c3c42;
+    border-radius: 5px;
+    background: #2e2e34;
+    color: #e4e4e8;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: default;
+}
+
+.pv-demo-button:hover {
+    background: #383840;
+}
+
+.pv-demo-button.is-primary {
+    border-color: transparent;
+    background: var(--pv-accent);
+    color: #fff;
+}
+
+.pv-demo-button.is-primary:hover {
+    background: #2b96ff;
+}
+
+.pv-demo-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: default;
+}
+
+.pv-demo-check input[type="checkbox"] {
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    accent-color: var(--pv-accent);
+}
+
+.pv-demo-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.pv-demo-inline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.pv-demo-label {
+    color: #8a8a90;
+}
+
+.pv-demo-number {
+    box-sizing: border-box;
+    width: 78px;
+    height: 24px;
+    padding: 0 6px;
+    border: 1px solid #3c3c42;
+    border-radius: 5px;
+    background: #151517;
+    color: #e8e8ea;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.pv-demo-select {
+    height: 24px;
+    padding: 0 4px;
+    border: 1px solid #3c3c42;
+    border-radius: 5px;
+    background: #151517;
+    color: #e8e8ea;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+.pv-demo-select:disabled {
+    opacity: 0.5;
+}
+
+.pv-demo-range {
+    width: 116px;
+    margin: 0;
+    accent-color: var(--pv-accent);
+}
+
+.pv-demo-value {
+    color: #e8e8ea;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    overflow-wrap: anywhere;
+}
+
+.pv-demo-scroll {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 180px;
+    padding: 6px 8px;
+    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    background: #1e1e21;
+}
+
+.pv-demo-scroll::-webkit-scrollbar {
+    width: 8px;
+}
+
+.pv-demo-scroll::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+    background: rgba(255, 255, 255, 0.18);
+}
+
+.pv-demo-readout {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.pv-demo-note {
+    color: #8a8a90;
+    line-height: 1.5;
+}

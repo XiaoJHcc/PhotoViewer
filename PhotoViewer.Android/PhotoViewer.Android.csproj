@@ -36,10 +36,24 @@
         </AndroidResource>
     </ItemGroup>
 
+    <!--
+      DINO 模型作为 AndroidAsset 打进 APK（约 +83MB）；
+      原生资源提供器按 avares://PhotoViewer/Assets/Models/... 的路径部分读取 Assets/Models/...
+    -->
     <ItemGroup>
-        <PackageReference Include="Avalonia.Android"/>
+        <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
+        <!-- 控制栏命令图标沿用共享 uicons 字体，随 APK 打包；实心字用于评分快捷命令的星底。 -->
+        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-regular-rounded.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-solid-straight.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
+    </ItemGroup>
+
+    <ItemGroup>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
-        <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen"/>
+        <!-- 原生壳：Material 3 主题/控件、胶片栏 RecyclerView、edge-to-edge insets、设置 BottomSheet -->
+        <PackageReference Include="Xamarin.Google.Android.Material" />
+        <PackageReference Include="Xamarin.AndroidX.RecyclerView" />
+        <PackageReference Include="Xamarin.AndroidX.Window" />
+        <PackageReference Include="Xamarin.AndroidX.Fragment" />
         <!-- LibHeifSharp：libheif 软件解码器，支持 HEIF YUV 4:2:2 等系统不支持的格式 -->
         <!-- 需配套将 libheif.so + libde265.so 放入 NativeLibs/{abi}/ 目录（见下方） -->
         <PackageReference Include="LibHeifSharp"/>
@@ -68,6 +82,19 @@
             Include="NativeLibs\arm64-v8a\libheif.so">
             <Abi>arm64-v8a</Abi>
         </AndroidNativeLibrary>
+        <!-- LibRaw RAW 解码（libpvraw.so）：由 build-native-android-raw.sh 交叉编译 -->
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libpvraw.so')"
+            Include="NativeLibs\arm64-v8a\libpvraw.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <!-- HEVC 快速解码库：静态 FFmpeg（仅 HEVC 解码器，LGPL）+ 薄 C 封装，
+             由 bash build-native-android-hevc.sh 交叉编译生成；缺失时自动跳过，不影响构建。 -->
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libpvhevc.so')"
+            Include="NativeLibs\arm64-v8a\libpvhevc.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
         <AndroidNativeLibrary
             Condition="Exists('NativeLibs\armeabi-v7a\libde265.so')"
             Include="NativeLibs\armeabi-v7a\libde265.so">
@@ -93,4 +120,26 @@
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
     </ItemGroup>
+
+    <!--
+      共享几何源：PhotoViewer.Shared/ 以 Compile Include 链接进 Android 头（不新增程序集），
+      与 Mac / iOS 共用视口、主屏分区、胶片栏、控制栏、分析栏、相似面板与 EXIF 表几何。
+      这些文件是纯 double 数学，不得引用 Apple/Android 平台类型。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
+    </ItemGroup>
+<!--
+  Microsoft.ML.OnnxRuntime 1.24.4 在 net10.0-android 下把 runtimes/linux-arm64/native/*.so
+  误放进 FrameworkNativeLibrary。这些是 glibc 构建（依赖 libdl.so.2），会被打进
+  lib/arm64-v8a 并盖掉 AAR 里的 Android bionic 版本，导致 libonnxruntime4j_jni.so
+  启动即 UnsatisfiedLinkError（DINO 不可用）。这里在 APK 打包前移除 Linux 资产，
+  使用 AAR 的 jni/<abi>/libonnxruntime.so。
+-->
+<Target Name="_PvRemoveLinuxOnnxFromApk" BeforeTargets="_BuildApkEmbed">
+  <ItemGroup>
+    <FrameworkNativeLibrary Remove="$(NuGetPackageRoot)microsoft.ml.onnxruntime/*/runtimes/linux-arm64/native/*.so" />
+  </ItemGroup>
+</Target>
 </Project>

@@ -1,0 +1,10 @@
+{
+  "name": "photoviewer-web",
+  "private": true,
+  "type": "module",
+  "description": "PhotoViewer Web 参考壳：只依据 Design/ 实现的完整主屏，零运行时依赖",
+  "scripts": {
+    "test": "node --test \"tests/**/*.test.js\"",
+    "serve": "python3 -m http.server 8080"
+  }
+}

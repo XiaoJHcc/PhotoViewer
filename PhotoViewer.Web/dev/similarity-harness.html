@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <title>相似面板 harness</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/card.css">
+    <link rel="stylesheet" href="../src/shell/similarity.css">
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #2a2a2e;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            font-family: var(--pv-font);
+        }
+        .h-controls {
+            display: flex;
+            flex: none;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            padding: 8px 12px;
+            background: #1b1b1e;
+            border-bottom: 1px solid #000;
+            color: #ccc;
+            font-size: 12px;
+        }
+        .h-controls button {
+            height: 24px;
+            padding: 0 10px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            background: #333;
+            color: #ddd;
+            font: inherit;
+        }
+        .h-controls button[aria-pressed="true"] {
+            border-color: #0A84FF;
+            background: #11427a;
+        }
+        .h-status {
+            margin-left: auto;
+            padding-left: 16px;
+            color: #999;
+            white-space: nowrap;
+        }
+        #stage {
+            position: relative;
+            flex: 1 1 auto;
+            overflow: auto;
+            padding: 12px;
+        }
+        .pv-window {
+            flex: none;
+        }
+        .h-context {
+            position: absolute;
+            z-index: 0;
+            border-right: 1px solid #2c2c2c;
+            background: #1a1a1a;
+        }
+        .h-host {
+            z-index: 1;
+        }
+        .h-host.pv-pane {
+            background: transparent;
+        }
+    </style>
+</head>
+<body>
+    <div class="h-controls">
+        <button type="button" data-action="col">列布局 1200×850</button>
+        <button type="button" data-action="compact">紧凑 1200×640</button>
+        <button type="button" data-action="row">行布局 1000×1000</button>
+        <button type="button" data-action="narrow">窄屏 620×820</button>
+        <button type="button" data-action="harbor">海港</button>
+        <button type="button" data-action="night">夜景</button>
+        <button type="button" data-action="empty">空文件夹</button>
+        <button type="button" data-action="toggle">展开面板</button>
+        <button type="button" data-action="next">下一张</button>
+        <button type="button" data-action="extract">提取全部</button>
+        <button type="button" data-action="fail">注入失败</button>
+        <span class="h-status" id="status"></span>
+    </div>
+    <div id="stage"></div>
+    <script type="module" src="./similarity-harness.js"></script>
+</body>
+</html>

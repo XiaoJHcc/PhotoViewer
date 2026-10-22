@@ -1,20 +1,19 @@
 using System;
-using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Media.Imaging;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
 /// DINOv3 [CLS] 特征提取器（ONNX Runtime，平台 EP 通过 <see cref="ConfigureSession"/> 注入）。
-/// 线程安全：InferenceSession 内部线程安全，推理调用串行化到后台线程以避免竞争 Avalonia Bitmap。
+/// 线程安全：InferenceSession 内部线程安全，推理调用串行化到后台线程执行。
 /// </summary>
 public static class DinoFeatureExtractor
 {
@@ -24,7 +23,19 @@ public static class DinoFeatureExtractor
     private static Action<SessionOptions>? _configureSession;
     private static bool _gpuFailed;
     private static byte[]? _modelBytesOverride;
+    private static long _sessionFootprintBytes; // 内存账本:模型字节 + 会话工作区估算
     private static int _inputSize = DinoModelResources.InputSize;   // 模型实际输入边长（518；升级梯换大分辨率模型时按 ONNX 输入元数据自适应）
+
+    /// <summary>
+    /// 当前 ONNX 会话是否成功注册了平台 GPU Execution Provider（诊断/验收用）。
+    /// GPU EP 注册抛错或推理失败回退 CPU 后为 false。
+    /// </summary>
+    public static bool UsesGpuExecutionProvider { get; private set; }
+
+    static DinoFeatureExtractor()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
 
     /// <summary>
     /// 注入平台专属 Execution Provider 配置（DirectML / CoreML / NNAPI）。
@@ -69,6 +80,7 @@ public static class DinoFeatureExtractor
         lock (_sessionLock)
         {
             _gpuFailed = true;
+            UsesGpuExecutionProvider = false;
             _session?.Dispose();
             _session = null;
         }
@@ -93,11 +105,13 @@ public static class DinoFeatureExtractor
             try
             {
                 _configureSession(options);
+                UsesGpuExecutionProvider = true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[DinoFeatureExtractor] GPU EP 注册失败，回退 CPU: {ex.Message}");
                 _gpuFailed = true;
+                UsesGpuExecutionProvider = false;
                 options = new SessionOptions
                 {
                     GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL,
@@ -107,7 +121,44 @@ public static class DinoFeatureExtractor
             }
         }
 
+        // 内存账本:模型字节 + 128MB 会话工作区估算(低估可接受,供压力快照判读数量级)
+        _sessionFootprintBytes = bytes.Length + 128L * 1024 * 1024;
         return new InferenceSession(bytes, options);
+    }
+
+    /// <summary>
+    /// 卸载 ONNX 会话(内存压力响应):先取推理闸确保无在途推理,再释放;下次 <see cref="GetSession"/> 惰性重建。
+    /// GPU 回退标记与输入尺寸自适应结果保持。
+    /// </summary>
+    public static void UnloadSession()
+    {
+        _runGate.Wait();
+        try
+        {
+            lock (_sessionLock)
+            {
+                _session?.Dispose();
+                _session = null;
+                _sessionFootprintBytes = 0;
+            }
+        }
+        finally
+        {
+            _runGate.Release();
+        }
+    }
+
+    // ---- 统一内存管控 ----
+
+    /// <summary>内存客户端:ONNX 会话占用;Warning 起卸载(下次推理惰性重建)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "DinoOnnxSession";
+        public long FootprintBytes => _session != null ? _sessionFootprintBytes : 0;
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) UnloadSession();
+        }
     }
 
     /// <summary>
@@ -145,14 +196,14 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 从已解码位图提取 [CLS] 特征向量（维度随模型，ViT-S=384）。L2 归一化后返回。
+    /// 从已解码图像提取 [CLS] 特征向量（维度随模型，ViT-S=384）。L2 归一化后返回。
     /// </summary>
-    /// <param name="bitmap">已应用 EXIF 旋转的位图。</param>
+    /// <param name="image">已应用 EXIF 旋转的图像。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>浮点向量，维度随模型（ViT-S=384）。</returns>
-    public static async Task<float[]> ExtractAsync(Bitmap bitmap, CancellationToken ct = default)
+    public static async Task<float[]> ExtractAsync(DecodedImage image, CancellationToken ct = default)
     {
-        var (cls, _) = await ExtractDualAsync(bitmap, includePatches: false, ct).ConfigureAwait(false);
+        var (cls, _) = await ExtractDualAsync(image, includePatches: false, ct).ConfigureAwait(false);
         return cls;
     }
 
@@ -160,17 +211,17 @@ public static class DinoFeatureExtractor
     /// 双输出推理:同时返回 CLS 向量与 patch token 张量(工具页可视化用)。
     /// CLS 强制 L2 归一化,patch 保留原始值。includePatches=false 时跳过 patch 拷贝以节省内存。
     /// </summary>
-    /// <param name="bitmap">已应用 EXIF 旋转的位图。</param>
+    /// <param name="image">已应用 EXIF 旋转的图像。</param>
     /// <param name="includePatches">是否拷贝 patch token 数据。</param>
     /// <param name="ct">取消令牌。</param>
     /// <returns>CLS 向量(维度随模型,ViT-S=384;L2 归一化)与 patch token 张量(token 数×维度随模型,ViT-S=1024×384,按 token-major 排布;includePatches=false 时为 null)。</returns>
     public static async Task<(float[] Cls, float[]? Patches)> ExtractDualAsync(
-        Bitmap bitmap, bool includePatches, CancellationToken ct = default)
+        DecodedImage image, bool includePatches, CancellationToken ct = default)
     {
-        ArgumentNullException.ThrowIfNull(bitmap);
+        ArgumentNullException.ThrowIfNull(image);
 
         GetSession();   // 先建会话以完成输入尺寸自适应（升级梯大分辨率模型）
-        var tensor = BuildInputTensor(bitmap);
+        var tensor = BuildInputTensor(image);
         await _runGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
@@ -242,76 +293,53 @@ public static class DinoFeatureExtractor
     }
 
     /// <summary>
-    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）。
+    /// 将图像拉伸缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）。
     /// 提取为公共方法：DatasetBuilder --dump-render 用同一路径产出训练用渲染缓存，
     /// 保证训练/推理像素严格同分布（Python 重采样已证与 CLS 不可比，见 EXECUTION-LOG）。
     /// </summary>
-    public static RenderTargetBitmap RenderInputBitmap(Bitmap source)
+    public static DecodedImage RenderInputImage(DecodedImage source)
     {
         int size = _inputSize;
-        var target = new RenderTargetBitmap(new PixelSize(size, size));
-        using (var ctx = target.CreateDrawingContext())
-        {
-            ctx.DrawImage(source, new Rect(source.PixelSize.ToSize(1)), new Rect(0, 0, size, size));
-        }
-        return target;
+        var scaled = SkiaImageCodec.ScaleToExact(source, size, size);
+        if (scaled == null) throw new InvalidOperationException("模型输入缩放失败");
+        return scaled;
     }
 
     /// <summary>
-    /// 将 Avalonia 位图缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
+    /// 将图像拉伸缩放到方形模型输入边长并构造 ONNX 输入张量（NCHW, RGB, 归一化）。
     /// </summary>
-    private static DenseTensor<float> BuildInputTensor(Bitmap source)
+    private static DenseTensor<float> BuildInputTensor(DecodedImage source)
     {
         int size = _inputSize;
-        using var target = RenderInputBitmap(source);
+        using var input = RenderInputImage(source);
 
         int channels = DinoModelResources.InputChannels;
-        int rowBytes = size * 4;
-        int totalBytes = rowBytes * size;
-        var rented = ArrayPool<byte>.Shared.Rent(totalBytes);
-        try
+        var tensor = new DenseTensor<float>([1, channels, size, size]);
+        var buf = tensor.Buffer.Span;
+        var mean = DinoModelResources.NormalizeMean;
+        var std = DinoModelResources.NormalizeStd;
+        int plane = size * size;
+        var pixels = input.Pixels;
+        int stride = input.Stride;
+
+        for (int y = 0; y < size; y++)
         {
-            unsafe
+            long rowOffset = (long)y * stride;
+            for (int x = 0; x < size; x++)
             {
-                fixed (byte* ptr = rented)
-                {
-                    target.CopyPixels(
-                        new PixelRect(0, 0, size, size),
-                        (IntPtr)ptr,
-                        totalBytes,
-                        rowBytes);
-                }
+                long i = rowOffset + x * 4;
+                // Bgra32 字节序: B,G,R,A
+                byte b = pixels[i + 0];
+                byte g = pixels[i + 1];
+                byte r = pixels[i + 2];
+
+                int pixelIdx = y * size + x;
+                buf[0 * plane + pixelIdx] = (r / 255f - mean[0]) / std[0];
+                buf[1 * plane + pixelIdx] = (g / 255f - mean[1]) / std[1];
+                buf[2 * plane + pixelIdx] = (b / 255f - mean[2]) / std[2];
             }
-
-            var tensor = new DenseTensor<float>([1, channels, size, size]);
-            var buf = tensor.Buffer.Span;
-            var mean = DinoModelResources.NormalizeMean;
-            var std = DinoModelResources.NormalizeStd;
-            int plane = size * size;
-
-            for (int y = 0; y < size; y++)
-            {
-                int rowOffset = y * rowBytes;
-                for (int x = 0; x < size; x++)
-                {
-                    int i = rowOffset + x * 4;
-                    // Avalonia RenderTargetBitmap 默认输出 BGRA8888（Bgra8888Premul），这里按 BGRA 读取。
-                    byte b = rented[i + 0];
-                    byte g = rented[i + 1];
-                    byte r = rented[i + 2];
-
-                    int pixelIdx = y * size + x;
-                    buf[0 * plane + pixelIdx] = (r / 255f - mean[0]) / std[0];
-                    buf[1 * plane + pixelIdx] = (g / 255f - mean[1]) / std[1];
-                    buf[2 * plane + pixelIdx] = (b / 255f - mean[2]) / std[2];
-                }
-            }
-
-            return tensor;
         }
-        finally
-        {
-            ArrayPool<byte>.Shared.Return(rented);
-        }
+
+        return tensor;
     }
 }

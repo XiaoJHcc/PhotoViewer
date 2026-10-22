@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="dark">
+    <title>控制栏组件自查</title>
+    <link rel="stylesheet" href="../src/shell/app.css">
+    <link rel="stylesheet" href="../src/shell/controlbar.css">
+    <style>
+        html, body { background: #24252a; }
+        body { margin: 0; font: 12px/1.4 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; color: #c8c9cc; }
+        #dev {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 10px 14px;
+            background: #1a1b1f;
+            border-bottom: 1px solid #303138;
+            color: #9a9da5;
+        }
+        #dev strong { color: #d8d9dc; font-weight: 600; margin-right: 4px; }
+        #dev button {
+            font: inherit;
+            color: #d8d9dc;
+            background: #2c2d33;
+            border: 1px solid #3a3b42;
+            border-radius: 5px;
+            padding: 3px 9px;
+            cursor: pointer;
+        }
+        #dev button:hover { background: #35363d; }
+        #dev .sep { width: 1px; height: 18px; background: #303138; margin: 0 4px; }
+        #stage { padding: 16px; overflow: auto; }
+        #window {
+            position: relative;
+            overflow: hidden;
+            background: var(--pv-color-bar-background);
+            border-radius: 10px;
+            box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12), 0 18px 50px rgba(0, 0, 0, 0.55);
+        }
+        #window .pv-pane-photo {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #3c3d42;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="dev">
+        <strong>布局</strong>
+        <button type="button" data-layout="auto">自动</button>
+        <button type="button" data-layout="row">行</button>
+        <button type="button" data-layout="col">列</button>
+        <span class="sep"></span>
+        <strong>窗口</strong>
+        <button type="button" data-size="1100x650">1100×650</button>
+        <button type="button" data-size="700x520">700×520</button>
+        <button type="button" data-size="520x480">520×480</button>
+        <button type="button" data-size="420x460">420×460</button>
+        <span class="sep"></span>
+        <strong>EXIF</strong>
+        <button type="button" data-exif="0">0</button>
+        <button type="button" data-exif="2">2</button>
+        <button type="button" data-exif="4">4</button>
+        <button type="button" data-exif="8">8</button>
+        <span class="sep"></span>
+        <strong>命令</strong>
+        <button type="button" data-commands="default">默认</button>
+        <button type="button" data-commands="all">全部</button>
+        <button type="button" data-commands="rating">评分数字</button>
+        <button type="button" data-commands="none">无命令</button>
+        <span class="sep"></span>
+        <button type="button" id="rating-toggle">评分显隐</button>
+        <button type="button" id="empty-link">无照片</button>
+        <span class="sep"></span>
+        <span id="status"></span>
+    </div>
+    <div id="stage">
+        <div id="window"></div>
+    </div>
+    <pre id="log" hidden></pre>
+
+    <script>
+        window.addEventListener("error", (event) => {
+            const log = document.getElementById("log");
+            log.hidden = false;
+            log.textContent += `${event.message}\n${event.filename}:${event.lineno}\n`;
+        });
+        window.addEventListener("unhandledrejection", (event) => {
+            const log = document.getElementById("log");
+            log.hidden = false;
+            log.textContent += `unhandled: ${event.reason && event.reason.stack || event.reason}\n`;
+        });
+    </script>
+    <script type="module">
+        import { createTokens } from "../src/core/tokens.js";
+        import baseTokens from "../src/tokens.g.js";
+        import { systemClock } from "../src/core/clock.js";
+        import { createLibrary } from "../src/core/library.js";
+        import { createApp } from "../src/core/app.js";
+        import { createDecoder } from "../src/render/decoder.js";
+        import { el, place, applyTokenVariables, createTextMeasurer } from "../src/shell/dom.js";
+        import { mountControlBar } from "../src/shell/controlbar.js";
+
+        const params = new URLSearchParams(location.search);
+        const t = createTokens(params.get("platform") ?? "web");
+        applyTokenVariables(document.documentElement, t, Object.keys(baseTokens));
+
+        const library = createLibrary();
+        const decoder = createDecoder({ clock: systemClock(), latency: 0 });
+        const memory = new Map();
+        const app = createApp({
+            t,
+            clock: systemClock(),
+            profile: t.profile,
+            library,
+            decoder,
+            storage: {
+                get: (key) => memory.get(key) ?? null,
+                set: (key, value) => { memory.set(key, value); },
+            },
+            dpr: devicePixelRatio,
+            reducedMotion: () => matchMedia("(prefers-reduced-motion: reduce)").matches,
+            measureText: createTextMeasurer(),
+        });
+
+        const baseExif = app.settings.exifItems.map((item) => ({ ...item }));
+        const baseHotkeys = app.settings.hotkeys.map((row) => ({ ...row }));
+
+        const windowEl = document.getElementById("window");
+        const photoPane = el("div", { class: "pv-pane pv-pane-photo" }, "主图");
+        const controlDivider = el("div", { class: "pv-divider" });
+        const controlPane = el("div", { class: "pv-pane pv-pane-control" });
+        windowEl.append(photoPane, controlDivider, controlPane);
+        const controlBar = mountControlBar(controlPane, { app, t });
+        const scrollHost = controlPane.querySelector(".pv-control-scroll");
+
+        function layoutPanes(state) {
+            place(photoPane, state.layout.panes.photoPane);
+            place(controlDivider, state.panes.control ? state.layout.panes.controlDivider : null);
+            place(controlPane, state.panes.control ? state.layout.panes.controlPane : null);
+        }
+
+        function render() {
+            const state = app.state;
+            layoutPanes(state);
+            controlBar.update(state, null);
+            updateStatus();
+        }
+
+        function updateStatus() {
+            const state = app.state;
+            const control = state.layout.control;
+            document.getElementById("status").textContent = [
+                state.layout.layoutMode,
+                `${state.window.width}×${state.window.height}`,
+                state.photo ? state.photo.name : "无照片",
+                `rating ${state.toolbar.rating.visible ? state.toolbar.rating.value : "off"}`,
+                `exif ${state.toolbar.exif.length}`,
+                `cmds ${state.toolbar.commands.length}`,
+                `doc ${control.document.w}×${control.document.h}`,
+                `overflow ${control.overflow}`,
+                `scroll ${scrollHost.scrollLeft},${scrollHost.scrollTop}`,
+            ].join(" · ");
+        }
+
+        scrollHost.addEventListener("scroll", updateStatus);
+
+        app.on("change", render);
+
+        const size = { width: 1100, height: 650 };
+        function applySize() {
+            windowEl.style.width = `${size.width}px`;
+            windowEl.style.height = `${size.height}px`;
+            app.setWindowSize(size.width, size.height);
+        }
+
+        function setExifCount(count) {
+            app.updateSettings({ exifItems: baseExif.map((item, index) => ({ ...item, enabled: index < count })) });
+        }
+
+        function setCommands(mode) {
+            const keep = mode === "all" ? () => true
+                : mode === "rating" ? (command) => command === "Open" || command.startsWith("SetRating")
+                    : mode === "none" ? () => false
+                        : null;
+            const preset = new Set(["Previous", "Next", "Exchange", "Fit", "ZoomInPreset", "ZoomOutPreset", "ToggleEnhance"]);
+            app.updateSettings({
+                hotkeys: baseHotkeys.map((row) => ({ ...row, display: keep ? keep(row.command) : preset.has(row.command) })),
+            });
+        }
+
+        document.getElementById("dev").addEventListener("click", (event) => {
+            const button = event.target.closest("button");
+            if (!button) return;
+            const { layout, size: sizeText, exif, commands } = button.dataset;
+            if (layout) app.updateSettings({ layoutMode: layout });
+            if (sizeText) {
+                const [width, height] = sizeText.split("x").map(Number);
+                size.width = width;
+                size.height = height;
+                applySize();
+            }
+            if (exif !== undefined) setExifCount(Number(exif));
+            if (commands) setCommands(commands);
+        });
+
+        document.getElementById("rating-toggle").addEventListener("click", () => {
+            app.updateSettings({ showRating: !app.settings.showRating });
+        });
+
+        document.getElementById("empty-link").addEventListener("click", () => {
+            const next = new URLSearchParams(location.search);
+            if (next.has("empty")) next.delete("empty");
+            else next.set("empty", "");
+            location.search = next.toString();
+        });
+
+        if (params.get("layout")) app.updateSettings({ layoutMode: params.get("layout") });
+        if (params.get("size")) {
+            const [width, height] = params.get("size").split("x").map(Number);
+            size.width = width;
+            size.height = height;
+        }
+        if (params.has("exif")) setExifCount(Number(params.get("exif")));
+        if (params.get("commands")) setCommands(params.get("commands"));
+        applySize();
+        if (!params.has("empty")) app.openFolder("harbor");
+        render();
+        document.getElementById("empty-link").textContent = params.has("empty") ? "有照片" : "无照片";
+    </script>
+</body>
+</html>

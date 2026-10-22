@@ -1,0 +1,13 @@
+<Project>
+    <Target Name="BundlePortableWindowsResources"
+            AfterTargets="PrepareForBundle"
+            Condition="'$(PublishSingleFile)' == 'true'">
+        <Error Condition="!Exists('$(ProjectPriFullPath)')"
+               Text="The application PRI must exist before creating the portable bundle." />
+        <ItemGroup>
+            <FilesToBundle Include="$(ProjectPriFullPath)">
+                <RelativePath>resources.pri</RelativePath>
+            </FilesToBundle>
+        </ItemGroup>
+    </Target>
+</Project>

@@ -1,10 +1,9 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Threading.Tasks;
-using Avalonia;
-using Avalonia.Platform.Storage;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 using Android.Graphics;
 using Android.OS;
 using Java.Nio;
@@ -18,7 +17,20 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
 {
     public bool IsSupported => OperatingSystem.IsAndroid() && (int)Build.VERSION.SdkInt >= 28;
 
-    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadBitmapAsync(IStorageFile file)
+    /// <summary>BitmapFactory 不应用 EXIF 方向,BitmapLoader 负责旋转。</summary>
+    public bool OutputPreRotated => false;
+
+    /// <summary>
+    /// 解码 HEIF。maxSize = null 全分辨率;非空时代理(内嵌缩略图够大用之,否则 InSampleSize 采样主图 + 精缩放)。
+    /// </summary>
+    public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
+    {
+        if (!IsSupported || file is null) return null;
+        if (!maxSize.HasValue) return await LoadFullAsync(file);
+        return await LoadScaledAsync(file, maxSize.Value);
+    }
+
+    private async Task<DecodedImage?> LoadFullAsync(IFileRef file)
     {
         if (!IsSupported || file is null) return null;
 
@@ -41,7 +53,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 return null;
             }
 
-            return ToAvaloniaBitmap(androidBmp);
+            return ToDecodedImage(androidBmp);
         }
         catch (Exception ex)
         {
@@ -50,16 +62,16 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
         }
     }
 
-    public async Task<Avalonia.Media.Imaging.Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
+    private async Task<DecodedImage?> LoadScaledAsync(IFileRef file, int maxSize)
     {
-        if (!IsSupported || file is null || maxSize <= 0) return null;
+        if (maxSize <= 0) return null;
 
         try
         {
             using var baseStream = await file.OpenReadAsync();
             using var stream = await EnsureSeekableAsync(baseStream);
 
-            // 1) 尝试内嵌缩略图（优先）
+            // 1) 尝试内嵌缩略图(仅在够大时;小了交给主图采样,避免放大糊图)
             Bitmap? embedded = null;
             try
             {
@@ -76,14 +88,18 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 try
                 {
                     var lw = Math.Max(embedded.Width, embedded.Height);
-                    using var chosen = (lw > maxSize)
-                        ? ScaleBitmap(embedded, maxSize) // 控制输出尺寸不浪费内存
-                        : embedded.Copy(Bitmap.Config.Argb8888, false);
+                    if (lw >= maxSize)
+                    {
+                        using var chosen = (lw > maxSize)
+                            ? ScaleBitmap(embedded, maxSize) // 控制输出尺寸不浪费内存
+                            : embedded.Copy(Bitmap.Config.Argb8888, false);
 
-                    if (!ReferenceEquals(chosen, embedded))
-                        embedded.Dispose();
+                        if (!ReferenceEquals(chosen, embedded))
+                            embedded.Dispose();
 
-                    return ToAvaloniaBitmap(chosen);
+                        return ToDecodedImage(chosen);
+                    }
+                    embedded.Dispose();
                 }
                 catch (Exception ex)
                 {
@@ -121,7 +137,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
             }
 
             using var scaled = ScaleBitmap(decoded, maxSize);
-            return ToAvaloniaBitmap(scaled);
+            return ToDecodedImage(scaled);
         }
         catch (Exception ex)
         {
@@ -163,7 +179,7 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
         return dst;
     }
 
-    private static Avalonia.Media.Imaging.Bitmap? ToAvaloniaBitmap(Bitmap androidBmp)
+    private static DecodedImage? ToDecodedImage(Bitmap androidBmp)
     {
         try
         {
@@ -179,91 +195,27 @@ public sealed class AndroidHeifDecoder : IHeifDecoder
                 ib.Get(pixels);
             }
 
-            // 修改：按设置输出 BGRA8888 或 BGR24
-            if (!BitmapLoader.IgnoreAlpha)
+            // 字节布局沿用 Android 位图通道顺序的既有口径，不做改动；缓冲池租用
+            var bgra = DecodedImage.RentPixels(pixels.Length * 4);
+            for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
             {
-                var bgra = new byte[pixels.Length * 4];
-                for (int i = 0, j = 0; i < pixels.Length; i++, j += 4)
-                {
-                    int p = pixels[i];
-                    byte a = (byte)((p >> 24) & 0xFF);
-                    byte b = (byte)((p >> 16) & 0xFF);
-                    byte g = (byte)((p >> 8) & 0xFF);
-                    byte r = (byte)(p & 0xFF);
+                int p = pixels[i];
+                byte a = (byte)((p >> 24) & 0xFF);
+                byte b = (byte)((p >> 16) & 0xFF);
+                byte g = (byte)((p >> 8) & 0xFF);
+                byte r = (byte)(p & 0xFF);
 
-                    bgra[j + 0] = b;
-                    bgra[j + 1] = g;
-                    bgra[j + 2] = r;
-                    bgra[j + 3] = a;
-                }
-
-                var bmp = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgra8888);
-                using (var l = bmp.Lock())
-                {
-                    int srcStride = w * 4;
-                    int destStride = l.RowBytes;
-                    unsafe
-                    {
-                        var dest = (byte*)l.Address;
-                        for (int y = 0; y < h; y++)
-                        {
-                            var srcOff = y * srcStride;
-                            var dstOff = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOff + copy > bgra.Length) break;
-
-                            fixed (byte* srcPtr = &bgra[srcOff])
-                            {
-                                Buffer.MemoryCopy(srcPtr, dest + dstOff, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
+                bgra[j + 0] = b;
+                bgra[j + 1] = g;
+                bgra[j + 2] = r;
+                bgra[j + 3] = a;
             }
-            else
-            {
-                var bgr = new byte[pixels.Length * 3];
-                for (int i = 0, j = 0; i < pixels.Length; i++, j += 3)
-                {
-                    int p = pixels[i];
-                    byte b = (byte)((p >> 16) & 0xFF);
-                    byte g = (byte)((p >> 8) & 0xFF);
-                    byte r = (byte)(p & 0xFF);
 
-                    bgr[j + 0] = b;
-                    bgr[j + 1] = g;
-                    bgr[j + 2] = r;
-                }
-
-                var bmp = new Avalonia.Media.Imaging.WriteableBitmap(new PixelSize(w, h), new Vector(96, 96), Avalonia.Platform.PixelFormats.Bgr24);
-                using (var l = bmp.Lock())
-                {
-                    int srcStride = w * 3;
-                    int destStride = l.RowBytes;
-                    unsafe
-                    {
-                        var dest = (byte*)l.Address;
-                        for (int y = 0; y < h; y++)
-                        {
-                            var srcOff = y * srcStride;
-                            var dstOff = y * destStride;
-                            var copy = Math.Min(srcStride, destStride);
-                            if (srcOff + copy > bgr.Length) break;
-
-                            fixed (byte* srcPtr = &bgr[srcOff])
-                            {
-                                Buffer.MemoryCopy(srcPtr, dest + dstOff, copy, copy);
-                            }
-                        }
-                    }
-                }
-                return bmp;
-            }
+            return DecodedImage.CreatePooled(bgra, w, h, w * 4, PixelEncoding.Bgra32);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"AndroidHeifDecoder: Convert to Avalonia Bitmap failed: {ex.Message}");
+            Console.WriteLine($"AndroidHeifDecoder: Convert to DecodedImage failed: {ex.Message}");
             return null;
         }
         finally

@@ -1,0 +1,11 @@
+pvraw — LibRaw C ABI shim (Android arm64-v8a)
+LibRaw: 0.22.2 — 双许可 LGPL-2.1 / CDDL-1.0，见 pvraw-LibRaw-LICENSE.txt
+NDK: 29.0.14206865 (darwin-x86_64), target aarch64-linux-android24
+compile: --target=aarch64-linux-android24 -O3 -std=c++17 -fPIC -fvisibility=hidden -fvisibility-inlines-hidden -fopenmp -w -I/tmp/pvraw-cache/LibRaw-0.22.2
+link: --target=aarch64-linux-android24 -shared -fopenmp -static-openmp -static-libstdc++ -Wl,-soname,libpvraw.so -Wl,-z,max-page-size=16384 -Wl,--gc-sections -Wl,--exclude-libs,ALL -Wl,--no-undefined
+sources: 79 个 LibRaw 源文件 + pvraw.cpp（无 zlib/jpeg/jasper/rawspeed/lcms）
+exposure: no_auto_bright=1 + LibRaw 直方图 1% 白点，提升上限 2.5×（约 +1.3EV）；output_color 1(sRGB)/7(DCI-P3 D65)
+exported: pv_raw_cancel pv_raw_close pv_raw_copy_rgba8 pv_raw_exposure_gain pv_raw_get_info pv_raw_last_error pv_raw_open pv_raw_process pv_raw_set_output_color pv_raw_thumb_count pv_raw_thumb_data pv_raw_thumb_get_info pv_raw_thumb_unpack pv_raw_version
+needed: libc.so libdl.so libm.so
+size: 1769128 bytes
+sha256: cf6c1d7e9e08885da4653f0040e0b393dd63940ceb1f0da94e77d7f9377bb558

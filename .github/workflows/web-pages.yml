@@ -1,0 +1,63 @@
+name: Web 参考壳
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "PhotoViewer.Web/**"
+      - "Design/tokens.json"
+      - "Tools/generate-design-tokens.py"
+      - ".github/workflows/web-pages.yml"
+  pull_request:
+    paths:
+      - "PhotoViewer.Web/**"
+      - "Design/tokens.json"
+      - "Tools/generate-design-tokens.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 令牌产物最新
+        run: python3 Tools/generate-design-tokens.py --check
+      - name: 单测
+        run: node --test "PhotoViewer.Web/tests/**/*.test.js"
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    concurrency:
+      group: pages
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: 组装站点
+        run: |
+          mkdir -p _site
+          cp PhotoViewer.Web/index.html _site/
+          cp -R PhotoViewer.Web/src _site/src
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

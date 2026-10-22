@@ -4,9 +4,9 @@ using System.Collections.Concurrent;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 
 namespace PhotoViewer.Core.AI;
 
@@ -82,6 +82,24 @@ public static class DinoFeatureCache
         _inflight.Clear();
     }
 
+    // ---- 统一内存管控 ----
+
+    static DinoFeatureCache()
+    {
+        MemoryGovernor.Register(new CacheMemoryClient());
+    }
+
+    /// <summary>内存客户端:CLS 向量占用(条数 × 维数 × 4B);Warning 起清进程缓存(特征可从 DB 重读)。</summary>
+    private sealed class CacheMemoryClient : IMemoryClient
+    {
+        public string Name => "DinoFeatureCache";
+        public long FootprintBytes => (long)_memoryCache.Count * DinoModelResources.FeatureDim * sizeof(float);
+        public void Trim(PressureLevel level)
+        {
+            if (level >= PressureLevel.Warning) _memoryCache.Clear();
+        }
+    }
+
     /// <summary>
     /// 不触发推理,仅从进程缓存或数据库里读。用于"只用已有特征做聚类"的快速路径。
     /// </summary>
@@ -89,13 +107,38 @@ public static class DinoFeatureCache
     {
         ArgumentNullException.ThrowIfNull(file);
 
-        var fingerprint = await ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
+        var fingerprint = await GetFingerprintAsync(file, ct).ConfigureAwait(false);
         if (fingerprint == null) return null;
+
+        return await ReadAsync(fingerprint, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 按指纹读已有特征(进程缓存 → 数据库),不触发推理;未命中返回 null。
+    /// </summary>
+    /// <param name="fingerprint">照片指纹</param>
+    /// <param name="ct">取消令牌</param>
+    /// <returns>L2 归一化向量,未入库时为 null</returns>
+    public static async Task<float[]?> ReadAsync(string fingerprint, CancellationToken ct = default)
+    {
         if (_memoryCache.TryGetValue(fingerprint, out var cached)) return cached;
 
+        ct.ThrowIfCancellationRequested();
         var vector = await ReadFromDatabaseAsync(fingerprint).ConfigureAwait(false);
         if (vector != null) _memoryCache[fingerprint] = vector;
         return vector;
+    }
+
+    /// <summary>
+    /// 计算指纹(依赖 EXIF;为此确保 EXIF 已加载)。无法取到稳定时间戳时返回 null。
+    /// 供相似聚类在读取向量前先做"同次曝光/伴侣文件"剔除。
+    /// </summary>
+    /// <param name="file">照片文件</param>
+    /// <param name="ct">取消令牌</param>
+    public static async Task<string?> GetFingerprintAsync(ImageFile file, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return await ComputeFingerprintAsync(file, ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -132,7 +175,7 @@ public static class DinoFeatureCache
             return dbVector;
         }
 
-        Bitmap? bitmap = null;
+        DecodedImage? bitmap = null;
         try
         {
             bitmap = await ThumbnailService.GetThumbnailAsync(file.File, FeaturingShortSide).ConfigureAwait(false);

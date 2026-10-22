@@ -1,9 +1,8 @@
 using System;
 using System.Threading.Tasks;
-using Avalonia.Media.Imaging;
-using Avalonia.Platform.Storage;
 using Foundation;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.iOS.Core;
 
@@ -17,18 +16,18 @@ public sealed class iOSRawDecoder : IRawDecoder
 {
     public bool IsSupported => OperatingSystem.IsIOS();
 
-    public async Task<Bitmap?> LoadBitmapAsync(IStorageFile file)
+    /// <summary>ImageIO RAW 引擎输出即显示朝向。</summary>
+    public bool OutputPreRotated => true;
+
+    public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
     {
         var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
-        var bmp = iOSHeifDecoder.DecodeWithImageIO(path, null, data);
-        if (bmp == null)
+        // maxSize 非空走子采样代理路径(ImageIO 对 RAW 同样按目标尺寸渲染,省峰值)
+        var bmp = maxSize.HasValue
+            ? iOSHeifDecoder.DecodeSubsampledWithImageIO(path, maxSize.Value, data)
+            : iOSHeifDecoder.DecodeWithImageIO(path, null, data);
+        if (bmp == null && !maxSize.HasValue)
             RawLoader.SetLastDecodeError("ImageIO 无法解码该 RAW 文件（当前 iOS 版本可能不支持该机型或压缩格式）");
         return bmp;
-    }
-
-    public async Task<Bitmap?> LoadThumbnailAsync(IStorageFile file, int maxSize)
-    {
-        var (path, data) = await iOSHeifDecoder.PreparePathOrDataAsync(file);
-        return iOSHeifDecoder.DecodeWithImageIO(path, maxSize, data);
     }
 }

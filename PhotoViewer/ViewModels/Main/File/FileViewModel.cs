@@ -36,12 +36,11 @@ public class FileViewModel : ReactiveObject
         main.WhenAnyValue(x => x.IsRowLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
-        // 面板展开时触发三态判定；关闭时无需操作
-        FilterBar.SimilarityPanelToggled += isOpen =>
+        // 面板展开/收起由 SimilarityPanelViewModel 按"展开且文件栏可见"自行驱动,
+        // 这里只负责把布局可见性变化转告绑定。
+        FilterBar.SimilarityPanelToggled += _ =>
         {
             this.RaisePropertyChanged(nameof(IsSimilarityPanelOpen));
-            if (isOpen)
-                SimilarityPanel.OnPanelOpened();
         };
     }
 }

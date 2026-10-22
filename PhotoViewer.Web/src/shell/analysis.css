@@ -1,0 +1,55 @@
+/* 分析栏瓦片（ANALYSIS-02/03/05）：正方形外框一层裁切，内容不带自己的圆角 */
+.pv-analysis-tile {
+    position: absolute;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background: var(--pv-color-analysis-tile-background);
+    border: var(--pv-analysis-tile-border-width) solid var(--pv-color-analysis-tile-border);
+    border-radius: var(--pv-analysis-tile-cornerRadius);
+    color: inherit;
+    font: inherit;
+    text-align: initial;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: default;
+    touch-action: manipulation;
+}
+
+.pv-analysis-canvas {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block;
+}
+
+.pv-analysis-badge {
+    position: absolute;
+    left: 0;
+    top: 0;
+    max-width: calc(100% - var(--pv-analysis-badge-paddingX));
+    padding: var(--pv-analysis-badge-paddingY) var(--pv-analysis-badge-paddingX);
+    border-radius: 0 0 var(--pv-analysis-badge-cornerRadius) 0;
+    background: var(--pv-color-analysis-badge-background);
+    color: var(--pv-color-analysis-badge-foreground);
+    font-size: var(--pv-analysis-caption-fontSize);
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.pv-analysis-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 var(--pv-analysis-badge-paddingX);
+    color: var(--pv-color-analysis-placeholder);
+    font-size: var(--pv-analysis-caption-fontSize);
+    text-align: center;
+    pointer-events: none;
+}

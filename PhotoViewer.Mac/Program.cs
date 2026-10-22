@@ -1,46 +1,10 @@
-using Avalonia;
-using ReactiveUI;
-using ReactiveUI.Avalonia;
-using PhotoViewer.Core;
-using PhotoViewer.Core.Platform;
-using PhotoViewer.Core.Image;
-using PhotoViewer.Core.Settings;
-using PhotoViewer.Core.AI;
-using PhotoViewer.Mac.Core;
-using Microsoft.ML.OnnxRuntime;
+using PhotoViewer.Mac.Native;
 
 namespace PhotoViewer.Mac;
 
 sealed class Program
 {
-    // Initialization code. Don't use any Avalonia, third-party APIs or any
-    // SynchronizationContext-reliant code before AppMain is called: things aren't initialized
-    // yet and stuff might break.
+    /// <summary>原生 AppKit 入口；历史启动参数（如 <c>--native</c>）由原生路径统一忽略。</summary>
     [STAThread]
-    public static void Main(string[] args) => BuildAvaloniaApp()
-        .AfterSetup(_ =>
-        {
-            HeifLoader.Initialize(new MacHeifDecoder());
-            RawLoader.Initialize(new MacRawDecoder());
-            PerformanceBudget.Initialize(new DefaultPerformanceBudget());
-            XmpWriter.Initialize(new MacXmpWriter());
-            SettingsService.ConfigureStorage(new MacSettingsStorage());
-            DinoFeatureExtractor.ConfigureSession(options =>
-            {
-                options.AppendExecutionProvider_CoreML();
-            });
-            MacExternalOpenBridge.PublishFromPaths(args, source: "MacCommandLine");
-        })
-        .StartWithClassicDesktopLifetime(args);
-
-    // Avalonia configuration, don't remove; also used by visual designer.
-    /// <summary>
-    /// 构建 Avalonia 应用。
-    /// </summary>
-    public static AppBuilder BuildAvaloniaApp()
-        => AppBuilder.Configure<App>()
-            .UsePlatformDetect()
-            .WithInterFont()
-            .UseReactiveUI(_ => { })
-            .LogToTrace();
+    public static void Main(string[] args) => MacNativeApplication.Run(args);
 }

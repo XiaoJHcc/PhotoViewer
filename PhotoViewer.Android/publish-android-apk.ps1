@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [string]$Configuration = 'Release',
     [string]$Framework = 'net10.0-android',
@@ -10,7 +10,6 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $androidProject = Join-Path $PSScriptRoot 'PhotoViewer.Android.csproj'
-$sharedProject = Join-Path $repoRoot 'PhotoViewer\PhotoViewer.csproj'
 $globalJson = Join-Path $repoRoot 'global.json'
 $directoryBuildProps = Join-Path $repoRoot 'Directory.Build.props'
 $releaseDirectory = Join-Path $repoRoot 'release'
@@ -136,11 +135,7 @@ if ($temporarilyBypassGlobalJson) {
     Write-Warning "当前未找到同时满足 SDK $requiredSdkVersion 与 android workload 的 dotnet，将临时绕开 global.json 并使用已安装 android workload 的 dotnet。"
 }
 
-$sharedProjectBackup = "$sharedProject.publishbak"
 $globalJsonBackup = "$globalJson.publishbak"
-$originalSharedProjectContent = Get-Content $sharedProject -Raw
-$patchedSharedProjectContent = $originalSharedProjectContent -replace '<TargetFrameworks>net10.0;net10.0-ios</TargetFrameworks>', '<TargetFramework>net10.0</TargetFramework>'
-$needsProjectPatch = $patchedSharedProjectContent -ne $originalSharedProjectContent
 
 try {
     if ($temporarilyBypassGlobalJson -and (Test-Path $globalJson)) {
@@ -158,11 +153,6 @@ try {
 
     if (Test-Path $OutputDirectory) {
         Remove-Item $OutputDirectory -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    if ($needsProjectPatch) {
-        Copy-Item $sharedProject $sharedProjectBackup -Force
-        Set-Content $sharedProject $patchedSharedProjectContent -Encoding UTF8
     }
 
     $signingArgs = @()
@@ -227,10 +217,6 @@ try {
     $outputFiles | Select-Object Name, Length | Format-Table -AutoSize
 }
 finally {
-    if ($needsProjectPatch -and (Test-Path $sharedProjectBackup)) {
-        Move-Item $sharedProjectBackup $sharedProject -Force
-    }
-
     if (Test-Path $globalJsonBackup) {
         Move-Item $globalJsonBackup $globalJson -Force
     }

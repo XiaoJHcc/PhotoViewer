@@ -5,24 +5,14 @@ using System.Linq;
 using System.Reactive;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using Avalonia;
-using Avalonia.Controls;
-using Avalonia.Input;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Exif;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Settings;
 using ReactiveUI;
 
 
 namespace PhotoViewer.ViewModels.Main;
-
-// 新增：用于携带鼠标位置（ImageView 坐标系）
-public sealed class PointerContext
-{
-    public Vector Center { get; set; }
-    public PointerContext() { }
-    public PointerContext(Vector center) { Center = center; }
-}
 
 /// <summary>
 /// 控制栏中展示的 EXIF 条目。
@@ -90,13 +80,7 @@ public class ControlViewModel : ReactiveObject
             "Previous" => OnPrevious,
             "Next" => OnNext,
             "Exchange" => OnExchange,
-            "Fit" => OnFit,
-            "ZoomInPreset" => OnZoomInPreset,
-            "ZoomOutPreset" => OnZoomOutPreset,
-            "ZoomInScale" => OnZoomInScale,
-            "ZoomOutScale" => OnZoomOutScale,
             "ToggleAnalysisView" => OnToggleAnalysisView,
-            "ToggleEnhance" => OnToggleEnhance,
             "SetRating0" => OnSetRating0,
             "SetRating1" => OnSetRating1,
             "SetRating2" => OnSetRating2,
@@ -108,48 +92,36 @@ public class ControlViewModel : ReactiveObject
     }
 
     // 命令
-    public ReactiveCommand<PointerContext?, Unit> OnOpen { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnPrevious { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnNext { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnExchange { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnFit { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnZoomInPreset { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnZoomOutPreset { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnZoomInScale { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnZoomOutScale { get; }
+    public ReactiveCommand<Unit, Unit> OnOpen { get; }
+    public ReactiveCommand<Unit, Unit> OnPrevious { get; }
+    public ReactiveCommand<Unit, Unit> OnNext { get; }
+    public ReactiveCommand<Unit, Unit> OnExchange { get; }
     // 新增：评分命令
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating0 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating1 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating2 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating3 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating4 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnSetRating5 { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnToggleAnalysisView { get; }
-    public ReactiveCommand<PointerContext?, Unit> OnToggleEnhance { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating0 { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating1 { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating2 { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating3 { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating4 { get; }
+    public ReactiveCommand<Unit, Unit> OnSetRating5 { get; }
+    public ReactiveCommand<Unit, Unit> OnToggleAnalysisView { get; }
 
     public ControlViewModel(MainViewModel mainViewModel)
     {
         Main = mainViewModel;
         
         // 初始化命令
-        OnOpen = ReactiveCommand.Create<PointerContext?>(ctx => { var _ = Main.FolderVM.OpenFilePickerAsync(); });
-        OnPrevious = ReactiveCommand.Create<PointerContext?>(_ => { ExecutePrevious(); });
-        OnNext = ReactiveCommand.Create<PointerContext?>(_ => { ExecuteNext(); });
-        OnExchange = ReactiveCommand.Create<PointerContext?>(_ => { Main.CurrentFile = Main.LastFile; });
-        OnFit = ReactiveCommand.Create<PointerContext?>(ctx => { if (ctx != null) Main.ImageVM.ToggleFit(ctx.Center); else Main.ImageVM.ToggleFit(); });
-        OnZoomInPreset = ReactiveCommand.Create<PointerContext?>(ctx => { if (ctx != null) Main.ImageVM.ZoomPreset(+1, ctx.Center); else Main.ImageVM.ZoomPreset(+1); });
-        OnZoomOutPreset = ReactiveCommand.Create<PointerContext?>(ctx => { if (ctx != null) Main.ImageVM.ZoomPreset(-1, ctx.Center); else Main.ImageVM.ZoomPreset(-1); });
-        OnZoomInScale = ReactiveCommand.Create<PointerContext?>(ctx => { if (ctx != null) Main.ImageVM.ZoomScale(1.25, ctx.Center); else Main.ImageVM.ZoomScale(1.25); });
-        OnZoomOutScale = ReactiveCommand.Create<PointerContext?>(ctx => { if (ctx != null) Main.ImageVM.ZoomScale(0.8, ctx.Center); else Main.ImageVM.ZoomScale(0.8); });
+        OnOpen = ReactiveCommand.Create(() => { var _ = Main.FolderVM.OpenFilePickerAsync(); });
+        OnPrevious = ReactiveCommand.Create(ExecutePrevious);
+        OnNext = ReactiveCommand.Create(ExecuteNext);
+        OnExchange = ReactiveCommand.Create(() => { Main.CurrentFile = Main.LastFile; });
         // 新增：评分命令
-        OnSetRating0 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(0));
-        OnSetRating1 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(1));
-        OnSetRating2 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(2));
-        OnSetRating3 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(3));
-        OnSetRating4 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(4));
-        OnSetRating5 = ReactiveCommand.Create<PointerContext?>(_ => SetRating(5));
-        OnToggleAnalysisView = ReactiveCommand.Create<PointerContext?>(_ => Main.ToggleAnalysisView());
-        OnToggleEnhance = ReactiveCommand.Create<PointerContext?>(ctx => { _ = Main.ImageVM.ToggleEnhanceAsync(); });
+        OnSetRating0 = ReactiveCommand.Create(() => SetRating(0));
+        OnSetRating1 = ReactiveCommand.Create(() => SetRating(1));
+        OnSetRating2 = ReactiveCommand.Create(() => SetRating(2));
+        OnSetRating3 = ReactiveCommand.Create(() => SetRating(3));
+        OnSetRating4 = ReactiveCommand.Create(() => SetRating(4));
+        OnSetRating5 = ReactiveCommand.Create(() => SetRating(5));
+        OnToggleAnalysisView = ReactiveCommand.Create(Main.ToggleAnalysisView);
 
         // 监听当前文件变化，通知 EXIF 数据更新
         Main.WhenAnyValue(vm => vm.CurrentFile)
@@ -244,28 +216,15 @@ public class ControlViewModel : ReactiveObject
         {
             return propertyName switch
             {
-                "Aperture" => exifData.Aperture != null
-                    ? Converters.ApertureConverter.Instance.Convert(exifData.Aperture, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "ExposureTime" => exifData.ExposureTime != null
-                    ? Converters.ExposureTimeConverter.Instance.Convert(exifData.ExposureTime, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
+                "Aperture" => ExifDisplayFormat.Aperture(exifData.Aperture),
+                "ExposureTime" => ExifDisplayFormat.ExposureTime(exifData.ExposureTime),
                 "Iso" => exifData.Iso?.ToString() ?? "--",
-                "EquivFocalLength" => exifData.EquivFocalLength != null
-                    ? Converters.FocalLengthConverter.Instance.Convert(exifData.EquivFocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "FocalLength" => exifData.FocalLength != null
-                    ? Converters.FocalLengthConverter.Instance.Convert(exifData.FocalLength, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "CameraMake" => exifData.CameraMake ?? "--",
+                "EquivFocalLength" => ExifDisplayFormat.FocalLength(exifData.EquivFocalLength),
+                "FocalLength" => ExifDisplayFormat.FocalLength(exifData.FocalLength),
                 "CameraModel" => exifData.CameraModel ?? "--",
                 "LensModel" => exifData.LensModel ?? "--",
-                "DateTimeOriginal" => exifData.DateTimeOriginal != null
-                    ? Converters.DateTimeConverter.Instance.Convert(exifData.DateTimeOriginal, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
-                "ExposureBias" => exifData.ExposureBias != null
-                    ? Converters.ExposureBiasConverter.Instance.Convert(exifData.ExposureBias, typeof(string), null, CultureInfo.CurrentCulture)?.ToString() ?? "--"
-                    : "--",
+                "DateTimeOriginal" => ExifDisplayFormat.DateTime(exifData.DateTimeOriginal),
+                "ExposureBias" => ExifDisplayFormat.ExposureBias(exifData.ExposureBias),
                 "WhiteBalance" => exifData.WhiteBalance ?? "--",
                 "Flash" => exifData.Flash ?? "--",
                 _ => "--"
@@ -279,26 +238,14 @@ public class ControlViewModel : ReactiveObject
     
     private void ExecutePrevious()
     {
-        // 上一张
-        var list = Main.FileVM.ThumbnailList;
-        if (list.HasPreviousFile() && Main.CurrentFile != null)
-        {
-            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = list.FilteredFiles[currentIndex - 1];
-            list.ScrollToCurrent();
-        }
+        // FILTER-05：翻页统一走共享实现，当前照片被筛掉时按锚点落到最近的前一项。
+        Main.FileVM.ThumbnailList.MoveCurrent(-1);
     }
 
     private void ExecuteNext()
     {
-        // 下一张
-        var list = Main.FileVM.ThumbnailList;
-        if (list.HasNextFile() && Main.CurrentFile != null)
-        {
-            var currentIndex = list.FilteredFiles.IndexOf(Main.CurrentFile);
-            Main.CurrentFile = list.FilteredFiles[currentIndex + 1];
-            list.ScrollToCurrent();
-        }
+        // FILTER-05：翻页统一走共享实现，当前照片被筛掉时按锚点落到最近的后一项。
+        Main.FileVM.ThumbnailList.MoveCurrent(1);
     }
 
     /// <summary>
@@ -314,16 +261,8 @@ public class ControlViewModel : ReactiveObject
     /// <summary>
     /// 打开工具窗口（桌面端）。
     /// </summary>
-    public void OpenTools(Window parentWindow)
+    public void OpenTools()
     {
-        Main.OpenToolsWindow(parentWindow);
-    }
-
-    /// <summary>
-    /// 打开工具弹窗（移动端）。
-    /// </summary>
-    public void OpenToolsModal()
-    {
-        Main.OpenToolsModal();
+        Main.OpenToolsWindow();
     }
 }

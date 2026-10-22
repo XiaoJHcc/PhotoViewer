@@ -2,21 +2,43 @@
     <PropertyGroup>
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
-        <SupportedOSPlatformVersion>12.0</SupportedOSPlatformVersion>
+        <!--
+          .NET for macOS 27.0.10722（Xcode 27.x）把最低部署版本抬到 macOS 14.0；
+          SupportedOSPlatformVersion 低于该值时 CompileAppManifest 直接报错。
+          设置窗口的 SwiftUI 动态库本就以 macOS 26 为目标，12/13 实际不可用，故显式对齐 14.0。
+        -->
+        <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
         <UseAppHost>true</UseAppHost>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
         <RuntimeIdentifiers>osx-arm64</RuntimeIdentifiers>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!--
+          .NET for macOS 27.0.10722 声明需要 Xcode 27.0，_ValidateXcodeVersion 做 major.minor 精确比较，
+          App Store 提供的 Xcode 27.1 会被直接判为不匹配。与 PhotoViewer.iOS 同口径关闭该精确版本校验；
+          待发布支持 Xcode 27.1 的 workload 后移除本项。
+        -->
+        <ValidateXcodeVersion>false</ValidateXcodeVersion>
     </PropertyGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia.Desktop"/>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
     </ItemGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+    </ItemGroup>
+
+    <!--
+      共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
+      由 Mac / iOS / Android 三个原生头共同链接；PhotoViewer.Apple/ 继续承载
+      Apple 专属的展示解码、Metal 渲染与验收判定。
+      这两个目录都不得出现 AppKit/UIKit 类型，平台专属部分留在各自 head 的 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
     </ItemGroup>
 
     <PropertyGroup Condition="'$(Configuration)'=='Release'">
@@ -34,7 +56,25 @@
     <!-- 将图标作为 BundleResource 拷入 .app（Contents/Resources） -->
     <ItemGroup>
         <BundleResource Include="icon.icns"/>
+        <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
     </ItemGroup>
+
+    <!--
+      原生设置 UI 动态库：
+      设置窗口由 SwiftUI 实现（Native/SwiftSettings/MacSettingsUI.swift），
+      编译成 libMacSettingsUI.dylib 落入 .app/Contents/MonoBundle/，
+      随后由 _FixDylibCodeSigning 统一完成 adhoc 代码签名。
+    -->
+    <Target Name="_BuildSwiftSettingsDylib"
+            BeforeTargets="_CodesignAppBundle"
+            Inputs="$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacToolsUI.swift"
+            Outputs="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib"
+            Condition="$([MSBuild]::IsOSPlatform('osx'))">
+        <MakeDir Directories="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle" />
+        <Exec Command="xcrun --sdk macosx swiftc -parse-as-library -emit-library -O -target arm64-apple-macosx26.0 &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacSettingsUI.swift&quot; &quot;$(MSBuildProjectDirectory)/Native/SwiftSettings/MacToolsUI.swift&quot; -o &quot;$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/libMacSettingsUI.dylib&quot;"
+              IgnoreExitCode="false" />
+        <Message Importance="high" Text="[SwiftSettings] 编译 SwiftUI 设置动态库 → MonoBundle/libMacSettingsUI.dylib" />
+    </Target>
 
     <!--
       macOS 26+ Code Signing 修正：

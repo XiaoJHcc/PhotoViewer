@@ -1,0 +1,12 @@
+libpvhevc.so — PhotoViewer HEVC still-picture decoder
+
+FFmpeg version : 8.1.3
+License        : LGPL 2.1 or later (COPYING.LGPLv2.1); no --enable-gpl / --enable-nonfree
+Toolchain      : Android NDK 29.0.14206865 (clang, arm64-v8a, API 24), static libavcodec.a + libavutil.a
+Shim source    : PhotoViewer.Windows/NativeSrc/pvhevc/pvhevc.c (+ pvhevc.h)
+Build script   : PhotoViewer.Android/build-native-android-hevc.sh
+Built          : 2026-10-22 18:50:23
+SHA-256        : a2bcdf72c975fcfb58eb55cfed3efa6efd050149a4c16a69e0b4dd14f5ae4409
+
+configure line :
+./configure --target-os=android --arch=aarch64 --cpu=armv8-a --enable-cross-compile --cc=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang --cxx=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android24-clang++ --ar=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar --nm=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-nm --ranlib=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ranlib --strip=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-strip --sysroot=/Users/xiaojh/Library/Android/sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/sysroot --disable-everything --disable-programs --disable-doc --disable-network --disable-autodetect --disable-debug --enable-static --disable-shared --enable-avcodec --enable-decoder=hevc --enable-parser=hevc --disable-avformat --disable-swscale --disable-swresample --disable-avfilter --disable-avdevice --enable-pic --enable-neon --enable-asm --extra-cflags=-O3

@@ -1,12 +1,21 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-ios</TargetFramework>
-        <SupportedOSPlatformVersion>15.0</SupportedOSPlatformVersion>
+        <!-- 原生壳要求 iOS 17（见 Plans/native-rebuild-phase-ipad.md §1-4：CAMetalLayer 色彩空间/EDR 与 Metal F16 目标的最低系统版本） -->
+        <SupportedOSPlatformVersion>17.0</SupportedOSPlatformVersion>
+        <!-- 与 PhotoViewer.Mac 一致：PhotoViewer.Apple 共享源按隐式 using 编写，两个 head 必须同口径 -->
+        <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
         <!-- iOS 应用图标：指定 Assets.xcassets 中的 AppIcon 图标集名称 -->
         <AppIcon>AppIcon</AppIcon>
+        <!--
+          .NET for iOS 27.0.10722 声明需要 Xcode 27.0，_ValidateXcodeVersion 做 major.minor 精确比较，
+          App Store 提供的 Xcode 27.1 会被直接判为不匹配。27.1 已实测可正常构建运行（iphoneos27.1 SDK），
+          故用官方开关关闭该精确版本校验；待发布支持 Xcode 27.1 的 workload 后移除本项。
+        -->
+        <ValidateXcodeVersion>false</ValidateXcodeVersion>
     </PropertyGroup>
 
     <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
@@ -24,8 +33,10 @@
     <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
         <!-- SdkOnly: 只链接 SDK 程序集，用户代码完整保留 -->
         <MtouchLink>SdkOnly</MtouchLink>
-        <!-- 混合模式：AOT + 解释器回退，防止纯 AOT 对反射密集型代码（Avalonia/ReactiveUI）闪退 -->
+        <!-- 混合模式：全部程序集 AOT，解释器只作回退（ReactiveUI/DI 的动态代码与未预编译泛型），
+             避免纯 AOT 闪退，同时让解码/直方图/增强等托管热循环跑原生代码 -->
         <UseInterpreter>true</UseInterpreter>
+        <MtouchInterpreter>-all</MtouchInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
         <CodesignKey>iPhone Developer</CodesignKey>
         <!-- 允许 .NET iOS 工具链调用 Xcode 自动签名基础设施，Profile 缺失或过期时自动创建 -->
@@ -40,13 +51,74 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Avalonia.iOS"/>
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
     </ItemGroup>
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
     </ItemGroup>
+
+    <!--
+      共享几何源：PhotoViewer.Shared/ 由 Mac / iOS / Android 三个原生头共同链接，
+      PhotoViewer.Apple/ 继续承载 Apple 专属的展示解码、Metal 渲染与验收判定。
+      两个目录都不得出现 AppKit/UIKit 类型，平台专属宿主留在各 head 的 Native/ 下。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Apple\**\*.cs"/>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
+        <Using Include="PhotoViewer.Shared"/>
+    </ItemGroup>
+
+    <!--
+      DINOv3 ONNX 模型：以 Bundle 资源拷进 .app（NSBundle.ResourcePath），不经 avares 资源。
+    -->
+    <ItemGroup>
+        <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
+    </ItemGroup>
+    <!--
+      App Store 隐私清单：放在 app bundle 根目录。原因码覆盖 .NET 运行时/BCL 固有调用（文件时间戳、开机时间、磁盘空间）、
+      用户经文件选择器授权的照片时间戳（3B52.1）与设置存储（NSUserDefaults，CA92.1）。新增 required-reason API 时同步更新。
+    -->
+    <ItemGroup>
+        <BundleResource Include="PrivacyInfo.xcprivacy" LogicalName="PrivacyInfo.xcprivacy" />
+    </ItemGroup>
+
+    <!--
+      ONNX Runtime 原生库：包自带的 net9.0-ios18.0 目标会把
+      runtimes/ios/native/onnxruntime.xcframework.zip 作为 NativeReference(Kind=Static) 加进来，
+      但 .NET 10 iOS SDK 的构建图中 _ExpandNativeReferences 不在 _ComputeLinkNativeExecutableInputs
+      之前执行 —— 压缩包因此从未解析成设备/模拟器切片，主执行文件里没有 onnxruntime 符号，
+      DllImport 在运行时抛 TypeInitialization(Microsoft.ML.OnnxRuntime.NativeMethods)。
+      显式把 SDK 自己的展开目标提到原生链接输入计算之前（切片解包到 obj，再静态链接进主执行文件；
+      该 xcframework 内是 ar 静态库，不存在可嵌入的 Frameworks/onnxruntime.framework）。
+    -->
+    <Target Name="_PvExpandOnnxRuntimeNativeReference"
+            BeforeTargets="_ComputeLinkNativeExecutableInputs;_ComputeFrameworkFilesToPublish;_ComputeDynamicLibrariesToPublish"
+            DependsOnTargets="_ExpandNativeReferences">
+        <!--
+          ResolveNativeReferences 会把 xcframework 里的静态切片归类为 Kind=Framework；
+          原生链接任务对 Framework 只加 -framework，不会 -force_load，托管侧 P/Invoke 没有静态引用，
+          归档成员会被全部丢弃。把 onnxruntime 切片改回 Kind=Static + ForceLoad，走与包原始意图
+          （打包目标声明 Kind=Static）一致的静态链接路径。
+        -->
+        <ItemGroup>
+            <_PvOnnxRuntimeStaticSlice Include="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
+            <_FrameworkNativeReference Remove="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
+            <_FileNativeReference Include="@(_PvOnnxRuntimeStaticSlice)" Kind="Static" ForceLoad="True" IsCxx="True" SmartLink="True" LinkerFlags="-lc++" WeakFrameworks="CoreML" />
+            <_PvOnnxRuntimeStaticSlice Remove="@(_PvOnnxRuntimeStaticSlice)" />
+        </ItemGroup>
+
+        <!--
+          静态库没有独立的动态镜像；managed 侧 DllImport 名仍是 "onnxruntime"，
+          由 iOSNativeShell 注册的 DllImport resolver 映射到主程序。静态链接后必须让
+          __Internal 的 dlsym 能看到入口，并把符号写进 mtouch-symbols.list —— Release 的
+          _NativeStripFiles 只保留该导出列表里的符号，否则会把它们从 app 可执行文件里剥掉。
+        -->
+        <ItemGroup>
+            <_ProcessedReferenceNativeSymbol Include="_OrtGetApiBase" />
+            <_ProcessedReferenceNativeSymbol Include="_OrtSessionOptionsAppendExecutionProvider_CoreML" />
+        </ItemGroup>
+    </Target>
 
     <!-- Linker preservation: protect reflection-used types (ViewLocator, ReactiveUI, DI) -->
     <ItemGroup>

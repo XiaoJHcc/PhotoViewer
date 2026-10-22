@@ -11,28 +11,59 @@
     {
       "label": "Debug Windows",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Run Windows",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Desktop --no-build -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug",
       "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Native",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --pv-native-smoke",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Serve Web",
+      "type": "shell",
+      "command": "python3 -m http.server 8080",
+      "options": { "cwd": "${workspaceFolder}/PhotoViewer.Web" },
+      "isBackground": true,
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test Web",
+      "type": "shell",
+      "command": "python3 Tools/generate-design-tokens.py --check && node --test \"PhotoViewer.Web/tests/**/*.test.js\"",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Mac (Debug)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64",
+      "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Debug Mac",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug && open PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.Mac.app",
+      "dependsOn": "Build Mac (Debug)",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
       "label": "Run Mac",
       "type": "shell",
-      "command": "open PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.Mac.app",
       "group": "test",
       "problemMatcher": []
     },
@@ -117,7 +148,7 @@
     {
       "label": "Publish Windows EXE (Release)",
       "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Desktop/publish-win-x64-singlefile.ps1",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
