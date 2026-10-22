@@ -59,7 +59,9 @@ public partial class SettingsViewModel
             SetPersistenceStatus(_loadPersistenceStatus);
             if (model.Version > 0)
             {
-                ApplyModel(model);
+                // 读取在后台线程完成；回填会触发属性通知，原生壳的控件订阅者只能在 UI 线程更新。
+                if (UiDispatcher.CheckAccess()) ApplyModel(model);
+                else await UiDispatcher.InvokeAsync(() => ApplyModel(model)).ConfigureAwait(false);
             }
         }
         catch (Exception ex)
