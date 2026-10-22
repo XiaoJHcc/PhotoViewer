@@ -22,6 +22,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     private int _proxyLongEdge;
     private bool _needsFull;
     private bool _fullLoading;
+    // 首次真解码在途：期间不接受视口变化发起的升级/换代理请求，避免同一张 RAW 并发解两遍。
+    private bool _initialLoading;
     private bool _fullFailed;
     private bool _enhanceRequested;
     private int _enhanceToken;
@@ -56,6 +58,11 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     public DecodedImage? Image => _enhanced ?? _image;
     /// <summary>当前产物是否代理。</summary>
     public bool IsProxy { get; private set; }
+    /// <summary>
+    /// 当前上屏图是否为低分辨率顶替预览（STATE-01）。为真时 <see cref="IsProxy"/> 恒为真，
+    /// 细节预览等以代理为闸的消费方据此排除它；真产物到达后原地替换。
+    /// </summary>
+    public bool IsSubstitute { get; private set; }
     /// <summary>压测口径的代理标记（与本会话的 <see cref="IsProxy"/> 同源）。</summary>
     bool IDisplayLoadSignal.CurrentIsProxy => IsProxy;
     /// <summary>压测口径的编码（当前展示产物，无图时为 null）。</summary>
@@ -87,7 +94,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     {
         void OnChanged()
         {
-            if (_file is { } file && _image != null) handler(file);
+            // 顶替预览不算一次上屏：压测计时应落在真解码产物上。
+            if (_file is { } file && _image != null && !IsSubstitute) handler(file);
         }
 
         Changed += OnChanged;
@@ -109,6 +117,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         _cancellation = new CancellationTokenSource();
         _file = file;
         _fullLoading = false;
+        _initialLoading = false;
         Error = string.Empty;
         FullError = string.Empty;
         _fullFailed = false;
@@ -129,9 +138,63 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         Replace(null, false);
         var cancellationToken = _cancellation.Token;
         _fullLoading = !target.HasValue;
-        _ = LoadAsync(file, _generation, target, cancellationToken);
+        _initialLoading = true;
+        // 真解码先发：顶替预览只补空窗，不占真解码的队位，也不拖慢它。
+        _ = LoadAsync(file, _generation, target, cancellationToken, initial: true);
+        // STATE-01 低分辨率顶替：平台展示解码器实现 IQuickPreviewDecoder 且该格式可顶替时才上屏预览，
+        // 未实现的平台与引入前完全一致（黑屏加载）。
+        if (BitmapLoader.QuickPreviewDecoder is { } quickPreview && quickPreview.HasQuickPreview(file))
+            _ = LoadQuickPreviewAsync(quickPreview, file, _generation, cancellationToken);
         // STATE-01：延迟暴露加载态，快速翻页在门槛内完成时不显示提示。
         _ = ShowLoadingAfterDelayAsync(_generation, cancellationToken);
+    }
+
+    /// <summary>
+    /// STATE-01 低分辨率顶替：解码平台给出的同源低分辨率预览，仅在真解码空窗期上屏。
+    /// 预览不进入 <see cref="BitmapLoader"/> 缓存、不触发上屏信号；真图已上屏、已出错或已换文件时直接归还租约。
+    /// </summary>
+    /// <param name="decoder">提供顶替预览的展示解码器。</param>
+    /// <param name="file">文件引用（所有权在会话之外）。</param>
+    /// <param name="generation">发起时的代际。</param>
+    /// <param name="cancellationToken">本代际的取消令牌。</param>
+    private async Task LoadQuickPreviewAsync(IQuickPreviewDecoder decoder, IFileRef file, int generation, CancellationToken cancellationToken)
+    {
+        DecodedImage? result = null;
+        try
+        {
+            result = await decoder.DecodeQuickPreviewAsync(file, cancellationToken).ConfigureAwait(false);
+            if (result == null) return;
+            var image = result;
+            result = null;
+            bool handedOff = false;
+            try
+            {
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    if (_disposed || generation != _generation || cancellationToken.IsCancellationRequested
+                        || _image != null || !string.IsNullOrEmpty(Error))
+                    {
+                        return;
+                    }
+                    Replace(image, proxy: true, substitute: true);
+                    handedOff = true;
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (!handedOff) image.Release();
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 换图或关闭会话：预览不再需要，按正常丢弃处理。
+        }
+        catch (Exception exception)
+        {
+            // 顶替预览是可选优化：失败只影响首帧，绝不升级为解码错误（STATE-02 的失败仍由真解码给出）。
+            Console.Error.WriteLine($"[PhotoLoadSession] 顶替预览解码失败: {exception.Message}");
+        }
+        finally { result?.Release(); }
     }
 
     /// <summary>
@@ -385,6 +448,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         if (_file == null || !string.IsNullOrEmpty(Error)) return;
         // IMAGE-03：Full 失败后等待下一次触发（需求上升沿或代理目标增长）再重试，避免每次布局刷新都重试。
         if (_fullFailed && needsFull && (!wasNeedsFull || grow)) _fullFailed = false;
+        // 首次真解码在途时不另起升级/换代理：同一张 RAW 并发解两遍只会两边都更慢（顶替预览在屏时同样适用）。
+        if (_initialLoading) return;
         if (needsFull && IsProxy && !_fullLoading && !_fullFailed)
         {
             _fullLoading = true;
@@ -395,7 +460,12 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     }
 
     /// <summary>按统一缓存/准入取得图像，检查代际后在 UI 线程交换；失效结果只归还租约。</summary>
-    private async Task LoadAsync(IFileRef file, int generation, int? target, CancellationToken cancellationToken)
+    /// <param name="file">文件引用。</param>
+    /// <param name="generation">发起时的代际。</param>
+    /// <param name="target">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="cancellationToken">本代际的取消令牌。</param>
+    /// <param name="initial">是否为切图后的首次真解码（决定顶替预览的失败口径与延后升级）。</param>
+    private async Task LoadAsync(IFileRef file, int generation, int? target, CancellationToken cancellationToken, bool initial = false)
     {
         DecodedImage? result = null;
         try
@@ -413,14 +483,19 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                     image?.Release();
                     return;
                 }
+                if (initial) _initialLoading = false;
                 if (!target.HasValue) _fullLoading = false;
-                if (target.HasValue && _image != null && (!IsProxy || image != null && Math.Max(image.Width, image.Height) <= Math.Max(_image.Width, _image.Height)))
+                // 真产物永远替换顶替预览：顶替只补空窗，不代表本次解码已有结果，也不参与"小代理不得覆盖大代理"的比较。
+                if (target.HasValue && _image != null && !IsSubstitute
+                    && (!IsProxy || image != null && Math.Max(image.Width, image.Height) <= Math.Max(_image.Width, _image.Height)))
                 {
                     image?.Release();
                     return;
                 }
                 if (image == null)
                 {
+                    // 真解码失败时顶替预览不得冒充成功：与屏上无图同口径撤下并报错（STATE-02）。
+                    if (initial && IsSubstitute) Replace(null, false);
                     // 屏上已有可用图时不报"无法打开该图片"；仅 Full 升级失败给出非阻塞提示，代理刷新失败保持静默。
                     if (_image == null) Error = "无法打开该图片";
                     else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
@@ -431,6 +506,12 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 if (!target.HasValue) FullError = string.Empty;
                 bool proxy = target.HasValue && image != null && (image.Width < image.SourceWidth || image.Height < image.SourceHeight);
                 Replace(image, proxy);
+                // 首次代理解码期间视口可能已要求 Full（放大/分析栏可见）；当时不并发解，等真代理上屏后补一次。
+                if (initial && proxy && _needsFull && !_fullLoading && !_fullFailed)
+                {
+                    _fullLoading = true;
+                    _ = LoadAsync(file, generation, null, _cancellation.Token);
+                }
             }).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
@@ -442,6 +523,9 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     _fullLoading = false;
+                    if (initial) _initialLoading = false;
+                    // 真解码被中断且屏上只有顶替预览时，顶替不得冒充成功（STATE-02）。
+                    if (initial && IsSubstitute) Replace(null, false);
                     // IMAGE-03/IMAGE-10：屏上已有代理时升级失败只报非阻塞的 Full 提示，保留代理。
                     if (_image == null) Error = "解码被中断，请重新选择照片";
                     else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
@@ -457,6 +541,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
             {
                 if (generation != _generation) return;
                 _fullLoading = false;
+                if (initial) _initialLoading = false;
+                if (initial && IsSubstitute) Replace(null, false);
                 if (_image == null) Error = exception.Message;
                 else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
                 IsLoadingVisible = false;
@@ -470,7 +556,10 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// 交换会话持有者租约并作废旧增强图；通知后归还旧图，保证订阅者同步上传期间源缓冲有效。
     /// 增强开着时先查"源 → 增强图"缓存：同实例回切直接复用，不重算也不闪"计算中"。
     /// </summary>
-    private void Replace(DecodedImage? image, bool proxy)
+    /// <param name="image">新的展示产物（null 表示清空）。</param>
+    /// <param name="proxy">该产物是否为代理档（含顶替预览）。</param>
+    /// <param name="substitute">该产物是否为 STATE-01 低分辨率顶替预览。</param>
+    private void Replace(DecodedImage? image, bool proxy, bool substitute = false)
     {
         int token = ++_enhanceToken;
         var previousEnhanced = _enhanced;
@@ -483,6 +572,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         var previous = _image;
         _image = image;
         IsProxy = proxy;
+        // 每次换产物都重置顶替标记：顶替预览只在 SetFile 的空窗期成立，随真产物到达或清空失效。
+        IsSubstitute = substitute;
         // STATE-01：图一到（或换图清空）即撤下加载提示。
         IsLoadingVisible = false;
         try { Changed?.Invoke(); }
@@ -518,6 +609,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         IsEnhancing = false;
         IsEnhancingVisible = false;
         IsLoadingVisible = false;
+        IsSubstitute = false;
+        _initialLoading = false;
         _image?.Release();
         _image = null;
     }

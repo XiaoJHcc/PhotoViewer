@@ -1,7 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 

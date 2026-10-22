@@ -103,6 +103,12 @@ public static class BitmapLoader
     }
 
     /// <summary>
+    /// 注入的展示解码器若支持低分辨率顶替预览（STATE-01）则返回该能力，否则为 null。
+    /// 未注入解码器或平台不实现时为 null，加载会话保持黑屏加载，行为与引入顶替前一致。
+    /// </summary>
+    public static IQuickPreviewDecoder? QuickPreviewDecoder => _presentationDecoder as IQuickPreviewDecoder;
+
+    /// <summary>
     /// 本次展示解码应产出的编码：按尺寸档与当前压力向注入的策略协商（平台无关，Core 不含平台判断）。
     /// </summary>
     /// <param name="sizeClass">尺寸档。</param>

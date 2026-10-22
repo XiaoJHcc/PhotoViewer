@@ -1,11 +1,13 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
@@ -119,6 +121,16 @@ internal static class WindowsNativeApplication
             ? WindowHandle
             : throw new InvalidOperationException("窗口句柄尚未就绪,无法弹出文件选择器。")));
         AppResources.Initialize(new WindowsAppResources());
+        FastHeifDecoder.Configure(new FastHeifOptions
+        {
+            // 与 libheif 等同址:普通输出与单文件解包目录都是 AppContext.BaseDirectory。
+            // 文件缺失时返回 0,交回 DllImport 默认探测(再失败由解码器按不可用处理)。
+            LoadLibrary = static () =>
+            {
+                var path = Path.Combine(AppContext.BaseDirectory, "pvhevc.dll");
+                return File.Exists(path) ? NativeLibrary.Load(path) : IntPtr.Zero;
+            },
+        });
         HeifLoader.Initialize(new LibHeifDecoder());
         BitmapLoader.InitializePresentationDecoder(new WindowsPresentationDecoder(), new WindowsPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new WindowsPerformanceBudget());

@@ -9,10 +9,10 @@ using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Storage;
 
-namespace PhotoViewer.Windows.Core.Heif;
+namespace PhotoViewer.Core.Image.Heif;
 
 /// <summary>
-/// HEIF 快速解码路径:容器自解析 + <c>pvhevc.dll</c>(静态 FFmpeg,仅 HEVC 解码器)并行解瓦片,
+/// HEIF 快速解码路径:容器自解析 + <c>pvhevc</c> 原生库(静态 FFmpeg,仅 HEVC 解码器)并行解瓦片,
 /// 再由 <see cref="YuvImageConverter"/> 一次融合完成色度上采样/矩阵/缩放/线性化。
 /// </summary>
 /// <remarks>
@@ -21,7 +21,7 @@ namespace PhotoViewer.Windows.Core.Heif;
 ///
 /// 并发纪律:
 /// <list type="bullet">
-/// <item>瓦片:每块瓦片独占一个 pvhevc 上下文(上下文可复用,池中空闲上限 <see cref="MaxIdleContexts"/> 个,多余关闭);
+/// <item>瓦片:每块瓦片独占一个 pvhevc 上下文(上下文可复用,池中空闲上限 <see cref="FastHeifOptions.MaxIdleContexts"/> 个,多余关闭);
 /// 整幅图需要的上下文数在开跑前**一次性预留**,避免多幅图各自持有一部分许可互相等待;</item>
 /// <item>同时在用的上下文总数上限 = 处理器数(全局),**当前照片(P0)另算**:
 /// 它可以直接越过仍在排队的后台请求、并用超出常规上限的上下文,否则连翻时整幅解码要么排在预取后面、
@@ -34,35 +34,38 @@ namespace PhotoViewer.Windows.Core.Heif;
 /// P0 当前图 &gt; 沿 P0 并行的前两张预取 &gt; 普通后台;普通后台在 P0 在解时让位。
 /// 两个名额按"先图像、后上下文,上下文全有或全无"的顺序取,所以不存在拿着上下文等图像的反向等待,
 /// 不会有死锁;取消在任一步都会把已拿到的名额归还。
+///
+/// 原生库位置由平台注入:见 <see cref="Configure"/>;未配置时按 <c>DllImport("pvhevc")</c> 的默认探测加载。
 /// </remarks>
-internal static partial class FastHeifDecoder
+public static partial class FastHeifDecoder
 {
     private const string LibraryName = "pvhevc";
 
-    /// <summary>空闲上下文池上限;超出上限的归还即关闭,避免空闲解码器长占内存。</summary>
-    private const int MaxIdleContexts = 6;
+    /// <summary>当前生效的并发与排队参数(由 <see cref="Configure"/> 一次性写入,默认值等同 Windows 头历史口径)。</summary>
+    private static volatile Settings s_settings = CreateSettings(null);
 
-    /// <summary>全局同时在用的解码上下文上限(处理器数)。</summary>
-    private static readonly int MaxConcurrentContexts = Math.Max(1, Environment.ProcessorCount);
+    /// <summary>配置参数快照。</summary>
+    private sealed record Settings(
+        int MaxIdleContexts,
+        int MaxConcurrentContexts,
+        int MaxCurrentContexts,
+        int MaxConcurrentImages,
+        int BackgroundTilesDuringCurrent,
+        bool HoldBackgroundDuringCurrent);
 
-    /// <summary>
-    /// 当前照片通道可以用的上下文上限:在常规上限之外再放宽一档,保证 P0 永远不等后台释放上下文。
-    /// 放宽的量按核数收敛(20 核 → +8),极端并发下每块瓦片的原生帧约 22 MB,放宽的峰值占用有上界。
-    /// </summary>
-    private static readonly int MaxCurrentContexts =
-        MaxConcurrentContexts + Math.Clamp(MaxConcurrentContexts / 2, 2, 8);
-
-    /// <summary>同时在转换的图像上限。</summary>
-    private static readonly int MaxConcurrentImages = Math.Max(2, Environment.ProcessorCount / 4);
-
-    /// <summary>在 P0 解码在解时,普通后台是否让位(只影响排队,不影响已开跑的图);<c>PV_HEIF_HOLD_BACKGROUND=0</c> 关闭。</summary>
-    private static readonly bool s_holdBackgroundDuringCurrent = EnvFlag("PV_HEIF_HOLD_BACKGROUND", true);
-
-    /// <summary>
-    /// 后台起解(进瓦片阶段)时若 P0 在解,瓦片并行度收窄到几路:把核让给当前图。
-    /// 0 表示不收窄;<c>PV_HEIF_BACKGROUND_TILES=0</c> 可关。
-    /// </summary>
-    private static readonly int s_backgroundTilesDuringCurrent = EnvInt("PV_HEIF_BACKGROUND_TILES", 2);
+    /// <summary>应用一次配置(可空 = 默认值),并叠加压测对照用的环境变量。</summary>
+    private static Settings CreateSettings(FastHeifOptions? options)
+    {
+        var concurrentContexts = Math.Max(1, options?.MaxConcurrentContexts ?? Math.Max(1, Environment.ProcessorCount));
+        var extraContexts = Math.Max(0, options?.MaxCurrentContextsExtra ?? Math.Clamp(concurrentContexts / 2, 2, 8));
+        return new Settings(
+            Math.Max(0, options?.MaxIdleContexts ?? 6),
+            concurrentContexts,
+            concurrentContexts + extraContexts,
+            Math.Max(1, options?.MaxConcurrentImages ?? Math.Max(2, Environment.ProcessorCount / 4)),
+            EnvInt("PV_HEIF_BACKGROUND_TILES", options?.BackgroundTilesDuringCurrent ?? 2),
+            EnvFlag("PV_HEIF_HOLD_BACKGROUND", options?.HoldBackgroundDuringCurrent ?? true));
+    }
 
     /// <summary>等名额时的轮询粒度:通道由票面决定,票面可能被别的请求提升,所以不能只靠信号唤醒。</summary>
     private const int AdmissionPollMs = 15;
@@ -81,7 +84,7 @@ internal static partial class FastHeifDecoder
     private static int s_waitingAlongside;
 
     private static int s_lastFrameBytes;
-    private static int s_resolverInstalled;
+    private static int s_configured;
     private static volatile bool s_initialized;
     private static volatile bool s_available;
 
@@ -135,7 +138,7 @@ internal static partial class FastHeifDecoder
     /// </summary>
     /// <param name="file">文件引用。</param>
     /// <returns>文件字节。</returns>
-    internal static async Task<byte[]> ReadAllBytesAsync(IFileRef file)
+    public static async Task<byte[]> ReadAllBytesAsync(IFileRef file)
     {
         await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
         using var buffer = stream.CanSeek
@@ -150,19 +153,24 @@ internal static partial class FastHeifDecoder
     /// </summary>
     /// <param name="file">完整文件字节。</param>
     /// <param name="maxLongEdge">目标长边上限;null 或 ≥ 画布长边时按画布尺寸输出。</param>
-    /// <param name="encoding">目标编码(线性 RGBA16F 或 sRGB BGRA32)。</param>
+    /// <param name="encoding">目标编码(线性 RGBA16F、sRGB BGRA32 或 8 位 RGBA)。</param>
     /// <param name="cancellationToken">取消令牌;取消会抛出,不返回 null。</param>
     /// <param name="fallbackReason">返回 null 时的原因(不支持/解码失败);成功时为 null。</param>
+    /// <param name="rgba8ColorSpace">
+    /// <see cref="PixelEncoding.Rgba8"/> 的目标色彩空间(<see cref="ImageColorSpace.Srgb"/> 或 <see cref="ImageColorSpace.DisplayP3"/>);
+    /// 其它编码忽略此参数。
+    /// </param>
     /// <returns>未旋转的解码产物(方向在 <see cref="DecodedImage.Orientation"/>);需要回落返回 null。</returns>
-    internal static DecodedImage? TryDecode(
+    public static DecodedImage? TryDecode(
         byte[] file,
         int? maxLongEdge,
         PixelEncoding encoding,
         CancellationToken cancellationToken,
-        out string? fallbackReason)
+        out string? fallbackReason,
+        ImageColorSpace rgba8ColorSpace = ImageColorSpace.Srgb)
     {
         fallbackReason = null;
-        if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Bgra32))
+        if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Bgra32 or PixelEncoding.Rgba8))
         {
             fallbackReason = "快速 HEIF 解码不支持目标编码 " + encoding;
             return null;
@@ -178,7 +186,7 @@ internal static partial class FastHeifDecoder
             return null;
         }
 
-        return DecodeContainer(container, maxLongEdge, encoding, cancellationToken, out fallbackReason);
+        return DecodeContainer(container, maxLongEdge, encoding, rgba8ColorSpace, cancellationToken, out fallbackReason);
     }
 
     /// <summary>
@@ -193,19 +201,23 @@ internal static partial class FastHeifDecoder
     /// </remarks>
     /// <param name="file">完整文件字节。</param>
     /// <param name="maxLongEdge">目标长边上限(按主图画布折算目标尺寸)。</param>
-    /// <param name="encoding">目标编码。</param>
+    /// <param name="encoding">目标编码(RGBA16F、BGRA32 或 8 位 RGBA)。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <param name="reason">返回 null 的原因(仅用于诊断)。</param>
+    /// <param name="rgba8ColorSpace">
+    /// <see cref="PixelEncoding.Rgba8"/> 的目标色彩空间;其它编码忽略此参数。
+    /// </param>
     /// <returns>未旋转的缩略图项产物(方向为该 <c>thmb</c> 项自己的 <c>irot</c>/<c>imir</c>)。</returns>
-    internal static DecodedImage? TryDecodeContainerThumbnail(
+    public static DecodedImage? TryDecodeContainerThumbnail(
         byte[] file,
         int maxLongEdge,
         PixelEncoding encoding,
         CancellationToken cancellationToken,
-        out string? reason)
+        out string? reason,
+        ImageColorSpace rgba8ColorSpace = ImageColorSpace.Srgb)
     {
         reason = null;
-        if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Bgra32))
+        if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Bgra32 or PixelEncoding.Rgba8))
         {
             reason = "快速 HEIF 解码不支持目标编码 " + encoding;
             return null;
@@ -232,7 +244,7 @@ internal static partial class FastHeifDecoder
         var item = container.FindThumbnail(minShortSide);
         if (item is null || item.ShortSide < minShortSide) return null;
 
-        return DecodeItem(container, item, targetWidth, targetHeight, encoding, cancellationToken, out reason);
+        return DecodeItem(container, item, targetWidth, targetHeight, encoding, rgba8ColorSpace, cancellationToken, out reason);
     }
 
     // ------------------------------------------------------------------
@@ -243,6 +255,7 @@ internal static partial class FastHeifDecoder
         HeifContainer container,
         int? maxLongEdge,
         PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace,
         CancellationToken cancellationToken,
         out string? fallbackReason)
     {
@@ -257,7 +270,7 @@ internal static partial class FastHeifDecoder
         var inFlight = HeifDecodeStats.Enter();
         try
         {
-            var reserved = Math.Min(tiles.Count, MaxConcurrentContexts);
+            var reserved = Math.Min(tiles.Count, s_settings.MaxConcurrentContexts);
             var admission = Admit(reserved, cancellationToken, out var gateMs, out var contextsMs);
             var frames = new Slot[tiles.Count];
             try
@@ -272,7 +285,7 @@ internal static partial class FastHeifDecoder
                     return null;
                 }
 
-                var result = Convert(container, frames, maxLongEdge, encoding, cancellationToken, out fallbackReason);
+                var result = Convert(container, frames, maxLongEdge, encoding, rgba8ColorSpace, cancellationToken, out fallbackReason);
                 HeifDecodeStats.Record(
                     inFlight,
                     admission.Lane == DecodeLane.Current,
@@ -417,6 +430,7 @@ internal static partial class FastHeifDecoder
         Slot[] frames,
         int? maxLongEdge,
         PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace,
         CancellationToken cancellationToken,
         out string? fallbackReason)
     {
@@ -459,6 +473,7 @@ internal static partial class FastHeifDecoder
             targetWidth,
             targetHeight,
             encoding,
+            rgba8ColorSpace,
             container.ExifOrientation,
             container.Width,
             container.Height,
@@ -479,6 +494,7 @@ internal static partial class FastHeifDecoder
         int targetWidth,
         int targetHeight,
         PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace,
         CancellationToken cancellationToken,
         out string? reason)
     {
@@ -540,6 +556,7 @@ internal static partial class FastHeifDecoder
                 targetWidth,
                 targetHeight,
                 encoding,
+                rgba8ColorSpace,
                 item.ExifOrientation,
                 container.Width,
                 container.Height,
@@ -620,6 +637,7 @@ internal static partial class FastHeifDecoder
         int targetWidth,
         int targetHeight,
         PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace,
         int exifOrientation,
         int sourceWidth,
         int sourceHeight,
@@ -640,9 +658,16 @@ internal static partial class FastHeifDecoder
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var converted = linearHalf
-                ? YuvImageConverter.TryConvertToRgbaLinearF16(source, targetWidth, targetHeight, buffer, stride, out var reason)
-                : YuvImageConverter.TryConvertToBgra32(source, targetWidth, targetHeight, buffer, stride, out reason);
+            string? reason = null;
+            var converted = encoding switch
+            {
+                PixelEncoding.RgbaF16 => YuvImageConverter.TryConvertToRgbaLinearF16(
+                    source, targetWidth, targetHeight, buffer, stride, out reason),
+                PixelEncoding.Rgba8 => YuvImageConverter.TryConvertToRgba8(
+                    source, targetWidth, targetHeight, buffer, stride, rgba8ColorSpace, out reason),
+                _ => YuvImageConverter.TryConvertToBgra32(
+                    source, targetWidth, targetHeight, buffer, stride, out reason),
+            };
             if (!converted)
             {
                 ImageBufferPool.Return(buffer);
@@ -656,7 +681,12 @@ internal static partial class FastHeifDecoder
                 targetHeight,
                 stride,
                 encoding,
-                linearHalf ? ImageColorSpace.LinearSrgb : ImageColorSpace.Srgb,
+                encoding switch
+                {
+                    PixelEncoding.RgbaF16 => ImageColorSpace.LinearSrgb,
+                    PixelEncoding.Rgba8 => rgba8ColorSpace,
+                    _ => ImageColorSpace.Srgb,
+                },
                 sourceWidth,
                 sourceHeight,
                 exifOrientation);
@@ -739,9 +769,9 @@ internal static partial class FastHeifDecoder
     private static int TileParallelism(int tileCount, DecodeLane lane)
     {
         var limit = Math.Min(tileCount, Environment.ProcessorCount);
-        if (lane != DecodeLane.Background || s_backgroundTilesDuringCurrent <= 0) return limit;
+        if (lane != DecodeLane.Background || s_settings.BackgroundTilesDuringCurrent <= 0) return limit;
         return Volatile.Read(ref s_currentImages) > 0
-            ? Math.Min(limit, s_backgroundTilesDuringCurrent)
+            ? Math.Min(limit, s_settings.BackgroundTilesDuringCurrent)
             : limit;
     }
 
@@ -749,10 +779,10 @@ internal static partial class FastHeifDecoder
     /// 解码入场:先取"同时在解的图像数"名额,再一次预留全部瓦片的解码上下文(全有或全无)。
     /// </summary>
     /// <remarks>
-    /// P0 通道不等后台:图像名额直接放行,上下文用 <see cref="MaxCurrentContexts"/>(常规上限之外另算),
+    /// P0 通道不等后台:图像名额直接放行,上下文用 <see cref="FastHeifOptions.MaxCurrentContextsExtra"/>(常规上限之外另算),
     /// 所以连翻时的整幅解码不会排在预取后面,也不会等后台释放上下文。
     /// 沿 P0 并行通道排在普通后台之前,且不受"P0 在解就让位"约束(它的意义就是在 P0 跑着的同时跑)。
-    /// 普通后台在 P0 在解时让位(<see cref="s_holdBackgroundDuringCurrent"/>):只挡排队,不打断已开跑的图。
+    /// 普通后台在 P0 在解时让位(<see cref="FastHeifOptions.HoldBackgroundDuringCurrent"/>):只挡排队,不打断已开跑的图。
     /// 名额先图像后上下文,且上下文全有或全无,故不存在持有上下文等图像的反向等待,无死锁;
     /// 取消在任一步都归还已拿到的名额。
     /// </remarks>
@@ -800,7 +830,7 @@ internal static partial class FastHeifDecoder
                     var lane = LaneOf();
                     if (lane == DecodeLane.Current)
                     {
-                        if (s_currentContexts + contextCount > MaxCurrentContexts)
+                        if (s_currentContexts + contextCount > s_settings.MaxCurrentContexts)
                         {
                             Monitor.Wait(s_admissionGate, AdmissionPollMs);
                             continue;
@@ -811,10 +841,10 @@ internal static partial class FastHeifDecoder
                     }
                     else
                     {
-                        if (s_backgroundContexts + contextCount > MaxConcurrentContexts
+                        if (s_backgroundContexts + contextCount > s_settings.MaxConcurrentContexts
                             || s_waitingCurrent > 0
                             || (lane == DecodeLane.Background
-                                && (s_waitingAlongside > 0 || (s_holdBackgroundDuringCurrent && s_currentImages > 0))))
+                                && (s_waitingAlongside > 0 || (s_settings.HoldBackgroundDuringCurrent && s_currentImages > 0))))
                         {
                             Monitor.Wait(s_admissionGate, AdmissionPollMs);
                             continue;
@@ -846,10 +876,10 @@ internal static partial class FastHeifDecoder
 
     /// <summary>图像名额是否已满(按通道);调用方须持有 <see cref="s_admissionGate"/>。</summary>
     private static bool ImageSlotBusyLocked(DecodeLane lane)
-        => s_backgroundImages >= MaxConcurrentImages
+        => s_backgroundImages >= s_settings.MaxConcurrentImages
             || s_waitingCurrent > 0
             || (lane == DecodeLane.Background
-                && (s_waitingAlongside > 0 || (s_holdBackgroundDuringCurrent && s_currentImages > 0)));
+                && (s_waitingAlongside > 0 || (s_settings.HoldBackgroundDuringCurrent && s_currentImages > 0)));
 
     /// <summary>登记"有该通道的请求在等",让更低优先级的请求先让开。</summary>
     private static void RegisterWaiter(DecodeLane lane)
@@ -939,6 +969,39 @@ internal static partial class FastHeifDecoder
     // ------------------------------------------------------------------
 
     /// <summary>
+    /// 一次性配置 pvhevc 的加载方式与解码并发上限,须在首次解码前调用。
+    /// </summary>
+    /// <remarks>
+    /// 共享工程不假定任何平台的原生库位置:未调用本方法的平台按 <c>DllImport("pvhevc")</c> 的默认探测加载
+    /// (Windows 即应用目录下的 <c>pvhevc.dll</c>,Android 即 APK 的 native 库目录),完全不受本类影响;
+    /// 需要自定义路径(例如单文件发布解包目录)的平台在启动时传入 <see cref="FastHeifOptions.LoadLibrary"/>。
+    /// 解析器注册在共享程序集上且只认 <c>pvhevc</c> 这个名字,不影响同程序集的其它原生依赖。
+    /// 每个进程只允许调用一次。
+    /// </remarks>
+    /// <param name="options">加载方式与并发上限。</param>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/> 为 null。</exception>
+    /// <exception cref="InvalidOperationException">解码器已初始化或已配置过。</exception>
+    public static void Configure(FastHeifOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        lock (s_initializationGate)
+        {
+            if (s_initialized)
+            {
+                throw new InvalidOperationException("FastHeifDecoder 已初始化,Configure 必须在首次解码前调用。");
+            }
+            if (s_configured != 0)
+            {
+                throw new InvalidOperationException("FastHeifDecoder 只能配置一次。");
+            }
+
+            s_settings = CreateSettings(options);
+            if (options.LoadLibrary is not null) InstallResolver(options.LoadLibrary);
+            s_configured = 1;
+        }
+    }
+
+    /// <summary>
     /// 串行完成一次性初始化:解析器安装 + 首次 open/close。
     /// </summary>
     /// <remarks>
@@ -952,7 +1015,6 @@ internal static partial class FastHeifDecoder
         lock (s_initializationGate)
         {
             if (s_initialized) return s_available;
-            InstallResolver();
             try
             {
                 s_available = pv_hevc_version() != 0;
@@ -976,18 +1038,23 @@ internal static partial class FastHeifDecoder
     }
 
     /// <summary>
-    /// 让 <c>pvhevc</c> 从应用目录加载(单文件发布时即解包目录,与 libheif 等同址);
-    /// 找不到时交回默认探测,便于工具直接引用同目录 DLL。
+    /// 安装平台注入的 pvhevc 加载器:只接管名字为 <c>pvhevc</c> 的导入,其余交回默认探测;
+    /// 加载器返回 0 时同样交回默认探测。
     /// </summary>
-    private static void InstallResolver()
+    /// <remarks>同一程序集只允许一个 <c>DllImport</c> 解析器,已被占用时记录一条诊断并保留默认探测。</remarks>
+    private static void InstallResolver(Func<IntPtr> loadLibrary)
     {
-        if (Interlocked.Exchange(ref s_resolverInstalled, 1) != 0) return;
-        NativeLibrary.SetDllImportResolver(typeof(FastHeifDecoder).Assembly, static (name, _, _) =>
+        try
         {
-            if (!string.Equals(name, LibraryName, StringComparison.OrdinalIgnoreCase)) return IntPtr.Zero;
-            var path = Path.Combine(AppContext.BaseDirectory, LibraryName + ".dll");
-            return File.Exists(path) ? NativeLibrary.Load(path) : IntPtr.Zero;
-        });
+            NativeLibrary.SetDllImportResolver(typeof(FastHeifDecoder).Assembly, (name, _, _) =>
+                string.Equals(name, LibraryName, StringComparison.OrdinalIgnoreCase)
+                    ? loadLibrary()
+                    : IntPtr.Zero);
+        }
+        catch (InvalidOperationException exception)
+        {
+            Console.WriteLine("[FastHeifDecoder] 程序集已有 DllImport 解析器,改用默认探测:" + exception.Message);
+        }
     }
 
     /// <summary>取一个上下文:优先复用池中空闲实例,池空时新建。</summary>
@@ -1024,7 +1091,7 @@ internal static partial class FastHeifDecoder
         if (context == IntPtr.Zero) return;
         lock (s_poolGate)
         {
-            if (s_idleContexts.Count < MaxIdleContexts)
+            if (s_idleContexts.Count < s_settings.MaxIdleContexts)
             {
                 s_idleContexts.Push(context);
                 return;
@@ -1072,4 +1139,38 @@ internal static partial class FastHeifDecoder
             TrimIdleContexts();
         }
     }
+}
+
+/// <summary>
+/// pvhevc 原生库加载方式与解码并发的可选配置;未调用 <see cref="FastHeifDecoder.Configure"/> 时全部取默认值。
+/// </summary>
+public sealed class FastHeifOptions
+{
+    /// <summary>
+    /// 打开 pvhevc 原生库并返回模块句柄;null 表示交给默认 DllImport 探测(应用目录同名的 <c>pvhevc</c> 库)。
+    /// 回调返回 <see cref="IntPtr.Zero"/> 时同样退回默认探测。
+    /// </summary>
+    public Func<IntPtr>? LoadLibrary { get; init; }
+
+    /// <summary>空闲上下文池上限;超出上限的归还即关闭,避免空闲解码器长占内存。</summary>
+    public int MaxIdleContexts { get; init; } = 6;
+
+    /// <summary>全局同时在用的解码上下文上限(默认处理器数)。</summary>
+    public int MaxConcurrentContexts { get; init; } = Math.Max(1, Environment.ProcessorCount);
+
+    /// <summary>
+    /// 当前照片通道在常规上限之外额外放宽的上下文数:保证 P0 不等后台释放上下文。
+    /// 默认按核数收敛(处理器数的一半,2–8)。
+    /// </summary>
+    public int MaxCurrentContextsExtra { get; init; }
+        = Math.Clamp(Math.Max(1, Environment.ProcessorCount) / 2, 2, 8);
+
+    /// <summary>同时在转换的图像上限(默认 max(2, 处理器数 / 4))。</summary>
+    public int MaxConcurrentImages { get; init; } = Math.Max(2, Environment.ProcessorCount / 4);
+
+    /// <summary>后台起解(进瓦片阶段)时若当前图在解,瓦片并行度上限;0 表示不收窄。</summary>
+    public int BackgroundTilesDuringCurrent { get; init; } = 2;
+
+    /// <summary>当前图在解时普通后台是否让位(只影响排队,不影响已开跑的图)。</summary>
+    public bool HoldBackgroundDuringCurrent { get; init; } = true;
 }

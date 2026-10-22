@@ -3,7 +3,7 @@ using System.Globalization;
 using System.Text;
 using System.Threading;
 
-namespace PhotoViewer.Windows.Core.Heif;
+namespace PhotoViewer.Core.Image.Heif;
 
 /// <summary>
 /// HEIF 整幅解码的分段耗时常驻统计(内存环形缓冲,无文件、无采样线程):压测汇总行据此区分
@@ -20,7 +20,7 @@ namespace PhotoViewer.Windows.Core.Heif;
 /// <item>convert:YUV→展示编码(按行带并行)。</item>
 /// </list>
 /// </remarks>
-internal static class HeifDecodeStats
+public static class HeifDecodeStats
 {
     /// <summary>环形缓冲容量(足够覆盖一轮连翻)。</summary>
     private const int Capacity = 256;
@@ -94,7 +94,7 @@ internal static class HeifDecodeStats
     internal static void Leave() => Interlocked.Decrement(ref _inFlight);
 
     /// <summary>清空(压测开始前调用)。</summary>
-    internal static void Reset()
+    public static void Reset()
     {
         lock (Gate)
         {
@@ -107,7 +107,7 @@ internal static class HeifDecodeStats
     /// <summary>
     /// 汇总成一行纯文本(无样本返回空串):各段 p50/p95/max、总耗时 p95、峰值同时在途图像数。
     /// </summary>
-    internal static string Summary()
+    public static string Summary()
     {
         Entry[] samples;
         lock (Gate)

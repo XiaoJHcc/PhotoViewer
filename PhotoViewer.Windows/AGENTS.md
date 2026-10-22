@@ -17,7 +17,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制。 |
 | `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。 |
 | `Native/WindowsWindowChrome.cs`、`WindowsUiServices.cs`、`WindowsImageAdapter.cs` | 窗口外壳、调度/选择器/资源门面、XAML 位图适配。 |
-| `Core/` | 展示编码与解码（`WindowsPresentationDecoder`：HEIF → `Heif/FastHeifDecoder`，回落 `LibHeifDecoder`；RAW → `WindowsRawDecoder`）、`Heif/`（`HeifContainer` 容器解析、`YuvImageConverter` YUV→展示编码、`FastHeifDecoder` 的 pvhevc 上下文池/**优先级解码闸门**、内存客户端、`HeifDecodeStats` 解码分段耗时统计——gate/ctx/tiles/conv 各段并按 P0 与后台分列）、`LibHeifDecoder`（**小尺寸请求**——胶片栏列表档经 `ThumbnailService` 传来的 120/400——优先解容器自带 `thmb` 项并缩到与主图路径相同的尺寸与方向；DINO 的 560 短边仍走主图）、`WindowsRawDecoder`（WIC RAW 全分辨率解码：按相机 `DefaultCropOrigin/Size` 裁剪、方向交给渲染层、内嵌整幅 JPEG 兜底）、`WindowsMemoryBudgetProvider`（物理内存预算 + 进程私有提交 + 系统低内存通知）、`WindowsPerformanceBudget`（设置页默认值：缓存内存与张数按物理内存、后台解码线程按核数推导，物理内存/核数/线程上限沿用 `DefaultPerformanceBudget`）,XMP 写回。 |
+| `Core/` | 展示编码与解码（`WindowsPresentationDecoder`：HEIF → 共享 `PhotoViewer.Core.Image.Heif.FastHeifDecoder`，回落 `LibHeifDecoder`；RAW → `WindowsRawDecoder`）、`LibHeifDecoder`（**小尺寸请求**——胶片栏列表档经 `ThumbnailService` 传来的 120/400——优先解容器自带 `thmb` 项并缩到与主图路径相同的尺寸与方向；DINO 的 560 短边仍走主图）、`WindowsRawDecoder`（WIC RAW 全分辨率解码：按相机 `DefaultCropOrigin/Size` 裁剪、方向交给渲染层、内嵌整幅 JPEG 兜底）、`WindowsMemoryBudgetProvider`（物理内存预算 + 进程私有提交 + 系统低内存通知）、`WindowsPerformanceBudget`（设置页默认值：缓存内存与张数按物理内存、后台解码线程按核数推导，物理内存/核数/线程上限沿用 `DefaultPerformanceBudget`）,XMP 写回。 |
 | `Native/*Acceptance.cs`、`Native/NativeStartupLog.cs` | 隔离验收、部署检查与启动诊断。 |
 | `Native/WindowsPerfProbe.cs`、`WindowsUploadStats.cs`、`WindowsHeifThumbProbe.cs` | 分段性能探针（HIF/ARW/JPG 各 6 张，首张预热，写文本报告）、主图纹理上传的常驻轻量统计（压测汇总行消费）、HEIF 缩略图项与主图缩放两条路径的逐文件对比探针。 |
 | `PhotoViewer.Windows.csproj`、`PortableSingleFile.targets`、`publish-win-x64-singlefile.ps1` | 平台依赖、单文件资源与 CRT 打包、发布验收。 |
@@ -32,7 +32,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 主图上传按图分流：当前帧与最近两帧的纹理按 `DecodedImage` 实例身份缓存，同一实例直接复用 GPU 纹理、不重传（缓存只持弱引用，不延长像素租约）；另有**一张**同尺寸空纹理（`_spareTexture`，只收 ≤32MB 的小图）给下一次同步上传复用——每张切图新建一张 21MB 的 mip 链纹理时，约 7%–10% 的 `CreateTexture2D` 会在驱动里停 300–500ms，那一段直接进切图延迟，复用后上传段 p95 从 ~350ms 降到 ~5ms；像素数据 ≥32MB 的图把整幅像素交给后台线程逐行写进系统内存暂存纹理（DirectN 是经典 RCW、D3D11 接口无 proxy/stub，后台线程不得调用任何 D3D/COM 对象），UI 线程只建带 mip 的纹理、拷 mip0、生成 mip 链后整体交换，未交换前上一帧继续上屏，同时最多一次在途拷贝，收尾时已不期望的成果进最近纹理缓存而不上屏。纹理占用登记为 `GpuTextures` 内存客户端，压力 Caution 起丢弃非当前帧的缓存纹理与空纹理（清场在 UI 线程）。
 - 切图与热替换按 `PhotoLoadSession.Generation` 区分，不能只比源尺寸与方向：缓存命中切图不经过空图，同机型连拍两张的几何完全相同。代际变化一律走 `BeginImageChange`/`ApplyImage`（适应态重新适应、跟随对焦到新照片），代际相同才可能是代理↔Full 热替换；同一实例 + 同一代际的会话通知（加载态、增强态）不重传纹理。大图后台上传仍保持上一帧，收尾交换时按切图语义应用几何。
 - 分析栏实现 `IAnalysisHost`，消费共享 `AnalysisPresenter`；工具 DINO 页消费 `DinoDiagnosticPresenter`。不得另建分析编排或恢复旧 UI 适配层。细节裁剪使用 `DisplayCrop`，增强状态归 `PhotoLoadSession`。
-- HEIF 解码排队按优先级通道（`PhotoViewer.Core.Image.DecodeContext` 的票据定通道）：P0 当前照片越过一切后台请求、可用超出常规上限的 pvhevc 上下文（常规上限仍管后台）；翻页方向前两张预取（Alongside）排普通后台之前；普通后台在 P0 在解时让位（只挡排队，不打断已开跑的图，`PV_HEIF_HOLD_BACKGROUND=0` 关）。两个名额先图像后上下文、上下文全有或全无，故无反向等待死锁；后台起解时瓦片并行度默认收窄到 2 路（`PV_HEIF_BACKGROUND_TILES`，0 = 不收窄），把核让给当前图。这两条环境变量只作压测对照，不进设置页。
+- HEIF 快速解码（`HeifContainer` 容器解析、`YuvImageConverter` YUV→展示编码、pvhevc 上下文池与优先级解码闸门、`HeifDecodeStats` 分段耗时统计）位于共享 `PhotoViewer.Core.Image.Heif`；Windows 头只注入原生库与并发参数，不另存一套实现。解码排队按优先级通道（`PhotoViewer.Core.Image.DecodeContext` 的票据定通道）：P0 当前照片越过一切后台请求、可用超出常规上限的 pvhevc 上下文（常规上限仍管后台）；翻页方向前两张预取（Alongside）排普通后台之前；普通后台在 P0 在解时让位（只挡排队，不打断已开跑的图，`PV_HEIF_HOLD_BACKGROUND=0` 关）。两个名额先图像后上下文、上下文全有或全无，故无反向等待死锁；后台起解时瓦片并行度默认收窄到 2 路（`PV_HEIF_BACKGROUND_TILES`，0 = 不收窄），把核让给当前图。这两条环境变量只作压测对照，不进设置页。
 - 设置使用 `NativeSettingsSession` 工作副本；设置/工具窗口通过平台 presenter 管理生命周期。文件选择器绑定发起窗口自己的 HWND。
 - 导航图直接从展示帧以 Skia 降采样并处理方向，不做 D3D 回读。耗时像素处理在后台，`WriteableBitmap` 必须在 UI 线程创建。
 - DirectML 即时推理需串行；后台分析期间持有图像租约，避免热替换后访问已归还的像素缓冲。
@@ -40,7 +40,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 ## 构建与发布约束
 
 - TFM 为 `net10.0-windows10.0.19041.0`，RID 固定 `win-x64`；libheif 原生依赖仅提供该架构。普通输出位于 `bin/<配置>/<TFM>/win-x64/`。
-- HEIF 快速解码依赖 `NativeLibs/win-x64/pvhevc.dll`：静态链接「仅 HEVC 解码器」LGPL FFmpeg 的最小库，薄 C 封装在 `NativeSrc/pvhevc/`，用 MSYS2 CLANG64 工具链经 `build-native-windows-hevc.ps1` 构建，二进制与许可说明一并入库。csproj 把它和应用本地内容一起带进输出与单文件包，托管侧按 `AppContext.BaseDirectory` 解析；`--pv-native-portable` 会核对它确实从解包目录加载。
+- HEIF 快速解码依赖 `NativeLibs/win-x64/pvhevc.dll`：静态链接「仅 HEVC 解码器」LGPL FFmpeg 的最小库，薄 C 封装在 `NativeSrc/pvhevc/`，用 MSYS2 CLANG64 工具链经 `build-native-windows-hevc.ps1` 构建，二进制与许可说明一并入库。csproj 把它和应用本地内容一起带进输出与单文件包；共享解码器不硬编码路径，Windows 头在 `Native/WindowsNativeApplication.InitializeFacades` 用 `FastHeifOptions.LoadLibrary` 注入 `AppContext.BaseDirectory` 下的 `pvhevc.dll`（缺失时交回默认探测）；`--pv-native-portable` 会核对它确实从解包目录加载。
 - 非打包自包含配置、手写入口及 DPI 声明由 csproj / `app.manifest` 维护；保留 `PerMonitorV2`，避免系统位图缩放。
 - WinAppSDK 自带的 ONNX/DirectML 与项目包同名；保留 `MicrosoftWindowsAppSDKFilesExcluded` 规则，避免托管/原生版本混用。依赖版本集中在 `Directory.Packages.props`。
 - DINO 模型由 Windows 头工程显式嵌入，不依赖松散文件；资源名称由 `LogicalName` 固定，不随发布程序集名变化。

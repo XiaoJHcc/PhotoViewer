@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 

@@ -7,7 +7,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;

@@ -5,12 +5,12 @@ using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace PhotoViewer.Windows.Core;
 
 /// <summary>
-/// HEIF 解码器(缩略图兜底与分析输入):优先走 <see cref="Heif.FastHeifDecoder"/>,
+/// HEIF 解码器(缩略图兜底与分析输入):优先走 <see cref="FastHeifDecoder"/>,
 /// 容器或色彩超出支持面时回落 libheif。
 /// </summary>
 /// <remarks>

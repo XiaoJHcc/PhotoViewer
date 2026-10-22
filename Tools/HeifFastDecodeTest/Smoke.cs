@@ -1,5 +1,5 @@
 using System.Runtime.InteropServices;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 

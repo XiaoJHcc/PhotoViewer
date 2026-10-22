@@ -9,7 +9,13 @@
 
 #include <stdint.h>
 
+#if defined(_WIN32)
 #define PV_API __declspec(dllexport)
+#elif defined(__GNUC__) || defined(__clang__)
+#define PV_API __attribute__((visibility("default")))
+#else
+#define PV_API
+#endif
 
 #ifdef __cplusplus
 extern "C" {

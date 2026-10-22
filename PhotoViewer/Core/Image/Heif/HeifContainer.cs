@@ -4,7 +4,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace PhotoViewer.Windows.Core.Heif;
+namespace PhotoViewer.Core.Image.Heif;
 
 /// <summary>HEIF 图像项的类型。</summary>
 public enum HeifItemKind

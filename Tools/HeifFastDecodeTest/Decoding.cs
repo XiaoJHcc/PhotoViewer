@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 
@@ -31,7 +31,7 @@ internal sealed unsafe class DecodedTile : IDisposable
         => new(data, width, height, bitDepth, chroma);
 
     /// <summary>把平面转成转换器需要的瓦片视图(ispe 尺寸用于画布裁剪,CodedWidth 用于跨距)。</summary>
-    public PhotoViewer.Windows.Core.Heif.YuvTile ToTile(int column, int row, int ispeWidth, int ispeHeight)
+    public PhotoViewer.Core.Image.Heif.YuvTile ToTile(int column, int row, int ispeWidth, int ispeHeight)
     {
         var bytesPerSample = BitDepth > 8 ? 2 : 1;
         var basePointer = (byte*)_handle.AddrOfPinnedObject();
@@ -47,7 +47,7 @@ internal sealed unsafe class DecodedTile : IDisposable
         var cb = basePointer + ySize;
         var cr = cb + (chromaWidth * chromaHeight * bytesPerSample);
 
-        return new PhotoViewer.Windows.Core.Heif.YuvTile
+        return new PhotoViewer.Core.Image.Heif.YuvTile
         {
             Y = (IntPtr)basePointer,
             Cb = Chroma == HeifChromaSampling.Monochrome ? IntPtr.Zero : (IntPtr)cb,
@@ -181,7 +181,7 @@ internal static class TileDecodeHarness
 
     /// <summary>解码全部瓦片;失败返回 null。临时 .hevc 文件保留给调用方清理。</summary>
     public static DecodedTile[]? DecodeAll(
-        PhotoViewer.Windows.Core.Heif.HeifContainer container,
+        PhotoViewer.Core.Image.Heif.HeifContainer container,
         string tempDirectory,
         bool parallel,
         Backend backend = Backend.Ffmpeg)

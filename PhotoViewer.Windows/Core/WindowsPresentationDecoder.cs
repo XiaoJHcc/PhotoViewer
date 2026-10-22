@@ -7,7 +7,7 @@ using PhotoViewer.Core.Color;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace PhotoViewer.Windows.Core;
 

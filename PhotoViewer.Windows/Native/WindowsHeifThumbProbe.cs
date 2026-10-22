@@ -10,7 +10,7 @@ using System.Threading.Tasks;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
-using PhotoViewer.Windows.Core.Heif;
+using PhotoViewer.Core.Image.Heif;
 
 namespace PhotoViewer.Windows.Native;
 

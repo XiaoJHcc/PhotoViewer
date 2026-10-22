@@ -2,17 +2,24 @@
  * pvhevc — minimal FFmpeg-backed HEVC still-picture decoder for PhotoViewer.
  *
  * Static FFmpeg build: libavcodec.a + libavutil.a, HEVC decoder only, LGPL.
- * See PhotoViewer.Windows/build-native-windows-hevc.ps1 for the exact
- * configure line and version.
+ * One source, two build scripts (the header exports the identical C ABI):
+ *   PhotoViewer.Windows/build-native-windows-hevc.ps1  → pvhevc.dll
+ *   PhotoViewer.Android/build-native-android-hevc.sh   → libpvhevc.so
+ * Each script's pvhevc.txt records the exact configure line and version.
  */
 
 #include "pvhevc.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#else
+#include <stdatomic.h>
+#endif
 
 #include <libavcodec/avcodec.h>
 #include <libavutil/error.h>
@@ -45,9 +52,16 @@ static void pv_set_error(PvHevcContext *c, const char *what, int averr)
  * callers that want FFmpeg chatter can raise the level again after pv_hevc_open. */
 static void pv_quiet_logs_once(void)
 {
+#ifdef _WIN32
     static volatile long done = 0;
-    if (InterlockedCompareExchange(&done, 1, 0) == 0)
-        av_log_set_level(AV_LOG_ERROR);
+    if (InterlockedCompareExchange(&done, 1, 0) != 0)
+        return;
+#else
+    static atomic_int done = 0;
+    if (atomic_exchange_explicit(&done, 1, memory_order_relaxed) != 0)
+        return;
+#endif
+    av_log_set_level(AV_LOG_ERROR);
 }
 
 static int pv_chroma_format(const AVPixFmtDescriptor *desc)

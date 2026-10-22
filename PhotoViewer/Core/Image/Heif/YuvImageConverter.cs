@@ -5,8 +5,9 @@ using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
 using System.Threading;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Color;
 
-namespace PhotoViewer.Windows.Core.Heif;
+namespace PhotoViewer.Core.Image.Heif;
 
 /// <summary>HEVC 色度采样格式。</summary>
 public enum HeifChromaSampling
@@ -106,10 +107,11 @@ public sealed class YuvImage
 /// YUV 瓦片 → 呈现缓冲的转换器。
 /// </summary>
 /// <remarks>
-/// 两条出口:
+/// 三条出口:
 /// <list type="bullet">
 /// <item>线性光 RGBA 半浮点(scRGB / 线性 sRGB 基色),供线性交换链直接采样;</item>
-/// <item>sRGB 8 位 BGRA,供缩略图与分析使用。</item>
+/// <item>sRGB 8 位 BGRA,供缩略图与分析使用;</item>
+/// <item>8 位 RGBA,按请求标记为 sRGB 或 Display P3,供 Android 等 8 位展示表面使用。</item>
 /// </list>
 /// 目标尺寸等于画布时逐像素直通;小于画布时用 Mitchell–Netravali(B=C=1/3)可分离重采样,
 /// 核支撑按缩放倍数展宽(抗锯齿),重采样在 gamma 编码的 R'G'B' 上完成,最后才线性化/量化。
@@ -131,6 +133,18 @@ public static class YuvImageConverter
 
     private static readonly float[] s_linearLut = BuildLut(false);
     private static readonly float[] s_encodeLut = BuildLut(true);
+
+    /// <summary>
+    /// sRGB/BT.709 → Display P3 的线性基色矩阵(行优先)。取 Display P3 → sRGB 标准线性基色矩阵
+    /// (即 <c>Plan.P3ToSrgbMatrix</c> 那三行)在双精度下求逆的结果,两者互逆:正向应用后再反向应用的
+    /// 舍入误差在 1e-7 量级,远小于 1/255 的量化步长。
+    /// </summary>
+    private static readonly float[] s_srgbToP3Matrix =
+    {
+        0.8224620f, 0.1775382f, 0.0000000f,
+        0.0331942f, 0.9668059f, 0.0000000f,
+        0.0170827f, 0.0723975f, 0.9105200f,
+    };
 
     private static long s_scratchCurrent;
     private static long s_scratchPeak;
@@ -156,7 +170,15 @@ public static class YuvImageConverter
         byte[] destination,
         int destinationStride,
         out string? unsupportedReason)
-        => Convert(source, targetWidth, targetHeight, destination, destinationStride, true, out unsupportedReason);
+        => Convert(
+            source,
+            targetWidth,
+            targetHeight,
+            destination,
+            destinationStride,
+            OutputFormat.RgbaF16,
+            ImageColorSpace.LinearSrgb,
+            out unsupportedReason);
 
     /// <summary>
     /// 转换到 sRGB 8 位 BGRA(B,G,R,255)缓冲。
@@ -175,7 +197,45 @@ public static class YuvImageConverter
         byte[] destination,
         int destinationStride,
         out string? unsupportedReason)
-        => Convert(source, targetWidth, targetHeight, destination, destinationStride, false, out unsupportedReason);
+        => Convert(
+            source,
+            targetWidth,
+            targetHeight,
+            destination,
+            destinationStride,
+            OutputFormat.Bgra32,
+            ImageColorSpace.Srgb,
+            out unsupportedReason);
+
+    /// <summary>
+    /// 转换到 8 位 RGBA(R,G,B,255)缓冲,色彩标记为 <paramref name="colorSpace"/>。
+    /// </summary>
+    /// <remarks>
+    /// <paramref name="colorSpace"/> 只影响原色转换,传递函数始终是 sRGB 曲线(Display P3 也用 sRGB TRC):
+    /// <list type="bullet">
+    /// <item><see cref="ImageColorSpace.Srgb"/>:源为 BT.709/sRGB 原色时与原 BGRA32 路径逐像素相同(仅通道序不同);
+    /// 源为 Display P3 原色时先转 sRGB 再量化。</item>
+    /// <item><see cref="ImageColorSpace.DisplayP3"/>:源为 Display P3 原色时直接量化(不裁剪到 sRGB 色域);
+    /// 源为 BT.709/sRGB 原色时在线性域乘以 sRGB→P3 基色矩阵后再编码量化。</item>
+    /// </list>
+    /// </remarks>
+    /// <param name="source">解码后的瓦片与色彩描述。</param>
+    /// <param name="targetWidth">目标宽;等于画布宽时不做重采样。</param>
+    /// <param name="targetHeight">目标高。</param>
+    /// <param name="destination">目标缓冲,按行跨距写入。</param>
+    /// <param name="destinationStride">目标行跨距(字节),需 ≥ targetWidth×4。</param>
+    /// <param name="colorSpace">目标 8 位色彩空间(仅接受 <see cref="ImageColorSpace.Srgb"/> 与 <see cref="ImageColorSpace.DisplayP3"/>)。</param>
+    /// <param name="unsupportedReason">不受支持时的原因;成功为 null。</param>
+    /// <returns>转换成功返回 true。</returns>
+    public static bool TryConvertToRgba8(
+        YuvImage source,
+        int targetWidth,
+        int targetHeight,
+        byte[] destination,
+        int destinationStride,
+        ImageColorSpace colorSpace,
+        out string? unsupportedReason)
+        => Convert(source, targetWidth, targetHeight, destination, destinationStride, OutputFormat.Rgba8, colorSpace, out unsupportedReason);
 
     /// <summary>检查色彩与格式是否可转换,不实际转换。</summary>
     /// <param name="source">输入描述。</param>
@@ -188,19 +248,52 @@ public static class YuvImageConverter
     // 准备与调度
     // ---------------------------------------------------------------
 
+    /// <summary>输出格式。</summary>
+    private enum OutputFormat
+    {
+        /// <summary>线性光 RGBA 半浮点。</summary>
+        RgbaF16,
+
+        /// <summary>sRGB 8 位 BGRA。</summary>
+        Bgra32,
+
+        /// <summary>8 位 RGBA,目标色彩空间由调用方指定。</summary>
+        Rgba8,
+    }
+
+    /// <summary>8 位 RGBA 输出需要做的线性基色转换。</summary>
+    private enum Rgba8Transform
+    {
+        /// <summary>源与目标原色一致,直接量化 gamma 编码值。</summary>
+        None,
+
+        /// <summary>源为 Display P3 原色,目标为 sRGB。</summary>
+        P3ToSrgb,
+
+        /// <summary>源为 BT.709/sRGB 原色,目标为 Display P3。</summary>
+        SrgbToP3,
+    }
+
     private static bool Convert(
         YuvImage source,
         int targetWidth,
         int targetHeight,
         byte[] destination,
         int destinationStride,
-        bool linearHalf,
+        OutputFormat format,
+        ImageColorSpace rgba8ColorSpace,
         out string? unsupportedReason)
     {
         unsupportedReason = DescribeUnsupported(source);
         if (unsupportedReason is not null) return false;
 
-        var bytesPerPixel = linearHalf ? 8 : 4;
+        if (format == OutputFormat.Rgba8 && rgba8ColorSpace is not (ImageColorSpace.Srgb or ImageColorSpace.DisplayP3))
+        {
+            unsupportedReason = "8 位 RGBA 只支持 sRGB 或 Display P3 目标色彩空间,收到 " + rgba8ColorSpace;
+            return false;
+        }
+
+        var bytesPerPixel = format == OutputFormat.RgbaF16 ? 8 : 4;
         if (targetWidth <= 0 || targetHeight <= 0)
         {
             unsupportedReason = "目标尺寸非法";
@@ -218,7 +311,7 @@ public static class YuvImageConverter
             return false;
         }
 
-        var plan = new Plan(source, targetWidth, targetHeight, destinationStride, linearHalf);
+        var plan = new Plan(source, targetWidth, targetHeight, destinationStride, format, rgba8ColorSpace);
         Interlocked.Exchange(ref s_scratchPeak, 0);
 
         var options = new ParallelOptions();
@@ -287,10 +380,9 @@ public static class YuvImageConverter
     private static unsafe void RunFullResolution(Plan plan, byte* destination, ParallelOptions options)
     {
         var bands = (plan.TargetHeight + FullResBandRows - 1) / FullResBandRows;
-        var linearHalf = plan.LinearHalf;
         if (options.MaxDegreeOfParallelism == 1)
         {
-            RunFullResolutionRange(plan, destination, 0, bands, linearHalf);
+            RunFullResolutionRange(plan, destination, 0, bands);
             return;
         }
         Parallel.For(0, bands, options, band =>
@@ -302,13 +394,12 @@ public static class YuvImageConverter
             for (var y = startY; y < endY; y++)
             {
                 var row = destination + ((long)y * plan.DestinationStride);
-                if (linearHalf) ConvertRowToHalf(plan, y, row, scratch, single);
-                else ConvertRowToBgra(plan, y, row, scratch, single);
+                ConvertRow(plan, y, row, scratch, single);
             }
         });
     }
 
-    private static unsafe void RunFullResolutionRange(Plan plan, byte* destination, int firstBand, int lastBand, bool linearHalf)
+    private static unsafe void RunFullResolutionRange(Plan plan, byte* destination, int firstBand, int lastBand)
     {
         var scratch = stackalloc float[24];
         var single = stackalloc float[3];
@@ -319,9 +410,25 @@ public static class YuvImageConverter
             for (var y = startY; y < endY; y++)
             {
                 var row = destination + ((long)y * plan.DestinationStride);
-                if (linearHalf) ConvertRowToHalf(plan, y, row, scratch, single);
-                else ConvertRowToBgra(plan, y, row, scratch, single);
+                ConvertRow(plan, y, row, scratch, single);
             }
+        }
+    }
+
+    /// <summary>按输出格式把一整行画布像素写进目标缓冲。</summary>
+    private static unsafe void ConvertRow(Plan plan, int y, byte* destination, float* scratch, float* single)
+    {
+        switch (plan.Format)
+        {
+            case OutputFormat.RgbaF16:
+                ConvertRowToHalf(plan, y, destination, scratch, single);
+                break;
+            case OutputFormat.Rgba8:
+                ConvertRowToRgba8(plan, y, destination, scratch, single);
+                break;
+            default:
+                ConvertRowToBgra(plan, y, destination, scratch, single);
+                break;
         }
     }
 
@@ -383,6 +490,37 @@ public static class YuvImageConverter
             {
                 Load1(plan, rows, localX, chromaWeight, single);
                 PackBgra1(plan, single, output + ((long)localX * 4));
+            }
+        }
+    }
+
+    private static unsafe void ConvertRowToRgba8(Plan plan, int y, byte* destination, float* scratch, float* single)
+    {
+        var tileRowBase = plan.TileRowBase(y);
+        var localY = plan.LocalY(y);
+        var chromaWeight = plan.ChromaWeight(localY);
+        for (var column = 0; column < plan.Columns; column++)
+        {
+            var slot = tileRowBase + column;
+            var tileColumn = plan.TileIndex[slot];
+            if (tileColumn < 0) continue;
+            var tile = plan.Tiles[tileColumn];
+            var startX = column * plan.TileWidth;
+            var endX = Math.Min(plan.CanvasWidth, startX + plan.TileWidth);
+            var output = destination + ((long)startX * 4);
+            var localEnd = endX - startX;
+            var rows = plan.ResolveRows(tile, localY);
+
+            var localX = 0;
+            for (; localX + 8 <= localEnd; localX += 8)
+            {
+                Load8(plan, rows, localX, chromaWeight, scratch);
+                PackRgba8(plan, scratch, output + ((long)localX * 4));
+            }
+            for (; localX < localEnd; localX++)
+            {
+                Load1(plan, rows, localX, chromaWeight, single);
+                PackRgba1(plan, single, output + ((long)localX * 4));
             }
         }
     }
@@ -485,8 +623,18 @@ public static class YuvImageConverter
             }
 
             var row = destination + ((long)outputY * plan.DestinationStride);
-            if (plan.LinearHalf) PackHalf(plan, outputRow, plan.TargetWidth, row);
-            else PackBgra(plan, outputRow, plan.TargetWidth, row);
+            switch (plan.Format)
+            {
+                case OutputFormat.RgbaF16:
+                    PackHalf(plan, outputRow, plan.TargetWidth, row);
+                    break;
+                case OutputFormat.Rgba8:
+                    PackRgba(plan, outputRow, plan.TargetWidth, row);
+                    break;
+                default:
+                    PackBgra(plan, outputRow, plan.TargetWidth, row);
+                    break;
+            }
         }
     }
 
@@ -799,6 +947,52 @@ public static class YuvImageConverter
         target[3] = 255;
     }
 
+    private static unsafe void PackRgba8(Plan plan, float* scratch, byte* destination)
+    {
+        for (var i = 0; i < 8; i++)
+        {
+            PackRgbaPixel(plan, scratch[i], scratch[8 + i], scratch[16 + i], destination + (i * 4));
+        }
+    }
+
+    private static unsafe void PackRgba1(Plan plan, float* rgb, byte* destination)
+        => PackRgbaPixel(plan, rgb[0], rgb[1], rgb[2], destination);
+
+    private static unsafe void PackRgba(Plan plan, float* interleaved, int width, byte* destination)
+    {
+        for (var x = 0; x < width; x++)
+        {
+            var source = interleaved + ((long)x * 3);
+            PackRgbaPixel(plan, source[0], source[1], source[2], destination + ((long)x * 4));
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static unsafe void PackRgbaPixel(Plan plan, float gr, float gg, float gb, byte* target)
+    {
+        switch (plan.Rgba8Transform)
+        {
+            case Rgba8Transform.P3ToSrgb:
+                FinishRgb(plan, gr, gg, gb, out var sr, out var sg, out var sb);
+                target[0] = QuantizeLinear(sr);
+                target[1] = QuantizeLinear(sg);
+                target[2] = QuantizeLinear(sb);
+                break;
+            case Rgba8Transform.SrgbToP3:
+                FinishRgbToP3(gr, gg, gb, out var pr, out var pg, out var pb);
+                target[0] = QuantizeLinear(pr);
+                target[1] = QuantizeLinear(pg);
+                target[2] = QuantizeLinear(pb);
+                break;
+            default:
+                target[0] = QuantizeGamma(gr);
+                target[1] = QuantizeGamma(gg);
+                target[2] = QuantizeGamma(gb);
+                break;
+        }
+        target[3] = 255;
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void WriteHalf(byte* target, float value)
         => Unsafe.WriteUnaligned(ref *target, BitConverter.HalfToUInt16Bits((Half)value));
@@ -837,6 +1031,18 @@ public static class YuvImageConverter
         r = (plan.P3ToSrgbMatrix[0] * lr) + (plan.P3ToSrgbMatrix[1] * lg) + (plan.P3ToSrgbMatrix[2] * lb);
         g = (plan.P3ToSrgbMatrix[3] * lr) + (plan.P3ToSrgbMatrix[4] * lg) + (plan.P3ToSrgbMatrix[5] * lb);
         b = (plan.P3ToSrgbMatrix[6] * lr) + (plan.P3ToSrgbMatrix[7] * lg) + (plan.P3ToSrgbMatrix[8] * lb);
+    }
+
+    /// <summary>gamma 编码的 BT.709/sRGB 三分量 → 线性光 sRGB → 线性光 Display P3。</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static void FinishRgbToP3(float gr, float gg, float gb, out float r, out float g, out float b)
+    {
+        var lr = Linearize(gr);
+        var lg = Linearize(gg);
+        var lb = Linearize(gb);
+        r = (s_srgbToP3Matrix[0] * lr) + (s_srgbToP3Matrix[1] * lg) + (s_srgbToP3Matrix[2] * lb);
+        g = (s_srgbToP3Matrix[3] * lr) + (s_srgbToP3Matrix[4] * lg) + (s_srgbToP3Matrix[5] * lb);
+        b = (s_srgbToP3Matrix[6] * lr) + (s_srgbToP3Matrix[7] * lg) + (s_srgbToP3Matrix[8] * lb);
     }
 
     /// <summary>sRGB 电光转换:编码值 → 线性光(4096 项表 + 线性插值)。</summary>
@@ -908,7 +1114,13 @@ public static class YuvImageConverter
 
     private sealed class Plan
     {
-        public Plan(YuvImage source, int targetWidth, int targetHeight, int destinationStride, bool linearHalf)
+        public Plan(
+            YuvImage source,
+            int targetWidth,
+            int targetHeight,
+            int destinationStride,
+            OutputFormat format,
+            ImageColorSpace rgba8ColorSpace)
         {
             Tiles = new YuvTile[source.Tiles.Count];
             for (var i = 0; i < Tiles.Length; i++) Tiles[i] = source.Tiles[i];
@@ -917,11 +1129,18 @@ public static class YuvImageConverter
             TargetWidth = targetWidth;
             TargetHeight = targetHeight;
             DestinationStride = destinationStride;
-            LinearHalf = linearHalf;
+            Format = format;
             Chroma = source.Chroma;
             WideSamples = source.BitDepth > 8;
             IsPassthrough = targetWidth == CanvasWidth && targetHeight == CanvasHeight;
             P3ToSrgb = source.PrimariesCode == 12;
+            // 8 位 RGBA 的原色转换:源 P3 → 目标 sRGB 复用现有 P3→sRGB 矩阵;
+            // 源 sRGB/BT.709 → 目标 P3 用其逆矩阵;原色一致时直接量化。
+            Rgba8Transform = format != OutputFormat.Rgba8
+                ? Rgba8Transform.None
+                : P3ToSrgb
+                    ? (rgba8ColorSpace == ImageColorSpace.DisplayP3 ? Rgba8Transform.None : Rgba8Transform.P3ToSrgb)
+                    : (rgba8ColorSpace == ImageColorSpace.DisplayP3 ? Rgba8Transform.SrgbToP3 : Rgba8Transform.None);
 
             TileWidth = Tiles[0].Width;
             TileHeight = Tiles[0].Height;
@@ -996,7 +1215,10 @@ public static class YuvImageConverter
 
         public int DestinationStride { get; }
 
-        public bool LinearHalf { get; }
+        public OutputFormat Format { get; }
+
+        /// <summary>8 位 RGBA 输出的原色转换方向(其余格式恒为 None)。</summary>
+        public Rgba8Transform Rgba8Transform { get; }
 
         public bool IsPassthrough { get; }
 
