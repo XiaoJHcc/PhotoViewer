@@ -644,7 +644,15 @@ internal static class iOSNativeAnalysisCheck
                         pane.RouteDetailTouch(101, point, UITouchPhase.Ended);
                     }
                     session.Changed += OnReload;
-                    try { session.SetFile(main.CurrentFile!.File); }
+                    try
+                    {
+                        // STATE-01 黑屏加载路径验证：缓存命中的切图不再经过空图，必须移除该文件的
+                        // Full/Proxy 展示缓存，让 SetFile 真的清屏并异步解码。
+                        var file = main.CurrentFile!.File;
+                        BitmapLoader.RemoveCached(file.PathKey, ImageSizeClass.Full);
+                        BitmapLoader.RemoveCached(file.PathKey, ImageSizeClass.Proxy);
+                        session.SetFile(file);
+                    }
                     finally { session.Changed -= OnReload; }
                     if (!observed) throw new InvalidOperationException("未观察到真实SetFile清空态");
                     clearStateProved = true;

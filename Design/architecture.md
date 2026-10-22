@@ -28,7 +28,7 @@
 ### 5.1 图片加载流水线
 
 1. **触发**：`MainViewModel.CurrentFile` 变化（用户切换图片）。
-2. **分发**：各原生壳在 `CurrentFile` 变化时调用 `PhotoLoadSession.SetFile`，会话递增单调的**代际计数器**并调用 `BitmapLoader.GetBitmapAsync`；若新图片不在缓存中，立即把屏上产物置空（旧图不会停留上屏）。
+2. **分发**：各原生壳在 `CurrentFile` 变化时调用 `PhotoLoadSession.SetFile`，会话递增单调的**代际计数器**并调用 `BitmapLoader.GetBitmapAsync`：所需档位已在内存缓存时同步换上新图，旧图留屏到新纹理上屏（不插黑帧）；不在缓存中才立即把屏上产物置空（旧图不会冒充当前照片）并异步解码（STATE-01）。宿主按会话 `Generation` 区分切图与代理↔Full 热替换。
 3. **分级代理解码**(P1-M4b 起):适应态/浏览先解码**代理图**(长边 = 渲染表面物理像素 × overscan 2.0——2× 超采样抗"解码降采样+上屏降采样"双重软化,守画质红线;Apple 走 `CGImageSourceCreateThumbnailAtIndex` 编解码器级子采样,JPEG 走 Skia codec 子采样,Windows HEIF 走 HEVC 瓦片并行解码 + YUV 域按比例展宽的 Mitchell 重采样、RAW 走 WIC 全解码 + Mitchell 精缩)数十~数百 ms 上屏;**缩放超出代理能力 / 分析栏可见(细节预览要 100% 源)** 时后台解码 Full,就绪后**同变换热替换**(几何基准 = 全分辨率逻辑尺寸,EXIF/`ImageOrientationInfo` 推导,`ImageSize` 恒定故无跳变);快速翻页代际闸作废在途 Full。100% 及以上放大永远以 Full 呈现(硬约束)。缓存层两级条目同驻统一 LRU(`(路径, 尺寸档)` 键,Proxy 档命中规则:已有代理长边 ≥ 需求即复用)。**跨档复用**:请求代理时若同路径 Full 已驻留、长边足够且保真度不低于本次需求,直接返回 Full 而不解代理(F16 覆盖 8 位请求;iPad 8 位 Full 不满足 F16 代理请求,不得降保真度)。当前图（P0）代理解码失败时解码器自动回退解码 Full；两档都失败才由加载会话报「无法打开该图片」，屏上已有代理而 Full 失败只给非阻塞提示（IMAGE-03、STATE-02）。
 4. **缓存 / 解码**（`BitmapLoader.GetBitmapAsync` 以 **P0** 运行，并由 `DecodeScheduler.TrackP0` 包裹，使后台工作线程在期间暂停）：
    - 先查 **LRU 内存缓存**，命中立即返回。

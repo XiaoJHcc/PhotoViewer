@@ -420,6 +420,32 @@ test("IMAGE-03/FILM-05：分析栏可见触发 Full 升级并记入主图缓存"
     assert.ok(app.state.analysis.tiles.length >= 6);
 });
 
+test("STATE-01：切回已上屏的照片同步换图，几何与新图同一次调用生效", async () => {
+    const left = makePhoto("pair", "LEFT.JPG", 0, { width: 3000, height: 2000 });
+    const right = makePhoto("pair", "RIGHT.JPG", 1, { width: 6000, height: 4000 });
+    const library = { folders: [{ id: "pair", name: "两张", photos: [left, right], enumerable: true }] };
+    const { app, clock } = harness({ library });
+
+    app.openFolder("pair", { target: left.id });
+    await settle(clock, 3);
+    const surfaceLeft = app.state.session.surface;
+    assert.ok(surfaceLeft, "首张未上屏");
+    app.selectCard(right.id);
+    await settle(clock, 3);
+    assert.equal(app.state.viewport.image.width, 6000);
+
+    app.selectCard(left.id);
+    assert.equal(app.state.session.surface, surfaceLeft, "命中缓存没有同步换回已有展示产物");
+    assert.equal(app.state.session.loadingHint, false, "命中缓存显示了加载提示");
+    assert.equal(app.state.session.tier, "proxy");
+    assert.equal(app.state.viewport.image.width, 3000, "几何没有与新图在同一次调用里生效");
+    assert.equal(app.state.viewport.isFit, true);
+
+    await settle(clock, 2);
+    assert.equal(app.state.session.surface, surfaceLeft, "命中缓存后又发生了解码替换");
+    assert.equal(app.state.session.loadingHint, false, "命中缓存 300 ms 后出现加载提示");
+});
+
 test("IMAGE-03：小图适应倍率高于 100% 不升 Full，分析栏可见仍升级", async () => {
     const small = makePhoto("small", "SMALL.JPG", 0, { width: 600, height: 400 });
     const library = { folders: [{ id: "small", name: "小图", photos: [small], enumerable: true }] };

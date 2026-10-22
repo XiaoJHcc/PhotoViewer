@@ -59,7 +59,7 @@ function flush() {
     return new Promise((resolve) => setImmediate(resolve));
 }
 
-function harness() {
+function harness(options = {}) {
     const clock = manualClock();
     const decodeCalls = [];
     const enhanceCalls = [];
@@ -80,6 +80,7 @@ function harness() {
         t,
         clock,
         decoder,
+        cacheLimit: options.cacheLimit,
         onChange: (snapshot) => snapshots.push(snapshot),
     });
     return { clock, session, decodeCalls, enhanceCalls, snapshots };
@@ -90,7 +91,7 @@ async function loadProxy(harnessRef, index, result) {
     await flush();
 }
 
-test("STATE-01：切图立即清旧图，300 ms 内完成不显示加载提示", async () => {
+test("STATE-01：未命中缓存的切图立即清旧图，300 ms 内完成不显示加载提示", async () => {
     const h = harness();
     const a = fakePhoto("A.JPG");
 
@@ -106,7 +107,7 @@ test("STATE-01：切图立即清旧图，300 ms 内完成不显示加载提示",
     const b = fakePhoto("B.JPG");
     h.session.show(b);
     assert.equal(h.session.snapshot().photoId, b.id);
-    // IMAGE-10：切图即清旧图
+    // IMAGE-10：需要解码时切图即清旧图
     assert.equal(h.session.snapshot().surface, null);
     assert.equal(h.session.snapshot().tier, "none");
 
@@ -116,6 +117,141 @@ test("STATE-01：切图立即清旧图，300 ms 内完成不显示加载提示",
     h.clock.advance(1000);
     assert.equal(h.session.snapshot().loadingHint, false);
     assert.deepEqual(h.session.snapshot().surface, { kind: "proxy", tag: "B" });
+});
+
+test("STATE-01：缓存命中切图保留前一张——同步换上新图、全程不空、不显示加载提示", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    const b = fakePhoto("B.JPG");
+
+    h.session.show(a);
+    await loadProxy(h, 0, proxySurface("A"));
+    const surfaceA = h.session.snapshot().surface;
+    h.session.show(b);
+    await loadProxy(h, 1, proxySurface("B"));
+    assert.equal(h.decodeCalls.length, 2);
+
+    const mark = h.snapshots.length;
+    h.session.show(a);
+    const switched = h.snapshots.slice(mark);
+    assert.ok(switched.length >= 1, "命中缓存没有发出状态通知");
+    assert.equal(switched[0].surface, surfaceA, "命中缓存没有在 show 返回时换上新图");
+    assert.equal(switched[0].photoId, a.id);
+    assert.ok(switched.every((snapshot) => snapshot.surface !== null), "命中缓存期间出现空屏快照");
+    assert.ok(switched.every((snapshot) => snapshot.loadingHint === false), "命中缓存期间出现加载提示");
+    assert.equal(h.decodeCalls.length, 2, "命中缓存仍发起了重新解码");
+    assert.equal(h.clock.pendingTimers(), 0, "命中缓存仍起了 300 ms 提示计时");
+
+    h.clock.advance(1000);
+    assert.equal(h.session.snapshot().loadingHint, false);
+    assert.deepEqual(h.session.snapshot().surface, surfaceA);
+});
+
+test("STATE-01：需要 Full 而缓存只有代理按未命中处理，清图走黑屏加载", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    h.session.show(a);
+    await loadProxy(h, 0, proxySurface("A", 800));
+    h.session.show(fakePhoto("B.JPG"));
+    await loadProxy(h, 1, proxySurface("B"));
+
+    h.session.show(a, { wantFull: true });
+    // 低分辨率顶替默认禁用：代理不得先顶替 Full 上屏。
+    assert.equal(h.session.snapshot().surface, null, "需要 Full 时仍拿代理缓存上屏");
+    assert.equal(h.session.snapshot().tier, "none");
+    assert.equal(h.decodeCalls.length, 3);
+    assert.equal(h.decodeCalls[2].tier, "proxy");
+
+    h.clock.advance(300);
+    assert.equal(h.session.snapshot().loadingHint, true);
+
+    await loadProxy(h, 2, proxySurface("A", 800));
+    assert.equal(h.session.snapshot().tier, "proxy");
+    assert.equal(h.decodeCalls.length, 4);
+    assert.equal(h.decodeCalls[3].tier, "full");
+    h.decodeCalls[3].pending.resolve(fullSurface("A"));
+    await flush();
+    assert.equal(h.session.snapshot().tier, "full");
+    assert.deepEqual(h.session.snapshot().surface, { kind: "full", tag: "A" });
+});
+
+test("STATE-01：缓存代理长边覆盖当前代理目标才算命中，覆盖不足按未命中清图", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    h.session.show(a, { proxyLongEdge: 800 });
+    await loadProxy(h, 0, proxySurface("A", 800));
+    h.session.show(fakePhoto("B.JPG"), { proxyLongEdge: 800 });
+    await loadProxy(h, 1, proxySurface("B", 800));
+
+    h.session.show(a, { proxyLongEdge: 1600 });
+    assert.equal(h.session.snapshot().surface, null, "代理覆盖不足仍命中缓存");
+    assert.equal(h.decodeCalls.length, 3);
+    assert.equal(h.decodeCalls[2].options.longEdge, 1600);
+
+    await loadProxy(h, 2, proxySurface("A", 1600));
+    h.session.show(fakePhoto("B.JPG"), { proxyLongEdge: 1600 });
+    await loadProxy(h, 3, proxySurface("B", 1600));
+
+    h.session.show(a, { proxyLongEdge: 1600 });
+    assert.deepEqual(h.session.snapshot().surface, { kind: "proxy", tag: "A" }, "覆盖够用的代理未命中");
+    assert.equal(h.session.snapshot().tier, "proxy");
+    assert.equal(h.decodeCalls.length, 4);
+});
+
+test("STATE-01：代理被夹到源分辨率时按源分辨率命中", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    a.width = 900;
+    a.height = 600;
+    h.session.show(a, { proxyLongEdge: 4000 });
+    await loadProxy(h, 0, proxySurface("A", 900));
+    h.session.show(fakePhoto("B.JPG"), { proxyLongEdge: 4000 });
+    await loadProxy(h, 1, proxySurface("B", 900));
+
+    h.session.show(a, { proxyLongEdge: 4000 });
+    assert.deepEqual(h.session.snapshot().surface, { kind: "proxy", tag: "A" }, "源分辨率产物未命中");
+    assert.equal(h.decodeCalls.length, 2);
+});
+
+test("STATE-01：缓存命中 Full 的照片直接以 Full 上屏，不再解码", async () => {
+    const h = harness();
+    const a = fakePhoto("A.JPG");
+    h.session.show(a, { wantFull: true });
+    await loadProxy(h, 0, proxySurface("A"));
+    h.decodeCalls[1].pending.resolve(fullSurface("A"));
+    await flush();
+    assert.equal(h.session.snapshot().tier, "full");
+
+    h.session.show(fakePhoto("B.JPG"), { wantFull: false });
+    await loadProxy(h, 2, proxySurface("B"));
+
+    const mark = h.snapshots.length;
+    h.session.show(a, { wantFull: true });
+    assert.equal(h.session.snapshot().tier, "full");
+    assert.deepEqual(h.session.snapshot().surface, { kind: "full", tag: "A" });
+    assert.equal(h.decodeCalls.length, 3);
+    assert.equal(h.clock.pendingTimers(), 0);
+    assert.ok(h.snapshots.slice(mark).every((entry) => entry.surface !== null), "命中 Full 缓存期间出现空屏快照");
+});
+
+test("STATE-01：展示产物缓存按缓存上限淘汰，超出的照片回到黑屏加载", async () => {
+    const h = harness({ cacheLimit: 1 });
+    const a = fakePhoto("A.JPG");
+    const b = fakePhoto("B.JPG");
+    h.session.show(a);
+    await loadProxy(h, 0, proxySurface("A"));
+    h.session.show(b);
+    await loadProxy(h, 1, proxySurface("B"));
+
+    h.session.show(a);
+    assert.equal(h.session.snapshot().surface, null, "被淘汰的照片仍命中缓存");
+    assert.equal(h.session.snapshot().tier, "none");
+    assert.equal(h.decodeCalls.length, 3);
+    assert.equal(h.decodeCalls[2].photo.id, a.id);
+    assert.deepEqual(h.session.cachedFullIds(), [], "只有代理产物不应标记为已缓存全分辨率");
+
+    h.clock.advance(400);
+    assert.equal(h.session.snapshot().loadingHint, true, "淘汰后未按黑屏加载显示提示");
 });
 
 test("STATE-01：加载超过 300 ms 显示提示，图一到即撤下", async () => {

@@ -21,6 +21,7 @@ internal static class NativeFilmstripAcceptance
         filter.SortOrder = SortOrder.Ascending;
         await Task.Delay(800);
         var observations = new List<string>();
+        await VerifyStateLoadingAsync(window, observations);
         foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
         {
             window.Main.Settings.LayoutMode = mode;
@@ -141,6 +142,140 @@ internal static class NativeFilmstripAcceptance
         string report = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(window.Main.CurrentFile!.File.PathKey)) == "PhotoViewerTest" ? "filmstrip-five-checks.txt" : "filmstrip-many-checks.txt";
         await File.WriteAllLinesAsync(System.IO.Path.Combine(output, report), observations);
         File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+    }
+
+    /// <summary>
+    /// STATE-01：缓存命中切图保留前一张——不插黑帧、不显示加载提示、新图与几何在 SetFile 返回时已生效，
+    /// 且宿主按切图语义（代际）更新视口；移除缓存后同一路径必须回到黑屏加载。
+    /// 大图用两张尺寸方向完全相同的副本（旧实现只比身份会误判成热替换），
+    /// 小图（长边小于代理目标）验证"源分辨率产物即满足任何代理目标"的复用规则也走保留前一张。
+    /// </summary>
+    private static async Task VerifyStateLoadingAsync(MacMainWindow window, List<string> observations)
+    {
+        string entryPath = window.Main.CurrentFile?.File.PathKey ?? throw new InvalidOperationException("STATE-01 回归缺少进入时的当前照片");
+        string root = PrepareStateLoadingFixtures();
+        try
+        {
+            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(root));
+            var files = window.Main.FileVM.ThumbnailList.FilteredFiles;
+            if (files.Count != 4) throw new InvalidOperationException($"STATE-01 素材项目数错误：{files.Count}");
+            var first = files.Single(file => file.Name == "large-a.jpg");
+            var second = files.Single(file => file.Name == "large-b.jpg");
+            var smallFirst = files.Single(file => file.Name == "small-a.jpg");
+            var smallSecond = files.Single(file => file.Name == "small-b.jpg");
+            // 缩小窗口：大图的代理档长边要高于目标才可复用（小图靠"已是源分辨率"复用，与本目标无关）。
+            window.Window.SetContentSize(new CGSize(700, 480));
+            await Task.Delay(250);
+            window.Photo.FitToView();
+            await SelectAndWaitAsync(window, first);
+            await SelectAndWaitAsync(window, second);
+            var cached = BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Proxy)
+                ?? BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Full)
+                ?? throw new InvalidOperationException("STATE-01 回归要求切走后的上一张仍留在缓存中");
+            bool sawNull = false;
+            bool sawLoading = false;
+            void OnSwitchState()
+            {
+                if (window.Session.Image == null) sawNull = true;
+                if (window.Session.IsLoadingVisible) sawLoading = true;
+            }
+            window.Session.Changed += OnSwitchState;
+            int generation = window.Session.Generation;
+            try
+            {
+                // Mac 宿主在 CurrentFile 变更里同步调用 Session.SetFile，因此赋值返回即可核对"返回瞬间"的状态。
+                window.Main.CurrentFile = first;
+                if (window.Session.Generation != generation + 1) throw new InvalidOperationException("缓存命中切图未推进展示会话代际");
+                if (!ReferenceEquals(window.Session.Image, cached))
+                    throw new InvalidOperationException($"缓存命中切图未在 SetFile 返回时换上缓存产物：image={Describe(window.Session.Image)} proxy={window.Session.IsProxy} cached={Describe(cached)} target={BitmapLoader.ProxyTargetLongEdge} fullCached={BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Full) != null}");
+                if (window.Photo.DisplayedGeneration != window.Session.Generation)
+                    throw new InvalidOperationException("宿主未按切图语义认到缓存命中切图");
+                if (!window.Photo.IsFit) throw new InvalidOperationException("缓存命中切图没有保持适应态");
+            }
+            finally { window.Session.Changed -= OnSwitchState; }
+            if (sawNull) throw new InvalidOperationException("STATE-01 保留前一张期间主图出现空帧");
+            if (sawLoading) throw new InvalidOperationException("STATE-01 保留前一张期间出现了加载提示");
+            observations.Add($"PASS STATE-01 keep-previous: {first.Name} cut in from cache at generation {window.Session.Generation} (same source size/orientation as {second.Name}) with no null frame, no loading hint, viewport still fit");
+
+            // 黑屏加载路径：移除两档展示缓存，切图必须清空旧图且 300ms 门槛前不显示加载提示。
+            BitmapLoader.RemoveCached(second.File.PathKey, ImageSizeClass.Full);
+            BitmapLoader.RemoveCached(second.File.PathKey, ImageSizeClass.Proxy);
+            bool cleared = false;
+            void OnCleared()
+            {
+                if (window.Session.Image == null) cleared = true;
+            }
+            window.Session.Changed += OnCleared;
+            try { window.Main.CurrentFile = second; }
+            finally { window.Session.Changed -= OnCleared; }
+            if (!cleared || window.Session.Image != null) throw new InvalidOperationException("缓存移除后的切图未清空旧图（应为 STATE-01 黑屏加载）");
+            if (window.Session.IsLoadingVisible) throw new InvalidOperationException("黑屏加载路径的加载提示必须等 status.loading.delay 门槛");
+            await WaitAsync(() => window.Session.Image != null, "缓存移除后重新解码出图");
+            observations.Add($"PASS STATE-01 black-load: {second.Name} cleared the old photo after its display cache was removed and reloaded without early loading hint");
+
+            // 小图（长边小于代理目标）：源分辨率产物满足任何代理目标，切回必须命中缓存且不经过空帧。
+            await SelectAndWaitAsync(window, smallFirst);
+            await SelectAndWaitAsync(window, smallSecond);
+            var smallCached = BitmapLoader.TryGetCached(smallFirst.File.PathKey, ImageSizeClass.Proxy)
+                ?? BitmapLoader.TryGetCached(smallFirst.File.PathKey, ImageSizeClass.Full)
+                ?? throw new InvalidOperationException("小图的源分辨率产物未留在缓存中");
+            if (Math.Max(smallCached.Width, smallCached.Height) >= BitmapLoader.ProxyTargetLongEdge)
+                throw new InvalidOperationException($"小图素材长边未小于代理目标，无法证明源分辨率复用规则：{Describe(smallCached)} target={BitmapLoader.ProxyTargetLongEdge}");
+            sawNull = false;
+            sawLoading = false;
+            window.Session.Changed += OnSwitchState;
+            generation = window.Session.Generation;
+            try
+            {
+                window.Main.CurrentFile = smallFirst;
+                if (window.Session.Generation != generation + 1) throw new InvalidOperationException("小图缓存命中切图未推进展示会话代际");
+                if (!ReferenceEquals(window.Session.Image, smallCached))
+                    throw new InvalidOperationException($"小图缓存命中切图未在 SetFile 返回时换上缓存产物：image={Describe(window.Session.Image)} cached={Describe(smallCached)} target={BitmapLoader.ProxyTargetLongEdge}");
+                if (window.Photo.DisplayedGeneration != window.Session.Generation)
+                    throw new InvalidOperationException("宿主未按切图语义认到小图缓存命中切图");
+                if (!window.Photo.IsFit) throw new InvalidOperationException("小图缓存命中切图没有保持适应态");
+            }
+            finally { window.Session.Changed -= OnSwitchState; }
+            if (sawNull) throw new InvalidOperationException("小图保留前一张期间主图出现空帧");
+            if (sawLoading) throw new InvalidOperationException("小图保留前一张期间出现了加载提示");
+            observations.Add($"PASS STATE-01 small-cache-hit: {smallFirst.Name} ({smallCached.Width}×{smallCached.Height} < target {BitmapLoader.ProxyTargetLongEdge}) cut in from cache at generation {window.Session.Generation} with no null frame and no loading hint");
+        }
+        finally
+        {
+            // 回到进入时的文件夹与当前照片，后续几何/交互回归依赖原目录。
+            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(System.IO.Path.GetDirectoryName(entryPath)!));
+            var restored = window.Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => file.File.PathKey == entryPath);
+            if (restored != null) window.Main.CurrentFile = restored;
+            await Task.Delay(150);
+        }
+    }
+
+    /// <summary>创建本套件自有的 STATE-01 素材：大图两份同分辨率副本 + 两张小于代理目标的小图副本（作者素材只读）。</summary>
+    private static string PrepareStateLoadingFixtures()
+    {
+        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/state-loading-fixtures");
+        Directory.CreateDirectory(root);
+        foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
+        string large = System.IO.Path.GetFullPath("release/native-p2-large-fixtures/color-p3-large.jpg");
+        if (!File.Exists(large)) throw new FileNotFoundException("STATE-01 回归缺少大图素材", large);
+        File.Copy(large, System.IO.Path.Combine(root, "large-a.jpg"), true);
+        File.Copy(large, System.IO.Path.Combine(root, "large-b.jpg"), true);
+        string small = System.IO.Path.GetFullPath("release/native-p2-fixtures");
+        File.Copy(System.IO.Path.Combine(small, "color-srgb.jpg"), System.IO.Path.Combine(root, "small-a.jpg"), true);
+        File.Copy(System.IO.Path.Combine(small, "color-p3.jpg"), System.IO.Path.Combine(root, "small-b.jpg"), true);
+        return root;
+    }
+
+    /// <summary>验收失败信息用的图像摘要（编码、尺寸与是否仍持有像素）。</summary>
+    private static string Describe(DecodedImage? image)
+        => image == null ? "null" : $"{image.Width}×{image.Height}/{image.Encoding}/px={image.Pixels.Length}/#{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(image)}";
+
+    /// <summary>选中一张照片并等到该代际的产物真正上屏。</summary>
+    private static async Task SelectAndWaitAsync(MacMainWindow window, ImageFile file)
+    {
+        window.Main.CurrentFile = file;
+        int expected = window.Session.Generation;
+        await WaitAsync(() => window.Session.Image != null && window.Session.Generation == expected, "主图出图 " + file.Name);
     }
 
     /// <summary>在真实卡片上点击并执行翻页/交换/排序，核对定位条件、动画中间帧与用户接管。</summary>

@@ -42,6 +42,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private AndroidPhotoRenderer _renderer = new();
     private DecodedImage? _image;
     private (int Width, int Height, int Orientation) _identity;
+    /// <summary>当前展示照片的代际（来自 <see cref="PhotoLoadSession.Generation"/>）：代际变化即切图，不是热替换。</summary>
+    private int _generation;
     private ValueAnimator? _animation;
     private bool _surfaceReady;
     private bool _disposed;
@@ -115,25 +117,39 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
 
     /// <summary>同步上传当前展示图；null 表示清空。</summary>
     /// <param name="image">展示产物（会话持有所有权，本视图只在本调用内读取像素）。</param>
-    public void SetImage(DecodedImage? image)
+    /// <param name="generation">会话照片代际（<see cref="PhotoLoadSession.Generation"/>）：代际变化即切图，
+    /// 同机型连拍的两张源尺寸与方向相同，只比几何无法区分切图与代理↔Full 热替换（STATE-01）。</param>
+    public void SetImage(DecodedImage? image, int generation)
     {
         if (_disposed) return;
+        bool cut = generation != _generation;
+        _generation = generation;
         if (image == null)
         {
             _image = null;
             _identity = default;
             _wheelAccumulator = 0;
             _renderer.SetImage(null);
+            _viewport.ClearTexture();
+            Draw();
+            ViewportChanged?.Invoke();
+            return;
+        }
+        // 同一实例 + 同一代际：会话的加载态/增强态等通知，纹理与几何都没变，只重绘当前帧、不重传。
+        if (!cut && ReferenceEquals(_image, image))
+        {
             Draw();
             ViewportChanged?.Invoke();
             return;
         }
         var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
+        // STATE-01：重新选中同一文件命中同一缓存实例时代际变了，纹理不必重传，几何仍按切图重算。
+        bool reuseTexture = cut && ReferenceEquals(_image, image);
         _image = image;
         if (_surfaceReady)
         {
-            _renderer.SetImage(image);
-            if (identity == _identity)
+            if (!reuseTexture) _renderer.SetImage(image);
+            if (!cut && identity == _identity)
             {
                 // 同一张照片的代理 ↔ Full 热替换：只换纹理。
                 _viewport.ApplyTexture(_renderer.TextureWidth);

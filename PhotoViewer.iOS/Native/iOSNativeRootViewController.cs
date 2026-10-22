@@ -1147,7 +1147,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void OnSessionChanged()
     {
         UpdateFocusPoint();
-        _photo.SetImage(_session.Image);
+        _photo.SetImage(_session.Image, _session.Generation);
         // IMAGE-07：药丸只跟随共享 500ms 门槛后的可见态，避免快速增强闪烁。
         _enhanceBusy.Hidden = !_session.IsEnhancingVisible;
         UpdateHint();

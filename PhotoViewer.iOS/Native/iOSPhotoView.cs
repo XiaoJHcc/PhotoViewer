@@ -42,6 +42,8 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     private readonly UITapGestureRecognizer _doubleTap;
     /// <summary>当前照片的未旋转源尺寸与 EXIF 方向；default 表示没有照片。</summary>
     private (int Width, int Height, int Orientation) _identity;
+    /// <summary>已上屏照片的加载代际；缓存命中切图不经过空图，只能靠它与身份共同判定切图。</summary>
+    private int _generation;
     /// <summary>已上传的展示产物引用：同一对象再次上屏（会话状态通知）时只重绘，不重复上传整张纹理。</summary>
     private DecodedImage? _textureSource;
     /// <summary>正在程序化写入滚动视图：期间忽略回调，写完统一派生一次，避免边写边读的反馈环。</summary>
@@ -79,6 +81,8 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     /// <summary>缩放是否处于适应状态。</summary>
     internal bool IsFit => _viewport.IsFit;
     internal DecodedImage? DisplayedImage => _textureSource;
+    /// <summary>已按切图语义应用的加载代际；与 <see cref="PhotoLoadSession.Generation"/> 一致说明宿主认到了这次切图。</summary>
+    internal int DisplayedGeneration => _generation;
     internal bool PresentationReady => _textureSource != null && _identity != default && _scrollGeometryValid
         && _renderer.TextureWidth > 0 && Bounds.Width > 0 && Bounds.Height > 0;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
@@ -182,8 +186,16 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
 
     /// <summary>同步上传像素并重算视口；null 表示清空照片。</summary>
     /// <param name="image">展示产物（F16 线性 scRGB 或 8 位 Display P3），所有权仍在调用方。</param>
-    public void SetImage(DecodedImage? image)
+    /// <param name="generation">该产物的加载代际（<see cref="PhotoLoadSession.Generation"/>）；代际变化即切图。</param>
+    /// <remarks>
+    /// 切图判定同时看代际与身份：STATE-01 的缓存命中切图不经过空图，同机型连拍的照片身份完全相同，
+    /// 只比身份会把它误判成代理↔Full 热替换，丢掉 IMAGE-02 的跟随对焦居中；
+    /// 代际相同而身份变化是 IMAGE-01 的元数据纠正（Full 纠正源尺寸），仍按切图语义处理。
+    /// </remarks>
+    public void SetImage(DecodedImage? image, int generation)
     {
+        bool newGeneration = generation != _generation;
+        _generation = generation;
         if (image == null)
         {
             _identity = default;
@@ -195,15 +207,20 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
             return;
         }
         var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
-        if (ReferenceEquals(image, _textureSource) && identity == _identity)
+        bool sameTexture = ReferenceEquals(image, _textureSource);
+        if (sameTexture && !newGeneration)
         {
             // 会话只是状态通知（如"增强计算中"提示）：同一份产物已在纹理里，重绘即可。
             DrawFrame();
             return;
         }
-        _textureSource = image;
-        _renderer.SetTexture(image);
-        if (identity == _identity)
+        // STATE-01：缓存命中切图不经过空图，重新选中命中同一缓存实例时也不得当作热替换——不重传纹理但按切图语义重定位。
+        if (!sameTexture)
+        {
+            _renderer.SetTexture(image);
+            _textureSource = image;
+        }
+        if (!newGeneration && identity == _identity)
         {
             // 同一张照片的代理 ↔ Full 热替换：几何基准恒定（ImageSize 不变），只换纹理；
             // 滚动状态与视口缩放/平移一律不动，避免"增强/升 Full 时照片被拽走"。

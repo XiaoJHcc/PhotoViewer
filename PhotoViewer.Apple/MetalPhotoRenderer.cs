@@ -91,29 +91,44 @@ public sealed class MetalPhotoRenderer : IDisposable
 
     /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。</summary>
     /// <param name="image">展示主图（F16 线性 scRGB 或 8 位 Display P3）；null 表示移除当前照片。</param>
+    /// <remarks>
+    /// 新纹理完整分配、上传并生成 mipmap 后才置换当前纹理；创建或上传失败时保留旧纹理并释放半成品，
+    /// 避免一次失败就让主图永久黑屏，也避免旧纹理泄漏。null 仍是显式清空。
+    /// </remarks>
     public unsafe void SetTexture(DecodedImage? image)
     {
-        var previous = _texture;
-        _texture = null;
-        TextureWidth = 0;
         if (image == null)
         {
+            var cleared = _texture;
+            _texture = null;
+            TextureWidth = 0;
             Interlocked.Exchange(ref _textureBytes, 0);
-            previous?.Dispose();
+            cleared?.Dispose();
             return;
         }
         var (format, displayP3) = TextureFormat(image);
-        using var descriptor = MTLTextureDescriptor.CreateTexture2DDescriptor(format, (nuint)image.Width, (nuint)image.Height, true);
-        descriptor.StorageMode = MTLStorageMode.Shared;
-        descriptor.Usage = MTLTextureUsage.ShaderRead;
-        _texture = _device.CreateTexture(descriptor) ?? throw new InvalidOperationException("照片纹理分配失败");
-        fixed (byte* pixels = image.Pixels)
-            _texture.ReplaceRegion(MTLRegion.Create2D(0, 0, (nuint)image.Width, (nuint)image.Height), 0, (IntPtr)pixels, (nuint)image.Stride);
-        using var command = _queue.CommandBuffer() ?? throw new InvalidOperationException("Metal 命令缓冲不可用");
-        using var blit = command.BlitCommandEncoder ?? throw new InvalidOperationException("Metal mipmap 编码器不可用");
-        blit.GenerateMipmapsForTexture(_texture);
-        blit.EndEncoding();
-        command.Commit();
+        IMTLTexture? created = null;
+        try
+        {
+            using var descriptor = MTLTextureDescriptor.CreateTexture2DDescriptor(format, (nuint)image.Width, (nuint)image.Height, true);
+            descriptor.StorageMode = MTLStorageMode.Shared;
+            descriptor.Usage = MTLTextureUsage.ShaderRead;
+            created = _device.CreateTexture(descriptor) ?? throw new InvalidOperationException("照片纹理分配失败");
+            fixed (byte* pixels = image.Pixels)
+                created.ReplaceRegion(MTLRegion.Create2D(0, 0, (nuint)image.Width, (nuint)image.Height), 0, (IntPtr)pixels, (nuint)image.Stride);
+            using var command = _queue.CommandBuffer() ?? throw new InvalidOperationException("Metal 命令缓冲不可用");
+            using var blit = command.BlitCommandEncoder ?? throw new InvalidOperationException("Metal mipmap 编码器不可用");
+            blit.GenerateMipmapsForTexture(created);
+            blit.EndEncoding();
+            command.Commit();
+        }
+        catch
+        {
+            created?.Dispose();
+            throw;
+        }
+        var previous = _texture;
+        _texture = created;
         _textureIsDisplayP3 = displayP3;
         TextureWidth = image.Width;
         Interlocked.Exchange(ref _textureBytes, (long)image.Width * image.Height * DecodedImage.BytesPerPixel(image.Encoding) * 4 / 3);

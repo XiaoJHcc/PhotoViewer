@@ -533,8 +533,10 @@ public static class DesignTokens
     public const double SimPanelWidth = 110.0;
     /// <summary>sim.score.lowerBound（ratio） SIM-01：卡片第二行柱状占比的下限分数（75% 起映射到 0）。</summary>
     public const double SimScoreLowerBound = 0.75;
-    /// <summary>status.loading.delay（ms） STATE-01：有照片但展示图未就绪时，加载提示延迟出现的时长；由共享加载会话提供延迟态。</summary>
+    /// <summary>status.loading.delay（ms） STATE-01：黑屏加载时加载提示延迟出现的时长；由共享加载会话提供延迟态。</summary>
     public const int StatusLoadingDelay = 300;
+    /// <summary>status.loading.holdMax（ms） STATE-01：切图可采用「保留前一张」的延迟上限：稳定短于此值（内存缓存命中只剩上传）才保留上一张，否则黑屏加载。是方案选择的设计口径，不作运行时等待计时。</summary>
+    public const int StatusLoadingHoldMax = 100;
     /// <summary>status.toast.bottomMargin（pt） FILM-06：状态提示距主图区底边的距离。</summary>
     public const double StatusToastBottomMargin = 24.0;
     /// <summary>status.toast.cornerRadius（pt） FILM-06：状态提示圆角。</summary>

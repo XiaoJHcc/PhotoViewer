@@ -146,6 +146,9 @@ internal static class AndroidNativeChecks
         await System.Threading.Tasks.Task.Delay(500);
         Check("回到适应态", root.Photo.IsFit, $"fit={root.Photo.IsFit}");
 
+        // STATE-01：缓存命中切图保留前一张——两张都已上屏后再切，不得经过空图、不得显示加载提示。
+        await CheckCachedSwitchAsync(_activity!, main, session, root);
+
         if (Wants("analysis") || Wants("all"))
         {
         // 分析栏开合与瓦片几何。先生成一张确定性的 Sony 对焦 JPEG，保证对焦点+中心两张细节瓦片。
@@ -562,6 +565,107 @@ internal static class AndroidNativeChecks
         File.WriteAllText(IOPath.Combine(directory, $"android-checks-{_mode}.txt"), report.ToString());
         Console.WriteLine(report.ToString());
         Console.WriteLine(_failed == 0 ? $"[NativeCheck] PASS {_mode} ({_passed} checks)" : $"[NativeCheck] FAIL {_mode} ({_failed} failed / {_passed + _failed})");
+    }
+
+    /// <summary>
+    /// STATE-01：两张同尺寸同方向的照片都已上屏（进内存缓存）后再切回，缓存命中的切图要在 SetFile 返回时
+    /// 直接换上新图，全程不出现空图快照，也不出现延迟加载提示。素材特意同尺寸，覆盖"只比几何会误判成
+    /// 热替换"的情形；大图覆盖代理档缓存，小图（源本身小于代理目标）覆盖"已是源分辨率"的复用口径。
+    /// </summary>
+    private static async System.Threading.Tasks.Task CheckCachedSwitchAsync(
+        Activity activity, MainViewModel main, PhotoLoadSession session, AndroidNativeRootView root)
+    {
+        await CheckCachedSwitchInFolderAsync(activity, main, session, root, 3000, 2000, "STATE-01 ");
+        await CheckCachedSwitchInFolderAsync(activity, main, session, root, 1200, 800, "STATE-01 小图 ");
+    }
+
+    /// <summary>在同一文件夹内做一次"两张都已上屏后切回"的缓存命中切图断言；尺寸与报告前缀由调用方给定。</summary>
+    private static async System.Threading.Tasks.Task CheckCachedSwitchInFolderAsync(
+        Activity activity, MainViewModel main, PhotoLoadSession session, AndroidNativeRootView root,
+        int width, int height, string label)
+    {
+        var folder = EnsureCachedSwitchFixtures(activity, width, height);
+        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
+        var files = main.FileVM.ThumbnailList.FilteredFiles;
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            files = main.FileVM.ThumbnailList.FilteredFiles;
+            if (files.Count >= 2 && main.CurrentFile != null && session.Image != null) break;
+            await System.Threading.Tasks.Task.Delay(100);
+        }
+        if (files.Count < 2)
+        {
+            Check($"{label}缓存命中切图", false, $"素材不足两张 ({files.Count})");
+            return;
+        }
+
+        // 两张都上屏一次（A → B → A），让它们都进内存缓存。
+        await SelectAndWaitAsync(main, session, files[1]);
+        var secondPhoto = session.Image;
+        await SelectAndWaitAsync(main, session, files[0]);
+
+        int nullSamples = 0, loadingSamples = 0;
+        void OnChanged()
+        {
+            if (session.Image == null) nullSamples++;
+            if (session.IsLoadingVisible) loadingSamples++;
+        }
+
+        int generation = session.Generation;
+        bool immediate;
+        session.Changed += OnChanged;
+        try
+        {
+            main.FileVM.ThumbnailList.SelectImageCommand(files[1]);
+            // 命中时 SetFile 同步换图：返回时已是上一次上屏的同一份产物，且代际已推进。
+            immediate = ReferenceEquals(main.CurrentFile, files[1])
+                && secondPhoto != null && ReferenceEquals(session.Image, secondPhoto)
+                && session.Generation > generation && !session.IsLoadingVisible && root.Photo.HasImage;
+            // 后续状态通知（导航图刷新等）同样不得出现空图或加载提示。
+            await System.Threading.Tasks.Task.Delay(600);
+        }
+        finally
+        {
+            session.Changed -= OnChanged;
+        }
+
+        Check($"{label}缓存命中切图即时上屏", immediate,
+            $"image={session.Image?.Width}x{session.Image?.Height} generation={generation}->{session.Generation}");
+        Check($"{label}缓存命中切图不经过空图", nullSamples == 0 && loadingSamples == 0,
+            $"null={nullSamples} loading={loadingSamples}");
+        await SelectAndWaitAsync(main, session, files[0]);
+    }
+
+    /// <summary>选中一行并等它成为当前照片、新一代际的展示图已上屏。</summary>
+    private static async System.Threading.Tasks.Task SelectAndWaitAsync(MainViewModel main, PhotoLoadSession session, ImageFile file)
+    {
+        int generation = session.Generation;
+        main.FileVM.ThumbnailList.SelectImageCommand(file);
+        for (int attempt = 0; attempt < 60; attempt++)
+        {
+            if (ReferenceEquals(main.CurrentFile, file) && session.Generation > generation && session.Image != null) return;
+            await System.Threading.Tasks.Task.Delay(100);
+        }
+    }
+
+    /// <summary>生成两张同尺寸、同方向、内容不同的 JPEG（写入应用内部目录，按尺寸分文件夹复用）。</summary>
+    private static string EnsureCachedSwitchFixtures(Activity activity, int width, int height)
+    {
+        var folder = IOPath.Combine(activity.FilesDir!.AbsolutePath, $"pv-check-switch-{width}");
+        Directory.CreateDirectory(folder);
+        for (int index = 0; index < 2; index++)
+        {
+            var path = IOPath.Combine(folder, index == 0 ? "switch-a.jpg" : "switch-b.jpg");
+            if (File.Exists(path) && new FileInfo(path).Length > 0) continue;
+            using var bitmap = Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!)!;
+            using var canvas = new Canvas(bitmap);
+            using var paint = new Paint();
+            paint.Color = index == 0 ? Color.Rgb(40, 90, 160) : Color.Rgb(160, 90, 40);
+            canvas.DrawRect(0, 0, width, height, paint);
+            using var stream = File.Create(path);
+            bitmap.Compress(Bitmap.CompressFormat.Jpeg!, 90, stream);
+        }
+        return folder;
     }
 
     /// <summary>瓦片中心（像素），按当前面板布局换算。</summary>

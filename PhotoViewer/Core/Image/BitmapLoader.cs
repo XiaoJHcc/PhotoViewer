@@ -117,7 +117,12 @@ public static class BitmapLoader
     /// <param name="requiredLongEdge">本次请求的长边上限（0 表示全分辨率请求）。</param>
     /// <param name="requiredEncoding">本次请求的编码。</param>
     private static bool Reusable(DecodedImage candidate, int requiredLongEdge, PixelEncoding requiredEncoding)
-        => (requiredLongEdge <= 0 || Math.Max(candidate.Width, candidate.Height) >= requiredLongEdge)
+        => (requiredLongEdge <= 0
+                || Math.Max(candidate.Width, candidate.Height) >= requiredLongEdge
+                // 解码器不放大：已是源分辨率的产物即满足任何代理目标，否则小图每次切图都要重解。
+                || candidate.SourceWidth > 0 && candidate.SourceHeight > 0
+                    && Math.Max(candidate.Width, candidate.Height) >= Math.Max(candidate.SourceWidth, candidate.SourceHeight)
+                    && Math.Min(candidate.Width, candidate.Height) >= Math.Min(candidate.SourceWidth, candidate.SourceHeight))
             && FidelityAtLeast(candidate.Encoding, requiredEncoding);
 
     /// <summary>
@@ -253,6 +258,43 @@ public static class BitmapLoader
             return item.Image;
         }
         return null;
+    }
+
+    /// <summary>
+    /// 只查缓存的同步取图：按 <see cref="GetBitmapAsync(IFileRef, DecodeSizeHint, DecodePriority, CancellationToken)"/>
+    /// 的复用规则（代理档含跨档复用 Full）命中即携调用方租约返回；未命中返回 null，不解码、不排队、不并入在途任务。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="hint">尺寸档提示。</param>
+    /// <returns>命中的展示产物（用完 <see cref="DecodedImage.Release"/>），未命中为 null。</returns>
+    public static DecodedImage? TryAcquireCached(IFileRef file, DecodeSizeHint hint)
+    {
+        var filePath = file.PathKey;
+        var fullKey = new BitmapCacheKey(filePath, ImageSizeClass.Full);
+        DecodedImage? image;
+        if (hint.Class == ImageSizeClass.Proxy && hint.MaxLongEdge > 0)
+        {
+            var encoding = PresentationEncoding(ImageSizeClass.Proxy);
+            image = TryAcquireReusable(new BitmapCacheKey(filePath, ImageSizeClass.Proxy), hint.MaxLongEdge, encoding)
+                ?? TryAcquireReusable(fullKey, hint.MaxLongEdge, encoding);
+        }
+        else if (_cache.TryGetValue(fullKey, out var fullItem) && fullItem.Image.TryAcquire())
+        {
+            fullItem.UpdateAccessTime();
+            image = fullItem.Image;
+        }
+        else image = null;
+        if (image != null) PerfTrace.RecordDecode(file.Name, true, 0, 0, image.Width, image.Height);
+        return image;
+    }
+
+    /// <summary>缓存条目满足长边与保真度需求时携租约取出并刷新访问时间，否则返回 null。</summary>
+    private static DecodedImage? TryAcquireReusable(BitmapCacheKey key, int requiredLongEdge, PixelEncoding requiredEncoding)
+    {
+        if (!_cache.TryGetValue(key, out var item) || !Reusable(item.Image, requiredLongEdge, requiredEncoding) || !item.Image.TryAcquire())
+            return null;
+        item.UpdateAccessTime();
+        return item.Image;
     }
 
     /// <summary>

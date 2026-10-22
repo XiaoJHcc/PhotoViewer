@@ -74,6 +74,12 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// </summary>
     public bool IsLoadingVisible { get; private set; }
 
+    /// <summary>
+    /// 照片代际：每次 <see cref="SetFile"/> 递增，同一张照片的代理 ↔ Full 热替换不变。
+    /// 缓存命中切图不经过空图，宿主须用它区分"切图"与"热替换"，不能只比较源尺寸与方向（同机型连拍尺寸相同）。
+    /// </summary>
+    public int Generation => _generation;
+
     /// <summary>订阅"本会话已把某文件上屏"（压测驱动器计时用），退订句柄可重复释放。</summary>
     /// <param name="handler">上屏完成回调，参数为该次上屏的文件引用。</param>
     /// <returns>退订句柄。</returns>
@@ -91,7 +97,10 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// <summary>构造并登记为内存客户端：压力到 Warning 时自动关闭增强并释放增强图。</summary>
     public PhotoLoadSession() => MemoryGovernor.Register(this);
 
-    /// <summary>设置新文件，清空旧图并作废上一轮加载；所有权留在会话。</summary>
+    /// <summary>
+    /// 设置新文件并作废上一轮加载；所有权留在会话。
+    /// 所需档位已在内存缓存时同步换上新图（一次 <see cref="Changed"/>，不经过空图），否则清空旧图后异步解码。
+    /// </summary>
     public void SetFile(IFileRef? file)
     {
         _generation++;
@@ -103,16 +112,26 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
         Error = string.Empty;
         FullError = string.Empty;
         _fullFailed = false;
-        Replace(null, false);
-        if (file != null)
+        if (file == null)
         {
-            var cancellationToken = _cancellation.Token;
-            int? target = !_needsFull && _proxyLongEdge > 0 ? _proxyLongEdge : null;
-            _fullLoading = !target.HasValue;
-            _ = LoadAsync(file, _generation, target, cancellationToken);
-            // STATE-01：延迟暴露加载态，快速翻页在门槛内完成时不显示提示。
-            _ = ShowLoadingAfterDelayAsync(_generation, cancellationToken);
+            Replace(null, false);
+            return;
         }
+        int? target = !_needsFull && _proxyLongEdge > 0 ? _proxyLongEdge : null;
+        // STATE-01 保留前一张：缓存命中只剩上传耗时，旧画面留到新图上屏，不插入黑帧也不显示加载提示。
+        var cached = BitmapLoader.TryAcquireCached(file, target.HasValue ? DecodeSizeHint.ProxyTo(target.Value) : DecodeSizeHint.Full);
+        if (cached != null)
+        {
+            Replace(cached, target.HasValue && (cached.Width < cached.SourceWidth || cached.Height < cached.SourceHeight));
+            return;
+        }
+        // STATE-01 黑屏加载：解码耗时不可控，切图即清旧图，不让上一张冒充当前照片。
+        Replace(null, false);
+        var cancellationToken = _cancellation.Token;
+        _fullLoading = !target.HasValue;
+        _ = LoadAsync(file, _generation, target, cancellationToken);
+        // STATE-01：延迟暴露加载态，快速翻页在门槛内完成时不显示提示。
+        _ = ShowLoadingAfterDelayAsync(_generation, cancellationToken);
     }
 
     /// <summary>

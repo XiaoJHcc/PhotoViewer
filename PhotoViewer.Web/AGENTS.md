@@ -37,7 +37,7 @@ src/
     filmscroll.js       # 胶片栏几何（步长/内容长/居中偏移）、定位动画器与定位门控
     features.js         # 合成 DINO/CV 特征（同一连拍场景彼此相似）
     input.js            # 手势编码、主/次绑定、Repeatable、滚轮分流
-    session.js          # 加载/代理→Full/增强/药丸/提示条时序
+    session.js          # 加载/代理→Full/增强/药丸/提示条时序；展示产物缓存（STATE-01 保留前一张）
     analysis.js         # 分析栏瓦片集合、三态、准星、cosine
     similarity.js       # 相似面板三态、计算/取消、提取进度
     exifformat.js       # 控制栏 EXIF 值与卡片时间格式化
@@ -69,6 +69,7 @@ python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli
 - **状态唯一**：业务状态只在 `app.js`；组件不缓存第二份（菜单勾选每次弹出重读快照，MENU-02）。
 - **分析栏细节绿框**：唯一活动目标在 `core/analysis.js`（`hoverDetail`），`shell/analysis.js` 只把指针序列翻译成该状态——悬停指针进入/离开、触控按下即亮、滑入另一细节瓦片切换、抬手/取消/失去捕获/失焦/隐藏/换图清除；任意时刻只有一个活动 pointer，旧 pointer 的抬起、取消或失去捕获不得清除新目标。键盘与辅助技术通过瓦片 `aria-pressed` 与 `detail=0` 激活等价显示/清除；诊断准星与双击定位独立（ANALYSIS-04）。
 - **单位**：几何一律为逻辑点（CSS px = pt）；物理 100% 用 `devicePixelRatio` 换算（IMAGE-01）。
+- **展示产物缓存**：`core/session.js` 按照片 id 保留最近 `cacheCount` 份已上屏 surface（与设置里的缓存数量上限、胶片栏细边同一份表）。命中要求缓存档位满足当前需求：需要 Full 时必须已是 Full，否则产物长边要覆盖当前代理目标或本身已是源分辨率。命中时不清旧图、不起加载提示计时，新 surface 与新几何在同一次调用里交给同一帧绘制（STATE-01「保留前一张」）；档位不足与没有产物一样按未命中清旧图走「黑屏加载」——低分辨率顶替默认禁用，需要 Full 时不得先拿代理顶替。代理→Full 的后台升级属于同一张照片的档位工作，不阻塞上屏（IMAGE-03）。
 - **注释**：默认不写；只在实现某条规则的关键分支写 `// FILM-03：<为什么>`。不写阶段号。
 - **风格**：4 空格缩进、双引号、分号；命名导出；不引入任何第三方依赖。
 - **主图手势**：`core/input.js` 的 `PhotoGesture` 判定单指/鼠标的平移、轻扫、导航图拖动与捏合；导航图只接单指/鼠标拖动，第二指按下即取消拖动并把两指交给主图捏合（IMAGE-06），DOM 捕获与导航图命中留在 `shell/photo.js`。

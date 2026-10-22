@@ -798,7 +798,7 @@ public sealed class MacMainWindow : IDisposable
     private void OnImageChanged()
     {
         UpdateFocusPoint();
-        Photo.SetImage(Session.Image);
+        Photo.SetImage(Session.Image, Session.Generation);
         // STATE-01：有照片但图未就绪时只在共享 300ms 延迟态可见后提示；STATE-02 的解码失败仍优先。
         _hint.StringValue = Session.Error.Length > 0 ? "无法打开该图片"
             : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处"

@@ -135,6 +135,8 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     private GpuTextureMemoryClient? _memoryClient;
     /// <summary>当前期望上屏的帧(按实例);在途上传据此判断是否还要它。</summary>
     private WeakReference<DecodedImage>? _wanted;
+    /// <summary>当前上屏照片的代际(来自 <see cref="PhotoLoadSession.Generation"/>);代际变化即切图,不是热替换。</summary>
+    private int _generation;
     /// <summary>是否有当前期望帧的上传在途(0/1,可跨线程读)。</summary>
     private int _uploadPending;
     /// <summary>内存压力要求修剪缓存(0/1):Trim 在探测线程上调用,只能标记后由 UI 线程清场。</summary>
@@ -426,9 +428,14 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     ///   回到 UI 线程后只做「建带 mip 纹理 → 拷 mip0 → GenerateMips → 交换」。
     ///   同时只允许一次在途拷贝:切走又切回同一实例就继续用那次在途拷贝,切到别的帧时
     ///   把接力交给最新期望帧(连翻时不会堆积多份 262MB 拷贝);收尾时已不再期望的成果进最近纹理缓存而不上屏。
+    ///
+    /// STATE-01 / IMAGE-02:缓存命中切图不经过空图,同机型连拍的两张源尺寸与方向相同,只比几何无法区分
+    /// 「切图」与「代理↔Full 热替换」,故按 <paramref name="generation"/> 判定:代际变化一律走切图语义,
+    /// 代际相同而实例变化(代理→Full)才是热替换。
     /// </summary>
     /// <param name="image">已解码图像;null 表示清空画面。</param>
-    public void SetImage(DecodedImage? image)
+    /// <param name="generation">会话照片代际(<see cref="PhotoLoadSession.Generation"/>)。</param>
+    public void SetImage(DecodedImage? image, int generation)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (image != null)
@@ -441,23 +448,37 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         // 期望上屏的帧按实例记录:在途上传据此判断"还要不要"。
         _wanted = image == null ? null : new WeakReference<DecodedImage>(image);
         var key = _wanted;
+        bool cut = generation != _generation;
+        _generation = generation;
 
-        // 会话的加载态/增强态等属性变化会带着同一帧重复触发 Changed;同一实例没有任何 GPU 工作可做。
+        // 会话的加载态/增强态等属性变化会带着同一帧重复触发 Changed;同一实例、同一代际没有任何 GPU 工作可做。
         if (image != null && _current?.Matches(image) == true)
         {
-            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
-            return;
-        }
+            if (!cut)
+            {
+                WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+                return;
+            }
 
-        // 同一实例的后台拷贝仍在途(切走又切回):不重传,等它完成即可。
-        if (key != null && _stagedUpload != null && Matches(_stagedUpload.Key, key))
-        {
+            // STATE-01:重新选中同一文件命中同一缓存实例 —— 纹理无需重传,但几何必须按切图重算
+            // (适应态重新适应、跟随对焦居中到新照片的对焦点)。
+            _viewport.BeginImageChange();
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _current.Width);
+            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            Draw();
+            NotifyViewportChanged();
             return;
         }
 
         // IMAGE-02：切图走共享 ApplyImage（适应态重新适应 / 跟随对焦 / 保持同一归一化中心）；
         // 代理↔Full 的源尺寸与对焦点相同，还原结果与热替换一致。
         _viewport.BeginImageChange();
+
+        // 同一实例的后台拷贝仍在途(切走又切回):不重传,等它完成即可;收尾时按切图语义应用几何。
+        if (key != null && _stagedUpload != null && Matches(_stagedUpload.Key, key))
+        {
+            return;
+        }
 
         if (image == null || key == null)
         {

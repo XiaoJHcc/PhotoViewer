@@ -12,7 +12,7 @@
 | Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel()` → `PhotoLoadSession` → 根视图；外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，启动参数 `pv-settings` 也在这里收口。日志出现 `[Native] Android 原生壳就绪`。 |
 | Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性/打开失败（STATE-02）提示条（文案取共享 `StatusMessages`，与「计算中」药丸同时可见时上移到药丸上方）；行布局按共享 `SimilarityPanelGeometry.RowWidth` 给相似面板让宽并计入列表态停靠区；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
 | Native/AndroidMainScreenLayout.cs | 主屏分区纯函数：共享分区数学 + 系统栏/刘海 insets；栏位背景铺到屏幕边缘、内容收在安全区。 |
-| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。 |
+| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。切图与热替换按 `PhotoLoadSession.Generation` 区分（缓存命中切图不经过空图，同机型连拍几何相同）：代际变化走切图语义，同一实例 + 同代际的会话通知只重绘不重传纹理；无图时清除纹理宽度。 |
 | Native/AndroidFilterBar.cs | 自绘下拉 ×3 + 计数 + 相似聚类 toggle（窄屏紧凑宽度 84/76dp）；原生 PopupMenu 写回共享筛选 VM。 |
 | Native/AndroidFilmstripView.cs / AndroidThumbnailCard.cs / AndroidBitmapConverter.cs | RecyclerView 胶片栏 + 自绘卡片（96×144 / 80 方形 / 星级 / 抖动徽标 / 第二行）、350ms 三次缓出定位/用户接管/减少动态效果、可见范围上报、星星写回不切图。 |
 | Native/AndroidControlBar.cs | 共享 `ControlBarLayout` 的 EXIF/评分/命令三分组、换行/居中；命令显隐/顺序来自共享设置（含分析栏/增强）；评分快捷命令为实心星内叠数字（0 为清零叉），数字不拦截点击；`ExploreByTouchHelper` 暴露虚拟节点、名称、禁用态与焦点顺序。 |
@@ -69,7 +69,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 ```
 
 - 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；API 35 arm64 模拟器基线与覆盖范围：
-  - `main`：主屏分区、安全区、筛选/卡片/控制栏几何、Fit↔100% 与 Full。
+  - `main`：主屏分区、安全区、筛选/卡片/控制栏几何、Fit↔100% 与 Full；STATE-01 缓存命中切图（运行时生成大图与小于代理目标的小图两组同尺寸 JPEG，切回时无空图快照、无加载提示、新图同步上屏）。
   - `analysis`：分析栏开合与瓦片几何；运行时生成确定性 Sony 对焦 JPEG，覆盖对焦点/中心两张细节瓦片，验证按下立即点亮、两瓦片切换/回切、滑到空白/诊断清除、抬起与取消清除、真实鼠标/触控板悬停、触屏不合成悬停、触控期间悬停不抢占、双击定位独立于高亮；`owner` pointer 多指规则与旧 PointerUp/Cancel 不清新目标；诊断起手/空白起手不得滑入细节自动点亮；诊断点按落准星且滑动释放不误点；隐藏分析栏清除活动目标。
   - `settings`：设置 sheet 与工作副本；`AndroidInputDevices` 能力注入（键盘/指针/纯触控），读取真实行视图断言完整绑定控件、纯触控零绑定文字与读屏不泄露；录制/取消/清空/冲突、录制时鼠标左右键被吞、断开最后外设取消录制、连接变化保留草稿且不弹软键盘、虚拟/非字母键盘排除；倍率行单一居中值 + `%`、失焦统一提交、1601/NaN/0 恢复、输入框实例保持、草稿随增删保留、原地重排与至少保留一项。
   - `similarity` / `tools`：面板与工具 sheet 开合。

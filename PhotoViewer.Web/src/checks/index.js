@@ -1065,6 +1065,75 @@ const CHECKS = [
         },
     },
     {
+        id: "STATE-01",
+        title: "缓存命中切图保留前一张，未命中即清图并延迟提示",
+        async run(shell, h) {
+            const { app } = shell;
+            const usable = app.state.cards
+                .map((card) => card.photo)
+                .filter((photo) => !(photo.fault && photo.fault.decode === "all"));
+            h.assert(usable.length >= 2, "harbor 可解码照片不足");
+            const [first, second] = usable;
+            const cacheCount = app.settings.cacheCount;
+            const hitCacheCount = Math.max(4, cacheCount);
+            const slow = typeof shell.decoder?.setLatencyMultiplier === "function";
+
+            try {
+                // 缓存数量上限压到 1：把缓存收敛到一张（上屏 second 再上屏 first），
+                // 之后切到 second 必然未命中，才能验证黑屏加载路径。解码放慢到 8 倍，
+                // 让代理稳定超过 300 ms，露出加载提示的时序。
+                app.updateSettings({ cacheCount: 1 });
+                if (slow) shell.decoder.setLatencyMultiplier(8);
+                app.selectCard(second.id);
+                await h.until(() => app.state.session.surface !== null, 8000);
+                app.selectCard(first.id);
+                await h.until(() => app.state.session.surface !== null, 8000);
+
+                app.selectCard(second.id);
+                // STATE-01：需要解码时切图即清旧图，不让上一张冒充当前照片。
+                h.assert(app.state.session.surface === null, "未命中的切图没有清旧图");
+                h.assert(app.state.session.tier === "none", `未命中的切图仍标记档位 ${app.state.session.tier}`);
+                h.assert(app.state.session.loadingHint === false, "切图瞬间就显示了加载提示");
+                if (slow) {
+                    await h.until(() => app.state.session.loadingHint === true, 3000);
+                    h.assert(app.state.session.surface === null, "加载提示出现时已不是黑屏加载");
+                }
+                await h.until(() => app.state.session.surface !== null, 8000);
+                h.assert(app.state.session.loadingHint === false, "图到达后加载提示未撤下");
+                if (slow) shell.decoder.setLatencyMultiplier(1);
+                app.updateSettings({ cacheCount: hitCacheCount });
+
+                // 两张都上屏过：切回已上屏的照片命中展示产物缓存，同步换图、不空屏、不显示提示。
+                app.selectCard(first.id);
+                await h.until(() => app.state.session.surface !== null, 5000);
+                const surfaceFirst = app.state.session.surface;
+                app.selectCard(second.id);
+                await h.until(() => app.state.session.surface !== null, 5000);
+
+                app.selectCard(first.id);
+                h.assert(app.state.session.surface === surfaceFirst, "命中缓存没有同步换回该照片的展示产物");
+                h.assert(app.state.session.loadingHint === false, "命中缓存切图显示了加载提示");
+                h.assert(app.state.viewport.isFit === true, "命中缓存切图没有保持适应态");
+                await h.tick(400);
+                h.assert(app.state.session.surface === surfaceFirst, "命中缓存后又发生了解码替换");
+                h.assert(app.state.session.loadingHint === false, "命中缓存 300 ms 后出现加载提示");
+
+                // 需要 Full 而缓存只有代理：按未命中清图，低分辨率顶替默认禁用。
+                h.dblclick(h.photoCanvas());
+                await h.tick(80);
+                h.assert(app.state.viewport.isFit === false, "双击未进入 100%");
+                await h.until(() => app.state.session.tier === "full", 5000);
+                app.selectCard(second.id);
+                h.assert(app.state.session.surface === null, "需要 Full 时仍拿代理缓存顶替上屏");
+                h.assert(app.state.session.tier === "none", `需要 Full 的未命中切图仍标记档位 ${app.state.session.tier}`);
+                await h.until(() => app.state.session.surface !== null, 5000);
+            } finally {
+                if (slow) shell.decoder.setLatencyMultiplier(1);
+                app.updateSettings({ cacheCount });
+            }
+        },
+    },
+    {
         id: "STATE-02",
         title: "解码失败显示失败文案，仍可选中评分",
         async run(shell, h) {

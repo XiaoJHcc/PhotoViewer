@@ -263,6 +263,7 @@ const tokens = Object.freeze({
     "sim.panel.width": 110,
     "sim.score.lowerBound": 0.75,
     "status.loading.delay": 300,
+    "status.loading.holdMax": 100,
     "status.toast.bottomMargin": 24,
     "status.toast.cornerRadius": 6,
     "status.toast.fontSize": 12,

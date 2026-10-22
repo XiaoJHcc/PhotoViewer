@@ -185,7 +185,6 @@ class MainApp {
         this._dropdownOpen = false;
         this._textFocus = false;
         this._cached = new Set();
-        this._cachedLimit = this._settings.cacheCount;
         this._listeners = new Map();
         this._pendingRegions = new Set();
         this._flushScheduled = false;
@@ -209,6 +208,8 @@ class MainApp {
             t,
             clock,
             decoder,
+            // SETTINGS-06：展示产物缓存容量沿用「缓存数量上限」，与胶片栏细边同一口径。
+            cacheLimit: this._settings.cacheCount,
             onChange: (snapshot) => this._onSession(snapshot),
         });
         this._sessionSnap = this._photoSession.snapshot();
@@ -743,8 +744,8 @@ class MainApp {
     updateSettings(patch) {
         if (!patch || typeof patch !== "object") return false;
         this._settings = normalizeSettings({ ...this._settings, ...patch }, this._settings);
-        this._cachedLimit = this._settings.cacheCount;
-        this._trimCache();
+        this._photoSession.setCacheLimit(this._settings.cacheCount);
+        this._syncCached();
         const previousMode = this._layout ? this._layout.layoutMode : null;
         // FILTER-09 / SETTINGS-06：格式与同名合并只重算列表，不重置排序与星级筛选、不定位。
         this._fileList.setFormatOptions({
@@ -900,6 +901,8 @@ class MainApp {
             return;
         }
         const size = displaySize(photo.width, photo.height, photo.orientation);
+        // STATE-01：先落新几何再 show——命中缓存时 show 同步换上新 surface，两者在同一次调用里
+        // 交给同一帧绘制，旧图不会按新照片的几何出现一帧；未命中时屏上无图，几何先换无妨。
         this._viewport.setImage({
             width: size.width,
             height: size.height,
@@ -1192,10 +1195,8 @@ class MainApp {
             this._analysis.setDisplaySurfaceReady(Boolean(snapshot.surface));
             regions.add("analysis");
         }
-        if (snapshot.tier === "full" && snapshot.photoId) {
-            this._rememberCached(snapshot.photoId);
-            regions.add("list");
-        }
+        // FILM-05：缓存细边只表示全分辨率已缓存，口径取会话里同一份展示产物缓存。
+        if (this._syncCached()) regions.add("list");
         if (regions.size > 0) this._invalidate([...regions]);
     }
 
@@ -1241,20 +1242,11 @@ class MainApp {
         this._invalidate(regions);
     }
 
-    _rememberCached(photoId) {
-        this._cached.delete(photoId);
-        this._cached.add(photoId);
-        while (this._cached.size > this._cachedLimit) {
-            const oldest = this._cached.values().next().value;
-            this._cached.delete(oldest);
-        }
-    }
-
-    _trimCache() {
-        while (this._cached.size > this._cachedLimit) {
-            const oldest = this._cached.values().next().value;
-            this._cached.delete(oldest);
-        }
+    _syncCached() {
+        const next = new Set(this._photoSession.cachedFullIds());
+        const changed = next.size !== this._cached.size || [...next].some((id) => !this._cached.has(id));
+        this._cached = next;
+        return changed;
     }
 
     _invalidate(regions) {

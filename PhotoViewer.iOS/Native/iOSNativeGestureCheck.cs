@@ -421,9 +421,12 @@ internal static class iOSNativeGestureCheck
                 lines.Add($"PASS 增强关闭还原（Full 24MP）：{fullOffMs:0} ms");
 
                 // 代理档：回到适应态后重新装载同一文件（会话只升不降，重新 SetFile 才会重新解出代理档）。
+                // 移除该文件的两档展示缓存，避免 STATE-01 的缓存命中直接返回已缓存的 Full 而拿不到代理档。
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     root.Photo.FitToView();
+                    BitmapLoader.RemoveCached(largeFile.File.PathKey, ImageSizeClass.Full);
+                    BitmapLoader.RemoveCached(largeFile.File.PathKey, ImageSizeClass.Proxy);
                     session.SetFile(largeFile.File);
                 });
                 await WaitAsync(() => session.IsProxy && session.Image is { Encoding: PixelEncoding.RgbaF16 }, "回适应态代理档");

@@ -7,10 +7,16 @@
  *     enhance(surface, { signal }) -> Promise<surface>,
  * }
  *
- * new PhotoSession({ t, clock, decoder, onChange })
+ * 主图展示产物在会话内按照片 id 保留最近若干份（cacheLimit，取设置里的缓存数量上限）：
+ * 切到的照片若已有满足当前档位的产物，即同步换上新 surface（STATE-01「保留前一张」）；
+ * 档位不足或没有产物则清图走黑屏加载（低分辨率顶替默认禁用）。
+ *
+ * new PhotoSession({ t, clock, decoder, onChange, cacheLimit })
  *     show(photo, { proxyLongEdge, wantFull })   切图；photo 为 null 进入空态
  *     setWantFull(bool)                          视口/分析栏可见性变化后的升级需求
  *     setProxyLongEdge(px)                       视口变大时重出代理
+ *     setCacheLimit(count)                       缓存数量上限变化后裁剪
+ *     cachedFullIds() -> string[]                已缓存全分辨率的照片 id（胶片栏细边口径）
  *     setEnhance(bool)                           增强预览会话开关（无照片时不可开）；返回生效值
  *     memoryWarning()                            内存压力：自动关闭增强并提示；返回是否因此关闭
  *     toast(text)                                状态提示条（STATE-03）
@@ -27,8 +33,15 @@
  *     write(card, rating) -> Promise<boolean>    代表文件先行，同名伴侣随后同步
  */
 
+const DEFAULT_CACHE_LIMIT = 30;
+
+function positiveInt(value, fallback) {
+    const number = Math.round(Number(value));
+    return Number.isFinite(number) && number > 0 ? number : fallback;
+}
+
 export class PhotoSession {
-    constructor({ t, clock, decoder, onChange } = {}) {
+    constructor({ t, clock, decoder, onChange, cacheLimit = DEFAULT_CACHE_LIMIT } = {}) {
         if (typeof t !== "function") throw new Error("PhotoSession 需要令牌函数 t");
         if (!clock) throw new Error("PhotoSession 需要 clock");
         if (!decoder) throw new Error("PhotoSession 需要 decoder");
@@ -36,6 +49,8 @@ export class PhotoSession {
         this._clock = clock;
         this._decoder = decoder;
         this._onChange = typeof onChange === "function" ? onChange : () => {};
+        this._cache = new Map();
+        this._cacheLimit = positiveInt(cacheLimit, DEFAULT_CACHE_LIMIT);
 
         this._photo = null;
         this._generation = 0;
@@ -105,7 +120,6 @@ export class PhotoSession {
         this._stopBusy();
 
         this._photo = photo;
-        this._surface = null;
         this._original = null;
         this._tier = "none";
         this._error = null;
@@ -114,7 +128,23 @@ export class PhotoSession {
         if (options.proxyLongEdge != null) this._proxyLongEdge = Number(options.proxyLongEdge);
         this._proxyLongEdgeUsed = null;
 
-        // IMAGE-10：切图即清旧图，不让上一张冒充当前照片
+        const cached = this._cache.get(photo.id);
+        if (cached && this._cacheSatisfies(cached, this._wantFull)) {
+            // STATE-01：缓存档位已满足当前需求，只剩上屏——保留前一张直到这次 emit 换上新图，
+            // 不插黑帧、不起加载提示计时；新 surface 与新几何在同一次调用里生效。
+            this._cacheSurface(photo.id, cached);
+            this._surface = cached.surface;
+            this._original = cached.surface;
+            this._tier = cached.tier;
+            this._proxyLongEdgeUsed = cached.longEdge;
+            if (this._enhance) this._startEnhance();
+            this._emit();
+            return;
+        }
+
+        this._surface = null;
+        // IMAGE-10 / STATE-01：缓存不满足需求即按未命中清旧图；低分辨率顶替默认禁用，
+        // 需要 Full 而屏上只有代理时不得先拿代理顶替。
         this._emit();
 
         this._loadingTimer = this._clock.setTimeout(() => {
@@ -154,6 +184,22 @@ export class PhotoSession {
         if (next <= used) return;
         // 代理覆盖不足：后台重出，新图到达前旧代理维持上屏
         this._requestProxy({ longEdge: next, keepSurface: true });
+    }
+
+    setCacheLimit(count) {
+        const next = positiveInt(count, this._cacheLimit);
+        if (next === this._cacheLimit) return;
+        this._cacheLimit = next;
+        this._trimCache();
+    }
+
+    /** 已缓存全分辨率的照片 id：胶片栏细边（FILM 主图缓存标记）与展示产物缓存同一份口径。 */
+    cachedFullIds() {
+        const ids = [];
+        for (const [id, entry] of this._cache) {
+            if (entry.tier === "full") ids.push(id);
+        }
+        return ids;
     }
 
     setEnhance(on) {
@@ -233,6 +279,13 @@ export class PhotoSession {
         this._surface = result.surface;
         this._tier = "proxy";
         this._proxyLongEdgeUsed = this._coverage(result, req.longEdge);
+        // STATE-01：上屏产物进内存缓存，之后切回这张照片直接换图。
+        this._cacheSurface(this._photo?.id, {
+            surface: result.surface,
+            tier: "proxy",
+            longEdge: this._proxyLongEdgeUsed,
+            sourceEdge: this._sourceEdge(),
+        });
         if (this._enhance) this._startEnhance();
         if (this._wantFull) this._requestFull();
         this._emit();
@@ -292,6 +345,13 @@ export class PhotoSession {
         this._original = result.surface;
         this._surface = result.surface;
         this._tier = "full";
+        // STATE-01：Full 覆盖代理成为该照片的展示产物，胶片栏缓存细边也以此为口径。
+        this._cacheSurface(this._photo?.id, {
+            surface: result.surface,
+            tier: "full",
+            longEdge: this._coverage(result, 0),
+            sourceEdge: this._sourceEdge(),
+        });
         if (this._enhance) this._startEnhance();
         this._emit();
     }
@@ -390,6 +450,37 @@ export class PhotoSession {
         const edge = Math.max(width, height);
         if (edge > 0) return edge;
         return Number(requested) || 0;
+    }
+
+    _sourceEdge() {
+        const photo = this._photo;
+        const width = Number(photo?.width) || 0;
+        const height = Number(photo?.height) || 0;
+        return Math.max(width, height);
+    }
+
+    // STATE-01：命中要求缓存档位已满足当前需求——需要 Full 时必须已是 Full；否则产物长边
+    // 要覆盖当前代理目标，或产物本身已是源分辨率（代理被夹到源尺寸时不会再产出更大档）。
+    _cacheSatisfies(entry, wantFull) {
+        if (wantFull) return entry.tier === "full";
+        if (entry.tier === "full") return true;
+        const target = Math.max(0, Number(this._proxyLongEdge) || 0);
+        if (entry.longEdge >= target) return true;
+        return entry.sourceEdge > 0 && entry.longEdge >= entry.sourceEdge;
+    }
+
+    // 最近用过的照片排到表尾；超出缓存数量上限时从表头淘汰（与胶片栏细边共用这份表）。
+    _cacheSurface(photoId, entry) {
+        if (!photoId || !entry || !entry.surface) return;
+        this._cache.delete(photoId);
+        this._cache.set(photoId, entry);
+        this._trimCache();
+    }
+
+    _trimCache() {
+        while (this._cache.size > this._cacheLimit) {
+            this._cache.delete(this._cache.keys().next().value);
+        }
     }
 
     _setToast(text) {

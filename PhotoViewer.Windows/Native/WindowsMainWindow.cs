@@ -884,7 +884,8 @@ internal sealed partial class WindowsMainWindow : Window
         // EXIF 可能晚于主图到达;每次会话变化都重读对焦点,ToggleFit 才能在 F 上按对焦点放大。
         UpdateFocusPoint();
         // 会话自己管理增强态:Image 在增强就绪后返回增强图,切图/清空时立即回到新图或 null。
-        _photo.SetImage(_session.Image);
+        // STATE-01：代际让视图区分「缓存命中切图」与「代理↔Full 热替换」,两者可能源尺寸相同。
+        _photo.SetImage(_session.Image, _session.Generation);
         _busyPill.Visibility = _session.IsEnhancingVisible ? Visibility.Visible : Visibility.Collapsed;
         UpdateStatusToastBottomMargin();
         // IMAGE-03：有代理时 Full 升级失败只走非阻塞提示，不覆盖主图错误标题；同一错误只提示一次。

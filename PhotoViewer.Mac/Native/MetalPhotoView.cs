@@ -17,6 +17,8 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     private DecodedImage? _textureSource;
     /// <summary>当前照片的未旋转源尺寸与 EXIF 方向；用于区分"切图"与"代理↔Full 热替换"。</summary>
     private (int Width, int Height, int Orientation) _identity;
+    /// <summary>已上屏照片的加载代际；缓存命中切图不经过空图，只能靠它与身份共同判定切图。</summary>
+    private int _generation;
 
     /// <summary>视口变化通知，加载会话据此决定代理尺寸与 Full 升级。</summary>
     public event Action? ViewportChanged;
@@ -44,6 +46,8 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     public override bool AcceptsFirstResponder() => true;
     /// <summary>缩放是否处于适应状态。</summary>
     public bool IsFit => _viewport.IsFit;
+    /// <summary>已按切图语义应用的加载代际；与 <see cref="PhotoLoadSession.Generation"/> 一致说明宿主认到了这次切图。</summary>
+    internal int DisplayedGeneration => _generation;
     /// <summary>源像素对屏幕物理像素的倍率。</summary>
     public double PhysicalScale => _viewport.PhysicalScale;
     /// <summary>当前全分辨率细节需求，包括代理覆盖不足的放大。</summary>
@@ -96,46 +100,52 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     }
 
     /// <summary>同步上传 pinned 像素并生成 mipmap；Metal 命令队列顺序保证绘制前生成完毕。编码支持范围由渲染核心判定。</summary>
+    /// <param name="image">展示产物（F16 线性 scRGB 或 8 位 Display P3）；null 表示移除当前照片。</param>
+    /// <param name="generation">该产物的加载代际（<see cref="PhotoLoadSession.Generation"/>）；代际变化即切图。</param>
     /// <remarks>
     /// 同一张照片的代理 ↔ Full 热替换只更新纹理宽度（<see cref="PhotoViewport.ApplyTexture"/>），绝不重跑切图定位：
     /// 视口中心可能恰好落在对焦点 5% 邻域（跟随对焦），重跑 <see cref="PhotoViewport.ApplyImage"/> 会把画面吸到对焦点，
-    /// 在升 Full 时表现为一次可见跳动。只有照片身份 / 逻辑尺寸 / 方向变化才走切图语义。
+    /// 在升 Full 时表现为一次可见跳动。切图判定同时看代际与身份：STATE-01 的缓存命中切图不经过空图，
+    /// 同机型连拍的照片身份完全相同，只比身份会把它误判成热替换，丢掉 IMAGE-02 的跟随对焦居中；
+    /// 代际相同而身份变化是 IMAGE-01 的元数据纠正（Full 纠正源尺寸），仍按切图语义处理。
     /// </remarks>
-    public void SetImage(DecodedImage? image)
+    public void SetImage(DecodedImage? image, int generation)
     {
+        bool newGeneration = generation != _generation;
+        _generation = generation;
         if (image == null)
         {
             _identity = default;
             _textureSource = null;
+            _renderer.SetTexture(null);
+            _viewport.ClearTexture();
+            DrawFrame();
+            ViewportChanged?.Invoke();
+            return;
         }
-        else if (ReferenceEquals(image, _textureSource))
+        bool sameTexture = ReferenceEquals(image, _textureSource);
+        // 会话只是状态通知（例如"增强计算中"）：同一代际的同一份产物已在纹理里，重绘即可。
+        if (sameTexture && !newGeneration)
         {
-            // 会话只是状态通知（例如"增强计算中"）：同一份产物已在纹理里，重绘即可。
             DrawFrame();
             return;
         }
-        else
+        // STATE-01：缓存命中切图不经过空图，重新选中命中同一缓存实例时也不得当作热替换——不重传纹理但按切图语义重定位。
+        if (!sameTexture)
         {
+            _renderer.SetTexture(image);
             _textureSource = image;
         }
-        _renderer.SetTexture(image);
-        if (image == null)
+        var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
+        if (!newGeneration && identity == _identity)
         {
-            _viewport.ClearTexture();
+            _viewport.ApplyTexture(_renderer.TextureWidth);
         }
         else
         {
-            var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
-            if (identity == _identity)
-            {
-                _viewport.ApplyTexture(_renderer.TextureWidth);
-            }
-            else
-            {
-                _identity = identity;
-                _viewport.BeginImageChange();
-                _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
-            }
+            _identity = identity;
+            _viewport.BeginImageChange();
+            _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
         }
         DrawFrame();
         ViewportChanged?.Invoke();

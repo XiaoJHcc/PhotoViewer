@@ -80,6 +80,84 @@ internal static class iOSNativePhotoCheck
 
             using var awaiter = new DisplayAwaiter(session);
 
+            // STATE-01：缓存命中切图保留前一张（不插黑帧、不显示加载提示、SetFile 返回时已是新图且宿主按切图语义生效）；
+            //     移除两档展示缓存后必须回到黑屏加载。iOS 的 CurrentFile 变更经 Posted 派发，这里直接调用会话 API
+            //     核对"SetFile 返回瞬间"的契约；主 VM 与会话在收尾时回到同一文件。
+            //     用长边超过代理目标的大色卡（长边 ≥ 4000）保证切回时代理档真的可复用。
+            await SetCurrentAsync(main, awaiter, "color-p3-large.jpg");
+            await SetCurrentAsync(main, awaiter, "color-srgb.jpg");
+            var largeFile = await UiDispatcher.InvokeAsync(() =>
+                main.FolderVM.AllFiles.First(item => item.Name == "color-p3-large.jpg"));
+            var srgbFile = await UiDispatcher.InvokeAsync(() =>
+                main.FolderVM.AllFiles.First(item => item.Name == "color-srgb.jpg"));
+            var largeCached = BitmapLoader.TryGetCached(largeFile.File.PathKey, ImageSizeClass.Proxy)
+                ?? throw new InvalidOperationException("STATE-01 回归要求切走后的上一张仍以代理档留在缓存中");
+            bool sawNull = false;
+            bool sawLoading = false;
+            void OnSwitchState()
+            {
+                if (session.Image == null) sawNull = true;
+                if (session.IsLoadingVisible) sawLoading = true;
+            }
+            session.Changed += OnSwitchState;
+            try
+            {
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    int generation = session.Generation;
+                    session.SetFile(largeFile.File);
+                    if (session.Generation != generation + 1) throw new InvalidOperationException("缓存命中切图未推进展示会话代际");
+                    if (!ReferenceEquals(session.Image, largeCached))
+                        throw new InvalidOperationException("缓存命中切图未在 SetFile 返回时换上缓存产物");
+                    if (root.Photo.DisplayedGeneration != session.Generation || !root.Photo.PresentationReady)
+                        throw new InvalidOperationException("宿主未按切图语义认到缓存命中切图");
+                    if (!root.Photo.IsFit) throw new InvalidOperationException("缓存命中切图没有保持适应态");
+                });
+                if (sawNull) throw new InvalidOperationException("STATE-01 保留前一张期间主图出现空帧");
+                if (sawLoading) throw new InvalidOperationException("STATE-01 保留前一张期间出现了加载提示");
+                lines.Add($"PASS STATE-01 缓存命中切图：{largeFile.Name} 在 SetFile 返回时已是缓存代理产物，全程无空帧、无加载提示，宿主代际 {root.Photo.DisplayedGeneration}");
+
+                // 黑屏加载：移除 Full/Proxy 两档缓存，切图必须清空旧图且 300ms 门槛前不显示加载提示。
+                bool cleared = await UiDispatcher.InvokeAsync(() =>
+                {
+                    BitmapLoader.RemoveCached(srgbFile.File.PathKey, ImageSizeClass.Full);
+                    BitmapLoader.RemoveCached(srgbFile.File.PathKey, ImageSizeClass.Proxy);
+                    session.SetFile(srgbFile.File);
+                    return session.Image == null && !session.IsLoadingVisible;
+                });
+                if (!cleared) throw new InvalidOperationException("缓存移除后的切图未清空旧图或提前显示加载提示（应为 STATE-01 黑屏加载）");
+                await WaitAsync(() => session.Image != null, "缓存移除后重新解码出图");
+                lines.Add($"PASS STATE-01 黑屏加载：移除 {srgbFile.Name} 的展示缓存后切图清空旧图并重新解码，加载提示不早于门槛");
+
+                // 小图（长边小于代理目标）：源分辨率产物即满足任何代理目标，切回必须命中缓存且不经过空帧。
+                await SetCurrentAsync(main, awaiter, "color-p3.jpg");
+                var smallCached = BitmapLoader.TryGetCached(srgbFile.File.PathKey, ImageSizeClass.Proxy)
+                    ?? BitmapLoader.TryGetCached(srgbFile.File.PathKey, ImageSizeClass.Full)
+                    ?? throw new InvalidOperationException("小图的源分辨率产物未留在缓存中");
+                if (Math.Max(smallCached.Width, smallCached.Height) >= BitmapLoader.ProxyTargetLongEdge)
+                    throw new InvalidOperationException($"小图素材长边未小于代理目标，无法证明源分辨率复用规则：{smallCached.Width}×{smallCached.Height} target={BitmapLoader.ProxyTargetLongEdge}");
+                sawNull = false;
+                sawLoading = false;
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    int generation = session.Generation;
+                    session.SetFile(srgbFile.File);
+                    if (session.Generation != generation + 1) throw new InvalidOperationException("小图缓存命中切图未推进展示会话代际");
+                    if (!ReferenceEquals(session.Image, smallCached))
+                        throw new InvalidOperationException("小图缓存命中切图未在 SetFile 返回时换上缓存产物");
+                    if (root.Photo.DisplayedGeneration != session.Generation || !root.Photo.PresentationReady)
+                        throw new InvalidOperationException("宿主未按切图语义认到小图缓存命中切图");
+                    if (!root.Photo.IsFit) throw new InvalidOperationException("小图缓存命中切图没有保持适应态");
+                });
+                if (sawNull) throw new InvalidOperationException("小图保留前一张期间主图出现空帧");
+                if (sawLoading) throw new InvalidOperationException("小图保留前一张期间出现了加载提示");
+                lines.Add($"PASS STATE-01 小图缓存命中切图：{srgbFile.Name}（{smallCached.Width}×{smallCached.Height} < 目标 {BitmapLoader.ProxyTargetLongEdge}）在 SetFile 返回时已是缓存产物，全程无空帧、无加载提示");
+                // 主 VM 与展示会话回到同一文件（posted 的 SetFile 再次命中，订阅仍在，期间同样不得出现空帧）。
+                await UiDispatcher.InvokeAsync(() => main.CurrentFile = srgbFile);
+                await WaitAsync(() => main.CurrentFile == srgbFile && session.Image != null, "STATE-01 小图对齐");
+            }
+            finally { session.Changed -= OnSwitchState; }
+
             // 一、代理先行 + 编码协商：大色卡 → 代理 F16，物理 100% 后 Full 8 位 Display P3，且热替换不改变视口变换
             await SetCurrentAsync(main, awaiter, "color-p3-large.jpg");
             var proxyState = session.Image ?? throw new InvalidOperationException("大色卡未上屏");
