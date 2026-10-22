@@ -402,25 +402,32 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var info = new List<View>();
         var performance = InfoLabel(() => Settings.PerformanceBudgetInfo);
         var cache = InfoLabel(() => Settings.BitmapCacheCountInfo);
-        Add(_content, Section("缓存与预加载", null,
+        var cacheRows = new List<View>
+        {
             StepperRow("原生解码线程", null, () => Settings.NativePreloadParallelism,
                 value => Settings.NativePreloadParallelism = value, 1, () => Settings.NativePreloadParallelismMaximum,
                 1, value => $"{value} 线程"),
             StepperRow("软件解码线程", null, () => Settings.CpuPreloadParallelism,
                 value => Settings.CpuPreloadParallelism = value, 1, () => Settings.CpuPreloadParallelismMaximum,
                 1, value => $"{value} 线程"),
-            StepperRow("缓存内存上限", null, () => Settings.BitmapCacheMaxMemory,
-                value => Settings.BitmapCacheMaxMemory = value, 512, () => 32768, 512, value => $"{value} MB"),
-            StepperRow("缓存数量上限", null, () => Settings.BitmapCacheMaxCount,
-                value => Settings.BitmapCacheMaxCount = value, 1, () => 400, 10, value => $"{value} 张"),
-            StepperRow("下一张预载数量", null, () => Settings.PreloadForwardCount,
-                value => Settings.PreloadForwardCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"),
-            StepperRow("上一张预载数量", null, () => Settings.PreloadBackwardCount,
-                value => Settings.PreloadBackwardCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"),
-            StepperRow("列表滚动预载数量", null, () => Settings.VisibleCenterPreloadCount,
-                value => Settings.VisibleCenterPreloadCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"),
-            StepperRow("滚动预载延时", null, () => Settings.VisibleCenterDelayMs,
-                value => Settings.VisibleCenterDelayMs = value, 100, () => 5000, 100, value => $"{value} ms")));
+        };
+        // SETTINGS-06@android：缓存容量由实测预算自动推导，两项用户上限不显示（模型字段保留）。
+        if (Settings.ShowsCacheLimits)
+        {
+            cacheRows.Add(StepperRow("缓存内存上限", null, () => Settings.BitmapCacheMaxMemory,
+                value => Settings.BitmapCacheMaxMemory = value, 512, () => 32768, 512, value => $"{value} MB"));
+            cacheRows.Add(StepperRow("缓存数量上限", null, () => Settings.BitmapCacheMaxCount,
+                value => Settings.BitmapCacheMaxCount = value, 1, () => 400, 10, value => $"{value} 张"));
+        }
+        cacheRows.Add(StepperRow("下一张预载数量", null, () => Settings.PreloadForwardCount,
+            value => Settings.PreloadForwardCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"));
+        cacheRows.Add(StepperRow("上一张预载数量", null, () => Settings.PreloadBackwardCount,
+            value => Settings.PreloadBackwardCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"));
+        cacheRows.Add(StepperRow("列表滚动预载数量", null, () => Settings.VisibleCenterPreloadCount,
+            value => Settings.VisibleCenterPreloadCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"));
+        cacheRows.Add(StepperRow("滚动预载延时", null, () => Settings.VisibleCenterDelayMs,
+            value => Settings.VisibleCenterDelayMs = value, 100, () => 5000, 100, value => $"{value} ms"));
+        Add(_content, Section("缓存与预加载", null, cacheRows.ToArray()));
         Add(_content, performance);
         Add(_content, cache);
         RefreshDynamicTexts();

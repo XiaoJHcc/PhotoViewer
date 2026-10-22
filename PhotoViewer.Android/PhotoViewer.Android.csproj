@@ -82,6 +82,19 @@
             Include="NativeLibs\arm64-v8a\libheif.so">
             <Abi>arm64-v8a</Abi>
         </AndroidNativeLibrary>
+        <!-- LibRaw RAW 解码（libpvraw.so）：由 build-native-android-raw.sh 交叉编译 -->
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libpvraw.so')"
+            Include="NativeLibs\arm64-v8a\libpvraw.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
+        <!-- HEVC 快速解码库：静态 FFmpeg（仅 HEVC 解码器，LGPL）+ 薄 C 封装，
+             由 bash build-native-android-hevc.sh 交叉编译生成；缺失时自动跳过，不影响构建。 -->
+        <AndroidNativeLibrary
+            Condition="Exists('NativeLibs\arm64-v8a\libpvhevc.so')"
+            Include="NativeLibs\arm64-v8a\libpvhevc.so">
+            <Abi>arm64-v8a</Abi>
+        </AndroidNativeLibrary>
         <AndroidNativeLibrary
             Condition="Exists('NativeLibs\armeabi-v7a\libde265.so')"
             Include="NativeLibs\armeabi-v7a\libde265.so">

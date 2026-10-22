@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
 using Android.OS;
@@ -10,6 +13,7 @@ using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
@@ -32,6 +36,7 @@ public static class AndroidNativeShell
     private static AndroidNativeRootView? _root;
     private static AndroidNativeSettingsPresenter? _settingsPresenter;
     private static AndroidToolsPresenter? _toolsPresenter;
+    private static IPresentationImageDecoder? _presentationDecoder;
     private static bool _externalHandlerRegistered;
 
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
@@ -86,7 +91,15 @@ public static class AndroidNativeShell
         // 真机 EGL P3 表面在当前合成路径下会把主图整体抬亮（缩略图正常）；默认走 sRGB 保正确，
         // 广色域留 --ez pv-p3 true 诊断，待 EGL/合成传递函数确认后再默认开启。
         AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-p3", false) != true;
+        // 压测独占一份隔离设置：否则一轮压测会把用户设置写脏，下一轮也无法从默认值起跑。
+        if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
+            AndroidSettingsStorage.UseIsolatedProfile("stress");
         InitializePlatform(activity);
+
+        // 性能探针独占一轮：不建共享 VM 与主界面，测完写报告并结束进程（与 Windows/Mac 同流程）。
+        var perfProbeFolder = ResolveLaunchPath(intent?.GetStringExtra("pv-perf-probe"));
+        if (!string.IsNullOrWhiteSpace(perfProbeFolder))
+            return RunPerfProbe(activity, perfProbeFolder, intent?.GetIntExtra("pv-perf-probe-target", 0) ?? 0);
 
         if (_main == null)
         {
@@ -103,7 +116,93 @@ public static class AndroidNativeShell
         _root = new AndroidNativeRootView(activity, _main, _session);
         HandleIntent(intent);
         AndroidNativeChecks.MaybeStart(activity, _main, _session, _root, intent?.GetStringExtra("pv-check"));
+        if (intent != null) MaybeStartStress(activity, intent, _main, _session);
         return _root;
+    }
+
+    /// <summary>
+    /// 压测入口：Intent extras（<c>pv-stress</c> / <c>pv-stress-count</c> / <c>pv-stress-mode</c>）
+    /// 映射到共享 <see cref="StressFlipDriver"/> 参数；日志与 pv-check 报告同目录（内部 <c>files/PhotoViewer/</c>），
+    /// 汇总行补上传统计、<c>/proc/self/status</c> 内存读数与 GC 次数。素材只读，不写回照片文件夹。
+    /// </summary>
+    /// <param name="activity">宿主 Activity（收尾用）。</param>
+    /// <param name="intent">启动 Intent。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="session">展示会话。</param>
+    private static void MaybeStartStress(Activity activity, Intent intent, MainViewModel main, PhotoLoadSession session)
+    {
+        var folder = intent.GetStringExtra("pv-stress");
+        if (string.IsNullOrWhiteSpace(folder)) return;
+
+        var args = new List<string> { "--pv-stress=" + folder };
+        if (intent.HasExtra("pv-stress-count"))
+            args.Add("--pv-stress-count=" + intent.GetIntExtra("pv-stress-count", 0));
+        var mode = intent.GetStringExtra("pv-stress-mode");
+        if (!string.IsNullOrWhiteSpace(mode)) args.Add("--pv-stress-mode=" + mode);
+        if (!StressFlipDriver.TryParseArgs(args, path => ResolveLaunchPath(path) ?? path)) return;
+
+        var reportDirectory = Path.Combine(activity.FilesDir!.AbsolutePath, "PhotoViewer");
+        Directory.CreateDirectory(reportDirectory);
+        StressFlipDriver.LogDirectory = reportDirectory;
+        AndroidUploadStats.Reset();
+        // 压测期间不跑后台特征索引：索引会解 560 缩略图并抢占解码与 CPU，把翻页延迟混成"索引延迟"。
+        main.Settings.SimilarityPanelExpanded = false;
+        var gc0AtStart = GC.CollectionCount(0);
+        var gc2AtStart = GC.CollectionCount(2);
+        StressFlipDriver.ExtraSummary = () => AndroidUploadStats.Summary()
+            + " " + AndroidProcessMemory.Summary()
+            + " gc0Delta=" + (GC.CollectionCount(0) - gc0AtStart)
+            + " gc2Delta=" + (GC.CollectionCount(2) - gc2AtStart)
+            + " managedMB=" + (GC.GetTotalMemory(false) >> 20);
+        // 自动化压测：一轮翻完就结束进程，否则 Activity/隔离库留在前台，下一轮无法从干净进程起跑。
+        StressFlipDriver.Completed = () => ExitShell(activity, "压测完成");
+        Console.WriteLine($"[Native] 压测启动：{StressFlipDriver.PendingFolderPath} flips={StressFlipDriver.MaxFlips}"
+            + $" mode={(StressFlipDriver.AbMode ? "ab" : "sequential")}");
+        StressFlipDriver.MaybeStart(main, session);
+    }
+
+    /// <summary>
+    /// 性能探针：目标长边取屏幕物理长边 × 2（无主图视口可比），跑完写 <c>files/PhotoViewer/perf-probe.txt</c>
+    /// 并结束进程；返回一个占位视图交给 <c>SetContentView</c>，不构建用户界面。
+    /// </summary>
+    /// <param name="activity">宿主 Activity。</param>
+    /// <param name="folder">素材目录（只读）。</param>
+    /// <returns>占位视图。</returns>
+    private static View RunPerfProbe(Activity activity, string folder, int targetOverride)
+    {
+        var reportDirectory = Path.Combine(activity.FilesDir!.AbsolutePath, "PhotoViewer");
+        var reportPath = Path.Combine(reportDirectory, "perf-probe.txt");
+        var metrics = activity.Resources?.DisplayMetrics;
+        var displayLongEdge = metrics == null ? 1080 : Math.Max(metrics.WidthPixels, metrics.HeightPixels);
+        // 默认视口长边 ×2；验收可用 --ei pv-perf-probe-target 指定别的代理目标
+        var proxyLongEdge = targetOverride > 0 ? targetOverride : Math.Max(displayLongEdge * 2, 1);
+        var decoder = _presentationDecoder ?? new AndroidPresentationDecoder();
+        Console.WriteLine($"[PerfProbe] start {folder} -> {reportPath} T={proxyLongEdge}"
+            + $" display={metrics?.WidthPixels}x{metrics?.HeightPixels}");
+        AndroidPerfProbe.RunAsync(folder, reportPath, decoder, proxyLongEdge).ContinueWith(task =>
+        {
+            if (task.IsFaulted)
+                Console.Error.WriteLine($"[PerfProbe] 失败：{task.Exception?.GetBaseException()}");
+            else
+                Console.WriteLine($"[PerfProbe] done {reportPath}");
+            ExitShell(activity, "性能探针完成");
+        }, TaskScheduler.Default);
+        return new View(activity);
+    }
+
+    /// <summary>自动化收尾：关闭 Activity 后结束进程，下一轮从干净进程开始（对齐 Windows 的 Environment.Exit）。</summary>
+    /// <param name="activity">宿主 Activity。</param>
+    /// <param name="reason">日志用原因。</param>
+    private static void ExitShell(Activity activity, string reason)
+    {
+        Console.WriteLine($"[Native] {reason}，结束进程");
+        var handler = new Handler(Looper.MainLooper!);
+        handler.Post(() =>
+        {
+            try { activity.FinishAndRemoveTask(); }
+            catch (Exception exception) { Console.Error.WriteLine($"[Native] Activity 结束失败：{exception.Message}"); }
+            handler.PostDelayed(() => global::Android.OS.Process.KillProcess(global::Android.OS.Process.MyPid()), 200);
+        });
     }
 
     /// <summary>
@@ -134,12 +233,21 @@ public static class AndroidNativeShell
         {
             Console.WriteLine($"[Native] DINO 模型资源={(model != null ? "ok" : "missing")}");
         }
+        ConfigureHeifFastDecoder();
         HeifLoader.Initialize(new AndroidLibHeifDecoder());
-        BitmapLoader.InitializePresentationDecoder(new AndroidPresentationDecoder(), new AndroidPresentationEncodingPolicy());
-        // Android 手机堆更紧：邻居预取统一走代理档（Full 只在当前图放大时按需解码），避免 3+3 张 24MP Full 同时驻留。
-        BitmapLoader.PrefetchFullNeighbors = false;
+        _presentationDecoder = new AndroidPresentationDecoder();
+        BitmapLoader.InitializePresentationDecoder(_presentationDecoder, new AndroidPresentationEncodingPolicy());
+        // 邻居预取档位跟随实际需求：适应态只取代理；放大或分析栏可见时 ±1 邻居取 Full（有准入与预算兜底）。
+        BitmapLoader.PrefetchFullNeighbors = true;
         PerformanceBudget.Initialize(new AndroidPerformanceBudget());
         MemoryGovernor.Initialize(new AndroidMemoryBudgetProvider());
+        // Android 14+ 前台不再收到 RUNNING_* trim 回调，缓存容量改由实测预算推导（忽略用户两项上限）。
+        BitmapLoader.AutomaticCacheLimit = true;
+        // 空闲像素缓冲按预算的 1/8 封顶（模拟器 ~1.1GB 预算 → ~140MB），大图缓冲不长期占着不还。
+        long governorBudget = MemoryGovernor.BudgetBytes;
+        ImageBufferPool.MaxIdleBytes = governorBudget > 0
+            ? Math.Min(512L * 1024 * 1024, governorBudget / 8)
+            : 512L * 1024 * 1024;
         StorageAccessManager.Initialize(new AndroidStorageAccessManager());
         XmpWriter.Initialize(new AndroidXmpWriter(activity.ContentResolver!));
         SettingsService.ConfigureStorage(new AndroidSettingsStorage());
@@ -148,6 +256,42 @@ public static class AndroidNativeShell
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_Nnapi());
         Console.WriteLine("[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/xmp/settings/dino）");
+    }
+
+    /// <summary>
+    /// 配置共享 HEIF 快速解码器：原生库取 APK 的 <c>libpvhevc.so</c>，并发与空闲上下文按移动端收敛。
+    /// </summary>
+    /// <remarks>
+    /// 空闲上下文按最近一帧的 YUV 平面占内存，手机上只留两个；同时在转换的图像数默认 2，
+    /// 预算不足 3 GB 的设备降到 1，避免两幅全画幅的 YUV 平面同时驻留。
+    /// 原生库缺失时加载器返回 <see cref="IntPtr.Zero"/>，解码器退回默认探测并按不可用处理，
+    /// HEIF 继续走系统 <c>BitmapFactory</c> 与 libheif。
+    /// </remarks>
+    private static void ConfigureHeifFastDecoder()
+    {
+        var handle = IntPtr.Zero;
+        try
+        {
+            handle = NativeLibrary.Load("libpvhevc.so");
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[Native] pvhevc 加载失败（{exception.GetType().Name}）：{exception.Message}");
+        }
+
+        long budget = new AndroidMemoryBudgetProvider().GetBudgetBytes();
+        int maxImages = budget < 3L * 1024 * 1024 * 1024 ? 1 : 2;
+        int contexts = System.Environment.ProcessorCount;
+        FastHeifDecoder.Configure(new FastHeifOptions
+        {
+            LoadLibrary = () => handle,
+            MaxConcurrentContexts = contexts,
+            MaxCurrentContextsExtra = 2,
+            MaxConcurrentImages = maxImages,
+            MaxIdleContexts = 2,
+        });
+        Console.WriteLine($"[Native] HEIF 快速解码 pvhevc={(handle != IntPtr.Zero ? "ok" : "不可用")}"
+            + $" contexts={contexts}+2 images={maxImages} budget={budget >> 20}MB");
     }
 
     /// <summary>

@@ -9,26 +9,28 @@
 | AndroidApp.cs | 普通 `Android.App.Application`，不初始化任何 UI 框架。 |
 | AndroidBootstrapActivity.cs | 唯一 `MainLauncher` 与 `ACTION_VIEW`/`ACTION_SEND`/`ACTION_SEND_MULTIPLE`（`image/*`）入口；原样转发 Action/Data/ClipData/Extras 到 `AndroidNativeActivity` 并 `Finish()`。 |
 | AndroidNativeActivity.cs | 原生壳 Activity（`AppCompatActivity` + `@style/Theme.PhotoViewer.Native`）；挂 `AndroidNativeShell` 根视图，转发 SAF 结果、硬件键盘与返回键；`ConfigurationChanges` 覆盖键盘/键盘隐藏/导航/触摸/方向/尺寸等，外设插拔与软键盘显隐不重建 Activity、不丢设置或工具 sheet。 |
-| Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel()` → `PhotoLoadSession` → 根视图；外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，启动参数 `pv-settings` 也在这里收口。日志出现 `[Native] Android 原生壳就绪`。 |
+| Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel()` → `PhotoLoadSession` → 根视图；HEIF 门面注入前先 `FastHeifDecoder.Configure`（`libpvhevc.so` + 移动端上下文/并发上限），MemoryGovernor 注入后置 `BitmapLoader.AutomaticCacheLimit`（缓存容量按实测预算推导）与 `ImageBufferPool.MaxIdleBytes = min(512MB, 预算/8)`。外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，`pv-settings` 与程序化入口（`pv-check` / `pv-stress` / `pv-perf-probe`）也在这里收口。日志出现 `[Native] Android 原生壳就绪`。 |
 | Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性/打开失败（STATE-02）提示条（文案取共享 `StatusMessages`，与「计算中」药丸同时可见时上移到药丸上方）；行布局按共享 `SimilarityPanelGeometry.RowWidth` 给相似面板让宽并计入列表态停靠区；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
 | Native/AndroidMainScreenLayout.cs | 主屏分区纯函数：共享分区数学 + 系统栏/刘海 insets；栏位背景铺到屏幕边缘、内容收在安全区。 |
-| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。切图与热替换按 `PhotoLoadSession.Generation` 区分（缓存命中切图不经过空图，同机型连拍几何相同）：代际变化走切图语义，同一实例 + 同代际的会话通知只重绘不重传纹理；无图时清除纹理宽度。 |
+| Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。切图与热替换按 `PhotoLoadSession.Generation` 区分（缓存命中切图不经过空图，同机型连拍几何相同）：代际变化走切图语义，同一实例 + 同代际的会话通知只重绘不重传纹理；无图时清除纹理宽度。**纹理缓存**：当前帧 + 最近 2 帧按 `DecodedImage` 实例身份缓存（弱引用，不延长像素租约），另有 1 张 ≤32MB 的同尺寸空纹理供下次上传复用（驱动在新建纹理时可能停顿）；命中不重传、`up_hits` 记 0 ms。纹理字节含 mip 链（×4/3）上报为 `AndroidPhotoView` 的 footprint，并通过 `AndroidMemoryBudgetProvider.ExternalFootprint` 加进预算源（GPU 内存不在 RssAnon）；压力 Caution 起在 UI 线程丢掉非当前纹理与空纹理（`Trim` 由探测线程调用，只投递）。 |
 | Native/AndroidFilterBar.cs | 自绘下拉 ×3 + 计数 + 相似聚类 toggle（窄屏紧凑宽度 84/76dp）；原生 PopupMenu 写回共享筛选 VM。 |
 | Native/AndroidFilmstripView.cs / AndroidThumbnailCard.cs / AndroidBitmapConverter.cs | RecyclerView 胶片栏 + 自绘卡片（96×144 / 80 方形 / 星级 / 抖动徽标 / 第二行）、350ms 三次缓出定位/用户接管/减少动态效果、可见范围上报、星星写回不切图。 |
 | Native/AndroidControlBar.cs | 共享 `ControlBarLayout` 的 EXIF/评分/命令三分组、换行/居中；命令显隐/顺序来自共享设置（含分析栏/增强）；评分快捷命令为实心星内叠数字（0 为清零叉），数字不拦截点击；`ExploreByTouchHelper` 暴露虚拟节点、名称、禁用态与焦点顺序。 |
 | Native/AndroidControlBarScrollHost.cs | 控制栏滚动宿主（TOOLBAR-08）：文档超出可用主轴时拖动/惯性滚动，普通重建不回到起点，偏移按新几何夹取；未溢出时行为与原先一致。 |
 | Native/AndroidNavigationOverlay.cs / AndroidNavigationDecoder.cs | 缩放指示器（长边 150dp + 可见框 + 百分比，宿主不透明度 0.6；白框可拖动定位，IMAGE-06）；缩略图取当前展示产物（含增强预览）抽样转正，不二次解码文件、不回读 GPU。 |
-| Native/AndroidNativeSettingsPresenter.cs | 半屏 Material 3 BottomSheet：五分类（文件/预览/控制/EXIF/AI）、共享 `NativeSettingsSession` 工作副本、关闭/下滑/返回统一回写；三张可排序表用 `ItemTouchHelper` + 行尾把手（轻点把手是上移/下移菜单），顶部显示源设置的持久化失败状态。控制页按 `AndroidInputDevices` 能力显示主/次绑定：有外设时提供录制（`SettingsBottomSheetDialog` 统一截获键盘/滚轮/鼠标按键，录制态左右键不穿透）与清空，纯触控整块隐藏绑定文本、冲突与录制/清空控件，读屏也不朗读绑定；`Esc` 取消、`Delete` 清空、写入共享 `HotkeyItem` 并重算冲突，录制时鼠标按键不穿透到下层控件。缩放预设每行只有一个居中数值框 + 固定 `%`，失焦/空白/Done/导航/关闭统一校验提交，保留输入框实例并原地重排；`＋` 新增 100% 项、`−` 删除项。 |
+| Native/AndroidNativeSettingsPresenter.cs | 半屏 Material 3 BottomSheet：五分类（文件/预览/控制/EXIF/AI）、共享 `NativeSettingsSession` 工作副本、关闭/下滑/返回统一回写；三张可排序表用 `ItemTouchHelper` + 行尾把手（轻点把手是上移/下移菜单），顶部显示源设置的持久化失败状态。文件页「缓存与预加载」按 `ShowsCacheLimits` 决定是否显示「缓存内存上限 / 缓存数量上限」（Android 自动口径下隐藏，两项提示行保留）。控制页按 `AndroidInputDevices` 能力显示主/次绑定：有外设时提供录制（`SettingsBottomSheetDialog` 统一截获键盘/滚轮/鼠标按键，录制态左右键不穿透）与清空，纯触控整块隐藏绑定文本、冲突与录制/清空控件，读屏也不朗读绑定；`Esc` 取消、`Delete` 清空、写入共享 `HotkeyItem` 并重算冲突，录制时鼠标按键不穿透到下层控件。缩放预设每行只有一个居中数值框 + 固定 `%`，失焦/空白/Done/导航/关闭统一校验提交，保留输入框实例并原地重排；`＋` 新增 100% 项、`−` 删除项。 |
 | Native/AndroidInputDevices.cs | `InputManager` 设备增删监听：真实字母键盘（排除虚拟设备与非字母键）或鼠标/触控板任一连接即视为具备键鼠录制能力；只按系统连接状态判断，供设置页动态增删控件。 |
 | Native/AndroidAnalysisPanel.cs / AndroidAnalysisHost | 分析栏：共享 `AnalysisPresenter` 宿主，细节预览/直方图/DINO-CV 瓦片自绘；细节绿框按“触控按下立即点亮、滑动切换/空白清除、抬起或取消清除、真实鼠标/触控板悬停、失活/隐藏/换图清除”工作，双击定位与绿框互不影响；诊断瓦片只在未超过触控容差的完整点按时落准星；可见时主图升 Full。 |
 | Native/AndroidSimilarityPanel.cs | 相似聚类面板：复用卡片 + 分数条，三态/动作区/真实“提取全部”，行布局从胶片栏右侧让位；向主屏提供列表态停靠区自然宽度，让 1–2 项列表不被动作区挤窄。 |
 | Native/AndroidToolsPresenter.cs | 工具 BottomSheet：与设置页同款容器尺寸、把手/标题栏与分组卡片导航；根页只有 EXIF 详情（分组/格式切换）与 DINO 诊断（5 瓦片 + 刚体拟合），导航状态写共享 `ToolsViewModel`；显示/关闭同步 `IsPresented`，关闭即 `Deactivate()` 取消在途 DINO。 |
 | Native/AndroidInputMapping.cs | `KeyEvent`/修饰键 → 共享 `GestureKey`/`GestureModifiers`；Android 语义另写，不复用苹果修饰键表。设置页录制复用同一映射生成共享 `AppGesture`，不维护第二套键码。 |
 | Native/AndroidUiTheme.cs | 固定深色、显式圆角/字重/主色；uicons 描边与实心图标字体从 Assets 加载（缺失各自回退并只记录一次），设计令牌的图标码位转字形。 |
-| Core/AndroidPresentationDecoder.cs / AndroidPresentationEncodingPolicy.cs / AndroidDisplayCapabilities.cs | 展示解码（BitmapFactory + libheif 兜底、P3/sRGB、EXIF 方向、源尺寸）与编码协商（恒 Rgba8）、色域探测。 |
+| Core/AndroidPresentationDecoder.cs / AndroidPresentationEncodingPolicy.cs / AndroidDisplayCapabilities.cs | 展示解码：**RAW 走 `AndroidRawDecoder`（LibRaw 全分辨率开发）**，不落 `BitmapFactory`（系统只会给内嵌预览，违反代理精度规则），失败返回 null 由会话如实报错；HEIF 先走共享 `FastHeifDecoder`（自解析容器 + `libpvhevc.so` 并行解 HEVC 瓦片；方向取容器 `irot`/`imir`，按 ISO/IEC 23008-12 忽略 HEIF 的 EXIF Orientation 项），其余格式与快速路径回落走 `BitmapFactory` → libheif；代理用 `InSampleSize` + 精确缩放，方向只写入 `DecodedImage.Orientation` 交顶点阶段，缩略图路径返回已转正的 sRGB8。同时实现共享 `IQuickPreviewDecoder`：RAW 首次解码空窗期用内嵌预览顶替（STATE-01），RAW 缩略图也只解内嵌预览、绝不全分辨率开发。编码协商恒 Rgba8、色域探测（P3 表面可选）。 |
+| Core/AndroidRawDecoder.cs / AndroidBitmapPixels.cs | RAW 解码（`libpvraw.so` = LibRaw 0.22 薄 C ABI，见 `NativeSrc/pvraw`）：全分辨率或 half_size 开发，产物**未旋转**的 RGBA8（A=255），sRGB 或 Display P3（LibRaw `output_color` 1/7，DCI-P3 D65 原色 + sRGB 曲线），方向映射 flip→EXIF（0→1,3→3,5→8,6→6…），`SourceWidth/Height` 为全分辨率裁剪尺寸（`adjust_to_raw_inset_crop`，A7C II 7008x4672 / A6700 6192x4128）。曝光＝LibRaw 直方图 1% 白点、提升上限 2.5×（`no_auto_bright=1` + `bright`），与相机 JPEG/ImageIO 同族且逐字节等同 LibRaw mem image 路径。并发：后台（非 P0）RAW 开发串行、总并发 ≤2，P0 不与后台排队；后台另按 `MemoryGovernor.TryAcquire(EstimatePeakBytes − 产物字节)` 申请工作内存，被拒即跳过（代理返回 null 不算错误）。`EstimatePeakBytes` 由实测 RSS 拟合（2.2 B/原始像素 + 11 B/输出像素）。`AndroidBitmapPixels` 是 Bitmap→RGBA8 拷贝与「RGBA8 直缩（Mitchell，省掉 Bgra32 往返四次整图拷贝）」的共用助手。 |
+| Core/AndroidLibHeifDecoder.cs / AndroidHeifDecoder.cs | `HeifLoader` 注入的 HEIF 解码器（胶片缩略图与兜底链）：目标长边 ≤512 先解容器自带的 `thmb` 项，再走 `FastHeifDecoder`，最后 `BitmapFactory` → libheif；契约不变——产物**未旋转**（`OutputPreRotated` 为 false），方向对齐由 `ThumbnailService` 按容器方向完成，DINO 的 560 短边请求仍解整幅主图。`AndroidHeifDecoder` 是其中的系统 `BitmapFactory` 一段。 |
 | Core/AndroidStorageRefs.cs / AndroidFilePicker.cs / AndroidStorageAccessManager.cs | SAF `content://` 与本地 `IFileRef`/`IFolderRef`；`ACTION_OPEN_DOCUMENT_TREE`/`ACTION_OPEN_DOCUMENT` + 持久授权。 |
 | Core/AndroidNativeWindowPresenter.cs | 设置走原生 BottomSheet；工具页交 `AndroidToolsPresenter`。 |
-| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / Android{Heif,LibHeif}Decoder.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力，继续复用；设置 JSON 损坏时另存带时间戳的 SharedPreferences 备份键再以默认值启动（SETTINGS-14）。 |
+| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力；`AndroidMemoryBudgetProvider` 预算按 `MemTotal` 查 AOSP MemoryLimiter 前台可见档，footprint = `RssAnon + VmSwap` + 主图挂的 `ExternalFootprint`（GL 纹理），可用量再受系统 `availMem − threshold` 收窄（Android 14+ 前台收不到 RUNNING_* trim 回调，周期探测是唯一压力源）；`AndroidPerformanceBudget` 的内存上限取该预算、原生预载默认 6 核及以上 2 路否则 1 路。设置 JSON 损坏时另存带时间戳的 SharedPreferences 备份键再以默认值启动（SETTINGS-14）。 |
 
 ## 主题与资源
 
@@ -47,6 +49,15 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 
 长期建议 `sudo dotnet workload install android` 到 10.0.402。模拟器：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`（Apple Silicon 必须 arm64-v8a 镜像）。
 
+原生库（两个脚本各自交叉编译，产物入库，`NativeLibs/arm64-v8a/`）：
+
+| 脚本 | 产物 | 说明 |
+|---|---|---|
+| `build-native-android-raw.sh` | `libpvraw.so` + `pvraw.txt` + `pvraw-LibRaw-LICENSE.txt` | LibRaw 0.22.2 静态编入（仅 arm64-v8a），`-O3 -fopenmp -static-openmp -static-libstdc++`、16KB 页对齐、只导出 `pv_raw_*`；LibRaw 双许可 LGPL-2.1/CDDL-1.0。脚本内校验导出符号集合、`NEEDED ⊆ libc/libdl/libm/liblog`、`LOAD` 对齐 0x4000。 |
+| `build-native-android-hevc.sh` | `libpvhevc.so` + `pvhevc.txt` + `pvhevc-FFmpeg-LICENSE.txt` | 静态 FFmpeg（仅 HEVC 解码器，LGPL）+ 薄 C 封装，供 `FastHeifDecoder` 并行解瓦片。 |
+
+两者都缺 `.so` 时对应路径自动回退（RAW 停用并记一次日志 / HEIF 回落系统与 libheif），不阻塞构建。
+
 ## 已验证（A2–A5 自验，2026-10-18，API 35 arm64 模拟器）
 
 - Android Debug/Release 构建 **0 错误 / 9 警告**（剩余为既有 `AndroidHeifDecoder` 的 CS8603/CS8604×5、CA1422×2 与 XA4301×2，未新增）。
@@ -55,7 +66,7 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 - 13 张夹具：筛选条/12+ 卡片/控制栏/主图分区与安全区正确；方向 6 显示朝向正确；`color-p3-large`（6000×4000）Fit→100% 时代理 2706×1804 → Full 6000×4000，导航图与百分比正确。
 - 卡片星级点击 → `[Rating] SetRating(..., 3)` + XMP 写回 OK，主图身份不变；设置关闭 ShowRating 后控制栏评分分组与卡片星级即时消失（关闭回写传播）。
 - 硬件键盘 Right → Next、F → Fit；设置 sheet 打开时键盘让位；返回键先关 sheet 再结束 Activity。
-- 3+3 邻居预取在 13 张夹具下曾 SIGSEGV；`BitmapLoader.PrefetchFullNeighbors=false`（Android）后稳定，Mac/iOS/Windows 行为不变。
+- `PrefetchFullNeighbors` 为 true（只在放大或分析栏可见时预取 ±1 Full，受预算准入约束）；26MP HIF 夹具上 `pv-check analysis` 的「100% 触发 Full」受全幅解码约 1s 与检查固定 700ms 等待窗影响偶发失败，重跑即过。性能与内存实测见 [Android 性能专项](../Plans/android-performance-memory-plan-1.md)。
 - 分析栏：范围 + 细节按压/悬停绿框 + 诊断瓦片点按；相似聚类：toggle → 空态 → 真实“提取全部” → 100% 分数卡片/柱状条；工具页：EXIF 详情分组/列/格式切换、DINO 5 瓦片 + 刚体文本；增强预览像素变亮（均为目视/日志，不是程序化通过）。
 
 ## 程序化检查（A6 起步）
@@ -75,6 +86,34 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
   - `similarity` / `tools`：面板与工具 sheet 开合。
 - `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。检查已按行/列布局分别核对分区与卡片宽度。
 
+### 压测与性能探针
+
+入口在 `AndroidNativeShell`：Intent extras 映射到共享 `StressFlipDriver` / `AndroidPerfProbe`，报告与 pv-check 同目录（内部 `files/PhotoViewer/`）。素材只读，不写回照片文件夹。
+
+| Extra | 作用 |
+|---|---|
+| `pv-stress=<文件夹>`（`@files/` 解析同 `pv-open`） | 顺序翻页压测，写 `stress-flip.jsonl` |
+| `pv-stress-count=N` | 翻页上限；缺省翻完整个文件夹 |
+| `pv-stress-mode=ab` | 最近两张对比切换（缺省 sequential） |
+| `pv-perf-probe=<文件夹>` | 分段计时探针，独占一轮，写 `perf-probe.txt` 后结束进程 |
+
+```bash
+# 探针：HIF/ARW/JPG 各取前 6 张（首张预热），代理长边 = 屏幕物理长边 × 2
+adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
+  --es pv-perf-probe @files/pv-perf
+adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/perf-probe.txt
+
+# 压测：顺序 60 翻 / 对比 60 翻
+adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
+  --es pv-stress @files/pv-stress-hif --ei pv-stress-count 60 --es pv-stress-mode ab
+adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/stress-flip.jsonl
+```
+
+- 压测切到隔离设置档 `cc.xiaojh.PhotoViewer.Settings.stress`，每轮从默认值起跑且不覆盖用户设置；`done` 行 `extra` 含 GL 上传统计（`up_*`）、`/proc/self/status` 的 `rssAnonMB`/`swapMB`/`peakRssMB` 与 GC 次数。
+- 压测与探针结束都结束进程（对齐 Windows 的 `Environment.Exit`），下一轮从干净进程起跑。
+- 探针解码走壳注入的展示解码器实例（换 HEIF/RAW 解码器后无需改探针），GL 上传无 EGL 上下文时不测；解码返回 null 记作 `null result`，不吞成 0 ms。
+- Release 包非 debuggable，`run-as` 不可用：`adb root` 后 `adb pull /data/data/cc.xiaojh.PhotoViewer/files/PhotoViewer/` 取报告。
+
 ## 发现清单（A1b–A5）
 
 | # | 现象 | 处理 |
@@ -82,7 +121,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 3 | APK 同时打进 Linux glibc 的 `libonnxruntime.so`（依赖 `libdl.so.2`）与 AAR 的 Android bionic 版本，前者胜出，`libonnxruntime4j_jni.so` 启动即 `UnsatisfiedLinkError` | **已修**：csproj `_PvRemoveLinuxOnnxFromApk` 在 `_BuildApkEmbed` 前从 `FrameworkNativeLibrary` 移除 `runtimes/linux-arm64/native/*.so`；APK 现用 AAR 的 bionic 版本（md5 5316513a…），启动无 `libdl.so.2` 错误 |
 | 4 | `AndroidAsset` 实际打进 `assets/Models/...`，而共享 URI 是 `avares://PhotoViewer/Assets/Models/...` | `AndroidAppResourceProvider` 去掉开头 `Assets/`；原生壳启动日志打印 `DINO 模型资源=ok` 验证 |
 | 5 | SAF 选择器/设置页/工具页已全部替换 | A5 工具页已落地；无占位入口 |
-| 6 | 3+3 邻居预取同时解 Full 时 13 张夹具（含 6000×4000）启动约 0.5s SIGSEGV | 共享 `BitmapLoader.PrefetchFullNeighbors` 默认 true；Android 壳置 false，邻居统一代理档（Full 只在当前图放大时按需）。Mac/iOS/Windows 行为不变 |
+| 6 | 3+3 邻居预取同时解 Full 时 13 张夹具（含 6000×4000）启动约 0.5s SIGSEGV | 预取档位改为跟随实际需求（适应态只取代理，放大或分析栏可见时只取 ±1 邻居 Full）并加预算准入后，Android 重新启用 `PrefetchFullNeighbors`（true）；`pv-check analysis/main` 各 3 次 + 26MP HIF 夹具 analysis 2 次全 PASS、无 SIGSEGV。Mac/iOS/Windows 不受影响 |
 | 7 | 导航图 FBO `glReadPixels` 回读内容错位/通道异常 | 改为不依赖 GPU 回读：当前取展示产物（代理/Full/增强）抽样转正生成导航图，长边仍为 150dp 显示 |
 | 8 | 模拟器为 ANGLE，EGL P3 协商回退 sRGB；真实 P3 面板未验 | 解码器按实际表面色彩空间选择 P3/sRGB；真机门补 P3 正向与色卡 |
 | 9 | 数值设置用 +/- 步进、列表排序曾用上下按钮、拖入未接 | 三张表已改 `ItemTouchHelper` 拖拽 + 行尾把手，轻点把手提供上移/下移菜单（SETTINGS-13/15）；`OnDragListener` 拖入仍待补 |
@@ -111,7 +150,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | 32 | HIF 导航指示器无缩略图 | 导航图改取当前展示产物（HIF 主图由 libheif 解出），不再单独走 BitmapFactory；真实 HIF `A7C05520.HIF` 已实测导航图出图 |
 | 33 | 同名 HIF/ARW 优先级 | 真实 `same.hif + same.arw` 实测：卡片 `same.hif(RAW)`、主图 HIF；`same.jpg + same.hif` 实测代表与主图均为 JPG。小组代表仍按 `SelectedFormats` 顺序 |
 | 34 | 同名合并后主图可能是被隐藏文件 | 文件夹打开时 CurrentFile 可能先指向 ARW/HIF，卡片却显示代表；`ApplyFilter` 末尾把隐藏的 CurrentFile 映射回其代表，实测 JPG/HIF/ARW 主图与卡片一致 |
-| 35 | HIF 缩略图/指示器等待久 | Sony HIF 的 `thmb` item 用 libheif thumbnail 插件解不了；但容器里有独立的 JPEG item（实测 160×120）。新增 `HeifJpegThumbnailExtractor` 解析 iinf/iloc 提取 JPEG item，胶片/导航优先用它，跳过 7008×4672 全图；随后 512 代理缓存复用。主图 Full 仍需一次全图 libheif（另一条路径），首张小图已不再等全图 |
+| 35 | HIF 缩略图/指示器等待久 | Sony HIF 的 `thmb` item 用 libheif thumbnail 插件解不了；但容器里有独立的 JPEG item（实测 160×120）。新增 `HeifJpegThumbnailExtractor` 解析 iinf/iloc 提取 JPEG item，胶片/导航优先用它，跳过 7008×4672 全图；小尺寸请求现由共享快速路径直接解容器 `thmb` 项（≤512 长边），不再保留 512 代理缓存。主图 Full 走 `pvhevc` 全图解码，首张小图不等全图 |
 | 38 | HIF 同一文件缩略图横竖不一致 | 同一 HIF 内不同 thumbnail item 方向不一致：160×120 是传感器横向，373×560 已是显示竖图；统一按容器 270° 转会把后者转横。改为先比较“原始横竖”和“显示横竖”，相反才转。同进程先开 A670 文件夹再开 A7C09124，首卡已与主图同向 |
 | 37 | HIF 首张缩略图方向偶发错 | 首张走优先加载时 MetadataExtractor 可能还没给出 Default Rotation；新增 `HeifOrientationReader` 直接从文件头 irot 读角度，元数据为 0 时兜底。用 `/sdcard/PhotoViewerTest/12760425/A7C09124.HIF`（irot=1→270°）验证首卡与主图同向 |
 | 36 | HIF 胶片缩略图横竖错乱 | JPEG 缩略图 item 存储方向与主图不同。`ThumbnailService` 之前把 HEIF 平台源硬编码 `isPreRotated:true`；改为 `HeifLoader.OutputPreRotated`，Android libheif/JPEG item 路径按容器 Default Rotation 再做方向对齐。用改 `irot=90°` 的 HIF 验证主图与卡片同向 |

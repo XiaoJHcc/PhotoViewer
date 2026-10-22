@@ -15,8 +15,17 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
 {
     private const string PreferenceName = "cc.xiaojh.PhotoViewer.Settings";
     private const string SettingsKey = "settings_json";
+    private static string _preferenceName = PreferenceName;
     private string? _corruptJson;
     private bool _corruptPending;
+
+    /// <summary>
+    /// 切到隔离档：压测换用独立 SharedPreferences，不读也不覆盖用户设置，每轮从默认值起跑。
+    /// 必须在共享设置首次加载前调用（原生壳建 <c>MainViewModel</c> 之前）。
+    /// </summary>
+    /// <param name="profile">档名（如 <c>stress</c>）；空值恢复用户档。</param>
+    public static void UseIsolatedProfile(string profile)
+        => _preferenceName = string.IsNullOrWhiteSpace(profile) ? PreferenceName : PreferenceName + "." + profile;
 
     public Task<SettingsModel?> LoadAsync()
     {
@@ -90,7 +99,7 @@ public sealed class AndroidSettingsStorage : ISettingsStorage
     }
 
     private static ISharedPreferences Preferences()
-        => Application.Context.GetSharedPreferences(PreferenceName, FileCreationMode.Private)
+        => Application.Context.GetSharedPreferences(_preferenceName, FileCreationMode.Private)
            ?? throw new InvalidOperationException("无法打开设置偏好存储");
 
     private static string BuildBackupKey(ISharedPreferences prefs)

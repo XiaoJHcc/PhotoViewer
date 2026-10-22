@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,6 +9,7 @@ using Android.Media;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Storage;
 using AndroidColorSpace = Android.Graphics.ColorSpace;
 using AndroidUri = Android.Net.Uri;
@@ -15,13 +17,22 @@ using AndroidUri = Android.Net.Uri;
 namespace PhotoViewer.Android.Core;
 
 /// <summary>
-/// Android 原生主图解码器（A2）：<see cref="BitmapFactory"/> 负责 JPEG/PNG/系统支持的 HEIF，
-/// 系统解不了的用户 HEIF（YUV 4:2:2 等）回退打包的 libheif 软件解码。
-/// 代理用 <c>InSampleSize</c> + 精确缩放；EXIF 方向不旋转像素，只写入 <see cref="DecodedImage.Orientation"/> 交顶点阶段处理。
+/// Android 原生主图解码器（A2）：RAW 走 LibRaw（<see cref="AndroidRawDecoder"/>，全分辨率开发 + 内嵌预览顶替），
+/// HEIF 先走共享快速路径（容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片），其余格式与快速路径回落用 <see cref="BitmapFactory"/>；
+/// 系统解不了的用户 HEIF（YUV 4:2:2 等）再回退打包的 libheif 软件解码。
+/// 代理用 <c>InSampleSize</c> + 精确缩放；方向不旋转像素，只写入 <see cref="DecodedImage.Orientation"/> 交顶点阶段处理
+/// （快速路径取容器 <c>irot</c>/<c>imir</c>，系统链取 EXIF 方向）。
 /// 色彩：表面以 Display P3 创建时解码到 P3，否则 sRGB8；不做隐式降级。
+/// 同时实现 <see cref="IQuickPreviewDecoder"/>：RAW 首次解码空窗期用内嵌预览顶替（STATE-01）。
 /// </summary>
-public sealed class AndroidPresentationDecoder : IPresentationImageDecoder
+public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQuickPreviewDecoder
 {
+    /// <summary>pvraw 是否可用：0 未知 / 1 可用 / 2 已确认不可用（只记一次日志）。</summary>
+    private static int _rawAvailability;
+
+    /// <summary>RAW 开发是否可用（libpvraw 加载失败后不再重试，也不会静默回退内嵌预览）。</summary>
+    private static bool RawAvailable => Volatile.Read(ref _rawAvailability) != 2;
+
     /// <summary>在线程池解码；代理限制长边，不使用容器内的小缩略图。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
@@ -43,17 +54,208 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder
     public Task<DecodedImage?> DecodeThumbnailAsync(IFileRef file, int minShortEdge, CancellationToken cancellationToken)
         => Task.Run<DecodedImage?>(() =>
         {
-            using var decoded = Decode(file, Math.Max(minShortEdge, 1) * 3, cancellationToken);
+            int targetLongEdge = Math.Max(minShortEdge, 1) * 3;
+            // RAW：只解内嵌预览（已转正的正确朝向），绝不为此全分辨率开发。
+            if (RawLoader.IsRawFile(file))
+            {
+                using var preview = DecodeRawPreview(file, cancellationToken);
+                return preview == null ? null : ColorEngine.ToAnalysisSrgb8(preview, preview.Orientation);
+            }
+            if (HeifLoader.IsHeifFile(file) && DecodeHeifThumbnail(file, targetLongEdge, cancellationToken) is { } heif)
+                return heif;
+
+            using var decoded = DecodeLegacy(file, targetLongEdge, cancellationToken);
             if (decoded == null) return null;
             return ColorEngine.ToAnalysisSrgb8(decoded);
         }, cancellationToken);
 
-    /// <summary>同步解码主体（在线程池执行）。</summary>
+    /// <summary>RAW 是否有内嵌预览顶替（只看扩展名，不做 I/O）。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <returns>RAW 且 libpvraw 可用时为 true。</returns>
+    public bool HasQuickPreview(IFileRef file) => RawLoader.IsRawFile(file) && RawAvailable;
+
+    /// <summary>
+    /// STATE-01 顶替预览：解 RAW 内嵌预览（Sony 1616x1080），在线程池执行。
+    /// 产物与正式解码同一展示编码与方向；失败返回 null（顶替是可选优化，不报错）。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>未旋转的 RGBA8 预览；不可用时为 null。</returns>
+    public Task<DecodedImage?> DecodeQuickPreviewAsync(IFileRef file, CancellationToken cancellationToken)
+        => Task.Run(() =>
+        {
+            var started = System.Diagnostics.Stopwatch.StartNew();
+            var preview = DecodeRawPreview(file, cancellationToken);
+            if (preview != null)
+                Console.WriteLine($"[Native] RAW 顶替预览上屏（{file.Name}）：{preview.Width}x{preview.Height}，"
+                    + $"{started.Elapsed.TotalMilliseconds:F0} ms");
+            return preview;
+        }, cancellationToken);
+
+    /// <summary>解 RAW 内嵌预览（展示编码 + 方向），pvraw 不可用/无预览时返回 null。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>未旋转的 RGBA8 预览；调用方负责释放。</returns>
+    private static DecodedImage? DecodeRawPreview(IFileRef file, CancellationToken cancellationToken)
+    {
+        if (!RawAvailable) return null;
+        try
+        {
+            var preview = AndroidRawDecoder.DecodeEmbeddedPreview(
+                file, AndroidDisplayCapabilities.PresentationColorSpace, cancellationToken);
+            Volatile.Write(ref _rawAvailability, 1);
+            return preview;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            MarkRawUnavailable(exception);
+            return null;
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[Native] RAW 内嵌预览失败（{file.Name}）：{exception.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>RAW 开发（全分辨率或代理），pvraw 不可用/失败返回 null 由会话如实报错（SCOPE-04）。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>未旋转的 RGBA8；失败为 null。</returns>
+    private static DecodedImage? DecodeRaw(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    {
+        if (!RawAvailable) return null;
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            var image = AndroidRawDecoder.Decode(
+                file, maxLongEdge, AndroidDisplayCapabilities.PresentationColorSpace, cancellationToken);
+            Volatile.Write(ref _rawAvailability, 1);
+            // 与"顶替预览上屏"日志配对，可核对真图确实晚于顶替图到达。
+            Console.WriteLine(image == null
+                ? $"[Native] RAW 解码无产物（{file.Name}），{started.Elapsed.TotalMilliseconds:F0} ms"
+                : $"[Native] RAW 解码完成（{file.Name}）：{image.Width}x{image.Height}，{started.Elapsed.TotalMilliseconds:F0} ms");
+            return image;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception) when (exception is DllNotFoundException or EntryPointNotFoundException or BadImageFormatException)
+        {
+            MarkRawUnavailable(exception);
+            return null;
+        }
+    }
+
+    /// <summary>libpvraw 加载失败：只记一次，后续不再尝试 RAW 解码（也不静默改用内嵌预览）。</summary>
+    private static void MarkRawUnavailable(Exception exception)
+    {
+        if (Interlocked.Exchange(ref _rawAvailability, 2) == 2) return;
+        Console.WriteLine($"[Native] libpvraw 不可用，RAW 解码停用：{exception.GetType().Name}: {exception.Message}");
+    }
+
+
+    /// <summary>同步解码主体（在线程池执行）：HEIF 先走快速路径，其余（及快速路径回落）用系统解码链。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>解码产物；失败返回 null。</returns>
     private static DecodedImage? Decode(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        // RAW 不落 BitmapFactory：系统只会给出内嵌预览，违反代理精度规则。失败返回 null，由会话如实报错。
+        if (RawLoader.IsRawFile(file))
+            return DecodeRaw(file, maxLongEdge, cancellationToken);
+        if (HeifLoader.IsHeifFile(file) && DecodeHeifFast(file, maxLongEdge, cancellationToken) is { } fast)
+            return fast;
+        return DecodeLegacy(file, maxLongEdge, cancellationToken);
+    }
+
+    /// <summary>
+    /// HEIF 快速路径：容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片，产物未旋转，
+    /// 方向取容器 <c>irot</c>/<c>imir</c>（ISO/IEC 23008-12 规定忽略 HEIF 的 EXIF Orientation 项）。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>RGBA8 产物；容器或色彩超出支持面时返回 null，由调用方回落。</returns>
+    private static DecodedImage? DecodeHeifFast(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            var fast = FastHeifDecoder.TryDecode(bytes, maxLongEdge, PixelEncoding.Rgba8, cancellationToken,
+                out var reason, AndroidDisplayCapabilities.PresentationColorSpace);
+            if (fast != null) return fast;
+            LogHeifFallback(file, reason);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            LogHeifFallback(file, $"{exception.GetType().Name}: {exception.Message}");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// HEIF 缩略图快速路径：解主图并缩到长边上限，按容器方向做到显示朝向的 sRGB8；
+    /// 不做 letterbox 裁剪（方向对齐与裁剪由缩略图服务按容器元数据完成）。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="targetLongEdge">按目标短边折算的长边上限。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>显示朝向的 sRGB8；快速路径不可用时返回 null，由调用方回落。</returns>
+    private static DecodedImage? DecodeHeifThumbnail(IFileRef file, int targetLongEdge, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            var fast = FastHeifDecoder.TryDecode(bytes, targetLongEdge, PixelEncoding.Bgra32, cancellationToken, out var reason);
+            if (fast == null)
+            {
+                LogHeifFallback(file, reason);
+                return null;
+            }
+
+            using (fast)
+            {
+                return ColorEngine.ToAnalysisSrgb8(fast, fast.Orientation);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            LogHeifFallback(file, $"{exception.GetType().Name}: {exception.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>已记录过回落原因的文件（限幅；回落原因只与容器能力相关，同一文件不必重复刷屏）。</summary>
+    private static readonly HashSet<string> HeifFallbackLogged = new(StringComparer.Ordinal);
+
+    /// <summary>记录一次 HEIF 快速路径回落（每文件只记第一次）。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="reason">回落原因。</param>
+    private static void LogHeifFallback(IFileRef file, string? reason)
+    {
+        var key = file.PathKey;
+        lock (HeifFallbackLogged)
+        {
+            if (!HeifFallbackLogged.Add(key)) return;
+            if (HeifFallbackLogged.Count > 256) HeifFallbackLogged.Clear();
+        }
+
+        Console.WriteLine($"[Native] HEIF 快速路径回落（{file.Name}）：{reason ?? "未知原因"}");
+    }
+
+    /// <summary>系统解码链主体（在线程池执行）：<c>BitmapFactory</c> 失败再走 libheif。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>解码产物；失败返回 null。</returns>
+    private static DecodedImage? DecodeLegacy(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         int sourceWidth = 0, sourceHeight = 0;

@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using Android.Animation;
 using Android.App;
 using Android.Content;
@@ -56,6 +57,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private bool _hasLastFocus;
     /// <summary>离散滚轮尚未累积到一格的增量（INPUT-04）。</summary>
     private double _wheelAccumulator;
+    /// <summary>纹理占用快照（含 mip 链），GPU 私有内存不在 RssAnon 里，供内存预算源与管家读取。</summary>
+    private long _textureBytes;
+    /// <summary>挂到 <see cref="AndroidMemoryBudgetProvider.ExternalFootprint"/> 的读数委托（释放时只摘自己这份）。</summary>
+    private readonly Func<long> _textureFootprint;
 
     /// <summary>EGL 窗口表面就绪（首图必须等表面就绪后再解码，保证 P3 协商结果参与编码选择）。</summary>
     internal event Action? SurfaceReady;
@@ -91,9 +96,16 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
 
     /// <summary>内存客户端名称。</summary>
     public string Name => "AndroidPhotoView";
-    /// <summary>纹理与表面估算字节（8 位 RGBA）。</summary>
-    public long FootprintBytes => _renderer.TextureBytes
-        + (long)(_viewport.ViewWidth * _viewport.ViewHeight * _viewport.BackingScale * _viewport.BackingScale * 4);
+    /// <summary>纹理（当前 + 最近缓存 + 空纹理，含 mip 链）与表面估算字节（8 位 RGBA）。</summary>
+    public long FootprintBytes
+    {
+        get
+        {
+            long texture = Interlocked.Read(ref _textureBytes);
+            double backing = _viewport.BackingScale;
+            return texture + (long)(_viewport.ViewWidth * _viewport.ViewHeight * backing * backing * 4);
+        }
+    }
 
     /// <summary>建立 SurfaceView、渲染器与手势识别。</summary>
     /// <param name="context">宿主上下文（Activity）。</param>
@@ -112,6 +124,9 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         AddView(_surfaceView, new LayoutParams(LayoutParams.MatchParent, LayoutParams.MatchParent));
         _gestures = new GestureDetector(context, new PhotoGestureListener(this));
         _scaleDetector = new ScaleGestureDetector(context, new PhotoScaleListener(this));
+        // GPU 纹理不占 RssAnon，预算源要单独加上这份占用才与 MemoryLimiter 的可用量同口径。
+        _textureFootprint = () => Interlocked.Read(ref _textureBytes);
+        AndroidMemoryBudgetProvider.ExternalFootprint = _textureFootprint;
         MemoryGovernor.Register(this);
     }
 
@@ -130,6 +145,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _identity = default;
             _wheelAccumulator = 0;
             _renderer.SetImage(null);
+            RefreshTextureBytes();
             _viewport.ClearTexture();
             Draw();
             ViewportChanged?.Invoke();
@@ -148,7 +164,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         _image = image;
         if (_surfaceReady)
         {
-            if (!reuseTexture) _renderer.SetImage(image);
+            if (!reuseTexture)
+            {
+                _renderer.SetImage(image);
+                RefreshTextureBytes();
+            }
             if (!cut && identity == _identity)
             {
                 // 同一张照片的代理 ↔ Full 热替换：只换纹理。
@@ -301,6 +321,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 _renderer.SetImage(_image);
                 _viewport.ApplyTexture(_renderer.TextureWidth);
             }
+            RefreshTextureBytes();
             Draw();
             SurfaceReady?.Invoke();
         }
@@ -332,6 +353,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         _surfaceReady = false;
         _renderer.Dispose();
         _renderer = new AndroidPhotoRenderer();
+        RefreshTextureBytes();
     }
 
     /// <summary>布局尺寸变化：刷新 dp 视口并保持适应态贴合。</summary>
@@ -536,15 +558,37 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _disposed = true;
             CancelAnimation();
             MemoryGovernor.Unregister(this);
+            if (ReferenceEquals(AndroidMemoryBudgetProvider.ExternalFootprint, _textureFootprint))
+                AndroidMemoryBudgetProvider.ExternalFootprint = null;
             _renderer.Dispose();
+            Interlocked.Exchange(ref _textureBytes, 0);
             _surfaceView.Holder?.RemoveCallback(this);
         }
         base.Dispose(disposing);
     }
 
-    /// <summary>压力响应保留当前纹理（缓存由共享 Governor 修剪）。</summary>
+    /// <summary>
+    /// 压力响应：Caution 起丢掉非当前帧的缓存纹理；GL 调用必须在主图线程执行，
+    /// 而本方法由内存探测线程调用，因此只投递、不在此等待。
+    /// </summary>
     /// <param name="level">压力级别。</param>
-    public void Trim(PressureLevel level) { }
+    public void Trim(PressureLevel level)
+    {
+        if (level < PressureLevel.Caution || _disposed) return;
+        try { Post(TrimCachedTextures); }
+        catch (Exception exception) { Console.Error.WriteLine($"[Native] 纹理修剪投递失败：{exception.Message}"); }
+    }
+
+    /// <summary>丢掉非当前纹理与复用空纹理（主图线程）。</summary>
+    private void TrimCachedTextures()
+    {
+        if (_disposed) return;
+        _renderer.TrimCachedTextures();
+        RefreshTextureBytes();
+    }
+
+    /// <summary>刷新纹理占用快照（供内存管家与预算源读取）。</summary>
+    private void RefreshTextureBytes() => Interlocked.Exchange(ref _textureBytes, _renderer.TextureBytes);
 
     /// <summary>单击/长按/双击手势回调。</summary>
     private sealed class PhotoGestureListener : GestureDetector.SimpleOnGestureListener

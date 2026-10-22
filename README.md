@@ -103,4 +103,4 @@ PhotoViewer 是一款专为摄影师打造的高效选片工具，支持 Windows
 
 ## 许可证
 
-本项目使用 [LibHeif](https://github.com/strukturag/libheif) 开源库解码 HEIF 格式照片，使用 [ExifTool](https://github.com/exiftool/exiftool) 的源码参数用于补充解析 EXIF 信息，遵循协议采用 [GPL 许可证](LICENSE)。
+本项目使用 [LibHeif](https://github.com/strukturag/libheif) 开源库解码 HEIF 格式照片，使用 [ExifTool](https://github.com/exiftool/exiftool) 的源码参数用于补充解析 EXIF 信息，遵循协议采用 [GPL 许可证](LICENSE)。Windows 与 Android 端打包仅含 HEVC 解码器的 [FFmpeg](https://ffmpeg.org/)（LGPL-2.1，许可原文随原生库附带）并行解码 HEIF 瓦片；Android 端另打包 [LibRaw](https://www.libraw.org/)（0.22.2，双许可 LGPL-2.1 / CDDL-1.0，许可原文见 `PhotoViewer.Android/NativeLibs/arm64-v8a/pvraw-LibRaw-LICENSE.txt`）解码 RAW 格式照片。
