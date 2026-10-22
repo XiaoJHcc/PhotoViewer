@@ -30,7 +30,7 @@
 | Core/AndroidLibHeifDecoder.cs / AndroidHeifDecoder.cs | `HeifLoader` 注入的 HEIF 解码器（胶片缩略图与兜底链）：目标长边 ≤512 先解容器自带的 `thmb` 项，再走 `FastHeifDecoder`，最后 `BitmapFactory` → libheif；契约不变——产物**未旋转**（`OutputPreRotated` 为 false），方向对齐由 `ThumbnailService` 按容器方向完成，DINO 的 560 短边请求仍解整幅主图。`AndroidHeifDecoder` 是其中的系统 `BitmapFactory` 一段。 |
 | Core/AndroidStorageRefs.cs / AndroidFilePicker.cs / AndroidStorageAccessManager.cs | SAF `content://` 与本地 `IFileRef`/`IFolderRef`；`ACTION_OPEN_DOCUMENT_TREE`/`ACTION_OPEN_DOCUMENT` + 持久授权。 |
 | Core/AndroidNativeWindowPresenter.cs | 设置走原生 BottomSheet；工具页交 `AndroidToolsPresenter`。 |
-| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力；`AndroidMemoryBudgetProvider` 预算按 `MemTotal` 查 AOSP MemoryLimiter 前台可见档，footprint = `RssAnon + VmSwap` + 主图挂的 `ExternalFootprint`（GL 纹理），可用量再受系统 `availMem − threshold` 收窄（Android 14+ 前台收不到 RUNNING_* trim 回调，周期探测是唯一压力源）；`AndroidPerformanceBudget` 的内存上限取该预算、原生预载默认 6 核及以上 2 路否则 1 路。设置 JSON 损坏时另存带时间戳的 SharedPreferences 备份键再以默认值启动（SETTINGS-14）。 |
+| Core/AndroidUiDispatcher.cs / AndroidAppResourceProvider.cs / AndroidXmpWriter.cs / AndroidSettingsStorage.cs / AndroidPerformanceBudget.cs / AndroidMemoryBudgetProvider.cs | 既有平台能力；`AndroidMemoryBudgetProvider` 预算按 `MemTotal` 查 AOSP MemoryLimiter 前台可见档，小米 HyperOS/MIUI 的 Sentinel PSS 红线（`persist.sys.stability.pss_highest_line`，越线即被强杀，不经 lmkd）更低时取其 90%，footprint = `RssAnon + VmSwap` + 主图挂的 `ExternalFootprint`（GL 纹理），可用量再受系统 `availMem − threshold` 收窄（Android 14+ 前台收不到 RUNNING_* trim 回调，周期探测是唯一压力源）；`AndroidPerformanceBudget` 的内存上限取该预算、原生预载默认 6 核及以上 2 路否则 1 路。设置 JSON 损坏时另存带时间戳的 SharedPreferences 备份键再以默认值启动（SETTINGS-14）。 |
 
 ## 主题与资源
 
@@ -95,6 +95,10 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 | `pv-stress=<文件夹>`（`@files/` 解析同 `pv-open`） | 顺序翻页压测，写 `stress-flip.jsonl` |
 | `pv-stress-count=N` | 翻页上限；缺省翻完整个文件夹 |
 | `pv-stress-mode=ab` | 最近两张对比切换（缺省 sequential） |
+| `pv-perf-probe-target=N`（`--ei`） | 探针代理长边；缺省为屏幕物理长边 × 2，实际主图代理长边见压测 `up_last` |
+| `pv-memory-probe` | 内存上限探针：前台按 128MB 逐步分配并逐页写入，每步把占用与系统水位写入 `memory-ceiling.txt`，到 14GB 或分配失败停止（会挤掉后台应用，只在验收时用） |
+| `pv-memory-probe-report` | 把系统记录的最近 5 次进程退出原因写入 `exit-reasons.txt` 后结束进程 |
+| `pv-settings-page=<files\|preview\|control\|exif\|ai>` | 与 `pv-settings` 合用，设置 sheet 直接落到指定分类页（真机禁用输入注入时核对页面内容） |
 | `pv-perf-probe=<文件夹>` | 分段计时探针，独占一轮，写 `perf-probe.txt` 后结束进程 |
 
 ```bash
@@ -112,7 +116,9 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/stress-flip.json
 - 压测切到隔离设置档 `cc.xiaojh.PhotoViewer.Settings.stress`，每轮从默认值起跑且不覆盖用户设置；`done` 行 `extra` 含 GL 上传统计（`up_*`）、`/proc/self/status` 的 `rssAnonMB`/`swapMB`/`peakRssMB` 与 GC 次数。
 - 压测与探针结束都结束进程（对齐 Windows 的 `Environment.Exit`），下一轮从干净进程起跑。
 - 探针解码走壳注入的展示解码器实例（换 HEIF/RAW 解码器后无需改探针），GL 上传无 EGL 上下文时不测；解码返回 null 记作 `null result`，不吞成 0 ms。
-- Release 包非 debuggable，`run-as` 不可用：`adb root` 后 `adb pull /data/data/cc.xiaojh.PhotoViewer/files/PhotoViewer/` 取报告。
+- Release 包非 debuggable，`run-as` 不可用：模拟器 `adb root` 后 `adb pull /data/data/cc.xiaojh.PhotoViewer/files/PhotoViewer/` 取报告。真机（不可 root）验收要可调试的 Release：复制 `Properties/AndroidManifest.xml` 加 `android:debuggable="true"`，以相对 csproj 的路径传 `/p:AndroidManifest=…`（绝对路径会报 XA1018），签名参数同 `publish-android-apk.sh`。
+- 真机素材推到 `/sdcard/Android/data/cc.xiaojh.PhotoViewer/files/<目录>`，以 `@external/<目录>` 打开；`adb push` 建的目录是 `shell:ext_data_rw 2770`，应用无权遍历，推完须 `adb shell chmod -R 777 <目录>`。
+- 小米 HyperOS 禁止 `input` 注入与 `svc power stayon`，触控类验收只能靠程序化检查与 `screencap`。
 
 ## 发现清单（A1b–A5）
 

@@ -96,6 +96,15 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("stress");
         InitializePlatform(activity);
 
+        // 内存上限探针（验收）：只读系统退出原因，或接管界面做逐步分配；都不建主界面。
+        if (AndroidMemoryCeilingProbe.MaybeReportExitReasons(activity, intent))
+        {
+            ExitShell(activity, "退出原因报告完成");
+            return new View(activity);
+        }
+        if (AndroidMemoryCeilingProbe.MaybeStart(activity, intent) is { } ceilingView)
+            return ceilingView;
+
         // 性能探针独占一轮：不建共享 VM 与主界面，测完写报告并结束进程（与 Windows/Mac 同流程）。
         var perfProbeFolder = ResolveLaunchPath(intent?.GetStringExtra("pv-perf-probe"));
         if (!string.IsNullOrWhiteSpace(perfProbeFolder))
@@ -193,7 +202,7 @@ public static class AndroidNativeShell
     /// <summary>自动化收尾：关闭 Activity 后结束进程，下一轮从干净进程开始（对齐 Windows 的 Environment.Exit）。</summary>
     /// <param name="activity">宿主 Activity。</param>
     /// <param name="reason">日志用原因。</param>
-    private static void ExitShell(Activity activity, string reason)
+    internal static void ExitShell(Activity activity, string reason)
     {
         Console.WriteLine($"[Native] {reason}，结束进程");
         var handler = new Handler(Looper.MainLooper!);
@@ -370,6 +379,14 @@ public static class AndroidNativeShell
         {
             Console.WriteLine("[Native] pv-settings：启动后打开设置 sheet（验收）");
             UiDispatcher.Post(() => _main.OpenSettingWindow());
+        }
+        // 验收：设置 sheet 直接落到指定分类页（真机禁用输入注入时用于核对提示行）。
+        var settingsPage = intent.GetStringExtra("pv-settings-page");
+        if (!string.IsNullOrWhiteSpace(settingsPage))
+        {
+            Console.WriteLine($"[Native] pv-settings-page：{settingsPage}");
+            new Handler(Looper.MainLooper!).PostDelayed(
+                () => AndroidNativeSettingsPresenter.CurrentSheet?.ShowPageForChecks(settingsPage), 700);
         }
     }
 

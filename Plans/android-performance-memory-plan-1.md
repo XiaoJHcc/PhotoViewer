@@ -59,18 +59,33 @@
 | # | 状态 | 结论 |
 |---|---|---|
 | W0 | 完成 | `pv-perf-probe`（`--ei pv-perf-probe-target` 可指定代理长边）与 `pv-stress`（顺序 / ab）可跑；压测用隔离设置档，素材目录零写入。 |
-| W1 | 部分 | Rgba8+sRGB 与 Bgra32 逐字节一致（通道交换），Rgba8+P3 与 skcms 平均差 0.14–0.27 级；迁移前后 Bgra32/RgbaF16 96/96 逐字节一致，Windows 类型检查 0 错误。HIF 代理 922 → 416 ms、Full 692 → 323 ms（约 2.2×，未达 ≥3×：4 核模拟器 + 并行构建占用）；连翻零回落；方向与卡片一致，色差 < 0.2/255。胶片栏 HIF 改解容器 `thmb` 项，删去 512 代理缓存。 |
+| W1 | 部分（≥3× 未达成） | Rgba8+sRGB 与 Bgra32 逐字节一致（通道交换），Rgba8+P3 与 skcms 平均差 0.14–0.27 级；迁移前后 Bgra32/RgbaF16 96/96 逐字节一致，Windows 类型检查 0 错误。HIF 代理 922 → 416 ms、Full 692 → 323 ms（模拟器约 2.2×；真机 17 Ultra 26MP 代理 458 ms，基线未在真机测，3× 未核验）；连翻零回落；方向与卡片一致，色差 < 0.2/255。胶片栏 HIF 改解容器 `thmb` 项，删去 512 代理缓存。 |
 | W2 | 完成（模拟器） | ARW 主图 LibRaw 全分辨率（6192×4128 / 7008×4672），竖拍方向正确，100% 为全分辨率细节；色调沿用 LibRaw 白点规则、提亮上限 2.5×，与 macOS ImageIO 渲染 p50 差 −8…+2 级；代理在半尺寸长边够用时走 half_size（T=2496 代理 424 ms，Full 603 ms）。顶替预览 SetFile 后 78–112 ms 上屏，真图 0.6–1.3 s 后替换；细节预览以 `IsProxy` 为闸不取顶替图。后台 RAW 串行、按工作内存准入，被拒即跳过。30 张 ARW 顺序 p50/p95 690/745 ms、ab 61/84 ms，零超时零崩溃。 |
-| W3 | 部分（真机上限未测） | 模拟器 `MemTotal` 2.4 GB 低于最低档 → 预算 45% ≈ 1112 MB；启动快照 `budgetMB=1112 / footprintMB=86`。HIF 顺序连翻解码高峰短暂 Caution/Warning（footprint 约 840 MB），随后回落；全程零超时零闪退。500 连翻未跑。 |
+| W3 | 完成 | 模拟器预算 1112 MB（低于最低档 45%）；真机见下节：17 Ultra 受 Sentinel 红线约束取 5529 MB、小米 13 取 8192 MB，两台 500 连翻零超时零闪退、全程 Normal。 |
 | W4 | 完成 | 当前 + 最近 2 帧纹理按实例弱引用缓存，另留 1 张同尺寸空纹理；mip 链计入 footprint 并汇入预算源。A/B 60 翻 `up_hits=58`，剔除冷帧 p95 48–67 ms；Caution 修剪非当前纹理（198 → 45 MB）。 |
 | W5 | 完成 | HIF 顺序 60 翻 p50/p95 1210/2257 → 446–544/611–741 ms；`PrefetchFullNeighbors` 恢复为 true，`pv-check analysis`/`main` 多轮无崩溃。 |
 | W6 | 完成 | `SETTINGS-06@android` 入 `Design/platforms.md`；文件页隐藏两项缓存上限，提示「设备性能: CPU 4 核 / 内存 1112 MB」「✓ 可缓存约 28 张适屏照片（预载与对比需 6 张）」。 |
 | W7 | 完成 | Android Release 0 错误、告警不新增；`pv-check` 五模式 PASS；Mac Debug 0 错误，Windows 类型检查 0 错误。 |
 
-### 待真机
+### 真机验收（Release AOT，可调试 + 正式签名）
 
-- 真机 MemoryLimiter 档位与实际可用内存（`adb shell am memory-limiter status`，Android 17 设备）；HyperOS 是否另有上限；500 连翻；P3 表面下快速路径 / LibRaw 的 P3 输出目视。
-- HIF 解码 ≥3× 的验收需在空闲真机上复测。
+| | 小米 17 Ultra | 小米 13 |
+|---|---|---|
+| 系统 / SoC / 内存 | Android 16 HyperOS 3 / SM8850 / 15 GB | Android 13 MIUI 14 / SM8550 / 11 GB |
+| 预算（启动快照） | 5529 MB（AOSP 档 10240，Sentinel 红线 6144 × 90%） | 8192 MB（无 Sentinel 红线属性） |
+| HIF 代理 / Full（真实视口代理，中位 ms） | 458 / 375（26MP）、624 / 523（33MP） | 651 / 502（26MP） |
+| ARW 代理 / Full | 746 / 893（26MP）、887 / 1179（33MP） | 967 / 1354（26MP） |
+| HIF 顺序 60 p50 / p95 | 404–534 / 599–910 | 470 / 705 |
+| HIF A/B 60 p50 / p95 | 16 / 38（`up_hits=58`） | 16 / 37（`up_hits=58`） |
+| RAW 顺序 30 / A/B 30 p50 / p95 | 838 / 1224；16 / 43 | 753 / 1140；16 / 921（冷帧，`up_hits=27`） |
+| HIF 500 连翻 p50 / p95 | 591 / 805，零超时，全程 Normal，swap 66 MB | 618 / 797，零超时，全程 Normal |
+| `pv-check` 五模式 | 全 PASS | 全 PASS（修复设置线程问题后） |
+
+- 方向、顶替预览先上屏再替换、100% 全分辨率细节均截图核对；设置文件页隐藏缓存上限两项，小米 13 提示行「设备性能: CPU 8 核 / 内存 8192 MB」「✓ 可缓存约 254 张适屏照片（预载与对比需 17 张）」。
+- 零 SIGSEGV / OOM / lmkd 查杀。小米 13 连续压测后一度 Thermal SEVERE，探针中位数慢约 12%。
+- **内存上限**：17 Ultra 前台逐步分配到 PSS 14.8 GB 后被 HyperOS `MiuiSentinelMemoryManager` 以 `used too many pss resource … threshold:6291456kb` 强杀（越线约 60 s 后执行，非 lmkd），阈值即系统属性 `persist.sys.stability.pss_highest_line`。预算改为 `min(AOSP 可见档, 红线 × 90%)` 后，同一 500 连翻的 swap 从 2.5 GB 降到 66 MB、托管堆峰值从约 4.9 GB 降到约 2.6 GB；后半程 p50 上升来自素材后 300 张为 33MP（前 100 张 26MP），与内存无关。
+- **设置读取跨线程**：真机上 `LoadSettingsAsync` 在后台线程回填设置，原生控件订阅者抛 `CalledFromWrongThreadException`，被报成「读取设置失败」，部分回填后的节流保存曾把小米 13 的快捷键从 16 项截断为 1 项（控制栏命令分组随之消失）。回填改为切回 UI 线程，两台真机复测无报错、设置完整。
+- **P3 表面**：小米 13 上 `pv-p3` 诊断模式照片区亮度 +72%（HIF）/ +114%（ARW），与 17 Ultra 的 #29 一致，默认 sRGB 维持不变。
 
 ### 遗留候选
 

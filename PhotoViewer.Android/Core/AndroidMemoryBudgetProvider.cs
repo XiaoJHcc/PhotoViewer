@@ -15,7 +15,8 @@ namespace PhotoViewer.Android.Core;
 /// <para>Android 没有给前台应用的按字节配额 API：Android 10–16 由 PSI 驱动的 lmkd 在系统级回收，
 /// 前台进程最后被杀；Android 17 起平台 MemoryLimiter 按 <c>MemTotal</c> 分档给可见进程设 cgroup <c>memory.high</c>，
 /// 计量口径正是匿名驻留 + swap（不含 GPU 私有内存与文件页）。预算取该分档的可见上限，
-/// 两类系统上都是"前台不被回收"的已知安全上限；<c>largeHeap</c> 只影响 ART Java 堆，与此无关。</para>
+/// 两类系统上都是"前台不被回收"的已知安全上限；<c>largeHeap</c> 只影响 ART Java 堆，与此无关。
+/// 厂商系统可能另设更低的前台红线（小米 Sentinel 的 PSS 红线），存在时预算取两者较小者。</para>
 /// <para>GPU 纹理在独立显存/驱动内存里，不在 <c>RssAnon</c> 中；主图宿主通过 <see cref="ExternalFootprint"/>
 /// 把这份占用加进来，预算源给出的 footprint 才是"真的占了多少"。系统整机水位另作压力源：<c>availMem</c>
 /// 逼近 <c>threshold</c>（系统开始杀后台服务的水位）时按比例收窄可用量，让缓存先退让。
@@ -69,14 +70,66 @@ public sealed class AndroidMemoryBudgetProvider : IMemoryBudgetProvider
     private long _systemAvailBytes = -1;
     private long _systemThresholdBytes;
 
-    /// <summary>按设备 <c>MemTotal</c> 定档并记录一次启动日志（真机据此核对档位）。</summary>
+    /// <summary>
+    /// 厂商前台进程占用红线（系统属性，单位 kB）：超过即被系统强杀，不经 lmkd。
+    /// 小米 HyperOS/MIUI 的 Sentinel 按进程 PSS（含 swap 部分）比对 <c>persist.sys.stability.pss_highest_line</c>，
+    /// 小米 17 Ultra 实测 6291456 kB 时在 PSS 14.8 GB 处被 <c>used too many pss resource</c> 强杀。
+    /// </summary>
+    private static readonly string[] VendorPssLineProperties =
+    [
+        "persist.sys.stability.pss_highest_line",
+    ];
+
+    /// <summary>预算占厂商红线的比例。</summary>
+    private const double VendorLineRatio = 0.9;
+
+    /// <summary>
+    /// 预算 = min(AOSP 可见档, 厂商红线)，并记录一次启动日志（真机据此核对档位）。
+    /// 厂商红线只在 Sentinel 开关未关闭时生效。
+    /// </summary>
     public AndroidMemoryBudgetProvider()
     {
         var info = ReadMemoryInfo();
         long total = info?.TotalMem ?? 0;
-        _budgetBytes = BudgetForTotal(total);
-        Console.WriteLine($"[AndroidMemoryBudget] MemTotal={total / MiB}MB budget={_budgetBytes / MiB}MB " +
+        long tier = BudgetForTotal(total);
+        long vendorLine = ReadVendorPssLineBytes();
+        // 红线按 PSS 计，含文件页按比例分摊与驱动内存，本类 footprint 只近似它（真机两者差约 2%），留 10% 余量。
+        long vendorBudget = (long)(vendorLine * VendorLineRatio);
+        _budgetBytes = vendorBudget > 0 && tier > 0 ? Math.Min(tier, vendorBudget) : tier;
+        Console.WriteLine($"[AndroidMemoryBudget] MemTotal={total / MiB}MB tier={tier / MiB}MB " +
+                          $"vendorLine={(vendorLine > 0 ? vendorLine / MiB + "MB" : "无")} budget={_budgetBytes / MiB}MB " +
                           $"availMem={(info?.AvailMem ?? 0) / MiB}MB threshold={(info?.Threshold ?? 0) / MiB}MB");
+    }
+
+    /// <summary>读厂商 PSS 红线（字节）；属性不存在、为 0 或监控被关闭时返回 0。</summary>
+    private static long ReadVendorPssLineBytes()
+    {
+        if (string.Equals(ReadSystemProperty("persist.sys.stability.enable_sentinel_resource_monitor"), "false",
+                StringComparison.OrdinalIgnoreCase))
+            return 0;
+        foreach (var key in VendorPssLineProperties)
+        {
+            if (long.TryParse(ReadSystemProperty(key), out long kb) && kb > 0) return kb * 1024L;
+        }
+        return 0;
+    }
+
+    /// <summary>经 <c>/system/bin/getprop</c> 读系统属性（SDK 无公开读取接口）；失败返回空串。</summary>
+    private static string ReadSystemProperty(string key)
+    {
+        try
+        {
+            using var process = Java.Lang.Runtime.GetRuntime()!.Exec(["/system/bin/getprop", key])!;
+            using var reader = new Java.IO.BufferedReader(new Java.IO.InputStreamReader(process.InputStream!));
+            var value = reader.ReadLine()?.Trim() ?? string.Empty;
+            process.WaitFor();
+            return value;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AndroidMemoryBudget] getprop {key} failed: {ex.Message}");
+            return string.Empty;
+        }
     }
 
     /// <summary>按 <c>MemTotal</c> 查可见上限分档；读不到总内存时为 0（Governor 退化为恒 Normal）。</summary>
