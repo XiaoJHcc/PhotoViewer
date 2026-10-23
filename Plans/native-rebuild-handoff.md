@@ -1,7 +1,7 @@
 # 原生重构交接文档(handoff)
 
 > **给在 Mac 上接手的 agent**:本文是重构的当前状态真源 + 开工指引。写入规则:每次阶段推进后更新"当前状态"与"验证矩阵"。
-> 最后更新:2026-10-22(Windows 收尾裁定:常规 UI、175%/200% DPI 与真实跨屏作者手验通过;相机八方向以自生成素材 + 代码核对为准;增强 + 分析长稳、桌面外设热插拔、Windows 失败注入与 W-M6 专项/几何导出不再挂账;W-M7 只剩色彩,RAW 主图已由 Windows 性能专项落地。此前:Avalonia 旧壳退役完成 `640d52d`,四头 Debug/Release 直接进原生壳;6C 四端统一完成;iPad 原生壳 I1–I5 完成模拟器 + 真机程序化验收)。发布通道已确定为原生壳;发布产物早于 10-20/21 的修复,待重出。
+> 最后更新:2026-10-23(Windows 收尾裁定:常规 UI、175%/200% DPI 与真实跨屏作者手验通过;相机八方向以自生成素材 + 代码核对为准;增强 + 分析长稳、桌面外设热插拔、Windows 失败注入与 W-M6 专项/几何导出不再挂账;W-M7 只剩色彩,RAW 主图已由 Windows 性能专项落地。此前:Avalonia 旧壳退役完成 `640d52d`,四头 Debug/Release 直接进原生壳;6C 四端统一完成;iPad 原生壳 I1–I5 完成模拟器 + 真机程序化验收)。2026-10-22 版本号升至 0.8.5 并重出 Mac/iOS/Android 产物;2026-10-23 Android 基础操作、色彩与可机测专项通过,仅剩真机外设/SAF/ROM 矩阵与策略项;Windows 0.8.5 单文件产物待重出。
 
 ## 1. 为什么重构(决策语境)
 
@@ -69,7 +69,7 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 
 1. **6F 已完成**：几何基准由 Web 参考壳承担——`node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52` 导出，`python3 Tools/compare-layout-geometry.py` 与 Mac `--pv-native-layout` 的 `native-layout-geometry.txt` 比对：9 个布局、363 个共有节点、0 差异（容差 0.5 点，2026-10-21 复跑）；原 HTML 样机随 W5 退役。Windows 同格式几何导出按 2026-10-22 裁定不做，iOS/Android 可按需补。
 2. **6E 其余发布就绪项**：6E-2 Windows 单文件工程阻塞已关，体积接受由作者决定；未签名/SmartScreen、无运行时干净机与 Win10 未验仍为发布风险。其余为 macOS Developer ID 签名 + 公证（待立项）、iOS TestFlight 与审核材料、Android Release 签名与真机冒烟；6E-5 与 6E-4 本机部分已完成。见 [phase-6 §4](native-rebuild-phase-6.md#4-6e-发布就绪)。
-3. **验收欠账（2026-10-22 裁定后）**：macOS、iPad、Windows 常规 UI 已由作者手验通过，Windows 175%/200% DPI 与真实跨屏亦通过。Windows 相机八方向素材（自生成素材 + 代码核对即足）、增强 + 分析长稳、桌面外设热插拔、失败注入与 W-M6 专项/几何导出按裁定不再挂账，7 格 `代码核对` 即为终态（另 3 格不适用）。仍未关闭：iPad 广色域对拍、外接显示、500 连翻与内存告警；Android 全量清单与真机门；W-M7 色彩是否立项待作者决定。其余按 [统一清单](native-rebuild-phase-6-unify.md#待作者手验)、[iPad](native-rebuild-phase-ipad-acceptance.md) 与 [Android](native-rebuild-phase-android-acceptance.md) 清单回填状态。本轮 HEAD 复跑证据：Mac base 39 + layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全 PASS；iPad 模拟器 photo 10 / layout 24 / input 40 / analysis 18 / similarity 10 / tools 10 / gesture 24；Web `?check=all` 44/44、单测 297。
+3. **验收欠账（2026-10-23）**：macOS、iPad、Windows 常规 UI 已由作者手验通过，Windows 175%/200% DPI 与真实跨屏亦通过。Windows 相机八方向素材（自生成素材 + 代码核对即足）、增强 + 分析长稳、桌面外设热插拔、失败注入与 W-M6 专项/几何导出按裁定不再挂账，7 格 `代码核对` 即为终态（另 3 格不适用）。Android 基础操作、色彩与全部可机测专项已通过（2026-10-23）；仅剩真机外设/触控板手感与断连、SAF 持久授权重启、第三方文件管理器打开、ROM/系统版本矩阵、手感/高刷，以及 SCOPE-03/SCOPE-06 策略项与 STATE-04 数据库不可用注入。仍未关闭：iPad 广色域对拍、外接显示、500 连翻与内存告警；W-M7 色彩是否立项待作者决定。其余按 [统一清单](native-rebuild-phase-6-unify.md#待作者手验)、[iPad](native-rebuild-phase-ipad-acceptance.md) 与 [Android](native-rebuild-phase-android-acceptance.md) 清单回填状态。本轮 HEAD 复跑证据：Mac base 39 + layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全 PASS；iPad 模拟器 photo 10 / layout 24 / input 40 / analysis 18 / similarity 10 / tools 10 / gesture 24；Android 八模式分模式全 PASS；Web `?check=all` 44/44、单测 297。
 4. **独立延期，非发布前置**：W-M7 的**色彩**部分（ICC/ACM/广色域标签）是否立项待作者，RAW 主图解码已落地；性能门、切图卡顿、RAW 冷图、iPad ARW Full/分析可见 p95、CoreML EP 明确以后再做（Windows 压测与探针入口已接线，Android 仍置后）。Training `DatasetBuilder` 去 Avalonia 已完成，Windows 实跑复核仍待补。
 
 ## 3. 验证矩阵
@@ -86,11 +86,11 @@ PhotoViewer 正在从 Avalonia 迁往四平台原生壳 + 共享 C# Core。驱�
 | **Android A1a 共享源迁移** | ✅ 2026-10-18 | 7 个几何文件迁入 `PhotoViewer.Shared/` + `InputCommandMap`；Mac base 39 + 七套专项 PASS，iOS 七套全 PASS（photo 10 / gesture 24 / layout 24 / input 29 / analysis 18 / similarity 10 / tools 7）；`--pv-native-settings` 假阴性（抓屏权限，基线同） |
 | **Android A1b 原生基座** | ✅ 2026-10-18 | 默认 native / `--legacy-ui` 旧壳双启动通过；native 首次 `+940ms`、legacy `+1.09s`；APK 362MB（含 DINO 模型）；SAF/设置/工具仍为占位 |
 | Android 构建 | ✅ 2026-10-18 | A1b 基线 0 错误 / 21 警告（10.0.201 workload）；A1a–A5 功能构建 **0 错误 / 20 警告**（低于 A1b 基线 21，新增警告已清零）；API 35 arm64 模拟器安装启动通过；真机冒烟仍未做 |
-| Android A2 主图 | ◐ 模拟器目视 2026-10-18 | 方向 6 朝向、代理 2706×1804 → Full 6000×4000、Fit→100% 导航图正确；P3 表面在模拟器为 sRGB 回退；八方向/色卡/双击物理 100%/热替换变换保持的程序化断言未做（A6） |
-| Android A3 主屏 | ◐ 模拟器目视 2026-10-18 | 竖屏行布局、insets、筛选条/胶片栏/控制栏/导航图/栏位显隐目视正确；两向与卡片几何断言待 A6 |
-| Android A4 输入 + 设置 | ◐ 模拟器目视 2026-10-18 | 半屏五分类设置、关闭回写、ShowRating 传播、键盘 Right/F、返回、卡片星级写回通过目视/日志；真实键鼠/拖拽排序/拖入/真机手感未做 |
-| Android A5 P3 功能 | ◐ 模拟器目视 2026-10-18 | 分析栏/细节定格/诊断瓦片、相似 toggle/空态/真实提取全部/分数卡片、工具页 EXIF+DINO、增强预览均通过目视/日志；程序化 harness 待 A6 |
-| Android A6 程序化检查 | ◐ 2026-10-18 | `--es pv-check <mode>` 五模式 API 35 arm64 **PASS 14/18/15/16/16**（主屏几何/Fit↔100%/Full/分析栏/相似面板/设置/工具）；`all` 连跑偶发 SIGSEGV，分模式稳定；API 矩阵/两向/fontScale/DPI/真机未做 |
+| Android A2 主图 | ✅ 基础操作与色彩作者手验 2026-10-23 | 方向 6 朝向、代理 2706×1804 → Full 6000×4000、Fit→100% 导航图正确；P3 与 sRGB 素材目视有差异，按 sRGB 回退平台限制通过；八方向/色卡/双击物理 100%/热替换变换保持的程序化断言未做（A6） |
+| Android A3 主屏 | ✅ 基础操作作者手验 2026-10-23 | 竖屏行布局、insets、筛选条/胶片栏/控制栏/导航图/栏位显隐目视正确；两向与卡片几何断言待 A6 |
+| Android A4 输入 + 设置 | ✅ 程序化 2026-10-23 | 滚轮/重复/录制/外设能力/字体缩放已机测；真机手感未验 |
+| Android A5 P3 功能 | ✅ 程序化 2026-10-23 | faults/layout/input 全 PASS |
+| Android A6 程序化检查 | ✅ 2026-10-23 | 八模式分模式全 PASS：main 18 / analysis 47 / similarity 19 / settings 51 / tools 20 / faults 20 / layout 18×3 / input 8；API 矩阵仅模拟器，真机未跑；all 连跑仍偶发 SIGSEGV |
 | Training.sln / Tools 构建 | ✅ | CvDebugTool / ExifTestTool / RawDecodeTool(Mac 专用,需在 Mac 构建复核) |
 | **macOS 构建** | ✅ 2026-10-12 | 0 错误,仅 NU1903 基线警告 |
 | **P2 四平台构建** | ✅ 2026-10-14 | Windows/iOS 0 警告；Mac 仅 NU1903，Android 14 条既有警告；全部零错误 |

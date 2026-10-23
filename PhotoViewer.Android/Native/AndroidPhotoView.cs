@@ -454,7 +454,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         return true;
     }
 
-    /// <summary>滚轮分流（INPUT-04）：精确滚动平移照片，离散滚轮累积到一格才派发一次命令。</summary>
+    /// <summary>滚轮分流（INPUT-04）：精确/非整格滚动平移照片，整格离散滚轮按格派发命令。</summary>
     /// <param name="e">通用运动事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnGenericMotionEvent(MotionEvent? e)

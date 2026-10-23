@@ -81,6 +81,9 @@ internal static class AndroidInputMapping
         if (name.StartsWith("Numpad", StringComparison.Ordinal))
             name = "NumPad" + name["Numpad".Length..];
         if (name.Length == 1 && char.IsDigit(name[0])) name = "D" + name;
+        // Android 把主行数字键命名为 Num0–Num9，共享枚举对应 D0–D9；小键盘已是 NumPad*。
+        if (name.Length == 4 && name.StartsWith("Num", StringComparison.Ordinal) && char.IsDigit(name[3]))
+            name = "D" + name[3];
         return Enum.TryParse<GestureKey>(name, ignoreCase: false, out var key) ? key : null;
     }
 }

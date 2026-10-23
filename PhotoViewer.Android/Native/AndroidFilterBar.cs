@@ -50,6 +50,11 @@ internal sealed class AndroidFilterBar : View
     internal double CountWidthDp => _countWidth;
     /// <summary>当前是否行布局。</summary>
     internal bool Horizontal => _horizontal;
+    /// <summary>行布局下五个控件不压缩时的自然宽度（dp）；窄屏由滚动宿主承载。</summary>
+    internal double RequiredWidthDp => _horizontal
+        ? Math.Max(ShowsSimilarityToggle ? _frames.Toggle.MaxX : _frames.Count.MaxX, _frames.Rating.MaxX)
+            + MainScreenLayout.FilterMargin
+        : _contentWidth;
 
     /// <summary>构建筛选条并订阅共享筛选状态。</summary>
     /// <param name="context">宿主上下文（Activity）。</param>

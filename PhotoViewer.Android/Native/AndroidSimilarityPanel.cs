@@ -48,6 +48,10 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
     internal bool IsListVisible => _list.Visibility == ViewStates.Visible;
     /// <summary>当前列表项数量。</summary>
     internal int ItemCount => _panel.SimilarItems.Count;
+    /// <summary>列表态停靠区错误文案（验收用）。</summary>
+    internal string? DockErrorTextForChecks => _footerError.Text;
+    /// <summary>列表态停靠区错误标签是否可见（验收用）。</summary>
+    internal bool DockErrorVisibleForChecks => _footerError.Visibility == ViewStates.Visible;
 
     /// <summary>构建面板视图树并订阅共享 VM。</summary>
     /// <param name="context">宿主上下文。</param>

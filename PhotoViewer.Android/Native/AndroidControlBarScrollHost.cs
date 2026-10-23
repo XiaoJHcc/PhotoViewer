@@ -7,7 +7,7 @@ using Android.Widget;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// 控制栏滚动宿主（TOOLBAR-08）：只在文档沿分组排布主轴超出可用长度时可滚，
+/// 可滚动宿主（TOOLBAR-08 / FILTER-07）：文档沿主轴超出可用长度时可滚，
 /// 普通重建/换向保留用户偏移并按新几何夹取；不显示滚动条时内容与原先一致。
 /// </summary>
 internal sealed class AndroidControlBarScrollHost : ViewGroup

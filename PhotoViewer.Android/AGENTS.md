@@ -1,6 +1,6 @@
 # PhotoViewer.Android — Android 原生壳
 
-**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 与 Release 均只启动原生壳，无旧壳入口。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6 部分完成**：程序化检查驱动器已落地（五模式 API 35 模拟器 PASS），矩阵/真机门/组合模式稳定性未完成。**真机（25128PNA1C / API 36）已验 P3 表面=True**；列布局/筛选菜单/长按菜单项已按作者反馈修复。
+**当前阶段：A1a–A5 已完成（2026-10-18）**。Debug 与 Release 均只启动原生壳，无旧壳入口。主图（EGL14/GLES + 8 位 P3/sRGB）、主屏布局（文件栏/胶片栏/控制栏/导航图/insets）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 关闭回写）已落地。**A6 程序化验收已完成**：八模式（五组基线 + `faults` / `layout` / `input`）在 API 35 模拟器上全 PASS，矩阵覆盖 fontScale 1.0/1.3 × density 420/525 × 竖/横屏；真机门、组合模式（`all`）与启动期偶发 SIGSEGV 未关闭。**真机（25128PNA1C / API 36）已验 P3 表面=True**；列布局/筛选菜单/长按菜单项已按作者反馈修复。
 
 ## 启动与主屏（A1b–A5）
 
@@ -10,7 +10,7 @@
 | AndroidBootstrapActivity.cs | 唯一 `MainLauncher` 与 `ACTION_VIEW`/`ACTION_SEND`/`ACTION_SEND_MULTIPLE`（`image/*`）入口；原样转发 Action/Data/ClipData/Extras 到 `AndroidNativeActivity` 并 `Finish()`。 |
 | AndroidNativeActivity.cs | 原生壳 Activity（`AppCompatActivity` + `@style/Theme.PhotoViewer.Native`）；挂 `AndroidNativeShell` 根视图，转发 SAF 结果、硬件键盘与返回键；`ConfigurationChanges` 覆盖键盘/键盘隐藏/导航/触摸/方向/尺寸等，外设插拔与软键盘显隐不重建 Activity、不丢设置或工具 sheet。 |
 | Native/AndroidNativeShell.cs | 原生启动顺序：色域探测 → `AndroidUiDispatcher` → ReactiveUI → 门面（FilePicker/AppResources/Heif/展示解码器/预算/MemoryGovernor/StorageAccess/Xmp/Settings/设置展示器/DINO-NNAPI）→ `MainViewModel()` → `PhotoLoadSession` → 根视图；HEIF 门面注入前先 `FastHeifDecoder.Configure`（`libpvhevc.so` + 移动端上下文/并发上限），MemoryGovernor 注入后置 `BitmapLoader.AutomaticCacheLimit`（缓存容量按实测预算推导）与 `ImageBufferPool.MaxIdleBytes = min(512MB, 预算/8)`。外部打开（含 `pv-open` 与多个 Intent Uri）合并为一次打开请求，`pv-settings` 与程序化入口（`pv-check` / `pv-stress` / `pv-perf-probe`）也在这里收口。日志出现 `[Native] Android 原生壳就绪`。 |
-| Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性/打开失败（STATE-02）提示条（文案取共享 `StatusMessages`，与「计算中」药丸同时可见时上移到药丸上方）；行布局按共享 `SimilarityPanelGeometry.RowWidth` 给相似面板让宽并计入列表态停靠区；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
+| Native/AndroidNativeRootView.cs | 原生主屏：按共享 `MainScreenLayout`/`AndroidMainScreenLayout` 拼合文件栏（筛选条 + 胶片栏）、主图、控制栏（溢出时沿主轴滚动并保留偏移）；筛选条在窄屏同样由可滚动宿主承载，控件宽度不压缩；接线会话、栏位显隐（SharedPreferences `PhotoViewer.Native.ShowFilm/ShowControls` 跨会话恢复）、导航图、长按菜单、评分/Full 失败/会话一次性/打开失败（STATE-02）提示条（文案取共享 `StatusMessages`，与「计算中」药丸同时可见时上移到药丸上方）；行布局按共享 `SimilarityPanelGeometry.RowWidth` 给相似面板让宽并计入列表态停靠区；加载提示绑 `PhotoLoadSession.IsLoadingVisible`（300ms 延迟），增强药丸绑 `IsEnhancingVisible`（500ms 门槛），物理视口上报 `PhotoLoadSession`，EXIF 对焦点到达后同步共享视口。 |
 | Native/AndroidMainScreenLayout.cs | 主屏分区纯函数：共享分区数学 + 系统栏/刘海 insets；栏位背景铺到屏幕边缘、内容收在安全区。 |
 | Native/AndroidPhotoView.cs / AndroidPhotoRenderer.cs | `SurfaceView` + 自有 EGL14/GLES 主图：P3/sRGB 表面协商、RGBA8 纹理/mipmap、八方向 UV、`PhotoViewport` 手势（放大态平移、双指捏合、双击/Fit、适应态横滑）；滚轮按精确/离散分流（触控板平移、离散滚轮累积到一格才派发命令），物理 100% 触发 Full。切图与热替换按 `PhotoLoadSession.Generation` 区分（缓存命中切图不经过空图，同机型连拍几何相同）：代际变化走切图语义，同一实例 + 同代际的会话通知只重绘不重传纹理；无图时清除纹理宽度。**纹理缓存**：当前帧 + 最近 2 帧按 `DecodedImage` 实例身份缓存（弱引用，不延长像素租约），另有 1 张 ≤32MB 的同尺寸空纹理供下次上传复用（驱动在新建纹理时可能停顿）；命中不重传、`up_hits` 记 0 ms。纹理字节含 mip 链（×4/3）上报为 `AndroidPhotoView` 的 footprint，并通过 `AndroidMemoryBudgetProvider.ExternalFootprint` 加进预算源（GPU 内存不在 RssAnon）；压力 Caution 起在 UI 线程丢掉非当前纹理与空纹理（`Trim` 由探测线程调用，只投递）。 |
 | Native/AndroidFilterBar.cs | 自绘下拉 ×3 + 计数 + 相似聚类 toggle（窄屏紧凑宽度 84/76dp）；原生 PopupMenu 写回共享筛选 VM。 |
@@ -69,7 +69,7 @@ cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Andro
 - `PrefetchFullNeighbors` 为 true（只在放大或分析栏可见时预取 ±1 Full，受预算准入约束）；26MP HIF 夹具上 `pv-check analysis` 的「100% 触发 Full」受全幅解码约 1s 与检查固定 700ms 等待窗影响偶发失败，重跑即过。性能与内存实测见 [Android 性能专项](../Plans/android-performance-memory-plan-1.md)。
 - 分析栏：范围 + 细节按压/悬停绿框 + 诊断瓦片点按；相似聚类：toggle → 空态 → 真实“提取全部” → 100% 分数卡片/柱状条；工具页：EXIF 详情分组/列/格式切换、DINO 5 瓦片 + 刚体文本；增强预览像素变亮（均为目视/日志，不是程序化通过）。
 
-## 程序化检查（A6 起步）
+## 程序化检查（A6）
 
 ```bash
 # 安装并准备夹具后（应用内部 files/pv-fixtures）：
@@ -79,12 +79,24 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity \
 adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-main.txt
 ```
 
-- 模式：`main` / `analysis` / `similarity` / `settings` / `tools`；API 35 arm64 模拟器基线与覆盖范围：
-  - `main`：主屏分区、安全区、筛选/卡片/控制栏几何、Fit↔100% 与 Full；STATE-01 缓存命中切图（运行时生成大图与小于代理目标的小图两组同尺寸 JPEG，切回时无空图快照、无加载提示、新图同步上屏）。
-  - `analysis`：分析栏开合与瓦片几何；运行时生成确定性 Sony 对焦 JPEG，覆盖对焦点/中心两张细节瓦片，验证按下立即点亮、两瓦片切换/回切、滑到空白/诊断清除、抬起与取消清除、真实鼠标/触控板悬停、触屏不合成悬停、触控期间悬停不抢占、双击定位独立于高亮；`owner` pointer 多指规则与旧 PointerUp/Cancel 不清新目标；诊断起手/空白起手不得滑入细节自动点亮；诊断点按落准星且滑动释放不误点；隐藏分析栏清除活动目标。
-  - `settings`：设置 sheet 与工作副本；`AndroidInputDevices` 能力注入（键盘/指针/纯触控），读取真实行视图断言完整绑定控件、纯触控零绑定文字与读屏不泄露；录制/取消/清空/冲突、录制时鼠标左右键被吞、断开最后外设取消录制、连接变化保留草稿且不弹软键盘、虚拟/非字母键盘排除；倍率行单一居中值 + `%`、失焦统一提交、1601/NaN/0 恢复、输入框实例保持、草稿随增删保留、原地重排与至少保留一项。
-  - `similarity` / `tools`：面板与工具 sheet 开合。
-- `all`（五组连跑）在该模拟器上偶发 SIGSEGV；分模式稳定，暂不作为验收口径。检查已按行/列布局分别核对分区与卡片宽度。
+入口统一是 `--es pv-check <mode>`：报告写 App 内部 `files/PhotoViewer/android-checks-<mode>.txt`，首行是 `PASS n / FAIL m`，其后逐条 `PASS/FAIL 名称 — 实际值`。每次运行前 `am force-stop`，避免旧进程/旧报告冒充。
+
+**基线模式**（API 35 arm64 模拟器基线与覆盖范围）：
+
+- `main`：主屏分区、安全区、筛选/卡片/控制栏几何、Fit↔100% 与 Full；STATE-01 缓存命中切图（运行时生成大图与小于代理目标的小图两组同尺寸 JPEG，切回时无空图快照、无加载提示、新图同步上屏）。
+- `analysis`：分析栏开合与瓦片几何；运行时生成确定性 Sony 对焦 JPEG，覆盖对焦点/中心两张细节瓦片，验证按下立即点亮、两瓦片切换/回切、滑到空白/诊断清除、抬起与取消清除、真实鼠标/触控板悬停、触屏不合成悬停、触控期间悬停不抢占、双击定位独立于高亮；`owner` pointer 多指规则与旧 PointerUp/Cancel 不清新目标；诊断起手/空白起手不得滑入细节自动点亮；诊断点按落准星且滑动释放不误点；隐藏分析栏清除活动目标。
+- `settings`：设置 sheet 与工作副本；`AndroidInputDevices` 能力注入（键盘/指针/纯触控），读取真实行视图断言完整绑定控件、纯触控零绑定文字与读屏不泄露；录制/取消/清空/冲突、录制时鼠标左右键被吞、断开最后外设取消录制、连接变化保留草稿且不弹软键盘、虚拟/非字母键盘排除；倍率行单一居中值 + `%`、失焦统一提交、1601/NaN/0 恢复、输入框实例保持、草稿随增删保留、原地重排与至少保留一项。
+- `similarity` / `tools`：面板与工具 sheet 开合。
+
+**独立模式**（精确模式名匹配，不并入 `all`；自带素材、每步独立 try/catch，失败记 FAIL 后继续，例外与超时都写进报告）：
+
+- `faults`：此前只能手验/代码核对的失败与边界项——IMAGE-08 八方向（运行时生成 320×200 + EXIF 0x0112 = 1..8 的 8 张 JPEG，断言解码方向、视口方向与 5–8 的逻辑宽高互换）、SCOPE-04 RAW 全分辨率（`files/pv-check-raw/*.ARW`，源 ≥6000×4000，放大到物理 100% 后展示尺寸 = 源尺寸）、TOOLBAR-03 外部存储评分写回（`GetExternalFilesDir` 下 800×600 JPEG，XMP 字节回读 = 4）、IMAGE-03 Full 失败（反射换 `BitmapLoader._presentationDecoder` 为「仅全分辨率失败」替身，断言保留代理 + 提示条含「全分辨率」）、STATE-02/OPEN-03（`ParentFailingFileRef` + `FailingFolderRef`：文案含目录名、回退单图、列表只剩 1 项）、STATE-03（只读副本 444/555，星级不变 + 提示条含文件名）、SETTINGS-14（隔离档 `checks` 写入损坏 JSON，断言 `.corrupt-` 备份键存在、状态行含「损坏」）、SIM-10（反射给 `SimilarItems`/`UnindexedCount`/`IndexError` 赋值，断言列表态停靠区错误标签）、ANALYSIS-10（覆盖 DINO 模型字节并卸载会话，断言 4 张诊断瓦片全部「分析失败」且无残留图）、SCOPE-02（`session.Trim(Warning)` 关闭增强 + 一次性提示）、OPEN-06（`ACTION_VIEW` 外部打开落到同一 `PathKey`）。素材只写 App 内部目录与 `GetExternalFilesDir`；RAW 夹具先 `adb push` 再 `run-as cp` 到 `files/pv-check-raw/`。
+- `layout`：记录当前 `fontScale`/density/窗口尺寸/方向/布局模式，然后在竖屏、横屏（`RequestedOrientation` 切向，Activity 不重建）、回竖屏三态各核对一遍：分区非负且在屏内、相邻分区边界相接（列布局控制栏背景从分隔线之后起排）、筛选条在文件栏内容区、控制栏三分组 + 虚拟节点矩形（整条文档超出可视主轴时按 TOOLBAR-08 只要求交叉轴在界内，主轴允许滚动）、首卡 96×144（行）/116×144（列）。字体档与密度不自己改：外部用 `adb shell settings put system font_scale` / `wm density` 改档后重启再跑。
+- `input`：INPUT-04 合成滚动事件（触控板源 0.4 → 只平移且不派发滚轮命令；鼠标源 1.0 → 恰好一次命令）分流、INPUT-05 按键重复（`DpadRight` 重复翻页；`Numpad3` 重复只执行一次、非重复写入 3 星；主行 `Num3` 的评分绑定）、TOOLBAR-11 控制栏虚拟节点（名称非空、评分按行 0→5 / 列 5→0、命令名与 `Commands` 对齐、矩形非零）与硬件键盘命令（`F` 切适应、`DpadRight` 翻页）。
+
+**已跑矩阵**（API 35 arm64 模拟器，2026-10-23）：fontScale 1.0 / 1.3 × density 420 / 525（411dp / 329dp 宽）× 竖屏 / 横屏 / 回竖屏。报告计数：`faults` 20/0、`layout` 18/0（420 两档字体）、`layout` 18/0（525 档，筛选条按窄屏横向滚动）、`input` 8/0、`main` 18/0、`analysis` 47/0、`similarity` 19/0、`settings` 51/0、`tools` 20/0。验收读取用的访问器（`StatusTextForChecks`、`StatusVisibleForChecks`、`ResetStatusForChecks`、`ControlBar.NodesForChecks`、`SimilarityPane.DockError*ForChecks`、`FilterScrollableForChecks`、`FilterScrollOffsetForChecks`）都是 `internal` 且注释标「验收用」，产品路径不引用；`faults` 另用反射改 `BitmapLoader` 私有静态解码器字段与 `SimilarityPanelViewModel` 私有 setter，退出前一律还原。
+
+`all`（五组连跑）与个别独立模式的**启动期偶发 SIGSEGV 未关闭**：实测约每 8 次启动有 1 次在「刚打开文件夹、图片刚上屏」的 200 ms 内以 signal 11 退出（无托管异常、无 tombstone）。独立模式已加 `[NativeCheck] 独立模式开始/<步骤>` 日志，崩溃可定位到步骤之前还是步骤之内；分模式（尤其 `faults` / `layout` / `input`）仍优于 `all`，但不作为「必过」验收口径。
 
 ### 压测与性能探针
 
@@ -134,8 +146,8 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/stress-flip.json
 | 10 | 设置五分类页面的列表项较多（文件格式/EXIF/快捷键），需滚动；无搜索 | 与 iOS 设置同口径（滚动表单）；搜索非本轮范围 |
 | 11 | 手机 411dp 放不下 3×90dp 筛选控件 + 计数 + 90dp 相似 toggle | 共享 `FilterBarFrames` 增加可选宽度（默认 90 不变）；Android 窄屏 84/76dp + “13 张”紧凑计数 |
 | 12 | 手机分析栏瓦片约 58dp；相似空态按钮在占位下方；EXIF 表只显示 4 列；DINO 抖动线为简化绘制 | A5 偏差，登记待作者裁定/A6 视觉收口 |
-| 13 | `pv-check all` 连跑五组检查偶发 SIGSEGV；分模式均 PASS。2026-10-19 重装后首跑 analysis 偶发 1 项「回到适应态 fit=False」，随后连跑 3 次 18/18 | 分模式作为验收口径；首跑时序偶发待矩阵/真机复测 |
-| 14 | 检查矩阵只覆盖 API 35 / 竖屏 / fontScale 1.0 / density 2.625 | A6 矩阵未跑；真机门未做 |
+| 13 | `pv-check all` 连跑五组检查偶发 SIGSEGV；分模式也有约 1/8 的启动在「刚开文件夹、图片刚上屏」200 ms 内 signal 11 退出（无托管异常、无 tombstone）。2026-10-19 重装后首跑 analysis 偶发 1 项「回到适应态 fit=False」，随后连跑 3 次 18/18 | 分模式（尤其 `faults`/`layout`/`input`）为验收口径，但不按「必过」要求；独立模式已加步骤日志，便于把崩溃定位到步骤边界；崩溃根因待查（与检查代码无关，发生在 `[NativeCheck] 独立模式开始` 之后、首步之前） |
+| 14 | 检查矩阵已覆盖 API 35 arm64 / fontScale 1.0·1.3 / density 420·525（411dp·329dp 宽）/ 竖屏·横屏·回竖屏；真机矩阵未跑 | 矩阵结果见「程序化检查」段；真机门仍待做 |
 | 15 | 真机（Xiaomi 25128PNA1C / API 36）P3 表面始终 False | 补 `android:colorMode="wideColorGamut"` + `Window.ColorMode`；关键修正是 `EGL_GL_COLORSPACE_DISPLAY_P3_EXT` 常量应为 **0x3363**（此前误用 0x30BF → EGL_BAD_ATTRIBUTE）；真机日志已 `P3表面=True` |
 | 16 | 筛选下拉点击不切换 | `IMenu.Add(title)` 的 itemId 恒为 0；改为 `Add(0, index, index, title)`，卡片评分菜单同样改唯一 id 并合并单一 `MenuItemClick`（原先每个评分项各挂一个 handler，点击会串写） |
 | 17 | 列布局筛选条顶部有大段“mac 红绿灯”空白 | `FileContent` 已含 `safe.Top`，`leadingInset` 又加一次 `safe.Top`；列布局只传 `FilterMargin` |
@@ -160,3 +172,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/stress-flip.json
 | 38 | HIF 同一文件缩略图横竖不一致 | 同一 HIF 内不同 thumbnail item 方向不一致：160×120 是传感器横向，373×560 已是显示竖图；统一按容器 270° 转会把后者转横。改为先比较“原始横竖”和“显示横竖”，相反才转。同进程先开 A670 文件夹再开 A7C09124，首卡已与主图同向 |
 | 37 | HIF 首张缩略图方向偶发错 | 首张走优先加载时 MetadataExtractor 可能还没给出 Default Rotation；新增 `HeifOrientationReader` 直接从文件头 irot 读角度，元数据为 0 时兜底。用 `/sdcard/PhotoViewerTest/12760425/A7C09124.HIF`（irot=1→270°）验证首卡与主图同向 |
 | 36 | HIF 胶片缩略图横竖错乱 | JPEG 缩略图 item 存储方向与主图不同。`ThumbnailService` 之前把 HEIF 平台源硬编码 `isPreRotated:true`；改为 `HeifLoader.OutputPreRotated`，Android libheif/JPEG item 路径按容器 Default Rotation 再做方向对齐。用改 `irot=90°` 的 HIF 验证主图与卡片同向 |
+
+| 39 | 主行数字键 1–5 在 Android 上不触发评分快捷键（默认绑定 `D1`–`D5`）：`AndroidInputMapping.MapKey` 的数字兜底只把 1 字符名补成 `D<n>`，而键码枚举是 `Num0`–`Num9`，`Enum.TryParse<GestureKey>("Num3")` 解析失败返回 null → `HandleHardwareKey(KEYCODE_3)` 返回 false。小键盘 `Numpad3` 经 `NumPad` 前缀改写可正常触发（次绑定） | **已修**：`Num0`–`Num9` 映射为 `D0`–`D9`；`pv-check input`「INPUT-05 主行数字键映射」PASS |
+| 40 | 窄屏（density 525 → 329dp 宽）下筛选条溢出：自然最小宽约 389dp（3×84 + 计数 + 76 toggle + 间距），相似聚类 toggle 落在 313..389，超出 329dp 内容区约 60dp 被屏幕裁掉；行布局无横向滚动 | **已修**：筛选条复用可滚动宿主（TOOLBAR-08 同一实现），控件宽度不压缩，窄屏横向滚动；density 525 的 `pv-check layout` 18/18 PASS |
+| 41 | `INPUT-04` 的「离散事件累积到一格才派发」分支实际不可达：非整数轴增量一律先被判为精确滚动（`IsPreciseScroll`），两次 0.5 只平移不派发命令；与 Windows「增量小于一格即精确」同口径 | **已按实际口径修正**：`Design/spec/input.md` 改为「高分辨率（非整格）增量按精确滚动平移，不累积成命令；整格按格计数」；`pv-check input` 改为断言非整格平移 + 整格一次命令，PASS |

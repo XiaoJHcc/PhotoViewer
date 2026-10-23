@@ -95,13 +95,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Native/iOSFilterBar.cs:16`（`UIView`）、`:43-79`（`UIButton` + `UIMenu`）、`:82-88`（toggle）。
   - Windows：`PhotoViewer.Windows/Native/WindowsFilterBar.cs:19`（`Grid`）、`:34-67`（`ComboBox`×3）、`:126-133`（`ToggleButton`）。
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs:20`（自绘 `View`）、`:148-255`（自绘 `PopupWindow`）。
-  - **FILTER-01@android**：<600 宽手机 toggle 76、下拉 84，计数用紧凑文案（已登记 10-18）。
+  - **FILTER-01@android**：<600 宽手机 toggle 76、下拉 84，计数用紧凑文案（已登记 10-18）；窄于紧凑宽度所需时筛选条横向滚动，控件宽度不压缩。
 - **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:270-339`（筛选、排序、当前项映射）。
 - **FILTER-04**：计数文案 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:665`、iOS `PhotoViewer.iOS/Native/iOSFilterBar.cs:71`、Windows `PhotoViewer.Windows/Native/WindowsFilterBar.cs:102`、Android `PhotoViewer.Android/Native/AndroidFilterBar.cs:89-93`。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/Core/Settings/SettingsModel.cs:28`；可见性 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`。
 - **FILTER-07**：共享 `PhotoViewer.Shared/MainScreenLayout.cs:29-39`、`:66-69`。
   - **FILTER-07@win**：筛选条自带 `StackPanel` + 外边距 10，不消费共享 `FilterBarFrames`；几何值与令牌一致（已登记 10-18）。
-  - **FILTER-07@android**：手机行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）；iPad 与四端一致，五项整组在安全内容区内居中，不设前导对齐差异。
+  - **FILTER-07@android**：手机行布局 `alignLeading`，从安全区前导边 + 10 起排（已登记 10-18）；iPad 与四端一致，五项整组在安全内容区内居中，不设前导对齐差异。窄于紧凑宽度所需时筛选条横向滚动，控件宽度不压缩。
 - **FILTER-08**：菜单交互。macOS/iOS 用系统菜单；Windows 原生 `ComboBox`；Android 自绘菜单（行高约 40）。
   - **FILTER-08@ios / @android**：触控下拉可点区 90×32，低于 44 点建议（已登记 10-18）。
 - **FILTER-07@web / FILTER-08@web**：无交通灯，列布局首控件从 `filter.margin` 起排；浏览器无原生下拉弹层，三个下拉按 FILTER-08 自绘外观（旧壳 Avalonia Fluent 深色），菜单与 MENU-03 共用同一自绘弹层组件。

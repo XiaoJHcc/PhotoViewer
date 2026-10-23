@@ -20,12 +20,16 @@ using IOPath = System.IO.Path;
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// Android 原生壳程序化自检（A6 起步，验收专用）：<c>--es pv-check main</c> 在首图上屏后核对主屏分区、
+/// Android 原生壳程序化自检（A6，验收专用）：<c>--es pv-check &lt;mode&gt;</c> 在首图上屏后核对主屏分区、
 /// 安全区、筛选条/卡片/控制栏几何、Fit↔100% 往返、分析栏/相似面板/设置/工具页开合，并把报告写到
-/// App 内部 <c>files/PhotoViewer/android-checks.txt</c>，供 <c>adb exec-out run-as ... cat</c> 取回。
+/// App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;.txt</c>，供 <c>adb exec-out run-as ... cat</c> 取回。
 /// 仅测试路径调用，不改变产品行为。
 /// </summary>
-internal static class AndroidNativeChecks
+/// <remarks>
+/// <c>faults</c> / <c>layout</c> / <c>input</c> 三组是独立模式：自带素材与流程、按精确模式名分发
+/// （<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
+/// </remarks>
+internal static partial class AndroidNativeChecks
 {
     private static int _passed;
     private static int _failed;
@@ -63,6 +67,11 @@ internal static class AndroidNativeChecks
     private static void Tick()
     {
         if (_root == null || _main == null || _session == null || _activity == null) return;
+        if (IsStandaloneMode)
+        {
+            _ = RunAsync();
+            return;
+        }
         if (_session.Image == null && _main.CurrentFile != null && _attempt++ < 60)
         {
             new Handler(Looper.MainLooper!).PostDelayed(Tick, 200);
@@ -73,6 +82,11 @@ internal static class AndroidNativeChecks
 
     private static async System.Threading.Tasks.Task RunAsync()
     {
+        if (IsStandaloneMode)
+        {
+            await RunStandaloneAsync();
+            return;
+        }
         var root = _root!;
         var main = _main!;
         var session = _session!;
@@ -556,6 +570,12 @@ internal static class AndroidNativeChecks
         Check("工具 sheet 关闭", !AndroidToolsPresenter.IsOpen, "IsOpen=true");
         }
 
+        WriteReport();
+    }
+
+    /// <summary>把本次检查的逐条结果写到 App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;.txt</c>。</summary>
+    private static void WriteReport()
+    {
         var report = new StringBuilder();
         report.AppendLine($"Android native checks mode={_mode} {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         report.AppendLine($"PASS {_passed} / FAIL {_failed}");
@@ -841,4 +861,10 @@ internal static class AndroidNativeChecks
 
     /// <summary>当前检查模式是否包含某一组检查。</summary>
     private static bool Wants(string group) => _mode == group || _mode == "all";
+
+    /// <summary>
+    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c>）：精确模式名匹配、自带素材与流程，
+    /// 不并入 <c>all</c>（现有 <c>all</c> 五组连跑在该模拟器上偶发 SIGSEGV）。
+    /// </summary>
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input";
 }

@@ -61,6 +61,25 @@ internal sealed class AndroidControlBar : View
     /// <summary>评分分组是否存在。</summary>
     internal bool HasRatingGroup => _groups.Exists(group => group.Kind == ControlBarGroupKind.Rating);
 
+    /// <summary>
+    /// 按视觉顺序展开的虚拟节点快照（验收用）：读屏名称、分组类型、本地 dp 矩形与禁用态，
+    /// 与 <c>ExploreByTouchHelper</c> 暴露给读屏的节点同源。
+    /// </summary>
+    /// <returns>节点快照列表。</returns>
+    internal IReadOnlyList<(string Name, string Kind, double X, double Y, double Width, double Height, bool Enabled)> NodesForChecks()
+    {
+        var nodes = new List<(string, string, double, double, double, double, bool)>(_groups.Count * 6);
+        foreach (var group in _groups)
+        {
+            foreach (var child in group.Children)
+            {
+                nodes.Add((AccessibleName(group, child), group.Kind.ToString(), child.Rect.X, child.Rect.Y,
+                    child.Rect.Width, child.Rect.Height, child.Enabled));
+            }
+        }
+        return nodes;
+    }
+
     /// <summary>构建控制栏。</summary>
     /// <param name="context">宿主上下文。</param>
     /// <param name="main">共享主 VM。</param>

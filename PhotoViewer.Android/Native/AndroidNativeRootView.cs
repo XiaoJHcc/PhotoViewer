@@ -39,6 +39,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly View _controlBackground;
     private readonly View _controlDivider;
     private readonly AndroidFilterBar _filterBar;
+    private readonly AndroidControlBarScrollHost _filterScrollHost;
     private readonly AndroidFilmstripView _filmstrip;
     private readonly AndroidControlBar _controlBar;
     private readonly AndroidControlBarScrollHost _controlScrollHost;
@@ -75,6 +76,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidControlBar ControlBar => _controlBar;
     /// <summary>筛选条（验收读取控件几何）。</summary>
     internal AndroidFilterBar FilterBar => _filterBar;
+    /// <summary>筛选条是否因窄屏进入横向滚动（验收读取）。</summary>
+    internal bool FilterScrollableForChecks => _filterScrollHost.IsScrollable;
+    /// <summary>筛选条当前横向滚动偏移（px，验收读取）。</summary>
+    internal int FilterScrollOffsetForChecks => _filterScrollHost.ScrollOffset;
     /// <summary>最近一次布局算出的分区矩形（dp）。</summary>
     internal AndroidPaneFrames Panes => _panes;
     /// <summary>导航图宿主。</summary>
@@ -93,6 +98,18 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal bool DetailFrameVisible => _detailVisible;
     /// <summary>共享分析编排（验收读取准星）。</summary>
     internal AnalysisPresenter AnalysisPresenterForChecks => _analysisPresenter;
+    /// <summary>状态提示条正文（验收用）。</summary>
+    internal string? StatusTextForChecks => _statusLabel.Text;
+    /// <summary>状态提示条是否可见（验收用）。</summary>
+    internal bool StatusVisibleForChecks => _statusLabel.Visibility == ViewStates.Visible;
+
+    /// <summary>收起状态提示条并作废在途自动隐藏（验收用，避免上一条提示冒充本次结果）。</summary>
+    internal void ResetStatusForChecks()
+    {
+        _statusToken++;
+        _statusLabel.Visibility = ViewStates.Gone;
+        RequestLayout();
+    }
 
     /// <summary>建立主屏视图树并接线共享 VM 与会话。</summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -130,7 +147,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         AddView(_controlDivider);
 
         _filterBar = new AndroidFilterBar(activity, main);
-        AddView(_filterBar);
+        _filterScrollHost = new AndroidControlBarScrollHost(activity, _filterBar);
+        AddView(_filterScrollHost);
         _filmstrip = new AndroidFilmstripView(activity, main);
         AddView(_filmstrip);
         _filmstrip.RateRequested += OnRateRequested;
@@ -336,15 +354,24 @@ internal sealed class AndroidNativeRootView : FrameLayout
             LayoutChild(_controlDivider, _panes.ControlDivider, density);
             _controlDivider.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
 
-            _filterBar.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+            _filterScrollHost.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
             _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
             _similarityPane.Visibility = similarityOpen ? ViewStates.Visible : ViewStates.Gone;
             if (filmVisible)
             {
                 var content = _panes.FileContent;
                 double contentWidth = row ? Math.Max(1, content.Width) : MainScreenLayout.FileBarContentWidth;
-                LayoutChild(_filterBar, new LayoutRect(content.X, content.Y, contentWidth, filterMain), density);
                 _filterBar.Arrange(row, contentWidth, leadingInset);
+                double filterDocumentWidth = row ? Math.Max(contentWidth, _filterBar.RequiredWidthDp) : contentWidth;
+                if (filterDocumentWidth > contentWidth + .5)
+                    _filterBar.Arrange(row, filterDocumentWidth, leadingInset);
+                var filterRect = new LayoutRect(content.X, content.Y, contentWidth, filterMain);
+                LayoutChild(_filterScrollHost, filterRect, density);
+                double filterMainViewport = row ? contentWidth : filterMain;
+                double filterMainDocument = row ? filterDocumentWidth : filterMain;
+                _filterScrollHost.Configure(row,
+                    (int)Math.Round(filterMainViewport * density),
+                    (int)Math.Round(filterMainDocument * density));
                 double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
                 LayoutChild(_filmstrip, new LayoutRect(content.X, content.Y + filterMain, filmWidth,
                     Math.Max(1, content.Height - filterMain)), density);
