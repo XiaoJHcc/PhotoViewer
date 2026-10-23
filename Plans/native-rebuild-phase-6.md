@@ -55,7 +55,7 @@
 | # | 事项 | 平台 | 备注 |
 |---|---|---|---|
 | 6E-1 | ✅ **已完成 2026-10-19**：Release 默认进原生壳（随 6D 删除分流后自然成立） | 全部 | 发布脚本与 tasks 已同步；四平台 Release 都直接进原生壳 |
-| 6E-2 | ◐ **单 EXE 工程修复通过，干净机门待验（2026-10-19）**：内置四个官方 CRT，固定 `resources.pri` 解除改名限制；原名/中文改名各 32/7/5，共 88 项全 PASS，实际 HEVC/DirectML 与模块来源检查通过；归档 `release/PhotoViewer-0.8.0-win-x64.exe` | Windows | 230,753,372 字节（230.8 MB / 220.1 MiB）；运行库从解包目录加载，不要求用户安装。构建端使用官方 Release x64 Redist 并遵守许可。无现成干净机环境，未冒称全系统验收；Win10、真实相机素材、未签名/SmartScreen 仍据实登记。完整 SHA256、CRT 来源与证据见 [收尾记录](native-rebuild-windows-release-closeout.md) |
+| 6E-2 | ◐ **单 EXE 工程修复通过，干净机门待验（2026-10-19）**：内置四个官方 CRT，固定 `resources.pri` 解除改名限制；原名/中文改名各 32/7/5，共 88 项全 PASS，实际 HEVC/DirectML 与模块来源检查通过；归档 `release/PhotoViewer-0.8.0-win-x64.exe` | Windows | 230,753,372 字节（230.8 MB / 220.1 MiB）；运行库从解包目录加载，不要求用户安装。构建端使用官方 Release x64 Redist 并遵守许可。无现成干净机环境，未冒称全系统验收；Win10 与未签名/SmartScreen 仍据实登记（真实相机素材不列为待办，自生成八方向素材 + 代码核对即足）。完整 SHA256、CRT 来源与证据见 [收尾记录](native-rebuild-windows-release-closeout.md) |
 | 6E-3 | Developer ID 签名 + 公证（现 adhoc） | macOS | 待作者决定是否立项；**受 Apple Developer Program 付费会员阻塞**——免费账号只能 adhoc/本机开发签名，Developer ID 与 notarytool 均不可用。`publish.sh` 当前是 `codesign -s -` |
 | 6E-4 | ◐ App Store 合规冲刺。**已完成 2026-10-19**：`PrivacyInfo.xcprivacy`（不追踪/不收集；FileTimestamp C617.1+3B52.1、SystemBootTime 35F9.1、DiskSpace E174.1、UserDefaults CA92.1）、`ITSAppUsesNonExemptEncryption=false`、设备能力 arm64；核对确认不访问相册/相机/定位/网络，无需用途字符串与 ATS 例外。**余项**：TestFlight 上传与审核材料（作者）；Release 真机构建验证清单入包。**TestFlight/上架受付费会员阻塞**：当前工程用 `iPhone Developer` 开发签名 + 自动预配（免费账号 7 天 profile），Apple Distribution 证书与 App Store Connect 上传需 Apple Developer Program。批量评分写回：产品目前没有多选批量评分入口（评分只作用于单张及其同名伴侣，失败已走 STATE-03 提示条），此项待出现批量入口时再立 | iOS | 总纲 §4.5 |
 | 6E-5 | ✅ **已完成 2026-10-19**（`df16c77`）：`Microsoft.Data.Sqlite` 10.0.13 → SQLitePCLRaw 2.1.13，GHSA-2m69-gcr7-jv3q 消除，`dotnet list --vulnerable` 无 | 全部 | Mac smoke 39、iOS similarity 9、Android main 14 / similarity 15、Windows 类型检查 0/0 |
@@ -66,12 +66,12 @@
 
 完整清单由 2026-10-18 文档盘点产生，6G 合并为单一 backlog。2026-10-19 按 `Design/status.md` 复核后：
 
-- **Windows**：`INPUT-01` 仍待核验，不直接认定功能缺失；W-M6 专项与几何导出未做，旧壳对拍随 6D 失效，后续按 6F 样机导出。status Windows 现仅 **1 格待核验**（SCOPE-04）与 6 格代码核对，不是缺功能；`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。W-M7 色彩与 RAW 主图解码独立延期（RAW 内嵌缩略图、列表与星级写回可用）。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit`，程序化与作者手验通过）。
+- **Windows**：`INPUT-01` 随 2026-10-21 作者手验通过；status Windows 列现为 **7 格代码核对 + 3 格不适用**（状态词如实，不是缺功能），`SCOPE-04` 已按 WIC RAW 实测改为程序化通过。W-M6 专项 harness 与几何导出按作者 2026-10-22 裁定不补——旧壳对拍随 6D 失效，几何以 Web 参考壳 + Mac 比对为准；相机八方向素材、增强 + 分析长稳、桌面外设热插拔、Windows 失败注入同样不再挂账。**唯一功能缺口是 W-M7 的色彩部分**（ICC/ACM/广色域标签），RAW 主图已由 [Windows 性能与内存专项](windows-performance-memory-plan-1.md) W4 落地。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。~~`IMAGE-02` Fit 无对焦点优先与对焦跟随切图~~ → **已由 6C W1 解决**（共享 `PhotoViewport.ToggleFit`，程序化与作者手验通过）。
 - **Android**：~~列表上下按钮排序~~ → **已改为拖拽**（`ItemTouchHelper` + 行尾把手，status.md SETTINGS-15 代码核对 10-18）；数值用 +/- 与拖入未接已登记为平台差异（SETTINGS-12@android / OPEN-07@android）；真机 P3 表面抬亮（现回退 sRGB）；`pv-check all` 偶发 SIGSEGV；API/方向/字体缩放/DPI 矩阵与真机门未跑。
 - **macOS**：~~细节预览双击会清 `FollowsFocus`~~ → **已按规格统一**：`ANALYSIS-04` 规定"双击即结束跟随（显式定位优先），四端一致"，status.md macOS 程序化通过 10-16。
 - **共享**：RAW 自动 sidecar 未实现。
 
-作者手验（2026-10-21）：macOS、iPad、Windows 三端常规 UI 已通过，Windows 另含 175%/200% DPI。Mac/iPad 的失败注入已由 faults 套件机测通过；Windows 失败注入仍为代码核对。仍缺：iPad 广色域对拍、外接显示、500 连翻与内存告警；Windows 真实跨屏、相机八方向素材、增强 + 分析长稳；Android 验收清单全部与真机门；统一清单余项。**触控板分流无验收条件，记为不阻塞任务**（对应 status.md 的 INPUT-04 已注明）。
+作者手验（2026-10-21，Windows 追加 2026-10-22 裁定）：macOS、iPad、Windows 三端常规 UI 已通过，Windows 另含 175%/200% DPI 与真实跨屏。Mac/iPad 的失败注入已由 faults 套件机测通过；Windows 失败注入保持代码核对，不再另建套件。Windows 的相机八方向素材、增强 + 分析长稳、桌面外设热插拔与触控板分流（无验收条件，对应 status.md 的 INPUT-04）已按裁定不再挂账。仍缺：iPad 广色域对拍、外接显示、500 连翻与内存告警；Android 验收清单全部与真机门；统一清单余项；W-M7 色彩是否立项待作者。
 
 待作者决策：iOS 纯 AOT（`UseInterpreter`）、Android 手机分析栏放大与 EXIF 横滑、iPhone 紧凑布局、Android 平板。（Windows 工具窗口进任务栏/Alt+Tab 已于 2026-10-18 落地为普通窗口，见 `platforms.md` TOOLS-01@win。）
 

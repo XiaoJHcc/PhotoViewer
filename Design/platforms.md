@@ -236,7 +236,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **OPEN-01@ios / @android**：只有文件夹选择器（已登记 10-18）。
   - **OPEN-07@android**：未接 `OnDragListener`，手机无常见拖入来源，不建拖入入口（已登记 10-18）。
 - **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。
-  - 显式打开前调用 `FitToView()` 回到适应态（macOS/iOS 已实现）；Windows/Android 未重置视口为缺口（见 status.md）。
+  - 显式打开前调用 `FitToView()` 回到适应态：四端统一由共享 `MainViewModel.RequestFitToView()` + 共享 `PhotoViewport` 实现（见 status.md OPEN-05）。
 - **OPEN-03、OPEN-09**：单图模式与派生状态由共享 VM 承担；平台父目录可得性见各端安全作用域 / SAF 授权。
 - **OPEN-01@web / OPEN-07@web**：没有真实文件系统，打开文件/文件夹使用应用内选择器浏览合成文件夹；拖入按文件名匹配合成库，否则打开首个合成文件夹。
 

@@ -17,7 +17,7 @@
 - **发布风险**：未签名及 SmartScreen 提示风险；无运行时干净机与 Win10 尚未验。最低声明 Win10 1809、实测 Win11 是不同口径，并不矛盾。当前仅提供 x64 原生发布产物、无 ARM64 原生产物，不据此断言 Windows ARM 不能通过 x64 仿真运行。
 - **硬件/素材验收**：175%/200% DPI 已由作者 2026-10-21 手验通过；仍待真实跨屏、相机八方向素材、增强 + 分析长时间稳定性。设置真实拖拽/录制/清库/预设增删、工具真实多格式/文件夹与 CSV 选择器已由作者 2026-10-18 手验，不再挂起。
 - **独立延期**：Windows 缺 RAW **主图**解码，但内嵌缩略图、列表与星级写回可用；W-M7 色彩/RAW 原本独立立项。性能门、压测入口与 p50/p95 基线明确以后再做，**不计发布前置**。
-- **验收/小缺口**：W-M6 专项与 Windows 几何导出未做；旧壳几何对拍随 6D 失效，后续按 6F 导出与样机比对。`Design/status.md` Windows 现仅 **1 格待核验**（SCOPE-04）与 6 格代码核对，不是缺功能；`INPUT-01` 仍需判定，不能直接认定功能缺失。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。Training `DatasetBuilder` Windows 实跑复核仍待补。
+- **验收/小缺口**：W-M6 专项与 Windows 几何导出按作者 2026-10-22 裁定不补（旧壳几何对拍随 6D 失效，几何以 Web 参考壳 + Mac 比对为准）。`Design/status.md` Windows 列为 **7 格代码核对 + 3 格不适用**（终态，不是缺功能），`SCOPE-04` 已按 WIC RAW 实测改为程序化通过，`INPUT-01` 随 2026-10-21 作者手验通过。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。Training `DatasetBuilder` Windows 实跑复核仍待补。
 
 ---
 
@@ -32,7 +32,7 @@
 2. **「缺 `.pri`」这条已知限制来自对症状的错配**：上游 [WindowsAppSDK#6720](https://github.com/microsoft/WindowsAppSDK/issues/6720) 描述的是「启动约 10 秒后 `0xC000027B`」，与本案「启动即 `0x80040111`」不是同一症状；上游同时明确 WinUI 3 自包含**不支持** `PublishSingleFile`（原生依赖必须留在 exe 旁）。
 3. **多文件发布是当前唯一可用形态**：同日实测产物含 4 个 `.pri`，exe 正常启动到 `startup complete` / `main window activated`，525 MB / 532 文件。但仓库里**没有**多文件发布脚本或 Task，唯一的发布脚本是跑不通的单文件脚本。
 4. **需要作者拍的板**：单文件放弃后出包形态选 zip / 安装器 / MSIX 之一（见 §3），以及 0.8.0 Windows 的体积口径。
-5. 其余 Windows 待收尾项见 §4：RAW 解码完全缺失、W-M7 色彩、W-M6 专项 harness 与几何导出、无压测入口、DPI/跨屏/真实素材手验、`status.md` 1 格待核验与 6 格代码核对。
+5. 其余 Windows 待收尾项：§4 为初轮调查记录（已在原处更正），现行结论见 §1 与 [Windows P2 §13.2](native-rebuild-windows-p2.md)；剩下发布签名与干净机门、W-M7 色彩、顺序连翻 p95 长尾三项。
 
 ## 1. 实测记录
 
@@ -84,35 +84,35 @@ dotnet publish PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Release -r win-
 
 ### 4.1 发布/出包
 
-- `release/` 里最新 Windows 产物是 `PhotoViewer-0.7.1-win-x64.exe`（7 月，旧 Avalonia 壳）；0.8.0 尚无任何 Windows 产物。
+- ~~`release/` 里最新 Windows 产物是 `PhotoViewer-0.7.1-win-x64.exe`；0.8.0 尚无任何 Windows 产物~~ → 已归档 `PhotoViewer-0.8.0-win-x64.exe`（230,753,372 字节，原名/改名共 88 项 PASS）。版本号已升至 0.8.5，该产物早于 10-20/21 的修复，出包需重出。
 - **无代码签名**：直发 exe 会触发 SmartScreen。文档未登记为待办，属发布面风险。
 - **仅 x64**：`LibHeif.Native` 只有 win-x64，脚本硬拒其他 RID，Windows on ARM 不可用。
 
 ### 4.2 功能缺口（已登记）
 
-- **Windows 完全没有 RAW 解码**（README 状态表写「暂不支持」）：0.8.0 Windows 版打不开 ARW/CR3，与 mac/iPad 有明显落差。对应 `native-rebuild-windows-p2.md` §13.2 #13。
-- **W-M7 色彩**（ICC/广色域标签/ACM 探测/Win10 烘焙回退）未做；`Design/status.md` 的 `SHELL-05`（DPI/跨屏）仍是待核验。§13.2 #12。
-- **`INPUT-01`**（文本框获焦暂停全局快捷键）挂待核验：主窗口其实没有文本框，设置窗口已独立吞键（§13.1 #20 已验），很可能是一次被误挂的待验项，值得一次实测判定为「满足/不适用」。
-- `SCOPE-04`（RAW 预览限制）、`SCOPE-05` 待核验。
+- ~~**Windows 完全没有 RAW 解码**（README 状态表写「暂不支持」）~~ → 已由 [Windows 性能与内存专项](windows-performance-memory-plan-1.md) W4 落地：`WindowsRawDecoder` 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 7008×4672、代理 5120 长边），README 状态表为「✅ 系统 RAW 引擎」。
+- **W-M7 只剩色彩**（ICC/广色域标签、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签）未做，是否立项待作者；`SHELL-05` 的 DPI 与真实跨屏已由作者 2026-10-21 手验通过。
+- ~~**`INPUT-01`**（文本框获焦暂停全局快捷键）挂待核验~~ → 随 2026-10-21 作者手验通过（主窗口无文本输入控件，设置窗口独立吞键见 §13.1 #20）。
+- ~~`SCOPE-04`（RAW 预览限制）、`SCOPE-05` 待核验~~ → `SCOPE-04` 按 WIC RAW 实测改为 `程序化通过`，`SCOPE-05` 作者手验通过。
 
 ### 4.3 验收缺口
 
-- **W-M6 专项 harness + 旧壳几何 JSON 对拍未开始**（§13.2 #11）：6F 已让 Mac 导出 381 节点几何，Windows 尚无同格式导出，未纳入比对。
-- 设备矩阵：200%/175% DPI、真实跨屏（不同 scale）、真实相机八方向素材与旧壳逐项对拍、真实鼠标/触控板手感、增强 + 分析栏同时开启的长时间稳定性（§13.2 #1/#2/#3/#5/#16）。
-- **性能无入口**：Windows 原生壳没有 `--pv-stress`（`StressFlipDriver` 未接线），没有任何 p50/p95 基线。
-- `Design/status.md` Windows 列 127 个 ID 中仍有 **38 格**为待核验/缺口：TOOLBAR 8、SIM 8、INPUT 6、SETTINGS 5、FILTER 3、ANALYSIS 3、SCOPE 2，以及 SHELL-05 / OPEN-07 / TOOLS-04 各 1。
+- **W-M6 专项 harness 与几何导出**：作者 2026-10-22 裁定不补——旧壳对拍已随 6D 失效，几何以 Web 参考壳与 Mac 的 9 布局 0 差异比对为准。
+- ~~设备矩阵~~ → 175%/200% DPI 与真实跨屏已通过；相机八方向以自生成素材 + 代码核对为准；增强 + 分析长稳、桌面端外设热插拔按裁定不做验收。
+- ~~性能无入口~~ → `--pv-stress`（顺序 / `--pv-stress-mode=ab`）与 `--pv-perf-probe` 已接线，基线见 [性能与内存专项](windows-performance-memory-plan-1.md) §4；顺序连翻 p95 长尾待本地直连独显会话复测。
+- ~~38 格待核验/缺口~~ → 当前 Windows 列为 7 格 `代码核对`（终态）+ 3 格不适用（MENU-04/MENU-05/INPUT-06 无对应交互）。
 
 ### 4.4 文档账
 
-- `DEV.md:105`、`PhotoViewer.Windows/AGENTS.md:131`、`Plans/native-rebuild-windows-p2.md:65`、`Plans/native-rebuild-phase-6.md:58`（6E-2）：根因表述需更正（见 §2）。
-- `Plans/native-rebuild-phase-6.md` §7 发现清单：应补一条「单文件 0x80040111 根因误判为缺 `.pri`」。
-- 命名口径：DEV.md / README 写 `PhotoViewer.Windows.exe`，`release/` 实际是 `PhotoViewer-<版本>-win-x64.exe`。
-- README「已测试平台 Windows 11」与 csproj 最低 `10.0.17763.0`（Win10 1809）口径不一致。
+- 根因表述更正已按 §2 结论改写（`Plans/native-rebuild-phase-6.md` §4 6E-2、§7 #10；DEV.md 与 `PhotoViewer.Windows/AGENTS.md` 已无「缺 `.pri`」表述）。
+- `Plans/native-rebuild-phase-6.md` §7 发现清单第 10 条已记录「单文件 0x80040111 根因误判为缺 `.pri`」。
+- 命名口径已统一为 `PhotoViewer-<版本>-win-x64.exe`（DEV.md、README 一致）。
+- README「已测试平台 Windows 11」是实测环境口径，与 csproj 最低 `10.0.17763.0` 不矛盾（前者写测过什么，后者写支持到哪）。
 - Training `DatasetBuilder` 去 Avalonia 后的 **Windows 实跑复核**仍挂着（`native-rebuild-phase-6.md` §3 保留项）。
 
-## 5. 建议顺序
+## 5. 收口状态
 
-1. 定出包形态（§3）→ 改脚本 + Task + DEV.md，产出 0.8.0 Windows 包并实测启动。
-2. 更正 §2 的根因，补齐 §4.4 的文档回写（含 6E-2 状态）。
-3. 单独判定 `INPUT-01` 是缺口还是误挂。
-4. 之后按 W-M6（几何导出 + 专项 harness）/ W-M7（色彩、RAW）排期；性能入口与 iPad/Android 一起做。
+1. ✅ 出包形态已定为单文件 EXE（§1–§3），脚本、Task 与 DEV.md 已同步，`PhotoViewer-0.8.0-win-x64.exe` 归档并实测启动；版本号已升到 0.8.5，出包需重出。
+2. ✅ §2 根因与 §4.4 文档回写已完成（`Plans/native-rebuild-phase-6.md` §4 6E-2、§7 #10）。
+3. ✅ `INPUT-01` 判定为不适用，随作者 2026-10-21 常规 UI 手验通过。
+4. 剩余：W-M7 只剩色彩（是否立项待作者）；W-M6 专项与几何导出按 2026-10-22 裁定不补；发布签名、干净机/Win10 门与顺序连翻 p95 长尾见 §1 与 [Windows P2 §13.2](native-rebuild-windows-p2.md)。
