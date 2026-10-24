@@ -5,7 +5,6 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
-using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
 using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.ViewModels.Main;
@@ -21,18 +20,23 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 public partial class App : Application
 {
+    private readonly OpenRequestChannel _openRequests;
     private WindowsMainWindow? _window;
     private MainViewModel? _main;
+    private SettingsRepository? _settingsRepository;
     private WindowsNativeSettingsPresenter? _settingsPresenter;
     private WindowsNativeToolsPresenter? _toolsPresenter;
+    private bool _closed;
 
     /// <summary>
     /// 初始化应用对象并载入应用级资源。
     /// </summary>
     /// <param name="args">命令行参数</param>
-    public App(string[] args)
+    /// <param name="openRequests">启动期外部打开通道(主实例激活也投到这里)</param>
+    public App(string[] args, OpenRequestChannel openRequests)
     {
         LaunchArgs = args;
+        _openRequests = openRequests;
         InitializeComponent();
         UnhandledException += (_, e) => NativeStartupLog.Fail("Application.UnhandledException", e.Exception);
     }
@@ -79,17 +83,25 @@ public partial class App : Application
                 return;
             }
 
-            _main = new MainViewModel();
+            var settingsRepository = await CreateSettingsRepositoryAsync();
+            _settingsRepository = settingsRepository;
+            var viewState = WindowsNativePreferences.CreateStore(WindowsNativeApplication.IsolatedMode);
+            _main = new MainViewModel(
+                settingsRepository,
+                viewState,
+                _openRequests);
             _settingsPresenter = new WindowsNativeSettingsPresenter(() => WindowsNativeApplication.WindowHandle);
             _toolsPresenter = new WindowsNativeToolsPresenter(() => WindowsNativeApplication.WindowHandle);
             NativeWindowPresenter.Initialize(new NativeWindowPresenterImpl(_settingsPresenter, _toolsPresenter));
-            _window = new WindowsMainWindow(_main);
+            _window = new WindowsMainWindow(_main, viewState);
             _window.Closed += OnWindowClosed;
             _window.Activate();
             WindowsNativeApplication.WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(_window);
             NativeStartupLog.Write("main window activated");
 
-            ExternalOpenService.RegisterHandler(OnExternalOpenRequested);
+            // 重复激活(再次打开当前目录/当前图片)只前置窗口;无路径的二次启动也走同一前置动作。
+            _main.OpenCoordinator.RepeatActivation += OnRepeatActivation;
+            WindowsSingleInstance.AttachForeground(BringMainWindowToFront);
 
             if (smoke)
             {
@@ -141,7 +153,13 @@ public partial class App : Application
                 .Where((arg, index) => !arg.StartsWith("--", StringComparison.Ordinal)
                     && (index == 0 || !string.Equals(LaunchArgs[index - 1], "--pv-perf-probe", StringComparison.Ordinal)))
                 .ToList();
-            await _window.OpenPathsAsync(paths);
+            var startupItems = WindowsOpenPaths.FromPaths(paths);
+            if (startupItems.Count > 0)
+            {
+                // 命令行等待打开完成再报 startup complete:验收与脚本依赖这个顺序,而不是只投递。
+                await _main.OpenCoordinator.PublishAndWaitAsync(startupItems, OpenRequestSource.CommandLine);
+            }
+
             NativeStartupLog.Write("startup complete");
 
             // 压测在窗口与 PhotoLoadSession 就绪后启动(与 Mac 同一注入点)。
@@ -188,72 +206,93 @@ public partial class App : Application
         }
     }
 
-    /// <summary>
-    /// 外部打开请求:Windows 本地路径可直接解析(无安全作用域),文件夹走打开文件夹、图片走打开图片。
-    /// </summary>
-    private Task OnExternalOpenRequested(ExternalOpenRequest request)
+    /// <summary>重复激活当前目标:只把已有主窗口前置,不重新打开、不重新适应(OPEN-06)。</summary>
+    private void OnRepeatActivation() => BringMainWindowToFront();
+
+    /// <summary>把主窗口前置;无路径的二次启动也走这里,关闭后不再抢前台。</summary>
+    private void BringMainWindowToFront()
     {
-        var main = _main;
-        if (main == null)
+        if (_closed)
         {
-            return Task.CompletedTask;
-        }
-
-        return UiDispatcher.InvokeAsync(() => ResolveAsync(main, request)).Unwrap();
-    }
-
-    /// <summary>在 UI 线程上解析并打开外部请求。</summary>
-    private static async Task ResolveAsync(MainViewModel main, ExternalOpenRequest request)
-    {
-        foreach (var item in request.Items)
-        {
-            if (item.StorageItem is IFolderRef directFolder)
-            {
-                await main.FolderVM.OpenFolderAsync(directFolder);
-                return;
-            }
-
-            if (item.StorageItem is IFileRef directFile && main.FolderVM.IsImageFile(directFile.Name))
-            {
-                await main.FolderVM.OpenExternalFilesAsync(new[] { directFile });
-                return;
-            }
-
-            var path = item.Path?.LocalPath;
-            if (string.IsNullOrEmpty(path))
-            {
-                continue;
-            }
-
-            if (item.Kind == ExternalOpenItemKind.Folder)
-            {
-                if (Directory.Exists(path))
-                {
-                    await main.FolderVM.OpenFolderAsync(new LocalFolderRef(path));
-                    return;
-                }
-
-                continue;
-            }
-
-            if (!File.Exists(path) || !main.FolderVM.IsImageFile(System.IO.Path.GetFileName(path)))
-            {
-                continue;
-            }
-
-            await main.FolderVM.OpenExternalFilesAsync(new[] { (IFileRef)new LocalFileRef(path) });
             return;
         }
 
-        NativeStartupLog.Write($"外部打开未解析出可用项({request.Source})");
+        UiDispatcher.Post(() =>
+        {
+            if (_closed)
+            {
+                return;
+            }
+
+            _window?.BringToFront();
+        });
     }
 
-    /// <summary>关闭窗口:先关设置/工具窗口(设置窗口回写工作副本),再释放 GPU 资源与订阅。</summary>
+    /// <summary>
+    /// 建立设置仓库并完成首次读取：隔离运行落验收目录，普通运行落用户档。
+    /// 默认值按 <see cref="WindowsPerformanceBudget"/> 推导，缓存容量由用户设置决定。
+    /// </summary>
+    /// <returns>已初始化的仓库。</returns>
+    private static async Task<SettingsRepository> CreateSettingsRepositoryAsync()
+    {
+        var path = WindowsNativeApplication.SettingsFilePath;
+        var repository = new SettingsRepository(
+            new FileSettingsStore(path),
+            new WindowsPerformanceBudget(),
+            appleKeyboard: false,
+            automaticCacheLimit: false);
+        await repository.InitializeAsync();
+        NativeStartupLog.Write(
+            $"settings: path={path} outcome={repository.LoadOutcome}"
+            + $" canCommit={repository.CanCommit}"
+            + (repository.LastLoadError is { } error ? $" error={error}" : string.Empty));
+        return repository;
+    }
+
+    /// <summary>
+    /// 关闭窗口:先关设置/工具窗口并统一落盘,再释放界面资源与订阅,
+    /// 最后结束主视图模型(取消外部打开消费者、在途打开与设置订阅);两段释放互不重叠。
+    /// </summary>
     private void OnWindowClosed(object sender, WindowEventArgs args)
     {
-        _settingsPresenter?.CloseIfOpen();
-        _toolsPresenter?.CloseIfOpen();
-        _window?.Detach();
+        _closed = true;
+        try
+        {
+            // 设置窗口关闭即提交工作副本;提交全部走 ConfigureAwait(false),此处同步等待不会死锁。
+            _settingsPresenter?.CloseIfOpenAsync().GetAwaiter().GetResult();
+            _toolsPresenter?.CloseIfOpen();
+            _settingsRepository?.FlushAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("退出时回写设置", ex);
+        }
+
+        try
+        {
+            if (_main != null)
+            {
+                _main.OpenCoordinator.RepeatActivation -= OnRepeatActivation;
+            }
+
+            _window?.Detach();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("退出时释放界面资源", ex);
+        }
+
+        // 界面资源先归还,再结束视图模型与单实例键:两者释放对象不重叠。
+        try
+        {
+            _main?.Dispose();
+            WindowsSingleInstance.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("退出时释放主视图模型", ex);
+        }
+
         NativeStartupLog.Write("window closed");
     }
 

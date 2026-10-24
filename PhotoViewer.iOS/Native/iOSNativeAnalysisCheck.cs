@@ -7,6 +7,8 @@ using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -95,7 +97,7 @@ internal static class iOSNativeAnalysisCheck
                     main.FileVM.FilterBar.SelectedRatingFilter = "All";
                     EnsureJpegEnabled(main);
                 });
-                await main.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
+                await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
                 await WaitAsync(() => main.FolderVM.AllFiles.Count > 0, "夹具目录枚举");
                 await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
                 await SettleAsync(root);
@@ -199,7 +201,7 @@ internal static class iOSNativeAnalysisCheck
                 Directory.CreateDirectory(workspace);
                 string lowContrast = Path.Combine(workspace, "enhance-lowcontrast.jpg");
                 EnhancementAcceptance.CreateLowContrastJpeg(lowContrast);
-                await main.FolderVM.OpenImageAsync(new iOSFileRef(lowContrast));
+                await main.FolderVM.OpenImageAsync(new LocalFileRef(lowContrast));
                 await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(lowContrast), "低对比度素材成为当前照片");
                 await WaitAsync(() => session.Image is { Encoding: PixelEncoding.Rgba8 } && !session.IsProxy, "低对比度素材 Full 档（8 位 P3）");
                 await SettleAsync(root);
@@ -236,7 +238,7 @@ internal static class iOSNativeAnalysisCheck
                 string detailTrace = Path.Combine(output, "native-analysis-race-diagnostics.txt");
                 File.WriteAllText(detailTrace, string.Empty);
                 string? displayedFileKey = null;
-                using var displaySignal = await UiDispatcher.InvokeAsync(() => session.Subscribe(file => displayedFileKey = file.PathKey));
+                using var displaySignal = await UiDispatcher.InvokeAsync(() => session.Subscribe(file => displayedFileKey = file.StorageId.Value));
                 void TraceDetail(string stage, iOSDetailPreview? selected = null)
                 {
                     string text = stage + " " + DescribeDetailProbe(root, main, session, displayedFileKey, selected);
@@ -247,13 +249,13 @@ internal static class iOSNativeAnalysisCheck
                 string expectedFileKey;
                 if (hasFocusFixture)
                 {
-                    var focusFile = new iOSFileRef(focusFixture);
-                    expectedFileKey = focusFile.PathKey;
+                    var focusFile = new LocalFileRef(focusFixture);
+                    expectedFileKey = focusFile.StorageId.Value;
                     await main.FolderVM.OpenImageAsync(focusFile);
                 }
                 else expectedFileKey = await UiDispatcher.InvokeAsync(() =>
                 {
-                    displayedFileKey = main.CurrentFile!.File.PathKey;
+                    displayedFileKey = main.CurrentFile!.File.StorageId.Value;
                     return displayedFileKey;
                 });
                 int detailCount = await VerifyDetailActivityAsync(root, main, session, expectedFileKey,
@@ -322,7 +324,7 @@ internal static class iOSNativeAnalysisCheck
         {
             string path = Path.Combine(directory, name);
             if (!File.Exists(path)) throw new FileNotFoundException($"增强方向回归需要 {name}", path);
-            await main.FolderVM.OpenImageAsync(new iOSFileRef(path));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
             await WaitAsync(() => main.CurrentFile?.Name == name && session.Image != null, $"{name} 上屏");
             await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
             await SettleAsync(root);
@@ -348,7 +350,7 @@ internal static class iOSNativeAnalysisCheck
         // 8 位 P3 Full 档：生成 4000×3000（容器横向）的 EXIF 6 竖拍素材，放大到物理 100% 触发 Full 后再增强。
         string portrait = Path.Combine(workspace, "enhance-portrait-6.jpg");
         EnhancementAcceptance.CreateOrientationJpeg(portrait, 6, 4000, 3000);
-        await main.FolderVM.OpenImageAsync(new iOSFileRef(portrait));
+        await main.FolderVM.OpenImageAsync(new LocalFileRef(portrait));
         await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(portrait) && session.Image != null, "竖拍大素材上屏");
         await UiDispatcher.InvokeAsync(() => root.Photo.ZoomToPhysical(1.1));
         await WaitAsync(() => !session.IsProxy && session.Image is { Encoding: PixelEncoding.Rgba8 }, "竖拍素材 Full 8 位 P3");
@@ -427,7 +429,11 @@ internal static class iOSNativeAnalysisCheck
 
     /// <summary>收尾时把设置同步落盘，避免验收进程被强杀导致回写丢失。</summary>
     private static void FlushSettings(MainViewModel main)
-        => PhotoViewer.Core.Settings.SettingsService.Instance.SaveAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+    {
+        var repository = main.SettingsRepository;
+        repository.CommitAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+        repository.FlushAsync().GetAwaiter().GetResult();
+    }
 
     /// <summary>F16 代理直方图：直接用瓦片共用的 <see cref="HistogramRenderer"/> 渲染，验证线性表面可被接受。</summary>
     /// <param name="source">F16 代理展示图。</param>
@@ -517,7 +523,7 @@ internal static class iOSNativeAnalysisCheck
         File.Copy(smallest, probe, true);
         try
         {
-            await main.FolderVM.OpenImageAsync(new iOSFileRef(probe));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(probe));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(probe), "探针图成为当前照片");
             var presenter = root.AnalysisPane.Presenter;
             await WaitAsync(() => presenter.PcaTile.Placeholder == "未提取" && presenter.SharpnessTile.Placeholder == "未提取",
@@ -551,7 +557,7 @@ internal static class iOSNativeAnalysisCheck
     /// <param name="analysisDisplay">进入时的分析栏命令显隐。</param>
     /// <param name="enhanceDisplay">进入时的增强预览命令显隐。</param>
     /// <param name="originalFile">进入时的当前照片。</param>
-    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, PhotoViewer.Core.Settings.SettingsModel snapshot,
+    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings snapshot,
         bool analysis, bool film, bool control, bool similarity, bool analysisDisplay, bool enhanceDisplay, ImageFile? originalFile)
     {
         await UiDispatcher.InvokeAsync(() =>
@@ -614,7 +620,7 @@ internal static class iOSNativeAnalysisCheck
                 root.View!.LayoutIfNeeded();
                 var pane = root.AnalysisPane;
                 var previews = pane.DetailPreviews;
-                bool ready = main.CurrentFile?.File.PathKey == expectedFileKey && displayedFileKey() == expectedFileKey
+                bool ready = main.CurrentFile?.File.StorageId.Value == expectedFileKey && displayedFileKey() == expectedFileKey
                     && session.Image != null && !session.IsProxy && ReferenceEquals(root.Photo.DisplayedImage, session.Image)
                     && root.Photo.PresentationReady && main.IsAnalysisViewVisible && !pane.Hidden && previews.Count == expectedCount
                     && previews.All(value => (nint)value.Handle != 0 && ReferenceEquals(value.Superview, pane)
@@ -649,8 +655,8 @@ internal static class iOSNativeAnalysisCheck
                         // STATE-01 黑屏加载路径验证：缓存命中的切图不再经过空图，必须移除该文件的
                         // Full/Proxy 展示缓存，让 SetFile 真的清屏并异步解码。
                         var file = main.CurrentFile!.File;
-                        BitmapLoader.RemoveCached(file.PathKey, ImageSizeClass.Full);
-                        BitmapLoader.RemoveCached(file.PathKey, ImageSizeClass.Proxy);
+                        BitmapLoader.RemoveCached(file.StorageId.Value, ImageSizeClass.Full);
+                        BitmapLoader.RemoveCached(file.StorageId.Value, ImageSizeClass.Proxy);
                         session.SetFile(file);
                     }
                     finally { session.Changed -= OnReload; }
@@ -713,7 +719,7 @@ internal static class iOSNativeAnalysisCheck
         var pane = root.AnalysisPane;
         var image = session.Image;
         bool live = preview != null && (nint)preview.Handle != 0;
-        return $"current={main.CurrentFile?.File.PathKey} signal={displayedFileKey ?? "none"} image={Id(image)} "
+        return $"current={main.CurrentFile?.File.StorageId.Value} signal={displayedFileKey ?? "none"} image={Id(image)} "
             + $"imageSize={image?.Width}x{image?.Height} proxy={session.IsProxy} error={session.Error} texture={Id(root.Photo.DisplayedImage)} ready={root.Photo.PresentationReady} "
             + $"photo={root.Photo.Bounds} display={root.Photo.DisplayWidth}x{root.Photo.DisplayHeight} analysis={main.IsAnalysisViewVisible}/{!pane.Hidden} count={pane.DetailPreviews.Count} "
             + $"preview={Id(preview)} currentPreview={pane.DetailPreviews.Any(value => ReferenceEquals(value, preview))} live={live} "

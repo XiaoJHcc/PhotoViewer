@@ -59,7 +59,7 @@ public sealed class MacFilePicker : IFilePickerService
         panel.CanChooseDirectories = true;
         panel.CanChooseFiles = false;
         panel.AllowsMultipleSelection = false;
-        return Task.FromResult<IFolderRef?>(panel.RunModal() == 1 && panel.Url?.Path is { } path ? new Core.MacFolderRef(path) : null);
+        return Task.FromResult<IFolderRef?>(panel.RunModal() == 1 && panel.Url?.Path is { } path ? new LocalFolderRef(path) : null);
     }
     /// <summary>选择图片文件，后续格式合法性由共享 FolderVM 按配置校验。</summary>
     public Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters)
@@ -69,7 +69,7 @@ public sealed class MacFilePicker : IFilePickerService
         panel.CanChooseDirectories = false;
         panel.CanChooseFiles = true;
         panel.AllowsMultipleSelection = false;
-        return Task.FromResult<IFileRef?>(panel.RunModal() == 1 && panel.Url?.Path is { } path ? new Core.MacFileRef(path) : null);
+        return Task.FromResult<IFileRef?>(panel.RunModal() == 1 && panel.Url?.Path is { } path ? new LocalFileRef(path) : null);
     }
 }
 

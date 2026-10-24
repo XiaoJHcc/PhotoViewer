@@ -1,5 +1,6 @@
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
 

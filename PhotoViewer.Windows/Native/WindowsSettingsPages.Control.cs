@@ -5,6 +5,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Windows.Native;

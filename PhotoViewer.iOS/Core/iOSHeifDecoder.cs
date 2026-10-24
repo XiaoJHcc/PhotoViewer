@@ -189,7 +189,7 @@ public sealed class iOSHeifDecoder : IHeifDecoder
     {
         try
         {
-            var path = file.PathKey;
+            var path = file.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path) && File.Exists(path))
                 return (path, null);
 

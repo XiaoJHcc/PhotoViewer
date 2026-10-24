@@ -84,13 +84,16 @@ public sealed class iOSFilePicker : IFilePickerService
     /// <summary>选择器的委托必须由本类持有：UIKit 的 delegate 是弱引用，只挂在选择器上会被回收。</summary>
     private PickerDelegate? _activeDelegate;
 
-    /// <summary>弹出文档选择器选择一个目录，并保留其安全作用域供整个会话读取。</summary>
+    /// <summary>触屏端主入口是选文件夹（与 Mac 的桌面选择器区分，不按操作系统判断）。</summary>
+    public bool PreferFolderPicker => true;
+
+    /// <summary>弹出文档选择器选择一个目录；安全作用域由打开会话的存储租约按次获取。</summary>
     /// <param name="title">标题（iOS 文档选择器不展示自定义标题）。</param>
     /// <returns>用户选择的文件夹；取消或宿主不可用时返回 null。</returns>
     public async Task<IFolderRef?> PickFolderAsync(string title)
     {
         var url = await PickUrlAsync([UTTypes.Folder]);
-        return url?.Path is { } path ? new iOSFolderRef(path) : null;
+        return url?.Path is { } path ? new LocalFolderRef(path) : null;
     }
 
     /// <summary>弹出文档选择器选择单个图片文件；格式合法性仍由共享 FolderVM 按配置校验。</summary>
@@ -100,7 +103,7 @@ public sealed class iOSFilePicker : IFilePickerService
     public async Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters)
     {
         var url = await PickUrlAsync(BuildContentTypes(filters));
-        return url?.Path is { } path ? new iOSFileRef(path) : null;
+        return url?.Path is { } path ? new LocalFileRef(path) : null;
     }
 
     /// <summary>把共享过滤项换算成系统类型（无扩展名可换算时退回图片类型）。</summary>
@@ -155,18 +158,14 @@ public sealed class iOSFilePicker : IFilePickerService
         return completion.Task;
     }
 
-    /// <summary>文档选择器回调；选中时立即保留安全作用域，保证后续按路径读取可用。</summary>
+    /// <summary>文档选择器回调；只把 URL 交回调用方，访问授权由打开会话的存储租约负责。</summary>
     private sealed class PickerDelegate(Action<NSUrl?> completed) : UIDocumentPickerDelegate
     {
         /// <summary>选择完成后回调（多选选择器返回首个 URL，本类只允许单选）。</summary>
         /// <param name="controller">选择器。</param>
         /// <param name="urls">选中的 URL 集合。</param>
         public override void DidPickDocument(UIDocumentPickerViewController controller, NSUrl[] urls)
-        {
-            var url = urls.FirstOrDefault();
-            if (url != null) iOSStorageAccessManager.RetainUrl(url);
-            completed(url);
-        }
+            => completed(urls.FirstOrDefault());
 
         /// <summary>用户取消选择。</summary>
         /// <param name="controller">选择器。</param>

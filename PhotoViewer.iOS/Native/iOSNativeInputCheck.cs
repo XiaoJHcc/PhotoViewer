@@ -50,7 +50,7 @@ internal static class iOSNativeInputCheck
     }
 
     /// <summary>
-    /// 把夹具复制到 App 自建的工作目录再运行：评分写回会在同目录新建 .xmp_backup，
+    /// 把夹具复制到 App 自建的工作目录再运行：评分写回会在同目录新建 sidecar（.xmp），
     /// devicectl 拷入的目录属 root（0755），App 无法在其中创建文件。
     /// 源目录本身就是工作目录时直接复用，避免删除自身。
     /// </summary>
@@ -91,7 +91,7 @@ internal static class iOSNativeInputCheck
             await WaitAsync(() => root.View!.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
             string[] fixtures = Directory.GetFiles(directory, "*.jpg");
             if (fixtures.Length < 2) throw new InvalidOperationException($"输入验收需要 ≥2 张自有夹具，实际 {fixtures.Length}（{directory}）");
-            // 评分写回需要同目录内新建 .xmp_backup：真机用 devicectl 拷贝的目录属 root，App 无目录写权限。
+            // 评分写回需要同目录内新建 sidecar（.xmp）：真机用 devicectl 拷贝的目录属 root，App 无目录写权限。
             // 与 Mac 各验收套件同口径，一律先在工作副本上操作（App 自建目录，属 App UID）。
             string workspace = StageFixtures(directory, fixtures);
             var entrySnapshot = main.Settings.CreateSnapshot();
@@ -105,7 +105,7 @@ internal static class iOSNativeInputCheck
                     main.IsControlViewVisible = true;
                     main.FileVM.FilterBar.SelectedRatingFilter = "All";
                 });
-                await main.FolderVM.OpenFolderAsync(new iOSFolderRef(workspace));
+                await main.FolderVM.OpenFolderAsync(new LocalFolderRef(workspace));
                 await WaitAsync(() => main.FolderVM.AllFiles.Count >= 2, "夹具目录枚举");
                 await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
                 await SettleAsync(root);
@@ -244,8 +244,9 @@ internal static class iOSNativeInputCheck
     {
         var list = main.FileVM.ThumbnailList;
         var current = main.CurrentFile ?? throw new InvalidOperationException("卡片菜单核对缺少当前照片");
-        if (!Path.GetFullPath(current.File.PathKey).StartsWith(Path.GetFullPath(directory), StringComparison.Ordinal))
-            throw new InvalidOperationException($"卡片菜单核对不在自有夹具目录内：{current.File.PathKey}");
+        string currentPath = current.File.RequireLocalPath();
+        if (!Path.GetFullPath(currentPath).StartsWith(Path.GetFullPath(directory), StringComparison.Ordinal))
+            throw new InvalidOperationException($"卡片菜单核对不在自有夹具目录内：{currentPath}");
         var entryRatings = main.FolderVM.AllFiles.ToDictionary(file => file, file => file.Rating);
         try
         {            int index = Math.Min(2, list.FilteredFiles.Count - 1);
@@ -289,7 +290,7 @@ internal static class iOSNativeInputCheck
             {
                 if (pair.Key.Rating != pair.Value) await main.SetRatingAsync(pair.Key, pair.Value);
             }
-            if (main.CurrentFile?.File.PathKey != current.File.PathKey) await main.FolderVM.OpenImageAsync(current.File);
+            if (main.CurrentFile?.File.StorageId != current.File.StorageId) await main.FolderVM.OpenImageAsync(current.File);
         }
     }
 
@@ -523,8 +524,8 @@ internal static class iOSNativeInputCheck
     }
 
     /// <summary>
-    /// 拖入：拖放交互挂在根视图；文件 URL 经共享 <c>ExternalOpenService</c> 打开并切换当前照片
-    /// （拖入会话本身无法合成，直接调用同一落地入口）。
+    /// 拖入：拖放交互挂在根视图；文件 URL 经共享打开通道投递并等待处理完成，
+    /// 目标照片成为当前照片（拖入会话本身无法合成，直接调用同一落地入口）。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
@@ -535,12 +536,12 @@ internal static class iOSNativeInputCheck
         if (!root.View!.Interactions.Contains(root.DropInteraction))
             throw new InvalidOperationException("拖放交互未挂在主屏根视图");
         var current = main.CurrentFile ?? throw new InvalidOperationException("拖入核对缺少当前照片");
-        var target = main.FolderVM.AllFiles.First(file => !ReferenceEquals(file, current) && file.File.PathKey.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase));
-        using var url = NSUrl.CreateFileUrl(target.File.PathKey, false, null);
+        var target = main.FolderVM.AllFiles.First(file => !ReferenceEquals(file, current) && file.File.RequireLocalPath().EndsWith(".jpg", StringComparison.OrdinalIgnoreCase));
+        using var url = NSUrl.CreateFileUrl(target.File.RequireLocalPath(), false, null);
         if (url == null) throw new InvalidOperationException("拖入用文件 URL 创建失败");
-        if (!root.PublishDroppedUrlsAsync([url])) throw new InvalidOperationException("拖入文件 URL 未被外部打开链路接收");
-        await WaitAsync(() => main.CurrentFile?.File.PathKey == target.File.PathKey, "拖入文件切图");
-        lines.Add($"PASS 拖入：{target.Name} 经共享 ExternalOpenService 打开并成为当前照片（拖放会话本身不可合成，走同一落地入口）");
+        if (!await root.PublishDroppedUrlsAsync([url])) throw new InvalidOperationException("拖入文件 URL 未被打开通道接收");
+        await WaitAsync(() => main.CurrentFile?.File.StorageId == target.File.StorageId, "拖入文件切图");
+        lines.Add($"PASS 拖入：{target.Name} 经共享打开通道（PublishAndWaitAsync）打开并成为当前照片（拖放会话本身不可合成，走同一落地入口）");
     }
 
     /// <summary>
@@ -708,7 +709,7 @@ internal static class iOSNativeInputCheck
     /// <param name="root">原生根控制器。</param>
     /// <param name="main">共享主 VM。</param>
     /// <param name="snapshot">进入检查时的设置快照。</param>
-    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, SettingsModel snapshot)
+    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings snapshot)
     {
         await UiDispatcher.InvokeAsync(() =>
         {
@@ -719,7 +720,9 @@ internal static class iOSNativeInputCheck
         });
         await SettleAsync(root);
         // 验收进程随后会被强杀；同步落盘避免"测试中临时关闭文件格式"被遗留为持久状态。
-        PhotoViewer.Core.Settings.SettingsService.Instance.SaveAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+        var repository = main.SettingsRepository;
+        repository.CommitAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+        repository.FlushAsync().GetAwaiter().GetResult();
     }
 
     /// <summary>经主图交互委托重建一次菜单（等价于一次新的长按弹出），返回菜单与回调。</summary>

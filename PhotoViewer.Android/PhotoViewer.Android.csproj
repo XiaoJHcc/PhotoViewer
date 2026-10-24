@@ -34,6 +34,9 @@
         <AndroidResource Include="Icon.png">
             <Link>Resources\drawable\Icon.png</Link>
         </AndroidResource>
+        <!-- Debug 专用验收 Provider 的 intent-filter 覆盖层（Release 不合并）。 -->
+        <AndroidManifestOverlay Condition="'$(Configuration)' == 'Debug'"
+            Include="Properties\AndroidManifest.Debug.xml" />
     </ItemGroup>
 
     <!--

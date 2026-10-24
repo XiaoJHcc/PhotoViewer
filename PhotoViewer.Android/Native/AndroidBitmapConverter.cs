@@ -16,7 +16,7 @@ internal static class AndroidBitmapConverter
     private static readonly Dictionary<string, (DecodedImage Source, Bitmap Bitmap)> Cache = new(StringComparer.Ordinal);
 
     /// <summary>取得缩略图位图；同一解码产物引用只转换一次。</summary>
-    /// <param name="key">缓存键（文件 PathKey）。</param>
+    /// <param name="key">缓存键（文件 StorageId）。</param>
     /// <param name="image">共享缩略图（调用方持有租约）。</param>
     /// <returns>位图；编码不支持时 null。</returns>
     internal static Bitmap? FromDecodedImage(string key, DecodedImage image)

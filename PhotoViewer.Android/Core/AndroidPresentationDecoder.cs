@@ -240,7 +240,7 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     /// <param name="reason">回落原因。</param>
     private static void LogHeifFallback(IFileRef file, string? reason)
     {
-        var key = file.PathKey;
+        var key = file.StorageId.Value;
         lock (HeifFallbackLogged)
         {
             if (!HeifFallbackLogged.Add(key)) return;

@@ -99,7 +99,7 @@ internal static class NativeInputAcceptance
         // 7) 退出路径：从未展示过设置窗口时关闭设置必须是空操作，不得去调尚未载入的设置动态库
         //    （退出时 WillTerminate 会调用它；修复前函数指针为 null，直接跳到地址 0 SIGSEGV）。
         if (settings.IsPresented) throw new InvalidOperationException("输入回归不应先打开设置窗口");
-        settings.CloseWindow();
+        await settings.CloseWindowAsync();
         checks.Add("shutdown: closing a never-presented settings window is a no-op and does not touch the unloaded settings dylib");
 
         await File.WriteAllLinesAsync(Path.Combine(output, "native-input-checks.txt"), checks);

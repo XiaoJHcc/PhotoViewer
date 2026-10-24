@@ -2,7 +2,8 @@ using AppKit;
 using Foundation;
 using CoreGraphics;
 using PhotoViewer.Core.Image;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 
@@ -139,7 +140,7 @@ internal static class NativeFilmstripAcceptance
         await Task.Delay(250);
         NativeSnapshots.SaveMain(window, System.IO.Path.Combine(output, "filmstrip-final.png"));
         await VerifyLazyCardDecodingAsync(window, observations);
-        string report = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(window.Main.CurrentFile!.File.PathKey)) == "PhotoViewerTest" ? "filmstrip-five-checks.txt" : "filmstrip-many-checks.txt";
+        string report = System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(window.Main.CurrentFile!.File.RequireLocalPath())) == "PhotoViewerTest" ? "filmstrip-five-checks.txt" : "filmstrip-many-checks.txt";
         await File.WriteAllLinesAsync(System.IO.Path.Combine(output, report), observations);
         File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
     }
@@ -152,11 +153,13 @@ internal static class NativeFilmstripAcceptance
     /// </summary>
     private static async Task VerifyStateLoadingAsync(MacMainWindow window, List<string> observations)
     {
-        string entryPath = window.Main.CurrentFile?.File.PathKey ?? throw new InvalidOperationException("STATE-01 回归缺少进入时的当前照片");
+        var entryFile = window.Main.CurrentFile ?? throw new InvalidOperationException("STATE-01 回归缺少进入时的当前照片");
+        string entryPath = entryFile.File.RequireLocalPath();
+        var entryId = entryFile.File.StorageId;
         string root = PrepareStateLoadingFixtures();
         try
         {
-            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(root));
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
             var files = window.Main.FileVM.ThumbnailList.FilteredFiles;
             if (files.Count != 4) throw new InvalidOperationException($"STATE-01 素材项目数错误：{files.Count}");
             var first = files.Single(file => file.Name == "large-a.jpg");
@@ -169,8 +172,8 @@ internal static class NativeFilmstripAcceptance
             window.Photo.FitToView();
             await SelectAndWaitAsync(window, first);
             await SelectAndWaitAsync(window, second);
-            var cached = BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Proxy)
-                ?? BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Full)
+            var cached = BitmapLoader.TryGetCached(first.File.StorageId.Value, ImageSizeClass.Proxy)
+                ?? BitmapLoader.TryGetCached(first.File.StorageId.Value, ImageSizeClass.Full)
                 ?? throw new InvalidOperationException("STATE-01 回归要求切走后的上一张仍留在缓存中");
             bool sawNull = false;
             bool sawLoading = false;
@@ -187,7 +190,7 @@ internal static class NativeFilmstripAcceptance
                 window.Main.CurrentFile = first;
                 if (window.Session.Generation != generation + 1) throw new InvalidOperationException("缓存命中切图未推进展示会话代际");
                 if (!ReferenceEquals(window.Session.Image, cached))
-                    throw new InvalidOperationException($"缓存命中切图未在 SetFile 返回时换上缓存产物：image={Describe(window.Session.Image)} proxy={window.Session.IsProxy} cached={Describe(cached)} target={BitmapLoader.ProxyTargetLongEdge} fullCached={BitmapLoader.TryGetCached(first.File.PathKey, ImageSizeClass.Full) != null}");
+                    throw new InvalidOperationException($"缓存命中切图未在 SetFile 返回时换上缓存产物：image={Describe(window.Session.Image)} proxy={window.Session.IsProxy} cached={Describe(cached)} target={BitmapLoader.ProxyTargetLongEdge} fullCached={BitmapLoader.TryGetCached(first.File.StorageId.Value, ImageSizeClass.Full) != null}");
                 if (window.Photo.DisplayedGeneration != window.Session.Generation)
                     throw new InvalidOperationException("宿主未按切图语义认到缓存命中切图");
                 if (!window.Photo.IsFit) throw new InvalidOperationException("缓存命中切图没有保持适应态");
@@ -198,8 +201,8 @@ internal static class NativeFilmstripAcceptance
             observations.Add($"PASS STATE-01 keep-previous: {first.Name} cut in from cache at generation {window.Session.Generation} (same source size/orientation as {second.Name}) with no null frame, no loading hint, viewport still fit");
 
             // 黑屏加载路径：移除两档展示缓存，切图必须清空旧图且 300ms 门槛前不显示加载提示。
-            BitmapLoader.RemoveCached(second.File.PathKey, ImageSizeClass.Full);
-            BitmapLoader.RemoveCached(second.File.PathKey, ImageSizeClass.Proxy);
+            BitmapLoader.RemoveCached(second.File.StorageId.Value, ImageSizeClass.Full);
+            BitmapLoader.RemoveCached(second.File.StorageId.Value, ImageSizeClass.Proxy);
             bool cleared = false;
             void OnCleared()
             {
@@ -216,8 +219,8 @@ internal static class NativeFilmstripAcceptance
             // 小图（长边小于代理目标）：源分辨率产物满足任何代理目标，切回必须命中缓存且不经过空帧。
             await SelectAndWaitAsync(window, smallFirst);
             await SelectAndWaitAsync(window, smallSecond);
-            var smallCached = BitmapLoader.TryGetCached(smallFirst.File.PathKey, ImageSizeClass.Proxy)
-                ?? BitmapLoader.TryGetCached(smallFirst.File.PathKey, ImageSizeClass.Full)
+            var smallCached = BitmapLoader.TryGetCached(smallFirst.File.StorageId.Value, ImageSizeClass.Proxy)
+                ?? BitmapLoader.TryGetCached(smallFirst.File.StorageId.Value, ImageSizeClass.Full)
                 ?? throw new InvalidOperationException("小图的源分辨率产物未留在缓存中");
             if (Math.Max(smallCached.Width, smallCached.Height) >= BitmapLoader.ProxyTargetLongEdge)
                 throw new InvalidOperationException($"小图素材长边未小于代理目标，无法证明源分辨率复用规则：{Describe(smallCached)} target={BitmapLoader.ProxyTargetLongEdge}");
@@ -243,8 +246,8 @@ internal static class NativeFilmstripAcceptance
         finally
         {
             // 回到进入时的文件夹与当前照片，后续几何/交互回归依赖原目录。
-            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(System.IO.Path.GetDirectoryName(entryPath)!));
-            var restored = window.Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => file.File.PathKey == entryPath);
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(System.IO.Path.GetDirectoryName(entryPath)!));
+            var restored = window.Main.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => file.File.StorageId == entryId);
             if (restored != null) window.Main.CurrentFile = restored;
             await Task.Delay(150);
         }
@@ -375,14 +378,15 @@ internal static class NativeFilmstripAcceptance
     {
         var thumbnailList = window.Main.FileVM.ThumbnailList;
         var entryFile = window.Main.CurrentFile ?? throw new InvalidOperationException("延迟加载回归缺少进入时的当前照片");
-        string entryPath = entryFile.File.PathKey;
+        string entryPath = entryFile.File.RequireLocalPath();
+        var entryId = entryFile.File.StorageId;
         var entrySize = window.Window.ContentView!.Bounds.Size;
         bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
         window.Main.IsThumbnailViewVisible = true;
         string root = PrepareLazyFixtures();
         try
         {
-            await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(root));
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
             // 身份与几何先于解码就绪：这里不等待任何解码，先就地取到“仍在异步解码”的证据。
             var files = thumbnailList.FilteredFiles;
             if (files.Count != 3) throw new InvalidOperationException($"延迟加载素材项目数错误：{files.Count}");
@@ -453,7 +457,7 @@ internal static class NativeFilmstripAcceptance
         {
             window.Window.SetContentSize(entrySize);
             window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
-            if (window.Main.CurrentFile?.File.PathKey != entryPath) await window.Main.FolderVM.OpenImageAsync(new MacFileRef(entryPath));
+            if (window.Main.CurrentFile?.File.StorageId != entryId) await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
             await Task.Delay(150);
         }
     }

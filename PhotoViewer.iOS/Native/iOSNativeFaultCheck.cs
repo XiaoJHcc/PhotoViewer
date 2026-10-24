@@ -20,7 +20,6 @@ namespace PhotoViewer.iOS.Native;
 internal static class iOSNativeFaultCheck
 {
     private const string Switch = "--pv-native-faults-check";
-    private const string SettingsKey = "cc.xiaojh.PhotoViewer.Settings.json";
 
     /// <summary>解析开关；命中即以给定目录启动异步核对。</summary>
     public static void MaybeStart(string[] args, iOSNativeRootViewController root, PhotoLoadSession session)
@@ -69,7 +68,7 @@ internal static class iOSNativeFaultCheck
 
             await VerifyOpenFailureAsync(main, root, small, lines);
             await VerifyRatingFailureAsync(main, root, small, lines);
-            await VerifyCorruptSettingsAsync(lines);
+            await VerifyCorruptSettingsAsync(work, lines);
             await VerifySimilarityFailureAsync(main, root, work, lines);
             await VerifyAnalysisFailureAsync(main, root, session, work, lines);
         }
@@ -92,7 +91,7 @@ internal static class iOSNativeFaultCheck
         string path,
         List<string> lines)
     {
-        await main.FolderVM.OpenImageAsync(new iOSFileRef(path));
+        await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
         await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(path) && session.Image != null, "Full 失败素材代理上屏");
         if (!session.IsProxy) throw new InvalidOperationException("Full 失败素材没有先上代理");
         root.Photo.ZoomToPhysical(1);
@@ -114,7 +113,7 @@ internal static class iOSNativeFaultCheck
         main.OpenFailed += OnOpenFailed;
         try
         {
-            var target = new iOSFileRef(path);
+            var target = new LocalFileRef(path);
             var failing = new FailingFolderRef("fault-folder", Path.Combine(Path.GetDirectoryName(path)!, "fault-folder"));
             await main.FolderVM.OpenImageAsync(new ParentFailingFileRef(target, failing));
             await WaitAsync(() => message != null, "打开失败事件");
@@ -122,7 +121,7 @@ internal static class iOSNativeFaultCheck
                 throw new InvalidOperationException($"打开失败文案缺少对象：{message}");
             if (!root.Toast.IsVisible || root.Toast.Message != message)
                 throw new InvalidOperationException($"打开失败未显示提示条：{root.Toast.Message}");
-            if (main.CurrentFile?.File.PathKey != target.PathKey)
+            if (main.CurrentFile?.File.StorageId != target.StorageId)
                 throw new InvalidOperationException("枚举失败后没有回退到目标图片");
             if (main.FolderVM.AllFiles.Count != 1)
                 throw new InvalidOperationException($"枚举失败后列表应为单图，实际 {main.FolderVM.AllFiles.Count}");
@@ -141,7 +140,7 @@ internal static class iOSNativeFaultCheck
         List<string> lines)
     {
         var file = main.CurrentFile ?? throw new InvalidOperationException("评分失败回归缺少当前照片");
-        if (file.File.PathKey != new iOSFileRef(path).PathKey) throw new InvalidOperationException("评分失败回归应使用自有副本");
+        if (file.File.StorageId != new LocalFileRef(path).StorageId) throw new InvalidOperationException("评分失败回归应使用自有副本");
         int before = file.Rating;
         int target = before == 3 ? 2 : 3;
         string directory = Path.GetDirectoryName(path)!;
@@ -161,33 +160,34 @@ internal static class iOSNativeFaultCheck
         }
     }
 
-    private static async Task VerifyCorruptSettingsAsync(List<string> lines)
+    private static async Task VerifyCorruptSettingsAsync(string work, List<string> lines)
     {
-        var defaults = NSUserDefaults.StandardUserDefaults;
-        string? original = defaults.StringForKey(SettingsKey);
-        defaults.SetString("{ this is not valid json", SettingsKey);
-        defaults.Synchronize();
-        var service = new SettingsService(new iOSSettingsStorage());
-        using var viewModel = new SettingsViewModel(service, initialModel: null, applyRuntimeSettings: false);
+        string directory = Path.Combine(work, $"settings-corrupt-{DateTime.UtcNow.Ticks}");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, "settings.json");
+        await File.WriteAllTextAsync(path, "{ this is not valid json");
+        var repository = new SettingsRepository(
+            new FileSettingsStore(path), new iOSPerformanceBudget(), appleKeyboard: true, BitmapLoader.AutomaticCacheLimit);
+        await repository.InitializeAsync();
+        using var viewModel = new SettingsViewModel(repository, new InMemorySettingsStore());
         try
         {
             await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置状态行");
-            if (string.IsNullOrEmpty(service.LastLoadError) || !service.LastLoadError.Contains(".corrupt-", StringComparison.Ordinal))
-                throw new InvalidOperationException($"损坏设置没有形成备份：{service.LastLoadError}");
+            if (repository.LoadOutcome != SettingsLoadOutcome.Recovered)
+                throw new InvalidOperationException($"损坏设置未进入恢复态：{repository.LoadOutcome}");
+            if (string.IsNullOrEmpty(repository.LastLoadError) || !repository.LastLoadError.Contains(".corrupt-", StringComparison.Ordinal))
+                throw new InvalidOperationException($"损坏设置没有形成备份：{repository.LastLoadError}");
             if (string.IsNullOrEmpty(viewModel.PersistenceStatus) || !viewModel.PersistenceStatus.Contains("损坏", StringComparison.Ordinal))
                 throw new InvalidOperationException($"设置状态行未显示读取失败：{viewModel.PersistenceStatus}");
-
-            string backupKey = service.LastLoadError[(service.LastLoadError.IndexOf("已备份为 ", StringComparison.Ordinal) + 5)..].Split(' ')[0];
-            if (defaults.StringForKey(backupKey) == null) throw new InvalidOperationException($"备份键不存在：{backupKey}");
-            defaults.RemoveObject(backupKey);
-            defaults.Synchronize();
-            lines.Add("PASS settings14：损坏 JSON 先备份到偏好键，状态行可见");
+            if (repository.CorruptBackupPath is not { } backupPath || !File.Exists(backupPath))
+                throw new InvalidOperationException($"备份文件不存在：{repository.CorruptBackupPath}");
+            if (await File.ReadAllTextAsync(backupPath) != "{ this is not valid json")
+                throw new InvalidOperationException("备份未保留损坏原文");
+            lines.Add("PASS settings14：损坏 JSON 先备份为唯一文件，状态行可见（隔离文件，不读写用户偏好）");
         }
         finally
         {
-            if (original == null) defaults.RemoveObject(SettingsKey);
-            else defaults.SetString(original, SettingsKey);
-            defaults.Synchronize();
+            Directory.Delete(directory, true);
         }
     }
 
@@ -204,7 +204,7 @@ internal static class iOSNativeFaultCheck
         bool wasOpen = main.FileVM.FilterBar.IsSimilarityPanelOpen;
         try
         {
-            await main.FolderVM.OpenFolderAsync(new iOSFolderRef(folder));
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(folder));
             await WaitAsync(() => main.CurrentFile != null, "失败提取素材成为当前照片");
             main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
             var panel = main.FileVM.SimilarityPanel;
@@ -239,7 +239,7 @@ internal static class iOSNativeFaultCheck
             DinoFeatureExtractor.ConfigureModelOverride([1, 2, 3]);
             main.Settings.AnalysisImmediateCompute = true;
             main.IsAnalysisViewVisible = true;
-            await main.FolderVM.OpenImageAsync(new iOSFileRef(path));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(path) && session.Image != null, "分析失败素材上屏");
             await WaitAsync(() => root.AnalysisPane.Presenter.Tiles
                 .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic)
@@ -291,21 +291,20 @@ internal static class iOSNativeFaultCheck
     {
         public string Name => inner.Name;
         public Uri Path => inner.Path;
-        public string PathKey => inner.PathKey;
         public string? TryGetLocalPath() => inner.TryGetLocalPath();
-        public Task<Stream> OpenReadAsync() => inner.OpenReadAsync();
-        public Task<StorageItemBasicProperties> GetBasicPropertiesAsync() => inner.GetBasicPropertiesAsync();
-        public Task<IFolderRef?> GetParentAsync() => Task.FromResult<IFolderRef?>(parent);
+        public Task<Stream> OpenReadAsync(CancellationToken cancellationToken = default) => inner.OpenReadAsync(cancellationToken);
+        public Task<StorageItemBasicProperties> GetBasicPropertiesAsync(CancellationToken cancellationToken = default) => inner.GetBasicPropertiesAsync(cancellationToken);
+        public Task<IFolderRef?> GetParentAsync(CancellationToken cancellationToken = default) => Task.FromResult<IFolderRef?>(parent);
     }
 
     private sealed class FailingFolderRef(string name, string path) : IFolderRef
     {
         public string Name => name;
         public Uri Path { get; } = new(path);
-        public string PathKey => path;
         public string? TryGetLocalPath() => path;
 
-        public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync()
+        public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
             throw new UnauthorizedAccessException("injected folder enumeration failure");

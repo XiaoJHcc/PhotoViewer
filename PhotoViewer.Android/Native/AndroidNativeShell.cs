@@ -1,8 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
@@ -32,12 +32,16 @@ public static class AndroidNativeShell
 {
     private static bool _initialized;
     private static MainViewModel? _main;
+    private static OpenRequestChannel? _openRequests;
     private static PhotoLoadSession? _session;
     private static AndroidNativeRootView? _root;
     private static AndroidNativeSettingsPresenter? _settingsPresenter;
     private static AndroidToolsPresenter? _toolsPresenter;
     private static IPresentationImageDecoder? _presentationDecoder;
-    private static bool _externalHandlerRegistered;
+    private static AndroidFilePicker? _filePicker;
+
+    /// <summary>当前 SAF 选择器实例（Activity 转发结果与销毁取消用）。</summary>
+    internal static AndroidFilePicker? FilePickerForResults => _filePicker;
 
     /// <summary>当前原生壳的共享主 VM；未启动时为 null。</summary>
     public static MainViewModel? Main => _main;
@@ -112,13 +116,18 @@ public static class AndroidNativeShell
 
         if (_main == null)
         {
-            _main = new MainViewModel();
+            var settingsRepository = CreateSettingsRepository();
+            // 打开请求通道先于 VM 建立：外部打开在界面就绪前即可投递，由 OpenCoordinator 顺序消费。
+            _openRequests ??= new OpenRequestChannel();
+            // 存储访问租约走 Android SAF 实现（校验/补取持久授权），不再用默认 Local（对 content:// 不校验）。
+            var storageAccess = new AndroidStorageAccessSessionFactory(
+                new AndroidStorageAccessManager(activity.ContentResolver ?? Application.Context.ContentResolver!));
+            _main = new MainViewModel(settingsRepository, new AndroidViewStateStore(), _openRequests, storageAccess);
             Console.WriteLine("[Native] 共享 MainViewModel 就绪");
         }
         _session ??= new PhotoLoadSession();
         _toolsPresenter = new AndroidToolsPresenter(activity, _main);
         NativeWindowPresenter.Initialize(new AndroidNativeWindowPresenter(activity, _settingsPresenter!, _toolsPresenter));
-        RegisterExternalOpen(_main);
 
         Console.WriteLine($"[Native] Android 原生壳就绪；intent action={intent?.Action}");
         _root?.Dispose();
@@ -215,6 +224,51 @@ public static class AndroidNativeShell
     }
 
     /// <summary>
+    /// 主窗销毁（Activity 真正退出，非配置重建）：释放根视图、共享 VM、请求通道与展示会话。
+    /// 全部释放路径都幂等，重复调用安全；配置重建时保留 VM，避免丢当前文件夹。
+    /// </summary>
+    internal static void DisposeMain()
+    {
+        var root = _root;
+        _root = null;
+        var main = _main;
+        _main = null;
+        _openRequests = null;
+        root?.Dispose();
+        main?.Dispose();
+        var session = _session;
+        _session = null;
+        session?.Dispose();
+    }
+
+    /// <summary>
+    /// 建立共享设置仓库并在主界面之前完成一次读取：后续 ViewModel、缓存与预算直接消费
+    /// <see cref="SettingsRepository.Current"/>。读取本身在后台线程进行，这里只同步等待结果
+    /// （SharedPreferences 读取不依赖 UI 线程，不会死锁）。
+    /// </summary>
+    /// <returns>已完成初始化的设置仓库。</returns>
+    private static SettingsRepository CreateSettingsRepository()
+    {
+        var repository = new SettingsRepository(
+            new AndroidSettingsStorage(),
+            new AndroidPerformanceBudget(),
+            appleKeyboard: false,
+            automaticCacheLimit: true);
+        try
+        {
+            repository.InitializeAsync().GetAwaiter().GetResult();
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine($"[Native] 设置仓库初始化失败：{exception}");
+        }
+
+        Console.WriteLine($"[Native] 设置仓库就绪：{repository.LoadOutcome} canCommit={repository.CanCommit}"
+            + (repository.LastLoadError is { } error ? $" error={error}" : string.Empty));
+        return repository;
+    }
+
+    /// <summary>
     /// 平台门面与 ONNX 执行提供程序注入。
     /// </summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -222,6 +276,8 @@ public static class AndroidNativeShell
     {
         if (_initialized)
         {
+            // Activity 重建（字体/语言等）后选择器要指向新实例；旧请求按取消收口。
+            _filePicker?.Rebind(activity);
             return;
         }
 
@@ -236,7 +292,8 @@ public static class AndroidNativeShell
         reactiveBuilder.WithMainThreadScheduler(dispatcher.MainThreadScheduler);
         reactiveBuilder.BuildApp();
 
-        FilePicker.Initialize(new AndroidFilePicker(activity));
+        _filePicker = new AndroidFilePicker(activity);
+        FilePicker.Initialize(_filePicker);
         AppResources.Initialize(new AndroidAppResourceProvider());
         using (var model = AppResources.OpenAsset(PhotoViewer.Core.AI.DinoModelResources.ModelAssetUri))
         {
@@ -257,14 +314,11 @@ public static class AndroidNativeShell
         ImageBufferPool.MaxIdleBytes = governorBudget > 0
             ? Math.Min(512L * 1024 * 1024, governorBudget / 8)
             : 512L * 1024 * 1024;
-        StorageAccessManager.Initialize(new AndroidStorageAccessManager());
-        XmpWriter.Initialize(new AndroidXmpWriter(activity.ContentResolver!));
-        SettingsService.ConfigureStorage(new AndroidSettingsStorage());
         AndroidInputDevices.Initialize(activity);
         _settingsPresenter = new AndroidNativeSettingsPresenter(activity);
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_Nnapi());
-        Console.WriteLine("[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/xmp/settings/dino）");
+        Console.WriteLine("[Native] 平台门面就绪（dispatcher/heif/decode/budget/governor/storage/settings/dino）");
     }
 
     /// <summary>
@@ -304,53 +358,44 @@ public static class AndroidNativeShell
     }
 
     /// <summary>
-    /// 外部打开统一投递：文件夹走共享 FolderVM，文件列表走外部文件打开；未就绪时共享服务自动排队。
-    /// </summary>
-    /// <param name="main">共享主 VM。</param>
-    private static void RegisterExternalOpen(MainViewModel main)
-    {
-        if (_externalHandlerRegistered) return;
-        _externalHandlerRegistered = true;
-        ExternalOpenService.RegisterHandler(async request =>
-        {
-            try
-            {
-                // OPEN-01：多项按投递顺序取首个可打开项（文件夹或受支持图片），其余忽略。
-                var first = request.Items.FirstOrDefault(item => item.StorageItem is IFolderRef
-                    || item.StorageItem is IFileRef file && main.FolderVM.IsImageFile(file.Name));
-                if (first?.StorageItem is IFolderRef folder)
-                {
-                    await main.FolderVM.OpenFolderAsync(folder);
-                    return;
-                }
-                if (first?.StorageItem is IFileRef target)
-                    await main.FolderVM.OpenExternalFilesAsync([target]);
-            }
-            catch (Exception exception)
-            {
-                Console.Error.WriteLine($"[Native] 外部打开失败：{exception}");
-                main.ReportOpenFailure(StatusMessages.OpenFailed(request.Items.FirstOrDefault()?.StorageItem?.Name, null));
-            }
-        });
-    }
-
-    /// <summary>
-    /// 处理启动/新 Intent：<c>pv-open</c> 验收路径优先，其次 ACTION_VIEW/SEND 的 content Uri；
-    /// 全部合并为一次外部打开请求（OPEN-01），不逐项投递。
+    /// 处理启动/新 Intent：<c>pv-open</c> 验收路径、ACTION_VIEW 与 ACTION_SEND(_MULTIPLE) 的 Uri
+    /// 合并为一批投递到共享 <see cref="OpenRequestChannel"/>（OPEN-01），由 <see cref="OpenCoordinator"/> 顺序消费。
     /// </summary>
     /// <param name="intent">系统 Intent。</param>
     public static void HandleIntent(Intent? intent)
     {
-        if (intent == null || _main == null) return;
-        var items = new List<ExternalOpenItem>();
+        _ = HandleIntentAsync(intent).ContinueWith(
+            completed => Console.Error.WriteLine($"[Native] 外部打开请求失败：{completed.Exception?.GetBaseException()}"),
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
+    }
+
+    /// <summary>
+    /// 解析 Intent 并等待本次请求处理完成（验收据此断言，不靠固定延时）。
+    /// 来源映射：<c>pv-open</c>=<see cref="OpenRequestSource.Automation"/>、ACTION_VIEW=<see cref="OpenRequestSource.SystemOpen"/>、
+    /// ACTION_SEND(_MULTIPLE)=<see cref="OpenRequestSource.Share"/>；Data/ClipData/EXTRA_STREAM 的 Uri 去重后合并。
+    /// </summary>
+    /// <param name="intent">系统 Intent。</param>
+    internal static async Task HandleIntentAsync(Intent? intent)
+    {
+        var main = _main;
+        if (intent == null || main == null) return;
+
+        var items = new List<IStorageItemRef>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        bool automation = false;
+
         string? openPath = ResolveLaunchPath(intent.GetStringExtra("pv-open"));
         if (!string.IsNullOrWhiteSpace(openPath))
         {
             try
             {
-                items.Add(new ExternalOpenItem(System.IO.Directory.Exists(openPath)
+                IStorageItemRef root = System.IO.Directory.Exists(openPath)
                     ? new AndroidFolderRef(openPath)
-                    : new AndroidFileRef(openPath)));
+                    : new AndroidFileRef(openPath);
+                if (seen.Add(root.StorageId.Value)) items.Add(root);
+                automation = true;
                 Console.WriteLine($"[Native] pv-open：{openPath}");
             }
             catch (Exception exception)
@@ -365,8 +410,8 @@ public static class AndroidNativeShell
                 if (uri == null) continue;
                 try
                 {
-                    items.Add(new ExternalOpenItem(new AndroidFileRef(Application.Context.ContentResolver!, uri, null,
-                        uri.LastPathSegment, null, null)));
+                    var file = new AndroidFileRef(Application.Context.ContentResolver!, uri);
+                    if (seen.Add(file.StorageId.Value)) items.Add(file);
                 }
                 catch (Exception exception)
                 {
@@ -374,11 +419,30 @@ public static class AndroidNativeShell
                 }
             }
         }
-        if (items.Count > 0) ExternalOpenService.Publish(new ExternalOpenRequest(items, "android-intent"));
+
+        // 先投递打开请求再处理设置参数：设置 sheet 不被文件夹枚举阻塞（与原行为一致）。
+        Task? opening = items.Count > 0
+            ? main.OpenCoordinator.PublishAndWaitAsync(
+                items, automation ? OpenRequestSource.Automation : SourceForAction(intent.Action))
+            : null;
+        HandleSettingsIntent(intent, main);
+        if (opening != null) await opening;
+    }
+
+    /// <summary>Intent Action → 打开来源（ACTION_VIEW 归系统打开，分享归 Share）。</summary>
+    private static OpenRequestSource SourceForAction(string? action) => action switch
+    {
+        Intent.ActionSend or Intent.ActionSendMultiple => OpenRequestSource.Share,
+        _ => OpenRequestSource.SystemOpen,
+    };
+
+    /// <summary>验收参数 <c>pv-settings</c> / <c>pv-settings-page</c>：打开设置 sheet 并落到指定分类页。</summary>
+    private static void HandleSettingsIntent(Intent intent, MainViewModel main)
+    {
         if (intent.GetBooleanExtra("pv-settings", false))
         {
             Console.WriteLine("[Native] pv-settings：启动后打开设置 sheet（验收）");
-            UiDispatcher.Post(() => _main.OpenSettingWindow());
+            UiDispatcher.Post(() => main.OpenSettingWindow());
         }
         // 验收：设置 sheet 直接落到指定分类页（真机禁用输入注入时用于核对提示行）。
         var settingsPage = intent.GetStringExtra("pv-settings-page");

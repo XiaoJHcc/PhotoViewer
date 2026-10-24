@@ -90,7 +90,7 @@ internal static class iOSNativePhotoCheck
                 main.FolderVM.AllFiles.First(item => item.Name == "color-p3-large.jpg"));
             var srgbFile = await UiDispatcher.InvokeAsync(() =>
                 main.FolderVM.AllFiles.First(item => item.Name == "color-srgb.jpg"));
-            var largeCached = BitmapLoader.TryGetCached(largeFile.File.PathKey, ImageSizeClass.Proxy)
+            var largeCached = BitmapLoader.TryGetCached(largeFile.File.StorageId.Value, ImageSizeClass.Proxy)
                 ?? throw new InvalidOperationException("STATE-01 回归要求切走后的上一张仍以代理档留在缓存中");
             bool sawNull = false;
             bool sawLoading = false;
@@ -120,8 +120,8 @@ internal static class iOSNativePhotoCheck
                 // 黑屏加载：移除 Full/Proxy 两档缓存，切图必须清空旧图且 300ms 门槛前不显示加载提示。
                 bool cleared = await UiDispatcher.InvokeAsync(() =>
                 {
-                    BitmapLoader.RemoveCached(srgbFile.File.PathKey, ImageSizeClass.Full);
-                    BitmapLoader.RemoveCached(srgbFile.File.PathKey, ImageSizeClass.Proxy);
+                    BitmapLoader.RemoveCached(srgbFile.File.StorageId.Value, ImageSizeClass.Full);
+                    BitmapLoader.RemoveCached(srgbFile.File.StorageId.Value, ImageSizeClass.Proxy);
                     session.SetFile(srgbFile.File);
                     return session.Image == null && !session.IsLoadingVisible;
                 });
@@ -131,8 +131,8 @@ internal static class iOSNativePhotoCheck
 
                 // 小图（长边小于代理目标）：源分辨率产物即满足任何代理目标，切回必须命中缓存且不经过空帧。
                 await SetCurrentAsync(main, awaiter, "color-p3.jpg");
-                var smallCached = BitmapLoader.TryGetCached(srgbFile.File.PathKey, ImageSizeClass.Proxy)
-                    ?? BitmapLoader.TryGetCached(srgbFile.File.PathKey, ImageSizeClass.Full)
+                var smallCached = BitmapLoader.TryGetCached(srgbFile.File.StorageId.Value, ImageSizeClass.Proxy)
+                    ?? BitmapLoader.TryGetCached(srgbFile.File.StorageId.Value, ImageSizeClass.Full)
                     ?? throw new InvalidOperationException("小图的源分辨率产物未留在缓存中");
                 if (Math.Max(smallCached.Width, smallCached.Height) >= BitmapLoader.ProxyTargetLongEdge)
                     throw new InvalidOperationException($"小图素材长边未小于代理目标，无法证明源分辨率复用规则：{smallCached.Width}×{smallCached.Height} target={BitmapLoader.ProxyTargetLongEdge}");

@@ -5,6 +5,8 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -49,12 +51,16 @@ internal static class iOSNativeGestureCheck
     public static void MaybeStart(string[] args, iOSNativeRootViewController root, PhotoLoadSession session)
     {
         string? directory = null;
+        IStorageItemRef? launchTarget = null;
         for (int index = 0; index + 1 < args.Length; index++)
         {
             if (string.Equals(args[index], Switch, StringComparison.Ordinal)) directory = args[index + 1];
+            if (!string.Equals(args[index], "--pv-open", StringComparison.Ordinal)) continue;
+            string path = ResolveDocumentsPath(args[index + 1]);
+            launchTarget = Directory.Exists(path) ? new LocalFolderRef(path) : new LocalFileRef(path);
         }
         if (directory == null) return;
-        _ = RunAsync(root, session, ResolveDocumentsPath(directory));
+        _ = RunAsync(root, session, ResolveDocumentsPath(directory), launchTarget);
     }
 
     /// <summary>相对路径按沙盒 Documents 解析（iOS 无启动工作目录语义）。</summary>
@@ -63,11 +69,16 @@ internal static class iOSNativeGestureCheck
     private static string ResolveDocumentsPath(string path)
         => Path.IsPathRooted(path) ? path : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), path);
 
-    /// <summary>核对主流程：等主屏布局 → 打开素材 → 逐项驱动真实滚动路径 → 落盘并打印结论。</summary>
+    /// <summary>核对主流程：等主屏布局与启动打开落定 → 打开素材 → 逐项驱动真实滚动路径 → 落盘并打印结论。</summary>
     /// <param name="root">原生根控制器。</param>
     /// <param name="session">原生展示会话。</param>
     /// <param name="directory">自有夹具目录（绝对路径）。</param>
-    private static async Task RunAsync(iOSNativeRootViewController root, PhotoLoadSession session, string directory)
+    /// <param name="launchTarget">启动 --pv-open 的目标；null 表示无启动打开。</param>
+    private static async Task RunAsync(
+        iOSNativeRootViewController root,
+        PhotoLoadSession session,
+        string directory,
+        IStorageItemRef? launchTarget)
     {
         var lines = new List<string>();
         string output = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer");
@@ -81,6 +92,12 @@ internal static class iOSNativeGestureCheck
             string large = Path.Combine(directory, "color-p3-large.jpg");
             if (!File.Exists(large)) throw new FileNotFoundException($"手势验收需要 color-p3-large.jpg（真实代理档与 Full）", large);
             await WaitAsync(() => root.View!.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
+            if (launchTarget != null)
+            {
+                // 启动请求已在协调器创建时入队；同目标的幂等请求排到它之后，
+                // 等其完成再核对冷启动首图，避免迟到的启动打开覆盖后续工作目录。
+                await main.OpenCoordinator.PublishAndWaitAsync([launchTarget], OpenRequestSource.Automation);
+            }
             var snapshot = main.Settings.CreateSnapshot();
             var originalFile = main.CurrentFile;
             try
@@ -105,7 +122,7 @@ internal static class iOSNativeGestureCheck
                     main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
                     EnsureJpegEnabled(main);
                 });
-                await main.FolderVM.OpenFolderAsync(new iOSFolderRef(WorkDirectory));
+                await main.FolderVM.OpenFolderAsync(new LocalFolderRef(WorkDirectory));
                 var largeFile = await UiDispatcher.InvokeAsync(() =>
                     main.FolderVM.AllFiles.FirstOrDefault(item => item.Name == Path.GetFileName(large)));
                 if (largeFile == null) throw new InvalidOperationException("打开夹具目录后找不到大色卡（color-p3-large.jpg）");
@@ -425,8 +442,8 @@ internal static class iOSNativeGestureCheck
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     root.Photo.FitToView();
-                    BitmapLoader.RemoveCached(largeFile.File.PathKey, ImageSizeClass.Full);
-                    BitmapLoader.RemoveCached(largeFile.File.PathKey, ImageSizeClass.Proxy);
+                    BitmapLoader.RemoveCached(largeFile.File.StorageId.Value, ImageSizeClass.Full);
+                    BitmapLoader.RemoveCached(largeFile.File.StorageId.Value, ImageSizeClass.Proxy);
                     session.SetFile(largeFile.File);
                 });
                 await WaitAsync(() => session.IsProxy && session.Image is { Encoding: PixelEncoding.RgbaF16 }, "回适应态代理档");
@@ -471,7 +488,7 @@ internal static class iOSNativeGestureCheck
     private static async Task SelectFileAsync(MainViewModel main, PhotoLoadSession session, ImageFile file, string stage)
     {
         bool shown = false;
-        using var subscription = session.Subscribe(source => { if (source.PathKey == file.File.PathKey) shown = true; });
+        using var subscription = session.Subscribe(source => { if (source.StorageId == file.File.StorageId) shown = true; });
         bool same = ReferenceEquals(main.CurrentFile, file);
         await UiDispatcher.InvokeAsync(() => main.CurrentFile = file);
         if (!same) await WaitAsync(() => ReferenceEquals(main.CurrentFile, file) && shown, stage);
@@ -585,7 +602,7 @@ internal static class iOSNativeGestureCheck
         CopyIfNeeded(large, workLarge);
         CopyIfNeeded(large, Path.Combine(WorkDirectory, "gesture-b-large.jpg"));
         CopyIfNeeded(large, Path.Combine(WorkDirectory, "gesture-c-large.jpg"));
-        var exif = await ExifLoader.LoadExifDataAsync(new iOSFileRef(sourceRaw));
+        var exif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(sourceRaw));
         if (exif?.SonyFocusPosition is not { } focus || focus.ImageWidth <= 0 || focus.ImageHeight <= 0)
             throw new InvalidOperationException("focus-src.ARW 没有 Sony 对焦位置（MakerNote 0x2027），无法核对对焦跟随");
         WriteFocusCopy(sourceRaw, Path.Combine(WorkDirectory, "focus-a.ARW"), focus, 1500, 3400);

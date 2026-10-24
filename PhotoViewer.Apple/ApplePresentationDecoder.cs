@@ -30,22 +30,28 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>携带源尺寸、色彩与待应用方向的解码产物。</returns>
     public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
-        => Task.Run<DecodedImage?>(() => Decode(file.PathKey, maxLongEdge, encoding, cancellationToken), cancellationToken);
+        => Task.Run<DecodedImage?>(() => Decode(RequireLocalPath(file), maxLongEdge, encoding, cancellationToken), cancellationToken);
 
     /// <summary>无内嵌预览的用户图片按短边缩解码，保持 ICC 与方向正确，不走原图全尺寸路径。</summary>
     public Task<DecodedImage?> DecodeThumbnailAsync(IFileRef file, int minShortEdge, CancellationToken cancellationToken)
         => Task.Run<DecodedImage?>(() =>
         {
             using var pool = new NSAutoreleasePool();
-            using var url = NSUrl.FromFilename(file.PathKey);
+            var path = RequireLocalPath(file);
+            using var url = NSUrl.FromFilename(path);
             using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false }) ?? throw new InvalidOperationException("ImageIO 无法读取缩略图尺寸");
             var properties = source.GetProperties(0, null);
             int width = properties?.PixelWidth ?? 0, height = properties?.PixelHeight ?? 0;
             if (width <= 0 || height <= 0) throw new InvalidOperationException("缩略图源尺寸无效");
             int target = Math.Max(minShortEdge, (int)Math.Ceiling((double)minShortEdge * Math.Max(width, height) / Math.Min(width, height)));
-            using var image = Decode(file.PathKey, target, PixelEncoding.RgbaF16, cancellationToken);
+            using var image = Decode(path, target, PixelEncoding.RgbaF16, cancellationToken);
             return ColorEngine.ToAnalysisSrgb8(image);
         }, cancellationToken);
+
+    /// <summary>ImageIO / Core Image 只接受真实文件路径；SAF 等非本地来源明确报不支持。</summary>
+    private static string RequireLocalPath(IFileRef file)
+        => file.TryGetLocalPath()
+            ?? throw new NotSupportedException($"Apple 展示解码需要本地文件路径：{file.Name}");
 
     /// <summary>按格式选路：RAW 走 Core Image 的 RAW 引擎，其余走 ImageIO；RAW 失败时回退 ImageIO 并记录原因。</summary>
     /// <param name="path">图片路径。</param>

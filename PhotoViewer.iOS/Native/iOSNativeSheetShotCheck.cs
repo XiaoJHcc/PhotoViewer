@@ -2,6 +2,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using UIKit;
@@ -52,7 +53,7 @@ internal static class iOSNativeSheetShotCheck
         {
             var main = iOSNativeShell.Main ?? throw new InvalidOperationException("原生壳主 VM 未就绪");
             await WaitAsync(() => root.ViewIfLoaded?.Window != null && root.View!.Bounds.Width > 100, "主屏上屏");
-            await main.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
             await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
             await Task.Delay(600);
 

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Threading;
 using Android.App;
 using Android.Content;
 using Android.Graphics;
@@ -68,14 +69,28 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
             var metrics = _activity.Resources?.DisplayMetrics;
             int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
             dialog.SetContentView(content, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MatchParent, height));
-            dialog.DismissEvent += (_, _) =>
+            int applyStarted = 0;
+            dialog.DismissEvent += async (_, _) =>
             {
                 if (ReferenceEquals(_current, content)) _current = null;
                 content.CommitPendingEdits();
-                session.Apply();
-                session.Dispose();
-                // 解除外设监听，避免已关闭的 sheet 被静态事件保活。
-                content.Dispose();
+                // 关闭按钮、下滑与返回可能重复触发 DismissEvent：只提交一次，并且等提交完成后再释放会话。
+                if (Interlocked.Exchange(ref applyStarted, 1) != 0) return;
+                try
+                {
+                    if (!await session.ApplyAsync())
+                        Console.Error.WriteLine("[Native] 设置提交未成功（仓库不可写或写入失败）");
+                }
+                catch (Exception exception)
+                {
+                    Console.Error.WriteLine($"[Native] 设置提交失败：{exception}");
+                }
+                finally
+                {
+                    session.Dispose();
+                    // 解除外设监听，避免已关闭的 sheet 被静态事件保活。
+                    content.Dispose();
+                }
             };
             dialog.Show();
             var parent = content.Parent as View;
@@ -280,14 +295,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return true;
     }
 
-    /// <summary>关闭并避免重复应用。</summary>
+    /// <summary>关闭并避免重复关闭；提交由 Dialog 的 DismissEvent 统一 await 完成。</summary>
     private void Dismiss()
     {
         if (_closed) return;
         _closed = true;
         CommitScalePresets();
         CancelRecording();
-        _session.Apply();
         _dismiss();
     }
 

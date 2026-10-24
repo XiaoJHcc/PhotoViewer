@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;

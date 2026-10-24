@@ -86,7 +86,7 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     }
 
     /// <summary>
-    /// SAF 选择器结果：交 <see cref="AndroidFilePicker"/> 收口（持久授权与存储引用）。
+    /// SAF 选择器结果：交 <see cref="AndroidFilePicker"/> 实例收口（持久授权与存储引用）。
     /// </summary>
     /// <param name="requestCode">请求码。</param>
     /// <param name="resultCode">结果码。</param>
@@ -94,7 +94,18 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     protected override void OnActivityResult(int requestCode, Result resultCode, Intent? data)
     {
         base.OnActivityResult(requestCode, resultCode, data);
-        AndroidFilePicker.HandleActivityResult(requestCode, resultCode, data);
+        Native.AndroidNativeShell.FilePickerForResults?.HandleActivityResult(requestCode, resultCode, data);
+    }
+
+    /// <summary>
+    /// Activity 销毁：等待中的 SAF 请求按取消收口；主窗真正退出（非配置重建）时释放根视图与共享 VM。
+    /// 配置重建（字体/语言/密度等）保留 VM 与当前文件夹，由新 Activity 复用。
+    /// </summary>
+    protected override void OnDestroy()
+    {
+        Native.AndroidNativeShell.FilePickerForResults?.CancelPending();
+        if (!IsChangingConfigurations) Native.AndroidNativeShell.DisposeMain();
+        base.OnDestroy();
     }
 
     /// <summary>返回键：设置 sheet 打开时优先关闭/回上级；否则结束原生 Activity。</summary>

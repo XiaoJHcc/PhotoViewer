@@ -43,17 +43,34 @@ public static class iOSNativeShell
     /// <summary>当前原生壳的展示加载会话（压测与验收共用同一份）。</summary>
     internal static PhotoLoadSession? Session => _session;
 
+    /// <summary>本进程唯一的打开请求通道与桥接实例（应用委托创建，scene 与主屏共用）。</summary>
+    private static OpenRequestChannel? _openRequests;
+    private static iOSExternalOpenBridge? _openBridge;
+
+    /// <summary>
+    /// 与 scene、主屏共用的外部打开桥接；界面就绪前的系统打开请求先在通道内排队。
+    /// </summary>
+    internal static iOSExternalOpenBridge? OpenBridge => _openBridge;
+
     /// <summary>
     /// 接线原生平台门面并构建共享 VM 与根控制器；重复调用返回同一控制器。
     /// </summary>
     /// <param name="args">进程启动参数（压测与验收开关从这里解析）。</param>
+    /// <param name="openRequests">应用委托持有的打开请求通道（与 scene 共用）。</param>
+    /// <param name="openBridge">应用委托持有的外部打开桥接（与 scene 共用）。</param>
     /// <returns>可直接挂到 UIWindow 的根控制器。</returns>
-    public static UIViewController CreateRootViewController(string[] args)
+    public static UIViewController CreateRootViewController(
+        string[] args,
+        OpenRequestChannel openRequests,
+        iOSExternalOpenBridge openBridge)
     {
         if (_rootViewController != null)
         {
             return _rootViewController;
         }
+
+        _openRequests = openRequests ?? throw new ArgumentNullException(nameof(openRequests));
+        _openBridge = openBridge ?? throw new ArgumentNullException(nameof(openBridge));
 
         BootTrace.Mark("native shell: bootstrap begin");
         InitializePlatform();
@@ -61,7 +78,7 @@ public static class iOSNativeShell
         ApplyLaunchLayoutMode(args, main);
         ApplyLaunchAnalysisOpen(args, main);
         _session = new PhotoLoadSession();
-        _rootViewController = new iOSNativeRootViewController(main, _session, IsAutomatedValidation(args));
+        _rootViewController = new iOSNativeRootViewController(main, _session, _openBridge, IsAutomatedValidation(args));
         Console.WriteLine("[Native] UIKit 原生壳就绪");
         // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳展示适配器。
         StressFlipDriver.MaybeStart(main, _session);
@@ -104,6 +121,33 @@ public static class iOSNativeShell
     /// <returns>是否为验收会话。</returns>
     private static bool IsAutomatedValidation(string[] args)
         => args.Any(argument => argument.StartsWith("--pv-", StringComparison.Ordinal));
+
+    /// <summary>
+    /// 生产走 Apple 偏好单键；验收会话走沙盒内的隔离文件，不读写用户真实设置。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <returns>设置仓库（尚未读取）。</returns>
+    private static SettingsRepository CreateSettingsRepository(string[] args)
+    {
+        ISettingsStore store;
+        if (IsAutomatedValidation(args))
+        {
+            string directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer", "acceptance");
+            Directory.CreateDirectory(directory);
+            store = new FileSettingsStore(Path.Combine(directory, "settings.json"));
+        }
+        else
+        {
+            store = new AppleSettingsStore();
+        }
+
+        return new SettingsRepository(
+            store,
+            new iOSPerformanceBudget(),
+            appleKeyboard: true,
+            BitmapLoader.AutomaticCacheLimit);
+    }
 
     /// <summary>
     /// 验收专用（非产品行为）：<c>--pv-layout-mode row|col</c> 在启动期固定布局方向，
@@ -167,12 +211,9 @@ public static class iOSNativeShell
         // iPad 的缓存容量由实测预算推导,忽略用户缓存上限(自动口径在 BitmapLoader 内生效)
         BitmapLoader.AutomaticCacheLimit = true;
         MemoryGovernor.Initialize(new iOSMemoryBudgetProvider());
-        StorageAccessManager.Initialize(new iOSStorageAccessManager());
-        XmpWriter.Initialize(new iOSXmpWriter());
         _settingsPresenter = new iOSNativeSettingsPresenter();
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         NativeWindowPresenter.Initialize(new iOSWindowPresenter(_settingsPresenter));
-        SettingsService.ConfigureStorage(new iOSSettingsStorage());
         InstallOnnxRuntimeStaticResolver();
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_CoreML());
         BootTrace.Mark("native shell: platform facades ready");
@@ -192,15 +233,24 @@ public static class iOSNativeShell
     }
 
     /// <summary>
-    /// 构建共享主 VM 并接线外部打开、内存告警、设置落盘与压测驱动。
+    /// 构建共享主 VM 并接线内存告警、设置落盘与压测驱动；
+    /// 外部打开通道来自应用委托（与 scene/主屏共用），存储访问租约走 iOS 安全作用域会话。
     /// </summary>
     /// <param name="args">进程启动参数。</param>
     /// <returns>共享主 VM。</returns>
     private static MainViewModel InitializeMainViewModel(string[] args)
     {
-        var main = new MainViewModel();
+        // 主 VM 构造前完成设置仓库读取：首帧即拿到持久化设置，避免默认值闪现后回填。
+        var repository = CreateSettingsRepository(args);
+        repository.InitializeAsync().GetAwaiter().GetResult();
+        var main = new MainViewModel(
+            repository,
+            IsAutomatedValidation(args) ? new InMemorySettingsStore() : new AppleViewStateStore(),
+            _openRequests ?? throw new InvalidOperationException("打开请求通道尚未接线"),
+            new iOSStorageAccessSessionFactory());
         _main = main;
-        ExternalOpenService.RegisterHandler(request => HandleExternalOpenAsync(main, request));
+        // 桥接与主 VM 共用同一通道；协调器建立后即可等待本批处理完成（验收路径）。
+        _openBridge?.Attach(main.OpenCoordinator);
         SubscribeMemoryWarning();
         SubscribeMemoryPressure();
         SubscribePersistence(main);
@@ -212,7 +262,7 @@ public static class iOSNativeShell
             UIApplication.SharedApplication.IdleTimerDisabled = true;
         }
 
-        // 验收专用入口（非产品行为）：--pv-open <路径> 直接投递进共享外部打开链路。
+        // 验收专用入口（非产品行为）：--pv-open <路径> 直接投递进共享打开通道。
         PublishLaunchArgumentOpenPaths(args);
         BootTrace.Mark("native shell: main view model ready");
         return main;
@@ -267,50 +317,51 @@ public static class iOSNativeShell
     }
 
     /// <summary>
-    /// 退到后台或退出前立即落盘设置（与 Mac 退出前的显式保存同因：常规保存有节流，可能来不及执行）。
+    /// 退到后台时立即落盘设置；退出前先落盘再结束主视图模型（与 Mac 的 Close/Flush/Dispose 顺序同口径）。
     /// </summary>
     /// <param name="main">共享主 VM。</param>
     private static void SubscribePersistence(MainViewModel main)
     {
-        void Save() => SettingsService.Instance.SaveAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
-        UIApplication.Notifications.ObserveDidEnterBackground((_, _) => Save());
-        UIApplication.Notifications.ObserveWillTerminate((_, _) => Save());
-    }
-
-    /// <summary>
-    /// 共享外部打开请求的 iOS 原生处理：使用原生存储引用直接进入共享文件源，不经过反射或 StorageProvider。
-    /// </summary>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="request">外部打开请求。</param>
-    /// <returns>处理完成的异步任务。</returns>
-    private static async Task HandleExternalOpenAsync(MainViewModel main, ExternalOpenRequest request)
-    {
-        foreach (var item in request.Items)
+        void Flush() => main.SettingsRepository.FlushAsync().GetAwaiter().GetResult();
+        UIApplication.Notifications.ObserveDidEnterBackground((_, _) => Flush());
+        UIApplication.Notifications.ObserveWillTerminate((_, _) =>
         {
-            if (item.StorageItem is not { } storageItem)
+            try
             {
-                Console.WriteLine($"[Native] 外部打开项缺少原生引用，已忽略：{item.Path}（{request.Source}）");
-                continue;
+                Flush();
             }
-
-            if (storageItem is IFolderRef folder)
+            catch (Exception exception)
             {
-                await UiDispatcher.InvokeAsync(() => main.FolderVM.OpenFolderAsync(folder)).Unwrap();
-                return;
+                Console.Error.WriteLine("[Native] 退出保存设置失败：" + exception);
             }
-
-            if (storageItem is IFileRef file && main.FolderVM.IsImageFile(file.Name))
+            finally
             {
-                await UiDispatcher.InvokeAsync(() => main.FolderVM.OpenImageAsync(file)).Unwrap();
-                return;
+                DisposeMain();
             }
-        }
-
-        Console.WriteLine($"[Native] 外部打开未命中可识别图片：{request.Source}");
+        });
     }
 
     /// <summary>
-    /// 验收专用（非产品行为）：解析 --pv-open 启动参数并把目标路径按原生引用投递进共享外部打开链路，
+    /// 结束原生壳生命周期：释放根视图与展示会话，再结束共享主视图模型（外部打开消费者、
+    /// 文件源会话与设置订阅）。全部释放幂等，重复调用安全；设置只由 <see cref="MainViewModel.Dispose"/> 释放一次。
+    /// </summary>
+    internal static void DisposeMain()
+    {
+        var root = _rootViewController;
+        _rootViewController = null;
+        var main = _main;
+        _main = null;
+        var session = _session;
+        _session = null;
+        root?.Dispose();
+        main?.Dispose();
+        session?.Dispose();
+        _openBridge = null;
+        _openRequests = null;
+    }
+
+    /// <summary>
+    /// 验收专用（非产品行为）：解析 --pv-open 启动参数并把目标路径按原生引用投递进共享打开通道，
     /// 用于无 Files App 交互的自动化验证；路径可为绝对路径或相对沙盒 Documents。
     /// </summary>
     /// <param name="args">进程启动参数。</param>
@@ -332,7 +383,7 @@ public static class iOSNativeShell
 
             var url = NSUrl.CreateFileUrl(path, Directory.Exists(path), null);
             BootTrace.Mark($"native shell: --pv-open {path}");
-            iOSExternalOpenBridge.PublishNativeFromUrl(url, "iOS:LaunchArgument");
+            _openBridge?.Publish(url, OpenRequestSource.Automation);
         }
     }
 

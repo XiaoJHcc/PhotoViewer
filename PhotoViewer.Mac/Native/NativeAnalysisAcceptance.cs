@@ -4,7 +4,8 @@ using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 
@@ -90,7 +91,7 @@ internal static class NativeAnalysisAcceptance
                 using var stream = File.Create(narrow);
                 encoded.SaveTo(stream);
             }
-            await main.FolderVM.OpenImageAsync(new MacFileRef(narrow));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(narrow));
             await WaitAsync(() => window.Session.Image is { Width: 40 } && !window.Session.IsProxy
                 && panel.TileViews.OfType<MacDetailPreview>().Any(preview => preview.ContentPixels == 40), "短边小于裁剪边长的细节图");
             var narrowPreview = panel.TileViews.OfType<MacDetailPreview>().First(preview => preview.UsesCropWindow);
@@ -108,7 +109,7 @@ internal static class NativeAnalysisAcceptance
             // 5) 增强预览：命令经共享展示会话生效 → 低对比度素材的 GPU 帧像素明显变化 → 再关一次还原原片。
             string lowContrast = Path.Combine(output, "enhance-lowcontrast.jpg");
             EnhancementAcceptance.CreateLowContrastJpeg(lowContrast);
-            await main.FolderVM.OpenImageAsync(new MacFileRef(lowContrast));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(lowContrast));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(lowContrast), "低对比度素材成为当前照片");
             // Mac 展示编码恒为 F16 线性 scRGB；这里只要求已是全分辨率（代理档不参与增强回归）。
             await WaitAsync(() => window.Session.Image != null && !window.Session.IsProxy, "低对比度素材 Full 档");
@@ -141,7 +142,7 @@ internal static class NativeAnalysisAcceptance
             //     （方向丢失时画面会转 90°，四角红/蓝/白/灰的排列随之改变）。
             string portrait = Path.Combine(output, "enhance-portrait-6.jpg");
             EnhancementAcceptance.CreateOrientationJpeg(portrait, 6);
-            await main.FolderVM.OpenImageAsync(new MacFileRef(portrait));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(portrait));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(portrait) && window.Session.Image != null, "竖拍素材上屏");
             await SettleAsync(window);
             var portraitOriginal = window.Session.Image ?? throw new InvalidOperationException("竖拍素材展示图为空");
@@ -327,10 +328,10 @@ internal static class NativeAnalysisAcceptance
     {
         var fixture = main.CurrentFile ?? throw new InvalidOperationException("缺少当前照片");
         string probe = Path.Combine(output, $"refresh-probe-{DateTime.UtcNow.Ticks}.jpg");
-        File.Copy(fixture.File.Path.LocalPath, probe, true);
+        File.Copy(fixture.File.RequireLocalPath(), probe, true);
         try
         {
-            await main.FolderVM.OpenImageAsync(new MacFileRef(probe));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(probe));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(probe), "探针图成为当前照片");
             var presenter = window.Analysis.Presenter;
             await WaitAsync(() => presenter.PcaTile.Placeholder == "未提取" && presenter.SharpnessTile.Placeholder == "未提取",

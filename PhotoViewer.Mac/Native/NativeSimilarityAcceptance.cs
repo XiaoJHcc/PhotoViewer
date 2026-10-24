@@ -2,7 +2,8 @@ using AppKit;
 using CoreGraphics;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
@@ -213,14 +214,14 @@ internal static class NativeSimilarityAcceptance
         string second = Path.Combine(probeFolder, "probe-b.jpg");
         string third = Path.Combine(probeFolder, "probe-c.jpg");
         string orphan = Path.Combine(probeFolder, "probe-d.jpg");
-        File.Copy(fixture.File.Path.LocalPath, first, true);
-        File.Copy(fixture.File.Path.LocalPath, second, true);
-        File.Copy(fixture.File.Path.LocalPath, third, true);
+        File.Copy(fixture.File.RequireLocalPath(), first, true);
+        File.Copy(fixture.File.RequireLocalPath(), second, true);
+        File.Copy(fixture.File.RequireLocalPath(), third, true);
         // 不可解码且没有拍摄时间的孤立文件：SIM-02 视为未提取，列表态停靠区因此可见（SIM-07 的宽度条件）。
         await File.WriteAllTextAsync(orphan, "not an image");
         try
         {
-            await main.FolderVM.OpenImageAsync(new MacFileRef(first));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(first));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(first), "探针 A 成为当前照片");
             var similarity = main.FileVM.SimilarityPanel;
             similarity.StartIndexingCommand();

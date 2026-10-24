@@ -34,6 +34,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session;
+    private readonly iOSExternalOpenBridge _openBridge;
     private readonly bool _automatedValidation;
     private readonly iOSPhotoView _photo = new(CGRect.Empty);
     private readonly UIView _photoPane = new();
@@ -148,11 +149,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>用共享主 VM 与展示会话构建原生主屏。</summary>
     /// <param name="main">共享主 VM。</param>
     /// <param name="session">共享展示加载会话（所有权在壳层，生命周期与根控制器一致）。</param>
+    /// <param name="openBridge">与应用委托/scene 共用的外部打开桥接（拖入走同一通道）。</param>
     /// <param name="automatedValidation">是否程序化验收会话（不读写用户窗口偏好）。</param>
-    public iOSNativeRootViewController(MainViewModel main, PhotoLoadSession session, bool automatedValidation = false)
+    public iOSNativeRootViewController(
+        MainViewModel main,
+        PhotoLoadSession session,
+        iOSExternalOpenBridge openBridge,
+        bool automatedValidation = false)
     {
         _main = main;
         _session = session;
+        _openBridge = openBridge;
         _automatedValidation = automatedValidation;
         _filterBar = new iOSFilterBar(main);
         _filmstrip = new iOSFilmstripView(main);
@@ -771,7 +778,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating) ShowToast(StatusMessages.RatingWriteFailed(file.Name));
+        if (file.Rating != rating) ShowToast(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError));
         BuildControls();
     }
 
@@ -1226,7 +1233,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>
     /// 拖入会话落地：逐项读取文件 URL（不可读项记录后跳过，属不可信外部输入），
-    /// 再交原生外部打开路径——与 I1b 的 openURL / "打开方式"完全同一条共享链路。
+    /// 再按一批交共享打开通道——与 openURL / scene 的多 context 同一条链路。
     /// </summary>
     /// <param name="session">系统拖入会话。</param>
     private async Task HandleDropSessionAsync(IUIDropSession session)
@@ -1243,14 +1250,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 Console.Error.WriteLine($"[Native] 拖入项读取失败：{exception.Message}");
             }
         }
-        PublishDroppedUrlsAsync(urls);
+        await PublishDroppedUrlsAsync(urls);
     }
 
-    /// <summary>把拖入的原生 URL 发布为外部打开请求（验收与 <see cref="HandleDropSessionAsync"/> 共用）。</summary>
+    /// <summary>
+    /// 把拖入的原生 URL 按一批投递并等待处理完成（验收与 <see cref="HandleDropSessionAsync"/> 共用）。
+    /// 一批只取首个可打开目标（OPEN-01），顺序即系统给出的顺序。
+    /// </summary>
     /// <param name="urls">文件/文件夹 URL。</param>
-    /// <returns>是否成功投递。</returns>
-    internal bool PublishDroppedUrlsAsync(IReadOnlyList<NSUrl> urls)
-        => urls.Count > 0 && iOSExternalOpenBridge.PublishNativeFromUrls(urls, "iOS:Drop");
+    /// <returns>成功投递并处理完成时返回 true。</returns>
+    internal Task<bool> PublishDroppedUrlsAsync(IReadOnlyList<NSUrl> urls)
+        => _openBridge.PublishAndWaitAsync(urls, OpenRequestSource.DragDrop);
 
     /// <summary>拖放委托：只接受文件 URL，拖动中给"拷贝"指示，落地后交共享打开路径。</summary>
     private sealed class iOSDropDelegate(iOSNativeRootViewController owner) : UIDropInteractionDelegate

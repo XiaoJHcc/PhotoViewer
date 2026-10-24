@@ -3,7 +3,7 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Tools;
 
 namespace PhotoViewer.Mac.Native;
@@ -53,7 +53,7 @@ internal static class NativeToolsAcceptance
                 string arwPath = System.IO.Path.GetFullPath("../TestCase/A7C01489.ARW");
                 if (File.Exists(arwPath))
                 {
-                    var arwFile = new ImageFile(new MacFileRef(arwPath));
+                    var arwFile = new ImageFile(new LocalFileRef(arwPath));
                     var arw = new ExifDetailViewModel(arwFile);
                     await WaitAsync(() => arw.Groups is { Count: > 0 } && !arw.IsLoading, "大 EXIF 加载");
                     checks.Add(MeasureExif(page, host.Window, arw, "arw"));

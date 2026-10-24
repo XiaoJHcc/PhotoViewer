@@ -1,4 +1,5 @@
 using Foundation;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.iOS.Core;
 using UIKit;
 
@@ -6,7 +7,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// scene 窗口与外部打开的接线。
-/// 系统的 scene 连接统一交给原生壳根控制器；文件 URL 直接以原生存储引用投递。
+/// 系统的 scene 连接统一交给原生壳根控制器；文件 URL 以一批原生存储引用投递到共享打开通道。
 /// </summary>
 internal static class iOSSceneBridge
 {
@@ -34,17 +35,25 @@ internal static class iOSSceneBridge
     }
 
     /// <summary>
-    /// 把 scene 携带的文件 URL 投递进共享外部打开链路（原生存储引用）。
+    /// 把 scene 携带的文件 URL 按一批投递进共享打开通道（原生存储引用，顺序即系统顺序）。
     /// </summary>
     /// <param name="urlContexts">URL 上下文集合。</param>
-    /// <param name="source">请求来源标记。</param>
-    public static void PublishOpenUrlContexts(NSSet<UIOpenUrlContext>? urlContexts, string source)
+    /// <param name="origin">诊断用的来源标记（scene 连接 / scene 打开）。</param>
+    public static void PublishOpenUrlContexts(NSSet<UIOpenUrlContext>? urlContexts, string origin)
     {
-        if (urlContexts == null)
+        if (urlContexts == null || urlContexts.Count == 0)
         {
             return;
         }
 
+        if (iOSNativeShell.OpenBridge is not { } bridge)
+        {
+            Console.Error.WriteLine($"[Native] 外部打开桥接未接线，忽略 {urlContexts.Count} 个 {origin} URL");
+            return;
+        }
+
+        var urls = new List<NSUrl>();
+        var allInPlace = true;
         foreach (var contextObject in urlContexts)
         {
             if (contextObject is not UIOpenUrlContext context)
@@ -52,7 +61,23 @@ internal static class iOSSceneBridge
                 continue;
             }
 
-            iOSExternalOpenBridge.PublishNativeFromUrl(context.Url, source);
+            urls.Add(context.Url);
+            if (context.Options?.OpenInPlace != true)
+            {
+                allInPlace = false;
+            }
+        }
+
+        if (urls.Count == 0)
+        {
+            return;
+        }
+
+        // 就地打开是系统把原文件交给本应用；非就地是分享菜单/其它应用送来的副本。
+        var source = allInPlace ? OpenRequestSource.SystemOpen : OpenRequestSource.Share;
+        if (!bridge.Publish(urls, source))
+        {
+            Console.Error.WriteLine($"[Native] 场景 {origin} 的打开请求未被接收");
         }
     }
 }

@@ -8,8 +8,9 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 | 文件/目录 | 职责 |
 |---|---|
-| `Program.cs`、`App.xaml*`、`Native/WindowsNativeApplication.cs` | 原生启动、应用资源、调度器与平台门面注入。 |
-| `Native/WindowsMainWindow.cs`、`WindowsTitleBar.cs`、`WindowsInput.cs` | 主窗口、标题栏、外部打开、命令与输入分发。 |
+| `Program.cs`、`App.xaml*`、`Native/WindowsNativeApplication.cs` | 原生启动、应用资源、调度器与平台门面注入；设置用 `FileSettingsStore`（schemaVersion 2，原子替换；验收/压测走隔离目录），本地存储引用统一 `LocalFileRef`/`LocalFolderRef`。 |
+| `Native/WindowsMainWindow.cs`、`WindowsTitleBar.cs`、`WindowsInput.cs` | 主窗口、标题栏、外部打开（拖入经 `WindowsOpenPaths` 投递共享打开通道，选择器直接进共享文件源）、命令与输入分发。 |
+| `Native/WindowsOpenPaths.cs`、`WindowsSingleInstance.cs` | 命令行、文件激活与二次启动路径 → `LocalFileRef`/`LocalFolderRef`；`AppInstance` 单实例把二次激活转发到主实例的 `OpenRequestChannel`。隔离验收/压测不注册单实例键，避免与用户实例互相转发。 |
 | `Native/WindowsLayout.cs`、`WindowsWrapPanel.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsPhotoView.cs`、`WindowsNavigator.cs` | D3D 照片表面、共享视口接线与缩放导航图。 |
 | `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选、胶片栏、卡片、EXIF 与评分/命令栏，以及主屏小型控件的四态外观。 |
@@ -17,7 +18,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制。 |
 | `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。 |
 | `Native/WindowsWindowChrome.cs`、`WindowsUiServices.cs`、`WindowsImageAdapter.cs` | 窗口外壳、调度/选择器/资源门面、XAML 位图适配。 |
-| `Core/` | 展示编码与解码（`WindowsPresentationDecoder`：HEIF → 共享 `PhotoViewer.Core.Image.Heif.FastHeifDecoder`，回落 `LibHeifDecoder`；RAW → `WindowsRawDecoder`）、`LibHeifDecoder`（**小尺寸请求**——胶片栏列表档经 `ThumbnailService` 传来的 120/400——优先解容器自带 `thmb` 项并缩到与主图路径相同的尺寸与方向；DINO 的 560 短边仍走主图）、`WindowsRawDecoder`（WIC RAW 全分辨率解码：按相机 `DefaultCropOrigin/Size` 裁剪、方向交给渲染层、内嵌整幅 JPEG 兜底）、`WindowsMemoryBudgetProvider`（物理内存预算 + 进程私有提交 + 系统低内存通知）、`WindowsPerformanceBudget`（设置页默认值：缓存内存与张数按物理内存、后台解码线程按核数推导，物理内存/核数/线程上限沿用 `DefaultPerformanceBudget`）,XMP 写回。 |
+| `Core/` | 展示编码与解码（`WindowsPresentationDecoder`：HEIF → 共享 `PhotoViewer.Core.Image.Heif.FastHeifDecoder`，回落 `LibHeifDecoder`；RAW → `WindowsRawDecoder`）、`LibHeifDecoder`（**小尺寸请求**——胶片栏列表档经 `ThumbnailService` 传来的 120/400——优先解容器自带 `thmb` 项并缩到与主图路径相同的尺寸与方向；DINO 的 560 短边仍走主图）、`WindowsRawDecoder`（WIC RAW 全分辨率解码：按相机 `DefaultCropOrigin/Size` 裁剪、方向交给渲染层、内嵌整幅 JPEG 兜底）、`WindowsMemoryBudgetProvider`（物理内存预算 + 进程私有提交 + 系统低内存通知）、`WindowsPerformanceBudget`（设置页默认值：缓存内存与张数按物理内存、后台解码线程按核数推导，物理内存/核数/线程上限沿用 `DefaultPerformanceBudget`）；评分写回不在本目录实现，统一走共享 `RatingService` + `XmpRatingStoreFactory`。 |
 | `Native/*Acceptance.cs`、`Native/NativeStartupLog.cs` | 隔离验收、部署检查与启动诊断。 |
 | `Native/WindowsPerfProbe.cs`、`WindowsUploadStats.cs`、`WindowsHeifThumbProbe.cs` | 分段性能探针（HIF/ARW/JPG 各 6 张，首张预热，写文本报告）、主图纹理上传的常驻轻量统计（压测汇总行消费）、HEIF 缩略图项与主图缩放两条路径的逐文件对比探针。 |
 | `PhotoViewer.Windows.csproj`、`PortableSingleFile.targets`、`publish-win-x64-singlefile.ps1` | 平台依赖、单文件资源与 CRT 打包、发布验收。 |
@@ -33,7 +34,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 切图与热替换按 `PhotoLoadSession.Generation` 区分，不能只比源尺寸与方向：缓存命中切图不经过空图，同机型连拍两张的几何完全相同。代际变化一律走 `BeginImageChange`/`ApplyImage`（适应态重新适应、跟随对焦到新照片），代际相同才可能是代理↔Full 热替换；同一实例 + 同一代际的会话通知（加载态、增强态）不重传纹理。大图后台上传仍保持上一帧，收尾交换时按切图语义应用几何。
 - 分析栏实现 `IAnalysisHost`，消费共享 `AnalysisPresenter`；工具 DINO 页消费 `DinoDiagnosticPresenter`。不得另建分析编排或恢复旧 UI 适配层。细节裁剪使用 `DisplayCrop`，增强状态归 `PhotoLoadSession`。
 - HEIF 快速解码（`HeifContainer` 容器解析、`YuvImageConverter` YUV→展示编码、pvhevc 上下文池与优先级解码闸门、`HeifDecodeStats` 分段耗时统计）位于共享 `PhotoViewer.Core.Image.Heif`；Windows 头只注入原生库与并发参数，不另存一套实现。解码排队按优先级通道（`PhotoViewer.Core.Image.DecodeContext` 的票据定通道）：P0 当前照片越过一切后台请求、可用超出常规上限的 pvhevc 上下文（常规上限仍管后台）；翻页方向前两张预取（Alongside）排普通后台之前；普通后台在 P0 在解时让位（只挡排队，不打断已开跑的图，`PV_HEIF_HOLD_BACKGROUND=0` 关）。两个名额先图像后上下文、上下文全有或全无，故无反向等待死锁；后台起解时瓦片并行度默认收窄到 2 路（`PV_HEIF_BACKGROUND_TILES`，0 = 不收窄），把核让给当前图。这两条环境变量只作压测对照，不进设置页。
-- 设置使用 `NativeSettingsSession` 工作副本；设置/工具窗口通过平台 presenter 管理生命周期。文件选择器绑定发起窗口自己的 HWND。
+- 设置使用 `NativeSettingsSession` 工作副本，关闭时 `ApplyAsync` 一次提交并 `Dispose`；设置/工具窗口通过平台 presenter 管理生命周期。`FileSettingsStore` 落盘用原子替换，`SettingsRepository` 是唯一写者，失败保留 last good。文件选择器绑定发起窗口自己的 HWND。
 - 导航图直接从展示帧以 Skia 降采样并处理方向，不做 D3D 回读。耗时像素处理在后台，`WriteableBitmap` 必须在 UI 线程创建。
 - DirectML 即时推理需串行；后台分析期间持有图像租约，避免热替换后访问已归还的像素缓冲。
 

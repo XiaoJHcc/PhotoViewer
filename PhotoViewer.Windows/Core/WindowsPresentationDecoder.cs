@@ -310,14 +310,14 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
     private static Task<byte[]> ReadAllBytesAsync(IFileRef file) => FastHeifDecoder.ReadAllBytesAsync(file);
 
     /// <summary>已记录过回落原因的文件名(限幅;回落原因只与容器能力相关,同一文件不必重复刷屏)。</summary>
-    private static readonly HashSet<string> FallbackLogged = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly HashSet<string> FallbackLogged = new(StringComparer.Ordinal);
 
     /// <summary>记录一次 HEIF 快速路径回落(每文件只记第一次,便于现场定位又不刷屏)。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="reason">回落原因。</param>
     private static void LogFallback(IFileRef file, string? reason)
     {
-        var key = file.PathKey;
+        var key = file.StorageId.Value;
         lock (FallbackLogged)
         {
             if (FallbackLogged.Contains(key)) return;

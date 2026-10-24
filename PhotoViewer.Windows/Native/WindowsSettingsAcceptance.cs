@@ -243,7 +243,11 @@ internal static class WindowsSettingsAcceptance
             var working = window.Settings.SameNameAsOnePhoto;
             window.Close();
             await WaitAsync(() => !presenter.IsOpen, "设置窗口关闭");
-            Require(main.Settings.SameNameAsOnePhoto == working, "关闭后工作副本没有回写");
+            // 关闭提交是异步写入，先等工作副本回写与释放结束再断言主设置与落盘。
+            await presenter.CloseIfOpenAsync();
+            await WaitAsync(
+                () => main.Settings.SameNameAsOnePhoto == working,
+                "关闭后工作副本回写主设置");
             Require(beforeClose != working, "回写断言前值未变化");
             Require(main.Settings.ScalePresets.Any(preset => Math.Abs(preset.Value - 0.666) < 1e-9),
                 "关闭设置没有提交尚未失焦的预设编辑");
@@ -272,7 +276,7 @@ internal static class WindowsSettingsAcceptance
             }
 
             Require(persisted, "关闭设置后缩放预设没有落盘");
-            checks.Add("PASS lifecycle: work copy applied exactly once on close; focused preset edit committed and persisted to settings.json");
+            checks.Add("PASS lifecycle: work copy applied exactly once on close; focused preset edit committed and persisted to settings-smoke.json");
 
             Environment.ExitCode = 0;
         }
@@ -281,7 +285,7 @@ internal static class WindowsSettingsAcceptance
             Environment.ExitCode = 1;
             checks.Add("FAIL " + exception);
             NativeStartupLog.Fail("native settings acceptance", exception);
-            presenter.CloseIfOpen();
+            await presenter.CloseIfOpenAsync();
         }
         finally
         {

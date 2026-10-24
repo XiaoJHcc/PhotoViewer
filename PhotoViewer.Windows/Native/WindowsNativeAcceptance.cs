@@ -34,13 +34,13 @@ internal sealed partial class WindowsMainWindow
     /// <summary>以启动工作目录为基准的隔离验收输出目录。</summary>
     internal static string SmokeOutputDirectory => Path.GetFullPath("release/native-win-acceptance");
 
-    /// <summary>在构造共享视图模型前配置专用设置和数据库，每轮重置自有设置。</summary>
+    /// <summary>在构造共享视图模型前重置隔离目录的设置、界面状态与数据库，每轮从默认值开始。</summary>
     internal static void ConfigureSmokeStorage()
     {
         Directory.CreateDirectory(SmokeOutputDirectory);
-        var settingsPath = Path.Combine(SmokeOutputDirectory, "settings-smoke.json");
-        File.WriteAllText(settingsPath, "{\"Version\":0}");
-        SettingsService.ConfigureStorage(new FileSettingsStorage(settingsPath));
+        // 设置仓库在 App 创建视图模型前建立；删除上一轮的文档即回到平台默认值，未修改时也不会重新创建。
+        File.Delete(WindowsNativeApplication.IsolatedSettingsFilePath);
+        File.Delete(WindowsNativePreferences.IsolatedFilePath);
         // 每轮从空库开始:上一轮的 DINO/CV 特征会让"相似聚类空态"与"即时计算"分支走不到
         var databasePath = Path.Combine(SmokeOutputDirectory, "photos-smoke.db");
         foreach (var suffix in new[] { string.Empty, "-wal", "-shm" })

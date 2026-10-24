@@ -40,6 +40,9 @@ internal static partial class AndroidNativeChecks
                 case "input":
                     await RunInputChecksAsync();
                     break;
+                case "storage":
+                    await RunStorageChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)
@@ -171,7 +174,7 @@ internal static partial class AndroidNativeChecks
     /// <param name="height">高（像素）。</param>
     /// <param name="orientation">EXIF 方向码（2–8 才插入；1 表示不写）。</param>
     /// <param name="rating">XMP 星级（0–5 才插入）。</param>
-    private static void WriteCheckJpeg(string path, int width, int height, int orientation = 1, int? rating = null)
+    private static void WriteCheckJpeg(string path, int width, int height, int orientation = 1, int? rating = null, int xmpPadding = 0)
     {
         Directory.CreateDirectory(IOPath.GetDirectoryName(path)!);
         byte[] jpeg;
@@ -201,7 +204,7 @@ internal static partial class AndroidNativeChecks
         using var stream = File.Create(path);
         stream.Write(jpeg, 0, 2);
         if (orientation is >= 2 and <= 8) stream.Write(BuildOrientationApp1(orientation));
-        if (rating is >= 0 and <= 5) stream.Write(BuildXmpApp1(rating.Value));
+        if (rating is >= 0 and <= 5) stream.Write(BuildXmpApp1(rating.Value, xmpPadding));
         stream.Write(jpeg, 2, jpeg.Length - 2);
     }
 
@@ -236,13 +239,15 @@ internal static partial class AndroidNativeChecks
     /// <summary>XMP APP1：<c>xmp:Rating</c> 是共享写回器定位星级的锚点。</summary>
     /// <param name="rating">星级 0–5。</param>
     /// <returns>完整 APP1 段。</returns>
-    private static byte[] BuildXmpApp1(int rating)
+    private static byte[] BuildXmpApp1(int rating, int padding = 0)
     {
         const string header = "http://ns.adobe.com/xap/1.0/\0";
         string xml = "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
             + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
             + "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"" + rating + "\"/>"
-            + "</rdf:RDF></x:xmpmeta>\n<?xpacket end=\"w\"?>";
+            + "</rdf:RDF></x:xmpmeta>\n"
+            + new string(' ', Math.Max(0, padding))
+            + "<?xpacket end=\"w\"?>";
         return FrameApp1(Encoding.UTF8.GetBytes(header + xml));
     }
 

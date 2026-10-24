@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 
 namespace PhotoViewer.iOS.Native;
@@ -53,7 +54,7 @@ internal static class iOSDinoCheck
             if (!File.Exists(path)) throw new FileNotFoundException("图片不存在", path);
 
             using var image = await BitmapLoader.GetBitmapAsync(
-                new iOSFileRef(path), DecodePriority.P0_Current, CancellationToken.None).ConfigureAwait(false)
+                new LocalFileRef(path), DecodePriority.P0_Current, CancellationToken.None).ConfigureAwait(false)
                 ?? throw new InvalidOperationException("解码失败");
 
             var mainProgram = NativeLibrary.GetMainProgramHandle();

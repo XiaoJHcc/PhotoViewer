@@ -3,6 +3,8 @@ using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -83,7 +85,7 @@ internal static class iOSNativeLayoutCheck
                     if (hotkey.Command is "Previous" or "Next") hotkey.IsDisplay = true;
                 root.BuildControls();
             });
-            await main.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
             await WaitAsync(() => main.FolderVM.AllFiles.Count >= 12, "夹具目录枚举");
             await WaitAsync(() => main.CurrentFile != null, "首图选中");
             await SettleAsync(root);
@@ -649,8 +651,9 @@ internal static class iOSNativeLayoutCheck
         var list = main.FileVM.ThumbnailList;
         string entryFilter = filter.SelectedRatingFilter;
         var entryFile = main.CurrentFile ?? throw new InvalidOperationException("评分核对缺少当前照片");
-        if (!Path.GetFullPath(entryFile.File.PathKey).StartsWith(Path.GetFullPath(directory), StringComparison.Ordinal))
-            throw new InvalidOperationException($"评分核对不在自有夹具目录内：{entryFile.File.PathKey}");
+        string entryPath = entryFile.File.RequireLocalPath();
+        if (!Path.GetFullPath(entryPath).StartsWith(Path.GetFullPath(directory), StringComparison.Ordinal))
+            throw new InvalidOperationException($"评分核对不在自有夹具目录内：{entryPath}");
         int entryRating = (await ExifLoader.LoadExifDataAsync(entryFile.File))?.Rating ?? 0;
         var fixtureRatings = new Dictionary<string, int>(StringComparer.Ordinal);
         int target = entryRating == 3 ? 2 : 3;
@@ -659,9 +662,9 @@ internal static class iOSNativeLayoutCheck
             var other = main.FolderVM.AllFiles.FirstOrDefault(candidate => !ReferenceEquals(candidate, entryFile))
                 ?? throw new InvalidOperationException("评分核对需要至少两张自有夹具");
             foreach (var candidate in main.FolderVM.AllFiles)
-                fixtureRatings[candidate.File.PathKey] = (await ExifLoader.LoadExifDataAsync(candidate.File))?.Rating ?? 0;
+                fixtureRatings[candidate.File.StorageId.Value] = (await ExifLoader.LoadExifDataAsync(candidate.File))?.Rating ?? 0;
             // 另一张副本先与当前照片同星级，才能同时构成"当前照片改星后落出筛选"和"列表里还有符合筛选的照片"。
-            if (fixtureRatings[other.File.PathKey] != entryRating) await main.SetRatingAsync(other, entryRating);
+            if (fixtureRatings[other.File.StorageId.Value] != entryRating) await main.SetRatingAsync(other, entryRating);
             await WaitAsync(() => entryFile.Rating == entryRating && other.Rating == entryRating, "自有副本评级就绪");
             string key = entryRating == 0 ? "None" : $"Eq{entryRating}";
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = key);
@@ -705,11 +708,11 @@ internal static class iOSNativeLayoutCheck
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = "All");
             foreach (var pair in fixtureRatings)
             {
-                var candidate = main.FolderVM.AllFiles.FirstOrDefault(item => item.File.PathKey == pair.Key);
+                var candidate = main.FolderVM.AllFiles.FirstOrDefault(item => item.File.StorageId.Value == pair.Key);
                 if (candidate != null && candidate.Rating != pair.Value) await main.SetRatingAsync(candidate, pair.Value);
             }
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = entryFilter);
-            if (main.CurrentFile?.File.PathKey != entryFile.File.PathKey)
+            if (main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
                 await main.FolderVM.OpenImageAsync(entryFile.File);
         }
     }

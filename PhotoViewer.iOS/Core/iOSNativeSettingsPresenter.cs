@@ -17,6 +17,8 @@ namespace PhotoViewer.iOS.Core;
 /// </summary>
 public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
 {
+    private NativeSettingsSession? _session;
+
     /// <summary>
     /// 尝试展示 iOS 原生设置页。
     /// </summary>
@@ -37,16 +39,18 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
                 return;
             }
 
-            var session = new iOSNativeSettingsSession(settings);
-            var rootController = new iOSNativeSettingsRootViewController(session);
-            var navigationController = new iOSNativeSettingsNavigationController(rootController, session);
-            // SETTINGS-03：设置页固定深色，不随系统亮/暗切换（与工具页同一口径）。
-            navigationController.OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
-            ConfigureSheetPresentation(navigationController.SheetPresentationController);
             if (iOSViewControllerLocator.GetTopMostViewController() is not { } topController)
             {
                 return;
             }
+
+            // 同一时刻只保留一份工作副本；关闭后由 Closed 清空，下次展示重建。
+            var session = _session ??= new NativeSettingsSession(settings);
+            var rootController = new iOSNativeSettingsRootViewController(session, settings, Closed);
+            var navigationController = new iOSNativeSettingsNavigationController(rootController, rootController);
+            // SETTINGS-03：设置页固定深色，不随系统亮/暗切换（与工具页同一口径）。
+            navigationController.OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+            ConfigureSheetPresentation(navigationController.SheetPresentationController);
 
             topController.PresentViewController(navigationController, true, null);
         }
@@ -62,6 +66,9 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
 
         return true;
     }
+
+    /// <summary>设置页关闭且工作副本已提交/释放：丢弃会话引用，等待下次展示重建。</summary>
+    private void Closed() => _session = null;
 
     /// <summary>
     /// 查找当前已经展示的原生设置导航控制器。
@@ -108,89 +115,8 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
 }
 
 /// <summary>
-/// iOS 原生设置编辑会话。
-/// 负责持有一个可编辑副本，并在关闭时一次性回写到共享设置实例。
-/// </summary>
-internal sealed class iOSNativeSettingsSession
-{
-    private readonly SettingsViewModel _source;
-    private bool _hasApplied;
-
-    /// <summary>
-    /// 当前会话使用的工作设置副本。
-    /// </summary>
-    public SettingsViewModel WorkingSettings { get; }
-
-    /// <summary>
-    /// 共享层当前生效的设置实例；持久化状态只从源实例读取（工作副本用临时存储，永远没有失败状态）。
-    /// </summary>
-    public SettingsViewModel Source => _source;
-
-    /// <summary>
-    /// 初始化原生设置编辑会话。
-    /// </summary>
-    /// <param name="source">共享层当前生效的设置实例。</param>
-    public iOSNativeSettingsSession(SettingsViewModel source)
-    {
-        _source = source;
-        WorkingSettings = new SettingsViewModel(
-            settingsService: new iOSNativeTransientSettingsService(),
-            initialModel: source.CreateSnapshot(), applyRuntimeSettings: false);
-    }
-
-    /// <summary>
-    /// 将暂存改动一次性应用回共享设置实例。
-    /// 重复调用时只会真正应用一次，避免关闭回调多次触发。
-    /// </summary>
-    public void ApplyPendingChanges()
-    {
-        if (_hasApplied)
-        {
-            return;
-        }
-
-        iOSViewControllerLocator.GetTopMostViewController()?.View?.EndEditing(true);
-        _source.ApplySnapshot(WorkingSettings.CreateSnapshot());
-        _hasApplied = true;
-    }
-}
-
-/// <summary>
-/// iOS 原生设置临时存储服务。
-/// 用于屏蔽工作副本的自动持久化，避免编辑过程中提前落盘。
-/// </summary>
-internal sealed class iOSNativeTransientSettingsService : ISettingsService
-{
-    /// <summary>工作副本读取始终成功，没有读取错误。</summary>
-    public string? LastLoadError => null;
-
-    /// <summary>工作副本不落盘，没有保存错误。</summary>
-    public string? LastSaveError => null;
-
-    /// <summary>
-    /// 读取临时设置。
-    /// 工作副本通过初始快照同步，这里始终返回空模型。
-    /// </summary>
-    /// <returns>空设置模型。</returns>
-    public Task<SettingsModel> LoadAsync()
-    {
-        return Task.FromResult(new SettingsModel());
-    }
-
-    /// <summary>
-    /// 忽略工作副本的持久化请求。
-    /// 真正的写回在设置页关闭时统一发生。
-    /// </summary>
-    /// <param name="model">待保存的临时模型。</param>
-    public Task SaveAsync(SettingsModel model)
-    {
-        return Task.CompletedTask;
-    }
-}
-
-/// <summary>
 /// iOS 原生设置导航控制器。
-/// 负责持有关闭代理，确保系统下拉关闭时也会统一应用暂存设置。
+/// 负责持有关闭代理，确保系统下拉关闭时也会统一提交并释放工作副本。
 /// </summary>
 internal sealed class iOSNativeSettingsNavigationController : UINavigationController
 {
@@ -200,12 +126,12 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
     /// 初始化原生设置导航控制器。
     /// </summary>
     /// <param name="rootViewController">根控制器。</param>
-    /// <param name="session">当前设置编辑会话。</param>
-    public iOSNativeSettingsNavigationController(UIViewController rootViewController, iOSNativeSettingsSession session)
+    /// <param name="settingsRoot">设置页根控制器，关闭回写与释放由它统一负责。</param>
+    public iOSNativeSettingsNavigationController(UIViewController rootViewController, iOSNativeSettingsRootViewController settingsRoot)
         : base(rootViewController)
     {
         ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
-        _dismissDelegate = new iOSNativeSettingsDismissDelegate(session);
+        _dismissDelegate = new iOSNativeSettingsDismissDelegate(settingsRoot);
     }
 
     /// <summary>
@@ -229,24 +155,24 @@ internal sealed class iOSNativeSettingsNavigationController : UINavigationContro
 /// </summary>
 internal sealed class iOSNativeSettingsDismissDelegate : UIAdaptivePresentationControllerDelegate
 {
-    private readonly iOSNativeSettingsSession _session;
+    private readonly iOSNativeSettingsRootViewController _root;
 
     /// <summary>
     /// 初始化关闭代理。
     /// </summary>
-    /// <param name="session">当前设置编辑会话。</param>
-    public iOSNativeSettingsDismissDelegate(iOSNativeSettingsSession session)
+    /// <param name="root">设置页根控制器。</param>
+    public iOSNativeSettingsDismissDelegate(iOSNativeSettingsRootViewController root)
     {
-        _session = session;
+        _root = root;
     }
 
     /// <summary>
-    /// 在系统 sheet 完成关闭后统一应用暂存设置。
+    /// 在系统 sheet 完成关闭后提交工作副本并释放会话（重复触发只执行一次）。
     /// </summary>
     /// <param name="presentationController">当前展示控制器。</param>
     public override void DidDismiss(UIPresentationController presentationController)
     {
-        _session.ApplyPendingChanges();
+        _ = _root.CloseAsync();
     }
 }
 
@@ -256,15 +182,20 @@ internal sealed class iOSNativeSettingsDismissDelegate : UIAdaptivePresentationC
 /// </summary>
 internal sealed class iOSNativeSettingsRootViewController : UITableViewController
 {
-    private readonly iOSNativeSettingsSession _session;
+    private readonly NativeSettingsSession _session;
+    private readonly SettingsViewModel _source;
     private readonly SettingsViewModel _settings;
+    private readonly Action _closed;
     private readonly UIView _statusHeader = new();
     private readonly UILabel _statusLabel = new();
 
     private readonly (string Title, string? Subtitle, Func<UIViewController> Factory)[] _items;
 
     /// <summary>当前编辑会话（测试缝：验收核对关闭回写后的设置传播）。</summary>
-    internal iOSNativeSettingsSession Session => _session;
+    internal NativeSettingsSession Session => _session;
+
+    /// <summary>源设置实例；持久化状态只从源实例读取。</summary>
+    internal SettingsViewModel Source => _source;
 
     /// <summary>设置页顶部的持久化失败状态行（SETTINGS-14，测试缝）。</summary>
     internal UILabel PersistenceStatusLabel => _statusLabel;
@@ -272,11 +203,15 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// <summary>
     /// 初始化原生设置页根控制器。
     /// </summary>
-    /// <param name="settings">共享设置 ViewModel。</param>
-    public iOSNativeSettingsRootViewController(iOSNativeSettingsSession session)
+    /// <param name="session">共享原生设置会话（关闭时一次性提交）。</param>
+    /// <param name="source">共享层当前生效的设置实例。</param>
+    /// <param name="closed">关闭完成回调，用于让展示器丢弃会话引用。</param>
+    public iOSNativeSettingsRootViewController(NativeSettingsSession session, SettingsViewModel source, Action closed)
         : base(UITableViewStyle.InsetGrouped)
     {
         _session = session;
+        _source = source;
+        _closed = closed;
         _settings = session.WorkingSettings;
         _items =
         [
@@ -288,6 +223,27 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         ];
     }
 
+    private int _closedFlag;
+    private Task? _closeTask;
+
+    /// <summary>提交工作副本并释放会话；关闭按钮与系统下拉共用，重复调用只执行一次。</summary>
+    internal Task CloseAsync() => _closeTask ??= CloseCoreAsync();
+
+    private async Task CloseCoreAsync()
+    {
+        if (Interlocked.Exchange(ref _closedFlag, 1) != 0) return;
+        try
+        {
+            View?.EndEditing(true);
+            await _session.ApplyAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            _session.Dispose();
+            _closed();
+        }
+    }
+
     /// <summary>
     /// 初始化导航栏与表格样式。
     /// </summary>
@@ -297,7 +253,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         Title = "设置";
         NavigationItem.RightBarButtonItem = new UIBarButtonItem(UIBarButtonSystemItem.Close, (_, _) =>
         {
-            _session.ApplyPendingChanges();
+            _ = CloseAsync();
             DismissViewController(true, null);
         });
         // 首页与子页、工具页统一用同一层系统分组背景，sheet 玻璃在各页取到相同材质。
@@ -320,7 +276,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
-        _session.Source.PropertyChanged += OnSourceSettingsChanged;
+        _source.PropertyChanged += OnSourceSettingsChanged;
         RefreshPersistenceStatus();
     }
 
@@ -328,8 +284,17 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// <param name="animated">系统动画标记。</param>
     public override void ViewWillDisappear(bool animated)
     {
-        _session.Source.PropertyChanged -= OnSourceSettingsChanged;
+        _source.PropertyChanged -= OnSourceSettingsChanged;
         base.ViewWillDisappear(animated);
+    }
+
+    /// <summary>页面被系统或代码关闭时兜底提交：覆盖不经关闭代理的程序化 dismiss，保证会话一定释放。</summary>
+    /// <param name="animated">系统动画标记。</param>
+    public override void ViewDidDisappear(bool animated)
+    {
+        base.ViewDidDisappear(animated);
+        if (IsBeingDismissed || NavigationController?.IsBeingDismissed == true)
+            _ = CloseAsync();
     }
 
     /// <summary>表格宽度变化后重算状态行高度，避免状态文本被截断。</summary>
@@ -350,7 +315,7 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     /// <summary>同步设置页顶部状态行：没有失败信息时整行收起。</summary>
     private void RefreshPersistenceStatus()
     {
-        string? status = _session.Source.PersistenceStatus;
+        string? status = _source.PersistenceStatus;
         _statusLabel.Text = status ?? string.Empty;
         _statusLabel.Hidden = string.IsNullOrWhiteSpace(status);
         LayoutStatusHeader();

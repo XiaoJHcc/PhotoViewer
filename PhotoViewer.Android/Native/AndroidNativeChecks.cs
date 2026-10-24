@@ -863,8 +863,8 @@ internal static partial class AndroidNativeChecks
     private static bool Wants(string group) => _mode == group || _mode == "all";
 
     /// <summary>
-    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c>）：精确模式名匹配、自带素材与流程，
+    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c>）：精确模式名匹配、自带素材与流程，
     /// 不并入 <c>all</c>（现有 <c>all</c> 五组连跑在该模拟器上偶发 SIGSEGV）。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input";
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage";
 }

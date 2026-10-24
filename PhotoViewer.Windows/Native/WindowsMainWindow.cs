@@ -16,6 +16,7 @@ using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -76,6 +77,7 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _sized;
     private bool _isFullScreen;
     private XamlRoot? _xamlRoot;
+    private readonly IViewStateStore _viewState;
     private bool _preferencesLoaded;
     private string _lastFullError = string.Empty;
 
@@ -83,9 +85,11 @@ internal sealed partial class WindowsMainWindow : Window
     /// 创建主窗口。
     /// </summary>
     /// <param name="main">主视图模型</param>
-    public WindowsMainWindow(MainViewModel main)
+    /// <param name="viewState">栏位显隐的界面状态存储(与设置文档分开)</param>
+    public WindowsMainWindow(MainViewModel main, IViewStateStore viewState)
     {
         _main = main;
+        _viewState = viewState;
         Title = WindowTitle;
 
         _photo = new WindowsPhotoView();
@@ -360,31 +364,36 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 打开外部传入的路径(命令行/拖放/文件关联):按入参顺序取首个可打开项,其余忽略(OPEN-01)。
-    /// 文件夹进入文件夹模式,图片进父文件夹并选中。
+    /// 打开外部传入的路径(命令行/验收):按 file/dir 构造本地引用后交给共享打开协调器,
+    /// 一批只取首个可打开项(OPEN-01);等待打开完成,供验收与命令行使用。
     /// </summary>
     /// <param name="paths">路径集合</param>
-    public async Task OpenPathsAsync(IEnumerable<string> paths)
+    /// <returns>本批处理完成(成功、重复激活或失败提示已上报)后结束的任务。</returns>
+    public Task OpenPathsAsync(IEnumerable<string> paths)
+        => OpenPathsAsync(paths, OpenRequestSource.CommandLine);
+
+    /// <summary>同上,由调用方给出请求来源(命令行 / 拖放)。</summary>
+    /// <param name="paths">路径集合</param>
+    /// <param name="source">请求来源</param>
+    /// <returns>本批处理完成后的任务。</returns>
+    internal Task OpenPathsAsync(IEnumerable<string> paths, OpenRequestSource source)
     {
-        foreach (var path in paths)
+        var items = WindowsOpenPaths.FromPaths(paths);
+        // 等待处理完成:验收与命令行依赖"打开结束后再断言",协调器内部仍按共享规则串行。
+        return items.Count == 0
+            ? Task.CompletedTask
+            : _main.OpenCoordinator.PublishAndWaitAsync(items, source);
+    }
+
+    /// <summary>把主窗口前置(重复激活 / 无路径的再次启动);最小化时先还原。</summary>
+    internal void BringToFront()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
         {
-            if (System.IO.File.Exists(path))
-            {
-                if (!_main.FolderVM.IsImageFile(System.IO.Path.GetFileName(path)))
-                {
-                    continue;
-                }
-
-                await _main.FolderVM.OpenExternalFilesAsync(new[] { (IFileRef)new LocalFileRef(path) });
-                return;
-            }
-
-            if (System.IO.Directory.Exists(path))
-            {
-                await _main.FolderVM.OpenFolderAsync(new LocalFolderRef(path));
-                return;
-            }
+            presenter.Restore();
         }
+
+        Activate();
     }
 
     /// <summary>
@@ -707,15 +716,14 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>读取栏位显隐的平台偏好(SHELL-04);缺失时保留共享默认值。</summary>
     private void LoadUiPreferences()
     {
-        var (showFilm, showControls) = WindowsNativePreferences.Load();
-        if (showFilm.HasValue)
+        if (_viewState.GetBool(WindowsNativePreferences.ShowFilmKey) is { } showFilm)
         {
-            _main.IsThumbnailViewVisible = showFilm.Value;
+            _main.IsThumbnailViewVisible = showFilm;
         }
 
-        if (showControls.HasValue)
+        if (_viewState.GetBool(WindowsNativePreferences.ShowControlsKey) is { } showControls)
         {
-            _main.IsControlViewVisible = showControls.Value;
+            _main.IsControlViewVisible = showControls;
         }
 
         _preferencesLoaded = true;
@@ -729,7 +737,8 @@ internal sealed partial class WindowsMainWindow : Window
             return;
         }
 
-        WindowsNativePreferences.Save(_main.IsThumbnailViewVisible, _main.IsControlViewVisible);
+        _viewState.SetBool(WindowsNativePreferences.ShowFilmKey, _main.IsThumbnailViewVisible);
+        _viewState.SetBool(WindowsNativePreferences.ShowControlsKey, _main.IsControlViewVisible);
     }
 
     /// <summary>按可用宽度落相似面板宽度(SIM-01/SIM-07):行布局取共享 RowWidth 并夹到一半。</summary>
@@ -969,7 +978,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <param name="file">写回失败的照片</param>
     /// <param name="rating">本次请求的星级(文案由共享 StatusMessages 统一,不再回显)</param>
     private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name));
+        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError));
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文</param>
@@ -1188,7 +1197,7 @@ internal sealed partial class WindowsMainWindow : Window
         e.AcceptedOperation = DataPackageOperation.Copy;
     }
 
-    /// <summary>拖放落下:统一走外部打开流程。</summary>
+    /// <summary>拖放落下:与命令行同一条协调器入口,来源记为拖放。</summary>
     private async void OnDrop(object sender, DragEventArgs e)
     {
         try
@@ -1205,7 +1214,7 @@ internal sealed partial class WindowsMainWindow : Window
                 return;
             }
 
-            await OpenPathsAsync(paths);
+            await OpenPathsAsync(paths, OpenRequestSource.DragDrop);
         }
         catch (Exception ex)
         {

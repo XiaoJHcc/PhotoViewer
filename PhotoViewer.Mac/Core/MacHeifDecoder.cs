@@ -20,9 +20,18 @@ public sealed class MacHeifDecoder : IHeifDecoder
     /// 非空走编解码器级子采样(CGImageSourceCreateThumbnailAtIndex,省解码成本与瞬时峰值)。
     /// </summary>
     public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
-        => Task.Run(() => maxSize.HasValue
-            ? DecodeSubsampledWithImageIO(file.PathKey, maxSize.Value)
-            : DecodeWithImageIO(file.PathKey, null));
+    {
+        // ImageIO 只接受真实文件路径；非本地来源明确跳过，不用 StorageId 冒充路径。
+        if (file.TryGetLocalPath() is not { Length: > 0 } path)
+        {
+            Console.WriteLine($"[MacHeif] 非本地存储项无法用 ImageIO 解码：{file.Name}");
+            return Task.FromResult<DecodedImage?>(null);
+        }
+
+        return Task.Run(() => maxSize.HasValue
+            ? DecodeSubsampledWithImageIO(path, maxSize.Value)
+            : DecodeWithImageIO(path, null));
+    }
 
     /// <summary>
     /// 代理图子采样解码:ImageIO thumbnail API,从原图渲染到长边 ≤ maxSize(不吃内嵌小图),

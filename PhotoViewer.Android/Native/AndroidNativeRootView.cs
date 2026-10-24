@@ -502,7 +502,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
         RefreshControlBarHard();
         OnPhotoViewportChanged();
-        Console.WriteLine($"[Native] 主图加载：{file.Name}（{file.File.PathKey}）");
+        Console.WriteLine($"[Native] 主图加载：{file.Name}（{file.File.StorageId.Value}）");
         _session.SetFile(file.File);
         _photo.SetImage(_session.Image, _session.Generation);
         UpdateHint();
@@ -758,7 +758,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
     private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name), DesignTokens.MotionStatusToastDuration);
+        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError), DesignTokens.MotionStatusToastDuration);
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文。</param>

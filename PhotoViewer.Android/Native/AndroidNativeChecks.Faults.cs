@@ -152,11 +152,11 @@ internal static partial class AndroidNativeChecks
         WriteCheckJpeg(path, 800, 600, rating: 0);
         var target = new AndroidFileRef(path);
         await main.FolderVM.OpenImageAsync(target);
-        await WaitAsync(() => main.CurrentFile?.File.PathKey == target.PathKey && session.Image != null, "外部存储素材上屏", 20000);
+        await WaitAsync(() => main.CurrentFile?.File.StorageId.Value == target.StorageId.Value && session.Image != null, "外部存储素材上屏", 20000);
 
         var file = main.CurrentFile!;
         await main.SetRatingAsync(file, 4);
-        int? readBack = await XmpWriter.ReadRatingAsync(new AndroidFileRef(path));
+        int readBack = (await XmpRatingReader.ReadAsync(new AndroidFileRef(path))).ValueOrZero;
         byte[] bytes = File.ReadAllBytes(path);
         bool xmpMarker = Encoding.ASCII.GetString(bytes, 0, Math.Min(bytes.Length, 4096))
             .Contains("xmp:Rating=\"4\"", StringComparison.Ordinal);
@@ -230,8 +230,8 @@ internal static partial class AndroidNativeChecks
                 && root.StatusVisibleForChecks && root.StatusTextForChecks == message,
                 $"message={message} visible={root.StatusVisibleForChecks} status={root.StatusTextForChecks}");
             Check("OPEN-03 枚举失败回退单图",
-                main.CurrentFile?.File.PathKey == target.PathKey && main.FolderVM.AllFiles.Count == 1,
-                $"current={main.CurrentFile?.File.PathKey} count={main.FolderVM.AllFiles.Count} expected={target.PathKey}");
+                main.CurrentFile?.File.StorageId.Value == target.StorageId.Value && main.FolderVM.AllFiles.Count == 1,
+                $"current={main.CurrentFile?.File.StorageId.Value} count={main.FolderVM.AllFiles.Count} expected={target.StorageId.Value}");
         }
         finally
         {
@@ -293,6 +293,7 @@ internal static partial class AndroidNativeChecks
         string? original = prefs.GetString(settingsKey, null);
         var backupKeys = new List<string>();
         SettingsViewModel? viewModel = null;
+        SettingsRepository? repository = null;
         AndroidSettingsStorage.UseIsolatedProfile("checks");
         try
         {
@@ -302,11 +303,16 @@ internal static partial class AndroidNativeChecks
                 editor.Apply();
             }
 
-            var service = new SettingsService(new AndroidSettingsStorage());
-            viewModel = new SettingsViewModel(service, null, applyRuntimeSettings: false);
+            repository = new SettingsRepository(
+                new AndroidSettingsStorage(),
+                new AndroidPerformanceBudget(),
+                appleKeyboard: false,
+                automaticCacheLimit: true);
+            await repository.InitializeAsync();
+            viewModel = new SettingsViewModel(repository, null);
             await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置状态行", 15000);
 
-            string? error = service.LastLoadError;
+            string? error = repository.LastLoadError;
             bool backupOk = error != null && error.Contains(".corrupt-", StringComparison.Ordinal);
             string? backupKey = null;
             if (backupOk)
@@ -317,7 +323,7 @@ internal static partial class AndroidNativeChecks
             bool stored = backupKey != null && prefs.GetString(backupKey, null) != null;
             if (stored) backupKeys.Add(backupKey!);
             Check("SETTINGS-14 损坏设置备份", backupOk && stored,
-                $"error={error} backupKey={backupKey} stored={stored}");
+                $"outcome={repository.LoadOutcome} error={error} backupKey={backupKey} stored={stored}");
 
             Check("SETTINGS-14 状态行可见",
                 viewModel.PersistenceStatus != null && viewModel.PersistenceStatus.Contains("损坏", StringComparison.Ordinal),
@@ -456,17 +462,17 @@ internal static partial class AndroidNativeChecks
         }
     }
 
-    /// <summary>OPEN-06：ACTION_VIEW 外部打开要定位到目标文件（与 SAF/本地路径同一 PathKey 口径）。</summary>
+    /// <summary>OPEN-06：ACTION_VIEW 外部打开要经请求通道定位到目标文件（与 SAF/本地路径同一 StorageId 口径）。</summary>
     private static async Task CheckExternalOpenAsync()
     {
         var activity = _activity!;
         var main = _main!;
         string path = EnsureFaultGoodJpeg(activity);
-        string target = new AndroidFileRef(path).PathKey;
-        AndroidNativeShell.HandleIntent(new Intent(Intent.ActionView, AndroidUri.FromFile(new JavaFile(path))!));
-        await WaitAsync(() => main.CurrentFile?.File.PathKey == target, "外部打开定位", 15000);
-        Check("OPEN-06 外部打开定位", main.CurrentFile?.File.PathKey == target,
-            $"current={main.CurrentFile?.File.PathKey} expected={target}");
+        string target = new AndroidFileRef(path).StorageId.Value;
+        // 新链路 Intent → OpenRequestChannel → OpenCoordinator：等待本次请求处理完再断言，不靠固定延时。
+        await AndroidNativeShell.HandleIntentAsync(new Intent(Intent.ActionView, AndroidUri.FromFile(new JavaFile(path))!));
+        Check("OPEN-06 外部打开定位", main.CurrentFile?.File.StorageId.Value == target,
+            $"current={main.CurrentFile?.File.StorageId.Value} expected={target}");
     }
 
     /// <summary>把截图/素材目录权限改成只读或可写（评分写回失败的注入手段）。</summary>
@@ -520,16 +526,16 @@ internal static partial class AndroidNativeChecks
         public string Name => inner.Name;
         /// <summary>平台路径。</summary>
         public Uri Path => inner.Path;
-        /// <summary>路径键。</summary>
-        public string PathKey => inner.PathKey;
         /// <summary>本地路径。</summary>
         public string? TryGetLocalPath() => inner.TryGetLocalPath();
         /// <summary>读取流。</summary>
-        public Task<Stream> OpenReadAsync() => inner.OpenReadAsync();
+        public Task<Stream> OpenReadAsync(CancellationToken cancellationToken = default) => inner.OpenReadAsync(cancellationToken);
         /// <summary>基本属性。</summary>
-        public Task<StorageItemBasicProperties> GetBasicPropertiesAsync() => inner.GetBasicPropertiesAsync();
+        public Task<StorageItemBasicProperties> GetBasicPropertiesAsync(CancellationToken cancellationToken = default)
+            => inner.GetBasicPropertiesAsync(cancellationToken);
         /// <summary>始终返回注入的失败父目录。</summary>
-        public Task<IFolderRef?> GetParentAsync() => Task.FromResult<IFolderRef?>(parent);
+        public Task<IFolderRef?> GetParentAsync(CancellationToken cancellationToken = default)
+            => Task.FromResult<IFolderRef?>(parent);
     }
 
     /// <summary>枚举必然抛异常的文件夹引用（STATE-02 / OPEN-03 注入）。</summary>
@@ -539,13 +545,12 @@ internal static partial class AndroidNativeChecks
         public string Name => name;
         /// <summary>平台路径。</summary>
         public Uri Path { get; } = new(path);
-        /// <summary>路径键。</summary>
-        public string PathKey => path;
         /// <summary>本地路径。</summary>
         public string? TryGetLocalPath() => path;
 
         /// <summary>枚举直接抛 <see cref="UnauthorizedAccessException"/>。</summary>
-        public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync()
+        public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync(
+            [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken = default)
         {
             await Task.Yield();
             throw new UnauthorizedAccessException("injected folder enumeration failure");

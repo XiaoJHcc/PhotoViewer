@@ -10,7 +10,7 @@ using System.Text.Json.Serialization;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Color;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Database;
 
 namespace PhotoViewer.Mac.Native;
@@ -130,9 +130,12 @@ public static class NativeAcceptanceRunner
                 }
             }
             window.Main.CurrentFile = null;
-            ExternalOpenService.PublishFile(new Uri(first.File.PathKey), "NativeSmoke");
-            await WaitAsync(() => window.Main.CurrentFile?.File.PathKey == first.File.PathKey && window.Session.Image != null, "外部文件队列打开");
-            results.Add(new NativeCheck { Check = "external-open-service", File = first.Name });
+            // 外部打开走与 Finder/命令行同一个协调器入口；等待本批处理完成后再断言（不靠固定延时）。
+            await window.Main.OpenCoordinator.PublishAndWaitAsync(
+                [new LocalFileRef(first.File.RequireLocalPath())],
+                OpenRequestSource.Automation);
+            await WaitAsync(() => window.Main.CurrentFile?.File.StorageId == first.File.StorageId && window.Session.Image != null, "外部文件队列打开");
+            results.Add(new NativeCheck { Check = "external-open-request", File = first.Name });
             await WaitAsync(() => window.Main.FileVM.ThumbnailList.FilteredFiles.Count == files.Length, "外部打开后文件列表");
             foreach (var mode in new[] { LayoutMode.Row, LayoutMode.Col, LayoutMode.Auto })
             {
@@ -154,31 +157,45 @@ public static class NativeAcceptanceRunner
             settings.WorkingSettings.UseAppleKeyboard = !keyboardBefore;
             if (window.Main.Settings.BitmapCacheMaxMemory != memoryBefore || BitmapLoader.MaxCacheSize != memoryBefore * 1024L * 1024L || PhotoViewer.Core.Input.AppleKeyboardMapping.UseAppleKeyboard != keyboardBefore)
                 throw new InvalidOperationException("设置工作副本提前影响运行时配置");
-            settings.CloseWindow();
-            if (window.Main.Settings.BitmapCacheMaxMemory != memoryBefore + 1 || BitmapLoader.MaxCacheSize != (memoryBefore + 1) * 1024L * 1024L || PhotoViewer.Core.Input.AppleKeyboardMapping.UseAppleKeyboard == keyboardBefore)
-                throw new InvalidOperationException("设置关闭回写未应用运行时配置");
+            await settings.CloseWindowAsync();
+            await WaitAsync(
+                () => window.Main.Settings.BitmapCacheMaxMemory == memoryBefore + 1
+                    && BitmapLoader.MaxCacheSize == (memoryBefore + 1) * 1024L * 1024L
+                    && PhotoViewer.Core.Input.AppleKeyboardMapping.UseAppleKeyboard != keyboardBefore,
+                "设置关闭回写未应用运行时配置");
             results.Add(new NativeCheck { Check = "settings-working-copy-isolation", JsonRoundTrip = true });
             var snapshot = window.Main.Settings.CreateSnapshot();
-            string serialized = JsonSerializer.Serialize(snapshot, SettingsJsonContext.Default.SettingsModel);
-            if (JsonSerializer.Deserialize(serialized, SettingsJsonContext.Default.SettingsModel) == null) throw new InvalidOperationException("设置序列化失败");
+            string serialized = SettingsDocumentCodec.Serialize(snapshot, BitmapLoader.AutomaticCacheLimit);
+            var decoded = SettingsDocumentCodec.Read(serialized, snapshot, BitmapLoader.AutomaticCacheLimit);
+            if (decoded.Status != SettingsDocumentReadStatus.Loaded || !decoded.Settings!.ContentEquals(snapshot))
+                throw new InvalidOperationException("设置序列化失败");
             await Task.Delay(800);
             string persisted = await File.ReadAllTextAsync(System.IO.Path.Combine(output, "settings-smoke.json"));
-            var restored = JsonSerializer.Deserialize(persisted, SettingsJsonContext.Default.SettingsModel) ?? throw new InvalidOperationException("设置落盘为空");
-            if (JsonSerializer.Serialize(restored, SettingsJsonContext.Default.SettingsModel) != serialized) throw new InvalidOperationException("设置落盘与关闭回写不一致");
+            var restored = SettingsDocumentCodec.Read(persisted, snapshot, BitmapLoader.AutomaticCacheLimit);
+            if (restored.Status != SettingsDocumentReadStatus.Loaded || !restored.Settings!.ContentEquals(snapshot))
+                throw new InvalidOperationException("设置落盘与关闭回写不一致");
             results.Add(new NativeCheck { Check = "settings", Categories = 5, JsonRoundTrip = true });
-            bool generatedFixture = first.File.PathKey.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-fixtures" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
-            bool rawCopy = first.File.PathKey.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-raw" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            string firstPath = first.File.RequireLocalPath();
+            bool generatedFixture = firstPath.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-fixtures" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            bool rawCopy = firstPath.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-raw" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
             if (generatedFixture || rawCopy)
             {
                 await window.RateAsync(first, 3);
-                var exif = await ExifLoader.LoadExifDataAsync(new MacFileRef(first.File.PathKey));
+                var exif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(firstPath));
                 if (exif?.Rating != 3) throw new InvalidOperationException("原生评分写回读环失败");
                 results.Add(new NativeCheck { Check = rawCopy ? "rating-raw-in-place" : "rating-in-place", File = first.Name, JsonRoundTrip = true });
                 string sidecarPath = System.IO.Path.Combine(output, "rating-service.xmp");
                 await File.WriteAllTextAsync(sidecarPath, "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"0\"/></rdf:RDF></x:xmpmeta>");
-                if (!await XmpWriter.WriteRatingAsync(new MacFileRef(sidecarPath), 4, true) || !(await File.ReadAllTextAsync(sidecarPath)).Contains("xmp:Rating=\"4\"", StringComparison.Ordinal))
-                    throw new InvalidOperationException("独立 XMP 文件原位写回失败");
-                results.Add(new NativeCheck { Check = "rating-existing-xmp-service", JsonRoundTrip = true });
+                // 只断言语义：独立 .xmp 经评分存储读→写→再读得到新星级，不依赖写入器的字符串形式。
+                var sidecarStore = XmpRatingStoreFactory.Create(new LocalFileRef(sidecarPath));
+                var beforeSidecar = await sidecarStore.ReadAsync();
+                if (beforeSidecar.State != XmpRatingState.Rated || beforeSidecar.Value != 0 || beforeSidecar.Source != XmpRatingSource.Sidecar)
+                    throw new InvalidOperationException($"独立 XMP 文件初始评分读取异常：{beforeSidecar.State}/{beforeSidecar.Value}");
+                await sidecarStore.WriteAsync(4, safeMode: true);
+                var afterSidecar = await sidecarStore.ReadAsync();
+                if (afterSidecar.State != XmpRatingState.Rated || afterSidecar.Value != 4 || afterSidecar.Source != XmpRatingSource.Sidecar)
+                    throw new InvalidOperationException($"独立 XMP 文件评分写回后读取异常：{afterSidecar.State}/{afterSidecar.Value}");
+                results.Add(new NativeCheck { Check = "rating-existing-xmp-store", JsonRoundTrip = true });
                 using var analysis = ColorEngine.ToAnalysisSrgb8(window.Session.Image!);
                 var cv = await CvGridExtractor.ExtractAsync(analysis);
                 if (cv.Encode().Length == 0) throw new InvalidOperationException("CV 输出为空");

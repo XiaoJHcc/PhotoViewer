@@ -5,6 +5,7 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -88,7 +89,7 @@ internal static class iOSNativeSimilarityCheck
                     main.FileVM.FilterBar.SelectedRatingFilter = "All";
                     EnsureJpegEnabled(main);
                 });
-                await main.FolderVM.OpenFolderAsync(new iOSFolderRef(workspace));
+                await main.FolderVM.OpenFolderAsync(new LocalFolderRef(workspace));
                 await WaitAsync(() => main.FolderVM.AllFiles.Count >= 3, "工作副本枚举");
                 await WaitAsync(() => main.CurrentFile != null && session.Image != null, "首图解码");
                 await SettleAsync(root);
@@ -282,7 +283,7 @@ internal static class iOSNativeSimilarityCheck
         File.Copy(sources[1], second, true);
         try
         {
-            await main.FolderVM.OpenImageAsync(new iOSFileRef(first));
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(first));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(first), "探针 A 成为当前照片");
             var similarity = main.FileVM.SimilarityPanel;
             similarity.StartIndexingCommand();
@@ -322,7 +323,11 @@ internal static class iOSNativeSimilarityCheck
 
     /// <summary>收尾时把设置同步落盘，避免验收进程被强杀导致回写丢失。</summary>
     private static void FlushSettings(MainViewModel main)
-        => PhotoViewer.Core.Settings.SettingsService.Instance.SaveAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+    {
+        var repository = main.SettingsRepository;
+        repository.CommitAsync(main.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+        repository.FlushAsync().GetAwaiter().GetResult();
+    }
 
     /// <summary>把夹具复制成 App 自建工作副本（唯一名字，避免与既有入库指纹混淆），只保留 3 张控制耗时。</summary>
     /// <param name="fixtures">源目录内的 jpg 列表。</param>
@@ -346,7 +351,7 @@ internal static class iOSNativeSimilarityCheck
     /// <param name="control">进入时的控制栏可见性。</param>
     /// <param name="similarity">进入时的相似面板状态。</param>
     /// <param name="originalFile">进入时的当前照片。</param>
-    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, SettingsModel snapshot,
+    private static async Task RestoreAsync(iOSNativeRootViewController root, MainViewModel main, AppSettings snapshot,
         bool analysis, bool film, bool control, bool similarity, ImageFile? originalFile)
     {
         await UiDispatcher.InvokeAsync(() =>

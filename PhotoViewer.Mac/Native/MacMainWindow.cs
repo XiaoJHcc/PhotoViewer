@@ -6,7 +6,6 @@ using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
-using PhotoViewer.Mac.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
@@ -59,7 +58,6 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSObject _scrollObserver;
     private readonly NSObject _liveScrollObserver;
     private readonly NSObject _inputMonitor;
-    private readonly SemaphoreSlim _openGate = new(1, 1);
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
     private string? _lastFullError;
@@ -226,7 +224,7 @@ public sealed class MacMainWindow : IDisposable
         Session.Changed += OnImageChanged;
         Session.Notice += ShowToast;
         _root.Resized = Layout;
-        _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths);
+        _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths, OpenRequestSource.DragDrop);
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
@@ -239,7 +237,8 @@ public sealed class MacMainWindow : IDisposable
         _root.Menu = ContextMenu();
         Photo.Menu = _root.Menu;
         Layout();
-        ExternalOpenService.RegisterHandler(HandleExternalOpenAsync);
+        // 重复外部激活（再次打开当前目录/当前照片）只前置窗口；协调器不重新打开、不重新适应。
+        _main.OpenCoordinator.RepeatActivation += BringToFront;
         Window.MakeKeyAndOrderFront(null);
         if (!automatedValidation && NSUserDefaults.StandardUserDefaults.BoolForKey("PhotoViewer.Native.Fullscreen"))
             UiDispatcher.Post(() => Window.ToggleFullScreen(null));
@@ -611,7 +610,7 @@ public sealed class MacMainWindow : IDisposable
         await _main.SetRatingAsync(file, rating);
         if (file.Rating != rating)
         {
-            string message = StatusMessages.RatingWriteFailed(file.Name);
+            string message = StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError);
             Console.Error.WriteLine($"[Native] {message}");
             ShowToast(message);
         }
@@ -968,32 +967,26 @@ public sealed class MacMainWindow : IDisposable
             ShowToast(StatusMessages.OpenFailed(null, exception.Message));
         }
     }
-    /// <summary>串行接收 Finder/命令行/拖入路径，确保最后选中的是请求目标。</summary>
-    public async Task OpenPathsAsync(IEnumerable<string> paths)
+    /// <summary>命令行等桌面入口按路径打开；一批只取首个可打开目标（OPEN-01）。</summary>
+    public Task OpenPathsAsync(IEnumerable<string> paths) => OpenPathsAsync(paths, OpenRequestSource.CommandLine);
+
+    /// <summary>把路径转成本地引用后交共享协调器；等待本批处理完成，供命令行与验收断言。</summary>
+    /// <param name="paths">候选路径。</param>
+    /// <param name="source">请求来源（命令行 / 拖放 / 系统打开）。</param>
+    internal Task OpenPathsAsync(IEnumerable<string> paths, OpenRequestSource source)
     {
-        await _openGate.WaitAsync();
-        string? targetName = null;
-        try
-        {
-            foreach (var path in paths)
-            {
-                targetName = System.IO.Path.GetFileName(path.TrimEnd(System.IO.Path.DirectorySeparatorChar));
-                if (Directory.Exists(path)) { Photo.FitToView(); await _main.FolderVM.OpenFolderAsync(new MacFolderRef(path)); break; }
-                if (File.Exists(path) && _main.FolderVM.IsImageFile(System.IO.Path.GetFileName(path))) { Photo.FitToView(); await _main.FolderVM.OpenImageAsync(new MacFileRef(path)); break; }
-            }
-            Window.MakeKeyAndOrderFront(null);
-        }
-        catch (Exception exception)
-        {
-            Console.Error.WriteLine(exception);
-            if (_automatedValidation) throw new InvalidOperationException(exception.Message);
-            ShowToast(StatusMessages.OpenFailed(targetName, exception.Message));
-        }
-        finally { _openGate.Release(); }
+        var items = MacOpenPaths.FromPaths(paths);
+        return items.Count == 0
+            ? Task.CompletedTask
+            : _main.OpenCoordinator.PublishAndWaitAsync(items, source);
     }
-    /// <summary>共享外部打开桥接消费入口。</summary>
-    private Task HandleExternalOpenAsync(ExternalOpenRequest request)
-        => UiDispatcher.InvokeAsync(() => OpenPathsAsync(request.Items.Select(item => item.Path.LocalPath))).Unwrap();
+
+    /// <summary>重复激活当前目标（再次打开同一目录/照片）：只把已有窗口前置，不重新打开（OPEN-06）。</summary>
+    internal void BringToFront()
+    {
+        if (Window.IsMiniaturized) Window.Deminiaturize(null);
+        Window.MakeKeyAndOrderFront(null);
+    }
 
     /// <summary>系统应用菜单，所有查看操作共享与按钮相同的执行入口。</summary>
     private void BuildMenus()
@@ -1068,10 +1061,12 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>
     private void OnFitToViewRequested() => Photo.FitToView();
 
-    /// <summary>释放窗口观察者与渲染器，取消所有在途展示任务。</summary>
+    /// <summary>释放窗口观察者与渲染器，取消所有在途展示任务；重复调用安全。</summary>
     public void Dispose()
     {
+        if (_disposed) return;
         _disposed = true;
+        _main.OpenCoordinator.RepeatActivation -= BringToFront;
         CancelFilmstripScroll();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();

@@ -10,7 +10,6 @@ using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
-using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
 using ReactiveUI;
@@ -26,6 +25,12 @@ internal static class WindowsNativeApplication
 {
     /// <summary>主窗口句柄;文件选择器与设置窗口尺寸在窗口创建后读取。</summary>
     internal static IntPtr WindowHandle { get; set; }
+
+    /// <summary>
+    /// 启动期外部打开通道:命令行、系统激活与拖放都投到这里,由共享 <c>OpenCoordinator</c> 唯一消费者
+    /// 顺序处理,界面就绪前不丢请求。WinUI 应用对象只创建一次,通道随进程存活。
+    /// </summary>
+    internal static OpenRequestChannel OpenRequests { get; } = new();
 
     /// <summary>本轮是否为隔离运行(验收 / 压测 / 性能探针):设置、数据库与日志都落到隔离目录。</summary>
     internal static bool IsolatedMode { get; private set; }
@@ -44,6 +49,21 @@ internal static class WindowsNativeApplication
 
     /// <summary>隔离产物目录(设置、数据库、日志、报告都在这里)。</summary>
     internal static string IsolatedOutputDirectory => WindowsMainWindow.SmokeOutputDirectory;
+
+    /// <summary>隔离运行的设置文档：与数据库、日志同在本轮验收输出目录。</summary>
+    internal static string IsolatedSettingsFilePath => Path.Combine(
+        WindowsMainWindow.SmokeOutputDirectory,
+        "settings-smoke.json");
+
+    /// <summary>
+    /// 本进程的设置文档路径：隔离运行落在验收输出目录(启动时每轮重置)，普通运行落在用户本地应用数据。
+    /// </summary>
+    internal static string SettingsFilePath => IsolatedMode
+        ? IsolatedSettingsFilePath
+        : Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "PhotoViewer",
+            "settings.json");
 
     /// <summary>本进程的预算源(含低内存监视线程);重复注入只创建一次。</summary>
     private static WindowsMemoryBudgetProvider? s_memoryBudgetProvider;
@@ -82,6 +102,20 @@ internal static class WindowsNativeApplication
         WinRT.ComWrappersSupport.InitializeComWrappers();
         NativeStartupLog.Write("com wrappers ready");
 
+        // 单实例在 Application.Start 之前决定:二次启动只把激活转给主实例后退出,
+        // 不创建窗口/视图模型,也不重复投递本进程的命令行参数。
+        // 验收/压测/探针是隔离运行,可能和用户正在用的实例并行,不参与单实例键,
+        // 免得把测试进程的启动参数转发进用户窗口、或让测试被静默转发掉。
+        if (IsolatedMode)
+        {
+            NativeStartupLog.Write("single instance skipped: isolated run");
+        }
+        else if (!WindowsSingleInstance.TryBecomePrimary(OpenRequests))
+        {
+            NativeStartupLog.Write("second instance: activation redirected to primary, exiting");
+            return;
+        }
+
         Application.Start(p =>
         {
             try
@@ -100,7 +134,7 @@ internal static class WindowsNativeApplication
                     .BuildApp();
                 NativeStartupLog.Write("reactiveui ready");
 
-                _ = new App(args);
+                _ = new App(args, OpenRequests);
                 NativeStartupLog.Write("application created");
             }
             catch (Exception ex)
@@ -135,14 +169,11 @@ internal static class WindowsNativeApplication
         BitmapLoader.InitializePresentationDecoder(new WindowsPresentationDecoder(), new WindowsPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new WindowsPerformanceBudget());
         MemoryGovernor.Initialize(s_memoryBudgetProvider ??= new WindowsMemoryBudgetProvider());
-        XmpWriter.Initialize(new WindowsXmpWriter());
+        // 评分回写由共享 RatingService + XmpRatingStoreFactory 走强类型路径,旧 IXmpPlatformWriter 门面不再注入。
         if (isolated)
         {
+            // 设置仓库由 App 在创建视图模型前建立并初始化，这里只重置隔离目录里的设置与数据库。
             WindowsMainWindow.ConfigureSmokeStorage();
-        }
-        else
-        {
-            SettingsService.ConfigureStorage(SettingsService.CreateFileStorage());
         }
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_DML());
         NativeStartupLog.Write("facades ready");

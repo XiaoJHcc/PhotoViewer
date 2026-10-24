@@ -243,7 +243,7 @@ internal sealed class AndroidThumbnailCard : View
         if (!image.TryAcquire()) return _thumbnail;
         try
         {
-            _thumbnail = AndroidBitmapConverter.FromDecodedImage(_file.File.PathKey, image);
+            _thumbnail = AndroidBitmapConverter.FromDecodedImage(_file.File.StorageId.Value, image);
             _thumbnailSource = image;
             return _thumbnail;
         }

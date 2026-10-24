@@ -214,7 +214,7 @@ internal static class NativeSettingsAcceptance
         settingsWindow.MakeFirstResponder(lastField);
         lastField.SelectText(lastField);
         using (var text = new NSString("1333")) ((NSTextView)settingsWindow.FirstResponder!).InsertText(text, new NSRange(nint.MaxValue, 0));
-        presenter.CloseWindow();
+        await presenter.CloseWindowAsync();
         await Task.Delay(300);
         if (!main.Main.Settings.ScalePresets.Any(item => item.Text == "1333")) throw new InvalidOperationException("关闭窗口丢失未提交预设草稿");
         checks.Add("preset close: uncommitted native editor draft is applied once and survives reopen");
@@ -227,7 +227,7 @@ internal static class NativeSettingsAcceptance
         await Task.Delay(200);
         presenter.RenderTo(Path.Combine(output, "settings-reopen.png"));
         presenter.WorkingSettings.ScalePresets = new(originalPresets.Select(text => new PhotoViewer.ViewModels.Settings.SettingsViewModel.ScalePreset(text)));
-        presenter.CloseWindow();
+        await presenter.CloseWindowAsync();
         checks.Add("close applies working copy / reopen restores all rows");
         await File.WriteAllLinesAsync(Path.Combine(output, "settings-ui-checks.txt"), checks);
     }

@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
@@ -13,6 +14,7 @@ internal sealed class WindowsNativeSettingsPresenter : INativeSettingsPresenter
     private readonly Func<IntPtr> _ownerHandle;
     private NativeSettingsSession? _session;
     private WindowsSettingsWindow? _window;
+    private TaskCompletionSource _closed = CompletedSource();
 
     /// <summary>创建展示器。</summary>
     /// <param name="ownerHandle">主窗口句柄提供者(取显示器 DPI 与工作区)</param>
@@ -35,6 +37,7 @@ internal sealed class WindowsNativeSettingsPresenter : INativeSettingsPresenter
             return true;
         }
 
+        _closed = CompletedSource();
         _session = new NativeSettingsSession(settings);
         _window = new WindowsSettingsWindow(_session.WorkingSettings, settings, _ownerHandle());
         _window.Closed += OnWindowClosed;
@@ -42,8 +45,24 @@ internal sealed class WindowsNativeSettingsPresenter : INativeSettingsPresenter
         return true;
     }
 
-    /// <summary>主窗口关闭或退出前关闭设置窗口,保证工作副本回写一次。</summary>
-    public void CloseIfOpen() => _window?.Close();
+    /// <summary>关闭设置窗口并等待工作副本回写完成;未打开时立即返回。</summary>
+    /// <returns>回写与释放结束后的任务。</returns>
+    public Task CloseIfOpenAsync()
+    {
+        var window = _window;
+        if (window is null)
+        {
+            return _closed.Task;
+        }
+
+        // 退出路径不等 Closed 事件：先摘掉会话与订阅，再关窗，回写不受窗口事件调度影响。
+        var session = _session;
+        _session = null;
+        window.Closed -= OnWindowClosed;
+        _window = null;
+        window.Close();
+        return CompleteAsync(session);
+    }
 
     /// <summary>窗口关闭:一次性回写并释放工作副本。</summary>
     /// <param name="sender">窗口</param>
@@ -56,8 +75,46 @@ internal sealed class WindowsNativeSettingsPresenter : INativeSettingsPresenter
             _window = null;
         }
 
-        _session?.Apply();
-        _session?.Dispose();
+        var session = _session;
         _session = null;
+        _ = CompleteAsync(session);
+    }
+
+    private Task CompleteAsync(NativeSettingsSession? session)
+    {
+        if (session is null)
+        {
+            _closed.TrySetResult();
+            return Task.CompletedTask;
+        }
+
+        return ApplyAndDisposeAsync(session, _closed);
+    }
+
+    private static async Task ApplyAndDisposeAsync(NativeSettingsSession session, TaskCompletionSource closed)
+    {
+        try
+        {
+            if (!await session.ApplyAsync().ConfigureAwait(false))
+            {
+                NativeStartupLog.Write("设置回写未落盘，保留 last good 设置");
+            }
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("设置回写", ex);
+        }
+        finally
+        {
+            session.Dispose();
+            closed.TrySetResult();
+        }
+    }
+
+    private static TaskCompletionSource CompletedSource()
+    {
+        var source = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        source.TrySetResult();
+        return source;
     }
 }

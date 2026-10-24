@@ -6,7 +6,8 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
-using PhotoViewer.Mac.Core;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
 using SkiaSharp;
 
@@ -130,13 +131,13 @@ internal static class NativeToolbarAcceptance
 
             window.Main.CurrentFile = first;
             await Task.Delay(200);
-            if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(first.File.PathKey)) == "native-p2-toolbar-fixtures")
+            if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(first.File.RequireLocalPath())) == "native-p2-toolbar-fixtures")
             {
                 int targetRating = first.Rating == 3 ? 2 : 3;
                 var ratingButton = window.ControlBar.Ratings[targetRating];
                 ratingButton.PerformClick(ratingButton);
                 for (int attempt = 0; attempt < 100 && first.Rating != targetRating; attempt++) await Task.Delay(50);
-                var exif = await ExifLoader.LoadExifDataAsync(new MacFileRef(first.File.PathKey));
+                var exif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(first.File.RequireLocalPath()));
                 if (first.Rating != targetRating || exif?.Rating != targetRating || window.Main.CurrentFile != first)
                     throw new InvalidOperationException("评分按钮写回/主图身份错误");
                 observations.Add($"real rating button changes owned fixture to {targetRating} stars and preserves current photo");
@@ -419,11 +420,13 @@ internal static class NativeToolbarAcceptance
         var filter = window.Main.FileVM.FilterBar;
         var thumbnailList = window.Main.FileVM.ThumbnailList;
         var entryFile = window.Main.CurrentFile ?? throw new InvalidOperationException("评分连续性回归缺少进入时的当前照片");
-        string entryPath = entryFile.File.PathKey;
+        string entryPath = entryFile.File.RequireLocalPath();
+        var entryId = entryFile.File.StorageId;
         bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
         string entryFilter = filter.SelectedRatingFilter;
         string fixtures = System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures");
         var entryRatings = new Dictionary<string, int>(StringComparer.Ordinal);
+        var entryLocalPaths = new Dictionary<string, string>(StringComparer.Ordinal);
         int entryRating = 0;
         // 星级按钮只在卡片创建时按设置显隐，故先打开胶片栏与评分组再建卡片。
         settings.ShowRating = true;
@@ -435,27 +438,32 @@ internal static class NativeToolbarAcceptance
             filter.SelectedRatingFilter = entryFilter;
             foreach (var pair in entryRatings)
             {
-                var candidate = window.Main.FolderVM.AllFiles.FirstOrDefault(item => item.File.PathKey == pair.Key);
+                var candidate = window.Main.FolderVM.AllFiles.FirstOrDefault(item => item.File.StorageId.Value == pair.Key);
                 if (candidate != null && candidate.Rating != pair.Value) await window.Main.SetRatingAsync(candidate, pair.Value);
             }
             window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
-            if (window.Main.CurrentFile?.File.PathKey != entryPath) await window.Main.FolderVM.OpenImageAsync(new MacFileRef(entryPath));
+            if (window.Main.CurrentFile?.File.StorageId != entryId) await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
         }
 
         try
         {
             // 只对自有可写副本操作：调用方传入别的图片时先切到副本目录。
-            if (!IsOwnedFixtureFile(window.Main.CurrentFile)) await window.Main.FolderVM.OpenFolderAsync(new MacFolderRef(fixtures));
+            if (!IsOwnedFixtureFile(window.Main.CurrentFile)) await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(fixtures));
             await WaitAsync(() => window.Main.CurrentFile != null && thumbnailList.FilteredFiles.Count == 3, "自有评分副本载入");
             var file = window.Main.CurrentFile!;
             if (!IsOwnedFixtureFile(file)) throw new InvalidOperationException("评分连续性回归未落在自有可写副本上");
             foreach (var candidate in window.Main.FolderVM.AllFiles)
-                entryRatings[candidate.File.PathKey] = (await ExifLoader.LoadExifDataAsync(new MacFileRef(candidate.File.PathKey)))?.Rating ?? 0;
-            entryRating = entryRatings[file.File.PathKey];
+            {
+                string candidatePath = candidate.File.RequireLocalPath();
+                string candidateKey = candidate.File.StorageId.Value;
+                entryLocalPaths[candidateKey] = candidatePath;
+                entryRatings[candidateKey] = (await ExifLoader.LoadExifDataAsync(new LocalFileRef(candidatePath)))?.Rating ?? 0;
+            }
+            entryRating = entryRatings[file.File.StorageId.Value];
             int target = entryRating == 3 ? 2 : 3;
             var other = window.Main.FolderVM.AllFiles.First(candidate => !ReferenceEquals(candidate, file));
             // 另一张副本先与当前照片同星级，才能同时构成“当前照片改星后落出筛选”和“列表里还有符合筛选的照片”。
-            if (entryRatings[other.File.PathKey] != entryRating) await window.Main.SetRatingAsync(other, entryRating);
+            if (entryRatings[other.File.StorageId.Value] != entryRating) await window.Main.SetRatingAsync(other, entryRating);
             await WaitAsync(() => file.Rating == entryRating && other.Rating == entryRating, "自有副本评级就绪");
             string key = $"Eq{entryRating}";
             filter.SelectedRatingFilter = key;
@@ -475,7 +483,7 @@ internal static class NativeToolbarAcceptance
                 throw new InvalidOperationException($"星级按钮未独立命中，点星会选中父卡片：card={cardHit?.GetType().Name ?? "null"}, window={windowHit?.GetType().Name ?? "null"}");
             star.PerformClick(star);
             await WaitAsync(() => file.Rating == target, $"胶片栏星级按钮写回 {target} 星");
-            var written = await ExifLoader.LoadExifDataAsync(new MacFileRef(file.File.PathKey));
+            var written = await ExifLoader.LoadExifDataAsync(new LocalFileRef(file.File.RequireLocalPath()));
             if (file.Rating != target || written?.Rating != target)
                 throw new InvalidOperationException($"胶片栏星级按钮未写回文件：memory={file.Rating}, file={written?.Rating}");
             if (!ReferenceEquals(window.Main.CurrentFile, file))
@@ -491,9 +499,9 @@ internal static class NativeToolbarAcceptance
                 throw new InvalidOperationException($"切走后筛选列表与 {key} 不一致：count={thumbnailList.FilteredFiles.Count}, expected={expected}");
 
             await RestoreAsync();
-            bool restored = filter.SelectedRatingFilter == entryFilter && window.Main.CurrentFile?.File.PathKey == entryPath;
+            bool restored = filter.SelectedRatingFilter == entryFilter && window.Main.CurrentFile?.File.StorageId == entryId;
             foreach (var pair in entryRatings)
-                restored &= (await ExifLoader.LoadExifDataAsync(new MacFileRef(pair.Key)))?.Rating == pair.Value;
+                restored &= (await ExifLoader.LoadExifDataAsync(new LocalFileRef(entryLocalPaths[pair.Key])))?.Rating == pair.Value;
             if (!restored)
                 throw new InvalidOperationException("评分连续性回归未还原自有副本评级与进入时的打开状态");
             observations.Add($"leaving the photo drops it from {key} with the filtered count matching the shared filter; owned fixture stars and filter restored to {entryRating}/{entryFilter}");
@@ -540,5 +548,5 @@ internal static class NativeToolbarAcceptance
 
     /// <summary>判断照片是否位于本套件自有的可写评分副本目录。</summary>
     private static bool IsOwnedFixtureFile(ImageFile? file)
-        => file != null && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file.File.PathKey)) == "native-p2-toolbar-fixtures";
+        => file != null && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file.File.RequireLocalPath())) == "native-p2-toolbar-fixtures";
 }

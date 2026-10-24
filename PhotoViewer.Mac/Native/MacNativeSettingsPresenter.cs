@@ -21,6 +21,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private SettingsViewModel? _sourceSettings;
     private bool _presenting;
     private bool _closing;
+    private Task? _closeTask;
     private int _category = -1;
     private int _recordingIndex = -1;
     private bool _recordingPrimary;
@@ -74,10 +75,11 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     internal void BeginRecording(int hotkeyIndex, bool primary) => MacSettingsNative.BeginRecording(hotkeyIndex, primary);
     /// <summary>关闭设置窗口并触发工作副本回写；从未展示过时不动 SwiftUI 侧
     /// （退出路径会调用本方法，此时不该为了关一个不存在的窗口去载入设置动态库）。</summary>
-    internal void CloseWindow()
+    internal Task CloseWindowAsync()
     {
-        if (!_presenting) return;
+        if (!_presenting) return Task.CompletedTask;
         MacSettingsNative.Close();
+        return CloseSessionAsync();
     }
     /// <summary>当前是否有已展示的设置窗口（退出路径回归读取）。</summary>
     internal bool IsPresented => _presenting;
@@ -111,13 +113,36 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) PushState();
     }
 
-    /// <summary>窗口关闭：完成一次性回写并释放工作副本，等待下次展示重建。</summary>
-    private void HandleClose()
+    /// <summary>窗口关闭回调：关闭只发起一次回写，完成前重复关闭共享同一次提交。</summary>
+    private void HandleClose() => _ = CloseSessionAsync();
+
+    /// <summary>完成一次性回写并释放工作副本；并发/重复关闭复用同一任务。</summary>
+    private Task CloseSessionAsync() => _closeTask ??= CloseSessionCoreAsync();
+
+    private async Task CloseSessionCoreAsync()
     {
         if (_closing) return;
         _closing = true;
-        _session?.Apply();
-        _session?.Dispose();
+        try
+        {
+            var session = _session;
+            if (session is not null)
+            {
+                try { await session.ApplyAsync().ConfigureAwait(false); }
+                finally { session.Dispose(); }
+            }
+            ResetPresentationState();
+        }
+        finally
+        {
+            _closing = false;
+            _closeTask = null;
+        }
+    }
+
+    /// <summary>清空窗口级状态，等待下次展示重建工作副本。</summary>
+    private void ResetPresentationState()
+    {
         _session = null;
         if (_sourceSettings != null)
         {
@@ -131,7 +156,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         _historyBack.Clear();
         _historyForward.Clear();
         _presetIds.Clear();
-        _closing = false;
     }
 
     /// <summary>回到上一个浏览过的分类，并把当前分类压入前进栈。</summary>
@@ -159,7 +183,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     /// <summary>把最新派生状态推回 SwiftUI，保持单一数据源。</summary>
     private void PushState()
     {
-        if (!_presenting) return;
+        if (!_presenting || _closing) return;
         MacSettingsNative.UpdateState(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
     }
 
@@ -264,7 +288,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     /// <summary>处理 SwiftUI 回传动作；录制事件返回消费标记，其余返回 0。</summary>
     private int HandleAction(string json)
     {
-        if (!_presenting) return 0;
+        if (!_presenting || _closing) return 0;
         MacSettingsActionDto? action;
         try { action = JsonSerializer.Deserialize(json, MacSettingsJsonContext.Default.MacSettingsActionDto); }
         catch (JsonException exception)

@@ -3,6 +3,7 @@ using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
@@ -83,7 +84,7 @@ internal static class iOSNativeToolsCheck
                     mainVm.Settings.ExifDisplayItems[0].IsEnabled = true;
                 root.BuildControls();
             });
-            await mainVm.FolderVM.OpenFolderAsync(new iOSFolderRef(directory));
+            await mainVm.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
             await WaitAsync(() => mainVm.CurrentFile != null && session.Image != null, "首图解码");
             await WaitAsync(() => mainVm.CurrentFile?.ExifData != null, "EXIF 读入");
             await WaitAsync(() => mainVm.Tools.IsExifDetailEnabled, "EXIF 详情可用");
@@ -93,7 +94,7 @@ internal static class iOSNativeToolsCheck
             // 同名 RAW+JPG 的伴侣关系在筛选阶段建立到代表项上；真实用户点选的是列表里的代表卡片，
             // 这里同样把当前照片切到带伴侣的代表项（共享 CurrentFile → Tools.SyncCurrentFile 同步建 VM）。
             await UiDispatcher.InvokeAsync(() => mainVm.FileVM.ThumbnailList.ApplyFilter());
-            var representative = mainVm.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => file.HiddenFiles.Count > 0);
+            var representative = mainVm.FileVM.ThumbnailList.FilteredFiles.FirstOrDefault(file => (file.Group?.Companions.Count ?? 0) > 0);
             if (representative != null && !ReferenceEquals(mainVm.CurrentFile, representative))
             {
                 await UiDispatcher.InvokeAsync(() => mainVm.CurrentFile = representative);
@@ -102,9 +103,9 @@ internal static class iOSNativeToolsCheck
             await WaitAsync(() => mainVm.Tools.IsExifDetailEnabled, "EXIF 详情重建");
             await SettleAsync(root);
             lines.Add($"NOTE 同名合并={mainVm.Settings.SameNameAsOnePhoto}，筛选后 {mainVm.FileVM.ThumbnailList.FilteredFiles.Count} 张，" +
-                $"当前照片伴侣 {mainVm.CurrentFile!.HiddenFiles.Count}，格式 {mainVm.Tools.ExifDetail?.Formats.Count ?? 0}");
+                $"当前照片伴侣 {mainVm.CurrentFile!.Group?.Companions.Count ?? 0}，格式 {mainVm.Tools.ExifDetail?.Formats.Count ?? 0}");
             lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}），列表 {mainVm.FileVM.ThumbnailList.FilteredFiles.Count} 张，" +
-                $"当前照片 {mainVm.CurrentFile!.Name}（伴侣 {mainVm.CurrentFile.HiddenFiles.Count}）");
+                $"当前照片 {mainVm.CurrentFile!.Name}（伴侣 {mainVm.CurrentFile.Group?.Companions.Count ?? 0}）");
 
             // 一、控制栏 EXIF 信息块点击打开工具页（另一条入口，与主图菜单共用门面）。
             if (root.ControlBar.ExifGroup == null) throw new InvalidOperationException("控制栏缺少 EXIF 信息块分组");
@@ -237,7 +238,9 @@ internal static class iOSNativeToolsCheck
                     mainVm.Settings.ExifDisplayItems[index].IsEnabled = entryExif[index];
             });
             await SettleAsync(root);
-            PhotoViewer.Core.Settings.SettingsService.Instance.SaveAsync(mainVm.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+            var repository = mainVm.SettingsRepository;
+            repository.CommitAsync(mainVm.Settings.CreateSnapshot()).GetAwaiter().GetResult();
+            repository.FlushAsync().GetAwaiter().GetResult();
             await File.WriteAllLinesAsync(report, lines);
             Console.WriteLine($"[NativeSmoke] PASS tools ({lines.Count} checks)");
         }
