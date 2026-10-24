@@ -1,20 +1,24 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
 
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
-/// <c>--es pv-check input</c>（验收专用）：合成滚动事件核对 INPUT-04 精确/离散滚轮分流、按键重复设闸（INPUT-05），
-/// 并通过控制栏虚拟节点快照与硬件键盘派发核对 TOOLBAR-11 焦点顺序与命令触发。
-/// 事件与按键都走产品自己的入口，不另开测试分支。
+/// <c>--es pv-check input</c>（验收专用）：合成滚动事件核对 INPUT-04 精确/离散滚轮分流与修饰键绑定优先（INPUT-03），
+/// 并经 <c>Activity.DispatchKeyEvent</c> 构造带 <c>RepeatCount</c> 的真实按键事件核对 INPUT-05 首下/重复设闸与键位别名，
+/// 再通过控制栏虚拟节点快照与硬件键盘派发核对 TOOLBAR-11 焦点顺序与命令触发。
+/// 事件与按键都走产品自己的入口，不直接调用内部派发方法，也不另开测试分支。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
-    /// <summary>输入模式入口：先打开固定素材，再按 INPUT-04 → INPUT-05 → TOOLBAR-11 顺序核对。</summary>
+    /// <summary>输入模式入口：先打开固定素材，再按 INPUT-03 → INPUT-04 → INPUT-05 → TOOLBAR-11 顺序核对。</summary>
     private static async Task RunInputChecksAsync()
     {
         var activity = _activity!;
@@ -29,7 +33,9 @@ internal static partial class AndroidNativeChecks
 
         await RunStepAsync("INPUT-04 精确滚动", CheckPreciseScrollAsync);
         await RunStepAsync("INPUT-04 离散滚轮", CheckDiscreteWheelAsync);
+        await RunStepAsync("INPUT-03 修饰键滚轮优先", CheckModifierWheelAsync);
         await RunStepAsync("INPUT-05 按键重复", CheckKeyRepeatAsync);
+        await RunStepAsync("INPUT-05 键位别名", CheckKeyAliasesAsync);
         await RunStepAsync("TOOLBAR-11 焦点顺序", CheckFocusOrderAsync);
         await RunStepAsync("TOOLBAR-11 键盘触发", CheckKeyboardCommandsAsync);
     }
@@ -45,8 +51,13 @@ internal static partial class AndroidNativeChecks
         var viewport = root.Photo.Viewport;
         double scale = viewport.Scale, panX = viewport.PanX, panY = viewport.PanY;
         int wheel = 0;
-        void OnWheel(bool up, int metaState) => wheel++;
-        root.Photo.WheelScrolled += OnWheel;
+        var previousWheel = root.Photo.WheelCommand;
+        root.Photo.WheelCommand = (up, metaState) =>
+        {
+            bool handled = previousWheel?.Invoke(up, metaState) ?? false;
+            if (handled) wheel++;
+            return handled;
+        };
         try
         {
             bool consumed = root.Photo.OnGenericMotionEvent(ScrollEvent(.4f, InputSourceType.Touchpad));
@@ -59,7 +70,7 @@ internal static partial class AndroidNativeChecks
         }
         finally
         {
-            root.Photo.WheelScrolled -= OnWheel;
+            root.Photo.WheelCommand = previousWheel;
         }
     }
 
@@ -74,8 +85,13 @@ internal static partial class AndroidNativeChecks
         await Task.Delay(300);
 
         int wheel = 0;
-        void OnWheel(bool up, int metaState) => wheel++;
-        root.Photo.WheelScrolled += OnWheel;
+        var previousWheel = root.Photo.WheelCommand;
+        root.Photo.WheelCommand = (up, metaState) =>
+        {
+            bool handled = previousWheel?.Invoke(up, metaState) ?? false;
+            if (handled) wheel++;
+            return handled;
+        };
         try
         {
             // 非整格增量属高分辨率滚动：只平移，不派发命令，也不累积。
@@ -103,46 +119,130 @@ internal static partial class AndroidNativeChecks
         }
         finally
         {
-            root.Photo.WheelScrolled -= OnWheel;
+            root.Photo.WheelCommand = previousWheel;
         }
     }
 
-    /// <summary>INPUT-05：可重复命令按住连续执行，不可重复命令按住只执行一次。</summary>
+    /// <summary>
+    /// INPUT-03：带修饰键的滚轮先查用户绑定（默认 Ctrl+滚轮上 = 放大比例），命中后不再落到精确滚动平移。
+    /// 用触控板来源的精确事件制造回归：若修饰键判定晚于精确/离散分流，这里只会平移而不缩放。
+    /// </summary>
+    private static async Task CheckModifierWheelAsync()
+    {
+        var root = _root!;
+        await SelectFirstFileAsync();
+        if (!root.Photo.IsFit) root.Photo.ToggleFit();
+        await WaitAsync(() => root.Photo.IsFit, "回到适应态", 10000);
+        await Task.Delay(350);
+
+        var viewport = root.Photo.Viewport;
+        double scale = viewport.Scale, panX = viewport.PanX, panY = viewport.PanY;
+        int wheel = 0;
+        var previousWheel = root.Photo.WheelCommand;
+        root.Photo.WheelCommand = (up, metaState) =>
+        {
+            bool handled = previousWheel?.Invoke(up, metaState) ?? false;
+            if (handled) wheel++;
+            return handled;
+        };
+        try
+        {
+            // 触控板精确事件 + Ctrl：修饰键绑定优先于平移。
+            bool consumed = root.Photo.OnGenericMotionEvent(
+                ScrollEvent(-.6f, InputSourceType.Touchpad, 0, MetaKeyStates.CtrlOn));
+            await Task.Delay(500);
+            bool zoomed = viewport.Scale > scale + 1e-6;
+            bool panKept = Math.Abs(viewport.PanX - panX) < .5 && Math.Abs(viewport.PanY - panY) < .5;
+            Check("INPUT-03 Ctrl+精确滚动优先", consumed && wheel == 1 && zoomed && panKept,
+                $"consumed={consumed} wheel={wheel} scale={scale:0.###}->{viewport.Scale:0.###} "
+                + $"pan=({panX:0.#},{panY:0.#})->({viewport.PanX:0.#},{viewport.PanY:0.#})");
+        }
+        finally
+        {
+            root.Photo.WheelCommand = previousWheel;
+        }
+    }
+
+    /// <summary>INPUT-05：首下、系统重复与不可重复命令的设闸，全部经 Activity.DispatchKeyEvent 的真实按键事件。</summary>
     private static async Task CheckKeyRepeatAsync()
     {
         var main = _main!;
-        var session = _session!;
         var files = main.FileVM.ThumbnailList.FilteredFiles;
-        if (files.Count < 2) throw new InvalidOperationException($"输入素材不足两张（{files.Count}）");
+        if (files.Count < 3) throw new InvalidOperationException($"输入素材不足三张（{files.Count}）");
         await SelectFirstFileAsync();
 
-        bool consumedNext = AndroidNativeShell.HandleHardwareKey(Keycode.DpadRight, 0, repeated: true);
-        await WaitAsync(() => !ReferenceEquals(main.CurrentFile, files[0]), "重复键翻页", 6000);
-        Check("INPUT-05 可重复命令执行",
-            consumedNext && ReferenceEquals(main.CurrentFile, files[1]),
-            $"consumed={consumedNext} file={main.CurrentFile?.Name} expect={files[1].Name} total={files.Count}");
+        // 首下：Down + RepeatCount 0。
+        bool consumedDown = DispatchHardwareKey(Keycode.DpadRight);
+        await WaitAsync(() => ReferenceEquals(main.CurrentFile, files[1]), "首下翻页", 6000);
+        Check("INPUT-05 首下派发",
+            consumedDown && ReferenceEquals(main.CurrentFile, files[1]),
+            $"consumed={consumedDown} file={main.CurrentFile?.Name} expect={files[1].Name} total={files.Count}");
 
-        var current = main.CurrentFile!;
-        int before = current.Rating;
-        // 评分的“3”走小键盘键：主行数字键在键码表里是 Num3，映射表当前解析不到（见下一条检查）。
-        bool consumedRepeat = AndroidNativeShell.HandleHardwareKey(Keycode.Numpad3, 0, repeated: true);
+        // 系统重复：Down + RepeatCount>0；可重复命令继续执行。
+        bool consumedRepeat = DispatchHardwareKey(Keycode.DpadRight, repeat: 1);
+        await WaitAsync(() => ReferenceEquals(main.CurrentFile, files[2]), "重复翻页", 6000);
+        Check("INPUT-05 可重复命令执行",
+            consumedRepeat && ReferenceEquals(main.CurrentFile, files[2]),
+            $"consumed={consumedRepeat} file={main.CurrentFile?.Name} expect={files[2].Name} total={files.Count}");
+
+        // 不可重复命令：重复事件被消费但不再执行，随后的首下才写入。
+        var rated = main.CurrentFile!;
+        await main.SetRatingAsync(rated, 0);
+        await WaitAsync(() => rated.Rating == 0, "星级复位", 8000);
+        bool consumedRepeatRating = DispatchHardwareKey(Keycode.Numpad3, repeat: 2);
         await Task.Delay(1200);
-        int afterRepeat = current.Rating;
-        bool consumedKey = AndroidNativeShell.HandleHardwareKey(Keycode.Numpad3, 0, repeated: false);
-        await WaitAsync(() => current.Rating == 3, "评分键写入", 10000);
+        int afterRepeat = rated.Rating;
+        bool consumedKey = DispatchHardwareKey(Keycode.Numpad3);
+        await WaitAsync(() => rated.Rating == 3, "评分键写入", 10000);
         Check("INPUT-05 不可重复命令设闸",
-            consumedRepeat && afterRepeat == before && consumedKey && current.Rating == 3,
-            $"repeatedConsumed={consumedRepeat} rating {before}->{afterRepeat}，非重复按键后={current.Rating} "
-            + $"keyConsumed={consumedKey} image={session.Image != null}");
+            consumedRepeatRating && afterRepeat == 0 && consumedKey && rated.Rating == 3,
+            $"repeatedConsumed={consumedRepeatRating} rating 0->{afterRepeat}，首下后={rated.Rating} keyConsumed={consumedKey}");
+
+        // KEYCODE_ACTION_MULTIPLE 是输入法的多字符提交，不得冒充长按/重复去执行命令。
+        await SelectFirstFileAsync();
+        var beforeMultiple = main.CurrentFile;
+        Check("INPUT-05 Multiple 不冒充长按",
+            !MultipleAdvancesFile(Keycode.DpadRight) && ReferenceEquals(main.CurrentFile, beforeMultiple),
+            $"file={beforeMultiple?.Name}->{main.CurrentFile?.Name}");
 
         // 默认绑定把评分 1–5 挂在主行数字键（D1–D5）上；硬件键盘的主行数字键码是 Num0–Num9。
+        var current = main.CurrentFile!;
         await main.SetRatingAsync(current, 0);
         await WaitAsync(() => current.Rating == 0, "星级复位", 8000);
-        bool consumedDigit = AndroidNativeShell.HandleHardwareKey(Keycode.Num3, 0);
+        bool consumedDigit = DispatchHardwareKey(Keycode.Num3);
         await Task.Delay(1200);
         Check("INPUT-05 主行数字键映射",
             consumedDigit && current.Rating == 3,
             $"key=Num3(KEYCODE_3) consumed={consumedDigit} rating={current.Rating}（默认绑定为 D3）");
+    }
+
+    /// <summary>INPUT-05：Enter/Backspace/Delete 与小键盘运算符/回车的键位别名对齐共享枚举。</summary>
+    private static Task CheckKeyAliasesAsync()
+    {
+        var mismatches = new List<string>();
+        void Expect(Keycode code, GestureKey expected)
+        {
+            var actual = AndroidInputMapping.FromKeyEvent(code, 0)?.Key?.Key;
+            if (actual != expected) mismatches.Add($"{code}→{actual?.ToString() ?? "null"}≠{expected}");
+        }
+
+        Expect(Keycode.Enter, GestureKey.Return);
+        Expect(Keycode.NumpadEnter, GestureKey.Return);
+        Expect(Keycode.Del, GestureKey.Back);
+        Expect(Keycode.ForwardDel, GestureKey.Delete);
+        Expect(Keycode.NumpadAdd, GestureKey.OemPlus);
+        Expect(Keycode.NumpadSubtract, GestureKey.OemMinus);
+        Expect(Keycode.NumpadDot, GestureKey.Decimal);
+        Expect(Keycode.NumpadMultiply, GestureKey.Multiply);
+        Expect(Keycode.NumpadDivide, GestureKey.Divide);
+        Check("INPUT-05 键位别名", mismatches.Count == 0,
+            mismatches.Count == 0
+                ? "Enter/NumpadEnter→Return、Del→Back、ForwardDel→Delete、小键盘 + − . * / 全部对齐"
+                : string.Join("，", mismatches));
+        // 系统返回键不参与命令绑定，录制路径也就不会写出永远派发不到的死绑定。
+        Check("INPUT-05 系统返回键不绑定", AndroidInputMapping.FromKeyEvent(Keycode.Back, 0) == null,
+            $"KEYCODE_BACK→{AndroidInputMapping.FromKeyEvent(Keycode.Back, 0)?.ToDisplayString() ?? "null"}");
+        return Task.CompletedTask;
     }
 
     /// <summary>TOOLBAR-11：虚拟节点按视觉顺序暴露名称、评分方向与命令入口。</summary>
@@ -195,17 +295,40 @@ internal static partial class AndroidNativeChecks
         if (files.Count >= 2 && ReferenceEquals(main.CurrentFile, files[^1])) await SelectFirstFileAsync();
 
         bool beforeFit = root.Photo.IsFit;
-        bool consumedFit = AndroidNativeShell.HandleHardwareKey(Keycode.F, 0);
+        bool consumedFit = DispatchHardwareKey(Keycode.F);
         await WaitAsync(() => root.Photo.IsFit != beforeFit, "F 切换适应态", 6000);
         bool afterFit = root.Photo.IsFit;
 
         var beforeFile = main.CurrentFile;
-        bool consumedNext = AndroidNativeShell.HandleHardwareKey(Keycode.DpadRight, 0);
+        bool consumedNext = DispatchHardwareKey(Keycode.DpadRight);
         await WaitAsync(() => !ReferenceEquals(main.CurrentFile, beforeFile), "Right 下一张", 6000);
         Check("TOOLBAR-11 键盘触发命令",
             consumedFit && consumedNext && afterFit != beforeFit && !ReferenceEquals(main.CurrentFile, beforeFile),
             $"fit {beforeFit}->{afterFit} fitConsumed={consumedFit} "
             + $"file={beforeFile?.Name}->{main.CurrentFile?.Name} nextConsumed={consumedNext}");
+    }
+
+    /// <summary>构造真实按键事件并经 Activity 的键盘入口派发（与系统路径同一解码与派发代码）。</summary>
+    /// <param name="key">原生键码。</param>
+    /// <param name="repeat">系统重复次数；0 为首次按下。</param>
+    /// <param name="action">按键动作。</param>
+    /// <returns>是否被消费。</returns>
+    private static bool DispatchHardwareKey(Keycode key, int repeat = 0, KeyEventActions action = KeyEventActions.Down)
+    {
+        long now = SystemClock.UptimeMillis();
+        var e = new KeyEvent(now, now, action, key, repeat, MetaKeyStates.None);
+        return _activity!.DispatchKeyEvent(e);
+    }
+
+    /// <summary>派发一次 <see cref="KeyEventActions.Multiple"/>，返回是否被当成命令执行（翻页）。</summary>
+    /// <param name="key">原生键码。</param>
+    /// <returns>派发后当前照片是否变化。</returns>
+    private static bool MultipleAdvancesFile(Keycode key)
+    {
+        var main = _main!;
+        var before = main.CurrentFile;
+        DispatchHardwareKey(key, action: KeyEventActions.Multiple);
+        return !ReferenceEquals(main.CurrentFile, before);
     }
 
     /// <summary>回到筛选列表首项（各步之间复位当前照片，避免上一步的翻页影响下一步结论）。</summary>

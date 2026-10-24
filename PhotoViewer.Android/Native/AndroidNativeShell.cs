@@ -61,8 +61,9 @@ public static class AndroidNativeShell
     public static PhotoLoadSession? Session => _session;
 
     /// <summary>
-    /// 硬件键盘派发：设置 sheet/文本输入期间不抢键；命中用户绑定且命令可用时执行并消费。
-    /// 系统重复（<see cref="KeyEventActions.Multiple"/>）只对共享命令表标记为可重复的命令执行（INPUT-05）。
+    /// 硬件键盘派发：设置 sheet/文本输入期间不抢键；命中用户绑定且命令登记在共享设置目录时执行并消费。
+    /// 系统重复只对共享命令表标记为可重复的命令执行（INPUT-05）；重复标记必须来自真实的
+    /// <see cref="KeyEventActions.Down"/> + <see cref="KeyEvent.RepeatCount"/>。
     /// </summary>
     /// <param name="keyCode">原生键码。</param>
     /// <param name="metaState">原生修饰键状态。</param>
@@ -76,7 +77,7 @@ public static class AndroidNativeShell
         if (activity?.CurrentFocus is global::Android.Widget.EditText) return false;
         var gesture = AndroidInputMapping.FromKeyEvent(keyCode, metaState);
         string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (command == null || !AndroidControlBar.IsCommandAvailable(command)) return false;
+        if (command == null || !InputCommandMap.IsCommandKnown(command)) return false;
         // INPUT-05：不可重复的命令按住只执行一次；已消费的重复事件不再交回系统。
         if (repeated && !InputCommandMap.IsRepeatable(command)) return true;
         Console.WriteLine($"[Native] 键盘命令：{keyCode} → {command}{(repeated ? "（重复）" : "")}");

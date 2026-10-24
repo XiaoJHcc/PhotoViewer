@@ -32,12 +32,12 @@ public static class AppleInputMapping
 
     /// <summary>把原生事件字段还原为共享手势，供事件解包与跨语言录制复用同一映射。</summary>
     /// <param name="eventType">原生事件类型码。</param>
-    /// <param name="keyCode">原生键码。</param>
+    /// <param name="keyCode">原生键码；键盘事件按它判定物理键位。</param>
     /// <param name="modifierFlags">原生修饰键掩码。</param>
     /// <param name="buttonNumber">鼠标按键编号。</param>
     /// <param name="scrollingDeltaY">滚轮纵向增量。</param>
     /// <param name="hasPreciseScrollingDeltas">是否为精确滚轮事件。</param>
-    /// <param name="charactersIgnoringModifiers">忽略修饰键后的字符。</param>
+    /// <param name="charactersIgnoringModifiers">忽略修饰键后的字符；仅保留原生调用契约，不参与键位判定。</param>
     /// <param name="captureSettings">录制所用的工作副本，决定苹果键盘映射口径。</param>
     /// <returns>匹配到的共享手势；不支持的事件返回 null。</returns>
     public static AppGesture? FromRaw(int eventType, ushort keyCode, ulong modifierFlags, nint buttonNumber, double scrollingDeltaY,
@@ -59,7 +59,7 @@ public static class AppleInputMapping
             return AppGesture.FromMouse(new MouseGestureEx(action, modifiers));
         }
         if (eventType != KeyDown) return null;
-        var key = KeyFromRaw(keyCode, charactersIgnoringModifiers);
+        var key = KeyFromRaw(keyCode);
         return key.HasValue ? AppGesture.FromKey(new AppKeyGesture(key.Value, modifiers)) : null;
     }
 
@@ -80,6 +80,7 @@ public static class AppleInputMapping
     /// <summary>
     /// HID usage → 共享键映射表（纯数据）。逐条登记而不做区间算术，
     /// 避免依赖 <see cref="GestureKey"/> 的成员顺序；未登记返回 null，由调用方把按键交还系统。
+    /// 字母/数字/标点只认物理位置；数字键盘的 ± 与主行 =/− 同键（才能命中默认缩放绑定），回车保持 Return。
     /// </summary>
     /// <param name="usage">HID usage 数值。</param>
     /// <returns>对应的共享键；未定义时为 null。</returns>
@@ -107,8 +108,8 @@ public static class AppleInputMapping
         74 => GestureKey.Home, 75 => GestureKey.PageUp, 76 => GestureKey.Delete, 77 => GestureKey.End,
         78 => GestureKey.PageDown,
         79 => GestureKey.Right, 80 => GestureKey.Left, 81 => GestureKey.Down, 82 => GestureKey.Up,
-        83 => GestureKey.NumLock, 84 => GestureKey.Divide, 85 => GestureKey.Multiply, 86 => GestureKey.Subtract,
-        87 => GestureKey.Add, 88 => GestureKey.Return,
+        83 => GestureKey.NumLock, 84 => GestureKey.Divide, 85 => GestureKey.Multiply, 86 => GestureKey.OemMinus,
+        87 => GestureKey.OemPlus, 88 => GestureKey.Return,
         89 => GestureKey.NumPad1, 90 => GestureKey.NumPad2, 91 => GestureKey.NumPad3, 92 => GestureKey.NumPad4,
         93 => GestureKey.NumPad5, 94 => GestureKey.NumPad6, 95 => GestureKey.NumPad7, 96 => GestureKey.NumPad8,
         97 => GestureKey.NumPad9, 98 => GestureKey.NumPad0, 99 => GestureKey.Decimal,
@@ -136,40 +137,46 @@ public static class AppleInputMapping
                 captureSettings.MapOptionTarget, captureSettings.MapControlTarget);
     }
 
-    /// <summary>优先读取特殊键/数字键盘，普通字符按持久化键名转换。</summary>
-    /// <param name="keyCode">原生键码。</param>
-    /// <param name="charactersIgnoringModifiers">忽略修饰键后的字符。</param>
-    /// <returns>匹配到的共享键；未定义时返回 null。</returns>
-    private static GestureKey? KeyFromRaw(ushort keyCode, string? charactersIgnoringModifiers)
+    /// <summary>
+    /// macOS 虚拟键码 → 共享键的物理键位表。<paramref name="keyCode"/> 是唯一判据：
+    /// 非 US 布局下即使 <c>CharactersIgnoringModifiers</c> 为空或是别的字符，字母、主行数字与常用标点
+    /// 仍按硬件位置识别，与 iOS 硬件键盘的 HID usage 表同口径。
+    /// </summary>
+    /// <param name="keyCode">macOS 虚拟键码（<c>NSEvent.KeyCode</c>）。</param>
+    /// <returns>匹配到的共享键；未登记返回 null，由调用方把按键交还系统。</returns>
+    private static GestureKey? KeyFromRaw(ushort keyCode) => keyCode switch
     {
-        GestureKey? special = keyCode switch
-        {
-            123 => GestureKey.Left, 124 => GestureKey.Right, 125 => GestureKey.Down, 126 => GestureKey.Up,
-            53 => GestureKey.Escape, 36 => GestureKey.Return, 48 => GestureKey.Tab, 49 => GestureKey.Space,
-            51 => GestureKey.Back, 117 => GestureKey.Delete, 50 => GestureKey.OemTilde,
-            122 => GestureKey.F1, 120 => GestureKey.F2, 99 => GestureKey.F3, 118 => GestureKey.F4,
-            96 => GestureKey.F5, 97 => GestureKey.F6, 98 => GestureKey.F7, 100 => GestureKey.F8,
-            101 => GestureKey.F9, 109 => GestureKey.F10, 103 => GestureKey.F11, 111 => GestureKey.F12,
-            105 => GestureKey.F13, 107 => GestureKey.F14, 113 => GestureKey.F15, 106 => GestureKey.F16,
-            64 => GestureKey.F17, 79 => GestureKey.F18, 80 => GestureKey.F19, 90 => GestureKey.F20,
-            115 => GestureKey.Home, 119 => GestureKey.End, 116 => GestureKey.PageUp, 121 => GestureKey.PageDown,
-            24 => GestureKey.OemPlus, 27 => GestureKey.OemMinus,
-            82 => GestureKey.NumPad0, 83 => GestureKey.NumPad1, 84 => GestureKey.NumPad2, 85 => GestureKey.NumPad3,
-            86 => GestureKey.NumPad4, 87 => GestureKey.NumPad5, 88 => GestureKey.NumPad6, 89 => GestureKey.NumPad7,
-            91 => GestureKey.NumPad8, 92 => GestureKey.NumPad9, 69 => GestureKey.Add, 78 => GestureKey.Subtract,
-            67 => GestureKey.Multiply, 75 => GestureKey.Divide, 65 => GestureKey.Decimal, 76 => GestureKey.Return,
-            _ => null,
-        };
-        if (special.HasValue) return special;
-        string text = charactersIgnoringModifiers?.ToUpperInvariant() ?? string.Empty;
-        if (text.Length != 1) return null;
-        if (text[0] is >= 'A' and <= 'Z' && Enum.TryParse<GestureKey>(text, out var letter)) return letter;
-        if (text[0] is >= '0' and <= '9' && Enum.TryParse<GestureKey>("D" + text, out var digit)) return digit;
-        return text[0] switch
-        {
-            ',' => GestureKey.OemComma, '.' => GestureKey.OemPeriod, '/' => GestureKey.OemQuestion,
-            ';' => GestureKey.OemSemicolon, '\'' => GestureKey.OemQuotes, '[' => GestureKey.OemOpenBrackets,
-            ']' => GestureKey.OemCloseBrackets, '\\' => GestureKey.OemPipe, _ => null,
-        };
-    }
+        // 字母行（物理位置，非字符）
+        0 => GestureKey.A, 1 => GestureKey.S, 2 => GestureKey.D, 3 => GestureKey.F, 4 => GestureKey.H,
+        5 => GestureKey.G, 6 => GestureKey.Z, 7 => GestureKey.X, 8 => GestureKey.C, 9 => GestureKey.V,
+        11 => GestureKey.B, 12 => GestureKey.Q, 13 => GestureKey.W, 14 => GestureKey.E, 15 => GestureKey.R,
+        16 => GestureKey.Y, 17 => GestureKey.T, 31 => GestureKey.O, 32 => GestureKey.U, 34 => GestureKey.I,
+        35 => GestureKey.P, 37 => GestureKey.L, 38 => GestureKey.J, 40 => GestureKey.K, 45 => GestureKey.N,
+        46 => GestureKey.M,
+        // 主行数字
+        18 => GestureKey.D1, 19 => GestureKey.D2, 20 => GestureKey.D3, 21 => GestureKey.D4, 22 => GestureKey.D6,
+        23 => GestureKey.D5, 25 => GestureKey.D9, 26 => GestureKey.D7, 28 => GestureKey.D8, 29 => GestureKey.D0,
+        // 常用标点（与 HID 的 =/−/[/]/;/'/\`/,/./ 一一对应）
+        24 => GestureKey.OemPlus, 27 => GestureKey.OemMinus, 30 => GestureKey.OemCloseBrackets,
+        33 => GestureKey.OemOpenBrackets, 39 => GestureKey.OemQuotes, 41 => GestureKey.OemSemicolon,
+        42 => GestureKey.OemPipe, 43 => GestureKey.OemComma, 44 => GestureKey.OemQuestion,
+        47 => GestureKey.OemPeriod, 50 => GestureKey.OemTilde,
+        // 特殊键
+        123 => GestureKey.Left, 124 => GestureKey.Right, 125 => GestureKey.Down, 126 => GestureKey.Up,
+        53 => GestureKey.Escape, 36 => GestureKey.Return, 48 => GestureKey.Tab, 49 => GestureKey.Space,
+        51 => GestureKey.Back, 117 => GestureKey.Delete,
+        122 => GestureKey.F1, 120 => GestureKey.F2, 99 => GestureKey.F3, 118 => GestureKey.F4,
+        96 => GestureKey.F5, 97 => GestureKey.F6, 98 => GestureKey.F7, 100 => GestureKey.F8,
+        101 => GestureKey.F9, 109 => GestureKey.F10, 103 => GestureKey.F11, 111 => GestureKey.F12,
+        105 => GestureKey.F13, 107 => GestureKey.F14, 113 => GestureKey.F15, 106 => GestureKey.F16,
+        64 => GestureKey.F17, 79 => GestureKey.F18, 80 => GestureKey.F19, 90 => GestureKey.F20,
+        115 => GestureKey.Home, 119 => GestureKey.End, 116 => GestureKey.PageUp, 121 => GestureKey.PageDown,
+        // 数字键盘：± 与主行 =/− 同键，才能命中默认缩放绑定；回车保持 Return
+        69 => GestureKey.OemPlus, 78 => GestureKey.OemMinus, 76 => GestureKey.Return,
+        82 => GestureKey.NumPad0, 83 => GestureKey.NumPad1, 84 => GestureKey.NumPad2, 85 => GestureKey.NumPad3,
+        86 => GestureKey.NumPad4, 87 => GestureKey.NumPad5, 88 => GestureKey.NumPad6, 89 => GestureKey.NumPad7,
+        91 => GestureKey.NumPad8, 92 => GestureKey.NumPad9,
+        67 => GestureKey.Multiply, 75 => GestureKey.Divide, 65 => GestureKey.Decimal,
+        _ => null,
+    };
 }

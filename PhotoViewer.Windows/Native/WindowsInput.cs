@@ -65,6 +65,8 @@ internal static class WindowsInput
     /// 大写锁定叫 CapsLock、数字锁定叫 NumLock;WinRT 对应的名字分别是
     /// NumberPad0-9 / Enter / CapitalLock / NumberKeyLock,名称对不上,
     /// 靠 <c>Enum.TryParse</c> 兜底会失败(默认次级评分快捷键 NumPad0-5 会因此失效)。
+    /// 小键盘加/减统一归到主键盘的 OemPlus/OemMinus:默认缩放绑定 Ctrl+OemPlus/OemMinus,
+    /// 若按 WinRT 名字落成 Add/Subtract,小键盘 +/- 永远匹配不到缩放。
     /// </summary>
     /// <param name="key">虚拟键</param>
     /// <returns>共享键;名称与共享模型一致时返回 null,交给名称解析兜底</returns>
@@ -80,6 +82,8 @@ internal static class WindowsInput
         VirtualKey.NumberPad7 => GestureKey.NumPad7,
         VirtualKey.NumberPad8 => GestureKey.NumPad8,
         VirtualKey.NumberPad9 => GestureKey.NumPad9,
+        VirtualKey.Add => GestureKey.OemPlus,
+        VirtualKey.Subtract => GestureKey.OemMinus,
         VirtualKey.Enter => GestureKey.Return,
         VirtualKey.CapitalLock => GestureKey.CapsLock,
         VirtualKey.NumberKeyLock => GestureKey.NumLock,

@@ -1,6 +1,7 @@
 namespace PhotoViewer.Apple;
 
-/// <summary>业务命令与菜单项到 SF Symbols 名称的平台中立映射；系统图标对象的创建留在各平台头部。</summary>
+/// <summary>业务命令与菜单项到 SF Symbols 名称的平台中立映射；系统图标对象的创建留在各平台头部。
+/// 本表只管 UI：命令能否执行以共享 <c>InputCommandMap.IsCommandKnown</c> 为准，输入派发不得以缺图标作否决条件。</summary>
 public static class AppleSymbolNames
 {
     public static class Menu

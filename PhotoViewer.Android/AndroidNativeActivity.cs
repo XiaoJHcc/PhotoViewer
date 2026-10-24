@@ -66,20 +66,21 @@ public sealed class AndroidNativeActivity : AppCompatActivity
     }
 
     /// <summary>
-    /// 硬件键盘：按键按下/重复交给共享命令表；未命中或设置页打开时按系统默认处理。
+    /// 硬件键盘：按键首次按下与系统重复交给共享命令表；未命中或设置页打开时按系统默认处理。
+    /// 重复只认 <see cref="KeyEventActions.Down"/> + <see cref="KeyEvent.RepeatCount"/> &gt; 0；
+    /// <see cref="KeyEventActions.Multiple"/> 是输入法的多字符提交，不冒充长按，原样交还系统。
     /// </summary>
     /// <param name="e">按键事件。</param>
     /// <returns>是否消费。</returns>
     public override bool DispatchKeyEvent(KeyEvent? e)
     {
-        if (e != null && e.Action is KeyEventActions.Down or KeyEventActions.Multiple)
+        if (e != null && e.Action == KeyEventActions.Down)
         {
             var keyCode = e.KeyCode;
             if (keyCode is not (Keycode.Back or Keycode.VolumeUp or Keycode.VolumeDown or Keycode.VolumeMute
                 or Keycode.Camera or Keycode.Power))
             {
-                if (Native.AndroidNativeShell.HandleHardwareKey(keyCode, (int)e.MetaState,
-                    e.Action == KeyEventActions.Multiple)) return true;
+                if (Native.AndroidNativeShell.HandleHardwareKey(keyCode, (int)e.MetaState, e.RepeatCount > 0)) return true;
             }
         }
         return base.DispatchKeyEvent(e);

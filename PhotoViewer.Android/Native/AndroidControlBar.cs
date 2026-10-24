@@ -147,7 +147,6 @@ internal sealed class AndroidControlBar : View
         var commands = new List<Child>();
         foreach (var hotkey in _main.ControlVM.EnabledControls)
         {
-            if (!IsCommandAvailable(hotkey.Command)) continue;
             commands.Add(new Child
             {
                 Command = hotkey.Command,
@@ -168,11 +167,6 @@ internal sealed class AndroidControlBar : View
 
     /// <summary>标记设置/文件变化后需要重建（宿主在变化时调用）。</summary>
     internal void MarkDirty() => _dirty = true;
-
-    /// <summary>是否提供该命令入口；A5 之前分析栏没有面板，先不显示该入口。</summary>
-    /// <param name="command">共享命令标识。</param>
-    /// <returns>是否显示。</returns>
-    internal static bool IsCommandAvailable(string command) => true;
 
     /// <summary>命令的读屏文本：名称 + 已设置的绑定（TOOLBAR-04，未设置不占位）。</summary>
     /// <param name="hotkey">共享快捷键项。</param>

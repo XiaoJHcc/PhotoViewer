@@ -62,12 +62,13 @@ internal static class WindowsIcons
     private static readonly HashSet<string> WarnedMissing = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// 取命令的图标字形。
-    /// 表里没有的命令视为配置漂移:记录一次日志并返回 null(不显示、不消费按键),
+    /// 取命令的图标字形(只负责显示)。
+    /// 表里没有的命令不显示按钮并记录一次日志;命令是否可达由共享
+    /// <c>InputCommandMap.IsCommandKnown</c> 判定,图标不参与输入闸门。
     /// 不能让用户可编辑的快捷键 JSON 把进程打死。
     /// </summary>
     /// <param name="command">命令标识</param>
-    /// <returns>字形;null 表示该命令未知或本阶段不显示</returns>
+    /// <returns>字形;null 表示本阶段不显示该命令</returns>
     public static string? ForCommand(string command)
     {
         if (Glyphs.TryGetValue(command, out var glyph))
@@ -77,7 +78,7 @@ internal static class WindowsIcons
 
         if (WarnedMissing.Add(command))
         {
-            NativeStartupLog.Write($"图标映射缺少命令「{command}」,已按不可用处理;请在 WindowsIcons 中登记。");
+            NativeStartupLog.Write($"图标映射缺少命令「{command}」,该命令不显示按钮;请在 WindowsIcons 中登记。");
         }
 
         return null;

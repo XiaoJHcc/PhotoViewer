@@ -224,16 +224,14 @@ public partial class SettingsViewModel
         return false;
     }
 
-    // iOS 下将 Add/Subtract 视为 OemPlus/OemMinus，用于冲突检测等价比较
-    private static GestureKey NormalizeKeyForCompare(GestureKey key)
+    // 数字键盘 ± 与主行 =/− 是同一手势：历史设置可能已持久化 Add/Subtract（旧录制产物），
+    // 而四端运行时统一产出 OemPlus/OemMinus。冲突检测与命令查询都按等价处理（双向一致），不改设置 JSON。
+    private static GestureKey NormalizeKeyForCompare(GestureKey key) => key switch
     {
-        if (OperatingSystem.IsIOS())
-        {
-            if (key == GestureKey.Add) return GestureKey.OemPlus;
-            if (key == GestureKey.Subtract) return GestureKey.OemMinus;
-        }
-        return key;
-    }
+        GestureKey.Add => GestureKey.OemPlus,
+        GestureKey.Subtract => GestureKey.OemMinus,
+        _ => key,
+    };
 
     // 新增：根据通用手势查找命令（用于执行）
     public string? GetCommandByGesture(AppGesture targetGesture)

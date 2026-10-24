@@ -272,8 +272,10 @@ internal static partial class AndroidNativeChecks
     /// <param name="vertical">纵向轴增量。</param>
     /// <param name="source">输入源（触控板 / 鼠标）。</param>
     /// <param name="horizontal">横向轴增量。</param>
+    /// <param name="metaState">修饰键状态（带修饰键的滚轮先查用户绑定）。</param>
     /// <returns>合成事件。</returns>
-    private static MotionEvent ScrollEvent(float vertical, InputSourceType source, float horizontal = 0)
+    private static MotionEvent ScrollEvent(float vertical, InputSourceType source, float horizontal = 0,
+        MetaKeyStates metaState = MetaKeyStates.None)
     {
         var properties = new[] { new MotionEvent.PointerProperties { Id = 0, ToolType = MotionEventToolType.Mouse } };
         var coordinates = new[] { new MotionEvent.PointerCoords { X = 8, Y = 8, Pressure = 1, Size = 1 } };
@@ -281,7 +283,7 @@ internal static partial class AndroidNativeChecks
         if (Math.Abs(horizontal) > .0001f) coordinates[0].SetAxisValue(Axis.Hscroll, horizontal);
         long now = SystemClock.UptimeMillis();
         return MotionEvent.Obtain(now, now, MotionEventActions.Scroll, 1, properties, coordinates,
-            MetaKeyStates.None, (MotionEventButtonState)0, 1, 1, 0, (Edge)0, source, MotionEventFlags.None)!;
+            metaState, (MotionEventButtonState)0, 1, 1, 0, (Edge)0, source, MotionEventFlags.None)!;
     }
 
     /// <summary>读取 <c>BitmapLoader</c> 当前的展示解码器。</summary>

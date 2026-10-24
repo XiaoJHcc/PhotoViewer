@@ -658,7 +658,7 @@ public sealed class MacMainWindow : IDisposable
         string? command = MacInput.ResolveCommand(nativeEvent, _main.Settings);
         // INPUT-05：按住重复只放行可连续执行的命令；其余重复事件消费掉但不执行。
         if (nativeEvent.Type == NSEventType.KeyDown && nativeEvent.IsARepeat && command != null && !InputCommandMap.IsRepeatable(command)) return true;
-        if (command != null && AppleSymbolNames.ForCommand(command) != null) { Execute(command); return true; }
+        if (InputCommandMap.IsCommandKnown(command)) { Execute(command!); return true; }
         if (TryOpenEmptyStatePicker(nativeEvent)) return true;
         return false;
     }

@@ -17,6 +17,7 @@ using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -92,6 +93,8 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(_photo.CurrentTextureSize.Width < 3600,
                 $"代理档未上屏,主图纹理仍是 {_photo.CurrentTextureSize.Width}x{_photo.CurrentTextureSize.Height}");
 
+            RunKeyboardEntryChecks(checks);
+
             foreach (var mode in new[] { LayoutMode.Col, LayoutMode.Row })
             {
                 _main.Settings.LayoutMode = mode;
@@ -164,6 +167,67 @@ internal sealed partial class WindowsMainWindow
         {
             File.WriteAllText(Path.Combine(SmokeOutputDirectory, "checks.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         }
+    }
+
+    /// <summary>
+    /// 主窗键盘入口:小键盘缩放映射、重复设闸、未绑定放行、文本编辑焦点放行与 Exchange 空态。
+    /// 根元素 PreviewKeyDown 的真实事件派发无法用 WinUI 合成,这里验证同一入口
+    /// <see cref="HandleShortcutKey"/> 的判定;真实焦点路径留给 Windows 本机键盘验收。
+    /// </summary>
+    /// <param name="checks">验收结果收集器</param>
+    private void RunKeyboardEntryChecks(List<string> checks)
+    {
+        var settings = _main.Settings;
+        WindowsKeyDispatch.Route Resolve(GestureKey key, GestureModifiers modifiers, bool wasKeyDown, bool textEditingFocus = false)
+            => WindowsKeyDispatch.Resolve(
+                AppGesture.FromKey(new AppKeyGesture(key, modifiers)), settings, textEditingFocus, wasKeyDown);
+
+        // 小键盘 +/- 必须并入主键盘 +/- 的手势,默认 Ctrl+/- 缩放才对小键盘生效;Enter 仍按共享名 Return 映射。
+        var add = WindowsInput.FromKey(VirtualKey.Add)?.Key;
+        var subtract = WindowsInput.FromKey(VirtualKey.Subtract)?.Key;
+        RequireSmoke(add is { Key: GestureKey.OemPlus }, $"小键盘加号未映射为 OemPlus: {add?.Key}");
+        RequireSmoke(subtract is { Key: GestureKey.OemMinus }, $"小键盘减号未映射为 OemMinus: {subtract?.Key}");
+        RequireSmoke(WindowsInput.FromKey(VirtualKey.Enter)?.Key is { Key: GestureKey.Return }, "回车未映射为 Return");
+        RequireSmoke(Resolve(GestureKey.OemPlus, GestureModifiers.Control, false).Command == "ZoomInPreset",
+            "Ctrl+小键盘加号未解析到 ZoomInPreset");
+        RequireSmoke(Resolve(GestureKey.OemMinus, GestureModifiers.Control, false).Command == "ZoomOutPreset",
+            "Ctrl+小键盘减号未解析到 ZoomOutPreset");
+
+        // INPUT-05:可重复命令按住继续执行,不可重复命令的重复按键只消费不执行。
+        RequireSmoke(Resolve(GestureKey.Right, GestureModifiers.None, true) is { Command: "Next", Consume: true },
+            "上一张/下一张的按住重复被设闸拦下");
+        RequireSmoke(Resolve(GestureKey.D3, GestureModifiers.None, true) is { Consume: true, ShouldExecute: false },
+            "评分命令的按住重复没有被吞掉");
+
+        // 未绑定与文本编辑焦点都放行,预览入口不能无条件截获。
+        RequireSmoke(Resolve(GestureKey.K, GestureModifiers.None, false) is { Consume: false },
+            "未绑定按键被输入入口消费");
+        RequireSmoke(Resolve(GestureKey.Right, GestureModifiers.None, false, textEditingFocus: true) is { Consume: false },
+            "文本编辑焦点下的按键被快捷键截获");
+
+        // 真实入口(除事件参数与焦点外):未绑定放行、绑定消费。
+        RequireSmoke(!HandleShortcutKey(VirtualKey.K, false), "主窗入口消费了未绑定按键");
+        var current = _main.CurrentFile;
+        var rating = current?.Rating;
+        RequireSmoke(HandleShortcutKey(VirtualKey.Right, false), "主窗入口未消费已绑定按键");
+        RequireSmoke(ReferenceEquals(_main.CurrentFile, current), "只有一张照片时上一张/下一张不该换图");
+        RequireSmoke(HandleShortcutKey(VirtualKey.Number3, true), "评分命令的重复按键未被入口消费");
+        RequireSmoke(current?.Rating == rating, "评分命令的重复按键仍写入了星级");
+
+        // Exchange 在 LastFile 为空时不动:共享实现会把 CurrentFile 置空(空态会因此回到空首屏)。
+        var lastFile = _main.LastFile;
+        try
+        {
+            _main.LastFile = null;
+            Execute("Exchange");
+            RequireSmoke(ReferenceEquals(_main.CurrentFile, current), "LastFile 为空时 Exchange 清空了当前照片");
+        }
+        finally
+        {
+            _main.LastFile = lastFile;
+        }
+
+        checks.Add("PASS keyboard entry: numpad +/- map to OemPlus/OemMinus (Ctrl+zoom), Enter→Return, repeat gate keeps Next and swallows rating repeat, unbound/text-edit keys pass through, Exchange no-ops without LastFile");
     }
 
     /// <summary>窗口态:最大化/还原/全屏与退出全屏(SHELL-02 自绘标题栏按钮的实际效果)。</summary>

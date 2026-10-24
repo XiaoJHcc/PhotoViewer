@@ -7,8 +7,11 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 
@@ -68,6 +71,13 @@ internal static class WindowsSettingsAcceptance
             Require(WindowsInput.FormatGesture(AppGesture.FromMouse(new MouseGestureEx(MouseAction.WheelUp))) == "滚轮上",
                 "滚轮显示文本不是“滚轮上”");
             checks.Add("PASS gesture text: arrows and mouse wheel format");
+
+            // 输入闸门改用共享命令表:图标表只负责显示,缺图标不得让已知命令变成不可执行。
+            Require(SettingsCatalog.Commands.All(definition => InputCommandMap.IsCommandKnown(definition.Id)),
+                "共享命令目录中有命令未被 IsCommandKnown 收录");
+            Require(!InputCommandMap.IsCommandKnown("NoSuchCommand") && !InputCommandMap.IsCommandKnown(null),
+                "未知命令被当成可执行命令");
+            checks.Add($"PASS command gate: all {SettingsCatalog.Commands.Length} catalog commands are known; unknown/null rejected, icon table is display-only");
 
             for (var index = 0; index < 5; index++)
             {
@@ -142,9 +152,13 @@ internal static class WindowsSettingsAcceptance
             var mainPresetsBefore = main.Settings.ScalePresets.Select(item => item.Value).ToList();
             editor.Focus(FocusState.Programmatic);
             Require(editor.FocusState != FocusState.Unfocused, "预设输入框无法获得焦点");
+            Require(WindowsKeyDispatch.IsTextEditingElement(FocusManager.GetFocusedElement(window.Root.XamlRoot!) as DependencyObject),
+                "文本编辑焦点未被识别,主窗快捷键会吞掉输入");
             editor.Text = "42.5";
             blurTarget.Focus(FocusState.Programmatic);
             Require(blurTarget.FocusState != FocusState.Unfocused, "无法把焦点移出预设输入框");
+            Require(!WindowsKeyDispatch.IsTextEditingElement(FocusManager.GetFocusedElement(window.Root.XamlRoot!) as DependencyObject),
+                "非文本控件焦点被误判为文本编辑");
             await Task.Delay(80);
             Require(Math.Abs(editedPreset.Value - 0.425) < 1e-9,
                 $"失焦没有提交缩放预设文本: {editedPreset.Value}");

@@ -414,7 +414,7 @@ internal static class iOSNativeInputCheck
             (40, GestureKey.Return), (41, GestureKey.Escape), (42, GestureKey.Back), (43, GestureKey.Tab), (44, GestureKey.Space),
             (58, GestureKey.F1), (69, GestureKey.F12), (62, GestureKey.F5),
             (74, GestureKey.Home), (75, GestureKey.PageUp), (76, GestureKey.Delete), (77, GestureKey.End), (78, GestureKey.PageDown),
-            (87, GestureKey.Add), (86, GestureKey.Subtract), (84, GestureKey.Divide), (85, GestureKey.Multiply), (99, GestureKey.Decimal),
+            (87, GestureKey.OemPlus), (86, GestureKey.OemMinus), (84, GestureKey.Divide), (85, GestureKey.Multiply), (99, GestureKey.Decimal),
             (89, GestureKey.NumPad1), (97, GestureKey.NumPad9), (98, GestureKey.NumPad0), (88, GestureKey.Return),
             (224, GestureKey.LeftCtrl), (225, GestureKey.LeftShift), (226, GestureKey.LeftAlt), (227, GestureKey.LWin),
             (228, GestureKey.RightCtrl), (229, GestureKey.RightShift), (230, GestureKey.RightAlt), (231, GestureKey.RWin),
@@ -434,6 +434,71 @@ internal static class iOSNativeInputCheck
             if (resolved != command) throw new InvalidOperationException($"HID {usage} 往返应解析到 {command}，实际 {resolved ?? "null"}");
         }
         lines.Add("PASS 键映射往返：方向键/F/Z/数字键经共享手势查用户绑定，与默认命令表一致");
+
+        // 数字键盘 ± 与主行 =/− 同键：必须解析到同一条用户绑定（默认即预设缩放）；回车与数字键盘 Enter 都是 Return。
+        foreach (var (keypadUsage, rowUsage, label) in new[] { (87, 46, "+"), (86, 45, "−") })
+        {
+            var keypadGesture = AppleInputMapping.FromHidUsage(keypadUsage, AppleInputMapping.ControlMask, main.Settings);
+            var rowGesture = AppleInputMapping.FromHidUsage(rowUsage, AppleInputMapping.ControlMask, main.Settings);
+            var keypadCommand = InputCommandMap.CommandForGesture(keypadGesture, main.Settings);
+            if (keypadCommand is null || keypadCommand != InputCommandMap.CommandForGesture(rowGesture, main.Settings))
+                throw new InvalidOperationException($"数字键盘 {label} 未命中主行键的绑定：{keypadCommand ?? "null"}");
+        }
+        foreach (var (command, key) in new[] { ("ZoomInPreset", GestureKey.OemPlus), ("ZoomOutPreset", GestureKey.OemMinus) })
+        {
+            var defaultGesture = SettingsCatalog.DefaultHotkeys.Single(hotkey => hotkey.CommandId == command).PrimaryGesture;
+            if (defaultGesture?.Key is not { } expected || expected.Key != key)
+                throw new InvalidOperationException($"{command} 的默认绑定不再是主行 =/−，小键盘别名已失去意义");
+        }
+        if (AppleInputMapping.KeyFromHidUsage(88) != GestureKey.Return || AppleInputMapping.KeyFromHidUsage(40) != GestureKey.Return)
+            throw new InvalidOperationException("回车或数字键盘 Enter 未映射到 Return");
+        lines.Add("PASS 数字键盘：HID 87/86 与主行 46/45 同键并解析到同一条绑定，Enter 与 Return 都是 Return");
+
+        // 兼容回归：旧设置可能已持久化数字键盘的 Add/Subtract，运行时统一产出 OemPlus/OemMinus。
+        // 等价比较（冲突检测与命令查询同源）必须双向成立，否则老用户的预设缩放会静默失效；结束时恢复用户原绑定。
+        var controlModifiers = AppleKeyboardMapping.ApplyForRuntime(GestureModifiers.Control, main.Settings.UseAppleKeyboard,
+            main.Settings.MapCommandTarget, main.Settings.MapOptionTarget, main.Settings.MapControlTarget);
+        AppGesture Pair(GestureKey key) => AppGesture.FromKey(new AppKeyGesture(key, controlModifiers));
+        var zoomInItem = main.Settings.Hotkeys.Single(item => item.Command == "ZoomInPreset");
+        var zoomOutItem = main.Settings.Hotkeys.Single(item => item.Command == "ZoomOutPreset");
+        var zoomInBinding = zoomInItem.PrimaryHotkey;
+        var zoomOutBinding = zoomOutItem.PrimaryHotkey;
+        try
+        {
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                zoomInItem.PrimaryHotkey = Pair(GestureKey.Add);
+                zoomOutItem.PrimaryHotkey = Pair(GestureKey.Subtract);
+            });
+            if (InputCommandMap.CommandForGesture(AppleInputMapping.FromHidUsage(87, AppleInputMapping.ControlMask, main.Settings), main.Settings) != "ZoomInPreset" ||
+                InputCommandMap.CommandForGesture(AppleInputMapping.FromHidUsage(86, AppleInputMapping.ControlMask, main.Settings), main.Settings) != "ZoomOutPreset")
+                throw new InvalidOperationException("新数字键盘 ± 手势未命中旧 Add/Subtract 绑定");
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                zoomInItem.PrimaryHotkey = Pair(GestureKey.OemPlus);
+                zoomOutItem.PrimaryHotkey = Pair(GestureKey.OemMinus);
+            });
+            if (InputCommandMap.CommandForGesture(Pair(GestureKey.Add), main.Settings) != "ZoomInPreset" ||
+                InputCommandMap.CommandForGesture(Pair(GestureKey.Subtract), main.Settings) != "ZoomOutPreset")
+                throw new InvalidOperationException("旧 Add/Subtract 手势未命中新的 OemPlus/OemMinus 绑定");
+        }
+        finally
+        {
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                zoomInItem.PrimaryHotkey = zoomInBinding;
+                zoomOutItem.PrimaryHotkey = zoomOutBinding;
+            });
+        }
+        lines.Add("PASS 旧绑定兼容：持久化的 Add/Subtract 与运行时 OemPlus/OemMinus 双向解析到同一命令（测试后恢复用户绑定）");
+
+        // 输入派发闸门：命令登记只认 SettingsCatalog.Commands，图标表不再参与。
+        if (InputCommandMap.IsCommandKnown(null) || InputCommandMap.IsCommandKnown("") || InputCommandMap.IsCommandKnown("NoSuchCommand"))
+            throw new InvalidOperationException("命令登记查询把 null/空串/未登记标识当成已登记");
+        foreach (var definition in SettingsCatalog.Commands)
+            if (!InputCommandMap.IsCommandKnown(definition.Id))
+                throw new InvalidOperationException($"共享命令目录中的 {definition.Id} 未被登记查询识别");
+        lines.Add($"PASS 命令登记：IsCommandKnown 以 SettingsCatalog.Commands 的 {SettingsCatalog.Commands.Length} 个标识为唯一来源，null/空串/未登记为 false，输入派发不再依赖 SF Symbols");
 
         bool appleKeyboard = main.Settings.UseAppleKeyboard;
         try

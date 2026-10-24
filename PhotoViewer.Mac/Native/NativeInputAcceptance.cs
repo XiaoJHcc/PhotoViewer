@@ -3,8 +3,10 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Mac.Core;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -24,7 +26,7 @@ internal static class NativeInputAcceptance
         if (window.Session.Image != null) throw new InvalidOperationException("输入回归要求未加载照片的空窗口");
 
         // 1) 各事件类型只读取对应字段并映射到正确手势（回归根因）。
-        VerifyGestureMapping(checks);
+        VerifyGestureMapping(window.Main.Settings, checks);
 
         // 2) 空首屏结构：提示可见、主图铺满展示区、提示不拦截点击。
         //    点击点取主图中心，正好落在提示文字上，故同时验证提示标签的点击透传。
@@ -267,8 +269,12 @@ internal static class NativeInputAcceptance
         return condition();
     }
 
-    /// <summary>逐类型构造真实 NSEvent 并核对 FromEvent 不抛异常且映射到预期手势。</summary>
-    private static void VerifyGestureMapping(List<string> checks)
+    /// <summary>
+    /// 逐类型构造真实 NSEvent 并核对 FromEvent 不抛异常且映射到预期手势；另覆盖物理键位口径
+    /// （字符为空或非 US 字符时仍按 keyCode 识别）、数字键盘缩放的 ± 别名与 Return，
+    /// 以及输入派发共用的命令登记查询。
+    /// </summary>
+    private static void VerifyGestureMapping(SettingsViewModel settings, List<string> checks)
     {
         void Expect(string label, NSEvent? nativeEvent, Func<AppGesture, bool>? matches)
         {
@@ -285,18 +291,110 @@ internal static class NativeInputAcceptance
 
         var location = new CGPoint(100, 100);
         double uptime = NSProcessInfo.ProcessInfo.SystemUptime;
+        NSEvent Key(string characters, ushort keyCode)
+            => NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, uptime, 0, null!, characters, characters, false, keyCode)
+                ?? throw new InvalidOperationException($"键码 {keyCode} 事件创建失败");
         Expect("LeftMouseDown", NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, uptime, 0, null!, 1, 1, 1),
             gesture => gesture.Mouse is { Action: MouseAction.LeftClick });
         Expect("RightMouseDown", NSEvent.MouseEvent(NSEventType.RightMouseDown, location, 0, uptime, 0, null!, 1, 1, 1),
             gesture => gesture.Mouse is { Action: MouseAction.LeftClick or MouseAction.RightClick });
         Expect("OtherMouseDown", NSEvent.MouseEvent(NSEventType.OtherMouseDown, location, 0, uptime, 0, null!, 1, 1, 1),
             gesture => gesture.Mouse != null);
-        Expect("KeyDown 'n'", NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, uptime, 0, null!, "n", "n", false, 45),
-            gesture => gesture.Key is { Key: GestureKey.N });
-        Expect("KeyDown ←", NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, uptime, 0, null!, "\u001c", "\u001c", false, 123),
-            gesture => gesture.Key is { Key: GestureKey.Left });
+        Expect("KeyDown 'n'", Key("n", 45), gesture => gesture.Key is { Key: GestureKey.N });
+        Expect("KeyDown ←", Key("\u001c", 123), gesture => gesture.Key is { Key: GestureKey.Left });
         Expect("KeyUp", NSEvent.KeyEvent(NSEventType.KeyUp, location, 0, uptime, 0, null!, "n", "n", false, 45), null);
         checks.Add("gesture mapping: mouse / key / key-up events read type-specific fields without throwing");
+
+        // 物理键位口径：非 US 布局下 CharactersIgnoringModifiers 会给别的字符甚至空串，
+        // 字母/主行数字/常用标点必须仍按硬件 keyCode 识别，与 iOS HID usage 表同位置。
+        (ushort KeyCode, string Characters, GestureKey Key, string Label)[] physical =
+        [
+            (0, "", GestureKey.A, "A 键空字符"),
+            (45, "н", GestureKey.N, "非 US 字母"),
+            (18, "&", GestureKey.D1, "主行数字 1"),
+            (29, "à", GestureKey.D0, "主行数字 0"),
+            (43, "，", GestureKey.OemComma, "全角逗号位"),
+            (47, "。", GestureKey.OemPeriod, "全角句号位"),
+            (44, ":", GestureKey.OemQuestion, "非 US 斜杠位"),
+            (39, "§", GestureKey.OemQuotes, "引号位"),
+            (41, "ñ", GestureKey.OemSemicolon, "分号位"),
+            (30, "+", GestureKey.OemCloseBrackets, "右方括号位"),
+            (33, "ü", GestureKey.OemOpenBrackets, "左方括号位"),
+            (42, "#", GestureKey.OemPipe, "反斜杠位"),
+            (50, "°", GestureKey.OemTilde, "反引号位"),
+        ];
+        foreach (var (keyCode, characters, key, label) in physical)
+            Expect($"KeyDown keyCode {keyCode}（{label}）", Key(characters, keyCode), gesture => gesture.Key is { } actual && actual.Key == key);
+        checks.Add($"physical keys: {physical.Length} letter / digit / punctuation keyCodes map by hardware position even with empty or non-US characters");
+
+        // 特殊键与数字键盘：缩放 ± 别名到主行 =/−（命中同一条用户绑定），回车保持 Return。
+        (ushort KeyCode, GestureKey Key, string Label)[] specials =
+        [
+            (24, GestureKey.OemPlus, "主行 ="), (27, GestureKey.OemMinus, "主行 −"),
+            (69, GestureKey.OemPlus, "数字键盘 +"), (78, GestureKey.OemMinus, "数字键盘 −"),
+            (36, GestureKey.Return, "Return"), (76, GestureKey.Return, "数字键盘 Enter"),
+            (48, GestureKey.Tab, "Tab"), (49, GestureKey.Space, "空格"), (51, GestureKey.Back, "Backspace"),
+        ];
+        foreach (var (keyCode, key, label) in specials)
+            Expect($"KeyDown keyCode {keyCode}（{label}）", Key("", keyCode), gesture => gesture.Key is { } actual && actual.Key == key);
+
+        GestureModifiers Modifiers(GestureModifiers raw) => AppleKeyboardMapping.ApplyForRuntime(raw, settings.UseAppleKeyboard,
+            settings.MapCommandTarget, settings.MapOptionTarget, settings.MapControlTarget);
+        AppGesture? WithControl(ushort keyCode)
+            => AppleInputMapping.FromRaw(AppleInputMapping.KeyDown, keyCode, AppleInputMapping.ControlMask, 0, 0, false, "", settings);
+        foreach (var (keypad, row, command, label) in new[]
+                 {
+                     ((ushort)69, (ushort)24, "ZoomInPreset", "+"),
+                     ((ushort)78, (ushort)27, "ZoomOutPreset", "−"),
+                 })
+        {
+            var keypadGesture = WithControl(keypad);
+            var rowGesture = WithControl(row);
+            if (keypadGesture?.Key is null || keypadGesture.Key.Modifiers != Modifiers(GestureModifiers.Control))
+                throw new InvalidOperationException($"数字键盘 {label} 未按 Control 修饰键解码");
+            var keypadResolved = InputCommandMap.CommandForGesture(keypadGesture, settings);
+            if (keypadResolved is null || keypadResolved != InputCommandMap.CommandForGesture(rowGesture, settings))
+                throw new InvalidOperationException($"数字键盘 {label} 未命中主行键的绑定：{keypadResolved ?? "null"}");
+            var defaultGesture = SettingsCatalog.DefaultHotkeys.Single(hotkey => hotkey.CommandId == command).PrimaryGesture;
+            if (defaultGesture?.Key is not { } expected || expected.Key != (keypad == 69 ? GestureKey.OemPlus : GestureKey.OemMinus))
+                throw new InvalidOperationException($"{command} 的默认绑定不再是主行 =/−，小键盘别名已失去意义");
+        }
+        checks.Add("keypad: ± alias the main-row =/− binding (default preset zoom) and Enter/Return both map to Return");
+
+        // 兼容回归：旧设置可能已持久化数字键盘的 Add/Subtract，而运行时统一产出 OemPlus/OemMinus。
+        // 等价比较必须双向成立，否则老用户的预设缩放会静默失效；结束时恢复用户原绑定。
+        var zoomInItem = settings.Hotkeys.Single(item => item.Command == "ZoomInPreset");
+        var zoomOutItem = settings.Hotkeys.Single(item => item.Command == "ZoomOutPreset");
+        var zoomInBinding = zoomInItem.PrimaryHotkey;
+        var zoomOutBinding = zoomOutItem.PrimaryHotkey;
+        AppGesture Pair(GestureKey key) => AppGesture.FromKey(new AppKeyGesture(key, Modifiers(GestureModifiers.Control)));
+        try
+        {
+            zoomInItem.PrimaryHotkey = Pair(GestureKey.Add);
+            zoomOutItem.PrimaryHotkey = Pair(GestureKey.Subtract);
+            if (InputCommandMap.CommandForGesture(WithControl(69), settings) != "ZoomInPreset" ||
+                InputCommandMap.CommandForGesture(WithControl(78), settings) != "ZoomOutPreset")
+                throw new InvalidOperationException("新数字键盘 ± 手势未命中旧 Add/Subtract 绑定");
+            zoomInItem.PrimaryHotkey = Pair(GestureKey.OemPlus);
+            zoomOutItem.PrimaryHotkey = Pair(GestureKey.OemMinus);
+            if (InputCommandMap.CommandForGesture(Pair(GestureKey.Add), settings) != "ZoomInPreset" ||
+                InputCommandMap.CommandForGesture(Pair(GestureKey.Subtract), settings) != "ZoomOutPreset")
+                throw new InvalidOperationException("旧 Add/Subtract 手势未命中新的 OemPlus/OemMinus 绑定");
+        }
+        finally
+        {
+            zoomInItem.PrimaryHotkey = zoomInBinding;
+            zoomOutItem.PrimaryHotkey = zoomOutBinding;
+        }
+        checks.Add("legacy keypad bindings: persisted Add/Subtract and runtime OemPlus/OemMinus resolve to the same command in both directions (user binding restored)");
+
+        // 输入派发使用的命令登记查询：单一来源为 SettingsCatalog.Commands，null/空串/未登记一律 false。
+        if (InputCommandMap.IsCommandKnown(null) || InputCommandMap.IsCommandKnown("") || InputCommandMap.IsCommandKnown("NoSuchCommand"))
+            throw new InvalidOperationException("命令登记查询把 null/空串/未登记标识当成已登记");
+        foreach (var definition in SettingsCatalog.Commands)
+            if (!InputCommandMap.IsCommandKnown(definition.Id))
+                throw new InvalidOperationException($"共享命令目录中的 {definition.Id} 未被登记查询识别");
+        checks.Add($"command gate: IsCommandKnown follows the {SettingsCatalog.Commands.Length} settings-catalog commands; null / empty / unknown are false and SF Symbols no longer gate dispatch");
     }
 
     /// <summary>在真实主图上触发右键，用菜单代理捕获 MenuWillOpen，超时取消跟踪避免阻塞。</summary>

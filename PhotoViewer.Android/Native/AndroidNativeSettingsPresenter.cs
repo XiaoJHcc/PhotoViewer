@@ -567,14 +567,18 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         else _hotkeyList?.NotifyAllRowsChanged();
     }
 
-    /// <summary>录制态键盘：Esc 取消并保留原绑定，Delete/Backspace 清空，其余完整手势写入槽位。</summary>
+    /// <summary>
+    /// 录制态键盘：Esc 与系统返回键取消并保留原绑定，Delete/Backspace 清空，其余完整手势写入槽位。
+    /// 只有真实按下（<see cref="KeyEventActions.Down"/>）参与录制：抬起与输入法的多字符提交（Multiple）
+    /// 只被吞掉，不写绑定；系统返回键不参与映射，取消语义保证它永远不会被录成无法派发的死绑定。
+    /// </summary>
     /// <param name="e">按键事件。</param>
     /// <returns>录制态是否消费该事件。</returns>
     internal bool HandleRecordingKey(KeyEvent? e)
     {
         if (_recordingItem == null || e == null) return false;
-        if (e.Action != KeyEventActions.Down && e.Action != KeyEventActions.Multiple) return true;
-        if (e.KeyCode == Keycode.Escape)
+        if (e.Action != KeyEventActions.Down) return true;
+        if (e.KeyCode is Keycode.Escape or Keycode.Back)
         {
             CancelRecording();
             return true;

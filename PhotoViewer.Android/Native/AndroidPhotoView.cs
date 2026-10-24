@@ -11,6 +11,7 @@ using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Shared;
 
@@ -68,8 +69,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     internal event Action? ViewportChanged;
     /// <summary>适应态横向轻扫：-1 上一张、+1 下一张。</summary>
     internal event Action<int>? SwipeRequested;
-    /// <summary>离散滚轮（鼠标）：方向与原生修饰键掩码。</summary>
-    internal event Action<bool, int>? WheelScrolled;
+    /// <summary>
+    /// 滚轮命令派发（宿主按共享绑定表查询并执行）：参数为向上/向下与原生修饰键掩码，返回是否已执行命令。
+    /// 带修饰键的滚轮先走这里，未命中绑定才回落到默认语义（精确平移 / 一格一命令）。
+    /// </summary>
+    internal Func<bool, int, bool>? WheelCommand { get; set; }
     /// <summary>主图长按：弹上下文菜单；参数为触点在本视图内的像素坐标。</summary>
     internal event Action<float, float>? LongPressRequested;
     /// <summary>主图单击（空态打开文件夹 / 点空白清除细节预览）。</summary>
@@ -454,7 +458,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         return true;
     }
 
-    /// <summary>滚轮分流（INPUT-04）：精确/非整格滚动平移照片，整格离散滚轮按格派发命令。</summary>
+    /// <summary>
+    /// 滚轮分流（INPUT-04）：带修饰键的滚轮先按共享绑定表执行（如 Ctrl+滚轮缩放，INPUT-03），
+    /// 未命中绑定再回落到默认语义——精确/非整格滚动平移照片，整格离散滚轮按格派发命令。
+    /// </summary>
     /// <param name="e">通用运动事件。</param>
     /// <returns>是否消费。</returns>
     public override bool OnGenericMotionEvent(MotionEvent? e)
@@ -465,6 +472,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             return base.OnGenericMotionEvent(e);
         float vertical = e.GetAxisValue(Axis.Vscroll), horizontal = e.GetAxisValue(Axis.Hscroll);
         if (Math.Abs(vertical) < .01f && Math.Abs(horizontal) < .01f) return base.OnGenericMotionEvent(e);
+        int metaState = (int)e.MetaState;
+        if (Math.Abs(vertical) >= .01f && AndroidInputMapping.ModifiersOf(metaState) != GestureModifiers.None
+            && WheelCommand?.Invoke(vertical < 0, metaState) == true)
+            return true;
         if (IsPreciseScroll(e, vertical))
         {
             if (!_viewport.IsFit)
@@ -481,7 +492,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         {
             bool up = _wheelAccumulator < 0;
             _wheelAccumulator = 0;
-            WheelScrolled?.Invoke(up, (int)e.MetaState);
+            WheelCommand?.Invoke(up, metaState);
         }
         return true;
     }

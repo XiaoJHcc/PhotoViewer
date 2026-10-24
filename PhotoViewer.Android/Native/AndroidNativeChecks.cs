@@ -415,6 +415,11 @@ internal static partial class AndroidNativeChecks
             Check("Esc 取消保留原绑定", sheet.FeedRecordingKeyForChecks(Keycode.Escape)
                 && !sheet.IsRecording && ReferenceEquals(firstHotkey.PrimaryHotkey, savedPrimary),
                 $"{firstHotkey.PrimaryHotkeyText}");
+            // 系统返回键与 Esc 同语义：取消录制并保留原绑定，不写入永远无法派发的死绑定。
+            sheet.BeginRecordingForChecks(0, true);
+            Check("系统返回键取消保留原绑定", sheet.FeedRecordingKeyForChecks(Keycode.Back)
+                && !sheet.IsRecording && ReferenceEquals(firstHotkey.PrimaryHotkey, savedPrimary),
+                $"{firstHotkey.PrimaryHotkeyText}");
             sheet.BeginRecordingForChecks(0, true);
             sheet.FeedRecordingKeyForChecks(Keycode.Del);
             Check("Delete 清空槽位", firstHotkey.PrimaryHotkey == null, firstHotkey.PrimaryHotkeyText);

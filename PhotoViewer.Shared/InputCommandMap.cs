@@ -1,4 +1,5 @@
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Shared;
@@ -10,6 +11,16 @@ namespace PhotoViewer.Shared;
 /// </summary>
 public static class InputCommandMap
 {
+    /// <summary>
+    /// 命令是否登记在共享设置目录 <see cref="SettingsCatalog.Commands"/> 中。
+    /// 输入派发只用这一判据决定能否执行；SF Symbols 之类的图标表只负责 UI，
+    /// 不得反过来充当命令白名单（否则新增/改名的命令会因缺图标而静默失效）。
+    /// </summary>
+    /// <param name="command">命令标识（可为 null）。</param>
+    /// <returns>已登记返回 true；null、空串与未登记标识返回 false。</returns>
+    public static bool IsCommandKnown(string? command)
+        => command is not null && SettingsCatalog.TryGetCommand(command, out _);
+
     /// <summary>按用户主/次绑定查找命令；各平台的事件解包之后共用这一张命令表。</summary>
     /// <param name="gesture">共享手势（可为 null）。</param>
     /// <param name="settings">当前设置。</param>

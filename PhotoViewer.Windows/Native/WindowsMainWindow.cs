@@ -70,6 +70,7 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly WindowsTitleBar _titleBar;
     private readonly Rectangle _detailHighlight;
     private readonly Canvas _highlightLayer;
+    private readonly KeyEventHandler _previewKeyHandler;
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _statusTimer;
     private Rect? _detailHighlightUv;
@@ -90,6 +91,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         _main = main;
         _viewState = viewState;
+        _previewKeyHandler = OnPreviewKeyDown;
         Title = WindowTitle;
 
         _photo = new WindowsPhotoView();
@@ -244,7 +246,8 @@ internal sealed partial class WindowsMainWindow : Window
 
         _root.Loaded += OnRootLoaded;
         _root.SizeChanged += OnRootSizeChanged;
-        _root.KeyDown += OnKeyDown;
+        // 快捷键在根元素预处置:冒泡阶段的焦点路径(ScrollViewer/按钮先处理方向键等)不再决定快捷键是否生效。
+        _root.AddHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler, handledEventsToo: true);
         _root.PointerMoved += OnRootPointerMoved;
         Activated += OnWindowActivated;
         _photoHost.PointerWheelChanged += OnPhotoWheel;
@@ -294,6 +297,7 @@ internal sealed partial class WindowsMainWindow : Window
             _xamlRoot.Changed -= OnXamlRootChanged;
         }
 
+        _root.RemoveHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler);
         _filterBar.SizeChanged -= OnFilterBarSizeChanged;
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
@@ -349,6 +353,13 @@ internal sealed partial class WindowsMainWindow : Window
             case "ToggleEnhance":
                 ToggleEnhance();
                 return;
+        }
+
+        // Exchange 由共享命令直接写 CurrentFile:上一张为空时会把当前照片置空,
+        // 与其他三端一样按键不动作,而不是落进共享实现。
+        if (command == "Exchange" && _main.LastFile == null)
+        {
+            return;
         }
 
         // Open / Previous / Next / Exchange / SetRating0-5 与视口无关,直接复用共享命令实现
@@ -1083,31 +1094,49 @@ internal sealed partial class WindowsMainWindow : Window
         _emptyHitArea.Visibility = file == null ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    /// <summary>键盘快捷键:走共享手势表,未映射或本阶段不可达的命令不消费按键(INPUT-01)。</summary>
-    private void OnKeyDown(object sender, KeyRoutedEventArgs e)
+    /// <summary>
+    /// 主窗快捷键入口:根元素 PreviewKeyDown 与实际键盘共用,返回是否消费按键(INPUT-01)。
+    /// 未映射或未绑定的按键放行;焦点在文本编辑控件内时整体放行;命令执行前先过重复设闸。
+    /// </summary>
+    /// <param name="key">虚拟键</param>
+    /// <param name="wasKeyDown">是否为按住产生的重复按键</param>
+    /// <returns>消费返回 true,放行返回 false</returns>
+    internal bool HandleShortcutKey(VirtualKey key, bool wasKeyDown)
     {
-        var gesture = WindowsInput.FromKey(e.Key);
-        if (gesture == null)
+        var route = WindowsKeyDispatch.Resolve(
+            WindowsInput.FromKey(key),
+            _main.Settings,
+            IsTextEditingFocus(),
+            wasKeyDown);
+        if (!route.Consume)
         {
-            return;
+            return false;
         }
 
-        var command = _main.Settings.GetCommandByGesture(gesture);
-        if (command == null || WindowsIcons.ForCommand(command) == null)
+        if (route.Command is { } command)
         {
-            return;
+            Execute(command);
         }
 
-        // INPUT-05：只有上一张/下一张/预设缩放允许按住重复，其余命令的重复按键直接吞掉。
-        if (e.KeyStatus.WasKeyDown && !InputCommandMap.IsRepeatable(command))
+        return true;
+    }
+
+    /// <summary>根元素 PreviewKeyDown:在焦点控件之前处置快捷键。</summary>
+    /// <param name="sender">根元素</param>
+    /// <param name="e">按键参数</param>
+    private void OnPreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (HandleShortcutKey(e.Key, e.KeyStatus.WasKeyDown))
         {
             e.Handled = true;
-            return;
         }
-
-        e.Handled = true;
-        Execute(command);
     }
+
+    /// <summary>焦点是否落在文本编辑控件内(主窗后续出现输入框时必须先放行)。</summary>
+    /// <returns>文本编辑焦点返回 true</returns>
+    private bool IsTextEditingFocus()
+        => _root.XamlRoot is { } xamlRoot
+            && WindowsKeyDispatch.IsTextEditingElement(FocusManager.GetFocusedElement(xamlRoot) as DependencyObject);
 
     /// <summary>
     /// 主图区滚轮(INPUT-04):精确滚动(触控板/高精度滚轮)平移照片;离散滚轮按格查共享手势表。
@@ -1125,7 +1154,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         var gesture = WindowsInput.FromWheel(delta);
         var command = _main.Settings.GetCommandByGesture(gesture);
-        bool commandAvailable = command != null && WindowsIcons.ForCommand(command) != null;
+        bool commandAvailable = command != null && InputCommandMap.IsCommandKnown(command);
         // INPUT-04：带修饰键的用户绑定优先于精确/离散分流（如 Ctrl+滚轮缩放）。
         if (commandAvailable && gesture.Mouse is { Modifiers: not GestureModifiers.None })
         {

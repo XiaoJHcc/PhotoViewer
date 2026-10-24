@@ -51,10 +51,13 @@ internal static class AndroidInputMapping
             case Keycode.DpadUp: return GestureKey.Up;
             case Keycode.DpadDown: return GestureKey.Down;
             case Keycode.Space: return GestureKey.Space;
-            case Keycode.Enter: return GestureKey.Enter;
+            case Keycode.Enter:
+            case Keycode.NumpadEnter: return GestureKey.Return;
             case Keycode.Tab: return GestureKey.Tab;
             case Keycode.Escape: return GestureKey.Escape;
-            case Keycode.Del: return GestureKey.Delete;
+            // Android 的 Del 是 Backspace、ForwardDel 才是 Delete；共享键名按物理键位对齐其他平台。
+            case Keycode.Del: return GestureKey.Back;
+            case Keycode.ForwardDel: return GestureKey.Delete;
             case Keycode.Insert: return GestureKey.Insert;
             case Keycode.MoveHome: return GestureKey.Home;
             case Keycode.MoveEnd: return GestureKey.End;
@@ -66,6 +69,9 @@ internal static class AndroidInputMapping
             case Keycode.NumpadAdd: return GestureKey.OemPlus;
             case Keycode.Minus:
             case Keycode.NumpadSubtract: return GestureKey.OemMinus;
+            case Keycode.NumpadDot: return GestureKey.Decimal;
+            case Keycode.NumpadMultiply: return GestureKey.Multiply;
+            case Keycode.NumpadDivide: return GestureKey.Divide;
             case Keycode.Slash: return GestureKey.OemQuestion;
             case Keycode.Comma: return GestureKey.OemComma;
             case Keycode.Period: return GestureKey.OemPeriod;
@@ -74,9 +80,8 @@ internal static class AndroidInputMapping
             case Keycode.LeftBracket: return GestureKey.OemOpenBrackets;
             case Keycode.RightBracket: return GestureKey.OemCloseBrackets;
             case Keycode.Backslash: return GestureKey.OemPipe;
-            case Keycode.Back: return GestureKey.Back;
         }
-        // 字母 / 数字 / F1–F24 / 小键盘数字与原生键码枚举同名，直接解析；修饰键与媒体键解析失败返回 null。
+        // 字母 / 数字 / F1–F24 / 小键盘数字与原生键码枚举同名，直接解析；修饰键、媒体键与系统返回键解析失败返回 null。
         string name = keyCode.ToString();
         if (name.StartsWith("Numpad", StringComparison.Ordinal))
             name = "NumPad" + name["Numpad".Length..];
@@ -84,6 +89,8 @@ internal static class AndroidInputMapping
         // Android 把主行数字键命名为 Num0–Num9，共享枚举对应 D0–D9；小键盘已是 NumPad*。
         if (name.Length == 4 && name.StartsWith("Num", StringComparison.Ordinal) && char.IsDigit(name[3]))
             name = "D" + name[3];
+        // Android 的 Back 是系统返回键，不参与命令绑定；Backspace 由上方的 Del 映射成共享 Back。
+        if (name == nameof(Keycode.Back)) return null;
         return Enum.TryParse<GestureKey>(name, ignoreCase: false, out var key) ? key : null;
     }
 }

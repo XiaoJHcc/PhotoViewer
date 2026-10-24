@@ -399,12 +399,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (KeyboardInputBlocked) return false;
         var gesture = AppleInputMapping.FromHidUsage(usage, modifierFlags, _main.Settings);
         command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null)
+        if (!InputCommandMap.IsCommandKnown(command) || !iOSControlBar.IsCommandAvailable(command!))
         {
             command = null;
             return false;
         }
-        Execute(command);
+        Execute(command!);
         return true;
     }
 
@@ -857,8 +857,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (KeyboardInputBlocked) return;
         var gesture = AppleInputMapping.FromRaw(AppleInputMapping.ScrollWheel, 0, modifierFlags, 0, up ? 1 : -1, false, null, _main.Settings);
         string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (command == null || !iOSControlBar.IsCommandAvailable(command) || AppleSymbolNames.ForCommand(command) == null) return;
-        Execute(command);
+        if (!InputCommandMap.IsCommandKnown(command) || !iOSControlBar.IsCommandAvailable(command!)) return;
+        Execute(command!);
     }
 
     /// <summary>订阅输入控件编辑通知，作为 INPUT-01 的"文本输入获焦"判据。</summary>

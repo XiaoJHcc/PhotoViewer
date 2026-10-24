@@ -232,7 +232,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _photo.SwipeRequested += direction => Execute(direction < 0 ? "Previous" : "Next");
         _photo.TapRequested += OnPhotoTapped;
         _photo.LongPressRequested += OnPhotoLongPressed;
-        _photo.WheelScrolled += OnWheelScrolled;
+        _photo.WheelCommand = OnWheelCommand;
 
         _session.Changed += OnSessionChanged;
         _session.Notice += OnSessionNotice;
@@ -558,12 +558,14 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnPhotoLongPressed(float x, float y) => ShowPhotoMenu(x, y);
 
-    private void OnWheelScrolled(bool up, int metaState)
+    private bool OnWheelCommand(bool up, int metaState)
     {
         var gesture = AppGesture.FromMouse(new MouseGestureEx(up ? MouseAction.WheelUp : MouseAction.WheelDown,
             AndroidInputMapping.ModifiersOf(metaState)));
         string? command = InputCommandMap.CommandForGesture(gesture, _main.Settings);
-        if (command != null && AndroidControlBar.IsCommandAvailable(command)) Execute(command);
+        if (command == null || !InputCommandMap.IsCommandKnown(command)) return false;
+        Execute(command);
+        return true;
     }
 
     /// <summary>主图长按菜单：在手指处弹出自绘面板；面板整体夹在屏幕内，超出高度时可滚动。</summary>
