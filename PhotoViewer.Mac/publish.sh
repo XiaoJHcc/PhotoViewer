@@ -6,7 +6,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEFAULT_VERSION="$(sed -n 's:.*<AppVersion>\(.*\)</AppVersion>.*:\1:p' "${REPO_ROOT}/Directory.Build.props" | head -n 1)"
 VERSION="${1:-${DEFAULT_VERSION}}"
-APP_NAME="PhotoViewer.Mac"
+PROJECT_NAME="PhotoViewer.Mac"
+APP_NAME="PhotoViewer"
 APP_PATH="${SCRIPT_DIR}/bin/Release/net10.0-macos/osx-arm64/${APP_NAME}.app"
 DIST_DIR="${SCRIPT_DIR}/bin/Release/dist"
 STAGING="${DIST_DIR}/_staging"
@@ -19,11 +20,11 @@ if [[ -z "${VERSION}" ]]; then
 fi
 
 echo "=== 还原 ==="
-dotnet restore "${SCRIPT_DIR}/${APP_NAME}.csproj"
+dotnet restore "${SCRIPT_DIR}/${PROJECT_NAME}.csproj"
 
 echo ""
 echo "=== 构建 ==="
-dotnet publish "${SCRIPT_DIR}/${APP_NAME}.csproj" -c Release -r osx-arm64 --no-restore
+dotnet publish "${SCRIPT_DIR}/${PROJECT_NAME}.csproj" -c Release -r osx-arm64 --no-restore
 
 echo ""
 echo "=== 签名 ==="

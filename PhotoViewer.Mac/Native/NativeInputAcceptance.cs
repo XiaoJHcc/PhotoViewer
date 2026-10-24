@@ -49,7 +49,7 @@ internal static class NativeInputAcceptance
         }
         checks.Add("keyboard: bound arrow key reaches shared command table through photo input handler");
 
-        // 3b) INPUT-05：按住重复只放行上一张/下一张/预设缩放；增强这类命令只执行一次。
+        // 3b) INPUT-05：重复按键不执行增强；空照片时首次按键也只消费事件，不开启增强会话。
         bool enhanced = window.Session.IsEnhanced;
         using (var repeated = NSEvent.KeyEvent(NSEventType.KeyDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
                    window.Window.WindowNumber, null!, "e", "e", true, 14))
@@ -61,10 +61,9 @@ internal static class NativeInputAcceptance
                    window.Window.WindowNumber, null!, "e", "e", false, 14))
         {
             if (photo.InputHandler?.Invoke(first!) != true) throw new InvalidOperationException("首次按键未被主窗口消费");
-            if (window.Session.IsEnhanced == enhanced) throw new InvalidOperationException("首次按键未执行增强命令");
+            if (window.Session.IsEnhanced != enhanced) throw new InvalidOperationException("无照片时增强快捷键仍改变了会话状态");
         }
-        window.Session.ToggleEnhanced();
-        checks.Add("key repeat: non-repeatable command consumes repeats without executing; first press still runs");
+        checks.Add("key repeat: non-repeatable command consumes repeats; empty-state enhance key does not change session state");
 
         // 4) 空首屏左键打开文件选择器（用桩实现避免模态面板阻塞）。
         var stub = new RecordingFilePicker();
@@ -429,14 +428,41 @@ internal static class NativeInputAcceptance
         string[] expectedDisplaySymbols = [AppleSymbolNames.Menu.Filmstrip, AppleSymbolNames.Menu.Analysis, AppleSymbolNames.Menu.Control, AppleSymbolNames.Menu.Enhance];
         if (!displayItems.Select(item => item.Image?.AccessibilityDescription).SequenceEqual(expectedDisplaySymbols))
             throw new InvalidOperationException("系统显示菜单图标不符");
+        string[] expectedMenus = ["PhotoViewer", "文件", "显示", "工具", "操作"];
+        if (!mainMenu.Items.Select(item => item.Submenu?.Title).SequenceEqual(expectedMenus))
+            throw new InvalidOperationException("系统菜单栏缺少工具/操作菜单或顺序错误");
+        var tools = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "工具")!;
+        string[] expectedTools = ["EXIF 详情…", "DINO 诊断…"];
+        if (!tools.Items.Select(item => item.Title).SequenceEqual(expectedTools)) throw new InvalidOperationException("系统工具菜单结构不符");
+        if (tools.Items[0].Enabled || !tools.Items[1].Enabled) throw new InvalidOperationException("空照片时工具菜单可用性错误");
+        var actions = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "操作")!;
+        var actionItems = actions.Items;
+        var hotkeys = window.Main.Settings.Hotkeys;
+        if (!actionItems.Select(item => item.Title).SequenceEqual(hotkeys.Select(item => item.Name)))
+            throw new InvalidOperationException("操作菜单未按设置顺序列出全部控制命令");
+        if (hotkeys.Any(item => !item.IsDisplay) == false || hotkeys.Where(item => !item.IsDisplay).Any(item => actionItems.All(menuItem => menuItem.Title != item.Name)))
+            throw new InvalidOperationException("操作菜单遗漏了控制栏隐藏命令");
+        if (actionItems.Where(item => item.Enabled).Select(item => item.Title).ToArray() is not ["打开文件"])
+            throw new InvalidOperationException("无照片时操作菜单仍有照片命令可用");
+        var nativeMenus = new[] { menu, mainMenu, display, tools, actions };
+        if (nativeMenus.Any(nativeMenu => nativeMenu.AutoEnablesItems))
+            throw new InvalidOperationException("菜单仍允许 AppKit 在打开时自动启用业务禁用项");
+        for (int pass = 0; pass < 3; pass++)
+        {
+            foreach (var nativeMenu in nativeMenus) nativeMenu.Delegate?.MenuWillOpen(nativeMenu);
+            if (enhance.Enabled || tools.Items[0].Enabled || actionItems.Any(item => item.Title != "打开文件" && item.Enabled))
+                throw new InvalidOperationException($"第 {pass + 1} 次菜单更新重新启用了空态禁用项");
+        }
+        checks.Add("menu availability: AppKit auto-enable is off; three consecutive pre-open updates keep empty-state items disabled");
         var systemItems = mainMenu.Items.Where(item => item.Submenu != null).SelectMany(item => item.Submenu!.Items)
             .Where(item => item.Title.Length > 0).ToArray();
         if (systemItems.Any(item => item.Image is not { Template: true } || string.IsNullOrEmpty(item.Image.AccessibilityDescription)))
             throw new InvalidOperationException("系统菜单栏存在无 SF Symbols 模板图的命令项");
         if (window.Main.CurrentFile == null && display.Items.First(item => item.Title == "雾天增强").Enabled)
             throw new InvalidOperationException("无照片时系统菜单雾天增强仍可用");
-        checks.Add("menu: fixed item order and display-only view menu, shared SF Symbols everywhere, 雾天增强 disabled without a photo");
+        checks.Add("menu: five fixed menus, direct tools, complete actions independent of toolbar visibility, shared SF Symbols and empty-state availability");
         var probe = new MenuOpenProbe();
+        var previousDelegate = menu.Delegate;
         menu.Delegate = probe;
         try
         {
@@ -446,7 +472,7 @@ internal static class NativeInputAcceptance
                 window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("右键事件创建失败");
             photo.RightMouseDown(right);
         }
-        finally { menu.Delegate = null; }
+        finally { menu.Delegate = previousDelegate; }
         if (!probe.Opened) throw new InvalidOperationException("主图右键未弹出原生上下文菜单");
         checks.Add("photo area: right click opens native context menu");
     }

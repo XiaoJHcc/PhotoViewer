@@ -55,7 +55,7 @@
     {
       "label": "Debug Mac",
       "type": "shell",
-      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.Mac.app",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
       "dependsOn": "Build Mac (Debug)",
       "group": "test",
       "problemMatcher": "$msCompile"
@@ -63,7 +63,7 @@
     {
       "label": "Run Mac",
       "type": "shell",
-      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.Mac.app",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer.app",
       "group": "test",
       "problemMatcher": []
     },

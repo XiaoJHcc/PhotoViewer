@@ -123,11 +123,16 @@ internal static class NativeToolbarAcceptance
             observations.Add("rating shortcut commands draw a star.fill / clear cross with the 9pt digit stacked in the centre (TOOLBAR-04)");
             settings.Hotkeys.Single(hotkey => hotkey.Command == "Open").IsDisplay = true;
             window.Main.CurrentFile = null;
+            var mainMenu = NSApplication.SharedApplication.MainMenu ?? throw new InvalidOperationException("缺少系统菜单栏");
+            var actionItems = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "操作")!.Items;
+            var enhanceItem = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "显示")!.Items.Single(item => item.Title == "雾天增强");
+            if (enhanceItem.Enabled || actionItems.Any(item => item.Title != "打开文件" && item.Enabled) || !actionItems.Single(item => item.Title == "打开文件").Enabled)
+                throw new InvalidOperationException("照片切空后系统菜单未在同一轮立即禁用");
             await Task.Delay(150);
             if (window.ControlBar.Ratings.Any(button => button.Enabled) || !window.ControlBar.Commands["Open"].Enabled ||
                 window.ControlBar.Commands.Where(pair => pair.Key != "Open").Any(pair => pair.Value.Enabled))
                 throw new InvalidOperationException("空照片状态的工具栏启用状态错误");
-            observations.Add("rating group hides without blank space; numbered rating commands remain distinguishable; empty state disables photo actions");
+            observations.Add("rating group hides without blank space; numbered rating commands remain distinguishable; empty state disables toolbar and menu actions synchronously");
 
             window.Main.CurrentFile = first;
             await Task.Delay(200);

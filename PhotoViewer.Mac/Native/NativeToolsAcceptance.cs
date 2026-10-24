@@ -139,6 +139,12 @@ internal static class NativeToolsAcceptance
             window.ShowTools();
             await Task.Delay(150);
             if (host.Window != sameWindow || tools.CurrentTool is not DinoDebugViewModel) throw new InvalidOperationException("重复打开未保留工具页");
+            window.ShowTools(0);
+            await WaitAsync(() => tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0, "系统菜单直达 EXIF");
+            window.ShowTools(1);
+            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "系统菜单直达 DINO");
+            if (host.Window != sameWindow) throw new InvalidOperationException("系统工具菜单创建了重复窗口");
+            checks.Add("menu entry: EXIF and DINO direct actions reuse the same tools window and select the requested category");
             ClickCategory(host, 0);
             await WaitAsync(() => tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0, "常驻侧栏切回 EXIF");
             {

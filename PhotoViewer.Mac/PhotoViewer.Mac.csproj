@@ -1,7 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
     <PropertyGroup>
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
+        <ApplicationTitle>PhotoViewer</ApplicationTitle>
         <!--
           .NET for macOS 27.0.10722（Xcode 27.x）把最低部署版本抬到 macOS 14.0；
           SupportedOSPlatformVersion 低于该值时 CompileAppManifest 直接报错。

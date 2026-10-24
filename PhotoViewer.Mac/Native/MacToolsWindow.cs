@@ -80,6 +80,9 @@ internal sealed class MacToolsWindow : IDisposable
         Render();
     }
 
+    /// <summary>系统菜单直达入口，与侧栏共用分类切换和 EXIF 可用性守卫。</summary>
+    internal void SelectCategory(int row) => SelectTool(row);
+
     /// <summary>按 SwiftUI 侧栏的选择结果切换分类（与用户点击同一条绑定路径）。</summary>
     private void HandleSidebarSelection(int row)
     {

@@ -193,7 +193,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 ## menu
 
 - **MENU-01、MENU-02**：主图菜单。
-  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs`（`ContextMenu` 创建 `NSMenu`，`UpdateMenuChecks` 同步勾选与可用性）。系统菜单栏由同文件 `BuildMenus`（`:999-1020`）建立：应用菜单「设置… / 分割线 / 退出 PhotoViewer」、文件菜单「打开文件… / 打开文件夹…」、显示菜单「胶片栏 / 分析栏 / 控制栏 / 分割线 / 雾天增强」；显示菜单只含这三个栏位开关、一个分割线与雾天增强，不放布局模式、全屏、缩放或其他项，全部项与右键菜单、控制栏按钮走同一共享命令入口。
+  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs`（`ContextMenu` 创建 `NSMenu`，`UpdateMenuChecks` 同步勾选与可用性）。系统菜单栏由同文件 `BuildMenus` 建立：应用菜单「设置… / 分割线 / 退出 PhotoViewer」、文件菜单「打开文件… / 打开文件夹…」、显示菜单「胶片栏 / 分析栏 / 控制栏 / 分割线 / 雾天增强」、工具菜单「EXIF 详情… / DINO 诊断…」与操作菜单；操作菜单按设置的完整命令集合和顺序生成，不受控制栏显隐影响。显示菜单只含这三个栏位开关、一个分割线与雾天增强，不放布局模式、全屏、缩放或其他项；工具菜单直达同一个工具窗口的目标分类，全部命令与右键菜单、控制栏按钮走同一执行入口。
   - iOS：`PhotoViewer.iOS/Native/iOSContextMenus.cs:49-69`（`UIMenu`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs:342-384`（`MenuFlyout`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs:478-583`（自绘 `PopupWindow`）。

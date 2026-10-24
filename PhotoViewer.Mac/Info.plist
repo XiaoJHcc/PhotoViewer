@@ -33,7 +33,7 @@
 	<key>CFBundleIdentifier</key>
 	<string>cc.xiaojh.PhotoViewer.Mac</string>
 	<key>CFBundleName</key>
-	<string>PhotoViewer.Mac</string>
+	<string>PhotoViewer</string>
 	<key>CFBundleShortVersionString</key>
 	<string>0.8.5</string>
 	<key>CFBundleVersion</key>
