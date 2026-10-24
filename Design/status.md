@@ -8,6 +8,8 @@
 
 **2026-10-23 Android 程序化验收**：基础操作与色彩已由作者手验通过（色彩按 sRGB 回退的平台限制）。八方向、RAW 全分辨率、Full/打开/评分/DINO/相似/设置失败态、外部打开、外部存储写回、旋转与 fontScale/density 矩阵、滚轮分流、按键重复、控制栏焦点已由 `pv-check` 机测通过；剩余仅 SCOPE-03/SCOPE-06 策略项、数据库不可用注入、真机 ROM/手感与组合模式稳定性。
 
+**2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
+
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
 ## film
@@ -19,7 +21,7 @@
 | FILM-03 | 作者手验通过；减弱动态 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-05 | 作者手验通过；空列表无占位文字 | 作者手验通过；胶片栏无占位视图 | 作者手验通过；空列表无占位文字 | 作者手验通过；基础操作；胶片栏无占位视图 |
-| FILM-06 | 作者手验通过；toolbar | 作者手验通过；写回失败改走提示条 | 作者手验通过 | 作者手验通过；基础操作 |
+| FILM-06 | 程序化通过；真实改星、sidecar 回读与筛选连续性 | 程序化通过；真实改星、sidecar 回读与筛选连续性 | 代码核对；新评分写回与失败补偿，待 Windows 运行验收 | 程序化通过；外部存储写回与失败提示 |
 
 ## shell
 
@@ -148,15 +150,15 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| OPEN-01 | 作者手验通过 | 作者手验通过 | 作者手验通过；多目标按入参取首个可打开项 | 作者手验通过；基础操作；合并为单个打开请求 |
-| OPEN-02 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
-| OPEN-03 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过；faults: 枚举失败回退单图 | 代码核对；枚举失败回退单图（共享层仍无可见错误态，遗留 S8） | 程序化通过；枚举失败回退单图 |
-| OPEN-04 | 作者手验通过；空筛选回退代表文件 | 作者手验通过；空筛选回退代表文件 | 作者手验通过；空筛选回退代表文件 | 作者手验通过；基础操作 |
-| OPEN-05 | 作者手验通过 | 作者手验通过 | 作者手验通过；打开照片回适应态 | 作者手验通过；基础操作；订阅 FitToViewRequested |
-| OPEN-06 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 程序化通过；ACTION_VIEW 外部打开定位 |
-| OPEN-07 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 不适用；@android 已登记无拖入 |
-| OPEN-08 | 作者手验通过；打开代际与同目录重开 | 作者手验通过；打开代际与同目录重开 | 作者手验通过；打开代际与同目录重开 | 作者手验通过；基础操作；打开代际与同目录重开 |
-| OPEN-09 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
+| OPEN-01 | 程序化通过；选择器/CLI/拖放统一入口 | 程序化通过；openURL/scene/drop 统一入口 | 代码核对；CLI/拖放/activation 统一入口，待运行验收 | 程序化通过；合并为单个打开请求 |
+| OPEN-02 | 程序化通过；失败保留旧快照 | 程序化通过；失败保留旧快照 | 代码核对；失败保留旧快照，待运行验收 | 程序化通过；失败保留旧快照 |
+| OPEN-03 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过；faults: 枚举失败回退单图 | 代码核对；共享提示条与单图回退已统一，待运行验收 | 程序化通过；枚举失败回退单图 |
+| OPEN-04 | 程序化通过；空筛选回退代表文件 | 程序化通过；空筛选回退代表文件 | 代码核对；空筛选回退代表文件，待运行验收 | 程序化通过；空筛选回退代表文件 |
+| OPEN-05 | 程序化通过；显式打开回适应态 | 程序化通过；显式打开回适应态 | 代码核对；显式打开回适应态，待运行验收 | 程序化通过；订阅 FitToViewRequested |
+| OPEN-06 | 程序化通过；CLI/Automation，Finder/Dock 待实机 | 程序化通过；openURL/scene/drop，真机 scope 待验 | 代码核对；AppInstance 二次激活与参数待 Windows 本机验证 | 程序化通过；ACTION_VIEW 同 UID content URI 打开与真实读取，跨 UID 临时授权待验 |
+| OPEN-07 | 程序化通过；拖放走统一通道 | 程序化通过；拖放走统一通道 | 代码核对；拖放走统一通道，待运行验收 | 不适用；@android 已登记无拖入 |
+| OPEN-08 | 程序化通过；可取消会话与同目录刷新 | 程序化通过；可取消会话与同目录刷新 | 代码核对；可取消会话与同目录刷新，待运行验收 | 程序化通过；新通道与可取消会话 |
+| OPEN-09 | 程序化通过；派生状态随新会话路由 | 程序化通过；派生状态随新会话路由 | 代码核对；派生状态随新会话路由，待运行验收 | 程序化通过；派生状态随新会话路由 |
 
 ## state
 
@@ -175,7 +177,7 @@
 | SETTINGS-02 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | SETTINGS-03 | 作者手验通过 | 作者手验通过；应用固定深色，系统浅/深外观下取样一致 | 作者手验通过 | 不适用；@android 已登记 |
 | SETTINGS-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
-| SETTINGS-05 | 作者手验通过；失败状态行已补 | 作者手验通过；失败状态行已补 | 作者手验通过；失败状态行已补 | 作者手验通过；基础操作；失败状态行已补 |
+| SETTINGS-05 | 程序化通过；draft 隔离、关闭一次提交、失败不发布 | 程序化通过；draft 隔离、关闭一次提交、失败不发布 | 代码核对；draft 隔离与提交已统一，待 Windows 运行验收 | 程序化通过；draft 隔离、关闭一次提交、失败不发布 |
 | SETTINGS-06 | 代码核对；提示内存取内存压力预算，按适屏张数表述 | 代码核对；按实测预算推导缓存，iPad 隐藏缓存上限两项 | 作者手验通过；缓存/预载/后台解码默认值按物理内存与核数推导，提示行取运行时预算与进程私有提交 | 作者手验通过；基础操作；缓存按 MemoryLimiter 可见档实测预算推导，footprint 含 GL 纹理，隐藏缓存上限两项，提示行同口径 |
 | SETTINGS-07 | 作者手验通过；倍率组整行居中、行尾圆形增删同列 | 作者手验通过；倍率组整行居中、行尾圆形增删同列，失焦/Done 不重弹键盘 | 作者手验通过；整组居中待同步 | 作者手验通过；基础操作；草稿跨增删排序保留，非法值恢复，整组居中待同步 |
 | SETTINGS-08 | 作者手验通过 | 作者手验通过；映射行为标准弹出按钮，Cmd 映射往返 | 作者手验通过 | 作者手验通过；基础操作 |
@@ -184,7 +186,7 @@
 | SETTINGS-11 | 作者手验通过；外设断开未验 | 作者手验通过；真实外接键盘未验 | 作者手验通过 | 程序化通过；录制/冲突/断连（能力注入） |
 | SETTINGS-12 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 步进已登记 |
 | SETTINGS-13 | 作者手验通过；设置键盘操作/动态字体已验 | 作者手验通过；动态字体/显示缩放已验 | 作者手验通过；设置键盘操作/动态字体已验 | 程序化通过；fontScale 1.0/1.3 × density 420/525 |
-| SETTINGS-14 | 程序化通过；settings + SettingsDefaultsCheck：回写、快捷键最小字段与旧 JSON 展示字段忽略 | 程序化通过；input + 共享旧 JSON/快捷键最小字段检查 | 代码核对；共享旧 JSON/快捷键最小字段检查通过，待 Windows 运行验收 | 代码核对；共享旧 JSON/快捷键最小字段检查通过，待运行验收 |
+| SETTINGS-14 | 程序化通过；schema 2、原子提交、备份最多三份、读取/保存失败不覆盖原文 | 程序化通过；schema 2、提交与损坏恢复、失败不发布 | 代码核对；schema 2 与原子替换类型检查通过，待 Windows 运行验收 | 程序化通过；SharedPreferences Commit、备份与状态行、失败不发布 |
 | SETTINGS-15 | 作者手验通过；拖拽 | 作者手验通过；拖拽 | 作者手验通过；重排 | 作者手验通过；基础操作；ItemTouchHelper 拖拽与把手菜单 |
 
 ## tools
