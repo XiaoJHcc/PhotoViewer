@@ -1,5 +1,6 @@
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
 using UIKit;
 
@@ -51,18 +52,18 @@ internal static class iOSContextMenus
         Action openTools, Action openSettings)
     {
         var handlers = new Dictionary<string, Action>(StringComparer.Ordinal);
-        var open = Item(handlers, "photo.open-folder", "打开文件夹…", "folder", null, openFolder);
+        var open = Item(handlers, "photo.open-folder", "打开文件夹…", AppleSymbolNames.Menu.OpenFolder, null, openFolder);
         var toggles = UIMenu.Create(string.Empty, null!, new NSString("photo.panes"), UIMenuOptions.DisplayInline,
         [
-            Item(handlers, "photo.film", "胶片栏", "rectangle.stack", filmVisible, toggleFilm),
-            Item(handlers, "photo.analysis", "分析栏", "square.grid.2x2", analysisVisible, toggleAnalysis),
-            Item(handlers, "photo.control", "控制栏", "slider.horizontal.3", controlVisible, toggleControl),
+            Item(handlers, "photo.film", "胶片栏", AppleSymbolNames.Menu.Filmstrip, filmVisible, toggleFilm),
+            Item(handlers, "photo.analysis", "分析栏", AppleSymbolNames.Menu.Analysis, analysisVisible, toggleAnalysis),
+            Item(handlers, "photo.control", "控制栏", AppleSymbolNames.Menu.Control, controlVisible, toggleControl),
         ]);
-        var enhance = Item(handlers, "photo.enhance", "增强", "wand.and.stars", enhanced, toggleEnhance, enabled: hasPhoto);
+        var enhance = Item(handlers, "photo.enhance", "雾天增强", AppleSymbolNames.Menu.Enhance, enhanced, toggleEnhance, enabled: hasPhoto);
         var settings = UIMenu.Create(string.Empty, null!, new NSString("photo.settings"), UIMenuOptions.DisplayInline,
         [
-            Item(handlers, "photo.tools", "工具…", "wrench.and.screwdriver", null, openTools),
-            Item(handlers, "photo.settings.open", "设置…", "gearshape", null, openSettings),
+            Item(handlers, "photo.tools", "工具…", AppleSymbolNames.Menu.Tools, null, openTools),
+            Item(handlers, "photo.settings.open", "设置…", AppleSymbolNames.Menu.Settings, null, openSettings),
         ]);
         var menu = UIMenu.Create(string.Empty, null!, new NSString(PhotoIdentifier), default, [open, toggles, enhance, settings]);
         return new MenuResult(PhotoIdentifier, menu, handlers);

@@ -193,8 +193,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 ## menu
 
 - **MENU-01、MENU-02**：主图菜单。
-  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs:885-899`（`NSMenu`）、`:612`/`:883`（勾选）。
-  - iOS：`PhotoViewer.iOS/Native/iOSContextMenus.cs:48-68`（`UIMenu`）。
+  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs`（`ContextMenu` 创建 `NSMenu`，`UpdateMenuChecks` 同步勾选与可用性）。系统菜单栏由同文件 `BuildMenus`（`:999-1020`）建立：应用菜单「设置… / 分割线 / 退出 PhotoViewer」、文件菜单「打开文件… / 打开文件夹…」、显示菜单「胶片栏 / 分析栏 / 控制栏 / 分割线 / 雾天增强」；显示菜单只含这三个栏位开关、一个分割线与雾天增强，不放布局模式、全屏、缩放或其他项，全部项与右键菜单、控制栏按钮走同一共享命令入口。
+  - iOS：`PhotoViewer.iOS/Native/iOSContextMenus.cs:49-69`（`UIMenu`）。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs:342-384`（`MenuFlyout`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs:478-583`（自绘 `PopupWindow`）。
 - **MENU-03、MENU-04**：弹出与收回。macOS/iOS/Windows 用系统菜单；Android 自绘并夹取到屏幕内（`PhotoViewer.Android/Native/AndroidNativeRootView.cs:566-568`）。
@@ -202,7 +202,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **MENU-04@ios**：卡片菜单保留系统抬升，不移动列表布局（已登记 10-18）。
 - **MENU-05**：卡片菜单。iOS `PhotoViewer.iOS/Native/iOSContextMenus.cs:77-93`；Android `PhotoViewer.Android/Native/AndroidThumbnailCard.cs:288-307`；桌面无卡片菜单，用 tooltip + 星级按钮。
   - **MENU-05@android**：标题与时间可拆成两行原生外观；标题行不可点击，时间补秒与时区（已登记 10-18）。
-- **MENU-07**：不可用项与并发。各端菜单项集合不随照片/列表内容增删；无照片时「增强」置灰、工具打开空态（macOS `MacMainWindow.cs:933`、iOS `iOSContextMenus.cs:40`、Windows `WindowsMainWindow.cs:418`、Android `AndroidNativeRootView.cs:607`）。
+- **MENU-06@mac / @ios**：主图菜单（macOS 右键、iOS 长按）与 macOS 系统菜单栏都使用 SF Symbols，共用 `PhotoViewer.Apple/AppleSymbolNames.cs` 的 `Menu` 映射；Mac 独有「打开文件…」用 `doc`、应用菜单「退出 PhotoViewer」用 `power`，系统菜单栏与右键菜单一样显示图标。
+- **MENU-07**：不可用项与并发。各端菜单项与 macOS 显示菜单的集合都不随照片/列表内容增删；无照片时「雾天增强」置灰、工具打开空态（macOS `MacMainWindow.cs` 的 `AddCheck`、iOS `iOSContextMenus.cs:40`、Windows `WindowsMainWindow.cs:418`、Android `AndroidNativeRootView.cs:607`）。
 - **MENU-01@web**：不实现设置与工具窗口，主图菜单不生成「工具…/设置…」及其分组，其余项、顺序与勾选语义不变（SCOPE-01）。
 - **MENU-03@web**：主图菜单与卡片菜单为自绘弹层（MENU-03 自绘外观），夹在窗口内，键盘语义按 MENU-03；悬停提示同样自绘（`tooltip.*`）。
 - **MENU-05@web**：触屏（`pointerType=touch`）长按卡片弹卡片菜单；桌面右键卡片仍弹主图菜单。

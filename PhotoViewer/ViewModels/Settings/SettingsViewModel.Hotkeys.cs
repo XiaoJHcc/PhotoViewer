@@ -66,7 +66,7 @@ public partial class SettingsViewModel
                 null,
                 null),
 
-            new("增强预览", "ToggleEnhance", "", "增强预览", true,
+            new("雾天增强", "ToggleEnhance", "", "雾天增强", true,
                 AppGesture.FromKey(new AppKeyGesture(GestureKey.E)),
                 null),
 

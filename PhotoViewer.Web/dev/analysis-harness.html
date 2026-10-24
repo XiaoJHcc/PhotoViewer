@@ -164,7 +164,7 @@ function syncWindow() {
 
 button("上一张", () => app.navigate(-1));
 button("下一张", () => app.navigate(1));
-button("增强", () => app.toggleEnhance());
+button("雾天增强", () => app.toggleEnhance());
 button("即时计算", () => app.updateSettings({ analysisImmediateCompute: !app.settings.analysisImmediateCompute }));
 button("分析栏", () => app.toggleAnalysis());
 controls.append(photoSelect, readout);
@@ -360,7 +360,7 @@ async function runSelfTest() {
         histAfter = app.state.analysis.histogram;
         if (histAfter && histAfter !== histBefore) break;
     }
-    check("ANALYSIS-07 增强切换重算直方图",
+    check("ANALYSIS-07 雾天增强切换重算直方图",
         Boolean(histBefore) && Boolean(histAfter) && histAfter !== histBefore,
         `before=${Boolean(histBefore)} after=${Boolean(histAfter)} waited=${waited}ms enhance=${app.state.session.enhance}`);
     app.toggleEnhance();

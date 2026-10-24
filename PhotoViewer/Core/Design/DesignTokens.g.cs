@@ -351,15 +351,15 @@ public static class DesignTokens
     public const string IconStar = "U+FCE9";
     /// <summary>icon.starFilled TOOLBAR-03：实心星（icon.fontSolid 的 fi-ss-star）：点亮的星与评分快捷命令星底；未点亮仍用 icon.star 描边字形。</summary>
     public const string IconStarFilled = "U+FCD7";
-    /// <summary>image.busy.bottomOffset（pt） IMAGE-01：增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
+    /// <summary>image.busy.bottomOffset（pt） IMAGE-01：雾天增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
     public const double ImageBusyBottomOffset = 24.0;
-    /// <summary>image.busy.cornerRadius（pt） IMAGE-01：增强提示药丸圆角。</summary>
+    /// <summary>image.busy.cornerRadius（pt） IMAGE-01：雾天增强提示药丸圆角。</summary>
     public const double ImageBusyCornerRadius = 11.0;
-    /// <summary>image.busy.delay（ms） IMAGE-07：增强提示药丸的出现门槛：计算持续超过该时长才显示，结束即收起。</summary>
+    /// <summary>image.busy.delay（ms） IMAGE-07：雾天增强提示药丸的出现门槛：计算持续超过该时长才显示，结束即收起。</summary>
     public const int ImageBusyDelay = 500;
-    /// <summary>image.busy.height（pt） IMAGE-01：增强预览“计算中…”药丸高。</summary>
+    /// <summary>image.busy.height（pt） IMAGE-01：雾天增强“计算中…”药丸高。</summary>
     public const double ImageBusyHeight = 28.0;
-    /// <summary>image.busy.width（pt） IMAGE-01：增强预览“计算中…”药丸宽。</summary>
+    /// <summary>image.busy.width（pt） IMAGE-01：雾天增强“计算中…”药丸宽。</summary>
     public const double ImageBusyWidth = 96.0;
     /// <summary>image.focus.followTolerance（ratio） IMAGE-02：跟随对焦判定：视口中心与对焦点两轴归一化偏差均小于 5% 时视为仍在跟随。</summary>
     public const double ImageFocusFollowTolerance = 0.05;

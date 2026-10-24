@@ -433,7 +433,7 @@ internal sealed partial class WindowsMainWindow : Window
         _analysisMenuToggle.Click += (_, _) => _main.ToggleAnalysisView();
         _controlMenuToggle = new ToggleMenuFlyoutItem { Text = "控制栏", IsChecked = _main.IsControlViewVisible };
         _controlMenuToggle.Click += (_, _) => _main.ToggleControlView();
-        _enhanceMenuToggle = new ToggleMenuFlyoutItem { Text = "增强", IsChecked = _session.IsEnhanced };
+        _enhanceMenuToggle = new ToggleMenuFlyoutItem { Text = "雾天增强", IsChecked = _session.IsEnhanced };
         _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
         menu.Opening += (_, _) =>
         {
@@ -441,7 +441,7 @@ internal sealed partial class WindowsMainWindow : Window
             _analysisMenuToggle.IsChecked = _main.IsAnalysisViewVisible;
             _controlMenuToggle.IsChecked = _main.IsControlViewVisible;
             _enhanceMenuToggle.IsChecked = _session.IsEnhanced;
-            // MENU-07：无当前照片时增强置灰，其余项照常可用。
+            // MENU-07：无当前照片时雾天增强置灰，其余项照常可用。
             _enhanceMenuToggle.IsEnabled = _main.CurrentFile != null;
         };
 

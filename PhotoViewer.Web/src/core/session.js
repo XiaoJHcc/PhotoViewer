@@ -1,5 +1,5 @@
 /**
- * 加载会话：把「切图 → 代理上屏 → 按需全分辨率 → 增强预览」编排成一份可订阅快照。
+ * 加载会话：把「切图 → 代理上屏 → 按需全分辨率 → 雾天增强」编排成一份可订阅快照。
  * 纯逻辑，不触 DOM；时间走注入的 clock，数值走注入的令牌函数 t。
  *
  * decoder = {
@@ -17,8 +17,8 @@
  *     setProxyLongEdge(px)                       视口变大时重出代理
  *     setCacheLimit(count)                       缓存数量上限变化后裁剪
  *     cachedFullIds() -> string[]                已缓存全分辨率的照片 id（胶片栏细边口径）
- *     setEnhance(bool)                           增强预览会话开关（无照片时不可开）；返回生效值
- *     memoryWarning()                            内存压力：自动关闭增强并提示；返回是否因此关闭
+ *     setEnhance(bool)                           雾天增强会话开关（无照片时不可开）；返回生效值
+ *     memoryWarning()                            内存压力：自动关闭雾天增强并提示；返回是否因此关闭
  *     toast(text)                                状态提示条（STATE-03）
  *     openFailed(name, kind)                     打开失败提示条，返回文案
  *     snapshot() -> {
@@ -228,7 +228,7 @@ export class PhotoSession {
         this._enhance = false;
         this._cancelEnhance();
         this._surface = this._original;
-        this._setToast("内存不足，已关闭增强预览");
+        this._setToast("内存不足，已关闭雾天增强");
         this._emit();
         return true;
     }

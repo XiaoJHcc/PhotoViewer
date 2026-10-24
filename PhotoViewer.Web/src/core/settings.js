@@ -41,7 +41,7 @@ export const HOTKEYS = Object.freeze([
     { command: "ZoomInScale", name: "放大（比例）", display: false, primary: "Ctrl+WheelUp", secondary: null },
     { command: "ZoomOutScale", name: "缩小（比例）", display: false, primary: "Ctrl+WheelDown", secondary: null },
     { command: "ToggleAnalysisView", name: "分析栏展开/收纳", display: false, primary: null, secondary: null },
-    { command: "ToggleEnhance", name: "增强预览", display: true, primary: "KeyE", secondary: null },
+    { command: "ToggleEnhance", name: "雾天增强", display: true, primary: "KeyE", secondary: null },
     { command: "SetRating0", name: "评分 0 星", display: false, primary: "Backquote", secondary: "Numpad0" },
     { command: "SetRating1", name: "评分 1 星", display: false, primary: "Digit1", secondary: "Numpad1" },
     { command: "SetRating2", name: "评分 2 星", display: false, primary: "Digit2", secondary: "Numpad2" },

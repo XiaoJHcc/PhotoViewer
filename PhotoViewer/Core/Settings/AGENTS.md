@@ -9,5 +9,5 @@
 | 文件 | 模块 | 职责 |
 |---|---|---|
 | [SettingsService.cs](SettingsService.cs) | 设置服务 | JSON-serialised config persistence (source-gen via `SettingsJsonContext`). 读取损坏文档先由 `ISettingsStorage.BackupCorruptAsync` 备份（文件改名 `settings.json.corrupt-<yyyyMMdd-HHmmss>`；Apple 偏好/Android SharedPreferences 写带时间戳的备份键）再以默认值启动；`LastLoadError`/`LastSaveError` 暴露最近一次失败（SETTINGS-14）。 |
-| [SettingsModel.cs](SettingsModel.cs) | 设置模型 | 序列化 POCO，定义所有持久化字段及默认值。 |
+| [SettingsModel.cs](SettingsModel.cs) | 设置模型 | 序列化 POCO，定义所有持久化字段及默认值。快捷键只保存命令 id、顺序、显隐与主/次绑定；名称、提示、图标由 `BuildDefaultHotkeys` 命令目录按 id 派生，旧 JSON 中这些展示字段按未知字段忽略。 |
 | [NativeSettingsPresenter.cs](NativeSettingsPresenter.cs) | 原生设置展示器 | `INativeSettingsPresenter` 接口 + `TryPresent` 静态调用入口；macOS / iOS / Windows / Android 各实现原生弹窗或窗口，未注入时返回 false（不再有 Avalonia 模态回退）。 |

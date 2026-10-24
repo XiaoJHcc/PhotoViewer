@@ -819,7 +819,7 @@ class MainApp {
             { id: "film", group: "panes", label: "胶片栏", type: "check", checked: this._panes.film, enabled: true, shortcut: null },
             { id: "analysis", group: "panes", label: "分析栏", type: "check", checked: this._panes.analysis, enabled: true, shortcut: shortcut("ToggleAnalysisView") },
             { id: "control", group: "panes", label: "控制栏", type: "check", checked: this._panes.control, enabled: true, shortcut: null },
-            { id: "enhance", group: "preview", label: "增强", type: "check", checked: Boolean(this._sessionSnap.enhance), enabled: Boolean(photo), shortcut: shortcut("ToggleEnhance") },
+            { id: "enhance", group: "preview", label: "雾天增强", type: "check", checked: Boolean(this._sessionSnap.enhance), enabled: Boolean(photo), shortcut: shortcut("ToggleEnhance") },
         ];
     }
 
@@ -1301,7 +1301,11 @@ class MainApp {
 
     _persistSettings() {
         try {
-            this._write(SETTINGS_KEY, JSON.stringify(this._settings));
+            const settings = {
+                ...this._settings,
+                hotkeys: this._settings.hotkeys.map(({ command, display, primary, secondary }) => ({ command, display, primary, secondary })),
+            };
+            this._write(SETTINGS_KEY, JSON.stringify(settings));
         } catch {
             // SETTINGS-05：持久化失败不得清空设置文档或阻断主屏。
         }

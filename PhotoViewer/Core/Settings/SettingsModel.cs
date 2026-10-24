@@ -63,10 +63,7 @@ public sealed class ExifDisplayModel
 
 public sealed class HotkeyModel
 {
-    public string Name { get; set; } = string.Empty;
     public string Command { get; set; } = string.Empty;
-    public string DisplaySymbol { get; set; } = string.Empty;
-    public string Tooltip { get; set; } = string.Empty;
     public bool IsDisplay { get; set; }
     public GestureModel? Primary { get; set; }
     public GestureModel? Secondary { get; set; }

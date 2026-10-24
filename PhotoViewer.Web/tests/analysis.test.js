@@ -226,7 +226,7 @@ test("ANALYSIS-09：只读库优先；缺结果且即时计算关闭时保持未
     assert.equal(tile(empty, "histogram").state, "empty");
 });
 
-test("ANALYSIS-09：增强联动优先于只读库，按 enhanced 变体现算", async () => {
+test("ANALYSIS-09：雾天增强联动优先于只读库，按 enhanced 变体现算", async () => {
     const clock = manualClock();
     const target = photo("a");
     const store = makeStore(clock, { features: new Map([[target.id, featuresFor(target)]]) });

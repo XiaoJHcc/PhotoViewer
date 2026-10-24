@@ -8,8 +8,8 @@ public static class StatusMessages
     /// <summary>选择器或外部打开没有可用对象名时的占位。</summary>
     public const string UnnamedTarget = "所选项目";
 
-    /// <summary>内存压力自动关闭增强预览。</summary>
-    public const string EnhanceClosedForMemory = "内存不足，已关闭增强预览";
+    /// <summary>内存压力自动关闭雾天增强。</summary>
+    public const string EnhanceClosedForMemory = "内存不足，已关闭雾天增强";
 
     /// <summary>评分写回失败。</summary>
     public static string RatingWriteFailed(string fileName, string? reason = null)

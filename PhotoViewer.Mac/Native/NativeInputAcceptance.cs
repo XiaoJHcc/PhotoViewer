@@ -1,6 +1,7 @@
 using AppKit;
 using CoreGraphics;
 using Foundation;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Mac.Core;
@@ -302,21 +303,41 @@ internal static class NativeInputAcceptance
     private static void VerifyContextMenu(MacMainWindow window, MetalPhotoView photo, CGPoint location, List<string> checks)
     {
         var menu = photo.Menu ?? throw new InvalidOperationException("主图未设置上下文菜单");
-        // MENU-01/MENU-06：项、顺序与固定文案；无照片时增强置灰，工具仍可打开空态。
-        string[] expected = ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "增强", "工具…", "设置…"];
-        var titles = menu.Items.Where(item => item.Title.Length > 0).Select(item => item.Title).ToArray();
+        // MENU-01/MENU-06：项、顺序、固定文案与共享 SF Symbols；无照片时雾天增强置灰，工具仍可打开空态。
+        string[] expected = ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "雾天增强", "工具…", "设置…"];
+        var items = menu.Items.Where(item => item.Title.Length > 0).ToArray();
+        var titles = items.Select(item => item.Title).ToArray();
         if (!titles.SequenceEqual(expected))
             throw new InvalidOperationException($"主图菜单项或顺序不符：{string.Join(" | ", titles)}");
-        var enhance = menu.Items.First(item => item.Title == "增强");
-        if (window.Main.CurrentFile == null && enhance.Enabled) throw new InvalidOperationException("无照片时菜单增强仍可用");
-        var display = NSApplication.SharedApplication.MainMenu?.Items.Select(item => item.Submenu).FirstOrDefault(submenu => submenu?.Title == "显示")
+        string[] expectedSymbols =
+        [
+            AppleSymbolNames.Menu.OpenFile, AppleSymbolNames.Menu.OpenFolder, AppleSymbolNames.Menu.Filmstrip,
+            AppleSymbolNames.Menu.Analysis, AppleSymbolNames.Menu.Control, AppleSymbolNames.Menu.Enhance,
+            AppleSymbolNames.Menu.Tools, AppleSymbolNames.Menu.Settings,
+        ];
+        var symbols = items.Select(item => item.Image?.AccessibilityDescription).ToArray();
+        if (!symbols.SequenceEqual(expectedSymbols) || items.Any(item => item.Image is not { Template: true }))
+            throw new InvalidOperationException($"主图菜单图标不符：{string.Join(" | ", symbols)}");
+        var enhance = menu.Items.First(item => item.Title == "雾天增强");
+        if (window.Main.CurrentFile == null && enhance.Enabled) throw new InvalidOperationException("无照片时菜单雾天增强仍可用");
+        var mainMenu = NSApplication.SharedApplication.MainMenu ?? throw new InvalidOperationException("缺少系统菜单栏");
+        var display = mainMenu.Items.Select(item => item.Submenu).FirstOrDefault(submenu => submenu?.Title == "显示")
             ?? throw new InvalidOperationException("系统菜单缺少显示菜单");
-        var displayTitles = display.Items.Where(item => item.Title.Length > 0).Select(item => item.Title).ToArray();
-        if (!displayTitles.Contains("分析栏", StringComparer.Ordinal) || !displayTitles.Contains("增强", StringComparer.Ordinal))
-            throw new InvalidOperationException($"系统显示菜单缺少分析栏/增强：{string.Join(" | ", displayTitles)}");
-        if (window.Main.CurrentFile == null && display.Items.First(item => item.Title == "增强").Enabled)
-            throw new InvalidOperationException("无照片时系统菜单增强仍可用");
-        checks.Add("menu: fixed item order, 工具…, enhance check present in both menus and disabled without a photo");
+        string[] expectedDisplay = ["胶片栏", "分析栏", "控制栏", "雾天增强"];
+        var displayItems = display.Items.Where(item => item.Title.Length > 0).ToArray();
+        var displayTitles = displayItems.Select(item => item.Title).ToArray();
+        if (!displayTitles.SequenceEqual(expectedDisplay) || display.Items.Count(item => item.Title.Length == 0) != 1)
+            throw new InvalidOperationException($"系统显示菜单结构不符：{string.Join(" | ", displayTitles)}");
+        string[] expectedDisplaySymbols = [AppleSymbolNames.Menu.Filmstrip, AppleSymbolNames.Menu.Analysis, AppleSymbolNames.Menu.Control, AppleSymbolNames.Menu.Enhance];
+        if (!displayItems.Select(item => item.Image?.AccessibilityDescription).SequenceEqual(expectedDisplaySymbols))
+            throw new InvalidOperationException("系统显示菜单图标不符");
+        var systemItems = mainMenu.Items.Where(item => item.Submenu != null).SelectMany(item => item.Submenu!.Items)
+            .Where(item => item.Title.Length > 0).ToArray();
+        if (systemItems.Any(item => item.Image is not { Template: true } || string.IsNullOrEmpty(item.Image.AccessibilityDescription)))
+            throw new InvalidOperationException("系统菜单栏存在无 SF Symbols 模板图的命令项");
+        if (window.Main.CurrentFile == null && display.Items.First(item => item.Title == "雾天增强").Enabled)
+            throw new InvalidOperationException("无照片时系统菜单雾天增强仍可用");
+        checks.Add("menu: fixed item order and display-only view menu, shared SF Symbols everywhere, 雾天增强 disabled without a photo");
         var probe = new MenuOpenProbe();
         menu.Delegate = probe;
         try

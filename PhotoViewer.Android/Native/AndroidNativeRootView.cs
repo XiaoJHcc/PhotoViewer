@@ -640,15 +640,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
         }
 
-        // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 增强 | 工具/设置；不逐项加分隔线。
+        // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 雾天增强 | 工具/设置；不逐项加分隔线。
         AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
         AddDivider();
         AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
         AddItem("分析栏", _main.IsAnalysisViewVisible, () => _main.ToggleAnalysisView());
         AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
         AddDivider();
-        // MENU-06/07：文案为「增强」；无当前照片时置灰，工具仍可打开并显示空态。
-        AddItem("增强", _session.IsEnhanced, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
+        // MENU-06/07：文案为「雾天增强」；无当前照片时置灰，工具仍可打开并显示空态。
+        AddItem("雾天增强", _session.IsEnhanced, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
         AddDivider();
         AddItem("工具…", null, ShowTools);
         AddItem("设置…", null, () => _main.OpenSettingWindow());

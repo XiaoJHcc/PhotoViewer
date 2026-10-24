@@ -159,10 +159,7 @@ public partial class SettingsViewModel
             }).ToList(),
             Hotkeys = Hotkeys.Select(h => new HotkeyModel
             {
-                Name = h.Name,
                 Command = h.Command,
-                DisplaySymbol = h.DisplaySymbol,
-                Tooltip = h.Tooltip,
                 IsDisplay = h.IsDisplay,
                 Primary = ToGestureModel(h.PrimaryHotkey),
                 Secondary = ToGestureModel(h.SecondaryHotkey)
@@ -339,29 +336,26 @@ public partial class SettingsViewModel
         }
 
         Hotkeys.Clear();
+        var definitions = BuildDefaultHotkeys();
+        var byCommand = definitions.ToDictionary(item => item.Command, StringComparer.Ordinal);
         foreach (var hotkey in hotkeys)
         {
-            // 迁移历史命名:旧版本"细节栏" → 当前"分析栏",命令 id 同步升级。
             var command = hotkey.Command == "ToggleDetailView" ? "ToggleAnalysisView" : hotkey.Command;
-            var name = command == "ToggleAnalysisView" && hotkey.Name == "细节栏展开/收纳"
-                ? "分析栏展开/收纳" : hotkey.Name;
-            var tooltip = command == "ToggleAnalysisView" && hotkey.Tooltip == "细节栏"
-                ? "分析栏" : hotkey.Tooltip;
-
+            if (!byCommand.TryGetValue(command, out var definition)) continue;
             Hotkeys.Add(new HotkeyItem(
-                name,
+                definition.Name,
                 command,
-                hotkey.DisplaySymbol,
-                tooltip,
+                definition.DisplaySymbol,
+                definition.Tooltip,
                 hotkey.IsDisplay,
                 FromGestureModel(hotkey.Primary),
                 FromGestureModel(hotkey.Secondary)));
         }
 
         // 合并缺失的默认热键:新版本新增的命令(旧配置 JSON 里没有)补进来,
-        // 使新按钮(如"增强预览")对沿用旧设置的用户也可见;按命令去重,已存在的不覆盖用户自定义。
+        // 使新按钮(如"雾天增强")对沿用旧设置的用户也可见;按命令去重,已存在的不覆盖用户自定义。
         var existingCommands = new HashSet<string>(Hotkeys.Select(h => h.Command));
-        foreach (var def in BuildDefaultHotkeys())
+        foreach (var def in definitions)
         {
             if (existingCommands.Add(def.Command))
                 Hotkeys.Add(def);

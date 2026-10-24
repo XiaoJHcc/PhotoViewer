@@ -490,7 +490,7 @@ test("IMAGE-03：视口变大重出更大代理，旧图维持到新图到达", 
     assert.equal(pending.decodeCalls[1].options.longEdge, 1600);
 });
 
-test("IMAGE-07 / MENU-07：无照片时增强不可开", () => {
+test("IMAGE-07 / MENU-07：无照片时雾天增强不可开", () => {
     const h = harness();
     assert.equal(h.session.setEnhance(true), false);
     assert.equal(h.session.snapshot().enhance, false);
@@ -518,7 +518,7 @@ test("IMAGE-07：400 ms 内完成不显示药丸", async () => {
     assert.deepEqual(h.session.snapshot().original, { kind: "proxy", tag: "A" });
 });
 
-test("IMAGE-07：600 ms 完成显示药丸后收起，增强图原地替换", async () => {
+test("IMAGE-07：600 ms 完成显示药丸后收起，雾天增强图原地替换", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"));
     await loadProxy(h, 0, proxySurface("A"));
@@ -537,7 +537,7 @@ test("IMAGE-07：600 ms 完成显示药丸后收起，增强图原地替换", as
     assert.deepEqual(h.session.snapshot().surface, { kind: "enhanced", tag: "A" });
 });
 
-test("IMAGE-07：增强跨切图持续生效，新产物先显示原片再重算", async () => {
+test("IMAGE-07：雾天增强跨切图持续生效，新产物先显示原片再重算", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"));
     await loadProxy(h, 0, proxySurface("A"));
@@ -585,7 +585,7 @@ test("IMAGE-07：代理→Full 后自动重算，重算期间药丸保持不闪"
     assert.deepEqual(h.session.snapshot().original, { kind: "full", tag: "A" });
 });
 
-test("IMAGE-07：关闭增强立即还原原片并取消在途计算", async () => {
+test("IMAGE-07：关闭雾天增强立即还原原片并取消在途计算", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"));
     await loadProxy(h, 0, proxySurface("A"));
@@ -603,7 +603,7 @@ test("IMAGE-07：关闭增强立即还原原片并取消在途计算", async () 
     assert.deepEqual(h.session.snapshot().surface, { kind: "proxy", tag: "A" });
 });
 
-test("IMAGE-07：内存压力自动关闭增强并只提示一次", async () => {
+test("IMAGE-07：内存压力自动关闭雾天增强并只提示一次", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"));
     await loadProxy(h, 0, proxySurface("A"));
@@ -615,14 +615,14 @@ test("IMAGE-07：内存压力自动关闭增强并只提示一次", async () => 
     assert.equal(h.session.memoryWarning(), true);
     assert.equal(h.session.snapshot().enhance, false);
     assert.deepEqual(h.session.snapshot().surface, { kind: "proxy", tag: "A" });
-    assert.equal(h.session.snapshot().toast.text, "内存不足，已关闭增强预览");
+    assert.equal(h.session.snapshot().toast.text, "内存不足，已关闭雾天增强");
     const toastId = h.session.snapshot().toast.id;
 
     assert.equal(h.session.memoryWarning(), false);
     assert.equal(h.session.snapshot().toast.id, toastId);
 });
 
-test("IMAGE-07：增强失败收起药丸、保持原片且不自动重试", async () => {
+test("IMAGE-07：雾天增强失败收起药丸、保持原片且不自动重试", async () => {
     const h = harness();
     h.session.show(fakePhoto("A.JPG"));
     await loadProxy(h, 0, proxySurface("A"));

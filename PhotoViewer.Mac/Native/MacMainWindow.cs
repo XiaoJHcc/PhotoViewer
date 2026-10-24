@@ -999,31 +999,35 @@ public sealed class MacMainWindow : IDisposable
     private void BuildMenus()
     {
         var menu = new NSMenu();
-        var app = new NSMenu("PhotoViewer"); app.AddItem(new NSMenuItem("设置…", ",", (_, _) => ShowSettings()));
-        app.AddItem(NSMenuItem.SeparatorItem); app.AddItem(new NSMenuItem("退出 PhotoViewer", "q", (_, _) => NSApplication.SharedApplication.Terminate(null)));
+        var app = new NSMenu("PhotoViewer");
+        app.AddItem(Item("设置…", AppleSymbolNames.Menu.Settings, ShowSettings, ","));
+        app.AddItem(NSMenuItem.SeparatorItem);
+        app.AddItem(Item("退出 PhotoViewer", AppleSymbolNames.Menu.Quit, () => NSApplication.SharedApplication.Terminate(null), "q"));
         menu.AddItem(new NSMenuItem("PhotoViewer") { Submenu = app });
-        var file = new NSMenu("文件"); file.AddItem(new NSMenuItem("打开文件…", (_, _) => _ = OpenPickerAsync(false))); file.AddItem(new NSMenuItem("打开文件夹…", (_, _) => _ = OpenPickerAsync(true)));
+        var file = new NSMenu("文件");
+        file.AddItem(Item("打开文件…", AppleSymbolNames.Menu.OpenFile, () => _ = OpenPickerAsync(false)));
+        file.AddItem(Item("打开文件夹…", AppleSymbolNames.Menu.OpenFolder, () => _ = OpenPickerAsync(true)));
         menu.AddItem(new NSMenuItem("文件") { Submenu = file });
         var view = new NSMenu("显示");
-        AddCheck(view, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
-        AddCheck(view, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView);
-        AddCheck(view, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
-        foreach (var layout in _main.Settings.LayoutModes) AddCheck(view, layout.DisplayName, () => _main.Settings.LayoutMode == layout.Value, () => _main.Settings.LayoutMode = layout.Value);
-        AddCheck(view, "增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null);
-        view.AddItem(new NSMenuItem("全屏", (_, _) => Window.ToggleFullScreen(null)));
+        AddCheck(view, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView, symbol: AppleSymbolNames.Menu.Filmstrip);
+        AddCheck(view, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView, symbol: AppleSymbolNames.Menu.Analysis);
+        AddCheck(view, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView, symbol: AppleSymbolNames.Menu.Control);
+        view.AddItem(NSMenuItem.SeparatorItem);
+        AddCheck(view, "雾天增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null, AppleSymbolNames.Menu.Enhance);
         menu.AddItem(new NSMenuItem("显示") { Submenu = view });
         NSApplication.SharedApplication.MainMenu = menu;
         UpdateMenuChecks();
     }
-    /// <summary>原生菜单项勾选与可用性复用同一业务属性（MENU-07：无照片时增强置灰）。</summary>
+    /// <summary>原生菜单项勾选与可用性复用同一业务属性（MENU-07：无照片时雾天增强置灰）。</summary>
     /// <param name="menu">目标菜单。</param>
     /// <param name="title">菜单项文案。</param>
     /// <param name="isChecked">勾选态来源。</param>
     /// <param name="action">执行入口。</param>
     /// <param name="isEnabled">可用性来源；null 表示始终可用。</param>
-    private void AddCheck(NSMenu menu, string title, Func<bool> isChecked, Action action, Func<bool>? isEnabled = null)
+    /// <param name="symbol">SF Symbols 名称；null 表示不显示图标。</param>
+    private void AddCheck(NSMenu menu, string title, Func<bool> isChecked, Action action, Func<bool>? isEnabled = null, string? symbol = null)
     {
-        var item = new NSMenuItem(title, (_, _) => action()); menu.AddItem(item); _menuChecks.Add((item, isChecked, isEnabled));
+        var item = Item(title, symbol, action); menu.AddItem(item); _menuChecks.Add((item, isChecked, isEnabled));
     }
     /// <summary>同步菜单当前勾选与可用性，避免按钮、菜单与布局状态分叉。</summary>
     private void UpdateMenuChecks()
@@ -1034,21 +1038,29 @@ public sealed class MacMainWindow : IDisposable
             check.Item.Enabled = check.Enabled?.Invoke() ?? true;
         }
     }
-    /// <summary>照片原生右键菜单，顺序与设计一致：打开、栏位显隐、增强、工具、设置。</summary>
+    private static NSMenuItem Item(string title, string? symbol, Action action, string? shortcut = null)
+    {
+        var item = shortcut == null
+            ? new NSMenuItem(title, (_, _) => action())
+            : new NSMenuItem(title, shortcut, (_, _) => action());
+        if (symbol != null) item.Image = MacSymbols.Get(symbol);
+        return item;
+    }
+    /// <summary>照片原生右键菜单，顺序与设计一致：打开、栏位显隐、雾天增强、工具、设置。</summary>
     private NSMenu ContextMenu()
     {
         var menu = new NSMenu();
-        menu.AddItem(new NSMenuItem("打开文件…", (_, _) => _ = OpenPickerAsync(false)));
-        menu.AddItem(new NSMenuItem("打开文件夹…", (_, _) => _ = OpenPickerAsync(true)));
+        menu.AddItem(Item("打开文件…", AppleSymbolNames.Menu.OpenFile, () => _ = OpenPickerAsync(false)));
+        menu.AddItem(Item("打开文件夹…", AppleSymbolNames.Menu.OpenFolder, () => _ = OpenPickerAsync(true)));
         menu.AddItem(NSMenuItem.SeparatorItem);
-        AddCheck(menu, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView);
-        AddCheck(menu, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView);
-        AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView);
+        AddCheck(menu, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView, symbol: AppleSymbolNames.Menu.Filmstrip);
+        AddCheck(menu, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView, symbol: AppleSymbolNames.Menu.Analysis);
+        AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView, symbol: AppleSymbolNames.Menu.Control);
         menu.AddItem(NSMenuItem.SeparatorItem);
-        AddCheck(menu, "增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null);
+        AddCheck(menu, "雾天增强", () => Session.IsEnhanced, Session.ToggleEnhanced, () => _main.CurrentFile != null, AppleSymbolNames.Menu.Enhance);
         menu.AddItem(NSMenuItem.SeparatorItem);
-        menu.AddItem(new NSMenuItem("工具…", (_, _) => ShowTools()));
-        menu.AddItem(new NSMenuItem("设置…", (_, _) => ShowSettings()));
+        menu.AddItem(Item("工具…", AppleSymbolNames.Menu.Tools, ShowTools));
+        menu.AddItem(Item("设置…", AppleSymbolNames.Menu.Settings, ShowSettings));
         UpdateMenuChecks();
         return menu;
     }

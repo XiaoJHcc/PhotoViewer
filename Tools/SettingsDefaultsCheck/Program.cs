@@ -1,5 +1,6 @@
 using System;
 using System.Reactive.Concurrency;
+using System.Text.Json;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
@@ -93,6 +94,11 @@ internal static class Program
             PreloadBackwardCount = 3,
             VisibleCenterPreloadCount = 4,
             BitmapCacheMaxMemory = 3000,
+            Hotkeys =
+            [
+                JsonSerializer.Deserialize<HotkeyModel>(
+                    """{"Name":"增强预览","Command":"ToggleEnhance","DisplaySymbol":"old","Tooltip":"增强预览","IsDisplay":true}""")!,
+            ],
         };
         using var settings = new SettingsViewModel(new TransientSettings(), model, applyRuntimeSettings: false);
         DrainLoad();
@@ -108,6 +114,12 @@ internal static class Program
         problems += Require(settings.PreloadForwardCount == 7, "已保存前预载被改写");
         problems += Require(settings.PreloadBackwardCount == 3, "已保存后预载被改写");
         problems += Require(settings.VisibleCenterPreloadCount == 4, "已保存列表滚动预载被改写");
+        problems += Require(settings.Hotkeys[0].Name == "雾天增强", "快捷键名称未按 Command 取当前命令目录");
+        problems += Require(settings.Hotkeys[0].Tooltip == "雾天增强", "快捷键提示未按 Command 取当前命令目录");
+        string savedHotkey = JsonSerializer.Serialize(model.Hotkeys[0]);
+        problems += Require(!savedHotkey.Contains("Name", StringComparison.Ordinal)
+            && !savedHotkey.Contains("DisplaySymbol", StringComparison.Ordinal)
+            && !savedHotkey.Contains("Tooltip", StringComparison.Ordinal), "快捷键展示元数据仍被持久化");
         return problems;
     }
 

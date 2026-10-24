@@ -156,21 +156,21 @@ internal static class iOSNativeInputCheck
             throw new InvalidOperationException("主图菜单勾选态与栏位显隐/增强开关不一致");
         lines.Add($"PASS 主图上下文菜单：{actions.Count} 项（{string.Join(" / ", actions.Select(action => action.Title))}），图标与勾选态正确（I5 入口均可用）");
 
-        // MENU-07：无照片时只置灰"增强"，其余项照常可用（工具仍可打开空态）。
+        // MENU-07：无照片时只置灰"雾天增强"，其余项照常可用（工具仍可打开空态）。
         var noPhoto = iOSContextMenus.Photo(true, true, false, false, hasPhoto: false,
             () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { });
         var noPhotoActions = Flatten(noPhoto.Menu);
         if (!noPhotoActions[4].Attributes.HasFlag(UIMenuElementAttributes.Disabled))
-            throw new InvalidOperationException("MENU-07：无照片时「增强」仍可用");
+            throw new InvalidOperationException("MENU-07：无照片时「雾天增强」仍可用");
         if (noPhotoActions.Where((_, index) => index != 4).Any(action => action.Attributes.HasFlag(UIMenuElementAttributes.Disabled)))
-            throw new InvalidOperationException("MENU-07：无照片时除「增强」外的项不应禁用");
+            throw new InvalidOperationException("MENU-07：无照片时除「雾天增强」外的项不应禁用");
         if (noPhotoActions.Single(action => action.Id == "photo.tools").Attributes.HasFlag(UIMenuElementAttributes.Disabled))
             throw new InvalidOperationException("MENU-07：无照片时「工具…」应保持可用（打开空态）");
         var withPhoto = iOSContextMenus.Photo(true, true, false, false, hasPhoto: true,
             () => { }, () => { }, () => { }, () => { }, () => { }, () => { }, () => { });
         if (Flatten(withPhoto.Menu)[4].Attributes.HasFlag(UIMenuElementAttributes.Disabled))
-            throw new InvalidOperationException("MENU-07：有照片时「增强」不应禁用");
-        lines.Add("PASS MENU-07：无照片时仅「增强」置灰，「工具…」保持可用；有照片时增强恢复可用");
+            throw new InvalidOperationException("MENU-07：有照片时「雾天增强」不应禁用");
+        lines.Add("PASS MENU-07：无照片时仅「雾天增强」置灰，「工具…」保持可用；有照片时雾天增强恢复可用");
 
         bool film = main.IsThumbnailViewVisible;
         built.Handlers["photo.film"]();
@@ -186,7 +186,7 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => main.IsControlViewVisible != control && root.ControlScroll.Hidden == !main.IsControlViewVisible, "控制栏显隐切换");
         built.Handlers["photo.control"]();
         await WaitAsync(() => main.IsControlViewVisible == control, "控制栏恢复");
-        // 分析栏与增强预览：走菜单同一份回调，共享状态与会话开关随之变化。
+        // 分析栏与雾天增强：走菜单同一份回调，共享状态与会话开关随之变化。
         bool analysis = main.IsAnalysisViewVisible;
         built.Handlers["photo.analysis"]();
         await WaitAsync(() => main.IsAnalysisViewVisible != analysis && !root.AnalysisPane.Hidden, "分析栏显隐切换");
@@ -194,10 +194,10 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => main.IsAnalysisViewVisible == analysis && root.AnalysisPane.Hidden, "分析栏恢复");
         bool enhanced = session.IsEnhanced;
         built.Handlers["photo.enhance"]();
-        await WaitAsync(() => session.IsEnhanced != enhanced, "增强预览切换");
+        await WaitAsync(() => session.IsEnhanced != enhanced, "雾天增强切换");
         built.Handlers["photo.enhance"]();
-        await WaitAsync(() => session.IsEnhanced == enhanced, "增强预览恢复");
-        lines.Add("PASS 主图菜单动作：胶片栏/分析栏/控制栏真实切换共享状态与原生视图，增强预览经展示会话生效并还原，重新弹出时勾选态同步");
+        await WaitAsync(() => session.IsEnhanced == enhanced, "雾天增强恢复");
+        lines.Add("PASS 主图菜单动作：胶片栏/分析栏/控制栏真实切换共享状态与原生视图，雾天增强经展示会话生效并还原，重新弹出时勾选态同步");
 
         var stub = new RecordingFilePicker();
         FilePicker.Initialize(stub);

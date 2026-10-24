@@ -523,11 +523,11 @@ test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前�
     assert.equal(app.state.toolbar.commands[0].tooltip, "下一张 · N / 滚轮下");
 });
 
-test("MENU-01/02/06/07：固定项与实时勾选，无照片增强置灰，Web 不显示工具与设置", () => {
+test("MENU-01/02/06/07：固定项与实时勾选，无照片雾天增强置灰，Web 不显示工具与设置", () => {
     const { app } = harness();
     const model = app.menuModel();
     assert.deepEqual(model.map((item) => item.id), ["open-file", "open-folder", "film", "analysis", "control", "enhance"]);
-    assert.deepEqual(model.map((item) => item.label), ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "增强"]);
+    assert.deepEqual(model.map((item) => item.label), ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "雾天增强"]);
     assert.equal(model.find((item) => item.id === "enhance").enabled, false);
     assert.equal(model.find((item) => item.id === "enhance").checked, false);
     assert.equal(model.find((item) => item.id === "open-file").shortcut, "Ctrl+N");
@@ -573,6 +573,23 @@ test("SHELL-04/FILTER-09：显隐与相似开关持久化，排序与星级筛�
     second.app.toggleFilmbar();
     assert.equal(second.app.state.panes.film, true);
     assert.equal(second.app.state.similarity.visible, true);
+});
+
+test("SETTINGS-14：快捷键只持久化用户字段，展示元数据按 Command 恢复", () => {
+    const storage = createStorage();
+    storage.set("PhotoViewer.Settings", JSON.stringify({
+        hotkeys: [{ command: "ToggleEnhance", name: "增强预览", display: false, primary: "KeyE", secondary: null }],
+    }));
+    const first = harness({ storage });
+    const row = first.app.settings.hotkeys.find((entry) => entry.command === "ToggleEnhance");
+    assert.equal(row.name, "雾天增强");
+    assert.equal(row.display, false);
+    first.app.updateSettings({ hotkeys: first.app.settings.hotkeys });
+    const saved = JSON.parse(storage.get("PhotoViewer.Settings"));
+    const savedRow = saved.hotkeys.find((entry) => entry.command === "ToggleEnhance");
+    assert.deepEqual(Object.keys(savedRow).sort(), ["command", "display", "primary", "secondary"]);
+    const second = harness({ storage });
+    assert.equal(second.app.settings.hotkeys.find((entry) => entry.command === "ToggleEnhance").name, "雾天增强");
 });
 
 test("STATE-03/FILM-06：星级写回失败保持原值并给出提示条", async () => {
@@ -653,7 +670,7 @@ test("INPUT-03/04：离散滚轮翻页、精确滚动平移、捏合缩放", () 
     assert.notDeepEqual(app.state.viewport.offset, panBefore);
 });
 
-test("IMAGE-07/MENU-07：增强预览需照片，内存压力关闭增强并提示", async () => {
+test("IMAGE-07/MENU-07：雾天增强需照片，内存压力关闭雾天增强并提示", async () => {
     const { app, clock } = harness();
     assert.equal(app.toggleEnhance(), false);
 
@@ -665,7 +682,7 @@ test("IMAGE-07/MENU-07：增强预览需照片，内存压力关闭增强并提�
 
     assert.equal(app.simulateMemoryWarning(), true);
     assert.equal(app.state.session.enhance, false);
-    assert.equal(app.state.session.toast.text, "内存不足，已关闭增强预览");
+    assert.equal(app.state.session.toast.text, "内存不足，已关闭雾天增强");
 });
 
 test("ANALYSIS-04/08/09：准星、细节悬停与双击定位转发", async () => {

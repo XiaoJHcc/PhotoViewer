@@ -477,7 +477,7 @@ const CHECKS = [
             h.deepEqual(nodes, ["open-file", "open-folder", "---", "film", "analysis", "control", "---", "enhance"],
                 "菜单项或分组顺序不符");
             const labels = h.domAll(".pv-menu .pv-menu-item").map((node) => node.querySelector(".pv-menu-label").textContent);
-            h.deepEqual(labels, ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "增强"], "菜单文案不符");
+            h.deepEqual(labels, ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "雾天增强"], "菜单文案不符");
             h.assert(h.menuItem("film").getAttribute("aria-checked") === "true", "胶片栏勾选未反映可见性");
             h.assert(h.menuItem("control").getAttribute("aria-checked") === "true", "控制栏勾选未反映可见性");
             h.assert(h.menuItem("analysis").getAttribute("aria-checked") === "false", "分析栏勾选未反映可见性");
@@ -594,15 +594,15 @@ const CHECKS = [
     },
     {
         id: "MENU-07",
-        title: "无照片时打开与栏位可用、增强置灰",
+        title: "无照片时打开与栏位可用、雾天增强置灰",
         async run(shell, h) {
             const { app } = shell;
             app.openFolder("empty");
             await h.tick(120);
             h.assert(app.state.photo === null, "空文件夹仍有当前照片");
             await h.openMainMenu();
-            h.assert(h.menuItem("enhance").getAttribute("aria-disabled") === "true", "无照片时增强未置灰");
-            h.assert(h.menuItem("enhance").classList.contains("is-disabled"), "增强缺少禁用样式");
+            h.assert(h.menuItem("enhance").getAttribute("aria-disabled") === "true", "无照片时雾天增强未置灰");
+            h.assert(h.menuItem("enhance").classList.contains("is-disabled"), "雾天增强缺少禁用样式");
             h.assert(h.menuItem("film").getAttribute("aria-disabled") === "false", "无照片时胶片栏被禁用");
             h.assert(h.menuItem("open-file").getAttribute("aria-disabled") === "false", "无照片时打开文件被禁用");
         },
@@ -658,7 +658,7 @@ const CHECKS = [
     },
     {
         id: "INPUT-01",
-        title: "← → 翻页、F/Ctrl+0 适应、E 增强、1–5/` 评分",
+        title: "← → 翻页、F/Ctrl+0 适应、E 雾天增强、1–5/` 评分",
         async run(shell, h) {
             const { app } = shell;
             const start = app.state.displayedId;
@@ -693,10 +693,10 @@ const CHECKS = [
 
             h.key("KeyE");
             await h.tick(60);
-            h.assert(app.state.session.enhance === true, "E 未开启增强");
+            h.assert(app.state.session.enhance === true, "E 未开启雾天增强");
             h.key("KeyE");
             await h.tick(60);
-            h.assert(app.state.session.enhance === false, "E 未关闭增强");
+            h.assert(app.state.session.enhance === false, "E 未关闭雾天增强");
 
             h.key("Digit3");
             await h.until(() => app.state.photo.rating === 3, 4000);

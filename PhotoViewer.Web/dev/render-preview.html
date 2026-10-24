@@ -37,8 +37,8 @@
     <p class="note">上排为整幅构图（应完全一致，仅锐度不同）；下排为同一区域的 100%（1 源像素 = 1 画布像素，代理放大后应明显发软）。</p>
     <div class="row" id="tiers"></div>
 
-    <h2>增强预览</h2>
-    <p class="note">同一代理图，右侧为增强产物（对比度 / 饱和度提升）。</p>
+    <h2>雾天增强</h2>
+    <p class="note">同一代理图，右侧为雾天增强产物（对比度 / 饱和度提升）。</p>
     <div class="row" id="enhance"></div>
 
     <h2>连拍组（scene.base 相同，variant 递增）</h2>
@@ -229,7 +229,7 @@
             const ms = Math.round(performance.now() - started);
             const after = canvas(320, 213);
             fit(after, enhanced, proxy.width, proxy.height, 1);
-            host.append(figure(after, `增强（${ms}ms）`));
+            host.append(figure(after, `雾天增强（${ms}ms）`));
             closeSurface(enhanced);
             log(`enhance in ${ms}ms`);
         }
