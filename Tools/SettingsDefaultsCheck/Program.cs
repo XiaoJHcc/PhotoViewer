@@ -1,6 +1,6 @@
 using System;
+using System.Linq;
 using System.Reactive.Concurrency;
-using System.Text.Json;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
@@ -10,44 +10,47 @@ using PhotoViewer.ViewModels.Settings;
 namespace SettingsDefaultsCheck;
 
 /// <summary>
-/// 用假预算源建全新 <see cref="SettingsViewModel"/>，核对缓存与预载默认值：
-/// 预载数不得超过预载上限，前后预载 + 当前 + 对比不得超过缓存张数（SETTINGS-06）。
-/// 同时核对已保存的设置不被默认值覆盖。
+/// 用假预算源核对设置默认值、schemaVersion 2 往返、draft 不写盘与保存失败不发布。
 /// </summary>
 internal static class Program
 {
-    private static int Main()
+    private static async Task<int> Main()
     {
-        // 与壳启动一致：先准备 ReactiveUI（主线程调度器 + 核心服务），MessageBus 与 WhenAnyValue 依赖它。
         var dispatcher = new InlineDispatcher();
         UiDispatcher.Initialize(dispatcher);
         var reactiveBuilder = ReactiveUI.Builder.RxAppBuilder.CreateReactiveUIBuilder();
         reactiveBuilder.WithCoreServices();
         reactiveBuilder.WithMainThreadScheduler(dispatcher.MainThreadScheduler);
         reactiveBuilder.BuildApp();
-        BitmapLoader.ProxyTargetLongEdge = 3840; // 与 Windows 壳的代理长边同口径
+        BitmapLoader.ProxyTargetLongEdge = 3840;
 
         var failed = 0;
         foreach (var physicalMB in new[] { 4096, 8192, 16384, 32768, 65536 })
         {
-            failed += CheckFresh(physicalMB, null);
+            failed += await CheckFreshAsync(physicalMB, null);
         }
 
-        // 张数达到基准（30）时默认份数必须与旧口径逐字节一致；更多张数同样保持 10/5/5。
-        failed += CheckFresh(8192, 30);
-        failed += CheckFresh(8192, 45);
-
-        failed += CheckSaved();
+        failed += await CheckFreshAsync(8192, 30);
+        failed += await CheckFreshAsync(8192, 45);
+        failed += await CheckSavedAsync();
+        failed += await CheckZeroRoundtripAsync();
+        failed += await CheckDraftDoesNotWriteAsync();
+        failed += await CheckLiveCommitAsync();
+        failed += await CheckSaveFailureAsync();
+        failed += await CheckNativeSessionAsync();
+        failed += await CheckRecoveryStatusAsync();
 
         Console.WriteLine(failed == 0 ? "ALL PASS" : $"{failed} FAIL");
         return failed == 0 ? 0 : 1;
     }
 
-    private static int CheckFresh(int physicalMB, int? countOverride)
+    private static async Task<int> CheckFreshAsync(int physicalMB, int? countOverride)
     {
-        PerformanceBudget.Initialize(new WindowsLikeBudget(physicalMB, countOverride));
-        using var settings = new SettingsViewModel(new TransientSettings(), null, applyRuntimeSettings: false);
-        DrainLoad();
+        var budget = new WindowsLikeBudget(physicalMB, countOverride);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        using var context = await DraftContext.CreateAsync(defaults);
+        var settings = context.Settings;
 
         var needed = settings.PreloadForwardCount + settings.PreloadBackwardCount + 2;
         var counts = $"preload 前{settings.PreloadForwardCount}/后{settings.PreloadBackwardCount}"
@@ -64,7 +67,6 @@ internal static class Program
         problems += Require(settings.BitmapCacheCountInfoLevel == PerfInfoLevel.Normal,
             $"提示级别为 {settings.BitmapCacheCountInfoLevel}");
 
-        // 缓存张数达到基准时，默认份数必须与旧口径（10 / 5 / 5）逐字节一致。
         if (settings.BitmapCacheMaxCount >= 30)
         {
             problems += Require(settings.PreloadForwardCount == 10, $"张数 ≥ 30 时前预载不是 10: {settings.PreloadForwardCount}");
@@ -73,7 +75,6 @@ internal static class Program
                 $"张数 ≥ 30 时列表滚动预载不是 5: {settings.VisibleCenterPreloadCount}");
         }
 
-        // 未达到基准时按同一比例收敛，且后预载不多于前预载。
         if (settings.BitmapCacheMaxCount < 30)
         {
             problems += Require(settings.PreloadBackwardCount <= settings.PreloadForwardCount,
@@ -84,24 +85,23 @@ internal static class Program
         return problems;
     }
 
-    private static int CheckSaved()
+    private static async Task<int> CheckSavedAsync()
     {
-        PerformanceBudget.Initialize(new WindowsLikeBudget(8192, null));
-        var model = new SettingsModel
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var saved = defaults with
         {
             BitmapCacheMaxCount = 40,
             PreloadForwardCount = 7,
             PreloadBackwardCount = 3,
             VisibleCenterPreloadCount = 4,
             BitmapCacheMaxMemory = 3000,
-            Hotkeys =
-            [
-                JsonSerializer.Deserialize<HotkeyModel>(
-                    """{"Name":"增强预览","Command":"ToggleEnhance","DisplaySymbol":"old","Tooltip":"增强预览","IsDisplay":true}""")!,
-            ],
+            Hotkeys = [new HotkeySetting("ToggleEnhance", true)],
         };
-        using var settings = new SettingsViewModel(new TransientSettings(), model, applyRuntimeSettings: false);
-        DrainLoad();
+
+        using var context = await DraftContext.CreateAsync(defaults, SettingsDocumentCodec.Serialize(saved));
+        var settings = context.Settings;
 
         Console.WriteLine(
             $"已保存设置 -> 缓存 {settings.BitmapCacheMaxMemory} MB / {settings.BitmapCacheMaxCount} 张; "
@@ -116,20 +116,192 @@ internal static class Program
         problems += Require(settings.VisibleCenterPreloadCount == 4, "已保存列表滚动预载被改写");
         problems += Require(settings.Hotkeys[0].Name == "雾天增强", "快捷键名称未按 Command 取当前命令目录");
         problems += Require(settings.Hotkeys[0].Tooltip == "雾天增强", "快捷键提示未按 Command 取当前命令目录");
-        string savedHotkey = JsonSerializer.Serialize(model.Hotkeys[0]);
-        problems += Require(!savedHotkey.Contains("Name", StringComparison.Ordinal)
-            && !savedHotkey.Contains("DisplaySymbol", StringComparison.Ordinal)
-            && !savedHotkey.Contains("Tooltip", StringComparison.Ordinal), "快捷键展示元数据仍被持久化");
+
+        var json = SettingsDocumentCodec.Serialize(settings.CreateSnapshot());
+        problems += Require(!json.Contains("displayName", StringComparison.OrdinalIgnoreCase), "文件格式显示名仍被持久化");
+        problems += Require(!json.Contains("extensions", StringComparison.OrdinalIgnoreCase), "文件格式扩展名仍被持久化");
+        problems += Require(!json.Contains("displaySymbol", StringComparison.OrdinalIgnoreCase), "快捷键图标仍被持久化");
+        problems += Require(!json.Contains("tooltip", StringComparison.OrdinalIgnoreCase), "快捷键提示仍被持久化");
         return problems;
     }
 
-    private static void DrainLoad()
+    private static async Task<int> CheckZeroRoundtripAsync()
     {
-        // 构造里的 LoadSettingsAsync 在后台跑完才算"启动完毕"；默认模型全为 0，不会覆盖预算默认值。
-        for (var attempt = 0; attempt < 50; attempt++)
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var explicitZero = defaults with
         {
-            Task.Delay(10).GetAwaiter().GetResult();
+            ShowRating = false,
+            SafeSetRating = false,
+            AnalysisImmediateCompute = false,
+            PreloadForwardCount = 0,
+            PreloadBackwardCount = 0,
+            VisibleCenterPreloadCount = 0,
+        };
+
+        var problems = 0;
+        var json = SettingsDocumentCodec.Serialize(explicitZero);
+        var read = SettingsDocumentCodec.Read(json, defaults);
+        problems += Require(read.Status == SettingsDocumentReadStatus.Loaded, "0 值文档读取失败");
+        if (read.Settings is { } roundtrip)
+        {
+            problems += Require(!roundtrip.ShowRating, "显式 false 被当作缺失");
+            problems += Require(!roundtrip.SafeSetRating, "显式 false 被当作缺失（安全写回）");
+            problems += Require(roundtrip.PreloadForwardCount == 0, "显式 0 前预载未保留");
+            problems += Require(roundtrip.PreloadBackwardCount == 0, "显式 0 后预载未保留");
+            problems += Require(roundtrip.VisibleCenterPreloadCount == 0, "显式 0 列表滚动预载未保留");
         }
+
+        using var context = await DraftContext.CreateAsync(defaults);
+        context.Settings.ApplySnapshot(explicitZero);
+        var snapshot = context.Settings.CreateSnapshot();
+        problems += Require(!snapshot.ShowRating, "VM 回填把显式 false 当作缺失");
+        problems += Require(snapshot.PreloadForwardCount == 0, "VM 回填把显式 0 当作缺失（前预载）");
+        problems += Require(snapshot.PreloadBackwardCount == 0, "VM 回填把显式 0 当作缺失（后预载）");
+        problems += Require(snapshot.VisibleCenterPreloadCount == 0, "VM 回填把显式 0 当作缺失（列表滚动）");
+        return problems;
+    }
+
+    private static async Task<int> CheckDraftDoesNotWriteAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var store = new MemorySettingsStore();
+        var repository = new SettingsRepository(store, defaults);
+        await repository.InitializeAsync();
+
+        using var settings = new SettingsViewModel(repository.BeginSession());
+        var current = repository.Current;
+        settings.ShowRating = !current.ShowRating;
+        settings.SimilarityPanelExpanded = true;
+        await Task.Delay(30);
+
+        var problems = 0;
+        problems += Require(store.SaveCalls == 0, "draft 编辑触发了写盘");
+        problems += Require(repository.Current.ContentEquals(current), "draft 编辑改写了仓库当前值");
+        problems += Require(settings.Session is not null
+            && settings.Session.Draft.ShowRating == settings.ShowRating, "draft 未同步到 SettingsSession.Draft");
+        problems += Require(settings.Session is not null
+            && settings.Session.Draft.ContentEquals(settings.CreateSnapshot()), "draft 与界面快照不一致");
+        return problems;
+    }
+
+    private static async Task<int> CheckLiveCommitAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var store = new MemorySettingsStore();
+        var repository = new SettingsRepository(store, defaults);
+
+        using var settings = new SettingsViewModel(repository);
+        var target = !repository.Current.ShowRating;
+        settings.ShowRating = target;
+
+        var committed = await WaitUntilAsync(() => repository.Current.ShowRating == target);
+        var problems = 0;
+        problems += Require(committed, "live 编辑未提交到仓库");
+        problems += Require(store.SaveCalls >= 1, "live 编辑未写盘");
+        problems += Require(settings.PersistenceStatus is null, $"live 保存成功仍显示状态：{settings.PersistenceStatus}");
+        return problems;
+    }
+
+    private static async Task<int> CheckSaveFailureAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var store = new MemorySettingsStore(SettingsDocumentCodec.Serialize(defaults)) { FailSave = true };
+        var repository = new SettingsRepository(store, defaults);
+        await repository.InitializeAsync();
+        var good = repository.Current;
+
+        var problems = 0;
+        var success = await repository.CommitAsync(good with { ShowRating = false });
+        problems += Require(!success, "保存失败仍返回成功");
+        problems += Require(repository.Current.ContentEquals(good), "保存失败覆盖了 last good");
+        problems += Require(repository.LastSaveError is not null, "保存失败未记录错误");
+
+        using var settings = new SettingsViewModel(repository);
+        settings.SafeSetRating = !good.SafeSetRating;
+        await WaitUntilAsync(() => store.SaveCalls >= 2);
+        await Task.Delay(30);
+        problems += Require(repository.Current.ContentEquals(good), "live 保存失败仍发布了运行时设置");
+        problems += Require(settings.PersistenceStatus?.Contains("保存设置失败", StringComparison.Ordinal) == true,
+            $"保存失败未刷新 PersistenceStatus：{settings.PersistenceStatus}");
+        return problems;
+    }
+
+    private static async Task<int> CheckNativeSessionAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var store = new MemorySettingsStore();
+        var repository = new SettingsRepository(store, defaults);
+
+        using var source = new SettingsViewModel(repository);
+        using var session = new NativeSettingsSession(source);
+        var target = !source.ShowRating;
+        session.WorkingSettings.ShowRating = target;
+        await Task.Delay(30);
+
+        var problems = 0;
+        problems += Require(store.SaveCalls == 0, "原生 draft 编辑提前写盘");
+        var applied = await session.ApplyAsync();
+        problems += Require(applied, "原生会话 ApplyAsync 失败");
+        problems += Require(repository.Current.ShowRating == target, "原生会话未提交到仓库");
+        problems += Require(store.SaveCalls >= 1, "原生会话未写盘");
+        var saves = store.SaveCalls;
+        problems += Require(await session.ApplyAsync(), "原生会话重复 ApplyAsync 失败");
+        problems += Require(store.SaveCalls == saves, "原生会话重复 ApplyAsync 重复写盘");
+        return problems;
+    }
+
+    private static async Task<int> CheckRecoveryStatusAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+
+        var corruptStore = new MemorySettingsStore("{ broken");
+        var corruptRepository = new SettingsRepository(corruptStore, defaults);
+        using var corruptSettings = new SettingsViewModel(corruptRepository);
+        await WaitUntilAsync(() => corruptSettings.PersistenceStatus is not null);
+
+        var problems = 0;
+        problems += Require(corruptRepository.LoadOutcome == SettingsLoadOutcome.Recovered, "损坏文档未按恢复处理");
+        problems += Require(corruptSettings.PersistenceStatus?.Contains("已备份为 memory-backup", StringComparison.Ordinal) == true,
+            $"损坏恢复状态未显示备份位置：{corruptSettings.PersistenceStatus}");
+        problems += Require(corruptStore.SaveCalls == 0, "恢复默认值后未修改却写盘");
+
+        var futureStore = new MemorySettingsStore("{\"schemaVersion\":3}");
+        var futureRepository = new SettingsRepository(futureStore, defaults);
+        await futureRepository.InitializeAsync();
+        using var futureSettings = new SettingsViewModel(futureRepository);
+        futureSettings.ShowRating = !futureSettings.ShowRating;
+        await Task.Delay(80);
+
+        problems += Require(futureRepository.LoadOutcome == SettingsLoadOutcome.UnsupportedVersion && !futureRepository.CanCommit,
+            "未来版本文档未进入不可写状态");
+        problems += Require(futureStore.SaveCalls == 0, "未来版本文档被覆盖");
+        problems += Require(futureSettings.PersistenceStatus?.Contains("高于当前支持版本", StringComparison.Ordinal) == true,
+            $"未来版本状态未显示：{futureSettings.PersistenceStatus}");
+        return problems;
+    }
+
+    private static async Task<bool> WaitUntilAsync(Func<bool> condition, int timeoutMs = 3000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (Environment.TickCount64 < deadline)
+        {
+            if (condition()) return true;
+            await Task.Delay(10).ConfigureAwait(false);
+        }
+
+        return condition();
     }
 
     private static int Require(bool condition, string message)
@@ -141,6 +313,58 @@ internal static class Program
 
         Console.WriteLine("  FAIL " + message);
         return 1;
+    }
+
+    private sealed class DraftContext : IDisposable
+    {
+        private DraftContext(SettingsViewModel settings)
+        {
+            Settings = settings;
+        }
+
+        public SettingsViewModel Settings { get; }
+
+        public static async Task<DraftContext> CreateAsync(AppSettings defaults, string? document = null)
+        {
+            var store = new MemorySettingsStore(document);
+            var repository = new SettingsRepository(store, defaults);
+            await repository.InitializeAsync();
+            return new DraftContext(new SettingsViewModel(repository.BeginSession()));
+        }
+
+        public void Dispose() => Settings.Dispose();
+    }
+
+    private sealed class MemorySettingsStore(string? content = null) : ISettingsStore
+    {
+        private string? _content = content;
+
+        public int LoadCalls { get; private set; }
+
+        public int SaveCalls { get; private set; }
+
+        public bool FailSave { get; init; }
+
+        public Task<SettingsStoreLoadResult> LoadAsync(System.Threading.CancellationToken cancellationToken = default)
+        {
+            LoadCalls++;
+            return Task.FromResult(_content is null
+                ? SettingsStoreLoadResult.Absent
+                : SettingsStoreLoadResult.FromContent(_content));
+        }
+
+        public Task SaveAsync(string json, System.Threading.CancellationToken cancellationToken = default)
+        {
+            SaveCalls++;
+            if (FailSave)
+                return Task.FromException(new System.IO.IOException("simulated save failure"));
+
+            _content = json;
+            return Task.CompletedTask;
+        }
+
+        public Task<string?> BackupCorruptAsync(System.Threading.CancellationToken cancellationToken = default)
+            => Task.FromResult<string?>("memory-backup");
     }
 
     /// <summary>按 Windows 壳的口径给出推荐值（见 PhotoViewer.Windows/Core/WindowsPerformanceBudget.cs）。</summary>
@@ -188,18 +412,6 @@ internal static class Program
 
         public int GetRecommendedCpuPreloadParallelism(int cacheMemoryMB)
             => ((IPerformanceBudget)_platform).GetRecommendedCpuPreloadParallelism(cacheMemoryMB);
-    }
-
-    /// <summary>不落盘的设置服务。</summary>
-    private sealed class TransientSettings : ISettingsService
-    {
-        public string? LastLoadError => null;
-
-        public string? LastSaveError => null;
-
-        public Task<SettingsModel> LoadAsync() => Task.FromResult(new SettingsModel());
-
-        public Task SaveAsync(SettingsModel model) => Task.CompletedTask;
     }
 
     /// <summary>控制台用的就地调度器。</summary>

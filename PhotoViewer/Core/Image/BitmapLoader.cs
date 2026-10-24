@@ -48,10 +48,10 @@ public class BitmapCacheItem
 
 /// <summary>
 /// 图片缓存服务（静态类）。
-/// 缓存键 = (路径, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
-/// 缩略图分区有独立张数/字节上限,淘汰保留排名按路径对所有档生效。主分区上限由实测预算推导
+/// 缓存键 = (存储身份 StorageId, 尺寸档):缩略图/代理图/全分辨率同驻统一 LRU,
+/// 缩略图分区有独立张数/字节上限,淘汰保留排名按存储身份对所有档生效。主分区上限由实测预算推导
 /// (<see cref="EffectiveCacheCapacityBytes"/>),排名外的条目先走,当前图不因容量被淘汰。
-/// 每档至多一条条目：**像素编码不进缓存键**——同一 (路径, 尺寸档) 只保留最新一次解码产物，
+/// 每档至多一条条目：**像素编码不进缓存键**——同一 (存储身份, 尺寸档) 只保留最新一次解码产物，
 /// 编码变化按"长边足够且保真度不低于需求"(<see cref="Reusable"/>)复用，否则原地替换，
 /// 因此不会出现同档多份编码副本，也不会因压力升降泄漏内存。
 /// </summary>
@@ -154,15 +154,15 @@ public static class BitmapLoader
         return DecodedImage.PresentationFidelity(candidate.Encoding) > DecodedImage.PresentationFidelity(existing.Encoding);
     }
 
-    /// <summary>统一缓存键:路径(忽略大小写)+ 尺寸档。</summary>
+    /// <summary>统一缓存键:存储身份(StorageId,已在来源侧规范化大小写)+ 尺寸档。</summary>
     private readonly struct BitmapCacheKey : IEquatable<BitmapCacheKey>
     {
         public readonly string Path;
         public readonly ImageSizeClass Class;
         public BitmapCacheKey(string path, ImageSizeClass cls) { Path = path; Class = cls; }
-        public bool Equals(BitmapCacheKey other) => Class == other.Class && string.Equals(Path, other.Path, StringComparison.OrdinalIgnoreCase);
+        public bool Equals(BitmapCacheKey other) => Class == other.Class && string.Equals(Path, other.Path, StringComparison.Ordinal);
         public override bool Equals(object? obj) => obj is BitmapCacheKey other && Equals(other);
-        public override int GetHashCode() => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(Path), (int)Class);
+        public override int GetHashCode() => HashCode.Combine(StringComparer.Ordinal.GetHashCode(Path), (int)Class);
     }
 
     private static readonly ConcurrentDictionary<BitmapCacheKey, BitmapCacheItem> _cache = new();
@@ -173,7 +173,7 @@ public static class BitmapLoader
     // 淘汰保留排名：越靠前的路径越重要（0 = 当前图）。淘汰选择时先淘汰未入排名的 LRU，
     // 再按排名从最不重要到最重要淘汰；volatile 整体替换，读侧无锁。
     private static volatile string[] _retentionRanking = [];
-    private static volatile Dictionary<string, int> _retentionRank = new(StringComparer.OrdinalIgnoreCase);
+    private static volatile Dictionary<string, int> _retentionRank = new(StringComparer.Ordinal);
 
     // 新增：忽略透明度（默认 false）
     public static bool IgnoreAlpha { get; set; } = false;
@@ -275,7 +275,7 @@ public static class BitmapLoader
     /// <returns>命中的展示产物（用完 <see cref="DecodedImage.Release"/>），未命中为 null。</returns>
     public static DecodedImage? TryAcquireCached(IFileRef file, DecodeSizeHint hint)
     {
-        var filePath = file.PathKey;
+        var filePath = file.StorageId.Value;
         var fullKey = new BitmapCacheKey(filePath, ImageSizeClass.Full);
         DecodedImage? image;
         if (hint.Class == ImageSizeClass.Proxy && hint.MaxLongEdge > 0)
@@ -383,10 +383,10 @@ public static class BitmapLoader
     /// 所有淘汰路径（EnsureCapacity / Cleanup / LruRemoveToSize / 压力修剪）统一按该顺序决定先淘汰谁：
     /// 未入排名的按 LRU 先走，排名内从最不重要到最重要；只有当前图（排名 0）不会被容量淘汰动到。
     /// </summary>
-    /// <param name="paths">按重要性排列的路径（下标越小越重要，0 = 当前图）。</param>
+    /// <param name="paths">按重要性排列的存储身份（<c>StorageId.Value</c>，下标越小越重要，0 = 当前图）。</param>
     public static void SetRetentionRanking(IReadOnlyList<string> paths)
     {
-        var rank = new Dictionary<string, int>(paths.Count, StringComparer.OrdinalIgnoreCase);
+        var rank = new Dictionary<string, int>(paths.Count, StringComparer.Ordinal);
         var ordered = new string[paths.Count];
         int index = 0;
         foreach (var path in paths)
@@ -647,7 +647,7 @@ public static class BitmapLoader
         if (hint.Class != ImageSizeClass.Proxy || hint.MaxLongEdge <= 0)
             return await GetBitmapAsync(file, priority, ct);
 
-        var filePath = file.PathKey;
+        var filePath = file.StorageId.Value;
         var key = new BitmapCacheKey(filePath, ImageSizeClass.Proxy);
 
         for (int attempt = 0; attempt < 3; attempt++)
@@ -870,7 +870,7 @@ public static class BitmapLoader
     /// <param name="ct">取消令牌。</param>
     public static async Task<DecodedImage?> GetBitmapAsync(IFileRef file, DecodePriority priority, CancellationToken ct)
     {
-        var filePath = file.PathKey;
+        var filePath = file.StorageId.Value;
         var key = new BitmapCacheKey(filePath, ImageSizeClass.Full);
 
         // 尝试上限防循环:命中后被淘汰释放 / 加入了被拒的低优先级在途任务,都重走本流程
@@ -1279,7 +1279,7 @@ public static class BitmapLoader
             if (token.IsCancellationRequested) break;
             try
             {
-                if (!IsInCache(f.PathKey))
+                if (!IsInCache(f.StorageId.Value))
                     await PreloadBitmapAsync(f, token);
             }
             catch { /* 单个失败忽略 */ }

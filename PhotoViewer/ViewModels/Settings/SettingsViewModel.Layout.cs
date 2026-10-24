@@ -1,15 +1,8 @@
 ﻿using System.Collections.ObjectModel;
+using PhotoViewer.Core.Settings;
 using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Settings;
-
-// 布局模式枚举
-public enum LayoutMode
-{
-    Row,   // 上下（文件栏在顶部，横向排列）
-    Col,   // 左右（文件栏在侧边，纵向排列）
-    Auto   // 智能（根据屏幕方向）
-}
 
 public partial class SettingsViewModel
 {

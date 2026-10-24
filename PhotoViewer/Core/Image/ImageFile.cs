@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Platform;
@@ -21,7 +22,7 @@ public class ImageFile : ReactiveObject
     private bool _isExifLoaded;
     private bool _isThumbnailLoading;
     private bool _isInCache;
-    private string? _displayName;
+    private PhotoGroup? _group;
     private DateTimeOffset? _modifiedDate;
     private ulong? _fileSize;
     private bool _basicPropsLoaded;
@@ -70,13 +71,13 @@ public class ImageFile : ReactiveObject
     /// </summary>
     public DecodedImage? Thumbnail
     {
-        get => BitmapLoader.TryGetCached(File.PathKey, ImageSizeClass.Thumb);
+        get => BitmapLoader.TryGetCached(File.StorageId.Value, ImageSizeClass.Thumb);
         private set
         {
             if (value != null)
-                BitmapLoader.StoreThumbnail(File.PathKey, value);
+                BitmapLoader.StoreThumbnail(File.StorageId.Value, value);
             else
-                BitmapLoader.RemoveCached(File.PathKey, ImageSizeClass.Thumb);
+                BitmapLoader.RemoveCached(File.StorageId.Value, ImageSizeClass.Thumb);
             this.RaisePropertyChanged(nameof(Thumbnail));
             this.RaisePropertyChanged(nameof(ShowThumbnailPlaceholder));
         }
@@ -169,36 +170,30 @@ public class ImageFile : ReactiveObject
     /// </summary>
     public bool ShowThumbnailPlaceholder => Thumbnail == null && !IsThumbnailLoading;
 
-    public string DisplayName
+    /// <summary>
+    /// 所属同名合并组（<see cref="PhotoGroupMap"/> 构建时回填，未参与分组时为 null）。
+    /// 组信息以该对象为唯一真源：显示名与星级冲突都从组计算。
+    /// </summary>
+    public PhotoGroup? Group
     {
-        get => _displayName ?? Name;
-        set => this.RaiseAndSetIfChanged(ref _displayName, value);
+        get => _group;
+        internal set
+        {
+            if (ReferenceEquals(_group, value)) return;
+            _group = value;
+            this.RaisePropertyChanged();
+            this.RaisePropertyChanged(nameof(DisplayName));
+            this.RaisePropertyChanged(nameof(HasRatingConflict));
+        }
     }
 
-    // 被同名合并隐藏的其它格式文件
-    public List<IFileRef> HiddenFiles { get; } = new();
+    public string DisplayName => Group?.DisplayName ?? Name;
 
     /// <summary>
-    /// 隐藏文件的星级缓存（key = 文件名，value = 星级），
-    /// 在 FolderViewModel.ApplyFilter 分组时填充，用于"星级冲突"筛选。
+    /// 是否存在星级冲突：代表文件与任意同伴文件（如 RAW）的星级不一致。
+    /// 组内只有一个文件或不属于任何组时为 false。
     /// </summary>
-    public Dictionary<string, int> HiddenFileRatings { get; } = new();
-
-    /// <summary>
-    /// 是否存在星级冲突：代表文件与任意隐藏伴侣文件（如 RAW）的星级不一致。
-    /// 仅在开启"同名视为一张"且有隐藏文件时有意义。
-    /// </summary>
-    public bool HasRatingConflict =>
-        HiddenFileRatings.Count > 0 &&
-        HiddenFileRatings.Any(kvp => kvp.Value != Rating);
-
-    // 工具：清空隐藏文件并重置显示名
-    public void ResetGrouping()
-    {
-        HiddenFiles.Clear();
-        HiddenFileRatings.Clear();
-        DisplayName = Name;
-    }
+    public bool HasRatingConflict => Group?.HasRatingConflict ?? false;
 
     public ImageFile(IFileRef file)
     {
@@ -211,17 +206,22 @@ public class ImageFile : ReactiveObject
     /// <summary>
     /// 异步加载文件基本属性（大小、修改日期），避免在属性 getter 中同步阻塞。
     /// </summary>
-    public async Task LoadBasicPropertiesAsync()
+    public async Task LoadBasicPropertiesAsync(CancellationToken cancellationToken = default)
     {
         if (_basicPropsLoaded) return;
         try
         {
-            var props = await File.GetBasicPropertiesAsync();
+            var props = await File.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
             // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
             // 调用方在全部加载完成后统一在 UI 线程批量通知。
             _modifiedDate = props.DateModified;
             _fileSize = props.Size;
             _basicPropsLoaded = true;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -236,7 +236,7 @@ public class ImageFile : ReactiveObject
     {
         try
         {
-            var filePath = File.PathKey;
+            var filePath = File.StorageId.Value;
             IsInCache = BitmapLoader.IsInCache(filePath);
         }
         catch (Exception ex)
@@ -341,7 +341,8 @@ public class ImageFile : ReactiveObject
     /// <summary>
     /// 仅加载星级信息（用于快速筛选，不加载其他EXIF数据）
     /// </summary>
-    public async Task LoadRatingOnlyAsync()
+    /// <param name="cancellationToken">取消令牌：打开被后发请求取代时停止读取，且不写入旧结果。</param>
+    public async Task LoadRatingOnlyAsync(CancellationToken cancellationToken = default)
     {
         // 如果已经有完整的EXIF数据，直接返回
         if (IsExifLoaded && ExifData != null) return;
@@ -351,26 +352,20 @@ public class ImageFile : ReactiveObject
 
         try
         {
-            var rating = await Task.Run(async () =>
-            {
-                try
-                {
-                    return await ExifLoader.LoadRatingOnlyAsync(File);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Failed to read rating (" + Name + "): " + ex.Message);
-                    return 0;
-                }
-            });
-            
+            var rating = await Task.Run(
+                () => ExifLoader.LoadRatingOnlyAsync(File, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+
+            // 读取期间已被取消：不写入本次会话的旧结果。
+            cancellationToken.ThrowIfCancellationRequested();
+
             // 直接写入字段（不触发 RaisePropertyChanged），避免 1000+ 个 UiDispatcher.InvokeAsync。
-            // 调用方 LoadAllExifRatingsAsync 在全部加载完成后统一在 UI 线程批量通知。
+            // 调用方 LoadRatingsAsync 在全部加载完成后统一在 UI 线程批量通知。
             if (_exifData == null)
             {
                 _exifData = new ExifData 
                 { 
-                    FilePath = File.PathKey,
+                    FilePath = File.StorageId.Value,
                     Rating = rating 
                 };
             }
@@ -378,6 +373,10 @@ public class ImageFile : ReactiveObject
             {
                 _exifData.Rating = rating;
             }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -405,7 +404,7 @@ public class ImageFile : ReactiveObject
         {
             ExifData = new ExifData
             {
-                FilePath = File.PathKey,
+                FilePath = File.StorageId.Value,
                 Rating = rating
             };
         }

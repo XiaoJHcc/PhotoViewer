@@ -1,42 +1,39 @@
+using System;
+using System.Threading;
 using System.Threading.Tasks;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Core.Settings;
 
-/// <summary>原生设置共用工作副本会话，关闭时回写一次，不更改 JSON 契约。</summary>
-public sealed class NativeSettingsSession : System.IDisposable
+/// <summary>原生设置共用工作副本：编辑独立 draft，关闭时提交一次。</summary>
+public sealed class NativeSettingsSession : IDisposable
 {
     private readonly SettingsViewModel _source;
-    private bool _applied;
+    private readonly SettingsSession _session;
+
     /// <summary>可编辑的设置工作副本。</summary>
     public SettingsViewModel WorkingSettings { get; }
-    /// <summary>从共享设置建立工作副本，编辑阶段的磁盘保存请求由临时服务消费。</summary>
+
+    /// <summary>从 live 设置建立 draft 会话。</summary>
     public NativeSettingsSession(SettingsViewModel source)
     {
+        ArgumentNullException.ThrowIfNull(source);
+        var repository = source.Repository
+            ?? throw new InvalidOperationException("原生设置会话需要 live SettingsViewModel");
+
         _source = source;
-        WorkingSettings = new SettingsViewModel(new TransientSettingsService(), source.CreateSnapshot(), applyRuntimeSettings: false);
+        _session = repository.BeginSession();
+        WorkingSettings = new SettingsViewModel(_session);
     }
-    /// <summary>应用当前工作副本，关闭事件重复触发也只回写一次。</summary>
-    public void Apply()
+
+    /// <summary>把 draft 提交到仓库；重复调用幂等，并刷新源设置的持久化状态。</summary>
+    public async Task<bool> ApplyAsync(CancellationToken cancellationToken = default)
     {
-        if (_applied) return;
-        _source.ApplySnapshot(WorkingSettings.CreateSnapshot());
-        _applied = true;
+        var success = await _session.CommitAsync(cancellationToken).ConfigureAwait(false);
+        _source.RefreshPersistenceStatus();
+        return success;
     }
-    /// <summary>结束工作副本订阅生命周期，实际回写由 Apply 明确触发。</summary>
+
+    /// <summary>结束工作副本生命周期；提交由 <see cref="ApplyAsync"/> 明确触发。</summary>
     public void Dispose() => WorkingSettings.Dispose();
-    /// <summary>工作副本临时保存通道；实际持久化归源设置，非文件存储替代品。</summary>
-    private sealed class TransientSettingsService : ISettingsService
-    {
-        /// <summary>工作副本读取始终成功，没有读取错误。</summary>
-        public string? LastLoadError => null;
-
-        /// <summary>工作副本不落盘，没有保存错误。</summary>
-        public string? LastSaveError => null;
-
-        /// <summary>副本已由构造快照填充，读取为空模型。</summary>
-        public Task<SettingsModel> LoadAsync() => Task.FromResult(new SettingsModel());
-        /// <summary>编辑期不落盘。</summary>
-        public Task SaveAsync(SettingsModel model) => Task.CompletedTask;
-    }
 }

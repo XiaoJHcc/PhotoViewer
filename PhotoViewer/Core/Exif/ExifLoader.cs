@@ -22,7 +22,7 @@ public static class ExifLoader
     /// </summary>
     public static async Task<ExifData?> LoadExifDataAsync(IFileRef file)
     {
-        var filePath = file.PathKey;
+        var filePath = file.StorageId.Value;
 
         try
         {
@@ -34,7 +34,6 @@ public static class ExifLoader
             // RAW 文件（如 Sony ARW）可能有多个 SubIFD，选择包含拍摄参数的那一个
             var exifSubIfd = FindShootingExifSubIfd(directories);
             var exifIfd0 = directories.OfType<ExifIfd0Directory>().FirstOrDefault();
-            var xmpDirectory = directories.OfType<XmpDirectory>().FirstOrDefault();
 
             if (exifSubIfd != null)
                 PopulateFromExifSubIfd(exifSubIfd, exifData);
@@ -49,8 +48,20 @@ public static class ExifLoader
                 exifData.MimeType = fileTypeDir.GetDescription(FileTypeDirectory.TagDetectedFileMimeType);
             }
 
-            if (xmpDirectory != null)
-                exifData.Rating = ReadXmpRating(xmpDirectory, filePath);
+            // 星级与评分筛选共用 XmpRatingReader 语义；XMP 异常只丢星级，不影响其余 EXIF。
+            try
+            {
+                var rating = XmpRatingReader.PrefersSidecar(file.Name) &&
+                    await XmpRatingReader.ReadSidecarAsync(file).ConfigureAwait(false) is { } sidecar
+                    ? sidecar
+                    : XmpRatingReader.ReadDirectories(directories.OfType<XmpDirectory>());
+                if (rating.State == XmpRatingState.Rated)
+                    exifData.Rating = rating.Value!.Value;
+            }
+            catch (Exception xmpException)
+            {
+                Console.WriteLine("Failed to read XMP Rating (" + filePath + "): " + xmpException.Message);
+            }
 
             exifData.AllMetadata = ExifMetadataGrouper.ExtractAll(directories);
 
@@ -72,17 +83,26 @@ public static class ExifLoader
 
     /// <summary>
     /// 仅加载文件的星级评分（用于快速筛选，避免读取完整 EXIF）。
+    /// 专有 RAW 先读标准 sidecar，sidecar 不存在时读内嵌 XMP。
     /// </summary>
-    public static async Task<int> LoadRatingOnlyAsync(IFileRef file)
+    /// <param name="file">要读取的文件。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    public static async Task<int> LoadRatingOnlyAsync(
+        IFileRef file,
+        CancellationToken cancellationToken = default)
     {
-        var filePath = file.PathKey;
+        var filePath = file.StorageId.Value;
 
         try
         {
-            using var stream = await file.OpenReadAsync();
-            var directories = ImageMetadataReader.ReadMetadata(stream);
-            var xmpDirectory = directories.OfType<XmpDirectory>().FirstOrDefault();
-            return xmpDirectory != null ? ReadXmpRating(xmpDirectory, filePath) ?? 0 : 0;
+            var snapshot = await XmpRatingReader
+                .ReadAsync(file, cancellationToken)
+                .ConfigureAwait(false);
+            return snapshot.ValueOrZero;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -286,53 +306,5 @@ public static class ExifLoader
 
         if (ifd0.HasTagName(ExifDirectoryBase.TagSoftware))
             exifData.Software = ifd0.GetDescription(ExifDirectoryBase.TagSoftware);
-    }
-
-    /// <summary>
-    /// 从 XMP 目录解析 Rating (0~5)，匹配失败时回退到 XmpCore 解析原始字符串。
-    /// 任一路径解析到的值超出 [0, 5] 一律丢弃。
-    /// </summary>
-    private static int? ReadXmpRating(XmpDirectory xmpDirectory, string filePath)
-    {
-        try
-        {
-            var xmpMeta = xmpDirectory.GetXmpProperties();
-
-            string[] ratingPaths = { "xmp:Rating", "http://ns.adobe.com/xap/1.0/:Rating", "Rating", "xap:Rating" };
-            foreach (var path in ratingPaths)
-            {
-                if (xmpMeta.TryGetValue(path, out var ratingValue) &&
-                    int.TryParse(ratingValue, out var rating) && rating >= 0 && rating <= 5)
-                {
-                    return rating;
-                }
-            }
-
-            // 回退：用 XmpCore 解析原始字符串
-            try
-            {
-                var xmpString = xmpDirectory.GetXmpProperties().ToString();
-                if (!string.IsNullOrEmpty(xmpString))
-                {
-                    var parsedXmp = XmpCore.XmpMetaFactory.ParseFromString(xmpString);
-                    var ratingProperty = parsedXmp.GetProperty("http://ns.adobe.com/xap/1.0/", "Rating");
-                    if (ratingProperty != null && int.TryParse(ratingProperty.Value, out var parsedRating) &&
-                        parsedRating >= 0 && parsedRating <= 5)
-                    {
-                        return parsedRating;
-                    }
-                }
-            }
-            catch (Exception xmpEx)
-            {
-                Console.WriteLine("Failed to parse XMP with XmpCore (" + filePath + "): " + xmpEx.Message);
-            }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Failed to read XMP Rating (" + filePath + "): " + ex.Message);
-        }
-
-        return null;
     }
 }

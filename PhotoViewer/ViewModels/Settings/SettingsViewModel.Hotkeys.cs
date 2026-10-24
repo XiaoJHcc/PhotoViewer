@@ -4,7 +4,9 @@ using System.Linq;
 using ReactiveUI;
 using System.Reactive;
 using System;
+using System.Linq;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
 
 namespace PhotoViewer.ViewModels.Settings;
 
@@ -92,7 +94,7 @@ public partial class SettingsViewModel
     };
 
     /// <summary>
-    /// 订阅热键集合 / 各项变化，并初始化苹果键盘映射（从原 InitializeHotkeys 尾部抽出）。
+    /// 订阅热键集合 / 各项变化，并把当前映射同步到全局映射器（仅 live）。
     /// </summary>
     private void SubscribeAndInitHotkeyMapping()
     {
@@ -103,16 +105,6 @@ public partial class SettingsViewModel
         foreach (var item in Hotkeys)
         {
             item.PropertyChanged += OnHotkeyItemChanged;
-        }
-
-        // 新增：默认映射设置（苹果平台默认开启“使用苹果键盘”，Cmd => Ctrl，Ctrl => Ctrl，Option => Alt）
-        if (!_appleMappingInitializedOnce)
-        {
-            UseAppleKeyboard = OperatingSystem.IsMacOS() || OperatingSystem.IsIOS();
-            MapCommandTarget = AppleMappingTarget.Ctrl;
-            MapOptionTarget  = AppleMappingTarget.Alt;
-            MapControlTarget = AppleMappingTarget.Ctrl;
-            _appleMappingInitializedOnce = true;
         }
 
         // 同步到全局映射器
@@ -158,7 +150,13 @@ public partial class SettingsViewModel
             CheckHotkeyConflicts();
         }
 
-        RequestSave();
+        if (e.PropertyName is nameof(HotkeyItem.Command)
+            or nameof(HotkeyItem.IsDisplay)
+            or nameof(HotkeyItem.PrimaryHotkey)
+            or nameof(HotkeyItem.SecondaryHotkey))
+        {
+            RequestSave();
+        }
     }
 
     public void CheckHotkeyConflicts()
@@ -349,8 +347,6 @@ public partial class SettingsViewModel
     // ========= 新增：映射设置属性 =========
     public AppleMappingTarget[] AppleMappingTargets { get; } = Enum.GetValues<AppleMappingTarget>();
 
-    private bool _appleMappingInitializedOnce = false;
-
     private bool _useAppleKeyboard;
     public bool UseAppleKeyboard
     {
@@ -362,7 +358,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private AppleMappingTarget _mapCommandTarget;
+    private AppleMappingTarget _mapCommandTarget = AppleMappingTarget.Ctrl;
     public AppleMappingTarget MapCommandTarget
     {
         get => _mapCommandTarget;
@@ -373,7 +369,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private AppleMappingTarget _mapOptionTarget;
+    private AppleMappingTarget _mapOptionTarget = AppleMappingTarget.Alt;
     public AppleMappingTarget MapOptionTarget
     {
         get => _mapOptionTarget;
@@ -384,7 +380,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private AppleMappingTarget _mapControlTarget;
+    private AppleMappingTarget _mapControlTarget = AppleMappingTarget.Ctrl;
     public AppleMappingTarget MapControlTarget
     {
         get => _mapControlTarget;

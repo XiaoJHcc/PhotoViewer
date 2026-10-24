@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using PhotoViewer.Core.Settings;
 using ReactiveUI;
 using System.Reactive;
 
@@ -42,18 +43,13 @@ public partial class SettingsViewModel
     private void InitializeFileFormats()
     {
         MoveFileFormatCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveFileFormat);
-        
-        FileFormats = new ObservableCollection<FileFormatItem>
-        {
-            new("JPG", new[] { ".jpg", ".jpeg" }, true),
-            new("HEIF", new[] { ".heif", ".heic", ".avif", ".hif" }, true),
-            new("PNG", new[] { ".png" }, true),
-            new("TIFF", new[] { ".tiff", ".tif" }, false),
-            new("WebP", new[] { ".webp" }, true),
-            new("RAW", new[] { ".cr2", ".cr3", ".nef", ".arw", ".dng", ".raf", ".orf", ".rw2", ".srw" }, true),
-            new("BMP", new[] { ".bmp" }, false),
-            new("GIF", new[] { ".gif" }, false),
-        };
+
+        FileFormats = new ObservableCollection<FileFormatItem>(
+            SettingsCatalog.FileFormats.Select(definition => new FileFormatItem(
+                definition.Id,
+                definition.DisplayName,
+                definition.Extensions.ToArray(),
+                definition.IsEnabledByDefault)));
 
         // 监听集合变化
         FileFormats.CollectionChanged += OnFileFormatsChanged;
@@ -140,9 +136,17 @@ public partial class SettingsViewModel
 
     public class FileFormatItem : ReactiveObject
     {
+        private string _id;
         private string _displayName;
         private string[] _extensions;
         private bool _isEnabled;
+
+        /// <summary>稳定 Id，用于设置文档合并与持久化。</summary>
+        public string Id
+        {
+            get => _id;
+            set => this.RaiseAndSetIfChanged(ref _id, value);
+        }
 
         public string DisplayName
         {
@@ -168,8 +172,9 @@ public partial class SettingsViewModel
         // 保持向后兼容的 Name 属性
         public string Name => DisplayName;
 
-        public FileFormatItem(string displayName, string[] extensions, bool isEnabled = true)
+        public FileFormatItem(string id, string displayName, string[] extensions, bool isEnabled = true)
         {
+            _id = id;
             _displayName = displayName;
             _extensions = extensions;
             _isEnabled = isEnabled;

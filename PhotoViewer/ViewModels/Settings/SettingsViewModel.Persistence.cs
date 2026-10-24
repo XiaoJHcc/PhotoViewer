@@ -1,29 +1,49 @@
 using System;
 using System.Collections.Generic;
-using System.Collections.Specialized;
-using System.Diagnostics.CodeAnalysis;
+using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
-using System.Reactive;
-using System.Reactive.Linq;
-using System.Reactive.Subjects;
-using System.Threading.Tasks;
-using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using ReactiveUI;
-
 
 namespace PhotoViewer.ViewModels.Settings;
 
 public partial class SettingsViewModel
 {
-    private string? _loadPersistenceStatus;
+    private static readonly HashSet<string> PersistedPropertyNames = new(StringComparer.Ordinal)
+    {
+        nameof(LayoutMode),
+        nameof(ShowZoomIndicator),
+        nameof(ScalePresets),
+        nameof(ShowRating),
+        nameof(SafeSetRating),
+        nameof(SameNameAsOnePhoto),
+        nameof(FileFormats),
+        nameof(ExifDisplayItems),
+        nameof(Hotkeys),
+        nameof(UseAppleKeyboard),
+        nameof(MapCommandTarget),
+        nameof(MapOptionTarget),
+        nameof(MapControlTarget),
+        nameof(SimilarityThreshold),
+        nameof(SimilarityMaxResults),
+        nameof(AnalysisImmediateCompute),
+        nameof(BitmapCacheMaxCount),
+        nameof(BitmapCacheMaxMemory),
+        nameof(PreloadForwardCount),
+        nameof(PreloadBackwardCount),
+        nameof(VisibleCenterPreloadCount),
+        nameof(VisibleCenterDelayMs),
+        nameof(NativePreloadParallelism),
+        nameof(CpuPreloadParallelism),
+    };
+
     private string? _persistenceStatus;
 
     /// <summary>
-    /// 设置页顶部的一行持久化状态：读取失败（含损坏备份）或保存失败时非空（SETTINGS-14）。
-    /// 保存成功后清除保存错误；本次会话的读取失败提示保留到再次读取。
+    /// 设置页顶部的一行持久化状态：读取/恢复失败或保存失败时非空（SETTINGS-14）。
+    /// draft 会话不显示源设置的持久化状态。
     /// </summary>
     public string? PersistenceStatus
     {
@@ -31,143 +51,140 @@ public partial class SettingsViewModel
         private set => this.RaiseAndSetIfChanged(ref _persistenceStatus, value);
     }
 
-     private IDisposable InitializePersistence()
+    public void RefreshPersistenceStatus()
     {
-        var subscription = _saveRequests
-            .Throttle(TimeSpan.FromMilliseconds(400))
-            .ObserveOn(System.Reactive.Concurrency.TaskPoolScheduler.Default)
-            .SelectMany(async _ => { await PersistAsync(); return Unit.Default; })
-            .Subscribe();
-
-        _runtimeSubscriptions.Add(this.Changed.Subscribe(_ => RequestSave()));
-
-        ScalePresets.CollectionChanged += OnScalePresetsChanged;
-        foreach (var preset in ScalePresets)
-        {
-            preset.PropertyChanged += OnScalePresetPropertyChanged;
-        }
-
-        return subscription;
+        if (_disposed) return;
+        SetPersistenceStatus(BuildPersistenceStatus());
     }
 
-    private async Task LoadSettingsAsync()
+    private string? BuildPersistenceStatus()
     {
-        try
-        {
-            var model = await _settingsService.LoadAsync().ConfigureAwait(false);
-            _loadPersistenceStatus = _settingsService.LastLoadError;
-            SetPersistenceStatus(_loadPersistenceStatus);
-            if (model.Version > 0)
-            {
-                // 读取在后台线程完成；回填会触发属性通知，原生壳的控件订阅者只能在 UI 线程更新。
-                if (UiDispatcher.CheckAccess()) ApplyModel(model);
-                else await UiDispatcher.InvokeAsync(() => ApplyModel(model)).ConfigureAwait(false);
-            }
-        }
-        catch (Exception ex)
-        {
-            _loadPersistenceStatus = $"读取设置失败：{ex.Message}";
-            SetPersistenceStatus(_loadPersistenceStatus);
-            Console.WriteLine($"SettingsViewModel.LoadSettingsAsync failed: {ex.Message}");
-        }
-        finally
-        {
-            _hasLoaded = true;
-            RequestSave(); // create storage when missing
-        }
+        if (_session is not null || _repository is null) return null;
+
+        var load = _repository.LastLoadError;
+        var save = _repository.LastSaveError is { } error ? $"保存设置失败：{error}" : null;
+        if (load is null) return save;
+        if (save is null) return load;
+        return $"{load}；{save}";
     }
 
-    private async Task PersistAsync()
-    {
-        if (_isRestoring || !_hasLoaded || _disposed) return;
-        try
-        {
-            var model = ToModel();
-            await _settingsService.SaveAsync(model).ConfigureAwait(false);
-            SetPersistenceStatus(_settingsService.LastSaveError is { } error
-                ? $"保存设置失败：{error}"
-                : _loadPersistenceStatus);
-        }
-        catch (Exception ex)
-        {
-            SetPersistenceStatus($"保存设置失败：{ex.Message}");
-            Console.WriteLine($"SettingsViewModel.PersistAsync failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>持久化发生在后台线程；状态变更统一回 UI 线程，避免原生壳直接更新控件时跨线程。</summary>
     private void SetPersistenceStatus(string? status)
     {
+        if (_disposed) return;
+
         if (UiDispatcher.CheckAccess())
         {
             PersistenceStatus = status;
             return;
         }
 
-        UiDispatcher.Post(() => PersistenceStatus = status);
+        UiDispatcher.Post(() =>
+        {
+            if (!_disposed) PersistenceStatus = status;
+        });
     }
 
     private void RequestSave()
     {
-        if (_isRestoring || !_hasLoaded || _disposed) return;
-        _saveRequests.OnNext(Unit.Default);
+        if (_isRestoring || !_initialized || _disposed) return;
+
+        if (_session is not null)
+        {
+            _session.Draft = CreateSnapshot();
+            return;
+        }
+
+        if (_repository is null) return;
+        if (!_repositoryReady)
+        {
+            _hasLocalEdits = true;
+            return;
+        }
+
+        QueueRepositoryCommit();
     }
 
-    /// <summary>
-    /// 导出当前设置快照。
-    /// 用于原生设置页先编辑副本，再在关闭时一次性回写。
-    /// </summary>
-    /// <returns>当前设置对应的数据模型副本。</returns>
-    public SettingsModel CreateSnapshot()
+    private void QueueRepositoryCommit()
     {
-        return ToModel();
+        if (_disposed || _repository is null || !_repositoryReady) return;
+
+        var snapshot = CreateSnapshot();
+        lock (_saveGate)
+        {
+            _pendingSnapshot = snapshot;
+            _saveRequested = true;
+            if (_saveLoopRunning) return;
+            _saveLoopRunning = true;
+        }
+
+        _ = SaveLoopAsync();
     }
 
-    /// <summary>
-    /// 应用外部传入的设置快照。
-    /// 用于在原生设置页关闭时，把暂存改动一次性同步回主设置实例。
-    /// </summary>
-    /// <param name="model">待应用的设置快照。</param>
-    public void ApplySnapshot(SettingsModel model)
+    private async System.Threading.Tasks.Task SaveLoopAsync()
     {
-        ApplyModel(model, preserveDefaultValues: false);
-        RequestSave();
+        var repository = _repository!;
+        while (true)
+        {
+            AppSettings? snapshot;
+            lock (_saveGate)
+            {
+                if (_disposed || !_saveRequested || _pendingSnapshot is null)
+                {
+                    _saveRequested = false;
+                    _pendingSnapshot = null;
+                    _saveLoopRunning = false;
+                    return;
+                }
+
+                snapshot = _pendingSnapshot;
+                _pendingSnapshot = null;
+                _saveRequested = false;
+            }
+
+            try
+            {
+                await repository.CommitAsync(snapshot).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                SetPersistenceStatus($"保存设置失败：{ex.Message}");
+            }
+
+            RefreshPersistenceStatus();
+        }
     }
 
-    private SettingsModel ToModel()
+    /// <summary>导出当前界面状态对应的不可变设置快照。</summary>
+    public AppSettings CreateSnapshot()
     {
-         return new SettingsModel
-         {
-            Version = 1,
-             LayoutMode = LayoutMode,
+        return new AppSettings
+        {
+            LayoutMode = LayoutMode,
             ShowZoomIndicator = ShowZoomIndicator,
-            ScalePresets = ScalePresets.Select(s => s.Value).ToList(),
+            ScalePresets = ScalePresets.Select(preset => preset.Value).ToImmutableArray(),
             ShowRating = ShowRating,
             SafeSetRating = SafeSetRating,
             SameNameAsOnePhoto = SameNameAsOnePhoto,
-            FileFormats = FileFormats.Select(f => new FileFormatModel
-            {
-                DisplayName = f.DisplayName,
-                Extensions = f.Extensions.ToList(),
-                IsEnabled = f.IsEnabled
-            }).ToList(),
-            ExifDisplayItems = ExifDisplayItems.Select(e => new ExifDisplayModel
-            {
-                DisplayName = e.DisplayName,
-                PropertyName = e.PropertyName,
-                IsEnabled = e.IsEnabled
-            }).ToList(),
-            Hotkeys = Hotkeys.Select(h => new HotkeyModel
-            {
-                Command = h.Command,
-                IsDisplay = h.IsDisplay,
-                Primary = ToGestureModel(h.PrimaryHotkey),
-                Secondary = ToGestureModel(h.SecondaryHotkey)
-            }).ToList(),
+            FileFormats = FileFormats
+                .Select(item => new FileFormatSetting(item.Id, item.IsEnabled))
+                .ToImmutableArray(),
+            ExifFields = ExifDisplayItems
+                .Select(item => new ExifFieldSetting(item.PropertyName, item.IsEnabled))
+                .ToImmutableArray(),
+            Hotkeys = Hotkeys
+                .Select(item => new HotkeySetting(
+                    item.Command,
+                    item.IsDisplay,
+                    item.PrimaryHotkey,
+                    item.SecondaryHotkey))
+                .ToImmutableArray(),
             UseAppleKeyboard = UseAppleKeyboard,
             MapCommandTarget = MapCommandTarget,
             MapOptionTarget = MapOptionTarget,
             MapControlTarget = MapControlTarget,
+            SimilarityThreshold = SimilarityThreshold,
+            SimilarityMaxResults = SimilarityMaxResults,
+            AnalysisImmediateCompute = AnalysisImmediateCompute,
             BitmapCacheMaxCount = BitmapCacheMaxCount,
             BitmapCacheMaxMemory = BitmapCacheMaxMemory,
             PreloadForwardCount = PreloadForwardCount,
@@ -176,84 +193,61 @@ public partial class SettingsViewModel
             VisibleCenterDelayMs = VisibleCenterDelayMs,
             NativePreloadParallelism = NativePreloadParallelism,
             CpuPreloadParallelism = CpuPreloadParallelism,
-            SimilarityPanelExpanded = SimilarityPanelExpanded,
-            SimilarityThreshold = SimilarityThreshold,
-            SimilarityMaxResults = SimilarityMaxResults,
-            AnalysisImmediateCompute = AnalysisImmediateCompute
         };
     }
 
-    private void ApplyModel(SettingsModel model, bool preserveDefaultValues = true)
+    /// <summary>用快照显式回填所有界面字段（0/false 不当作缺失）；不触发保存。</summary>
+    public void ApplySnapshot(AppSettings settings)
     {
+        ArgumentNullException.ThrowIfNull(settings);
+
         _isRestoring = true;
         try
         {
-            LayoutMode = model.LayoutMode;
-            ShowZoomIndicator = model.ShowZoomIndicator;
-
-            if (!preserveDefaultValues || model.ScalePresets.Count > 0)
-            {
-                ResetScalePresets(model.ScalePresets);
-            }
-
-            ShowRating = model.ShowRating;
-            SafeSetRating = model.SafeSetRating;
-            SameNameAsOnePhoto = model.SameNameAsOnePhoto;
-
-            if (!preserveDefaultValues || model.FileFormats.Count > 0)
-            {
-                ResetFileFormats(model.FileFormats);
-            }
-
-            if (!preserveDefaultValues || model.ExifDisplayItems.Count > 0)
-            {
-                ResetExifDisplayItems(model.ExifDisplayItems);
-            }
-
-            if (!preserveDefaultValues || model.Hotkeys.Count > 0)
-            {
-                ResetHotkeys(model.Hotkeys);
-            }
-
-            UseAppleKeyboard = model.UseAppleKeyboard;
-            MapCommandTarget = model.MapCommandTarget;
-            MapOptionTarget = model.MapOptionTarget;
-            MapControlTarget = model.MapControlTarget;
-
-            if (!preserveDefaultValues || model.BitmapCacheMaxCount > 0) BitmapCacheMaxCount = model.BitmapCacheMaxCount;
-            if (!preserveDefaultValues || model.BitmapCacheMaxMemory > 0) BitmapCacheMaxMemory = model.BitmapCacheMaxMemory;
-            if (!preserveDefaultValues || model.PreloadForwardCount > 0) PreloadForwardCount = model.PreloadForwardCount;
-            if (!preserveDefaultValues || model.PreloadBackwardCount > 0) PreloadBackwardCount = model.PreloadBackwardCount;
-            if (!preserveDefaultValues || model.VisibleCenterPreloadCount > 0) VisibleCenterPreloadCount = model.VisibleCenterPreloadCount;
-            if (!preserveDefaultValues || model.VisibleCenterDelayMs > 0) VisibleCenterDelayMs = model.VisibleCenterDelayMs;
-            if (!preserveDefaultValues || model.NativePreloadParallelism > 0)
-                NativePreloadParallelism = model.NativePreloadParallelism;
-            else if (model.PreloadParallelism > 0)
-                NativePreloadParallelism = model.PreloadParallelism;
-
-            if (!preserveDefaultValues || model.CpuPreloadParallelism > 0)
-                CpuPreloadParallelism = model.CpuPreloadParallelism;
-            else if (model.PreloadParallelism > 0)
-                CpuPreloadParallelism = model.PreloadParallelism;
-
-            SimilarityPanelExpanded = model.SimilarityPanelExpanded;
-
-            if (!preserveDefaultValues || model.SimilarityThreshold > 0)
-                SimilarityThreshold = model.SimilarityThreshold;
-            if (!preserveDefaultValues || model.SimilarityMaxResults > 0)
-                SimilarityMaxResults = model.SimilarityMaxResults;
-
-            AnalysisImmediateCompute = model.AnalysisImmediateCompute;
+            LayoutMode = settings.LayoutMode;
+            ShowZoomIndicator = settings.ShowZoomIndicator;
+            ResetScalePresets(
+                settings.ScalePresets.IsDefaultOrEmpty
+                    ? SettingsCatalog.DefaultScalePresets
+                    : settings.ScalePresets);
+            ShowRating = settings.ShowRating;
+            SafeSetRating = settings.SafeSetRating;
+            SameNameAsOnePhoto = settings.SameNameAsOnePhoto;
+            ResetFileFormats(settings.FileFormats.IsDefault
+                ? SettingsCatalog.DefaultFileFormats
+                : settings.FileFormats);
+            ResetExifDisplayItems(settings.ExifFields.IsDefault
+                ? SettingsCatalog.DefaultExifFields
+                : settings.ExifFields);
+            ResetHotkeys(settings.Hotkeys.IsDefault
+                ? SettingsCatalog.DefaultHotkeys
+                : settings.Hotkeys);
+            UseAppleKeyboard = settings.UseAppleKeyboard;
+            MapCommandTarget = settings.MapCommandTarget;
+            MapOptionTarget = settings.MapOptionTarget;
+            MapControlTarget = settings.MapControlTarget;
+            BitmapCacheMaxCount = settings.BitmapCacheMaxCount;
+            BitmapCacheMaxMemory = settings.BitmapCacheMaxMemory;
+            PreloadForwardCount = settings.PreloadForwardCount;
+            PreloadBackwardCount = settings.PreloadBackwardCount;
+            VisibleCenterPreloadCount = settings.VisibleCenterPreloadCount;
+            VisibleCenterDelayMs = settings.VisibleCenterDelayMs;
+            NativePreloadParallelism = settings.NativePreloadParallelism;
+            CpuPreloadParallelism = settings.CpuPreloadParallelism;
+            SimilarityThreshold = settings.SimilarityThreshold;
+            SimilarityMaxResults = settings.SimilarityMaxResults;
+            AnalysisImmediateCompute = settings.AnalysisImmediateCompute;
+            CheckHotkeyConflicts();
         }
         finally
         {
             _isRestoring = false;
         }
 
-        // 更新派生状态
         UpdateSelectedFormats();
         UpdateEnabledExifItems();
-        CheckHotkeyConflicts();
+        if (_session is not null)
+            _session.Draft = CreateSnapshot();
     }
 
     private void ResetScalePresets(IEnumerable<double> presets)
@@ -267,7 +261,6 @@ public partial class SettingsViewModel
         ScalePresets.Clear();
         foreach (var value in presets)
         {
-            // SETTINGS-14：历史文档中的越界数值按范围夹取，不因单个坏值丢弃整份设置。
             var percent = value * 100;
             if (!double.IsFinite(percent)) percent = 100;
             percent = Math.Clamp(percent, ScalePresetPercentMin, ScalePresetPercentMax);
@@ -276,16 +269,10 @@ public partial class SettingsViewModel
         }
 
         SortScalePreset();
-
-        foreach (var preset in ScalePresets)
-        {
-            preset.PropertyChanged += OnScalePresetPropertyChanged;
-        }
-        ScalePresets.CollectionChanged += OnScalePresetsChanged;
         this.RaisePropertyChanged(nameof(CanRemoveScalePreset));
     }
 
-    private void ResetFileFormats(IEnumerable<FileFormatModel> formats)
+    private void ResetFileFormats(IEnumerable<FileFormatSetting> formats)
     {
         FileFormats.CollectionChanged -= OnFileFormatsChanged;
         foreach (var item in FileFormats)
@@ -294,9 +281,34 @@ public partial class SettingsViewModel
         }
 
         FileFormats.Clear();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var format in formats)
         {
-            FileFormats.Add(new FileFormatItem(format.DisplayName, format.Extensions.ToArray(), format.IsEnabled));
+            if (format is null
+                || string.IsNullOrWhiteSpace(format.Id)
+                || !seen.Add(format.Id)
+                || !SettingsCatalog.TryGetFileFormat(format.Id, out var definition))
+            {
+                continue;
+            }
+
+            FileFormats.Add(new FileFormatItem(
+                definition.Id,
+                definition.DisplayName,
+                definition.Extensions.ToArray(),
+                format.IsEnabled));
+        }
+
+        foreach (var definition in SettingsCatalog.FileFormats)
+        {
+            if (seen.Add(definition.Id))
+            {
+                FileFormats.Add(new FileFormatItem(
+                    definition.Id,
+                    definition.DisplayName,
+                    definition.Extensions.ToArray(),
+                    definition.IsEnabledByDefault));
+            }
         }
 
         FileFormats.CollectionChanged += OnFileFormatsChanged;
@@ -306,7 +318,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private void ResetExifDisplayItems(IEnumerable<ExifDisplayModel> items)
+    private void ResetExifDisplayItems(IEnumerable<ExifFieldSetting> items)
     {
         ExifDisplayItems.CollectionChanged -= OnExifDisplayItemsChanged;
         foreach (var item in ExifDisplayItems)
@@ -315,9 +327,32 @@ public partial class SettingsViewModel
         }
 
         ExifDisplayItems.Clear();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var item in items)
         {
-            ExifDisplayItems.Add(new ExifDisplayItem(item.DisplayName, item.PropertyName, item.IsEnabled));
+            if (item is null
+                || string.IsNullOrWhiteSpace(item.Id)
+                || !seen.Add(item.Id)
+                || !SettingsCatalog.TryGetExifField(item.Id, out var definition))
+            {
+                continue;
+            }
+
+            ExifDisplayItems.Add(new ExifDisplayItem(
+                definition.DisplayName,
+                definition.Id,
+                item.IsEnabled));
+        }
+
+        foreach (var definition in SettingsCatalog.ExifFields)
+        {
+            if (seen.Add(definition.Id))
+            {
+                ExifDisplayItems.Add(new ExifDisplayItem(
+                    definition.DisplayName,
+                    definition.Id,
+                    definition.IsEnabledByDefault));
+            }
         }
 
         ExifDisplayItems.CollectionChanged += OnExifDisplayItemsChanged;
@@ -327,7 +362,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private void ResetHotkeys(IEnumerable<HotkeyModel> hotkeys)
+    private void ResetHotkeys(IEnumerable<HotkeySetting> hotkeys)
     {
         Hotkeys.CollectionChanged -= OnHotkeysChanged;
         foreach (var item in Hotkeys)
@@ -336,29 +371,40 @@ public partial class SettingsViewModel
         }
 
         Hotkeys.Clear();
-        var definitions = BuildDefaultHotkeys();
-        var byCommand = definitions.ToDictionary(item => item.Command, StringComparer.Ordinal);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var hotkey in hotkeys)
         {
-            var command = hotkey.Command == "ToggleDetailView" ? "ToggleAnalysisView" : hotkey.Command;
-            if (!byCommand.TryGetValue(command, out var definition)) continue;
+            if (hotkey is null
+                || string.IsNullOrWhiteSpace(hotkey.CommandId)
+                || !seen.Add(hotkey.CommandId)
+                || !SettingsCatalog.TryGetCommand(hotkey.CommandId, out var definition))
+            {
+                continue;
+            }
+
             Hotkeys.Add(new HotkeyItem(
                 definition.Name,
-                command,
-                definition.DisplaySymbol,
+                definition.Id,
+                definition.Icon,
                 definition.Tooltip,
                 hotkey.IsDisplay,
-                FromGestureModel(hotkey.Primary),
-                FromGestureModel(hotkey.Secondary)));
+                hotkey.PrimaryGesture,
+                hotkey.SecondaryGesture));
         }
 
-        // 合并缺失的默认热键:新版本新增的命令(旧配置 JSON 里没有)补进来,
-        // 使新按钮(如"雾天增强")对沿用旧设置的用户也可见;按命令去重,已存在的不覆盖用户自定义。
-        var existingCommands = new HashSet<string>(Hotkeys.Select(h => h.Command));
-        foreach (var def in definitions)
+        foreach (var definition in SettingsCatalog.Commands)
         {
-            if (existingCommands.Add(def.Command))
-                Hotkeys.Add(def);
+            if (seen.Add(definition.Id))
+            {
+                Hotkeys.Add(new HotkeyItem(
+                    definition.Name,
+                    definition.Id,
+                    definition.Icon,
+                    definition.Tooltip,
+                    definition.IsVisibleByDefault,
+                    definition.PrimaryGesture,
+                    definition.SecondaryGesture));
+            }
         }
 
         Hotkeys.CollectionChanged += OnHotkeysChanged;
@@ -368,54 +414,7 @@ public partial class SettingsViewModel
         }
     }
 
-    private static GestureModel? ToGestureModel(AppGesture? gesture)
-    {
-        if (gesture == null) return null;
-        if (gesture.Key != null)
-        {
-            return new GestureModel
-            {
-                Kind = GestureKind.Key,
-                Key = gesture.Key.Key.ToString(),
-                Modifiers = gesture.Key.Modifiers
-            };
-        }
-        if (gesture.Mouse != null)
-        {
-            return new GestureModel
-            {
-                Kind = GestureKind.Mouse,
-                MouseAction = gesture.Mouse.Action,
-                Modifiers = gesture.Mouse.Modifiers
-            };
-        }
-        return null;
-    }
-
-    private static AppGesture? FromGestureModel(GestureModel? model)
-    {
-        if (model == null) return null;
-
-        switch (model.Kind)
-        {
-            case GestureKind.Key:
-                if (!string.IsNullOrWhiteSpace(model.Key) && Enum.TryParse<GestureKey>(model.Key, true, out var key))
-                {
-                    return AppGesture.FromKey(new AppKeyGesture(key, model.Modifiers));
-                }
-                break;
-            case GestureKind.Mouse:
-                if (model.MouseAction.HasValue)
-                {
-                    return AppGesture.FromMouse(new MouseGestureEx(model.MouseAction.Value, model.Modifiers));
-                }
-                break;
-        }
-
-        return null;
-    }
-
-    private void OnScalePresetsChanged(object? sender, NotifyCollectionChangedEventArgs e)
+    private void OnScalePresetsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
         if (e.NewItems != null)
         {

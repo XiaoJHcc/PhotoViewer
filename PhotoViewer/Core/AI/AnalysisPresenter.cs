@@ -208,7 +208,7 @@ public sealed class AnalysisPresenter : IDisposable
         // 增强模式且增强图就绪且开启即时计算 → 对增强图实时重算诊断瓦片(ONNX 推理 + CV),不走 DB。
         if (_host.ImmediateCompute && _host.EnhancedDisplay && _host.DisplayImage is { } enhanced)
         {
-            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.PathKey, enhanced: true);
+            var enhancedKey = AnalysisResultCache.ImmediateKey(file.File.StorageId.Value, enhanced: true);
             var enhancedHit = AnalysisResultCache.TryGetImmediate(enhancedKey);
             if (enhancedHit != null) ApplyEntry(enhancedHit);
             else
@@ -230,7 +230,7 @@ public sealed class AnalysisPresenter : IDisposable
                 // 命中空 entry(未提取)且开启即时计算 → 回退到立即计算;已有即时结果则直接 swap。
                 if (IsEntryEmpty(hit) && _host.ImmediateCompute)
                 {
-                    var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
+                    var imm = AnalysisResultCache.TryGetImmediate(file.File.StorageId.Value);
                     if (imm != null) ApplyEntry(imm);
                     else
                     {
@@ -282,7 +282,7 @@ public sealed class AnalysisPresenter : IDisposable
             // 库里没有提取结果且开启即时计算 → 回退到立即计算。
             if (data.IsEmpty && _host.ImmediateCompute)
             {
-                var imm = AnalysisResultCache.TryGetImmediate(file.File.Path.LocalPath);
+                var imm = AnalysisResultCache.TryGetImmediate(file.File.StorageId.Value);
                 if (imm != null)
                 {
                     PostEntry(imm, ct);
@@ -431,7 +431,7 @@ public sealed class AnalysisPresenter : IDisposable
             ct.ThrowIfCancellationRequested();
 
             // 延迟 / 让位期间可能已被其他路径算好,命中则直接贴,不再重算。
-            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.PathKey, enhanced: false);
+            var cacheKey = AnalysisResultCache.ImmediateKey(file.File.StorageId.Value, enhanced: false);
             var imm = AnalysisResultCache.TryGetImmediate(cacheKey);
             if (imm != null)
             {

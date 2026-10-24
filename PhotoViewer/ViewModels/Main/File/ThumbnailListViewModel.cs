@@ -32,6 +32,9 @@ public class ThumbnailListViewModel : ReactiveObject
         private set => this.RaiseAndSetIfChanged(ref _filteredFiles, value);
     }
 
+    /// <summary>最近一次筛选构建的组信息，用于把当前文件映射回代表文件。</summary>
+    private PhotoGroupMap _groups = PhotoGroupMap.Empty;
+
     /// <summary>当前布局是否为行布局（分栏位于上下，影响列表方向、滚动条朝向、对齐方式）</summary>
     public bool IsRowLayout => _main.IsRowLayout;
 
@@ -152,20 +155,20 @@ public class ThumbnailListViewModel : ReactiveObject
         }
 
         var ranking = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         void AddPath(string path)
         {
             if (!string.IsNullOrEmpty(path) && seen.Add(path)) ranking.Add(path);
         }
         void AddFile(ImageFile? file)
         {
-            if (file != null) AddPath(file.File.Path.LocalPath);
+            if (file != null) AddPath(file.File.StorageId.Value);
         }
 
         var recent = new List<string>();
         if (currentFile != null)
         {
-            var currentPath = currentFile.File.Path.LocalPath;
+            var currentPath = currentFile.File.StorageId.Value;
             // 最近浏览 LRU:新路径置顶,容量 = 前后窗口之和(至少 1)
             _recentViewedPaths.Remove(currentPath);
             _recentViewedPaths.Insert(0, currentPath);
@@ -173,7 +176,7 @@ public class ThumbnailListViewModel : ReactiveObject
             if (_recentViewedPaths.Count > capacity)
                 _recentViewedPaths.RemoveRange(capacity, _recentViewedPaths.Count - capacity);
             foreach (var path in _recentViewedPaths)
-                if (!string.Equals(path, currentPath, StringComparison.OrdinalIgnoreCase)) recent.Add(path);
+                if (!string.Equals(path, currentPath, StringComparison.Ordinal)) recent.Add(path);
         }
 
         AddFile(currentFile);                                 // ①
@@ -236,7 +239,7 @@ public class ThumbnailListViewModel : ReactiveObject
     {
         UiDispatcher.Post(() =>
         {
-            var imageFile = _folder.AllFiles.FirstOrDefault(f => f.File.Path.LocalPath == filePath);
+            var imageFile = _folder.AllFiles.FirstOrDefault(f => string.Equals(f.File.StorageId.Value, filePath, StringComparison.Ordinal));
             if (imageFile == null) return;
 
             if (sizeClass == ImageSizeClass.Thumb)
@@ -275,116 +278,25 @@ public class ThumbnailListViewModel : ReactiveObject
             }
         }
 
-        var allFiles = _folder.AllFiles;
+        var projection = PhotoListProjection.Project(
+            _folder.AllFiles,
+            _main.Settings,
+            _filter.SelectedRatingFilter,
+            _filter.SortMode,
+            _filter.SortOrder,
+            _retainedFile);
 
-        var filtered = allFiles.Where(f =>
-            _main.Settings.SelectedFormats.Contains(
-                System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? string.Empty
-            )
-        ).ToList();
-
-        if (_main.Settings.SameNameAsOnePhoto)
-        {
-            var order = _main.Settings.SelectedFormats;
-            var grouped = filtered
-                .GroupBy(f => System.IO.Path.GetFileNameWithoutExtension(f.Name), StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            List<ImageFile> merged = new();
-            foreach (var g in grouped)
-            {
-                if (g.Count() == 1)
-                {
-                    var single = g.First();
-                    single.ResetGrouping();
-                    merged.Add(single);
-                    continue;
-                }
-
-                ImageFile representative = g
-                    .OrderBy(f =>
-                    {
-                        var ext = System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? "";
-                        var idx = order.IndexOf(ext);
-                        return idx < 0 ? int.MaxValue : idx;
-                    })
-                    .First();
-
-                representative.HiddenFiles.Clear();
-                representative.HiddenFileRatings.Clear();
-                foreach (var other in g)
-                {
-                    if (other != representative)
-                    {
-                        representative.HiddenFiles.Add(other.File);
-                        representative.HiddenFileRatings[other.File.Name] = other.Rating;
-                        other.ResetGrouping();
-                    }
-                }
-
-                if (representative.HiddenFiles.Count > 0)
-                {
-                    var hiddenGroups = representative.HiddenFiles
-                        .Select(f => _main.Settings.GetFormatDisplayNameByExtension(
-                            System.IO.Path.GetExtension(f.Name)?.ToLowerInvariant() ?? ""))
-                        .Distinct()
-                        .ToList();
-
-                    representative.DisplayName = $"{representative.Name}({string.Join('/', hiddenGroups)})";
-                }
-                else
-                {
-                    representative.DisplayName = representative.Name;
-                }
-
-                merged.Add(representative);
-            }
-
-            filtered = merged;
-        }
-        else
-        {
-            foreach (var f in filtered)
-            {
-                f.ResetGrouping();
-            }
-        }
-
-        var ratingKey = _filter.SelectedRatingFilter;
-        filtered = filtered.Where(f =>
-        {
-            if (ReferenceEquals(f, _retainedFile)) return true;
-            var r = f.Rating;
-            return ratingKey switch
-            {
-                "All" => true,
-                "None" => r == 0,
-                "Eq1" => r == 1,
-                "Eq2" => r == 2,
-                "Eq3" => r == 3,
-                "Eq4" => r == 4,
-                "Eq5" => r == 5,
-                "Gt1" => r >= 1,
-                "Gt2" => r >= 2,
-                "Gt3" => r >= 3,
-                "Gt4" => r >= 4,
-                "Conflict" => f.HasRatingConflict,
-                _ => true
-            };
-        }).ToList();
-
-        filtered = SortFileList(filtered);
+        _groups = projection.Groups;
         // FILTER-04：先提交列表再通知计数，保证同一帧内列表与文本一致。
-        FilteredFiles = filtered;
+        FilteredFiles = projection.Items.ToList();
 
         // 同名合并后，文件夹打开时可能把“被隐藏”的 ARW/HIF 设为 CurrentFile；
         // 主图与卡片会因此不是同一张。把当前文件映射回它所在组的代表文件。
         // FILTER-04：映射后仍要发出计数通知，列表与文本在同一次刷新中一起提交。
-        if (_main.CurrentFile is { } current && !filtered.Contains(current))
+        if (_main.CurrentFile is { } current && !_filteredFiles.Contains(current))
         {
-            var representative = filtered.FirstOrDefault(f =>
-                f.HiddenFiles.Any(hidden => string.Equals(hidden.PathKey, current.File.PathKey, StringComparison.Ordinal)));
-            if (representative != null)
+            var representative = _groups.RepresentativeFor(current);
+            if (representative != null && _filteredFiles.Contains(representative))
             {
                 _main.CurrentFile = representative;
             }
@@ -398,29 +310,10 @@ public class ThumbnailListViewModel : ReactiveObject
     /// </summary>
     private void ApplySort()
     {
-        FilteredFiles = SortFileList(_filteredFiles.ToList());
-    }
-
-    private List<ImageFile> SortFileList(List<ImageFile> files)
-    {
-        // FILTER-02：名称比较固定用序数忽略大小写，四端同序且不随系统区域设置变化。
-        IEnumerable<ImageFile> sorted = _filter.SortMode switch
-        {
-            SortMode.Name => _filter.SortOrder == SortOrder.Ascending
-                ? files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-                : files.OrderByDescending(f => f.Name, StringComparer.OrdinalIgnoreCase),
-
-            SortMode.Date => _filter.SortOrder == SortOrder.Ascending
-                ? files.OrderBy(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue)
-                : files.OrderByDescending(f => f.PhotoDate ?? f.ModifiedDate ?? DateTimeOffset.MinValue),
-
-            SortMode.Size => _filter.SortOrder == SortOrder.Ascending
-                ? files.OrderBy(f => f.FileSize)
-                : files.OrderByDescending(f => f.FileSize),
-
-            _ => files.OrderBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
-        };
-        return sorted.ToList();
+        FilteredFiles = PhotoListProjection.SortItems(
+            _filteredFiles.ToList(),
+            _filter.SortMode,
+            _filter.SortOrder);
     }
 
     /// <summary>
@@ -548,7 +441,7 @@ public class ThumbnailListViewModel : ReactiveObject
         if (imageFile.Thumbnail != null || imageFile.IsThumbnailLoading) return;
 
         DecodeScheduler.Submit(
-            imageFile.File.Path.LocalPath + "#thumb",
+            imageFile.File.StorageId.Value + "#thumb",
             priority ? DecodePriority.P1_HighValue : DecodePriority.P2_Prefetch,
             _ => imageFile.LoadThumbnailAsync());
     }

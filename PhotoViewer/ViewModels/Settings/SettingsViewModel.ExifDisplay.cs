@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
+using PhotoViewer.Core.Settings;
 using ReactiveUI;
 using System.Reactive;
 
@@ -30,21 +31,12 @@ public partial class SettingsViewModel
     private void InitializeExifDisplay()
     {
         MoveExifDisplayCommand = ReactiveCommand.Create<MoveCommandParameter>(OnMoveExifDisplay);
-        
-        ExifDisplayItems = new ObservableCollection<ExifDisplayItem>
-        {
-            new("光圈", "Aperture", true),
-            new("快门", "ExposureTime", true),
-            new("ISO", "Iso", true),
-            new("等效焦距", "EquivFocalLength", true),
-            new("实际焦距", "FocalLength", false),
-            new("相机型号", "CameraModel", false),
-            new("镜头型号", "LensModel", false),
-            new("拍摄时间", "DateTimeOriginal", false),
-            new("曝光补偿", "ExposureBias", false),
-            new("白平衡", "WhiteBalance", false),
-            new("闪光灯", "Flash", false),
-        };
+
+        ExifDisplayItems = new ObservableCollection<ExifDisplayItem>(
+            SettingsCatalog.ExifFields.Select(definition => new ExifDisplayItem(
+                definition.DisplayName,
+                definition.Id,
+                definition.IsEnabledByDefault)));
 
         // 监听集合变化
         ExifDisplayItems.CollectionChanged += OnExifDisplayItemsChanged;

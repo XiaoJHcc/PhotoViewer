@@ -8,6 +8,8 @@ using PhotoViewer.Core;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using PhotoViewer.ViewModels.Tools;
@@ -15,13 +17,24 @@ using ReactiveUI;
 
 namespace PhotoViewer.ViewModels.Main;
 
-public class MainViewModel : ViewModelBase
+public class MainViewModel : ViewModelBase, IDisposable
 {
     public FolderViewModel FolderVM { get; }
     public FileViewModel FileVM { get; }
     public ControlViewModel ControlVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
+    public OpenRequestChannel OpenRequests { get; }
+    /// <summary>外部打开协调器：唯一消费者顺序处理 <see cref="OpenRequests"/>，重复激活当前目标只前置窗口。</summary>
+    public OpenCoordinator OpenCoordinator { get; }
+    public IStorageAccessSessionFactory StorageAccess { get; }
+    public RatingService Rating { get; } = new();
+
+    private bool _disposed;
+    private readonly Action _recheckShakeFlags;
+
+    public SettingsRepository SettingsRepository => Settings.Repository
+        ?? throw new InvalidOperationException("当前设置未绑定持久化仓库");
 
     /// <summary>
     /// 星级写回文件失败时触发(UI 线程);界面据此给出可见提示,不呈现虚假成功(FILM-06)。
@@ -99,17 +112,31 @@ public class MainViewModel : ViewModelBase
         finally { _suppressAnchorUpdate = false; }
     }
 
-    /// <summary>建立共享业务 VM；文件、评分与设置行为不变。</summary>
-    public MainViewModel()
+    /// <summary>建立共享业务 VM；生产壳在调用前完成设置仓库初始化。</summary>
+    public MainViewModel(
+        SettingsRepository? settingsRepository = null,
+        IViewStateStore? viewState = null,
+        OpenRequestChannel? openRequests = null,
+        IStorageAccessSessionFactory? storageAccess = null)
     {
-        // 先创建设置 ViewModel
-        Settings = new SettingsViewModel();
+        Settings = new SettingsViewModel(
+            settingsRepository ?? new SettingsRepository(
+                new InMemorySettingsDocumentStore(),
+                new DefaultPerformanceBudget(),
+                OperatingSystem.IsMacOS() || OperatingSystem.IsIOS(),
+                BitmapLoader.AutomaticCacheLimit),
+            viewState);
+        OpenRequests = openRequests ?? new OpenRequestChannel();
+        StorageAccess = storageAccess ?? new LocalStorageAccessSessionFactory();
         Tools = new ToolsViewModel(this);
         // 创建子 ViewModel
         FolderVM = new FolderViewModel(this);
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
         FileVM = new FileViewModel(this);
+
+        // 外部打开：界面就绪前的请求已在通道内排队，消费者从这里开始顺序处理。
+        OpenCoordinator = new OpenCoordinator(this);
 
         // 监听布局模式变化
         Settings.WhenAnyValue(s => s.LayoutMode)
@@ -129,8 +156,21 @@ public class MainViewModel : ViewModelBase
         FolderVM.AllFilesChanged += () => _ = PhotoViewer.Core.AI.ShakeFlagService.EvaluateAsync(FolderVM.AllFiles);
 
         // AI 设置页清空特征数据库后,触发对当前文件列表的重新评估,徽标即时消失。
-        PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested += () =>
-            _ = PhotoViewer.Core.AI.ShakeFlagService.EvaluateAsync(FolderVM.AllFiles);
+        _recheckShakeFlags = () => _ = PhotoViewer.Core.AI.ShakeFlagService.EvaluateAsync(FolderVM.AllFiles);
+        PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested += _recheckShakeFlags;
+    }
+
+    /// <summary>
+    /// 结束主视图模型的生命周期：取消外部打开消费者、在途打开会话与后台补齐，归还存储访问租约并释放设置。
+    /// </summary>
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested -= _recheckShakeFlags;
+        OpenCoordinator.Dispose();
+        FolderVM.Dispose();
+        Settings.Dispose();
     }
     
     ////////////////
@@ -163,7 +203,11 @@ public class MainViewModel : ViewModelBase
     /// 上报显式打开失败（STATE-02），由平台壳订阅 <see cref="OpenFailed"/> 后以 STATE-03 提示条呈现。
     /// </summary>
     /// <param name="message">完整的失败提示正文。</param>
-    public void ReportOpenFailure(string message) => OpenFailed?.Invoke(message);
+    public void ReportOpenFailure(string message)
+    {
+        if (UiDispatcher.CheckAccess()) OpenFailed?.Invoke(message);
+        else UiDispatcher.Post(() => OpenFailed?.Invoke(message));
+    }
 
     #endregion
     
@@ -289,161 +333,114 @@ public class MainViewModel : ViewModelBase
     
     #region Rating
     
-    /// <summary>
-    /// 获取当前文件及其已合并隐藏伴侣文件对应的运行期对象，便于在写入 XMP 后同步刷新内存星级。
-    /// </summary>
-    /// <param name="file">当前参与评分的代表文件</param>
-    /// <returns>需要同步星级缓存的图片对象集合</returns>
-    private List<ImageFile> GetRatingSyncTargets(ImageFile file)
+    public string? LastRatingWriteError { get; private set; }
+
+    private PhotoGroup GetRatingGroup(ImageFile file)
     {
-        var relatedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            file.File.Path.LocalPath
-        };
-
-        foreach (var hiddenFile in file.HiddenFiles)
-        {
-            relatedPaths.Add(hiddenFile.Path.LocalPath);
-        }
-
-        return FolderVM.AllFiles
-            .Where(candidate => relatedPaths.Contains(candidate.File.Path.LocalPath))
-            .ToList();
+        if (file.Group != null) return file.Group;
+        var formats = Settings.FileFormats
+            .Select(item => new PhotoFormatRule(item.Id, item.DisplayName, item.Extensions, item.IsEnabled))
+            .ToArray();
+        return PhotoGroupMap.Build(FolderVM.AllFiles, Settings.SameNameAsOnePhoto, formats).GroupFor(file)
+            ?? PhotoGroupMap.Build([file], false, formats).GroupFor(file)!;
     }
 
-    /// <summary>
-    /// 在 UI 线程同步更新已成功写入文件的运行期星级缓存，并刷新依赖星级的界面状态。
-    /// </summary>
-    /// <param name="syncedFiles">已成功写入星级的图片对象</param>
-    /// <param name="rating">新的星级</param>
-    private void UpdateRatingCaches(IReadOnlyCollection<ImageFile> syncedFiles, int rating)
-    {
-        foreach (var syncedFile in syncedFiles)
-        {
-            syncedFile.UpdateCachedRating(rating);
-        }
-
-        ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
-
-        // 仅在启用了星级筛选时才重建文件列表,否则仅更新内存缓存即可,避免重建 ObservableCollection 导致 UI 卡顿
-        if (FileVM.FilterBar.SelectedRatingFilter != "All")
-        {
-            FileVM.ThumbnailList.RefreshFilters(retainFile: CurrentFile);
-        }
-    }
-
-    /// <summary>
-    /// 设置图片星级，并在写入代表文件及其同名伴侣文件后同步更新运行期缓存。
-    /// 所有文件 I/O 均在后台线程执行，不阻塞 UI。
-    /// </summary>
-    /// <param name="file">要设置星级的图片</param>
-    /// <param name="rating">新的星级（0~5）</param>
+    /// <summary>设置图片星级；只有整组写入并验证成功才把请求值同步到缓存和数据库。</summary>
     public async Task SetRatingAsync(ImageFile? file, int rating)
     {
         if (file == null) return;
-
         var ratingSw = Stopwatch.StartNew();
         Console.WriteLine($"[Rating] === BEGIN SetRating({file.Name}, {rating}) ===");
-
-        // 文件是否已写成功:为 true 时后续 UI 刷新异常不得再报"写回失败"(界面不能报假失败)
-        var written = false;
-
-        // 先在 UI 线程收集需要的引用，再整体下放到后台执行文件 I/O。
-        var safeMode = Settings.SafeSetRating;
-        var syncTargets = GetRatingSyncTargets(file);
-        var hiddenFiles = file.HiddenFiles.ToList();
-
+        LastRatingWriteError = null;
+        var persisted = false;
         try
         {
-            // 将全部文件读写操作移到后台线程，避免阻塞 UI。
-            var (success, syncedFiles) = await Task.Run(async () =>
+            var group = GetRatingGroup(file);
+            var safeMode = Settings.SafeSetRating;
+            var result = await Task.Run(() => Rating.SetRatingAsync(group, rating, safeMode));
+            if (result.Outcome is RatingWriteOutcome.Superseded or RatingWriteOutcome.Canceled) return;
+
+            if (result.IsApplied)
             {
-                var writeSuccess = await XmpWriter.WriteRatingAsync(file.File, rating, safeMode);
-                if (!writeSuccess)
-                {
-                    return (false, (List<ImageFile>?)null);
-                }
-
-                var synced = new List<ImageFile> { file };
-
-                if (hiddenFiles.Count > 0)
-                {
-                    var hiddenWriteTasks = hiddenFiles.Select(async hidden =>
-                    {
-                        try
-                        {
-                            var ok = await XmpWriter.WriteRatingAsync(hidden, rating, safeMode);
-                            return (Path: hidden.Path.LocalPath, Success: ok);
-                        }
-                        catch (Exception exHidden)
-                        {
-                            Console.WriteLine("Hidden file rating sync failed: " + exHidden.Message);
-                            return (Path: hidden.Path.LocalPath, Success: false);
-                        }
-                    }).ToList();
-
-                    var hiddenResults = await Task.WhenAll(hiddenWriteTasks);
-                    var hiddenSuccessPaths = hiddenResults
-                        .Where(r => r.Success)
-                        .Select(r => r.Path)
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                    synced.AddRange(syncTargets.Where(target =>
-                        !ReferenceEquals(target, file) && hiddenSuccessPaths.Contains(target.File.Path.LocalPath)));
-                }
-
-                return (true, (List<ImageFile>?)synced);
-            });
-
-            if (!success || syncedFiles == null)
-            {
-                Console.WriteLine($"[Rating] FAIL for {file.Name}. Total: {ratingSw.ElapsedMilliseconds}ms");
-                RatingWriteFailed?.Invoke(file, rating);
+                persisted = true;
+                await UiDispatcher.InvokeAsync(() => ApplyVerifiedRatings(group, result));
+                _ = SyncRatingToDatabaseAsync(group.Representative, rating);
+                _ = ReloadExifAfterRatingAsync(group.Representative);
                 return;
             }
 
-            Console.WriteLine($"[Rating] Write done. Elapsed: {ratingSw.ElapsedMilliseconds}ms. Updating UI caches...");
-            written = true;
-
-            // 回到 UI 线程刷新内存缓存与界面。
-            await UiDispatcher.InvokeAsync(() => UpdateRatingCaches(syncedFiles, rating));
-
-            // 顺手同步 photos.rating 快照(Plan-2-4):产品行为以文件为准,DB rating 只是训练用副本。
-            // 指纹未入库时 UpdateRatingAsync 静默跳过,无需在 UI 线程等。
-            _ = SyncRatingToDatabaseAsync(file, rating);
-
-            // 再异步重载当前文件完整 EXIF，确保界面中的其他字段也与磁盘状态保持一致。
-            _ = Task.Run(async () =>
+            LastRatingWriteError = result.FailureReason;
+            if (result.Outcome == RatingWriteOutcome.Partial)
+                await RefreshRatingsFromDiskAsync(group);
+            await UiDispatcher.InvokeAsync(() =>
             {
-                try
-                {
-                    // 在 UI 线程清除 EXIF 标记（涉及 RaisePropertyChanged），再由 LoadExifDataAsync 在后台重新加载
-                    await UiDispatcher.InvokeAsync(() => file.ClearExifData());
-                    await file.LoadExifDataAsync();
-                    await UiDispatcher.InvokeAsync(() =>
-                    {
-                        ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
-                        file.RaisePropertyChanged(nameof(file.Rating));
-                        file.RaisePropertyChanged(nameof(file.HasRatingConflict));
-                    });
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
-                }
+                RefreshRatingDependentState();
+                RatingWriteFailed?.Invoke(file, rating);
             });
         }
         catch (Exception ex)
         {
-            Console.WriteLine("Error setting rating for " + file.Name + ": " + ex.Message);
-            if (!written)
-            {
-                RatingWriteFailed?.Invoke(file, rating);
-            }
+            LastRatingWriteError = ex.Message;
+            Console.WriteLine("Error setting rating for " + file.Name + ": " + ex);
+            if (!persisted) RatingWriteFailed?.Invoke(file, rating);
         }
         finally
         {
             Console.WriteLine($"[Rating] === END SetRating({file.Name}): Total {ratingSw.ElapsedMilliseconds}ms ===");
+        }
+    }
+
+    private void ApplyVerifiedRatings(PhotoGroup group, RatingWriteResult result)
+    {
+        foreach (var outcome in result.Files)
+        {
+            var target = group.Files.First(file => file.File.StorageId == outcome.File.StorageId);
+            if (outcome.After is { } snapshot)
+                target.UpdateCachedRating(snapshot.ValueOrZero);
+        }
+        RefreshRatingDependentState();
+    }
+
+    private async Task RefreshRatingsFromDiskAsync(PhotoGroup group)
+    {
+        var ratings = await Task.Run(async () =>
+        {
+            var values = new List<(StorageItemId Id, int Rating)>();
+            foreach (var file in group.Files)
+                values.Add((file.File.StorageId, await ExifLoader.LoadRatingOnlyAsync(file.File)));
+            return values;
+        });
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            foreach (var (id, value) in ratings)
+                group.Files.First(file => file.File.StorageId == id).UpdateCachedRating(value);
+            RefreshRatingDependentState();
+        });
+    }
+
+    private void RefreshRatingDependentState()
+    {
+        ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
+        if (FileVM.FilterBar.SelectedRatingFilter != "All")
+            FileVM.ThumbnailList.RefreshFilters(retainFile: CurrentFile);
+    }
+
+    private async Task ReloadExifAfterRatingAsync(ImageFile file)
+    {
+        try
+        {
+            await UiDispatcher.InvokeAsync(() => file.ClearExifData());
+            await file.LoadExifDataAsync();
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
+                file.RaisePropertyChanged(nameof(file.Rating));
+                file.RaisePropertyChanged(nameof(file.HasRatingConflict));
+            });
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
         }
     }
 

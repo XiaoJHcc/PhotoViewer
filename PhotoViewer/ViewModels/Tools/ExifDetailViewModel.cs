@@ -119,7 +119,7 @@ public class ExifDetailViewModel : ReactiveObject
     /// <summary>当前格式是否正在加载</summary>
     public bool IsLoading => SelectedFormat.IsLoading;
 
-    /// <param name="imageFile">当前图片文件（其 ExifData 应已加载），及其 HiddenFiles 伴侣文件</param>
+    /// <param name="imageFile">当前图片文件；其所属同名合并组（<see cref="ImageFile.Group"/>）给出代表文件与伴侣文件</param>
     public ExifDetailViewModel(ImageFile imageFile)
     {
         _baseFileName = Path.GetFileNameWithoutExtension(imageFile.Name);
@@ -196,14 +196,19 @@ public class ExifDetailViewModel : ReactiveObject
 
     private static List<FormatEntry> BuildFormats(ImageFile imageFile)
     {
-        var primaryExt = GetExtension(imageFile.Name);
-        var primary = new FormatEntry(primaryExt, imageFile.File, imageFile.ExifData);
+        // 组信息以 PhotoGroup 为唯一真源：代表文件固定在前，其余同伴按组内顺序跟进。
+        // 未参与分组（Group 为 null）时退化为只看当前文件，行为与单文件一致。
+        var group = imageFile.Group;
+        var primary = group?.Representative ?? imageFile;
+        var primaryEntry = new FormatEntry(GetExtension(primary.Name), primary.File, primary.ExifData);
 
-        var companions = imageFile.HiddenFiles
-            .Select(f => new FormatEntry(GetExtension(f.Name), f))
-            .ToList();
+        var companions = group == null
+            ? new List<FormatEntry>()
+            : group.Companions
+                .Select(file => new FormatEntry(GetExtension(file.Name), file.File))
+                .ToList();
 
-        var all = new List<FormatEntry> { primary }.Concat(companions).ToList();
+        var all = new List<FormatEntry> { primaryEntry }.Concat(companions).ToList();
 
         // RAW 格式优先，同级按扩展名字母排序
         all.Sort((a, b) =>

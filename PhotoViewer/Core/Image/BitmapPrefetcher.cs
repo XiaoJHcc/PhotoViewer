@@ -252,7 +252,7 @@ public class BitmapPrefetcher
             var file = f;
             var full = wantFull;
             var alongside = alongP0;
-            DecodeScheduler.Submit(file.File.Path.LocalPath, DecodePriority.P2_Prefetch, async token =>
+            DecodeScheduler.Submit(file.File.StorageId.Value, DecodePriority.P2_Prefetch, async token =>
             {
                 // 压力闸:Caution/恢复观察期起预取不执行(投递即空跑退出)
                 if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return;
@@ -271,7 +271,7 @@ public class BitmapPrefetcher
 
                 try
                 {
-                    var path = file.File.Path.LocalPath;
+                    var path = file.File.StorageId.Value;
                     if (full)
                     {
                         if (!BitmapLoader.IsInCache(path))
@@ -310,7 +310,7 @@ public class BitmapPrefetcher
         var file = _main.CurrentFile;
         if (file == null) return;
 
-        var path = file.File.Path.LocalPath;
+        var path = file.File.StorageId.Value;
         _ = Task.Run(async () =>
         {
             try

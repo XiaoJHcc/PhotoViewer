@@ -62,19 +62,18 @@ public static class RawLoader
     public static bool IsRawFile(IFileRef file)
     {
         if (file is null) return false;
-        // Android 上可能是 content:// 无法从 LocalPath 识别扩展名，回退到 Name
-        var fromPath = file.PathKey;
-        if (IsRawFile(fromPath)) return true;
-
+        // 先用显示名识别（SAF document id 可能没有扩展名），再看本地路径。
         try
         {
-            var name = file.Name ?? string.Empty;
-            return IsRawFile(name);
+            if (IsRawFile(file.Name)) return true;
         }
         catch
         {
-            return false;
+            // Name 不可用时继续尝试本地路径。
         }
+
+        var localPath = file.TryGetLocalPath();
+        return !string.IsNullOrEmpty(localPath) && IsRawFile(localPath);
     }
 
     /// <summary>

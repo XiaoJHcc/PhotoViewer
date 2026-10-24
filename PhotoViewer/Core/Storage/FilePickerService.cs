@@ -38,6 +38,12 @@ public sealed class FilePickFilter
 public interface IFilePickerService
 {
     /// <summary>
+    /// 主入口是否为目录选择：触屏端为 true（空首屏与"打开"都进入目录选择），桌面端为 false。
+    /// 共享层据此选择 <see cref="PickFolderAsync"/> 或 <see cref="PickFileAsync"/>，不再按操作系统判断。
+    /// </summary>
+    bool PreferFolderPicker => false;
+
+    /// <summary>
     /// 弹出文件夹选择器。
     /// </summary>
     /// <param name="title">标题。</param>
@@ -72,6 +78,11 @@ public static class FilePicker
     /// <summary>当前注入的实现;未初始化时抛出异常(暴露接线遗漏)。</summary>
     private static IFilePickerService Impl
         => _impl ?? throw new System.InvalidOperationException("FilePicker 未初始化:请在应用启动时调用 FilePicker.Initialize。");
+
+    /// <summary>
+    /// 主入口是否为目录选择（触屏端为 true）。未注入实现时按桌面口径返回 false。
+    /// </summary>
+    public static bool PreferFolderPicker => _impl?.PreferFolderPicker ?? false;
 
     /// <summary>
     /// 弹出文件夹选择器。

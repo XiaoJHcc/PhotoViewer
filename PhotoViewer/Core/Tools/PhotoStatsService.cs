@@ -109,19 +109,8 @@ public static class PhotoStatsService
     }
 
     /// <summary>从元数据目录中读取 XMP 星级评分（0–5）。</summary>
-    private static int ReadRating(IReadOnlyList<MetadataExtractor.Directory> directories)
-    {
-        var xmpDir = directories.OfType<XmpDirectory>().FirstOrDefault();
-        if (xmpDir == null) return 0;
-
-        var props = xmpDir.GetXmpProperties();
-        foreach (var key in new[] { "xmp:Rating", "xap:Rating", "Rating" })
-        {
-            if (props.TryGetValue(key, out var val) && int.TryParse(val, out var r) && r >= 0 && r <= 5)
-                return r;
-        }
-        return 0;
-    }
+    private static int ReadRating(IReadOnlyList<MetadataExtractor.Directory> directories) =>
+        XmpRatingReader.ReadDirectories(directories.OfType<XmpDirectory>()).ValueOrZero;
 
     /// <summary>对包含逗号、引号或换行的 CSV 字段进行转义。</summary>
     private static string EscapeCsv(string field)
