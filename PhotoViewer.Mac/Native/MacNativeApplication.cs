@@ -180,7 +180,7 @@ public static class MacNativeApplication
         public override void OpenUrls(NSApplication application, NSUrl[] urls)
             => PublishOpenItems(MacOpenPaths.FromUrls(urls));
 
-        /// <summary>把系统打开项投进请求通道；界面就绪前排队，重复激活由协调器只前置窗口。</summary>
+        /// <summary>把系统打开项投进请求通道；界面就绪前排队，重复激活由协调器前置窗口并按 OPEN-08 原地刷新（保留视口）。</summary>
         private void PublishOpenItems(IReadOnlyList<IStorageItemRef> items)
         {
             if (items.Count == 0) return;

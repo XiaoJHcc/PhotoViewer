@@ -99,7 +99,7 @@ public partial class App : Application
             WindowsNativeApplication.WindowHandle = WinRT.Interop.WindowNative.GetWindowHandle(_window);
             NativeStartupLog.Write("main window activated");
 
-            // 重复激活(再次打开当前目录/当前图片)只前置窗口;无路径的二次启动也走同一前置动作。
+            // 重复激活(再次打开当前目录/当前图片):前置窗口,并由协调器按 OPEN-08 原地刷新并保留视口;无路径的二次启动只走前置动作。
             _main.OpenCoordinator.RepeatActivation += OnRepeatActivation;
             WindowsSingleInstance.AttachForeground(BringMainWindowToFront);
 
@@ -206,7 +206,7 @@ public partial class App : Application
         }
     }
 
-    /// <summary>重复激活当前目标:只把已有主窗口前置,不重新打开、不重新适应(OPEN-06)。</summary>
+    /// <summary>重复激活当前目标:把已有主窗口前置;原地刷新由协调器按 OPEN-08 完成,不重新 Fit(OPEN-06/08)。</summary>
     private void OnRepeatActivation() => BringMainWindowToFront();
 
     /// <summary>把主窗口前置;无路径的二次启动也走这里,关闭后不再抢前台。</summary>

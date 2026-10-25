@@ -47,7 +47,7 @@
    - **macOS**：`Program.Main(args)` + `MacNativeApplication` 用 `MacOpenPaths.FromPaths/FromUrls` 捕获 Finder / Dock /「打开方式」/命令行；根视图拖入同路投递 `OpenRequestChannel`。
    - **Android**：`AndroidBootstrapActivity` 捕获 `ACTION_VIEW` / `ACTION_SEND` / `ACTION_SEND_MULTIPLE` 并原样转发 Intent；`AndroidNativeShell` 把 Intent、`pv-open` 与多个 URI 合并为一次打开请求，发布到共享通道。
    - **iOS**：`iOSNativeAppDelegate` / scene → `iOSExternalOpenBridge` 把 URL 转成 `LocalFileRef`/`LocalFolderRef` 后投递 `OpenRequestChannel`；主屏 `UIDropInteraction` 走同一桥接。
-2. **桥接**：共享层提供实例级 `OpenRequestChannel` + `OpenCoordinator`。通道在 UI 就绪前排队，只允许一个消费者按投递顺序处理；同目标的 pending 请求去重合并，`OpenCoordinator.PublishAndWaitAsync` 供验收等待本批完成。一批只取首个可打开目标，重复激活当前目标只发 `RepeatActivation`/前置窗口，失败统一经 `MainViewModel.OpenFailed`（STATE-02）。没有静态队列或静态处理器。
+2. **桥接**：共享层提供实例级 `OpenRequestChannel` + `OpenCoordinator`。通道在 UI 就绪前排队，只允许一个消费者按投递顺序处理；同目标的 pending 请求去重合并，`OpenCoordinator.PublishAndWaitAsync` 供验收等待本批完成。一批只取首个可打开目标；**所有显式打开**（文件夹、文件、拖入、系统外部激活/命令行）都从磁盘重新枚举目标父目录或目录，并刷新新增、删除、全部评分来源、sidecar 存在性与内容、基本属性与 EXIF；当前目标保留筛选、排序、滚动、面板与视口，新目标按 OPEN-05 回到适应态，不生成重复卡片（OPEN-08）。失败统一经 `MainViewModel.OpenFailed`（STATE-02）。没有静态队列或静态处理器。
 3. **处理**：`OpenCoordinator` 逐个 await `FolderViewModel.OpenFolderAsync` / `OpenImageAsync`，每次打开由 `FolderLoadSession` 持有存储访问租约（`IStorageAccessSessionFactory` 注入：iOS 安全作用域会话、Android SAF 会话、桌面本地会话）、取消源与工作列表；枚举成功后一次提交新列表，新快照提交成功时释放被取代会话的租约，当前快照保留到下一次提交或文件源释放，失败/取消随会话释放。
    - 文件夹 → `FolderViewModel.OpenFolderAsync`。
    - 文件 → `FolderViewModel.OpenImageAsync`——先尝试进入父文件夹；父目录访问被拒或枚举失败时回退到**单图模式**，至少让用户看到该文件。

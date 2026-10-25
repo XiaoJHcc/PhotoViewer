@@ -244,8 +244,8 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs`（SAF）、`PhotoViewer.Android/Native/AndroidNativeShell.cs`（`ACTION_VIEW/SEND` 合并后投递共享通道）。
   - **OPEN-01@ios / @android**：只有文件夹选择器（已登记 10-18）。
   - **OPEN-07@android**：未接 `OnDragListener`，手机无常见拖入来源，不建拖入入口（已登记 10-18）。
-- **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。
-  - 显式打开前调用 `FitToView()` 回到适应态：四端统一由共享 `MainViewModel.RequestFitToView()` + 共享 `PhotoViewport` 实现（见 status.md OPEN-05）。
+- **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。所有显式打开（文件 / 文件夹 / 拖入 / 外部激活 / 命令行）都重新枚举目标父目录或目录并完整刷新新增、删除、全部评分来源、sidecar 存在性与内容、基本属性与 EXIF；当前目标保留视口，新目标回到适应态，滚动 / 筛选 / 面板保持且不生成重复卡片（OPEN-08、RATING-01）。
+  - 新目标的显式打开前调用 `FitToView()`；当前目标刷新不调用。四端统一由共享 `MainViewModel.RequestFitToView()` + 共享 `PhotoViewport` 实现（见 status.md OPEN-05）。
 - **OPEN-03、OPEN-09**：单图模式与派生状态由共享 VM 承担；每次打开由 `FolderLoadSession` 持有存储访问租约（iOS `iOSStorageAccessSessionFactory` / Android `AndroidStorageAccessSessionFactory` / 桌面本地会话）。新快照提交成功时释放被取代会话的租约，当前快照保留到下一次提交或文件源释放；父目录不可读时回退单图。
 - **OPEN-01@web / OPEN-07@web**：没有真实文件系统，打开文件/文件夹使用应用内选择器浏览合成文件夹；拖入按文件名匹配合成库，否则打开首个合成文件夹。
 

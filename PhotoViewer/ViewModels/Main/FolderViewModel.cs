@@ -162,23 +162,29 @@ public class FolderViewModel : ReactiveObject, IDisposable
 
     /// <summary>
     /// 打开指定图片,并尽量进入其所在文件夹;若平台权限不支持,则回退为单图模式。
+    /// 显式打开的图片一律重新枚举父目录（新增/删除、全部评分来源、属性与 EXIF），
+    /// 当前目标只刷新不打断视口；新目标按 <paramref name="resetView"/> 回到适应态。
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
     /// <param name="scrollToCurrent">打开后是否滚动到当前图片</param>
-    /// <param name="resetView">是否让主图回到适应态（OPEN-05）;重复外部激活同一目标时传 false</param>
-    public async Task OpenImageAsync(IFileRef file, bool scrollToCurrent = true, bool resetView = true)
+    /// <param name="resetView">是否让主图回到适应态（OPEN-05）;当前目标始终不 Fit</param>
+    /// <param name="refresh">
+    /// 是否重新枚举父目录并刷新元数据。显式打开默认为 true；只有确属纯选中（不重新读取磁盘）的
+    /// 内部调用才显式传 false。
+    /// </param>
+    public async Task OpenImageAsync(IFileRef file, bool scrollToCurrent = true, bool resetView = true, bool refresh = true)
     {
         if (_disposed || !IsImageFile(file.Name))
         {
             return;
         }
 
-        // OPEN-05：显式打开开始新的观片，主图回到适应态。
-        if (resetView) Main.RequestFitToView();
+        // OPEN-05：新目标回到适应态；当前目标（含同组伴侣）只刷新，保留当前视口。
+        if (resetView && !IsCurrentTarget(file)) Main.RequestFitToView();
 
         try
         {
-            var committed = await OpenImageInFolderContextAsync(file);
+            var committed = await OpenImageInFolderContextAsync(file, refresh);
             if (committed && scrollToCurrent)
             {
                 ScrollToCurrent();
@@ -191,6 +197,15 @@ public class FolderViewModel : ReactiveObject, IDisposable
         }
     }
 
+    /// <summary>目标是否就是当前照片（或它的同组伴侣）：这类显式打开属于刷新，不重新 Fit。</summary>
+    private bool IsCurrentTarget(IFileRef file)
+    {
+        var current = Main.CurrentFile;
+        return current != null &&
+               (HasSameStorageId(file, current.File) ||
+                current.Group?.Files.Any(member => HasSameStorageId(file, member.File)) == true);
+    }
+
     /// <summary>
     /// 打开指定文件夹,并定位到筛选后的第一张图片。
     /// </summary>
@@ -201,13 +216,13 @@ public class FolderViewModel : ReactiveObject, IDisposable
     {
         if (_disposed) return;
 
-
-        // OPEN-05：显式打开开始新的观片，主图回到适应态。
-        if (resetView) Main.RequestFitToView();
+        // 只有切到新目录才是新的观片（OPEN-05）；同目录入口重复打开属于刷新，保留视口。
+        var isSameFolder = HasSameStorageId(folder, _currentFolder);
+        if (resetView && !isSameFolder) Main.RequestFitToView();
 
         // OPEN-08：同目录重开视为刷新,以当前照片为首选目标,且保留缩略图缓存。
-        var isSameFolder = HasSameStorageId(folder, _currentFolder) && _allFiles.Count > 0;
-        var preferredFile = isSameFolder && Main.CurrentFile != null && _allFiles.Contains(Main.CurrentFile)
+        var hasExistingList = isSameFolder && _allFiles.Count > 0;
+        var preferredFile = hasExistingList && Main.CurrentFile != null && _allFiles.Contains(Main.CurrentFile)
             ? Main.CurrentFile.File
             : null;
 
@@ -271,7 +286,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
     /// </summary>
     /// <param name="file">要打开的图片文件</param>
     /// <returns>本次打开是否已提交（被后发打开取代时为 false）</returns>
-    private async Task<bool> OpenImageInFolderContextAsync(IFileRef file)
+    private async Task<bool> OpenImageInFolderContextAsync(IFileRef file, bool refresh)
     {
         IFolderRef? folder = null;
         try
@@ -289,25 +304,43 @@ public class FolderViewModel : ReactiveObject, IDisposable
         }
 
         return await UiDispatcher
-            .InvokeAsync(() => OpenImageInFolderContextOnUiAsync(file, folder))
+            .InvokeAsync(() => OpenImageInFolderContextOnUiAsync(file, folder, refresh))
             .Unwrap()
             .ConfigureAwait(false);
     }
 
-    private async Task<bool> OpenImageInFolderContextOnUiAsync(IFileRef file, IFolderRef? folder)
+    private async Task<bool> OpenImageInFolderContextOnUiAsync(IFileRef file, IFolderRef? folder, bool refresh)
     {
         if (_disposed) return false;
 
         if (folder == null)
         {
+            // 父目录不可得：只刷新可访问的当前项（基本属性、完整 EXIF、评分与 sidecar），不重新 fit。
+            if (refresh && FindLoadedFile(file) is { } loaded)
+            {
+                return await ReloadFileAsync(loaded);
+            }
+
             return await OpenSingleImageAsync(file);
+        }
+
+        if (refresh)
+        {
+            // 只有目标父目录就是当前目录时才按“同目录刷新”处理（无临时单图快照、失败保留列表）；
+            // 跨目录是显式打开：目标先上屏，枚举失败按 OPEN-03 回退单图。
+            var sameFolder = HasSameStorageId(folder, _currentFolder);
+            if (sameFolder && _allFiles.Count > 0)
+            {
+                var target = FindLoadedFile(file)?.File ?? file;
+                return await LoadFolderAsync(folder, target, targetIsExplicit: false, refreshMode: true);
+            }
+
+            return await LoadFolderAsync(folder, file, targetIsExplicit: true, refreshMode: false);
         }
 
         if (HasSameStorageId(folder, _currentFolder) && _allFiles.Count > 0)
         {
-
-
-            // OPEN-03：目标已在当前目录模型中只切换，不重建目录；伴侣文件经同名组合映射到代表文件。
+            // 纯选中：目标已在当前目录模型中只切换，不重建目录；伴侣文件经同名组合映射到代表文件。
             var existingFile = FindLoadedFile(file);
             if (existingFile != null)
             {
@@ -337,6 +370,8 @@ public class FolderViewModel : ReactiveObject, IDisposable
         try
         {
             await session.LoadTargetRatingAsync().ConfigureAwait(false);
+            // 补入列表的文件同样要有大小/修改时间，避免排序与卡片属性空一帧。
+            await Task.Run(() => imageFile.LoadBasicPropertiesAsync(session.Token), session.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -383,6 +418,8 @@ public class FolderViewModel : ReactiveObject, IDisposable
         try
         {
             await session.LoadTargetRatingAsync().ConfigureAwait(false);
+            // 单图也要有大小/修改时间：排序、卡片与控制栏不能空着等后续补齐。
+            await Task.Run(() => imageFile.LoadBasicPropertiesAsync(session.Token), session.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -420,8 +457,16 @@ public class FolderViewModel : ReactiveObject, IDisposable
     /// <param name="folder">要加载的文件夹</param>
     /// <param name="preferredFile">优先定位的图片;为空时打开第一张</param>
     /// <param name="targetIsExplicit">目标是调用方显式指定的文件（失败时按 OPEN-03 回退单图），而非同目录刷新沿用的当前图</param>
+    /// <param name="refreshMode">
+    /// 显式打开触发的刷新：跳过阶段 1 的临时单图快照；枚举失败时保留旧列表、
+    /// 只刷新仍然可访问的文件并给出 STATE 提示，不把整个目录降级成单图。
+    /// </param>
     /// <returns>本次打开是否已提交</returns>
-    private async Task<bool> LoadFolderAsync(IFolderRef folder, IFileRef? preferredFile, bool targetIsExplicit)
+    private async Task<bool> LoadFolderAsync(
+        IFolderRef folder,
+        IFileRef? preferredFile,
+        bool targetIsExplicit,
+        bool refreshMode = false)
     {
         var isRefresh = HasSameStorageId(folder, _currentFolder) && _allFiles.Count > 0;
         // 只有切换到不同目录才整批释放旧缩略图（OPEN-08）；临时快照不改变该判断。
@@ -431,9 +476,11 @@ public class FolderViewModel : ReactiveObject, IDisposable
         var stopwatch = Stopwatch.StartNew();
         Console.WriteLine("[Folder] === BEGIN OpenFolder: " + folder.StorageId.Value);
 
-        // ── 阶段 1:优先显示目标图片 ──
+        // ── 阶段 1:优先显示目标图片（刷新不发布临时快照，但新目标仍先读好评分/来源） ──
         var targetFile = session.EnsureTargetImage();
-        if (targetFile != null)
+        var publishTarget = targetFile != null && !isRefresh && !refreshMode;
+        var targetIsNew = preferredFile != null && FindLoadedFile(preferredFile) == null;
+        if (targetFile != null && (publishTarget || targetIsNew))
         {
             try
             {
@@ -451,7 +498,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
                 return false;
             }
 
-            if (!isRefresh)
+            if (publishTarget)
             {
                 await UiDispatcher.InvokeAsync(() =>
                 {
@@ -489,7 +536,13 @@ public class FolderViewModel : ReactiveObject, IDisposable
         }
         catch (Exception exception)
         {
-            return await HandleEnumerateFailureAsync(session, folder, targetFile, targetIsExplicit, exception);
+            return await HandleEnumerateFailureAsync(
+                session,
+                folder,
+                targetFile,
+                targetIsExplicit,
+                refreshMode,
+                exception);
         }
 
         if (!IsSessionActive(session))
@@ -501,43 +554,64 @@ public class FolderViewModel : ReactiveObject, IDisposable
         Console.WriteLine($"[Folder] Phase2 (enumerate {session.WorkFiles.Count} files): {stopwatch.ElapsedMilliseconds}ms");
 
         var snapshot = session.WorkFiles.ToList();
+        List<ImageFile>? reused = null;
         await UiDispatcher.InvokeAsync(() =>
         {
             if (!IsSessionActive(session)) return;
 
+            // 同目录刷新：按 StorageId 复用仍存在的文件对象，保住缩略图、EXIF 与卡片身份；
+            // 新出现的文件用本次枚举对象，已删除的文件自然退出列表。
+            var files = snapshot;
+            if (isRefresh) files = MergeLoadedFiles(session, snapshot, out reused);
+
             // 一次提交：枚举成功后才替换列表、目录名与当前照片，失败时旧快照原样保留。
             PublishSnapshot(
                 session,
-                snapshot,
+                files,
                 folder,
                 folder.Name,
                 clearThumbnailsOnCommit,
                 retireSuperseded: true);
 
-            var selection = targetFile != null
-                ? ResolveTargetSelection(targetFile)
-                : ResolveFirstFile(snapshot);
+            // 刷新（同目录或显式重开）以当前/目标照片为首选；目标已不在新列表时退回首项。
+            var selection = ResolveCommittedSelection(files, targetFile, isRefresh || refreshMode);
 
             // 阶段 2 定下的当前照片不再被后续阶段改写（OPEN-02）。
             SetCurrentFile(selection, session);
             Main.FileVM.ThumbnailList.TriggerPrefetchAroundCurrent();
-            session.StartBackgroundLoads(snapshot, CreateRatingsLoadedCallback(session, snapshot));
+
+            // 复用对象重读完整磁盘元数据由本方法在返回前 await；新加入的文件仍走阶段 3 后台首读。
+            var backgroundFiles = files;
+            if (reused is { Count: > 0 })
+            {
+                var reusedSet = new HashSet<ImageFile>(reused);
+                backgroundFiles = files.Where(file => !reusedSet.Contains(file)).ToList();
+            }
+
+            session.StartBackgroundLoads(backgroundFiles, CreateRatingsLoadedCallback(session, backgroundFiles));
 
             Console.WriteLine($"[Folder] Phase2 (UI updated): {stopwatch.ElapsedMilliseconds}ms");
         });
+
+        // 返回前完成复用对象的属性/EXIF/评分/sidecar 重读：调用方 await 打开即可读到新值。
+        if (reused is { Count: > 0 })
+        {
+            await ReloadRatingsAsync(session, reused).ConfigureAwait(false);
+        }
 
         return IsSessionActive(session);
     }
 
     /// <summary>
-    /// 枚举失败：显式指定的目标回退单图模式（OPEN-03）；
-    /// 无目标或同目录刷新沿用的当前图则保留打开前的快照（OPEN-02/OPEN-08）。
+    /// 枚举失败：显式指定的新目标回退单图模式（OPEN-03）；刷新则保留打开前的快照，
+    /// 只刷新仍然可访问的文件（OPEN-02/OPEN-08），绝不整体降级为单图。
     /// </summary>
     private async Task<bool> HandleEnumerateFailureAsync(
         FolderLoadSession session,
         IFolderRef folder,
         ImageFile? targetFile,
         bool targetIsExplicit,
+        bool refreshMode,
         Exception exception)
     {
         if (!IsSessionActive(session))
@@ -550,10 +624,19 @@ public class FolderViewModel : ReactiveObject, IDisposable
         // STATE-02：打开失败必须让用户看见对象与原因，不能只写日志。
         Main.ReportOpenFailure(StatusMessages.FolderOpenFailed(folder.Name, exception.Message));
 
-        if (targetFile == null || !targetIsExplicit)
+        if (refreshMode || targetFile == null || !targetIsExplicit)
         {
-            // OPEN-02/OPEN-08：没有显式目标时保持打开前的列表、当前图、目录名与缩略图缓存。
+            // 刷新失败：旧列表、当前图、目录名与缩略图缓存原样保留；
+            // 目录读不到时仍刷新当前仍可访问的对象，而不是把整个目录变成单图。
+            var accessible = _allFiles;
             AbandonSession(session);
+            if (refreshMode && accessible.Count > 0)
+            {
+                // 枚举失败说明旧索引可能早于磁盘现状：清空后逐文件核实 sidecar，
+                // 已删除的来源不复活，新出现的来源也不漏。
+                foreach (var file in accessible) file.RatingSidecarIndex = null;
+                await ReloadRatingsAsync(accessible).ConfigureAwait(false);
+            }
             return false;
         }
 
@@ -673,6 +756,176 @@ public class FolderViewModel : ReactiveObject, IDisposable
     private ImageFile? FindLoadedFile(IFileRef file)
     {
         return _allFiles.FirstOrDefault(imageFile => imageFile.File.StorageId == file.StorageId);
+    }
+
+    /// <summary>
+    /// 同目录刷新时按 StorageId 把枚举结果与已加载对象对齐：仍存在的文件复用旧对象
+    /// （缩略图、EXIF、卡片身份与当前照片引用都不变），并保持旧顺序后追加新文件，
+    /// 让同名合并组的代表选择（按枚举序号）在刷新前后稳定；复用对象换成本次枚举的 sidecar 索引。
+    /// </summary>
+    /// <param name="session">本次刷新会话（提供最新的 sidecar 索引）。</param>
+    /// <param name="workFiles">本次枚举得到的文件。</param>
+    /// <param name="reused">被复用的旧对象（刷新时需要重读完整元数据）。</param>
+    private List<ImageFile> MergeLoadedFiles(
+        FolderLoadSession session,
+        IReadOnlyList<ImageFile> workFiles,
+        out List<ImageFile> reused)
+    {
+        reused = new List<ImageFile>();
+        if (_allFiles.Count == 0) return workFiles.ToList();
+
+        var incoming = new Dictionary<StorageItemId, ImageFile>(workFiles.Count);
+        foreach (var file in workFiles) incoming.TryAdd(file.File.StorageId, file);
+
+        var merged = new List<ImageFile>(workFiles.Count);
+        foreach (var file in _allFiles)
+        {
+            if (!incoming.Remove(file.File.StorageId, out _)) continue;
+            file.RatingSidecarIndex = session.SidecarIndex;
+            merged.Add(file);
+            reused.Add(file);
+        }
+
+        foreach (var file in workFiles)
+        {
+            if (!incoming.Remove(file.File.StorageId, out _)) continue;
+            merged.Add(file);
+        }
+
+        return merged;
+    }
+
+    /// <summary>
+    /// 提交后的选中项：按 StorageId 映射到本次快照里的对象（刷新时即被复用的旧对象），
+    /// 目标已不存在时退回枚举首项，绝不把已删除的文件留成当前照片。
+    /// </summary>
+    /// <param name="snapshot">本次提交的列表。</param>
+    /// <param name="targetFile">首选目标。</param>
+    /// <param name="fallbackWhenTargetMissing">刷新语义：目标不在快照时退回枚举首项，而不是保留悬空目标。</param>
+    private ImageFile? ResolveCommittedSelection(
+        IReadOnlyList<ImageFile> snapshot,
+        ImageFile? targetFile,
+        bool fallbackWhenTargetMissing)
+    {
+        var candidate = targetFile == null
+            ? null
+            : snapshot.FirstOrDefault(file => file.File.StorageId == targetFile.File.StorageId)
+              ?? (fallbackWhenTargetMissing ? null : targetFile);
+        return candidate == null ? ResolveFirstFile(snapshot) : ResolveTargetSelection(candidate);
+    }
+
+    /// <summary>
+    /// 刷新被复用文件的磁盘元数据（基本属性 + 完整 EXIF + 内嵌评分 + 已存在的 sidecar）。
+    /// 磁盘解析全部在后台线程完成（不能被 UI 调度器的同步前导段拖住前 8 个文件）；
+    /// 后发打开接管后结果不再发布，刷新完成时统一重算筛选并刷新控制栏 EXIF。
+    /// </summary>
+    private Task ReloadRatingsAsync(FolderLoadSession session, IReadOnlyList<ImageFile> files)
+        => ReloadMetadataAsync(files, session.Token, () => IsSessionActive(session));
+
+    /// <summary>
+    /// 没有会话的刷新（目录枚举失败后只刷新仍可访问的对象）：不取消，只受文件源释放约束。
+    /// </summary>
+    private Task ReloadRatingsAsync(IReadOnlyList<ImageFile> files)
+        => ReloadMetadataAsync(files, CancellationToken.None, () => !_disposed);
+
+    private async Task ReloadMetadataAsync(
+        IReadOnlyList<ImageFile> files,
+        CancellationToken token,
+        Func<bool> isStillValid)
+    {
+        using var semaphore = new SemaphoreSlim(8);
+        try
+        {
+            var tasks = files.Select(async file =>
+            {
+                try
+                {
+                    await semaphore.WaitAsync(token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (!isStillValid()) return;
+                    // Task.Run 包住整个读取：Task.Run 返回的任务在后台完成，UI 线程不做同步解析。
+                    await Task.Run(() => file.RefreshMetadataAsync(token), token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    // 后发打开已接管：旧会话的刷新结果不发布。
+                }
+                catch (Exception exception)
+                {
+                    // 单个文件元数据不可读只记录；列表与当前照片保持刷新前状态。
+                    Console.WriteLine($"[Folder] 刷新元数据失败: {file.Name} — {exception.Message}");
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+            });
+
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        if (!isStillValid()) return;
+
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (!isStillValid()) return;
+
+            // 当前照片的 EXIF 摘要与星级按钮随刷新后的数据重画。
+            var current = Main.CurrentFile;
+            if (current != null)
+            {
+                current.RaisePropertyChanged(nameof(ImageFile.PhotoDate));
+                Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.CurrentExifData));
+                Main.ControlVM.RaisePropertyChanged(nameof(Main.ControlVM.StarOpacity));
+            }
+
+            AllFilesChanged?.Invoke();
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 单图模式重复激活：对同一对象重读基本属性、完整 EXIF、评分与 sidecar 后回到 UI 线程刷新，
+    /// 不换对象、不重新 fit、不改动列表与视口；读取失败按 STATE-02/STATE-03 上报。
+    /// 刷新前丢弃 sidecar 索引，强制逐文件核实存在性（删除不复活、新增不漏）。
+    /// </summary>
+    /// <returns>刷新是否成功（被取消或读取失败为 false）。</returns>
+    private async Task<bool> ReloadFileAsync(ImageFile imageFile)
+    {
+        imageFile.RatingSidecarIndex = null;
+        try
+        {
+            await Task.Run(() => imageFile.RefreshMetadataAsync()).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch (Exception exception)
+        {
+            // STATE-02/STATE-03：单图刷新失败必须有可见原因，不能只写日志。
+            ReportUnexpectedOpenFailure(imageFile.Name, exception);
+            return false;
+        }
+
+        if (_disposed) return false;
+
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (_disposed) return;
+            AllFilesChanged?.Invoke();
+            SetCurrentFile(imageFile, session: null);
+        }).ConfigureAwait(false);
+        return true;
     }
 
     /// <summary>

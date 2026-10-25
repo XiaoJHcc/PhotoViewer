@@ -9,7 +9,9 @@ namespace PhotoViewer.ViewModels.Main;
 /// <summary>
 /// 外部打开协调器：消费 <see cref="MainViewModel.OpenRequests"/>，单个消费者按投递顺序逐个打开。
 /// 一批只取首个可打开目标（文件夹或受支持图片），全部状态改动在 UI 线程完成；
-/// 重复激活当前目标只重新选中（不再 fit、不再重新枚举），失败统一经 <see cref="MainViewModel.OpenFailed"/> 上报。
+/// 文件目标一律重新枚举父目录并刷新元数据：当前照片（含同组伴侣）视为刷新，保留滚动与视口；
+/// 新目标按 OPEN-05 回到适应态并定位。文件夹重复激活先触发 <see cref="RepeatActivation"/> 再原地刷新。
+/// 失败统一经 <see cref="MainViewModel.OpenFailed"/> 上报。
 /// 每个主窗口一个实例，不持有静态队列或静态处理器。
 /// </summary>
 public sealed class OpenCoordinator : IDisposable
@@ -102,7 +104,9 @@ public sealed class OpenCoordinator : IDisposable
             case IFolderRef folder:
                 if (HasSameStorageId(folder, _main.FolderVM.CurrentFolder))
                 {
+                    // 重复激活当前目录：前置窗口后原地重枚举，发现新增/删除并保留当前照片与视口。
                     RepeatActivation?.Invoke();
+                    await _main.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false, resetView: false);
                     return;
                 }
                 await _main.FolderVM.OpenFolderAsync(folder, resetView: true);
@@ -110,14 +114,20 @@ public sealed class OpenCoordinator : IDisposable
 
             case IFileRef file:
                 var current = _main.CurrentFile;
-                if (current != null &&
+                var repeatsCurrent = current != null &&
                     (HasSameStorageId(file, current.File) ||
-                     current.Group?.Files.Any(member => HasSameStorageId(file, member.File)) == true))
+                     current.Group?.Files.Any(member => HasSameStorageId(file, member.File)) == true);
+                if (repeatsCurrent)
                 {
+                    // 重复激活当前照片或同组伴侣：前置窗口后重枚举所在目录，保留滚动与视口。
                     RepeatActivation?.Invoke();
-                    return;
                 }
-                await _main.FolderVM.OpenImageAsync(file, resetView: true);
+                // 文件目标一律重新枚举父目录；当前目标不 Fit、不滚动，新目标按 OPEN-05 回适应态并定位。
+                await _main.FolderVM.OpenImageAsync(
+                    file,
+                    scrollToCurrent: !repeatsCurrent,
+                    resetView: !repeatsCurrent,
+                    refresh: true);
                 return;
         }
     }

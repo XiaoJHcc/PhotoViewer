@@ -11,7 +11,7 @@
 5. 安全写入按结构定位、最小区间与等长包长写，用合法 XML 空白吸收 `-1` 的位数差；无法证明非目标数据安全时为 `Unsupported`；不允许启发式全文定位。
 6. 数字与"以上"筛选仍按代表文件内嵌 Rating；`Conflict` 独立；新增"已拒绝"按代表 -1；筛选项从 12 变 13；-1 的星级 UI 挂账。
 7. 冲突时胶片栏与控制栏 0 号位置把清零叉换成红色警示三角；点击打开横排来源浮窗，列出全部实际来源；任一来源点 0–5 都统一写全部来源；成功后关闭，失败保留（RATING-04，待优化，未验收）。
-8. 重复拖入或外部激活当前目录/当前照片时重新枚举并刷新元数据，保留当前照片、筛选、滚动、面板与视口，不重新 Fit（OPEN-08，待优化，未验收）。
+8. 所有显式打开（文件、文件夹、拖入、系统外部激活/命令行）都重新枚举目标父目录/目录，并完整刷新新增、删除、全部 Rating 来源、sidecar 存在性与内容、基本属性和 EXIF；当前目标保留筛选、排序、滚动、面板与视口，新目标按 OPEN-05 Fit；单图权限不足只刷新可访问项并明示边界；新增删除不生成重复卡片。
 9. 训练侧实际选用文件内部为 `Conflict` / `Invalid` 时 Rating 不落快照，不任选值。
 10. 旧设置明确不迁移，不写迁移补丁。
 11. 本轮先保证真实 HIF / ARW 与已有 sidecar；复杂容器结构挂账。手测是后续独立任务，不纳入本轮自动完成条件。
@@ -22,12 +22,12 @@
 |---|---|
 | [spec/rating.md](../Design/spec/rating.md) | RATING-01–03、05–06 新条目（来源、安全写、事务、状态/训练、支持边界）；RATING-04 冲突浮窗待优化 |
 | [Design/README.md](../Design/README.md) | 登记 `RATING` 前缀 |
-| [Design/architecture.md](../Design/architecture.md) §5.3、§5.2 | 删除 RAW 只写 sidecar / sidecar 唯一权威；改为全来源枚举、预检、顺序写、逆序补偿；重复激活按刷新处理（待优化） |
+| [Design/architecture.md](../Design/architecture.md) §5.3、§5.2 | 删除 RAW 只写 sidecar / sidecar 唯一权威；改为全来源枚举、预检、顺序写、逆序补偿；所有显式打开完整刷新 |
 | [spec/film.md](../Design/spec/film.md) / [toolbar.md](../Design/spec/toolbar.md) | 全部实际来源写回与 -1 显示口径；冲突三角与来源浮窗（RATING-04）待优化 |
 | [spec/filter.md](../Design/spec/filter.md) | 13 项、已拒绝、冲突独立、刷新时机 |
 | [spec/state.md](../Design/spec/state.md) | 部分来源失败文案与真实状态展示 |
 | [spec/settings.md](../Design/spec/settings.md) | 安全模式的全来源预检语义；旧设置不迁移不补丁 |
-| [spec/open.md](../Design/spec/open.md) | 重复激活/拖入的刷新语义，保留视口不重新 Fit（待优化，未提交） |
+| [spec/open.md](../Design/spec/open.md) | 所有显式打开重新枚举并完整刷新；当前目标保留视口、新目标 Fit |
 | [Design/platforms.md](../Design/platforms.md) / [status.md](../Design/status.md) | 来源枚举/事务落点与缺口状态；浮窗宿主待优化 |
 | [Design/tokens.json](../Design/tokens.json) | `color.star.conflict`、`icon.warning`（待优化，未提交） |
 
@@ -38,7 +38,7 @@
 - [x] 组内来源枚举：每个参与文件的内嵌 XMP + 每个实际存在的 `<stem>.xmp`；不以扩展名判断 sidecar 该不该存在。
 - [x] 去掉"专有 RAW 优先 sidecar / sidecar 唯一权威"分支（`XmpRatingReader` 的 sidecar 优先与 `ExifLoader` 的 RAW 读取口子），所有来源并行读取。
 - [x] 来源级状态（缺失 / 已评分 / 已拒绝 / 无效 / 冲突 / 不可读）与组级一致性判定；代表值只用于显示与数字筛选。
-- [ ] 重复激活刷新时重新读取各来源与 sidecar 是否存在（OPEN-08）——待优化，未验收。
+- [x] 所有显式打开刷新时重新读取各来源与 sidecar 是否存在（OPEN-08）。
 
 ### 2.2 写入定位与安全写
 
@@ -73,10 +73,11 @@
 - [x] -1 不归一化为 0；UI 不提供 -1 星级入口。
 - [x] `Training/DatasetBuilder`：只取实际选用文件的内部 Rating；内部 `Conflict` / `Invalid` 时不落快照；去掉组内 `Max` 取值的旧口径。
 
-### 2.6 打开与刷新（待优化）
+### 2.6 打开与刷新
 
-- [ ]（待优化） 重复打开/拖入/外部激活当前目录或当前照片：重新枚举、刷新 Rating 与 sidecar 存在性、EXIF；保留当前照片、筛选、排序、滚动、面板、视口，不重新 Fit。
-- [ ]（待优化） 不生成重复卡片；当前照片不在新列表时按 OPEN-04 取首项；刷新失败保留旧列表。
+- [x] 所有显式打开（文件 / 文件夹 / 拖入 / 外部激活 / 命令行）都重新枚举目标父目录或目录，刷新新增、删除、全部 Rating 来源、sidecar 存在性与内容、基本属性与 EXIF。
+- [x] 当前目标保留视口，新目标按 OPEN-05 Fit；滚动 / 筛选 / 面板保持，不生成重复卡片，当前照片不在新列表时按 OPEN-04 取首项。
+- [x] 单图权限不足只刷新可访问项，并在提示条明示「无法读取父目录，仅刷新当前照片」；刷新失败保留旧列表与当前照片。
 
 ### 2.7 设置与迁移
 
@@ -93,13 +94,13 @@
 
 程序化（随实现）：
 
-- [x] 来源枚举：`CoreContractCheck` 521 PASS / 1 SKIP / 0 FAIL（未含 OPEN 刷新契约检查）；真实 HIF/ARW 副本内嵌与已有 sidecar 独立枚举，2→-1→3 全 `Applied`；无 sidecar 组成功且不创建。
+- [x] 来源枚举：`CoreContractCheck` 635 PASS / 1 SKIP / 0 FAIL；真实 HIF/ARW 副本内嵌与已有 sidecar 独立枚举，2→-1→3 全 `Applied`；无 sidecar 组成功且不创建。
 - [x] 写入：ARW / HEIF 内嵌、已有 sidecar 同步；无 sidecar 不创建；同值 `NoChange` 不写盘；真实副本三来源 2→-1→3 一致，无 sidecar 组写 4 一致。
 - [x] 事务：CoreContractCheck；Mac faults PASS；iOS faults 6；Android `storage` 24/0、`faults` 24/0。
 - [ ] UI：冲突三角与来源浮窗（RATING-04）待优化，未验收；本轮不作通过项。
 - [x] 筛选：CoreContractCheck + Web `?check=all`；13 项、已拒绝、冲突独立。
 - [x] 训练：Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar/伴侣不取 max、Invalid/Conflict 记 0 标签。
-- [ ] 打开：重复激活刷新（OPEN-08）待优化，未验收；Windows 运行时未验。
+- [x] 打开：所有显式打开全量刷新（CoreContractCheck 覆盖文件/文件夹/拖入与单图回退）；Mac input 与 base/layout 通过，iOS / Android 构建通过；Windows 运行时未验。
 
 未覆盖边界：Windows WinUI 运行时与真实 UI；PNG 写入（含标准 `iTXt`、容器 CRC 事务）；无 canonical 包的新建/插入与复杂容器结构；iOS 真机 security scope、Android USB/MTP/云 Provider、桌面链接/ACL/跨卷/断电恢复。
 
@@ -113,7 +114,7 @@
 ## 4. 挂账
 
 - Windows WinUI 运行时与真实 UI 手验：仅 WindowsTypeCheck 通过，不当作已验收。
-- 冲突三角与来源浮窗 UI（RATING-04）、重复打开/拖入/激活刷新（OPEN-08）与令牌接入：待优化，未验收，未随本次核心层提交。
+- 冲突三角与来源浮窗 UI（RATING-04）与令牌接入：待优化，未验收，未随本次核心层提交。
 - PNG 写入整体挂账（含标准 `iTXt`，需容器级 CRC 事务），当前 `Unsupported`。
 - 无 canonical XMP 包的新建/插入容器结构（含 JPEG 无 APP1）；复杂容器结构：非标准/重复 JPEG APP1；HEIF `idat`、多 extent、多个 XML/RDF 项、无 XMP mime 项；TIFF tag 700 在子 IFD、重复 tag 700、BigTIFF、无 tag 700 新增；WebP 多 XMP chunk；CR3 等超范围结构。
 - 其它专有 RAW（CR2 / NEF / RAF / ORF / RW2 / SRW）的容器差异未逐一实测，按实际结构预检。

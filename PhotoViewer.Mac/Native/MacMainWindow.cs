@@ -240,7 +240,7 @@ public sealed class MacMainWindow : IDisposable
         _root.Menu = ContextMenu();
         Photo.Menu = _root.Menu;
         Layout();
-        // 重复外部激活（再次打开当前目录/当前照片）只前置窗口；协调器不重新打开、不重新适应。
+        // 重复外部激活（再次打开当前目录/当前照片）：前置窗口，并由协调器按 OPEN-08 原地刷新，保留当前照片、筛选、滚动与视口（不重新 Fit）。
         _main.OpenCoordinator.RepeatActivation += BringToFront;
         Window.MakeKeyAndOrderFront(null);
         if (!automatedValidation && NSUserDefaults.StandardUserDefaults.BoolForKey("PhotoViewer.Native.Fullscreen"))
@@ -970,8 +970,9 @@ public sealed class MacMainWindow : IDisposable
     {
         try
         {
-            if (folder) { var selected = await FilePicker.PickFolderAsync("选择图片文件夹"); if (selected != null) { Photo.FitToView(); await _main.FolderVM.OpenFolderAsync(selected); } }
-            else { Photo.FitToView(); await _main.FolderVM.OpenFilePickerAsync(); }
+            // 视口只在共享层判定为新目标时回到适应态；取消选择器或重开当前目标都不改变视口。
+            if (folder) { var selected = await FilePicker.PickFolderAsync("选择图片文件夹"); if (selected != null) await _main.FolderVM.OpenFolderAsync(selected); }
+            else { await _main.FolderVM.OpenFilePickerAsync(); }
         }
         catch (Exception exception)
         {
@@ -994,7 +995,7 @@ public sealed class MacMainWindow : IDisposable
             : _main.OpenCoordinator.PublishAndWaitAsync(items, source);
     }
 
-    /// <summary>重复激活当前目标（再次打开同一目录/照片）：只把已有窗口前置，不重新打开（OPEN-06）。</summary>
+    /// <summary>重复激活当前目标（再次打开同一目录/照片）：把已有窗口前置；原地刷新由协调器按 OPEN-08 完成，保留视口（OPEN-06/08）。</summary>
     internal void BringToFront()
     {
         if (Window.IsMiniaturized) Window.Deminiaturize(null);

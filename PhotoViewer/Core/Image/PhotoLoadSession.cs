@@ -82,7 +82,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     public bool IsLoadingVisible { get; private set; }
 
     /// <summary>
-    /// 照片代际：每次 <see cref="SetFile"/> 递增，同一张照片的代理 ↔ Full 热替换不变。
+    /// 照片代际：每次真正换文件（存储身份变化）时递增，同一张照片的代理 ↔ Full 热替换、同一身份的引用刷新都不变。
     /// 缓存命中切图不经过空图，宿主须用它区分"切图"与"热替换"，不能只比较源尺寸与方向（同机型连拍尺寸相同）。
     /// </summary>
     public int Generation => _generation;
@@ -108,9 +108,18 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
     /// <summary>
     /// 设置新文件并作废上一轮加载；所有权留在会话。
     /// 所需档位已在内存缓存时同步换上新图（一次 <see cref="Changed"/>，不经过空图），否则清空旧图后异步解码。
+    /// 同一存储身份（<see cref="IFileRef.StorageId"/>）的文件引用只更新引用，不换代号也不重新解码：
+    /// 刷新后重建的 <see cref="ImageFile"/> 不该让已上屏的同一张照片重置视口或闪一帧。
+    /// 但屏上无有效图或处于错误态时不短路，允许重新设置同一文件重试解码。
     /// </summary>
     public void SetFile(IFileRef? file)
     {
+        if (file != null && _file != null && _file.StorageId == file.StorageId
+            && Image != null && string.IsNullOrEmpty(Error))
+        {
+            _file = file;
+            return;
+        }
         _generation++;
         _cancellation.Cancel();
         _cancellation.Dispose();

@@ -10,7 +10,7 @@
 
 **2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
 
-**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 521 PASS / 1 SKIP / 0 FAIL（未含 OPEN 刷新契约检查），`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）、重复打开/激活刷新（OPEN-08）与四端界面验收不在本轮范围内。
+**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 635 PASS / 1 SKIP / 0 FAIL，`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）与四端界面验收不在本轮范围内。
 
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
@@ -35,7 +35,7 @@
 | RATING-05 | 程序化通过；13 项/已拒绝/冲突独立（CoreContractCheck） | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；CoreContractCheck |
 | RATING-06 | 程序化通过；真实 HIF/ARW 内嵌+已有 sidecar、无 sidecar 不创建；PNG 整体写入挂账；无 canonical/多 XMP/复杂结构 Unsupported；真机与云 Provider 未验 | 程序化通过；同口径（模拟器）；PNG 挂账；真机 security scope 未验 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验；PNG/复杂结构挂账 | 程序化通过；storage 24/0（无 tag 700 拒绝、sidecar 同步）；PNG 挂账；无 canonical/复杂结构 Unsupported；USB/MTP/云 Provider 未验 |
 
-> RATING-01–03、05–06 同时修订 film / filter / toolbar / state / settings 的既有口径，相关行已按新规则更新；冲突指示与来源浮窗（RATING-04）与 OPEN-08 刷新待优化，不计入本轮验收。实施、程序化验收与挂账见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；Windows WinUI 运行时与真机边界仍未验。旧 [core-legacy-rebuild-plan-1](../Plans/core-legacy-rebuild-plan-1.md) 只保留历史。
+> RATING-01–03、05–06 同时修订 film / filter / toolbar / state / settings 的既有口径，相关行已按新规则更新；冲突指示与来源浮窗（RATING-04）待优化，不计入本轮验收。实施、程序化验收与挂账见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；Windows WinUI 运行时与真机边界仍未验。旧 [core-legacy-rebuild-plan-1](../Plans/core-legacy-rebuild-plan-1.md) 只保留历史。
 
 ## shell
 
@@ -171,7 +171,7 @@
 | OPEN-05 | 程序化通过；显式打开回适应态 | 程序化通过；显式打开回适应态 | 代码核对；显式打开回适应态，待运行验收 | 程序化通过；订阅 FitToViewRequested |
 | OPEN-06 | 程序化通过；CLI/Automation，Finder/Dock 待实机 | 程序化通过；openURL/scene/drop，真机 scope 待验 | 代码核对；AppInstance 二次激活与参数待 Windows 本机验证 | 程序化通过；ACTION_VIEW 同 UID content URI 打开与真实读取，跨 UID 临时授权待验 |
 | OPEN-07 | 程序化通过；拖放走统一通道 | 程序化通过；拖放走统一通道 | 代码核对；拖放走统一通道，待运行验收 | 不适用；@android 已登记无拖入 |
-| OPEN-08 | 程序化通过；可取消会话与同目录刷新 | 程序化通过；可取消会话与同目录刷新 | 代码核对；可取消会话与同目录刷新，待运行验收 | 程序化通过；新通道与可取消会话 |
+| OPEN-08 | 程序化通过；所有显式打开全量刷新（CoreContractCheck；`--pv-native-input` 与 base/layout 通过） | 程序化通过；构建通过，全量刷新随共享层（模拟器套件待复跑） | 代码核对；全量刷新随共享层，WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；构建通过，全量刷新随共享层（设备套件待复跑） |
 | OPEN-09 | 程序化通过；派生状态随新会话路由 | 程序化通过；派生状态随新会话路由 | 代码核对；派生状态随新会话路由，待运行验收 | 程序化通过；派生状态随新会话路由 |
 
 ## state
