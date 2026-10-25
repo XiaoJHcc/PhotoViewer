@@ -139,7 +139,7 @@ public static class NativeFaultAcceptance
         }
     }
 
-    /// <summary>SETTINGS-14：损坏设置先备份再以默认值启动，状态行可观察。</summary>
+    /// <summary>SETTINGS-14：损坏设置先备份再以默认值启动，共享诊断状态可观察。</summary>
     private static async Task VerifyCorruptSettingsAsync(string root, List<string> checks)
     {
         string path = Path.Combine(root, "settings-corrupt.json");
@@ -150,13 +150,13 @@ public static class NativeFaultAcceptance
         var repository = new SettingsRepository(new FileSettingsStore(path), new DefaultPerformanceBudget(), appleKeyboard: true);
         await repository.InitializeAsync();
         using var viewModel = new SettingsViewModel(repository, new InMemorySettingsStore());
-        await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置状态行");
+        await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置诊断状态");
         if (string.IsNullOrWhiteSpace(repository.LastLoadError) ||
             (!repository.LastLoadError.Contains("损坏", StringComparison.Ordinal) && !repository.LastLoadError.Contains("读取设置失败", StringComparison.Ordinal)))
             throw new InvalidOperationException($"损坏设置未形成读取错误：{repository.LastLoadError}");
         if (!viewModel.PersistenceStatus!.Contains("损坏", StringComparison.Ordinal) &&
             !viewModel.PersistenceStatus.Contains("读取设置失败", StringComparison.Ordinal))
-            throw new InvalidOperationException($"设置状态行未显示读取失败：{viewModel.PersistenceStatus}");
+            throw new InvalidOperationException($"诊断状态未记录读取失败：{viewModel.PersistenceStatus}");
         if (repository.LoadOutcome != SettingsLoadOutcome.Recovered)
             throw new InvalidOperationException($"损坏设置未进入恢复态：{repository.LoadOutcome}");
         if (repository.CorruptBackupPath is not { } backupPath || !File.Exists(backupPath))
@@ -165,7 +165,7 @@ public static class NativeFaultAcceptance
             throw new InvalidOperationException("备份未保留损坏原文");
         string[] leftovers = Directory.GetFiles(serviceDirectory, "settings-corrupt.json.corrupt-*");
         if (leftovers.Length != 1) throw new InvalidOperationException($"损坏设置备份份数异常：{leftovers.Length}");
-        checks.Add("settings14: corrupt JSON is backed up before defaults load and the status line reports it");
+        checks.Add("settings14: corrupt JSON is backed up before defaults load and the diagnostic status reports it");
     }
 
     /// <summary>SIM-10：批量提取失败时列表态动作区显示错误标签。</summary>

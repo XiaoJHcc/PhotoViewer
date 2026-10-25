@@ -275,7 +275,7 @@ internal static class WindowsSettingsAcceptance
                 try
                 {
                     using var document = JsonDocument.Parse(await File.ReadAllTextAsync(settingsPath));
-                    persisted = document.RootElement.GetProperty("ScalePresets").EnumerateArray()
+                    persisted = document.RootElement.GetProperty("scalePresets").EnumerateArray()
                         .Any(value => Math.Abs(value.GetDouble() - 0.666) < 1e-9);
                 }
                 catch (IOException)

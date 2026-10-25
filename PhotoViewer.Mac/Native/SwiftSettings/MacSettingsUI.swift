@@ -114,7 +114,6 @@ struct SVAiState: Codable {
 struct SVState: Codable {
     var category: Int
     var title: String
-    var persistenceStatus: String
     var canGoBack: Bool
     var canGoForward: Bool
     var file: SVFileState
@@ -126,7 +125,7 @@ struct SVState: Codable {
     /// 解码失败时的安全占位，避免窗口空白崩溃。
     static var empty: SVState {
         SVState(
-            category: 0, title: "文件", persistenceStatus: "", canGoBack: false, canGoForward: false,
+            category: 0, title: "文件", canGoBack: false, canGoForward: false,
             file: SVFileState(
                 sameNameAsOnePhoto: true, formats: [],
                 nativeParallelism: 8, nativeParallelismMax: 8,
@@ -577,20 +576,6 @@ struct SettingsDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if !vm.state.persistenceStatus.isEmpty {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                    Text(vm.state.persistenceStatus)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 0)
-                }
-                .font(.callout)
-                .foregroundStyle(.orange)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.orange.opacity(0.12))
-            }
             Group {
                 switch vm.state.category {
                 case 0: FileSettingsPage(vm: vm)

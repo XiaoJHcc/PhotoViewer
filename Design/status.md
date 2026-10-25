@@ -14,6 +14,8 @@
 
 **2026-10-26 星级冲突指示回归**：iOS 模拟器 `--pv-native-layout-check` **25/25 PASS**（含 RATING-04 冲突三角）；Android `pv-check faults` **22/0**、`storage` **24/0**（含 RATING-04 冲突三角）；Web `node --test` **318/318**、`?check=all` **50/50**；Windows `WindowsTypeCheck` 0 错；macOS 无代码改动，沿用作者验收。来源浮窗仅 macOS 已实现，iOS / Windows / Android / Web 待实现，未实现平台点击三角不动作。
 
+**2026-10-26 设置持久化状态改为仅诊断**：SETTINGS-14 的失败原因只保留为共享诊断（`PersistenceStatus` / 仓库错误），四端设置页不再显示状态条或提示行。Mac faults **6/6**、iOS faults **6/6**、Android faults **22/0**（含诊断状态断言）PASS；Mac / iOS / Android Debug 构建 0 错，Windows `WindowsTypeCheck` 0 错；Windows 设置运行时验收沿用分支本机结果，合并后未在 Windows 重新运行。
+
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
 ## film
@@ -203,7 +205,7 @@
 | SETTINGS-11 | 作者手验通过；外设断开未验 | 作者手验通过；真实外接键盘未验 | 作者手验通过 | 程序化通过；录制/冲突/断连（能力注入） |
 | SETTINGS-12 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 步进已登记 |
 | SETTINGS-13 | 作者手验通过；设置键盘操作/动态字体已验 | 作者手验通过；动态字体/显示缩放已验 | 作者手验通过；设置键盘操作/动态字体已验 | 程序化通过；fontScale 1.0/1.3 × density 420/525 |
-| SETTINGS-14 | 程序化通过；schema 2、原子提交、备份最多三份、读取/保存失败不覆盖原文 | 程序化通过；schema 2、提交与损坏恢复、失败不发布 | 代码核对；schema 2 与原子替换类型检查通过，待 Windows 运行验收 | 程序化通过；SharedPreferences Commit、备份与状态行、失败不发布 |
+| SETTINGS-14 | 程序化通过；schema 2、原子提交、备份最多三份、读取/保存失败不覆盖原文 | 程序化通过；schema 2、提交与损坏恢复、失败不发布 | 代码核对；schema 2 与原子替换类型检查通过，待 Windows 运行验收 | 程序化通过；SharedPreferences Commit、备份、失败不发布 |
 | SETTINGS-15 | 作者手验通过；拖拽 | 作者手验通过；拖拽 | 作者手验通过；重排 | 作者手验通过；基础操作；ItemTouchHelper 拖拽与把手菜单 |
 
 ## tools

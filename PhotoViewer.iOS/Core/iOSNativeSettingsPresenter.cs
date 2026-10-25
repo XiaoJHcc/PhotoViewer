@@ -4,7 +4,6 @@ using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using Foundation;
-using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
@@ -186,19 +185,14 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
     private readonly SettingsViewModel _source;
     private readonly SettingsViewModel _settings;
     private readonly Action _closed;
-    private readonly UIView _statusHeader = new();
-    private readonly UILabel _statusLabel = new();
 
     private readonly (string Title, string? Subtitle, Func<UIViewController> Factory)[] _items;
 
     /// <summary>当前编辑会话（测试缝：验收核对关闭回写后的设置传播）。</summary>
     internal NativeSettingsSession Session => _session;
 
-    /// <summary>源设置实例；持久化状态只从源实例读取。</summary>
+    /// <summary>源设置实例（测试缝）。</summary>
     internal SettingsViewModel Source => _source;
-
-    /// <summary>设置页顶部的持久化失败状态行（SETTINGS-14，测试缝）。</summary>
-    internal UILabel PersistenceStatusLabel => _statusLabel;
 
     /// <summary>
     /// 初始化原生设置页根控制器。
@@ -259,33 +253,6 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         // 首页与子页、工具页统一用同一层系统分组背景，sheet 玻璃在各页取到相同材质。
         TableView.BackgroundColor = UIColor.SystemGroupedBackground;
         TableView.CellLayoutMarginsFollowReadableWidth = false;
-        // SETTINGS-14：读取/保存失败在设置页顶部显示一行可见状态（源设置实例才有真实持久化状态）。
-        _statusLabel.Font = UIFont.SystemFontOfSize(12)!;
-        _statusLabel.TextColor = UIColor.SystemRed;
-        _statusLabel.Lines = 0;
-        _statusLabel.LineBreakMode = UILineBreakMode.WordWrap;
-        _statusLabel.BackgroundColor = UIColor.Clear;
-        _statusHeader.BackgroundColor = UIColor.Clear;
-        _statusHeader.AddSubview(_statusLabel);
-        TableView.TableHeaderView = _statusHeader;
-        RefreshPersistenceStatus();
-    }
-
-    /// <summary>页面出现时跟随源设置的持久化状态；离开时解除订阅。</summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewWillAppear(bool animated)
-    {
-        base.ViewWillAppear(animated);
-        _source.PropertyChanged += OnSourceSettingsChanged;
-        RefreshPersistenceStatus();
-    }
-
-    /// <summary>页面离开时解除源设置订阅。</summary>
-    /// <param name="animated">系统动画标记。</param>
-    public override void ViewWillDisappear(bool animated)
-    {
-        _source.PropertyChanged -= OnSourceSettingsChanged;
-        base.ViewWillDisappear(animated);
     }
 
     /// <summary>页面被系统或代码关闭时兜底提交：覆盖不经关闭代理的程序化 dismiss，保证会话一定释放。</summary>
@@ -295,48 +262,6 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
         base.ViewDidDisappear(animated);
         if (IsBeingDismissed || NavigationController?.IsBeingDismissed == true)
             _ = CloseAsync();
-    }
-
-    /// <summary>表格宽度变化后重算状态行高度，避免状态文本被截断。</summary>
-    public override void ViewDidLayoutSubviews()
-    {
-        base.ViewDidLayoutSubviews();
-        LayoutStatusHeader();
-    }
-
-    /// <summary>源设置持久化状态变化（跨线程）后回到 UI 线程刷新。</summary>
-    /// <param name="sender">事件源（源设置 VM）。</param>
-    /// <param name="args">属性变化参数。</param>
-    private void OnSourceSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) UiDispatcher.Post(RefreshPersistenceStatus);
-    }
-
-    /// <summary>同步设置页顶部状态行：没有失败信息时整行收起。</summary>
-    private void RefreshPersistenceStatus()
-    {
-        string? status = _source.PersistenceStatus;
-        _statusLabel.Text = status ?? string.Empty;
-        _statusLabel.Hidden = string.IsNullOrWhiteSpace(status);
-        LayoutStatusHeader();
-    }
-
-    /// <summary>按文本换行测量状态行高度并挂回表格头。</summary>
-    private void LayoutStatusHeader()
-    {
-        double width = Math.Max(1, (double)TableView.Bounds.Width);
-        double textWidth = Math.Max(1, width - 32);
-        double height = _statusLabel.Hidden
-            ? 0
-            : Math.Ceiling((double)_statusLabel.SizeThatFits(new CoreGraphics.CGSize(textWidth, 10000)).Height) + 16;
-        _statusLabel.Frame = new CoreGraphics.CGRect(16, 8, textWidth, Math.Max(1, height - 16));
-        var size = new CoreGraphics.CGSize(width, height);
-        // 只比较尺寸：UIKit 自己会把表格头原点挪到内容起点（y=35），比较原点会让每次布局都重挂表头并无限重排。
-        if (!ReferenceEquals(TableView.TableHeaderView, _statusHeader) || _statusHeader.Frame.Size != size)
-        {
-            _statusHeader.Frame = new CoreGraphics.CGRect(0, 0, width, height);
-            TableView.TableHeaderView = _statusHeader;
-        }
     }
 
     /// <summary>

@@ -55,7 +55,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | `InputCommandMap.IsRepeatable` | INPUT-05 按住重复设闸 | W3/A8；Mac、iOS 键盘重复入口同补 |
 | `ToolsViewModel.IsPresented` / `Deactivate()` | TOOLS-01 已开留页、TOOLS-06 关闭取消 | Mac 已写 `IsPresented`，`ShowTools` 需改调 `_main.OpenToolsWindow()`（M5）；I6/I9、A12、W14 写入标志并在关闭时 `Deactivate()` |
 | `SimilarityPanelViewModel.ShowActionAreaError` | SIM-10 列表态错误 | Mac 补一项；I10/A15/W15 |
-| `SettingsViewModel.CanRemoveScalePreset` / `IsValidScalePresetPercent` / `PersistenceStatus` / `ClearFeatureDatabaseConfirmedAsync()` | SETTINGS-07/14/10 | M9/W16/I12/I14/A17/A19；原生设置是工作副本，`PersistenceStatus` 要从源 VM 取 |
+| `SettingsViewModel.CanRemoveScalePreset` / `IsValidScalePresetPercent` / `ClearFeatureDatabaseConfirmedAsync()` | SETTINGS-07/14/10 | M9/W16/I12/I14/A17/A19；原生设置是工作副本 |
 
 遗留：S8 纯文件夹枚举失败时共享层没有可见错误状态，现只落 `Console.Error` 并保持空态；需要可见提示时另立条目（STATE-02）。
 
@@ -113,7 +113,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | W13 | TOOLS-03 | Tag ID 列开文本选择，四类文本一致可复制 | `PhotoViewer.Windows/Native/WindowsExifToolPage.cs:385` | B19 |
 | W14 | TOOLS-06 | 关闭工具窗即取消在途 DINO 任务 | `PhotoViewer.Windows/Native/WindowsToolsWindow.cs:328` | C21 |
 | W15 | SIM-10 | 列表态动作区补错误标签 | `PhotoViewer.Windows/Native/WindowsSimilarityPanel.cs:81` | C09 |
-| W16 | SETTINGS-14 / SETTINGS-10 / SETTINGS-07 | 设置页顶部失败状态行；清库按钮直调共享"已确认"入口（去隐形 arm）；预设删到剩 1 项时禁用删除 | `PhotoViewer.Windows/Native/WindowsSettingsPages.Ai.cs:115`、`WindowsSettingsPages.Preview.cs:114` | C27、D27、C28 |
+| W16 | SETTINGS-14 / SETTINGS-10 / SETTINGS-07 | 清库按钮直调共享"已确认"入口（去隐形 arm）；预设删到剩 1 项时禁用删除 | `PhotoViewer.Windows/Native/WindowsSettingsPages.Ai.cs:115`、`WindowsSettingsPages.Preview.cs:114` | C27、D27、C28 |
 | W17 | SHELL-06 | 自绘窗口按钮补悬停提示与可点击语义 | `PhotoViewer.Windows/Native/WindowsTitleBar.cs:157` | C16 |
 | W18 | TOOLBAR-04 | 命令提示含主/次绑定（沿用 `AppGesture.ToDisplayString()`） | `PhotoViewer.Windows/Native/WindowsControlBar.cs:290` | B26 |
 | W19 | STATE-03 | 提示条文字改 `color.status.toast.foreground` #FFFFFF（现 #808080 不达 AA），宽取 min(500, 可用宽) | `PhotoViewer.Windows/Native/WindowsLayout.cs:459`、`:145` | G6-20、G6-17 |
@@ -137,7 +137,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | I11 | SETTINGS-01 | 快捷键行副标题显示主/次绑定与冲突（只读，不补录制） | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:1469` | B12 |
 | I12 | SETTINGS-07 | 缩放预设补 >0 且 ≤1600 校验 | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:1348` | B14 |
 | I13 | SETTINGS-03 | 设置展示控制器设 `OverrideUserInterfaceStyle = Dark`（与工具页一致） | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:96` | D07 |
-| I14 | SETTINGS-14 / SETTINGS-07 | 设置页顶部失败状态行；预设删到剩 1 项时禁用删除 | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:17`、`:1280` | C27、C28 |
+| I14 | SETTINGS-14 / SETTINGS-07 | 预设删到剩 1 项时禁用删除 | `PhotoViewer.iOS/Core/iOSNativeSettingsPresenter.cs:17`、`:1280` | C27、C28 |
 | I15 | TOOLBAR-04 | 命令按钮提示补主/次绑定（现只有命令名） | `PhotoViewer.iOS/Native/iOSControlBar.cs:107` | B26 |
 | I16 | FILTER-01（视觉） | 筛选开关选中/未选中四色改令牌值（深蓝底、#AECBEE 字、#AAA 未选中） | `PhotoViewer.iOS/Native/iOSFilterBar.cs:85`、`:114` | G6-23~26 |
 | I17 | IMAGE-06（视觉） | 导航图宿主 alpha 0.78→0.6 | `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:204` | G6-09 |
@@ -168,7 +168,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 | A16 | SETTINGS-01 | 快捷键行副标题显示主/次绑定与冲突（只读） | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:319` | B12 |
 | A17 | SETTINGS-07 | 缩放预设补 >0 且 ≤1600 校验 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:427` | B14 |
 | A18 | SETTINGS-15 | 控制列表改 `ItemTouchHelper` 拖拽 + 行尾把手，删上下按钮 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:319` | B35 |
-| A19 | SETTINGS-14 / SETTINGS-07 | 设置页顶部失败状态行；预设删到剩 1 项时禁用删除 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`、`:408` | C27、C28 |
+| A19 | SETTINGS-14 / SETTINGS-07 | 预设删到剩 1 项时禁用删除 | `PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`、`:408` | C27、C28 |
 | A20 | TOOLBAR-11 | 控制栏焦点顺序与键盘触发 | `PhotoViewer.Android/Native/AndroidControlBar.cs:194` | C12、B26 |
 | A21 | IMAGE-07（视觉） | 药丸：圆角 11dp、距底 24 且不重复扣底部安全区；接 500ms 门槛 | `PhotoViewer.Android/Native/AndroidNativeRootView.cs:168`、`:367` | G6-05、G6-06、B04 |
 | A22 | SIM-03（视觉） | 动作按钮改 90×28：底 #2A2A2A、边 #555555、字 #CCCCCC；文本进度保留 | `PhotoViewer.Android/Native/AndroidSimilarityPanel.cs:77` | G6-11~14 |
