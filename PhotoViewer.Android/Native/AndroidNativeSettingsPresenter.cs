@@ -62,7 +62,7 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
         try
         {
             var session = new NativeSettingsSession(settings);
-            var content = new AndroidSettingsSheetView(_activity, settings, session, Dismiss);
+            var content = new AndroidSettingsSheetView(_activity, session, Dismiss);
             // 对话框窗口统一接收录制态键盘/滚轮/鼠标按键，避免控件抢走手势。
             var dialog = new SettingsBottomSheetDialog(_activity,
                 Resource.Style.Theme_PhotoViewer_BottomSheet, content);
@@ -179,13 +179,11 @@ internal sealed class SettingsBottomSheetDialog : BottomSheetDialog
 internal sealed class AndroidSettingsSheetView : FrameLayout
 {
     private readonly Activity _activity;
-    private readonly SettingsViewModel _source;
     private readonly NativeSettingsSession _session;
     private readonly Action _dismiss;
     private readonly LinearLayout _content;
     private readonly TextView _title;
     private readonly TextView _back;
-    private readonly TextView _persistenceStatus;
     private readonly List<(TextView Label, Func<string> Text)> _dynamicTexts = [];
     private string _page = "root";
     private bool _closed;
@@ -208,14 +206,11 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     /// <summary>建立 sheet 视图树。</summary>
     /// <param name="activity">宿主 Activity。</param>
-    /// <param name="source">源设置 ViewModel（持久化状态与工作副本的提交目标）。</param>
     /// <param name="session">设置工作副本会话。</param>
     /// <param name="dismiss">关闭回调。</param>
-    public AndroidSettingsSheetView(Activity activity, SettingsViewModel source,
-        NativeSettingsSession session, Action dismiss) : base(activity)
+    public AndroidSettingsSheetView(Activity activity, NativeSettingsSession session, Action dismiss) : base(activity)
     {
         _activity = activity;
-        _source = source;
         _session = session;
         _dismiss = dismiss;
         double density = AndroidUiTheme.Density(activity);
@@ -254,15 +249,6 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         header.AddView(_title, new LinearLayout.LayoutParams(0, (int)(48 * density), 1));
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         root.AddView(header, new LinearLayout.LayoutParams(LayoutParams.MatchParent, (int)(48 * density)));
-
-        // SETTINGS-14：读取/保存失败在设置页顶部显示一行可见状态。
-        _persistenceStatus = Text("", 12, AndroidUiTheme.ErrorText);
-        _persistenceStatus.SetPadding((int)(16 * density), (int)(6 * density),
-            (int)(16 * density), (int)(6 * density));
-        root.AddView(_persistenceStatus, new LinearLayout.LayoutParams(
-            LayoutParams.MatchParent, LayoutParams.WrapContent));
-        _source.PropertyChanged += OnSourceChanged;
-        RefreshPersistenceStatus();
 
         var scroll = new ScrollView(activity) { FillViewport = true };
         scroll.SetBackgroundColor(Color.Transparent);
@@ -319,23 +305,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         });
     }
 
-    /// <summary>源设置持久化状态变化时刷新顶部状态行。</summary>
-    private void OnSourceChanged(object? sender, global::System.ComponentModel.PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) Post(RefreshPersistenceStatus);
-    }
-
-    /// <summary>显示或隐藏设置页顶部的持久化失败状态行。</summary>
-    private void RefreshPersistenceStatus()
-    {
-        string? status = _source.PersistenceStatus;
-        _persistenceStatus.Text = status ?? "";
-        _persistenceStatus.Visibility = string.IsNullOrWhiteSpace(status)
-            ? ViewStates.Gone
-            : ViewStates.Visible;
-    }
-
-    /// <summary>释放时解除源设置订阅。</summary>
+    /// <summary>释放时解除外设监听。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
     {
@@ -343,7 +313,6 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         {
             _closed = true;
             _recordingItem = null;
-            _source.PropertyChanged -= OnSourceChanged;
             AndroidInputDevices.Changed -= OnInputDevicesChanged;
         }
         base.Dispose(disposing);

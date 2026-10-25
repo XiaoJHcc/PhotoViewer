@@ -26,7 +26,6 @@ internal sealed class WindowsSettingsWindow
 
     private readonly Window _window;
     private readonly SettingsViewModel _settings;
-    private readonly SettingsViewModel _sourceSettings;
     private readonly IntPtr _ownerHandle;
     private readonly WindowsHotkeyRecorder _recorder;
     private readonly WindowsSettingsPages _pages;
@@ -34,18 +33,15 @@ internal sealed class WindowsSettingsWindow
     private readonly TitleBar _titleBar;
     private readonly NavigationView _nav;
     private readonly Grid _pageHost;
-    private readonly InfoBar _persistenceBar;
     private bool _sized;
     private bool _attached;
 
     /// <summary>创建设置窗口(不激活)。</summary>
     /// <param name="settings">设置工作副本</param>
-    /// <param name="sourceSettings">源设置(读取 <see cref="SettingsViewModel.PersistenceStatus"/>)</param>
     /// <param name="ownerHandle">主窗口句柄(取其显示器 DPI 与工作区)</param>
-    public WindowsSettingsWindow(SettingsViewModel settings, SettingsViewModel sourceSettings, IntPtr ownerHandle)
+    public WindowsSettingsWindow(SettingsViewModel settings, IntPtr ownerHandle)
     {
         _settings = settings;
-        _sourceSettings = sourceSettings;
         _ownerHandle = ownerHandle;
         _recorder = new WindowsHotkeyRecorder(settings);
 
@@ -57,7 +53,6 @@ internal sealed class WindowsSettingsWindow
             IsTabStop = true,
         };
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(WindowsLayout.SettingsTitleBarHeight) });
-        _root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         _root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
 
         _window = new Window
@@ -82,19 +77,6 @@ internal sealed class WindowsSettingsWindow
         };
         _root.Children.Add(_titleBar);
         _window.SetTitleBar(_titleBar);
-
-        // SETTINGS-14：设置页顶部显示源设置读取失败/损坏备份状态；工作副本自身不落盘。
-        _persistenceBar = new InfoBar
-        {
-            Severity = InfoBarSeverity.Warning,
-            IsClosable = false,
-            IsOpen = !string.IsNullOrEmpty(_sourceSettings.PersistenceStatus),
-            Message = _sourceSettings.PersistenceStatus ?? string.Empty,
-            Margin = new Thickness(WindowsLayout.SettingsPagePadding, 0, WindowsLayout.SettingsPagePadding, 0),
-        };
-        Grid.SetRow(_persistenceBar, 1);
-        _root.Children.Add(_persistenceBar);
-        _sourceSettings.PropertyChanged += OnSourceSettingsChanged;
 
         _pages = new WindowsSettingsPages(settings, _recorder, _window);
         _pageHost = new Grid { Background = transparent };
@@ -135,7 +117,7 @@ internal sealed class WindowsSettingsWindow
         }
 
         _nav.SelectionChanged += OnNavigationSelectionChanged;
-        Grid.SetRow(_nav, 2);
+        Grid.SetRow(_nav, 1);
         _root.Children.Add(_nav);
 
         _nav.SelectedItem = _nav.MenuItems[0];
@@ -235,7 +217,6 @@ internal sealed class WindowsSettingsWindow
     private void OnClosed(object sender, WindowEventArgs args)
     {
         _pages.CommitForClose();
-        _sourceSettings.PropertyChanged -= OnSourceSettingsChanged;
         _recorder.Detach();
         _pages.Detach();
         Closed?.Invoke(this, EventArgs.Empty);
@@ -247,18 +228,6 @@ internal sealed class WindowsSettingsWindow
     private void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
         _pages.CommitForClose();
-    }
-
-    /// <summary>源设置的持久化状态变化时刷新顶部状态行(SETTINGS-14)。</summary>
-    /// <param name="sender">源设置。</param>
-    /// <param name="args">属性变化参数。</param>
-    private void OnSourceSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus))
-        {
-            _persistenceBar.Message = _sourceSettings.PersistenceStatus ?? string.Empty;
-            _persistenceBar.IsOpen = !string.IsNullOrEmpty(_sourceSettings.PersistenceStatus);
-        }
     }
 
     /// <summary>分类切换:选中项 Tag 即页索引。</summary>

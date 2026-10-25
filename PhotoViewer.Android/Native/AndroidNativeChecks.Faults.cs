@@ -284,7 +284,7 @@ internal static partial class AndroidNativeChecks
         }
     }
 
-    /// <summary>SETTINGS-14：损坏的设置 JSON 先备份成偏好键再以默认值启动，状态行如实显示“损坏”。</summary>
+    /// <summary>SETTINGS-14：损坏的设置 JSON 先备份成偏好键再以默认值启动，持久化诊断状态记录“损坏”。</summary>
     private static async Task CheckCorruptSettingsAsync()
     {
         const string settingsKey = "settings_json";
@@ -310,7 +310,7 @@ internal static partial class AndroidNativeChecks
                 automaticCacheLimit: true);
             await repository.InitializeAsync();
             viewModel = new SettingsViewModel(repository, null);
-            await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置状态行", 15000);
+            await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置诊断状态", 15000);
 
             string? error = repository.LastLoadError;
             bool backupOk = error != null && error.Contains(".corrupt-", StringComparison.Ordinal);
@@ -325,7 +325,8 @@ internal static partial class AndroidNativeChecks
             Check("SETTINGS-14 损坏设置备份", backupOk && stored,
                 $"outcome={repository.LoadOutcome} error={error} backupKey={backupKey} stored={stored}");
 
-            Check("SETTINGS-14 状态行可见",
+            // 仅核对共享 ViewModel 的诊断状态，不涉及任何 UI 呈现。
+            Check("SETTINGS-14 诊断状态记录损坏",
                 viewModel.PersistenceStatus != null && viewModel.PersistenceStatus.Contains("损坏", StringComparison.Ordinal),
                 $"status={viewModel.PersistenceStatus}");
         }

@@ -172,18 +172,18 @@ internal static class iOSNativeFaultCheck
         using var viewModel = new SettingsViewModel(repository, new InMemorySettingsStore());
         try
         {
-            await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置状态行");
+            await WaitAsync(() => viewModel.PersistenceStatus != null, "损坏设置诊断状态");
             if (repository.LoadOutcome != SettingsLoadOutcome.Recovered)
                 throw new InvalidOperationException($"损坏设置未进入恢复态：{repository.LoadOutcome}");
             if (string.IsNullOrEmpty(repository.LastLoadError) || !repository.LastLoadError.Contains(".corrupt-", StringComparison.Ordinal))
                 throw new InvalidOperationException($"损坏设置没有形成备份：{repository.LastLoadError}");
             if (string.IsNullOrEmpty(viewModel.PersistenceStatus) || !viewModel.PersistenceStatus.Contains("损坏", StringComparison.Ordinal))
-                throw new InvalidOperationException($"设置状态行未显示读取失败：{viewModel.PersistenceStatus}");
+                throw new InvalidOperationException($"诊断状态未记录损坏：{viewModel.PersistenceStatus}");
             if (repository.CorruptBackupPath is not { } backupPath || !File.Exists(backupPath))
                 throw new InvalidOperationException($"备份文件不存在：{repository.CorruptBackupPath}");
             if (await File.ReadAllTextAsync(backupPath) != "{ this is not valid json")
                 throw new InvalidOperationException("备份未保留损坏原文");
-            lines.Add("PASS settings14：损坏 JSON 先备份为唯一文件，状态行可见（隔离文件，不读写用户偏好）");
+            lines.Add("PASS settings14：损坏 JSON 先备份为唯一文件，共享诊断状态含损坏（隔离文件，不读写用户偏好）");
         }
         finally
         {

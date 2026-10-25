@@ -1,5 +1,4 @@
 using AppKit;
-using System.ComponentModel;
 using System.Globalization;
 using System.Reactive.Linq;
 using System.Text.Json;
@@ -18,7 +17,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private static readonly string[] CategoryNames = ["文件", "预览", "控制", "EXIF", "AI"];
 
     private NativeSettingsSession? _session;
-    private SettingsViewModel? _sourceSettings;
     private bool _presenting;
     private bool _closing;
     private Task? _closeTask;
@@ -93,9 +91,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         if (!_presenting)
         {
             _session = new NativeSettingsSession(settings);
-            _sourceSettings = settings;
-            // SETTINGS-14：工作副本的持久化状态恒为空，顶部状态行必须读源设置。
-            _sourceSettings.PropertyChanged += OnSourceSettingsChanged;
             MacSettingsNative.ActionSink = HandleAction;
             MacSettingsNative.CloseSink = HandleClose;
             _category = 0;
@@ -106,12 +101,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     }
 
     private SettingsViewModel Settings => _session?.WorkingSettings ?? throw new InvalidOperationException("设置会话未建立");
-
-    /// <summary>源设置的持久化状态变化时刷新设置页顶部状态行。</summary>
-    private void OnSourceSettingsChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (args.PropertyName == nameof(SettingsViewModel.PersistenceStatus)) PushState();
-    }
 
     /// <summary>窗口关闭回调：关闭只发起一次回写，完成前重复关闭共享同一次提交。</summary>
     private void HandleClose() => _ = CloseSessionAsync();
@@ -144,11 +133,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private void ResetPresentationState()
     {
         _session = null;
-        if (_sourceSettings != null)
-        {
-            _sourceSettings.PropertyChanged -= OnSourceSettingsChanged;
-            _sourceSettings = null;
-        }
         _presenting = false;
         _category = -1;
         _recordingIndex = -1;
@@ -200,7 +184,6 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         {
             Category = _category,
             Title = _category >= 0 ? CategoryNames[_category] : string.Empty,
-            PersistenceStatus = _sourceSettings?.PersistenceStatus ?? string.Empty,
             CanGoBack = _historyBack.Count > 0,
             CanGoForward = _historyForward.Count > 0,
             File = new MacFileStateDto
