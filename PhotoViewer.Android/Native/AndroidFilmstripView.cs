@@ -99,6 +99,13 @@ internal sealed class AndroidFilmstripView : RecyclerView
         _adapter.NotifyDataSetChanged();
     }
 
+    /// <summary>可见卡片重绘：后台星级/来源补齐后重读 <see cref="ImageFile.Rating"/> 与冲突态。</summary>
+    internal void RefreshCardStates()
+    {
+        for (int index = 0; index < ChildCount; index++)
+            if (GetChildAt(index) is AndroidThumbnailCard card) card.Invalidate();
+    }
+
     /// <summary>业务筛选结果原子替换后重载列表（不主动居中，[FILM-01]）。</summary>
     internal void ReloadData()
     {

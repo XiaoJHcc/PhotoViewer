@@ -175,6 +175,25 @@
     font-size: var(--pv-film-card-clearGlyph-size);
 }
 
+/* RATING-04：组级星级冲突时 0 号槽位换 icon.warning + color.star.conflict。 */
+.pv-card-warning {
+    display: none;
+    font-size: var(--pv-film-card-star-fontSize);
+    color: var(--pv-color-star-conflict);
+}
+
+.pv-card-star.is-conflict {
+    color: var(--pv-color-star-conflict);
+}
+
+.pv-card-star.is-conflict .pv-card-clear {
+    display: none;
+}
+
+.pv-card-star.is-conflict .pv-card-warning {
+    display: block;
+}
+
 .pv-card-surface.is-rating-hidden .pv-card-star {
     display: none;
 }

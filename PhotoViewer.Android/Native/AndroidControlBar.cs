@@ -31,6 +31,7 @@ internal sealed class AndroidControlBar : View
     private readonly Paint _starActive;
     private readonly Paint _starInactive;
     private readonly Paint _starClear;
+    private readonly Paint _starConflict;
     private readonly ControlBarExploreByTouchHelper _accessibility;
     private readonly List<Group> _groups = [];
     private readonly List<ControlBarLayout.GroupSpec> _specs = [];
@@ -60,6 +61,8 @@ internal sealed class AndroidControlBar : View
     internal bool HasExifGroup => _groups.Exists(group => group.Kind == ControlBarGroupKind.Exif);
     /// <summary>评分分组是否存在。</summary>
     internal bool HasRatingGroup => _groups.Exists(group => group.Kind == ControlBarGroupKind.Rating);
+    /// <summary>当前照片是否处于组级星级冲突（0 号显示警示三角，验收用）。</summary>
+    internal bool RatingConflictForChecks => _main.CurrentFile?.HasRatingConflict == true;
 
     /// <summary>
     /// 按视觉顺序展开的虚拟节点快照（验收用）：读屏名称、分组类型、本地 dp 矩形与禁用态，
@@ -99,6 +102,7 @@ internal sealed class AndroidControlBar : View
         _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
         _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
+        _starConflict = AndroidUiTheme.Paint(AndroidUiTheme.StarConflict);
         SetWillNotDraw(false);
         Focusable = true;
         ImportantForAccessibility = ImportantForAccessibility.Yes;
@@ -136,10 +140,18 @@ internal sealed class AndroidControlBar : View
             var children = new List<Child>(6);
             bool hasPhoto = _main.CurrentFile != null;
             int rating = _main.CurrentFile?.Rating ?? 0;
+            // RATING-04：组级冲突时 0 号换成警示三角，几何与命中区不变。
+            bool conflict = hasPhoto && _main.CurrentFile!.HasRatingConflict;
             for (int value = 0; value < 6; value++)
             {
                 // TOOLBAR-03：无照片时整组禁用，按钮保留几何可见。
-                children.Add(new Child { Rating = value, Active = value > 0 && value <= rating, Enabled = hasPhoto });
+                children.Add(new Child
+                {
+                    Rating = value,
+                    Active = value > 0 && value <= rating,
+                    Conflict = value == 0 && conflict,
+                    Enabled = hasPhoto,
+                });
             }
             _groups.Add(new Group(ControlBarGroupKind.Rating, children));
             _specs.Add(new ControlBarLayout.GroupSpec(ControlBarGroupKind.Rating, 6));
@@ -296,6 +308,14 @@ internal sealed class AndroidControlBar : View
         int alpha = child.Enabled ? 255 : 97;
         if (child.Rating == 0)
         {
+            if (child.Conflict)
+            {
+                _starConflict.Alpha = alpha;
+                using var warning = AndroidUiTheme.WarningTriangle(cx, cy,
+                    AndroidUiTheme.Dp(Context!, DesignTokens.ToolbarRatingGlyphFontSize));
+                canvas.DrawPath(warning, _starConflict);
+                return;
+            }
             float arm = 4.5f * density;
             _starClear.Alpha = alpha;
             canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _starClear);
@@ -372,7 +392,10 @@ internal sealed class AndroidControlBar : View
                         _openTools?.Invoke();
                         break;
                     case ControlBarGroupKind.Rating:
-                        if (child.Enabled) _rate?.Invoke(child.Rating);
+                        if (!child.Enabled) break;
+                        // 来源浮窗尚未实现：冲突三角只作指示，点击不写 0。
+                        if (child.Rating == 0 && child.Conflict) break;
+                        _rate?.Invoke(child.Rating);
                         break;
                     default:
                         if (child.Enabled && child.Command != null) _execute?.Invoke(child.Command);
@@ -425,7 +448,9 @@ internal sealed class AndroidControlBar : View
         ControlBarGroupKind.Exif => child.Exif == null
             ? ""
             : $"{child.Exif.DisplayName} {child.Exif.DisplayValue}",
-        ControlBarGroupKind.Rating => child.Rating == 0 ? "无星级" : $"{child.Rating} 星",
+        ControlBarGroupKind.Rating => child.Rating == 0
+            ? (child.Conflict ? "星级冲突" : "无星级")
+            : $"{child.Rating} 星",
         _ => child.Binding ?? child.Label ?? child.Command ?? "",
     };
 
@@ -439,6 +464,7 @@ internal sealed class AndroidControlBar : View
                 _openTools?.Invoke();
                 return true;
             case ControlBarGroupKind.Rating:
+                if (child.Rating == 0 && child.Conflict) return false;
                 _rate?.Invoke(child.Rating);
                 return true;
             default:
@@ -570,6 +596,7 @@ internal sealed class AndroidControlBar : View
         internal ExifDisplayEntry? Exif { get; init; }
         internal int Rating { get; init; }
         internal bool Active { get; init; }
+        internal bool Conflict { get; init; }
         internal string? Command { get; init; }
         internal string? Icon { get; init; }
         internal string? Number { get; init; }

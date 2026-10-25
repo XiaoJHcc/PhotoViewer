@@ -95,6 +95,7 @@ function createShotMaker(folderId, rand, start) {
         const stem = options.stem ?? `DSC${String(number++).padStart(5, "0")}`;
         const taken = options.taken !== undefined ? options.taken : clock;
         const scene = options.scene ?? { base: ++base, variant: 0 };
+        const randomRating = pick(rand, RATINGS);
         return {
             folderId,
             stem,
@@ -103,8 +104,13 @@ function createShotMaker(folderId, rand, start) {
             modified: options.modified,
             scene,
             focal: options.focal ?? pick(rand, FOCALS),
-            rating: options.rating ?? pick(rand, RATINGS),
+            // RATING-01：rating 为 null 表示代表内嵌缺 Rating，不能用默认值顶替。
+            rating: "rating" in options ? options.rating : randomRating,
             ratings: options.ratings,
+            ratingState: options.ratingState,
+            ratingStates: options.ratingStates,
+            // RATING-01：只描述磁盘上实际存在的 <stem>.xmp；缺省表示没有 sidecar。
+            sidecar: options.sidecar,
             orientations: options.orientations ?? [pick(rand, ORIENTATIONS)],
             dims: options.dims ?? [pick(rand, DIMS)],
             focus: options.focus !== undefined ? options.focus : rand() < 0.65,
@@ -123,10 +129,16 @@ function createShotFiles(rand, shot) {
     const fingerprint = taken === null ? null : `${shot.folderId}:${shot.stem}:${taken}`;
     const focus = shot.focus ? makeFocus(rand) : null;
     const exif = shot.exif ?? makeExif(rand, shot.focal);
+    // RATING-01：同名组的 sidecar 是同一个磁盘文件，伴侣共享同一份记录。
+    const sidecar = shot.sidecar ? { ...shot.sidecar } : null;
     return shot.exts.map((typedExt, index) => {
         const ext = typedExt.toLowerCase();
         const orientation = shot.orientations[index] ?? shot.orientations[0] ?? 1;
         const dims = shot.dims[index] ?? shot.dims[0] ?? [6000, 4000];
+        const rating = shot.ratings && index < shot.ratings.length ? shot.ratings[index] : shot.rating;
+        const ratingState = shot.ratingStates && index < shot.ratingStates.length
+            ? shot.ratingStates[index]
+            : shot.ratingState;
         return {
             id: `${shot.folderId}/${shot.stem}${typedExt}`,
             folderId: shot.folderId,
@@ -139,7 +151,9 @@ function createShotFiles(rand, shot) {
                 : taken + (index + Math.round(rand() * 900)) * SECOND,
             taken,
             tzOffset: TZ,
-            rating: shot.ratings?.[index] ?? shot.rating ?? 0,
+            rating: rating === undefined ? 0 : rating,
+            ratingState,
+            sidecar,
             width: dims[0],
             height: dims[1],
             orientation,
@@ -191,12 +205,28 @@ function buildHarbor() {
     for (let i = 0; i < 22; i++) {
         const conflict = i === 4 || i === 11 || i === 17;
         const exts = i % 3 === 0 ? [".JPG", ".ARW"] : i % 3 === 1 ? [".jpg", ".arw"] : [".JPG", ".arw"];
+        // RATING-01：来源级故障样本——sidecar 取值不同、sidecar 无效、伴侣内嵌不可读、
+        // 全部内嵌缺包；都是实际存在的来源，不隐藏、不合并。
+        const sources = i === 4
+            ? { sidecar: { rating: 3 } }
+            : i === 5
+                ? { ratings: [2, 2], sidecar: { rating: 2 } }
+                : i === 7
+                    ? { ratings: [2, 2], sidecar: { rating: 4 } }
+                    : i === 9
+                        ? { ratings: [1, 1], sidecar: { state: "invalid" } }
+                        : i === 14
+                            ? { ratings: [4, 4], ratingStates: ["rated", "unreadable"] }
+                            : i === 20
+                                ? { ratings: [null, null], ratingStates: ["missing", "missing"] }
+                                : {};
         add({
             gap: 14 + (i % 4) * 6,
             exts,
             ratings: conflict ? [3, 5] : undefined,
             rating: pick(rand, RATINGS),
             orientations: [pick(rand, ORIENTATIONS), pick(rand, ORIENTATIONS)],
+            ...sources,
         });
     }
 
@@ -236,11 +266,20 @@ function buildHarbor() {
     add({ gap: 9, exts: [".JPG"], fault: { decode: "full" }, rating: 3 });
     add({ gap: 7, exts: [".JPG"], fault: { write: true }, rating: 4 });
 
+    // RATING-01/05：代表文件内嵌的独立状态——已拒绝（-1）、缺失、无效与同一文件内冲突。
+    // 缺失样本取 JPEG：无 canonical XMP 时连 JPEG 也不新建，写入按预检失败处理。
+    const representativeStates = [
+        { rating: -1, ratingState: "rejected" },
+        { rating: null, ratingState: "missing" },
+        { rating: null, ratingState: "invalid" },
+        { rating: null, ratingState: "conflict" },
+    ];
     for (let i = 0; i < 8; i++) {
         add({
             gap: 15 + i * 3,
             exts: [i % 2 === 1 ? ".JPG" : ".ARW"],
             orientations: [i === 0 ? 3 : pick(rand, ORIENTATIONS)],
+            ...(i >= 4 ? representativeStates[i - 4] : {}),
         });
     }
 

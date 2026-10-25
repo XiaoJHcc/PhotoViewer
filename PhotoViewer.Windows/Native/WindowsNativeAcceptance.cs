@@ -12,8 +12,10 @@ using Microsoft.ML.OnnxRuntime.Tensors;
 using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
@@ -143,6 +145,7 @@ internal sealed partial class WindowsMainWindow
             await RunEnhancementChecksAsync(checks);
             await RunSimilarityPanelChecksAsync(checks);
             await RunRatingFailureChecksAsync(checks);
+            await RunRatingConflictChecksAsync(checks);
             await RunAnalysisPreviewPointerChecksAsync(checks);
             await RunWindowStateChecksAsync(checks);
 
@@ -1338,6 +1341,121 @@ internal sealed partial class WindowsMainWindow
             _main.RatingWriteFailed -= OnFailed;
             File.SetAttributes(path, FileAttributes.Normal);
         }
+    }
+
+    /// <summary>
+    /// RATING-04:组级冲突把卡片与控制栏 0 号槽位换成警示三角;三角只作指示,点击不写值、不切主图。
+    /// 来源浮窗尚未实现,本检查同时确认点击不会打开任何共享浮窗状态。
+    /// </summary>
+    /// <param name="checks">验收结果收集器</param>
+    /// <returns>检查完成后的任务</returns>
+    private async Task RunRatingConflictChecksAsync(List<string> checks)
+    {
+        var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "rating-conflict");
+        var conflictPath = Path.Combine(folder, "conflict.jpg");
+        var plainPath = Path.Combine(folder, "plain.jpg");
+        var sidecarPath = Path.Combine(folder, "conflict.xmp");
+        var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
+        await Task.Run(() =>
+        {
+            Directory.CreateDirectory(folder);
+            // 冲突必须是可写的真实冲突：JPEG 已带 canonical XMP(内嵌 2 星)，sidecar 已存在且为 4 星。
+            CreateJpegWithEmbeddedRating(conflictPath, 2);
+            File.Copy(checkerPath, plainPath, true);
+            File.WriteAllBytes(sidecarPath, XmpPacketEditor.SetRating(null, 4, preserveLength: false));
+        });
+
+        // 夹具前置校验：两个来源都能按 canonical XMP 读取。
+        var embeddedStore = XmpRatingStoreFactory.Create(new LocalFileRef(conflictPath));
+        var embeddedBefore = await embeddedStore.ReadAsync();
+        RequireSmoke(embeddedBefore.State == XmpRatingState.Rated && embeddedBefore.Value == 2,
+            $"测试素材内嵌 XMP 不可读或不是 2 星: {embeddedBefore.State}/{embeddedBefore.Value}");
+        var sidecarStore = XmpRatingStoreFactory.Create(new LocalFileRef(sidecarPath));
+        var sidecarBefore = await sidecarStore.ReadAsync();
+        RequireSmoke(sidecarBefore.State == XmpRatingState.Rated && sidecarBefore.Value == 4,
+            $"测试素材 sidecar 不可读或不是 4 星: {sidecarBefore.State}/{sidecarBefore.Value}");
+
+        await OpenFolderForSmokeAsync(folder);
+        await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 2, "评分冲突素材载入");
+        var conflictFile = _main.FileVM.ThumbnailList.FilteredFiles.First(file => file.Name == "conflict.jpg");
+        var plainFile = _main.FileVM.ThumbnailList.FilteredFiles.First(file => file.Name == "plain.jpg");
+        _main.FileVM.ThumbnailList.SelectImageCommand(conflictFile);
+        await WaitForSmokeAsync(() => ReferenceEquals(_main.CurrentFile, conflictFile), "打开冲突素材");
+
+        // 来源在后台读取完成后冲突才成立:控制栏必须订阅当前文件属性,不能只等 CurrentFile 变化。
+        await WaitForSmokeAsync(() => conflictFile.HasRatingConflict, "评分来源冲突未识别", 30);
+        await WaitForSmokeAsync(() => _controlBar.RatingZeroGlyph == WindowsIcons.WarningGlyph,
+            $"控制栏 0 号槽位未换成警示三角: {_controlBar.RatingZeroGlyph}", 10);
+        RequireSmoke(_controlBar.RatingZeroColor == WindowsLayout.StarConflict,
+            $"警示三角颜色不是 color.star.conflict: {_controlBar.RatingZeroColor}");
+        RequireSmoke(_controlBar.RatingZeroButton.Width == WindowsLayout.RatingButtonSize
+            && _controlBar.RatingZeroButton.Height == WindowsLayout.RatingButtonSize,
+            "冲突三角改变了控制栏 0 号按钮几何");
+
+        // 控制栏三角只作指示:不切主图、不写 0、不打开浮窗。
+        int controlRating = conflictFile.Rating;
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await Task.Delay(150);
+        RequireSmoke(ReferenceEquals(_main.CurrentFile, conflictFile), "点击控制栏冲突三角切换了主图");
+        RequireSmoke(conflictFile.Rating == controlRating, "点击控制栏冲突三角写了 0 星");
+        RequireSmoke(!_main.RatingSources.IsOpen, "来源浮窗尚未实现,但点击三角打开了共享浮窗状态");
+
+        // 非冲突照片仍是清零叉。
+        _main.FileVM.ThumbnailList.SelectImageCommand(plainFile);
+        await WaitForSmokeAsync(() => ReferenceEquals(_main.CurrentFile, plainFile), "切到非冲突照片");
+        await Task.Delay(150);
+        RequireSmoke(_controlBar.RatingZeroGlyph == WindowsIcons.ClearGlyph,
+            $"非冲突照片的 0 号槽位不是清零叉: {_controlBar.RatingZeroGlyph}");
+
+        // 卡片 0 号槽位同样换三角;点击不切主图、不写值。
+        await WaitForSmokeAsync(() => _filmstrip.CardFor(conflictFile) != null, "冲突素材卡片未实现", 10);
+        var card = _filmstrip.CardFor(conflictFile)!;
+        RequireSmoke(card.RatingZeroGlyph == WindowsIcons.WarningGlyph, "胶片栏卡片 0 号槽位未换成警示三角");
+        RequireSmoke(card.RatingZeroColor == WindowsLayout.StarConflict, "胶片栏冲突三角颜色错误");
+        int cardRating = conflictFile.Rating;
+        new ButtonAutomationPeer(card.RatingZeroButton).Invoke();
+        await Task.Delay(150);
+        RequireSmoke(ReferenceEquals(_main.CurrentFile, plainFile), "点击卡片冲突三角切换了主图");
+        RequireSmoke(conflictFile.Rating == cardRating, "点击卡片冲突三角写了 0 星");
+        RequireSmoke(!_main.RatingSources.IsOpen, "来源浮窗尚未实现,但点击卡片三角打开了共享浮窗状态");
+        checks.Add("PASS RATING-04: conflict triangle replaces slot 0 on card and control bar, keeps 30x30 geometry, and clicking it neither writes a rating nor opens a source flyout");
+    }
+
+    /// <summary>
+    /// 生成一张带 Rating 的 canonical XMP APP1 段的小幅 JPEG。
+    /// 评分核心要求来源已有 canonical XMP 才允许预检写入,夹具不能只有裸 EXIF、空内嵌或多份 XMP。
+    /// </summary>
+    /// <param name="targetPath">目标路径</param>
+    /// <param name="rating">内嵌 Rating(0–5)</param>
+    private static void CreateJpegWithEmbeddedRating(string targetPath, int rating)
+    {
+        using var bitmap = new SKBitmap(480, 320);
+        using var canvas = new SKCanvas(bitmap);
+        canvas.Clear(new SKColor(0x33, 0x66, 0x99));
+        using var encoded = bitmap.Encode(SKEncodedImageFormat.Jpeg, 90);
+        var jpeg = encoded.ToArray();
+        if (jpeg.Length < 4 || jpeg[0] != 0xFF || jpeg[1] != 0xD8)
+        {
+            throw new InvalidOperationException("JPEG 编码结果缺少 SOI");
+        }
+
+        var packet = XmpPacketEditor.SetRating(null, rating, preserveLength: false);
+        ReadOnlySpan<byte> identifier = "http://ns.adobe.com/xap/1.0/\0"u8;
+        int payloadLength = identifier.Length + packet.Length;
+        if (payloadLength + 2 > 0xFFFF)
+        {
+            throw new InvalidOperationException($"测试 XMP 包 {packet.Length} 字节超过 JPEG APP1 段上限");
+        }
+
+        using var stream = File.Create(targetPath);
+        stream.Write(jpeg, 0, 2);
+        stream.WriteByte(0xFF);
+        stream.WriteByte(0xE1);
+        stream.WriteByte((byte)((payloadLength + 2) >> 8));
+        stream.WriteByte((byte)(payloadLength + 2));
+        stream.Write(identifier);
+        stream.Write(packet);
+        stream.Write(jpeg, 2, jpeg.Length - 2);
     }
 
     /// <summary>生成胶片条定位测试用的小幅 JPEG。</summary>

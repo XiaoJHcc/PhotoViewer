@@ -1,6 +1,7 @@
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using System.ComponentModel;
@@ -12,6 +13,8 @@ namespace PhotoViewer.iOS.Native;
 /// 胶片栏卡片（[FILM-05]）：96×144 外框 + 四周 3 点占位、80 方形照片区、文件名、第二行（拍摄时间）、
 /// 6 个星级、抖动徽标与占位/加载状态；几何与 Mac 原生壳同口径（<see cref="FilmstripGeometry"/> 与固定内部 frame），
 /// 便于程序化对拍。星级是独立 UIButton，选择是覆盖整卡的独立 UIButton，命中测试天然分离，点星不会切图。
+/// 组级星级冲突（RATING-04）时 0 号槽位画 <c>exclamationmark.triangle.fill</c>（<c>color.star.conflict</c>），
+/// 只作指示、点击不写值；非冲突仍是清零叉、点击写 0。
 /// </summary>
 [Register("PViOSThumbnailCard")]
 internal sealed class iOSThumbnailCard : UICollectionViewCell
@@ -41,6 +44,8 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     private iOSContextMenuDelegate? _menuDelegate;
     private string? _secondLineText;
     private double? _secondLineProgress;
+    /// <summary>0 号槽位当前字形：冲突为警示三角，非冲突为清零叉。</summary>
+    private string _clearSymbol = "xmark";
     /// <summary>选中态取主图身份（相似聚类）还是列表锚点（胶片栏）。</summary>
     private bool _selectByDisplayedImage;
 
@@ -64,6 +69,8 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     internal double? SecondLineProgress => _secondLineProgress;
     /// <summary>第二行柱状条是否可见。</summary>
     internal bool IsSecondLineBarVisible => !_secondLineBar.Hidden;
+    /// <summary>0 号槽位当前字形名称（RATING-04：冲突 <c>exclamationmark.triangle.fill</c>，否则 <c>xmark</c>）。</summary>
+    internal string ClearRatingSymbol => _clearSymbol;
 
     /// <summary>原生复用池按 frame 构造卡片。</summary>
     /// <param name="frame">卡片外框。</param>
@@ -133,7 +140,13 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
             button.SetImage(iOSSymbols.Symbol(rating == 0 ? "xmark" : "star", rating == 0 ? 8 : 10), UIControlState.Normal);
             button.TintColor = rating == 0 ? UIColor.FromRGB(0x66, 0x66, 0x66) : UIColor.Gray;
             button.AccessibilityLabel = rating == 0 ? "无星级" : $"{rating} 星";
-            button.TouchUpInside += (_, _) => { if (_file != null) _rate?.Invoke(_file, value); };
+            // RATING-04：冲突时 0 号槽位只显示警示三角，不写值；非冲突仍是清零叉，直接写 0。
+            button.TouchUpInside += (_, _) =>
+            {
+                if (_file == null) return;
+                if (value == 0 && _file.HasRatingConflict) return;
+                _rate?.Invoke(_file, value);
+            };
             _stars[rating] = button;
             _surface.AddSubview(button);
         }
@@ -206,6 +219,14 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         if (loading) _progress.StartAnimating();
         else _progress.StopAnimating();
         _shake.Hidden = _file.IsShake != true;
+        // RATING-04：组级来源冲突时 0 号槽位换成红色警示三角；来源刷新（HasRatingConflict 变化）后立即回到清零叉。
+        bool conflict = _file.HasRatingConflict;
+        _clearSymbol = conflict ? "exclamationmark.triangle.fill" : "xmark";
+        _stars[0].SetImage(iOSSymbols.Symbol(_clearSymbol, conflict ? DesignTokens.FilmCardStarFontSize : DesignTokens.FilmCardClearGlyphSize), UIControlState.Normal);
+        _stars[0].TintColor = conflict
+            ? iOSColors.FromToken(DesignTokens.ColorStarConflict)
+            : iOSColors.FromToken(DesignTokens.ColorStarClear);
+        _stars[0].AccessibilityLabel = conflict ? "星级冲突" : "无星级";
         for (int index = 1; index < _stars.Length; index++)
         {
             _stars[index].SetImage(iOSSymbols.Symbol(index <= _file.Rating ? "star.fill" : "star", 10), UIControlState.Normal);

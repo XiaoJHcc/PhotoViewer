@@ -174,6 +174,13 @@ internal sealed class AndroidSimilarityPanel : LinearLayout
         }
     }
 
+    /// <summary>可见卡片重绘：后台星级/来源补齐后重读 <see cref="ImageFile.Rating"/> 与冲突态。</summary>
+    internal void RefreshCardStates()
+    {
+        for (int index = 0; index < _list.ChildCount; index++)
+            if (_list.GetChildAt(index) is AndroidThumbnailCard card) card.Invalidate();
+    }
+
     /// <summary>同步共享 VM 到列表/三态/动作区。</summary>
     internal void Refresh()
     {

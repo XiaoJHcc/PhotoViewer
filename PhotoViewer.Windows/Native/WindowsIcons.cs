@@ -19,6 +19,9 @@ internal static class WindowsIcons
     /// <summary>清零评分字形。</summary>
     public const string ClearGlyph = "\uE711";
 
+    /// <summary>星级冲突警示三角字形(RATING-04,与 <c>icon.warning</c> 同义)。</summary>
+    public const string WarningGlyph = "\uE7BA";
+
     /// <summary>命令 → 单字形映射。null 表示该命令在本阶段不显示/不可达(P3 延期)。</summary>
     private static readonly Dictionary<string, string?> Glyphs = new(StringComparer.Ordinal)
     {

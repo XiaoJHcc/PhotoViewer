@@ -1014,7 +1014,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
     {
         if (!ReferenceEquals(sender, _observedFile)) return;
         if (args.PropertyName == nameof(ImageFile.ExifData)) UpdateFocusPoint();
-        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)) BuildControls();
+        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)
+            or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources)) BuildControls();
     });
 
     /// <summary>设置回写后重建按钮并重排（显隐/顺序/快捷键/文件格式都影响主屏）。</summary>

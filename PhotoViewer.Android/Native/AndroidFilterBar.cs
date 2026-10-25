@@ -339,6 +339,7 @@ internal sealed class AndroidFilterBar : View
         "Gt2" => "二星以上",
         "Gt3" => "三星以上",
         "Gt4" => "四星以上",
+        "Rejected" => "已拒绝",
         "Conflict" => "星级冲突",
         _ => "全部",
     };

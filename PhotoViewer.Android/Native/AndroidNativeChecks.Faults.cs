@@ -8,6 +8,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
+using Android.OS;
+using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
@@ -25,8 +27,8 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// <c>--es pv-check faults</c>（验收专用）：用 App 自有素材与测试替身核对此前只能手验/代码核对的失败与边界项——
-/// IMAGE-08 八方向、SCOPE-04 RAW 全分辨率、TOOLBAR-03 外部存储评分写回、IMAGE-03 Full 失败、
-/// STATE-02/OPEN-03 打开失败、STATE-03 评分写回失败、SETTINGS-14 损坏设置、SIM-10 列表态错误标签、
+/// IMAGE-08 八方向、SCOPE-04 RAW 全分辨率、TOOLBAR-03 外部存储评分写回、RATING-04 冲突指示、
+/// IMAGE-03 Full 失败、STATE-02/OPEN-03 打开失败、STATE-03 评分写回失败、SETTINGS-14 损坏设置、SIM-10 列表态错误标签、
 /// ANALYSIS-10 DINO 失败、SCOPE-02 内存告警关闭增强、OPEN-06 外部打开。
 /// 素材只写 App 内部目录与 <c>GetExternalFilesDir</c>；产品代码行为不作任何改动。
 /// </summary>
@@ -39,6 +41,7 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("方向 1..8", CheckOrientationsAsync);
         await RunStepAsync("SCOPE-04", CheckRawFullResolutionAsync);
         await RunStepAsync("TOOLBAR-03", CheckExternalStorageWriteAsync);
+        await RunStepAsync("RATING-04", CheckRatingConflictAsync);
         await RunStepAsync("IMAGE-03", CheckFullFailureAsync);
         await RunStepAsync("STATE-02/OPEN-03", CheckOpenFailureAsync);
         await RunStepAsync("STATE-03", CheckRatingFailureAsync);
@@ -160,10 +163,79 @@ internal static partial class AndroidNativeChecks
         byte[] bytes = File.ReadAllBytes(path);
         bool xmpMarker = Encoding.ASCII.GetString(bytes, 0, Math.Min(bytes.Length, 4096))
             .Contains("xmp:Rating=\"4\"", StringComparison.Ordinal);
-        // 写回成功后共享层会清空并重载 EXIF（清空瞬间 Rating 归 0），等重载收敛再断言内存值。
+        // 写回成功后共享层直接回填逐来源真值、不清空 EXIF，模型星级应即时收敛到 4。
         await WaitAsync(() => file.Rating == 4, "内存星级同步", 8000);
         Check("TOOLBAR-03 外部存储评分写回", readBack == 4 && file.Rating == 4 && xmpMarker,
             $"readback={readBack} model={file.Rating} xmpMarker={xmpMarker} path={path}");
+    }
+
+    /// <summary>
+    /// RATING-04：组级星级冲突时卡片与控制栏 0 号槽位显示红色警示三角；三角只作指示，
+    /// 点击不写 0、不切主图。来源浮窗尚未实现，本检查同时确认点击不会打开共享浮窗状态。
+    /// </summary>
+    private static async Task CheckRatingConflictAsync()
+    {
+        var activity = _activity!;
+        var main = _main!;
+        var root = _root!;
+        string folder = IOPath.Combine(activity.FilesDir!.AbsolutePath, "pv-check-conflict");
+        Directory.CreateDirectory(folder);
+        string path = IOPath.Combine(folder, "conflict.jpg");
+        string sidecarPath = IOPath.Combine(folder, "conflict.xmp");
+        // 每次重建素材：内嵌 2 与同名 sidecar 4 不一致，形成组级冲突。
+        File.Delete(path);
+        File.Delete(sidecarPath);
+        WriteCheckJpeg(path, 640, 480, rating: 2);
+        File.WriteAllBytes(sidecarPath, BuildXmpPacket(4));
+        var target = new AndroidFileRef(path);
+        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
+        try
+        {
+            await WaitAsync(
+                () => main.CurrentFile?.File.StorageId.Value == target.StorageId.Value && main.CurrentFile.HasRatingConflict,
+                "冲突素材上屏", 25000);
+        }
+        catch (TimeoutException exception)
+        {
+            Check("RATING-04 冲突指示", false,
+                $"{exception.Message} current={main.CurrentFile?.Name ?? "null"} "
+                + $"conflict={main.CurrentFile?.HasRatingConflict} sources={main.CurrentFile?.RatingSources.Count ?? 0}");
+            return;
+        }
+
+        var file = main.CurrentFile;
+        if (file == null || !file.HasRatingConflict)
+        {
+            Check("RATING-04 冲突指示", false,
+                $"current={file?.Name ?? "null"} conflict={file?.HasRatingConflict} "
+                + $"sources={file?.RatingSources.Count ?? 0}");
+            return;
+        }
+
+        int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
+        var card = index >= 0 ? root.Filmstrip.CardAt(index) : null;
+        Check("RATING-04 冲突指示",
+            card?.ShowsRatingConflict == true && root.ControlBar.RatingConflictForChecks,
+            $"card={card?.ShowsRatingConflict} control={root.ControlBar.RatingConflictForChecks} "
+            + $"sources={file.RatingSources.Count} rating={file.Rating}");
+
+        // 行布局卡片宽 96dp：0 号槽位中心 (13,126)dp；点三角不写 0、不切主图。
+        if (card == null || !main.IsRowLayout)
+        {
+            Check("RATING-04 点三角不写值不切主图", false, "行布局冲突卡片不可用");
+            return;
+        }
+
+        float densityPx = (float)AndroidUiTheme.Density(root.Context!);
+        long now = SystemClock.UptimeMillis();
+        using var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, 13f * densityPx, 126f * densityPx, 0);
+        using var up = MotionEvent.Obtain(now, now, MotionEventActions.Up, 13f * densityPx, 126f * densityPx, 0);
+        card.DispatchTouchEvent(down);
+        card.DispatchTouchEvent(up);
+        await Task.Delay(150);
+        Check("RATING-04 点三角不写值不切主图",
+            ReferenceEquals(main.CurrentFile, file) && file.Rating == 2 && !main.RatingSources.IsOpen,
+            $"current={main.CurrentFile?.Name} rating={file.Rating} sourcesOpen={main.RatingSources.IsOpen}");
     }
 
     /// <summary>IMAGE-03：Full 解码失败时保留屏上代理并给出非阻塞提示条，不覆盖主图错误态。</summary>

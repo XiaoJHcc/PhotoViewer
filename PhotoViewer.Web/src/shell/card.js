@@ -3,6 +3,7 @@ import { codepoint, icon, solidIcon } from "./icons.js";
 import { cardFrames } from "../core/layout/card.js";
 import { formatTakenFull, formatTakenShort } from "../core/exifformat.js";
 import { LongPressRecognizer } from "../core/input.js";
+import { displayStars, hasRatingConflict } from "../core/rating.js";
 
 const RATING_LABELS = ["无星级", "1 星", "2 星", "3 星", "4 星", "5 星"];
 const PRIORITY_RANK = { visible: 0, near: 1, far: 2 };
@@ -69,9 +70,13 @@ export function createCard(ctx, { mode = "film" } = {}) {
         const label = index === 0 ? "无星级" : `${index} 星`;
         button.setAttribute("aria-label", label);
         button.dataset.tooltip = label;
+        button.dataset.rating = String(index);
         if (index === 0) {
             button.classList.add("is-clear");
-            button.append(icon(t, "icon.clear", "pv-card-clear"));
+            // RATING-04：0 号槽位同时持有清零叉与冲突警示三角，按组级状态切换。
+            button.append(
+                icon(t, "icon.clear", "pv-card-clear"),
+                icon(t, "icon.warning", "pv-card-warning"));
         } else {
             button.append(
                 icon(t, "icon.star", "pv-card-star-glyph pv-card-star-outline"),
@@ -80,7 +85,10 @@ export function createCard(ctx, { mode = "film" } = {}) {
         button.addEventListener("pointerdown", (event) => event.stopPropagation());
         button.addEventListener("click", (event) => {
             event.stopPropagation();
-            if (currentCard) app.rate(currentCard.photo.id, index);
+            if (!currentCard) return;
+            // RATING-04：来源浮窗尚未实现，冲突三角只作指示，不写值。
+            if (index === 0 && hasRatingConflict(currentCard)) return;
+            app.rate(currentCard.photo.id, index);
         });
         place(button, frames.stars[index]);
         surface.append(button);
@@ -98,6 +106,7 @@ export function createCard(ctx, { mode = "film" } = {}) {
 
     let currentCard = null;
     let lastRating = null;
+    let lastConflict = null;
     let lastCached = null;
     let lastShake = null;
     let lastCurrent = null;
@@ -252,7 +261,8 @@ export function createCard(ctx, { mode = "film" } = {}) {
         if (!card) return;
         currentCard = card;
         const photo = card.photo;
-        const rating = ratingValue(photo.rating);
+        const rating = displayStars(photo);
+        const conflict = hasRatingConflict(card);
         const identity = similarity ? state.displayedId : state.anchorId;
         const isCurrent = Boolean(identity)
             && (identity === photo.id || card.companions.some((companion) => companion.id === identity));
@@ -267,7 +277,8 @@ export function createCard(ctx, { mode = "film" } = {}) {
         root.dataset.tooltip = taken === undefined || taken === null
             ? card.displayName
             : `${card.displayName}\n${formatTakenFull(taken, photo.tzOffset)}`;
-        const label = `${card.displayName}，${RATING_LABELS[rating]}`;
+        const ratingLabel = conflict ? "星级冲突" : RATING_LABELS[rating];
+        const label = `${card.displayName}，${ratingLabel}`;
         if (root.getAttribute("aria-label") !== label) root.setAttribute("aria-label", label);
 
         if (similarity) {
@@ -292,10 +303,22 @@ export function createCard(ctx, { mode = "film" } = {}) {
             lastShowRating = showRating;
         }
 
+        if (conflict !== lastConflict) {
+            // RATING-04：冲突时 0 号槽位换成红色警示三角，几何与命中区不变。
+            const zero = stars[0];
+            zero.classList.toggle("is-conflict", conflict);
+            zero.classList.toggle("is-clear", !conflict);
+            const zeroLabel = conflict ? "星级冲突" : "无星级";
+            zero.setAttribute("aria-label", zeroLabel);
+            zero.dataset.tooltip = zeroLabel;
+            zero.setAttribute("aria-pressed", "false");
+            lastConflict = conflict;
+        }
+
         if (rating !== lastRating) {
             for (let index = 0; index < stars.length; index += 1) {
                 const button = stars[index];
-                const active = index === 0 ? rating === 0 : rating >= index;
+                const active = index === 0 ? rating === 0 && !conflict : rating >= index;
                 button.classList.toggle("is-on", index > 0 && active);
                 button.setAttribute("aria-pressed", active ? "true" : "false");
             }

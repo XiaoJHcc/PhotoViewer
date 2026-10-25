@@ -65,11 +65,11 @@ test("FILTER-02：排序键、方向与星级筛选取值固定", () => {
         ["desc", "降序 ↓"],
     ]);
     assert.deepEqual(RATING_FILTERS.map((entry) => entry.value), [
-        "all", "none", "1", "2", "3", "4", "5", "1+", "2+", "3+", "4+", "conflict",
+        "all", "none", "1", "2", "3", "4", "5", "1+", "2+", "3+", "4+", "rejected", "conflict",
     ]);
     assert.deepEqual(RATING_FILTERS.map((entry) => entry.label), [
         "全部", "无星级", "一星", "二星", "三星", "四星", "五星",
-        "一星以上", "二星以上", "三星以上", "四星以上", "星级冲突",
+        "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突",
     ]);
     const list = makeList([]);
     assert.equal(list.sortKey, "name");

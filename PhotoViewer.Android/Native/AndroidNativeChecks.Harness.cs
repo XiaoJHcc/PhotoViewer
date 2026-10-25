@@ -241,14 +241,27 @@ internal static partial class AndroidNativeChecks
     /// <returns>完整 APP1 段。</returns>
     private static byte[] BuildXmpApp1(int rating, int padding = 0)
     {
-        const string header = "http://ns.adobe.com/xap/1.0/\0";
+        byte[] header = Encoding.UTF8.GetBytes("http://ns.adobe.com/xap/1.0/\0");
+        byte[] packet = BuildXmpPacket(rating, padding);
+        var payload = new byte[header.Length + packet.Length];
+        header.CopyTo(payload, 0);
+        packet.CopyTo(payload, header.Length);
+        return FrameApp1(payload);
+    }
+
+    /// <summary>canonical XMP 包（可作 JPEG APP1 载荷或独立 <c>.xmp</c> / TIFF tag 700 内容）。</summary>
+    /// <param name="rating">星级 0–5。</param>
+    /// <param name="padding">包尾空白（等长改写的余量）。</param>
+    /// <returns>UTF-8 包字节。</returns>
+    private static byte[] BuildXmpPacket(int rating, int padding = 0)
+    {
         string xml = "<?xpacket begin=\"\uFEFF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
             + "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
             + "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"" + rating + "\"/>"
             + "</rdf:RDF></x:xmpmeta>\n"
             + new string(' ', Math.Max(0, padding))
             + "<?xpacket end=\"w\"?>";
-        return FrameApp1(Encoding.UTF8.GetBytes(header + xml));
+        return Encoding.UTF8.GetBytes(xml);
     }
 
     /// <summary>把载荷包成 <c>FF E1 len payload</c> 的 APP1 段。</summary>

@@ -1,6 +1,7 @@
 using CoreGraphics;
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
@@ -115,6 +116,9 @@ internal static class iOSNativeLayoutCheck
 
             // 三、卡片星级写回与筛选连续性（[FILM-05/06]）
             await VerifyRatingAsync(root, main, lines, directory);
+
+            // 四、组级冲突指示（[RATING-04]）
+            await VerifyRatingConflictAsync(root, main, lines, directory);
 
             await RestoreAsync(root, main, entrySimilarity);
             lines.Add($"PASS 收尾还原：布局模式/栏位显隐/筛选/评级已回到进入本检查时的状态");
@@ -671,6 +675,9 @@ internal static class iOSNativeLayoutCheck
             await WaitAsync(() => list.FilteredFiles.Contains(entryFile) && list.FilteredFiles.Contains(other), $"筛选键 {key} 就绪");
             if (list.FilteredFiles.Any(item => item.Rating != entryRating && !ReferenceEquals(item, entryFile)))
                 throw new InvalidOperationException($"{key} 筛选列表仍含不符合条件的照片，无法核对 FILM-06 暂留规则");
+            // 筛选变化后胶片栏 reload 是异步的：等 UI 数据源与列表模型对齐再取卡片，避免 layout 期间旧索引越界。
+            await WaitAsync(() => root.Filmstrip.Collection.DataSource?.GetItemsCount(root.Filmstrip.Collection, 0) == list.FilteredFiles.Count, "胶片栏数据源与筛选列表对齐");
+            await SettleAsync(root);
             int index = list.FilteredFiles.IndexOf(entryFile);
             await UiDispatcher.InvokeAsync(() => list.ScrollToCurrent());
             var card = await WaitForCardAsync(root, main, index, "FILM-06");
@@ -713,6 +720,88 @@ internal static class iOSNativeLayoutCheck
             }
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = entryFilter);
             if (main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
+                await main.FolderVM.OpenImageAsync(entryFile.File);
+        }
+    }
+
+    /// <summary>
+    /// 核对 [RATING-04] 的冲突指示：组内来源不一致时胶片栏卡片与控制栏 0 号槽位换成警示三角，
+    /// 几何与命中区不变；点击三角只作指示，不写值、不切主图。来源浮窗尚未实现，因此同时确认不打开共享浮窗状态。
+    /// 全程只操作 App 沙盒内自建的工作副本，收尾删除冲突夹具并重开目录。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    /// <param name="directory">自有夹具目录。</param>
+    private static async Task VerifyRatingConflictAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines, string directory)
+    {
+        var filter = main.FileVM.FilterBar;
+        string entryFilter = filter.SelectedRatingFilter;
+        var entryFile = main.CurrentFile;
+        string pair = Path.Combine(directory, "rating-conflict.jpg");
+        string companion = Path.Combine(directory, "rating-conflict.jpeg");
+        string sidecar = Path.Combine(directory, "rating-conflict.xmp");
+        try
+        {
+            // 组内差异：同一 stem 的 .jpg/.jpeg 内嵌各写不同值，再加一份真实存在的同名 sidecar。
+            File.Copy(Path.Combine(directory, "orientation-1.jpg"), pair, true);
+            File.Copy(Path.Combine(directory, "orientation-2.jpg"), companion, true);
+            await XmpRatingStoreFactory.Create(new LocalFileRef(pair)).WriteAsync(4, true);
+            await XmpRatingStoreFactory.Create(new LocalFileRef(companion)).WriteAsync(2, true);
+            await File.WriteAllBytesAsync(sidecar, XmpPacketEditor.SetRating(null, 1, false));
+            await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = "All");
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
+            var conflictMember = main.FolderVM.AllFiles.FirstOrDefault(candidate => candidate.Name == "rating-conflict.jpg")
+                ?? throw new InvalidOperationException("冲突夹具未出现在列表中");
+            var group = conflictMember.Group ?? throw new InvalidOperationException("冲突夹具未按同名合并成组");
+            if (group.Files.Count != 2) throw new InvalidOperationException($"冲突夹具组应含 2 个文件，实际 {group.Files.Count}");
+            foreach (var member in group.Files) await member.LoadExifDataAsync();
+            var photo = group.Representative;
+            await main.FolderVM.OpenImageAsync(photo.File);
+            await WaitAsync(() => ReferenceEquals(main.CurrentFile, photo) && photo.HasRatingConflict, "冲突夹具来源就绪");
+            await SettleAsync(root);
+
+            // 控制栏 0 号：字形换成警示三角、颜色取令牌，几何仍是 30×30 评分按钮。
+            var controlClear = root.ControlBar.RatingClearButton
+                ?? throw new InvalidOperationException("控制栏缺少评分 0 号按钮");
+            if (root.ControlBar.RatingClearSymbol != "exclamationmark.triangle.fill")
+                throw new InvalidOperationException($"控制栏 0 号未换成警示三角：{root.ControlBar.RatingClearSymbol}");
+            RequireColor(controlClear.TintColor, DesignTokens.ColorStarConflict, "控制栏冲突三角颜色");
+            RequireFrame(controlClear.Frame, new CGRect(controlClear.Frame.X, controlClear.Frame.Y, 30, 30), "控制栏冲突三角未沿用 30×30 命中区");
+
+            // 胶片栏卡片 0 号：同一字形/颜色，几何仍取 film.card.star 原槽位。
+            await UiDispatcher.InvokeAsync(() => main.FileVM.ThumbnailList.ScrollToCurrent());
+            int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(photo);
+            var card = await WaitForCardAsync(root, main, index, "RATING-04");
+            if (card.ClearRatingSymbol != "exclamationmark.triangle.fill")
+                throw new InvalidOperationException($"卡片 0 号未换成警示三角：{card.ClearRatingSymbol}");
+            RequireColor(card.StarButtons[0].TintColor, DesignTokens.ColorStarConflict, "卡片冲突三角颜色");
+            RequireFrame(card.StarButtons[0].Frame, new CGRect(3, 116, 14, 14), "卡片冲突三角未沿用 film.card.star 槽位");
+
+            // 点击三角不写值、不切主图；来源浮窗待实现，共享浮窗状态也不得被打开。
+            int ratingBefore = photo.Rating;
+            var currentBefore = main.CurrentFile;
+            await UiDispatcher.InvokeAsync(() => card.StarButtons[0].SendActionForControlEvents(UIControlEvent.TouchUpInside));
+            await Task.Delay(200);
+            if (!ReferenceEquals(main.CurrentFile, currentBefore)) throw new InvalidOperationException("点卡片冲突三角切换了当前主图");
+            if (photo.Rating != ratingBefore) throw new InvalidOperationException("点卡片冲突三角改了评分");
+            if (main.RatingSources.IsOpen) throw new InvalidOperationException("来源浮窗尚未实现，但点三角打开了共享浮窗状态");
+            await UiDispatcher.InvokeAsync(() => controlClear.SendActionForControlEvents(UIControlEvent.TouchUpInside));
+            await Task.Delay(200);
+            if (!ReferenceEquals(main.CurrentFile, currentBefore)) throw new InvalidOperationException("点控制栏冲突三角切换了当前主图");
+            if (photo.Rating != ratingBefore) throw new InvalidOperationException("点控制栏冲突三角改了评分");
+            if (main.RatingSources.IsOpen) throw new InvalidOperationException("来源浮窗尚未实现，但点控制栏三角打开了共享浮窗状态");
+            lines.Add($"PASS RATING-04：组内 {group.RatingSources.Count} 个来源不一致时卡片与控制栏 0 号槽位均保持原几何，字形 xmark → exclamationmark.triangle.fill、颜色取 color.star.conflict；点击只作指示，不写值、不切主图、不打开未实现的来源浮窗");
+        }
+        finally
+        {
+            foreach (string path in new[] { pair, companion, sidecar })
+            {
+                try { if (File.Exists(path)) File.Delete(path); } catch (Exception exception) { Console.Error.WriteLine(exception); }
+            }
+            await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
+            await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = entryFilter);
+            if (entryFile != null && main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
                 await main.FolderVM.OpenImageAsync(entryFile.File);
         }
     }
@@ -879,6 +968,19 @@ internal static class iOSNativeLayoutCheck
         if (Math.Abs((double)(actual.X - expected.X)) > tolerance || Math.Abs((double)(actual.Y - expected.Y)) > tolerance ||
             Math.Abs((double)(actual.Width - expected.Width)) > tolerance || Math.Abs((double)(actual.Height - expected.Height)) > tolerance)
             throw new InvalidOperationException($"{context}：实际 {actual}，预期 {expected}");
+    }
+
+    /// <summary>核对视图颜色与设计令牌一致（按 CGColor 分量比较，不依赖动态色解析）。</summary>
+    /// <param name="actual">实际颜色（未设置时为 null，按不一致处理）。</param>
+    /// <param name="token">0xAARRGGBB 令牌。</param>
+    /// <param name="context">失败信息。</param>
+    private static void RequireColor(UIColor? actual, uint token, string context)
+    {
+        var expected = iOSColors.FromToken(token);
+        var left = actual?.CGColor.Components ?? [];
+        var right = expected.CGColor.Components ?? [];
+        if (actual == null || left.Length != right.Length || left.Zip(right).Any(pair => Math.Abs((double)(pair.First - pair.Second)) > .01))
+            throw new InvalidOperationException($"{context}：实际 {actual?.ToString() ?? "null"}（{left.Length} 分量），预期令牌 0x{token:X8}（{right.Length} 分量）");
     }
 
     /// <summary>轮询条件并设有限超时，失败即抛出不输出虚假通过。</summary>

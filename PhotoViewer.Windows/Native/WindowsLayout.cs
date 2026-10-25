@@ -491,6 +491,9 @@ internal static class WindowsLayout
     /// <summary>清零评分字形颜色(旧壳 CardStar/StarButton 的 0 星按钮为 #666)。</summary>
     public static readonly Color StarClear = Token(DesignTokens.ColorStarClear);
 
+    /// <summary>星级冲突警示三角颜色(RATING-04)。</summary>
+    public static readonly Color StarConflict = Token(DesignTokens.ColorStarConflict);
+
     /// <summary>命令按钮底色。</summary>
     public static readonly Color CommandButtonBackground = Token(DesignTokens.ColorToolbarCommandBackground);
 

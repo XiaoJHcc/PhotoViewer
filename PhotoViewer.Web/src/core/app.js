@@ -15,6 +15,7 @@
  *   app.filmAnimating             胶片栏定位动画是否在播放（调试读数）
  */
 import { FileList } from "./filter.js";
+import { displayStars, hasRatingConflict } from "./rating.js";
 import { Viewport, displaySize } from "./viewport.js";
 import { FilmScroller, FilmPositioner, contentLength } from "./filmscroll.js";
 import { PhotoSession, RatingWriter } from "./session.js";
@@ -433,13 +434,14 @@ class MainApp {
         return this._ratingWriter.write(card, value).then((ok) => {
             if (!ok) {
                 // STATE-03 / FILM-06：失败时星级保持原值，提示条由 RatingWriter 给出。
-                this._invalidate(["toast"]);
+                this._invalidate(["toast", "list", "toolbar"]);
                 return false;
             }
             this._fileList.noteRatingWritten(card.photo.id);
             this._positioner?.onRatingRefresh();
             this._syncSimilarityPool();
             this._similarity.rated(card.photo.id);
+            // RATING-04：来源一致后三角恢复清零叉。
             this._invalidate(["list", "toolbar", "current", "similarity"]);
             return true;
         });
@@ -1067,10 +1069,14 @@ class MainApp {
                     tooltip: `${item.label} · ${formatExifDetail(item.id, photo, value)}`,
                 };
             });
+        const card = photo ? this._fileList.cardOf(photo.id) : null;
         const rating = {
             visible: this._settings.showRating !== false,
-            value: photo ? photo.rating : 0,
+            // TOOLBAR-03：点亮星取代表内嵌 Rating，已拒绝/缺失/无效不点亮。
+            value: displayStars(photo),
             enabled: Boolean(photo),
+            // RATING-04：组级冲突时 0 号槽位换成警示三角。
+            conflict: Boolean(card && hasRatingConflict(card)),
         };
         // TOOLBAR-04：命令列表完全取设置的显示项与顺序，不写死第二份列表。
         const commands = this._settings.hotkeys

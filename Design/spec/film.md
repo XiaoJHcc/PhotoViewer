@@ -67,7 +67,7 @@
 | 主图已缓存 | 照片区内一圈淡色细边（`color.film.card.cachedBorder`），只表示主图全分辨率已缓存，与当前项独立；必须四边完整可见，压在缩略图之上 |
 | 文件名 | 显示同名合并后的代表名（格式见 FILTER-02）；`film.card.name.fontSize` 半粗、`color.film.card.name`；尾部截断，完整名可查看（桌面 tooltip，触屏卡片菜单标题） |
 | 第二行 | 拍摄时间 `MM-dd HH:mm`（照片当地时间）：取共享照片日期，EXIF 缺失时回退文件时间；`film.card.secondLine.fontSize` 粗体、`color.film.card.name`；完整时间 `yyyy-MM-dd HH:mm:ss zzz` 可查看；相似面板中改为相似度（见 SIM） |
-| 评分 | 0–5 星，字号 `film.card.star.fontSize`，点亮为金色实心 `icon.starFilled`、未点亮为灰色描边 `icon.star`（`color.star.*`），有独立清零叉（`icon.clear`，字形 `film.card.clearGlyph.size`，`color.star.clear`）；星级显示取代表文件内嵌 Rating，点星改该卡片所属组的全部实际来源（RATING-01/03）。组级星级冲突时 0 号位置改为红色警示三角（`icon.warning`、`color.star.conflict`），点三角打开 RATING-04 来源浮窗；已拒绝（-1）不点亮任何星。点星不选中父卡片 |
+| 评分 | 0–5 星，字号 `film.card.star.fontSize`，点亮为金色实心 `icon.starFilled`、未点亮为灰色描边 `icon.star`（`color.star.*`），有独立清零叉（`icon.clear`，字形 `film.card.clearGlyph.size`，`color.star.clear`）；星级显示取代表文件内嵌 Rating，点星改该卡片所属组的全部实际来源（RATING-01/03）。组级星级冲突时 0 号位置改为红色警示三角（`icon.warning`、`color.star.conflict`）；macOS 上点三角打开 RATING-04 来源浮窗，其他平台浮窗待实现、点击不动作。已拒绝（-1）不点亮任何星。点星不选中父卡片 |
 | 抖动徽标 | 仅判定为抖动时在照片区右下角显示橙色"抖"（`film.card.badge.*`、`color.film.shakeBadge`）；未分析不显示，不推断为正常 |
 | 加载与失败 | 卡片身份与几何不等解码；缩略图与日期异步补齐；未就绪与解码失败显示 `icon.photoPlaceholder`（字号 `film.card.placeholderGlyph.fontSize`、`color.text.secondary`）；解码失败的卡片仍可选为主图，不显示伪造图像 |
 | 无筛选结果 | 列表区留空，不显示占位文字（计数 `共 0 张` 已表达结果）；保留筛选控件，不自动改用户条件 |

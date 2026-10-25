@@ -10,7 +10,9 @@
 
 **2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
 
-**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 635 PASS / 1 SKIP / 0 FAIL，`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）的 macOS 版本已另行验收；其余平台界面未验。
+**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 635 PASS / 1 SKIP / 0 FAIL，`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）的 macOS 版本已另行验收。
+
+**2026-10-26 星级冲突指示回归**：iOS 模拟器 `--pv-native-layout-check` **25/25 PASS**（含 RATING-04 冲突三角）；Android `pv-check faults` **22/0**、`storage` **24/0**（含 RATING-04 冲突三角）；Web `node --test` **318/318**、`?check=all` **50/50**；Windows `WindowsTypeCheck` 0 错；macOS 无代码改动，沿用作者验收。来源浮窗仅 macOS 已实现，iOS / Windows / Android / Web 待实现，未实现平台点击三角不动作。
 
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
@@ -22,21 +24,21 @@
 | FILM-02 | 作者手验通过 | 作者手验通过；含中间帧 | 作者手验通过；350 ms | 作者手验通过；基础操作 |
 | FILM-03 | 作者手验通过；减弱动态 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
-| FILM-05 | 作者验收通过；冲突三角定稿 | 缺口；冲突三角 layout 30 通过；来源浮窗仍为横排旧形态，待同步 | 缺口；冲突三角代码核对；来源浮窗仍为横排旧形态，待同步；WinUI 运行时待后续手验 | 缺口；冲突三角 faults 24/0；来源浮窗仍为横排旧形态，待同步 |
-| FILM-06 | 程序化通过；真实全来源改星（CoreContractCheck 覆盖回滚/Partial） | 程序化通过；CoreContractCheck + input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage/faults 24/0 |
+| FILM-05 | 作者验收通过；冲突三角定稿 | 程序化通过；冲突三角（layout 25）；来源浮窗待实现 | 缺口；冲突三角代码核对；来源浮窗待实现，WinUI 运行时待后续手验 | 程序化通过；冲突三角（faults 22/0）；来源浮窗待实现 |
+| FILM-06 | 程序化通过；真实全来源改星（CoreContractCheck 覆盖回滚/Partial） | 程序化通过；CoreContractCheck + input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage/faults 22/0 |
 
 ## rating
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| RATING-01 | 程序化通过；CoreContractCheck 与真实 HIF/ARW 副本，内嵌/已有 sidecar 独立枚举 | 程序化通过；CoreContractCheck；模拟器 layout/input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 24/0 |
+| RATING-01 | 程序化通过；CoreContractCheck 与真实 HIF/ARW 副本，内嵌/已有 sidecar 独立枚举 | 程序化通过；CoreContractCheck；模拟器 layout/input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 22/0 |
 | RATING-02 | 程序化通过；等长/局部空白原位写与写后回读；PNG 写入挂账 | 程序化通过；CoreContractCheck；PNG 写入挂账 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验；PNG 写入挂账 | 程序化通过；storage 24/0（ARW tag 700、无 tag 700 拒绝）；PNG 写入挂账 |
-| RATING-03 | 程序化通过；CoreContractCheck 预检、固定顺序、逆序补偿/Partial/NoChange | 程序化通过；CoreContractCheck；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 24/0 |
-| RATING-04 | 作者验收通过；纵向来源浮窗、宽度/三信息/长名双行/分隔线、原生毛玻璃与星按钮 hover | 缺口；冲突三角 layout 30 通过；来源浮窗仍为横排旧形态，待同步 | 缺口；冲突三角代码核对；来源浮窗仍为横排旧形态，待同步，WinUI 运行时待后续手验 | 缺口；冲突三角 faults 24/0；来源浮窗仍为横排旧形态，待同步 |
+| RATING-03 | 程序化通过；CoreContractCheck 预检、固定顺序、逆序补偿/Partial/NoChange | 程序化通过；CoreContractCheck；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 22/0 |
+| RATING-04 | 作者验收通过；纵向来源浮窗、宽度/三信息/长名双行/分隔线、原生毛玻璃与星按钮 hover | 程序化通过；冲突三角（layout 25）；来源浮窗待实现 | 缺口；冲突三角代码核对；来源浮窗待实现，WinUI 运行时待后续手验 | 程序化通过；冲突三角（faults 22/0）；来源浮窗待实现 |
 | RATING-05 | 程序化通过；13 项/已拒绝/冲突独立（CoreContractCheck） | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；CoreContractCheck |
 | RATING-06 | 程序化通过；真实 HIF/ARW 内嵌+已有 sidecar、无 sidecar 不创建；PNG 整体写入挂账；无 canonical/多 XMP/复杂结构 Unsupported；真机与云 Provider 未验 | 程序化通过；同口径（模拟器）；PNG 挂账；真机 security scope 未验 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验；PNG/复杂结构挂账 | 程序化通过；storage 24/0（无 tag 700 拒绝、sidecar 同步）；PNG 挂账；无 canonical/复杂结构 Unsupported；USB/MTP/云 Provider 未验 |
 
-> RATING-01–06 同时修订 film / filter / toolbar / state / settings 的既有口径，相关行已按新规则更新。实施、程序化验收与挂账见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；Mac RATING-04 已定稿；其他平台按同一规范同步后重跑各自套件；Windows WinUI 运行时与真机边界仍未验。旧 [core-legacy-rebuild-plan-1](../Plans/core-legacy-rebuild-plan-1.md) 只保留历史。
+> RATING-01–06 同时修订 film / filter / toolbar / state / settings 的既有口径，相关行已按新规则更新。实施、程序化验收与挂账见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；macOS RATING-04 已定稿，其他平台本轮只实现冲突三角，来源浮窗待实现；Windows WinUI 运行时与真机边界仍未验。旧 [core-legacy-rebuild-plan-1](../Plans/core-legacy-rebuild-plan-1.md) 只保留历史。
 
 ## shell
 
@@ -102,7 +104,7 @@
 |---|---|---|---|---|
 | TOOLBAR-01 | 作者手验通过 | 作者手验通过 | 作者手验通过；EXIF 取值；几何目视 | 作者手验通过；基础操作；EXIF 块入口已接线 |
 | TOOLBAR-02 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
-| TOOLBAR-03 | 作者验收通过；冲突三角定稿 | 缺口；冲突三角 layout 30 通过；来源浮窗仍为横排旧形态，待同步 | 缺口；冲突三角代码核对；来源浮窗仍为横排旧形态，待同步；WinUI 运行时待后续手验 | 缺口；冲突三角 faults 24/0；来源浮窗仍为横排旧形态，待同步 |
+| TOOLBAR-03 | 作者验收通过；冲突三角定稿 | 程序化通过；冲突三角（layout 25）；来源浮窗待实现 | 缺口；冲突三角代码核对；来源浮窗待实现，WinUI 运行时待后续手验 | 程序化通过；冲突三角（faults 22/0）；来源浮窗待实现 |
 | TOOLBAR-04 | 作者手验通过；桌面键鼠 | 作者手验通过 | 作者手验通过；纯触控条件未验 | 作者手验通过；基础操作；纯触控条件已验 |
 | TOOLBAR-05 | 作者手验通过；共享 ExifDisplayFormat 四端同源 | 作者手验通过；取共享 ExifDisplayFormat | 作者手验通过；取共享 ExifDisplayFormat；EXIF 值 Bold（TOOLBAR-05@win） | 作者手验通过；基础操作；取共享 ExifDisplayFormat |
 | TOOLBAR-06 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；入口已接线 |
@@ -181,7 +183,7 @@
 |---|---|---|---|---|
 | STATE-01 | 程序化通过；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），切图无黑帧待手验 | 程序化通过（模拟器）；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），真机待手验 | 代码核对；类型检查通过，未本机运行，低分辨率顶替未启用（共享能力已就绪） | 作者手验通过；基础操作；保留前一张/黑屏加载；RAW 初次解码以内嵌预览低分辨率顶替 |
 | STATE-02 | 程序化通过；faults: 打开失败提示条 | 程序化通过；faults: 打开失败提示条 | 程序化通过；打开失败走提示条，代码核对 | 程序化通过；打开失败走提示条 |
-| STATE-03 | 程序化通过；faults 覆盖评分失败提示 | 程序化通过；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；faults 24/0 |
+| STATE-03 | 程序化通过；faults 覆盖评分失败提示 | 程序化通过；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；faults 22/0 |
 | STATE-04 | 程序化通过 | 程序化通过 | 程序化通过 | 程序化通过；模型/推理失败；数据库不可用未注入 |
 
 ## settings

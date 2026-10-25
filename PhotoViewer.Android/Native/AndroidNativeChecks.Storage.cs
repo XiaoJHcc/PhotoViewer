@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
@@ -10,6 +11,7 @@ using Android.OS;
 using Android.Provider;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
 using AndroidUri = Android.Net.Uri;
 using IOPath = System.IO.Path;
@@ -19,7 +21,7 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// <c>--es pv-check storage</c>（验收专用）：经 <see cref="DebugTestDocumentsProvider"/> 的真实
 /// <c>content://</c> 文档树核对 SAF 存储引用与写入链路——文档身份、嵌套目录枚举、缺失 size/mtime、
-/// 内嵌/侧车 XMP 写回、只读与非可定位拒绝、原子替换拒绝、Provider 拒绝访问与恢复，
+/// 内嵌/同名 sidecar XMP 写回（ARW 写内嵌且不创建 sidecar、已有 sidecar 随整组同步）、只读与非可定位拒绝、原子替换拒绝、Provider 拒绝访问与恢复，
 /// 以及 ACTION_VIEW 经共享通道打开与同 UID 读取。Provider 与宿主同 UID，不验证第三方临时授权；
 /// 全部素材只写 App 私有目录，不触碰用户照片；不模拟 MTP/USB 设备。
 /// </summary>
@@ -32,6 +34,41 @@ internal static partial class AndroidNativeChecks
         0x00, 0x00,                         // IFD0 条目数 0
         0x00, 0x00, 0x00, 0x00,             // 下一个 IFD = 0
     ];
+
+    /// <summary>经典小端 TIFF（ARW 家族）：IFD0 单条 tag 700（BYTE）指向文件尾的 canonical XMP 包。</summary>
+    /// <param name="rating">初始星级 0–5。</param>
+    /// <returns>完整 TIFF 字节。</returns>
+    private static byte[] BuildTiffWithXmpRating(int rating)
+    {
+        byte[] packet = BuildXmpPacket(rating, 512);
+        const int ifdOffset = 8, entrySize = 12, entryCount = 1;
+        int packetOffset = ifdOffset + 2 + entryCount * entrySize + 4;
+        using var stream = new MemoryStream(packetOffset + packet.Length);
+        using (var writer = new BinaryWriter(stream, Encoding.ASCII, true))
+        {
+            writer.Write((byte)'I');
+            writer.Write((byte)'I');
+            writer.Write((ushort)42);
+            writer.Write((uint)ifdOffset);
+            writer.Write((ushort)entryCount);
+            writer.Write((ushort)0x02BC);
+            writer.Write((ushort)1);
+            writer.Write((uint)packet.Length);
+            writer.Write((uint)packetOffset);
+            writer.Write(0u);
+            writer.Write(packet);
+        }
+
+        return stream.ToArray();
+    }
+
+    /// <summary>Debug Provider writable 树中某个相对路径的 backing store 绝对路径（验收写夹具用）。</summary>
+    /// <param name="relative">相对写树根的路径。</param>
+    /// <returns>绝对路径。</returns>
+    private static string PathForWritable(string relative) => IOPath.Combine(
+        DebugTestDocumentsProvider.StoreRoot(Application.Context),
+        DebugTestDocumentsProvider.WritableRoot,
+        relative.Replace('/', IOPath.DirectorySeparatorChar));
 
     /// <summary>存储验收入口：重建 provider backing store 后按顺序核对七组语义。</summary>
     private static async Task RunStorageChecksAsync()
@@ -268,36 +305,64 @@ internal static partial class AndroidNativeChecks
             + $"bytes={streamBefore.Length}->{streamAfter.Length}");
     }
 
-    /// <summary>5) sidecar 新建/读回/删除、CreateFile 非法名、AtomicWrite 明确 Unsupported。</summary>
+    /// <summary>5) RAW 内嵌写入不建 sidecar、已有 sidecar 随整组同步、CreateFile 非法名、AtomicWrite 明确 Unsupported。</summary>
     private static async Task CheckSidecarAndFileOpsAsync(ContentResolver resolver)
     {
         var treeRoot = TreeUri(DebugTestDocumentsProvider.WritableRoot);
         var folder = new AndroidFolderRef(resolver, treeRoot, null);
+        // 无 tag 700 的 TIFF：内嵌来源不能安全新增，明确 Unsupported；不得用 sidecar 顶替。
         var arw = new AndroidFileRef(resolver, DocumentUri(treeRoot, "writable/photo.arw"), treeRoot);
         var store = XmpRatingStoreFactory.Create(arw);
-        var write = await CatchStorageAsync(() => store.WriteAsync(3, safeMode: true));
-        var read = await store.ReadAsync();
-        var sidecar = await folder.FindFileAsync("photo.xmp");
-        int sidecarRating = -1;
-        var sidecarRead = await CatchStorageAsync(async () =>
-            sidecarRating = (await XmpRatingReader.ReadSidecarAsync(arw))?.ValueOrZero ?? -1);
-        long sidecarSize = -1;
-        if (sidecar != null)
-        {
-            try { sidecarSize = (long)((await sidecar.GetBasicPropertiesAsync()).Size ?? 0); }
-            catch (Exception) { }
-        }
-        Check("storage sidecar 新建与读回",
-            write.Error == null && read.ValueOrZero == 3 && sidecar != null && sidecarRating == 3,
-            $"write={write.Error?.ToString() ?? "ok"} {write.Message} store={read.ValueOrZero} "
-            + $"sidecar={sidecar?.Name ?? "null"} size={sidecarSize} xmp={sidecarRating} read={sidecarRead.Message}");
+        var unsupported = await CatchStorageAsync(() => store.WriteAsync(3, safeMode: true));
+        var sidecarAfterReject = await folder.FindFileAsync("photo.xmp");
+        Check("storage ARW 无 tag 700 拒绝内嵌写入且不建 sidecar",
+            unsupported.Error == StorageError.Unsupported && sidecarAfterReject == null,
+            $"write={unsupported.Error?.ToString() ?? "none"} {unsupported.Message} "
+            + $"sidecar={sidecarAfterReject?.Name ?? "null"}");
 
-        if (sidecar != null) await sidecar.DeleteAsync();
-        var afterDelete = await store.ReadAsync();
+        // 有 tag 700 的 TIFF（ARW 家族）：写内嵌成功，且仍然不创建 sidecar。
+        File.WriteAllBytes(PathForWritable("photo.arw"), BuildTiffWithXmpRating(1));
+        var embedded = new AndroidFileRef(resolver, DocumentUri(treeRoot, "writable/photo.arw"), treeRoot);
+        var embeddedStore = XmpRatingStoreFactory.Create(embedded);
+        var embeddedWrite = await CatchStorageAsync(() => embeddedStore.WriteAsync(3, safeMode: true));
+        var embeddedRead = await embeddedStore.ReadAsync();
+        var sidecarAfterEmbedded = await folder.FindFileAsync("photo.xmp");
+        Check("storage ARW 写内嵌且不创建 sidecar",
+            embeddedWrite.Error == null && embeddedRead.ValueOrZero == 3 && sidecarAfterEmbedded == null,
+            $"write={embeddedWrite.Error?.ToString() ?? "ok"} {embeddedWrite.Message} "
+            + $"embedded={embeddedRead.ValueOrZero} sidecar={sidecarAfterEmbedded?.Name ?? "null"}");
+
+        // 已存在的同名 sidecar 是独立来源：整组写入必须同时更新内嵌与 sidecar。
+        var sidecarFile = await folder.CreateFileAsync("photo.xmp");
+        byte[] packet = BuildXmpPacket(2);
+        await using (var write = await sidecarFile.OpenRandomAccessAsync(StorageAccessMode.ReadWrite))
+        {
+            await write.WriteAsync(0, packet);
+            await write.SetLengthAsync(packet.Length);
+            await write.FlushAsync();
+        }
+
+        var image = new ImageFile(embedded);
+        var group = PhotoGroupMap.Build([image], false, [new PhotoFormatRule("arw", "ARW", [".arw"])])
+            .GroupFor(image)!;
+        var groupWrite = await new RatingService().SetRatingAsync(group, 4, safeMode: true);
+        var embeddedAfterGroup = (await XmpRatingReader.ReadEmbeddedAsync(embedded)).ValueOrZero;
+        var sidecarAfterGroup = (await XmpRatingReader.ReadSidecarAsync(embedded))?.ValueOrZero ?? -1;
+        Check("storage 已有 sidecar 随整组同步",
+            groupWrite.IsApplied && embeddedAfterGroup == 4 && sidecarAfterGroup == 4,
+            $"outcome={groupWrite.Outcome} embedded={embeddedAfterGroup} sidecar={sidecarAfterGroup} "
+            + $"reason={groupWrite.FailureReason ?? "none"}");
+
+        if (sidecarFile != null) await sidecarFile.DeleteAsync();
+        var afterDelete = await embeddedStore.ReadAsync();
         var sidecarAfter = await folder.FindFileAsync("photo.xmp");
-        Check("storage sidecar 删除后不再作为权威",
-            sidecarAfter == null && afterDelete.State == XmpRatingState.Missing,
-            $"sidecar={sidecarAfter?.Name ?? "null"} state={afterDelete.State}");
+        var sourcesAfterDelete = await RatingSourceReader.ReadAsync(embedded, RatingSidecarIndex.Empty);
+        Check("storage sidecar 删除后不再作为来源",
+            sidecarAfter == null && afterDelete.ValueOrZero == 4
+            && sourcesAfterDelete.Sources.Count == 1
+            && sourcesAfterDelete.Sources.All(source => source.Source == XmpRatingSource.Embedded),
+            $"sidecar={sidecarAfter?.Name ?? "null"} embedded={afterDelete.ValueOrZero} "
+            + $"sources={sourcesAfterDelete.Sources.Count}");
 
         var invalid = new List<string>();
         foreach (string name in new[] { "bad/name.jpg", " ", ".." })

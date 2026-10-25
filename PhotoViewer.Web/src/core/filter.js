@@ -1,8 +1,10 @@
 /**
  * 文件列表：格式与同名合并（OPEN-02、PRIN-06）→ 星级筛选（FILTER-03）→ 排序（FILTER-02），
  * 附带暂留（FILM-06）、锚点翻页（FILTER-05）与首图回退（OPEN-04）。
+ * 星级投影与组级冲突口径集中在 rating.js（RATING-01/05）。
  * 所有变更方法返回 cards 是否变化；version 在 cards 变化时 +1。
  */
+import { hasRatingConflict, matchesRatingFilter } from "./rating.js";
 
 export const RATING_FILTERS = Object.freeze([
     { value: "all", label: "全部" },
@@ -16,6 +18,7 @@ export const RATING_FILTERS = Object.freeze([
     { value: "2+", label: "二星以上" },
     { value: "3+", label: "三星以上" },
     { value: "4+", label: "四星以上" },
+    { value: "rejected", label: "已拒绝" },
     { value: "conflict", label: "星级冲突" },
 ]);
 
@@ -60,11 +63,20 @@ function compareName(a, b) {
     return 0;
 }
 
+function sourceSignature(photo) {
+    // RATING-01：sidecar 与来源状态参与签名，外部刷新后冲突指示才会跟着更新。
+    const sidecar = photo.sidecar;
+    const sidecarText = sidecar && typeof sidecar === "object"
+        ? `${sidecar.rating ?? ""}/${sidecar.state ?? sidecar.ratingState ?? ""}`
+        : "-";
+    return `${photo.id}:${photo.rating ?? ""}/${photo.ratingState ?? ""}/${sidecarText}`;
+}
+
 function signatureOf(cards) {
     let out = "";
     for (const card of cards) {
-        out += `${card.key}:${card.photo.rating}`;
-        for (const companion of card.companions) out += `|${companion.id}:${companion.rating}`;
+        out += `${card.key}:${sourceSignature(card.photo)}`;
+        for (const companion of card.companions) out += `|${sourceSignature(companion)}`;
         out += ";";
     }
     return out;
@@ -186,8 +198,11 @@ export class FileList {
     }
 
     hasRatingConflict(card) {
-        if (!this._sameNameAsOne || !card || card.companions.length === 0) return false;
-        return card.companions.some((companion) => companion.rating !== card.photo.rating);
+        if (!this._sameNameAsOne) {
+            // FILTER-03：合并关闭时不再比较伴侣，但同一文件内/与已有 sidecar 的冲突仍可命中。
+            return card ? hasRatingConflict({ ...card, companions: [] }) : false;
+        }
+        return hasRatingConflict(card);
     }
 
     firstCard() {
@@ -304,13 +319,7 @@ export class FileList {
     }
 
     _matches(card) {
-        const rating = card.photo.rating;
-        const value = this._ratingFilter;
-        if (value === "all") return true;
-        if (value === "none") return rating === 0;
-        if (value === "conflict") return this.hasRatingConflict(card);
-        if (value.endsWith("+")) return rating >= Number(value.slice(0, -1));
-        return rating === Number(value);
+        return matchesRatingFilter(card, this._ratingFilter);
     }
 
     _compare(a, b) {

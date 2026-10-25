@@ -70,11 +70,12 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **RATING-02、RATING-06**：定位与写入由 `PhotoViewer/Core/Exif/XmpContainerIO.cs`（等长原位与 Rating 附近局部空白吸收；远端 padding 移位、受控追加、整文件替换本轮不采用）、`XmpPacketEditor.cs`（只改 `xap:Rating`）与各容器适配器承担：`JpegXmpContainerAdapter`、`HeifXmpContainerAdapter`、`TiffXmpContainerAdapter`、`WebpXmpContainerAdapter`，以及已有 `<stem>.xmp` 的 sidecar 存储；PNG 写入整体挂账（含标准 `iTXt`，必须维护容器级 CRC 事务），本轮 `Unsupported`。无 canonical XMP 包（含 JPEG 无 APP1）时不新建或插入容器结构，按 `StorageError.Unsupported` 处理；已有包但缺 `xap:Rating` 时只在包结构唯一且空白足够时于包内插入，否则同样不支持。不新增结构、不用 sidecar 顶替。来源枚举由 `PhotoGroupMap.RatingSources` 汇总，`XmpRatingStoreFactory` 为每个实际来源选择适配器；没有创建 sidecar 的入口。
   - **RATING-06@mac / @win / @ios**：本轮只做等长与 Rating 附近局部空白吸收的原位写；远端 padding 移位、受控追加与整文件替换挂账。
   - **RATING-06@android**：SAF 目标先核对可定位原位写能力；不可定位句柄、云 Provider 或需要远端移位/扩容的写入在首次修改前失败，不做原位假成功。
-- **RATING-04**：冲突三角与来源浮窗入口落在控制栏评分组与胶片栏卡片的 0 号槽位；点击只开浮窗、不写值。浮窗布局按 [spec/rating.md](spec/rating.md) RATING-04：宽度随星级控件、纵向来源条目、三信息行与长名双行、条目间分隔线。macOS 已按此定稿；iOS / Windows / Android / Web 仍为横排旧形态，待同步。
+- **RATING-04**：冲突三角落在控制栏评分组与胶片栏卡片的 0 号槽位；三角只作指示，不写值。macOS 已按 [spec/rating.md](spec/rating.md) RATING-04 完整实现来源浮窗；iOS / Windows / Android / Web 当前只实现冲突指示，点击三角不动作，来源浮窗待实现。浮窗设计约束以 macOS 版本为准：内容固定 204 点并在原生弹层内居中；条目位于内容内 x=4、宽 196（180 星排 + 2×8），文字与星排左右各 12 点，分隔线宽 196；纵向来源条目、三信息行与长名双行；星级行 6×30 点，空间不足时六格等比收窄。
   - **RATING-04@mac**：`NSPopover` 的原生毛玻璃与圆角是唯一外观，内容区不自绘背景、描边或圆角；来源标签底与条目间分隔线用标准 `NSBox`，文件名/来源/状态用 `NSTextField`，星按钮复用控制栏评分按钮的槽位、字形与悬停/按下反馈。
   - **RATING-04@mac / @ios**：警示三角取 SF Symbols `exclamationmark.triangle.fill`，语义同 `icon.warning`。
   - **RATING-04@win**：警示三角取 Segoe Fluent Icons Warning `E7BA`；**@android / @web** 直接用 `icon.warning`（U+FE33）。
 - **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs:48`；训练快照由独立仓 `Training/DatasetBuilder` 只读取实际选用的文件（`Training/DatasetBuilder/FingerprintGrouper.cs`），sidecar 与伴侣不参与取 max，文件内部冲突或无效时不落值。scan-only 验证见 [纠正计划](../Plans/rating-storage-correction-plan-1.md)。
+- Web 参考壳没有真实文件写入；冲突指示与 13 项筛选由 `?check=all` 校验界面语义（合成数据），来源浮窗待实现。
 
 ## shell
 

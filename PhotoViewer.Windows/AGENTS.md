@@ -13,7 +13,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsOpenPaths.cs`、`WindowsSingleInstance.cs` | 命令行、文件激活与二次启动路径 → `LocalFileRef`/`LocalFolderRef`；`AppInstance` 单实例把二次激活转发到主实例的 `OpenRequestChannel`。隔离验收/压测不注册单实例键，避免与用户实例互相转发。 |
 | `Native/WindowsLayout.cs`、`WindowsWrapPanel.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsPhotoView.cs`、`WindowsNavigator.cs` | D3D 照片表面、共享视口接线与缩放导航图。 |
-| `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选、胶片栏、卡片、EXIF 与评分/命令栏，以及主屏小型控件的四态外观。 |
+| `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选、胶片栏、卡片、EXIF 与评分/命令栏、评分冲突警示三角，以及主屏小型控件的四态外观。 |
 | `Native/WindowsAnalysisPanel.cs`、`WindowsSimilarityPanel.cs`、`WindowsDiagnostic*.cs`、`WindowsShakeFieldView.cs` | 分析/相似面板与共用诊断瓦片。 |
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制。 |
 | `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。 |
@@ -53,6 +53,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 - 布局回调不改子元素尺寸或创建位图；瓦片尺寸交给 `Measure/Arrange`，尺寸变化后的裁剪等副作用异步处理。
 - 主屏小型控件（命令按钮、评分星、相似聚类开关、动作按钮）的常态/悬停/按下/禁用统一走 `WindowsControlStyles`：按元素覆盖模板状态键，禁用不换底色、只降内容不透明度；只设 `Background` 不够，WinUI 模板会在禁用/悬停时回落到主题资源。
+- 评分冲突（RATING-04）：组级冲突时卡片与控制栏的 0 号槽位换成警示三角（`WindowsIcons.WarningGlyph` + `WindowsLayout.StarConflict`），按钮几何与命中区不变；三角只作指示，点击不写值、不切主图。控制栏订阅当前文件的 `Rating`/`HasRatingConflict`/`RatingSources`，后台来源读取完成后三角自动刷新。来源浮窗尚未移植到 Windows（macOS 已实现，设计约束见 [RATING-04](../Design/spec/rating.md) 与 [platforms](../Design/platforms.md#rating)），点击三角不打开任何界面。
 - 主窗口快捷键挂在根元素 `PreviewKeyDown`（`AddHandler(..., handledEventsToo: true)`），不依赖冒泡焦点路径：未映射/未绑定的按键放行，焦点在文本编辑控件内时整体放行；设置/工具窗口各自独立处理键盘。命令能否执行由共享 `InputCommandMap.IsCommandKnown` 判定，`WindowsIcons` 只负责显示。
 - 控制栏换行由 `WindowsWrapPanel.MainLimit` 驱动：主轴上限取滚动视口，能整组换行时不得以滚动代替；单组超长才由 `ScrollViewer` 兜底。
 - 导航图白框可拖动：`WindowsNavigator.PressAt/DragTo` 换算归一化点，交 `WindowsPhotoView.CenterOnNormalizedPoint`；滚轮仍冒泡给主图缩放。
@@ -75,7 +76,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 | 参数 | 用途 |
 |---|---|
-| `--pv-native-smoke` | 主窗口、解码/渲染、模型与交互冒烟；使用隔离设置、数据库和自有素材。 |
+| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；使用隔离设置、数据库和自有素材。 |
 | `--pv-native-portable` | 与 smoke 合用，核对实际已加载的 CRT/libheif/ONNX/DirectML 均来自应用解包目录。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
 | `--pv-stress=<文件夹>`（`--pv-stress-count=N`、`--pv-stress-mode=ab`、`--pv-stress-native-threads=N`） | 压测翻页：顺序模式按展示列表连翻，`ab` 模式在相邻两张之间来回切（测"最近两张对比"）。`--pv-stress-native-threads` 覆盖本轮的后台预取并发（隔离设置每轮重置，用于并行度对照实验）。与验收入口同样使用隔离设置与数据库。 |

@@ -33,7 +33,9 @@ internal sealed class WindowsThumbnailCard : Grid
     private readonly Border _secondLineFill;
     private readonly StackPanel _stars;
     private readonly TextBlock[] _starGlyphs = new TextBlock[6];
+    private readonly Button[] _starButtons = new Button[6];
     private readonly SolidColorBrush _starClearBrush;
+    private readonly SolidColorBrush _starConflictBrush;
     private readonly SolidColorBrush _starOnBrush;
     private readonly SolidColorBrush _starOffBrush;
     private readonly SolidColorBrush _currentBorderBrush;
@@ -63,6 +65,7 @@ internal sealed class WindowsThumbnailCard : Grid
 
         // 星级与描边只在这几种颜色间切换;画刷在 UI 线程建一次,Refresh 只换引用,不再逐次分配。
         _starClearBrush = new SolidColorBrush(WindowsLayout.StarClear);
+        _starConflictBrush = new SolidColorBrush(WindowsLayout.StarConflict);
         _starOnBrush = new SolidColorBrush(WindowsLayout.StarOn);
         _starOffBrush = new SolidColorBrush(WindowsLayout.StarOff);
         _currentBorderBrush = new SolidColorBrush(WindowsLayout.CurrentBorder);
@@ -245,8 +248,9 @@ internal sealed class WindowsThumbnailCard : Grid
             WindowsControlStyles.ApplyTransparentSquareButton(button);
             // 星级点击只改评分,不冒泡成"切换主图"(FILM-05)
             button.PointerPressed += (_, e) => e.Handled = true;
-            button.Click += (_, _) => RateAsync(value);
+            button.Click += (_, _) => OnRatingSlotClicked(value);
             _starGlyphs[star] = glyph;
+            _starButtons[star] = button;
             _stars.Children.Add(button);
         }
 
@@ -374,17 +378,34 @@ internal sealed class WindowsThumbnailCard : Grid
 
         _stars.Visibility = _showRating ? Visibility.Visible : Visibility.Collapsed;
         var rating = file.Rating;
+        var hasConflict = file.HasRatingConflict;
         for (var star = 0; star <= 5; star++)
         {
             var on = star > 0 && rating >= star;
             var glyph = _starGlyphs[star];
-            glyph.Text = star == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
-            glyph.FontSize = star == 0 ? 8 : WindowsLayout.CardStarFontSize;
+            glyph.Text = star == 0
+                ? hasConflict ? WindowsIcons.WarningGlyph : WindowsIcons.ClearGlyph
+                : on ? WindowsIcons.StarGlyph : "\uE734";
+            glyph.FontSize = star == 0
+                ? hasConflict ? WindowsLayout.CardStarFontSize : DesignTokens.FilmCardClearGlyphSize
+                : WindowsLayout.CardStarFontSize;
             glyph.Foreground = star == 0
-                ? _starClearBrush
+                ? hasConflict ? _starConflictBrush : _starClearBrush
                 : on ? _starOnBrush : _starOffBrush;
         }
     }
+
+    /// <summary>验收专用:卡片当前绑定的文件。</summary>
+    internal ImageFile? BoundFile => _file;
+
+    /// <summary>验收专用:0 号槽位按钮。</summary>
+    internal Button RatingZeroButton => _starButtons[0];
+
+    /// <summary>验收专用:0 号槽位当前字形。</summary>
+    internal string RatingZeroGlyph => _starGlyphs[0].Text;
+
+    /// <summary>验收专用:0 号槽位当前颜色。</summary>
+    internal Color RatingZeroColor => (_starGlyphs[0].Foreground as SolidColorBrush)?.Color ?? default;
 
     /// <summary>把缩略图转成 XAML 位图(读取期间持租约,避免与缓存淘汰竞态)。</summary>
     private static ImageSource? ConvertThumbnail(DecodedImage? thumbnail)
@@ -416,6 +437,14 @@ internal sealed class WindowsThumbnailCard : Grid
         {
             _select(_file);
         }
+    }
+
+    /// <summary>0 号槽位在组级冲突时只作警示,不写值;其余情况按星数写回(RATING-04)。</summary>
+    private void OnRatingSlotClicked(int rating)
+    {
+        if (rating == 0 && _file is { HasRatingConflict: true }) return;
+
+        RateAsync(rating);
     }
 
     /// <summary>评分并刷新。</summary>

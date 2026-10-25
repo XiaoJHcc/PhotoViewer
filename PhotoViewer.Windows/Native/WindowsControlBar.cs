@@ -6,6 +6,7 @@ using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -33,6 +34,7 @@ internal sealed class WindowsControlBar : Grid
     private readonly StackPanel _commandStack;
     private readonly List<Border> _exifBlocks = new();
     private readonly List<Button> _starButtons = new();
+    private ImageFile? _currentFile;
     private bool _refreshPending;
     private bool _fileRefreshPending;
     private bool _ratingRefreshPending;
@@ -94,7 +96,7 @@ internal sealed class WindowsControlBar : Grid
         {
             var value = star;
             var button = CreateGlyphButton(ratingMetrics.Width, DesignTokens.ToolbarRatingGlyphFontSize, null);
-            button.Click += (_, _) => RateCurrent(value);
+            button.Click += (_, _) => OnRatingSlotClicked(value);
             _starButtons.Add(button);
             _ratingStack.Children.Add(button);
         }
@@ -141,6 +143,7 @@ internal sealed class WindowsControlBar : Grid
         _main.PropertyChanged += OnMainChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.Settings.PropertyChanged += OnControlChanged;
+        AttachCurrentFile(_main.CurrentFile);
         Refresh();
     }
 
@@ -249,6 +252,7 @@ internal sealed class WindowsControlBar : Grid
         _main.PropertyChanged -= OnMainChanged;
         _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.Settings.PropertyChanged -= OnControlChanged;
+        AttachCurrentFile(null);
     }
 
     /// <summary>
@@ -410,20 +414,29 @@ internal sealed class WindowsControlBar : Grid
         return string.Join(" · ", parts);
     }
 
-    /// <summary>按当前照片评分刷新星色；无照片时整组走系统禁用态，不用透明度近似隐藏。</summary>
+    /// <summary>
+    /// 按当前照片评分刷新星色；无照片时整组走系统禁用态，不用透明度近似隐藏。
+    /// 组级冲突时 0 号槽位换成警示三角，按钮几何与命中区不变(RATING-04)。
+    /// </summary>
     private void RefreshRating()
     {
-        var rating = _main.CurrentFile?.Rating ?? 0;
-        bool hasFile = _main.CurrentFile != null;
+        var file = _main.CurrentFile;
+        var rating = file?.Rating ?? 0;
+        var hasFile = file != null;
+        var hasConflict = file?.HasRatingConflict == true;
         for (var star = 0; star <= 5; star++)
         {
             var button = _starButtons[star];
             var on = star > 0 && rating >= star;
+            var glyph = star == 0
+                ? hasConflict ? WindowsIcons.WarningGlyph : WindowsIcons.ClearGlyph
+                : on ? WindowsIcons.StarGlyph : "\uE734";
+            var size = star == 0 && !hasConflict
+                ? DesignTokens.ToolbarRatingClearGlyphFontSize
+                : WindowsLayout.RatingGlyphFontSize;
             var tint = star == 0
-                ? WindowsLayout.StarClear
+                ? hasConflict ? WindowsLayout.StarConflict : WindowsLayout.StarClear
                 : on ? WindowsLayout.StarOn : WindowsLayout.StarOff;
-            var glyph = star == 0 ? WindowsIcons.ClearGlyph : on ? WindowsIcons.StarGlyph : "\uE734";
-            var size = star == 0 ? DesignTokens.ToolbarRatingClearGlyphFontSize : WindowsLayout.RatingGlyphFontSize;
             button.Content = CreateGlyph(glyph, size, tint);
             WindowsControlStyles.SetContentEnabled(button, hasFile);
         }
@@ -534,6 +547,23 @@ internal sealed class WindowsControlBar : Grid
         return button;
     }
 
+    /// <summary>0 号槽位在组级冲突时只作警示,不写值;其余情况按星数写回(RATING-04)。</summary>
+    private void OnRatingSlotClicked(int rating)
+    {
+        if (rating == 0 && _main.CurrentFile is { HasRatingConflict: true }) return;
+
+        RateCurrent(rating);
+    }
+
+    /// <summary>验收专用:0 号评分按钮。</summary>
+    internal Button RatingZeroButton => _starButtons[0];
+
+    /// <summary>验收专用:0 号评分按钮当前字形。</summary>
+    internal string RatingZeroGlyph => (_starButtons[0].Content as TextBlock)?.Text ?? string.Empty;
+
+    /// <summary>验收专用:0 号评分按钮当前颜色。</summary>
+    internal Color RatingZeroColor => ((_starButtons[0].Content as TextBlock)?.Foreground as SolidColorBrush)?.Color ?? default;
+
     /// <summary>按评分设置当前照片。</summary>
     private async void RateCurrent(int rating)
     {
@@ -552,7 +582,47 @@ internal sealed class WindowsControlBar : Grid
     {
         if (e.PropertyName == nameof(MainViewModel.CurrentFile))
         {
+            AttachCurrentFile(_main.CurrentFile);
             ScheduleFileRefresh();
+        }
+    }
+
+    /// <summary>
+    /// 订阅当前文件:评分来源在后台读完后只改文件属性,控制栏要跟着刷新冲突三角,
+    /// 不能只等 CurrentFile 变化。
+    /// </summary>
+    private void AttachCurrentFile(ImageFile? file)
+    {
+        if (ReferenceEquals(_currentFile, file))
+        {
+            return;
+        }
+
+        if (_currentFile != null)
+        {
+            _currentFile.PropertyChanged -= OnCurrentFileChanged;
+        }
+
+        _currentFile = file;
+        if (_currentFile != null)
+        {
+            _currentFile.PropertyChanged += OnCurrentFileChanged;
+        }
+    }
+
+    /// <summary>当前文件的评分/冲突来源变化:刷新评分组,不重建命令按钮。</summary>
+    private void OnCurrentFileChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (!ReferenceEquals(sender, _currentFile))
+        {
+            return;
+        }
+
+        if (e.PropertyName is nameof(ImageFile.Rating)
+            or nameof(ImageFile.HasRatingConflict)
+            or nameof(ImageFile.RatingSources))
+        {
+            ScheduleRatingRefresh();
         }
     }
 

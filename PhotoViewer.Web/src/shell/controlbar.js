@@ -51,6 +51,10 @@ function createClearGlyph(t) {
     return icon(t, "icon.clear", "pv-rating-glyph pv-rating-clear");
 }
 
+function createConflictGlyph(t) {
+    return icon(t, "icon.warning", "pv-rating-glyph pv-rating-conflict");
+}
+
 function coordinateOf(axis, child) {
     return axis === "vertical" ? child.y : child.x;
 }
@@ -85,6 +89,7 @@ export function mountControlBar(host, ctx) {
     let layoutRef = null;
     let metrics = null;
     let drag = null;
+    let ratingConflict = false;
 
     function ensureGroup(kind) {
         let node = groups.get(kind);
@@ -117,7 +122,9 @@ export function mountControlBar(host, ctx) {
 
     function createRatingButton(value) {
         const label = value === 0 ? "无星级" : `${value} 星`;
-        const glyph = value === 0 ? createClearGlyph(t) : createStarGlyph(t);
+        const glyph = value === 0
+            ? [createClearGlyph(t), createConflictGlyph(t)]
+            : createStarGlyph(t);
         const button = el("button", {
             type: "button",
             class: value === 0 ? "pv-control-rating-button is-clear" : "pv-control-rating-button is-off",
@@ -125,7 +132,11 @@ export function mountControlBar(host, ctx) {
             "data-tooltip": label,
         }, glyph);
         button.dataset.rating = String(value);
-        button.addEventListener("click", () => ctx.app.rate(undefined, value));
+        button.addEventListener("click", () => {
+            // RATING-04：来源浮窗尚未实现，冲突三角只作指示，不写值。
+            if (value === 0 && ratingConflict) return;
+            ctx.app.rate(undefined, value);
+        });
         return button;
     }
 
@@ -173,6 +184,17 @@ export function mountControlBar(host, ctx) {
         reorder(container, order.map((child) => ratingButtons[child.index]).filter(Boolean));
         for (let value = 0; value < RATING_COUNT; value += 1) {
             ratingButtons[value].disabled = !rating.enabled;
+        }
+        // RATING-04：组级冲突时 0 号按钮保持 30×30 与命中区，只换成红色警示三角。
+        const conflict = Boolean(rating.conflict);
+        if (conflict !== ratingConflict) {
+            ratingConflict = conflict;
+            const zero = ratingButtons[0];
+            zero.classList.toggle("is-conflict", conflict);
+            zero.classList.toggle("is-clear", !conflict);
+            const label = conflict ? "星级冲突" : "无星级";
+            zero.setAttribute("aria-label", label);
+            zero.dataset.tooltip = label;
         }
         for (let value = 1; value < RATING_COUNT; value += 1) {
             const on = rating.value >= value;

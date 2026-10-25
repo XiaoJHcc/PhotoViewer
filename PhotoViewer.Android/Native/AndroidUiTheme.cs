@@ -40,6 +40,8 @@ internal static class AndroidUiTheme
     internal static readonly Color StarInactive = FromToken(DesignTokens.ColorStarOff);
     /// <summary>0 星清零叉（FILM-05）。</summary>
     internal static readonly Color StarClear = FromToken(DesignTokens.ColorStarClear);
+    /// <summary>星级冲突警示三角（RATING-04，<c>color.star.conflict</c>）。</summary>
+    internal static readonly Color StarConflict = FromToken(DesignTokens.ColorStarConflict);
     /// <summary>抖动徽标橙色。</summary>
     internal static readonly Color ShakeBadge = FromToken(DesignTokens.ColorFilmShakeBadge);
     /// <summary>相似聚类面板底色（SIM-01）。</summary>
@@ -211,6 +213,24 @@ internal static class AndroidUiTheme
             else high = mid - 1;
         }
         return low <= 0 ? ellipsis : text[..low] + ellipsis;
+    }
+
+    /// <summary>
+    /// 警示三角路径（<c>icon.warning</c> 语义）：以中心点为基准的等边三角，供 0 号槽位替换清零叉。
+    /// </summary>
+    /// <param name="cx">中心横坐标。</param>
+    /// <param name="cy">中心纵坐标。</param>
+    /// <param name="height">三角高度（px）。</param>
+    /// <returns>闭合三角路径。</returns>
+    internal static Path WarningTriangle(float cx, float cy, float height)
+    {
+        float half = height * .56f;
+        var path = new Path();
+        path.MoveTo(cx, cy - height / 2);
+        path.LineTo(cx + half, cy + height / 2);
+        path.LineTo(cx - half, cy + height / 2);
+        path.Close();
+        return path;
     }
 
     /// <summary>绘制居中单行文本。</summary>

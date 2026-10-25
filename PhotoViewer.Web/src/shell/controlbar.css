@@ -109,6 +109,24 @@
     color: var(--pv-color-star-clear);
 }
 
+/* RATING-04：组级冲突时 0 号槽位换成红色警示三角 toolbar.rating.glyph.fontSize（16）。 */
+.pv-rating-conflict {
+    display: none;
+    font-size: var(--pv-toolbar-rating-glyph-fontSize);
+}
+
+.pv-control-rating-button.is-conflict {
+    color: var(--pv-color-star-conflict);
+}
+
+.pv-control-rating-button.is-conflict .pv-rating-clear {
+    display: none;
+}
+
+.pv-control-rating-button.is-conflict .pv-rating-conflict {
+    display: block;
+}
+
 .pv-control-rating-button.is-on {
     color: var(--pv-color-star-on);
 }

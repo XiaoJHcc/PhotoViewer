@@ -406,6 +406,30 @@ internal sealed class WindowsFilmstripView : Grid
         _pool.Push(card);
     }
 
+    /// <summary>验收专用:取某个文件已实现的卡片;尚未实现或已回收时返回 null。</summary>
+    /// <param name="file">目标文件</param>
+    internal WindowsThumbnailCard? CardFor(ImageFile file) => FindCard(_scroll, file);
+
+    private static WindowsThumbnailCard? FindCard(DependencyObject container, ImageFile file)
+    {
+        if (container is WindowsThumbnailCard card)
+        {
+            return ReferenceEquals(card.BoundFile, file) ? card : null;
+        }
+
+        int children = VisualTreeHelper.GetChildrenCount(container);
+        for (int index = 0; index < children; index++)
+        {
+            var found = FindCard(VisualTreeHelper.GetChild(container, index), file);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+
+        return null;
+    }
+
     /// <summary>按滚动位置上报可见区,驱动缩略图加载优先级与 LRU 保护窗口。</summary>
     private void ReportVisibleRange()
     {

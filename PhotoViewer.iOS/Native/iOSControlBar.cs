@@ -24,6 +24,8 @@ internal sealed class iOSControlBar : UIView
     private UIView? _exifGroup;
     private Action? _openTools;
     private bool _horizontal;
+    /// <summary>评分组 0 号按钮当前字形（RATING-04：冲突警示三角 / 非冲突清零叉）。</summary>
+    private string _ratingClearSymbol = "xmark";
 
     /// <summary>业务分组视图（EXIF / 评分 / 命令，按顺序）。</summary>
     internal IReadOnlyList<UIView> Groups => _groups;
@@ -33,6 +35,10 @@ internal sealed class iOSControlBar : UIView
     internal IReadOnlyList<UIButton> Ratings => _ratings;
     /// <summary>EXIF 信息块分组（点击打开工具页；验收核对入口）。</summary>
     internal UIView? ExifGroup => _exifGroup;
+    /// <summary>评分组 0 号按钮（验收读取冲突字形与状态）。</summary>
+    internal UIButton? RatingClearButton => _ratings.Count > 0 ? _ratings[0] : null;
+    /// <summary>评分组 0 号按钮当前字形名称（冲突 <c>exclamationmark.triangle.fill</c>，否则 <c>xmark</c>）。</summary>
+    internal string RatingClearSymbol => _ratingClearSymbol;
 
     /// <summary>EXIF 信息块点按入口（识别器与验收共用）：打开工具页。</summary>
     internal void TapExifGroup() => _openTools?.Invoke();
@@ -83,12 +89,28 @@ internal sealed class iOSControlBar : UIView
             {
                 int value = rating;
                 bool active = rating > 0 && rating <= (main.CurrentFile?.Rating ?? 0);
+                // RATING-04：组级来源冲突时 0 号按钮换成警示三角（几何/命中区不变），点击不写值。
+                bool conflict = rating == 0 && (main.CurrentFile?.HasRatingConflict ?? false);
+                if (rating == 0) _ratingClearSymbol = conflict ? "exclamationmark.triangle.fill" : "xmark";
                 var button = new UIButton(new CGRect(0, 0, 30, 30));
-                button.SetImage(iOSSymbols.Symbol(rating == 0 ? "xmark" : active ? "star.fill" : "star", rating == 0 ? 12 : 16), UIControlState.Normal);
-                button.TintColor = active ? UIColor.FromRGB(255, 210, 20) : UIColor.SecondaryLabel;
+                button.SetImage(iOSSymbols.Symbol(
+                    rating == 0 ? _ratingClearSymbol : active ? "star.fill" : "star",
+                    rating == 0
+                        ? (conflict ? DesignTokens.ToolbarRatingGlyphFontSize : DesignTokens.ToolbarRatingClearGlyphFontSize)
+                        : DesignTokens.ToolbarRatingGlyphFontSize), UIControlState.Normal);
+                button.TintColor = rating == 0
+                    ? (conflict ? iOSColors.FromToken(DesignTokens.ColorStarConflict) : UIColor.SecondaryLabel)
+                    : active ? iOSColors.FromToken(DesignTokens.ColorStarOn) : UIColor.SecondaryLabel;
                 button.Enabled = main.CurrentFile != null;
-                button.AccessibilityLabel = rating == 0 ? "无星级" : $"{rating} 星";
-                button.TouchUpInside += (_, _) => rate(value);
+                button.AccessibilityLabel = rating == 0
+                    ? (conflict ? "星级冲突" : "无星级")
+                    : $"{rating} 星";
+                button.TouchUpInside += (_, _) =>
+                {
+                    // 来源浮窗尚未实现：冲突三角只作指示，点击不写 0。
+                    if (value == 0 && conflict) return;
+                    rate(value);
+                };
                 ratingGroup.AddSubview(button);
                 _ratings.Add(button);
             }
@@ -245,6 +267,7 @@ internal sealed class iOSControlBar : UIView
         _specs.Clear();
         _commands.Clear();
         _ratings.Clear();
+        _ratingClearSymbol = "xmark";
     }
 
     /// <summary>销毁时解除快捷键订阅并释放所有分组。</summary>

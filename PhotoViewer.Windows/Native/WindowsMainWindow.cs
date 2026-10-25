@@ -12,6 +12,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Shapes;
+using PhotoViewer.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
@@ -256,7 +257,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
-        _main.RatingWriteFailed += OnRatingWriteFailed;
+        _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _session.Changed += OnImageChanged;
@@ -302,7 +303,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
-        _main.RatingWriteFailed -= OnRatingWriteFailed;
+        _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _session.Changed -= OnImageChanged;
@@ -986,10 +987,10 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>星级写回失败:窗口内给可见提示,不保留看似成功的星色(FILM-06)。</summary>
-    /// <param name="file">写回失败的照片</param>
-    /// <param name="rating">本次请求的星级(文案由共享 StatusMessages 统一,不再回显)</param>
-    private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError));
+    /// <param name="failure">本次失败的结果、对象与原因。</param>
+    private void OnRatingWriteFailed(RatingWriteFailure failure)
+        => ShowStatus(StatusMessages.RatingWriteFailed(
+            failure.File.Name, failure.Reason, failure.IsPartial));
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文</param>

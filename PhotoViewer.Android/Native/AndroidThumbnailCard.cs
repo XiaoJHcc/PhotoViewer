@@ -28,6 +28,7 @@ internal sealed class AndroidThumbnailCard : View
     private readonly Paint _badgePaint;
     private readonly Paint _badgeTextPaint;
     private readonly Paint _linePaint;
+    private readonly Paint _conflictPaint;
     private readonly GestureDetector _gestures;
     private ImageFile? _file;
     private Bitmap? _thumbnail;
@@ -49,6 +50,8 @@ internal sealed class AndroidThumbnailCard : View
     internal static double CardHeightDp => 144;
     /// <summary>第二行文字（相似聚类为百分比；null 表示拍摄时间）。</summary>
     internal string? SecondLineText => _secondLineText;
+    /// <summary>0 号槽位是否为星级冲突警示三角（验收用）。</summary>
+    internal bool ShowsRatingConflict => _file?.HasRatingConflict == true;
 
     /// <summary>创建卡片并建好画笔/手势识别。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -65,6 +68,7 @@ internal sealed class AndroidThumbnailCard : View
         _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
         // FILM-05：清零叉使用中性图形色，不随评分点亮。
         _linePaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
+        _conflictPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarConflict);
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
@@ -204,15 +208,22 @@ internal sealed class AndroidThumbnailCard : View
                 badge.CenterY() + _badgeTextPaint.TextSize * .36f, badge.Width());
         }
 
-        // 星级：0 号为清除，1–5 号实心/空心星，按当前评分点亮。
+        // 星级：0 号为清除（组级冲突时为红色警示三角），1–5 号实心/空心星，按当前评分点亮。
         if (_showRating)
         {
+            bool conflict = _file.HasRatingConflict;
             for (int rating = 0; rating < 6; rating++)
             {
                 float cx = (float)(((96 - StarSize * 6) / 2 + rating * StarSize + StarSize / 2) * d);
                 float cy = (float)((119 + StarSize / 2) * d);
                 if (rating == 0)
                 {
+                    if (conflict)
+                    {
+                        using var warning = AndroidUiTheme.WarningTriangle(cx, cy, 11f * d);
+                        canvas.DrawPath(warning, _conflictPaint);
+                        continue;
+                    }
                     float arm = 3.2f * d;
                     canvas.DrawLine(cx - arm, cy - arm, cx + arm, cy + arm, _linePaint);
                     canvas.DrawLine(cx - arm, cy + arm, cx + arm, cy - arm, _linePaint);
@@ -293,6 +304,8 @@ internal sealed class AndroidThumbnailCard : View
             {
                 int rating = (int)((x - starLeft) / (float)(StarSize * density));
                 rating = Math.Clamp(rating, 0, 5);
+                // RATING-04：冲突时 0 号是警示三角，只作指示，不写 0、不切主图。
+                if (rating == 0 && _file.HasRatingConflict) return true;
                 _rate?.Invoke(_file, rating);
                 return true;
             }

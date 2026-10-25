@@ -3,10 +3,12 @@
  * globalThis.pvCheckResult。每条检查前重置到已知场景（harbor、1200×850、auto、减少动态效果开），
  * 故障照片按字段查找而不是写死文件名。
  *
- * 覆盖：FILM / FILTER / MENU / INPUT / IMAGE / TOOLBAR / STATE / ANALYSIS / SIM / OPEN / SHELL。
+ * 覆盖：FILM / FILTER / RATING / MENU / INPUT / IMAGE / TOOLBAR / STATE / ANALYSIS / SIM / OPEN / SHELL。
  */
 
-const MODULES = ["film", "filter", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "open", "shell"];
+import { hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
+
+const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "open", "shell"];
 
 const KEY_OF = {
     ArrowLeft: "ArrowLeft",
@@ -232,15 +234,23 @@ const CHECKS = [
                     `${card.displayName} 抖动徽标可见性 ${!badge.hidden} 与 shake=${card.photo.shake} 不符`);
             }
 
-            // FILM-05：第二行与文件名同色粗体，清零叉字形取 film.card.clearGlyph.size。
+            // FILM-05：第二行与文件名同色粗体；0 号槽位按组级冲突显示清零叉或警示三角。
             const styleCard = currentCard;
             const dateStyle = getComputedStyle(styleCard.querySelector(".pv-card-date"));
             h.assert(dateStyle.fontWeight === "700", `第二行字重 ${dateStyle.fontWeight}`);
             h.assert(dateStyle.color === getComputedStyle(styleCard.querySelector(".pv-card-name")).color,
                 "第二行颜色与文件名不一致");
-            const clear = styleCard.querySelector(".pv-card-star.is-clear");
-            h.assert(getComputedStyle(clear).fontSize === `${shell.t("film.card.clearGlyph.size")}px`,
-                `清零叉字号 ${getComputedStyle(clear).fontSize}`);
+            const zero = styleCard.querySelector('.pv-card-star[data-rating="0"]');
+            if (app.state.toolbar.rating.conflict) {
+                const warning = zero.querySelector(".pv-card-warning");
+                h.assert(getComputedStyle(warning).fontSize === `${shell.t("film.card.star.fontSize")}px`,
+                    `警示三角字号 ${getComputedStyle(warning).fontSize}`);
+                h.assert(colorMatches(getComputedStyle(warning).color, shell.t("color.star.conflict")),
+                    `警示三角颜色 ${getComputedStyle(warning).color}`);
+            } else {
+                h.assert(getComputedStyle(zero).fontSize === `${shell.t("film.card.clearGlyph.size")}px`,
+                    `清零叉字号 ${getComputedStyle(zero).fontSize}`);
+            }
             h.assert(styleCard.querySelector(".pv-card-date").textContent.length > 0, "第二行未显示日期或 --");
             const placeholder = styleCard.querySelector(".pv-card-placeholder");
             h.assert(placeholder !== null, "缩略图占位字形未渲染");
@@ -322,7 +332,7 @@ const CHECKS = [
             const { app } = shell;
             await h.openFilter("rating");
             const labels = h.domAll(".pv-menu .pv-menu-item").map((node) => node.querySelector(".pv-menu-label").textContent);
-            h.deepEqual(labels, ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "一星以上", "二星以上", "三星以上", "四星以上", "星级冲突"],
+            h.deepEqual(labels, ["全部", "无星级", "一星", "二星", "三星", "四星", "五星", "一星以上", "二星以上", "三星以上", "四星以上", "已拒绝", "星级冲突"],
                 "星级筛选项或顺序不符");
             const checked = h.domAll(".pv-menu .pv-menu-item").filter((node) => node.getAttribute("aria-checked") === "true");
             h.assert(checked.length === 1 && checked[0].dataset.id === "all", "当前项未勾选");
@@ -453,16 +463,19 @@ const CHECKS = [
             const { app } = shell;
             app.updateSettings({ sameNameAsOne: false });
             await h.tick(60);
+            // 夜景没有 -1 来源，选「已拒绝」必然无命中：空结果共用 FILTER-10 的空状态。
             await h.openFilter("rating");
-            h.click(h.menuItem("conflict"));
+            h.click(h.menuItem("rejected"));
             await h.tick(100);
+            app.openFolder("night");
+            await h.tick(120);
             h.assert(app.state.count === 0, `空结果计数 ${app.state.count} ≠ 0`);
             h.assert(app.state.countText === "共 0 张", `空结果计数文本 ${app.state.countText}`);
             // FILM-05 / STATE-02：空结果胶片栏留空，不写占位文字。
             h.assert(h.filmScroller().textContent.trim() === "", `胶片栏空态有文字：${h.filmScroller().textContent}`);
             h.assert(document.querySelector(".pv-film-empty") === null, "胶片栏仍有空状态元素");
             h.assert(h.domAll(".pv-popup").every((node) => !node.disabled), "空结果时筛选控件被禁用");
-            h.assert(h.domAll(".pv-popup")[2].querySelector(".pv-popup-label").textContent === "星级冲突", "空结果时筛选条件未保留");
+            h.assert(h.domAll(".pv-popup")[2].querySelector(".pv-popup-label").textContent === "已拒绝", "空结果时筛选条件未保留");
         },
     },
     {
@@ -1707,6 +1720,186 @@ const CHECKS = [
             await h.tick(40);
         },
     },
+    {
+        id: "RATING-04",
+        title: "冲突时卡片/控制栏 0 号换红色三角，几何不变且点击不写值",
+        async run(shell, h) {
+            const { app } = shell;
+            const t = (name) => shell.t(name);
+            const target = app.state.cards.find((entry) => hasRatingConflict(entry));
+            h.assert(target, "harbor 中找不到冲突组");
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            const card = h.cardByPhotoId(target.photo.id);
+            const node = h.filmCardByKey(card.key);
+            h.assert(node, "冲突卡片未渲染");
+            const warningCode = parseInt(t("icon.warning").slice(2), 16);
+            const ratingBefore = target.photo.rating;
+
+            // RATING-04：胶片栏卡片 0 号槽位换 icon.warning + color.star.conflict，几何不变。
+            const zero = node.querySelector('.pv-card-star[data-rating="0"]');
+            h.assert(zero.classList.contains("is-conflict"), "卡片 0 号未换成警示三角");
+            h.assert(zero.getBoundingClientRect().width === t("film.card.star.size"),
+                `卡片 0 号宽度 ${zero.getBoundingClientRect().width}`);
+            const cardWarning = zero.querySelector(".pv-card-warning");
+            h.assert(cardWarning.textContent.codePointAt(0) === warningCode, "卡片警示三角字形不是 icon.warning");
+            h.assert(getComputedStyle(cardWarning).display !== "none", "卡片警示三角未绘制");
+            h.assert(colorMatches(getComputedStyle(cardWarning).color, t("color.star.conflict")),
+                `卡片警示三角颜色 ${getComputedStyle(cardWarning).color}`);
+
+            // 控制栏 0 号按钮：保持 30×30，三角字号取 toolbar.rating.glyph.fontSize。
+            const controlZero = h.ratingButton(0);
+            h.assert(controlZero.classList.contains("is-conflict"), "控制栏 0 号未换成警示三角");
+            const controlBox = controlZero.getBoundingClientRect();
+            h.assert(Math.round(controlBox.width) === t("toolbar.rating.button.size"),
+                `控制栏 0 号宽度 ${controlBox.width}`);
+            const controlWarning = controlZero.querySelector(".pv-rating-conflict");
+            h.assert(controlWarning.textContent.codePointAt(0) === warningCode, "控制栏警示三角字形不是 icon.warning");
+            h.assert(getComputedStyle(controlWarning).fontSize === `${t("toolbar.rating.glyph.fontSize")}px`,
+                `控制栏警示三角字号 ${getComputedStyle(controlWarning).fontSize}`);
+            h.assert(colorMatches(getComputedStyle(controlWarning).color, t("color.star.conflict")),
+                `控制栏警示三角颜色 ${getComputedStyle(controlWarning).color}`);
+
+            // 来源浮窗尚未实现：点三角不写值、不切主图。
+            const displayed = app.state.displayedId;
+            h.click(controlZero);
+            await h.tick(60);
+            h.assert(document.querySelector(".pv-rating-sources") === null, "浮窗尚未实现却出现了来源浮窗");
+            h.assert(app.state.displayedId === displayed, "点控制栏三角切换了主图");
+            h.assert(target.photo.rating === ratingBefore, "点控制栏三角写了评分");
+            h.click(zero);
+            await h.tick(60);
+            h.assert(app.state.displayedId === displayed, "点卡片三角切换了主图");
+            h.assert(target.photo.rating === ratingBefore, "点卡片三角写了评分");
+        },
+    },
+    {
+        id: "RATING-05",
+        title: "筛选：已拒绝独立、无星级含缺失、无效不命中数字档，冲突独立于数字档",
+        async run(shell, h) {
+            const { app } = shell;
+            const cards = app.state.cards;
+            const rejected = cards.find((entry) => representativeRating(entry.photo).state === "rejected");
+            const missing = cards.find((entry) => representativeRating(entry.photo).state === "missing");
+            const invalid = cards.find((entry) => representativeRating(entry.photo).state === "invalid");
+            const conflict = cards.find((entry) => representativeRating(entry.photo).state === "rated"
+                && hasRatingConflict(entry));
+            h.assert(rejected && missing && invalid && conflict, "harbor 缺少已拒绝/缺失/无效/冲突代表");
+
+            const has = (card) => app.state.cards.some((entry) => entry.key === card.key);
+            app.setRatingFilter("rejected");
+            await h.tick(40);
+            h.assert(has(rejected), "已拒绝未命中「已拒绝」");
+            h.assert(!has(missing), "缺失命中了「已拒绝」");
+
+            app.setRatingFilter("none");
+            await h.tick(40);
+            h.assert(has(missing), "代表缺失未命中「无星级」");
+            h.assert(!has(rejected), "已拒绝被并入「无星级」");
+
+            for (const value of ["1", "2", "3", "4", "5", "1+", "2+", "3+", "4+"]) {
+                app.setRatingFilter(value);
+                await h.tick(20);
+                h.assert(!has(invalid), `无效代表命中了「${value}」`);
+            }
+
+            const representative = representativeRating(conflict.photo);
+            app.setRatingFilter(String(representative.value));
+            await h.tick(40);
+            h.assert(has(conflict), "冲突组未按代表命中数字档");
+            app.setRatingFilter("conflict");
+            await h.tick(40);
+            h.assert(has(conflict), "冲突组未命中「星级冲突」");
+            h.assert(has(missing), "缺失来源未命中「星级冲突」");
+            app.setRatingFilter("all");
+            await h.tick(40);
+        },
+    },
+    {
+        id: "RATING-06",
+        title: "无 canonical XMP 一律不新建（含 JPEG），写入预检失败且不改来源",
+        async run(shell, h) {
+            const { app } = shell;
+            const missing = app.state.cards.find((entry) => representativeRating(entry.photo).state === "missing"
+                && entry.photo.ext === ".jpg");
+            h.assert(missing, "harbor 中找不到缺包 JPEG 样本");
+            app.openFolder("harbor", { target: missing.photo.id });
+            await h.tick(160);
+            const card = h.cardByPhotoId(missing.photo.id);
+            const sources = ratingSources(card);
+            h.assert(sources.every((source) => source.state === "missing"), "缺包 JPEG 组不是全缺失");
+            h.assert(app.state.toolbar.rating.conflict === true, "缺包 JPEG 组未标冲突");
+
+            h.click(h.ratingButton(5));
+
+            const toast = h.dom(".pv-photo-toast");
+            const expected = `无法写入星级：${missing.photo.name}（无 canonical XMP 包，不支持新建）`;
+            await h.until(() => toast.hidden === false && toast.textContent === expected, 4000);
+            h.assert(app.state.photo.rating === null, "缺包 JPEG 被写入了评分");
+            h.assert(ratingSources(h.cardByPhotoId(missing.photo.id)).every((source) => source.state === "missing"),
+                "缺包 JPEG 的来源状态被改写");
+            h.assert(h.cardByPhotoId(missing.photo.id).photo.sidecar === null
+                || h.cardByPhotoId(missing.photo.id).photo.sidecar === undefined, "写入创建了 sidecar");
+        },
+    },
+    {
+        id: "RATING-06b",
+        title: "PNG 内嵌来源整体挂账：写入预检失败且零修改",
+        async run(shell, h) {
+            const { app } = shell;
+            const target = app.state.cards.find((entry) => entry.photo.ext === ".png"
+                && !hasRatingConflict(entry) && !entry.photo.sidecar);
+            h.assert(target, "harbor 中找不到可用的 PNG 样本");
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            const card = h.cardByPhotoId(target.photo.id);
+            const before = ratingSources(card).map((source) => `${source.state}:${source.value}`);
+            const rating = app.state.photo.rating;
+            const value = rating === 5 ? 4 : rating + 1;
+
+            h.click(h.ratingButton(value));
+            const toast = h.dom(".pv-photo-toast");
+            const expected = `无法写入星级：${target.photo.name}（PNG 内嵌 XMP 写入不支持）`;
+            await h.until(() => toast.hidden === false && toast.textContent === expected, 4000);
+            h.assert(app.state.photo.rating === rating, `PNG 评分被改写：${app.state.photo.rating}`);
+            h.assert(app.state.toolbar.rating.value === rating, "控制栏点亮星与磁盘真值不一致");
+            const after = ratingSources(h.cardByPhotoId(target.photo.id)).map((source) => `${source.state}:${source.value}`);
+            h.deepEqual(after, before, "PNG 来源状态被改写");
+            h.assert(h.cardByPhotoId(target.photo.id).photo.sidecar === null
+                || h.cardByPhotoId(target.photo.id).photo.sidecar === undefined, "PNG 写入创建了 sidecar");
+        },
+    },
+    {
+        id: "RATING-01",
+        title: "OPEN-08 重复打开按磁盘真值刷新来源与冲突指示",
+        async run(shell, h) {
+            const { app } = shell;
+            const target = app.state.cards.find((entry) => !hasRatingConflict(entry)
+                && entry.photo.sidecar && ratingSources(entry).length >= 3);
+            h.assert(target, "harbor 中找不到含 sidecar 的一致组");
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.assert(app.state.toolbar.rating.conflict === false, "一致组误报冲突");
+            app.setRatingFilter("conflict");
+            await h.tick(40);
+            const before = app.state.count;
+
+            const sidecar = target.photo.sidecar;
+            const original = sidecar.rating;
+            sidecar.rating = original === 5 ? 1 : 5;
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.assert(app.state.toolbar.rating.conflict === true, "刷新后未按磁盘真值显示冲突");
+            h.assert(app.state.count === before + 1, `刷新后冲突计数 ${app.state.count} ≠ ${before + 1}`);
+
+            sidecar.rating = original;
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(120);
+            h.assert(app.state.toolbar.rating.conflict === false, "恢复来源后仍显示冲突");
+            app.setRatingFilter("all");
+            await h.tick(40);
+        },
+    },
 ];
 
 function selectChecks(name) {
@@ -1924,7 +2117,11 @@ function createHelpers(shell) {
     function filmCardAt(index) {
         const card = state().cards[index];
         if (!card) return null;
-        return filmCards().find((node) => node.dataset.key === card.key) ?? null;
+        return filmCardByKey(card.key);
+    }
+
+    function filmCardByKey(key) {
+        return filmCards().find((node) => node.dataset.key === key) ?? null;
     }
 
     function cardIndex(photoId) {
@@ -2017,7 +2214,7 @@ function createHelpers(shell) {
         state, wait, tick, until, assert, deepEqual, dom, domAll, click, dblclick,
         key, keyDown, keyUp, wheel, contextmenu, pointer,
         menu, menuItem, openMainMenu, openFilter,
-        filmScroller, filmOffset, filmMaxOffset, expectedCenter, filmCardAt, filmCards,
+        filmScroller, filmOffset, filmMaxOffset, expectedCenter, filmCardAt, filmCardByKey, filmCards,
         cardIndex, cardByPhotoId, currentFilmKey,
         harborPhotos, harborPhoto, ratingButton, photoCanvas, paneRect,
         reset, restore,

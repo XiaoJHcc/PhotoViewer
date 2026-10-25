@@ -30,8 +30,9 @@
  *     }
  *
  * new RatingWriter({ clock, latency, onToast })
- *     write(card, rating) -> Promise<boolean>    代表文件先行，同名伴侣随后同步
+ *     write(card, rating) -> Promise<boolean>    整组全来源写入（RATING-03）
  */
+import { applyRatingToSource, ratingSources, ratingWriteBlockReason } from "./rating.js";
 
 const DEFAULT_CACHE_LIMIT = 30;
 
@@ -573,21 +574,38 @@ export class RatingWriter {
     }
 
     async _perform(card, rating) {
-        const companions = card.companions ?? [];
-        for (const file of [card.photo, ...companions]) {
-            await this._delay();
+        const sources = ratingSources(card);
+        // RATING-03：全部来源已是目标值时不做任何物理写入。
+        if (sources.every((source) => source.state === "rated" && source.value === rating)) return true;
+        for (const file of [card.photo, ...(card.companions ?? [])]) {
             if (file.fault && file.fault.write === true) {
                 // STATE-03：评分写回失败「无法写入星级：<文件名>（<原因>）」，合成故障原因写「文件只读」。
                 this._onToast(`无法写入星级：${file.name}（文件只读）`);
                 return false;
             }
         }
+        // RATING-03：先预检全部来源；任一来源不能安全写入就在首次修改前整组失败。
+        for (const source of sources) {
+            const reason = ratingWriteBlockReason(source);
+            if (!reason) continue;
+            this._onToast(`无法写入星级：${source.label}（${reason}）`);
+            return false;
+        }
+        for (const source of sources) {
+            await this._delay();
+        }
         return true;
     }
 
     _commit(card, rating) {
+        // RATING-03：同一值写进全部实际来源；不新增 sidecar，也不改其它字节。
+        for (const source of ratingSources(card)) applyRatingToSource(source, rating);
         card.photo.rating = rating;
-        for (const file of card.companions ?? []) file.rating = rating;
+        card.photo.ratingState = "rated";
+        for (const file of card.companions ?? []) {
+            file.rating = rating;
+            file.ratingState = "rated";
+        }
     }
 
     _delay() {

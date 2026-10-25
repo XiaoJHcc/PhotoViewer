@@ -244,7 +244,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
-        _main.RatingWriteFailed += OnRatingWriteFailed;
+        _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
@@ -759,8 +759,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnRateRequested(ImageFile file, int rating) => _ = RateAsync(file, rating);
 
-    private void OnRatingWriteFailed(ImageFile file, int rating)
-        => ShowStatus(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError), DesignTokens.MotionStatusToastDuration);
+    private void OnRatingWriteFailed(RatingWriteFailure failure)
+        => ShowStatus(StatusMessages.RatingWriteFailed(
+            failure.File.Name, failure.Reason, failure.IsPartial), DesignTokens.MotionStatusToastDuration);
 
     /// <summary>STATE-02：共享层上报的打开失败统一用提示条呈现，不弹模态。</summary>
     /// <param name="message">失败提示正文。</param>
@@ -863,6 +864,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _filterBar.Refresh();
         _controlBar.MarkDirty();
         _controlBar.Invalidate();
+        // 后台星级/来源补齐只改字段、不逐项发通知：卡片按当前模型重绘，冲突三角才会即时出现。
+        _filmstrip.RefreshCardStates();
+        _similarityPane.RefreshCardStates();
         UpdateHint();
     }
 
@@ -882,7 +886,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnCurrentFileChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is nameof(ImageFile.ExifData) or nameof(ImageFile.Rating))
+        if (args.PropertyName is nameof(ImageFile.ExifData) or nameof(ImageFile.Rating)
+            or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources))
         {
             _controlBar.MarkDirty();
             _controlBar.Invalidate();
@@ -1082,7 +1087,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
-            _main.RatingWriteFailed -= OnRatingWriteFailed;
+            _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
             _main.OpenFailed -= OnOpenFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _filmstrip.RateRequested -= OnRateRequested;
