@@ -87,13 +87,13 @@ public sealed class iOSFilePicker : IFilePickerService
     /// <summary>触屏端主入口是选文件夹（与 Mac 的桌面选择器区分，不按操作系统判断）。</summary>
     public bool PreferFolderPicker => true;
 
-    /// <summary>弹出文档选择器选择一个目录；安全作用域由打开会话的存储租约按次获取。</summary>
+    /// <summary>弹出文档选择器选择一个目录；系统交回的原 URL 随引用保留，安全作用域由打开会话的存储租约按次获取。</summary>
     /// <param name="title">标题（iOS 文档选择器不展示自定义标题）。</param>
     /// <returns>用户选择的文件夹；取消或宿主不可用时返回 null。</returns>
     public async Task<IFolderRef?> PickFolderAsync(string title)
     {
         var url = await PickUrlAsync([UTTypes.Folder]);
-        return url?.Path is { } path ? new LocalFolderRef(path) : null;
+        return iOSStorageRefs.CreateFolderRef(url);
     }
 
     /// <summary>弹出文档选择器选择单个图片文件；格式合法性仍由共享 FolderVM 按配置校验。</summary>
@@ -103,7 +103,7 @@ public sealed class iOSFilePicker : IFilePickerService
     public async Task<IFileRef?> PickFileAsync(string title, IReadOnlyList<FilePickFilter> filters)
     {
         var url = await PickUrlAsync(BuildContentTypes(filters));
-        return url?.Path is { } path ? new LocalFileRef(path) : null;
+        return iOSStorageRefs.CreateFileRef(url);
     }
 
     /// <summary>把共享过滤项换算成系统类型（无扩展名可换算时退回图片类型）。</summary>

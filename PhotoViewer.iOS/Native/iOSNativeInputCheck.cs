@@ -117,6 +117,7 @@ internal static class iOSNativeInputCheck
                 await VerifySwipeAsync(root, main, lines);
                 await VerifyKeyboardAsync(root, main, lines);
                 await VerifyDropAsync(root, main, lines, workspace);
+                VerifyExternalAccess(lines, workspace);
                 await VerifySettingsPropagationAsync(root, main, lines);
             }
             finally
@@ -610,12 +611,122 @@ internal static class iOSNativeInputCheck
     }
 
     /// <summary>
+    /// 外部文件授权：系统交回的 URL 必须随引用保留、存在性探测在有效作用域内、访问租约对同一 URL
+    /// 实例成对 Start/Stop，沙盒本地文件仍走共享 Local 引用与会话。
+    /// 模拟器不能在真实沙盒里复现"作用域外不可见"，因此用可观测的系统作用域替身核对本层契约：
+    /// 替身 Start 时创建目标文件、Stop 时删除，只有探测确实落在 Start 之后才能解析出目标。
+    /// </summary>
+    /// <param name="lines">报告行。</param>
+    /// <param name="workspace">App 沙盒内的可写夹具工作副本。</param>
+    private static void VerifyExternalAccess(List<string> lines, string workspace)
+    {
+        string filePath = Directory.GetFiles(workspace, "*.jpg").OrderBy(path => path, StringComparer.Ordinal).First();
+
+        using var fileUrl = NSUrl.CreateFileUrl(filePath, false, null)
+            ?? throw new InvalidOperationException("外部授权核对：文件 URL 创建失败");
+        using var folderUrl = NSUrl.CreateFileUrl(workspace, true, null)
+            ?? throw new InvalidOperationException("外部授权核对：目录 URL 创建失败");
+
+        // ① 系统 URL → 引用：保留原 URL 实例，探测按 URL 去重且成对归还作用域。
+        var bridgeScope = new RecordingSecurityScope(started: true);
+        var bridge = new iOSExternalOpenBridge(new OpenRequestChannel(), bridgeScope);
+        var items = bridge.Resolve([fileUrl, fileUrl]);
+        if (items.Count != 1)
+            throw new InvalidOperationException($"外部文件应解析为 1 个引用，实际 {items.Count}");
+        if (items[0] is not IIOSScopedStorageItem { SecurityScopedUrls.Count: 1 } opened ||
+            !ReferenceEquals(opened.SecurityScopedUrls[0], fileUrl))
+            throw new InvalidOperationException("外部文件引用未保留系统交回的原 URL，租约只能按 path 重建 URL");
+        if (bridgeScope.Starts.Count != 1 || bridgeScope.Stops.Count != 1 ||
+            !ReferenceEquals(bridgeScope.Starts[0], fileUrl) || !ReferenceEquals(bridgeScope.Stops[0], fileUrl))
+            throw new InvalidOperationException(
+                $"作用域内存在性探测未对同一 URL 成对 Start/Stop（start={bridgeScope.Starts.Count} stop={bridgeScope.Stops.Count}）");
+        lines.Add("PASS 外部打开引用：openURL/拖入的原 URL 随引用保留，存在性探测按 URL 去重并成对 Start/Stop");
+
+        // ② 探测时序：目标只在作用域内出现时才应被解析（Start 之前探测会把外部文件全部丢掉）。
+        string ghostPath = Path.Combine(workspace, "external-scope-order.jpg");
+        File.Delete(ghostPath);
+        using var ghostUrl = NSUrl.CreateFileUrl(ghostPath, false, null)
+            ?? throw new InvalidOperationException("外部授权核对：作用域探测 URL 创建失败");
+        var orderingScope = new RecordingSecurityScope(started: true,
+            onStart: () => File.WriteAllBytes(ghostPath, [0x00]),
+            onStop: () => File.Delete(ghostPath));
+        var orderingBridge = new iOSExternalOpenBridge(new OpenRequestChannel(), orderingScope);
+        if (orderingBridge.Resolve([ghostUrl]).Count != 1)
+            throw new InvalidOperationException("存在性探测发生在安全作用域之外：作用域内可见的目标被判为不存在");
+        if (File.Exists(ghostPath))
+            throw new InvalidOperationException("安全作用域探测结束后没有成对 Stop（替身目标仍在磁盘上）");
+        var blindScope = new RecordingSecurityScope(started: false);
+        var blindBridge = new iOSExternalOpenBridge(new OpenRequestChannel(), blindScope);
+        if (blindBridge.Resolve([ghostUrl]).Count != 0)
+            throw new InvalidOperationException("未启动系统作用域仍解析出了目标");
+        if (blindScope.Starts.Count != 1 || blindScope.Stops.Count != 0)
+            throw new InvalidOperationException(
+                $"Start 返回 false 时不应配对 Stop（start={blindScope.Starts.Count} stop={blindScope.Stops.Count}）");
+        lines.Add("PASS 作用域内探测：Start 之后才判断存在性，结束时成对 Stop，未获授权时不再误判");
+
+        // ③ 访问租约：Create/Dispose 对系统交回的原 URL 成对启动/结束，绝不出现按 path 重建的 URL。
+        var leaseScope = new RecordingSecurityScope(started: true);
+        var factory = new iOSStorageAccessSessionFactory(leaseScope);
+        var lease = factory.Create(items[0]);
+        if (leaseScope.Starts.Count != 1 || !ReferenceEquals(leaseScope.Starts[0], fileUrl) ||
+            leaseScope.Starts.Any(url => !ReferenceEquals(url, fileUrl)))
+            throw new InvalidOperationException("访问租约没有用系统交回的原 URL 启动安全作用域（疑似按 path 重建）");
+        lease.Dispose();
+        if (leaseScope.Stops.Count != 1 || !ReferenceEquals(leaseScope.Stops[0], fileUrl))
+            throw new InvalidOperationException("访问租约未对启动作用域时的同一 URL 实例成对结束");
+        lines.Add("PASS 访问租约：Create/Dispose 对同一原 URL 实例成对 Start/Stop，全程不按 path 重建 URL");
+
+        // ④ 沙盒本地文件：引用仍是共享 Local 类型，租约走本地会话，不占用系统作用域。
+        var sandboxBridge = new iOSExternalOpenBridge(new OpenRequestChannel(), new RecordingSecurityScope(started: false));
+        var sandboxItems = sandboxBridge.Resolve([fileUrl]);
+        if (sandboxItems.Count != 1 || sandboxItems[0] is not LocalFileRef)
+            throw new InvalidOperationException("沙盒本地文件应继续使用共享 LocalFileRef");
+        var sandboxScope = new RecordingSecurityScope(started: false);
+        var sandboxFactory = new iOSStorageAccessSessionFactory(sandboxScope);
+        using (sandboxFactory.Create(new LocalFolderRef(workspace)))
+        {
+            if (sandboxScope.Starts.Count != 0)
+                throw new InvalidOperationException("沙盒目录错误地启动了系统安全作用域");
+        }
+        lines.Add("PASS 沙盒本地文件：外部打开仍得到共享 LocalFileRef，沙盒目录租约不启动系统作用域");
+
+        // ⑤ 外部路径缺少系统 URL：按未授权上报，绝不偷偷重建 URL 再启动一次注定失败的作用域。
+        var orphanScope = new RecordingSecurityScope(started: true);
+        var orphanFactory = new iOSStorageAccessSessionFactory(orphanScope);
+        bool denied = false;
+        try
+        {
+            orphanFactory.Create(new LocalFolderRef(
+                "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/PhotoViewerExternalCheck")).Dispose();
+        }
+        catch (StorageException ex) when (ex.Error == StorageError.AccessDenied)
+        {
+            denied = true;
+        }
+        if (!denied) throw new InvalidOperationException("外部路径缺少系统 URL 时应按 AccessDenied 上报");
+        if (orphanScope.Starts.Count != 0)
+            throw new InvalidOperationException("外部路径缺少系统 URL 时仍启动了按 path 重建的作用域");
+        lines.Add("PASS 外部路径缺少系统 URL：按访问授权失败上报，不再按 path 重建 URL");
+
+        // ⑥ 选择器结果：文档选择器返回的 URL 与 openURL 同一判断口径（作用域 URL 保留原 URL，沙盒 URL 用 Local 引用）。
+        var pickedFolder = iOSStorageRefs.CreateFolderRef(folderUrl, new RecordingSecurityScope(started: true));
+        if (pickedFolder is not iOSScopedFolderRef folderWithScope ||
+            !ReferenceEquals(folderWithScope.SecurityScopedUrls[0], folderUrl))
+            throw new InvalidOperationException("选择器返回的外部目录未保留原 URL");
+        if (iOSStorageRefs.CreateFolderRef(folderUrl, new RecordingSecurityScope(started: false)) is not LocalFolderRef)
+            throw new InvalidOperationException("选择器返回的沙盒目录应继续是共享 LocalFolderRef");
+        var pickedFile = iOSStorageRefs.CreateFileRef(fileUrl, new RecordingSecurityScope(started: true));
+        if (pickedFile is not iOSScopedFileRef fileWithScope ||
+            !ReferenceEquals(fileWithScope.SecurityScopedUrls[0], fileUrl))
+            throw new InvalidOperationException("选择器返回的外部文件未保留原 URL");
+        lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，沙盒目录仍返回共享 LocalFolderRef");
+        lines.Add("NOTE 模拟器不能构造真实沙盒扩展：真机需复核 Files「打开方式」(就地打开) 与文档选择器目录的读取/评分写回");
+    }
+
+    /// <summary>
     /// 设置写回传播：从主图菜单真实弹出设置页，改写工作副本后经关闭回写路径应用，
     /// 逐项核对布局模式、控制栏命令显隐/顺序、快捷键重绑、评分与 EXIF 分组，以及文件格式筛选反映到胶片栏。
     /// </summary>
-    /// <param name="root">原生根控制器。</param>
-    /// <param name="main">共享主 VM。</param>
-    /// <param name="lines">报告行。</param>
     private static async Task VerifySettingsPropagationAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
     {
         // 第一轮：布局模式 / 控制栏命令显隐与顺序 / 快捷键重绑 / 评分与 EXIF 显隐。
@@ -906,6 +1017,53 @@ internal static class iOSNativeInputCheck
         {
             if (watch.Elapsed > TimeSpan.FromSeconds(20)) throw new TimeoutException(name);
             await Task.Delay(20);
+        }
+    }
+
+    /// <summary>
+    /// 可观测的系统作用域替身（外部授权核对用）：记录每次 Start/Stop 的 URL 实例，
+    /// 并可用回调伪造"目标只在作用域内可见"的时序。
+    /// </summary>
+    private sealed class RecordingSecurityScope : ISecurityScopeAccess
+    {
+        private readonly bool _started;
+        private readonly Action? _onStart;
+        private readonly Action? _onStop;
+
+        /// <summary>创建替身。</summary>
+        /// <param name="started">Start 的返回值（true = 该 URL 携带系统作用域）。</param>
+        /// <param name="onStart">Start 成功后执行的回调。</param>
+        /// <param name="onStop">Stop 后执行的回调。</param>
+        internal RecordingSecurityScope(bool started, Action? onStart = null, Action? onStop = null)
+        {
+            _started = started;
+            _onStart = onStart;
+            _onStop = onStop;
+        }
+
+        /// <summary>按调用顺序记录的 Start URL。</summary>
+        internal List<NSUrl> Starts { get; } = [];
+
+        /// <summary>按调用顺序记录的 Stop URL。</summary>
+        internal List<NSUrl> Stops { get; } = [];
+
+        /// <summary>记录启动请求并返回预设结果。</summary>
+        /// <param name="url">系统交回的原 URL。</param>
+        /// <returns>预设的启动结果。</returns>
+        public bool Start(NSUrl url)
+        {
+            Starts.Add(url);
+            if (!_started) return false;
+            _onStart?.Invoke();
+            return true;
+        }
+
+        /// <summary>记录结束请求。</summary>
+        /// <param name="url">启动作用域时使用的同一 URL 实例。</param>
+        public void Stop(NSUrl url)
+        {
+            Stops.Add(url);
+            _onStop?.Invoke();
         }
     }
 

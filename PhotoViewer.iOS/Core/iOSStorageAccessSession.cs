@@ -8,18 +8,31 @@ namespace PhotoViewer.iOS.Core;
 /// 持有一个根 URL（文件或目录）并按需附加其他 URL，按路径引用计数与系统
 /// <c>StartAccessingSecurityScopedResource</c>/<c>StopAccessingSecurityScopedResource</c> 配对：
 /// 同一路径重复获取不重复启动，<see cref="Dispose"/> 释放本会话持有的全部计数。
+/// Start 与 Stop 始终使用系统交回的同一个 <see cref="NSUrl"/> 实例——按路径重建的 URL 不带沙盒扩展，
+/// 启动必然失败，这是外部文件授权失效的根因。
 /// </summary>
 public sealed class iOSStorageAccessSession : IDisposable
 {
     private readonly object _gate = new();
     private readonly Dictionary<string, Entry> _entries = new(StringComparer.Ordinal);
+    private readonly ISecurityScopeAccess _scope;
     private bool _disposed;
 
     /// <summary>创建会话并可同时保留根 URL 的访问权限。</summary>
     /// <param name="rootUrl">根文件或目录 URL；null 表示先建空会话再按需附加。</param>
     /// <exception cref="StorageException">根 URL 无法获取安全作用域访问权限。</exception>
     public iOSStorageAccessSession(NSUrl? rootUrl = null)
+        : this(PlatformSecurityScopeAccess.Instance, rootUrl)
     {
+    }
+
+    /// <summary>创建会话并注入系统作用域调用面（验收替身用）。</summary>
+    /// <param name="scope">系统作用域调用面。</param>
+    /// <param name="rootUrl">根文件或目录 URL；null 表示先建空会话再按需附加。</param>
+    /// <exception cref="StorageException">根 URL 无法获取安全作用域访问权限。</exception>
+    internal iOSStorageAccessSession(ISecurityScopeAccess scope, NSUrl? rootUrl = null)
+    {
+        _scope = scope ?? throw new ArgumentNullException(nameof(scope));
         if (rootUrl != null)
         {
             Acquire(rootUrl);
@@ -58,7 +71,7 @@ public sealed class iOSStorageAccessSession : IDisposable
             bool started;
             try
             {
-                started = url.StartAccessingSecurityScopedResource();
+                started = _scope.Start(url);
             }
             catch (Exception ex)
             {
@@ -71,6 +84,25 @@ public sealed class iOSStorageAccessSession : IDisposable
             }
 
             _entries[path] = new Entry(url);
+        }
+    }
+
+    /// <summary>
+    /// 尝试获取一个 URL 的访问权限：失败只记录日志并返回 false，由调用方决定回退（沙盒路径不需要作用域）。
+    /// </summary>
+    /// <param name="url">系统授予的文件或目录 URL。</param>
+    /// <returns>本会话已持有该路径的访问权限时返回 true。</returns>
+    internal bool TryAcquire(NSUrl url)
+    {
+        try
+        {
+            Acquire(url);
+            return true;
+        }
+        catch (StorageException ex)
+        {
+            Console.WriteLine($"[StorageAccess] {ex.Message}");
+            return false;
         }
     }
 
@@ -145,8 +177,8 @@ public sealed class iOSStorageAccessSession : IDisposable
     }
 
     /// <summary>结束一次系统作用域；失败只记录日志，不掩盖释放过程中的其他错误。</summary>
-    /// <param name="url">要结束作用域的 URL。</param>
-    private static void Stop(NSUrl? url)
+    /// <param name="url">启动作用域时使用的同一 URL 实例。</param>
+    private void Stop(NSUrl? url)
     {
         if (url == null)
         {
@@ -155,7 +187,7 @@ public sealed class iOSStorageAccessSession : IDisposable
 
         try
         {
-            url.StopAccessingSecurityScopedResource();
+            _scope.Stop(url);
         }
         catch (Exception ex)
         {
