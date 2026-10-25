@@ -34,7 +34,10 @@ public partial class SettingsViewModel : ReactiveObject, IDisposable
         get => _similarityPanelExpanded;
         set
         {
-            if (!this.RaiseAndSetIfChanged(ref _similarityPanelExpanded, value)) return;
+            // ReactiveUI 23 的 RaiseAndSetIfChanged 返回新值而非“是否变化”，不能当 bool 用；
+            // 显式比较后写回，保证收起（false）也持久化，否则下次启动会按旧 true 重新展开。
+            if (_similarityPanelExpanded == value) return;
+            this.RaiseAndSetIfChanged(ref _similarityPanelExpanded, value);
             _viewState.SetBool(SettingsViewStateKeys.SimilarityPanelExpanded, value);
         }
     }

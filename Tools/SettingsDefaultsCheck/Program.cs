@@ -35,6 +35,7 @@ internal static class Program
         failed += await CheckSavedAsync();
         failed += await CheckZeroRoundtripAsync();
         failed += await CheckDraftDoesNotWriteAsync();
+        failed += await CheckSimilarityPanelViewStateAsync();
         failed += await CheckLiveCommitAsync();
         failed += await CheckSaveFailureAsync();
         failed += await CheckNativeSessionAsync();
@@ -185,6 +186,34 @@ internal static class Program
             && settings.Session.Draft.ShowRating == settings.ShowRating, "draft 未同步到 SettingsSession.Draft");
         problems += Require(settings.Session is not null
             && settings.Session.Draft.ContentEquals(settings.CreateSnapshot()), "draft 与界面快照不一致");
+        return problems;
+    }
+
+    /// <summary>相似面板展开态走视图状态存储：展开与收起都必须写回，重启后沿用最后一次开关。</summary>
+    private static async Task<int> CheckSimilarityPanelViewStateAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+        var store = new MemorySettingsStore();
+        var repository = new SettingsRepository(store, defaults);
+        await repository.InitializeAsync();
+
+        var viewState = new InMemorySettingsStore();
+        using var settings = new SettingsViewModel(repository, viewState);
+        var problems = 0;
+        problems += Require(!settings.SimilarityPanelExpanded, "相似面板初始态不是收起");
+
+        settings.SimilarityPanelExpanded = true;
+        problems += Require(viewState.GetBool(SettingsViewStateKeys.SimilarityPanelExpanded) == true,
+            "展开态未写入视图状态");
+
+        settings.SimilarityPanelExpanded = false;
+        problems += Require(viewState.GetBool(SettingsViewStateKeys.SimilarityPanelExpanded) == false,
+            "收起态未写入视图状态（下次启动会按旧 true 重新展开）");
+
+        using var reopened = new SettingsViewModel(repository, viewState);
+        problems += Require(!reopened.SimilarityPanelExpanded, "重新创建后未沿用收起态");
         return problems;
     }
 
