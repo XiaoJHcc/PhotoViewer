@@ -30,6 +30,7 @@ internal static class Program
             OpenRequestChannelChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             XmpContainerChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             PhotoGroupChecks.Run(checks, root);
+            RatingChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             SettingsChecks.RunAsync(checks, root).GetAwaiter().GetResult();
         }
         catch (Exception exception)

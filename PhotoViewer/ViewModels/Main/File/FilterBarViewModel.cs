@@ -45,6 +45,7 @@ public class FilterBarViewModel : ReactiveObject
         new() { DisplayName = "二星以上", Key = "Gt2" },
         new() { DisplayName = "三星以上", Key = "Gt3" },
         new() { DisplayName = "四星以上", Key = "Gt4" },
+        new() { DisplayName = "已拒绝", Key = "Rejected" },
         new() { DisplayName = "星级冲突", Key = "Conflict" },
     ];
 

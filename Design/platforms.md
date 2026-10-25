@@ -61,8 +61,16 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs:164`（文件名）、`:183`（相似度条）、`PhotoViewer.Windows/Native/WindowsLayout.cs:40-130`（转接共享 `FilmstripGeometry` 与 `film.*` / `color.*` 令牌）。
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs:139`（缩略图圆角）、`:171`（第二行 y）、`:288-307`（卡片菜单）。
   - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足（已登记 10-18）。
-- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:581`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:686`）。
+- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回作用于组的全部实际来源（RATING-01/03）；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:581`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:686`）。
 - **追溯**：旧壳定位/动画的冻结几何与截图见 `Design/baseline/avalonia/`（旧视图源码只存在于 tag `avalonia-final` 之前的历史）；现行触发与定位逻辑在共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
+
+## rating
+
+- **RATING-01、RATING-03**：来源枚举与全来源事务在共享 `PhotoViewer/Core/Exif/RatingService.cs`（按 `PhotoGroup.Id` 串行、预检、固定顺序写、逆序补偿与结果枚举）；来源级读取状态在 `PhotoViewer/Core/Exif/XmpRatingReader.cs`（缺失 / 已评分 / 已拒绝 / 无效 / 冲突）；组级来源状态由 `PhotoViewer/Core/Image/PhotoGroupMap.cs`（`HasRatingConflict`）汇总，列表与筛选投影见 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`。
+- **RATING-02、RATING-06**：定位与写入由 `PhotoViewer/Core/Exif/XmpContainerIO.cs`（等长原位与 Rating 附近局部空白吸收；远端 padding 移位、受控追加、整文件替换本轮不采用）、`XmpPacketEditor.cs`（只改 `xap:Rating`）与各容器适配器承担：`JpegXmpContainerAdapter`、`HeifXmpContainerAdapter`、`TiffXmpContainerAdapter`、`WebpXmpContainerAdapter`，以及已有 `<stem>.xmp` 的 sidecar 存储；PNG 写入整体挂账（含标准 `iTXt`，必须维护容器级 CRC 事务），本轮 `Unsupported`。无 canonical XMP 包（含 JPEG 无 APP1）时不新建或插入容器结构，按 `StorageError.Unsupported` 处理；已有包但缺 `xap:Rating` 时只在包结构唯一且空白足够时于包内插入，否则同样不支持。不新增结构、不用 sidecar 顶替。来源枚举由 `PhotoGroupMap.RatingSources` 汇总，`XmpRatingStoreFactory` 为每个实际来源选择适配器；没有创建 sidecar 的入口。
+  - **RATING-06@mac / @win / @ios**：本轮只做等长与 Rating 附近局部空白吸收的原位写；远端 padding 移位、受控追加与整文件替换挂账。
+  - **RATING-06@android**：SAF 目标先核对可定位原位写能力；不可定位句柄、云 Provider 或需要远端移位/扩容的写入在首次修改前失败，不做原位假成功。
+- **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs:48`；训练快照由独立仓 `Training/DatasetBuilder` 只读取实际选用的文件（`Training/DatasetBuilder/FingerprintGrouper.cs`），sidecar 与伴侣不参与取 max，文件内部冲突或无效时不落值。scan-only 验证见 [纠正计划](../Plans/rating-storage-correction-plan-1.md)。
 
 ## shell
 
@@ -96,7 +104,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsFilterBar.cs:19`（`Grid`）、`:34-67`（`ComboBox`×3）、`:126-133`（`ToggleButton`）。
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs:20`（自绘 `View`）、`:148-255`（自绘 `PopupWindow`）。
   - **FILTER-01@android**：<600 宽手机 toggle 76、下拉 84，计数用紧凑文案（已登记 10-18）；窄于紧凑宽度所需时筛选条横向滚动，控件宽度不压缩。
-- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:270-339`（筛选、排序、当前项映射）。
+- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:270-339`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs:48`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`。13 项取值与已拒绝/全来源冲突口径见 [rating](#rating)（RATING-05）。
 - **FILTER-04**：计数文案 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:665`、iOS `PhotoViewer.iOS/Native/iOSFilterBar.cs:71`、Windows `PhotoViewer.Windows/Native/WindowsFilterBar.cs:102`、Android `PhotoViewer.Android/Native/AndroidFilterBar.cs:89-93`。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/ViewModels/Settings/SettingsViewModel.cs` 的 `SimilarityPanelExpanded`（经 `IViewStateStore` 跨会话保留，不进入设置文档）；可见性 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`。
 - **FILTER-07**：共享 `PhotoViewer.Shared/MainScreenLayout.cs:29-39`、`:66-69`。
@@ -244,7 +252,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 ## state
 
 - **STATE-01、STATE-02**：提示与空态。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:135`/`:744`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:1101`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:858`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:933`。切图方案由共享加载会话选定：缓存命中同步换图（保留前一张），四端主图视图以 `PhotoLoadSession.Generation` 判定切图；未命中清图并以 `IsLoadingVisible`（`status.loading.delay` 300ms）提示。程序化覆盖：Mac `--pv-native-filmstrip`、iOS `--pv-native-photo-check`、Android `pv-check main`，Web `?check=state`。
-- **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条：macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`（`MacMainWindow.cs:581` 评分失败、`:755` `FullError`、`:212` 订阅 `Session.Notice`）、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`（`iOSNativeRootViewController.cs:686`/`:1076`）、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:798-812`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:682-693`。
+- **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条：macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`（`MacMainWindow.cs:581` 评分失败、`:755` `FullError`、`:212` 订阅 `Session.Notice`）、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`（`iOSNativeRootViewController.cs:686`/`:1076`）、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:798-812`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:682-693`。评分写回与"部分来源写入失败（补偿未完成）"分列文案（RATING-03）；后者必须按磁盘真值展示每个来源与冲突状态，不把部分成功当整组成功。
 - **STATE-04**：模型/推理/数据库不可用由共享 `AnalysisPresenter`、`SimilarityPanelViewModel` 与设置清库路径承担。
 
 ## settings
@@ -267,7 +275,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SETTINGS-06@android**：内存预算取前台可见进程的匿名内存上限（`PhotoViewer.Android/Core/AndroidMemoryBudgetProvider.cs`，按 `MemTotal` 查 AOSP MemoryLimiter 可见档：3.2–4.8 GB → 2 GB、4.8–6.8 GB → 4 GB、6.8–9 GB → 5 GB、9–14 GB → 8 GB、14–18 GB → 10 GB，档外按 45% / 62.5% 外推；厂商另设前台红线时取较小者——小米 HyperOS/MIUI 的 Sentinel 读 `persist.sys.stability.pss_highest_line`，预算取其 90%，小米 17 Ultra 实测超过 6 GB PSS 即被强杀），占用 = `RssAnon + VmSwap` + GL 纹理字节。缓存容量由该预算自动推导（`BitmapLoader.AutomaticCacheLimit`），文件页「缓存与预加载」组不显示「缓存内存上限 / 缓存数量上限」，两项用户字段保留；预载上限按自动口径固定 10。提示第一行为预算（与缓存推导同口径，不是设备总内存），第二行按有效缓存容量与 8 位代理尺寸换算；原生解码线程默认 6 核及以上 2 路、否则 1 路，软件解码线程恒为 1。
   - **SETTINGS-10@ios / @android**：AI 页无「清空特征数据库」；移动端长期不提供，配置保留、入口不显示（已登记 10-18）。
   - iOS / Android：绑定文本、录制、清空与冲突按 INPUT-13 外设能力显示；仅直接触控全部隐藏，断开最后一个外设时取消未完成录制并保留原绑定，不按平台固定为只读。
-  - **SETTINGS-14**：四端共用 `SettingsRepository` + `SettingsDocumentCodec`（schemaVersion 2）；旧/缺失版本不迁移，先备份再默认值；普通 IO、未来版本或备份失败进入不可写且不覆盖原文；保存成功才发布，提交不做延迟合并。文件载体（Windows、macOS/iOS 验收）用原子替换，偏好/SharedPreferences 用平台同步提交；损坏备份最多保留 3 份。
+  - **SETTINGS-14**：四端共用 `SettingsRepository` + `SettingsDocumentCodec`（schemaVersion 2）；旧/缺失版本不迁移、不写字段级迁移补丁，先备份再默认值；普通 IO、未来版本或备份失败进入不可写且不覆盖原文；保存成功才发布，提交不做延迟合并。文件载体（Windows、macOS/iOS 验收）用原子替换，偏好/SharedPreferences 用平台同步提交；损坏备份最多保留 3 份。
   - **SETTINGS-14@mac / @ios**：生产环境 JSON 存 `NSUserDefaults` 单键（`PhotoViewer.Apple/AppleSettingsStore.cs`）；macOS / iOS 验收会话改用隔离 `FileSettingsStore`，不读写用户设置。
   - **SETTINGS-14@win**：JSON 存本地设置文件（`FileSettingsStore`，唯一临时文件 + 原子替换），普通运行与隔离验收使用不同目录。
   - **SETTINGS-14@android**：JSON 存 `SharedPreferences`（`PhotoViewer.Android/Core/AndroidSettingsStorage.cs`），后台 `Commit` 并检查返回值；损坏/旧版备份为带时间戳的偏好键，最多 3 份。
@@ -303,7 +311,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **SCOPE-02**：计算门控。相似 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`；分析 `PhotoViewer/Core/AI/AnalysisPresenter.cs:136-142`；回退 `FallbackDelayMs = 500`（`PhotoViewer/Core/AI/AnalysisPresenter.cs:34`）。
 - **SCOPE-03**：入库与现算。批量提取 `PhotoViewer/Core/AI/FolderFeatureIndexer.cs`；即时缓存 `AnalysisResultCache`。
 - **SCOPE-04**：能力缺失。**SCOPE-04@win**：RAW 主图/代理走系统 WIC RAW 引擎（Raw Image Extension）全分辨率解码，按相机 `DefaultCrop` 裁切、方向交渲染层；解码器缺失或失败时只接受与有效成像区尺寸一致的整幅内嵌 JPEG，否则如实停在可得尺寸。**SCOPE-04@ios**：RAW 主图/代理经 `CIRawFilter` 全分辨率解码（几何取传感器 `NativeSize`，EXIF 方向交 GPU），只有创建/渲染失败回退 ImageIO 时才可能只得到内嵌预览、`IsProxy=false`，此时如实停在该尺寸；CoreML EP 不可用回退 CPU（已登记 10-18）。**SCOPE-04@android**：RAW 走打包的 LibRaw（`AndroidRawDecoder`）全分辨率开发，半尺寸输出已满足代理目标时用 half_size，输出 sRGB 或 Display P3；首次解码空窗期用内嵌预览顶替（STATE-01），真产物到达即替换，顶替图不冒充全分辨率，细节预览不以它为源；`libpvraw.so` 缺失时 RAW 停用并记一次日志（不回退系统预览冒充主图）。模拟器 P3 协商失败回退 sRGB（已登记 10-18）。
-- **SCOPE-05**：文件写操作。评分写回走共享 `RatingService` + `XmpRatingStoreFactory`（JPEG/HEIF/PNG/WebP/TIFF/DNG 内嵌容器，专有 RAW 用 `<stem>.xmp` sidecar）；无删除/重命名/移动/导出命令。
+- **SCOPE-05**：文件写操作。评分写回走共享 `RatingService`：组的每个文件内嵌与每个实际存在的 `<stem>.xmp` 都是来源，RAW 也写内嵌（Sony 相机与 Imaging Edge 只读 RAW 本体），sidecar 不存在时不创建（RATING-01/03）；无删除/重命名/移动/导出命令。
 - **SCOPE-06**：平台专属。导航图点按/拖动定位（**SCOPE-06@ios / @android**，已登记 10-18）；Windows 照片统计；Android 设置数值步进见 SETTINGS-12@android。
 - **SCOPE-01@web**：设置窗口、工具窗口、真实解码/写回/推理均不实现，相应入口不显示；照片、特征与故障均为合成数据。
 

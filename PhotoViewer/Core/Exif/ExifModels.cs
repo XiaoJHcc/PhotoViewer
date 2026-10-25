@@ -64,9 +64,19 @@ public class ExifData
     public string? Flash { get; set; }
 
     /// <summary>
-    /// XMP Rating 评分 (0-5)
+    /// XMP Rating 评分 (0-5)；-1 表示已拒绝，null 表示缺失/无效/冲突。
+    /// 该值是文件内嵌来源的数值，sidecar 作为独立来源见 <see cref="RatingSources"/>。
     /// </summary>
     public int? Rating { get; set; }
+
+    /// <summary>内嵌来源的状态（Missing / Rated / Rejected / Invalid / Conflict）。</summary>
+    public XmpRatingState RatingState { get; set; } = XmpRatingState.Missing;
+
+    /// <summary>内嵌来源的完整快照；与 <see cref="RatingState"/> 同源。</summary>
+    public XmpRatingSnapshot? EmbeddedRating { get; set; }
+
+    /// <summary>全部实际评分来源（内嵌 + 已存在的同名 sidecar），各自保留原始状态。</summary>
+    public List<RatingSourceState> RatingSources { get; set; } = new();
 
     // ---- 扩展拍摄参数 ----
 

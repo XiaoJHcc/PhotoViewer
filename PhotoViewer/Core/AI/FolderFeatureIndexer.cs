@@ -334,6 +334,18 @@ public sealed class FolderFeatureIndexer
     }
 
     /// <summary>
+    /// 训练用评级只取该文件自身内嵌来源的 Rated 1..5；Missing / Rejected / Invalid / Conflict
+    /// 以及 0 星统一为 null。不采用同组其它文件或 sidecar 的值，避免用代表值伪造样本。
+    /// </summary>
+    public static int? ResolveTrainingRating(ImageFile file)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+        return file.RatingState == XmpRatingState.Rated && file.Rating is >= 1 and <= 5
+            ? file.Rating
+            : null;
+    }
+
+    /// <summary>
     /// 从代表文件的 EXIF 抽出训练用拍摄参数快照(实际焦距/光圈/快门/CMOS 倍率)+ 当前 rating。
     /// `crop_factor` = EquivFocalLength / FocalLength,两者任一缺失则 NULL(训练脚本按 1.0 兜底)。
     /// rating 0(未评)统一存 NULL — 让训练查询直接 `WHERE rating IS NOT NULL` 排除未评样本。
@@ -350,14 +362,13 @@ public sealed class FolderFeatureIndexer
         if (focal.HasValue && focal.Value > 0 && equivFocal.HasValue && equivFocal.Value > 0)
             cropFactor = equivFocal.Value / focal.Value;
 
-        int rating = file.Rating;
         return new ExifSnapshot
         {
             FocalLength = focal,
             Aperture = aperture,
             ShutterSpeed = shutter,
             CropFactor = cropFactor,
-            Rating = rating > 0 ? rating : (int?)null,
+            Rating = ResolveTrainingRating(file),
         };
     }
 

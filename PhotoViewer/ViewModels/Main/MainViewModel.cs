@@ -32,6 +32,7 @@ public class MainViewModel : ViewModelBase, IDisposable
 
     private bool _disposed;
     private readonly Action _recheckShakeFlags;
+    private static long s_ratingRefreshSequence;
 
     public SettingsRepository SettingsRepository => Settings.Repository
         ?? throw new InvalidOperationException("当前设置未绑定持久化仓库");
@@ -41,6 +42,13 @@ public class MainViewModel : ViewModelBase, IDisposable
     /// 参数为原照片与本次请求的星级。
     /// </summary>
     public event Action<ImageFile, int>? RatingWriteFailed;
+
+    /// <summary>
+    /// 星级写回失败的详细事件（UI 线程）：携带本次结果、原因与是否 Partial，
+    /// 不依赖可被后发请求清空的 <see cref="LastRatingWriteError"/>。
+    /// 旧 <see cref="RatingWriteFailed"/> 保留兼容，新界面应优先订阅本事件。
+    /// </summary>
+    public event Action<RatingWriteFailure>? RatingWriteFailedDetailed;
 
     /// <summary>
     /// 显式打开失败时触发(UI 线程);文案由共享层统一给出,界面据此显示 STATE-03 提示条(STATE-02)。
@@ -334,8 +342,9 @@ public class MainViewModel : ViewModelBase, IDisposable
     #region Rating
     
     public string? LastRatingWriteError { get; private set; }
+    public RatingWriteOutcome? LastRatingWriteOutcome { get; private set; }
 
-    private PhotoGroup GetRatingGroup(ImageFile file)
+    internal PhotoGroup GetRatingGroup(ImageFile file)
     {
         if (file.Group != null) return file.Group;
         var formats = Settings.FileFormats
@@ -345,44 +354,84 @@ public class MainViewModel : ViewModelBase, IDisposable
             ?? PhotoGroupMap.Build([file], false, formats).GroupFor(file)!;
     }
 
-    /// <summary>设置图片星级；只有整组写入并验证成功才把请求值同步到缓存和数据库。</summary>
-    public async Task SetRatingAsync(ImageFile? file, int rating)
+    /// <summary>
+    /// 设置图片星级（兼容旧签名）。统一写入组内全部实际来源（各文件内嵌 + 已存在的同名 sidecar）。
+    /// 只有整组写入/验证成功（或同值无需写入）才同步数据库；成功后不清空 EXIF。
+    /// </summary>
+    public Task SetRatingAsync(ImageFile? file, int rating) => SetRatingCoreAsync(file, rating);
+
+    /// <summary>
+    /// 设置图片星级并返回本次结果（供调用方决定后续处理，避免共享 LastOutcome 竞态）。
+    /// </summary>
+    public Task<RatingWriteOutcome?> SetRatingWithResultAsync(ImageFile? file, int rating) =>
+        SetRatingCoreAsync(file, rating);
+
+    private async Task<RatingWriteOutcome?> SetRatingCoreAsync(ImageFile? file, int rating)
     {
-        if (file == null) return;
+        if (file == null) return null;
         var ratingSw = Stopwatch.StartNew();
         Console.WriteLine($"[Rating] === BEGIN SetRating({file.Name}, {rating}) ===");
         LastRatingWriteError = null;
+        LastRatingWriteOutcome = null;
         var persisted = false;
         try
         {
             var group = GetRatingGroup(file);
             var safeMode = Settings.SafeSetRating;
-            var result = await Task.Run(() => Rating.SetRatingAsync(group, rating, safeMode));
-            if (result.Outcome is RatingWriteOutcome.Superseded or RatingWriteOutcome.Canceled) return;
+            var sidecarIndex = group.Files
+                .Select(item => item.RatingSidecarIndex)
+                .FirstOrDefault(item => item != null);
+            var result = await Task.Run(
+                () => Rating.SetRatingAsync(group, rating, safeMode, sidecarIndex));
+            LastRatingWriteOutcome = result.Outcome;
+            if (result.Outcome is RatingWriteOutcome.Superseded or RatingWriteOutcome.Canceled)
+            {
+                // 即使没有物理修改也按磁盘真值刷新，避免内存与外部状态长期分叉。
+                await RefreshRatingsFromDiskAsync(group);
+                return result.Outcome;
+            }
 
             if (result.IsApplied)
             {
                 persisted = true;
-                await UiDispatcher.InvokeAsync(() => ApplyVerifiedRatings(group, result));
+                // 成功后按磁盘真值逐文件重读全部来源（共享 sidecar 会回填到每个文件，
+                // 内嵌 Conflict/多来源状态也不会被单份 canonical 的 After 抹掉）。
+                await RefreshRatingsFromDiskAsync(group);
                 _ = SyncRatingToDatabaseAsync(group.Representative, rating);
-                _ = ReloadExifAfterRatingAsync(group.Representative);
-                return;
+                return result.Outcome;
             }
 
             LastRatingWriteError = result.FailureReason;
-            if (result.Outcome == RatingWriteOutcome.Partial)
-                await RefreshRatingsFromDiskAsync(group);
+            // 所有非 Applied 结果都按磁盘真值重读，不只 Partial。
+            await RefreshRatingsFromDiskAsync(group);
+            var failure = new RatingWriteFailure(
+                file,
+                rating,
+                result.Outcome,
+                result.FailureReason,
+                result.Outcome == RatingWriteOutcome.Partial);
             await UiDispatcher.InvokeAsync(() =>
             {
-                RefreshRatingDependentState();
                 RatingWriteFailed?.Invoke(file, rating);
+                RatingWriteFailedDetailed?.Invoke(failure);
             });
+            return result.Outcome;
         }
         catch (Exception ex)
         {
             LastRatingWriteError = ex.Message;
             Console.WriteLine("Error setting rating for " + file.Name + ": " + ex);
-            if (!persisted) RatingWriteFailed?.Invoke(file, rating);
+            if (!persisted)
+            {
+                var failure = new RatingWriteFailure(file, rating, null, ex.Message, IsPartial: false);
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    RatingWriteFailed?.Invoke(file, rating);
+                    RatingWriteFailedDetailed?.Invoke(failure);
+                });
+            }
+
+            return null;
         }
         finally
         {
@@ -390,30 +439,32 @@ public class MainViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private void ApplyVerifiedRatings(PhotoGroup group, RatingWriteResult result)
-    {
-        foreach (var outcome in result.Files)
-        {
-            var target = group.Files.First(file => file.File.StorageId == outcome.File.StorageId);
-            if (outcome.After is { } snapshot)
-                target.UpdateCachedRating(snapshot.ValueOrZero);
-        }
-        RefreshRatingDependentState();
-    }
-
     private async Task RefreshRatingsFromDiskAsync(PhotoGroup group)
     {
-        var ratings = await Task.Run(async () =>
+        // 全局递增序号：多个快速请求并发刷新时，只允许最新一轮把快照写回内存。
+        var sequence = Interlocked.Increment(ref s_ratingRefreshSequence);
+        var readings = await Task.Run(async () =>
         {
-            var values = new List<(StorageItemId Id, int Rating)>();
+            var values = new List<(StorageItemId Id, IReadOnlyList<RatingSourceState> Sources)>();
             foreach (var file in group.Files)
-                values.Add((file.File.StorageId, await ExifLoader.LoadRatingOnlyAsync(file.File)));
+            {
+                var (_, sources) = await RatingSourceReader.ReadAsync(
+                    file.File, file.RatingSidecarIndex).ConfigureAwait(false);
+                values.Add((file.File.StorageId, sources));
+            }
+
             return values;
         });
         await UiDispatcher.InvokeAsync(() =>
         {
-            foreach (var (id, value) in ratings)
-                group.Files.First(file => file.File.StorageId == id).UpdateCachedRating(value);
+            if (sequence != Volatile.Read(ref s_ratingRefreshSequence)) return;
+            foreach (var (id, sources) in readings)
+            {
+                group.Files
+                    .FirstOrDefault(item => item.File.StorageId == id)
+                    ?.ApplyRatingSources(sources);
+            }
+
             RefreshRatingDependentState();
         });
     }
@@ -423,25 +474,6 @@ public class MainViewModel : ViewModelBase, IDisposable
         ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
         if (FileVM.FilterBar.SelectedRatingFilter != "All")
             FileVM.ThumbnailList.RefreshFilters(retainFile: CurrentFile);
-    }
-
-    private async Task ReloadExifAfterRatingAsync(ImageFile file)
-    {
-        try
-        {
-            await UiDispatcher.InvokeAsync(() => file.ClearExifData());
-            await file.LoadExifDataAsync();
-            await UiDispatcher.InvokeAsync(() =>
-            {
-                ControlVM.RaisePropertyChanged(nameof(ControlVM.CurrentExifData));
-                file.RaisePropertyChanged(nameof(file.Rating));
-                file.RaisePropertyChanged(nameof(file.HasRatingConflict));
-            });
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine("Refresh EXIF after rating failed: " + ex.Message);
-        }
     }
 
     /// <summary>

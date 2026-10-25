@@ -10,6 +10,8 @@
 
 **2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
 
+**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 521 PASS / 1 SKIP / 0 FAIL（未含 OPEN 刷新契约检查），`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）、重复打开/激活刷新（OPEN-08）与四端界面验收不在本轮范围内。
+
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
 ## film
@@ -21,7 +23,19 @@
 | FILM-03 | 作者手验通过；减弱动态 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-05 | 作者手验通过；空列表无占位文字 | 作者手验通过；胶片栏无占位视图 | 作者手验通过；空列表无占位文字 | 作者手验通过；基础操作；胶片栏无占位视图 |
-| FILM-06 | 程序化通过；真实改星、sidecar 回读与筛选连续性 | 程序化通过；真实改星、sidecar 回读与筛选连续性 | 代码核对；新评分写回与失败补偿，待 Windows 运行验收 | 程序化通过；外部存储写回与失败提示 |
+| FILM-06 | 程序化通过；真实全来源改星（CoreContractCheck 覆盖回滚/Partial） | 程序化通过；CoreContractCheck + input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage/faults 24/0 |
+
+## rating
+
+| ID | macOS | iOS·iPadOS | Windows | Android |
+|---|---|---|---|---|
+| RATING-01 | 程序化通过；CoreContractCheck 与真实 HIF/ARW 副本，内嵌/已有 sidecar 独立枚举 | 程序化通过；CoreContractCheck；模拟器 layout/input/faults | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 24/0 |
+| RATING-02 | 程序化通过；等长/局部空白原位写与写后回读；PNG 写入挂账 | 程序化通过；CoreContractCheck；PNG 写入挂账 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验；PNG 写入挂账 | 程序化通过；storage 24/0（ARW tag 700、无 tag 700 拒绝）；PNG 写入挂账 |
+| RATING-03 | 程序化通过；CoreContractCheck 预检、固定顺序、逆序补偿/Partial/NoChange | 程序化通过；CoreContractCheck；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0、faults 24/0 |
+| RATING-05 | 程序化通过；13 项/已拒绝/冲突独立（CoreContractCheck） | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；CoreContractCheck |
+| RATING-06 | 程序化通过；真实 HIF/ARW 内嵌+已有 sidecar、无 sidecar 不创建；PNG 整体写入挂账；无 canonical/多 XMP/复杂结构 Unsupported；真机与云 Provider 未验 | 程序化通过；同口径（模拟器）；PNG 挂账；真机 security scope 未验 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验；PNG/复杂结构挂账 | 程序化通过；storage 24/0（无 tag 700 拒绝、sidecar 同步）；PNG 挂账；无 canonical/复杂结构 Unsupported；USB/MTP/云 Provider 未验 |
+
+> RATING-01–03、05–06 同时修订 film / filter / toolbar / state / settings 的既有口径，相关行已按新规则更新；冲突指示与来源浮窗（RATING-04）与 OPEN-08 刷新待优化，不计入本轮验收。实施、程序化验收与挂账见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；Windows WinUI 运行时与真机边界仍未验。旧 [core-legacy-rebuild-plan-1](../Plans/core-legacy-rebuild-plan-1.md) 只保留历史。
 
 ## shell
 
@@ -38,9 +52,9 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| FILTER-01 | 作者手验通过；layout | 作者手验通过；开关四色取令牌值 | 作者手验通过；开关 90×27（41 px @150%）、四色令牌 | 作者手验通过；基础操作；开关四色取令牌值 |
+| FILTER-01 | 程序化通过；星级筛选 13 项 | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；CoreContractCheck |
 | FILTER-02 | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；基础操作；名称排序 OrdinalIgnoreCase |
-| FILTER-03 | 作者手验通过；FILM-06 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
+| FILTER-03 | 程序化通过；13 项/已拒绝/冲突独立 | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；CoreContractCheck |
 | FILTER-04 | 作者手验通过；计数字号取令牌 | 作者手验通过；计数通知与暂留同帧 | 作者手验通过；计数通知补齐 | 作者手验通过；基础操作；计数通知与暂留同帧 |
 | FILTER-05 | 作者手验通过；落出后落最近前后项 | 作者手验通过；落出后落最近前后项 | 作者手验通过；落出后落最近前后项 | 作者手验通过；基础操作；落出后落最近前后项 |
 | FILTER-06 | 作者手验通过；文件栏隐藏/恢复保留逻辑态并还原面板 | 作者手验通过；含初态同步 | 作者手验通过 | 作者手验通过；基础操作；文件栏隐藏/恢复保留逻辑态并还原面板 |
@@ -166,7 +180,7 @@
 |---|---|---|---|---|
 | STATE-01 | 程序化通过；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），切图无黑帧待手验 | 程序化通过（模拟器）；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），真机待手验 | 代码核对；类型检查通过，未本机运行，低分辨率顶替未启用（共享能力已就绪） | 作者手验通过；基础操作；保留前一张/黑屏加载；RAW 初次解码以内嵌预览低分辨率顶替 |
 | STATE-02 | 程序化通过；faults: 打开失败提示条 | 程序化通过；faults: 打开失败提示条 | 程序化通过；打开失败走提示条，代码核对 | 程序化通过；打开失败走提示条 |
-| STATE-03 | 程序化通过；faults: 只读副本评分失败提示 | 程序化通过；faults: 只读副本评分失败提示 | 代码核对；文案取共享 StatusMessages，删除雾天增强开关提示 | 程序化通过；评分写回失败提示 |
+| STATE-03 | 程序化通过；faults 覆盖评分失败提示 | 程序化通过；faults 6 | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；faults 24/0 |
 | STATE-04 | 程序化通过 | 程序化通过 | 程序化通过 | 程序化通过；模型/推理失败；数据库不可用未注入 |
 
 ## settings
@@ -181,7 +195,7 @@
 | SETTINGS-06 | 代码核对；提示内存取内存压力预算，按适屏张数表述 | 代码核对；按实测预算推导缓存，iPad 隐藏缓存上限两项 | 作者手验通过；缓存/预载/后台解码默认值按物理内存与核数推导，提示行取运行时预算与进程私有提交 | 作者手验通过；基础操作；缓存按 MemoryLimiter 可见档实测预算推导，footprint 含 GL 纹理，隐藏缓存上限两项，提示行同口径 |
 | SETTINGS-07 | 作者手验通过；倍率组整行居中、行尾圆形增删同列 | 作者手验通过；倍率组整行居中、行尾圆形增删同列，失焦/Done 不重弹键盘 | 作者手验通过；整组居中待同步 | 作者手验通过；基础操作；草稿跨增删排序保留，非法值恢复，整组居中待同步 |
 | SETTINGS-08 | 作者手验通过 | 作者手验通过；映射行为标准弹出按钮，Cmd 映射往返 | 作者手验通过 | 作者手验通过；基础操作 |
-| SETTINGS-09 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
+| SETTINGS-09 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck 安全模式 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck |
 | SETTINGS-10 | 作者手验通过；直调已确认清库入口 | 不适用；长期不提供清库 | 作者手验通过；直调已确认清库入口 | 不适用；长期不提供清库 |
 | SETTINGS-11 | 作者手验通过；外设断开未验 | 作者手验通过；真实外接键盘未验 | 作者手验通过 | 程序化通过；录制/冲突/断连（能力注入） |
 | SETTINGS-12 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 步进已登记 |
@@ -209,5 +223,5 @@
 | SCOPE-02 | 代码核对；内存自动关闭发提示条 | 代码核对；内存自动关闭发提示条 | 代码核对；内存自动关闭发提示条 | 程序化通过；内存告警关闭雾天增强并提示 |
 | SCOPE-03 | 程序化通过 | 程序化通过 | 程序化通过 | 待核验；入库与现算边界 |
 | SCOPE-04 | 代码核对 | 代码核对；RAW 走 `CIRawFilter` 全分辨率，回退 ImageIO 时如实呈现内嵌预览；CoreML 回退 CPU | 程序化通过；RAW 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 实测 7008×4672、代理 5120 长边），内嵌整幅 JPEG 只在等于裁切尺寸时兜底 | 程序化通过；RAW 7008×4672 全分辨率；P3 回退已由作者目视确认 |
-| SCOPE-05 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
+| SCOPE-05 | 程序化通过；全来源写入边界（CoreContractCheck + 真实副本） | 程序化通过；CoreContractCheck | 代码核对；WindowsTypeCheck通过，WinUI运行时待后续手验 | 程序化通过；storage 24/0 |
 | SCOPE-06 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 待核验；平台专属能力取舍 |

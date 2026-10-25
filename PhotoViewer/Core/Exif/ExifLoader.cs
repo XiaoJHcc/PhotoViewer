@@ -20,7 +20,14 @@ public static class ExifLoader
     /// <summary>
     /// 异步加载文件的完整 EXIF 数据（仅解析元数据，不解码像素）。
     /// </summary>
-    public static async Task<ExifData?> LoadExifDataAsync(IFileRef file)
+    /// <param name="file">要读取的文件。</param>
+    /// <param name="sidecarIndex">
+    /// 文件夹枚举得到的 sidecar 索引；传入后不再为每个文件单独查找目录（SAF 上代价很高）。
+    /// 为 null 时才按文件名查找同名 sidecar。
+    /// </param>
+    public static async Task<ExifData?> LoadExifDataAsync(
+        IFileRef file,
+        RatingSidecarIndex? sidecarIndex = null)
     {
         var filePath = file.StorageId.Value;
 
@@ -48,20 +55,22 @@ public static class ExifLoader
                 exifData.MimeType = fileTypeDir.GetDescription(FileTypeDirectory.TagDetectedFileMimeType);
             }
 
-            // 星级与评分筛选共用 XmpRatingReader 语义；XMP 异常只丢星级，不影响其余 EXIF。
-            try
+            // 内嵌是独立来源：sidecar 存在也不会遮蔽这里；XMP 异常只影响评分状态，不丢其余 EXIF。
+            var embedded = ReadEmbeddedSnapshot(directories);
+            var sources = new List<RatingSourceState>(2)
             {
-                var rating = XmpRatingReader.PrefersSidecar(file.Name) &&
-                    await XmpRatingReader.ReadSidecarAsync(file).ConfigureAwait(false) is { } sidecar
-                    ? sidecar
-                    : XmpRatingReader.ReadDirectories(directories.OfType<XmpDirectory>());
-                if (rating.State == XmpRatingState.Rated)
-                    exifData.Rating = rating.Value!.Value;
-            }
-            catch (Exception xmpException)
-            {
-                Console.WriteLine("Failed to read XMP Rating (" + filePath + "): " + xmpException.Message);
-            }
+                new(XmpRatingSource.Embedded, file, embedded),
+            };
+            var sidecar = await RatingSourceReader
+                .ResolveSidecarAsync(file, sidecarIndex)
+                .ConfigureAwait(false);
+            if (sidecar != null)
+                sources.Add(await RatingSourceReader.ReadSidecarAsync(sidecar).ConfigureAwait(false));
+
+            exifData.EmbeddedRating = embedded;
+            exifData.RatingState = embedded.State;
+            exifData.Rating = embedded.ValueOrNull;
+            exifData.RatingSources = sources;
 
             exifData.AllMetadata = ExifMetadataGrouper.ExtractAll(directories);
 
@@ -82,23 +91,52 @@ public static class ExifLoader
     }
 
     /// <summary>
+    /// 读取一个文件的全部评分来源（内嵌 + 已存在的 sidecar），不解析其余 EXIF。
+    /// </summary>
+    public static async Task<(XmpRatingSnapshot Embedded, IReadOnlyList<RatingSourceState> Sources)> LoadRatingSourcesAsync(
+        IFileRef file,
+        RatingSidecarIndex? sidecarIndex,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(file);
+
+        cancellationToken.ThrowIfCancellationRequested();
+        var embedded = await RatingSourceReader
+            .ReadEmbeddedAsync(file, cancellationToken)
+            .ConfigureAwait(false);
+
+        var sources = new List<RatingSourceState>(2)
+        {
+            new(XmpRatingSource.Embedded, file, embedded),
+        };
+        var sidecar = await RatingSourceReader
+            .ResolveSidecarAsync(file, sidecarIndex, cancellationToken)
+            .ConfigureAwait(false);
+        if (sidecar != null)
+            sources.Add(await RatingSourceReader.ReadSidecarAsync(sidecar, cancellationToken).ConfigureAwait(false));
+
+        return (embedded, sources);
+    }
+
+    /// <summary>
     /// 仅加载文件的星级评分（用于快速筛选，避免读取完整 EXIF）。
-    /// 专有 RAW 先读标准 sidecar，sidecar 不存在时读内嵌 XMP。
+    /// 返回值是内嵌来源的数值（Rejected 为 -1；缺失/无效/冲突为 0），sidecar 不再遮蔽内嵌。
     /// </summary>
     /// <param name="file">要读取的文件。</param>
     /// <param name="cancellationToken">取消令牌。</param>
+    /// <param name="sidecarIndex">文件夹枚举得到的 sidecar 索引（可选）。</param>
     public static async Task<int> LoadRatingOnlyAsync(
         IFileRef file,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        RatingSidecarIndex? sidecarIndex = null)
     {
         var filePath = file.StorageId.Value;
 
         try
         {
-            var snapshot = await XmpRatingReader
-                .ReadAsync(file, cancellationToken)
+            var (embedded, _) = await LoadRatingSourcesAsync(file, sidecarIndex, cancellationToken)
                 .ConfigureAwait(false);
-            return snapshot.ValueOrZero;
+            return embedded.NumericValue;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -108,6 +146,22 @@ public static class ExifLoader
         {
             Console.WriteLine("Failed to read rating data (" + filePath + "): " + ex.Message);
             return 0;
+        }
+    }
+
+    private static XmpRatingSnapshot ReadEmbeddedSnapshot(IReadOnlyList<MetadataExtractor.Directory> directories)
+    {
+        try
+        {
+            return XmpRatingReader.ReadDirectories(directories.OfType<XmpDirectory>());
+        }
+        catch (Exception exception)
+        {
+            return new XmpRatingSnapshot(
+                XmpRatingState.Invalid,
+                null,
+                XmpRatingSource.Embedded,
+                $"读取内嵌 XMP 失败：{exception.Message}");
         }
     }
 

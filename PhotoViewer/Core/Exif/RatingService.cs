@@ -5,8 +5,11 @@ namespace PhotoViewer.Core;
 
 public enum RatingWriteOutcome
 {
-    /// <summary>组内全部文件已写入并通过写后校验；只有这一结果可由上层同步数据库。</summary>
+    /// <summary>组内全部来源已写入并通过写后校验；只有这一结果可由上层同步数据库。</summary>
     Applied,
+
+    /// <summary>组内全部来源本来就已经是目标值，没有发生任何物理修改。</summary>
+    NoChange,
 
     /// <summary>等待期间被同组更新的请求取代，未做任何物理修改。</summary>
     Superseded,
@@ -14,7 +17,7 @@ public enum RatingWriteOutcome
     /// <summary>写入中途失败，已按逆序补偿，且补偿全部成功（磁盘回到写入前状态）。</summary>
     RolledBack,
 
-    /// <summary>写入失败且至少一个文件的补偿未成功；组内文件可能不一致，需按逐文件状态重新展示。</summary>
+    /// <summary>写入失败且至少一个来源的补偿未成功；组内可能不一致，需按逐来源状态重新展示。</summary>
     Partial,
 
     /// <summary>首次物理修改前被取消，未做任何物理修改。</summary>
@@ -22,20 +25,36 @@ public enum RatingWriteOutcome
 }
 
 /// <summary>
-/// 单个文件在本次评分写入中的结果。失败路径的 <see cref="After"/> 来自重新读取，
-/// 不是请求值，代表磁盘真实状态。
+/// 一个实际评分来源在本次写入中的结果。<see cref="After"/> 在失败路径来自重新读取，代表磁盘真实状态。
 /// </summary>
-public sealed record RatingFileOutcome(
-    string FileName,
+public sealed record RatingSourceOutcome(
+    XmpRatingSource Source,
     IFileRef File,
     XmpRatingSnapshot? Before,
     XmpRatingSnapshot? After,
     bool Written,
+    bool NoChange,
     string? Error = null,
-    string? CompensationError = null);
+    string? CompensationError = null)
+{
+    public string DisplayName => File.Name;
+}
+
+/// <summary>一个文件在本次写入中的结果；<see cref="Sources"/> 包含它的内嵌来源与同名 sidecar。</summary>
+public sealed record RatingFileOutcome(
+    string FileName,
+    IFileRef File,
+    IReadOnlyList<RatingSourceOutcome> Sources,
+    string? Error = null)
+{
+    public XmpRatingSnapshot? EmbeddedAfter =>
+        Sources.FirstOrDefault(source => source.Source == XmpRatingSource.Embedded)?.After;
+
+    public bool Written => Sources.Any(source => source.Written);
+}
 
 /// <summary>
-/// 同组评分写入的结果。<see cref="Files"/> 按实际写入顺序排列；失败路径会把组内每个文件都列出来。
+/// 同组评分写入的结果。<see cref="Files"/> 按实际写入顺序排列；失败路径会把组内每个文件与其全部来源都列出来。
 /// </summary>
 public sealed record RatingWriteResult(
     string GroupId,
@@ -44,51 +63,76 @@ public sealed record RatingWriteResult(
     IReadOnlyList<RatingFileOutcome> Files,
     string? FailureReason = null)
 {
-    public bool IsApplied => Outcome == RatingWriteOutcome.Applied;
+    public bool IsApplied => Outcome is RatingWriteOutcome.Applied or RatingWriteOutcome.NoChange;
 
-    public bool AnyFileModified => Files.Any(file => file.Written);
+    public bool AnyFileModified => Files.SelectMany(file => file.Sources).Any(source => source.Written);
 }
 
 /// <summary>
-/// 应用实例级的评分写入服务（无静态状态）。同一 <see cref="PhotoGroup.Id"/> 串行执行，
-/// 组内文件顺序写并收集回执；任一文件失败按逆序补偿已写入的文件。
-/// 只保证“全部成功或按回执回滚”，不宣称跨文件原子。
+/// 一次评分失败的完整载荷：结果/原因/是否 Partial 与原文对象一起传递，
+/// 避免共享 <c>LastRatingWriteError</c> 被后发请求清空造成错误文案串台。
+/// </summary>
+public sealed record RatingWriteFailure(
+    ImageFile File,
+    int RequestedRating,
+    RatingWriteOutcome? Outcome,
+    string? Reason,
+    bool IsPartial);
+
+/// <summary>
+/// 应用实例级的评分写入服务（无静态状态）。同一 <see cref="PhotoGroup.Id"/> 串行执行。
 /// </summary>
 /// <remarks>
+/// <para>写入目标是组内全部<strong>实际来源</strong>：每个文件的内嵌 XMP，加上已存在的
+/// <c>&lt;stem&gt;.xmp</c>（同名共享 sidecar 只出现一次）。sidecar 不存在时不会创建。
+/// 写入时逐个文件直接核查当前磁盘，不使用列表读取用的 sidecar 索引。</para>
+/// <para>两个阶段：先对全部来源做只读预检（<see cref="IXmpRatingStore.PrepareAsync"/>），
+/// 任一来源无法安全改写则在首次修改前整组失败；预检全部通过后才按“代表文件优先”的顺序提交。
+/// 任一提交失败时按逆序补偿已拿到回执的来源。</para>
 /// <para>快速连按时（例如 3→4→5），仍在排队等待的旧请求以 <see cref="RatingWriteOutcome.Superseded"/>
-/// 返回且不写盘；已经开始物理写入的请求不会被取消，会完整走完或回滚。</para>
-/// <para>取消只在首次物理修改前生效（排队、读取阶段）；一旦开始写入，本次操作不再响应取消，
-/// 避免取消留下跨文件半写状态。</para>
-/// <para>适配器/存储在自己的 <c>WriteAsync</c> 内负责写后语义校验并在失败时自行恢复原内容；
-/// 本类只对拿到 <see cref="XmpRatingWriteReceipt"/> 的文件做补偿。</para>
+/// 返回且不写盘；已经开始物理写入的请求不会被取消，会完整走完或回滚。取消只在首次物理修改前生效。</para>
+/// <para>结果为 <see cref="RatingWriteOutcome.Partial"/> 时逐来源重新读取磁盘真值，不宣称跨文件原子。</para>
 /// </remarks>
 public sealed class RatingService
 {
-    private readonly Func<IFileRef, IXmpRatingStore> _storeFactory;
+    private readonly Func<IFileRef, IXmpRatingStore> _embeddedStoreFactory;
+    private readonly Func<IFileRef, IXmpRatingStore> _sidecarStoreFactory;
     private readonly object _registryLock = new();
     private readonly Dictionary<string, GroupGate> _gates = new(StringComparer.Ordinal);
     private long _sequence;
 
     public RatingService()
-        : this(XmpRatingStoreFactory.Create)
+        : this(XmpRatingStoreFactory.Create, XmpRatingStoreFactory.CreateSidecar)
     {
     }
 
+    /// <summary>测试/平台注入：内嵌与 sidecar 使用同一个工厂。</summary>
     public RatingService(Func<IFileRef, IXmpRatingStore> storeFactory)
+        : this(storeFactory, storeFactory)
     {
-        ArgumentNullException.ThrowIfNull(storeFactory);
-        _storeFactory = storeFactory;
+    }
+
+    public RatingService(
+        Func<IFileRef, IXmpRatingStore> embeddedStoreFactory,
+        Func<IFileRef, IXmpRatingStore> sidecarStoreFactory)
+    {
+        ArgumentNullException.ThrowIfNull(embeddedStoreFactory);
+        ArgumentNullException.ThrowIfNull(sidecarStoreFactory);
+        _embeddedStoreFactory = embeddedStoreFactory;
+        _sidecarStoreFactory = sidecarStoreFactory;
     }
 
     public async Task<RatingWriteResult> SetRatingAsync(
         PhotoGroup group,
         int rating,
         bool safeMode,
+        RatingSidecarIndex? sidecarIndex = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(group);
-        if (rating is < 0 or > 5)
-            throw new ArgumentOutOfRangeException(nameof(rating), rating, "XMP Rating 必须在 0 到 5 之间");
+        // 核心全链路允许 -1（已拒绝）；UI 不提供该入口。
+        if (rating is < -1 or > 5)
+            throw new ArgumentOutOfRangeException(nameof(rating), rating, "XMP Rating 必须在 -1 到 5 之间");
 
         var (gate, sequence) = Register(group.Id);
         var acquired = false;
@@ -113,6 +157,8 @@ public sealed class RatingService
                     "已被同组更新的评分请求取代，未修改文件");
             }
 
+            // sidecar 索引只服务列表读取；写入必须逐个文件核查当前磁盘，避免混合/陈旧索引漏写。
+            _ = sidecarIndex;
             return await ApplyAsync(group, rating, safeMode, gate, sequence, cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -131,54 +177,103 @@ public sealed class RatingService
         long sequence,
         CancellationToken cancellationToken)
     {
-        var files = OrderFiles(group);
-        var plans = new List<(ImageFile Image, IXmpRatingStore Store, XmpRatingSnapshot Before)>(files.Length);
-
-        for (var index = 0; index < files.Length; index++)
+        List<RatingWriteSource> sources;
+        try
         {
-            var image = files[index];
+            sources = await CollectSourcesAsync(group, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            return new RatingWriteResult(
+                group.Id, rating, RatingWriteOutcome.Canceled, [], "首次物理修改前被取消，未修改文件");
+        }
+        catch (Exception exception)
+        {
+            return new RatingWriteResult(
+                group.Id, rating, RatingWriteOutcome.RolledBack, PlannedOutcomes(group, []),
+                $"读取评分来源失败：{Describe(exception)}；未修改任何文件");
+        }
+
+        // 预检：只读，任一来源不支持就整组失败。
+        var preparations = new List<(RatingWriteSource Source, XmpRatingPreparation Preparation)>(sources.Count);
+        var precheckErrors = new List<string>();
+        foreach (var source in sources)
+        {
             try
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var store = _storeFactory(image.File);
-                cancellationToken.ThrowIfCancellationRequested();
-                var before = await store.ReadAsync(cancellationToken).ConfigureAwait(false);
-                plans.Add((image, store, before));
+                if (source.Kind == XmpRatingSource.Embedded)
+                {
+                    // 不依赖内存里的读取结果：写入前重新枚举内嵌 XMP 目录，
+                    // 多份/扩展 XMP 无法证明唯一目标时拒绝，即使 canonical 缺 Rating 也不插入。
+                    var probe = await XmpRatingReader
+                        .ProbeEmbeddedAsync(source.Target, cancellationToken)
+                        .ConfigureAwait(false);
+                    if (probe.XmpDirectoryCount > 1)
+                    {
+                        throw new StorageException(
+                            StorageError.Unsupported,
+                            $"{source.DisplayName} 存在多份 XMP 目录，无法证明唯一写入目标");
+                    }
+
+                    if (probe.HasExtendedXmp)
+                    {
+                        throw new StorageException(
+                            StorageError.Unsupported,
+                            $"{source.DisplayName} 声明了 extended XMP，无法证明唯一写入目标");
+                    }
+
+                    if (probe.HasNullMeta)
+                    {
+                        throw new StorageException(
+                            StorageError.Unsupported,
+                            $"{source.DisplayName} 的 XMP 目录没有可解析的元数据");
+                    }
+                }
+
+                var preparation = await source.Store
+                    .PrepareAsync(rating, safeMode, cancellationToken)
+                    .ConfigureAwait(false);
+                preparations.Add((source, preparation));
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 return new RatingWriteResult(
-                    group.Id, rating, RatingWriteOutcome.Canceled, PlannedOutcomes(plans),
-                    "首次物理修改前被取消，未修改文件");
+                    group.Id, rating, RatingWriteOutcome.Canceled,
+                    PlannedOutcomes(group, preparations), "首次物理修改前被取消，未修改文件");
             }
             catch (Exception exception)
             {
-                var failure = Describe(exception);
-                var plannedOutcomes = PlannedOutcomes(plans);
-                plannedOutcomes.Add(new RatingFileOutcome(
-                    image.Name, image.File, null, null, Written: false, Error: failure));
-                return new RatingWriteResult(
-                    group.Id, rating, RatingWriteOutcome.RolledBack, plannedOutcomes,
-                    $"读取 {image.Name} 的评分失败：{failure}；未修改任何文件");
+                precheckErrors.Add($"{source.DisplayName}：{Describe(exception)}");
             }
         }
 
-        // 预读可能较慢，正式写盘前再确认一次：期间有更新的同组请求时直接让位。
+        if (precheckErrors.Count > 0)
+        {
+            return new RatingWriteResult(
+                group.Id,
+                rating,
+                RatingWriteOutcome.RolledBack,
+                PlannedOutcomes(group, preparations),
+                "预检未通过，未修改任何文件：" + string.Join("；", precheckErrors));
+        }
+
+        // 预检可能较慢，正式写盘前再确认一次：期间有更新的同组请求时直接让位。
         if (IsStale(gate, sequence))
         {
             return new RatingWriteResult(
-                group.Id, rating, RatingWriteOutcome.Superseded, PlannedOutcomes(plans),
+                group.Id, rating, RatingWriteOutcome.Superseded, PlannedOutcomes(group, preparations),
                 "已被同组更新的评分请求取代，未修改文件");
         }
 
-        var results = new List<RatingFileOutcome>(plans.Count);
-        var receipts = new List<(IXmpRatingStore Store, XmpRatingWriteReceipt Receipt)>(plans.Count);
-        var started = false;
+        var receipts = new List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)>();
+        RatingWriteSource? failedSource = null;
         string? failureReason = null;
+        var started = false;
 
-        for (var index = 0; index < plans.Count; index++)
+        foreach (var (source, preparation) in preparations)
         {
-            var (image, store, before) = plans[index];
+            if (preparation.NoChange) continue;
             try
             {
                 if (!started)
@@ -187,87 +282,233 @@ public sealed class RatingService
                     started = true;
                 }
 
-                var receipt = await store.WriteAsync(rating, safeMode, CancellationToken.None)
+                var receipt = await source.Store.CommitAsync(preparation, CancellationToken.None)
                     .ConfigureAwait(false);
-                receipts.Add((store, receipt));
-                results.Add(new RatingFileOutcome(image.Name, image.File, before, receipt.After, Written: true));
+                receipts.Add((source, receipt));
+                if (receipt.Failure is { } commitFailure)
+                {
+                    // 存储已尝试自愈但无法证明恢复成功：回执必须参与逆序补偿。
+                    failedSource = source;
+                    failureReason = commitFailure;
+                    break;
+                }
             }
             catch (OperationCanceledException) when (!started)
             {
                 return new RatingWriteResult(
-                    group.Id, rating, RatingWriteOutcome.Canceled, PlannedOutcomes(plans),
-                    "首次物理修改前被取消，未修改文件");
+                    group.Id, rating, RatingWriteOutcome.Canceled,
+                    PlannedOutcomes(group, preparations), "首次物理修改前被取消，未修改文件");
             }
             catch (Exception exception)
             {
+                failedSource = source;
                 failureReason = Describe(exception);
-                results.Add(new RatingFileOutcome(
-                    image.Name, image.File, before, null, Written: false, Error: failureReason));
                 break;
             }
         }
 
         if (failureReason is null)
         {
-            return new RatingWriteResult(group.Id, rating, RatingWriteOutcome.Applied, results);
+            var outcomes = BuildOutcomes(group, preparations, receipts, compensationErrors: [], failedSource: null);
+            var allNoChange = preparations.All(item => item.Preparation.NoChange);
+            return new RatingWriteResult(
+                group.Id,
+                rating,
+                allNoChange ? RatingWriteOutcome.NoChange : RatingWriteOutcome.Applied,
+                outcomes);
         }
 
-        // 逆序补偿已拿到回执的文件；没有回执的文件不做补偿（适配器负责自行恢复）。
-        var compensationErrors = new string?[receipts.Count];
-        for (var index = receipts.Count - 1; index >= 0; index--)
+        // 安全模式：逆序补偿已拿到回执的来源；关闭时保留已写来源的磁盘真值，不假装整组一致。
+        var compensationErrors = new Dictionary<RatingWriteSource, string>();
+        if (safeMode)
         {
-            try
+            for (var index = receipts.Count - 1; index >= 0; index--)
             {
-                await receipts[index].Store
-                    .RestoreAsync(receipts[index].Receipt, CancellationToken.None)
-                    .ConfigureAwait(false);
-            }
-            catch (Exception exception)
-            {
-                compensationErrors[index] = Describe(exception);
+                try
+                {
+                    await receipts[index].Source.Store
+                        .RestoreAsync(receipts[index].Receipt, CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    compensationErrors[receipts[index].Source] = Describe(exception);
+                }
             }
         }
 
-        var outcomes = new List<RatingFileOutcome>(plans.Count);
-        var compensationFailed = false;
-        for (var index = 0; index < plans.Count; index++)
-        {
-            var (image, store, before) = plans[index];
-            var attempted = index < results.Count;
-            var written = attempted && results[index].Written;
-            var error = attempted ? results[index].Error : null;
-            var compensationError = written && index < compensationErrors.Length
-                ? compensationErrors[index]
-                : null;
-
-            var read = await TryReadAsync(store).ConfigureAwait(false);
-            if (!read.Ok)
-            {
-                error = Combine(error, $"重新读取失败：{read.Error}");
-            }
-            else if (written && compensationError is null && !SameSemantics(before, read.Snapshot))
-            {
-                compensationError = $"补偿后磁盘评分为 {Describe(read.Snapshot)}，与写入前不一致";
-            }
-
-            if (compensationError is not null) compensationFailed = true;
-
-            outcomes.Add(new RatingFileOutcome(
-                image.Name, image.File, before, read.Snapshot, written, error, compensationError));
-        }
-
+        var compensationFailed = safeMode ? compensationErrors.Count > 0 : receipts.Count > 0;
+        var finalOutcomes = await ReadTruthAsync(
+                group, preparations, receipts, compensationErrors, failedSource, verifyRestoration: safeMode)
+            .ConfigureAwait(false);
         var suffix = receipts.Count == 0
             ? "；未修改任何文件"
-            : compensationFailed
-                ? "；部分文件中补偿失败，磁盘状态可能不一致"
-                : "；已按逆序恢复所有已写文件";
+            : !safeMode
+                ? "；安全模式关闭，已写来源保持磁盘真值，整组可能不一致"
+                : compensationFailed
+                    ? "；部分来源补偿失败，磁盘状态可能不一致"
+                    : "；已按逆序恢复所有已写来源";
 
         return new RatingWriteResult(
             group.Id,
             rating,
             compensationFailed ? RatingWriteOutcome.Partial : RatingWriteOutcome.RolledBack,
-            outcomes,
+            finalOutcomes,
             Combine(failureReason, suffix.TrimStart('；')));
+    }
+
+    private async Task<List<RatingWriteSource>> CollectSourcesAsync(
+        PhotoGroup group,
+        CancellationToken cancellationToken)
+    {
+        var sources = new List<RatingWriteSource>(group.Files.Count + 1);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var ordered = OrderFiles(group);
+
+        // 顺序只用于确定性与补偿：代表文件内嵌 → 其余文件内嵌 → 每个实际存在的 sidecar。
+        foreach (var image in ordered)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (seen.Add("E|" + image.File.StorageId.Value))
+            {
+                sources.Add(new RatingWriteSource(
+                    image,
+                    image.File,
+                    XmpRatingSource.Embedded,
+                    _embeddedStoreFactory(image.File)));
+            }
+        }
+
+        foreach (var image in ordered)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // 写入必须逐个文件核查当前磁盘：不采用文件对象上的索引，避免混合/陈旧索引漏掉新 sidecar。
+            var sidecar = await RatingSourceReader
+                .ResolveSidecarAsync(image.File, sidecarIndex: null, cancellationToken)
+                .ConfigureAwait(false);
+            if (sidecar is null) continue;
+            if (seen.Add("S|" + sidecar.StorageId.Value))
+            {
+                sources.Add(new RatingWriteSource(
+                    image,
+                    sidecar,
+                    XmpRatingSource.Sidecar,
+                    _sidecarStoreFactory(sidecar)));
+            }
+        }
+
+        return sources;
+    }
+
+    private static List<RatingFileOutcome> BuildOutcomes(
+        PhotoGroup group,
+        List<(RatingWriteSource Source, XmpRatingPreparation Preparation)> preparations,
+        List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)> receipts,
+        Dictionary<RatingWriteSource, string> compensationErrors,
+        RatingWriteSource? failedSource)
+    {
+        var sourceOutcomes = new Dictionary<RatingWriteSource, RatingSourceOutcome>();
+        foreach (var (source, preparation) in preparations)
+        {
+            var receipt = receipts.FirstOrDefault(item => ReferenceEquals(item.Source, source));
+            var written = receipt.Receipt is not null;
+            var after = receipt.Receipt is { } applied ? applied.After : preparation.Before;
+            var error = ReferenceEquals(source, failedSource) ? "写入失败" : null;
+            compensationErrors.TryGetValue(source, out var compensationError);
+            sourceOutcomes[source] = new RatingSourceOutcome(
+                source.Kind,
+                source.Target,
+                preparation.Before,
+                after,
+                written,
+                preparation.NoChange,
+                error,
+                compensationError);
+        }
+
+        return GroupOutcomes(group, sourceOutcomes);
+    }
+
+    private async Task<List<RatingFileOutcome>> ReadTruthAsync(
+        PhotoGroup group,
+        List<(RatingWriteSource Source, XmpRatingPreparation Preparation)> preparations,
+        List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)> receipts,
+        Dictionary<RatingWriteSource, string> compensationErrors,
+        RatingWriteSource? failedSource,
+        bool verifyRestoration)
+    {
+        var sourceOutcomes = new Dictionary<RatingWriteSource, RatingSourceOutcome>();
+        foreach (var (source, preparation) in preparations)
+        {
+            var receipt = receipts.FirstOrDefault(item => ReferenceEquals(item.Source, source));
+            var written = receipt.Receipt != null;
+            string? error = ReferenceEquals(source, failedSource) ? "写入失败" : null;
+            XmpRatingSnapshot? after = null;
+            try
+            {
+                after = await source.Store.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                error = Combine(error, "重新读取失败：" + Describe(exception));
+            }
+
+            compensationErrors.TryGetValue(source, out var compensationError);
+            if (verifyRestoration && written && compensationError is null && after is { } actual &&
+                !SameSemantics(preparation.Before, actual))
+            {
+                compensationError = $"补偿后磁盘评分为 {Describe(actual)}，与写入前不一致";
+            }
+
+            sourceOutcomes[source] = new RatingSourceOutcome(
+                source.Kind,
+                source.Target,
+                preparation.Before,
+                after,
+                written,
+                preparation.NoChange,
+                error,
+                compensationError);
+        }
+
+        return GroupOutcomes(group, sourceOutcomes);
+    }
+
+    private static List<RatingFileOutcome> GroupOutcomes(
+        PhotoGroup group,
+        Dictionary<RatingWriteSource, RatingSourceOutcome> sourceOutcomes)
+    {
+        var results = new List<RatingFileOutcome>(group.Files.Count);
+        foreach (var image in OrderFiles(group))
+        {
+            var outcomes = sourceOutcomes
+                .Where(item => ReferenceEquals(item.Key.Owner, image))
+                .OrderBy(item => item.Key.Kind == XmpRatingSource.Embedded ? 0 : 1)
+                .Select(item => item.Value)
+                .ToArray();
+            results.Add(new RatingFileOutcome(image.Name, image.File, outcomes));
+        }
+
+        return results;
+    }
+
+    private static List<RatingFileOutcome> PlannedOutcomes(
+        PhotoGroup group,
+        List<(RatingWriteSource Source, XmpRatingPreparation Preparation)> preparations)
+    {
+        var outcomes = new Dictionary<RatingWriteSource, RatingSourceOutcome>();
+        foreach (var (source, preparation) in preparations)
+        {
+            outcomes[source] = new RatingSourceOutcome(
+                source.Kind,
+                source.Target,
+                preparation.Before,
+                preparation.Before,
+                Written: false,
+                preparation.NoChange);
+        }
+
+        return GroupOutcomes(group, outcomes);
     }
 
     /// <summary>代表文件（通常是主格式）先写，其余保持组内顺序。</summary>
@@ -279,32 +520,8 @@ public sealed class RatingService
             .ToArray();
     }
 
-    private static List<RatingFileOutcome> PlannedOutcomes(
-        List<(ImageFile Image, IXmpRatingStore Store, XmpRatingSnapshot Before)> plans) =>
-        plans
-            .Select(plan => new RatingFileOutcome(
-                plan.Image.Name, plan.Image.File, plan.Before, plan.Before, Written: false))
-            .ToList();
-
-    private static async Task<(bool Ok, XmpRatingSnapshot? Snapshot, string? Error)> TryReadAsync(
-        IXmpRatingStore store)
-    {
-        try
-        {
-            var snapshot = await store.ReadAsync(CancellationToken.None).ConfigureAwait(false);
-            return (true, snapshot, null);
-        }
-        catch (Exception exception)
-        {
-            return (false, null, Describe(exception));
-        }
-    }
-
-    private static bool SameSemantics(XmpRatingSnapshot? left, XmpRatingSnapshot? right) =>
-        left is { } leftValue &&
-        right is { } rightValue &&
-        leftValue.State == rightValue.State &&
-        leftValue.Value == rightValue.Value;
+    private static bool SameSemantics(XmpRatingSnapshot left, XmpRatingSnapshot right) =>
+        left.State == right.State && left.Value == right.Value;
 
     private static string? Combine(string? first, string? second)
     {
@@ -362,6 +579,18 @@ public sealed class RatingService
                 _gates.Remove(groupId);
             }
         }
+    }
+
+    /// <summary>组内唯一的一个物理写入目标（内嵌包或共享 sidecar）。</summary>
+    private sealed record RatingWriteSource(
+        ImageFile Owner,
+        IFileRef Target,
+        XmpRatingSource Kind,
+        IXmpRatingStore Store)
+    {
+        public string DisplayName => Kind == XmpRatingSource.Embedded
+            ? Owner.Name + "（内嵌）"
+            : Target.Name + "（sidecar）";
     }
 
     private sealed class GroupGate

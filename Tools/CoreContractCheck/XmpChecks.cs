@@ -61,9 +61,17 @@ internal static class XmpChecks
         var tooSmall = Packet("<rdf:Description rdf:about=\"\"/>", padding: 0);
         c.ThrowsExact<XmpException>("空间不足不在原包内硬写",
             () => XmpPacketEditor.SetRating(tooSmall, 5, preserveLength: true));
+        // Missing 与 0 的区分由状态承担，数值只用于旧调用方。
+        c.Equal("Rejected 数值为 -1", -1,
+            XmpRatingReader.ReadPacket(rejected, XmpRatingSource.Embedded).NumericValue);
+        c.Equal("Missing 没有可比较数值", null,
+            XmpRatingReader.ReadPacket(missing, XmpRatingSource.Embedded).ValueOrNull);
+
+        var nullDirectory = XmpRatingReader.Read(null);
+        c.Equal("XmpDirectory.XmpMeta 为 null 映射 Invalid", XmpRatingState.Invalid, nullDirectory.State);
+        c.True("空 XMP 目录带明确错误", nullDirectory.Error != null);
+
         c.Equal("同名 sidecar 规则", "A7C01489.xmp", XmpRatingReader.SidecarName("A7C01489.ARW"));
-        c.True("专有 RAW 使用 sidecar", XmpRatingReader.PrefersSidecar("A7C01489.ARW"));
-        c.True("DNG 不强制 sidecar", !XmpRatingReader.PrefersSidecar("A7C01489.DNG"));
     }
 
     private static byte[] Packet(string description, int padding = 4096)

@@ -42,7 +42,47 @@ public sealed class PhotoGroup
         ? Representative.Name
         : $"{Representative.Name}({string.Join('/', CompanionFormatNames)})";
 
-    public bool HasRatingConflict => Files.Any(file => file.Rating != Representative.Rating);
+    /// <summary>
+    /// 组内全部实际评分来源（每个文件的内嵌 + 已存在的共享 sidecar，按存储身份去重）。
+    /// 详情按来源展示；数值筛选只用代表文件的内嵌值。
+    /// </summary>
+    public IReadOnlyList<RatingSourceState> RatingSources
+    {
+        get
+        {
+            var seen = new HashSet<(XmpRatingSource Source, string Id)>();
+            var sources = new List<RatingSourceState>();
+            foreach (var file in Files)
+            {
+                foreach (var source in file.RatingSources)
+                {
+                    if (seen.Add((source.Source, source.File.StorageId.Value))) sources.Add(source);
+                }
+            }
+
+            return sources;
+        }
+    }
+
+    /// <summary>
+    /// 是否存在评分冲突：组内实际来源不处于“全部可读、全部带值且取值相同”的状态。
+    /// 任一来源 Invalid/Conflict，多来源中有 Missing，或带值来源取值不同都为冲突；
+    /// 只有单个来源且该来源只是 Missing/带值时不算冲突（没有可比较的第二份事实）。
+    /// </summary>
+    public bool HasRatingConflict
+    {
+        get
+        {
+            var sources = RatingSources;
+            if (sources.Count == 0) return false;
+            if (sources.Any(source => source.State is XmpRatingState.Invalid or XmpRatingState.Conflict))
+                return true;
+            if (sources.Count == 1) return false;
+            if (sources.Any(source => source.State == XmpRatingState.Missing)) return true;
+            var first = sources[0];
+            return sources.Any(source => source.Value != first.Value);
+        }
+    }
 }
 
 public sealed class PhotoGroupMap

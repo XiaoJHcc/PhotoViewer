@@ -32,152 +32,30 @@ public sealed class PngXmpContainerAdapter : IXmpContainerAdapter
         return layout.Xmp is { } xmp ? ToPacket(xmp) : null;
     }
 
-    public async Task<XmpRatingWriteReceipt> WriteRatingAsync(
+    public Task<XmpRatingWriteReceipt> WriteRatingAsync(
         IFileRef file,
         int rating,
         bool safeMode,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
-        if (rating is < 0 or > 5) throw new ArgumentOutOfRangeException(nameof(rating));
-
-        var properties = await file.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
-        if (!properties.Exists)
-            throw new StorageException(StorageError.ObjectGone, $"{file.Name} 已不存在");
-
-        PngLayout layout;
-        await using (var stream = await file.OpenReadAsync(cancellationToken).ConfigureAwait(false))
-            layout = await ScanAsync(stream, cancellationToken).ConfigureAwait(false);
-
-        if (layout.HasForeignXmp)
-            throw new NotSupportedException("PNG 的 tEXt/zTXt XMP 不受支持，写入会保留旧的冲突包");
-
-        var original = layout.Xmp;
-        if (original != null && safeMode)
-            await EnsureChunkUnchangedAsync(file, original.Chunk.Offset, original.ChunkBytes, cancellationToken)
-                .ConfigureAwait(false);
-
-        var packet = BuildPacket(original?.Text, rating);
-        var chunkBytes = BuildChunk(original?.Prefix ?? CreateXmpPrefix(), packet);
-
-        var pending = new XmpRatingWriteReceipt
-        {
-            TargetFile = file,
-            Before = Snapshot(original?.Text),
-            After = XmpRatingReader.ReadPacket(packet, XmpRatingSource.Embedded),
-            OriginalPacket = original == null ? null : ToPacket(original),
-        };
-
-        if (original == null || !await TryWriteInPlaceAsync(
-                file,
-                original.Chunk.Offset,
-                original.ChunkBytes,
-                chunkBytes,
-                properties.Revision,
-                safeMode,
-                cancellationToken).ConfigureAwait(false))
-        {
-            var edits = original == null
-                ? new[] { new XmpContainerEdit(layout.Iend.Offset, 0, chunkBytes) }
-                : new[] { new XmpContainerEdit(original.Chunk.Offset, original.Chunk.TotalLength, chunkBytes) };
-            await XmpContainerIO.RewriteAsync(file, edits, properties.Revision, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        XmpRatingSnapshot verified;
-        try
-        {
-            verified = await VerifyAsync(file, packet, rating, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception verificationError)
-        {
-            await RollbackAsync(file, pending, verificationError).ConfigureAwait(false);
-            throw;
-        }
-
-        return new XmpRatingWriteReceipt
-        {
-            TargetFile = file,
-            Before = pending.Before,
-            After = verified,
-            OriginalPacket = pending.OriginalPacket,
-            Revision = (await file.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false)).Revision,
-            CreatedTarget = false,
-        };
+        throw PngWriteUnsupported(file.Name);
     }
 
-    public async Task RestoreAsync(
+    public Task RestoreAsync(
         IFileRef file,
         XmpRatingWriteReceipt receipt,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(file);
         ArgumentNullException.ThrowIfNull(receipt);
-        if (receipt.TargetFile.StorageId != file.StorageId)
-            throw new ArgumentException("回执与目标文件不一致", nameof(receipt));
-
-        var properties = await file.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
-        if (properties.Exists && receipt.Revision is { Size: { } expectedSize } &&
-            properties.Size != (ulong)expectedSize)
-            throw StorageException.ChangedExternally(file.Name);
-
-        PngLayout layout;
-        await using (var stream = await file.OpenReadAsync(cancellationToken).ConfigureAwait(false))
-            layout = await ScanAsync(stream, cancellationToken).ConfigureAwait(false);
-
-        if (receipt.OriginalPacket is { } original)
-        {
-            if (layout.Xmp is not { } current)
-                throw StorageException.ChangedExternally(file.Name);
-            if (original.Descriptor is { } originalDescriptor
-                    ? current.ChunkBytes.AsSpan().SequenceEqual(originalDescriptor.Data)
-                    : current.Text.AsSpan().SequenceEqual(original.Data))
-                return;
-            EnsureCurrentRatingMatches(current.Text, receipt, file.Name);
-
-            var restoreChunk = original.Descriptor?.Data ?? BuildChunk(CreateXmpPrefix(), original.Data);
-            if (!await TryWriteInPlaceAsync(
-                    file,
-                    current.Chunk.Offset,
-                    current.ChunkBytes,
-                    restoreChunk,
-                    properties.Revision,
-                    safeMode: false,
-                    cancellationToken).ConfigureAwait(false))
-            {
-                await XmpContainerIO.RewriteAsync(
-                    file,
-                    [new XmpContainerEdit(current.Chunk.Offset, current.Chunk.TotalLength, restoreChunk)],
-                    properties.Revision,
-                    cancellationToken).ConfigureAwait(false);
-            }
-
-            var restored = await ReadCanonicalPacketAsync(file, cancellationToken).ConfigureAwait(false);
-            if (restored == null || !restored.Data.AsSpan().SequenceEqual(original.Data))
-                throw new InvalidOperationException("PNG XMP 回滚后内容不一致");
-            return;
-        }
-
-        if (receipt.Before.State != XmpRatingState.Missing)
-            throw new ArgumentException("回执缺少原包，但写入前已有 XMP", nameof(receipt));
-        if (layout.Xmp is not { } added)
-            return;
-        EnsureCurrentRatingMatches(added.Text, receipt, file.Name);
-
-        await XmpContainerIO.RewriteAsync(
-            file,
-            [new XmpContainerEdit(added.Chunk.Offset, added.Chunk.TotalLength, Array.Empty<byte>())],
-            properties.Revision,
-            cancellationToken).ConfigureAwait(false);
-
-        var after = await ReadCanonicalPacketAsync(file, cancellationToken).ConfigureAwait(false);
-        if (after != null)
-            throw new InvalidOperationException("PNG XMP 回滚后仍存在 XMP");
+        throw PngWriteUnsupported(file.Name);
     }
+
+    private static StorageException PngWriteUnsupported(string name) =>
+        new(
+            StorageError.Unsupported,
+            $"{name}：PNG 评分写入需要同步重建 iTXt 长度与 CRC，本轮事务不支持");
 
     private async Task RollbackAsync(
         IFileRef file,
