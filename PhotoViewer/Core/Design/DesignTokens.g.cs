@@ -159,6 +159,8 @@ public static class DesignTokens
     public const uint ColorSimProgress = 0xFF4A7A4Au;
     /// <summary>color.star.clear（color） FILM-05：0 星清零叉颜色（图形色，不套文本语义）。</summary>
     public const uint ColorStarClear = 0xFF666666u;
+    /// <summary>color.star.conflict（color） RATING-04：星级冲突警示三角：组内实际来源不一致时替换胶片栏卡片与控制栏 0 号按钮的清零叉（RATING-04、FILM-05、TOOLBAR-03）；不随评分点亮，也不作错误文本色。</summary>
+    public const uint ColorStarConflict = 0xFFFF453Au;
     /// <summary>color.star.off（color） FILM-05：未评分灰星。</summary>
     public const uint ColorStarOff = 0xFF808080u;
     /// <summary>color.star.on（color） FILM-05：已评分金色。</summary>
@@ -351,6 +353,8 @@ public static class DesignTokens
     public const string IconStar = "U+FCE9";
     /// <summary>icon.starFilled TOOLBAR-03：实心星（icon.fontSolid 的 fi-ss-star）：点亮的星与评分快捷命令星底；未点亮仍用 icon.star 描边字形。</summary>
     public const string IconStarFilled = "U+FCD7";
+    /// <summary>icon.warning RATING-04：星级冲突警示三角（fi-rr-triangle-warning）：组内实际来源不一致时替换胶片栏卡片与控制栏 0 号按钮的清零叉，点击打开来源浮窗（RATING-04、FILM-05、TOOLBAR-03）。Apple 平台取语义相同的 SF Symbols 字形。</summary>
+    public const string IconWarning = "U+FE33";
     /// <summary>image.busy.bottomOffset（pt） IMAGE-01：雾天增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
     public const double ImageBusyBottomOffset = 24.0;
     /// <summary>image.busy.cornerRadius（pt） IMAGE-01：雾天增强提示药丸圆角。</summary>

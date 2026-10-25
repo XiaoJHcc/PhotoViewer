@@ -573,17 +573,22 @@ internal static class NativeFilmstripAcceptance
         }
     }
 
-    /// <summary>FILM-05：清零叉固定使用 color.star.clear（#666666），不取系统次级色。</summary>
+    /// <summary>FILM-05/RATING-04：无冲突时清零叉固定 color.star.clear（#666666），冲突时 0 号槽位为警示三角 color.star.conflict。</summary>
     private static void VerifyClearStarColor(MacThumbnailItem card)
     {
-        var clear = Descendants(card.View).OfType<NSButton>().FirstOrDefault(button => button.ToolTip == "无星级");
-        if (clear?.ContentTintColor == null) throw new InvalidOperationException("卡片缺少清零叉");
+        var clear = Descendants(card.View).OfType<NSButton>()
+            .FirstOrDefault(button => button.ToolTip is "无星级" or "评分来源冲突");
+        if (clear?.ContentTintColor == null) throw new InvalidOperationException("卡片缺少 0 号评分槽位");
         var color = clear.ContentTintColor;
         int red = (int)Math.Round((double)color.RedComponent * 255);
         int green = (int)Math.Round((double)color.GreenComponent * 255);
         int blue = (int)Math.Round((double)color.BlueComponent * 255);
-        if (red != 0x66 || green != 0x66 || blue != 0x66)
-            throw new InvalidOperationException($"清零叉颜色不是 #666666：({red},{green},{blue})");
+        bool conflict = card.BoundFile?.HasRatingConflict == true;
+        int expectedRed = conflict ? 0xFF : 0x66, expectedGreen = conflict ? 0x45 : 0x66, expectedBlue = conflict ? 0x3A : 0x66;
+        if (red != expectedRed || green != expectedGreen || blue != expectedBlue)
+            throw new InvalidOperationException($"0 号评分槽位颜色不是预期令牌：({red},{green},{blue})，冲突={conflict}");
+        if (conflict && !ReferenceEquals(clear.Image, MacSymbols.Get(MacSymbols.RatingConflict)))
+            throw new InvalidOperationException("冲突卡片的 0 号槽位不是警示三角");
     }
 
     /// <summary>递归枚举视图树的后代。</summary>

@@ -36,7 +36,13 @@ internal sealed class MacControlBar : NSView
     }
 
     /// <summary>根据共享设置重建三组控件，保留设置排序、主次手势与缺少照片时的状态。</summary>
-    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null)
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="execute">命令执行回调。</param>
+    /// <param name="rate">评分写回回调。</param>
+    /// <param name="openTools">EXIF 信息块打开工具窗口。</param>
+    /// <param name="showSources">RATING-04：冲突时 0 号按钮改为来源浮窗入口，参数即该按钮。</param>
+    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null,
+        Action<NSView>? showSources = null)
     {
         ClearGroups();
         var entries = main.ControlVM.EnabledExifItems;
@@ -54,12 +60,20 @@ internal sealed class MacControlBar : NSView
             for (int rating = 0; rating < 6; rating++)
             {
                 int value = rating;
+                bool conflict = value == 0 && main.CurrentFile?.HasRatingConflict == true;
                 bool active = rating > 0 && rating <= (main.CurrentFile?.Rating ?? 0);
-                var button = ToolbarButton.Create(rating == 0 ? "xmark" : active ? "star.fill" : "star",
-                    rating == 0 ? "无星级" : rating + " 星", () => rate(value), 30, false);
+                string symbol = rating == 0 ? (conflict ? MacSymbols.RatingConflict : "xmark") : active ? "star.fill" : "star";
+                string tooltip = rating == 0 ? (conflict ? "评分来源冲突" : "无星级") : rating + " 星";
+                NSButton? button = null;
+                button = ToolbarButton.Create(symbol, tooltip, () =>
+                {
+                    if (value == 0 && conflict && showSources != null) showSources(button!);
+                    else rate(value);
+                }, 30, false);
                 button.Tag = rating;
-                // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear。
-                button.ContentTintColor = MacDesignColors.Argb(rating == 0 ? DesignTokens.ColorStarClear
+                // TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；
+                // RATING-04 冲突时的警示三角取 color.star.conflict，几何与命中区不变。
+                button.ContentTintColor = MacDesignColors.Argb(rating == 0 ? (conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear)
                     : active ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff);
                 button.Enabled = main.CurrentFile != null;
                 ratingGroup.AddSubview(button);

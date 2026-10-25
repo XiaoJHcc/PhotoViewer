@@ -31,6 +31,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     private NSImage? _nativeThumbnail;
     private Action<ImageFile>? _select;
     private Action<ImageFile, int>? _rate;
+    private Action<ImageFile, NSView>? _showSources;
     private string? _secondLineText;
     private double? _secondLineProgress;
     /// <summary>选中态取主图身份（相似聚类）还是列表锚点（胶片栏）。</summary>
@@ -40,6 +41,9 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
 
     /// <summary>卡片是否处于选中描边状态（胶片栏取列表锚点，相似面板取主图身份），供回归核对高亮语义。</summary>
     internal bool IsHighlighted { get; private set; }
+
+    /// <summary>0 号槽位按钮：非冲突为清零叉，冲突为警示三角，供回归核对字形、颜色与命中。</summary>
+    internal NSButton ClearSlot => _stars[0];
 
     /// <summary>原生 CollectionView 通过注册类构造可复用卡片。</summary>
     [Export("init")]
@@ -95,7 +99,14 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         for (int rating = 0; rating < 6; rating++)
         {
             int value = rating;
-            var button = MacSymbols.Button(rating == 0 ? "xmark" : "star", rating == 0 ? "无星级" : rating + " 星", () => { if (_file != null) _rate?.Invoke(_file, value); }, 14, false);
+            NSButton? button = null;
+            button = MacSymbols.Button(rating == 0 ? "xmark" : "star", rating == 0 ? "无星级" : rating + " 星", () =>
+            {
+                if (_file == null) return;
+                // RATING-04：冲突时 0 号槽位是来源浮窗入口，不当作清零写入。
+                if (value == 0 && _file.HasRatingConflict && _showSources != null) _showSources(_file, button!);
+                else _rate?.Invoke(_file, value);
+            }, 14, false);
             button.Frame = new CGRect(3 + rating * 14, 116, 14, 14);
             // FILM-05：清零叉固定中性色 color.star.clear，不取系统次级色。
             button.ContentTintColor = rating == 0
@@ -122,11 +133,13 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     /// <param name="secondLineText">第二行文字；null 显示拍摄时间。</param>
     /// <param name="secondLineProgress">第二行柱状条占比(0~1)；null 只显示文字。</param>
     /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>(相似聚类面板)而非列表锚点 <see cref="ImageFile.IsCurrent"/>(胶片栏)。</param>
+    /// <param name="showSources">冲突时 0 号槽位的来源浮窗入口，锚点即该槽位按钮。</param>
     public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
-        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false)
+        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false,
+        Action<ImageFile, NSView>? showSources = null)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
-        _file = file; _select = select; _rate = rate;
+        _file = file; _select = select; _rate = rate; _showSources = showSources;
         _secondLineText = secondLineText; _secondLineProgress = secondLineProgress;
         _selectByDisplayedImage = selectByDisplayedImage;
         _lastThumbnail = null;
@@ -160,6 +173,13 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         if (loading) _progress.StartAnimation(null);
         else _progress.StopAnimation(null);
         _shake.Hidden = _file.IsShake != true;
+        bool conflict = _file.HasRatingConflict;
+        var clearSlot = _stars[0];
+        clearSlot.Image = MacSymbols.Get(conflict ? MacSymbols.RatingConflict : "xmark");
+        clearSlot.ContentTintColor = MacDesignColors.Argb(conflict ? DesignTokens.ColorStarConflict : DesignTokens.ColorStarClear);
+        clearSlot.ToolTip = conflict ? "评分来源冲突" : "无星级";
+        ((NSView)clearSlot).AccessibilityLabel = clearSlot.ToolTip;
+        clearSlot.SymbolConfiguration = NSImageSymbolConfiguration.Create((nfloat)(conflict ? 10 : 8), (double)NSFontWeight.Regular);
         for (int index = 1; index < _stars.Length; index++)
         {
             _stars[index].Image = MacSymbols.Get(index <= _file.Rating ? "star.fill" : "star");
@@ -187,6 +207,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = null; _thumbnail.Image = null; _nativeThumbnail?.Dispose(); _nativeThumbnail = null; _lastThumbnail = null;
+        _showSources = null;
         _secondLineText = null; _secondLineProgress = null; _secondLineBar.Hidden = true;
         _progress.StopAnimation(null);
         _progress.Hidden = true;

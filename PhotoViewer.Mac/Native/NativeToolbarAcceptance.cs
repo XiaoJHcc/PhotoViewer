@@ -148,6 +148,7 @@ internal static class NativeToolbarAcceptance
                 observations.Add($"real rating button changes owned fixture to {targetRating} stars and preserves current photo");
             }
             await VerifyRatingContinuityAsync(window, observations);
+            await VerifyRatingConflictAsync(window, output, observations);
             foreach (var entry in settings.ExifDisplayItems) entry.IsEnabled = true;
             foreach (var hotkey in settings.Hotkeys) hotkey.IsDisplay = true;
             settings.LayoutMode = LayoutMode.Row;
@@ -296,13 +297,24 @@ internal static class NativeToolbarAcceptance
             throw new InvalidOperationException($"{stage}控制栏裁剪区被竖向滚动条挤窄 {gutter:0.##} 点：clip {scroll.ContentView.Bounds.Width} / bar {scroll.Bounds.Width}");
     }
 
-    /// <summary>TOOLBAR-03：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear。</summary>
+    /// <summary>TOOLBAR-03/RATING-04：点亮星 color.star.on、空心星 color.star.off、清零叉中性 color.star.clear；冲突时 0 号取 color.star.conflict。</summary>
     private static void VerifyRatingGroupColors(MacMainWindow window)
     {
         var bar = window.ControlBar;
         if (bar.Ratings.Count != 6) throw new InvalidOperationException("评分组按钮数量不是 6");
         int rating = window.Main.CurrentFile?.Rating ?? 0;
-        RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "评分组清零叉");
+        if (window.Main.CurrentFile?.HasRatingConflict == true)
+        {
+            if (!ReferenceEquals(bar.Ratings[0].Image, MacSymbols.Get(MacSymbols.RatingConflict)))
+                throw new InvalidOperationException("评分组冲突时 0 号未换成警示三角");
+            RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "评分组冲突三角");
+        }
+        else
+        {
+            if (!ReferenceEquals(bar.Ratings[0].Image, MacSymbols.Get("xmark")))
+                throw new InvalidOperationException("评分组无冲突时 0 号不是清零叉");
+            RequireColor(bar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "评分组清零叉");
+        }
         for (int value = 1; value < 6; value++)
             RequireColor(bar.Ratings[value].ContentTintColor,
                 MacDesignColors.Argb(value <= rating ? DesignTokens.ColorStarOn : DesignTokens.ColorStarOff), $"评分组 {value} 星");
@@ -517,6 +529,316 @@ internal static class NativeToolbarAcceptance
             catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 评分连续性收尾还原失败：" + exception.Message); }
         }
     }
+
+    /// <summary>
+    /// RATING-04：用自有 JPG 副本 + 自建同名 sidecar 形成真实的两来源冲突，核对胶片栏与控制栏
+    /// 0 号槽位的警示三角（几何不变）、纵向来源条目、三种实际展开方向、连续重开与指针移入、
+    /// 任一条目整组统一写入、冲突解除后关闭且不误报失败，以及卡片入口不切换当前主图。
+    /// </summary>
+    private static async Task VerifyRatingConflictAsync(MacMainWindow window, string output, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var entry = window.Main.CurrentFile ?? throw new InvalidOperationException("评分冲突回归缺少进入时的当前照片");
+        string entryPath = entry.File.RequireLocalPath();
+        bool entryShowRating = settings.ShowRating;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/rating-conflict-fixtures");
+        string photoPath = System.IO.Path.Combine(root, "conflict.jpg");
+        string cleanPath = System.IO.Path.Combine(root, "clean.jpg");
+        string sidecarPath = System.IO.Path.Combine(root, "conflict.xmp");
+        int failures = 0;
+        void OnFailed(ImageFile failed, int rating) => failures++;
+        try
+        {
+            settings.ShowRating = true;
+            window.Main.IsThumbnailViewVisible = true;
+            Directory.CreateDirectory(root);
+            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), photoPath, true);
+            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-02.jpg"), cleanPath, true);
+            File.Delete(sidecarPath);
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
+            await WaitAsync(() => window.Main.CurrentFile != null && window.Main.FolderVM.AllFiles.Count == 2, "冲突夹具载入");
+            var conflict = window.Main.FolderVM.AllFiles.Single(file => file.Name == "conflict.jpg");
+            var clean = window.Main.FolderVM.AllFiles.Single(file => file.Name == "clean.jpg");
+            window.Main.CurrentFile = conflict;
+            await window.Main.SetRatingAsync(conflict, 2);
+            await WaitAsync(() => conflict.Rating == 2, "内嵌来源写回 2 星");
+            // sidecar 是独立来源：同目录刷新会重读它，两份不同事实即构成组级冲突。
+            await File.WriteAllTextAsync(sidecarPath, SidecarPacket(1));
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
+            await WaitAsync(() => window.Main.CurrentFile != null && window.Main.CurrentFile.HasRatingConflict
+                && window.Main.CurrentFile.RatingSources.Count == 2, "来源冲突就绪");
+            conflict = window.Main.CurrentFile!;
+            await Task.Delay(150);
+
+            // 控制栏 0 号：三角 + color.star.conflict，几何与命中区仍是 30×30。
+            var clear = window.ControlBar.Ratings[0];
+            if (clear.Tag != 0 || Math.Abs((double)clear.Frame.Width - 30) > .01 || Math.Abs((double)clear.Frame.Height - 30) > .01)
+                throw new InvalidOperationException($"冲突三角改变了评分组 0 号按钮几何：{clear.Frame}");
+            if (!ReferenceEquals(clear.Image, MacSymbols.Get(MacSymbols.RatingConflict)))
+                throw new InvalidOperationException("控制栏 0 号槽位未显示冲突警示三角");
+            RequireColor(clear.ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "控制栏冲突三角");
+            if (clear.ToolTip != "评分来源冲突")
+                throw new InvalidOperationException($"控制栏冲突入口提示错误：{clear.ToolTip}");
+
+            window.Main.RatingWriteFailed += OnFailed;
+            var currentBefore = window.Main.CurrentFile;
+            var popover = window.RatingSourcesPopover;
+            var sources = window.Main.RatingSources.Items;
+            string[] starTips = ["无星级", "1 星", "2 星", "3 星", "4 星", "5 星"];
+            static double MidY(CGRect frame) => (double)(frame.Y + frame.Height / 2);
+            var shortLayout = MacRatingSourcesPopover.MeasureEntryLayout("A6702544.ARW", "ARW", "1 星");
+            if (shortLayout.TwoLines
+                || Math.Abs(MidY(shortLayout.NameFrame) - MidY(shortLayout.StatusFrame)) > .5
+                || Math.Abs(MidY(shortLayout.BadgeFrame) - MidY(shortLayout.StatusFrame)) > .5
+                || (double)shortLayout.NameFrame.X >= (double)shortLayout.BadgeFrame.X
+                || (double)shortLayout.BadgeFrame.X >= (double)shortLayout.StatusFrame.X
+                || Math.Abs((double)(shortLayout.StatusFrame.Right - shortLayout.NameFrame.X)
+                    - MacRatingSourcesPopover.EntryContentWidth) > .01)
+                throw new InvalidOperationException("来源三信息没有按文件名居左、来源与状态居右同行排列");
+            var longLayout = MacRatingSourcesPopover.MeasureEntryLayout(
+                "rating-conflict-source-with-a-deliberately-long-name.jpg", "JPG", "1 星");
+            if (!longLayout.TwoLines
+                || Math.Abs((double)longLayout.NameFrame.Width - MacRatingSourcesPopover.EntryContentWidth) > .01
+                || (double)longLayout.NameFrame.Y >= (double)longLayout.BadgeFrame.Y
+                || Math.Abs(MidY(longLayout.BadgeFrame) - MidY(longLayout.StatusFrame)) > .5
+                || Math.Abs((double)(longLayout.StatusFrame.Right - longLayout.NameFrame.X)
+                    - MacRatingSourcesPopover.EntryContentWidth) > .01)
+                throw new InvalidOperationException("长文件名没有改为双行信息布局或文件名越出浮窗宽度");
+            observations.Add("RATING-04: source popover keeps three info items on one line and switches to two lines for long names");
+            CGRect[]? reopenedFrames = null;
+            NSView? previousContent = null;
+            foreach (var mode in new[] { LayoutMode.Row, LayoutMode.Col })
+            {
+                settings.LayoutMode = mode;
+                await Task.Delay(200);
+                for (int attempt = 0; attempt < 3; attempt++)
+                {
+                    clear = window.ControlBar.Ratings[0];
+                    var anchorScreen = window.Window.ConvertRectToScreen(clear.ConvertRectToView(clear.Bounds, null));
+                    clear.PerformClick(clear);
+                    await WaitAsync(() => popover.IsOpen, $"来源浮窗展开 {mode}/{attempt}");
+                    await Task.Delay(60);
+                    if (previousContent != null && ReferenceEquals(previousContent, popover.Content))
+                        throw new InvalidOperationException("重开复用了已随旧浮窗释放的内容视图");
+                    previousContent = popover.Content;
+                    if (popover.Content.Layer is { BackgroundColor: not null } || (popover.Content.Layer?.BorderWidth ?? 0) > 0)
+                        throw new InvalidOperationException("来源浮窗重复绘制了自定义背景或描边，覆盖了原生毛玻璃");
+                    sources = window.Main.RatingSources.Items;
+                    var expectedEdge = mode == LayoutMode.Row ? NSRectEdge.MinYEdge : NSRectEdge.MinXEdge;
+                    if (popover.LastPreferredEdge != expectedEdge)
+                        throw new InvalidOperationException($"{mode} 控制栏浮窗展开方向错误：{popover.LastPreferredEdge}");
+                    var popoverFrame = (popover.Content.Window ?? throw new InvalidOperationException("来源浮窗没有原生窗口")).Frame;
+                    double anchorCenterX = (double)(anchorScreen.X + anchorScreen.Width / 2);
+                    double anchorCenterY = (double)(anchorScreen.Y + anchorScreen.Height / 2);
+                    double popoverCenterX = (double)(popoverFrame.X + popoverFrame.Width / 2);
+                    double popoverCenterY = (double)(popoverFrame.Y + popoverFrame.Height / 2);
+                    if (mode == LayoutMode.Row && popoverCenterY <= anchorCenterY
+                        || mode == LayoutMode.Col && popoverCenterX >= anchorCenterX)
+                        throw new InvalidOperationException($"{mode} 浮窗实际位置方向错误：anchor={anchorScreen}, popover={popoverFrame}");
+                    if (!popover.IsAnchoredToControlBar)
+                        throw new InvalidOperationException("重开后旧关闭通知清空了控制栏锚点标记");
+                    if (popover.EntryViews.Count != 2 || window.Main.RatingSources.Items.Count != 2)
+                        throw new InvalidOperationException($"来源浮窗条目数错误：{popover.EntryViews.Count}");
+                    if (popover.DividerViews.Count != popover.EntryViews.Count - 1)
+                        throw new InvalidOperationException($"来源分割线数量错误：{popover.DividerViews.Count}");
+                    for (int index = 0; index < popover.DividerViews.Count; index++)
+                    {
+                        var divider = popover.DividerViews[index];
+                        var above = popover.EntryViews[index];
+                        var below = popover.EntryViews[index + 1];
+                        if (divider.Frame.Height > 1.01 || divider.Frame.Width < above.Frame.Width - .01
+                            || divider.Frame.Y <= above.Frame.Y + above.Frame.Height
+                            || divider.Frame.Y + divider.Frame.Height >= below.Frame.Y)
+                            throw new InvalidOperationException($"来源分割线没有落在两个条目之间：{divider.Frame}");
+                        if (divider.BoxType != NSBoxType.NSBoxSeparator)
+                            throw new InvalidOperationException("来源分割线不是标准分隔控件");
+                    }
+                    var frames = popover.EntryViews.Select(entry => entry.Frame).ToArray();
+                    if (reopenedFrames == null) reopenedFrames = frames;
+                    for (int index = 0; index < popover.EntryViews.Count; index++)
+                    {
+                        var sourceEntry = popover.EntryViews[index];
+                        if (index > 0)
+                        {
+                            var previous = popover.EntryViews[index - 1];
+                            if (Math.Abs((double)sourceEntry.Frame.X - (double)previous.Frame.X) > .01
+                                || (double)sourceEntry.Frame.Y <= (double)previous.Frame.Y)
+                                throw new InvalidOperationException("来源条目没有按相同宽度纵向排列");
+                        }
+                        if (sourceEntry.Frame.X < 0 || sourceEntry.Frame.Y < 0
+                            || (double)(sourceEntry.Frame.X + sourceEntry.Frame.Width) > (double)popover.Content.Bounds.Width + .01
+                            || (double)(sourceEntry.Frame.Y + sourceEntry.Frame.Height) > (double)popover.Content.Bounds.Height + .01)
+                            throw new InvalidOperationException($"重开后来源条目越出浮窗：{sourceEntry.Frame} / {popover.Content.Bounds}");
+                        if (reopenedFrames[index] != sourceEntry.Frame)
+                            throw new InvalidOperationException($"连续重开改变了条目布局：{reopenedFrames[index]} → {sourceEntry.Frame}");
+                        if (sourceEntry.Name.StringValue != sources[index].Name
+                            || sourceEntry.Kind.StringValue != sources[index].Kind
+                            || sourceEntry.Status.StringValue != sources[index].Status)
+                            throw new InvalidOperationException($"来源条目文字错误：{sourceEntry.Name.StringValue}/{sourceEntry.Kind.StringValue}/{sourceEntry.Status.StringValue}");
+                        if (sourceEntry.TwoLines)
+                            throw new InvalidOperationException("短文件名来源误用了双行信息布局");
+                        double nameMid = MidY(sourceEntry.Name.Frame);
+                        double badgeMid = MidY(sourceEntry.Badge.Frame);
+                        double statusMid = MidY(sourceEntry.Status.Frame);
+                        double kindMid = (double)sourceEntry.Badge.Frame.Y + MidY(sourceEntry.Kind.Frame);
+                        if (Math.Abs(nameMid - statusMid) > .5 || Math.Abs(badgeMid - statusMid) > .5
+                            || Math.Abs(kindMid - badgeMid) > .5
+                            || sourceEntry.Name.Frame.X >= sourceEntry.Badge.Frame.X
+                            || sourceEntry.Badge.Frame.X >= sourceEntry.Status.Frame.X)
+                            throw new InvalidOperationException($"来源首行元素没有按同一中线垂直对齐：name={sourceEntry.Name.Frame}/{nameMid} badge={sourceEntry.Badge.Frame}/{badgeMid} status={sourceEntry.Status.Frame}/{statusMid} kind={sourceEntry.Kind.Frame}/{kindMid}");
+                        if (sourceEntry.Badge.BoxType != NSBoxType.NSBoxCustom || sourceEntry.Badge.FillColor is null
+                            || sourceEntry.Kind.Frame.Width >= sourceEntry.Badge.Frame.Width - .01)
+                            throw new InvalidOperationException("来源标签缺少包住文字的标签式背景");
+                        var stars = sourceEntry.Stars.ToArray();
+                        if (stars.Length != 6 || !stars.Select(button => button.ToolTip).SequenceEqual(starTips)
+                            || stars.Any(button => (double)button.Frame.Y <= (double)sourceEntry.Name.Frame.Y))
+                            throw new InvalidOperationException("来源第二行缺少完整的 0–5 星级控件");
+                        var barStars = window.ControlBar.Ratings;
+                        if (barStars.Count != 6)
+                            throw new InvalidOperationException($"控制栏评分组按钮数错误：{barStars.Count}");
+                        double barStep = Math.Abs(mode == LayoutMode.Row
+                            ? barStars[1].Frame.X - barStars[0].Frame.X
+                            : barStars[1].Frame.Y - barStars[0].Frame.Y);
+                        double entryStep = stars[1].Frame.X - stars[0].Frame.X;
+                        if (Math.Abs(entryStep - barStep) > .01
+                            || Math.Abs((double)(stars[0].Frame.Width - barStars[0].Frame.Width)) > .01)
+                            throw new InvalidOperationException($"来源星排与控制栏评分组间距不一致：{entryStep} / {barStep}");
+                        double starSpan = stars[^1].Frame.Right - stars[0].Frame.X;
+                        double contentInset = sourceEntry.Name.Frame.X;
+                        if (Math.Abs(starSpan - (sourceEntry.Frame.Width - contentInset * 2)) > .01)
+                            throw new InvalidOperationException("浮窗宽度不是由星级控件整体宽度决定");
+                        if (Math.Abs((double)popover.Content.Bounds.Width
+                            - (sourceEntry.Frame.Width + DesignTokens.PopupPadding * 2)) > .01)
+                            throw new InvalidOperationException("浮窗内容宽不等于条目宽加内边距");
+                        if (attempt == 0 && mode == LayoutMode.Row && index == 0)
+                        {
+                            var hoverStar = stars[1];
+                            string normalPath = System.IO.Path.Combine(output, "rating-source-star-normal.png");
+                            string hoverPath = System.IO.Path.Combine(output, "rating-source-star-hover.png");
+                            NativeSnapshots.SaveView(hoverStar, normalPath);
+                            using var hoverEvent = NSEvent.MouseEvent(NSEventType.MouseMoved, CGPoint.Empty, 0,
+                                NSProcessInfo.ProcessInfo.SystemUptime,
+                                (hoverStar.Window ?? throw new InvalidOperationException("来源星按钮没有原生窗口")).WindowNumber,
+                                null!, 1, 1, 0) ?? throw new InvalidOperationException("来源星按钮悬停事件创建失败");
+                            hoverStar.MouseEntered(hoverEvent);
+                            NativeSnapshots.SaveView(hoverStar, hoverPath);
+                            if (File.ReadAllBytes(normalPath).SequenceEqual(File.ReadAllBytes(hoverPath)))
+                                throw new InvalidOperationException("来源星按钮悬停没有可见反馈");
+                            hoverStar.MouseExited(hoverEvent);
+                            observations.Add("RATING-04: source star buttons use the control bar rating hover surface");
+                        }
+                    }
+                    if (attempt == 0 && mode == LayoutMode.Row)
+                    {
+                        NativeSnapshots.SaveView(popover.Content, System.IO.Path.Combine(output, "rating-sources-popover.png"));
+                        NativeSnapshots.SaveView(window.ControlBar, System.IO.Path.Combine(output, "toolbar-rating-conflict.png"));
+                    }
+                    if (attempt == 1)
+                    {
+                        var popoverWindow = popover.Content.Window ?? throw new InvalidOperationException("来源浮窗没有原生窗口");
+                        using var move = NSEvent.MouseEvent(NSEventType.MouseMoved, new CGPoint(20, 20), 0,
+                            NSProcessInfo.ProcessInfo.SystemUptime, popoverWindow.WindowNumber, null!, 1, 1, 0)
+                            ?? throw new InvalidOperationException("浮窗指针移动事件创建失败");
+                        NSApplication.SharedApplication.PostEvent(move, false);
+                        await Task.Delay(100);
+                        if (!popover.IsOpen) throw new InvalidOperationException("指针移入后来源浮窗自动关闭");
+                    }
+                    popover.Close();
+                    await WaitAsync(() => !popover.IsOpen, $"来源浮窗关闭 {mode}/{attempt}");
+                }
+            }
+            if (window.Main.CurrentFile?.File.StorageId != currentBefore?.File.StorageId)
+                throw new InvalidOperationException("控制栏冲突入口切换了当前主图");
+
+            settings.LayoutMode = LayoutMode.Row;
+            await Task.Delay(200);
+            clear = window.ControlBar.Ratings[0];
+            clear.PerformClick(clear);
+            await WaitAsync(() => popover.IsOpen, "写入前来源浮窗展开");
+            var targetStar = popover.EntryViews[0].Stars.Single(button => button.ToolTip == "3 星");
+            targetStar.PerformClick(targetStar);
+            await WaitAsync(() => window.Main.RatingSources.Items.Count == 2
+                && window.Main.RatingSources.Items.All(item => item.State.Value == 3), "浮窗来源统一写回 3 星");
+            await WaitAsync(() => !popover.IsOpen, "成功且冲突解除后来源浮窗关闭");
+            var embedded = await ExifLoader.LoadExifDataAsync(new LocalFileRef(photoPath));
+            var written = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(sidecarPath));
+            if (embedded?.Rating != 3 || written?.State != XmpRatingState.Rated || written.Value != 3)
+                throw new InvalidOperationException($"浮窗评分没有同时写入内嵌与 sidecar：{embedded?.Rating}/{written?.State}/{written?.Value}");
+            if (failures != 0 || window.Main.LastRatingWriteError != null)
+                throw new InvalidOperationException($"成功写回被误报为失败：{failures} / {window.Main.LastRatingWriteError}");
+            if (window.StatusToast.IsVisible)
+                throw new InvalidOperationException($"成功写回弹出了失败提示：{window.StatusToast.Text}");
+            if (conflict.HasRatingConflict)
+                throw new InvalidOperationException("统一下发成功后仍保持冲突状态");
+            await WaitAsync(() => ReferenceEquals(window.ControlBar.Ratings[0].Image, MacSymbols.Get("xmark")), "成功后恢复清零叉");
+            RequireColor(window.ControlBar.Ratings[0].ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarClear), "成功后清零叉颜色");
+            observations.Add("RATING-04: conflict slot is unchanged; source rows share one vertical centre line with separators between entries; vertical source entries survive repeated reopening and pointer movement; bottom control opens upward, right control opens left, and any entry writes the whole group");
+
+            // 卡片入口：非当前卡片的 0 号槽位只打开浮窗，不切主图、不写值。
+            window.Main.CurrentFile = clean;
+            await Task.Delay(200);
+            if (!ReferenceEquals(window.ControlBar.Ratings[0].Image, MacSymbols.Get("xmark")))
+                throw new InvalidOperationException("当前照片无冲突时控制栏 0 号未回到清零叉");
+            // 重新制造第二张卡片的冲突（写回成功后已收敛，这里用内存真值构造两份不同事实的展示态）。
+            var conflictCard = await WaitForCardAsync(window, conflict);
+            if (!ReferenceEquals(conflictCard.ClearSlot.Image, MacSymbols.Get("xmark")))
+                throw new InvalidOperationException("无冲突的胶片栏卡片仍显示警示三角");
+            conflict.ApplyRatingSources([
+                new RatingSourceState(XmpRatingSource.Embedded, conflict.File, new XmpRatingSnapshot(XmpRatingState.Rated, 2, XmpRatingSource.Embedded)),
+                new RatingSourceState(XmpRatingSource.Sidecar, new LocalFileRef(sidecarPath), new XmpRatingSnapshot(XmpRatingState.Rated, 4, XmpRatingSource.Sidecar)),
+            ]);
+            await WaitAsync(() => ReferenceEquals(conflictCard.ClearSlot.Image, MacSymbols.Get(MacSymbols.RatingConflict)), "胶片栏冲突三角");
+            RequireColor(conflictCard.ClearSlot.ContentTintColor, MacDesignColors.Argb(DesignTokens.ColorStarConflict), "胶片栏冲突三角");
+            var valuesBefore = conflict.RatingSources.Select(source => source.Value).ToArray();
+            NativeSnapshots.SaveView(conflictCard.View, System.IO.Path.Combine(output, "filmstrip-rating-conflict.png"));
+            NSView? cardPreviousContent = null;
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                conflictCard = await WaitForCardAsync(window, conflict);
+                var anchorScreen = window.Window.ConvertRectToScreen(conflictCard.ClearSlot.ConvertRectToView(conflictCard.ClearSlot.Bounds, null));
+                conflictCard.ClearSlot.PerformClick(conflictCard.ClearSlot);
+                await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, conflict), "卡片冲突入口");
+                if (cardPreviousContent != null && ReferenceEquals(cardPreviousContent, popover.Content))
+                    throw new InvalidOperationException("卡片重开复用了已释放的内容视图");
+                cardPreviousContent = popover.Content;
+                if (popover.LastPreferredEdge != NSRectEdge.MaxYEdge)
+                    throw new InvalidOperationException($"横排卡片浮窗没有默认向下：{popover.LastPreferredEdge}");
+                var popoverFrame = (popover.Content.Window ?? throw new InvalidOperationException("卡片来源浮窗没有原生窗口")).Frame;
+                if ((double)(popoverFrame.Y + popoverFrame.Height / 2) >= (double)(anchorScreen.Y + anchorScreen.Height / 2))
+                    throw new InvalidOperationException($"卡片浮窗实际位置不在入口下方：anchor={anchorScreen}, popover={popoverFrame}");
+                var stableFrames = popover.EntryViews.Select(entry => entry.Frame).ToArray();
+                await Task.Delay(1300);
+                if (!popover.IsOpen || !window.Main.RatingSources.IsOpen || !popover.OwnsWindow(window.Window))
+                    throw new InvalidOperationException($"卡片浮窗停留一秒后自动关闭或丢失稳定宿主：{attempt}");
+                if (!stableFrames.SequenceEqual(popover.EntryViews.Select(entry => entry.Frame)))
+                    throw new InvalidOperationException($"卡片浮窗停留后内容错位：{attempt}");
+                if (attempt == 0)
+                    NativeSnapshots.SaveView(popover.Content, System.IO.Path.Combine(output, "rating-sources-popover-card.png"));
+                if (!ReferenceEquals(window.Main.CurrentFile, clean))
+                    throw new InvalidOperationException("卡片冲突入口切换了当前主图");
+                if (!conflict.RatingSources.Select(source => source.Value).SequenceEqual(valuesBefore))
+                    throw new InvalidOperationException("冲突三角本身写入了评分");
+                popover.Close();
+                await WaitAsync(() => !window.Main.RatingSources.IsOpen, "关闭浮窗同步共享状态");
+            }
+            observations.Add("RATING-04: a non-current filmstrip card opens downward without selecting or writing; three reopen cycles each remain stable for 1.3s with fresh native content and no stale anchor bounds access");
+        }
+        finally
+        {
+            window.Main.RatingWriteFailed -= OnFailed;
+            settings.ShowRating = entryShowRating;
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            try { await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath)); }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 评分冲突回归收尾还原失败：" + exception.Message); }
+            await Task.Delay(150);
+        }
+    }
+
+    /// <summary>写一份结构完整的最小 sidecar XMP 包，只含单个 <c>xap:Rating</c>。</summary>
+    private static string SidecarPacket(int rating)
+        => "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
+            + $"<rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"{rating}\"/></rdf:RDF></x:xmpmeta>";
 
     /// <summary>轮询等待真实状态并设定有限超时，失败不输出虚假的通过报告。</summary>
     private static async Task WaitAsync(Func<bool> condition, string name, int seconds = 5)

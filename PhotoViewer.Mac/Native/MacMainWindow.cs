@@ -49,6 +49,7 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSTextField _hint;
     private readonly NSTextField _busyPill;
     private readonly MacStatusToast _toast = new();
+    private readonly MacRatingSourcesPopover _ratingSources;
     private readonly NavigatorHostView _navigationHost;
     private readonly NSImageView _navigationImage;
     private readonly NSView _navigationFrame;
@@ -104,6 +105,8 @@ public sealed class MacMainWindow : IDisposable
     internal NSTextField EnhanceBusyPill => _busyPill;
     /// <summary>主图区底部提示条，供验收核对非模态反馈。</summary>
     internal MacStatusToast StatusToast => _toast;
+    /// <summary>来源浮窗（RATING-04），供验收核对冲突入口与横排列。</summary>
+    internal MacRatingSourcesPopover RatingSourcesPopover => _ratingSources;
     /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
     internal IReadOnlyList<NSView> DragZones => [_dragLeft, _dragRight];
     /// <summary>主图上的细节预览绿框（ANALYSIS-04/06），供验收核对它框住的源像素范围等于裁剪窗口。</summary>
@@ -116,6 +119,7 @@ public sealed class MacMainWindow : IDisposable
     {
         _main = main;
         _automatedValidation = automatedValidation;
+        _ratingSources = new MacRatingSourcesPopover(main);
         if (!automatedValidation)
         {
             var preferences = NSUserDefaults.StandardUserDefaults;
@@ -140,7 +144,6 @@ public sealed class MacMainWindow : IDisposable
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _main.FitToViewRequested += OnFitToViewRequested;
         _main.OpenFailed += ShowToast;
-        // 评分失败只由共享事件驱动：Superseded/Canceled 不发事件，成功也不会因为内存值变化误报。
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _photoPane.AddSubview(Photo);
         _detailHighlight = new PassThroughPane();
@@ -203,6 +206,7 @@ public sealed class MacMainWindow : IDisposable
         _liveScrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSScrollView.WillStartLiveScrollNotification, _ => CancelFilmstripScroll(), _scroll);
         _filePane.AddSubview(_scroll);
         _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
+        _similarityPane.ShowRatingSources = ShowRatingSources;
         _filePane.AddSubview(_similarityPane);
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
         _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
@@ -214,7 +218,15 @@ public sealed class MacMainWindow : IDisposable
                 _dragLeft.Hidden = !show; _dragRight.Hidden = !show;
                 return nativeEvent;
             }
-            if (nativeEvent.Type != NSEventType.KeyDown || nativeEvent.Window != Window || Window.FirstResponder is NSTextView or NSTextField) return nativeEvent;
+            // RATING-04：来源浮窗不进入模态，浮窗窗口上的按键仍按照片快捷键派发；Esc 先关闭浮窗。
+            if (nativeEvent.Type != NSEventType.KeyDown
+                || (nativeEvent.Window != Window && !_ratingSources.OwnsWindow(nativeEvent.Window))
+                || Window.FirstResponder is NSTextView or NSTextField) return nativeEvent;
+            if (_ratingSources.IsOpen && nativeEvent.KeyCode == 53 && _ratingSources.OwnsWindow(nativeEvent.Window))
+            {
+                _ratingSources.Close();
+                return null!;
+            }
             return HandleInput(nativeEvent) ? null! : nativeEvent;
         });
         Photo.InputHandler = HandleInput;
@@ -606,27 +618,56 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
     private void BuildControls()
     {
-        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
+        // 控制栏重建会销毁 0 号按钮：浮窗若锚在控制栏，先关闭并在新按钮上按同一目标重开，
+        // 失败时按磁盘真值刷新后仍保留浮窗（RATING-04）。
+        bool reopen = _ratingSources.IsOpen && _ratingSources.IsAnchoredToControlBar;
+        var sourceTarget = reopen ? _main.RatingSources.Target : null;
+        if (reopen) _ratingSources.Close();
+        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools,
+            anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
         Layout();
+        if (sourceTarget == null || _controlPane.Ratings.Count == 0) return;
+        _main.ShowRatingSources(sourceTarget);
+        PresentRatingSources(_controlPane.Ratings[0]);
     }
 
-    /// <summary>
-    /// 评分经共享全来源事务写回；成功与失败都不在这里判"内存值是否等于请求值"
-    /// （写入后内存按磁盘真值回填，重算筛选也可能改变当前照片）。失败提示统一由
-    /// <see cref="OnRatingWriteFailed"/> 订阅共享 <see cref="MainViewModel.RatingWriteFailed"/> 触发。
-    /// </summary>
+    /// <summary>评分经共享全来源事务写回；失败由共享 <see cref="MainViewModel.RatingWriteFailed"/> 给出非模态提示（STATE-03）。</summary>
     public async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
         BuildControls();
     }
 
-    /// <summary>
-    /// 共享层报告评分写回失败：用 STATE-03 提示条说明对象与原因。
-    /// 共享层只对真实失败（RolledBack / Partial / 异常）发事件，Superseded / Canceled 不发，故这里不做额外过滤；
-    /// 补偿不完整时取“星级写入不完整”文案。
-    /// </summary>
-    /// <param name="failure">本次失败的对象、结果、原因与是否 Partial。</param>
+    private bool IsControlBarAnchor(NSView anchor)
+    {
+        for (var current = anchor; current != null; current = current.Superview)
+            if (ReferenceEquals(current, _controlPane)) return true;
+        return false;
+    }
+
+    private NSRectEdge RatingSourcesEdge(NSView anchor)
+        => IsControlBarAnchor(anchor)
+            ? _main.IsRowLayout ? NSRectEdge.MinYEdge : NSRectEdge.MinXEdge
+            : NSRectEdge.MaxYEdge;
+
+    private void PresentRatingSources(NSView anchor)
+    {
+        bool controlBarAnchor = IsControlBarAnchor(anchor);
+        var positioningRect = anchor.ConvertRectToView(anchor.Bounds, _root);
+        _ratingSources.Show(_root, positioningRect, RatingSourcesEdge(anchor), controlBarAnchor);
+    }
+
+    /// <summary>RATING-04：打开来源浮窗；先收起上一处锚点，切图时浮窗由 <see cref="OnMainChanged"/> 关闭。</summary>
+    /// <param name="file">来源所属照片（可以是列表里的非当前卡片）。</param>
+    /// <param name="anchor">触发入口的 0 号槽位按钮。</param>
+    internal void ShowRatingSources(ImageFile file, NSView anchor)
+    {
+        _ratingSources.Close();
+        _main.ShowRatingSources(file);
+        PresentRatingSources(anchor);
+    }
+
+    /// <summary>共享写回失败事件转成 STATE-03 提示；Superseded/Canceled 不触发该事件，因此不提示。</summary>
     private void OnRatingWriteFailed(RatingWriteFailure failure)
     {
         string message = StatusMessages.RatingWriteFailed(
@@ -709,6 +750,8 @@ public sealed class MacMainWindow : IDisposable
         if (args.PropertyName == nameof(MainViewModel.CurrentFile))
         {
             CancelFilmstripScroll();
+            // RATING-04：浮窗是当前照片的临时视图，切图即关闭。
+            _ratingSources.Close();
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _observedFile = _main.CurrentFile;
             if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
@@ -735,7 +778,8 @@ public sealed class MacMainWindow : IDisposable
     {
         if (_disposed || !ReferenceEquals(sender, _observedFile)) return;
         if (args.PropertyName == nameof(ImageFile.ExifData)) UpdateFocusPoint();
-        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)) BuildControls();
+        if (args.PropertyName is nameof(ImageFile.Rating) or nameof(ImageFile.ExifData)
+            or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources)) BuildControls();
         UpdateMenuChecks();
     });
     /// <summary>设置回写后重建按钮并重新布局。</summary>
@@ -1147,8 +1191,11 @@ public sealed class MacMainWindow : IDisposable
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
-        Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();
+        // 先收起来源浮窗并释放它，再拆锚点所在的控制栏/胶片栏与窗口：
+        // NSPopover 关闭时仍会触碰定位视图，晚于 _controlPane/_similarityPane/Window 释放会访问已释放视图。
+        _ratingSources.Dispose();
         Session.Notice -= ShowToast;
+        Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();
         _toast.Dispose(); _busyPill.Dispose();
     }
 
@@ -1171,7 +1218,7 @@ public sealed class MacMainWindow : IDisposable
             {
                 owner.CancelFilmstripScroll();
                 owner._main.FileVM.ThumbnailList.SelectImageCommand(selected);
-            }, (selected, rating) => _ = owner.RateAsync(selected, rating));
+            }, (selected, rating) => _ = owner.RateAsync(selected, rating), showSources: owner.ShowRatingSources);
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
             return item;
         }

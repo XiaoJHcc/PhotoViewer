@@ -8,6 +8,8 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>原生图标和小图工厂；命令语义映射在共享 <see cref="PhotoViewer.Apple.AppleSymbolNames"/>，不改变共享私用区字体字码。</summary>
 public static class MacSymbols
 {
+    /// <summary>RATING-04：组级星级冲突的警示三角（语义同 <c>icon.warning</c>）。</summary>
+    public const string RatingConflict = "exclamationmark.triangle.fill";
     private static readonly Dictionary<string, NSImage> Symbols = new(StringComparer.Ordinal);
     /// <summary>取得稳定的系统符号，缺失时显式报告映射问题。</summary>
     public static NSImage Get(string name)

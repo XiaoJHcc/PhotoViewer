@@ -40,8 +40,9 @@
 - 六个等宽按钮：0 号为清零叉，1–5 为星。点击第 n 星把**当前照片所属组的全部实际来源**写成 n 星，点击清零叉写成 0 星；不做第二次点击取消（取消走清零叉）。
 - 顺序随方向：行布局自左向右 0→5；列布局自上而下 5→0（0 号在底端）。同一行/列内不得出现两种方向。
 - 星色取代表文件内嵌 Rating：`rating ≥ n` 的星点亮 `color.star.on`（#FFD214），其余为空心 `color.star.off`（#808080）；清零叉用中性 `color.star.clear`（#666666），不随评分点亮。点亮的星取实心 `icon.starFilled`（`icon.fontSolid`），未点亮取描边 `icon.star`，清零叉取 `icon.clear`，字号见 TOOLBAR-10。已拒绝（-1）不点亮任何星，也不提供 -1 的设置入口。
+- 组级星级冲突时（[RATING-01](rating.md)），0 号按钮换成红色警示三角 `icon.warning` + `color.star.conflict`，按钮几何与命中区不变；点击打开 [RATING-04](rating.md) 来源浮窗，展示各来源真值并统一写入全部来源。非冲突时 0 号仍是清零叉。
 - 点星只改评分：不切图、不改变当前照片身份、不抢胶片栏位置（PRIN-02、FILM-06）。评分对象是当前照片，不取鼠标悬停的卡片。
-- 写回失败时星级保持原值，并给出状态提示（停留 `motion.status.toast.duration`，4000；见 [state](state.md)）；不得先点亮再静默回滚，也不得显示虚假成功。
+- 写回失败时星级保持原值，并给出状态提示（停留 `motion.status.toast.duration`，4000；见 [state](state.md)）；按磁盘真实来源状态刷新冲突指示，不得先点亮再静默回滚，也不得显示虚假成功。
 - 无照片时整组禁用：按钮保留几何可见，但不可点。禁用按 TOOLBAR-10：自绘控件保持底色、描边与尺寸，只降内容强调；原生控件可用系统禁用外观（系统色），但仍须清楚可辨，不得用 `Opacity≈0.1` 近似隐藏，也不得改变尺寸或布局。
 - 评分按钮 `toolbar.rating.button.size`（30×30）四端一致；触屏不做长按补偿，低于 44 点由卡片菜单与评分快捷命令承担（平台差异见 platforms.md：TOOLBAR-03@ios）。
 - 关闭评分显示后整组移除，命令组前移，不留空条。
@@ -101,7 +102,7 @@
 ## TOOLBAR-10 视觉与反馈 · 应当
 
 - EXIF 块与评分组共用深色底 `color.toolbar.block.background`（#222222）；命令按钮 `color.toolbar.command.background`（#333333）+ 描边 `color.toolbar.command.border`（#555555）；圆角 `toolbar.cornerRadius`（6）只由控件自身一层裁切产生，不叠卡中卡双层圆角，也不把自绘圆角与系统按钮 bezel 或系统描边裁切叠加成二次裁角。
-- 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12）；星形不因按钮 30 见方而缩小到不可辨。
+- 评分星形字号 `toolbar.rating.glyph.fontSize`（16），0 号清零叉 `toolbar.rating.clearGlyph.fontSize`（12），冲突警示三角 `icon.warning` 取 `toolbar.rating.glyph.fontSize`（16）并占同一 0 号槽位（`color.star.conflict`）；星形不因按钮 30 见方而缩小到不可辨，换成三角不改变按钮几何与命中区。
 - 每个小控件有常态、悬停、按下、禁用、焦点五态。任何状态切换都不得引起布局抖动、残留旧态或裁切内容：不改尺寸与占位、不缩放、不绘制到父容器之外；焦点用可见焦点环或描边表达，本身不被裁切。
 - 自绘控件按令牌绘制状态色，只改底色、描边与前景色，不加过渡动画，避免连续划过按钮时闪烁。原生控件可以使用系统状态色与轻量状态动效（L4），但占位、命中区与令牌几何一致。
 - 常态/悬停/按下：

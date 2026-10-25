@@ -5,6 +5,7 @@ using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
@@ -88,6 +89,9 @@ internal sealed class MacSimilarityPanel : NSView
     private bool _ready;
     private bool _opened;
     private bool _disposed;
+
+    /// <summary>RATING-04：相似卡片冲突时 0 号槽位的来源浮窗入口，由主窗口提供。</summary>
+    internal Action<ImageFile, NSView>? ShowRatingSources { get; set; }
 
     /// <summary>顶边为原点的布局坐标。</summary>
     public override bool IsFlipped => true;
@@ -633,7 +637,7 @@ internal sealed class MacSimilarityPanel : NSView
             var similar = owner._items[(int)indexPath.Item];
             item.Bind(similar.File, owner._main.Settings.ShowRating, _ => owner._panel.SelectItemCommand(similar),
                 (file, rating) => _ = owner._main.SetRatingAsync(file, rating), ScoreText(similar.Score), ScoreFraction(similar.Score),
-                selectByDisplayedImage: true);
+                selectByDisplayedImage: true, showSources: owner.ShowRatingSources);
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(similar.File, true);
             return item;
         }

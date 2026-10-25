@@ -24,6 +24,7 @@ public class MainViewModel : ViewModelBase, IDisposable
     public ControlViewModel ControlVM { get; }
     public SettingsViewModel Settings { get; }
     public ToolsViewModel Tools { get; }
+    public RatingSourcesViewModel RatingSources { get; }
     public OpenRequestChannel OpenRequests { get; }
     /// <summary>外部打开协调器：唯一消费者顺序处理 <see cref="OpenRequests"/>，重复激活当前目标只前置窗口。</summary>
     public OpenCoordinator OpenCoordinator { get; }
@@ -142,6 +143,7 @@ public class MainViewModel : ViewModelBase, IDisposable
         ControlVM = new ControlViewModel(this);
         // 文件栏容器(必须在 FolderVM 之后,因为 FileVM 内部会订阅 FolderVM 事件)
         FileVM = new FileViewModel(this);
+        RatingSources = new RatingSourcesViewModel(this);
 
         // 外部打开：界面就绪前的请求已在通道内排队，消费者从这里开始顺序处理。
         OpenCoordinator = new OpenCoordinator(this);
@@ -354,6 +356,8 @@ public class MainViewModel : ViewModelBase, IDisposable
             ?? PhotoGroupMap.Build([file], false, formats).GroupFor(file)!;
     }
 
+    public void ShowRatingSources(ImageFile file) => RatingSources.Show(file, GetRatingGroup(file));
+
     /// <summary>
     /// 设置图片星级（兼容旧签名）。统一写入组内全部实际来源（各文件内嵌 + 已存在的同名 sidecar）。
     /// 只有整组写入/验证成功（或同值无需写入）才同步数据库；成功后不清空 EXIF。
@@ -361,7 +365,7 @@ public class MainViewModel : ViewModelBase, IDisposable
     public Task SetRatingAsync(ImageFile? file, int rating) => SetRatingCoreAsync(file, rating);
 
     /// <summary>
-    /// 设置图片星级并返回本次结果（供调用方决定后续处理，避免共享 LastOutcome 竞态）。
+    /// 设置图片星级并返回本次结果（供来源浮窗等调用方决定关闭/保留，避免共享 LastOutcome 竞态）。
     /// </summary>
     public Task<RatingWriteOutcome?> SetRatingWithResultAsync(ImageFile? file, int rating) =>
         SetRatingCoreAsync(file, rating);
