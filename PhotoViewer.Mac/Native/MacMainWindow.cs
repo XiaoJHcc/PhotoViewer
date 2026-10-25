@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
@@ -139,6 +140,8 @@ public sealed class MacMainWindow : IDisposable
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _main.FitToViewRequested += OnFitToViewRequested;
         _main.OpenFailed += ShowToast;
+        // 评分失败只由共享事件驱动：Superseded/Canceled 不发事件，成功也不会因为内存值变化误报。
+        _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _photoPane.AddSubview(Photo);
         _detailHighlight = new PassThroughPane();
         _detailHighlight.Layer!.BorderColor = NSColor.FromRgb(0, 255, 0).CGColor;
@@ -607,17 +610,29 @@ public sealed class MacMainWindow : IDisposable
         Layout();
     }
 
-    /// <summary>评分经共享 XMP/同步逻辑写回，失败保留原星级并给出非模态提示（STATE-03）。</summary>
+    /// <summary>
+    /// 评分经共享全来源事务写回；成功与失败都不在这里判"内存值是否等于请求值"
+    /// （写入后内存按磁盘真值回填，重算筛选也可能改变当前照片）。失败提示统一由
+    /// <see cref="OnRatingWriteFailed"/> 订阅共享 <see cref="MainViewModel.RatingWriteFailed"/> 触发。
+    /// </summary>
     public async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating)
-        {
-            string message = StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError);
-            Console.Error.WriteLine($"[Native] {message}");
-            ShowToast(message);
-        }
         BuildControls();
+    }
+
+    /// <summary>
+    /// 共享层报告评分写回失败：用 STATE-03 提示条说明对象与原因。
+    /// 共享层只对真实失败（RolledBack / Partial / 异常）发事件，Superseded / Canceled 不发，故这里不做额外过滤；
+    /// 补偿不完整时取“星级写入不完整”文案。
+    /// </summary>
+    /// <param name="failure">本次失败的对象、结果、原因与是否 Partial。</param>
+    private void OnRatingWriteFailed(RatingWriteFailure failure)
+    {
+        string message = StatusMessages.RatingWriteFailed(
+            failure.File.Name, failure.Reason, failure.IsPartial);
+        Console.Error.WriteLine($"[Native] {message}");
+        ShowToast(message);
     }
 
     /// <summary>在主图区底部显示一条 STATE-03 提示；新提示替换旧提示并重置计时。</summary>
@@ -1126,6 +1141,7 @@ public sealed class MacMainWindow : IDisposable
         NSNotificationCenter.DefaultCenter.RemoveObserver(_deactivationObserver); _deactivationObserver.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.OpenFailed -= ShowToast;
+        _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;

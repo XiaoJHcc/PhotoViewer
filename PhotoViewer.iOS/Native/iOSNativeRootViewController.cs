@@ -1,6 +1,7 @@
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
@@ -191,6 +192,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _filmstrip.RateRequested += OnRateRequested;
+        // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
+        // Superseded/Canceled 不发，因此快速连按不会弹虚假失败）。
+        _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _observedFile = _main.CurrentFile;
         if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
         RestoreWindowPreferences();
@@ -439,6 +443,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
             _filmstrip.RateRequested -= OnRateRequested;
+            _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
             _photo.ViewportChanged -= ApplyDetailHighlight;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             ClearHeldKeys();
@@ -772,15 +777,27 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (target is double value) _photo.ZoomToPhysical(value);
     }
 
-    /// <summary>评分写回经共享 XMP/同步逻辑；失败保留原星级并用 STATE-03 提示条说明对象与原因。</summary>
+    /// <summary>
+    /// 评分写回经共享 XMP/全来源事务；成功与失败都不在这里判"内存值是否等于请求值"
+    /// （写入后内存按磁盘真值回填，重算筛选也可能改变当前照片）。失败提示统一由
+    /// <see cref="OnRatingWriteFailed"/> 订阅共享 <c>RatingWriteFailed</c> 触发。
+    /// </summary>
     /// <param name="file">目标照片。</param>
     /// <param name="rating">星级。</param>
     internal async Task RateAsync(ImageFile file, int rating)
     {
         await _main.SetRatingAsync(file, rating);
-        if (file.Rating != rating) ShowToast(StatusMessages.RatingWriteFailed(file.Name, _main.LastRatingWriteError));
         BuildControls();
     }
+
+    /// <summary>
+    /// 共享层报告评分写回失败：用 STATE-03 提示条说明对象与原因。
+    /// 共享层只对真实失败（RolledBack / Partial / 异常）发事件，Superseded / Canceled 不发，故这里不做额外过滤。
+    /// </summary>
+    /// <param name="failure">本次失败的结果、对象与原因。</param>
+    private void OnRatingWriteFailed(RatingWriteFailure failure)
+        => UiDispatcher.Post(() => ShowToast(StatusMessages.RatingWriteFailed(
+            failure.File.Name, failure.Reason, failure.IsPartial)));
 
     /// <summary>
     /// 显示 STATE-03 提示条（评分/Full 升级/内存提示共用）：新提示替换旧提示并重置 4 s 计时。
