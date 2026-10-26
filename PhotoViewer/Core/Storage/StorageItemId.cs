@@ -16,6 +16,10 @@ public readonly record struct StorageItemId
     public static StorageItemId FromLocalPath(string path)
         => new(LocalStorageIdentity.CreateValueFromFullPath(Path.GetFullPath(path)));
 
+    /// <summary>使用调用方已在所需访问作用域内解析的绝对路径建立身份。</summary>
+    internal static StorageItemId FromResolvedLocalPath(string path)
+        => new(LocalStorageIdentity.CreateValueFromResolvedFullPath(Path.GetFullPath(path)));
+
     public static StorageItemId FromUri(Uri uri)
     {
         ArgumentNullException.ThrowIfNull(uri);

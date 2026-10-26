@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Foundation;
@@ -93,71 +92,15 @@ public sealed class iOSExternalOpenBridge
     public IReadOnlyList<IStorageItemRef> Resolve(IEnumerable<NSUrl> urls)
     {
         var items = new List<IStorageItemRef>();
-        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var seen = new HashSet<StorageItemId>();
         foreach (var url in urls)
         {
             if (url == null || !url.IsFileUrl) continue;
-            string? candidate = url.Path;
-            if (string.IsNullOrWhiteSpace(candidate)) continue;
-
-            string key;
-            try
-            {
-                key = Path.GetFullPath(candidate);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Open] 忽略无效路径：{ex.Message}");
-                continue;
-            }
-
-            if (!seen.Add(key)) continue;
-            if (!TryResolveInScope(url, out var target))
-            {
-                // 解析失败不占位：同批重复路径的后续 URL 仍可重新尝试（例如另一份可用授权）。
-                seen.Remove(key);
-                continue;
-            }
-
+            if (!iOSStorageRefs.TryResolve(url, _scope, out var target) || !seen.Add(target.StorageId)) continue;
             items.Add(iOSStorageRefs.Create(url, target, _scope));
         }
 
         return items;
     }
 
-    /// <summary>
-    /// 在系统授予的作用域内解析目标：作用域外不可见的外部文件也能正确判断存在性与目录类型，
-    /// 判断结束后按启动结果成对归还作用域。
-    /// </summary>
-    /// <param name="url">系统传入的 URL。</param>
-    /// <param name="target">解析出的本地目标。</param>
-    /// <returns>目标存在且可用时返回 true。</returns>
-    private bool TryResolveInScope(NSUrl url, out iOSSystemUrlTarget target)
-    {
-        iOSSystemUrlTarget resolved = default;
-        bool accessible = iOSSecurityScope.TryProbe(_scope, url, () =>
-        {
-            string? candidate = url.Path;
-            if (string.IsNullOrWhiteSpace(candidate)) return false;
-
-            string path;
-            try
-            {
-                path = Path.GetFullPath(candidate);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Open] 忽略无效路径：{ex.Message}");
-                return false;
-            }
-
-            bool isDirectory = Directory.Exists(path);
-            if (!isDirectory && !File.Exists(path)) return false;
-            resolved = new iOSSystemUrlTarget(path, isDirectory, false);
-            return true;
-        }, out bool started);
-
-        target = accessible ? resolved with { SecurityScoped = started } : default;
-        return accessible;
-    }
 }

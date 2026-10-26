@@ -12,8 +12,8 @@ namespace PhotoViewer.Mac.Native;
 /// RATING-04：纵向列出各来源真值，任一条目的评分都统一写入全部来源。
 /// 浮窗宽度由星级控件（0 号清零叉 + 5 星）决定；三信息默认同行，文件名放不下时改为双行。
 /// 浮窗自身不绘制背景或描边，毛玻璃材质由 <see cref="NSPopover"/> 提供。
-/// 条目随共享 <see cref="RatingSourcesViewModel.Items"/> 的实时变化重建；每次展示都新建
-/// popover/controller/content，旧实例保持强引用到窗口终结（关闭后 AppKit 仍会迟后读取定位视图的 bounds）。
+/// 条目随共享 <see cref="RatingSourcesViewModel.Items"/> 的实时变化重建；popover/controller/content
+/// 在主窗口生命周期内复用同一套实例，关闭后 AppKit 的迟后访问仍落到存活对象上。
 /// </summary>
 internal sealed class MacRatingSourcesPopover : IDisposable
 {
@@ -40,12 +40,6 @@ internal sealed class MacRatingSourcesPopover : IDisposable
     private static readonly double MetaFieldHeight = CellHeight(MetaFont);
 
     private readonly MainViewModel _main;
-    /// <summary>
-    /// 已关闭的展示实例。保留量的上限是"窗口生命周期内每次开合一个"：AppKit 关闭浮窗后仍会迟后
-    /// 读取定位视图/锚点 bounds，提前 Dispose 或让 GC 回收旧 popover 会在真实窗口里崩溃，
-    /// 因此这里不做回收，也不复用旧实例；数量由 <see cref="RetiredPresentationCount"/> 供验收观察。
-    /// </summary>
-    private readonly List<Presentation> _retired = [];
     private Presentation? _presentation;
     private NSView? _positioningView;
     private NSObject? _escapeMonitor;
@@ -59,8 +53,11 @@ internal sealed class MacRatingSourcesPopover : IDisposable
     internal NSRectEdge? LastPreferredEdge { get; private set; }
     /// <summary>本次锚点在主窗口根视图内的矩形；卡片入口只复制矩形，不持有虚拟化按钮。</summary>
     internal CGRect? AnchorRect { get; private set; }
-    /// <summary>已关闭但仍由主窗口强引用的展示实例数（AppKit 关闭后可能迟后读取锚点 bounds）。</summary>
-    internal int RetiredPresentationCount => _retired.Count;
+    /// <summary>当前持有的原生浮窗数；创建后恒为 1，供反复开合验收。</summary>
+    internal int PresentationCount => _presentation == null ? 0 : 1;
+    internal IntPtr PopoverHandle => _presentation?.Popover.Handle ?? IntPtr.Zero;
+    internal IntPtr ControllerHandle => _presentation?.Controller.Handle ?? IntPtr.Zero;
+    internal CGSize ContentSize => _presentation?.Popover.ContentSize ?? CGSize.Empty;
     /// <summary>条目内可用的信息宽度，等于星级控件整体宽度。</summary>
     internal static double EntryContentWidth => EntryWidth - DesignTokens.PopupRatingSourcesEntryPadding * 2;
 
@@ -97,23 +94,28 @@ internal sealed class MacRatingSourcesPopover : IDisposable
         _positioningView = positioningView;
         IsAnchoredToControlBar = controlBarAnchor;
         AnchorRect = positioningRect;
-        var presentation = new Presentation();
-        _presentation = presentation;
-        presentation.CloseObserver = NSPopover.Notifications.ObserveDidClose(presentation.Popover, (_, _) =>
-        {
-            if (presentation.Popover.Shown) return;
-            if (!ReferenceEquals(_presentation, presentation)) return;
-            _presentation = null;
-            // 原生关闭（点外部/系统收起）同样保留实例：AppKit 关闭后仍可能迟后读取定位视图。
-            _retired.Add(presentation);
-            if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
-        });
+        var presentation = GetOrCreatePresentation();
         Refresh();
         // RATING-04：横排卡片入口默认向下；底部卡片在屏幕下方放不下时改向上。
         var edge = ResolveEdge(preferredEdge, positioningRect, presentation.Content.Frame.Size, controlBarAnchor);
         LastPreferredEdge = edge;
         presentation.Popover.Show(positioningRect, positioningView, edge);
         InstallEscapeMonitor();
+    }
+
+    private Presentation GetOrCreatePresentation()
+    {
+        if (_presentation is { } existing) return existing;
+        var presentation = new Presentation();
+        presentation.CloseObserver = NSPopover.Notifications.ObserveDidClose(presentation.Popover, (_, _) =>
+        {
+            // 快速重开时，旧 DidClose 可以晚于新 Show 到达；此时它不属于当前展示。
+            if (presentation.Popover.Shown || _disposed) return;
+            ClosePresentation();
+            if (_main.RatingSources.IsOpen) _main.RatingSources.Close();
+        });
+        _presentation = presentation;
+        return presentation;
     }
 
     /// <summary>控制栏入口按令牌方向不变；卡片入口仅在屏幕下方放不下时改向上，两侧都不够时保留默认向下。</summary>
@@ -170,7 +172,6 @@ internal sealed class MacRatingSourcesPopover : IDisposable
             : y - DesignTokens.PopupRatingSourcesEntrySpacing + DesignTokens.PopupPadding;
         var size = new CGSize(ContentWidth, height);
         presentation.Popover.ContentSize = size;
-        presentation.Content.Frame = new CGRect(CGPoint.Empty, size);
         if (IsOpen) presentation.Content.LayoutSubtreeIfNeeded();
     }
 
@@ -344,13 +345,7 @@ internal sealed class MacRatingSourcesPopover : IDisposable
         _positioningView = null;
         IsAnchoredToControlBar = false;
         AnchorRect = null;
-        var presentation = _presentation;
-        _presentation = null;
-        if (presentation == null) return;
-        // 关闭后 AppKit 仍可能迟后读取定位视图与锚点 bounds，展示实例只能保留到窗口终结：
-        // 不在这里 Dispose popover/controller/content，也不在任何展示路径上让 GC 提前回收。
-        _retired.Add(presentation);
-        if (presentation.Popover.Shown) presentation.Popover.Close();
+        if (_presentation is { } presentation && presentation.Popover.Shown) presentation.Popover.Close();
     }
 
     internal void Close()
@@ -364,8 +359,7 @@ internal sealed class MacRatingSourcesPopover : IDisposable
         if (_disposed) return;
         _main.RatingSources.PropertyChanged -= OnSourcesChanged;
         ClosePresentation();
-        foreach (var presentation in _retired) presentation.CloseObserver?.Dispose();
-        _retired.Clear();
+        _presentation?.CloseObserver?.Dispose();
         _disposed = true;
     }
 

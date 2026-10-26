@@ -172,10 +172,10 @@
 - [x] 容器安全：TIFF 有界遍历目录/数据范围并拒绝共享字节；HEIF 拒绝共享 extent、重复索引、多 XML/RDF 候选与不可证明的项间引用；修正 idat 绝对基址、base_offset 与溢出边界。
 - [x] 唯一写入路径：删除适配器写/恢复/追加与 `XmpPacketEditor` 整包重序列化入口，夹具通过独立造包或正式存储入口操作。
 - [x] 事务：真实非截断 RW 预检；NoChange 实读与修订复核；成功前重新发现来源集合并逐来源回读；失败按安全模式补偿或保留磁盘真值。组内其余文件按格式优先级稳定排序。
-- [x] 刷新与打开：按存储身份独立刷新代际，写后重新发现 sidecar；单图刷新说明父目录访问边界；可读但无 EXIF 的文件不误报无法打开；macOS 本地身份按卷上的实际拼写归一；设置缓存张数/内存按规范上界夹取。
+- [x] 刷新与打开：按存储身份独立刷新代际，写后重新发现 sidecar；单图刷新说明父目录访问边界；可读但无 EXIF 的文件不误报无法打开；macOS 本地身份按卷上的实际拼写归一；iOS 在安全作用域内固化实际拼写身份；设置缓存张数/内存按规范上界夹取。
 - [x] Android：新鲜 Provider 属性与会话 revision、数字 URI 显示名、选择器后台准备/迟到结果隔离、不可定位打开即拒绝；`SetLength` 改用 ftruncate，覆盖扩展零填充与回缩。
-- [x] iOS：枚举子项保留原安全作用域；胶片栏以原子显示快照统一数据源/布局/定位；共享通知先回主线程再访问 UIKit。回归不手动调用数据源 dequeue，改由 UIKit 滚动请求卡片。
-- [x] 现有 macOS 浮窗：非当前目标及组成员实时刷新、失败保留、成功仍冲突保留、Esc/切图关闭、底部卡片方向及锚点失效关闭；几何字号使用令牌。
+- [x] iOS：枚举子项保留原安全作用域；选择器与外部打开在作用域内解析实际路径并缓存身份，目录子项在租约内使用同一规则；胶片栏以原子显示快照统一数据源/布局/定位；共享通知先回主线程再访问 UIKit。回归不手动调用数据源 dequeue，改由 UIKit 滚动请求卡片。
+- [x] 现有 macOS 浮窗：非当前目标及组成员实时刷新、失败保留、成功仍冲突保留、Esc/切图关闭、底部卡片方向及锚点失效关闭；几何字号使用令牌；popover/controller/content 每窗复用一套，旧关闭通知不影响快速重开。
 - [x] Web：单 Missing 不冲突、Rejected 可改写 0–5、冲突解除后 aria-pressed 更新；未新增来源浮窗。
 - [x] 训练消费只取实际选用文件有效 1–5；共享测试验证不可信状态不落值，Training.sln 构建与 scan-only 通过，未修改独立训练仓。
 - [x] 核心、Web、Mac、iOS 模拟器与 Android 模拟器回归及 Windows 类型检查，覆盖与证据见 §6.4。
@@ -198,10 +198,10 @@
 | Windows | WindowsTypeCheck 0 错；`release/windows-review-fix-typecheck.log`，不替代 Windows 本机构建/WinUI 运行时 |
 | Training | `dotnet build Training/Training.sln` 0 错 0 警；现有夹具 scan-only 正常，未写训练库；`release/training-review-fix-{build,scan}.log` |
 
+本轮限制收尾复验：CoreContractCheck 830 PASS / 1 SKIP / 0 FAIL；macOS Debug 构建 0 错，base 39、input、layout、toolbar 全 PASS。toolbar 中 32 轮快速关闭/重开始终复用同一原生实例且 content frame 不累计偏移，`phys_footprint` 样本 659572392 → 613615272 字节（作为进程样本而非逐对象归因），报告为 `release/native-p2-acceptance/toolbar-ui-checks.txt`。iOS 同型号模拟器 Debug 构建 0 错，input 48 PASS / 4 NOTE / 0 FAIL，layout 24 PASS / 3 NOTE / 0 FAIL，报告归档为 `release/ios-identity-{input,layout}-checks.txt`；同文件大小写别名在当前模拟器卷无法构造，保留 NOTE，不冒充通过。
+
 保留限制：
 
-- macOS `_retired` 仍在主窗口生命周期内保留旧 popover/controller/content，避免 AppKit 关闭后迟后读取导致崩溃；未找到可证明安全的提前回收时机，反复开合的对象累积未标为已解决。
-- Apple iOS 身份保持词法路径；外部引用在安全作用域外建立，不做随访问权限变化的身份探测。macOS 按文件系统实际拼写归一，不以全路径小写合并区分大小写卷上的不同文件。
 - Windows WinUI 运行时、iOS 真机 Files 作用域、Android USB/MTP/云 Provider 与跨 UID 授权、Imaging Edge / 相机读取往返、断电恢复未验。
 - PNG 写入、无 canonical 包的新建与复杂容器扩展均未新增；其他平台来源浮窗仍未实现。
 

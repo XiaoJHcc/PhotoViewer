@@ -20,79 +20,84 @@ internal interface IIOSScopedStorageItem : IStorageItemRef
 /// <param name="LocalPath">规范化的绝对路径。</param>
 /// <param name="IsDirectory">目标是目录。</param>
 /// <param name="SecurityScoped">解析时系统授予了安全作用域（引用需保留原 URL）。</param>
-internal readonly record struct iOSSystemUrlTarget(string LocalPath, bool IsDirectory, bool SecurityScoped);
+/// <param name="StorageId">作用域内按文件系统实际拼写固化的身份。</param>
+internal readonly record struct iOSSystemUrlTarget(
+    string LocalPath,
+    bool IsDirectory,
+    bool SecurityScoped,
+    StorageItemId StorageId);
 
 /// <summary>系统 URL → 本地存储引用：外部目标保留原 URL，沙盒目标继续走共享 Local 引用。</summary>
 internal static class iOSStorageRefs
 {
     /// <summary>按选择器结果建立目录引用（沙盒内的目录仍返回共享 <see cref="LocalFolderRef"/>）。</summary>
-    /// <param name="url">文档选择器返回的原 URL。</param>
-    /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
-    /// <returns>目录引用；URL 不是本地文件时返回 null。</returns>
     internal static IFolderRef? CreateFolderRef(NSUrl? url, ISecurityScopeAccess? scope = null)
-    {
-        if (url == null || !TryGetFullPath(url, out var path)) return null;
-        return HasSecurityScope(url, scope) ? new iOSScopedFolderRef(path, [url], scope) : new LocalFolderRef(path);
-    }
+        => ResolvePicked(url, true, scope) as IFolderRef;
 
     /// <summary>按选择器结果建立文件引用（沙盒内的文件仍返回共享 <see cref="LocalFileRef"/>）。</summary>
-    /// <param name="url">文档选择器返回的原 URL。</param>
-    /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
-    /// <returns>文件引用；URL 不是本地文件时返回 null。</returns>
     internal static IFileRef? CreateFileRef(NSUrl? url, ISecurityScopeAccess? scope = null)
+        => ResolvePicked(url, false, scope) as IFileRef;
+
+    private static IStorageItemRef? ResolvePicked(NSUrl? url, bool directory, ISecurityScopeAccess? scope)
     {
-        if (url == null || !TryGetFullPath(url, out var path)) return null;
-        return HasSecurityScope(url, scope) ? new iOSScopedFileRef(path, [url], scope) : new LocalFileRef(path);
+        if (url == null || !TryResolve(url, scope ?? PlatformSecurityScopeAccess.Instance, out var target) ||
+            target.IsDirectory != directory)
+        {
+            return null;
+        }
+
+        return Create(url, target, scope);
     }
 
     /// <summary>按作用域内的解析结果建立引用（<see cref="iOSExternalOpenBridge"/> 使用）。</summary>
-    /// <param name="url">系统传入的原 URL。</param>
-    /// <param name="target">作用域内解析出的本地目标。</param>
-    /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
-    /// <returns>目录走文件夹引用，其余走文件引用。</returns>
     internal static IStorageItemRef Create(NSUrl url, iOSSystemUrlTarget target, ISecurityScopeAccess? scope = null)
     {
         if (!target.SecurityScoped)
         {
-            return target.IsDirectory ? new LocalFolderRef(target.LocalPath) : new LocalFileRef(target.LocalPath);
+            return target.IsDirectory
+                ? new LocalFolderRef(target.LocalPath, target.StorageId)
+                : new LocalFileRef(target.LocalPath, target.StorageId);
         }
 
         return target.IsDirectory
-            ? new iOSScopedFolderRef(target.LocalPath, [url], scope)
-            : new iOSScopedFileRef(target.LocalPath, [url], scope);
+            ? new iOSScopedFolderRef(target.LocalPath, [url], scope, target.StorageId)
+            : new iOSScopedFileRef(target.LocalPath, [url], scope, target.StorageId);
     }
 
-    /// <summary>读取本地文件 URL 的规范化路径；非文件 URL 或路径为空时返回 false。</summary>
-    /// <param name="url">候选 URL。</param>
-    /// <param name="path">规范化绝对路径。</param>
-    /// <returns>可用于本地存储引用时返回 true。</returns>
-    private static bool TryGetFullPath(NSUrl? url, out string path)
+    /// <summary>在一次有效作用域内探测目标并缓存实际拼写身份，随后立即归还作用域。</summary>
+    internal static bool TryResolve(NSUrl url, ISecurityScopeAccess scope, out iOSSystemUrlTarget target)
     {
-        path = string.Empty;
-        if (url == null || !url.IsFileUrl || string.IsNullOrWhiteSpace(url.Path))
+        iOSSystemUrlTarget resolved = default;
+        bool accessible = iOSSecurityScope.TryProbe(scope, url, () =>
         {
-            return false;
-        }
+            string? candidate = url.Path;
+            if (!url.IsFileUrl || string.IsNullOrWhiteSpace(candidate)) return false;
 
-        try
-        {
-            path = Path.GetFullPath(url.Path);
+            string path;
+            try
+            {
+                path = Path.GetFullPath(candidate);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Open] 忽略无效路径：{ex.Message}");
+                return false;
+            }
+
+            bool isDirectory = Directory.Exists(path);
+            if (!isDirectory && !File.Exists(path)) return false;
+            string identityPath = LocalStorageIdentity.ResolvePathForIdentity(path);
+            resolved = new iOSSystemUrlTarget(
+                path,
+                isDirectory,
+                false,
+                StorageItemId.FromResolvedLocalPath(identityPath));
             return true;
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[StorageAccess] iOS 忽略无效路径：{ex.Message}");
-            return false;
-        }
-    }
+        }, out bool started);
 
-    /// <summary>判断系统是否为该 URL 授予了安全作用域（成对启动/结束一次后立即归还）。</summary>
-    /// <param name="url">系统交回的 URL。</param>
-    /// <param name="scope">系统作用域调用面。</param>
-    /// <returns>URL 携带系统授予的作用域时返回 true。</returns>
-    private static bool HasSecurityScope(NSUrl url, ISecurityScopeAccess? scope)
-        => iOSSecurityScope.TryProbe(scope ?? PlatformSecurityScopeAccess.Instance, url, static () => true, out bool started)
-            && started;
+        target = accessible ? resolved with { SecurityScoped = started } : default;
+        return accessible;
+    }
 }
 
 /// <summary>
@@ -108,9 +113,13 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
     /// <param name="localPath">规范化绝对路径。</param>
     /// <param name="scopedUrls">系统授予的原 URL（至少一个）。</param>
     /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
-    internal iOSScopedFileRef(string localPath, IReadOnlyList<NSUrl> scopedUrls, ISecurityScopeAccess? scope = null)
+    internal iOSScopedFileRef(
+        string localPath,
+        IReadOnlyList<NSUrl> scopedUrls,
+        ISecurityScopeAccess? scope = null,
+        StorageItemId? storageId = null)
     {
-        _inner = new LocalFileRef(localPath);
+        _inner = storageId is { } id ? new LocalFileRef(localPath, id) : new LocalFileRef(localPath);
         SecurityScopedUrls = [.. scopedUrls];
         _scope = scope ?? PlatformSecurityScopeAccess.Instance;
     }
@@ -161,8 +170,8 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
             return Task.FromResult<IFolderRef?>(null);
         }
 
-        return Task.FromResult<IFolderRef?>(CanEnumerate(parent)
-            ? new iOSScopedFolderRef(parent, SecurityScopedUrls, _scope)
+        return Task.FromResult<IFolderRef?>(CanEnumerate(parent, out var storageId)
+            ? new iOSScopedFolderRef(parent, SecurityScopedUrls, _scope, storageId)
             : null);
     }
 
@@ -194,18 +203,23 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
     /// <summary>在系统授予的作用域内试枚举父目录：作用域不覆盖父目录时返回 false。</summary>
     /// <param name="directory">父目录绝对路径。</param>
     /// <returns>可枚举时返回 true。</returns>
-    private bool CanEnumerate(string directory)
+    private bool CanEnumerate(string directory, out StorageItemId storageId)
     {
+        storageId = default;
         foreach (var url in SecurityScopedUrls)
         {
+            StorageItemId resolved = default;
             bool accessible = iOSSecurityScope.TryProbe(_scope, url, () =>
             {
                 using var entries = Directory.EnumerateFileSystemEntries(directory).GetEnumerator();
                 entries.MoveNext();
+                resolved = StorageItemId.FromResolvedLocalPath(
+                    LocalStorageIdentity.ResolvePathForIdentity(directory));
                 return true;
             }, out _);
             if (accessible)
             {
+                storageId = resolved;
                 return true;
             }
         }
@@ -232,9 +246,10 @@ internal sealed class iOSScopedFolderRef : IFolderRef, IIOSScopedStorageItem
     internal iOSScopedFolderRef(
         string localPath,
         IReadOnlyList<NSUrl> scopedUrls,
-        ISecurityScopeAccess? scope = null)
+        ISecurityScopeAccess? scope = null,
+        StorageItemId? storageId = null)
     {
-        _inner = new LocalFolderRef(localPath);
+        _inner = storageId is { } id ? new LocalFolderRef(localPath, id) : new LocalFolderRef(localPath);
         SecurityScopedUrls = [.. scopedUrls];
         _scope = scope ?? PlatformSecurityScopeAccess.Instance;
     }
@@ -303,10 +318,11 @@ internal sealed class iOSScopedFolderRef : IFolderRef, IIOSScopedStorageItem
             return item;
         }
 
+        var storageId = StorageItemId.FromResolvedLocalPath(LocalStorageIdentity.ResolvePathForIdentity(path));
         return item switch
         {
-            LocalFolderRef => new iOSScopedFolderRef(path, SecurityScopedUrls, _scope),
-            LocalFileRef => new iOSScopedFileRef(path, SecurityScopedUrls, _scope),
+            LocalFolderRef => new iOSScopedFolderRef(path, SecurityScopedUrls, _scope, storageId),
+            LocalFileRef => new iOSScopedFileRef(path, SecurityScopedUrls, _scope, storageId),
             _ => item,
         };
     }

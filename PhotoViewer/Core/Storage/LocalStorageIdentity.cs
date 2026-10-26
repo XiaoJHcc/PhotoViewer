@@ -1,4 +1,7 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+
+[assembly: InternalsVisibleTo("PhotoViewer.iOS")]
 
 namespace PhotoViewer.Core.Storage;
 
@@ -7,8 +10,8 @@ namespace PhotoViewer.Core.Storage;
 /// <para>Windows 只做大小写归一（NTFS 默认不区分大小写）；macOS 用 <c>realpath(3)</c> 取实际路径，
 /// 所以在默认的不区分大小写卷上 <c>a.jpg</c> / <c>A.JPG</c> 指向同一身份，
 /// 而在区分大小写卷上两个各自存在的文件仍是两个身份。</para>
-/// <para>iOS 不做这层探测：外部目标的引用在系统安全作用域之外建立，探测结果会随作用域是否生效而变，
-/// 同一文件可能得到两个身份；因此 iOS 保持原来的词法身份（作用域只在打开会话里成对持有）。</para>
+/// <para>iOS 由平台引用工厂在安全作用域内调用同一解析入口并固化结果；普通词法构造不自行探测，
+/// 因而外部目标不会因授权是否生效而得到不同身份。</para>
 /// <para>探测只在建立引用时发生一次，<see cref="IStorageItemRef.StorageId"/> 读取不再访问文件系统。</para>
 /// </summary>
 internal static class LocalStorageIdentity
@@ -35,15 +38,19 @@ internal static class LocalStorageIdentity
             return FilePrefix + fullPath;
         }
 
-        return FilePrefix + ResolveApplePath(fullPath);
+        return FilePrefix + ResolvePathForIdentity(fullPath);
     }
+
+    /// <summary>把调用方已在所需访问作用域内解析的绝对路径转为本地身份。</summary>
+    internal static string CreateValueFromResolvedFullPath(string fullPath) => FilePrefix + fullPath;
 
     /// <summary>
     /// 取文件系统实际拼写的绝对路径；无法判定时退回给定路径，绝不让身份查询失败影响调用方。
+    /// iOS 调用方必须在目标所需的安全作用域内调用，并缓存结果作为身份。
     /// </summary>
     /// <param name="fullPath">绝对路径。</param>
     /// <returns>文件系统认得的路径，或原路径。</returns>
-    private static string ResolveApplePath(string fullPath)
+    internal static string ResolvePathForIdentity(string fullPath)
     {
         if (!s_pathProbeAvailable)
         {

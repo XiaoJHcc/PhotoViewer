@@ -611,6 +611,9 @@ internal static class NativeToolbarAcceptance
             observations.Add("RATING-04: source popover keeps three info items on one line and switches to two lines for long names");
             CGRect[]? reopenedFrames = null;
             NSView? previousContent = null;
+            IntPtr previousPopover = IntPtr.Zero;
+            IntPtr previousController = IntPtr.Zero;
+            CGRect? initialContentFrame = null;
             foreach (var mode in new[] { LayoutMode.Row, LayoutMode.Col })
             {
                 settings.LayoutMode = mode;
@@ -622,9 +625,24 @@ internal static class NativeToolbarAcceptance
                     clear.PerformClick(clear);
                     await WaitAsync(() => popover.IsOpen, $"来源浮窗展开 {mode}/{attempt}");
                     await Task.Delay(60);
-                    if (previousContent != null && ReferenceEquals(previousContent, popover.Content))
-                        throw new InvalidOperationException("重开复用了已随旧浮窗释放的内容视图");
+                    if (previousContent == null)
+                    {
+                        previousPopover = popover.PopoverHandle;
+                        previousController = popover.ControllerHandle;
+                    }
+                    else if (!ReferenceEquals(previousContent, popover.Content)
+                        || previousPopover != popover.PopoverHandle
+                        || previousController != popover.ControllerHandle
+                        || popover.PresentationCount != 1)
+                    {
+                        throw new InvalidOperationException("重开没有复用主窗口唯一的 popover/controller/content");
+                    }
                     previousContent = popover.Content;
+                    initialContentFrame ??= popover.Content.Frame;
+                    if (popover.Content.Frame != initialContentFrame.Value
+                        || Math.Abs((double)popover.Content.Bounds.Width - popover.ContentSize.Width) > .01
+                        || Math.Abs((double)popover.Content.Bounds.Height - popover.ContentSize.Height) > .01)
+                        throw new InvalidOperationException($"第 {mode}/{attempt} 次打开的内容视图发生累计偏移或尺寸错位：frame={popover.Content.Frame}, initial={initialContentFrame.Value}, bounds={popover.Content.Bounds}, contentSize={popover.ContentSize}");
                     if (popover.Content.Layer is { BackgroundColor: not null } || (popover.Content.Layer?.BorderWidth ?? 0) > 0)
                         throw new InvalidOperationException("来源浮窗重复绘制了自定义背景或描边，覆盖了原生毛玻璃");
                     sources = window.Main.RatingSources.Items;
@@ -756,6 +774,31 @@ internal static class NativeToolbarAcceptance
 
             settings.LayoutMode = LayoutMode.Row;
             await Task.Delay(200);
+            long footprintBefore = AppleMemoryFootprint.GetPhysFootprintBytes();
+            for (int attempt = 0; attempt < 32; attempt++)
+            {
+                clear = window.ControlBar.Ratings[0];
+                clear.PerformClick(clear);
+                await WaitAsync(() => popover.IsOpen, $"浮窗复用压力展开 {attempt}");
+                popover.Close();
+                clear = window.ControlBar.Ratings[0];
+                clear.PerformClick(clear);
+                await WaitAsync(() => popover.IsOpen && window.Main.RatingSources.IsOpen, $"浮窗快速重开 {attempt}");
+                await Task.Delay(30);
+                if (!popover.IsOpen || !window.Main.RatingSources.IsOpen
+                    || !ReferenceEquals(previousContent, popover.Content)
+                    || previousPopover != popover.PopoverHandle
+                    || previousController != popover.ControllerHandle
+                    || popover.PresentationCount != 1
+                    || popover.Content.Frame != initialContentFrame.GetValueOrDefault())
+                {
+                    throw new InvalidOperationException($"迟后关闭通知破坏了第 {attempt} 次快速重开、产生了新原生实例或累计了内容偏移");
+                }
+                popover.Close();
+                await WaitAsync(() => !popover.IsOpen, $"浮窗复用压力关闭 {attempt}");
+            }
+            long footprintAfter = AppleMemoryFootprint.GetPhysFootprintBytes();
+            observations.Add($"RATING-04: 32 rapid close/show cycles reuse one native presentation; footprint {footprintBefore} -> {footprintAfter} bytes");
             clear = window.ControlBar.Ratings[0];
             clear.PerformClick(clear);
             await WaitAsync(() => popover.IsOpen, "写入前来源浮窗展开");
@@ -802,8 +845,9 @@ internal static class NativeToolbarAcceptance
                 var anchorScreen = window.Window.ConvertRectToScreen(conflictCard.ClearSlot.ConvertRectToView(conflictCard.ClearSlot.Bounds, null));
                 conflictCard.ClearSlot.PerformClick(conflictCard.ClearSlot);
                 await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, conflict), "卡片冲突入口");
-                if (cardPreviousContent != null && ReferenceEquals(cardPreviousContent, popover.Content))
-                    throw new InvalidOperationException("卡片重开复用了已释放的内容视图");
+                if (cardPreviousContent != null && (!ReferenceEquals(cardPreviousContent, popover.Content)
+                    || previousPopover != popover.PopoverHandle || previousController != popover.ControllerHandle))
+                    throw new InvalidOperationException("卡片重开没有复用同一套原生浮窗实例");
                 cardPreviousContent = popover.Content;
                 // 横排卡片入口默认向下；底部卡片在屏幕下方放不下时向上（RATING-04）。
                 var expectedEdge = ExpectedCardEdge(window.Window, anchorScreen, (double)popover.Content.Frame.Height);
@@ -829,7 +873,7 @@ internal static class NativeToolbarAcceptance
                 popover.Close();
                 await WaitAsync(() => !window.Main.RatingSources.IsOpen, "关闭浮窗同步共享状态");
             }
-            observations.Add("RATING-04: a non-current filmstrip card opens downward when the screen has room below (upward when the entry sits at the bottom) without selecting or writing; three reopen cycles each remain stable for 1.3s with fresh native content and no stale anchor bounds access");
+            observations.Add("RATING-04: a non-current filmstrip card opens downward when the screen has room below (upward when the entry sits at the bottom) without selecting or writing; three reopen cycles each remain stable for 1.3s with the same native presentation and no stale anchor bounds access");
         }
         finally
         {
@@ -1177,7 +1221,7 @@ internal static class NativeToolbarAcceptance
             window.FilmstripScroll.ReflectScrolledClipView(clip);
             await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "滚动移走锚点后关闭来源浮窗");
             observations.Add("RATING-04: hiding the filmstrip, reloading the list, resizing the window or scrolling the anchor away closes the source popover instead of leaving it over a moved card");
-            observations.Add($"RATING-04: closed popover presentations stay retained for the window lifetime ({popover.RetiredPresentationCount} after this regression) because AppKit reads anchor bounds after close; no early Dispose or reuse");
+            observations.Add($"RATING-04: closed popovers keep the same native presentation alive for safe AppKit anchor access (count={popover.PresentationCount}); entries alone are refreshed");
         }
         finally
         {

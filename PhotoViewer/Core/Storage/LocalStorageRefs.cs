@@ -8,9 +8,14 @@ public sealed class LocalFileRef : IFileRef
     private readonly StorageItemId _storageId;
 
     public LocalFileRef(string localPath)
+        : this(localPath, StorageItemId.FromLocalPath(localPath))
+    {
+    }
+
+    internal LocalFileRef(string localPath, StorageItemId storageId)
     {
         _localPath = System.IO.Path.GetFullPath(localPath);
-        _storageId = StorageItemId.FromLocalPath(_localPath);
+        _storageId = storageId;
     }
 
     public string Name => System.IO.Path.GetFileName(_localPath);
@@ -180,9 +185,14 @@ public sealed class LocalFolderRef : IFolderRef
     private readonly StorageItemId _storageId;
 
     public LocalFolderRef(string localPath)
+        : this(localPath, StorageItemId.FromLocalPath(localPath))
+    {
+    }
+
+    internal LocalFolderRef(string localPath, StorageItemId storageId)
     {
         _localPath = System.IO.Path.GetFullPath(localPath);
-        _storageId = StorageItemId.FromLocalPath(_localPath);
+        _storageId = storageId;
     }
 
     public string Name => new DirectoryInfo(_localPath).Name;

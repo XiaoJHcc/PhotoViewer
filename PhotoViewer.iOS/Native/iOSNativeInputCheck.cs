@@ -626,7 +626,7 @@ internal static class iOSNativeInputCheck
         using var folderUrl = NSUrl.CreateFileUrl(workspace, true, null)
             ?? throw new InvalidOperationException("外部授权核对：目录 URL 创建失败");
 
-        // ① 系统 URL → 引用：保留原 URL 实例，探测按 URL 去重且成对归还作用域。
+        // ① 系统 URL → 引用：保留原 URL 实例，重复项经作用域内身份去重且每次探测成对归还作用域。
         var bridgeScope = new RecordingSecurityScope(started: true);
         var bridge = new iOSExternalOpenBridge(new OpenRequestChannel(), bridgeScope);
         var items = bridge.Resolve([fileUrl, fileUrl]);
@@ -635,11 +635,49 @@ internal static class iOSNativeInputCheck
         if (items[0] is not IIOSScopedStorageItem { SecurityScopedUrls.Count: 1 } opened ||
             !ReferenceEquals(opened.SecurityScopedUrls[0], fileUrl))
             throw new InvalidOperationException("外部文件引用未保留系统交回的原 URL，租约只能按 path 重建 URL");
-        if (bridgeScope.Starts.Count != 1 || bridgeScope.Stops.Count != 1 ||
-            !ReferenceEquals(bridgeScope.Starts[0], fileUrl) || !ReferenceEquals(bridgeScope.Stops[0], fileUrl))
+        if (bridgeScope.Starts.Count != 2 || bridgeScope.Stops.Count != 2 ||
+            bridgeScope.Starts.Any(url => !ReferenceEquals(url, fileUrl)) ||
+            bridgeScope.Stops.Any(url => !ReferenceEquals(url, fileUrl)))
             throw new InvalidOperationException(
                 $"作用域内存在性探测未对同一 URL 成对 Start/Stop（start={bridgeScope.Starts.Count} stop={bridgeScope.Stops.Count}）");
-        lines.Add("PASS 外部打开引用：openURL/拖入的原 URL 随引用保留，存在性探测按 URL 去重并成对 Start/Stop");
+        lines.Add("PASS 外部打开引用：openURL/拖入的原 URL 随引用保留，重复项按身份去重且每次探测成对 Start/Stop");
+
+        string identityPath = Path.Combine(workspace, "IdentityPhoto.JPG");
+        File.Copy(filePath, identityPath, true);
+        string alternateIdentityPath = Path.Combine(workspace, "identityphoto.jpg");
+        if (File.Exists(alternateIdentityPath))
+        {
+            using var identityUrl = NSUrl.CreateFileUrl(identityPath, false, null)
+                ?? throw new InvalidOperationException("身份核对：实际拼写 URL 创建失败");
+            using var alternateUrl = NSUrl.CreateFileUrl(alternateIdentityPath, false, null)
+                ?? throw new InvalidOperationException("身份核对：不同拼写 URL 创建失败");
+            var identityScope = new RecordingSecurityScope(started: true);
+            var identityBridge = new iOSExternalOpenBridge(new OpenRequestChannel(), identityScope);
+            var identities = identityBridge.Resolve([identityUrl, alternateUrl]);
+            if (identities.Count != 1)
+                throw new InvalidOperationException($"同一文件的不同拼写应按身份去重，实际 {identities.Count} 项");
+            string actualName = Path.GetFileName(identities[0].StorageId.Value["file:".Length..]);
+            if (actualName != "IdentityPhoto.JPG")
+                throw new InvalidOperationException($"身份没有取文件系统实际拼写：{actualName}");
+            var cachedIdentity = identities[0].StorageId;
+            using var alternateFolderUrl = NSUrl.CreateFileUrl(workspace.ToUpperInvariant(), true, null)
+                ?? throw new InvalidOperationException("身份核对：不同拼写目录 URL 创建失败");
+            var alternateFolder = iOSStorageRefs.CreateFolderRef(alternateFolderUrl, new RecordingSecurityScope(started: true))
+                ?? throw new InvalidOperationException("身份核对：不同拼写目录未解析");
+            var scopedIdentity = alternateFolder.FindFileAsync("identityphoto.jpg").GetAwaiter().GetResult()
+                ?? throw new InvalidOperationException("身份核对：不同拼写目录未找到子项");
+            if (scopedIdentity.StorageId != cachedIdentity)
+                throw new InvalidOperationException("目录或子项的错误大小写拼写泄漏进了完整路径身份");
+            File.Delete(identityPath);
+            if (identities[0].StorageId != cachedIdentity || identityScope.Starts.Count != 2 || identityScope.Stops.Count != 2)
+                throw new InvalidOperationException("身份读取在作用域结束后重新探测，或不同拼写解析未分别成对 Start/Stop");
+            lines.Add("PASS 文件身份：不同大小写 URL 在各自作用域内归一为实际拼写并按身份去重，目录子项完整路径同身份，Stop 后身份保持缓存");
+        }
+        else
+        {
+            File.Delete(identityPath);
+            lines.Add("NOTE 当前卷不能用不同大小写访问同一文件，跳过同文件拼写归一；该场景由共享 realpath 契约与真机复核覆盖");
+        }
 
         // ② 探测时序：目标只在作用域内出现时才应被解析（Start 之前探测会把外部文件全部丢掉）。
         string ghostPath = Path.Combine(workspace, "external-scope-order.jpg");
@@ -718,7 +756,11 @@ internal static class iOSNativeInputCheck
         if (pickedFile is not iOSScopedFileRef fileWithScope ||
             !ReferenceEquals(fileWithScope.SecurityScopedUrls[0], fileUrl))
             throw new InvalidOperationException("选择器返回的外部文件未保留原 URL");
-        lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，沙盒目录仍返回共享 LocalFolderRef");
+        var scopedChild = folderWithScope.FindFileAsync(Path.GetFileName(filePath)).GetAwaiter().GetResult()
+            ?? throw new InvalidOperationException("外部目录没有找到已授权子文件");
+        if (scopedChild.StorageId != pickedFile.StorageId || scopedChild.TryGetLocalPath() != filePath)
+            throw new InvalidOperationException("目录子项没有继承实际拼写身份，或身份归一改写了访问地址");
+        lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，目录子项继承稳定身份，沙盒目录仍返回共享 LocalFolderRef");
         lines.Add("NOTE 模拟器不能构造真实沙盒扩展：真机需复核 Files「打开方式」(就地打开) 与文档选择器目录的读取/评分写回");
     }
 
