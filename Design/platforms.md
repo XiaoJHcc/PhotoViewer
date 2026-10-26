@@ -61,21 +61,21 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsThumbnailCard.cs:164`（文件名）、`:183`（相似度条）、`PhotoViewer.Windows/Native/WindowsLayout.cs:40-130`（转接共享 `FilmstripGeometry` 与 `film.*` / `color.*` 令牌）。
   - Android：`PhotoViewer.Android/Native/AndroidThumbnailCard.cs:139`（缩略图圆角）、`:171`（第二行 y）、`:288-307`（卡片菜单）。
   - **FILM-05@ios / @android**：卡片星级 14 点不放大，触控评分由卡片上下文菜单补足（已登记 10-18）。
-- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs` 与各端评分写回路径承担；写回作用于组的全部实际来源（RATING-01/03），来源冲突的指示与浮窗见 [rating](#rating)（RATING-04）；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:581`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:686`）。
+- **FILM-06**：评分与筛选连续性由共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（评分回填、暂留与筛选刷新）与各端评分写回路径承担；写回作用于组的全部实际来源（RATING-01/03），来源冲突的指示与浮窗见 [rating](#rating)（RATING-04）；写回失败一律走 [state](#state) 的 4 s 非模态提示条（macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`）。
 - **追溯**：旧壳定位/动画的冻结几何与截图见 `Design/baseline/avalonia/`（旧视图源码只存在于 tag `avalonia-final` 之前的历史）；现行触发与定位逻辑在共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`、`PhotoViewer/ViewModels/Main/ControlViewModel.cs`、`PhotoViewer/ViewModels/Main/FolderViewModel.cs`；iPad 侧在 `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs`、`PhotoViewer.iOS/Native/iOSPhotoView.cs`、`PhotoViewer.iOS/Native/iOSFilmstripView.cs`。
 
 ## rating
 
-- **RATING-01、RATING-03**：来源枚举与全来源事务在共享 `PhotoViewer/Core/Exif/RatingService.cs`（按 `PhotoGroup.Id` 串行、预检、固定顺序写、逆序补偿与结果枚举）；来源级读取状态在 `PhotoViewer/Core/Exif/XmpRatingReader.cs`（缺失 / 已评分 / 已拒绝 / 无效 / 冲突）；组级来源状态由 `PhotoViewer/Core/Image/PhotoGroupMap.cs`（`HasRatingConflict`）汇总，列表与筛选投影见 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`。
-- **RATING-02、RATING-06**：定位与写入由 `PhotoViewer/Core/Exif/XmpContainerIO.cs`（等长原位与 Rating 附近局部空白吸收；远端 padding 移位、受控追加、整文件替换本轮不采用）、`XmpPacketEditor.cs`（只改 `xap:Rating`）与各容器适配器承担：`JpegXmpContainerAdapter`、`HeifXmpContainerAdapter`、`TiffXmpContainerAdapter`、`WebpXmpContainerAdapter`，以及已有 `<stem>.xmp` 的 sidecar 存储；PNG 写入整体挂账（含标准 `iTXt`，必须维护容器级 CRC 事务），本轮 `Unsupported`。无 canonical XMP 包（含 JPEG 无 APP1）时不新建或插入容器结构，按 `StorageError.Unsupported` 处理；已有包但缺 `xap:Rating` 时只在包结构唯一且空白足够时于包内插入，否则同样不支持。不新增结构、不用 sidecar 顶替。来源枚举由 `PhotoGroupMap.RatingSources` 汇总，`XmpRatingStoreFactory` 为每个实际来源选择适配器；没有创建 sidecar 的入口。
-  - **RATING-06@mac / @win / @ios**：本轮只做等长与 Rating 附近局部空白吸收的原位写；远端 padding 移位、受控追加与整文件替换挂账。
+- **RATING-01、RATING-03**：来源枚举与全来源事务在共享 `PhotoViewer/Core/Exif/RatingService.cs`（按 `PhotoGroup.Id` 串行、预检、固定顺序写、逆序补偿、写后重新枚举来源集合并逐来源回读与结果枚举）；来源级读取状态（缺失 / 已评分 / 已拒绝 / 无效 / 冲突 / 不可读）在 `PhotoViewer/Core/Exif/XmpRatingReader.cs`，组级冲突判定在 `PhotoViewer/Core/Image/PhotoGroupMap.cs` 的 `PhotoGroup.HasRatingConflict`，列表与筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`。
+- **RATING-02、RATING-06**：评分写入只有一条正常路径：`PhotoViewer/Core/Exif/ContainerRatingStore.cs` 负责预检（以 ReadWrite 打开现有文件、在包偏移定位读取，验证真实可定位写能力且不写不截断）、revision 与整包/区间复核、提交和写后回读，`NoChange` 提交同样复核 revision 与目标值；包内 `xap:Rating` 的结构定位与等长改写由 `PhotoViewer/Core/Exif/XmpRatingSpanLocator.cs` 完成（值替换或按结构插入，近端空白吸收；远端 padding 移位、受控追加、整文件替换不支持）。容器适配器只承担 canonical 包的只读定位：`JpegXmpContainerAdapter`、`HeifXmpContainerAdapter`、`TiffXmpContainerAdapter`、`WebpXmpContainerAdapter`、`XmpFileContainerAdapter`（`<stem>.xmp` 本体与已有 sidecar）。按 RATING-02 拒绝与其它段、项、extent 或 IFD 条目重叠或共享的写入区间；无 canonical XMP 包（含 JPEG 无 APP1）时不新建或插入容器结构，按 `StorageError.Unsupported` 失败；已有包但缺 `xap:Rating` 时只在包结构唯一且空白足够时于包内插入。PNG 写入不支持（含标准 `iTXt`，需要维护容器级 CRC 事务）。来源枚举由 `PhotoGroupMap.RatingSources` 汇总，`XmpRatingStoreFactory` 为每个实际来源选择适配器；没有创建 sidecar 的入口。
+  - **RATING-06@mac / @win / @ios**：只做等长与 Rating 附近局部空白吸收的原位写；远端 padding 移位、受控追加与整文件替换不支持。
   - **RATING-06@android**：SAF 目标先核对可定位原位写能力；不可定位句柄、云 Provider 或需要远端移位/扩容的写入在首次修改前失败，不做原位假成功。
-- **RATING-04**：冲突三角落在控制栏评分组与胶片栏卡片的 0 号槽位；三角只作指示，不写值。macOS 已按 [spec/rating.md](spec/rating.md) RATING-04 完整实现来源浮窗；iOS / Windows / Android / Web 当前只实现冲突指示，点击三角不动作，来源浮窗待实现。浮窗设计约束以 macOS 版本为准：内容固定 204 点并在原生弹层内居中；条目位于内容内 x=4、宽 196（180 星排 + 2×8），文字与星排左右各 12 点，分隔线宽 196；纵向来源条目、三信息行与长名双行；星级行 6×30 点，空间不足时六格等比收窄。
-  - **RATING-04@mac**：`NSPopover` 的原生毛玻璃与圆角是唯一外观，内容区不自绘背景、描边或圆角；来源标签底与条目间分隔线用标准 `NSBox`，文件名/来源/状态用 `NSTextField`，星按钮复用控制栏评分按钮的槽位、字形与悬停/按下反馈。
+- **RATING-04**：冲突三角落在控制栏评分组与胶片栏卡片的 0 号槽位，三角只作指示、不写值；来源条目由共享 `PhotoViewer/ViewModels/Main/RatingSourcesViewModel.cs` 汇总组内全部来源，打开期间跟随刷新。浮窗的宽度、展开方向、条目结构与关闭条件以 [spec/rating.md](spec/rating.md) RATING-04 为准；本节只记录弹层宿主与字形，各端实现与验收状态见 [status.md](status.md#rating)。
+  - **RATING-04@mac**：`NSPopover` 的原生毛玻璃与圆角是唯一外观，内容区不自绘背景、描边或圆角；来源标签底与条目间分隔线用标准 `NSBox`，文件名/来源/状态用 `NSTextField`，星按钮复用控制栏评分按钮的槽位、字形与悬停/按下反馈。条目几何、间距与字号取 `popup.ratingSources.*`；卡片入口默认向下、下方不足且上方可容纳时向上，锚点移动/隐藏/滚动/列表替换时关闭。关闭中的旧实例保存在 `_retired` 并强引用到窗口终结（AppKit 迟后读取 bounds 的真实安全限制，不视为已解决；边界与挂账归 Plans，入口说明见 [PhotoViewer.Mac/AGENTS.md](../PhotoViewer.Mac/AGENTS.md)）。
   - **RATING-04@mac / @ios**：警示三角取 SF Symbols `exclamationmark.triangle.fill`，语义同 `icon.warning`。
   - **RATING-04@win**：警示三角取 Segoe Fluent Icons Warning `E7BA`；**@android / @web** 直接用 `icon.warning`（U+FE33）。
-- **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs:48`；训练快照由独立仓 `Training/DatasetBuilder` 只读取实际选用的文件（`Training/DatasetBuilder/FingerprintGrouper.cs`），sidecar 与伴侣不参与取 max，文件内部冲突或无效时不落值。scan-only 验证见 [纠正计划](../Plans/rating-storage-correction-plan-1.md)。
-- Web 参考壳没有真实文件写入；冲突指示与 13 项筛选由 `?check=all` 校验界面语义（合成数据），来源浮窗待实现。
+- **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
+- Web 参考壳没有真实文件写入；冲突指示与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
 
 ## shell
 
@@ -109,7 +109,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsFilterBar.cs:19`（`Grid`）、`:34-67`（`ComboBox`×3）、`:126-133`（`ToggleButton`）。
   - Android：`PhotoViewer.Android/Native/AndroidFilterBar.cs:20`（自绘 `View`）、`:148-255`（自绘 `PopupWindow`）。
   - **FILTER-01@android**：<600 宽手机 toggle 76、下拉 84，计数用紧凑文案（已登记 10-18）；窄于紧凑宽度所需时筛选条横向滚动，控件宽度不压缩。
-- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:270-339`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs:48`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs:102`。13 项取值与已拒绝/全来源冲突口径见 [rating](#rating)（RATING-05）。
+- **FILTER-02、FILTER-03、FILTER-05、FILTER-10**：共享 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（筛选、排序、当前项映射）；筛选项定义在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`，星级投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`。13 项取值与已拒绝/冲突口径见 [rating](#rating)（RATING-01）与 [spec/filter.md](spec/filter.md)（FILTER-03）。
 - **FILTER-04**：计数文案 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:665`、iOS `PhotoViewer.iOS/Native/iOSFilterBar.cs:71`、Windows `PhotoViewer.Windows/Native/WindowsFilterBar.cs:102`、Android `PhotoViewer.Android/Native/AndroidFilterBar.cs:89-93`。
 - **FILTER-06、FILTER-09**：开关状态 `PhotoViewer/ViewModels/Settings/SettingsViewModel.cs` 的 `SimilarityPanelExpanded`（经 `IViewStateStore` 跨会话保留，不进入设置文档）；可见性 `PhotoViewer/ViewModels/Main/File/SimilarityPanelViewModel.cs:50`。
 - **FILTER-07**：共享 `PhotoViewer.Shared/MainScreenLayout.cs:29-39`、`:66-69`。
@@ -249,7 +249,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs`（SAF）、`PhotoViewer.Android/Native/AndroidNativeShell.cs`（`ACTION_VIEW/SEND` 合并后投递共享通道）。
   - **OPEN-01@ios / @android**：只有文件夹选择器（已登记 10-18）。
   - **OPEN-07@android**：未接 `OnDragListener`，手机无常见拖入来源，不建拖入入口（已登记 10-18）。
-- **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs:263-349` 与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs:203-261`。所有显式打开（文件 / 文件夹 / 拖入 / 外部激活 / 命令行）都重新枚举目标父目录或目录并完整刷新新增、删除、全部评分来源、sidecar 存在性与内容、基本属性与 EXIF；当前目标保留视口，新目标回到适应态，滚动 / 筛选 / 面板保持且不生成重复卡片（OPEN-08、RATING-01）。
+- **OPEN-02、OPEN-04、OPEN-05、OPEN-08**：共享 `PhotoViewer/ViewModels/Main/FolderViewModel.cs`（打开、枚举与租约）与 `PhotoViewer/ViewModels/Main/File/ThumbnailListViewModel.cs`（列表重建与元数据回填）。所有显式打开的刷新范围、保留项与失败边界以 OPEN-08 为准，RATING 来源与 sidecar 的重读口径见 RATING-01；新目标回到适应态、当前目标保留视口。
   - 新目标的显式打开前调用 `FitToView()`；当前目标刷新不调用。四端统一由共享 `MainViewModel.RequestFitToView()` + 共享 `PhotoViewport` 实现（见 status.md OPEN-05）。
 - **OPEN-03、OPEN-09**：单图模式与派生状态由共享 VM 承担；每次打开由 `FolderLoadSession` 持有存储访问租约（iOS `iOSStorageAccessSessionFactory` / Android `AndroidStorageAccessSessionFactory` / 桌面本地会话）。新快照提交成功时释放被取代会话的租约，当前快照保留到下一次提交或文件源释放；父目录不可读时回退单图。
 - **OPEN-01@web / OPEN-07@web**：没有真实文件系统，打开文件/文件夹使用应用内选择器浏览合成文件夹；拖入按文件名匹配合成库，否则打开首个合成文件夹。
@@ -257,7 +257,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 ## state
 
 - **STATE-01、STATE-02**：提示与空态。macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:135`/`:744`；iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:1101`；Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:858`；Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:933`。切图方案由共享加载会话选定：缓存命中同步换图（保留前一张），四端主图视图以 `PhotoLoadSession.Generation` 判定切图；未命中清图并以 `IsLoadingVisible`（`status.loading.delay` 300ms）提示。程序化覆盖：Mac `--pv-native-filmstrip`、iOS `--pv-native-photo-check`、Android `pv-check main`，Web `?check=state`。
-- **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条：macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`（`MacMainWindow.cs:581` 评分失败、`:755` `FullError`、`:212` 订阅 `Session.Notice`）、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`（`iOSNativeRootViewController.cs:686`/`:1076`）、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:798-812`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:682-693`。评分写回与"部分来源写入失败（补偿未完成）"分列文案（RATING-03）；后者必须按磁盘真值展示每个来源与冲突状态，不把部分成功当整组成功。
+- **STATE-03**：操作结果提示。四端统一为 4 s 非模态提示条：macOS `PhotoViewer.Mac/Native/MacStatusToast.cs`（`MacMainWindow` 订阅 `Session.Notice`）、iOS `PhotoViewer.iOS/Native/iOSStatusToast.cs`（`iOSNativeRootViewController` 调用）、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs`。评分写回与"部分来源写入失败（补偿未完成）"分列文案（RATING-03）；后者必须按磁盘真值展示每个来源与冲突状态，不把部分成功当整组成功。
 - **STATE-04**：模型/推理/数据库不可用由共享 `AnalysisPresenter`、`SimilarityPanelViewModel` 与设置清库路径承担。
 
 ## settings

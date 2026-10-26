@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Foundation;
 using PhotoViewer.Core.Storage;
 
@@ -31,7 +32,7 @@ internal static class iOSStorageRefs
     internal static IFolderRef? CreateFolderRef(NSUrl? url, ISecurityScopeAccess? scope = null)
     {
         if (url == null || !TryGetFullPath(url, out var path)) return null;
-        return HasSecurityScope(url, scope) ? new iOSScopedFolderRef(path, [url]) : new LocalFolderRef(path);
+        return HasSecurityScope(url, scope) ? new iOSScopedFolderRef(path, [url], scope) : new LocalFolderRef(path);
     }
 
     /// <summary>按选择器结果建立文件引用（沙盒内的文件仍返回共享 <see cref="LocalFileRef"/>）。</summary>
@@ -57,7 +58,7 @@ internal static class iOSStorageRefs
         }
 
         return target.IsDirectory
-            ? new iOSScopedFolderRef(target.LocalPath, [url])
+            ? new iOSScopedFolderRef(target.LocalPath, [url], scope)
             : new iOSScopedFileRef(target.LocalPath, [url], scope);
     }
 
@@ -160,7 +161,9 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
             return Task.FromResult<IFolderRef?>(null);
         }
 
-        return Task.FromResult<IFolderRef?>(CanEnumerate(parent) ? new iOSScopedFolderRef(parent, SecurityScopedUrls) : null);
+        return Task.FromResult<IFolderRef?>(CanEnumerate(parent)
+            ? new iOSScopedFolderRef(parent, SecurityScopedUrls, _scope)
+            : null);
     }
 
     /// <summary>随机访问（本地文件直接支持）。</summary>
@@ -214,18 +217,26 @@ internal sealed class iOSScopedFileRef : IFileRef, IIOSScopedStorageItem
 /// <summary>
 /// 外部目录引用：委托共享 <see cref="LocalFolderRef"/>，并保留系统交回的原 URL
 /// （由外部单文件派生的父目录沿用该文件的 URL，租约仍持有已授予的那一份访问权限）。
+/// 枚举、查找与新建得到的子项沿用同一批原 URL：系统作用域对目录子树整体有效，
+/// 子项按同一实例成对 Start/Stop 即可，不另建书签或逐项导航。
 /// </summary>
 internal sealed class iOSScopedFolderRef : IFolderRef, IIOSScopedStorageItem
 {
     private readonly LocalFolderRef _inner;
+    private readonly ISecurityScopeAccess _scope;
 
     /// <summary>创建目录引用。</summary>
     /// <param name="localPath">规范化绝对路径。</param>
     /// <param name="scopedUrls">系统授予的原 URL（至少一个）。</param>
-    internal iOSScopedFolderRef(string localPath, IReadOnlyList<NSUrl> scopedUrls)
+    /// <param name="scope">系统作用域调用面；产品路径留空即用平台实现。</param>
+    internal iOSScopedFolderRef(
+        string localPath,
+        IReadOnlyList<NSUrl> scopedUrls,
+        ISecurityScopeAccess? scope = null)
     {
         _inner = new LocalFolderRef(localPath);
         SecurityScopedUrls = [.. scopedUrls];
+        _scope = scope ?? PlatformSecurityScopeAccess.Instance;
     }
 
     /// <summary>系统交回的原 URL。</summary>
@@ -247,23 +258,56 @@ internal sealed class iOSScopedFolderRef : IFolderRef, IIOSScopedStorageItem
     /// <returns>绝对路径。</returns>
     public string? TryGetLocalPath() => _inner.TryGetLocalPath();
 
-    /// <summary>枚举目录内容（调用方须在打开会话租约内调用）。</summary>
+    /// <summary>枚举目录内容（调用方须在打开会话租约内调用），子项沿用同一批原 URL。</summary>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>子项流。</returns>
-    public IAsyncEnumerable<IStorageItemRef> GetItemsAsync(CancellationToken cancellationToken = default)
-        => _inner.GetItemsAsync(cancellationToken);
+    public async IAsyncEnumerable<IStorageItemRef> GetItemsAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await foreach (var item in _inner.GetItemsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            yield return ScopeChild(item);
+        }
+    }
 
-    /// <summary>按名称查找子文件。</summary>
+    /// <summary>按名称查找子文件，子项沿用同一批原 URL。</summary>
     /// <param name="name">文件名。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>子文件引用；不存在时为 null。</returns>
-    public Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
-        => _inner.FindFileAsync(name, cancellationToken);
+    public async Task<IFileRef?> FindFileAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var file = await _inner.FindFileAsync(name, cancellationToken).ConfigureAwait(false);
+        return file is null ? null : (IFileRef)ScopeChild(file);
+    }
 
-    /// <summary>新建子文件（同目录同名评分 sidecar 与结构写回使用）。</summary>
+    /// <summary>
+    /// 新建空子文件（调用方随后写入，例如结构写回），子项沿用同一批原 URL。
+    /// 评分写回不会为缺少 sidecar 的照片新建文件。
+    /// </summary>
     /// <param name="name">文件名。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>子文件引用。</returns>
-    public Task<IFileRef> CreateFileAsync(string name, CancellationToken cancellationToken = default)
-        => _inner.CreateFileAsync(name, cancellationToken);
+    public async Task<IFileRef> CreateFileAsync(string name, CancellationToken cancellationToken = default)
+    {
+        var file = await _inner.CreateFileAsync(name, cancellationToken).ConfigureAwait(false);
+        return (IFileRef)ScopeChild(file);
+    }
+
+    /// <summary>把子项包成携带同一批原 URL 的外部引用；非本地项原样返回。</summary>
+    /// <param name="item">目录枚举或查找得到的子项。</param>
+    /// <returns>带系统作用域的子项引用。</returns>
+    private IStorageItemRef ScopeChild(IStorageItemRef item)
+    {
+        if (item.TryGetLocalPath() is not { } path)
+        {
+            return item;
+        }
+
+        return item switch
+        {
+            LocalFolderRef => new iOSScopedFolderRef(path, SecurityScopedUrls, _scope),
+            LocalFileRef => new iOSScopedFileRef(path, SecurityScopedUrls, _scope),
+            _ => item,
+        };
+    }
 }

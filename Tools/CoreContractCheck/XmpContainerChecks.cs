@@ -11,7 +11,7 @@ internal static class XmpContainerChecks
 {
     public static async Task RunAsync(Checks c, string root)
     {
-        c.Section("容器 XMP 写入、恢复与评分事务");
+        c.Section("容器 XMP 只经评分存储读写");
         UiDispatcher.Initialize(new InlineDispatcher());
 
         await CheckContainerAsync(c, root, "release/native-p2-fixtures/color-srgb.jpg", new JpegXmpContainerAdapter());
@@ -20,12 +20,12 @@ internal static class XmpContainerChecks
 
         var jpegWithoutXmp = Path.Combine(root, "without-xmp.jpg");
         await File.WriteAllBytesAsync(jpegWithoutXmp, [0xFF, 0xD8, 0xFF, 0xD9]);
-        await CheckContainerAsync(c, root, jpegWithoutXmp, new JpegXmpContainerAdapter(), copyFixture: false);
+        await CheckMissingXmpAsync(c, jpegWithoutXmp, new JpegXmpContainerAdapter());
 
         var webpWithoutXmp = Path.Combine(root, "without-xmp.webp");
         await File.WriteAllBytesAsync(webpWithoutXmp,
             Encoding.ASCII.GetBytes("RIFF").Concat(BitConverter.GetBytes(4)).Concat(Encoding.ASCII.GetBytes("WEBP")).ToArray());
-        await CheckContainerAsync(c, root, webpWithoutXmp, new WebpXmpContainerAdapter(), copyFixture: false);
+        await CheckMissingXmpAsync(c, webpWithoutXmp, new WebpXmpContainerAdapter());
 
         await CheckRatingConcurrencyAsync(c, root);
     }
@@ -34,19 +34,46 @@ internal static class XmpContainerChecks
         Checks c,
         string root,
         string fixture,
-        IXmpContainerAdapter adapter,
-        bool copyFixture = true)
+        IXmpContainerAdapter adapter)
     {
-        var path = copyFixture ? CopyFixture(fixture, root) : fixture;
+        var path = CopyFixture(fixture, root);
         var original = await File.ReadAllBytesAsync(path);
         var file = new LocalFileRef(path);
         var name = Path.GetFileName(path);
-        var receipt = await adapter.WriteRatingAsync(file, 4, safeMode: true);
+        var before = await adapter.ReadCanonicalPacketAsync(file);
+        c.True($"{name} 有 canonical XMP", before is { Length: > 0 },
+            before is null ? "适配器未定位到 canonical 包" : "包为空");
+
+        var store = XmpRatingStoreFactory.Create(file);
+        var receipt = await store.WriteAsync(4, safeMode: true);
         c.Equal($"{name} 写后 Rating", 4, receipt.After.Value);
         var read = await adapter.ReadCanonicalPacketAsync(file);
-        c.Equal($"{name} 写后语义回读", 4, XmpRatingReader.ReadPacket(read!.Data, XmpRatingSource.Embedded).Value);
-        await adapter.RestoreAsync(file, receipt);
+        c.Equal($"{name} 写后语义回读", 4,
+            XmpRatingReader.ReadPacket(read!.Data, XmpRatingSource.Embedded).Value);
+        c.Equal($"{name} 写入只改包内区间", original.Length, (await File.ReadAllBytesAsync(path)).Length);
+
+        await store.RestoreAsync(receipt);
         c.Bytes($"{name} 恢复原始字节", original, await File.ReadAllBytesAsync(path));
+    }
+
+    private static async Task CheckMissingXmpAsync(
+        Checks c,
+        string path,
+        IXmpContainerAdapter adapter)
+    {
+        var name = Path.GetFileName(path);
+        var original = await File.ReadAllBytesAsync(path);
+        var file = new LocalFileRef(path);
+        var packet = await adapter.ReadCanonicalPacketAsync(file);
+        c.True($"{name} 无 canonical XMP 时读取返回 null", packet is null, "适配器返回了包");
+
+        // 不新建 XMP：没有 canonical 包时评分存储明确 Unsupported，且文件一个字节都不动。
+        var store = XmpRatingStoreFactory.Create(file);
+        await c.StorageFailsAsync(
+            $"{name} 拒绝在缺失 XMP 时新建",
+            StorageError.Unsupported,
+            () => store.WriteAsync(4, safeMode: true));
+        c.Bytes($"{name} 失败后文件未改动", original, await File.ReadAllBytesAsync(path));
     }
 
     private static async Task CheckRatingConcurrencyAsync(Checks c, string root)

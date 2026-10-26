@@ -33,7 +33,9 @@ public class MainViewModel : ViewModelBase, IDisposable
 
     private bool _disposed;
     private readonly Action _recheckShakeFlags;
-    private static long s_ratingRefreshSequence;
+    private readonly object _ratingRefreshLock = new();
+    private readonly Dictionary<StorageItemId, long> _ratingRefreshVersions = new();
+    private long _ratingRefreshSequence;
 
     public SettingsRepository SettingsRepository => Settings.Repository
         ?? throw new InvalidOperationException("当前设置未绑定持久化仓库");
@@ -177,9 +179,11 @@ public class MainViewModel : ViewModelBase, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        lock (_ratingRefreshLock) _ratingRefreshVersions.Clear();
         PhotoViewer.Core.AI.ShakeFlagService.RecheckRequested -= _recheckShakeFlags;
         OpenCoordinator.Dispose();
         FolderVM.Dispose();
+        RatingSources.Dispose();
         Settings.Dispose();
     }
     
@@ -445,32 +449,54 @@ public class MainViewModel : ViewModelBase, IDisposable
 
     private async Task RefreshRatingsFromDiskAsync(PhotoGroup group)
     {
-        // 全局递增序号：多个快速请求并发刷新时，只允许最新一轮把快照写回内存。
-        var sequence = Interlocked.Increment(ref s_ratingRefreshSequence);
-        var readings = await Task.Run(async () =>
+        long sequence;
+        lock (_ratingRefreshLock)
         {
-            var values = new List<(StorageItemId Id, IReadOnlyList<RatingSourceState> Sources)>();
-            foreach (var file in group.Files)
-            {
-                var (_, sources) = await RatingSourceReader.ReadAsync(
-                    file.File, file.RatingSidecarIndex).ConfigureAwait(false);
-                values.Add((file.File.StorageId, sources));
-            }
+            if (_disposed) return;
+            sequence = ++_ratingRefreshSequence;
+            foreach (var file in group.Files) _ratingRefreshVersions[file.File.StorageId] = sequence;
+        }
 
-            return values;
-        });
-        await UiDispatcher.InvokeAsync(() =>
+        try
         {
-            if (sequence != Volatile.Read(ref s_ratingRefreshSequence)) return;
-            foreach (var (id, sources) in readings)
+            var readings = await Task.Run(async () =>
             {
-                group.Files
-                    .FirstOrDefault(item => item.File.StorageId == id)
-                    ?.ApplyRatingSources(sources);
+                var values = new List<(ImageFile File, IReadOnlyList<RatingSourceState> Sources)>();
+                foreach (var file in group.Files)
+                {
+                    var (_, sources) = await RatingSourceReader.ReadAsync(
+                        file.File, sidecarIndex: null).ConfigureAwait(false);
+                    values.Add((file, sources));
+                }
+                return values;
+            });
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                if (_disposed) return;
+                var changed = false;
+                foreach (var (file, sources) in readings)
+                {
+                    lock (_ratingRefreshLock)
+                    {
+                        if (!_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) || current != sequence)
+                            continue;
+                        file.RatingSidecarIndex = null;
+                        file.ApplyRatingSources(sources);
+                        changed = true;
+                    }
+                }
+                if (changed) RefreshRatingDependentState();
+            });
+        }
+        finally
+        {
+            lock (_ratingRefreshLock)
+            {
+                foreach (var file in group.Files)
+                    if (_ratingRefreshVersions.TryGetValue(file.File.StorageId, out var current) && current == sequence)
+                        _ratingRefreshVersions.Remove(file.File.StorageId);
             }
-
-            RefreshRatingDependentState();
-        });
+        }
     }
 
     private void RefreshRatingDependentState()

@@ -8,7 +8,7 @@ internal static class XmpChecks
 {
     public static void Run(Checks c, string root)
     {
-        c.Section("XMP Rating 语义与包编辑");
+        c.Section("XMP Rating 语义");
 
         var attribute = Packet("<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"3\"/>");
         var attributeResult = XmpRatingReader.ReadPacket(attribute, XmpRatingSource.Embedded);
@@ -36,31 +36,14 @@ internal static class XmpChecks
         c.Equal("无 Rating 是 Missing", XmpRatingState.Missing,
             XmpRatingReader.ReadPacket(missing, XmpRatingSource.Embedded).State);
 
-        foreach (var (name, original, target) in new[]
-        {
-            ("属性式", attribute, 5),
-            ("元素式", element, 1),
-            ("单引号", singleQuoted, 4),
-            ("无 Rating", missing, 3),
-            ("-1", rejected, 0),
-        })
-        {
-            var updated = XmpPacketEditor.SetRating(original, target, preserveLength: true);
-            c.Equal($"{name} 保持包长度", original.Length, updated.Length);
-            var readback = XmpRatingReader.ReadPacket(updated, XmpRatingSource.Embedded);
-            c.Equal($"{name} 写后语义回读", target, readback.Value);
-        }
-
-        var withTitle = XmpPacketEditor.SetRating(missing, 4, preserveLength: false);
-        var meta = XmpMetaFactory.ParseFromBuffer(withTitle);
-        c.Equal("新增包保留既有 dc:title", "照片",
+        // 测试包生成只用 XmpCore：产品侧没有“整包重新序列化”的写入入口。
+        var generated = GeneratePacket(missing, 4);
+        c.Equal("生成的包可读回 Rating", 4,
+            XmpRatingReader.ReadPacket(generated, XmpRatingSource.Sidecar).Value);
+        var meta = XmpMetaFactory.ParseFromBuffer(generated);
+        c.Equal("生成的包保留既有 dc:title", "照片",
             meta.GetLocalizedText("http://purl.org/dc/elements/1.1/", "title", null, "x-default")?.Value);
-        c.Equal("新 sidecar 可创建 Rating", 4,
-            XmpRatingReader.ReadPacket(withTitle, XmpRatingSource.Sidecar).Value);
 
-        var tooSmall = Packet("<rdf:Description rdf:about=\"\"/>", padding: 0);
-        c.ThrowsExact<XmpException>("空间不足不在原包内硬写",
-            () => XmpPacketEditor.SetRating(tooSmall, 5, preserveLength: true));
         // Missing 与 0 的区分由状态承担，数值只用于旧调用方。
         c.Equal("Rejected 数值为 -1", -1,
             XmpRatingReader.ReadPacket(rejected, XmpRatingSource.Embedded).NumericValue);
@@ -72,6 +55,14 @@ internal static class XmpChecks
         c.True("空 XMP 目录带明确错误", nullDirectory.Error != null);
 
         c.Equal("同名 sidecar 规则", "A7C01489.xmp", XmpRatingReader.SidecarName("A7C01489.ARW"));
+    }
+
+    /// <summary>测试夹具生成：用 XmpCore 重新序列化一个带 Rating 的包，仅用于构造输入。</summary>
+    private static byte[] GeneratePacket(byte[] template, int rating)
+    {
+        var xmp = XmpMetaFactory.ParseFromBuffer(template);
+        xmp.SetPropertyInteger(XmpRatingReader.XmpNamespace, "Rating", rating);
+        return XmpMetaFactory.SerializeToBuffer(xmp, new XmpCore.Options.SerializeOptions { Padding = 2048 });
     }
 
     private static byte[] Packet(string description, int padding = 4096)

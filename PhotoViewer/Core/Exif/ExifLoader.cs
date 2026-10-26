@@ -158,7 +158,7 @@ public static class ExifLoader
         catch (Exception exception)
         {
             return new XmpRatingSnapshot(
-                XmpRatingState.Invalid,
+                XmpRatingState.Unreadable,
                 null,
                 XmpRatingSource.Embedded,
                 $"读取内嵌 XMP 失败：{exception.Message}");

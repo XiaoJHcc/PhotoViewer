@@ -89,7 +89,7 @@ public static class PhotoListProjection
     {
         var rating = file.Rating;
         var state = file.RatingState;
-        // 数字与“以上”只按代表文件的内嵌值命中；代表为 Invalid/Conflict 时不命中任何数字档。
+        // 数字与“以上”只按代表文件的内嵌值命中；代表为 Invalid/Unreadable/Conflict 时不命中任何数字档。
         // 冲突是独立维度：数字命中不消除冲突，冲突也不改写数字结果。
         return ratingKey switch
         {
@@ -110,7 +110,7 @@ public static class PhotoListProjection
     }
 
     private static bool HasNumericValue(XmpRatingState state) =>
-        state is not (XmpRatingState.Invalid or XmpRatingState.Conflict);
+        state is not (XmpRatingState.Invalid or XmpRatingState.Unreadable or XmpRatingState.Conflict);
 
     private static PhotoFormatRule[] BuildFormatRules(SettingsViewModel settings) =>
         settings.FileFormats

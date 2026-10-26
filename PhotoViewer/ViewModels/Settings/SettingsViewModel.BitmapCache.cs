@@ -259,7 +259,9 @@ public partial class SettingsViewModel
         get => _bitmapCacheMaxCount;
         set
         {
-            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxCount, value < 1 ? 1 : value);
+            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxCount, Math.Clamp(value,
+                Core.Settings.SettingsDocumentCodec.MinimumCacheCount,
+                Core.Settings.SettingsDocumentCodec.MaximumCacheCount));
             this.RaisePropertyChanged(nameof(BitmapCacheMaxCountExp));
             this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
         }
@@ -277,7 +279,9 @@ public partial class SettingsViewModel
         get => _bitmapCacheMaxMemory;
         set
         {
-            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Max(512, value));
+            this.RaiseAndSetIfChanged(ref _bitmapCacheMaxMemory, Math.Clamp(value,
+                Core.Settings.SettingsDocumentCodec.MinimumCacheMemoryMB,
+                Core.Settings.SettingsDocumentCodec.MaximumCacheMemoryMB));
             this.RaisePropertyChanged(nameof(BitmapCacheMaxMemoryExp));
         }
     }

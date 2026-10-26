@@ -1,16 +1,24 @@
 using System.Buffers.Binary;
 using System.Text;
 using PhotoViewer.Core.Storage;
-using XmpCore;
 
 namespace PhotoViewer.Core;
 
 /// <summary>
-/// HEIF/HEIC/HIF/AVIF 等 ISOBMFF 容器的 XMP 读写适配器。
+/// HEIF/HEIC/HIF/AVIF/CR3 等 ISOBMFF 容器的 XMP 读取适配器。
 /// 只认 <c>meta</c> 下 <c>iinf</c> 中类型为 <c>mime</c>、内容类型为 XML/RDF 的项，
-/// 通过 <c>iloc</c> 单 extent 定位到 <c>mdat</c> 内的精确文件范围。
-/// 多 extent、<c>idat</c> 承载、长度不定或无法证明范围的结构明确报不支持。
+/// 通过 <c>iloc</c> 的全部 extent 定位到 <c>mdat</c> 内的精确文件范围。
 /// </summary>
+/// <remarks>
+/// <para>多个 meta 盒、多个 <c>pitm</c>/<c>iinf</c>/<c>iloc</c>/<c>idat</c>、多个候选 XMP 项
+/// （RDF 与 XML 同时出现也算多候选）、多 extent 或 <c>idat</c> 承载的 XMP 项一律
+/// <see cref="StorageError.Unsupported"/>，不按顺序取第一个。</para>
+/// <para>其它 item 的全部 extent 都会被解析成文件绝对范围：<c>idat</c> 的 box 偏移按 meta payload
+/// 绝对基址换算，<c>iloc</c> 的 base_offset 对 idat 承载的 extent 同样生效，所有范围相加都做溢出检查。
+/// XMP 范围与任一其它 item 的范围相交（共享 extent 或重叠）时明确拒绝；项间引用
+/// （construction method 2）的 item 无法逐 extent 证明独占，同样拒绝。
+/// 保证等长原位写入不会改到其它 item 的字节。</para>
+/// </remarks>
 public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
 {
     private const uint BoxMeta = 0x6D657461;
@@ -18,6 +26,7 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
     private const uint BoxIinf = 0x69696E66;
     private const uint BoxInfe = 0x696E6665;
     private const uint BoxIloc = 0x696C6F63;
+    private const uint BoxIdat = 0x69646174;
     private const uint BoxMdat = 0x6D646174;
     private const uint ItemTypeMime = 0x6D696D65;
 
@@ -25,6 +34,7 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
     private const int MaxMetaBytes = 64 << 20;
     private const int MaxXmpPacketBytes = 64 << 20;
     private const int MaxExtentCount = 4096;
+    private const int MaxTotalExtents = 1 << 16;
     private const int MaxIlocItems = 65536;
 
     private const string RdfXmlContentType = "application/rdf+xml";
@@ -37,587 +47,6 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
         ArgumentNullException.ThrowIfNull(file);
         var document = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false);
         return document?.Packet;
-    }
-
-    /// <inheritdoc/>
-    public async Task<XmpRatingWriteReceipt> WriteRatingAsync(
-        IFileRef file,
-        int rating,
-        bool safeMode,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(file);
-        if (rating is < 0 or > 5) throw new ArgumentOutOfRangeException(nameof(rating));
-
-        var document = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false)
-            ?? throw Unsupported("文件中没有 XMP mime 项，新增 XMP 项不受支持");
-        var original = document.Packet;
-        var before = XmpRatingReader.ReadPacket(original.Data, XmpRatingSource.Embedded);
-
-        if (before.State == XmpRatingState.Rated && before.Value == rating)
-        {
-            return new XmpRatingWriteReceipt
-            {
-                TargetFile = file,
-                Before = before,
-                After = before,
-                OriginalPacket = original,
-                Revision = document.Revision,
-                CreatedTarget = false,
-            };
-        }
-
-        byte[]? sameLength = null;
-        try
-        {
-            sameLength = XmpPacketEditor.SetRating(original.Data, rating, preserveLength: true);
-        }
-        catch (XmpException)
-        {
-        }
-        catch (InvalidOperationException)
-        {
-        }
-
-        if (sameLength is not null && sameLength.Length == original.Length)
-            return await WriteInPlaceAsync(
-                file, document, original, sameLength, rating, before, safeMode, cancellationToken)
-                .ConfigureAwait(false);
-
-        var updated = XmpPacketEditor.SetRating(original.Data, rating, preserveLength: false);
-        if (updated.Length > MaxXmpPacketBytes)
-            throw Unsupported("XMP 包超过解析上限");
-        if (updated.Length == original.Length)
-        {
-            return await WriteInPlaceAsync(
-                file, document, original, updated, rating, before, safeMode, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        return await WriteAppendedAsync(
-            file, document, original, updated, rating, before, safeMode, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    /// <inheritdoc/>
-    public async Task RestoreAsync(
-        IFileRef file,
-        XmpRatingWriteReceipt receipt,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(file);
-        ArgumentNullException.ThrowIfNull(receipt);
-
-        var original = receipt.OriginalPacket
-            ?? throw Unsupported("文件中没有 XMP mime 项，无法撤销新增项");
-        var originalIndex = original.Descriptor
-            ?? throw Unsupported("原始包缺少 iloc 索引，无法恢复");
-        if (original.Data.Length != original.Length)
-            throw Unsupported("原始包长度与数据不一致");
-
-        var document = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false)
-            ?? throw Unsupported("当前文件已没有 XMP mime 项，无法恢复索引");
-        var current = document.Packet;
-        var currentIndex = current.Descriptor
-            ?? throw Unsupported("当前 XMP 项缺少 iloc 索引");
-        if (currentIndex.Offset != originalIndex.Offset ||
-            currentIndex.Data.Length != originalIndex.Data.Length)
-        {
-            throw Unsupported("iloc 项位置或长度已变化，无法原位恢复");
-        }
-
-        var recordedLength = receipt.OriginalFileLength;
-        if (recordedLength is { } originalLength)
-        {
-            if (document.FileLength < originalLength)
-                throw Unsupported("当前文件短于回执记录的原长度，无法恢复追加区");
-            if (document.FileLength > originalLength)
-            {
-                EnsureRevisionMatches(receipt.Revision, document.Revision, file.Name);
-                EnsureAppendedTail(document, originalLength, current, receipt.After, file.Name);
-            }
-        }
-
-        var edits = new List<XmpContainerEdit>(2);
-        if (!currentIndex.Data.AsSpan().SequenceEqual(originalIndex.Data))
-        {
-            edits.Add(new XmpContainerEdit(
-                originalIndex.Offset,
-                originalIndex.Data.Length,
-                originalIndex.Data));
-        }
-
-        if (current.Offset != original.Offset ||
-            current.Length != original.Length ||
-            !current.Data.AsSpan().SequenceEqual(original.Data))
-        {
-            if (!IsInsideMdat(document.TopLevel, original.Offset, original.Length))
-                throw Unsupported("原始包范围已不在 mdat 内，无法恢复");
-            edits.Add(new XmpContainerEdit(original.Offset, original.Length, original.Data));
-        }
-
-        if (edits.Count > 0)
-        {
-            await XmpContainerIO.RewriteAsync(file, edits, receipt.Revision, cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        if (recordedLength is { } expectedLength && document.FileLength > expectedLength)
-        {
-            await TruncateAppendedAsync(
-                file,
-                document,
-                expectedLength,
-                receipt,
-                current,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        var restoredDocument = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false)
-            ?? throw Unsupported("恢复后找不到 XMP mime 项");
-        if (recordedLength is { } restoredLength && restoredDocument.FileLength != restoredLength)
-            throw new InvalidDataException("HEIF XMP 恢复后的文件长度与原始长度不符");
-        if (receipt.OriginalHadZeroLengthFinalBox &&
-            (restoredDocument.TopLevel.Count == 0 || !restoredDocument.TopLevel[restoredDocument.TopLevel.Count - 1].SizeToEnd))
-        {
-            throw new InvalidDataException("HEIF XMP 恢复后的末尾盒未回到 size=0 状态");
-        }
-
-        var restored = restoredDocument.Packet;
-        if (restored.Offset != original.Offset ||
-            restored.Length != original.Length ||
-            !restored.Data.AsSpan().SequenceEqual(original.Data))
-        {
-            throw new InvalidDataException("HEIF XMP 恢复后的包范围或内容与原始包不一致");
-        }
-
-        if (restored.Descriptor is not { } restoredIndex ||
-            restoredIndex.Offset != originalIndex.Offset ||
-            !restoredIndex.Data.AsSpan().SequenceEqual(originalIndex.Data))
-        {
-            throw new InvalidDataException("HEIF XMP 恢复后的 iloc 索引与原始索引不一致");
-        }
-
-        VerifySnapshot(restored.Data, receipt.Before, "恢复");
-    }
-
-    private static void EnsureRevisionMatches(
-        StorageRevision? expected,
-        StorageRevision? actual,
-        string name)
-    {
-        if (expected is not { } expectedRevision || actual is not { } actualRevision) return;
-        if (expectedRevision.Size is { } expectedSize &&
-            actualRevision.Size is { } actualSize &&
-            expectedSize != actualSize)
-        {
-            throw StorageException.ChangedExternally(name);
-        }
-
-        if (expectedRevision.LastModified is { } expectedModified &&
-            actualRevision.LastModified is { } actualModified &&
-            expectedModified != actualModified)
-        {
-            throw StorageException.ChangedExternally(name);
-        }
-
-        if (expectedRevision.Version is { } expectedVersion &&
-            actualRevision.Version is { } actualVersion &&
-            !string.Equals(expectedVersion, actualVersion, StringComparison.Ordinal))
-        {
-            throw StorageException.ChangedExternally(name);
-        }
-    }
-
-    private static void EnsureAppendedTail(
-        HeifDocument document,
-        long originalLength,
-        XmpContainerPacket current,
-        XmpRatingSnapshot expectedRating,
-        string name)
-    {
-        if (document.TopLevel.Count == 0)
-            throw Unsupported("当前文件没有顶层盒，不能截断追加区");
-
-        var last = document.TopLevel[document.TopLevel.Count - 1];
-        if (last.Type != BoxMdat ||
-            last.Offset != originalLength ||
-            last.End != document.FileLength ||
-            last.SizeToEnd ||
-            last.HeaderLength is not (8 or 16) ||
-            last.PayloadOffset != current.Offset ||
-            last.PayloadLength != current.Length ||
-            current.Offset + current.Length != document.FileLength)
-        {
-            throw Unsupported("当前文件末尾不是本次写入的 mdat，不能截断追加区");
-        }
-
-        var snapshot = XmpRatingReader.ReadPacket(current.Data, XmpRatingSource.Embedded);
-        if (snapshot.State != expectedRating.State || snapshot.Value != expectedRating.Value)
-            throw StorageException.ChangedExternally(name);
-    }
-
-    private static async Task TruncateAppendedAsync(
-        IFileRef file,
-        HeifDocument document,
-        long originalLength,
-        XmpRatingWriteReceipt receipt,
-        XmpContainerPacket appendedPacket,
-        CancellationToken cancellationToken)
-    {
-        await using var session = await file
-            .OpenRandomAccessAsync(StorageAccessMode.ReadWrite, cancellationToken)
-            .ConfigureAwait(false);
-
-        if (session.Length < originalLength)
-            throw Unsupported("当前文件短于回执记录的原长度，无法截断追加区");
-        if (session.Length == originalLength) return;
-
-        var tailLength = session.Length - originalLength;
-        var headerLength = (int)(appendedPacket.Offset - originalLength);
-        if (headerLength is not (8 or 16))
-            throw Unsupported("追加区 mdat 头长度异常，不能截断");
-
-        var header = await XmpContainerIO.ReadExactlyAsync(
-            session,
-            originalLength,
-            headerLength,
-            cancellationToken).ConfigureAwait(false);
-        if (!MatchesMdatHeader(header, tailLength))
-            throw Unsupported("追加区不是完整 mdat，不能截断");
-
-        if (appendedPacket.Offset + appendedPacket.Length != session.Length)
-            throw Unsupported("追加区包范围与文件末尾不符，不能截断");
-
-        var payload = await XmpContainerIO.ReadExactlyAsync(
-            session,
-            appendedPacket.Offset,
-            appendedPacket.Length,
-            cancellationToken).ConfigureAwait(false);
-        if (!payload.AsSpan().SequenceEqual(appendedPacket.Data))
-            throw StorageException.ChangedExternally(file.Name);
-
-        if (receipt.OriginalHadZeroLengthFinalBox)
-        {
-            await RestoreZeroLengthFinalBoxAsync(
-                session,
-                document,
-                originalLength,
-                file.Name,
-                cancellationToken).ConfigureAwait(false);
-        }
-
-        try
-        {
-            await session.SetLengthAsync(originalLength, cancellationToken).ConfigureAwait(false);
-        }
-        catch (StorageException ex) when (ex.Error == StorageError.Unsupported)
-        {
-            throw Unsupported("当前存储不支持截断追加数据：" + ex.Message);
-        }
-
-        await session.FlushAsync(cancellationToken).ConfigureAwait(false);
-    }
-
-    private static async Task RestoreZeroLengthFinalBoxAsync(
-        IStorageRandomAccessSession session,
-        HeifDocument document,
-        long originalLength,
-        string name,
-        CancellationToken cancellationToken)
-    {
-        BoxInfo? finalBox = null;
-        for (var i = document.TopLevel.Count - 1; i >= 0; i--)
-        {
-            var candidate = document.TopLevel[i];
-            if (candidate.End == originalLength)
-            {
-                finalBox = candidate;
-                break;
-            }
-        }
-
-        if (finalBox is not { } box)
-            throw Unsupported("找不到原始末尾盒，无法恢复 size=0 状态");
-        if (box.HeaderLength != 8 || box.SizeToEnd)
-            throw Unsupported("原始末尾盒不是可回写的 32 位尺寸头，无法恢复 size=0 状态");
-
-        var expectedSize = originalLength - box.Offset;
-        if (expectedSize <= 0 || (ulong)expectedSize > uint.MaxValue)
-            throw Unsupported("原始末尾盒尺寸无法用 32 位表示");
-
-        var current = await XmpContainerIO.ReadExactlyAsync(
-            session,
-            box.Offset,
-            4,
-            cancellationToken).ConfigureAwait(false);
-        if (BinaryPrimitives.ReadUInt32BigEndian(current) != (uint)expectedSize)
-            throw StorageException.ChangedExternally(name);
-
-        await session.WriteAsync(box.Offset, new byte[4], cancellationToken).ConfigureAwait(false);
-    }
-
-    private static bool MatchesMdatHeader(ReadOnlySpan<byte> header, long tailLength)
-    {
-        if (header.Length == 8)
-        {
-            var size = BinaryPrimitives.ReadUInt32BigEndian(header);
-            var type = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(4, 4));
-            return type == BoxMdat &&
-                tailLength <= uint.MaxValue &&
-                size == (uint)tailLength;
-        }
-
-        if (header.Length == 16)
-        {
-            var size = BinaryPrimitives.ReadUInt32BigEndian(header);
-            var type = BinaryPrimitives.ReadUInt32BigEndian(header.Slice(4, 4));
-            var largeSize = BinaryPrimitives.ReadUInt64BigEndian(header.Slice(8, 8));
-            return size == 1 &&
-                type == BoxMdat &&
-                largeSize == (ulong)tailLength;
-        }
-
-        return false;
-    }
-
-    private static async Task<XmpRatingWriteReceipt> WriteInPlaceAsync(
-        IFileRef file,
-        HeifDocument document,
-        XmpContainerPacket original,
-        byte[] updated,
-        int rating,
-        XmpRatingSnapshot before,
-        bool safeMode,
-        CancellationToken cancellationToken)
-    {
-        if (updated.Length != original.Length)
-            throw Unsupported("原位写入必须保持包长度");
-        if (safeMode) await EnsureUnchangedAsync(file, original, cancellationToken).ConfigureAwait(false);
-
-        await XmpContainerIO.WritePacketAsync(
-            file,
-            original,
-            updated,
-            document.Revision,
-            safeMode,
-            cancellationToken).ConfigureAwait(false);
-
-        var written = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException("HEIF XMP 写入后找不到 mime 项");
-        if (written.Packet.Offset != original.Offset ||
-            written.Packet.Length != updated.Length ||
-            !written.Packet.Data.AsSpan().SequenceEqual(updated))
-        {
-            throw new InvalidDataException("HEIF XMP 原位写入后的包范围或内容不符");
-        }
-
-        var after = VerifySnapshot(written.Packet.Data, null, "写入", rating);
-        return new XmpRatingWriteReceipt
-        {
-            TargetFile = file,
-            Before = before,
-            After = after,
-            OriginalPacket = original,
-            Revision = await ReadRevisionAsync(file, document.Revision, cancellationToken).ConfigureAwait(false),
-            CreatedTarget = false,
-        };
-    }
-
-    private static async Task<XmpRatingWriteReceipt> WriteAppendedAsync(
-        IFileRef file,
-        HeifDocument document,
-        XmpContainerPacket original,
-        byte[] updated,
-        int rating,
-        XmpRatingSnapshot before,
-        bool safeMode,
-        CancellationToken cancellationToken)
-    {
-        var mdatHeader = BuildMdatHeader(updated.Length);
-        var newOffset = document.FileLength + mdatHeader.Length;
-        var relocatedIndex = RelocateEntry(document.Item, newOffset, updated.Length);
-
-        var edits = new List<XmpContainerEdit>(3);
-        AddEndOfFileSizePatch(document, edits);
-        edits.Add(new XmpContainerEdit(
-            document.Item.EntryOffset,
-            document.Item.EntryBytes.Length,
-            relocatedIndex));
-
-        var mdat = new byte[mdatHeader.Length + updated.Length];
-        mdatHeader.CopyTo(mdat, 0);
-        updated.CopyTo(mdat, mdatHeader.Length);
-        edits.Add(new XmpContainerEdit(document.FileLength, 0, mdat));
-
-        if (safeMode) await EnsureUnchangedAsync(file, original, cancellationToken).ConfigureAwait(false);
-
-        await XmpContainerIO.RewriteAsync(file, edits, document.Revision, cancellationToken)
-            .ConfigureAwait(false);
-
-        var written = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidDataException("HEIF XMP 扩容写入后找不到 mime 项");
-        if (written.Packet.Offset != newOffset ||
-            written.Packet.Length != updated.Length ||
-            !written.Packet.Data.AsSpan().SequenceEqual(updated))
-        {
-            throw new InvalidDataException("HEIF XMP 扩容写入后的包范围或内容不符");
-        }
-
-        var after = VerifySnapshot(written.Packet.Data, null, "写入", rating);
-        return new XmpRatingWriteReceipt
-        {
-            TargetFile = file,
-            Before = before,
-            After = after,
-            OriginalPacket = original,
-            Revision = await ReadRevisionAsync(file, document.Revision, cancellationToken).ConfigureAwait(false),
-            OriginalFileLength = document.FileLength,
-            OriginalHadZeroLengthFinalBox =
-                document.TopLevel.Count > 0 && document.TopLevel[document.TopLevel.Count - 1].SizeToEnd,
-            CreatedTarget = false,
-        };
-    }
-
-    private static void AddEndOfFileSizePatch(HeifDocument document, List<XmpContainerEdit> edits)
-    {
-        if (document.TopLevel.Count == 0) return;
-        var last = document.TopLevel[document.TopLevel.Count - 1];
-        if (!last.SizeToEnd) return;
-
-        var actual = document.FileLength - last.Offset;
-        if (actual <= 0 || (ulong)actual > uint.MaxValue)
-            throw Unsupported("末尾盒以 0 长度声明但无法回写 32 位尺寸");
-
-        var sizeBytes = new byte[4];
-        BinaryPrimitives.WriteUInt32BigEndian(sizeBytes, (uint)actual);
-        edits.Add(new XmpContainerEdit(last.Offset, 4, sizeBytes));
-    }
-
-    private static byte[] BuildMdatHeader(int payloadLength)
-    {
-        var size = 8L + payloadLength;
-        if (size <= uint.MaxValue)
-        {
-            var header = new byte[8];
-            BinaryPrimitives.WriteUInt32BigEndian(header, (uint)size);
-            BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(4), BoxMdat);
-            return header;
-        }
-
-        var large = new byte[16];
-        BinaryPrimitives.WriteUInt32BigEndian(large, 1);
-        BinaryPrimitives.WriteUInt32BigEndian(large.AsSpan(4), BoxMdat);
-        BinaryPrimitives.WriteUInt64BigEndian(large.AsSpan(8), (ulong)size);
-        return large;
-    }
-
-    private static byte[] RelocateEntry(IlocItem item, long offset, int length)
-    {
-        if (item.ExtentCount != 1)
-            throw Unsupported("XMP 项包含多个 extent");
-        if (item.ConstructionMethod != 0)
-            throw Unsupported("XMP 项未使用文件偏移 construction method");
-        if (!Fits(offset, item.ExtentOffsetSize))
-            throw Unsupported("新 extent 偏移超出 iloc 字段宽度");
-        if (!Fits(length, item.ExtentLengthSize))
-            throw Unsupported("新 extent 长度超出 iloc 字段宽度");
-
-        var raw = (byte[])item.EntryBytes.Clone();
-        if (item.BaseOffsetSize > 0)
-            WriteBigEndian(raw.AsSpan(item.BaseOffsetPosition, item.BaseOffsetSize), 0);
-        WriteBigEndian(raw.AsSpan(item.ExtentOffsetPosition, item.ExtentOffsetSize), (ulong)offset);
-        WriteBigEndian(raw.AsSpan(item.ExtentLengthPosition, item.ExtentLengthSize), (ulong)length);
-        return raw;
-    }
-
-    private static bool Fits(long value, int fieldSize)
-    {
-        if (value < 0) return false;
-        if (fieldSize == 0) return value == 0;
-        if (fieldSize >= 8) return true;
-        return (ulong)value < (1UL << (fieldSize * 8));
-    }
-
-    private static void WriteBigEndian(Span<byte> destination, ulong value)
-    {
-        for (var i = destination.Length - 1; i >= 0; i--)
-        {
-            destination[i] = (byte)value;
-            value >>= 8;
-        }
-    }
-
-    private static async Task EnsureUnchangedAsync(
-        IFileRef file,
-        XmpContainerPacket expected,
-        CancellationToken cancellationToken)
-    {
-        var current = await ReadDocumentAsync(file, cancellationToken).ConfigureAwait(false);
-        if (current is null ||
-            current.Packet.Offset != expected.Offset ||
-            current.Packet.Length != expected.Length ||
-            !current.Packet.Data.AsSpan().SequenceEqual(expected.Data) ||
-            expected.Descriptor is not { } expectedIndex ||
-            current.Packet.Descriptor is not { } currentIndex ||
-            currentIndex.Offset != expectedIndex.Offset ||
-            !currentIndex.Data.AsSpan().SequenceEqual(expectedIndex.Data))
-        {
-            throw StorageException.ChangedExternally(file.Name);
-        }
-    }
-
-    private static async Task<StorageRevision?> ReadRevisionAsync(
-        IFileRef file,
-        StorageRevision? fallback,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            var properties = await file.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
-            return properties.Revision ?? fallback;
-        }
-        catch (StorageException)
-        {
-            return fallback;
-        }
-    }
-
-    private static XmpRatingSnapshot VerifySnapshot(
-        byte[] packet,
-        XmpRatingSnapshot? expected,
-        string operation,
-        int? writtenRating = null)
-    {
-        var actual = XmpRatingReader.ReadPacket(packet, XmpRatingSource.Embedded);
-        if (writtenRating is { } rating &&
-            (actual.State != XmpRatingState.Rated || actual.Value != rating))
-        {
-            throw new InvalidDataException($"HEIF XMP {operation}后的 Rating 回读不符");
-        }
-
-        if (expected is { } snapshot &&
-            (actual.State != snapshot.State || actual.Value != snapshot.Value))
-        {
-            throw new InvalidDataException($"HEIF XMP {operation}后的 Rating 与原始状态不符");
-        }
-
-        return actual;
-    }
-
-    private static bool IsInsideMdat(IReadOnlyList<BoxInfo> topLevel, long offset, int length)
-    {
-        if (offset < 0 || length < 0) return false;
-        var end = offset + length;
-        if (end < offset) return false;
-        for (var i = 0; i < topLevel.Count; i++)
-        {
-            var box = topLevel[i];
-            if (box.Type != BoxMdat) continue;
-            if (offset >= box.PayloadOffset && end <= box.PayloadOffset + box.PayloadLength)
-                return true;
-        }
-        return false;
     }
 
     private static async Task<HeifDocument?> ReadDocumentAsync(
@@ -634,14 +63,15 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
         var topLevel = await ReadTopLevelBoxesAsync(session, fileLength, cancellationToken)
             .ConfigureAwait(false);
         BoxInfo? metaBox = null;
-        for (var i = 0; i < topLevel.Count; i++)
+        foreach (var box in topLevel)
         {
-            var box = topLevel[i];
-            if (box.Type == BoxMeta && metaBox is null) metaBox = box;
+            if (box.Type != BoxMeta) continue;
+            if (metaBox is not null)
+                throw Unsupported("文件包含多个 meta 盒，无法确定 canonical XMP");
+            metaBox = box;
         }
 
-        if (metaBox is not { } meta)
-            return null;
+        if (metaBox is not { } meta) return null;
 
         if (meta.PayloadLength < 4)
             throw Unsupported("meta 盒长度不足");
@@ -656,25 +86,33 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
             (int)meta.PayloadLength,
             cancellationToken).ConfigureAwait(false);
         if (metaPayload[0] != 0)
-            throw Unsupported("meta 版本 " + metaPayload[0].ToString(System.Globalization.CultureInfo.InvariantCulture));
+            throw Unsupported(
+                "meta 版本 " + metaPayload[0].ToString(System.Globalization.CultureInfo.InvariantCulture));
 
         var children = ReadSpanBoxes(metaPayload, 4, metaPayload.Length);
         SpanBox? pitm = null;
         SpanBox? iinf = null;
         SpanBox? iloc = null;
-        for (var i = 0; i < children.Count; i++)
+        SpanBox? idat = null;
+        foreach (var child in children)
         {
-            var child = children[i];
             switch (child.Type)
             {
                 case BoxPitm:
-                    pitm ??= child;
+                    if (pitm is not null) throw Unsupported("meta 包含重复的 pitm 盒");
+                    pitm = child;
                     break;
                 case BoxIinf:
-                    iinf ??= child;
+                    if (iinf is not null) throw Unsupported("meta 包含重复的 iinf 盒");
+                    iinf = child;
                     break;
                 case BoxIloc:
-                    iloc ??= child;
+                    if (iloc is not null) throw Unsupported("meta 包含重复的 iloc 盒");
+                    iloc = child;
+                    break;
+                case BoxIdat:
+                    if (idat is not null) throw Unsupported("meta 包含重复的 idat 盒");
+                    idat = child;
                     break;
             }
         }
@@ -688,11 +126,7 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
 
         var primaryItemId = ParsePitm(metaPayload, pitm.Value);
         var items = ParseIinf(metaPayload, iinf.Value);
-        var locations = ParseIloc(
-            metaPayload,
-            iloc.Value,
-            meta.PayloadOffset,
-            fileLength);
+        var locations = ParseIloc(metaPayload, iloc.Value, fileLength);
 
         var item = SelectXmpItem(items);
         if (item is null) return null;
@@ -703,45 +137,129 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
             throw Unsupported("XMP mime 项缺少 iloc 位置");
         if (location.ConstructionMethod != 0)
             throw Unsupported("XMP 项使用 idat 或项间引用 construction method");
-        if (location.ExtentCount != 1)
+        if (location.Extents.Count != 1)
             throw Unsupported("XMP 项包含多个 extent");
-        if (location.ExtentLength <= 0)
+        var extent = location.Extents[0];
+        if (extent.Length <= 0)
             throw Unsupported("XMP 项 extent 长度未声明或为零");
-        if (location.ExtentLength > MaxXmpPacketBytes)
+        if (extent.Length > MaxXmpPacketBytes)
             throw Unsupported("XMP 包超过解析上限");
 
-        if (location.BaseOffset > fileLength ||
-            location.ExtentOffset > fileLength - location.BaseOffset)
-        {
+        var offset = AddOffset(location.BaseOffset, extent.Offset, "XMP 项 base offset 与 extent 偏移");
+        if (offset > fileLength || extent.Length > fileLength - offset)
             throw Unsupported("XMP 项数据范围超出文件");
-        }
-
-        var offset = location.BaseOffset + location.ExtentOffset;
-        if (location.ExtentLength > fileLength - offset)
-            throw Unsupported("XMP 项数据范围超出文件");
-        if (!IsInsideMdat(topLevel, offset, (int)location.ExtentLength))
+        if (!IsInsideMdat(topLevel, offset, extent.Length))
             throw Unsupported("XMP 项数据范围不在 mdat 内");
+
+        var xmpEnd = AddLength(offset, extent.Length, "XMP 项范围");
+        foreach (var other in locations.Values)
+        {
+            if (other.ItemId == location.ItemId) continue;
+            if (other.ConstructionMethod == 2)
+            {
+                // 项间引用（method 2）的数据由被引用项提供，无法逐 extent 证明与 XMP 不共享字节。
+                throw Unsupported(
+                    $"item {other.ItemId} 使用项间引用 construction method，无法证明与 XMP 范围独占");
+            }
+
+            foreach (var otherExtent in other.Extents)
+            {
+                var (otherStart, otherEnd) = ResolveExtentRange(
+                    other, otherExtent, idat, meta.PayloadOffset, fileLength);
+                if (otherStart < xmpEnd && otherEnd > offset)
+                {
+                    throw Unsupported(
+                        $"XMP 项范围 {offset}+{extent.Length} 与 item {other.ItemId} 的 " +
+                        $"extent {otherStart}+{otherEnd - otherStart} 重叠或共享字节");
+                }
+            }
+        }
 
         var data = await XmpContainerIO.ReadExactlyAsync(
             session,
             offset,
-            (int)location.ExtentLength,
+            (int)extent.Length,
             cancellationToken).ConfigureAwait(false);
-
-        var packet = new XmpContainerPacket(
-            offset,
-            data.Length,
-            data,
-            new XmpContainerPacketDescriptor(location.EntryOffset, location.EntryBytes));
 
         return new HeifDocument
         {
-            FileLength = fileLength,
-            Revision = session.Revision,
-            TopLevel = topLevel,
-            Item = location,
-            Packet = packet,
+            Packet = new XmpContainerPacket(offset, data.Length, data),
         };
+    }
+
+    /// <summary>
+    /// 解析其它 item 的 extent 绝对文件范围。长度为 0 表示“延伸到所在容器末尾”
+    /// （ISO/IEC 14496-12），因此也参与重叠检查，不能当成空范围跳过。
+    /// <c>idat</c> 的 box 偏移相对 meta payload，必须加上 meta payload 的绝对偏移；
+    /// <c>iloc</c> 的 base_offset 对 idat 承载的 extent 同样有效。
+    /// </summary>
+    private static (long Start, long End) ResolveExtentRange(
+        IlocItem item,
+        IlocExtent extent,
+        SpanBox? idat,
+        long metaAbsoluteOffset,
+        long fileLength)
+    {
+        long start;
+        long limit;
+        switch (item.ConstructionMethod)
+        {
+            case 0:
+                start = AddOffset(item.BaseOffset, extent.Offset, $"item {item.ItemId} 的 extent 偏移");
+                limit = fileLength;
+                break;
+            case 1:
+                if (idat is not { } idatBox)
+                    throw Unsupported($"item {item.ItemId} 使用 idat 但 meta 中没有 idat 盒");
+                var idatStart = AddOffset(metaAbsoluteOffset, idatBox.PayloadOffset, "idat 绝对偏移");
+                limit = AddLength(idatStart, idatBox.PayloadLength, "idat 绝对范围");
+                if (limit > fileLength)
+                    throw Unsupported("idat 盒范围超出文件");
+                var relativeStart = AddOffset(
+                    item.BaseOffset, extent.Offset, $"item {item.ItemId} 的 idat extent 偏移");
+                if (relativeStart > idatBox.PayloadLength)
+                    throw Unsupported($"item {item.ItemId} 的 idat extent 越界");
+                start = AddOffset(idatStart, relativeStart, "idat extent 绝对偏移");
+                break;
+            default:
+                throw Unsupported($"item {item.ItemId} 的 construction method {item.ConstructionMethod} 不受支持");
+        }
+
+        if (start < 0 || start > limit)
+            throw Unsupported($"item {item.ItemId} 的 extent 范围超出所在容器");
+        if (extent.Length == 0) return (start, limit);
+
+        var end = AddLength(start, extent.Length, $"item {item.ItemId} 的 extent 范围");
+        if (end > limit)
+            throw Unsupported($"item {item.ItemId} 的 extent 范围超出所在容器");
+        return (start, end);
+    }
+
+    private static long AddOffset(long left, long right, string what)
+    {
+        if (left < 0 || right < 0 || left > long.MaxValue - right)
+            throw Unsupported(what + " 相加溢出或为负");
+        return left + right;
+    }
+
+    private static long AddLength(long start, long length, string what)
+    {
+        if (start < 0 || length < 0 || start > long.MaxValue - length)
+            throw Unsupported(what + " 相加溢出或为负");
+        return start + length;
+    }
+
+    private static bool IsInsideMdat(IReadOnlyList<BoxInfo> topLevel, long offset, long length)
+    {
+        if (offset < 0 || length < 0) return false;
+        foreach (var box in topLevel)
+        {
+            if (box.Type != BoxMdat || offset < box.PayloadOffset) continue;
+            var relative = offset - box.PayloadOffset;
+            if (relative <= box.PayloadLength && length <= box.PayloadLength - relative)
+                return true;
+        }
+        return false;
     }
 
     private static async Task<List<BoxInfo>> ReadTopLevelBoxesAsync(
@@ -848,7 +366,7 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
         return (int)value;
     }
 
-    private static List<MimeItem> ParseIinf(ReadOnlySpan<byte> meta, SpanBox box)
+    private static List<ItemInfo> ParseIinf(ReadOnlySpan<byte> meta, SpanBox box)
     {
         if (box.PayloadLength < 6)
             throw Unsupported("iinf 长度不足");
@@ -868,10 +386,10 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
         if (entries.Count != entryCount)
             throw Unsupported("iinf 声明项数与实际条目不符");
 
-        var items = new List<MimeItem>(4);
-        for (var i = 0; i < entries.Count; i++)
+        var items = new List<ItemInfo>(4);
+        var seenIds = new HashSet<int>();
+        foreach (var entry in entries)
         {
-            var entry = entries[i];
             if (entry.Type != BoxInfe) continue;
 
             var position = entry.PayloadOffset;
@@ -911,12 +429,13 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
                 if (!string.IsNullOrEmpty(contentType)) itemType = ItemTypeMime;
             }
 
-            if (itemType != ItemTypeMime) continue;
-            if (string.IsNullOrWhiteSpace(contentType)) continue;
+            if (!seenIds.Add((int)itemId))
+                throw Unsupported("iinf 项编号重复");
 
-            items.Add(new MimeItem
+            items.Add(new ItemInfo
             {
                 ItemId = (int)itemId,
+                ItemType = itemType,
                 ContentType = contentType,
                 ContentEncoding = contentEncoding,
             });
@@ -925,22 +444,31 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
         return items;
     }
 
-    private static MimeItem? SelectXmpItem(List<MimeItem> items)
+    /// <summary>
+    /// 选出唯一的 canonical XMP 项。RDF 与 XML 同时出现、或多份同类项都属于多候选，
+    /// 一律拒绝而不是按列表顺序取第一个。
+    /// </summary>
+    private static ItemInfo? SelectXmpItem(List<ItemInfo> items)
     {
-        var rdf = new List<MimeItem>(1);
-        var xml = new List<MimeItem>(1);
-        for (var i = 0; i < items.Count; i++)
+        var candidates = new List<ItemInfo>(1);
+        foreach (var item in items)
         {
-            var item = items[i];
+            if (item.ItemType != ItemTypeMime) continue;
+            if (string.IsNullOrWhiteSpace(item.ContentType)) continue;
             if (!IsUtf8Encoding(item.ContentEncoding)) continue;
             var mediaType = NormalizeMediaType(item.ContentType);
-            if (mediaType == RdfXmlContentType) rdf.Add(item);
-            else if (mediaType is "application/xml" or "text/xml") xml.Add(item);
+            if (mediaType == RdfXmlContentType || mediaType is "application/xml" or "text/xml")
+                candidates.Add(item);
         }
 
-        var candidates = rdf.Count > 0 ? rdf : xml;
         if (candidates.Count > 1)
-            throw Unsupported("存在多个 XML/RDF mime 项，无法确定 canonical XMP");
+        {
+            throw Unsupported(
+                "存在 " + candidates.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                " 个 XML/RDF mime 项（" + string.Join(",", candidates.Select(item => item.ItemId)) +
+                "），无法确定 canonical XMP");
+        }
+
         return candidates.Count == 0 ? null : candidates[0];
     }
 
@@ -959,7 +487,6 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
     private static Dictionary<int, IlocItem> ParseIloc(
         ReadOnlySpan<byte> meta,
         SpanBox box,
-        long metaAbsoluteOffset,
         long fileLength)
     {
         if (box.PayloadLength < 8)
@@ -985,85 +512,61 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
 
         var items = new Dictionary<int, IlocItem>(itemCount);
         var itemIdSize = version < 2 ? 2 : 4;
+        var totalExtents = 0;
 
         for (var i = 0; i < itemCount; i++)
         {
-            var entryStart = position;
             var itemId = ReadBigEndian(meta, ref position, itemIdSize, end);
             if (itemId > int.MaxValue)
                 throw Unsupported("iloc 项编号越界");
 
             var constructionMethod = 0;
             if (version is 1 or 2)
-            {
                 constructionMethod = (int)(ReadBigEndian(meta, ref position, 2, end) & 0xF);
-            }
             var dataReferenceIndex = ReadBigEndian(meta, ref position, 2, end);
             if (dataReferenceIndex != 0)
                 throw Unsupported("iloc 使用外部数据引用");
 
-            var baseOffsetPosition = position;
-            var baseOffset = ReadBigEndian(meta, ref position, baseOffsetSize, end);
-            if (baseOffset > long.MaxValue)
+            var baseOffsetValue = ReadBigEndian(meta, ref position, baseOffsetSize, end);
+            if (baseOffsetValue > long.MaxValue)
                 throw Unsupported("iloc base offset 越界");
+            var baseOffset = (long)baseOffsetValue;
 
             var extentCount = (int)ReadBigEndian(meta, ref position, 2, end);
             if (extentCount > MaxExtentCount)
                 throw Unsupported("iloc extent 数量超过解析上限");
+            totalExtents += extentCount;
+            if (totalExtents > MaxTotalExtents)
+                throw Unsupported("iloc extent 总数超过解析上限");
 
-            long extentOffset = 0;
-            long extentLength = 0;
-            var extentOffsetPosition = position;
-            var extentLengthPosition = position;
+            if (baseOffset > fileLength)
+                throw Unsupported("iloc 项数据范围超出文件");
+
+            var extents = new List<IlocExtent>(extentCount);
             for (var j = 0; j < extentCount; j++)
             {
                 if (indexSize > 0)
                     ReadBigEndian(meta, ref position, indexSize, end);
 
-                var currentOffsetPosition = position;
-                var currentOffset = ReadBigEndian(meta, ref position, offsetSize, end);
-                var currentLengthPosition = position;
-                var currentLength = ReadBigEndian(meta, ref position, lengthSize, end);
-                if (j == 0)
-                {
-                    extentOffsetPosition = currentOffsetPosition;
-                    extentLengthPosition = currentLengthPosition;
-                    extentOffset = currentOffset > long.MaxValue
-                        ? long.MaxValue
-                        : (long)currentOffset;
-                    extentLength = currentLength > long.MaxValue
-                        ? long.MaxValue
-                        : (long)currentLength;
-                }
+                var extentOffset = ReadBigEndian(meta, ref position, offsetSize, end);
+                var extentLength = ReadBigEndian(meta, ref position, lengthSize, end);
+                if (extentOffset > long.MaxValue || extentLength > long.MaxValue)
+                    throw Unsupported("iloc extent 字段越界");
+                if ((long)extentOffset > fileLength - baseOffset)
+                    throw Unsupported("iloc extent 偏移超出文件");
+                extents.Add(new IlocExtent((long)extentOffset, (long)extentLength));
             }
 
-            var entryEnd = position;
             var item = new IlocItem
             {
                 ItemId = (int)itemId,
                 ConstructionMethod = constructionMethod,
-                BaseOffset = (long)baseOffset,
-                ExtentCount = extentCount,
-                ExtentOffset = extentOffset,
-                ExtentLength = extentLength,
-                EntryOffset = metaAbsoluteOffset + entryStart,
-                EntryBytes = meta.Slice(entryStart, entryEnd - entryStart).ToArray(),
-                BaseOffsetPosition = baseOffsetPosition - entryStart,
-                BaseOffsetSize = baseOffsetSize,
-                ExtentOffsetPosition = extentOffsetPosition - entryStart,
-                ExtentOffsetSize = offsetSize,
-                ExtentLengthPosition = extentLengthPosition - entryStart,
-                ExtentLengthSize = lengthSize,
+                BaseOffset = baseOffset,
+                Extents = extents,
             };
 
             if (!items.TryAdd(item.ItemId, item))
                 throw Unsupported("iloc 项编号重复");
-
-            if (item.BaseOffset > fileLength ||
-                item.ExtentOffset > fileLength - item.BaseOffset)
-            {
-                throw Unsupported("iloc 项数据范围超出文件");
-            }
         }
 
         return items;
@@ -1130,22 +633,16 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
 
     private sealed class HeifDocument
     {
-        public required long FileLength { get; init; }
-
-        public required StorageRevision? Revision { get; init; }
-
-        public required IReadOnlyList<BoxInfo> TopLevel { get; init; }
-
-        public required IlocItem Item { get; init; }
-
         public required XmpContainerPacket Packet { get; init; }
     }
 
-    private sealed class MimeItem
+    private sealed class ItemInfo
     {
         public required int ItemId { get; init; }
 
-        public required string ContentType { get; init; }
+        public required uint ItemType { get; init; }
+
+        public string? ContentType { get; init; }
 
         public string? ContentEncoding { get; init; }
     }
@@ -1158,28 +655,10 @@ public sealed class HeifXmpContainerAdapter : IXmpContainerAdapter
 
         public required long BaseOffset { get; init; }
 
-        public required int ExtentCount { get; init; }
-
-        public required long ExtentOffset { get; init; }
-
-        public required long ExtentLength { get; init; }
-
-        public required long EntryOffset { get; init; }
-
-        public required byte[] EntryBytes { get; init; }
-
-        public required int BaseOffsetPosition { get; init; }
-
-        public required int BaseOffsetSize { get; init; }
-
-        public required int ExtentOffsetPosition { get; init; }
-
-        public required int ExtentOffsetSize { get; init; }
-
-        public required int ExtentLengthPosition { get; init; }
-
-        public required int ExtentLengthSize { get; init; }
+        public required IReadOnlyList<IlocExtent> Extents { get; init; }
     }
+
+    private readonly record struct IlocExtent(long Offset, long Length);
 
     private readonly record struct BoxInfo(
         uint Type,

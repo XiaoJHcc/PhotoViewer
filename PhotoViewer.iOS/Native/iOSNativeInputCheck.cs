@@ -91,8 +91,7 @@ internal static class iOSNativeInputCheck
             await WaitAsync(() => root.View!.Bounds.Width > 100 && root.Photo.Bounds.Width > 100, "主屏布局");
             string[] fixtures = Directory.GetFiles(directory, "*.jpg");
             if (fixtures.Length < 2) throw new InvalidOperationException($"输入验收需要 ≥2 张自有夹具，实际 {fixtures.Length}（{directory}）");
-            // 评分写回需要同目录内新建 sidecar（.xmp）：真机用 devicectl 拷贝的目录属 root，App 无目录写权限。
-            // 与 Mac 各验收套件同口径，一律先在工作副本上操作（App 自建目录，属 App UID）。
+            // 真机拷入目录可能属 root；评分与故障夹具只在 App 自建的可写副本中操作。
             string workspace = StageFixtures(directory, fixtures);
             var entrySnapshot = main.Settings.CreateSnapshot();
             try

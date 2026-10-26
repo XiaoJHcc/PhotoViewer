@@ -18,7 +18,8 @@ namespace PhotoViewer.iOS.Native;
 /// 验收专用（非产品行为，测试钩子）：`--pv-native-layout-check &lt;目录&gt;` 在模拟器/真机上程序化核对 iPad 主屏——
 /// 两向/自动布局与安全区分区、栏位显隐释放空间、胶片栏卡片几何（96×144 / 80 方形）、筛选条与计数几何、
 /// 控制栏三分组换行居中与评分方向，以及 [FILM-01–06] 的交互语义（点选不居中、显式定位的中间帧与终点、
-/// 用户接管、减少动态效果直接到终点、点星写回自有副本且不切主图、改星后筛选暂留）。
+/// 用户接管、减少动态效果直接到终点、点星写回自有副本且不切主图、改星后筛选暂留），
+/// 还有胶片栏显示快照回归（live 筛选列表换短、UIKit 重载前的旧索引仍按同一快照回答，不越界）。
 /// 素材要求：目录内 ≥12 张自有夹具（release/native-p2-fixtures/*.jpg 的容器内副本，含 XMP 可写评级），
 /// 且目录必须位于本 App 沙盒内 —— 任何情况下都不写用户照片或 TestCase。
 /// 报告写 Documents/PhotoViewer/native-layout-checks.txt，打印 <c>[NativeSmoke] PASS layout</c> / FAIL。
@@ -119,6 +120,9 @@ internal static class iOSNativeLayoutCheck
 
             // 四、组级冲突指示（[RATING-04]）
             await VerifyRatingConflictAsync(root, main, lines, directory);
+
+            // 五、胶片栏显示快照：重载前的陈旧索引不得读到缩短后的 live 筛选列表
+            await VerifyDisplaySnapshotAsync(root, main, lines);
 
             await RestoreAsync(root, main, entrySimilarity);
             lines.Add($"PASS 收尾还原：布局模式/栏位显隐/筛选/评级已回到进入本检查时的状态");
@@ -748,7 +752,8 @@ internal static class iOSNativeLayoutCheck
             File.Copy(Path.Combine(directory, "orientation-2.jpg"), companion, true);
             await XmpRatingStoreFactory.Create(new LocalFileRef(pair)).WriteAsync(4, true);
             await XmpRatingStoreFactory.Create(new LocalFileRef(companion)).WriteAsync(2, true);
-            await File.WriteAllBytesAsync(sidecar, XmpPacketEditor.SetRating(null, 1, false));
+            await File.WriteAllTextAsync(sidecar,
+                "<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description rdf:about='' xmlns:xmp='http://ns.adobe.com/xap/1.0/' xmp:Rating='1'/></rdf:RDF></x:xmpmeta>");
             await UiDispatcher.InvokeAsync(() => filter.SelectedRatingFilter = "All");
             await main.FolderVM.OpenFolderAsync(new LocalFolderRef(directory));
             var conflictMember = main.FolderVM.AllFiles.FirstOrDefault(candidate => candidate.Name == "rating-conflict.jpg")
@@ -804,6 +809,94 @@ internal static class iOSNativeLayoutCheck
             if (entryFile != null && main.CurrentFile?.File.StorageId != entryFile.File.StorageId)
                 await main.FolderVM.OpenImageAsync(entryFile.File);
         }
+    }
+
+    /// <summary>
+    /// 胶片栏显示快照回归：共享筛选列表已经换短、UIKit 还没重载的那一小段窗口里，
+    /// 数据源条数、卡片绑定、布局几何与文档尺寸必须仍按同一份显示快照回答旧索引，不能落到 live 列表上。
+    /// 用文件格式筛选把 live 列表一次缩到空，复现"重载前的陈旧索引"窗口；旧实现会在
+    /// <c>Source.GetCell</c> 按旧索引读缩短后的 live 列表而越界。检查在自有夹具目录内进行，
+    /// 收尾恢复全部格式与当前照片，不改变业务筛选身份、不写用户素材。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static async Task VerifyDisplaySnapshotAsync(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    {
+        var filmstrip = root.Filmstrip;
+        var collection = filmstrip.Collection;
+        var list = main.FileVM.ThumbnailList;
+        await SettleAsync(root);
+        await WaitAsync(() => filmstrip.DisplayCount == list.FilteredFiles.Count && filmstrip.DisplayCount >= 3,
+            "显示快照与筛选列表对齐");
+        int displayed = filmstrip.DisplayCount;
+        var lastDisplayed = filmstrip.DisplayFiles[displayed - 1];
+        var documentBefore = filmstrip.DocumentSize;
+        var entryFile = main.CurrentFile;
+        var formats = main.Settings.FileFormats.ToArray();
+        var entryEnabled = formats.Select(item => item.IsEnabled).ToArray();
+        try
+        {
+            int liveDuring = -1, displayDuring = -1, sourceCount = -1;
+            ImageFile? bound = null;
+            CGRect? staleFrame = null;
+            CGSize documentDuring = CGSize.Empty;
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                // 同一段主线程代码：格式筛选同步换掉 live 列表，胶片栏的 reload 只能排在本回调之后执行。
+                foreach (var format in formats) format.IsEnabled = false;
+                liveDuring = list.FilteredFiles.Count;
+                displayDuring = filmstrip.DisplayCount;
+                var source = collection.DataSource ?? throw new InvalidOperationException("胶片栏缺少数据源");
+                sourceCount = (int)source.GetItemsCount(collection, 0);
+                using var oldPath = NSIndexPath.FromItemSection(displayed - 1, 0);
+                collection.ScrollToItem(oldPath, filmstrip.Horizontal
+                    ? UICollectionViewScrollPosition.Right : UICollectionViewScrollPosition.Bottom, false);
+                collection.LayoutIfNeeded();
+                bound = (collection.CellForItem(oldPath) as iOSThumbnailCard)?.BoundFile;
+                staleFrame = filmstrip.FrameAt(displayed - 1);
+                documentDuring = filmstrip.DocumentSize;
+            });
+            if (liveDuring != 0)
+                throw new InvalidOperationException($"格式筛选未把 live 列表缩到空，无法构造陈旧索引窗口：{liveDuring}");
+            if (displayDuring != displayed || sourceCount != displayed)
+                throw new InvalidOperationException(
+                    $"陈旧索引窗口内数据源未按显示快照回答：数据源 {sourceCount}、显示 {displayDuring}，进入窗口时 {displayed}");
+            if (!ReferenceEquals(bound, lastDisplayed))
+                throw new InvalidOperationException(
+                    $"陈旧索引窗口内旧索引取到别的照片：{bound?.Name ?? "null"}，应为 {lastDisplayed.Name}");
+            if (staleFrame is not { } frame || (double)frame.Width < 1 || (double)frame.Height < 1)
+                throw new InvalidOperationException($"陈旧索引窗口内布局丢失旧索引几何：{staleFrame}");
+            double documentMainBefore = filmstrip.Horizontal ? (double)documentBefore.Width : (double)documentBefore.Height;
+            double documentMainDuring = filmstrip.Horizontal ? (double)documentDuring.Width : (double)documentDuring.Height;
+            if (Math.Abs(documentMainDuring - documentMainBefore) > .5)
+                throw new InvalidOperationException(
+                    $"陈旧索引窗口内文档尺寸跟随了 live 列表：{documentMainDuring:0.##} != {documentMainBefore:0.##}");
+
+            // reload 排在主队列里：SettleAsync 的等待让队列先跑完，再核对快照、数据源与 UIKit 条数一起归零。
+            await SettleAsync(root);
+            int sourceAfter = (int)(collection.DataSource?.GetItemsCount(collection, 0) ?? -1);
+            if (list.FilteredFiles.Count != 0 || filmstrip.DisplayCount != 0 || sourceAfter != 0 ||
+                collection.NumberOfItemsInSection(0) != 0)
+                throw new InvalidOperationException(
+                    $"重载后显示快照未跟随 live 列表：显示 {filmstrip.DisplayCount}、数据源 {sourceAfter}、live {list.FilteredFiles.Count}");
+            if (filmstrip.FrameAt(0) != null || filmstrip.CardAt(0) != null)
+                throw new InvalidOperationException("重载后仍按旧快照保留卡片或几何");
+            lines.Add($"PASS 显示快照：live 筛选列表 {displayed} → 0 的陈旧索引窗口内，数据源({sourceCount})/卡片({lastDisplayed.Name})/布局/文档尺寸仍读同一快照、旧索引不越界；reload 后快照与 live 列表一起归零");
+        }
+        finally
+        {
+            for (int index = 0; index < formats.Length; index++) formats[index].IsEnabled = entryEnabled[index];
+            await SettleAsync(root);
+        }
+
+        await WaitAsync(() => filmstrip.DisplayCount == list.FilteredFiles.Count && filmstrip.DisplayCount >= 12,
+            "恢复格式后显示快照重新对齐");
+        if (filmstrip.FrameAt(filmstrip.DisplayCount - 1) == null)
+            throw new InvalidOperationException($"恢复格式后末项布局缺失：{filmstrip.DisplayCount}");
+        if (entryFile != null && !ReferenceEquals(main.CurrentFile, entryFile))
+            await UiDispatcher.InvokeAsync(() => main.CurrentFile = entryFile);
+        lines.Add($"PASS 显示快照恢复：格式恢复后快照与 live 列表同为 {filmstrip.DisplayCount} 张，末项几何可定位，当前照片保持 {entryFile?.Name ?? "无"}");
     }
 
     /// <summary>收尾：布局模式、栏位显隐与筛选还原到验收默认值。</summary>

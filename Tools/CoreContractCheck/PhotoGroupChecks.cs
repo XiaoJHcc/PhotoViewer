@@ -34,6 +34,7 @@ internal static class PhotoGroupChecks
         var group = map.GroupFor(raw)!;
         c.Equal("JPG 优先成为代表", jpg, group.Representative);
         c.Equal("两个隐藏伴侣", 2, group.Companions.Count);
+        c.True("组成员按格式优先级稳定排序", group.Files.SequenceEqual(new[] { jpg, heif, raw }));
         c.Equal("隐藏 RAW 回映射代表", jpg, map.RepresentativeFor(raw));
         c.True("显示名包含伴侣格式", group.DisplayName.Contains("HEIF", StringComparison.Ordinal)
             && group.DisplayName.Contains("RAW", StringComparison.Ordinal));

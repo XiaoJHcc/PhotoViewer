@@ -15,8 +15,10 @@ namespace PhotoViewer.Core;
 /// 空白不足）时预检直接报 <see cref="StorageError.Unsupported"/>，不新建 XMP、不扩容容器、
 /// 不用整包重序列化兜底。</para>
 /// <para>提交前始终比较预检记录的文件 revision（size/mtime/version）与当前值，外部修改直接
-/// <c>ChangedExternally</c>；安全模式再额外比较待写区间的原始字节。写后回读语义并核对区间外
-/// 字节未变；失败时把原区间写回自愈。补偿同样只恢复“磁盘仍是本次写入内容”的来源。</para>
+/// <c>ChangedExternally</c>；安全模式再额外比较整个原始 XMP 包。预检本身以 ReadWrite 打开现有内容
+/// （不截断、不新建）并在包偏移做定位读取，证明写权限与随机寻址可用，全程零写入；同值
+/// <c>NoChange</c> 也必须通过这一步，并在提交时复核 revision 与目标值，不能凭预检结果直接宣称成功。
+/// 写后回读语义并核对区间外字节未变；失败时把原区间写回自愈。补偿同样只恢复“磁盘仍是本次写入内容”的来源。</para>
 /// </remarks>
 public sealed class ContainerRatingStore : IXmpRatingStore
 {
@@ -69,6 +71,11 @@ public sealed class ContainerRatingStore : IXmpRatingStore
         if (before.State == XmpRatingState.Conflict)
             throw Unsupported($"{File.Name} 的内嵌 XMP 标注了多个互相冲突的 Rating：{Describe(before)}");
 
+        // 写权限与随机寻址是真写之前必须证明的能力：同值 NoChange 也要通过，
+        // 否则只读来源会以“无需写入”冒充成功，而整组永远无法收敛。
+        var revision = await ProbeWriteAccessAsync(packet.Offset, cancellationToken).ConfigureAwait(false)
+            ?? properties.Revision;
+
         if (IsSameRating(before, rating))
         {
             // 同值 Rated/Rejected 不需要任何结构定位或物理写入。
@@ -80,7 +87,7 @@ public sealed class ContainerRatingStore : IXmpRatingStore
                 Rating = rating,
                 NoChange = true,
                 SafeMode = safeMode,
-                Revision = properties.Revision,
+                Revision = revision,
                 PacketOffset = packet.Offset,
             };
         }
@@ -123,7 +130,7 @@ public sealed class ContainerRatingStore : IXmpRatingStore
             Rating = rating,
             NoChange = edit is null,
             SafeMode = safeMode,
-            Revision = properties.Revision,
+            Revision = revision,
             PacketOffset = packet.Offset,
             OriginalPacket = edit is null ? null : packet.Data,
             EditOffset = edit?.Offset ?? 0,
@@ -143,12 +150,31 @@ public sealed class ContainerRatingStore : IXmpRatingStore
 
         if (preparation.NoChange)
         {
+            // 同值不写盘，但必须证明“现在仍是目标值且写入期间未被外部修改”，不能回到预检结果就宣称成功。
+            var current = await File.GetBasicPropertiesAsync(cancellationToken).ConfigureAwait(false);
+            if (!current.Exists)
+                throw new StorageException(StorageError.ObjectGone, $"{File.Name} 已不存在");
+            EnsureRevisionUnchanged(preparation.Revision, current.Revision, File.Name);
+
+            var currentPacket = await ReadPacketAsync(cancellationToken).ConfigureAwait(false)
+                ?? throw StorageException.ChangedExternally(File.Name);
+            if (currentPacket.Offset != preparation.PacketOffset)
+                throw StorageException.ChangedExternally(File.Name);
+
+            var confirmed = ParseOrInvalid(currentPacket.Data);
+            if (!IsSameRating(confirmed, preparation.Rating))
+            {
+                throw new StorageException(
+                    StorageError.ChangedExternally,
+                    $"{File.Name} 的 XMP Rating 在预检后已被外部修改为 {Describe(confirmed)}");
+            }
+
             return new XmpRatingWriteReceipt
             {
                 TargetFile = File,
                 Before = preparation.Before,
-                After = preparation.Before,
-                Revision = preparation.Revision,
+                After = confirmed,
+                Revision = current.Revision,
                 NoChange = true,
                 EditOffset = preparation.PacketOffset,
             };
@@ -470,6 +496,34 @@ public sealed class ContainerRatingStore : IXmpRatingStore
     private Task<XmpContainerPacket?> ReadPacketAsync(CancellationToken cancellationToken) =>
         Adapter.ReadCanonicalPacketAsync(File, cancellationToken);
 
+    /// <summary>
+    /// 预检的写权限/随机寻址探测：以 ReadWrite 打开同一文件的现有内容（不截断、不新建），
+    /// 在包偏移处做一次定位读取，证明该来源现在确实可写且可按偏移定位；全程不写任何字节。
+    /// 返回会话 revision，供提交阶段复核。
+    /// </summary>
+    private async Task<StorageRevision?> ProbeWriteAccessAsync(
+        long packetOffset,
+        CancellationToken cancellationToken)
+    {
+        await using var session = await File
+            .OpenRandomAccessAsync(StorageAccessMode.ReadWrite, cancellationToken)
+            .ConfigureAwait(false);
+
+        if (session.Length <= 0)
+            throw new StorageException(StorageError.IoError, $"{File.Name} 为空，无法验证写入区间");
+        if (packetOffset < 0 || packetOffset >= session.Length)
+            throw StorageException.ChangedExternally(File.Name);
+
+        var probe = new byte[1];
+        var read = await session
+            .ReadAsync(packetOffset, probe, cancellationToken)
+            .ConfigureAwait(false);
+        if (read != 1)
+            throw new StorageException(StorageError.IoError, $"{File.Name} 无法按偏移定位写入区间");
+
+        return session.Revision;
+    }
+
     private XmpRatingSnapshot ParseOrInvalid(byte[] packet)
     {
         try
@@ -547,6 +601,7 @@ public sealed class ContainerRatingStore : IXmpRatingStore
     private static string Describe(XmpRatingSnapshot snapshot) => snapshot.State switch
     {
         XmpRatingState.Invalid => snapshot.Error ?? "无效评分",
+        XmpRatingState.Unreadable => snapshot.Error ?? "来源无法读取",
         XmpRatingState.Conflict => snapshot.Error ?? "多个 XMP 评分冲突",
         _ => snapshot.State.ToString(),
     };

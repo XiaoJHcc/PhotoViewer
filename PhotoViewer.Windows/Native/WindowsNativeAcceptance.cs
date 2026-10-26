@@ -1362,7 +1362,7 @@ internal sealed partial class WindowsMainWindow
             // 冲突必须是可写的真实冲突：JPEG 已带 canonical XMP(内嵌 2 星)，sidecar 已存在且为 4 星。
             CreateJpegWithEmbeddedRating(conflictPath, 2);
             File.Copy(checkerPath, plainPath, true);
-            File.WriteAllBytes(sidecarPath, XmpPacketEditor.SetRating(null, 4, preserveLength: false));
+            File.WriteAllBytes(sidecarPath, RatingPacket(4));
         });
 
         // 夹具前置校验：两个来源都能按 canonical XMP 读取。
@@ -1421,6 +1421,9 @@ internal sealed partial class WindowsMainWindow
         checks.Add("PASS RATING-04: conflict triangle replaces slot 0 on card and control bar, keeps 30x30 geometry, and clicking it neither writes a rating nor opens a source flyout");
     }
 
+    private static byte[] RatingPacket(int rating) => Encoding.UTF8.GetBytes(
+        $"<x:xmpmeta xmlns:x='adobe:ns:meta/'><rdf:RDF xmlns:rdf='http://www.w3.org/1999/02/22-rdf-syntax-ns#'><rdf:Description rdf:about='' xmlns:xmp='http://ns.adobe.com/xap/1.0/' xmp:Rating='{rating}'/></rdf:RDF></x:xmpmeta>");
+
     /// <summary>
     /// 生成一张带 Rating 的 canonical XMP APP1 段的小幅 JPEG。
     /// 评分核心要求来源已有 canonical XMP 才允许预检写入,夹具不能只有裸 EXIF、空内嵌或多份 XMP。
@@ -1439,7 +1442,7 @@ internal sealed partial class WindowsMainWindow
             throw new InvalidOperationException("JPEG 编码结果缺少 SOI");
         }
 
-        var packet = XmpPacketEditor.SetRating(null, rating, preserveLength: false);
+        var packet = RatingPacket(rating);
         ReadOnlySpan<byte> identifier = "http://ns.adobe.com/xap/1.0/\0"u8;
         int payloadLength = identifier.Length + packet.Length;
         if (payloadLength + 2 > 0xFFFF)

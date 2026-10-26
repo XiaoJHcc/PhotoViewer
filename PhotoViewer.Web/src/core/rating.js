@@ -35,7 +35,7 @@ const STATE_VALUES = new Set(Object.values(RATING_STATES));
 
 // RATING-06：无 canonical XMP 时一律不支持新建（含 JPEG）；不用 sidecar 顶替，
 // 也不新建 sidecar。已有 canonical 包、仅包内缺 xap:Rating 的安全插入不在合成模型内建模。
-// PNG 的 XMP 写入整体挂账（含标准 iTXt），内嵌来源一律不写，sidecar 不受此限。
+// PNG 内嵌 XMP 写入不支持，内嵌来源一律不写；sidecar 不受此限。
 const PNG_NAME = /\.png$/i;
 
 const WRITE_BLOCK_REASONS = Object.freeze({
@@ -137,12 +137,19 @@ function consistentValue(state) {
 }
 
 /**
- * RATING-01：组级冲突 = 实际来源不处于「全部可读、全部带值且取值相同」。
- * 缺失、无效、不可读、同一文件内冲突与取值不同都算冲突。
+ * RATING-01：组级冲突 = 任一文件内多份 canonical XMP 的 Rating 不同；存在两个及以上
+ * 实际来源时，任一来源缺失、无效、不可读或可读来源取值不同也为冲突。
+ * 全组只有一个来源且仅缺 Rating 不算冲突；该来源无效、不可读或内部冲突仍算冲突。
  */
 export function hasRatingConflict(card) {
     const sources = ratingSources(card);
     if (sources.length === 0) return false;
+    if (sources.length === 1) {
+        const only = sources[0];
+        return only.state === RATING_STATES.INVALID
+            || only.state === RATING_STATES.UNREADABLE
+            || only.state === RATING_STATES.CONFLICT;
+    }
     const first = sources[0];
     if (!consistentValue(first.state)) return true;
     return sources.some((source) => !consistentValue(source.state) || source.value !== first.value);
@@ -169,11 +176,12 @@ export function matchesRatingFilter(card, value) {
 /** RATING-03 预检：返回该来源不能安全写入的原因；null 表示可写。 */
 export function ratingWriteBlockReason(source) {
     if (!source) return "来源不存在";
-    // RATING-06：PNG 内嵌 XMP 写入本轮挂账，任何状态都不写；sidecar 仍按普通来源处理。
+    // RATING-06：PNG 内嵌 XMP 写入不支持，任何状态都不写；sidecar 仍按普通来源处理。
     if (source.kind === "embedded" && PNG_NAME.test(source.photo?.name ?? source.label ?? "")) {
         return "PNG 内嵌 XMP 写入不支持";
     }
-    if (source.state === RATING_STATES.RATED) return null;
+    // RATING-05：已拒绝是已有 canonical XMP 的 -1，可原位改写为 0–5；缺失不新建。
+    if (source.state === RATING_STATES.RATED || source.state === RATING_STATES.REJECTED) return null;
     return WRITE_BLOCK_REASONS[source.state] ?? "来源状态未知";
 }
 

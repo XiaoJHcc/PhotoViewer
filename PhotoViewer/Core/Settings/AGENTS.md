@@ -13,7 +13,7 @@
 | [AppSettings.cs](AppSettings.cs) | 不可变设置快照 | `sealed record`，所有集合为 `ImmutableArray`，修改通过 `with` 生成新快照；`ContentEquals` 按字段内容比较，作为“是否需要写盘”的判据。字段只含行为设置，不含面板展开态等视图状态。 |
 | [SettingsCatalog.cs](SettingsCatalog.cs) | 目录与派生元数据 | 文件格式、EXIF 字段与命令目录，以及它们的默认表；命令名、提示、图标、扩展名按 id 派生，历史展示字段不进入设置文档。 |
 | [SettingsDefaults.cs](SettingsDefaults.cs) | 首次运行默认值 | 按 `IPerformanceBudget` 推导缓存内存/张数与解码并发；预载份数按推荐张数换算（30 张基准为 10 / 5 / 5，更少时同比例收敛并受张数 ÷ 3 约束）；自动口径（iPad / Android）的预载上限固定 10。 |
-| [SettingsDocumentCodec.cs](SettingsDocumentCodec.cs) | 文档编解码与归一化 | `schemaVersion = 2` 的读取/序列化；缺字段取默认值，未知字段与未知 id 忽略，三张表按 id 合并并保留用户顺序，数值按范围夹取。版本缺失或 `< 2` 判旧版、`> 2` 判未来版本，两者都不做迁移。 |
+| [SettingsDocumentCodec.cs](SettingsDocumentCodec.cs) | 文档编解码与归一化 | `schemaVersion = 2` 的读取/序列化；缺字段取默认值，未知字段与未知 id 忽略，三张表按 id 合并并保留用户顺序，数值按范围夹取；缓存张数 1–400、缓存内存 512–32768 MB 的范围常量供工作副本输入共用。版本缺失或 `< 2` 判旧版、`> 2` 判未来版本，两者都不做迁移。 |
 | [SettingsDocumentDto.cs](SettingsDocumentDto.cs) / [SettingsDocumentJsonContext.cs](SettingsDocumentJsonContext.cs) | 文档 DTO 与源生成上下文 | 可空字段只表示 JSON 中缺失；序列化走源生成，避免反射。 |
 | [SettingsRepository.cs](SettingsRepository.cs) | 唯一写者 | 初始化读取与提交写入均经写锁串行；损坏/旧版先经 `ISettingsStore.BackupCorruptAsync` 备份再以默认值启动，备份最多 3 份；备份失败、读取 IO 失败或版本过高时进入不可写状态，原文保持不动。提交 = 归一化 → `SaveAsync` → 成功后发布 `Current`；未修改时不写盘。`StateChanged` 在完成操作的线程同步触发，调用方负责回到 UI 线程。 |
 | [SettingsSession.cs](SettingsSession.cs) | 编辑会话 | 持有独立 draft；`CommitAsync` 一次性提交，首次成功后重复调用直接返回 true、不再写盘。 |

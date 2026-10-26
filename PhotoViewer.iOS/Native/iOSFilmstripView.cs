@@ -20,9 +20,10 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
     internal bool Horizontal { get; set; } = true;
 
     /// <summary>
-    /// 项目数来源（业务筛选结果）。必须由宿主提供：UICollectionView 在 reloadData 之后、
+    /// 项目数来源（宿主显示快照）。必须由宿主提供：UICollectionView 在 reloadData 之后、
     /// 下一次布局之前会返回过期的条目数（实测为 0），用它算文档长度会把文档压成视口大小，
-    /// 随后的偏移约束就把刚发起的显式定位清零。
+    /// 随后的偏移约束就把刚发起的显式定位清零。宿主给出的是与数据源同一份显示快照，
+    /// 不是随时会被筛选替换的 live 列表。
     /// </summary>
     internal Func<int>? CountProvider { get; set; }
 
@@ -89,6 +90,9 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
 /// <summary>
 /// 胶片栏（[FILM-01–05]）：UICollectionView + 共享几何布局、可中断的 350ms 三次缓出定位（CADisplayLink 驱动）、
 /// 可见范围上报共享缩略图调度器。点选只改当前照片不居中；上一张/下一张、打开文件、方向变化与重新显示走显式定位。
+/// <para>数据源、布局条数、文档尺寸、可见范围与定位索引都只读宿主在 <see cref="ReloadData"/> 时原子替换的
+/// <b>显示快照</b>：共享筛选列表先替换、UIKit 重载是异步的，旧索引与 live 列表不能在同一次布局里混用，
+/// 否则 UIKit 按旧索引取卡片会读到已缩短的 live 列表而越界。</para>
 /// </summary>
 internal sealed class iOSFilmstripView : UIView
 {
@@ -96,6 +100,11 @@ internal sealed class iOSFilmstripView : UIView
     private readonly iOSFilmstripLayout _layout = new();
     private readonly UICollectionView _collection;
     private readonly Source _source;
+    /// <summary>
+    /// 当前显示快照：只在 <see cref="ReloadData"/> 里整份替换，UIKit 重载后数据源/布局/可见范围/定位同读这一份。
+    /// 引用不可变，滚动与布局期间不会看到半更新的列表。
+    /// </summary>
+    private ImageFile[] _displaySnapshot = [];
     /// <summary>显示链接回调目标必须由本类强引用：CADisplayLink 不 retain 自己的 target，被回收后动画静默停止。</summary>
     private readonly DisplayLinkTarget _animationTarget;
     private CADisplayLink? _animation;
@@ -121,13 +130,18 @@ internal sealed class iOSFilmstripView : UIView
     internal CGPoint ContentOffset => _collection.ContentOffset;
     /// <summary>文档尺寸（帧检查与边界断言用）。</summary>
     internal CGSize DocumentSize => _layout.CollectionViewContentSize;
+    /// <summary>当前显示快照（只读视图；验收核对数据源与列表是否对齐时使用）。</summary>
+    internal IReadOnlyList<ImageFile> DisplayFiles => _displaySnapshot;
+    /// <summary>当前显示快照条数（数据源、布局与定位共用同一口径）。</summary>
+    internal int DisplayCount => _displaySnapshot.Length;
 
     /// <summary>构建集合视图、卡片复用注册与滚动/拖拽接管。</summary>
     /// <param name="main">共享主 VM（筛选结果与缩略图调度都在共享层）。</param>
     public iOSFilmstripView(MainViewModel main) : base(CGRect.Empty)
     {
         _main = main;
-        _layout.CountProvider = () => main.FileVM.ThumbnailList.FilteredFiles.Count;
+        _displaySnapshot = main.FileVM.ThumbnailList.FilteredFiles.ToArray();
+        _layout.CountProvider = () => _displaySnapshot.Length;
         _animationTarget = new DisplayLinkTarget(StepAnimation);
         BackgroundColor = UIColor.FromWhiteAlpha(.07f, 1);
         _collection = new UICollectionView(CGRect.Empty, _layout)
@@ -160,9 +174,14 @@ internal sealed class iOSFilmstripView : UIView
         SetNeedsLayout();
     }
 
-    /// <summary>业务筛选结果原子替换后重载列表（不主动居中，[FILM-01]）。</summary>
+    /// <summary>
+    /// 共享筛选结果替换后重载列表（不主动居中，[FILM-01]）。必须由宿主在主线程调用：
+    /// 先把 live 列表拷成新的显示快照，再让 UIKit 重载；此后的数据源、布局、可见范围与定位都只读这份快照，
+    /// 重载完成前的旧索引不会落到已经变短的 live 列表上。
+    /// </summary>
     internal void ReloadData()
     {
+        _displaySnapshot = _main.FileVM.ThumbnailList.FilteredFiles.ToArray();
         _collection.ReloadData();
         _layout.InvalidateLayout();
         SetNeedsLayout();
@@ -208,31 +227,41 @@ internal sealed class iOSFilmstripView : UIView
         });
     }
 
-    /// <summary>可见卡片交共享缩略图调度器按 P1 加载，并上报可见范围（预取/淘汰保护）。</summary>
+    /// <summary>可见卡片交共享缩略图调度器按 P1 加载，并上报可见范围（预取/淘汰保护）。索引全部按显示快照解释。</summary>
     internal void ReportVisibleRange()
     {
-        var files = _main.FileVM.ThumbnailList.FilteredFiles;
+        var files = _displaySnapshot;
         var indexes = _collection.IndexPathsForVisibleItems.Select(path => (int)path.Item).Order().ToArray();
-        var visible = indexes.Where(index => index >= 0 && index < files.Count).Select(index => files[index]).ToArray();
-        if (visible.Length > 0) _main.FileVM.ThumbnailList.LoadVisibleThumbnails(visible);
-        if (indexes.Length > 0) _main.FileVM.ThumbnailList.ReportVisibleRange(indexes[0], indexes[^1]);
+        var visible = new List<ImageFile>(indexes.Length);
+        int first = -1, last = -1;
+        foreach (var index in indexes)
+        {
+            if ((uint)index >= (uint)files.Length) continue;
+            visible.Add(files[index]);
+            if (first < 0) first = index;
+            last = index;
+        }
+
+        if (visible.Count > 0) _main.FileVM.ThumbnailList.LoadVisibleThumbnails(visible);
+        if (first >= 0) _main.FileVM.ThumbnailList.ReportVisibleRange(first, last);
     }
 
-    /// <summary>取某一项的卡片视图（未创建或超出可见区时为 null）。</summary>
-    /// <param name="index">业务索引。</param>
+    /// <summary>取某一项的卡片视图（未创建、超出可见区或不在显示快照内时为 null）。</summary>
+    /// <param name="index">显示快照索引。</param>
     /// <returns>已创建的卡片；没有则返回 null。</returns>
     internal iOSThumbnailCard? CardAt(int index)
     {
+        if ((uint)index >= (uint)_displaySnapshot.Length) return null;
         using var path = NSIndexPath.FromItemSection(index, 0);
         return _collection.CellForItem(path) as iOSThumbnailCard;
     }
 
     /// <summary>取某一项的布局矩形（文档坐标）。</summary>
-    /// <param name="index">业务索引。</param>
+    /// <param name="index">显示快照索引。</param>
     /// <returns>卡片矩形；越界返回 null。</returns>
     internal CGRect? FrameAt(int index)
     {
-        if (index < 0 || index >= _main.FileVM.ThumbnailList.FilteredFiles.Count) return null;
+        if ((uint)index >= (uint)_displaySnapshot.Length) return null;
         using var path = NSIndexPath.FromItemSection(index, 0);
         var frame = _layout.LayoutAttributesForItem(path).Frame;
         return frame.Width > 0 && frame.Height > 0 ? frame : null;
@@ -266,11 +295,14 @@ internal sealed class iOSFilmstripView : UIView
         base.Dispose(disposing);
     }
 
-    /// <summary>把某一项居中（不含动画决策）：目标偏移由共享 <see cref="FilmstripGeometry.CenterOffset"/> 给出。</summary>
+    /// <summary>
+    /// 把某一项居中（不含动画决策）：目标偏移由共享 <see cref="FilmstripGeometry.CenterOffset"/> 给出。
+    /// 索引按显示快照取：快照里找不到当前照片时宁可不居中，也不把 live 列表的索引用到旧布局上。
+    /// </summary>
     private void CenterOnCurrent()
     {
-        var files = _main.FileVM.ThumbnailList.FilteredFiles;
-        int index = _main.CurrentFile == null ? -1 : files.IndexOf(_main.CurrentFile);
+        var files = _displaySnapshot;
+        int index = _main.CurrentFile == null ? -1 : Array.IndexOf(files, _main.CurrentFile);
         if (index < 0) return;
         if (FrameAt(index) is not { } frame) return;
         var document = _layout.CollectionViewContentSize;
@@ -374,20 +406,32 @@ internal sealed class iOSFilmstripView : UIView
         /// <returns>分区数。</returns>
         public override nint NumberOfSections(UICollectionView collectionView) => 1;
 
-        /// <summary>筛选后的项目数。</summary>
+        /// <summary>显示快照的项目数（与布局、可见范围和定位同源）。</summary>
         /// <param name="collectionView">集合视图。</param>
         /// <param name="section">分区索引。</param>
         /// <returns>项目数。</returns>
-        public override nint GetItemsCount(UICollectionView collectionView, nint section) => _owner._main.FileVM.ThumbnailList.FilteredFiles.Count;
+        public override nint GetItemsCount(UICollectionView collectionView, nint section) => _owner.DisplayCount;
 
-        /// <summary>复用卡片并按业务身份绑定（含缩略图 P1 排队）。</summary>
+        /// <summary>复用卡片并按业务身份绑定（含缩略图 P1 排队）。索引只按显示快照解释。</summary>
         /// <param name="collectionView">集合视图。</param>
         /// <param name="indexPath">项目索引路径。</param>
         /// <returns>已绑定的卡片。</returns>
         public override UICollectionViewCell GetCell(UICollectionView collectionView, NSIndexPath indexPath)
         {
             var card = (iOSThumbnailCard)collectionView.DequeueReusableCell(CellId, indexPath);
-            var file = _owner._main.FileVM.ThumbnailList.FilteredFiles[(int)indexPath.Item];
+            var files = _owner.DisplayFiles;
+            int index = (int)indexPath.Item;
+            if ((uint)index >= (uint)files.Count)
+            {
+                // 数据源与布局同读显示快照后这里不可达；若 UIKit 仍持有重载前的索引，
+                // 留空并记录，而不是把别的照片错绑到这个位置。
+                Console.WriteLine($"[Filmstrip] 数据源索引越界：{index}/{files.Count}（重载前的旧索引？）");
+                card.Hidden = true;
+                return card;
+            }
+
+            card.Hidden = false;
+            var file = files[index];
             card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner.OnCardSelected(selected),
                 (selected, rating) => _owner.RateRequested?.Invoke(selected, rating));

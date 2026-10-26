@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
@@ -12,13 +13,15 @@ namespace PhotoViewer.Android.Core;
 
 /// <summary>
 /// SAF 文件/文件夹选择器：<c>ACTION_OPEN_DOCUMENT_TREE</c> 选文件夹、<c>ACTION_OPEN_DOCUMENT</c> 选单文件；
-/// 结果 Uri 在返回时按 Intent 标志取得持久读/写授权，再构造原生存储引用。
-/// 等待中的请求是实例状态：新请求、Activity 销毁或重新绑定都会把旧任务按取消收口，调用方不会永久等待。
+/// 结果 Uri 在返回时按 Intent 标志取得持久读/写授权，单文件再在后台读取真实显示名/属性后构造存储引用。
+/// 等待中的请求是实例状态：新请求、Activity 销毁或重新绑定都会把旧任务按取消收口，调用方不会永久等待；
+/// 后台属性查询完成时按等待项身份做代际检查，被取代的旧结果不会复活新请求。
 /// </summary>
 public sealed class AndroidFilePicker : IFilePickerService
 {
     private const int FolderRequestCode = 0x5056;
-    private const int FileRequestCode = 0x5057;
+    /// <summary>单文件请求码；验收可直接用 <see cref="HandleActivityResult"/> 投递结果，产品路径不引用。</summary>
+    internal const int FileRequestCode = 0x5057;
 
     private TaskCompletionSource<IFolderRef?>? _folderPending;
     private TaskCompletionSource<IFileRef?>? _filePending;
@@ -155,7 +158,6 @@ public sealed class AndroidFilePicker : IFilePickerService
     private void CompleteFileRequest(Result resultCode, Intent? data)
     {
         var pending = _filePending;
-        _filePending = null;
         if (pending == null)
         {
             Console.WriteLine($"[Native] SAF 选择结果没有等待中的请求（request={FileRequestCode}），已忽略");
@@ -164,21 +166,48 @@ public sealed class AndroidFilePicker : IFilePickerService
 
         if (!TryGetResultUri(resultCode, data, out var resolver, out var uri))
         {
-            pending.TrySetResult(null);
+            TryCompleteFileRequest(pending, null);
             return;
         }
 
+        // 取得授权期间可能已被新请求/取消/销毁取代：不再发起后台查询（结果也无人接收）。
+        if (!ReferenceEquals(_filePending, pending)) return;
+
+        // 显示名/属性是 binder 查询：交给后台完成，UI 线程只保留等待项身份。
+        _ = ResolveFileResultAsync(resolver!, uri!, pending);
+    }
+
+    /// <summary>
+    /// 后台读完真实属性后完成请求（与外部打开共用 <see cref="AndroidFileRef.CreateForContentUriAsync"/>）：
+    /// 数字 documentId 的 Uri 末段不是文件名，按扩展名判类型的打开链会直接丢弃。
+    /// 期间被新请求、<see cref="CancelPending"/> 或 Activity 销毁取代时丢弃结果，旧结果不会复活新请求。
+    /// </summary>
+    private async Task ResolveFileResultAsync(ContentResolver resolver, AndroidUri uri,
+        TaskCompletionSource<IFileRef?> pending)
+    {
+        IFileRef? file = null;
         try
         {
-            var file = new AndroidFileRef(resolver!, uri!);
-            pending.TrySetResult(file);
-            Console.WriteLine($"[Native] SAF 文件选择结果：{file.Name}");
+            file = await AndroidFileRef.CreateForContentUriAsync(resolver, uri).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
-            Console.Error.WriteLine($"[Native] SAF 选择结果解析失败：{exception.Message}");
-            pending.TrySetResult(null);
+            Console.Error.WriteLine($"[Native] SAF 选择结果属性读取失败：{exception.Message}");
         }
+
+        if (!TryCompleteFileRequest(pending, file))
+            Console.WriteLine("[Native] SAF 文件选择结果已过期，丢弃");
+    }
+
+    /// <summary>
+    /// 仅当该等待项仍是当前请求时落结果并清空等待项；返回是否真正完成（代际检查）。
+    /// 与 <see cref="CancelPending"/> 并发时以先完成者为准，后到的一方不得覆盖。
+    /// </summary>
+    private bool TryCompleteFileRequest(TaskCompletionSource<IFileRef?> pending, IFileRef? file)
+    {
+        if (!ReferenceEquals(Interlocked.CompareExchange(ref _filePending, null, pending), pending)) return false;
+        if (file != null) Console.WriteLine($"[Native] SAF 文件选择结果：{file.Name}");
+        return pending.TrySetResult(file);
     }
 
     private bool TryGetResultUri(Result resultCode, Intent? data, out ContentResolver? resolver, out AndroidUri? uri)
@@ -206,11 +235,23 @@ public sealed class AndroidFilePicker : IFilePickerService
     public void CancelPending()
     {
         var folder = _folderPending;
-        var file = _filePending;
+        var file = Interlocked.Exchange(ref _filePending, null);
         _folderPending = null;
-        _filePending = null;
         folder?.TrySetResult(null);
         file?.TrySetResult(null);
+    }
+
+    /// <summary>
+    /// 验收用：注册一个等待中的单文件请求（不启动系统选择器），随后用
+    /// <see cref="HandleActivityResult"/> 直接投递结果；产品路径不引用。
+    /// </summary>
+    /// <returns>该请求的完成任务；被新请求或 <see cref="CancelPending"/> 取代时完成为 null。</returns>
+    internal Task<IFileRef?> BeginFileRequestForChecks()
+    {
+        CancelPending();
+        var pending = new TaskCompletionSource<IFileRef?>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _filePending = pending;
+        return pending.Task;
     }
 
     /// <summary>

@@ -353,7 +353,7 @@ public static class DesignTokens
     public const string IconStar = "U+FCE9";
     /// <summary>icon.starFilled TOOLBAR-03：实心星（icon.fontSolid 的 fi-ss-star）：点亮的星与评分快捷命令星底；未点亮仍用 icon.star 描边字形。</summary>
     public const string IconStarFilled = "U+FCD7";
-    /// <summary>icon.warning RATING-04：星级冲突警示三角（fi-rr-triangle-warning）：组内实际来源不一致时替换胶片栏卡片与控制栏 0 号按钮的清零叉，点击打开来源浮窗（RATING-04、FILM-05、TOOLBAR-03）。Apple 平台取语义相同的 SF Symbols 字形。</summary>
+    /// <summary>icon.warning RATING-04：星级冲突警示三角（fi-rr-triangle-warning）：替换胶片栏卡片与控制栏 0 号清零叉；点击行为按 RATING-04，未提供来源浮窗的平台不写值。Apple 平台取语义相同的 SF Symbols 字形。</summary>
     public const string IconWarning = "U+FE33";
     /// <summary>image.busy.bottomOffset（pt） IMAGE-01：雾天增强提示距主图区底边的距离；主图分区已排除底部安全区，不再重复扣减。</summary>
     public const double ImageBusyBottomOffset = 24.0;
@@ -461,6 +461,26 @@ public static class DesignTokens
     public const double PopupCornerRadius = 5.0;
     /// <summary>popup.padding（pt） MENU-03：弹层上下内边距（左右为 0）。</summary>
     public const double PopupPadding = 4.0;
+    /// <summary>popup.ratingSources.arrowMargin（pt） RATING-04：判断评分来源浮窗展开空间时保留的箭头余量。</summary>
+    public const double PopupRatingSourcesArrowMargin = 12.0;
+    /// <summary>popup.ratingSources.badgeCornerRadius（pt） RATING-04：评分来源类型标签圆角。</summary>
+    public const double PopupRatingSourcesBadgeCornerRadius = 4.0;
+    /// <summary>popup.ratingSources.badgePaddingX（pt） RATING-04：评分来源类型标签的水平内边距。</summary>
+    public const double PopupRatingSourcesBadgePaddingX = 6.0;
+    /// <summary>popup.ratingSources.dividerHeight（pt） RATING-04：评分来源条目分隔线高度。</summary>
+    public const double PopupRatingSourcesDividerHeight = 1.0;
+    /// <summary>popup.ratingSources.entryPadding（pt） RATING-04：评分来源条目两侧内边距；条目宽由六格星排与此内边距决定。</summary>
+    public const double PopupRatingSourcesEntryPadding = 8.0;
+    /// <summary>popup.ratingSources.entrySpacing（pt） RATING-04：评分来源条目与分隔线之间的间距。</summary>
+    public const double PopupRatingSourcesEntrySpacing = 8.0;
+    /// <summary>popup.ratingSources.labelGap（pt） RATING-04：评分来源信息行与星排的间距。</summary>
+    public const double PopupRatingSourcesLabelGap = 6.0;
+    /// <summary>popup.ratingSources.metaFontSize（pt） RATING-04：评分来源类型与状态字号。</summary>
+    public const double PopupRatingSourcesMetaFontSize = 10.0;
+    /// <summary>popup.ratingSources.metaLineGap（pt） RATING-04：评分来源长文件名换行后的信息行间距。</summary>
+    public const double PopupRatingSourcesMetaLineGap = 4.0;
+    /// <summary>popup.ratingSources.nameFontSize（pt） RATING-04：评分来源文件名字号；平台可以使用对应原生字体。</summary>
+    public const double PopupRatingSourcesNameFontSize = 11.0;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>

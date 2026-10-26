@@ -2,13 +2,7 @@ using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Core;
 
-public sealed record XmpContainerPacketDescriptor(long Offset, byte[] Data);
-
-public sealed record XmpContainerPacket(
-    long Offset,
-    int Length,
-    byte[] Data,
-    XmpContainerPacketDescriptor? Descriptor = null);
+public sealed record XmpContainerPacket(long Offset, int Length, byte[] Data);
 
 /// <summary>
 /// 一次评分写入的回执。回执只描述已经发生的物理修改：
@@ -21,9 +15,6 @@ public sealed class XmpRatingWriteReceipt
     public required XmpRatingSnapshot After { get; init; }
     public XmpContainerPacket? OriginalPacket { get; init; }
     public StorageRevision? Revision { get; init; }
-    public long? OriginalFileLength { get; init; }
-    public bool OriginalHadZeroLengthFinalBox { get; init; }
-    public bool CreatedTarget { get; init; }
 
     /// <summary>同值写入：没有发生任何物理修改。</summary>
     public bool NoChange { get; init; }
@@ -56,7 +47,7 @@ public sealed class XmpRatingPreparation
     public required int Rating { get; init; }
     public required bool NoChange { get; init; }
 
-    /// <summary>本次预检使用的安全模式：关闭时提交仍做写后校验与 revision 比对，只跳过区间字节比对。</summary>
+    /// <summary>开启时复核整个原始 XMP 包；关闭时仍复核修订与编辑区间，并执行写后校验。</summary>
     public bool SafeMode { get; init; }
 
     /// <summary>预检时读取的文件修订，提交前必须仍然一致。</summary>
@@ -122,20 +113,13 @@ public static class XmpRatingStoreExtensions
     }
 }
 
+/// <summary>
+/// 容器中 canonical XMP 包的定位契约。适配器只读：评分写入只有
+/// <see cref="ContainerRatingStore"/> 一条路径，容器不提供自己的写/恢复入口。
+/// </summary>
 public interface IXmpContainerAdapter
 {
     Task<XmpContainerPacket?> ReadCanonicalPacketAsync(
         IFileRef file,
-        CancellationToken cancellationToken = default);
-
-    Task<XmpRatingWriteReceipt> WriteRatingAsync(
-        IFileRef file,
-        int rating,
-        bool safeMode,
-        CancellationToken cancellationToken = default);
-
-    Task RestoreAsync(
-        IFileRef file,
-        XmpRatingWriteReceipt receipt,
         CancellationToken cancellationToken = default);
 }

@@ -86,9 +86,11 @@ public sealed record RatingWriteFailure(
 /// <para>写入目标是组内全部<strong>实际来源</strong>：每个文件的内嵌 XMP，加上已存在的
 /// <c>&lt;stem&gt;.xmp</c>（同名共享 sidecar 只出现一次）。sidecar 不存在时不会创建。
 /// 写入时逐个文件直接核查当前磁盘，不使用列表读取用的 sidecar 索引。</para>
-/// <para>两个阶段：先对全部来源做只读预检（<see cref="IXmpRatingStore.PrepareAsync"/>），
+/// <para>两个阶段：先对全部来源做只读预检（<see cref="IXmpRatingStore.PrepareAsync"/>，包含写权限探测），
 /// 任一来源无法安全改写则在首次修改前整组失败；预检全部通过后才按“代表文件优先”的顺序提交。
 /// 任一提交失败时按逆序补偿已拿到回执的来源。</para>
+/// <para>成功前还有一次整组校验：重新发现实际来源集合，并逐来源重读磁盘（同值 NoChange 也重读）。
+/// 集合新增/消失或任一来源不再等于目标值都不算成功，走与提交失败相同的补偿/真值路径。</para>
 /// <para>快速连按时（例如 3→4→5），仍在排队等待的旧请求以 <see cref="RatingWriteOutcome.Superseded"/>
 /// 返回且不写盘；已经开始物理写入的请求不会被取消，会完整走完或回滚。取消只在首次物理修改前生效。</para>
 /// <para>结果为 <see cref="RatingWriteOutcome.Partial"/> 时逐来源重新读取磁盘真值，不宣称跨文件原子。</para>
@@ -268,6 +270,7 @@ public sealed class RatingService
 
         var receipts = new List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)>();
         RatingWriteSource? failedSource = null;
+        string? failedSourceError = null;
         string? failureReason = null;
         var started = false;
 
@@ -289,6 +292,7 @@ public sealed class RatingService
                 {
                     // 存储已尝试自愈但无法证明恢复成功：回执必须参与逆序补偿。
                     failedSource = source;
+                    failedSourceError = "写入失败";
                     failureReason = commitFailure;
                     break;
                 }
@@ -302,14 +306,28 @@ public sealed class RatingService
             catch (Exception exception)
             {
                 failedSource = source;
+                failedSourceError = "写入失败";
                 failureReason = Describe(exception);
                 break;
             }
         }
 
+        // 全组成功前必须重读每个来源（含同值 NoChange）并重新发现来源集合：
+        // 预检后新增/消失的 sidecar、写入期间被外部改动的同值来源都不允许以 Applied/NoChange 收尾。
         if (failureReason is null)
         {
-            var outcomes = BuildOutcomes(group, preparations, receipts, compensationErrors: [], failedSource: null);
+            var verification = await VerifyAsync(group, rating, preparations).ConfigureAwait(false);
+            if (verification.Problems.Count > 0)
+            {
+                failureReason = string.Join("；", verification.Problems);
+                failedSource = verification.FailedSource;
+                failedSourceError = "写入后校验不一致";
+            }
+        }
+
+        if (failureReason is null)
+        {
+            var outcomes = BuildOutcomes(group, preparations, receipts, compensationErrors: [], failedSource: null, failedSourceError: null);
             var allNoChange = preparations.All(item => item.Preparation.NoChange);
             return new RatingWriteResult(
                 group.Id,
@@ -339,7 +357,7 @@ public sealed class RatingService
 
         var compensationFailed = safeMode ? compensationErrors.Count > 0 : receipts.Count > 0;
         var finalOutcomes = await ReadTruthAsync(
-                group, preparations, receipts, compensationErrors, failedSource, verifyRestoration: safeMode)
+                group, preparations, receipts, compensationErrors, failedSource, failedSourceError, verifyRestoration: safeMode)
             .ConfigureAwait(false);
         var suffix = receipts.Count == 0
             ? "；未修改任何文件"
@@ -356,6 +374,123 @@ public sealed class RatingService
             finalOutcomes,
             Combine(failureReason, suffix.TrimStart('；')));
     }
+
+    /// <summary>
+    /// 写入后的整组校验：重新发现实际来源集合，并逐个来源重读磁盘（同值 NoChange 不写盘也必须复核）。
+    /// 集合新增/消失或任一来源不再等于目标值都算失败，交给已有的补偿/真值路径收尾。
+    /// </summary>
+    private async Task<RatingVerification> VerifyAsync(
+        PhotoGroup group,
+        int rating,
+        List<(RatingWriteSource Source, XmpRatingPreparation Preparation)> preparations)
+    {
+        var problems = new List<string>();
+        RatingWriteSource? failed = null;
+
+        List<RatingWriteSource> current;
+        try
+        {
+            current = await CollectSourcesAsync(group, CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            return new RatingVerification(
+                ["写入后重新枚举评分来源失败：" + Describe(exception)], null);
+        }
+
+        var plannedByKey = new Dictionary<string, RatingWriteSource>(StringComparer.Ordinal);
+        foreach (var (source, _) in preparations) plannedByKey[SourceKey(source)] = source;
+        var currentByKey = new Dictionary<string, RatingWriteSource>(StringComparer.Ordinal);
+        foreach (var source in current) currentByKey[SourceKey(source)] = source;
+
+        foreach (var (source, _) in preparations)
+        {
+            if (currentByKey.ContainsKey(SourceKey(source))) continue;
+            problems.Add($"{source.DisplayName} 在预检后消失");
+            failed ??= source;
+        }
+
+        foreach (var source in current)
+        {
+            if (plannedByKey.ContainsKey(SourceKey(source))) continue;
+            problems.Add($"{source.DisplayName} 在预检后新增，未参与本次写入");
+            failed ??= source;
+        }
+
+        foreach (var (source, preparation) in preparations)
+        {
+            // 已消失的来源在上面的集合差异里报告过，不再重复读。
+            if (!currentByKey.ContainsKey(SourceKey(source))) continue;
+
+            // 同值来源本次没有写盘，所以任何 revision 变化都只能是外部修改：
+            // 不能把“预检时同值”直接当成最终成功。
+            if (preparation.NoChange)
+            {
+                try
+                {
+                    var properties = await source.Target
+                        .GetBasicPropertiesAsync(CancellationToken.None)
+                        .ConfigureAwait(false);
+                    if (!properties.Exists || RevisionChanged(preparation.Revision, properties.Revision))
+                    {
+                        problems.Add($"{source.DisplayName} 在预检后被外部修改，不能算作无需写入");
+                        failed ??= source;
+                        continue;
+                    }
+                }
+                catch (Exception exception)
+                {
+                    problems.Add($"{source.DisplayName} 无法复核修订：{Describe(exception)}");
+                    failed ??= source;
+                    continue;
+                }
+            }
+
+            XmpRatingSnapshot actual;
+            try
+            {
+                actual = await source.Store.ReadAsync(CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                problems.Add($"{source.DisplayName} 重新读取失败：{Describe(exception)}");
+                failed ??= source;
+                continue;
+            }
+
+            if (!IsSameRating(actual, rating))
+            {
+                problems.Add($"{source.DisplayName} 当前为 {Describe(actual)}，期望 {DescribeTarget(rating)}");
+                failed ??= source;
+            }
+        }
+
+        return new RatingVerification(problems, failed);
+    }
+
+    private static bool RevisionChanged(StorageRevision? expected, StorageRevision? current)
+    {
+        if (expected is not { } wanted) return false;
+        var known = wanted.Size is not null || wanted.LastModified is not null || wanted.Version is not null;
+        if (!known) return false;
+        if (current is not { } actual) return true;
+
+        return (wanted.Size is { } size && actual.Size != size)
+            || (wanted.LastModified is { } modified && actual.LastModified != modified)
+            || (wanted.Version is { } version &&
+                !string.Equals(actual.Version, version, StringComparison.Ordinal));
+    }
+
+    private static string SourceKey(RatingWriteSource source) =>
+        (source.Kind == XmpRatingSource.Embedded ? "E|" : "S|") + source.Target.StorageId.Value;
+
+    private static bool IsSameRating(XmpRatingSnapshot snapshot, int rating) =>
+        rating == -1
+            ? snapshot.State == XmpRatingState.Rejected
+            : snapshot.State == XmpRatingState.Rated && snapshot.Value == rating;
+
+    private static string DescribeTarget(int rating) =>
+        rating == -1 ? "Rating -1（拒绝）" : $"Rating {rating}";
 
     private async Task<List<RatingWriteSource>> CollectSourcesAsync(
         PhotoGroup group,
@@ -405,7 +540,8 @@ public sealed class RatingService
         List<(RatingWriteSource Source, XmpRatingPreparation Preparation)> preparations,
         List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)> receipts,
         Dictionary<RatingWriteSource, string> compensationErrors,
-        RatingWriteSource? failedSource)
+        RatingWriteSource? failedSource,
+        string? failedSourceError)
     {
         var sourceOutcomes = new Dictionary<RatingWriteSource, RatingSourceOutcome>();
         foreach (var (source, preparation) in preparations)
@@ -413,7 +549,7 @@ public sealed class RatingService
             var receipt = receipts.FirstOrDefault(item => ReferenceEquals(item.Source, source));
             var written = receipt.Receipt is not null;
             var after = receipt.Receipt is { } applied ? applied.After : preparation.Before;
-            var error = ReferenceEquals(source, failedSource) ? "写入失败" : null;
+            var error = ReferenceEquals(source, failedSource) ? failedSourceError : null;
             compensationErrors.TryGetValue(source, out var compensationError);
             sourceOutcomes[source] = new RatingSourceOutcome(
                 source.Kind,
@@ -435,6 +571,7 @@ public sealed class RatingService
         List<(RatingWriteSource Source, XmpRatingWriteReceipt Receipt)> receipts,
         Dictionary<RatingWriteSource, string> compensationErrors,
         RatingWriteSource? failedSource,
+        string? failedSourceError,
         bool verifyRestoration)
     {
         var sourceOutcomes = new Dictionary<RatingWriteSource, RatingSourceOutcome>();
@@ -442,7 +579,7 @@ public sealed class RatingService
         {
             var receipt = receipts.FirstOrDefault(item => ReferenceEquals(item.Source, source));
             var written = receipt.Receipt != null;
-            string? error = ReferenceEquals(source, failedSource) ? "写入失败" : null;
+            string? error = ReferenceEquals(source, failedSource) ? failedSourceError : null;
             XmpRatingSnapshot? after = null;
             try
             {
@@ -536,6 +673,7 @@ public sealed class RatingService
         { State: XmpRatingState.Rated } value => $"Rating {value.Value}",
         { State: XmpRatingState.Rejected } => "Rating -1（拒绝）",
         { State: XmpRatingState.Missing } => "无评分",
+        { State: XmpRatingState.Unreadable } value => value.Error ?? "来源无法读取",
         { State: XmpRatingState.Conflict } => "多个 XMP 评分冲突",
         _ => "无效评分",
     };
@@ -592,6 +730,11 @@ public sealed class RatingService
             ? Owner.Name + "（内嵌）"
             : Target.Name + "（sidecar）";
     }
+
+    /// <summary>写入后整组校验的结果：<see cref="Problems"/> 非空即不能按成功收尾。</summary>
+    private sealed record RatingVerification(
+        IReadOnlyList<string> Problems,
+        RatingWriteSource? FailedSource);
 
     private sealed class GroupGate
     {

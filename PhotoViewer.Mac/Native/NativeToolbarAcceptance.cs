@@ -10,6 +10,8 @@ using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
 using SkiaSharp;
+using System.ComponentModel;
+using SortOrder = PhotoViewer.ViewModels.Main.SortOrder;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -149,6 +151,7 @@ internal static class NativeToolbarAcceptance
             }
             await VerifyRatingContinuityAsync(window, observations);
             await VerifyRatingConflictAsync(window, output, observations);
+            await VerifyRatingSourcesLiveAsync(window, output, observations);
             foreach (var entry in settings.ExifDisplayItems) entry.IsEnabled = true;
             foreach (var hotkey in settings.Hotkeys) hotkey.IsDisplay = true;
             settings.LayoutMode = LayoutMode.Row;
@@ -802,11 +805,15 @@ internal static class NativeToolbarAcceptance
                 if (cardPreviousContent != null && ReferenceEquals(cardPreviousContent, popover.Content))
                     throw new InvalidOperationException("卡片重开复用了已释放的内容视图");
                 cardPreviousContent = popover.Content;
-                if (popover.LastPreferredEdge != NSRectEdge.MaxYEdge)
-                    throw new InvalidOperationException($"横排卡片浮窗没有默认向下：{popover.LastPreferredEdge}");
+                // 横排卡片入口默认向下；底部卡片在屏幕下方放不下时向上（RATING-04）。
+                var expectedEdge = ExpectedCardEdge(window.Window, anchorScreen, (double)popover.Content.Frame.Height);
+                if (popover.LastPreferredEdge != expectedEdge)
+                    throw new InvalidOperationException($"横排卡片浮窗展开方向错误：{popover.LastPreferredEdge}，预期 {expectedEdge}");
                 var popoverFrame = (popover.Content.Window ?? throw new InvalidOperationException("卡片来源浮窗没有原生窗口")).Frame;
-                if ((double)(popoverFrame.Y + popoverFrame.Height / 2) >= (double)(anchorScreen.Y + anchorScreen.Height / 2))
-                    throw new InvalidOperationException($"卡片浮窗实际位置不在入口下方：anchor={anchorScreen}, popover={popoverFrame}");
+                bool opensUp = expectedEdge == NSRectEdge.MinYEdge;
+                bool above = (double)(popoverFrame.Y + popoverFrame.Height / 2) > (double)(anchorScreen.Y + anchorScreen.Height / 2);
+                if (above != opensUp)
+                    throw new InvalidOperationException($"卡片浮窗实际位置与展开方向不符：edge={expectedEdge}, anchor={anchorScreen}, popover={popoverFrame}");
                 var stableFrames = popover.EntryViews.Select(entry => entry.Frame).ToArray();
                 await Task.Delay(1300);
                 if (!popover.IsOpen || !window.Main.RatingSources.IsOpen || !popover.OwnsWindow(window.Window))
@@ -822,7 +829,7 @@ internal static class NativeToolbarAcceptance
                 popover.Close();
                 await WaitAsync(() => !window.Main.RatingSources.IsOpen, "关闭浮窗同步共享状态");
             }
-            observations.Add("RATING-04: a non-current filmstrip card opens downward without selecting or writing; three reopen cycles each remain stable for 1.3s with fresh native content and no stale anchor bounds access");
+            observations.Add("RATING-04: a non-current filmstrip card opens downward when the screen has room below (upward when the entry sits at the bottom) without selecting or writing; three reopen cycles each remain stable for 1.3s with fresh native content and no stale anchor bounds access");
         }
         finally
         {
@@ -835,10 +842,393 @@ internal static class NativeToolbarAcceptance
         }
     }
 
+    /// <summary>
+    /// RATING-04：用自有副本核对来源浮窗与共享来源状态的实时联动——非当前卡片在外部整批刷新
+    /// （含同名组替换）后条目立即更新；写入失败或写入成功但冲突仍未解除时保留并按磁盘真值刷新；
+    /// Esc 与切图关闭；首卡默认向下、底部卡片向上；锚点随栏位隐藏、列表重载、布局变化或滚动失效时关闭。
+    /// </summary>
+    private static async Task VerifyRatingSourcesLiveAsync(MacMainWindow window, string output, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var filter = window.Main.FileVM.FilterBar;
+        var popover = window.RatingSourcesPopover;
+        var entry = window.Main.CurrentFile ?? throw new InvalidOperationException("来源实时回归缺少进入时的当前照片");
+        string entryPath = entry.File.RequireLocalPath();
+        var entryId = entry.File.StorageId;
+        string entryFilter = filter.SelectedRatingFilter;
+        var entrySort = filter.SortOrder;
+        var entryLayout = settings.LayoutMode;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        bool entryShowRating = settings.ShowRating;
+        var entryFrame = window.Window.Frame;
+        var pngFormat = settings.FileFormats.FirstOrDefault(item => item.Id == "png");
+        bool entryPngEnabled = pngFormat?.IsEnabled ?? true;
+        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/rating-sources-live-fixtures");
+        string livePath = System.IO.Path.Combine(root, "live.jpg");
+        string otherPath = System.IO.Path.Combine(root, "other.jpg");
+        string failPath = System.IO.Path.Combine(root, "fail.jpg");
+        string failPngPath = System.IO.Path.Combine(root, "fail.png");
+        string liveSidecar = System.IO.Path.Combine(root, "live.xmp");
+        string failSidecar = System.IO.Path.Combine(root, "fail.xmp");
+        int failures = 0;
+        void OnFailed(ImageFile failed, int rating) => failures++;
+        try
+        {
+            settings.ShowRating = true;
+            if (pngFormat != null) pngFormat.IsEnabled = true;
+            window.Main.IsThumbnailViewVisible = true;
+            settings.LayoutMode = LayoutMode.Row;
+            filter.SelectedRatingFilter = "All";
+            Directory.CreateDirectory(root);
+            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), livePath, true);
+            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-02.jpg"), otherPath, true);
+            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), failPath, true);
+            File.Delete(liveSidecar);
+            File.Delete(failSidecar);
+            File.Delete(failPngPath);
+            window.Main.RatingWriteFailed += OnFailed;
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
+            await WaitAsync(() => window.Main.CurrentFile != null && window.Main.FolderVM.AllFiles.Count == 3, "来源实时夹具载入");
+            var live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            var other = window.Main.FolderVM.AllFiles.Single(file => file.Name == "other.jpg");
+            var fail = window.Main.FolderVM.AllFiles.Single(file => file.Name == "fail.jpg");
+            await window.Main.SetRatingAsync(live, 2);
+            await window.Main.SetRatingAsync(fail, 3);
+            await WaitAsync(() => live.Rating == 2 && fail.Rating == 3, "来源实时夹具初始内嵌评级");
+            // 真实 sidecar 与不可写的 PNG 成员：前者形成冲突，后者让整组在预检阶段失败。
+            await File.WriteAllTextAsync(liveSidecar, SidecarPacket(1));
+            await File.WriteAllTextAsync(failSidecar, SidecarPacket(1));
+            using (var bitmap = new SKBitmap(16, 16))
+            using (var image = SKImage.FromBitmap(bitmap))
+            using (var data = image.Encode(SKEncodedImageFormat.Png, 100)
+                ?? throw new InvalidOperationException("PNG 夹具生成失败"))
+                await File.WriteAllBytesAsync(failPngPath, data.ToArray());
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
+            await WaitAsync(() => window.Main.FolderVM.AllFiles.Count == 4, "来源实时夹具补齐 PNG 成员");
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            other = window.Main.FolderVM.AllFiles.Single(file => file.Name == "other.jpg");
+            fail = window.Main.FolderVM.AllFiles.Single(file => file.Name == "fail.jpg");
+            if (!live.HasRatingConflict || !fail.HasRatingConflict)
+                throw new InvalidOperationException($"来源实时夹具没有形成冲突：live={live.HasRatingConflict}, fail={fail.HasRatingConflict}");
+
+            // 1) 非当前卡片的浮窗：外部整批刷新 + 组替换后条目实时跟随，不依赖再次 Show 或写评分。
+            window.Main.CurrentFile = other;
+            await Task.Delay(150);
+            var liveGroupBefore = live.Group ?? throw new InvalidOperationException("live.jpg 未参与同名分组");
+            var liveCard = await WaitForCardAsync(window, live);
+            liveCard.ClearSlot.PerformClick(liveCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, live), "非当前卡片打开来源浮窗");
+            await File.WriteAllTextAsync(liveSidecar, SidecarPacket(4));
+            await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
+            await WaitAsync(() => window.Main.RatingSources.Items.Any(item =>
+                item.State.Source == XmpRatingSource.Sidecar && item.State.Value == 4), "外部整批刷新后来源条目实时跟随");
+            if (!popover.IsOpen || !ReferenceEquals(window.Main.RatingSources.Target, live))
+                throw new InvalidOperationException("外部整批刷新误关了来源浮窗或切换了目标");
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            if (ReferenceEquals(liveGroupBefore, live.Group))
+                throw new InvalidOperationException("目录重开没有替换同名组，实时订阅未被验证");
+            await File.WriteAllTextAsync(liveSidecar, SidecarPacket(5));
+            await live.RefreshMetadataAsync();
+            await WaitAsync(() => window.Main.RatingSources.Items.Any(item =>
+                item.State.Source == XmpRatingSource.Sidecar && item.State.Value == 5), "组替换后仍订阅目标来源");
+            if (!popover.EntryViews.Select(entryView => entryView.Status.StringValue)
+                .SequenceEqual(window.Main.RatingSources.Items.Select(item => item.Status)))
+                throw new InvalidOperationException("来源条目没有随共享 Items 一起刷新");
+            observations.Add("RATING-04: a non-current source popover follows an external full refresh and a replaced photo group without another Show/SetRating");
+
+            // 2) 写入失败：按磁盘真值刷新后保留，并给出 STATE-03。
+            popover.Close();
+            await WaitAsync(() => !window.Main.RatingSources.IsOpen, "失败用例前收起来源浮窗");
+            fail = window.Main.FolderVM.AllFiles.Single(file => file.Name == "fail.jpg");
+            var failGroup = fail.Group ?? throw new InvalidOperationException("fail.jpg 未参与同名分组");
+            if (!fail.HasRatingConflict || failGroup.Files.Count != 2)
+                throw new InvalidOperationException($"失败夹具组不完整：files={failGroup.Files.Count}, conflict={fail.HasRatingConflict}");
+            var failCard = await WaitForCardAsync(window, fail);
+            failCard.ClearSlot.PerformClick(failCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, fail), "失败用例打开来源浮窗");
+            var failItemsBefore = window.Main.RatingSources.Items
+                .Select(item => (item.Name, item.Status, item.State.State)).ToArray();
+            if (failItemsBefore.Single(item => item.Name == "fail.jpg").Status != "3 星"
+                || failItemsBefore.Single(item => item.Name == "fail.png").Status != "未设置"
+                || failItemsBefore.Single(item => item.Name == "fail.xmp").Status != "1 星")
+                throw new InvalidOperationException($"来源状态没有区分已评分与未设置：{string.Join(";", failItemsBefore)}");
+            int failuresBefore = failures;
+            var failStar = popover.EntryViews[0].Stars.Single(button => button.ToolTip == "4 星");
+            failStar.PerformClick(failStar);
+            await WaitAsync(() => failures > failuresBefore, "只读 PNG 成员让整组写回失败");
+            await Task.Delay(200);
+            if (!popover.IsOpen || !ReferenceEquals(window.Main.RatingSources.Target, fail))
+                throw new InvalidOperationException("写入失败后来源浮窗被关闭");
+            if (!window.StatusToast.IsVisible)
+                throw new InvalidOperationException("写入失败没有 STATE-03 提示条");
+            var failItemsAfter = window.Main.RatingSources.Items
+                .Select(item => (item.Name, item.Status, item.State.State)).ToArray();
+            if (!failItemsAfter.SequenceEqual(failItemsBefore))
+                throw new InvalidOperationException($"写入失败后的来源刷新改写了磁盘真值：{string.Join(";", failItemsAfter)}");
+            if (window.Main.FolderVM.AllFiles.Single(file => file.Name == "fail.jpg").Rating != 3)
+                throw new InvalidOperationException("预检失败的整组写回仍改写了内嵌来源");
+            var failedSidecar = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(failSidecar));
+            if (failedSidecar.State != XmpRatingState.Rated || failedSidecar.Value != 1)
+                throw new InvalidOperationException($"整组写回失败后 sidecar 被改写：{failedSidecar.State}/{failedSidecar.Value}");
+            if (popover.EntryViews.Count != failItemsAfter.Length)
+                throw new InvalidOperationException($"失败后来源条目数与 Items 不一致：{popover.EntryViews.Count}/{failItemsAfter.Length}");
+            // 组内伴侣文件的来源变化同样实时进入浮窗：订阅的是组成员，不只是目标文件。
+            var failCompanion = window.Main.FolderVM.AllFiles.Single(file => file.Name == "fail.png");
+            failCompanion.ApplyRatingSources([
+                new RatingSourceState(
+                    XmpRatingSource.Embedded,
+                    failCompanion.File,
+                    new XmpRatingSnapshot(XmpRatingState.Rated, 5, XmpRatingSource.Embedded))]);
+            await WaitAsync(() => window.Main.RatingSources.Items.Any(item =>
+                item.Name == "fail.png" && item.Status == "5 星"), "组内伴侣来源变化实时更新");
+            observations.Add("RATING-04: a failed whole-group write keeps the popover open with refreshed disk truth and a STATE-03 notice");
+
+            // 3) 写入成功但刷新后冲突仍未解除：保留浮窗并显示刷新后的来源。
+            popover.Close();
+            await WaitAsync(() => !window.Main.RatingSources.IsOpen, "成功冲突用例前收起来源浮窗");
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            window.Main.CurrentFile = other;
+            await Task.Delay(150);
+            var successCard = await WaitForCardAsync(window, live);
+            successCard.ClearSlot.PerformClick(successCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, live), "成功冲突用例打开来源浮窗");
+            int successFailures = failures;
+            var successTarget = live;
+            // 外部来源在写回刷新时出现：用共享 ApplyRatingSources 注入第三个来源，写入因此成功但组仍有冲突。
+            void InjectLateSource(object? sender, PropertyChangedEventArgs args)
+            {
+                if (args.PropertyName != nameof(ImageFile.RatingSources)) return;
+                if (successTarget.RatingSources.Any(source => source.File.Name == "external.xmp")) return;
+                var sources = successTarget.RatingSources.ToList();
+                sources.Add(new RatingSourceState(
+                    XmpRatingSource.Sidecar,
+                    new LocalFileRef(System.IO.Path.Combine(root, "external.xmp")),
+                    new XmpRatingSnapshot(XmpRatingState.Rated, 5, XmpRatingSource.Sidecar)));
+                successTarget.ApplyRatingSources(sources);
+            }
+            successTarget.PropertyChanged += InjectLateSource;
+            try
+            {
+                var successStar = popover.EntryViews[0].Stars.Single(button => button.ToolTip == "3 星");
+                successStar.PerformClick(successStar);
+                await WaitAsync(() => window.Main.RatingSources.Items.Any(item =>
+                    item.Name == "external.xmp" && item.Status == "5 星"), "写入成功但刷新后冲突仍在");
+                await Task.Delay(200);
+                if (!popover.IsOpen || !ReferenceEquals(window.Main.RatingSources.Target, successTarget))
+                    throw new InvalidOperationException("写入成功但冲突仍未解除时关闭了来源浮窗");
+                if (failures != successFailures || window.Main.LastRatingWriteError != null)
+                    throw new InvalidOperationException("成功写入被误报为失败");
+                var liveExif = await ExifLoader.LoadExifDataAsync(new LocalFileRef(livePath));
+                if (liveExif?.Rating != 3)
+                    throw new InvalidOperationException($"成功路径没有写回内嵌来源：{liveExif?.Rating}");
+                var liveSidecarState = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(liveSidecar));
+                if (liveSidecarState.State != XmpRatingState.Rated || liveSidecarState.Value != 3)
+                    throw new InvalidOperationException($"成功路径没有写回 sidecar：{liveSidecarState.State}/{liveSidecarState.Value}");
+                if (!popover.EntryViews.Select(entryView => entryView.Status.StringValue)
+                    .SequenceEqual(window.Main.RatingSources.Items.Select(item => item.Status)))
+                    throw new InvalidOperationException("写入成功后浮窗条目没有显示刷新后的来源状态");
+            }
+            finally
+            {
+                successTarget.PropertyChanged -= InjectLateSource;
+            }
+            observations.Add("RATING-04: a successful write keeps the popover open while the refreshed group still reports a conflict, showing the refreshed sources");
+
+            // 4) Esc 先关浮窗；切图关闭。
+            popover.Close();
+            await WaitAsync(() => !window.Main.RatingSources.IsOpen, "Esc 用例前收起来源浮窗");
+            window.Window.MakeKeyAndOrderFront(null);
+            window.Window.MakeFirstResponder(window.Photo);
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            var escCard = await WaitForCardAsync(window, live);
+            escCard.ClearSlot.PerformClick(escCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "Esc 用例打开来源浮窗");
+            await Task.Delay(150);
+            if (!popover.IsOpen) throw new InvalidOperationException("Esc 用例浮窗在按键前已关闭");
+            var popoverWindow = popover.Content.Window ?? throw new InvalidOperationException("来源浮窗没有原生窗口");
+            PostKey(NSEventType.KeyDown, popoverWindow.WindowNumber, 53);
+            try
+            {
+                await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "Esc 关闭来源浮窗", 2);
+            }
+            catch (TimeoutException)
+            {
+                PostKey(NSEventType.KeyDown, window.Window.WindowNumber, 53);
+                await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "主窗口 Esc 关闭来源浮窗", 2);
+            }
+            var switchCard = await WaitForCardAsync(window, live);
+            switchCard.ClearSlot.PerformClick(switchCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "切图用例打开来源浮窗");
+            window.Main.CurrentFile = window.Main.FolderVM.AllFiles.First(file => !ReferenceEquals(file, window.Main.CurrentFile));
+            await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "切图关闭来源浮窗");
+            window.Main.CurrentFile = other;
+            await Task.Delay(150);
+            observations.Add("RATING-04: Esc closes the source popover first and switching photos closes it as well");
+
+            // 5) 首卡默认向下；窗口贴屏幕底部时底部卡片向上。
+            // 用单来源目标保持浮窗较低，任何支持 560×480 窗口的屏幕都能核对两侧空间。
+            var screen = window.Window.Screen ?? NSScreen.MainScreen ?? throw new InvalidOperationException("没有可用屏幕");
+            var visible = screen.VisibleFrame;
+            double width = Math.Min(900, (double)visible.Width - 80);
+            double height = Math.Min(480, (double)visible.Height - 80);
+            if (height < 480 || width < 560)
+                throw new InvalidOperationException($"屏幕可用区域不足以验证卡片展开方向：{visible}");
+            settings.LayoutMode = LayoutMode.Row;
+            window.Window.SetFrame(new CGRect(
+                (double)visible.X + 40,
+                (double)visible.Y + (double)visible.Height - height - 20,
+                width,
+                height), true);
+            await Task.Delay(350);
+            other = window.Main.FolderVM.AllFiles.Single(file => file.Name == "other.jpg");
+            var topCard = await WaitForCardAsync(window, other);
+            var topAnchor = window.Window.ConvertRectToScreen(topCard.ClearSlot.ConvertRectToView(topCard.ClearSlot.Bounds, null));
+            window.ShowRatingSources(other, topCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "顶部卡片打开来源浮窗");
+            double contentHeight = (double)popover.Content.Frame.Height;
+            double below = (double)(topAnchor.Y - visible.Y);
+            if (below < contentHeight + 12)
+                throw new InvalidOperationException($"顶部窗口下方仍无展开空间，无法核对默认向下：{below}");
+            if (popover.LastPreferredEdge != NSRectEdge.MaxYEdge)
+                throw new InvalidOperationException($"首卡没有默认向下：{popover.LastPreferredEdge}");
+            var topFrame = (popover.Content.Window ?? throw new InvalidOperationException("来源浮窗没有原生窗口")).Frame;
+            if ((double)(topFrame.Y + topFrame.Height / 2) >= (double)(topAnchor.Y + topAnchor.Height / 2))
+                throw new InvalidOperationException($"首卡浮窗实际不在入口下方：anchor={topAnchor}, popover={topFrame}");
+            popover.Close();
+            await WaitAsync(() => !popover.IsOpen, "收起首卡浮窗");
+
+            settings.LayoutMode = LayoutMode.Col;
+            window.Window.SetFrame(new CGRect((double)visible.X + 40, (double)visible.Y, width, height), true);
+            await Task.Delay(350);
+            other = window.Main.FolderVM.AllFiles.Single(file => file.Name == "other.jpg");
+            window.Main.CurrentFile = other;
+            window.Main.FileVM.ThumbnailList.ScrollToCurrent();
+            await Task.Delay(500);
+            var bottomCard = await WaitForCardAsync(window, other);
+            var bottomAnchor = window.Window.ConvertRectToScreen(bottomCard.ClearSlot.ConvertRectToView(bottomCard.ClearSlot.Bounds, null));
+            window.ShowRatingSources(other, bottomCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "底部卡片打开来源浮窗");
+            contentHeight = (double)popover.Content.Frame.Height;
+            below = (double)(bottomAnchor.Y - visible.Y);
+            if (below >= contentHeight + 12)
+                throw new InvalidOperationException($"底部窗口仍有展开空间，无法核对向上：{below}");
+            if (popover.LastPreferredEdge != NSRectEdge.MinYEdge)
+                throw new InvalidOperationException($"底部卡片没有向上展开：{popover.LastPreferredEdge}");
+            var bottomFrame = (popover.Content.Window ?? throw new InvalidOperationException("来源浮窗没有原生窗口")).Frame;
+            if ((double)(bottomFrame.Y + bottomFrame.Height / 2) <= (double)(bottomAnchor.Y + bottomAnchor.Height / 2))
+                throw new InvalidOperationException($"底部卡片浮窗实际不在入口上方：anchor={bottomAnchor}, popover={bottomFrame}");
+            NativeSnapshots.SaveView(popover.Content, System.IO.Path.Combine(output, "rating-sources-popover-upward.png"));
+            popover.Close();
+            await WaitAsync(() => !popover.IsOpen, "收起底部卡片浮窗");
+            observations.Add("RATING-04: the first card opens downward with room below, and a card at the bottom of the screen opens upward using the same content size");
+
+            // 6) 锚点失效：隐藏栏位、列表重载、布局变化、滚动移走卡片都关闭浮窗。
+            window.Window.SetFrame(entryFrame, true);
+            settings.LayoutMode = LayoutMode.Row;
+            await Task.Delay(350);
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            var hiddenCard = await WaitForCardAsync(window, live);
+            hiddenCard.ClearSlot.PerformClick(hiddenCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "隐藏栏位用例打开来源浮窗");
+            window.Main.IsThumbnailViewVisible = false;
+            await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "隐藏胶片栏关闭来源浮窗");
+            window.Main.IsThumbnailViewVisible = true;
+            await Task.Delay(500);
+
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            var reloadCard = await WaitForCardAsync(window, live);
+            reloadCard.ClearSlot.PerformClick(reloadCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "列表重载用例打开来源浮窗");
+            filter.SortOrder = filter.SortOrders
+                .Select(option => (SortOrder)option.Value)
+                .First(order => order != filter.SortOrder);
+            await WaitAsync(() => !popover.IsOpen, "列表重载关闭来源浮窗");
+            filter.SortOrder = entrySort;
+            await Task.Delay(300);
+
+            live = window.Main.FolderVM.AllFiles.Single(file => file.Name == "live.jpg");
+            var resizeCard = await WaitForCardAsync(window, live);
+            resizeCard.ClearSlot.PerformClick(resizeCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "布局变化用例打开来源浮窗");
+            var contentSize = window.Window.ContentView?.Bounds.Size ?? new CGSize(1200, 850);
+            window.Window.SetContentSize(new CGSize(
+                Math.Max(600, (double)contentSize.Width - 120), Math.Max(500, (double)contentSize.Height - 100)));
+            await WaitAsync(() => !popover.IsOpen, "布局变化关闭来源浮窗");
+            window.Window.SetFrame(entryFrame, true);
+            await Task.Delay(300);
+
+            settings.LayoutMode = LayoutMode.Col;
+            window.Window.SetContentSize(new CGSize(560, 480));
+            await Task.Delay(350);
+            window.Main.CurrentFile = other;
+            await Task.Delay(150);
+            window.Main.FileVM.ThumbnailList.ScrollToCurrent();
+            await Task.Delay(400);
+            var current = window.Main.CurrentFile ?? throw new InvalidOperationException("滚动用例缺少当前照片");
+            var currentCard = await WaitForCardAsync(window, current);
+            window.ShowRatingSources(current, currentCard.ClearSlot);
+            await WaitAsync(() => popover.IsOpen, "滚动用例打开来源浮窗");
+            await Task.Delay(200);
+            if (!popover.IsOpen) throw new InvalidOperationException("滚动用例浮窗在滚动前就已关闭");
+            var clip = window.FilmstripScroll.ContentView;
+            // 列布局小窗口里胶片栏可纵向滚动；滚到与当前位置不同的偏移即代表锚点卡片移走。
+            double targetOffset = (double)clip.Bounds.Y > 40 ? 0 : 120;
+            clip.ScrollToPoint(new CGPoint((double)clip.Bounds.X, targetOffset));
+            window.FilmstripScroll.ReflectScrolledClipView(clip);
+            await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "滚动移走锚点后关闭来源浮窗");
+            observations.Add("RATING-04: hiding the filmstrip, reloading the list, resizing the window or scrolling the anchor away closes the source popover instead of leaving it over a moved card");
+            observations.Add($"RATING-04: closed popover presentations stay retained for the window lifetime ({popover.RetiredPresentationCount} after this regression) because AppKit reads anchor bounds after close; no early Dispose or reuse");
+        }
+        finally
+        {
+            window.Main.RatingWriteFailed -= OnFailed;
+            try { popover.Close(); }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 来源实时回归收尾关闭浮窗失败：" + exception.Message); }
+            settings.ShowRating = entryShowRating;
+            if (pngFormat != null) pngFormat.IsEnabled = entryPngEnabled;
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            settings.LayoutMode = entryLayout;
+            filter.SelectedRatingFilter = entryFilter;
+            filter.SortOrder = entrySort;
+            window.Window.SetFrame(entryFrame, true);
+            try
+            {
+                if (window.Main.CurrentFile?.File.StorageId != entryId)
+                    await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
+            }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 来源实时回归收尾还原失败：" + exception.Message); }
+            await Task.Delay(200);
+        }
+    }
+
     /// <summary>写一份结构完整的最小 sidecar XMP 包，只含单个 <c>xap:Rating</c>。</summary>
     private static string SidecarPacket(int rating)
         => "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">"
             + $"<rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"{rating}\"/></rdf:RDF></x:xmpmeta>";
+
+    /// <summary>
+    /// 按屏幕可见区域独立推算卡片入口应有的展开方向：下方放得下就向下，否则上方放得下就向上，
+    /// 两侧都不够时保留规范默认向下。与实现同口径但只用屏幕坐标推导，避免测试照抄实现变量。
+    /// </summary>
+    private static NSRectEdge ExpectedCardEdge(NSWindow window, CGRect anchorScreen, double contentHeight)
+    {
+        var screen = window.Screen ?? NSScreen.MainScreen;
+        if (screen == null) return NSRectEdge.MaxYEdge;
+        var visible = screen.VisibleFrame;
+        double below = (double)(anchorScreen.Y - visible.Y);
+        double above = (double)(visible.Y + visible.Height - (anchorScreen.Y + anchorScreen.Height));
+        double required = contentHeight + 12;
+        return below < required && above >= required ? NSRectEdge.MinYEdge : NSRectEdge.MaxYEdge;
+    }
+
+    /// <summary>把一次真实按键事件投进应用事件队列（本地监视器与产品路径一致）。</summary>
+    private static void PostKey(NSEventType type, nint windowNumber, ushort keyCode)
+    {
+        var key = NSEvent.KeyEvent(type, CGPoint.Empty, 0, NSProcessInfo.ProcessInfo.SystemUptime,
+            windowNumber, null!, "\u001b", "\u001b", false, keyCode)
+            ?? throw new InvalidOperationException("按键事件创建失败");
+        NSApplication.SharedApplication.PostEvent(key, false);
+    }
 
     /// <summary>轮询等待真实状态并设定有限超时，失败不输出虚假的通过报告。</summary>
     private static async Task WaitAsync(Func<bool> condition, string name, int seconds = 5)

@@ -175,6 +175,15 @@ internal static class AndroidStorageSupport
         }
     }
 
+    /// <summary>
+    /// 读取一个 <c>content://</c> URI 的属性：DocumentsProvider 文档走 SAF 投影，
+    /// 其它（MediaStore 等只有数字 ID 的通用 provider）走通用列。
+    /// </summary>
+    internal static AndroidDocumentMetadata QueryContentMetadata(ContentResolver resolver, AndroidUri uri, string name)
+        => IsDocumentUri(uri)
+            ? QueryDocument(resolver, uri, name)
+            : QueryGenericContent(resolver, uri);
+
     internal static AndroidDocumentMetadata ReadMetadata(ICursor cursor) => new(
         ReadString(cursor, DocumentsContract.Document.ColumnDisplayName),
         ReadString(cursor, DocumentsContract.Document.ColumnMimeType),
@@ -277,6 +286,8 @@ internal static class AndroidStorageSupport
 /// Android 文件引用：SAF <c>content://</c> 文档与本地文件路径都实现共享 <see cref="IFileRef"/>。
 /// SAF 引用保留树 Uri 与自身文档 ID，读取/写入/属性都经 <see cref="ContentResolver"/>；
 /// 本地路径用于验收夹具与 <c>file://</c> 外部打开。
+/// 目录枚举投影只是打开时的快照：属性读取与随机会话每次都重新查询，
+/// 能力（Document flags）由后台投影补齐，名称/能力 getter 不做同步 binder 调用。
 /// </summary>
 public sealed class AndroidFileRef : IFileRef
 {
@@ -286,10 +297,11 @@ public sealed class AndroidFileRef : IFileRef
     private readonly string? _localPath;
     private readonly string? _documentId;
     private readonly StorageItemId _storageId;
+    private readonly object _metadataGate = new();
 
     private AndroidDocumentMetadata _metadata;
-    private bool _propertiesLoaded;
-    private StorageException? _projectionFailure;
+    private int _propertiesLoaded;
+    private int _backgroundRefreshStarted;
 
     /// <summary>从 SAF 文档构造引用。</summary>
     /// <param name="resolver">内容解析器。</param>
@@ -307,7 +319,7 @@ public sealed class AndroidFileRef : IFileRef
     {
     }
 
-    /// <summary>枚举投影已完整读取时使用：不再重复查询属性。</summary>
+    /// <summary>枚举投影已完整读取时使用：构造时不再重复查询，但仍会在属性读取时重新核对。</summary>
     internal AndroidFileRef(ContentResolver resolver, AndroidUri documentUri, AndroidUri? treeUri,
         AndroidDocumentMetadata metadata, bool propertiesLoaded)
     {
@@ -315,7 +327,7 @@ public sealed class AndroidFileRef : IFileRef
         _uri = documentUri;
         _treeUri = treeUri;
         _metadata = metadata;
-        _propertiesLoaded = propertiesLoaded;
+        _propertiesLoaded = propertiesLoaded ? 1 : 0;
         Path = new Uri(documentUri.ToString()!);
         _documentId = AndroidStorageSupport.GetDocumentId(documentUri);
         _storageId = AndroidStorageSupport.CreateStorageId(Path, documentUri, _documentId, null);
@@ -334,11 +346,17 @@ public sealed class AndroidFileRef : IFileRef
         _storageId = StorageItemId.FromLocalPath(full);
     }
 
-    /// <summary>文件显示名。</summary>
-    public string Name => _metadata.DisplayName
-        ?? AndroidStorageSupport.NameFromDocumentId(_documentId)
-        ?? _uri.LastPathSegment
-        ?? "image";
+    /// <summary>
+    /// 文件显示名。只读缓存：首次访问时在后台补查真实投影，getter 本身不做 binder 调用。
+    /// </summary>
+    public string Name
+    {
+        get
+        {
+            EnsureBackgroundProjection();
+            return CachedName;
+        }
+    }
 
     /// <summary>平台路径 URI。</summary>
     public Uri Path { get; }
@@ -349,12 +367,15 @@ public sealed class AndroidFileRef : IFileRef
     /// <summary>
     /// 能力三态：本地按文件系统，SAF 按 Provider 的 Document flags；AtomicReplace 恒为不支持
     /// （SAF 没有不删除原目标的原子替换）。flags 缺失时保持 Unknown，不武断判为不支持。
+    /// flags 只能由后台投影补齐，getter 不做同步 binder 查询。
     /// </summary>
     public StorageCapabilities Capabilities
     {
         get
         {
             if (_localPath != null) return StorageCapabilities.Local;
+            EnsureBackgroundProjection();
+            var flags = Metadata.Flags;
             if (_documentId == null)
             {
                 return new StorageCapabilities
@@ -366,12 +387,10 @@ public sealed class AndroidFileRef : IFileRef
 
             return new StorageCapabilities
             {
-                RandomAccessWrite = AndroidStorageSupport.FromFlags(
-                    _metadata.Flags, DocumentContractFlags.SupportsWrite),
+                RandomAccessWrite = AndroidStorageSupport.FromFlags(flags, DocumentContractFlags.SupportsWrite),
                 AtomicReplace = StorageCapability.Unsupported,
                 CreateChild = StorageCapability.Unsupported,
-                Delete = AndroidStorageSupport.FromFlags(
-                    _metadata.Flags, DocumentContractFlags.SupportsDelete),
+                Delete = AndroidStorageSupport.FromFlags(flags, DocumentContractFlags.SupportsDelete),
                 PersistAccess = StorageCapability.Supported,
             };
         }
@@ -427,7 +446,10 @@ public sealed class AndroidFileRef : IFileRef
         }, cancellationToken);
     }
 
-    /// <summary>读取文件大小与修改时间；缺 mtime 时补查完整投影。</summary>
+    /// <summary>
+    /// 读取文件大小与修改时间。每次调用都重新查询 Provider：目录枚举/打开时的投影只是快照，
+    /// 外部程序改过文件后不能继续返回旧 size/mtime。
+    /// </summary>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>基本属性。</returns>
     public Task<StorageItemBasicProperties> GetBasicPropertiesAsync(CancellationToken cancellationToken = default)
@@ -438,9 +460,10 @@ public sealed class AndroidFileRef : IFileRef
         return Task.Run(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            EnsureProjection();
+            RefreshProjection(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            return new StorageItemBasicProperties(_metadata.Size, _metadata.Modified);
+            var metadata = Metadata;
+            return new StorageItemBasicProperties(metadata.Size, metadata.Modified);
         }, cancellationToken);
     }
 
@@ -459,11 +482,14 @@ public sealed class AndroidFileRef : IFileRef
         return Task.FromResult(GetDocumentParent());
     }
 
-    /// <summary>打开随机访问会话；本地文件用共享本地实现，SAF 走文件描述符。</summary>
+    /// <summary>
+    /// 打开随机访问会话；本地文件用共享本地实现，SAF 走文件描述符。
+    /// 会话尺寸/时间取自打开瞬间的新鲜属性与描述符真实长度，不沿用目录投影。
+    /// </summary>
     /// <param name="mode">只读或读写。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>随机访问会话。</returns>
-    public Task<IStorageRandomAccessSession> OpenRandomAccessAsync(
+    public async Task<IStorageRandomAccessSession> OpenRandomAccessAsync(
         StorageAccessMode mode,
         CancellationToken cancellationToken = default)
     {
@@ -472,7 +498,7 @@ public sealed class AndroidFileRef : IFileRef
         {
             try
             {
-                return Task.FromResult<IStorageRandomAccessSession>(new LocalRandomAccessSession(local, mode));
+                return new LocalRandomAccessSession(local, mode);
             }
             catch (Exception exception)
             {
@@ -480,8 +506,16 @@ public sealed class AndroidFileRef : IFileRef
             }
         }
 
-        return AndroidRandomAccessSession.OpenAsync(
-            _resolver, _uri, mode, _metadata.Size, _metadata.Modified, Name, cancellationToken);
+        var metadata = await Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            RefreshProjection(cancellationToken);
+            return Metadata;
+        }, cancellationToken).ConfigureAwait(false);
+
+        return await AndroidRandomAccessSession.OpenAsync(
+            _resolver, _uri, mode, metadata.Size, metadata.Modified, CachedName, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -555,44 +589,103 @@ public sealed class AndroidFileRef : IFileRef
         return new StorageItemBasicProperties((ulong)info.Length, modified);
     }
 
-    private void EnsureProjection()
+    /// <summary>缓存中的显示名（含文档 ID / Uri 末段兜底），不触发任何查询。</summary>
+    private string CachedName => Metadata.DisplayName
+        ?? AndroidStorageSupport.NameFromDocumentId(_documentId)
+        ?? _uri.LastPathSegment
+        ?? "image";
+
+    private AndroidDocumentMetadata Metadata
     {
-        if (_propertiesLoaded) return;
-        if (_documentId == null)
+        get
         {
-            var generic = AndroidStorageSupport.QueryGenericContent(_resolver, _uri);
-            _metadata = generic with
-            {
-                DisplayName = generic.DisplayName ?? _metadata.DisplayName,
-                Size = generic.Size ?? _metadata.Size,
-                Modified = generic.Modified ?? _metadata.Modified,
-            };
-            _propertiesLoaded = true;
-            return;
-        }
-        if (_projectionFailure != null) throw _projectionFailure;
-        try
-        {
-            _metadata = AndroidStorageSupport.QueryDocument(_resolver, _uri, Name);
-            _propertiesLoaded = true;
-        }
-        catch (StorageException exception)
-        {
-            _projectionFailure = exception;
-            throw;
+            lock (_metadataGate) return _metadata;
         }
     }
 
-    private void TryEnsureProjection()
+    /// <summary>
+    /// 外部打开用工厂：在后台线程读取真实投影（显示名/大小/时间/flags）。
+    /// 只有数字 documentId 的 <c>content://</c>（MediaStore 等）Uri 末段不是文件名，
+    /// 不先查通用列就无法按扩展名判定类型，打开链会把目标当成不支持的文件丢弃。
+    /// </summary>
+    /// <param name="resolver">内容解析器。</param>
+    /// <param name="documentUri">外部传入的 <c>content://</c> Uri。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>带真实显示名的文件引用。</returns>
+    internal static Task<AndroidFileRef> CreateForContentUriAsync(
+        ContentResolver resolver,
+        AndroidUri documentUri,
+        CancellationToken cancellationToken = default)
     {
-        try
+        return Task.Run(() =>
         {
-            EnsureProjection();
-        }
-        catch (Exception)
+            cancellationToken.ThrowIfCancellationRequested();
+            string name = AndroidStorageSupport.NameFromDocumentId(AndroidStorageSupport.GetDocumentId(documentUri))
+                ?? documentUri.LastPathSegment
+                ?? "image";
+            var metadata = AndroidStorageSupport.QueryContentMetadata(resolver, documentUri, name);
+            // 通用 provider 不支持这些列时投影为空：保持未加载，后续访问会在后台再试。
+            return new AndroidFileRef(resolver, documentUri, null, metadata, metadata.DisplayName != null);
+        }, cancellationToken);
+    }
+
+    /// <summary>
+    /// 重新查询 Provider 投影并更新缓存。属性/能力/随机会话共用这一条新鲜度路径；
+    /// 调用方必须已经在后台线程上，binder 查询不得落在 UI 线程。
+    /// </summary>
+    private void RefreshProjection(CancellationToken cancellationToken)
+    {
+        var cached = Metadata;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_documentId == null)
         {
-            // 能力查询失败时保持 Unknown，不把属性查询异常抛到 UI 线程。
+            // 通用 content URI 用通用列；空投影不覆盖已有显示名/大小/时间。
+            var generic = AndroidStorageSupport.QueryGenericContent(_resolver, _uri);
+            lock (_metadataGate)
+            {
+                _metadata = generic with
+                {
+                    DisplayName = generic.DisplayName ?? cached.DisplayName,
+                    Size = generic.Size ?? cached.Size,
+                    Modified = generic.Modified ?? cached.Modified,
+                };
+                if (_metadata.DisplayName != null) Volatile.Write(ref _propertiesLoaded, 1);
+            }
+            return;
         }
+
+        var metadata = AndroidStorageSupport.QueryDocument(_resolver, _uri, cached.DisplayName
+            ?? AndroidStorageSupport.NameFromDocumentId(_documentId)
+            ?? _uri.LastPathSegment
+            ?? "image");
+        lock (_metadataGate)
+        {
+            _metadata = metadata;
+            Volatile.Write(ref _propertiesLoaded, 1);
+        }
+    }
+
+    /// <summary>
+    /// 后台补齐属性与能力：枚举结果已带完整投影，其余（选择器/外部打开）在首次访问
+    /// <see cref="Name"/> 或 <see cref="Capabilities"/> 时启动一次后台查询。
+    /// getter 本身不做 binder 调用，UI 线程不会被 Provider 拖住。
+    /// </summary>
+    private void EnsureBackgroundProjection()
+    {
+        if (_localPath != null) return;
+        if (Volatile.Read(ref _propertiesLoaded) == 1) return;
+        if (Interlocked.Exchange(ref _backgroundRefreshStarted, 1) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                RefreshProjection(CancellationToken.None);
+            }
+            catch (Exception)
+            {
+                // 查询失败时能力保持 Unknown；真正的属性读取会重新查询并向调用方抛 typed 异常。
+            }
+        });
     }
 
     private IFolderRef? GetDocumentParent()
@@ -648,10 +741,11 @@ public sealed class AndroidFolderRef : IFolderRef
     private readonly string? _localPath;
     private readonly string? _documentId;
     private readonly StorageItemId _storageId;
+    private readonly object _metadataGate = new();
 
     private AndroidDocumentMetadata _metadata;
-    private bool _propertiesLoaded;
-    private bool _projectionAttempted;
+    private int _propertiesLoaded;
+    private int _backgroundRefreshStarted;
 
     /// <summary>从 SAF 树构造目录引用（选择器返回的根树）。</summary>
     /// <param name="resolver">内容解析器。</param>
@@ -679,7 +773,7 @@ public sealed class AndroidFolderRef : IFolderRef
         _treeUri = treeUri;
         _documentId = documentId;
         _metadata = metadata with { DisplayName = displayName ?? metadata.DisplayName };
-        _propertiesLoaded = propertiesLoaded;
+        _propertiesLoaded = propertiesLoaded ? 1 : 0;
         Path = new Uri(documentUri.ToString()!);
         _storageId = AndroidStorageSupport.CreateStorageId(Path, documentUri, documentId, null);
     }
@@ -696,11 +790,18 @@ public sealed class AndroidFolderRef : IFolderRef
         _storageId = StorageItemId.FromLocalPath(_localPath);
     }
 
-    /// <summary>目录显示名。</summary>
-    public string Name => _metadata.DisplayName
-        ?? AndroidStorageSupport.NameFromDocumentId(_documentId)
-        ?? _uri.LastPathSegment
-        ?? "文件夹";
+    /// <summary>
+    /// 目录显示名。只读缓存：选择器根树等未带投影的引用在首次访问时后台补查，
+    /// getter 本身不做 binder 调用。
+    /// </summary>
+    public string Name
+    {
+        get
+        {
+            EnsureBackgroundProjection();
+            return CachedName;
+        }
+    }
 
     /// <summary>目录路径 URI。</summary>
     public Uri Path { get; }
@@ -708,12 +809,17 @@ public sealed class AndroidFolderRef : IFolderRef
     /// <summary>稳定身份；SAF 目录按 authority + 目录文档 ID。</summary>
     public StorageItemId StorageId => _storageId;
 
-    /// <summary>能力三态：本地按文件系统，SAF 按 Document flags；AtomicReplace 恒为不支持。</summary>
+    /// <summary>
+    /// 能力三态：本地按文件系统，SAF 按 Document flags；AtomicReplace 恒为不支持。
+    /// flags 只能由后台投影补齐，getter 不做同步 binder 查询。
+    /// </summary>
     public StorageCapabilities Capabilities
     {
         get
         {
             if (_localPath != null) return StorageCapabilities.Local;
+            EnsureBackgroundProjection();
+            var flags = Metadata.Flags;
             if (_documentId == null)
             {
                 return new StorageCapabilities
@@ -727,10 +833,8 @@ public sealed class AndroidFolderRef : IFolderRef
             {
                 RandomAccessWrite = StorageCapability.Unsupported,
                 AtomicReplace = StorageCapability.Unsupported,
-                CreateChild = AndroidStorageSupport.FromFlags(
-                    _metadata.Flags, DocumentContractFlags.DirSupportsCreate),
-                Delete = AndroidStorageSupport.FromFlags(
-                    _metadata.Flags, DocumentContractFlags.SupportsDelete),
+                CreateChild = AndroidStorageSupport.FromFlags(flags, DocumentContractFlags.DirSupportsCreate),
+                Delete = AndroidStorageSupport.FromFlags(flags, DocumentContractFlags.SupportsDelete),
                 PersistAccess = StorageCapability.Supported,
             };
         }
@@ -904,31 +1008,54 @@ public sealed class AndroidFolderRef : IFolderRef
         }
     }
 
-    private void EnsureProjection()
+    /// <summary>缓存中的显示名（含文档 ID / Uri 末段兜底），不触发任何查询。</summary>
+    private string CachedName => Metadata.DisplayName
+        ?? AndroidStorageSupport.NameFromDocumentId(_documentId)
+        ?? _uri.LastPathSegment
+        ?? "文件夹";
+
+    private AndroidDocumentMetadata Metadata
     {
-        if (_propertiesLoaded) return;
-        if (_documentId == null)
+        get
         {
-            _propertiesLoaded = true;
-            return;
+            lock (_metadataGate) return _metadata;
         }
-        if (_projectionAttempted) return;
-        _projectionAttempted = true;
-        var target = BuildDocumentUri(_documentId) ?? _uri;
-        _metadata = AndroidStorageSupport.QueryDocument(_resolver, target, Name);
-        _propertiesLoaded = true;
     }
 
-    private void TryEnsureProjection()
+    /// <summary>查询并缓存目录自身的投影（调用方保证在后台线程）。</summary>
+    private void RefreshProjection()
     {
-        try
+        if (_documentId == null) return;
+        var target = BuildDocumentUri(_documentId) ?? _uri;
+        var metadata = AndroidStorageSupport.QueryDocument(_resolver, target, CachedName);
+        lock (_metadataGate)
         {
-            EnsureProjection();
+            _metadata = metadata;
+            Volatile.Write(ref _propertiesLoaded, 1);
         }
-        catch (Exception)
+    }
+
+    /// <summary>
+    /// 后台补齐目录投影与能力：选择器返回的根树 / 未带投影的目录在首次访问
+    /// <see cref="Name"/> 或 <see cref="Capabilities"/> 时启动一次后台查询，
+    /// getter 本身不做 binder 调用。
+    /// </summary>
+    private void EnsureBackgroundProjection()
+    {
+        if (_localPath != null || _documentId == null) return;
+        if (Volatile.Read(ref _propertiesLoaded) == 1) return;
+        if (Interlocked.Exchange(ref _backgroundRefreshStarted, 1) != 0) return;
+        _ = Task.Run(() =>
         {
-            // 能力查询失败时保持 Unknown。
-        }
+            try
+            {
+                RefreshProjection();
+            }
+            catch (Exception)
+            {
+                // 查询失败时能力保持 Unknown。
+            }
+        });
     }
 
     /// <summary>SAF 目录自身的文档 Uri。</summary>

@@ -5,14 +5,19 @@ namespace PhotoViewer.Core.Storage;
 public sealed class LocalFileRef : IFileRef
 {
     private readonly string _localPath;
+    private readonly StorageItemId _storageId;
 
-    public LocalFileRef(string localPath) => _localPath = System.IO.Path.GetFullPath(localPath);
+    public LocalFileRef(string localPath)
+    {
+        _localPath = System.IO.Path.GetFullPath(localPath);
+        _storageId = StorageItemId.FromLocalPath(_localPath);
+    }
 
     public string Name => System.IO.Path.GetFileName(_localPath);
 
     public Uri Path => new(_localPath);
 
-    public StorageItemId StorageId => StorageItemId.FromLocalPath(_localPath);
+    public StorageItemId StorageId => _storageId;
 
     public StorageCapabilities Capabilities => StorageCapabilities.Local;
 
@@ -113,7 +118,8 @@ public sealed class LocalFileRef : IFileRef
             {
                 File.Replace(tempPath, _localPath, backupPath, true);
                 replaced = true;
-                File.Delete(backupPath);
+                // 替换已经生效：备份清理属于收尾，删不掉（目录在替换后被收紧权限等）不能把成功写回报成失败。
+                try { File.Delete(backupPath); } catch { }
             }
             else
             {
@@ -171,14 +177,19 @@ public sealed class LocalFileRef : IFileRef
 public sealed class LocalFolderRef : IFolderRef
 {
     private readonly string _localPath;
+    private readonly StorageItemId _storageId;
 
-    public LocalFolderRef(string localPath) => _localPath = System.IO.Path.GetFullPath(localPath);
+    public LocalFolderRef(string localPath)
+    {
+        _localPath = System.IO.Path.GetFullPath(localPath);
+        _storageId = StorageItemId.FromLocalPath(_localPath);
+    }
 
     public string Name => new DirectoryInfo(_localPath).Name;
 
     public Uri Path => new(_localPath.TrimEnd(System.IO.Path.DirectorySeparatorChar) + System.IO.Path.DirectorySeparatorChar);
 
-    public StorageItemId StorageId => StorageItemId.FromLocalPath(_localPath);
+    public StorageItemId StorageId => _storageId;
 
     public StorageCapabilities Capabilities => StorageCapabilities.Local;
 

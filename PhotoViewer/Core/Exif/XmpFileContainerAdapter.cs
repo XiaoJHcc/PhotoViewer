@@ -28,21 +28,4 @@ public sealed class XmpFileContainerAdapter : IXmpContainerAdapter
         var data = buffer.ToArray();
         return data.Length == 0 ? null : new XmpContainerPacket(0, data.Length, data);
     }
-
-    /// <summary>兼容旧的适配器入口：把整文件当作包，经评分存储做等长原位写入。</summary>
-    public Task<XmpRatingWriteReceipt> WriteRatingAsync(
-        IFileRef file,
-        int rating,
-        bool safeMode,
-        CancellationToken cancellationToken = default) =>
-        new ContainerRatingStore(file, this, XmpRatingSource.Sidecar)
-            .WriteAsync(rating, safeMode, cancellationToken);
-
-    /// <summary>兼容旧的适配器入口：按回执恢复整文件内容。</summary>
-    public Task RestoreAsync(
-        IFileRef file,
-        XmpRatingWriteReceipt receipt,
-        CancellationToken cancellationToken = default) =>
-        new ContainerRatingStore(file, this, XmpRatingSource.Sidecar)
-            .RestoreAsync(receipt, cancellationToken);
 }

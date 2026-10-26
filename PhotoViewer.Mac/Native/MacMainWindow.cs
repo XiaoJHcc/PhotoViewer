@@ -62,6 +62,7 @@ public sealed class MacMainWindow : IDisposable
     private NSMenuDelegate? _menuDelegate;
     private readonly NSObject _scrollObserver;
     private readonly NSObject _liveScrollObserver;
+    private readonly NSObject _controlScrollObserver;
     private readonly NSObject _inputMonitor;
     private ImageFile? _observedFile;
     private ImageFile[] _displayedFiles = [];
@@ -70,6 +71,9 @@ public sealed class MacMainWindow : IDisposable
     private bool _refreshPending;
     private bool _disposed;
     private int _scrollRequestVersion;
+    private CGPoint _lastFilmstripOrigin;
+    private CGPoint _lastControlOrigin;
+    private CGSize _lastRootSize;
     private readonly bool _automatedValidation;
     private MacNativeSettingsPresenter? _settingsPresenter;
     private (double U, double V, double? Width, double? Height)? _activeDetail;
@@ -208,7 +212,11 @@ public sealed class MacMainWindow : IDisposable
         _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
         _similarityPane.ShowRatingSources = ShowRatingSources;
         _filePane.AddSubview(_similarityPane);
-        _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => ReportVisible(), _scroll.ContentView);
+        _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => OnFilmstripBoundsChanged(), _scroll.ContentView);
+        _lastFilmstripOrigin = _scroll.ContentView.Bounds.Location;
+        _controlScroll.ContentView.PostsBoundsChangedNotifications = true;
+        _controlScrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => OnControlScrollBoundsChanged(), _controlScroll.ContentView);
+        _lastControlOrigin = _controlScroll.ContentView.Bounds.Location;
         _inputMonitor = NSEvent.AddLocalMonitorForEventsMatchingMask(NSEventMask.KeyDown | NSEventMask.MouseMoved | NSEventMask.MouseExited, nativeEvent =>
         {
             if (nativeEvent.Type is NSEventType.MouseMoved or NSEventType.MouseExited)
@@ -490,6 +498,7 @@ public sealed class MacMainWindow : IDisposable
         try
         {
             var previousViewport = _scroll.ContentView.Bounds.Size;
+            var previousFilmstripFrame = _scroll.Frame;
             double width = (double)_root.Bounds.Width, height = (double)_root.Bounds.Height;
             _main.UpdateScreenOrientation(width, height);
             bool row = _main.IsRowLayout;
@@ -594,8 +603,53 @@ public sealed class MacMainWindow : IDisposable
             _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), dragHeight);
             UpdateViewport();
             ReportVisible();
+            UpdateRatingSourcesAnchor(_lastRootSize != _root.Bounds.Size || previousFilmstripFrame != _scroll.Frame);
+            _lastRootSize = _root.Bounds.Size;
         }
         finally { _layingOut = false; }
+    }
+
+    /// <summary>
+    /// RATING-04：布局变化后处理来源浮窗。控制栏入口在 0 号按钮移动后关闭（重建控制栏时由
+    /// <see cref="BuildControls"/> 按同一目标重开）；卡片入口只在胶片栏几何未变时继续有效，
+    /// 栏位隐藏、窗口尺寸或胶片栏布局变化时直接关闭，避免静态矩形指向已经移走的卡片。
+    /// </summary>
+    private void UpdateRatingSourcesAnchor(bool anchorMayHaveMoved)
+    {
+        if (!_ratingSources.IsOpen) return;
+        if (_ratingSources.IsAnchoredToControlBar)
+        {
+            if (!_main.IsControlViewVisible || _controlPane.Ratings.Count == 0)
+            {
+                _ratingSources.Close();
+                return;
+            }
+            var anchor = _controlPane.Ratings[0];
+            if (_ratingSources.AnchorRect != anchor.ConvertRectToView(anchor.Bounds, _root)) _ratingSources.Close();
+            return;
+        }
+        if (!_main.IsThumbnailViewVisible || anchorMayHaveMoved) _ratingSources.Close();
+    }
+
+    /// <summary>胶片栏滚动即锚点卡片移动：卡片入口直接关闭，不让浮窗停在另一张卡片上方。</summary>
+    private void OnFilmstripBoundsChanged()
+    {
+        var origin = _scroll.ContentView.Bounds.Location;
+        if (origin != _lastFilmstripOrigin)
+        {
+            _lastFilmstripOrigin = origin;
+            if (_ratingSources.IsOpen && !_ratingSources.IsAnchoredToControlBar) _ratingSources.Close();
+        }
+        ReportVisible();
+    }
+
+    /// <summary>控制栏滚动同样移动锚点：只关闭，不跟随滚动反复重建。</summary>
+    private void OnControlScrollBoundsChanged()
+    {
+        var origin = _controlScroll.ContentView.Bounds.Location;
+        if (origin == _lastControlOrigin) return;
+        _lastControlOrigin = origin;
+        if (_ratingSources.IsOpen && _ratingSources.IsAnchoredToControlBar) _ratingSources.Close();
     }
 
     /// <summary>把共享布局矩形落成原生 frame（两个原生壳共用同一份几何数学）。</summary>
@@ -816,6 +870,8 @@ public sealed class MacMainWindow : IDisposable
             _displayedFiles = files.ToArray();
             if (!sameSequence)
             {
+                // 列表重载会重新绑定卡片：卡片入口的静态锚点矩形不再指向同一张照片。
+                if (_ratingSources.IsOpen && !_ratingSources.IsAnchoredToControlBar) _ratingSources.Close();
                 _collection.ReloadData();
                 UpdateFilmstripLayout();
             }
@@ -1182,6 +1238,7 @@ public sealed class MacMainWindow : IDisposable
         CancelFilmstripScroll();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_scrollObserver); _scrollObserver.Dispose(); NSEvent.RemoveMonitor(_inputMonitor); _inputMonitor.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_liveScrollObserver); _liveScrollObserver.Dispose();
+        NSNotificationCenter.DefaultCenter.RemoveObserver(_controlScrollObserver); _controlScrollObserver.Dispose();
         NSNotificationCenter.DefaultCenter.RemoveObserver(_deactivationObserver); _deactivationObserver.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.OpenFailed -= ShowToast;

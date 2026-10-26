@@ -8,7 +8,7 @@ namespace PhotoViewer.Core;
 /// </summary>
 /// <remarks>
 /// <para>不支持的格式明确抛出 <see cref="StorageError.Unsupported"/>，绝不返回 null 或静默假成功。</para>
-/// <para>PNG 本轮明确不支持写入：容器写入需要同步重建 iTXt 长度与 CRC，事务层不做冒险写；
+/// <para>PNG 明确不支持写入：容器写入需要同步重建 iTXt 长度与 CRC，事务层不做冒险写；
 /// 读取仍可由 <see cref="PngXmpContainerAdapter"/> 或元数据读取路径完成。</para>
 /// <para><c>.xmp</c> 文件本身是一个已存在的评分来源；<see cref="CreateSidecar"/> 供同名 sidecar 使用，
 /// 两者都不创建文件——创建 sidecar 的能力已从本类移除。</para>
@@ -24,7 +24,7 @@ public static class XmpRatingStoreFactory
         if (HasExtension(extension, ".xmp"))
             return new ContainerRatingStore(file, new XmpFileContainerAdapter(), XmpRatingSource.Sidecar);
         if (HasExtension(extension, ".png"))
-            throw Unsupported(file.Name, extension, "PNG 写入需要同步重建 iTXt 长度与 CRC，本轮不支持");
+            throw Unsupported(file.Name, extension, "PNG 写入需要同步重建 iTXt 长度与 CRC，不支持");
 
         var adapter = CreateEmbeddedAdapter(extension)
             ?? throw Unsupported(file.Name, extension);

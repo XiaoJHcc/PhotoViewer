@@ -21,9 +21,11 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// <c>--es pv-check storage</c>（验收专用）：经 <see cref="DebugTestDocumentsProvider"/> 的真实
 /// <c>content://</c> 文档树核对 SAF 存储引用与写入链路——文档身份、嵌套目录枚举、缺失 size/mtime、
-/// 内嵌/同名 sidecar XMP 写回（ARW 写内嵌且不创建 sidecar、已有 sidecar 随整组同步）、只读与非可定位拒绝、原子替换拒绝、Provider 拒绝访问与恢复，
-/// 以及 ACTION_VIEW 经共享通道打开与同 UID 读取。Provider 与宿主同 UID，不验证第三方临时授权；
-/// 全部素材只写 App 私有目录，不触碰用户照片；不模拟 MTP/USB 设备。
+/// 外部改动后的属性刷新与写入后的新鲜 revision、内嵌/同名 sidecar XMP 写回（ARW 写内嵌且不创建 sidecar、
+/// 已有 sidecar 随整组同步）、只读与非可定位拒绝、原子替换拒绝、Provider 拒绝访问与恢复，
+/// 以及 ACTION_VIEW 经共享通道打开与同 UID 读取，含 <see cref="DebugTestMediaProvider"/> 的数字
+/// documentId 通用 content URI（显示名只能查 <c>_display_name</c>）。Provider 与宿主同 UID，
+/// 不验证第三方临时授权；全部素材只写 App 私有目录，不触碰用户照片；不模拟 MTP/USB 设备。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
@@ -70,7 +72,7 @@ internal static partial class AndroidNativeChecks
         DebugTestDocumentsProvider.WritableRoot,
         relative.Replace('/', IOPath.DirectorySeparatorChar));
 
-    /// <summary>存储验收入口：重建 provider backing store 后按顺序核对七组语义。</summary>
+    /// <summary>存储验收入口：重建 provider backing store 后按顺序核对各组语义。</summary>
     private static async Task RunStorageChecksAsync()
     {
         await WaitForScreenAsync();
@@ -85,11 +87,16 @@ internal static partial class AndroidNativeChecks
             {
                 await CheckStorageIdentityAsync(resolver);
                 await CheckNestedEnumerationAsync(resolver);
+                await CheckFreshPropertiesAsync(resolver);
+                await CheckFreshRevisionAsync(resolver);
                 await CheckWritableXmpAsync(resolver);
                 await CheckReadonlyAndNonseekableAsync(resolver, activity);
+                await CheckReadonlyPrecheckAsync(resolver, activity);
                 await CheckSidecarAndFileOpsAsync(resolver);
                 await CheckRevocationAsync(resolver, providerUri);
                 await CheckActionViewAsync(resolver);
+                await CheckNumericContentNameAsync(resolver, activity);
+                await CheckPickerResultAsync(resolver);
             }
             finally
             {
@@ -102,18 +109,21 @@ internal static partial class AndroidNativeChecks
         }
     }
 
-    /// <summary>重建三棵树与夹具：同名文件、子目录、缺失元数据文件、最小 TIFF 与只读/管道树。</summary>
+    /// <summary>重建三棵树与夹具：同名文件、子目录、缺失元数据文件、属性刷新/版本夹具、最小 TIFF 与只读/管道树。</summary>
     private static void ResetProviderStore(Activity activity)
     {
         string root = DebugTestDocumentsProvider.StoreRoot(activity);
         if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         DebugTestDocumentsProvider.EnsureStore(activity);
+        DebugTestMediaProvider.Clear();
 
         string writable = IOPath.Combine(root, DebugTestDocumentsProvider.WritableRoot);
         string sub = IOPath.Combine(writable, "sub");
         Directory.CreateDirectory(sub);
         WriteCheckJpeg(IOPath.Combine(writable, "photo.jpg"), 800, 600, rating: 0, xmpPadding: 2048);
         WriteCheckJpeg(IOPath.Combine(writable, "unknown-meta.jpg"), 320, 200, rating: 0);
+        WriteCheckJpeg(IOPath.Combine(writable, "refresh.jpg"), 480, 320, rating: 0);
+        WriteCheckJpeg(IOPath.Combine(writable, "revision.jpg"), 480, 320, rating: 0);
         WriteCheckJpeg(IOPath.Combine(sub, "photo.jpg"), 640, 480, rating: 0);
         WriteCheckJpeg(IOPath.Combine(sub, "nested.jpg"), 320, 200, rating: 0);
         File.WriteAllBytes(IOPath.Combine(writable, "photo.arw"), MinimalTiff);
@@ -191,6 +201,113 @@ internal static partial class AndroidNativeChecks
             + $"enumerated={enumeratedProps?.Size?.ToString() ?? "null"}/{enumeratedProps?.DateModified?.ToString() ?? "null"}");
     }
 
+    /// <summary>
+    /// 2b) 同一引用在外部改动后必须重新查属性：枚举投影只是打开目录时的快照，
+    /// 属性读取与随机会话长度都要反映当前磁盘状态。
+    /// </summary>
+    private static async Task CheckFreshPropertiesAsync(ContentResolver resolver)
+    {
+        var treeRoot = TreeUri(DebugTestDocumentsProvider.WritableRoot);
+        var folder = new AndroidFolderRef(resolver, treeRoot, null);
+        var enumerated = (await ReadItemsAsync(folder)).OfType<IFileRef>()
+            .FirstOrDefault(file => file.Name == "refresh.jpg");
+        if (enumerated == null)
+        {
+            Check("storage 同引用外改后属性刷新", false, "根枚举缺少 refresh.jpg");
+            return;
+        }
+
+        string path = PathForWritable("refresh.jpg");
+        long original = new FileInfo(path).Length;
+        var before = await enumerated.GetBasicPropertiesAsync();
+
+        // 直接改 backing store：等同于另一个 App 往同一文档追加数据。
+        const int appended = 4096;
+        await using (var external = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
+        {
+            await external.WriteAsync(new byte[appended]);
+        }
+
+        long expected = original + appended;
+        var after = await enumerated.GetBasicPropertiesAsync();
+        long? sessionLength = null;
+        long? sessionRevision = null;
+        await using (var session = await enumerated.OpenRandomAccessAsync(StorageAccessMode.Read))
+        {
+            sessionLength = session.Length;
+            sessionRevision = session.Revision?.Size;
+        }
+
+        Check("storage 同引用外改后属性刷新",
+            before.Size == (ulong)original && after.Size == (ulong)expected
+            && after.Revision?.Size == expected
+            && sessionLength == expected && sessionRevision == expected,
+            $"props={before.Size?.ToString() ?? "null"}->{after.Size?.ToString() ?? "null"} disk={original}->{expected} "
+            + $"mtime={before.DateModified:O}->{after.DateModified:O} "
+            + $"session={sessionLength?.ToString() ?? "null"}/{sessionRevision?.ToString() ?? "null"}");
+    }
+
+    /// <summary>2c) 写入后同一引用的属性与下一个会话必须给出新尺寸/时间，不能沿用写前快照。</summary>
+    private static async Task CheckFreshRevisionAsync(ContentResolver resolver)
+    {
+        var treeRoot = TreeUri(DebugTestDocumentsProvider.WritableRoot);
+        var folder = new AndroidFolderRef(resolver, treeRoot, null);
+        var target = (await ReadItemsAsync(folder)).OfType<IFileRef>()
+            .FirstOrDefault(file => file.Name == "revision.jpg");
+        if (target == null)
+        {
+            Check("storage 写后 fresh revision", false, "根枚举缺少 revision.jpg");
+            return;
+        }
+
+        var before = await target.GetBasicPropertiesAsync();
+        long original = (long)(before.Size ?? 0);
+        if (original <= 0)
+        {
+            Check("storage 写后 fresh revision", false, $"初始长度 {original}");
+            return;
+        }
+
+        const long extra = 1024;
+        await using (var session = await target.OpenRandomAccessAsync(StorageAccessMode.ReadWrite))
+        {
+            await session.SetLengthAsync(original + extra);
+            await session.FlushAsync();
+        }
+
+        long expected = original + extra;
+        var after = await target.GetBasicPropertiesAsync();
+        long? freshLength = null;
+        long? freshRevision = null;
+        await using (var session = await target.OpenRandomAccessAsync(StorageAccessMode.Read))
+        {
+            freshLength = session.Length;
+            freshRevision = session.Revision?.Size;
+        }
+
+        long onDisk = new FileInfo(PathForWritable("revision.jpg")).Length;
+        Check("storage 写后 fresh revision",
+            after.Size == (ulong)expected && after.Revision?.Size == expected
+            && freshLength == expected && freshRevision == expected && onDisk == expected
+            && after.DateModified != null
+            && (before.DateModified == null || after.DateModified >= before.DateModified),
+            $"props={before.Size?.ToString() ?? "null"}->{after.Size?.ToString() ?? "null"} "
+            + $"session={freshLength?.ToString() ?? "null"}/{freshRevision?.ToString() ?? "null"} disk={onDisk} "
+            + $"mtime={before.DateModified:O}->{after.DateModified:O}");
+        var padding = new byte[extra];
+        int paddingRead;
+        await using (var session = await target.OpenRandomAccessAsync(StorageAccessMode.ReadWrite))
+        {
+            paddingRead = await session.ReadAsync(original, padding);
+            await session.SetLengthAsync(original);
+            await session.FlushAsync();
+        }
+        var restored = await target.GetBasicPropertiesAsync();
+        Check("storage 长度扩展零填充与回缩",
+            paddingRead == extra && padding.All(value => value == 0) && restored.Size == (ulong)original,
+            $"padding={paddingRead}/{extra} restored={restored.Size}/{original}");
+    }
+
     /// <summary>3) 可写 content URI 的内嵌 XMP 原位写回：语义回读 4，非目标字节不变。</summary>
     private static async Task CheckWritableXmpAsync(ContentResolver resolver)
     {
@@ -215,7 +332,8 @@ internal static partial class AndroidNativeChecks
         string inPlaceError = "none";
         try
         {
-            inPlace = packet == null ? null : XmpPacketEditor.SetRating(packet.Data, 4, preserveLength: true);
+            if (packet != null && !XmpRatingSpanLocator.TryCreateEdit(packet.Data, 4, out _, out inPlace, out var reason))
+                inPlaceError = reason ?? "无法定位等长编辑区间";
         }
         catch (Exception exception)
         {
@@ -257,8 +375,10 @@ internal static partial class AndroidNativeChecks
         var readonlyStore = XmpRatingStoreFactory.Create(readonlyPhoto);
         var writeFailure = await CatchStorageAsync(() => readonlyStore.WriteAsync(3, safeMode: true));
         byte[] readonlyAfter = File.ReadAllBytes(readonlyPath);
+        // 能力预检（flags 无 SupportsWrite）按共享映射报 NotSeekable，Provider 侧拒绝报 AccessDenied/ReadOnly；
+        // 三条都是 typed 拒绝，判定重点是「拒绝 + 零写入」，由下一项检查固定能力分支。
         Check("storage 只读 content URI 写回 typed 失败且字节不变",
-            writeFailure.Error is StorageError.AccessDenied or StorageError.ReadOnly
+            writeFailure.Error is StorageError.AccessDenied or StorageError.ReadOnly or StorageError.NotSeekable
             && readonlyBefore.AsSpan().SequenceEqual(readonlyAfter),
             $"error={writeFailure.Error?.ToString() ?? "none"} message={writeFailure.Message} "
             + $"bytes={readonlyBefore.Length}->{readonlyAfter.Length}");
@@ -287,6 +407,15 @@ internal static partial class AndroidNativeChecks
                 $"read={buffer.Length} expected={streamBefore.Length}");
         }
 
+        // 管道 fd 能打开但不能定位：随机会话必须在打开时就报 NotSeekable，
+        // 不能用 fstat 的 0 长度或投影把不可定位伪装成「0 字节文件」。
+        bool randomOpened = false;
+        var randomOpen = await CatchStorageAsync(async () =>
+        {
+            await using var session = await streamPhoto.OpenRandomAccessAsync(StorageAccessMode.Read);
+            randomOpened = true;
+            _ = session.Length;
+        });
         var randomRead = await CatchStorageAsync(async () =>
         {
             await using var session = await streamPhoto.OpenRandomAccessAsync(StorageAccessMode.Read);
@@ -298,11 +427,56 @@ internal static partial class AndroidNativeChecks
             await session.WriteAsync(0, new byte[] { 0xAA, 0xBB });
         });
         byte[] streamAfter = File.ReadAllBytes(streamPath);
+        Check("storage nonseekable 打开随机会话即 NotSeekable",
+            !randomOpened && randomOpen.Error == StorageError.NotSeekable,
+            $"error={randomOpen.Error?.ToString() ?? "none"} opened={randomOpened} {randomOpen.Message}");
         Check("storage nonseekable 随机读写明确 NotSeekable 且不整文件重写",
             randomRead.Error == StorageError.NotSeekable && randomWrite.Error == StorageError.NotSeekable
             && streamBefore.AsSpan().SequenceEqual(streamAfter),
             $"read={randomRead.Error?.ToString() ?? "none"} write={randomWrite.Error?.ToString() ?? "none"} "
             + $"bytes={streamBefore.Length}->{streamAfter.Length}");
+    }
+
+    /// <summary>
+    /// 4b) 只读文档的能力由后台投影补齐（flags 无 SupportsWrite → Unsupported），写入预检在打开会话前
+    /// 就以 typed 错误拒绝：零写入、零新建文件，Name/Capabilities getter 不阻塞 UI 线程做 binder 查询。
+    /// </summary>
+    private static async Task CheckReadonlyPrecheckAsync(ContentResolver resolver, Activity activity)
+    {
+        var readonlyTree = TreeUri(DebugTestDocumentsProvider.ReadonlyRoot);
+        var readonlyPhoto = new AndroidFileRef(resolver,
+            DocumentUri(readonlyTree, "readonly/photo.jpg"), readonlyTree);
+        bool prepared;
+        try
+        {
+            await WaitAsync(() => readonlyPhoto.Capabilities.RandomAccessWrite != StorageCapability.Unknown,
+                "只读文档后台能力预备", 3000);
+            prepared = true;
+        }
+        catch (TimeoutException)
+        {
+            prepared = false;
+        }
+
+        string readonlyPath = DebugTestDocumentsProvider.PathFor(activity, "readonly/photo.jpg");
+        string readonlyDir = IOPath.GetDirectoryName(readonlyPath)!;
+        byte[] before = File.ReadAllBytes(readonlyPath);
+        string[] entriesBefore = Directory.GetFileSystemEntries(readonlyDir)
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var precheck = await CatchStorageAsync(() =>
+            XmpRatingStoreFactory.Create(readonlyPhoto).WriteAsync(3, safeMode: true));
+        byte[] after = File.ReadAllBytes(readonlyPath);
+        string[] entriesAfter = Directory.GetFileSystemEntries(readonlyDir)
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        var capability = readonlyPhoto.Capabilities.RandomAccessWrite;
+        Check("storage 只读预检拒绝写入且零写入",
+            prepared && capability == StorageCapability.Unsupported
+            && precheck.Error is StorageError.NotSeekable or StorageError.ReadOnly or StorageError.AccessDenied
+            && before.AsSpan().SequenceEqual(after)
+            && entriesBefore.AsSpan().SequenceEqual(entriesAfter),
+            $"capability={capability} prepared={prepared} error={precheck.Error?.ToString() ?? "none"} "
+            + $"bytes={before.Length}->{after.Length} entries={entriesBefore.Length}->{entriesAfter.Length} "
+            + precheck.Message);
     }
 
     /// <summary>5) RAW 内嵌写入不建 sidecar、已有 sidecar 随整组同步、CreateFile 非法名、AtomicWrite 明确 Unsupported。</summary>
@@ -517,6 +691,160 @@ internal static partial class AndroidNativeChecks
         Check("storage ACTION_VIEW 后 content URI 可解码上屏",
             session.Image != null,
             $"image={session.Image?.Width}x{session.Image?.Height} src={session.Image?.SourceWidth}x{session.Image?.SourceHeight}");
+    }
+
+    /// <summary>
+    /// 8) 数字 documentId 的通用 content URI（MediaStore 类）：Uri 末段不是文件名，
+    /// 入口必须在后台查真实 <c>_display_name</c>，否则按扩展名判类型的打开链会把目标丢弃。
+    /// </summary>
+    private static async Task CheckNumericContentNameAsync(ContentResolver resolver, Activity activity)
+    {
+        const long mediaId = 4201;
+        const string displayName = "numeric-view.jpg";
+        var main = _main!;
+        var session = _session!;
+
+        string path = PathForWritable("photo.jpg");
+        DebugTestMediaProvider.Register(mediaId, path, displayName);
+        var uri = AndroidUri.Parse($"content://{DebugTestMediaProvider.TestAuthority}/{mediaId}")!;
+        bool isDocument = DocumentsContract.IsDocumentUri(activity, uri);
+        string? documentId = AndroidStorageSupport.GetDocumentId(uri);
+        // 仅凭 Uri 能拿到的“文件名”就是这个数字 ID：没有扩展名，按扩展名判类型的打开链会直接丢弃。
+        string uriOnlyName = uri.LastPathSegment ?? "null";
+        var expected = new AndroidFileRef(resolver, uri).StorageId;
+
+        // 真实系统投递：Bootstrap → 原生 Activity → 共享打开通道。
+        var external = new Intent(Intent.ActionView, uri);
+        external.SetClass(activity, typeof(AndroidNativeActivity));
+        external.AddFlags(ActivityFlags.GrantReadUriPermission);
+        activity.StartActivity(external);
+
+        bool located;
+        try
+        {
+            await WaitAsync(() => main.CurrentFile?.File.StorageId == expected, "数字 ID 外部打开定位", 20000);
+            located = true;
+        }
+        catch (TimeoutException)
+        {
+            located = false;
+        }
+
+        var current = main.CurrentFile?.File;
+        string? currentName = current?.Name;
+        bool readOk = false;
+        string readDetail = "未打开";
+        if (current != null)
+        {
+            try
+            {
+                using var stream = await current.OpenReadAsync();
+                var head = new byte[2];
+                int read = await stream.ReadAsync(head.AsMemory(0, 2));
+                readOk = read == 2 && head[0] == 0xFF && head[1] == 0xD8;
+                readDetail = $"{read}B {head[0]:X2}{head[1]:X2}";
+            }
+            catch (Exception exception)
+            {
+                readDetail = $"{exception.GetType().Name}：{exception.Message}";
+            }
+        }
+
+        await Task.Delay(300);
+        Check("storage 数字 documentId 外部打开用真实显示名",
+            !isDocument && documentId == null && uriOnlyName == mediaId.ToString()
+            && located && currentName == displayName && readOk,
+            $"isDocument={isDocument} documentId={documentId ?? "null"} uriOnlyName={uriOnlyName} "
+            + $"located={located} current={currentName ?? "null"} read={readDetail} "
+            + $"image={session.Image?.Width}x{session.Image?.Height}");
+    }
+
+    /// <summary>
+    /// 9) 文件选择器回调（不启动 DocumentsUI，直接投递 Activity 结果）：与外部打开共用后台显示名准备；
+    /// 新请求取代旧请求、取消/销毁后的迟到结果都不得复活或串写等待项。
+    /// </summary>
+    private static async Task CheckPickerResultAsync(ContentResolver resolver)
+    {
+        var picker = AndroidNativeShell.FilePickerForResults;
+        if (picker == null)
+        {
+            Check("storage 选择器回调后台准备显示名", false, "选择器实例未创建");
+            return;
+        }
+
+        try
+        {
+            string path = PathForWritable("photo.jpg");
+
+            // 9a. 直接回调：拿到的是后台查到真实显示名的那一个引用（数字 ID 不再是文件名）。
+            DebugTestMediaProvider.Register(4202, path, "picker-a.jpg");
+            var firstUri = MediaUri(4202);
+            var firstExpected = new AndroidFileRef(resolver, firstUri).StorageId;
+            var firstRequest = picker.BeginFileRequestForChecks();
+            picker.HandleActivityResult(
+                AndroidFilePicker.FileRequestCode, Result.Ok, new Intent(Intent.ActionView, firstUri));
+            var firstFile = await WaitFileAsync(firstRequest, 10000);
+            Check("storage 选择器回调后台准备显示名",
+                firstFile != null && firstFile.Name == "picker-a.jpg" && firstFile.StorageId == firstExpected,
+                $"name={firstFile?.Name ?? "null"} id={firstFile?.StorageId.Value ?? "null"} "
+                + $"expected={firstExpected.Value}");
+
+            // 9b. 新请求取代旧请求：旧的在途结果不得完成新等待项，新请求仍按自己的 Uri 解析。
+            DebugTestMediaProvider.Register(4203, path, "picker-b.jpg");
+            var staleRequest = picker.BeginFileRequestForChecks();
+            picker.HandleActivityResult(
+                AndroidFilePicker.FileRequestCode, Result.Ok, new Intent(Intent.ActionView, firstUri));
+            var freshRequest = picker.BeginFileRequestForChecks();
+            await Task.Delay(400);
+            bool freshUntouched = !freshRequest.IsCompleted;
+            var freshUri = MediaUri(4203);
+            var freshExpected = new AndroidFileRef(resolver, freshUri).StorageId;
+            picker.HandleActivityResult(
+                AndroidFilePicker.FileRequestCode, Result.Ok, new Intent(Intent.ActionView, freshUri));
+            var freshFile = await WaitFileAsync(freshRequest, 10000);
+            // 被取代的旧请求以取消收口；已先一步完成的旧结果不构成“复活”（它属于它自己的等待项）。
+            bool staleNotLeaked = !staleRequest.IsCompleted || staleRequest.Result == null;
+            Check("storage 选择器旧结果不复活新请求",
+                freshUntouched && staleNotLeaked
+                && freshFile != null && freshFile.Name == "picker-b.jpg" && freshFile.StorageId == freshExpected,
+                $"freshPendingBefore={freshUntouched} staleCompleted={staleRequest.IsCompleted} "
+                + $"name={freshFile?.Name ?? "null"} id={freshFile?.StorageId.Value ?? "null"} "
+                + $"expected={freshExpected.Value}");
+
+            // 9c. 取消/Activity 销毁后迟到的系统回调：等待项已收口，不得复活或新建。
+            var cancelled = picker.BeginFileRequestForChecks();
+            picker.CancelPending();
+            bool cancelledNull = cancelled.IsCompleted && cancelled.Result == null;
+            picker.HandleActivityResult(
+                AndroidFilePicker.FileRequestCode, Result.Ok, new Intent(Intent.ActionView, firstUri));
+            var probe = picker.BeginFileRequestForChecks();
+            await Task.Delay(300);
+            bool lateIgnored = !probe.IsCompleted;
+            Check("storage 选择器取消后迟到回调不复活",
+                cancelledNull && lateIgnored,
+                $"cancelledNull={cancelledNull} pendingAfterLateCallback={!lateIgnored}");
+        }
+        finally
+        {
+            picker.CancelPending();
+        }
+    }
+
+    /// <summary>验收媒体 Uri（通用 content provider 的数字 ID）。</summary>
+    private static AndroidUri MediaUri(long mediaId) =>
+        AndroidUri.Parse($"content://{DebugTestMediaProvider.TestAuthority}/{mediaId}")!;
+
+    /// <summary>等待选择器请求完成；超时返回 null，由调用方按实际值记 FAIL。</summary>
+    private static async Task<IFileRef?> WaitFileAsync(Task<IFileRef?> request, int timeoutMs)
+    {
+        try
+        {
+            return await request.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs));
+        }
+        catch (TimeoutException)
+        {
+            return null;
+        }
     }
 
     private static AndroidUri TreeUri(string documentId) =>

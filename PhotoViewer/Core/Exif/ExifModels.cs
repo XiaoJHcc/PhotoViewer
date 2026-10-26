@@ -69,7 +69,7 @@ public class ExifData
     /// </summary>
     public int? Rating { get; set; }
 
-    /// <summary>内嵌来源的状态（Missing / Rated / Rejected / Invalid / Conflict）。</summary>
+    /// <summary>内嵌来源的状态（Missing / Rated / Rejected / Invalid / Conflict / Unreadable）。</summary>
     public XmpRatingState RatingState { get; set; } = XmpRatingState.Missing;
 
     /// <summary>内嵌来源的完整快照；与 <see cref="RatingState"/> 同源。</summary>

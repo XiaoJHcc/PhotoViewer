@@ -18,6 +18,8 @@ namespace PhotoViewer.Android.Core;
 /// 字节搬运走 <see cref="JavaFileInputStream"/>/<see cref="JavaFileOutputStream"/> 的托管 <c>byte[]</c> 重载
 /// （<see cref="Java.Nio.ByteBuffer"/> 会把托管数组复制到 Java 侧，读回的数据留在副本里）。
 /// 读写模式对同一描述符 <c>dup</c> 出独立的输入流，两个通道共享文件偏移；不支持原子替换。
+/// 描述符必须可定位：管道类 fd 在打开时就以 <see cref="StorageError.NotSeekable"/> 拒绝，
+/// 长度取描述符真实值（不用 fstat 的 0 或投影冒充）。
 /// 所有阻塞 Java IO 都放在线程池，调用方（UI 线程）不会被文件系统或云 Provider 卡住。
 /// </summary>
 internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
@@ -42,7 +44,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
         StorageAccessMode mode,
         string name,
         long? knownLength,
-        DateTimeOffset? knownModified)
+        StorageRevision revision)
     {
         _readChannel = readChannel;
         _writeChannel = writeChannel;
@@ -52,18 +54,18 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
         _mode = mode;
         _name = name;
         _knownLength = knownLength;
-        Revision = new StorageRevision(knownLength, knownModified);
+        Revision = revision;
     }
 
     /// <summary>
-    /// 打开 SAF 文档的随机访问会话；描述符不可用（例如云端 Provider 不提供文件、目标只读）时
+    /// 打开 SAF 文档的随机访问会话；描述符不可用（例如云端 Provider 不提供文件、目标只读）或不可定位时
     /// 返回 <see cref="StorageException"/> 的明确错误，而不是吞掉异常。
     /// </summary>
     /// <param name="resolver">内容解析器。</param>
     /// <param name="uri">文档 Uri。</param>
     /// <param name="mode">只读或读写。</param>
-    /// <param name="knownSize">列表投影里已知的字节数（描述符不支持取长度时兜底）。</param>
-    /// <param name="knownModified">列表投影里已知的修改时间。</param>
+    /// <param name="knownSize">打开瞬间查到的字节数（构成 Revision，并在描述符可定位但取不到长度时兜底）。</param>
+    /// <param name="knownModified">打开瞬间查到的修改时间。</param>
     /// <param name="name">显示名（错误信息用）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>随机访问会话。</returns>
@@ -132,6 +134,18 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
                 throw new StorageException(StorageError.IoError, $"{name} 缺少读写通道");
 
             var lengthChannel = readChannel ?? writeChannel!;
+            // 管道类描述符能打开但不能定位（lseek → ESPIPE）：随机会话必须在打开时就明确拒绝。
+            // 也不能拿 fstat 的 0（管道）或列表投影冒充文件长度。
+            try
+            {
+                lengthChannel.Position(0);
+            }
+            catch (Exception exception)
+            {
+                throw new StorageException(
+                    StorageError.NotSeekable, $"{name} 不支持随机访问：描述符不可定位", exception);
+            }
+
             long? length = null;
             try
             {
@@ -140,7 +154,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             }
             catch (Exception)
             {
-                // 部分 Provider 的描述符不支持取长度；继续用 fstat / 列表投影兜底。
+                // 个别 Provider 的通道长度查询失败但定位可用，继续用 fstat 兜底。
             }
             if (length == null)
             {
@@ -151,7 +165,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
                 }
                 catch (Exception)
                 {
-                    // fstat 也不可用时接受列表投影。
+                    // fstat 也不可用时接受新鲜投影。
                 }
             }
             if (length == null && knownSize is { } projected)
@@ -161,8 +175,14 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             descriptor = null;
             readDescriptor = null;
             cancellationToken.ThrowIfCancellationRequested();
+            // Revision 是变更检测令牌，必须与 GetBasicPropertiesAsync 返回的同一组属性可比：
+            // 尺寸取新鲜投影（缺失则 null），描述符真实长度只用于 Length，不用来伪造 revision。
+            long? revisionSize = knownSize is { } freshSize
+                ? (freshSize > long.MaxValue ? long.MaxValue : (long)freshSize)
+                : null;
             return new AndroidRandomAccessSession(
-                readChannel, writeChannel, input, output, fileDescriptor, mode, name, length, knownModified);
+                readChannel, writeChannel, input, output, fileDescriptor, mode, name, length,
+                new StorageRevision(revisionSize, knownModified));
         }
         catch
         {
@@ -174,7 +194,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
         }
     }
 
-    /// <summary>当前长度：优先取通道实际长度，其次用打开时的列表投影，二者都没有则明确不支持。</summary>
+    /// <summary>当前长度：优先取通道实际长度，其次用打开时查到的字节数，二者都没有则明确不支持。</summary>
     public long Length
     {
         get
@@ -200,7 +220,7 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
         }
     }
 
-    /// <summary>打开时的长度与修改时间快照（写入后不自动更新）。</summary>
+    /// <summary>打开时的属性快照（尺寸取新鲜投影、时间取同一次查询；写入后不自动更新）。</summary>
     public StorageRevision? Revision { get; }
 
     /// <summary>从指定偏移读取；返回 0 表示已到文件末尾。</summary>
@@ -348,7 +368,9 @@ internal sealed class AndroidRandomAccessSession : IStorageRandomAccessSession
             {
                 var channel = _writeChannel
                     ?? throw new StorageException(StorageError.NotSeekable, $"{_name} 没有可写通道");
-                channel.Truncate(length);
+                global::Android.Systems.Os.Ftruncate(_fileDescriptor, length);
+                if (channel.Size() != length)
+                    throw new StorageException(StorageError.Unsupported, $"当前存储未能调整 {_name} 的长度");
                 channel.Force(true);
                 _fileDescriptor.Sync();
             }

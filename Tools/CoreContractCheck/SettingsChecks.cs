@@ -8,6 +8,22 @@ internal static class SettingsChecks
     public static async Task RunAsync(Checks c, string root)
     {
         c.Section("设置仓储与损坏备份");
+        var oversized = SettingsDocumentCodec.Normalize(new AppSettings
+        {
+            BitmapCacheMaxCount = int.MaxValue,
+            BitmapCacheMaxMemory = int.MaxValue,
+            PreloadForwardCount = int.MaxValue,
+        });
+        c.Equal("缓存张数上界归一", 400, oversized.BitmapCacheMaxCount);
+        c.Equal("缓存内存上界归一", 32768, oversized.BitmapCacheMaxMemory);
+        c.Equal("预载按归一后缓存张数限制", 133, oversized.PreloadForwardCount);
+        var undersized = SettingsDocumentCodec.Normalize(new AppSettings
+        {
+            BitmapCacheMaxCount = int.MinValue,
+            BitmapCacheMaxMemory = int.MinValue,
+        });
+        c.Equal("缓存张数下界归一", 1, undersized.BitmapCacheMaxCount);
+        c.Equal("缓存内存下界归一", 512, undersized.BitmapCacheMaxMemory);
         var path = Path.Combine(root, "settings.json");
         for (var index = 0; index < 5; index++)
         {

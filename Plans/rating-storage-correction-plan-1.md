@@ -23,12 +23,12 @@
 | [spec/rating.md](../Design/spec/rating.md) | RATING-01–06 新条目（来源、安全写、事务、冲突浮窗、状态/训练、支持边界） |
 | [Design/README.md](../Design/README.md) | 登记 `RATING` 前缀 |
 | [Design/architecture.md](../Design/architecture.md) §5.3、§5.2 | 删除 RAW 只写 sidecar / sidecar 唯一权威；改为全来源枚举、预检、顺序写、逆序补偿；所有显式打开完整刷新 |
-| [spec/film.md](../Design/spec/film.md) / [toolbar.md](../Design/spec/toolbar.md) | 冲突三角、来源浮窗设计约束（macOS 基准）、全来源写回与 -1 显示口径 |
+| [spec/film.md](../Design/spec/film.md) / [toolbar.md](../Design/spec/toolbar.md) | 冲突三角、来源浮窗入口与全来源写回引用；-1 显示口径 |
 | [spec/filter.md](../Design/spec/filter.md) | 13 项、已拒绝、冲突独立、刷新时机 |
 | [spec/state.md](../Design/spec/state.md) | 部分来源失败文案与真实状态展示 |
 | [spec/settings.md](../Design/spec/settings.md) | 安全模式的全来源预检语义；旧设置不迁移不补丁 |
-| [spec/open.md](../Design/spec/open.md) | 所有显式打开重新枚举并完整刷新；当前目标保留视口、新目标 Fit |
-| [Design/platforms.md](../Design/platforms.md) / [status.md](../Design/status.md) | L4 字形；macOS 浮窗已定稿，其余平台浮窗待实现 |
+| [spec/open.md](../Design/spec/open.md) | 所有显式打开的完整刷新统一在 OPEN-08；当前目标保留视口、新目标 Fit |
+| [Design/platforms.md](../Design/platforms.md) / [status.md](../Design/status.md) | L4 定位/写入入口与字形；各端实现状态只记在 status |
 | [Design/tokens.json](../Design/tokens.json) | `color.star.conflict`、`icon.warning` |
 
 ## 2. 实施清单
@@ -61,10 +61,10 @@
 ### 2.4 冲突指示与来源浮窗
 
 - [x] 四端胶片栏卡片与控制栏 0 号槽位：冲突时清零叉换 `icon.warning` + `color.star.conflict`，几何与命中区不变；未实现浮窗的平台点击三角不动作、不写值。
-- [x] 规范：来源纵向排列；信息行默认单行（文件名居左、来源标签 + 状态居右并垂直居中），长文件名改双行；每来源一行 0–5，条目间加分隔线；浮窗宽度随星级控件，任一条目点值都整组统一写入。
-- [x] 规范：横排入口默认向下、底部横排入口向上、右侧竖排入口向左；只有成功且刷新后冲突解除才关闭，其余情况保留并刷新。
-- [x] Mac：以 `NSPopover` 实现纵向条目与三种方向；宽度、三信息行/长名双行、条目分隔线、原生毛玻璃与星按钮 hover 定稿；toolbar 真实窗口回归通过，作者验收通过。
-- [ ] iOS / iPadOS：按 Mac 定稿规范实现纵向来源浮窗与整组写入。
+- [x] 规范：来源纵向排列；信息行默认单行（文件名居左、来源标签 + 状态居右并垂直居中），长文件名改双行；每来源一行 0–5，条目间加分隔线；浮窗宽度由星排与固定内边距决定、不收窄，任一条目点值都整组统一写入。
+- [x] 规范：横排入口默认向下、底部横排入口向上、右侧竖排入口向左；刷新覆盖全部条目；只有成功且刷新后冲突解除才关闭，锚点消失/布局重排/入口滚出可视区也关闭，刷新失败不因此关闭。
+- [x] Mac：以 `NSPopover` 实现纵向条目与三种方向；宽度、三信息行/长名双行、条目分隔线、原生毛玻璃与星按钮 hover（修订前实现）；toolbar 真实窗口回归通过，作者验收通过（不冒充修订后验收）。
+- [ ] iOS / iPadOS：按 RATING-04 实现纵向来源浮窗与整组写入。
 - [ ] Windows / Android / Web：按同一规范实现来源浮窗，并确定各端原生弹层细节。
 - [x] 四端字形：Apple SF Symbols、Windows `E7BA`、Android / Web `icon.warning`。
 
@@ -83,7 +83,7 @@
 
 ### 2.7 设置与迁移
 
-- [x] 安全模式开关语义对齐 RATING-02/03 文案：关闭只跳过外部修改比对，不跳过结构预检与写后校验。
+- [x] 安全模式语义对齐 RATING-02/03：始终执行结构/实际可写性预检、revision 与编辑区间复核、写后校验；开启时额外比较整个原始包并逆序补偿，关闭时不回滚此前成功写入的来源。
 - [x] 旧设置不迁移、不写字段级迁移补丁；沿用备份后默认值启动的现有路径。
 
 ### 2.8 令牌与生成物
@@ -112,8 +112,8 @@
 
 - [ ] 真实 HIF/ARW + 已有 sidecar 的 0–5 往返，ExifTool 分别核查内嵌与 sidecar。
 - [ ] Imaging Edge 与 Sony 相机读取 RAW 内嵌星级。
-- [ ] 冲突组浮窗、全来源统一写入与失败保留（macOS 已验收，其余平台待浮窗实现）。
-- [x] Mac 新浮窗易用性验收。
+- [ ] 冲突组浮窗、全来源统一写入与失败保留（macOS 修订前已验收，修订后待重验；其余平台待浮窗实现）。
+- [x] Mac 新浮窗易用性验收（修订前实现，不冒充修订后验收）。
 - [ ] 其他平台浮窗实现后的对应验收。
 - [ ] 各平台只读文件、只读目录、云 Provider、跨卷与中断恢复。
 
@@ -134,3 +134,83 @@
 - 不以 sidecar 成功代替 RAW 内嵌写入。
 - 不创建缺席的 sidecar。
 - 不允许启发式全文定位或"尽力写一部分"。
+
+## 6. 复审纠正
+
+> 2026-10-26 复审。以下规范裁定已写入 [spec/rating.md](../Design/spec/rating.md)、[spec/open.md](../Design/spec/open.md) 及相关条目；代码修复由各端执行，回归结果待主代理复核后回填 [status.md](../Design/status.md)。
+
+### 6.1 审查问题与裁定
+
+| 问题 | 裁定 |
+|---|---|
+| 组级冲突把单来源缺失与多来源缺失混在一起 | 单来源仅 Missing 不冲突；两个及以上来源中任一 Missing（含全部 Missing）即冲突；单来源 Invalid/Unreadable 仍为冲突 |
+| Unreadable 与 Missing 的区分和参与判定需要写实 | 作为与 Missing 并列的来源级状态参与比较；同一文件多份 canonical XMP 中缺 Rating 的那份也参与比较 |
+| 结构定位被当作非目标数据安全的证明 | 结构定位只确定区间；安全还需区间边界、区间外字节不变与写后回读共同证明 |
+| 容器内重叠或共享区间可能被误写 | 写入区间与记账字段不得与其它段/项/extent/IFD 条目重叠，也不得改写被其它数据引用的共享范围；不能证明独占即 `Unsupported` |
+| 预检只依赖"可写"声明 | 预检改为真实随机读写能力（可定位读写句柄）；云 Provider、不可定位句柄在首次修改前失败 |
+| `NoChange` 可能由缓存或上次回执推定 | `NoChange` 也必须逐来源实读并严格解析确认 |
+| 写后只确认目标值 | 增加全部来源回读与来源集合确认（sidecar 未增删、内嵌包位置未替换） |
+| 浮窗规范写成 macOS 实现数值（204 点、196 宽、六格收窄） | 规范宽度由星排（0 号 + 5 星）与固定内边距决定，星按钮不收窄；任一端实现不作规范真源 |
+| 浮窗刷新范围与关闭条件需补全 | 刷新覆盖全部条目；锚点消失、布局重排、入口滚出可视区时关闭；刷新失败不因此关闭 |
+| 训练快照的落值范围过宽 | 只落有效 1–5；0、-1、Missing、Invalid、Conflict、Unreadable 都不落 |
+| "挂账"混用实现状态与规范边界 | 规范统一写"不支持"；未实测边界只留在 status 与本计划 |
+| 完整刷新在 OPEN 各条重复 | 统一收敛到 OPEN-08，各入口只留触发与边界差异 |
+| 规范混入实施语气与计划链接 | 删除"本轮/定稿/已实现/待实现"叙述与计划头链接；平台现状只留在 status |
+
+### 6.2 规范修订（本次完成）
+
+- [spec/rating.md](../Design/spec/rating.md)：RATING-01 冲突矩阵与多包 Missing 比较；RATING-02 区间独占与"定位不是安全证明"；RATING-03 真实读写能力预检、`NoChange` 实读证据、写后全来源与集合确认；RATING-04 非目标来源刷新、关闭条件、底部卡片向上、宽度不收窄、删除平台现状与实现基准叙述；RATING-05 训练仅落有效 1–5；RATING-06 "挂账"改为"不支持"。
+- [spec/open.md](../Design/spec/open.md)：完整刷新集中到 OPEN-08，OPEN-01/02/03/05/06/07 只留触发与边界差异。
+- [spec/film.md](../Design/spec/film.md)、[spec/filter.md](../Design/spec/filter.md)、[spec/toolbar.md](../Design/spec/toolbar.md)、[spec/state.md](../Design/spec/state.md)：只保留自身语义与对 RATING / OPEN-08 的引用，删除重复的来源、事务与平台现状描述。
+- [Design/platforms.md](../Design/platforms.md)：RATING-02/06 改述为 `XmpRatingSpanLocator` + `ContainerRatingStore` + 只读定位适配器，删除 `XmpPacketEditor` 正常路径、六格收窄与 Mac 数值；评分相关入口优先符号名，去掉脆弱行号。
+- [Design/status.md](../Design/status.md)：新近历史验收细节归档到本计划 §6.5；各条目按 §6.4 的实际回归范围回填，旧作者验收不替代修订后复验。
+- [spec/settings.md](../Design/spec/settings.md)：安全模式语义按本次裁定核对（全来源预检、修订/区间复核、写后整组确认；safe 额外整包比较与逆序补偿，关闭时不回滚已成功来源），未改动。
+
+### 6.3 代码修复与回归
+
+- [x] 来源语义：多 canonical 包 Missing 参与比较；单来源 Missing 与多来源全 Missing 区分；Unreadable 与可解析但无效的 Rating 分开，数字筛选排除不可信来源。
+- [x] 容器安全：TIFF 有界遍历目录/数据范围并拒绝共享字节；HEIF 拒绝共享 extent、重复索引、多 XML/RDF 候选与不可证明的项间引用；修正 idat 绝对基址、base_offset 与溢出边界。
+- [x] 唯一写入路径：删除适配器写/恢复/追加与 `XmpPacketEditor` 整包重序列化入口，夹具通过独立造包或正式存储入口操作。
+- [x] 事务：真实非截断 RW 预检；NoChange 实读与修订复核；成功前重新发现来源集合并逐来源回读；失败按安全模式补偿或保留磁盘真值。组内其余文件按格式优先级稳定排序。
+- [x] 刷新与打开：按存储身份独立刷新代际，写后重新发现 sidecar；单图刷新说明父目录访问边界；可读但无 EXIF 的文件不误报无法打开；macOS 本地身份按卷上的实际拼写归一；设置缓存张数/内存按规范上界夹取。
+- [x] Android：新鲜 Provider 属性与会话 revision、数字 URI 显示名、选择器后台准备/迟到结果隔离、不可定位打开即拒绝；`SetLength` 改用 ftruncate，覆盖扩展零填充与回缩。
+- [x] iOS：枚举子项保留原安全作用域；胶片栏以原子显示快照统一数据源/布局/定位；共享通知先回主线程再访问 UIKit。回归不手动调用数据源 dequeue，改由 UIKit 滚动请求卡片。
+- [x] 现有 macOS 浮窗：非当前目标及组成员实时刷新、失败保留、成功仍冲突保留、Esc/切图关闭、底部卡片方向及锚点失效关闭；几何字号使用令牌。
+- [x] Web：单 Missing 不冲突、Rejected 可改写 0–5、冲突解除后 aria-pressed 更新；未新增来源浮窗。
+- [x] 训练消费只取实际选用文件有效 1–5；共享测试验证不可信状态不落值，Training.sln 构建与 scan-only 通过，未修改独立训练仓。
+- [x] 核心、Web、Mac、iOS 模拟器与 Android 模拟器回归及 Windows 类型检查，覆盖与证据见 §6.4。
+- [x] Windows 二次激活转发改为有界等待，超时记诊断并退出二次进程；类型检查通过，主实例无响应场景仍待 Windows 实机验证。
+- [ ] iOS / Windows / Android / Web 来源浮窗：按本次范围明确不补实现，仍仅三角指示且点击不动作。
+
+### 6.4 修复后的验证证据与限制
+
+2026-10-26，macOS 本机；全部评分测试仅写自有夹具或临时副本，原始 TestCase 只读。
+
+| 检查 | 结果与证据 |
+|---|---|
+| CoreContractCheck | 830 PASS / 1 SKIP / 0 FAIL；`release/core-review-fix-checks.log`，跳过 Windows 专属身份分支；含两份真实 ARW、真实 HEIC 副本往返/字节还原及合成重叠/事务/刷新回归 |
+| SettingsDefaultsCheck | ALL PASS；`release/settings-review-fix-checks.log` |
+| Web | Node 319/319；内置浏览器 `?check=all` 53/53、0 FAIL；令牌生成物最新 |
+| macOS Debug | 构建 0 错；base 39 checks，input/layout/filmstrip/toolbar/analysis/similarity/tools/settings 全 PASS，faults 6 PASS；`release/mac-review-fix-*.log`。每套复跑使用干净隔离设置，input 不加载照片，避免旧套件留存快捷键/单项缩放预设污染前提 |
+| macOS 浮窗 | `release/native-p2-acceptance/toolbar-ui-checks.txt`；真实窗口覆盖非当前来源变更、组重建、失败保留、成功仍冲突保留、Esc/切图、上下左右方向、隐藏/重排/滚动锚点关闭 |
+| iOS Simulator | iPad mini (A17 Pro)，iOS 26.3，Debug 构建 0 错；layout 27 条（含 1 NOTE）无 FAIL，input 48 PASS / 3 NOTE / 0 FAIL，faults 6 PASS；`release/ios-review-fix-{layout,input,faults}.txt`。input 自建工作副本时不并发启动 `--pv-open` |
+| Android | 既有 API 35 arm64 模拟器，使用 SDK 10.0.201 构建 0 错；storage 33/0、faults 22/0、input 13/0；`release/android-review-fix-{storage,faults,input}.txt`。数字 URI/选择器为 Debug Provider、同 UID，未冒充 DocumentsUI/跨 UID 授权实测 |
+| Windows | WindowsTypeCheck 0 错；`release/windows-review-fix-typecheck.log`，不替代 Windows 本机构建/WinUI 运行时 |
+| Training | `dotnet build Training/Training.sln` 0 错 0 警；现有夹具 scan-only 正常，未写训练库；`release/training-review-fix-{build,scan}.log` |
+
+保留限制：
+
+- macOS `_retired` 仍在主窗口生命周期内保留旧 popover/controller/content，避免 AppKit 关闭后迟后读取导致崩溃；未找到可证明安全的提前回收时机，反复开合的对象累积未标为已解决。
+- Apple iOS 身份保持词法路径；外部引用在安全作用域外建立，不做随访问权限变化的身份探测。macOS 按文件系统实际拼写归一，不以全路径小写合并区分大小写卷上的不同文件。
+- Windows WinUI 运行时、iOS 真机 Files 作用域、Android USB/MTP/云 Provider 与跨 UID 授权、Imaging Edge / 相机读取往返、断电恢复未验。
+- PNG 写入、无 canonical 包的新建与复杂容器扩展均未新增；其他平台来源浮窗仍未实现。
+
+### 6.5 修订前的程序化证据（自 status.md 移入）
+
+> 以下结果产生于本次规则修订之前，只作历史证据，不冒充修订后的验收。
+
+**2026-10-25 评分存储纠正（核心层）验收**：`Tools/CoreContractCheck` 635 PASS / 1 SKIP / 0 FAIL，`SettingsDefaultsCheck` 全通过。真实用户 HIF/ARW 副本：内嵌与已有 sidecar 2→-1→3 全 `Applied` 且一致，无 sidecar 组 4 星成功且不创建 sidecar。Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar 与伴侣不取 max、Invalid/Conflict 记 0 标签。Windows 仅完成 TypeCheck，WinUI 运行时未验。冲突指示与来源浮窗（RATING-04）的 macOS 版本已另行验收。
+
+**2026-10-26 星级冲突指示回归**：iOS 模拟器 `--pv-native-layout-check` 25/25 PASS（含 RATING-04 冲突三角）；Android `pv-check faults` 22/0、`storage` 24/0（含 RATING-04 冲突三角）；Web `node --test` 318/318、`?check=all` 50/50；Windows `WindowsTypeCheck` 0 错；macOS 无代码改动，沿用作者验收。来源浮窗仅 macOS 已实现，iOS / Windows / Android / Web 未实现，未实现平台点击三角不动作。
+
+**修订前作者验收**：macOS 来源浮窗的纵向条目、三种方向、宽度/长名双行/分隔线与原生毛玻璃经作者验收；该验收覆盖修订前实现，修订后需重新核验。

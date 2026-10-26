@@ -37,7 +37,10 @@ public static class SettingsDocumentCodec
     private const int SimilarityMaxResultsMin = 1;
     private const int SimilarityMaxResultsMax = 32;
     private const int AutomaticPreloadMaximum = 10;
-    private const int MinimumCacheMemoryMB = 512;
+    public const int MinimumCacheCount = 1;
+    public const int MaximumCacheCount = 400;
+    public const int MinimumCacheMemoryMB = 512;
+    public const int MaximumCacheMemoryMB = 32768;
     private const int MinimumVisibleCenterDelayMs = 100;
     private const int MaximumVisibleCenterDelayMs = 5000;
     private const int MinimumParallelism = 1;
@@ -91,7 +94,7 @@ public static class SettingsDocumentCodec
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var cacheCount = Math.Max(1, settings.BitmapCacheMaxCount);
+        var cacheCount = Math.Clamp(settings.BitmapCacheMaxCount, MinimumCacheCount, MaximumCacheCount);
         var preloadMaximum = automaticCacheLimit
             ? AutomaticPreloadMaximum
             : Math.Max(0, cacheCount / 3);
@@ -116,7 +119,7 @@ public static class SettingsDocumentCodec
                 SimilarityMaxResultsMin,
                 SimilarityMaxResultsMax),
             BitmapCacheMaxCount = cacheCount,
-            BitmapCacheMaxMemory = Math.Max(MinimumCacheMemoryMB, settings.BitmapCacheMaxMemory),
+            BitmapCacheMaxMemory = Math.Clamp(settings.BitmapCacheMaxMemory, MinimumCacheMemoryMB, MaximumCacheMemoryMB),
             PreloadForwardCount = Math.Clamp(settings.PreloadForwardCount, 0, preloadMaximum),
             PreloadBackwardCount = Math.Clamp(settings.PreloadBackwardCount, 0, preloadMaximum),
             VisibleCenterPreloadCount = Math.Clamp(settings.VisibleCenterPreloadCount, 0, preloadMaximum),

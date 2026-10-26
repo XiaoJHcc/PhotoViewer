@@ -6,7 +6,7 @@
  * 覆盖：FILM / FILTER / RATING / MENU / INPUT / IMAGE / TOOLBAR / STATE / ANALYSIS / SIM / OPEN / SHELL。
  */
 
-import { hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
+import { displayStars, hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
 
 const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "open", "shell"];
 
@@ -1774,27 +1774,76 @@ const CHECKS = [
         },
     },
     {
+        id: "RATING-04b",
+        title: "冲突解除且代表星仍为 0 时，卡片 0 号 aria-pressed 恢复按下",
+        async run(shell, h) {
+            const { app } = shell;
+            const target = app.state.cards.find((entry) => displayStars(entry.photo) === 0
+                && !entry.photo.sidecar
+                && ratingSources(entry).every((source) => source.kind === "embedded" && source.state === "rated"));
+            h.assert(target, "harbor 中找不到 0 星可写组");
+
+            // 模拟外部应用新建同名 sidecar：来源取值不同形成组级冲突，代表星仍为 0。
+            target.photo.sidecar = { rating: 3 };
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.assert(app.state.toolbar.rating.conflict === true, "新增 sidecar 后未标冲突");
+            let node = h.filmCardByKey(target.key);
+            h.assert(node, "目标卡片未渲染");
+            let zero = node.querySelector('.pv-card-star[data-rating="0"]');
+            h.assert(zero.classList.contains("is-conflict"), "冲突时卡片 0 号未换成警示三角");
+            h.assert(zero.getAttribute("aria-pressed") === "false", "冲突三角仍标记为按下");
+
+            // MENU-05：冲突时卡片菜单「无星级」直接整组写 0，代表星保持 0。
+            const rect = node.getBoundingClientRect();
+            const x = rect.left + rect.width / 2;
+            const y = rect.top + rect.height / 2;
+            h.pointer(node, "pointerdown", x, y, { pointerType: "touch" });
+            await h.wait(650);
+            h.assert(h.menu() !== null, "卡片长按未弹出卡片菜单");
+            h.pointer(node, "pointerup", x, y, { pointerType: "touch" });
+            h.click(h.menuItem("rate-0"));
+            await h.until(() => app.state.toolbar.rating.conflict === false, 4000);
+            h.assert(app.state.photo?.rating === 0, "解除冲突后代表星不再是 0");
+
+            node = h.filmCardByKey(target.key);
+            zero = node.querySelector('.pv-card-star[data-rating="0"]');
+            h.assert(!zero.classList.contains("is-conflict"), "冲突解除后 0 号仍是警示三角");
+            h.assert(zero.classList.contains("is-clear"), "冲突解除后 0 号没有恢复清零叉");
+            h.assert(zero.getAttribute("aria-pressed") === "true", "冲突解除后 0 号 aria-pressed 未恢复");
+            h.assert(getComputedStyle(zero.querySelector(".pv-card-warning")).display === "none",
+                "冲突解除后警示三角仍显示");
+            h.assert(document.querySelector(".pv-rating-sources") === null, "出现了来源浮窗");
+            delete target.photo.sidecar;
+        },
+    },
+    {
         id: "RATING-05",
         title: "筛选：已拒绝独立、无星级含缺失、无效不命中数字档，冲突独立于数字档",
         async run(shell, h) {
             const { app } = shell;
             const cards = app.state.cards;
             const rejected = cards.find((entry) => representativeRating(entry.photo).state === "rejected");
-            const missing = cards.find((entry) => representativeRating(entry.photo).state === "missing");
+            const singleMissing = cards.find((entry) => ratingSources(entry).length === 1
+                && representativeRating(entry.photo).state === "missing");
+            const groupMissing = cards.find((entry) => ratingSources(entry).length > 1
+                && ratingSources(entry).every((source) => source.state === "missing"));
             const invalid = cards.find((entry) => representativeRating(entry.photo).state === "invalid");
             const conflict = cards.find((entry) => representativeRating(entry.photo).state === "rated"
                 && hasRatingConflict(entry));
-            h.assert(rejected && missing && invalid && conflict, "harbor 缺少已拒绝/缺失/无效/冲突代表");
+            h.assert(rejected && singleMissing && groupMissing && invalid && conflict,
+                "harbor 缺少已拒绝/单一缺失/多来源缺失/无效/冲突代表");
 
             const has = (card) => app.state.cards.some((entry) => entry.key === card.key);
             app.setRatingFilter("rejected");
             await h.tick(40);
             h.assert(has(rejected), "已拒绝未命中「已拒绝」");
-            h.assert(!has(missing), "缺失命中了「已拒绝」");
+            h.assert(!has(singleMissing), "缺失命中了「已拒绝」");
 
             app.setRatingFilter("none");
             await h.tick(40);
-            h.assert(has(missing), "代表缺失未命中「无星级」");
+            h.assert(has(singleMissing), "代表缺失未命中「无星级」");
+            h.assert(has(groupMissing), "多来源缺失未命中「无星级」");
             h.assert(!has(rejected), "已拒绝被并入「无星级」");
 
             for (const value of ["1", "2", "3", "4", "5", "1+", "2+", "3+", "4+"]) {
@@ -1810,9 +1859,45 @@ const CHECKS = [
             app.setRatingFilter("conflict");
             await h.tick(40);
             h.assert(has(conflict), "冲突组未命中「星级冲突」");
-            h.assert(has(missing), "缺失来源未命中「星级冲突」");
+            h.assert(has(groupMissing), "多来源缺失未命中「星级冲突」");
+            h.assert(!has(singleMissing), "单一缺失来源被误判为「星级冲突」");
             app.setRatingFilter("all");
             await h.tick(40);
+        },
+    },
+    {
+        id: "RATING-05b",
+        title: "已拒绝来源可整组写 0–5：写后来源为已评分并点亮对应星",
+        async run(shell, h) {
+            const { app } = shell;
+            const target = app.state.cards.find((entry) => representativeRating(entry.photo).state === "rejected"
+                && ratingSources(entry).length === 1);
+            h.assert(target, "harbor 中找不到单一已拒绝样本");
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            const card = h.cardByPhotoId(target.photo.id);
+            h.assert(displayStars(card.photo) === 0, "已拒绝代表点亮了星");
+
+            h.click(h.ratingButton(0));
+            await h.until(() => app.state.photo.rating === 0, 4000);
+            h.assert(ratingSources(card)[0].state === "rated", "写 0 后来源仍是已拒绝");
+            h.assert(displayStars(card.photo) === 0, "写 0 后代表星不是 0");
+
+            h.click(h.ratingButton(3));
+            await h.until(() => app.state.photo.rating === 3, 4000);
+            h.assert(ratingSources(card)[0].state === "rated", "写 3 后来源仍是已拒绝");
+            const node = h.filmCardByKey(card.key);
+            h.assert(node, "目标卡片未渲染");
+            const stars = Array.from(node.querySelectorAll(".pv-card-star"));
+            h.assert(stars.slice(1, 4).every((button) => button.classList.contains("is-on")),
+                "写 3 后 1–3 号星未点亮");
+            h.assert(stars.slice(4).every((button) => !button.classList.contains("is-on")),
+                "写 3 后 4–5 号星被点亮");
+            h.assert(stars[0].getAttribute("aria-pressed") === "false", "写 3 后 0 号仍标记为按下");
+            h.assert(app.state.toolbar.rating.value === 3, "控制栏点亮星与写入值不一致");
+
+            target.photo.rating = -1;
+            target.photo.ratingState = "rejected";
         },
     },
     {
@@ -1821,14 +1906,14 @@ const CHECKS = [
         async run(shell, h) {
             const { app } = shell;
             const missing = app.state.cards.find((entry) => representativeRating(entry.photo).state === "missing"
-                && entry.photo.ext === ".jpg");
+                && entry.photo.ext === ".jpg" && ratingSources(entry).length === 1);
             h.assert(missing, "harbor 中找不到缺包 JPEG 样本");
             app.openFolder("harbor", { target: missing.photo.id });
             await h.tick(160);
             const card = h.cardByPhotoId(missing.photo.id);
             const sources = ratingSources(card);
             h.assert(sources.every((source) => source.state === "missing"), "缺包 JPEG 组不是全缺失");
-            h.assert(app.state.toolbar.rating.conflict === true, "缺包 JPEG 组未标冲突");
+            h.assert(app.state.toolbar.rating.conflict === false, "单一缺失来源被误判为冲突");
 
             h.click(h.ratingButton(5));
 
@@ -1896,6 +1981,40 @@ const CHECKS = [
             app.openFolder("harbor", { target: target.photo.id });
             await h.tick(120);
             h.assert(app.state.toolbar.rating.conflict === false, "恢复来源后仍显示冲突");
+            app.setRatingFilter("all");
+            await h.tick(40);
+        },
+    },
+    {
+        id: "RATING-01b",
+        title: "单一来源仅缺失不报冲突：卡片无警示三角，也不命中「星级冲突」",
+        async run(shell, h) {
+            const { app } = shell;
+            const cards = app.state.cards;
+            const single = cards.find((entry) => ratingSources(entry).length === 1
+                && representativeRating(entry.photo).state === "missing");
+            const group = cards.find((entry) => ratingSources(entry).length > 1
+                && ratingSources(entry).every((source) => source.state === "missing"));
+            h.assert(single && group, "harbor 缺少单一/多来源缺失样本");
+
+            app.openFolder("harbor", { target: single.photo.id });
+            await h.tick(160);
+            h.assert(app.state.toolbar.rating.conflict === false, "单一缺失来源被误判为冲突");
+            const node = h.filmCardByKey(single.key);
+            h.assert(node, "单一缺失卡片未渲染");
+            const zero = node.querySelector('.pv-card-star[data-rating="0"]');
+            h.assert(!zero.classList.contains("is-conflict"), "单一缺失卡片的 0 号仍是警示三角");
+            h.assert(zero.classList.contains("is-clear"), "单一缺失卡片的 0 号没有清零叉");
+            h.assert(getComputedStyle(zero.querySelector(".pv-card-warning")).display === "none",
+                "单一缺失卡片显示了警示三角");
+            h.assert(zero.getAttribute("aria-label") === "无星级",
+                `单一缺失 0 号名称是 ${zero.getAttribute("aria-label")}`);
+
+            app.setRatingFilter("conflict");
+            await h.tick(40);
+            const keys = app.state.cards.map((entry) => entry.key);
+            h.assert(!keys.includes(single.key), "单一缺失卡片命中了「星级冲突」");
+            h.assert(keys.includes(group.key), "多来源全缺失未命中「星级冲突」");
             app.setRatingFilter("all");
             await h.tick(40);
         },

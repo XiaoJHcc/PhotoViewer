@@ -66,7 +66,7 @@ public sealed class PhotoGroup
 
     /// <summary>
     /// 是否存在评分冲突：组内实际来源不处于“全部可读、全部带值且取值相同”的状态。
-    /// 任一来源 Invalid/Conflict，多来源中有 Missing，或带值来源取值不同都为冲突；
+    /// 任一来源 Invalid/Unreadable/Conflict，多来源中有 Missing，或带值来源取值不同都为冲突；
     /// 只有单个来源且该来源只是 Missing/带值时不算冲突（没有可比较的第二份事实）。
     /// </summary>
     public bool HasRatingConflict
@@ -75,8 +75,12 @@ public sealed class PhotoGroup
         {
             var sources = RatingSources;
             if (sources.Count == 0) return false;
-            if (sources.Any(source => source.State is XmpRatingState.Invalid or XmpRatingState.Conflict))
+            if (sources.Any(source => source.State is
+                XmpRatingState.Invalid or XmpRatingState.Unreadable or XmpRatingState.Conflict))
+            {
                 return true;
+            }
+
             if (sources.Count == 1) return false;
             if (sources.Any(source => source.State == XmpRatingState.Missing)) return true;
             var first = sources[0];
@@ -170,6 +174,7 @@ public sealed class PhotoGroupMap
         ImageFile representative,
         PhotoFormatRule[] formats)
     {
+        members = members.OrderBy(file => FormatPriority(file.Name, formats)).ToArray();
         var companionNames = members
             .Where(file => !ReferenceEquals(file, representative))
             .Select(file => FindFormat(file.Name, formats)?.DisplayName.ToUpperInvariant())

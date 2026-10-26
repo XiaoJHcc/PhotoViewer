@@ -12,7 +12,11 @@ internal static class StorageItemIdChecks
         var expectedPath = Path.Combine(root, "a", "b", "photo.jpg");
         var id = StorageItemId.FromLocalPath(expectedPath);
         c.True("本地路径以 file: 前缀", id.Value.StartsWith("file:", StringComparison.Ordinal), $"实际 {id.Value}");
-        c.Equal("本地路径取绝对路径", expectedPath, id.Value["file:".Length..]);
+        var identityPath = id.Value["file:".Length..];
+        c.True("本地路径身份为绝对路径", Path.IsPathFullyQualified(identityPath), identityPath);
+        c.Equal("本地路径身份已规范化", Path.GetFullPath(identityPath), identityPath);
+        c.Equal("本地路径身份保留文件名", "photo.jpg", Path.GetFileName(identityPath));
+        c.SameId("身份路径再次构造得到同一身份", id, StorageItemId.FromLocalPath(identityPath));
 
         var messy = Path.Combine(root, "a", ".", "c", "..", "b", "photo.jpg");
         c.SameId("本地路径折叠 . 与 ..", id, StorageItemId.FromLocalPath(messy));

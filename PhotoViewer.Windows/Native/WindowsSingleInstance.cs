@@ -93,7 +93,7 @@ internal static class WindowsSingleInstance
     private static void RedirectToPrimary(AppActivationArguments activation, AppInstance primary)
     {
         var completed = new Semaphore(0, 1);
-        _ = Task.Run(async () =>
+        var redirect = Task.Run(async () =>
         {
             try
             {
@@ -109,13 +109,21 @@ internal static class WindowsSingleInstance
             }
         });
 
+        var started = Stopwatch.StartNew();
         var handles = new[] { completed.SafeWaitHandle.DangerousGetHandle() };
-        if (CoWaitForMultipleObjects(CoWaitDefault, Infinite, 1, handles, out _) != 0)
+        var signaled = CoWaitForMultipleObjects(CoWaitDefault, RedirectTimeoutMs, 1, handles, out _) == 0;
+        if (!signaled)
         {
-            completed.WaitOne();
+            var remaining = Math.Max(0, (int)RedirectTimeoutMs - (int)started.ElapsedMilliseconds);
+            signaled = completed.WaitOne(remaining);
         }
 
-        completed.Dispose();
+        if (signaled) completed.Dispose();
+        else
+        {
+            NativeStartupLog.Write("activation redirect timed out; secondary instance will exit");
+            _ = redirect.ContinueWith(_ => completed.Dispose(), TaskScheduler.Default);
+        }
 
         // 转发本身只把激活交给主实例；窗口是否被抢到前台由系统焦点规则决定，这里补一次显式前置。
         try
@@ -207,8 +215,7 @@ internal static class WindowsSingleInstance
     /// <summary><c>CoWaitForMultipleObjects</c> 的默认标志（只等待，不派发调用）。</summary>
     private const uint CoWaitDefault = 0;
 
-    /// <summary>无限等待。</summary>
-    private const uint Infinite = 0xFFFFFFFF;
+    private const uint RedirectTimeoutMs = 10000;
 
     /// <summary>在 STA 上可安全等待句柄完成（内部派发 COM 调用）。</summary>
     /// <param name="flags">等待标志。</param>

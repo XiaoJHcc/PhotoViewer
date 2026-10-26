@@ -311,7 +311,8 @@ export function createCard(ctx, { mode = "film" } = {}) {
             const zeroLabel = conflict ? "星级冲突" : "无星级";
             zero.setAttribute("aria-label", zeroLabel);
             zero.dataset.tooltip = zeroLabel;
-            zero.setAttribute("aria-pressed", "false");
+            // 冲突解除后星级可能仍是 0：此时星级分支不会重跑，0 号需在这里恢复按下态。
+            zero.setAttribute("aria-pressed", rating === 0 && !conflict ? "true" : "false");
             lastConflict = conflict;
         }
 

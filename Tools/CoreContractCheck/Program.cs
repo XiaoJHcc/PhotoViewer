@@ -21,6 +21,7 @@ internal static class Program
         try
         {
             StorageItemIdChecks.Run(checks, root);
+            StorageIdentityRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             LocalFileRefChecks.Run(checks, root);
             LocalFolderChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             RandomAccessChecks.RunAsync(checks, root).GetAwaiter().GetResult();
@@ -29,9 +30,12 @@ internal static class Program
             XmpChecks.Run(checks, root);
             OpenRequestChannelChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             XmpContainerChecks.RunAsync(checks, root).GetAwaiter().GetResult();
+            ContainerSafetyRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             PhotoGroupChecks.Run(checks, root);
             RatingChecks.RunAsync(checks, root).GetAwaiter().GetResult();
+            RatingTransactionRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             SettingsChecks.RunAsync(checks, root).GetAwaiter().GetResult();
+            RefreshRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
         }
         catch (Exception exception)
         {

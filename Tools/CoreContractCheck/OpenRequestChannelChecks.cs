@@ -125,7 +125,7 @@ internal static class OpenRequestChannelChecks
         WritePhoto(Path.Combine(directory, "c.jpg"));
         if (hasFixtures)
         {
-            await new JpegXmpContainerAdapter().WriteRatingAsync(new LocalFileRef(aPath), 3, safeMode: true);
+            await WriteRatingAsync(aPath, 3);
         }
         var sizeOnDisk = (ulong)new FileInfo(aPath).Length;
         var modifiedOnDisk = new DateTimeOffset(new FileInfo(aPath).LastWriteTimeUtc, TimeSpan.Zero);
@@ -450,7 +450,7 @@ internal static class OpenRequestChannelChecks
         new(new FileInfo(path).LastWriteTimeUtc, TimeSpan.Zero);
 
     private static Task WriteRatingAsync(string path, int rating) =>
-        new JpegXmpContainerAdapter().WriteRatingAsync(new LocalFileRef(path), rating, safeMode: true);
+        XmpRatingStoreFactory.Create(new LocalFileRef(path)).WriteAsync(rating, safeMode: true);
 
     /// <summary>单图模式重复激活：同一对象重读属性/EXIF/评分，不 Fit；读取失败以 STATE-03 上报。</summary>
     private static async Task CheckSingleImageRefreshAsync(Checks c, MainViewModel main, string root)
@@ -482,7 +482,7 @@ internal static class OpenRequestChannelChecks
         var sizeOnDisk = (ulong)new FileInfo(path).Length;
         if (hasFixture)
         {
-            await new JpegXmpContainerAdapter().WriteRatingAsync(new LocalFileRef(path), 4, safeMode: true);
+            await WriteRatingAsync(path, 4);
             sizeOnDisk = (ulong)new FileInfo(path).Length;
         }
 
@@ -532,7 +532,7 @@ internal static class OpenRequestChannelChecks
         Directory.CreateDirectory(directory);
         var path = Path.Combine(directory, "s.jpg");
         File.Copy(fixture, path, overwrite: true);
-        await new JpegXmpContainerAdapter().WriteRatingAsync(new LocalFileRef(path), 3, safeMode: true);
+        await WriteRatingAsync(path, 3);
 
         var gated = new GatedFileRef(new LocalFileRef(path));
         var imageFile = new ImageFile(gated);

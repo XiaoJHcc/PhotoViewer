@@ -1,8 +1,11 @@
+using System.Xml;
+using XmpCore;
+
 namespace PhotoViewer.Core;
 
 /// <summary>
 /// 一个实际存在的评分来源：某个文件的内嵌 XMP，或一个已存在的同名 sidecar。
-/// <see cref="Snapshot"/> 保留 Missing / Rated / Rejected / Invalid / Conflict 原始语义，
+/// <see cref="Snapshot"/> 保留 Missing / Rated / Rejected / Invalid / Conflict / Unreadable 原始语义，
 /// 详情不得用 <see cref="NumericValue"/> 把“无评分”和“0 星”混同。
 /// </summary>
 public sealed record RatingSourceState(
@@ -58,7 +61,9 @@ public sealed class RatingSidecarIndex
 
 /// <summary>
 /// 读取一个照片的全部评分来源：内嵌 XMP（永不 sidecar 遮蔽）+ 已存在的同名 sidecar。
-/// 每个来源独立保留状态；读取失败以 <see cref="XmpRatingState.Invalid"/> 与错误信息呈现，不静默归零。
+/// 每个来源独立保留状态；读不进来的来源（I/O、权限、超过解析上限、已消失）以
+/// <see cref="XmpRatingState.Unreadable"/> 呈现，包可读但内容不可用的来源以
+/// <see cref="XmpRatingState.Invalid"/> 呈现，都带原因，不静默归零。
 /// </summary>
 public static class RatingSourceReader
 {
@@ -97,11 +102,18 @@ public static class RatingSourceReader
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (IsContentCorruption(exception))
         {
+            // 包内容损坏（XML/XMP 解析失败）仍按 Invalid：来源读到了，但语义不可用。
             return new XmpRatingSnapshot(
                 XmpRatingState.Invalid,
                 null,
+                XmpRatingSource.Embedded,
+                $"内嵌 XMP 无法解析：{exception.Message}");
+        }
+        catch (Exception exception)
+        {
+            return XmpRatingSnapshot.Unreadable(
                 XmpRatingSource.Embedded,
                 $"读取内嵌 XMP 失败：{exception.Message}");
         }
@@ -120,8 +132,8 @@ public static class RatingSourceReader
                 return new RatingSourceState(
                     XmpRatingSource.Sidecar,
                     sidecar,
-                    new XmpRatingSnapshot(
-                        XmpRatingState.Invalid, null, XmpRatingSource.Sidecar, "sidecar 已不存在"));
+                    XmpRatingSnapshot.Unreadable(
+                        XmpRatingSource.Sidecar, "sidecar 已不存在"));
             }
 
             if (properties.Size is 0)
@@ -138,8 +150,8 @@ public static class RatingSourceReader
                 return new RatingSourceState(
                     XmpRatingSource.Sidecar,
                     sidecar,
-                    new XmpRatingSnapshot(
-                        XmpRatingState.Invalid, null, XmpRatingSource.Sidecar, "sidecar 超过解析上限"));
+                    XmpRatingSnapshot.Unreadable(
+                        XmpRatingSource.Sidecar, "sidecar 超过解析上限"));
             }
 
             await using var stream = await sidecar.OpenReadAsync(cancellationToken).ConfigureAwait(false);
@@ -157,8 +169,9 @@ public static class RatingSourceReader
         {
             throw;
         }
-        catch (Exception exception)
+        catch (Exception exception) when (IsContentCorruption(exception))
         {
+            // 包内容损坏（XML/XMP 解析失败）按 Invalid；读不进来（I/O、权限）才是 Unreadable。
             return new RatingSourceState(
                 XmpRatingSource.Sidecar,
                 sidecar,
@@ -166,9 +179,22 @@ public static class RatingSourceReader
                     XmpRatingState.Invalid,
                     null,
                     XmpRatingSource.Sidecar,
+                    $"sidecar 的 XMP 无法解析：{exception.Message}"));
+        }
+        catch (Exception exception)
+        {
+            return new RatingSourceState(
+                XmpRatingSource.Sidecar,
+                sidecar,
+                XmpRatingSnapshot.Unreadable(
+                    XmpRatingSource.Sidecar,
                     $"读取 sidecar 失败：{exception.Message}"));
         }
     }
+
+    /// <summary>包内容本身无法解析（与“来源读不进来”区分）。</summary>
+    private static bool IsContentCorruption(Exception exception) =>
+        exception is XmpException or XmlException;
 
     /// <summary>找出照片对应的已存在 sidecar；有索引时不再触碰目录。</summary>
     public static async Task<Storage.IFileRef?> ResolveSidecarAsync(

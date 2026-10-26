@@ -411,8 +411,8 @@ public static class AndroidNativeShell
                 if (uri == null) continue;
                 try
                 {
-                    var file = new AndroidFileRef(Application.Context.ContentResolver!, uri);
-                    if (seen.Add(file.StorageId.Value)) items.Add(file);
+                    var file = await CreateExternalFileAsync(uri).ConfigureAwait(false);
+                    if (file != null && seen.Add(file.StorageId.Value)) items.Add(file);
                 }
                 catch (Exception exception)
                 {
@@ -436,6 +436,28 @@ public static class AndroidNativeShell
         Intent.ActionSend or Intent.ActionSendMultiple => OpenRequestSource.Share,
         _ => OpenRequestSource.SystemOpen,
     };
+
+    /// <summary>
+    /// 外部打开 Uri → 存储引用。<c>file://</c> 直接回本地路径快路径；<c>content://</c> 在后台线程
+    /// 查询真实显示名（DocumentsProvider 投影或通用 <c>_display_name</c>）：MediaStore 这类
+    /// 只有数字 documentId 的 Uri 末段不是文件名，不查属性就无法按扩展名判定类型而整条请求被丢弃。
+    /// </summary>
+    /// <param name="uri">外部传入的 Uri。</param>
+    /// <returns>存储引用；Uri 无法转为可读目标时返回 null。</returns>
+    private static async Task<IFileRef?> CreateExternalFileAsync(global::Android.Net.Uri uri)
+    {
+        if (string.Equals(uri.Scheme, ContentResolver.SchemeFile, StringComparison.OrdinalIgnoreCase))
+        {
+            string? local = uri.Path;
+            if (string.IsNullOrEmpty(local)) return null;
+            Console.WriteLine($"[Native] 外部打开本地路径：{local}");
+            return new AndroidFileRef(local);
+        }
+
+        var resolver = Application.Context.ContentResolver;
+        if (resolver == null) return null;
+        return await AndroidFileRef.CreateForContentUriAsync(resolver, uri).ConfigureAwait(false);
+    }
 
     /// <summary>验收参数 <c>pv-settings</c> / <c>pv-settings-page</c>：打开设置 sheet 并落到指定分类页。</summary>
     private static void HandleSettingsIntent(Intent intent, MainViewModel main)

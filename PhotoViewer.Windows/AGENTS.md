@@ -10,7 +10,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 |---|---|
 | `Program.cs`、`App.xaml*`、`Native/WindowsNativeApplication.cs` | 原生启动、应用资源、调度器与平台门面注入；设置用 `FileSettingsStore`（schemaVersion 2，原子替换；验收/压测走隔离目录），本地存储引用统一 `LocalFileRef`/`LocalFolderRef`。 |
 | `Native/WindowsMainWindow.cs`、`WindowsTitleBar.cs`、`WindowsInput.cs`、`WindowsKeyDispatch.cs` | 主窗口、标题栏、外部打开（拖入经 `WindowsOpenPaths` 投递共享打开通道，选择器直接进共享文件源）、命令与输入分发（`WindowsInput` 做虚拟键/滚轮映射，`WindowsKeyDispatch` 判定消费与重复设闸）。 |
-| `Native/WindowsOpenPaths.cs`、`WindowsSingleInstance.cs` | 命令行、文件激活与二次启动路径 → `LocalFileRef`/`LocalFolderRef`；`AppInstance` 单实例把二次激活转发到主实例的 `OpenRequestChannel`。隔离验收/压测不注册单实例键，避免与用户实例互相转发。 |
+| `Native/WindowsOpenPaths.cs`、`WindowsSingleInstance.cs` | 命令行、文件激活与二次启动路径 → `LocalFileRef`/`LocalFolderRef`；`AppInstance` 单实例把二次激活转发到主实例的 `OpenRequestChannel`；转发等待有界，超时只记诊断并退出二次进程，不无限挂起或另开重复主窗口。隔离验收/压测不注册单实例键，避免与用户实例互相转发。 |
 | `Native/WindowsLayout.cs`、`WindowsWrapPanel.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsPhotoView.cs`、`WindowsNavigator.cs` | D3D 照片表面、共享视口接线与缩放导航图。 |
 | `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选、胶片栏、卡片、EXIF 与评分/命令栏、评分冲突警示三角，以及主屏小型控件的四态外观。 |
@@ -53,7 +53,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 - 布局回调不改子元素尺寸或创建位图；瓦片尺寸交给 `Measure/Arrange`，尺寸变化后的裁剪等副作用异步处理。
 - 主屏小型控件（命令按钮、评分星、相似聚类开关、动作按钮）的常态/悬停/按下/禁用统一走 `WindowsControlStyles`：按元素覆盖模板状态键，禁用不换底色、只降内容不透明度；只设 `Background` 不够，WinUI 模板会在禁用/悬停时回落到主题资源。
-- 评分冲突（RATING-04）：组级冲突时卡片与控制栏的 0 号槽位换成警示三角（`WindowsIcons.WarningGlyph` + `WindowsLayout.StarConflict`），按钮几何与命中区不变；三角只作指示，点击不写值、不切主图。控制栏订阅当前文件的 `Rating`/`HasRatingConflict`/`RatingSources`，后台来源读取完成后三角自动刷新。来源浮窗尚未移植到 Windows（macOS 已实现，设计约束见 [RATING-04](../Design/spec/rating.md) 与 [platforms](../Design/platforms.md#rating)），点击三角不打开任何界面。
+- 评分冲突（RATING-04）：组级冲突时卡片与控制栏的 0 号槽位换成警示三角（`WindowsIcons.WarningGlyph` + `WindowsLayout.StarConflict`），按钮几何与命中区不变；三角只作指示，点击不写值、不切主图。控制栏订阅当前文件的 `Rating`/`HasRatingConflict`/`RatingSources`，后台来源读取完成后三角自动刷新。本端不提供来源浮窗入口，点击三角不打开界面；浮窗规则见 [RATING-04](../Design/spec/rating.md)，平台实现状态只在 `Design/status.md` 登记。
 - 主窗口快捷键挂在根元素 `PreviewKeyDown`（`AddHandler(..., handledEventsToo: true)`），不依赖冒泡焦点路径：未映射/未绑定的按键放行，焦点在文本编辑控件内时整体放行；设置/工具窗口各自独立处理键盘。命令能否执行由共享 `InputCommandMap.IsCommandKnown` 判定，`WindowsIcons` 只负责显示。
 - 控制栏换行由 `WindowsWrapPanel.MainLimit` 驱动：主轴上限取滚动视口，能整组换行时不得以滚动代替；单组超长才由 `ScrollViewer` 兜底。
 - 导航图白框可拖动：`WindowsNavigator.PressAt/DragTo` 换算归一化点，交 `WindowsPhotoView.CenterOnNormalizedPoint`；滚轮仍冒泡给主图缩放。

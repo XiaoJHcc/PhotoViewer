@@ -556,7 +556,7 @@ internal static partial class AndroidNativeChecks
             ? UnixFileMode.UserRead | UnixFileMode.GroupRead | UnixFileMode.OtherRead
             : UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead);
 
-    /// <summary>把目录权限改成只读或可写（安全模式备份文件也写不进来）。</summary>
+    /// <summary>把目录权限改成只读或可写。</summary>
     /// <param name="path">目录全路径。</param>
     /// <param name="readOnly">true 设只读。</param>
     private static void SetDirectoryReadOnly(string path, bool readOnly)

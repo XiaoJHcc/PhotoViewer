@@ -95,8 +95,16 @@ test("RATING-01：组级冲突覆盖取值不同、缺失、无效、不可读�
     assert.equal(hasRatingConflict(card(photo("E.JPG", { rating: 3, sidecar: { state: "invalid" } }))), true);
     assert.equal(hasRatingConflict(card(photo("F.JPG", { rating: 3 }), [photo("F.ARW", { rating: null, ratingState: "unreadable" })])), true);
     assert.equal(hasRatingConflict(card(photo("G.JPG", { rating: null, ratingState: "conflict" }))), true);
-    // 只有一个来源且缺失也算冲突（RATING-01「任一来源缺失」）。
-    assert.equal(hasRatingConflict(card(photo("H.JPG", { rating: null, ratingState: "missing" }))), true);
+    // RATING-01：全组只有一个来源且仅缺 Rating 不算冲突。
+    assert.equal(hasRatingConflict(card(photo("H.JPG", { rating: null, ratingState: "missing" }))), false);
+    // 单来源自身无效/不可读/内部冲突仍算冲突，无法作为可信评分。
+    assert.equal(hasRatingConflict(card(photo("J.JPG", { rating: null, ratingState: "invalid" }))), true);
+    assert.equal(hasRatingConflict(card(photo("K.JPG", { rating: null, ratingState: "unreadable" }))), true);
+    // 两个及以上来源全部缺失仍算冲突。
+    assert.equal(hasRatingConflict(card(
+        photo("L.JPG", { rating: null, ratingState: "missing" }),
+        [photo("L.ARW", { rating: null, ratingState: "missing" })],
+    )), true);
     // 已拒绝是带值状态，全部 -1 组内部一致。
     assert.equal(hasRatingConflict(card(photo("I.JPG", { rating: -1, ratingState: "rejected" }))), false);
 });
@@ -136,6 +144,8 @@ test("FILTER-03：数字/以上按代表内嵌，已拒绝独立，冲突独立"
     assert.equal(matchesRatingFilter(missing, "rejected"), false);
     assert.equal(matchesRatingFilter(invalid, "rejected"), false);
     assert.equal(matchesRatingFilter(invalid, "none"), false);
+    assert.equal(matchesRatingFilter(missing, "conflict"), false);
+    assert.equal(matchesRatingFilter(invalid, "conflict"), true);
     for (const value of ["1", "2", "3", "4", "5", "1+", "2+", "3+", "4+"]) {
         assert.equal(matchesRatingFilter(invalid, value), false, `无效代表命中了 ${value}`);
     }
@@ -156,11 +166,13 @@ test("FILTER-03：数字/以上按代表内嵌，已拒绝独立，冲突独立"
     list.setRatingFilter("none");
     assert.deepEqual(list.cards.map((entry) => entry.key), ["f1/A.JPG", "f1/C.JPG"]);
     list.setRatingFilter("conflict");
-    assert.deepEqual(list.cards.map((entry) => entry.key), ["f1/C.JPG", "f1/D.JPG"]);
+    assert.deepEqual(list.cards.map((entry) => entry.key), ["f1/D.JPG"]);
 });
 
 test("RATING-06：无 canonical XMP 一律不支持新建（含 JPEG）", () => {
     assert.equal(ratingWriteBlockReason({ state: "rated", kind: "embedded" }), null);
+    assert.equal(ratingWriteBlockReason({ state: "rejected", kind: "embedded" }), null);
+    assert.equal(ratingWriteBlockReason({ state: "rejected", kind: "sidecar" }), null);
     assert.match(ratingWriteBlockReason({ state: "missing", kind: "embedded" }), /无 canonical XMP 包，不支持新建/);
     assert.match(ratingWriteBlockReason({ state: "missing", kind: "sidecar" }), /无 canonical XMP 包，不支持新建/);
     assert.match(ratingWriteBlockReason({ state: "invalid", kind: "embedded" }), /无法解析/);
@@ -273,6 +285,34 @@ test("RATING-03：全部来源已是目标值时不产生物理写入", async ()
     await flush();
     assert.equal(await result, true);
     assert.equal(clock.pendingTimers(), 0);
+});
+
+test("RATING-05：已有 canonical 的已拒绝来源可写 0–5，缺失来源仍整组失败", async () => {
+    const { clock, toasts, writer } = writerHarness();
+    const rejected = photo("A.JPG", { rating: -1, ratingState: "rejected" });
+
+    const toZero = writer.write(card(rejected), 0);
+    await settle(clock);
+    assert.equal(await toZero, true);
+    assert.equal(rejected.rating, 0);
+    assert.equal(rejected.ratingState, "rated");
+    assert.deepEqual(toasts, []);
+
+    const toThree = writer.write(card(rejected), 3);
+    await settle(clock);
+    assert.equal(await toThree, true);
+    assert.equal(rejected.rating, 3);
+    assert.equal(displayStars(rejected), 3);
+
+    // 已拒绝可写不等于缺失可建：组内仍有缺失来源时整组在首次修改前失败。
+    const mixed = photo("B.JPG", { rating: -1, ratingState: "rejected" });
+    const missing = photo("B.ARW", { rating: null, ratingState: "missing" });
+    const blocked = writer.write(card(mixed, [missing]), 4);
+    await settle(clock);
+    assert.equal(await blocked, false);
+    assert.equal(mixed.rating, -1);
+    assert.equal(missing.rating, null);
+    assert.match(toasts.at(-1), /^无法写入星级：B\.ARW（无 canonical XMP 包，不支持新建）$/);
 });
 
 function makeLibrary() {

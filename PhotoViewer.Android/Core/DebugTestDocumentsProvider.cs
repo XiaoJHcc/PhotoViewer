@@ -497,3 +497,110 @@ public sealed class DebugTestDocumentsProvider : DocumentsProvider
         }
     }
 }
+
+/// <summary>
+/// 验收专用通用 <see cref="ContentProvider"/>：模拟 MediaStore 这类「Uri 里只有数字 ID、
+/// 显示名要靠 <c>_display_name</c> 查」的 provider（<c>content://authority/4201</c>），
+/// 用来核对 ACTION_VIEW 入口必须在后台读真实属性，而不是拿 Uri 末段当文件名。
+/// 不是 DocumentsProvider（<c>DocumentsContract.IsDocumentUri</c> 为 false），仅 Debug 注册，
+/// 只读、只服务登记过的数字 ID，不承载产品数据。
+/// </summary>
+#if DEBUG
+[ContentProvider(
+    new[] { DebugTestMediaProvider.TestAuthority },
+    Name = "cc.xiaojh.PhotoViewer.Core.DebugTestMediaProvider",
+    Exported = false)]
+#endif
+public sealed class DebugTestMediaProvider : ContentProvider
+{
+    /// <summary>固定测试 authority。</summary>
+    internal const string TestAuthority = "cc.xiaojh.PhotoViewer.debug.media";
+
+    private static readonly string[] DefaultColumns = ["_display_name", "_size", "date_modified"];
+    private static readonly object Gate = new();
+    private static readonly Dictionary<string, Entry> Files = new(StringComparer.Ordinal);
+
+    /// <summary>登记一个数字 ID → 真实文件与显示名（验收写入，产品路径不引用）。</summary>
+    /// <param name="mediaId">数字 ID（Uri 末段）。</param>
+    /// <param name="path">backing store 里的真实文件。</param>
+    /// <param name="displayName">真实显示名（与 Uri 无关）。</param>
+    internal static void Register(long mediaId, string path, string displayName)
+    {
+        string key = mediaId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        lock (Gate) Files[key] = new Entry(path, displayName);
+    }
+
+    /// <summary>清空登记；每轮检查重建夹具前调用。</summary>
+    internal static void Clear()
+    {
+        lock (Gate) Files.Clear();
+    }
+
+    /// <inheritdoc />
+    public override bool OnCreate() => true;
+
+    /// <inheritdoc />
+    public override ICursor? Query(AndroidUri? uri, string[]? projection, string? selection,
+        string[]? selectionArgs, string? sortOrder)
+    {
+        var columns = projection is { Length: > 0 } ? projection : DefaultColumns;
+        var cursor = new MatrixCursor(columns);
+        if (!TryResolve(uri, out var entry)) return cursor;
+
+        var info = new FileInfo(entry.Path);
+        bool exists = info.Exists;
+        long size = exists ? info.Length : 0;
+        long modified = exists
+            ? new DateTimeOffset(info.LastWriteTimeUtc, TimeSpan.Zero).ToUnixTimeMilliseconds()
+            : 0;
+        var row = new Java.Lang.Object[columns.Length];
+        for (int index = 0; index < columns.Length; index++)
+        {
+            row[index] = columns[index] switch
+            {
+                "_display_name" => new Java.Lang.String(entry.DisplayName),
+                "_size" => Java.Lang.Long.ValueOf(size),
+                "date_modified" => Java.Lang.Long.ValueOf(modified),
+                _ => null!,
+            };
+        }
+        cursor.AddRow(row);
+        return cursor;
+    }
+
+    /// <inheritdoc />
+    public override string? GetType(AndroidUri? uri) => "image/jpeg";
+
+    /// <inheritdoc />
+    public override AndroidUri? Insert(AndroidUri? uri, ContentValues? values)
+        => throw new Java.Lang.UnsupportedOperationException("验收媒体 Provider 只读");
+
+    /// <inheritdoc />
+    public override int Delete(AndroidUri? uri, string? selection, string[]? selectionArgs)
+        => throw new Java.Lang.UnsupportedOperationException("验收媒体 Provider 只读");
+
+    /// <inheritdoc />
+    public override int Update(AndroidUri? uri, ContentValues? values, string? selection, string[]? selectionArgs)
+        => throw new Java.Lang.UnsupportedOperationException("验收媒体 Provider 只读");
+
+    /// <inheritdoc />
+    public override ParcelFileDescriptor? OpenFile(AndroidUri? uri, string? mode)
+    {
+        if (!TryResolve(uri, out var entry))
+            throw new Java.IO.FileNotFoundException("未知媒体 ID");
+        if (!File.Exists(entry.Path))
+            throw new Java.IO.FileNotFoundException($"媒体文件不存在：{entry.DisplayName}");
+        return ParcelFileDescriptor.Open(new Java.IO.File(entry.Path),
+            (ParcelFileMode)ParcelFileDescriptor.ParseMode(mode ?? "r"));
+    }
+
+    private static bool TryResolve(AndroidUri? uri, out Entry entry)
+    {
+        entry = default;
+        string? key = uri?.LastPathSegment;
+        if (string.IsNullOrEmpty(key)) return false;
+        lock (Gate) return Files.TryGetValue(key, out entry);
+    }
+
+    private readonly record struct Entry(string Path, string DisplayName);
+}

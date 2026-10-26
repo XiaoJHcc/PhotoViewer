@@ -205,8 +205,7 @@ public class ImageFile : ReactiveObject
     public string DisplayName => Group?.DisplayName ?? Name;
 
     /// <summary>
-    /// 是否存在星级冲突：代表文件与任意同伴文件（如 RAW）的星级不一致。
-    /// 组内只有一个文件或不属于任何组时为 false。
+    /// 所属组的实际评分来源是否冲突，包含内嵌、已有 sidecar 与单文件内部异常。
     /// </summary>
     public bool HasRatingConflict => Group?.HasRatingConflict ?? false;
 
@@ -269,6 +268,21 @@ public class ImageFile : ReactiveObject
                 if (!basic.Exists)
                     throw new StorageException(StorageError.ObjectGone, $"{Name} 已不存在");
                 var exif = await ExifLoader.LoadExifDataAsync(File, RatingSidecarIndex).ConfigureAwait(false);
+                if (exif == null)
+                {
+                    await using var stream = await File.OpenReadAsync(cancellationToken).ConfigureAwait(false);
+                    var (_, sources) = await RatingSourceReader.ReadAsync(File, sidecarIndex: null, cancellationToken)
+                        .ConfigureAwait(false);
+                    var embedded = sources.First(source => source.Source == XmpRatingSource.Embedded).Snapshot;
+                    exif = new ExifData
+                    {
+                        FilePath = File.StorageId.Value,
+                        EmbeddedRating = embedded,
+                        RatingState = embedded.State,
+                        Rating = embedded.ValueOrNull,
+                        RatingSources = sources.ToList(),
+                    };
+                }
                 return (basic, exif);
             }, cancellationToken).ConfigureAwait(false);
 
@@ -287,15 +301,9 @@ public class ImageFile : ReactiveObject
                 this.RaisePropertyChanged(nameof(FileSize));
                 this.RaisePropertyChanged(nameof(PhotoDate));
 
-                if (exifData != null)
-                {
-                    ExifData = exifData;
-                    IsExifLoaded = true;
-                }
+                ExifData = exifData;
+                IsExifLoaded = true;
             });
-
-            if (applied && exifData == null)
-                throw new StorageException(StorageError.IoError, $"无法读取 {Name} 的 EXIF 数据");
 
             return applied;
         }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Xml;
 using MetadataExtractor;
 using MetadataExtractor.Formats.Xmp;
 using PhotoViewer.Core.Storage;
@@ -11,8 +12,14 @@ public enum XmpRatingState
     Missing,
     Rated,
     Rejected,
+
+    /// <summary>包可解析，但 Rating 值本身不可用（非整数、越界）或包内容损坏。</summary>
     Invalid,
+
     Conflict,
+
+    /// <summary>来源根本无法读取：I/O 失败、权限被拒、容器结构不识别、包超过解析上限。</summary>
+    Unreadable,
 }
 
 public enum XmpRatingSource
@@ -27,7 +34,7 @@ public readonly record struct XmpRatingSnapshot(
     XmpRatingSource Source,
     string? Error = null)
 {
-    /// <summary>筛选与显示用的数值：Rated 取原值、Rejected 为 -1、其余为 0。</summary>
+    /// <summary>筛选与显示用的数值：Rated 取原值、Rejected 为 -1、其余（含 Unreadable）为 0。</summary>
     public int NumericValue => State switch
     {
         XmpRatingState.Rated => Value ?? 0,
@@ -35,16 +42,19 @@ public readonly record struct XmpRatingSnapshot(
         _ => 0,
     };
 
-    /// <summary>可写入/可比较的数值；Missing / Invalid / Conflict 为 null（不与 0 混同）。</summary>
+    /// <summary>可写入/可比较的数值；Missing / Invalid / Conflict / Unreadable 为 null（不与 0 混同）。</summary>
     public int? ValueOrNull => State is XmpRatingState.Rated or XmpRatingState.Rejected
         ? State == XmpRatingState.Rejected ? -1 : Value
         : null;
 
-    /// <summary>只要 Rated 才算有星级；Rejected 与缺失/无效都返回 0，仅用于旧调用方。</summary>
+    /// <summary>只要 Rated 才算有星级；Rejected 与缺失/无效/不可读都返回 0，仅用于旧调用方。</summary>
     public int ValueOrZero => State == XmpRatingState.Rated ? Value!.Value : 0;
 
     public static XmpRatingSnapshot Missing(XmpRatingSource source) =>
         new(XmpRatingState.Missing, null, source);
+
+    public static XmpRatingSnapshot Unreadable(XmpRatingSource source, string error) =>
+        new(XmpRatingState.Unreadable, null, source, error);
 }
 
 /// <summary>内嵌 XMP 目录写入预检结果：数量/扩展声明/空元数据与合并快照。</summary>
@@ -82,21 +92,40 @@ public static class XmpRatingReader
         return Read(XmpMetaFactory.ParseFromBuffer(packet), source);
     }
 
+    /// <summary>
+    /// 合并同一文件的多份 XMP 目录。每个目录各自独立判定（Missing 也参与比较）：
+    /// 任一份不可读/无效先返回该状态；否则全部目录必须状态与取值一致，
+    /// 一份 Rated 另一份 Missing（或取值不同）判 <see cref="XmpRatingState.Conflict"/>。
+    /// </summary>
     public static XmpRatingSnapshot ReadDirectories(
         IEnumerable<XmpDirectory> directories,
         XmpRatingSource source = XmpRatingSource.Embedded)
     {
         var snapshots = directories
-            .Select(directory => Read(directory.XmpMeta, source))
-            .Where(snapshot => snapshot.State != XmpRatingState.Missing)
+            .Select(directory => ReadSafely(directory.XmpMeta, source))
             .ToArray();
         if (snapshots.Length == 0) return XmpRatingSnapshot.Missing(source);
-        if (snapshots.Any(snapshot => snapshot.State == XmpRatingState.Invalid))
-            return snapshots.First(snapshot => snapshot.State == XmpRatingState.Invalid);
+        var brokenIndex = Array.FindIndex(snapshots, snapshot =>
+            snapshot.State is XmpRatingState.Invalid or XmpRatingState.Unreadable);
+        if (brokenIndex >= 0) return snapshots[brokenIndex];
         var first = snapshots[0];
         return snapshots.All(snapshot => snapshot.State == first.State && snapshot.Value == first.Value)
             ? first
             : new XmpRatingSnapshot(XmpRatingState.Conflict, null, source, "多个内嵌 XMP 包含不同的 Rating");
+    }
+
+    /// <summary>单个目录的读取：包内容损坏（XML/XMP 解析失败）判 Invalid，不让一个坏目录吞掉其余信息。</summary>
+    private static XmpRatingSnapshot ReadSafely(IXmpMeta? xmp, XmpRatingSource source)
+    {
+        try
+        {
+            return Read(xmp, source);
+        }
+        catch (Exception exception) when (exception is XmpException or XmlException)
+        {
+            return new XmpRatingSnapshot(
+                XmpRatingState.Invalid, null, source, $"XMP 无法解析：{exception.Message}");
+        }
     }
 
     public static async Task<XmpRatingSnapshot> ReadEmbeddedAsync(

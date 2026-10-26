@@ -1023,6 +1023,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="args">属性变化参数。</param>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(() => OnSettingsChanged(sender, args));
+            return;
+        }
         // 绑定可能已在设置页里改写：按住状态的重复目标立即作废，避免按旧命令继续翻页。
         ClearHeldKeys();
         ScheduleControlsRefresh();
@@ -1039,6 +1044,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>合并同一轮设置/EXIF 变化产生的通知，避免重复重建全部原生按钮。</summary>
     private void ScheduleControlsRefresh()
     {
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(ScheduleControlsRefresh);
+            return;
+        }
         if (_refreshPending || !IsViewLoaded) return;
         _refreshPending = true;
         UiDispatcher.Post(() =>
@@ -1057,6 +1067,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(_main.FileVM.ThumbnailList.FilteredFiles)) return;
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(() => OnFilesChanged(sender, args));
+            return;
+        }
         var currentFiles = _main.FileVM.ThumbnailList.FilteredFiles;
         if (_displayedFiles.Length != currentFiles.Count || !_displayedFiles.SequenceEqual(currentFiles)) _filmstrip.CancelScroll();
         UiDispatcher.Post(() =>

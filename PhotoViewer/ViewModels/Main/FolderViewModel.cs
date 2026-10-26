@@ -315,13 +315,11 @@ public class FolderViewModel : ReactiveObject, IDisposable
 
         if (folder == null)
         {
-            // 父目录不可得：只刷新可访问的当前项（基本属性、完整 EXIF、评分与 sidecar），不重新 fit。
-            if (refresh && FindLoadedFile(file) is { } loaded)
-            {
-                return await ReloadFileAsync(loaded);
-            }
-
-            return await OpenSingleImageAsync(file);
+            var opened = refresh && FindLoadedFile(file) is { } loaded
+                ? await ReloadFileAsync(loaded)
+                : await OpenSingleImageAsync(file);
+            if (opened && refresh) Main.ReportOpenFailure(StatusMessages.SinglePhotoRefreshed);
+            return opened;
         }
 
         if (refresh)

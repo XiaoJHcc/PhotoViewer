@@ -11,6 +11,8 @@ public static class StatusMessages
     /// <summary>内存压力自动关闭雾天增强。</summary>
     public const string EnhanceClosedForMemory = "内存不足，已关闭雾天增强";
 
+    public const string SinglePhotoRefreshed = "无法读取父目录，仅刷新当前照片";
+
     /// <summary>评分写回失败；部分来源补偿失败时明确数据可能不一致。</summary>
     public static string RatingWriteFailed(string fileName, string? reason = null, bool partial = false)
         => Compose(partial ? "星级写入不完整" : "无法写入星级", fileName, reason);
