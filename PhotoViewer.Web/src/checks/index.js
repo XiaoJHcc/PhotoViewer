@@ -1722,22 +1722,61 @@ const CHECKS = [
     },
     {
         id: "RATING-04",
-        title: "冲突时卡片/控制栏 0 号换红色三角，几何不变且点击不写值",
+        title: "冲突三角打开来源浮窗：几何、方向、整组写入与关闭条件",
         async run(shell, h) {
             const { app } = shell;
             const t = (name) => shell.t(name);
-            const target = app.state.cards.find((entry) => hasRatingConflict(entry));
-            h.assert(target, "harbor 中找不到冲突组");
+            const popup = () => document.querySelector(".pv-rating-sources");
+            const entries = () => [...document.querySelectorAll(".pv-rating-source")];
+            const sourceSignature = (card) => ratingSources(card)
+                .map((source) => `${source.kind}:${source.state}:${source.value}`);
+            const fileState = (card) => [card.photo, ...card.companions].map((file) => ({
+                file,
+                rating: file.rating,
+                ratingState: file.ratingState,
+                sidecar: file.sidecar,
+                sidecarRating: file.sidecar?.rating,
+                sidecarState: file.sidecar?.state,
+            }));
+            const restoreFiles = (saved) => {
+                for (const item of saved) {
+                    item.file.rating = item.rating;
+                    item.file.ratingState = item.ratingState;
+                    item.file.sidecar = item.sidecar;
+                    if (item.sidecar) {
+                        item.sidecar.rating = item.sidecarRating;
+                        item.sidecar.state = item.sidecarState;
+                    }
+                }
+            };
+            const popupRect = () => popup().getBoundingClientRect();
+
+            // 其他检查可能留下尚未完成的整组写入；先等它们落盘，避免目标在用例中途解除冲突。
+            await h.tick(700);
+            // 冲突组：两个内嵌来源，取值不同；非当前卡片入口不应切主图。
+            const cards = app.state.cards;
+            const target = cards.find((entry) => hasRatingConflict(entry)
+                && ratingSources(entry).length === 2
+                && ratingSources(entry).every((source) => source.kind === "embedded" && source.state === "rated"));
+            h.assert(target, "harbor 中找不到两来源冲突组");
+            // 先把冲突组定位到可见范围，再选相邻卡片为当前项，验证非当前卡片入口。
             app.openFolder("harbor", { target: target.photo.id });
             await h.tick(160);
-            const card = h.cardByPhotoId(target.photo.id);
-            const node = h.filmCardByKey(card.key);
+            let card = h.cardByPhotoId(target.photo.id);
+            let node = h.filmCardByKey(card.key);
             h.assert(node, "冲突卡片未渲染");
-            const warningCode = parseInt(t("icon.warning").slice(2), 16);
-            const ratingBefore = target.photo.rating;
-
-            // RATING-04：胶片栏卡片 0 号槽位换 icon.warning + color.star.conflict，几何不变。
+            const targetIndex = app.state.cards.findIndex((entry) => entry.key === card.key);
+            const baseline = app.state.cards[targetIndex + 1] ?? app.state.cards[targetIndex - 1];
+            h.assert(baseline, "冲突组旁没有可用卡片");
+            app.selectCard(baseline.photo.id);
+            await h.tick(120);
             const zero = node.querySelector('.pv-card-star[data-rating="0"]');
+            const warningCode = parseInt(t("icon.warning").slice(2), 16);
+            const displayed = app.state.displayedId;
+            h.assert(displayed !== target.photo.id, "基线卡片仍是冲突组自身");
+            const sourcesBefore = sourceSignature(card);
+
+            // RATING-04：卡片 0 号保持槽位几何，换 icon.warning + color.star.conflict。
             h.assert(zero.classList.contains("is-conflict"), "卡片 0 号未换成警示三角");
             h.assert(zero.getBoundingClientRect().width === t("film.card.star.size"),
                 `卡片 0 号宽度 ${zero.getBoundingClientRect().width}`);
@@ -1747,30 +1786,362 @@ const CHECKS = [
             h.assert(colorMatches(getComputedStyle(cardWarning).color, t("color.star.conflict")),
                 `卡片警示三角颜色 ${getComputedStyle(cardWarning).color}`);
 
-            // 控制栏 0 号按钮：保持 30×30，三角字号取 toolbar.rating.glyph.fontSize。
-            const controlZero = h.ratingButton(0);
+            // 卡片入口：只打开浮窗，不写值、不切主图。
+            h.click(zero);
+            await h.tick(80);
+            h.assert(popup(), "点卡片冲突三角未打开来源浮窗");
+            h.assert(app.state.displayedId === displayed, "点非当前卡片冲突三角切换了主图");
+            h.deepEqual(sourceSignature(h.cardByPhotoId(target.photo.id)), sourcesBefore, "打开浮窗写了评分");
+
+            const contentWidth = t("popup.padding") * 2
+                + t("popup.ratingSources.entryPadding") * 2
+                + t("toolbar.rating.button.size") * 6;
+            const entryWidth = contentWidth - t("popup.padding") * 2;
+            h.assert(Math.round(popup().clientWidth) === contentWidth,
+                `浮窗内容宽 ${popup().clientWidth} ≠ ${contentWidth}`);
+            h.assert(getComputedStyle(popup()).borderRadius === `${t("popup.ratingSources.cornerRadius")}px`,
+                `浮窗圆角 ${getComputedStyle(popup()).borderRadius}`);
+            const entryNodes = entries();
+            h.assert(entryNodes.length === ratingSources(card).length,
+                `浮窗条目 ${entryNodes.length} ≠ 来源 ${ratingSources(card).length}`);
+            for (const entry of entryNodes) {
+                const box = entry.getBoundingClientRect();
+                h.assert(Math.round(box.width) === entryWidth, `条目宽 ${box.width} ≠ ${entryWidth}`);
+                h.assert(Math.round(box.height) === 68, `短名条目高 ${box.height} ≠ 68`);
+                h.assert(getComputedStyle(entry).paddingLeft === `${t("popup.ratingSources.entryPadding")}px`,
+                    `条目左内边距 ${getComputedStyle(entry).paddingLeft}`);
+                h.assert(getComputedStyle(entry).paddingRight === `${t("popup.ratingSources.entryPadding")}px`,
+                    `条目右内边距 ${getComputedStyle(entry).paddingRight}`);
+                h.assert(getComputedStyle(entry).paddingTop === `${t("popup.ratingSources.entryPadding")}px`,
+                    `条目上内边距 ${getComputedStyle(entry).paddingTop}`);
+                h.assert(getComputedStyle(entry).paddingBottom === `${t("popup.ratingSources.entryPadding")}px`,
+                    `条目下内边距 ${getComputedStyle(entry).paddingBottom}`);
+                const stars = [...entry.querySelectorAll(".pv-rating-source-star")];
+                h.assert(stars.length === 6, `星排槽位 ${stars.length} ≠ 6`);
+                for (const star of stars) {
+                    const starBox = star.getBoundingClientRect();
+                    h.assert(Math.round(starBox.width) === t("toolbar.rating.button.size")
+                        && Math.round(starBox.height) === t("toolbar.rating.button.size"),
+                        `星槽位 ${starBox.width}×${starBox.height}`);
+                }
+                h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-name")).fontSize
+                    === `${t("popup.ratingSources.nameFontSize")}px`, "文件名字号不符");
+                h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-status")).fontSize
+                    === `${t("popup.ratingSources.metaFontSize")}px`, "状态字号不符");
+                h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-badge")).paddingLeft
+                    === `${t("popup.ratingSources.badgePaddingX")}px`, "来源标签水平内边距不符");
+                h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-badge")).borderRadius
+                    === `${t("popup.ratingSources.badgeCornerRadius")}px`, "来源标签圆角不符");
+                h.assert(getComputedStyle(entry.querySelector(".pv-rating-source-stars")).marginTop
+                    === `${t("popup.ratingSources.labelGap")}px`, "信息行与星排间距不符");
+            }
+            // 两个短名条目：4 + 68 + 8 + 68 + 4 = 152。
+            h.assert(Math.round(popup().clientHeight) === 152, `浮窗内容高 ${popup().clientHeight} ≠ 152`);
+            const separator = popup().querySelector(".pv-rating-source-sep");
+            h.assert(separator, "条目之间缺少分隔线");
+            h.assert(Math.round(separator.getBoundingClientRect().height) === t("popup.ratingSources.dividerHeight"),
+                "分隔线高度不符");
+            h.assert(getComputedStyle(separator).marginTop
+                === `${(t("popup.ratingSources.entrySpacing") - t("popup.ratingSources.dividerHeight")) / 2}px`,
+                `分隔线间距 ${getComputedStyle(separator).marginTop}`);
+
+            // 每个来源按自己的 rated 真值点亮，不冒充 0 星。
+            const currentSources = ratingSources(card);
+            for (let index = 0; index < entryNodes.length; index += 1) {
+                const source = currentSources[index];
+                const stars = entryNodes[index].querySelectorAll(".pv-rating-source-star");
+                for (let value = 1; value < 6; value += 1) {
+                    const on = source.state === "rated" && source.value >= value;
+                    h.assert(stars[value].classList.contains("is-on") === on,
+                        `${source.label} 第 ${value} 星点亮状态不符`);
+                }
+                const expectedBadge = source.kind === "sidecar"
+                    ? "XMP"
+                    : String(source.photo.ext ?? "").replace(/^\./, "").toUpperCase();
+                h.assert(entryNodes[index].querySelector(".pv-rating-source-badge").textContent === expectedBadge,
+                    `来源标签 ${entryNodes[index].querySelector(".pv-rating-source-badge").textContent} ≠ ${expectedBadge}`);
+                h.assert(entryNodes[index].querySelector(".pv-rating-source-status").textContent === source.stateLabel,
+                    "来源状态文案不符");
+                const glyph = entryNodes[index].querySelector('.pv-rating-source-star[data-rating="1"] .pv-rating-source-glyph');
+                h.assert(getComputedStyle(glyph).fontSize === `${t("toolbar.rating.glyph.fontSize")}px`,
+                    `星形字号 ${getComputedStyle(glyph).fontSize}`);
+                const clear = entryNodes[index].querySelector(".pv-rating-source-clear");
+                h.assert(getComputedStyle(clear).fontSize === `${t("toolbar.rating.clearGlyph.fontSize")}px`,
+                    `清零叉字号 ${getComputedStyle(clear).fontSize}`);
+                h.assert(colorMatches(getComputedStyle(clear).color, t("color.star.clear")), "清零叉颜色不符");
+                const one = entryNodes[index].querySelector('.pv-rating-source-star[data-rating="1"]');
+                const on = source.state === "rated" && source.value >= 1;
+                h.assert(colorMatches(getComputedStyle(one).color, on ? t("color.star.on") : t("color.star.off")),
+                    `星形颜色不符：${getComputedStyle(one).color}`);
+            }
+
+            // 打开期间外部来源变化：不关闭，按最新来源刷新全部条目。
+            const externalSource = currentSources[1];
+            const externalOriginal = externalSource.photo.rating;
+            let externalNext = externalOriginal === 2 ? 1 : 2;
+            if (externalNext === currentSources[0].value) externalNext = externalNext === 1 ? 3 : 1;
+            externalSource.photo.rating = externalNext;
+            app.setSort("name", "asc");
+            await h.tick(140);
+            h.assert(popup(), "外部来源变化关闭了浮窗");
+            const refreshedStars = entries()[1].querySelectorAll(".pv-rating-source-star");
+            for (let value = 1; value < 6; value += 1) {
+                h.assert(refreshedStars[value].classList.contains("is-on")
+                    === (externalSource.photo.rating >= value), `外部变化后第 ${value} 星未刷新`);
+            }
+            externalSource.photo.rating = externalOriginal;
+            app.setSort("name", "asc");
+            await h.tick(140);
+
+            // 卡片默认向下，以真实 0 号按钮为锚点并保留 arrowMargin。
+            const zeroBox = zero.getBoundingClientRect();
+            const hostBox = h.dom(".pv-window").getBoundingClientRect();
+            h.assert(popup().dataset.direction === "down", `卡片展开方向 ${popup().dataset.direction}`);
+            h.assert(Math.abs(popupRect().top - zeroBox.bottom - t("popup.ratingSources.arrowMargin")) <= 0.5,
+                `卡片 0 号与浮窗间距 ${popupRect().top - zeroBox.bottom}`);
+            h.assert(popupRect().left >= hostBox.left - 0.5 && popupRect().right <= hostBox.right + 0.5
+                && popupRect().top >= hostBox.top - 0.5 && popupRect().bottom <= hostBox.bottom + 0.5,
+                "浮窗未夹在宿主内");
+
+            // 重复点同一入口只有一层；Esc 关闭。
+            h.click(zero);
+            await h.tick(80);
+            h.assert(document.querySelectorAll(".pv-rating-sources").length === 1, "重复打开出现多层浮窗");
+            h.key("Escape");
+            await h.tick(60);
+            h.assert(popup() === null, "Esc 未关闭浮窗");
+
+            // 横排胶片默认向下。
+            shell.setWindowSize(700, 850);
+            await h.tick(160);
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            h.assert(popup()?.dataset.direction === "down", `横排胶片展开方向 ${popup()?.dataset.direction}`);
+            h.key("Escape");
+            await h.tick(40);
+            shell.setWindowSize(1200, 850);
+            await h.tick(160);
+
+            // 横排控制栏：向上；整组写入成功后冲突解除才关闭。
+            shell.setWindowSize(700, 850);
+            await h.tick(160);
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.assert(app.state.layout.control.axis === "horizontal", "700×850 不是横排控制栏");
+            let saved = fileState(h.cardByPhotoId(target.photo.id));
+            let controlZero = h.ratingButton(0);
             h.assert(controlZero.classList.contains("is-conflict"), "控制栏 0 号未换成警示三角");
-            const controlBox = controlZero.getBoundingClientRect();
-            h.assert(Math.round(controlBox.width) === t("toolbar.rating.button.size"),
-                `控制栏 0 号宽度 ${controlBox.width}`);
+            h.assert(Math.round(controlZero.getBoundingClientRect().width) === t("toolbar.rating.button.size"),
+                `控制栏 0 号宽度 ${controlZero.getBoundingClientRect().width}`);
             const controlWarning = controlZero.querySelector(".pv-rating-conflict");
             h.assert(controlWarning.textContent.codePointAt(0) === warningCode, "控制栏警示三角字形不是 icon.warning");
             h.assert(getComputedStyle(controlWarning).fontSize === `${t("toolbar.rating.glyph.fontSize")}px`,
                 `控制栏警示三角字号 ${getComputedStyle(controlWarning).fontSize}`);
             h.assert(colorMatches(getComputedStyle(controlWarning).color, t("color.star.conflict")),
                 `控制栏警示三角颜色 ${getComputedStyle(controlWarning).color}`);
-
-            // 来源浮窗尚未实现：点三角不写值、不切主图。
-            const displayed = app.state.displayedId;
+            let controlZeroBox = controlZero.getBoundingClientRect();
+            const displayedBeforeWrite = app.state.displayedId;
             h.click(controlZero);
+            await h.tick(80);
+            h.assert(popup(), "点控制栏冲突三角未打开来源浮窗");
+            h.assert(popup().dataset.direction === "up", `横排控制栏展开方向 ${popup().dataset.direction}`);
+            h.assert(Math.abs(controlZeroBox.top - popupRect().bottom
+                - t("popup.ratingSources.arrowMargin")) <= 0.5,
+                `控制栏 0 号与浮窗间距 ${controlZeroBox.top - popupRect().bottom}`);
+            h.assert(app.state.displayedId === displayedBeforeWrite, "打开控制栏浮窗切换了主图");
+
+            h.click(entries()[0].querySelector('.pv-rating-source-star[data-rating="3"]'));
+            await h.until(() => popup() === null, 5000);
+            const written = h.cardByPhotoId(target.photo.id);
+            h.assert(!hasRatingConflict(written), `整组写入成功后仍显示冲突（${sourceSignature(written).join("|")}）`);
+            h.assert(ratingSources(written).every((source) => source.state === "rated" && source.value === 3),
+                "整组写入未覆盖全部来源");
+            h.assert(app.state.displayedId === displayedBeforeWrite, "写入后切换了主图");
+            restoreFiles(saved);
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.assert(hasRatingConflict(h.cardByPhotoId(target.photo.id)), "恢复来源后没有重新形成冲突");
+
+            // 竖排控制栏：向左。
+            shell.setWindowSize(1200, 850);
+            await h.tick(160);
+            h.assert(app.state.layout.control.axis === "vertical", "1200×850 不是竖排控制栏");
+            controlZero = h.ratingButton(0);
+            controlZeroBox = controlZero.getBoundingClientRect();
+            h.click(controlZero);
+            await h.tick(80);
+            h.assert(popup(), "竖排控制栏未打开来源浮窗");
+            h.assert(popup().dataset.direction === "left", `竖排控制栏展开方向 ${popup().dataset.direction}`);
+            h.assert(Math.abs(controlZeroBox.left - popupRect().right
+                - t("popup.ratingSources.arrowMargin")) <= 0.5,
+                `竖排控制栏 0 号与浮窗间距 ${controlZeroBox.left - popupRect().right}`);
+            h.assert(Math.abs((popupRect().top + popupRect().bottom) / 2
+                - (controlZeroBox.top + controlZeroBox.bottom) / 2) <= 1,
+                "竖排浮窗未以 0 号按钮垂直居中");
+            h.assert(popupRect().left >= hostBox.left - 0.5, "竖排浮窗越出宿主左侧");
+            h.key("Escape");
             await h.tick(60);
-            h.assert(document.querySelector(".pv-rating-sources") === null, "浮窗尚未实现却出现了来源浮窗");
-            h.assert(app.state.displayedId === displayed, "点控制栏三角切换了主图");
-            h.assert(target.photo.rating === ratingBefore, "点控制栏三角写了评分");
-            h.click(zero);
+            h.assert(popup() === null, "竖排浮窗 Esc 未关闭");
+
+            // 卡片下方不足且上方充足时向上；胶片栏滚动关闭。
+            const last = app.state.cards[app.state.cards.length - 1];
+            const lastSidecar = last.photo.sidecar;
+            last.photo.sidecar = { rating: last.photo.rating === 5 ? 1 : 5 };
+            app.openFolder("harbor", { target: last.photo.id });
+            await h.tick(160);
+            const scroller = h.filmScroller();
+            scroller.scrollTop = h.filmMaxOffset("y");
+            await h.tick(160);
+            const lastNode = h.filmCardByKey(h.cardByPhotoId(last.photo.id).key);
+            h.assert(lastNode, "末张冲突卡片未渲染");
+            const lastZero = lastNode.querySelector('.pv-card-star[data-rating="0"]');
+            const lastBox = lastZero.getBoundingClientRect();
+            h.click(lastZero);
+            await h.tick(80);
+            h.assert(popup(), "末张卡片未打开来源浮窗");
+            h.assert(popup().dataset.direction === "up", `卡片展开方向 ${popup().dataset.direction}`);
+            h.assert(Math.abs(lastBox.top - popupRect().bottom - t("popup.ratingSources.arrowMargin")) <= 0.5,
+                `卡片 0 号与浮窗间距 ${lastBox.top - popupRect().bottom}`);
+            scroller.scrollTop = Math.max(0, scroller.scrollTop - 40);
+            // 无头 Chrome 不派发脚本改 scrollTop 产生的 scroll 事件，这里显式补发以验证监听接线。
+            scroller.dispatchEvent(new Event("scroll"));
+            await h.tick(160);
+            h.assert(popup() === null, "胶片栏滚动未关闭浮窗");
+            last.photo.sidecar = lastSidecar;
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+
+            // 布局重排、切图、入口隐藏、菜单/下拉打开时关闭。
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(120);
+            h.assert(popup(), "重排检查前浮窗未打开");
+            shell.setWindowSize(1000, 800);
+            await h.tick(160);
+            h.assert(popup() === null, "布局重排未关闭浮窗");
+            shell.setWindowSize(1200, 850);
+            await h.tick(160);
+
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            h.assert(popup(), "切图检查前浮窗未打开");
+            const otherPhoto = h.harborPhotos().find((photo) => photo.id !== target.photo.id
+                && h.state().cards.some((entry) => entry.photo.id === photo.id));
+            h.assert(otherPhoto, "找不到可切换的其它照片");
+            app.selectCard(otherPhoto.id);
+            await h.tick(160);
+            h.assert(popup() === null, "切图未关闭浮窗");
+
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            h.click(h.ratingButton(0));
+            await h.tick(80);
+            h.assert(popup(), "隐藏检查前浮窗未打开");
+            app.updateSettings({ showRating: false });
+            await h.tick(120);
+            h.assert(popup() === null, "入口隐藏未关闭浮窗");
+            app.updateSettings({ showRating: true });
+            await h.tick(120);
+
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            h.assert(popup(), "下拉检查前浮窗未打开");
+            await h.openFilter("sort");
+            await h.tick(80);
+            h.assert(popup() === null, "下拉打开时浮窗未关闭");
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            h.assert(popup() === null, "下拉打开时仍打开了浮窗");
+            h.key("Escape");
             await h.tick(60);
-            h.assert(app.state.displayedId === displayed, "点卡片三角切换了主图");
-            h.assert(target.photo.rating === ratingBefore, "点卡片三角写了评分");
+
+            // 外部点击关闭；再次打开按最新来源重建。
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            for (let round = 0; round < 3; round += 1) {
+                h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+                await h.tick(60);
+                h.assert(document.querySelectorAll(".pv-rating-sources").length === 1,
+                    `第 ${round + 1} 次打开浮窗层数不为 1`);
+                h.pointer(h.dom(".pv-photo-canvas"), "pointerdown", 1, 1);
+                await h.tick(60);
+                h.assert(popup() === null, `第 ${round + 1} 次外部点击未关闭浮窗`);
+            }
+
+            // 长文件名：独占首行、保留首尾中间省略，标签与状态第二行居右，条目高 88。
+            const longName = "DSC01200_LONG_FILENAME_FOR_RATING_SOURCES_LAYOUT_CHECK.JPG";
+            const longSource = ratingSources(h.cardByPhotoId(target.photo.id))[0];
+            const originalName = longSource.photo.name;
+            longSource.photo.name = longName;
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+            node = h.filmCardByKey(h.cardByPhotoId(target.photo.id).key);
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            const longEntry = entries()[0];
+            h.assert(longEntry.classList.contains("is-long"), "长文件名未切换双行");
+            h.assert(Math.round(longEntry.getBoundingClientRect().height) === 88,
+                `长名条目高 ${longEntry.getBoundingClientRect().height} ≠ 88`);
+            const longNameNode = longEntry.querySelector(".pv-rating-source-name");
+            const longMeta = longEntry.querySelector(".pv-rating-source-meta");
+            h.assert(longNameNode.getAttribute("aria-label") === longName, "长名完整名称未保留在 aria-label");
+            h.assert(longNameNode.textContent.includes("…") && longNameNode.textContent.length < longName.length,
+                "长名未截断");
+            h.assert(!longNameNode.textContent.endsWith("…"), "长名仍是尾部省略");
+            h.assert(longNameNode.textContent.startsWith(longName.slice(0, 4))
+                && longNameNode.textContent.endsWith(".JPG"), "长名未保留首尾（中间省略）");
+            h.assert(longNameNode.scrollWidth <= longNameNode.clientWidth + 1, "长名超出浮窗内容宽");
+            h.assert(Math.round(longMeta.getBoundingClientRect().top - longNameNode.getBoundingClientRect().top)
+                === 16 + t("popup.ratingSources.metaLineGap"), "长名第二行行距不符");
+            h.assert(Math.round(popup().clientHeight) === 172, `长名浮窗内容高 ${popup().clientHeight} ≠ 172`);
+            h.key("Escape");
+            await h.tick(60);
+            longSource.photo.name = originalName;
+            app.openFolder("harbor", { target: target.photo.id });
+            await h.tick(160);
+
+            // 写入失败：PNG 内嵌不可写，浮窗保留并刷新全部条目。
+            const png = app.state.cards.find((entry) => entry.photo.ext === ".png"
+                && !entry.photo.sidecar && entry.photo.rating !== 5);
+            h.assert(png, "harbor 中找不到可制造冲突的 PNG");
+            const pngSidecar = { rating: png.photo.rating === 5 ? 1 : 5 };
+            png.photo.sidecar = pngSidecar;
+            app.openFolder("harbor", { target: png.photo.id });
+            await h.tick(160);
+            const pngCard = h.cardByPhotoId(png.photo.id);
+            const pngSignature = sourceSignature(pngCard);
+            const pngEntryCount = ratingSources(pngCard).length;
+            node = h.filmCardByKey(pngCard.key);
+            h.assert(node, "PNG 冲突卡片未渲染");
+            h.click(node.querySelector('.pv-card-star[data-rating="0"]'));
+            await h.tick(80);
+            h.assert(entries().length === pngEntryCount, "PNG 浮窗条目数与来源不符");
+            h.click(entries()[0].querySelector('.pv-rating-source-star[data-rating="3"]'));
+            await h.tick(400);
+            h.assert(popup(), "写入失败后浮窗被关闭");
+            h.assert(entries().length === pngEntryCount, "写入失败后条目未保留");
+            h.deepEqual(sourceSignature(h.cardByPhotoId(png.photo.id)), pngSignature, "写入失败改动了来源状态");
+            h.assert(hasRatingConflict(h.cardByPhotoId(png.photo.id)), "写入失败后冲突指示消失");
+            const toast = h.dom(".pv-photo-toast");
+            h.assert(toast.hidden === false && toast.textContent.includes("无法写入星级"),
+                `写入失败提示不可读：${toast.hidden} ${toast.textContent}`);
+            h.assert(getComputedStyle(toast).zIndex === "891", `失败提示层级 ${getComputedStyle(toast).zIndex}`);
+            h.key("Escape");
+            await h.tick(60);
+            png.photo.sidecar = null;
+            app.openFolder("harbor", { target: baseline.photo.id });
+            await h.tick(160);
+            h.assert(popup() === null, "检查结束时残留浮窗");
         },
     },
     {
@@ -2283,6 +2654,11 @@ function createHelpers(shell) {
     async function closeOverlays() {
         const shield = document.querySelector(".pv-menu-shield");
         if (shield) pointer(shield, "pointerdown", 1, 1);
+        const popover = document.querySelector(".pv-rating-sources");
+        if (popover) {
+            const host = document.querySelector(".pv-photo-canvas") ?? document.querySelector(".pv-window");
+            pointer(host, "pointerdown", 1, 1);
+        }
         const picker = document.querySelector(".pv-picker:not([hidden])");
         if (picker) {
             const cancel = picker.querySelector(".pv-picker-button:not(.is-primary)");

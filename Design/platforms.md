@@ -70,12 +70,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **RATING-02、RATING-06**：评分写入只有一条正常路径：`PhotoViewer/Core/Exif/ContainerRatingStore.cs` 负责预检（以 ReadWrite 打开现有文件、在包偏移定位读取，验证真实可定位写能力且不写不截断）、revision 与整包/区间复核、提交和写后回读，`NoChange` 提交同样复核 revision 与目标值；包内 `xap:Rating` 的结构定位与等长改写由 `PhotoViewer/Core/Exif/XmpRatingSpanLocator.cs` 完成（值替换或按结构插入，近端空白吸收；远端 padding 移位、受控追加、整文件替换不支持）。容器适配器只承担 canonical 包的只读定位：`JpegXmpContainerAdapter`、`HeifXmpContainerAdapter`、`TiffXmpContainerAdapter`、`WebpXmpContainerAdapter`、`XmpFileContainerAdapter`（`<stem>.xmp` 本体与已有 sidecar）。按 RATING-02 拒绝与其它段、项、extent 或 IFD 条目重叠或共享的写入区间；无 canonical XMP 包（含 JPEG 无 APP1）时不新建或插入容器结构，按 `StorageError.Unsupported` 失败；已有包但缺 `xap:Rating` 时只在包结构唯一且空白足够时于包内插入。PNG 写入不支持（含标准 `iTXt`，需要维护容器级 CRC 事务）。来源枚举由 `PhotoGroupMap.RatingSources` 汇总，`XmpRatingStoreFactory` 为每个实际来源选择适配器；没有创建 sidecar 的入口。
   - **RATING-06@mac / @win / @ios**：只做等长与 Rating 附近局部空白吸收的原位写；远端 padding 移位、受控追加与整文件替换不支持。
   - **RATING-06@android**：SAF 目标先核对可定位原位写能力；不可定位句柄、云 Provider 或需要远端移位/扩容的写入在首次修改前失败，不做原位假成功。
-- **RATING-04**：冲突三角落在控制栏评分组与胶片栏卡片的 0 号槽位，三角只作指示、不写值；来源条目由共享 `PhotoViewer/ViewModels/Main/RatingSourcesViewModel.cs` 汇总组内全部来源，打开期间跟随刷新。浮窗的宽度、展开方向、条目结构与关闭条件以 [spec/rating.md](spec/rating.md) RATING-04 为准；本节只记录弹层宿主与字形，各端实现与验收状态见 [status.md](status.md#rating)。
+- **RATING-04**：冲突三角落在控制栏评分组与胶片栏卡片的 0 号槽位，三角只作指示、不写值；原生端来源条目由共享 `PhotoViewer/ViewModels/Main/RatingSourcesViewModel.cs` 汇总组内全部来源（Web 由 `PhotoViewer.Web/src/core/rating.js` 汇总），打开期间跟随刷新。浮窗的宽度、展开方向、条目结构与关闭条件以 [spec/rating.md](spec/rating.md) RATING-04 为准；本节只记录弹层宿主与字形，各端实现与验收状态见 [status.md](status.md#rating)。
   - **RATING-04@mac**：`NSPopover` 的原生毛玻璃与圆角是唯一外观，内容区不自绘背景、描边或圆角；来源标签底与条目间分隔线用标准 `NSBox`，文件名/来源/状态用 `NSTextField`，星按钮复用控制栏评分按钮的槽位、字形与悬停/按下反馈。条目几何、间距与字号取 `popup.ratingSources.*`；卡片入口默认向下、下方不足且上方可容纳时向上，锚点移动/隐藏/滚动/列表替换时关闭。每个主窗口复用唯一 popover/controller/content，来源条目随状态刷新；内容尺寸只写 `ContentSize`，不手工改写 AppKit 管理的 content frame，避免重开累计偏移；实例保留到窗口终结以兼容 AppKit 关闭后的迟后 bounds 访问，旧 `DidClose` 不得关闭已重新展示的新状态（入口说明见 [PhotoViewer.Mac/AGENTS.md](../PhotoViewer.Mac/AGENTS.md)）。
   - **RATING-04@mac / @ios**：警示三角取 SF Symbols `exclamationmark.triangle.fill`，语义同 `icon.warning`。
   - **RATING-04@win**：警示三角取 Segoe Fluent Icons Warning `E7BA`；**@android / @web** 直接用 `icon.warning`（U+FE33）。
+  - **RATING-04@web**：来源浮窗为自绘组件 `PhotoViewer.Web/src/shell/ratingsources.js`，几何取 `PhotoViewer.Web/src/core/layout/ratingpopover.js`（宽度 = 六格星排 + 条目内边距 + 浮窗内边距），星排与控制栏评分组同槽位、字形、颜色与悬停/按下反馈；文件名用实际字体测量决定单行或双行，长名保留首尾、中间省略。卡片与相似卡片默认向下、下方不足且上方可容纳时向上，横排控制栏向上、竖排控制栏向左；方向与定位以真实 0 号按钮（卡片 14×14、控制栏 30×30）为锚点，浮窗夹在窗口内，入口与浮窗间保留 `arrowMargin`。写入走 `core/app.js` 的整组路径，成功且冲突解除才关闭，失败保留并刷新全部条目；Esc、外部点击、切图、筛选改变当前、锚点隐藏/移动、布局重排、胶片栏或控制栏滚动、菜单/下拉打开时关闭。
 - **RATING-05**：数字/以上筛选投影在 `PhotoViewer/ViewModels/Main/File/PhotoListProjection.cs` 的 `MatchesRating`，筛选项在 `PhotoViewer/ViewModels/Main/File/FilterBarViewModel.cs`；训练快照由独立仓 `Training/DatasetBuilder`（`FingerprintGrouper`）只读取实际选用的文件，sidecar 与伴侣不参与取 max，文件内部不是有效 1–5 时不落值。
-- Web 参考壳没有真实文件写入；冲突指示与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
+- Web 参考壳没有真实文件写入；冲突指示、来源浮窗与 13 项筛选由 `?check=all` 校验界面语义（合成数据）。
 
 ## shell
 

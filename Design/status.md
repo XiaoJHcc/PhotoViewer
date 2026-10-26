@@ -36,7 +36,7 @@
 | RATING-05 | 程序化通过；代表值筛选与训练消费契约 | 程序化通过；共享投影与模拟器筛选 | 代码核对；类型检查通过，WinUI 运行时未验 | 程序化通过；共享投影与原生输入 |
 | RATING-06 | 程序化通过；现有 canonical 包，PNG/无包/复杂结构不支持；相机往返未验 | 程序化通过；模拟器范围，真机 security scope 未验 | 代码核对；类型检查通过，WinUI 运行时未验 | 程序化通过；Debug Provider 范围，USB/MTP/云 Provider 未验 |
 
-> 程序化证据与未覆盖边界见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；修订前作者验收不替代修订后复验。来源浮窗仅 macOS 已实现，iOS / Windows / Android / Web 未实现；Windows WinUI 运行时、真实相机往返及移动端真实存储边界未验。
+> 程序化证据与未覆盖边界见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；修订前作者验收不替代修订后复验。来源浮窗已在 macOS 与 Web 参考壳实现（Web 由 `?check=all` 的 RATING-04 覆盖），iOS / Windows / Android 未实现；Windows WinUI 运行时、真实相机往返及移动端真实存储边界未验。
 
 ## shell
 

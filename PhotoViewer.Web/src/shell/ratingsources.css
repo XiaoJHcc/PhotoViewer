@@ -1,0 +1,162 @@
+/* RATING-04：星级来源浮窗。宽度由六格星排 + 条目内边距 + 浮窗内边距决定，文本不撑宽。 */
+.pv-rating-sources {
+    position: absolute;
+    z-index: 890;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    --pv-rating-sources-border: 1px;
+    width: calc(var(--pv-toolbar-rating-button-size) * 6 + var(--pv-popup-ratingSources-entryPadding) * 2 + var(--pv-popup-padding) * 2 + var(--pv-rating-sources-border) * 2);
+    padding: var(--pv-popup-padding);
+    background: var(--pv-color-popup-background);
+    border: var(--pv-rating-sources-border) solid var(--pv-color-popup-border);
+    border-radius: var(--pv-popup-ratingSources-cornerRadius);
+    color: var(--pv-color-text-primary);
+    font-family: var(--pv-font);
+}
+
+.pv-rating-sources-body {
+    display: flex;
+    flex-direction: column;
+}
+
+/* 信息行高 16 是 RATING-04 的排版布局值；条目四边内边距均取 entryPadding。 */
+.pv-rating-source {
+    box-sizing: border-box;
+    padding: var(--pv-popup-ratingSources-entryPadding);
+}
+
+.pv-rating-source-info {
+    display: flex;
+    align-items: center;
+    gap: var(--pv-popup-ratingSources-labelGap);
+    height: 16px;
+}
+
+.pv-rating-source-name {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--pv-color-text-primary);
+    font-size: var(--pv-popup-ratingSources-nameFontSize);
+    line-height: 16px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.pv-rating-source-meta {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: var(--pv-popup-ratingSources-labelGap);
+    height: 16px;
+    white-space: nowrap;
+}
+
+.pv-rating-source-badge {
+    box-sizing: border-box;
+    padding: 0 var(--pv-popup-ratingSources-badgePaddingX);
+    background: var(--pv-color-menu-item-pressed);
+    border-radius: var(--pv-popup-ratingSources-badgeCornerRadius);
+    color: var(--pv-color-text-secondary);
+    font-size: var(--pv-popup-ratingSources-metaFontSize);
+    line-height: 16px;
+}
+
+.pv-rating-source-status {
+    color: var(--pv-color-text-secondary);
+    font-size: var(--pv-popup-ratingSources-metaFontSize);
+    line-height: 16px;
+}
+
+/* 长名：文件名独占首行截断，来源标签与状态在第二行居右。 */
+.pv-rating-source.is-long .pv-rating-source-info {
+    display: block;
+    height: auto;
+}
+
+.pv-rating-source.is-long .pv-rating-source-meta {
+    justify-content: flex-end;
+    margin-top: var(--pv-popup-ratingSources-metaLineGap);
+}
+
+.pv-rating-source-stars {
+    display: flex;
+    height: var(--pv-toolbar-rating-button-size);
+    margin-top: var(--pv-popup-ratingSources-labelGap);
+}
+
+/* 槽位、字形、颜色与控制栏评分组共用同一规格。 */
+.pv-rating-source-star {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: var(--pv-toolbar-rating-button-size);
+    height: var(--pv-toolbar-rating-button-size);
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--pv-color-star-off);
+    font-family: inherit;
+    line-height: 1;
+    cursor: default;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+.pv-rating-source-star:hover {
+    background: var(--pv-color-toolbar-rating-hover-background);
+}
+
+.pv-rating-source-star:active {
+    background: var(--pv-color-toolbar-rating-pressed-background);
+}
+
+.pv-rating-source-star.is-clear {
+    color: var(--pv-color-star-clear);
+}
+
+.pv-rating-source-star.is-on {
+    color: var(--pv-color-star-on);
+}
+
+.pv-rating-source-star.is-off {
+    color: var(--pv-color-star-off);
+}
+
+.pv-rating-source-glyph {
+    display: block;
+    font-size: var(--pv-toolbar-rating-glyph-fontSize);
+}
+
+.pv-rating-source-clear {
+    display: block;
+    font-size: var(--pv-toolbar-rating-clearGlyph-fontSize);
+}
+
+.pv-rating-source-solid {
+    display: none;
+}
+
+.pv-rating-source-star.is-on .pv-rating-source-solid {
+    display: block;
+}
+
+.pv-rating-source-star.is-on .pv-rating-source-outline {
+    display: none;
+}
+
+/* RATING-04：浮窗打开时把写回失败提示条抬到浮窗之上，失败原因保持可读。 */
+.pv-window.is-rating-sources-open .pv-photo-toast {
+    z-index: 891;
+}
+
+/* 条目分隔线只占 entrySpacing 的中间，条目间距合计仍为 entrySpacing。 */
+.pv-rating-source-sep {
+    height: var(--pv-popup-ratingSources-dividerHeight);
+    margin: calc((var(--pv-popup-ratingSources-entrySpacing) - var(--pv-popup-ratingSources-dividerHeight)) / 2) 0;
+    background: var(--pv-color-menu-separator);
+}

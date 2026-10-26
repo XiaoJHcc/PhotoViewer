@@ -86,8 +86,11 @@ export function createCard(ctx, { mode = "film" } = {}) {
         button.addEventListener("click", (event) => {
             event.stopPropagation();
             if (!currentCard) return;
-            // RATING-04：来源浮窗尚未实现，冲突三角只作指示，不写值。
-            if (index === 0 && hasRatingConflict(currentCard)) return;
+            // RATING-04：冲突三角只打开来源浮窗，不写值，也不切换主图。
+            if (index === 0 && hasRatingConflict(currentCard)) {
+                ctx.ratingPopover?.open(button, { mode: "card", card: currentCard });
+                return;
+            }
             app.rate(currentCard.photo.id, index);
         });
         place(button, frames.stars[index]);

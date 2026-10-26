@@ -133,8 +133,14 @@ export function mountControlBar(host, ctx) {
         }, glyph);
         button.dataset.rating = String(value);
         button.addEventListener("click", () => {
-            // RATING-04：来源浮窗尚未实现，冲突三角只作指示，不写值。
-            if (value === 0 && ratingConflict) return;
+            // RATING-04：冲突三角只打开来源浮窗；横排控制栏向上、竖排控制栏向左。
+            if (value === 0 && ratingConflict) {
+                ctx.ratingPopover?.open(button, {
+                    mode: "control",
+                    axis: layoutRef?.axis ?? "horizontal",
+                });
+                return;
+            }
             ctx.app.rate(undefined, value);
         });
         return button;
