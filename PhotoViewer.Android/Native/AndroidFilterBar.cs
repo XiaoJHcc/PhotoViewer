@@ -56,6 +56,9 @@ internal sealed class AndroidFilterBar : View
             + MainScreenLayout.FilterMargin
         : _contentWidth;
 
+    /// <summary>冲突三角之外的浮层协调：下拉打开前通知宿主收起其它临时浮窗（RATING-04）。</summary>
+    internal event Action? DropdownOpening;
+
     /// <summary>构建筛选条并订阅共享筛选状态。</summary>
     /// <param name="context">宿主上下文（Activity）。</param>
     /// <param name="main">共享主 VM。</param>
@@ -175,6 +178,7 @@ internal sealed class AndroidFilterBar : View
     private void ShowMenu(FilterMenu kind)
     {
         if (Context is not Activity activity) return;
+        DropdownOpening?.Invoke();
         DismissDropdown();
         var filter = _main.FileVM.FilterBar;
         var labels = new List<string>();
