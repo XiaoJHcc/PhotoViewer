@@ -14,10 +14,12 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Database;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
@@ -1343,29 +1345,55 @@ internal sealed partial class WindowsMainWindow
         }
     }
 
-    /// <summary>
-    /// RATING-04:组级冲突把卡片与控制栏 0 号槽位换成警示三角;三角只作指示,点击不写值、不切主图。
-    /// 来源浮窗尚未实现,本检查同时确认点击不会打开任何共享浮窗状态。
-    /// </summary>
-    /// <param name="checks">验收结果收集器</param>
-    /// <returns>检查完成后的任务</returns>
+    /// <summary>RATING-04：浮窗主体在窗口内留 edgeMargin，未被夹取的一侧与入口相距 arrowMargin 并居中对准入口。</summary>
+    private async Task RequireRatingSourcesGeometryAsync(string entry)
+    {
+        Rect body = default;
+        await WaitForSmokeAsync(() => _ratingSources.TryGetPresenterBounds(out body), $"{entry}来源浮窗未完成布局");
+        var anchor = _ratingSources.AnchorRectForAcceptance;
+        double edge = DesignTokens.PopupRatingSourcesEdgeMargin;
+        double gap = DesignTokens.PopupRatingSourcesArrowMargin;
+        RequireSmoke(body.Left >= edge - .5 && body.Top >= edge - .5
+            && body.Right <= _root.ActualWidth - edge + .5 && body.Bottom <= _root.ActualHeight - edge + .5,
+            $"{entry}来源浮窗越出窗口安全区: body={body}, root={_root.ActualWidth}x{_root.ActualHeight}");
+        double centerX = (anchor.Left + anchor.Right) / 2, centerY = (anchor.Top + anchor.Bottom) / 2;
+        bool clampedX = body.Left <= edge + .5 || body.Right >= _root.ActualWidth - edge - .5;
+        bool clampedY = body.Top <= edge + .5 || body.Bottom >= _root.ActualHeight - edge - .5;
+        switch (_ratingSources.LastPlacement)
+        {
+            case FlyoutPlacementMode.Bottom:
+                RequireSmoke(Math.Abs(body.Top - anchor.Bottom - gap) <= 1, $"{entry}来源浮窗与入口间距 {body.Top - anchor.Bottom}");
+                RequireSmoke(clampedX || Math.Abs((body.Left + body.Right) / 2 - centerX) <= 1, $"{entry}来源浮窗未居中对准入口");
+                break;
+            case FlyoutPlacementMode.Top:
+                RequireSmoke(Math.Abs(anchor.Top - body.Bottom - gap) <= 1, $"{entry}来源浮窗与入口间距 {anchor.Top - body.Bottom}");
+                RequireSmoke(clampedX || Math.Abs((body.Left + body.Right) / 2 - centerX) <= 1, $"{entry}来源浮窗未居中对准入口");
+                break;
+            case FlyoutPlacementMode.Left:
+                RequireSmoke(Math.Abs(anchor.Left - body.Right - gap) <= 1, $"{entry}来源浮窗与入口间距 {anchor.Left - body.Right}");
+                RequireSmoke(clampedY || Math.Abs((body.Top + body.Bottom) / 2 - centerY) <= 1, $"{entry}来源浮窗未居中对准入口");
+                break;
+        }
+    }
+
+    /// <summary>RATING-04：真实冲突入口、原生来源浮窗、整组写入与关闭条件。</summary>
     private async Task RunRatingConflictChecksAsync(List<string> checks)
     {
         var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "rating-conflict");
-        var conflictPath = Path.Combine(folder, "conflict.jpg");
+        const string conflictName = "conflict-rating-source-with-a-deliberately-long-name.jpg";
+        var conflictPath = Path.Combine(folder, conflictName);
         var plainPath = Path.Combine(folder, "plain.jpg");
-        var sidecarPath = Path.Combine(folder, "conflict.xmp");
+        var sidecarPath = Path.ChangeExtension(conflictPath, ".xmp");
         var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
         await Task.Run(() =>
         {
             Directory.CreateDirectory(folder);
-            // 冲突必须是可写的真实冲突：JPEG 已带 canonical XMP(内嵌 2 星)，sidecar 已存在且为 4 星。
             CreateJpegWithEmbeddedRating(conflictPath, 2);
             File.Copy(checkerPath, plainPath, true);
             File.WriteAllBytes(sidecarPath, RatingPacket(4));
+            File.SetAttributes(sidecarPath, FileAttributes.Normal);
         });
 
-        // 夹具前置校验：两个来源都能按 canonical XMP 读取。
         var embeddedStore = XmpRatingStoreFactory.Create(new LocalFileRef(conflictPath));
         var embeddedBefore = await embeddedStore.ReadAsync();
         RequireSmoke(embeddedBefore.State == XmpRatingState.Rated && embeddedBefore.Value == 2,
@@ -1376,13 +1404,13 @@ internal sealed partial class WindowsMainWindow
             $"测试素材 sidecar 不可读或不是 4 星: {sidecarBefore.State}/{sidecarBefore.Value}");
 
         await OpenFolderForSmokeAsync(folder);
+        _main.Settings.LayoutMode = LayoutMode.Row;
+        _root.UpdateLayout();
         await WaitForSmokeAsync(() => _main.FileVM.ThumbnailList.FilteredFiles.Count == 2, "评分冲突素材载入");
-        var conflictFile = _main.FileVM.ThumbnailList.FilteredFiles.First(file => file.Name == "conflict.jpg");
+        var conflictFile = _main.FileVM.ThumbnailList.FilteredFiles.First(file => file.Name == conflictName);
         var plainFile = _main.FileVM.ThumbnailList.FilteredFiles.First(file => file.Name == "plain.jpg");
         _main.FileVM.ThumbnailList.SelectImageCommand(conflictFile);
         await WaitForSmokeAsync(() => ReferenceEquals(_main.CurrentFile, conflictFile), "打开冲突素材");
-
-        // 来源在后台读取完成后冲突才成立:控制栏必须订阅当前文件属性,不能只等 CurrentFile 变化。
         await WaitForSmokeAsync(() => conflictFile.HasRatingConflict, "评分来源冲突未识别", 30);
         await WaitForSmokeAsync(() => _controlBar.RatingZeroGlyph == WindowsIcons.WarningGlyph,
             $"控制栏 0 号槽位未换成警示三角: {_controlBar.RatingZeroGlyph}", 10);
@@ -1392,33 +1420,97 @@ internal sealed partial class WindowsMainWindow
             && _controlBar.RatingZeroButton.Height == WindowsLayout.RatingButtonSize,
             "冲突三角改变了控制栏 0 号按钮几何");
 
-        // 控制栏三角只作指示:不切主图、不写 0、不打开浮窗。
-        int controlRating = conflictFile.Rating;
+        int originalRating = conflictFile.Rating;
         new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
-        await Task.Delay(150);
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen, "控制栏来源浮窗打开");
         RequireSmoke(ReferenceEquals(_main.CurrentFile, conflictFile), "点击控制栏冲突三角切换了主图");
-        RequireSmoke(conflictFile.Rating == controlRating, "点击控制栏冲突三角写了 0 星");
-        RequireSmoke(!_main.RatingSources.IsOpen, "来源浮窗尚未实现,但点击三角打开了共享浮窗状态");
+        RequireSmoke(conflictFile.Rating == originalRating, "点击控制栏冲突三角写了 0 星");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Top, "横排控制栏来源浮窗未向上展开");
+        await RequireRatingSourcesGeometryAsync("横排控制栏");
+        RequireSmoke(WindowsRatingSourcesFlyout.ContentWidth == 204, "来源浮窗总宽不是规范 204pt");
+        RequireSmoke(_ratingSources.UsesDesktopAcrylic, "来源浮窗未使用原生 Desktop Acrylic 材质");
+        RequireSmoke(_ratingSources.EntryViews.Count == 2, "来源浮窗没有列出内嵌与 sidecar 两个来源");
+        foreach (var entry in _ratingSources.EntryViews)
+        {
+            RequireSmoke(entry.TwoLines && entry.Name.Text.Contains('…'), "长文件名未双行并中间省略");
+            RequireSmoke(entry.Stars.Count == 6 && entry.Stars.All(button =>
+                button.Width == WindowsLayout.RatingButtonSize && button.Height == WindowsLayout.RatingButtonSize),
+                "来源星排不是六个 30x30 槽位");
+            entry.Container.UpdateLayout();
+            var nameRect = entry.Name.TransformToVisual(entry.Container).TransformBounds(
+                new Rect(0, 0, entry.Name.ActualWidth, entry.Name.ActualHeight));
+            var metaRect = entry.Badge.TransformToVisual(entry.Container).TransformBounds(
+                new Rect(0, 0, entry.Badge.ActualWidth, entry.Badge.ActualHeight));
+            var starsRect = entry.Stars[0].TransformToVisual(entry.Container).TransformBounds(
+                new Rect(0, 0, entry.Stars[0].ActualWidth, entry.Stars[0].ActualHeight));
+            RequireSmoke(nameRect.Bottom <= starsRect.Top && metaRect.Bottom <= starsRect.Top,
+                $"来源信息行与星排重叠: name={nameRect}, meta={metaRect}, stars={starsRect}");
+        }
+        var shortLayout = WindowsRatingSourcesFlyout.MeasureEntryLayout(
+            _main.RatingSources.Items[0] with { Name = "a.jpg" });
+        RequireSmoke(!shortLayout.TwoLines, "短文件名被错误改为双行");
+        double shortHeight = DesignTokens.PopupRatingSourcesEntryPadding * 2 + 16
+            + DesignTokens.PopupRatingSourcesLabelGap + DesignTokens.ToolbarRatingButtonSize;
+        RequireSmoke(Math.Abs(shortLayout.Height - shortHeight) < .01, "单线条目高度不符合令牌推导");
 
-        // 非冲突照片仍是清零叉。
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
+            "原生关闭未同步共享来源状态");
+
         _main.FileVM.ThumbnailList.SelectImageCommand(plainFile);
         await WaitForSmokeAsync(() => ReferenceEquals(_main.CurrentFile, plainFile), "切到非冲突照片");
-        await Task.Delay(150);
-        RequireSmoke(_controlBar.RatingZeroGlyph == WindowsIcons.ClearGlyph,
-            $"非冲突照片的 0 号槽位不是清零叉: {_controlBar.RatingZeroGlyph}");
-
-        // 卡片 0 号槽位同样换三角;点击不切主图、不写值。
         await WaitForSmokeAsync(() => _filmstrip.CardFor(conflictFile) != null, "冲突素材卡片未实现", 10);
         var card = _filmstrip.CardFor(conflictFile)!;
         RequireSmoke(card.RatingZeroGlyph == WindowsIcons.WarningGlyph, "胶片栏卡片 0 号槽位未换成警示三角");
         RequireSmoke(card.RatingZeroColor == WindowsLayout.StarConflict, "胶片栏冲突三角颜色错误");
-        int cardRating = conflictFile.Rating;
         new ButtonAutomationPeer(card.RatingZeroButton).Invoke();
-        await Task.Delay(150);
-        RequireSmoke(ReferenceEquals(_main.CurrentFile, plainFile), "点击卡片冲突三角切换了主图");
-        RequireSmoke(conflictFile.Rating == cardRating, "点击卡片冲突三角写了 0 星");
-        RequireSmoke(!_main.RatingSources.IsOpen, "来源浮窗尚未实现,但点击卡片三角打开了共享浮窗状态");
-        checks.Add("PASS RATING-04: conflict triangle replaces slot 0 on card and control bar, keeps 30x30 geometry, and clicking it neither writes a rating nor opens a source flyout");
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen, "卡片来源浮窗打开");
+        RequireSmoke(ReferenceEquals(_main.CurrentFile, plainFile), "点击非当前卡片冲突三角切换了主图");
+        RequireSmoke(conflictFile.Rating == originalRating, "点击卡片冲突三角写了 0 星");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Bottom, "卡片来源浮窗未默认向下展开");
+        await RequireRatingSourcesGeometryAsync("卡片");
+
+        _main.Settings.LayoutMode = LayoutMode.Col;
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
+            "布局重排未关闭来源浮窗");
+        _main.FileVM.ThumbnailList.SelectImageCommand(conflictFile);
+        await WaitForSmokeAsync(() => ReferenceEquals(_main.CurrentFile, conflictFile), "列布局打开冲突素材");
+        await WaitForSmokeAsync(() => _controlBar.RatingZeroGlyph == WindowsIcons.WarningGlyph, "列布局冲突三角");
+        _root.UpdateLayout();
+        await Task.Delay(200);
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen, "竖排控制栏来源浮窗打开");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Left, "竖排控制栏来源浮窗未向左展开");
+        await RequireRatingSourcesGeometryAsync("竖排控制栏");
+
+        File.SetAttributes(sidecarPath, FileAttributes.ReadOnly);
+        try
+        {
+            new ButtonAutomationPeer(_ratingSources.EntryViews[0].Stars[3]).Invoke();
+            await Task.Delay(800);
+            RequireSmoke(_ratingSources.IsOpen && _main.RatingSources.IsOpen && conflictFile.HasRatingConflict,
+                "整组写入失败后来源浮窗未保留");
+        }
+        finally
+        {
+            File.SetAttributes(sidecarPath, FileAttributes.Normal);
+        }
+
+        if (!_ratingSources.IsOpen)
+        {
+            new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+            await WaitForSmokeAsync(() => _ratingSources.IsOpen, "写入前重新打开来源浮窗");
+        }
+        new ButtonAutomationPeer(_ratingSources.EntryViews[0].Stars[3]).Invoke();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen
+            && !conflictFile.HasRatingConflict, "成功且冲突解除后来源浮窗关闭", 30);
+        var embeddedAfter = await embeddedStore.ReadAsync();
+        var sidecarAfter = await sidecarStore.ReadAsync();
+        RequireSmoke(embeddedAfter.Value == 3 && sidecarAfter.Value == 3, "条目点星未统一写入全部来源");
+        await WaitForSmokeAsync(() => _controlBar.RatingZeroGlyph == WindowsIcons.ClearGlyph,
+            "冲突解除后未恢复清零叉");
+        _main.Settings.LayoutMode = LayoutMode.Row;
+        checks.Add("PASS RATING-04: windowed Desktop Acrylic flyout lists all sources with token geometry and middle truncation; card/control directions with arrowMargin gap inside the window edgeMargin, failure retention, whole-group write convergence, native close synchronization, and layout close");
     }
 
     private static byte[] RatingPacket(int rating) => Encoding.UTF8.GetBytes(

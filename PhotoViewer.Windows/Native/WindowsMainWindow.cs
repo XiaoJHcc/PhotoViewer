@@ -49,6 +49,7 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly WindowsControlBar _controlBar;
     private readonly WindowsSimilarityPanel _similarity;
     private readonly WindowsAnalysisPanel _analysis;
+    private WindowsRatingSourcesFlyout _ratingSources = null!;
 
     private readonly Grid _root;
     private readonly Grid _rowHost;
@@ -97,9 +98,10 @@ internal sealed partial class WindowsMainWindow : Window
 
         _photo = new WindowsPhotoView();
         _main.FitToViewRequested += OnFitToViewRequested;
-        _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile);
+        _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile, ShowRatingSources);
         _filterBar = new WindowsFilterBar(main.FileVM.FilterBar);
-        _controlBar = new WindowsControlBar(main, Execute, main.OpenToolsWindow);
+        _controlBar = new WindowsControlBar(main, Execute, anchor => ShowRatingSources(main.CurrentFile!, anchor),
+            main.OpenToolsWindow);
 
         _hintTitle = new TextBlock
         {
@@ -210,7 +212,7 @@ internal sealed partial class WindowsMainWindow : Window
             UpdateStatusToastWidth();
         };
 
-        _similarity = new WindowsSimilarityPanel(main, RateFile);
+        _similarity = new WindowsSimilarityPanel(main, RateFile, ShowRatingSources);
         _analysis = new WindowsAnalysisPanel(main, _session,
             (u, v) => _photo.FocusOnImagePoint(u, v),
             uv =>
@@ -240,6 +242,8 @@ internal sealed partial class WindowsMainWindow : Window
             ContextFlyout = _contextMenu,
             AllowDrop = true,
         };
+        _ratingSources = new WindowsRatingSourcesFlyout(main, _root);
+        _filterBar.PopupOpening += _ratingSources.Close;
         _root.Children.Add(_rowHost);
         _root.Children.Add(_colHost);
         _root.Children.Add(_titleBar.Root);
@@ -300,6 +304,8 @@ internal sealed partial class WindowsMainWindow : Window
 
         _root.RemoveHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler);
         _filterBar.SizeChanged -= OnFilterBarSizeChanged;
+        _filterBar.PopupOpening -= _ratingSources.Close;
+        _ratingSources.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
@@ -408,6 +414,12 @@ internal sealed partial class WindowsMainWindow : Window
         Activate();
     }
 
+    private void ShowRatingSources(ImageFile file, Button anchor)
+    {
+        bool controlBarAnchor = ReferenceEquals(anchor, _controlBar.RatingZeroButton);
+        _ratingSources.Show(file, anchor, controlBarAnchor, _isRowLayout);
+    }
+
     /// <summary>
     /// 构建文件栏:筛选条 + 胶片条 + 相似聚类面板(旧壳 FileView 三分区同构)。
     /// 上下布局时筛选条横跨两列;左右布局时筛选条只占 116 主列,相似面板在主列右侧。
@@ -458,6 +470,7 @@ internal sealed partial class WindowsMainWindow : Window
         _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
         menu.Opening += (_, _) =>
         {
+            _ratingSources.Close();
             _thumbnailMenuToggle.IsChecked = _main.IsThumbnailViewVisible;
             _analysisMenuToggle.IsChecked = _main.IsAnalysisViewVisible;
             _controlMenuToggle.IsChecked = _main.IsControlViewVisible;
@@ -596,6 +609,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>窗口尺寸变化:同步方向判定与标题栏拖动区。</summary>
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
+        _ratingSources.Close();
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
         UpdateSimilarityWidth();
         UpdateCaptionRegions();
@@ -614,6 +628,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>按当前方向重排三个分区。</summary>
     private void ApplyLayout()
     {
+        _ratingSources.Close();
         _isRowLayout = _main.IsRowLayout;
 
         _rowHost.Children.Clear();
@@ -703,6 +718,7 @@ internal sealed partial class WindowsMainWindow : Window
         // 由 ToggleButton.Checked / 设置变化直接调用,异常一旦跨 COM 边界就是进程级崩溃,这里兜住。
         try
         {
+            _ratingSources.Close();
             _filePaneFrame.Visibility = _main.IsThumbnailViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _controlBar.Visibility = _main.IsControlViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _analysis.Visibility = _main.IsAnalysisViewVisible ? Visibility.Visible : Visibility.Collapsed;

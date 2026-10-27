@@ -43,6 +43,7 @@ internal sealed class WindowsThumbnailCard : Grid
     private readonly SolidColorBrush _transparentBorderBrush;
     private readonly Action<ImageFile> _select;
     private readonly Func<ImageFile, int, Task> _rate;
+    private readonly Action<ImageFile, Button> _showSources;
 
     private ImageFile? _file;
     private bool _showRating = true;
@@ -58,10 +59,13 @@ internal sealed class WindowsThumbnailCard : Grid
     /// </summary>
     /// <param name="select">选中回调</param>
     /// <param name="rate">评分回调</param>
-    public WindowsThumbnailCard(Action<ImageFile> select, Func<ImageFile, int, Task> rate)
+    /// <param name="showSources">冲突三角的来源浮窗入口，锚点为 0 号按钮</param>
+    public WindowsThumbnailCard(Action<ImageFile> select, Func<ImageFile, int, Task> rate,
+        Action<ImageFile, Button> showSources)
     {
         _select = select;
         _rate = rate;
+        _showSources = showSources;
 
         // 星级与描边只在这几种颜色间切换;画刷在 UI 线程建一次,Refresh 只换引用,不再逐次分配。
         _starClearBrush = new SolidColorBrush(WindowsLayout.StarClear);
@@ -439,10 +443,14 @@ internal sealed class WindowsThumbnailCard : Grid
         }
     }
 
-    /// <summary>0 号槽位在组级冲突时只作警示,不写值;其余情况按星数写回(RATING-04)。</summary>
+    /// <summary>RATING-04：冲突三角只打开来源浮窗，不切主图、不写值；其余槽位整组写回。</summary>
     private void OnRatingSlotClicked(int rating)
     {
-        if (rating == 0 && _file is { HasRatingConflict: true }) return;
+        if (rating == 0 && _file is { HasRatingConflict: true })
+        {
+            _showSources(_file, _starButtons[0]);
+            return;
+        }
 
         RateAsync(rating);
     }

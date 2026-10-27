@@ -50,6 +50,10 @@ internal sealed class WindowsFilterBar : Panel
         _ratingFilter = CreateComboBox();
         _ratingFilter.ItemsSource = _filter.RatingFilters.Select(option => option.DisplayName).ToList();
         _ratingFilter.SelectionChanged += OnRatingFilterChanged;
+        foreach (var comboBox in new[] { _sortMode, _sortOrder, _ratingFilter })
+        {
+            comboBox.DropDownOpened += (_, _) => PopupOpening?.Invoke();
+        }
 
         _similarityToggle = CreateSimilarityToggle();
         _count = new TextBlock
@@ -70,6 +74,9 @@ internal sealed class WindowsFilterBar : Panel
         _filter.PropertyChanged += OnFilterChanged;
         SyncFromViewModel();
     }
+
+    /// <summary>RATING-04：下拉打开前关闭来源浮窗。</summary>
+    internal event Action? PopupOpening;
 
     /// <summary>
     /// 释放订阅。

@@ -14,6 +14,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsLayout.cs`、`WindowsWrapPanel.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsPhotoView.cs`、`WindowsNavigator.cs` | D3D 照片表面、共享视口接线与缩放导航图。 |
 | `Native/WindowsFilterBar.cs`、`WindowsFilmstripView.cs`、`WindowsThumbnailCard.cs`、`WindowsControlBar.cs`、`WindowsControlStyles.cs` | 筛选、胶片栏、卡片、EXIF 与评分/命令栏、评分冲突警示三角，以及主屏小型控件的四态外观。 |
+| `Native/WindowsRatingSourcesFlyout.cs` | RATING-04 原生 `Flyout` 来源浮窗：令牌几何、来源条目与长名中间省略，复用共享整组写入；主窗口接入卡片/相似卡片/控制栏锚点与关闭联动。 |
 | `Native/WindowsAnalysisPanel.cs`、`WindowsSimilarityPanel.cs`、`WindowsDiagnostic*.cs`、`WindowsShakeFieldView.cs` | 分析/相似面板与共用诊断瓦片。 |
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制。 |
 | `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。 |
@@ -53,7 +54,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 - 布局回调不改子元素尺寸或创建位图；瓦片尺寸交给 `Measure/Arrange`，尺寸变化后的裁剪等副作用异步处理。
 - 主屏小型控件（命令按钮、评分星、相似聚类开关、动作按钮）的常态/悬停/按下/禁用统一走 `WindowsControlStyles`：按元素覆盖模板状态键，禁用不换底色、只降内容不透明度；只设 `Background` 不够，WinUI 模板会在禁用/悬停时回落到主题资源。
-- 评分冲突（RATING-04）：组级冲突时卡片与控制栏的 0 号槽位换成警示三角（`WindowsIcons.WarningGlyph` + `WindowsLayout.StarConflict`），按钮几何与命中区不变；三角只作指示，点击不写值、不切主图。控制栏订阅当前文件的 `Rating`/`HasRatingConflict`/`RatingSources`，后台来源读取完成后三角自动刷新。本端不提供来源浮窗入口，点击三角不打开界面；浮窗规则见 [RATING-04](../Design/spec/rating.md)，平台实现状态只在 `Design/status.md` 登记。
+- 评分冲突（RATING-04）：组级冲突时卡片与控制栏的 0 号槽位换成警示三角（`WindowsIcons.WarningGlyph` + `WindowsLayout.StarConflict`），按钮几何与命中区不变；点击只打开来源浮窗，不写值、不切主图。控制栏订阅当前文件的 `Rating`/`HasRatingConflict`/`RatingSources`，后台来源读取完成后三角自动刷新。`WindowsRatingSourcesFlyout` 使用继承默认样式的原生 `Flyout`，与右键菜单一样保持窗口化弹层（`ShouldConstrainToRootBounds = false`）并用 `DesktopAcrylicBackdrop` + 透明背景——系统背景材质只作用于窗口化弹层，约束在根内容内时只剩半透明而无模糊；窗口化弹层只按显示器夹取，主体位置由入口矩形按令牌算好、夹在窗口安全区内再 `ShowAt`（不自绘箭头或额外覆盖底色），共享 `RatingSourcesViewModel`，胶片栏、相似卡片和控制栏共用；展示期间核对真实锚点，切图、滚动、重排、隐藏/回收及菜单/下拉打开时关闭，外部点击与 Esc 由原生轻量弹层处理并同步共享 `IsOpen`。平台实现状态只在 `Design/status.md` 登记。
 - 主窗口快捷键挂在根元素 `PreviewKeyDown`（`AddHandler(..., handledEventsToo: true)`），不依赖冒泡焦点路径：未映射/未绑定的按键放行，焦点在文本编辑控件内时整体放行；设置/工具窗口各自独立处理键盘。命令能否执行由共享 `InputCommandMap.IsCommandKnown` 判定，`WindowsIcons` 只负责显示。
 - 控制栏换行由 `WindowsWrapPanel.MainLimit` 驱动：主轴上限取滚动视口，能整组换行时不得以滚动代替；单组超长才由 `ScrollViewer` 兜底。
 - 导航图白框可拖动：`WindowsNavigator.PressAt/DragTo` 换算归一化点，交 `WindowsPhotoView.CenterOnNormalizedPoint`；滚轮仍冒泡给主图缩放。

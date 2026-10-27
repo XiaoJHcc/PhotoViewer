@@ -34,6 +34,7 @@ internal sealed class WindowsFilmstripView : Grid
     private readonly ThumbnailListViewModel _list;
     private readonly Action<ImageFile> _select;
     private readonly Func<ImageFile, int, Task> _rate;
+    private readonly Action<ImageFile, Button> _showSources;
     private readonly ScrollViewer _scroll;
     private readonly Stack<WindowsThumbnailCard> _pool = new();
     private readonly UISettings _uiSettings = new();
@@ -64,12 +65,15 @@ internal sealed class WindowsFilmstripView : Grid
     /// <param name="main">主视图模型</param>
     /// <param name="select">选中回调</param>
     /// <param name="rate">评分回调</param>
-    public WindowsFilmstripView(MainViewModel main, Action<ImageFile> select, Func<ImageFile, int, Task> rate)
+    /// <param name="showSources">冲突卡片的来源浮窗入口</param>
+    public WindowsFilmstripView(MainViewModel main, Action<ImageFile> select, Func<ImageFile, int, Task> rate,
+        Action<ImageFile, Button> showSources)
     {
         _main = main;
         _list = main.FileVM.ThumbnailList;
         _select = select;
         _rate = rate;
+        _showSources = showSources;
 
         _scroll = new ScrollViewer
         {
@@ -393,7 +397,7 @@ internal sealed class WindowsFilmstripView : Grid
             }
         }
 
-        card ??= new WindowsThumbnailCard(_select, _rate);
+        card ??= new WindowsThumbnailCard(_select, _rate, _showSources);
         card.Bind(file, _main.Settings.ShowRating);
         _list.QueueThumbnailLoad(file, true);
         return card;

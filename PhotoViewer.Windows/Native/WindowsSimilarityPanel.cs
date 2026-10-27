@@ -26,6 +26,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     private readonly MainViewModel _main;
     private readonly SimilarityPanelViewModel _panel;
     private readonly Func<ImageFile, int, Task> _rate;
+    private readonly Action<ImageFile, Button> _showSources;
     private readonly Border _frame;
     private readonly Grid _content;
     private readonly ScrollViewer _scroll;
@@ -51,11 +52,14 @@ internal sealed class WindowsSimilarityPanel : Grid
     /// </summary>
     /// <param name="main">主视图模型</param>
     /// <param name="rate">评分回调</param>
-    public WindowsSimilarityPanel(MainViewModel main, Func<ImageFile, int, Task> rate)
+    /// <param name="showSources">冲突卡片的来源浮窗入口</param>
+    public WindowsSimilarityPanel(MainViewModel main, Func<ImageFile, int, Task> rate,
+        Action<ImageFile, Button> showSources)
     {
         _main = main;
         _panel = main.FileVM.SimilarityPanel;
         _rate = rate;
+        _showSources = showSources;
 
         _emptyActions = new SimilarityActionView(StartIndexing);
         _dockedActions = new SimilarityActionView(StartIndexing);
@@ -324,7 +328,7 @@ internal sealed class WindowsSimilarityPanel : Grid
     /// <summary>取一张卡片:回收池优先,否则新建。</summary>
     private WindowsThumbnailCard RentCard(SimilarityItem item)
     {
-        var card = _pool.Count > 0 ? _pool.Pop() : new WindowsThumbnailCard(SelectItem, _rate);
+        var card = _pool.Count > 0 ? _pool.Pop() : new WindowsThumbnailCard(SelectItem, _rate, _showSources);
         card.Bind(item.File, _main.Settings.ShowRating,
             secondLineText: $"{Math.Clamp(item.Score, 0, 1) * 100:0}%",
             secondLineProgress: SimilarityProgressFraction(item.Score),

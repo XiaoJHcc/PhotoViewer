@@ -654,7 +654,7 @@ internal static class WindowsLayout
     /// <summary>把 <c>0xAARRGGBB</c> 设计令牌转换为 WinUI 颜色。</summary>
     /// <param name="argb">令牌颜色。</param>
     /// <returns>WinUI 颜色。</returns>
-    private static Color Token(uint argb) => Color.FromArgb(
+    internal static Color Token(uint argb) => Color.FromArgb(
         (byte)(argb >> 24), (byte)(argb >> 16), (byte)(argb >> 8), (byte)argb);
 
     /// <summary>把设计令牌颜色按不透明度叠加为自己(替代令牌里的独立 alpha 值)。</summary>
