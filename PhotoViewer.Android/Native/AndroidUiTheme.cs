@@ -216,24 +216,6 @@ internal static class AndroidUiTheme
     }
 
     /// <summary>
-    /// 警示三角路径（<c>icon.warning</c> 语义）：以中心点为基准的等边三角，供 0 号槽位替换清零叉。
-    /// </summary>
-    /// <param name="cx">中心横坐标。</param>
-    /// <param name="cy">中心纵坐标。</param>
-    /// <param name="height">三角高度（px）。</param>
-    /// <returns>闭合三角路径。</returns>
-    internal static Path WarningTriangle(float cx, float cy, float height)
-    {
-        float half = height * .56f;
-        var path = new Path();
-        path.MoveTo(cx, cy - height / 2);
-        path.LineTo(cx + half, cy + height / 2);
-        path.LineTo(cx - half, cy + height / 2);
-        path.Close();
-        return path;
-    }
-
-    /// <summary>
     /// 五角星路径（控制栏评分组与来源浮窗星排共用的字形规格）。
     /// </summary>
     /// <param name="cx">中心横坐标。</param>

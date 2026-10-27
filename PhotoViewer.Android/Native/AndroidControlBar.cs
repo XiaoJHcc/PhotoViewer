@@ -133,7 +133,8 @@ internal sealed class AndroidControlBar : View
         _starActive = AndroidUiTheme.Paint(AndroidUiTheme.StarActive);
         _starInactive = AndroidUiTheme.Paint(AndroidUiTheme.StarInactive);
         _starClear = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _starConflict = AndroidUiTheme.Paint(AndroidUiTheme.StarConflict);
+        _starConflict = AndroidUiTheme.TextPaint(context, DesignTokens.ToolbarRatingGlyphFontSize, AndroidUiTheme.StarConflict);
+        if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _starConflict.SetTypeface(iconTypeface);
         SetWillNotDraw(false);
         Focusable = true;
         ImportantForAccessibility = ImportantForAccessibility.Yes;
@@ -344,9 +345,10 @@ internal sealed class AndroidControlBar : View
             if (child.Conflict)
             {
                 _starConflict.Alpha = alpha;
-                using var warning = AndroidUiTheme.WarningTriangle(cx, cy,
-                    AndroidUiTheme.Dp(Context!, DesignTokens.ToolbarRatingGlyphFontSize));
-                canvas.DrawPath(warning, _starConflict);
+                string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
+                using var bounds = new Rect();
+                _starConflict.GetTextBounds(glyph, 0, glyph.Length, bounds);
+                canvas.DrawText(glyph, cx, cy - bounds.ExactCenterY(), _starConflict);
                 return;
             }
             float arm = 4.5f * density;

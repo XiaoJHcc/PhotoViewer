@@ -97,7 +97,8 @@ internal sealed class AndroidThumbnailCard : View
         _badgeTextPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardBadgeFontSize, Color.White, bold: true);
         // FILM-05：清零叉使用中性图形色，不随评分点亮。
         _linePaint = AndroidUiTheme.Paint(AndroidUiTheme.StarClear, Math.Max(1, AndroidUiTheme.Dp(context, 1)));
-        _conflictPaint = AndroidUiTheme.Paint(AndroidUiTheme.StarConflict);
+        _conflictPaint = AndroidUiTheme.TextPaint(context, DesignTokens.FilmCardStarFontSize, AndroidUiTheme.StarConflict);
+        if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _conflictPaint.SetTypeface(iconTypeface);
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
@@ -255,8 +256,10 @@ internal sealed class AndroidThumbnailCard : View
                 {
                     if (conflict)
                     {
-                        using var warning = AndroidUiTheme.WarningTriangle(cx, cy, 11f * d);
-                        canvas.DrawPath(warning, _conflictPaint);
+                        string glyph = AndroidUiTheme.IconGlyph(DesignTokens.IconWarning);
+                        using var bounds = new Rect();
+                        _conflictPaint.GetTextBounds(glyph, 0, glyph.Length, bounds);
+                        canvas.DrawText(glyph, cx, cy - bounds.ExactCenterY(), _conflictPaint);
                         continue;
                     }
                     float arm = 3.2f * d;
