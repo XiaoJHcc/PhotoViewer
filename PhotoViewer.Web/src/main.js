@@ -16,6 +16,7 @@ import { mountPhoto } from "./shell/photo.js";
 import { mountAnalysis } from "./shell/analysis.js";
 import { mountControlBar } from "./shell/controlbar.js";
 import { mountPicker } from "./shell/picker.js";
+import { mountRatingPopover } from "./shell/ratingsources.js";
 import { mountDemoPanel } from "./demo/panel.js";
 
 const params = new URLSearchParams(location.search);
@@ -77,6 +78,8 @@ const menu = createMenu({ host: windowEl, t, onOpenChange: (open) => app.setMenu
 // TOOLBAR-04@web：data-tooltip 的全局委托，替换浏览器原生 title。
 const tooltip = createTooltip({ host: windowEl, t });
 const ctx = { app, t, clock, thumbs, decoder, library, measureText, menu, tooltip, overlay, windowEl, reducedMotion };
+const ratingPopover = mountRatingPopover(windowEl, ctx);
+ctx.ratingPopover = ratingPopover;
 
 const components = [
     mountFilterBar(panes.file, ctx),
@@ -88,6 +91,8 @@ const components = [
 ];
 const picker = mountPicker(windowEl, ctx, library);
 components.push(picker);
+// RATING-04：来源浮窗最后更新，确保读到的卡片/控制栏节点已就位。
+components.push(ratingPopover);
 
 function layoutPanes(state) {
     const p = state.layout.panes;

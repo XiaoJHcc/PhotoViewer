@@ -233,6 +233,30 @@ internal static class AndroidUiTheme
         return path;
     }
 
+    /// <summary>
+    /// 五角星路径（控制栏评分组与来源浮窗星排共用的字形规格）。
+    /// </summary>
+    /// <param name="cx">中心横坐标。</param>
+    /// <param name="cy">中心纵坐标。</param>
+    /// <param name="outer">外接半径。</param>
+    /// <param name="inner">内接半径。</param>
+    /// <returns>闭合星形路径。</returns>
+    internal static Path StarPath(float cx, float cy, float outer, float inner)
+    {
+        var path = new Path();
+        for (int index = 0; index < 10; index++)
+        {
+            double angle = -Math.PI / 2 + index * Math.PI / 5;
+            float radius = index % 2 == 0 ? outer : inner;
+            float x = (float)(cx + Math.Cos(angle) * radius);
+            float y = (float)(cy + Math.Sin(angle) * radius);
+            if (index == 0) path.MoveTo(x, y);
+            else path.LineTo(x, y);
+        }
+        path.Close();
+        return path;
+    }
+
     /// <summary>绘制居中单行文本。</summary>
     /// <param name="canvas">画布。</param>
     /// <param name="text">文本。</param>

@@ -43,12 +43,12 @@ src/
     similarity.js       # 相似面板三态、计算/取消、提取进度
     exifformat.js       # 控制栏 EXIF 值与卡片时间格式化
     app.js              # 主屏模型：整合以上模块，对外只暴露状态快照、动作与事件
-    layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js
+    layout/             # 分区与各区几何（只依据 spec + tokens 推导）；胶片栏步长取 filmscroll.js，来源浮窗取 ratingpopover.js
   render/               # 浏览器实现：procedural（矢量程序化照片，存储朝向）、decoder（代理/Full/增强）、store（特征库）、thumbs（缩略图队列）
   shell/                # DOM 组件：订阅 app 事件按区域增量更新，不整窗重建
     dom.js / menu.js    # 组件约定与工具（el/place/令牌 CSS 变量 --pv-<点分名转连字符，保留驼峰>）；共用弹出菜单
     icons.js / tooltip.js  # 图标字形（icon.* 令牌）与自绘悬停提示（data-tooltip 全局委托）
-    filterbar / filmstrip / card / similarity / photo / analysis / controlbar / picker  # 各分区组件与 .css
+    filterbar / filmstrip / card / similarity / photo / analysis / controlbar / picker / ratingsources  # 各分区组件与 .css
   checks/               # ?check=<模块|all> 页内行为检查，按设计 ID 出报告
   demo/                 # 窗口外演示面板（尺寸、设置项、故障注入、减少动态效果）
 tests/                  # node --test，测试名以设计 ID 开头
@@ -68,7 +68,7 @@ python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli
 
 - **依赖方向**：`shell/ → core/app.js → core/*`；`core/` 不得引用 `shell/`、`document`、`window`。时间一律经 `clock.js`，便于假时钟断言 300/350/500/4000 ms 等门槛。
 - **状态唯一**：业务状态只在 `app.js`；组件不缓存第二份（菜单勾选每次弹出重读快照，MENU-02）。
-- **星级来源（RATING-01/03/04/05）**：口径只在 `core/rating.js`，状态、冲突判定与写入边界按 [Design/spec/rating.md](../Design/spec/rating.md)。同名组里每个文件的内嵌 XMP 与每个实际存在的 `<stem>.xmp` 各算一个来源，没有读取/写入优先级；代表文件内嵌 Rating 只用于卡片/控制栏点亮星与 FILTER-03 的数字/「以上」档。冲突时卡片与控制栏 0 号槽位换成 `icon.warning` + `color.star.conflict` 的警示三角（几何与命中区不变）；三角只作指示、点击不写值。Web 不提供来源浮窗，点击三角不动作、不写值。整组写入不新增 sidecar；缺 canonical XMP 的来源（含 JPEG）一律预检失败，合成模型也不建模已有包缺 Rating 的插入。PNG 内嵌 XMP 写入不支持，sidecar 不受此限。已拒绝（-1）不点亮任何星、不提供设置入口，只命中「已拒绝」筛选；已有 canonical 的已拒绝来源可整组改写为 0–5。
+- **星级来源（RATING-01/03/04/05）**：口径只在 `core/rating.js`，状态、冲突判定与写入边界按 [Design/spec/rating.md](../Design/spec/rating.md)。同名组里每个文件的内嵌 XMP 与每个实际存在的 `<stem>.xmp` 各算一个来源，没有读取/写入优先级；代表文件内嵌 Rating 只用于卡片/控制栏点亮星与 FILTER-03 的数字/「以上」档。冲突时卡片与控制栏 0 号槽位换成 `icon.warning` + `color.star.conflict` 的警示三角（几何与命中区不变）；三角只作指示、不写值。点击三角打开来源浮窗（`shell/ratingsources.js`，RATING-04）：按 `popup.ratingSources.*` 纵向列出组内全部实际来源，文件名用实际字体测量决定单行或双行、长名保留首尾中间省略，星排与控制栏评分组同槽位规格；点击任一条目的星或清零叉走 `app.rate` 的整组写入，只有写入成功且冲突解除才关闭，失败保留并刷新条目。卡片与相似卡片默认向下、下方不足且上方可容纳时向上；横排控制栏向上、竖排控制栏向左；方向与定位以真实 0 号按钮为锚点；锚点移动/隐藏/移除、切图、筛选改变当前、布局重排、胶片栏或控制栏滚动、Esc、外部点击与菜单/下拉打开时关闭。整组写入不新增 sidecar；缺 canonical XMP 的来源（含 JPEG）一律预检失败，合成模型也不建模已有包缺 Rating 的插入。PNG 内嵌 XMP 写入不支持，sidecar 不受此限。已拒绝（-1）不点亮任何星、不提供设置入口，只命中「已拒绝」筛选；已有 canonical 的已拒绝来源可整组改写为 0–5。
 - **分析栏细节绿框**：唯一活动目标在 `core/analysis.js`（`hoverDetail`），`shell/analysis.js` 只把指针序列翻译成该状态——悬停指针进入/离开、触控按下即亮、滑入另一细节瓦片切换、抬手/取消/失去捕获/失焦/隐藏/换图清除；任意时刻只有一个活动 pointer，旧 pointer 的抬起、取消或失去捕获不得清除新目标。键盘与辅助技术通过瓦片 `aria-pressed` 与 `detail=0` 激活等价显示/清除；诊断准星与双击定位独立（ANALYSIS-04）。
 - **单位**：几何一律为逻辑点（CSS px = pt）；物理 100% 用 `devicePixelRatio` 换算（IMAGE-01）。
 - **展示产物缓存**：`core/session.js` 按照片 id 保留最近 `cacheCount` 份已上屏 surface（与设置里的缓存数量上限、胶片栏细边同一份表）。命中要求缓存档位满足当前需求：需要 Full 时必须已是 Full，否则产物长边要覆盖当前代理目标或本身已是源分辨率。命中时不清旧图、不起加载提示计时，新 surface 与新几何在同一次调用里交给同一帧绘制（STATE-01「保留前一张」）；档位不足与没有产物一样按未命中清旧图走「黑屏加载」——低分辨率顶替默认禁用，需要 Full 时不得先拿代理顶替。代理→Full 的后台升级属于同一张照片的档位工作，不阻塞上屏（IMAGE-03）。

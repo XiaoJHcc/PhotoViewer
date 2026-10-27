@@ -57,6 +57,10 @@ public static class AndroidNativeShell
     /// <returns>关闭了返回 true。</returns>
     public static bool DismissFilterDropdown() => _root?.DismissFilterDropdown() == true;
 
+    /// <summary>关闭星级来源浮窗；返回键优先消费（RATING-04）。</summary>
+    /// <returns>关闭了浮窗返回 true。</returns>
+    public static bool DismissRatingSources() => _root?.DismissRatingSources() == true;
+
     /// <summary>当前原生壳的展示加载会话。</summary>
     public static PhotoLoadSession? Session => _session;
 

@@ -8,6 +8,12 @@ import { analysisTileSize, analysisCrossSize, analysisGeometry } from "../src/co
 import { columnSimilarity, rowSimilarityWidth, rowSimilarityHeight } from "../src/core/layout/similarity.js";
 import { filmContentLength, filmItemFrame } from "../src/core/layout/film.js";
 import { cardFrames } from "../src/core/layout/card.js";
+import {
+    placeRatingSources,
+    ratingSourcesHeight,
+    ratingSourcesMetrics,
+    resolveRatingSourcesDirection,
+} from "../src/core/layout/ratingpopover.js";
 
 const t = createTokens("web");
 const mac = createTokens("mac");
@@ -301,4 +307,72 @@ test("FILM-05：卡片内层节点由令牌推导", () => {
     assert.deepEqual(frames.shake, { x: 67, y: 67, w: 16, h: 16 });
     assert.deepEqual(frames.stars[0], { x: 3, y: 116, w: 14, h: 14 });
     assert.deepEqual(frames.stars[5], { x: 73, y: 116, w: 14, h: 14 });
+});
+
+test("RATING-04：来源浮窗宽度、条目高度与内边距由令牌推导", () => {
+    const metrics = ratingSourcesMetrics(t);
+    assert.equal(metrics.starSize, 30);
+    assert.equal(metrics.starCount, 6);
+    assert.equal(metrics.entryWidth, 196);
+    assert.equal(metrics.contentWidth, 204);
+    assert.equal(metrics.infoHeight, 16);
+    assert.equal(metrics.labelGap, 6);
+    assert.equal(metrics.metaLineGap, 4);
+    assert.equal(metrics.entrySpacing, 8);
+    assert.equal(metrics.dividerHeight, 1);
+    assert.equal(metrics.arrowMargin, 12);
+    assert.equal(metrics.shortEntryHeight, 68);
+    assert.equal(metrics.longEntryHeight, 88);
+
+    assert.equal(ratingSourcesHeight(t, []), 8);
+    assert.equal(ratingSourcesHeight(t, [false]), 76);
+    assert.equal(ratingSourcesHeight(t, [false, false]), 152);
+    assert.equal(ratingSourcesHeight(t, [true, false]), 172);
+    assert.equal(ratingSourcesHeight(t, [true, true]), 192);
+    assert.equal(ratingSourcesHeight(t, [false, false, false]), 228);
+});
+
+test("RATING-04：卡片默认向下、空间不足向上；控制栏横向上、竖向左", () => {
+    const host = { width: 1200, height: 850 };
+    const height = ratingSourcesHeight(t, [false, false]);
+    const cardTop = { x: 3, y: 116, w: 14, h: 14 };
+    assert.equal(resolveRatingSourcesDirection({
+        mode: "card", anchor: cardTop, host, height, t,
+    }).direction, "down");
+    const cardBottom = { x: 3, y: 850 - 14, w: 14, h: 14 };
+    assert.equal(resolveRatingSourcesDirection({
+        mode: "card", anchor: cardBottom, host, height, t,
+    }).direction, "up");
+    const cardMiddle = { x: 0, y: 350, w: 96, h: 300 };
+    assert.equal(resolveRatingSourcesDirection({
+        mode: "card", anchor: cardMiddle, host, height: 400, t,
+    }).direction, "down");
+    assert.equal(resolveRatingSourcesDirection({
+        mode: "control", axis: "horizontal", anchor: cardTop, host, height, t,
+    }).direction, "up");
+    assert.equal(resolveRatingSourcesDirection({
+        mode: "control", axis: "vertical", anchor: cardTop, host, height, t,
+    }).direction, "left");
+});
+
+test("RATING-04：浮窗按入口居中、保留 arrowMargin 余量并夹在宿主内", () => {
+    const host = { width: 1200, height: 850 };
+    const width = 206;
+    // RATING-04：定位尺寸取内容高 + 上下各 1 点描边。
+    const height = ratingSourcesHeight(t, [false, false]) + 2;
+    assert.deepEqual(placeRatingSources({
+        anchor: { x: 100, y: 116, w: 14, h: 14 }, host, width, height, direction: "down", gap: 12,
+    }), { x: 4, y: 142 });
+    assert.deepEqual(placeRatingSources({
+        anchor: { x: 100, y: 600, w: 14, h: 14 }, host, width, height, direction: "up", gap: 12,
+    }), { x: 4, y: 434 });
+    assert.deepEqual(placeRatingSources({
+        anchor: { x: 500, y: 300, w: 30, h: 30 }, host, width, height, direction: "left", gap: 12,
+    }), { x: 282, y: 238 });
+    assert.deepEqual(placeRatingSources({
+        anchor: { x: 0, y: 116, w: 14, h: 14 }, host, width, height, direction: "down", gap: 12,
+    }), { x: 0, y: 142 });
+    assert.deepEqual(placeRatingSources({
+        anchor: { x: 1180, y: 700, w: 30, h: 30 }, host, width, height, direction: "down", gap: 12,
+    }), { x: 994, y: 696 });
 });

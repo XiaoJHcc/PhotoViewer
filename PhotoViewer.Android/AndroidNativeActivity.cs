@@ -118,10 +118,11 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         /// <param name="activity">宿主 Activity。</param>
         public NativeBackCallback(Activity activity) : base(true) => _activity = activity;
 
-        /// <summary>返回处理。</summary>
+        /// <summary>返回处理：浮窗/菜单/下拉/设置/工具依次优先消费，最后结束 Activity。</summary>
         public override void HandleOnBackPressed()
         {
             if (Native.AndroidNativeShell.DismissPhotoMenu()) return;
+            if (Native.AndroidNativeShell.DismissRatingSources()) return;
             if (Native.AndroidNativeShell.DismissFilterDropdown()) return;
             if (Native.AndroidNativeSettingsPresenter.HandleBack()) return;
             if (Native.AndroidToolsPresenter.HandleBack()) return;

@@ -35,6 +35,9 @@ internal sealed class AndroidFilmstripView : RecyclerView
     /// <summary>星级点击（写回交给宿主统一走共享评分与错误提示）。</summary>
     internal event Action<ImageFile, int>? RateRequested;
 
+    /// <summary>冲突三角点击：打开该卡片的来源浮窗，不写值、不切图（RATING-04）。</summary>
+    internal event Action<AndroidThumbnailCard>? SourcesRequested;
+
     /// <summary>是否横向单行。</summary>
     internal bool IsHorizontal => _horizontal;
     /// <summary>定位动画是否仍在播放（验收区分自动定位与用户滚动）。</summary>
@@ -324,7 +327,8 @@ internal sealed class AndroidFilmstripView : RecyclerView
             }
             cardHolder.Card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner._main.FileVM.ThumbnailList.SelectImageCommand(selected),
-                (selected, rating) => _owner.RateRequested?.Invoke(selected, rating));
+                (selected, rating) => _owner.RateRequested?.Invoke(selected, rating),
+                showSources: _ => _owner.SourcesRequested?.Invoke(cardHolder.Card));
             _owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
         }
 

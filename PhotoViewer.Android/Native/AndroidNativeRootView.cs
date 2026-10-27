@@ -47,6 +47,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AnalysisPresenter _analysisPresenter;
     private readonly AndroidAnalysisPanel _analysisPane;
     private readonly AndroidSimilarityPanel _similarityPane;
+    private readonly AndroidRatingSourcesPopup _ratingSourcesPopup;
     private readonly DetailFrameView _detailHighlight;
     private LayoutRect _detailRect;
     private bool _detailVisible;
@@ -92,6 +93,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
     /// <summary>相似聚类面板（验收读取可见性/列表）。</summary>
     internal AndroidSimilarityPanel SimilarityPane => _similarityPane;
+    /// <summary>星级来源浮窗（验收读取方向/锚点/条目）。</summary>
+    internal AndroidRatingSourcesPopup RatingSourcesPopup => _ratingSourcesPopup;
     /// <summary>活动细节绿框视图。</summary>
     internal View DetailHighlightView => _detailHighlight;
     /// <summary>主图细节绿框当前是否可见（验收读取活动目标联动）。</summary>
@@ -152,10 +155,14 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _filmstrip = new AndroidFilmstripView(activity, main);
         AddView(_filmstrip);
         _filmstrip.RateRequested += OnRateRequested;
+        _filmstrip.SourcesRequested += OnCardSourcesRequested;
         _controlBar = new AndroidControlBar(activity, main);
-        _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
+        _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
+            ShowTools, OpenRatingSourcesFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
         AddView(_controlScrollHost);
+        _ratingSourcesPopup = new AndroidRatingSourcesPopup(this, main);
+        _filterBar.DropdownOpening += CloseRatingSources;
 
         _analysisHost = new AndroidAnalysisHost(main, session);
         _analysisPresenter = new AnalysisPresenter(_analysisHost);
@@ -166,6 +173,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _analysisPane.Visibility = ViewStates.Gone;
         AddView(_analysisPane);
         _similarityPane = new AndroidSimilarityPanel(activity, main);
+        _similarityPane.ShowRatingSources = (_, card) => OpenRatingSourcesForCard(card);
         _similarityPane.Visibility = ViewStates.Gone;
         AddView(_similarityPane);
         _detailHighlight = new DetailFrameView(activity);
@@ -575,6 +583,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         if (Context is not Activity activity) return;
         DismissPhotoMenu();
+        CloseRatingSources();
         var photoLocation = new int[2];
         _photo.GetLocationOnScreen(photoLocation);
         int touchX = photoLocation[0] + (int)localX;
@@ -686,6 +695,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     /// <summary>Activity 恢复（SAF 返回）后恢复栏位内容与主图：选择器期间可能丢失一帧/一次重建。</summary>
     internal void RefreshAfterResume()
     {
+        CloseRatingSources();
         RefreshControlBarHard();
         _filterBar.Refresh();
         UpdateHint();
@@ -697,6 +707,50 @@ internal sealed class AndroidNativeRootView : FrameLayout
     /// <returns>关闭了返回 true。</returns>
     internal bool DismissFilterDropdown() => _filterBar.DismissDropdown();
 
+    /// <summary>关闭星级来源浮窗（返回键优先消费，RATING-04）。</summary>
+    /// <returns>关闭了浮窗返回 true。</returns>
+    internal bool DismissRatingSources()
+    {
+        if (!_ratingSourcesPopup.IsOpen) return false;
+        _ratingSourcesPopup.Close();
+        return true;
+    }
+
+    /// <summary>卡片冲突三角点击：以该卡片 0 号槽位的真实矩形为锚点，不写值、不切图。</summary>
+    /// <param name="card">被点的卡片。</param>
+    private void OnCardSourcesRequested(AndroidThumbnailCard card) => OpenRatingSourcesForCard(card);
+
+    private void OpenRatingSourcesForCard(AndroidThumbnailCard card)
+    {
+        if (card.BoundFile is not { } file || !file.HasRatingConflict) return;
+        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Card, true, () => CardStarSlotScreenRect(card));
+    }
+
+    /// <summary>控制栏冲突三角点击：以评分组 0 号按钮的屏幕矩形为锚点（横排向上、竖排向左）。</summary>
+    private void OpenRatingSourcesFromControlBar()
+    {
+        if (_main.CurrentFile is not { } file || !file.HasRatingConflict) return;
+        _ratingSourcesPopup.Show(file, RatingSourcesAnchorKind.Control, _controlBar.IsHorizontal,
+            () => _controlBar.TryGetRatingSlotScreenRect(0, out var rect) ? rect : null);
+    }
+
+    /// <summary>卡片 0 号槽位的屏幕矩形；卡片未挂载、不可见或星级被关闭时返回 null（入口已移除）。</summary>
+    private Rect? CardStarSlotScreenRect(AndroidThumbnailCard card)
+    {
+        if (!card.IsAttachedToWindow || !card.IsShown || !_main.Settings.ShowRating) return null;
+        if (card.StarSlotRectPx(0) is not { } slot) return null;
+        var location = new int[2];
+        card.GetLocationOnScreen(location);
+        return new Rect(location[0] + slot.Left, location[1] + slot.Top,
+            location[0] + slot.Right, location[1] + slot.Bottom);
+    }
+
+    /// <summary>收起来源浮窗（切图、栏位隐藏、菜单/下拉/设置工具打开、列表替换等入口统一调用）。</summary>
+    private void CloseRatingSources()
+    {
+        if (_ratingSourcesPopup.IsOpen) _ratingSourcesPopup.Close();
+    }
+
     /// <summary>关闭主图长按菜单（返回键优先消费）。</summary>
     /// <returns>关闭了菜单返回 true。</returns>
     internal bool DismissPhotoMenu()
@@ -707,8 +761,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
         return true;
     }
 
-    /// <summary>打开/前置原生工具页（A5 前由窗口门面给出可见反馈）。</summary>
-    internal void ShowTools() => _main.OpenToolsWindow();
+    /// <summary>打开/前置原生工具页（RATING-04：先收起来源浮窗）。</summary>
+    internal void ShowTools()
+    {
+        CloseRatingSources();
+        _main.OpenToolsWindow();
+    }
 
     /// <summary>执行共享命令：主图相关走原生视口，其余走共享命令 VM。</summary>
     /// <param name="command">共享命令标识。</param>
@@ -796,6 +854,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+                // RATING-04：浮窗属于上一张照片的临时视图，切图即关闭。
+                CloseRatingSources();
                 _analysisPane.ClearDetail();
                 _filmstrip.CancelScrollUpToNow();
                 _controlBar.MarkDirty();
@@ -804,14 +864,17 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 break;
             case nameof(MainViewModel.IsRowLayout):
             case nameof(MainViewModel.IsScreenLandscape):
+                CloseRatingSources();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsThumbnailViewVisible):
                 AndroidShellPreferences.SaveShowFilm(_main.IsThumbnailViewVisible);
+                if (!_main.IsThumbnailViewVisible) CloseRatingSources();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsControlViewVisible):
                 AndroidShellPreferences.SaveShowControls(_main.IsControlViewVisible);
+                if (!_main.IsControlViewVisible) CloseRatingSources();
                 RequestLayout();
                 break;
             case nameof(MainViewModel.IsAnalysisViewVisible):
@@ -825,6 +888,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
+        // RATING-04：设置不直接收起来源浮窗，入口被隐藏/移除或槽位移动由浮窗每帧核对锚点时关闭
+        // （设置 VM 的派生属性会在打开文件夹后异步连发，不能据此关闭）。
         if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute) or nameof(SettingsViewModel.ShowZoomIndicator))
             _analysisHost.Raise();
         _filterBar.Refresh();
@@ -852,6 +917,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName != nameof(ThumbnailListViewModel.FilteredFiles)) return;
+        // RATING-04：列表替换会重新绑定卡片，静态锚点不再指向同一张照片。
+        CloseRatingSources();
         _filmstrip.ReloadData();
         _filterBar.Refresh();
         RefreshControlBarHard();
@@ -879,7 +946,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
             or nameof(SimilarityPanelViewModel.ShowActionArea)
             or nameof(SimilarityPanelViewModel.IsStateIndexing)
             or nameof(SimilarityPanelViewModel.UnindexedCount))
+        {
+            // RATING-04：相似列表重排/替换后锚点卡片不再指向原项。
+            if (args.PropertyName is nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems))
+                CloseRatingSources();
             RequestLayout();
+        }
     }
 
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();
@@ -1091,6 +1163,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.OpenFailed -= OnOpenFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             _filmstrip.RateRequested -= OnRateRequested;
+            _filmstrip.SourcesRequested -= OnCardSourcesRequested;
+            _filterBar.DropdownOpening -= CloseRatingSources;
+            _similarityPane.ShowRatingSources = null;
+            _ratingSourcesPopup.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;
             _analysisPresenter.Dispose();

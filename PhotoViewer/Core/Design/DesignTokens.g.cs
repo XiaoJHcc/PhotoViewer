@@ -467,6 +467,8 @@ public static class DesignTokens
     public const double PopupRatingSourcesBadgeCornerRadius = 4.0;
     /// <summary>popup.ratingSources.badgePaddingX（pt） RATING-04：评分来源类型标签的水平内边距。</summary>
     public const double PopupRatingSourcesBadgePaddingX = 6.0;
+    /// <summary>popup.ratingSources.cornerRadius（pt） RATING-04：评分来源浮窗外轮廓圆角，对齐 macOS NSPopover 实际外观。</summary>
+    public const double PopupRatingSourcesCornerRadius = 20.0;
     /// <summary>popup.ratingSources.dividerHeight（pt） RATING-04：评分来源条目分隔线高度。</summary>
     public const double PopupRatingSourcesDividerHeight = 1.0;
     /// <summary>popup.ratingSources.edgeMargin（pt） RATING-04：评分来源浮窗与窗口安全区边缘的最小距离；贴边入口的箭头仍能对准入口。</summary>

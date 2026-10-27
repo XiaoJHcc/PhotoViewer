@@ -39,12 +39,15 @@ internal sealed class AndroidControlBar : View
     private Action<string>? _execute;
     private Action<int>? _rate;
     private Action? _openTools;
+    private Action? _openRatingSources;
     private bool _horizontal = true;
     private double _availableMain;
     private bool _dirty = true;
 
     /// <summary>分组数量（验收读取）。</summary>
     internal int GroupCount => _groups.Count;
+    /// <summary>控制栏是否为横排（底部横排向上、右侧竖排向左，RATING-04 方向判定用）。</summary>
+    internal bool IsHorizontal => _horizontal;
     /// <summary>命令标识集合（验收读取）。</summary>
     internal IReadOnlyList<string> Commands
     {
@@ -63,6 +66,34 @@ internal sealed class AndroidControlBar : View
     internal bool HasRatingGroup => _groups.Exists(group => group.Kind == ControlBarGroupKind.Rating);
     /// <summary>当前照片是否处于组级星级冲突（0 号显示警示三角，验收用）。</summary>
     internal bool RatingConflictForChecks => _main.CurrentFile?.HasRatingConflict == true;
+
+    /// <summary>
+    /// 评分分组某一槽位的屏幕矩形（px）；分组不存在或尚未排布返回 false。
+    /// RATING-04 以这里返回的真实 0 号按钮矩形作为来源浮窗锚点。
+    /// </summary>
+    /// <param name="index">槽位索引（0 为清零叉/冲突三角）。</param>
+    /// <param name="rect">屏幕矩形（px）。</param>
+    /// <returns>可取到矩形返回 true。</returns>
+    internal bool TryGetRatingSlotScreenRect(int index, out Rect rect)
+    {
+        rect = new Rect();
+        if (!IsAttachedToWindow) return false;
+        // 重建后分组还没有矩形：与 OnDraw 一样先 Arrange，避免一次无害刷新被当成“入口消失”。
+        if (_dirty || _groups.Count == 0) Arrange(_horizontal, _availableMain);
+        var group = _groups.Find(item => item.Kind == ControlBarGroupKind.Rating);
+        if (group == null || index < 0 || index >= group.Children.Count) return false;
+        var child = group.Children[index];
+        if (child.Rect.Width <= 0 || child.Rect.Height <= 0) return false;
+        double density = AndroidUiTheme.Density(Context!);
+        var location = new int[2];
+        GetLocationOnScreen(location);
+        rect = new Rect(
+            location[0] + (int)Math.Round(child.Rect.X * density),
+            location[1] + (int)Math.Round(child.Rect.Y * density),
+            location[0] + (int)Math.Round(child.Rect.MaxX * density),
+            location[1] + (int)Math.Round(child.Rect.MaxY * density));
+        return true;
+    }
 
     /// <summary>
     /// 按视觉顺序展开的虚拟节点快照（验收用）：读屏名称、分组类型、本地 dp 矩形与禁用态，
@@ -110,15 +141,17 @@ internal sealed class AndroidControlBar : View
         ViewCompat.SetAccessibilityDelegate(this, _accessibility);
     }
 
-    /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页。</summary>
+    /// <summary>命令执行入口与评分入口；EXIF 块点击打开工具页，冲突三角打开来源浮窗。</summary>
     /// <param name="execute">执行共享命令。</param>
     /// <param name="rate">评分写回。</param>
     /// <param name="openTools">EXIF 块点击。</param>
-    internal void Wire(Action<string> execute, Action<int> rate, Action? openTools)
+    /// <param name="openRatingSources">冲突三角点击（RATING-04）。</param>
+    internal void Wire(Action<string> execute, Action<int> rate, Action? openTools, Action? openRatingSources)
     {
         _execute = execute;
         _rate = rate;
         _openTools = openTools;
+        _openRatingSources = openRatingSources;
     }
 
     /// <summary>按共享设置重建三组控件（显隐/顺序、当前星级与 EXIF 项）。</summary>
@@ -393,8 +426,12 @@ internal sealed class AndroidControlBar : View
                         break;
                     case ControlBarGroupKind.Rating:
                         if (!child.Enabled) break;
-                        // 来源浮窗尚未实现：冲突三角只作指示，点击不写 0。
-                        if (child.Rating == 0 && child.Conflict) break;
+                        // RATING-04：冲突三角只打开来源浮窗，不写 0。
+                        if (child.Rating == 0 && child.Conflict)
+                        {
+                            _openRatingSources?.Invoke();
+                            break;
+                        }
                         _rate?.Invoke(child.Rating);
                         break;
                     default:
@@ -464,7 +501,12 @@ internal sealed class AndroidControlBar : View
                 _openTools?.Invoke();
                 return true;
             case ControlBarGroupKind.Rating:
-                if (child.Rating == 0 && child.Conflict) return false;
+                // RATING-04：读屏点按冲突三角与触摸同义，只开浮窗、不写值。
+                if (child.Rating == 0 && child.Conflict)
+                {
+                    _openRatingSources?.Invoke();
+                    return true;
+                }
                 _rate?.Invoke(child.Rating);
                 return true;
             default:

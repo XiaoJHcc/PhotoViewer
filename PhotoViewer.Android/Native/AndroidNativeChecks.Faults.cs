@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Android.App;
 using Android.Content;
+using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
@@ -18,6 +19,7 @@ using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
+using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using AndroidUri = Android.Net.Uri;
 using IOPath = System.IO.Path;
@@ -42,6 +44,9 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("SCOPE-04", CheckRawFullResolutionAsync);
         await RunStepAsync("TOOLBAR-03", CheckExternalStorageWriteAsync);
         await RunStepAsync("RATING-04", CheckRatingConflictAsync);
+        await RunStepAsync("RATING-04 写入", CheckRatingSourcesWriteAsync);
+        await RunStepAsync("RATING-04 控制栏", CheckRatingControlBarAsync);
+        await RunStepAsync("RATING-04 失败保留", CheckRatingSourcesFailureAsync);
         await RunStepAsync("IMAGE-03", CheckFullFailureAsync);
         await RunStepAsync("STATE-02/OPEN-03", CheckOpenFailureAsync);
         await RunStepAsync("STATE-03", CheckRatingFailureAsync);
@@ -170,25 +175,16 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// RATING-04：组级星级冲突时卡片与控制栏 0 号槽位显示红色警示三角；三角只作指示，
-    /// 点击不写 0、不切主图。来源浮窗尚未实现，本检查同时确认点击不会打开共享浮窗状态。
+    /// RATING-04：组级冲突时卡片与控制栏 0 号槽位显示红色警示三角；点卡片三角打开来源浮窗
+    /// （不写值、不切主图），浮窗按真实锚点向下展开并列出两个来源的名称、标签与状态。
     /// </summary>
     private static async Task CheckRatingConflictAsync()
     {
-        var activity = _activity!;
         var main = _main!;
         var root = _root!;
-        string folder = IOPath.Combine(activity.FilesDir!.AbsolutePath, "pv-check-conflict");
-        Directory.CreateDirectory(folder);
-        string path = IOPath.Combine(folder, "conflict.jpg");
-        string sidecarPath = IOPath.Combine(folder, "conflict.xmp");
-        // 每次重建素材：内嵌 2 与同名 sidecar 4 不一致，形成组级冲突。
-        File.Delete(path);
-        File.Delete(sidecarPath);
-        WriteCheckJpeg(path, 640, 480, rating: 2);
-        File.WriteAllBytes(sidecarPath, BuildXmpPacket(4));
+        var (folderPath, path, sidecarPath) = EnsureConflictFixture(2, 4);
         var target = new AndroidFileRef(path);
-        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
+        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folderPath));
         try
         {
             await WaitAsync(
@@ -212,6 +208,13 @@ internal static partial class AndroidNativeChecks
             return;
         }
 
+        await WaitForListSettledAsync(main);
+        file = main.CurrentFile;
+        if (file == null || !file.HasRatingConflict)
+        {
+            Check("RATING-04 冲突指示", false, "列表重算后冲突消失");
+            return;
+        }
         int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
         var card = index >= 0 ? root.Filmstrip.CardAt(index) : null;
         Check("RATING-04 冲突指示",
@@ -219,24 +222,268 @@ internal static partial class AndroidNativeChecks
             $"card={card?.ShowsRatingConflict} control={root.ControlBar.RatingConflictForChecks} "
             + $"sources={file.RatingSources.Count} rating={file.Rating}");
 
-        // 行布局卡片宽 96dp：0 号槽位中心 (13,126)dp；点三角不写 0、不切主图。
         if (card == null || !main.IsRowLayout)
         {
-            Check("RATING-04 点三角不写值不切主图", false, "行布局冲突卡片不可用");
+            Check("RATING-04 卡片三角打开来源浮窗", false, "行布局冲突卡片不可用");
             return;
         }
 
-        float densityPx = (float)AndroidUiTheme.Density(root.Context!);
-        long now = SystemClock.UptimeMillis();
-        using var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, 13f * densityPx, 126f * densityPx, 0);
-        using var up = MotionEvent.Obtain(now, now, MotionEventActions.Up, 13f * densityPx, 126f * densityPx, 0);
-        card.DispatchTouchEvent(down);
-        card.DispatchTouchEvent(up);
-        await Task.Delay(150);
-        Check("RATING-04 点三角不写值不切主图",
-            ReferenceEquals(main.CurrentFile, file) && file.Rating == 2 && !main.RatingSources.IsOpen,
-            $"current={main.CurrentFile?.Name} rating={file.Rating} sourcesOpen={main.RatingSources.IsOpen}");
+        var popup = root.RatingSourcesPopup;
+        try
+        {
+            byte[] embeddedBefore = File.ReadAllBytes(path);
+            byte[] sidecarBefore = File.ReadAllBytes(sidecarPath);
+            var slot = card.StarSlotRectPx(0) ?? throw new InvalidOperationException("卡片 0 号槽位不可用");
+            var location = new int[2];
+            card.GetLocationOnScreen(location);
+            var expectedAnchor = new Rect(location[0] + slot.Left, location[1] + slot.Top,
+                location[0] + slot.Right, location[1] + slot.Bottom);
+            TapLocal(card, slot.CenterX(), slot.CenterY());
+            await WaitAsync(() => popup.IsOpen && main.RatingSources.IsOpen, "卡片三角打开浮窗", 5000);
+            await Task.Delay(250);
+            bool stillOpen = popup.IsOpen && main.RatingSources.IsOpen;
+            double density = AndroidUiTheme.Density(root.Context!);
+            var items = main.RatingSources.Items;
+            bool twoSources = items.Count == 2
+                && items[0].Name == "conflict.jpg" && items[0].Kind == "JPG" && items[0].Status == "2 星"
+                && items[1].Name == "conflict.xmp" && items[1].Kind == "XMP" && items[1].Status == "4 星";
+            // 打开浮窗不写评分、不切图：主图身份与两个来源的磁盘字节都必须原样保留。
+            bool unchanged = ReferenceEquals(main.CurrentFile, file) && file.Rating == 2
+                && File.ReadAllBytes(path).SequenceEqual(embeddedBefore)
+                && File.ReadAllBytes(sidecarPath).SequenceEqual(sidecarBefore);
+            bool anchored = SameRect(popup.AnchorRectForChecks, expectedAnchor);
+            bool sized = popup.WidthPxForChecks == (int)Math.Round(AndroidRatingSourcesPopup.WindowWidthDp * density)
+                && popup.HeightPxForChecks > 0;
+            Check("RATING-04 卡片三角打开来源浮窗",
+                twoSources && unchanged && anchored && sized && stillOpen && popup.DirectionForChecks == "down",
+                $"open={stillOpen} sources={items.Count} [{string.Join(" / ", items.Select(item => $"{item.Name}:{item.Kind}:{item.Status}"))}] "
+                + $"current={main.CurrentFile?.Name} rating={file.Rating} anchor={popup.AnchorRectForChecks} "
+                + $"expectedAnchor={expectedAnchor} width={popup.WidthPxForChecks} height={popup.HeightPxForChecks} "
+                + $"direction={popup.DirectionForChecks}");
+        }
+        finally
+        {
+            popup.Close();
+        }
     }
+
+    /// <summary>
+    /// RATING-04：点浮窗内任一条目的任意值都整组写入全部来源；写入成功且冲突解除后浮窗关闭，
+    /// 两个来源的磁盘真值都收敛到目标值。
+    /// </summary>
+    private static async Task CheckRatingSourcesWriteAsync()
+    {
+        var main = _main!;
+        var root = _root!;
+        var (folderPath, path, sidecarPath) = EnsureConflictFixture(2, 4);
+        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folderPath));
+        await WaitAsync(() => main.CurrentFile?.HasRatingConflict == true, "冲突素材上屏", 25000);
+        await WaitForListSettledAsync(main);
+        var file = main.CurrentFile!;
+        var popup = root.RatingSourcesPopup;
+        try
+        {
+            int index = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
+            var card = index >= 0 ? root.Filmstrip.CardAt(index) : null;
+            if (card?.StarSlotRectPx(0) is not { } cardSlot)
+                throw new InvalidOperationException("行布局冲突卡片不可用");
+            TapLocal(card, cardSlot.CenterX(), cardSlot.CenterY());
+            await WaitAsync(() => popup.IsOpen, "来源浮窗打开", 5000);
+            await Task.Delay(250);
+            if (!popup.IsOpen) throw new InvalidOperationException("浮窗打开后立即被关闭");
+            int entryIndex = Math.Max(0, main.RatingSources.Items.Count - 1);
+            var target = popup.SlotRectPx(entryIndex, 5);
+            if (target.Width() <= 0 || popup.ContentViewForChecks is not { } content)
+                throw new InvalidOperationException("浮窗槽位不可用");
+            TapLocal(content, target.CenterX(), target.CenterY());
+            await WaitAsync(() => !popup.IsOpen && !main.RatingSources.IsOpen && !file.HasRatingConflict,
+                "整组写入后浮窗关闭", 15000);
+            await WaitAsync(() => file.RatingSources.All(source =>
+                    source.State == XmpRatingState.Rated && source.Value == 5), "两来源收敛", 8000);
+            // sidecar 是独立 XMP 包（不是照片容器），按字节核对而不是再走容器解析。
+            bool sidecar = File.ReadAllText(sidecarPath).Contains("xmp:Rating=\"5\"", StringComparison.Ordinal);
+            bool embedded = (await XmpRatingReader.ReadAsync(new AndroidFileRef(path))).ValueOrZero == 5;
+            bool cardConverged = card.ShowsRatingConflict == false;
+            Check("RATING-04 整组写入收敛并关闭浮窗",
+                embedded && sidecar && cardConverged,
+                $"embedded={embedded} sidecar={sidecar} conflict={file.HasRatingConflict} "
+                + $"rating={file.Rating} popup={popup.IsOpen} shared={main.RatingSources.IsOpen}");
+        }
+        finally
+        {
+            popup.Close();
+        }
+    }
+
+    /// <summary>
+    /// RATING-04：控制栏评分组 0 号按钮打开的是当前照片组的来源浮窗，横排控制栏向上展开；
+    /// 打开本身不写值、不切图。
+    /// </summary>
+    private static async Task CheckRatingControlBarAsync()
+    {
+        var main = _main!;
+        var root = _root!;
+        var (folder, path, _) = EnsureConflictFixture(2, 4);
+        await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
+        await WaitAsync(() => main.CurrentFile?.HasRatingConflict == true, "冲突素材上屏", 25000);
+        await WaitForListSettledAsync(main);
+        var file = main.CurrentFile!;
+        var popup = root.RatingSourcesPopup;
+        try
+        {
+            var node = await WaitForRatingNodeAsync(root, 0);
+            double density = AndroidUiTheme.Density(root.Context!);
+            TapLocal(root.ControlBar, (float)((node.X + node.Width / 2) * density),
+                (float)((node.Y + node.Height / 2) * density));
+            await WaitAsync(() => popup.IsOpen && main.RatingSources.IsOpen, "控制栏三角打开浮窗", 5000);
+            await Task.Delay(250);
+            bool stillOpen = popup.IsOpen && main.RatingSources.IsOpen;
+            var items = main.RatingSources.Items;
+            Check("RATING-04 控制栏三角打开浮窗",
+                stillOpen && items.Count == 2 && items[0].Name == "conflict.jpg"
+                && ReferenceEquals(main.CurrentFile, file) && file.Rating == 2
+                && popup.DirectionForChecks == "up",
+                $"open={stillOpen} sources={items.Count} current={main.CurrentFile?.Name} rating={file.Rating} "
+                + $"direction={popup.DirectionForChecks} anchor={popup.AnchorRectForChecks}");
+        }
+        finally
+        {
+            popup.Close();
+        }
+    }
+
+    /// <summary>
+    /// RATING-04：写入失败时保留浮窗并显示刷新后的来源状态（不因失败收起），评分真值不变。
+    /// </summary>
+    private static async Task CheckRatingSourcesFailureAsync()
+    {
+        var main = _main!;
+        var root = _root!;
+        var (folder, path, sidecarPath) = EnsureConflictFixture(2, 4);
+        SetFileReadOnly(path, true);
+        SetFileReadOnly(sidecarPath, true);
+        SetDirectoryReadOnly(folder, true);
+        var popup = root.RatingSourcesPopup;
+        try
+        {
+            await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(folder));
+            await WaitAsync(() => main.CurrentFile?.HasRatingConflict == true, "只读冲突素材上屏", 25000);
+            await WaitForListSettledAsync(main);
+            var file = main.CurrentFile!;
+            root.ResetStatusForChecks();
+            var card = root.Filmstrip.CardAt(main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file));
+            if (card?.StarSlotRectPx(0) is not { } cardSlot)
+                throw new InvalidOperationException("只读冲突卡片不可用");
+            TapLocal(card, cardSlot.CenterX(), cardSlot.CenterY());
+            await WaitAsync(() => popup.IsOpen, "只读来源浮窗打开", 5000);
+            await Task.Delay(250);
+            if (!popup.IsOpen) throw new InvalidOperationException("浮窗打开后立即被关闭");
+            var target = popup.SlotRectPx(0, 4);
+            if (target.Width() <= 0 || popup.ContentViewForChecks is not { } content)
+                throw new InvalidOperationException("浮窗槽位不可用");
+            TapLocal(content, target.CenterX(), target.CenterY());
+            await WaitAsync(() => root.StatusVisibleForChecks
+                && (root.StatusTextForChecks ?? string.Empty).Contains(file.Name, StringComparison.Ordinal),
+                "写入失败提示条", 15000);
+            bool kept = popup.IsOpen && main.RatingSources.IsOpen;
+            bool unchanged = file.HasRatingConflict && file.Rating == 2;
+            Check("RATING-04 写入失败保留浮窗",
+                kept && unchanged,
+                $"popup={popup.IsOpen} shared={main.RatingSources.IsOpen} conflict={file.HasRatingConflict} "
+                + $"rating={file.Rating} status={root.StatusTextForChecks}");
+        }
+        finally
+        {
+            popup.Close();
+            SetFileReadOnly(path, false);
+            SetFileReadOnly(sidecarPath, false);
+            SetDirectoryReadOnly(folder, false);
+        }
+    }
+
+    /// <summary>等待筛选列表稳定（后台来源补齐/评分扫描不再替换列表），避免列表替换关闭浮窗。</summary>
+    private static async Task WaitForListSettledAsync(MainViewModel main)
+    {
+        IReadOnlyList<ImageFile>? last = null;
+        int stable = 0;
+        for (int attempt = 0; attempt < 40 && stable < 4; attempt++)
+        {
+            await Task.Delay(120);
+            var files = main.FileVM.ThumbnailList.FilteredFiles;
+            if (last != null && files.Count == last.Count && files.SequenceEqual(last)) stable++;
+            else stable = 0;
+            last = files.ToArray();
+        }
+    }
+
+    /// <summary>重建冲突素材：内嵌 2 与同名 sidecar 4 不一致，形成组级冲突。</summary>
+    /// <param name="embedded">内嵌星级。</param>
+    /// <param name="sidecar">sidecar 星级。</param>
+    /// <returns>目录、JPEG 与 sidecar 路径。</returns>
+    private static (string Folder, string Path, string Sidecar) EnsureConflictFixture(int embedded, int sidecar)
+    {
+        string folder = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "pv-check-conflict");
+        Directory.CreateDirectory(folder);
+        string path = IOPath.Combine(folder, "conflict.jpg");
+        string sidecarPath = IOPath.Combine(folder, "conflict.xmp");
+        if (File.Exists(path)) SetFileReadOnly(path, false);
+        if (File.Exists(sidecarPath)) SetFileReadOnly(sidecarPath, false);
+        SetDirectoryReadOnly(folder, false);
+        File.Delete(path);
+        File.Delete(sidecarPath);
+        WriteCheckJpeg(path, 640, 480, rating: embedded);
+        File.WriteAllBytes(sidecarPath, BuildXmpPacket(sidecar));
+        return (folder, path, sidecarPath);
+    }
+
+    /// <summary>在视图本地坐标点按（验收用，与真实触摸同一条消费路径）。</summary>
+    /// <param name="view">目标视图。</param>
+    /// <param name="xPx">横坐标（px）。</param>
+    /// <param name="yPx">纵坐标（px）。</param>
+    private static void TapLocal(View view, float xPx, float yPx)
+    {
+        long now = SystemClock.UptimeMillis();
+        using var down = MotionEvent.Obtain(now, now, MotionEventActions.Down, xPx, yPx, 0);
+        using var up = MotionEvent.Obtain(now, now, MotionEventActions.Up, xPx, yPx, 0);
+        view.DispatchTouchEvent(down);
+        view.DispatchTouchEvent(up);
+    }
+
+    /// <summary>卡片某个槽位在屏幕上的矩形（与产品锚点同一计算）。</summary>
+    private static Rect? ScreenRectOfCardSlot(AndroidThumbnailCard card)
+    {
+        if (!card.IsAttachedToWindow || card.StarSlotRectPx(0) is not { } slot) return null;
+        var location = new int[2];
+        card.GetLocationOnScreen(location);
+        return new Rect(location[0] + slot.Left, location[1] + slot.Top,
+            location[0] + slot.Right, location[1] + slot.Bottom);
+    }
+
+    /// <summary>等待控制栏评分组第 <paramref name="slot"/> 个虚拟节点排布完成并返回其本地 dp 矩形。</summary>
+    private static async Task<(string Name, string Kind, double X, double Y, double Width, double Height, bool Enabled)>
+        WaitForRatingNodeAsync(AndroidNativeRootView root, int slot)
+    {
+        (string, string, double, double, double, double, bool)? found = null;
+        await WaitAsync(() =>
+        {
+            int seen = 0;
+            foreach (var node in root.ControlBar.NodesForChecks())
+            {
+                if (node.Kind != "Rating") continue;
+                if (seen++ != slot) continue;
+                if (node.Width <= 0 || node.Height <= 0) return false;
+                found = node;
+                return true;
+            }
+            return false;
+        }, "控制栏评分槽位排布", 8000);
+        return found!.Value;
+    }
+
+    private static bool SameRect(Rect left, Rect right)
+        => left.Left == right.Left && left.Top == right.Top
+            && left.Right == right.Right && left.Bottom == right.Bottom;
+
 
     /// <summary>IMAGE-03：Full 解码失败时保留屏上代理并给出非阻塞提示条，不覆盖主图错误态。</summary>
     private static async Task CheckFullFailureAsync()

@@ -1,9 +1,14 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using Android.Content;
 using Android.Graphics;
+using Android.OS;
 using Android.Views;
 using Android.Widget;
+using AndroidX.Core.View;
+using AndroidX.Core.View.Accessibility;
+using AndroidX.CustomView.Widget;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
@@ -13,12 +18,16 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// 胶片栏卡片（A3，[FILM-05]）：96×144 外框、90×138 占位区、80 方形照片区、文件名、拍摄时间、
 /// 6 个星级、抖动徽标、当前项蓝框与 Full 缓存细边；整卡自绘，尺寸与 iOS 原生壳同口径。
-/// 星级命中优先于整卡选择（点星不切图）。
+/// 星级命中优先于整卡选择（点星不切图）；组级冲突时 0 号换警示三角，点击只打开来源浮窗（RATING-04）。
 /// </summary>
 internal sealed class AndroidThumbnailCard : View
 {
     private const double Inset = 3, SurfaceWidth = 90, SurfaceHeight = 138, ImageSize = 80, StarSize = 14;
     private const double SecondLineWidth = 80;
+    /// <summary>星级行的绘制/命中左边缘（6 颗 14dp 星在 96dp 卡片内居中的起点）。</summary>
+    private static readonly double StarRowLeft = (CardWidthDp - StarSize * 6) / 2;
+    /// <summary>星级行的绘制/命中上边缘；绘制与触摸共用同一几何，锚点即真实三角位置。</summary>
+    private const double StarRowTop = 119;
     private readonly Paint _surfacePaint;
     private readonly Paint _thumbnailBackground;
     private readonly Paint _textPaint;
@@ -30,11 +39,13 @@ internal sealed class AndroidThumbnailCard : View
     private readonly Paint _linePaint;
     private readonly Paint _conflictPaint;
     private readonly GestureDetector _gestures;
+    private readonly CardExploreByTouchHelper _accessibility;
     private ImageFile? _file;
     private Bitmap? _thumbnail;
     private DecodedImage? _thumbnailSource;
     private Action<ImageFile>? _select;
     private Action<ImageFile, int>? _rate;
+    private Action<ImageFile>? _showSources;
     private bool _showRating = true;
     private string? _secondLineText;
     private double? _secondLineProgress;
@@ -52,6 +63,24 @@ internal sealed class AndroidThumbnailCard : View
     internal string? SecondLineText => _secondLineText;
     /// <summary>0 号槽位是否为星级冲突警示三角（验收用）。</summary>
     internal bool ShowsRatingConflict => _file?.HasRatingConflict == true;
+
+    /// <summary>
+    /// 给定槽位在卡片视图内的矩形（px，含列布局的水平居中偏移）；锚点与实际绘制/命中同一几何。
+    /// </summary>
+    /// <param name="index">0–5。</param>
+    /// <returns>矩形；卡片尚未测量或索引越界返回 null。</returns>
+    internal Rect? StarSlotRectPx(int index)
+    {
+        if (Width < 1 || index < 0 || index > 5) return null;
+        float density = (float)AndroidUiTheme.Density(Context!);
+        float scale = Math.Min(Width / (float)(CardWidthDp * density), 1f);
+        float originX = (Width - (float)(96 * density)) / 2;
+        float left = originX + (float)((StarRowLeft + index * StarSize) * density) * scale;
+        float top = (float)(StarRowTop * density) * scale;
+        float side = (float)(StarSize * density) * scale;
+        return new Rect((int)Math.Round(left), (int)Math.Round(top),
+            (int)Math.Round(left + side), (int)Math.Round(top + side));
+    }
 
     /// <summary>创建卡片并建好画笔/手势识别。</summary>
     /// <param name="context">宿主上下文。</param>
@@ -72,6 +101,8 @@ internal sealed class AndroidThumbnailCard : View
         _gestures = new GestureDetector(context, new CardGestureListener(this));
         Focusable = true;
         Clickable = true;
+        _accessibility = new CardExploreByTouchHelper(this);
+        ViewCompat.SetAccessibilityDelegate(this, _accessibility);
     }
 
     /// <summary>
@@ -84,13 +115,16 @@ internal sealed class AndroidThumbnailCard : View
     /// <param name="secondLineText">第二行文字；null 显示拍摄时间。</param>
     /// <param name="secondLineProgress">第二行进度条占比；null 不显示。</param>
     /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>（相似聚类）。</param>
+    /// <param name="showSources">冲突三角点击：打开该照片的来源浮窗。</param>
     internal void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
-        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false)
+        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false,
+        Action<ImageFile>? showSources = null)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = file;
         _select = select;
         _rate = rate;
+        _showSources = showSources;
         _showRating = showRating;
         _secondLineText = secondLineText;
         _secondLineProgress = secondLineProgress;
@@ -109,6 +143,7 @@ internal sealed class AndroidThumbnailCard : View
         _file = null;
         _select = null;
         _rate = null;
+        _showSources = null;
         _thumbnail = null;
         _thumbnailSource = null;
     }
@@ -214,8 +249,8 @@ internal sealed class AndroidThumbnailCard : View
             bool conflict = _file.HasRatingConflict;
             for (int rating = 0; rating < 6; rating++)
             {
-                float cx = (float)(((96 - StarSize * 6) / 2 + rating * StarSize + StarSize / 2) * d);
-                float cy = (float)((119 + StarSize / 2) * d);
+                float cx = (float)((StarRowLeft + rating * StarSize + StarSize / 2) * d);
+                float cy = (float)((StarRowTop + StarSize / 2) * d);
                 if (rating == 0)
                 {
                     if (conflict)
@@ -295,22 +330,55 @@ internal sealed class AndroidThumbnailCard : View
                 _longPressConsumed = false;
                 return true;
             }
-            float density = (float)AndroidUiTheme.Density(Context!);
-            float x = e.GetX(), y = e.GetY();
-            float starLeft = (float)(Inset * density);
-            float starTop = (float)(116 * density);
-            float starBottom = (float)((116 + StarSize) * density);
-            if (_showRating && y >= starTop && y <= starBottom && x >= starLeft && x <= starLeft + (float)(6 * StarSize * density))
+            int slot = SlotAtPx(e.GetX(), e.GetY());
+            if (slot >= 0)
             {
-                int rating = (int)((x - starLeft) / (float)(StarSize * density));
-                rating = Math.Clamp(rating, 0, 5);
-                // RATING-04：冲突时 0 号是警示三角，只作指示，不写 0、不切主图。
-                if (rating == 0 && _file.HasRatingConflict) return true;
-                _rate?.Invoke(_file, rating);
+                ActivateSlot(slot);
                 return true;
             }
             _select?.Invoke(_file);
         }
+        return true;
+    }
+
+    /// <summary>
+    /// 触点命中的星级槽位（含列布局的水平居中偏移）；未命中返回 -1。
+    /// 与绘制、<see cref="StarSlotRectPx"/> 共用 <see cref="StarRowLeft"/> / <see cref="StarRowTop"/>。
+    /// </summary>
+    /// <param name="x">触点横坐标（px）。</param>
+    /// <param name="y">触点纵坐标（px）。</param>
+    /// <returns>0–5 或 -1。</returns>
+    internal int SlotAtPx(float x, float y)
+    {
+        if (!_showRating || Width < 1) return -1;
+        float density = (float)AndroidUiTheme.Density(Context!);
+        float scale = Math.Min(Width / (float)(CardWidthDp * density), 1f);
+        if (scale <= 0) return -1;
+        float originX = (Width - (float)(96 * density)) / 2;
+        float localX = (x - originX) / scale, localY = y / scale;
+        float starLeft = (float)(StarRowLeft * density);
+        float starTop = (float)(StarRowTop * density);
+        float starBottom = (float)((StarRowTop + StarSize) * density);
+        float starRight = starLeft + (float)(6 * StarSize * density);
+        if (localY < starTop || localY > starBottom || localX < starLeft || localX > starRight) return -1;
+        return Math.Clamp((int)((localX - starLeft) / (float)(StarSize * density)), 0, 5);
+    }
+
+    /// <summary>
+    /// 槽位动作：普通槽位写回评分；冲突时的 0 号只打开来源浮窗，不写值、不切图（RATING-04）。
+    /// 触摸与读屏虚拟动作共用本入口。
+    /// </summary>
+    /// <param name="rating">0–5。</param>
+    /// <returns>是否执行了动作。</returns>
+    internal bool ActivateSlot(int rating)
+    {
+        if (_file == null || !_showRating || rating < 0 || rating > 5) return false;
+        if (rating == 0 && _file.HasRatingConflict)
+        {
+            _showSources?.Invoke(_file);
+            return true;
+        }
+        _rate?.Invoke(_file, rating);
         return true;
     }
 
@@ -350,6 +418,71 @@ internal sealed class AndroidThumbnailCard : View
             Recycle();
         }
         base.Dispose(disposing);
+    }
+
+    /// <summary>
+    /// 卡片槽位的读屏节点（RATING-04）：0 号冲突时名称为「星级冲突」，点按走与触摸相同的
+    /// <see cref="ActivateSlot"/>，因此读屏也能打开来源浮窗而不写值。
+    /// </summary>
+    private sealed class CardExploreByTouchHelper : ExploreByTouchHelper
+    {
+        private readonly AndroidThumbnailCard _owner;
+
+        /// <summary>绑定卡片。</summary>
+        /// <param name="owner">卡片视图。</param>
+        public CardExploreByTouchHelper(AndroidThumbnailCard owner) : base(owner) => _owner = owner;
+
+        /// <summary>按本地像素坐标找槽位。</summary>
+        protected override int GetVirtualViewAt(float x, float y) => _owner.SlotAtPx(x, y);
+
+        /// <summary>星级可见时列出 0–5 六个槽位。</summary>
+        protected override void GetVisibleVirtualViews(IList<Java.Lang.Integer>? virtualViewIds)
+        {
+            if (virtualViewIds == null || _owner._file == null || !_owner._showRating) return;
+            for (int rating = 0; rating < 6; rating++) virtualViewIds.Add(Java.Lang.Integer.ValueOf(rating));
+        }
+
+        /// <summary>填充名称、选中态与屏幕边界。</summary>
+        protected override void OnPopulateNodeForVirtualView(int virtualViewId, AccessibilityNodeInfoCompat? node)
+        {
+            if (node == null) return;
+            var file = _owner._file;
+            if (file == null || virtualViewId < 0 || virtualViewId > 5 || !_owner._showRating)
+            {
+                node.ContentDescription = "";
+                node.SetBoundsInScreen(new Rect());
+                return;
+            }
+            bool conflict = file.HasRatingConflict;
+            node.ContentDescription = virtualViewId == 0
+                ? (conflict ? "星级冲突" : "无星级")
+                : $"{virtualViewId} 星";
+            node.ClassName = "android.widget.Button";
+            node.Focusable = true;
+            node.Enabled = true;
+            node.Clickable = true;
+            node.VisibleToUser = true;
+            node.Selected = virtualViewId > 0 && file.Rating == virtualViewId;
+            node.AddAction((int)global::Android.Views.Accessibility.Action.Click);
+            if (_owner.StarSlotRectPx(virtualViewId) is { } rect)
+            {
+                var location = new int[2];
+                _owner.GetLocationOnScreen(location);
+                node.SetBoundsInScreen(new Rect(location[0] + rect.Left, location[1] + rect.Top,
+                    location[0] + rect.Right, location[1] + rect.Bottom));
+            }
+            else
+            {
+                node.SetBoundsInScreen(new Rect());
+            }
+        }
+
+        /// <summary>读屏点按：与触摸同一槽位入口（冲突三角只开浮窗、不写值）。</summary>
+        protected override bool OnPerformActionForVirtualView(int virtualViewId, int action, Bundle? arguments)
+        {
+            if (action != (int)global::Android.Views.Accessibility.Action.Click) return false;
+            return _owner.ActivateSlot(virtualViewId);
+        }
     }
 
     /// <summary>卡片手势回调。</summary>
