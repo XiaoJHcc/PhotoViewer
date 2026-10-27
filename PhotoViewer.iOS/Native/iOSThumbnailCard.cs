@@ -14,7 +14,7 @@ namespace PhotoViewer.iOS.Native;
 /// 6 个星级、抖动徽标与占位/加载状态；几何与 Mac 原生壳同口径（<see cref="FilmstripGeometry"/> 与固定内部 frame），
 /// 便于程序化对拍。星级是独立 UIButton，选择是覆盖整卡的独立 UIButton，命中测试天然分离，点星不会切图。
 /// 组级星级冲突（RATING-04）时 0 号槽位画 <c>exclamationmark.triangle.fill</c>（<c>color.star.conflict</c>），
-/// 只作指示、点击不写值；非冲突仍是清零叉、点击写 0。
+/// 点击打开来源浮窗、不写值；非冲突仍是清零叉、点击写 0。
 /// </summary>
 [Register("PViOSThumbnailCard")]
 internal sealed class iOSThumbnailCard : UICollectionViewCell
@@ -41,6 +41,7 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     private UIImage? _nativeThumbnail;
     private Action<ImageFile>? _selectFile;
     private Action<ImageFile, int>? _rate;
+    private Action<ImageFile, UIButton>? _showSources;
     private iOSContextMenuDelegate? _menuDelegate;
     private string? _secondLineText;
     private double? _secondLineProgress;
@@ -144,7 +145,11 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
             button.TouchUpInside += (_, _) =>
             {
                 if (_file == null) return;
-                if (value == 0 && _file.HasRatingConflict) return;
+                if (value == 0 && _file.HasRatingConflict)
+                {
+                    _showSources?.Invoke(_file, button);
+                    return;
+                }
                 _rate?.Invoke(_file, value);
             };
             _stars[rating] = button;
@@ -181,12 +186,14 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
     /// <param name="secondLineProgress">第二行柱状条占比（0~1）；null 只显示文字（相似聚类用 75% 起的占比）。</param>
     /// <param name="selectByDisplayedImage">选中态取 <see cref="ImageFile.IsCurrentImage"/>（相似聚类面板）而非列表锚点 <see cref="ImageFile.IsCurrent"/>（胶片栏）。</param>
     public void Bind(ImageFile file, bool showRating, Action<ImageFile> select, Action<ImageFile, int> rate,
-        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false)
+        string? secondLineText = null, double? secondLineProgress = null, bool selectByDisplayedImage = false,
+        Action<ImageFile, UIButton>? showSources = null)
     {
         if (_file != null) _file.PropertyChanged -= OnFileChanged;
         _file = file;
         _selectFile = select;
         _rate = rate;
+        _showSources = showSources;
         _secondLineText = secondLineText;
         _secondLineProgress = secondLineProgress;
         _selectByDisplayedImage = selectByDisplayedImage;
@@ -254,6 +261,7 @@ internal sealed class iOSThumbnailCard : UICollectionViewCell
         _file = null;
         _selectFile = null;
         _rate = null;
+        _showSources = null;
         _thumbnail.Image = null;
         _nativeThumbnail?.Dispose();
         _nativeThumbnail = null;

@@ -45,6 +45,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly UIView _controlDivider = new();
     private readonly UIScrollView _controlScroll = new();
     private readonly iOSControlBar _controlBar;
+    private readonly iOSRatingSourcesPopover _ratingSources;
     private readonly iOSFilterBar _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
@@ -91,6 +92,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private bool _sessionStarted;
     private bool _refreshPending;
     private bool _layingOut;
+    private CGPoint _lastControlScrollOffset;
 
     /// <summary>主图宿主（验收读取视口、抓帧与手势状态）。</summary>
     internal iOSPhotoView Photo => _photo;
@@ -98,6 +100,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal iOSFilmstripView Filmstrip => _filmstrip;
     /// <summary>控制栏（验收读取分组、命令与评分按钮）。</summary>
     internal iOSControlBar ControlBar => _controlBar;
+    internal iOSRatingSourcesPopover RatingSourcesPopover => _ratingSources;
     /// <summary>筛选条（验收读取筛选控件几何）。</summary>
     internal iOSFilterBar FilterBar => _filterBar;
     /// <summary>文件栏背景视图。</summary>
@@ -169,6 +172,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
         _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
         _controlBar = new iOSControlBar(ScheduleControlsRefresh);
+        _ratingSources = new iOSRatingSourcesPopover(main, this);
         // 主图菜单用触点处的 1 点透明预览：长按只弹菜单，照片不抬升、不缩小。
         _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu(), stablePreview: true);
         _drop = new UIDropInteraction(new iOSDropDelegate(this));
@@ -192,6 +196,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
         _filmstrip.RateRequested += OnRateRequested;
+        _filmstrip.RatingSourcesRequested += ShowRatingSources;
+        _filmstrip.RatingAnchorMoved += CloseCardRatingSources;
+        _similarityPane.RatingSourcesRequested += ShowRatingSources;
+        _similarityPane.RatingAnchorMoved += CloseCardRatingSources;
         // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
         // Superseded/Canceled 不发，因此快速连按不会弹虚假失败）。
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
@@ -271,6 +279,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _controlDivider.BackgroundColor = UIColor.FromWhiteAlpha(.2f, 1);
         _controlScroll.BackgroundColor = UIColor.Clear;
         _controlScroll.ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never;
+        _controlScroll.Delegate = new ControlScrollObserver(this);
         _controlScroll.AddSubview(_controlBar);
         root.AddSubview(_photoPane);
         root.AddSubview(_fileBar);
@@ -338,6 +347,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
         {
             if (press.Key is not { } key) continue;
             int usage = (int)key.KeyCode;
+            if (_ratingSources.IsOpen && usage == 41)
+            {
+                ClearHeldKeys();
+                _ratingSources.Close();
+                consumed = true;
+                continue;
+            }
             if (_heldKeys.ContainsKey(usage))
             {
                 // 系统按键重复：已消费过，重复节奏由本类计时器统一驱动。
@@ -443,7 +459,12 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
             _filmstrip.RateRequested -= OnRateRequested;
+            _filmstrip.RatingSourcesRequested -= ShowRatingSources;
+            _filmstrip.RatingAnchorMoved -= CloseCardRatingSources;
+            _similarityPane.RatingSourcesRequested -= ShowRatingSources;
+            _similarityPane.RatingAnchorMoved -= CloseCardRatingSources;
             _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
+            _ratingSources.Dispose();
             _photo.ViewportChanged -= ApplyDetailHighlight;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
             ClearHeldKeys();
@@ -535,14 +556,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 _filterBar.Frame = new CGRect(content.X, content.Y, contentWidth, filterMain);
                 _filterBar.Arrange(row, contentWidth, leadingInset);
                 double filmWidth = row ? Math.Max(1, contentWidth - similarityColumn) : contentWidth;
-                _filmstrip.Frame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
+                var nextFilmstripFrame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
+                if (_filmstrip.Frame != nextFilmstripFrame) CloseCardRatingSources();
+                _filmstrip.Frame = nextFilmstripFrame;
                 if (similarityOpen)
                 {
-                    _similarityPane.Frame = row
+                    var nextSimilarityFrame = row
                         ? new CGRect(content.X + contentWidth - similarityColumn, content.Y + filterMain,
                             Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
                         : new CGRect(content.X + MainScreenLayout.FileBarContentWidth, content.Y + filterMain,
                             (nfloat)_similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
+                    if (_similarityPane.Frame != nextSimilarityFrame) CloseCardRatingSources();
+                    _similarityPane.Frame = nextSimilarityFrame;
                     _similarityPane.LayoutIfNeeded();
                 }
             }
@@ -550,7 +575,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
             bool axisChanged = _filmstrip.Horizontal != row;
             _filmstrip.SetAxis(row);
             // 方向变化属于显式定位条件（[FILM-04] 登记的原生增强），普通尺寸变化只约束偏移。
-            if (axisChanged) _filmstrip.ScrollToCurrent();
+            if (axisChanged)
+            {
+                CloseCardRatingSources();
+                _filmstrip.ScrollToCurrent();
+            }
 
             if (controlVisible)
             {
@@ -566,6 +595,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                     Math.Clamp((double)offset.Y, 0, Math.Max(0, (double)_controlScroll.ContentSize.Height - (double)_controlScroll.Bounds.Height)));
                 if (clamped != offset) _controlScroll.SetContentOffset(clamped, false);
             }
+            _lastControlScrollOffset = _controlScroll.ContentOffset;
             LayoutOverlays();
         }
         finally { _layingOut = false; }
@@ -737,9 +767,68 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>按共享设置与当前照片重建控制栏（验收与设置回写共用同一入口）。</summary>
     internal void BuildControls()
     {
-        _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools);
+        bool reopen = (_ratingSources.IsOpen || _ratingSources.IsOpening) && _ratingSources.IsAnchoredToControlBar;
+        var sourceTarget = reopen ? _main.RatingSources.Target : null;
+        if (reopen && _ratingSources.IsOpening) _ratingSources.Close();
+        _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
+            ShowTools, anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
         Layout();
+        if (sourceTarget == null) return;
+        if (_controlBar.RatingClearButton is not { } anchor)
+        {
+            _ratingSources.Close();
+            return;
+        }
+        if (!_main.RatingSources.IsOpen) _main.ShowRatingSources(sourceTarget);
+        _ratingSources.Show(anchor, true, _main.IsRowLayout);
     }
+
+    internal void ShowRatingSources(ImageFile file, UIButton anchor)
+    {
+        _ratingSources.Close();
+        _main.ShowRatingSources(file);
+        bool controlBarAnchor = false;
+        for (UIView? view = anchor; view != null; view = view.Superview)
+        {
+            if (!ReferenceEquals(view, _controlBar)) continue;
+            controlBarAnchor = true;
+            break;
+        }
+        _ratingSources.Show(anchor, controlBarAnchor, _main.IsRowLayout);
+    }
+
+    /// <summary>列表重载会换掉卡片实例：浮窗只在同一照片的入口仍停在展示时的矩形上才保留，否则按 RATING-04 关闭。</summary>
+    private void RevalidateCardRatingSources()
+    {
+        if (!_ratingSources.IsOpen && !_ratingSources.IsOpening || _ratingSources.IsAnchoredToControlBar) return;
+        if (_ratingSources.SourceRect is not { } shown || _main.RatingSources.Target is not { } target)
+        {
+            _ratingSources.Close();
+            return;
+        }
+        bool SameEntry(UICollectionView list) => list.Window != null && list.VisibleCells.OfType<iOSThumbnailCard>().Any(card =>
+            ReferenceEquals(card.BoundFile, target) && card.StarButtons.Count > 0
+            && card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, View) == shown);
+        if (!SameEntry(_filmstrip.Collection) && !SameEntry(_similarityPane.List)) _ratingSources.Close();
+    }
+
+    private void CloseCardRatingSources()
+    {
+        if ((_ratingSources.IsOpen || _ratingSources.IsOpening) && !_ratingSources.IsAnchoredToControlBar) _ratingSources.Close();
+    }
+
+    private sealed class ControlScrollObserver(iOSNativeRootViewController owner) : UIScrollViewDelegate
+    {
+        public override void Scrolled(UIScrollView scrollView)
+        {
+            if (!scrollView.Dragging && !scrollView.Decelerating) return;
+            var offset = scrollView.ContentOffset;
+            if (offset == owner._lastControlScrollOffset) return;
+            owner._lastControlScrollOffset = offset;
+            if (owner._ratingSources.IsOpen && owner._ratingSources.IsAnchoredToControlBar) owner._ratingSources.Close();
+        }
+    }
+
     /// <summary>执行共享命令；本阶段未接入的命令（缩放预设等）不生成按钮，故不会走到这里。</summary>
     /// <param name="command">共享命令标识。</param>
     private void Execute(string command)
@@ -982,6 +1071,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
                 _observedFile = _main.CurrentFile;
                 if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
+                _ratingSources.Close();
                 // 切图后细节预览的触控活动/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
                 HideDetailHighlight();
                 _session.SetFile(_main.CurrentFile?.File);
@@ -994,6 +1084,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             or nameof(MainViewModel.IsControlViewVisible) or nameof(MainViewModel.IsAnalysisViewVisible))) return;
         UiDispatcher.Post(() =>
         {
+            _ratingSources.Close();
             if (!_main.IsThumbnailViewVisible) _filmstrip.CancelScrollUpToNow();
             if (!_main.IsAnalysisViewVisible)
             {
@@ -1058,6 +1149,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _filmstrip.ReloadData();
             // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
             RefreshScreen();
+            _filmstrip.Collection.LayoutIfNeeded();
+            _similarityPane.List.LayoutIfNeeded();
+            RevalidateCardRatingSources();
         });
     }
 
@@ -1079,7 +1173,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
             var files = _main.FileVM.ThumbnailList.FilteredFiles;
             bool sameSequence = _displayedFiles.Length == files.Count && _displayedFiles.SequenceEqual(files);
             _displayedFiles = files.ToArray();
-            if (!sameSequence) _filmstrip.ReloadData();
+            if (!sameSequence)
+            {
+                CloseCardRatingSources();
+                _filmstrip.ReloadData();
+            }
             RefreshScreen();
         });
     }
@@ -1101,7 +1199,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
         if (args.PropertyName is not (nameof(SimilarityPanelViewModel.SimilarItems) or nameof(SimilarityPanelViewModel.HasItems)
             or nameof(SimilarityPanelViewModel.UnindexedCount) or nameof(SimilarityPanelViewModel.ShowActionArea)
             or nameof(SimilarityPanelViewModel.ShowActionAreaError))) return;
-        UiDispatcher.Post(Layout);
+        UiDispatcher.Post(() =>
+        {
+            CloseCardRatingSources();
+            Layout();
+        });
     }
 
     /// <summary>显式定位请求（上一张/下一张、打开文件、外部打开）。</summary>

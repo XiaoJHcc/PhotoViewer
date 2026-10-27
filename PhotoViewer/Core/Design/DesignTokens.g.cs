@@ -469,6 +469,8 @@ public static class DesignTokens
     public const double PopupRatingSourcesBadgePaddingX = 6.0;
     /// <summary>popup.ratingSources.dividerHeight（pt） RATING-04：评分来源条目分隔线高度。</summary>
     public const double PopupRatingSourcesDividerHeight = 1.0;
+    /// <summary>popup.ratingSources.edgeMargin（pt） RATING-04：评分来源浮窗与窗口安全区边缘的最小距离；贴边入口的箭头仍能对准入口。</summary>
+    public const double PopupRatingSourcesEdgeMargin = 8.0;
     /// <summary>popup.ratingSources.entryPadding（pt） RATING-04：评分来源条目两侧内边距；条目宽由六格星排与此内边距决定。</summary>
     public const double PopupRatingSourcesEntryPadding = 8.0;
     /// <summary>popup.ratingSources.entrySpacing（pt） RATING-04：评分来源条目与分隔线之间的间距。</summary>

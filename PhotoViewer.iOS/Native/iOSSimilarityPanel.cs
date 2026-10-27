@@ -78,6 +78,9 @@ internal sealed class iOSSimilarityPanel : UIView
     private double _crossSize = SimilarityPanelGeometry.MinHeight;
     private bool _disposed;
 
+    internal event Action<ImageFile, UIButton>? RatingSourcesRequested;
+    internal event Action? RatingAnchorMoved;
+
     /// <summary>相似项原生列表，供验收读取真实卡片与几何。</summary>
     internal UICollectionView List => _collection;
 
@@ -147,6 +150,7 @@ internal sealed class iOSSimilarityPanel : UIView
         _collection.RegisterClassForCell(typeof(iOSThumbnailCard), Source.CellId);
         _source = new Source(this);
         _collection.DataSource = _source;
+        _collection.Delegate = new ScrollObserver(this);
         _listHost.AddSubview(_collection);
         _listHost.AddSubview(_listDock);
         AddSubview(_listHost);
@@ -583,9 +587,15 @@ internal sealed class iOSSimilarityPanel : UIView
             var similar = owner._items[(int)indexPath.Item];
             card.Bind(similar.File, owner._main.Settings.ShowRating, _ => owner._panel.SelectItemCommand(similar),
                 (file, rating) => _ = owner._main.SetRatingAsync(file, rating), ScoreText(similar.Score), ScoreFraction(similar.Score),
-                selectByDisplayedImage: true);
+                selectByDisplayedImage: true,
+                showSources: (file, anchor) => owner.RatingSourcesRequested?.Invoke(file, anchor));
             owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(similar.File, true);
             return card;
         }
+    }
+
+    private sealed class ScrollObserver(iOSSimilarityPanel owner) : UICollectionViewDelegate
+    {
+        public override void Scrolled(UIScrollView scrollView) => owner.RatingAnchorMoved?.Invoke();
     }
 }

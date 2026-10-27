@@ -117,6 +117,8 @@ internal sealed class iOSFilmstripView : UIView
 
     /// <summary>星级点击回调（写回交给宿主统一走共享评分与错误提示）。</summary>
     internal event Action<ImageFile, int>? RateRequested;
+    internal event Action<ImageFile, UIButton>? RatingSourcesRequested;
+    internal event Action? RatingAnchorMoved;
 
     /// <summary>真实集合视图（验收读取可见卡片与偏移）。</summary>
     internal UICollectionView Collection => _collection;
@@ -434,7 +436,8 @@ internal sealed class iOSFilmstripView : UIView
             var file = files[index];
             card.Bind(file, _owner._main.Settings.ShowRating,
                 selected => _owner.OnCardSelected(selected),
-                (selected, rating) => _owner.RateRequested?.Invoke(selected, rating));
+                (selected, rating) => _owner.RateRequested?.Invoke(selected, rating),
+                showSources: (selected, anchor) => _owner.RatingSourcesRequested?.Invoke(selected, anchor));
             _owner._main.FileVM.ThumbnailList.QueueThumbnailLoad(file, true);
             return card;
         }
@@ -451,7 +454,11 @@ internal sealed class iOSFilmstripView : UIView
 
         /// <summary>滚动（拖动、惯性、程序化定位）后上报可见范围。</summary>
         /// <param name="scrollView">集合视图。</param>
-        public override void Scrolled(UIScrollView scrollView) => _owner.ReportVisibleRange();
+        public override void Scrolled(UIScrollView scrollView)
+        {
+            _owner.RatingAnchorMoved?.Invoke();
+            _owner.ReportVisibleRange();
+        }
 
         /// <summary>用户按下手指准备拖动：撤销自动定位与在途动画（[FILM-03]）。</summary>
         /// <param name="scrollView">集合视图。</param>

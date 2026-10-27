@@ -62,7 +62,8 @@ internal sealed class iOSControlBar : UIView
     /// <param name="execute">命令执行入口（与 Mac 同一份命令语义）。</param>
     /// <param name="rate">评分写回入口。</param>
     /// <param name="openTools">EXIF 信息块点击（打开工具页）；null 表示本壳无工具页。</param>
-    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null)
+    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null,
+        Action<UIButton>? showSources = null)
     {
         ClearGroups();
         _openTools = openTools;
@@ -107,8 +108,11 @@ internal sealed class iOSControlBar : UIView
                     : $"{rating} 星";
                 button.TouchUpInside += (_, _) =>
                 {
-                    // 来源浮窗尚未实现：冲突三角只作指示，点击不写 0。
-                    if (value == 0 && conflict) return;
+                    if (value == 0 && conflict)
+                    {
+                        showSources?.Invoke(button);
+                        return;
+                    }
                     rate(value);
                 };
                 ratingGroup.AddSubview(button);

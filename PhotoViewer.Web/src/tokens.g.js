@@ -230,6 +230,7 @@ const tokens = Object.freeze({
     "popup.ratingSources.badgeCornerRadius": 4,
     "popup.ratingSources.badgePaddingX": 6,
     "popup.ratingSources.dividerHeight": 1,
+    "popup.ratingSources.edgeMargin": 8,
     "popup.ratingSources.entryPadding": 8,
     "popup.ratingSources.entrySpacing": 8,
     "popup.ratingSources.labelGap": 6,

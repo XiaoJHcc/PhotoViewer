@@ -180,7 +180,7 @@
 - [x] 训练消费只取实际选用文件有效 1–5；共享测试验证不可信状态不落值，Training.sln 构建与 scan-only 通过，未修改独立训练仓。
 - [x] 核心、Web、Mac、iOS 模拟器与 Android 模拟器回归及 Windows 类型检查，覆盖与证据见 §6.4。
 - [x] Windows 二次激活转发改为有界等待，超时记诊断并退出二次进程；类型检查通过，主实例无响应场景仍待 Windows 实机验证。
-- [ ] iOS / Windows / Android / Web 来源浮窗：按本次范围明确不补实现，仍仅三角指示且点击不动作。
+- [x] iOS 来源浮窗：原生 popover、完整条目、锚点生命周期与整组写回已落地；Windows / Android / Web 仍按本次范围仅保留三角指示且点击不动作。
 
 ### 6.4 修复后的验证证据与限制
 
@@ -199,6 +199,10 @@
 | Training | `dotnet build Training/Training.sln` 0 错 0 警；现有夹具 scan-only 正常，未写训练库；`release/training-review-fix-{build,scan}.log` |
 
 本轮限制收尾复验：CoreContractCheck 830 PASS / 1 SKIP / 0 FAIL；macOS Debug 构建 0 错，base 39、input、layout、toolbar 全 PASS。toolbar 中 32 轮快速关闭/重开始终复用同一原生实例且 content frame 不累计偏移，`phys_footprint` 样本 659572392 → 613615272 字节（作为进程样本而非逐对象归因），报告为 `release/native-p2-acceptance/toolbar-ui-checks.txt`。iOS 同型号模拟器 Debug 构建 0 错，input 48 PASS / 4 NOTE / 0 FAIL，layout 24 PASS / 3 NOTE / 0 FAIL，报告归档为 `release/ios-identity-{input,layout}-checks.txt`；同文件大小写别名在当前模拟器卷无法构造，保留 NOTE，不冒充通过。
+
+iOS 来源浮窗复验：iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；`--pv-native-layout-check layout-fixtures` 连续 3 轮各 29 checks PASS，覆盖原生 popover 条目与长名布局、卡片/控制栏入口、滚动关闭、控制栏保持展示换锚、完整可见高度及整组写回；`--pv-native-input-check input-fixtures` 52 checks PASS。报告为 `release/native-p2-acceptance/ios-rating-layout-{1,2,3}.txt`、`ios-rating-input.txt`，真实系统截图 `ios-rating-sources-popover.png`。真机触屏手感未由模拟器结果代替。
+
+iOS 原生来源浮窗重做与复验：默认 `UIPopoverPresentationController` 承载，内容以 `UIStackView`、`SafeAreaLayoutGuide` 与令牌约束布局，不使用自绘弹层背景或拟合箭头。iOS 26 卡片使用主窗口内保留完整入口矩形的 `UIView` 快照作为 `SourceItem`，控制栏使用实际 `UIButton`；旧系统保留主窗口矩形锚点。展示/退出经 UIKit 完成回调串行衔接，快照保留到退出完成；实际滚动、换向及布局移动关闭。iOS 箭头与贴边形变按系统原生外观保留，不冒充 Mac `NSPopover` 的曲线外形。iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；两轮及提交前默认 `--pv-native-layout-check layout-fixtures` 各 28 checks PASS / 3 NOTE / 0 FAIL，`--pv-native-input-check input-fixtures` 48 PASS / 4 NOTE / 0 FAIL。报告为 `release/native-p2-acceptance/ios-rating-layout-{1,2,final}.txt`、`ios-rating-input.txt`；真实截图为 `probe-rating-sources-{card,card-row,control-col}-popover.png`，放大证据为 `ios-rating-{row,col}-{zoom,geometry}.png`。作者已核查当前实现，真机触屏未覆盖；独立问题报告见 [iOS 星级冲突浮窗问题报告](ios-rating-popover-native-report-1.md)。
 
 保留限制：
 
