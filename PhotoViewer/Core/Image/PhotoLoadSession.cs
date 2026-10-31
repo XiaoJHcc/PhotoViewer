@@ -537,7 +537,7 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                     if (initial && IsSubstitute) Replace(null, false);
                     // IMAGE-03/IMAGE-10：屏上已有代理时升级失败只报非阻塞的 Full 提示，保留代理。
                     if (_image == null) Error = "解码被中断，请重新选择照片";
-                    else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
+                    else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name, "解码被中断"); _fullFailed = true; }
                     IsLoadingVisible = false;
                     Changed?.Invoke();
                 }).ConfigureAwait(false);
@@ -552,8 +552,8 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
                 _fullLoading = false;
                 if (initial) _initialLoading = false;
                 if (initial && IsSubstitute) Replace(null, false);
-                if (_image == null) Error = exception.Message;
-                else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name); _fullFailed = true; }
+                if (_image == null) Error = StatusMessages.OpenFailed(file.Name, StatusMessages.ReasonFor(exception));
+                else if (!target.HasValue) { FullError = StatusMessages.FullLoadFailed(file.Name, StatusMessages.ReasonFor(exception)); _fullFailed = true; }
                 IsLoadingVisible = false;
                 Changed?.Invoke();
             }).ConfigureAwait(false);

@@ -678,12 +678,7 @@ public sealed class RatingService
         _ => "无效评分",
     };
 
-    private static string Describe(Exception exception) => exception switch
-    {
-        StorageException storage => storage.Message,
-        OperationCanceledException => "操作已取消",
-        _ => $"{exception.GetType().Name}: {exception.Message}",
-    };
+    private static string Describe(Exception exception) => Platform.StatusMessages.ReasonFor(exception);
 
     private static bool IsStale(GroupGate gate, long sequence) =>
         sequence != Volatile.Read(ref gate.LatestSequence);

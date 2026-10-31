@@ -156,7 +156,7 @@ public sealed class OpenCoordinator : IDisposable
         var name = request == null ? null : TargetName(request);
         try
         {
-            UiDispatcher.Post(() => _main.ReportOpenFailure(StatusMessages.OpenFailed(name, exception.Message)));
+            UiDispatcher.Post(() => _main.ReportOpenFailure(StatusMessages.OpenFailed(name, StatusMessages.ReasonFor(exception))));
         }
         catch (Exception dispatchFailure)
         {

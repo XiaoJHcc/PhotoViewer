@@ -4,6 +4,7 @@ using Foundation;
 using ImageIO;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 
 namespace PhotoViewer.Apple;
@@ -39,10 +40,10 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             using var pool = new NSAutoreleasePool();
             var path = RequireLocalPath(file);
             using var url = NSUrl.FromFilename(path);
-            using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false }) ?? throw new InvalidOperationException("ImageIO 无法读取缩略图尺寸");
+            using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false }) ?? throw new UserFacingException("系统无法读取缩略图尺寸");
             var properties = source.GetProperties(0, null);
             int width = properties?.PixelWidth ?? 0, height = properties?.PixelHeight ?? 0;
-            if (width <= 0 || height <= 0) throw new InvalidOperationException("缩略图源尺寸无效");
+            if (width <= 0 || height <= 0) throw new UserFacingException("缩略图源尺寸无效");
             int target = Math.Max(minShortEdge, (int)Math.Ceiling((double)minShortEdge * Math.Max(width, height) / Math.Min(width, height)));
             using var image = Decode(path, target, PixelEncoding.RgbaF16, cancellationToken);
             return ColorEngine.ToAnalysisSrgb8(image);
@@ -89,7 +90,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     {
         using var url = NSUrl.FromFilename(path);
         using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false })
-            ?? throw new InvalidOperationException("ImageIO 无法打开图片");
+            ?? throw new UserFacingException("系统无法打开图片");
         var properties = source.GetProperties(0, null);
         int sourceWidth = properties?.PixelWidth ?? 0;
         int sourceHeight = properties?.PixelHeight ?? 0;
@@ -105,7 +106,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
                 ShouldCacheImmediately = true,
             })
             : source.CreateImage(0, new CGImageOptions { ShouldCacheImmediately = true });
-        if (image == null) throw new InvalidOperationException("ImageIO 无法解码图片（格式或机型不受系统支持）");
+        if (image == null) throw new UserFacingException("系统无法解码该图片");
         using var inferredImage = InterpretUntaggedJpeg(image, properties, path);
         int width = checked((int)image.Width);
         int height = checked((int)image.Height);
@@ -123,13 +124,13 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     {
         using var url = NSUrl.FromFilename(path);
         using var filter = CIRawFilter.Create(url)
-            ?? throw new InvalidOperationException("CIRawFilter 不支持该 RAW（机型或格式）");
+            ?? throw new UserFacingException("系统不支持该 RAW 的格式或相机机型");
         filter.DraftModeEnabled = false;
         int orientation = (int)filter.Orientation;
         CGSize native = filter.NativeSize;
         int sourceWidth = (int)Math.Round(native.Width);
         int sourceHeight = (int)Math.Round(native.Height);
-        if (sourceWidth <= 0 || sourceHeight <= 0) throw new InvalidOperationException("CIRawFilter 给出的原生尺寸无效");
+        if (sourceWidth <= 0 || sourceHeight <= 0) throw new UserFacingException("RAW 解码给出的原生尺寸无效");
 
         // 方向交给 GPU：先把像素摆正再渲染会让产物与源尺寸、方向码三者互相矛盾。
         filter.Orientation = CGImagePropertyOrientation.Up;
@@ -139,7 +140,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         CGRect extent = output.Extent;
         int width = (int)Math.Round(extent.Width);
         int height = (int)Math.Round(extent.Height);
-        if (width <= 0 || height <= 0) throw new InvalidOperationException("CIRawFilter 的输出尺寸无效");
+        if (width <= 0 || height <= 0) throw new UserFacingException("RAW 解码的输出尺寸无效");
         return RenderRaw(output, extent, width, height, encoding, sourceWidth, sourceHeight, orientation, cancellationToken);
     }
 
@@ -152,7 +153,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         if (maxLongEdge is not { } limit || limit <= 0 || limit >= nativeLongEdge)
         {
             filter.ScaleFactor = 1f;
-            return filter.OutputImage ?? throw new InvalidOperationException("CIRawFilter 未给出输出图");
+            return filter.OutputImage ?? throw new UserFacingException("RAW 解码未给出输出图");
         }
 
         float scale = (float)limit / nativeLongEdge;
@@ -160,13 +161,13 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         {
             cancellationToken.ThrowIfCancellationRequested();
             filter.ScaleFactor = scale;
-            CIImage image = filter.OutputImage ?? throw new InvalidOperationException("CIRawFilter 未给出输出图");
+            CIImage image = filter.OutputImage ?? throw new UserFacingException("RAW 解码未给出输出图");
             CGRect extent = image.Extent;
             int longEdge = (int)Math.Round(Math.Max(extent.Width, extent.Height));
             if (longEdge <= 0)
             {
                 image.Dispose();
-                throw new InvalidOperationException("CIRawFilter 的缩放输出尺寸无效");
+                throw new UserFacingException("RAW 解码的缩放输出尺寸无效");
             }
 
             if (longEdge >= limit || scale >= 1f || attempt >= 3) return image;
@@ -197,13 +198,13 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
                 space = RawWorkingSpace;
                 // CIFormat 在绑定里是普通枚举（Rgbah=1、Rgba8=6），枚举值不是原生常量；
                 // 直接传会被 Core Image 当成别的格式渲染（RGBAh 时静默不写像素），必须取 GetConstant() 的原生值。
-                format = CIFormat.Rgbah.GetConstant() ?? throw new InvalidOperationException("系统未提供 RGBAh 的原生像素格式");
+                format = CIFormat.Rgbah.GetConstant() ?? throw new UserFacingException("系统不支持该照片所需的像素格式");
             }
             else
             {
                 space = ownedSpace = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3)
-                    ?? throw new InvalidOperationException("系统不支持 Display P3");
-                format = CIFormat.Rgba8.GetConstant() ?? throw new InvalidOperationException("系统未提供 RGBA8 的原生像素格式");
+                    ?? throw new UserFacingException("系统不支持 Display P3 色彩空间");
+                format = CIFormat.Rgba8.GetConstant() ?? throw new UserFacingException("系统不支持该照片所需的像素格式");
             }
 
             fixed (byte* pixels = buffer)
@@ -227,7 +228,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     private static CIContext CreateRawRenderContext()
     {
         var space = CGColorSpace.CreateWithName(CGColorSpaceNames.ExtendedLinearSrgb)
-            ?? throw new InvalidOperationException("系统不支持扩展线性 sRGB");
+            ?? throw new UserFacingException("系统不支持扩展线性 sRGB 色彩空间");
         _rawWorkingSpace = space;
         return new CIContext(new CIContextOptions
         {
@@ -238,7 +239,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
 
     /// <summary>RAW 渲染的工作色彩空间（扩展线性 sRGB）；上下文创建失败时显式抛出。</summary>
     private static CGColorSpace RawWorkingSpace => _rawWorkingSpace
-        ?? throw new InvalidOperationException("RAW 渲染色彩空间尚未就绪");
+        ?? throw new UserFacingException("RAW 渲染所需的色彩空间尚未就绪");
 
     /// <summary>绘制到扩展线性 sRGB 的半精度浮点缓冲；广色域原色允许超过一，由 scRGB 承载不裁剪。</summary>
     private static unsafe DecodedImage DecodeLinearF16(CGImage image, int width, int height, int sourceWidth, int sourceHeight, int orientation, CancellationToken cancellationToken)
@@ -248,7 +249,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         try
         {
             using var linearSpace = CGColorSpace.CreateWithName(CGColorSpaceNames.ExtendedLinearSrgb)
-                ?? throw new InvalidOperationException("系统不支持扩展线性 sRGB");
+                ?? throw new UserFacingException("系统不支持扩展线性 sRGB 色彩空间");
             fixed (byte* pixels = buffer)
             {
                 using var context = new CGBitmapContext((IntPtr)pixels, width, height, 16, stride,
@@ -277,7 +278,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         var buffer = DecodedImage.RentPixels(checked(stride * height));
         try
         {
-            using var displayP3 = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3) ?? throw new InvalidOperationException("系统不支持 Display P3");
+            using var displayP3 = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3) ?? throw new UserFacingException("系统不支持 Display P3 色彩空间");
             fixed (byte* pixels = buffer)
             {
                 // PremultipliedLast + 默认字节序 = 内存中的 R,G,B,A 顺序。
@@ -313,8 +314,8 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         string? index = interop?[indexKey]?.ToString();
         var inferred = ColorEngine.InferJpegColorSpace(color, index);
         using var space = CGColorSpace.CreateWithName(inferred == ImageColorSpace.AdobeRgb ? CGColorSpaceNames.AdobeRgb1998 : CGColorSpaceNames.Srgb)
-            ?? throw new InvalidOperationException("JPEG 推断色彩空间不可用");
-        return image.WithColorSpace(space) ?? throw new InvalidOperationException("JPEG 色彩解释失败");
+            ?? throw new UserFacingException("无法确定 JPEG 照片的色彩空间");
+        return image.WithColorSpace(space) ?? throw new UserFacingException("无法正确解释 JPEG 照片的色彩");
     }
 
     /// <summary>扫描 JPEG 头部的 ICC APP2 段；ImageIO 的 ProfileName 可能是系统补的默认值，不能代表内嵌 ICC。</summary>

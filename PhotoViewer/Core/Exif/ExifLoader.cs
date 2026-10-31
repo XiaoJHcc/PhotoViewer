@@ -161,7 +161,7 @@ public static class ExifLoader
                 XmpRatingState.Unreadable,
                 null,
                 XmpRatingSource.Embedded,
-                $"读取内嵌 XMP 失败：{exception.Message}");
+                $"读取内嵌 XMP 失败：{Platform.StatusMessages.ReasonFor(exception)}");
         }
     }
 

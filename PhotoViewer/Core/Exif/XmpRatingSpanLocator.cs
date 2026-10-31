@@ -176,7 +176,7 @@ public static class XmpRatingSpanLocator
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            reason = "改写后的 XMP 无法解析：" + exception.Message;
+            reason = "改写后的 XMP 无法解析：" + Platform.StatusMessages.ReasonFor(exception);
             return false;
         }
 
@@ -389,7 +389,7 @@ public static class XmpRatingSpanLocator
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
-            reason = "插入后的 XMP 无法解析：" + exception.Message;
+            reason = "插入后的 XMP 无法解析：" + Platform.StatusMessages.ReasonFor(exception);
             return false;
         }
 

@@ -1050,7 +1050,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         catch (Exception exception)
         {
             Console.Error.WriteLine(exception);
-            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, exception.Message));
+            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
         }
     }
 

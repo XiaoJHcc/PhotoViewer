@@ -390,7 +390,7 @@ public sealed class ContainerRatingStore : IXmpRatingStore
     private static StorageException WrapFailure(Exception exception) =>
         exception is StorageException storage
             ? storage
-            : new StorageException(StorageError.IoError, $"写入 XMP 评分失败：{exception.Message}", exception);
+            : new StorageException(StorageError.IoError, $"写入 XMP 评分失败：{Platform.StatusMessages.ReasonFor(exception)}", exception);
 
     public async Task RestoreAsync(XmpRatingWriteReceipt receipt, CancellationToken cancellationToken = default)
     {
@@ -544,12 +544,12 @@ public sealed class ContainerRatingStore : IXmpRatingStore
         }
         catch (Exception exception) when (exception is XmpException or XmlException)
         {
-            throw Unsupported($"{File.Name} 的 XMP 无法解析：{exception.Message}");
+            throw Unsupported($"{File.Name} 的 XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}");
         }
     }
 
     private XmpRatingSnapshot Invalid(Exception exception) =>
-        new(XmpRatingState.Invalid, null, Source, $"XMP 无法解析：{exception.Message}");
+        new(XmpRatingState.Invalid, null, Source, $"XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}");
 
     private static bool IsSameRating(XmpRatingSnapshot snapshot, int rating) =>
         rating == -1

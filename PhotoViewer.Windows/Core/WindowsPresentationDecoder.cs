@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Image.Heif;
 
@@ -300,7 +301,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
 
         var longEdge = (int)Math.Ceiling(Math.Max(decoded.Width, decoded.Height) * (double)minShortEdge / shortEdge);
         scaled = SkiaImageCodec.ScaleToLongEdge(decoded, longEdge)
-            ?? throw new InvalidOperationException("缩略图精缩失败");
+            ?? throw new UserFacingException("缩略图精缩失败");
         return scaled;
     }
 

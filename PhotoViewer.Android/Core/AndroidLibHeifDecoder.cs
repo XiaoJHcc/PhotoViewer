@@ -6,6 +6,7 @@ using LibHeifSharp;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using Bitmap = Android.Graphics.Bitmap;
 
@@ -283,20 +284,20 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
 
         using var imageHandle = context.GetPrimaryImageHandle();
         if (imageHandle == null)
-            throw new InvalidOperationException("GetPrimaryImageHandle 返回 null");
+            throw new UserFacingException("HEIF 文件中没有可解码的主图像");
 
         Console.WriteLine($"[AndroidLibHeifDecoder] 主图句柄: {imageHandle.Width}x{imageHandle.Height}, " +
                           $"HasAlpha={imageHandle.HasAlphaChannel}, BitDepth={imageHandle.BitDepth}");
 
         using var image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
         if (image == null)
-            throw new InvalidOperationException("Decode 返回 null（HeifColorspace.Rgb, InterleavedRgb24）");
+            throw new UserFacingException("HEIF 图像解码失败");
 
         Console.WriteLine($"[AndroidLibHeifDecoder] 解码成功: {image.Width}x{image.Height}");
 
         var result = ConvertHeifImageToBitmap(image);
         if (result == null)
-            throw new InvalidOperationException("ConvertHeifImageToBitmap 返回 null（像素数据转换失败）");
+            throw new UserFacingException("HEIF 图像像素转换失败");
 
         return result;
     }

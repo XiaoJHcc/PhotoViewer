@@ -127,7 +127,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
         {
             // STATE-02/STATE-03：选择器失败要留下可见原因，不得静默无响应（OPEN-01）。
             Console.Error.WriteLine($"[Open] 选择器失败：{exception.Message}");
-            Main.ReportOpenFailure(StatusMessages.OpenFailed(null, exception.Message));
+            Main.ReportOpenFailure(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
             return;
         }
 
@@ -620,7 +620,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
 
         Console.Error.WriteLine($"[Folder] 枚举文件夹失败: {folder.StorageId.Value} — {exception.Message}");
         // STATE-02：打开失败必须让用户看见对象与原因，不能只写日志。
-        Main.ReportOpenFailure(StatusMessages.FolderOpenFailed(folder.Name, exception.Message));
+        Main.ReportOpenFailure(StatusMessages.FolderOpenFailed(folder.Name, StatusMessages.ReasonFor(exception)));
 
         if (refreshMode || targetFile == null || !targetIsExplicit)
         {
@@ -1014,7 +1014,7 @@ public class FolderViewModel : ReactiveObject, IDisposable
     private void ReportUnexpectedOpenFailure(string? name, Exception exception)
     {
         Console.Error.WriteLine($"[Open] 打开失败：{name} — {exception}");
-        Main.ReportOpenFailure(StatusMessages.OpenFailed(name, exception.Message));
+        Main.ReportOpenFailure(StatusMessages.OpenFailed(name, StatusMessages.ReasonFor(exception)));
     }
 
     /// <summary>两个存储项是否指向同一个底层对象（只比较 StorageId）。</summary>

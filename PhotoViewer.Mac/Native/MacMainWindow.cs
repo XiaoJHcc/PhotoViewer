@@ -1093,7 +1093,7 @@ public sealed class MacMainWindow : IDisposable
         {
             Console.Error.WriteLine(exception);
             if (_automatedValidation) throw new InvalidOperationException(exception.Message);
-            ShowToast(StatusMessages.OpenFailed(null, exception.Message));
+            ShowToast(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(exception)));
         }
     }
     /// <summary>命令行等桌面入口按路径打开；一批只取首个可打开目标（OPEN-01）。</summary>

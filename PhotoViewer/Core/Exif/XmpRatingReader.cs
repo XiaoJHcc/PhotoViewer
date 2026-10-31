@@ -124,7 +124,7 @@ public static class XmpRatingReader
         catch (Exception exception) when (exception is XmpException or XmlException)
         {
             return new XmpRatingSnapshot(
-                XmpRatingState.Invalid, null, source, $"XMP 无法解析：{exception.Message}");
+                XmpRatingState.Invalid, null, source, $"XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}");
         }
     }
 

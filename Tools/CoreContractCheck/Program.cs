@@ -36,6 +36,7 @@ internal static class Program
             RatingTransactionRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             SettingsChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             RefreshRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
+            StatusMessageChecks.Run(checks);
         }
         catch (Exception exception)
         {

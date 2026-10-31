@@ -1297,7 +1297,7 @@ internal sealed partial class WindowsMainWindow : Window
         catch (Exception ex)
         {
             NativeStartupLog.Fail("打开文件选择器失败", ex);
-            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, ex.Message));
+            _main.ReportOpenFailure(StatusMessages.OpenFailed(null, StatusMessages.ReasonFor(ex)));
         }
     }
 

@@ -109,13 +109,13 @@ public static class RatingSourceReader
                 XmpRatingState.Invalid,
                 null,
                 XmpRatingSource.Embedded,
-                $"内嵌 XMP 无法解析：{exception.Message}");
+                $"内嵌 XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}");
         }
         catch (Exception exception)
         {
             return XmpRatingSnapshot.Unreadable(
                 XmpRatingSource.Embedded,
-                $"读取内嵌 XMP 失败：{exception.Message}");
+                $"读取内嵌 XMP 失败：{Platform.StatusMessages.ReasonFor(exception)}");
         }
     }
 
@@ -179,7 +179,7 @@ public static class RatingSourceReader
                     XmpRatingState.Invalid,
                     null,
                     XmpRatingSource.Sidecar,
-                    $"sidecar 的 XMP 无法解析：{exception.Message}"));
+                    $"sidecar 的 XMP 无法解析：{Platform.StatusMessages.ReasonFor(exception)}"));
         }
         catch (Exception exception)
         {
@@ -188,7 +188,7 @@ public static class RatingSourceReader
                 sidecar,
                 XmpRatingSnapshot.Unreadable(
                     XmpRatingSource.Sidecar,
-                    $"读取 sidecar 失败：{exception.Message}"));
+                    $"读取 sidecar 失败：{Platform.StatusMessages.ReasonFor(exception)}"));
         }
     }
 

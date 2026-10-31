@@ -427,11 +427,11 @@ public class MainViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            LastRatingWriteError = ex.Message;
+            LastRatingWriteError = StatusMessages.ReasonFor(ex);
             Console.WriteLine("Error setting rating for " + file.Name + ": " + ex);
             if (!persisted)
             {
-                var failure = new RatingWriteFailure(file, rating, null, ex.Message, IsPartial: false);
+                var failure = new RatingWriteFailure(file, rating, null, LastRatingWriteError, IsPartial: false);
                 await UiDispatcher.InvokeAsync(() =>
                 {
                     RatingWriteFailed?.Invoke(file, rating);
