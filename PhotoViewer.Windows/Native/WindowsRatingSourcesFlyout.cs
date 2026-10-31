@@ -263,14 +263,16 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         {
             if (index > 0)
             {
-                double margin = (DesignTokens.PopupRatingSourcesEntrySpacing
-                    - DesignTokens.PopupRatingSourcesDividerHeight) / 2;
-                _body.Children.Add(new Border
+                // 分隔线放在固定高度的容器里:1 DIP 线在 3.5 DIP 上下边距下会被弹层按物理像素
+                // 取整(150% 缩放时多出 1px),内容高度随之偏离令牌推导值,浮窗按计划尺寸定位就会偏。
+                var divider = new Grid { Height = DesignTokens.PopupRatingSourcesEntrySpacing };
+                divider.Children.Add(new Border
                 {
                     Height = DesignTokens.PopupRatingSourcesDividerHeight,
-                    Margin = new Thickness(0, margin, 0, margin),
+                    VerticalAlignment = VerticalAlignment.Center,
                     Background = new SolidColorBrush(WindowsLayout.Token(DesignTokens.ColorMenuSeparator)),
                 });
+                _body.Children.Add(divider);
             }
 
             var entry = CreateEntry(items[index]);
