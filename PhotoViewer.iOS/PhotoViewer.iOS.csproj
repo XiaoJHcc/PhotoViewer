@@ -38,8 +38,10 @@
         <UseInterpreter>true</UseInterpreter>
         <MtouchInterpreter>-all</MtouchInterpreter>
         <MtouchUseLlvm>false</MtouchUseLlvm>
+        <!-- 保留 Mono AOT 启动所需符号，规避 iOS 26.6 发布包在 load_aot_module 阶段崩溃（dotnet/macios#26445） -->
+        <MtouchNoSymbolStrip>true</MtouchNoSymbolStrip>
         <CodesignKey>iPhone Developer</CodesignKey>
-        <!-- 允许 .NET iOS 工具链调用 Xcode 自动签名基础设施，Profile 缺失或过期时自动创建 -->
+        <!-- 真机安装继续使用开发签名与自动预配；TestFlight 由发布脚本覆盖为分发签名 -->
         <AutomaticProvisioning>true</AutomaticProvisioning>
     </PropertyGroup>
 
@@ -104,17 +106,18 @@
         <ItemGroup>
             <_PvOnnxRuntimeStaticSlice Include="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
             <_FrameworkNativeReference Remove="@(_FrameworkNativeReference)" Condition="'%(Filename)' == 'onnxruntime'" />
-            <_FileNativeReference Include="@(_PvOnnxRuntimeStaticSlice)" Kind="Static" ForceLoad="True" IsCxx="True" SmartLink="True" LinkerFlags="-lc++" WeakFrameworks="CoreML" />
+            <_FileNativeReference Include="@(_PvOnnxRuntimeStaticSlice)" Kind="Static" ForceLoad="True" IsCxx="True" SmartLink="True" LinkerFlags="-lc++ -framework Foundation -framework CoreFoundation" WeakFrameworks="CoreML" />
             <_PvOnnxRuntimeStaticSlice Remove="@(_PvOnnxRuntimeStaticSlice)" />
         </ItemGroup>
 
         <!--
           静态库没有独立的动态镜像；managed 侧 DllImport 名仍是 "onnxruntime"，
           由 iOSNativeShell 注册的 DllImport resolver 映射到主程序。静态链接后必须让
-          __Internal 的 dlsym 能看到入口，并把符号写进 mtouch-symbols.list —— Release 的
-          _NativeStripFiles 只保留该导出列表里的符号，否则会把它们从 app 可执行文件里剥掉。
+          __Internal 的 dlsym 能看到入口，因此把 ONNX 入口与 _main 写进 mtouch-symbols.list，
+          避免原生链接和导出阶段丢失。
         -->
         <ItemGroup>
+            <_ProcessedReferenceNativeSymbol Include="_main" />
             <_ProcessedReferenceNativeSymbol Include="_OrtGetApiBase" />
             <_ProcessedReferenceNativeSymbol Include="_OrtSessionOptionsAppendExecutionProvider_CoreML" />
         </ItemGroup>
@@ -128,7 +131,7 @@
     <!-- 自动同步 Info.plist 版本号，在构建读取 Info.plist 前写入 -->
     <Target Name="_SyncInfoPlistVersion" BeforeTargets="_DetectAppManifest">
         <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
-        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
-        <Message Importance="high" Text="[版本同步] Info.plist → $(AppVersion)" />
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion $(AppBuildNumber)' '$(MSBuildProjectDirectory)/Info.plist'" />
+        <Message Importance="high" Text="[版本同步] Info.plist → $(AppVersion) ($(AppBuildNumber))" />
     </Target>
 </Project>

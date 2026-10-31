@@ -465,8 +465,9 @@ Tools/ExifTestTool/assets
 PhotoViewer/Assets/Models/*.onnx
 PhotoViewer/Assets/Models/*.onnx.data
 
-# iOS Profile 续期占位工程：开发者本地 Team ID（勿提交）
+# iOS Profile 续期与 App Store 导出：开发者本地 Team ID（勿提交）
 Tools/RefreshIosProfile/Local.xcconfig
+PhotoViewer.iOS/ExportOptions.AppStore.Local.plist
 
 # CV / DINO 离线诊断本地样本（HIF 大文件 + 工具输出 PNG/TXT，仅本地保留）
 TestCase/

@@ -177,6 +177,27 @@
       "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa release/ios-stable/PhotoViewer.iOS.ipa && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\"",
       "group": "build",
       "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Upload iOS TestFlight",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS TestFlight Archive",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check iOS TestFlight Device",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/check-testflight-device.sh \"${input:iosDevice}\"",
+      "group": "build",
+      "problemMatcher": "$msCompile"
     }
   ],
   "inputs": [
