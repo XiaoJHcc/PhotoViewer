@@ -35,11 +35,11 @@
 	<key>CFBundleName</key>
 	<string>PhotoViewer</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.8.5</string>
+	<string>0.8.8</string>
 	<key>CFBundleVersion</key>
-	<string>0.8.5</string>
+	<string>0.8.8</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>26.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 </dict>

@@ -104,11 +104,20 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 
 版本号由根目录 `Directory.Build.props` 控制，发布产物位于 `release/`。
 
+Mac 采用 Developer ID 公证直发，不进入 Mac App Store。首次发布前在 Xcode 的 **Settings → Accounts → Manage Certificates** 创建带本机私钥的 **Developer ID Application** 证书，再把 App 专用密码存入本机钥匙串：
+
+```bash
+xcrun notarytool store-credentials "PhotoViewer-notary" \
+    --apple-id "<Apple ID>" --team-id "<Team ID>" --password "<App 专用密码>"
+```
+
+可用 `MAC_DEVELOPER_ID_IDENTITY` 指定签名身份、`MAC_NOTARY_PROFILE` 指定其他钥匙串配置；默认自动选择首个 Developer ID Application 身份并读取 `PhotoViewer-notary`。凭据不得写入仓库。若 Apple 已返回 `Accepted`、但附加票据时网络失败，运行 `bash PhotoViewer.Mac/publish.sh --staple-only`，只重试票据附加与验证，不重新构建或上传。
+
 | Task | 产物与说明 |
 |---|---|
 | **Publish Windows EXE (Release)** | 自包含 `PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
 | **Publish Android APK (Release)** | 构建并签名 APK。 |
-| **Publish Mac DMG (Release)** | 构建应用、签名原生依赖并封装 DMG。 |
+| **Publish Mac DMG (Release)** | 构建应用，以 Developer ID + Hardened Runtime 逐个签名原生文件，封装并签名 DMG，提交 Apple 公证、附加票据并验证 Gatekeeper 评估。 |
 | **Publish iOS IPA (Release)** | 生成版本化 IPA，同时归档 `.app` / `.ipa` 到 `release/ios-stable/`。 |
 | **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；归档与导出产物位于 `release/testflight/`。上传前自动执行归档检查。 |
 | **Validate iOS TestFlight Archive** | 检查当前版本归档的版本号、Bundle ID、分发签名、entitlements、AOT/ONNX 符号与图标，不上传。 |

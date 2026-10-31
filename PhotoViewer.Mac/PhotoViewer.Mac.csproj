@@ -3,12 +3,8 @@
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
         <ApplicationTitle>PhotoViewer</ApplicationTitle>
-        <!--
-          .NET for macOS 27.0.10722（Xcode 27.x）把最低部署版本抬到 macOS 14.0；
-          SupportedOSPlatformVersion 低于该值时 CompileAppManifest 直接报错。
-          设置窗口的 SwiftUI 动态库本就以 macOS 26 为目标，12/13 实际不可用，故显式对齐 14.0。
-        -->
-        <SupportedOSPlatformVersion>14.0</SupportedOSPlatformVersion>
+        <!-- 最低部署版本与 SwiftUI 动态库的 arm64-apple-macosx26.0 目标保持一致。 -->
+        <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
         <UseAppHost>true</UseAppHost>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>

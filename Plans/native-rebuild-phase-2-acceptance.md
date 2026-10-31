@@ -16,7 +16,7 @@
 
 - **发布通道切原生**：`Release` 目前默认旧壳（`PhotoViewer.Mac/Program.cs` 的 `#if DEBUG` 分流），切 dmg 默认内容属主计划 Phase 6。
 - **退役 Avalonia 旧壳**：删旧壳/共享 Avalonia UI/适配层，需其他平台原生壳就位（下一个是 iOS）。
-- **macOS 分发公证与上架**：现 DMG 为 adhoc 签名（`publish.sh` 用 `codesign -s -`），若要免除 Gatekeeper 提示需 Developer ID + 公证；主计划只规划了 iOS 上架，**macOS 侧未立项**。
+- **macOS 分发公证与上架（后续状态）**：2026-10-31 已完成 Developer ID + 公证直发，最终 DMG 与包内 App 均通过 Gatekeeper 评估；仍不进入 Mac App Store，详见 [phase-6 §4](native-rebuild-phase-6.md#4-6e-发布就绪)。
 
 已程序化补齐的两项契约覆盖（2026-10-16，证据见 `release/native-p2-acceptance/`）：
 
