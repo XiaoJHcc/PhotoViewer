@@ -1182,8 +1182,22 @@ internal static class iOSNativeLayoutCheck
         }
         finally
         {
-            for (int index = 0; index < formats.Length; index++) formats[index].IsEnabled = entryEnabled[index];
-            await SettleAsync(root);
+            // 设置仓库保存后会以新快照重建格式项，直改旧项可能被拍回；按 id 重取并重试到列表恢复。
+            string[] formatIds = formats.Select(item => item.Id).ToArray();
+            for (int attempt = 0; attempt < 20; attempt++)
+            {
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    foreach (var live in main.Settings.FileFormats)
+                    {
+                        int index = Array.IndexOf(formatIds, live.Id);
+                        if (index >= 0) live.IsEnabled = entryEnabled[index];
+                    }
+                });
+                await SettleAsync(root);
+                if (filmstrip.DisplayCount == list.FilteredFiles.Count && filmstrip.DisplayCount >= 12) break;
+                await Task.Delay(150);
+            }
         }
 
         await WaitAsync(() => filmstrip.DisplayCount == list.FilteredFiles.Count && filmstrip.DisplayCount >= 12,

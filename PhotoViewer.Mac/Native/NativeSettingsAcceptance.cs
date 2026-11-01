@@ -36,10 +36,15 @@ internal static class NativeSettingsAcceptance
             {
                 // 桌面端缓存上限由用户设置生效，提示按实测预算与适屏尺寸给出可缓存张数
                 if (!presenter.WorkingSettings.ShowsCacheLimits) throw new InvalidOperationException("桌面端缓存上限两项不应隐藏");
+                string budgetInfo = presenter.WorkingSettings.PerformanceBudgetInfo;
+                if (!budgetInfo.Contains("核 / 内存", StringComparison.Ordinal) || !budgetInfo.EndsWith(" MB", StringComparison.Ordinal))
+                    throw new InvalidOperationException("设备性能提示未取运行时预算：" + budgetInfo);
                 string countInfo = presenter.WorkingSettings.BitmapCacheCountInfo;
-                if (!countInfo.Contains("适屏照片", StringComparison.Ordinal))
+                if (!countInfo.Contains("适屏照片", StringComparison.Ordinal)
+                    || !(countInfo.StartsWith("✓ 可缓存", StringComparison.Ordinal) || countInfo.StartsWith("⚠ 可缓存", StringComparison.Ordinal)))
                     throw new InvalidOperationException("缓存提示未按适屏张数口径：" + countInfo);
-                checks.Add("file footer: " + presenter.WorkingSettings.PerformanceBudgetInfo);
+                checks.Add("settings06: budget and cache-count hints come from the runtime budget (" + budgetInfo + " / " + countInfo + ")");
+                checks.Add("file footer: " + budgetInfo);
                 checks.Add("file footer: " + countInfo);
             }
             await Task.Delay(300);

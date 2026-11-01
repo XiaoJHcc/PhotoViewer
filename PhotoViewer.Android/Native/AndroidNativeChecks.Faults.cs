@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -14,6 +15,7 @@ using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
@@ -53,6 +55,8 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("SETTINGS-14", CheckCorruptSettingsAsync);
         await RunStepAsync("SIM-10", CheckSimilarityListErrorAsync);
         await RunStepAsync("ANALYSIS-10", CheckAnalysisFailureAsync);
+        await RunStepAsync("SCOPE-03", CheckScopeBoundaryAsync);
+        await RunStepAsync("STATE-04", CheckDatabaseUnavailableAsync);
         await RunStepAsync("SCOPE-02", CheckMemoryTrimAsync);
         await RunStepAsync("OPEN-06", CheckExternalOpenAsync);
     }
@@ -739,6 +743,311 @@ internal static partial class AndroidNativeChecks
             // 丢掉用坏模型建起来的会话，后续推理按恢复后的模型重建。
             DinoFeatureExtractor.UnloadSession();
         }
+    }
+
+    /// <summary>
+    /// SCOPE-03：只有用户显式批量提取才写特征库。即时计算与「雾天增强」的产物只进进程缓存——
+    /// 不入库、不写 XMP sidecar、不改照片字节；显式提取后三路齐备；清库同时清进程缓存，
+    /// 诊断瓦片回到「未提取」而不再现算。
+    /// </summary>
+    private static async Task CheckScopeBoundaryAsync()
+    {
+        var activity = _activity!;
+        var main = _main!;
+        var session = _session!;
+        var root = _root!;
+        bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        bool previousVisible = main.IsAnalysisViewVisible;
+        var (folder, first, second) = EnsureScopeFixture(activity);
+        try
+        {
+            main.Settings.AnalysisImmediateCompute = true;
+            main.IsAnalysisViewVisible = true;
+            await OpenFolderAndWaitAsync(folder);
+            Console.WriteLine("[NativeCheck] SCOPE-03 素材上屏");
+
+            // 指纹组按产品同一套分组口径取（同次曝光的 RAW/HIF/JPG 会合并成一组）。
+            var groups = await FolderFeatureIndexer.GroupByFingerprintAsync(main.FolderVM.AllFiles);
+            var current = main.CurrentFile ?? throw new InvalidOperationException("缺少当前照片");
+            var group = groups.FirstOrDefault(candidate => candidate.Files.Contains(current))
+                ?? throw new InvalidOperationException("当前照片没有指纹组");
+            string fingerprint = group.Fingerprint;
+            if (string.IsNullOrEmpty(fingerprint)) throw new InvalidOperationException("指纹为空");
+
+            var diagnostics = root.AnalysisPresenterForChecks.Tiles
+                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToList();
+            try
+            {
+                await WaitAsync(() => diagnostics.Count > 0
+                    && diagnostics.All(tile => tile.Placeholder == null)
+                    && diagnostics.Count(tile => tile.Source != null) >= 3,
+                    "即时计算诊断瓦片出图", 90000);
+            }
+            catch (TimeoutException exception)
+            {
+                Check("SCOPE-03 即时计算诊断瓦片出图", false,
+                    $"{exception.Message} placeholders=[{DescribeDiagnostics(diagnostics)}] "
+                    + $"immediate={main.Settings.AnalysisImmediateCompute} visible={main.IsAnalysisViewVisible}");
+                return;
+            }
+            Console.WriteLine($"[NativeCheck] SCOPE-03 诊断瓦片出图 [{DescribeDiagnostics(diagnostics)}]");
+
+            byte[] firstBefore = File.ReadAllBytes(first);
+            byte[] secondBefore = File.ReadAllBytes(second);
+            var (photosImmediate, featuresImmediate, patchesImmediate) = await CountFingerprintRowsAsync(fingerprint);
+            bool xmpImmediate = HasXmpSidecar(first) || HasXmpSidecar(second);
+            Check("SCOPE-03 即时计算不入库",
+                photosImmediate == 0 && featuresImmediate == 0 && patchesImmediate == 0 && !xmpImmediate,
+                $"photos={photosImmediate} features={featuresImmediate} patches={patchesImmediate} "
+                + $"xmp={xmpImmediate} tiles=[{DescribeDiagnostics(diagnostics)}] fp={fingerprint}");
+            Console.WriteLine("[NativeCheck] SCOPE-03 即时计算边界完成");
+
+            // 雾天增强对增强图实时重算：产物同样只进进程缓存。
+            Console.WriteLine("[NativeCheck] SCOPE-03 增强开始");
+            session.ToggleEnhanced();
+            await WaitAsync(() => session.IsEnhanced, "开启增强", 15000);
+            // 内存压力可能在上屏后释放增强图，用闩锁记住“确实看到过上屏”这一事实。
+            bool enhancedSeen = false;
+            await WaitAsync(() =>
+            {
+                bool on = session.EnhancedDisplay;
+                if (on) enhancedSeen = true;
+                return on;
+            }, "增强图上屏", 90000);
+            await WaitAsync(() => diagnostics.All(tile => tile.Placeholder == null), "增强图诊断瓦片出图", 90000);
+            var (photosEnhanced, featuresEnhanced, patchesEnhanced) = await CountFingerprintRowsAsync(fingerprint);
+            bool xmpEnhanced = HasXmpSidecar(first) || HasXmpSidecar(second);
+            bool bytesSame = File.ReadAllBytes(first).SequenceEqual(firstBefore)
+                && File.ReadAllBytes(second).SequenceEqual(secondBefore);
+            Check("SCOPE-03 增强产物不入库不写 XMP",
+                enhancedSeen && photosEnhanced == 0 && featuresEnhanced == 0 && patchesEnhanced == 0
+                && !xmpEnhanced && bytesSame,
+                $"photos={photosEnhanced} features={featuresEnhanced} patches={patchesEnhanced} "
+                + $"xmp={xmpEnhanced} bytesSame={bytesSame} enhancedSeen={enhancedSeen} "
+                + $"enhancedNow={session.EnhancedDisplay} tiles=[{DescribeDiagnostics(diagnostics)}]");
+            Console.WriteLine("[NativeCheck] SCOPE-03 增强边界完成");
+
+            // 显式批量提取（共享 indexer）才写库：三路齐备，且没有缺失。
+            Console.WriteLine("[NativeCheck] SCOPE-03 显式提取开始");
+            var indexer = new FolderFeatureIndexer();
+            await AwaitOrTimeoutAsync(indexer.RunAsync(main.FolderVM.AllFiles), "批量提取", 300000);
+            Console.WriteLine($"[NativeCheck] SCOPE-03 显式提取结束 error={indexer.LastError ?? "none"}");
+            var missing = await FolderFeatureIndexer.EvaluateMissingPartsAsync(fingerprint);
+            var (photosIndexed, featuresIndexed, patchesIndexed) = await CountFingerprintRowsAsync(fingerprint);
+            Check("SCOPE-03 显式提取三路入库",
+                !missing.AnyMissing && photosIndexed > 0 && featuresIndexed > 0 && patchesIndexed > 0,
+                $"missing=cls{missing.NeedCls}/patch{missing.NeedPatches}/cv{missing.NeedCv} "
+                + $"photos={photosIndexed} features={featuresIndexed} patches={patchesIndexed} "
+                + $"error={indexer.LastError ?? "none"}");
+
+            // 产品清库入口：删库 + 清 DinoFeatureCache / ShakeFlagService / AnalysisResultCache，不重启应用。
+            main.Settings.AnalysisImmediateCompute = false;
+            Console.WriteLine("[NativeCheck] SCOPE-03 清库开始");
+            await AwaitOrTimeoutAsync(main.Settings.ClearFeatureDatabaseConfirmedAsync(), "清库", 120000);
+            Console.WriteLine($"[NativeCheck] SCOPE-03 清库结束 status={main.Settings.ClearDbStatus}");
+            long photosTotal = await PhotoDatabase.CountAsync();
+            var (photosCleared, featuresCleared, patchesCleared) = await CountFingerprintRowsAsync(fingerprint);
+            Check("SCOPE-03 清库清空特征库",
+                photosTotal == 0 && photosCleared == 0 && featuresCleared == 0 && patchesCleared == 0,
+                $"status={main.Settings.ClearDbStatus} photosTotal={photosTotal} "
+                + $"row={photosCleared}/{featuresCleared}/{patchesCleared}");
+
+            await WaitAsync(() => diagnostics.All(tile => tile.Placeholder == "未提取" && tile.Source == null),
+                "清库后诊断瓦片回到未提取", 30000);
+            // 即时计算已关闭：清库后不得退化成后台现算，抽样观察一小段时间保持「未提取」。
+            int recomputed = 0;
+            for (int sample = 0; sample < 15; sample++)
+            {
+                await Task.Delay(100);
+                if (diagnostics.Any(tile => tile.Placeholder != "未提取" || tile.Source != null)) recomputed++;
+            }
+            Check("SCOPE-03 清库后诊断瓦片回到未提取", recomputed == 0,
+                $"placeholders=[{DescribeDiagnostics(diagnostics)}] recomputes={recomputed} "
+                + $"immediate={main.Settings.AnalysisImmediateCompute}");
+            bool anyShake = main.FolderVM.AllFiles.Any(file => file.IsShake == true);
+            Check("SCOPE-03 清库后抖动徽标消失", !anyShake,
+                $"shake={anyShake} flags=[{string.Join("/", main.FolderVM.AllFiles.Select(file => file.IsShake?.ToString() ?? "null"))}]");
+        }
+        finally
+        {
+            main.Settings.AnalysisImmediateCompute = previousImmediate;
+            if (session.IsEnhanced)
+            {
+                session.ToggleEnhanced();
+                await WaitAsync(() => !session.IsEnhanced, "关闭增强", 10000);
+            }
+            main.IsAnalysisViewVisible = previousVisible;
+            await Task.Delay(300);
+        }
+    }
+
+    /// <summary>
+    /// STATE-04：特征库不可用时界面进入明确的「未提取」状态——不长期停在「计算中」、不崩溃、
+    /// 不显示伪造分数或徽标。注入是真实的打开失败（把库路径指到普通文件之下，SQLite 打开即抛错），
+    /// 不靠延时或吞异常冒充；收尾恢复原路径并核对库重新可用。
+    /// </summary>
+    private static async Task CheckDatabaseUnavailableAsync()
+    {
+        var activity = _activity!;
+        var main = _main!;
+        var session = _session!;
+        var root = _root!;
+        string source = EnsureFaultGoodJpeg(activity);
+        string path = IOPath.Combine(IOPath.GetDirectoryName(source)!, "db-down.jpg");
+        File.Copy(source, path, true);
+        bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        bool previousVisible = main.IsAnalysisViewVisible;
+        string databasePath = PhotoDatabase.DatabasePath;
+        string blocker = IOPath.Combine(EnsureFaultsFolder(activity), "db-blocker");
+        File.WriteAllText(blocker, "blocked by STATE-04 check");
+        string blockedPath = IOPath.Combine(blocker, "photos.db");
+        try
+        {
+            SetDatabasePathForChecks(blockedPath);
+            string? openError = null;
+            try
+            {
+                using var unused = PhotoDatabase.OpenConnection();
+            }
+            catch (Exception exception)
+            {
+                openError = exception.GetType().Name + "：" + exception.Message;
+            }
+            Check("STATE-04 数据库不可用注入", openError != null, openError ?? "OpenConnection 未失败");
+
+            // 即时计算关闭：库里读不到就停在「未提取」，而不是抢算或伪造结果。
+            main.Settings.AnalysisImmediateCompute = false;
+            main.IsAnalysisViewVisible = true;
+            await main.FolderVM.OpenImageAsync(new AndroidFileRef(path));
+            await WaitAsync(() => main.CurrentFile?.Name == "db-down.jpg" && session.Image != null, "数据库不可用素材上屏", 25000);
+
+            var diagnostics = root.AnalysisPresenterForChecks.Tiles
+                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToList();
+            bool computingSeen = false;
+            bool settled = false;
+            for (int sample = 0; sample < 80; sample++)
+            {
+                await Task.Delay(100);
+                if (diagnostics.Any(tile => (tile.Placeholder ?? string.Empty).Contains("计算中", StringComparison.Ordinal)))
+                    computingSeen = true;
+                if (diagnostics.All(tile => tile.Placeholder == "未提取" && tile.Source == null))
+                {
+                    settled = true;
+                    break;
+                }
+            }
+            Check("STATE-04 诊断瓦片未提取且不停留计算中", settled && !computingSeen,
+                $"settled={settled} computingSeen={computingSeen} placeholders=[{DescribeDiagnostics(diagnostics)}]");
+
+            var file = main.CurrentFile;
+            Check("STATE-04 无伪造徽标且未崩溃",
+                session.Image != null && file != null && file.IsShake != true && !file.HasRatingConflict,
+                $"image={session.Image?.Width}x{session.Image?.Height} shake={file?.IsShake?.ToString() ?? "null"} "
+                + $"conflict={file?.HasRatingConflict}");
+
+            // 相似面板同一失败路径：如实给未提取计数与空列表，不显示伪造分数。
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
+            await WaitAsync(() => main.FileVM.SimilarityPanel.UnindexedCount >= 1, "相似面板未提取计数", 15000);
+            var panel = main.FileVM.SimilarityPanel;
+            Check("STATE-04 相似面板如实未提取",
+                panel.IndexError == null && panel.SimilarItems.Count == 0,
+                $"unindexed={panel.UnindexedCount} items={panel.SimilarItems.Count} error={panel.IndexError ?? "none"} "
+                + $"pane={root.SimilarityPane.Visibility}");
+        }
+        finally
+        {
+            SetDatabasePathForChecks(databasePath);
+            bool restored = false;
+            string restoreDetail;
+            try
+            {
+                long photos = await PhotoDatabase.CountAsync();
+                using var connection = PhotoDatabase.OpenConnection();
+                using var command = connection.CreateCommand();
+                command.CommandText = "SELECT COUNT(*) FROM photos;";
+                restored = command.ExecuteScalar() != null;
+                restoreDetail = $"photos={photos}";
+            }
+            catch (Exception exception)
+            {
+                restoreDetail = exception.GetType().Name + "：" + exception.Message;
+            }
+            Check("STATE-04 收尾恢复可用库", restored, restoreDetail);
+            main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            main.Settings.AnalysisImmediateCompute = previousImmediate;
+            main.IsAnalysisViewVisible = previousVisible;
+            await Task.Delay(300);
+        }
+    }
+
+    /// <summary>
+    /// SCOPE-03 自建素材：两张自有 JPG（名称带时间戳，保证指纹组每轮都是新的、库里没有历史行）。
+    /// </summary>
+    /// <param name="activity">宿主 Activity（提供内部目录）。</param>
+    /// <returns>目录与两个文件路径。</returns>
+    private static (string Folder, string First, string Second) EnsureScopeFixture(Activity activity)
+    {
+        string folder = IOPath.Combine(activity.FilesDir!.AbsolutePath, "pv-check-scope");
+        if (Directory.Exists(folder)) Directory.Delete(folder, true);
+        Directory.CreateDirectory(folder);
+        string suffix = DateTime.UtcNow.Ticks.ToString(CultureInfo.InvariantCulture);
+        string first = IOPath.Combine(folder, $"scope-a-{suffix}.jpg");
+        string second = IOPath.Combine(folder, $"scope-b-{suffix}.jpg");
+        WriteCheckJpeg(first, 1200, 800);
+        WriteCheckJpeg(second, 1200, 800);
+        return (folder, first, second);
+    }
+
+    /// <summary>照片同名 <c>.xmp</c> sidecar 是否存在（SCOPE-03：显示态产物不写 XMP）。</summary>
+    private static bool HasXmpSidecar(string photoPath) => File.Exists(IOPath.ChangeExtension(photoPath, ".xmp"));
+
+    /// <summary>把诊断瓦片的占位/成图状态压成一行，供报告人工复核。</summary>
+    private static string DescribeDiagnostics(IReadOnlyList<AnalysisTile> tiles)
+        => string.Join("/", tiles.Select(tile => tile.Placeholder ?? (tile.Source != null ? "图" : "空")));
+
+    /// <summary>查询某指纹在三张表里的行数（验收只读查询，走产品自己的连接入口）。</summary>
+    private static async Task<(long Photos, long Features, long Patches)> CountFingerprintRowsAsync(string fingerprint)
+    {
+        await using var connection = PhotoDatabase.OpenConnection();
+        async Task<long> CountAsync(string table)
+        {
+            await using var command = connection.CreateCommand();
+            command.CommandText = $"SELECT COUNT(*) FROM {table} WHERE fingerprint = $fp;";
+            command.Parameters.AddWithValue("$fp", fingerprint);
+            var value = await command.ExecuteScalarAsync();
+            return Convert.ToInt64(value, CultureInfo.InvariantCulture);
+        }
+
+        long photos = await CountAsync("photos");
+        long features = await CountAsync("photo_features");
+        long patches = await CountAsync("photo_patches");
+        return (photos, features, patches);
+    }
+
+    /// <summary>
+    /// 验收注入：把 <see cref="PhotoDatabase"/> 的库路径闸门改到指定路径。保持「已初始化」让
+    /// <c>Initialize()</c> 的早退分支不再把路径改回默认值，后续每次打开都用注入路径（真实抛错）。
+    /// </summary>
+    /// <param name="databasePath">目标库路径。</param>
+    private static void SetDatabasePathForChecks(string databasePath)
+    {
+        var pathField = typeof(PhotoDatabase).GetField("_dbPath", StaticNonPublic)
+            ?? throw new InvalidOperationException("PhotoDatabase 缺少 _dbPath 字段");
+        var initializedField = typeof(PhotoDatabase).GetField("_initialized", StaticNonPublic)
+            ?? throw new InvalidOperationException("PhotoDatabase 缺少 _initialized 字段");
+        pathField.SetValue(null, databasePath);
+        initializedField.SetValue(null, true);
+    }
+
+    /// <summary>给可能长时间不返回的共享任务加上限等待：超时抛 <see cref="TimeoutException"/>，由步骤记 FAIL 而不挂住整套检查。</summary>
+    /// <param name="task">被等待的任务。</param>
+    /// <param name="label">超时说明（写进报告）。</param>
+    /// <param name="timeoutMs">最长等待（ms）。</param>
+    private static async Task AwaitOrTimeoutAsync(Task task, string label, int timeoutMs)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeoutMs)).ConfigureAwait(true);
+        if (!ReferenceEquals(completed, task)) throw new TimeoutException($"等待超时：{label}");
+        await task.ConfigureAwait(true);
     }
 
     /// <summary>SCOPE-02：内存告警自动关闭增强预览，并用一次性提示条告知用户。</summary>

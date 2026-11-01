@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Threading;
@@ -57,6 +58,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
     private PopupWindow? _photoMenu;
+    private readonly List<(string Text, bool Checked, bool Enabled)> _photoMenuItems = [];
     private AndroidInsets _insets;
     private AndroidPaneFrames _panes;
     private ImageFile? _observedFile;
@@ -105,6 +107,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal string? StatusTextForChecks => _statusLabel.Text;
     /// <summary>状态提示条是否可见（验收用）。</summary>
     internal bool StatusVisibleForChecks => _statusLabel.Visibility == ViewStates.Visible;
+    /// <summary>最近一次主图菜单构建出的项（文本/勾选/可用，验收用只读快照；产品路径不读取）。</summary>
+    internal IReadOnlyList<(string Text, bool Checked, bool Enabled)> PhotoMenuItemsForChecks => _photoMenuItems;
 
     /// <summary>收起状态提示条并作废在途自动隐藏（验收用，避免上一条提示冒充本次结果）。</summary>
     internal void ResetStatusForChecks()
@@ -584,6 +588,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (Context is not Activity activity) return;
         DismissPhotoMenu();
         CloseRatingSources();
+        _photoMenuItems.Clear();
         var photoLocation = new int[2];
         _photo.GetLocationOnScreen(photoLocation);
         int touchX = photoLocation[0] + (int)localX;
@@ -618,6 +623,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
         void AddItem(string label, bool? check, Action action, bool enabled = true)
         {
+            // 验收快照：只记录本次构建出的项，不参与布局、命中或可点击性判断。
+            _photoMenuItems.Add((label, check == true, enabled));
             var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
             row.SetGravity(GravityFlags.CenterVertical);
             row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(10 * density), 0);

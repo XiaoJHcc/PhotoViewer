@@ -438,13 +438,18 @@ internal static class iOSNativeGestureCheck
                 lines.Add($"PASS 增强关闭还原（Full 24MP）：{fullOffMs:0} ms");
 
                 // 代理档：回到适应态后重新装载同一文件（会话只升不降，重新 SetFile 才会重新解出代理档）。
+                // 先清空会话再设置同一文件：同身份且有图时 SetFile 会短路，只为避免刷新后闪一帧。
                 // 移除该文件的两档展示缓存，避免 STATE-01 的缓存命中直接返回已缓存的 Full 而拿不到代理档。
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                var liveLarge = await UiDispatcher.InvokeAsync(() =>
+                    main.FolderVM.AllFiles.FirstOrDefault(item => item.File.StorageId == largeFile.File.StorageId) ?? largeFile);
                 await UiDispatcher.InvokeAsync(() =>
                 {
-                    root.Photo.FitToView();
-                    BitmapLoader.RemoveCached(largeFile.File.StorageId.Value, ImageSizeClass.Full);
-                    BitmapLoader.RemoveCached(largeFile.File.StorageId.Value, ImageSizeClass.Proxy);
-                    session.SetFile(largeFile.File);
+                    BitmapLoader.RemoveCached(liveLarge.File.StorageId.Value, ImageSizeClass.Full);
+                    BitmapLoader.RemoveCached(liveLarge.File.StorageId.Value, ImageSizeClass.Proxy);
+                    session.SetFile(null);
+                    session.SetFile(liveLarge.File);
                 });
                 await WaitAsync(() => session.IsProxy && session.Image is { Encoding: PixelEncoding.RgbaF16 }, "回适应态代理档");
                 await SettleAsync(root);
@@ -489,13 +494,33 @@ internal static class iOSNativeGestureCheck
     {
         bool shown = false;
         using var subscription = session.Subscribe(source => { if (source.StorageId == file.File.StorageId) shown = true; });
+        // 列表刷新后同一存储身份可能对应新的 ImageFile 实例；会话已停在该身份上时不会再发一次上屏事件。
+        bool alreadyShown = SessionFileField.GetValue(session) is IFileRef displayed && displayed.StorageId == file.File.StorageId;
         bool same = ReferenceEquals(main.CurrentFile, file);
         await UiDispatcher.InvokeAsync(() => main.CurrentFile = file);
-        if (!same) await WaitAsync(() => ReferenceEquals(main.CurrentFile, file) && shown, stage);
+        if (!same && !alreadyShown)
+        {
+            try
+            {
+                await WaitAsync(() => ReferenceEquals(main.CurrentFile, file) && shown, stage);
+            }
+            catch (InvalidOperationException exception) when (exception.Message.Contains("等待超时", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"{stage} 超时：current={main.CurrentFile?.Name ?? "null"} session={SessionFileName(session)} shown={shown}", exception);
+            }
+        }
         // 切图请求与原生壳的会话重置都经 UI 线程排队；留出一轮排空后再确认产物仍在（避免读到旧图或重置窗口）。
         await Task.Delay(200);
         await WaitAsync(() => session.Image != null, stage);
     }
+
+    /// <summary>会话当前上屏文件（只读反射，测试不可见内部状态，产品不新增 API）。</summary>
+    private static readonly System.Reflection.FieldInfo SessionFileField =
+        typeof(PhotoLoadSession).GetField("_file", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+
+    private static string SessionFileName(PhotoLoadSession session)
+        => SessionFileField.GetValue(session) is IFileRef file ? file.Name : "(null)";
 
     /// <summary>等待主图分区尺寸连续 500ms 不变（启动期控制栏/文件栏定型会改变主图可用高度）。</summary>
     /// <param name="root">原生根控制器。</param>

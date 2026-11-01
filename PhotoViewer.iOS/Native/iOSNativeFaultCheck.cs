@@ -4,6 +4,7 @@ using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -71,6 +72,8 @@ internal static class iOSNativeFaultCheck
             await VerifyCorruptSettingsAsync(work, lines);
             await VerifySimilarityFailureAsync(main, root, work, lines);
             await VerifyAnalysisFailureAsync(main, root, session, work, lines);
+            await VerifyRawCapabilityAsync(directory, work, lines);
+            await VerifyEnhanceClosedByMemoryPressureAsync(main, root, session, small, lines);
         }
         catch (Exception ex)
         {
@@ -253,6 +256,74 @@ internal static class iOSNativeFaultCheck
             main.IsAnalysisViewVisible = previousVisible;
             main.Settings.AnalysisImmediateCompute = previousImmediate;
             if (originalModel != null) DinoFeatureExtractor.ConfigureModelOverride(originalModel);
+        }
+    }
+
+    /// <summary>
+    /// SCOPE-04：RAW 走平台全分辨率引擎；引擎不可用时回退 ImageIO，并如实报出容器实际像素尺寸。
+    /// </summary>
+    private static async Task VerifyRawCapabilityAsync(string directory, string work, List<string> lines)
+    {
+        var decoder = new ApplePresentationDecoder();
+        string arw = Path.Combine(directory, "A7C01489.ARW");
+        if (File.Exists(arw))
+        {
+            using var full = await decoder.DecodeAsync(new LocalFileRef(arw), null, PixelEncoding.Rgba8, CancellationToken.None)
+                ?? throw new InvalidOperationException("ARW 未能解码");
+            int longEdge = Math.Max(full.SourceWidth, full.SourceHeight);
+            if (longEdge < 6000)
+                throw new InvalidOperationException($"ARW 未走全分辨率 RAW 引擎：{full.SourceWidth}x{full.SourceHeight}");
+            lines.Add($"PASS scope04：RAW 引擎按传感器分辨率解出 ARW {full.SourceWidth}x{full.SourceHeight}");
+        }
+        else
+        {
+            lines.Add("NOTE scope04：素材目录缺少 A7C01489.ARW，未断言全分辨率尺寸");
+        }
+
+        // 伪造 .arw（JPEG 负载）让 RAW 引擎失败，核对回退路径报出容器真实尺寸而不是假装全分辨率。
+        string jpeg = Path.Combine(work, "fault-good.jpg");
+        string fallbackPath = Path.Combine(work, "fault-raw-fallback.arw");
+        File.Copy(jpeg, fallbackPath, true);
+        using var expected = await decoder.DecodeAsync(new LocalFileRef(jpeg), null, PixelEncoding.Rgba8, CancellationToken.None)
+            ?? throw new InvalidOperationException("RAW 回退对拍基准未能解码");
+        using var fallback = await decoder.DecodeAsync(new LocalFileRef(fallbackPath), null, PixelEncoding.Rgba8, CancellationToken.None)
+            ?? throw new InvalidOperationException("RAW 引擎失败后没有回退结果");
+        if (fallback.SourceWidth != expected.SourceWidth || fallback.SourceHeight != expected.SourceHeight)
+            throw new InvalidOperationException(
+                $"RAW 回退尺寸不实：{fallback.SourceWidth}x{fallback.SourceHeight}，容器实际 {expected.SourceWidth}x{expected.SourceHeight}");
+        lines.Add("PASS scope04：RAW 引擎失败回退 ImageIO，报出容器实际尺寸");
+    }
+
+    /// <summary>SCOPE-02 / STATE-03：OS 内存告警关闭增强并发出一次性提示条。</summary>
+    private static async Task VerifyEnhanceClosedByMemoryPressureAsync(
+        PhotoViewer.ViewModels.Main.MainViewModel main,
+        iOSNativeRootViewController root,
+        PhotoLoadSession session,
+        string path,
+        List<string> lines)
+    {
+        await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
+        await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(path) && session.Image != null, "内存告警素材上屏");
+        if (!session.IsEnhanced) session.ToggleEnhanced();
+        await WaitAsync(() => session.IsEnhanced && session.EnhancedDisplay, "增强图就绪", 4000);
+
+        int notices = 0;
+        void OnNotice(string _) => notices++;
+        session.Notice += OnNotice;
+        try
+        {
+            MemoryGovernor.ReportOsEvent(PressureLevel.Warning);
+            await WaitAsync(() => !session.IsEnhanced && !session.EnhancedDisplay, "内存告警关闭增强");
+            await WaitAsync(
+                () => root.Toast.IsVisible && root.Toast.Message == StatusMessages.EnhanceClosedForMemory,
+                "内存告警提示条");
+            if (notices != 1)
+                throw new InvalidOperationException($"内存关闭增强应只发一次提示，实际 {notices}");
+            lines.Add("PASS scope02：OS 内存告警关闭增强并发出一次性 EnhanceClosedForMemory 提示");
+        }
+        finally
+        {
+            session.Notice -= OnNotice;
         }
     }
 

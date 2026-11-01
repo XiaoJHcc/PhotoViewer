@@ -64,8 +64,8 @@
 - [x] 规范：来源纵向排列；信息行默认单行（文件名居左、来源标签 + 状态居右并垂直居中），长文件名改双行；每来源一行 0–5，条目间加分隔线；浮窗宽度由星排与固定内边距决定、不收窄，任一条目点值都整组统一写入。
 - [x] 规范：横排入口默认向下、底部横排入口向上、右侧竖排入口向左；刷新覆盖全部条目；只有成功且刷新后冲突解除才关闭，锚点消失/布局重排/入口滚出可视区也关闭，刷新失败不因此关闭。
 - [x] Mac：以 `NSPopover` 实现纵向条目与三种方向；宽度、三信息行/长名双行、条目分隔线、原生毛玻璃与星按钮 hover（修订前实现）；toolbar 真实窗口回归通过，作者验收通过（不冒充修订后验收）。
-- [ ] iOS / iPadOS：按 RATING-04 实现纵向来源浮窗与整组写入。
-- [ ] Windows / Android / Web：按同一规范实现来源浮窗，并确定各端原生弹层细节。
+- [x] iOS / iPadOS：按 RATING-04 实现纵向来源浮窗与整组写入（原生 popover，2026-10-26 落地、10-27 复验）。
+- [x] Windows / Android / Web：按同一规范实现来源浮窗（Windows 原生 Flyout、Android 原生浮层、Web 复刻，2026-10-27）。
 - [x] 四端字形：Apple SF Symbols、Windows `E7BA`、Android / Web `icon.warning`。
 
 ### 2.5 筛选与训练
@@ -101,20 +101,20 @@
 - [x] 事务：CoreContractCheck；Mac faults PASS；iOS faults 6；Android `storage` 24/0、`faults` 22/0。
 - [x] Mac UI：toolbar 真实窗口回归连续两轮通过，覆盖纵向来源条目、三种实际方向、各入口连续重开三次且每次停留 1.3 秒、原生内容不重用、条目不越界、指针移入不关闭与整组写入；只写自有测试副本。
 - [x] 冲突三角：macOS 作者验收；iOS `layout 25/25`、Android `faults 22/0`、Web `node --test` 318/318 与 `?check=all` 50/50、Windows `WindowsTypeCheck` 0 错（运行时待本机）。
-- [ ] 来源浮窗：iOS / Windows / Android / Web 尚未实现，按 Mac 定稿规范落地后重跑各自套件。
+- [x] 来源浮窗：四端已落地（macOS `NSPopover`、iOS `UIPopoverPresentationController`、Windows 原生 Flyout、Android 原生浮层、Web 复刻）；各端程序化状态见 [status.md](../Design/status.md)，作者复验与 iOS 真机仍待。
 - [x] 筛选：CoreContractCheck + Web `?check=all`；13 项、已拒绝、冲突独立。
 - [x] 训练：Training.sln 0 错 0 警；scan-only 验证 HIF 内嵌取 3、sidecar/伴侣不取 max、Invalid/Conflict 记 0 标签。
 - [x] 打开：所有显式打开全量刷新（CoreContractCheck 覆盖文件/文件夹/拖入与单图回退）；Mac input 与 base/layout 通过，iOS / Android 构建通过；Windows 运行时未验。
 
-未覆盖边界：其他平台的来源浮窗与运行时验证；Windows WinUI 运行时与真实 UI；PNG 写入（含标准 `iTXt`、容器 CRC 事务）；无 canonical 包的新建/插入与复杂容器结构；iOS 真机 security scope、Android USB/MTP/云 Provider、桌面链接/ACL/跨卷/断电恢复。
+未覆盖边界：作者对各端来源浮窗的复验、iOS 真机与 iOS 27；Windows WinUI 运行时与真实 UI；PNG 写入（含标准 `iTXt`、容器 CRC 事务）；无 canonical 包的新建/插入与复杂容器结构；iOS 真机 security scope、Android USB/MTP/云 Provider、桌面链接/ACL/跨卷/断电恢复。
 
 作者手测（后续独立任务，不计入本轮自动完成）：
 
 - [ ] 真实 HIF/ARW + 已有 sidecar 的 0–5 往返，ExifTool 分别核查内嵌与 sidecar。
 - [ ] Imaging Edge 与 Sony 相机读取 RAW 内嵌星级。
-- [ ] 冲突组浮窗、全来源统一写入与失败保留（macOS 修订前已验收，修订后待重验；其余平台待浮窗实现）。
+- [ ] 冲突组浮窗、全来源统一写入与失败保留的作者复验（macOS 修订后待重验；其余平台浮窗已实现、待作者复验）。
 - [x] Mac 新浮窗易用性验收（修订前实现，不冒充修订后验收）。
-- [ ] 其他平台浮窗实现后的对应验收。
+- [ ] 其他平台浮窗的作者复验（程序化套件已通过）。
 - [ ] 各平台只读文件、只读目录、云 Provider、跨卷与中断恢复。
 
 ## 4. 挂账
@@ -207,7 +207,7 @@ iOS 原生来源浮窗重做与复验：默认 `UIPopoverPresentationController`
 保留限制：
 
 - Windows WinUI 运行时、iOS 真机 Files 作用域、Android USB/MTP/云 Provider 与跨 UID 授权、Imaging Edge / 相机读取往返、断电恢复未验。
-- PNG 写入、无 canonical 包的新建与复杂容器扩展均未新增；其他平台来源浮窗仍未实现。
+- PNG 写入、无 canonical 包的新建与复杂容器扩展均未新增；其他平台来源浮窗已在 2026-10-27 落地，作者复验仍待。
 
 ### 6.5 修订前的程序化证据（自 status.md 移入）
 

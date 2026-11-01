@@ -108,14 +108,27 @@ internal static class iOSNativeAnalysisCheck
                 var ids = Flatten(menu.Menu).Select(action => action.Id).ToArray();
                 if (!ids.Contains("photo.analysis"))
                     throw new InvalidOperationException($"主图菜单缺少分析栏入口：{string.Join(",", ids)}");
-                await UiDispatcher.InvokeAsync(() =>
+                // 设置仓库保存后会以新快照重建 Hotkeys 项，直改旧项可能被下一次应用拍回；按命令 id 重取并重试。
+                for (int attempt = 0; attempt < 20 && !root.ControlBar.Commands.ContainsKey("ToggleAnalysisView"); attempt++)
                 {
-                    analysisHotkey.IsDisplay = true;
-                    root.BuildControls();
-                });
-                await SettleAsync(root);
+                    await UiDispatcher.InvokeAsync(() =>
+                    {
+                        var live = main.Settings.Hotkeys.FirstOrDefault(item => item.Command == "ToggleAnalysisView");
+                        if (live != null) live.IsDisplay = true;
+                        root.BuildControls();
+                    });
+                    await SettleAsync(root);
+                    if (root.ControlBar.Commands.ContainsKey("ToggleAnalysisView")) break;
+                    await Task.Delay(150);
+                }
                 if (!root.ControlBar.Commands.TryGetValue("ToggleAnalysisView", out var analysisButton))
-                    throw new InvalidOperationException("控制栏未生成 ToggleAnalysisView 命令入口");
+                {
+                    var enabled = main.ControlVM.EnabledControls.Select(item => item.Command).ToArray();
+                    throw new InvalidOperationException(
+                        $"控制栏未生成 ToggleAnalysisView 命令入口：display={analysisHotkey.IsDisplay} " +
+                        $"enabled=[{string.Join(",", enabled)}] bar=[{string.Join(",", root.ControlBar.Commands.Keys)}] " +
+                        $"controlVisible={main.IsControlViewVisible} hidden={root.ControlBar.Hidden}");
+                }
                 double baselinePhoto = root.PhotoMainLength(true);
                 await UiDispatcher.InvokeAsync(() => analysisButton.SendActionForControlEvents(UIControlEvent.TouchUpInside));
                 await WaitAsync(() => main.IsAnalysisViewVisible && !root.AnalysisPane.Hidden, "控制栏命令打开分析栏");
@@ -165,6 +178,13 @@ internal static class iOSNativeAnalysisCheck
                 await UiDispatcher.InvokeAsync(() => main.IsAnalysisViewVisible = false);
                 await SettleAsync(root);
                 await SelectFileAsync(main, largeCard);
+                // 会话同身份且有图时 SetFile 会短路（避免刷新闪帧），这里必须先清空再装载才能重新解出代理档。
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    var file = main.CurrentFile ?? throw new InvalidOperationException("大色卡未成为当前照片");
+                    session.SetFile(null);
+                    session.SetFile(file.File);
+                });
                 await WaitAsync(() => session.Image is { Encoding: PixelEncoding.RgbaF16 } && session.IsProxy, "大色卡代理档（F16）");
                 VerifyProxyHistogram(session.Image!, lines);
                 VerifyCropPixel(root, session.Image!, "F16 代理", lines);
@@ -284,8 +304,8 @@ internal static class iOSNativeAnalysisCheck
             {
                 var settings = main.Settings;
                 settings.ApplySnapshot(snapshot);
-                analysisHotkey.IsDisplay = entryAnalysisDisplay;
-                enhanceHotkey.IsDisplay = entryEnhanceDisplay;
+                settings.Hotkeys.FirstOrDefault(item => item.Command == "ToggleAnalysisView")?.IsDisplay = entryAnalysisDisplay;
+                settings.Hotkeys.FirstOrDefault(item => item.Command == "ToggleEnhance")?.IsDisplay = entryEnhanceDisplay;
                 main.IsAnalysisViewVisible = entryAnalysis;
                 main.IsThumbnailViewVisible = entryFilm;
                 main.IsControlViewVisible = entryControl;
@@ -657,6 +677,8 @@ internal static class iOSNativeAnalysisCheck
                         var file = main.CurrentFile!.File;
                         BitmapLoader.RemoveCached(file.StorageId.Value, ImageSizeClass.Full);
                         BitmapLoader.RemoveCached(file.StorageId.Value, ImageSizeClass.Proxy);
+                        // 同身份且有图时 SetFile 会短路（刷新防闪帧），先清空才会真正走黑屏加载路径。
+                        session.SetFile(null);
                         session.SetFile(file);
                     }
                     finally { session.Changed -= OnReload; }

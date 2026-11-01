@@ -90,6 +90,7 @@ internal static partial class AndroidNativeChecks
         var root = _root!;
         var main = _main!;
         var session = _session!;
+        Phase("主屏几何");
         Check("首图上屏", session.Image != null, session.Image == null ? "无图像" : $"{session.Image.Width}x{session.Image.Height}");
         Check("安全区非负", root.SafeInsets.Left >= 0 && root.SafeInsets.Top >= 0 && root.SafeInsets.Right >= 0 && root.SafeInsets.Bottom >= 0,
             $"{root.SafeInsets}");
@@ -160,11 +161,17 @@ internal static partial class AndroidNativeChecks
         await System.Threading.Tasks.Task.Delay(500);
         Check("回到适应态", root.Photo.IsFit, $"fit={root.Photo.IsFit}");
 
+        Phase("STATE-01 缓存切图");
         // STATE-01：缓存命中切图保留前一张——两张都已上屏后再切，不得经过空图、不得显示加载提示。
         await CheckCachedSwitchAsync(_activity!, main, session, root);
 
+        Phase("MENU-06 主图菜单");
+        // MENU-06：主图菜单文案、勾选与置灰（快照取自真实 ShowPhotoMenu 构建）。
+        await CheckPhotoMenuAsync(main, session, root);
+
         if (Wants("analysis") || Wants("all"))
         {
+        Phase("analysis 分析栏");
         // 分析栏开合与瓦片几何。先生成一张确定性的 Sony 对焦 JPEG，保证对焦点+中心两张细节瓦片。
         var focusFolder = EnsureSonyFocusFixture(_activity!);
         await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(focusFolder));
@@ -346,6 +353,7 @@ internal static partial class AndroidNativeChecks
 
         if (Wants("similarity") || Wants("all"))
         {
+        Phase("similarity 相似面板");
         // 相似面板开合。
         main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
         await System.Threading.Tasks.Task.Delay(900);
@@ -357,6 +365,7 @@ internal static partial class AndroidNativeChecks
 
         if (Wants("settings") || Wants("all"))
         {
+        Phase("settings 设置");
         // 设置半屏与工具页开合（真实展示路径）。
         main.OpenSettingWindow();
         await System.Threading.Tasks.Task.Delay(700);
@@ -567,6 +576,7 @@ internal static partial class AndroidNativeChecks
 
         if (Wants("tools") || Wants("all"))
         {
+        Phase("tools 工具页");
         main.OpenToolsWindow();
         await System.Threading.Tasks.Task.Delay(800);
         Check("工具 sheet 打开", AndroidToolsPresenter.IsOpen, "IsOpen=false");
@@ -660,6 +670,91 @@ internal static partial class AndroidNativeChecks
             $"null={nullSamples} loading={loadingSamples}");
         await SelectAndWaitAsync(main, session, files[0]);
     }
+
+    /// <summary>
+    /// MENU-06：主图长按菜单的固定文案、勾选跟随增强状态、无照片时「雾天增强」置灰而「工具…」仍可用。
+    /// 快照直接取 <see cref="AndroidNativeRootView.ShowPhotoMenu"/> 本次构建出的项，断言后立即关闭菜单。
+    /// </summary>
+    private static async System.Threading.Tasks.Task CheckPhotoMenuAsync(MainViewModel main, PhotoLoadSession session, AndroidNativeRootView root)
+    {
+        var previous = main.CurrentFile;
+        bool previousEnhanced = session.IsEnhanced;
+        var point = ((float)(root.Width / 2.0), (float)(root.Height / 2.0));
+        try
+        {
+            var items = OpenPhotoMenuAndSnapshot(root, point);
+            bool found = TryFindPhotoMenuItem(items, "雾天增强", out var enhance);
+            Check("MENU-06 雾天增强文案与勾选",
+                found && enhance.Checked == session.IsEnhanced && enhance.Enabled,
+                $"enhanced={session.IsEnhanced} found={found} items=[{DescribePhotoMenu(items)}]");
+
+            // 勾选不是静态文案：切一次增强再重建菜单，勾选必须跟着会话状态走。
+            session.ToggleEnhanced();
+            await WaitAsync(() => session.IsEnhanced, "开启增强", 10000);
+            var toggledItems = OpenPhotoMenuAndSnapshot(root, point);
+            bool toggledFound = TryFindPhotoMenuItem(toggledItems, "雾天增强", out var toggled);
+            Check("MENU-06 勾选跟随增强状态", toggledFound && toggled.Checked,
+                $"enhanced={session.IsEnhanced} checked={(toggledFound ? toggled.Checked.ToString() : "缺项")}");
+            session.ToggleEnhanced();
+            await WaitAsync(() => !session.IsEnhanced, "关闭增强", 10000);
+
+            // MENU-07：无当前照片时打开与栏位项照常可用、「雾天增强」置灰、「工具…」仍可执行。
+            main.CurrentFile = null;
+            await WaitAsync(() => main.CurrentFile == null, "清空当前照片", 5000);
+            var noPhotoItems = OpenPhotoMenuAndSnapshot(root, point);
+            bool enhanceDisabled = TryFindPhotoMenuItem(noPhotoItems, "雾天增强", out var disabled) && !disabled.Enabled;
+            bool toolsEnabled = TryFindPhotoMenuItem(noPhotoItems, "工具…", out var tools) && tools.Enabled;
+            Check("MENU-06 无照片时增强置灰工具可用", enhanceDisabled && toolsEnabled,
+                $"enhanceDisabled={enhanceDisabled} toolsEnabled={toolsEnabled} items=[{DescribePhotoMenu(noPhotoItems)}]");
+        }
+        finally
+        {
+            root.DismissPhotoMenu();
+            if (session.IsEnhanced != previousEnhanced) session.ToggleEnhanced();
+            if (previous != null && !ReferenceEquals(main.CurrentFile, previous))
+            {
+                main.CurrentFile = previous;
+                try
+                {
+                    await WaitAsync(() => session.Image != null && ReferenceEquals(main.CurrentFile, previous),
+                        "恢复当前照片", 20000);
+                }
+                catch (TimeoutException exception)
+                {
+                    Check("MENU-06 恢复当前照片", false, exception.Message);
+                }
+            }
+        }
+    }
+
+    /// <summary>打开主图菜单、拷贝本次构建出的项，再关闭菜单（菜单本体不留在屏上干扰后续检查）。</summary>
+    private static List<(string Text, bool Checked, bool Enabled)> OpenPhotoMenuAndSnapshot(
+        AndroidNativeRootView root, (float X, float Y) point)
+    {
+        root.ShowPhotoMenu(point.X, point.Y);
+        var snapshot = new List<(string Text, bool Checked, bool Enabled)>(root.PhotoMenuItemsForChecks);
+        root.DismissPhotoMenu();
+        return snapshot;
+    }
+
+    /// <summary>按文本严格匹配菜单项。</summary>
+    private static bool TryFindPhotoMenuItem(IReadOnlyList<(string Text, bool Checked, bool Enabled)> items,
+        string text, out (string Text, bool Checked, bool Enabled) item)
+    {
+        foreach (var candidate in items)
+        {
+            if (!string.Equals(candidate.Text, text, StringComparison.Ordinal)) continue;
+            item = candidate;
+            return true;
+        }
+        item = default;
+        return false;
+    }
+
+    /// <summary>把菜单快照写成一行（勾选标 ✓、置灰标「灰」），报告里可直接人工复核文案。</summary>
+    private static string DescribePhotoMenu(IReadOnlyList<(string Text, bool Checked, bool Enabled)> items)
+        => string.Join(" / ", items.Select(item =>
+            $"{item.Text}{(item.Checked ? "✓" : string.Empty)}{(item.Enabled ? string.Empty : "灰")}"));
 
     /// <summary>选中一行并等它成为当前照片、新一代际的展示图已上屏。</summary>
     private static async System.Threading.Tasks.Task SelectAndWaitAsync(MainViewModel main, PhotoLoadSession session, ImageFile file)
@@ -866,6 +961,12 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>当前检查模式是否包含某一组检查。</summary>
     private static bool Wants(string group) => _mode == group || _mode == "all";
+
+    /// <summary>
+    /// inline 主流程（<c>main</c> / <c>all</c>）的阶段日志：与独立模式的步骤日志同前缀，
+    /// 崩溃时用最后一条把位置收窄到组边界。
+    /// </summary>
+    private static void Phase(string name) => Console.WriteLine($"[NativeCheck] 阶段：{name}（{_mode}）");
 
     /// <summary>
     /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c>）：精确模式名匹配、自带素材与流程，

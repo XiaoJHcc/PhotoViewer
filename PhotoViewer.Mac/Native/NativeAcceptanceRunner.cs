@@ -221,6 +221,7 @@ public static class NativeAcceptanceRunner
                 results.Add(new NativeCheck { Check = "database-schema", JsonRoundTrip = true });
             }
             results.Add(new NativeCheck { Check = "native-boundary", GpuBytes = window.Photo.FootprintBytes });
+            if (files.Length > 1) await VerifyLaunchServicesOpenAsync(window, files[^1], results);
             string report = JsonSerializer.Serialize(results, NativeSmokeJsonContext.Default.ListNativeCheck);
             await File.WriteAllTextAsync(System.IO.Path.Combine(output, "native-smoke.json"), report);
             string reportName = rawCopy ? "native-smoke-raw.json" : first.Name.EndsWith(".heic", StringComparison.OrdinalIgnoreCase) ? "native-smoke-heif.json" : "native-smoke-fixtures.json";
@@ -243,6 +244,29 @@ public static class NativeAcceptanceRunner
             Environment.Exit(Environment.ExitCode);
         }
     }
+    /// <summary>
+    /// OPEN-06：Finder/Dock 双击经 Launch Services 投递打开事件（odoc），必须与命令行、拖入
+    /// 共享同一打开协调器，最终定位到目标照片而不是只前置窗口。
+    /// </summary>
+    private static async Task VerifyLaunchServicesOpenAsync(MacMainWindow window, ImageFile target, List<NativeCheck> results)
+    {
+        string path = target.File.RequireLocalPath();
+        string bundle = NSBundle.MainBundle.BundlePath;
+        var startInfo = new ProcessStartInfo("/usr/bin/open", ["-a", bundle, path])
+        {
+            UseShellExecute = false,
+            RedirectStandardError = true,
+        };
+        using var process = Process.Start(startInfo) ?? throw new InvalidOperationException("无法启动 Launch Services 投递");
+        string stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0) throw new InvalidOperationException($"Launch Services 投递失败：{stderr.Trim()}");
+        await WaitAsync(
+            () => window.Main.CurrentFile?.File.StorageId == target.File.StorageId && window.Session.Image != null,
+            "Launch Services 文件事件定位");
+        results.Add(new NativeCheck { Check = "launch-services-open", File = target.Name });
+    }
+
     /// <summary>对拍分析输入与 GPU 的显示朝向，防止镜像转置使 CV/DINO 坐标与主图相反。</summary>
     private static void VerifyAnalysisOrientation(MetalPhotoView photo, DecodedImage source)
     {
