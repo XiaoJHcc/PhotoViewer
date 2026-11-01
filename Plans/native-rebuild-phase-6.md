@@ -48,7 +48,7 @@
 6. ✅ **工程配置**：`.vscode/tasks.json` 删除 Legacy/Compare 任务、Release 任务去 `--native`（`Debug iOS (Native)` 并入 `Debug iOS`）；`.vscode/extensions.json` 删 Avalonia 扩展；`.run/` 修 `net9.0` 路径；DEV.md、README、根与模块 AGENTS 改写。
 7. ✅ **验收门**：Mac Debug/Release 0 错误；Mac 九套 harness PASS（smoke 39）；iOS 模拟器七套（photo 10 / layout 21 / input 31 / analysis 18 / similarity 9+NOTE / tools 8 / gesture 22）；Android 五模式 main 14 / analysis 18 / similarity 15 / settings 16 / tools 16；Windows **本机 Debug/Release 0 错 0 警、smoke 24 / settings 7 / tools 5 PASS；正式单文件亦在全新目录/缓存通过同三套 36 项**；各平台产物内无 `Avalonia*`。
 
-旧壳专属待办随删除关闭：已缓存描边被覆盖、分析瓦片双层圆角、纵向可见范围估算、`--pv-legacy-layout` 采集、双份 `DecodedImage`+`WriteableBitmap` 缓冲。**保留项**：`avares://` URI 约定。~~`Training/DatasetBuilder` 去 Avalonia~~ → **2026-10-19 完成**（Training `ed033fc`）：其像素路径自 `6276c6b` 起已全走 Core `SkiaImageCodec`，Avalonia 只剩空转的 `AppBuilder`/`Dispatcher`，删除后 DINO 输入口径不变（无需重跑 `verify_onnx_parity.py`，该脚本校验的是 PyTorch↔ONNX 而非解码）；macOS `EnableWindowsTargeting` 构建通过，Windows 实跑待作者复核（小文件夹 `--dump-render` 与既有缓存比对哈希）。全仓构建文件中已无 Avalonia 包。
+旧壳专属待办随删除关闭：已缓存描边被覆盖、分析瓦片双层圆角、纵向可见范围估算、`--pv-legacy-layout` 采集、双份 `DecodedImage`+`WriteableBitmap` 缓冲。**保留项**：`avares://` URI 约定。~~`Training/DatasetBuilder` 去 Avalonia~~ → **2026-10-19 完成**（Training `ed033fc`）：其像素路径自 `6276c6b` 起已全走 Core `SkiaImageCodec`，Avalonia 只剩空转的 `AppBuilder`/`Dispatcher`，删除后 DINO 输入口径不变（无需重跑 `verify_onnx_parity.py`，该脚本校验的是 PyTorch↔ONNX 而非解码）；macOS `EnableWindowsTargeting` 构建通过；**2026-11-02 Windows 实跑复核通过**：`--dump-render` 渲染 4 张真实 HIF（指纹组 4/4，0 跳过 0 失败），产物 PNG 与既有 `display-plane-v3` 缓存逐文件 SHA256 完全一致。全仓构建文件中已无 Avalonia 包。
 
 ## 4. 6E 发布就绪
 

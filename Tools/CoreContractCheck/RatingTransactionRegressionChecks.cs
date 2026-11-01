@@ -41,19 +41,13 @@ internal static class RatingTransactionRegressionChecks
         c.Equal("预检写权限探测不改长度", (long)probeBytes.Length, new FileInfo(probePath).Length);
         c.Equal("预检写权限探测不改 mtime", probeModified, File.GetLastWriteTimeUtc(probePath));
 
-        if (OperatingSystem.IsWindows())
-        {
-            c.Skip("只读 sidecar 预检失败", "Windows 分支需在 Windows 上验证，本机不冒充");
-            return;
-        }
-
         // 值不同：只读 sidecar 必须让整组在首次修改前失败，安全模式关闭也不例外。
         var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "readonly-side.jpg");
         var photoBytes = await File.ReadAllBytesAsync(photoPath);
         var sidecarPath = Path.Combine(root, "readonly-side.xmp");
         var sidecarBytes = Sidecar("5");
         await File.WriteAllBytesAsync(sidecarPath, sidecarBytes);
-        File.SetUnixFileMode(sidecarPath, UnixFileMode.UserRead);
+        SetReadOnly(sidecarPath, readOnly: true);
         try
         {
             var photo = new ImageFile(new LocalFileRef(photoPath));
@@ -63,13 +57,17 @@ internal static class RatingTransactionRegressionChecks
             c.True("只读 sidecar 不产生物理修改", !result.AnyFileModified);
             c.Bytes("只读 sidecar 失败后照片不变", photoBytes, await File.ReadAllBytesAsync(photoPath));
             c.Bytes("只读 sidecar 失败后 sidecar 不变", sidecarBytes, await File.ReadAllBytesAsync(sidecarPath));
-            c.Equal("只读 sidecar 失败后权限不变", UnixFileMode.UserRead, File.GetUnixFileMode(sidecarPath));
+            c.True("只读 sidecar 失败后权限不变",
+                OperatingSystem.IsWindows()
+                    ? File.GetAttributes(sidecarPath).HasFlag(FileAttributes.ReadOnly)
+                    : File.GetUnixFileMode(sidecarPath) == UnixFileMode.UserRead,
+                "只读状态被写操作改写了");
             c.True("只读 sidecar 失败原因指明预检",
                 result.FailureReason?.Contains("预检", StringComparison.Ordinal) == true);
         }
         finally
         {
-            File.SetUnixFileMode(sidecarPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            SetReadOnly(sidecarPath, readOnly: false);
         }
 
         // 值相同：同值 NoChange 也要证明来源可写，不能被“无需写入”冒充成功。
@@ -78,7 +76,7 @@ internal static class RatingTransactionRegressionChecks
         var sameSidecarPath = Path.Combine(root, "readonly-same.xmp");
         var sameSidecarBytes = Sidecar("3");
         await File.WriteAllBytesAsync(sameSidecarPath, sameSidecarBytes);
-        File.SetUnixFileMode(sameSidecarPath, UnixFileMode.UserRead);
+        SetReadOnly(sameSidecarPath, readOnly: true);
         try
         {
             var samePhoto = new ImageFile(new LocalFileRef(samePath));
@@ -92,7 +90,7 @@ internal static class RatingTransactionRegressionChecks
         }
         finally
         {
-            File.SetUnixFileMode(sameSidecarPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            SetReadOnly(sameSidecarPath, readOnly: false);
         }
     }
 
@@ -284,38 +282,16 @@ internal static class RatingTransactionRegressionChecks
 
         if (OperatingSystem.IsWindows())
         {
-            c.Skip("不可读 sidecar 映射 Unreadable", "Windows 分支需在 Windows 上验证，本机不冒充");
+            // Windows 没有 POSIX 的 0000 模式：用独占句柄让读取方拿到共享冲突，语义同为"读不进来"。
+            using var exclusive = new FileStream(sidecarPath, FileMode.Open, FileAccess.Read, FileShare.None);
+            await CheckUnreadableSourcesAsync(c, rules, photoPath, sidecarPath, root);
         }
         else
         {
             File.SetUnixFileMode(sidecarPath, UnixFileMode.None);
             try
             {
-                var source = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(sidecarPath));
-                c.Equal("读取被拒的 sidecar 是 Unreadable", XmpRatingState.Unreadable, source.State);
-                c.True("Unreadable 带明确原因", source.Error != null);
-                c.Equal("Unreadable 不提供可比较数值", null, source.Snapshot.ValueOrNull);
-
-                var photo = new ImageFile(new LocalFileRef(photoPath));
-                photo.ApplyRatingSources(
-                [
-                    new RatingSourceState(XmpRatingSource.Embedded, photo.File,
-                        new XmpRatingSnapshot(XmpRatingState.Rated, 3, XmpRatingSource.Embedded)),
-                    source,
-                ]);
-                var group = PhotoGroupMap.Build([photo], false, rules).GroupFor(photo)!;
-                c.True("可读来源 + Unreadable 来源视为冲突", group.HasRatingConflict);
-
-                var unreadableFile = new ImageFile(new LocalFileRef(Path.Combine(root, "unreadable-only.jpg")));
-                unreadableFile.ApplyRatingSources(
-                [
-                    new RatingSourceState(XmpRatingSource.Embedded, unreadableFile.File,
-                        XmpRatingSnapshot.Unreadable(XmpRatingSource.Embedded, "读取被拒")),
-                ]);
-                c.Equal("Unreadable 代表状态", XmpRatingState.Unreadable, unreadableFile.RatingState);
-                c.Equal("Unreadable 代表数值为 0", 0, unreadableFile.Rating);
-                c.True("单个 Unreadable 代表视为冲突",
-                    PhotoGroupMap.Build([unreadableFile], false, rules).GroupFor(unreadableFile)!.HasRatingConflict);
+                await CheckUnreadableSourcesAsync(c, rules, photoPath, sidecarPath, root);
             }
             finally
             {
@@ -333,6 +309,54 @@ internal static class RatingTransactionRegressionChecks
         await File.WriteAllBytesAsync(outOfRangePath, Sidecar("9"));
         var outOfRange = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(outOfRangePath));
         c.Equal("可解析的越界值是 Invalid", XmpRatingState.Invalid, outOfRange.State);
+    }
+
+    /// <summary>Unreadable 来源的语义断言：与"如何让来源读不进来"的平台做法无关。</summary>
+    private static async Task CheckUnreadableSourcesAsync(
+        Checks c,
+        PhotoFormatRule[] rules,
+        string photoPath,
+        string sidecarPath,
+        string root)
+    {
+        var source = await RatingSourceReader.ReadSidecarAsync(new LocalFileRef(sidecarPath));
+        c.Equal("读取被拒的 sidecar 是 Unreadable", XmpRatingState.Unreadable, source.State);
+        c.True("Unreadable 带明确原因", source.Error != null);
+        c.Equal("Unreadable 不提供可比较数值", null, source.Snapshot.ValueOrNull);
+
+        var photo = new ImageFile(new LocalFileRef(photoPath));
+        photo.ApplyRatingSources(
+        [
+            new RatingSourceState(XmpRatingSource.Embedded, photo.File,
+                new XmpRatingSnapshot(XmpRatingState.Rated, 3, XmpRatingSource.Embedded)),
+            source,
+        ]);
+        var group = PhotoGroupMap.Build([photo], false, rules).GroupFor(photo)!;
+        c.True("可读来源 + Unreadable 来源视为冲突", group.HasRatingConflict);
+
+        var unreadableFile = new ImageFile(new LocalFileRef(Path.Combine(root, "unreadable-only.jpg")));
+        unreadableFile.ApplyRatingSources(
+        [
+            new RatingSourceState(XmpRatingSource.Embedded, unreadableFile.File,
+                XmpRatingSnapshot.Unreadable(XmpRatingSource.Embedded, "读取被拒")),
+        ]);
+        c.Equal("Unreadable 代表状态", XmpRatingState.Unreadable, unreadableFile.RatingState);
+        c.Equal("Unreadable 代表数值为 0", 0, unreadableFile.Rating);
+        c.True("单个 Unreadable 代表视为冲突",
+            PhotoGroupMap.Build([unreadableFile], false, rules).GroupFor(unreadableFile)!.HasRatingConflict);
+    }
+
+
+    /// <summary>按平台把文件置为只读/可写：Windows 用属性，其余用 unix 模式。</summary>
+    private static void SetReadOnly(string path, bool readOnly)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            File.SetAttributes(path, readOnly ? FileAttributes.ReadOnly : FileAttributes.Normal);
+            return;
+        }
+
+        File.SetUnixFileMode(path, readOnly ? UnixFileMode.UserRead : UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 
     // ---------------------------------------------------------------- 测试替身与工具

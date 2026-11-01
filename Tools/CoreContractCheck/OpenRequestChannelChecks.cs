@@ -218,6 +218,20 @@ internal static class OpenRequestChannelChecks
         var groupFitsBefore = fits;
         if (representative != null && partner != null)
         {
+            // 分组由 PhotoGroupMap.Build 就地清空再回填，后台元数据刷新重投影时会有短暂 Group==null 窗口；
+            // 等到组连续两次采样都稳定再发请求，否则偶发把"同组伴侣"误判成新目标（产品侧同样有这个窗口）。
+            for (var attempt = 0; attempt < 30; attempt++)
+            {
+                if (main.CurrentFile?.Group != null)
+                {
+                    await Task.Delay(100);
+                    if (main.CurrentFile?.Group != null) break;
+                }
+                else
+                {
+                    await Task.Delay(100);
+                }
+            }
             repeatBefore = repeats;
             await main.OpenCoordinator.PublishAndWaitAsync([partner.File], OpenRequestSource.SystemOpen);
             c.Equal("伴侣重复激活触发前置窗口", repeatBefore + 1, repeats);

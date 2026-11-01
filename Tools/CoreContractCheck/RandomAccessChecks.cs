@@ -76,28 +76,34 @@ internal static class RandomAccessChecks
         await c.StorageFailsAsync("缺失文件打开随机会话报 ObjectGone", StorageError.ObjectGone,
             () => missing.OpenRandomAccessAsync(StorageAccessMode.ReadWrite));
 
+        // 只读文件：POSIX 用 u=r，Windows 用只读属性；两边都要求 ReadWrite 报 AccessDenied、Read 仍可打开。
+        var readOnlyPath = Path.Combine(directory, "readonly.bin");
+        File.WriteAllBytes(readOnlyPath, original);
+        SetReadOnly(readOnlyPath, readOnly: true);
+        try
+        {
+            var readOnlyFile = new LocalFileRef(readOnlyPath);
+            await c.StorageFailsAsync("无写权限文件打开 ReadWrite 报 AccessDenied",
+                StorageError.AccessDenied,
+                () => readOnlyFile.OpenRandomAccessAsync(StorageAccessMode.ReadWrite));
+            await using var readSession = await readOnlyFile.OpenRandomAccessAsync(StorageAccessMode.Read);
+            c.Equal("无写权限文件仍可只读打开", (long)original.Length, readSession.Length);
+        }
+        finally
+        {
+            SetReadOnly(readOnlyPath, readOnly: false);
+        }
+    }
+
+    /// <summary>按平台把文件置为只读/可写：Windows 用属性，其余用 unix 模式。</summary>
+    private static void SetReadOnly(string path, bool readOnly)
+    {
         if (OperatingSystem.IsWindows())
         {
-            c.Skip("文件权限拒绝打开映射 AccessDenied", "Windows 分支需在 Windows 上验证，本机不冒充");
+            File.SetAttributes(path, readOnly ? FileAttributes.ReadOnly : FileAttributes.Normal);
+            return;
         }
-        else
-        {
-            var readOnlyPath = Path.Combine(directory, "readonly.bin");
-            File.WriteAllBytes(readOnlyPath, original);
-            File.SetUnixFileMode(readOnlyPath, UnixFileMode.UserRead);
-            try
-            {
-                var readOnlyFile = new LocalFileRef(readOnlyPath);
-                await c.StorageFailsAsync("无写权限文件打开 ReadWrite 报 AccessDenied",
-                    StorageError.AccessDenied,
-                    () => readOnlyFile.OpenRandomAccessAsync(StorageAccessMode.ReadWrite));
-                await using var readSession = await readOnlyFile.OpenRandomAccessAsync(StorageAccessMode.Read);
-                c.Equal("无写权限文件仍可只读打开", (long)original.Length, readSession.Length);
-            }
-            finally
-            {
-                File.SetUnixFileMode(readOnlyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
-            }
-        }
+
+        File.SetUnixFileMode(path, readOnly ? UnixFileMode.UserRead : UnixFileMode.UserRead | UnixFileMode.UserWrite);
     }
 }

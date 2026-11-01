@@ -33,8 +33,10 @@ public sealed class LocalFileRef : IFileRef
         cancellationToken.ThrowIfCancellationRequested();
         try
         {
+            // Windows 上只给 ReadWrite 会挡住其它进程删除/改名（含本应用的原子替换）：
+            // 查看器读文件期间不应锁住文件，刷新语义本身就是"外部改动由下一次刷新接管"。
             return Task.FromResult<Stream>(new FileStream(_localPath, FileMode.Open, FileAccess.Read,
-                FileShare.ReadWrite, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan));
+                FileShare.ReadWrite | FileShare.Delete, 65536, FileOptions.Asynchronous | FileOptions.SequentialScan));
         }
         catch (Exception exception)
         {

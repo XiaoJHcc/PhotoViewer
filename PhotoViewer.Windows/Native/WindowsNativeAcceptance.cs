@@ -82,7 +82,9 @@ internal sealed partial class WindowsMainWindow
 
             await RunDeploymentChecksAsync(checks);
 
-            var fixture = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
+            // 单图素材放在独立目录：显式打开文件会刷新整个父目录（OPEN-08），与其他 harness
+            // 共用 fixtures/ 根目录时，上一轮留下的图片会让"只有一张照片"的断言失效。
+            var fixture = Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg");
             await Task.Run(() => CreateFixture(fixture));
             await OpenPathsAsync(new[] { fixture });
             await WaitForSmokeAsync(() => _session.Image is { SourceWidth: 3600, SourceHeight: 2400 }, "首次照片解码");
@@ -171,6 +173,74 @@ internal sealed partial class WindowsMainWindow
         finally
         {
             File.WriteAllText(Path.Combine(SmokeOutputDirectory, "checks.json"), JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    /// <summary>
+    /// OPEN-06 二次激活:本进程持单实例键，真实拉起第二个进程（同一 EXE + 目标路径），
+    /// 核对激活参数经 <c>RedirectActivationToAsync</c> 转发回主实例、主实例切到目标、二次进程自行退出。
+    /// 这条路径没有其它 harness 覆盖：单实例键只有在非隔离运行时才注册。
+    /// </summary>
+    /// <returns>检查完成后的任务；失败退出码为 1。</returns>
+    internal async Task RunActivationCheckAsync()
+    {
+        Directory.CreateDirectory(SmokeOutputDirectory);
+        File.WriteAllText(Path.Combine(SmokeOutputDirectory, "activation-checks.json"), "[\"RUNNING\"]");
+        var checks = new List<string>();
+        try
+        {
+            var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "activation");
+            Directory.CreateDirectory(folder);
+            var first = Path.Combine(folder, "first.jpg");
+            var second = Path.Combine(folder, "second.jpg");
+            await Task.Run(() =>
+            {
+                CreateFixture(first);
+                CreateFixture(second);
+            });
+
+            await OpenPathsAsync(new[] { folder });
+            await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "first.jpg", "主实例载入目录首张");
+            checks.Add("PASS primary: activation folder opened, current=first.jpg");
+
+            var exePath = Environment.ProcessPath
+                ?? throw new InvalidOperationException("无法取得当前进程可执行文件路径");
+            using var child = Process.Start(new ProcessStartInfo(exePath)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Environment.CurrentDirectory,
+                ArgumentList = { second },
+            }) ?? throw new InvalidOperationException("二次进程未能启动");
+
+            try
+            {
+                await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "second.jpg", "二次激活未把目标交给主实例", 20);
+            }
+            catch (TimeoutException exception)
+            {
+                throw new InvalidOperationException(
+                    $"二次激活未切到 second.jpg（当前 {_main.CurrentFile?.Name ?? "null"}）", exception);
+            }
+
+            checks.Add("PASS second instance: activation forwarded, primary switched to second.jpg");
+
+            RequireSmoke(child.WaitForExit(15000), "二次进程未在 15s 内退出（可能另开了窗口）");
+            RequireSmoke(child.ExitCode == 0, $"二次进程退出码为 {child.ExitCode}");
+            checks.Add("PASS second instance: exited with code 0 instead of opening a second window");
+            _main.OpenCoordinator.Dispose();
+            Environment.ExitCode = 0;
+        }
+        catch (Exception exception)
+        {
+            Environment.ExitCode = 1;
+            checks.Add("FAIL " + exception);
+            NativeStartupLog.Fail("activation check", exception);
+        }
+        finally
+        {
+            File.WriteAllText(
+                Path.Combine(SmokeOutputDirectory, "activation-checks.json"),
+                JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
         }
     }
 
@@ -1297,15 +1367,19 @@ internal sealed partial class WindowsMainWindow
         await WaitForSmokeAsync(() => _session.IsEnhanced && _session.EnhancedDisplay && _photo.HasImage, "增强预览上屏", 60);
         await WaitForSmokeAsync(() => _analysis.HasDiagnostics, "增强图分析诊断重算", 120);
         RequireSmoke(!_analysis.DiagnosticsPlaceholderVisible, "增强态诊断瓦片仍停留在占位");
+        // MENU-06：右键菜单必须写“雾天增强”（不是泛称“增强”），勾选态跟随会话。
+        RequireSmoke(_enhanceMenuToggle.Text == "雾天增强", $"菜单文案不是雾天增强：{_enhanceMenuToggle.Text}");
+        RequireSmoke(_enhanceMenuToggle.IsChecked, "增强开启后菜单未勾选");
 
         Execute("ToggleEnhance");
         await WaitForSmokeAsync(() => !_session.IsEnhanced && !_session.EnhancedDisplay, "退出增强预览");
+        RequireSmoke(!_enhanceMenuToggle.IsChecked, "退出增强后菜单仍勾选");
         RequireSmoke(_session.Image != null, "退出增强后展示图丢失");
         RequireSmoke(_photo.HasImage, "退出增强后主图消失");
         _main.Settings.AnalysisImmediateCompute = false;
         _main.ToggleAnalysisView();
         await Task.Delay(200);
-        checks.Add("PASS enhancement: CLHE enhanced frame via PhotoLoadSession; enhanced-frame diagnostics recompute; toggle off restores original");
+        checks.Add("PASS enhancement + MENU-06: CLHE frame via PhotoLoadSession; enhanced-frame diagnostics recompute; menu reads 雾天增强 and follows the session; toggle off restores original");
     }
 
     /// <summary>星级写回失败必须在窗口内可见(FILM-06),且不得呈现成功星色。</summary>
@@ -1313,11 +1387,12 @@ internal sealed partial class WindowsMainWindow
     /// <returns>检查完成后的任务</returns>
     private async Task RunRatingFailureChecksAsync(List<string> checks)
     {
-        var path = Path.Combine(SmokeOutputDirectory, "fixtures", "readonly.jpg");
+        // 只读素材同样独占目录，避免落在单图素材的父目录里改变列表长度。
+        var path = Path.Combine(SmokeOutputDirectory, "fixtures", "readonly", "readonly.jpg");
         await Task.Run(() =>
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.Copy(Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg"), path, true);
+            File.Copy(Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg"), path, true);
             File.SetAttributes(path, FileAttributes.ReadOnly);
         });
 
@@ -1384,7 +1459,7 @@ internal sealed partial class WindowsMainWindow
         var conflictPath = Path.Combine(folder, conflictName);
         var plainPath = Path.Combine(folder, "plain.jpg");
         var sidecarPath = Path.ChangeExtension(conflictPath, ".xmp");
-        var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
+        var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg");
         await Task.Run(() =>
         {
             Directory.CreateDirectory(folder);
