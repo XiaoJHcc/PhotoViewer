@@ -8,6 +8,7 @@
 - **Windows**：发布需安装 Visual Studio / Build Tools 的 Release x64 C++ Redistributable 组件，供脚本取得官方 CRT；不从 Windows 系统目录复制 DLL。
 - **macOS / iOS**：安装 Xcode，执行 `sudo dotnet workload install macos ios`。Xcode 与 workload 版本须匹配；临时关闭版本校验的配置在升级工具链时应复核。
 - **Android**：安装 `dotnet workload install android`、JDK 17+ 和 Android SDK。macOS 默认 SDK/ADB 路径为 `~/Library/Android/sdk`；Apple Silicon 模拟器使用 `arm64-v8a` 镜像。
+- **本地专属内容（不入库）**：iOS 的 `Tools/RefreshIosProfile/Local.xcconfig`（Team ID）与 `PhotoViewer.iOS/ExportOptions.AppStore.Local.plist`、Android 的 `signing.json` 与 `keystore/`，分别由同目录 `.sample` 或 `setup-android-signing.sh` 生成；`TestCase/` 是本地自备照片样本（`Tools/ColorEngineLutCheck` 等可选工具用），`native-p2-raw/` 是 RAW 就地评分冒烟用的副本；DINOv3 模型受许可约束不入库，见 [DINOv3 ONNX 模型](#dinov3-onnx-模型)。除这些与本机凭据外，构建、运行与验收所需文件都随仓库分发。
 - 若不同平台需要不同 SDK，使用临时目录中的 `global.json` 与绝对项目路径构建，不为本机环境随意改仓库 SDK 约束。
 
 通过 `F1` → **Tasks: Run Task** 选择任务，不使用通用 UI Publish 菜单代替项目发布脚本。**Clean Build Caches (All Platforms)** 会清理平台 `bin/obj` 及相关工具链缓存，仅在版本切换或疑似脏缓存时使用。
@@ -100,6 +101,22 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 
 **内存上限 entitlement**：`PhotoViewer.iOS/Entitlements.plist` 声明 `com.apple.developer.kernel.increased-memory-limit`（免费 Apple ID 也可签进 Profile），`Tools/RefreshIosProfile/RefreshIosProfile/Entitlements.plist` 必须与它保持一致，否则续期后的 Profile 不带该能力、真机预算退回小口径。两份文件同改同验；运行时不依赖它生效，缺失时按同一逻辑自动按小预算运行。
 
+## 验收素材
+
+验收素材是测试输入而非构建产物，统一放在 `Fixtures/` 随版本库分发，新克隆无需再手工拷贝；`release/` 只落报告、截图与安装包等运行产物。
+
+| 路径 | 内容 |
+|---|---|
+| `Fixtures/jpeg/` | 1200×800 色卡 `color-srgb.jpg` / `color-p3.jpg` / `color-adobe.jpg` / `color-untagged-adobe.jpg` 与 `orientation-1..8.jpg`，由 `Tools/generate-native-color-fixtures.py` 生成 |
+| `Fixtures/heif/` | 同一色卡的 HEVC 容器 `color-srgb.heic` / `color-p3.heic`，覆盖 HEIF 解码与容器 XMP |
+| `Fixtures/jpeg-large/color-p3-large.jpg` | 6000×4000 Display P3 色卡，iOS 代理→Full 档验收用 |
+| `Fixtures/toolbar/` | 工具栏评分回归的自有副本（`toolbar-01..03.jpg`） |
+| `Fixtures/raw/A7C01489.ARW`、`Fixtures/raw/A7C01495.ARW` | 真实 ILCE-7CM2 RAW；IFD0 tag 700 带 canonical XMP，`A7C01489` 的 `xmpMM:DocumentID` 固定为 `urn:uuid:e342971a-5835-4d56-b3ff-f434089d2e00` |
+
+- **初始星级属于夹具契约**：`color-srgb.jpg` 与 `color-srgb.heic` 内嵌 3 星、`Fixtures/raw/A7C01489.ARW` 为 0 星，Core 契约自检按这些初值断言。生成脚本产出的 JPEG 默认 0 星，重新生成色卡后须把 `color-srgb.jpg` 写回 3 星；HEIF 素材不在生成脚本内，按仓库内既有容器包使用。
+- 写评分/写回类验收只操作目录副本，不直接写仓库素材；RAW 就地评分用本地 `native-p2-raw/` 副本（位置任意，不入库）。
+- Core 契约自检在仓库根运行：`dotnet run --project Tools/CoreContractCheck -c Release`；素材不全时在开跑前报缺件并非零退出，不跑半套结果。
+
 ## 打包发布
 
 版本号由根目录 `Directory.Build.props` 控制，发布产物位于 `release/`。
@@ -175,7 +192,13 @@ dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compil
 
 ### DINOv3 ONNX 模型
 
-`PhotoViewer/Assets/Models/dinov3_vits16.onnx` 受 **Meta DINOv3 License** 约束，不入库；开发者在本地生成。原始权重可从需授权的 HuggingFace `facebook/dinov3-vits16-pretrain-lvd1689m` 或 ModelScope 镜像获取。
+`PhotoViewer/Assets/Models/dinov3_vits16.onnx` 受 **Meta DINOv3 License** 约束，不入库；开发者在本地生成。导出脚本在独立仓 [PhotoViewer-Training](https://github.com/XiaoJHcc/PhotoViewer-Training)，按约定检出到本仓 `Training/`（主库忽略）：
+
+```bash
+git clone https://github.com/XiaoJHcc/PhotoViewer-Training.git Training
+```
+
+原始权重可从需授权的 HuggingFace `facebook/dinov3-vits16-pretrain-lvd1689m` 或 ModelScope 镜像获取。
 
 准备 Python 环境中的 `torch transformers onnx onnxruntime onnxscript`，然后导出并校验：
 
@@ -188,4 +211,4 @@ python Training/onnx/verify_onnx_parity.py \
     --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
 ```
 
-模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响基础浏览，但相似聚类不可用。
+模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。

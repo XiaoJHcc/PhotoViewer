@@ -14,9 +14,9 @@ internal static class XmpContainerChecks
         c.Section("容器 XMP 只经评分存储读写");
         UiDispatcher.Initialize(new InlineDispatcher());
 
-        await CheckContainerAsync(c, root, "release/native-p2-fixtures/color-srgb.jpg", new JpegXmpContainerAdapter());
-        await CheckContainerAsync(c, root, "release/native-p2-heif/color-srgb.heic", new HeifXmpContainerAdapter());
-        await CheckContainerAsync(c, root, "TestCase/A7C01489.ARW", new TiffXmpContainerAdapter());
+        await CheckContainerAsync(c, root, "Fixtures/jpeg/color-srgb.jpg", new JpegXmpContainerAdapter());
+        await CheckContainerAsync(c, root, "Fixtures/heif/color-srgb.heic", new HeifXmpContainerAdapter());
+        await CheckContainerAsync(c, root, "Fixtures/raw/A7C01489.ARW", new TiffXmpContainerAdapter());
 
         var jpegWithoutXmp = Path.Combine(root, "without-xmp.jpg");
         await File.WriteAllBytesAsync(jpegWithoutXmp, [0xFF, 0xD8, 0xFF, 0xD9]);
@@ -78,7 +78,7 @@ internal static class XmpContainerChecks
 
     private static async Task CheckRatingConcurrencyAsync(Checks c, string root)
     {
-        var path = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root);
+        var path = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root);
         var image = new ImageFile(new LocalFileRef(path));
         var group = PhotoGroupMap.Build([image], false, Rules()).GroupFor(image)!;
         var service = new RatingService();

@@ -11,3 +11,11 @@
 *.jpeg          binary
 *.heic          binary
 *.heif          binary
+*.arw           binary
+*.ttf           binary
+*.woff2         binary
+*.icns          binary
+*.ico           binary
+
+# 跨平台脚本：统一 LF 入库，避免 Windows 检出后 bash 直接不可执行
+*.sh            text eol=lf

@@ -37,8 +37,8 @@ internal static class ContainerSafetyRegressionChecks
 
     private static readonly string[] ArwFixtures =
     [
-        "TestCase/A7C01489.ARW",
-        "TestCase/A7C01495.ARW",
+        "Fixtures/raw/A7C01489.ARW",
+        "Fixtures/raw/A7C01495.ARW",
     ];
 
     private static async Task CheckArwRoundTripAsync(Checks c, string root, Func<string, IFileRef> fileRef)

@@ -14,7 +14,7 @@ PhotoViewer 是面向摄影师的跨平台选片应用（JPG/HEIF 浏览、评�
 - **设计规范总则（UI 改动先改设计再四端执行、设计 ID、令牌、Web 参考壳）**：[Design/README.md](Design/README.md)
 - UI 行为规则、平台实现与验收状态：[Design/spec/](Design/spec/00-principles.md) · [Design/platforms.md](Design/platforms.md) · [Design/status.md](Design/status.md)
 - 当前重构进度、分支与下一步：[Plans/native-rebuild-handoff.md](Plans/native-rebuild-handoff.md) · 收尾阶段：[Plans/native-rebuild-phase-6.md](Plans/native-rebuild-phase-6.md)
-- AI 训练独立仓：[Training/README.md](Training/README.md) · [Training/AGENTS.md](Training/AGENTS.md)
+- AI 训练独立仓（需另克隆到 `Training/`，主库忽略）：[PhotoViewer-Training](https://github.com/XiaoJHcc/PhotoViewer-Training)
 
 ## 项目结构
 
@@ -28,10 +28,11 @@ PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（Bootstrap/主题/门面）
 PhotoViewer.Web/              # Web 参考壳：只依据 Design/ 实现的主屏（ES module，零依赖，合成照片）
 Tools/                        # 诊断与维护工具
+Fixtures/                     # 验收素材（色卡/HEIF/RAW，四端验收与 Core 契约自检共用）
 Training/                     # AI 训练独立 git 仓库（主库忽略）
 Design/                       # 设计规范（总则/spec/令牌/冻结基线）、架构说明与验收状态
 Plans/                        # 方案、阶段清单与任务进度
-release/                      # 发布产物
+release/                      # 构建与验收产物（报告、截图、安装包）
 ```
 
 ## 模块手册

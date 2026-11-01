@@ -31,7 +31,7 @@ internal static class RatingTransactionRegressionChecks
         var rules = Rules(("jpg", "JPG", ".jpg"));
 
         // 预检本身必须零写入：字节、长度、mtime 都不能变。
-        var probePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "probe-prepare.jpg");
+        var probePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "probe-prepare.jpg");
         var probeBytes = await File.ReadAllBytesAsync(probePath);
         var probeModified = File.GetLastWriteTimeUtc(probePath);
         var probeStore = XmpRatingStoreFactory.Create(new LocalFileRef(probePath));
@@ -48,7 +48,7 @@ internal static class RatingTransactionRegressionChecks
         }
 
         // 值不同：只读 sidecar 必须让整组在首次修改前失败，安全模式关闭也不例外。
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "readonly-side.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "readonly-side.jpg");
         var photoBytes = await File.ReadAllBytesAsync(photoPath);
         var sidecarPath = Path.Combine(root, "readonly-side.xmp");
         var sidecarBytes = Sidecar("5");
@@ -73,7 +73,7 @@ internal static class RatingTransactionRegressionChecks
         }
 
         // 值相同：同值 NoChange 也要证明来源可写，不能被“无需写入”冒充成功。
-        var samePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "readonly-same.jpg");
+        var samePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "readonly-same.jpg");
         var sameBytes = await File.ReadAllBytesAsync(samePath);
         var sameSidecarPath = Path.Combine(root, "readonly-same.xmp");
         var sameSidecarBytes = Sidecar("3");
@@ -103,7 +103,7 @@ internal static class RatingTransactionRegressionChecks
         c.Section("同值 NoChange 期间外部改值不得成功");
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "nochange-ext.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "nochange-ext.jpg");
         var photoBytes = await File.ReadAllBytesAsync(photoPath);
         var sidecarPath = Path.Combine(root, "nochange-ext.xmp");
         await File.WriteAllBytesAsync(sidecarPath, Sidecar("3"));
@@ -132,7 +132,7 @@ internal static class RatingTransactionRegressionChecks
         c.Section("同值 NoChange 期间来源被同值改写也不得成功");
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "nochange-rewrite.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "nochange-rewrite.jpg");
         var sidecarPath = Path.Combine(root, "nochange-rewrite.xmp");
         await File.WriteAllBytesAsync(sidecarPath, Sidecar("3"));
 
@@ -163,7 +163,7 @@ internal static class RatingTransactionRegressionChecks
     {
         c.Section("多份内嵌 XMP：一包 Rated 一包 Missing 判冲突");
 
-        var fixturePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "multi-missing-src.jpg");
+        var fixturePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "multi-missing-src.jpg");
         var fixture = await File.ReadAllBytesAsync(fixturePath);
         var (offset, length) = FindCanonicalXmpSegment(fixture);
         var ratedSegment = fixture.AsSpan(offset, length).ToArray();
@@ -210,7 +210,7 @@ internal static class RatingTransactionRegressionChecks
         c.Section("写入后新增 sidecar 不得算成功（写后回滚）");
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "added-source.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "added-source.jpg");
         var photoBytes = await File.ReadAllBytesAsync(photoPath);
         var sidecarPath = Path.Combine(root, "added-source.xmp");
         if (File.Exists(sidecarPath)) File.Delete(sidecarPath);
@@ -242,7 +242,7 @@ internal static class RatingTransactionRegressionChecks
         c.Section("写入后 sidecar 消失不得算成功");
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "removed-source.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "removed-source.jpg");
         var photoBytes = await File.ReadAllBytesAsync(photoPath);
         var sidecarPath = Path.Combine(root, "removed-source.xmp");
         await File.WriteAllBytesAsync(sidecarPath, Sidecar("3"));
@@ -278,7 +278,7 @@ internal static class RatingTransactionRegressionChecks
         c.Section("Unreadable 与 Invalid 的语义区分");
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
-        var photoPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "unreadable.jpg");
+        var photoPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "unreadable.jpg");
         var sidecarPath = Path.Combine(root, "unreadable.xmp");
         await File.WriteAllBytesAsync(sidecarPath, Sidecar("3"));
 

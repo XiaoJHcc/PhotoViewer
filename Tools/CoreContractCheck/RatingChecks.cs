@@ -16,6 +16,10 @@ namespace CoreContractCheck;
 /// <summary>评分来源、区间定位、整组写入与筛选语义的契约自检。</summary>
 internal static class RatingChecks
 {
+    /// <summary>内置的最小合法 PNG（8×8 灰），供 PNG 事务边界用例合成样本，不依赖验收截图产物。</summary>
+    private static readonly byte[] PlainPng = Convert.FromBase64String(
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFUlEQVR42mNsaGhgwAaYGHCAwSkBADAXAZDUexXGAAAAAElFTkSuQmCC");
+
     public static async Task RunAsync(Checks c, string root)
     {
         await CheckLocatorAsync(c);
@@ -203,7 +207,7 @@ internal static class RatingChecks
     {
         c.Section("ARW 内嵌写入、等长与不建 sidecar");
 
-        var path = CopyFixture("TestCase/A7C01489.ARW", root);
+        var path = CopyFixture("Fixtures/raw/A7C01489.ARW", root);
         var original = await File.ReadAllBytesAsync(path);
         var file = new LocalFileRef(path);
         var store = XmpRatingStoreFactory.Create(file);
@@ -262,7 +266,7 @@ internal static class RatingChecks
         c.Equal("ARW -1 改写语义", XmpRatingState.Rejected,
             XmpRatingReader.ReadPacket(negativePacket, XmpRatingSource.Embedded).State);
 
-        var heifPath = CopyFixture("release/native-p2-heif/color-srgb.heic", root, "embedded.heic");
+        var heifPath = CopyFixture("Fixtures/heif/color-srgb.heic", root, "embedded.heic");
         var heifOriginal = await File.ReadAllBytesAsync(heifPath);
         var heifStore = XmpRatingStoreFactory.Create(new LocalFileRef(heifPath));
         c.Equal("HEIF 内嵌初始值", 3, (await heifStore.ReadAsync()).Value);
@@ -281,8 +285,8 @@ internal static class RatingChecks
     {
         c.Section("内嵌/sidecar 独立来源与组内去重");
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "pair.jpg");
-        var arwPath = CopyFixture("TestCase/A7C01489.ARW", root, "pair.ARW");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "pair.jpg");
+        var arwPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "pair.ARW");
         var sidecarPath = Path.Combine(root, "pair.xmp");
         await File.WriteAllBytesAsync(sidecarPath, Sidecar("5"));
 
@@ -341,7 +345,7 @@ internal static class RatingChecks
 
         c.True("组内三方一致后无冲突", !group.HasRatingConflict);
 
-        var noSidecarPath = CopyFixture("TestCase/A7C01489.ARW", root, "solo.ARW");
+        var noSidecarPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "solo.ARW");
         var solo = new ImageFile(new LocalFileRef(noSidecarPath));
         var soloGroup = PhotoGroupMap.Build([solo], false, rules).GroupFor(solo)!;
         var soloResult = await new RatingService().SetRatingAsync(soloGroup, 5, safeMode: true);
@@ -351,8 +355,8 @@ internal static class RatingChecks
         c.Equal("无 sidecar 的 ARW 写回内嵌", 5,
             (await XmpRatingStoreFactory.Create(new LocalFileRef(noSidecarPath)).ReadAsync()).Value);
 
-        var noXmpPath = CopyFixture(
-            "release/native-p2-acceptance/toolbar-rating-commands.png", root, "noxmp.png");
+        var noXmpPath = Path.Combine(root, "noxmp.png");
+        await File.WriteAllBytesAsync(noXmpPath, PlainPng);
         var noXmp = await RatingSourceReader.ReadEmbeddedAsync(new LocalFileRef(noXmpPath));
         c.Equal("没有 XMP 的内嵌来源是 Missing", XmpRatingState.Missing, noXmp.State);
         c.Equal("Missing 不冒充 0 星数值", null, noXmp.ValueOrNull);
@@ -375,8 +379,8 @@ internal static class RatingChecks
     {
         c.Section("PNG 事务入口明确 Unsupported 且零修改");
 
-        var withXmpPath = CopyFixture(
-            "release/native-p2-acceptance/toolbar-rating-commands.png", root, "canonical-xmp.png");
+        var withXmpPath = Path.Combine(root, "canonical-xmp.png");
+        await File.WriteAllBytesAsync(withXmpPath, PlainPng);
         var withXmpFile = new LocalFileRef(withXmpPath);
         var canonicalBytes = Packet(
             "<rdf:Description rdf:about=\"\" xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:Rating=\"3\"/>");
@@ -412,7 +416,7 @@ internal static class RatingChecks
     {
         c.Section("已有 sidecar 的空/损坏状态与预检");
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "side.jpg");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "side.jpg");
         var jpgOriginal = await File.ReadAllBytesAsync(jpgPath);
         var sidecarPath = Path.Combine(root, "side.xmp");
         var rules = Rules(("jpg", "JPG", ".jpg"));
@@ -450,7 +454,7 @@ internal static class RatingChecks
         c.Section("已有 canonical XMP 缺 Rating 的结构化插入");
 
         var (arwPath, arwBefore, arwPacketOffset, arwPacketLength) = await CreateNoRatingCopyAsync(
-            "TestCase/A7C01489.ARW", root, "insert.ARW", new TiffXmpContainerAdapter());
+            "Fixtures/raw/A7C01489.ARW", root, "insert.ARW", new TiffXmpContainerAdapter());
         var arwFile = new LocalFileRef(arwPath);
         var arwStore = XmpRatingStoreFactory.Create(arwFile);
         c.Equal("ARW 缺 Rating 读为 Missing", XmpRatingState.Missing, (await arwStore.ReadAsync()).State);
@@ -489,7 +493,7 @@ internal static class RatingChecks
         }
 
         var (hifPath, hifBefore, hifPacketOffset, hifPacketLength) = await CreateNoRatingCopyAsync(
-            "release/native-p2-heif/color-srgb.heic", root, "insert.hif", new HeifXmpContainerAdapter());
+            "Fixtures/heif/color-srgb.heic", root, "insert.hif", new HeifXmpContainerAdapter());
         var hifFile = new LocalFileRef(hifPath);
         var hifStore = XmpRatingStoreFactory.Create(hifFile);
         c.Equal("HEIF 缺 Rating 读为 Missing", XmpRatingState.Missing, (await hifStore.ReadAsync()).State);
@@ -619,7 +623,7 @@ internal static class RatingChecks
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
 
-        var brokenPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "broken-group.jpg");
+        var brokenPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "broken-group.jpg");
         var brokenOriginal = await File.ReadAllBytesAsync(brokenPath);
         var brokenSidecarPath = Path.Combine(root, "broken-group.xmp");
         var brokenSidecarBytes = Packet(
@@ -634,7 +638,7 @@ internal static class RatingChecks
         c.Bytes("裸实体失败不改照片", brokenOriginal, await File.ReadAllBytesAsync(brokenPath));
         c.Bytes("裸实体失败不改 sidecar", brokenSidecarBytes, await File.ReadAllBytesAsync(brokenSidecarPath));
 
-        var duplicatePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "dup-group.jpg");
+        var duplicatePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "dup-group.jpg");
         var duplicateOriginal = await File.ReadAllBytesAsync(duplicatePath);
         var duplicateSidecarPath = Path.Combine(root, "dup-group.xmp");
         var duplicateSidecarBytes = Packet(
@@ -657,7 +661,7 @@ internal static class RatingChecks
 
         var rules = Rules(("arw", "RAW", ".arw"), ("hif", "HEIF", ".hif"));
 
-        var arwPath = CopyFixture("TestCase/A7C01489.ARW", root, "negative.ARW");
+        var arwPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "negative.ARW");
         var arw = new ImageFile(new LocalFileRef(arwPath));
         var arwGroup = PhotoGroupMap.Build([arw], false, rules).GroupFor(arw)!;
         var arwNegative = await new RatingService().SetRatingAsync(arwGroup, -1, safeMode: true);
@@ -672,7 +676,7 @@ internal static class RatingChecks
             .Single(file => file.File.StorageId == arw.File.StorageId)
             .EmbeddedAfter?.Value);
 
-        var hifPath = CopyFixture("release/native-p2-heif/color-srgb.heic", root, "negative.hif");
+        var hifPath = CopyFixture("Fixtures/heif/color-srgb.heic", root, "negative.hif");
         var hif = new ImageFile(new LocalFileRef(hifPath));
         var hifGroup = PhotoGroupMap.Build([hif], false, rules).GroupFor(hif)!;
         var hifNegative = await new RatingService().SetRatingAsync(hifGroup, -1, safeMode: true);
@@ -684,7 +688,7 @@ internal static class RatingChecks
             .Single(file => file.File.StorageId == hif.File.StorageId)
             .EmbeddedAfter?.Value);
 
-        var pairPath = CopyFixture("TestCase/A7C01489.ARW", root, "negative-pair.ARW");
+        var pairPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "negative-pair.ARW");
         var sidecarPath = Path.Combine(root, "negative-pair.xmp");
         var sidecarBytes = Sidecar("5");
         await File.WriteAllBytesAsync(sidecarPath, sidecarBytes);
@@ -712,7 +716,7 @@ internal static class RatingChecks
     {
         c.Section("安全模式与 revision 的外部修改比对");
 
-        var path = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "external.jpg");
+        var path = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "external.jpg");
         var file = new LocalFileRef(path);
 
         var safeStore = XmpRatingStoreFactory.Create(file);
@@ -737,7 +741,7 @@ internal static class RatingChecks
             (await XmpRatingStoreFactory.Create(file).ReadAsync()).Value);
 
         // 仅 mtime 变化（内容不变）也必须被 revision 拦截。
-        var mtimePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "mtime.jpg");
+        var mtimePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "mtime.jpg");
         var mtimeFile = new LocalFileRef(mtimePath);
         var mtimeStore = XmpRatingStoreFactory.Create(mtimeFile);
         var mtimePreparation = await mtimeStore.PrepareAsync(4, safeMode: true);
@@ -750,7 +754,7 @@ internal static class RatingChecks
         c.Equal("mtime 拦截后内容保持原值", 3,
             (await XmpRatingStoreFactory.Create(mtimeFile).ReadAsync()).Value);
 
-        var sizePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "size.jpg");
+        var sizePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "size.jpg");
         var sizeFile = new LocalFileRef(sizePath);
         var sizeStore = XmpRatingStoreFactory.Create(sizeFile);
         var sizePreparation = await sizeStore.PrepareAsync(4, safeMode: false);
@@ -767,7 +771,7 @@ internal static class RatingChecks
             (await XmpRatingStoreFactory.Create(sizeFile).ReadAsync()).Value);
 
         // revision 完全不变（size/mtime 相同）但包内其它位置被外部修改：安全模式必须逐字节发现。
-        var packetPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "packet-change.jpg");
+        var packetPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "packet-change.jpg");
         var packetFile = new LocalFileRef(packetPath);
         var packetStore = XmpRatingStoreFactory.Create(packetFile);
         var packetPreparation = await packetStore.PrepareAsync(4, safeMode: true);
@@ -790,7 +794,7 @@ internal static class RatingChecks
             (await XmpRatingStoreFactory.Create(packetFile).ReadAsync()).Value);
 
         // 安全模式关闭、revision 未变时仍按预检结果提交并做写后校验。
-        var quietPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "quiet.jpg");
+        var quietPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "quiet.jpg");
         var quietStore = XmpRatingStoreFactory.Create(new LocalFileRef(quietPath));
         var quietPreparation = await quietStore.PrepareAsync(1, safeMode: false);
         var quietReceipt = await quietStore.CommitAsync(quietPreparation);
@@ -805,7 +809,7 @@ internal static class RatingChecks
     {
         c.Section("同值 NoChange");
 
-        var path = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "same.jpg");
+        var path = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "same.jpg");
         var original = await File.ReadAllBytesAsync(path);
         var image = new ImageFile(new LocalFileRef(path));
         var rules = Rules(("jpg", "JPG", ".jpg"));
@@ -830,7 +834,7 @@ internal static class RatingChecks
     {
         c.Section("预检失败零修改");
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "precheck.jpg");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "precheck.jpg");
         var tiffPath = Path.Combine(root, "precheck.tif");
         var tiffBytes = Encoding.ASCII.GetBytes("not-a-tiff");
         await File.WriteAllBytesAsync(tiffPath, tiffBytes);
@@ -858,8 +862,8 @@ internal static class RatingChecks
     {
         c.Section("写入失败逆序回滚与 Partial 真值");
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "roll.jpg");
-        var heifPath = CopyFixture("release/native-p2-heif/color-srgb.heic", root, "roll.hif");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "roll.jpg");
+        var heifPath = CopyFixture("Fixtures/heif/color-srgb.heic", root, "roll.hif");
         var jpgOriginal = await File.ReadAllBytesAsync(jpgPath);
         var heifOriginal = await File.ReadAllBytesAsync(heifPath);
         var rules = Rules(("jpg", "JPG", ".jpg"), ("heif", "HEIF", ".hif"));
@@ -898,8 +902,8 @@ internal static class RatingChecks
         c.NoTempArtifacts("回滚路径无临时文件", root);
 
         // 安全模式关闭：停止后续写入，已写来源保持磁盘真值，不假装整组一致。
-        var noSafeJpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "nosafe.jpg");
-        var noSafeHeifPath = CopyFixture("release/native-p2-heif/color-srgb.heic", root, "nosafe.hif");
+        var noSafeJpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "nosafe.jpg");
+        var noSafeHeifPath = CopyFixture("Fixtures/heif/color-srgb.heic", root, "nosafe.hif");
         var noSafeHeifOriginal = await File.ReadAllBytesAsync(noSafeHeifPath);
         var noSafeJpg = new ImageFile(new LocalFileRef(noSafeJpgPath));
         var noSafeHeif = new ImageFile(new LocalFileRef(noSafeHeifPath));
@@ -925,7 +929,7 @@ internal static class RatingChecks
     {
         c.Section("多份 XMP / extended 写入预检");
 
-        var sourcePath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "multi-source.jpg");
+        var sourcePath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "multi-source.jpg");
         var sourceBytes = await File.ReadAllBytesAsync(sourcePath);
         var segment = FindCanonicalXmpSegment(sourceBytes);
 
@@ -976,8 +980,8 @@ internal static class RatingChecks
         var staleIndex = new RatingSidecarIndex();
         staleIndex.Add(new LocalFileRef(Path.Combine(root, "unrelated.xmp")));
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "stale-write.jpg");
-        var arwPath = CopyFixture("TestCase/A7C01489.ARW", root, "stale-write.ARW");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "stale-write.jpg");
+        var arwPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "stale-write.ARW");
         var sidecarPath = Path.Combine(root, "stale-write.xmp");
         var sidecarBytes = Sidecar("5");
         await File.WriteAllBytesAsync(sidecarPath, sidecarBytes);
@@ -1019,11 +1023,11 @@ internal static class RatingChecks
         var folderPath = Path.Combine(root, "folder-index");
         Directory.CreateDirectory(folderPath);
         var stagePath = CopyFixture(
-            "release/native-p2-fixtures/color-srgb.jpg", folderPath, "stage.jpg");
+            "Fixtures/jpeg/color-srgb.jpg", folderPath, "stage.jpg");
         await File.WriteAllBytesAsync(Path.Combine(folderPath, "stage.xmp"), Sidecar("5"));
-        CopyFixture("release/native-p2-fixtures/color-srgb.jpg", folderPath, "other.jpg");
-        CopyFixture("release/native-p2-fixtures/color-srgb.jpg", folderPath, "shared.jpg");
-        CopyFixture("TestCase/A7C01489.ARW", folderPath, "shared.ARW");
+        CopyFixture("Fixtures/jpeg/color-srgb.jpg", folderPath, "other.jpg");
+        CopyFixture("Fixtures/jpeg/color-srgb.jpg", folderPath, "shared.jpg");
+        CopyFixture("Fixtures/raw/A7C01489.ARW", folderPath, "shared.ARW");
         await File.WriteAllBytesAsync(Path.Combine(folderPath, "shared.xmp"), Sidecar("5"));
 
         using var main = new MainViewModel();
@@ -1070,7 +1074,7 @@ internal static class RatingChecks
 
         // 新增目标：目录已打开但目标未参与枚举，副作用读取必须仍能找到它的 sidecar。
         var addedPath = CopyFixture(
-            "release/native-p2-fixtures/color-srgb.jpg", folderPath, "added.jpg");
+            "Fixtures/jpeg/color-srgb.jpg", folderPath, "added.jpg");
         await File.WriteAllBytesAsync(Path.Combine(folderPath, "added.xmp"), Sidecar("3"));
         await main.FolderVM.OpenImageAsync(new LocalFileRef(addedPath));
         await WaitUntilAsync(
@@ -1090,7 +1094,7 @@ internal static class RatingChecks
 
         // 非 Applied 失败也必须按磁盘真值重读，而不是沿用内存旧值。
         var stalePath = CopyFixture(
-            "release/native-p2-fixtures/color-srgb.jpg", folderPath, "stale.jpg");
+            "Fixtures/jpeg/color-srgb.jpg", folderPath, "stale.jpg");
         await File.WriteAllBytesAsync(
             Path.Combine(folderPath, "stale.xmp"), Encoding.UTF8.GetBytes("<x:xmpmeta><rdf:RDF>"));
         await main.FolderVM.OpenImageAsync(new LocalFileRef(stalePath));
@@ -1136,7 +1140,7 @@ internal static class RatingChecks
     {
         c.Section("评分刷新序号：旧刷新不覆盖新状态");
 
-        var path = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "refresh-seq.jpg");
+        var path = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "refresh-seq.jpg");
         await XmpRatingStoreFactory.Create(new LocalFileRef(path)).WriteAsync(1, safeMode: true);
 
         var image = new ImageFile(new LocalFileRef(path));
@@ -1453,7 +1457,7 @@ internal static class RatingChecks
 
         var rules = Rules(("jpg", "JPG", ".jpg"));
 
-        var oneShotPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "flush-once.jpg");
+        var oneShotPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "flush-once.jpg");
         var oneShotOriginal = await File.ReadAllBytesAsync(oneShotPath);
         var oneShotImage = new ImageFile(new LocalFileRef(oneShotPath));
         var oneShotGroup = PhotoGroupMap.Build([oneShotImage], false, rules).GroupFor(oneShotImage)!;
@@ -1464,7 +1468,7 @@ internal static class RatingChecks
         c.Equal("已写后抛错且自愈成功返回 RolledBack", RatingWriteOutcome.RolledBack, oneShotResult.Outcome);
         c.Bytes("自愈成功后原字节恢复", oneShotOriginal, await File.ReadAllBytesAsync(oneShotPath));
 
-        var persistentPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "flush-all.jpg");
+        var persistentPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "flush-all.jpg");
         var persistentImage = new ImageFile(new LocalFileRef(persistentPath));
         var persistentGroup = PhotoGroupMap.Build([persistentImage], false, rules).GroupFor(persistentImage)!;
         var persistentStore = new FlushFailingFileRef(new LocalFileRef(persistentPath), failAll: true);
@@ -1480,7 +1484,7 @@ internal static class RatingChecks
         c.True("自愈失败仍标记来源被写过",
             persistentResult.Files.SelectMany(file => file.Sources).Any(source => source.Written));
 
-        var capabilityPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "no-seek.jpg");
+        var capabilityPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "no-seek.jpg");
         var capabilityOriginal = await File.ReadAllBytesAsync(capabilityPath);
         var capabilityFile = new CapabilityFileRef(
             new LocalFileRef(capabilityPath),
@@ -1545,8 +1549,8 @@ internal static class RatingChecks
     {
         c.Section("代表内嵌数字筛选、已拒绝与冲突筛选");
 
-        var jpgPath = CopyFixture("release/native-p2-fixtures/color-srgb.jpg", root, "filter.jpg");
-        var rawPath = CopyFixture("TestCase/A7C01489.ARW", root, "filter.ARW");
+        var jpgPath = CopyFixture("Fixtures/jpeg/color-srgb.jpg", root, "filter.jpg");
+        var rawPath = CopyFixture("Fixtures/raw/A7C01489.ARW", root, "filter.ARW");
         await File.WriteAllBytesAsync(Path.Combine(root, "filter.xmp"), Sidecar("1"));
 
         var jpg = new ImageFile(new LocalFileRef(jpgPath));

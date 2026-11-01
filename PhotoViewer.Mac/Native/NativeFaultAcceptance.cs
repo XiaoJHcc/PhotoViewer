@@ -26,8 +26,8 @@ public static class NativeFaultAcceptance
         Directory.CreateDirectory(root);
         string small = Path.Combine(root, "fault-good.jpg");
         string large = Path.Combine(root, "fault-full-fail.jpg");
-        File.Copy(Path.GetFullPath("release/native-p2-fixtures/color-srgb.jpg"), small, true);
-        File.Copy(Path.GetFullPath("release/native-p2-large-fixtures/color-p3-large.jpg"), large, true);
+        File.Copy(FixturePaths.Resolve("jpeg", "color-srgb.jpg"), small, true);
+        File.Copy(FixturePaths.Resolve("jpeg-large", "color-p3-large.jpg"), large, true);
         window.Window.SetFrame(new CGRect(100, 100, 1180, 800), true);
 
         bool decoderInstalled = false;
@@ -203,7 +203,7 @@ public static class NativeFaultAcceptance
     private static async Task VerifyAnalysisFailureAsync(MacMainWindow window, string root, List<string> checks)
     {
         string path = Path.Combine(root, $"analysis-fail-{DateTime.UtcNow.Ticks}.jpg");
-        File.Copy(Path.GetFullPath("release/native-p2-fixtures/color-srgb.jpg"), path, true);
+        File.Copy(FixturePaths.Resolve("jpeg", "color-srgb.jpg"), path, true);
         byte[]? originalModel = DinoModelResources.TryLoadModelBytes();
         bool previousImmediate = window.Main.Settings.AnalysisImmediateCompute;
         bool previousVisible = window.Main.IsAnalysisViewVisible;
@@ -236,7 +236,7 @@ public static class NativeFaultAcceptance
     private static async Task VerifyRawCapabilityAsync(string root, List<string> checks)
     {
         var decoder = new ApplePresentationDecoder();
-        string arw = Path.GetFullPath("TestCase/A7C01489.ARW");
+        string arw = FixturePaths.Resolve("raw", "A7C01489.ARW");
         if (File.Exists(arw))
         {
             using var full = await decoder.DecodeAsync(new LocalFileRef(arw), null, PixelEncoding.Rgba8, CancellationToken.None)
@@ -248,11 +248,11 @@ public static class NativeFaultAcceptance
         }
         else
         {
-            checks.Add("NOTE scope04: TestCase/A7C01489.ARW missing; full-resolution RAW size not asserted");
+            checks.Add("NOTE scope04: Fixtures/raw/A7C01489.ARW missing; full-resolution RAW size not asserted");
         }
 
         // 伪造 .arw（JPEG 负载）让 RAW 引擎创建/渲染失败，核对回退路径报出的是容器真实尺寸。
-        string jpeg = Path.GetFullPath("release/native-p2-fixtures/color-srgb.jpg");
+        string jpeg = FixturePaths.Resolve("jpeg", "color-srgb.jpg");
         string fallbackPath = Path.Combine(root, "fault-raw-fallback.arw");
         File.Copy(jpeg, fallbackPath, true);
         using var expected = await decoder.DecodeAsync(new LocalFileRef(jpeg), null, PixelEncoding.Rgba8, CancellationToken.None)

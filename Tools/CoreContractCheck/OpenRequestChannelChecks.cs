@@ -155,7 +155,7 @@ internal static class OpenRequestChannelChecks
         }
         else
         {
-            c.Skip("刷新重读属性/EXIF/星级", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("刷新重读属性/EXIF/星级", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
         }
 
         // sidecar 是独立来源：新增后刷新可见，删除后刷新不再复活（返回前已重读完成）。
@@ -248,7 +248,7 @@ internal static class OpenRequestChannelChecks
         hasFixtures &= WritePhoto(bPath);
         if (!hasFixtures)
         {
-            c.Skip("刷新权限不足保留目录", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("刷新权限不足保留目录", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
             return;
         }
 
@@ -318,7 +318,7 @@ internal static class OpenRequestChannelChecks
         hasFixtures &= WritePhoto(dPath);
         if (!hasFixtures)
         {
-            c.Skip("显式打开文件刷新整个父目录", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("显式打开文件刷新整个父目录", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
             return;
         }
 
@@ -502,7 +502,7 @@ internal static class OpenRequestChannelChecks
         }
         else
         {
-            c.Skip("单图刷新重读属性与评分", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("单图刷新重读属性与评分", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
         }
 
         // 文件被删除后再激活：刷新失败必须有可见原因（STATE-02/STATE-03），不能静默。
@@ -521,7 +521,7 @@ internal static class OpenRequestChannelChecks
     private static async Task CheckStaleMetadataAsync(Checks c, string root)
     {
         c.Section("过期元数据读取不覆盖新来源");
-        var fixture = Path.Combine("release", "native-p2-fixtures", "color-srgb.jpg");
+        var fixture = Path.Combine("Fixtures", "jpeg", "color-srgb.jpg");
         if (!File.Exists(fixture))
         {
             c.Skip("过期读取不覆盖新评分", "缺少夹具 " + fixture);
@@ -601,7 +601,7 @@ internal static class OpenRequestChannelChecks
         var targetPath = Path.Combine(directory, "target.jpg");
         if (!WritePhoto(targetPath))
         {
-            c.Skip("跨目录打开失败回退单图", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("跨目录打开失败回退单图", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
             return;
         }
 
@@ -672,7 +672,7 @@ internal static class OpenRequestChannelChecks
         Directory.CreateDirectory(newDirectory);
         if (!WritePhoto(Path.Combine(newDirectory, "a.jpg")))
         {
-            c.Skip("选择器打开新目录 Fit", "缺少夹具 release/native-p2-fixtures/color-srgb.jpg");
+            c.Skip("选择器打开新目录 Fit", "缺少夹具 Fixtures/jpeg/color-srgb.jpg");
             return;
         }
 
@@ -689,7 +689,7 @@ internal static class OpenRequestChannelChecks
     private static async Task CheckLoadSessionIdentityAsync(Checks c, string root)
     {
         c.Section("展示会话同一身份幂等");
-        var fixture = Path.Combine("release", "native-p2-fixtures", "color-srgb.jpg");
+        var fixture = Path.Combine("Fixtures", "jpeg", "color-srgb.jpg");
         if (!File.Exists(fixture))
         {
             c.Skip("同一 StorageId 的 SetFile 不换代", "缺少夹具 " + fixture);
@@ -746,7 +746,7 @@ internal static class OpenRequestChannelChecks
     /// <summary>放一张真实 JPEG（夹具可用时）或占位文件，返回是否用了真实夹具。</summary>
     private static bool WritePhoto(string path)
     {
-        var fixture = Path.Combine("release", "native-p2-fixtures", "color-srgb.jpg");
+        var fixture = Path.Combine("Fixtures", "jpeg", "color-srgb.jpg");
         if (File.Exists(fixture))
         {
             File.Copy(fixture, path, overwrite: true);

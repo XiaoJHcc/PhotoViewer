@@ -43,7 +43,7 @@
 ### 2.2 写入定位与安全写
 
 - [x] 逐来源生成写入计划：容器适配器按结构定位 canonical XMP 与 Rating 值区间；移除任何正则/全文搜索定位。
-- [x] 样本核对：`TestCase/A7C01489.ARW`、`TestCase/A7C01495.ARW` 的 IFD0 均含 tag 700（XMP），真实 ARW 走现有条目即可，不需要新增结构。
+- [x] 样本核对：`Fixtures/raw/A7C01489.ARW`、`Fixtures/raw/A7C01495.ARW` 的 IFD0 均含 tag 700（XMP），真实 ARW 走现有条目即可，不需要新增结构。
 - [x] 最小写入区间；等长优先；`-1` 与 0–5 互换用合法 XML 空白吸收位数差。
 - [x] ARW / TIFF 改写已有 IFD0 tag 700 内嵌；HEIF 家族改写已有标准 `mime` XMP 项；已有 sidecar 同步写。
 - [x] 写后回读 `xap:Rating` 与容器记账字段（段长、RIFF、tag count/offset、`iloc`）。

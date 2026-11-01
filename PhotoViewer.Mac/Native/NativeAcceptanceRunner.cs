@@ -176,8 +176,9 @@ public static class NativeAcceptanceRunner
                 throw new InvalidOperationException("设置落盘与关闭回写不一致");
             results.Add(new NativeCheck { Check = "settings", Categories = 5, JsonRoundTrip = true });
             string firstPath = first.File.RequireLocalPath();
-            bool generatedFixture = firstPath.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-fixtures" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
-            bool rawCopy = firstPath.Contains(System.IO.Path.DirectorySeparatorChar + "native-p2-raw" + System.IO.Path.DirectorySeparatorChar, StringComparison.Ordinal);
+            // 3 星色卡夹具可就地评分；RAW 只评分本地副本（目录名含 native-p2-raw），不改仓库素材。
+            bool generatedFixture = FixturePaths.LocatedIn(firstPath, "jpeg");
+            bool rawCopy = firstPath.Replace('\\', '/').Contains("/native-p2-raw/", StringComparison.Ordinal);
             if (generatedFixture || rawCopy)
             {
                 await window.RateAsync(first, 3);

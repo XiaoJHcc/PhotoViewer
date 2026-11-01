@@ -45,7 +45,7 @@ def generate(destination: Path, large_output: Path | None = None) -> None:
     image.save(destination / "color-untagged-adobe.jpg", quality=100, subsampling=0, exif=metadata, xmp=rating_packet)
     if large_output is not None:
         # 6000×4000 Display P3 色卡：长边 ≥ 4000 才能让 iPad 的 2× 视口代理档成立（--pv-native-photo-check 必需素材）。
-        # 必须放在独立目录：Mac 回归会枚举 release/native-p2-fixtures 并只接受已登记的 color-* 名称。
+        # 必须放在独立目录：Mac 回归会枚举 Fixtures/jpeg 并只接受已登记的 color-* 名称。
         large_output.mkdir(parents=True, exist_ok=True)
         scale = 5.0
         size = (round(BASE_SIZE[0] * scale), round(BASE_SIZE[1] * scale))

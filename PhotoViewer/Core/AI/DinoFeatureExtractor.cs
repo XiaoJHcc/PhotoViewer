@@ -91,7 +91,7 @@ public static class DinoFeatureExtractor
         var bytes = _modelBytesOverride
             ?? DinoModelResources.TryLoadModelBytes()
             ?? throw new FileNotFoundException(
-                $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。运行 Training/onnx/export_dinov3_onnx.py 生成后重新构建。");
+                $"DINOv3 ONNX 模型未找到：{DinoModelResources.ModelAssetUri}。按 DEV.md「DINOv3 ONNX 模型」从独立仓 PhotoViewer-Training 导出到 PhotoViewer/Assets/Models/ 后重新构建。");
 
         var options = new SessionOptions
         {

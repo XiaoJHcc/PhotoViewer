@@ -50,7 +50,7 @@ internal static class NativeToolsAcceptance
             checks.Add($"exif: {groups} groups / {tags} tags, single virtualized NSTableView ({expectedRows} rows)");
             {
                 checks.Add(MeasureExif(page, host.Window, tools.ExifDetail, "jpg"));
-                string arwPath = System.IO.Path.GetFullPath("../TestCase/A7C01489.ARW");
+                string arwPath = FixturePaths.Resolve("raw", "A7C01489.ARW");
                 if (File.Exists(arwPath))
                 {
                     var arwFile = new ImageFile(new LocalFileRef(arwPath));

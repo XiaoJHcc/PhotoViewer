@@ -50,7 +50,7 @@ Release 发布通道仍为旧壳，原生通过 `--native` 进入；验收前不
 - `Tools/ColorTestTool`：23 项独立矩阵/传递函数、广色域负值/超一、非对齐行距与 8 位往返，最大线性分量误差 0.000488。
 - `Tools/generate-native-color-fixtures.py`：系统 ICC 三色域色块/灰阶 + 8 EXIF 方向，使用可写的 XMP Rating 测试槽。
 - `--pv-native-smoke <绝对图片路径>`：真实 AppKit 窗口、Metal 上屏、Full、翻图、共享外部打开队列、布局、五类设置实际落盘、无 Avalonia 主图副本、评级/CV/DINO/指纹三表索引读写。生成文件与 RAW 副本目录必须是 agent 自有测试目录。8 个 EXIF 方向独立 GPU 角点验证，ICC sRGB/P3/Adobe 与无 ICC EXIF Adobe 均通过。
-- `release/native-p2-acceptance/`：JSON 报告及实际原生控件绘制/GPU 照片帧合成图，构建及运行日志。设置/SQLite 测试独立持久化，原始 TestCase 照片未修改。
+- `release/native-p2-acceptance/`：JSON 报告及实际原生控件绘制/GPU 照片帧合成图，构建及运行日志。设置/SQLite 测试独立持久化，原始素材照片未修改。
 - 四平台构建：Mac、Windows、iOS 模拟器、Android 均已编译；Windows/iOS 0 警告，Mac NU1903 与 Android 14 项未改文件中的警告为现有基线。最终检查以阶段清单记录为准。
 
 最近程序化结果：ColorTestTool **23** 项；JPEG 色卡/八方向 **39** 项；RAW 副本 **17** 项；生成 HEIF（sRGB/P3）**14** 项。设置副本编辑期间缓存/键盘映射不变，关闭后同步运行时并实际落盘；分析输入的八方向与 GPU 对拍一致。HEIF 生成样本用于链路验证，不代替相机大图性能测试。
@@ -59,7 +59,7 @@ Release 发布通道仍为旧壳，原生通过 `--native` 进入；验收前不
 
 ```sh
 dotnet run --project Tools/ColorTestTool
-PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app/Contents/MacOS/PhotoViewer.Mac --native --pv-native-smoke "$PWD/release/native-p2-fixtures/color-srgb.jpg"
+PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app/Contents/MacOS/PhotoViewer.Mac --native --pv-native-smoke "$PWD/Fixtures/jpeg/color-srgb.jpg"
 ```
 
 色卡由 `Tools/generate-native-color-fixtures.py` 生成，需 Pillow 和 macOS 系统 ICC。报告包含实际等待加载的时间；RAW 冷图约 1.7–1.9s，尚未满足 fit <100ms 目标，不宣称性能门通过。原生设置绘制导出可能遗漏系统选中背景，最终以窗口实际显示为准。
@@ -70,7 +70,7 @@ PhotoViewer.Mac/bin/Debug/net10.0-macos/PhotoViewer.Mac.app/Contents/MacOS/Photo
 
 本轮最终复跑：`layout-main-final.log` 为 `PASS layout`，`layout-toolbar-final.log` 为 `PASS toolbar`，`layout-filmstrip-final.log` 为 `PASS filmstrip`，`layout-gpu-final.log` 为 `PASS 39 checks`（包括新等比导航帧上的八方向 GPU/分析口径采样）。`layout-build-final.log` 零错误、无新增编译警告，保留既有 NU1903；ONNX CoreML 分区提示是既有运行时信息。已修首批集合重载时业务数量先于 AppKit 数量就绪导致的越界布局日志，最终胶片条 stderr 无该告警。KimiCU 校准期间的真窗口截图归档为 `layout-native-window-col.jpg` / `layout-native-window-row.jpg` / `layout-legacy-window-col.jpg`；最终几何以报告为准（列布局计数行高最后从系统自然高度统一为旧版 17 点）。测试仅改自有 fixture 的评级槽，未写用户照片；当轮未标记设置手验、跨屏色彩及触控板手感通过 —— 这三项已于 **2026-10-16 由作者统一验收通过**（见文首）。
 
-工具栏对拍回归（2026-10-15）：`--pv-native-smoke --pv-native-toolbar <自有测试图片路径>`；两向布局与 830×650 / 700×480 / 1200×850 三档窗口验证整组排列不重叠、EXIF 小块与文字层级、方形按钮实际绘制像素、评分方向、显隐/排序/主次绑定、编号评分快捷命令、空照片状态，以及真实上一张/下一张和评分按钮。评分只写 `native-p2-toolbar-fixtures` 自有副本，读回 XMP 且确认主图不切换。全启用的超长命令组验证系统横向滚动。报告 `toolbar-ui-checks.txt`，按钮像素 `toolbar-button-surface.png`；实际 WindowServer 对拍截图为 `toolbar-legacy-reference.png` / `toolbar-native-before.png` / `toolbar-native-after.png`。本轮工具栏程序化 `PASS toolbar`，无新增编译警告；尺寸和材质属于当前原生表现，未冻结为四平台规格。
+工具栏对拍回归（2026-10-15）：`--pv-native-smoke --pv-native-toolbar <自有测试图片路径>`；两向布局与 830×650 / 700×480 / 1200×850 三档窗口验证整组排列不重叠、EXIF 小块与文字层级、方形按钮实际绘制像素、评分方向、显隐/排序/主次绑定、编号评分快捷命令、空照片状态，以及真实上一张/下一张和评分按钮。评分只写 `Fixtures/toolbar` 自有副本，读回 XMP 且确认主图不切换。全启用的超长命令组验证系统横向滚动。报告 `toolbar-ui-checks.txt`，按钮像素 `toolbar-button-surface.png`；实际 WindowServer 对拍截图为 `toolbar-legacy-reference.png` / `toolbar-native-before.png` / `toolbar-native-after.png`。本轮工具栏程序化 `PASS toolbar`，无新增编译警告；尺寸和材质属于当前原生表现，未冻结为四平台规格。
 
 胶片条定向回归：`--pv-native-smoke --pv-native-filmstrip <绝对图片路径>`，使用作者 `PhotoViewerTest` 的五组 HIF/ARW 与 12 张色卡，按 [FILM-01–04](../Design/ui-contract.md) 核对左右/上下布局、名称升降序、真实卡片点击不居中、普通赋值/交换/排序/筛选不抢位置、显式导航的动画中间帧与居中终点（首尾截断）、末次请求覆盖和点击/滚轮接管、显隐恢复定位、复用身份及横向鼠标滚轮。报告 `filmstrip-five-checks.txt` / `filmstrip-many-checks.txt`；不修改作者照片。触控板手感与滚动手感已于 2026-10-16 由作者验收通过；**系统"减少动态效果"开启态已由作者 2026-10-16 实测通过**。
 

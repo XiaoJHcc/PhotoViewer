@@ -458,10 +458,9 @@ PhotoViewer.Windows/.build-windows-native
 # Android 签名证书（本地敏感文件，勿提交）
 PhotoViewer.Android/signing.json
 PhotoViewer.Android/keystore/
-Tools/ExifTestTool/assets
 
 # DINOv3 ONNX 模型（Meta DINOv3 License，属受控分发 / gated model）
-# 不可直接入库。每个开发者本地跑 Training/onnx/export_dinov3_onnx.py 从 HF/ModelScope 权重生成。
+# 不可直接入库。导出脚本在独立仓 PhotoViewer-Training（检出到 Training/），见 DEV.md「DINOv3 ONNX 模型」。
 PhotoViewer/Assets/Models/*.onnx
 PhotoViewer/Assets/Models/*.onnx.data
 
@@ -486,3 +485,4 @@ Training/train/out/
 
 # Training 已拆分为独立仓库 PhotoViewer-Training（嵌套 git 仓库，勿在此跟踪）
 Training/
+

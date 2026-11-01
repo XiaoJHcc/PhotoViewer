@@ -138,7 +138,7 @@ internal static class NativeToolbarAcceptance
 
             window.Main.CurrentFile = first;
             await Task.Delay(200);
-            if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(first.File.RequireLocalPath())) == "native-p2-toolbar-fixtures")
+            if (System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(first.File.RequireLocalPath())) == "toolbar")
             {
                 int targetRating = first.Rating == 3 ? 2 : 3;
                 var ratingButton = window.ControlBar.Ratings[targetRating];
@@ -444,7 +444,7 @@ internal static class NativeToolbarAcceptance
         var entryId = entryFile.File.StorageId;
         bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
         string entryFilter = filter.SelectedRatingFilter;
-        string fixtures = System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures");
+        string fixtures = FixturePaths.Resolve("toolbar");
         var entryRatings = new Dictionary<string, int>(StringComparer.Ordinal);
         var entryLocalPaths = new Dictionary<string, string>(StringComparer.Ordinal);
         int entryRating = 0;
@@ -556,8 +556,8 @@ internal static class NativeToolbarAcceptance
             settings.ShowRating = true;
             window.Main.IsThumbnailViewVisible = true;
             Directory.CreateDirectory(root);
-            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), photoPath, true);
-            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-02.jpg"), cleanPath, true);
+            File.Copy(FixturePaths.Resolve("toolbar", "toolbar-01.jpg"), photoPath, true);
+            File.Copy(FixturePaths.Resolve("toolbar", "toolbar-02.jpg"), cleanPath, true);
             File.Delete(sidecarPath);
             await window.Main.FolderVM.OpenFolderAsync(new LocalFolderRef(root));
             await WaitAsync(() => window.Main.CurrentFile != null && window.Main.FolderVM.AllFiles.Count == 2, "冲突夹具载入");
@@ -924,9 +924,9 @@ internal static class NativeToolbarAcceptance
             settings.LayoutMode = LayoutMode.Row;
             filter.SelectedRatingFilter = "All";
             Directory.CreateDirectory(root);
-            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), livePath, true);
-            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-02.jpg"), otherPath, true);
-            File.Copy(System.IO.Path.GetFullPath("release/native-p2-toolbar-fixtures/toolbar-01.jpg"), failPath, true);
+            File.Copy(FixturePaths.Resolve("toolbar", "toolbar-01.jpg"), livePath, true);
+            File.Copy(FixturePaths.Resolve("toolbar", "toolbar-02.jpg"), otherPath, true);
+            File.Copy(FixturePaths.Resolve("toolbar", "toolbar-01.jpg"), failPath, true);
             File.Delete(liveSidecar);
             File.Delete(failSidecar);
             File.Delete(failPngPath);
@@ -1309,5 +1309,5 @@ internal static class NativeToolbarAcceptance
 
     /// <summary>判断照片是否位于本套件自有的可写评分副本目录。</summary>
     private static bool IsOwnedFixtureFile(ImageFile? file)
-        => file != null && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file.File.RequireLocalPath())) == "native-p2-toolbar-fixtures";
+        => file != null && System.IO.Path.GetFileName(System.IO.Path.GetDirectoryName(file.File.RequireLocalPath())) == "toolbar";
 }

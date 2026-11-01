@@ -20,7 +20,7 @@ namespace PhotoViewer.iOS.Native;
 /// 控制栏三分组换行居中与评分方向，以及 [FILM-01–06] 的交互语义（点选不居中、显式定位的中间帧与终点、
 /// 用户接管、减少动态效果直接到终点、点星写回自有副本且不切主图、改星后筛选暂留），
 /// 还有胶片栏显示快照回归（live 筛选列表换短、UIKit 重载前的旧索引仍按同一快照回答，不越界）。
-/// 素材要求：目录内 ≥12 张自有夹具（release/native-p2-fixtures/*.jpg 的容器内副本，含 XMP 可写评级），
+/// 素材要求：目录内 ≥12 张自有夹具（Fixtures/jpeg/*.jpg 的容器内副本，含 XMP 可写评级），
 /// 且目录必须位于本 App 沙盒内 —— 任何情况下都不写用户照片或 TestCase。
 /// 报告写 Documents/PhotoViewer/native-layout-checks.txt，打印 <c>[NativeSmoke] PASS layout</c> / FAIL。
 /// </summary>

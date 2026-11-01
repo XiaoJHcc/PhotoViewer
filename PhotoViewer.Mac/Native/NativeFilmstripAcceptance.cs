@@ -259,11 +259,11 @@ internal static class NativeFilmstripAcceptance
         string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/state-loading-fixtures");
         Directory.CreateDirectory(root);
         foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
-        string large = System.IO.Path.GetFullPath("release/native-p2-large-fixtures/color-p3-large.jpg");
+        string large = FixturePaths.Resolve("jpeg-large", "color-p3-large.jpg");
         if (!File.Exists(large)) throw new FileNotFoundException("STATE-01 回归缺少大图素材", large);
         File.Copy(large, System.IO.Path.Combine(root, "large-a.jpg"), true);
         File.Copy(large, System.IO.Path.Combine(root, "large-b.jpg"), true);
-        string small = System.IO.Path.GetFullPath("release/native-p2-fixtures");
+        string small = FixturePaths.Resolve("jpeg");
         File.Copy(System.IO.Path.Combine(small, "color-srgb.jpg"), System.IO.Path.Combine(root, "small-a.jpg"), true);
         File.Copy(System.IO.Path.Combine(small, "color-p3.jpg"), System.IO.Path.Combine(root, "small-b.jpg"), true);
         return root;
@@ -468,7 +468,7 @@ internal static class NativeFilmstripAcceptance
         string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/filmstrip-lazy-fixtures");
         Directory.CreateDirectory(root);
         foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
-        string sources = System.IO.Path.GetFullPath("release/native-p2-fixtures");
+        string sources = FixturePaths.Resolve("jpeg");
         foreach (string name in new[] { "color-srgb.jpg", "color-p3.jpg" })
             File.Copy(System.IO.Path.Combine(sources, name), System.IO.Path.Combine(root, name), true);
         File.WriteAllBytes(System.IO.Path.Combine(root, "broken.jpg"),

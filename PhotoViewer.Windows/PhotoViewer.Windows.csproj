@@ -45,8 +45,11 @@
 
     <ItemGroup>
         <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+        <!-- DINOv3 模型受 Meta 许可约束、不入库（见 DEV.md「DINOv3 ONNX 模型」）：
+             缺失时仍可构建与运行，仅 DINO / 相似聚类在运行期报缺少模型。 -->
         <EmbeddedResource Include="..\PhotoViewer\Assets\Models\dinov3_vits16.onnx"
-                          LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"/>
+                          LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"
+                          Condition="Exists('..\PhotoViewer\Assets\Models\dinov3_vits16.onnx')"/>
     </ItemGroup>
 
     <!--

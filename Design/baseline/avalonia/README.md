@@ -6,7 +6,7 @@
 
 | 文件 | 内容 | 采集 |
 |---|---|---|
-| `legacy-layout-geometry.json` | 两向（col/row）× 三尺寸（1200×850 / 830×650 / 700×480）客户区内真实已布局控件几何，坐标统一换算到 MainView，逻辑点；共 492 节点 | 2026-10-16 21:32，macOS 26.6.2 arm64，Retina（RenderScaling=2），`--legacy-ui --pv-legacy-layout release/native-p2-fixtures/color-srgb.jpg`（12 张夹具，见 `release/native-p2-fixtures/`），驱动器 `PhotoViewer.Mac/Native/LegacyLayoutAcceptance.cs`；测试口径：四项 EXIF（光圈/快门/ISO/等效焦距）+ 六个命令（Previous/Next/Exchange/Fit/ZoomInPreset/ZoomOutPreset）+ 评分，相似面板收起 |
+| `legacy-layout-geometry.json` | 两向（col/row）× 三尺寸（1200×850 / 830×650 / 700×480）客户区内真实已布局控件几何，坐标统一换算到 MainView，逻辑点；共 492 节点 | 2026-10-16 21:32，macOS 26.6.2 arm64，Retina（RenderScaling=2），`--legacy-ui --pv-legacy-layout Fixtures/jpeg/color-srgb.jpg`（12 张夹具，见 `Fixtures/jpeg/`），驱动器 `PhotoViewer.Mac/Native/LegacyLayoutAcceptance.cs`；测试口径：四项 EXIF（光圈/快门/ISO/等效焦距）+ 六个命令（Previous/Next/Exchange/Fit/ZoomInPreset/ZoomOutPreset）+ 评分，相似面板收起 |
 | `legacy-layout-{col,row}-{1200,830,700}.png` | 同次运行的 `RenderTargetBitmap` 控件渲染导出 | 同上；不是系统窗口截图，无标题栏、阴影与色彩管理 |
 | `legacy-window-col.jpg` | 旧壳左右布局系统窗口截图 | 2026-10-15 |
 | `toolbar-legacy-window.jpg` | 旧壳控制栏对拍窗口截图（由 PNG 转 JPEG） | 2026-10-15 |

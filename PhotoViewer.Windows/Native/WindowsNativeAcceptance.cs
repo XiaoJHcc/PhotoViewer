@@ -1600,7 +1600,7 @@ internal sealed partial class WindowsMainWindow
     /// <returns>资源字节的 SHA256，供外部与源模型独立核对。</returns>
     private static string CheckModel()
     {
-        var bytes = DinoModelResources.TryLoadModelBytes() ?? throw new InvalidOperationException("原生模型资源缺失");
+        var bytes = DinoModelResources.TryLoadModelBytes() ?? throw new InvalidOperationException("DINO 模型资源缺失：按 DEV.md「DINOv3 ONNX 模型」导出 dinov3_vits16.onnx 后重跑");
         using var options = new SessionOptions { EnableMemoryPattern = false, ExecutionMode = ExecutionMode.ORT_SEQUENTIAL, IntraOpNumThreads = 1 };
         options.AppendExecutionProvider_DML();
         using var session = new InferenceSession(bytes, options);

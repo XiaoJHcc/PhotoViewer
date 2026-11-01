@@ -81,7 +81,7 @@ SDK="$HOME/Library/Android/sdk"
   `cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug`。
   长期仍建议 `sudo dotnet workload install android` 到 10.0.402，使默认 `dotnet build` 一致。
 - **AVD 启动**：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`；无窗口验收可加 `-no-window -no-audio -no-boot-anim -gpu swiftshader_indirect`。
-- **素材**：`/release/` 在 [.gitignore](../.gitignore) 里，**新 clone 不会有**。本机已有 `release/native-p2-fixtures`（含 `orientation-1..8.jpg`、四张色卡）、`release/native-p2-large-fixtures/color-p3-large.jpg`、`release/native-p2-raw/A7C01489.ARW`、`release/native-p2-toolbar-fixtures`。A1 的 iOS 回归需要 `focus-src.ARW`（由 `release/native-p2-raw/A7C01489.ARW` 改名）。缺素材时不要让回归静默跳过。
+- **素材**：验收夹具随仓库分发（`Fixtures/jpeg`、`Fixtures/jpeg-large/color-p3-large.jpg`、`Fixtures/toolbar`、`Fixtures/raw/*.ARW`，见 [DEV.md](../DEV.md) 验收素材）。A1 的 iOS 回归需要 `focus-src.ARW`（由 `Fixtures/raw/A7C01489.ARW` 改名）；`release/native-p2-raw/` 只是本地 RAW 冒烟副本，不入库。缺素材时不要让回归静默跳过。
 
 ## 5. A1 执行顺序（建议拆两笔提交）
 
@@ -111,6 +111,6 @@ SDK="$HOME/Library/Android/sdk"
 - **DINO**：模型资产与 ONNX bionic 库已修到可加载；A5 工具页已跑真实 DINO 诊断（模拟器 CPU，5 瓦片 + 刚体文本），NNAPI EP 在模拟器不可用并按既有路径回退 CPU。
 - **Mac 工具链**：workload 27.0.10722 要求 macOS 14.0，已把 Mac head 与 Info.plist 对齐；升级 Apple workload 后先删 iOS `obj/bin` 再构建。
 - P3 正向路径在模拟器上大概率不可得，真机验收清单已列。
-- iOS 回归素材不在 git；本机已有色卡/ARW，`focus-src.ARW` 需由 `release/native-p2-raw/A7C01489.ARW` 改名。
+- iOS 回归素材随仓库分发（见 [DEV.md](../DEV.md) 验收素材）；`focus-src.ARW` 由 `Fixtures/raw/A7C01489.ARW` 改名。
 - `PhotoViewer.Android` 当前 Debug APK 约 362MB（含 86MB DINO 模型）；冷启动 native +940ms / legacy +1.09s，Release/AOT 与真实设备待测。
 - ARW 在 Android 的 libheif/系统解码链路未验；验收清单第 40 项要求记录是否只有内嵌预览。

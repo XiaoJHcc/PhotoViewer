@@ -31,7 +31,7 @@
 
 ### 1.2 镜头校正：Apple 有、但不可控也不可验
 
-实测（`TestCase/A7C01489.ARW`，ILCE-7CM2 + TAMRON 35-100mm F2.8 A078，1500×1000 代理，线性 F16）：
+实测（`Fixtures/raw/A7C01489.ARW`，ILCE-7CM2 + TAMRON 35-100mm F2.8 A078，1500×1000 代理，线性 F16）：
 
 - `isLensCorrectionSupported = true`、`isLensCorrectionEnabled = true`（默认）；
 - 同一实例仅切换该开关重渲染：`mean|Δ| = 0.0030`、`max|Δ| = 0.486`、71% 采样变化；同参数连渲两次差值恒为 0（确定性成立），故差异确实来自校正；

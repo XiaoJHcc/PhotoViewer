@@ -27,7 +27,9 @@ internal static class Program
         WarmUp();
         ExhaustiveHalfPatterns();
         RandomEightBitCombinations();
-        RealPhoto(Path.Combine(TestCaseRoot(), "DSC08943.JPG"));
+        var sample = Path.Combine(TestCaseRoot(), "DSC08943.JPG");
+        if (File.Exists(sample)) RealPhoto(sample);
+        else Console.WriteLine($"[SKIP] real-photo LUT check: 缺少本地样本 {sample}（自备一张 JPG 放到 TestCase/CV/ 即可启用）");
         LargeImageTiming();
 
         Console.WriteLine();

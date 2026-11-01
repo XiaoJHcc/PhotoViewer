@@ -30,7 +30,7 @@ namespace PhotoViewer.iOS.Native;
 /// 素材要求：目录内必须有 <c>color-p3-large.jpg</c>（长边 ≥ 4000，制造真实代理档与 100% 物理 Full）与
 /// <c>focus-src.ARW</c>（Sony MakerNote 0x2027 提供对焦位置）；验收会把大色卡复制成三份同分辨率副本、
 /// 并把 ARW 复制两份分别改写到不同对焦点，全部写入 App 自建的 <c>Documents/gesture-fixtures-work</c>
-/// （输入目录、用户照片与 TestCase 一律只读）。报告写 Documents/PhotoViewer/native-gesture-checks.txt，
+/// （输入目录、用户照片与仓库素材一律只读）。报告写 Documents/PhotoViewer/native-gesture-checks.txt，
 /// 打印 <c>[NativeSmoke] PASS gesture (n)</c> / FAIL。
 /// </summary>
 internal static class iOSNativeGestureCheck
