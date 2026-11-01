@@ -188,21 +188,21 @@
 
 | 检查 | 结果与证据 |
 |---|---|
-| CoreContractCheck | 830 PASS / 1 SKIP / 0 FAIL；`release/core-review-fix-checks.log`，跳过 Windows 专属身份分支；含两份真实 ARW、真实 HEIC 副本往返/字节还原及合成重叠/事务/刷新回归 |
-| SettingsDefaultsCheck | ALL PASS；`release/settings-review-fix-checks.log` |
+| CoreContractCheck | 830 PASS / 1 SKIP / 0 FAIL；`artifacts/acceptance/review-2026-10-26/core-review-fix-checks.log`，跳过 Windows 专属身份分支；含两份真实 ARW、真实 HEIC 副本往返/字节还原及合成重叠/事务/刷新回归 |
+| SettingsDefaultsCheck | ALL PASS；`artifacts/acceptance/review-2026-10-26/settings-review-fix-checks.log` |
 | Web | Node 319/319；内置浏览器 `?check=all` 53/53、0 FAIL；令牌生成物最新 |
-| macOS Debug | 构建 0 错；base 39 checks，input/layout/filmstrip/toolbar/analysis/similarity/tools/settings 全 PASS，faults 6 PASS；`release/mac-review-fix-*.log`。每套复跑使用干净隔离设置，input 不加载照片，避免旧套件留存快捷键/单项缩放预设污染前提 |
-| macOS 浮窗 | `release/native-p2-acceptance/toolbar-ui-checks.txt`；真实窗口覆盖非当前来源变更、组重建、失败保留、成功仍冲突保留、Esc/切图、上下左右方向、隐藏/重排/滚动锚点关闭 |
-| iOS Simulator | iPad mini (A17 Pro)，iOS 26.3，Debug 构建 0 错；layout 27 条（含 1 NOTE）无 FAIL，input 48 PASS / 3 NOTE / 0 FAIL，faults 6 PASS；`release/ios-review-fix-{layout,input,faults}.txt`。input 自建工作副本时不并发启动 `--pv-open` |
-| Android | 既有 API 35 arm64 模拟器，使用 SDK 10.0.201 构建 0 错；storage 33/0、faults 22/0、input 13/0；`release/android-review-fix-{storage,faults,input}.txt`。数字 URI/选择器为 Debug Provider、同 UID，未冒充 DocumentsUI/跨 UID 授权实测 |
-| Windows | WindowsTypeCheck 0 错；`release/windows-review-fix-typecheck.log`，不替代 Windows 本机构建/WinUI 运行时 |
-| Training | `dotnet build Training/Training.sln` 0 错 0 警；现有夹具 scan-only 正常，未写训练库；`release/training-review-fix-{build,scan}.log` |
+| macOS Debug | 构建 0 错；base 39 checks，input/layout/filmstrip/toolbar/analysis/similarity/tools/settings 全 PASS，faults 6 PASS；`artifacts/acceptance/review-2026-10-26/mac-review-fix-*.log`。每套复跑使用干净隔离设置，input 不加载照片，避免旧套件留存快捷键/单项缩放预设污染前提 |
+| macOS 浮窗 | `artifacts/acceptance/native-p2-acceptance/toolbar-ui-checks.txt`；真实窗口覆盖非当前来源变更、组重建、失败保留、成功仍冲突保留、Esc/切图、上下左右方向、隐藏/重排/滚动锚点关闭 |
+| iOS Simulator | iPad mini (A17 Pro)，iOS 26.3，Debug 构建 0 错；layout 27 条（含 1 NOTE）无 FAIL，input 48 PASS / 3 NOTE / 0 FAIL，faults 6 PASS；`artifacts/acceptance/review-2026-10-26/ios-review-fix-{layout,input,faults}.txt`。input 自建工作副本时不并发启动 `--pv-open` |
+| Android | 既有 API 35 arm64 模拟器，使用 SDK 10.0.201 构建 0 错；storage 33/0、faults 22/0、input 13/0；`artifacts/acceptance/review-2026-10-26/android-review-fix-{storage,faults,input}.txt`。数字 URI/选择器为 Debug Provider、同 UID，未冒充 DocumentsUI/跨 UID 授权实测 |
+| Windows | WindowsTypeCheck 0 错；`artifacts/acceptance/review-2026-10-26/windows-review-fix-typecheck.log`，不替代 Windows 本机构建/WinUI 运行时 |
+| Training | `dotnet build Training/Training.sln` 0 错 0 警；现有夹具 scan-only 正常，未写训练库；`artifacts/acceptance/review-2026-10-26/training-review-fix-{build,scan}.log` |
 
-本轮限制收尾复验：CoreContractCheck 830 PASS / 1 SKIP / 0 FAIL；macOS Debug 构建 0 错，base 39、input、layout、toolbar 全 PASS。toolbar 中 32 轮快速关闭/重开始终复用同一原生实例且 content frame 不累计偏移，`phys_footprint` 样本 659572392 → 613615272 字节（作为进程样本而非逐对象归因），报告为 `release/native-p2-acceptance/toolbar-ui-checks.txt`。iOS 同型号模拟器 Debug 构建 0 错，input 48 PASS / 4 NOTE / 0 FAIL，layout 24 PASS / 3 NOTE / 0 FAIL，报告归档为 `release/ios-identity-{input,layout}-checks.txt`；同文件大小写别名在当前模拟器卷无法构造，保留 NOTE，不冒充通过。
+本轮限制收尾复验：CoreContractCheck 830 PASS / 1 SKIP / 0 FAIL；macOS Debug 构建 0 错，base 39、input、layout、toolbar 全 PASS。toolbar 中 32 轮快速关闭/重开始终复用同一原生实例且 content frame 不累计偏移，`phys_footprint` 样本 659572392 → 613615272 字节（作为进程样本而非逐对象归因），报告为 `artifacts/acceptance/native-p2-acceptance/toolbar-ui-checks.txt`。iOS 同型号模拟器 Debug 构建 0 错，input 48 PASS / 4 NOTE / 0 FAIL，layout 24 PASS / 3 NOTE / 0 FAIL，报告归档为 `artifacts/acceptance/review-2026-10-26/ios-identity-{input,layout}-checks.txt`；同文件大小写别名在当前模拟器卷无法构造，保留 NOTE，不冒充通过。
 
-iOS 来源浮窗复验：iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；`--pv-native-layout-check layout-fixtures` 连续 3 轮各 29 checks PASS，覆盖原生 popover 条目与长名布局、卡片/控制栏入口、滚动关闭、控制栏保持展示换锚、完整可见高度及整组写回；`--pv-native-input-check input-fixtures` 52 checks PASS。报告为 `release/native-p2-acceptance/ios-rating-layout-{1,2,3}.txt`、`ios-rating-input.txt`，真实系统截图 `ios-rating-sources-popover.png`。真机触屏手感未由模拟器结果代替。
+iOS 来源浮窗复验：iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；`--pv-native-layout-check layout-fixtures` 连续 3 轮各 29 checks PASS，覆盖原生 popover 条目与长名布局、卡片/控制栏入口、滚动关闭、控制栏保持展示换锚、完整可见高度及整组写回；`--pv-native-input-check input-fixtures` 52 checks PASS。报告为 `artifacts/acceptance/native-p2-acceptance/ios-rating-layout-{1,2,3}.txt`、`ios-rating-input.txt`，真实系统截图 `ios-rating-sources-popover.png`。真机触屏手感未由模拟器结果代替。
 
-iOS 原生来源浮窗重做与复验：默认 `UIPopoverPresentationController` 承载，内容以 `UIStackView`、`SafeAreaLayoutGuide` 与令牌约束布局，不使用自绘弹层背景或拟合箭头。iOS 26 卡片使用主窗口内保留完整入口矩形的 `UIView` 快照作为 `SourceItem`，控制栏使用实际 `UIButton`；旧系统保留主窗口矩形锚点。展示/退出经 UIKit 完成回调串行衔接，快照保留到退出完成；实际滚动、换向及布局移动关闭。iOS 箭头与贴边形变按系统原生外观保留，不冒充 Mac `NSPopover` 的曲线外形。iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；两轮及提交前默认 `--pv-native-layout-check layout-fixtures` 各 28 checks PASS / 3 NOTE / 0 FAIL，`--pv-native-input-check input-fixtures` 48 PASS / 4 NOTE / 0 FAIL。报告为 `release/native-p2-acceptance/ios-rating-layout-{1,2,final}.txt`、`ios-rating-input.txt`；真实截图为 `probe-rating-sources-{card,card-row,control-col}-popover.png`，放大证据为 `ios-rating-{row,col}-{zoom,geometry}.png`。作者已核查当前实现，真机触屏未覆盖；独立问题报告见 [iOS 星级冲突浮窗问题报告](ios-rating-popover-native-report-1.md)。
+iOS 原生来源浮窗重做与复验：默认 `UIPopoverPresentationController` 承载，内容以 `UIStackView`、`SafeAreaLayoutGuide` 与令牌约束布局，不使用自绘弹层背景或拟合箭头。iOS 26 卡片使用主窗口内保留完整入口矩形的 `UIView` 快照作为 `SourceItem`，控制栏使用实际 `UIButton`；旧系统保留主窗口矩形锚点。展示/退出经 UIKit 完成回调串行衔接，快照保留到退出完成；实际滚动、换向及布局移动关闭。iOS 箭头与贴边形变按系统原生外观保留，不冒充 Mac `NSPopover` 的曲线外形。iPad mini (A17 Pro) / iOS 26.3，Debug `iossimulator-arm64` 构建 0 错、28 条既有 nullable 警告；两轮及提交前默认 `--pv-native-layout-check layout-fixtures` 各 28 checks PASS / 3 NOTE / 0 FAIL，`--pv-native-input-check input-fixtures` 48 PASS / 4 NOTE / 0 FAIL。报告为 `artifacts/acceptance/native-p2-acceptance/ios-rating-layout-{1,2,final}.txt`、`ios-rating-input.txt`；真实截图为 `probe-rating-sources-{card,card-row,control-col}-popover.png`，放大证据为 `ios-rating-{row,col}-{zoom,geometry}.png`。作者已核查当前实现，真机触屏未覆盖；独立问题报告见 [iOS 星级冲突浮窗问题报告](ios-rating-popover-native-report-1.md)。
 
 保留限制：
 

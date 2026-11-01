@@ -18,6 +18,7 @@ $windowsProject = Join-Path $PSScriptRoot 'PhotoViewer.Windows.csproj'
 $globalJson = Join-Path $repoRoot 'global.json'
 $directoryBuildProps = Join-Path $repoRoot 'Directory.Build.props'
 $releaseDirectory = Join-Path $repoRoot 'release'
+$artifactsDirectory = Join-Path $repoRoot 'artifacts'
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $PSScriptRoot 'bin\Release\publish-singlefile\win-x64'
@@ -215,7 +216,7 @@ if ($remainingFiles.Count -ne 1 -or $remainingFiles[0].FullName -ne $exePath) {
     throw '发布目录不是独立单 EXE，停止归档。'
 }
 
-$validationRoot = Join-Path $releaseDirectory ("rebuild-check\windows-singlefile\" + [guid]::NewGuid().ToString('N'))
+$validationRoot = Join-Path $artifactsDirectory ("acceptance\rebuild-check\windows-singlefile\" + [guid]::NewGuid().ToString('N'))
 $validationResults = @()
 $previousExtractDirectory = $env:DOTNET_BUNDLE_EXTRACT_BASE_DIR
 try {
@@ -248,7 +249,7 @@ try {
             finally {
                 $process.Dispose()
             }
-            $reportPath = Join-Path $validationDirectory ("release\native-win-acceptance\" + $check.Report)
+            $reportPath = Join-Path $validationDirectory ("artifacts\acceptance\native-win-acceptance\" + $check.Report)
             $results = @(Get-Content $reportPath -Raw -Encoding UTF8 | ConvertFrom-Json | ForEach-Object { $_ })
             if ($results.Count -eq 0 -or @($results | Where-Object { $_ -notlike 'PASS *' }).Count -ne 0) {
                 throw "发布验收报告未全部通过：$reportPath"
@@ -280,7 +281,9 @@ $manifest = [pscustomobject]@{
     Checks = $validationResults
 }
 $manifest | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $validationRoot 'deployment.json') -Encoding UTF8
-$releaseExePath = Join-Path $releaseDirectory $exeName
+$releasePackages = Join-Path $releaseDirectory 'packages'
+New-Item -ItemType Directory -Path $releasePackages -Force | Out-Null
+$releaseExePath = Join-Path $releasePackages $exeName
 Copy-Item $exePath $releaseExePath -Force
 Write-Host "[发布] 单文件验收通过，已归档：$releaseExePath"
 Write-Host "[发布] 验收目录：$validationRoot"

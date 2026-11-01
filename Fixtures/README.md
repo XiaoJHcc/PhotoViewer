@@ -1,6 +1,6 @@
 # Fixtures
 
-四端原生验收与 `Tools/CoreContractCheck` 共用的固定素材。这里是**测试输入**，随版本库分发；构建与验收产物（报告、截图、安装包）仍写 `release/`，不进版本库。
+四端原生验收与 `Tools/CoreContractCheck` 共用的固定素材。这里是**测试输入**，随版本库分发；验收证据写 `artifacts/acceptance/`，分发包与打包过程产物写 `release/`，两者都不进版本库。
 
 | 目录 | 内容 | 主要消费方 |
 |---|---|---|

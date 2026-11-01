@@ -87,19 +87,19 @@ dotnet publish "$ANDROID_PROJECT" \
     "${SIGNING_ARGS[@]+"${SIGNING_ARGS[@]}"}"
 
 # ──────────────────────────────────────────────────────────────
-# 6. 复制产物到 release/
+# 6. 复制签名产物到 release/packages/
 # ──────────────────────────────────────────────────────────────
-mkdir -p "$RELEASE_DIR"
+mkdir -p "$RELEASE_DIR/packages"
 SIGNED_APK="$OUTPUT_DIR/cc.xiaojh.PhotoViewer-Signed.apk"
-UNSIGNED_APK="$OUTPUT_DIR/cc.xiaojh.PhotoViewer.apk"
 
-if [[ -f "$UNSIGNED_APK" ]]; then
-    cp "$UNSIGNED_APK" "$RELEASE_DIR/PhotoViewer-$APP_VERSION-android.apk"
-    echo "[发布] 已复制到：release/PhotoViewer-$APP_VERSION-android.apk"
+if [[ ! -f "$SIGNED_APK" ]]; then
+    echo "[发布] 未找到签名 APK：$SIGNED_APK" >&2
+    exit 1
 fi
-if [[ -f "$SIGNED_APK" ]]; then
-    cp "$SIGNED_APK" "$RELEASE_DIR/PhotoViewer-$APP_VERSION-android-signed.apk"
-    echo "[发布] 已复制到：release/PhotoViewer-$APP_VERSION-android-signed.apk"
+cp "$SIGNED_APK" "$RELEASE_DIR/packages/PhotoViewer-$APP_VERSION-android-signed.apk"
+echo "[发布] 已复制到：release/packages/PhotoViewer-$APP_VERSION-android-signed.apk"
+if command -v python3 >/dev/null 2>&1; then
+    python3 "$REPO_ROOT/Tools/check-release.py" --write
 fi
 
 APK_COUNT=$(find "$OUTPUT_DIR" -name "*.apk" | wc -l | tr -d ' ')

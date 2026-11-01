@@ -37,7 +37,7 @@ namespace PhotoViewer.Windows.Native;
 internal sealed partial class WindowsMainWindow
 {
     /// <summary>以启动工作目录为基准的隔离验收输出目录。</summary>
-    internal static string SmokeOutputDirectory => Path.GetFullPath("release/native-win-acceptance");
+    internal static string SmokeOutputDirectory => Path.GetFullPath("artifacts/acceptance/native-win-acceptance");
 
     /// <summary>在构造共享视图模型前重置隔离目录的设置、界面状态与数据库，每轮从默认值开始。</summary>
     internal static void ConfigureSmokeStorage()

@@ -31,9 +31,9 @@
 dotnet run --project PhotoViewer.Windows -c Debug -- "D:/photos/a.jpg"
 ```
 
-专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。报告位于工作目录的 `release/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
+专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
 
-性能与压测入口同样使用隔离设置、数据库与日志（`release/native-win-acceptance/`），不触碰用户设置与照片：
+性能与压测入口同样使用隔离设置、数据库与日志（`artifacts/acceptance/native-win-acceptance/`），不触碰用户设置与照片：
 
 ```bash
 dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
@@ -103,7 +103,7 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 
 ## 验收素材
 
-验收素材是测试输入而非构建产物，统一放在 `Fixtures/` 随版本库分发，新克隆无需再手工拷贝；`release/` 只落报告、截图与安装包等运行产物。
+验收素材是测试输入而非构建产物，统一放在 `Fixtures/` 随版本库分发，新克隆无需再手工拷贝；验收报告与截图写 `artifacts/acceptance/`，`release/` 只放分发包与打包过程产物。
 
 | 路径 | 内容 |
 |---|---|
@@ -114,12 +114,37 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 | `Fixtures/raw/A7C01489.ARW`、`Fixtures/raw/A7C01495.ARW` | 真实 ILCE-7CM2 RAW；IFD0 tag 700 带 canonical XMP，`A7C01489` 的 `xmpMM:DocumentID` 固定为 `urn:uuid:e342971a-5835-4d56-b3ff-f434089d2e00` |
 
 - **初始星级属于夹具契约**：`color-srgb.jpg` 与 `color-srgb.heic` 内嵌 3 星、`Fixtures/raw/A7C01489.ARW` 为 0 星，Core 契约自检按这些初值断言。生成脚本产出的 JPEG 默认 0 星，重新生成色卡后须把 `color-srgb.jpg` 写回 3 星；HEIF 素材不在生成脚本内，按仓库内既有容器包使用。
-- 写评分/写回类验收只操作目录副本，不直接写仓库素材；RAW 就地评分用本地 `native-p2-raw/` 副本（位置任意，不入库）。
+- 写评分/写回类验收只操作目录副本，不直接写仓库素材；RAW 就地评分用 `artifacts/scratch/native-p2-raw/` 副本（不入库，可随时重建）。
 - Core 契约自检在仓库根运行：`dotnet run --project Tools/CoreContractCheck -c Release`；素材不全时在开跑前报缺件并非零退出，不跑半套结果。
+
+## 产物目录
+
+`release/` 只放分发包与打包过程产物；验收报告、截图、日志、测试数据库、崩溃报告一律放 `artifacts/`，两者都不入库。
+
+| 路径 | 内容 | 生命周期 |
+|---|---|---|
+| `release/packages/` | 历史与当前分发包，命名 `PhotoViewer-<版本>-<平台>-<架构>.<dmg/apk/ipa/exe>` | 每版每平台一份，长期保留；未签名 APK 等中间产物不归档 |
+| `release/ios-stable/` | 最新 iOS 稳定安装源（`.app`） | 每次 **Publish iOS IPA** 覆盖 |
+| `release/testflight/` | 最近一次 TestFlight `.xcarchive` | 每次上传覆盖，脚本只保留最新归档 |
+| `release/SHA256SUMS` | 分发包校验清单 | 每次发包后由 `check-release.py --write` 重写 |
+| `artifacts/acceptance/` | 各套件报告与截图；同名套件目录覆盖写，带日期目录按轮次归档 | 每平台只保留最近 2 份轮次 |
+| `artifacts/diagnostics/` | 崩溃报告等诊断物 | 问题结案后删除 |
+| `artifacts/scratch/` | RAW 副本、临时状态 | 随时可清 |
+
+`release/` 顶层只允许 `packages/`、`ios-stable/`、`testflight/` 和 `SHA256SUMS`；报告、截图、日志、数据库、崩溃报告出现在 `release/` 视为错误。发布后运行：
+
+```bash
+python3 Tools/check-release.py --write   # 校验 release 布局并重写 SHA256SUMS
+bash Tools/clean-artifacts.sh            # 预览可清理项；加 --yes 执行
+```
+
+`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。
+
+校验清单可在 `release/` 内核对：`cd release && shasum -a 256 -c SHA256SUMS`。
 
 ## 打包发布
 
-版本号由根目录 `Directory.Build.props` 控制，发布产物位于 `release/`。
+版本号由根目录 `Directory.Build.props` 控制；分发包位于 `release/packages/`，打包过程产物位于 `release/ios-stable/` 与 `release/testflight/`。
 
 Mac 采用 Developer ID 公证直发，不进入 Mac App Store。首次发布前在 Xcode 的 **Settings → Accounts → Manage Certificates** 创建带本机私钥的 **Developer ID Application** 证书，再把 App 专用密码存入本机钥匙串：
 
@@ -132,17 +157,17 @@ xcrun notarytool store-credentials "PhotoViewer-notary" \
 
 | Task | 产物与说明 |
 |---|---|
-| **Publish Windows EXE (Release)** | 自包含 `PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
-| **Publish Android APK (Release)** | 构建并签名 APK。 |
-| **Publish Mac DMG (Release)** | 构建应用，以 Developer ID + Hardened Runtime 逐个签名原生文件，封装并签名 DMG，提交 Apple 公证、附加票据并验证 Gatekeeper 评估。 |
-| **Publish iOS IPA (Release)** | 生成版本化 IPA，同时归档 `.app` / `.ipa` 到 `release/ios-stable/`。 |
-| **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；归档与导出产物位于 `release/testflight/`。上传前自动执行归档检查。 |
+| **Publish Windows EXE (Release)** | 自包含 `release/packages/PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
+| **Publish Android APK (Release)** | 构建并签名 APK，归档 `release/packages/PhotoViewer-<版本>-android-signed.apk`。 |
+| **Publish Mac DMG (Release)** | 构建应用，以 Developer ID + Hardened Runtime 逐个签名原生文件，封装并签名 DMG，提交 Apple 公证、附加票据并验证 Gatekeeper 评估；归档 `release/packages/PhotoViewer-<版本>-arm64.dmg`。 |
+| **Publish iOS IPA (Release)** | 生成 `release/packages/PhotoViewer-<版本>-ios-arm64.ipa`，并覆盖 `release/ios-stable/` 的 `.app` 安装源。 |
+| **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；`release/testflight/` 只保留最近一次归档。上传前自动执行归档检查。 |
 | **Validate iOS TestFlight Archive** | 检查当前版本归档的版本号、Bundle ID、分发签名、entitlements、AOT/ONNX 符号与图标，不上传。 |
 | **Check iOS TestFlight Device** | 核对设备版本，连续 5 次冷启动并确认进程存活、无新增崩溃报告；设备需先通过 TestFlight 安装当前构建。 |
 
 每次上传 iOS 构建前递增 `AppBuildNumber`，即使 `AppVersion` 不变也不复用构建号。TestFlight 上传复用 Xcode 中已登录的开发者账号，不改变 Release 真机安装所用的开发签名。iOS Release 通过 `MtouchNoSymbolStrip=true` 保留 Mono AOT 启动符号，不能为缩减体积重新开启符号剥离。首次上传前复制 `PhotoViewer.iOS/ExportOptions.AppStore.Local.sample.plist` 为同目录 `ExportOptions.AppStore.Local.plist` 并填写本机 Team ID；该文件已忽略，不提交。
 
-Windows 发布脚本自动定位 Visual Studio 官方 Release x64 CRT；自定义构建环境可向 `PhotoViewer.Windows/publish-win-x64-singlefile.ps1` 传 `-VCRedistDirectory`。脚本在原名/改名 EXE 的独立目录和新缓存中执行验收，通过后归档，并在 `release/rebuild-check/windows-singlefile/` 保存报告与 `deployment.json`。CRT 来源须符合 [微软再分发许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)。
+Windows 发布脚本自动定位 Visual Studio 官方 Release x64 CRT；自定义构建环境可向 `PhotoViewer.Windows/publish-win-x64-singlefile.ps1` 传 `-VCRedistDirectory`。脚本在原名/改名 EXE 的独立目录和新缓存中执行验收，通过后归档，并在 `artifacts/acceptance/rebuild-check/windows-singlefile/` 保存报告与 `deployment.json`。CRT 来源须符合 [微软再分发许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)。
 
 Android 首次发布前，在对应宿主执行：
 
@@ -168,7 +193,7 @@ bash PhotoViewer.Android/setup-android-signing.sh
 python3 Tools/generate-design-tokens.py
 python3 Tools/generate-design-tokens.py --check
 node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52 --out /tmp/web-geometry.json
-python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
+python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json artifacts/acceptance/native-p2-acceptance/native-layout-geometry.txt
 ```
 
 ### 在 macOS 类型检查 Windows 壳

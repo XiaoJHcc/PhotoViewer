@@ -99,7 +99,10 @@ xcrun stapler staple "${DMG_PATH}"
 xcrun stapler validate "${DMG_PATH}"
 spctl -a -vvv -t open --context context:primary-signature "${DMG_PATH}"
 
-mkdir -p "${RELEASE_DIR}"
-cp -f "${DMG_PATH}" "${RELEASE_DIR}/"
+mkdir -p "${RELEASE_DIR}/packages"
+cp -f "${DMG_PATH}" "${RELEASE_DIR}/packages/"
 echo ""
-echo "发布产物：${RELEASE_DIR}/$(basename "${DMG_PATH}")"
+echo "发布产物：${RELEASE_DIR}/packages/$(basename "${DMG_PATH}")"
+if command -v python3 >/dev/null 2>&1; then
+    python3 "${REPO_ROOT}/Tools/check-release.py" --write
+fi

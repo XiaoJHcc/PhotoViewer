@@ -4,7 +4,7 @@
 
 ## 唯一依据：Design/
 
-**硬规则**：本壳只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，**不读取** `PhotoViewer/`、`PhotoViewer.*/`（本目录除外）、`Design/baseline/`、`release/` 下的源码与验收常量，也不照搬其他平台的写法。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与 Mac 的每一处差异都能定位到"文档没写清"或"某端没照文档做"。
+**硬规则**：本壳只依据 `Design/`（`spec/`、`tokens.json`、`README.md`、`platforms.md` 中的 `@web` 条目）实现，**不读取** `PhotoViewer/`、`PhotoViewer.*/`（本目录除外）、`Design/baseline/`、`release/`、`artifacts/` 下的源码与验收常量，也不照搬其他平台的写法。规则缺失、含糊或无法实现时，按最合理的理解实现，同时在缺口台账追加一条（分类写 `待审`），不得去其他平台的代码里找答案。这样本壳与 Mac 的每一处差异都能定位到"文档没写清"或"某端没照文档做"。
 
 ## 运行与测试
 

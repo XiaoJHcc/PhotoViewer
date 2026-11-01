@@ -174,7 +174,7 @@
     {
       "label": "Publish iOS IPA (Release)",
       "type": "shell",
-      "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa release/ios-stable/PhotoViewer.iOS.ipa && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\"",
+      "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable release/packages && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/packages/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\" && python3 Tools/check-release.py --write",
       "group": "build",
       "problemMatcher": "$msCompile"
     },

@@ -81,7 +81,7 @@ SDK="$HOME/Library/Android/sdk"
   `cd /tmp/pv-sdk201 && dotnet build /path/to/PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug`。
   长期仍建议 `sudo dotnet workload install android` 到 10.0.402，使默认 `dotnet build` 一致。
 - **AVD 启动**：`~/Library/Android/sdk/emulator/emulator -avd pv-api35`；无窗口验收可加 `-no-window -no-audio -no-boot-anim -gpu swiftshader_indirect`。
-- **素材**：验收夹具随仓库分发（`Fixtures/jpeg`、`Fixtures/jpeg-large/color-p3-large.jpg`、`Fixtures/toolbar`、`Fixtures/raw/*.ARW`，见 [DEV.md](../DEV.md) 验收素材）。A1 的 iOS 回归需要 `focus-src.ARW`（由 `Fixtures/raw/A7C01489.ARW` 改名）；`release/native-p2-raw/` 只是本地 RAW 冒烟副本，不入库。缺素材时不要让回归静默跳过。
+- **素材**：验收夹具随仓库分发（`Fixtures/jpeg`、`Fixtures/jpeg-large/color-p3-large.jpg`、`Fixtures/toolbar`、`Fixtures/raw/*.ARW`，见 [DEV.md](../DEV.md) 验收素材）。A1 的 iOS 回归需要 `focus-src.ARW`（由 `Fixtures/raw/A7C01489.ARW` 改名）；`artifacts/scratch/native-p2-raw/` 只是本地 RAW 冒烟副本，不入库。缺素材时不要让回归静默跳过。
 
 ## 5. A1 执行顺序（建议拆两笔提交）
 

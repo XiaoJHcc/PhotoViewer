@@ -545,7 +545,7 @@ internal static class NativeToolbarAcceptance
         string entryPath = entry.File.RequireLocalPath();
         bool entryShowRating = settings.ShowRating;
         bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
-        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/rating-conflict-fixtures");
+        string root = System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/rating-conflict-fixtures");
         string photoPath = System.IO.Path.Combine(root, "conflict.jpg");
         string cleanPath = System.IO.Path.Combine(root, "clean.jpg");
         string sidecarPath = System.IO.Path.Combine(root, "conflict.xmp");
@@ -907,7 +907,7 @@ internal static class NativeToolbarAcceptance
         var entryFrame = window.Window.Frame;
         var pngFormat = settings.FileFormats.FirstOrDefault(item => item.Id == "png");
         bool entryPngEnabled = pngFormat?.IsEnabled ?? true;
-        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/rating-sources-live-fixtures");
+        string root = System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/rating-sources-live-fixtures");
         string livePath = System.IO.Path.Combine(root, "live.jpg");
         string otherPath = System.IO.Path.Combine(root, "other.jpg");
         string failPath = System.IO.Path.Combine(root, "fail.jpg");

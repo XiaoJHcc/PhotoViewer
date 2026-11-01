@@ -48,8 +48,8 @@ public static class MacNativeApplication
         MemoryGovernor.Initialize(new MacMemoryBudgetProvider());
         if (args.Contains("--pv-native-smoke"))
         {
-            Directory.CreateDirectory("release/native-p2-acceptance");
-            PhotoDatabase.Initialize(System.IO.Path.GetFullPath("release/native-p2-acceptance/photos-smoke.db"));
+            Directory.CreateDirectory("artifacts/acceptance/native-p2-acceptance");
+            PhotoDatabase.Initialize(System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/photos-smoke.db"));
         }
         var settingsRepository = new SettingsRepository(
             CreateSettingsStore(args),
@@ -70,7 +70,7 @@ public static class MacNativeApplication
     private static ISettingsStore CreateSettingsStore(string[] args)
     {
         if (!args.Contains("--pv-native-smoke")) return new AppleSettingsStore();
-        return new FileSettingsStore(System.IO.Path.GetFullPath("release/native-p2-acceptance/settings-smoke.json"));
+        return new FileSettingsStore(System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/settings-smoke.json"));
     }
 
     /// <summary>验收专用性能探针目录（<c>--pv-perf-probe</c> 的值）；未指定时为 null。</summary>

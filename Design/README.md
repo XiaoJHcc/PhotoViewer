@@ -90,7 +90,7 @@
 - 它导出的几何 JSON 与各平台验收程序导出的格式一致，用脚本比对，不需要两台机器同时运行：
   ```
   node PhotoViewer.Web/tools/export-geometry.mjs --profile mac --count-width 52 --out /tmp/web-geometry.json
-  python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json release/native-p2-acceptance/native-layout-geometry.txt
+  python3 Tools/compare-layout-geometry.py /tmp/web-geometry.json artifacts/acceptance/native-p2-acceptance/native-layout-geometry.txt
   ```
   `--profile mac` 打开 macOS 交通灯让位等已登记差异；`--count-width` 固定计数文本宽（各平台字体度量不同）。比对脚本自动识别 JSON 与 `native-layout-geometry.txt`；只比较双方共有布局/节点，单轴容差默认 0.5 点（`--tolerance` 可调），单方独有节点只列出、不算失败。节点命名：显式布局用 `root.<分区>`、`filter.<控件>`、`control.group<i>[.child<j>]`、`card<i>.<部件>` 等，Auto 布局只导出顶层 `photoPane`。
 - `baseline/avalonia/` 冻结后不再更新，不作为验收标准，只用于追溯原设计意图。

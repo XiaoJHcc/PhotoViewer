@@ -9,7 +9,7 @@
 - **改名限制已解除**：此前改名造成 settings/tools 缺 `TextFillColorPrimaryBrush`；现 `PortableSingleFile.targets` 使用 .NET 官方 `PrepareForBundle` 扩展点，将应用 PRI 额外以固定 `resources.pri` 名放入 bundle，供 WinUI 默认资源查找回退。无运行时复制资源、无 SDK 补丁；改为中文/带空格文件名也通过三套验收。曾尝试显式 `ResourceManagerRequested`，但会丢失框架资源解析，已撤除该临时方案，生产 App.xaml 引导保持不变。
 - **CRT 已内置，不再要求用户安装运行库**：从 Visual Studio 2022 Build Tools 官方 `VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT` 原样携带 `msvcp140.dll`、`msvcp140_1.dll`、`vcruntime140.dll`、`vcruntime140_1.dll`，文件版本均 14.44.35211.0，微软签名有效。依赖导入/导出检查覆盖 libheif 编解码链和 ONNX 所需符号；UCRT 是支持的 Windows 自带组件。来源与再分发须遵守 [VS 官方清单及许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)，不携带 Debug CRT、不从 System32 复制、不执行安装器。构建脚本自动 vswhere 定位或接受显式 `-VCRedistDirectory`，校验架构、版本、完整性后再发布。
 - **正式脚本最新实跑**：保留清 `obj`、全内容解包、不 trim、不 R2R、WinPS 5.1 UTF-8 BOM；原名与“照片 查看器.exe”在独立目录/各自全新缓存，分别 **smoke 32 / settings 7 / tools 5，共 88 项全 PASS**。HEIF 验收真实生成 HEVC 四象限图片，并经生产会话和缩略图解码、Fit/100% GPU 回读；素材不是相机原片。DirectML 实际推理后，枚举已加载模块，四 CRT（14.44.35211.0）、libheif、ONNX、DirectML 全来自本应用解包目录，不是系统目录。普通 smoke 为 25 项，`--pv-native-portable` 加 7 项来源检查。额外用未携带 CRT 的 Debug 进程做负例，验收器按预期拒绝 `C:\WINDOWS\SYSTEM32\MSVCP140.dll`，证明来源检查不是恒通过；该负例失败是预期结果，不是正式包验收失败。
-- **最新产物**：`release/PhotoViewer-0.8.0-win-x64.exe`，**230,753,372 字节（230.8 MB / 220.1 MiB）**，SHA256 `BE82F815DC51920A5DFDF2046C49E0AAA11259EE1A495494BC24072581F45D9F`。报告与 CRT 源文件哈希：`release/rebuild-check/windows-singlefile/e77f66d7296440f8a0d0a46ad76e434d/deployment.json`，各套 JSON 位于该目录的 `original/` 与 `改名 空格目录/` 下。Debug/Release 常规构建均 0 错 0 警。
+- **最新产物**：`release/packages/PhotoViewer-0.8.0-win-x64.exe`，**230,753,372 字节（230.8 MB / 220.1 MiB）**，SHA256 `BE82F815DC51920A5DFDF2046C49E0AAA11259EE1A495494BC24072581F45D9F`。报告与 CRT 源文件哈希：`artifacts/acceptance/rebuild-check/windows-singlefile/e77f66d7296440f8a0d0a46ad76e434d/deployment.json`，各套 JSON 位于该目录的 `original/` 与 `改名 空格目录/` 下。Debug/Release 常规构建均 0 错 0 警。
 - **明确未关闭项**：本机无现成 Sandbox/干净虚拟机，未卸载宿主运行库或修改系统功能；因此尚无干净 Windows 全系统实测，不能把新缓存或模块来源证明冒充干净机验证。打包与改名工程问题已修，干净机、Win10、真实相机素材、签名仍据实保留。
 
 ### 剩余事项（当前分类）
@@ -84,7 +84,7 @@ dotnet publish PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Release -r win-
 
 ### 4.1 发布/出包
 
-- ~~`release/` 里最新 Windows 产物是 `PhotoViewer-0.7.1-win-x64.exe`；0.8.0 尚无任何 Windows 产物~~ → 已归档 `PhotoViewer-0.8.0-win-x64.exe`（230,753,372 字节，原名/改名共 88 项 PASS）。版本号已升至 0.8.5，该产物早于 10-20/21 的修复，出包需重出。
+- ~~`release/packages/` 里最新 Windows 产物是 `PhotoViewer-0.7.1-win-x64.exe`；0.8.0 尚无任何 Windows 产物~~ → 已归档 `PhotoViewer-0.8.0-win-x64.exe`（230,753,372 字节，原名/改名共 88 项 PASS）。版本号已升至 0.8.5，该产物早于 10-20/21 的修复，出包需重出。
 - **无代码签名**：直发 exe 会触发 SmartScreen。文档未登记为待办，属发布面风险。
 - **仅 x64**：`LibHeif.Native` 只有 win-x64，脚本硬拒其他 RID，Windows on ARM 不可用。
 

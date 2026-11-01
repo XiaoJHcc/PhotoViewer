@@ -18,7 +18,7 @@
 - **退役 Avalonia 旧壳**：删旧壳/共享 Avalonia UI/适配层，需其他平台原生壳就位（下一个是 iOS）。
 - **macOS 分发公证与上架（后续状态）**：2026-10-31 已完成 Developer ID + 公证直发，最终 DMG 与包内 App 均通过 Gatekeeper 评估；仍不进入 Mac App Store，详见 [phase-6 §4](native-rebuild-phase-6.md#4-6e-发布就绪)。
 
-已程序化补齐的两项契约覆盖（2026-10-16，证据见 `release/native-p2-acceptance/`）：
+已程序化补齐的两项契约覆盖（2026-10-16，证据见 `artifacts/acceptance/native-p2-acceptance/`）：
 
 - **FILM-05 延迟加载与失败形态**（`--pv-native-filmstrip`，`filmstrip-many-checks.txt`）：自有素材上断言列表身份/几何不等解码、好图缩略图与日期异步补齐、滚动后可见卡片身份立即有效、不可解码文件仍可选为主图并报错且不呈现伪造图像。
 - **FILM-06 完整真实改星交互**（`--pv-native-toolbar`，`toolbar-ui-checks.txt`）：胶片栏卡片星级按钮真实点击后文件读回一致、主图身份不变、点星不选中父卡片；改星落出筛选仍暂留、切走后移除且计数与筛选一致；收尾还原。
@@ -50,7 +50,7 @@ Release 发布通道仍为旧壳，原生通过 `--native` 进入；验收前不
 - `Tools/ColorTestTool`：23 项独立矩阵/传递函数、广色域负值/超一、非对齐行距与 8 位往返，最大线性分量误差 0.000488。
 - `Tools/generate-native-color-fixtures.py`：系统 ICC 三色域色块/灰阶 + 8 EXIF 方向，使用可写的 XMP Rating 测试槽。
 - `--pv-native-smoke <绝对图片路径>`：真实 AppKit 窗口、Metal 上屏、Full、翻图、共享外部打开队列、布局、五类设置实际落盘、无 Avalonia 主图副本、评级/CV/DINO/指纹三表索引读写。生成文件与 RAW 副本目录必须是 agent 自有测试目录。8 个 EXIF 方向独立 GPU 角点验证，ICC sRGB/P3/Adobe 与无 ICC EXIF Adobe 均通过。
-- `release/native-p2-acceptance/`：JSON 报告及实际原生控件绘制/GPU 照片帧合成图，构建及运行日志。设置/SQLite 测试独立持久化，原始素材照片未修改。
+- `artifacts/acceptance/native-p2-acceptance/`：JSON 报告及实际原生控件绘制/GPU 照片帧合成图；构建与运行日志为临时产物，不长期保留。设置/SQLite 测试独立持久化，原始素材照片未修改。
 - 四平台构建：Mac、Windows、iOS 模拟器、Android 均已编译；Windows/iOS 0 警告，Mac NU1903 与 Android 14 项未改文件中的警告为现有基线。最终检查以阶段清单记录为准。
 
 最近程序化结果：ColorTestTool **23** 项；JPEG 色卡/八方向 **39** 项；RAW 副本 **17** 项；生成 HEIF（sRGB/P3）**14** 项。设置副本编辑期间缓存/键盘映射不变，关闭后同步运行时并实际落盘；分析输入的八方向与 GPU 对拍一致。HEIF 生成样本用于链路验证，不代替相机大图性能测试。

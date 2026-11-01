@@ -22,7 +22,7 @@ public static class NativeAcceptanceRunner
     public static async Task RunAsync(MacMainWindow window, MacNativeSettingsPresenter settings, string[] args)
     {
         var results = new List<NativeCheck>();
-        string output = System.IO.Path.GetFullPath("release/native-p2-acceptance");
+        string output = System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance");
         Directory.CreateDirectory(output);
         // 各套件会为几何对拍反复改窗口尺寸，而主窗口开了 FrameAutosaveName，程序化 SetFrame 同样会写回
         // 用户偏好。这里记住进入时的窗口帧，收尾还原，避免跑一轮验收就把作者的窗口尺寸改掉。

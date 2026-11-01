@@ -256,7 +256,7 @@ internal static class NativeFilmstripAcceptance
     /// <summary>创建本套件自有的 STATE-01 素材：大图两份同分辨率副本 + 两张小于代理目标的小图副本（作者素材只读）。</summary>
     private static string PrepareStateLoadingFixtures()
     {
-        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/state-loading-fixtures");
+        string root = System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/state-loading-fixtures");
         Directory.CreateDirectory(root);
         foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
         string large = FixturePaths.Resolve("jpeg-large", "color-p3-large.jpg");
@@ -465,7 +465,7 @@ internal static class NativeFilmstripAcceptance
     /// <summary>创建/刷新本套件自有的延迟加载素材目录：两张自有好图副本加一个故意不可解码的坏文件（幂等，作者照片只读）。</summary>
     private static string PrepareLazyFixtures()
     {
-        string root = System.IO.Path.GetFullPath("release/native-p2-acceptance/filmstrip-lazy-fixtures");
+        string root = System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/filmstrip-lazy-fixtures");
         Directory.CreateDirectory(root);
         foreach (string stale in Directory.GetFiles(root)) File.Delete(stale);
         string sources = FixturePaths.Resolve("jpeg");

@@ -310,5 +310,5 @@ W-M5 原先声称 `NavigationView` / `TitleBar` / `NumberBox` / `TextBox` / `Ric
 - `dotnet build PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Debug`：0 error；新增代码 0 warning（仓库既有 `NU1903` SQLite 告警不计入本次改动）。
 - `--pv-native-smoke`：**24 项 PASS**（主屏无回归）。
 - `--pv-native-settings`：**7 项 PASS**（深色/Mica、NavigationView+TitleBar+NumberBox+InfoBar、五分类/尺寸、开关+NumberBox+Slider、列表重排、录制开始取消/手势显示、关闭回写）。
-- 150% 实机截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`）。
+- 150% 实机截图：`artifacts/acceptance/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`）。
 - 2026-10-21 作者手验通过常规 UI（真实拖拽排序、键鼠录制、清库确认、预设增删、175%/200% DPI）；125% 与外设断开未记证据。

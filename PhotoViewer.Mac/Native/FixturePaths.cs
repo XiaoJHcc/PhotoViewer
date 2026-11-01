@@ -2,7 +2,7 @@ namespace PhotoViewer.Mac.Native;
 
 /// <summary>
 /// 验收素材定位：从当前目录与程序目录向上找到仓库根的 <c>Fixtures/</c>，
-/// 让原生验收不依赖启动目录（报告与截图仍按当前目录落在 release/）。
+/// 让原生验收不依赖启动目录（报告与截图仍按当前目录落在 artifacts/acceptance/）。
 /// </summary>
 internal static class FixturePaths
 {

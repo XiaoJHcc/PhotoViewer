@@ -32,7 +32,8 @@ Fixtures/                     # 验收素材（色卡/HEIF/RAW，四端验收与
 Training/                     # AI 训练独立 git 仓库（主库忽略）
 Design/                       # 设计规范（总则/spec/令牌/冻结基线）、架构说明与验收状态
 Plans/                        # 方案、阶段清单与任务进度
-release/                      # 构建与验收产物（报告、截图、安装包）
+release/                      # 分发包（历史与当前）与打包过程产物（iOS 稳定安装源、最近一次 TestFlight 归档）
+artifacts/                    # 本机验收证据与可再生产物（报告/截图/诊断，不入库）
 ```
 
 ## 模块手册

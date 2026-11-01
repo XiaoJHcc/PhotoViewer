@@ -84,6 +84,6 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `--pv-perf-probe=<文件夹>` | 分段性能探针：HIF/ARW/JPG 各 6 张（首张预热），报告写隔离目录后退出，不进交互。 |
 | `--pv-heif-thumb-probe=<文件夹或文件>`（可重复） | HEIF 缩略图项对比探针：逐文件对比"容器 `thmb` 项"与"主图缩放"在同一请求下的尺寸、方向与平均绝对差，并校验 DINO 560 档仍走主图；报告 `heif-thumb-probe.txt`，失败退出码为 1。 |
 
-普通验收、压测与探针的报告位于工作目录的 `release/native-win-acceptance/`（压测日志为 `stress-flip.jsonl`，探针为 `perf-probe.txt`），验收失败退出码为 1。发布脚本对原名/改名 EXE 在独立目录与空缓存下验收，并在 `release/rebuild-check/windows-singlefile/` 保存绑定产物 SHA256 的 `deployment.json`。
+普通验收、压测与探针的报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`（压测日志为 `stress-flip.jsonl`，探针为 `perf-probe.txt`），验收失败退出码为 1。发布脚本对原名/改名 EXE 在独立目录与空缓存下验收，并在 `artifacts/acceptance/rebuild-check/windows-singlefile/` 保存绑定产物 SHA256 的 `deployment.json`。
 
 截图与窗口几何测量工具自身必须启用 Per-Monitor-V2；仅移动光标不能代替真实指针事件。自动化结果不能替代真实硬件、色彩或干净系统验收，具体状态只在 `Plans/` 与 `Design/status.md` 记录。

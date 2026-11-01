@@ -95,7 +95,7 @@
 | 2026-10-14 | 旧壳修复:P1-M4b 代理 overscan 1.5→2.0(作者实证 1.5× 下"解码降采样+上屏降采样"双重 Mitchell 有可见软化;2× 超采样后上屏重采样近乎无损);双击/键盘放大不触发 Full 升级(根因:`ZoomTo`/`FocusOnImagePoint` 先改 Scale 后落 Fit=false,Scale 订阅见到 Fit=true 直接 return;改为同时监听 Scale+Fit) | 已修(共享层,原生壳直接继承);上屏最后一级滤波纳入 P2-M2 |
 | 2026-10-14 | 开工审阅发现待实证项：线性 scRGB 与 Apple 非线性 extended sRGB 标签不应混用；sRGB 代理及唯一 sRGB 8bit 冷缓存中间态会提前裁剪广色域 | 见 UI 方案 §6；M1/M2 探针后收口编码/标签及代理/冷缓存产物，不按旧文字直接落地 |
 | 2026-10-14 | skcms Float16 探针通过，最大线性分量误差 0.000488；P3/Adobe 红保留负值/超一；ImageIO 对无 ICC JPEG 自动补 ProfileName=sRGB | 使用 SKPixmap.ReadPixels；JPEG 实际扫描 APP2 判断内嵌 ICC，再用 EXIF 推断；原生代理与 Full 均为 F16 |
-| 2026-10-14 | 真实 AppKit/Metal 色卡与 RAW 副本冒烟通过；八种 GPU 方向、100% Full、五类设置落盘、评级/CV/DINO/指纹索引三表回环 | 独立设置/数据库与自有图片，报告在 release/native-p2-acceptance；系统色彩对拍和真实素材性能仍待验 |
+| 2026-10-14 | 真实 AppKit/Metal 色卡与 RAW 副本冒烟通过；八种 GPU 方向、100% Full、五类设置落盘、评级/CV/DINO/指纹索引三表回环 | 独立设置/数据库与自有图片，报告在 artifacts/acceptance/native-p2-acceptance；系统色彩对拍和真实素材性能仍待验 |
 | 2026-10-14 | 文档曾称 RAW 自动 sidecar，但实现只有已有 Rating 原位更新 | 保留现有行为，根/设置模块/验收文档纠正；新 sidecar 能力单独立项 |
 | 2026-10-14 | 合并到已取消的代理任务被误判为失败，P0 随后全解码；并发大小代理可能覆盖与丢租约 | 取消单独传播，仍有效调用重发代理；缓存原子替换且尺寸单调。修后 RAW 实测保持 Proxy，但冷图仍约 1.9s，性能门未通过 |
 | 2026-10-14 | 作者五张实拍暴露胶片条缺陷：文档尺寸被视口截断、流式换行错序、当前项定位/横向滚动失败 | 独立单轴布局按项目数扩展；保留 AppKit FlowLayout 滚动方向契约，滚动位置不随控制刷新复位。五组 HIF/ARW 与 12 张色卡验证身份/几何/升降序/末项/鼠标横滚通过，原照片只读 |

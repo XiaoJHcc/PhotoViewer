@@ -5,7 +5,7 @@
 > 跨平台对账真源:[Design/spec/](../Design/spec/00-principles.md) / [Design/status.md](../Design/status.md)。下文早期双壳与旧壳对拍为历史记录；6D 已退役旧壳，现行待办以 §13 为准。
 >
 > **2026-10-19 最新单 EXE 修复**：WinAppSDK 1.8 支持非打包自包含单文件，PRI 随包解出；清旧清单修复 `0x80040111`，全内容解包、不 trim/R2R、WinPS 5.1 BOM 保留。四个官方 Release x64 CRT 14.44.35211.0 现已随包，用户不需安装运行库；`PortableSingleFile.targets` 加固定 `resources.pri` 回退名，原来的改名限制已解除，不更改生产 App.xaml 引导。
-> `release/PhotoViewer-0.8.0-win-x64.exe` 为 230,753,372 字节。原名及中文/空格改名各自独立目录/空缓存 **32/7/5，共 88 项全 PASS**：真实 HEVC 生产解码与 GPU/缩略图回读、DirectML 推理，并证明 CRT/libheif/ONNX/DirectML 均从解包目录实际加载。无现成干净机环境，因此干净 Windows 全系统验收仍未关闭，不以本机来源检查替代；Win10、相机真实素材、未签名/SmartScreen 仍保留。详见 [收尾记录、许可与 SHA256](native-rebuild-windows-release-closeout.md)。
+> `release/packages/PhotoViewer-0.8.0-win-x64.exe` 为 230,753,372 字节。原名及中文/空格改名各自独立目录/空缓存 **32/7/5，共 88 项全 PASS**：真实 HEVC 生产解码与 GPU/缩略图回读、DirectML 推理，并证明 CRT/libheif/ONNX/DirectML 均从解包目录实际加载。无现成干净机环境，因此干净 Windows 全系统验收仍未关闭，不以本机来源检查替代；Win10、相机真实素材、未签名/SmartScreen 仍保留。详见 [收尾记录、许可与 SHA256](native-rebuild-windows-release-closeout.md)。
 
 ## 0. W-M0 可行性闸门:结论(2026-10-16 已过)
 
@@ -196,7 +196,7 @@ PhotoViewer.Windows/
 - **门**:`--pv-native-settings` **7 项 PASS**;主冒烟 24 项无回归;真实拖拽/录制/清库/预设增删已由作者 2026-10-18 手验。
 
 **W-M6 验收 harness 与文档同步**（不补，见 §13.2 裁定）
-- 保留 `--pv-native-smoke/settings/tools` 与压测/探针入口；`--pv-native-layout/filmstrip/input/toolbar` 专项不实现。隔离设置/数据库落 `release/native-win-acceptance/`，**不写用户照片、不动用户设置**。
+- 保留 `--pv-native-smoke/settings/tools` 与压测/探针入口；`--pv-native-layout/filmstrip/input/toolbar` 专项不实现。隔离设置/数据库落 `artifacts/acceptance/native-win-acceptance/`，**不写用户照片、不动用户设置**。
 - 几何对拍：不建 Windows 同格式导出；旧壳与 `--legacy-ui --pv-legacy-layout` 已随 6D 退役，几何以 Web 参考壳 + Mac 比对为准。
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
 - 文档:本文（§12–§18 即 Windows 验收记录）、`Design/status.md` 的 Windows 列(**编译通过≠验收通过**)、[架构文档](../Design/architecture.md) §4 平台矩阵 + 根 `AGENTS.md` 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md`（旧壳 `Debug Windows (Legacy UI)` 任务已随 6D 删除）。
@@ -264,7 +264,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 - **源尺寸**：codec 缩解码及内存 Mitchell 精缩保留真实原始像素尺寸，Windows 展示解码使用该尺寸而非 EXIF；缺少 EXIF 的 3600×2400 JPEG 不再被误判为代理已是 Full。
 - **标题栏**：DIP 边界转换为物理像素，监听 XamlRoot 与筛选条布局更新；上下布局仅避让实际控件组合，避免用拉伸网格宽度清空自定义区域、退回系统默认拖动区；胶片条隐藏时恢复全宽拖动。
 - **模型**：Windows 头工程以 .NET 清单资源提供模型，支持工作目录变化及单文件发布；迁移期与旧壳 AvaloniaResource 各有一份同源模型，原始模型 86,582,598 字节，这项体积代价随 Native/Legacy 工程和资源归属拆分再消除。
-- **验收入口**：`Check Windows Native` Task；仅 `--native --pv-native-smoke` 激活，配置自有设置/数据库/日志，忽略外部图片参数并生成自有棋盘 JPEG；输出 `release/native-win-acceptance/checks.json`，失败退出码 1。覆盖真实队列顺序、线程池回 UI、资源 SHA256/DirectML 双输出推理、两向 1200×850 / 830×650 / 700×480 加恢复原尺寸、标题栏区域、100% Full 升级和关闭释放。
+- **验收入口**：`Check Windows Native` Task；仅 `--native --pv-native-smoke` 激活，配置自有设置/数据库/日志，忽略外部图片参数并生成自有棋盘 JPEG；输出 `artifacts/acceptance/native-win-acceptance/checks.json`，失败退出码 1。覆盖真实队列顺序、线程池回 UI、资源 SHA256/DirectML 双输出推理、两向 1200×850 / 830×650 / 700×480 加恢复原尺寸、标题栏区域、100% Full 升级和关闭释放。
 - **已验证边界**：当前设备 scale=1 的 13 项定向检查通过，模型 SHA256 与源文件独立核对一致；不是完整专项验收。175%/200% DPI 与真实跨屏已由作者手验通过；八方向以自生成素材 + 代码核对为准；系统色彩待 W-M7。新增共享尺寸元数据回归，ColorTestTool 共 27 项通过（原色彩口径保持）。
 
 ## 12. 对标纠偏与标题栏自动显隐（2026-10-17）
@@ -343,7 +343,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 10 | 胶片条虚拟化(ItemsRepeater + 卡片池 + 可见区上报 + 350ms 三次缓出定位 + 收敛式定位) | ✅ 定向 | 卡片几何/项距/打开定位/换向重定位已对拍;用户接管与"减少动态效果"见 §14(harness 覆盖) |
 | 11 | 输入:键盘/滚轮 → 共享手势表 → 共享命令表 | ✅ | NumberPad3→SetRating3 映射已过；`INPUT-01` 随 2026-10-21 作者手验通过（主窗口无文本输入控件，设置窗口独立吞键见 #20） |
 | 12 | 命令分发复用共享 `ControlViewModel`(Open/Previous/Next/Exchange/SetRating 与旧壳同源) | ✅ | 单测式对拍 + 实机 |
-| 13 | 定向验收 harness(`--pv-native-smoke`,隔离设置/数据库/日志 + 自有素材) | ✅ | **28 项全过**（设置 9 项、工具 5 项）；2026-10-23 在当前 HEAD 复跑 28/28、9/9、5/5 全 PASS 并留证于 `release/native-win-acceptance/`；专项 harness 与几何导出按 §13.2 裁定不补 |
+| 13 | 定向验收 harness(`--pv-native-smoke`,隔离设置/数据库/日志 + 自有素材) | ✅ | **28 项全过**（设置 9 项、工具 5 项）；2026-10-23 在当前 HEAD 复跑 28/28、9/9、5/5 全 PASS 并留证于 `artifacts/acceptance/native-win-acceptance/`；专项 harness 与几何导出按 §13.2 裁定不补 |
 | 14 | **缩放指示器(导航图)**:长边 150 缩略图 + 2 px 白色可见框 + 百分比,显示条件与旧壳一致、不可交互 | ✅ | §14;harness 断言 fit 隐藏/非 fit 显示、像素尺寸、白框在缩略图内、百分比与 `PhysicalScale` 同口径、设置关闭即隐藏;缩略帧取 `PhotoLoadSession.Image`(含增强态),`SKImage` pin 覆盖 `DrawImage` 全程,栅格化比例变化时重建 |
 | 15 | **FILM-03**:点选/滚轮/拖动滚动条/触摸接管撤销动画与排队请求;系统"减少动态效果"直接到终点 | ✅ 定向 | §14;harness 断言动画中接管后位置不再推进、减少动态效果两次请求终点一致;真实手感待手测 |
 | 16 | **FILM-06**:星级写回失败在窗口内可见(底部状态提示),不呈现虚假成功 | ✅ 定向 | §14;共享 `MainViewModel.RatingWriteFailed` + 只读素材触发,harness 断言提示可见且星色未变 |
@@ -551,7 +551,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 
 - `--pv-native-settings` **7 项 PASS**：深色/Mica、`NavigationView`+`TitleBar`+`NumberBox`+`InfoBar` 已加载、五分类/960 外层 945 内容、开关+`NumberBox`+滑条回写、UI 行重排回写、录制开始取消/手势显示、关闭回写。
 - `--pv-native-smoke` **24 项全 PASS**（无回归）。
-- 截图：`release/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
+- 截图：`artifacts/acceptance/native-win-acceptance/settings-page{0..4}.png`（DPI-aware `PrintWindow`，1440×1080）。
 - **作者 2026-10-18 手验通过**：真实拖拽排序、键鼠录制、清库确认、预设增删与真实手感；未覆盖的 DPI/文本缩放矩阵按 §13 补验。
 
 ### 17.4 与方案的偏差(已修正)
@@ -592,14 +592,14 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 
 ### 18.4 验收
 
-- `--pv-native-tools`(隔离设置/数据库/日志、自建带 EXIF 的 400×300 素材)**5 项 PASS**,输出 `release/native-win-acceptance/tools-checks.json`:
+- `--pv-native-tools`(隔离设置/数据库/日志、自建带 EXIF 的 400×300 素材)**5 项 PASS**,输出 `artifacts/acceptance/native-win-acceptance/tools-checks.json`:
   1. 深色/Mica/NavigationView + TitleBar/三分类/960 DIP/不进任务栏;
   2. EXIF 6 组 / 25 标签 + 单格式标签(文件名去后缀);
   3. DINO 5 瓦片出图、3+2 同宽网格(206 DIP)且两排上沿齐平、状态 = 文件名、点击瓦片把 cosine 参考点设为 8,8;
   4. 照片统计文件夹行/通配符写回/CSV 导出/移除;
   5. 关闭重开:新窗口、默认 EXIF、共享统计状态保留。
 - 主冒烟 `--pv-native-smoke` **24 项无回归**(分析栏抽瓦片后含增强态诊断、两向等边长仍 PASS);`--pv-native-settings` **7 项无回归**(设置窗口改用共享 `WindowsWindowChrome`/页容器后)。
-- 150% 实机截图:`release/native-win-acceptance/tools-page-{exif,dino,stats}.png`;最小 800×560 的 EXIF 排版另行目视。
+- 150% 实机截图:`artifacts/acceptance/native-win-acceptance/tools-page-{exif,dino,stats}.png`;最小 800×560 的 EXIF 排版另行目视。
 - 主图右键「工具…」与控制栏 EXIF 块点击均实机验证可打开工具窗口。
 - **作者 2026-10-18 手验通过**：真实多格式(RAW+JPG/HEIF)切换、文件夹/CSV 选择器与视觉手感；未覆盖的 DPI/文本缩放矩阵按 §13 补验。
 

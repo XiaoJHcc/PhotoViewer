@@ -16,6 +16,9 @@ if [[ ! -f "${EXPORT_OPTIONS}" ]]; then
 fi
 
 mkdir -p "${OUTPUT_DIR}"
+# release/testflight 规则：归档只保留最近一次，导出目录不驻留
+find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -name '*.xcarchive' -exec rm -rf {} +
+find "${OUTPUT_DIR}" -mindepth 1 -maxdepth 1 -name 'upload-*' -exec rm -rf {} +
 rm -rf "${ARCHIVE_PATH}" "${EXPORT_PATH}"
 
 dotnet publish "${SCRIPT_DIR}/PhotoViewer.iOS.csproj" \

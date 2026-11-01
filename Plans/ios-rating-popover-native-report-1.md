@@ -55,11 +55,11 @@
 
 证据文件：
 
-- [贴边边距后布局验收](../release/native-p2-acceptance/ios-rating-layout-edge.txt) · [布局验收 1](../release/native-p2-acceptance/ios-rating-layout-1.txt) · [布局验收 2](../release/native-p2-acceptance/ios-rating-layout-2.txt) · [提交前默认布局验收](../release/native-p2-acceptance/ios-rating-layout-final.txt)
-- [输入验收](../release/native-p2-acceptance/ios-rating-input.txt)
-- [顶部胶片条原图](../release/native-p2-acceptance/probe-rating-sources-card-row-popover.png) · [顶部放大图](../release/native-p2-acceptance/ios-rating-row-zoom.png) · [入口几何标记](../release/native-p2-acceptance/ios-rating-row-geometry.png)
-- [左侧胶片条原图](../release/native-p2-acceptance/probe-rating-sources-card-popover.png) · [左侧放大图](../release/native-p2-acceptance/ios-rating-col-zoom.png) · [入口几何标记](../release/native-p2-acceptance/ios-rating-col-geometry.png)
-- [底部控制栏](../release/native-p2-acceptance/probe-rating-sources-popover.png) · [右侧控制栏](../release/native-p2-acceptance/probe-rating-sources-control-col-popover.png)
+- [贴边边距后布局验收](../artifacts/acceptance/native-p2-acceptance/ios-rating-layout-edge.txt) · [布局验收 1](../artifacts/acceptance/native-p2-acceptance/ios-rating-layout-1.txt) · [布局验收 2](../artifacts/acceptance/native-p2-acceptance/ios-rating-layout-2.txt) · [提交前默认布局验收](../artifacts/acceptance/native-p2-acceptance/ios-rating-layout-final.txt)
+- [输入验收](../artifacts/acceptance/native-p2-acceptance/ios-rating-input.txt)
+- [顶部胶片条原图](../artifacts/acceptance/native-p2-acceptance/probe-rating-sources-card-row-popover.png) · [顶部放大图](../artifacts/acceptance/native-p2-acceptance/ios-rating-row-zoom.png) · [入口几何标记](../artifacts/acceptance/native-p2-acceptance/ios-rating-row-geometry.png)
+- [左侧胶片条原图](../artifacts/acceptance/native-p2-acceptance/probe-rating-sources-card-popover.png) · [左侧放大图](../artifacts/acceptance/native-p2-acceptance/ios-rating-col-zoom.png) · [入口几何标记](../artifacts/acceptance/native-p2-acceptance/ios-rating-col-geometry.png)
+- [底部控制栏](../artifacts/acceptance/native-p2-acceptance/probe-rating-sources-popover.png) · [右侧控制栏](../artifacts/acceptance/native-p2-acceptance/probe-rating-sources-control-col-popover.png)
 
 ## 未覆盖项
 

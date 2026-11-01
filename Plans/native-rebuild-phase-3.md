@@ -63,7 +63,7 @@
 
 ## 3. 验收门
 
-程序化证据（隔离冒烟会话，`release/native-p2-acceptance/`）：
+程序化证据（隔离冒烟会话，`artifacts/acceptance/native-p2-acceptance/`）：
 
 - [x] 原生分析栏：`--pv-native-analysis` **PASS**（日志 `[NativeSmoke] PASS analysis`）；检查清单 `native-analysis-checks.txt` 记录行布局 6 张 106 正方形瓦片（gap 8 / padding 10 / cross 126）、列布局 70 / cross 90、瓦片顺序与角标、点击落准星、直方图与细节预览出图（proxy=False）、关闭后主图恢复。
 - [x] 增强预览：同一套件验证 `ToggleEnhance` 经 `PhotoLoadSession` 生效并还原（增强图 8 MB 实测）。
