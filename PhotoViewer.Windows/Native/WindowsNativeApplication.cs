@@ -35,6 +35,12 @@ internal static class WindowsNativeApplication
     /// <summary>本轮是否为隔离运行(验收 / 压测 / 性能探针):设置、数据库与日志都落到隔离目录。</summary>
     internal static bool IsolatedMode { get; private set; }
 
+    /// <summary>
+    /// 本轮是否是二次激活验收(<c>--pv-native-activation-check</c>)：数据仍走隔离目录，
+    /// 但必须注册单实例键并拉第二个进程，否则测不到 OPEN-06 的转发。
+    /// </summary>
+    internal static bool ActivationCheckRequested { get; private set; }
+
     /// <summary>本轮是否要求压测翻页(<c>--pv-stress=...</c>;解析在 <see cref="Run"/> 里完成)。</summary>
     internal static bool StressRequested { get; private set; }
 
@@ -87,8 +93,9 @@ internal static class WindowsNativeApplication
         StressRequested = StressFlipDriver.TryParseArgs(args, relative => Path.GetFullPath(relative));
         StressNativeThreads = ParseNativeThreads(args);
         var thumbProbe = WindowsHeifThumbProbe.ParsePaths(args).Length > 0;
+        ActivationCheckRequested = args.Contains("--pv-native-activation-check");
         IsolatedMode = smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
-            || StressRequested || PerfProbeFolder != null || thumbProbe;
+            || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested;
 
         var logName = StressRequested ? "native-startup-stress.log"
             : PerfProbeFolder != null ? "native-startup-probe.log"
@@ -106,7 +113,7 @@ internal static class WindowsNativeApplication
         // 不创建窗口/视图模型,也不重复投递本进程的命令行参数。
         // 验收/压测/探针是隔离运行,可能和用户正在用的实例并行,不参与单实例键,
         // 免得把测试进程的启动参数转发进用户窗口、或让测试被静默转发掉。
-        if (IsolatedMode)
+        if (IsolatedMode && !ActivationCheckRequested)
         {
             NativeStartupLog.Write("single instance skipped: isolated run");
         }

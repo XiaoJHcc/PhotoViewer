@@ -118,15 +118,12 @@ public sealed class PhotoGroupMap
         ArgumentNullException.ThrowIfNull(formatRules);
         var formats = formatRules.Where(rule => rule.IsEnabled).ToArray();
         var allFiles = source.ToArray();
-        // 组信息的唯一真源：先清空所有源文件的背链，再只给本次参与分组的文件回填。
-        // 被格式筛选掉的文件因此不会残留上一次的组与显示名。
-        foreach (var file in allFiles)
-        {
-            file.Group = null;
-        }
-
         var files = allFiles.Where(file => FindFormat(file.Name, formats) != null).ToArray();
-        if (files.Length == 0) return Empty;
+        if (files.Length == 0)
+        {
+            foreach (var file in allFiles) file.Group = null;
+            return Empty;
+        }
 
         var groups = new List<PhotoGroup>();
         if (mergeSameName)
@@ -153,12 +150,20 @@ public sealed class PhotoGroupMap
             .SelectMany(group => group.Files.Select(file => (file, group)))
             .ToImmutableDictionary(item => item.file.File.StorageId, item => item.group);
 
+        // 先回填新组，再把本次参与但已不在任何组里的文件清空：原先"先全清再回填"期间，
+        // 列表投影与后台刷新并发读取会看到 Group == null（重复激活判同组、显示名都会误判）。
+        var grouped = new HashSet<ImageFile>(groups.SelectMany(group => group.Files));
         foreach (var group in groups)
         {
             foreach (var file in group.Files)
             {
                 file.Group = group;
             }
+        }
+
+        foreach (var file in allFiles)
+        {
+            if (!grouped.Contains(file)) file.Group = null;
         }
 
         return new PhotoGroupMap(groups.ToImmutableArray(), byFile);

@@ -80,6 +80,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；使用隔离设置、数据库和自有素材。 |
 | `--pv-native-portable` | 与 smoke 合用，核对实际已加载的 CRT/libheif/ONNX/DirectML 均来自应用解包目录。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
+| `--pv-native-activation-check` | 二次激活专项（OPEN-06）：本进程持单实例键并拉起第二个进程，核对激活转发、主实例定位目标、二次进程以 0 退出且不开第二个窗口；设置/数据库仍走隔离目录。 |
 | `--pv-stress=<文件夹>`（`--pv-stress-count=N`、`--pv-stress-mode=ab`、`--pv-stress-native-threads=N`） | 压测翻页：顺序模式按展示列表连翻，`ab` 模式在相邻两张之间来回切（测"最近两张对比"）。`--pv-stress-native-threads` 覆盖本轮的后台预取并发（隔离设置每轮重置，用于并行度对照实验）。与验收入口同样使用隔离设置与数据库。 |
 | `--pv-perf-probe=<文件夹>` | 分段性能探针：HIF/ARW/JPG 各 6 张（首张预热），报告写隔离目录后退出，不进交互。 |
 | `--pv-heif-thumb-probe=<文件夹或文件>`（可重复） | HEIF 缩略图项对比探针：逐文件对比"容器 `thmb` 项"与"主图缩放"在同一请求下的尺寸、方向与平均绝对差，并校验 DINO 560 档仍走主图；报告 `heif-thumb-probe.txt`，失败退出码为 1。 |

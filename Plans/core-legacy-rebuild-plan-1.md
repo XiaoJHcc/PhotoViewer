@@ -63,14 +63,14 @@ XmpCore 是 XMP 语义真源，容器适配器负责 canonical packet 位置、�
 - [x] 外部打开与文件夹会话
 - [x] 本机可执行回归与文档收口：CoreContractCheck 839 PASS / 1 SKIP / 0 FAIL（夹具入库后全量），SettingsDefaultsCheck 通过；macOS 与 iOS 模拟器分套通过；Android faults 20/0、storage 22/0；Windows 本轮此前只有 C# 类型检查（2026-11-02 补本机实跑，见下节）
 - [x] Windows 真实 UI 与设置关闭/写回（2026-11-02 本机实跑：`CoreContractCheck` 818 PASS / 1 SKIP / 0 FAIL，`--pv-native-smoke` 30/30 连跑两次、settings 10/10、tools 5/5；三个原先在 Windows 跳过的权限/只读/不可读分支改为实跑）
-- [ ] Windows AppInstance 二次激活与命令行参数（唯一剩余；无 harness 覆盖）
+- [x] Windows AppInstance 二次激活与命令行参数（2026-11-02：新增 `--pv-native-activation-check`，真实拉起第二进程验证转发/定位/退出码，连跑两次 PASS）
 - [ ] macOS Finder/Dock 实际文件关联事件
 - [ ] iOS 真机外部目录 security scope 生命周期
 - [ ] Android 跨 UID 临时授权、系统 persisted grant 撤销、DocumentsUI、真实 USB/MTP/相机写卡与云 Provider
 
 ## 2026-11-02 Windows 实跑发现
 
-- **分组重建存在可见空窗（相邻发现，未修）**：`PhotoGroupMap.Build` 先对所有参与文件 `Group = null` 再回填，而列表投影会在后台元数据刷新完成后重跑；并发读取（重复激活判同组、显示名）可能读到 `Group == null`。契约自检已改为等分组稳定后再断言（30 次采样内稳定），产品侧窗口仍在；是否改为"投影内持有分组 + 原子替换"待定。
+- **分组重建有可见空窗（已修）**：`PhotoGroupMap.Build` 原先把所有参与文件 `Group = null` 再回填，而列表投影会在后台元数据刷新完成后重跑；并发读取（重复激活判同组、显示名）会读到 `Group == null`，契约自检因此偶发误判「同组伴侣」。现改为先回填新组、再清空本次参与但不在任何组里的文件，读者只会看到「旧组或新组」；自检的稳定等待保留为防御。
 
 - **本地读取不带 `FileShare.Delete`**：`LocalFileRef.OpenReadAsync` 原为 `FileShare.ReadWrite`，Windows 上只要有一个读取句柄（缩略图/EXIF 元数据在途读取），外部删除/改名、以及本应用 `File.Replace` 原子替换都会报共享冲突。契约自检删除 `d.jpg` 时直接抛 `IOException` 中断整轮。改为 `FileShare.ReadWrite | FileShare.Delete` 后，刷新语义（外部改动由下一次刷新接管）才真正成立。
 - **三个 Windows 分支从未实现**：`RandomAccessChecks` 的「权限拒绝打开」、`RatingTransactionRegressionChecks` 的「只读 sidecar 预检」与「不可读 sidecar 映射」在 `OperatingSystem.IsWindows()` 分支里直接 Skip。现按平台实现：只读用文件属性、不可读用独占句柄制造共享冲突；两边断言同一套语义。

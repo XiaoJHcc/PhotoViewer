@@ -57,6 +57,7 @@ public partial class App : Application
             var settingsHold = LaunchArgs.Contains("--pv-native-settings-hold");
             var toolsCheck = LaunchArgs.Contains("--pv-native-tools");
             var toolsHold = LaunchArgs.Contains("--pv-native-tools-hold");
+            var activationCheck = LaunchArgs.Contains("--pv-native-activation-check");
             var stress = WindowsNativeApplication.StressRequested;
             var perfProbeFolder = WindowsNativeApplication.PerfProbeFolder;
             var thumbProbePaths = WindowsHeifThumbProbe.ParsePaths(LaunchArgs);
@@ -66,7 +67,7 @@ public partial class App : Application
                 NativeStartupLog.Write("xaml binding failed: " + e.Message);
             WindowsNativeApplication.InitializeFacades(
                 smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
-                || stress || perfProbeFolder != null || thumbProbePaths.Length > 0);
+                || stress || perfProbeFolder != null || thumbProbePaths.Length > 0 || activationCheck);
 
             // HEIF 缩略图项对比探针:不需要窗口与视图模型,门面就绪后直接跑完退出。
             if (thumbProbePaths.Length > 0)
@@ -132,6 +133,14 @@ public partial class App : Application
             if (toolsHold)
             {
                 await WindowsToolsAcceptance.PrepareHoldAsync(_main, _window, _toolsPresenter!);
+                return;
+            }
+
+            // 二次激活验收：本进程持单实例键，再拉起第二个进程把参数转发回来（OPEN-06）。
+            if (activationCheck)
+            {
+                await _window.RunActivationCheckAsync();
+                _window.Close();
                 return;
             }
 

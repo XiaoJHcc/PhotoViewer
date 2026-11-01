@@ -363,7 +363,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 | 作者决策 | 最终单文件体积是否接受 | 230,753,372 字节（230.8 MB / 220.1 MiB），已内置 CRT；工程修复通过，干净机门仍待环境 |
 | 功能缺口 | W-M7 色彩：ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签 | RAW 主图已落地（WIC 系统 RAW 引擎全分辨率），不再属 W-M7；色彩是否立项待作者 |
 | 性能 | 顺序连翻 p95 未达 350 ms（远程会话合成交换链缓冲归还等待） | 待显示器直连独显的本地会话按同一脚本复测定性；不计发布前置 |
-| 状态记录 | `Design/status.md` Windows 列 2026-11-02 已按本机实跑回填（CoreContractCheck 818 PASS/1 SKIP/0 FAIL + smoke/settings/tools）；剩 10 格 `代码核对` 为失败注入类与 OPEN-06 | 不补注入套件故 IMAGE-03/IMAGE-10/ANALYSIS-10/SIM-10/MENU-06/STATE-01/STATE-02/SCOPE-02 保持代码核对；OPEN-06 二次激活无 harness 覆盖 |
+| 状态记录 | `Design/status.md` Windows 列 2026-11-02 已按本机实跑回填（CoreContractCheck 818 PASS/1 SKIP/0 FAIL + smoke/settings/tools + OPEN-06 二次激活与 DatasetBuilder 渲染复核）；剩 9 格 `代码核对` 均为失败注入类 | 不补注入套件故 IMAGE-03/IMAGE-10/ANALYSIS-10/SIM-10/MENU-06/STATE-01/STATE-02/SCOPE-02 保持代码核对；OPEN-06 已由 `--pv-native-activation-check` 覆盖 |
 
 **2026-11-02 补齐**：Windows 首次实跑共享 `CoreContractCheck`（818 PASS / 1 SKIP / 0 FAIL）与三套原生 harness，发现并修掉一处产品缺陷——`LocalFileRef.OpenReadAsync` 只带 `FileShare.ReadWrite`，在途读取会让外部删除/改名和本应用 `File.Replace` 原子替换报共享冲突（契约自检因此直接中断）；同时把三个原先在 Windows 直接跳过的检查分支（权限拒绝、只读 sidecar、不可读 sidecar）改为按平台实跑。单文件 0.8.9 已重出并过原名/改名验收。
 

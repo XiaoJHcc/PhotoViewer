@@ -31,7 +31,7 @@
 dotnet run --project PhotoViewer.Windows -c Debug -- "D:/photos/a.jpg"
 ```
 
-专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。报告位于工作目录的 `release/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
+专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。`--pv-native-activation-check` 验证单实例二次激活（本进程持键并拉起第二个进程，核对转发、定位与退出码；数据仍走隔离目录）。报告位于工作目录的 `release/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
 
 性能与压测入口同样使用隔离设置、数据库与日志（`release/native-win-acceptance/`），不触碰用户设置与照片：
 

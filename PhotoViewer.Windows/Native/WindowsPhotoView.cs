@@ -743,8 +743,15 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         {
             if (ReferenceEquals(_stagedUpload, upload)) _stagedUpload = null;
             var staging = upload.Texture;
+            if (_disposed)
+            {
+                // 面板已释放：排在队尾的收尾回调不再碰 D3D（上下文已 Dispose，Unmap 会抛 ObjectDisposedException），
+                // 暂存纹理在 finally 里直接释放。
+                return;
+            }
+
             _context.Object.Unmap(staging.Object, 0);
-            if (_disposed || !upload.Key.TryGetTarget(out var image))
+            if (!upload.Key.TryGetTarget(out var image))
             {
                 return;
             }

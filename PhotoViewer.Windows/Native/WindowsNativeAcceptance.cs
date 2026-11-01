@@ -177,6 +177,74 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>
+    /// OPEN-06 二次激活:本进程持单实例键，真实拉起第二个进程（同一 EXE + 目标路径），
+    /// 核对激活参数经 <c>RedirectActivationToAsync</c> 转发回主实例、主实例切到目标、二次进程自行退出。
+    /// 这条路径没有其它 harness 覆盖：单实例键只有在非隔离运行时才注册。
+    /// </summary>
+    /// <returns>检查完成后的任务；失败退出码为 1。</returns>
+    internal async Task RunActivationCheckAsync()
+    {
+        Directory.CreateDirectory(SmokeOutputDirectory);
+        File.WriteAllText(Path.Combine(SmokeOutputDirectory, "activation-checks.json"), "[\"RUNNING\"]");
+        var checks = new List<string>();
+        try
+        {
+            var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "activation");
+            Directory.CreateDirectory(folder);
+            var first = Path.Combine(folder, "first.jpg");
+            var second = Path.Combine(folder, "second.jpg");
+            await Task.Run(() =>
+            {
+                CreateFixture(first);
+                CreateFixture(second);
+            });
+
+            await OpenPathsAsync(new[] { folder });
+            await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "first.jpg", "主实例载入目录首张");
+            checks.Add("PASS primary: activation folder opened, current=first.jpg");
+
+            var exePath = Environment.ProcessPath
+                ?? throw new InvalidOperationException("无法取得当前进程可执行文件路径");
+            using var child = Process.Start(new ProcessStartInfo(exePath)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = Environment.CurrentDirectory,
+                ArgumentList = { second },
+            }) ?? throw new InvalidOperationException("二次进程未能启动");
+
+            try
+            {
+                await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "second.jpg", "二次激活未把目标交给主实例", 20);
+            }
+            catch (TimeoutException exception)
+            {
+                throw new InvalidOperationException(
+                    $"二次激活未切到 second.jpg（当前 {_main.CurrentFile?.Name ?? "null"}）", exception);
+            }
+
+            checks.Add("PASS second instance: activation forwarded, primary switched to second.jpg");
+
+            RequireSmoke(child.WaitForExit(15000), "二次进程未在 15s 内退出（可能另开了窗口）");
+            RequireSmoke(child.ExitCode == 0, $"二次进程退出码为 {child.ExitCode}");
+            checks.Add("PASS second instance: exited with code 0 instead of opening a second window");
+            _main.OpenCoordinator.Dispose();
+            Environment.ExitCode = 0;
+        }
+        catch (Exception exception)
+        {
+            Environment.ExitCode = 1;
+            checks.Add("FAIL " + exception);
+            NativeStartupLog.Fail("activation check", exception);
+        }
+        finally
+        {
+            File.WriteAllText(
+                Path.Combine(SmokeOutputDirectory, "activation-checks.json"),
+                JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    /// <summary>
     /// 主窗键盘入口:小键盘缩放映射、重复设闸、未绑定放行、文本编辑焦点放行与 Exchange 空态。
     /// 根元素 PreviewKeyDown 的真实事件派发无法用 WinUI 合成,这里验证同一入口
     /// <see cref="HandleShortcutKey"/> 的判定;真实焦点路径留给 Windows 本机键盘验收。
