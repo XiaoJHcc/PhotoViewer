@@ -1367,15 +1367,19 @@ internal sealed partial class WindowsMainWindow
         await WaitForSmokeAsync(() => _session.IsEnhanced && _session.EnhancedDisplay && _photo.HasImage, "增强预览上屏", 60);
         await WaitForSmokeAsync(() => _analysis.HasDiagnostics, "增强图分析诊断重算", 120);
         RequireSmoke(!_analysis.DiagnosticsPlaceholderVisible, "增强态诊断瓦片仍停留在占位");
+        // MENU-06：右键菜单必须写“雾天增强”（不是泛称“增强”），勾选态跟随会话。
+        RequireSmoke(_enhanceMenuToggle.Text == "雾天增强", $"菜单文案不是雾天增强：{_enhanceMenuToggle.Text}");
+        RequireSmoke(_enhanceMenuToggle.IsChecked, "增强开启后菜单未勾选");
 
         Execute("ToggleEnhance");
         await WaitForSmokeAsync(() => !_session.IsEnhanced && !_session.EnhancedDisplay, "退出增强预览");
+        RequireSmoke(!_enhanceMenuToggle.IsChecked, "退出增强后菜单仍勾选");
         RequireSmoke(_session.Image != null, "退出增强后展示图丢失");
         RequireSmoke(_photo.HasImage, "退出增强后主图消失");
         _main.Settings.AnalysisImmediateCompute = false;
         _main.ToggleAnalysisView();
         await Task.Delay(200);
-        checks.Add("PASS enhancement: CLHE enhanced frame via PhotoLoadSession; enhanced-frame diagnostics recompute; toggle off restores original");
+        checks.Add("PASS enhancement + MENU-06: CLHE frame via PhotoLoadSession; enhanced-frame diagnostics recompute; menu reads 雾天增强 and follows the session; toggle off restores original");
     }
 
     /// <summary>星级写回失败必须在窗口内可见(FILM-06),且不得呈现成功星色。</summary>

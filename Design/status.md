@@ -16,7 +16,7 @@
 
 **2026-11-01 Android 补齐程序化断言**：MENU-06（雾天增强文案/勾选/无照片置灰，`pv-check main` 21/0）、SCOPE-03（现算与增强产物不入库不写 XMP、显式提取三路入库、清库清空库表并把诊断瓦片退回「未提取」）与 STATE-04（数据库不可用注入后如实「未提取」、不停留计算中、无伪造徽标且不崩溃，收尾恢复可用库）由 `pv-check faults` 36/0 机测通过；`pv-check all` 87 项连跑 15 次 0 崩溃、无新增 tombstone，历史启动期 SIGSEGV 在本轮未复现、仍未定位。报告归档 `release/android-acceptance-2026-11-01/`。
 
-**2026-11-02 Windows 运行态补齐**：共享 Core 重建后 Windows 只有类型检查，本轮在 Windows 本机实跑 `CoreContractCheck` **818 PASS / 1 SKIP / 0 FAIL**（唯一 skip 是 macOS 专有 `realpath` 身份）、`--pv-native-smoke` **30/30**（连跑两次）、`--pv-native-settings` **10/10**、`--pv-native-tools` **5/5**，Debug/Release 构建 0 错 0 警。期间修掉一个 Windows 缺陷：读文件只带 `FileShare.ReadWrite`，外部删除/改名与本应用原子替换都会被锁（`LocalFileRef.OpenReadAsync` 现同时允许 `FileShare.Delete`）；并把「权限拒绝打开」「只读 sidecar 预检」「不可读 sidecar 映射」三个原先在 Windows 上直接跳过的分支改成实跑（Windows 用只读属性/独占句柄，不套用 POSIX 模式）。冒烟夹具改为各自独占子目录（显式打开会刷新整个父目录），修复了冒烟第二次运行必失败。**OPEN-06** 新增 `--pv-native-activation-check`：本进程持单实例键并真实拉起第二个进程，核对激活转发、主实例切到目标、二次进程以 0 退出且不开第二个窗口，连跑两次通过。同日还实测了 Training `DatasetBuilder` 在 Windows 的 `--dump-render`（像素与既有 `display-plane-v3` 缓存逐文件哈希一致），关窗时在途大图上传的 `ObjectDisposedException` 已加前置守卫（原先是收尾回调在 D3D 上下文 Dispose 后仍调用 `Unmap`）；`PhotoGroupMap.Build` 的「先清空再回填」改为「先回填、再清空不在组内的文件」，并发读取不再看到 `Group == null`。仍缺：WinUI 真实点选写回的作者复验、色彩（W-M7）与顺序连翻长尾。
+**2026-11-02 Windows 运行态补齐**：共享 Core 重建后 Windows 只有类型检查，本轮在 Windows 本机实跑 `CoreContractCheck` **818 PASS / 1 SKIP / 0 FAIL**（唯一 skip 是 macOS 专有 `realpath` 身份）、`--pv-native-smoke` **30/30**（连跑两次）、`--pv-native-settings` **10/10**、`--pv-native-tools` **5/5**，Debug/Release 构建 0 错 0 警。期间修掉一个 Windows 缺陷：读文件只带 `FileShare.ReadWrite`，外部删除/改名与本应用原子替换都会被锁（`LocalFileRef.OpenReadAsync` 现同时允许 `FileShare.Delete`）；并把「权限拒绝打开」「只读 sidecar 预检」「不可读 sidecar 映射」三个原先在 Windows 上直接跳过的分支改成实跑（Windows 用只读属性/独占句柄，不套用 POSIX 模式）。冒烟夹具改为各自独占子目录（显式打开会刷新整个父目录），修复了冒烟第二次运行必失败。**OPEN-06** 新增 `--pv-native-activation-check`：本进程持单实例键并真实拉起第二个进程，核对激活转发、主实例切到目标、二次进程以 0 退出且不开第二个窗口，连跑两次通过。同日还实测了 Training `DatasetBuilder` 在 Windows 的 `--dump-render`（像素与既有 `display-plane-v3` 缓存逐文件哈希一致），关窗时在途大图上传的 `ObjectDisposedException` 已加前置守卫（原先是收尾回调在 D3D 上下文 Dispose 后仍调用 `Unmap`）；`PhotoGroupMap.Build` 的「先清空再回填」改为「先回填、再清空不在组内的文件」，并发读取不再看到 `Group == null`。MENU-06 也转为程序化（smoke 断言菜单文案与勾选跟随会话）。仍缺：WinUI 真实点选写回的作者复验、色彩（W-M7）与顺序连翻长尾。
 
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
@@ -146,7 +146,7 @@
 | MENU-03 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | MENU-04 | 不适用；系统菜单 | 作者手验通过 | 不适用；系统菜单 | 作者手验通过；基础操作 |
 | MENU-05 | 不适用；无卡片菜单 | 作者手验通过；卡片菜单两行外观 | 不适用；无卡片菜单 | 作者手验通过；基础操作；标题不可点、时间带秒/时区 |
-| MENU-06 | 程序化通过；雾天增强文案、共享 SF Symbols 与系统菜单栏图标 | 程序化通过；雾天增强文案与共享 SF Symbols | 代码核对；雾天增强文案，待 Windows 运行验收 | 程序化通过；文案/勾选随状态/无照片置灰（main 断言） |
+| MENU-06 | 程序化通过；雾天增强文案、共享 SF Symbols 与系统菜单栏图标 | 程序化通过；雾天增强文案与共享 SF Symbols | 程序化通过 11-02；smoke 断言右键菜单文案为「雾天增强」且勾选态跟随会话（MENU-07 的无照片置灰为作者手验） | 程序化通过；文案/勾选随状态/无照片置灰（main 断言） |
 | MENU-07 | 程序化通过；切空无照片当轮禁用增强与全部照片操作 | 程序化通过；无照片雾天增强置灰 | 作者手验通过；无照片雾天增强禁用 | 作者手验通过；基础操作；无照片雾天增强禁用 |
 
 ## input
