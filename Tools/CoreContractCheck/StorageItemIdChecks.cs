@@ -15,7 +15,11 @@ internal static class StorageItemIdChecks
         var identityPath = id.Value["file:".Length..];
         c.True("本地路径身份为绝对路径", Path.IsPathFullyQualified(identityPath), identityPath);
         c.Equal("本地路径身份已规范化", Path.GetFullPath(identityPath), identityPath);
-        c.Equal("本地路径身份保留文件名", "photo.jpg", Path.GetFileName(identityPath));
+        // Windows 身份按大小写不敏感归一（整条路径大写），文件名保留但不保留大小写。
+        c.True("本地路径身份保留文件名",
+            string.Equals("photo.jpg", Path.GetFileName(identityPath),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal),
+            Path.GetFileName(identityPath));
         c.SameId("身份路径再次构造得到同一身份", id, StorageItemId.FromLocalPath(identityPath));
 
         var messy = Path.Combine(root, "a", ".", "c", "..", "b", "photo.jpg");

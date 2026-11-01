@@ -82,7 +82,9 @@ internal sealed partial class WindowsMainWindow
 
             await RunDeploymentChecksAsync(checks);
 
-            var fixture = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
+            // 单图素材放在独立目录：显式打开文件会刷新整个父目录（OPEN-08），与其他 harness
+            // 共用 fixtures/ 根目录时，上一轮留下的图片会让"只有一张照片"的断言失效。
+            var fixture = Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg");
             await Task.Run(() => CreateFixture(fixture));
             await OpenPathsAsync(new[] { fixture });
             await WaitForSmokeAsync(() => _session.Image is { SourceWidth: 3600, SourceHeight: 2400 }, "首次照片解码");
@@ -1313,11 +1315,12 @@ internal sealed partial class WindowsMainWindow
     /// <returns>检查完成后的任务</returns>
     private async Task RunRatingFailureChecksAsync(List<string> checks)
     {
-        var path = Path.Combine(SmokeOutputDirectory, "fixtures", "readonly.jpg");
+        // 只读素材同样独占目录，避免落在单图素材的父目录里改变列表长度。
+        var path = Path.Combine(SmokeOutputDirectory, "fixtures", "readonly", "readonly.jpg");
         await Task.Run(() =>
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            File.Copy(Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg"), path, true);
+            File.Copy(Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg"), path, true);
             File.SetAttributes(path, FileAttributes.ReadOnly);
         });
 
@@ -1384,7 +1387,7 @@ internal sealed partial class WindowsMainWindow
         var conflictPath = Path.Combine(folder, conflictName);
         var plainPath = Path.Combine(folder, "plain.jpg");
         var sidecarPath = Path.ChangeExtension(conflictPath, ".xmp");
-        var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "checker.jpg");
+        var checkerPath = Path.Combine(SmokeOutputDirectory, "fixtures", "single", "checker.jpg");
         await Task.Run(() =>
         {
             Directory.CreateDirectory(folder);
