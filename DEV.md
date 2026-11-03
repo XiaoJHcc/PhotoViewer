@@ -67,6 +67,10 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 | **Debug Mac** | 构建、签名并启动原生 `.app`。 |
 | **Run Mac** | 启动已有构建，不重新编译。 |
 
+### Apple 液态玻璃 UI demo
+
+独立原型位于 `Prototypes/AppleLiquidGlass/PhotoViewerUI.xcodeproj`，不链接产品 C#、解码器或原生壳。使用 Xcode 打开后选择 **My Mac**、iPad 或 iPhone 模拟器运行；目标系统为 macOS / iOS 26。demo 使用合成照片和会话内状态，不读写用户照片与设置；设计确认前不修改 `Design/` 规范和产品接线。
+
 ### Web 参考壳
 
 | Task | 用途 |

@@ -27,6 +27,7 @@ PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链�
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（Bootstrap/主题/门面）
 PhotoViewer.Web/              # Web 参考壳：只依据 Design/ 实现的主屏（ES module，零依赖，合成照片）
+Prototypes/                   # 不接产品接线的独立 UI 原型；AppleLiquidGlass 为 macOS/iPad/iPhone SwiftUI 演示
 Tools/                        # 诊断与维护工具
 Fixtures/                     # 验收素材（色卡/HEIF/RAW，四端验收与 Core 契约自检共用）
 Training/                     # AI 训练独立 git 仓库（主库忽略）
