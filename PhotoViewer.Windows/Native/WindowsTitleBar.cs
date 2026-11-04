@@ -10,9 +10,10 @@ using Windows.UI;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 悬停标题栏(SHELL-02):标题文字 + 全屏/最小化/最大化/关闭四个自绘按钮。
+/// 桌面标题栏(SHELL-02):标题文字 + 全屏/最小化/最大化/关闭四个自绘按钮。
 /// <para>
-/// 只负责"看得见的部分":覆盖层不占布局高度、<see cref="IsHitTestVisible"/> 保持默认(空处不命中任何元素),
+/// 只负责"看得见的部分":默认是悬停覆盖层，窄宽度时由主窗口让出布局高度并常态显示；
+/// <see cref="IsHitTestVisible"/> 保持默认(空处不命中任何元素),
 /// 背景是一块独立的不可命中元素,按钮才是唯一可命中的目标。拖动区不在这里画元素 ——
 /// 由 <see cref="WindowsMainWindow"/> 把区域登记成系统 caption,所以标题栏不可见时顶部不可拖动。
 /// </para>
@@ -190,7 +191,8 @@ internal sealed class WindowsTitleBar
     }
 
     /// <summary>
-    /// 按当前布局设置跨度与背景:列布局从文件栏右缘起,行布局整宽无背景,文件栏隐藏时整宽带亚克力。
+    /// 按当前布局设置跨度与背景:列布局从文件栏右缘起,行布局悬停形态整宽无背景,
+    /// 窄宽度常驻栏与文件栏隐藏时整宽带亚克力。
     /// <paramref name="photoBand"/> 是主图渲染器已经画好亚克力的区段(覆盖层坐标),该处 XAML 背景让空:
     /// SwapChainPanel 不能给 <c>AcrylicBrush</c> 取样,只有交换链内的那一份才有真实的模糊。
     /// </summary>

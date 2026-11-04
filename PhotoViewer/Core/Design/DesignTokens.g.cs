@@ -523,11 +523,11 @@ public static class DesignTokens
     public const double ShellTitlebarButtonGlyphSize = 10.0;
     /// <summary>shell.titlebar.button.width（pt） SHELL-02：Windows 自绘窗口按钮（全屏/最小化/最大化/关闭）外框宽，高同标题栏，对齐 Win11 系统 caption 按钮。</summary>
     public const double ShellTitlebarButtonWidth = 46.0;
-    /// <summary>shell.titlebar.height（pt） SHELL-02：桌面主窗口悬停标题栏覆盖层高度（Windows 自绘标题栏与窗口按钮高、macOS 拖动区与毛玻璃带高）。</summary>
+    /// <summary>shell.titlebar.height（pt） SHELL-02：桌面主窗口标题栏高度：默认是悬停覆盖层；行布局宽度不足时改为文件栏上方的常驻通栏并占布局高度。</summary>
     public const double ShellTitlebarHeight = 32.0;
-    /// <summary>shell.titlebar.hotzone.height（pt） SHELL-02：指针进入窗口顶部该高度内才显示标题栏；移出、离开窗口或失焦即收起。</summary>
+    /// <summary>shell.titlebar.hotzone.height（pt） SHELL-02：悬停覆盖层形态下，指针进入窗口顶部该高度内才显示标题栏；移出、离开窗口或失焦即收起。行布局窄宽度常驻栏不使用热区。</summary>
     public const double ShellTitlebarHotzoneHeight = 50.0;
-    /// <summary>shell.titlebar.title.leftInset（pt） SHELL-02：标题文字前导间距：Windows 距标题栏左缘，macOS 距最右交通灯右缘；行布局同值作为标题文字到筛选挖空的尾部间距。</summary>
+    /// <summary>shell.titlebar.title.leftInset（pt） SHELL-02：标题文字前导间距：Windows 距标题栏左缘，macOS 距最右交通灯右缘；行布局悬停覆盖层同值作为标题文字到筛选挖空的尾部间距，窄宽度常驻栏同值作为到窗口按钮组或窗口右缘的尾部间距。</summary>
     public const double ShellTitlebarTitleLeftInset = 12.0;
     /// <summary>shell.window.default.height（pt） SHELL-01：桌面主窗口默认高。</summary>
     public const double ShellWindowDefaultHeight = 850.0;

@@ -356,7 +356,7 @@ internal sealed partial class WindowsMainWindow
         checks.Add("PASS window states: maximize/restore/fullscreen/exit return consistent presenter state; caption buttons flip 最大化/还原 and 全屏/退出全屏; fullscreen keeps the bar on hover with no caption regions, exit restores border without system title bar");
     }
 
-    /// <summary>SHELL-02 / MENU-06 / TOOLBAR-04：悬停标题栏、动态标题、窗口图标、菜单图标与命令提示。</summary>
+    /// <summary>SHELL-02 / MENU-06 / TOOLBAR-04：悬停与窄宽度常驻标题栏、动态标题、窗口图标、菜单图标与命令提示。</summary>
     private async Task RunTitleBarChromeChecksAsync(List<string> checks)
     {
         CheckWindowChrome();
@@ -370,7 +370,7 @@ internal sealed partial class WindowsMainWindow
         await CheckContextMenuIconsAsync();
         CheckCommandTooltips();
         checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": photo renderer draws the title bar acrylic inside the swap chain (blur -> luminosity blend -> color blend from the theme brush recipe), band pixel differs from / keeps the hue of / is darker than the plain photo, restored when hidden, XAML acrylic only outside the photo band, WinUI noise texture loaded, both sides of the photo/XAML seam fade to the same FallbackColor acrylic value, band region PNG exported");
-        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: hover title bar over the content top edge with zero caption regions while hidden, caption regions inside the bar height ending at the buttons, acrylic background except row layout with filmstrip, layout-dependent span and filter cut-out, caption text mirrored from folder - file - PhotoViewer title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
+        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: hover and persistent title bars, zero caption while hover-hidden, full-width acrylic and 32-DIP row offset at 700 DIP, persistent visibility outside the hot zone and on deactivation, restored hover overlay at 1200 DIP, caption regions ending at the buttons and excluding filter controls only in hover mode, caption text mirrored from folder - file - PhotoViewer title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
     }
 
     /// <summary>动态标题:<c>文件夹名 - 文件名 - PhotoViewer</c>,无文件只有应用名,单图重复名去重。</summary>
@@ -2190,9 +2190,9 @@ internal sealed partial class WindowsMainWindow
     }
 
     /// <summary>
-    /// SHELL-02:悬停标题栏的显隐、跨度、背景与 caption 拖动区。
-    /// 隐藏态零命中；显示态拖动区落在标题栏高内、止于按钮组，列布局从文件栏右缘起，
-    /// 行布局整宽无背景并挖空筛选条可点控件，文件栏隐藏时整宽带亚克力。
+    /// SHELL-02:悬停与窄宽度常驻标题栏的显隐、跨度、背景与 caption 拖动区。
+    /// 悬停隐藏态零命中；显示态拖动区止于按钮组，行布局按宽度选择筛选挖空或 32 点常驻通栏，
+    /// 文件栏隐藏时整宽带亚克力；常驻栏在热区外与失焦后仍保留。
     /// </summary>
     private void CheckHoverTitleBar()
     {
@@ -2242,27 +2242,48 @@ internal sealed partial class WindowsMainWindow
         else
         {
             var cut = _filterBar.GetInteractiveBounds(_root);
-            var cutLeft = (int)Math.Floor(cut.X * scale);
-            var cutRight = (int)Math.Ceiling((cut.X + cut.Width) * scale);
             RequireSmoke(_titleBar.Left == 0, $"行布局标题栏未从窗口左缘开始: {_titleBar.Left}");
-            RequireSmoke(!_titleBar.IsBackgroundVisible && _photo.TitleBarBackdropBand == null,
-                "行布局标题栏不应有背景");
-            RequireSmoke(regions[0].X == 0, $"行布局拖动区未从窗口左缘开始: {regions[0].X}");
-            foreach (var region in regions)
+            if (_isTitleBarPersistent)
             {
-                RequireSmoke(region.X + region.Width <= cutLeft || region.X >= cutRight,
-                    $"行布局拖动区压住筛选控件: region={region.X}+{region.Width}, 挖空={cutLeft}..{cutRight}");
+                RequireSmoke(cut.X + cut.Width > _titleBar.GetButtonsLeft(_root),
+                    "常驻标题栏的触发条件不成立：筛选组与窗口按钮没有相交");
+                RequireSmoke(Math.Abs(_rowHost.Margin.Top - WindowsLayout.TitleBarHeight) < 0.01,
+                    $"窄宽度常驻栏未占用 32 点布局高度: {_rowHost.Margin.Top}");
+                RequireSmoke(cut.Y >= WindowsLayout.TitleBarHeight,
+                    $"筛选组未整体下移到常驻标题栏下方: {cut.Y}");
+                RequireSmoke(hasBackdrop && _photo.TitleBarBackdropBand == null,
+                    "窄宽度常驻栏未使用整通栏 XAML 亚克力，或错误启用了主图交换链背板");
+                RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
+                    "窄宽度常驻栏未提供窗口左缘到按钮组的完整拖动区");
+                var title = _titleBar.TitleElement;
+                RequireSmoke(title.Visibility != Visibility.Visible
+                    || WindowsLayout.TitleBarTitleInset + title.MaxWidth <= _titleBar.GetButtonsLeft(_root) + 0.5,
+                    "窄宽度常驻栏标题文字越过窗口按钮组");
             }
+            else
+            {
+                var cutLeft = (int)Math.Floor(cut.X * scale);
+                var cutRight = (int)Math.Ceiling((cut.X + cut.Width) * scale);
+                RequireSmoke(Math.Abs(_rowHost.Margin.Top) < 0.01,
+                    $"行布局悬停覆盖层不应占用布局高度: {_rowHost.Margin.Top}");
+                RequireSmoke(!_titleBar.IsBackgroundVisible && _photo.TitleBarBackdropBand == null,
+                    "行布局悬停标题栏不应有背景");
+                RequireSmoke(regions[0].X == 0, $"行布局拖动区未从窗口左缘开始: {regions[0].X}");
+                foreach (var region in regions)
+                {
+                    RequireSmoke(region.X + region.Width <= cutLeft || region.X >= cutRight,
+                        $"行布局拖动区压住筛选控件: region={region.X}+{region.Width}, 挖空={cutLeft}..{cutRight}");
+                }
 
-            // 挖空之外、按钮左侧的整条标题栏高都是拖动区(窗口很窄时筛选条会伸到按钮下方，挖空右段为 0)。
-            var cutEnd = Math.Min(Math.Max(cutRight, cutLeft), buttonLeftPx);
-            var draggable = Math.Max(cutLeft, 0) + (buttonLeftPx - cutEnd);
-            RequireSmoke(regions.Sum(region => region.Width) == draggable,
-                $"行布局拖动区宽度不符: {regions.Sum(region => region.Width)} != {draggable}");
-            var title = _titleBar.TitleElement;
-            RequireSmoke(title.Visibility != Visibility.Visible
-                || _titleBar.Left + WindowsLayout.TitleBarTitleInset + title.MaxWidth <= cut.X + 0.5,
-                $"行布局标题文字越过筛选挖空: {_titleBar.Left}+{WindowsLayout.TitleBarTitleInset}+{title.MaxWidth} > {cut.X}");
+                var cutEnd = Math.Min(Math.Max(cutRight, cutLeft), buttonLeftPx);
+                var draggable = Math.Max(cutLeft, 0) + (buttonLeftPx - cutEnd);
+                RequireSmoke(regions.Sum(region => region.Width) == draggable,
+                    $"行布局拖动区宽度不符: {regions.Sum(region => region.Width)} != {draggable}");
+                var title = _titleBar.TitleElement;
+                RequireSmoke(title.Visibility != Visibility.Visible
+                    || _titleBar.Left + WindowsLayout.TitleBarTitleInset + title.MaxWidth <= cut.X + 0.5,
+                    $"行布局标题文字越过筛选挖空: {_titleBar.Left}+{WindowsLayout.TitleBarTitleInset}+{title.MaxWidth} > {cut.X}");
+            }
         }
 
         // 3) 拖动区真的生效：标题栏内的点由系统判成 HTCAPTION（拖动/双击走系统），标题栏下方仍是客户区。
@@ -2285,9 +2306,21 @@ internal sealed partial class WindowsMainWindow
             && ReferenceEquals(titleElement.Style, captionStyle),
             "标题文字未使用 WinUI CaptionTextBlockStyle");
 
-        // 5) 指针移出热区或离开窗口：标题栏收起，拖动区归零，顶部不再可拖动、双击交给主图。
-        //    这一段紧跟在模拟之后同步读完，不留真实指针事件插进来的窗口。
+        // 5) 悬停覆盖层在热区外收起；窄宽度常驻栏在热区外、离开窗口与失焦后都保留。
         SimulateTitleBarPointerForAcceptance(true, WindowsLayout.TitleBarHotZoneHeight + 1);
+        if (_isTitleBarPersistent)
+        {
+            RequireSmoke(_titleBar.IsVisible, "指针低于热区后窄宽度常驻栏被收起");
+            SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
+            RequireSmoke(_titleBar.IsVisible, "指针离开窗口后窄宽度常驻栏被收起");
+            SimulateWindowDeactivatedForAcceptance();
+            RequireSmoke(_titleBar.IsVisible, "窗口失焦后窄宽度常驻栏被收起");
+            RequireSmoke(CurrentCaptionRegions().Any(region => region.Width > 0 && region.Height > 0),
+                "窗口失焦后窄宽度常驻栏撤掉了拖动区");
+            SimulateWindowActivatedForAcceptance();
+            return;
+        }
+
         RequireSmoke(!_titleBar.IsVisible, "指针低于热区后标题栏仍显示");
         RequireNoCaptionRegions("指针低于热区");
         SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);

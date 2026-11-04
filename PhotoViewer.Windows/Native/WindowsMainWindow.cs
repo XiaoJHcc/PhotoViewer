@@ -94,6 +94,7 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _isRowLayout = true;
     private bool _sized;
     private bool _isFullScreen;
+    private bool _isTitleBarPersistent;
     private bool _windowIconApplied;
     private readonly IViewStateStore _viewState;
     private bool _preferencesLoaded;
@@ -334,6 +335,7 @@ internal sealed partial class WindowsMainWindow : Window
         _root.RemoveHandler(UIElement.PointerExitedEvent, _rootPointerExited);
         _photo.SizeChanged -= OnPhotoSizeChanged;
         _filterBar.SizeChanged -= OnFilterBarSizeChanged;
+        _filterBar.InteractiveBoundsChanged -= UpdateTitleBarChrome;
         DetachNonClientPointerSource();
         _filterBar.PopupOpening -= _ratingSources.Close;
         _ratingSources.Dispose();
@@ -718,6 +720,7 @@ internal sealed partial class WindowsMainWindow : Window
             }
 
             _filterBar.SizeChanged += OnFilterBarSizeChanged;
+            _filterBar.InteractiveBoundsChanged += UpdateTitleBarChrome;
         }
 
         if (!_sized)
@@ -1155,8 +1158,8 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏显隐(SHELL-02):指针在顶部热区、停在已登记的拖动区上或正在拖动/缩放时可见;
-    /// 移出热区、离开窗口或窗口失焦即收起,不播放过渡动画。显隐不变时只做一次比较(指针移动是热路径)。
+    /// 标题栏显隐(SHELL-02):窄宽度常驻栏始终可见;其余形态由顶边热区、非客户区悬停与拖动循环驱动,
+    /// 不播放过渡动画。显隐不变时只做一次比较(指针移动是热路径)。
     /// </summary>
     private void RefreshTitleBarVisibility()
     {
@@ -1165,9 +1168,9 @@ internal sealed partial class WindowsMainWindow : Window
             return;
         }
 
-        var visible = _windowActive
+        var visible = (_isTitleBarPersistent && !_isFullScreen) || (_windowActive
             && (_moveSizeActive || _nonClientHover
-                || (_pointerInside && _pointerY <= WindowsLayout.TitleBarHotZoneHeight));
+                || (_pointerInside && _pointerY <= WindowsLayout.TitleBarHotZoneHeight)));
         if (_titleBar.IsVisible == visible)
         {
             return;
@@ -1177,7 +1180,7 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateTitleBarChrome();
     }
 
-    /// <summary>验收:按指针位置驱动同一条显隐判定(热区外、离开窗口都必须收起)。</summary>
+    /// <summary>验收:按指针位置驱动同一条显隐判定。</summary>
     /// <param name="inside">指针是否在窗口内</param>
     /// <param name="y">指针在内容坐标内的 Y</param>
     internal void SimulateTitleBarPointerForAcceptance(bool inside, double y)
@@ -1191,8 +1194,8 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏跨度、背景与标题可用宽(SHELL-02):列布局从文件栏右缘(含相似面板扩宽)到窗口右缘并铺亚克力;
-    /// 行布局整宽无背景、只挖空筛选条可点控件;文件栏隐藏时整宽带亚克力。
+    /// 标题栏跨度、背景与标题可用宽(SHELL-02):行布局在筛选组与窗口按钮相交时改为文件栏上方常驻通栏;
+    /// 其余行布局整宽无背景并挖空筛选控件,列布局与文件栏隐藏时铺亚克力。
     /// </summary>
     private void UpdateTitleBarChrome()
     {
@@ -1208,14 +1211,26 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         var fileBarVisible = _main.IsThumbnailViewVisible;
+        var filterBounds = fileBarVisible && _isRowLayout
+            ? _filterBar.GetInteractiveBounds(_root)
+            : default(Rect);
+        var persistent = fileBarVisible && _isRowLayout && !_isFullScreen
+            && filterBounds.X + filterBounds.Width > _titleBar.GetButtonsLeft(_root);
+        if (_isTitleBarPersistent != persistent)
+        {
+            _isTitleBarPersistent = persistent;
+            _rowHost.Margin = new Thickness(0, persistent ? WindowsLayout.TitleBarHeight : 0, 0, 0);
+            RefreshTitleBarVisibility();
+        }
+
         var left = fileBarVisible && !_isRowLayout ? FilePaneRightEdge() : 0;
         var width = Math.Max(0, _root.ActualWidth - left);
-        var showBackground = !(fileBarVisible && _isRowLayout);
+        var showBackground = persistent || !(fileBarVisible && _isRowLayout);
 
         // 标题栏与主图视图重叠的区段由主图渲染器在交换链内画同一份亚克力(SwapChainPanel 取不到
-        // AcrylicBrush 背板),XAML 背景只铺其余区段。
+        // AcrylicBrush 背板),XAML 背景只铺其余区段。常驻栏已让主图下移,不启用交换链背板。
         Rect? photoBand = null;
-        if (_titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe)
+        if (!persistent && _titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe)
         {
             var bar = new Rect(left, 0, width, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight));
             if (TryGetPhotoBand(bar, out var bandInPhoto, out var bandInBar, out var edges, out var barOrigin))
@@ -1232,11 +1247,11 @@ internal sealed partial class WindowsMainWindow : Window
 
         _titleBar.SetSpan(left, showBackground, photoBand, width);
 
-        // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局再让出筛选条可点控件。
+        // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局悬停覆盖层再让出筛选条可点控件。
         var titleRightEdge = _titleBar.GetButtonsLeft(_root);
-        if (fileBarVisible && _isRowLayout)
+        if (fileBarVisible && _isRowLayout && !persistent)
         {
-            titleRightEdge = _filterBar.GetInteractiveBounds(_root).X;
+            titleRightEdge = filterBounds.X;
         }
 
         _titleBar.SetTitleMaxWidth(
@@ -1378,7 +1393,7 @@ internal sealed partial class WindowsMainWindow : Window
             return NoCaptionRects;
         }
 
-        if (_main.IsThumbnailViewVisible && _isRowLayout)
+        if (_main.IsThumbnailViewVisible && _isRowLayout && !_isTitleBarPersistent)
         {
             var bounds = _filterBar.GetInteractiveBounds(_root);
             var cutLeft = (int)Math.Clamp(Math.Floor(bounds.X * scale), leftEdge, buttonLeft);

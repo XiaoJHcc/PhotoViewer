@@ -13,10 +13,10 @@ internal static class NativeMainLayoutAcceptance
 {
     /// <summary>代码内固定几何允许的误差。</summary>
     private const double Exact = .01;
-    /// <summary>三种参考窗口尺寸，覆盖两向布局的宽窄两端。</summary>
-    private static readonly CGSize[] WindowSizes = [new(1200, 850), new(830, 650), new(700, 480)];
+    /// <summary>四种参考窗口尺寸，覆盖两向布局、窄宽度常驻标题栏及恢复悬停覆盖层。</summary>
+    private static readonly CGSize[] WindowSizes = [new(1200, 850), new(830, 650), new(560, 480), new(700, 480)];
 
-    /// <summary>在隔离设置与只读素材下核对两向布局的三种窗口尺寸，输出实际几何，结束后恢复设置工作副本。</summary>
+    /// <summary>在隔离设置与只读素材下核对两向布局的四种窗口尺寸，输出实际几何，结束后恢复设置工作副本。</summary>
     internal static async Task RunAsync(MacMainWindow window, string output)
     {
         var settings = window.Main.Settings;
@@ -108,7 +108,7 @@ internal static class NativeMainLayoutAcceptance
             (filePane, "文件栏"), (fileDivider, "文件栏分隔线"), (photoPane, "观片区"),
             (controlDivider, "控制栏分隔线"), (controlScroll, "控制栏"),
         ];
-        double cursor = 0;
+        double cursor = window.IsTitlebarPersistent ? DesignTokens.ShellTitlebarHeight : 0;
         foreach (var partition in partitions)
         {
             var frame = partition.View.Frame;
@@ -217,15 +217,15 @@ internal static class NativeMainLayoutAcceptance
     }
 
     /// <summary>
-    /// SHELL-02：标题栏覆盖层的跨度、毛玻璃背景与标题文字。覆盖层恒高 shell.titlebar.height 且顶边贴合窗口顶边；
-    /// 行布局文件栏可见时只留筛选挖空两侧的拖动区、无背景，列布局是通栏带并带毛玻璃；标题文字在最右交通灯
-    /// 右缘 + shell.titlebar.title.leftInset 起、中线对齐交通灯，行布局止于筛选控件前同样 12 点。
-    /// 显隐由验收直接模拟热区悬停，检查完恢复收起，避免污染后续截图。
+    /// SHELL-02：标题栏跨度、毛玻璃背景与标题文字。默认覆盖层高 shell.titlebar.height 且贴合窗口顶边；
+    /// 行布局宽度足够时挖空筛选控件，窄宽度改为占布局高度的常驻通栏；列布局为通栏悬停覆盖层。
+    /// 显隐由验收模拟热区进出，悬停形态应收起，窄宽度常驻栏应保持可见。
     /// </summary>
     private static void VerifyTitlebar(MacMainWindow window, bool row, string scope, NSView filePane, NSView photoPane, List<string> geometry)
     {
         var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
         double width = (double)root.Bounds.Width, height = DesignTokens.ShellTitlebarHeight;
+        bool persistent = window.IsTitlebarPersistent;
         var zones = window.DragZones;
         if (zones.Count != 2) throw new InvalidOperationException($"{scope} 拖动区数量为 {zones.Count}，预期 2");
         var material = window.TitlebarMaterialView;
@@ -239,11 +239,12 @@ internal static class NativeMainLayoutAcceptance
         if (Math.Abs((double)zones[0].Frame.X) > Exact) throw new InvalidOperationException($"{scope} 左侧拖动区未从窗口左缘起：{zones[0].Frame}");
         if (Math.Abs((double)zones[1].Frame.X + (double)zones[1].Frame.Width - width) > Exact)
             throw new InvalidOperationException($"{scope} 右侧拖动区未止于窗口右缘：{zones[1].Frame}");
+        if (persistent && (Math.Abs((double)zones[0].Frame.Width - width) > Exact || Math.Abs((double)zones[1].Frame.Width) > Exact))
+            throw new InvalidOperationException($"{scope} 窄宽度常驻栏未提供完整通栏拖动区：{zones[0].Frame}/{zones[1].Frame}");
         RequireFrame(material.Frame, new CGRect(0, 0, width, height), $"{scope} 标题栏毛玻璃层未铺满窗口宽 {width}×{height}");
         Record(geometry, scope, "titlebar.material", material.Frame);
         Record(geometry, scope, "titlebar.title", label.Frame);
 
-        // 层级：毛玻璃压住内容分区，拖动区压在毛玻璃之上，标题文字最上层但透传命中。
         int materialIndex = Array.IndexOf(root.Subviews, material);
         int leftIndex = Array.IndexOf(root.Subviews, zones[0]);
         int rightIndex = Array.IndexOf(root.Subviews, zones[1]);
@@ -251,37 +252,41 @@ internal static class NativeMainLayoutAcceptance
         if (Array.IndexOf(root.Subviews, photoPane) >= materialIndex || materialIndex >= leftIndex || leftIndex >= rightIndex || rightIndex >= labelIndex)
             throw new InvalidOperationException($"{scope} 标题栏层序不是 内容 < 毛玻璃 < 拖动区 < 标题文字：{materialIndex}/{leftIndex}/{rightIndex}/{labelIndex}");
 
-        // 交通灯是只读参照：标题文字左缘 = 最右交通灯右缘 + 12，中线与交通灯中线重合。
         var zoom = window.Window.StandardWindowButton(NSWindowButton.ZoomButton)
             ?? throw new InvalidOperationException($"{scope} 窗口缺少缩放按钮，无法核对标题文字让位");
         var zoomFrame = root.ConvertRectFromView(zoom.ConvertRectToView(zoom.Bounds, null), null);
-        double expectedLeft = (double)zoomFrame.X + (double)zoomFrame.Width + DesignTokens.ShellTitlebarTitleLeftInset;
+        double zoomRight = (double)zoomFrame.X + (double)zoomFrame.Width;
+        double expectedLeft = zoomRight + DesignTokens.ShellTitlebarTitleLeftInset;
         if ((double)label.Frame.X < expectedLeft - Exact)
             throw new InvalidOperationException($"{scope} 标题文字压住了交通灯或未留 12 点间距：{label.Frame} / 交通灯 {zoomFrame}");
         double labelCentre = (double)label.Frame.Y + (double)label.Frame.Height / 2;
         double zoomCentre = (double)zoomFrame.Y + (double)zoomFrame.Height / 2;
         if (Math.Abs(labelCentre - zoomCentre) > .5)
             throw new InvalidOperationException($"{scope} 标题文字中线未对齐交通灯中线：{labelCentre} / {zoomCentre}");
-        // 行布局：标题文字放得下时右缘止于筛选控件前 12 点，绝不压住可点控件。
-        if (row && (double)label.Frame.Width >= 24)
+        var leftMost = filePane.Subviews.OfType<NSPopUpButton>().MinBy(popup => (double)popup.Frame.X)
+            ?? throw new InvalidOperationException($"{scope} 缺少筛选下拉框，无法核对标题文字让位");
+        double groupLeft = (double)filePane.Frame.X + (double)leftMost.Frame.X;
+        if (persistent)
         {
-            var leftMost = filePane.Subviews.OfType<NSPopUpButton>().MinBy(popup => (double)popup.Frame.X)
-                ?? throw new InvalidOperationException($"{scope} 缺少筛选下拉框，无法核对标题文字让位");
-            double groupLeft = (double)filePane.Frame.X + (double)leftMost.Frame.X;
-            if ((double)label.Frame.X + (double)label.Frame.Width > groupLeft - DesignTokens.ShellTitlebarTitleLeftInset + Exact)
-                throw new InvalidOperationException($"{scope} 行布局标题文字压住了筛选控件：{label.Frame} / 筛选组左缘 {groupLeft}");
+            if (zoomRight <= groupLeft)
+                throw new InvalidOperationException($"{scope} 常驻标题栏触发条件不成立：交通灯 {zoomRight} 未与筛选组 {groupLeft} 相交");
+            if (Math.Abs((double)filePane.Frame.Y - height) > Exact)
+                throw new InvalidOperationException($"{scope} 文件栏未下移到常驻标题栏下方：{filePane.Frame}");
+        }
+        else if (row && (double)label.Frame.Width >= 24
+            && (double)label.Frame.X + (double)label.Frame.Width > groupLeft - DesignTokens.ShellTitlebarTitleLeftInset + Exact)
+        {
+            throw new InvalidOperationException($"{scope} 行布局标题文字压住了筛选控件：{label.Frame} / 筛选组左缘 {groupLeft}");
         }
 
         window.ShowTitlebarForTesting(true);
         try
         {
-            // 行布局文件栏可见时中间挖空，没有背景材质；列布局盖住文件栏，通栏带带毛玻璃。
-            bool backdrop = !row;
+            bool backdrop = !row || persistent;
             if (material.Hidden != !backdrop)
                 throw new InvalidOperationException($"{scope} 毛玻璃背景显隐与跨度不符（{(backdrop ? "应有" : "应无")}背景）：{material.Hidden}");
             foreach (var zone in zones)
                 if (zone.Hidden) throw new InvalidOperationException($"{scope} 悬停热区后拖动区仍收起");
-            // 背景与文字永不参与命中：可见时必须仍然透传，否则会夺走拖动区与主图点击。
             if (material.HitTest(new CGPoint(material.Bounds.Width / 2, material.Bounds.Height / 2)) != null)
                 throw new InvalidOperationException($"{scope} 标题栏毛玻璃背景拦截了命中");
             if (label.HitTest(new CGPoint(label.Bounds.Width / 2, label.Bounds.Height / 2)) != null)
@@ -293,8 +298,15 @@ internal static class NativeMainLayoutAcceptance
                 throw new InvalidOperationException($"{scope} 标题文字显隐未按可用宽度 {label.Frame.Width:0.##} 判定：Hidden={label.Hidden}");
         }
         finally { window.ShowTitlebarForTesting(false); }
-        if (!material.Hidden || !label.Hidden || zones.Any(zone => !zone.Hidden))
+        if (persistent)
+        {
+            if (material.Hidden || zones.Any(zone => zone.Hidden))
+                throw new InvalidOperationException($"{scope} 热区退出后窄宽度常驻栏被收起");
+        }
+        else if (!material.Hidden || !label.Hidden || zones.Any(zone => !zone.Hidden))
+        {
             throw new InvalidOperationException($"{scope} 收起标题栏后仍有可见的覆盖层");
+        }
     }
 
     /// <summary>核对胶片栏步长与内边距、卡片 96×144 内部结构，并输出前两张卡片的实际几何。</summary>

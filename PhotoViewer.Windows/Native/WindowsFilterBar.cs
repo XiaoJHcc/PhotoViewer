@@ -78,6 +78,9 @@ internal sealed class WindowsFilterBar : Panel
     /// <summary>RATING-04：下拉打开前关闭来源浮窗。</summary>
     internal event Action? PopupOpening;
 
+    /// <summary>实际筛选控件边界在布局后发生变化，标题栏据此重算挖空与窄宽度回退。</summary>
+    internal event Action? InteractiveBoundsChanged;
+
     /// <summary>
     /// 释放订阅。
     /// </summary>
@@ -146,6 +149,7 @@ internal sealed class WindowsFilterBar : Panel
     /// <inheritdoc/>
     protected override Size ArrangeOverride(Size finalSize)
     {
+        var previousFrames = _frames;
         double countWidth = Math.Max(1, _count.DesiredSize.Width);
         _frames = _isRowLayout
             ? MainScreenLayout.FilterBarFrames(true, finalSize.Width, 0, countWidth, true)
@@ -157,6 +161,10 @@ internal sealed class WindowsFilterBar : Panel
         ArrangeChild(_ratingFilter, _frames.Rating);
         ArrangeChild(_count, _frames.Count);
         ArrangeChild(_similarityToggle, _frames.Toggle);
+        if (_frames != previousFrames)
+        {
+            InteractiveBoundsChanged?.Invoke();
+        }
         return finalSize;
     }
 
