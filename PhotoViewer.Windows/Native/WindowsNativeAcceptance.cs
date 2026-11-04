@@ -369,7 +369,7 @@ internal sealed partial class WindowsMainWindow
         CheckWindowIcon();
         await CheckContextMenuIconsAsync();
         CheckCommandTooltips();
-        checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": photo renderer draws the title bar acrylic inside the swap chain (blur -> luminosity blend -> color blend from the theme brush recipe), band pixel differs from / keeps the hue of / is darker than the plain photo, restored when hidden, XAML acrylic only outside the photo band, band region PNG exported");
+        checks.Add("PASS SHELL-02 backdrop" + _backdropSummary + ": photo renderer draws the title bar acrylic inside the swap chain (blur -> luminosity blend -> color blend from the theme brush recipe), band pixel differs from / keeps the hue of / is darker than the plain photo, restored when hidden, XAML acrylic only outside the photo band, WinUI noise texture loaded, both sides of the photo/XAML seam fade to the same FallbackColor acrylic value, band region PNG exported");
         checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: hover title bar over the content top edge with zero caption regions while hidden, caption regions inside the bar height ending at the buttons, acrylic background except row layout with filmstrip, layout-dependent span and filter cut-out, caption text mirrored from folder - file - PhotoViewer title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
     }
 
@@ -508,6 +508,30 @@ internal sealed partial class WindowsMainWindow
             RequireSmoke(Math.Abs(xamlWidth + band.Width - barWidth) <= 2,
                 $"XAML 分段与主图区段没有盖满标题栏: xaml={xamlWidth:0.0} band={band.Width:0.0} bar={barWidth:0.0}");
 
+            // 3b) 接缝:主图区段右侧紧接控制栏上的 XAML 亚克力段 —— 两侧都渐变到同一个接缝值,区段最右一列贴近它;
+            //     噪点取 WinUI 随包的同一张纹理。
+            RequireSmoke(_photo.HasTitleBarNoise, "主图区段没有载入 WinUI 亚克力噪点纹理");
+            var edges = _photo.TitleBarBackdropEdges;
+            var trailingXaml = _titleBar.BackgroundSegments.Any(segment => segment.X + _titleBar.Left > band.X + PhotoOriginX());
+            RequireSmoke(edges is { PadRight: true } && edges.Value.FadeRight == trailingXaml,
+                $"主图区段右侧邻接关系不符: edges={edges}, 右侧 XAML 段={trailingXaml}");
+            RequireSmoke(_titleBar.SeamVisibility.Trailing == trailingXaml,
+                $"XAML 亚克力段的接缝渐变与主图区段不对称: seam={_titleBar.SeamVisibility}, 右侧 XAML 段={trailingXaml}");
+            if (trailingXaml)
+            {
+                var seam = _titleBar.BackdropRecipe.SeamColor();
+                var edgeX = band.X + band.Width - (1.0 / _root.XamlRoot!.RasterizationScale);
+                RequireSmoke(_photo.TryReadViewportPixel(edgeX, sampleY, out var edgeLinear), "接缝列取样失败");
+                var edgeSrgb = (SrgbEncode(edgeLinear.R), SrgbEncode(edgeLinear.G), SrgbEncode(edgeLinear.B));
+                var seamDelta = Math.Max(Math.Abs(edgeSrgb.Item1 - seam.R),
+                    Math.Max(Math.Abs(edgeSrgb.Item2 - seam.G), Math.Abs(edgeSrgb.Item3 - seam.B)));
+                // 容差:噪点 2% 的单像素起伏 + 交界处最后一像素的渐变残量。
+                RequireSmoke(seamDelta < 0.03,
+                    $"主图区段贴接缝一列没有落到接缝值: edge=({edgeSrgb.Item1:0.000},{edgeSrgb.Item2:0.000},{edgeSrgb.Item3:0.000})"
+                    + $" seam=({seam.R:0.000},{seam.G:0.000},{seam.B:0.000})");
+                _backdropSummary += $" seamDelta={seamDelta:0.000}";
+            }
+
             // 4) 导出带内区域截图供目视核对(回读是 D3D 调用,必须在 UI 线程)。
             SaveBandScreenshot(sampleX, sampleY, band.Width, band.Height);
 
@@ -531,6 +555,15 @@ internal sealed partial class WindowsMainWindow
 
     /// <summary>背板实测数值(写进汇总行,便于对照)。</summary>
     private string _backdropSummary = string.Empty;
+
+    /// <summary>线性分量 → sRGB 编码值(0–1)。</summary>
+    /// <param name="linear">线性分量</param>
+    /// <returns>编码值</returns>
+    private static float SrgbEncode(float linear)
+    {
+        linear = Math.Clamp(linear, 0f, 1f);
+        return linear <= 0.0031308f ? linear * 12.92f : 1.055f * MathF.Pow(linear, 1f / 2.4f) - 0.055f;
+    }
 
     /// <summary>主图左上角在窗口内容坐标内的横向偏移。</summary>
     /// <returns>偏移(DIP)。</returns>

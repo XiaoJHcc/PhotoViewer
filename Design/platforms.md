@@ -91,7 +91,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **SHELL-02**：悬停标题栏与拖动区。
   - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 窗口 `FullSizeContentView` + 隐藏系统标题文字，交通灯保持系统位置；顶边监视器驱动 `SetTitlebarVisible`，`Layout` 末段排布两段 `DragZone`、`TitlebarBackdrop`（`NSVisualEffectView`，`Titlebar` 材质、窗口内混合、命中透传）与标题标签（`titleBarFont`，按 Zoom 按钮右缘与中线定位）；`HandleTitlebarDoubleClick` 按 `AppleActionOnDoubleClick` 分派。
   - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs`（标题文字、`AcrylicInAppFillColorDefaultBrush` 背景、四个 46×32 自绘窗口按钮与状态字形）+ `WindowsMainWindow.cs` 的 `ConfigureTitleBar`（`SetBorderAndTitleBar(true, false)`）、`RefreshTitleBarVisibility`（内容区与非客户区指针事件、拖动循环）、`UpdateTitleBarChrome`/`BuildCaptionRects`（跨度、背景、筛选挖空与 `InputNonClientPointerSource` caption 登记）。隐藏或全屏时登记一条零面积 caption：清空区域会让 WinAppSDK 退回整幅宽默认拖动带。动态标题同时写 `Window.Title` 与标题栏文字。`icon.ico` 随普通输出复制并随单文件解包，激活后由 `AppWindow.SetIcon` 设置为真实窗口图标，供任务栏悬停浮窗读取。
-  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样，标题栏与主图重叠的区段由 `WindowsPhotoView` 在交换链内按同一亚克力配方（高斯模糊 → 亮度混合 → 颜色混合，参数取主题画刷运行时值）绘制，XAML 背景只铺在其余区段。
+  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层。WinUI 3 的 `SwapChainPanel` 不支持 `AcrylicBrush` 背板取样，标题栏与主图重叠的区段由 `WindowsPhotoView` 在交换链内按同一亚克力配方（高斯模糊 → 亮度混合 → 颜色混合 → 2% 噪点，参数取主题画刷运行时值与 WinUI 随包噪点纹理）绘制，XAML 背景只铺在其余区段；两者相接处各自渐变到同一接缝值。
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
   - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义。
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异（已登记 10-18）。

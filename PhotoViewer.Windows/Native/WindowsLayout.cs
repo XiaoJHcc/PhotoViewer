@@ -277,6 +277,11 @@ internal static class WindowsLayout
     /// <summary>标题栏亚克力背板的高斯模糊标准差(与 WinUI 亚克力主题画刷同值,DIP)。</summary>
     public const double TitleBarBackdropBlurAmount = DesignTokens.ShellTitlebarBackdropBlurAmount;
 
+    /// <summary>
+    /// 主图区段与 XAML 亚克力段交界处两侧各自的渐变宽度(DIP,2σ):两边各从自己的背板结果渐变到同一个接缝值。
+    /// </summary>
+    public const double TitleBarBackdropSeamWidth = TitleBarBackdropBlurAmount * 2;
+
     /// <summary>关闭按钮悬停底色(Win11 系统 caption 关闭按钮同值,字形转白)。</summary>
     public static readonly Color TitleBarCloseHover = Token(DesignTokens.ColorTitlebarCloseHover);
 

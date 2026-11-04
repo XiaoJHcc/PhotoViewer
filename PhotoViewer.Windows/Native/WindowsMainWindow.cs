@@ -1218,16 +1218,16 @@ internal sealed partial class WindowsMainWindow : Window
         if (_titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe)
         {
             var bar = new Rect(left, 0, width, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight));
-            if (TryGetPhotoBand(bar, out var bandInPhoto, out var bandInBar))
+            if (TryGetPhotoBand(bar, out var bandInPhoto, out var bandInBar, out var edges, out var barOrigin))
             {
-                _photo.SetTitleBarBackdrop(bandInPhoto, _titleBar.BackdropRecipe);
+                _photo.SetTitleBarBackdrop(bandInPhoto, _titleBar.BackdropRecipe, edges, barOrigin);
                 photoBand = bandInBar;
             }
         }
 
         if (photoBand == null)
         {
-            _photo.SetTitleBarBackdrop(null, _titleBar.BackdropRecipe);
+            _photo.SetTitleBarBackdrop(null, _titleBar.BackdropRecipe, default, default);
         }
 
         _titleBar.SetSpan(left, showBackground, photoBand, width);
@@ -1245,16 +1245,23 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 标题栏与主图视图的重叠区段:分别折算到主图视图坐标(给渲染器)与覆盖层坐标(给 XAML 背景分段)。
+    /// 标题栏与主图视图的重叠区段:分别折算到主图视图坐标(给渲染器)与覆盖层坐标(给 XAML 背景分段),
+    /// 并给出区段两侧的邻接关系 —— 主图视图边不在窗口边上时外侧是 XAML 内容(按 FallbackColor 补),
+    /// 标题栏在该侧还继续时紧接一段 XAML 亚克力(两边在交界处渐变到同一个值)。
     /// </summary>
     /// <param name="bar">标题栏矩形(窗口内容坐标)</param>
     /// <param name="bandInPhoto">重叠区段(主图视图坐标)</param>
     /// <param name="bandInBar">重叠区段(覆盖层坐标)</param>
+    /// <param name="edges">区段两侧的邻接关系</param>
+    /// <param name="barOrigin">整条标题栏左上角(主图视图坐标,噪点平铺原点)</param>
     /// <returns>有非空重叠时返回 true</returns>
-    private bool TryGetPhotoBand(Rect bar, out Rect bandInPhoto, out Rect bandInBar)
+    private bool TryGetPhotoBand(Rect bar, out Rect bandInPhoto, out Rect bandInBar,
+        out TitleBarBackdropEdges edges, out Point barOrigin)
     {
         bandInPhoto = default;
         bandInBar = default;
+        edges = default;
+        barOrigin = default;
         if (_photo.ActualWidth <= 0 || _photo.ActualHeight <= 0)
         {
             return false;
@@ -1280,6 +1287,15 @@ internal sealed partial class WindowsMainWindow : Window
 
         bandInPhoto = new Rect(overlap.X - bounds.X, overlap.Y - bounds.Y, overlap.Width, overlap.Height);
         bandInBar = new Rect(overlap.X - _titleBar.Left, overlap.Y, overlap.Width, overlap.Height);
+        barOrigin = new Point(bar.X - bounds.X, bar.Y - bounds.Y);
+        const double Slack = 0.5;
+        var photoLeftInside = bounds.X > Slack;
+        var photoRightInside = bounds.X + bounds.Width < _root.ActualWidth - Slack;
+        edges = new TitleBarBackdropEdges(
+            PadLeft: photoLeftInside,
+            PadRight: photoRightInside,
+            FadeLeft: photoLeftInside && bar.X < bounds.X - Slack,
+            FadeRight: photoRightInside && bar.X + bar.Width > bounds.X + bounds.Width + Slack);
         return true;
     }
 

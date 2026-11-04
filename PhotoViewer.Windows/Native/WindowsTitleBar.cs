@@ -43,6 +43,10 @@ internal sealed class WindowsTitleBar
     private readonly Border _backgroundLeading;
     private readonly Border _backgroundTrailing;
     private readonly AcrylicBackdropRecipe _backdropRecipe;
+
+    // 接缝渐变:左段右缘 / 右段左缘紧贴主图区段时,从接缝值(不透明)渐变到透明,与主图区段一侧在交界处取同一个值。
+    private readonly Border _seamLeading;
+    private readonly Border _seamTrailing;
     private IReadOnlyList<Rect> _backgroundSegments = Array.Empty<Rect>();
     private readonly TextBlock _title;
     private readonly StackPanel _buttons;
@@ -66,8 +70,10 @@ internal sealed class WindowsTitleBar
     {
         BackgroundBrush = Resource<Brush>(AcrylicBackgroundBrushKey);
         _backdropRecipe = BuildBackdropRecipe(BackgroundBrush as AcrylicBrush);
-        _backgroundLeading = CreateBackgroundSegment();
-        _backgroundTrailing = CreateBackgroundSegment();
+        _seamLeading = CreateSeam(towardRight: true);
+        _seamTrailing = CreateSeam(towardRight: false);
+        _backgroundLeading = CreateBackgroundSegment(_seamLeading);
+        _backgroundTrailing = CreateBackgroundSegment(_seamTrailing);
 
         // CaptionTextBlockStyle 自带字号/字体/颜色:标题与系统标题栏文字同源,不自调字号。
         _title = new TextBlock
@@ -210,6 +216,7 @@ internal sealed class WindowsTitleBar
         {
             segments.Add(new Rect(0, 0, bandStart, WindowsLayout.TitleBarHeight));
             ShowLeadingSegment(bandStart);
+            SetSeam(_seamLeading, photoBand != null, bandStart);
         }
         else
         {
@@ -220,6 +227,7 @@ internal sealed class WindowsTitleBar
         {
             segments.Add(new Rect(bandEnd, 0, width - bandEnd, WindowsLayout.TitleBarHeight));
             ShowTrailingSegment(bandEnd);
+            SetSeam(_seamTrailing, photoBand != null, width - bandEnd);
         }
         else
         {
@@ -408,15 +416,82 @@ internal sealed class WindowsTitleBar
     }
 
     /// <summary>建一段背景元素:不参与命中,常态隐藏,位置由 <see cref="SetSpan"/> 指定。</summary>
+    /// <param name="seam">贴在该段与主图区段交界一侧的接缝渐变</param>
     /// <returns>背景分段元素。</returns>
-    private Border CreateBackgroundSegment() => new()
+    private Border CreateBackgroundSegment(Border seam) => new()
     {
         Background = BackgroundBrush,
         IsHitTestVisible = false,
         Visibility = Visibility.Collapsed,
         HorizontalAlignment = HorizontalAlignment.Left,
         VerticalAlignment = VerticalAlignment.Stretch,
+        Child = seam,
     };
+
+    /// <summary>
+    /// 建接缝渐变:接缝值(配方在纯 FallbackColor 背板上的结果)按 smoothstep 从交界处的不透明渐变到透明,
+    /// 宽度 <see cref="WindowsLayout.TitleBarBackdropSeamWidth"/>,与主图区段一侧的渐变对称。
+    /// </summary>
+    /// <param name="towardRight">交界在右侧(左段)</param>
+    /// <returns>渐变元素(常态隐藏)。</returns>
+    private Border CreateSeam(bool towardRight)
+    {
+        var (r, g, b) = _backdropRecipe.SeamColor();
+        var color = Color.FromArgb(0xFF, ToByte(r), ToByte(g), ToByte(b));
+        var brush = new LinearGradientBrush
+        {
+            StartPoint = new Point(towardRight ? 1 : 0, 0.5),
+            EndPoint = new Point(towardRight ? 0 : 1, 0.5),
+        };
+        // smoothstep(0, 1, t) 的补:t = 0 处完全是接缝值,t = 1 处完全是 XAML 亚克力。
+        foreach (var t in new[] { 0.0, 0.25, 0.5, 0.75, 1.0 })
+        {
+            var weight = t * t * (3 - 2 * t);
+            brush.GradientStops.Add(new GradientStop
+            {
+                Offset = t,
+                Color = Color.FromArgb((byte)Math.Round((1 - weight) * 255), color.R, color.G, color.B),
+            });
+        }
+
+        return new Border
+        {
+            Background = brush,
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
+            HorizontalAlignment = towardRight ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Stretch,
+        };
+    }
+
+    /// <summary>显示或隐藏接缝渐变;段比渐变宽度窄时按段宽截断。</summary>
+    /// <param name="seam">接缝渐变</param>
+    /// <param name="visible">该段是否紧贴主图区段</param>
+    /// <param name="segmentWidth">所在段的宽度</param>
+    private static void SetSeam(Border seam, bool visible, double segmentWidth)
+    {
+        var target = visible ? Visibility.Visible : Visibility.Collapsed;
+        if (seam.Visibility != target)
+        {
+            seam.Visibility = target;
+        }
+
+        var width = Math.Min(WindowsLayout.TitleBarBackdropSeamWidth, Math.Max(0, segmentWidth));
+        if (Math.Abs(seam.Width - width) > 0.01 || double.IsNaN(seam.Width))
+        {
+            seam.Width = width;
+        }
+    }
+
+    /// <summary>0–1 分量 → 8 位。</summary>
+    /// <param name="value">分量</param>
+    /// <returns>字节</returns>
+    private static byte ToByte(float value) => (byte)Math.Round(Math.Clamp(value, 0f, 1f) * 255);
+
+    /// <summary>接缝渐变是否在显示(验收用):左段右缘 / 右段左缘。</summary>
+    internal (bool Leading, bool Trailing) SeamVisibility
+        => (_backgroundLeading.Visibility == Visibility.Visible && _seamLeading.Visibility == Visibility.Visible,
+            _backgroundTrailing.Visibility == Visibility.Visible && _seamTrailing.Visibility == Visibility.Visible);
 
     /// <summary>左段:从覆盖层左缘到照片区段左缘(按宽度定位)。</summary>
     /// <param name="width">段宽。</param>
@@ -480,9 +555,10 @@ internal sealed class WindowsTitleBar
             + $" luminosityOpacity={(hasLuminosity ? luminosity!.Value.ToString("0.###") : "未设置")}"
             + $" fallback=#{fallback.R:X2}{fallback.G:X2}{fallback.B:X2}"
             + (hasLuminosity ? "" : ",缺亮度层,主图区段改用 FallbackColor 纯色带"));
+        // 与 AcrylicBrush.GetEffectiveTintColor 同口径:设置了亮度层时色调层不透明度 = TintColor.A × TintOpacity。
         return new AcrylicBackdropRecipe(
             (tint.R / 255f, tint.G / 255f, tint.B / 255f),
-            (float)Math.Clamp(brush.TintOpacity, 0, 1),
+            (float)Math.Clamp(tint.A / 255.0 * brush.TintOpacity, 0, 1),
             hasLuminosity ? (float)Math.Clamp(luminosity!.Value, 0, 1) : -1f,
             (LinearChannel(fallback.R), LinearChannel(fallback.G), LinearChannel(fallback.B)));
     }
