@@ -32,7 +32,7 @@ struct MainDemoView: View {
             WideWorkspaceView()
         }
         #else
-        WideWorkspaceView()
+        DesktopWorkspaceView()
             .frame(minWidth: 760, minHeight: 540)
         #endif
     }
