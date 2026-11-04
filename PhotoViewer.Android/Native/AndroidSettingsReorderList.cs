@@ -19,6 +19,12 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 internal sealed class AndroidSettingsReorderList : RecyclerView
 {
+    /// <summary>勾选 → 命令图标的左边距：负值只抵消勾选框自带的透明内缩，命中区仍是 44dp(SETTINGS-01)。</summary>
+    private const double IconLeftMarginDp = -4;
+
+    /// <summary>命令图标 → 命令名的间距(SETTINGS-01)。</summary>
+    private const double IconToTitleGapDp = 8;
+
     private readonly Func<int> _count;
     private readonly Func<int, SettingsReorderItem> _itemAt;
     private readonly Action<int, int> _move;
@@ -100,7 +106,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         string PrimaryChipText,
         string SecondaryChipText,
         bool PrimaryClearVisible,
-        bool SecondaryClearVisible);
+        bool SecondaryClearVisible,
+        bool IconVisible,
+        string IconSymbol,
+        int CheckToIconGap,
+        int IconToTitleGap);
 
     private static string HotkeyBinding(string text, bool conflict) => conflict ? $"{text}（冲突）" : text;
 
@@ -195,13 +205,15 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
     }
 
     /// <summary>
-    /// 行：勾选框、标题/副标题、行尾把手；快捷键行在标题下按外设能力显示主/次绑定与录制控件。
+    /// 行：勾选框、命令图标（控制栏功能行）、标题/副标题、行尾把手；快捷键行在标题下按外设能力显示主/次绑定与录制控件。
     /// 把手轻点开菜单，长按开始拖拽。
     /// </summary>
     internal sealed class RowView : LinearLayout
     {
         private readonly AndroidSettingsReorderList _owner;
         private readonly MaterialCheckBox _check;
+        private readonly TextView _icon;
+        private readonly LinearLayout _column;
         private readonly TextView _title;
         private readonly TextView _subtitle;
         private readonly TextView _handle;
@@ -232,14 +244,25 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
                 _item?.SetChecked(args.IsChecked);
                 UpdateDescription();
             };
-            var column = new LinearLayout(context) { Orientation = Orientation.Vertical };
+            // SETTINGS-01：勾选 → 命令图标 → 命令名的视觉间距同为 8；勾选项保持 44dp 命中区，
+            // 图标的负左边距只抵消勾选框自带的透明内缩，不放宽字形容器。
+            _icon = new TextView(context)
+            {
+                TextSize = AndroidUiTheme.Sp(context, DesignTokens.ToolbarCommandGlyphFontSize),
+                Gravity = GravityFlags.Center,
+                Visibility = ViewStates.Gone,
+            };
+            _icon.SetTextColor(AndroidUiTheme.TextSecondary);
+            if (AndroidUiTheme.IconTypeface(context) is { } iconTypeface) _icon.Typeface = iconTypeface;
+
+            _column = new LinearLayout(context) { Orientation = Orientation.Vertical };
             _title = new TextView(context) { TextSize = 15 };
             _title.SetTextColor(AndroidUiTheme.TextPrimary);
             _subtitle = new TextView(context) { TextSize = 12 };
             _subtitle.SetTextColor(AndroidUiTheme.TextSecondary);
             _subtitle.SetPadding(0, (int)(2 * density), 0, 0);
-            column.AddView(_title, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
-            column.AddView(_subtitle, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+            _column.AddView(_title, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
+            _column.AddView(_subtitle, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
 
             _handle = new TextView(context)
             {
@@ -260,8 +283,15 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             };
 
             var checkboxSize = (int)AndroidUiTheme.Dp(context, 44);
+            var iconSize = (int)AndroidUiTheme.Dp(context, 20);
+            var iconParameters = new LayoutParams(iconSize, iconSize)
+            {
+                LeftMargin = (int)AndroidUiTheme.Dp(context, IconLeftMarginDp),
+                RightMargin = (int)AndroidUiTheme.Dp(context, IconToTitleGapDp),
+            };
             line.AddView(_check, new LayoutParams(checkboxSize, checkboxSize));
-            line.AddView(column, new LayoutParams(0, LayoutParams.WrapContent, 1));
+            line.AddView(_icon, iconParameters);
+            line.AddView(_column, new LayoutParams(0, LayoutParams.WrapContent, 1));
             line.AddView(_handle, new LayoutParams(checkboxSize, checkboxSize));
             AddView(line, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
 
@@ -336,6 +366,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             _check.Checked = item.GetChecked();
             _binding = false;
             _title.Text = item.Title;
+            // SETTINGS-01：控制栏功能行在勾选与命令名之间显示命令图标；文件格式与 EXIF 行不带图标。
+            string symbol = item.Hotkey?.DisplaySymbol ?? string.Empty;
+            _icon.Text = symbol;
+            _icon.Visibility = string.IsNullOrEmpty(symbol) ? ViewStates.Gone : ViewStates.Visible;
             bool hasSubtitle = !string.IsNullOrWhiteSpace(item.Subtitle);
             _subtitle.Text = item.Subtitle ?? "";
             _subtitle.Visibility = hasSubtitle ? ViewStates.Visible : ViewStates.Gone;
@@ -417,7 +451,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             return new RowSnapshot(bindings, _subtitle.Visibility == ViewStates.Visible,
                 _subtitle.Text ?? string.Empty, ContentDescription ?? string.Empty,
                 _primaryChip.Text ?? string.Empty, _secondaryChip.Text ?? string.Empty,
-                bindings, bindings);
+                bindings, bindings,
+                _icon.Visibility == ViewStates.Visible,
+                _icon.Text ?? string.Empty,
+                _icon.Left - _check.Right,
+                _column.Left - _icon.Right);
         }
     }
 

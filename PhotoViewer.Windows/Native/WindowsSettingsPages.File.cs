@@ -8,7 +8,7 @@ namespace PhotoViewer.Windows.Native;
 
 internal sealed partial class WindowsSettingsPages
 {
-    /// <summary>文件页:支持格式、同名合并、缓存与预加载。</summary>
+    /// <summary>文件页:同名合并(固定第一项,不带分组小标题)、支持格式、缓存与预加载。</summary>
     /// <returns>页面</returns>
     private UIElement BuildFilePage()
     {
@@ -113,18 +113,16 @@ internal sealed partial class WindowsSettingsPages
         var formatGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         formatGroup.Children.Add(WindowsSettingsCard.Card(formats, new Thickness(4)));
 
-        var toggleGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
-        toggleGroup.Children.Add(WindowsSettingsCard.ToggleRow(
+        var sameNameCard = WindowsSettingsCard.ToggleRow(
             "同名文件视为同一张图片",
             "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
-            sameName));
+            sameName);
 
         return Page(
             "文件",
+            sameNameCard,
             WindowsSettingsCard.SectionHeader("支持的文件格式"),
             formatGroup,
-            WindowsSettingsCard.SectionHeader("同名文件"),
-            toggleGroup,
             WindowsSettingsCard.SectionHeader("缓存与预加载"),
             cacheCards,
             budgetHint,

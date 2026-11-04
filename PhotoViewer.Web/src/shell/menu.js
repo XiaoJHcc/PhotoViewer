@@ -1,7 +1,8 @@
 /**
  * 共用弹出菜单（筛选下拉与主图右键菜单，MENU-03@web / FILTER-08@web：浏览器无原生弹层，自绘）。
  * createMenu({ host, onOpenChange }) → { open(items, anchor, options), close(), isOpen }
- *   items: [{ id, label, type: "command"|"check"|"radio"|"separator"|"header", checked, enabled, shortcut }]
+ *   items: [{ id, label, type: "command"|"check"|"radio"|"separator"|"header", checked, enabled, shortcut, icon }]
+ *     icon 是可选图标令牌（如 "icon.menu.filmstrip"），渲染在勾选列与文字之间（MENU-06）。
  *   anchor: { x, y }（窗口坐标点，右键：菜单左上角对齐指针）或 { rect }（下拉控件矩形：
  *     菜单贴按钮正下方、以按钮水平居中，最小宽 = 按钮宽，下方不足翻到上方）
  *   options: { onSelect(id), onClose(), returnFocus: HTMLElement, label, style: "menu"|"dropdown", focusFirst }
@@ -10,7 +11,7 @@
  * 外观（旧壳 Avalonia Fluent 深色）：弹层 popup.*，菜单项 menu.*；下拉项 dropdown.*（当前项整行强调色、无勾号）。
  */
 import { el } from "./dom.js";
-import { codepoint } from "./icons.js";
+import { codepoint, icon } from "./icons.js";
 
 const EDGE = 4;
 
@@ -72,6 +73,8 @@ export function createMenu({ host, t, onOpenChange = () => {} }) {
                     "aria-hidden": "true",
                 }, item.checked ? checkGlyph : ""));
             }
+            // MENU-06：命令图标位于勾选列之后、文字之前；字形是装饰，可访问名称只取文字。
+            if (item.icon) row.append(icon(t, item.icon, "pv-menu-icon"));
             row.append(
                 el("span", { class: "pv-menu-label" }, item.label),
                 el("span", { class: "pv-menu-shortcut" }, item.shortcut ?? ""));

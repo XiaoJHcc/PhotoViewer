@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Input;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
@@ -116,13 +117,12 @@ internal sealed class MacControlBar : NSView
         }
     }
 
-    /// <summary>悬停描述包含业务名称和实际主次绑定，使用苹果修饰键符号并省略未设置占位。</summary>
+    /// <summary>悬停描述包含业务名称和实际主次绑定：格式 `名称（主 / 次）` 取共享 <see cref="CommandTooltipText"/>，
+    /// 本端只负责把绑定格式化成苹果修饰键符号并省略未设置占位。</summary>
     private static string CommandTooltip(SettingsViewModel.HotkeyItem hotkey, SettingsViewModel settings)
-    {
-        var gestures = new[] { hotkey.PrimaryHotkey, hotkey.SecondaryHotkey }.Where(gesture => gesture != null)
-            .Select(gesture => MacInput.FormatGesture(gesture, settings)).Distinct().ToArray();
-        return hotkey.Name + (gestures.Length == 0 ? "" : " · " + string.Join(" / ", gestures));
-    }
+        => CommandTooltipText.Format(hotkey.Name,
+            hotkey.PrimaryHotkey == null ? null : MacInput.FormatGesture(hotkey.PrimaryHotkey, settings),
+            hotkey.SecondaryHotkey == null ? null : MacInput.FormatGesture(hotkey.SecondaryHotkey, settings));
 
     /// <summary>显隐、名称或快捷键变化时请求刷新，冲突标志不改变工具栏展示。</summary>
     private void OnHotkeyChanged(object? sender, PropertyChangedEventArgs args)

@@ -173,13 +173,13 @@ export function gestureText(gesture, opts = {}) {
 export function tooltipText(command, name, commandMap, opts = {}) {
     const bindings = commandMap ? commandMap.bindingsOf(command) : null;
     if (!bindings) return name;
-    // TOOLBAR-04：格式「命令名 · 主 / 次」，空槽省略，主次相同只显示一次。
+    // TOOLBAR-04：格式「名称（主 / 次）」，空槽省略，主次相同只显示一次；与四端共享 CommandTooltipText 同源。
     const texts = [];
     for (const slot of ["primary", "secondary"]) {
         const text = gestureText(bindings[slot], opts);
         if (text && !texts.includes(text)) texts.push(text);
     }
-    return texts.length > 0 ? `${name} · ${texts.join(" / ")}` : name;
+    return texts.length > 0 ? `${name}（${texts.join(" / ")}）` : name;
 }
 
 export class CommandMap {

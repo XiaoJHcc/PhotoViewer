@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using System.Diagnostics;
+using PhotoViewer.Apple;
 using PhotoViewer.Core.Input;
 
 namespace PhotoViewer.Mac.Native;
@@ -50,6 +51,40 @@ internal static class NativeSettingsAcceptance
             await Task.Delay(300);
         }
         CaptureScreen(presenter, Path.Combine(output, "settings-window.png"), checks);
+
+        // SETTINGS-01：控制栏功能行的命令图标与 iOS/控制栏同源（AppleSymbolNames.ForCommand），
+        // 勾选→图标→名称的间距由 SwiftUI 渲染，这里只核对推送状态，实际外观由下方截图取证。
+        var state = presenter.BuildState();
+        if (state.Control.Hotkeys.Count != presenter.WorkingSettings.Hotkeys.Count)
+            throw new InvalidOperationException("控制栏功能状态行数与工作副本不一致");
+        for (int index = 0; index < state.Control.Hotkeys.Count; index++)
+        {
+            var row = state.Control.Hotkeys[index];
+            string expected = AppleSymbolNames.ForCommand(presenter.WorkingSettings.Hotkeys[index].Command) ?? string.Empty;
+            if (string.IsNullOrEmpty(row.Symbol) || row.Symbol != expected)
+                throw new InvalidOperationException($"第 {index} 行命令图标不是命令目录口径：{row.Symbol}/{expected}");
+        }
+        checks.Add($"SETTINGS-01 hotkey icons: {state.Control.Hotkeys.Count} 行的 SF Symbols 全部取自 AppleSymbolNames.ForCommand（勾选→图标→名称间距由 SwiftUI 渲染，见截图）");
+
+        // SETTINGS-07/16：预览页去掉指示器分组小标题；拉条行在最小窗口宽度下仍同行，导出截图供目视核对。
+        // 说明：SwiftUI 分组表单的分组标题与行内几何无法从 C# 侧读取，本轮只核对推送状态 + 真实窗口位图。
+        presenter.ShowCategory(1);
+        await Task.Delay(300);
+        foreach (var (category, name, width) in new[]
+        {
+            (1, "settings-preview", 860.0), (1, "settings-preview-narrow", 760.0),
+            (0, "settings-file-narrow", 760.0), (4, "settings-ai-narrow", 760.0),
+        })
+        {
+            presenter.SetContentSize(width, 720);
+            presenter.ShowCategory(category);
+            await Task.Delay(350);
+            string shot = Path.Combine(output, name + ".png");
+            presenter.RenderTo(shot);
+            AssertRendered(shot, $"分类 {category} 在 {width:0} 宽度下未渲染出控件");
+        }
+        presenter.SetContentSize(860, 720);
+        checks.Add("SETTINGS-07/16 narrow: 860 与 760 DIP 下文件/AI 拉条行、预览页与设置窗截图已导出待目视核对（拉条与数值同在标题行；预览页无“缩放位置显示”小标题；未做像素断言）");
 
         presenter.ShowCategory(0);
         await Task.Delay(100);

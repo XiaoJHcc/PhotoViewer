@@ -815,13 +815,14 @@ class MainApp {
             return gesture ? gestureText(gesture, { apple: this._settings.appleKeyboard }) : null;
         };
         // MENU-01@web / SCOPE-01@web：Web 壳不实现工具与设置窗口，因此不返回这两项及其分组。
+        // MENU-06：图标角色取 uicons 的 icon.menu.*，增强复用命令图标，与四端菜单同一语义。
         return [
-            { id: "open-file", group: "open", label: "打开文件…", type: "command", enabled: true, shortcut: shortcut("Open") },
-            { id: "open-folder", group: "open", label: "打开文件夹…", type: "command", enabled: true, shortcut: null },
-            { id: "film", group: "panes", label: "胶片栏", type: "check", checked: this._panes.film, enabled: true, shortcut: null },
-            { id: "analysis", group: "panes", label: "分析栏", type: "check", checked: this._panes.analysis, enabled: true, shortcut: shortcut("ToggleAnalysisView") },
-            { id: "control", group: "panes", label: "控制栏", type: "check", checked: this._panes.control, enabled: true, shortcut: null },
-            { id: "enhance", group: "preview", label: "雾天增强", type: "check", checked: Boolean(this._sessionSnap.enhance), enabled: Boolean(photo), shortcut: shortcut("ToggleEnhance") },
+            { id: "open-file", group: "open", label: "打开文件…", type: "command", enabled: true, icon: "icon.menu.openFile", shortcut: shortcut("Open") },
+            { id: "open-folder", group: "open", label: "打开文件夹…", type: "command", enabled: true, icon: "icon.menu.openFolder", shortcut: null },
+            { id: "film", group: "panes", label: "胶片栏", type: "check", checked: this._panes.film, enabled: true, icon: "icon.menu.filmstrip", shortcut: null },
+            { id: "analysis", group: "panes", label: "分析栏", type: "check", checked: this._panes.analysis, enabled: true, icon: "icon.menu.analysis", shortcut: shortcut("ToggleAnalysisView") },
+            { id: "control", group: "panes", label: "控制栏", type: "check", checked: this._panes.control, enabled: true, icon: "icon.menu.control", shortcut: null },
+            { id: "enhance", group: "preview", label: "雾天增强", type: "check", checked: Boolean(this._sessionSnap.enhance), enabled: Boolean(photo), icon: "icon.command.toggleEnhance", shortcut: shortcut("ToggleEnhance") },
         ];
     }
 

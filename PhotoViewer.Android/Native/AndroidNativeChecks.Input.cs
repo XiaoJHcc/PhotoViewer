@@ -7,6 +7,7 @@ using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Android.Native;
 
@@ -274,16 +275,27 @@ internal static partial class AndroidNativeChecks
 
         var commandNodes = nodes.Where(node => node.Kind == nameof(ControlBarGroupKind.Command)).ToList();
         var commands = root.ControlBar.Commands;
-        string nextName = main.ControlVM.EnabledControls.FirstOrDefault(item => item.Command == "Next")?.Name ?? "下一张";
-        string fitName = main.ControlVM.EnabledControls.FirstOrDefault(item => item.Command == "Fit")?.Name ?? "缩放适应";
+        // TOOLBAR-04：读屏名称必须是「名称（主 / 次）」。期望值按设计格式在本套件独立拼装，
+        // 不复用共享格式化函数，共享实现写坏格式时这里照样失败。
+        var expectedNames = main.ControlVM.EnabledControls.Select(ExpectedCommandName).ToList();
         bool commandsOk = commandNodes.Count == commands.Count
-            && commandNodes.Any(node => node.Name.Contains(nextName, StringComparison.Ordinal))
-            && commandNodes.Any(node => node.Name.Contains(fitName, StringComparison.Ordinal));
+            && commandNodes.Select(node => node.Name).SequenceEqual(expectedNames);
 
         Check("TOOLBAR-11 焦点顺序", named && rectOk && ratingOrder && commandsOk,
             $"nodes={nodes.Count} named={named} rectPositive={rectOk} row={row} "
             + $"rating={string.Join("/", ordered.Select(node => node.Name))} "
-            + $"commands={commandNodes.Count}/{commands.Count} next={nextName} fit={fitName}");
+            + $"commands={commandNodes.Count}/{commands.Count} "
+            + $"names=[{string.Join(" | ", commandNodes.Select(node => node.Name))}] expected=[{string.Join(" | ", expectedNames)}]");
+    }
+
+    /// <summary>TOOLBAR-04：命令读屏名称按设计格式在此独立拼装（空槽省略、主次相同只显示一次）。</summary>
+    private static string ExpectedCommandName(SettingsViewModel.HotkeyItem hotkey)
+    {
+        var slots = new List<string>();
+        if (hotkey.PrimaryHotkey != null) slots.Add(hotkey.PrimaryHotkeyText);
+        if (hotkey.SecondaryHotkey != null && (slots.Count == 0 || slots[0] != hotkey.SecondaryHotkeyText))
+            slots.Add(hotkey.SecondaryHotkeyText);
+        return slots.Count == 0 ? hotkey.Name : $"{hotkey.Name}（{string.Join(" / ", slots)}）";
     }
 
     /// <summary>TOOLBAR-11：硬件键盘按键经共享命令表驱动主图 Fit 与翻页。</summary>

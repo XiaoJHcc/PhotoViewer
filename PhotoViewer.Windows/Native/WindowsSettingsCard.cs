@@ -15,6 +15,15 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal static class WindowsSettingsCard
 {
+    /// <summary>拉条行内滑块的最小宽度(行宽不足时优先压缩标题,三者仍属同一行)。</summary>
+    private const double SliderMinimumWidth = 120;
+
+    /// <summary>拉条行标题与滑块之间的间距。</summary>
+    private const double SliderTitleGap = 12;
+
+    /// <summary>拉条行滑块与数值之间的间距。</summary>
+    private const double SliderValueGap = 8;
+
     /// <summary>设置页/工具页共用的滚动页容器:页面标题 + 内容,MaxWidth 与页边距统一。</summary>
     /// <param name="title">页面标题</param>
     /// <param name="children">页面内容</param>
@@ -118,7 +127,7 @@ internal static class WindowsSettingsCard
         return card;
     }
 
-    /// <summary>标题 + 右侧数值 + 下方滑块的设置行。</summary>
+    /// <summary>同一行内的标题 → 弹性滑块 → 右侧等宽数值(SETTINGS-16)。</summary>
     /// <param name="header">行标题</param>
     /// <param name="slider">滑块</param>
     /// <param name="valueText">右侧数值文本</param>
@@ -127,22 +136,37 @@ internal static class WindowsSettingsCard
     {
         valueText.Style = Style("BodyTextBlockStyle");
         valueText.Foreground = ThemeBrush("TextFillColorSecondaryBrush");
-        valueText.HorizontalAlignment = HorizontalAlignment.Right;
-        valueText.Margin = new Thickness(0, 0, 0, 8);
+        valueText.VerticalAlignment = VerticalAlignment.Center;
+        valueText.TextAlignment = TextAlignment.Right;
+        // 固定最小宽 + 文本右对齐(拉伸占满本列),数值贴齐行尾;不靠子元素对齐去猜模板内边距。
+        valueText.HorizontalAlignment = HorizontalAlignment.Stretch;
+        valueText.MinWidth = WindowsLayout.SettingsSliderValueWidth;
+        valueText.Margin = new Thickness(SliderValueGap, 0, 0, 0);
+
+        var title = RowTitle(header);
+        title.VerticalAlignment = VerticalAlignment.Center;
+        title.Margin = new Thickness(0, 0, SliderTitleGap, 0);
 
         slider.HorizontalAlignment = HorizontalAlignment.Stretch;
+        slider.VerticalAlignment = VerticalAlignment.Center;
         slider.MinWidth = 0;
 
         var content = new Grid();
-        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        content.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-        content.Children.Add(valueText);
-        Grid.SetRow(slider, 1);
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.ColumnDefinitions.Add(new ColumnDefinition
+        {
+            Width = new GridLength(1, GridUnitType.Star),
+            MinWidth = SliderMinimumWidth,
+        });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        content.Children.Add(title);
+        Grid.SetColumn(slider, 1);
         content.Children.Add(slider);
+        Grid.SetColumn(valueText, 2);
+        content.Children.Add(valueText);
 
         return new SettingsCard
         {
-            Header = header,
             ContentAlignment = ContentAlignment.Vertical,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Content = content,

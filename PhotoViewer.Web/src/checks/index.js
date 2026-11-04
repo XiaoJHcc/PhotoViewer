@@ -491,6 +491,16 @@ const CHECKS = [
                 "菜单项或分组顺序不符");
             const labels = h.domAll(".pv-menu .pv-menu-item").map((node) => node.querySelector(".pv-menu-label").textContent);
             h.deepEqual(labels, ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "雾天增强"], "菜单文案不符");
+            // MENU-06：图标角色固定，增强复用命令图标；DOM 顺序为「勾选列 → 图标 → 文字 → 快捷键」。
+            h.deepEqual(app.menuModel().map((item) => item.icon),
+                ["icon.menu.openFile", "icon.menu.openFolder", "icon.menu.filmstrip", "icon.menu.analysis",
+                    "icon.menu.control", "icon.command.toggleEnhance"], "菜单图标角色不符");
+            const rows = h.domAll(".pv-menu .pv-menu-item");
+            h.deepEqual(rows.map((row) => [...row.children].map((child) => child.className)),
+                rows.map(() => ["pv-menu-mark", "pv-icon pv-menu-icon", "pv-menu-label", "pv-menu-shortcut"]),
+                "菜单项列顺序不是「勾选列 → 图标 → 文字 → 快捷键」");
+            h.deepEqual(rows.map((row) => row.querySelector(".pv-menu-icon").textContent.codePointAt(0)),
+                app.menuModel().map((item) => parseInt(shell.t(item.icon).slice(2), 16)), "菜单项图标字形不符");
             h.assert(h.menuItem("film").getAttribute("aria-checked") === "true", "胶片栏勾选未反映可见性");
             h.assert(h.menuItem("control").getAttribute("aria-checked") === "true", "控制栏勾选未反映可见性");
             h.assert(h.menuItem("analysis").getAttribute("aria-checked") === "false", "分析栏勾选未反映可见性");
@@ -572,6 +582,22 @@ const CHECKS = [
             h.assert(checkedMark.textContent.codePointAt(0) === parseInt(t("icon.check").slice(2), 16),
                 `勾选字形不是 icon.check：U+${checkedMark.textContent.codePointAt(0).toString(16)}`);
             h.assert(h.menuItem("analysis").querySelector(".pv-menu-mark").textContent === "", "未勾选项仍画勾号");
+
+            // MENU-06：命令图标占勾选列右侧 menu.icon.size 列、字号 menu.icon.fontSize、与文字间距 menu.icon.gap。
+            for (const item of items) {
+                const glyph = item.querySelector(".pv-menu-icon");
+                h.assert(glyph !== null, `菜单项 ${item.dataset.id} 缺少命令图标`);
+                h.assert(glyph.offsetWidth === t("menu.icon.size"), `图标列宽 ${glyph.offsetWidth} ≠ ${t("menu.icon.size")}`);
+                const glyphStyle = getComputedStyle(glyph);
+                h.assert(glyphStyle.marginRight === `${t("menu.icon.gap")}px`, `图标与文字间距 ${glyphStyle.marginRight}`);
+                h.assert(glyphStyle.fontSize === `${t("menu.icon.fontSize")}px`, `图标字号 ${glyphStyle.fontSize}`);
+                const textLeft = item.querySelector(".pv-menu-label").getBoundingClientRect().left;
+                h.assert(Math.abs(textLeft - glyph.getBoundingClientRect().right - t("menu.icon.gap")) <= 0.5,
+                    `图标与文字实际间距 ${textLeft - glyph.getBoundingClientRect().right}`);
+            }
+            // 勾选项保留图标：勾选列与图标列是两条独立的列。
+            h.assert(h.menuItem("film").querySelector(".pv-menu-mark").textContent !== ""
+                && h.menuItem("film").querySelector(".pv-menu-icon").textContent !== "", "勾选项丢了命令图标");
 
             // 快捷键右对齐、颜色取 color.menu.shortcut，与文字间距 ≥ menu.shortcut.gap。
             const nextItem = h.menuItem("analysis");
@@ -976,15 +1002,16 @@ const CHECKS = [
     },
     {
         id: "TOOLBAR-04",
-        title: "命令按钮提示为「命令名 · 主 / 次」、下一张切图并定位、无照片禁用",
+        title: "命令按钮提示为「名称（主 / 次）」、下一张切图并定位、无照片禁用",
         async run(shell, h) {
             const { app } = shell;
             const next = h.dom('.pv-control-command-button[data-command="Next"]');
-            // TOOLBAR-04：格式 `命令名 · 主 / 次`，不含「未设置」占位；提示走 data-tooltip。
-            h.assert(next.dataset.tooltip === "下一张 · → / 滚轮下", `按钮提示格式不符：${next.dataset.tooltip}`);
+            // TOOLBAR-04：格式 `名称（主 / 次）`，不含「未设置」占位、不用点号分隔；提示走 data-tooltip。
+            h.assert(next.dataset.tooltip === "下一张（→ / 滚轮下）", `按钮提示格式不符：${next.dataset.tooltip}`);
             const fit = h.dom('.pv-control-command-button[data-command="Fit"]');
-            h.assert(fit.dataset.tooltip === "缩放适应 · Ctrl+0 / F", `按钮提示格式不符：${fit.dataset.tooltip}`);
+            h.assert(fit.dataset.tooltip === "缩放适应（Ctrl+0 / F）", `按钮提示格式不符：${fit.dataset.tooltip}`);
             h.assert(!next.dataset.tooltip.includes("未设置"), "提示出现未设置占位");
+            h.assert(!next.dataset.tooltip.includes("·"), `提示仍用点号分隔命令名与绑定：${next.dataset.tooltip}`);
             h.assert(next.getAttribute("title") === null, "命令按钮仍用浏览器原生 title");
             const before = app.state.displayedId;
             h.click(next);

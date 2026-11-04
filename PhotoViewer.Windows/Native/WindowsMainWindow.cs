@@ -32,13 +32,16 @@ using Windows.UI;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生主窗口:隐藏式标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
+/// 原生主窗口:Windows 系统标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
 /// (契约 SHELL-01/02)。几何常量取自 <see cref="WindowsLayout"/>,方向切换只重排既有控件实例。
 /// </summary>
 internal sealed partial class WindowsMainWindow : Window
 {
-    /// <summary>窗口标题(与旧壳一致,标题栏覆盖层与系统窗口标题共用)。</summary>
-    private const string WindowTitle = "PhotoViewer 图片查看器";
+    /// <summary>窗口标题的应用名(标题格式 <c>文件夹名 - 文件名 - PhotoViewer</c>,SHELL-02)。</summary>
+    private const string AppTitle = "PhotoViewer";
+
+    /// <summary>任务栏缩略浮窗图标:随输出复制的 icon.ico(与 EXE 图标同源)。</summary>
+    private const string WindowIconFileName = "icon.ico";
 
     private readonly MainViewModel _main;
     private readonly PhotoLoadSession _session = new();
@@ -69,7 +72,6 @@ internal sealed partial class WindowsMainWindow : Window
     private ToggleMenuFlyoutItem _analysisMenuToggle = null!;
     private ToggleMenuFlyoutItem _controlMenuToggle = null!;
     private ToggleMenuFlyoutItem _enhanceMenuToggle = null!;
-    private readonly WindowsTitleBar _titleBar;
     private readonly Rectangle _detailHighlight;
     private readonly Canvas _highlightLayer;
     private readonly KeyEventHandler _previewKeyHandler;
@@ -79,7 +81,7 @@ internal sealed partial class WindowsMainWindow : Window
     private bool _isRowLayout = true;
     private bool _sized;
     private bool _isFullScreen;
-    private XamlRoot? _xamlRoot;
+    private bool _windowIconApplied;
     private readonly IViewStateStore _viewState;
     private bool _preferencesLoaded;
     private string _lastFullError = string.Empty;
@@ -94,7 +96,7 @@ internal sealed partial class WindowsMainWindow : Window
         _main = main;
         _viewState = viewState;
         _previewKeyHandler = OnPreviewKeyDown;
-        Title = WindowTitle;
+        Title = AppTitle;
 
         _photo = new WindowsPhotoView();
         _main.FitToViewRequested += OnFitToViewRequested;
@@ -232,7 +234,6 @@ internal sealed partial class WindowsMainWindow : Window
         _rowHost = new Grid();
         _colHost = new Grid();
         _contextMenu = BuildContextMenu();
-        _titleBar = new WindowsTitleBar(WindowTitle, MinimizeWindow, ToggleMaximizeWindow, ToggleFullScreenWindow, Close);
 
         _root = new Grid
         {
@@ -246,14 +247,12 @@ internal sealed partial class WindowsMainWindow : Window
         _filterBar.PopupOpening += _ratingSources.Close;
         _root.Children.Add(_rowHost);
         _root.Children.Add(_colHost);
-        _root.Children.Add(_titleBar.Root);
         Content = _root;
 
         _root.Loaded += OnRootLoaded;
         _root.SizeChanged += OnRootSizeChanged;
         // 快捷键在根元素预处置:冒泡阶段的焦点路径(ScrollViewer/按钮先处理方向键等)不再决定快捷键是否生效。
         _root.AddHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler, handledEventsToo: true);
-        _root.PointerMoved += OnRootPointerMoved;
         Activated += OnWindowActivated;
         _photoHost.PointerWheelChanged += OnPhotoWheel;
         _root.DragOver += OnDragOver;
@@ -261,6 +260,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         _main.PropertyChanged += OnMainChanged;
         _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.FolderVM.PropertyChanged += OnFolderChanged;
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
@@ -268,12 +268,14 @@ internal sealed partial class WindowsMainWindow : Window
         _session.Notice += OnSessionNotice;
         _photo.ViewportChanged += OnViewportChanged;
         _photo.RenderStateChanged += OnPhotoRenderStateChanged;
+        AppWindow.Changed += OnAppWindowChanged;
 
         LoadUiPreferences();
         _session.SetFile(_main.CurrentFile?.File);
         ApplyLayout();
         ApplyVisibility();
         UpdateHint();
+        UpdateWindowTitle();
 
         ConfigureTitleBar();
     }
@@ -297,21 +299,17 @@ internal sealed partial class WindowsMainWindow : Window
     /// </summary>
     public void Detach()
     {
-        if (_xamlRoot != null)
-        {
-            _xamlRoot.Changed -= OnXamlRootChanged;
-        }
-
         _root.RemoveHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler);
-        _filterBar.SizeChanged -= OnFilterBarSizeChanged;
         _filterBar.PopupOpening -= _ratingSources.Close;
         _ratingSources.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
         _main.Settings.PropertyChanged -= OnSettingsChanged;
+        _main.FolderVM.PropertyChanged -= OnFolderChanged;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
+        AppWindow.Changed -= OnAppWindowChanged;
         _session.Changed -= OnImageChanged;
         _session.Notice -= OnSessionNotice;
         _photo.ViewportChanged -= OnViewportChanged;
@@ -444,13 +442,17 @@ internal sealed partial class WindowsMainWindow : Window
         return pane;
     }
 
-    /// <summary>构建右键菜单(工具/设置窗口入口)。</summary>
+    /// <summary>
+    /// 构建右键菜单(工具/设置窗口入口)。MENU-06:每项带语义前置图标,
+    /// 勾选项(ToggleMenuFlyoutItem)同样带图标 —— WinUI 1.8 的 ToggleMenuFlyoutItem 与本机模板
+    /// 都支持 Icon(CheckedWithIcon/UncheckedWithIcon 状态),勾选列与图标列并存,勾选不只靠图标表达。
+    /// </summary>
     private MenuFlyout BuildContextMenu()
     {
         var menu = new MenuFlyout();
-        var openFile = new MenuFlyoutItem { Text = "打开文件…" };
+        var openFile = new MenuFlyoutItem { Text = "打开文件…", Icon = MenuGlyph(WindowsIcons.DocumentGlyph) };
         openFile.Click += (_, _) => OpenFilePicker();
-        var openFolder = new MenuFlyoutItem { Text = "打开文件夹…" };
+        var openFolder = new MenuFlyoutItem { Text = "打开文件夹…", Icon = MenuGlyph(WindowsIcons.FolderGlyph) };
         openFolder.Click += async (_, _) =>
         {
             var folder = await FilePicker.PickFolderAsync("选择图片文件夹");
@@ -460,13 +462,33 @@ internal sealed partial class WindowsMainWindow : Window
             }
         };
 
-        _thumbnailMenuToggle = new ToggleMenuFlyoutItem { Text = "胶片栏", IsChecked = _main.IsThumbnailViewVisible };
+        _thumbnailMenuToggle = new ToggleMenuFlyoutItem
+        {
+            Text = "胶片栏",
+            IsChecked = _main.IsThumbnailViewVisible,
+            Icon = MenuGlyph(WindowsIcons.PhotosGlyph),
+        };
         _thumbnailMenuToggle.Click += (_, _) => _main.ToggleThumbnailView();
-        _analysisMenuToggle = new ToggleMenuFlyoutItem { Text = "分析栏", IsChecked = _main.IsAnalysisViewVisible };
+        _analysisMenuToggle = new ToggleMenuFlyoutItem
+        {
+            Text = "分析栏",
+            IsChecked = _main.IsAnalysisViewVisible,
+            Icon = MenuGlyph(WindowsIcons.AnalysisGridGlyph),
+        };
         _analysisMenuToggle.Click += (_, _) => _main.ToggleAnalysisView();
-        _controlMenuToggle = new ToggleMenuFlyoutItem { Text = "控制栏", IsChecked = _main.IsControlViewVisible };
+        _controlMenuToggle = new ToggleMenuFlyoutItem
+        {
+            Text = "控制栏",
+            IsChecked = _main.IsControlViewVisible,
+            Icon = MenuGlyph(WindowsIcons.SliderGlyph),
+        };
         _controlMenuToggle.Click += (_, _) => _main.ToggleControlView();
-        _enhanceMenuToggle = new ToggleMenuFlyoutItem { Text = "雾天增强", IsChecked = _session.IsEnhanced };
+        _enhanceMenuToggle = new ToggleMenuFlyoutItem
+        {
+            Text = "雾天增强",
+            IsChecked = _session.IsEnhanced,
+            Icon = MenuGlyph(WindowsIcons.ContrastGlyph),
+        };
         _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
         menu.Opening += (_, _) =>
         {
@@ -488,37 +510,36 @@ internal sealed partial class WindowsMainWindow : Window
         menu.Items.Add(new MenuFlyoutSeparator());
         menu.Items.Add(_enhanceMenuToggle);
         menu.Items.Add(new MenuFlyoutSeparator());
-        var tools = new MenuFlyoutItem { Text = "工具…" };
+        var tools = new MenuFlyoutItem { Text = "工具…", Icon = MenuGlyph(WindowsIcons.ToolsGlyph) };
         tools.Click += (_, _) => _main.OpenToolsWindow();
         menu.Items.Add(tools);
-        var settings = new MenuFlyoutItem { Text = "设置…" };
+        var settings = new MenuFlyoutItem { Text = "设置…", Icon = MenuGlyph(WindowsIcons.SettingsGlyph) };
         settings.Click += (_, _) => _main.OpenSettingWindow();
         menu.Items.Add(settings);
         return menu;
     }
 
-    /// <summary>
-    /// 去掉系统标题栏与系统最小/最大/关闭按钮,改用自绘按钮 + 自动显隐(SHELL-02)。
-    /// <c>hasBorder: true</c> 保留窗口边框与拖拽改尺寸;<c>hasTitleBar: false</c> 让内容直接顶到窗口上边缘。
-    /// </summary>
+    /// <summary>MENU-06:菜单项的语义前置图标(系统 Fluent 字形,尺寸随原生菜单图标列)。</summary>
+    /// <param name="glyph">字形码位。</param>
+    /// <returns>可直接作为 <c>MenuFlyoutItem.Icon</c> 的图标元素。</returns>
+    private static FontIcon MenuGlyph(string glyph) => new()
+    {
+        FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+        Glyph = glyph,
+        FontSize = DesignTokens.MenuIconSize,
+    };
+
+    /// <summary>使用 Windows 系统标题栏与系统窗口按钮，拖动、圆角和非客户区命中全部由系统处理。</summary>
     private void ConfigureTitleBar()
     {
         if (AppWindow.Presenter is not OverlappedPresenter presenter)
         {
-            throw new InvalidOperationException("原生壳要求 OverlappedPresenter,无法配置隐藏式标题栏。");
+            throw new InvalidOperationException("原生壳要求 OverlappedPresenter,无法配置系统标题栏。");
         }
 
-        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-        NativeStartupLog.Write("title bar: 系统标题栏已移除,使用自绘自动显隐标题栏");
-    }
-
-    /// <summary>最小化窗口。</summary>
-    private void MinimizeWindow()
-    {
-        if (AppWindow.Presenter is OverlappedPresenter presenter)
-        {
-            presenter.Minimize();
-        }
+        ExtendsContentIntoTitleBar = false;
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
+        NativeStartupLog.Write("title bar: 使用 Windows 系统标题栏");
     }
 
     /// <summary>最大化 / 还原窗口(全屏态下先退出全屏)。</summary>
@@ -565,29 +586,76 @@ internal sealed partial class WindowsMainWindow : Window
         _isFullScreen = true;
     }
 
-    /// <summary>退出全屏,恢复有边框的可缩放窗口。</summary>
+    /// <summary>退出全屏,恢复系统边框与标题栏。</summary>
     /// <param name="presenter">窗口呈现器</param>
     private void ExitFullScreen(OverlappedPresenter presenter)
     {
-        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
-        presenter.Restore();
+        // 先落标志再动窗口:SetBorderAndTitleBar/Restore 会同步触发 AppWindow.Changed,
+        // 标志还停在"全屏"时同步逻辑会重复设置边框。
         _isFullScreen = false;
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
+        presenter.Restore();
+    }
+
+    /// <summary>系统还原全屏窗口时同步恢复系统边框与标题栏。</summary>
+    private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
+    {
+        if (!args.DidPresenterChange && !args.DidSizeChange && !args.DidVisibilityChange)
+        {
+            return;
+        }
+
+        SyncFullScreenWithPresenter();
+    }
+
+    private void SyncFullScreenWithPresenter()
+    {
+        if (!_isFullScreen || AppWindow.Presenter is not OverlappedPresenter presenter)
+        {
+            return;
+        }
+
+        if (presenter.State == OverlappedPresenterState.Maximized)
+        {
+            return;
+        }
+
+        _isFullScreen = false;
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
+    }
+
+    /// <summary>
+    /// 设窗口图标(SHELL-02):Win11 任务栏悬停缩略浮窗读窗口图标,不走 EXE 资源,
+    /// 因此用随输出复制的 icon.ico 显式设置一次;缺失时只记诊断,不阻塞启动。
+    /// </summary>
+    private void ApplyWindowIcon()
+    {
+        if (_windowIconApplied)
+        {
+            return;
+        }
+
+        _windowIconApplied = true;
+        var path = System.IO.Path.Combine(AppContext.BaseDirectory, WindowIconFileName);
+        if (!System.IO.File.Exists(path))
+        {
+            NativeStartupLog.Write($"window icon: 缺少 {path},任务栏缩略浮窗将回落到系统默认图标");
+            return;
+        }
+
+        try
+        {
+            AppWindow.SetIcon(path);
+        }
+        catch (Exception ex)
+        {
+            NativeStartupLog.Fail("设置窗口图标失败", ex);
+        }
     }
 
     /// <summary>窗口首次布局完成后设定初始尺寸并让根元素获得键盘焦点。</summary>
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
-        if (_xamlRoot == null)
-        {
-            _xamlRoot = _root.XamlRoot;
-            if (_xamlRoot != null)
-            {
-                _xamlRoot.Changed += OnXamlRootChanged;
-            }
-
-            _filterBar.SizeChanged += OnFilterBarSizeChanged;
-        }
-
         if (!_sized)
         {
             _sized = true;
@@ -603,27 +671,16 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         _root.Focus(FocusState.Programmatic);
-        UpdateCaptionRegions();
+        ApplyWindowIcon();
     }
 
-    /// <summary>窗口尺寸变化:同步方向判定与标题栏拖动区。</summary>
+    /// <summary>窗口尺寸变化:同步方向判定与相似面板宽度。</summary>
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _ratingSources.Close();
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
         UpdateSimilarityWidth();
-        UpdateCaptionRegions();
     }
-
-    /// <summary>跨屏栅格化比例变化时重算物理标题栏区域，即使逻辑窗口尺寸不变。</summary>
-    /// <param name="sender">当前 XAML 根。</param>
-    /// <param name="args">根布局变化参数。</param>
-    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateCaptionRegions();
-
-    /// <summary>筛选条完成换向布局后更新拖动区，避免使用布局前的旧尺寸。</summary>
-    /// <param name="sender">筛选条。</param>
-    /// <param name="args">布局尺寸变化参数。</param>
-    private void OnFilterBarSizeChanged(object sender, SizeChangedEventArgs args) => UpdateCaptionRegions();
 
     /// <summary>按当前方向重排三个分区。</summary>
     private void ApplyLayout()
@@ -709,7 +766,6 @@ internal sealed partial class WindowsMainWindow : Window
             _main.UpdateScreenOrientation(_root.ActualWidth, _root.ActualHeight);
         }
 
-        UpdateCaptionRegions();
     }
 
     /// <summary>栏位显隐(跨会话持久化 SHELL-04;分析栏仍为会话态)。</summary>
@@ -732,7 +788,6 @@ internal sealed partial class WindowsMainWindow : Window
             }
 
             UpdateSimilarityWidth();
-            UpdateCaptionRegions();
             SaveUiPreferences();
         }
         catch (Exception ex)
@@ -790,108 +845,23 @@ internal sealed partial class WindowsMainWindow : Window
         }
     }
 
-    /// <summary>指针移动:进入顶部热区显示标题栏,离开隐藏(旧壳 HotZoneHeight=50)。</summary>
-    private void OnRootPointerMoved(object sender, PointerRoutedEventArgs e)
-    {
-        var y = e.GetCurrentPoint(_root).Position.Y;
-        UpdateTitleBarVisibility(y <= WindowsLayout.CaptionHotZoneHeight);
-    }
-
-    /// <summary>窗口失活时隐藏标题栏并撤掉分析栏绿框(旧壳 Deactivated 同口径);激活不主动显示。</summary>
+    /// <summary>窗口失活时撤掉分析栏绿框；激活后设置真实窗口图标。</summary>
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
     {
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
             HandleWindowDeactivated();
+            return;
         }
+
+        ApplyWindowIcon();
     }
 
     internal void SimulateWindowDeactivatedForAcceptance() => HandleWindowDeactivated();
 
-    private void HandleWindowDeactivated()
-    {
-        UpdateTitleBarVisibility(false);
-        _analysis.ClearPreviewHighlight();
-    }
+    private void HandleWindowDeactivated() => _analysis.ClearPreviewHighlight();
 
-    /// <summary>
-    /// 标题栏显隐:标题栏不可见时不登记系统 caption 区域,顶部因此不可拖动(旧壳同口径)。
-    /// </summary>
-    /// <param name="visible">是否显示</param>
-    private void UpdateTitleBarVisibility(bool visible)
-    {
-        // 指针每次移动都会进来;显隐未变时不重算 caption(GetForWindowId/TransformToVisual/SetRegionRects 都是热路径)。
-        if (_titleBar.IsVisible == visible)
-        {
-            return;
-        }
-
-        _titleBar.SetVisible(visible);
-        UpdateCaptionRegions();
-    }
-
-    /// <summary>
-    /// 隐藏式标题栏的拖动区:避让筛选条与文件栏,不吞掉控件手势(SHELL-02);
-    /// 隐藏时清空全部区域。
-    /// </summary>
-    private void UpdateCaptionRegions()
-    {
-        if (_root.ActualWidth <= 0)
-        {
-            return;
-        }
-
-        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
-        var width = (int)Math.Round(_root.ActualWidth * scale);
-        var height = (int)Math.Round(Math.Min(WindowsLayout.CaptionHeight, _root.ActualHeight) * scale);
-        var nonClient = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
-
-        var rects = new List<RectInt32>();
-        if (!_titleBar.IsVisible)
-        {
-            nonClient.SetRegionRects(NonClientRegionKind.Caption, rects.ToArray());
-            return;
-        }
-
-        // 用实际布局出的按钮组左边界,不按常量复算:Button.Width 不含 Margin,公式很容易漂移。
-        var buttonLeft = (int)Math.Clamp(Math.Round(_titleBar.GetButtonsLeft(_root) * scale), 0, width);
-        if (!_main.IsThumbnailViewVisible)
-        {
-            rects.Add(new RectInt32(0, 0, buttonLeft, height));
-            _titleBar.SetTitleInset(0);
-        }
-        else if (_isRowLayout)
-        {
-            var bounds = _filterBar.GetInteractiveBounds(_root);
-            var left = (int)Math.Clamp(Math.Floor(bounds.X * scale), 0, width);
-            var right = (int)Math.Clamp(Math.Ceiling((bounds.X + bounds.Width) * scale), left, width);
-            if (left > 0)
-            {
-                rects.Add(new RectInt32(0, 0, left, height));
-            }
-
-            if (right < buttonLeft)
-            {
-                rects.Add(new RectInt32(right, 0, buttonLeft - right, height));
-            }
-
-            _titleBar.SetTitleInset(0);
-        }
-        else
-        {
-            var left = (int)Math.Clamp(Math.Ceiling(_filePaneFrame.ActualWidth * scale), 0, width);
-            if (left < buttonLeft)
-            {
-                rects.Add(new RectInt32(left, 0, buttonLeft - left, height));
-            }
-
-            _titleBar.SetTitleInset(_filePaneFrame.ActualWidth);
-        }
-
-        nonClient.SetRegionRects(NonClientRegionKind.Caption, rects.ToArray());
-    }
-
-    /// <summary>当前照片或布局变化:换图、换向、刷新提示。</summary>
+    /// <summary>当前照片或布局变化:换图、换向、刷新提示与窗口标题。</summary>
     private void OnMainChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
         switch (e.PropertyName)
@@ -901,6 +871,7 @@ internal sealed partial class WindowsMainWindow : Window
                 UpdateFocusPoint();
                 _session.SetFile(_main.CurrentFile?.File);
                 UpdateHint();
+                UpdateWindowTitle();
                 break;
             case nameof(MainViewModel.IsRowLayout):
                 ApplyLayout();
@@ -913,6 +884,54 @@ internal sealed partial class WindowsMainWindow : Window
                 OnViewportChanged();
                 break;
         }
+    }
+
+    /// <summary>文件源变化:目录名进入窗口标题(SHELL-02)。</summary>
+    /// <param name="sender">文件源视图模型。</param>
+    /// <param name="e">属性变化参数。</param>
+    private void OnFolderChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(FolderViewModel.FolderName))
+        {
+            UpdateWindowTitle();
+        }
+    }
+
+    /// <summary>
+    /// 窗口标题(SHELL-02):<c>文件夹名 - 文件名 - PhotoViewer</c>。
+    /// 无当前文件时只显示应用名;文件夹段与文件段同名时只出现一次,
+    /// 应用名始终保留为最后一段(文件夹恰好叫 PhotoViewer 时标题是
+    /// <c>PhotoViewer - 文件名 - PhotoViewer</c>)。
+    /// </summary>
+    private void UpdateWindowTitle() => Title = BuildWindowTitle();
+
+    /// <summary>按当前目录与当前文件拼窗口标题。</summary>
+    /// <returns>标题文案。</returns>
+    private string BuildWindowTitle()
+    {
+        var file = _main.CurrentFile;
+        if (file == null)
+        {
+            return AppTitle;
+        }
+
+        var parts = new List<string>(3);
+        var folder = _main.FolderVM.FolderName?.Trim();
+        if (!string.IsNullOrEmpty(folder))
+        {
+            parts.Add(folder);
+        }
+
+        // 只去重文件夹段与文件段(单图/同名情况);应用名不参与去重,必须留在最后。
+        var name = file.Name?.Trim();
+        if (!string.IsNullOrEmpty(name)
+            && !string.Equals(name, folder, StringComparison.OrdinalIgnoreCase))
+        {
+            parts.Add(name);
+        }
+
+        parts.Add(AppTitle);
+        return string.Join(" - ", parts);
     }
 
     /// <summary>解码会话变化:同步展示帧、增强计算态与提示(回调内同步上传,不跨下一次 Changed 持引用)。</summary>

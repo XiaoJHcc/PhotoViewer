@@ -171,8 +171,8 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         MacSettingsNative.UpdateState(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
     }
 
-    /// <summary>构建完整窗口状态快照，含派生文本、冲突与语义级别。</summary>
-    private MacSettingsStateDto BuildState()
+    /// <summary>构建完整窗口状态快照，含派生文本、冲突与语义级别；验收也读取同一份快照。</summary>
+    internal MacSettingsStateDto BuildState()
     {
         var settings = Settings;
         int layoutIndex = 0;
@@ -227,6 +227,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
                 Hotkeys = settings.Hotkeys.Select((item, index) => new MacHotkeyDto
                 {
                     Name = item.Name,
+                    Symbol = AppleSymbolNames.ForCommand(item.Command) ?? string.Empty,
                     IsDisplay = item.IsDisplay,
                     Primary = MacInput.FormatGesture(item.PrimaryHotkey, settings),
                     Secondary = MacInput.FormatGesture(item.SecondaryHotkey, settings),

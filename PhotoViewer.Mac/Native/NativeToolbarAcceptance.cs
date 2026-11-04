@@ -62,14 +62,28 @@ internal static class NativeToolbarAcceptance
             await Task.Delay(150);
             var expected = settings.Hotkeys.Where(hotkey => hotkey.IsDisplay && AppleSymbolNames.ForCommand(hotkey.Command) != null).Select(hotkey => hotkey.Command);
             if (!window.ControlBar.Commands.Keys.SequenceEqual(expected)) throw new InvalidOperationException("工具栏未保留设置排序");
+            // TOOLBAR-04：格式「名称（主 / 次）」。期望值按设计格式独立拼装，不复用共享格式化函数，
+            // 这样共享实现写坏格式时这里照样会失败。
+            string primaryText = MacInput.FormatGesture(next.PrimaryHotkey, settings);
+            string secondaryText = MacInput.FormatGesture(next.SecondaryHotkey, settings);
+            string expectedTooltip = $"{next.Name}（{primaryText} / {secondaryText}）";
             string tooltip = window.ControlBar.Commands["Next"].ToolTip ?? "";
             string spoken = window.ControlBar.Commands["Next"].AccessibilityLabel ?? "";
-            if (!tooltip.Contains(MacInput.FormatGesture(next.PrimaryHotkey, settings), StringComparison.Ordinal) ||
-                !tooltip.Contains(MacInput.FormatGesture(next.SecondaryHotkey, settings), StringComparison.Ordinal) || tooltip.Contains("未设置", StringComparison.Ordinal))
-                throw new InvalidOperationException("工具栏提示未正确显示苹果主次快捷键");
+            if (tooltip != expectedTooltip)
+                throw new InvalidOperationException($"工具栏提示不是「名称（主 / 次）」：实际 {tooltip}，期望 {expectedTooltip}");
+            if (tooltip.Contains('·') || tooltip.Contains("未设置", StringComparison.Ordinal))
+                throw new InvalidOperationException($"工具栏提示仍带点号分隔或未设置占位：{tooltip}");
             if (spoken != tooltip)
-                throw new InvalidOperationException($"命令读屏名称未包含当前主次绑定：{spoken}");
-            observations.Add("display/order bindings and both Apple gesture tooltips update without changing photos; accessibility label matches tooltip");
+                throw new InvalidOperationException($"命令读屏名称未与提示同源：{spoken} / {tooltip}");
+            // 只有主绑定的命令必须省略次槽，不出现空括号或“未设置”。
+            var singleSlot = settings.Hotkeys.Single(hotkey => hotkey.Command == "ZoomInPreset");
+            if (singleSlot.SecondaryHotkey != null) throw new InvalidOperationException("缩放预设的次绑定已被改动，无法核对空槽省略");
+            string singleSlotTooltip = window.ControlBar.Commands["ZoomInPreset"].ToolTip ?? "";
+            string singleSlotExpected = $"{singleSlot.Name}（{MacInput.FormatGesture(singleSlot.PrimaryHotkey, settings)}）";
+            if (singleSlotTooltip != singleSlotExpected)
+                throw new InvalidOperationException($"单槽提示未省略空槽：实际 {singleSlotTooltip}，期望 {singleSlotExpected}");
+            observations.Add("display/order bindings and both Apple gesture tooltips update without changing photos; " +
+                "tooltip and accessibility label both read 名称（主 / 次）, single-slot commands omit the empty slot, no dot separator");
 
             window.Main.CurrentFile = window.Main.FileVM.ThumbnailList.FilteredFiles[0];
             await Task.Delay(100);

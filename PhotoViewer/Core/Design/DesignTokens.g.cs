@@ -347,6 +347,20 @@ public static class DesignTokens
     public const string IconFont = "uicons-regular-rounded";
     /// <summary>icon.fontSolid TOOLBAR-03：实心字形字体：Flaticon UIcons Solid Straight（PhotoViewer/Assets/Fonts），只用于点亮的星与评分快捷命令的星底。</summary>
     public const string IconFontSolid = "uicons-solid-straight";
+    /// <summary>icon.menu.analysis MENU-06：主图菜单分析栏图标：uicons fi-rr-grid。</summary>
+    public const string IconMenuAnalysis = "U+F71C";
+    /// <summary>icon.menu.control MENU-06：主图菜单控制栏图标：uicons fi-rr-settings-sliders。</summary>
+    public const string IconMenuControl = "U+FBD1";
+    /// <summary>icon.menu.filmstrip MENU-06：主图菜单胶片栏图标：uicons fi-rr-images。</summary>
+    public const string IconMenuFilmstrip = "U+F7FC";
+    /// <summary>icon.menu.openFile MENU-06：主图菜单打开文件图标：uicons fi-rr-document。</summary>
+    public const string IconMenuOpenFile = "U+F57A";
+    /// <summary>icon.menu.openFolder MENU-06：主图菜单打开文件夹图标：uicons fi-rr-folder。</summary>
+    public const string IconMenuOpenFolder = "U+F6BA";
+    /// <summary>icon.menu.settings MENU-06：主图菜单设置图标：uicons fi-rr-settings。</summary>
+    public const string IconMenuSettings = "U+FBD2";
+    /// <summary>icon.menu.tools MENU-06：主图菜单工具图标：uicons fi-rr-tools。</summary>
+    public const string IconMenuTools = "U+FDCB";
     /// <summary>icon.photoPlaceholder FILM-05：缩略图未就绪/失败占位（fi-rr-picture）。</summary>
     public const string IconPhotoPlaceholder = "U+FA78";
     /// <summary>icon.star TOOLBAR-04：星形（fi-rr-star 描边；点亮用同字形填色 color.star.on）。评分快捷命令为星形内叠数字（0 为叉 fi-rr-cross U+F4F7）。</summary>
@@ -405,6 +419,12 @@ public static class DesignTokens
     public const double MenuCheckGap = 12.0;
     /// <summary>menu.check.size（pt） MENU-03：菜单勾选列宽；菜单中有任一勾选项时所有项文本让出该列 + menu.check.gap。</summary>
     public const double MenuCheckSize = 16.0;
+    /// <summary>menu.icon.fontSize（pt） MENU-03：自绘菜单命令图标字号。</summary>
+    public const double MenuIconFontSize = 13.0;
+    /// <summary>menu.icon.gap（pt） MENU-03：自绘菜单命令图标与文本的间距。</summary>
+    public const double MenuIconGap = 10.0;
+    /// <summary>menu.icon.size（pt） MENU-03：自绘菜单命令图标列宽，位于勾选列之后。</summary>
+    public const double MenuIconSize = 16.0;
     /// <summary>menu.item.fontSize（pt） MENU-03：菜单项字号。</summary>
     public const double MenuItemFontSize = 14.0;
     /// <summary>menu.item.height（pt） MENU-03：菜单项高（14 点字：上 4 + 行高 20 + 下 7）。</summary>
@@ -497,22 +517,6 @@ public static class DesignTokens
     public const double ShellFilebarContentWidth = 116.0;
     /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位（隐藏标题栏交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
     public const double ShellFilterLeadingInset = 34.0;
-    /// <summary>shell.titlebar.button.cornerRadius（pt） SHELL-02：Windows 标题栏按钮圆角（WinUI 控件圆角口径）；代码中为字面量，未进 WindowsLayout。</summary>
-    public const double ShellTitlebarButtonCornerRadius = 4.0;
-    /// <summary>shell.titlebar.button.height（pt） SHELL-02：Windows 标题栏按钮外框高。</summary>
-    public const double ShellTitlebarButtonHeight = 32.0;
-    /// <summary>shell.titlebar.button.width（pt） SHELL-02：Windows 标题栏最小化/最大化/全屏/关闭按钮外框宽。</summary>
-    public const double ShellTitlebarButtonWidth = 36.0;
-    /// <summary>shell.titlebar.buttons.rightInset（pt） SHELL-02：Windows 标题栏按钮组距窗口右边缘。</summary>
-    public const double ShellTitlebarButtonsRightInset = 4.0;
-    /// <summary>shell.titlebar.height（pt） SHELL-02：Windows 自绘隐藏式标题栏覆盖层高度；macOS 使用系统隐藏标题栏（交通灯），iOS/Android 无窗口装饰。</summary>
-    public const double ShellTitlebarHeight = 48.0;
-    /// <summary>shell.titlebar.hotzone.height（pt） SHELL-02：Windows 指针进入顶部该高度内才显示标题栏；离开或窗口失活即隐藏。</summary>
-    public const double ShellTitlebarHotzoneHeight = 50.0;
-    /// <summary>shell.titlebar.title.fontSize（pt） SHELL-02：Windows 标题文本字号。</summary>
-    public const double ShellTitlebarTitleFontSize = 12.0;
-    /// <summary>shell.titlebar.title.leftInset（pt） SHELL-02：Windows 标题文本距其宿主左边缘（8 外边距 + 4 文本内距）。</summary>
-    public const double ShellTitlebarTitleLeftInset = 12.0;
     /// <summary>shell.window.default.height（pt） SHELL-01：桌面主窗口默认高。</summary>
     public const double ShellWindowDefaultHeight = 850.0;
     /// <summary>shell.window.default.width（pt） SHELL-01：桌面主窗口默认宽；iOS/Android 为全屏窗口，无默认尺寸。</summary>

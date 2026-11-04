@@ -214,16 +214,14 @@ internal sealed class AndroidControlBar : View
     /// <summary>标记设置/文件变化后需要重建（宿主在变化时调用）。</summary>
     internal void MarkDirty() => _dirty = true;
 
-    /// <summary>命令的读屏文本：名称 + 已设置的绑定（TOOLBAR-04，未设置不占位）。</summary>
+    /// <summary>
+    /// 命令的读屏文本：格式 <c>名称（主 / 次）</c> 取共享 <see cref="CommandTooltipText"/>，与桌面悬停提示同一文案；
+    /// 本端只负责把绑定格式化成可读键名（TOOLBAR-04）。
+    /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
     /// <returns>读屏文本。</returns>
     private static string BindingText(SettingsViewModel.HotkeyItem hotkey)
-    {
-        string text = hotkey.Name;
-        if (hotkey.PrimaryHotkey?.ToDisplayString() is { Length: > 0 } primary) text += $" {primary}";
-        if (hotkey.SecondaryHotkey?.ToDisplayString() is { Length: > 0 } secondary) text += $" / {secondary}";
-        return text;
-    }
+        => CommandTooltipText.Format(hotkey.Name, hotkey.PrimaryHotkey?.ToDisplayString(), hotkey.SecondaryHotkey?.ToDisplayString());
 
     /// <summary>量文档主轴/交叉轴长度（dp）；行布局主轴为高、列布局主轴为宽。</summary>
     /// <param name="horizontal">是否行布局。</param>

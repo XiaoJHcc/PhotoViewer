@@ -71,6 +71,20 @@
                  ExcludeFromSingleFile="false"/>
     </ItemGroup>
 
+    <!--
+      icon.ico:EXE 图标由 ApplicationIcon 编进资源,但 Win11 任务栏悬停缩略浮窗读的是窗口图标
+      (AppWindow.SetIcon),非打包壳没有安装包清单可回退。这里以链路文件随输出/发布复制一份,
+      激活后由 WindowsMainWindow 按 AppContext.BaseDirectory 设置;单文件发布保持解包(ExcludeFromSingleFile=false),
+      仍是单个 EXE 分发。
+    -->
+    <ItemGroup>
+        <Content Include="..\PhotoViewer\Assets\icon.ico"
+                 Link="icon.ico"
+                 CopyToOutputDirectory="PreserveNewest"
+                 CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false"/>
+    </ItemGroup>
+
     <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
         <_WindowsVCRedistFile Include="msvcp140.dll;msvcp140_1.dll;vcruntime140.dll;vcruntime140_1.dll" />
         <Content Include="@(_WindowsVCRedistFile->'$(WindowsVCRedistDirectory)\%(Identity)')"

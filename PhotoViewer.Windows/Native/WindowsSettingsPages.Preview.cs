@@ -76,13 +76,9 @@ internal sealed partial class WindowsSettingsPages
             }
         });
 
-        var toggleGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
-        toggleGroup.Children.Add(WindowsSettingsCard.ToggleRow("缩放时显示指示器", null, showZoom));
-
         var page = Page(
             "预览",
-            WindowsSettingsCard.SectionHeader("缩放位置显示"),
-            toggleGroup,
+            WindowsSettingsCard.ToggleRow("缩放时显示指示器", null, showZoom),
             WindowsSettingsCard.SectionHeader("缩放比例预设"),
             _presetError,
             WindowsSettingsCard.Card(_presetHost, new Thickness(4)));
@@ -236,7 +232,7 @@ internal sealed partial class WindowsSettingsPages
             Text = "%",
             VerticalAlignment = VerticalAlignment.Center,
             Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorSecondaryBrush"),
-            Margin = new Thickness(4, 0, 12, 0),
+            Margin = new Thickness(4, 0, 0, 0),
         };
 
         var grid = new Grid
@@ -244,16 +240,21 @@ internal sealed partial class WindowsSettingsPages
             Height = WindowsLayout.SettingsListRowHeight,
             Margin = new Thickness(8, 0, 8, 0),
         };
+        // SETTINGS-07：输入框与 % 作为一组在整行居中；行尾删除按钮叠加在右侧，不参与居中计算。
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumn(editor, 1);
         grid.Children.Add(editor);
-        Grid.SetColumn(percent, 1);
+        Grid.SetColumn(percent, 2);
         grid.Children.Add(percent);
         var delete = WindowsSettingsCard.IconButton("\uE74D", "移除预设", () => _settings.RemoveScalePreset(preset));
         delete.IsEnabled = _settings.CanRemoveScalePreset;
-        Grid.SetColumn(delete, 3);
+        delete.HorizontalAlignment = HorizontalAlignment.Right;
+        delete.VerticalAlignment = VerticalAlignment.Center;
+        Grid.SetColumn(delete, 0);
+        Grid.SetColumnSpan(delete, 4);
         grid.Children.Add(delete);
 
         void OnGotFocus(object sender, RoutedEventArgs e) => _focusedPresetEditor = editor;

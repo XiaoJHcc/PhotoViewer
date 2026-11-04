@@ -58,7 +58,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly TextView _statusLabel;
     private readonly AndroidNavigationOverlay _navigation;
     private PopupWindow? _photoMenu;
-    private readonly List<(string Text, bool Checked, bool Enabled)> _photoMenuItems = [];
+    private readonly List<(string Text, bool Checked, bool Enabled, string Icon)> _photoMenuItems = [];
     private AndroidInsets _insets;
     private AndroidPaneFrames _panes;
     private ImageFile? _observedFile;
@@ -107,8 +107,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal string? StatusTextForChecks => _statusLabel.Text;
     /// <summary>状态提示条是否可见（验收用）。</summary>
     internal bool StatusVisibleForChecks => _statusLabel.Visibility == ViewStates.Visible;
-    /// <summary>最近一次主图菜单构建出的项（文本/勾选/可用，验收用只读快照；产品路径不读取）。</summary>
-    internal IReadOnlyList<(string Text, bool Checked, bool Enabled)> PhotoMenuItemsForChecks => _photoMenuItems;
+    /// <summary>最近一次主图菜单构建出的项（文本/勾选/可用/实际绘制的图标字形，验收用只读快照；产品路径不读取）。</summary>
+    internal IReadOnlyList<(string Text, bool Checked, bool Enabled, string Icon)> PhotoMenuItemsForChecks => _photoMenuItems;
 
     /// <summary>收起状态提示条并作废在途自动隐藏（验收用，避免上一条提示冒充本次结果）。</summary>
     internal void ResetStatusForChecks()
@@ -621,10 +621,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(divider, new LinearLayout.LayoutParams(LayoutParams.MatchParent, dividerHeight));
         }
 
-        void AddItem(string label, bool? check, Action action, bool enabled = true)
+        void AddItem(string label, bool? check, string iconToken, Action action, bool enabled = true)
         {
-            // 验收快照：只记录本次构建出的项，不参与布局、命中或可点击性判断。
-            _photoMenuItems.Add((label, check == true, enabled));
+            // 验收快照：只记录本次构建出的项（含实际绘制的图标字形），不参与布局、命中或可点击性判断。
+            string iconGlyph = AndroidUiTheme.IconGlyph(iconToken);
+            _photoMenuItems.Add((label, check == true, enabled, iconGlyph));
             var row = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
             row.SetGravity(GravityFlags.CenterVertical);
             row.SetPadding((int)Math.Round(12 * density), 0, (int)Math.Round(10 * density), 0);
@@ -632,6 +633,32 @@ internal sealed class AndroidNativeRootView : FrameLayout
             row.Focusable = enabled;
             row.Enabled = enabled;
             row.ContentDescription = check == true ? $"{label}，已勾选" : label;
+            // MENU-03：勾选列在行首，命令图标紧随其后，文本占剩余宽度；勾号与图标都不发声，读屏只念整行名称。
+            var mark = new TextView(activity)
+            {
+                Text = check == true ? "✓" : "",
+                TextSize = 15,
+                Gravity = GravityFlags.Center,
+            };
+            mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
+            mark.ImportantForAccessibility = ImportantForAccessibility.No;
+            row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
+            var icon = new TextView(activity)
+            {
+                Text = iconGlyph,
+                TextSize = (float)DesignTokens.MenuIconFontSize,
+                Gravity = GravityFlags.Center,
+            };
+            icon.SetTypeface(AndroidUiTheme.IconTypeface(activity), TypefaceStyle.Normal);
+            icon.SetTextColor(enabled ? AndroidUiTheme.TextPrimary : AndroidUiTheme.TextSecondary);
+            icon.ImportantForAccessibility = ImportantForAccessibility.No;
+            icon.Enabled = enabled;
+            var iconParams = new LinearLayout.LayoutParams(
+                (int)Math.Round(DesignTokens.MenuIconSize * density), LayoutParams.MatchParent)
+            {
+                RightMargin = (int)Math.Round(DesignTokens.MenuIconGap * density),
+            };
+            row.AddView(icon, iconParams);
             var text = new TextView(activity)
             {
                 Text = label,
@@ -641,14 +668,6 @@ internal sealed class AndroidNativeRootView : FrameLayout
             text.Gravity = GravityFlags.CenterVertical;
             text.Enabled = enabled;
             row.AddView(text, new LinearLayout.LayoutParams(0, LayoutParams.MatchParent) { Weight = 1 });
-            var mark = new TextView(activity)
-            {
-                Text = check == true ? "✓" : "",
-                TextSize = 15,
-                Gravity = GravityFlags.Center,
-            };
-            mark.SetTextColor(enabled ? AndroidUiTheme.Accent : AndroidUiTheme.TextSecondary);
-            row.AddView(mark, new LinearLayout.LayoutParams((int)Math.Round(24 * density), LayoutParams.MatchParent));
             row.Click += (_, _) =>
             {
                 if (!enabled) return;
@@ -659,17 +678,18 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
 
         // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 雾天增强 | 工具/设置；不逐项加分隔线。
-        AddItem("打开文件夹…", null, () => _ = _main.FolderVM.OpenFilePickerAsync());
+        // MENU-06：每项前置图标取 uicons，语义与桌面/系统菜单栏一致。
+        AddItem("打开文件夹…", null, DesignTokens.IconMenuOpenFolder, () => _ = _main.FolderVM.OpenFilePickerAsync());
         AddDivider();
-        AddItem("胶片栏", _main.IsThumbnailViewVisible, () => _main.ToggleThumbnailView());
-        AddItem("分析栏", _main.IsAnalysisViewVisible, () => _main.ToggleAnalysisView());
-        AddItem("控制栏", _main.IsControlViewVisible, () => _main.ToggleControlView());
+        AddItem("胶片栏", _main.IsThumbnailViewVisible, DesignTokens.IconMenuFilmstrip, () => _main.ToggleThumbnailView());
+        AddItem("分析栏", _main.IsAnalysisViewVisible, DesignTokens.IconMenuAnalysis, () => _main.ToggleAnalysisView());
+        AddItem("控制栏", _main.IsControlViewVisible, DesignTokens.IconMenuControl, () => _main.ToggleControlView());
         AddDivider();
         // MENU-06/07：文案为「雾天增强」；无当前照片时置灰，工具仍可打开并显示空态。
-        AddItem("雾天增强", _session.IsEnhanced, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
+        AddItem("雾天增强", _session.IsEnhanced, DesignTokens.IconCommandToggleEnhance, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
         AddDivider();
-        AddItem("工具…", null, ShowTools);
-        AddItem("设置…", null, () => _main.OpenSettingWindow());
+        AddItem("工具…", null, DesignTokens.IconMenuTools, ShowTools);
+        AddItem("设置…", null, DesignTokens.IconMenuSettings, () => _main.OpenSettingWindow());
 
         ScrollView? scroll = null;
         View popupContent = content;

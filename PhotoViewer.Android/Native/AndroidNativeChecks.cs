@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -9,6 +10,7 @@ using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
@@ -391,6 +393,34 @@ internal static partial class AndroidNativeChecks
             Check("布局模式说明可见", !string.IsNullOrWhiteSpace(sheet.LayoutModeDescriptionForChecks()),
                 sheet.LayoutModeDescriptionForChecks());
 
+            // SETTINGS-08：布局分组标题固定为「边栏布局位置」，行标题仍是「布局模式」。
+            Check("控制页布局分组标题为边栏布局位置",
+                sheet.LayoutSectionTitleForChecks() == "边栏布局位置",
+                $"title=\"{sheet.LayoutSectionTitleForChecks()}\"");
+
+            // SETTINGS-01：控制栏功能行 勾选 → 命令图标 → 命令名。
+            // 断言规则：图标→命令名的布局间距 = 8dp；勾选→图标使用负左边距，只抵消 MaterialCheckBox 自带的
+            // 透明内缩（视觉仍约 8dp），勾选命中区保持 44dp，负边距不缩小命中区。快照记录两侧实际像素值。
+            var iconRow = sheet.HotkeyRowSnapshotForChecks(0);
+            int gap8Dp = (int)AndroidUiTheme.Dp(_activity!, 8);
+            int insetOffsetPx = (int)AndroidUiTheme.Dp(_activity!, -4);
+            int hitArea44Dp = (int)AndroidUiTheme.Dp(_activity!, 44);
+            int? hitWidth = HotkeyCheckHitWidthPx(sheet, firstHotkey.DisplaySymbol);
+            bool iconVisible = iconRow is { IconVisible: true } && !string.IsNullOrEmpty(iconRow.Value.IconSymbol);
+            Check("控制栏功能行显示命令图标",
+                iconVisible && iconRow!.Value.IconSymbol == firstHotkey.DisplaySymbol,
+                iconRow is { } iconValue ? $"icon={iconValue.IconSymbol} expected={firstHotkey.DisplaySymbol}" : DescribeRow(iconRow));
+            Check("命令图标到命令名间距 8dp",
+                iconRow is { } gapRow && Math.Abs(gapRow.IconToTitleGap - gap8Dp) <= 1,
+                iconRow is { } gapValue ? $"gap={gapValue.IconToTitleGap}px expected={gap8Dp}px" : DescribeRow(iconRow));
+            Check("勾选→图标负边距只抵消透明内缩且命中区仍 44dp",
+                iconRow is { } lineRow && Math.Abs(lineRow.CheckToIconGap - insetOffsetPx) <= 1
+                && hitWidth is { } hit && Math.Abs(hit - hitArea44Dp) <= 1,
+                iconRow is { } checkValue
+                    ? $"checkToIcon={checkValue.CheckToIconGap}px expected={insetOffsetPx}px(仅抵消勾选框透明内缩)"
+                        + $" hit={hitWidth?.ToString() ?? "null"}px expected={hitArea44Dp}px"
+                    : DescribeRow(iconRow));
+
             // INPUT-13：键盘、鼠标/触控板任一连接即显示完整录制控件；纯触控全部隐藏。
             AndroidInputDevices.SetChecksOverride(true, false);
             await System.Threading.Tasks.Task.Delay(300);
@@ -502,8 +532,30 @@ internal static partial class AndroidNativeChecks
             // SETTINGS-07：倍率行单一居中数值 + %，提交保持输入框实例并原地重排。
             sheet.ShowPageForChecks("preview");
             await System.Threading.Tasks.Task.Delay(200);
+
+            // SETTINGS-07：缩放指示器开关组不显示「缩放位置显示」类分组小标题。
+            Check("预览页指示器开关无分组标题", string.IsNullOrEmpty(sheet.PreviewSwitchSectionTitleForChecks()),
+                $"title=\"{sheet.PreviewSwitchSectionTitleForChecks()}\"");
+
             var shape = sheet.ScalePresetRowShapeForChecks(0);
             Check("倍率行单一居中值+%", shape == "inputs=1 centered=1 percent=1 delete=1", shape);
+
+            // SETTINGS-07：输入框 + % 作为一组居行中心（偏差 ≤1px），行尾删除按钮不挤入这一组。
+            await System.Threading.Tasks.Task.Delay(150);
+            string presetGeometry = sheet.ScalePresetGroupGeometryForChecks(0);
+            double presetOffset = GeometryValue(presetGeometry, "offset");
+            double presetRowWidth = GeometryValue(presetGeometry, "rowWidth");
+            double presetDeleteLeft = GeometryValue(presetGeometry, "deleteLeft");
+            double presetDeleteWidth = GeometryValue(presetGeometry, "deleteWidth");
+            int? presetGroupRight = PresetGroupRightEdgePx(sheet);
+            Check("倍率输入组居行中心(偏差≤1px)",
+                !double.IsNaN(presetOffset) && Math.Abs(presetOffset) <= 1,
+                presetGeometry);
+            Check("倍率删除按钮不挤入输入组",
+                !double.IsNaN(presetRowWidth) && !double.IsNaN(presetDeleteLeft) && !double.IsNaN(presetDeleteWidth)
+                && presetDeleteLeft + presetDeleteWidth <= presetRowWidth + .5
+                && presetGroupRight is { } groupRight && presetDeleteLeft >= groupRight,
+                $"{presetGeometry} groupRight={presetGroupRight?.ToString() ?? "null"}");
             var targetPreset = settings.ScalePresets[0];
             string originalPreset = targetPreset.Text;
             var targetInput = sheet.ScalePresetInputIdentityForChecks(0);
@@ -672,7 +724,7 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>
-    /// MENU-06：主图长按菜单的固定文案、勾选跟随增强状态、无照片时「雾天增强」置灰而「工具…」仍可用。
+    /// MENU-06：主图长按菜单的固定文案与前置图标、勾选跟随增强状态、无照片时「雾天增强」置灰而「工具…」仍可用。
     /// 快照直接取 <see cref="AndroidNativeRootView.ShowPhotoMenu"/> 本次构建出的项，断言后立即关闭菜单。
     /// </summary>
     private static async System.Threading.Tasks.Task CheckPhotoMenuAsync(MainViewModel main, PhotoLoadSession session, AndroidNativeRootView root)
@@ -687,6 +739,32 @@ internal static partial class AndroidNativeChecks
             Check("MENU-06 雾天增强文案与勾选",
                 found && enhance.Checked == session.IsEnhanced && enhance.Enabled,
                 $"enhanced={session.IsEnhanced} found={found} items=[{DescribePhotoMenu(items)}]");
+
+            // 触屏没有悬停提示，前置图标是唯一的命令符号：逐项核对顺序与字形语义（MENU-06）。
+            var expectedIcons = new (string Text, string Token)[]
+            {
+                ("打开文件夹…", DesignTokens.IconMenuOpenFolder),
+                ("胶片栏", DesignTokens.IconMenuFilmstrip),
+                ("分析栏", DesignTokens.IconMenuAnalysis),
+                ("控制栏", DesignTokens.IconMenuControl),
+                ("雾天增强", DesignTokens.IconCommandToggleEnhance),
+                ("工具…", DesignTokens.IconMenuTools),
+                ("设置…", DesignTokens.IconMenuSettings),
+            };
+            bool iconsOk = items.Count == expectedIcons.Length;
+            string iconMismatch = string.Empty;
+            for (int index = 0; iconsOk && index < expectedIcons.Length; index++)
+            {
+                var (text, token) = expectedIcons[index];
+                string glyph = AndroidUiTheme.IconGlyph(token);
+                if (glyph.Length > 0 && string.Equals(items[index].Text, text, StringComparison.Ordinal)
+                    && string.Equals(items[index].Icon, glyph, StringComparison.Ordinal)) continue;
+                iconsOk = false;
+                iconMismatch = $"{items[index].Text}:{DescribeGlyph(items[index].Icon)}≠{text}:{token}";
+            }
+            Check("MENU-06 菜单项前置图标", iconsOk && iconMismatch.Length == 0,
+                iconsOk ? $"7 项图标按 {string.Join("/", expectedIcons.Select(item => item.Token))} 绘制"
+                    : $"items=[{DescribePhotoMenu(items)}] 首个不符 {iconMismatch}");
 
             // 勾选不是静态文案：切一次增强再重建菜单，勾选必须跟着会话状态走。
             session.ToggleEnhanced();
@@ -728,18 +806,18 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>打开主图菜单、拷贝本次构建出的项，再关闭菜单（菜单本体不留在屏上干扰后续检查）。</summary>
-    private static List<(string Text, bool Checked, bool Enabled)> OpenPhotoMenuAndSnapshot(
+    private static List<(string Text, bool Checked, bool Enabled, string Icon)> OpenPhotoMenuAndSnapshot(
         AndroidNativeRootView root, (float X, float Y) point)
     {
         root.ShowPhotoMenu(point.X, point.Y);
-        var snapshot = new List<(string Text, bool Checked, bool Enabled)>(root.PhotoMenuItemsForChecks);
+        var snapshot = new List<(string Text, bool Checked, bool Enabled, string Icon)>(root.PhotoMenuItemsForChecks);
         root.DismissPhotoMenu();
         return snapshot;
     }
 
     /// <summary>按文本严格匹配菜单项。</summary>
-    private static bool TryFindPhotoMenuItem(IReadOnlyList<(string Text, bool Checked, bool Enabled)> items,
-        string text, out (string Text, bool Checked, bool Enabled) item)
+    private static bool TryFindPhotoMenuItem(IReadOnlyList<(string Text, bool Checked, bool Enabled, string Icon)> items,
+        string text, out (string Text, bool Checked, bool Enabled, string Icon) item)
     {
         foreach (var candidate in items)
         {
@@ -751,10 +829,14 @@ internal static partial class AndroidNativeChecks
         return false;
     }
 
-    /// <summary>把菜单快照写成一行（勾选标 ✓、置灰标「灰」），报告里可直接人工复核文案。</summary>
-    private static string DescribePhotoMenu(IReadOnlyList<(string Text, bool Checked, bool Enabled)> items)
+    /// <summary>把菜单快照写成一行（勾选标 ✓、置灰标「灰」、图标标码位），报告里可直接人工复核文案与字形。</summary>
+    private static string DescribePhotoMenu(IReadOnlyList<(string Text, bool Checked, bool Enabled, string Icon)> items)
         => string.Join(" / ", items.Select(item =>
-            $"{item.Text}{(item.Checked ? "✓" : string.Empty)}{(item.Enabled ? string.Empty : "灰")}"));
+            $"{item.Text}{(item.Checked ? "✓" : string.Empty)}{(item.Enabled ? string.Empty : "灰")}{DescribeGlyph(item.Icon)}"));
+
+    /// <summary>图标字形写成 <c>[U+F7FC]</c>；缺失时写 <c>[无图标]</c>，报告与断言共用同一写法。</summary>
+    private static string DescribeGlyph(string glyph)
+        => string.IsNullOrEmpty(glyph) ? "[无图标]" : $"[U+{char.ConvertToUtf32(glyph, 0):X}]";
 
     /// <summary>选中一行并等它成为当前照片、新一代际的展示图已上屏。</summary>
     private static async System.Threading.Tasks.Task SelectAndWaitAsync(MainViewModel main, PhotoLoadSession session, ImageFile file)
@@ -824,6 +906,64 @@ internal static partial class AndroidNativeChecks
         => row is { } value
             ? $"bindings={value.BindingControlsVisible} subtitle={value.SubtitleVisible} ax={value.AccessibilityText} chips={value.PrimaryChipText}|{value.SecondaryChipText}"
             : "row=null";
+
+    /// <summary>从设置页几何快照（<c>key=value</c> 空格分隔）取一项数值；缺失或不可解析返回 NaN。</summary>
+    private static double GeometryValue(string snapshot, string key)
+    {
+        foreach (string part in snapshot.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int split = part.IndexOf('=');
+            if (split <= 0 || !string.Equals(part[..split], key, StringComparison.Ordinal)) continue;
+            return double.TryParse(part[(split + 1)..], NumberStyles.Float, CultureInfo.InvariantCulture, out double value)
+                ? value
+                : double.NaN;
+        }
+        return double.NaN;
+    }
+
+    /// <summary>在设置页真实视图树里按谓词深度优先查找第一个匹配视图（只读查询）。</summary>
+    private static T? FindDescendant<T>(View root, Func<T, bool> match) where T : View
+    {
+        if (root is not ViewGroup group) return null;
+        for (int index = 0; index < group.ChildCount; index++)
+        {
+            var child = group.GetChildAt(index);
+            if (child == null) continue;
+            if (child is T candidate && match(candidate)) return candidate;
+            if (FindDescendant(child, match) is { } nested) return nested;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// 控制栏功能行的勾选命中区宽度（像素）：按命令图标定位到该行，取同行的勾选控件宽度；
+    /// 找不到返回 null（图标行未实现或文本不匹配）。
+    /// </summary>
+    private static int? HotkeyCheckHitWidthPx(AndroidSettingsSheetView sheet, string symbol)
+    {
+        if (FindDescendant<global::Android.Widget.TextView>(sheet, view => view.Text == symbol) is not { } icon
+            || icon.Parent is not ViewGroup line) return null;
+        for (int index = 0; index < line.ChildCount; index++)
+        {
+            if (line.GetChildAt(index) is global::Android.Widget.CompoundButton check && check.Width > 0)
+                return check.Width;
+        }
+        return null;
+    }
+
+    /// <summary>第一行倍率预设“输入框 + %”组的右缘（像素，相对行左缘）；找不到返回 null。</summary>
+    private static int? PresetGroupRightEdgePx(AndroidSettingsSheetView sheet)
+    {
+        if (FindDescendant<global::Android.Widget.EditText>(sheet,
+                view => view.ContentDescription == "缩放比例百分比") is not { } input
+            || input.Parent is not ViewGroup row) return null;
+        for (int index = 0; index < row.ChildCount; index++)
+        {
+            if (row.GetChildAt(index) is global::Android.Widget.TextView text && text.Text == "%")
+                return text.Right;
+        }
+        return null;
+    }
 
     /// <summary>构造多指事件，用于 owner 指针与旧 PointerUp 断言。</summary>
     private static MotionEvent MultiTouchEvent(long downTime, long eventTime, MotionEventActions action,

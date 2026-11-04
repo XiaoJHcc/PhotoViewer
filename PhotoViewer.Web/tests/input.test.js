@@ -414,14 +414,19 @@ test("SETTINGS-11：Apple 手势文本用 ⌘⌥⌃⇧，其余用 Ctrl/Alt/Win"
     assert.equal(gestureText("Alt+Shift+KeyZ", { apple: true }), "⌥⇧Z");
 });
 
-test("TOOLBAR-04：提示格式「命令名 · 主 / 次」，空槽省略并去重", () => {
+test("TOOLBAR-04：提示格式「名称（主 / 次）」，空槽省略并去重", () => {
     const map = new CommandMap(HOTKEYS);
-    assert.equal(tooltipText("Previous", "上一张", map), "上一张 · ← / 滚轮上");
-    assert.equal(tooltipText("ZoomInPreset", "放大（预设）", map), "放大（预设） · Ctrl++");
+    assert.equal(tooltipText("Previous", "上一张", map), "上一张（← / 滚轮上）");
+    assert.equal(tooltipText("ZoomInPreset", "放大（预设）", map), "放大（预设）（Ctrl++）");
     assert.equal(tooltipText("ToggleAnalysisView", "分析栏展开/收纳", map), "分析栏展开/收纳");
-    assert.equal(tooltipText("Fit", "缩放适应", map, { apple: true }), "缩放适应 · ⌘0 / F");
+    assert.equal(tooltipText("Fit", "缩放适应", map, { apple: true }), "缩放适应（⌘0 / F）");
     assert.equal(tooltipText("NoSuchCommand", "未知", map), "未知");
 
     const same = new CommandMap([{ command: "Same", primary: "KeyQ", secondary: "KeyQ" }]);
-    assert.equal(tooltipText("Same", "同名绑定", same), "同名绑定 · Q");
+    assert.equal(tooltipText("Same", "同名绑定", same), "同名绑定（Q）");
+
+    // 命令名与绑定之间不使用点号分隔，也不出现「未设置」占位。
+    const text = tooltipText("Previous", "上一张", map);
+    assert.ok(!text.includes("·") && !text.includes("未设置"), text);
+    assert.equal(tooltipText("SingleSlot", "仅次绑定", new CommandMap([{ command: "SingleSlot", secondary: "KeyE" }])), "仅次绑定（E）");
 });

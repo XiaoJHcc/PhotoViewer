@@ -254,36 +254,6 @@ internal static class WindowsLayout
     /// <summary>最小窗口高。</summary>
     public const double MinWindowHeight = DesignTokens.ShellWindowMinHeight;
 
-    /// <summary>隐藏式标题栏拖动区高度(上下布局整体避让)。</summary>
-    public const double CaptionHeight = DesignTokens.ShellTitlebarHeight;
-
-    /// <summary>标题栏自动显示的热区高度(旧壳 HotZoneHeight,指针 Y ≤ 50 才显示)。</summary>
-    public const double CaptionHotZoneHeight = DesignTokens.ShellTitlebarHotzoneHeight;
-
-    /// <summary>标题栏按钮外框宽(旧壳 Button.TitleBtn)。</summary>
-    public const double CaptionButtonWidth = DesignTokens.ShellTitlebarButtonWidth;
-
-    /// <summary>标题栏按钮外框高。</summary>
-    public const double CaptionButtonHeight = DesignTokens.ShellTitlebarButtonHeight;
-
-    /// <summary>标题栏按钮左右外边距(旧壳 Margin="4,8,4,8")。</summary>
-    public const double CaptionButtonMarginX = 4;
-
-    /// <summary>标题栏按钮上下外边距。</summary>
-    public const double CaptionButtonMarginY = 8;
-
-    /// <summary>标题栏按钮字形字号。</summary>
-    public const double CaptionButtonFontSize = 12;
-
-    /// <summary>标题栏按钮组距窗口右边距(旧壳 RightButtonsHost Margin="0,0,4,0")。</summary>
-    public const double CaptionButtonsRightInset = DesignTokens.ShellTitlebarButtonsRightInset;
-
-    /// <summary>标题文本距其宿主左边缘(旧壳 Grid Margin="8,0,4,0" + TextBlock Margin="4,0,0,0")。</summary>
-    public const double TitleTextLeftInset = DesignTokens.ShellTitlebarTitleLeftInset;
-
-    /// <summary>标题文本字号(旧壳文本默认 12)。</summary>
-    public const double TitleTextFontSize = DesignTokens.ShellTitlebarTitleFontSize;
-
     // ===== 相似聚类面板 =====
 
     /// <summary>相似聚类面板外框底色(旧壳 #1E1E1E)。</summary>
@@ -517,21 +487,6 @@ internal static class WindowsLayout
 
     /// <summary>禁用控件的内容不透明度；底色与描边保持常态。</summary>
     public const double DisabledContentAlpha = DesignTokens.ColorToolbarDisabledContentAlpha;
-
-    /// <summary>标题栏按钮底色(旧壳默认按钮底色实测 #393939)。</summary>
-    public static readonly Color CaptionButtonBackground = Color.FromArgb(0xFF, 0x39, 0x39, 0x39);
-
-    /// <summary>标题栏按钮悬停底色。</summary>
-    public static readonly Color CaptionButtonHover = Color.FromArgb(0xFF, 0x4A, 0x4A, 0x4A);
-
-    /// <summary>关闭按钮悬停底色(旧壳 #E81123)。</summary>
-    public static readonly Color CaptionCloseHover = Color.FromArgb(0xFF, 0xE8, 0x11, 0x23);
-
-    /// <summary>标题栏按钮字形颜色。</summary>
-    public static readonly Color CaptionButtonForeground = Color.FromArgb(0xFF, 0xFF, 0xFF, 0xFF);
-
-    /// <summary>标题文本颜色(旧壳 Foreground=White,Opacity 0.85)。</summary>
-    public static readonly Color TitleTextForeground = Color.FromArgb(0xD9, 0xFF, 0xFF, 0xFF);
 
     /// <summary>提示标题文字色。</summary>
     public static readonly Color HintTitleForeground = Color.FromArgb(0xFF, 0x80, 0x80, 0x80);

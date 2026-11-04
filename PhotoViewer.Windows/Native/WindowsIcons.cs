@@ -22,11 +22,37 @@ internal static class WindowsIcons
     /// <summary>星级冲突警示三角字形(RATING-04,与 <c>icon.warning</c> 同义)。</summary>
     public const string WarningGlyph = "\uE7BA";
 
+    // MENU-06：主图菜单的语义前置图标(系统 Fluent 字形,语义与 icon.menu.* 一一对应)。
+
+    /// <summary>打开文件:文档字形(<c>icon.menu.openFile</c>)。</summary>
+    public const string DocumentGlyph = "\uE8A5";
+
+    /// <summary>打开文件夹:文件夹字形(<c>icon.menu.openFolder</c>)。</summary>
+    public const string FolderGlyph = "\uE8B7";
+
+    /// <summary>胶片栏:照片/照片组字形(<c>icon.menu.filmstrip</c>)。</summary>
+    public const string PhotosGlyph = "\uE8B9";
+
+    /// <summary>分析栏:方格网字形(<c>icon.menu.analysis</c>)。</summary>
+    public const string AnalysisGridGlyph = "\uE8A9";
+
+    /// <summary>控制栏:滑杆字形(<c>icon.menu.control</c>)。</summary>
+    public const string SliderGlyph = "\uE9E9";
+
+    /// <summary>雾天增强:对比度半圆字形(与 <c>icon.command.toggleEnhance</c> 同义)。</summary>
+    public const string ContrastGlyph = "\uE7A1";
+
+    /// <summary>工具:扳手字形(<c>icon.menu.tools</c>)。</summary>
+    public const string ToolsGlyph = "\uE90F";
+
+    /// <summary>设置:齿轮字形(<c>icon.menu.settings</c>)。</summary>
+    public const string SettingsGlyph = "\uE713";
+
     /// <summary>命令 → 单字形映射。null 表示该命令在本阶段不显示/不可达(P3 延期)。</summary>
     private static readonly Dictionary<string, string?> Glyphs = new(StringComparer.Ordinal)
     {
         // 打开用文件夹而不是“带箭头文档”，与旧壳和新手预期一致。
-        ["Open"] = "\uE8B7",
+        ["Open"] = FolderGlyph,
         ["Previous"] = "\uE76B",
         ["Next"] = "\uE76C",
         ["Exchange"] = "\uE8AB",
@@ -47,7 +73,7 @@ internal static class WindowsIcons
         // 主屏 P3 入口(第二轮补齐):分析栏开关与增强预览
         ["ToggleAnalysisView"] = "\uE9D9",
         // 增强预览画对比度半圆（旧壳字形同义），比闪电更贴近“明暗增强”而不是“性能/加速”。
-        ["ToggleEnhance"] = "\uE7A1",
+        ["ToggleEnhance"] = ContrastGlyph,
     };
 
     /// <summary>评分快捷命令底图:0 为清零叉,1–5 为实心星(数字另行叠在星心,TOOLBAR-04)。</summary>

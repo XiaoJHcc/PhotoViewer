@@ -52,7 +52,7 @@
 - 菜单已展开时不叠加弹出第二个菜单；拖入文件、切换栏位导致主图区重建时先关闭菜单。
 - 菜单展开期间暂停照片全局快捷键（与文本输入、录制控件同一守卫，[input](input.md) INPUT-01），关闭后恢复；菜单内部的方向键、回车、Esc 由菜单消费。
 - **应当**：使用平台原生菜单控件；自绘实现须登记为平台差异，并同样满足本条的定位、勾选与键盘要求（MENU-03@android、MENU-03@web）。
-- 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影、最小宽 `menu.minWidth`；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `icon.check` 占左侧 `menu.check.size` 列、字号 `menu.check.fontSize`（菜单内有任一勾选项时所有项让出该列）；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针；下拉弹层以按钮宽为最小宽，不取 `menu.minWidth`。
+- 自绘菜单外观：弹层底 `color.popup.background`、1 点描边 `color.popup.border`、圆角 `popup.cornerRadius`、上下内边距 `popup.padding`、无阴影、最小宽 `menu.minWidth`；项高 `menu.item.height`、左右内边距 `menu.item.paddingX`、字号 `menu.item.fontSize`，悬停/按下整行直角高亮 `color.menu.item.hover/pressed`，文字不变色；勾选标记 `icon.check` 占左侧 `menu.check.size` 列、字号 `menu.check.fontSize`（菜单内有任一勾选项时所有项让出该列）；命令图标位于勾选列右侧，占 `menu.icon.size` 列、字号 `menu.icon.fontSize`，与文本间距 `menu.icon.gap`；快捷键右对齐、`color.menu.shortcut`；分隔线 `color.menu.separator` 1 点、左右内缩 `menu.separator.inset`；禁用文字 `color.menu.foreground.disabled`。右键菜单左上角对齐指针；下拉弹层以按钮宽为最小宽，不取 `menu.minWidth`。
 - 平台差异见 platforms.md（MENU-03@android）。
 
 ## MENU-04 弹出不改变观片布局 · 必须
@@ -77,7 +77,7 @@
 - 文案固定：打开文件…、打开文件夹…、胶片栏、分析栏、控制栏、雾天增强、工具…、设置…；沿用分区名，不使用"缩略图栏"等别名。macOS 系统菜单栏沿用同一文案，应用菜单另有「退出 PhotoViewer」，工具菜单另有「EXIF 详情… / DINO 诊断…」，操作菜单使用设置中的命令名称。
 - 打开窗口或选择器的项带省略号（…），纯开关项不带；省略号前不留空格，也不使用"..."。
 - **可以**：有用户主/次绑定的项显示当前绑定（平台原生快捷键列），无绑定不显示；绑定修改后下一次弹出即为新值；菜单内不改写或录制绑定（[input](input.md)）。
-- 触屏平台不显示快捷键列；图标是否使用由平台决定，同一项在各平台的图标含义应一致。
+- 触屏平台不显示快捷键列。主图菜单与 macOS 系统菜单栏的命令项必须显示前置图标，勾选项也保留图标；打开文件=文档、打开文件夹=文件夹、胶片栏=照片组、分析栏=分析网格、控制栏=滑杆、雾天增强=对比度半圆、工具=工具、设置=齿轮，退出=电源，操作菜单沿用 TOOLBAR-04 的命令图标。字形使用各端已登记的平台图标集，同一项语义不得变化。
 - **应当**：菜单用平台原生菜单控件，键盘可完成选择与取消；勾选不只靠颜色或图标表达。
 
 ## MENU-07 不可用项、空态与并发 · 应当

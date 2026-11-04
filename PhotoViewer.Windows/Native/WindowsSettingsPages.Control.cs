@@ -12,6 +12,12 @@ namespace PhotoViewer.Windows.Native;
 
 internal sealed partial class WindowsSettingsPages
 {
+    /// <summary>命令行图标尺寸(与主屏命令图标同源字体)。</summary>
+    internal const double HotkeyIconSize = 20;
+
+    /// <summary>勾选 → 图标 → 命令名的视觉间距(SETTINGS-01)。</summary>
+    internal const double HotkeyIconGap = 8;
+
     /// <summary>控制页:布局模式、控制栏功能/快捷键。</summary>
     /// <returns>页面</returns>
     private UIElement BuildControlPage()
@@ -67,7 +73,7 @@ internal sealed partial class WindowsSettingsPages
 
         return Page(
             "控制",
-            WindowsSettingsCard.SectionHeader("控制栏布局位置"),
+            WindowsSettingsCard.SectionHeader("边栏布局位置"),
             layoutCard,
             WindowsSettingsCard.SectionHeader("控制栏功能与快捷键"),
             WindowsSettingsCard.Card(hotkeys, new Thickness(4)));
@@ -88,7 +94,7 @@ internal sealed partial class WindowsSettingsPages
         return -1;
     }
 
-    /// <summary>快捷键行:显隐 + 名称 + 主/次录制按钮 + 把手。</summary>
+    /// <summary>快捷键行:显隐 + 命令图标 + 名称 + 主/次录制按钮 + 把手。</summary>
     /// <param name="hotkey">快捷键项</param>
     /// <returns>行元素</returns>
     private WindowsSettingsRowElement BuildHotkeyRow(SettingsViewModel.HotkeyItem hotkey)
@@ -99,7 +105,7 @@ internal sealed partial class WindowsSettingsPages
             MinWidth = 0,
             Padding = new Thickness(0),
             VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(0, 0, 12, 0),
+            Margin = new Thickness(0, 0, HotkeyIconGap, 0),
         };
         var updating = false;
         checkbox.Checked += (_, _) =>
@@ -134,9 +140,23 @@ internal sealed partial class WindowsSettingsPages
 
         var name = WindowsSettingsCard.RowTitle(hotkey.Name);
         name.VerticalAlignment = VerticalAlignment.Center;
+        name.HorizontalAlignment = HorizontalAlignment.Left;
         name.TextWrapping = TextWrapping.NoWrap;
         name.TextTrimming = TextTrimming.CharacterEllipsis;
         name.MaxWidth = 160;
+
+        var icon = new FontIcon
+        {
+            Glyph = WindowsIcons.ForCommand(hotkey.Command) ?? string.Empty,
+            FontFamily = new FontFamily(WindowsIcons.FluentFontFamily),
+            FontSize = 16,
+            Foreground = WindowsSettingsCard.ThemeBrush("TextFillColorSecondaryBrush"),
+            VerticalAlignment = VerticalAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Width = HotkeyIconSize,
+            Margin = new Thickness(0, 0, HotkeyIconGap, 0),
+            IsHitTestVisible = false,
+        };
 
         var grid = new Grid
         {
@@ -144,19 +164,22 @@ internal sealed partial class WindowsSettingsPages
             Margin = new Thickness(12, 0, 12, 0),
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.Children.Add(checkbox);
-        Grid.SetColumn(name, 1);
+        Grid.SetColumn(icon, 1);
+        grid.Children.Add(icon);
+        Grid.SetColumn(name, 2);
         grid.Children.Add(name);
-        Grid.SetColumn(primary, 2);
+        Grid.SetColumn(primary, 3);
         grid.Children.Add(primary);
-        Grid.SetColumn(secondary, 3);
+        Grid.SetColumn(secondary, 4);
         grid.Children.Add(secondary);
         var handle = WindowsSettingsCard.DragHandle();
-        Grid.SetColumn(handle, 4);
+        Grid.SetColumn(handle, 5);
         grid.Children.Add(handle);
 
         PropertyChangedEventHandler propertyHandler = (_, args) =>

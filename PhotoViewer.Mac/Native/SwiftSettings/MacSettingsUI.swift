@@ -38,6 +38,8 @@ struct SVPreset: Codable {
 /// 控制栏功能（快捷键）条目。
 struct SVHotkey: Codable {
     var name: String
+    /// 命令图标（SF Symbols 名，取自 AppleSymbolNames.ForCommand）；空串表示无图标。
+    var symbol: String
     var isDisplay: Bool
     var primary: String
     var secondary: String
@@ -847,7 +849,16 @@ struct FileSettingsPage: View {
     }
 }
 
-/// 拉条行：上方标题 + 右侧等宽数值，下方连续拉条。
+/// 拉条行的最小宽度口径：行宽不足时压缩标题而不是压掉拉条与当前值。
+private enum SliderRowMetrics {
+    /// 拉条最小宽度。
+    static let sliderMinWidth: CGFloat = 96
+    /// 当前值最小宽度（等宽数字右对齐）。
+    static let valueMinWidth: CGFloat = 56
+}
+
+/// 拉条行：标题 → 弹性拉条 → 固定最小宽右对齐数值，三者同行（SETTINGS-16）。
+/// 行宽不足时先压缩标题（尾部截断），拉条保有自己的最小宽度，不把拉条单独换到下一行。
 struct SliderRow: View {
     let title: String
     let value: Binding<Double>
@@ -855,14 +866,17 @@ struct SliderRow: View {
     let valueText: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(title)
-                Spacer()
-                ValueText(text: valueText)
-            }
+        HStack(alignment: .center, spacing: 12) {
+            Text(title)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .layoutPriority(1)
             Slider(value: value, in: range)
                 .tint(.blue)
+                .frame(minWidth: SliderRowMetrics.sliderMinWidth)
+            ValueText(text: valueText)
+                .frame(minWidth: SliderRowMetrics.valueMinWidth, alignment: .trailing)
+                .layoutPriority(1)
         }
         .padding(.vertical, 2)
     }
@@ -877,7 +891,7 @@ struct PreviewSettingsPage: View {
 
     var body: some View {
         Form {
-            Section("缩放位置显示") {
+            Section {
                 Toggle("缩放时显示指示器", isOn: vm.bindBool("preview.showZoom") { vm.state.preview.showZoomIndicator })
                     .toggleStyle(.switch)
             }
@@ -969,7 +983,7 @@ struct ControlSettingsPage: View {
                     }
                 }
             } header: {
-                Text("控制栏布局位置")
+                Text("边栏布局位置")
             } footer: {
                 if control.layoutIndex >= 0, control.layoutIndex < control.layoutModes.count {
                     Text(control.layoutModes[control.layoutIndex].description).font(.callout).foregroundStyle(.secondary)
@@ -1009,7 +1023,7 @@ struct ControlSettingsPage: View {
     }
 }
 
-/// 单行快捷键：勾选、名称、主/次录制按钮、拖拽把手。
+/// 单行快捷键：勾选、命令图标、名称、主/次录制按钮、拖拽把手。
 struct HotkeyRow: View {
     @ObservedObject var vm: SettingsBridge
     let index: Int
@@ -1019,6 +1033,13 @@ struct HotkeyRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Toggle("", isOn: isEnabled).toggleStyle(.checkbox).labelsHidden()
+            if !hotkey.symbol.isEmpty {
+                Image(systemName: hotkey.symbol)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .accessibilityHidden(true)
+            }
             Text(hotkey.name)
             Spacer(minLength: 8)
             RecordButton(

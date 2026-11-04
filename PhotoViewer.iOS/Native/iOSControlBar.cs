@@ -1,6 +1,7 @@
 using CoreGraphics;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Input;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
 using UIKit;
@@ -141,7 +142,7 @@ internal sealed class iOSControlBar : UIView
             button.Layer.BorderWidth = (nfloat)DesignTokens.ShellDividerThickness;
             button.Layer.CornerRadius = (nfloat)DesignTokens.ToolbarCornerRadius;
             button.Layer.MasksToBounds = true;
-            // TOOLBAR-04：读屏名称含命令名与当前主/次绑定（未设置的绑定不显示占位）。
+            // TOOLBAR-04：读屏名称与桌面悬停提示同一文案「名称（主 / 次）」，空槽省略、主次相同只显示一次。
             button.AccessibilityLabel = CommandAccessibilityLabel(hotkey);
             button.Enabled = hotkey.Command == "Open" || main.CurrentFile != null;
             button.TouchUpInside += (_, _) => execute(hotkey.Command);
@@ -158,17 +159,15 @@ internal sealed class iOSControlBar : UIView
     }
 
     /// <summary>
-    /// 命令按钮的读屏名称：命令名 + 实际主/次绑定；未设置的绑定不出现"未设置"占位（TOOLBAR-04）。
+    /// 命令按钮的读屏名称：格式 <c>名称（主 / 次）</c> 取共享 <see cref="CommandTooltipText"/>，与桌面悬停提示同一文案；
+    /// 本端只负责把绑定格式化成苹果手势文本，未设置的槽交给共享函数省略（TOOLBAR-04）。
     /// </summary>
     /// <param name="hotkey">共享快捷键项。</param>
     /// <returns>无障碍名称。</returns>
     private static string CommandAccessibilityLabel(SettingsViewModel.HotkeyItem hotkey)
-    {
-        var parts = new List<string> { hotkey.Name };
-        if (hotkey.PrimaryHotkey != null) parts.Add($"主 {hotkey.PrimaryHotkeyText}");
-        if (hotkey.SecondaryHotkey != null) parts.Add($"次 {hotkey.SecondaryHotkeyText}");
-        return string.Join("，", parts);
-    }
+        => CommandTooltipText.Format(hotkey.Name,
+            hotkey.PrimaryHotkey == null ? null : hotkey.PrimaryHotkeyText,
+            hotkey.SecondaryHotkey == null ? null : hotkey.SecondaryHotkeyText);
 
     /// <summary>显隐、名称或快捷键变化时请求宿主合并刷新。</summary>
     /// <param name="sender">事件源（快捷键项）。</param>

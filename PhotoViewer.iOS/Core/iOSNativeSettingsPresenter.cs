@@ -328,6 +328,12 @@ internal sealed class iOSNativeSettingsRootViewController : UITableViewControlle
 /// </summary>
 internal abstract class iOSNativeSettingsFormViewController : UIViewController
 {
+    /// <summary>拉条行内拉条的最小宽度（行宽不足时压缩标题而不是压掉拉条）。</summary>
+    private const double SliderRowSliderMinWidth = 88;
+
+    /// <summary>拉条行当前值的最小宽度（等宽数字右对齐）。</summary>
+    private const double SliderRowValueMinWidth = 64;
+
     private readonly UIScrollView _scrollView = new();
     private readonly UIStackView _contentStack = new();
 
@@ -573,7 +579,8 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     }
 
     /// <summary>
-    /// 创建滑条设置行。
+    /// 创建滑条设置行：标题 → 弹性拉条 → 固定最小宽右对齐当前值，三者同行（SETTINGS-16）。
+    /// 行宽不足时标题先换行收缩，拉条保有自己的最小宽度，不与数值叠压。
     /// </summary>
     /// <param name="title">主标题。</param>
     /// <param name="subtitle">副标题。</param>
@@ -597,28 +604,24 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         Action? onEditingCompleted = null)
     {
         var row = CreateRowContainer();
-        var verticalStack = new UIStackView
-        {
-            Axis = UILayoutConstraintAxis.Vertical,
-            Spacing = 10,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        var headerStack = new UIStackView
+        var contentStack = new UIStackView
         {
             Axis = UILayoutConstraintAxis.Horizontal,
-            Alignment = UIStackViewAlignment.Top,
+            Alignment = UIStackViewAlignment.Center,
             Spacing = 12,
             TranslatesAutoresizingMaskIntoConstraints = false
         };
+
         var textStack = CreateTextStack(title, subtitle);
+        textStack.SetContentCompressionResistancePriority(
+            (float)UILayoutPriority.DefaultLow, UILayoutConstraintAxis.Horizontal);
+
         var valueLabel = CreateTrailingValueLabel();
         valueLabel.TextAlignment = UITextAlignment.Right;
-        valueLabel.Lines = 2;
-        valueLabel.SetContentCompressionResistancePriority((float)UILayoutPriority.Required, UILayoutConstraintAxis.Horizontal);
-        headerStack.AddArrangedSubview(textStack);
-        headerStack.AddArrangedSubview(CreateFlexibleSpacer());
-        headerStack.AddArrangedSubview(valueLabel);
+        valueLabel.Lines = 1;
+        valueLabel.SetContentHuggingPriority((float)UILayoutPriority.DefaultHigh, UILayoutConstraintAxis.Horizontal);
+        valueLabel.SetContentCompressionResistancePriority(
+            (float)UILayoutPriority.DefaultHigh + 1, UILayoutConstraintAxis.Horizontal);
 
         var slider = new UISlider
         {
@@ -626,6 +629,19 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
             MaxValue = maximum,
             Continuous = true
         };
+        slider.SetContentHuggingPriority((float)UILayoutPriority.DefaultLow - 1, UILayoutConstraintAxis.Horizontal);
+        slider.SetContentCompressionResistancePriority(
+            (float)UILayoutPriority.DefaultLow - 1, UILayoutConstraintAxis.Horizontal);
+
+        contentStack.AddArrangedSubview(textStack);
+        contentStack.AddArrangedSubview(slider);
+        contentStack.AddArrangedSubview(valueLabel);
+
+        var sliderMinimum = slider.WidthAnchor.ConstraintGreaterThanOrEqualTo(SliderRowSliderMinWidth);
+        var valueMinimum = valueLabel.WidthAnchor.ConstraintGreaterThanOrEqualTo(SliderRowValueMinWidth);
+        sliderMinimum.Priority = (float)UILayoutPriority.DefaultHigh;
+        valueMinimum.Priority = (float)UILayoutPriority.DefaultHigh;
+        NSLayoutConstraint.ActivateConstraints([sliderMinimum, valueMinimum]);
 
         void Refresh()
         {
@@ -648,20 +664,25 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
 
         Refresh();
 
-        verticalStack.AddArrangedSubview(headerStack);
-        verticalStack.AddArrangedSubview(slider);
-        row.AddSubview(verticalStack);
+        row.AddSubview(contentStack);
 
         NSLayoutConstraint.ActivateConstraints(
         [
-            verticalStack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
-            verticalStack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
-            verticalStack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
-            verticalStack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
+            contentStack.TopAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TopAnchor),
+            contentStack.LeadingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.LeadingAnchor),
+            contentStack.TrailingAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.TrailingAnchor),
+            contentStack.BottomAnchor.ConstraintEqualTo(row.LayoutMarginsGuide.BottomAnchor),
         ]);
 
         return row;
     }
+
+    /// <summary>验收：用同一构建器生成一条滑条行（不挂到页面），用于核对同行几何与间距。</summary>
+    /// <param name="title">主标题。</param>
+    /// <param name="valueText">当前值文本。</param>
+    /// <returns>原生滑条行。</returns>
+    internal UIView CreateSliderRowForChecks(string title, string valueText)
+        => CreateSliderRow(title, null, () => 85, _ => { }, 75, 95, valueFormatter: _ => valueText);
 
     /// <summary>
     /// 创建导航跳转行。
@@ -1166,7 +1187,7 @@ internal sealed class iOSNativePreviewSettingsViewController : iOSNativeSettings
 
         contentStack.AddArrangedSubview(
             CreateSection(
-                "缩放位置显示",
+                "",
                 null,
                 CreateSwitchRow(
                     "缩放时显示指示器",
@@ -1279,7 +1300,7 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
     protected override void BuildContent(UIStackView contentStack)
     {
         Title = "控制";
-        contentStack.AddArrangedSubview(CreateSection("布局模式", null, new iOSLayoutModePicker(Settings)));
+        contentStack.AddArrangedSubview(CreateSection("边栏布局位置", null, new iOSLayoutModePicker(Settings)));
         _hotkeys = new iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.HotkeyItem>(
             itemsProvider: () => Settings.Hotkeys,
             titleSelector: item => item.Name,
@@ -1868,6 +1889,12 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
 /// </summary>
 internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
 {
+    /// <summary>勾选 → 命令图标的视觉间距（SETTINGS-01）。</summary>
+    private const double CheckToIconGap = 8;
+
+    /// <summary>命令图标 → 命令名的视觉间距（SETTINGS-01）。</summary>
+    private const double IconToTitleGap = 8;
+
     private readonly UIImageView _checkmarkView;
     private readonly UILabel _titleLabel;
     private readonly UILabel? _subtitleLabel;
@@ -1963,10 +1990,11 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _checkmarkView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
         _iconView.WidthAnchor.ConstraintEqualTo(iconWidth).Active = true;
         _iconView.HeightAnchor.ConstraintEqualTo(iconWidth).Active = true;
-        _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, 10).Active = true;
+        // SETTINGS-01：勾选 → 命令图标与图标 → 命令名的视觉间距同为 8。
+        _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, CheckToIconGap).Active = true;
         _iconView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
         _titleLeadingPlain = _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing);
-        _titleLeadingIcon = _titleLabel.LeadingAnchor.ConstraintEqualTo(_iconView.TrailingAnchor, 8);
+        _titleLeadingIcon = _titleLabel.LeadingAnchor.ConstraintEqualTo(_iconView.TrailingAnchor, IconToTitleGap);
         _titleLeadingPlain.Active = true;
         _titleTrailingDefault = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16);
         _titleTrailingDefault.Active = true;

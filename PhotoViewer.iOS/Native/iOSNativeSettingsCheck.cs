@@ -25,6 +25,23 @@ internal static class iOSNativeSettingsCheck
         await UiDispatcher.InvokeAsync(() =>
         {
             var page = root.NavigationController!.TopViewController!;
+            page.View!.LayoutIfNeeded();
+            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            if (labels.Contains("缩放位置显示"))
+                throw new InvalidOperationException("预览页仍显示“缩放位置显示”分组小标题");
+            if (!labels.Contains("缩放时显示指示器"))
+                throw new InvalidOperationException("预览页缺少缩放指示器开关");
+            var sections = page.View!.Subviews.OfType<UIScrollView>().Single()
+                .Subviews.OfType<UIStackView>().Single().ArrangedSubviews.OfType<UIStackView>().ToArray();
+            if (sections.Length < 2 || sections[0].ArrangedSubviews[0] is UILabel)
+                throw new InvalidOperationException("缩放指示器开关仍带分组小标题");
+            if (!Descendants(sections[1]).OfType<UILabel>().Any(label => label.Text == "缩放比例预设"))
+                throw new InvalidOperationException("预览页缺少缩放比例预设分组标题");
+        });
+        lines.Add("PASS SETTINGS-07 预览页：缩放指示器开关不带分组小标题，预设分组标题保留");
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
             var editor = Descendants(page.View!).OfType<iOSScalePresetEditor>().Single();
             editor.LayoutIfNeeded();
             var groups = editor.FieldGroups;
@@ -66,6 +83,7 @@ internal static class iOSNativeSettingsCheck
         await WaitForPage<iOSNativeControlSettingsViewController>(root);
         var control = (iOSNativeControlSettingsViewController)root.NavigationController!.TopViewController!;
         await VerifyListPresentationAsync(control, settings, lines);
+        await VerifySliderRowAsync(control, lines);
         await VerifyInlineBindingAsync(control, settings, lines);
         await VerifyCaptureAsync(root, control, settings, lines);
         await VerifyExifListMatchesControlRowHeightAsync(root, lines);
@@ -75,6 +93,47 @@ internal static class iOSNativeSettingsCheck
             root.NavigationController!.PopToViewController(root, false);
             settings.ApplySnapshot(snapshot);
         });
+    }
+
+    /// <summary>
+    /// SETTINGS-16：滑条行的标题、拉条与当前值排在同一行，窄宽下先压缩标题而不与数值叠压。
+    /// iPad 上文件页不显示缓存上限两项，故用生产构建器生成同一条行（同一 CreateSliderRow 代码路径）。
+    /// </summary>
+    private static async Task VerifySliderRowAsync(iOSNativeSettingsFormViewController page, List<string> lines)
+    {
+        var notes = new List<string>();
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            foreach (double width in new double[] { 320, 480, 768 })
+            {
+                var row = page.CreateSliderRowForChecks("缓存内存上限", "4096 MB");
+                row.TranslatesAutoresizingMaskIntoConstraints = true;
+                row.Frame = new CoreGraphics.CGRect(0, 0, (nfloat)width, 60);
+                row.LayoutIfNeeded();
+
+                var labels = Descendants(row).OfType<UILabel>().ToArray();
+                var title = labels.First(label => label.Text == "缓存内存上限");
+                var value = labels.First(label => label.Text == "4096 MB");
+                var slider = Descendants(row).OfType<UISlider>().Single();
+                var titleFrame = title.ConvertRectToView(title.Bounds, row);
+                var sliderFrame = slider.ConvertRectToView(slider.Bounds, row);
+                var valueFrame = value.ConvertRectToView(value.Bounds, row);
+                if (Math.Abs((double)titleFrame.GetMidY() - (double)sliderFrame.GetMidY()) > 1
+                    || Math.Abs((double)valueFrame.GetMidY() - (double)sliderFrame.GetMidY()) > 1)
+                    throw new InvalidOperationException(
+                        $"拉条行没有排在同一行：宽度 {width} title={titleFrame} slider={sliderFrame} value={valueFrame}");
+                if (titleFrame.GetMaxX() > sliderFrame.X + .5 || sliderFrame.GetMaxX() > valueFrame.X + .5)
+                    throw new InvalidOperationException(
+                        $"拉条行顺序/间距异常：宽度 {width} title={titleFrame} slider={sliderFrame} value={valueFrame}");
+                if (sliderFrame.Width < 87)
+                    throw new InvalidOperationException($"窄宽下拉条被压没：宽度 {width} slider={sliderFrame}");
+                if (Math.Abs((double)valueFrame.GetMaxX() - ((double)row.Bounds.Width - 16)) > 1)
+                    throw new InvalidOperationException(
+                        $"当前值未右对齐到行尾：宽度 {width} value={valueFrame} row={row.Bounds}");
+                notes.Add($"{width:0}: 标题 {titleFrame.Width:0} / 拉条 {sliderFrame.Width:0} / 数值 {valueFrame.Width:0} 同一行且右对齐");
+            }
+        });
+        lines.Add("PASS SETTINGS-16 滑条行：320/480/768 三个宽度下标题→拉条→当前值同行、拉条保有最小宽度、数值右对齐行尾（同一 CreateSliderRow 构建器，非页面截图实测）；" + string.Join("；", notes));
     }
 
     /// <summary>
@@ -271,6 +330,12 @@ internal static class iOSNativeSettingsCheck
         await UiDispatcher.InvokeAsync(() =>
         {
             page.View!.LayoutIfNeeded();
+            // SETTINGS-08：布局分组标题固定为「边栏布局位置」，行标题仍是「布局模式」。
+            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            if (!labels.Contains("边栏布局位置"))
+                throw new InvalidOperationException("控制页布局分组标题不是“边栏布局位置”");
+            if (labels.Contains("布局模式"))
+                throw new InvalidOperationException("控制页仍用旧分组标题“布局模式”");
             var picker = Descendants(page.View).OfType<iOSLayoutModePicker>().Single();
             var table = picker.Subviews.OfType<UITableView>().Single();
             if (Math.Abs((double)(table.ContentSize.Height - picker.Bounds.Height)) > 1)
@@ -398,6 +463,11 @@ internal static class iOSNativeSettingsCheck
             throw new InvalidOperationException($"命令图标未在行内垂直居中：{frame} 行高 {cell.Bounds.Height}");
         if (frame.IntersectsWith(title) || frame.IntersectsWith(checkmark) || frame.GetMaxX() > title.X + .5)
             throw new InvalidOperationException($"命令图标与勾选/命令名重叠：icon={frame} check={checkmark} title={title}");
+        // SETTINGS-01：勾选 → 图标、图标 → 命令名的视觉间距同为 8 点，不用加宽容器制造空隙。
+        if (Math.Abs((double)(frame.X - checkmark.GetMaxX()) - 8) > .5)
+            throw new InvalidOperationException($"勾选到命令图标间距不是 8：{frame.X - checkmark.GetMaxX()}");
+        if (Math.Abs((double)(title.X - frame.GetMaxX()) - 8) > .5)
+            throw new InvalidOperationException($"命令图标到命令名间距不是 8：{title.X - frame.GetMaxX()}");
     }
 
     /// <summary>校验行内主/次绑定按钮的尺寸、位置、标题与无障碍信息（外设连接态）。</summary>

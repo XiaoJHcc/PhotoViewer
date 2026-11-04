@@ -187,6 +187,15 @@ html, body {
     text-align: center;
 }
 
+/* MENU-06：命令图标位于勾选列右侧，占 menu.icon.size 列、字号 menu.icon.fontSize，与文字间距 menu.icon.gap */
+.pv-menu-icon {
+    flex: none;
+    width: var(--pv-menu-icon-size);
+    margin-right: var(--pv-menu-icon-gap);
+    font-size: var(--pv-menu-icon-fontSize);
+    text-align: center;
+}
+
 .pv-menu-label {
     flex: 0 1 auto;
     min-width: 0;

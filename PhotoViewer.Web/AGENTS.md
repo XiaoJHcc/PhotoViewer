@@ -58,7 +58,7 @@ tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告�
 tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
 
-图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。字形一律放在单独的 `aria-hidden="true"` span 里，纯字形控件的可访问名称由 `aria-label` 提供，不得让私有区字符进入 `role="application"` 容器的可读文本；`?check=shell` 的 SHELL-06 会遍历窗口文本节点拦截回归。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
+图标（TOOLBAR-04、FILM-05、FILTER-08、MENU-02、MENU-06）统一用 `icon.font` 字形，不写内联 SVG：`src/shell/icons.js` 的 `icon(t, token)` / `solidIcon(code)` 输出带 `pv-icon` 的文本节点，字号取各控件 glyph 令牌。主图菜单按 MENU-06 在勾选列与文字之间渲染 `.pv-menu-icon`：图标角色由 `app.menuModel()` 的 `icon` 字段给出（`icon.menu.*`，增强复用 `icon.command.toggleEnhance`），几何取 `menu.icon.size/gap/fontSize`。命令悬停提示的格式（`名称（主 / 次）`）见 `core/input.js` 的 `tooltipText`，与四端共享 `CommandTooltipText` 同一文案；控制栏 EXIF 小块的 `标签 · 值` 是另一条规则，不受影响。字形一律放在单独的 `aria-hidden="true"` span 里，纯字形控件的可访问名称由 `aria-label` 提供，不得让私有区字符进入 `role="application"` 容器的可读文本；`?check=shell` 的 SHELL-06 会遍历窗口文本节点拦截回归。`src/assets/` 只放子集产物，改 `Design/tokens.json` 的 `icon.*` 后运行：
 
 ```bash
 python3 PhotoViewer.Web/tools/subset-icons.py        # 需要 fonttools + brotli，pyftsubset 可用 PYFTSUBSET 指定

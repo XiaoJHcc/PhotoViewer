@@ -192,6 +192,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private bool _recordingPrimary;
     private LinearLayout? _scaleCard;
     private View? _scaleAddRow;
+    private View? _previewSwitchSection;
+    private View? _layoutSection;
     private readonly Dictionary<SettingsViewModel.ScalePreset, ScaleRowView> _scaleRows = [];
     private bool _committingScalePresets;
 
@@ -328,6 +330,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _hotkeyList = null;
         _scaleCard = null;
         _scaleAddRow = null;
+        _previewSwitchSection = null;
+        _layoutSection = null;
         _scaleRows.Clear();
         _content.RemoveAllViews();
         _dynamicTexts.Clear();
@@ -419,9 +423,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>预览页：缩放指示器开关与缩放预设编辑。</summary>
     private void BuildPreviewPage()
     {
-        Add(_content, Section("缩放位置显示", null,
+        _previewSwitchSection = Section(null, null,
             SwitchRow("缩放时显示指示器", null, () => Settings.ShowZoomIndicator,
-                value => Settings.ShowZoomIndicator = value)));
+                value => Settings.ShowZoomIndicator = value));
+        Add(_content, _previewSwitchSection);
         _scaleRows.Clear();
         _scaleCard = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         var background = new GradientDrawable();
@@ -479,8 +484,9 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>控制页：布局模式与控制栏功能（显隐/排序，键鼠外设连接时含主/次绑定录制）。</summary>
     private void BuildControlPage()
     {
-        Add(_content, Section("控制栏布局位置", null,
-            NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker)));
+        _layoutSection = Section("边栏布局位置", null,
+            NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker));
+        Add(_content, _layoutSection);
         var hotkeys = new AndroidSettingsReorderList(_activity,
             () => Settings.Hotkeys.Count,
             index =>
@@ -702,7 +708,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     }
 
     /// <summary>单个预设行：唯一居中数值输入框、固定 % 与删除按钮。</summary>
-    private sealed record ScaleRowView(LinearLayout Root, EditText Input, TextView Delete);
+    private sealed record ScaleRowView(LinearLayout Root, EditText Input, TextView Percent, TextView Delete);
 
     private ScaleRowView CreateScalePresetRow(SettingsViewModel.ScalePreset preset)
     {
@@ -744,11 +750,23 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
         var delete = Button("−", 18, () => DeleteScalePreset(preset));
         delete.ContentDescription = "删除缩放比例";
-        row.AddView(input, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
+
+        // SETTINGS-07：输入框与 % 作为一组在整行水平居中；行尾删除按钮不挤偏中心。
+        // 行首放一个与删除按钮等宽的透明平衡位，两侧权重相等，输入组中点正好落在行中点。
+        var leadingBalance = new View(_activity);
+        var leadingSpacer = new View(_activity);
+        var trailingSpacer = new View(_activity);
+        row.AddView(leadingBalance, new LinearLayout.LayoutParams(ButtonSize(), 1));
+        row.AddView(leadingSpacer, new LinearLayout.LayoutParams(0, 1, 1f));
+        row.AddView(input, new LinearLayout.LayoutParams(ScalePresetInputWidth(), LayoutParams.WrapContent));
         row.AddView(percent, new LinearLayout.LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent));
+        row.AddView(trailingSpacer, new LinearLayout.LayoutParams(0, 1, 1f));
         row.AddView(delete, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
-        return new ScaleRowView(row, input, delete);
+        return new ScaleRowView(row, input, percent, delete);
     }
+
+    /// <summary>预设输入框宽度（dp→px）：固定宽使输入组在整行内可计算地居中。</summary>
+    private int ScalePresetInputWidth() => (int)AndroidUiTheme.Dp(_activity, 96);
 
     /// <summary>校验并写入单个输入框；非法值恢复原文本并提示。</summary>
     private bool CommitScalePreset(SettingsViewModel.ScalePreset preset, EditText input, bool reorder)
@@ -840,6 +858,38 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     /// <summary>验收：当前布局模式说明。</summary>
     internal string LayoutModeDescriptionForChecks() => CurrentLayoutModeDescription();
+
+    /// <summary>验收：控制页布局分组的可见标题（分组不带标题时为空串）。</summary>
+    internal string LayoutSectionTitleForChecks() => SectionTitleText(_layoutSection);
+
+    /// <summary>验收：预览页缩放指示器开关分组的可见标题（应为空串，SETTINGS-07）。</summary>
+    internal string PreviewSwitchSectionTitleForChecks() => SectionTitleText(_previewSwitchSection);
+
+    /// <summary>验收：缩放预设行输入组居中与删除按钮位置（像素，相对行左缘）。</summary>
+    /// <param name="index">预设索引。</param>
+    /// <returns>快照文本；行未布局时返回 not-laid-out。</returns>
+    internal string ScalePresetGroupGeometryForChecks(int index)
+    {
+        if (index < 0 || index >= Settings.ScalePresets.Count
+            || !_scaleRows.TryGetValue(Settings.ScalePresets[index], out var row)) return "missing";
+        var root = row.Root;
+        if (root.Width <= 0) return "not-laid-out";
+        double groupLeft = row.Input.Left;
+        double groupRight = row.Percent.Right;
+        double groupMid = (groupLeft + groupRight) / 2;
+        double rowMid = root.Width / 2.0;
+        double offset = groupMid - rowMid;
+        return $"rowWidth={root.Width} groupMid={groupMid:0.0} rowMid={rowMid:0.0} offset={offset:0.0}"
+            + $" deleteLeft={row.Delete.Left} deleteWidth={row.Delete.Width}";
+    }
+
+    /// <summary>分组标题文本：分组视图的第一个子视图是标题文本时取它，否则视为不带标题。</summary>
+    /// <param name="section">分组视图。</param>
+    /// <returns>标题文本或空串。</returns>
+    private static string SectionTitleText(View? section)
+        => section is LinearLayout stack && stack.ChildCount > 0 && stack.GetChildAt(0) is TextView text
+            ? text.Text ?? string.Empty
+            : string.Empty;
 
     /// <summary>验收：读取指定快捷键行真实视图的可见性与读屏文本。</summary>
     internal AndroidSettingsReorderList.RowSnapshot? HotkeyRowSnapshotForChecks(int index)

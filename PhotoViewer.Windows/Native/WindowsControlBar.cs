@@ -7,6 +7,7 @@ using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
@@ -296,6 +297,28 @@ internal sealed class WindowsControlBar : Grid
         }
     }
 
+    /// <summary>
+    /// 验收用:取当前已生成命令按钮的 (命令, 悬停提示, 读屏名称) 三元组,
+    /// 供 harness 核对 TOOLBAR-04 的文案格式与提示/读屏同源。
+    /// </summary>
+    /// <returns>按控制栏显示顺序排列的三元组。</returns>
+    internal IReadOnlyList<(string Command, string Tooltip, string AutomationName)> DescribeCommandButtons()
+    {
+        var described = new List<(string, string, string)>();
+        foreach (var child in _commandStack.Children)
+        {
+            if (child is Button { Tag: string command } button)
+            {
+                described.Add((
+                    command,
+                    ToolTipService.GetToolTip(button) as string ?? string.Empty,
+                    AutomationProperties.GetName(button)));
+            }
+        }
+
+        return described;
+    }
+
     /// <summary>重建 EXIF 信息块(保留标签与强调值的信息层级与完整内容 tooltip)。</summary>
     private void RefreshExif()
     {
@@ -401,22 +424,16 @@ internal sealed class WindowsControlBar : Grid
         return button;
     }
 
-    /// <summary>拼装 tooltip:命令名 + 主/次绑定实际按键(可读键名,不出现 D2/Oem3 等枚举名)。</summary>
+    /// <summary>
+    /// 拼装 tooltip(TOOLBAR-04):命令名 + 实际主/次绑定,格式 <c>命令名（主 / 次）</c>。
+    /// 拼装规则在共享 <see cref="CommandTooltipText"/>,键名仍由 <see cref="WindowsInput.FormatGesture"/> 给;
+    /// 未设置的槽不传给 Format,避免出现"未设置"。
+    /// </summary>
     private static string BuildTooltip(SettingsViewModel.HotkeyItem item)
-    {
-        var parts = new List<string> { item.Name };
-        if (item.PrimaryHotkey != null)
-        {
-            parts.Add(WindowsInput.FormatGesture(item.PrimaryHotkey));
-        }
-
-        if (item.SecondaryHotkey != null)
-        {
-            parts.Add(WindowsInput.FormatGesture(item.SecondaryHotkey));
-        }
-
-        return string.Join(" · ", parts);
-    }
+        => CommandTooltipText.Format(
+            item.Name,
+            item.PrimaryHotkey != null ? WindowsInput.FormatGesture(item.PrimaryHotkey) : null,
+            item.SecondaryHotkey != null ? WindowsInput.FormatGesture(item.SecondaryHotkey) : null);
 
     /// <summary>
     /// 按当前照片评分刷新星色；无照片时整组走系统禁用态，不用透明度近似隐藏。

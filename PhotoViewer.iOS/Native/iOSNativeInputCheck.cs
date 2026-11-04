@@ -796,6 +796,7 @@ internal static class iOSNativeInputCheck
         await WaitAsync(() => root.ControlBar.Ratings.Count == 0 && main.ControlVM.EnabledExifItems.Count == 0, "评分与 EXIF 分组传播");
         lines.Add($"PASS 设置写回①：布局模式→{(expectedRow ? "行" : "列")}、控制栏命令显隐/顺序（ZoomInScale 置顶）、Next 重绑 F5、评分与 EXIF 分组即时消失");
         RequireControlBarStructure(root, main, "设置写回①");
+        RequireCommandAccessibilityFormat(root, main, lines);
 
         // 控制栏重建幂等性：反复改变 EXIF 项与命令显隐（正是作者报告的"多块 EXIF/按钮重叠"触发路径），
         // 每次重建后核对子视图数 == 分组数、无旧分组残留、分组与组内控件都不重叠。
@@ -876,6 +877,30 @@ internal static class iOSNativeInputCheck
             for (int second = first + 1; second < groups.Length; second++)
                 if (Overlaps(groups[first].Frame, groups[second].Frame))
                     throw new InvalidOperationException($"{label} 控制栏分组重叠：{groups[first].Frame} × {groups[second].Frame}");
+    }
+
+    /// <summary>
+    /// TOOLBAR-04：命令按钮的读屏名称必须是 <c>名称（主 / 次）</c>。期望值按设计格式在本套件里独立拼装，
+    /// 不复用共享格式化函数，共享实现写坏格式时这里照样失败。
+    /// </summary>
+    /// <param name="root">原生主屏根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="lines">报告行。</param>
+    private static void RequireCommandAccessibilityFormat(iOSNativeRootViewController root, MainViewModel main, List<string> lines)
+    {
+        foreach (var hotkey in main.ControlVM.EnabledControls)
+        {
+            if (!root.ControlBar.Commands.TryGetValue(hotkey.Command, out var button)) continue;
+            var slots = new List<string>();
+            if (hotkey.PrimaryHotkey != null) slots.Add(hotkey.PrimaryHotkeyText);
+            if (hotkey.SecondaryHotkey != null && (slots.Count == 0 || hotkey.SecondaryHotkeyText != slots[0]))
+                slots.Add(hotkey.SecondaryHotkeyText);
+            string expected = slots.Count == 0 ? hotkey.Name : $"{hotkey.Name}（{string.Join(" / ", slots)}）";
+            string actual = button.AccessibilityLabel ?? "";
+            if (actual != expected)
+                throw new InvalidOperationException($"命令读屏名称不是「名称（主 / 次）」：{hotkey.Command} 实际 {actual}，期望 {expected}");
+        }
+        lines.Add("PASS TOOLBAR-04@ios：控制栏每条命令的读屏名称都是「名称（主 / 次）」，空槽省略、主次相同只显示一次、不出现未设置占位");
     }
 
     /// <summary>两个矩形是否真实相交（忽略零尺寸与 0.5 点以内的贴边）。</summary>

@@ -496,7 +496,7 @@ test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前�
         app.state.toolbar.commands.slice(0, 2).map((item) => item.command),
         ["Open", "Next"],
     );
-    assert.equal(app.state.toolbar.commands[1].tooltip, "下一张 · N");
+    assert.equal(app.state.toolbar.commands[1].tooltip, "下一张（N）");
     assert.equal(app.state.toolbar.commands[0].enabled, true);
     assert.equal(app.state.toolbar.commands[1].enabled, false);
 
@@ -520,7 +520,7 @@ test("TOOLBAR-04/05/07：命令列表随设置即时变化，tooltip 含当前�
         app.state.toolbar.commands.slice(0, 2).map((item) => item.command),
         ["Next", "Open"],
     );
-    assert.equal(app.state.toolbar.commands[0].tooltip, "下一张 · N / 滚轮下");
+    assert.equal(app.state.toolbar.commands[0].tooltip, "下一张（N / 滚轮下）");
 });
 
 test("MENU-01/02/06/07：固定项与实时勾选，无照片雾天增强置灰，Web 不显示工具与设置", () => {
@@ -528,6 +528,15 @@ test("MENU-01/02/06/07：固定项与实时勾选，无照片雾天增强置灰�
     const model = app.menuModel();
     assert.deepEqual(model.map((item) => item.id), ["open-file", "open-folder", "film", "analysis", "control", "enhance"]);
     assert.deepEqual(model.map((item) => item.label), ["打开文件…", "打开文件夹…", "胶片栏", "分析栏", "控制栏", "雾天增强"]);
+    // MENU-06：每项都带图标角色，增强复用命令图标，同一项语义在四端不得变化。
+    assert.deepEqual(model.map((item) => item.icon), [
+        "icon.menu.openFile",
+        "icon.menu.openFolder",
+        "icon.menu.filmstrip",
+        "icon.menu.analysis",
+        "icon.menu.control",
+        "icon.command.toggleEnhance",
+    ]);
     assert.equal(model.find((item) => item.id === "enhance").enabled, false);
     assert.equal(model.find((item) => item.id === "enhance").checked, false);
     assert.equal(model.find((item) => item.id === "open-file").shortcut, "Ctrl+N");

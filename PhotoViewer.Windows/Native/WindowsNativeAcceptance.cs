@@ -3,13 +3,13 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
-using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
@@ -80,6 +80,12 @@ internal sealed partial class WindowsMainWindow
             var modelHash = await Task.Run(CheckModel);
             checks.Add("PASS embedded model: SHA256=" + modelHash + "; DirectML dual-output inference");
 
+            // SHELL-02：无文件时系统窗口标题只有应用名。
+            RequireSmoke(_main.CurrentFile == null, "空态检查前已存在当前照片");
+            RequireSmoke(Title == "PhotoViewer", $"空态窗口标题不符: {Title}");
+            CheckSystemTitleBar();
+            checks.Add("PASS SHELL-02: native system title bar with empty state title PhotoViewer");
+
             await RunDeploymentChecksAsync(checks);
 
             // 单图素材放在独立目录：显式打开文件会刷新整个父目录（OPEN-08），与其他 harness
@@ -118,7 +124,7 @@ internal sealed partial class WindowsMainWindow
                     _photo.FitToView();
                     _photo.ZoomBy(1.1);
                     _photo.FitToView();
-                    CheckCaptionRegion();
+                    CheckSystemTitleBar();
                     // TOOLBAR-08：空间不足先按组换行/换列；只有单组超长才允许沿主轴滚动。
                     if (size.Width == 700)
                     {
@@ -152,10 +158,11 @@ internal sealed partial class WindowsMainWindow
             await RunRatingConflictChecksAsync(checks);
             await RunAnalysisPreviewPointerChecksAsync(checks);
             await RunWindowStateChecksAsync(checks);
+            await RunTitleBarChromeChecksAsync(checks);
 
             _main.ToggleThumbnailView();
             _root.UpdateLayout();
-            CheckCaptionRegion();
+            CheckSystemTitleBar();
             checks.Add("PASS caption with filmstrip hidden");
             _main.ToggleThumbnailView();
             _photo.FitToView();
@@ -305,7 +312,7 @@ internal sealed partial class WindowsMainWindow
         checks.Add("PASS keyboard entry: numpad +/- map to OemPlus/OemMinus (Ctrl+zoom), Enter→Return, repeat gate keeps Next and swallows rating repeat, unbound/text-edit keys pass through, Exchange no-ops without LastFile");
     }
 
-    /// <summary>窗口态:最大化/还原/全屏与退出全屏(SHELL-02 自绘标题栏按钮的实际效果)。</summary>
+    /// <summary>窗口态:最大化/还原/全屏与退出全屏后恢复系统标题栏。</summary>
     /// <param name="checks">验收结果收集器</param>
     /// <returns>检查完成后的任务</returns>
     private async Task RunWindowStateChecksAsync(List<string> checks)
@@ -336,6 +343,220 @@ internal sealed partial class WindowsMainWindow
         _photo.FitToView();
         checks.Add("PASS window states: maximize/restore/fullscreen/exit all return consistent presenter state");
     }
+
+    /// <summary>SHELL-02 / MENU-06 / TOOLBAR-04：系统标题栏、动态标题、窗口图标、菜单图标与命令提示。</summary>
+    private async Task RunTitleBarChromeChecksAsync(List<string> checks)
+    {
+        CheckSystemTitleBar();
+        await CheckDynamicWindowTitleAsync();
+        CheckWindowIcon();
+        await CheckContextMenuIconsAsync();
+        CheckCommandTooltips();
+        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: native Windows title bar and caption buttons, folder - file - PhotoViewer title with single-image dedupe, window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
+    }
+
+    /// <summary>动态标题:<c>文件夹名 - 文件名 - PhotoViewer</c>,无文件只有应用名,单图重复名去重。</summary>
+    /// <returns>检查完成后的任务</returns>
+    private async Task CheckDynamicWindowTitleAsync()
+    {
+        var folder = Path.Combine(SmokeOutputDirectory, "fixtures", "title");
+        Directory.CreateDirectory(folder);
+        await Task.Run(() =>
+        {
+            CreateFixture(Path.Combine(folder, "title-a.jpg"));
+            CreateFixture(Path.Combine(folder, "title-b.jpg"));
+        });
+
+        var folderName = Path.GetFileName(folder);
+        await OpenPathsAsync(new[] { folder });
+        await WaitForSmokeAsync(() => _main.CurrentFile != null && _main.FolderVM.FolderName == folderName,
+            "标题素材载入");
+        var expected = $"{folderName} - {_main.CurrentFile!.Name} - PhotoViewer";
+        RequireSmoke(Title == expected, $"窗口标题不符: {Title} != {expected}");
+
+        var first = _main.CurrentFile.Name;
+        Execute("Next");
+        await WaitForSmokeAsync(() => _main.CurrentFile?.Name != first, "标题随换图更新");
+        expected = $"{folderName} - {_main.CurrentFile!.Name} - PhotoViewer";
+        RequireSmoke(Title == expected, $"换图后窗口标题未更新: {Title} != {expected}");
+
+        // 单图模式下共享 FolderViewModel 把目录名置成文件名:同名时标题只出现一次。
+        var current = _main.CurrentFile!.Name;
+        var originalFolderName = _main.FolderVM.FolderName;
+        try
+        {
+            _main.FolderVM.FolderName = current;
+            RequireSmoke(Title == $"{current} - PhotoViewer", $"单图模式标题未去重: {Title}");
+        }
+        finally
+        {
+            _main.FolderVM.FolderName = originalFolderName;
+        }
+
+        expected = $"{originalFolderName} - {current} - PhotoViewer";
+        RequireSmoke(Title == expected, $"恢复目录名后标题未回到常规格式: {Title} != {expected}");
+
+        // 文件夹恰好与应用同名(PhotoViewer):文件夹段必须保留,应用名仍作为最后一段。
+        var sameNameFolder = Path.Combine(SmokeOutputDirectory, "fixtures", AppTitle);
+        Directory.CreateDirectory(sameNameFolder);
+        await Task.Run(() => CreateFixture(Path.Combine(sameNameFolder, "color-srgb.jpg")));
+        await OpenPathsAsync(new[] { sameNameFolder });
+        await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "color-srgb.jpg" && _main.FolderVM.FolderName == AppTitle,
+            "同名文件夹标题");
+        RequireSmoke(Title == $"{AppTitle} - color-srgb.jpg - {AppTitle}",
+            $"文件夹与应用同名时标题少了一段: {Title}");
+    }
+
+    /// <summary>窗口图标:icon.ico 随输出就位,并已通过 AppWindow.SetIcon 设到真实窗口(WM_GETICON)。</summary>
+    private void CheckWindowIcon()
+    {
+        var iconPath = Path.Combine(AppContext.BaseDirectory, "icon.ico");
+        RequireSmoke(File.Exists(iconPath), $"输出目录缺少窗口图标文件: {iconPath}");
+        RequireSmoke(_windowIconApplied, "窗口图标未在激活后设置");
+
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        RequireSmoke(hwnd != IntPtr.Zero, "无法取得主窗口句柄");
+        var big = SendMessage(hwnd, WmGetIcon, (IntPtr)IconBig, IntPtr.Zero);
+        var small = SendMessage(hwnd, WmGetIcon, (IntPtr)IconSmall, IntPtr.Zero);
+        RequireSmoke(big != IntPtr.Zero && small != IntPtr.Zero,
+            $"WM_GETICON 未取到窗口图标(任务栏缩略浮窗会退回系统图标): big={big}, small={small}");
+    }
+
+    /// <summary>主图菜单的语义前置图标:八项各有字形,四个勾选项同样带图标,且在真实弹层里渲染出来。</summary>
+    /// <returns>检查完成后的任务</returns>
+    private async Task CheckContextMenuIconsAsync()
+    {
+        var expected = new (string Text, string Glyph)[]
+        {
+            ("打开文件…", WindowsIcons.DocumentGlyph),
+            ("打开文件夹…", WindowsIcons.FolderGlyph),
+            ("胶片栏", WindowsIcons.PhotosGlyph),
+            ("分析栏", WindowsIcons.AnalysisGridGlyph),
+            ("控制栏", WindowsIcons.SliderGlyph),
+            ("雾天增强", WindowsIcons.ContrastGlyph),
+            ("工具…", WindowsIcons.ToolsGlyph),
+            ("设置…", WindowsIcons.SettingsGlyph),
+        };
+
+        foreach (var (text, glyph) in expected)
+        {
+            MenuFlyoutItem? match = null;
+            foreach (var item in _contextMenu.Items)
+            {
+                // 勾选项(ToggleMenuFlyoutItem)派生自 MenuFlyoutItem,一条判断覆盖两类。
+                if (item is MenuFlyoutItem candidate && candidate.Text == text)
+                {
+                    match = candidate;
+                    break;
+                }
+            }
+
+            RequireSmoke(match != null, $"主图菜单缺少「{text}」");
+            RequireSmoke(match!.Icon is FontIcon icon && icon.Glyph == glyph,
+                $"菜单项「{text}」的前置图标不符: {(match.Icon as FontIcon)?.Glyph ?? "null"} != {glyph}");
+        }
+
+        // MENU-06：勾选不只靠图标,四个开关项必须仍是 ToggleMenuFlyoutItem(保留系统勾选列)。
+        foreach (var toggle in new[] { _thumbnailMenuToggle, _analysisMenuToggle, _controlMenuToggle, _enhanceMenuToggle })
+        {
+            RequireSmoke(_contextMenu.Items.Contains(toggle), $"开关项「{toggle.Text}」不在菜单里");
+            RequireSmoke(toggle.Icon is FontIcon, $"开关项「{toggle.Text}」没有前置图标");
+        }
+
+        // 真实弹层里核对图标确实渲染成可见字形,而不只是设了属性。
+        _contextMenu.ShowAt(_root);
+        try
+        {
+            await Task.Delay(250);
+            var rendered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var popup in VisualTreeHelper.GetOpenPopupsForXamlRoot(_root.XamlRoot))
+            {
+                CollectRenderedGlyphs(popup.Child, rendered);
+            }
+
+            RequireSmoke(rendered.Count > 0, "右键菜单弹层里没有任何可见图标");
+            foreach (var (text, glyph) in expected)
+            {
+                RequireSmoke(rendered.Contains(glyph), $"菜单项「{text}」的图标没有渲染出来: 字形 {glyph}");
+            }
+        }
+        finally
+        {
+            _contextMenu.Hide();
+        }
+    }
+
+    /// <summary>收集已渲染成可见字形的 FontIcon 码位。</summary>
+    /// <param name="root">子树根。</param>
+    /// <param name="glyphs">收集器。</param>
+    private static void CollectRenderedGlyphs(DependencyObject? root, HashSet<string> glyphs)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        if (root is FontIcon { Glyph.Length: > 0 } icon
+            && icon.Visibility == Visibility.Visible
+            && icon.ActualWidth > 0
+            && icon.ActualHeight > 0)
+        {
+            glyphs.Add(icon.Glyph);
+        }
+
+        int count = VisualTreeHelper.GetChildrenCount(root);
+        for (var index = 0; index < count; index++)
+        {
+            CollectRenderedGlyphs(VisualTreeHelper.GetChild(root, index), glyphs);
+        }
+    }
+
+    /// <summary>控制栏提示与读屏名称同源,且为 <c>名称（主 / 次）</c> 格式(TOOLBAR-04)。</summary>
+    private void CheckCommandTooltips()
+    {
+        var described = _controlBar.DescribeCommandButtons();
+        RequireSmoke(described.Count > 0, "控制栏没有已生成的命令按钮,无法核对提示格式");
+        var items = _main.ControlVM.EnabledControls;
+        foreach (var (command, tooltip, automationName) in described)
+        {
+            var item = items.FirstOrDefault(candidate => candidate.Command == command);
+            RequireSmoke(item != null, $"控制栏按钮「{command}」不在当前命令集合里");
+            var expected = CommandTooltipText.Format(
+                item!.Name,
+                item.PrimaryHotkey != null ? WindowsInput.FormatGesture(item.PrimaryHotkey) : null,
+                item.SecondaryHotkey != null ? WindowsInput.FormatGesture(item.SecondaryHotkey) : null);
+            RequireSmoke(tooltip == expected, $"按钮「{item.Name}」提示格式不符: {tooltip} != {expected}");
+            RequireSmoke(automationName == expected, $"按钮「{item.Name}」读屏名称与提示不同源: {automationName}");
+            RequireSmoke(!tooltip.Contains(" · ", StringComparison.Ordinal) && !tooltip.Contains("未设置", StringComparison.Ordinal),
+                $"按钮「{item.Name}」提示仍是旧格式: {tooltip}");
+        }
+
+        RequireSmoke(described.Any(entry => entry.Tooltip.Contains('（', StringComparison.Ordinal)),
+            "没有任何带绑定的提示,提示格式未被实际验证");
+
+        // 共享格式契约:空槽省略、主次相同只出现一次、都为空只输出名称。
+        RequireSmoke(CommandTooltipText.Format("下一张", "→", null) == "下一张（→）", "空次槽未省略");
+        RequireSmoke(CommandTooltipText.Format("下一张", "→", "→") == "下一张（→）", "主次相同未去重");
+        RequireSmoke(CommandTooltipText.Format("下一张", null, null) == "下一张", "双空槽仍拼了括号");
+    }
+
+    /// <summary>窗口图标查询消息(Win32)。</summary>
+    private const int WmGetIcon = 0x007F;
+
+    /// <summary>WM_GETICON 的小图标槽。</summary>
+    private const int IconSmall = 0;
+
+    /// <summary>WM_GETICON 的大图标槽。</summary>
+    private const int IconBig = 1;
+
+    /// <summary>发送窗口消息(Win32)。</summary>
+    /// <param name="hWnd">窗口句柄。</param>
+    /// <param name="msg">消息号。</param>
+    /// <param name="wParam">消息参数。</param>
+    /// <param name="lParam">消息参数。</param>
+    /// <returns>消息返回值。</returns>
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
 
     /// <summary>八方向 EXIF 素材与控制栏 EXIF 取值:方向进入渲染链路,EXIF 块不再显示 "--"(IMAGE-01/FILM-05)。</summary>
     /// <param name="checks">验收结果收集器</param>
@@ -740,8 +961,9 @@ internal sealed partial class WindowsMainWindow
     private async Task RunNavigatorChecksAsync(List<string> checks)
     {
         _main.Settings.LayoutMode = LayoutMode.Row;
+        // 系统标题栏占用非客户区高度；较高视口确保两个方向都有可拖动范围。
         AppWindow.Resize(new SizeInt32((int)Math.Round(1200 * _root.XamlRoot.RasterizationScale),
-            (int)Math.Round(850 * _root.XamlRoot.RasterizationScale)));
+            (int)Math.Round(950 * _root.XamlRoot.RasterizationScale)));
         await Task.Delay(200);
         _root.UpdateLayout();
         _photo.FitToView();
@@ -1711,44 +1933,14 @@ internal sealed partial class WindowsMainWindow
         encoded.SaveTo(stream);
     }
 
-    /// <summary>读取系统实际登记的物理标题栏区域，核对自动显隐、边界及筛选条避让。</summary>
-    private void CheckCaptionRegion()
+    /// <summary>核对主窗口使用系统非客户区标题栏，未创建内容区 caption 或自绘按钮。</summary>
+    private void CheckSystemTitleBar()
     {
-        var source = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
-        var scale = _root.XamlRoot.RasterizationScale;
-        var width = (int)Math.Round(_root.ActualWidth * scale);
-        var height = (int)Math.Round(Math.Min(WindowsLayout.CaptionHeight, _root.ActualHeight) * scale);
-        // 读实际布局出的按钮组左边界,而不是复算生产常量/公式。
-        var buttonLeft = (int)Math.Round(_titleBar.GetButtonsLeft(_root) * scale);
-
-        // 标题栏自动显隐:隐藏时不得登记任何拖动区域(顶部不可拖动),显示时才登记
-        UpdateTitleBarVisibility(false);
-        RequireSmoke(source.GetRegionRects(NonClientRegionKind.Caption).Length == 0, "标题栏隐藏时仍登记了拖动区域");
-
-        UpdateTitleBarVisibility(true);
-        RequireSmoke(_titleBar.IsVisible, "标题栏未进入显示态");
-        var regions = source.GetRegionRects(NonClientRegionKind.Caption);
-        RequireSmoke(regions.Length > 0, "标题栏没有可拖动区域");
-        foreach (var region in regions)
-        {
-            RequireSmoke(region.X >= 0 && region.Y == 0 && region.Width > 0 && region.Height == height
-                && region.X + region.Width <= width,
-                $"标题栏物理区域越界：region={region.X},{region.Y},{region.Width},{region.Height}; expected={width}x{height}; mode={_main.Settings.LayoutMode}");
-            RequireSmoke(region.X + region.Width <= buttonLeft,
-                $"标题栏拖动区压住标题栏按钮：region={region.X}+{region.Width} > {buttonLeft}; mode={_main.Settings.LayoutMode}");
-        }
-
-        if (!_main.IsThumbnailViewVisible)
-        {
-            RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].Width == buttonLeft,
-                "隐藏胶片条后拖动区未覆盖到标题栏按钮左侧");
-        }
-        else if (!_isRowLayout)
-        {
-            RequireSmoke(regions[0].X == (int)Math.Ceiling(_filePaneFrame.ActualWidth * scale), "标题栏未避让物理文件栏");
-        }
-
-        UpdateTitleBarVisibility(false);
+        var presenter = AppWindow.Presenter as OverlappedPresenter
+            ?? throw new InvalidOperationException("原生壳要求 OverlappedPresenter");
+        RequireSmoke(!ExtendsContentIntoTitleBar, "主窗口仍将内容延伸到标题栏");
+        RequireSmoke(presenter.HasBorder == !_isFullScreen && presenter.HasTitleBar == !_isFullScreen,
+            $"系统窗口外观与全屏状态不一致: border={presenter.HasBorder}, titleBar={presenter.HasTitleBar}, fullScreen={_isFullScreen}");
     }
 
     /// <summary>限时等待异步解码或真实布局，不把超时当成通过。</summary>

@@ -48,6 +48,7 @@ internal static class Program
             SettingsChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             RefreshRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             StatusMessageChecks.Run(checks);
+            TooltipTextChecks.Run(checks);
         }
         catch (Exception exception)
         {

@@ -105,6 +105,8 @@ internal sealed class MacHotkeyDto
 {
     /// <summary>功能名称。</summary>
     public string Name { get; set; } = string.Empty;
+    /// <summary>命令图标 SF Symbols 名（SETTINGS-01：勾选与名称之间显示）。</summary>
+    public string Symbol { get; set; } = string.Empty;
     /// <summary>是否在控制栏显示。</summary>
     public bool IsDisplay { get; set; }
     /// <summary>主快捷键显示文本。</summary>
