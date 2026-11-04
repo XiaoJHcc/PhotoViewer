@@ -86,7 +86,7 @@
 
 令牌：`filter.control.width`（90）、`filter.control.height`（32）、`filter.gap`（5）、`filter.count.height`（17）、`filter.toggle.height`（27）、`filter.margin`（10）。
 
-- 列布局：文件栏内容宽 116，三个下拉各 90×32 纵向排列，间距 5，整组水平居中；计数居中于其下，开关 90×27 紧随计数（间距 5）；首控件顶部让位取 `shell.filter.leadingInset`（34，仅 macOS 列布局的交通灯让位；Windows 沿用自身原生排布）。
+- 列布局：文件栏内容宽 116，三个下拉各 90×32 纵向排列，间距 5，整组水平居中；计数居中于其下，开关 90×27 紧随计数（间距 5）；首控件顶部让位取 `shell.filter.leadingInset`（42 = 标题栏高 32 + `filter.margin`，仅 macOS 列布局避开盖住文件栏的标题栏与交通灯；Windows 标题栏不盖文件栏，沿用自身原生排布）。
 - 行布局：三个下拉与计数、开关同排，间距 5，交叉轴居中；整组占高 `filter.bar.row.height`（52）。
 - 组内不换行、不压缩控件宽度、不因计数变长改变下拉宽度；窄屏紧凑宽度属平台差异，见 platforms.md（FILTER-01@android）。
 - 行布局默认五项整组在安全内容区内居中；iPad 同样整组居中，不做前导对齐。Android 手机行布局可从前导安全边 + `filter.margin` 起排，作为已登记的平台差异（FILTER-07@android）。

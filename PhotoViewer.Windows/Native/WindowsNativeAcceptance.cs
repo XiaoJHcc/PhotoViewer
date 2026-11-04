@@ -10,8 +10,10 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using Microsoft.UI.Input;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
@@ -80,11 +82,11 @@ internal sealed partial class WindowsMainWindow
             var modelHash = await Task.Run(CheckModel);
             checks.Add("PASS embedded model: SHA256=" + modelHash + "; DirectML dual-output inference");
 
-            // SHELL-02：无文件时系统窗口标题只有应用名。
+            // SHELL-02：空态标题只有应用名，窗口态保留系统边框、去掉系统标题栏。
             RequireSmoke(_main.CurrentFile == null, "空态检查前已存在当前照片");
             RequireSmoke(Title == "PhotoViewer", $"空态窗口标题不符: {Title}");
-            CheckSystemTitleBar();
-            checks.Add("PASS SHELL-02: native system title bar with empty state title PhotoViewer");
+            CheckWindowChrome();
+            checks.Add("PASS SHELL-02: content extends to the window top edge with system border kept and system title bar removed; empty state title PhotoViewer");
 
             await RunDeploymentChecksAsync(checks);
 
@@ -124,7 +126,7 @@ internal sealed partial class WindowsMainWindow
                     _photo.FitToView();
                     _photo.ZoomBy(1.1);
                     _photo.FitToView();
-                    CheckSystemTitleBar();
+                    CheckHoverTitleBar();
                     // TOOLBAR-08：空间不足先按组换行/换列；只有单组超长才允许沿主轴滚动。
                     if (size.Width == 700)
                     {
@@ -133,7 +135,7 @@ internal sealed partial class WindowsMainWindow
                             $"{mode} 700 宽下控制栏仍以滚动代替换行: {_controlBar.ScrollableMain}");
                     }
 
-                    checks.Add($"PASS resize/present/caption: {mode} {size.Width}x{size.Height} scale={scale}");
+                    checks.Add($"PASS resize/present/titlebar: {mode} {size.Width}x{size.Height} scale={scale}");
                 }
             }
 
@@ -162,8 +164,8 @@ internal sealed partial class WindowsMainWindow
 
             _main.ToggleThumbnailView();
             _root.UpdateLayout();
-            CheckSystemTitleBar();
-            checks.Add("PASS caption with filmstrip hidden");
+            CheckHoverTitleBar();
+            checks.Add("PASS SHELL-02 caption with filmstrip hidden: full-width title bar, acrylic background, caption across the window down to the window buttons");
             _main.ToggleThumbnailView();
             _photo.FitToView();
             Close();
@@ -312,7 +314,7 @@ internal sealed partial class WindowsMainWindow
         checks.Add("PASS keyboard entry: numpad +/- map to OemPlus/OemMinus (Ctrl+zoom), Enter→Return, repeat gate keeps Next and swallows rating repeat, unbound/text-edit keys pass through, Exchange no-ops without LastFile");
     }
 
-    /// <summary>窗口态:最大化/还原/全屏与退出全屏后恢复系统标题栏。</summary>
+    /// <summary>窗口态:最大化/还原/全屏与退出全屏的呈现器状态、标题栏按钮字形与全屏拖动区(SHELL-02)。</summary>
     /// <param name="checks">验收结果收集器</param>
     /// <returns>检查完成后的任务</returns>
     private async Task RunWindowStateChecksAsync(List<string> checks)
@@ -326,33 +328,47 @@ internal sealed partial class WindowsMainWindow
         _root.UpdateLayout();
         RequireSmoke(presenter.State == OverlappedPresenterState.Maximized, "最大化未生效");
         RequireSmoke(_root.ActualWidth > normalWidth, "最大化后窗口内容没有变大");
+        CheckTitleBarButtons();
 
         ToggleMaximizeWindow();
         await Task.Delay(300);
         _root.UpdateLayout();
         RequireSmoke(presenter.State == OverlappedPresenterState.Restored, "从最大化还原未生效");
+        CheckTitleBarButtons();
 
         ToggleFullScreenWindow();
         await Task.Delay(300);
         RequireSmoke(_isFullScreen && presenter.State == OverlappedPresenterState.Maximized, "全屏未生效");
+        CheckWindowChrome();
+        CheckTitleBarButtons();
+        // 全屏态标题栏照常悬停显示(以便退出),但不登记拖动区:双击落回主图。
+        SimulateTitleBarPointerForAcceptance(true, WindowsLayout.TitleBarHeight - 2);
+        RequireSmoke(_titleBar.IsVisible, "全屏态进入顶部热区后标题栏未显示");
+        RequireNoCaptionRegions("全屏态");
 
         ToggleFullScreenWindow();
         await Task.Delay(300);
         _root.UpdateLayout();
         RequireSmoke(!_isFullScreen && presenter.State == OverlappedPresenterState.Restored, "退出全屏未回到还原态");
+        CheckWindowChrome();
+        CheckTitleBarButtons();
         _photo.FitToView();
-        checks.Add("PASS window states: maximize/restore/fullscreen/exit all return consistent presenter state");
+        checks.Add("PASS window states: maximize/restore/fullscreen/exit return consistent presenter state; caption buttons flip 最大化/还原 and 全屏/退出全屏; fullscreen keeps the bar on hover with no caption regions, exit restores border without system title bar");
     }
 
-    /// <summary>SHELL-02 / MENU-06 / TOOLBAR-04：系统标题栏、动态标题、窗口图标、菜单图标与命令提示。</summary>
+    /// <summary>SHELL-02 / MENU-06 / TOOLBAR-04：悬停标题栏、动态标题、窗口图标、菜单图标与命令提示。</summary>
     private async Task RunTitleBarChromeChecksAsync(List<string> checks)
     {
-        CheckSystemTitleBar();
+        CheckWindowChrome();
+        CheckHoverTitleBar();
+        CheckTitleBarButtons();
         await CheckDynamicWindowTitleAsync();
+        RequireSmoke(_titleBar.TitleText == Title && Title == BuildWindowTitle(),
+            $"标题栏文字与系统窗口标题不同源: {_titleBar.TitleText} / {Title} / {BuildWindowTitle()}");
         CheckWindowIcon();
         await CheckContextMenuIconsAsync();
         CheckCommandTooltips();
-        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: native Windows title bar and caption buttons, folder - file - PhotoViewer title with single-image dedupe, window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
+        checks.Add("PASS SHELL-02/MENU-06/TOOLBAR-04: hover title bar over the content top edge with zero caption regions while hidden, caption regions inside the bar height ending at the buttons, acrylic background except row layout with filmstrip, layout-dependent span and filter cut-out, caption text mirrored from folder - file - PhotoViewer title (single-image dedupe), window icon served from icon.ico via WM_GETICON, semantic menu icons including toggles, shared command tooltip format");
     }
 
     /// <summary>动态标题:<c>文件夹名 - 文件名 - PhotoViewer</c>,无文件只有应用名,单图重复名去重。</summary>
@@ -961,7 +977,7 @@ internal sealed partial class WindowsMainWindow
     private async Task RunNavigatorChecksAsync(List<string> checks)
     {
         _main.Settings.LayoutMode = LayoutMode.Row;
-        // 系统标题栏占用非客户区高度；较高视口确保两个方向都有可拖动范围。
+        // 较高视口确保两个方向都有可拖动范围。
         AppWindow.Resize(new SizeInt32((int)Math.Round(1200 * _root.XamlRoot.RasterizationScale),
             (int)Math.Round(950 * _root.XamlRoot.RasterizationScale)));
         await Task.Delay(200);
@@ -1933,14 +1949,251 @@ internal sealed partial class WindowsMainWindow
         encoded.SaveTo(stream);
     }
 
-    /// <summary>核对主窗口使用系统非客户区标题栏，未创建内容区 caption 或自绘按钮。</summary>
-    private void CheckSystemTitleBar()
+    /// <summary>
+    /// SHELL-02:主窗口保留系统边框、缩放边缘与圆角，去掉系统标题栏；
+    /// 全屏态两者都去掉，退出全屏必须回到"有边框、无系统标题栏"。
+    /// </summary>
+    private void CheckWindowChrome()
     {
         var presenter = AppWindow.Presenter as OverlappedPresenter
             ?? throw new InvalidOperationException("原生壳要求 OverlappedPresenter");
-        RequireSmoke(!ExtendsContentIntoTitleBar, "主窗口仍将内容延伸到标题栏");
-        RequireSmoke(presenter.HasBorder == !_isFullScreen && presenter.HasTitleBar == !_isFullScreen,
-            $"系统窗口外观与全屏状态不一致: border={presenter.HasBorder}, titleBar={presenter.HasTitleBar}, fullScreen={_isFullScreen}");
+        // 延伸内容到标题栏会给出一块 WinUI 自带拖动区，与自绘标题栏的 caption 登记互相打架。
+        RequireSmoke(!ExtendsContentIntoTitleBar, "主窗口把内容延伸到了系统标题栏");
+        RequireSmoke(!presenter.HasTitleBar,
+            $"系统标题栏未移除: hasTitleBar={presenter.HasTitleBar}, fullScreen={_isFullScreen}");
+        RequireSmoke(presenter.HasBorder == !_isFullScreen,
+            $"系统边框与全屏状态不一致: hasBorder={presenter.HasBorder}, fullScreen={_isFullScreen}");
+    }
+
+    /// <summary>
+    /// SHELL-02:悬停标题栏的显隐、跨度、背景与 caption 拖动区。
+    /// 隐藏态零命中；显示态拖动区落在标题栏高内、止于按钮组，列布局从文件栏右缘起，
+    /// 行布局整宽无背景并挖空筛选条可点控件，文件栏隐藏时整宽带亚克力。
+    /// </summary>
+    private void CheckHoverTitleBar()
+    {
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        _root.UpdateLayout();
+        var widthPx = (int)Math.Round(_root.ActualWidth * scale);
+        var barHeightPx = (int)Math.Round(Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight) * scale);
+
+        // 1) 指针进入顶部热区：标题栏显示，拖动区落在标题栏高内并止于按钮组。
+        SimulateTitleBarPointerForAcceptance(true, 4);
+        _root.UpdateLayout();
+        RequireSmoke(_titleBar.IsVisible, "指针进入顶部热区后标题栏未显示");
+        var regions = CurrentCaptionRegions();
+        RequireSmoke(regions.Length > 0, "标题栏显示后没有 caption 拖动区");
+        var buttonLeftPx = (int)Math.Round(_titleBar.GetButtonsLeft(_root) * scale);
+        foreach (var region in regions)
+        {
+            RequireSmoke(region.Y == 0 && region.Height == barHeightPx && region.Width > 0
+                && region.X >= 0 && region.X + region.Width <= widthPx,
+                $"caption 区域越界: {region.X},{region.Y},{region.Width},{region.Height}; 期望 {widthPx}x{barHeightPx}");
+            RequireSmoke(region.X + region.Width <= buttonLeftPx,
+                $"caption 拖动区压住窗口按钮: {region.X}+{region.Width} > {buttonLeftPx}");
+        }
+
+        // 2) 跨度与背景。
+        var fileBarVisible = _main.IsThumbnailViewVisible;
+        if (!fileBarVisible)
+        {
+            RequireSmoke(regions.Length == 1 && regions[0].X == 0 && regions[0].X + regions[0].Width == buttonLeftPx,
+                "文件栏隐藏时拖动区未覆盖窗口左缘到按钮之间");
+            RequireSmoke(_titleBar.Left == 0, $"文件栏隐藏时标题栏未从窗口左缘开始: {_titleBar.Left}");
+            RequireSmoke(_titleBar.IsBackgroundVisible, "文件栏隐藏时标题栏没有亚克力背景");
+        }
+        else if (!_isRowLayout)
+        {
+            var fileRightPx = (int)Math.Round(_filePaneFrame.ActualWidth * scale);
+            var barLeftPx = (int)Math.Round(_titleBar.Left * scale);
+            RequireSmoke(Math.Abs(barLeftPx - fileRightPx) <= 1,
+                $"列布局标题栏未从文件栏右缘开始: {barLeftPx} vs 文件栏右缘 {fileRightPx}");
+            RequireSmoke(regions.Length == 1 && Math.Abs(regions[0].X - barLeftPx) <= 1
+                && regions[0].X + regions[0].Width == buttonLeftPx,
+                "列布局拖动区未覆盖文件栏右缘到按钮之间");
+            RequireSmoke(_titleBar.IsBackgroundVisible, "列布局标题栏没有亚克力背景");
+        }
+        else
+        {
+            var cut = _filterBar.GetInteractiveBounds(_root);
+            var cutLeft = (int)Math.Floor(cut.X * scale);
+            var cutRight = (int)Math.Ceiling((cut.X + cut.Width) * scale);
+            RequireSmoke(_titleBar.Left == 0, $"行布局标题栏未从窗口左缘开始: {_titleBar.Left}");
+            RequireSmoke(!_titleBar.IsBackgroundVisible, "行布局标题栏不应有背景");
+            RequireSmoke(regions[0].X == 0, $"行布局拖动区未从窗口左缘开始: {regions[0].X}");
+            foreach (var region in regions)
+            {
+                RequireSmoke(region.X + region.Width <= cutLeft || region.X >= cutRight,
+                    $"行布局拖动区压住筛选控件: region={region.X}+{region.Width}, 挖空={cutLeft}..{cutRight}");
+            }
+
+            // 挖空之外、按钮左侧的整条标题栏高都是拖动区(窗口很窄时筛选条会伸到按钮下方，挖空右段为 0)。
+            var cutEnd = Math.Min(Math.Max(cutRight, cutLeft), buttonLeftPx);
+            var draggable = Math.Max(cutLeft, 0) + (buttonLeftPx - cutEnd);
+            RequireSmoke(regions.Sum(region => region.Width) == draggable,
+                $"行布局拖动区宽度不符: {regions.Sum(region => region.Width)} != {draggable}");
+            var title = _titleBar.TitleElement;
+            RequireSmoke(title.Visibility != Visibility.Visible
+                || _titleBar.Left + WindowsLayout.TitleBarTitleInset + title.MaxWidth <= cut.X + 0.5,
+                $"行布局标题文字越过筛选挖空: {_titleBar.Left}+{WindowsLayout.TitleBarTitleInset}+{title.MaxWidth} > {cut.X}");
+        }
+
+        // 3) 拖动区真的生效：标题栏内的点由系统判成 HTCAPTION（拖动/双击走系统），标题栏下方仍是客户区。
+        var probeRegion = regions[0];
+        var captionHit = HitTestClientPoint(
+            (probeRegion.X + Math.Min(probeRegion.Width, widthPx) / 2) / scale,
+            probeRegion.Height / 2 / scale);
+        RequireSmoke(captionHit == HitCaption, $"标题栏内未判成 HTCAPTION: {captionHit}");
+        var clientHit = HitTestClientPoint(_root.ActualWidth / 2, WindowsLayout.TitleBarHeight + 40);
+        RequireSmoke(clientHit == HitClient, $"标题栏下方被当成非客户区: {clientHit}");
+
+        // 4) 标题文字：单行、不可命中、尾部截断、距标题栏左缘一个前导间距、样式取 WinUI 标题文字样式。
+        var titleElement = _titleBar.TitleElement;
+        RequireSmoke(!titleElement.IsHitTestVisible, "标题文字参与了命中");
+        RequireSmoke(titleElement.TextWrapping == TextWrapping.NoWrap && titleElement.TextTrimming == TextTrimming.CharacterEllipsis,
+            "标题文字不是单行尾部截断");
+        RequireSmoke(Math.Abs(titleElement.Margin.Left - WindowsLayout.TitleBarTitleInset) < 0.01,
+            $"标题文字前导间距不符: {titleElement.Margin.Left}");
+        RequireSmoke(Application.Current.Resources.TryGetValue("CaptionTextBlockStyle", out var captionStyle)
+            && ReferenceEquals(titleElement.Style, captionStyle),
+            "标题文字未使用 WinUI CaptionTextBlockStyle");
+
+        // 5) 指针移出热区或离开窗口：标题栏收起，拖动区归零，顶部不再可拖动、双击交给主图。
+        //    这一段紧跟在模拟之后同步读完，不留真实指针事件插进来的窗口。
+        SimulateTitleBarPointerForAcceptance(true, WindowsLayout.TitleBarHotZoneHeight + 1);
+        RequireSmoke(!_titleBar.IsVisible, "指针低于热区后标题栏仍显示");
+        RequireNoCaptionRegions("指针低于热区");
+        SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
+        RequireSmoke(!_titleBar.IsVisible, "指针离开窗口后标题栏仍显示");
+        RequireNoCaptionRegions("指针离开窗口");
+    }
+
+    /// <summary>隐藏态拖动区归零：没有任何正面积的 caption 区域，顶部最上两行判成客户区。</summary>
+    /// <param name="stage">失败时的阶段名</param>
+    private void RequireNoCaptionRegions(string stage)
+    {
+        var regions = CurrentCaptionRegions();
+        RequireSmoke(regions.All(region => region.Width <= 0 || region.Height <= 0),
+            $"{stage}后仍登记了 caption 拖动区: {Describe(regions)}, key={_captionKey}");
+        RequireSmoke(HitTestClientPoint(_root.ActualWidth / 2, 8) == HitClient,
+            $"{stage}后顶部标题栏带仍被当成非客户区(HTCAPTION)");
+    }
+
+    /// <summary>WM_NCHITTEST 的客户区结果。</summary>
+    private const int HitClient = 1;
+
+    /// <summary>WM_NCHITTEST 的标题栏结果。</summary>
+    private const int HitCaption = 2;
+
+    /// <summary>客户区坐标 → 屏幕坐标(Per-Monitor-V2 下为物理像素)。</summary>
+    /// <param name="hwnd">窗口句柄</param>
+    /// <param name="point">待换算的点</param>
+    /// <returns>成功返回 true</returns>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ClientToScreen(IntPtr hwnd, ref NativePoint point);
+
+    /// <summary>问系统该客户区点在窗口命中测试里的结果(WM_NCHITTEST,按相机非客户区命中)。</summary>
+    /// <param name="x">客户区 X(DIP)</param>
+    /// <param name="y">客户区 Y(DIP)</param>
+    /// <returns>HTCLIENT(1)/HTCAPTION(2) 等命中码</returns>
+    private int HitTestClientPoint(double x, double y)
+    {
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var point = new NativePoint { X = (int)Math.Round(x * scale), Y = (int)Math.Round(y * scale) };
+        ClientToScreen(hwnd, ref point);
+        var lParam = (IntPtr)((point.Y << 16) | (point.X & 0xFFFF));
+        return (int)SendMessage(hwnd, 0x0084, IntPtr.Zero, lParam);
+    }
+
+    /// <summary>把 caption 区域列表写成可读文本(诊断用)。</summary>
+    /// <param name="rects">矩形集合</param>
+    /// <returns>可读文本</returns>
+    private static string Describe(RectInt32[] rects)
+        => rects.Length + "[" + string.Join(";", rects.Select(r => $"{r.X},{r.Y},{r.Width},{r.Height}")) + "]";
+
+    /// <summary>系统当前登记的 caption 区域(从未登记过时 WinRT 返回 null)。</summary>
+    /// <returns>物理像素矩形</returns>
+    private RectInt32[] CurrentCaptionRegions()
+        => InputNonClientPointerSource.GetForWindowId(AppWindow.Id)
+            .GetRegionRects(NonClientRegionKind.Caption) ?? Array.Empty<RectInt32>();
+
+    /// <summary>
+    /// SHELL-02:右上角四个自绘按钮的次序、外框、字形、提示与状态底色；背景是 WinUI 应用内亚克力。
+    /// </summary>
+    private void CheckTitleBarButtons()
+    {
+        var buttons = _titleBar.Buttons;
+        RequireSmoke(buttons.Count == 4, $"窗口按钮数量不符: {buttons.Count}");
+        var maximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+        var expected = new (string Glyph, string Text)[]
+        {
+            (_isFullScreen ? WindowsIcons.ExitFullScreenGlyph : WindowsIcons.FullScreenGlyph,
+                _isFullScreen ? "退出全屏" : "全屏"),
+            (WindowsIcons.MinimizeGlyph, "最小化"),
+            (!_isFullScreen && maximized ? WindowsIcons.RestoreGlyph : WindowsIcons.MaximizeGlyph,
+                !_isFullScreen && maximized ? "还原" : "最大化"),
+            (WindowsIcons.CloseGlyph, "关闭"),
+        };
+
+        // 按钮组的真实位置只在标题栏显示时才有布局(折叠元素不参与 arrange),这里按热区示意先显示。
+        SimulateTitleBarPointerForAcceptance(true, 4);
+        _root.UpdateLayout();
+        for (var index = 0; index < buttons.Count; index++)
+        {
+            var button = buttons[index];
+            var (glyph, text) = expected[index];
+            RequireSmoke(WindowsTitleBar.GlyphOf(button) == glyph,
+                $"第 {index + 1} 个窗口按钮字形不符: {WindowsTitleBar.GlyphOf(button)} != {glyph}");
+            RequireSmoke(button.Content is FontIcon icon
+                && icon.FontFamily.Source.StartsWith("Segoe Fluent Icons", StringComparison.Ordinal)
+                && Math.Abs(icon.FontSize - WindowsLayout.TitleBarButtonGlyphSize) < 0.01,
+                $"第 {index + 1} 个窗口按钮不是 Segoe Fluent Icons {WindowsLayout.TitleBarButtonGlyphSize} 点字形");
+            RequireSmoke(Equals(ToolTipService.GetToolTip(button), text),
+                $"第 {index + 1} 个窗口按钮提示不符: {ToolTipService.GetToolTip(button)} != {text}");
+            RequireSmoke(AutomationProperties.GetName(button) == text,
+                $"第 {index + 1} 个窗口按钮读屏名不符: {AutomationProperties.GetName(button)} != {text}");
+            RequireSmoke(Math.Abs(button.Width - WindowsLayout.TitleBarButtonWidth) < 0.01
+                && Math.Abs(button.Height - WindowsLayout.TitleBarHeight) < 0.01,
+                $"第 {index + 1} 个窗口按钮外框不符: {button.Width}x{button.Height}");
+            RequireSmoke(button.CornerRadius.TopLeft == 0 && button.CornerRadius.TopRight == 0
+                && button.BorderThickness == default && button.Margin == default,
+                $"窗口按钮「{text}」不是无圆角、无间距的外框");
+            RequireSmoke(button.Resources.TryGetValue("ButtonBackgroundPointerOver", out var hover) && hover is Brush,
+                $"窗口按钮「{text}」缺少悬停底色");
+            RequireSmoke(button.Resources.TryGetValue("ButtonBackgroundPressed", out var pressed) && pressed is Brush,
+                $"窗口按钮「{text}」缺少按下底色");
+        }
+
+        // 按钮组紧贴窗口顶边与右缘、彼此无间距。
+        var first = buttons[0].TransformToVisual(_root).TransformPoint(new Point(0, 0));
+        var last = buttons[3].TransformToVisual(_root).TransformPoint(new Point(WindowsLayout.TitleBarButtonWidth, 0));
+        RequireSmoke(Math.Abs(first.Y) < 0.5, $"窗口按钮未紧贴窗口顶边: y={first.Y}");
+        RequireSmoke(Math.Abs(last.X - _root.ActualWidth) < 0.5,
+            $"窗口按钮未紧贴窗口右缘: {last.X} vs {_root.ActualWidth}");
+        RequireSmoke(Math.Abs(_titleBar.GetButtonsLeft(_root) - (_root.ActualWidth - WindowsLayout.TitleBarButtonWidth * 4)) < 0.5,
+            "窗口按钮组宽与 4 × 46 不符");
+
+        // 关闭按钮悬停/按下取令牌底色，其余按钮取 WinUI 半透明填充（SubtleFill）。
+        var close = buttons[3];
+        RequireSmoke(close.Resources["ButtonBackgroundPointerOver"] is SolidColorBrush closeHover
+            && closeHover.Color == WindowsLayout.TitleBarCloseHover,
+            "关闭按钮悬停底色不是 color.titlebar.close.hover");
+        RequireSmoke(close.Resources["ButtonBackgroundPressed"] is SolidColorBrush closePressed
+            && closePressed.Color == WindowsLayout.TitleBarClosePressed,
+            "关闭按钮按下底色不是 color.titlebar.close.pressed");
+        RequireSmoke(close.Content is FontIcon { Foreground: SolidColorBrush { Color.A: 0xFF } },
+            "关闭按钮字形不是白色");
+        var subtle = Application.Current.Resources.TryGetValue("SubtleFillColorSecondaryBrush", out var subtleValue)
+            ? subtleValue as Brush
+            : null;
+        RequireSmoke(subtle != null && ReferenceEquals(buttons[1].Resources["ButtonBackgroundPointerOver"], subtle),
+            "普通窗口按钮悬停底色不是 WinUI SubtleFillColorSecondaryBrush");
+
+        RequireSmoke(_titleBar.BackgroundBrush is AcrylicBrush,
+            $"标题栏背景不是 WinUI 应用内亚克力画刷: {_titleBar.BackgroundBrush?.GetType().Name ?? "null"}");
+        SimulateTitleBarPointerForAcceptance(false, WindowsLayout.TitleBarHotZoneHeight + 40);
     }
 
     /// <summary>限时等待异步解码或真实布局，不把超时当成通过。</summary>

@@ -17,8 +17,8 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>AppKit 主窗口；复用共享业务 VM，加载与展示通过 PhotoLoadSession/MetalPhotoView 分离。</summary>
 public sealed class MacMainWindow : IDisposable
 {
-    /// <summary>列布局下筛选条顶边:为隐藏标题栏的交通灯让位(旧壳平台标题栏设置);其余几何取共享 <see cref="MainScreenLayout"/>。</summary>
-    private const double FilterTopInset = 34;
+    /// <summary>标题文字的可用宽度低于该值即隐藏（SHELL-02）。</summary>
+    private const double TitlebarTitleMinWidth = 24;
     /// <summary>系统“双击窗口标题栏”偏好键(NSUserDefaults 全局域，取值 Maximize / Minimize / None)。</summary>
     internal const string TitlebarDoubleClickPreference = "AppleActionOnDoubleClick";
     /// <summary>AppKit 全屏样式位 <c>NSWindowStyleMaskFullScreen</c>（.NET 绑定的 <see cref="NSWindowStyle"/> 未导出该成员，按位取值）。</summary>
@@ -36,6 +36,8 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSView _detailHighlight;
     private readonly DragZone _dragLeft;
     private readonly DragZone _dragRight;
+    private readonly TitlebarBackdrop _titlebarMaterial;
+    private readonly NSTextField _titleLabel;
     private readonly MacFilmstripScrollView _scroll;
     private readonly NSCollectionView _collection;
     private readonly MacFilmstripLayout _filmstripLayout;
@@ -74,6 +76,9 @@ public sealed class MacMainWindow : IDisposable
     private CGPoint _lastFilmstripOrigin;
     private CGPoint _lastControlOrigin;
     private CGSize _lastRootSize;
+    private bool _titlebarShown;
+    private bool _titlebarBackdrop;
+    private bool _titlebarTitleFits;
     private readonly bool _automatedValidation;
     private MacNativeSettingsPresenter? _settingsPresenter;
     private (double U, double V, double? Width, double? Height)? _activeDetail;
@@ -113,6 +118,12 @@ public sealed class MacMainWindow : IDisposable
     internal MacRatingSourcesPopover RatingSourcesPopover => _ratingSources;
     /// <summary>顶边悬停拖动区供验收核对它们是否绕开了筛选条控件。</summary>
     internal IReadOnlyList<NSView> DragZones => [_dragLeft, _dragRight];
+    /// <summary>标题栏毛玻璃背景层，供验收核对它只在有背景的模式里与拖动区同时出现。</summary>
+    internal NSView TitlebarMaterialView => _titlebarMaterial;
+    /// <summary>自绘标题文字，供验收核对它避开交通灯与筛选控件。</summary>
+    internal NSTextField TitlebarLabel => _titleLabel;
+    /// <summary>模拟顶边热区悬停（验收用；正常运行由鼠标热区监视器驱动显隐）。</summary>
+    internal void ShowTitlebarForTesting(bool visible) => SetTitlebarVisible(visible);
     /// <summary>主图上的细节预览绿框（ANALYSIS-04/06），供验收核对它框住的源像素范围等于裁剪窗口。</summary>
     internal CGRect DetailHighlightFrame => _detailHighlight.Frame;
     /// <summary>细节预览绿框是否可见。</summary>
@@ -144,7 +155,6 @@ public sealed class MacMainWindow : IDisposable
         _root.AddSubview(_filePane); _root.AddSubview(_photoPane); _root.AddSubview(_controlScroll);
         _root.AddSubview(_fileDivider); _root.AddSubview(_controlDivider);
         _dragLeft = new DragZone(); _dragRight = new DragZone();
-        _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
         Photo = new MetalPhotoView(new CGRect(0, 0, 1000, 750));
         _main.FitToViewRequested += OnFitToViewRequested;
         _main.OpenFailed += ShowToast;
@@ -159,6 +169,14 @@ public sealed class MacMainWindow : IDisposable
         _analysisPane.DetailHighlight = UpdateDetailHighlight;
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
         _root.AddSubview(_analysisPane);
+        // SHELL-02：标题栏是浮在内容之上的覆盖层，不占布局高度。毛玻璃背景压住全部分区，拖动区压在背景之上，
+        // 标题文字最上层但透传命中，因此三者顺序固定在此处，不能跟着分区一起往前提。
+        _titlebarMaterial = new TitlebarBackdrop();
+        _root.AddSubview(_titlebarMaterial);
+        _root.AddSubview(_dragLeft); _root.AddSubview(_dragRight);
+        _titleLabel = TitleLabel();
+        _titleLabel.StringValue = Window.Title;
+        _root.AddSubview(_titleLabel);
         _hint = Label("点击打开文件 或 拖拽图片到此处", 16);
         _hint.Alignment = NSTextAlignment.Center;
         _hint.TextColor = NSColor.SecondaryLabel;
@@ -222,8 +240,9 @@ public sealed class MacMainWindow : IDisposable
             if (nativeEvent.Type is NSEventType.MouseMoved or NSEventType.MouseExited)
             {
                 var point = _root.ConvertPointFromView(nativeEvent.LocationInWindow, null);
-                bool show = nativeEvent.Window == Window && Window.IsKeyWindow && nativeEvent.Type == NSEventType.MouseMoved && point.Y >= 0 && point.Y <= 50;
-                _dragLeft.Hidden = !show; _dragRight.Hidden = !show;
+                // SHELL-02：指针进入顶边热区且窗口为 key 才显示；系统全屏态交给系统，自绘标题栏不出现。
+                SetTitlebarVisible(nativeEvent.Type == NSEventType.MouseMoved && nativeEvent.Window == Window
+                    && Window.IsKeyWindow && point.Y >= 0 && point.Y <= DesignTokens.ShellTitlebarHotzoneHeight);
                 return nativeEvent;
             }
             // RATING-04：来源浮窗不进入模态，浮窗窗口上的按键仍按照片快捷键派发；Esc 先关闭浮窗。
@@ -243,10 +262,11 @@ public sealed class MacMainWindow : IDisposable
         _dragRight.DoubleClick = HandleTitlebarDoubleClick;
         Photo.ViewportChanged += UpdateViewport;
         Window.DidChangeBackingProperties += (_, _) => { Photo.SetFrameSize(Photo.Frame.Size); _analysisPane.RefreshDetailCrops(); RefreshDetailHighlight(); };
-        Window.DidEnterFullScreen += (_, _) => SaveFullscreen(true);
+        Window.DidEnterFullScreen += (_, _) => { SaveFullscreen(true); SetTitlebarVisible(false); };
         Window.DidExitFullScreen += (_, _) => SaveFullscreen(false);
-        Window.DidResignKey += (_, _) => { _dragLeft.Hidden = true; _dragRight.Hidden = true; HideDetailHighlight(); };
-        _deactivationObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSApplication.DidResignActiveNotification, _ => HideDetailHighlight());
+        // 失焦或应用切到后台即收起标题栏（SHELL-02），不给不可交互的层留悬停残影。
+        Window.DidResignKey += (_, _) => { SetTitlebarVisible(false); HideDetailHighlight(); };
+        _deactivationObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSApplication.DidResignActiveNotification, _ => { SetTitlebarVisible(false); HideDetailHighlight(); });
         Session.Changed += OnImageChanged;
         Session.Notice += ShowToast;
         _root.Resized = Layout;
@@ -326,6 +346,15 @@ public sealed class MacMainWindow : IDisposable
     /// <summary>创建只读且不拦截鼠标点击的原生标签。</summary>
     private static NSTextField Label(string text, double size)
         => new PassThroughLabel { StringValue = text, Editable = false, Selectable = false, Bordered = false, DrawsBackground = false, TextColor = NSColor.LightGray, Font = NSFont.SystemFontOfSize((nfloat)size) ?? throw new InvalidOperationException("系统字体不可用") };
+    /// <summary>SHELL-02：标题栏文字——单行尾部截断，字体与颜色取平台标题栏文字样式，属于拖动区的一部分而不参与命中。</summary>
+    private static NSTextField TitleLabel()
+        => new PassThroughLabel
+        {
+            Editable = false, Selectable = false, Bordered = false, DrawsBackground = false,
+            LineBreakMode = NSLineBreakMode.TruncatingTail, MaximumNumberOfLines = 1,
+            TextColor = NSColor.Label,
+            Font = NSFont.TitleBarFontOfSize(0) ?? NSFont.SystemFontOfSize(13) ?? throw new InvalidOperationException("系统字体不可用"),
+        };
     /// <summary>创建固定位置的原生下拉框。</summary>
     private static NSPopUpButton Popup(string[] titles)
     {
@@ -504,7 +533,7 @@ public sealed class MacMainWindow : IDisposable
             bool row = _main.IsRowLayout;
             _count.SizeToFit();
             double countWidth = Math.Ceiling((double)_count.Frame.Width);
-            double filterHeight = MainScreenLayout.FilterBarMainLength(row, FilterTopInset);
+            double filterHeight = MainScreenLayout.FilterBarMainLength(row, DesignTokens.ShellFilterLeadingInset);
             double filmstripHeight = MainScreenLayout.FilmstripBand;
             // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
             bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
@@ -552,7 +581,7 @@ public sealed class MacMainWindow : IDisposable
             double hintTop = Math.Max(0, ((double)_photoPane.Bounds.Height - (_hintDetail.StringValue.Length > 0 ? 80 : 20)) / 2);
             _hint.Frame = new CGRect(hintLeft, hintTop, hintWidth, 20);
             _hintDetail.Frame = new CGRect(hintLeft, hintTop + 28, hintWidth, 52);
-            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, FilterTopInset, countWidth, includeSimilarityToggle: true);
+            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, DesignTokens.ShellFilterLeadingInset, countWidth, includeSimilarityToggle: true);
             _sort.Frame = ToFrame(filterFrames.Sort);
             _order.Frame = ToFrame(filterFrames.Order);
             _ratingFilter.Frame = ToFrame(filterFrames.Rating);
@@ -592,21 +621,93 @@ public sealed class MacMainWindow : IDisposable
                 _controlScroll.ContentView.ScrollToPoint(clampedOffset);
                 _controlScroll.ReflectScrolledClipView(_controlScroll.ContentView);
             }
-            double dragHeight = row ? 44 : 24;
-            // 拖动区必须绕开筛选条的全部可点控件：右区从最后一个控件（相似聚类 toggle）右边缘起，
-            // 否则悬停显隐的拖动层会盖住 toggle，让它"有时可点、有时不可点"。
-            double dragStart = row && fileSize > 0 ? (double)_sort.Frame.X : width;
-            double dragEnd = row && fileSize > 0
+            // SHELL-02：标题栏覆盖层高 shell.titlebar.height，不占布局高度。行布局且文件栏可见时只留左右两段、
+            // 中间挖空筛选条的全部可点控件（右段从相似聚类 toggle 右缘起，否则悬停显隐的拖动层会盖住 toggle，
+            // 让它"有时可点、有时不可点"）；列布局和文件栏隐藏都是一条通栏带。
+            double titlebarHeight = DesignTokens.ShellTitlebarHeight;
+            bool fileBarRow = row && fileSize > 0;
+            double dragStart = fileBarRow ? (double)_sort.Frame.X : width;
+            double dragEnd = fileBarRow
                 ? (double)_similarityToggle.Frame.X + (double)_similarityToggle.Frame.Width
                 : width;
-            _dragLeft.Frame = new CGRect(0, 0, dragStart, dragHeight);
-            _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), dragHeight);
+            _dragLeft.Frame = new CGRect(0, 0, dragStart, titlebarHeight);
+            _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), titlebarHeight);
+            // 毛玻璃背景只在有背景的模式出现：行布局文件栏可见时中间是筛选条挖空，没有背景；
+            // 列布局（盖住文件栏）与文件栏隐藏都是整幅宽通栏带。背景层永远整幅宽，靠显隐切换。
+            _titlebarBackdrop = !fileBarRow;
+            _titlebarMaterial.Frame = new CGRect(0, 0, width, titlebarHeight);
+            ArrangeTitlebarTitle(fileBarRow ? dragStart : width, titlebarHeight);
+            ApplyTitlebarVisibility();
             UpdateViewport();
             ReportVisible();
             UpdateRatingSourcesAnchor(_lastRootSize != _root.Bounds.Size || previousFilmstripFrame != _scroll.Frame);
             _lastRootSize = _root.Bounds.Size;
         }
         finally { _layingOut = false; }
+    }
+
+    /// <summary>系统全屏态：全屏没有自绘标题栏，顶部交给系统（SHELL-02/03）。</summary>
+    private bool IsFullScreen => Window.StyleMask.HasFlag(FullScreenStyleBit);
+
+    /// <summary>SHELL-02：标题栏显隐。只在指针进入顶边热区且窗口为 key 时显示；系统全屏下永不显示。</summary>
+    /// <param name="visible">调用方判定的显隐意图。</param>
+    private void SetTitlebarVisible(bool visible)
+    {
+        bool show = visible && !IsFullScreen;
+        if (_titlebarShown == show) return;
+        _titlebarShown = show;
+        ApplyTitlebarVisibility();
+    }
+
+    /// <summary>拖动区、毛玻璃背景与标题文字同步显隐：背景只给有背景的模式，文字只在放得下时出现。</summary>
+    private void ApplyTitlebarVisibility()
+    {
+        _dragLeft.Hidden = !_titlebarShown;
+        _dragRight.Hidden = !_titlebarShown;
+        _titlebarMaterial.Hidden = !_titlebarShown || !_titlebarBackdrop;
+        _titleLabel.Hidden = !_titlebarShown || !_titlebarTitleFits;
+    }
+
+    /// <summary>
+    /// SHELL-02：标题文字左缘距最右交通灯右缘 <see cref="DesignTokens.ShellTitlebarTitleLeftInset"/>，中线对齐交通灯中线；
+    /// 右缘止于筛选挖空（行布局）或窗口右缘前同样 12 点，可用宽度不足 24 点即隐藏。交通灯不移动、不重绘。
+    /// </summary>
+    /// <param name="bandEnd">行布局通栏带的右端（筛选挖空左缘）；其余模式传窗口宽。</param>
+    /// <param name="titlebarHeight">标题栏高。</param>
+    private void ArrangeTitlebarTitle(double bandEnd, double titlebarHeight)
+    {
+        var font = _titleLabel.Font;
+        double lineHeight = font == null ? titlebarHeight
+            : Math.Ceiling((double)font.Ascender - (double)font.Descender + (double)font.Leading);
+        double left = 0, centre = titlebarHeight / 2;
+        var zoom = TrafficLightInRoot(NSWindowButton.ZoomButton);
+        if (!zoom.IsEmpty)
+        {
+            left = (double)zoom.X + (double)zoom.Width;
+            centre = (double)zoom.Y + (double)zoom.Height / 2;
+        }
+        left += DesignTokens.ShellTitlebarTitleLeftInset;
+        double available = bandEnd - DesignTokens.ShellTitlebarTitleLeftInset - left;
+        _titlebarTitleFits = available >= TitlebarTitleMinWidth;
+        _titleLabel.Frame = new CGRect(left, centre - lineHeight / 2, Math.Max(0, available), lineHeight);
+    }
+
+    /// <summary>系统窗口按钮在根视图（顶部为原点）坐标系里的矩形；按钮缺失时返回空矩形，不改动其位置与样式。</summary>
+    /// <param name="button">系统窗口按钮种类。</param>
+    private CGRect TrafficLightInRoot(NSWindowButton button)
+    {
+        var view = Window.StandardWindowButton(button);
+        if (view == null) return CGRect.Empty;
+        // 交通灯 frame 在窗口 frame view 里：先换成窗口基坐标（目标视图为 null），再换成根视图坐标。
+        return _root.ConvertRectFromView(view.ConvertRectToView(view.Bounds, null), null);
+    }
+
+    /// <summary>SHELL-02：标题文字同时写入系统窗口标题（任务栏、窗口菜单、调度中心读取）与自绘标题栏。</summary>
+    /// <param name="title">窗口标题。</param>
+    private void SetWindowTitle(string title)
+    {
+        Window.Title = title;
+        _titleLabel.StringValue = title;
     }
 
     /// <summary>
@@ -810,7 +911,7 @@ public sealed class MacMainWindow : IDisposable
             _observedFile = _main.CurrentFile;
             if (_observedFile != null) _observedFile.PropertyChanged += OnCurrentFileChanged;
             Session.SetFile(_main.CurrentFile?.File);
-            Window.Title = _main.CurrentFile?.Name ?? "PhotoViewer";
+            SetWindowTitle(_main.CurrentFile?.Name ?? "PhotoViewer");
             HideDetailHighlight();
             BuildControls();
             UpdateMenuChecks();
@@ -1395,11 +1496,27 @@ public sealed class MacMainWindow : IDisposable
         public override NSView? HitTest(CGPoint aPoint) => null;
     }
 
-    /// <summary>顶边悬停才显示的透明拖动区，上下布局中间留空给筛选控件。</summary>
+    /// <summary>SHELL-02：标题栏毛玻璃背景（系统 Titlebar 材质、窗口内混合、深色外观），只作背景、不参与命中。</summary>
+    private sealed class TitlebarBackdrop : NSVisualEffectView
+    {
+        /// <summary>固定深色外观，材质与混合方式取系统原生定义，不另调色值。</summary>
+        public TitlebarBackdrop()
+        {
+            Material = NSVisualEffectMaterial.Titlebar;
+            BlendingMode = NSVisualEffectBlendingMode.WithinWindow;
+            State = NSVisualEffectState.Active;
+            Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua);
+            Hidden = true;
+        }
+        /// <summary>背景永不接管鼠标，命中一律落到下层拖动区。</summary>
+        public override NSView? HitTest(CGPoint aPoint) => null;
+    }
+
+    /// <summary>顶边悬停才显示的透明拖动区，上下布局中间留空给筛选控件；底色由标题栏背景层或内容本身提供。</summary>
     private sealed class DragZone : NSView
     {
-        /// <summary>默认收起，不占用布局高度。</summary>
-        public DragZone() { Hidden = true; WantsLayer = true; Layer!.BackgroundColor = NSColor.FromWhite(.08f, .55f).CGColor; }
+        /// <summary>默认收起，不占用布局高度，也不自绘底色。</summary>
+        public DragZone() { Hidden = true; }
         internal Func<NSEvent, bool>? DoubleClick { get; set; }
         /// <summary>真实原生命中后处理拖动与标题栏双击，不在窗口事件监视器中抢占系统命中。</summary>
         public override void MouseDown(NSEvent theEvent)

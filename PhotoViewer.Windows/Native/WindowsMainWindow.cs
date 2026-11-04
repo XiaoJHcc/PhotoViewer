@@ -32,7 +32,7 @@ using Windows.UI;
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 原生主窗口:Windows 系统标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
+/// 原生主窗口:悬停显示的标题栏 + 四分区(文件栏 / 主图 / 控制栏)两向布局
 /// (契约 SHELL-01/02)。几何常量取自 <see cref="WindowsLayout"/>,方向切换只重排既有控件实例。
 /// </summary>
 internal sealed partial class WindowsMainWindow : Window
@@ -75,8 +75,21 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly Rectangle _detailHighlight;
     private readonly Canvas _highlightLayer;
     private readonly KeyEventHandler _previewKeyHandler;
+    private readonly PointerEventHandler _rootPointerMoved;
+    private readonly PointerEventHandler _rootPointerExited;
+    private readonly WindowsTitleBar _titleBar;
 
     private Microsoft.UI.Dispatching.DispatcherQueueTimer? _statusTimer;
+    private string _windowTitle = AppTitle;
+    private bool _closed;
+    private XamlRoot? _xamlRoot;
+    private InputNonClientPointerSource? _nonClientSource;
+    private bool _pointerInside;
+    private double _pointerY = double.NaN;
+    private bool _nonClientHover;
+    private bool _moveSizeActive;
+    private bool _windowActive = true;
+    private string _captionKey = string.Empty;
     private Rect? _detailHighlightUv;
     private bool _isRowLayout = true;
     private bool _sized;
@@ -96,6 +109,8 @@ internal sealed partial class WindowsMainWindow : Window
         _main = main;
         _viewState = viewState;
         _previewKeyHandler = OnPreviewKeyDown;
+        _rootPointerMoved = OnRootPointerMoved;
+        _rootPointerExited = OnRootPointerExited;
         Title = AppTitle;
 
         _photo = new WindowsPhotoView();
@@ -234,6 +249,7 @@ internal sealed partial class WindowsMainWindow : Window
         _rowHost = new Grid();
         _colHost = new Grid();
         _contextMenu = BuildContextMenu();
+        _titleBar = new WindowsTitleBar(BuildWindowTitle(), ToggleFullScreenWindow, MinimizeWindow, ToggleMaximizeWindow, Close);
 
         _root = new Grid
         {
@@ -247,12 +263,16 @@ internal sealed partial class WindowsMainWindow : Window
         _filterBar.PopupOpening += _ratingSources.Close;
         _root.Children.Add(_rowHost);
         _root.Children.Add(_colHost);
+        _root.Children.Add(_titleBar.Root);
         Content = _root;
 
         _root.Loaded += OnRootLoaded;
         _root.SizeChanged += OnRootSizeChanged;
         // 快捷键在根元素预处置:冒泡阶段的焦点路径(ScrollViewer/按钮先处理方向键等)不再决定快捷键是否生效。
         _root.AddHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler, handledEventsToo: true);
+        // 标题栏显隐只靠指针位置;主图/控件会吃掉 PointerMoved,因此在根元素用 handledEventsToo 收。
+        _root.AddHandler(UIElement.PointerMovedEvent, _rootPointerMoved, handledEventsToo: true);
+        _root.AddHandler(UIElement.PointerExitedEvent, _rootPointerExited, handledEventsToo: true);
         Activated += OnWindowActivated;
         _photoHost.PointerWheelChanged += OnPhotoWheel;
         _root.DragOver += OnDragOver;
@@ -299,7 +319,19 @@ internal sealed partial class WindowsMainWindow : Window
     /// </summary>
     public void Detach()
     {
+        // 关窗后仍可能收到一次 Activated(失活):此时任何 Window 属性都会抛 COMException,统一由该标志挡住。
+        _closed = true;
+        Activated -= OnWindowActivated;
+        if (_xamlRoot != null)
+        {
+            _xamlRoot.Changed -= OnXamlRootChanged;
+        }
+
         _root.RemoveHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler);
+        _root.RemoveHandler(UIElement.PointerMovedEvent, _rootPointerMoved);
+        _root.RemoveHandler(UIElement.PointerExitedEvent, _rootPointerExited);
+        _filterBar.SizeChanged -= OnFilterBarSizeChanged;
+        DetachNonClientPointerSource();
         _filterBar.PopupOpening -= _ratingSources.Close;
         _ratingSources.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
@@ -529,17 +561,28 @@ internal sealed partial class WindowsMainWindow : Window
         FontSize = DesignTokens.MenuIconSize,
     };
 
-    /// <summary>使用 Windows 系统标题栏与系统窗口按钮，拖动、圆角和非客户区命中全部由系统处理。</summary>
+    /// <summary>
+    /// 去掉系统标题栏、保留系统边框与缩放边缘(SHELL-02):内容顶到窗口上边缘,
+    /// 拖动区由登记的系统 caption 承担,窗口按钮自绘。全屏态由 <see cref="ToggleFullScreenWindow"/> 去掉边框。
+    /// </summary>
     private void ConfigureTitleBar()
     {
         if (AppWindow.Presenter is not OverlappedPresenter presenter)
         {
-            throw new InvalidOperationException("原生壳要求 OverlappedPresenter,无法配置系统标题栏。");
+            throw new InvalidOperationException("原生壳要求 OverlappedPresenter,无法配置悬停标题栏。");
         }
 
-        ExtendsContentIntoTitleBar = false;
-        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
-        NativeStartupLog.Write("title bar: 使用 Windows 系统标题栏");
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
+        NativeStartupLog.Write("title bar: 系统标题栏已移除,使用悬停显示的自绘标题栏");
+    }
+
+    /// <summary>最小化窗口(自绘最小化按钮;全屏态保持全屏,由系统还原时同步)。</summary>
+    private void MinimizeWindow()
+    {
+        if (AppWindow.Presenter is OverlappedPresenter presenter)
+        {
+            presenter.Minimize();
+        }
     }
 
     /// <summary>最大化 / 还原窗口(全屏态下先退出全屏)。</summary>
@@ -584,20 +627,24 @@ internal sealed partial class WindowsMainWindow : Window
         presenter.SetBorderAndTitleBar(hasBorder: false, hasTitleBar: false);
         presenter.Maximize();
         _isFullScreen = true;
+        SyncTitleBarState();
+        UpdateTitleBarChrome();
     }
 
-    /// <summary>退出全屏,恢复系统边框与标题栏。</summary>
+    /// <summary>退出全屏,恢复系统边框与可缩放窗口(系统标题栏仍保持移除)。</summary>
     /// <param name="presenter">窗口呈现器</param>
     private void ExitFullScreen(OverlappedPresenter presenter)
     {
         // 先落标志再动窗口:SetBorderAndTitleBar/Restore 会同步触发 AppWindow.Changed,
         // 标志还停在"全屏"时同步逻辑会重复设置边框。
         _isFullScreen = false;
-        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
         presenter.Restore();
+        SyncTitleBarState();
+        UpdateTitleBarChrome();
     }
 
-    /// <summary>系统还原全屏窗口时同步恢复系统边框与标题栏。</summary>
+    /// <summary>系统还原全屏窗口时同步恢复系统边框与缩放边缘。</summary>
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
         if (!args.DidPresenterChange && !args.DidSizeChange && !args.DidVisibilityChange)
@@ -606,6 +653,8 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         SyncFullScreenWithPresenter();
+        SyncTitleBarState();
+        UpdateTitleBarChrome();
     }
 
     private void SyncFullScreenWithPresenter()
@@ -621,7 +670,7 @@ internal sealed partial class WindowsMainWindow : Window
         }
 
         _isFullScreen = false;
-        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: true);
+        presenter.SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false);
     }
 
     /// <summary>
@@ -656,6 +705,18 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>窗口首次布局完成后设定初始尺寸并让根元素获得键盘焦点。</summary>
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
+        if (_xamlRoot == null)
+        {
+            // 跨屏/缩放变化时逻辑尺寸可能不变,只能从 XamlRoot.Changed 拿到新的物理倍率。
+            _xamlRoot = _root.XamlRoot;
+            if (_xamlRoot != null)
+            {
+                _xamlRoot.Changed += OnXamlRootChanged;
+            }
+
+            _filterBar.SizeChanged += OnFilterBarSizeChanged;
+        }
+
         if (!_sized)
         {
             _sized = true;
@@ -672,15 +733,28 @@ internal sealed partial class WindowsMainWindow : Window
 
         _root.Focus(FocusState.Programmatic);
         ApplyWindowIcon();
+        SyncTitleBarState();
+        UpdateTitleBarChrome();
     }
 
-    /// <summary>窗口尺寸变化:同步方向判定与相似面板宽度。</summary>
+    /// <summary>窗口尺寸变化:同步方向判定、相似面板宽度与标题栏跨度/拖动区。</summary>
     private void OnRootSizeChanged(object sender, SizeChangedEventArgs e)
     {
         _ratingSources.Close();
         _main.UpdateScreenOrientation(e.NewSize.Width, e.NewSize.Height);
         UpdateSimilarityWidth();
+        UpdateTitleBarChrome();
     }
+
+    /// <summary>跨屏栅格化比例变化时重算物理拖动区,即使逻辑窗口尺寸不变。</summary>
+    /// <param name="sender">当前 XAML 根</param>
+    /// <param name="args">根布局变化参数</param>
+    private void OnXamlRootChanged(XamlRoot sender, XamlRootChangedEventArgs args) => UpdateTitleBarChrome();
+
+    /// <summary>筛选条完成换向布局后重算筛选挖空与标题可用宽,避免使用布局前的旧尺寸。</summary>
+    /// <param name="sender">筛选条</param>
+    /// <param name="args">布局尺寸变化参数</param>
+    private void OnFilterBarSizeChanged(object sender, SizeChangedEventArgs args) => UpdateTitleBarChrome();
 
     /// <summary>按当前方向重排三个分区。</summary>
     private void ApplyLayout()
@@ -766,6 +840,7 @@ internal sealed partial class WindowsMainWindow : Window
             _main.UpdateScreenOrientation(_root.ActualWidth, _root.ActualHeight);
         }
 
+        UpdateTitleBarChrome();
     }
 
     /// <summary>栏位显隐(跨会话持久化 SHELL-04;分析栏仍为会话态)。</summary>
@@ -788,6 +863,7 @@ internal sealed partial class WindowsMainWindow : Window
             }
 
             UpdateSimilarityWidth();
+            UpdateTitleBarChrome();
             SaveUiPreferences();
         }
         catch (Exception ex)
@@ -842,24 +918,456 @@ internal sealed partial class WindowsMainWindow : Window
             or nameof(SimilarityPanelViewModel.ShowActionArea))
         {
             UpdateSimilarityWidth();
+            UpdateTitleBarChrome();
         }
     }
 
-    /// <summary>窗口失活时撤掉分析栏绿框；激活后设置真实窗口图标。</summary>
+    /// <summary>窗口失焦收起标题栏并撤掉分析栏绿框;重新激活后设真实窗口图标。</summary>
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)
     {
+        if (_closed)
+        {
+            return;
+        }
+
         if (e.WindowActivationState == WindowActivationState.Deactivated)
         {
             HandleWindowDeactivated();
             return;
         }
 
+        _windowActive = true;
+        RefreshTitleBarVisibility();
         ApplyWindowIcon();
     }
 
     internal void SimulateWindowDeactivatedForAcceptance() => HandleWindowDeactivated();
 
-    private void HandleWindowDeactivated() => _analysis.ClearPreviewHighlight();
+    /// <summary>验收:恢复活动态(真实路径由 <c>Activated</c> 事件驱动)。</summary>
+    internal void SimulateWindowActivatedForAcceptance()
+    {
+        _windowActive = true;
+        RefreshTitleBarVisibility();
+    }
+
+    private void HandleWindowDeactivated()
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        _windowActive = false;
+        _nonClientHover = false;
+        _moveSizeActive = false;
+        RefreshTitleBarVisibility();
+        _analysis.ClearPreviewHighlight();
+    }
+
+    /// <summary>指针在内容区移动:进入顶部热区显示标题栏,移出热区收起。</summary>
+    /// <param name="sender">根元素</param>
+    /// <param name="e">指针事件参数</param>
+    private void OnRootPointerMoved(object sender, PointerRoutedEventArgs e)
+    {
+        var position = e.GetCurrentPoint(_root).Position;
+        _pointerY = position.Y;
+        _pointerInside = position.X >= 0 && position.Y >= 0
+            && position.X <= _root.ActualWidth && position.Y <= _root.ActualHeight;
+        // 内容区收到了该位置的移动 ⇒ 指针不在（高度只有一条标题栏的）caption 带里。
+        if (_pointerY > WindowsLayout.TitleBarHeight)
+        {
+            _nonClientHover = false;
+        }
+
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>
+    /// 指针离开根元素:去往 caption 非客户区(位置仍在内容区内)不算离开窗口,
+    /// 真正移出窗口才收起标题栏;位置落在热区内时保持显示。
+    /// </summary>
+    /// <param name="sender">根元素</param>
+    /// <param name="e">指针事件参数</param>
+    private void OnRootPointerExited(object sender, PointerRoutedEventArgs e)
+    {
+        var position = e.GetCurrentPoint(_root).Position;
+        _pointerInside = position.X >= 0 && position.Y >= 0
+            && position.X <= _root.ActualWidth && position.Y <= _root.ActualHeight;
+        if (_pointerInside)
+        {
+            _pointerY = position.Y;
+        }
+        else
+        {
+            _nonClientHover = false;
+        }
+
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>
+    /// 主窗口的非客户区输入源:登记 caption 拖动区,并收非客户区的指针/拖动事件。
+    /// </summary>
+    private InputNonClientPointerSource? NonClientSource
+    {
+        get
+        {
+            if (_nonClientSource != null)
+            {
+                return _nonClientSource;
+            }
+
+            try
+            {
+                _nonClientSource = InputNonClientPointerSource.GetForWindowId(AppWindow.Id);
+            }
+            catch (Exception ex)
+            {
+                NativeStartupLog.Fail("取得非客户区输入源失败", ex);
+                return null;
+            }
+
+            AttachNonClientPointerSource(_nonClientSource);
+            return _nonClientSource;
+        }
+    }
+
+    /// <summary>
+    /// 非客户区指针事件:<paramref name="source"/> 上的进入/离开/移动在 caption 区域上替代 XAML 指针事件,
+    /// 拖动或缩放循环期间也维持标题栏可见。
+    /// </summary>
+    /// <param name="source">非客户区输入源</param>
+    private void AttachNonClientPointerSource(InputNonClientPointerSource source)
+    {
+        source.PointerEntered += OnNonClientPointerEntered;
+        source.PointerMoved += OnNonClientPointerMoved;
+        source.PointerExited += OnNonClientPointerExited;
+        source.EnteredMoveSize += OnEnteredMoveSize;
+        source.ExitedMoveSize += OnExitedMoveSize;
+    }
+
+    /// <summary>脱离非客户区输入源的事件订阅(关窗时调用)。</summary>
+    private void DetachNonClientPointerSource()
+    {
+        if (_nonClientSource == null)
+        {
+            return;
+        }
+
+        _nonClientSource.PointerEntered -= OnNonClientPointerEntered;
+        _nonClientSource.PointerMoved -= OnNonClientPointerMoved;
+        _nonClientSource.PointerExited -= OnNonClientPointerExited;
+        _nonClientSource.EnteredMoveSize -= OnEnteredMoveSize;
+        _nonClientSource.ExitedMoveSize -= OnExitedMoveSize;
+        _nonClientSource = null;
+    }
+
+    /// <summary>指针进入 caption 区域:继续显示标题栏(此时 XAML 可能已经报 PointerExited)。</summary>
+    /// <param name="sender">非客户区输入源</param>
+    /// <param name="args">非客户区指针参数</param>
+    private void OnNonClientPointerEntered(InputNonClientPointerSource sender, NonClientPointerEventArgs args)
+    {
+        if (args.RegionKind != NonClientRegionKind.Caption)
+        {
+            return;
+        }
+
+        _nonClientHover = true;
+        _pointerInside = true;
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>指针在 caption 区域内移动:只在还没记成"在拖动区上"时补一次状态。</summary>
+    /// <param name="sender">非客户区输入源</param>
+    /// <param name="args">非客户区指针参数</param>
+    private void OnNonClientPointerMoved(InputNonClientPointerSource sender, NonClientPointerEventArgs args)
+    {
+        if (args.RegionKind != NonClientRegionKind.Caption || _nonClientHover)
+        {
+            return;
+        }
+
+        _nonClientHover = true;
+        _pointerInside = true;
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>指针离开 caption 区域:按真实光标位置判定仍在窗口内还是已经移出。</summary>
+    /// <param name="sender">非客户区输入源</param>
+    /// <param name="args">非客户区指针参数</param>
+    private void OnNonClientPointerExited(InputNonClientPointerSource sender, NonClientPointerEventArgs args)
+    {
+        if (args.RegionKind != NonClientRegionKind.Caption)
+        {
+            return;
+        }
+
+        _nonClientHover = false;
+        SyncPointerFromCursor();
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>进入系统拖动/缩放循环:整个循环期间标题栏保持可见。</summary>
+    /// <param name="sender">非客户区输入源</param>
+    /// <param name="args">拖动循环参数</param>
+    private void OnEnteredMoveSize(InputNonClientPointerSource sender, EnteredMoveSizeEventArgs args)
+    {
+        _moveSizeActive = true;
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>拖动/缩放循环结束:按真实光标位置重算显隐,并按新窗口几何重登记拖动区。</summary>
+    /// <param name="sender">非客户区输入源</param>
+    /// <param name="args">拖动循环参数</param>
+    private void OnExitedMoveSize(InputNonClientPointerSource sender, ExitedMoveSizeEventArgs args)
+    {
+        _moveSizeActive = false;
+        SyncPointerFromCursor();
+        RefreshTitleBarVisibility();
+        UpdateTitleBarChrome();
+    }
+
+    /// <summary>
+    /// 用系统光标位置补正指针状态:指针在非客户区时 XAML 不再报移动,
+    /// 只有光标位置能判定"仍在窗口内 / 已移出窗口"。
+    /// </summary>
+    private void SyncPointerFromCursor()
+    {
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        if (hwnd == IntPtr.Zero || !GetCursorPos(out var point) || !ScreenToClient(hwnd, ref point))
+        {
+            _pointerInside = false;
+            return;
+        }
+
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var x = point.X / scale;
+        _pointerY = point.Y / scale;
+        _pointerInside = x >= 0 && _pointerY >= 0 && x <= _root.ActualWidth && _pointerY <= _root.ActualHeight;
+    }
+
+    /// <summary>
+    /// 标题栏显隐(SHELL-02):指针在顶部热区、停在已登记的拖动区上或正在拖动/缩放时可见;
+    /// 移出热区、离开窗口或窗口失焦即收起,不播放过渡动画。显隐不变时只做一次比较(指针移动是热路径)。
+    /// </summary>
+    private void RefreshTitleBarVisibility()
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        var visible = _windowActive
+            && (_moveSizeActive || _nonClientHover
+                || (_pointerInside && _pointerY <= WindowsLayout.TitleBarHotZoneHeight));
+        if (_titleBar.IsVisible == visible)
+        {
+            return;
+        }
+
+        _titleBar.SetVisible(visible);
+        UpdateTitleBarChrome();
+    }
+
+    /// <summary>验收:按指针位置驱动同一条显隐判定(热区外、离开窗口都必须收起)。</summary>
+    /// <param name="inside">指针是否在窗口内</param>
+    /// <param name="y">指针在内容坐标内的 Y</param>
+    internal void SimulateTitleBarPointerForAcceptance(bool inside, double y)
+    {
+        _windowActive = true;
+        _moveSizeActive = false;
+        _nonClientHover = false;
+        _pointerInside = inside;
+        _pointerY = y;
+        RefreshTitleBarVisibility();
+    }
+
+    /// <summary>
+    /// 标题栏跨度、背景与标题可用宽(SHELL-02):列布局从文件栏右缘(含相似面板扩宽)到窗口右缘并铺亚克力;
+    /// 行布局整宽无背景、只挖空筛选条可点控件;文件栏隐藏时整宽带亚克力。
+    /// </summary>
+    private void UpdateTitleBarChrome()
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        _titleBar.SetTitle(_windowTitle);
+        if (_root.ActualWidth <= 0 || _root.ActualHeight <= 0)
+        {
+            return;
+        }
+
+        var fileBarVisible = _main.IsThumbnailViewVisible;
+        var left = fileBarVisible && !_isRowLayout ? FilePaneRightEdge() : 0;
+        _titleBar.SetSpan(left, showBackground: !(fileBarVisible && _isRowLayout));
+
+        // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局再让出筛选条可点控件。
+        var titleRightEdge = _titleBar.GetButtonsLeft(_root);
+        if (fileBarVisible && _isRowLayout)
+        {
+            titleRightEdge = _filterBar.GetInteractiveBounds(_root).X;
+        }
+
+        _titleBar.SetTitleMaxWidth(
+            titleRightEdge - left - WindowsLayout.TitleBarTitleInset * 2);
+        UpdateCaptionRegions();
+    }
+
+    /// <summary>列布局文件栏右缘(含相似面板扩宽与分隔线)在内容坐标内的位置。</summary>
+    /// <returns>右缘 DIP;文件栏未布局时为 0</returns>
+    private double FilePaneRightEdge()
+    {
+        if (_filePaneFrame.ActualWidth <= 0)
+        {
+            return 0;
+        }
+
+        try
+        {
+            return _filePaneFrame.TransformToVisual(_root).TransformPoint(new Point(0, 0)).X
+                + _filePaneFrame.ActualWidth;
+        }
+        catch (Exception)
+        {
+            // 尚未进入可视树时退回零偏移:文件栏在主轴首位,ActualWidth 即右缘。
+            return _filePaneFrame.ActualWidth;
+        }
+    }
+
+    /// <summary>
+    /// 拖动区(SHELL-02):只在标题栏可见且非全屏时登记 caption 非客户区,
+    /// 排除窗口按钮与行布局的筛选挖空;隐藏或全屏时登记零面积区域,顶部不拦截点击与双击。
+    /// </summary>
+    private void UpdateCaptionRegions()
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        var source = NonClientSource;
+        if (source == null)
+        {
+            return;
+        }
+
+        var rects = BuildCaptionRects(_root.XamlRoot?.RasterizationScale ?? 1.0);
+        var key = CaptionKey(rects);
+        if (key == _captionKey)
+        {
+            return;
+        }
+
+        _captionKey = key;
+        source.SetRegionRects(NonClientRegionKind.Caption, rects);
+    }
+
+    /// <summary>
+    /// 无拖动区时登记的零面积矩形:WinAppSDK 清空 caption 区域后会退回系统默认的整幅宽 caption 带
+    /// (顶部又变成可拖动),因此隐藏与全屏态显式登记一条零面积 caption —— 命中面积为零,点击落回内容。
+    /// </summary>
+    private static readonly RectInt32[] NoCaptionRects = { new(0, 0, 0, 0) };
+
+    /// <summary>按当前布局算出 caption 区域的物理像素矩形。</summary>
+    /// <param name="scale">物理倍率</param>
+    /// <returns>矩形集合;隐藏或全屏时为零面积矩形</returns>
+    private RectInt32[] BuildCaptionRects(double scale)
+    {
+        if (!_titleBar.IsVisible || _isFullScreen || _root.ActualWidth <= 0 || _root.ActualHeight <= 0)
+        {
+            return NoCaptionRects;
+        }
+
+        var width = (int)Math.Round(_root.ActualWidth * scale);
+        var height = (int)Math.Round(Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight) * scale);
+        if (width <= 0 || height <= 0)
+        {
+            return NoCaptionRects;
+        }
+
+        var leftEdge = (int)Math.Clamp(Math.Round(_titleBar.Left * scale), 0, width);
+        var buttonLeft = (int)Math.Clamp(Math.Round(_titleBar.GetButtonsLeft(_root) * scale), 0, width);
+        if (buttonLeft <= leftEdge)
+        {
+            return NoCaptionRects;
+        }
+
+        if (_main.IsThumbnailViewVisible && _isRowLayout)
+        {
+            var bounds = _filterBar.GetInteractiveBounds(_root);
+            var cutLeft = (int)Math.Clamp(Math.Floor(bounds.X * scale), leftEdge, buttonLeft);
+            var cutRight = (int)Math.Clamp(Math.Ceiling((bounds.X + bounds.Width) * scale), cutLeft, buttonLeft);
+            var segments = new List<RectInt32>(2);
+            if (cutLeft > leftEdge)
+            {
+                segments.Add(new RectInt32(leftEdge, 0, cutLeft - leftEdge, height));
+            }
+
+            if (buttonLeft > cutRight)
+            {
+                segments.Add(new RectInt32(cutRight, 0, buttonLeft - cutRight, height));
+            }
+
+            return segments.ToArray();
+        }
+
+        return new[] { new RectInt32(leftEdge, 0, buttonLeft - leftEdge, height) };
+    }
+
+    /// <summary>拖动区的比较键(指针移动热路径上避免重复登记)。</summary>
+    /// <param name="rects">矩形集合</param>
+    /// <returns>可比较的字符串</returns>
+    private static string CaptionKey(RectInt32[] rects)
+    {
+        var builder = new System.Text.StringBuilder(rects.Length * 20);
+        foreach (var rect in rects)
+        {
+            builder.Append(rect.X).Append(',').Append(rect.Y).Append(',')
+                .Append(rect.Width).Append(',').Append(rect.Height).Append(';');
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>窗口按钮字形与提示跟随窗口态(最大化/还原、全屏/退出全屏)。</summary>
+    private void SyncTitleBarState()
+    {
+        if (_closed)
+        {
+            return;
+        }
+
+        var maximized = AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Maximized };
+        _titleBar.SetWindowState(_isFullScreen, maximized);
+    }
+
+    /// <summary>光标位置(屏幕物理像素)。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativePoint
+    {
+        /// <summary>屏幕 X。</summary>
+        public int X;
+
+        /// <summary>屏幕 Y。</summary>
+        public int Y;
+    }
+
+    /// <summary>取系统光标位置。</summary>
+    /// <param name="point">屏幕物理像素坐标</param>
+    /// <returns>成功返回 true</returns>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetCursorPos(out NativePoint point);
+
+    /// <summary>屏幕坐标 → 客户区坐标(Per-Monitor-V2 下为物理像素)。</summary>
+    /// <param name="hwnd">窗口句柄</param>
+    /// <param name="point">待换算的点</param>
+    /// <returns>成功返回 true</returns>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ScreenToClient(IntPtr hwnd, ref NativePoint point);
 
     /// <summary>当前照片或布局变化:换图、换向、刷新提示与窗口标题。</summary>
     private void OnMainChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
@@ -898,12 +1406,22 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 窗口标题(SHELL-02):<c>文件夹名 - 文件名 - PhotoViewer</c>。
+    /// 窗口标题(SHELL-02):<c>文件夹名 - 文件名 - PhotoViewer</c>。标题栏文字与系统窗口标题
+    /// (任务栏/窗口菜单/调度中心读它)始终是同一个字符串。
     /// 无当前文件时只显示应用名;文件夹段与文件段同名时只出现一次,
     /// 应用名始终保留为最后一段(文件夹恰好叫 PhotoViewer 时标题是
     /// <c>PhotoViewer - 文件名 - PhotoViewer</c>)。
     /// </summary>
-    private void UpdateWindowTitle() => Title = BuildWindowTitle();
+    private void UpdateWindowTitle()
+    {
+        _windowTitle = BuildWindowTitle();
+        if (!_closed)
+        {
+            Title = _windowTitle;
+        }
+
+        _titleBar.SetTitle(_windowTitle);
+    }
 
     /// <summary>按当前目录与当前文件拼窗口标题。</summary>
     /// <returns>标题文案。</returns>

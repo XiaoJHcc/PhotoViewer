@@ -97,12 +97,31 @@ test("FILTER-07：列布局五控件纵向排列、居中，计数按自然宽�
     assert.equal(web.bar.h, 180);
     assert.equal(layout().film.scroll.y, 180);
 
+    // 列布局首控件让位标题栏与交通灯：shell.filter.leadingInset = shell.titlebar.height + filter.margin。
+    const macInset = mac("shell.filter.leadingInset");
+    const macControlPitch = 32 + 5;
+    const macToggleY = macInset + 3 * macControlPitch + 17 + 5;
+    const macBarHeight = macToggleY + 27 + mac("filter.margin");
     const macLayout = layout({}, mac, "mac").filter;
-    assert.equal(macLayout.controls.sort.y, 34);
-    assert.equal(macLayout.controls.count.y, 145);
-    assert.equal(macLayout.controls.toggle.y, 167);
-    assert.equal(macLayout.bar.h, 204);
-    assert.equal(layout({}, mac, "mac").film.scroll.y, 204);
+    assert.equal(macLayout.controls.sort.y, macInset);
+    assert.equal(macLayout.controls.count.y, macInset + 3 * macControlPitch);
+    assert.equal(macLayout.controls.toggle.y, macToggleY);
+    assert.equal(macLayout.bar.h, macBarHeight);
+    assert.equal(layout({}, mac, "mac").film.scroll.y, macBarHeight);
+});
+
+test("SHELL-02：mac 标题栏覆盖层高 shell.titlebar.height，列布局通栏、行布局无背景带", () => {
+    const height = mac("shell.titlebar.height");
+    const col = layout({ width: 1200, height: 850, layoutMode: "col" }, mac, "mac").overlays.dragzone;
+    assert.equal(col.height, height);
+    assert.deepEqual(col.rect, { x: 0, y: 0, w: 1200, h: height });
+
+    // 行布局文件栏可见时中间挖空筛选条，没有可测的背景矩形。
+    const row = layout({ width: 1200, height: 850, layoutMode: "row" }, mac, "mac").overlays.dragzone;
+    assert.equal(row.height, height);
+    assert.equal(row.rect, null);
+
+    assert.equal(layout({ layoutMode: "col" }).overlays.dragzone, null);
 });
 
 test("FILTER-07：行布局整组同排横居中，胶片栏在筛选条下方通栏", () => {

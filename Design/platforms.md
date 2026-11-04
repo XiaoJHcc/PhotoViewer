@@ -87,10 +87,11 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:27`、`PhotoViewer.Shared/MainScreenLayout.cs` + 真实安全区。
   - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs:574-628`（XAML Grid 五分区；栏宽与胶片带高经 `WindowsLayout` 取共享 `MainScreenLayout` / `FilmBandHeight`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeRootView.cs` + `AndroidMainScreenLayout`。
-  - **SHELL-01@mac**：列布局筛选条前导 34 让交通灯（已登记 10-18，见 FILTER-07）。
-- **SHELL-02**：标题栏与拖动区。
-  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs:111-115`（`FullSizeContentView`）、`:173-191`（顶部监视器）、`:223-246`（双击）、`:500-508`（拖动区）。
-  - Windows：`PhotoViewer.Windows/Native/WindowsMainWindow.cs` 使用系统非客户区标题栏与窗口按钮，普通窗口态为 `ExtendsContentIntoTitleBar = false` + `OverlappedPresenter.SetBorderAndTitleBar(true, true)`，不使用自绘标题栏、附属表层或自定义 caption；动态标题直接写 `Window.Title`。`icon.ico` 随普通输出复制并随单文件解包，激活后由 `AppWindow.SetIcon` 设置为真实窗口图标，供任务栏悬停浮窗读取。
+  - **SHELL-01@mac**：列布局筛选条前导 `shell.filter.leadingInset`（42）让开盖住文件栏的标题栏与交通灯（见 FILTER-07）。
+- **SHELL-02**：悬停标题栏与拖动区。
+  - macOS：`PhotoViewer.Mac/Native/MacMainWindow.cs` 窗口 `FullSizeContentView` + 隐藏系统标题文字，交通灯保持系统位置；顶边监视器驱动 `SetTitlebarVisible`，`Layout` 末段排布两段 `DragZone`、`TitlebarBackdrop`（`NSVisualEffectView`，`Titlebar` 材质、窗口内混合、命中透传）与标题标签（`titleBarFont`，按 Zoom 按钮右缘与中线定位）；`HandleTitlebarDoubleClick` 按 `AppleActionOnDoubleClick` 分派。
+  - Windows：`PhotoViewer.Windows/Native/WindowsTitleBar.cs`（标题文字、`AcrylicInAppFillColorDefaultBrush` 背景、四个 46×32 自绘窗口按钮与状态字形）+ `WindowsMainWindow.cs` 的 `ConfigureTitleBar`（`SetBorderAndTitleBar(true, false)`）、`RefreshTitleBarVisibility`（内容区与非客户区指针事件、拖动循环）、`UpdateTitleBarChrome`/`BuildCaptionRects`（跨度、背景、筛选挖空与 `InputNonClientPointerSource` caption 登记）。隐藏或全屏时登记一条零面积 caption：清空区域会让 WinAppSDK 退回整幅宽默认拖动带。动态标题同时写 `Window.Title` 与标题栏文字。`icon.ico` 随普通输出复制并随单文件解包，激活后由 `AppWindow.SetIcon` 设置为真实窗口图标，供任务栏悬停浮窗读取。
+  - **SHELL-02@win**：自绘最大化按钮不提供系统贴靠布局浮层；应用内亚克力在主图交换链上取不到模糊时按 WinUI 原生回退外观显示。
   - iOS：根控制器隐藏状态栏（`PrefersStatusBarHidden`），窗口级入口由主图长按菜单承担。
   - Android：`Theme.PhotoViewer.Native` 固定深色、edge-to-edge + insets，无标题栏双击语义。
   - **SHELL-02@ios / @android**：无窗口装饰与标题栏双击语义，属平台差异（已登记 10-18）。

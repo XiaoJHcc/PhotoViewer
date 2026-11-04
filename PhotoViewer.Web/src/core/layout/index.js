@@ -95,7 +95,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
         ? analysisGeometry({ axis, pane: panes.analysisPane, tileCount }, t)
         : null;
 
-    const overlays = createOverlays(t, profile, layout, panes);
+    const overlays = createOverlays(t, profile, layout, panes, width);
 
     const frames = cardFrames(t);
     const cards = [];
@@ -111,7 +111,7 @@ export function computeLayout(scene, { t, profile = "web", measureText = approxi
     return { layoutMode: layout, panes, filter, film, control, analysis, similarity, overlays, nodes };
 }
 
-function createOverlays(t, profile, layout, panes) {
+function createOverlays(t, profile, layout, panes, width) {
     const photoPane = panes.photoPane;
 
     function navigatorFrame(pane, thumbW, thumbH) {
@@ -185,13 +185,15 @@ function createOverlays(t, profile, layout, panes) {
         };
     }
 
+    // SHELL-02：macOS 标题栏是浮在内容之上的覆盖层，高 shell.titlebar.height。列布局盖住文件栏，
+    // 是铺满窗口宽的通栏带（带毛玻璃背景）；行布局没有背景带，只有挖空筛选条两侧的拖动区。
     const dragzone = profile === "mac"
         ? layout === "col"
             ? {
-                height: t("shell.dragzone.column.height"),
-                rect: { x: 0, y: 0, w: t("shell.filter.leadingInset"), h: t("shell.dragzone.column.height") },
+                height: t("shell.titlebar.height"),
+                rect: { x: 0, y: 0, w: width, h: t("shell.titlebar.height") },
             }
-            : { height: t("shell.dragzone.row.height"), rect: null }
+            : { height: t("shell.titlebar.height"), rect: null }
         : null;
 
     return { navigatorFrame, busyPillFrame, toastFrame, hintFrames, dragzone };

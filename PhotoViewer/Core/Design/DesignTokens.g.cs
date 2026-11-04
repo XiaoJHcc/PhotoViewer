@@ -175,6 +175,10 @@ public static class DesignTokens
     public const uint ColorTextPrimary = 0xFFEEEEEEu;
     /// <summary>color.text.secondary（color）：次要文字色；Apple 平台取系统次级文字色（G6-34@mac/@ios）。；平台语义：ios=system-secondary-label，macos=system-secondary-label</summary>
     public const uint ColorTextSecondary = 0xFFAAAAAAu;
+    /// <summary>color.titlebar.close.hover（color） SHELL-02：Windows 自绘关闭按钮悬停底色（Win11 系统 caption 关闭按钮同值），字形转白。</summary>
+    public const uint ColorTitlebarCloseHover = 0xFFC42B1Cu;
+    /// <summary>color.titlebar.close.pressed（color） SHELL-02：Windows 自绘关闭按钮按下底色（悬停色 90% 不透明）。</summary>
+    public const uint ColorTitlebarClosePressed = 0xE6C42B1Cu;
     /// <summary>color.toolbar.block.background（color） TOOLBAR-01：EXIF 信息块与评分分组底色。</summary>
     public const uint ColorToolbarBlockBackground = 0xFF222222u;
     /// <summary>color.toolbar.command.background（color） TOOLBAR-01：命令按钮底色。</summary>
@@ -509,14 +513,20 @@ public static class DesignTokens
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>
     public const double ShellDividerThickness = 1.0;
-    /// <summary>shell.dragzone.column.height（pt） SHELL-02：macOS 列布局顶边悬停拖动区高度（只覆盖交通灯左侧空带）。</summary>
-    public const double ShellDragzoneColumnHeight = 24.0;
-    /// <summary>shell.dragzone.row.height（pt） SHELL-02：macOS 行布局顶边悬停拖动区高度；拖动区绕开筛选条全部可点控件。</summary>
-    public const double ShellDragzoneRowHeight = 44.0;
     /// <summary>shell.filebar.content.width（pt） SHELL-01：文件栏内容宽（筛选条与胶片栏共用，分隔线另计 1）。</summary>
     public const double ShellFilebarContentWidth = 116.0;
-    /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位（隐藏标题栏交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
-    public const double ShellFilterLeadingInset = 34.0;
+    /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
+    public const double ShellFilterLeadingInset = 42.0;
+    /// <summary>shell.titlebar.button.glyphSize（pt） SHELL-02：Windows 窗口按钮 Segoe Fluent Icons 字形字号。</summary>
+    public const double ShellTitlebarButtonGlyphSize = 10.0;
+    /// <summary>shell.titlebar.button.width（pt） SHELL-02：Windows 自绘窗口按钮（全屏/最小化/最大化/关闭）外框宽，高同标题栏，对齐 Win11 系统 caption 按钮。</summary>
+    public const double ShellTitlebarButtonWidth = 46.0;
+    /// <summary>shell.titlebar.height（pt） SHELL-02：桌面主窗口悬停标题栏覆盖层高度（Windows 自绘标题栏与窗口按钮高、macOS 拖动区与毛玻璃带高）。</summary>
+    public const double ShellTitlebarHeight = 32.0;
+    /// <summary>shell.titlebar.hotzone.height（pt） SHELL-02：指针进入窗口顶部该高度内才显示标题栏；移出、离开窗口或失焦即收起。</summary>
+    public const double ShellTitlebarHotzoneHeight = 50.0;
+    /// <summary>shell.titlebar.title.leftInset（pt） SHELL-02：标题文字前导间距：Windows 距标题栏左缘，macOS 距最右交通灯右缘；行布局同值作为标题文字到筛选挖空的尾部间距。</summary>
+    public const double ShellTitlebarTitleLeftInset = 12.0;
     /// <summary>shell.window.default.height（pt） SHELL-01：桌面主窗口默认高。</summary>
     public const double ShellWindowDefaultHeight = 850.0;
     /// <summary>shell.window.default.width（pt） SHELL-01：桌面主窗口默认宽；iOS/Android 为全屏窗口，无默认尺寸。</summary>

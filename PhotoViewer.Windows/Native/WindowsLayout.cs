@@ -254,6 +254,32 @@ internal static class WindowsLayout
     /// <summary>最小窗口高。</summary>
     public const double MinWindowHeight = DesignTokens.ShellWindowMinHeight;
 
+    // ===== 悬停标题栏(SHELL-02) =====
+
+    /// <summary>标题栏覆盖层高,同时也是自绘窗口按钮外框高。</summary>
+    public const double TitleBarHeight = DesignTokens.ShellTitlebarHeight;
+
+    /// <summary>指针进入窗口顶部该高度内才显示标题栏。</summary>
+    public const double TitleBarHotZoneHeight = DesignTokens.ShellTitlebarHotzoneHeight;
+
+    /// <summary>自绘窗口按钮外框宽(按钮紧贴窗口顶边与右缘,彼此无间距)。</summary>
+    public const double TitleBarButtonWidth = DesignTokens.ShellTitlebarButtonWidth;
+
+    /// <summary>自绘窗口按钮的 Segoe Fluent Icons 字形字号。</summary>
+    public const double TitleBarButtonGlyphSize = DesignTokens.ShellTitlebarButtonGlyphSize;
+
+    /// <summary>标题文字距标题栏左缘;行布局同样用它作为标题文字到筛选挖空的尾部间距。</summary>
+    public const double TitleBarTitleInset = DesignTokens.ShellTitlebarTitleLeftInset;
+
+    /// <summary>标题文字可用宽低于该值就整体隐藏(尾部截断已无可读内容)。</summary>
+    public const double TitleBarTitleMinWidth = 60;
+
+    /// <summary>关闭按钮悬停底色(Win11 系统 caption 关闭按钮同值,字形转白)。</summary>
+    public static readonly Color TitleBarCloseHover = Token(DesignTokens.ColorTitlebarCloseHover);
+
+    /// <summary>关闭按钮按下底色(悬停色 90% 不透明)。</summary>
+    public static readonly Color TitleBarClosePressed = Token(DesignTokens.ColorTitlebarClosePressed);
+
     // ===== 相似聚类面板 =====
 
     /// <summary>相似聚类面板外框底色(旧壳 #1E1E1E)。</summary>

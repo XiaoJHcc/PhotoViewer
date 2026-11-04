@@ -9,7 +9,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | 文件/目录 | 职责 |
 |---|---|
 | `Program.cs`、`App.xaml*`、`Native/WindowsNativeApplication.cs` | 原生启动、应用资源、调度器与平台门面注入；设置用 `FileSettingsStore`（schemaVersion 2，原子替换；验收/压测走隔离目录），本地存储引用统一 `LocalFileRef`/`LocalFolderRef`。 |
-| `Native/WindowsMainWindow.cs`、`WindowsInput.cs`、`WindowsKeyDispatch.cs` | 主窗口与系统标题栏、外部打开（拖入经 `WindowsOpenPaths` 投递共享打开通道，选择器直接进共享文件源）、命令与输入分发（`WindowsInput` 做虚拟键/滚轮映射，`WindowsKeyDispatch` 判定消费与重复设闸）。 |
+| `Native/WindowsMainWindow.cs`、`WindowsTitleBar.cs`、`WindowsInput.cs`、`WindowsKeyDispatch.cs` | 主窗口与悬停标题栏（显隐判定、caption 拖动区、跨度/亚克力背景、自绘窗口按钮）、外部打开（拖入经 `WindowsOpenPaths` 投递共享打开通道，选择器直接进共享文件源）、命令与输入分发（`WindowsInput` 做虚拟键/滚轮映射，`WindowsKeyDispatch` 判定消费与重复设闸）。 |
 | `Native/WindowsOpenPaths.cs`、`WindowsSingleInstance.cs` | 命令行、文件激活与二次启动路径 → `LocalFileRef`/`LocalFolderRef`；`AppInstance` 单实例把二次激活转发到主实例的 `OpenRequestChannel`；转发等待有界，超时只记诊断并退出二次进程，不无限挂起或另开重复主窗口。隔离验收/压测不注册单实例键，避免与用户实例互相转发。 |
 | `Native/WindowsLayout.cs`、`WindowsWrapPanel.cs` | 消费共享几何与设计令牌，补充 Windows 专属布局。 |
 | `Native/WindowsPhotoView.cs`、`WindowsNavigator.cs` | D3D 照片表面、共享视口接线与缩放导航图。 |
@@ -63,9 +63,12 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - `Border` / `ScrollViewer` 是 sealed；自定义容器使用 `Panel`、`Grid` 等。`Border.Width` 包含边框，选中描边用不占布局的叠加层。
 - 虚拟化滚动区禁用 `ScrollViewer.ZoomMode`，避免无限尺寸测量。
 - `ItemsRepeater` 整体替换 `ItemsSource` 不回收已实现元素，且 `Children` 在 WinUI 3 投影中不可访问；胶片栏换数据源时连同 `ItemsRepeater` 与新的 `StackLayout` 一起重建，解绑旧卡片并还原主轴偏移。
-- 主窗口标题栏（SHELL-02）只使用 Windows 系统非客户区标题栏：`ExtendsContentIntoTitleBar = false`，普通窗口态由 `OverlappedPresenter.SetBorderAndTitleBar(true, true)` 恢复系统边框、标题栏与窗口按钮。不得创建自绘标题栏、附属表层、亚克力标题栏、自定义 caption 命中区或手动 `HTCAPTION` 拖动；拖动、双击、圆角与按钮状态全部交给系统。
-- 窗口标题由 `WindowsMainWindow.UpdateWindowTitle` 统一写 `Window.Title`：`文件夹名 - 文件名 - PhotoViewer`，无当前文件只有 `PhotoViewer`，文件夹段与文件段同名时只出现一次，应用名固定保留在末段；订阅 `FolderVM.FolderName` 与 `MainViewModel.CurrentFile`。
-- 全屏标志与 presenter 状态保持一致（系统还原时同步回窗口态）；退出全屏先落标志再动 presenter，避免 `Changed` 递归重设边框，并恢复同一系统边框与标题栏。
+- 主窗口标题栏（SHELL-02）是浮在内容之上的悬停覆盖层，由 `WindowsTitleBar` 自绘、不占布局高度：`ExtendsContentIntoTitleBar` 保持 `false`，普通窗口态 `SetBorderAndTitleBar(hasBorder: true, hasTitleBar: false)` 保留系统边框、缩放边缘与圆角并去掉系统标题栏，只有全屏态才是 `(false, false)` + 最大化。指针进入顶部 `shell.titlebar.hotzone.height` 才显示，移出热区、离开窗口或失焦即收起，不播过渡动画。
+- 显隐判定必须同时吃 XAML 指针事件与 `InputNonClientPointerSource` 的非客户区事件（`PointerEntered/PointerExited/PointerMoved`、`EnteredMoveSize/ExitedMoveSize`）：指针进入 caption 区域后变非客户区，XAML 会报 `PointerExited`，只按 XAML 判会把标题栏抖掉；从非客户区离开或拖动结束时用 `GetCursorPos` + `ScreenToClient` 复核真实光标位置再决定是否收起。
+- 拖动区用 `SetRegionRects(NonClientRegionKind.Caption, …)` 登记为系统 caption（物理像素），只在标题栏可见且非全屏时存在，排除窗口按钮（取真实布局位置，布局未跑完按 4 × 46 兜底）与行布局筛选条的可点控件（`_filterBar.GetInteractiveBounds`）；隐藏与全屏态登记一条**零面积** caption —— 清空区域会让 WinAppSDK 退回系统默认的整幅宽 caption 带（`WM_NCHITTEST` 又变成 `HTCAPTION`，顶部重新可拖动）。拖动、双击、贴靠、缩放全部交给系统，不手动发 `HTCAPTION`、不自绘拖动、不建附属窗口。跨度与背景：列布局从文件栏右缘（含相似面板扩宽与分隔线）到窗口右缘并铺 `AcrylicInAppFillColorDefaultBrush`，行布局整宽无背景，文件栏隐藏时整宽带亚克力；背景是独立元素且 `IsHitTestVisible=false`，全屏无拖动区时点击落到主图。
+- 窗口按钮固定为全屏、最小化、最大化、关闭：`shell.titlebar.button.width` × `shell.titlebar.height`、无圆角、紧贴窗口顶边与右缘、彼此无间距，字形取 `WindowsIcons` 的 Fluent 字形与 `shell.titlebar.button.glyphSize`；悬停/按下底色走 `SubtleFillColorSecondaryBrush`/`SubtleFillColorTertiaryBrush`（覆盖 `ButtonBackground*` 与描边、字形键，避免回落主题默认值），关闭按钮用 `color.titlebar.close.hover/pressed` 且字形转白。字形、提示与读屏名随窗口态切换：最大化 ↔ 还原、全屏 ↔ 退出全屏，presenter 状态变化与全屏切换都要同步。
+- 窗口标题由 `WindowsMainWindow.UpdateWindowTitle` 统一写 `Window.Title` 与标题栏文字（同一个字符串）：`文件夹名 - 文件名 - PhotoViewer`，无当前文件只有 `PhotoViewer`，文件夹段与文件段同名时只出现一次，应用名固定保留在末段；订阅 `FolderVM.FolderName` 与 `MainViewModel.CurrentFile`。标题文字用 WinUI `CaptionTextBlockStyle`、单行尾部截断、不参与命中，可用宽不足时隐藏。
+- 全屏标志与 presenter 状态保持一致（系统还原时同步回窗口态）；退出全屏先落标志再动 presenter，避免 `Changed` 递归重设边框，并恢复同一系统边框（`hasTitleBar` 仍为 `false`）。
 - 任务栏缩略浮窗图标取窗口图标而不是 EXE 资源：csproj 把 `PhotoViewer/Assets/icon.ico` 以 `Link=icon.ico`、`ExcludeFromSingleFile=false` 复制到输出与单文件解包目录，激活后 `AppWindow.SetIcon(AppContext.BaseDirectory/icon.ico)`；缺失只记 `NativeStartupLog`，不阻塞启动。
 - 主图菜单每一项都有语义前置图标（`MenuFlyoutItem.Icon` + `FontIcon`，字形表在 `WindowsIcons`）：打开文件=文档、打开文件夹=文件夹、胶片栏=照片、分析栏=方格网、控制栏=滑杆、雾天增强=对比度、工具=扳手、设置=齿轮。WinUI 1.8 的 `ToggleMenuFlyoutItem` 派生自 `MenuFlyoutItem`，沿用同一 `Icon` 与模板的 `CheckedWithIcon`/`UncheckedWithIcon` 状态，勾选项保留系统勾选列；不要删勾选、不要把图标拼进 `Text`。
 - 控制栏按钮的悬停提示与读屏名称同源，统一走共享 `CommandTooltipText.Format`（`名称（主 / 次）`，空槽省略、主次相同只出现一次），键名仍由 `WindowsInput.FormatGesture` 给；未设置的槽传 `null`，不要出现"未设置"或用点号分隔命令名与绑定。
@@ -82,7 +85,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 | 参数 | 用途 |
 |---|---|
-| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；另含系统标题栏状态、动态窗口标题、窗口图标、菜单图标与命令提示格式；使用隔离设置、数据库和自有素材。 |
+| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；另含悬停标题栏（显隐、跨度与背景、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式；使用隔离设置、数据库和自有素材。 |
 | `--pv-native-portable` | 与 smoke 合用，核对实际已加载的 CRT/libheif/ONNX/DirectML 均来自应用解包目录。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
 | `--pv-native-activation-check` | 二次激活专项（OPEN-06）：本进程持单实例键并拉起第二个进程，核对激活转发、主实例定位目标、二次进程以 0 退出且不开第二个窗口；设置/数据库仍走隔离目录。 |

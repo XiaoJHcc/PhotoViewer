@@ -2,6 +2,7 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
 
@@ -126,6 +127,7 @@ internal static class NativeMainLayoutAcceptance
 
         VerifyControlBar(window, scope, geometry);
         VerifyFilterBar(row, scope, filePane, geometry);
+        VerifyTitlebar(window, row, scope, filePane, photoPane, geometry);
         await VerifyFilmstripAsync(window, row, scope, filePane, geometry);
         observations.Add($"{scope}: 分区拼合无空带/重叠、主图铺满；筛选条 5 点间距与居中；胶片栏步长与卡片 96×144/(3,3,90,138)/图片 80 方形；控制栏 3 组文档覆盖视口");
     }
@@ -161,7 +163,7 @@ internal static class NativeMainLayoutAcceptance
         }
     }
 
-    /// <summary>核对筛选条 90×32、相似聚类 toggle 90×27、5 点间距与居中（左右布局中心 58、首控件顶边 34，上下布局贴顶 10）。</summary>
+    /// <summary>核对筛选条 90×32、相似聚类 toggle 90×27、5 点间距与居中（左右布局中心 58、首控件顶边 shell.filter.leadingInset，上下布局贴顶 10）。</summary>
     private static void VerifyFilterBar(bool row, string scope, NSView filePane, List<string> geometry)
     {
         var popups = filePane.Subviews.OfType<NSPopUpButton>().ToArray();
@@ -200,7 +202,8 @@ internal static class NativeMainLayoutAcceptance
         foreach (var popup in popups)
             if (Math.Abs((double)popup.Frame.X - (paneWidth - 90) / 2) > Exact)
                 throw new InvalidOperationException($"{scope} 左右布局筛选条未在 116 栏内居中：{popup.Frame}");
-        if (Math.Abs((double)popups[0].Frame.Y - 34) > Exact) throw new InvalidOperationException($"{scope} 左右布局首控件未从 34 点起：{popups[0].Frame}");
+        if (Math.Abs((double)popups[0].Frame.Y - DesignTokens.ShellFilterLeadingInset) > Exact)
+            throw new InvalidOperationException($"{scope} 左右布局首控件未从 {DesignTokens.ShellFilterLeadingInset} 点起（应为标题栏高 + filter.margin）：{popups[0].Frame}");
         if (Math.Abs((double)popups[1].Frame.Y - (double)popups[0].Frame.Y - 37) > Exact ||
             Math.Abs((double)popups[2].Frame.Y - (double)popups[1].Frame.Y - 37) > Exact ||
             Math.Abs((double)count.Frame.Y - (double)popups[2].Frame.Y - 37) > Exact ||
@@ -211,6 +214,87 @@ internal static class NativeMainLayoutAcceptance
         double toggleCenter = (double)toggle.Frame.X + (double)toggle.Frame.Width / 2;
         if (Math.Abs(popupCenter - 58) > Exact || Math.Abs(countCenter - 58) > Exact || Math.Abs(toggleCenter - 58) > Exact)
             throw new InvalidOperationException($"{scope} 左右布局筛选条/计数/toggle 中心不是 58：{popupCenter}/{countCenter}/{toggleCenter}");
+    }
+
+    /// <summary>
+    /// SHELL-02：标题栏覆盖层的跨度、毛玻璃背景与标题文字。覆盖层恒高 shell.titlebar.height 且顶边贴合窗口顶边；
+    /// 行布局文件栏可见时只留筛选挖空两侧的拖动区、无背景，列布局是通栏带并带毛玻璃；标题文字在最右交通灯
+    /// 右缘 + shell.titlebar.title.leftInset 起、中线对齐交通灯，行布局止于筛选控件前同样 12 点。
+    /// 显隐由验收直接模拟热区悬停，检查完恢复收起，避免污染后续截图。
+    /// </summary>
+    private static void VerifyTitlebar(MacMainWindow window, bool row, string scope, NSView filePane, NSView photoPane, List<string> geometry)
+    {
+        var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
+        double width = (double)root.Bounds.Width, height = DesignTokens.ShellTitlebarHeight;
+        var zones = window.DragZones;
+        if (zones.Count != 2) throw new InvalidOperationException($"{scope} 拖动区数量为 {zones.Count}，预期 2");
+        var material = window.TitlebarMaterialView;
+        var label = window.TitlebarLabel;
+        foreach (var zone in zones)
+        {
+            if (Math.Abs((double)zone.Frame.Y) > Exact || Math.Abs((double)zone.Frame.Height - height) > Exact)
+                throw new InvalidOperationException($"{scope} 拖动区未贴合窗口顶边且高 {height} 点：{zone.Frame}");
+            Record(geometry, scope, ReferenceEquals(zone, zones[0]) ? "titlebar.dragLeft" : "titlebar.dragRight", zone.Frame);
+        }
+        if (Math.Abs((double)zones[0].Frame.X) > Exact) throw new InvalidOperationException($"{scope} 左侧拖动区未从窗口左缘起：{zones[0].Frame}");
+        if (Math.Abs((double)zones[1].Frame.X + (double)zones[1].Frame.Width - width) > Exact)
+            throw new InvalidOperationException($"{scope} 右侧拖动区未止于窗口右缘：{zones[1].Frame}");
+        RequireFrame(material.Frame, new CGRect(0, 0, width, height), $"{scope} 标题栏毛玻璃层未铺满窗口宽 {width}×{height}");
+        Record(geometry, scope, "titlebar.material", material.Frame);
+        Record(geometry, scope, "titlebar.title", label.Frame);
+
+        // 层级：毛玻璃压住内容分区，拖动区压在毛玻璃之上，标题文字最上层但透传命中。
+        int materialIndex = Array.IndexOf(root.Subviews, material);
+        int leftIndex = Array.IndexOf(root.Subviews, zones[0]);
+        int rightIndex = Array.IndexOf(root.Subviews, zones[1]);
+        int labelIndex = Array.IndexOf(root.Subviews, label);
+        if (Array.IndexOf(root.Subviews, photoPane) >= materialIndex || materialIndex >= leftIndex || leftIndex >= rightIndex || rightIndex >= labelIndex)
+            throw new InvalidOperationException($"{scope} 标题栏层序不是 内容 < 毛玻璃 < 拖动区 < 标题文字：{materialIndex}/{leftIndex}/{rightIndex}/{labelIndex}");
+
+        // 交通灯是只读参照：标题文字左缘 = 最右交通灯右缘 + 12，中线与交通灯中线重合。
+        var zoom = window.Window.StandardWindowButton(NSWindowButton.ZoomButton)
+            ?? throw new InvalidOperationException($"{scope} 窗口缺少缩放按钮，无法核对标题文字让位");
+        var zoomFrame = root.ConvertRectFromView(zoom.ConvertRectToView(zoom.Bounds, null), null);
+        double expectedLeft = (double)zoomFrame.X + (double)zoomFrame.Width + DesignTokens.ShellTitlebarTitleLeftInset;
+        if ((double)label.Frame.X < expectedLeft - Exact)
+            throw new InvalidOperationException($"{scope} 标题文字压住了交通灯或未留 12 点间距：{label.Frame} / 交通灯 {zoomFrame}");
+        double labelCentre = (double)label.Frame.Y + (double)label.Frame.Height / 2;
+        double zoomCentre = (double)zoomFrame.Y + (double)zoomFrame.Height / 2;
+        if (Math.Abs(labelCentre - zoomCentre) > .5)
+            throw new InvalidOperationException($"{scope} 标题文字中线未对齐交通灯中线：{labelCentre} / {zoomCentre}");
+        // 行布局：标题文字放得下时右缘止于筛选控件前 12 点，绝不压住可点控件。
+        if (row && (double)label.Frame.Width >= 24)
+        {
+            var leftMost = filePane.Subviews.OfType<NSPopUpButton>().MinBy(popup => (double)popup.Frame.X)
+                ?? throw new InvalidOperationException($"{scope} 缺少筛选下拉框，无法核对标题文字让位");
+            double groupLeft = (double)filePane.Frame.X + (double)leftMost.Frame.X;
+            if ((double)label.Frame.X + (double)label.Frame.Width > groupLeft - DesignTokens.ShellTitlebarTitleLeftInset + Exact)
+                throw new InvalidOperationException($"{scope} 行布局标题文字压住了筛选控件：{label.Frame} / 筛选组左缘 {groupLeft}");
+        }
+
+        window.ShowTitlebarForTesting(true);
+        try
+        {
+            // 行布局文件栏可见时中间挖空，没有背景材质；列布局盖住文件栏，通栏带带毛玻璃。
+            bool backdrop = !row;
+            if (material.Hidden != !backdrop)
+                throw new InvalidOperationException($"{scope} 毛玻璃背景显隐与跨度不符（{(backdrop ? "应有" : "应无")}背景）：{material.Hidden}");
+            foreach (var zone in zones)
+                if (zone.Hidden) throw new InvalidOperationException($"{scope} 悬停热区后拖动区仍收起");
+            // 背景与文字永不参与命中：可见时必须仍然透传，否则会夺走拖动区与主图点击。
+            if (material.HitTest(new CGPoint(material.Bounds.Width / 2, material.Bounds.Height / 2)) != null)
+                throw new InvalidOperationException($"{scope} 标题栏毛玻璃背景拦截了命中");
+            if (label.HitTest(new CGPoint(label.Bounds.Width / 2, label.Bounds.Height / 2)) != null)
+                throw new InvalidOperationException($"{scope} 标题文字拦截了命中，点击落不到拖动区");
+            if (!label.Hidden && label.StringValue != window.Window.Title)
+                throw new InvalidOperationException($"{scope} 标题文字与系统窗口标题不一致：{label.StringValue} / {window.Window.Title}");
+            bool fits = (double)label.Frame.Width >= 24;
+            if (label.Hidden == fits)
+                throw new InvalidOperationException($"{scope} 标题文字显隐未按可用宽度 {label.Frame.Width:0.##} 判定：Hidden={label.Hidden}");
+        }
+        finally { window.ShowTitlebarForTesting(false); }
+        if (!material.Hidden || !label.Hidden || zones.Any(zone => !zone.Hidden))
+            throw new InvalidOperationException($"{scope} 收起标题栏后仍有可见的覆盖层");
     }
 
     /// <summary>核对胶片栏步长与内边距、卡片 96×144 内部结构，并输出前两张卡片的实际几何。</summary>
@@ -378,7 +462,19 @@ internal static class NativeMainLayoutAcceptance
         if (!filmPane.Hidden || ((double)filmPane.Frame.Width > .5 && (double)filmPane.Frame.Height > .5))
             throw new InvalidOperationException($"{mode} 隐藏胶片栏未收起文件栏：{filmPane.Frame}");
         RequireSize(photoPane.Frame, beforeFilm, filmBand, row, $"{mode} 隐藏胶片栏未释放主图{(row ? "上方" : "左侧")}空间");
-        observations.Add($"{mode}: 隐藏胶片栏释放{(row ? "上" : "左")}侧 {filmBand:0.##} 点，主图分区 {photoPane.Frame}");
+        // SHELL-02：文件栏隐藏后无论哪种布局都是整幅宽通栏带，并且带毛玻璃背景。
+        var zones = window.DragZones;
+        window.ShowTitlebarForTesting(true);
+        try
+        {
+            if (Math.Abs((double)zones[0].Frame.Width - (double)root.Bounds.Width) > Exact ||
+                Math.Abs((double)zones[1].Frame.Width) > Exact)
+                throw new InvalidOperationException($"{mode} 文件栏隐藏后拖动区未通栏：{zones[0].Frame}/{zones[1].Frame}");
+            if (window.TitlebarMaterialView.Hidden)
+                throw new InvalidOperationException($"{mode} 文件栏隐藏后标题栏未显示毛玻璃背景");
+        }
+        finally { window.ShowTitlebarForTesting(false); }
+        observations.Add($"{mode}: 隐藏胶片栏释放{(row ? "上" : "左")}侧 {filmBand:0.##} 点，主图分区 {photoPane.Frame}；标题栏转为通栏带 + 毛玻璃");
         window.Main.IsThumbnailViewVisible = true;
         await Task.Delay(300);
         RequireFrame(photoPane.Frame, beforeFilm, $"{mode} 恢复胶片栏后主图分区未还原", .5);

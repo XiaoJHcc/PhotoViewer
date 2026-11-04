@@ -22,6 +22,26 @@ internal static class WindowsIcons
     /// <summary>星级冲突警示三角字形(RATING-04,与 <c>icon.warning</c> 同义)。</summary>
     public const string WarningGlyph = "\uE7BA";
 
+    // SHELL-02：自绘窗口按钮字形（全屏/最小化/最大化/还原/关闭）。
+
+    /// <summary>全屏字形。</summary>
+    public const string FullScreenGlyph = "\uE740";
+
+    /// <summary>退出全屏字形。</summary>
+    public const string ExitFullScreenGlyph = "\uE73F";
+
+    /// <summary>最小化字形。</summary>
+    public const string MinimizeGlyph = "\uE921";
+
+    /// <summary>最大化字形。</summary>
+    public const string MaximizeGlyph = "\uE922";
+
+    /// <summary>还原字形（最大化态）。</summary>
+    public const string RestoreGlyph = "\uE923";
+
+    /// <summary>关闭字形。</summary>
+    public const string CloseGlyph = "\uE8BB";
+
     // MENU-06：主图菜单的语义前置图标(系统 Fluent 字形,语义与 icon.menu.* 一一对应)。
 
     /// <summary>打开文件:文档字形(<c>icon.menu.openFile</c>)。</summary>
