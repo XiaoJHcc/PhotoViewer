@@ -62,6 +62,8 @@ internal sealed class iOSLayoutModePicker : UIView
             cell.ContentConfiguration = config;
             cell.Accessory = item.Value == owner._settings.LayoutMode ? UITableViewCellAccessory.Checkmark : UITableViewCellAccessory.None;
             cell.BackgroundColor = UIColor.Clear;
+            // SETTINGS-15：卡片内最后一行不再留下底缘描边。
+            iOSNativeSettingsMetrics.ApplyRowSeparator(tableView, cell, indexPath);
             return cell;
         }
 

@@ -960,6 +960,25 @@ internal static class iOSNativeLayoutCheck
             if (popover.EntryViews.Any(entry => entry.Frame.Bottom > popover.PresentedContentSize.Height + 1))
                 throw new InvalidOperationException($"来源浮窗实际高度裁切条目：{popover.PresentedContentSize.Height}/{popover.ContentSize.Height}");
             lines.Add("PASS RATING-04 锚点生命周期：卡片/控制栏点击不切图不写值，滚动关闭，控制栏重建保持展示并换锚、全部条目可见");
+
+            // 周期刷新回归：内存管家每 2s 探测会改写缓存提示（诊断属性），不能把浮窗关掉或换掉按钮。
+            await Task.Delay(2600);
+            await SettleAsync(root);
+            if (!popover.IsOpen || !main.RatingSources.IsOpen)
+                throw new InvalidOperationException("内存探测的周期设置通知关闭了来源浮窗");
+            var stableClear = await UiDispatcher.InvokeAsync(() =>
+                root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("周期通知后控制栏缺少评分 0 号按钮"));
+            await UiDispatcher.InvokeAsync(() => root.NotifySettingsProperty(nameof(SettingsViewModel.BitmapCacheCountInfo)));
+            await SettleAsync(root);
+            var notifiedClear = await UiDispatcher.InvokeAsync(() =>
+                root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("诊断通知后控制栏缺少评分 0 号按钮"));
+            if (!ReferenceEquals(notifiedClear, stableClear))
+                throw new InvalidOperationException("缓存计数等诊断通知重建了控制栏按钮，浮窗锚点被换掉");
+            if (!popover.IsOpen || !main.RatingSources.IsOpen)
+                throw new InvalidOperationException("缓存计数等诊断通知关闭了来源浮窗");
+            RequireFrame(popover.Presentation!.SourceRect, notifiedClear.ConvertRectToView(notifiedClear.Bounds, root.View!),
+                "周期通知后浮窗锚点漂移");
+            lines.Add("PASS RATING-04 周期刷新：2.6s 内存探测与缓存计数通知后控制栏按钮身份、来源浮窗与锚点矩形保持（诊断属性不触发结构重建）");
             await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-popover");
 
             await UiDispatcher.InvokeAsync(popover.Close);

@@ -91,6 +91,9 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         return null;
     }
 
+    /// <summary>设置页与工具页共用的 sheet 圆角（验收按同一常量核对）。</summary>
+    internal const double SheetCornerRadius = 24;
+
     /// <summary>
     /// 配置 iOS 半屏浮窗的 detents 与交互参数。
     /// </summary>
@@ -109,7 +112,7 @@ public sealed class iOSNativeSettingsPresenter : INativeSettingsPresenter
         ];
         sheetPresentationController.PrefersGrabberVisible = true;
         sheetPresentationController.PrefersScrollingExpandsWhenScrolledToEdge = false;
-        sheetPresentationController.PreferredCornerRadius = 24;
+        sheetPresentationController.PreferredCornerRadius = (nfloat)SheetCornerRadius;
     }
 }
 
@@ -366,10 +369,11 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     protected abstract void BuildContent(UIStackView contentStack);
 
     /// <summary>
-    /// 重新生成整页内容。
+    /// 重新生成整页内容；保留用户滚动位置，不把长表单送回顶部。
     /// </summary>
     protected void RebuildContent()
     {
+        var offset = _scrollView.ContentOffset;
         foreach (var view in _contentStack.ArrangedSubviews)
         {
             _contentStack.RemoveArrangedSubview(view);
@@ -377,6 +381,10 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         }
 
         BuildContent(_contentStack);
+        _scrollView.LayoutIfNeeded();
+        double maxY = Math.Max(0, (double)_scrollView.ContentSize.Height - (double)_scrollView.Bounds.Height);
+        var clamped = new CoreGraphics.CGPoint(offset.X, Math.Min((double)offset.Y, maxY));
+        if (clamped != _scrollView.ContentOffset) _scrollView.SetContentOffset(clamped, false);
     }
 
     /// <summary>
@@ -1215,7 +1223,7 @@ internal sealed class iOSNativeExifSettingsViewController : iOSNativeSettingsFor
                     isEnabledGetter: item => item.IsEnabled,
                     isEnabledSetter: (item, value) => item.IsEnabled = value,
                     moveAction: Settings.MoveExifDisplay,
-                    rowHeight: 52,
+                    rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
                     cellStyle: UITableViewCellStyle.Default)));
 
         contentStack.AddArrangedSubview(
@@ -1279,9 +1287,10 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
             isEnabledGetter: item => item.IsDisplay,
             isEnabledSetter: (item, value) => item.IsDisplay = value,
             moveAction: Settings.MoveHotkey,
-            rowHeight: 44,
+            rowHeight: iOSNativeSettingsMetrics.ListRowHeight,
             cellStyle: UITableViewCellStyle.Default,
-            trailingAccessorySelector: BindingButtons);
+            trailingAccessorySelector: BindingButtons,
+            leadingIconSelector: CommandIcon);
         contentStack.AddArrangedSubview(CreateSection("控制栏功能", null, _hotkeys));
 
         var rows = new List<UIView>
@@ -1294,6 +1303,18 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
         _mapping = CreateSection("键盘映射", null, rows.ToArray());
         contentStack.AddArrangedSubview(_mapping);
         RefreshCapabilities();
+    }
+
+    /// <summary>控制栏功能的命令图标：取命令目录登记的同一条 SF Symbols，与控制栏按钮同一语义。</summary>
+    /// <param name="item">快捷键项。</param>
+    /// <returns>命令行图标；命令目录缺失映射时按共享映射的严格口径抛错。</returns>
+    private static UIImage? CommandIcon(SettingsViewModel.HotkeyItem item)
+    {
+        string? symbol = PhotoViewer.Apple.AppleSymbolNames.ForCommand(item.Command);
+        return symbol == null
+            ? null
+            : UIImage.GetSystemImage(symbol)?.ApplyConfiguration(
+                UIImageSymbolConfiguration.Create((nfloat)PhotoViewer.Core.Design.DesignTokens.ToolbarCommandGlyphFontSize));
     }
 
     /// <summary>每行的主/次快捷键按钮组：外设连接时创建或复用，纯触控返回 null 表示不显示。</summary>
@@ -1515,7 +1536,31 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
 }
 
 /// <summary>
-/// iOS 内联可勾选可排序列表视图：勾选位、标题、可选副标题与系统拖拽手柄；
+/// 设置页三张可勾选表共用的度量：标准行高与"卡片内最后一行不再画分隔线"的取巧值。
+/// </summary>
+internal static class iOSNativeSettingsMetrics
+{
+    /// <summary>控制栏功能与 EXIF 显示表共用的标准行高（SETTINGS-01@ios / SETTINGS-08）。</summary>
+    internal const double ListRowHeight = 52;
+
+    /// <summary>把右内边距推到表格宽度之外，使最后一行不留下卡片底缘的描边。</summary>
+    private const double HiddenSeparatorRightInset = 100_000;
+
+    /// <summary>按行序设置分隔线：末行隐藏，其余保持表格的全宽口径。</summary>
+    /// <param name="tableView">所在表格。</param>
+    /// <param name="cell">目标单元格。</param>
+    /// <param name="indexPath">行位置。</param>
+    internal static void ApplyRowSeparator(UITableView tableView, UITableViewCell cell, NSIndexPath indexPath)
+    {
+        bool last = indexPath.Row >= (int)tableView.NumberOfRowsInSection(indexPath.Section) - 1;
+        cell.SeparatorInset = last
+            ? new UIEdgeInsets(0, 0, 0, (nfloat)HiddenSeparatorRightInset)
+            : UIEdgeInsets.Zero;
+    }
+}
+
+/// <summary>
+/// iOS 内联可勾选可排序列表视图：勾选位、可选命令图标、标题、可选副标题与系统拖拽手柄；
 /// 可选的详情按钮（编辑态 ⓘ）与按行高度由调用方提供。
 /// </summary>
 /// <typeparam name="TItem">列表项类型。</typeparam>
@@ -1546,7 +1591,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         Func<TItem, string?>? accessibilityValueSelector = null,
         Func<TItem, bool>? showsDetailButton = null,
         Action<TItem>? detailAction = null,
-        Func<TItem, UIView?>? trailingAccessorySelector = null)
+        Func<TItem, UIView?>? trailingAccessorySelector = null,
+        Func<TItem, UIImage?>? leadingIconSelector = null)
     {
         _itemsProvider = itemsProvider;
 
@@ -1579,7 +1625,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
             accessibilityValueSelector,
             showsDetailButton,
             detailAction,
-            trailingAccessorySelector);
+            trailingAccessorySelector,
+            leadingIconSelector);
         _tableView.Source = _source;
 
         AddSubview(_tableView);
@@ -1614,7 +1661,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListView<TItem> : UIView
         foreach (var cell in _tableView.VisibleCells)
         {
             if (_tableView.IndexPathForCell(cell) is { } indexPath && cell is iOSNativeEmbeddedCheckableReorderCell reorderCell)
-                _source.ConfigureCell(reorderCell, indexPath);
+                _source.ConfigureCell(_tableView, reorderCell, indexPath);
         }
         UIView.PerformWithoutAnimation(() =>
         {
@@ -1654,6 +1701,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
     private readonly Func<TItem, bool>? _showsDetailButton;
     private readonly Action<TItem>? _detailAction;
     private readonly Func<TItem, UIView?>? _trailingAccessorySelector;
+    private readonly Func<TItem, UIImage?>? _leadingIconSelector;
 
     /// <summary>
     /// 初始化列表数据源。
@@ -1673,7 +1721,8 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         Func<TItem, string?>? accessibilityValueSelector,
         Func<TItem, bool>? showsDetailButton,
         Action<TItem>? detailAction,
-        Func<TItem, UIView?>? trailingAccessorySelector)
+        Func<TItem, UIView?>? trailingAccessorySelector,
+        Func<TItem, UIImage?>? leadingIconSelector)
     {
         _itemsProvider = itemsProvider;
         _titleSelector = titleSelector;
@@ -1690,6 +1739,7 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
         _showsDetailButton = showsDetailButton;
         _detailAction = detailAction;
         _trailingAccessorySelector = trailingAccessorySelector;
+        _leadingIconSelector = leadingIconSelector;
     }
 
     /// <summary>指定项的行高。</summary>
@@ -1722,12 +1772,15 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
             : "EmbeddedCheckableReorderDefaultCell";
         var cell = tableView.DequeueReusableCell(reuseIdentifier) as iOSNativeEmbeddedCheckableReorderCell
             ?? new iOSNativeEmbeddedCheckableReorderCell(reuseIdentifier, showsSubtitle);
-        ConfigureCell(cell, indexPath);
+        ConfigureCell(tableView, cell, indexPath);
         return cell;
     }
 
     /// <summary>按当前数据刷新一个单元格（新建与就地刷新共用）。</summary>
-    internal void ConfigureCell(iOSNativeEmbeddedCheckableReorderCell cell, NSIndexPath indexPath)
+    /// <param name="tableView">所在表格（行序与宽度用于末行分隔线）。</param>
+    /// <param name="cell">目标单元格。</param>
+    /// <param name="indexPath">行位置。</param>
+    internal void ConfigureCell(UITableView tableView, iOSNativeEmbeddedCheckableReorderCell cell, NSIndexPath indexPath)
     {
         var showsSubtitle = _cellStyle == UITableViewCellStyle.Subtitle;
         var item = _itemsProvider()[indexPath.Row];
@@ -1736,13 +1789,16 @@ internal sealed class iOSNativeEmbeddedCheckableReorderListSource<TItem> : UITab
             subtitle: showsSubtitle ? _subtitleSelector(item) : null,
             isEnabled: _isEnabledGetter(item),
             attributedSubtitle: showsSubtitle ? _attributedSubtitleSelector?.Invoke(item) : null,
-            accessibilityValue: _accessibilityValueSelector?.Invoke(item));
+            accessibilityValue: _accessibilityValueSelector?.Invoke(item),
+            icon: _leadingIconSelector?.Invoke(item));
         cell.ShowsReorderControl = true;
         cell.BackgroundColor = UIColor.Clear;
         cell.EditingAccessory = _showsDetailButton?.Invoke(item) == true
             ? UITableViewCellAccessory.DetailButton
             : UITableViewCellAccessory.None;
         cell.SetTrailingAccessory(_trailingAccessorySelector?.Invoke(item));
+        // SETTINGS-15：整表是一张卡片，最后一行不再画到卡片底缘。
+        iOSNativeSettingsMetrics.ApplyRowSeparator(tableView, cell, indexPath);
     }
 
     /// <summary>
@@ -1818,12 +1874,18 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     private readonly NSLayoutConstraint[] _centeredConstraints = [];
     private readonly NSLayoutConstraint[] _stackedConstraints = [];
     private readonly NSLayoutConstraint _titleTrailingDefault;
+    private readonly UIImageView _iconView;
+    private readonly NSLayoutConstraint _titleLeadingIcon;
+    private readonly NSLayoutConstraint _titleLeadingPlain;
     private NSLayoutConstraint? _titleTrailingAccessory;
     private NSLayoutConstraint[] _accessoryConstraints = [];
     private UIView? _trailingAccessory;
 
     /// <summary>行尾附加控件（控制栏功能行的主/次快捷键按钮组；验收读取）。</summary>
     internal UIView? TrailingAccessory => _trailingAccessory;
+
+    /// <summary>命令行图标（控制栏功能列表；验收读取可见性与图像）。</summary>
+    internal UIImageView LeadingIconView => _iconView;
 
     /// <summary>标题标签（验收读取）。</summary>
     internal UILabel TitleLabel => _titleLabel;
@@ -1863,7 +1925,16 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
             LineBreakMode = UILineBreakMode.TailTruncation
         };
 
+        _iconView = new UIImageView
+        {
+            TranslatesAutoresizingMaskIntoConstraints = false,
+            TintColor = UIColor.Label,
+            ContentMode = UIViewContentMode.ScaleAspectFit,
+            Hidden = true,
+        };
+
         ContentView.AddSubview(_checkmarkView);
+        ContentView.AddSubview(_iconView);
         ContentView.AddSubview(_titleLabel);
 
         UILabel? subtitleLabel = null;
@@ -1884,12 +1955,19 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         var leadingInset = 16f;
         var checkmarkWidth = 22f;
         var spacing = 12f;
+        var iconWidth = 20f;
 
         _checkmarkView.WidthAnchor.ConstraintEqualTo(checkmarkWidth).Active = true;
         _checkmarkView.HeightAnchor.ConstraintEqualTo(22).Active = true;
         _checkmarkView.LeadingAnchor.ConstraintEqualTo(ContentView.LeadingAnchor, leadingInset).Active = true;
         _checkmarkView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
-        _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing).Active = true;
+        _iconView.WidthAnchor.ConstraintEqualTo(iconWidth).Active = true;
+        _iconView.HeightAnchor.ConstraintEqualTo(iconWidth).Active = true;
+        _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, 10).Active = true;
+        _iconView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
+        _titleLeadingPlain = _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing);
+        _titleLeadingIcon = _titleLabel.LeadingAnchor.ConstraintEqualTo(_iconView.TrailingAnchor, 8);
+        _titleLeadingPlain.Active = true;
         _titleTrailingDefault = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16);
         _titleTrailingDefault.Active = true;
 
@@ -1953,10 +2031,18 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
     /// <param name="isEnabled">是否启用。</param>
     /// <param name="attributedSubtitle">带样式副标题（优先于纯文本）。</param>
     /// <param name="accessibilityValue">读屏值；null 时取副标题文本。</param>
+    /// <param name="icon">命令行图标（控制栏功能列表）；null 表示该行没有图标。</param>
     public void Configure(string title, string? subtitle, bool isEnabled,
-        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null)
+        NSAttributedString? attributedSubtitle = null, string? accessibilityValue = null, UIImage? icon = null)
     {
         _titleLabel.Text = title;
+        bool hasIcon = icon != null;
+        _iconView.Image = icon;
+        _iconView.Hidden = !hasIcon;
+        _iconView.IsAccessibilityElement = false;
+        _iconView.AccessibilityElementsHidden = true;
+        _titleLeadingIcon.Active = hasIcon;
+        _titleLeadingPlain.Active = !hasIcon;
         bool hasSubtitle = false;
         if (_subtitleLabel != null)
         {

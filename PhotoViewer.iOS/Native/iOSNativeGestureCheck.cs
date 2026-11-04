@@ -1,3 +1,4 @@
+using CoreAnimation;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
@@ -22,7 +23,7 @@ namespace PhotoViewer.iOS.Native;
 /// <see cref="UIScrollView"/>（SetZoomScale 后按 UIKit 语义调整 contentOffset、再 SetContentOffset 平移），
 /// 断言**屏幕上**的图像点（由视口映射给出）确实留在手指下，并覆盖真实使用中必然发生的后续事件：
 /// 捏合触发的 Full 热替换、布局/旋转、双击、Fit 命令切换、放大态切图（保持倍率与归一化中心，含对焦跟随）、
-/// 适应态轻扫、放大态拖动、增强开关，以及导航图的可见性与几何。</para>
+/// 适应态轻扫、放大态拖动、增强开关，以及导航图的可见性、几何与无隐式动画（显示/换位/隐藏当帧到位）。</para>
 ///
 /// <para>带 <c>--pv-open</c> 启动时先核对**冷启动首图**：尚未发生任何缩放的双击必须精确到物理 100%
 /// （滚动视图 zoomScale == 1/(BackingScale×FitScale)），这是作者真机"首图双击只放大一点点"的复现口径。</para>
@@ -465,6 +466,78 @@ internal static class iOSNativeGestureCheck
                 AssertSnapshot(beforeProxyEnhance, await SnapshotAsync(root), "增强关闭（代理档）");
                 lines.Add($"PASS 增强关闭还原（F16 代理）：{proxyOffMs:0} ms");
 
+                // 十、导航指示器不做过渡（作者真机缺陷：首次打开从左上角飞入，缩放换位置时白框约 1 秒位移）。
+                //     指示器的 frame/hidden/文本是在 UIScrollView 的 ZoomToRect 动画与宿主外层动画块里同步的，
+                //     UIKit 默认会把它们当成隐式动画。这里把同一次更新放进显式动画块，断言几何当帧到位、
+                //     图层没有任何运行中的动画，同时确认缩放动画与全局动画开关没有被一起关掉。
+                await UiDispatcher.InvokeAsync(() => root.Photo.FitToView());
+                await SettleAsync(root);
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    var bounds = root.Photo.Bounds;
+                    var tap = new CGPoint((double)bounds.Width * .45, (double)bounds.Height * .55);
+                    UIView.Animate(0.9, () =>
+                    {
+                        // 首次出现：此前宿主一直隐藏、frame 仍是 (0,0)，旧实现会从这里飞向角落。
+                        root.Photo.DoubleTapAt(tap);
+                        root.UpdateNavigationIndicator();
+                    });
+                    if (root.NavigationHost.Hidden) throw new InvalidOperationException("放大后导航图未显示");
+                    AssertNavigationIndicatorStatic(root, "首次显示");
+                    if (root.NavigationHost.Frame.Width <= 0 || root.NavigationHost.Frame.Height <= 0)
+                        throw new InvalidOperationException($"首次显示时导航图宿主尺寸非法：{root.NavigationHost.Frame}");
+                });
+                // 缩放动画仍在播：只关闭了指示器子树的隐式动作，双击的滚动视图缩放不受影响。
+                await Task.Delay(60);
+                bool zoomAnimating = await UiDispatcher.InvokeAsync(() =>
+                    HasRunningAnimation(root.Photo) || HasRunningAnimation(root.Photo.ScrollView)
+                    || HasRunningAnimation(root.Photo.ZoomContent));
+                if (!zoomAnimating)
+                    throw new InvalidOperationException("双击缩放动画未在播放：隐式动作被全局关闭，误伤了主图缩放动画");
+                var revealState = await UiDispatcher.InvokeAsync(() => (Fit: root.Photo.IsFit, Hidden: root.NavigationHost.Hidden,
+                    Frame: root.NavigationFrameView.Frame, Viewport: root.Photo.NavigationViewport));
+                if (revealState.Fit || revealState.Hidden)
+                    throw new InvalidOperationException($"双击后导航图状态错误：fit={revealState.Fit} hidden={revealState.Hidden}");
+                if (Math.Abs((double)revealState.Frame.X - (DesignTokens.NavPadding + (double)revealState.Viewport.X)) > SizeTolerance
+                    || Math.Abs((double)revealState.Frame.Y - (DesignTokens.NavPadding + (double)revealState.Viewport.Y)) > SizeTolerance)
+                    throw new InvalidOperationException($"导航图白框没有当帧落到共享几何：{revealState.Frame} vs {revealState.Viewport}");
+
+                // 白框换到另一个位置（旧实现会得到约 1 秒的缓慢位移）。
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    UIView.Animate(0.9, () =>
+                    {
+                        root.Photo.CenterOnNormalizedPoint(.72, .3);
+                        root.UpdateNavigationIndicator();
+                    });
+                    AssertNavigationIndicatorStatic(root, "白框换位置");
+                    var viewport = root.Photo.NavigationViewport;
+                    var frame = root.NavigationFrameView.Frame;
+                    if (Math.Abs((double)frame.X - (DesignTokens.NavPadding + (double)viewport.X)) > SizeTolerance
+                        || Math.Abs((double)frame.Y - (DesignTokens.NavPadding + (double)viewport.Y)) > SizeTolerance
+                        || Math.Abs((double)frame.Width - (double)viewport.Width) > SizeTolerance
+                        || Math.Abs((double)frame.Height - (double)viewport.Height) > SizeTolerance)
+                        throw new InvalidOperationException($"白框换位置后没有当帧到位：{frame} vs 共享 {viewport}（+{DesignTokens.NavPadding} 内边距）");
+                });
+
+                // 回适应态：隐藏同样立即生效，不得淡出或从画面滑走。
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    UIView.Animate(0.9, () =>
+                    {
+                        root.Photo.FitToView();
+                        root.UpdateNavigationIndicator();
+                    });
+                    if (!root.NavigationHost.Hidden) throw new InvalidOperationException("回适应态后导航图未立即隐藏");
+                    AssertNavigationIndicatorStatic(root, "隐藏");
+                });
+                await SettleAsync(root);
+                if (CATransaction.DisableActions)
+                    throw new InvalidOperationException("导航图更新后隐式动作仍处于关闭状态（CATransaction 未配对提交，会波及后续动画）");
+                if (!UIView.AnimationsEnabled)
+                    throw new InvalidOperationException("导航图更新关闭了全局动画（UIView.AnimationsEnabled=false），会误伤双击缩放");
+                lines.Add("PASS 导航图无隐式动画：显示/换位置/隐藏都在更新当帧到位（CATransaction 关闭隐式动作），未见飞入或缓慢位移；全局动画开关与双击缩放动画保持");
+
                 await File.WriteAllLinesAsync(report, lines);
                 Console.WriteLine($"[NativeSmoke] PASS gesture ({lines.Count} checks)");
             }
@@ -775,6 +848,37 @@ internal static class iOSNativeGestureCheck
         {
             if (root.Photo.IsFit != true) throw new InvalidOperationException("适应态判定异常：导航图隐藏但不是适应态");
             lines.Add("PASS 导航图：适应态隐藏（与旧壳缩放指示器一致）");
+        }
+    }
+
+    /// <summary>图层上是否有运行中的动画（隐式或显式），用于核对导航指示器没有过渡、缩放动画仍在播。</summary>
+    /// <param name="view">目标视图。</param>
+    /// <returns>存在动画键时为 true。</returns>
+    private static bool HasRunningAnimation(UIView view)
+        => view.Layer.AnimationKeys is { Length: > 0 };
+
+    /// <summary>
+    /// 导航图无隐式动画断言：宿主 / 小图 / 白框 / 百分比图层都不得有运行中的动画。
+    /// 指示器的几何更新落在滚动视图的 ZoomToRect 动画与宿主外层动画块里，UIKit 默认会把它们
+    /// 写成隐式动画（真机表现为首次从左上角飞入、白框约 1 秒位移、百分比淡入淡出）。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="stage">阶段名（报错用）。</param>
+    private static void AssertNavigationIndicatorStatic(iOSNativeRootViewController root, string stage)
+    {
+        (string Name, UIView View)[] parts =
+        [
+            ("宿主", root.NavigationHost),
+            ("小图", root.NavigationImageView),
+            ("可见框", root.NavigationFrameView),
+            ("百分比", root.ZoomLabel),
+        ];
+        foreach (var (name, view) in parts)
+        {
+            var keys = view.Layer.AnimationKeys;
+            if (keys == null || keys.Length == 0) continue;
+            throw new InvalidOperationException(
+                $"{stage}：导航图{name}仍有运行中的隐式动画 [{string.Join(",", keys)}]（表现为飞入或缓慢位移）");
         }
     }
 

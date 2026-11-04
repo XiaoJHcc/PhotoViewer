@@ -46,7 +46,8 @@ internal sealed class iOSNativeToolsPresenter
 
     /// <summary>打开或前置工具页；已在展示时只做内容同步。</summary>
     /// <param name="tools">共享工具壳 ViewModel。</param>
-    internal void ShowOrActivate(ToolsViewModel tools)
+    /// <param name="openExif">控制栏 EXIF 信息块入口：首次展示直接进入 EXIF 详情，无可用 EXIF 时回退列表。</param>
+    internal void ShowOrActivate(ToolsViewModel tools, bool openExif = false)
     {
         _tools = tools;
         if (_navigation == null) Build(tools);
@@ -62,13 +63,29 @@ internal sealed class iOSNativeToolsPresenter
             throw new InvalidOperationException("工具页没有可展示的宿主控制器");
         }
         _dismissDelegate ??= new ToolsDismissDelegate(this);
+        // TOOLS-01：每次展示都按设置页同一份 sheet 配置重新挂一次（detents/grabber/圆角/滚动扩展策略）：
+        // 重开复用同一导航控制器时，展示期重建的 sheet 控制器会丢掉上次的配置，只在 Build 时配一次不够。
+        ApplySheetStyle();
         // 展示控制器只在展示时存在：接着挂自适应关闭代理，覆盖下滑关闭与关闭按钮两条路径。
         if (_navigation!.PresentationController is { } presentation)
             presentation.Delegate = _dismissDelegate;
+        bool exifEntry = openExif && tools.IsExifDetailEnabled && tools.ExifDetail != null;
+        if (exifEntry)
+        {
+            // 控制栏 EXIF 信息块直达详情：导航栈保留列表页作为返回目标，共享导航状态在压栈后再写，
+            // 避免列表页的 ViewWillAppear 复位 CurrentTool。
+            _exif ??= new iOSExifDetailView();
+            _exif.Show(tools.ExifDetail!);
+            _navigation.SetViewControllers([_list!, _exif], false);
+            tools.OpenExifDetail();
+        }
+        else
+        {
+            _navigation.SetViewControllers([_list!], false);
+            tools.ShowList();
+        }
         // TOOLS-01：主窗口据此判断"已展示只前置、未展示才回首页"。
         tools.IsPresented = true;
-        _navigation.SetViewControllers([_list!], false);
-        tools.ShowList();
         host.PresentViewController(_navigation, true, () =>
         {
             if (_navigation.PresentationController is { } controller)
@@ -76,6 +93,15 @@ internal sealed class iOSNativeToolsPresenter
                 controller.Delegate = _dismissDelegate;
             }
         });
+    }
+
+    /// <summary>按设置页同一份配置设置工具 sheet：系统 PageSheet + 固定深色 + 半屏/全屏两档 detents。</summary>
+    private void ApplySheetStyle()
+    {
+        if (_navigation == null) return;
+        _navigation.ModalPresentationStyle = UIModalPresentationStyle.PageSheet;
+        _navigation.OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark;
+        iOSNativeSettingsPresenter.ConfigureSheetPresentation(_navigation.SheetPresentationController);
     }
 
     /// <summary>关闭工具页（sheet 下拉关闭同样走系统路径）；对象保留可重开。</summary>
@@ -92,12 +118,8 @@ internal sealed class iOSNativeToolsPresenter
     private void Build(ToolsViewModel tools)
     {
         _list = new iOSNativeToolsListViewController(tools, this);
-        _navigation = new UINavigationController(_list)
-        {
-            ModalPresentationStyle = UIModalPresentationStyle.PageSheet,
-            OverrideUserInterfaceStyle = UIUserInterfaceStyle.Dark,
-        };
-        iOSNativeSettingsPresenter.ConfigureSheetPresentation(_navigation.SheetPresentationController);
+        _navigation = new UINavigationController(_list);
+        ApplySheetStyle();
         Subscribe(tools);
     }
 
@@ -195,7 +217,9 @@ internal sealed class iOSNativeToolsListViewController : UITableViewController
     public override void ViewWillAppear(bool animated)
     {
         base.ViewWillAppear(animated);
-        _owner.BackToList();
+        // 只有列表页真的成为可见页时才回到列表态：控制栏直达 EXIF 时列表仍在导航栈底部，
+        // 不能把共享导航状态改回列表（否则详情页与 TopViewController 不同步）。
+        if (ReferenceEquals(NavigationController?.TopViewController, this)) _owner.BackToList();
         TableView.ReloadData();
     }
     public override nint RowsInSection(UITableView tableView, nint section) => 2;

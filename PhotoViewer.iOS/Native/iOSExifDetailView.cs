@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using CoreAnimation;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
@@ -11,17 +10,16 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生 EXIF 详情页（UIKit 版）：顶部居中显示不含后缀的文件名与格式切换，下方按元数据分组渲染圆角卡片，
+/// 原生 EXIF 详情页（UIKit 版）：顶部居中显示不含后缀的文件名与格式切换，下方按元数据分组渲染卡片，
 /// 每行 7 列（ID 60 点、1 点分隔线、名称/中文名/值按 2:2:3 分配，见共享 <see cref="ExifTableGeometry"/>）。
+/// 卡片由 <see cref="UITableViewStyle.InsetGrouped"/> 表格自身绘制：左右内缩、分组间距与连续圆角都取系统口径，
+/// 本页只从系统布局边距读取一次横向 inset，不再叠加自绘外边距或自绘圆角（自绘会与系统卡片叠成双层圆角）。
 /// 长分组列表用 <see cref="UITableView"/> 承载以获得原生虚拟化；窄宽度下列仍保持 2:2:3，由文本换行与
 /// 值列最多 3 行尾部截断自适应。数据全部来自共享 <see cref="ExifDetailViewModel"/>
 /// （含惰性加载、异步补全与当前格式状态），本视图只读不写业务状态。
 /// </summary>
 internal sealed class iOSExifDetailView : UIViewController
 {
-    /// <summary>页面/卡片左右外边距（旧壳 StackPanel Margin 12 与卡片 Margin 12,4）。</summary>
-    private const double SideMargin = 12;
-
     /// <summary>文件名行的上外边距（旧壳 Margin 12,12,12,4）。</summary>
     private const double HeaderTopMargin = 12;
 
@@ -37,11 +35,11 @@ internal sealed class iOSExifDetailView : UIViewController
     /// <summary>分组标题的下外边距。</summary>
     private const double GroupHeaderBottomMargin = 6;
 
-    /// <summary>卡片的上外边距（旧壳 Margin 12,4）。</summary>
+    /// <summary>分组标题与系统卡片之间的留白（旧壳卡片 Margin 12,4）。</summary>
     private const double CardTopMargin = 4;
 
-    /// <summary>卡片的下外边距。</summary>
-    private const double CardBottomMargin = 4;
+    /// <summary>系统布局边距尚未就绪时的回退左右内缩（iPhone/iPad 的 InsetGrouped 标准值）。</summary>
+    private const double FallbackHorizontalInset = 16;
 
     /// <summary>测量换行高度的宽度上限。</summary>
     private const double MeasureLimit = 10000;
@@ -62,7 +60,6 @@ internal sealed class iOSExifDetailView : UIViewController
     private static readonly UIColor GroupHeaderColor = UIColor.Label;
 
     private static readonly UIColor CardColor = UIColor.SecondarySystemGroupedBackground;
-    private static readonly UIColor IdCellColor = UIColor.SecondarySystemGroupedBackground;
     private static readonly UIColor DividerColor = UIColor.Separator;
 
     /// <summary>Tag ID 文字取系统次标签色，与 Mac 同口径，在深色卡片上保持可读。</summary>
@@ -119,6 +116,26 @@ internal sealed class iOSExifDetailView : UIViewController
     /// <summary>多格式时的格式切换按钮（验收触发真实点击）。</summary>
     internal IReadOnlyList<UIButton> FormatButtons => _header.FormatButtons;
 
+    /// <summary>文件名标签的当前 frame（验收核对与系统卡片左缘对齐）。</summary>
+    internal CGRect FileNameFrame => _header.FileNameFrame;
+
+    /// <summary>
+    /// 行卡片在表格坐标中的横向范围：<see cref="UITableViewStyle.InsetGrouped"/> 已按表格布局边距把卡片内缩，
+    /// 这里只读取那一次系统 inset。手机（16）与 iPad（16 或 20）由系统按当前宽度给出，壳层不再叠加固定边距。
+    /// </summary>
+    /// <param name="tableView">EXIF 表格。</param>
+    /// <returns>卡片左边距与宽度（点）。</returns>
+    internal static (double Left, double Width) CardSpan(UITableView tableView)
+    {
+        double left = (double)tableView.LayoutMargins.Left;
+        double right = (double)tableView.LayoutMargins.Right;
+        if (left + right <= 0)
+        {
+            left = right = FallbackHorizontalInset;
+        }
+        return (left, Math.Max(1, (double)tableView.Bounds.Width - left - right));
+    }
+
     /// <summary>建立表格、文件名/格式切换头与数据源。</summary>
     public iOSExifDetailView() : base(null, null)
     {
@@ -133,6 +150,8 @@ internal sealed class iOSExifDetailView : UIViewController
             SectionHeaderTopPadding = 0,
             ContentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentBehavior.Never,
             AllowsSelection = false,
+            // 与工具首页同口径：EXIF 卡片按系统 inset 铺满 sheet，不额外收进 readable width 的居中窄列。
+            CellLayoutMarginsFollowReadableWidth = false,
         };
         _table.RegisterClassForCellReuse(typeof(RowCell), TableSource.CellId);
         _header = new HeaderView(SelectFormat);
@@ -200,13 +219,15 @@ internal sealed class iOSExifDetailView : UIViewController
         double height = _header.RequiredHeight(width);
         if (Math.Abs((double)_header.Frame.Height - height) > .01 || Math.Abs((double)_header.Frame.Width - width) > .01)
             _header.Frame = new CGRect(0, 0, width, height);
+        var span = CardSpan(_table);
+        _header.HorizontalInset = span.Left;
         _table.TableHeaderView = _header;
         _header.SetNeedsLayout();
     }
 
     /// <summary>单条元数据的行高：名称/中文名/值在 2:2:3 列宽下换行后的最大高度 + 上下内边距。</summary>
     /// <param name="tag">元数据标签。</param>
-    /// <param name="cardWidth">卡片宽度（表格宽 - 两侧外边距）。</param>
+    /// <param name="cardWidth">系统 inset grouped 卡片宽度（表格宽 - 系统布局边距）。</param>
     /// <returns>行高。</returns>
     internal static double RowHeight(MetadataTag tag, double cardWidth)
     {
@@ -275,7 +296,7 @@ internal sealed class iOSExifDetailView : UIViewController
         public override nint RowsInSection(UITableView tableView, nint section)
             => owner._viewModel?.Groups is { } groups && section >= 0 && section < groups.Count ? groups[(int)section].Tags.Count : 0;
 
-        /// <summary>复用行并按当前标签配置（首/末行决定卡片圆角）。</summary>
+        /// <summary>复用行并按当前标签配置（末行隐藏行分隔线；卡片圆角由系统 inset grouped 卡片给出）。</summary>
         /// <param name="tableView">表格。</param>
         /// <param name="indexPath">行索引。</param>
         /// <returns>已配置的单元格。</returns>
@@ -283,7 +304,7 @@ internal sealed class iOSExifDetailView : UIViewController
         {
             var cell = (RowCell)tableView.DequeueReusableCell(CellId, indexPath);
             var group = owner._viewModel!.Groups![(int)indexPath.Section];
-            cell.Configure(group.Tags[(int)indexPath.Row], indexPath.Row == 0, indexPath.Row == group.Tags.Count - 1);
+            cell.Configure(group.Tags[(int)indexPath.Row], indexPath.Row == group.Tags.Count - 1);
             return cell;
         }
 
@@ -294,11 +315,11 @@ internal sealed class iOSExifDetailView : UIViewController
         public override nfloat GetHeightForRow(UITableView tableView, NSIndexPath indexPath)
         {
             var group = owner._viewModel!.Groups![(int)indexPath.Section];
-            double cardWidth = Math.Max(1, (double)tableView.Bounds.Width - (double)tableView.LayoutMargins.Left - (double)tableView.LayoutMargins.Right - SideMargin * 2);
+            double cardWidth = CardSpan(tableView).Width;
             return (nfloat)(RowHeight(group.Tags[(int)indexPath.Row], cardWidth) + ExifTableGeometry.DividerThickness);
         }
 
-        /// <summary>分组标题：左上 16 点粗体 #EEE，带旧壳的 18/6 上下外边距。</summary>
+        /// <summary>分组标题：左上 16 点粗体，与系统卡片左缘对齐，带旧壳的 18/6 上下外边距。</summary>
         /// <param name="tableView">表格。</param>
         /// <param name="section">分组索引。</param>
         /// <returns>分组标题视图。</returns>
@@ -306,7 +327,8 @@ internal sealed class iOSExifDetailView : UIViewController
         {
             var group = owner._viewModel!.Groups![(int)section];
             var host = new UIView { BackgroundColor = UIColor.Clear };
-            var label = new UILabel(new CGRect(SideMargin, GroupHeaderTopMargin, Math.Max(1, (double)tableView.Bounds.Width - SideMargin * 2), GroupHeaderFont.LineHeight))
+            var span = CardSpan(tableView);
+            var label = new UILabel(new CGRect((nfloat)span.Left, GroupHeaderTopMargin, (nfloat)span.Width, GroupHeaderFont.LineHeight))
             {
                 Text = group.Name,
                 Font = GroupHeaderFont,
@@ -325,15 +347,16 @@ internal sealed class iOSExifDetailView : UIViewController
             => (nfloat)(GroupHeaderTopMargin + Math.Ceiling((double)GroupHeaderFont.LineHeight) + GroupHeaderBottomMargin + CardTopMargin);
     }
 
-    /// <summary>元数据行：卡片 #2a2a2a 圆角 6，7 列（ID / 名称 / 中文名 / 值）与 1 点分隔线。</summary>
+    /// <summary>
+    /// 元数据行：行卡片即系统 inset grouped 的卡片（底色 <see cref="CardColor"/>、圆角与首末行圆角全由表格绘制），
+    /// 内部 7 列（ID / 名称 / 中文名 / 值）与 1 点分隔线直接铺在单元格内容区，不再叠加自绘卡片与固定圆角。
+    /// </summary>
     [Register("PViOSExifRowCell")]
     internal sealed class RowCell : UITableViewCell
     {
         private static readonly nfloat IdColumnWidth = (nfloat)ExifTableGeometry.IdColumnWidth;
         private static readonly nfloat DividerWidth = (nfloat)ExifTableGeometry.DividerThickness;
 
-        private readonly UIView _card = new();
-        private readonly UIView _idCell = new();
         private readonly SelectableTextView _idText;
         private readonly SelectableTextView _name;
         private readonly SelectableTextView _chinese;
@@ -347,12 +370,9 @@ internal sealed class iOSExifDetailView : UIViewController
         [Export("initWithStyle:reuseIdentifier:")]
         public RowCell(UITableViewCellStyle style, string reuseIdentifier) : base(style, reuseIdentifier)
         {
-            BackgroundColor = UIColor.Clear;
+            // 卡片底色交给单元格背景：InsetGrouped 表格按系统边距内缩并给首末行连续圆角，壳层不再自绘。
+            BackgroundColor = CardColor;
             ContentView.BackgroundColor = UIColor.Clear;
-            _card.BackgroundColor = CardColor;
-            _card.Layer.CornerRadius = 6;
-            _card.ClipsToBounds = true;
-            _idCell.BackgroundColor = IdCellColor;
             // TOOLS-03：标签文本可长按选择复制，故用只读可选文本视图而不是 UILabel。
             _idText = SelectableText(IdFont, IdTextColor, UITextAlignment.Center, 1, UILineBreakMode.TailTruncation);
             _name = SelectableText(CellFont, NameColor, UITextAlignment.Left, 0, UILineBreakMode.WordWrap);
@@ -360,63 +380,53 @@ internal sealed class iOSExifDetailView : UIViewController
             _value = SelectableText(CellFont, ValueColor, UITextAlignment.Left, ExifTableGeometry.ValueMaxLines, UILineBreakMode.TailTruncation);
             foreach (var divider in _dividers) divider.BackgroundColor = DividerColor;
             _rowDivider.BackgroundColor = DividerColor;
-            _card.AddSubview(_idCell);
-            _idCell.AddSubview(_idText);
-            _card.AddSubview(_name);
-            _card.AddSubview(_chinese);
-            _card.AddSubview(_value);
-            foreach (var divider in _dividers) _card.AddSubview(divider);
-            _card.AddSubview(_rowDivider);
-            ContentView.AddSubview(_card);
+            ContentView.AddSubview(_idText);
+            ContentView.AddSubview(_name);
+            ContentView.AddSubview(_chinese);
+            ContentView.AddSubview(_value);
+            foreach (var divider in _dividers) ContentView.AddSubview(divider);
+            ContentView.AddSubview(_rowDivider);
         }
 
-        /// <summary>按标签内容与首/末行状态配置（首/末行给卡片加对应圆角）。</summary>
+        /// <summary>按标签内容与末行状态配置（末行隐藏行分隔线）。</summary>
         /// <param name="tag">元数据标签。</param>
-        /// <param name="first">分组首行。</param>
         /// <param name="last">分组末行。</param>
-        internal void Configure(MetadataTag tag, bool first, bool last)
+        internal void Configure(MetadataTag tag, bool last)
         {
             _idText.Text = tag.TagIdHex;
             _name.Text = tag.Name;
             _chinese.Text = tag.ChineseName ?? "";
             _value.Text = tag.Value;
-            nfloat corner = 6;
-            _card.Layer.CornerRadius = corner;
-            _card.Layer.MaskedCorners = (first ? CACornerMask.MinXMinYCorner | CACornerMask.MaxXMinYCorner : 0)
-                | (last ? CACornerMask.MinXMaxYCorner | CACornerMask.MaxXMaxYCorner : 0);
             _rowDivider.Hidden = last;
             SetNeedsLayout();
         }
 
-        /// <summary>按共享 7 列几何摆放 ID 单元格、三条列分隔线、三列文本与行分隔线。</summary>
+        /// <summary>按共享 7 列几何在单元格内容区摆放 ID 列、三条列分隔线、三列文本与行分隔线。</summary>
         public override void LayoutSubviews()
         {
             base.LayoutSubviews();
-            double width = Math.Max(1, (double)ContentView.Bounds.Width);
-            double cardWidth = Math.Max(1, width - SideMargin * 2);
-            var card = new CGRect(SideMargin, 0, cardWidth, (double)ContentView.Bounds.Height);
-            _card.Frame = card;
+            double cardWidth = Math.Max(1, (double)ContentView.Bounds.Width);
+            double cardHeight = Math.Max(1, (double)ContentView.Bounds.Height);
             var columns = ExifTableGeometry.Compute(cardWidth);
-            double idHeight = Math.Min((double)_idText.Font!.LineHeight, (double)card.Height);
-            _idCell.Frame = new CGRect(0, 0, ExifTableGeometry.IdColumnWidth, (nfloat)card.Height);
-            _idText.Frame = new CGRect(0, ((nfloat)card.Height - idHeight) / 2, IdColumnWidth, idHeight);
+            double idHeight = Math.Min((double)_idText.Font!.LineHeight, cardHeight);
+            _idText.Frame = new CGRect(0, (nfloat)((cardHeight - idHeight) / 2), IdColumnWidth, (nfloat)idHeight);
 
             double x = ExifTableGeometry.IdColumnWidth;
-            _dividers[0].Frame = new CGRect(x, 0, DividerWidth, (nfloat)card.Height);
+            _dividers[0].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
             x += ExifTableGeometry.DividerThickness;
-            _name.Frame = new CGRect(x + ExifTableGeometry.CellPaddingX, ExifTableGeometry.CellPaddingY,
-                columns.NameTextWidth, Math.Max(1, (double)card.Height - ExifTableGeometry.CellPaddingY * 2));
+            _name.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
+                (nfloat)columns.NameTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
             x += columns.NameColumn;
-            _dividers[1].Frame = new CGRect(x, 0, DividerWidth, (nfloat)card.Height);
+            _dividers[1].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
             x += ExifTableGeometry.DividerThickness;
-            _chinese.Frame = new CGRect(x + ExifTableGeometry.CellPaddingX, ExifTableGeometry.CellPaddingY,
-                columns.ChineseTextWidth, Math.Max(1, (double)card.Height - ExifTableGeometry.CellPaddingY * 2));
+            _chinese.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
+                (nfloat)columns.ChineseTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
             x += columns.ChineseColumn;
-            _dividers[2].Frame = new CGRect(x, 0, DividerWidth, (nfloat)card.Height);
+            _dividers[2].Frame = new CGRect((nfloat)x, 0, DividerWidth, (nfloat)cardHeight);
             x += ExifTableGeometry.DividerThickness;
-            _value.Frame = new CGRect(x + ExifTableGeometry.CellPaddingX, ExifTableGeometry.CellPaddingY,
-                columns.ValueTextWidth, Math.Max(1, (double)card.Height - ExifTableGeometry.CellPaddingY * 2));
-            _rowDivider.Frame = new CGRect(0, (nfloat)card.Height - DividerWidth, (nfloat)cardWidth, DividerWidth);
+            _value.Frame = new CGRect((nfloat)(x + ExifTableGeometry.CellPaddingX), ExifTableGeometry.CellPaddingY,
+                (nfloat)columns.ValueTextWidth, (nfloat)Math.Max(1, cardHeight - ExifTableGeometry.CellPaddingY * 2));
+            _rowDivider.Frame = new CGRect(0, (nfloat)(cardHeight - DividerWidth), (nfloat)cardWidth, DividerWidth);
         }
 
         /// <summary>只读可选文本；值列超过三行时尾部截断。</summary>
@@ -469,7 +479,7 @@ internal sealed class iOSExifDetailView : UIViewController
         }
     }
 
-    /// <summary>文件名 + 格式切换头：单格式显示文字标签，多格式显示扁平按钮（选中 #505050、圆角 6）。</summary>
+    /// <summary>文件名 + 格式切换头：单格式显示文字标签，多格式显示原生 configuration 格式按钮。</summary>
     private sealed class HeaderView : UIView
     {
         private readonly UILabel _fileName;
@@ -478,6 +488,7 @@ internal sealed class iOSExifDetailView : UIViewController
         private readonly Action<FormatEntry> _select;
         private readonly List<UIButton> _buttons = [];
         private bool _showLoading;
+        private double _horizontalInset = FallbackHorizontalInset;
 
         /// <summary>构造三个常驻标签。</summary>
         /// <param name="select">格式切换回调。</param>
@@ -496,6 +507,24 @@ internal sealed class iOSExifDetailView : UIViewController
 
         /// <summary>多格式时的格式切换按钮（验收触发真实点击）。</summary>
         internal IReadOnlyList<UIButton> FormatButtons => _buttons;
+
+        /// <summary>
+        /// 头部内容的左右内缩（取系统 InsetGrouped 卡片的左缘），文件名与格式组在这个区间内居中。
+        /// 直接跟随表格布局边距，宽窗口/窄窗口与 iPhone/iPad 用同一口径，不再叠加自绘边距。
+        /// </summary>
+        internal double HorizontalInset
+        {
+            get => _horizontalInset;
+            set
+            {
+                if (Math.Abs(_horizontalInset - value) < .01) return;
+                _horizontalInset = value;
+                SetNeedsLayout();
+            }
+        }
+
+        /// <summary>文件名标签的当前 frame（验收核对与卡片左缘对齐）。</summary>
+        internal CGRect FileNameFrame => _fileName.Frame;
 
         /// <summary>绑定 VM 当前状态：文件名、格式切换按钮与加载提示。</summary>
         /// <param name="viewModel">共享 EXIF 详情 VM。</param>
@@ -567,9 +596,11 @@ internal sealed class iOSExifDetailView : UIViewController
                 formatWidth = MeasureWidth(_formatLabel);
             }
             double spacing = formatWidth > 0 ? HeaderSpacing : 0;
-            double groupWidth = Math.Min(fileNameWidth + spacing + formatWidth, Math.Max(1, width - SideMargin * 2));
+            double inset = Math.Max(0, _horizontalInset);
+            double available = Math.Max(1, width - inset * 2);
+            double groupWidth = Math.Min(fileNameWidth + spacing + formatWidth, available);
             double nameWidth = Math.Max(1, groupWidth - spacing - formatWidth);
-            double start = Math.Max(SideMargin, (width - groupWidth) / 2);
+            double start = inset + Math.Max(0, (available - groupWidth) / 2);
             _fileName.Frame = new CGRect(start, HeaderTopMargin + (headerHeight - lineHeight) / 2, nameWidth, lineHeight);
             double x = start + nameWidth + spacing;
             for (int index = 0; index < _buttons.Count; index++)
@@ -580,12 +611,12 @@ internal sealed class iOSExifDetailView : UIViewController
             }
             if (_buttons.Count == 0)
             {
-                double labelWidth = Math.Max(1, Math.Min(formatWidth, width - x - SideMargin));
+                double labelWidth = Math.Max(1, Math.Min(formatWidth, width - x - inset));
                 _formatLabel.Frame = new CGRect(x, HeaderTopMargin + (headerHeight - lineHeight) / 2, labelWidth, lineHeight);
             }
             double loadingHeight = Math.Ceiling((double)FormatFont.LineHeight);
             double loadingTop = HeaderTopMargin + headerHeight + HeaderBottomMargin;
-            _loading.Frame = new CGRect(SideMargin, loadingTop + LoadingMargin, Math.Max(1, width - SideMargin * 2), loadingHeight);
+            _loading.Frame = new CGRect(inset, loadingTop + LoadingMargin, available, loadingHeight);
         }
 
         /// <summary>单行文本的自然宽度。</summary>

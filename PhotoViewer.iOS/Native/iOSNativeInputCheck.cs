@@ -772,7 +772,7 @@ internal static class iOSNativeInputCheck
     {
         // 第一轮：布局模式 / 控制栏命令显隐与顺序 / 快捷键重绑 / 评分与 EXIF 显隐。
         var first = await OpenSettingsAsync(root, lines);
-        await iOSNativeSettingsCheck.RunAsync(first, lines);
+        await iOSNativeSettingsCheck.RunAsync(root, first, lines);
         bool expectedRow = !main.IsRowLayout;
         var working = first.Session.WorkingSettings;
         var next = working.Hotkeys.First(hotkey => hotkey.Command == "Next");

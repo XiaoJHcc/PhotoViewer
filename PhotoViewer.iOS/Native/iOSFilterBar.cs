@@ -25,6 +25,8 @@ internal sealed class iOSFilterBar : UIView
     private readonly UIButton _rating;
     private readonly UILabel _count = new();
     private readonly UIButton _similarity;
+    /// <summary>上一次刷新的筛选内容摘要：菜单只在选项/选中项真的变化时重建，避免无关通知换掉已展开的下拉。</summary>
+    private string _menuSignature = string.Empty;
 
     /// <summary>排序控件（验收读取几何）。</summary>
     internal UIButton SortControl => _sort;
@@ -74,6 +76,14 @@ internal sealed class iOSFilterBar : UIView
         _order.SetTitle(filter.SortOrders.FirstOrDefault(option => (SortOrder)option.Value == filter.SortOrder)?.DisplayName ?? "", UIControlState.Normal);
         _rating.SetTitle(filter.RatingFilters.FirstOrDefault(option => option.Key == filter.SelectedRatingFilter)?.DisplayName ?? "", UIControlState.Normal);
         SyncToggle();
+        string signature = string.Join("|",
+            string.Join(",", filter.SortModes.Select(option => option.DisplayName + ":" + option.Value)),
+            filter.SortMode + ":" + filter.SortOrder,
+            filter.SelectedRatingFilter,
+            string.Join(",", filter.SortOrders.Select(option => option.DisplayName + ":" + option.Value)),
+            string.Join(",", filter.RatingFilters.Select(option => option.DisplayName + ":" + option.Key)));
+        if (string.Equals(signature, _menuSignature, StringComparison.Ordinal)) return;
+        _menuSignature = signature;
         BindMenu(_sort, filter.SortModes.Select(option => (option.DisplayName, (object)(SortMode)option.Value)).ToArray(), filter.SortMode);
         BindMenu(_order, filter.SortOrders.Select(option => (option.DisplayName, (object)(SortOrder)option.Value)).ToArray(), filter.SortOrder);
         BindMenu(_rating, filter.RatingFilters.Select(option => (option.DisplayName, (object)option.Key)).ToArray(), filter.SelectedRatingFilter);

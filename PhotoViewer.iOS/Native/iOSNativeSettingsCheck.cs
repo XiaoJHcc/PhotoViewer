@@ -12,13 +12,13 @@ internal static class iOSNativeSettingsCheck
 {
     private static string BindingFrameNote = string.Empty;
 
-    internal static async Task RunAsync(iOSNativeSettingsRootViewController root, List<string> lines)
+    internal static async Task RunAsync(iOSNativeRootViewController mainRoot, iOSNativeSettingsRootViewController root, List<string> lines)
     {
         var settings = root.Session.WorkingSettings;
         var snapshot = settings.CreateSnapshot();
         await Task.Delay(700);
         await SnapshotStageAsync("settings-root");
-        await VerifyFilePageCacheLimitsAsync(root, settings, lines);
+        await VerifyFilePageCacheLimitsAsync(mainRoot, root, settings, lines);
         await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(1, 0)));
         await WaitForPage<iOSNativePreviewSettingsViewController>(root);
         await SnapshotStageAsync("settings-preview");
@@ -68,6 +68,7 @@ internal static class iOSNativeSettingsCheck
         await VerifyListPresentationAsync(control, settings, lines);
         await VerifyInlineBindingAsync(control, settings, lines);
         await VerifyCaptureAsync(root, control, settings, lines);
+        await VerifyExifListMatchesControlRowHeightAsync(root, lines);
         await UiDispatcher.InvokeAsync(() =>
         {
             control.Capabilities.Inject(false, false);
@@ -77,10 +78,42 @@ internal static class iOSNativeSettingsCheck
     }
 
     /// <summary>
+    /// SETTINGS-08：EXIF 显示表与控制栏功能表使用一致的标准行高；只有控制栏功能行带命令图标。
+    /// </summary>
+    private static async Task VerifyExifListMatchesControlRowHeightAsync(
+        iOSNativeSettingsRootViewController root, List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(3, 0)));
+        await WaitForPage<iOSNativeExifSettingsViewController>(root);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
+            page.View!.LayoutIfNeeded();
+            var list = Descendants(page.View!).OfType<iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.ExifDisplayItem>>().Single();
+            list.TableView.LayoutIfNeeded();
+            var cell = list.TableView.CellAt(NSIndexPath.FromRowSection(0, 0)) as iOSNativeEmbeddedCheckableReorderCell
+                ?? throw new InvalidOperationException("EXIF 显示表未生成真实单元格");
+            if (Math.Abs((double)cell.Bounds.Height - iOSNativeSettingsMetrics.ListRowHeight) > .5)
+                throw new InvalidOperationException($"EXIF 显示行未使用标准行高：{cell.Bounds.Height}");
+            if (!cell.LeadingIconView.Hidden)
+                throw new InvalidOperationException("EXIF 显示行不应带命令图标");
+            int rows = (int)list.TableView.NumberOfRowsInSection(0);
+            var last = list.TableView.CellAt(NSIndexPath.FromRowSection(rows - 1, 0))
+                ?? throw new InvalidOperationException("EXIF 显示表末行未生成");
+            if ((double)last.SeparatorInset.Right <= (double)list.TableView.Bounds.Width)
+                throw new InvalidOperationException($"EXIF 显示表最后一行仍有底缘分隔线：{last.SeparatorInset}");
+        });
+        lines.Add($"PASS SETTINGS-08 行高一致：控制栏功能与 EXIF 显示表同为 {iOSNativeSettingsMetrics.ListRowHeight} 点标准行高；命令图标只出现在控制栏功能行，两表末行均无底缘分隔线");
+        await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
+        await WaitForPage<iOSNativeSettingsRootViewController>(root);
+    }
+
+    /// <summary>
     /// 文件页缓存项：iPad 的缓存容量由实测预算自动管理，不出现「缓存内存上限 / 缓存数量上限」两项，
     /// 两条提示保留并改为按实测预算与适屏尺寸表述。
     /// </summary>
     private static async Task VerifyFilePageCacheLimitsAsync(
+        iOSNativeRootViewController mainRoot,
         iOSNativeSettingsRootViewController root,
         SettingsViewModel settings,
         List<string> lines)
@@ -108,6 +141,59 @@ internal static class iOSNativeSettingsCheck
             if (!count.Contains("适屏照片", StringComparison.Ordinal))
                 throw new InvalidOperationException($"可缓存张数提示口径不符：{count}");
         });
+
+        // SETTINGS-15 / 周期刷新回归：卡片内最后一行不留底缘描边；长表单在内存探测的周期通知期间保持滚动位置。
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
+            page.View!.LayoutIfNeeded();
+            var list = Descendants(page.View!).OfType<iOSNativeEmbeddedCheckableReorderListView<SettingsViewModel.FileFormatItem>>().Single();
+            list.TableView.LayoutIfNeeded();
+            var rows = (int)list.TableView.NumberOfRowsInSection(0);
+            if (rows < 2) throw new InvalidOperationException($"文件格式表行数不足：{rows}");
+            var last = list.TableView.CellAt(NSIndexPath.FromRowSection(rows - 1, 0))
+                ?? throw new InvalidOperationException("文件格式表末行未生成");
+            var middle = list.TableView.CellAt(NSIndexPath.FromRowSection(0, 0))
+                ?? throw new InvalidOperationException("文件格式表首行未生成");
+            if ((double)last.SeparatorInset.Right <= (double)list.TableView.Bounds.Width)
+                throw new InvalidOperationException($"文件格式表最后一行仍有底缘分隔线：inset={last.SeparatorInset} 表宽={list.TableView.Bounds.Width}");
+            if (middle.SeparatorInset != UIEdgeInsets.Zero)
+                throw new InvalidOperationException($"文件格式表非末行分隔线不再全宽：{middle.SeparatorInset}");
+            var scroll = page.View!.Subviews.OfType<UIScrollView>().Single();
+            scroll.SetContentOffset(new CoreGraphics.CGPoint(0, Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height)), false);
+            scroll.LayoutIfNeeded();
+        });
+        await Task.Delay(2600);
+        UIButton? firstCommand = null;
+        bool scrolled = false;
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
+            var scroll = page.View!.Subviews.OfType<UIScrollView>().Single();
+            double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
+            scrolled = bottom > 0;
+            if (scrolled && Math.Abs((double)scroll.ContentOffset.Y - bottom) > 1)
+                throw new InvalidOperationException($"周期刷新把长表单滚回顶部：offset={scroll.ContentOffset.Y} bottom={bottom}");
+            firstCommand = mainRoot.ControlBar.Commands.Values.FirstOrDefault();
+            // 实际通知入口：缓存计数等诊断属性不得引起主屏结构刷新。
+            mainRoot.NotifySettingsProperty(nameof(SettingsViewModel.BitmapCacheCountInfo));
+        });
+        await Task.Delay(200);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
+            var scroll = page.View!.Subviews.OfType<UIScrollView>().Single();
+            double bottom = Math.Max(0, (double)scroll.ContentSize.Height - (double)scroll.Bounds.Height);
+            if (scrolled && Math.Abs((double)scroll.ContentOffset.Y - bottom) > 1)
+                throw new InvalidOperationException($"缓存计数通知把长表单滚回顶部：offset={scroll.ContentOffset.Y} bottom={bottom}");
+            var current = mainRoot.ControlBar.Commands.Values.FirstOrDefault();
+            if (firstCommand != null && !ReferenceEquals(current, firstCommand))
+                throw new InvalidOperationException("缓存计数等诊断通知仍重建了控制栏按钮");
+        });
+        lines.Add(scrolled
+            ? "PASS 周期刷新回归：文件格式表末行无底缘分隔线（中间行仍全宽）；2.6s 内存探测与缓存计数通知后，文件页滚动位置与控制栏按钮身份均保持"
+            : "NOTE 周期刷新回归：当前窗口尺寸下文件页不足以滚动，只核对了控制栏按钮身份；末行分隔线断言已通过");
+
         await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
         await WaitForPage<iOSNativeSettingsRootViewController>(root);
         lines.Add("PASS SETTINGS-06@ios：文件页由实测预算自动管理缓存，不显示缓存内存/数量两项，预算与适屏张数两条提示按新口径且无旧说明");
@@ -193,6 +279,10 @@ internal static class iOSNativeSettingsCheck
                 if (cell.Bounds.Height < 44) throw new InvalidOperationException("布局模式行高小于44");
             if (table.VisibleCells.Count(cell => cell.Accessory == UITableViewCellAccessory.Checkmark) != 1)
                 throw new InvalidOperationException("布局模式不是三选一勾选");
+            var lastMode = table.CellAt(NSIndexPath.FromRowSection((nint)(settings.LayoutModes.Count - 1), 0))
+                ?? throw new InvalidOperationException("布局模式末行未生成");
+            if ((double)lastMode.SeparatorInset.Right <= (double)table.Bounds.Width)
+                throw new InvalidOperationException($"布局模式最后一行仍有底缘分隔线：{lastMode.SeparatorInset}");
         });
         var item = settings.Hotkeys[0];
         var draft = item.PrimaryHotkey;
@@ -224,8 +314,9 @@ internal static class iOSNativeSettingsCheck
                 cell.LayoutIfNeeded();
                 if (cell.TitleLabel.Text != item.Name || !cell.ShowsReorderControl || cell.CheckmarkView.Hidden == item.IsDisplay)
                     throw new InvalidOperationException("行未保留名称/勾选/排序");
-                if (Math.Abs((double)cell.Bounds.Height - 44) > .5)
-                    throw new InvalidOperationException($"控制栏功能行不是44点：{cell.Bounds.Height}");
+                if (Math.Abs((double)cell.Bounds.Height - iOSNativeSettingsMetrics.ListRowHeight) > .5)
+                    throw new InvalidOperationException($"控制栏功能行不是标准行高 {iOSNativeSettingsMetrics.ListRowHeight}：{cell.Bounds.Height}");
+                VerifyCommandIcon(cell, item);
                 if (cell.EditingAccessory != UITableViewCellAccessory.None)
                     throw new InvalidOperationException("行尾不应再有 ⓘ 详情入口");
                 if (!external)
@@ -279,9 +370,34 @@ internal static class iOSNativeSettingsCheck
             list.TableView.Source.MoveRow(list.TableView, NSIndexPath.FromRowSection(1, 0), NSIndexPath.FromRowSection(0, 0));
             if (!ReferenceEquals(settings.Hotkeys[0], second)) throw new InvalidOperationException("拖拽排序未写工作副本");
             list.TableView.Source.MoveRow(list.TableView, NSIndexPath.FromRowSection(1, 0), NSIndexPath.FromRowSection(0, 0));
+            int rows = (int)list.TableView.NumberOfRowsInSection(0);
+            var last = list.TableView.CellAt(NSIndexPath.FromRowSection(rows - 1, 0))
+                ?? throw new InvalidOperationException("控制栏功能表末行未生成");
+            if ((double)last.SeparatorInset.Right <= (double)list.TableView.Bounds.Width)
+                throw new InvalidOperationException($"控制栏功能表最后一行仍有底缘分隔线：{last.SeparatorInset}");
         });
         lines.Add("NOTE 行内绑定按钮几何：" + BindingFrameNote);
-        lines.Add("PASS INPUT-13 控制栏功能列表：纯触控仅勾选/名称/排序、标题居中44高、无绑定按钮与AX；键盘或鼠标注入后同一cell就地出现两个108×28主/次绑定按钮（垂直居中、不压名称与拖拽手柄、标题取自同一格式化）、44高；滚动位置与草稿不变；点行勾选、拖拽排序写副本");
+        lines.Add($"PASS INPUT-13 控制栏功能列表：纯触控仅勾选/命令图标/名称/排序、标题居中、标准行高 {iOSNativeSettingsMetrics.ListRowHeight}、末行无底缘分隔线、无绑定按钮与AX；键盘或鼠标注入后同一cell就地出现两个108×28主/次绑定按钮（垂直居中、不压名称与拖拽手柄、标题取自同一格式化）；滚动位置与草稿不变；点行勾选、拖拽排序写副本");
+    }
+
+    /// <summary>控制栏功能行的命令图标：与命令目录/控制栏按钮同一 SF Symbols，几何不压名称。</summary>
+    /// <param name="cell">真实单元格。</param>
+    /// <param name="item">快捷键项。</param>
+    private static void VerifyCommandIcon(iOSNativeEmbeddedCheckableReorderCell cell, SettingsViewModel.HotkeyItem item)
+    {
+        var icon = cell.LeadingIconView;
+        if (icon.Hidden || icon.Image == null)
+            throw new InvalidOperationException($"控制栏功能行缺少命令图标：{item.Command}");
+        icon.LayoutIfNeeded();
+        var frame = icon.ConvertRectToView(icon.Bounds, cell);
+        var title = cell.TitleLabel.ConvertRectToView(cell.TitleLabel.Bounds, cell);
+        var checkmark = cell.CheckmarkView.ConvertRectToView(cell.CheckmarkView.Bounds, cell);
+        if (Math.Abs((double)icon.Bounds.Width - 20) > .5 || (double)icon.Bounds.Height < 16 || (double)icon.Bounds.Height > 20.5)
+            throw new InvalidOperationException($"命令图标尺寸异常：bounds={icon.Bounds} cellFrame={frame}");
+        if (Math.Abs((double)frame.GetMidY() - (double)cell.Bounds.Height / 2) > .5)
+            throw new InvalidOperationException($"命令图标未在行内垂直居中：{frame} 行高 {cell.Bounds.Height}");
+        if (frame.IntersectsWith(title) || frame.IntersectsWith(checkmark) || frame.GetMaxX() > title.X + .5)
+            throw new InvalidOperationException($"命令图标与勾选/命令名重叠：icon={frame} check={checkmark} title={title}");
     }
 
     /// <summary>校验行内主/次绑定按钮的尺寸、位置、标题与无障碍信息（外设连接态）。</summary>
@@ -301,7 +417,7 @@ internal static class iOSNativeSettingsCheck
             if (Math.Abs((double)frame.Width - 108) > .5 || Math.Abs((double)frame.Height - 28) > .5)
                 throw new InvalidOperationException($"绑定按钮尺寸不是108×28：{frame}");
             if (Math.Abs((double)frame.GetMidY() - (double)cell.Bounds.Height / 2) > .5)
-                throw new InvalidOperationException($"绑定按钮未在44点行内垂直居中：{frame} 行高 {cell.Bounds.Height}");
+                throw new InvalidOperationException($"绑定按钮未在行内垂直居中：{frame} 行高 {cell.Bounds.Height}");
             if (frame.IntersectsWith(titleFrame))
                 throw new InvalidOperationException($"绑定按钮与命令名重叠：{frame} title={titleFrame}");
             if (reorder != null && frame.IntersectsWith(reorderFrame))

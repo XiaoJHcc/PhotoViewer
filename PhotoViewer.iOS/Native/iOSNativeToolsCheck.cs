@@ -15,8 +15,9 @@ namespace PhotoViewer.iOS.Native;
 /// <summary>
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-tools-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
 /// 工具页——sheet + 导航控制器展示/关闭、列表页两个入口（照片数据统计为 Windows 专属，不出现）、
-/// EXIF 详情页按共享 7 列几何渲染分组与标签（多格式时真实切换格式）、DINO 诊断页 5 张瓦片与共享 presenter
-/// 就绪、返回列表页，以及控制栏 EXIF 信息块点击打开工具页。
+/// EXIF 详情页按共享 7 列几何渲染分组与标签（多格式时真实切换格式），并在 320–1024 点七档宽度下核对卡片
+/// 内缩只取系统 InsetGrouped 一次边距、7 列与行高按实际卡片宽重算、行内无自绘圆角；DINO 诊断页 5 张瓦片与共享
+/// presenter 就绪、返回列表页，以及控制栏 EXIF 信息块直达 EXIF 详情（工具 sheet 与设置页同配置）。
 /// 素材要求：目录内至少 1 张自有 jpg 且能读到 EXIF；只读素材，不写用户照片或 TestCase。
 /// 报告写 Documents/PhotoViewer/native-tools-checks.txt。
 /// </summary>
@@ -107,27 +108,34 @@ internal static class iOSNativeToolsCheck
             lines.Add($"PASS 素材：{fixtures.Length} 张自有夹具（{directory}），列表 {mainVm.FileVM.ThumbnailList.FilteredFiles.Count} 张，" +
                 $"当前照片 {mainVm.CurrentFile!.Name}（伴侣 {mainVm.CurrentFile.Group?.Companions.Count ?? 0}）");
 
-            // 一、控制栏 EXIF 信息块点击打开工具页（另一条入口，与主图菜单共用门面）。
+            // 一、控制栏 EXIF 信息块直达 EXIF 详情（另一条入口，与主图菜单共用同一个展示器）。
             if (root.ControlBar.ExifGroup == null) throw new InvalidOperationException("控制栏缺少 EXIF 信息块分组");
             if (presenter.IsPresented) throw new InvalidOperationException("工具页在入口调用前已展示");
             await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
-            await WaitAsync(() => presenter.IsPresented && root.PresentedViewController is UINavigationController, "控制栏 EXIF 块打开工具页");
+            await WaitAsync(() => presenter.IsPresented && root.PresentedViewController is UINavigationController, "控制栏 EXIF 块打开工具页并压入 EXIF 详情");
             // TOOLS-01：展示时写共享展示态，主窗口入口据此只前置。
             if (!mainVm.Tools.IsPresented) throw new InvalidOperationException("工具页展示后共享 ToolsViewModel.IsPresented 仍为 false");
             var navigation = presenter.Navigation ?? throw new InvalidOperationException("工具页缺少导航控制器");
-            await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && navigation.ViewIfLoaded?.Window != null, "初次显示分组列表");
-            if (mainVm.Tools.CurrentTool != null || mainVm.Tools.DinoPresenter.Status != "未加载")
-                throw new InvalidOperationException("工具初次显示列表时启动了详情或DINO推理");
-            if (navigation.OverrideUserInterfaceStyle != UIUserInterfaceStyle.Dark)
-                throw new InvalidOperationException("工具页不是深色外观");
+            // TOOLS-01：工具 sheet 与设置页同一份原生配置（detents/grabber/圆角/滚动扩展策略）。
+            VerifySheetMatchesSettings(navigation, "首次展示");
+            await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && navigation.ViewIfLoaded?.Window != null,
+                "控制栏 EXIF 块直达 EXIF 详情");
+            if (mainVm.Tools.CurrentTool is not ExifDetailViewModel)
+                throw new InvalidOperationException("控制栏 EXIF 块进入详情后共享导航状态不是 EXIF 详情");
+            if (mainVm.Tools.DinoPresenter.Status != "未加载")
+                throw new InvalidOperationException("控制栏 EXIF 块入口启动了 DINO 推理");
             var list = presenter.ListPage!;
             if (list.TableView.Style != UITableViewStyle.InsetGrouped) throw new InvalidOperationException("工具根列表不是InsetGrouped");
+            if (navigation.ViewControllers?.FirstOrDefault() is not iOSNativeToolsListViewController)
+                throw new InvalidOperationException("EXIF 直达展示时导航栈缺少工具列表返回目标");
+            await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
+            await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "从 EXIF 详情返回工具列表");
             var titles = list.Entries.ToArray();
             if (!titles.Contains("EXIF 详情", StringComparer.Ordinal) || !titles.Contains("DINO 诊断", StringComparer.Ordinal))
                 throw new InvalidOperationException($"工具列表页缺少入口按钮：{string.Join(" | ", titles)}");
             if (titles.Contains("照片数据统计", StringComparer.Ordinal))
                 throw new InvalidOperationException("iOS 不应显示 Windows 专属的照片数据统计入口");
-            lines.Add($"PASS 入口：控制栏 EXIF 信息块打开原生分组列表（深色sheet），CurrentTool为空且DINO未加载；入口 = {string.Join(" / ", titles)}");
+            lines.Add($"PASS 入口：控制栏 EXIF 信息块直达 EXIF 详情（列表页保留为返回目标），DINO未加载；工具 sheet 与设置页同配置；入口 = {string.Join(" / ", titles)}");
             await iOSNativeSettingsCheck.SnapshotStageAsync("tools-list");
 
             // 二、EXIF 详情页：真实按钮进入，分组/标签渲染 + 多格式切换。
@@ -164,6 +172,80 @@ internal static class iOSNativeToolsCheck
             if (selectable is not { Selectable: true, Editable: false })
                 throw new InvalidOperationException("TOOLS-03：EXIF 标签文本不是可长按选择的只读文本");
             lines.Add($"PASS EXIF 详情：{exif.GroupCount} 组 / {exif.TagCount} 标签，表格分区/行数与共享 VM 一致，可见行含 ID/名称/值且可长按选择复制");
+            // TOOLS-03：卡片左右内缩只能来自系统 InsetGrouped 的一次布局边距。旧实现把系统 inset 与自绘 12 点边距相加
+            // （iPhone 两侧达 28 点、表头与卡片错位），并用固定 6 点自绘圆角盖在系统卡片圆角上，窄窗口下双层圆角更显眼。
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                var table = exif.Table;
+                var original = table.Frame;
+                var originalOffset = table.ContentOffset;
+                table.LayoutIfNeeded();
+                table.TableHeaderView?.LayoutIfNeeded();
+                // 表头（文件名 + 格式组）同样只按系统卡片左缘内缩，不再固定 12 点。
+                var headerSpan = iOSExifDetailView.CardSpan(table);
+                var nameFrame = exif.FileNameFrame;
+                if (nameFrame.X < headerSpan.Left - .5
+                    || nameFrame.GetMaxX() > (double)table.Bounds.Width - headerSpan.Left + .5)
+                    throw new InvalidOperationException(
+                        $"EXIF 表头未收在卡片左右边距内：name={nameFrame} cardLeft={headerSpan.Left} width={table.Bounds.Width}");
+                try
+                {
+                    // 320–1024 点覆盖窄 iPad 分屏、iPhone 竖屏与 iPad 全屏：边距、卡片宽、7 列与行高都必须按系统卡片宽重算。
+                    foreach (double width in new double[] { 320, 375, 402, 500, 600, 744, 1024 })
+                    {
+                        table.Frame = new CGRect(original.X, original.Y, (nfloat)width, original.Height);
+                        table.ReloadData();
+                        table.LayoutIfNeeded();
+                        var margins = table.LayoutMargins;
+                        var span = iOSExifDetailView.CardSpan(table);
+                        if (Math.Abs(span.Left - (double)margins.Left) > .5 || Math.Abs(span.Left - (double)margins.Right) > .5)
+                            throw new InvalidOperationException(
+                                $"W={width}：EXIF 卡片左缘未按系统 inset：left={span.Left} margins=({margins.Left},{margins.Right})");
+                        if (span.Left < 12 || span.Left > 40)
+                            throw new InvalidOperationException($"W={width}：EXIF 卡片左右边距不在合理范围：{span.Left}");
+                        if (Math.Abs(span.Width - ((double)width - (double)margins.Left - (double)margins.Right)) > .5)
+                            throw new InvalidOperationException($"W={width}：EXIF 卡片宽度重复扣除了左右边距：{span.Width}");
+                        var columns = ExifTableGeometry.Compute(span.Width);
+                        double total = ExifTableGeometry.IdColumnWidth + ExifTableGeometry.DividerThickness * 3
+                            + columns.NameColumn + columns.ChineseColumn + columns.ValueColumn;
+                        if (Math.Abs(total - span.Width) > .5)
+                            throw new InvalidOperationException($"W={width}：EXIF 7 列合计 {total} ≠ 卡片宽 {span.Width}");
+                        if (columns.NameTextWidth < 1 || columns.ChineseTextWidth < 1 || columns.ValueTextWidth < 1)
+                            throw new InvalidOperationException($"W={width}：EXIF 文本列退化为零宽（卡片 {span.Width}）");
+                        var cell = table.VisibleCells.OfType<iOSExifDetailView.RowCell>().FirstOrDefault()
+                            ?? throw new InvalidOperationException($"W={width}：EXIF 表格没有可见行");
+                        if (Math.Abs((double)cell.ContentView.Bounds.Width - span.Width) > 1)
+                            throw new InvalidOperationException(
+                                $"W={width}：EXIF 行内容宽 {cell.ContentView.Bounds.Width} ≠ 系统卡片宽 {span.Width}（重复内缩）");
+                        // 系统 cell / contentView 自身也带圆角；这里只禁止应用子视图再叠一层固定半径。
+                        foreach (var view in Descendants(cell.ContentView).Where(view =>
+                                     view.GetType().Namespace?.StartsWith("PhotoViewer.iOS", StringComparison.Ordinal) == true))
+                        {
+                            if ((double)view.Layer.CornerRadius > .01)
+                                throw new InvalidOperationException(
+                                    $"W={width}：EXIF 行自绘视图 {view.GetType().Name} 圆角 {view.Layer.CornerRadius}，会与系统卡片圆角叠加");
+                        }
+                        var indexPath = table.IndexPathForCell(cell)
+                            ?? throw new InvalidOperationException($"W={width}：EXIF 可见行没有索引路径");
+                        var group = exif.ViewModel!.Groups![(int)indexPath.Section];
+                        double expected = iOSExifDetailView.RowHeight(group.Tags[(int)indexPath.Row], span.Width)
+                            + ExifTableGeometry.DividerThickness;
+                        double actual = (double)cell.Frame.Height;
+                        if (Math.Abs(actual - expected) > 1)
+                            throw new InvalidOperationException(
+                                $"W={width}：EXIF 行高 {actual} 与按卡片宽 {span.Width} 的测量值 {expected} 不一致");
+                    }
+                }
+                finally
+                {
+                    table.Frame = original;
+                    table.ReloadData();
+                    table.LayoutIfNeeded();
+                    table.SetContentOffset(originalOffset, false);
+                }
+            });
+            lines.Add("PASS EXIF 卡片几何：320–1024 点七档宽度下左右内缩只取系统 InsetGrouped 一次边距（对称 12–40 点）、" +
+                "7 列与行高按实际卡片宽重算、行内无自绘圆角（圆角由系统卡片随宽度提供）");
             await iOSNativeSettingsCheck.SnapshotStageAsync("tools-exif");
 
             if (exif.ViewModel?.HasMultipleFormats == true)
@@ -224,6 +306,9 @@ internal static class iOSNativeToolsCheck
             lines.Add("PASS TOOLS-06：关闭工具页写回 IsPresented=false 并取消在途 DINO 任务");
             await UiDispatcher.InvokeAsync(root.ShowTools);
             await WaitAsync(() => presenter.IsPresented, "工具页重开");
+            await WaitAsync(() => presenter.Navigation!.ViewIfLoaded?.Window != null, "工具页重开上屏");
+            // TOOLS-01：关闭后复用同一导航控制器，重开的 sheet 仍按设置页同一份配置。
+            VerifySheetMatchesSettings(presenter.Navigation!, "关闭后重开");
             await WaitAsync(() => presenter.Navigation!.TopViewController is iOSNativeToolsListViewController && mainVm.Tools.CurrentTool == null, "重开后返回分组列表");
             if (mainVm.Tools.DinoPresenter.Status != "未加载") throw new InvalidOperationException("重开列表触发了DINO");
             lines.Add("PASS 生命周期：关闭释放展示、保留详情对象，重开回分组列表且DINO未加载");
@@ -275,6 +360,31 @@ internal static class iOSNativeToolsCheck
             yield return child;
             foreach (var nested in Descendants(child)) yield return nested;
         }
+    }
+
+    /// <summary>
+    /// TOOLS-01：工具 sheet 与设置页取同一份原生展示配置（System PageSheet / 固定深色 /
+    /// medium+large detents / grabber / 圆角 / 滚动扩展策略），每次展示都重新挂。
+    /// </summary>
+    /// <param name="navigation">工具导航控制器。</param>
+    /// <param name="scope">检查阶段标签。</param>
+    private static void VerifySheetMatchesSettings(UINavigationController navigation, string scope)
+    {
+        if (navigation.ModalPresentationStyle != UIModalPresentationStyle.PageSheet)
+            throw new InvalidOperationException($"{scope} 工具页不是原生 PageSheet：{navigation.ModalPresentationStyle}");
+        if (navigation.OverrideUserInterfaceStyle != UIUserInterfaceStyle.Dark)
+            throw new InvalidOperationException($"{scope} 工具页不是固定深色");
+        var sheet = navigation.SheetPresentationController
+            ?? throw new InvalidOperationException($"{scope} 工具页缺少 sheet 展示控制器");
+        var detents = sheet.Detents;
+        // 与设置页同一份 ConfigureSheetPresentation：medium + large 两档。
+        if (detents == null || detents.Length != 2)
+            throw new InvalidOperationException($"{scope} 工具 sheet 不是按设置页配置的 medium+large 两档：{detents?.Length}");
+        if (!sheet.PrefersGrabberVisible || sheet.PrefersScrollingExpandsWhenScrolledToEdge
+            || Math.Abs((double)sheet.PreferredCornerRadius - iOSNativeSettingsPresenter.SheetCornerRadius) > .5)
+            throw new InvalidOperationException(
+                $"{scope} 工具 sheet 外观与设置页不一致：grabber={sheet.PrefersGrabberVisible} " +
+                $"expand={sheet.PrefersScrollingExpandsWhenScrolledToEdge} corner={sheet.PreferredCornerRadius}");
     }
 
     /// <summary>轮询等待条件成立，超时即失败。</summary>

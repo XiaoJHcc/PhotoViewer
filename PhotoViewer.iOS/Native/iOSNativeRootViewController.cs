@@ -1,3 +1,4 @@
+using CoreAnimation;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
@@ -10,6 +11,7 @@ using PhotoViewer.Core.Storage;
 using PhotoViewer.iOS.Core;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
+using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
 using UIKit;
 using UniformTypeIdentifiers;
@@ -93,6 +95,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private bool _refreshPending;
     private bool _layingOut;
     private CGPoint _lastControlScrollOffset;
+    /// <summary>控制栏当前内容摘要：输入未变时跳过一次重建，保住按钮身份与已展示的来源浮窗。</summary>
+    private string _controlSignature = string.Empty;
+    private bool _controlsBuilt;
 
     /// <summary>主图宿主（验收读取视口、抓帧与手势状态）。</summary>
     internal iOSPhotoView Photo => _photo;
@@ -635,12 +640,40 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// 导航图（与 Mac 同语义）：非适应态且设置开启时显示在主图区右下角，避开安全区与控制栏/分析栏；
     /// 小图只在展示图引用变化（切图/换档/增强）时用 GPU 小目标渲染重出，可见框与百分比每个视口回调都更新。
     /// </summary>
-    private void UpdateNavigationIndicator()
+    /// <remarks>
+    /// 指示器逐帧跟随缩放与平移，更新时机几乎总是落在 <see cref="UIScrollView"/> 的
+    /// ZoomToRect / SetZoomScale 动画（以及宿主外层 UIView 动画块）里，UIKit 会把这几处
+    /// Frame / Hidden / 文本改写当作隐式动画：首次出现从 (0,0) 飞向角落、白框换位置时缓慢位移、
+    /// 百分比淡入淡出。它只是同步指示器，不做过渡：CATransaction 关闭本子树图层的隐式动作，
+    /// <see cref="UIView.PerformWithoutAnimation"/> 再压住 UIView 级的 frame/hidden 补间，
+    /// 并先写好几何再显示。只作用于导航图子树，不改 <see cref="UIView.AnimationsEnabled"/>，
+    /// 双击 / Fit / 命令的缩放动画仍由滚动视图照常播放。
+    /// </remarks>
+    internal void UpdateNavigationIndicator()
     {
         if (!IsViewLoaded) return;
         bool show = _main.Settings.ShowZoomIndicator && !_photo.IsFit && _session.Image != null;
-        _navigationHost.Hidden = !show;
-        if (!show) return;
+        CATransaction.Begin();
+        CATransaction.DisableActions = true;
+        try
+        {
+            UIView.PerformWithoutAnimation(() => ApplyNavigationIndicator(show));
+        }
+        finally
+        {
+            CATransaction.Commit();
+        }
+    }
+
+    /// <summary>写入导航图的几何、小图与百分比；调用方已关闭这一子树的动画。</summary>
+    /// <param name="show">是否显示（设置开启、非适应态且有照片）。</param>
+    private void ApplyNavigationIndicator(bool show)
+    {
+        if (!show)
+        {
+            _navigationHost.Hidden = true;
+            return;
+        }
         var size = _photo.NavigationSize;
         double width = (double)size.Width, height = (double)size.Height;
         double padding = DesignTokens.NavPadding;
@@ -670,6 +703,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _navigationFrame.Frame = new CGRect(padding + (double)rectangle.X, padding + (double)rectangle.Y,
             (double)rectangle.Width, (double)rectangle.Height);
         _zoomLabel.Text = $"{_photo.PhysicalScale * 100:0.##}%";
+        // 几何与小图都就位后再显示：首次出现的宿主已停在右下角，不会从 (0,0) 补间。
+        _navigationHost.Hidden = false;
     }
 
     /// <summary>
@@ -767,11 +802,17 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <summary>按共享设置与当前照片重建控制栏（验收与设置回写共用同一入口）。</summary>
     internal void BuildControls()
     {
+        // 周期性内存探测会持续改写缓存提示等诊断属性，触发无关的设置通知；输入摘要相同就保持现有控件
+        // （就地不重建），否则每次通知都会换掉按钮实例，来源浮窗的锚点随之消失、列表也随之重载。
+        string signature = ControlSignature();
+        if (_controlsBuilt && string.Equals(signature, _controlSignature, StringComparison.Ordinal)) return;
+        _controlSignature = signature;
+        _controlsBuilt = true;
         bool reopen = (_ratingSources.IsOpen || _ratingSources.IsOpening) && _ratingSources.IsAnchoredToControlBar;
         var sourceTarget = reopen ? _main.RatingSources.Target : null;
         if (reopen && _ratingSources.IsOpening) _ratingSources.Close();
         _controlBar.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
-            ShowTools, anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
+            ShowExifTools, anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
         Layout();
         if (sourceTarget == null) return;
         if (_controlBar.RatingClearButton is not { } anchor)
@@ -781,6 +822,29 @@ internal sealed class iOSNativeRootViewController : UIViewController
         }
         if (!_main.RatingSources.IsOpen) _main.ShowRatingSources(sourceTarget);
         _ratingSources.Show(anchor, true, _main.IsRowLayout);
+    }
+
+    /// <summary>
+    /// 控制栏内容摘要：Rebuild 实际读取的全部分组、命令、绑定与评分状态。
+    /// 只用来判断"是否必须重建"，不参与任何业务状态。
+    /// </summary>
+    private string ControlSignature()
+    {
+        var builder = new System.Text.StringBuilder();
+        builder.Append(_main.Settings.ShowRating ? '1' : '0');
+        builder.Append('|');
+        var file = _main.CurrentFile;
+        builder.Append(file == null ? "-" : $"{file.Rating}/{file.HasRatingConflict}");
+        builder.Append('|');
+        foreach (var entry in _main.ControlVM.EnabledExifItems)
+            builder.Append(entry.DisplayName).Append('=').Append(entry.DisplayValue).Append(';');
+        builder.Append('|');
+        foreach (var hotkey in _main.ControlVM.EnabledControls)
+        {
+            builder.Append(hotkey.Command).Append(',').Append(hotkey.Name).Append(',')
+                .Append(hotkey.PrimaryHotkeyText).Append('/').Append(hotkey.SecondaryHotkeyText).Append(';');
+        }
+        return builder.ToString();
     }
 
     internal void ShowRatingSources(ImageFile file, UIButton anchor)
@@ -943,10 +1007,24 @@ internal sealed class iOSNativeRootViewController : UIViewController
         () => _session.ToggleEnhanced(), ShowTools, _main.OpenSettingWindow);
 
     /// <summary>
-    /// 打开/前置原生工具页（主图菜单与 EXIF 信息块共用同一门面入口）。
+    /// 打开/前置原生工具页（主图菜单入口）。
     /// 经共享 <c>OpenToolsWindow</c>：未展示时回到列表首页，已展示时保留当前页（TOOLS-01）。
     /// </summary>
     internal void ShowTools() => _main.OpenToolsWindow();
+
+    /// <summary>
+    /// 控制栏 EXIF 信息块入口（[TOOLS-01]）：未展示时直接进入 EXIF 详情，无可用 EXIF 时回退工具列表；
+    /// 已展示时只前置并保留当前页。展示器与主图菜单共用同一个 <see cref="iOSNativeToolsPresenter"/> 实例。
+    /// </summary>
+    internal void ShowExifTools()
+    {
+        if (iOSNativeToolsPresenter.Current is { } presenter)
+        {
+            presenter.ShowOrActivate(_main.Tools, openExif: true);
+            return;
+        }
+        _main.OpenToolsWindow();
+    }
 
     /// <summary>适应态横向轻扫翻页：走共享命令表（上一张/下一张），由共享 Move 完成显式定位（[FILM-01]）。</summary>
     /// <param name="direction">-1 上一张、+1 下一张。</param>
@@ -1114,9 +1192,31 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="args">属性变化参数。</param>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
+        // 内存管家每 2s 探测后会改写缓存提示这类诊断属性；它们只属于设置页的说明行，
+        // 不改变主屏结构，不能当作"设置回写"去重建控制栏/胶片栏（否则浮窗锚点与滚动位置每 2s 被换掉）。
+        if (IsDiagnosticSettingsProperty(args.PropertyName)) return;
+        ApplySettingsChange();
+    }
+
+    /// <summary>只影响设置页说明文本、不影响主屏结构的设置属性。</summary>
+    /// <param name="propertyName">属性名。</param>
+    /// <returns>属于诊断文本时为 true。</returns>
+    private static bool IsDiagnosticSettingsProperty(string? propertyName)
+        => propertyName is nameof(SettingsViewModel.BitmapCacheCountInfo)
+            or nameof(SettingsViewModel.BitmapCacheCountInfoLevel)
+            or nameof(SettingsViewModel.PerformanceBudgetInfo)
+            or nameof(SettingsViewModel.PerformanceBudgetInfoLevel);
+
+    /// <summary>验收缝：按属性名走设置变化入口，核对无关通知被就地跳过（不伪造业务状态）。</summary>
+    /// <param name="propertyName">属性名。</param>
+    internal void NotifySettingsProperty(string propertyName)
+        => OnSettingsChanged(_main.Settings, new PropertyChangedEventArgs(propertyName));
+
+    private void ApplySettingsChange()
+    {
         if (!UiDispatcher.CheckAccess())
         {
-            UiDispatcher.Post(() => OnSettingsChanged(sender, args));
+            UiDispatcher.Post(ApplySettingsChange);
             return;
         }
         // 绑定可能已在设置页里改写：按住状态的重复目标立即作废，避免按旧命令继续翻页。
@@ -1146,6 +1246,8 @@ internal sealed class iOSNativeRootViewController : UIViewController
         {
             _refreshPending = false;
             BuildControls();
+            // 走到这里的都是真实设置变化（诊断属性已在 OnSettingsChanged 分流掉）：星级显隐等卡片绑定
+            // 依赖设置，需要重载一次；位置由胶片栏自身约束，不改变用户滚动偏移。
             _filmstrip.ReloadData();
             // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
             RefreshScreen();

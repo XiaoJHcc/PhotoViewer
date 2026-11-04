@@ -11,7 +11,8 @@ namespace PhotoViewer.iOS.Native;
 /// 控制栏（[TOOLBAR-01]）：EXIF 信息块 / 评分 / 命令三个整体分组，分组尺寸、按空间整组换行或换列、
 /// 行内居中与交叉轴拉伸全部由共享 <see cref="ControlBarLayout"/> 计算，本类只落 UIKit frame 与系统符号。
 /// 显隐与顺序来自共享设置；评分方向随布局方向（横排 0→5、竖排 5→0）。
-/// 分析栏 / 增强预览 / 工具页全部可用：命令按钮由共享设置生成，EXIF 信息块点击打开工具页。
+/// 分析栏 / 增强预览 / 工具页全部可用：命令按钮由共享设置生成，EXIF 信息块点击直接进入 EXIF 详情
+/// （无可用 EXIF 时由宿主回退工具列表，[TOOLS-01]）。
 /// </summary>
 internal sealed class iOSControlBar : UIView
 {
@@ -22,7 +23,7 @@ internal sealed class iOSControlBar : UIView
     private readonly Dictionary<string, UIButton> _commands = new(StringComparer.Ordinal);
     private readonly List<UIButton> _ratings = [];
     private UIView? _exifGroup;
-    private Action? _openTools;
+    private Action? _openExif;
     private bool _horizontal;
     /// <summary>评分组 0 号按钮当前字形（RATING-04：冲突警示三角 / 非冲突清零叉）。</summary>
     private string _ratingClearSymbol = "xmark";
@@ -33,15 +34,15 @@ internal sealed class iOSControlBar : UIView
     internal IReadOnlyDictionary<string, UIButton> Commands => _commands;
     /// <summary>评分按钮按星级索引（视觉顺序由布局方向决定）。</summary>
     internal IReadOnlyList<UIButton> Ratings => _ratings;
-    /// <summary>EXIF 信息块分组（点击打开工具页；验收核对入口）。</summary>
+    /// <summary>EXIF 信息块分组（点击直接进入 EXIF 详情；验收核对入口）。</summary>
     internal UIView? ExifGroup => _exifGroup;
     /// <summary>评分组 0 号按钮（验收读取冲突字形与状态）。</summary>
     internal UIButton? RatingClearButton => _ratings.Count > 0 ? _ratings[0] : null;
     /// <summary>评分组 0 号按钮当前字形名称（冲突 <c>exclamationmark.triangle.fill</c>，否则 <c>xmark</c>）。</summary>
     internal string RatingClearSymbol => _ratingClearSymbol;
 
-    /// <summary>EXIF 信息块点按入口（识别器与验收共用）：打开工具页。</summary>
-    internal void TapExifGroup() => _openTools?.Invoke();
+    /// <summary>EXIF 信息块点按入口（识别器与验收共用）：直接进入 EXIF 详情。</summary>
+    internal void TapExifGroup() => _openExif?.Invoke();
 
     /// <summary>建立深色控制文档。</summary>
     /// <param name="changed">设置变化时请求宿主合并刷新。</param>
@@ -61,12 +62,12 @@ internal sealed class iOSControlBar : UIView
     /// <param name="main">共享主 VM。</param>
     /// <param name="execute">命令执行入口（与 Mac 同一份命令语义）。</param>
     /// <param name="rate">评分写回入口。</param>
-    /// <param name="openTools">EXIF 信息块点击（打开工具页）；null 表示本壳无工具页。</param>
-    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openTools = null,
+    /// <param name="openExif">EXIF 信息块点击（直接进入 EXIF 详情）；null 表示本壳无工具页。</param>
+    internal void Rebuild(MainViewModel main, Action<string> execute, Action<int> rate, Action? openExif = null,
         Action<UIButton>? showSources = null)
     {
         ClearGroups();
-        _openTools = openTools;
+        _openExif = openExif;
         var entries = main.ControlVM.EnabledExifItems;
         if (entries.Count > 0)
         {
@@ -76,7 +77,7 @@ internal sealed class iOSControlBar : UIView
             var tap = new UITapGestureRecognizer(_ => TapExifGroup());
             exif.AddGestureRecognizer(tap);
             exif.UserInteractionEnabled = true;
-            exif.AccessibilityLabel = "EXIF 信息，点击打开工具";
+            exif.AccessibilityLabel = "EXIF 信息，点击查看详情";
             _exifGroup = exif;
             AddGroup(exif, ControlBarGroupKind.Exif);
         }
