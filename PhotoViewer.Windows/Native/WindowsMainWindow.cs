@@ -268,6 +268,8 @@ internal sealed partial class WindowsMainWindow : Window
 
         _root.Loaded += OnRootLoaded;
         _root.SizeChanged += OnRootSizeChanged;
+        // 主图视图自身的尺寸变化(栏位显隐/换向)也要重算标题栏背板区段。
+        _photo.SizeChanged += OnPhotoSizeChanged;
         // 快捷键在根元素预处置:冒泡阶段的焦点路径(ScrollViewer/按钮先处理方向键等)不再决定快捷键是否生效。
         _root.AddHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler, handledEventsToo: true);
         // 标题栏显隐只靠指针位置;主图/控件会吃掉 PointerMoved,因此在根元素用 handledEventsToo 收。
@@ -330,6 +332,7 @@ internal sealed partial class WindowsMainWindow : Window
         _root.RemoveHandler(UIElement.PreviewKeyDownEvent, _previewKeyHandler);
         _root.RemoveHandler(UIElement.PointerMovedEvent, _rootPointerMoved);
         _root.RemoveHandler(UIElement.PointerExitedEvent, _rootPointerExited);
+        _photo.SizeChanged -= OnPhotoSizeChanged;
         _filterBar.SizeChanged -= OnFilterBarSizeChanged;
         DetachNonClientPointerSource();
         _filterBar.PopupOpening -= _ratingSources.Close;
@@ -745,6 +748,11 @@ internal sealed partial class WindowsMainWindow : Window
         UpdateSimilarityWidth();
         UpdateTitleBarChrome();
     }
+
+    /// <summary>主图视图尺寸变化:重算标题栏与其重叠的背板区段。</summary>
+    /// <param name="sender">主图视图</param>
+    /// <param name="e">尺寸变化参数</param>
+    private void OnPhotoSizeChanged(object sender, SizeChangedEventArgs e) => UpdateTitleBarChrome();
 
     /// <summary>跨屏栅格化比例变化时重算物理拖动区,即使逻辑窗口尺寸不变。</summary>
     /// <param name="sender">当前 XAML 根</param>
@@ -1201,7 +1209,28 @@ internal sealed partial class WindowsMainWindow : Window
 
         var fileBarVisible = _main.IsThumbnailViewVisible;
         var left = fileBarVisible && !_isRowLayout ? FilePaneRightEdge() : 0;
-        _titleBar.SetSpan(left, showBackground: !(fileBarVisible && _isRowLayout));
+        var width = Math.Max(0, _root.ActualWidth - left);
+        var showBackground = !(fileBarVisible && _isRowLayout);
+
+        // 标题栏与主图视图重叠的区段由主图渲染器在交换链内画同一份亚克力(SwapChainPanel 取不到
+        // AcrylicBrush 背板),XAML 背景只铺其余区段。
+        Rect? photoBand = null;
+        if (_titleBar.IsVisible && showBackground && _titleBar.HasBackdropRecipe)
+        {
+            var bar = new Rect(left, 0, width, Math.Min(WindowsLayout.TitleBarHeight, _root.ActualHeight));
+            if (TryGetPhotoBand(bar, out var bandInPhoto, out var bandInBar))
+            {
+                _photo.SetTitleBarBackdrop(bandInPhoto, _titleBar.BackdropRecipe);
+                photoBand = bandInBar;
+            }
+        }
+
+        if (photoBand == null)
+        {
+            _photo.SetTitleBarBackdrop(null, _titleBar.BackdropRecipe);
+        }
+
+        _titleBar.SetSpan(left, showBackground, photoBand, width);
 
         // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局再让出筛选条可点控件。
         var titleRightEdge = _titleBar.GetButtonsLeft(_root);
@@ -1213,6 +1242,45 @@ internal sealed partial class WindowsMainWindow : Window
         _titleBar.SetTitleMaxWidth(
             titleRightEdge - left - WindowsLayout.TitleBarTitleInset * 2);
         UpdateCaptionRegions();
+    }
+
+    /// <summary>
+    /// 标题栏与主图视图的重叠区段:分别折算到主图视图坐标(给渲染器)与覆盖层坐标(给 XAML 背景分段)。
+    /// </summary>
+    /// <param name="bar">标题栏矩形(窗口内容坐标)</param>
+    /// <param name="bandInPhoto">重叠区段(主图视图坐标)</param>
+    /// <param name="bandInBar">重叠区段(覆盖层坐标)</param>
+    /// <returns>有非空重叠时返回 true</returns>
+    private bool TryGetPhotoBand(Rect bar, out Rect bandInPhoto, out Rect bandInBar)
+    {
+        bandInPhoto = default;
+        bandInBar = default;
+        if (_photo.ActualWidth <= 0 || _photo.ActualHeight <= 0)
+        {
+            return false;
+        }
+
+        Rect bounds;
+        try
+        {
+            bounds = _photo.TransformToVisual(_root)
+                .TransformBounds(new Rect(0, 0, _photo.ActualWidth, _photo.ActualHeight));
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+
+        var overlap = bar;
+        overlap.Intersect(bounds);
+        if (overlap.IsEmpty || overlap.Width <= 0.5 || overlap.Height <= 0.5)
+        {
+            return false;
+        }
+
+        bandInPhoto = new Rect(overlap.X - bounds.X, overlap.Y - bounds.Y, overlap.Width, overlap.Height);
+        bandInBar = new Rect(overlap.X - _titleBar.Left, overlap.Y, overlap.Width, overlap.Height);
+        return true;
     }
 
     /// <summary>列布局文件栏右缘(含相似面板扩宽与分隔线)在内容坐标内的位置。</summary>

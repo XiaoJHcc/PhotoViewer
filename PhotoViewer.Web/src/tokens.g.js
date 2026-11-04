@@ -254,6 +254,7 @@ const tokens = Object.freeze({
     "shell.divider.thickness": 1,
     "shell.filebar.content.width": 116,
     "shell.filter.leadingInset": 42,
+    "shell.titlebar.backdrop.blurAmount": 30,
     "shell.titlebar.button.glyphSize": 10,
     "shell.titlebar.button.width": 46,
     "shell.titlebar.height": 32,

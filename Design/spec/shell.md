@@ -33,7 +33,7 @@
 | 行布局，文件栏可见 | 全窗口宽，无背景；中间挖空筛选条可点控件的水平范围（全标题栏高），其余部位都是拖动区 | 同左 |
 | 文件栏隐藏（任一布局） | 全窗口宽；深色亚克力 | 全窗口宽；毛玻璃 |
 
-- 背景材质只用平台原生定义，不自调色值，不建附属窗口或表层模拟：Windows 为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色主题），macOS 为 `NSVisualEffectView`（`Titlebar` 材质、窗口内混合、深色外观）。系统材质在主图交换链/Metal 图层上取不到模糊时接受其原生回退外观，不强行拟合。
+- 背景材质只用平台原生定义，不建附属窗口或表层模拟：Windows 为 WinUI 应用内亚克力主题画刷 `AcrylicInAppFillColorDefaultBrush`（深色主题），macOS 为 `NSVisualEffectView`（`Titlebar` 材质、窗口内混合、深色外观）。WinUI 3 的 `SwapChainPanel` 不支持背板取样，亚克力在主图上只剩回退纯色；因此 Windows 标题栏与主图视口重叠的区段由主图渲染器在交换链内绘制同一亚克力：对其下方照片做高斯模糊（标准差 `shell.titlebar.backdrop.blurAmount`，30，与 WinUI 亚克力同值），再按该主题画刷运行时的 `TintColor` / `TintOpacity` / `TintLuminosityOpacity` 依次做亮度混合与颜色混合；该区段 XAML 背景透明，其余区段（控制栏、分析栏上方）仍用 XAML 亚克力；交换链区段不叠加 WinUI 亚克力 2% 的噪点纹理。
 - 标题文字位置：Windows 左缘距标题栏左缘 `shell.titlebar.title.leftInset`（12），垂直居中；macOS 左缘距最右一个交通灯右缘 12，垂直中线对齐交通灯中线。行布局标题文字止于筛选挖空左缘前 12。
 - Windows 去掉系统标题栏，保留系统边框、缩放边缘与圆角；右上角自绘窗口按钮，从左到右为全屏、最小化、最大化、关闭，紧贴窗口顶边与右缘、按钮间无间距。外框 `shell.titlebar.button.width`（46）× 标题栏高、无圆角，Segoe Fluent Icons 字号 `shell.titlebar.button.glyphSize`（10）；悬停/按下底色取 WinUI `SubtleFillColorSecondaryBrush` / `SubtleFillColorTertiaryBrush`，关闭按钮悬停/按下取 `color.titlebar.close.hover` / `color.titlebar.close.pressed` 且字形转白。字形与提示随窗口态切换：最大化 `E922`「最大化」↔ 还原 `E923`「还原」（最大化态）；全屏 `E740`「全屏」↔ 退出全屏 `E73F`「退出全屏」（全屏态）；最小化 `E921`、关闭 `E8BB`。行布局无背景时按钮同样只画字形与状态底。
 - Windows 拖动区登记为系统 caption 非客户区，只在标题栏可见时登记，排除窗口按钮与筛选挖空；拖动、双击、拖到屏幕边缘贴靠均由系统处理，不手动发 `HTCAPTION`、不自绘拖动。全屏态标题栏照常悬停显示以便退出全屏，但不登记拖动区，双击留给主图。自绘最大化按钮不提供系统贴靠布局浮层（SHELL-02@win）。

@@ -274,6 +274,9 @@ internal static class WindowsLayout
     /// <summary>标题文字可用宽低于该值就整体隐藏(尾部截断已无可读内容)。</summary>
     public const double TitleBarTitleMinWidth = 60;
 
+    /// <summary>标题栏亚克力背板的高斯模糊标准差(与 WinUI 亚克力主题画刷同值,DIP)。</summary>
+    public const double TitleBarBackdropBlurAmount = DesignTokens.ShellTitlebarBackdropBlurAmount;
+
     /// <summary>关闭按钮悬停底色(Win11 系统 caption 关闭按钮同值,字形转白)。</summary>
     public static readonly Color TitleBarCloseHover = Token(DesignTokens.ColorTitlebarCloseHover);
 

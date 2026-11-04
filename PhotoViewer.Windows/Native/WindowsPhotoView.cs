@@ -36,6 +36,51 @@ internal interface ISwapChainPanelNativeWinUI
 }
 
 /// <summary>
+/// 标题栏亚克力配方:WinUI <c>AcrylicBrush</c> 的运行时取值(<c>TintColor</c> / <c>TintOpacity</c> /
+/// <c>TintLuminosityOpacity</c> / <c>FallbackColor</c>),换色不改渲染代码。
+/// </summary>
+internal readonly struct AcrylicBackdropRecipe
+{
+    /// <summary>构建配方。</summary>
+    /// <param name="tint">TintColor(sRGB 分量,0–1)。</param>
+    /// <param name="tintOpacity">TintOpacity。</param>
+    /// <param name="luminosityOpacity">TintLuminosityOpacity;负值表示主题画刷没有设置亮度层。</param>
+    /// <param name="fallbackLinear">FallbackColor(线性 scRGB 分量,0–1),亮度层缺失时整条带用它。</param>
+    public AcrylicBackdropRecipe((float R, float G, float B) tint, float tintOpacity, float luminosityOpacity,
+        (float R, float G, float B) fallbackLinear)
+    {
+        Tint = tint;
+        TintOpacity = tintOpacity;
+        LuminosityOpacity = luminosityOpacity;
+        FallbackLinear = fallbackLinear;
+    }
+
+    /// <summary>TintColor(sRGB 0–1);亮度层与颜色层的源色都用它。</summary>
+    public (float R, float G, float B) Tint { get; }
+
+    /// <summary>TintOpacity:颜色层不透明度。</summary>
+    public float TintOpacity { get; }
+
+    /// <summary>TintLuminosityOpacity:亮度层不透明度;负值表示未设置,此时退化为 FallbackColor 纯色带。</summary>
+    public float LuminosityOpacity { get; }
+
+    /// <summary>FallbackColor(线性 scRGB),亮度层缺失时的纯色带颜色。</summary>
+    public (float R, float G, float B) FallbackLinear { get; }
+
+    /// <summary>是否有亮度层(主题画刷设置了 <c>TintLuminosityOpacity</c>)。</summary>
+    public bool HasLuminosityLayer => LuminosityOpacity >= 0;
+
+    /// <summary>与另一份配方的取值是否一致(避免重复重绘)。</summary>
+    /// <param name="other">另一份配方。</param>
+    /// <returns>全部取值相同返回 true。</returns>
+    public bool NearlyEquals(AcrylicBackdropRecipe other)
+        => Tint == other.Tint
+            && Math.Abs(TintOpacity - other.TintOpacity) < 1e-4
+            && Math.Abs(LuminosityOpacity - other.LuminosityOpacity) < 1e-4
+            && FallbackLinear == other.FallbackLinear;
+}
+
+/// <summary>
 /// GPU 照片表面(阶段 W-M1/W-M2):D3D11 + DXGI 合成翻转链(<c>R16G16B16A16_FLOAT</c>),
 /// EXIF 方向以 UV 置换在顶点着色器内完成(绝不旋转像素)、三线性 mipmap、适应/100% 缩放与拖动平移。
 ///
@@ -88,6 +133,112 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         {
             return photo.Sample(photoSampler, input.uv);
         }
+
+        // ===== 标题栏亚克力背板(SHELL-02)=====
+        // WinUI 3 的 SwapChainPanel 不支持 AcrylicBrush 背板取样,标题栏压在照片上的区段由这里在交换链内
+        // 画同一份亚克力:高斯模糊 → 亮度混合 → 颜色混合。配方与参数全部来自运行时主题画刷与设计令牌。
+
+        cbuffer BandParams : register(b1)
+        {
+            float4 bandTarget;      // xy = 目标左上(物理像素), zw = 目标尺寸
+            float4 bandDestSize;    // xy = 目标缓冲尺寸(物理像素)
+            float4 bandUv;          // xy = uv 起点, zw = uv 跨度
+            float4 bandBlur;        // xy = 单步 uv, z = sigma(已按降采样折算), w = 半径
+            float4 bandTint;        // rgb = TintColor(sRGB), a = TintOpacity
+            float4 bandLuminosity;  // rgb = TintColor 的亮度层色(sRGB), a = TintLuminosityOpacity
+            float4 bandSolid;       // rgb = FallbackColor(线性), a > 0.5 表示纯色回退
+        };
+
+        struct BandOutput
+        {
+            float4 position : SV_POSITION;
+            float2 uv : TEXCOORD0;
+        };
+
+        BandOutput BandVS(uint id : SV_VertexID)
+        {
+            float2 corners[4] = { float2(0, 0), float2(1, 0), float2(0, 1), float2(1, 1) };
+            float2 corner = corners[id];
+            float2 physical = bandTarget.xy + corner * bandTarget.zw;
+            BandOutput output;
+            output.position = float4(physical.x * 2.0 / bandDestSize.x - 1.0, -physical.y * 2.0 / bandDestSize.y + 1.0, 0, 1);
+            output.uv = bandUv.xy + corner * bandUv.zw;
+            return output;
+        }
+
+        Texture2D<float4> bandSource : register(t0);
+        SamplerState bandSampler : register(s0);
+
+        float3 BandLinearToSrgb(float3 c)
+        {
+            c = saturate(c);
+            return c <= 0.0031308 ? c * 12.92 : 1.055 * pow(c, 1.0 / 2.4) - 0.055;
+        }
+
+        float3 BandSrgbToLinear(float3 c)
+        {
+            c = saturate(c);
+            return c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4);
+        }
+
+        // 降采样 4 倍:双线性 4 采样覆盖 4x4 源纹素,顺手把线性 scRGB 夹到 [0,1] 并转成 sRGB ——
+        // WinUI/D2D 的模糊与混合都在 gamma 编码值上做。
+        float4 BandDownsamplePS(BandOutput input) : SV_Target
+        {
+            uint width, height;
+            bandSource.GetDimensions(width, height);
+            float2 texel = 1.0 / float2(width, height);
+            float3 color = bandSource.Sample(bandSampler, input.uv + texel * float2(-1, -1)).rgb
+                + bandSource.Sample(bandSampler, input.uv + texel * float2(1, -1)).rgb
+                + bandSource.Sample(bandSampler, input.uv + texel * float2(-1, 1)).rgb
+                + bandSource.Sample(bandSampler, input.uv + texel * float2(1, 1)).rgb;
+            return float4(BandLinearToSrgb(color * 0.25), 1.0);
+        }
+
+        // 可分离高斯的一趟:bandBlur.xy 是单步 uv 方向,sigma 已按降采样折算。
+        float4 BandBlurPS(BandOutput input) : SV_Target
+        {
+            float2 uv = input.position.xy / bandDestSize.xy;
+            float sigma = max(bandBlur.z, 0.0001);
+            int radius = (int)bandBlur.w;
+            float3 sum = bandSource.Sample(bandSampler, uv).rgb;
+            float weightSum = 1.0;
+            [loop] for (int i = 1; i <= radius; i++)
+            {
+                float weight = exp(-0.5 * (i * i) / (sigma * sigma));
+                sum += bandSource.Sample(bandSampler, uv + bandBlur.xy * i).rgb * weight;
+                sum += bandSource.Sample(bandSampler, uv - bandBlur.xy * i).rgb * weight;
+                weightSum += 2.0 * weight;
+            }
+            return float4(sum / weightSum, 1.0);
+        }
+
+        float bandLuminance(float3 c) { return dot(c, float3(0.3, 0.59, 0.11)); }
+
+        // W3C 合成规范的 ClipColor:SetLum 把源亮度套到目标色上并夹回色域。
+        float3 bandSetLuminance(float3 c, float l)
+        {
+            float3 shifted = c + (l - bandLuminance(c));
+            float lo = min(min(shifted.r, shifted.g), shifted.b);
+            float hi = max(max(shifted.r, shifted.g), shifted.b);
+            if (lo < 0.0) shifted = l + ((shifted - l) * l) / max(l - lo, 1e-5);
+            if (hi > 1.0) shifted = l + ((shifted - l) * (1.0 - l)) / max(hi - l, 1e-5);
+            return saturate(shifted);
+        }
+
+        // 合成:模糊(sRGB)→ 亮度层混合(Luminosity 混合)→ 颜色层混合(Color 混合)→ 解码回线性写出。
+        float4 BandAcrylicPS(BandOutput input) : SV_Target
+        {
+            if (bandSolid.a > 0.5)
+            {
+                return float4(bandSolid.rgb, 1.0);
+            }
+
+            float3 blur = bandSource.Sample(bandSampler, input.uv).rgb;
+            float3 step1 = lerp(blur, bandSetLuminance(blur, bandLuminance(bandLuminosity.rgb)), bandLuminosity.a);
+            float3 step2 = lerp(step1, bandSetLuminance(bandTint.rgb, bandLuminance(step1)), bandTint.a);
+            return float4(BandSrgbToLinear(step2), 1.0);
+        }
         """;
 
     /// <summary>交换链缓冲数(翻转模型要求 ≥ 2)。</summary>
@@ -116,6 +267,26 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
     private readonly IComObject<ID3D11Buffer> _parameters;
     private readonly IComObject<IDXGISwapChain3> _swapChain;
     private readonly float[] _parameterData = new float[16];
+
+    // ===== 标题栏亚克力背板(SHELL-02):SwapChainPanel 取不到 AcrylicBrush 背板,改在交换链内画同一亚克力 =====
+    private readonly IComObject<ID3D11VertexShader> _bandVertexShader;
+    private readonly IComObject<ID3D11PixelShader> _bandDownsampleShader;
+    private readonly IComObject<ID3D11PixelShader> _bandBlurShader;
+    private readonly IComObject<ID3D11PixelShader> _bandAcrylicShader;
+    private readonly IComObject<ID3D11Buffer> _bandParameters;
+    private readonly float[] _bandParameterData = new float[28];
+    private readonly Stopwatch _bandClock = new();
+    private IComObject<ID3D11Texture2D>? _bandSource;
+    private IComObject<ID3D11ShaderResourceView>? _bandSourceView;
+    private readonly IComObject<ID3D11Texture2D>?[] _bandScratch = new IComObject<ID3D11Texture2D>?[2];
+    private readonly IComObject<ID3D11ShaderResourceView>?[] _bandScratchView = new IComObject<ID3D11ShaderResourceView>?[2];
+    private readonly IComObject<ID3D11RenderTargetView>?[] _bandScratchTarget = new IComObject<ID3D11RenderTargetView>?[2];
+    private (uint Width, uint Height) _bandSourceSize;
+    private (uint Width, uint Height) _bandScratchSize;
+    private long _bandBytes;
+    private (Rect Band, AcrylicBackdropRecipe Recipe)? _titleBarBand;
+    private bool _bandFailed;
+    private bool _bandCostLogged;
     private IComObject<ID3D11RenderTargetView>? _renderTarget;
     /// <summary>当前上屏的纹理条目;null 表示没有照片。</summary>
     private TextureEntry? _current;
@@ -194,26 +365,105 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         double raster = PhysicalPixelsPerDip;
         double x = (ActualWidth / 2) + ((u - 0.5) * _viewport.ImageWidth * _viewport.Scale) + _viewport.PanX;
         double y = (ActualHeight / 2) + ((v - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY;
-        var px = (int)Math.Round(x * raster);
-        var py = (int)Math.Round(y * raster);
-        if (px < 0 || py < 0 || px >= _pixelWidth || py >= _pixelHeight)
+        return ReadBackBufferPixel((int)Math.Round(x * raster), (int)Math.Round(y * raster), out color);
+    }
+
+    /// <summary>
+    /// 读取主图表面的物理像素(视口左上为原点,DIP 输入),含标题栏亚克力区段。仅定向验收使用。
+    /// </summary>
+    /// <param name="xDip">视口内横向 DIP。</param>
+    /// <param name="yDip">视口内纵向 DIP。</param>
+    /// <param name="color">线性 RGB(0-1)。</param>
+    /// <returns>坐标落在视口内且回读成功时为 true。</returns>
+    internal bool TryReadViewportPixel(double xDip, double yDip, out (float R, float G, float B) color)
+    {
+        color = default;
+        if (_disposed || _renderTarget == null || _pixelWidth == 0 || _pixelHeight == 0)
         {
             return false;
         }
 
-        using var staging = _device.CreateTexture2D(new D3D11_TEXTURE2D_DESC
+        double raster = PhysicalPixelsPerDip;
+        return ReadBackBufferPixel((int)Math.Round(xDip * raster), (int)Math.Round(yDip * raster), out color);
+    }
+
+    /// <summary>
+    /// 把后台缓冲的一块物理像素区域读成 8 位 sRGB BGRA(顶行在前)。仅定向验收使用,用于导出背板区段截图。
+    /// </summary>
+    /// <param name="regionX">区域左上横坐标(物理像素,视口左上为原点)。</param>
+    /// <param name="regionY">区域左上纵坐标(物理像素)。</param>
+    /// <param name="regionWidth">区域宽(物理像素)。</param>
+    /// <param name="regionHeight">区域高(物理像素)。</param>
+    /// <param name="bgra">BGRA 字节。</param>
+    /// <param name="rowBytes">每行字节数。</param>
+    /// <returns>区域合法且回读成功时为 true。</returns>
+    internal unsafe bool TryReadBackBufferSrgb(int regionX, int regionY, int regionWidth, int regionHeight,
+        out byte[] bgra, out int rowBytes)
+    {
+        bgra = Array.Empty<byte>();
+        rowBytes = 0;
+        if (_disposed || _renderTarget == null || _pixelWidth == 0 || _pixelHeight == 0)
         {
-            Width = _pixelWidth,
-            Height = _pixelHeight,
-            MipLevels = 1,
-            ArraySize = 1,
-            Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
-            SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
-            Usage = D3D11_USAGE.D3D11_USAGE_STAGING,
-            BindFlags = 0,
-            CPUAccessFlags = (uint)D3D11_CPU_ACCESS_FLAG.D3D11_CPU_ACCESS_READ,
-            MiscFlags = 0,
-        }, null);
+            return false;
+        }
+
+        int left = Math.Clamp(regionX, 0, (int)_pixelWidth);
+        int top = Math.Clamp(regionY, 0, (int)_pixelHeight);
+        int right = Math.Clamp(regionX + regionWidth, 0, (int)_pixelWidth);
+        int bottom = Math.Clamp(regionY + regionHeight, 0, (int)_pixelHeight);
+        if (right <= left || bottom <= top)
+        {
+            return false;
+        }
+
+        using var staging = CreateStagingTexture();
+        using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+        RenderScene();
+        _context.Object.CopyResource(staging.Object, backBuffer.Object);
+        var mapped = _context.Object.Map(staging.Object, 0, D3D11_MAP.D3D11_MAP_READ, 0);
+        try
+        {
+            int width = right - left;
+            int height = bottom - top;
+            rowBytes = width * 4;
+            bgra = new byte[rowBytes * height];
+            for (var row = 0; row < height; row++)
+            {
+                var pixels = (ushort*)IntPtr.Add(mapped.pData, (int)(((top + row) * mapped.RowPitch) + (left * 8)));
+                for (var column = 0; column < width; column++)
+                {
+                    var value = pixels + (column * 4);
+                    var offset = (row * rowBytes) + (column * 4);
+                    bgra[offset] = LinearToSrgbByte(HalfToFloat(value[2]));
+                    bgra[offset + 1] = LinearToSrgbByte(HalfToFloat(value[1]));
+                    bgra[offset + 2] = LinearToSrgbByte(HalfToFloat(value[0]));
+                    bgra[offset + 3] = 0xFF;
+                }
+            }
+
+            return true;
+        }
+        finally
+        {
+            _context.Object.Unmap(staging.Object, 0);
+            _swapChain.Present(1, 0);
+        }
+    }
+
+    /// <summary>读回后台缓冲的单个物理像素(含标题栏亚克力区段);回读后照常呈现。</summary>
+    /// <param name="px">物理像素横坐标。</param>
+    /// <param name="py">物理像素纵坐标。</param>
+    /// <param name="color">线性 RGB(0-1)。</param>
+    /// <returns>坐标落在视口内且回读成功时为 true。</returns>
+    private unsafe bool ReadBackBufferPixel(int px, int py, out (float R, float G, float B) color)
+    {
+        color = default;
+        if (_disposed || _renderTarget == null || px < 0 || py < 0 || px >= _pixelWidth || py >= _pixelHeight)
+        {
+            return false;
+        }
+
+        using var staging = CreateStagingTexture();
         using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
         RenderScene();
         _context.Object.CopyResource(staging.Object, backBuffer.Object);
@@ -229,6 +479,32 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             _context.Object.Unmap(staging.Object, 0);
             _swapChain.Present(1, 0);
         }
+    }
+
+    /// <summary>整幅回读用的暂存纹理(与后台缓冲同尺寸同格式)。</summary>
+    /// <returns>可映射读取的暂存纹理。</returns>
+    private IComObject<ID3D11Texture2D> CreateStagingTexture() => _device.CreateTexture2D(new D3D11_TEXTURE2D_DESC
+    {
+        Width = _pixelWidth,
+        Height = _pixelHeight,
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+        SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+        Usage = D3D11_USAGE.D3D11_USAGE_STAGING,
+        BindFlags = 0,
+        CPUAccessFlags = (uint)D3D11_CPU_ACCESS_FLAG.D3D11_CPU_ACCESS_READ,
+        MiscFlags = 0,
+    }, null);
+
+    /// <summary>线性 scRGB 分量 → 8 位 sRGB(导出截图用)。</summary>
+    /// <param name="value">线性分量。</param>
+    /// <returns>0–255 的 sRGB 值。</returns>
+    private static byte LinearToSrgbByte(float value)
+    {
+        double linear = Math.Clamp(value, 0, 1);
+        double encoded = linear <= 0.0031308 ? linear * 12.92 : (1.055 * Math.Pow(linear, 1 / 2.4)) - 0.055;
+        return (byte)Math.Clamp(Math.Round(encoded * 255), 0, 255);
     }
 
     /// <summary>
@@ -282,6 +558,29 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         double y = (ActualHeight / 2) + (((uv.Y - 0.5) * _viewport.ImageHeight * _viewport.Scale) + _viewport.PanY);
         rect = new Rect(x, y, uv.Width * _viewport.ImageWidth * _viewport.Scale, uv.Height * _viewport.ImageHeight * _viewport.Scale);
         return true;
+    }
+
+    /// <summary><c>D3D11_BOX</c> 的等价布局(复制后台缓冲的源区用)。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Box3D
+    {
+        /// <summary>左边界(含)。</summary>
+        public uint Left;
+
+        /// <summary>上边界(含)。</summary>
+        public uint Top;
+
+        /// <summary>前边界(含)。</summary>
+        public uint Front;
+
+        /// <summary>右边界(不含)。</summary>
+        public uint Right;
+
+        /// <summary>下边界(不含)。</summary>
+        public uint Bottom;
+
+        /// <summary>后边界(不含)。</summary>
+        public uint Back;
     }
 
     /// <summary>半精度浮点转 float。</summary>
@@ -356,6 +655,10 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         var source = Encoding.UTF8.GetBytes(ShaderSource);
         _vertexShader = _device.CreateVertexShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "VSMain", "vs_5_0", compileFlags));
         _pixelShader = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "PSMain", "ps_5_0", compileFlags));
+        _bandVertexShader = _device.CreateVertexShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "BandVS", "vs_5_0", compileFlags));
+        _bandDownsampleShader = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "BandDownsamplePS", "ps_5_0", compileFlags));
+        _bandBlurShader = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "BandBlurPS", "ps_5_0", compileFlags));
+        _bandAcrylicShader = _device.CreatePixelShader(D3D11Functions.D3DCompile(source, "photo.hlsl", "BandAcrylicPS", "ps_5_0", compileFlags));
         _sampler = _device.CreateSamplerState(new D3D11_SAMPLER_DESC
         {
             Filter = D3D11_FILTER.D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -370,6 +673,12 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         _parameters = _device.CreateBuffer(new D3D11_BUFFER_DESC
         {
             ByteWidth = (uint)(_parameterData.Length * sizeof(float)),
+            Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+            BindFlags = (uint)D3D11_BIND_FLAG.D3D11_BIND_CONSTANT_BUFFER,
+        }, null);
+        _bandParameters = _device.CreateBuffer(new D3D11_BUFFER_DESC
+        {
+            ByteWidth = (uint)(_bandParameterData.Length * sizeof(float)),
             Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
             BindFlags = (uint)D3D11_BIND_FLAG.D3D11_BIND_CONSTANT_BUFFER,
         }, null);
@@ -923,12 +1232,13 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         }
     }
 
-    /// <summary>刷新内存管家读取的 GPU 纹理占用(当前 + 最近缓存 + 复用空纹理的字节,含 mip 链)。</summary>
+    /// <summary>刷新内存管家读取的 GPU 纹理占用(当前 + 最近缓存 + 复用空纹理的字节,含 mip 链;另含标题栏背板纹理)。</summary>
     private void UpdateGpuBytes()
     {
         long total = _current?.Bytes ?? 0;
         foreach (var entry in _recentTextures) total += entry.Bytes;
         total += _spareTexture?.Bytes ?? 0;
+        total += _bandBytes;
         Interlocked.Exchange(ref _gpuBytes, total);
     }
 
@@ -1032,9 +1342,16 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         _recentTextures.Clear();
         _spareTexture?.Dispose();
         _spareTexture = null;
+        _titleBarBand = null;
+        ReleaseBandTextures();
         Interlocked.Exchange(ref _gpuBytes, 0);
         _renderTarget?.Dispose();
         _swapChain.Dispose();
+        _bandParameters.Dispose();
+        _bandAcrylicShader.Dispose();
+        _bandBlurShader.Dispose();
+        _bandDownsampleShader.Dispose();
+        _bandVertexShader.Dispose();
         _parameters.Dispose();
         _sampler.Dispose();
         _pixelShader.Dispose();
@@ -1196,6 +1513,294 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
             _context.Object.PSSetSamplers(0, 1, [_sampler.Object]);
             _context.Object.Draw(4, 0);
         }
+
+        // 标题栏亚克力区段最后画:它取的就是这一帧照片(含黑底)的实际像素。
+        DrawTitleBarBackdrop();
+    }
+
+    /// <summary>
+    /// 设置标题栏压在照片上的区段(<paramref name="bandDip"/> 用本视图的 DIP 坐标,null 表示不画)。
+    /// WinUI 3 的 <c>SwapChainPanel</c> 取不到 <c>AcrylicBrush</c> 背板,该区段的亚克力由这里在交换链内绘制。
+    /// 每次正常绘制都按当前几何重画,视口/缩放/换图变化不必重新设置;取值未变时不重绘。
+    /// </summary>
+    /// <param name="bandDip">区段(本视图 DIP 坐标);null 关闭。</param>
+    /// <param name="recipe">亚克力配方(主题画刷的运行时取值)。</param>
+    public void SetTitleBarBackdrop(Rect? bandDip, AcrylicBackdropRecipe recipe)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        var next = bandDip is { Width: > 0.5, Height: > 0.5 } band
+            ? ((Rect Band, AcrylicBackdropRecipe Recipe)?)(band, recipe)
+            : null;
+        if (_titleBarBand is { } current)
+        {
+            if (next is { } candidate && current.Band == candidate.Band && current.Recipe.NearlyEquals(candidate.Recipe))
+            {
+                return;
+            }
+        }
+        else if (next == null)
+        {
+            return;
+        }
+
+        _titleBarBand = next;
+        Draw();
+    }
+
+    /// <summary>当前标题栏背板区段(本视图 DIP 坐标);null 表示未开启。</summary>
+    internal Rect? TitleBarBackdropBand => _titleBarBand?.Band;
+
+    /// <summary>
+    /// 在已画好照片的后台缓冲上补标题栏亚克力区段(SHELL-02):复制区域 → 降采样并转 sRGB →
+    /// 可分离高斯 → 按配方做亮度混合与颜色混合,写回同一后台缓冲。
+    /// 只碰 buffer 0 与自建临时纹理,不改变「单张可渲染缓冲」的既有约束。
+    /// </summary>
+    private unsafe void DrawTitleBarBackdrop()
+    {
+        if (_bandFailed || _renderTarget == null || _titleBarBand is not { } request) return;
+        if (_pixelWidth == 0 || _pixelHeight == 0) return;
+
+        try
+        {
+            _bandClock.Restart();
+            double scale = PhysicalPixelsPerDip;
+            var band = request.Band;
+            int viewportWidth = (int)_pixelWidth;
+            int viewportHeight = (int)_pixelHeight;
+            int left = Math.Clamp((int)Math.Round(band.X * scale), 0, viewportWidth);
+            int top = Math.Clamp((int)Math.Round(band.Y * scale), 0, viewportHeight);
+            int right = Math.Clamp((int)Math.Round((band.X + band.Width) * scale), 0, viewportWidth);
+            int bottom = Math.Clamp((int)Math.Round((band.Y + band.Height) * scale), 0, viewportHeight);
+            if (right <= left || bottom <= top) return;
+
+            // 模糊会带进邻域:源区按 3σ 外扩(顶边到视口边缘就自然截断)。
+            float sigma = (float)(WindowsLayout.TitleBarBackdropBlurAmount * scale);
+            int margin = (int)Math.Ceiling(3 * (double)sigma);
+            int sourceLeft = Math.Max(0, left - margin);
+            int sourceTop = Math.Max(0, top - margin);
+            int sourceRight = Math.Min(viewportWidth, right + margin);
+            int sourceBottom = Math.Min(viewportHeight, bottom + margin);
+            uint sourceWidth = (uint)(sourceRight - sourceLeft);
+            uint sourceHeight = (uint)(sourceBottom - sourceTop);
+            if (sourceWidth == 0 || sourceHeight == 0) return;
+
+            var created = EnsureBandTextures(sourceWidth, sourceHeight);
+            if (_bandSource is null || _bandScratch[0] is null || _bandScratch[1] is null) return;
+            uint reducedWidth = _bandScratchSize.Width;
+            uint reducedHeight = _bandScratchSize.Height;
+
+            using var backBuffer = _swapChain.GetBuffer<ID3D11Texture2D>(0);
+            _context.Object.OMSetRenderTargets(0, null, null);
+            _context.Object.PSSetShaderResources(0, 1, NoShaderResources);
+
+            // 1) 后台缓冲的源区域 → 背板源纹理。
+            var box = new Box3D
+            {
+                Left = (uint)sourceLeft,
+                Top = (uint)sourceTop,
+                Front = 0,
+                Right = (uint)sourceRight,
+                Bottom = (uint)sourceBottom,
+                Back = 1,
+            };
+            _context.Object.CopySubresourceRegion(_bandSource.Object, 0, 0, 0, 0, backBuffer.Object, 0, (IntPtr)(&box));
+
+            _context.Object.IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY.D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+            _context.Object.VSSetShader(_bandVertexShader.Object, null, 0);
+            _context.Object.VSSetConstantBuffers(1, 1, [_bandParameters.Object]);
+            _context.Object.PSSetConstantBuffers(1, 1, [_bandParameters.Object]);
+            _context.Object.PSSetSamplers(0, 1, [_sampler.Object]);
+
+            // 2) 降采样 4 倍并转 sRGB。
+            SetBandTarget(_bandScratchTarget[0]!, reducedWidth, reducedHeight);
+            WriteBandParameters(0, 0, reducedWidth, reducedHeight, reducedWidth, reducedHeight, 1, 1, 0, 0, 1, 1, 0, 0);
+            _context.Object.PSSetShader(_bandDownsampleShader.Object, null, 0);
+            _context.Object.PSSetShaderResources(0, 1, [_bandSourceView!.Object]);
+            _context.Object.Draw(4, 0);
+
+            // 3) 可分离高斯:水平进第二张小图,垂直回第一张(半径按降采样折算)。
+            float reducedSigma = sigma * 0.25f;
+            float reducedRadius = (float)Math.Ceiling(3 * (double)reducedSigma);
+            for (var pass = 0; pass < 2; pass++)
+            {
+                var horizontal = pass == 0;
+                var source = horizontal ? _bandScratchView[0]! : _bandScratchView[1]!;
+                var target = horizontal ? _bandScratchTarget[1]! : _bandScratchTarget[0]!;
+                SetBandTarget(target, reducedWidth, reducedHeight);
+                WriteBandParameters(0, 0, reducedWidth, reducedHeight, reducedWidth, reducedHeight, 1, 1, 0, 0,
+                    horizontal ? 1f / reducedWidth : 0f, horizontal ? 0f : 1f / reducedHeight, reducedSigma, reducedRadius);
+                _context.Object.PSSetShaderResources(0, 1, [source.Object]);
+                _context.Object.PSSetShader(_bandBlurShader.Object, null, 0);
+                _context.Object.Draw(4, 0);
+            }
+
+            // 4) 合成到后台缓冲的区段矩形:采样模糊结果,按配方混合,写不透明线性值。
+            _context.Object.OMSetRenderTargets(1, [_renderTarget.Object], null);
+            _context.Object.RSSetViewports(1, [new D3D11_VIEWPORT { Width = _pixelWidth, Height = _pixelHeight, MinDepth = 0, MaxDepth = 1 }]);
+            WriteBandParameters(left, top, right - left, bottom - top, _pixelWidth, _pixelHeight,
+                (right - left) / (float)sourceWidth, (bottom - top) / (float)sourceHeight,
+                (left - sourceLeft) / (float)sourceWidth, (top - sourceTop) / (float)sourceHeight, 1, 1, 0, 0);
+            var recipe = request.Recipe;
+            _bandParameterData[16] = recipe.Tint.R;
+            _bandParameterData[17] = recipe.Tint.G;
+            _bandParameterData[18] = recipe.Tint.B;
+            _bandParameterData[19] = recipe.TintOpacity;
+            _bandParameterData[20] = recipe.Tint.R;
+            _bandParameterData[21] = recipe.Tint.G;
+            _bandParameterData[22] = recipe.Tint.B;
+            _bandParameterData[23] = recipe.HasLuminosityLayer ? recipe.LuminosityOpacity : 0f;
+            _bandParameterData[24] = recipe.FallbackLinear.R;
+            _bandParameterData[25] = recipe.FallbackLinear.G;
+            _bandParameterData[26] = recipe.FallbackLinear.B;
+            _bandParameterData[27] = recipe.HasLuminosityLayer ? 0f : 1f;
+            UploadBandParameters();
+            _context.Object.PSSetShader(_bandAcrylicShader.Object, null, 0);
+            _context.Object.PSSetShaderResources(0, 1, [_bandScratchView[0]!.Object]);
+            _context.Object.Draw(4, 0);
+
+            _context.Object.PSSetShaderResources(0, 1, NoShaderResources);
+            _bandClock.Stop();
+            // 只报"纹理已就位"的稳态耗时:建纹理那一帧的量级完全不同。
+            if (!_bandCostLogged && !created)
+            {
+                _bandCostLogged = true;
+                NativeStartupLog.Write($"title bar backdrop: 稳态绘制耗时 {_bandClock.Elapsed.TotalMilliseconds:0.00}ms"
+                    + $" 区段={right - left}x{bottom - top} 源区={sourceWidth}x{sourceHeight}"
+                    + $" 降采样={reducedWidth}x{reducedHeight} sigma={sigma:0.0}px");
+            }
+        }
+        catch (Exception ex)
+        {
+            _bandFailed = true;
+            NativeStartupLog.Fail("title bar backdrop", ex);
+        }
+    }
+
+    /// <summary>绑定背板临时纹理为渲染目标并设视口。</summary>
+    /// <param name="target">渲染目标视图。</param>
+    /// <param name="width">目标宽(物理像素)。</param>
+    /// <param name="height">目标高(物理像素)。</param>
+    private void SetBandTarget(IComObject<ID3D11RenderTargetView> target, uint width, uint height)
+    {
+        _context.Object.OMSetRenderTargets(1, [target.Object], null);
+        _context.Object.RSSetViewports(1, [new D3D11_VIEWPORT { Width = width, Height = height, MinDepth = 0, MaxDepth = 1 }]);
+    }
+
+    /// <summary>写背板常量缓冲的目标矩形与 uv 变换。</summary>
+    /// <param name="x">目标左上横坐标。</param>
+    /// <param name="y">目标左上纵坐标。</param>
+    /// <param name="width">目标宽。</param>
+    /// <param name="height">目标高。</param>
+    /// <param name="destWidth">目标缓冲宽。</param>
+    /// <param name="destHeight">目标缓冲高。</param>
+    /// <param name="uvScaleX">uv 横向跨度。</param>
+    /// <param name="uvScaleY">uv 纵向跨度。</param>
+    /// <param name="uvOffsetX">uv 横向起点。</param>
+    /// <param name="uvOffsetY">uv 纵向起点。</param>
+    /// <param name="blurScaleX">模糊单步 uv 横向(其他阶段忽略)。</param>
+    /// <param name="blurScaleY">模糊单步 uv 纵向(其他阶段忽略)。</param>
+    /// <param name="blurSigma">高斯标准差(降采样后)。</param>
+    /// <param name="blurRadius">高斯半径。</param>
+    private void WriteBandParameters(float x, float y, float width, float height, float destWidth, float destHeight,
+        float uvScaleX, float uvScaleY, float uvOffsetX, float uvOffsetY,
+        float blurScaleX, float blurScaleY, float blurSigma, float blurRadius)
+    {
+        _bandParameterData[0] = x;
+        _bandParameterData[1] = y;
+        _bandParameterData[2] = width;
+        _bandParameterData[3] = height;
+        _bandParameterData[4] = destWidth;
+        _bandParameterData[5] = destHeight;
+        _bandParameterData[6] = 0;
+        _bandParameterData[7] = 0;
+        _bandParameterData[8] = uvOffsetX;
+        _bandParameterData[9] = uvOffsetY;
+        _bandParameterData[10] = uvScaleX;
+        _bandParameterData[11] = uvScaleY;
+        _bandParameterData[12] = blurScaleX;
+        _bandParameterData[13] = blurScaleY;
+        _bandParameterData[14] = blurSigma;
+        _bandParameterData[15] = blurRadius;
+        UploadBandParameters();
+    }
+
+    /// <summary>把背板常量数据提交给 GPU(合成阶段会再改 16–27 号槽,故刷新入口独立)。</summary>
+    private unsafe void UploadBandParameters()
+    {
+        fixed (float* pointer = _bandParameterData)
+            _context.Object.UpdateSubresource(_bandParameters.Object, 0, IntPtr.Zero, (IntPtr)pointer, 0, 0);
+    }
+
+    /// <summary>按源区尺寸建/重建背板纹理(源纹理 + 两张降采样乒乓图及其视图),尺寸未变时复用。</summary>
+    /// <param name="sourceWidth">源区宽(物理像素)。</param>
+    /// <param name="sourceHeight">源区高(物理像素)。</param>
+    /// <returns>本次是否新建了纹理。</returns>
+    private bool EnsureBandTextures(uint sourceWidth, uint sourceHeight)
+    {
+        if (_bandSource != null && _bandSourceSize == (sourceWidth, sourceHeight)) return false;
+        ReleaseBandTextures();
+
+        _bandSource = _device.CreateTexture2D(BandTextureDescription(sourceWidth, sourceHeight, renderTarget: false), null);
+        _bandSourceView = _device.CreateShaderResourceView(_bandSource, null);
+        uint width = Math.Max(1, (sourceWidth + 3) / 4);
+        uint height = Math.Max(1, (sourceHeight + 3) / 4);
+        for (var index = 0; index < _bandScratch.Length; index++)
+        {
+            var texture = _device.CreateTexture2D(BandTextureDescription(width, height, renderTarget: true), null);
+            _bandScratch[index] = texture;
+            _bandScratchView[index] = _device.CreateShaderResourceView(texture, null);
+            _bandScratchTarget[index] = _device.CreateRenderTargetView(texture, null);
+        }
+
+        _bandSourceSize = (sourceWidth, sourceHeight);
+        _bandScratchSize = (width, height);
+        _bandBytes = ((long)sourceWidth * sourceHeight + 2L * width * height) * 8;
+        UpdateGpuBytes();
+        NativeStartupLog.Write($"title bar backdrop: 建纹理 源={sourceWidth}x{sourceHeight} 降采样={width}x{height}");
+        return true;
+    }
+
+    /// <summary>背板临时纹理的通用描述(RGBA16F,可作 SRV;降采样乒乓图另加 RTV)。</summary>
+    /// <param name="width">宽。</param>
+    /// <param name="height">高。</param>
+    /// <param name="renderTarget">是否同时作渲染目标。</param>
+    /// <returns>纹理描述。</returns>
+    private static D3D11_TEXTURE2D_DESC BandTextureDescription(uint width, uint height, bool renderTarget) => new()
+    {
+        Width = width,
+        Height = height,
+        MipLevels = 1,
+        ArraySize = 1,
+        Format = DXGI_FORMAT.DXGI_FORMAT_R16G16B16A16_FLOAT,
+        SampleDesc = new DXGI_SAMPLE_DESC { Count = 1, Quality = 0 },
+        Usage = D3D11_USAGE.D3D11_USAGE_DEFAULT,
+        BindFlags = renderTarget
+            ? (uint)(D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_FLAG.D3D11_BIND_RENDER_TARGET)
+            : (uint)D3D11_BIND_FLAG.D3D11_BIND_SHADER_RESOURCE,
+        MiscFlags = 0,
+    };
+
+    /// <summary>释放背板纹理与视图(源区尺寸变化、设备收尾)。</summary>
+    private void ReleaseBandTextures()
+    {
+        for (var index = 0; index < _bandScratch.Length; index++)
+        {
+            _bandScratchTarget[index]?.Dispose();
+            _bandScratchTarget[index] = null;
+            _bandScratchView[index]?.Dispose();
+            _bandScratchView[index] = null;
+            _bandScratch[index]?.Dispose();
+            _bandScratch[index] = null;
+        }
+
+        _bandSourceView?.Dispose();
+        _bandSourceView = null;
+        _bandSource?.Dispose();
+        _bandSource = null;
+        _bandSourceSize = default;
+        _bandScratchSize = default;
+        _bandBytes = 0;
+        UpdateGpuBytes();
     }
 
     /// <summary>视口物理尺寸或 LOD 需求变化时上报一次(重复值不重报,避免每帧打扰加载会话)。</summary>

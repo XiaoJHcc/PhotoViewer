@@ -38,7 +38,12 @@ internal sealed class WindowsTitleBar
     private const string SecondaryForegroundBrushKey = "TextFillColorSecondaryBrush";
 
     private readonly Grid _root;
-    private readonly Border _background;
+
+    // 背景拆成两段:主图渲染器在交换链内画了亚克力的区段不铺 XAML 背景(见 SetSpan)。
+    private readonly Border _backgroundLeading;
+    private readonly Border _backgroundTrailing;
+    private readonly AcrylicBackdropRecipe _backdropRecipe;
+    private IReadOnlyList<Rect> _backgroundSegments = Array.Empty<Rect>();
     private readonly TextBlock _title;
     private readonly StackPanel _buttons;
     private readonly Button _fullScreenButton;
@@ -60,12 +65,9 @@ internal sealed class WindowsTitleBar
     public WindowsTitleBar(string title, Action toggleFullScreen, Action minimize, Action toggleMaximize, Action close)
     {
         BackgroundBrush = Resource<Brush>(AcrylicBackgroundBrushKey);
-        _background = new Border
-        {
-            Background = BackgroundBrush,
-            IsHitTestVisible = false,
-            Visibility = Visibility.Collapsed,
-        };
+        _backdropRecipe = BuildBackdropRecipe(BackgroundBrush as AcrylicBrush);
+        _backgroundLeading = CreateBackgroundSegment();
+        _backgroundTrailing = CreateBackgroundSegment();
 
         // CaptionTextBlockStyle 自带字号/字体/颜色:标题与系统标题栏文字同源,不自调字号。
         _title = new TextBlock
@@ -114,7 +116,8 @@ internal sealed class WindowsTitleBar
             HorizontalAlignment = HorizontalAlignment.Stretch,
             Visibility = Visibility.Collapsed,
         };
-        _root.Children.Add(_background);
+        _root.Children.Add(_backgroundLeading);
+        _root.Children.Add(_backgroundTrailing);
         _root.Children.Add(_title);
         _root.Children.Add(_buttons);
     }
@@ -126,10 +129,27 @@ internal sealed class WindowsTitleBar
     public bool IsVisible => _visible;
 
     /// <summary>背景是否可见(行布局文件栏可见时无背景)。</summary>
-    public bool IsBackgroundVisible => _background.Visibility == Visibility.Visible;
+    public bool IsBackgroundVisible
+        => _backgroundLeading.Visibility == Visibility.Visible || _backgroundTrailing.Visibility == Visibility.Visible;
 
     /// <summary>背景画刷(验收核对它确实是 WinUI 应用内亚克力)。</summary>
     public Brush? BackgroundBrush { get; }
+
+    /// <summary>
+    /// XAML 背景实际铺出的分段(覆盖层坐标,已扣除主图渲染器画亚克力的区段)。
+    /// </summary>
+    public IReadOnlyList<Rect> BackgroundSegments => _backgroundSegments;
+
+    /// <summary>
+    /// 主图渲染器在交换链内复刻亚克力用的配方:主题画刷的运行时取值,不在代码里硬编码颜色。
+    /// </summary>
+    public AcrylicBackdropRecipe BackdropRecipe => _backdropRecipe;
+
+    /// <summary>
+    /// 主题画刷能否在主图交换链里复刻(必须是 <see cref="AcrylicBrush"/>);
+    /// 不能时整条背景留 XAML,交换链区段不开。
+    /// </summary>
+    public bool HasBackdropRecipe => BackgroundBrush is AcrylicBrush;
 
     /// <summary>标题文字当前内容。</summary>
     public string TitleText => _title.Text;
@@ -165,17 +185,48 @@ internal sealed class WindowsTitleBar
 
     /// <summary>
     /// 按当前布局设置跨度与背景:列布局从文件栏右缘起,行布局整宽无背景,文件栏隐藏时整宽带亚克力。
+    /// <paramref name="photoBand"/> 是主图渲染器已经画好亚克力的区段(覆盖层坐标),该处 XAML 背景让空:
+    /// SwapChainPanel 不能给 <c>AcrylicBrush</c> 取样,只有交换链内的那一份才有真实的模糊。
     /// </summary>
     /// <param name="left">覆盖层左缘在窗口内容内的偏移</param>
     /// <param name="showBackground">是否铺亚克力背景</param>
-    public void SetSpan(double left, bool showBackground)
+    /// <param name="photoBand">主图已画亚克力的区段(覆盖层坐标);null 表示整条都由 XAML 铺</param>
+    /// <param name="width">覆盖层宽度(窗口内容宽减去左偏移)</param>
+    public void SetSpan(double left, bool showBackground, Rect? photoBand, double width)
     {
         _root.Margin = new Thickness(left, 0, 0, 0);
-        var visibility = showBackground ? Visibility.Visible : Visibility.Collapsed;
-        if (_background.Visibility != visibility)
+        if (!showBackground || width <= 0)
         {
-            _background.Visibility = visibility;
+            HideSegment(_backgroundLeading);
+            HideSegment(_backgroundTrailing);
+            _backgroundSegments = Array.Empty<Rect>();
+            return;
         }
+
+        var bandStart = photoBand is { } band ? Math.Clamp(band.X, 0, width) : width;
+        var bandEnd = photoBand is { } gap ? Math.Clamp(gap.X + gap.Width, bandStart, width) : width;
+        var segments = new List<Rect>(2);
+        if (bandStart > 0.5)
+        {
+            segments.Add(new Rect(0, 0, bandStart, WindowsLayout.TitleBarHeight));
+            ShowLeadingSegment(bandStart);
+        }
+        else
+        {
+            HideSegment(_backgroundLeading);
+        }
+
+        if (width - bandEnd > 0.5)
+        {
+            segments.Add(new Rect(bandEnd, 0, width - bandEnd, WindowsLayout.TitleBarHeight));
+            ShowTrailingSegment(bandEnd);
+        }
+        else
+        {
+            HideSegment(_backgroundTrailing);
+        }
+
+        _backgroundSegments = segments;
     }
 
     /// <summary>同步标题文字(与窗口标题同一字符串)。</summary>
@@ -354,6 +405,95 @@ internal sealed class WindowsTitleBar
         }
 
         button.Resources[key] = value;
+    }
+
+    /// <summary>建一段背景元素:不参与命中,常态隐藏,位置由 <see cref="SetSpan"/> 指定。</summary>
+    /// <returns>背景分段元素。</returns>
+    private Border CreateBackgroundSegment() => new()
+    {
+        Background = BackgroundBrush,
+        IsHitTestVisible = false,
+        Visibility = Visibility.Collapsed,
+        HorizontalAlignment = HorizontalAlignment.Left,
+        VerticalAlignment = VerticalAlignment.Stretch,
+    };
+
+    /// <summary>左段:从覆盖层左缘到照片区段左缘(按宽度定位)。</summary>
+    /// <param name="width">段宽。</param>
+    private void ShowLeadingSegment(double width)
+    {
+        if (_backgroundLeading.Visibility == Visibility.Visible && Math.Abs(_backgroundLeading.Width - width) < 0.01)
+        {
+            return;
+        }
+
+        _backgroundLeading.Width = width;
+        _backgroundLeading.Margin = new Thickness(0);
+        _backgroundLeading.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>右段:从照片区段右缘到覆盖层右缘(拉伸 + 左外边距)。</summary>
+    /// <param name="offset">段左缘在覆盖层内的偏移。</param>
+    private void ShowTrailingSegment(double offset)
+    {
+        _backgroundTrailing.HorizontalAlignment = HorizontalAlignment.Stretch;
+        if (_backgroundTrailing.Visibility == Visibility.Visible
+            && Math.Abs(_backgroundTrailing.Margin.Left - offset) < 0.01)
+        {
+            return;
+        }
+
+        _backgroundTrailing.Margin = new Thickness(offset, 0, 0, 0);
+        _backgroundTrailing.Visibility = Visibility.Visible;
+    }
+
+    /// <summary>隐藏分段。</summary>
+    /// <param name="segment">分段元素。</param>
+    private static void HideSegment(Border segment)
+    {
+        if (segment.Visibility != Visibility.Collapsed)
+        {
+            segment.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// 从 WinUI 亚克力主题画刷读出配方(TintColor / TintOpacity / TintLuminosityOpacity / FallbackColor)。
+    /// 亮度层缺失时不猜数值,改用 FallbackColor 纯色带并记一条诊断。
+    /// </summary>
+    /// <param name="brush">主题画刷;不是 <see cref="AcrylicBrush"/> 时返回默认配方。</param>
+    /// <returns>配方。</returns>
+    private static AcrylicBackdropRecipe BuildBackdropRecipe(AcrylicBrush? brush)
+    {
+        if (brush == null)
+        {
+            NativeStartupLog.Write($"标题栏:缺少亚克力主题画刷 {AcrylicBackgroundBrushKey},主图区段不画背板");
+            return default;
+        }
+
+        var tint = brush.TintColor;
+        var fallback = brush.FallbackColor;
+        double? luminosity = brush.TintLuminosityOpacity;
+        var hasLuminosity = luminosity is { } value && !double.IsNaN(value);
+        NativeStartupLog.Write($"title bar backdrop: 配方 tint=#{tint.R:X2}{tint.G:X2}{tint.B:X2}"
+            + $" tintOpacity={brush.TintOpacity:0.###}"
+            + $" luminosityOpacity={(hasLuminosity ? luminosity!.Value.ToString("0.###") : "未设置")}"
+            + $" fallback=#{fallback.R:X2}{fallback.G:X2}{fallback.B:X2}"
+            + (hasLuminosity ? "" : ",缺亮度层,主图区段改用 FallbackColor 纯色带"));
+        return new AcrylicBackdropRecipe(
+            (tint.R / 255f, tint.G / 255f, tint.B / 255f),
+            (float)Math.Clamp(brush.TintOpacity, 0, 1),
+            hasLuminosity ? (float)Math.Clamp(luminosity!.Value, 0, 1) : -1f,
+            (LinearChannel(fallback.R), LinearChannel(fallback.G), LinearChannel(fallback.B)));
+    }
+
+    /// <summary>8 位 sRGB 分量 → 线性 scRGB(0–1)。</summary>
+    /// <param name="value">sRGB 分量。</param>
+    /// <returns>线性分量。</returns>
+    private static float LinearChannel(byte value)
+    {
+        double srgb = value / 255.0;
+        return (float)(srgb <= 0.04045 ? srgb / 12.92 : Math.Pow((srgb + 0.055) / 1.055, 2.4));
     }
 
     /// <summary>读取 WinUI 主题资源(应用固定深色主题,直接取应用资源表)。</summary>

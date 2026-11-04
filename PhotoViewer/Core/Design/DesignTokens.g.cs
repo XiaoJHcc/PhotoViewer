@@ -517,6 +517,8 @@ public static class DesignTokens
     public const double ShellFilebarContentWidth = 116.0;
     /// <summary>shell.filter.leadingInset（pt） SHELL-02：macOS 列布局筛选条首控件顶边让位 = shell.titlebar.height + filter.margin（避开标题栏与交通灯）；iOS/Android 使用真实安全区。行布局整组居中，Android 保留从内容前导边 + filter.margin 起排的平台差异。</summary>
     public const double ShellFilterLeadingInset = 42.0;
+    /// <summary>shell.titlebar.backdrop.blurAmount（pt） SHELL-02：Windows 主图渲染器在标题栏下绘制亚克力时的高斯模糊标准差（与 WinUI AcrylicBrush 的 BlurAmount 同值，按物理倍率换算到像素）。</summary>
+    public const double ShellTitlebarBackdropBlurAmount = 30.0;
     /// <summary>shell.titlebar.button.glyphSize（pt） SHELL-02：Windows 窗口按钮 Segoe Fluent Icons 字形字号。</summary>
     public const double ShellTitlebarButtonGlyphSize = 10.0;
     /// <summary>shell.titlebar.button.width（pt） SHELL-02：Windows 自绘窗口按钮（全屏/最小化/最大化/关闭）外框宽，高同标题栏，对齐 Win11 系统 caption 按钮。</summary>
