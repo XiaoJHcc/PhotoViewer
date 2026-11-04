@@ -100,13 +100,15 @@ final class DemoWorkspace: ObservableObject {
         let focalLengths = ["24mm", "35mm", "50mm", "75mm"]
         var items: [DemoPhoto] = []
         for index in 0..<12 {
-            let capturedAt = String(format: "10-%02d %02d:%02d", (index % 9) + 1, 7 + (index % 10), (index * 7) % 60)
+            let day = (index % 9) + 1
+            let hour = 7 + (index % 10)
+            let minute = (index * 7) % 60
             items.append(DemoPhoto(
                 id: index,
                 palette: index % 6,
                 aspectRatio: aspects[index],
-                capturedAt: capturedAt,
-                sortDate: index * 137,
+                capturedAt: String(format: "10-%02d %02d:%02d", day, hour, minute),
+                sortDate: (day * 24 + hour) * 60 + minute,
                 fileSize: 24_000_000 + index * 1_730_000,
                 aperture: apertures[index % 4],
                 shutter: shutters[index % 4],
@@ -125,22 +127,18 @@ final class DemoWorkspace: ObservableObject {
 
     var visiblePhotos: [DemoPhoto] {
         let filtered = photos.filter { ratingFilter.matches($0.rating) }
-        return filtered.sorted { lhs, rhs in
-            let result: Bool
+        return filtered.sorted { first, second in
+            let lhs = ascending ? first : second
+            let rhs = ascending ? second : first
             switch sortKey {
             case .name:
-                result = lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             case .captureDate:
-                result = lhs.sortDate == rhs.sortDate ? lhs.id < rhs.id : lhs.sortDate < rhs.sortDate
+                return lhs.sortDate == rhs.sortDate ? lhs.id < rhs.id : lhs.sortDate < rhs.sortDate
             case .fileSize:
-                result = lhs.fileSize == rhs.fileSize ? lhs.id < rhs.id : lhs.fileSize < rhs.fileSize
+                return lhs.fileSize == rhs.fileSize ? lhs.id < rhs.id : lhs.fileSize < rhs.fileSize
             }
-            return ascending ? result : !result
         }
-    }
-
-    var selectedPosition: Int? {
-        visiblePhotos.firstIndex { $0.id == selectedID }.map { $0 + 1 }
     }
 
     func select(_ photo: DemoPhoto) {

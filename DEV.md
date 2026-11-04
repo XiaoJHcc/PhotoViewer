@@ -69,7 +69,7 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 
 ### Apple 液态玻璃 UI demo
 
-独立原型位于 `Prototypes/AppleLiquidGlass/PhotoViewerUI.xcodeproj`，不链接产品 C#、解码器或原生壳。使用 Xcode 打开后选择 **My Mac**、iPad 或 iPhone 模拟器运行；目标系统为 macOS / iOS 26。macOS 演示保留左侧文件栏、中央主图、右侧分析/工具区的分区，容器与控件采用系统 sidebar、toolbar、inspector 和分组表单样式；iPhone 保留近方形胶片卡片和系统液态玻璃操作控件。demo 使用合成照片和会话内状态，不读写用户照片与设置；设计确认前不修改 `Design/` 规范和产品接线。
+独立原型位于 `Prototypes/AppleLiquidGlass/PhotoViewerUI.xcodeproj`，不链接产品 C#、解码器或原生壳。使用 Xcode 打开后选择 **My Mac**、iPad 或 iPhone 模拟器运行；目标系统为 macOS / iOS 26。macOS 与 iPad 共用宽屏布局：系统 sidebar 承载胶片卡片与排序/筛选，中央主图，右侧可选窄分析栏与工具列；窗口使用系统标题栏与统一工具栏，sidebar 折叠交由 `NavigationSplitView` 自身处理。iPhone 保留紧凑布局与系统液态玻璃底部操作栏。demo 使用合成照片和会话内状态，不读写用户照片与设置；设计确认前不修改 `Design/` 规范和产品接线。
 
 ### Web 参考壳
 

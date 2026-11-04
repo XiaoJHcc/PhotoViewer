@@ -88,11 +88,11 @@ struct DemoThumbnailCard: View {
 
     var body: some View {
         let rating = workspace.rating(of: photo)
-        VStack(spacing: 4) {
+        VStack(spacing: 2) {
             Button {
                 workspace.select(photo)
             } label: {
-                VStack(spacing: 4) {
+                VStack(spacing: 2) {
                     DemoArtwork(photo: photo)
                         .frame(width: 80, height: 80)
                         .background(.black)
@@ -110,6 +110,7 @@ struct DemoThumbnailCard: View {
                 .contentShape(.rect)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(photo.name)
 
             HStack(spacing: 0) {
                 ForEach(0...5, id: \.self) { value in
@@ -127,7 +128,7 @@ struct DemoThumbnailCard: View {
                 }
             }
         }
-        .padding(4)
+        .padding(3)
         .frame(width: 98, height: 138)
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -137,7 +138,6 @@ struct DemoThumbnailCard: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .stroke(workspace.selectedID == photo.id ? Color.accentColor : .clear, lineWidth: 2)
         }
-        .id(photo.id)
     }
 }
 
