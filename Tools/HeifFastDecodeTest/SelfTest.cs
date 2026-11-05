@@ -18,13 +18,14 @@ internal static class SelfTest
     public static int Run()
     {
         var failures = TransformTruthTable();
+        failures += ColorTests.RunContainerCases();
         Console.WriteLine(failures == 0 ? "selftest: PASS" : $"selftest: {failures} FAILURE(S)");
         return failures == 0 ? 0 : 1;
     }
 
     /// <summary>
-    /// 枚举长度 1–4 的全部 irot/imir 序列,按像素映射复合出显示结果,
-    /// 与 8 个规范 EXIF 方向逐一比对,再与 ToExifOrientation 的折算结果对照。
+    /// 枚举长度 1–4 的全部 irot/imir 序列,按像素映射复合出显示结果,与 8 个规范 EXIF 方向逐一比对,
+    /// 再与合成容器解析出的 <see cref="HeifContainer.ExifOrientation"/> 对照(经由真实解析路径,不直连内部映射)。
     /// </summary>
     private static int TransformTruthTable()
     {
@@ -41,18 +42,18 @@ internal static class SelfTest
         foreach (var sequence in Sequences(ops, 4))
         {
             var image = source;
-            var transforms = new List<HeifTransform>(sequence.Count);
+            var transforms = new List<(int Kind, int Value)>(sequence.Count);
             foreach (var op in sequence)
             {
                 image = ApplyOp(image, op);
                 transforms.Add(op switch
                 {
-                    Op.Rot0 => new HeifTransform(HeifTransformKind.Rotation, 0),
-                    Op.Rot1 => new HeifTransform(HeifTransformKind.Rotation, 1),
-                    Op.Rot2 => new HeifTransform(HeifTransformKind.Rotation, 2),
-                    Op.Rot3 => new HeifTransform(HeifTransformKind.Rotation, 3),
-                    Op.Mirror0 => new HeifTransform(HeifTransformKind.Mirror, 0),
-                    _ => new HeifTransform(HeifTransformKind.Mirror, 1),
+                    Op.Rot0 => (0, 0),
+                    Op.Rot1 => (0, 1),
+                    Op.Rot2 => (0, 2),
+                    Op.Rot3 => (0, 3),
+                    Op.Mirror0 => (1, 0),
+                    _ => (1, 1),
                 });
             }
 
@@ -64,11 +65,19 @@ internal static class SelfTest
                 continue;
             }
 
-            var actual = HeifContainer.ToExifOrientation(transforms);
-            if (actual != expected)
+            var data = ColorTests.BuildContainer(null, null, transforms);
+            var container = HeifContainer.TryParse(data, out var reason);
+            if (container is null)
+            {
+                Console.WriteLine($"  ! {Describe(sequence)}: 合成容器解析失败 {reason}");
+                failures++;
+                continue;
+            }
+
+            if (container.ExifOrientation != expected)
             {
                 Console.WriteLine(
-                    $"  ! {Describe(sequence)}: expected EXIF {expected}, got {actual}");
+                    $"  ! {Describe(sequence)}: expected EXIF {expected}, got {container.ExifOrientation}");
                 failures++;
             }
         }

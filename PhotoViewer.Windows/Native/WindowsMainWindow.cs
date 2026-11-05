@@ -327,6 +327,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         // 关窗后仍可能收到一次 Activated(失活):此时任何 Window 属性都会抛 COMException,统一由该标志挡住。
         _closed = true;
+        DisposeDisplayColor();
         Activated -= OnWindowActivated;
         if (_xamlRoot != null)
         {
@@ -655,6 +656,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>系统还原全屏窗口时同步恢复系统边框与缩放边缘。</summary>
     private void OnAppWindowChanged(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        if (args.DidPositionChange || args.DidSizeChange || args.DidVisibilityChange) _displayColor?.Refresh();
         if (!args.DidPresenterChange && !args.DidSizeChange && !args.DidVisibilityChange)
         {
             return;
@@ -713,6 +715,7 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>窗口首次布局完成后设定初始尺寸并让根元素获得键盘焦点。</summary>
     private void OnRootLoaded(object sender, RoutedEventArgs e)
     {
+        InitializeDisplayColor();
         if (_xamlRoot == null)
         {
             // 跨屏/缩放变化时逻辑尺寸可能不变,只能从 XamlRoot.Changed 拿到新的物理倍率。

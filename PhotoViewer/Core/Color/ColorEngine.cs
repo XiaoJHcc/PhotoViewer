@@ -19,12 +19,9 @@ public static class ColorEngine
     /// <summary>8 位不透明 alpha。</summary>
     private const byte ByteOpaque = 255;
 
-    private static readonly SKColorSpace Srgb = SKColorSpace.CreateSrgb();
-    private static readonly SKColorSpace LinearSrgb = SKColorSpace.CreateSrgbLinear();
-    private static readonly SKColorSpace DisplayP3 = SKColorSpace.CreateRgb(SKColorSpaceTransferFn.Srgb, SKColorSpaceXyz.DisplayP3);
-    private static readonly SKColorSpace AdobeRgb = SKColorSpace.CreateRgb(
-        new SKColorSpaceTransferFn(563f / 256f, 1, 0, 0, 0, 0, 0),
-        SKColorSpaceXyz.AdobeRgb);
+    private static readonly SKColorSpace Srgb = SkColorSpaces.Srgb;
+    private static readonly SKColorSpace LinearSrgb = SkColorSpaces.LinearSrgb;
+    private static readonly SKColorSpace DisplayP3 = SkColorSpaces.DisplayP3;
 
     /// <summary>线性 F16 → sRGB8 的逐通道传递查表，由 skcms 枚举全部半精度位模式生成，故逐字节等同 skcms。</summary>
     private static readonly Lazy<HalfToByteLut> LinearToSrgb8Lut =
@@ -68,6 +65,24 @@ public static class ColorEngine
     public static DecodedImage ToDisplayP3(DecodedImage source)
         => Convert(source, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3, DisplayP3);
 
+    /// <summary>
+    /// 把图像转到指定的展示编码与色彩标签（增强、保色处理等"先在 sRGB8 上算完"的流程据此回到源的展示口径）。
+    /// 与 <see cref="ToScRgb16(DecodedImage)"/> / <see cref="ToDisplayP3"/> 同一转换实现，编码与色彩标签都可指定。
+    /// </summary>
+    /// <param name="source">已解码图像。</param>
+    /// <param name="encoding">目标像素编码。</param>
+    /// <param name="colorSpace">目标色彩标签。</param>
+    /// <param name="iccProfile">目标为 ICC 标签时携带的 profile 字节；其余标签忽略。</param>
+    /// <returns>须由调用方释放的目标图像（源已是目标口径时返回源本身的另一份租约）。</returns>
+    public static DecodedImage ToDisplayEncoding(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace,
+        ReadOnlyMemory<byte> iccProfile = default)
+    {
+        if (colorSpace == ImageColorSpace.Icc && iccProfile.IsEmpty)
+            throw new ArgumentException("ICC 展示口径缺少 profile 数据", nameof(iccProfile));
+        using var space = SkColorSpaces.Resolve(colorSpace, iccProfile);
+        return ConvertCore(source, encoding, colorSpace, space.Space, targetIcc: colorSpace == ImageColorSpace.Icc ? iccProfile : default);
+    }
+
     /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径（含 8 位 Display P3 展示产物）。</summary>
     public static DecodedImage ToAnalysisSrgb8(DecodedImage source)
         => RotateForAnalysis(ToSrgb8(source), source.Orientation);
@@ -98,9 +113,22 @@ public static class ColorEngine
     /// <param name="orientation">EXIF 方向;null 表示沿用源图像元数据。</param>
     private static unsafe DecodedImage Convert(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace, SKColorSpace targetSpace,
         int? sourceWidth = null, int? sourceHeight = null, int? orientation = null)
+        => ConvertCore(source, encoding, colorSpace, targetSpace, sourceWidth, sourceHeight, orientation);
+
+    /// <summary>同上，另带目标为 ICC 标签时随产物携带的 profile 字节。</summary>
+    /// <param name="source">源图像。</param>
+    /// <param name="encoding">目标像素编码。</param>
+    /// <param name="colorSpace">目标色彩标签。</param>
+    /// <param name="targetSpace">目标 skcms 色彩空间。</param>
+    /// <param name="sourceWidth">源全分辨率宽;null 表示沿用源图像元数据。</param>
+    /// <param name="sourceHeight">源全分辨率高;null 表示沿用源图像元数据。</param>
+    /// <param name="orientation">EXIF 方向;null 表示沿用源图像元数据。</param>
+    /// <param name="targetIcc">目标为 ICC 标签时随产物携带的 profile 字节。</param>
+    private static unsafe DecodedImage ConvertCore(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace, SKColorSpace targetSpace,
+        int? sourceWidth = null, int? sourceHeight = null, int? orientation = null, ReadOnlyMemory<byte> targetIcc = default)
     {
         // 元数据不可变:要求覆盖元数据时不能走"原格式直通"快路径。
-        if (sourceWidth == null && sourceHeight == null && orientation == null &&
+        if (sourceWidth == null && sourceHeight == null && orientation == null && targetIcc.IsEmpty &&
             source.Encoding == encoding && source.ColorSpace == colorSpace)
         {
             if (!source.TryAcquire()) throw new ObjectDisposedException(nameof(source));
@@ -115,17 +143,7 @@ public static class ColorEngine
         var original = rgbConverted ?? source;
         using var packed = original.Stride % DecodedImage.BytesPerPixel(original.Encoding) != 0 ? PackRows(original) : null;
         var effective = packed ?? original;
-        using var customSpace = source.ColorSpace == ImageColorSpace.Icc
-            ? SKColorSpace.CreateIcc(source.IccProfile.ToArray()) ?? throw new InvalidOperationException("无法解析图像 ICC profile")
-            : null;
-        var sourceSpace = customSpace ?? source.ColorSpace switch
-        {
-            ImageColorSpace.Legacy or ImageColorSpace.Srgb => Srgb,
-            ImageColorSpace.DisplayP3 => DisplayP3,
-            ImageColorSpace.AdobeRgb => AdobeRgb,
-            ImageColorSpace.LinearSrgb => LinearSrgb,
-            _ => throw new ArgumentOutOfRangeException(nameof(source)),
-        };
+        using var sourceSpace = SkColorSpaces.Resolve(source.ColorSpace, source.IccProfile);
         int stride = checked(source.Width * DecodedImage.BytesPerPixel(encoding));
         var buffer = DecodedImage.RentPixels(checked(stride * source.Height));
         try
@@ -133,7 +151,7 @@ public static class ColorEngine
             fixed (byte* sourcePixels = effective.Pixels)
             fixed (byte* targetPixels = buffer)
             {
-                var sourceInfo = new SKImageInfo(source.Width, source.Height, ColorType(effective.Encoding), SKAlphaType.Premul, sourceSpace);
+                var sourceInfo = new SKImageInfo(source.Width, source.Height, ColorType(effective.Encoding), SKAlphaType.Premul, sourceSpace.Space);
                 var targetInfo = new SKImageInfo(source.Width, source.Height, ColorType(encoding), SKAlphaType.Premul, targetSpace);
                 using var pixmap = new SKPixmap(sourceInfo, (IntPtr)sourcePixels, effective.Stride);
                 if (!pixmap.ReadPixels(targetInfo, (IntPtr)targetPixels, stride))
@@ -143,7 +161,8 @@ public static class ColorEngine
                 colorSpace,
                 sourceWidth ?? source.SourceWidth,
                 sourceHeight ?? source.SourceHeight,
-                orientation ?? source.Orientation);
+                orientation ?? source.Orientation,
+                targetIcc.IsEmpty ? null : targetIcc.ToArray());
         }
         catch
         {
@@ -155,7 +174,7 @@ public static class ColorEngine
     /// <summary>像素编码 → Skia 色彩类型；不支持的编码显式抛出，不做静默猜字节序。</summary>
     /// <param name="encoding">像素编码。</param>
     /// <returns>Skia 色彩类型。</returns>
-    private static SKColorType ColorType(PixelEncoding encoding) => encoding switch
+    internal static SKColorType ColorType(PixelEncoding encoding) => encoding switch
     {
         PixelEncoding.RgbaF16 => SKColorType.RgbaF16,
         PixelEncoding.Bgra32 => SKColorType.Bgra8888,

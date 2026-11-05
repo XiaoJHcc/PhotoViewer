@@ -18,6 +18,7 @@ internal static class Smoke
         failures += Case("444 10bit limited", HeifChromaSampling.Yuv444, 10, false, 1, 1);
         failures += Case("420 8bit full", HeifChromaSampling.Yuv420, 8, true, 1, 3);
         failures += Case("mono 10bit", HeifChromaSampling.Monochrome, 10, true, 1, 1);
+        failures += ColorTests.RunConverterCases();
         Console.WriteLine(failures == 0 ? "smoke: PASS" : $"smoke: {failures} FAILURE(S)");
         return failures == 0 ? 0 : 1;
     }

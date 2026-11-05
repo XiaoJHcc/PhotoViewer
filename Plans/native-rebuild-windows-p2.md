@@ -201,7 +201,7 @@ PhotoViewer.Windows/
 - 帧导出:`Windows.Graphics.Capture` 或 `PrintWindow`(权限受限时如实记录,不冒充通过)。
 - 文档:本文（§12–§18 即 Windows 验收记录）、`Design/status.md` 的 Windows 列(**编译通过≠验收通过**)、[架构文档](../Design/architecture.md) §4 平台矩阵 + 根 `AGENTS.md` 模块索引、新建 `PhotoViewer.Windows/AGENTS.md`、`Plans/native-rebuild-handoff.md`、`DEV.md`（旧壳 `Debug Windows (Legacy UI)` 任务已随 6D 删除）。
 
-**W-M7(待作者立项)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)。RAW 主图解码已由 [性能与内存专项](windows-performance-memory-plan-1.md) 落地(WIC 系统 RAW 引擎全分辨率),不再属本项。
+**W-M7(已实现,程序化验收通过;硬件真屏门未验)**:色彩正确性(ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签)。入口 `--pv-native-color`(16 PASS/0 FAIL/1 BOUNDARY),覆盖与硬件边界统一见 §19。RAW 主图解码已由 [性能与内存专项](windows-performance-memory-plan-1.md) 落地(WIC 系统 RAW 引擎全分辨率),不属本项。
 
 **W-M8 工具窗口(P3 收口)** ✅ 2026-10-17 — 方案、实现与验收见 §18;`--pv-native-tools` 5 项 PASS,主冒烟/设置回归无变化。
 
@@ -361,7 +361,7 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 |---|---|---|
 | 发布风险 | 未签名/SmartScreen；干净 Windows 全系统、Win10 未验 | 原名/改名共 88 项与模块来源检查不替代干净机；最低声明 Win10 1809 与实测 Win11 不矛盾，仅发布 x64 原生产物 |
 | 作者决策 | 最终单文件体积是否接受 | 230,753,372 字节（230.8 MB / 220.1 MiB），已内置 CRT；工程修复通过，干净机门仍待环境 |
-| 功能缺口 | W-M7 色彩：ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签 | RAW 主图已落地（WIC 系统 RAW 引擎全分辨率），不再属 W-M7；色彩是否立项待作者 |
+| 色彩收尾 | W-M7 色彩：ICC/nclx、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签 → **已实现并通过程序化验收**（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY），报告与覆盖见 §19 | RAW 主图早已落地（WIC 系统 RAW 引擎全分辨率），不属本项；真屏 ACM/HDR 开关/Win10 实机/不同色域跨屏/校色仪仍需匹配硬件，注入不能代替 |
 | 性能 | 顺序连翻 p95 未达 350 ms（远程会话合成交换链缓冲归还等待） | 待显示器直连独显的本地会话按同一脚本复测定性；不计发布前置 |
 | 状态记录 | `Design/status.md` Windows 列 2026-11-02 已按本机实跑回填（CoreContractCheck 818 PASS/1 SKIP/0 FAIL + smoke/settings/tools + OPEN-06 二次激活与 DatasetBuilder 渲染复核）；剩 9 格 `代码核对` 均为失败注入类 | 不补注入套件故 IMAGE-03/IMAGE-10/ANALYSIS-10/SIM-10/MENU-06/STATE-01/STATE-02/SCOPE-02 保持代码核对；OPEN-06 已由 `--pv-native-activation-check` 覆盖 |
 
@@ -371,13 +371,13 @@ EXIF 块 50×40、评分 30×30(纵向自下而上 0→5)、命令 40×40、栏�
 
 ### 13.3 独立延期与非目标
 
-- **W-M7 只剩色彩**：ICC/广色域标签、ACM 探测、Win10 显示器 ICC 烘焙与跨屏重标签未做，是否立项待作者；RAW 主图解码已落地（WIC 系统 RAW 引擎全分辨率）。
+- **W-M7 色彩（现行）**：已实现并通过程序化验收（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY）。输入侧 ICC/EXIF 与共享像素契约、Windows RAW 色彩声明、HEIF ICC+nclx、显示层 AdvancedColor 探测与输出转换均已完成；结果表与硬件边界见 §19，历史叙述中的"未做/是否立项待作者"均已被 §19 取代。
 - **性能门不计发布前置**：`--pv-stress`（顺序 / `ab`）与 `--pv-perf-probe` 已接线并有基线，顺序连翻 p95 长尾按 §13.2 复测定性。
 - P3 主屏、设置与工具已落地；自绘标题栏失去系统最大化按钮的贴靠布局为有意差异。
 
 ### 13.4 建议推进顺序
 
-先由作者确认体积与发布风险，再在干净 Windows/Win10 环境补发布门；W-M7 色彩是否立项由作者定，性能长尾待本地直连独显会话复测。其余项已按 §13.2 裁定结案，不重新挂已通过的设置/工具手验。
+先由作者确认体积与发布风险，再在干净 Windows/Win10 环境补发布门；W-M7 色彩已实现并通过程序化验收（入口 `--pv-native-color`，见 §19），硬件真屏门另记；性能长尾待本地直连独显会话复测。其余项已按 §13.2 裁定结案，不重新挂已通过的设置/工具手验。
 
 ## 14. 主屏功能对标收口(2026-10-17 第二轮)
 
@@ -517,7 +517,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - **主图编码**:新增 `Core/WindowsPresentationEncodingPolicy`(恒 RGBA16F 线性 scRGB),`WindowsNativeApplication` 注入 `WindowsPresentationDecoder` + policy;`DecodeAsync` 改为共享四参签名(带 `PixelEncoding`),非 `RgbaF16` 显式拒绝,`BytesPerPixel` 删除,`BitmapLoader.PresentationBytesPerPixel` 由 policy 计算。
 - **共享修复保留**:Windows 分支对共享层的修复随合并进入——`PhotoLoadSession` 取消重置、`ImageEnhancer` 元数据保留(增强 F16 方向,冒烟在方向 6 用增强帧四角回读覆盖)、`SkiaImageCodec.FromSkBitmap` 源尺寸、`BitmapLoader` 在途取消重试、`ColorEngine.ToScRgb16` 元数据重载;不另开 Windows 分叉。
 - **验收**:`--pv-native-smoke` **24 项全 PASS**(150%)。新增覆盖 NumberPad3→SetRating3、方向 6 的 `DisplayCrop` 象限、增强帧保持显示朝向、增强帧诊断重算;§15.2 #1 的"诊断固定读原片"规避已移除。
-- **待办状态**：现行分类与作者 2026-10-22 裁定见 §13.2；Windows 只剩 W-M7 色彩（是否立项待作者）、发布面风险与顺序连翻 p95 长尾，其余（相机素材/长稳/热插拔/失败注入/W-M6 专项与几何导出）不再挂账。
+- **待办状态**：现行分类与作者 2026-10-22 裁定见 §13.2；Windows 只剩 W-M7 色彩的**验收**（用户已要求执行、实现完成，见 §19）、发布面风险与顺序连翻 p95 长尾，其余（相机素材/长稳/热插拔/失败注入/W-M6 专项与几何导出）不再挂账。
 
 ## 17. W-M5 设置窗口落地与视觉重构(2026-10-17)
 
@@ -625,3 +625,90 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - `--pv-native-tools` 的 DINO 检查新增布局断言:五张瓦片宽度差 ≤1 DIP、两排各自上沿差 ≤1 DIP;当前 150% 下五张均 206 DIP 宽。
 - 重新截图:`tools-page-dino.png`(默认窗高)、`tools-page-dino-full.png`(加高窗口显示完整刚体拟合面板)。
 
+## 19. 色彩收尾(W-M7):程序化验收通过,硬件真屏门未覆盖(2026-11-05)
+
+> 本节是 W-M7 色彩的**唯一现行状态源**。功能实现与程序化验收已完成:Windows 本机 Debug/Release 构建 0 错 0 警,
+> `--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**,smoke 35/35(Debug 与 Release)、settings 14/14、tools 9/9,
+> 共享侧 ColorTestTool 68 PASS、ColorEngineLutCheck 逐字节一致、HeifFastDecodeTest 三套与 CoreContractCheck 905 PASS(§19.5)。
+> 仍属未验的是**真实硬件**:真屏 ACM/HDR 实际切换、Win10 实机、不同色域跨屏、校色仪(§19.4)——不得写成已验。
+> §13.2/13.3/13.4 的历史裁定文字保留原样,现行状态以本节为准。
+
+### 19.1 入口与判定口径
+
+- 程序化入口:`--pv-native-color`(VS Code Task **Check Windows Color**;隔离设置/数据库/日志,报告写 `artifacts/acceptance/native-win-acceptance/`),实现在 `Native/WindowsColorAcceptance.cs`。
+- 回归口径:色彩专项与 `--pv-native-smoke` 同机同素材一起跑;任一项未过即整体未通过,不挑分项算 PASS。
+- 状态词:PASS 只代表"与独立参考矩阵/转换一致";真屏观感与系统色彩状态需匹配硬件,另由 §19.4 跟踪,不折算成 PASS。
+
+### 19.2 实现范围(已完成)
+
+**输入侧(共享像素契约)**
+
+- JPEG 源色域来自容器(有效 ICC 优先 → `EXIF ColorSpace=2`/`R03` 推 Adobe RGB → 否则 sRGB);解码保留文件内编码值,不在解码期先收敛 sRGB。
+- 非 JPEG:原色就是 sRGB 时解码期精确换曲线(老 gAMA/cHRM PNG);能导出 ICC 则标 `Icc` 保留原值;两者都不可行时直接解到 `RgbaF16` 线性 scRGB 保全广色域(实测 Skia `ToProfile()` 恒为空),**不把广色域钳到 sRGB 再自称 sRGB**。
+- 缩放/方向/裁剪/`ToBgra32`/`ScaleToExact` 一律保持编码·色彩标签·ICC·源尺寸·方向;`ApplyOrientation` 产物方向归 1 且 90°/270° 交换源几何。
+- **F16 几何纯数值**:Skia 的 F16 画布会把负值/&gt;1 钳到 [0,1](实测 600 长边代理曾把 P3 红变成 `(1,0,0)`),故 `ScaleToLongEdge`/`DecodeToFit` 的 F16 缩放改为可分离数值重采样(缩小 ≥2× 面积平均、轻微缩放 Mitchell),`ApplyOrientation` 的 F16 改为整数像素置换;8 位/Rgba8 与 DINO 口径不变。
+- 出口口径:缩略图公共出口统一 sRGB8(转不成 sRGB 就丢弃该来源,不冒充);增强回到源展示编码**与**源色彩标签;DINO 模型输入显式 sRGB8;`Legacy ≡ Srgb` 逐字节等价。
+
+**Windows RAW(`WindowsRawDecoder`)**
+
+- 按 WIC **帧级(退到容器级)**色彩上下文如实打标签:有效 ICC 原样携带 → `Icc`;只有 EXIF `ColorSpace` → 按共享规则(2 → Adobe RGB,其余 sRGB);两者都没有才**显式**回退 `Srgb`。验收里该解码器实测读数为「sRGB / ICC 0 字节」,与这条回退路径一致。
+- 色彩声明在 `ConvertTo` 之前读取(格式转换会把帧换成格式转换器,帧级上下文随之不可达);`ConvertTo(32bppBGRA)` 只换内存布局、**不做色彩管理**,色域换算交给共享 `ColorEngine`。
+- 精度不虚标:产物恒 `Bgra32` 8 位;另设无像素探针 `TryGetSourceColor(path)` 供验收核对解码器实际声明。
+
+**Windows HEIF(已收尾,不再"在实现")**
+
+- 容器 `colr` 的 ICC 与 `nclx` 合并(一个项上的多个 `colr` 全取、网格项与瓦片/缩略图项"自身优先、缺失补齐");ICC 优先时只做 YCbCr 反矩阵、把 profile 空间码值交给 `ColorEngine`;无 ICC 时按 `nclx`(缺失回落码流 VUI)精确区分原色(BT.709/sRGB、BT.2020、Display P3)与传递函数;高位源经半浮点中间图,不先压 sRGB8。
+- libheif 回落同样按真实声明打标签,主图直接出线性 RGBA16F;16 位交错平面的码值范围取 **libheif 平面元数据**(`heif_image_get_bits_per_pixel_range`),不再按像素最大值猜位深(8 位源请求 RGB48 被库提升到 10 位时按 10 位归一化)。
+- 支持面外的 **PQ/HLG 仍明确拒绝**(不做 tone map):验收里 HDR 分支只验到"SDR 白电平 ×2 模拟",**不声称 HDR 内容支持**。
+
+**Windows 输出侧**
+
+- `WindowsDisplayColor`:按目标显示器 DisplayConfig 实际 `ActiveColorMode` 探测并动态刷新(Win11 用新版结构、失败回退旧版;v1 只认 `Flags & 2`,HDR/WCG 不可区分时白电平按 1 不猜);窗口移动与低频轮询触发刷新。
+- `WindowsDisplayTransform`:SDR 从显示器 DC 取关联 ICC,matrix/TRC profile 走 `skcms`(65³ cube),复杂 profile 走 WCS;HDR 下 SDR 白电平以 `SdrWhiteScale` 单独 pass 参与。
+- **无双转换**:GPU 最终 pass 与 XAML 位图(`WindowsImageAdapter`)共用同一输出转换,同一张图不因呈现路径不同而变;界面亚克力遮罩与 XAML 接缝用同一配方与同值;系统管理开启时不重复应用显示器 ICC。
+
+### 19.3 支持边界(不是缺口)
+
+- PQ/HLG 不做 tone map、如实拒绝——当前不声称 HDR 内容支持。
+- 12 位 HEIF 的**真实照片**未验:码值范围已改由 libheif 平面元数据决定,本项目只有自建 12 位暗平面用例(证明不靠白点猜范围),没有真实 12bit 原片素材。
+- RAW 开发/调色另案(§19.6),本项只保证现在这张 8 位 WIC 产物被如实解释与呈现。
+
+### 19.4 硬件真屏门(未验,注入不能代替)
+
+| 项 | 为什么注入代替不了 | 现状 |
+|---|---|---|
+| 真屏 ACM(AdvancedColor)开/关 | 依赖实际显示器 HDR/ACM 能力与系统当前状态 | 本机实测为 SDR(WCG/HDR 关);探测 + 刷新路径已程序化,真屏开/关未验 |
+| HDR 实际切换链路 | DXGI 色彩空间与交换链态随系统开关变化 | 只验了 HDR 分支的 SDR 白电平 ×2 模拟;真机切换未验,且**不等于 HDR 内容支持** |
+| Win10 实机 | Win10 无 ACM 时走 8bit 烘焙回退口径 | 未验(本机仅 Win11) |
+| 不同色域显示器跨屏 | 需要两台不同色域的显示器 | 常规 UI 跨屏已手验;色彩跨屏未验 |
+| 校色仪实测 | 需要测量设备 | 未做(程序化只比对独立参考矩阵与转换) |
+
+### 19.5 验收结果(2026-11-05 本机)
+
+| 项 | 结论 | 证据/报告 |
+|---|---|---|
+| Windows 构建 | Debug / Release 均 **0 警告 0 错误** | 本机构建 |
+| `--pv-native-color` | **16 PASS / 0 FAIL / 1 BOUNDARY** | `artifacts/acceptance/native-win-acceptance/color-checks.json` |
+| `--pv-native-smoke` | Debug **35/35**、Release **35/35** | `.../checks.json` |
+| `--pv-native-settings` | **14/14** | `.../settings-checks.json` |
+| `--pv-native-tools` | **9/9** | `.../tools-checks.json` |
+| `ColorTestTool` | **68 PASS**,参考矩阵最大误差 **0.000946** | 本机实跑 |
+| `ColorEngineLutCheck` | 查表快通道与 skcms **逐字节一致** | 本机实跑 |
+| `HeifFastDecodeTest` | `selftest` / `smoke` / `e2e` 全 PASS(含自建 12 位暗平面 range 用例) | 本机实跑 |
+| `CoreContractCheck` | **905 PASS / 1 SKIP / 0 FAIL** | 本机实跑 |
+
+- **作者目测**:浏览本轮色域检测图后未见异常,同意提交。此结论只覆盖本次色卡目测,不扩大到 Win10、ACM/HDR 切换、不同色域跨屏或校色仪验证。
+- **1 BOUNDARY** 即"真屏 ACM/HDR 未切换"那一项(本机显示器为 SDR):按未验记录,不计失败也不折算成 PASS。
+- 16 项覆盖:JPEG 四源(sRGB / P3 / Adobe / 未标记 Adobe)的 proxy 与 full 经 GPU;HEIF 快速路径 vs 强制 libheif 600 长边代理(F16 保负值与 &gt;1);WIC RAW 实际色彩声明;native WCS 黑/灰/白;skcms matrix/TRC 65³ cube;GPU P3 / sRGB / ACM 旁路 / HDR SDR 白 ×2 模拟;源实例保持。
+- 实测显示器 ICC:`C:\Windows\system32\spool\drivers\color\ICD27144 - 6727K - 2505.icm`,SHA256 `3D954D0A2FFE7C7BB785334E7B4B4988D59E85F36EFBC944E901ADCA27D51BA3`。
+
+#### 验收口径修正(harness,不是产品缺陷)
+
+1. **smoke 假失败**:harness 在重挂布局的同一 UI 轮立即打开弹层,一次记录显示弹层约 28ms 后关闭,早于周期通知;临时停用色彩轮询的对照仍失败。修正为等待 200ms 让布局完成、`combo.Focus()` 后再等 100ms 打开,原有跨两个探测周期的存活与内容身份断言全部保留。正式实现已恢复色彩轮询,Debug/Release 完整回归通过。
+2. **色彩象限分类**:按**实际输出转换后**的参考色归类,避免校准屏把绿色读成黄色;16 项独立色彩矩阵没有放宽容差。
+
+### 19.6 边界(不属本项)
+
+- RAW 开发/调色(`IWICDevelopRaw`、镜头校正、白平衡/高光恢复、相机矩阵)另案 [RAW 开发与调色方案](raw-develop-grading-plan-1.md),**不算色彩缺口**。
+- Android 保持**默认 sRGB**:`adb devices -l` 无设备、`emulator -list-avds` 为空,P3 真机尝试被硬件阻塞;既不声称"已恢复",也不算永久延期。
+- iPad 广色域对拍与外接显示仍属 Apple 侧未关闭项。

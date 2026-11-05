@@ -629,6 +629,8 @@ public static partial class FastHeifDecoder
             PrimariesCode = color.HasNclx ? color.Primaries : frame.Primaries,
             TransferCode = color.HasNclx ? color.Transfer : frame.Transfer,
             FullRange = color.HasNclx ? color.FullRange : frame.FullRange != 0,
+            // ICC 存在时优先级高于 nclx(HEIF 规定),由 Encode 走"码值 + 色彩引擎"出口。
+            IccProfile = color.IccProfile,
         };
 
     /// <summary>把 YUV 平面一次性转成目标编码的展示缓冲(尺寸、编码与方向由调用方给定)。</summary>
@@ -645,6 +647,21 @@ public static partial class FastHeifDecoder
         out string? fallbackReason)
     {
         fallbackReason = null;
+        if (source.HasIccProfile)
+        {
+            return EncodeFromIcc(
+                source,
+                targetWidth,
+                targetHeight,
+                encoding,
+                rgba8ColorSpace,
+                exifOrientation,
+                sourceWidth,
+                sourceHeight,
+                cancellationToken,
+                out fallbackReason);
+        }
+
         if (!YuvImageConverter.IsSupported(source, out var unsupported))
         {
             fallbackReason = unsupported;
@@ -687,6 +704,135 @@ public static partial class FastHeifDecoder
                     PixelEncoding.Rgba8 => rgba8ColorSpace,
                     _ => ImageColorSpace.Srgb,
                 },
+                sourceWidth,
+                sourceHeight,
+                exifOrientation);
+        }
+        catch
+        {
+            ImageBufferPool.Return(buffer);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// 携带 ICC 的源:先只做 YCbCr 反矩阵得到 ICC 空间内的编码值,再由色彩引擎(skcms)按 profile
+    /// 一次转到目标编码,避免把广色域当 sRGB 解释。
+    /// </summary>
+    /// <remarks>
+    /// 中间图取哪种位宽:8 位源用 8 位码值(不丢精度、峰值内存最小),10/12 位源用半浮点码值
+    /// (避免先量化到 8 位再放大成浮点)。HDR(PQ/HLG)不在这里 tone map:直接给原因回落,
+    /// 不把 HDR 当 SDR 输出。
+    /// </remarks>
+    private static DecodedImage? EncodeFromIcc(
+        YuvImage source,
+        int targetWidth,
+        int targetHeight,
+        PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace,
+        int exifOrientation,
+        int sourceWidth,
+        int sourceHeight,
+        CancellationToken cancellationToken,
+        out string? fallbackReason)
+    {
+        fallbackReason = null;
+        if (source.TransferCode is 16 or 18)
+        {
+            fallbackReason = "ICC 与 HDR 传输特性(PQ/HLG)同时声明,不做 tone map,回落到平台 HEIF 解码";
+            return null;
+        }
+        if (!YuvImageConverter.IsSupportedIccEncoded(source, out var unsupported))
+        {
+            fallbackReason = unsupported;
+            return null;
+        }
+
+        var wideCodes = source.BitDepth > 8 &&
+            (encoding == PixelEncoding.RgbaF16 || encoding == PixelEncoding.Rgba8);
+        var stride = checked(targetWidth * (wideCodes ? 8 : 4));
+        var buffer = DecodedImage.RentPixels(checked(stride * targetHeight));
+        DecodedImage? coded = null;
+        var owned = true;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            string? reason = null;
+            var converted = wideCodes
+                ? YuvImageConverter.TryConvertToIccEncodedRgbaF16(source, targetWidth, targetHeight, buffer, stride, out reason)
+                : YuvImageConverter.TryConvertToIccEncodedBgra32(source, targetWidth, targetHeight, buffer, stride, out reason);
+            if (!converted)
+            {
+                fallbackReason = reason ?? "YUV 转换失败";
+                return null;
+            }
+
+            coded = DecodedImage.CreatePooled(
+                buffer,
+                targetWidth,
+                targetHeight,
+                stride,
+                wideCodes ? PixelEncoding.RgbaF16 : PixelEncoding.Bgra32,
+                ImageColorSpace.Icc,
+                sourceWidth,
+                sourceHeight,
+                exifOrientation,
+                source.IccProfile);
+            owned = false;
+
+            return encoding switch
+            {
+                PixelEncoding.RgbaF16 => ColorEngine.ToScRgb16(coded, sourceWidth, sourceHeight, exifOrientation),
+                PixelEncoding.Rgba8 => rgba8ColorSpace == ImageColorSpace.DisplayP3
+                    ? ColorEngine.ToDisplayP3(coded)
+                    : ToRgba8Srgb(coded, sourceWidth, sourceHeight, exifOrientation),
+                _ => ColorEngine.ToSrgb8(coded),
+            };
+        }
+        finally
+        {
+            if (owned) ImageBufferPool.Return(buffer);
+            coded?.Release();
+        }
+    }
+
+    /// <summary>
+    /// ICC 空间 → 8 位 sRGB 的 RGBA 字节序:色彩引擎的 sRGB8 出口是 BGRA 布局,这里只换通道序,
+    /// 不做任何再去一次的色彩换算。
+    /// </summary>
+    /// <param name="coded">ICC 空间内的中间图,调用方仍持有其租约。</param>
+    /// <param name="sourceWidth">源(未旋转)全分辨率宽。</param>
+    /// <param name="sourceHeight">源(未旋转)全分辨率高。</param>
+    /// <param name="exifOrientation">待应用方向。</param>
+    /// <returns>RGBA 字节序的 sRGB8;调用方持有租约。</returns>
+    private static unsafe DecodedImage ToRgba8Srgb(DecodedImage coded, int sourceWidth, int sourceHeight, int exifOrientation)
+    {
+        using var srgb = ColorEngine.ToSrgb8(coded);
+        var stride = checked(srgb.Width * 4);
+        var buffer = DecodedImage.RentPixels(checked(stride * srgb.Height));
+        try
+        {
+            var sourcePixels = srgb.Pixels;
+            for (var row = 0; row < srgb.Height; row++)
+            {
+                var source = row * srgb.Stride;
+                var target = row * stride;
+                for (var x = 0; x < srgb.Width; x++, source += 4, target += 4)
+                {
+                    buffer[target] = sourcePixels[source + 2];
+                    buffer[target + 1] = sourcePixels[source + 1];
+                    buffer[target + 2] = sourcePixels[source];
+                    buffer[target + 3] = 255;
+                }
+            }
+
+            return DecodedImage.CreatePooled(
+                buffer,
+                srgb.Width,
+                srgb.Height,
+                stride,
+                PixelEncoding.Rgba8,
+                ImageColorSpace.Srgb,
                 sourceWidth,
                 sourceHeight,
                 exifOrientation);

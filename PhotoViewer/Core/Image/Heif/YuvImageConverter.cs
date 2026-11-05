@@ -93,14 +93,27 @@ public sealed class YuvImage
     /// <summary>nclx 矩阵系数代码(1=BT.709,5/6=BT.601,9=BT.2020 非恒定亮度,2=未指定→BT.601)。</summary>
     public int MatrixCode { get; init; } = 5;
 
-    /// <summary>nclx 原色代码(1=BT.709,2=未指定→BT.709,12=Display P3)。</summary>
+    /// <summary>nclx 原色代码(1=BT.709,2=未指定→BT.709,9=BT.2020,12=Display P3)。</summary>
     public int PrimariesCode { get; init; } = 1;
 
-    /// <summary>nclx 传输特性代码(1/6/13/2 视作 sRGB 曲线)。</summary>
+    /// <summary>nclx 传输特性代码(1/6/14/15=BT.709 曲线族,2/13=sRGB 曲线,8=线性)。</summary>
     public int TransferCode { get; init; } = 13;
 
     /// <summary>全范围(true)或视频范围(false)。</summary>
     public bool FullRange { get; init; } = true;
+
+    /// <summary>
+    /// 源 ICC 配置文件字节;存在时按 HEIF 规定优先于 <c>nclx</c> 三元组解释编码值。
+    /// </summary>
+    /// <remarks>
+    /// 携带 ICC 时必须走 <see cref="YuvImageConverter.TryConvertToIccEncodedRgbaF16"/> /
+    /// <see cref="YuvImageConverter.TryConvertToIccEncodedBgra32"/>:那两条出口只做 YCbCr 反矩阵,
+    /// 产出"该 ICC 空间内的编码值",再由色彩引擎( skcms )按 profile 转到目标空间。
+    /// </remarks>
+    public byte[]? IccProfile { get; init; }
+
+    /// <summary>是否携带可用的 ICC 配置文件。</summary>
+    public bool HasIccProfile => IccProfile is { Length: > 0 };
 }
 
 /// <summary>
@@ -113,10 +126,23 @@ public sealed class YuvImage
 /// <item>sRGB 8 位 BGRA,供缩略图与分析使用;</item>
 /// <item>8 位 RGBA,按请求标记为 sRGB 或 Display P3,供 Android 等 8 位展示表面使用。</item>
 /// </list>
+/// 另有两条例外出口供携带 ICC 的源使用(<see cref="TryConvertToIccEncodedRgbaF16"/> /
+/// <see cref="TryConvertToIccEncodedBgra32"/>):只做 YCbCr 反矩阵,产出源 ICC 空间内的编码值,
+/// 不线性化、不做原色转换 —— 后续由色彩引擎按 profile 转到目标空间,避免把广色域当 sRGB。
 /// 目标尺寸等于画布时逐像素直通;小于画布时用 Mitchell–Netravali(B=C=1/3)可分离重采样,
-/// 核支撑按缩放倍数展宽(抗锯齿),重采样在 gamma 编码的 R'G'B' 上完成,最后才线性化/量化。
+/// 核支撑按缩放倍数展宽(抗锯齿),重采样在编码值(R'G'B')上完成,最后才线性化/量化。
 /// 两条路径都按输出行带并行:逐像素直通无中间层;重采样每个线程只持有"一行源 + 若干行已横向重采样"
 /// 的缓冲(数 MB 级),不物化全分辨率浮点 RGB 中间图像。
+///
+/// 原色与传递函数的支持面(超出即 <see cref="IsSupported"/> 返回 false,由调用方回落平台 HEIF 解码):
+/// <list type="bullet">
+/// <item>原色:nclx 1/2(BT.709,等同 sRGB 原色)、9(BT.2020)、12(Display P3);
+/// 其余(470M/470BG/601/240M/电影/428/431/EBU)不猜,显式拒绝;</item>
+/// <item>传递函数:1/6/14/15(BT.709 曲线族)、2/13(sRGB)、4(伽马 2.2)、5(伽马 2.8)、8(线性);
+/// 7(SMPTE 240M)、11(xvYCC)、12(BT.1361)、16(PQ)、18(HLG)等显式拒绝 —— 本转换器不做 HDR tone map,
+/// 不把 PQ/HLG 当 SDR 输出;</item>
+/// <item>矩阵系数:1(BT.709)、5/6/2(BT.601)、9(BT.2020 非恒定亮度);其余显式拒绝。</item>
+/// </list>
 /// </remarks>
 public static class YuvImageConverter
 {
@@ -131,12 +157,15 @@ public static class YuvImageConverter
     private const long ScratchBudgetPerWorker = 3L << 20;
     private const int RowPaddingFloats = 8;
 
-    private static readonly float[] s_linearLut = BuildLut(false);
-    private static readonly float[] s_encodeLut = BuildLut(true);
+    private static readonly float[] s_encodeLut = BuildSrgbEncodeLut();
+    private static readonly float[] s_linearizeSrgbLut = BuildLinearizeLut(TransferCurve.Srgb);
+    private static readonly float[] s_linearizeBt709Lut = BuildLinearizeLut(TransferCurve.Bt709);
+    private static readonly float[] s_linearizeGamma22Lut = BuildLinearizeLut(TransferCurve.Gamma22);
+    private static readonly float[] s_linearizeGamma28Lut = BuildLinearizeLut(TransferCurve.Gamma28);
 
     /// <summary>
-    /// sRGB/BT.709 → Display P3 的线性基色矩阵(行优先)。取 Display P3 → sRGB 标准线性基色矩阵
-    /// (即 <c>Plan.P3ToSrgbMatrix</c> 那三行)在双精度下求逆的结果,两者互逆:正向应用后再反向应用的
+    /// BT.709/sRGB → Display P3 的线性基色矩阵(行优先)。取 Display P3 → sRGB 标准线性基色矩阵
+    /// (即 <c>s_p3ToSrgbMatrix</c> 那三行)在双精度下求逆的结果,两者互逆:正向应用后再反向应用的
     /// 舍入误差在 1e-7 量级,远小于 1/255 的量化步长。
     /// </summary>
     private static readonly float[] s_srgbToP3Matrix =
@@ -144,6 +173,33 @@ public static class YuvImageConverter
         0.8224620f, 0.1775382f, 0.0000000f,
         0.0331942f, 0.9668059f, 0.0000000f,
         0.0170827f, 0.0723975f, 0.9105200f,
+    };
+
+    /// <summary>
+    /// Display P3 → BT.709/sRGB 的线性基色矩阵(行优先),由 ITU-R BT.709 与 Display P3 白点(D65)
+    /// 三基色的色度坐标在双精度下推导;行和为 1,中性灰因此保持不变。
+    /// </summary>
+    private static readonly float[] s_p3ToSrgbMatrix =
+    {
+        1.2249401f, -0.2249404f, 0.0000000f,
+        -0.0420569f, 1.0420569f, 0.0000000f,
+        -0.0196376f, -0.0786361f, 1.0982735f,
+    };
+
+    /// <summary>BT.2020 → BT.709/sRGB 的线性基色矩阵(同法推导,行和为 1)。</summary>
+    private static readonly float[] s_bt2020ToSrgbMatrix =
+    {
+        1.6604910f, -0.5876411f, -0.0728499f,
+        -0.1245505f, 1.1328999f, -0.0083494f,
+        -0.0181508f, -0.1005789f, 1.1187297f,
+    };
+
+    /// <summary>BT.2020 → Display P3 的线性基色矩阵(行和为 1)。</summary>
+    private static readonly float[] s_bt2020ToP3Matrix =
+    {
+        1.3435783f, -0.2821797f, -0.0613986f,
+        -0.0652975f, 1.0757879f, -0.0104905f,
+        0.0028218f, -0.0195985f, 1.0167767f,
     };
 
     private static long s_scratchCurrent;
@@ -178,6 +234,7 @@ public static class YuvImageConverter
             destinationStride,
             OutputFormat.RgbaF16,
             ImageColorSpace.LinearSrgb,
+            false,
             out unsupportedReason);
 
     /// <summary>
@@ -205,6 +262,7 @@ public static class YuvImageConverter
             destinationStride,
             OutputFormat.Bgra32,
             ImageColorSpace.Srgb,
+            false,
             out unsupportedReason);
 
     /// <summary>
@@ -235,14 +293,86 @@ public static class YuvImageConverter
         int destinationStride,
         ImageColorSpace colorSpace,
         out string? unsupportedReason)
-        => Convert(source, targetWidth, targetHeight, destination, destinationStride, OutputFormat.Rgba8, colorSpace, out unsupportedReason);
+        => Convert(source, targetWidth, targetHeight, destination, destinationStride, OutputFormat.Rgba8, colorSpace, false, out unsupportedReason);
+
+    /// <summary>
+    /// 携带 ICC 的源:只做 YCbCr 反矩阵,输出 ICC 空间内的编码值(半浮点 RGBA,A=1.0)。
+    /// </summary>
+    /// <remarks>
+    /// 不线性化、不做原色矩阵:编码值就是该 ICC profile 描述的 R'G'B',由色彩引擎(skcms)
+    /// 按 profile 一次转到目标空间。这样 10/12 位源不会先被压成 8 位,也不会把 Display P3/BT.2020
+    /// 等广色域误当 sRGB。目标空间的原色/传递函数因此完全不参与本函数。
+    /// </remarks>
+    /// <param name="source">解码后的瓦片与色彩描述(须带 <see cref="YuvImage.IccProfile"/>)。</param>
+    /// <param name="targetWidth">目标宽;等于画布宽时不做重采样。</param>
+    /// <param name="targetHeight">目标高。</param>
+    /// <param name="destination">目标缓冲,按行跨距写入。</param>
+    /// <param name="destinationStride">目标行跨距(字节),需 ≥ targetWidth×8。</param>
+    /// <param name="unsupportedReason">不受支持时的原因;成功为 null。</param>
+    /// <returns>转换成功返回 true。</returns>
+    public static bool TryConvertToIccEncodedRgbaF16(
+        YuvImage source,
+        int targetWidth,
+        int targetHeight,
+        byte[] destination,
+        int destinationStride,
+        out string? unsupportedReason)
+        => Convert(
+            source,
+            targetWidth,
+            targetHeight,
+            destination,
+            destinationStride,
+            OutputFormat.RgbaF16,
+            ImageColorSpace.Icc,
+            true,
+            out unsupportedReason);
+
+    /// <summary>
+    /// 携带 ICC 的源:只做 YCbCr 反矩阵,输出 ICC 空间内的 8 位编码值(B,G,R,255)。
+    /// </summary>
+    /// <remarks>
+    /// 与 <see cref="TryConvertToIccEncodedRgbaF16"/> 同一口径,供 8 位目标省掉一份浮点中间图;
+    /// 代价是先把码值量化到 8 位,10/12 位源请优先用半浮点出口。
+    /// </remarks>
+    /// <param name="source">解码后的瓦片与色彩描述(须带 <see cref="YuvImage.IccProfile"/>)。</param>
+    /// <param name="targetWidth">目标宽;等于画布宽时不做重采样。</param>
+    /// <param name="targetHeight">目标高。</param>
+    /// <param name="destination">目标缓冲,按行跨距写入。</param>
+    /// <param name="destinationStride">目标行跨距(字节),需 ≥ targetWidth×4。</param>
+    /// <param name="unsupportedReason">不受支持时的原因;成功为 null。</param>
+    /// <returns>转换成功返回 true。</returns>
+    public static bool TryConvertToIccEncodedBgra32(
+        YuvImage source,
+        int targetWidth,
+        int targetHeight,
+        byte[] destination,
+        int destinationStride,
+        out string? unsupportedReason)
+        => Convert(
+            source,
+            targetWidth,
+            targetHeight,
+            destination,
+            destinationStride,
+            OutputFormat.Bgra32,
+            ImageColorSpace.Icc,
+            true,
+            out unsupportedReason);
 
     /// <summary>检查色彩与格式是否可转换,不实际转换。</summary>
     /// <param name="source">输入描述。</param>
     /// <param name="unsupportedReason">不受支持时的原因;支持为 null。</param>
     /// <returns>支持返回 true。</returns>
     public static bool IsSupported(YuvImage source, out string? unsupportedReason)
-        => (unsupportedReason = DescribeUnsupported(source)) is null;
+        => (unsupportedReason = DescribeUnsupported(source, false)) is null;
+
+    /// <summary>检查携带 ICC 的源能否走编码值出口(<see cref="TryConvertToIccEncodedRgbaF16"/> 等),不实际转换。</summary>
+    /// <param name="source">输入描述。</param>
+    /// <param name="unsupportedReason">不受支持时的原因;支持为 null。</param>
+    /// <returns>支持返回 true。</returns>
+    public static bool IsSupportedIccEncoded(YuvImage source, out string? unsupportedReason)
+        => (unsupportedReason = DescribeUnsupported(source, true)) is null;
 
     // ---------------------------------------------------------------
     // 准备与调度
@@ -251,27 +381,33 @@ public static class YuvImageConverter
     /// <summary>输出格式。</summary>
     private enum OutputFormat
     {
-        /// <summary>线性光 RGBA 半浮点。</summary>
+        /// <summary>线性光 RGBA 半浮点;编码值出口时为 ICC 空间内的编码值。</summary>
         RgbaF16,
 
-        /// <summary>sRGB 8 位 BGRA。</summary>
+        /// <summary>sRGB 8 位 BGRA;编码值出口时为 ICC 空间内的 8 位编码值。</summary>
         Bgra32,
 
         /// <summary>8 位 RGBA,目标色彩空间由调用方指定。</summary>
         Rgba8,
     }
 
-    /// <summary>8 位 RGBA 输出需要做的线性基色转换。</summary>
-    private enum Rgba8Transform
+    /// <summary>传递函数族:决定编码值 ↔ 线性光的换算曲线。</summary>
+    private enum TransferCurve
     {
-        /// <summary>源与目标原色一致,直接量化 gamma 编码值。</summary>
-        None,
+        /// <summary>sRGB(BT.709 的近似同族,本站点用于 nclx 2/13)。</summary>
+        Srgb,
 
-        /// <summary>源为 Display P3 原色,目标为 sRGB。</summary>
-        P3ToSrgb,
+        /// <summary>BT.709/601/2020 OETF 的逆曲线(nclx 1/6/14/15)。</summary>
+        Bt709,
 
-        /// <summary>源为 BT.709/sRGB 原色,目标为 Display P3。</summary>
-        SrgbToP3,
+        /// <summary>线性光(传输特性 8),编码值即线性值。</summary>
+        Linear,
+
+        /// <summary>BT.470 System M 纯幂曲线 2.2(nclx 4)。</summary>
+        Gamma22,
+
+        /// <summary>BT.470 System BG 纯幂曲线 2.8(nclx 5)。</summary>
+        Gamma28,
     }
 
     private static bool Convert(
@@ -282,9 +418,10 @@ public static class YuvImageConverter
         int destinationStride,
         OutputFormat format,
         ImageColorSpace rgba8ColorSpace,
+        bool codeValues,
         out string? unsupportedReason)
     {
-        unsupportedReason = DescribeUnsupported(source);
+        unsupportedReason = DescribeUnsupported(source, codeValues);
         if (unsupportedReason is not null) return false;
 
         if (format == OutputFormat.Rgba8 && rgba8ColorSpace is not (ImageColorSpace.Srgb or ImageColorSpace.DisplayP3))
@@ -311,7 +448,7 @@ public static class YuvImageConverter
             return false;
         }
 
-        var plan = new Plan(source, targetWidth, targetHeight, destinationStride, format, rgba8ColorSpace);
+        var plan = new Plan(source, targetWidth, targetHeight, destinationStride, format, rgba8ColorSpace, codeValues);
         Interlocked.Exchange(ref s_scratchPeak, 0);
 
         var options = new ParallelOptions();
@@ -330,7 +467,13 @@ public static class YuvImageConverter
         return true;
     }
 
-    private static string? DescribeUnsupported(YuvImage source)
+    /// <summary>
+    /// 检查输入是否在支持面内。
+    /// </summary>
+    /// <param name="source">输入描述。</param>
+    /// <param name="codeValues">是否走 ICC 编码值出口:该出口不做线性化与原色转换,原色/传递函数代码不参与,故不校验。</param>
+    /// <returns>不受支持时的原因;支持为 null。</returns>
+    private static string? DescribeUnsupported(YuvImage source, bool codeValues)
     {
         if (source.CanvasWidth <= 0 || source.CanvasHeight <= 0) return "画布尺寸非法";
         if (source.Tiles.Count == 0) return "没有瓦片";
@@ -340,13 +483,19 @@ public static class YuvImageConverter
         {
             return "色度格式 " + (int)source.Chroma + " 不受支持";
         }
-        if (source.TransferCode is not (1 or 2 or 6 or 13))
+        // 编码值出口只做 YCbCr 反矩阵:原色与传递函数由 ICC profile 描述,这里不参与也不校验。
+        if (!codeValues)
         {
-            return "传输特性 " + source.TransferCode + "(PQ/HLG 等)不受支持,回落到 libheif";
-        }
-        if (source.PrimariesCode is not (1 or 2 or 12))
-        {
-            return "原色 " + source.PrimariesCode + " 不受支持,回落到 libheif";
+            if (CurveOf(source.TransferCode) is null)
+            {
+                return source.TransferCode is 16 or 18
+                    ? "传输特性 " + source.TransferCode + "(PQ/HLG)是 HDR,不做 tone map,回落到平台 HEIF 解码"
+                    : "传输特性 " + source.TransferCode + " 不受支持,回落到平台 HEIF 解码";
+            }
+            if (!IsSupportedPrimaries(source.PrimariesCode))
+            {
+                return "原色 " + source.PrimariesCode + " 不受支持(仅支持 BT.709/未指定/BT.2020/Display P3),回落到平台 HEIF 解码";
+            }
         }
         if (source.MatrixCode is not (1 or 2 or 5 or 6 or 9))
         {
@@ -372,6 +521,27 @@ public static class YuvImageConverter
         }
         return null;
     }
+
+    /// <summary>nclx 传输特性代码 → 本站点实现的曲线族;不支持的返回 null。</summary>
+    /// <param name="code">nclx 传输特性代码。</param>
+    /// <returns>曲线族;不支持时 null。</returns>
+    private static TransferCurve? CurveOf(int code) => code switch
+    {
+        // 2 = 未指定、13 = sRGB:按 sRGB 曲线解释(桌面惯例)。
+        2 or 13 => TransferCurve.Srgb,
+        // 1 = BT.709、6 = BT.601、14/15 = BT.2020 10/12 位:三者是同一 OETF 曲线族(α=1.099, β≈0.018)。
+        1 or 6 or 14 or 15 => TransferCurve.Bt709,
+        // 4 = BT.470 System M(gamma 2.2)、5 = BT.470 System BG(gamma 2.8)。
+        4 => TransferCurve.Gamma22,
+        5 => TransferCurve.Gamma28,
+        8 => TransferCurve.Linear,
+        _ => null,
+    };
+
+    /// <summary>nclx 原色代码是否在支持面内(1/2 = BT.709 即 sRGB 原色、9 = BT.2020、12 = Display P3)。</summary>
+    /// <param name="code">nclx 原色代码。</param>
+    /// <returns>支持返回 true。</returns>
+    private static bool IsSupportedPrimaries(int code) => code is 1 or 2 or 9 or 12;
 
     // ---------------------------------------------------------------
     // 逐像素直通(目标尺寸 == 画布)
@@ -931,7 +1101,7 @@ public static class YuvImageConverter
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void PackBgraPixel(Plan plan, float gr, float gg, float gb, byte* target)
     {
-        if (plan.P3ToSrgb)
+        if (plan.LinearToSrgbRequired)
         {
             FinishRgb(plan, gr, gg, gb, out var r, out var g, out var b);
             target[0] = QuantizeLinear(b);
@@ -970,25 +1140,25 @@ public static class YuvImageConverter
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static unsafe void PackRgbaPixel(Plan plan, float gr, float gg, float gb, byte* target)
     {
-        switch (plan.Rgba8Transform)
+        if (plan.Rgba8ToP3)
         {
-            case Rgba8Transform.P3ToSrgb:
-                FinishRgb(plan, gr, gg, gb, out var sr, out var sg, out var sb);
-                target[0] = QuantizeLinear(sr);
-                target[1] = QuantizeLinear(sg);
-                target[2] = QuantizeLinear(sb);
-                break;
-            case Rgba8Transform.SrgbToP3:
-                FinishRgbToP3(gr, gg, gb, out var pr, out var pg, out var pb);
-                target[0] = QuantizeLinear(pr);
-                target[1] = QuantizeLinear(pg);
-                target[2] = QuantizeLinear(pb);
-                break;
-            default:
-                target[0] = QuantizeGamma(gr);
-                target[1] = QuantizeGamma(gg);
-                target[2] = QuantizeGamma(gb);
-                break;
+            FinishRgbToP3(plan, gr, gg, gb, out var pr, out var pg, out var pb);
+            target[0] = QuantizeLinear(pr);
+            target[1] = QuantizeLinear(pg);
+            target[2] = QuantizeLinear(pb);
+        }
+        else if (plan.LinearToSrgbRequired)
+        {
+            FinishRgb(plan, gr, gg, gb, out var sr, out var sg, out var sb);
+            target[0] = QuantizeLinear(sr);
+            target[1] = QuantizeLinear(sg);
+            target[2] = QuantizeLinear(sb);
+        }
+        else
+        {
+            target[0] = QuantizeGamma(gr);
+            target[1] = QuantizeGamma(gg);
+            target[2] = QuantizeGamma(gb);
         }
         target[3] = 255;
     }
@@ -1014,49 +1184,54 @@ public static class YuvImageConverter
         return (byte)((Encode(linear) * 255f) + 0.5f);
     }
 
-    /// <summary>gamma 编码三分量 → 线性光 sRGB(必要时做 P3→sRGB 基色转换)。</summary>
+    /// <summary>
+    /// 编码值三分量 → 线性光 sRGB(按计划的原色矩阵与传递曲线;编码值出口原样返回)。
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private static void FinishRgb(Plan plan, float gr, float gg, float gb, out float r, out float g, out float b)
     {
-        var lr = Linearize(gr);
-        var lg = Linearize(gg);
-        var lb = Linearize(gb);
-        if (!plan.P3ToSrgb)
+        if (plan.CodeValues)
+        {
+            // ICC 空间内的编码值:不换曲线、不换原色,只做 [0,1] 夹紧(越界码值本身无定义)。
+            r = gr < 0f ? 0f : gr > 1f ? 1f : gr;
+            g = gg < 0f ? 0f : gg > 1f ? 1f : gg;
+            b = gb < 0f ? 0f : gb > 1f ? 1f : gb;
+            return;
+        }
+        var lr = plan.Linearize(gr);
+        var lg = plan.Linearize(gg);
+        var lb = plan.Linearize(gb);
+        var matrix = plan.ToSrgb;
+        if (matrix is null)
         {
             r = lr;
             g = lg;
             b = lb;
             return;
         }
-        r = (plan.P3ToSrgbMatrix[0] * lr) + (plan.P3ToSrgbMatrix[1] * lg) + (plan.P3ToSrgbMatrix[2] * lb);
-        g = (plan.P3ToSrgbMatrix[3] * lr) + (plan.P3ToSrgbMatrix[4] * lg) + (plan.P3ToSrgbMatrix[5] * lb);
-        b = (plan.P3ToSrgbMatrix[6] * lr) + (plan.P3ToSrgbMatrix[7] * lg) + (plan.P3ToSrgbMatrix[8] * lb);
+        r = (matrix[0] * lr) + (matrix[1] * lg) + (matrix[2] * lb);
+        g = (matrix[3] * lr) + (matrix[4] * lg) + (matrix[5] * lb);
+        b = (matrix[6] * lr) + (matrix[7] * lg) + (matrix[8] * lb);
     }
 
-    /// <summary>gamma 编码的 BT.709/sRGB 三分量 → 线性光 sRGB → 线性光 Display P3。</summary>
+    /// <summary>编码值三分量 → 线性光 sRGB → 线性光 Display P3(按源原色矩阵)。</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static void FinishRgbToP3(float gr, float gg, float gb, out float r, out float g, out float b)
+    private static void FinishRgbToP3(Plan plan, float gr, float gg, float gb, out float r, out float g, out float b)
     {
-        var lr = Linearize(gr);
-        var lg = Linearize(gg);
-        var lb = Linearize(gb);
-        r = (s_srgbToP3Matrix[0] * lr) + (s_srgbToP3Matrix[1] * lg) + (s_srgbToP3Matrix[2] * lb);
-        g = (s_srgbToP3Matrix[3] * lr) + (s_srgbToP3Matrix[4] * lg) + (s_srgbToP3Matrix[5] * lb);
-        b = (s_srgbToP3Matrix[6] * lr) + (s_srgbToP3Matrix[7] * lg) + (s_srgbToP3Matrix[8] * lb);
-    }
-
-    /// <summary>sRGB 电光转换:编码值 → 线性光(4096 项表 + 线性插值)。</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    private static float Linearize(float value)
-    {
-        if (!(value > 0f)) return 0f;
-        if (value >= 1f) return 1f;
-        // 表项 i 对应 i / LutSize(见 BuildLut),位置按同一比例换算。
-        var position = value * LutSize;
-        var index = (int)position;
-        if (index >= LutSize) index = LutSize - 1;
-        var low = s_linearLut[index];
-        return low + ((s_linearLut[index + 1] - low) * (position - index));
+        var lr = plan.Linearize(gr);
+        var lg = plan.Linearize(gg);
+        var lb = plan.Linearize(gb);
+        var matrix = plan.ToP3;
+        if (matrix is null)
+        {
+            r = lr;
+            g = lg;
+            b = lb;
+            return;
+        }
+        r = (matrix[0] * lr) + (matrix[1] * lg) + (matrix[2] * lb);
+        g = (matrix[3] * lr) + (matrix[4] * lg) + (matrix[5] * lb);
+        b = (matrix[6] * lr) + (matrix[7] * lg) + (matrix[8] * lb);
     }
 
     /// <summary>sRGB 光电转换:线性光 → 编码值(4096 项表 + 线性插值)。</summary>
@@ -1072,15 +1247,41 @@ public static class YuvImageConverter
         return low + ((s_encodeLut[index + 1] - low) * (position - index));
     }
 
-    private static float[] BuildLut(bool encode)
+    /// <summary>构建 sRGB 光电转换表:线性光 → 编码值,表项按 value = i / LutSize 采样。</summary>
+    /// <returns>4096 + 1 项编码表。</returns>
+    private static float[] BuildSrgbEncodeLut()
     {
         var table = new float[LutSize + 1];
         for (var i = 0; i <= LutSize; i++)
         {
             var value = i / (float)LutSize;
-            table[i] = encode
-                ? (value <= 0.0031308f ? value * 12.92f : (1.055f * MathF.Pow(value, 1f / 2.4f)) - 0.055f)
-                : (value <= 0.04045f ? value / 12.92f : MathF.Pow((value + 0.055f) / 1.055f, 2.4f));
+            table[i] = value <= 0.0031308f ? value * 12.92f : (1.055f * MathF.Pow(value, 1f / 2.4f)) - 0.055f;
+        }
+        return table;
+    }
+
+    /// <summary>
+    /// 构建编码值 → 线性光的表:sRGB EOTF、BT.709 OETF 的逆曲线,或纯幂曲线(伽马 2.2/2.8);
+    /// 表项按 value = i / LutSize 采样。
+    /// </summary>
+    /// <param name="curve">曲线族(线性由 <see cref="Plan.LinearLut"/> 为 null 表达,不走本表)。</param>
+    /// <returns>4096 + 1 项反编码表。</returns>
+    private static float[] BuildLinearizeLut(TransferCurve curve)
+    {
+        var table = new float[LutSize + 1];
+        for (var i = 0; i <= LutSize; i++)
+        {
+            var value = i / (float)LutSize;
+            table[i] = curve switch
+            {
+                TransferCurve.Bt709 =>
+                    // BT.709 OETF 的逆:V < 0.081 时 L = V / 4.5,否则 L = ((V + 0.099) / 1.099)^(1/0.45)。
+                    value <= 0.081f ? value / 4.5f : MathF.Pow((value + 0.099f) / 1.099f, 1f / 0.45f),
+                // nclx 4 = BT.470 System M(gamma 2.2)、5 = BT.470 System BG(gamma 2.8):纯幂曲线,没有膝部。
+                TransferCurve.Gamma22 => MathF.Pow(value, 2.2f),
+                TransferCurve.Gamma28 => MathF.Pow(value, 2.8f),
+                _ => value <= 0.04045f ? value / 12.92f : MathF.Pow((value + 0.055f) / 1.055f, 2.4f),
+            };
         }
         return table;
     }
@@ -1120,7 +1321,8 @@ public static class YuvImageConverter
             int targetHeight,
             int destinationStride,
             OutputFormat format,
-            ImageColorSpace rgba8ColorSpace)
+            ImageColorSpace rgba8ColorSpace,
+            bool codeValues)
         {
             Tiles = new YuvTile[source.Tiles.Count];
             for (var i = 0; i < Tiles.Length; i++) Tiles[i] = source.Tiles[i];
@@ -1133,14 +1335,28 @@ public static class YuvImageConverter
             Chroma = source.Chroma;
             WideSamples = source.BitDepth > 8;
             IsPassthrough = targetWidth == CanvasWidth && targetHeight == CanvasHeight;
-            P3ToSrgb = source.PrimariesCode == 12;
-            // 8 位 RGBA 的原色转换:源 P3 → 目标 sRGB 复用现有 P3→sRGB 矩阵;
-            // 源 sRGB/BT.709 → 目标 P3 用其逆矩阵;原色一致时直接量化。
-            Rgba8Transform = format != OutputFormat.Rgba8
-                ? Rgba8Transform.None
-                : P3ToSrgb
-                    ? (rgba8ColorSpace == ImageColorSpace.DisplayP3 ? Rgba8Transform.None : Rgba8Transform.P3ToSrgb)
-                    : (rgba8ColorSpace == ImageColorSpace.DisplayP3 ? Rgba8Transform.SrgbToP3 : Rgba8Transform.None);
+            CodeValues = codeValues;
+
+            // 编码值出口不做任何色彩换算:原色矩阵与传递曲线都不参与。
+            var curve = codeValues ? TransferCurve.Linear : CurveOf(source.TransferCode) ?? TransferCurve.Srgb;
+            Curve = curve;
+            LinearLut = curve switch
+            {
+                TransferCurve.Srgb => s_linearizeSrgbLut,
+                TransferCurve.Bt709 => s_linearizeBt709Lut,
+                TransferCurve.Gamma22 => s_linearizeGamma22Lut,
+                TransferCurve.Gamma28 => s_linearizeGamma28Lut,
+                _ => null,
+            };
+
+            var primaries = codeValues ? 1 : source.PrimariesCode;
+            var (toSrgb, toP3) = Matrices(primaries);
+            ToSrgb = toSrgb;
+            ToP3 = toP3;
+
+            // 8 位出口:能直接量化码值时走原快路径,否则线性化 → 原色矩阵 → sRGB 编码。
+            LinearToSrgbRequired = !codeValues && (curve != TransferCurve.Srgb || ToSrgb is not null);
+            Rgba8ToP3 = !codeValues && format == OutputFormat.Rgba8 && rgba8ColorSpace == ImageColorSpace.DisplayP3;
 
             TileWidth = Tiles[0].Width;
             TileHeight = Tiles[0].Height;
@@ -1217,8 +1433,20 @@ public static class YuvImageConverter
 
         public OutputFormat Format { get; }
 
-        /// <summary>8 位 RGBA 输出的原色转换方向(其余格式恒为 None)。</summary>
-        public Rgba8Transform Rgba8Transform { get; }
+        /// <summary>是否走 ICC 编码值出口(不线性化、不做原色转换)。</summary>
+        public bool CodeValues { get; }
+
+        /// <summary>8 位 RGBA 目标是否为 Display P3(否则按 sRGB 输出)。</summary>
+        public bool Rgba8ToP3 { get; }
+
+        /// <summary>8 位出口是否必须经"线性化 → 原色矩阵 → sRGB 编码"才能写出正确码值。</summary>
+        public bool LinearToSrgbRequired { get; }
+
+        /// <summary>源的传递曲线族。</summary>
+        public TransferCurve Curve { get; }
+
+        /// <summary>编码值 → 线性光的查表;线性传递特性时为 null(码值即线性值)。</summary>
+        public float[]? LinearLut { get; }
 
         public bool IsPassthrough { get; }
 
@@ -1237,7 +1465,11 @@ public static class YuvImageConverter
 
         public int TileHeight { get; }
 
-        public bool P3ToSrgb { get; }
+        /// <summary>线性源原色 → 线性 sRGB 的矩阵;null 表示源原色已是 sRGB。</summary>
+        public float[]? ToSrgb { get; }
+
+        /// <summary>线性源原色 → 线性 Display P3 的矩阵;null 表示源原色已是 Display P3。</summary>
+        public float[]? ToP3 { get; }
 
         public float ChromaMid { get; }
 
@@ -1275,12 +1507,33 @@ public static class YuvImageConverter
 
         public Vector128<float> GreenFromCr { get; }
 
-        /// <summary>Display P3 → sRGB 的线性基色变换矩阵(行优先)。</summary>
-        public float[] P3ToSrgbMatrix { get; } = new[]
+        /// <summary>编码值 → 线性光(按 <see cref="Curve"/>;线性传递特性原样返回,超出 [0,1] 夹紧)。</summary>
+        /// <param name="value">源编码值。</param>
+        /// <returns>线性光值。</returns>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public float Linearize(float value)
         {
-            1.2249401f, -0.2249404f, 0.0000000f,
-            -0.0420569f, 1.0420569f, 0.0000000f,
-            -0.0196376f, -0.0786361f, 1.0982735f,
+            if (!(value > 0f)) return 0f;
+            if (value >= 1f) return 1f;
+            var table = LinearLut;
+            if (table is null) return value;
+            // 表项 i 对应 i / LutSize(见 BuildLinearizeLut),位置按同一比例换算。
+            var position = value * LutSize;
+            var index = (int)position;
+            if (index >= LutSize) index = LutSize - 1;
+            var low = table[index];
+            return low + ((table[index + 1] - low) * (position - index));
+        }
+
+        /// <summary>按 nclx 原色代码取"源 → 线性 sRGB"与"源 → 线性 Display P3"的矩阵(null 表示已是该原色)。</summary>
+        /// <param name="primariesCode">nclx 原色代码(1/2 = BT.709、9 = BT.2020、12 = Display P3)。</param>
+        /// <returns>两个行优先的 3×3 矩阵。</returns>
+        private static (float[]? ToSrgb, float[]? ToP3) Matrices(int primariesCode) => primariesCode switch
+        {
+            // BT.709 与 sRGB 原色相同;2 = 未指定按 BT.709 处理。
+            9 => (s_bt2020ToSrgbMatrix, s_bt2020ToP3Matrix),
+            12 => (s_p3ToSrgbMatrix, null),
+            _ => (null, s_srgbToP3Matrix),
         };
 
         public int TileRowBase(int y) => Math.Min(Rows - 1, y / TileHeight) * Columns;

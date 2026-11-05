@@ -65,9 +65,7 @@ public partial class App : Application
                 NativeStartupLog.Write("xaml resource failed: " + e.Message);
             DebugSettings.BindingFailed += (_, e) =>
                 NativeStartupLog.Write("xaml binding failed: " + e.Message);
-            WindowsNativeApplication.InitializeFacades(
-                smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
-                || stress || perfProbeFolder != null || thumbProbePaths.Length > 0 || activationCheck);
+            WindowsNativeApplication.InitializeFacades(WindowsNativeApplication.IsolatedMode);
 
             // HEIF 缩略图项对比探针:不需要窗口与视图模型,门面就绪后直接跑完退出。
             if (thumbProbePaths.Length > 0)
@@ -103,6 +101,12 @@ public partial class App : Application
             // 重复激活(再次打开当前目录/当前图片):前置窗口,并由协调器按 OPEN-08 原地刷新并保留视口;无路径的二次启动只走前置动作。
             _main.OpenCoordinator.RepeatActivation += OnRepeatActivation;
             WindowsSingleInstance.AttachForeground(BringMainWindowToFront);
+
+            if (LaunchArgs.Contains("--pv-native-color"))
+            {
+                await _window.RunColorChecksAsync();
+                return;
+            }
 
             if (smoke)
             {

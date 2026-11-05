@@ -191,7 +191,7 @@ S1–S26 已落地。验证：Mac `--pv-native-smoke` 基线与 layout/input/fil
 - macOS：常规 UI 已通过；失败注入（打开/评分/Full/损坏设置/相似/分析）与 SCOPE-02/SCOPE-04 已由 `--pv-native-faults` 机测通过，SETTINGS-06 由 settings 套件断言、OPEN-06 由真实 Launch Services 打开机测。仍缺：外设断开取消录制。
 - iOS·iPadOS：常规 UI 已通过；失败注入与 SCOPE-02/SCOPE-04 已由 `--pv-native-faults-check` 机测通过，SETTINGS-06 由 input 套件断言。仍缺：真实外接键鼠/触控板热插拔与录制；P3/Adobe RGB 与系统预览对拍；外接显示；外设断开后的控件恢复。
 - Android：基础操作、色彩与全部可机测专项已通过（2026-10-23）：八方向、RAW 全分辨率、失败态（Full/打开/评分/DINO/相似/损坏设置）、外部打开与外部存储写回、旋转、fontScale 1.0/1.3 × density 420/525、滚轮分流、按键重复、控制栏焦点。仍缺：真实外接键鼠/触控板手感与断连、SAF 持久授权真机重启、第三方文件管理器打开、ROM 字体/厂商省电/多系统版本、手感/高刷新率；SCOPE-06 为策略项；SCOPE-03 与 STATE-04 已于 2026-11-01 由 `pv-check faults` 机测通过。
-- Windows：常规 UI、175%/200% DPI 与真实跨屏已通过。W-M7 只剩色彩（ICC/ACM/广色域标签），RAW 主图已由性能专项落地（WIC 系统 RAW 引擎全分辨率）。按作者 2026-10-22 裁定不再挂账：真实相机八方向素材（自生成素材 + 代码核对即足）、增强 + 分析长时间稳定性、桌面端外设热插拔与触控板分流、Windows 程序化失败注入、W-M6 专项 harness 与几何导出（旧壳对拍已废，几何以 Web 参考壳 + Mac 比对为准）。
+- Windows：常规 UI、175%/200% DPI 与真实跨屏已通过。W-M7 色彩已实现并通过程序化验收（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY，覆盖 JPEG 四源/HEIF/RAW/输出转换，见 [Windows P2-W §19](native-rebuild-windows-p2.md)）；真屏 ACM/HDR 实际切换、Win10、不同色域跨屏与校色仪仍为硬件门。RAW 主图已由性能专项落地（WIC 系统 RAW 引擎全分辨率）。按作者 2026-10-22 裁定不再挂账：真实相机八方向素材（自生成素材 + 代码核对即足）、增强 + 分析长时间稳定性、桌面端外设热插拔与触控板分流、Windows 程序化失败注入、W-M6 专项 harness 与几何导出（旧壳对拍已废，几何以 Web 参考壳 + Mac 比对为准）。
 
 遗留（本次未处理，需另立条目）：
 

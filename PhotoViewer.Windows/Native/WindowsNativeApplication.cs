@@ -95,7 +95,8 @@ internal static class WindowsNativeApplication
         var thumbProbe = WindowsHeifThumbProbe.ParsePaths(args).Length > 0;
         ActivationCheckRequested = args.Contains("--pv-native-activation-check");
         IsolatedMode = smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
-            || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested;
+            || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested
+            || args.Contains("--pv-native-color");
 
         var logName = StressRequested ? "native-startup-stress.log"
             : PerfProbeFolder != null ? "native-startup-probe.log"

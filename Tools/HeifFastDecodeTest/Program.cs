@@ -15,7 +15,7 @@ internal static partial class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: HeifFastDecodeTest <selftest|smoke|parse|extract|validate|bench> [args]");
+            Console.Error.WriteLine("usage: HeifFastDecodeTest <selftest|smoke|probe|parse|extract|validate|e2e|bench> [args]");
             return 2;
         }
 
@@ -37,6 +37,8 @@ internal static partial class Program
                     return ExtractCommand(rest);
                 case "validate":
                     return Validation.Run(rest);
+                case "e2e":
+                    return E2E.Run(rest);
                 case "bench":
                     return Bench.Run(rest);
                 default:
@@ -86,8 +88,7 @@ internal static partial class Program
                 + $"grid={container.Rows}x{container.Columns} tile={container.TileWidth}x{container.TileHeight} "
                 + $"tiles={container.Tiles.Count} annexb={anneBytes / 1024}KB "
                 + $"rot={container.ExifOrientation} "
-                + $"nclx=({container.Color.Primaries},{container.Color.Transfer},{container.Color.Matrix},"
-                + $"{(container.Color.FullRange ? "full" : "limited")}) "
+                + $"color=[{container.Color}] "
                 + $"bits={container.PixelInfo.LumaBits}/{container.PixelInfo.ChromaBits} "
                 + $"chroma={container.ChromaFormat} thmbs={container.Thumbnails.Count} "
                 + $"aux={container.HasAuxiliaryImages} "
@@ -159,6 +160,11 @@ internal static partial class Program
                 transfer = container.Color.Transfer,
                 matrix = container.Color.Matrix,
                 fullRange = container.Color.FullRange,
+                hasNclx = container.Color.HasNclx,
+                iccBytes = container.Color.IccProfile?.Length ?? 0,
+                iccSha256 = container.Color.IccProfile is { Length: > 0 } profile
+                    ? Convert.ToHexString(SHA256.HashData(profile))[..16].ToLowerInvariant()
+                    : null,
                 lumaBits = container.PixelInfo.LumaBits,
                 chromaBits = container.PixelInfo.ChromaBits,
                 chromaFormat = container.ChromaFormat,

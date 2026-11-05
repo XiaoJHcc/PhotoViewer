@@ -6,6 +6,8 @@
 
 **手验与裁定（2026-10-22）**：macOS、iOS·iPadOS、Windows 三端常规 UI 呈现与操作已由作者手验通过（点击、真实照片加载、菜单/下拉、开关、设置页、工具页、分析栏/相似面板、缩放平移、排序筛选、评分写回、空态、跨启动持久化），Windows 另含 175%/200% 高 DPI 与真实跨屏。失败注入已覆盖打开/评分/Full/损坏设置/相似/分析失败（Mac、iPad）；Windows 的失败注入相关格子保持代码核对，不再另建注入套件。以下明确不再作为待办：真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性（不做压力验收）、桌面端外设热插拔与触控板分流（无验收条件）。仍未覆盖：广色域对拍与性能压力——相关格子保留各自的边界说明。逐项清单见 [原生收尾计划](../Plans/native-rebuild-phase-6-unify.md) 与下方各端证据文档。
 
+**Windows 色彩（W-M7）**：功能实现与程序化验收已完成——`--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**（本机显示器为 SDR）、smoke **35/35**（Debug 与 Release）、settings **14/14**、tools **9/9**，Debug/Release 构建 0 错 0 警；共享侧 `ColorTestTool` 68 PASS、`ColorEngineLutCheck` 逐字节一致、`HeifFastDecodeTest` 三套与 `CoreContractCheck` 905 PASS 全绿（详见 [Windows P2-W §19](../Plans/native-rebuild-windows-p2.md)）。作者浏览本轮色域检测图后目测未见异常，并同意提交；该结论仅覆盖本次目测，不扩大为完整硬件矩阵通过。程序化证据没覆盖的仍是硬件：真屏 ACM/HDR 实际切换、Win10 实机、不同色域显示器跨屏与校色仪——相关格子保留硬件未验边界。Android 保持默认 sRGB（`adb devices -l` 无设备、`emulator -list-avds` 为空），P3 真机尝试被硬件阻塞，既不算已恢复也不算永久延期。
+
 **2026-10-23 Android 程序化验收**：基础操作与色彩已由作者手验通过（色彩按 sRGB 回退的平台限制）。八方向、RAW 全分辨率、Full/打开/评分/DINO/相似/设置失败态、外部打开、外部存储写回、旋转与 fontScale/density 矩阵、滚轮分流、按键重复、控制栏焦点已由 `pv-check` 机测通过；SCOPE-03 与数据库不可用注入已于 2026-11-01 由 `pv-check faults` 机测通过；剩余仅 SCOPE-06 策略项、真机 ROM/手感与组合模式稳定性。
 
 **2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
@@ -52,7 +54,7 @@
 | SHELL-02 | 代码核对；既有 32 点悬停标题栏、文件栏隐藏时全宽毛玻璃与新增窄宽度常驻栏均已实现并静态复核，当前 Windows 主机无法编译/实跑 AppKit，layout/input 套件与作者手验待做 | 不适用；无标题栏语义 | 程序化通过；既有悬停显隐、文件栏隐藏时全宽亚克力、筛选挖空、caption 命中（WM_NCHITTEST）、按钮字形随窗口态、全屏无拖动区、主图上方交换链亚克力回读（变暗/保色/隐藏复原、噪点纹理就位、与 XAML 段接缝同值）与新增窄宽度常驻栏（700 DIP 下 32 点布局让位、全宽亚克力、热区外与失焦保持，1200 DIP 恢复悬停覆盖层）均已在本机冒烟通过；作者目视无大问题，行布局完整复验待做 | 不适用；窗口装饰属平台 |
 | SHELL-03 | 作者手验通过 | 不适用；无应用内全屏 | 作者手验通过；四态往返 | 不适用；系统窗口 |
 | SHELL-04 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；ShowFilm/ShowControls 写平台偏好并跨启动恢复 | 作者手验通过；基础操作；两键写 SharedPreferences |
-| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI 与真实跨屏已验 | 程序化通过；竖/横屏旋转与尺寸变化；外接显示未验 |
+| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI 与真实跨屏已验；色彩程序化通过（`--pv-native-color` 16/0/1 B），真屏 ACM/HDR 切换与不同色域跨屏未验 | 程序化通过；竖/横屏旋转与尺寸变化；外接显示未验 |
 | SHELL-06 | 作者手验通过；窗口按钮/触控菜单已验 | 作者手验通过；窗口按钮/触控菜单已验 | 程序化通过；自绘全屏/最小化/最大化/关闭按钮的提示与读屏名；作者复验待做 | 作者手验通过；基础操作 |
 
 ## filter
@@ -74,7 +76,7 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1 | 作者手验通过；P3 与 sRGB 素材目视有差异，按平台限制通过；@android 行高已登记 |
+| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1；色彩程序化通过（JPEG 四源/HEIF/RAW/GPU 输出转换），真屏 ACM/HDR 与校色仪未验 | 作者手验通过；P3 与 sRGB 素材目视有差异，按平台限制通过；@android 行高已登记 |
 | IMAGE-02 | 作者手验通过 | 作者手验通过 | 作者手验通过；F 键对焦优先 | 作者手验通过；基础操作；接共享视口对焦点 |
 | IMAGE-03 | 程序化通过；faults: 代理保持 + FullError 提示 | 程序化通过；faults: 代理保持 + FullError 提示 | 代码核对；有代理只报 FullError | 程序化通过；Full 失败保留代理并提示 |
 | IMAGE-04 | 作者手验通过 | 作者手验通过；@ios 已登记 | 作者手验通过；预设未命中不回退端点 | 作者手验通过；基础操作；@android 已登记 |

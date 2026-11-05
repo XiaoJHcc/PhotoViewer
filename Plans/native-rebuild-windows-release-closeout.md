@@ -16,7 +16,7 @@
 
 - **发布风险**：未签名及 SmartScreen 提示风险；无运行时干净机与 Win10 尚未验。最低声明 Win10 1809、实测 Win11 是不同口径，并不矛盾。当前仅提供 x64 原生发布产物、无 ARM64 原生产物，不据此断言 Windows ARM 不能通过 x64 仿真运行。
 - **硬件/素材验收**：175%/200% DPI 已由作者 2026-10-21 手验通过；仍待真实跨屏、相机八方向素材、增强 + 分析长时间稳定性。设置真实拖拽/录制/清库/预设增删、工具真实多格式/文件夹与 CSV 选择器已由作者 2026-10-18 手验，不再挂起。
-- **独立延期**：Windows 缺 RAW **主图**解码，但内嵌缩略图、列表与星级写回可用；W-M7 色彩/RAW 原本独立立项。性能门、压测入口与 p50/p95 基线明确以后再做，**不计发布前置**。
+- **独立延期**：RAW **主图**解码已落地（WIC 系统 RAW 引擎全分辨率），内嵌缩略图、列表与星级写回可用；W-M7 色彩已实现并通过程序化验收（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY，见 [Windows P2-W §19](native-rebuild-windows-p2.md)；真屏 ACM/HDR 实际切换、Win10、不同色域跨屏与校色仪仍为硬件门）。性能门、压测入口与 p50/p95 基线明确以后再做，**不计发布前置**。
 - **验收/小缺口**：W-M6 专项与 Windows 几何导出按作者 2026-10-22 裁定不补（旧壳几何对拍随 6D 失效，几何以 Web 参考壳 + Mac 比对为准）。`Design/status.md` Windows 列为 **7 格代码核对 + 3 格不适用**（终态，不是缺功能），`SCOPE-04` 已按 WIC RAW 实测改为程序化通过，`INPUT-01` 随 2026-10-21 作者手验通过。`FILTER-08` / `TOOLBAR-11` / `ANALYSIS-11` / `SETTINGS-13` 的读屏类要求已于 2026-10-21 删除，不再挂账。Training `DatasetBuilder` Windows 实跑复核仍待补。
 
 ---
@@ -91,7 +91,7 @@ dotnet publish PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Release -r win-
 ### 4.2 功能缺口（已登记）
 
 - ~~**Windows 完全没有 RAW 解码**（README 状态表写「暂不支持」）~~ → 已由 [Windows 性能与内存专项](windows-performance-memory-plan-1.md) W4 落地：`WindowsRawDecoder` 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 7008×4672、代理 5120 长边），README 状态表为「✅ 系统 RAW 引擎」。
-- **W-M7 只剩色彩**（ICC/广色域标签、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签）未做，是否立项待作者；`SHELL-05` 的 DPI 与真实跨屏已由作者 2026-10-21 手验通过。
+- **W-M7 只剩色彩**（ICC/广色域标签、ACM 探测、Win10 显示器 ICC 烘焙、跨屏重标签）未做，是否立项待作者（历史记录；现行状态见 [Windows P2-W §19](native-rebuild-windows-p2.md)）；`SHELL-05` 的 DPI 与真实跨屏已由作者 2026-10-21 手验通过。
 - ~~**`INPUT-01`**（文本框获焦暂停全局快捷键）挂待核验~~ → 随 2026-10-21 作者手验通过（主窗口无文本输入控件，设置窗口独立吞键见 §13.1 #20）。
 - ~~`SCOPE-04`（RAW 预览限制）、`SCOPE-05` 待核验~~ → `SCOPE-04` 按 WIC RAW 实测改为 `程序化通过`，`SCOPE-05` 作者手验通过。
 
@@ -115,4 +115,4 @@ dotnet publish PhotoViewer.Windows/PhotoViewer.Windows.csproj -c Release -r win-
 1. ✅ 出包形态已定为单文件 EXE（§1–§3），脚本、Task 与 DEV.md 已同步，`PhotoViewer-0.8.0-win-x64.exe` 归档并实测启动；版本号已升到 0.8.5，出包需重出。
 2. ✅ §2 根因与 §4.4 文档回写已完成（`Plans/native-rebuild-phase-6.md` §4 6E-2、§7 #10）。
 3. ✅ `INPUT-01` 判定为不适用，随作者 2026-10-21 常规 UI 手验通过。
-4. 剩余：W-M7 只剩色彩（是否立项待作者）；W-M6 专项与几何导出按 2026-10-22 裁定不补；发布签名、干净机/Win10 门与顺序连翻 p95 长尾见 §1 与 [Windows P2 §13.2](native-rebuild-windows-p2.md)。
+4. 剩余：W-M7 只剩色彩（是否立项待作者）（历史记录；现行状态见 [Windows P2-W §19](native-rebuild-windows-p2.md)）；W-M6 专项与几何导出按 2026-10-22 裁定不补；发布签名、干净机/Win10 门与顺序连翻 p95 长尾见 §1 与 [Windows P2 §13.2](native-rebuild-windows-p2.md)。

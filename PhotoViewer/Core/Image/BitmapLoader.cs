@@ -1076,6 +1076,12 @@ public static class BitmapLoader
         {
             var w = source.Width;
             var h = source.Height;
+            // 元数据先取出：转换成功后源图像随即释放
+            var colorSpace = source.ColorSpace;
+            var sourceWidth = source.SourceWidth;
+            var sourceHeight = source.SourceHeight;
+            var orientation = source.Orientation;
+            var iccProfile = source.IccProfile.IsEmpty ? null : source.IccProfile.ToArray();
             // 缓冲池租用:归还时回池而非丢 GC
             var rgb = DecodedImage.RentPixels(w * h * 3);
             for (int y = 0; y < h; y++)
@@ -1094,7 +1100,9 @@ public static class BitmapLoader
             }
 
             source.Dispose();
-            return DecodedImage.CreatePooled(rgb, w, h, w * 3, PixelEncoding.Rgb24);
+            // 只改通道布局,色彩语义原样带走(色彩标签/ICC/源尺寸/方向)
+            return DecodedImage.CreatePooled(rgb, w, h, w * 3, PixelEncoding.Rgb24, colorSpace,
+                sourceWidth, sourceHeight, orientation, iccProfile);
         }
         catch (Exception ex)
         {

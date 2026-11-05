@@ -64,7 +64,7 @@ public sealed class HeifColorInfo
     /// <summary>nclx 原色代码(ISO/IEC 23001-8);1=BT.709,2=未指定,12=Display P3,9=BT.2020。</summary>
     public ushort Primaries { get; init; }
 
-    /// <summary>nclx 传输特性代码;1/6/13/2 为 sRGB 曲线族,16=PQ,18=HLG。</summary>
+    /// <summary>nclx 传输特性代码;1/6/14/15 为 BT.709 曲线族,2/13 为 sRGB,8 为线性,16=PQ,18=HLG。</summary>
     public ushort Transfer { get; init; }
 
     /// <summary>nclx 矩阵系数代码;1=BT.709,5/6=BT.601,9=BT.2020 非恒定亮度。</summary>
@@ -76,8 +76,49 @@ public sealed class HeifColorInfo
     /// <summary>ICC 配置文件字节(<c>prof</c>/<c>rICC</c>);无则 null。</summary>
     public byte[]? IccProfile { get; init; }
 
+    /// <summary>是否携带可用的 ICC 配置文件(HEIF 规定 ICC 优先于 <c>nclx</c> 三元组)。</summary>
+    public bool HasIccProfile => IccProfile is { Length: > 0 };
+
     /// <summary>无任何色彩信息时的空描述。</summary>
     public static HeifColorInfo Empty { get; } = new();
+
+    /// <summary>
+    /// 合并两处色彩描述:<paramref name="primary"/> 的字段优先,缺失项由 <paramref name="fallback"/> 补齐。
+    /// </summary>
+    /// <remarks>
+    /// <c>colr</c> 是普通属性盒,一个项可以同时带 <c>nclx</c> 与 <c>rICC</c>/<c>prof</c> 两个盒子
+    /// (libheif 的"写两个色彩描述"就是这种布局),只取第一个会丢掉另一半。网格项的 <c>colr</c>
+    /// 与瓦片/缩略图项自己的 <c>colr</c> 同样需要合并,而不是二选一。
+    /// </remarks>
+    /// <param name="primary">优先来源;null 表示没有。</param>
+    /// <param name="fallback">补齐来源;null 表示没有。</param>
+    /// <returns>合并结果;两者都没有时为 <see cref="Empty"/>。</returns>
+    public static HeifColorInfo Merge(HeifColorInfo? primary, HeifColorInfo? fallback)
+    {
+        if (primary is null || primary == Empty) return fallback ?? Empty;
+        if (fallback is null || fallback == Empty) return primary;
+
+        var nclx = primary.HasNclx ? primary : fallback.HasNclx ? fallback : null;
+        var icc = primary.HasIccProfile ? primary.IccProfile : fallback.HasIccProfile ? fallback.IccProfile : null;
+        if (nclx is null && icc is null) return Empty;
+        return new HeifColorInfo
+        {
+            HasNclx = nclx is not null,
+            Primaries = nclx?.Primaries ?? 0,
+            Transfer = nclx?.Transfer ?? 0,
+            Matrix = nclx?.Matrix ?? 0,
+            FullRange = nclx?.FullRange ?? false,
+            IccProfile = icc,
+        };
+    }
+
+    /// <summary>供诊断输出:`nclx` 三元组 + ICC 字节数的紧凑描述。</summary>
+    public override string ToString()
+        => (HasNclx
+                ? "nclx=(" + Primaries.ToString(CultureInfo.InvariantCulture) + "," + Transfer.ToString(CultureInfo.InvariantCulture)
+                  + "," + Matrix.ToString(CultureInfo.InvariantCulture) + (FullRange ? ",full" : ",limited") + ")"
+                : "nclx=none")
+            + (HasIccProfile ? " icc=" + IccProfile!.Length.ToString(CultureInfo.InvariantCulture) + "B" : " icc=none");
 }
 
 /// <summary><c>pixi</c> 各通道位深。</summary>
@@ -577,23 +618,18 @@ public sealed class HeifContainer
             }
         }
 
-        // ---- 色彩与位深:网格项自身的属性优先,其次取首块瓦片 ----
-        List<ItemProperty> colorProps = primaryProps;
-        if (FindProperty(colorProps, BoxTypes.Colr) is null && kind == HeifItemKind.Grid)
-        {
-            colorProps = CollectProperties(associations, tileIds[0], properties);
-        }
+        // ---- 色彩与位深:网格项自身的属性优先,其次取首块瓦片;同一个项的多块 colr 全部合并 ----
+        var color = CollectColor(primaryProps);
+        var tileProps = kind == HeifItemKind.Grid ? CollectProperties(associations, tileIds[0], properties) : null;
+        if (tileProps is not null) color = HeifColorInfo.Merge(color, CollectColor(tileProps));
 
-        var color = FindProperty(colorProps, BoxTypes.Colr)?.Color ?? HeifColorInfo.Empty;
         var primaryHvcc = FindProperty(primaryProps, BoxTypes.HvcC)?.HvcC
-            ?? (kind == HeifItemKind.Grid
-                ? FindProperty(CollectProperties(associations, tileIds[0], properties), BoxTypes.HvcC)?.HvcC
-                : null);
+            ?? (tileProps is not null ? FindProperty(tileProps, BoxTypes.HvcC)?.HvcC : null);
 
         var pixi = FindProperty(primaryProps, BoxTypes.Pixi)?.BitsPerChannel;
-        if (pixi is null && kind == HeifItemKind.Grid)
+        if (pixi is null && tileProps is not null)
         {
-            pixi = FindProperty(CollectProperties(associations, tileIds[0], properties), BoxTypes.Pixi)?.BitsPerChannel;
+            pixi = FindProperty(tileProps, BoxTypes.Pixi)?.BitsPerChannel;
         }
 
         var lumaBits = pixi is { Length: > 0 } ? pixi[0] : primaryHvcc?.BitDepthLuma ?? 8;
@@ -632,7 +668,7 @@ public sealed class HeifContainer
                 {
                     Transforms = thumbTransforms,
                     ExifOrientation = ToExifOrientation(thumbTransforms),
-                    Color = FindProperty(props, BoxTypes.Colr)?.Color ?? color,
+                    Color = HeifColorInfo.Merge(CollectColor(props), color),
                     PixelInfo = new HeifPixelInfo
                     {
                         BitsPerChannel = thumbPixi ?? Array.Empty<int>(),
@@ -755,6 +791,24 @@ public sealed class HeifContainer
             if (props[i].Type == type) return props[i];
         }
         return null;
+    }
+
+    /// <summary>
+    /// 汇总一个项上全部 <c>colr</c> 盒子:<c>nclx</c> 与 ICC 各取首个有效项后合并。
+    /// </summary>
+    /// <remarks>
+    /// 属性表里可以有多个 <c>colr</c>(典型是 <c>nclx</c> + <c>rICC</c> 各一个),
+    /// 只取第一个会把另一半丢掉:丢 <c>nclx</c> 就丢了矩阵与范围,丢 ICC 就把广色域当 sRGB 解释。
+    /// </remarks>
+    private static HeifColorInfo CollectColor(List<ItemProperty> props)
+    {
+        var merged = HeifColorInfo.Empty;
+        for (var i = 0; i < props.Count; i++)
+        {
+            if (props[i].Type != BoxTypes.Colr || props[i].Color is not { } color) continue;
+            merged = HeifColorInfo.Merge(merged, color);
+        }
+        return merged;
     }
 
     private static List<int> FindReferenceTargets(Dictionary<uint, List<ItemReference>> references, uint type, int fromItemId)

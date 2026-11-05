@@ -158,7 +158,7 @@ internal readonly record struct TitleBarBackdropEdges(bool PadLeft, bool PadRigh
 /// 代理图 → 全分辨率热替换保持相对平移、不跳变,100% 口径为 1 源像素 = 1 物理屏幕像素。
 /// 全部方法只在 UI 线程调用,且 <see cref="SetImage"/> 必须在上层回调内同步完成。
 /// </summary>
-internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
+internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
 {
     /// <summary>着色器:顶点阶段做布局变换与 EXIF 方向的 UV 置换,像素阶段三线性采样。</summary>
     private const string ShaderSource = """
@@ -1466,6 +1466,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         _spareTexture = null;
         _titleBarBand = null;
         ReleaseBandTextures();
+        DisposeOutputColor();
         Interlocked.Exchange(ref _gpuBytes, 0);
         _renderTarget?.Dispose();
         _swapChain.Dispose();
@@ -1641,6 +1642,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
 
         // 标题栏亚克力区段最后画:它取的就是这一帧照片(含黑底)的实际像素。
         DrawTitleBarBackdrop();
+        RenderOutputColor();
     }
 
     /// <summary>
@@ -2235,7 +2237,7 @@ internal sealed class WindowsPhotoView : SwapChainPanel, IDisposable
         public string Name => "GpuTextures";
 
         /// <summary>当前帧与最近缓存帧的纹理字节合计(UI 线程写入,这里只读原子快照)。</summary>
-        public long FootprintBytes => Interlocked.Read(ref _view._gpuBytes);
+        public long FootprintBytes => Interlocked.Read(ref _view._gpuBytes) + Interlocked.Read(ref _view._outputColorBytes);
 
         /// <summary>按压力级别修剪:标记后由 UI 线程丢掉全部非当前纹理(本方法在探测线程上,不得阻塞)。</summary>
         /// <param name="level">当前压力级别</param>

@@ -13,8 +13,13 @@ namespace PhotoViewer.Windows.Core;
 
 /// <summary>
 /// Windows 侧 RAW 全分辨率解码入口，走系统 WIC「Microsoft Raw Image Decoder」（Raw Image Extension）。
-/// 与 Apple 的 Core Image 路径同契约：产出**未旋转**的 8 位 sRGB 像素 + 源尺寸 + 待应用方向，
-/// 由渲染层做顶点变换；色域按 WIC 报告（当前实测 raw 解码器不报 ICC，按 sRGB 解释）。
+/// 与 Apple 的 Core Image 路径同契约：产出**未旋转**的 8 位像素 + 源尺寸 + 待应用方向，
+/// 由渲染层做顶点变换。
+///
+/// 色域：按 WIC 在帧级（退到容器级）报告的色彩上下文如实打标签——有效 ICC 原样携带为 <see cref="ImageColorSpace.Icc"/>，
+/// 只有 EXIF ColorSpace 时按共享推断规则（2 → Adobe RGB，其余 sRGB），两者都没有才**显式**按 sRGB 解释
+/// （实测 Microsoft Raw Image Decoder 即不报任何色彩上下文）。像素格式转换（32bppBGRA）只换内存布局、
+/// 不做色彩管理，色域换算交给共享 <see cref="ColorEngine"/>，绝不用 <c>ConvertTo</c> 冒充色彩转换。
 ///
 /// 几何：WIC 输出的帧比相机取景画面大（a7C II 上 7028×4688 对 7008×4672），多出来的是传感器边距。
 /// 相机在 TIFF 标签 DefaultCropOrigin/DefaultCropSize（0xC61F/0xC620）里声明有效成像区，WIC 元数据
@@ -22,10 +27,14 @@ namespace PhotoViewer.Windows.Core;
 /// 故裁剪规则为「按相机声明的原点与尺寸裁剪，越界或缺失则用整帧」。
 ///
 /// 像素格式：解码器只真正产出 8 位精度（48bpp/64bpp 目标是 8 位值 ×257 的放大，128bpp 浮点亦是 8 位数据），
-/// 因此固定请求 32bppBGRA 并直接拷进池化缓冲（一次 CopyPixels 带裁剪矩形，无中间整幅拷贝）。
+/// 因此固定请求 32bppBGRA 并直接拷进池化缓冲（一次 CopyPixels 带裁剪矩形，无中间整幅拷贝）；
+/// 产物编码固定 <see cref="PixelEncoding.Bgra32"/>，不虚标 F16。
 /// </summary>
 internal static class WindowsRawDecoder
 {
+    /// <summary>ICC profile 的最小长度（128 字节头），与共享 <c>JpegColorMetadata</c> 同一判据。</summary>
+    private const int IccHeaderLength = 128;
+
     /// <summary>TIFF 标签 DefaultCropOrigin（0xC61F）：有效成像区左上角。</summary>
     private const ushort DefaultCropOriginTag = 0xC61F;
 
@@ -90,6 +99,10 @@ internal static class WindowsRawDecoder
             orientation = ReadOrientation(frame);
             var crop = ReadCropRect(frame, frameWidth, frameHeight);
 
+            // 色彩声明必须在 ConvertTo 之前取：WicNet 的格式转换会把源换成格式转换器包装，
+            // 之后再也 QI 不到 IWICBitmapFrameDecode，帧级色彩上下文随之不可达。
+            var (colorSpace, iccProfile) = ReadSourceColor(frame, decoder);
+
             // 8 位是这家解码器的精度上限（16 位目标只是 8 位值放大），32bppBGRA 最省一次转换。
             if (!frame.ConvertTo(WicPixelFormat.GUID_WICPixelFormat32bppBGRA, WICBitmapDitherType.WICBitmapDitherTypeNone,
                     null, 0, WICBitmapPaletteType.WICBitmapPaletteTypeCustom))
@@ -111,9 +124,9 @@ internal static class WindowsRawDecoder
 
                 cancellationToken.ThrowIfCancellationRequested();
 
-                // 解码器的 raw 帧不报 ICC（实测 0 个色彩上下文），按 sRGB 解释由 ImageColorSpace.Srgb 声明。
+                // 像素是文件里的编码值（格式转换只换布局、不做色彩管理），色域由 WIC 声明的标签说明。
                 return DecodedImage.CreatePooled(buffer, crop.Width, crop.Height, stride, PixelEncoding.Bgra32,
-                    ImageColorSpace.Srgb, crop.Width, crop.Height, orientation ?? 1);
+                    colorSpace, crop.Width, crop.Height, orientation ?? 1, iccProfile);
             }
             catch
             {
@@ -153,6 +166,88 @@ internal static class WindowsRawDecoder
             return null;
         }
     }
+
+    /// <summary>
+    /// 只读色彩声明的探针（打开解码器 + 读首帧 + 色彩上下文，不解码像素）：供验收核对解码器实际声明了什么。
+    /// </summary>
+    /// <param name="path">RAW 文件路径。</param>
+    /// <returns>声明的色彩标签与 ICC 字节数；解码器不可用时 null。</returns>
+    internal static (ImageColorSpace ColorSpace, int IccLength)? TryGetSourceColor(string path)
+    {
+        try
+        {
+            using var decoder = WicBitmapDecoder.Load(path, null, FileAccess.Read, WICDecodeOptions.WICDecodeMetadataCacheOnDemand);
+            using var frame = decoder.GetFrame(0);
+            var (colorSpace, iccProfile) = ReadSourceColor(frame, decoder);
+            return (colorSpace, iccProfile?.Length ?? 0);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[WindowsRawDecoder] 色彩声明探测失败：{path} {exception.GetType().Name} 0x{exception.HResult:X8} {exception.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 读取 WIC 声明的源色彩：有效 ICC（帧级优先，容器级兜底）原样携带为 <see cref="ImageColorSpace.Icc"/>；
+    /// 只有 EXIF ColorSpace 时按共享推断规则给 Adobe RGB / sRGB；两者都没有才显式回退 sRGB。
+    /// </summary>
+    /// <param name="frame">WIC 首帧（**尚未**做像素格式转换，转换后帧级上下文不可达）。</param>
+    /// <param name="decoder">解码器；容器级色彩声明的兜底来源。</param>
+    /// <returns>源色彩标签与随产物携带的 ICC profile（非 ICC 标签为 null）。</returns>
+    private static (ImageColorSpace ColorSpace, byte[]? IccProfile) ReadSourceColor(WicBitmapSource frame, WicBitmapDecoder decoder)
+    {
+        byte[]? iccProfile = null;
+        int? exifColorSpace = null;
+
+        foreach (var provider in new Func<IReadOnlyList<WicColorContext>>[] { frame.GetColorContexts, decoder.GetColorContexts })
+        {
+            IReadOnlyList<WicColorContext> contexts;
+            try
+            {
+                contexts = provider();
+            }
+            catch (Exception exception)
+            {
+                // 帧级/容器级色彩上下文不是每种解码器都实现（WIC 可返回不支持），此处不是错误，换个来源继续。
+                Console.WriteLine($"[WindowsRawDecoder] 色彩上下文不可用：{exception.GetType().Name} 0x{exception.HResult:X8}");
+                continue;
+            }
+
+            foreach (var context in contexts)
+            {
+                using (context)
+                {
+                    try
+                    {
+                        if (iccProfile == null && IsValidIccProfile(context.ProfileBytes) is { } profile) iccProfile = profile;
+                        if (exifColorSpace == null && context.ExifColorSpace is uint declared && declared <= int.MaxValue)
+                            exifColorSpace = (int)declared;
+                    }
+                    catch (Exception exception)
+                    {
+                        Console.WriteLine($"[WindowsRawDecoder] 色彩上下文读取失败：{exception.GetType().Name} 0x{exception.HResult:X8}");
+                    }
+                }
+            }
+
+            if (iccProfile != null) break;
+        }
+
+        if (iccProfile != null) return (ImageColorSpace.Icc, iccProfile);
+        if (exifColorSpace is int value) return (ColorEngine.InferJpegColorSpace(value), null);
+        // 没有任何色彩声明（Microsoft Raw Image Decoder 实测如此）：显式按 sRGB 解释，而不是把像素转换过来。
+        return (ImageColorSpace.Srgb, null);
+    }
+
+    /// <summary>校验并返回合法的 ICC profile 字节；不足头长或缺少 'acsp' 签名时返回 null。</summary>
+    /// <param name="profile">色彩上下文给出的字节。</param>
+    /// <returns>同一份 profile 字节，或 null。</returns>
+    private static byte[]? IsValidIccProfile(byte[]? profile)
+        => profile != null && profile.Length >= IccHeaderLength
+           && profile[36] == 'a' && profile[37] == 'c' && profile[38] == 's' && profile[39] == 'p'
+            ? profile
+            : null;
 
     /// <summary>
     /// RAW 解码不可用（扩展缺失或失败）时的兜底：取出相机写在文件里的整幅内嵌 JPEG，用 Skia 解成未旋转 Bgra32。

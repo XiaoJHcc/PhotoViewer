@@ -24,6 +24,7 @@
 | **Debug Windows** | 构建并启动 WinUI 3 原生壳。 |
 | **Run Windows** | 启动已有构建，不重新编译。 |
 | **Check Windows Native** | 构建并运行隔离冒烟，结束后自动关闭；失败退出码为 1。 |
+| **Check Windows Color** | 构建并运行隔离色彩专项（真实 JPEG/HEIF/RAW、显示器 ICC、GPU 输出切换），报告 `color-checks.json`；不改系统显示配置，真屏/跨屏结论另验。 |
 
 从仓库根直接打开图片或文件夹：
 
@@ -207,7 +208,13 @@ dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compil
 ### Windows HEVC 解码库
 
 `PhotoViewer.Windows/NativeLibs/win-x64/pvhevc.dll`（静态链接「仅 HEVC 解码器」LGPL FFmpeg）已入库；更换 FFmpeg 版本或工具链后用 MSYS2 CLANG64 重建 `PhotoViewer.Windows/build-native-windows-hevc.ps1`，并把 `pvhevc.dll` 与 `pvhevc.txt` 一起更新。
-重建后在 `Tools/HeifTileBench/` 目录执行 `python pvhevc_check.py`（逐瓦片对照 `heif_tile_extract.py` 的 Annex-B 产物与耗时）复核二进制；托管侧容器解析与 YUV 转换的对照验证用 `Tools/HeifFastDecodeTest`（`selftest`/`smoke`/`parse`/`extract`/`validate`/`bench`）。
+重建后在 `Tools/HeifTileBench/` 目录执行 `python pvhevc_check.py`（逐瓦片对照 `heif_tile_extract.py` 的 Annex-B 产物与耗时）复核二进制；托管侧容器解析与 YUV 转换的对照验证用 `Tools/HeifFastDecodeTest`（`selftest`/`smoke`/`parse`/`extract`/`validate`/`e2e`/`bench`）。改动 HEIF 色彩链、F16 几何或 libheif 码值归一化后至少跑：
+
+```bash
+dotnet run --project Tools/HeifFastDecodeTest -c Release -- e2e     # 快速路径 vs libheif 回落逐色块 + 48 位通道 + 自建 12 位暗平面码值范围
+dotnet run --project Tools/HeifFastDecodeTest -c Release -- smoke   # 容器/色彩支持面与转换器口径
+```
+
 
 ### EXIF 字段名称
 

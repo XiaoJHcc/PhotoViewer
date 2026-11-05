@@ -89,6 +89,7 @@ internal static class Validation
 
             var bitDepth = tiles[0].BitDepth;
             var chroma = tiles[0].Chroma;
+            var icc = container.Color.IccProfile;
             var source = new YuvImage
             {
                 Tiles = yuvTiles,
@@ -100,30 +101,57 @@ internal static class Validation
                 PrimariesCode = container.Color.HasNclx ? container.Color.Primaries : 1,
                 TransferCode = container.Color.HasNclx ? container.Color.Transfer : 13,
                 FullRange = !container.Color.HasNclx || container.Color.FullRange,
+                IccProfile = icc,
             };
 
             // ---- 全分辨率 BGRA ----
+            // 有 ICC 时"我们的产出口径"是源色彩空间内的编码值(随后由色彩引擎转到目标空间),
+            // 与 libheif RGB24(同样只做 YCbCr 反矩阵)是同一口径,可直接逐像素对照。
             var fullBgra = new byte[container.Width * container.Height * 4];
-            if (!YuvImageConverter.TryConvertToBgra32(source, container.Width, container.Height, fullBgra, container.Width * 4, out var unsupported))
+            var converted = icc is { Length: > 0 }
+                ? YuvImageConverter.TryConvertToIccEncodedBgra32(
+                    source, container.Width, container.Height, fullBgra, container.Width * 4, out var unsupported)
+                : YuvImageConverter.TryConvertToBgra32(
+                    source, container.Width, container.Height, fullBgra, container.Width * 4, out unsupported);
+            if (!converted)
             {
                 return builder.Append("  ! converter rejected: ").Append(unsupported).ToString();
             }
 
             var fullStats = Metrics.CompareBgra(fullBgra, referenceBgra, container.Width, container.Height);
             Console.WriteLine(
-                $"  full BGRA vs libheif RGB24: mean {fullStats.Mean:F3} max {fullStats.Max} "
+                $"  full {(icc is { Length: > 0 } ? "ICC 编码值" : "BGRA")} vs libheif RGB24: mean {fullStats.Mean:F3} max {fullStats.Max} "
                 + $"(B {fullStats.MeanB:F3} G {fullStats.MeanG:F3} R {fullStats.MeanR:F3})");
+
+            if (icc is { Length: > 0 })
+            {
+                // ICC 被忽略(把广色域码值当 sRGB)的代价,供回归时判断这条链路是否还在起作用。
+                var correct = Reference.ToSrgb8(referenceBgra, container.Width, container.Height, icc);
+                var ignored = Reference.ToSrgb8(referenceBgra, container.Width, container.Height, null);
+                var impact = Metrics.CompareBgra(correct, ignored, container.Width, container.Height);
+                Console.WriteLine($"  ICC 生效 vs 忽略 ICC: mean {impact.Mean:F3} max {impact.Max}");
+            }
 
             // ---- 全分辨率 F16 ----
             var fullF16 = new byte[container.Width * container.Height * 8];
-            if (!YuvImageConverter.TryConvertToRgbaLinearF16(source, container.Width, container.Height, fullF16, container.Width * 8, out var f16Reason))
+            var f16Converted = icc is { Length: > 0 }
+                ? YuvImageConverter.TryConvertToIccEncodedRgbaF16(
+                    source, container.Width, container.Height, fullF16, container.Width * 8, out var f16Reason)
+                : YuvImageConverter.TryConvertToRgbaLinearF16(
+                    source, container.Width, container.Height, fullF16, container.Width * 8, out f16Reason);
+            if (!f16Converted)
             {
                 return builder.Append("  ! F16 converter rejected: ").Append(f16Reason).ToString();
             }
 
-            var referenceF16 = Reference.ToLinearF16(referenceBgra, container.Width, container.Height);
-            var mineSrgb = Reference.F16ToSrgb8(fullF16, container.Width, container.Height);
-            var referenceSrgb = Reference.F16ToSrgb8(referenceF16, container.Width, container.Height);
+            // 两条 F16 拉到同一个可见空间比较:有 ICC 时按 profile 解释,否则按线性 sRGB。
+            var mineSrgb = icc is { Length: > 0 }
+                ? Reference.F16ToSrgb8WithIcc(fullF16, container.Width, container.Height, icc)
+                : Reference.F16ToSrgb8(fullF16, container.Width, container.Height);
+            var referenceF16 = Reference.ToLinearF16(referenceBgra, container.Width, container.Height, icc);
+            var referenceSrgb = icc is { Length: > 0 }
+                ? Reference.ToSrgb8(referenceBgra, container.Width, container.Height, icc)
+                : Reference.F16ToSrgb8(referenceF16, container.Width, container.Height);
             var f16Stats = Metrics.CompareBgra(mineSrgb, referenceSrgb, container.Width, container.Height);
             Console.WriteLine(
                 $"  full F16 (both -> sRGB8): mean {f16Stats.Mean:F3} max {f16Stats.Max} "
@@ -187,6 +215,8 @@ internal static class Validation
                 tiles = tiles.Length,
                 bitDepth,
                 chroma = chroma.ToString(),
+                color = container.Color.ToString(),
+                iccBytes = icc?.Length ?? 0,
                 fullBgraMean = Math.Round(fullStats.Mean, 4),
                 fullBgraMax = fullStats.Max,
                 fullF16Mean = Math.Round(f16Stats.Mean, 4),

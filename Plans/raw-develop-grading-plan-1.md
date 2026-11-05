@@ -4,7 +4,7 @@
 
 ## 0 结论摘要
 
-1. **色彩管理链路是对的，RAW 渲染链路不是我们控制的。** scRGB F16 / Display P3 / ICC / skcms 这套显示层已经正确；但"RAW 长什么样"由三端三套引擎的默认参数决定，我们只喂了方向与缩放。
+1. **色彩管理链路是对的，RAW 渲染链路不是我们控制的。** scRGB F16 / Display P3 / ICC / skcms 这套像素与转换基座已按 ICC/EXIF 正确解释源色域，但**"显示层全正确"不能笼统说，只能按平台边界**：Apple 端已按真实声明呈现（广色域对拍与外接显示仍未关）；Windows 色彩收尾已实现并通过程序化验收（真屏门未验）；Android 现行默认 sRGB 回退、P3 未启用。但"RAW 长什么样"由三端三套引擎的默认参数决定，我们只喂了方向与缩放。
 2. **镜头校正：Apple 默认开且实测生效，Windows 与 Android 完全没有。** Apple 只有一个 Bool（无强度、无 CA/暗角分项），是否真的校正取决于文件内嵌畸变元数据，覆盖不可查、无法验证正确性。
 3. **三端不是同一张照片**：16F vs 8 位、相机白平衡 vs codec 默认、Apple 自带锐化/降噪、Windows/Android 无高光恢复。目前没有任何跨端一致性验证。
 4. **可以做 ACR 风格的调色与预览，推荐"两级管线"**：`Develop`（统一线性基底）+ `Grade`（共享 GPU 调色）。Light/Color 必须在线性域才有 RAW 语义；Effects/HSL 本来就是显示域操作。
@@ -23,7 +23,7 @@
 | 曝光 | `exposure=0`，引擎 `baselineExposure` 生效 | codec 默认 | 自限 auto-bright（最大 ≈1.3 EV 提升） |
 | 高光 | `highlightRecoveryEnabled` 默认 true | 无（clip） | `highlight=0`（clip） |
 | 镜头校正 | **默认开**（见 1.2） | **无** | **无**（LibRaw 不具备） |
-| 色彩矩阵 | Apple 自有校准，无相机 profile | codec 默认，产物按 sRGB 声明 | LibRaw 内部机型矩阵 |
+| 色彩矩阵 | Apple 自有校准，无相机 profile | codec 默认；产物按 WIC 帧/容器色彩上下文打标签（ICC 优先 → EXIF ColorSpace → 显式 sRGB；当前 Microsoft Raw 解码器不报，即 sRGB） | LibRaw 内部机型矩阵 |
 | 锐化 / 降噪 | 默认开（实测 sharpness 1.0、luma NR 0.29、chroma NR 0.5） | codec 默认 | AHD，默认 |
 | 我们显式设置的参数 | `draftMode=false`、`orientation=Up`、`scaleFactor` | 仅裁剪与像素格式 | 输出色、half_size、quality、bright |
 
@@ -43,7 +43,7 @@ Windows 侧即使调用 `IWICDevelopRaw` 也没有镜头校正能力（微软文
 
 ### 1.3 色彩处理
 
-- 显示层正确：`ColorEngine`（skcms）按 ICC/EXIF 推断源色域，Apple 表面用 ExtendedLinearSrgb，Windows/Android 各自打对标签。
+- 显示层按平台边界（不要写"全正确"）：共享 `ColorEngine`（skcms）按 ICC/EXIF 解释源色域；Apple 表面用 ExtendedLinearSrgb 并已按真实声明呈现（广色域对拍/外接显示未关）；Windows 色彩收尾已实现并通过程序化验收（真屏门未验）；Android 现行默认 sRGB 回退、P3 未启用。
 - RAW 渲染层不可控：三套引擎的白平衡基准、相机→工作空间矩阵、色调曲线、锐化/降噪默认值都不同，且都不对应 ACR 的 Process Version / Camera Matching Profile。
 - 我们没有读 `AsShotNeutral`、没有相机矩阵、没有 DNG opcode，因此**无法把"渲染"从引擎手里拿回来**。
 - `decoderVersion` 当前实测可用 7/8，默认 8；RAW 9 需 macOS/iOS 27 且要显式 opt-in。

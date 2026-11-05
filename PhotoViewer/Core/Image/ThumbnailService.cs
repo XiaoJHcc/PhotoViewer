@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Storage;
 using MetadataExtractor;
@@ -120,7 +121,8 @@ public static class ThumbnailService
         if (sources.Count == 0)
         {
             if (_missingPreviewDecoder == null) return null;
-            return await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, CancellationToken.None).ConfigureAwait(false);
+            var substitute = await _missingPreviewDecoder.DecodeThumbnailAsync(file, targetShortSide, CancellationToken.None).ConfigureAwait(false);
+            return substitute == null ? null : ToSrgb(substitute);
         }
 
         foreach (var src in OrderByPriority(sources, targetShortSide))
@@ -132,7 +134,9 @@ public static class ThumbnailService
 
                 var aligned = AlignOrientationIfNeeded(raw, src, orientation);
                 var cropped = CropLetterboxByMetadata(aligned, orientation);
-                return cropped;
+                // 出口转不成 sRGB 时该来源作废（所有权已在 ToSrgb 内释放），继续试下一个来源：
+                // 宁可返回 null 让 UI 显示占位符，也不返回一张色彩语义是错的原图。
+                if (ToSrgb(cropped) is { } thumbnail) return thumbnail;
             }
             catch (Exception ex)
             {
@@ -140,6 +144,31 @@ public static class ThumbnailService
             }
         }
         return null;
+    }
+
+    /// <summary>
+    /// 缩略图公共出口统一为 sRGB8：内嵌 JPEG 的 ICC / EXIF 色域声明在这里生效（源按真实色域解码，
+    /// 出口再显式规范到 sRGB），广色域/16 位来源同样收敛，调用方无需各自解释色彩。
+    /// 源已是 sRGB8 时原样返回，不产生额外拷贝；**转换失败时释放源并返回 null**，
+    /// 绝不把未转换的原图当作 sRGB8 交出去。
+    /// </summary>
+    /// <param name="image">待规范化的产物，所有权移交本方法（失败或转换时释放）。</param>
+    /// <returns>sRGB8 缩略图；转换失败返回 null。</returns>
+    private static DecodedImage? ToSrgb(DecodedImage image)
+    {
+        if (image.Encoding == PixelEncoding.Bgra32 && image.ColorSpace == ImageColorSpace.Srgb) return image;
+        try
+        {
+            var srgb = ColorEngine.ToSrgb8(image);
+            if (!ReferenceEquals(srgb, image)) image.Dispose();
+            return srgb;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("ThumbnailService: sRGB 出口转换失败，丢弃该来源: " + ex.Message);
+            image.Dispose();
+            return null;
+        }
     }
 
     /// <summary>

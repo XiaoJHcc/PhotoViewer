@@ -43,7 +43,7 @@ internal sealed partial class WindowsMainWindow
         {
             RequireSmoke(_photo.TryReadDisplayPixel(points[index].U, points[index].V, out var color),
                 $"HEIF 100% 第 {index + 1} 象限 GPU 回读失败");
-            RequireSmoke(ClassifyLinear(color.R, color.G, color.B) == expected[index],
+            RequireSmoke(ClassifyManagedColor(color.R, color.G, color.B, true) == expected[index],
                 $"HEIF 100% 第 {index + 1} 象限颜色错误：{color}");
         }
         _photo.FitToView();

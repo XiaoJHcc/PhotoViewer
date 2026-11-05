@@ -20,9 +20,7 @@ internal static class Probe
             Console.Error.WriteLine("parse failed: " + reason);
             return 1;
         }
-        Console.WriteLine($"ours {container.Width}x{container.Height} rot={container.ExifOrientation} "
-            + $"nclx=({container.Color.Primaries},{container.Color.Transfer},{container.Color.Matrix},"
-            + $"{(container.Color.FullRange ? "full" : "limited")})");
+        Console.WriteLine($"ours {container.Width}x{container.Height} rot={container.ExifOrientation} color=[{container.Color}]");
 
         var reference = Reference.DecodeRgb24(data, true);
         if (reference is null)
@@ -43,6 +41,7 @@ internal static class Probe
         }
         Console.WriteLine("tiles: " + TileDecodeHarness.Describe(tiles));
 
+        var icc = container.Color.IccProfile;
         var source = new YuvImage
         {
             Tiles = yuvTiles,
@@ -54,10 +53,17 @@ internal static class Probe
             PrimariesCode = container.Color.HasNclx ? container.Color.Primaries : 1,
             TransferCode = container.Color.HasNclx ? container.Color.Transfer : 13,
             FullRange = !container.Color.HasNclx || container.Color.FullRange,
+            IccProfile = icc,
         };
 
+        // libheif 的 RGB24 是源色彩空间内的码值:有 ICC 时只与"编码值出口"同口径可比。
         var mine = new byte[container.Width * container.Height * 4];
-        if (!YuvImageConverter.TryConvertToBgra32(source, container.Width, container.Height, mine, container.Width * 4, out var rejected))
+        var converted = icc is { Length: > 0 }
+            ? YuvImageConverter.TryConvertToIccEncodedBgra32(
+                source, container.Width, container.Height, mine, container.Width * 4, out var rejected)
+            : YuvImageConverter.TryConvertToBgra32(
+                source, container.Width, container.Height, mine, container.Width * 4, out rejected);
+        if (!converted)
         {
             Console.Error.WriteLine("rejected: " + rejected);
             return 1;

@@ -99,26 +99,78 @@ internal static class Reference
         return output;
     }
 
-    /// <summary>BGRA32(sRGB)→ 线性 RGBA 半浮点,走 Skia 色彩管理。</summary>
-    public static byte[] ToLinearF16(byte[] bgra, int width, int height)
+    /// <summary>BGRA8(sRGB 或给定 ICC 空间)→ 线性 RGBA 半浮点,走 Skia 色彩管理。</summary>
+    public static byte[] ToLinearF16(byte[] bgra, int width, int height, byte[]? icc = null)
     {
-        var info = new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb());
-        var targetInfo = new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul, SKColorSpace.CreateSrgbLinear());
-        var source = Marshal.AllocHGlobal(bgra.Length);
-        var destination = Marshal.AllocHGlobal(width * height * 8);
-        Marshal.Copy(bgra, 0, source, bgra.Length);
+        var colorSpace = icc is { Length: > 0 }
+            ? SKColorSpace.CreateIcc(icc) ?? SKColorSpace.CreateSrgb()
+            : SKColorSpace.CreateSrgb();
+        return ConvertPixels(
+            bgra,
+            width,
+            height,
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, colorSpace),
+            new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul, SKColorSpace.CreateSrgbLinear()),
+            8);
+    }
+
+    /// <summary>BGRA8(源空间由显式 SKColorSpace 给出)→ 线性 RGBA 半浮点,走 Skia 色彩管理。</summary>
+    public static byte[] ToLinearF16WithSpace(byte[] bgra, int width, int height, SKColorSpace? sourceSpace)
+        => ConvertPixels(
+            bgra,
+            width,
+            height,
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, sourceSpace ?? SKColorSpace.CreateSrgb()),
+            new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul, SKColorSpace.CreateSrgbLinear()),
+            8);
+
+    /// <summary>BGRA8(源空间为给定 ICC 或 sRGB)→ sRGB8 BGRA;用于把 ICC 编码值拉到可见空间比较。</summary>
+    public static byte[] ToSrgb8(byte[] bgra, int width, int height, byte[]? icc)
+    {
+        var colorSpace = icc is { Length: > 0 }
+            ? SKColorSpace.CreateIcc(icc) ?? SKColorSpace.CreateSrgb()
+            : SKColorSpace.CreateSrgb();
+        return ConvertPixels(
+            bgra,
+            width,
+            height,
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, colorSpace),
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb()),
+            4);
+    }
+
+    /// <summary>RGBA 半浮点(ICC 空间码值)→ sRGB8 BGRA。</summary>
+    public static byte[] F16ToSrgb8WithIcc(byte[] f16, int width, int height, byte[]? icc)
+    {
+        var colorSpace = icc is { Length: > 0 }
+            ? SKColorSpace.CreateIcc(icc) ?? SKColorSpace.CreateSrgb()
+            : SKColorSpace.CreateSrgb();
+        return ConvertPixels(
+            f16,
+            width,
+            height,
+            new SKImageInfo(width, height, SKColorType.RgbaF16, SKAlphaType.Premul, colorSpace),
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, SKColorSpace.CreateSrgb()),
+            4);
+    }
+
+    private static byte[] ConvertPixels(byte[] source, int width, int height, SKImageInfo sourceInfo, SKImageInfo targetInfo, int targetBytesPerPixel)
+    {
+        var destination = Marshal.AllocHGlobal(width * height * targetBytesPerPixel);
+        var sourceMemory = Marshal.AllocHGlobal(source.Length);
+        Marshal.Copy(source, 0, sourceMemory, source.Length);
         try
         {
-            using var sourcePixmap = new SKPixmap(info, source);
+            using var sourcePixmap = new SKPixmap(sourceInfo, sourceMemory, sourceInfo.RowBytes);
             using var destinationPixmap = new SKPixmap(targetInfo, destination);
             if (!sourcePixmap.ReadPixels(destinationPixmap, 0, 0)) throw new InvalidOperationException("ReadPixels failed");
-            var output = new byte[width * height * 8];
+            var output = new byte[width * height * targetBytesPerPixel];
             Marshal.Copy(destination, output, 0, output.Length);
             return output;
         }
         finally
         {
-            Marshal.FreeHGlobal(source);
+            Marshal.FreeHGlobal(sourceMemory);
             Marshal.FreeHGlobal(destination);
         }
     }

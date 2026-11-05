@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 
@@ -294,15 +295,27 @@ public static class DinoFeatureExtractor
 
     /// <summary>
     /// 将图像拉伸缩放到方形模型输入边长（默认 518×518，升级梯按 ONNX 元数据自适应）。
+    /// 输入口径固定为 **sRGB8**：广色域 / 线性 / 未标记来源先显式规范成 sRGB8，再按线性采样缩放，
+    /// 保证模型看到的像素与训练管线（同一入口）一致、不随文件源色域漂移。
     /// 提取为公共方法：DatasetBuilder --dump-render 用同一路径产出训练用渲染缓存，
     /// 保证训练/推理像素严格同分布（Python 重采样已证与 CLS 不可比，见 EXECUTION-LOG）。
     /// </summary>
     public static DecodedImage RenderInputImage(DecodedImage source)
     {
         int size = _inputSize;
-        var scaled = SkiaImageCodec.ScaleToExact(source, size, size);
-        if (scaled == null) throw new InvalidOperationException("模型输入缩放失败");
-        return scaled;
+        var srgb = source.Encoding == PixelEncoding.Bgra32 && source.ColorSpace == ImageColorSpace.Srgb
+            ? null
+            : ColorEngine.ToSrgb8(source);
+        try
+        {
+            var scaled = SkiaImageCodec.ScaleToExact(srgb ?? source, size, size);
+            if (scaled == null) throw new InvalidOperationException("模型输入缩放失败");
+            return scaled;
+        }
+        finally
+        {
+            srgb?.Release();
+        }
     }
 
     /// <summary>

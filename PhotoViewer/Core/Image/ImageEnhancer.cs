@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Color;
 
 namespace PhotoViewer.Core.Image;
 
@@ -45,7 +46,7 @@ public static class ImageEnhancer
                 Array.Copy(source.Pixels, (long)y * source.Stride, pixels, (long)y * stride, stride);
             EqualizeLuminance(pixels, source.Width, source.Height, stride, source.Encoding);
             return DecodedImage.CreatePooled(pixels, source.Width, source.Height, stride, source.Encoding,
-                source.ColorSpace, source.SourceWidth, source.SourceHeight, source.Orientation);
+                source.ColorSpace, source.SourceWidth, source.SourceHeight, source.Orientation, source.IccProfile.ToArray());
         }
         catch
         {
@@ -63,6 +64,38 @@ public static class ImageEnhancer
     {
         ValidateEncoding(image);
         EqualizeLuminance(image.Pixels, image.Width, image.Height, image.Stride, image.Encoding);
+    }
+
+    /// <summary>
+    /// 增强预览的展示口径入口：先在 8 位 sRGB 副本上算（算法只在 8 位 sRGB 口径有定义），再回到源的展示编码与色彩标签。
+    /// 8 位展示档回到 8 位 Display P3 / sRGB / 源 ICC，不扩大成 F16（24MP 可省约 96MB 与一次整图转换）；
+    /// F16 线性表面（Mac 全档、iPad 代理）仍回 F16 线性 scRGB。源的像素不被修改，返回图由调用方负责释放。
+    /// </summary>
+    /// <param name="source">当前展示档的解码产物（由缓存/会话持有，本方法只读）。</param>
+    /// <returns>增强后的展示图（调用方负责释放）。</returns>
+    public static DecodedImage EnhanceToDisplay(DecodedImage source)
+    {
+        var working = ColorEngine.ToSrgb8(source);
+        DecodedImage? exclusive = null;
+        try
+        {
+            if (ReferenceEquals(working, source))
+            {
+                // 源本身就是 sRGB8 时转换会原样返回同一实例；增强必须写在独占副本上，不能改到缓存里的原图。
+                exclusive = SkiaImageCodec.Crop(source, 0, 0, source.Width, source.Height)
+                    ?? throw new InvalidOperationException("增强预览的独占副本创建失败");
+                working.Release();
+                working = exclusive;
+                exclusive = null;
+            }
+            EnhanceInPlace(working);
+            return ColorEngine.ToDisplayEncoding(working, source.Encoding, source.ColorSpace, source.IccProfile);
+        }
+        finally
+        {
+            exclusive?.Dispose();
+            working.Dispose();
+        }
     }
 
     /// <summary>算法定义在 8 位单字节通道上：F16 线性表面必须先经调用方转 sRGB8，误传时显式抛出而非按字节误算。</summary>

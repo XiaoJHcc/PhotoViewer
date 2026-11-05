@@ -901,7 +901,7 @@ internal sealed partial class WindowsMainWindow
             var x = Math.Clamp((int)(points[index].X * width), 0, width - 1);
             var y = Math.Clamp((int)(points[index].Y * height), 0, height - 1);
             var offset = ((y * width) + x) * 4;
-            var actual = ClassifyColor(pixels[offset + 2], pixels[offset + 1], pixels[offset]);
+            var actual = ClassifyManagedColor(pixels[offset + 2] / 255f, pixels[offset + 1] / 255f, pixels[offset] / 255f, false);
             RequireSmoke(actual == expected[index],
                 $"方向 {orientation} 导航图第 {index + 1} 象限应为{expected[index]}，实际{actual}");
         }
@@ -944,7 +944,7 @@ internal sealed partial class WindowsMainWindow
             _photo.FitToView();
             RequireSmoke(_photo.TryReadDisplayPixel(points[index].U, points[index].V, out var color),
                 $"方向 {orientation} 主图第 {index + 1} 象限取样失败");
-            var actual = ClassifyLinear(color.R, color.G, color.B);
+            var actual = ClassifyManagedColor(color.R, color.G, color.B, true);
             RequireSmoke(actual == expected[index],
                 $"方向 {orientation} 主图第 {index + 1} 象限应为{expected[index]}，实际{actual}(r={color.R:0.00} g={color.G:0.00} b={color.B:0.00})");
         }
@@ -963,19 +963,6 @@ internal sealed partial class WindowsMainWindow
         int offset = ((y * crop.Width) + x) * 4;
         var actual = ClassifyColor(crop.Pixels[offset + 2], crop.Pixels[offset + 1], crop.Pixels[offset]);
         RequireSmoke(actual == "蓝", $"方向 6 的细节预览裁剪象限应为蓝，实际{actual}");
-    }
-
-    /// <summary>把线性像素归类为四象限标记色。</summary>
-    /// <param name="r">线性红</param>
-    /// <param name="g">线性绿</param>
-    /// <param name="b">线性蓝</param>
-    /// <returns>红/绿/蓝/黄之一</returns>
-    private static string ClassifyLinear(float r, float g, float b)
-    {
-        if (r > 0.2f && g > 0.2f) return "黄";
-        if (r > 0.2f) return "红";
-        if (g > 0.2f) return "绿";
-        return "蓝";
     }
 
     /// <summary>生成八个方向的 JPEG(带方向/光圈/快门/ISO/焦距的最小 EXIF APP1)。</summary>
@@ -2249,10 +2236,13 @@ internal sealed partial class WindowsMainWindow
     /// <param name="checks">通过项收集器。</param>
     private async Task RunSettingsDiagnosticChecksAsync(List<string> checks)
     {
+        await Task.Delay(200);
         _root.UpdateLayout();
         var combo = _filterBar.SortModeDropDown;
         var itemsSource = combo.ItemsSource;
         int selected = combo.SelectedIndex;
+        RequireSmoke(combo.Focus(FocusState.Programmatic), "排序方式下拉无法取得焦点");
+        await Task.Delay(100);
         combo.IsDropDownOpen = true;
         await WaitForSmokeAsync(() => combo.IsDropDownOpen, "排序方式下拉未展开", 10);
         try

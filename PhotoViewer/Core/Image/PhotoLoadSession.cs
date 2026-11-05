@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Threading;
 using System.Threading.Tasks;
-using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
@@ -408,19 +407,13 @@ public sealed class PhotoLoadSession : IDisposable, IMemoryClient, IDisplayLoadS
 
     /// <summary>
     /// 增强算法只在 8 位 sRGB 口径上有定义（256 级直方图 + LUT），因此先转 sRGB8 副本、就地均衡，再回到源展示编码：
-    /// 8 位展示档（iPad Full / 压力降级）回到 8 位 Display P3，不扩大成 F16（24MP 可省约 96MB 与一次整图转换）；
-    /// F16 线性表面（Mac 全档、iPad 代理）仍回 F16 线性 scRGB。算法输出语义与编码口径都不变，只是不再多拷一份整图。
+    /// 8 位展示档（iPad Full / 压力降级 / sRGB 表面）回到源编码与源色彩标签（Display P3 / sRGB / ICC），
+    /// 不扩大成 F16（24MP 可省约 96MB 与一次整图转换）；F16 线性表面（Mac 全档、iPad 代理）仍回 F16 线性 scRGB。
+    /// 编码与色彩都由源的展示口径决定，不再只按"是否 8 位"猜测色域。
     /// </summary>
     /// <param name="source">当前展示档的解码产物（会话持有，本方法只读）。</param>
     /// <returns>增强图（调用方负责释放）。</returns>
-    private static DecodedImage EnhanceForDisplay(DecodedImage source)
-    {
-        using var srgb = ColorEngine.ToSrgb8(source);
-        ImageEnhancer.EnhanceInPlace(srgb);
-        return source.Encoding == PixelEncoding.Rgba8
-            ? ColorEngine.ToDisplayP3(srgb)
-            : ColorEngine.ToScRgb16(srgb);
-    }
+    private static DecodedImage EnhanceForDisplay(DecodedImage source) => ImageEnhancer.EnhanceToDisplay(source);
 
     /// <summary>释放增强图与"源 → 增强图"缓存，并作废在途增强任务（关闭增强时缓存一并清空）。</summary>
     private void ReleaseEnhanced()

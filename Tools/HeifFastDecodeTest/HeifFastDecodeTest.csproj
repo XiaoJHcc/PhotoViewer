@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    HEIF 快速解码验证工具:容器解析(YuvImageConverter 的输入)+ YUV→呈现转换的数值与性能验收。
-    刻意不引用 PhotoViewer.csproj / PhotoViewer.Windows.csproj(并行开发中的工程会锁 obj),
-    只把共享 Core/Image/Heif 下的源文件与无依赖的色彩空间枚举编进来;因此被验证的代码必须保持零外部依赖。
+    HEIF 快速解码验证工具：容器解析（YuvImageConverter 的输入）+ YUV→呈现转换的数值与性能验收
+    + 色彩链端到端（共享 FastHeifDecoder vs Windows libheif 回落）。
+    直接引用共享 Core 工程：端到端用例要用 FastHeifDecoder/DecodedImage/ColorEngine，这些必须与
+    生产同一份实现；LibHeifDecoder.cs 以源文件链接进本程序集（它在 PhotoViewer.Windows 里，
+    但只依赖 Core 与 LibHeifSharp/SkiaSharp），因此 Windows 头工程的回落色彩链也在这里被真实编译与执行。
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -15,23 +17,27 @@
     <RootNamespace>HeifFastDecodeTest</RootNamespace>
     <AssemblyName>HeifFastDecodeTest</AssemblyName>
     <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
-    <!-- 只跑在 Win11 桌面环境,不追加平台版本告警噪音。 -->
+    <!-- 只跑在 Win11 桌面环境，不追加平台版本告警噪音。 -->
     <NoWarn>$(NoWarn);CA1416</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- FastHeifDecoder 依赖共享工程的 DecodedImage/内存管家,不属于"零外部依赖"的容器/转换器,
-         由 PhotoViewer 工程本身编译;本工具只验证 HeifContainer + YuvImageConverter。
-         YuvImageConverter 的 8 位 RGBA 出口引用共享的色彩空间枚举,枚举本身无任何依赖,只链接该源文件。 -->
-    <Compile Include="..\..\PhotoViewer\Core\Image\Heif\*.cs"
-             Exclude="..\..\PhotoViewer\Core\Image\Heif\FastHeifDecoder.cs" />
-    <Compile Include="..\..\PhotoViewer\Core\Color\ImageColorSpace.cs" Link="ImageColorSpace.cs" />
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+    <!-- Windows 回落解码器：源文件链接，命名空间仍是 PhotoViewer.Windows.Core（internal 在本程序集内可见）。 -->
+    <Compile Include="..\..\PhotoViewer.Windows\Core\LibHeifDecoder.cs" Link="Windows\LibHeifDecoder.cs" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="LibHeifSharp" />
     <PackageReference Include="LibHeif.Native.win-x64" />
     <PackageReference Include="SkiaSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 共享快速解码依赖 pvhevc：放到输出目录，DllImport 默认探测即可加载。 -->
+    <None Include="..\..\PhotoViewer.Windows\NativeLibs\win-x64\pvhevc.dll"
+          Link="pvhevc.dll"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

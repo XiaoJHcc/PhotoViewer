@@ -21,7 +21,8 @@ namespace PhotoViewer.Windows.Core;
 /// HEIF 走 <see cref="FastHeifDecoder"/>(HEVC 瓦片并行解码),方向取容器的 <c>irot</c>/<c>imir</c>,
 /// 按 ISO/IEC 23008-12 忽略 HEIF 的 EXIF Orientation 项;容器或色彩超出支持面时回落 libheif,
 /// 后者已把像素按容器变换摆正,故回落路径的方向固定为 1。RAW 走系统 WIC RAW 引擎(见 <see cref="WindowsRawDecoder"/>)。
-/// 色域正确性(ICC/ACM)不在本阶段范围,当前口径与旧壳一致(未打标签按 sRGB 解释)。
+/// 回落路径不做 8 位 sRGB 中转:回落产物是**按文件真实色彩声明(ICC 优先,其次 nclx)转换**的线性 RGBA16F,
+/// 广色域保留到渲染层;色彩无法如实解释(HDR PQ/HLG、非支持原色)时如实返回 null 并记原因,不把未知当 sRGB。
 /// </remarks>
 public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
 {
@@ -107,6 +108,12 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
     /// <summary>
     /// HEIF 主图:快速路径(容器方向显式交给渲染层);不支持时回落 libheif(像素已摆正,方向 1)。
     /// </summary>
+    /// <remarks>
+    /// 回落路径不再经 <see cref="HeifLoader"/> 的 sRGB8 产物,而是用
+    /// <see cref="LibHeifDecoder.DecodePresentationAsync"/> 直接拿到**按文件真实色彩声明转换**的
+    /// 线性 RGBA16F:广色域内容不会先在 8 位 sRGB 上被裁掉;色彩无法如实解释(例如 HDR PQ/HLG)
+    /// 时返回 null 并在 <see cref="HeifLoader.LastDecodeError"/> 给出原因,不伪造 SDR。
+    /// </remarks>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">长边上限;null 表示全分辨率。</param>
     /// <param name="encoding">目标编码(只接受 RgbaF16)。</param>
@@ -131,21 +138,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         }
 
         LogFallback(file, reason);
-        var decoded = await HeifLoader.DecodeAsync(file, maxLongEdge).ConfigureAwait(false);
-        if (decoded == null)
-        {
-            return null;
-        }
-
-        try
-        {
-            // libheif 默认已应用 irot/imir:像素为显示朝向,方向固定 1,源尺寸沿用其(已旋转)全尺寸。
-            return ColorEngine.ToScRgb16(decoded, decoded.SourceWidth, decoded.SourceHeight, 1);
-        }
-        finally
-        {
-            decoded.Release();
-        }
+        return await LibHeifDecoder.DecodePresentationAsync(file, maxLongEdge, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
