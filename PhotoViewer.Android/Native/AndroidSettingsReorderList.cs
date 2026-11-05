@@ -28,9 +28,6 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
     /// </summary>
     internal const double CheckBoxGlyphSizeDp = 18;
 
-    /// <summary>勾选字形 → 命令图标、命令图标 → 命令名的视觉间距（SETTINGS-01）。</summary>
-    private const double IconToTitleGapDp = 8;
-
     private readonly Func<int> _count;
     private readonly Func<int, SettingsReorderItem> _itemAt;
     private readonly Action<int, int> _move;
@@ -265,6 +262,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         private readonly TextView _primaryClear;
         private readonly TextView _secondaryChip;
         private readonly TextView _secondaryClear;
+        private readonly int _checkHit;
+        private readonly int _checkGlyphInset;
+        private readonly int _cardPadding;
+        private readonly int _trailingPadding;
         private SettingsReorderItem? _item;
         private bool _binding;
 
@@ -275,15 +276,15 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             LayoutParameters = new RecyclerView.LayoutParams(
                 ViewGroup.LayoutParams.MatchParent, ViewGroup.LayoutParams.WrapContent);
             double density = AndroidUiTheme.Density(context);
-            int checkHit = (int)AndroidUiTheme.Dp(context, CheckHitSizeDp);
+            _checkHit = (int)AndroidUiTheme.Dp(context, CheckHitSizeDp);
             int checkGlyph = (int)AndroidUiTheme.Dp(context, CheckBoxGlyphSizeDp);
-            int checkGlyphInset = (checkHit - checkGlyph) / 2;
-            int gap = (int)AndroidUiTheme.Dp(context, IconToTitleGapDp);
-            int cardPadding = (int)AndroidUiTheme.Dp(context, DesignTokens.SettingsAndroidCardPaddingX);
-            int verticalPadding = (int)(2 * density);
+            _checkGlyphInset = (_checkHit - checkGlyph) / 2;
+            int gap = (int)AndroidUiTheme.Dp(context, DesignTokens.SettingsAndroidIconGap);
+            _cardPadding = (int)AndroidUiTheme.Dp(context, DesignTokens.SettingsAndroidCardPaddingX);
+            _trailingPadding = (int)(8 * density);
             // SETTINGS-15：可见勾选字形左缘对齐卡片 16dp 内容边；44dp 命中区只向卡片内边距延伸，不加宽行内容。
-            SetPadding(cardPadding - checkGlyphInset, verticalPadding, (int)(8 * density), verticalPadding);
-            SetMinimumHeight((int)AndroidUiTheme.Dp(context, DesignTokens.SettingsAndroidListRowMinHeight));
+            // 行高与上下内边距按行内容在 Bind 时切换（单行紧凑 48 / 标准 52）。
+            ApplyRowMetrics(compact: true);
 
             var line = new LinearLayout(context) { Orientation = Orientation.Horizontal };
             line.SetGravity(GravityFlags.CenterVertical);
@@ -294,10 +295,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
                 _item?.SetChecked(args.IsChecked);
                 UpdateDescription();
             };
-            // SETTINGS-01：勾选字形 → 命令图标 → 命令名视觉间距同为 8；图标负左边距只抵消 44dp 命中区
-            // 相对可见字形的透明内缩，命中区本身不缩小。
+            // SETTINGS-01：勾选字形 → 命令图标 → 命令名视觉间距同为 settings.android.icon.gap；
+            // 图标左边距扣除 44dp 命中区相对可见字形的透明内缩，命中区本身不缩小。
             _icon = new AndroidCommandIconView(context) { Visibility = ViewStates.Gone };
-            int iconLeftMargin = checkGlyphInset + checkGlyph + gap - checkHit;
+            int iconLeftMargin = _checkGlyphInset + checkGlyph + gap - _checkHit;
             var iconParameters = new LayoutParams(LayoutParams.WrapContent, LayoutParams.WrapContent)
             {
                 LeftMargin = iconLeftMargin,
@@ -331,10 +332,10 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
                 _owner.StartDrag(this);
             };
 
-            line.AddView(_check, new LayoutParams(checkHit, checkHit));
+            line.AddView(_check, new LayoutParams(_checkHit, _checkHit));
             line.AddView(_icon, iconParameters);
             line.AddView(_column, new LayoutParams(0, LayoutParams.WrapContent, 1));
-            line.AddView(_handle, new LayoutParams(checkHit, checkHit));
+            line.AddView(_handle, new LayoutParams(_checkHit, _checkHit));
             AddView(line, new LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
 
             _bindings = new LinearLayout(context) { Orientation = Orientation.Vertical };
@@ -400,6 +401,24 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
         /// <summary>排序把手的锚点视图。</summary>
         internal View HandleView => _handle;
 
+        /// <summary>
+        /// SETTINGS-15：单行紧凑内容（纯触控控制功能、EXIF 显示）取 48dp 最小行高与 2dp 上下内边距；
+        /// 带扩展名副文本的文件格式行、显示键鼠绑定控件的控制功能行恢复标准行高（52dp / 8dp）并按内容增高。
+        /// </summary>
+        /// <param name="compact">是否单行紧凑行。</param>
+        private void ApplyRowMetrics(bool compact)
+        {
+            var context = Context!;
+            int paddingY = (int)AndroidUiTheme.Dp(context, compact
+                ? DesignTokens.SettingsAndroidListRowPaddingY
+                : DesignTokens.SettingsAndroidListRowStandardPaddingY);
+            int minimumHeight = (int)AndroidUiTheme.Dp(context, compact
+                ? DesignTokens.SettingsAndroidListRowMinHeight
+                : DesignTokens.SettingsAndroidRowMinHeight);
+            SetPadding(_cardPadding - _checkGlyphInset, paddingY, _trailingPadding, paddingY);
+            SetMinimumHeight(minimumHeight);
+        }
+
         /// <summary>绑定行模型；程序化勾选不写回工作副本。</summary>
         internal void Bind(SettingsReorderItem item)
         {
@@ -407,6 +426,11 @@ internal sealed class AndroidSettingsReorderList : RecyclerView
             _binding = true;
             _check.Checked = item.GetChecked();
             _binding = false;
+            // SETTINGS-15：快捷键行只有显示键鼠绑定控件时才按标准行高；纯触控与 EXIF 表保持单行紧凑，
+            // 文件格式行带扩展名副文本，直接按标准行高。
+            ApplyRowMetrics(compact: item.Hotkey != null
+                ? !(item.RecordingEnabled?.Invoke() ?? false)
+                : string.IsNullOrWhiteSpace(item.Subtitle));
             _title.Text = item.Title;
             // SETTINGS-01：控制栏功能行在勾选与命令名之间显示命令图标；文件格式与 EXIF 行不带图标。
             var hotkey = item.Hotkey;

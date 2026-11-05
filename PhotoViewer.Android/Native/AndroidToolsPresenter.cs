@@ -28,6 +28,7 @@ public sealed class AndroidToolsPresenter
     private readonly MainViewModel _main;
     private BottomSheetDialog? _dialog;
     private static AndroidToolsSheetView? _current;
+    private static BottomSheetDialog? _currentDialog;
 
     /// <summary>绑定宿主与主 VM。</summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -43,6 +44,10 @@ public sealed class AndroidToolsPresenter
 
     /// <summary>当前展示页标识（验收用）：root / exif / dino；未打开为 null。</summary>
     internal static string? CurrentPageForChecks => _current?.Page;
+
+    /// <summary>当前工具浮层视图与对话框（验收读取初始 sheet 状态与位置）。</summary>
+    internal static AndroidToolsSheetView? CurrentSheetForChecks => _current;
+    internal static BottomSheetDialog? CurrentDialogForChecks => _currentDialog;
 
     /// <summary>返回键优先在工具页内回上级；已处理时返回 true。</summary>
     /// <returns>是否消费返回。</returns>
@@ -86,28 +91,23 @@ public sealed class AndroidToolsPresenter
             var content = new AndroidToolsSheetView(_activity, _main, tools, Dismiss);
             var dialog = new BottomSheetDialog(_activity, Resource.Style.Theme_PhotoViewer_BottomSheet);
             var metrics = _activity.Resources?.DisplayMetrics;
-            int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
-            dialog.SetContentView(content, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MatchParent, height));
+            int screenHeight = metrics?.HeightPixels ?? 1920;
+            dialog.SetContentView(content, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MatchParent, AndroidSheetPresentation.ContentHeight(screenHeight)));
             dialog.DismissEvent += (_, _) =>
             {
                 if (ReferenceEquals(_current, content)) _current = null;
+                if (ReferenceEquals(_currentDialog, dialog)) _currentDialog = null;
                 // TOOLS-01/TOOLS-06：关闭浮层即取消在途 DINO 任务，主窗口入口据此回到首页。
                 tools.IsPresented = false;
                 tools.Deactivate();
             };
+            // SETTINGS-04：Show 之前配置初始收起的半屏位置，避免先按内容高度展开再闪回收起。
+            AndroidSheetPresentation.ConfigureInitialCollapsed(content, screenHeight);
             dialog.Show();
-            if (content.Parent is View parent)
-            {
-                var behavior = BottomSheetBehavior.From(parent);
-                if (behavior != null)
-                {
-                    behavior.PeekHeight = (int)((metrics?.HeightPixels ?? 1920) * .5);
-                    behavior.SkipCollapsed = false;
-                    behavior.State = BottomSheetBehavior.StateExpanded;
-                }
-            }
             _dialog = dialog;
             _current = content;
+            _currentDialog = dialog;
             tools.IsPresented = true;
             Console.WriteLine($"[Native] 工具页已打开：{tools.CurrentTool?.GetType().Name ?? "列表"}");
         }
@@ -134,6 +134,8 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     private readonly ToolsViewModel _tools;
     private readonly Action _dismiss;
     private readonly LinearLayout _content;
+    private readonly AndroidSheetScrollView _scroll;
+    private readonly AndroidSheetViewport _viewport;
     private readonly TextView _title;
     private readonly TextView _back;
     private bool _disposed;
@@ -145,6 +147,9 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         DinoDebugViewModel => "dino",
         _ => "root",
     };
+
+    /// <summary>验收：内容滚动宿主（半屏可见高度与长页底部可达断言）。</summary>
+    internal AndroidSheetScrollView ScrollHostForChecks => _scroll;
 
     /// <summary>构建工具页视图。</summary>
     /// <param name="activity">宿主 Activity。</param>
@@ -198,12 +203,28 @@ internal sealed class AndroidToolsSheetView : FrameLayout
 
         // SETTINGS-04：内容区手势只滚动内容，不能把 sheet 拖下或收起；拖动关闭只由把手/标题承担。
         var scroll = new AndroidSheetScrollView(activity);
+        _scroll = scroll;
         _content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         _content.SetPadding((int)(16 * density), (int)(4 * density), (int)(16 * density), (int)(24 * density));
         scroll.AddView(_content, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
         root.AddView(scroll, new LinearLayout.LayoutParams(LayoutParams.MatchParent, 0, 1));
 
         BuildPage();
+        _viewport = AndroidSheetViewport.Create(this, root);
+    }
+
+    /// <summary>窗口挂载后开始同步内容可见高度。</summary>
+    protected override void OnAttachedToWindow()
+    {
+        base.OnAttachedToWindow();
+        _viewport.Attach();
+    }
+
+    /// <summary>视图分离时解除绘制前回调。</summary>
+    protected override void OnDetachedFromWindow()
+    {
+        _viewport.Detach();
+        base.OnDetachedFromWindow();
     }
 
     /// <summary>返回上一页；已在根页时返回 false。</summary>
@@ -225,6 +246,7 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     {
         if (_disposed) return;
         _disposed = true;
+        _viewport.Detach();
         _dismiss();
     }
 
@@ -385,9 +407,11 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         row.SetGravity(GravityFlags.CenterVertical);
-        int paddingX = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
-        row.SetPadding(paddingX, (int)AndroidUiTheme.Dp(_activity, 2), paddingX, (int)AndroidUiTheme.Dp(_activity, 2));
-        row.SetMinimumHeight((int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidListRowMinHeight));
+        int paddingLeft = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
+        int paddingRight = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidRowPaddingRight);
+        int paddingY = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidRowPaddingY);
+        row.SetPadding(paddingLeft, paddingY, paddingRight, paddingY);
+        row.SetMinimumHeight((int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidRowMinHeight));
         row.Clickable = true;
         var column = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         column.AddView(Text(title, 16, AndroidUiTheme.TextPrimary, bold: true));

@@ -71,8 +71,9 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
             var dialog = new SettingsBottomSheetDialog(_activity,
                 Resource.Style.Theme_PhotoViewer_BottomSheet, content);
             var metrics = _activity.Resources?.DisplayMetrics;
-            int height = (int)((metrics?.HeightPixels ?? 1920) * .85);
-            dialog.SetContentView(content, new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MatchParent, height));
+            int screenHeight = metrics?.HeightPixels ?? 1920;
+            dialog.SetContentView(content, new ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MatchParent, AndroidSheetPresentation.ContentHeight(screenHeight)));
             int applyStarted = 0;
             dialog.DismissEvent += async (_, _) =>
             {
@@ -97,18 +98,9 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
                     content.Dispose();
                 }
             };
+            // SETTINGS-04：Show 之前配置初始收起的半屏位置，避免先按内容高度展开再闪回收起。
+            AndroidSheetPresentation.ConfigureInitialCollapsed(content, screenHeight);
             dialog.Show();
-            var parent = content.Parent as View;
-            if (parent != null)
-            {
-                var behavior = BottomSheetBehavior.From(parent);
-                if (behavior != null)
-                {
-                    behavior.PeekHeight = (int)((metrics?.HeightPixels ?? 1920) * .5);
-                    behavior.SkipCollapsed = false;
-                    behavior.State = BottomSheetBehavior.StateExpanded;
-                }
-            }
             _dialog = dialog;
             _current = content;
             _currentDialog = dialog;
@@ -189,6 +181,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private readonly Action _dismiss;
     private readonly LinearLayout _content;
     private readonly AndroidSheetScrollView _scroll;
+    private readonly AndroidSheetViewport _viewport;
     private readonly TextView _title;
     private readonly TextView _back;
     private readonly LinearLayout _header;
@@ -285,6 +278,21 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         // INPUT-13：外设连接只增删录制控件，不重置工作副本、不关闭页面、不弹软键盘。
         AndroidInputDevices.Changed += OnInputDevicesChanged;
         BuildPage("root");
+        _viewport = AndroidSheetViewport.Create(this, root);
+    }
+
+    /// <summary>窗口挂载后开始同步内容可见高度。</summary>
+    protected override void OnAttachedToWindow()
+    {
+        base.OnAttachedToWindow();
+        _viewport.Attach();
+    }
+
+    /// <summary>视图分离时解除绘制前回调。</summary>
+    protected override void OnDetachedFromWindow()
+    {
+        _viewport.Detach();
+        base.OnDetachedFromWindow();
     }
 
     /// <summary>返回上一页；已在根页时返回 false（由调用方关闭 sheet）。</summary>
@@ -334,6 +342,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         {
             _closed = true;
             _recordingItem = null;
+            _viewport.Detach();
             AndroidInputDevices.Changed -= OnInputDevicesChanged;
         }
         base.Dispose(disposing);
@@ -733,7 +742,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
     private ScaleRowView CreateScalePresetRow(SettingsViewModel.ScalePreset preset)
     {
-        var row = Row();
+        // SETTINGS-15：缩放预设是单行紧凑行，不随通用设置行恢复的标准高度。
+        var row = CompactRow();
         var density = (float)AndroidUiTheme.Density(_activity);
         var input = new EditText(_activity)
         {
@@ -1182,15 +1192,35 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         foreach (var item in _dynamicTexts) item.Label.Text = item.Text();
     }
 
-    /// <summary>通用行容器：水平、内容左右 16dp、上下 2dp，最小行高取 48dp 列表令牌；大字体或多行内容时按内容增高。</summary>
-    private LinearLayout Row()
+    /// <summary>
+    /// 通用行容器：水平、内容左右 16dp / 12dp、上下 12dp，最小行高取标准行令牌（52dp）；
+    /// 大字体或多行内容时按内容增高。
+    /// </summary>
+    private LinearLayout Row() => BuildRow(compact: false);
+
+    /// <summary>
+    /// 单行紧凑行容器（SETTINGS-15）：缩放预设等只有一行的可编辑内容取 48dp 最小行高与 2dp 上下内边距，
+    /// 不随通用行一起增高。
+    /// </summary>
+    private LinearLayout CompactRow() => BuildRow(compact: true);
+
+    private LinearLayout BuildRow(bool compact)
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         row.SetGravity(GravityFlags.CenterVertical);
-        double density = AndroidUiTheme.Density(_activity);
-        int paddingX = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
-        row.SetPadding(paddingX, (int)(2 * density), paddingX, (int)(2 * density));
-        row.SetMinimumHeight((int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidListRowMinHeight));
+        int paddingLeft = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
+        // SETTINGS-07：紧凑行（缩放预设）左右对称，输入组才能落在整行中点；标准行行尾留白取行令牌。
+        int paddingRight = compact
+            ? paddingLeft
+            : (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidRowPaddingRight);
+        int paddingY = (int)AndroidUiTheme.Dp(_activity, compact
+            ? DesignTokens.SettingsAndroidListRowPaddingY
+            : DesignTokens.SettingsAndroidRowPaddingY);
+        int minimumHeight = (int)AndroidUiTheme.Dp(_activity, compact
+            ? DesignTokens.SettingsAndroidListRowMinHeight
+            : DesignTokens.SettingsAndroidRowMinHeight);
+        row.SetPadding(paddingLeft, paddingY, paddingRight, paddingY);
+        row.SetMinimumHeight(minimumHeight);
         return row;
     }
 

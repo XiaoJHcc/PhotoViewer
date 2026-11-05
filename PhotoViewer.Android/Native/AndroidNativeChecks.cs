@@ -8,6 +8,7 @@ using Android.App;
 using Android.Graphics;
 using Android.OS;
 using Android.Views;
+using Google.Android.Material.BottomSheet;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.AI;
 using PhotoViewer.Core.Design;
@@ -400,22 +401,22 @@ internal static partial class AndroidNativeChecks
                 $"title=\"{sheet.LayoutSectionTitleForChecks()}\"");
 
             // SETTINGS-01：控制栏功能行 勾选 → 命令图标 → 命令名。
-            // 断言规则：可见勾选字形右侧 8dp 处开始图标；图标负左边距只抵消 44dp 命中区相对可见字形的
-            // 透明内缩（勾选框 32dp 矢量帧内约 18dp 方框），命中区保持 44dp。快照记录两侧实际像素值。
+            // 断言规则：可见勾选字形右侧 settings.android.icon.gap 处开始图标；图标左边距只抵消 44dp 命中区
+            // 相对可见字形的透明内缩（勾选框 32dp 矢量帧内约 18dp 方框），命中区保持 44dp。快照记录两侧实际像素值。
             var iconRow = sheet.HotkeyRowSnapshotForChecks(0);
-            int gap8Dp = (int)AndroidUiTheme.Dp(_activity!, 8);
+            int iconGapPx = (int)AndroidUiTheme.Dp(_activity!, DesignTokens.SettingsAndroidIconGap);
             int hitArea44Dp = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckHitSizeDp);
             int checkGlyphPx = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckBoxGlyphSizeDp);
-            int insetOffsetPx = (hitArea44Dp - checkGlyphPx) / 2 + checkGlyphPx + gap8Dp - hitArea44Dp;
+            int insetOffsetPx = (hitArea44Dp - checkGlyphPx) / 2 + checkGlyphPx + iconGapPx - hitArea44Dp;
             int? hitWidth = HotkeyCheckHitWidthPx(sheet, firstHotkey.DisplaySymbol);
             bool iconVisible = iconRow is { IconVisible: true } && !string.IsNullOrEmpty(iconRow.Value.IconSymbol);
             Check("控制栏功能行显示命令图标",
                 iconVisible && iconRow!.Value.IconSymbol == firstHotkey.DisplaySymbol,
                 iconRow is { } iconValue ? $"icon={DescribeGlyph(iconValue.IconSymbol)} expected={firstHotkey.DisplaySymbol}" : DescribeRow(iconRow));
-            Check("命令图标到命令名间距 8dp",
-                iconRow is { } gapRow && Math.Abs(gapRow.IconToTitleGap - gap8Dp) <= 1,
-                iconRow is { } gapValue ? $"gap={gapValue.IconToTitleGap}px expected={gap8Dp}px" : DescribeRow(iconRow));
-            Check("勾选→图标负边距只抵消透明内缩且命中区仍 44dp",
+            Check("命令图标到命令名间距 16dp",
+                iconRow is { } gapRow && Math.Abs(gapRow.IconToTitleGap - iconGapPx) <= 1,
+                iconRow is { } gapValue ? $"gap={gapValue.IconToTitleGap}px expected={iconGapPx}px" : DescribeRow(iconRow));
+            Check("勾选→图标边距只抵消透明内缩且命中区仍 44dp",
                 iconRow is { } lineRow && Math.Abs(lineRow.CheckToIconGap - insetOffsetPx) <= 1
                 && hitWidth is { } hit && Math.Abs(hit - hitArea44Dp) <= 1,
                 iconRow is { } checkValue
@@ -636,6 +637,24 @@ internal static partial class AndroidNativeChecks
         main.OpenToolsWindow();
         await System.Threading.Tasks.Task.Delay(800);
         Check("工具 sheet 打开", AndroidToolsPresenter.IsOpen, "IsOpen=false");
+
+        // SETTINGS-04：工具浮层与设置同一初始收起半屏。
+        var toolsSheet = AndroidToolsPresenter.CurrentSheetForChecks;
+        var toolsContainer = toolsSheet?.Parent as View;
+        var toolsBehavior = toolsContainer == null ? null : BottomSheetBehavior.From(toolsContainer);
+        var toolsParent = toolsContainer?.Parent as View;
+        int toolsScreen = _activity!.Resources?.DisplayMetrics?.HeightPixels ?? 0;
+        int toolsPeek = toolsBehavior?.PeekHeight ?? 0;
+        int toolsTolerance = Math.Max(2, (int)(toolsScreen * .01));
+        Check("工具 sheet 初始半屏收起",
+            toolsBehavior != null && toolsBehavior.State == BottomSheetBehavior.StateCollapsed
+            && Math.Abs(toolsPeek - (int)(toolsScreen * DesignTokens.SettingsAndroidSheetPeekRatio)) <= toolsTolerance
+            && toolsParent != null && Math.Abs(toolsContainer!.Top - (toolsParent.Height - toolsPeek)) <= toolsTolerance,
+            toolsContainer == null
+                ? "sheet=null"
+                : $"state={toolsBehavior?.State} top={toolsContainer.Top} parent={toolsParent?.Height}"
+                    + $" peek={toolsPeek} screen={toolsScreen}");
+
         Check("菜单入口显示工具列表", main.Tools.CurrentTool == null && AndroidToolsPresenter.CurrentPageForChecks == "root",
             $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
 
@@ -647,6 +666,21 @@ internal static partial class AndroidNativeChecks
             $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
         Check("EXIF 入口不触发 DINO", !main.Tools.DinoPresenter.IsBusy && main.Tools.DinoPresenter.Status == "未加载",
             $"busy={main.Tools.DinoPresenter.IsBusy} status={main.Tools.DinoPresenter.Status}");
+
+        // SETTINGS-04：工具半屏同样只在可见区域内布局；EXIF 长页滚到末尾后最后一项必须完整可见。
+        if (toolsSheet != null && toolsContainer != null && toolsSheet.ScrollHostForChecks is { } toolsScroll)
+        {
+            for (int wait = 0; wait < 20 && (toolsScroll.GetChildAt(0)?.Height ?? 0) <= toolsScroll.Height; wait++)
+                await System.Threading.Tasks.Task.Delay(150);
+            Check("工具收起态内容布局高度等于可见区域",
+                SheetViewportMatches(toolsSheet, toolsContainer, toolsScroll),
+                SheetViewportText(toolsSheet, toolsContainer, toolsScroll));
+            var toolsTail = await ScrollSheetToEndAsync(toolsScroll);
+            Check("工具 EXIF 收起态长页底部完整可见",
+                toolsTail.Ok && toolsBehavior?.State == BottomSheetBehavior.StateCollapsed
+                && toolsParent != null && Math.Abs(toolsContainer.Top - (toolsParent.Height - toolsPeek)) <= toolsTolerance,
+                toolsTail.Detail + $" state={toolsBehavior?.State} top={toolsContainer.Top}/{toolsParent?.Height - toolsPeek}");
+        }
 
         // 已展示 DINO 时仍明确切到 EXIF（TOOLBAR-06），不保留原页。
         main.Tools.OpenDinoDebug();

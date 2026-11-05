@@ -511,10 +511,26 @@ public static class DesignTokens
     public const double PopupRatingSourcesNameFontSize = 11.0;
     /// <summary>settings.android.card.paddingX（pt） SETTINGS-15：Android 设置卡片内容视觉左右内边距；勾选字形左缘与普通标签对齐，透明命中区不额外内缩内容。</summary>
     public const double SettingsAndroidCardPaddingX = 16.0;
-    /// <summary>settings.android.list.row.minHeight（pt） SETTINGS-15：Android 缩放预设、纯触控控制功能与 EXIF 显示单行列表统一最小行高，系统大字体时可随内容增高。</summary>
+    /// <summary>settings.android.icon.gap（pt） SETTINGS-01：Android 控制功能行勾选字形→命令图标、命令图标→命令名的视觉间距；图标左边距扣除勾选 44dp 命中区的透明内缩，命中区本身不缩小。</summary>
+    public const double SettingsAndroidIconGap = 16.0;
+    /// <summary>settings.android.list.row.minHeight（pt） SETTINGS-15：Android 单行紧凑内容（缩放预设、纯触控控制功能、EXIF 显示）的统一最小行高；多行格式、显示键鼠绑定的控制行与普通设置行取 settings.android.row.minHeight，系统大字体时可随内容增高。</summary>
     public const double SettingsAndroidListRowMinHeight = 48.0;
+    /// <summary>settings.android.list.row.paddingY（pt） SETTINGS-15：Android 单行紧凑内容（缩放预设、纯触控控制功能、EXIF 显示）的上下内边距；与 settings.android.list.row.minHeight 配合保持单行 48dp。</summary>
+    public const double SettingsAndroidListRowPaddingY = 2.0;
+    /// <summary>settings.android.list.row.standardPaddingY（pt） SETTINGS-15：Android 可排序表中非紧凑行（多行文件格式、显示键鼠绑定控件的控制功能行）的上下内边距；行高取 settings.android.row.minHeight 并按内容增高。</summary>
+    public const double SettingsAndroidListRowStandardPaddingY = 8.0;
     /// <summary>settings.android.navigation.chevron.width（pt） SETTINGS-03：Android 设置与工具分类行尾箭头视觉容器宽度，居中绘制；整行承担点击，不预留独立按钮宽度。</summary>
     public const double SettingsAndroidNavigationChevronWidth = 20.0;
+    /// <summary>settings.android.row.minHeight（pt） SETTINGS-15：Android 普通设置行、分类导航行与工具分类行的最小行高；单行紧凑内容按 settings.android.list.row.minHeight，系统大字体与多行内容按内容增高。</summary>
+    public const double SettingsAndroidRowMinHeight = 52.0;
+    /// <summary>settings.android.row.paddingRight（pt） SETTINGS-15：Android 普通设置行与工具分类行右侧内边距；左侧内容边取 settings.android.card.paddingX。</summary>
+    public const double SettingsAndroidRowPaddingRight = 12.0;
+    /// <summary>settings.android.row.paddingY（pt） SETTINGS-15：Android 普通设置行与工具分类行的上下内边距；单行紧凑内容改用 settings.android.list.row.paddingY。</summary>
+    public const double SettingsAndroidRowPaddingY = 12.0;
+    /// <summary>settings.android.sheet.heightRatio（ratio） SETTINGS-04：Android 设置与工具半屏浮层的内容高度占屏高比例，也就是标题上拖到底时的展开高度。</summary>
+    public const double SettingsAndroidSheetHeightRatio = 0.85;
+    /// <summary>settings.android.sheet.peekRatio（ratio） SETTINGS-04：Android 设置与工具半屏浮层默认收起后的可见高度占屏高比例；初始状态为收起，标题上拖扩大到 settings.android.sheet.heightRatio，下滑关闭。</summary>
+    public const double SettingsAndroidSheetPeekRatio = 0.5;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>

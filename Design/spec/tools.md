@@ -30,7 +30,7 @@
 - 工具顺序：EXIF 详情、DINO 诊断、照片数据统计（TOOLS-07）。
 - 平台专属工具不建入口、不占位：非 Windows 不显示「照片数据统计」，不是置灰项（SCOPE-01）。
 - 从主图菜单打开尚未展示的工具窗口时，分组列表导航显示工具列表；从控制栏 EXIF 信息块打开时，无论窗口是否已展示都直接选择 EXIF 详情，无可用 EXIF 时回退工具列表。常驻侧栏默认 EXIF，macOS 无可用 EXIF 时落 DINO，Windows 无可用 EXIF 时落照片数据统计。已展示时，只有主图菜单入口只前置并保留当前页；EXIF 入口不得被此规则拦截。
-- Android 设置与工具半屏共用内容滚动策略：内容区域上下滑动不收起 sheet，顶部把手/标题区域仍可拖动关闭；分类行箭头用 `settings.android.navigation.chevron.width`（20）视觉容器居中，不预留独立按钮宽度，整行承担点击。
+- Android 设置与工具半屏共用展示与滚动策略：默认以屏高一半的收起态打开（`settings.android.sheet.peekRatio`），顶部把手/标题上拖扩大到内容高度（`settings.android.sheet.heightRatio`）、下滑关闭；内容区域上下滑动只滚内容，不收起 sheet。内容布局按面板当前可见高度量测（收起与展开两档一致），长表（如 EXIF 详情）最后一项都可完整滚到屏内；拖动、重新收起与窗口/insets 变化同步刷新。分类行取 `settings.android.row.minHeight`（52）标准行高，箭头用 `settings.android.navigation.chevron.width`（20）视觉容器居中，不预留独立按钮宽度，整行承担点击。
 - 在侧栏/分组列表与详情之间切换不销毁已加载的数据，再次进入先显示已有内容，不重走推理（见 TOOLS-06）。
 
 | 状态 | 呈现 |

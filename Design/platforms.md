@@ -275,12 +275,13 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - Windows：`PhotoViewer.Windows/Native/WindowsSettingsWindow.cs:15`（`NavigationView` + `SettingsCard`）。
   - Android：`PhotoViewer.Android/Native/AndroidNativeSettingsPresenter.cs:25`（`BottomSheetDialog`）。
   - iOS / Android：行结构随 INPUT-13 外设能力变化；连接硬件键盘/鼠标/触控板任一显示完整绑定、录制、清空与冲突，仅直接触控隐藏绑定文本、录制、清空、冲突与键盘映射等全部键鼠相关控件，保留命令显隐、排序与模型中的绑定配置。
-  - 控制栏功能行统一为勾选 + 命令图标 + 命令名 + 主/次绑定 + 排序把手，勾选与图标、图标与名称的视觉间距约 8 点；Windows 使用 `WindowsIcons.ForCommand`，macOS/iOS 使用 `AppleSymbolNames.ForCommand`，Android 使用 `HotkeyItem.DisplaySymbol` 与 uicons。EXIF 显示表不加图标。
+  - 控制栏功能行统一为勾选 + 命令图标 + 命令名 + 主/次绑定 + 排序把手，勾选与图标、图标与名称的视觉间距约 8 点（Android 取 `settings.android.icon.gap`，见 `SETTINGS-01@android`）；Windows 使用 `WindowsIcons.ForCommand`，macOS/iOS 使用 `AppleSymbolNames.ForCommand`，Android 使用 `HotkeyItem.DisplaySymbol` 与 uicons。EXIF 显示表不加图标。
   - **SETTINGS-01@ios**：控制栏功能沿用系统勾选排序列表，与 EXIF 显示表同为 52 点标准行高；绑定按钮只在有外设时出现，点按即在行内录制，长按或辅助点按出「清空」菜单。录制期间手指轻点任意处取消录制并保留原绑定。
 - **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页与工具页固定深色；iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），不随系统浅/深切换，页面不铺不透明底以保留 sheet 半透材质。
   - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色（已登记 10-18）。
-- **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.ApplyAsync()` 一次提交并 `Dispose`（幂等）。Android 设置与工具共用内容区手势隔离：内容上下滚动不拖动 sheet，顶部把手/标题仍可拖下关闭。
-  - **SETTINGS-01/03/07/15@android**：纯触控控制功能、EXIF 显示与缩放预设取 `settings.android.list.row.minHeight` 的紧凑行高；勾选字形左缘按 `settings.android.card.paddingX` 与普通 label 对齐，透明点击区不再叠加左边距。设置与工具分类箭头共用 `settings.android.navigation.chevron.width` 视觉容器、居中显示，整行可点。缩放预设与 EXIF 显示表不附重复操作脚注。
+- **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.ApplyAsync()` 一次提交并 `Dispose`（幂等）。Android 设置与工具共用展示与手势隔离：`Show()` 之前把浮层配成屏高一半的收起态，从顶部把手/标题上拖扩大到内容高度、下滑关闭；Show 之后不再改状态，避免先展开再闪回。内容上下滚动不拖动 sheet，顶部把手/标题仍可拖下关闭。内容布局按面板实际可见高度量测（外层面板仍按 `settings.android.sheet.heightRatio` 展开与拖动），收起与展开两档的长表最后一项都能完整滚入可见区；拖动、重新收起与窗口尺寸/insets 变化由同一绘制前同步刷新。
+  - **SETTINGS-01@android**：控制功能行勾选字形→命令图标、命令图标→命令名的视觉间距取 `settings.android.icon.gap`（16）；勾选 44dp 命中区的透明内缩由图标负左边距抵消，命中区不缩小。
+  - **SETTINGS-01/03/07/15@android**：48dp 紧凑行只用于单行内容——纯触控控制功能、EXIF 显示与缩放预设（`settings.android.list.row.minHeight` / `settings.android.list.row.paddingY`）；多行格式与显示键鼠绑定控件的控制功能行取 `settings.android.list.row.standardPaddingY`（8）、最小行高 `settings.android.row.minHeight`（52），普通设置行、分类行与工具分类行取 `settings.android.row.minHeight`（52）/`settings.android.row.paddingY`（12），均按内容增高。勾选字形左缘按 `settings.android.card.paddingX` 与普通 label 对齐，透明点击区不再叠加左边距。设置与工具分类箭头共用 `settings.android.navigation.chevron.width` 视觉容器、居中显示，整行可点。缩放预设与 EXIF 显示表不附重复操作脚注。
 - **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs`）。四端主屏订阅共享 `PresentationChanged(SettingsChangeImpact)`，按影响范围更新；预算/缓存等诊断继续走精确属性绑定，不触发主屏结构重建。Android 自绘下拉以最终屏幕锚点核对生命周期，相同几何重复布局不关闭；iOS 保留菜单与控制栏内容摘要保护；macOS 与 Windows 的菜单/控制栏只响应相关展示影响。
 - **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-12、SETTINGS-14、SETTINGS-15**：控件与持久化。
   - **SETTINGS-12@android**：一般数值用 `+/-` 步进（与 iOS `UIStepper` 同类），步进控件不改变取值范围（已登记 10-18）。缩放比例预设行例外：单一数值输入 + `%`，数字居中，`+`/`−` 只做新增 100% 项与删除项，不是步进（SETTINGS-07）。
@@ -305,7 +306,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - macOS：`PhotoViewer.Mac/Native/MacToolsWindow.cs:16`（独立 `NSWindow`，原生侧栏 + 详情；默认 EXIF，无可用 EXIF 时落 DINO）。
   - iOS / iPadOS：`PhotoViewer.iOS/Native/iOSToolsPresenter.cs`（设置同款 `PageSheet` + `UINavigationController` 分组列表导航；主图菜单初次打开显示工具列表，控制栏 EXIF 入口直达 EXIF 详情）。
   - Windows：`PhotoViewer.Windows/Native/WindowsToolsWindow.cs:16`（`NavigationView` 三分类，无首页）。
-  - Android：`PhotoViewer.Android/Native/AndroidToolsPresenter.cs:24`（设置同款 `BottomSheetDialog` + 分组列表导航；初次打开显示工具列表，系统返回先回列表再关闭浮层）。
+  - Android：`PhotoViewer.Android/Native/AndroidToolsPresenter.cs:24`（设置同款 `BottomSheetDialog` + 分组列表导航；默认半屏收起展示，初次打开显示工具列表，系统返回先回列表再关闭浮层）。
   - **TOOLS-01@win**：工具窗口 960×720、最小 800×560，因常驻侧栏 240 + EXIF 表格 720；普通窗口（进任务栏/Alt-Tab、可最大化）（已登记 10-18）。
   - **TOOLS-01@mac / @ios / @android**：不建「照片数据统计」入口（已登记 10-18）。
 - **TOOLS-02@win**：无首页/返回，常驻三分类；分类顺序与其他端一致为 EXIF → DINO → 照片数据统计（已登记 10-18）。
