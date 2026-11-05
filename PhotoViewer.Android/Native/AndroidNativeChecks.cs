@@ -30,7 +30,7 @@ namespace PhotoViewer.Android.Native;
 /// 仅测试路径调用，不改变产品行为。
 /// </summary>
 /// <remarks>
-/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> 是独立模式：自带素材与流程、按精确模式名分发
+/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> 是独立模式：按精确模式名分发，素材入口见模块手册
 /// （<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
@@ -753,6 +753,11 @@ internal static partial class AndroidNativeChecks
         var directory = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "PhotoViewer");
         Directory.CreateDirectory(directory);
         File.WriteAllText(IOPath.Combine(directory, $"android-checks-{_mode}.txt"), report.ToString());
+        if (_mode is "zoom" or "input")
+        {
+            global::Android.Util.Log.Info("PhotoViewerChecks", $"{_mode}: PASS {_passed} / FAIL {_failed}");
+            foreach (var line in Lines) global::Android.Util.Log.Info("PhotoViewerChecks", line);
+        }
         Console.WriteLine(report.ToString());
         Console.WriteLine(_failed == 0 ? $"[NativeCheck] PASS {_mode} ({_passed} checks)" : $"[NativeCheck] FAIL {_mode} ({_failed} failed / {_passed + _failed})");
     }
@@ -1215,5 +1220,5 @@ internal static partial class AndroidNativeChecks
     /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c>）：精确模式名匹配、自带素材与流程，
     /// 不并入 <c>all</c>（现有 <c>all</c> 五组连跑在该模拟器上偶发 SIGSEGV）。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter";
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom";
 }

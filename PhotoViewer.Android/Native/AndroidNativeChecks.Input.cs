@@ -18,7 +18,8 @@ namespace PhotoViewer.Android.Native;
 /// 并经 <c>Activity.DispatchKeyEvent</c> 构造带 <c>RepeatCount</c> 的真实按键事件核对 INPUT-05 首下/重复设闸与键位别名，
 /// 再通过控制栏虚拟节点快照与硬件键盘派发核对 TOOLBAR-11 焦点顺序与命令触发，最后向主图产品入口
 /// <c>AndroidPhotoView.OnTouchEvent</c> 派发真实 Down/Move/Up/Cancel（DownTime 起于第一下）核对触摸语义：
-/// 放大态拖动跨长按超时、历史批次越容差、双指与 Cancel 后的长按抑制、静止长按与真实双击（INPUT-03/06/07）。
+/// 放大态拖动跨长按超时、历史批次越容差、双指与 Cancel 后的长按抑制、静止长按与真实双击（INPUT-03/06/07），
+/// 时间戳积压的 Down/移动与主线程阻塞恢复后的积压批次、候选过期后的长按、动画途中触摸接管（IMAGE-05）。
 /// 事件与按键都走产品自己的入口，不直接调用内部派发方法，也不另开测试分支。
 /// </summary>
 internal static partial class AndroidNativeChecks
@@ -48,6 +49,10 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("INPUT-07 历史批次越容差", CheckHistoryBatchAsync);
         await RunStepAsync("INPUT-07 双指取消", CheckTwoFingerAsync);
         await RunStepAsync("INPUT-07 静止长按", CheckLongPressAsync);
+        await RunStepAsync("INPUT-07 积压 Down", CheckBackloggedDownAsync);
+        await RunStepAsync("INPUT-07 阻塞恢复积压移动", CheckBlockedQueueAsync);
+        await RunStepAsync("INPUT-07 候选过期后长按", CheckExpiredCandidateAsync);
+        await RunStepAsync("IMAGE-05 动画中断停当前帧", CheckAnimationTakeoverAsync);
         await RunStepAsync("INPUT-03 真实双击", CheckRealDoubleTapAsync);
     }
 
@@ -475,6 +480,25 @@ internal static partial class AndroidNativeChecks
         return consumed;
     }
 
+    /// <summary>
+    /// 连事件时间一起给出的单指触摸：DownTime 与 EventTime 都取过去时刻，模拟主线程阻塞后积压的事件
+    /// （<see cref="SendPhotoTouch"/> 的事件时间恒为当前时刻，造不出积压）。
+    /// </summary>
+    /// <param name="action">触摸动作。</param>
+    /// <param name="downTime">本手势第一下的时间。</param>
+    /// <param name="eventTime">事件发生时间。</param>
+    /// <param name="x">视图内横坐标（px）。</param>
+    /// <param name="y">视图内纵坐标（px）。</param>
+    /// <returns>是否被消费。</returns>
+    private static bool SendPhotoTouchAt(MotionEventActions action, long downTime, long eventTime, float x, float y)
+    {
+        using var e = PhotoTouch(downTime, eventTime, action, x, y);
+        if (action == MotionEventActions.Down) _touchDownTime = downTime;
+        bool consumed = _root!.Photo.OnTouchEvent(e);
+        if (action is MotionEventActions.Up or MotionEventActions.Cancel) _touchDownTime = 0;
+        return consumed;
+    }
+
     /// <summary>异常收尾：仍按着的手指补一条 Cancel，下一步不继承按下状态。</summary>
     /// <param name="x">视图内横坐标（px）。</param>
     /// <param name="y">视图内纵坐标（px）。</param>
@@ -725,6 +749,203 @@ internal static partial class AndroidNativeChecks
                     $"longPress={afterHold} menu={menuShown} fit={photo.IsFit} "
                     + $"pan=({viewport.PanX - panX:0.#},{viewport.PanY - panY:0.#}) {probe.Describe}");
             }
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：Down 因主线程阻塞积压约 1s 才送达——平台按 DownTime 计时会让长按候选在事件刚落地就触发。
+    /// 按住时长须从真正送达起算：候选先得到一次调度，随后递送积压的移动/抬起仍要作废它——零长按、零点按，拖动照常平移。
+    /// </summary>
+    private static async Task CheckBackloggedDownAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            await ZoomForGestureAsync("放大到物理 200%");
+            probe.Reset();
+            var viewport = photo.Viewport;
+            double panX = viewport.PanX, panY = viewport.PanY;
+            float step = DragStep();
+            long downTime = SystemClock.UptimeMillis() - 1000;
+            int candidatesBefore = photo.LongPressCandidatesForChecks;
+            bool consumed = SendPhotoTouchAt(MotionEventActions.Down, downTime, downTime, center.X, center.Y);
+            // 让平台的长按处理器先跑一次（候选在这一刻登记），再递送同一批已经积压的移动与抬起。
+            await Task.Delay(150);
+            bool candidateScheduled = photo.LongPressCandidatesForChecks > candidatesBefore;
+            int afterCandidate = probe.LongPress;
+            consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, center.X - step, center.Y);
+            consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, center.X - step * 2, center.Y + step * .5f);
+            consumed &= SendPhotoTouch(MotionEventActions.Up, downTime, center.X - step * 2, center.Y + step * .5f);
+            await Task.Delay(LongPressWaitMs);
+            double movedX = viewport.PanX - panX, movedY = viewport.PanY - panY;
+            Check("INPUT-07 积压 Down 不长按",
+                consumed && candidateScheduled && afterCandidate == 0 && probe.LongPress == 0
+                && probe.Tap == 0 && probe.Swipe == 0 && !photo.IsFit
+                && (Math.Abs(movedX) > 1 || Math.Abs(movedY) > 1),
+                $"consumed={consumed} candidate={candidateScheduled} afterCandidate={afterCandidate} "
+                + $"pan=({movedX:0.#},{movedY:0.#}) fit={photo.IsFit} {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：Down 及时送达后真实阻塞主线程超过长按超时，恢复时先处理平台候选、再递送积压移动；
+    /// 最终确认必须让积压移动先落地，不弹菜单，位移照常平移。
+    /// </summary>
+    private static async Task CheckBlockedQueueAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            await ZoomForGestureAsync("放大到物理 200%");
+            probe.Reset();
+            var viewport = photo.Viewport;
+            double panX = viewport.PanX, panY = viewport.PanY;
+            float step = DragStep();
+            long downTime = SystemClock.UptimeMillis();
+            int timeout = (int)ViewConfiguration.LongPressTimeout;
+            int candidatesBefore = photo.LongPressCandidatesForChecks;
+            bool consumed = SendPhotoTouchAt(MotionEventActions.Down, downTime, downTime, center.X, center.Y);
+            bool backlogged = false;
+            photo.PostDelayed(() =>
+            {
+                backlogged = true;
+                consumed &= SendPhotoTouchAt(MotionEventActions.Move, downTime, downTime + 30, center.X - step * 2, center.Y);
+                consumed &= SendPhotoTouchAt(MotionEventActions.Up, downTime, downTime + 60, center.X - step * 2, center.Y);
+            }, timeout + 20);
+            System.Threading.Thread.Sleep(timeout + 100);
+            await Task.Delay(LongPressWaitMs);
+            bool candidateScheduled = photo.LongPressCandidatesForChecks > candidatesBefore;
+            double movedX = viewport.PanX - panX, movedY = viewport.PanY - panY;
+            Check("INPUT-07 阻塞恢复后积压移动不误判",
+                consumed && backlogged && candidateScheduled && probe.LongPress == 0 && probe.Tap == 0
+                && !photo.IsFit && (Math.Abs(movedX) > 1 || Math.Abs(movedY) > 1),
+                $"consumed={consumed} backlogged={backlogged} candidate={candidateScheduled} "
+                + $"pan=({movedX:0.#},{movedY:0.#}) fit={photo.IsFit} {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：积压 Down 的候选尚未确认就被新一轮 Down 取代——旧候选不得补发，
+    /// 新手势静止按住仍然恰好一次菜单，抬起后也不再补一次。
+    /// </summary>
+    private static async Task CheckExpiredCandidateAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            if (!photo.IsFit)
+            {
+                photo.ToggleFit();
+                await WaitStableViewportAsync("回到适应态");
+            }
+            probe.Reset();
+            long staleDown = SystemClock.UptimeMillis() - 1000;
+            SendPhotoTouchAt(MotionEventActions.Down, staleDown, staleDown, center.X, center.Y);
+            // 平台候选已登记、确认时间还没到：此刻来一轮新的 Down，旧候选必须作废。
+            await Task.Delay(150);
+            int afterStale = probe.LongPress;
+            long downTime = SystemClock.UptimeMillis();
+            SendPhotoTouch(MotionEventActions.Down, downTime, center.X, center.Y);
+            await Task.Delay(LongPressWaitMs);
+            int afterHold = probe.LongPress;
+            bool menuShown = root.DismissPhotoMenu();
+            SendPhotoTouch(MotionEventActions.Up, downTime, center.X, center.Y);
+            await Task.Delay(150);
+            Check("INPUT-07 候选过期后长按一次",
+                afterStale == 0 && afterHold == 1 && menuShown && probe.LongPress == 1 && probe.Tap == 0,
+                $"staleCandidate={afterStale} hold={afterHold} menu={menuShown} {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// IMAGE-05：放大动画途中按下即接管——停在当前帧，不跳到动画终点；随后的拖动与等待都不被迟到的旧结束回调覆盖。
+    /// </summary>
+    private static async Task CheckAnimationTakeoverAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            if (!photo.IsFit)
+            {
+                photo.ToggleFit();
+                await WaitStableViewportAsync("回到适应态");
+            }
+            probe.Reset();
+            photo.ZoomToPhysical(2);
+            // 等动画走到中段再按下：若取消把视口拉到旧终点，倍率会在同一帧跳到 2。
+            bool midAnimation = false;
+            var deadline = DateTime.UtcNow.AddSeconds(5);
+            while (DateTime.UtcNow < deadline)
+            {
+                double scale = photo.PhysicalScale;
+                if (scale > 1 && scale < 1.95)
+                {
+                    midAnimation = true;
+                    break;
+                }
+                if (scale >= 1.99) break;
+                await Task.Delay(8);
+            }
+            float step = DragStep();
+            long downTime = SystemClock.UptimeMillis();
+            double beforeDown = photo.PhysicalScale;
+            bool consumed = SendPhotoTouch(MotionEventActions.Down, downTime, center.X, center.Y);
+            // 与 Down 同一个同步调用链里读：中间没有帧插进来，差距只可能来自取消时把视口拉到旧终点。
+            double afterDown = photo.PhysicalScale;
+            var viewport = photo.Viewport;
+            double panX = viewport.PanX, panY = viewport.PanY;
+            consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, center.X - step * 2, center.Y - step * .5f);
+            consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, center.X - step * 3, center.Y);
+            // 旧动画的结束回调早该在 250ms 到达：等过去，看它有没有覆盖接管后的状态。
+            await Task.Delay(400);
+            double later = photo.PhysicalScale;
+            double movedX = viewport.PanX - panX, movedY = viewport.PanY - panY;
+            SendPhotoTouch(MotionEventActions.Up, downTime, center.X - step * 3, center.Y);
+            await Task.Delay(150);
+            bool stopped = Math.Abs(afterDown - beforeDown) < .02;
+            bool keptLater = Math.Abs(later - afterDown) < .02;
+            bool panned = Math.Abs(movedX) > 1 || Math.Abs(movedY) > 1;
+            Check("IMAGE-05 动画中断停当前帧",
+                midAnimation && consumed && stopped && keptLater && panned && !photo.IsFit
+                && probe.LongPress == 0 && probe.Tap == 0,
+                $"mid={midAnimation} scale={beforeDown:0.###}->{afterDown:0.###}->{later:0.###} "
+                + $"pan=({movedX:0.#},{movedY:0.#}) fit={photo.IsFit} {probe.Describe}");
         }
         finally
         {

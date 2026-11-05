@@ -103,6 +103,8 @@ public static class AndroidNativeShell
         // 压测独占一份隔离设置：否则一轮压测会把用户设置写脏，下一轮也无法从默认值起跑。
         if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
+        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input")
+            AndroidSettingsStorage.UseIsolatedProfile("input-checks");
         InitializePlatform(activity);
 
         // 内存上限探针（验收）：只读系统退出原因，或接管界面做逐步分配；都不建主界面。

@@ -58,6 +58,15 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private bool _gestureCancelled;
     private bool _longPressed;
     private long _downTime;
+    /// <summary>本轮 Down 真正被视图接收的时刻（uptime）：积压事件的按住时长从这里起算，不把阻塞时长当成已按住。</summary>
+    private long _downReceivedAt;
+    /// <summary>触摸轮次：每次 Down 递增，异步确认据此丢弃上一轮的长按候选。</summary>
+    private int _touchRound;
+    /// <summary>待确认的长按候选；被新候选取代或作废后为 null，已投递的旧回收不再生效。</summary>
+    private Java.Lang.Runnable? _longPressConfirm;
+    private float _longPressX, _longPressY;
+    /// <summary>系统长按阈值（毫秒），与手势识别器读同一份系统配置。</summary>
+    private readonly long _longPressTimeoutMs = (int)ViewConfiguration.LongPressTimeout;
     private float _downX, _downY, _lastX, _lastY, _lastFocusX, _lastFocusY;
     private bool _hasLastFocus;
     /// <summary>离散滚轮尚未累积到一格的增量（INPUT-04）。</summary>
@@ -93,6 +102,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     internal bool NeedsFull => _viewport.NeedsFull;
     /// <summary>当前是否已有纹理。</summary>
     internal bool HasImage => _image != null && _renderer.HasTexture;
+    /// <summary>验收用：平台长按候选被登记的次数（含随后被积压的移动/抬起作用作废的候选）。</summary>
+    internal int LongPressCandidatesForChecks { get; private set; }
     /// <summary>屏幕密度（验收换算 dp/px）。</summary>
     internal double Density => _density;
     /// <summary>导航图逻辑点尺寸。</summary>
@@ -405,6 +416,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         {
             case MotionEventActions.Down:
                 CancelAnimation();
+                // 新一轮按下：上一轮尚未确认的长按候选作废，按住时长从这次真正送达视图起算。
+                InvalidateLongPressCandidate();
+                _touchRound++;
+                _downReceivedAt = SystemClock.UptimeMillis();
                 _downX = _lastX = e.GetX();
                 _downY = _lastY = e.GetY();
                 _downTime = e.DownTime;
@@ -423,6 +438,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 _moved = true;
                 _dragging = false;
                 _hasLastFocus = false;
+                InvalidateLongPressCandidate();
                 CancelTapGesture(e);
                 break;
 
@@ -432,6 +448,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 break;
 
             case MotionEventActions.Cancel:
+                InvalidateLongPressCandidate();
                 _touchActive = false;
                 CancelTapGesture(e);
                 break;
@@ -466,6 +483,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 break;
 
             case MotionEventActions.Up:
+                InvalidateLongPressCandidate();
                 float upX = e.GetX(), upY = e.GetY();
                 if (_touchActive && !_longPressed && !_multiTouch && _swipeStartedFit && _moved)
                     ApplySwipe((upX - _downX) / _density, (upY - _downY) / _density);
@@ -497,7 +515,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             }
             if (ExceededTouchSlop(e.GetX(), e.GetY())) _moved = true;
         }
-        if (_moved) CancelTapGesture(e);
+        if (_moved)
+        {
+            InvalidateLongPressCandidate();
+            CancelTapGesture(e);
+        }
     }
 
     private bool ExceededTouchSlop(float x, float y)
@@ -513,6 +535,69 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         using var cancel = MotionEvent.Obtain(e)!;
         cancel.Action = MotionEventActions.Cancel;
         _gestures.OnTouchEvent(cancel);
+    }
+
+    /// <summary>
+    /// 平台长按候选：只登记，不立即判定。平台按 <c>DownTime</c> 计时，Down 因主线程阻塞而积压时
+    /// 候选会在事件刚送达就触发，此时积压的移动/抬起还没落地；按住时长改从本轮 Down 真正送达视图起算。
+    /// 事件只在本次调用内读取触发点，不跨异步持有。
+    /// </summary>
+    /// <param name="e">触发候选的事件。</param>
+    private void BeginLongPressCandidate(MotionEvent e)
+    {
+        if (_disposed || !_touchActive || _longPressed || _moved || _multiTouch || _pinching || _gestureCancelled) return;
+        if (e.DownTime != _downTime) return;
+        LongPressCandidatesForChecks++;
+        _longPressX = e.GetX();
+        _longPressY = e.GetY();
+        long remaining = _downReceivedAt + _longPressTimeoutMs - SystemClock.UptimeMillis();
+        ArmLongPressConfirmation(remaining, nextFrame: remaining <= 0);
+    }
+
+    /// <summary>排定一次长按确认：按住时长不足时按剩余时间重排，够时长也先让一帧再最终判定。</summary>
+    /// <param name="delayMs">距本轮 Down 真正送达满阈值的剩余毫秒。</param>
+    /// <param name="nextFrame">是否等到下一帧，把本轮已积压/待处理的移动与抬起先交给手势状态。</param>
+    private void ArmLongPressConfirmation(long delayMs, bool nextFrame)
+    {
+        int round = _touchRound;
+        Java.Lang.Runnable confirmation = null!;
+        confirmation = new Java.Lang.Runnable(() =>
+        {
+            if (!ReferenceEquals(_longPressConfirm, confirmation) || round != _touchRound) return;
+            if (nextFrame) ConfirmLongPress(round, confirmation);
+            else ArmLongPressConfirmation(0, nextFrame: true);
+        });
+        _longPressConfirm = confirmation;
+        if (nextFrame) PostOnAnimation(confirmation);
+        else PostDelayed(confirmation, Math.Max(1L, delayMs));
+    }
+
+    /// <summary>最终确认：本轮标识与按住状态在确认这一刻重新核对，已作废或已过期的候选不生效。</summary>
+    /// <param name="round">登记候选时的触摸轮次。</param>
+    /// <param name="confirmation">本次确认的回调，与当前候选不同即表示已被取代或作废。</param>
+    private void ConfirmLongPress(int round, Java.Lang.Runnable confirmation)
+    {
+        if (!ReferenceEquals(_longPressConfirm, confirmation)) return;
+        _longPressConfirm = null;
+        if (_disposed || round != _touchRound || !_touchActive || _longPressed || _moved
+            || _multiTouch || _pinching || _gestureCancelled) return;
+        long elapsed = SystemClock.UptimeMillis() - _downReceivedAt;
+        if (elapsed < _longPressTimeoutMs)
+        {
+            ArmLongPressConfirmation(_longPressTimeoutMs - elapsed, nextFrame: false);
+            return;
+        }
+        _longPressed = true;
+        _moved = true;
+        LongPressRequested?.Invoke(_longPressX, _longPressY);
+    }
+
+    /// <summary>作废旧候选：新 Down、第二指、越容差的移动、抬起、取消与释放都让当前候选失效。</summary>
+    private void InvalidateLongPressCandidate()
+    {
+        var pending = _longPressConfirm;
+        _longPressConfirm = null;
+        if (pending != null) RemoveCallbacks(pending);
     }
 
     /// <summary>
@@ -599,9 +684,12 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         };
         animator.AnimationEnd += (_, _) =>
         {
+            // 取消（用户触摸接管、被新动画取代、释放）同样会走到结束回调：只让仍是当前动画的正常完成落地，
+            // 迟到的旧结束不得把视口拉回旧终点，触摸接管停在当前帧。
+            if (!ReferenceEquals(_animation, animator)) return;
+            _animation = null;
             _viewport.ApplyGestureView(endScale, endX, endY, interactive: false);
             if (endFit || _viewport.Scale < _viewport.FitScale - 1e-9) _viewport.FitToView();
-            _animation = null;
             Draw();
             ViewportChanged?.Invoke();
         };
@@ -609,7 +697,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         animator.Start();
     }
 
-    /// <summary>取消进行中的视口动画（用户触摸接管）。</summary>
+    /// <summary>取消进行中的视口动画（用户触摸接管、被新动画取代）：停在当前帧，迟到结束回调不再改写视口。</summary>
     private void CancelAnimation()
     {
         var animation = _animation;
@@ -625,6 +713,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         {
             _disposed = true;
             CancelAnimation();
+            InvalidateLongPressCandidate();
             MemoryGovernor.Unregister(this);
             if (ReferenceEquals(AndroidMemoryBudgetProvider.ExternalFootprint, _textureFootprint))
                 AndroidMemoryBudgetProvider.ExternalFootprint = null;
@@ -677,16 +766,12 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             return true;
         }
 
-        /// <summary>长按：弹主图菜单。</summary>
+        /// <summary>长按：登记候选，由视图按本轮实际按住时长与积压输入最终判定。</summary>
         /// <param name="e">事件。</param>
         public override void OnLongPress(MotionEvent? e)
         {
-            if (e == null || _owner._disposed || !_owner._touchActive || _owner._moved
-                || _owner._multiTouch || _owner._pinching || _owner._gestureCancelled
-                || e.DownTime != _owner._downTime) return;
-            _owner._longPressed = true;
-            _owner._moved = true;
-            _owner.LongPressRequested?.Invoke(e.GetX(), e.GetY());
+            if (e == null) return;
+            _owner.BeginLongPressCandidate(e);
         }
 
         /// <summary>双击切换适应/100%。</summary>

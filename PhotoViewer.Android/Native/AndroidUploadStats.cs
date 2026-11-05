@@ -5,7 +5,7 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// 主图纹理上传的常驻轻量统计（仅内存环形缓冲，无 UI、无文件、无采样线程）。
-/// <see cref="AndroidPhotoRenderer.SetImage"/> 每次换图记一条"纹理尺寸 + 建纹理/分配/分块上传/mipmap 的 CPU 耗时"：
+/// <see cref="AndroidPhotoRenderer.SetImage"/> 每次换图记一条"纹理尺寸 + 建纹理/分配/像素上传/mipmap 的 CPU 耗时"：
 /// 上传同步发生在 UI 线程，直接计入切换延迟；未单独测量就分不清"解码慢"与"上传慢"。
 /// 同一 <see cref="PhotoViewer.Core.Image.DecodedImage"/> 实例再次上屏视为缓存命中，记 0 ms 并单独累计命中次数。
 /// 压测汇总行（<c>StressFlipDriver.ExtraSummary</c>）据此报 p50/p95/max，字段名与 Windows 口径一致。
@@ -36,14 +36,19 @@ internal static class AndroidUploadStats
         /// <summary>glTexImage2D 分配纹理存储。</summary>
         public readonly double AllocMs;
 
-        /// <summary>分块 glTexSubImage2D 像素上传。</summary>
+        /// <summary>像素 glTexSubImage2D 像素上传。</summary>
         public readonly double UpdateMs;
 
         /// <summary>glGenerateMipmap。</summary>
         public readonly double MipsMs;
 
+        public readonly long CopyBytes;
+        public readonly int Chunks;
+        public readonly double CopyMs;
+
         /// <summary>构造一条记录。</summary>
-        public Entry(int width, int height, double createMs, double allocMs, double updateMs, double mipsMs)
+        public Entry(int width, int height, double createMs, double allocMs, double updateMs, double mipsMs,
+            long copyBytes = 0, int chunks = 0, double copyMs = 0)
         {
             Width = width;
             Height = height;
@@ -51,24 +56,22 @@ internal static class AndroidUploadStats
             AllocMs = allocMs;
             UpdateMs = updateMs;
             MipsMs = mipsMs;
+            CopyBytes = copyBytes;
+            Chunks = chunks;
+            CopyMs = copyMs;
         }
 
         /// <summary>UI 线程四段合计。</summary>
         public double TotalMs => CreateMs + AllocMs + UpdateMs + MipsMs;
     }
 
-    /// <summary>记一次上传（UI 线程调用）。</summary>
-    /// <param name="width">纹理宽</param>
-    /// <param name="height">纹理高</param>
-    /// <param name="createMs">建纹理 + 参数耗时</param>
-    /// <param name="allocMs">glTexImage2D 耗时</param>
-    /// <param name="updateMs">分块上传耗时</param>
-    /// <param name="mipsMs">mipmap 耗时</param>
-    internal static void Record(int width, int height, double createMs, double allocMs, double updateMs, double mipsMs)
+    /// <summary>记一次上传（UI 线程调用）；copyMs 已包含在 updateMs 中。</summary>
+    internal static void Record(int width, int height, double createMs, double allocMs, double updateMs, double mipsMs,
+        long copyBytes, int chunks, double copyMs)
     {
         lock (Gate)
         {
-            Ring[_next] = new Entry(width, height, createMs, allocMs, updateMs, mipsMs);
+            Ring[_next] = new Entry(width, height, createMs, allocMs, updateMs, mipsMs, copyBytes, chunks, copyMs);
             _next = (_next + 1) % Capacity;
             if (_count < Capacity) _count++;
         }
@@ -88,6 +91,14 @@ internal static class AndroidUploadStats
             Ring[_next] = new Entry(width, height, 0, 0, 0, 0);
             _next = (_next + 1) % Capacity;
             if (_count < Capacity) _count++;
+        }
+    }
+
+    internal static Entry? LatestForChecks
+    {
+        get
+        {
+            lock (Gate) return _count == 0 ? null : Ring[(_next - 1 + Capacity) % Capacity];
         }
     }
 

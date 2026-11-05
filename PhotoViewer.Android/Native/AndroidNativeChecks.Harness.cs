@@ -46,6 +46,9 @@ internal static partial class AndroidNativeChecks
                 case "filter":
                     await RunFilterBarChecksAsync();
                     break;
+                case "zoom":
+                    await RunZoomChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

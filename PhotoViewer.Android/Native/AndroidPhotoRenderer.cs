@@ -72,6 +72,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private TextureEntry? _current;
     private TextureEntry? _spareTexture;
     private long _textureBytes;
+    private ByteBuffer? _uploadBuffer;
     private bool _disposed;
     private bool _surfaceP3;
 
@@ -221,6 +222,8 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 Bind(null);
                 return;
             }
+            if (image.Encoding != PixelEncoding.Rgba8)
+                throw new NotSupportedException($"Android 主图纹理不支持 {image.Encoding}");
             if (_current?.Matches(image) == true)
             {
                 // 同一产物已在显存：切图零上传，压测统计记 0 ms 缓存命中
@@ -257,22 +260,35 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 createMs = 0;
             }
             upload.Restart();
-            // 分块上传：整图 direct buffer 在 24MP 上会额外占约 96MB，按 4MB 分块走 TexSubImage2D。
             int rowBytes = checked(image.Width * 4);
-            int chunkBytes = Math.Min(checked(rowBytes * image.Height), 4 * 1024 * 1024);
-            int chunkRows = Math.Max(1, chunkBytes / rowBytes);
-            var buffer = ByteBuffer.AllocateDirect(chunkRows * rowBytes) as ByteBuffer;
             GLES20.GlTexImage2D(GLES20.GlTexture2d, 0, GLES20.GlRgba, image.Width, image.Height, 0,
                 GLES20.GlRgba, GLES20.GlUnsignedByte, (ByteBuffer?)null);
             var allocMs = upload.Elapsed.TotalMilliseconds;
             upload.Restart();
-            if (buffer != null)
+            var pixels = image.Pixels;
+            long copyBytes = 0;
+            int chunks = 0;
+            double copyMs = 0;
+            if (image.Stride == rowBytes)
             {
+                UploadPacked(image, pixels);
+                chunks = 1;
+            }
+            else
+            {
+                int chunkRows = Math.Max(1, Math.Min(checked(rowBytes * image.Height), 4 * 1024 * 1024) / rowBytes);
+                var buffer = UploadBuffer(checked(chunkRows * rowBytes));
+                var address = buffer.GetDirectBufferAddress();
+                if (address == IntPtr.Zero) throw new InvalidOperationException("无法访问纹理上传缓冲");
                 for (int y = 0; y < image.Height; y += chunkRows)
                 {
                     int rows = Math.Min(chunkRows, image.Height - y);
-                    buffer.Clear();
-                    buffer.Put(image.Pixels, y * rowBytes, rows * rowBytes);
+                    long copyStart = Stopwatch.GetTimestamp();
+                    for (int row = 0; row < rows; row++)
+                        Marshal.Copy(pixels, (y + row) * image.Stride, IntPtr.Add(address, row * rowBytes), rowBytes);
+                    copyMs += Stopwatch.GetElapsedTime(copyStart).TotalMilliseconds;
+                    copyBytes += (long)rows * rowBytes;
+                    chunks++;
                     buffer.Position(0);
                     GLES20.GlTexSubImage2D(GLES20.GlTexture2d, 0, 0, y, image.Width, rows,
                         GLES20.GlRgba, GLES20.GlUnsignedByte, buffer);
@@ -283,9 +299,35 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             GLES20.GlGenerateMipmap(GLES20.GlTexture2d);
             var mipsMs = upload.Elapsed.TotalMilliseconds;
             GLES20.GlBindTexture(GLES20.GlTexture2d, 0);
-            AndroidUploadStats.Record(image.Width, image.Height, createMs, allocMs, updateMs, mipsMs);
+            AndroidUploadStats.Record(image.Width, image.Height, createMs, allocMs, updateMs, mipsMs,
+                copyBytes, chunks, copyMs);
             Bind(entry);
         }
+    }
+
+    private static unsafe void UploadPacked(DecodedImage image, byte[] pixels)
+    {
+        // GL 在调用返回前消费客户端像素；只在同步上传期间固定租约内的数组，不另建整图副本。
+        fixed (byte* address = pixels)
+        {
+            var handle = global::Android.Runtime.JNIEnv.NewDirectByteBuffer((IntPtr)address,
+                checked((long)image.Width * image.Height * 4));
+            using var buffer = Java.Lang.Object.GetObject<ByteBuffer>(handle,
+                global::Android.Runtime.JniHandleOwnership.TransferLocalRef)
+                ?? throw new InvalidOperationException("无法创建纹理像素视图");
+            GLES20.GlTexSubImage2D(GLES20.GlTexture2d, 0, 0, 0, image.Width, image.Height,
+                GLES20.GlRgba, GLES20.GlUnsignedByte, buffer);
+        }
+    }
+
+    private ByteBuffer UploadBuffer(int capacity)
+    {
+        if (_uploadBuffer != null && _uploadBuffer.Capacity() >= capacity) return _uploadBuffer;
+        var replacement = ByteBuffer.AllocateDirect(capacity)
+            ?? throw new InvalidOperationException("无法分配纹理上传缓冲");
+        _uploadBuffer?.Dispose();
+        _uploadBuffer = replacement;
+        return replacement;
     }
 
     /// <summary>切换当前纹理：退下的旧纹理进最近缓存（实例已回收或超出容量则释放）。</summary>
@@ -494,6 +536,57 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         _ => (x, y),
     };
 
+    internal (bool Matches, string Details) CheckTexturePixelsForChecks(DecodedImage image)
+    {
+        lock (_sync)
+        {
+            if (_current?.Matches(image) != true || _display == null || _surface == null || _context == null)
+                return (false, "texture unavailable");
+            EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+            int[] previous = new int[1], framebuffer = new int[1];
+            GLES20.GlGetIntegerv(GLES20.GlFramebufferBinding, previous, 0);
+            GLES20.GlGenFramebuffers(1, framebuffer, 0);
+            using var pixel = ByteBuffer.AllocateDirect(4)!;
+            int checkedPixels = 0;
+            try
+            {
+                GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, framebuffer[0]);
+                GLES20.GlFramebufferTexture2D(GLES20.GlFramebuffer, GLES20.GlColorAttachment0,
+                    GLES20.GlTexture2d, _current.Handle, 0);
+                if (GLES20.GlCheckFramebufferStatus(GLES20.GlFramebuffer) != GLES20.GlFramebufferComplete)
+                    return (false, "incomplete framebuffer");
+                int chunkRows = Math.Max(1, 4 * 1024 * 1024 / checked(image.Width * 4));
+                var rows = new SortedSet<int> { 0, image.Height - 1 };
+                for (int y = chunkRows; y < image.Height; y += chunkRows)
+                {
+                    rows.Add(y - 1);
+                    rows.Add(y);
+                }
+                foreach (int y in rows)
+                foreach (int x in new[] { 0, image.Width / 2, image.Width - 1 })
+                {
+                    pixel.Position(0);
+                    GLES20.GlReadPixels(x, y, 1, 1, GLES20.GlRgba, GLES20.GlUnsignedByte, pixel);
+                    int offset = y * image.Stride + x * 4;
+                    for (int channel = 0; channel < 4; channel++)
+                    {
+                        byte actual = unchecked((byte)pixel.Get(channel));
+                        if (actual != image.Pixels[offset + channel])
+                            return (false, $"pixel({x},{y}) channel={channel} gpu={actual} source={image.Pixels[offset + channel]}");
+                    }
+                    checkedPixels++;
+                }
+                int error = GLES20.GlGetError();
+                return (error == GLES20.GlNoError, $"pixels={checkedPixels} rows={rows.Count} glError={error}");
+            }
+            finally
+            {
+                GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, previous[0]);
+                GLES20.GlDeleteFramebuffers(1, framebuffer, 0);
+            }
+        }
+    }
+
     /// <summary>
     /// 离屏渲染导航图（长边 150 点、按显示朝向比例），供缩放指示器使用；只在展示图变化时调用。
     /// </summary>
@@ -671,6 +764,8 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 if (_program != 0) GLES20.GlDeleteProgram(_program);
             }
             ReleaseContext();
+            _uploadBuffer?.Dispose();
+            _uploadBuffer = null;
         }
     }
 
