@@ -54,6 +54,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     private bool _multiTouch;
     private bool _swipeStartedFit;
     private bool _moved;
+    private bool _touchActive;
+    private bool _gestureCancelled;
+    private bool _longPressed;
+    private long _downTime;
     private float _downX, _downY, _lastX, _lastY, _lastFocusX, _lastFocusY;
     private bool _hasLastFocus;
     /// <summary>离散滚轮尚未累积到一格的增量（INPUT-04）。</summary>
@@ -396,15 +400,17 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     /// <returns>始终消费（主图区域没有可滚动子视图）。</returns>
     public override bool OnTouchEvent(MotionEvent? e)
     {
-        if (e == null) return false;
-        _scaleDetector.OnTouchEvent(e);
-        _gestures.OnTouchEvent(e);
+        if (e == null || _disposed) return false;
         switch (e.ActionMasked)
         {
             case MotionEventActions.Down:
                 CancelAnimation();
                 _downX = _lastX = e.GetX();
                 _downY = _lastY = e.GetY();
+                _downTime = e.DownTime;
+                _touchActive = true;
+                _gestureCancelled = false;
+                _longPressed = false;
                 _swipeStartedFit = _viewport.IsFit;
                 _multiTouch = false;
                 _moved = false;
@@ -417,13 +423,28 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 _moved = true;
                 _dragging = false;
                 _hasLastFocus = false;
+                CancelTapGesture(e);
                 break;
 
             case MotionEventActions.Move:
-                if (e.PointerCount > 1 || _pinching) break;
+            case MotionEventActions.Up:
+                if (_touchActive) UpdateTouchMovement(e);
+                break;
+
+            case MotionEventActions.Cancel:
+                _touchActive = false;
+                CancelTapGesture(e);
+                break;
+        }
+
+        _scaleDetector.OnTouchEvent(e);
+        if (!_gestureCancelled) _gestures.OnTouchEvent(e);
+        switch (e.ActionMasked)
+        {
+            case MotionEventActions.Move:
+                if (!_touchActive || _longPressed || e.PointerCount > 1 || _pinching) break;
                 float x = e.GetX(), y = e.GetY();
                 double dx = (x - _lastX) / _density, dy = (y - _lastY) / _density;
-                if (Math.Abs(x - _downX) > _touchSlop || Math.Abs(y - _downY) > _touchSlop) _moved = true;
                 if (!_viewport.IsFit && _moved)
                 {
                     _viewport.PanBy(dx, dy);
@@ -436,17 +457,23 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
 
             case MotionEventActions.PointerUp:
                 _hasLastFocus = false;
-                if (e.PointerCount <= 1) _dragging = false;
+                int remaining = e.ActionIndex == 0 ? 1 : 0;
+                if (remaining < e.PointerCount)
+                {
+                    _lastX = e.GetX(remaining);
+                    _lastY = e.GetY(remaining);
+                }
                 break;
 
             case MotionEventActions.Up:
                 float upX = e.GetX(), upY = e.GetY();
-                if (!_multiTouch && _swipeStartedFit && _moved)
+                if (_touchActive && !_longPressed && !_multiTouch && _swipeStartedFit && _moved)
                     ApplySwipe((upX - _downX) / _density, (upY - _downY) / _density);
+                _touchActive = false;
                 _dragging = false;
                 _pinching = false;
                 _hasLastFocus = false;
-                PerformClick();
+                if (!_moved && !_multiTouch && !_longPressed) PerformClick();
                 break;
 
             case MotionEventActions.Cancel:
@@ -456,6 +483,36 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 break;
         }
         return true;
+    }
+
+    private void UpdateTouchMovement(MotionEvent e)
+    {
+        if (!_moved)
+        {
+            for (int history = 0; history < e.HistorySize; history++)
+            {
+                if (!ExceededTouchSlop(e.GetHistoricalX(history), e.GetHistoricalY(history))) continue;
+                _moved = true;
+                break;
+            }
+            if (ExceededTouchSlop(e.GetX(), e.GetY())) _moved = true;
+        }
+        if (_moved) CancelTapGesture(e);
+    }
+
+    private bool ExceededTouchSlop(float x, float y)
+    {
+        double dx = x - _downX, dy = y - _downY;
+        return dx * dx + dy * dy > (double)_touchSlop * _touchSlop;
+    }
+
+    private void CancelTapGesture(MotionEvent e)
+    {
+        if (_gestureCancelled) return;
+        _gestureCancelled = true;
+        using var cancel = MotionEvent.Obtain(e)!;
+        cancel.Action = MotionEventActions.Cancel;
+        _gestures.OnTouchEvent(cancel);
     }
 
     /// <summary>
@@ -615,7 +672,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         /// <returns>消费。</returns>
         public override bool OnSingleTapUp(MotionEvent? e)
         {
-            if (!_owner._moved) _owner.TapRequested?.Invoke();
+            if (_owner._touchActive && !_owner._moved && !_owner._multiTouch && !_owner._longPressed)
+                _owner.TapRequested?.Invoke();
             return true;
         }
 
@@ -623,8 +681,12 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         /// <param name="e">事件。</param>
         public override void OnLongPress(MotionEvent? e)
         {
+            if (e == null || _owner._disposed || !_owner._touchActive || _owner._moved
+                || _owner._multiTouch || _owner._pinching || _owner._gestureCancelled
+                || e.DownTime != _owner._downTime) return;
+            _owner._longPressed = true;
             _owner._moved = true;
-            _owner.LongPressRequested?.Invoke(e?.GetX() ?? 0, e?.GetY() ?? 0);
+            _owner.LongPressRequested?.Invoke(e.GetX(), e.GetY());
         }
 
         /// <summary>双击切换适应/100%。</summary>

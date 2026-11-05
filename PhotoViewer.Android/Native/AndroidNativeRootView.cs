@@ -105,6 +105,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal bool DetailFrameVisible => _detailVisible;
     /// <summary>共享分析编排（验收读取准星）。</summary>
     internal AnalysisPresenter AnalysisPresenterForChecks => _analysisPresenter;
+    /// <summary>分析宿主（验收用：订阅 HostChanged 核对纯平移零通知、真实内容变化有通知）。</summary>
+    internal AndroidAnalysisHost AnalysisHostForChecks => _analysisHost;
     /// <summary>状态提示条正文（验收用）。</summary>
     internal string? StatusTextForChecks => _statusLabel.Text;
     /// <summary>状态提示条是否可见（验收用）。</summary>
@@ -538,7 +540,6 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
         if (_main.Settings.ShowZoomIndicator) UpdateNavigationIndicator();
         UpdateDetailHighlight();
-        _analysisHost.Raise();
     }
 
     private void OnSessionChanged()
@@ -1136,6 +1137,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void HideDetailFrame()
     {
+        if (!_detailVisible) return;
         _detailVisible = false;
         _detailHighlight.Visibility = ViewStates.Gone;
         Invalidate();

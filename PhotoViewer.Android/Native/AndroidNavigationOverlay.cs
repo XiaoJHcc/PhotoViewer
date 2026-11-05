@@ -22,6 +22,7 @@ internal sealed class AndroidNavigationOverlay : View
     private double _navWidthDp, _navHeightDp;
     private (double X, double Y, double Width, double Height) _viewport;
     private string _zoomText = "100%";
+    private string? _spokenZoom;
     private Action<double, double>? _centerRequested;
     private bool _dragging;
     private double _grabX, _grabY;
@@ -66,8 +67,12 @@ internal sealed class AndroidNavigationOverlay : View
         _navWidthDp = navWidth;
         _navHeightDp = navHeight;
         _viewport = viewport;
-        _zoomText = zoomText;
-        ContentDescription = $"缩放指示器 {zoomText}";
+        if (_spokenZoom != zoomText)
+        {
+            _spokenZoom = zoomText;
+            _zoomText = zoomText;
+            ContentDescription = $"缩放指示器 {zoomText}";
+        }
         Invalidate();
     }
 

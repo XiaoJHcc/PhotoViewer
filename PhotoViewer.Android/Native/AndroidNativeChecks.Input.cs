@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Android.OS;
@@ -8,18 +9,21 @@ using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Settings;
+using IOPath = System.IO.Path;
 
 namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// <c>--es pv-check input</c>（验收专用）：合成滚动事件核对 INPUT-04 精确/离散滚轮分流与修饰键绑定优先（INPUT-03），
 /// 并经 <c>Activity.DispatchKeyEvent</c> 构造带 <c>RepeatCount</c> 的真实按键事件核对 INPUT-05 首下/重复设闸与键位别名，
-/// 再通过控制栏虚拟节点快照与硬件键盘派发核对 TOOLBAR-11 焦点顺序与命令触发。
+/// 再通过控制栏虚拟节点快照与硬件键盘派发核对 TOOLBAR-11 焦点顺序与命令触发，最后向主图产品入口
+/// <c>AndroidPhotoView.OnTouchEvent</c> 派发真实 Down/Move/Up/Cancel（DownTime 起于第一下）核对触摸语义：
+/// 放大态拖动跨长按超时、历史批次越容差、双指与 Cancel 后的长按抑制、静止长按与真实双击（INPUT-03/06/07）。
 /// 事件与按键都走产品自己的入口，不直接调用内部派发方法，也不另开测试分支。
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
-    /// <summary>输入模式入口：先打开固定素材，再按 INPUT-03 → INPUT-04 → INPUT-05 → TOOLBAR-11 顺序核对。</summary>
+    /// <summary>输入模式入口：先打开固定素材，再按 INPUT-03 → INPUT-04 → INPUT-05 → TOOLBAR-11 → 触摸语义顺序核对。</summary>
     private static async Task RunInputChecksAsync()
     {
         var activity = _activity!;
@@ -39,6 +43,12 @@ internal static partial class AndroidNativeChecks
         await RunStepAsync("INPUT-05 键位别名", CheckKeyAliasesAsync);
         await RunStepAsync("TOOLBAR-11 焦点顺序", CheckFocusOrderAsync);
         await RunStepAsync("TOOLBAR-11 键盘触发", CheckKeyboardCommandsAsync);
+        // 触摸语义换用手势专用素材（切到另一文件夹，排在最后不影响上面的列表索引断言）。
+        await RunStepAsync("INPUT-03 拖动跨长按", CheckDragPastLongPressAsync);
+        await RunStepAsync("INPUT-07 历史批次越容差", CheckHistoryBatchAsync);
+        await RunStepAsync("INPUT-07 双指取消", CheckTwoFingerAsync);
+        await RunStepAsync("INPUT-07 静止长按", CheckLongPressAsync);
+        await RunStepAsync("INPUT-03 真实双击", CheckRealDoubleTapAsync);
     }
 
     /// <summary>INPUT-04：触控板精确滚动只平移照片，不派发滚轮命令。</summary>
@@ -353,5 +363,479 @@ internal static partial class AndroidNativeChecks
         if (!ReferenceEquals(main.CurrentFile, files[0])) main.FileVM.ThumbnailList.SelectImageCommand(files[0]);
         await WaitAsync(() => ReferenceEquals(main.CurrentFile, files[0]) && session.Image != null, "回到首张", 10000);
         await Task.Delay(150);
+    }
+
+    // ── 触摸语义（真实 MotionEvent 走产品入口）────────────────────────────────────
+
+    /// <summary>手势素材文件名。</summary>
+    private const string GesturePhotoName = "gesture-large.jpg";
+
+    /// <summary>未收尾手势的按下时间（0 = 没有按着的手指），异常收尾据此补一条 Cancel。</summary>
+    private static long _touchDownTime;
+
+    /// <summary>系统径向触控容差（px）：与产品视图读同一份 <see cref="ViewConfiguration"/>，判定口径一致。</summary>
+    private static int TouchSlopPx => Math.Max(1, ViewConfiguration.Get(_activity!)?.ScaledTouchSlop ?? 8);
+
+    /// <summary>单个拖动采样点的位移（px）：远超系统径向容差，必然被判成拖动而不是点按。</summary>
+    private static float DragStep() => Math.Max(24, TouchSlopPx * 2);
+
+    /// <summary>系统长按 + 点按超时再加余量：静止按住这么久之后仍不得冒出长按/点按。</summary>
+    private static int LongPressWaitMs =>
+        (int)ViewConfiguration.LongPressTimeout + (int)ViewConfiguration.TapTimeout + 250;
+
+    /// <summary>主图视图中心的触摸像素坐标（视图自身坐标系）。</summary>
+    private static (float X, float Y) PhotoCenter()
+    {
+        var photo = _root!.Photo;
+        return (photo.Width / 2f, photo.Height / 2f);
+    }
+
+    /// <summary>生成可放大到物理 100% 的手势素材；拖动检查另等待 Full 就绪。</summary>
+    private static string EnsureGestureFolder()
+    {
+        var folder = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "pv-check-gestures");
+        Directory.CreateDirectory(folder);
+        var path = IOPath.Combine(folder, GesturePhotoName);
+        if (!File.Exists(path) || new FileInfo(path).Length == 0) WriteCheckJpeg(path, 2600, 1800);
+        return folder;
+    }
+
+    /// <summary>切到手势素材并等它上屏（各步骤独立起跑，前一步失败也能得到自己的结论）。</summary>
+    private static async Task EnsureGesturePhotoAsync()
+    {
+        var main = _main!;
+        var session = _session!;
+        if (main.CurrentFile?.Name == GesturePhotoName && session.Image != null) return;
+        await OpenFolderAndWaitAsync(EnsureGestureFolder());
+        await WaitAsync(() => main.CurrentFile?.Name == GesturePhotoName && session.Image != null, "手势素材上屏");
+        // EXIF/缩略图落定后再开始计数，避免它们的通知冒充手势引起的状态变化。
+        await Task.Delay(800);
+    }
+
+    /// <summary>等到视口缩放稳定（动画结束），且放大态不再挂代理；返回稳定后的物理倍率。</summary>
+    /// <param name="label">超时说明。</param>
+    private static async Task<double> WaitStableViewportAsync(string label)
+    {
+        var photo = _root!.Photo;
+        var session = _session!;
+        var deadline = DateTime.UtcNow.AddSeconds(20);
+        double previous = double.NaN;
+        while (DateTime.UtcNow < deadline)
+        {
+            double scale = photo.PhysicalScale;
+            if (!double.IsNaN(previous) && Math.Abs(scale - previous) < 1e-3 && (photo.IsFit || !session.IsProxy))
+            {
+                // 收尾动画最后几个百分点也落在容差里：再等一帧以上，保证手势读到的是终点状态。
+                await Task.Delay(250);
+                return scale;
+            }
+            previous = scale;
+            await Task.Delay(120);
+        }
+        throw new TimeoutException($"等待视口稳定超时：{label}"
+            + $"（physical={photo.PhysicalScale:0.###} fit={photo.IsFit} proxy={session.IsProxy}）");
+    }
+
+    /// <summary>构造一条触摸事件：DownTime 由第一下给出（不拿当前时间冒充），源为触摸屏；调用方释放。</summary>
+    private static MotionEvent PhotoTouch(long downTime, long eventTime, MotionEventActions action, float x, float y)
+    {
+        var e = MotionEvent.Obtain(downTime, eventTime, action, x, y, MetaKeyStates.None)!;
+        e.SetSource(InputSourceType.Touchscreen);
+        return e;
+    }
+
+    /// <summary>把一条单指触摸事件交给产品入口 <c>OnTouchEvent</c>；Down/Up 维护异常收尾用的按下时间。</summary>
+    /// <param name="action">触摸动作。</param>
+    /// <param name="downTime">本手势第一下的时间。</param>
+    /// <param name="x">视图内横坐标（px）。</param>
+    /// <param name="y">视图内纵坐标（px）。</param>
+    /// <returns>是否被消费。</returns>
+    private static bool SendPhotoTouch(MotionEventActions action, long downTime, float x, float y)
+    {
+        using var e = PhotoTouch(downTime, SystemClock.UptimeMillis(), action, x, y);
+        if (action == MotionEventActions.Down) _touchDownTime = downTime;
+        bool consumed = _root!.Photo.OnTouchEvent(e);
+        if (action is MotionEventActions.Up or MotionEventActions.Cancel) _touchDownTime = 0;
+        return consumed;
+    }
+
+    /// <summary>把一条多指触摸事件走同一产品入口（Source/Pressure/Size 由 <see cref="MultiTouchEvent"/> 构造）。</summary>
+    /// <param name="action">触摸动作。</param>
+    /// <param name="actionIndex">触发动作的指针下标。</param>
+    /// <param name="downTime">本手势第一下的时间。</param>
+    /// <param name="pointers">当前全部指针。</param>
+    /// <returns>是否被消费。</returns>
+    private static bool SendPhotoMultiTouch(MotionEventActions action, int actionIndex, long downTime,
+        params (int Id, float X, float Y)[] pointers)
+    {
+        using var e = MultiTouchEvent(downTime, SystemClock.UptimeMillis(), action, actionIndex, pointers);
+        if (action == MotionEventActions.Down) _touchDownTime = downTime;
+        bool consumed = _root!.Photo.OnTouchEvent(e);
+        if (action == MotionEventActions.Up) _touchDownTime = 0;
+        return consumed;
+    }
+
+    /// <summary>异常收尾：仍按着的手指补一条 Cancel，下一步不继承按下状态。</summary>
+    /// <param name="x">视图内横坐标（px）。</param>
+    /// <param name="y">视图内纵坐标（px）。</param>
+    private static void CancelActiveTouch(float x, float y)
+    {
+        long downTime = _touchDownTime;
+        if (downTime == 0) return;
+        SendPhotoTouch(MotionEventActions.Cancel, downTime, x, y);
+    }
+
+    /// <summary>
+    /// 单指拖动一次并跨过系统长按超时：越容差后停住等到长按/点按超时，再继续拖到抬起。
+    /// 返回拖动前后的视口平移差与事件是否都被消费。
+    /// </summary>
+    private static async Task<(double DeltaX, double DeltaY, bool Consumed)> DragAcrossLongPressAsync(
+        float x, float y, float step)
+    {
+        var viewport = _root!.Photo.Viewport;
+        double startX = viewport.PanX, startY = viewport.PanY;
+        long downTime = SystemClock.UptimeMillis();
+        bool consumed = SendPhotoTouch(MotionEventActions.Down, downTime, x, y);
+        await Task.Delay(16);
+        consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, x - step, y);
+        consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, x - step * 2, y + step * .5f);
+        await Task.Delay(LongPressWaitMs);
+        consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, x - step * 3, y);
+        consumed &= SendPhotoTouch(MotionEventActions.Move, downTime, x - step * 4, y - step * .5f);
+        consumed &= SendPhotoTouch(MotionEventActions.Up, downTime, x - step * 4, y - step * .5f);
+        return (viewport.PanX - startX, viewport.PanY - startY, consumed);
+    }
+
+    /// <summary>
+    /// 一组真实轻点两下（Down/Up + Down/Up）：两下间距落在系统双击窗口内且大于最小间隔，交给手势识别器自行判成双击，
+    /// 不直接调 <c>DoubleTapAt</c>。返回第二下 Down 刚落地时的物理倍率——若同一下 Down 把刚起的动画取消，
+    /// 这里已经在终点。
+    /// </summary>
+    private static async Task<(bool Consumed, double ImmediateScale)> DoubleTapAsync(float x, float y)
+    {
+        long first = SystemClock.UptimeMillis();
+        bool consumed = SendPhotoTouch(MotionEventActions.Down, first, x, y);
+        await Task.Delay(30);
+        consumed &= SendPhotoTouch(MotionEventActions.Up, first, x, y);
+        await Task.Delay(60);
+        long second = SystemClock.UptimeMillis();
+        consumed &= SendPhotoTouch(MotionEventActions.Down, second, x, y);
+        double immediate = _root!.Photo.PhysicalScale;
+        await Task.Delay(30);
+        consumed &= SendPhotoTouch(MotionEventActions.Up, second, x, y);
+        return (consumed, immediate);
+    }
+
+    /// <summary>放大到物理 200% 并把平移摆回中心，保证各方向都还有平移余量。</summary>
+    private static async Task ZoomForGestureAsync(string label)
+    {
+        var photo = _root!.Photo;
+        photo.ZoomToPhysical(2);
+        await WaitStableViewportAsync(label);
+        photo.CenterOnNormalizedPoint(.5, .5);
+    }
+
+    /// <summary>
+    /// INPUT-03：放大态单指拖动跨过系统长按超时仍只平移——分析栏隐藏与显示两态各一次；
+    /// 这一次手势里不得冒长按、点按、翻页，也不得让分析栏重算（<c>HostChanged</c> 恒零）。
+    /// </summary>
+    private static async Task CheckDragPastLongPressAsync()
+    {
+        var root = _root!;
+        var main = _main!;
+        var center = PhotoCenter();
+        bool previousVisible = main.IsAnalysisViewVisible;
+        bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        using var probe = new GestureProbe(root.Photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            // 即时推理默认关：拖动期间不让 DINO/CV 改写分析栏内容，把结论收在触摸语义上。
+            main.Settings.AnalysisImmediateCompute = false;
+            await Task.Delay(300);
+            foreach (bool visible in new[] { false, true })
+            {
+                main.IsAnalysisViewVisible = visible;
+                await Task.Delay(400);
+                await ZoomForGestureAsync($"放大到物理 200%（分析栏{(visible ? "显示" : "隐藏")}）");
+                probe.Reset();
+                var (deltaX, deltaY, consumed) = await DragAcrossLongPressAsync(center.X, center.Y, DragStep());
+                bool panned = Math.Abs(deltaX) > 1 || Math.Abs(deltaY) > 1;
+                bool quiet = probe.LongPress == 0 && probe.Tap == 0 && probe.Swipe == 0 && probe.HostChanged == 0;
+                Check($"INPUT-03 拖动跨长按（分析栏{(visible ? "显示" : "隐藏")}）",
+                    consumed && panned && quiet && !root.Photo.IsFit,
+                    $"consumed={consumed} pan=({deltaX:0.#},{deltaY:0.#}) fit={root.Photo.IsFit} "
+                    + $"physical={root.Photo.PhysicalScale:0.##} {probe.Describe}");
+            }
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+            main.IsAnalysisViewVisible = previousVisible;
+            main.Settings.AnalysisImmediateCompute = previousImmediate;
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：一个 <see cref="MotionEvent"/> 里的历史批次先离开容差再回到起点——判定必须看历史采样，
+    /// 否则手指"没动"就长按弹菜单。历史越界即把点击识别器取消，随后按住跨过长按超时也不得有长按/点按。
+    /// </summary>
+    private static async Task CheckHistoryBatchAsync()
+    {
+        var root = _root!;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(root.Photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            await ZoomForGestureAsync("放大到物理 200%");
+            probe.Reset();
+            var viewport = root.Photo.Viewport;
+            double panX = viewport.PanX, panY = viewport.PanY;
+            long downTime = SystemClock.UptimeMillis();
+            SendPhotoTouch(MotionEventActions.Down, downTime, center.X, center.Y);
+            await Task.Delay(30);
+            int history;
+            // 历史：离开容差 → 回到起点；当前采样仍在起点，位移判定只能靠历史才看得见。
+            using (var move = PhotoTouch(downTime, SystemClock.UptimeMillis(), MotionEventActions.Move, center.X, center.Y))
+            {
+                long time = move.EventTime;
+                move.AddBatch(time + 1, center.X - DragStep() * 3, center.Y, 1, 1, MetaKeyStates.None);
+                move.AddBatch(time + 2, center.X, center.Y, 1, 1, MetaKeyStates.None);
+                history = move.HistorySize;
+                root.Photo.OnTouchEvent(move);
+            }
+            await Task.Delay(LongPressWaitMs);
+            SendPhotoTouch(MotionEventActions.Up, downTime, center.X, center.Y);
+            double movedX = viewport.PanX - panX, movedY = viewport.PanY - panY;
+            Check("INPUT-07 历史批次越容差不弹菜单",
+                history >= 2 && Math.Abs(movedX) < 1 && Math.Abs(movedY) < 1
+                && probe.LongPress == 0 && probe.Tap == 0,
+                $"history={history} pan=({movedX:0.#},{movedY:0.#}) {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：双指按住不动、未达捏合阈值就等过长按超时也不得弹菜单（第二指落指即取消点击识别器）；
+    /// 抬起一指后剩下的手指不得沿用被抬手指的坐标，首个单指移动只能平移这一小段（无指针跳变）。
+    /// </summary>
+    private static async Task CheckTwoFingerAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            await ZoomForGestureAsync("放大到物理 200%");
+            probe.Reset();
+            var viewport = photo.Viewport;
+            double scale = viewport.Scale, density = photo.Density;
+            // 两指相距足够远：真出现指针跳变会明显超过一小段平移。
+            float gap = DragStep() * 6;
+            long downTime = SystemClock.UptimeMillis();
+            bool consumed = SendPhotoMultiTouch(MotionEventActions.Down, 0, downTime, (0, center.X, center.Y));
+            consumed &= SendPhotoMultiTouch(MotionEventActions.PointerDown, 1, downTime,
+                (0, center.X, center.Y), (1, center.X + gap, center.Y));
+            await Task.Delay(LongPressWaitMs);
+            int duringHold = probe.LongPress;
+            bool scaleKept = Math.Abs(viewport.Scale - scale) < 1e-6;
+            Check("INPUT-07 双指按住不弹菜单",
+                consumed && duringHold == 0 && probe.LongPress == 0 && scaleKept,
+                $"consumed={consumed} longPressDuringHold={duringHold} scale={scale:0.###}->{viewport.Scale:0.###} "
+                + probe.Describe);
+
+            double panX = viewport.PanX, panY = viewport.PanY;
+            SendPhotoMultiTouch(MotionEventActions.PointerUp, 0, downTime,
+                (0, center.X, center.Y), (1, center.X + gap, center.Y));
+            await Task.Delay(30);
+            float step = DragStep();
+            SendPhotoMultiTouch(MotionEventActions.Move, 0, downTime, (1, center.X + gap + step, center.Y));
+            SendPhotoMultiTouch(MotionEventActions.Up, 0, downTime, (1, center.X + gap + step, center.Y));
+            double movedX = viewport.PanX - panX, movedY = viewport.PanY - panY;
+            double expected = step / density;
+            bool jumped = Math.Abs(movedX - expected) > 4 || Math.Abs(movedY) > 4;
+            Check("INPUT-03 抬指后无指针跳变",
+                !jumped && Math.Abs(movedX) > .5 && probe.Tap == 0 && probe.Swipe == 0,
+                $"pan=({movedX:0.#},{movedY:0.#}) expected≈({expected:0.#},0) gap={gap:0}px {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-07：Cancel 之后不再弹菜单；随后静止按住真长按恰好一次、菜单真的弹出，
+    /// 长按期间不拖动、抬起不翻页也不点按（适应态看翻页、放大态看平移）。
+    /// </summary>
+    private static async Task CheckLongPressAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            if (!photo.IsFit)
+            {
+                photo.ToggleFit();
+                await WaitStableViewportAsync("回到适应态");
+            }
+            probe.Reset();
+            long downTime = SystemClock.UptimeMillis();
+            SendPhotoTouch(MotionEventActions.Down, downTime, center.X, center.Y);
+            SendPhotoTouch(MotionEventActions.Move, downTime, center.X - DragStep(), center.Y);
+            SendPhotoTouch(MotionEventActions.Cancel, downTime, center.X - DragStep(), center.Y);
+            await Task.Delay(LongPressWaitMs);
+            Check("INPUT-07 Cancel 后不长按", probe.LongPress == 0 && probe.Tap == 0, probe.Describe);
+
+            foreach (bool fit in new[] { true, false })
+            {
+                if (fit != photo.IsFit)
+                {
+                    photo.ToggleFit();
+                    await WaitStableViewportAsync(fit ? "回到适应态" : "放大到物理 100%");
+                }
+                probe.Reset();
+                var viewport = photo.Viewport;
+                double panX = viewport.PanX, panY = viewport.PanY;
+                downTime = SystemClock.UptimeMillis();
+                SendPhotoTouch(MotionEventActions.Down, downTime, center.X, center.Y);
+                await Task.Delay(LongPressWaitMs);
+                int afterHold = probe.LongPress;
+                bool menuShown = root.DismissPhotoMenu();
+                // 长按之后继续拖再抬起：不得平移、不得翻页、不得点按。
+                SendPhotoTouch(MotionEventActions.Move, downTime, center.X + DragStep() * 8, center.Y);
+                SendPhotoTouch(MotionEventActions.Up, downTime, center.X + DragStep() * 8, center.Y);
+                await Task.Delay(120);
+                bool noPan = Math.Abs(viewport.PanX - panX) < .5 && Math.Abs(viewport.PanY - panY) < .5;
+                Check($"INPUT-07 静止长按恰好一次（{(fit ? "适应" : "放大")}）",
+                    afterHold == 1 && menuShown && probe.LongPress == 1 && probe.Tap == 0 && probe.Swipe == 0
+                    && noPan && photo.IsFit == fit,
+                    $"longPress={afterHold} menu={menuShown} fit={photo.IsFit} "
+                    + $"pan=({viewport.PanX - panX:0.#},{viewport.PanY - panY:0.#}) {probe.Describe}");
+            }
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// INPUT-03：两组真实 Down/Up 组成的双击（不经 <c>DoubleTapAt</c>）在适应与物理 100% 间往返；
+    /// 第二下 Down 刚落地时的缩放仍须在动画途中——同一下 Down 若把刚起的动画取消，会直接跳到终点。
+    /// </summary>
+    private static async Task CheckRealDoubleTapAsync()
+    {
+        var root = _root!;
+        var photo = root.Photo;
+        var center = PhotoCenter();
+        using var probe = new GestureProbe(photo, root.AnalysisHostForChecks);
+        try
+        {
+            await EnsureGesturePhotoAsync();
+            if (!photo.IsFit)
+            {
+                photo.ToggleFit();
+                await WaitStableViewportAsync("回到适应态");
+            }
+            probe.Reset();
+            double fitScale = photo.PhysicalScale;
+            var (consumed, immediate) = await DoubleTapAsync(center.X, center.Y);
+            await Task.Delay(600);
+            Check("INPUT-03 真实双击到 100%",
+                consumed && !photo.IsFit && Math.Abs(photo.PhysicalScale - 1) < .05
+                && Math.Abs(immediate - fitScale) < .05 && probe.Swipe == 0,
+                $"consumed={consumed} fit={fitScale:0.##} immediate={immediate:0.##} "
+                + $"now={photo.PhysicalScale:0.##} isFit={photo.IsFit} {probe.Describe}");
+
+            // 双击窗口（300ms）过后再点第二组，避免被当成连续双击的延续。
+            await Task.Delay(400);
+            probe.Reset();
+            (consumed, immediate) = await DoubleTapAsync(center.X, center.Y);
+            await Task.Delay(600);
+            Check("INPUT-03 真实双击回适应",
+                consumed && photo.IsFit && Math.Abs(immediate - 1) < .05 && probe.Swipe == 0,
+                $"consumed={consumed} immediate={immediate:0.##} isFit={photo.IsFit} "
+                + $"physical={photo.PhysicalScale:0.##} {probe.Describe}");
+        }
+        finally
+        {
+            CancelActiveTouch(center.X, center.Y);
+            root.DismissPhotoMenu();
+        }
+    }
+
+    /// <summary>
+    /// 主图手势与分析宿主通知的计数订阅器（验收用）：长按/点按/翻页回调与 <c>HostChanged</c> 各记次数，
+    /// <see cref="Reset"/> 后重新起算，Dispose 即退订，异常路径也不会留下订阅。
+    /// </summary>
+    private sealed class GestureProbe : IDisposable
+    {
+        private readonly AndroidPhotoView _photo;
+        private readonly AndroidAnalysisHost _host;
+        private readonly Action<float, float> _longPress;
+        private readonly Action _tap;
+        private readonly Action<int> _swipe;
+        private readonly Action _hostChanged;
+
+        /// <summary>订阅三条手势回调与宿主状态变化。</summary>
+        /// <param name="photo">主图视图。</param>
+        /// <param name="host">分析宿主。</param>
+        public GestureProbe(AndroidPhotoView photo, AndroidAnalysisHost host)
+        {
+            _photo = photo;
+            _host = host;
+            _longPress = (_, _) => LongPress++;
+            _tap = () => Tap++;
+            _swipe = _ => Swipe++;
+            _hostChanged = () => HostChanged++;
+            photo.LongPressRequested += _longPress;
+            photo.TapRequested += _tap;
+            photo.SwipeRequested += _swipe;
+            host.HostChanged += _hostChanged;
+        }
+
+        /// <summary>长按回调次数。</summary>
+        public int LongPress { get; private set; }
+        /// <summary>点按回调次数。</summary>
+        public int Tap { get; private set; }
+        /// <summary>翻页回调次数。</summary>
+        public int Swipe { get; private set; }
+        /// <summary>分析宿主状态变化次数。</summary>
+        public int HostChanged { get; private set; }
+
+        /// <summary>清零计数（每次手势前复位）。</summary>
+        public void Reset()
+        {
+            LongPress = 0;
+            Tap = 0;
+            Swipe = 0;
+            HostChanged = 0;
+        }
+
+        /// <summary>报告用的一行读数。</summary>
+        public string Describe => $"longPress={LongPress} tap={Tap} swipe={Swipe} host={HostChanged}";
+
+        /// <summary>退订全部回调。</summary>
+        public void Dispose()
+        {
+            _photo.LongPressRequested -= _longPress;
+            _photo.TapRequested -= _tap;
+            _photo.SwipeRequested -= _swipe;
+            _host.HostChanged -= _hostChanged;
+        }
     }
 }
