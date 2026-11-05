@@ -76,7 +76,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     /// <summary>挂到 <see cref="AndroidMemoryBudgetProvider.ExternalFootprint"/> 的读数委托（释放时只摘自己这份）。</summary>
     private readonly Func<long> _textureFootprint;
 
-    /// <summary>EGL 窗口表面就绪（首图必须等表面就绪后再解码，保证 P3 协商结果参与编码选择）。</summary>
+    /// <summary>EGL 窗口表面就绪，允许宿主启动加载并按实际输出上传照片。</summary>
     internal event Action? SurfaceReady;
     /// <summary>视口变化通知（会话据此决定代理尺寸与 Full 升级，覆盖层据此刷新）。</summary>
     internal event Action? ViewportChanged;
@@ -297,9 +297,29 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     /// <param name="y">纵坐标。</param>
     internal void SetFocus(double? x, double? y) => _viewport.SetFocus(x, y);
 
-    /// <summary>离屏渲染导航图（长边 150 点）；无纹理时 null。</summary>
-    /// <returns>导航图位图。</returns>
-    internal Bitmap? CaptureNavigationBitmap() => _renderer.CaptureNavigationBitmap(_viewport, _density);
+    internal bool SurfaceReadyForChecks => _surfaceReady;
+    internal bool FramebufferEncodingForChecks(int encoding) => _renderer.FramebufferEncoding == encoding;
+    internal bool EglColorspaceForChecks(int colorspace) => _renderer.SurfaceColorspace == colorspace;
+
+    internal (byte R, byte G, byte B, byte A) ReadPixelForChecks(double u, double v, bool bypassOutputTransfer = false)
+        => _renderer.ReadPixelForChecks(_viewport, _density, u, v, bypassOutputTransfer);
+
+    internal void RecreateSurfaceForChecks(bool allowP3, bool allowPassthrough = true)
+    {
+        _surfaceReady = false;
+        _renderer.Dispose();
+        _renderer = new AndroidPhotoRenderer();
+        _renderer.Create(_surfaceView.Holder!, _density, allowP3, allowPassthrough);
+        _renderer.Resize(_surfaceView.Width, _surfaceView.Height);
+        _surfaceReady = true;
+        if (_image != null)
+        {
+            _renderer.SetImage(_image);
+            _viewport.ApplyTexture(_renderer.TextureWidth);
+        }
+        RefreshTextureBytes();
+        Draw();
+    }
 
     /// <summary>单指轻扫判定入口（手势与验收共用）。</summary>
     /// <param name="dx">水平位移（dp，右正）。</param>
@@ -347,6 +367,8 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         catch (Exception exception)
         {
             _surfaceReady = false;
+            _renderer.Dispose();
+            RefreshTextureBytes();
             Console.Error.WriteLine($"[Native] 主图表面创建失败：{exception.Message}");
         }
     }

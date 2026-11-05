@@ -22,7 +22,8 @@ namespace PhotoViewer.Android.Core;
 /// 系统解不了的用户 HEIF（YUV 4:2:2 等）再回退打包的 libheif 软件解码。
 /// 代理用 <c>InSampleSize</c> + 精确缩放；方向不旋转像素，只写入 <see cref="DecodedImage.Orientation"/> 交顶点阶段处理
 /// （快速路径取容器 <c>irot</c>/<c>imir</c>，系统链取 EXIF 方向）。
-/// 色彩：表面以 Display P3 创建时解码到 P3，否则 sRGB8；不做隐式降级。
+/// 色彩：目标色域在每次解码开始时**捕获一次**并贯穿解码选项与产物标签，位图自报的真实色域再经
+/// <see cref="ColorEngine"/> 规范到该目标（见 <see cref="AndroidBitmapPixels.ToRgba8"/>）；不做隐式降级，也不按请求标签硬标。
 /// 同时实现 <see cref="IQuickPreviewDecoder"/>：RAW 首次解码空窗期用内嵌预览顶替（STATE-01）。
 /// </summary>
 public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQuickPreviewDecoder
@@ -58,13 +59,14 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
             // RAW：只解内嵌预览（已转正的正确朝向），绝不为此全分辨率开发。
             if (RawLoader.IsRawFile(file))
             {
-                using var preview = DecodeRawPreview(file, cancellationToken);
+                using var preview = DecodeRawPreview(file, ImageColorSpace.Srgb, cancellationToken);
                 return preview == null ? null : ColorEngine.ToAnalysisSrgb8(preview, preview.Orientation);
             }
             if (HeifLoader.IsHeifFile(file) && DecodeHeifThumbnail(file, targetLongEdge, cancellationToken) is { } heif)
                 return heif;
 
-            using var decoded = DecodeLegacy(file, targetLongEdge, cancellationToken);
+            // 缩略图出口是 sRGB8 分析口径，直接解到 sRGB 省掉一次整图色域转换。
+            using var decoded = DecodeLegacy(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken);
             if (decoded == null) return null;
             return ColorEngine.ToAnalysisSrgb8(decoded);
         }, cancellationToken);
@@ -85,7 +87,8 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         => Task.Run(() =>
         {
             var started = System.Diagnostics.Stopwatch.StartNew();
-            var preview = DecodeRawPreview(file, cancellationToken);
+            // 顶替图要与随后上屏的正式产物同一色域标签，故在此捕获一次。
+            var preview = DecodeRawPreview(file, AndroidDisplayCapabilities.PresentationColorSpace, cancellationToken);
             if (preview != null)
                 Console.WriteLine($"[Native] RAW 顶替预览上屏（{file.Name}）：{preview.Width}x{preview.Height}，"
                     + $"{started.Elapsed.TotalMilliseconds:F0} ms");
@@ -94,15 +97,15 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
 
     /// <summary>解 RAW 内嵌预览（展示编码 + 方向），pvraw 不可用/无预览时返回 null。</summary>
     /// <param name="file">文件引用。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>未旋转的 RGBA8 预览；调用方负责释放。</returns>
-    private static DecodedImage? DecodeRawPreview(IFileRef file, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeRawPreview(IFileRef file, ImageColorSpace target, CancellationToken cancellationToken)
     {
         if (!RawAvailable) return null;
         try
         {
-            var preview = AndroidRawDecoder.DecodeEmbeddedPreview(
-                file, AndroidDisplayCapabilities.PresentationColorSpace, cancellationToken);
+            var preview = AndroidRawDecoder.DecodeEmbeddedPreview(file, target, cancellationToken);
             Volatile.Write(ref _rawAvailability, 1);
             return preview;
         }
@@ -122,16 +125,16 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     /// <summary>RAW 开发（全分辨率或代理），pvraw 不可用/失败返回 null 由会话如实报错（SCOPE-04）。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>未旋转的 RGBA8；失败为 null。</returns>
-    private static DecodedImage? DecodeRaw(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeRaw(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
     {
         if (!RawAvailable) return null;
         var started = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var image = AndroidRawDecoder.Decode(
-                file, maxLongEdge, AndroidDisplayCapabilities.PresentationColorSpace, cancellationToken);
+            var image = AndroidRawDecoder.Decode(file, maxLongEdge, target, cancellationToken);
             Volatile.Write(ref _rawAvailability, 1);
             // 与"顶替预览上屏"日志配对，可核对真图确实晚于顶替图到达。
             Console.WriteLine(image == null
@@ -163,12 +166,15 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     private static DecodedImage? Decode(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        // 目标色域只在这里捕获一次，贯穿解码选项与产物标签：解码期间渲染线程改写 SurfaceIsP3
+        // 也不会让"按 P3 编码的字节"被标成 sRGB（或反之）。
+        var target = AndroidDisplayCapabilities.PresentationColorSpace;
         // RAW 不落 BitmapFactory：系统只会给出内嵌预览，违反代理精度规则。失败返回 null，由会话如实报错。
         if (RawLoader.IsRawFile(file))
-            return DecodeRaw(file, maxLongEdge, cancellationToken);
-        if (HeifLoader.IsHeifFile(file) && DecodeHeifFast(file, maxLongEdge, cancellationToken) is { } fast)
+            return DecodeRaw(file, maxLongEdge, target, cancellationToken);
+        if (HeifLoader.IsHeifFile(file) && DecodeHeifFast(file, maxLongEdge, target, cancellationToken) is { } fast)
             return fast;
-        return DecodeLegacy(file, maxLongEdge, cancellationToken);
+        return DecodeLegacy(file, maxLongEdge, target, cancellationToken);
     }
 
     /// <summary>
@@ -177,16 +183,17 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     /// </summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>RGBA8 产物；容器或色彩超出支持面时返回 null，由调用方回落。</returns>
-    private static DecodedImage? DecodeHeifFast(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeHeifFast(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
     {
         try
         {
             var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             var fast = FastHeifDecoder.TryDecode(bytes, maxLongEdge, PixelEncoding.Rgba8, cancellationToken,
-                out var reason, AndroidDisplayCapabilities.PresentationColorSpace);
+                out var reason, target);
             if (fast != null) return fast;
             LogHeifFallback(file, reason);
         }
@@ -250,43 +257,122 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         Console.WriteLine($"[Native] HEIF 快速路径回落（{file.Name}）：{reason ?? "未知原因"}");
     }
 
+    /// <summary>已记录过"JPEG 容器色域改共享解码"的文件（每文件只记第一次）。</summary>
+    private static readonly HashSet<string> JpegColorLogged = new(StringComparer.Ordinal);
+
+    /// <summary>记录一次 JPEG 容器色域接管（无 ICC 却声明广色域，系统链会丢标签）。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="sourceColorSpace">共享解码器解析出的真实源色域。</param>
+    private static void LogJpegColorFallback(IFileRef file, ImageColorSpace sourceColorSpace)
+    {
+        var key = file.StorageId.Value;
+        lock (JpegColorLogged)
+        {
+            if (!JpegColorLogged.Add(key)) return;
+            if (JpegColorLogged.Count > 256) JpegColorLogged.Clear();
+        }
+
+        Console.WriteLine($"[Native] JPEG 容器声明源色域 {sourceColorSpace}，改共享 Skia 解码（{file.Name}）");
+    }
+
     /// <summary>系统解码链主体（在线程池执行）：<c>BitmapFactory</c> 失败再走 libheif。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>解码产物；失败返回 null。</returns>
-    private static DecodedImage? DecodeLegacy(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeLegacy(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         int sourceWidth = 0, sourceHeight = 0;
         try
         {
-            using var bitmap = DecodeBitmap(file, maxLongEdge, out sourceWidth, out sourceHeight, cancellationToken);
-            if (bitmap == null)
-                return DecodeHeifFallback(file, maxLongEdge, cancellationToken);
             int orientation = ReadOrientation(file);
-            var colorSpace = AndroidDisplayCapabilities.PresentationColorSpace;
-            var target = maxLongEdge is { } limit ? ScaleToLimit(bitmap, limit) : null;
+            var container = DecodeJpegWithContainerColor(file, maxLongEdge, target, orientation, cancellationToken,
+                out bool handled);
+            if (handled) return container;
+
+            using var bitmap = DecodeBitmap(file, maxLongEdge, target, out sourceWidth, out sourceHeight, cancellationToken);
+            if (bitmap == null)
+                return DecodeHeifFallback(file, maxLongEdge, target, cancellationToken);
+            var scaled = maxLongEdge is { } limit ? ScaleToLimit(bitmap, limit) : null;
             try
             {
-                return ToRgba8(target ?? bitmap, colorSpace, sourceWidth, sourceHeight, orientation);
+                // 像素只从原始 ARGB_8888 存储读，位图实际色域显式规范到捕获的目标色域。
+                return AndroidBitmapPixels.ToRgba8(scaled ?? bitmap, target, sourceWidth, sourceHeight, orientation);
             }
-            finally { target?.Dispose(); }
+            finally { scaled?.Dispose(); }
         }
         catch (System.OperationCanceledException) { throw; }
         catch (Exception exception)
         {
             Console.WriteLine($"[Native] 展示解码失败（{file.Name}）：{exception.GetType().Name}: {exception.Message}");
-            return DecodeHeifFallback(file, maxLongEdge, cancellationToken);
+            return DecodeHeifFallback(file, maxLongEdge, target, cancellationToken);
         }
     }
 
-    /// <summary>系统 HEIF 解码失败时用打包的 libheif 软解，并转成目标色彩空间。</summary>
+    /// <summary>
+    /// 无 ICC 但容器声明广色域的 JPEG 走共享 Skia 解码（系统链只用 ICC，会把这些码值当 sRGB），
+    /// 再经 <see cref="ColorEngine"/> 规范到捕获的展示目标；其余 JPEG 与格式仍走系统链。
+    /// </summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
+    /// <param name="orientation">EXIF 方向（共享解码器不消费，仍按系统链同一口径写进产物）。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <param name="handled">容器要求共享色彩解码时为 true；此时失败不得回到忽略声明的系统路径。</param>
+    /// <returns>目标色域的产物；失败返回 null。</returns>
+    private static DecodedImage? DecodeJpegWithContainerColor(IFileRef file, int? maxLongEdge, ImageColorSpace target,
+        int orientation, CancellationToken cancellationToken, out bool handled)
+    {
+        handled = false;
+        try
+        {
+            using var stream = file.OpenReadAsync().GetAwaiter().GetResult();
+            if (!DeclaresWideGamutWithoutIcc(stream)) return null;
+            handled = true;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            using var decoded = maxLongEdge is { } limit
+                ? SkiaImageCodec.DecodeToLongEdge(stream, limit)
+                : SkiaImageCodec.Decode(stream);
+            if (decoded == null) return null;
+            cancellationToken.ThrowIfCancellationRequested();
+
+            LogJpegColorFallback(file, decoded.ColorSpace);
+            using var converted = ColorEngine.ToDisplayEncoding(decoded, PixelEncoding.Rgba8, target);
+            return AndroidBitmapPixels.CopyWithGeometry(converted, target,
+                decoded.SourceWidth, decoded.SourceHeight, orientation);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[Native] JPEG 容器色域解码失败（{file.Name}）：{exception.GetType().Name}: {exception.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// 流是否为"无 ICC 但声明广色域"的 JPEG：只看标记段（读完恢复位置），非 JPEG、不可寻址、
+    /// 有 ICC（系统链会自己做色彩管理）时都返回 false。
+    /// </summary>
+    /// <param name="stream">文件流；调用后位置不变。</param>
+    /// <returns>需要共享解码器接管色域时为 true。</returns>
+    private static bool DeclaresWideGamutWithoutIcc(System.IO.Stream stream)
+    {
+        if (!stream.CanSeek) return false;
+        var metadata = JpegColorMetadata.Read(stream);
+        return !metadata.HasIccProfile && metadata.ResolveColorSpace() != ImageColorSpace.Srgb;
+    }
+
+    /// <summary>系统 HEIF 解码失败时用打包的 libheif 软解，并转成捕获的目标色域。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限。</param>
+    /// <param name="target">目标色域（调用方捕获一次）。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>解码产物；不是 HEIF 或软解也失败时为 null。</returns>
-    private static DecodedImage? DecodeHeifFallback(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeHeifFallback(IFileRef file, int? maxLongEdge, ImageColorSpace target,
+        CancellationToken cancellationToken)
     {
         if (!HeifLoader.IsHeifFile(file)) return null;
         try
@@ -296,22 +382,9 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
             if (decoded == null) return null;
             cancellationToken.ThrowIfCancellationRequested();
             int orientation = ReadOrientation(file);
-            bool p3 = AndroidDisplayCapabilities.SurfaceIsP3;
-            using var converted = p3 ? ColorEngine.ToDisplayP3(decoded) : ColorEngine.ToSrgb8(decoded);
-            var buffer = DecodedImage.RentPixels(checked(converted.Width * converted.Height * 4));
-            try
-            {
-                CopyToRgba8(converted, buffer);
-                int width = converted.Width, height = converted.Height;
-                return DecodedImage.CreatePooled(buffer, width, height, checked(width * 4), PixelEncoding.Rgba8,
-                    p3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb,
-                    Math.Max(width, decoded.SourceWidth), Math.Max(height, decoded.SourceHeight), orientation);
-            }
-            catch
-            {
-                ImageBufferPool.Return(buffer);
-                throw;
-            }
+            using var converted = ColorEngine.ToDisplayEncoding(decoded, PixelEncoding.Rgba8, target);
+            return AndroidBitmapPixels.CopyWithGeometry(converted, target,
+                Math.Max(converted.Width, decoded.SourceWidth), Math.Max(converted.Height, decoded.SourceHeight), orientation);
         }
         catch (System.OperationCanceledException) { throw; }
         catch (Exception exception)
@@ -324,11 +397,13 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     /// <summary>用 BitmapFactory 解码（代理时按 2 的幂采样），并返回未旋转源尺寸。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限。</param>
+    /// <param name="target">目标色域（与产物标签同一来源）。</param>
     /// <param name="sourceWidth">未旋转源宽。</param>
     /// <param name="sourceHeight">未旋转源高。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>解码位图；系统解不了时为 null。</returns>
-    private static Bitmap? DecodeBitmap(IFileRef file, int? maxLongEdge, out int sourceWidth, out int sourceHeight, CancellationToken cancellationToken)
+    private static Bitmap? DecodeBitmap(IFileRef file, int? maxLongEdge, ImageColorSpace target,
+        out int sourceWidth, out int sourceHeight, CancellationToken cancellationToken)
     {
         sourceWidth = 0;
         sourceHeight = 0;
@@ -348,11 +423,13 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         var options = new BitmapFactory.Options
         {
             InPreferredConfig = Bitmap.Config.Argb8888,
+            // 位图像素按预乘 alpha 读取（与 RGBA8 展示编码口径一致）。
+            InPremultiplied = true,
             InSampleSize = sample,
         };
         if (OperatingSystem.IsAndroidVersionAtLeast(26))
         {
-            var named = AndroidDisplayCapabilities.SurfaceIsP3
+            var named = target == ImageColorSpace.DisplayP3
                 ? AndroidColorSpace.Named.DisplayP3
                 : AndroidColorSpace.Named.Srgb;
             options.InPreferredColorSpace = AndroidColorSpace.Get(named!)!;
@@ -411,91 +488,6 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         {
             Console.WriteLine($"[Native] 读取 EXIF 方向失败（{file.Name}）：{exception.Message}");
             return 1;
-        }
-    }
-
-    /// <summary>把位图按显示色彩空间拷成 RGBA8 池化缓冲（照片不透明，保留 A 通道原值）。</summary>
-    /// <param name="bitmap">解码位图。</param>
-    /// <param name="colorSpace">像素色彩标签。</param>
-    /// <param name="sourceWidth">未旋转源宽。</param>
-    /// <param name="sourceHeight">未旋转源高。</param>
-    /// <param name="orientation">EXIF 方向。</param>
-    /// <returns>RGBA8 产物。</returns>
-    private static DecodedImage ToRgba8(Bitmap bitmap, ImageColorSpace colorSpace, int sourceWidth, int sourceHeight, int orientation)
-    {
-        int width = bitmap.Width, height = bitmap.Height;
-        var buffer = DecodedImage.RentPixels(checked(width * height * 4));
-        try
-        {
-            const int rowsPerChunk = 64;
-            var pixels = new int[width * Math.Min(height, rowsPerChunk)];
-            int offset = 0;
-            for (int y = 0; y < height; y += rowsPerChunk)
-            {
-                int rows = Math.Min(rowsPerChunk, height - y);
-                bitmap.GetPixels(pixels, 0, width, 0, y, width, rows);
-                int count = width * rows;
-                for (int i = 0; i < count; i++)
-                {
-                    int color = pixels[i];
-                    buffer[offset++] = (byte)(color >> 16);
-                    buffer[offset++] = (byte)(color >> 8);
-                    buffer[offset++] = (byte)color;
-                    buffer[offset++] = (byte)(color >> 24);
-                }
-            }
-            return DecodedImage.CreatePooled(buffer, width, height, checked(width * 4), PixelEncoding.Rgba8,
-                colorSpace, Math.Max(sourceWidth, width), Math.Max(sourceHeight, height), orientation);
-        }
-        catch
-        {
-            ImageBufferPool.Return(buffer);
-            throw;
-        }
-    }
-
-    /// <summary>把任意 8 位编码的已解码图像拷成 RGBA8（Bgra32 交换 R/B，Rgb24 补 alpha）。</summary>
-    /// <param name="source">源图像。</param>
-    /// <param name="target">目标缓冲（调用方持有，失败由调用方归还）。</param>
-    private static void CopyToRgba8(DecodedImage source, byte[] target)
-    {
-        var pixels = source.Pixels;
-        int offset = 0;
-        switch (source.Encoding)
-        {
-            case PixelEncoding.Rgba8:
-                Buffer.BlockCopy(pixels, 0, target, 0, checked(source.Width * source.Height * 4));
-                break;
-            case PixelEncoding.Bgra32:
-                for (int y = 0; y < source.Height; y++)
-                {
-                    int row = y * source.Stride;
-                    for (int x = 0; x < source.Width; x++)
-                    {
-                        int index = row + x * 4;
-                        target[offset++] = pixels[index + 2];
-                        target[offset++] = pixels[index + 1];
-                        target[offset++] = pixels[index];
-                        target[offset++] = pixels[index + 3];
-                    }
-                }
-                break;
-            case PixelEncoding.Rgb24:
-                for (int y = 0; y < source.Height; y++)
-                {
-                    int row = y * source.Stride;
-                    for (int x = 0; x < source.Width; x++)
-                    {
-                        int index = row + x * 3;
-                        target[offset++] = pixels[index];
-                        target[offset++] = pixels[index + 1];
-                        target[offset++] = pixels[index + 2];
-                        target[offset++] = 255;
-                    }
-                }
-                break;
-            default:
-                throw new NotSupportedException($"不支持从 {source.Encoding} 拷到 RGBA8");
         }
     }
 }

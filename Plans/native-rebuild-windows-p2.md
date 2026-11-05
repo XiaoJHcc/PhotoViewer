@@ -630,7 +630,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 > 本节是 W-M7 色彩的**唯一现行状态源**。功能实现与程序化验收已完成:Windows 本机 Debug/Release 构建 0 错 0 警,
 > `--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**,smoke 35/35(Debug 与 Release)、settings 14/14、tools 9/9,
 > 共享侧 ColorTestTool 68 PASS、ColorEngineLutCheck 逐字节一致、HeifFastDecodeTest 三套与 CoreContractCheck 905 PASS(§19.5)。
-> 仍属未验的是**真实硬件**:真屏 ACM/HDR 实际切换、Win10 实机、不同色域跨屏、校色仪(§19.4)——不得写成已验。
+> 作者已确认不同色域显示器跨屏完成；其余硬件无测试条件，只保留未验边界，不再列作当前待办(§19.4)。
 > §13.2/13.3/13.4 的历史裁定文字保留原样,现行状态以本节为准。
 
 ### 19.1 入口与判定口径
@@ -673,15 +673,17 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 - 12 位 HEIF 的**真实照片**未验:码值范围已改由 libheif 平面元数据决定,本项目只有自建 12 位暗平面用例(证明不靠白点猜范围),没有真实 12bit 原片素材。
 - RAW 开发/调色另案(§19.6),本项只保证现在这张 8 位 WIC 产物被如实解释与呈现。
 
-### 19.4 硬件真屏门(未验,注入不能代替)
+### 19.4 硬件覆盖边界
 
-| 项 | 为什么注入代替不了 | 现状 |
-|---|---|---|
-| 真屏 ACM(AdvancedColor)开/关 | 依赖实际显示器 HDR/ACM 能力与系统当前状态 | 本机实测为 SDR(WCG/HDR 关);探测 + 刷新路径已程序化,真屏开/关未验 |
-| HDR 实际切换链路 | DXGI 色彩空间与交换链态随系统开关变化 | 只验了 HDR 分支的 SDR 白电平 ×2 模拟;真机切换未验,且**不等于 HDR 内容支持** |
-| Win10 实机 | Win10 无 ACM 时走 8bit 烘焙回退口径 | 未验(本机仅 Win11) |
-| 不同色域显示器跨屏 | 需要两台不同色域的显示器 | 常规 UI 跨屏已手验;色彩跨屏未验 |
-| 校色仪实测 | 需要测量设备 | 未做(程序化只比对独立参考矩阵与转换) |
+作者已确认不同色域显示器跨屏完成；其余项目无测试条件，保留真实覆盖边界，不再列作当前待办，注入结果不冒充真屏结果。
+
+| 项 | 现状 |
+|---|---|
+| 不同色域显示器跨屏 | 作者确认已完成 |
+| 真屏 ACM(AdvancedColor)开/关 | 本机实测为 SDR(WCG/HDR 关)，实际开/关未验 |
+| HDR 实际切换链路 | 仅 SDR 白电平 ×2 模拟，实际切换未验；不等于 HDR 内容支持 |
+| Win10 实机 | 未验，本机仅 Win11 |
+| 校色仪实测 | 未做，程序化仅比对独立参考矩阵与转换 |
 
 ### 19.5 验收结果(2026-11-05 本机)
 
@@ -697,7 +699,7 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 | `HeifFastDecodeTest` | `selftest` / `smoke` / `e2e` 全 PASS(含自建 12 位暗平面 range 用例) | 本机实跑 |
 | `CoreContractCheck` | **905 PASS / 1 SKIP / 0 FAIL** | 本机实跑 |
 
-- **作者目测**:浏览本轮色域检测图后未见异常,同意提交。此结论只覆盖本次色卡目测,不扩大到 Win10、ACM/HDR 切换、不同色域跨屏或校色仪验证。
+- **作者目测**:浏览本轮色域检测图后未见异常,同意提交；另已明确确认不同色域显示器跨屏完成。未把这两项结论扩大到其余无条件覆盖的硬件场景。
 - **1 BOUNDARY** 即"真屏 ACM/HDR 未切换"那一项(本机显示器为 SDR):按未验记录,不计失败也不折算成 PASS。
 - 16 项覆盖:JPEG 四源(sRGB / P3 / Adobe / 未标记 Adobe)的 proxy 与 full 经 GPU;HEIF 快速路径 vs 强制 libheif 600 长边代理(F16 保负值与 &gt;1);WIC RAW 实际色彩声明;native WCS 黑/灰/白;skcms matrix/TRC 65³ cube;GPU P3 / sRGB / ACM 旁路 / HDR SDR 白 ×2 模拟;源实例保持。
 - 实测显示器 ICC:`C:\Windows\system32\spool\drivers\color\ICD27144 - 6727K - 2505.icm`,SHA256 `3D954D0A2FFE7C7BB785334E7B4B4988D59E85F36EFBC944E901ADCA27D51BA3`。
@@ -709,6 +711,6 @@ Windows 壳已并入共享基线 `c0567c6`。同步不改变产品范围,只把 
 
 ### 19.6 边界(不属本项)
 
-- RAW 开发/调色(`IWICDevelopRaw`、镜头校正、白平衡/高光恢复、相机矩阵)另案 [RAW 开发与调色方案](raw-develop-grading-plan-1.md),**不算色彩缺口**。
-- Android 保持**默认 sRGB**:`adb devices -l` 无设备、`emulator -list-avds` 为空,P3 真机尝试被硬件阻塞;既不声称"已恢复",也不算永久延期。
-- iPad 广色域对拍与外接显示仍属 Apple 侧未关闭项。
+- RAW 开发/调色(`IWICDevelopRaw`、镜头校正、白平衡/高光恢复、相机矩阵)另案 [RAW 开发与调色方案](raw-develop-grading-plan-1.md),**不算色彩缺口**，不安排为近期任务。
+- Android P3 已在小米 13 上修复并恢复能力协商，Debug/Release 色彩专项均 85/0；现行台账见 [Android §8](native-rebuild-phase-android.md#8-android-p3-色彩收尾现行状态)。
+- iPad 广色域对拍与外接显示属 Apple 侧覆盖边界，不转成本轮待办。

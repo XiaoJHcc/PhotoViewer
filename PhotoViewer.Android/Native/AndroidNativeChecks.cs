@@ -30,7 +30,7 @@ namespace PhotoViewer.Android.Native;
 /// 仅测试路径调用，不改变产品行为。
 /// </summary>
 /// <remarks>
-/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> 是独立模式：按精确模式名分发，素材入口见模块手册
+/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> / <c>color</c> 是独立模式：按精确模式名分发，素材入口见模块手册
 /// （<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
@@ -58,6 +58,7 @@ internal static partial class AndroidNativeChecks
         _main = main;
         _session = session;
         _root = root;
+        root.KeepScreenOn = true;
         _mode = mode.Trim().ToLowerInvariant();
         Lines.Clear();
         _passed = 0;
@@ -155,7 +156,12 @@ internal static partial class AndroidNativeChecks
         {
             Check("Fit→物理 100%", !root.Photo.IsFit && Math.Abs(root.Photo.PhysicalScale - 1) < .03,
                 $"fit={root.Photo.IsFit} physical={root.Photo.PhysicalScale:0.###}");
-            Check("100% 触发 Full", !session.IsProxy, $"proxy={session.IsProxy} {session.Image.Width}x{session.Image.Height}");
+            var fullDeadline = DateTime.UtcNow.AddSeconds(20);
+            while (session.IsProxy && string.IsNullOrEmpty(session.FullError) && DateTime.UtcNow < fullDeadline)
+                await System.Threading.Tasks.Task.Delay(50);
+            Check("100% 触发 Full", !session.IsProxy && session.Image != null
+                && session.Image.Width == session.Image.SourceWidth && session.Image.Height == session.Image.SourceHeight,
+                $"proxy={session.IsProxy} {session.Image?.Width}x{session.Image?.Height} error={session.FullError}");
         }
         else
         {
@@ -746,6 +752,7 @@ internal static partial class AndroidNativeChecks
     /// <summary>把本次检查的逐条结果写到 App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;.txt</c>。</summary>
     private static void WriteReport()
     {
+        if (_root != null) _root.KeepScreenOn = false;
         var report = new StringBuilder();
         report.AppendLine($"Android native checks mode={_mode} {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         report.AppendLine($"PASS {_passed} / FAIL {_failed}");
@@ -1217,8 +1224,7 @@ internal static partial class AndroidNativeChecks
     private static void Phase(string name) => Console.WriteLine($"[NativeCheck] 阶段：{name}（{_mode}）");
 
     /// <summary>
-    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c>）：精确模式名匹配、自带素材与流程，
-    /// 不并入 <c>all</c>（现有 <c>all</c> 五组连跑在该模拟器上偶发 SIGSEGV）。
+    /// 独立模式按精确模式名匹配，不并入 <c>all</c>；素材入口见模块手册。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom";
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom" or "color";
 }

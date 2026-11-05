@@ -3,29 +3,25 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
-using Android.App;
-using Android.Graphics;
 using Android.Opengl;
 using Android.Views;
 using Java.Nio;
 using PhotoViewer.Android.Core;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Shared;
 
 namespace PhotoViewer.Android.Native;
 
-/// <summary>
-/// Android 主图 GL 渲染核心（A2）：自有 <see cref="EGL14"/> 窗口表面（不用 GLSurfaceView，
-/// 因为其配置接口不暴露 <c>EGL_EXT_gl_colorspace_display_p3</c>）、GLES 3 纹理上传与 mipmap、
-/// 八方向 UV 置换、视口矩形绘制，以及导航图的小目标离屏渲染。
-/// 色彩：EGL 协商到 Display P3 时表面为 P3，否则回退普通 sRGB 表面；像素值不做任何隐式转换。
-/// </summary>
 internal sealed class AndroidPhotoRenderer : IDisposable
 {
-    /// <summary>EGL_KHR_gl_colorspace 的属性名。</summary>
     private const int EglGlColorspaceKhr = 0x309D;
-    /// <summary>EGL_EXT_gl_colorspace_display_p3 的 P3 值。</summary>
+    private const int EglGlColorspaceSrgbKhr = 0x3089;
     private const int EglGlColorspaceDisplayP3Ext = 0x3363;
+    private const int EglGlColorspaceDisplayP3PassthroughExt = 0x3490;
+    private const int GlFramebufferAttachmentColorEncoding = 0x8210;
+    private const int GlSrgb = 0x8C40;
+    private const int GlLinear = 0x2601;
     private const int EglOpenGles3Bit = 0x40;
     private const int EglNone = 0x3038;
 
@@ -40,19 +36,22 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         """;
 
     private const string FragmentShader = """
-        precision mediump float;
+        precision highp float;
         uniform sampler2D uTexture;
+        uniform bool uLinearize;
         varying vec2 vTexCoord;
+        vec3 toLinear(vec3 value) {
+            return mix(value / 12.92, pow((value + 0.055) / 1.055, vec3(2.4)),
+                step(vec3(0.04045), value));
+        }
         void main() {
-            gl_FragColor = texture2D(uTexture, vTexCoord);
+            vec4 color = texture2D(uTexture, vTexCoord);
+            gl_FragColor = vec4(uLinearize ? toLinear(color.rgb) : color.rgb, color.a);
         }
         """;
 
-    /// <summary>保留的最近纹理数量（不含当前帧）：A/B 对比来回切不重传。</summary>
     private const int RecentTextureCapacity = 2;
-    /// <summary>可留作同尺寸复用的空纹理字节上限（含 mip 链）：更大的纹理直接释放，不额外占显存。</summary>
     private const long SpareTextureByteLimit = 32L * 1024 * 1024;
-    /// <summary>纹理按完整 mip 链计账的分子/分母（1 + 1/4 + 1/16 + … = 4/3）。</summary>
     private const int MipChainNumerator = 4;
     private const int MipChainDenominator = 3;
 
@@ -68,7 +67,8 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private int _program;
     private int _positionHandle = -1;
     private int _texCoordHandle = -1;
-    private int[] _framebuffer = [];
+    private int _linearizeHandle = -1;
+    private bool _bypassOutputTransfer;
     private TextureEntry? _current;
     private TextureEntry? _spareTexture;
     private long _textureBytes;
@@ -76,21 +76,15 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private bool _disposed;
     private bool _surfaceP3;
 
-    /// <summary>当前纹理是否已建立。</summary>
     internal bool HasTexture => _current is { Width: > 0, Height: > 0 };
-    /// <summary>纹理尺寸（未应用方向）。</summary>
     internal int TextureWidth => _current?.Width ?? 0;
-    /// <summary>纹理尺寸（未应用方向）。</summary>
     internal int TextureHeight => _current?.Height ?? 0;
-    /// <summary>窗口表面是否以 Display P3 创建。</summary>
     internal bool SurfaceIsP3 => _surfaceP3;
-    /// <summary>当前 + 最近缓存 + 复用空纹理的估算 GPU 字节（均含 mip 链）；可在任意线程读取。</summary>
+    internal int SurfaceColorspace { get; private set; }
+    internal int FramebufferEncoding { get; private set; }
     internal long TextureBytes => Interlocked.Read(ref _textureBytes);
 
-    /// <summary>创建 EGL 上下文并绑定 SurfaceView 表面。</summary>
-    /// <param name="surface">SurfaceView 的窗口表面。</param>
-    /// <param name="density">屏幕密度（仅用于诊断）。</param>
-    internal void Create(ISurfaceHolder surface, double density)
+    internal void Create(ISurfaceHolder surface, double density, bool allowP3 = true, bool allowPassthrough = true)
     {
         lock (_sync)
         {
@@ -127,68 +121,80 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 throw new InvalidOperationException($"EglCreateContext 失败：0x{EGL14.EglGetError():X}");
             _context = context;
 
-            var windowSurface = CreateWindowSurface(surface, out bool p3);
-            if (windowSurface == null || windowSurface == EGL14.EglNoSurface)
+            _surface = CreateWindowSurface(surface, allowP3, allowPassthrough);
+            try { BindOutput(); }
+            catch (InvalidOperationException exception) when (_surfaceP3)
             {
-                // P3 属性被拒绝时回退普通表面，绝不把 P3 编码值当 sRGB 显示。
-                windowSurface = CreateWindowSurface(surface, out p3, allowP3: false);
+                Console.WriteLine($"[Native] P3 输出无法确认，回退 sRGB：{exception.Message}");
+                EGL14.EglMakeCurrent(display, EGL14.EglNoSurface, EGL14.EglNoSurface, EGL14.EglNoContext);
+                if (_surface != null && _surface != EGL14.EglNoSurface) EGL14.EglDestroySurface(display, _surface);
+                _surface = CreateWindowSurface(surface, allowP3: false, allowPassthrough: false);
+                BindOutput();
             }
-            if (windowSurface == null || windowSurface == EGL14.EglNoSurface)
-                throw new InvalidOperationException($"EglCreateWindowSurface 失败：0x{EGL14.EglGetError():X}");
-            _surface = windowSurface;
-            _surfaceP3 = p3;
-            AndroidDisplayCapabilities.SurfaceIsP3 = p3;
-
-            if (!EGL14.EglMakeCurrent(display, _surface, _surface, _context))
-                throw new InvalidOperationException($"EglMakeCurrent 失败：0x{EGL14.EglGetError():X}");
+            AndroidDisplayCapabilities.SurfaceIsP3 = _surfaceP3;
             BuildProgram();
-            Console.WriteLine($"[Native] EGL 就绪：GLES={GLES20.GlGetString(GLES20.GlVersion)}，P3表面={p3}，density={density:0.###}");
-        }
-    }
+            Console.WriteLine($"[Native] EGL 就绪：GLES={GLES20.GlGetString(GLES20.GlVersion)}，P3表面={_surfaceP3}，"
+                + $"colorspace=0x{SurfaceColorspace:X} framebuffer=0x{FramebufferEncoding:X}，density={density:0.###}");
 
-    /// <summary>尝试创建 P3 窗口表面；P3 不可用或不允许时按默认（sRGB）创建。</summary>
-    /// <param name="surface">窗口表面。</param>
-    /// <param name="p3">实际是否 P3。</param>
-    /// <param name="allowP3">是否允许尝试 P3。</param>
-    /// <returns>EGL 表面。</returns>
-    private EGLSurface? CreateWindowSurface(ISurfaceHolder surface, out bool p3, bool allowP3 = true)
-    {
-        p3 = false;
-        if (_display == null || _config == null) return null;
-        if (allowP3 && AndroidDisplayCapabilities.DisplaySupportsP3 && SupportsP3Colorspace(_display))
-        {
-            int[] attribs = [EglGlColorspaceKhr, EglGlColorspaceDisplayP3Ext, EglNone];
-            var candidate = EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!, attribs, 0);
-            if (candidate != null && candidate != EGL14.EglNoSurface)
+            void BindOutput()
             {
-                p3 = true;
-                return candidate;
+                if (_surface == null || _surface == EGL14.EglNoSurface)
+                    throw new InvalidOperationException($"EglCreateWindowSurface 失败：0x{EGL14.EglGetError():X}");
+                if (!EGL14.EglMakeCurrent(display, _surface, _surface, _context))
+                    throw new InvalidOperationException($"EglMakeCurrent 失败：0x{EGL14.EglGetError():X}");
+                int[] actual = new int[1];
+                if (EGL14.EglQuerySurface(display, _surface, EglGlColorspaceKhr, actual, 0))
+                    SurfaceColorspace = actual[0];
+                else
+                {
+                    _ = EGL14.EglGetError();
+                    SurfaceColorspace = 0;
+                    if (_surfaceP3) throw new InvalidOperationException("无法确认 P3 表面的实际色彩空间");
+                }
+                if (_surfaceP3 && SurfaceColorspace is not (EglGlColorspaceDisplayP3Ext or EglGlColorspaceDisplayP3PassthroughExt))
+                    throw new InvalidOperationException($"P3 表面返回未知色彩空间 0x{SurfaceColorspace:X}");
+                GLES30.GlGetFramebufferAttachmentParameteriv(GLES20.GlFramebuffer, 0x0405,
+                    GlFramebufferAttachmentColorEncoding, actual, 0);
+                int error = GLES20.GlGetError();
+                if (error != GLES20.GlNoError || actual[0] is not (GlSrgb or GlLinear))
+                    throw new InvalidOperationException($"无法确认输出帧缓冲编码：0x{actual[0]:X}, GL=0x{error:X}");
+                FramebufferEncoding = actual[0];
             }
-            Console.WriteLine($"[Native] P3 窗口表面创建失败，回退 sRGB（EGL error=0x{EGL14.EglGetError():X}）");
         }
-        else if (allowP3)
-        {
-            Console.WriteLine($"[Native] P3 不可用：display={AndroidDisplayCapabilities.DisplaySupportsP3} extension={SupportsP3Colorspace(_display)}，回退 sRGB");
-        }
-        return EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!, [EglNone], 0);
     }
 
-    /// <summary>查询 EGL 扩展串判断 P3 色彩空间是否可用。</summary>
-    /// <param name="display">EGL 显示。</param>
-    /// <returns>支持时 true。</returns>
-    private static bool SupportsP3Colorspace(EGLDisplay display)
+    private EGLSurface? CreateWindowSurface(ISurfaceHolder surface, bool allowP3, bool allowPassthrough)
     {
-        try
+        if (_display == null || _config == null) return null;
+        string extensions = " " + EGL14.EglQueryString(_display, EGL14.EglExtensions) + " ";
+        bool Has(string name) => extensions.Contains(" " + name + " ", StringComparison.Ordinal);
+        if (allowP3 && AndroidDisplayCapabilities.DisplaySupportsP3 && Has("EGL_KHR_gl_colorspace"))
         {
-            string? extensions = EGL14.EglQueryString(display, EGL14.EglExtensions);
-            bool supported = extensions != null
-                && extensions.Contains("EGL_EXT_gl_colorspace_display_p3", StringComparison.Ordinal)
-                && extensions.Contains("EGL_KHR_gl_colorspace", StringComparison.Ordinal);
-            if (!supported)
-                Console.WriteLine($"[Native] EGL 无 P3 色彩空间扩展：EGL_EXT_gl_colorspace_display_p3={(extensions?.Contains("EGL_EXT_gl_colorspace_display_p3", StringComparison.Ordinal) == true)} EGL_KHR_gl_colorspace={(extensions?.Contains("EGL_KHR_gl_colorspace", StringComparison.Ordinal) == true)}");
-            return supported;
+            if (allowPassthrough && Has("EGL_EXT_gl_colorspace_display_p3_passthrough")
+                && TryCreate(EglGlColorspaceDisplayP3PassthroughExt) is { } passthrough)
+            {
+                _surfaceP3 = true;
+                return passthrough;
+            }
+            if (Has("EGL_EXT_gl_colorspace_display_p3") && TryCreate(EglGlColorspaceDisplayP3Ext) is { } p3)
+            {
+                _surfaceP3 = true;
+                return p3;
+            }
         }
-        catch { return false; }
+        _surfaceP3 = false;
+        if (Has("EGL_KHR_gl_colorspace") && TryCreate(EglGlColorspaceSrgbKhr) is { } srgb)
+            return srgb;
+        return EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!, [EglNone], 0);
+
+        EGLSurface? TryCreate(int colorspace)
+        {
+            var candidate = EGL14.EglCreateWindowSurface(_display, _config, surface.Surface!,
+                [EglGlColorspaceKhr, colorspace, EglNone], 0);
+            if (candidate != null && candidate != EGL14.EglNoSurface) return candidate;
+            Console.WriteLine($"[Native] EGL 色彩空间 0x{colorspace:X} 被拒绝，尝试下一输出（0x{EGL14.EglGetError():X}）");
+            return null;
+        }
     }
 
     /// <summary>窗口尺寸变化：更新视口像素并重绘。</summary>
@@ -237,14 +243,22 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 return;
             }
             if (_display == null || _surface == null || _context == null) return;
+            if (image.Pixels.LongLength < (long)(image.Height - 1) * image.Stride
+                + (long)image.Width * DecodedImage.BytesPerPixel(image.Encoding))
+                throw new ObjectDisposedException(nameof(image));
             EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+            var source = image;
+            var targetSpace = _surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
+            using var converted = image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace
+                ? ColorEngine.ToDisplayEncoding(image, PixelEncoding.Rgba8, targetSpace) : null;
+            image = converted ?? image;
             var upload = Stopwatch.StartNew();
             var entry = TakeSpare(image.Width, image.Height);
             double createMs;
             if (entry == null)
             {
                 GLES20.GlGenTextures(1, _handleBuffer, 0);
-                entry = new TextureEntry(new WeakReference<DecodedImage>(image), _handleBuffer[0], image.Width, image.Height);
+                entry = new TextureEntry(new WeakReference<DecodedImage>(source), _handleBuffer[0], image.Width, image.Height);
                 GLES20.GlBindTexture(GLES20.GlTexture2d, entry.Handle);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMinFilter, GLES20.GlLinearMipmapLinear);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMagFilter, GLES20.GlLinear);
@@ -254,8 +268,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             }
             else
             {
-                // 空纹理的参数在建立时已设好，整幅覆写不会残留旧内容
-                entry.Rebind(new WeakReference<DecodedImage>(image));
+                entry.Rebind(new WeakReference<DecodedImage>(source));
                 GLES20.GlBindTexture(GLES20.GlTexture2d, entry.Handle);
                 createMs = 0;
             }
@@ -451,16 +464,14 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         Interlocked.Exchange(ref _textureBytes, total);
     }
 
-    /// <summary>绘制一帧：清屏后按共享视口矩形绘制照片（方向由 UV 置换表达）。</summary>
-    /// <param name="viewport">共享视口。</param>
-    /// <param name="density">屏幕密度。</param>
-    internal void DrawFrame(PhotoViewport viewport, double density)
+    internal void DrawFrame(PhotoViewport viewport, double density, bool present = true)
     {
         lock (_sync)
         {
             if (_disposed || _display == null || _surface == null || _context == null) return;
             if (_width < 1 || _height < 1) return;
             if (!EGL14.EglMakeCurrent(_display, _surface, _surface, _context)) return;
+            GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
             GLES20.GlViewport(0, 0, _width, _height);
             GLES20.GlDisable(GLES20.GlBlend);
             GLES20.GlDisable(GLES20.GlDepthTest);
@@ -468,6 +479,9 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             GLES20.GlClear(GLES20.GlColorBufferBit);
             if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
             {
+                GLES20.GlUseProgram(_program);
+                if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
+                GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
                 double scale = Math.Max(1e-9, viewport.Scale) * density;
                 double drawWidth = viewport.ImageWidth * scale;
                 double drawHeight = viewport.ImageHeight * scale;
@@ -478,7 +492,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 DrawQuad(viewport.Orientation, (float)(left / _width * 2 - 1), (float)(1 - top / _height * 2),
                     (float)(drawWidth / _width * 2), (float)(drawHeight / _height * 2));
             }
-            EGL14.EglSwapBuffers(_display, _surface);
+            if (present) EGL14.EglSwapBuffers(_display, _surface);
         }
     }
 
@@ -536,12 +550,25 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         _ => (x, y),
     };
 
+    /// <summary>
+    /// 校验当前纹理的原始存储是否等于源图按实际输出表面色域规范后的像素（逐通道精确比较）。
+    /// 上传前按表面色域转换，因此预期值取 <see cref="ColorEngine.ToDisplayEncoding"/> 的结果而不是源图码值；
+    /// 纹理身份仍按原源图实例核对（缓存键是源图，不是转换产物）。
+    /// </summary>
+    /// <param name="image">已上传的展示图像（源图实例）。</param>
+    /// <returns>是否逐通道一致，以及边界行/像素与 GL 错误信息。</returns>
     internal (bool Matches, string Details) CheckTexturePixelsForChecks(DecodedImage image)
     {
         lock (_sync)
         {
             if (_current?.Matches(image) != true || _display == null || _surface == null || _context == null)
                 return (false, "texture unavailable");
+            var targetSpace = _surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
+            using var expected = image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace
+                ? ColorEngine.ToDisplayEncoding(image, PixelEncoding.Rgba8, targetSpace) : null;
+            var reference = expected ?? image;
+            if (reference.Width != image.Width || reference.Height != image.Height)
+                return (false, $"expected {reference.Width}x{reference.Height} vs {image.Width}x{image.Height}");
             EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
             int[] previous = new int[1], framebuffer = new int[1];
             GLES20.GlGetIntegerv(GLES20.GlFramebufferBinding, previous, 0);
@@ -567,12 +594,12 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 {
                     pixel.Position(0);
                     GLES20.GlReadPixels(x, y, 1, 1, GLES20.GlRgba, GLES20.GlUnsignedByte, pixel);
-                    int offset = y * image.Stride + x * 4;
+                    int offset = y * reference.Stride + x * 4;
                     for (int channel = 0; channel < 4; channel++)
                     {
                         byte actual = unchecked((byte)pixel.Get(channel));
-                        if (actual != image.Pixels[offset + channel])
-                            return (false, $"pixel({x},{y}) channel={channel} gpu={actual} source={image.Pixels[offset + channel]}");
+                        if (actual != reference.Pixels[offset + channel])
+                            return (false, $"pixel({x},{y}) channel={channel} gpu={actual} expected={reference.Pixels[offset + channel]}");
                     }
                     checkedPixels++;
                 }
@@ -588,86 +615,42 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     }
 
     /// <summary>
-    /// 离屏渲染导航图（长边 150 点、按显示朝向比例），供缩放指示器使用；只在展示图变化时调用。
+    /// 回读当前照片在视口归一化坐标处的真实输出像素（默认帧缓冲，非屏幕截图），供色彩与像素验收使用。
     /// </summary>
     /// <param name="viewport">共享视口。</param>
     /// <param name="density">屏幕密度。</param>
-    /// <returns>导航图位图；无纹理或失败时 null。</returns>
-    internal Bitmap? CaptureNavigationBitmap(PhotoViewport viewport, double density)
+    /// <param name="u">显示横向归一化坐标。</param>
+    /// <param name="v">显示纵向归一化坐标。</param>
+    /// <param name="bypassOutputTransfer">为 true 时跳过着色器对 sRGB 帧缓冲的逆传递，取原始纹理编码值。</param>
+    /// <returns>回读到的 RGBA 通道。</returns>
+    internal (byte R, byte G, byte B, byte A) ReadPixelForChecks(PhotoViewport viewport, double density,
+        double u, double v, bool bypassOutputTransfer)
     {
         lock (_sync)
         {
-            if (_disposed || _display == null || _surface == null || _context == null || !HasTexture) return null;
-            if (!EGL14.EglMakeCurrent(_display, _surface, _surface, _context)) return null;
-            var (widthDp, heightDp) = viewport.NavigationSize;
-            int width = Math.Max(1, (int)Math.Round(widthDp * density));
-            int height = Math.Max(1, (int)Math.Round(heightDp * density));
-            // 限制在合理尺寸内，避免离屏目标意外过大。
-            double shrink = Math.Min(1, 768.0 / Math.Max(width, height));
-            if (shrink < 1)
+            if (!HasTexture || _width < 1 || _height < 1)
+                throw new InvalidOperationException("无可回读的照片表面");
+            var point = viewport.ViewPoint(u, v);
+            int x = (int)Math.Floor(point.X * density);
+            int y = _height - 1 - (int)Math.Floor(point.Y * density);
+            if (x < 0 || x >= _width || y < 0 || y >= _height)
+                throw new ArgumentOutOfRangeException(nameof(u), "采样点不在当前视口内");
+            try
             {
-                width = Math.Max(1, (int)Math.Round(width * shrink));
-                height = Math.Max(1, (int)Math.Round(height * shrink));
+                _bypassOutputTransfer = bypassOutputTransfer;
+                DrawFrame(viewport, density, present: false);
+                using var pixel = ByteBuffer.AllocateDirect(4)!;
+                GLES20.GlReadPixels(x, y, 1, 1, GLES20.GlRgba, GLES20.GlUnsignedByte, pixel);
+                int error = GLES20.GlGetError();
+                if (error != GLES20.GlNoError)
+                    throw new InvalidOperationException($"照片回读失败：0x{error:X}");
+                return ((byte)pixel.Get(0), (byte)pixel.Get(1), (byte)pixel.Get(2), (byte)pixel.Get(3));
             }
-            int previousFramebuffer = 0;
-            GLES20.GlGetIntegerv(GLES20.GlFramebufferBinding, new[] { previousFramebuffer }, 0);
-            int[] framebuffer = new int[1];
-            int[] texture = new int[1];
-            GLES20.GlGenFramebuffers(1, framebuffer, 0);
-            GLES20.GlGenTextures(1, texture, 0);
-            GLES20.GlBindTexture(GLES20.GlTexture2d, texture[0]);
-            GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMinFilter, GLES20.GlLinear);
-            GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMagFilter, GLES20.GlLinear);
-            GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureWrapS, GLES20.GlClampToEdge);
-            GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureWrapT, GLES20.GlClampToEdge);
-            GLES20.GlTexImage2D(GLES20.GlTexture2d, 0, GLES20.GlRgba, width, height, 0, GLES20.GlRgba, GLES20.GlUnsignedByte, (ByteBuffer?)null);
-            GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, framebuffer[0]);
-            GLES20.GlFramebufferTexture2D(GLES20.GlFramebuffer, GLES20.GlColorAttachment0, GLES20.GlTexture2d, texture[0], 0);
-            if (GLES20.GlCheckFramebufferStatus(GLES20.GlFramebuffer) != GLES20.GlFramebufferComplete)
+            finally
             {
-                GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, previousFramebuffer);
-                GLES20.GlDeleteFramebuffers(1, framebuffer, 0);
-                GLES20.GlDeleteTextures(1, texture, 0);
-                return null;
+                _bypassOutputTransfer = false;
+                DrawFrame(viewport, density);
             }
-            GLES20.GlViewport(0, 0, width, height);
-            GLES20.GlClearColor(0f, 0f, 0f, 1f);
-            GLES20.GlClear(GLES20.GlColorBufferBit);
-            float aspect = (float)(viewport.ImageWidth / Math.Max(1e-9, viewport.ImageHeight));
-            float quadWidth = 2f, quadHeight = 2f;
-            if (aspect > (float)width / height) quadHeight = quadWidth / aspect;
-            else quadWidth = quadHeight * aspect;
-            DrawQuad(viewport.Orientation, -quadWidth / 2, quadHeight / 2, quadWidth, quadHeight);
-
-            var pixels = ByteBuffer.AllocateDirect(width * height * 4).Order(ByteOrder.NativeOrder()!) as ByteBuffer;
-            Bitmap? bitmap = null;
-            if (pixels != null)
-            {
-                GLES20.GlReadPixels(0, 0, width, height, GLES20.GlRgba, GLES20.GlUnsignedByte, pixels);
-                pixels.Position(0);
-                int[] colors = new int[width * height];
-                for (int y = 0; y < height; y++)
-                {
-                    // GL 原点在左下，Bitmap 原点在左上。
-                    int sourceRow = (height - 1 - y) * width * 4;
-                    for (int x = 0; x < width; x++)
-                    {
-                        int index = sourceRow + x * 4;
-                        colors[y * width + x] = Color.Argb(pixels.Get(index + 3),
-                            pixels.Get(index), pixels.Get(index + 1), pixels.Get(index + 2));
-                    }
-                }
-                bitmap = OperatingSystem.IsAndroidVersionAtLeast(26)
-                    ? Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!, false,
-                        ColorSpace.Get((_surfaceP3 ? ColorSpace.Named.DisplayP3 : ColorSpace.Named.Srgb)!)!)
-                    : Bitmap.CreateBitmap(width, height, Bitmap.Config.Argb8888!);
-                bitmap.SetPixels(colors, 0, width, 0, 0, width, height);
-            }
-            GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, previousFramebuffer);
-            GLES20.GlDeleteFramebuffers(1, framebuffer, 0);
-            GLES20.GlDeleteTextures(1, texture, 0);
-            GLES20.GlViewport(0, 0, _width, _height);
-            return bitmap;
         }
     }
 
@@ -728,8 +711,11 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         _spareTexture = null;
         UpdateTextureBytes();
         _program = 0;
-        _positionHandle = _texCoordHandle = -1;
-        _framebuffer = [];
+        _positionHandle = _texCoordHandle = _linearizeHandle = -1;
+        _bypassOutputTransfer = false;
+        _surfaceP3 = false;
+        SurfaceColorspace = FramebufferEncoding = 0;
+        AndroidDisplayCapabilities.SurfaceIsP3 = false;
     }
 
     /// <summary>删除全部纹理（GL 调用，上下文仍有效时执行）。</summary>

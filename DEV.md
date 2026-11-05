@@ -59,7 +59,7 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-open @files/pv-fixtures --es pv-check main
 ```
 
-`pv-check` 支持 `main|analysis|similarity|settings|tools` 基线模式，以及 `faults|layout|input|storage|filter|zoom` 独立模式；`filter` 覆盖下拉跨探测周期、重复布局与窄屏滚动，`zoom` 覆盖 26MP 代理→Full 上传、GPU 分块边界与实际 HIF 放大性能（需照片副本放在应用内部或外部 `pv-check-zoom/`）。报告通过 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt` 读取。具体素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
+`pv-check` 支持 `main|analysis|similarity|settings|tools` 基线模式，以及 `faults|layout|input|storage|filter|zoom|color` 独立模式；`filter` 覆盖下拉跨探测周期、重复布局与窄屏滚动，`zoom` 覆盖 26MP 代理→Full 上传、GPU 分块边界与实际 HIF 放大性能（需照片副本放在应用内部或外部 `pv-check-zoom/`）。`color` 需 P3 真机：把 `Fixtures/jpeg/color-*.jpg`、`Fixtures/heif/color-*.heic` 与 `Fixtures/jpeg-large/color-p3-large.jpg` 复制到应用的 `files/pv-color-fixtures/`，再以 `--es pv-check color` 冷启动；检查使用隔离设置，覆盖实际 EGL 编码、主图回读、位图原始 P3 存储、导航图、代理/Full 与增强。默认按设备能力尝试 P3；`--ez pv-srgb true` 或 `--ez pv-p3 false` 可强制 sRGB 对照。报告通过 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt` 读取。具体素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
 
 ### macOS
 

@@ -97,11 +97,11 @@ public static class AndroidNativeShell
     /// <returns>可直接交给 <c>SetContentView</c> 的根视图。</returns>
     public static View CreateRootView(Activity activity, Intent? intent)
     {
-        // 真机 EGL P3 表面在当前合成路径下会把主图整体抬亮（缩略图正常）；默认走 sRGB 保正确，
-        // 广色域留 --ez pv-p3 true 诊断，待 EGL/合成传递函数确认后再默认开启。
-        AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-p3", false) != true;
-        // 压测独占一份隔离设置：否则一轮压测会把用户设置写脏，下一轮也无法从默认值起跑。
-        if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
+        AndroidDisplayCapabilities.ForceSrgb = intent?.GetBooleanExtra("pv-srgb", false) == true
+            || intent?.GetBooleanExtra("pv-p3", true) == false;
+        if (string.Equals(intent?.GetStringExtra("pv-check"), "color", StringComparison.OrdinalIgnoreCase))
+            AndroidSettingsStorage.UseIsolatedProfile("color");
+        else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
         else if (intent?.GetStringExtra("pv-check") is "zoom" or "input")
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");

@@ -130,7 +130,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - iOS：`PhotoViewer.iOS/Native/iOSPhotoView.cs`（`UIScrollView` 为交互真源）。
   - Windows：`PhotoViewer.Windows/Native/WindowsPhotoView.cs`（`SwapChainPanel` + D3D11）。
   - Android：`PhotoViewer.Android/Native/AndroidPhotoView.cs`（`SurfaceView` + EGL14/GLES）。
-  - **IMAGE-01@android**：空首屏副文偏移取 24（行高 24 + 内边距 6），已登记 10-18。
+  - **IMAGE-01@android**：空首屏副文偏移取 24（行高 24 + 内边距 6）。照片使用 8 位 Display P3（设备与窗口支持广色域时）或 sRGB；EGL 优先 P3 passthrough，标准 P3 与显式 sRGB 表面按实际帧缓冲编码决定是否由着色器线性化，避免重复传递编码。解码目标在会话内稳定，表面回退或重建时按图像真实标签转换上传，不把 P3 码值直接交给 sRGB 表面。缩略图、分析位图与导航图出口统一显式 sRGB；导航图先抽样再转换，不为小图转换整幅照片。
 - **IMAGE-02**：`PhotoViewport.ToggleFit` / `ApplyImage`。
   - **IMAGE-04@ios / @android**：触屏最小缩放为适应态，小图/RAW 预览夹回适应（已登记 10-18）。
 - **IMAGE-04**：缩放范围 `PhotoViewer.Shared/PhotoViewport.cs:250`/`:283`；预设与比例缩放入口 macOS `PhotoViewer.Mac/Native/MacMainWindow.cs:553`、iOS `PhotoViewer.iOS/Native/iOSNativeRootViewController.cs:605`、Windows `PhotoViewer.Windows/Native/WindowsMainWindow.cs:273-276`、Android `PhotoViewer.Android/Native/AndroidNativeRootView.cs:623-624`。

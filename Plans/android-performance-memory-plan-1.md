@@ -85,7 +85,7 @@
 - 零 SIGSEGV / OOM / lmkd 查杀。小米 13 连续压测后一度 Thermal SEVERE，探针中位数慢约 12%。
 - **内存上限**：17 Ultra 前台逐步分配到 PSS 14.8 GB 后被 HyperOS `MiuiSentinelMemoryManager` 以 `used too many pss resource … threshold:6291456kb` 强杀（越线约 60 s 后执行，非 lmkd），阈值即系统属性 `persist.sys.stability.pss_highest_line`。预算改为 `min(AOSP 可见档, 红线 × 90%)` 后，同一 500 连翻的 swap 从 2.5 GB 降到 66 MB、托管堆峰值从约 4.9 GB 降到约 2.6 GB；后半程 p50 上升来自素材后 300 张为 33MP（前 100 张 26MP），与内存无关。
 - **设置读取跨线程**：真机上 `LoadSettingsAsync` 在后台线程回填设置，原生控件订阅者抛 `CalledFromWrongThreadException`，被报成「读取设置失败」，部分回填后的节流保存曾把小米 13 的快捷键从 16 项截断为 1 项（控制栏命令分组随之消失）。回填改为切回 UI 线程，两台真机复测无报错、设置完整。
-- **P3 表面**：小米 13 上 `pv-p3` 诊断模式照片区亮度 +72%（HIF）/ +114%（ARW），与 17 Ultra 的 #29 一致，默认 sRGB 维持不变。
+- **P3 表面**：小米 13 上 `pv-p3` 诊断模式照片区亮度 +72%（HIF）/ +114%（ARW），与 17 Ultra 的 #29 一致；当时的处置是默认维持 sRGB。现行默认走 P3，该抬亮即 P3 表面上的重复传递编码，现由帧缓冲实际编码决定着色器是否先线性化，`--ez pv-srgb true` 仍可强制 sRGB 对照（见 [Android 执行清单 §8](native-rebuild-phase-android.md)）。
 
 ### 遗留候选
 

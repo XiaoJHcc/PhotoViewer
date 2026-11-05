@@ -88,8 +88,8 @@ plan-1 §0 调查结论不变:Avalonia 全平台零色彩管理、解码端丢 I
 |---|---|---|---|
 | macOS | 16float 扩展线性 sRGB | 16float 扩展线性 sRGB | 桌面内存宽松,全量 plan-1 配置 |
 | iOS | **8bit Display P3**(抖动) | **16float 扩展线性 sRGB**;压力 ≥ Warning 时降 8bit P3 | 现行口径（I2 落地）：Full 档 8bit P3、代理档 F16，压力下代理也降 8 位；8bit P3 在 Apple 屏上仍全色域正确,损失仅为超 P3 内容与平滑渐变余量 |
-| Windows | 16float 线性 scRGB（本阶段恒 F16） | 16float 线性 scRGB | 显示层 AdvancedColor(ACM) 探测与输出转换（W-M7）已实现并通过程序化验收（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY，见 [Windows P2-W §19](native-rebuild-windows-p2.md)）；真屏 ACM/HDR 实际切换、Win10、不同色域跨屏与校色仪仍为硬件门 |
-| Android | 8bit P3(探测失败回退 sRGB) | 8bit P3/sRGB（与 Full 同档） | 恒 Rgba8；plan-1 已定 Android SDR 只有 8bit P3；**现行默认 sRGB 回退**，P3 待 Windows 色彩验收后尝试（当前无 ADB 设备，不写已恢复） |
+| Windows | 16float 线性 scRGB（本阶段恒 F16） | 16float 线性 scRGB | 显示层 AdvancedColor(ACM) 探测与输出转换（W-M7）已实现并通过程序化验收（`--pv-native-color` 16 PASS/0 FAIL/1 BOUNDARY，见 [Windows P2-W §19](native-rebuild-windows-p2.md)）；不同色域跨屏已由作者确认；其余硬件无测试条件，仅保留未验边界，不列当前待办 |
+| Android | 8bit P3(探测失败回退 sRGB) | 8bit P3/sRGB（与 Full 同档） | 恒 Rgba8；plan-1 已定 Android SDR 只有 8bit P3；**现行按设备与窗口广色域能力启用 P3**（passthrough `0x3490` → 标准 P3 `0x3363` → sRGB `0x3089`，逐级回退），真机结论见 [Android 执行清单 §8](native-rebuild-phase-android.md) |
 
 **派生功能输入口径**:直方图/分析栏/DINO 诊断的输入从"全分辨率位图"改为"代理图 + 必要的全分辨率按需取样"(DINO 本来就只吃 560 短边缩略图,直方图用代理图统计视觉无差)——消灭 §2.1-P6 的整图拷贝。
 

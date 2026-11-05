@@ -4,11 +4,11 @@
 
 **证据规则**：每格只写"状态；简短覆盖边界或尚缺验证"；设备、素材与报告的验证范围见对应计划文档；程序化通过不等于作者手验，不能把一个平台的结果复制给另一个平台。未登记的 ID 一律写 `待核验`。平台实现入口见 [platforms.md](platforms.md)。
 
-**手验与裁定（2026-10-22）**：macOS、iOS·iPadOS、Windows 三端常规 UI 呈现与操作已由作者手验通过（点击、真实照片加载、菜单/下拉、开关、设置页、工具页、分析栏/相似面板、缩放平移、排序筛选、评分写回、空态、跨启动持久化），Windows 另含 175%/200% 高 DPI 与真实跨屏。失败注入已覆盖打开/评分/Full/损坏设置/相似/分析失败（Mac、iPad）；Windows 的失败注入相关格子保持代码核对，不再另建注入套件。以下明确不再作为待办：真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性（不做压力验收）、桌面端外设热插拔与触控板分流（无验收条件）。仍未覆盖：广色域对拍与性能压力——相关格子保留各自的边界说明。逐项清单见 [原生收尾计划](../Plans/native-rebuild-phase-6-unify.md) 与下方各端证据文档。
+**手验与裁定（2026-10-22）**：macOS、iOS·iPadOS、Windows 三端常规 UI 呈现与操作已由作者手验通过（点击、真实照片加载、菜单/下拉、开关、设置页、工具页、分析栏/相似面板、缩放平移、排序筛选、评分写回、空态、跨启动持久化），Windows 另含 175%/200% 高 DPI 与真实跨屏。失败注入已覆盖打开/评分/Full/损坏设置/相似/分析失败（Mac、iPad）；Windows 的失败注入相关格子保持代码核对，不再另建注入套件。以下明确不再作为待办：真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性（不做压力验收）、桌面端外设热插拔与触控板分流（无验收条件）。仍未覆盖：广色域对拍与性能压力——相关格子保留各自的边界说明（Android 色域已改为程序化回读通过，见 2026-11-06 段）。逐项清单见 [原生收尾计划](../Plans/native-rebuild-phase-6-unify.md) 与下方各端证据文档。
 
-**Windows 色彩（W-M7）**：功能实现与程序化验收已完成——`--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**（本机显示器为 SDR）、smoke **35/35**（Debug 与 Release）、settings **14/14**、tools **9/9**，Debug/Release 构建 0 错 0 警；共享侧 `ColorTestTool` 68 PASS、`ColorEngineLutCheck` 逐字节一致、`HeifFastDecodeTest` 三套与 `CoreContractCheck` 905 PASS 全绿（详见 [Windows P2-W §19](../Plans/native-rebuild-windows-p2.md)）。作者浏览本轮色域检测图后目测未见异常，并同意提交；该结论仅覆盖本次目测，不扩大为完整硬件矩阵通过。程序化证据没覆盖的仍是硬件：真屏 ACM/HDR 实际切换、Win10 实机、不同色域显示器跨屏与校色仪——相关格子保留硬件未验边界。Android 保持默认 sRGB（`adb devices -l` 无设备、`emulator -list-avds` 为空），P3 真机尝试被硬件阻塞，既不算已恢复也不算永久延期。
+**Windows 色彩（W-M7）**：功能实现与程序化验收已完成——`--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**（本机显示器为 SDR）、smoke **35/35**（Debug 与 Release）、settings **14/14**、tools **9/9**，Debug/Release 构建 0 错 0 警；共享侧 `ColorTestTool` 68 PASS、`ColorEngineLutCheck` 逐字节一致、`HeifFastDecodeTest` 三套与 `CoreContractCheck` 905 PASS 全绿（详见 [Windows P2-W §19](../Plans/native-rebuild-windows-p2.md)）。作者浏览本轮色域检测图后目测未见异常，并同意提交；另已明确确认不同色域显示器跨屏完成。其余硬件无测试条件，只保留未验边界，不再列作当前待办，也不扩大为完整硬件矩阵通过。Android 当时因无可用设备（`adb devices -l` 为空、`emulator -list-avds` 为空）未能尝试 P3；该阻塞已解除，现行状态见下方 2026-11-06 段。
 
-**2026-10-23 Android 程序化验收**：基础操作与色彩已由作者手验通过（色彩按 sRGB 回退的平台限制）。八方向、RAW 全分辨率、Full/打开/评分/DINO/相似/设置失败态、外部打开、外部存储写回、旋转与 fontScale/density 矩阵、滚轮分流、按键重复、控制栏焦点已由 `pv-check` 机测通过；SCOPE-03 与数据库不可用注入已于 2026-11-01 由 `pv-check faults` 机测通过；剩余仅 SCOPE-06 策略项、真机 ROM/手感与组合模式稳定性。
+**2026-10-23 Android 程序化验收**：基础操作与色彩已由作者手验通过（色彩当时按 sRGB 回退口径，已由 2026-11-06 段取代）。八方向、RAW 全分辨率、Full/打开/评分/DINO/相似/设置失败态、外部打开、外部存储写回、旋转与 fontScale/density 矩阵、滚轮分流、按键重复、控制栏焦点已由 `pv-check` 机测通过；SCOPE-03 与数据库不可用注入已于 2026-11-01 由 `pv-check faults` 机测通过；剩余仅 SCOPE-06 策略项、真机 ROM/手感与组合模式稳定性。
 
 **2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
 
@@ -19,6 +19,8 @@
 **2026-11-01 Android 补齐程序化断言**：MENU-06（雾天增强文案/勾选/无照片置灰，`pv-check main` 21/0）、SCOPE-03（现算与增强产物不入库不写 XMP、显式提取三路入库、清库清空库表并把诊断瓦片退回「未提取」）与 STATE-04（数据库不可用注入后如实「未提取」、不停留计算中、无伪造徽标且不崩溃，收尾恢复可用库）由 `pv-check faults` 36/0 机测通过；`pv-check all` 87 项连跑 15 次 0 崩溃、无新增 tombstone，历史启动期 SIGSEGV 在本轮未复现、仍未定位。报告归档 `artifacts/acceptance/android-acceptance-2026-11-01/`。
 
 **2026-11-02 Windows 运行态补齐**：共享 Core 重建后 Windows 只有类型检查，本轮在 Windows 本机实跑 `CoreContractCheck` **818 PASS / 1 SKIP / 0 FAIL**（唯一 skip 是 macOS 专有 `realpath` 身份）、`--pv-native-smoke` **30/30**（连跑两次）、`--pv-native-settings` **10/10**、`--pv-native-tools` **5/5**，Debug/Release 构建 0 错 0 警。期间修掉一个 Windows 缺陷：读文件只带 `FileShare.ReadWrite`，外部删除/改名与本应用原子替换都会被锁（`LocalFileRef.OpenReadAsync` 现同时允许 `FileShare.Delete`）；并把「权限拒绝打开」「只读 sidecar 预检」「不可读 sidecar 映射」三个原先在 Windows 上直接跳过的分支改成实跑（Windows 用只读属性/独占句柄，不套用 POSIX 模式）。冒烟夹具改为各自独占子目录（显式打开会刷新整个父目录），修复了冒烟第二次运行必失败。**OPEN-06** 新增 `--pv-native-activation-check`：本进程持单实例键并真实拉起第二个进程，核对激活转发、主实例切到目标、二次进程以 0 退出且不开第二个窗口，连跑两次通过。同日还实测了 Training `DatasetBuilder` 在 Windows 的 `--dump-render`（像素与既有 `display-plane-v3` 缓存逐文件哈希一致），关窗时在途大图上传的 `ObjectDisposedException` 已加前置守卫（原先是收尾回调在 D3D 上下文 Dispose 后仍调用 `Unmap`）；`PhotoGroupMap.Build` 的「先清空再回填」改为「先回填、再清空不在组内的文件」，并发读取不再看到 `Group == null`。MENU-06 也转为程序化（smoke 断言菜单文案与勾选跟随会话）。仍缺：WinUI 真实点选写回的作者复验、色彩（W-M7）与顺序连翻长尾。
+
+**2026-11-06 Android 色域（P3）真机落地**：主图默认按设备与窗口广色域能力协商表面——P3 passthrough（`0x3490`）→ 标准 P3（`0x3363`）→ sRGB（`0x3089`），并按 GL 帧缓冲的实际编码决定着色器是否先反 sRGB 线性化（标准 P3 未修正时 128 灰回读为 188、修正后为 128，均由直接回读证实）；`--ez pv-srgb true` 或 `--ez pv-p3 false` 仍可强制 sRGB 对照，默认不再强制。解码目标按 `DisplaySupportsP3` 在会话内稳定，上传按实际表面转换，导航图/缩略图/分析位图出口统一 sRGB；`Bitmap.GetPixels` 会返回 sRGB 打包值，改为 JNI 原始存储直读并如实规范目标色域。小米 13（2211133C / fuxi / Android 13·API 33）真机：Debug 与 Release 各 23 条既有警告、0 错误且无新增；整合远端零拷贝上传与触摸修复后，两种构建均 `pv-check color` 85/0、`main` 22/0、`input` 27/0；Debug `settings` 98/0，Release `zoom` 26/0。Debug `zoom` 25/1，唯一失败为真实 HIF 会话 UI 心跳性能门，未放宽门槛（详见 Android §8.4）；整合前另验 Debug `analysis` 51/0、`layout` 18/0、强制 sRGB `main` 22/0；HOME 切后台再回同一 PID，EGL 重建仍为 P3、照片 layer 为 DISPLAY_P3，灰阶 32/64/128/191/223 截图前后一致（该项在 Release 生产构建上实测）。报告 `artifacts/acceptance/android-color-xiaomi13-2026-11-06/`。`filter` 首跑在 Skia 动态库加载构造阶段 SIGSEGV（未确认与既有启动不稳定同因），重跑 28 PASS / 1 FAIL（恢复 `previousOrientation` 后等竖屏超时），本轮不按全量稳定通过计。以上仅本机范围，不移植其它平台。详见 [Android 执行清单 §8](../Plans/native-rebuild-phase-android.md)。
 
 证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
 
@@ -54,7 +56,7 @@
 | SHELL-02 | 代码核对；既有 32 点悬停标题栏、文件栏隐藏时全宽毛玻璃与新增窄宽度常驻栏均已实现并静态复核，当前 Windows 主机无法编译/实跑 AppKit，layout/input 套件与作者手验待做 | 不适用；无标题栏语义 | 程序化通过；既有悬停显隐、文件栏隐藏时全宽亚克力、筛选挖空、caption 命中（WM_NCHITTEST）、按钮字形随窗口态、全屏无拖动区、主图上方交换链亚克力回读（变暗/保色/隐藏复原、噪点纹理就位、与 XAML 段接缝同值）与新增窄宽度常驻栏（700 DIP 下 32 点布局让位、全宽亚克力、热区外与失焦保持，1200 DIP 恢复悬停覆盖层）均已在本机冒烟通过；作者目视无大问题，行布局完整复验待做 | 不适用；窗口装饰属平台 |
 | SHELL-03 | 作者手验通过 | 不适用；无应用内全屏 | 作者手验通过；四态往返 | 不适用；系统窗口 |
 | SHELL-04 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；ShowFilm/ShowControls 写平台偏好并跨启动恢复 | 作者手验通过；基础操作；两键写 SharedPreferences |
-| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI 与真实跨屏已验；色彩程序化通过（`--pv-native-color` 16/0/1 B），真屏 ACM/HDR 切换与不同色域跨屏未验 | 程序化通过；竖/横屏旋转与尺寸变化；外接显示未验 |
+| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI 与真实跨屏已验；色彩程序化通过（`--pv-native-color` 16/0/1 B），不同色域跨屏已由作者确认；其余硬件仅保留未验边界、不列待办 | 程序化通过；竖/横屏旋转与尺寸变化；HOME 切后台再回同一 PID 后 EGL 重建仍协商 P3、照片 layer 为 DISPLAY_P3；外接显示未验 |
 | SHELL-06 | 作者手验通过；窗口按钮/触控菜单已验 | 作者手验通过；窗口按钮/触控菜单已验 | 程序化通过；自绘全屏/最小化/最大化/关闭按钮的提示与读屏名；作者复验待做 | 作者手验通过；基础操作 |
 
 ## filter
@@ -76,12 +78,12 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1；色彩程序化通过（JPEG 四源/HEIF/RAW/GPU 输出转换），真屏 ACM/HDR 与校色仪未验 | 作者手验通过；P3 与 sRGB 素材目视有差异，按平台限制通过；@android 行高已登记 |
+| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1；色彩程序化通过（JPEG 四源/HEIF/RAW/GPU 输出转换），真屏 ACM/HDR 与校色仪未验 | 作者手验通过（基础）；色彩程序化通过（本机 `pv-check color`，见 2026-11-06 段）——默认按设备与窗口广色域能力启用 P3，不再默认强制 sRGB；@android 行高已登记 |
 | IMAGE-02 | 作者手验通过 | 作者手验通过 | 作者手验通过；F 键对焦优先 | 作者手验通过；基础操作；接共享视口对焦点 |
 | IMAGE-03 | 程序化通过；faults: 代理保持 + FullError 提示 | 程序化通过；faults: 代理保持 + FullError 提示 | 代码核对；有代理只报 FullError | 程序化通过；Full 失败保留代理并提示 |
 | IMAGE-04 | 作者手验通过 | 作者手验通过；@ios 已登记 | 作者手验通过；预设未命中不回退端点 | 作者手验通过；基础操作；@android 已登记 |
-| IMAGE-05 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；程序化通过真机/模拟器动画中途触摸接管且旧终点不覆盖 |
-| IMAGE-06 | 作者手验通过；导航拖框先放大到 4 倍再拖动 | 程序化通过；导航宿主 alpha 0.6、触屏拖动，显示/换位/隐藏无隐式动画 | 作者手验通过；白框拖动后视口中心与框位置同步；alpha 0.6 | 作者手验通过；基础操作；白框拖动保留抓取偏移 |
+| IMAGE-05 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；程序化通过真机/模拟器动画中途触摸接管且旧终点不覆盖（真机 25128PNA1C / API 36 Release、模拟器 Debug） |
+| IMAGE-06 | 作者手验通过；导航拖框先放大到 4 倍再拖动 | 程序化通过；导航宿主 alpha 0.6、触屏拖动，显示/换位/隐藏无隐式动画 | 作者手验通过；白框拖动后视口中心与框位置同步；alpha 0.6 | 作者手验通过；基础操作；白框拖动保留抓取偏移；导航图先抽样再显式转 sRGB |
 | IMAGE-07 | 作者手验通过；药丸 500ms 门槛 | 作者手验通过；busy 500ms | 作者手验通过；药丸 500ms 门槛 | 作者手验通过；基础操作；圆角 11dp 与 500ms 门槛 |
 | IMAGE-08 | 作者手验通过 | 作者手验通过 | 程序化通过；自生成八方向素材 + 代码核对即足（真实相机素材不列为待办） | 程序化通过；运行时八方向夹具 |
 | IMAGE-09 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
@@ -232,6 +234,6 @@
 | SCOPE-01 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 无入口 |
 | SCOPE-02 | 程序化通过；faults 注入 Warning 关闭增强并显示一次性提示 | 程序化通过；faults 注入 Warning 关闭增强并显示一次性提示 | 代码核对；内存自动关闭发提示条 | 程序化通过；内存告警关闭雾天增强并提示 |
 | SCOPE-03 | 程序化通过 | 程序化通过 | 程序化通过 | 程序化通过；现算不入库、显式提取入库、清库清缓存 |
-| SCOPE-04 | 程序化通过；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸 | 程序化通过（模拟器）；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸；CoreML 回退 CPU、真机仍待验 | 程序化通过；RAW 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 实测 7008×4672、代理 5120 长边），内嵌整幅 JPEG 只在等于裁切尺寸时兜底 | 程序化通过；RAW 7008×4672 全分辨率；P3 回退已由作者目视确认 |
+| SCOPE-04 | 程序化通过；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸 | 程序化通过（模拟器）；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸；CoreML 回退 CPU、真机仍待验 | 程序化通过；RAW 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 实测 7008×4672、代理 5120 长边），内嵌整幅 JPEG 只在等于裁切尺寸时兜底 | 程序化通过；RAW 7008×4672 全分辨率沿用既有验收；P3 按能力协商，色彩专项范围见 Android §8 |
 | SCOPE-05 | 程序化通过；全来源写入边界（CoreContractCheck + 真实副本） | 程序化通过；CoreContractCheck | 程序化通过 11-02；CoreContractCheck 全来源写入边界（Windows 实跑） | 程序化通过；storage 24/0 |
 | SCOPE-06 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 待核验；平台专属能力取舍 |

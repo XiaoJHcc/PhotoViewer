@@ -49,6 +49,9 @@ internal static partial class AndroidNativeChecks
                 case "zoom":
                     await RunZoomChecksAsync();
                     break;
+                case "color":
+                    await RunColorChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

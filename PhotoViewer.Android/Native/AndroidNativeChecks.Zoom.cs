@@ -143,8 +143,9 @@ internal static partial class AndroidNativeChecks
             pixels[offset + 2] = (byte)(x * 17 + y * 5 + seed);
             pixels[offset + 3] = 255;
         }
+        var colorSpace = _root!.Photo.SurfaceIsP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
         return DecodedImage.CreatePooled(pixels, width, height, stride, PixelEncoding.Rgba8,
-            ImageColorSpace.Srgb, sourceWidth, sourceHeight, orientation: seed == 2 ? 6 : 1);
+            colorSpace, sourceWidth, sourceHeight, orientation: seed == 2 ? 6 : 1);
     }
 
     private static async Task CheckZoomUploadAsync(string label, DecodedImage proxy, DecodedImage full, int generation)

@@ -296,3 +296,53 @@
 | 11 | Material 版本先钉 Material 1.14.0.6（冲突退 1.13.0.6）、RecyclerView 1.4.0.6、Window 1.5.1.3、Fragment 1.9.0；A1 立即构建验证主题与 splash 链 | §1.12、A1 |
 | 50 | HIF 首张缩略图偶发方向错 | 元数据未就绪时直接读文件头 irot 兜底；A7C09124.HIF irot=1→270°，首卡/主图同向 |
 | 51 | HIF 同文件缩略图方向不一致 | 不同 thumbnail item 有已旋转/未旋转两种；按原始与显示横竖相反才转。同进程切换文件夹首卡验证通过 |
+
+
+## 8. Android P3 色彩收尾（现行状态）
+
+本节取代历史发现 #43 与早期「默认 sRGB、P3 仅诊断」的现行结论；历史现象仍保留。Windows 与共享色彩收尾完成后，已接入小米 13（2211133C / fuxi，Android 13 / API 33），修复并恢复按设备能力默认尝试 P3。不是只把诊断开关改为默认开启。
+
+### 8.1 根因与实现
+
+- **输出传递函数重复编码已实证**：旧版同一 sRGB 色卡在 sRGB 表面上灰阶为 32/64/128/191/223，在 P3 表面上变为 99/138/188/225/240。标准 P3 EGL 表面 `0x3363` 的实际默认帧缓冲为 `GL_SRGB (0x8C40)`；原来普通 RGBA 纹理的已编码值经直通 shader 后被 GL 再编码一次。实机验收保留绕过修正的探针：128 灰读回 188，修正后读回 128。
+- **输出协商**：设备与窗口均支持广色域时，依次尝试 P3 passthrough `0x3490`、标准 P3 `0x3363`，失败回退显式 sRGB `0x3089`。读取实际 EGL 色彩空间与默认帧缓冲编码，不按机型或扩展名猜转换行为；仅 `GL_SRGB` 帧缓冲由 shader 先做 inverse sRGB，`GL_LINEAR` 直通。无法确认 P3 输出时回落 sRGB。
+- **源像素不能先裁 sRGB 再标 P3**：`Bitmap.GetPixels` 返回 sRGB 打包整数，不适合读取 P3 存储。`AndroidBitmapPixels` 改为优先 JNI 锁像素读取原始 RGBA8，保留真实行距与预乘 alpha；不可用时退 `CopyPixelsToBuffer`。按位图实际色彩空间解释，再显式规范到捕获的解码目标。无 ICC、EXIF 声明 Adobe RGB 的 JPEG 由共享容器色域链接管，失败不回到忽略声明的系统路径。
+- **缓存与生命周期**：解码目标按设备能力在会话内稳定，不随表面暂时销毁变成 sRGB。上传按源真实标签转换到实际表面，缓存键无需混入短暂的表面状态；重建上下文清空 GPU 缓存并重传，销毁时复位表面标志。源像素与标签不可变。
+- **小图出口**：胶片缩略图、分析位图与导航图统一 sRGB。导航图先按原编码抽样，再转换并按共享方向表转正，不为小图转换整幅照片；位图转换正确处理预乘 alpha。
+- **对照入口**：正常启动按能力尝试 P3；`--ez pv-srgb true` 或 `--ez pv-p3 false` 强制 sRGB。不支持广色域或 EGL 协商失败的设备继续使用 sRGB。
+
+### 8.2 验收入口与实机结果（2026-11-06）
+
+`--es pv-check color` 使用隔离设置，夹具位于应用内部 `files/pv-color-fixtures/`：仓库 `Fixtures/jpeg/color-*.jpg`、`Fixtures/heif/color-*.heic`、`Fixtures/jpeg-large/color-p3-large.jpg`。通过真实 EGL 窗口表面与默认帧缓冲回读、真实解码产物进行断言，不以截图目测替代。检查期间保持亮屏，结束后解除；启动前仍需设备已解锁、屏幕可见。
+
+| 项目 | 结果 | 范围 |
+|---|---|---|
+| Android Debug / Release 构建 | 各 0 错误、23 条既有警告 | 未新增警告；未更换依赖 |
+| Debug `color` | 85 PASS / 0 FAIL | P3 passthrough、强制标准 P3、sRGB 回退、两向色域转换、重复表面重建、预乘 alpha、位图原始 P3 存储、JPEG 四类、HEIF、6000×4000 大图、导航图与增强 |
+| Release `color` | 85 PASS / 0 FAIL | 正式非 debuggable Release 构建，同一套回读与解码断言 |
+| Debug / Release `main` | 各 22 PASS / 0 FAIL | 主屏、24MP 代理→实际 Full、缓存切图、菜单 |
+| Debug 强制 sRGB `main` | 22 PASS / 0 FAIL | `pv-srgb=true`，24MP 实际 Full 与常规行为 |
+| Debug `analysis` / `layout` / `input` | 51/0、18/0、23/0 | 分析图、横竖布局、手势与键盘；仅当前设备档位 |
+| Release 真实切后台→返回 | 通过 | 同一进程，HOME 后 EGL 重新创建为 P3 passthrough；照片图层 `DISPLAY_P3`；前后灰阶均 32/64/128/191/223 |
+
+证据目录：`artifacts/acceptance/android-color-xiaomi13-2026-11-06/`，其中 `android-checks-color-{debug,release}.txt`、`android-checks-main-{debug,release}.txt` 为对应构建结果；Release 报告由同进程 Logcat 取得，不为取报告把生产构建改成 debuggable。手机保留已验证的 Release 构建与色卡目录，便于作者浏览。
+
+### 8.3 额外回归与结论边界
+
+- 原 `main` 用固定 700ms 判定 Full，24MP 真实解码尚未完成就切回 Fit，产生误报。改为有上限 20 秒等待实际 Full/明确错误，并加强「产物尺寸等于源尺寸」断言；不放宽像素误差，最终两种构建都通过。
+- 首轮色彩驱动的合成图在步骤退出时归还了最后租约，但视图仍持引用，下一步重建表面读到了空缓冲。验收驱动现持有独立展示租约，替换/还原后才归还；生产上传入口也拒绝已释放的像素。修正后完整色彩专项通过。
+- 附加 `filter` 检查首跑在 `libSkiaSharp.so` 的动态加载构造阶段崩溃（`__system_property_get` 调用栈），并非默认帧缓冲回读步骤；重跑为 **28 PASS / 1 FAIL**，失败是恢复原始方向后等待竖屏超时。本轮未改筛选逻辑；不能把已有启动不稳定的历史记录当作本次崩溃根因已确认，也不把附加检查写成通过。证据为 `android-checks-filter-debug.txt` 与 `artifacts/diagnostics/android-p3-startup-crash.txt`。
+- 当前结论是小米 13 上的 P3 编码、解码与呈现链路程序化通过，实际后台恢复也已覆盖；不扩大为所有 Android ROM/设备的全量稳定性或作者目测通过。HDR 内容与 RAW 开发不属于本轮，也不安排为近期事项。
+
+
+### 8.4 远端整合复核
+
+提交前已先快进纳入 `e438dcf`（设置行高与半屏滚动视口）及 `18c9fa6`（大图零拷贝上传、积压触摸与动画接管），再语义合并 P3 改动；没有用单侧文件覆盖冲突。
+
+- 保留紧凑 RGBA8 的 pinned direct-buffer 同步零中间拷贝路径、额外行距的 ≤4MB 暂存复用与上传统计；色域规范化在提交像素前完成，临时转换图租约覆盖整个 GL 调用，纹理缓存仍按原源实例标识。
+- `zoom` 与 `color` 调度、隔离设置及两种 GPU 回读均保留。纹理校验按实际表面色域生成预期，仍逐通道精确比较；上传性能合成图按当前表面打标签，让紧凑/行距测试继续分别覆盖原路径，不以额外色域转换掩盖上传统计。
+- 合并后两种构建各 **0 错误 / 23 条既有警告**。同一小米 13 上，Debug：`color` **85/0**、`main` **22/0**、`input` **27/0**、`settings` **98/0**；Release：`color` **85/0**、`main` **22/0**、`input` **27/0**、`zoom` **26/0**。设计令牌生成检查通过。
+- Release 26MP 真实 `A6702851.HIF` 的冷纹理上传约 **39.3ms**，实际会话上传约 **40.5ms**、UI 心跳最大间断 **92.0ms**，紧凑图中间拷贝字节为 0；行距图仍精确拷贝 6144000 字节、2 次提交，GPU 边界像素一致。
+- **Debug 额外性能边界**：`zoom` 为 **25/1**，唯一失败是实际 HIF 会话的 250ms UI 心跳门（实测 1002.5ms，当次纹理上传 28.1ms）；其余上传、像素、缓存及 Full 升级断言通过。Release 同项通过。尚未确认 Debug 间断的具体原因，不把它写成已修复、也不放宽 250ms 门槛；不能因此把两种构建的全部性能检查都写成通过。
+
+本节复核报告为同证据目录下的 `android-checks-*-merged-{debug,release}.txt`；保留 Debug 性能失败报告，既有 `filter` 边界仍见 §8.3。

@@ -5,7 +5,7 @@
 
 ## 1. 当前状态
 
-- **真机反馈修复（2026-10-18，25128PNA1C / API 36）**：P3 表面 True；列布局/筛选菜单/长按菜单已修；后续又补菜单分组分隔线、筛选下拉自绘定位、卡片 80dp 上下左右对称、栏位开关补帧、分析栏细节语义按 iOS 重做、控制栏空分组兜底；真机 P3 表面导致主图整体抬亮，默认回退 sRGB（`pv-p3` 仅诊断）；控制栏空容器根因（OnDraw 只 Rebuild 未 Arrange）已修；胶片等比、HIF 导航兜底（真实 HIF 验证）、同名 HIF/ARW 优先与 CurrentFile 代表同步（真实夹具验证）已核对；HIF 缩略图改为优先提取容器内 JPEG item（160×120），胶片/导航跳过全图，再走 512 代理缓存；主图 Full 仍一次全图。
+- **真机反馈修复（2026-10-18，25128PNA1C / API 36）**：P3 表面 True；列布局/筛选菜单/长按菜单已修；后续又补菜单分组分隔线、筛选下拉自绘定位、卡片 80dp 上下左右对称、栏位开关补帧、分析栏细节语义按 iOS 重做、控制栏空分组兜底；真机 P3 表面导致主图整体抬亮，当时默认回退 sRGB（`pv-p3` 仅诊断；现行处置与结论见 [执行清单 §8](native-rebuild-phase-android.md)）；控制栏空容器根因（OnDraw 只 Rebuild 未 Arrange）已修；胶片等比、HIF 导航兜底（真实 HIF 验证）、同名 HIF/ARW 优先与 CurrentFile 代表同步（真实夹具验证）已核对；HIF 缩略图改为优先提取容器内 JPEG item（160×120），胶片/导航跳过全图，再走 512 代理缓存；主图 Full 仍一次全图。
 - **A6 起步（2026-10-18）**：`AndroidNativeChecks` 以 `--es pv-check <mode>` 跑主屏几何/Fit↔100%/Full/分析栏/相似面板/设置/工具页开合；API 35 arm64 五模式 **PASS 14/18/15/16/16**，报告 `files/PhotoViewer/android-checks-<mode>.txt`。`all` 连跑偶发 SIGSEGV（分模式稳定，§7）；API 矩阵、两向、fontScale/DPI、真机门未做。（2026-10-23 更新：八模式分模式全 PASS，模拟器矩阵已完成；真机与组合模式仍未关闭。）
 - **A5 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：分析栏（`AndroidAnalysisHost` + 共享 `AnalysisPresenter`，6 瓦片/细节定格绿框/准星）、相似聚类（窄屏紧凑筛选条 toggle、真实“提取全部”后 100% 分数卡片与柱状条）、工具页（EXIF 详情分组表格/多格式；DINO 5 瓦片 + 刚体拟合）、增强预览均已落地；均为**目视/日志核对**。新增警告清零，重建 20 警告 / 0 错误（低于 A1b 基线 21）。**A6（程序化 harness/矩阵/真机门）未开始**。
 - **A2 + A3 + A4 已完成（2026-10-18，本机 API 35 arm64 模拟器）**：主图（`AndroidPresentationDecoder`/`AndroidPresentationEncodingPolicy` + 自有 EGL14/GLES 渲染 + `PhotoViewport` 手势）、主屏（`AndroidMainScreenLayout` 叠加系统 insets、自绘筛选条、RecyclerView 胶片栏/自绘卡片、置中控制栏、导航图）、SAF 存储、硬件键盘/滚轮/长按菜单/返回、半屏设置（五分类 + 工作副本关闭回写）均已落地。**A5 已完成；A6（程序化 harness/矩阵/真机门/文档收口）未开始**。自验：原生壳加载 13 张夹具、方向 6 朝向正确、代理 2706×1804 → Full 6000×4000、导航图/百分比正确、卡片星级 XMP 写回不改主图、键盘 Right/F、设置关闭回写后评分分组与卡片星级即时消失；均为**目视/日志核对，不是程序化验收**。
@@ -94,7 +94,7 @@ SDK="$HOME/Library/Android/sdk"
 
 ## 6. A2–A6 交接要点
 
-- A2：`AndroidPresentationDecoder`/`EncodingPolicy` 走 8 位 sRGB 或 Display P3；纹理 `GL_RGBA8`；八方向 UV；代理↔Full 只换纹理。模拟器只验 sRGB 回退 + EGL P3 协商代码，P3 正向留真机门。
+- A2：`AndroidPresentationDecoder`/`EncodingPolicy` 走 8 位 sRGB 或 Display P3；纹理 `GL_RGBA8`；八方向 UV；代理↔Full 只换纹理。模拟器只验 sRGB 回退 + EGL P3 协商代码，P3 正向由真机门收（已完成，见 [执行清单 §8](native-rebuild-phase-android.md)）。
 - A3：几何全部 dp；导航图与筛选条左对齐按 §3#6/#7；`RecyclerView` 卡片状态只读不可变快照。
 - A4：设置 BottomSheet 半屏，五分类；`OnDismiss` 一次性回写；返回手势先关 sheet；fontScale 1.3 要实测控制栏不截断。
 - A5：分析栏/相似/工具页复用共享 presenter；DINO 模型按 §3#5；工具页只有 EXIF/DINO，无照片数据统计。
