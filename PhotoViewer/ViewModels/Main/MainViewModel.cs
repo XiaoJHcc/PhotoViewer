@@ -209,6 +209,19 @@ public class MainViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// 控制栏 EXIF 整组入口：同一单例内明确进入 EXIF 详情，已打开其他工具页也切到 EXIF（TOOLBAR-06）。
+    /// EXIF 不可用时由平台按 TOOLS-02 回退：分组列表回列表，常驻侧栏落默认可用页。
+    /// </summary>
+    public void OpenExifToolsWindow()
+    {
+        if (Tools.IsExifDetailEnabled)
+            Tools.OpenExifDetail();
+        else if (!Tools.IsPresented)
+            Tools.ShowList();
+        NativeWindowPresenter.ShowExifToolsWindow(Tools);
+    }
+
+    /// <summary>
     /// 请求主图回到适应态（OPEN-05）。由平台壳订阅 <see cref="FitToViewRequested"/> 后执行。
     /// </summary>
     public void RequestFitToView() => FitToViewRequested?.Invoke();

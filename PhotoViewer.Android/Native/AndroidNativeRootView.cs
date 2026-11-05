@@ -168,7 +168,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _filmstrip.SourcesRequested += OnCardSourcesRequested;
         _controlBar = new AndroidControlBar(activity, main);
         _controlBar.Wire(Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); },
-            ShowTools, OpenRatingSourcesFromControlBar);
+            ShowExifTools, OpenRatingSourcesFromControlBar);
         _controlScrollHost = new AndroidControlBarScrollHost(activity, _controlBar);
         AddView(_controlScrollHost);
         _ratingSourcesPopup = new AndroidRatingSourcesPopup(this, main);
@@ -800,6 +800,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
     {
         CloseRatingSources();
         _main.OpenToolsWindow();
+    }
+
+    /// <summary>控制栏 EXIF 整组入口：同一工具页内明确进入 EXIF 详情（TOOLBAR-06）。</summary>
+    internal void ShowExifTools()
+    {
+        CloseRatingSources();
+        _main.OpenExifToolsWindow();
     }
 
     /// <summary>执行共享命令：主图相关走原生视口，其余走共享命令 VM。</summary>

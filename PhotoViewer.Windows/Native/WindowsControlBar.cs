@@ -46,6 +46,9 @@ internal sealed class WindowsControlBar : Grid
     private double _savedHorizontalOffset;
     private double _savedVerticalOffset;
 
+    /// <summary>EXIF 整组点击入口（与真实 Tapped 同一回调；验收不依赖合成手势）。</summary>
+    internal void TapExifGroup() => _openTools?.Invoke();
+
     /// <summary>
     /// 创建控制栏。
     /// </summary>

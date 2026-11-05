@@ -331,5 +331,8 @@ public partial class App : Application
 
         /// <inheritdoc/>
         public void ShowOrActivateToolsWindow(ToolsViewModel tools) => _tools.TryPresent(tools);
+
+        /// <inheritdoc/>
+        public void ShowExifToolsWindow(ToolsViewModel tools) => _tools.TryPresentExif(tools);
     }
 }

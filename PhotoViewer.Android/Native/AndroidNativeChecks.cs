@@ -16,6 +16,7 @@ using PhotoViewer.Core.Input;
 using PhotoViewer.Shared;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Settings;
+using PhotoViewer.ViewModels.Tools;
 using AndroidInputManager = global::Android.Hardware.Input.InputManager;
 using IOPath = System.IO.Path;
 
@@ -399,17 +400,18 @@ internal static partial class AndroidNativeChecks
                 $"title=\"{sheet.LayoutSectionTitleForChecks()}\"");
 
             // SETTINGS-01：控制栏功能行 勾选 → 命令图标 → 命令名。
-            // 断言规则：图标→命令名的布局间距 = 8dp；勾选→图标使用负左边距，只抵消 MaterialCheckBox 自带的
-            // 透明内缩（视觉仍约 8dp），勾选命中区保持 44dp，负边距不缩小命中区。快照记录两侧实际像素值。
+            // 断言规则：可见勾选字形右侧 8dp 处开始图标；图标负左边距只抵消 44dp 命中区相对可见字形的
+            // 透明内缩（勾选框 32dp 矢量帧内约 18dp 方框），命中区保持 44dp。快照记录两侧实际像素值。
             var iconRow = sheet.HotkeyRowSnapshotForChecks(0);
             int gap8Dp = (int)AndroidUiTheme.Dp(_activity!, 8);
-            int insetOffsetPx = (int)AndroidUiTheme.Dp(_activity!, -4);
-            int hitArea44Dp = (int)AndroidUiTheme.Dp(_activity!, 44);
+            int hitArea44Dp = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckHitSizeDp);
+            int checkGlyphPx = (int)AndroidUiTheme.Dp(_activity!, AndroidSettingsReorderList.CheckBoxGlyphSizeDp);
+            int insetOffsetPx = (hitArea44Dp - checkGlyphPx) / 2 + checkGlyphPx + gap8Dp - hitArea44Dp;
             int? hitWidth = HotkeyCheckHitWidthPx(sheet, firstHotkey.DisplaySymbol);
             bool iconVisible = iconRow is { IconVisible: true } && !string.IsNullOrEmpty(iconRow.Value.IconSymbol);
             Check("控制栏功能行显示命令图标",
                 iconVisible && iconRow!.Value.IconSymbol == firstHotkey.DisplaySymbol,
-                iconRow is { } iconValue ? $"icon={iconValue.IconSymbol} expected={firstHotkey.DisplaySymbol}" : DescribeRow(iconRow));
+                iconRow is { } iconValue ? $"icon={DescribeGlyph(iconValue.IconSymbol)} expected={firstHotkey.DisplaySymbol}" : DescribeRow(iconRow));
             Check("命令图标到命令名间距 8dp",
                 iconRow is { } gapRow && Math.Abs(gapRow.IconToTitleGap - gap8Dp) <= 1,
                 iconRow is { } gapValue ? $"gap={gapValue.IconToTitleGap}px expected={gap8Dp}px" : DescribeRow(iconRow));
@@ -620,6 +622,8 @@ internal static partial class AndroidNativeChecks
             AndroidInputDevices.SetChecksOverride(null, null);
             sheet.ShowPageForChecks("root");
             await System.Threading.Tasks.Task.Delay(150);
+            // SETTINGS-04 / SETTINGS-15：内容区手势、行高、分类箭头、勾选对齐、命令图标与脚注。
+            await RunSettingsExperienceChecksAsync(sheet);
         }
         AndroidNativeSettingsPresenter.HandleBack();
         await System.Threading.Tasks.Task.Delay(500);
@@ -632,6 +636,71 @@ internal static partial class AndroidNativeChecks
         main.OpenToolsWindow();
         await System.Threading.Tasks.Task.Delay(800);
         Check("工具 sheet 打开", AndroidToolsPresenter.IsOpen, "IsOpen=false");
+        Check("菜单入口显示工具列表", main.Tools.CurrentTool == null && AndroidToolsPresenter.CurrentPageForChecks == "root",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+
+        // TOOLBAR-06：控制栏 EXIF 整组入口（已展示列表）直达详情，且不触发 DINO 推理。
+        root.ControlBar.TapExifGroup();
+        await System.Threading.Tasks.Task.Delay(600);
+        Check("EXIF 入口直达详情", AndroidToolsPresenter.IsOpen && main.Tools.CurrentTool is ExifDetailViewModel
+            && AndroidToolsPresenter.CurrentPageForChecks == "exif",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+        Check("EXIF 入口不触发 DINO", !main.Tools.DinoPresenter.IsBusy && main.Tools.DinoPresenter.Status == "未加载",
+            $"busy={main.Tools.DinoPresenter.IsBusy} status={main.Tools.DinoPresenter.Status}");
+
+        // 已展示 DINO 时仍明确切到 EXIF（TOOLBAR-06），不保留原页。
+        main.Tools.OpenDinoDebug();
+        await System.Threading.Tasks.Task.Delay(150);
+        root.ControlBar.TapExifGroup();
+        await System.Threading.Tasks.Task.Delay(600);
+        Check("已展示 DINO 时 EXIF 入口切回详情", main.Tools.CurrentTool is ExifDetailViewModel
+            && AndroidToolsPresenter.CurrentPageForChecks == "exif",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+
+        // 控制栏直达仍保留工具列表作为返回目标。
+        AndroidToolsPresenter.HandleBack();
+        await System.Threading.Tasks.Task.Delay(400);
+        Check("EXIF 详情返回工具列表", main.Tools.CurrentTool == null
+            && AndroidToolsPresenter.CurrentPageForChecks == "root",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+        root.ControlBar.TapExifGroup();
+        await System.Threading.Tasks.Task.Delay(400);
+        Check("返回列表后再次直达 EXIF", main.Tools.CurrentTool is ExifDetailViewModel
+            && AndroidToolsPresenter.CurrentPageForChecks == "exif",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+
+        // 主图菜单入口只前置并保留当前页。
+        root.ShowTools();
+        await System.Threading.Tasks.Task.Delay(300);
+        Check("菜单入口保留当前页", main.Tools.CurrentTool is ExifDetailViewModel
+            && AndroidToolsPresenter.CurrentPageForChecks == "exif",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+
+        // 加载中不算缺 EXIF；真正无照片时才回退工具列表。
+        var loaded = main.CurrentFile;
+        if (loaded != null)
+        {
+            main.Tools.SyncCurrentFile(new ImageFile(loaded.File));
+            Check("EXIF 加载中仍可进入", main.Tools.IsExifDetailEnabled,
+                $"enabled={main.Tools.IsExifDetailEnabled} loaded={loaded.IsExifLoaded}");
+            root.ControlBar.TapExifGroup();
+            await System.Threading.Tasks.Task.Delay(400);
+            Check("加载中 EXIF 入口直达详情", main.Tools.CurrentTool is ExifDetailViewModel
+                && AndroidToolsPresenter.CurrentPageForChecks == "exif",
+                $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+            main.Tools.SyncCurrentFile(loaded);
+
+            main.CurrentFile = null;
+            await System.Threading.Tasks.Task.Delay(400);
+            Check("无照片 EXIF 不可用", !main.Tools.IsExifDetailEnabled, "IsExifDetailEnabled=true");
+            root.ControlBar.TapExifGroup();
+            await System.Threading.Tasks.Task.Delay(600);
+            Check("无照片 EXIF 入口回退列表", main.Tools.CurrentTool == null
+                && AndroidToolsPresenter.CurrentPageForChecks == "root",
+                $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+            main.CurrentFile = loaded;
+        }
+
         AndroidToolsPresenter.HandleBack();
         await System.Threading.Tasks.Task.Delay(500);
         Check("工具 sheet 关闭", !AndroidToolsPresenter.IsOpen, "IsOpen=true");
@@ -941,7 +1010,7 @@ internal static partial class AndroidNativeChecks
     /// </summary>
     private static int? HotkeyCheckHitWidthPx(AndroidSettingsSheetView sheet, string symbol)
     {
-        if (FindDescendant<global::Android.Widget.TextView>(sheet, view => view.Text == symbol) is not { } icon
+        if (FindDescendant<AndroidCommandIconView>(sheet, view => view.Symbol == symbol) is not { } icon
             || icon.Parent is not ViewGroup line) return null;
         for (int index = 0; index < line.ChildCount; index++)
         {

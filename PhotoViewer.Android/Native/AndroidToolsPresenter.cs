@@ -41,6 +41,9 @@ public sealed class AndroidToolsPresenter
     /// <summary>当前工具页是否打开。</summary>
     public static bool IsOpen => _current != null;
 
+    /// <summary>当前展示页标识（验收用）：root / exif / dino；未打开为 null。</summary>
+    internal static string? CurrentPageForChecks => _current?.Page;
+
     /// <summary>返回键优先在工具页内回上级；已处理时返回 true。</summary>
     /// <returns>是否消费返回。</returns>
     public static bool HandleBack()
@@ -50,6 +53,23 @@ public sealed class AndroidToolsPresenter
         if (current.HandleBack()) return true;
         current.RequestDismiss();
         return true;
+    }
+
+    /// <summary>展示/前置工具页并明确进入 EXIF 详情（TOOLBAR-06）；已打开其他子页时也切到 EXIF。</summary>
+    /// <param name="tools">共享工具 VM；调用前已由共享层选定 EXIF 或回退状态。</param>
+    public void ShowOrActivateExif(ToolsViewModel tools)
+    {
+        // TOOLS-02：无可用 EXIF 时分组列表回列表页。
+        if (!tools.IsExifDetailEnabled)
+            tools.ShowList();
+        if (_dialog?.IsShowing == true)
+        {
+            tools.IsPresented = true;
+            // 已打开的 sheet 不会因共享导航状态变化自动换页，需按当前页重建内容。
+            _current?.RefreshCurrentPage();
+            return;
+        }
+        ShowOrActivate(tools);
     }
 
     /// <summary>打开或前置工具页；已打开时保持当前子页。</summary>
@@ -150,6 +170,10 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         handleBackground.SetColor(Color.ParseColor("#666666"));
         handleBackground.SetCornerRadius(2 * (float)density);
         handle.Background = handleBackground;
+        // 把手与标题栏是 sheet 的拖动关闭载体：消费按下，让 BottomSheetBehavior 走标准拦截路径；
+        // 内容区由 AndroidSheetScrollView 隔断，两者互不影响。
+        handle.Clickable = true;
+        handle.ImportantForAccessibility = ImportantForAccessibility.No;
         root.AddView(handle, new LinearLayout.LayoutParams((int)(36 * density), (int)(4 * density))
         {
             Gravity = GravityFlags.CenterHorizontal,
@@ -160,6 +184,8 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         var header = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
         header.SetGravity(GravityFlags.CenterVertical);
         header.SetPadding((int)(12 * density), 0, (int)(12 * density), 0);
+        header.Clickable = true;
+        header.ImportantForAccessibility = ImportantForAccessibility.No;
         _back = Button("‹", 26, () => { if (!HandleBack()) Dismiss(); });
         _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
         _title = Text("工具", 17, AndroidUiTheme.TextPrimary, bold: true);
@@ -170,7 +196,8 @@ internal sealed class AndroidToolsSheetView : FrameLayout
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         root.AddView(header, new LinearLayout.LayoutParams(LayoutParams.MatchParent, (int)(48 * density)));
 
-        var scroll = new ScrollView(activity) { FillViewport = true };
+        // SETTINGS-04：内容区手势只滚动内容，不能把 sheet 拖下或收起；拖动关闭只由把手/标题承担。
+        var scroll = new AndroidSheetScrollView(activity);
         _content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         _content.SetPadding((int)(16 * density), (int)(4 * density), (int)(16 * density), (int)(24 * density));
         scroll.AddView(_content, new FrameLayout.LayoutParams(LayoutParams.MatchParent, LayoutParams.WrapContent));
@@ -190,6 +217,9 @@ internal sealed class AndroidToolsSheetView : FrameLayout
 
     /// <summary>请求关闭。</summary>
     internal void RequestDismiss() => Dismiss();
+
+    /// <summary>按共享导航状态重建当前页（已展示时 EXIF 入口切页；不改变滚动/返回栈语义）。</summary>
+    internal void RefreshCurrentPage() => BuildPage();
 
     private void Dismiss()
     {
@@ -355,14 +385,19 @@ internal sealed class AndroidToolsSheetView : FrameLayout
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         row.SetGravity(GravityFlags.CenterVertical);
-        row.SetPadding((int)AndroidUiTheme.Dp(_activity, 16), (int)AndroidUiTheme.Dp(_activity, 12),
-            (int)AndroidUiTheme.Dp(_activity, 12), (int)AndroidUiTheme.Dp(_activity, 12));
+        int paddingX = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
+        row.SetPadding(paddingX, (int)AndroidUiTheme.Dp(_activity, 2), paddingX, (int)AndroidUiTheme.Dp(_activity, 2));
+        row.SetMinimumHeight((int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidListRowMinHeight));
         row.Clickable = true;
         var column = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         column.AddView(Text(title, 16, AndroidUiTheme.TextPrimary, bold: true));
         column.AddView(Text(subtitle, 12, AndroidUiTheme.TextSecondary));
+        var chevron = Text("›", 22, AndroidUiTheme.TextSecondary);
+        chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
-        row.AddView(Text("›", 22, AndroidUiTheme.TextSecondary), new LinearLayout.LayoutParams((int)AndroidUiTheme.Dp(_activity, 44), LayoutParams.WrapContent));
+        row.AddView(chevron, new LinearLayout.LayoutParams(
+            (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidNavigationChevronWidth),
+            LayoutParams.WrapContent));
         row.Click += (_, _) => action();
         return row;
     }

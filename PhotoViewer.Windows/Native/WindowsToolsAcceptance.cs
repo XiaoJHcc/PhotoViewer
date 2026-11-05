@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Image;
 using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Tools;
 using Windows.Foundation;
@@ -144,6 +145,52 @@ internal static class WindowsToolsAcceptance
             Require(reopened.SelectedPage == ToolsPage.Exif, "重开后默认页不是 EXIF 详情");
             Require(reopened.StatsPage.FolderRowCount == 0, "重开后共享统计状态未保留");
             checks.Add("PASS lifecycle: singleton via presenter, close + reopen returns to default page with shared state");
+
+            // TOOLBAR-06：控制栏 EXIF 整组入口明确切到 EXIF（含已展示其他分类）；菜单入口保留当前页。
+            reopened.Navigation.SelectedItem = reopened.Navigation.MenuItems.OfType<NavigationViewItem>()
+                .First(item => item.Tag is ToolsPage page && page == ToolsPage.Dino);
+            await WaitAsync(() => reopened.SelectedPage == ToolsPage.Dino && main.Tools.CurrentTool is DinoDebugViewModel, "入口测试切到 DINO");
+            mainWindow.ControlBar.TapExifGroup();
+            await WaitAsync(() => reopened.SelectedPage == ToolsPage.Exif && main.Tools.CurrentTool is ExifDetailViewModel,
+                "控制栏 EXIF 入口切到 EXIF");
+            main.OpenToolsWindow();
+            await Task.Delay(120);
+            Require(reopened.SelectedPage == ToolsPage.Exif, "主图菜单入口不应切换工具页");
+            checks.Add("PASS TOOLBAR-06: control bar EXIF entry selects EXIF even from DINO; photo menu keeps the current page");
+
+            presenter.CloseIfOpen();
+            await WaitAsync(() => !presenter.IsOpen, "工具窗口关闭（EXIF 入口测试）");
+            mainWindow.ControlBar.TapExifGroup();
+            var entryWindow = presenter.Window ?? throw new InvalidOperationException("控制栏 EXIF 入口未重开工具窗口");
+            await WaitAsync(() => entryWindow.SelectedPage == ToolsPage.Exif && main.Tools.CurrentTool is ExifDetailViewModel,
+                "关闭后控制栏 EXIF 入口直达 EXIF");
+            Require(main.Tools.DinoPresenter.Status == "未加载", "控制栏 EXIF 入口先启动了 DINO 推理");
+            checks.Add("PASS TOOLBAR-06: closed window reopens directly at EXIF from the control bar entry");
+
+            // 加载中不算缺 EXIF。
+            var loaded = main.CurrentFile!;
+            main.Tools.SyncCurrentFile(new ImageFile(loaded.File));
+            Require(main.Tools.IsExifDetailEnabled, "EXIF 加载中被当作缺 EXIF");
+            mainWindow.ControlBar.TapExifGroup();
+            await Task.Delay(80);
+            Require(entryWindow.SelectedPage == ToolsPage.Exif && main.Tools.CurrentTool is ExifDetailViewModel,
+                "EXIF 加载中控制栏入口未直达详情");
+            main.Tools.SyncCurrentFile(loaded);
+            checks.Add("PASS TOOLBAR-06: EXIF loading state keeps the EXIF entry instead of falling back");
+
+            // 无照片按 TOOLS-02 回退平台默认页（Windows 为照片数据统计）。
+            presenter.CloseIfOpen();
+            await WaitAsync(() => !presenter.IsOpen, "工具窗口关闭（无照片测试）");
+            main.CurrentFile = null;
+            await WaitAsync(() => !main.Tools.IsExifDetailEnabled, "无照片时 EXIF 不可用");
+            mainWindow.ControlBar.TapExifGroup();
+            var fallback = presenter.Window ?? throw new InvalidOperationException("无照片时控制栏 EXIF 入口未打开工具窗口");
+            await WaitAsync(() => fallback.SelectedPage == ToolsPage.Stats, "无照片回退照片数据统计");
+            fallback.SelectPage(ToolsPage.Dino, openShared: true);
+            mainWindow.ControlBar.TapExifGroup();
+            await WaitAsync(() => fallback.SelectedPage == ToolsPage.Stats, "已展示且无照片时回退照片数据统计");
+            main.CurrentFile = loaded;
+            checks.Add("PASS TOOLS-02: absent photo falls back to photo stats instead of an empty EXIF page");
 
             presenter.CloseIfOpen();
             Environment.ExitCode = 0;

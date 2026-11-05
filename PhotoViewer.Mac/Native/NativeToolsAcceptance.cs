@@ -170,12 +170,47 @@ internal static class NativeToolsAcceptance
                 throw new InvalidOperationException("无 EXIF 仍可选择 EXIF 页");
             main.CurrentFile = file;
             checks.Add("availability: absent photo disables EXIF and falls back to DINO without a tools home page");
+
+            // TOOLBAR-06：控制栏 EXIF 整组入口无论窗口是否已展示都直达 EXIF 详情；
+            // 主图菜单仍只前置并保留当前页；无可用 EXIF 按 TOOLS-02 回退，加载中不算缺失。
             host.CloseWindow();
-            var exifGroup = window.ControlBar.Groups.First();
-            using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, new CGPoint(5, 5), 0, NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, 1, 1, 1)!;
-            exifGroup.MouseDown(click);
-            await WaitAsync(() => host.IsOpen, "EXIF 控制栏入口");
-            checks.Add("entry: control bar EXIF group opens the same tools window");
+            await WaitAsync(() => !host.IsOpen, "关闭工具窗");
+            TapExifGroup(window);
+            await WaitAsync(() => host.IsOpen && tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0,
+                "关闭后控制栏 EXIF 入口直达详情");
+            if (tools.DinoPresenter.Status != "未加载") throw new InvalidOperationException("控制栏 EXIF 入口先启动了 DINO 推理");
+            checks.Add("entry: closed window + control bar EXIF group opens the same window directly at EXIF detail");
+
+            ClickCategory(host, 1);
+            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "EXIF 入口测试前进入 DINO");
+            TapExifGroup(window);
+            await WaitAsync(() => tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0,
+                "已展示 DINO 时 EXIF 入口切到详情");
+            if (tools.DinoPresenter.IsBusy) throw new InvalidOperationException("切到 EXIF 后 DINO 仍在计算");
+            window.ShowTools();
+            await Task.Delay(200);
+            if (host.SelectedCategory != 0 || tools.CurrentTool is not ExifDetailViewModel)
+                throw new InvalidOperationException("主图菜单入口未保留当前 EXIF 页");
+            checks.Add("entry: open DINO page switches to EXIF on control bar click; photo menu only fronts and preserves it");
+
+            var loading = new ImageFile(file!.File);
+            main.CurrentFile = loading;
+            await WaitAsync(() => tools.ExifDetail != null && !loading.IsExifLoaded, "EXIF 加载中");
+            TapExifGroup(window);
+            if (tools.CurrentTool is not ExifDetailViewModel || !tools.IsExifDetailEnabled)
+                throw new InvalidOperationException("EXIF 加载中被当作缺 EXIF");
+            checks.Add("entry: EXIF loading state keeps the EXIF entry instead of falling back");
+            main.CurrentFile = file;
+
+            host.CloseWindow();
+            await WaitAsync(() => !host.IsOpen, "无照片入口测试前关闭");
+            main.CurrentFile = null;
+            await WaitAsync(() => !tools.IsExifDetailEnabled, "无照片时 EXIF 不可用");
+            TapExifGroup(window);
+            await WaitAsync(() => host.IsOpen && tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1,
+                "无照片时控制栏 EXIF 入口回退 DINO");
+            main.CurrentFile = file;
+            checks.Add("entry: absent photo falls back to the platform default (DINO) instead of a tools home");
         }
         finally
         {
@@ -183,6 +218,17 @@ internal static class NativeToolsAcceptance
             await File.WriteAllLinesAsync(Path.Combine(output, "native-tools-checks.txt"), checks);
         }
         Console.WriteLine("[NativeSmoke] PASS tools");
+    }
+
+    /// <summary>真实鼠标按下控制栏 EXIF 整组（与用户点击同一条 GroupView 回调）。</summary>
+    /// <param name="window">主窗口。</param>
+    private static void TapExifGroup(MacMainWindow window)
+    {
+        var group = window.ControlBar.Groups.FirstOrDefault()
+            ?? throw new InvalidOperationException("控制栏缺少 EXIF 分组");
+        using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, new CGPoint(5, 5), 0,
+            NSProcessInfo.ProcessInfo.SystemUptime, window.Window.WindowNumber, null!, 1, 1, 1)!;
+        group.MouseDown(click);
     }
 
     /// <summary>测量 EXIF 页在一次展示与逐段滚动中的耗时，输出行数、标签数与已实例化文本控件数。</summary>

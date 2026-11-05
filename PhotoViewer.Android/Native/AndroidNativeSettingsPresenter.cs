@@ -31,6 +31,7 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
     private readonly Activity _activity;
     private BottomSheetDialog? _dialog;
     private static AndroidSettingsSheetView? _current;
+    private static BottomSheetDialog? _currentDialog;
 
     /// <summary>绑定宿主 Activity。</summary>
     /// <param name="activity">原生壳 Activity。</param>
@@ -41,6 +42,9 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
 
     /// <summary>当前设置 sheet（验收读取页面与绑定控件状态）。</summary>
     internal static AndroidSettingsSheetView? CurrentSheet => _current;
+
+    /// <summary>当前设置对话框（验收向真实窗口派发触摸并读取 sheet 行为）。</summary>
+    internal static BottomSheetDialog? CurrentDialog => _currentDialog;
 
     /// <summary>返回键优先关闭设置 sheet；返回是否消费。</summary>
     /// <returns>设置页存在并已处理时 true。</returns>
@@ -73,6 +77,7 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
             dialog.DismissEvent += async (_, _) =>
             {
                 if (ReferenceEquals(_current, content)) _current = null;
+                if (ReferenceEquals(_currentDialog, dialog)) _currentDialog = null;
                 content.CommitPendingEdits();
                 // 关闭按钮、下滑与返回可能重复触发 DismissEvent：只提交一次，并且等提交完成后再释放会话。
                 if (Interlocked.Exchange(ref applyStarted, 1) != 0) return;
@@ -106,6 +111,7 @@ public sealed class AndroidNativeSettingsPresenter : PhotoViewer.Core.Settings.I
             }
             _dialog = dialog;
             _current = content;
+            _currentDialog = dialog;
             Console.WriteLine("[Native] 设置 BottomSheet 已打开（工作副本，关闭回写）");
             return true;
         }
@@ -182,12 +188,16 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private readonly NativeSettingsSession _session;
     private readonly Action _dismiss;
     private readonly LinearLayout _content;
+    private readonly AndroidSheetScrollView _scroll;
     private readonly TextView _title;
     private readonly TextView _back;
+    private readonly LinearLayout _header;
     private readonly List<(TextView Label, Func<string> Text)> _dynamicTexts = [];
     private string _page = "root";
     private bool _closed;
     private AndroidSettingsReorderList? _hotkeyList;
+    private AndroidSettingsReorderList? _formatList;
+    private AndroidSettingsReorderList? _exifList;
     private SettingsViewModel.HotkeyItem? _recordingItem;
     private bool _recordingPrimary;
     private LinearLayout? _scaleCard;
@@ -229,6 +239,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         handleBackground.SetColor(Color.ParseColor("#666666"));
         handleBackground.SetCornerRadius(2 * (float)density);
         handle.Background = handleBackground;
+        // 把手与标题栏是 sheet 的拖动关闭载体：消费按下，让 BottomSheetBehavior 走标准拦截路径；
+        // 内容区由 AndroidSheetScrollView 隔断，两者互不影响。
+        handle.Clickable = true;
+        handle.ImportantForAccessibility = ImportantForAccessibility.No;
         var handleParams = new LinearLayout.LayoutParams((int)(36 * density), (int)(4 * density))
         {
             Gravity = GravityFlags.CenterHorizontal,
@@ -240,6 +254,9 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var header = new LinearLayout(activity) { Orientation = Orientation.Horizontal };
         header.SetGravity(GravityFlags.CenterVertical);
         header.SetPadding((int)(12 * density), 0, (int)(12 * density), 0);
+        header.Clickable = true;
+        header.ImportantForAccessibility = ImportantForAccessibility.No;
+        _header = header;
         _back = Button("‹", 26, () => { if (!GoBack()) Dismiss(); });
         _back.SetTextSize(global::Android.Util.ComplexUnitType.Sp, 26);
         _back.SetPadding((int)(8 * density), 0, (int)(8 * density), 0);
@@ -252,8 +269,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         header.AddView(close, new LinearLayout.LayoutParams((int)(44 * density), (int)(48 * density)));
         root.AddView(header, new LinearLayout.LayoutParams(LayoutParams.MatchParent, (int)(48 * density)));
 
-        var scroll = new ScrollView(activity) { FillViewport = true };
+        // SETTINGS-04：内容区手势只滚动内容，不能把 sheet 拖下或收起；拖动关闭只由把手/标题承担。
+        var scroll = new AndroidSheetScrollView(activity);
         scroll.SetBackgroundColor(Color.Transparent);
+        _scroll = scroll;
         _content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         _content.SetPadding((int)(16 * density), (int)(4 * density), (int)(16 * density), (int)(24 * density));
         _content.Clickable = true;
@@ -328,6 +347,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         if (page != "control") CancelRecording();
         _page = page;
         _hotkeyList = null;
+        _formatList = null;
+        _exifList = null;
         _scaleCard = null;
         _scaleAddRow = null;
         _previewSwitchSection = null;
@@ -372,7 +393,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>文件页：同名合并、文件格式勾选/排序、缓存与预加载。</summary>
     private void BuildFilePage()
     {
-        Add(_content, Section(null, null, SwitchRow("同名文件视为同一张图片",
+        Add(_content, Section(null, SwitchRow("同名文件视为同一张图片",
             "按列表排序优先级高的作为代表显示图片，修改星级时同步至所有同名文件",
             () => Settings.SameNameAsOnePhoto, value => Settings.SameNameAsOnePhoto = value)));
         var formats = new AndroidSettingsReorderList(_activity,
@@ -385,7 +406,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                     () => item.IsEnabled, value => item.IsEnabled = value);
             },
             (from, to) => Settings.MoveFileFormat(from, to));
-        Add(_content, SectionView("支持的文件格式", null, formats));
+        _formatList = formats;
+        Add(_content, SectionView("支持的文件格式", formats));
         var info = new List<View>();
         var performance = InfoLabel(() => Settings.PerformanceBudgetInfo);
         var cache = InfoLabel(() => Settings.BitmapCacheCountInfo);
@@ -414,7 +436,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             value => Settings.VisibleCenterPreloadCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"));
         cacheRows.Add(StepperRow("滚动预载延时", null, () => Settings.VisibleCenterDelayMs,
             value => Settings.VisibleCenterDelayMs = value, 100, () => 5000, 100, value => $"{value} ms"));
-        Add(_content, Section("缓存与预加载", null, cacheRows.ToArray()));
+        Add(_content, Section("缓存与预加载", cacheRows.ToArray()));
         Add(_content, performance);
         Add(_content, cache);
         RefreshDynamicTexts();
@@ -423,7 +445,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>预览页：缩放指示器开关与缩放预设编辑。</summary>
     private void BuildPreviewPage()
     {
-        _previewSwitchSection = Section(null, null,
+        _previewSwitchSection = Section(null,
             SwitchRow("缩放时显示指示器", null, () => Settings.ShowZoomIndicator,
                 value => Settings.ShowZoomIndicator = value));
         Add(_content, _previewSwitchSection);
@@ -436,7 +458,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _scaleCard.ClipToOutline = true;
         _scaleAddRow = TextButtonRow("＋ 添加缩放比例", AddScalePreset);
         RebuildScaleCard();
-        Add(_content, SectionView("缩放比例预设", "点击数值编辑，单位为百分比（100 = 物理 100%）。", _scaleCard));
+        Add(_content, SectionView("缩放比例预设", _scaleCard));
     }
 
     /// <summary>按工作副本顺序原地重排预设行，保留已存在的输入框实例。</summary>
@@ -484,7 +506,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>控制页：布局模式与控制栏功能（显隐/排序，键鼠外设连接时含主/次绑定录制）。</summary>
     private void BuildControlPage()
     {
-        _layoutSection = Section("边栏布局位置", null,
+        _layoutSection = Section("边栏布局位置",
             NavigationRow("布局模式", CurrentLayoutModeDescription(), CurrentLayoutModeName(), ShowLayoutModePicker));
         Add(_content, _layoutSection);
         var hotkeys = new AndroidSettingsReorderList(_activity,
@@ -506,8 +528,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             },
             (from, to) => Settings.MoveHotkey(from, to));
         _hotkeyList = hotkeys;
-        Add(_content, SectionView("控制栏功能",
-            "勾选决定是否显示在控制栏；拖动手柄排序，轻点手柄可用上移/下移菜单。", hotkeys));
+        Add(_content, SectionView("控制栏功能", hotkeys));
     }
 
     /// <summary>进入主/次绑定录制态；同一时间只有一行在录制。</summary>
@@ -643,9 +664,9 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                     () => item.IsEnabled, value => item.IsEnabled = value);
             },
             (from, to) => Settings.MoveExifDisplay(from, to));
-        Add(_content, SectionView("EXIF 显示/收纳",
-            "勾选决定是否显示在控制栏；拖动手柄排序，轻点手柄可用上移/下移菜单。", items));
-        Add(_content, Section("评分与写回", null,
+        _exifList = items;
+        Add(_content, SectionView("EXIF 显示/收纳", items));
+        Add(_content, Section("评分与写回",
             SwitchRow("显示星级评分", null, () => Settings.ShowRating, value => Settings.ShowRating = value),
             SwitchRow("安全修改文件星级", "检验文件字节变化再写回，降低损坏原文件概率",
                 () => Settings.SafeSetRating, value => Settings.SafeSetRating = value)));
@@ -654,7 +675,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>AI 页：相似聚类阈值/数量与即时计算。</summary>
     private void BuildAiPage()
     {
-        Add(_content, Section("相似聚类", null,
+        Add(_content, Section("相似聚类",
             StepperRow("相似度阈值", null, () => (int)Math.Round(Settings.SimilarityThreshold * 100),
                 value => Settings.SimilarityThreshold = value / 100.0,
                 (int)Math.Round(SettingsViewModel.SimilarityThresholdMin * 100),
@@ -663,7 +684,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                 value => Settings.SimilarityMaxResults = value,
                 SettingsViewModel.SimilarityMaxResultsMin, () => SettingsViewModel.SimilarityMaxResultsMax,
                 1, value => $"{value} 张")));
-        Add(_content, Section("分析诊断", null,
+        Add(_content, Section("分析诊断",
             SwitchRow("即时计算 DINO/CV", null, () => Settings.AnalysisImmediateCompute,
                 value => Settings.AnalysisImmediateCompute = value)));
     }
@@ -895,6 +916,29 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     internal AndroidSettingsReorderList.RowSnapshot? HotkeyRowSnapshotForChecks(int index)
         => _hotkeyList?.SnapshotForChecks(index);
 
+    /// <summary>验收：快捷键行的布局快照（行高、勾选对齐、图标语义）。</summary>
+    internal AndroidSettingsReorderList.RowLayoutSnapshot? HotkeyRowLayoutForChecks(int index)
+        => _hotkeyList?.LayoutForChecks(index);
+
+    /// <summary>验收：支持的文件格式行的布局快照。</summary>
+    internal AndroidSettingsReorderList.RowLayoutSnapshot? FormatRowLayoutForChecks(int index)
+        => _formatList?.LayoutForChecks(index);
+
+    /// <summary>验收：EXIF 显示行的布局快照。</summary>
+    internal AndroidSettingsReorderList.RowLayoutSnapshot? ExifRowLayoutForChecks(int index)
+        => _exifList?.LayoutForChecks(index);
+
+    /// <summary>验收：缩放预设行的真实高度（像素）。</summary>
+    internal int ScalePresetRowHeightForChecks(int index)
+        => index >= 0 && index < Settings.ScalePresets.Count
+            && _scaleRows.TryGetValue(Settings.ScalePresets[index], out var row) ? row.Root.Height : 0;
+
+    /// <summary>验收：半屏内容滚动宿主（手势断言用）。</summary>
+    internal AndroidSheetScrollView ScrollHostForChecks => _scroll;
+
+    /// <summary>验收：顶部标题栏（拖动关闭断言用）。</summary>
+    internal View HeaderForChecks => _header;
+
     /// <summary>验收：进入指定行主/次绑定录制。</summary>
     internal void BeginRecordingForChecks(int index, bool primary)
     {
@@ -999,7 +1043,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         var chevron = Text("›", 22, AndroidUiTheme.TextSecondary);
         chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
-        row.AddView(chevron, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
+        row.AddView(chevron, new LinearLayout.LayoutParams(ChevronWidth(), LayoutParams.WrapContent));
         row.Click += (_, _) => BuildPage(page);
         return row;
     }
@@ -1064,7 +1108,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         chevron.Gravity = GravityFlags.Center;
         row.AddView(column, new LinearLayout.LayoutParams(0, LayoutParams.WrapContent, 1));
         row.AddView(current, new LinearLayout.LayoutParams(LayoutParams.WrapContent, ButtonSize()));
-        row.AddView(chevron, new LinearLayout.LayoutParams(ButtonSize(), ButtonSize()));
+        row.AddView(chevron, new LinearLayout.LayoutParams(ChevronWidth(), ButtonSize()));
         row.Click += (_, _) => action();
         return row;
     }
@@ -1081,12 +1125,11 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return row;
     }
 
-    /// <summary>分区：可选标题 + 卡片 + 可选脚注。</summary>
-    private View Section(string? title, string? footer, params View[] rows)
-        => SectionView(title, footer, Card(rows));
+    /// <summary>分区：可选标题 + 卡片。</summary>
+    private View Section(string? title, params View[] rows) => SectionView(title, Card(rows));
 
-    /// <summary>分区：标题 + 现成卡片（可排序表自带圆角卡片）+ 脚注。</summary>
-    private View SectionView(string? title, string? footer, View card)
+    /// <summary>分区：标题 + 现成卡片（可排序表自带圆角卡片）。</summary>
+    private View SectionView(string? title, View card)
     {
         var section = new LinearLayout(_activity) { Orientation = Orientation.Vertical };
         section.SetPadding(0, (int)AndroidUiTheme.Dp(_activity, 10), 0, 0);
@@ -1097,12 +1140,6 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             section.AddView(header);
         }
         section.AddView(card);
-        if (!string.IsNullOrWhiteSpace(footer))
-        {
-            var note = Text(footer, 12, AndroidUiTheme.TextSecondary);
-            note.SetPadding((int)AndroidUiTheme.Dp(_activity, 4), (int)AndroidUiTheme.Dp(_activity, 6), 0, 0);
-            section.AddView(note);
-        }
         return section;
     }
 
@@ -1145,14 +1182,15 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         foreach (var item in _dynamicTexts) item.Label.Text = item.Text();
     }
 
-    /// <summary>通用行容器：水平、左右 16dp、上下 12dp、最小高度 52dp。</summary>
+    /// <summary>通用行容器：水平、内容左右 16dp、上下 2dp，最小行高取 48dp 列表令牌；大字体或多行内容时按内容增高。</summary>
     private LinearLayout Row()
     {
         var row = new LinearLayout(_activity) { Orientation = Orientation.Horizontal };
         row.SetGravity(GravityFlags.CenterVertical);
         double density = AndroidUiTheme.Density(_activity);
-        row.SetPadding((int)(16 * density), (int)(12 * density), (int)(12 * density), (int)(12 * density));
-        row.SetMinimumHeight((int)(52 * density));
+        int paddingX = (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidCardPaddingX);
+        row.SetPadding(paddingX, (int)(2 * density), paddingX, (int)(2 * density));
+        row.SetMinimumHeight((int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidListRowMinHeight));
         return row;
     }
 
@@ -1190,6 +1228,9 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     }
 
     private int ButtonSize() => (int)AndroidUiTheme.Dp(_activity, 44);
+
+    /// <summary>分类行/导航行行尾箭头的视觉容器宽度（SETTINGS-03：20dp，居中绘制）。</summary>
+    private int ChevronWidth() => (int)AndroidUiTheme.Dp(_activity, DesignTokens.SettingsAndroidNavigationChevronWidth);
 
     private void Add(LinearLayout parent, View child)
     {

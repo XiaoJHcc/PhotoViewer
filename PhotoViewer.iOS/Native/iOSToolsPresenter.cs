@@ -54,6 +54,13 @@ internal sealed class iOSNativeToolsPresenter
         else Subscribe(tools);
         if (IsPresented)
         {
+            // TOOLBAR-06：已展示时 EXIF 入口仍然明确导航到 EXIF 详情（或按 TOOLS-02 回退列表），
+            // 不被"已展示只前置"拦截；主图菜单入口（openExif=false）仍只同步当前页。
+            if (openExif)
+            {
+                ShowExifEntry(tools);
+                return;
+            }
             SyncCurrentPage();
             return;
         }
@@ -69,16 +76,8 @@ internal sealed class iOSNativeToolsPresenter
         // 展示控制器只在展示时存在：接着挂自适应关闭代理，覆盖下滑关闭与关闭按钮两条路径。
         if (_navigation!.PresentationController is { } presentation)
             presentation.Delegate = _dismissDelegate;
-        bool exifEntry = openExif && tools.IsExifDetailEnabled && tools.ExifDetail != null;
-        if (exifEntry)
-        {
-            // 控制栏 EXIF 信息块直达详情：导航栈保留列表页作为返回目标，共享导航状态在压栈后再写，
-            // 避免列表页的 ViewWillAppear 复位 CurrentTool。
-            _exif ??= new iOSExifDetailView();
-            _exif.Show(tools.ExifDetail!);
-            _navigation.SetViewControllers([_list!, _exif], false);
-            tools.OpenExifDetail();
-        }
+        if (openExif)
+            ShowExifEntry(tools);
         else
         {
             _navigation.SetViewControllers([_list!], false);
@@ -93,6 +92,33 @@ internal sealed class iOSNativeToolsPresenter
                 controller.Delegate = _dismissDelegate;
             }
         });
+    }
+
+    /// <summary>
+    /// 控制栏 EXIF 入口的导航：可用时压入 EXIF 详情（列表页保留为返回目标），
+    /// 不可用时回退列表；已展示 DINO 等其他页时同样切过来（TOOLBAR-06）。
+    /// </summary>
+    /// <param name="tools">共享工具壳 ViewModel。</param>
+    private void ShowExifEntry(ToolsViewModel tools)
+    {
+        if (_navigation == null) return;
+        if (tools.IsExifDetailEnabled && tools.ExifDetail is { } detail)
+        {
+            if (_navigation.TopViewController is iOSExifDetailView && tools.CurrentTool is ExifDetailViewModel)
+            {
+                SyncCurrentPage();
+                return;
+            }
+            _exif ??= new iOSExifDetailView();
+            _exif.Show(detail);
+            _navigation.SetViewControllers([_list!, _exif], false);
+            tools.OpenExifDetail();
+        }
+        else
+        {
+            _navigation.SetViewControllers([_list!], false);
+            tools.ShowList();
+        }
     }
 
     /// <summary>按设置页同一份配置设置工具 sheet：系统 PageSheet + 固定深色 + 半屏/全屏两档 detents。</summary>

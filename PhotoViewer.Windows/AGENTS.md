@@ -17,7 +17,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 | `Native/WindowsRatingSourcesFlyout.cs` | RATING-04 原生 `Flyout` 来源浮窗：令牌几何、来源条目与长名中间省略，复用共享整组写入；主窗口接入卡片/相似卡片/控制栏锚点与关闭联动。 |
 | `Native/WindowsAnalysisPanel.cs`、`WindowsSimilarityPanel.cs`、`WindowsDiagnostic*.cs`、`WindowsShakeFieldView.cs` | 分析/相似面板与共用诊断瓦片。 |
 | `Native/WindowsSettings*.cs`、`WindowsHotkeyRecorder.cs`、`WindowsNativeSettingsPresenter.cs` | 原生设置窗口、工作副本与快捷键录制。 |
-| `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。 |
+| `Native/WindowsTools*.cs`、`WindowsExifToolPage.cs`、`WindowsStatsToolPage.cs`、`WindowsDinoToolPage.cs`、`WindowsNativeToolsPresenter.cs` | 原生工具窗口及 EXIF、统计、DINO 页面。控制栏 EXIF 整组入口走共享 `OpenExifToolsWindow` → `TryPresentExif`，已打开在其他分类时显式 `SelectPage(Exif)`；主图菜单入口只前置保留当前页（TOOLBAR-06）。 |
 | `Native/WindowsWindowChrome.cs`、`WindowsUiServices.cs`、`WindowsImageAdapter.cs` | 窗口外壳、调度/选择器/资源门面、XAML 位图适配。 |
 | `Core/` | 展示编码与解码（`WindowsPresentationDecoder`：HEIF → 共享 `PhotoViewer.Core.Image.Heif.FastHeifDecoder`，回落 `LibHeifDecoder`；RAW → `WindowsRawDecoder`）、`LibHeifDecoder`（**小尺寸请求**——胶片栏列表档经 `ThumbnailService` 传来的 120/400——优先解容器自带 `thmb` 项并缩到与主图路径相同的尺寸与方向；DINO 的 560 短边仍走主图）、`WindowsRawDecoder`（WIC RAW 全分辨率解码：按相机 `DefaultCropOrigin/Size` 裁剪、方向交给渲染层、内嵌整幅 JPEG 兜底）、`WindowsMemoryBudgetProvider`（物理内存预算 + 进程私有提交 + 系统低内存通知）、`WindowsPerformanceBudget`（设置页默认值：缓存内存与张数按物理内存、后台解码线程按核数推导，物理内存/核数/线程上限沿用 `DefaultPerformanceBudget`）；评分写回不在本目录实现，统一走共享 `RatingService` + `XmpRatingStoreFactory`。 |
 | `Native/*Acceptance.cs`、`Native/NativeStartupLog.cs` | 隔离验收、部署检查与启动诊断。 |

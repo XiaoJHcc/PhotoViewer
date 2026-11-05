@@ -207,7 +207,11 @@ public sealed class iOSWindowPresenter : INativeWindowPresenter
     /// <param name="viewModel">共享设置 ViewModel。</param>
     public void ShowSettingsWindow(SettingsViewModel viewModel) => _settings.TryPresent(viewModel);
 
-    /// <summary>展示或前置原生工具页。</summary>
+    /// <summary>展示或前置原生工具页（主图菜单入口：保留当前页）。</summary>
     /// <param name="tools">工具壳 ViewModel。</param>
     public void ShowOrActivateToolsWindow(ToolsViewModel tools) => _tools.ShowOrActivate(tools);
+
+    /// <summary>展示或前置原生工具页并进入 EXIF 详情（控制栏 EXIF 整组入口）。</summary>
+    /// <param name="tools">工具壳 ViewModel。</param>
+    public void ShowExifToolsWindow(ToolsViewModel tools) => _tools.ShowOrActivate(tools, openExif: true);
 }

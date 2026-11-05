@@ -787,7 +787,7 @@ public sealed class MacMainWindow : IDisposable
         bool reopen = _ratingSources.IsOpen && _ratingSources.IsAnchoredToControlBar;
         var sourceTarget = reopen ? _main.RatingSources.Target : null;
         if (reopen) _ratingSources.Close();
-        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowTools,
+        _controlPane.Rebuild(_main, Execute, rating => { if (_main.CurrentFile != null) _ = RateAsync(_main.CurrentFile, rating); }, ShowExifTools,
             anchor => { if (_main.CurrentFile is { } file) ShowRatingSources(file, anchor); });
         Layout();
         if (sourceTarget == null || _controlPane.Ratings.Count == 0) return;
@@ -1172,6 +1172,9 @@ public sealed class MacMainWindow : IDisposable
 
     /// <summary>打开/前置原生工具窗口；未打开时选择默认可用工具，已打开时只前置并保留当前页（TOOLS-01）。</summary>
     public void ShowTools() => _main.OpenToolsWindow();
+
+    /// <summary>控制栏 EXIF 整组入口：同一窗口内明确进入 EXIF 详情（TOOLBAR-06）。</summary>
+    public void ShowExifTools() => _main.OpenExifToolsWindow();
 
     /// <summary>系统工具菜单入口：打开同一个窗口并直达指定分类。</summary>
     public void ShowTools(int category)

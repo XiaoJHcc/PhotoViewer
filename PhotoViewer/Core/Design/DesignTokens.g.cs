@@ -509,6 +509,12 @@ public static class DesignTokens
     public const double PopupRatingSourcesMetaLineGap = 4.0;
     /// <summary>popup.ratingSources.nameFontSize（pt） RATING-04：评分来源文件名字号；平台可以使用对应原生字体。</summary>
     public const double PopupRatingSourcesNameFontSize = 11.0;
+    /// <summary>settings.android.card.paddingX（pt） SETTINGS-15：Android 设置卡片内容视觉左右内边距；勾选字形左缘与普通标签对齐，透明命中区不额外内缩内容。</summary>
+    public const double SettingsAndroidCardPaddingX = 16.0;
+    /// <summary>settings.android.list.row.minHeight（pt） SETTINGS-15：Android 缩放预设、纯触控控制功能与 EXIF 显示单行列表统一最小行高，系统大字体时可随内容增高。</summary>
+    public const double SettingsAndroidListRowMinHeight = 48.0;
+    /// <summary>settings.android.navigation.chevron.width（pt） SETTINGS-03：Android 设置与工具分类行尾箭头视觉容器宽度，居中绘制；整行承担点击，不预留独立按钮宽度。</summary>
+    public const double SettingsAndroidNavigationChevronWidth = 20.0;
     /// <summary>shell.analysis.divider.thickness（pt） ANALYSIS-01：分析栏朝主图一侧的分隔线厚度。</summary>
     public const double ShellAnalysisDividerThickness = 1.0;
     /// <summary>shell.divider.thickness（pt） SHELL-01：文件栏/主图、主图/控制栏之间的分隔线厚度。</summary>

@@ -224,13 +224,28 @@ public static class MacNativeApplication
         /// <summary>显示或前置唯一的原生工具窗口；打开前把当前照片同步给工具页。</summary>
         public void ShowOrActivateToolsWindow(ToolsViewModel tools)
         {
+            EnsureToolsWindow();
+            _tools!.SyncCurrentFile();
+            _tools.ShowOrActivate();
+        }
+
+        /// <summary>控制栏 EXIF 整组入口：同一窗口内明确进入 EXIF 详情（TOOLBAR-06）。</summary>
+        public void ShowExifToolsWindow(ToolsViewModel tools)
+        {
+            EnsureToolsWindow();
+            _tools!.SyncCurrentFile();
+            // 共享层已选定 EXIF（或回退列表）；窗口渲染按共享导航状态落页，
+            // 已打开 DINO 时也切到 EXIF，无可用 EXIF 时保留/落平台默认页。
+            _tools.ShowOrActivate();
+        }
+
+        private void EnsureToolsWindow()
+        {
             if (_tools == null)
             {
                 _tools = new MacToolsWindow(window.Main, window.IsAutomatedValidation);
                 MacToolsWindowRegistry.Current = _tools;
             }
-            _tools.SyncCurrentFile();
-            _tools.ShowOrActivate();
         }
         /// <summary>退出时释放工具窗口的订阅与视图。</summary>
         public void Dispose()

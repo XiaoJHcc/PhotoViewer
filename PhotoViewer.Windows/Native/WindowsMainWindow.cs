@@ -119,7 +119,7 @@ internal sealed partial class WindowsMainWindow : Window
         _filmstrip = new WindowsFilmstripView(main, SelectFile, RateFile, ShowRatingSources);
         _filterBar = new WindowsFilterBar(main.FileVM.FilterBar);
         _controlBar = new WindowsControlBar(main, Execute, anchor => ShowRatingSources(main.CurrentFile!, anchor),
-            main.OpenToolsWindow);
+            main.OpenExifToolsWindow);
 
         _hintTitle = new TextBlock
         {
@@ -305,6 +305,9 @@ internal sealed partial class WindowsMainWindow : Window
 
     /// <summary>主图上屏信号源(压测驱动器按它计时)。</summary>
     internal PhotoLoadSession Session => _session;
+
+    /// <summary>原生控制栏(验收核对 EXIF 整组入口)。</summary>
+    internal WindowsControlBar ControlBar => _controlBar;
 
     /// <summary>
     /// 压测汇总附加指标(写进 stress-flip.jsonl 的 done 行):物理视口、代理目标口径与纹理上传耗时统计。

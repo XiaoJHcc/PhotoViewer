@@ -43,6 +43,24 @@ internal sealed class WindowsNativeToolsPresenter
         return true;
     }
 
+    /// <summary>
+    /// 展示(或激活)工具窗口并明确选中 EXIF 详情(TOOLBAR-06):已打开在其他分类时也切过来。
+    /// 共享层已选定 EXIF 或回退状态;EXIF 不可用时由窗口自身落默认可用页。
+    /// </summary>
+    /// <param name="tools">共享工具壳视图模型</param>
+    /// <returns>恒为 true(原生窗口总可接管)</returns>
+    public bool TryPresentExif(ToolsViewModel tools)
+    {
+        if (_window != null)
+        {
+            if (tools.IsExifDetailEnabled)
+                _window.SelectPage(ToolsPage.Exif, openShared: false);
+            else
+                _window.SelectPage(ToolsPage.Stats, openShared: true);
+        }
+        return TryPresent(tools);
+    }
+
     /// <summary>主窗口关闭或退出前关闭工具窗口,释放页面订阅。</summary>
     public void CloseIfOpen() => _window?.Close();
 

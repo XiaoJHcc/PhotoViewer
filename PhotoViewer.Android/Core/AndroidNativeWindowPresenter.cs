@@ -40,4 +40,8 @@ public sealed class AndroidNativeWindowPresenter : INativeWindowPresenter
     /// <summary>展示工具页（A5 之前的占位）。</summary>
     /// <param name="tools">工具壳 ViewModel。</param>
     public void ShowOrActivateToolsWindow(ToolsViewModel tools) => _tools.ShowOrActivate(tools);
+
+    /// <summary>展示工具页并进入 EXIF 详情（控制栏 EXIF 整组入口）。</summary>
+    /// <param name="tools">工具壳 ViewModel。</param>
+    public void ShowExifToolsWindow(ToolsViewModel tools) => _tools.ShowOrActivateExif(tools);
 }

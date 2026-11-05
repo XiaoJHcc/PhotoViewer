@@ -21,6 +21,13 @@ public interface INativeWindowPresenter
     /// </summary>
     /// <param name="tools">工具壳 ViewModel。</param>
     void ShowOrActivateToolsWindow(ToolsViewModel tools);
+
+    /// <summary>
+    /// 展示工具窗口并明确进入 EXIF 详情(TOOLBAR-06):已打开其他工具页时也切到 EXIF。
+    /// EXIF 不可用时按平台回退:分组列表回列表页,常驻侧栏落默认可用页。
+    /// </summary>
+    /// <param name="tools">工具壳 ViewModel;调用前已由共享层选定 EXIF 或回退状态。</param>
+    void ShowExifToolsWindow(ToolsViewModel tools);
 }
 
 /// <summary>
@@ -55,4 +62,10 @@ public static class NativeWindowPresenter
     /// </summary>
     /// <param name="tools">工具壳 ViewModel。</param>
     public static void ShowOrActivateToolsWindow(ToolsViewModel tools) => Impl.ShowOrActivateToolsWindow(tools);
+
+    /// <summary>
+    /// 展示工具窗口并明确进入 EXIF 详情(TOOLBAR-06)。
+    /// </summary>
+    /// <param name="tools">工具壳 ViewModel。</param>
+    public static void ShowExifToolsWindow(ToolsViewModel tools) => Impl.ShowExifToolsWindow(tools);
 }

@@ -1015,18 +1015,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal void ShowTools() => _main.OpenToolsWindow();
 
     /// <summary>
-    /// 控制栏 EXIF 信息块入口（[TOOLS-01]）：未展示时直接进入 EXIF 详情，无可用 EXIF 时回退工具列表；
-    /// 已展示时只前置并保留当前页。展示器与主图菜单共用同一个 <see cref="iOSNativeToolsPresenter"/> 实例。
+    /// 控制栏 EXIF 信息块入口（[TOOLBAR-06]）：无论工具页是否已展示都明确进入 EXIF 详情，
+    /// 无可用 EXIF 时按 [TOOLS-02] 回退工具列表；与主图菜单共用同一个 <see cref="iOSNativeToolsPresenter"/> 实例。
     /// </summary>
-    internal void ShowExifTools()
-    {
-        if (iOSNativeToolsPresenter.Current is { } presenter)
-        {
-            presenter.ShowOrActivate(_main.Tools, openExif: true);
-            return;
-        }
-        _main.OpenToolsWindow();
-    }
+    internal void ShowExifTools() => _main.OpenExifToolsWindow();
 
     /// <summary>适应态横向轻扫翻页：走共享命令表（上一张/下一张），由共享 Move 完成显式定位（[FILM-01]）。</summary>
     /// <param name="direction">-1 上一张、+1 下一张。</param>

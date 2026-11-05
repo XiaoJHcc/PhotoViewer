@@ -296,6 +296,13 @@ internal static class iOSNativeToolsCheck
                 throw new InvalidOperationException($"TOOLS-05：刚体拟合文本未以整宽块位于网格下方：{dino.RigidTitleFrame}（页宽 {pageWidth}）");
             lines.Add($"PASS DINO 诊断：5 张瓦片，状态 = {mainVm.Tools.DinoPresenter.Status}；刚体拟合文本为网格下方整宽块");
             await iOSNativeSettingsCheck.SnapshotStageAsync("tools-dino");
+
+            // TOOLBAR-06：已展示 DINO 时控制栏 EXIF 入口仍明确切到 EXIF 详情，并取消在途 DINO。
+            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && mainVm.Tools.CurrentTool is ExifDetailViewModel,
+                "已展示 DINO 时 EXIF 入口切回详情");
+            if (mainVm.Tools.DinoPresenter.IsBusy) throw new InvalidOperationException("切到 EXIF 后 DINO 仍在计算");
+            lines.Add("PASS TOOLBAR-06：已展示 DINO 时控制栏 EXIF 入口切到 EXIF 详情并取消在途 DINO");
             await UiDispatcher.InvokeAsync(() => navigation.PopViewController(true));
             await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && !mainVm.Tools.CanGoBack, "返回列表页（DINO）");
 
@@ -312,6 +319,23 @@ internal static class iOSNativeToolsCheck
             await WaitAsync(() => presenter.Navigation!.TopViewController is iOSNativeToolsListViewController && mainVm.Tools.CurrentTool == null, "重开后返回分组列表");
             if (mainVm.Tools.DinoPresenter.Status != "未加载") throw new InvalidOperationException("重开列表触发了DINO");
             lines.Add("PASS 生命周期：关闭释放展示、保留详情对象，重开回分组列表且DINO未加载");
+
+            // TOOLBAR-06 / TOOLS-02：EXIF 加载中不算缺 EXIF；真正无照片时才回退工具列表。
+            var loadedFile = mainVm.CurrentFile!;
+            await UiDispatcher.InvokeAsync(() => mainVm.Tools.SyncCurrentFile(new ImageFile(loadedFile.File)));
+            if (!mainVm.Tools.IsExifDetailEnabled) throw new InvalidOperationException("EXIF 加载中被当作缺 EXIF");
+            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await WaitAsync(() => navigation.TopViewController is iOSExifDetailView && mainVm.Tools.CurrentTool is ExifDetailViewModel,
+                "加载中 EXIF 入口直达详情");
+            lines.Add("PASS TOOLBAR-06：EXIF 加载中仍可进入详情（不按缺 EXIF 回退）");
+
+            await UiDispatcher.InvokeAsync(() => mainVm.CurrentFile = null);
+            await WaitAsync(() => !mainVm.Tools.IsExifDetailEnabled, "无照片时 EXIF 不可用");
+            await UiDispatcher.InvokeAsync(root.ControlBar.TapExifGroup);
+            await WaitAsync(() => navigation.TopViewController is iOSNativeToolsListViewController && mainVm.Tools.CurrentTool == null,
+                "无照片 EXIF 入口回退工具列表");
+            lines.Add("PASS TOOLS-02：无照片时控制栏 EXIF 入口回退工具列表");
+            await UiDispatcher.InvokeAsync(() => mainVm.CurrentFile = loadedFile);
 
             await UiDispatcher.InvokeAsync(() => presenter.Dismiss());
             await WaitAsync(() => !presenter.IsPresented && !mainVm.Tools.IsPresented, "收尾关闭工具页");

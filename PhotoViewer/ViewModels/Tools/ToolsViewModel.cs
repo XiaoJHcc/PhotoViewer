@@ -67,11 +67,14 @@ public class ToolsViewModel : ViewModelBase
 
     private readonly MainViewModel _main;
 
-    /// <summary>导航到 EXIF 详情子页面。</summary>
+    /// <summary>导航到 EXIF 详情子页面；离开 DINO 诊断页时取消在途任务（TOOLS-06）。</summary>
     public void OpenExifDetail()
     {
-        if (_exifDetail != null)
-            CurrentTool = _exifDetail;
+        if (_exifDetail == null)
+            return;
+        if (_currentTool is DinoDebugViewModel)
+            DinoPresenter.Cancel();
+        CurrentTool = _exifDetail;
     }
 
     /// <summary>导航到照片数据统计子页面。</summary>
