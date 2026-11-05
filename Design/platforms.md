@@ -280,7 +280,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
 - **SETTINGS-03**：平台外观。macOS `NavigationSplitView` + `Form(.grouped)`；Windows Mica + `TitleBar` + `NavigationView`；iOS 半屏 sheet；Android Material 3 `BottomSheetDialog`。四端设置页与工具页固定深色；iOS 整个应用固定深色（`Info.plist` `UIUserInterfaceStyle = Dark` + 窗口覆盖），不随系统浅/深切换，页面不铺不透明底以保留 sheet 半透材质。
   - **SETTINGS-03@mac / @win / @ios / @android**：各自原生设置外观，明暗统一固定深色（已登记 10-18）。
 - **SETTINGS-04**：入口与关闭。四端入口都在主图菜单末项；关闭统一走 `NativeSettingsSession.ApplyAsync()` 一次提交并 `Dispose`（幂等）。
-- **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs:40`）。
+- **SETTINGS-05**：编辑隔离。工作副本以 `applyRuntimeSettings: false` 创建，缓存/解码/键盘映射副作用都在提交后执行（`PhotoViewer/ViewModels/Settings/SettingsViewModel.cs`）。四端主屏订阅共享 `PresentationChanged(SettingsChangeImpact)`，按影响范围更新；预算/缓存等诊断继续走精确属性绑定，不触发主屏结构重建。Android 自绘下拉以最终屏幕锚点核对生命周期，相同几何重复布局不关闭；iOS 保留菜单与控制栏内容摘要保护；macOS 与 Windows 的菜单/控制栏只响应相关展示影响。
 - **SETTINGS-06、SETTINGS-07、SETTINGS-08、SETTINGS-09、SETTINGS-10、SETTINGS-11、SETTINGS-12、SETTINGS-14、SETTINGS-15**：控件与持久化。
   - **SETTINGS-12@android**：一般数值用 `+/-` 步进（与 iOS `UIStepper` 同类），步进控件不改变取值范围（已登记 10-18）。缩放比例预设行例外：单一数值输入 + `%`，数字居中，`+`/`−` 只做新增 100% 项与删除项，不是步进（SETTINGS-07）。
   - **SETTINGS-06@ios**：缓存容量由运行时实测预算（`phys_footprint + os_proc_available_memory`，启用 `increased-memory-limit`）自动推导，文件页「缓存与预加载」组不显示「缓存内存上限 / 缓存数量上限」；设置文档中的两项字段保留、不参与 iPad 运行时。

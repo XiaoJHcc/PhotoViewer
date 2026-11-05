@@ -71,6 +71,7 @@ public sealed class MacMainWindow : IDisposable
     private string? _lastFullError;
     private bool _layingOut;
     private bool _refreshPending;
+    private SettingsChangeImpact _pendingSettingsImpact;
     private bool _disposed;
     private int _scrollRequestVersion;
     private CGPoint _lastFilmstripOrigin;
@@ -153,7 +154,7 @@ public sealed class MacMainWindow : IDisposable
         Window.FrameAutosaveName = "PhotoViewer.Native.MainWindow";
         _root = new RootView(new CGRect(0, 0, 1200, 850));
         Window.ContentView = _root;
-        _filePane = Pane(); _controlPane = new MacControlBar(ScheduleControlsRefresh); _photoPane = Pane(NSColor.Black);
+        _filePane = Pane(); _controlPane = new MacControlBar(RequestControlsRefresh); _photoPane = Pane(NSColor.Black);
         _controlScroll = new MacControlScrollView { DocumentView = _controlPane, HasVerticalScroller = false, DrawsBackground = true, BackgroundColor = NSColor.FromWhite(.07f, 1), BorderType = NSBorderType.NoBorder, ScrollerStyle = NSScrollerStyle.Overlay, AutomaticallyAdjustsContentInsets = false };
         _root.AddSubview(_filePane); _root.AddSubview(_photoPane); _root.AddSubview(_controlScroll);
         _root.AddSubview(_fileDivider); _root.AddSubview(_controlDivider);
@@ -275,7 +276,7 @@ public sealed class MacMainWindow : IDisposable
         _root.Resized = Layout;
         _root.OpenDroppedPaths = paths => _ = OpenPathsAsync(paths, OpenRequestSource.DragDrop);
         _main.PropertyChanged += OnMainChanged;
-        _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.Settings.PresentationChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
@@ -945,24 +946,57 @@ public sealed class MacMainWindow : IDisposable
             or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources)) BuildControls();
         UpdateMenuChecks();
     });
-    /// <summary>设置回写后重建按钮并重新布局。</summary>
-    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args) => ScheduleControlsRefresh();
-    /// <summary>共享控制摘要变化通知。</summary>
-    private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
+    /// <summary>设置影响位：按共享分流重建必要的原生结构，合并同一快照回写的多次通知。</summary>
+    /// <param name="impact">本次设置变化影响的主屏区域。</param>
+    private void OnSettingsChanged(SettingsChangeImpact impact)
     {
-        if (args.PropertyName is nameof(_main.ControlVM.EnabledExifItems) or nameof(_main.ControlVM.EnabledControls)) ScheduleControlsRefresh();
-    }
-    /// <summary>合并快照回写产生的通知，避免同一轮设置改变重复创建全部原生按钮。</summary>
-    private void ScheduleControlsRefresh()
-    {
-        if (_refreshPending || _disposed) return;
+        if (impact == SettingsChangeImpact.None || _disposed) return;
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(() => OnSettingsChanged(impact));
+            return;
+        }
+        _pendingSettingsImpact |= impact;
+        // 合并快照回写产生的通知，避免同一轮设置改变重复创建全部原生按钮。
+        if (_refreshPending) return;
         _refreshPending = true;
         UiDispatcher.Post(() =>
         {
             _refreshPending = false;
             if (_disposed) return;
-            RebuildActionMenu(); BuildControls(); _collection.ReloadData(); UpdateFilmstripLayout(); ReportVisible(); UpdateMenuChecks();
+            var pending = _pendingSettingsImpact;
+            _pendingSettingsImpact = SettingsChangeImpact.None;
+            ApplySettingsImpact(pending);
         });
+    }
+
+    /// <summary>
+    /// 只做影响范围内的刷新：菜单由命令/绑定变化驱动，控制栏由命令/绑定/EXIF/评分变化驱动，
+    /// 胶片卡片只有评分与文件投影变化才重载；导航图、分析栏与相似面板只重排几何。
+    /// </summary>
+    /// <param name="impact">待应用的影响位。</param>
+    private void ApplySettingsImpact(SettingsChangeImpact impact)
+    {
+        if (impact == SettingsChangeImpact.None) return;
+        bool commands = (impact & (SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings)) != 0;
+        if (commands) RebuildActionMenu();
+        if (commands || (impact & (SettingsChangeImpact.Exif | SettingsChangeImpact.Rating)) != 0) BuildControls();
+        if ((impact & (SettingsChangeImpact.Rating | SettingsChangeImpact.FileProjection)) != 0)
+        {
+            _collection.ReloadData();
+            UpdateFilmstripLayout();
+            ReportVisible();
+        }
+        Layout();
+        UpdateMenuChecks();
+    }
+    /// <summary>控制栏自身的热键项变化：绑定改写即排队重建，不在属性通知链内同步刷新。</summary>
+    private void RequestControlsRefresh() => OnSettingsChanged(SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings);
+    /// <summary>共享控制摘要变化：EXIF 条目只动控制栏，命令显隐与设置同口径（菜单与控制栏）。</summary>
+    private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName == nameof(_main.ControlVM.EnabledExifItems)) OnSettingsChanged(SettingsChangeImpact.Exif);
+        else if (args.PropertyName == nameof(_main.ControlVM.EnabledControls)) OnSettingsChanged(SettingsChangeImpact.Commands);
     }
     /// <summary>列表原子替换后刷新 CollectionView 和计数；后台星级扫描未改变列表顺序时不打断滚动或重建卡片。</summary>
     private void OnFilesChanged(object? sender, PropertyChangedEventArgs args)
@@ -1352,7 +1386,7 @@ public sealed class MacMainWindow : IDisposable
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.OpenFailed -= ShowToast;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
-        _main.PropertyChanged -= OnMainChanged; _main.Settings.PropertyChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
+        _main.PropertyChanged -= OnMainChanged; _main.Settings.PresentationChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;

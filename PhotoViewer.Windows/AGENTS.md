@@ -36,6 +36,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 分析栏实现 `IAnalysisHost`，消费共享 `AnalysisPresenter`；工具 DINO 页消费 `DinoDiagnosticPresenter`。不得另建分析编排或恢复旧 UI 适配层。细节裁剪使用 `DisplayCrop`，增强状态归 `PhotoLoadSession`。
 - HEIF 快速解码（`HeifContainer` 容器解析、`YuvImageConverter` YUV→展示编码、pvhevc 上下文池与优先级解码闸门、`HeifDecodeStats` 分段耗时统计）位于共享 `PhotoViewer.Core.Image.Heif`；Windows 头只注入原生库与并发参数，不另存一套实现。解码排队按优先级通道（`PhotoViewer.Core.Image.DecodeContext` 的票据定通道）：P0 当前照片越过一切后台请求、可用超出常规上限的 pvhevc 上下文（常规上限仍管后台）；翻页方向前两张预取（Alongside）排普通后台之前；普通后台在 P0 在解时让位（只挡排队，不打断已开跑的图，`PV_HEIF_HOLD_BACKGROUND=0` 关）。两个名额先图像后上下文、上下文全有或全无，故无反向等待死锁；后台起解时瓦片并行度默认收窄到 2 路（`PV_HEIF_BACKGROUND_TILES`，0 = 不收窄），把核让给当前图。这两条环境变量只作压测对照，不进设置页。
 - 设置使用 `NativeSettingsSession` 工作副本，关闭时 `ApplyAsync` 一次提交并 `Dispose`；设置/工具窗口通过平台 presenter 管理生命周期。`FileSettingsStore` 落盘用原子替换，`SettingsRepository` 是唯一写者，失败保留 last good。文件选择器绑定发起窗口自己的 HWND。
+- 设置变化统一消费共享 `SettingsViewModel.PresentationChanged`（`SettingsChangeImpact` 位），主窗、控制栏与分析栏按位刷新对应结构，不按属性名清单自行判断，也不在壳里复刻影响映射。未登记属性（缓存预算文本、内存探测与诊断通知、未来新增文本）在共享分流里是 `None`，本地整体忽略——周期通知不得重建按钮、关闭弹层或收起下拉。控制栏另保留 `ControlViewModel` 的业务属性窄订阅（`EnabledExifItems`/`EnabledControls`/`StarOpacity`），用于当前照片 EXIF 与命令按钮可用态；快捷键子项与集合排序等真实子项变化由共享发布影响位，壳不再依赖设置快照回填的广播。
 - 导航图直接从展示帧以 Skia 降采样并处理方向，不做 D3D 回读。耗时像素处理在后台，`WriteableBitmap` 必须在 UI 线程创建。
 - DirectML 即时推理需串行；后台分析期间持有图像租约，避免热替换后访问已归还的像素缓冲。
 
@@ -86,7 +87,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 
 | 参数 | 用途 |
 |---|---|
-| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式；使用隔离设置、数据库和自有素材。 |
+| `--pv-native-smoke` | 主窗口、解码/渲染、模型、评分冲突指示、交互冒烟；另含悬停与窄宽度常驻标题栏（显隐、跨度与背景、32 点布局让位、失焦保持、caption 拖动区、窗口按钮与窗口态字形）、动态窗口标题、窗口图标、菜单图标与命令提示格式、设置展示影响分流（跨两个 2 秒内存探测周期与显式诊断通知后来源浮窗锚点/开放态、评分按钮与命令按钮身份、筛选条下拉展开态均不变，真实评分显隐与快捷键子项变化仍按影响位刷新）；使用隔离设置、数据库和自有素材。 |
 | `--pv-native-portable` | 与 smoke 合用，核对实际已加载的 CRT/libheif/ONNX/DirectML 均来自应用解包目录。 |
 | `--pv-native-settings`、`--pv-native-tools` | 设置/工具专项；追加 `-hold` 保持窗口供目视。 |
 | `--pv-native-activation-check` | 二次激活专项（OPEN-06）：本进程持单实例键并拉起第二个进程，核对激活转发、主实例定位目标、二次进程以 0 退出且不开第二个窗口；设置/数据库仍走隔离目录。 |

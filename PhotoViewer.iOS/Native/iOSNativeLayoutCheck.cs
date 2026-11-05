@@ -966,19 +966,79 @@ internal static class iOSNativeLayoutCheck
             await SettleAsync(root);
             if (!popover.IsOpen || !main.RatingSources.IsOpen)
                 throw new InvalidOperationException("内存探测的周期设置通知关闭了来源浮窗");
-            var stableClear = await UiDispatcher.InvokeAsync(() =>
-                root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("周期通知后控制栏缺少评分 0 号按钮"));
-            await UiDispatcher.InvokeAsync(() => root.NotifySettingsProperty(nameof(SettingsViewModel.BitmapCacheCountInfo)));
+            int cycleIndex = main.FileVM.ThumbnailList.FilteredFiles.IndexOf(main.CurrentFile
+                ?? throw new InvalidOperationException("周期刷新缺少当前照片"));
+            var stableCard = await WaitForCardAsync(root, main, cycleIndex, "周期刷新");
+            var stable = await UiDispatcher.InvokeAsync(() => (
+                Clear: root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("周期通知后控制栏缺少评分 0 号按钮"),
+                Command: root.ControlBar.Commands.Values.FirstOrDefault(),
+                SortMenu: root.FilterBar.SortControl.Menu,
+                OrderMenu: root.FilterBar.OrderControl.Menu,
+                RatingMenu: root.FilterBar.RatingControl.Menu,
+                Card: stableCard));
+            // 跨周期的身份断言：控制栏按钮、筛选条下拉菜单、胶片卡片与来源浮窗锚点都必须原样保留。
+            async Task RequireUnchangedAsync(string stage)
+            {
+                await UiDispatcher.InvokeAsync(() =>
+                {
+                    var clear = root.ControlBar.RatingClearButton
+                        ?? throw new InvalidOperationException($"{stage}后控制栏缺少评分 0 号按钮");
+                    if (!ReferenceEquals(clear, stable.Clear))
+                        throw new InvalidOperationException($"{stage}重建了控制栏按钮，浮窗锚点被换掉");
+                    if (root.ControlBar.Commands.Values.FirstOrDefault() is { } command && !ReferenceEquals(command, stable.Command))
+                        throw new InvalidOperationException($"{stage}重建了控制栏命令按钮");
+                    if (!ReferenceEquals(root.FilterBar.SortControl.Menu, stable.SortMenu)
+                        || !ReferenceEquals(root.FilterBar.OrderControl.Menu, stable.OrderMenu)
+                        || !ReferenceEquals(root.FilterBar.RatingControl.Menu, stable.RatingMenu))
+                        throw new InvalidOperationException($"{stage}重建了筛选条下拉菜单");
+                    var card = root.Filmstrip.CardAt(cycleIndex)
+                        ?? throw new InvalidOperationException($"{stage}后胶片卡片已不在可见范围");
+                    if (!ReferenceEquals(card, stable.Card))
+                        throw new InvalidOperationException($"{stage}重载了胶片卡片");
+                    if (!popover.IsOpen || !main.RatingSources.IsOpen)
+                        throw new InvalidOperationException($"{stage}关闭了来源浮窗");
+                    RequireFrame(popover.Presentation!.SourceRect, clear.ConvertRectToView(clear.Bounds, root.View!),
+                        $"{stage}后浮窗锚点漂移");
+                });
+            }
+            // 显式诊断通知走真实设置 VM 的属性通道：四项诊断与一个未登记名字都不得触发结构刷新。
+            string[] diagnostics =
+            [
+                nameof(SettingsViewModel.BitmapCacheCountInfo),
+                nameof(SettingsViewModel.BitmapCacheCountInfoLevel),
+                nameof(SettingsViewModel.PerformanceBudgetInfo),
+                nameof(SettingsViewModel.PerformanceBudgetInfoLevel),
+                "FutureDiagnosticText",
+            ];
+            foreach (var diagnostic in diagnostics)
+            {
+                await UiDispatcher.InvokeAsync(() => root.NotifySettingsProperty(diagnostic));
+                await SettleAsync(root);
+                await RequireUnchangedAsync($"诊断通知 {diagnostic}");
+            }
+            // 跨第二个内存探测周期：真实周期通知叠加在显式诊断之后，结构仍不得变化。
+            await Task.Delay(2600);
             await SettleAsync(root);
-            var notifiedClear = await UiDispatcher.InvokeAsync(() =>
-                root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("诊断通知后控制栏缺少评分 0 号按钮"));
-            if (!ReferenceEquals(notifiedClear, stableClear))
-                throw new InvalidOperationException("缓存计数等诊断通知重建了控制栏按钮，浮窗锚点被换掉");
-            if (!popover.IsOpen || !main.RatingSources.IsOpen)
-                throw new InvalidOperationException("缓存计数等诊断通知关闭了来源浮窗");
-            RequireFrame(popover.Presentation!.SourceRect, notifiedClear.ConvertRectToView(notifiedClear.Bounds, root.View!),
-                "周期通知后浮窗锚点漂移");
-            lines.Add("PASS RATING-04 周期刷新：2.6s 内存探测与缓存计数通知后控制栏按钮身份、来源浮窗与锚点矩形保持（诊断属性不触发结构重建）");
+            await RequireUnchangedAsync("第二个内存探测周期");
+            await UiDispatcher.InvokeAsync(popover.Close);
+            await Task.Delay(200);
+            lines.Add("PASS RATING-04 跨周期刷新：两个 2.6s 内存探测周期，加上四项诊断属性与未登记属性经真实设置 VM 注入，控制栏按钮/筛选条下拉菜单/胶片卡片身份与来源浮窗锚点均保持（诊断走共享无影响分流）");
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                var clear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("跨周期刷新后缺少评分 0 号按钮");
+                clear.SendActionForControlEvents(UIControlEvent.TouchUpInside);
+            });
+            await WaitAsync(() => popover.IsOpen && main.RatingSources.IsOpen, "跨周期刷新后重开来源浮窗");
+            await popover.PresentationTask;
+            await SettleAsync(root);
+            var reopenedAnchor = await UiDispatcher.InvokeAsync(() =>
+            {
+                var clear = root.ControlBar.RatingClearButton ?? throw new InvalidOperationException("重开后缺少评分 0 号按钮");
+                return clear.ConvertRectToView(clear.Bounds, root.View!);
+            });
+            RequireFrame(popover.Presentation!.SourceRect, reopenedAnchor,
+                "跨周期刷新后重开的浮窗锚点未对准评分 0 号按钮");
+            lines.Add("PASS RATING-04 跨周期刷新后真实入口仍可用：点控制栏评分 0 号按钮重开来源浮窗并对准同一按钮");
             await iOSNativeSettingsCheck.SnapshotStageAsync("rating-sources-popover");
 
             await UiDispatcher.InvokeAsync(popover.Close);

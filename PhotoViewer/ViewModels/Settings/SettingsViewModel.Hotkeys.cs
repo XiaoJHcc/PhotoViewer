@@ -1,10 +1,10 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using ReactiveUI;
 using System.Reactive;
-using System;
-using System.Linq;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 
@@ -17,10 +17,19 @@ public partial class SettingsViewModel
     //////////////
     
     private ObservableCollection<HotkeyItem> _hotkeys = new();
+    private readonly HashSet<HotkeyItem> _subscribedHotkeyItems = new();
     public ObservableCollection<HotkeyItem> Hotkeys
     {
         get => _hotkeys;
-        set => this.RaiseAndSetIfChanged(ref _hotkeys, value);
+        set
+        {
+            if (ReferenceEquals(_hotkeys, value)) return;
+
+            // 整体替换也换订阅：新集合与其中的子项立即生效，旧集合不再发布。
+            DetachHotkeyItems(_hotkeys);
+            this.RaiseAndSetIfChanged(ref _hotkeys, value);
+            AttachHotkeyItems(_hotkeys);
+        }
     }
 
     private void InitializeHotkeys()
@@ -98,14 +107,8 @@ public partial class SettingsViewModel
     /// </summary>
     private void SubscribeAndInitHotkeyMapping()
     {
-        // 监听集合变化
-        Hotkeys.CollectionChanged += OnHotkeysChanged;
-        
-        // 为现有项目订阅属性变化
-        foreach (var item in Hotkeys)
-        {
-            item.PropertyChanged += OnHotkeyItemChanged;
-        }
+        // 集合与子项订阅走同一挂接点，重复调用不会叠加订阅。
+        AttachHotkeyItems(Hotkeys);
 
         // 同步到全局映射器
         if (_applyRuntimeSettings)
@@ -118,31 +121,105 @@ public partial class SettingsViewModel
         }
     }
 
+    private void AttachHotkeyItems(ObservableCollection<HotkeyItem> collection)
+    {
+        collection.CollectionChanged -= OnHotkeysChanged;
+        collection.CollectionChanged += OnHotkeysChanged;
+        ReconcileHotkeyItemSubscriptions();
+    }
+
+    private void DetachHotkeyItems(ObservableCollection<HotkeyItem> collection)
+    {
+        collection.CollectionChanged -= OnHotkeysChanged;
+        foreach (var item in collection)
+        {
+            DetachHotkeyItem(item);
+        }
+    }
+
+    private void AttachHotkeyItem(HotkeyItem item)
+    {
+        item.PropertyChanged -= OnHotkeyItemChanged;
+        item.PropertyChanged += OnHotkeyItemChanged;
+        _subscribedHotkeyItems.Add(item);
+    }
+
+    private void DetachHotkeyItem(HotkeyItem item)
+    {
+        item.PropertyChanged -= OnHotkeyItemChanged;
+        _subscribedHotkeyItems.Remove(item);
+    }
+
+    /// <summary>Clear 的 Reset 通知不带 OldItems：按跟踪集合对照当前集合补退订。</summary>
+    private void ReconcileHotkeyItemSubscriptions()
+    {
+        foreach (var item in _subscribedHotkeyItems.ToArray())
+        {
+            if (!Hotkeys.Contains(item)) DetachHotkeyItem(item);
+        }
+
+        foreach (var item in Hotkeys)
+        {
+            AttachHotkeyItem(item);
+        }
+    }
+
+    private void DisposeHotkeySubscriptions()
+    {
+        foreach (var item in _subscribedHotkeyItems.ToArray())
+        {
+            item.PropertyChanged -= OnHotkeyItemChanged;
+        }
+
+        _subscribedHotkeyItems.Clear();
+        Hotkeys.CollectionChanged -= OnHotkeysChanged;
+    }
+
     private void OnHotkeysChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        // 为新添加的项目订阅属性变化
-        if (e.NewItems != null)
+        switch (e.Action)
         {
-            foreach (HotkeyItem item in e.NewItems)
-            {
-                item.PropertyChanged += OnHotkeyItemChanged;
-            }
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Reset:
+                ReconcileHotkeyItemSubscriptions();
+                break;
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Move:
+                break;
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Add:
+                if (e.NewItems != null)
+                {
+                    foreach (HotkeyItem item in e.NewItems) AttachHotkeyItem(item);
+                }
+                break;
+            case System.Collections.Specialized.NotifyCollectionChangedAction.Remove:
+                if (e.OldItems != null)
+                {
+                    foreach (HotkeyItem item in e.OldItems) DetachHotkeyItem(item);
+                }
+                break;
+            default:
+                if (e.OldItems != null)
+                {
+                    foreach (HotkeyItem item in e.OldItems) DetachHotkeyItem(item);
+                }
+
+                if (e.NewItems != null)
+                {
+                    foreach (HotkeyItem item in e.NewItems) AttachHotkeyItem(item);
+                }
+                break;
         }
 
-        // 为移除的项目取消订阅
-        if (e.OldItems != null)
-        {
-            foreach (HotkeyItem item in e.OldItems)
-            {
-                item.PropertyChanged -= OnHotkeyItemChanged;
-            }
-        }
-
+        // 集合增删/排序改变控制栏命令集合与输入绑定，必须显式发布（不经过 VM 属性通知）。
+        PublishPresentationImpact(
+            SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings);
         RequestSave();
     }
 
     private void OnHotkeyItemChanged(object? sender, PropertyChangedEventArgs e)
     {
+        // 已移除但仍被外部引用的子项不再影响展示。
+        if (sender is HotkeyItem item && !_subscribedHotkeyItems.Contains(item)) return;
+
         // 当快捷键变化时检测冲突
         if (e.PropertyName == nameof(HotkeyItem.PrimaryHotkey) || 
             e.PropertyName == nameof(HotkeyItem.SecondaryHotkey))
@@ -155,6 +232,9 @@ public partial class SettingsViewModel
             or nameof(HotkeyItem.PrimaryHotkey)
             or nameof(HotkeyItem.SecondaryHotkey))
         {
+            // 冲突标记与展示文本是派生通知，不进入展示刷新通道。
+            PublishPresentationImpact(
+                SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings);
             RequestSave();
         }
     }
@@ -255,9 +335,13 @@ public partial class SettingsViewModel
             fromIndex == toIndex)
             return;
 
-        var item = Hotkeys[fromIndex];
-        Hotkeys.RemoveAt(fromIndex);
-        Hotkeys.Insert(toIndex, item);
+        // 移除 + 插入是两次集合变更，排序按一次展示刷新发布。
+        RunInPresentationBatch(() =>
+        {
+            var item = Hotkeys[fromIndex];
+            Hotkeys.RemoveAt(fromIndex);
+            Hotkeys.Insert(toIndex, item);
+        });
         RequestSave();
     }
 

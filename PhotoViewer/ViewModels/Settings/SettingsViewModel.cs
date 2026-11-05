@@ -120,6 +120,14 @@ public partial class SettingsViewModel : ReactiveObject, IDisposable
         _runtimeSubscriptions.Add(this.Changed
             .Where(args => args.PropertyName is null || PersistedPropertyNames.Contains(args.PropertyName))
             .Subscribe(_ => RequestSave()));
+
+        // 展示刷新通道与持久化订阅分离：只转换白名单属性，诊断/文本通知不参与。
+        // EnabledExifItems 每次都会换成新实例列表，其展示影响改由 UpdateEnabledExifItems 按内容摘要发布。
+        _runtimeSubscriptions.Add(this.Changed.Subscribe(args =>
+        {
+            if (args.PropertyName == nameof(EnabledExifItems)) return;
+            PublishPresentationImpact(GetPresentationImpact(args.PropertyName));
+        }));
     }
 
     /// <summary>结束设置生命周期，释放订阅与全局内存通知；不等待在途保存。</summary>
@@ -128,6 +136,15 @@ public partial class SettingsViewModel : ReactiveObject, IDisposable
         if (_disposed) return;
         _disposed = true;
         _runtimeSubscriptions.Dispose();
+        DisposeHotkeySubscriptions();
+        lock (_presentationGate)
+        {
+            // 在途批次与订阅一并作废：Dispose 之后不再发布任何展示事件。
+            _presentationBatchDepth = 0;
+            _pendingPresentationImpact = SettingsChangeImpact.None;
+            PresentationChanged = null;
+        }
+
         lock (_saveGate)
         {
             _saveRequested = false;

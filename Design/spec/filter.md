@@ -99,6 +99,7 @@
 - 自绘下拉（无原生下拉的平台）：按钮 90×32、圆角 `dropdown.cornerRadius`、底 `color.dropdown.background`（悬停 `.hover`、按下 `.pressed`）、1 点描边 `color.dropdown.border`（悬停 `.hover`）、文字 `dropdown.fontSize` 左内边距 `dropdown.paddingLeft`、右侧 `icon.chevronDown` 边长 `dropdown.chevron.size`、距右 `dropdown.chevron.rightInset`、色 `color.dropdown.chevron`。弹层贴在按钮正下方并以按钮水平居中（最小宽 = 按钮宽，越界向内夹取，下方不足翻到上方），外观同 MENU-03 自绘弹层；项左右内边距 `dropdown.item.paddingX`，当前项整行底 `color.dropdown.item.selected`（悬停 `.selected.hover`），不画勾号。
 
 - 下拉显示当前选项；打开时当前项带勾选/选中态；选中即应用并关闭；点外部、返回键或取消不改变状态。
+- 重复刷新、相同几何的布局与无关状态通知不得关闭或重建已展开的菜单，也不重置菜单内滚动与焦点。入口实际移动、隐藏或移除时可关闭，或按平台原生能力重新定位；菜单内容失效时同步真实选项与选中态，不让旧菜单写回已失效的值。
 - 桌面支持键盘打开、上下选择、回车确认、Esc 取消，焦点回到原控件；触屏用平台菜单手势。
 - 筛选条控件的悬停、按下、禁用与焦点状态不得引起布局抖动、残留旧态或裁切；原生下拉/菜单可用系统状态色与轻量状态动效（L4），自绘控件按 `dropdown.*` / `color.filter.toggle.*` 令牌。
 - 菜单项与顺序固定（FILTER-03 表），不按使用频率重排，也不隐藏当前不可能命中的项。

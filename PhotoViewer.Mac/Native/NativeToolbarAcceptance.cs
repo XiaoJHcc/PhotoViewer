@@ -9,6 +9,7 @@ using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
+using ReactiveUI;
 using SkiaSharp;
 using System.ComponentModel;
 using SortOrder = PhotoViewer.ViewModels.Main.SortOrder;
@@ -166,6 +167,7 @@ internal static class NativeToolbarAcceptance
             await VerifyRatingContinuityAsync(window, observations);
             await VerifyRatingConflictAsync(window, output, observations);
             await VerifyRatingSourcesLiveAsync(window, output, observations);
+            await VerifySettingsImpactAsync(window, output, observations);
             foreach (var entry in settings.ExifDisplayItems) entry.IsEnabled = true;
             foreach (var hotkey in settings.Hotkeys) hotkey.IsDisplay = true;
             settings.LayoutMode = LayoutMode.Row;
@@ -1255,6 +1257,130 @@ internal static class NativeToolbarAcceptance
                     await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
             }
             catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 来源实时回归收尾还原失败：" + exception.Message); }
+            await Task.Delay(200);
+        }
+    }
+
+    /// <summary>
+    /// 设置影响分流：内存探测周期与诊断属性的属性通知（经真实设置 VM 发出）不得重建控制栏、胶片卡片
+    /// 或换掉来源浮窗锚点；同一条通道上的真实设置修改仍必须立刻反映到控制栏、胶片卡片与布局。
+    /// </summary>
+    private static async Task VerifySettingsImpactAsync(MacMainWindow window, string output, List<string> observations)
+    {
+        var settings = window.Main.Settings;
+        var filter = window.Main.FileVM.FilterBar;
+        var popover = window.RatingSourcesPopover;
+        var entry = window.Main.CurrentFile;
+        string entryPath = entry?.File.RequireLocalPath() ?? string.Empty;
+        string? entryId = entry?.File.StorageId.Value;
+        bool entryThumbnailVisible = window.Main.IsThumbnailViewVisible;
+        bool entryShowRating = settings.ShowRating;
+        var entryLayout = settings.LayoutMode;
+        string entryFilter = filter.SelectedRatingFilter;
+        var entryFrame = window.Window.Frame;
+        // 设置仓库保存后可能以新快照重建热键项，每次改写都按命令 id 重取，避免改到已脱离列表的旧项。
+        SettingsViewModel.HotkeyItem NextItem() => settings.Hotkeys.Single(hotkey => hotkey.Command == "Next");
+        bool entryNextDisplay = NextItem().IsDisplay;
+        try
+        {
+            settings.ShowRating = true;
+            NextItem().IsDisplay = true;
+            filter.SelectedRatingFilter = "All";
+            window.Main.IsThumbnailViewVisible = true;
+            await Task.Delay(300);
+            var file = window.Main.CurrentFile ?? throw new InvalidOperationException("设置影响回归缺少当前照片");
+            int index = window.Main.FileVM.ThumbnailList.FilteredFiles.IndexOf(file);
+            if (index < 0) throw new InvalidOperationException("设置影响回归的当前照片不在胶片列表内");
+            var card = await WaitForCardAsync(window, file);
+            window.ShowRatingSources(file, card.ClearSlot);
+            await WaitAsync(() => popover.IsOpen && ReferenceEquals(window.Main.RatingSources.Target, file), "设置影响回归打开来源浮窗");
+            var clearButton = window.ControlBar.Ratings.FirstOrDefault()
+                ?? throw new InvalidOperationException("设置影响回归缺少评分 0 号按钮");
+            var commandButton = window.ControlBar.Commands["Next"];
+            var anchor = popover.AnchorRect ?? throw new InvalidOperationException("设置影响回归的来源浮窗没有锚点矩形");
+            void RequireUnchanged(string stage)
+            {
+                if (!ReferenceEquals(window.ControlBar.Ratings.FirstOrDefault(), clearButton))
+                    throw new InvalidOperationException($"{stage}重建了控制栏评分按钮（来源浮窗锚点随之换位）");
+                if (!ReferenceEquals(window.ControlBar.Commands.GetValueOrDefault("Next"), commandButton))
+                    throw new InvalidOperationException($"{stage}重建了控制栏命令按钮");
+                using (var path = NSIndexPath.FromItemSection(index, 0))
+                    if (!ReferenceEquals(window.Filmstrip.GetItem(path), card))
+                        throw new InvalidOperationException($"{stage}重载了胶片卡片");
+                if (!popover.IsOpen || !ReferenceEquals(window.Main.RatingSources.Target, file))
+                    throw new InvalidOperationException($"{stage}关闭了来源浮窗");
+                if (popover.AnchorRect != anchor)
+                    throw new InvalidOperationException($"{stage}改写了来源浮窗锚点矩形：{popover.AnchorRect} / {anchor}");
+            }
+            // 两个真实内存探测周期（≥4.5s）：周期诊断通知不得改变任何结构。
+            await Task.Delay(4700);
+            RequireUnchanged("两个内存探测周期后");
+            string[] diagnostics =
+            [
+                nameof(SettingsViewModel.BitmapCacheCountInfo),
+                nameof(SettingsViewModel.BitmapCacheCountInfoLevel),
+                nameof(SettingsViewModel.PerformanceBudgetInfo),
+                nameof(SettingsViewModel.PerformanceBudgetInfoLevel),
+                "FutureDiagnosticText",
+            ];
+            foreach (var diagnostic in diagnostics)
+            {
+                // 走真实设置 VM 的属性通知，由共享影响分流判定为无结构影响。
+                settings.RaisePropertyChanged(diagnostic);
+                await Task.Delay(150);
+                RequireUnchanged($"诊断通知 {diagnostic}");
+            }
+            observations.Add("settings impact: after two 2 s memory-probe cycles plus four diagnostic and one unknown property notifications on the real settings VM, control-bar buttons, the filmstrip card and the source-popover anchor rect keep their identity");
+            NativeSnapshots.SaveMain(window, System.IO.Path.Combine(output, "toolbar-settings-impact.png"));
+
+            popover.Close();
+            await WaitAsync(() => !popover.IsOpen && !window.Main.RatingSources.IsOpen, "设置影响回归收起来源浮窗");
+
+            // 真实设置修改仍生效：评分显隐走 Rating 影响，控制栏评分组消失、胶片卡片星级隐藏。
+            settings.ShowRating = false;
+            await WaitAsync(() => window.ControlBar.Ratings.Count == 0, "隐藏评分组后控制栏移除评分按钮");
+            var hiddenCard = await WaitForCardAsync(window, file);
+            if (!hiddenCard.ClearSlot.Hidden) throw new InvalidOperationException("隐藏评分组后胶片卡片仍显示星级按钮");
+            settings.ShowRating = true;
+            await WaitAsync(() => window.ControlBar.Ratings.Count == 6, "恢复评分组");
+            var shownCard = await WaitForCardAsync(window, file);
+            if (shownCard.ClearSlot.Hidden) throw new InvalidOperationException("恢复评分组后胶片卡片星级按钮仍隐藏");
+            observations.Add("settings impact: a real ShowRating change still rebuilds the rating group and reloads filmstrip cards");
+
+            // 仅布局影响不重建按钮：换向后命令按钮与评分按钮身份不变，几何按新方向重排。
+            var layoutCommand = window.ControlBar.Commands["Next"];
+            var layoutClear = window.ControlBar.Ratings.FirstOrDefault();
+            settings.LayoutMode = window.Main.IsRowLayout ? LayoutMode.Col : LayoutMode.Row;
+            await Task.Delay(350);
+            if (!ReferenceEquals(window.ControlBar.Commands.GetValueOrDefault("Next"), layoutCommand)
+                || !ReferenceEquals(window.ControlBar.Ratings.FirstOrDefault(), layoutClear))
+                throw new InvalidOperationException("布局设置变化重建了控制栏按钮（应只重排几何）");
+            observations.Add("settings impact: a layout-mode change re-arranges the control bar without replacing its buttons");
+
+            // 命令显隐走 Commands 影响：按钮真的移除并恢复。
+            NextItem().IsDisplay = false;
+            await WaitAsync(() => !window.ControlBar.Commands.ContainsKey("Next"), "隐藏命令后控制栏移除按钮");
+            NextItem().IsDisplay = true;
+            await WaitAsync(() => window.ControlBar.Commands.ContainsKey("Next"), "恢复命令后控制栏重建按钮");
+            observations.Add("settings impact: a real command-visibility change still removes and restores the toolbar button");
+        }
+        finally
+        {
+            try { popover.Close(); }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 设置影响回归收尾关闭浮窗失败：" + exception.Message); }
+            settings.ShowRating = entryShowRating;
+            try { NextItem().IsDisplay = entryNextDisplay; }
+            catch (InvalidOperationException) { Console.Error.WriteLine("[NativeToolbar] 设置影响回归收尾未找到 Next 命令项"); }
+            filter.SelectedRatingFilter = entryFilter;
+            window.Main.IsThumbnailViewVisible = entryThumbnailVisible;
+            settings.LayoutMode = entryLayout;
+            window.Window.SetFrame(entryFrame, true);
+            try
+            {
+                if (window.Main.CurrentFile?.File.StorageId.Value != entryId)
+                    await window.Main.FolderVM.OpenImageAsync(new LocalFileRef(entryPath));
+            }
+            catch (Exception exception) { Console.Error.WriteLine("[NativeToolbar] 设置影响回归收尾还原失败：" + exception.Message); }
             await Task.Delay(200);
         }
     }

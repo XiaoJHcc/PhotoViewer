@@ -81,11 +81,22 @@ public partial class SettingsViewModel
         }
     }
 
+    private string _enabledExifItemsKey = string.Empty;
+
     private void UpdateEnabledExifItems()
     {
+        // 其他消费者依赖新的 ExifDisplayItem 列表实例，因此总是替换；展示通道只按内容摘要发布。
         EnabledExifItems = ExifDisplayItems
             .Where(item => item.IsEnabled)
             .ToList();
+
+        var key = string.Join(
+            "\u001f",
+            EnabledExifItems.Select(item => item.PropertyName + "\u001e" + item.DisplayName));
+        if (key == _enabledExifItemsKey) return;
+
+        _enabledExifItemsKey = key;
+        PublishPresentationImpact(SettingsChangeImpact.Exif);
     }
 
     // 添加移动命令
@@ -103,9 +114,13 @@ public partial class SettingsViewModel
             fromIndex == toIndex)
             return;
 
-        var item = ExifDisplayItems[fromIndex];
-        ExifDisplayItems.RemoveAt(fromIndex);
-        ExifDisplayItems.Insert(toIndex, item);
+        // 移除 + 插入会各发一次 EnabledExifItems，排序按一次展示刷新发布。
+        RunInPresentationBatch(() =>
+        {
+            var item = ExifDisplayItems[fromIndex];
+            ExifDisplayItems.RemoveAt(fromIndex);
+            ExifDisplayItems.Insert(toIndex, item);
+        });
         RequestSave();
     }
 

@@ -147,7 +147,7 @@ internal sealed class WindowsControlBar : Grid
 
         _main.PropertyChanged += OnMainChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
-        _main.Settings.PropertyChanged += OnControlChanged;
+        _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         AttachCurrentFile(_main.CurrentFile);
         Refresh();
     }
@@ -256,7 +256,7 @@ internal sealed class WindowsControlBar : Grid
     {
         _main.PropertyChanged -= OnMainChanged;
         _main.ControlVM.PropertyChanged -= OnControlChanged;
-        _main.Settings.PropertyChanged -= OnControlChanged;
+        _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
         AttachCurrentFile(null);
     }
 
@@ -589,6 +589,27 @@ internal sealed class WindowsControlBar : Grid
     /// <summary>验收专用:0 号评分按钮当前颜色。</summary>
     internal Color RatingZeroColor => ((_starButtons[0].Content as TextBlock)?.Foreground as SolidColorBrush)?.Color ?? default;
 
+    /// <summary>验收专用:评分组当前是否可见;评分显隐设置变化后由此核对控制栏已经响应。</summary>
+    internal bool RatingGroupVisible => _ratingGroup.Visibility == Visibility.Visible;
+
+    /// <summary>验收专用:当前命令按钮实例(按显示顺序),用于核对诊断通知没有重建按钮、真实绑定变化会重建。</summary>
+    internal IReadOnlyList<Button> CommandButtons
+    {
+        get
+        {
+            var buttons = new List<Button>();
+            foreach (var child in _commandStack.Children)
+            {
+                if (child is Button button)
+                {
+                    buttons.Add(button);
+                }
+            }
+
+            return buttons;
+        }
+    }
+
     /// <summary>按评分设置当前照片。</summary>
     private async void RateCurrent(int rating)
     {
@@ -651,23 +672,48 @@ internal sealed class WindowsControlBar : Grid
         }
     }
 
-    /// <summary>控制栏相关设置变化:按影响范围合并到一次 dispatcher turn 内重建。</summary>
+    /// <summary>控制栏业务摘要变化:当前照片的 EXIF 条目与命令集合来自共享控制 VM,只重建对应分组。</summary>
     private void OnControlChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(SettingsViewModel.EnabledExifItems)
-            or nameof(ControlViewModel.EnabledExifItems))
+        // EXIF 信息块随当前文件的 EXIF 与显示设置变化,归入文件相关刷新。
+        if (e.PropertyName == nameof(ControlViewModel.EnabledExifItems))
         {
-            // EXIF 信息块随当前文件的 EXIF 与显示设置变化,归入文件相关刷新。
             ScheduleFileRefresh();
         }
-        else if (e.PropertyName is nameof(SettingsViewModel.Hotkeys)
-            or nameof(ControlViewModel.EnabledControls))
+        else if (e.PropertyName == nameof(ControlViewModel.EnabledControls))
         {
             // 命令按钮只由显隐、快捷键绑定与排序决定。
             ScheduleCommandsRefresh();
         }
-        else if (e.PropertyName is nameof(SettingsViewModel.ShowRating)
-            or nameof(ControlViewModel.StarOpacity))
+        else if (e.PropertyName == nameof(ControlViewModel.StarOpacity))
+        {
+            ScheduleRatingRefresh();
+        }
+    }
+
+    /// <summary>
+    /// 设置展示影响:按共享 <see cref="SettingsChangeImpact"/> 位刷新对应分组,
+    /// 设置页只改一个分组时不必重建整条控制栏。未登记属性(诊断、缓存预算文本)不进入这里。
+    /// </summary>
+    /// <param name="impact">本次设置变化影响的主屏区域。</param>
+    private void OnSettingsPresentationChanged(SettingsChangeImpact impact)
+    {
+        if (impact == SettingsChangeImpact.None)
+        {
+            return;
+        }
+
+        if ((impact & SettingsChangeImpact.Exif) != 0)
+        {
+            ScheduleFileRefresh();
+        }
+
+        if ((impact & (SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings)) != 0)
+        {
+            ScheduleCommandsRefresh();
+        }
+
+        if ((impact & SettingsChangeImpact.Rating) != 0)
         {
             ScheduleRatingRefresh();
         }

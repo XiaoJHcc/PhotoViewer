@@ -202,6 +202,7 @@ public partial class SettingsViewModel
         ArgumentNullException.ThrowIfNull(settings);
 
         _isRestoring = true;
+        BeginPresentationBatch();
         try
         {
             LayoutMode = settings.LayoutMode;
@@ -238,16 +239,16 @@ public partial class SettingsViewModel
             SimilarityMaxResults = settings.SimilarityMaxResults;
             AnalysisImmediateCompute = settings.AnalysisImmediateCompute;
             CheckHotkeyConflicts();
+            UpdateSelectedFormats();
+            UpdateEnabledExifItems();
+            if (_session is not null)
+                _session.Draft = CreateSnapshot();
         }
         finally
         {
             _isRestoring = false;
+            EndPresentationBatch();
         }
-
-        UpdateSelectedFormats();
-        UpdateEnabledExifItems();
-        if (_session is not null)
-            _session.Draft = CreateSnapshot();
     }
 
     private void ResetScalePresets(IEnumerable<double> presets)
@@ -364,13 +365,38 @@ public partial class SettingsViewModel
 
     private void ResetHotkeys(IEnumerable<HotkeySetting> hotkeys)
     {
-        Hotkeys.CollectionChanged -= OnHotkeysChanged;
-        foreach (var item in Hotkeys)
-        {
-            item.PropertyChanged -= OnHotkeyItemChanged;
-        }
+        var previous = CaptureHotkeySettings();
+        var candidates = BuildHotkeyItems(hotkeys);
+        var next = candidates
+            .Select(item => new HotkeySetting(
+                item.Command,
+                item.IsDisplay,
+                item.PrimaryHotkey,
+                item.SecondaryHotkey))
+            .ToImmutableArray();
+
+        // 内容相同保持集合与子项 identity：不 Clear/Add，也不触发集合通知。
+        if (HotkeySettingsEqual(previous, next)) return;
+
+        DetachHotkeyItems(Hotkeys);
 
         Hotkeys.Clear();
+        foreach (var item in candidates)
+        {
+            Hotkeys.Add(item);
+        }
+
+        // Clear 的 Reset 通知不带 OldItems，这里重新对照跟踪集合，避免残留子项继续发布。
+        ReconcileHotkeyItemSubscriptions();
+        AttachHotkeyItems(Hotkeys);
+
+        PublishPresentationImpact(
+            SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings);
+    }
+
+    private static List<HotkeyItem> BuildHotkeyItems(IEnumerable<HotkeySetting> hotkeys)
+    {
+        var items = new List<HotkeyItem>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var hotkey in hotkeys)
         {
@@ -382,7 +408,7 @@ public partial class SettingsViewModel
                 continue;
             }
 
-            Hotkeys.Add(new HotkeyItem(
+            items.Add(new HotkeyItem(
                 definition.Name,
                 definition.Id,
                 definition.Icon,
@@ -394,24 +420,19 @@ public partial class SettingsViewModel
 
         foreach (var definition in SettingsCatalog.Commands)
         {
-            if (seen.Add(definition.Id))
-            {
-                Hotkeys.Add(new HotkeyItem(
-                    definition.Name,
-                    definition.Id,
-                    definition.Icon,
-                    definition.Tooltip,
-                    definition.IsVisibleByDefault,
-                    definition.PrimaryGesture,
-                    definition.SecondaryGesture));
-            }
+            if (!seen.Add(definition.Id)) continue;
+
+            items.Add(new HotkeyItem(
+                definition.Name,
+                definition.Id,
+                definition.Icon,
+                definition.Tooltip,
+                definition.IsVisibleByDefault,
+                definition.PrimaryGesture,
+                definition.SecondaryGesture));
         }
 
-        Hotkeys.CollectionChanged += OnHotkeysChanged;
-        foreach (var item in Hotkeys)
-        {
-            item.PropertyChanged += OnHotkeyItemChanged;
-        }
+        return items;
     }
 
     private void OnScalePresetsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)

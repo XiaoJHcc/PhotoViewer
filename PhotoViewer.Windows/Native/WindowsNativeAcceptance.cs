@@ -28,6 +28,7 @@ using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Settings;
+using ReactiveUI;
 using SkiaSharp;
 using Windows.Foundation;
 using Windows.Graphics;
@@ -158,6 +159,7 @@ internal sealed partial class WindowsMainWindow
             await RunSimilarityPanelChecksAsync(checks);
             await RunRatingFailureChecksAsync(checks);
             await RunRatingConflictChecksAsync(checks);
+            await RunSettingsDiagnosticChecksAsync(checks);
             await RunAnalysisPreviewPointerChecksAsync(checks);
             await RunWindowStateChecksAsync(checks);
             await RunTitleBarChromeChecksAsync(checks);
@@ -1990,6 +1992,8 @@ internal sealed partial class WindowsMainWindow
             + DesignTokens.PopupRatingSourcesLabelGap + DesignTokens.ToolbarRatingButtonSize;
         RequireSmoke(Math.Abs(shortLayout.Height - shortHeight) < .01, "单线条目高度不符合令牌推导");
 
+        await CheckSettingsPresentationStabilityAsync(checks);
+
         _ratingSources.DismissNativeForAcceptance();
         await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
             "原生关闭未同步共享来源状态");
@@ -2048,6 +2052,231 @@ internal sealed partial class WindowsMainWindow
             "冲突解除后未恢复清零叉");
         _main.Settings.LayoutMode = LayoutMode.Row;
         checks.Add("PASS RATING-04: windowed Desktop Acrylic flyout lists all sources with token geometry and middle truncation; card/control directions with arrowMargin gap inside the window edgeMargin, failure retention, whole-group write convergence, native close synchronization, and layout close");
+    }
+
+    /// <summary>
+    /// SETTINGS-05：设置展示影响分流回归。真实来源浮窗打开期间跨两个 2 秒内存探测周期，
+    /// 再经真实设置 VM 注入诊断属性通知，按钮身份、浮窗锚点与开放态必须保持不变；
+    /// 随后真实修改评分显隐与快捷键绑定，核对控制栏按影响位响应而不是静默不刷新。
+    /// </summary>
+    /// <param name="checks">通过项收集器。</param>
+    private async Task CheckSettingsPresentationStabilityAsync(List<string> checks)
+    {
+        // 周期内存探测重发的是缓存预算文本；共享分流必须把它们判成“无影响”，
+        // 否则各端会被 2 秒一轮的诊断通知带着重建界面。
+        foreach (var diagnostic in DiagnosticSettingsProperties)
+        {
+            RequireSmoke(SettingsViewModel.GetPresentationImpact(diagnostic) == SettingsChangeImpact.None,
+                $"诊断属性 {diagnostic} 被共享分流登记为展示影响");
+        }
+
+        RequireSmoke(SettingsViewModel.GetPresentationImpact(null) == SettingsChangeImpact.All,
+            "null 属性名(全部属性已变)未按全部刷新处理");
+
+        var button = _controlBar.RatingZeroButton;
+        var anchor = _ratingSources.AnchorRectForAcceptance;
+        var glyph = _controlBar.RatingZeroGlyph;
+        var commandButtons = _controlBar.CommandButtons;
+        RequireSmoke(_ratingSources.IsOpen && _main.RatingSources.IsOpen, "稳定性检查前来源浮窗未打开");
+        RequireSmoke(commandButtons.Count > 0, "稳定性检查前控制栏没有命令按钮");
+
+        var impacts = new List<SettingsChangeImpact>();
+        void OnImpact(SettingsChangeImpact impact) => impacts.Add(impact);
+        _main.Settings.PresentationChanged += OnImpact;
+        try
+        {
+            // 内存探测 2 秒一轮，每轮都会重发缓存预算文本；至少覆盖两个周期。
+            var notifications = await WaitForPeriodicSettingsNotificationsAsync(2, "来源浮窗周期诊断");
+            RequireSmoke(notifications >= 2, $"4.6s 内只收到 {notifications} 次周期设置通知，未覆盖两个周期");
+            RequireSmoke(impacts.Count == 0, $"周期诊断发出了展示影响: {string.Join(", ", impacts)}");
+            RequireStableRatingSurface(button, glyph, anchor, commandButtons, "周期诊断");
+
+            foreach (var diagnostic in DiagnosticSettingsProperties)
+            {
+                NotifySettingsProperty(diagnostic);
+                _root.UpdateLayout();
+                await Task.Delay(120);
+            }
+
+            RequireSmoke(impacts.Count == 0, $"显式诊断通知发出了展示影响: {string.Join(", ", impacts)}");
+            RequireStableRatingSurface(button, glyph, anchor, commandButtons, "显式诊断");
+        }
+        finally
+        {
+            _main.Settings.PresentationChanged -= OnImpact;
+        }
+
+        // 真实评分显隐变化必须经 Rating 影响位刷新控制栏，并因锚点隐藏关闭来源浮窗。
+        _main.Settings.ShowRating = false;
+        try
+        {
+            await WaitForSmokeAsync(() => !_controlBar.RatingGroupVisible, "评分显隐变化未刷新控制栏", 10);
+            await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
+                "评分组隐藏后来源浮窗未关闭", 10);
+        }
+        finally
+        {
+            _main.Settings.ShowRating = true;
+        }
+
+        await WaitForSmokeAsync(() => _controlBar.RatingGroupVisible, "恢复评分显隐后控制栏未刷新", 10);
+
+        // 真实快捷键子项变化必须经 Commands/InputBindings 影响位重建命令按钮与提示。
+        var next = _main.Settings.Hotkeys.First(item => item.Command == "Next" && item.IsDisplay);
+        var originalBinding = next.PrimaryHotkey;
+        var originalCommands = _controlBar.CommandButtons;
+        next.PrimaryHotkey = AppGesture.FromKey(new AppKeyGesture(GestureKey.D9, GestureModifiers.Control));
+        try
+        {
+            await WaitForSmokeAsync(() => TooltipForCommand("Next").Contains("Ctrl+9", StringComparison.Ordinal),
+                $"快捷键子项变化未刷新控制栏命令提示: {TooltipForCommand("Next")}", 10);
+            var refreshed = _controlBar.CommandButtons;
+            RequireSmoke(refreshed.Count == originalCommands.Count
+                && !ReferenceEquals(refreshed[0], originalCommands[0]),
+                "快捷键子项变化后命令按钮没有重建");
+        }
+        finally
+        {
+            next.PrimaryHotkey = originalBinding;
+        }
+
+        // 复原后重开来源浮窗，后续整组写入仍在真实浮层里验证。
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen,
+            "稳定性检查后重开来源浮窗", 10);
+        checks.Add("PASS SETTINGS-05: two 2s memory-probe cycles plus explicit notifications for four derived cache/budget properties and an unregistered name keep the rating button identity, flyout anchor and open state; real ShowRating and hotkey-binding changes refresh through the shared impact channel");
+    }
+
+    /// <summary>周期内存探测与派生文本会重发的设置属性名：共享分流必须判为无展示影响。</summary>
+    private static readonly string[] DiagnosticSettingsProperties =
+    [
+        nameof(SettingsViewModel.BitmapCacheCountInfo),
+        nameof(SettingsViewModel.BitmapCacheCountInfoLevel),
+        nameof(SettingsViewModel.PerformanceBudgetInfo),
+        nameof(SettingsViewModel.PerformanceBudgetInfoLevel),
+        "FutureDiagnosticText",
+    ];
+
+    /// <summary>
+    /// 等待至少两个内存探测周期（默认 2 秒一轮）的设置属性通知，同时保证观察窗不短于 4.6 秒。
+    /// 周期诊断是“设置文本重发但展示结构不变”的真实来源，回归用它做时间基准。
+    /// </summary>
+    /// <param name="required">需要观察到的通知次数。</param>
+    /// <param name="stage">超时诊断阶段。</param>
+    /// <returns>观察到的通知次数。</returns>
+    private async Task<int> WaitForPeriodicSettingsNotificationsAsync(int required, string stage)
+    {
+        var notifications = 0;
+        void OnSettingsProperty(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName == nameof(SettingsViewModel.BitmapCacheCountInfo))
+            {
+                notifications++;
+            }
+        }
+
+        _main.Settings.PropertyChanged += OnSettingsProperty;
+        try
+        {
+            var idle = Stopwatch.StartNew();
+            while (idle.Elapsed < TimeSpan.FromSeconds(4.6) || notifications < required)
+            {
+                if (idle.Elapsed > TimeSpan.FromSeconds(12))
+                {
+                    throw new TimeoutException($"{stage}: 12s 内只收到 {notifications} 次周期设置通知");
+                }
+
+                await Task.Delay(100);
+            }
+
+            return notifications;
+        }
+        finally
+        {
+            _main.Settings.PropertyChanged -= OnSettingsProperty;
+        }
+    }
+
+    /// <summary>经真实设置 VM 的属性通知注入变化（含未登记诊断名），由共享影响分流决定刷新范围。</summary>
+    /// <param name="propertyName">属性名或诊断名。</param>
+    private void NotifySettingsProperty(string propertyName) => _main.Settings.RaisePropertyChanged(propertyName);
+
+    /// <summary>取控制栏某命令按钮当前的悬停提示。</summary>
+    /// <param name="command">命令 id。</param>
+    /// <returns>提示文本；按钮不存在时返回空串。</returns>
+    private string TooltipForCommand(string command)
+    {
+        foreach (var entry in _controlBar.DescribeCommandButtons())
+        {
+            if (entry.Command == command)
+            {
+                return entry.Tooltip;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    /// <summary>诊断通知前后必须保持的评分入口与来源浮窗状态。</summary>
+    /// <param name="button">检查开始时抓取的 0 号评分按钮。</param>
+    /// <param name="glyph">检查开始时的 0 号槽位字形。</param>
+    /// <param name="anchor">检查开始时的浮窗锚点矩形。</param>
+    /// <param name="commandButtons">检查开始时的命令按钮实例。</param>
+    /// <param name="stage">失败时的阶段名。</param>
+    private void RequireStableRatingSurface(Button button, string glyph, Rect anchor,
+        IReadOnlyList<Button> commandButtons, string stage)
+    {
+        RequireSmoke(ReferenceEquals(_controlBar.RatingZeroButton, button), $"{stage}后评分 0 号按钮被重建");
+        RequireSmoke(_controlBar.RatingZeroGlyph == glyph, $"{stage}后评分 0 号槽位字形变化");
+        RequireSmoke(_ratingSources.IsOpen && _main.RatingSources.IsOpen, $"{stage}关闭了来源浮窗");
+        RequireSmoke(_ratingSources.TryGetAnchorBoundsForAcceptance(out var current),
+            $"{stage}后无法重新计算来源浮窗锚点");
+        RequireSmoke(Math.Abs(current.X - anchor.X) <= .5 && Math.Abs(current.Y - anchor.Y) <= .5
+            && Math.Abs(current.Width - anchor.Width) <= .5 && Math.Abs(current.Height - anchor.Height) <= .5,
+            $"{stage}后浮窗锚点漂移: {current} != {anchor}");
+        var refreshed = _controlBar.CommandButtons;
+        RequireSmoke(refreshed.Count == commandButtons.Count,
+            $"{stage}后命令按钮数量变化: {commandButtons.Count} -> {refreshed.Count}");
+        for (var index = 0; index < refreshed.Count; index++)
+        {
+            RequireSmoke(ReferenceEquals(refreshed[index], commandButtons[index]), $"{stage}后重建了命令按钮");
+        }
+    }
+
+    /// <summary>
+    /// SETTINGS-05：真实筛选条下拉在周期诊断与显式诊断通知期间保持展开，下拉内容不被重建。
+    /// </summary>
+    /// <param name="checks">通过项收集器。</param>
+    private async Task RunSettingsDiagnosticChecksAsync(List<string> checks)
+    {
+        _root.UpdateLayout();
+        var combo = _filterBar.SortModeDropDown;
+        var itemsSource = combo.ItemsSource;
+        int selected = combo.SelectedIndex;
+        combo.IsDropDownOpen = true;
+        await WaitForSmokeAsync(() => combo.IsDropDownOpen, "排序方式下拉未展开", 10);
+        try
+        {
+            var notifications = await WaitForPeriodicSettingsNotificationsAsync(2, "筛选条下拉周期诊断");
+            foreach (var diagnostic in DiagnosticSettingsProperties)
+            {
+                NotifySettingsProperty(diagnostic);
+            }
+
+            await Task.Delay(200);
+            _root.UpdateLayout();
+            RequireSmoke(notifications >= 2, $"下拉展开期间只收到 {notifications} 次周期设置通知，未覆盖两个周期");
+            RequireSmoke(combo.IsDropDownOpen, "周期诊断关闭了筛选条下拉");
+            RequireSmoke(ReferenceEquals(combo.ItemsSource, itemsSource) && combo.SelectedIndex == selected,
+                "诊断通知重建了筛选条下拉内容或改变选中项");
+        }
+        finally
+        {
+            combo.IsDropDownOpen = false;
+        }
+
+        await WaitForSmokeAsync(() => !combo.IsDropDownOpen, "排序方式下拉未收起", 10);
+        checks.Add("PASS SETTINGS-05 dropdown: real ComboBox stays open with unchanged items and selection across two 2s memory-probe cycles and explicit diagnostic notifications");
     }
 
     private static byte[] RatingPacket(int rating) => Encoding.UTF8.GetBytes(

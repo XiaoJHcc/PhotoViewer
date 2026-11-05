@@ -282,7 +282,7 @@ internal sealed partial class WindowsMainWindow : Window
         _root.Drop += OnDrop;
 
         _main.PropertyChanged += OnMainChanged;
-        _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged += OnFolderChanged;
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
@@ -341,7 +341,7 @@ internal sealed partial class WindowsMainWindow : Window
         _ratingSources.Dispose();
         _main.FitToViewRequested -= OnFitToViewRequested;
         _main.PropertyChanged -= OnMainChanged;
-        _main.Settings.PropertyChanged -= OnSettingsChanged;
+        _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
         _main.FolderVM.PropertyChanged -= OnFolderChanged;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
@@ -1690,17 +1690,25 @@ internal sealed partial class WindowsMainWindow : Window
         _statusToast.Visibility = Visibility.Collapsed;
     }
 
-    /// <summary>设置变化:缩放指示器开关即时生效。</summary>
-    /// <param name="sender">设置视图模型</param>
-    /// <param name="e">属性变化参数</param>
-    private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    /// <summary>
+    /// 设置展示影响:按共享 <see cref="SettingsChangeImpact"/> 位只刷新对应结构。
+    /// 未登记属性(缓存预算文本、诊断)在共享分流里是 <see cref="SettingsChangeImpact.None"/>,在这里整体忽略;
+    /// 不按属性名白名单自行判断,避免各端规则分裂。
+    /// </summary>
+    /// <param name="impact">本次设置变化影响的主屏区域。</param>
+    private void OnSettingsPresentationChanged(SettingsChangeImpact impact)
     {
-        if (e.PropertyName == nameof(SettingsViewModel.ShowZoomIndicator))
+        if (impact == SettingsChangeImpact.None)
+        {
+            return;
+        }
+
+        if ((impact & SettingsChangeImpact.Navigator) != 0)
         {
             UpdateNavigator();
         }
 
-        if (e.PropertyName == nameof(SettingsViewModel.SimilarityPanelExpanded))
+        if ((impact & SettingsChangeImpact.Similarity) != 0)
         {
             ApplyVisibility();
             OnViewportChanged();

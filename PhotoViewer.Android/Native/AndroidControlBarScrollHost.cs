@@ -45,6 +45,9 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
     /// <summary>当前滚动偏移（px，验收核对）。</summary>
     internal int ScrollOffset => _scroll;
 
+    /// <summary>滚动偏移真实发生变化（拖动、惯性、换向夹取）；浮层锚点据此失效。</summary>
+    internal event Action? ScrollChanged;
+
     /// <summary>按布局方向与文档长度更新滚动范围；保留偏移并夹到合法区间。</summary>
     /// <param name="horizontal">分组是否沿水平轴排布（底部控制栏）；否则沿垂直轴（侧边控制栏）。</param>
     /// <param name="viewportMainPx">可见主轴长度（px）。</param>
@@ -121,8 +124,7 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
                 return true;
             case MotionEventActions.Move:
                 float delta = _horizontal ? _lastX - e.GetX() : _lastY - e.GetY();
-                _scroll += (int)Math.Round(delta);
-                ClampScroll();
+                SetScroll(_scroll + (int)Math.Round(delta));
                 _lastX = e.GetX();
                 _lastY = e.GetY();
                 _velocity?.AddMovement(e);
@@ -169,8 +171,7 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
     public override void ComputeScroll()
     {
         if (!_scroller.ComputeScrollOffset()) return;
-        _scroll = _horizontal ? _scroller.CurrX : _scroller.CurrY;
-        ClampScroll();
+        SetScroll(_horizontal ? _scroller.CurrX : _scroller.CurrY);
         Invalidate();
         PostInvalidateOnAnimation();
     }
@@ -210,6 +211,16 @@ internal sealed class AndroidControlBarScrollHost : ViewGroup
 
     private void ClampScroll()
     {
-        _scroll = Math.Clamp(_scroll, 0, MaxScroll);
+        SetScroll(_scroll);
+    }
+
+    /// <summary>写入滚动偏移（夹到合法区间）；真实变化才通知，普通重建同值不打扰。</summary>
+    /// <param name="value">目标偏移（px）。</param>
+    private void SetScroll(int value)
+    {
+        int next = Math.Clamp(value, 0, MaxScroll);
+        if (next == _scroll) return;
+        _scroll = next;
+        ScrollChanged?.Invoke();
     }
 }

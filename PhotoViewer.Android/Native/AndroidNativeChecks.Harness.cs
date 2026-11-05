@@ -43,6 +43,9 @@ internal static partial class AndroidNativeChecks
                 case "storage":
                     await RunStorageChecksAsync();
                     break;
+                case "filter":
+                    await RunFilterBarChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

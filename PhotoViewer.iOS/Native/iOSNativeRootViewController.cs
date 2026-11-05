@@ -13,6 +13,7 @@ using PhotoViewer.ViewModels.Main;
 using PhotoViewer.ViewModels.Main.File;
 using PhotoViewer.ViewModels.Settings;
 using System.ComponentModel;
+using ReactiveUI;
 using UIKit;
 using UniformTypeIdentifiers;
 
@@ -93,6 +94,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private ImageFile[] _displayedFiles = [];
     private bool _sessionStarted;
     private bool _refreshPending;
+    private SettingsChangeImpact _pendingSettingsImpact;
     private bool _layingOut;
     private CGPoint _lastControlScrollOffset;
     /// <summary>控制栏当前内容摘要：输入未变时跳过一次重建，保住按钮身份与已展示的来源浮窗。</summary>
@@ -176,7 +178,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _analysisPane.DetailHighlight = UpdateDetailHighlight;
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
         _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
-        _controlBar = new iOSControlBar(ScheduleControlsRefresh);
+        _controlBar = new iOSControlBar(RequestControlsRefresh);
         _ratingSources = new iOSRatingSourcesPopover(main, this);
         // 主图菜单用触点处的 1 点透明预览：长按只弹菜单，照片不抬升、不缩小。
         _photoMenu = new iOSContextMenuDelegate(_ => BuildPhotoMenu(), stablePreview: true);
@@ -194,7 +196,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.OpenFailed += OnOpenFailed;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
         _main.PropertyChanged += OnMainPropertyChanged;
-        _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.Settings.PresentationChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
@@ -457,7 +459,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.OpenFailed -= OnOpenFailed;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
             _main.PropertyChanged -= OnMainPropertyChanged;
-            _main.Settings.PropertyChanged -= OnSettingsChanged;
+            _main.Settings.PresentationChanged -= OnSettingsChanged;
             _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged;
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.ControlVM.PropertyChanged -= OnControlChanged;
@@ -1187,74 +1189,71 @@ internal sealed class iOSNativeRootViewController : UIViewController
             or nameof(ImageFile.HasRatingConflict) or nameof(ImageFile.RatingSources)) BuildControls();
     });
 
-    /// <summary>设置回写后重建按钮并重排（显隐/顺序/快捷键/文件格式都影响主屏）。</summary>
-    /// <param name="sender">事件源（设置 VM）。</param>
-    /// <param name="args">属性变化参数。</param>
-    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
+    /// <summary>设置影响位：按共享分流重建必要的原生结构，并合并同一快照回写的多次通知。</summary>
+    /// <param name="impact">本次设置变化影响的主屏区域。</param>
+    private void OnSettingsChanged(SettingsChangeImpact impact) => ApplySettingsChange(impact);
+
+    /// <summary>验收缝：经真实设置 VM 的属性通知注入变化，由共享影响分流决定主屏刷新范围。</summary>
+    /// <param name="propertyName">属性名（真实属性或未登记的诊断名）。</param>
+    internal void NotifySettingsProperty(string propertyName) => _main.Settings.RaisePropertyChanged(propertyName);
+
+    /// <summary>合并同一轮设置/EXIF 变化产生的影响位，避免重复重建全部原生按钮。</summary>
+    /// <param name="impact">本次变化的影响位。</param>
+    private void ApplySettingsChange(SettingsChangeImpact impact)
     {
-        // 内存管家每 2s 探测后会改写缓存提示这类诊断属性；它们只属于设置页的说明行，
-        // 不改变主屏结构，不能当作"设置回写"去重建控制栏/胶片栏（否则浮窗锚点与滚动位置每 2s 被换掉）。
-        if (IsDiagnosticSettingsProperty(args.PropertyName)) return;
-        ApplySettingsChange();
-    }
-
-    /// <summary>只影响设置页说明文本、不影响主屏结构的设置属性。</summary>
-    /// <param name="propertyName">属性名。</param>
-    /// <returns>属于诊断文本时为 true。</returns>
-    private static bool IsDiagnosticSettingsProperty(string? propertyName)
-        => propertyName is nameof(SettingsViewModel.BitmapCacheCountInfo)
-            or nameof(SettingsViewModel.BitmapCacheCountInfoLevel)
-            or nameof(SettingsViewModel.PerformanceBudgetInfo)
-            or nameof(SettingsViewModel.PerformanceBudgetInfoLevel);
-
-    /// <summary>验收缝：按属性名走设置变化入口，核对无关通知被就地跳过（不伪造业务状态）。</summary>
-    /// <param name="propertyName">属性名。</param>
-    internal void NotifySettingsProperty(string propertyName)
-        => OnSettingsChanged(_main.Settings, new PropertyChangedEventArgs(propertyName));
-
-    private void ApplySettingsChange()
-    {
+        if (impact == SettingsChangeImpact.None) return;
         if (!UiDispatcher.CheckAccess())
         {
-            UiDispatcher.Post(ApplySettingsChange);
+            UiDispatcher.Post(() => ApplySettingsChange(impact));
             return;
         }
+        _pendingSettingsImpact |= impact;
         // 绑定可能已在设置页里改写：按住状态的重复目标立即作废，避免按旧命令继续翻页。
-        ClearHeldKeys();
-        ScheduleControlsRefresh();
+        if ((impact & (SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings)) != 0) ClearHeldKeys();
+        if (_refreshPending || !IsViewLoaded) return;
+        _refreshPending = true;
+        UiDispatcher.Post(FlushSettingsChange);
     }
 
-    /// <summary>共享控制摘要变化通知。</summary>
+    /// <summary>
+    /// 只做影响范围内的刷新：控制栏由命令/绑定/EXIF/评分变化驱动，胶片卡片只有评分与文件投影变化才重载；
+    /// 导航图、分析栏与相似面板只重排几何，筛选条菜单由自身内容摘要保护。
+    /// </summary>
+    private void FlushSettingsChange()
+    {
+        _refreshPending = false;
+        if (!IsViewLoaded) return;
+        var impact = _pendingSettingsImpact;
+        _pendingSettingsImpact = SettingsChangeImpact.None;
+        if (impact == SettingsChangeImpact.None) return;
+        if ((impact & (SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings
+            | SettingsChangeImpact.Exif | SettingsChangeImpact.Rating)) != 0) BuildControls();
+        if ((impact & (SettingsChangeImpact.Rating | SettingsChangeImpact.FileProjection)) != 0)
+        {
+            // 星级显隐等卡片绑定依赖设置：重载一次，位置由胶片栏自身约束，不改变用户滚动偏移。
+            _filmstrip.ReloadData();
+            _filmstrip.Collection.LayoutIfNeeded();
+            RevalidateCardRatingSources();
+        }
+        // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
+        if ((impact & (SettingsChangeImpact.Layout | SettingsChangeImpact.FileProjection)) != 0) RefreshScreen();
+        else
+        {
+            Layout();
+            _filmstrip.ReportVisibleRange();
+        }
+        _similarityPane.List.LayoutIfNeeded();
+    }
+
+    /// <summary>控制栏自身的热键项变化：绑定改写即排队重建，不在属性通知链内同步刷新。</summary>
+    private void RequestControlsRefresh() => ApplySettingsChange(SettingsChangeImpact.Commands | SettingsChangeImpact.InputBindings);
+    /// <summary>共享控制摘要变化：EXIF 条目只动控制栏，命令显隐与设置同口径（菜单与控制栏）。</summary>
     /// <param name="sender">事件源（控制 VM）。</param>
     /// <param name="args">属性变化参数。</param>
     private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName is nameof(_main.ControlVM.EnabledExifItems) or nameof(_main.ControlVM.EnabledControls)) ScheduleControlsRefresh();
-    }
-
-    /// <summary>合并同一轮设置/EXIF 变化产生的通知，避免重复重建全部原生按钮。</summary>
-    private void ScheduleControlsRefresh()
-    {
-        if (!UiDispatcher.CheckAccess())
-        {
-            UiDispatcher.Post(ScheduleControlsRefresh);
-            return;
-        }
-        if (_refreshPending || !IsViewLoaded) return;
-        _refreshPending = true;
-        UiDispatcher.Post(() =>
-        {
-            _refreshPending = false;
-            BuildControls();
-            // 走到这里的都是真实设置变化（诊断属性已在 OnSettingsChanged 分流掉）：星级显隐等卡片绑定
-            // 依赖设置，需要重载一次；位置由胶片栏自身约束，不改变用户滚动偏移。
-            _filmstrip.ReloadData();
-            // 筛选条文本/菜单、计数宽度与分区几何一并刷新；文件格式变化也在这里反映到胶片栏。
-            RefreshScreen();
-            _filmstrip.Collection.LayoutIfNeeded();
-            _similarityPane.List.LayoutIfNeeded();
-            RevalidateCardRatingSources();
-        });
+        if (args.PropertyName == nameof(_main.ControlVM.EnabledExifItems)) ApplySettingsChange(SettingsChangeImpact.Exif);
+        else if (args.PropertyName == nameof(_main.ControlVM.EnabledControls)) ApplySettingsChange(SettingsChangeImpact.Commands);
     }
 
     /// <summary>列表原子替换后重载胶片栏并刷新计数（不主动居中，[FILM-01]）。</summary>

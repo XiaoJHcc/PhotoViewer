@@ -58,7 +58,7 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-open @files/pv-fixtures --es pv-check main
 ```
 
-`pv-check` 支持 `main|analysis|similarity|settings|tools`；报告通过 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt` 读取。具体素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
+`pv-check` 支持 `main|analysis|similarity|settings|tools` 基线模式，以及 `faults|layout|input|storage|filter` 独立模式；`filter` 覆盖下拉跨探测周期、重复布局与窄屏滚动。报告通过 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt` 读取。具体素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
 
 ### macOS
 

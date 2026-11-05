@@ -194,12 +194,34 @@ public class ControlViewModel : ReactiveObject
     /// </summary>
     private void UpdateEnabledExifItems()
     {
-        EnabledExifItems = Main.Settings.EnabledExifItems
+        var items = Main.Settings.EnabledExifItems
             .Select(item => new ExifDisplayEntry(
                 item.DisplayName,
                 item.PropertyName,
                 FormatExifValue(CurrentExifData, item.PropertyName)))
             .ToList();
+
+        // 内容与顺序都未变时不换列表：设置空回填不应触发控制栏重建。
+        if (SameExifEntries(EnabledExifItems, items)) return;
+
+        EnabledExifItems = items;
+    }
+
+    private static bool SameExifEntries(IReadOnlyList<ExifDisplayEntry> left, IReadOnlyList<ExifDisplayEntry> right)
+    {
+        if (left.Count != right.Count) return false;
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            if (left[index].PropertyName != right[index].PropertyName
+                || left[index].DisplayName != right[index].DisplayName
+                || left[index].DisplayValue != right[index].DisplayValue)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

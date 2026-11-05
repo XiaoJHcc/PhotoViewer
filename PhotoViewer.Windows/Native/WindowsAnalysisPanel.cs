@@ -118,7 +118,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         _presenter.CrosshairChanged += SyncCrosshair;
 
         _main.PropertyChanged += OnMainChanged;
-        _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         _session.Changed += OnSessionChanged;
 
         SetOrientation(_main.IsRowLayout);
@@ -290,7 +290,7 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         _tiles.SideChanged = null;
 
         _main.PropertyChanged -= OnMainChanged;
-        _main.Settings.PropertyChanged -= OnSettingsChanged;
+        _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
         _session.Changed -= OnSessionChanged;
 
         ResetPreviewTracking();
@@ -321,10 +321,11 @@ internal sealed class WindowsAnalysisPanel : Grid, IAnalysisHost
         }
     }
 
-    /// <summary>设置变化:即时计算开关切回 DB 只读路径或实时重算。</summary>
-    private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    /// <summary>设置展示影响:分析栏开关切回 DB 只读路径或实时重算(共享分流为 <see cref="SettingsChangeImpact.Analysis"/>)。</summary>
+    /// <param name="impact">本次设置变化影响的主屏区域。</param>
+    private void OnSettingsPresentationChanged(SettingsChangeImpact impact)
     {
-        if (e.PropertyName == nameof(SettingsViewModel.AnalysisImmediateCompute))
+        if ((impact & SettingsChangeImpact.Analysis) != 0)
         {
             HostChanged?.Invoke();
         }

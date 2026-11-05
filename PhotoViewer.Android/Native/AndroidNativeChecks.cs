@@ -28,7 +28,7 @@ namespace PhotoViewer.Android.Native;
 /// 仅测试路径调用，不改变产品行为。
 /// </summary>
 /// <remarks>
-/// <c>faults</c> / <c>layout</c> / <c>input</c> 三组是独立模式：自带素材与流程、按精确模式名分发
+/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> 是独立模式：自带素材与流程、按精确模式名分发
 /// （<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
@@ -1109,8 +1109,8 @@ internal static partial class AndroidNativeChecks
     private static void Phase(string name) => Console.WriteLine($"[NativeCheck] 阶段：{name}（{_mode}）");
 
     /// <summary>
-    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c>）：精确模式名匹配、自带素材与流程，
+    /// 独立模式（<c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c>）：精确模式名匹配、自带素材与流程，
     /// 不并入 <c>all</c>（现有 <c>all</c> 五组连跑在该模拟器上偶发 SIGSEGV）。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage";
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter";
 }

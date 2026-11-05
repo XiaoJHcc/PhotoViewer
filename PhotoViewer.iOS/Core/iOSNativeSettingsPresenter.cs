@@ -637,8 +637,8 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         contentStack.AddArrangedSubview(slider);
         contentStack.AddArrangedSubview(valueLabel);
 
-        var sliderMinimum = slider.WidthAnchor.ConstraintGreaterThanOrEqualTo(SliderRowSliderMinWidth);
-        var valueMinimum = valueLabel.WidthAnchor.ConstraintGreaterThanOrEqualTo(SliderRowValueMinWidth);
+        var sliderMinimum = slider.WidthAnchor.ConstraintGreaterThanOrEqualTo((nfloat)SliderRowSliderMinWidth);
+        var valueMinimum = valueLabel.WidthAnchor.ConstraintGreaterThanOrEqualTo((nfloat)SliderRowValueMinWidth);
         sliderMinimum.Priority = (float)UILayoutPriority.DefaultHigh;
         valueMinimum.Priority = (float)UILayoutPriority.DefaultHigh;
         NSLayoutConstraint.ActivateConstraints([sliderMinimum, valueMinimum]);
@@ -1991,10 +1991,10 @@ internal sealed class iOSNativeEmbeddedCheckableReorderCell : UITableViewCell
         _iconView.WidthAnchor.ConstraintEqualTo(iconWidth).Active = true;
         _iconView.HeightAnchor.ConstraintEqualTo(iconWidth).Active = true;
         // SETTINGS-01：勾选 → 命令图标与图标 → 命令名的视觉间距同为 8。
-        _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, CheckToIconGap).Active = true;
+        _iconView.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, (nfloat)CheckToIconGap).Active = true;
         _iconView.CenterYAnchor.ConstraintEqualTo(ContentView.CenterYAnchor).Active = true;
         _titleLeadingPlain = _titleLabel.LeadingAnchor.ConstraintEqualTo(_checkmarkView.TrailingAnchor, spacing);
-        _titleLeadingIcon = _titleLabel.LeadingAnchor.ConstraintEqualTo(_iconView.TrailingAnchor, IconToTitleGap);
+        _titleLeadingIcon = _titleLabel.LeadingAnchor.ConstraintEqualTo(_iconView.TrailingAnchor, (nfloat)IconToTitleGap);
         _titleLeadingPlain.Active = true;
         _titleTrailingDefault = _titleLabel.TrailingAnchor.ConstraintLessThanOrEqualTo(ContentView.TrailingAnchor, -16);
         _titleTrailingDefault.Active = true;

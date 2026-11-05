@@ -78,6 +78,9 @@ internal sealed class WindowsFilterBar : Panel
     /// <summary>RATING-04：下拉打开前关闭来源浮窗。</summary>
     internal event Action? PopupOpening;
 
+    /// <summary>验收专用：排序方式下拉（真实 ComboBox，展开时驱动原生下拉弹层）。</summary>
+    internal ComboBox SortModeDropDown => _sortMode;
+
     /// <summary>实际筛选控件边界在布局后发生变化，标题栏据此重算挖空与窄宽度回退。</summary>
     internal event Action? InteractiveBoundsChanged;
 

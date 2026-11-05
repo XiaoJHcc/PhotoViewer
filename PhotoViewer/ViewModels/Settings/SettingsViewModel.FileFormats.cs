@@ -98,10 +98,15 @@ public partial class SettingsViewModel
 
     private void UpdateSelectedFormats()
     {
-        SelectedFormats = FileFormats
+        var formats = FileFormats
             .Where(f => f.IsEnabled)
             .SelectMany(f => f.Extensions)
             .ToList();
+
+        // 内容不变时不换新列表：避免空操作的 PropertyChanged 与展示刷新。
+        if (SelectedFormats.SequenceEqual(formats, StringComparer.OrdinalIgnoreCase)) return;
+
+        SelectedFormats = formats;
     }
 
     // 新增：根据扩展名获取格式显示名（用于同名合并显示 RAW 等）
@@ -128,9 +133,13 @@ public partial class SettingsViewModel
             fromIndex == toIndex)
             return;
 
-        var item = FileFormats[fromIndex];
-        FileFormats.RemoveAt(fromIndex);
-        FileFormats.Insert(toIndex, item);
+        // 移除 + 插入会各发一次 SelectedFormats，排序按一次展示刷新发布。
+        RunInPresentationBatch(() =>
+        {
+            var item = FileFormats[fromIndex];
+            FileFormats.RemoveAt(fromIndex);
+            FileFormats.Insert(toIndex, item);
+        });
         RequestSave();
     }
 

@@ -67,6 +67,15 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
     internal void DismissNativeForAcceptance() => HideNative();
     internal Rect AnchorRectForAcceptance => _anchorRect;
 
+    /// <summary>验收专用：按当前布局重新计算来源浮窗锚点，用于核对诊断通知没有让锚点漂移。</summary>
+    /// <param name="bounds">锚点在窗口内的边界。</param>
+    /// <returns>浮窗已锚定且锚点可计算时返回 true。</returns>
+    internal bool TryGetAnchorBoundsForAcceptance(out Rect bounds)
+    {
+        bounds = default;
+        return _anchor is { } anchor && TryGetAnchorRect(anchor, out bounds);
+    }
+
     internal bool TryGetPresenterBounds(out Rect bounds)
     {
         bounds = default;

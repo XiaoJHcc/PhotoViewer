@@ -16,7 +16,7 @@ namespace PhotoViewer.Android.Native;
 /// <summary>
 /// Android 文件栏筛选条（A3，[FILTER-01]）：排序 / 升降序 / 星级筛选三个自绘下拉控件 +
 /// 计数文本 + 相似聚类 toggle。几何全部取共享 <see cref="MainScreenLayout.FilterBarFrames"/>
-/// （90×32、间距 5、外边距 10；行布局从安全区前导边起排），点按弹原生 PopupMenu 写回共享筛选状态。
+/// （90×32、间距 5、外边距 10；行布局从安全区前导边起排），点按弹出 PopupWindow 写回共享筛选状态。
 /// </summary>
 internal sealed class AndroidFilterBar : View
 {
@@ -35,6 +35,12 @@ internal sealed class AndroidFilterBar : View
     private bool _menuOpen;
     private bool _compact;
     private PopupWindow? _dropdown;
+    private FilterMenu? _dropdownKind;
+    private int _dropdownItemCount;
+    private int _dropdownX;
+    private int _dropdownY;
+    private int _dropdownWidth;
+    private int _dropdownHeight;
 
     /// <summary>排序控件矩形（dp，验收读取）。</summary>
     internal LayoutRect SortFrame => _frames.Sort;
@@ -55,6 +61,16 @@ internal sealed class AndroidFilterBar : View
         ? Math.Max(ShowsSimilarityToggle ? _frames.Toggle.MaxX : _frames.Count.MaxX, _frames.Rating.MaxX)
             + MainScreenLayout.FilterMargin
         : _contentWidth;
+    /// <summary>当前是否有下拉在显示（验收读取，浮层锚点协调也用它）。</summary>
+    internal bool IsDropdownOpen => _dropdown?.IsShowing == true;
+    /// <summary>当前下拉的 <see cref="PopupWindow"/> 实例（验收比对跨周期是不是同一个）。</summary>
+    internal PopupWindow? DropdownInstanceForChecks => _dropdown;
+    /// <summary>当前下拉类型（验收读取）。</summary>
+    internal string? DropdownKindForChecks => _dropdownKind?.ToString();
+    /// <summary>当前下拉的屏幕定位与尺寸（px，验收读取）。</summary>
+    internal (int X, int Y, int Width, int Height) DropdownAnchorForChecks => (_dropdownX, _dropdownY, _dropdownWidth, _dropdownHeight);
+    /// <summary>当前下拉的内容视图（验收用真实行视图点选用）。</summary>
+    internal View? DropdownContentViewForChecks => _dropdown?.ContentView;
 
     /// <summary>冲突三角之外的浮层协调：下拉打开前通知宿主收起其它临时浮窗（RATING-04）。</summary>
     internal event Action? DropdownOpening;
@@ -82,25 +98,92 @@ internal sealed class AndroidFilterBar : View
         Invalidate();
     }
 
-    /// <summary>按共享几何落位五个控件（父布局在行/列方向变化时调用）。</summary>
+    /// <summary>
+    /// 按共享几何落位五个控件（父布局在行/列方向变化时调用）。幂等：几何没有变化就什么都不做，
+    /// 也不收起已打开的下拉——窄屏一次 <c>OnLayout</c> 会先按视口宽、再按文档宽各排一次，
+    /// 中间态不能把菜单当失效锚点关掉；锚点的更新/失效统一交给 <see cref="CommitLayout"/> 在最终几何上判定。
+    /// </summary>
     /// <param name="horizontal">是否行布局。</param>
     /// <param name="contentWidth">筛选条可用内容宽度（dp）。</param>
     /// <param name="leadingInset">列布局首控件的前导让位（dp）。</param>
     internal void Arrange(bool horizontal, double contentWidth, double leadingInset)
     {
-        DismissDropdown();
         _horizontal = horizontal;
         _contentWidth = Math.Max(1, contentWidth);
         _leadingInset = leadingInset;
         // 手机窄屏：三个下拉与 toggle 按紧凑宽度排布，避免 toggle 被挤出屏幕（其他平台保持 90 点默认）。
         _compact = horizontal && _contentWidth < 600;
         Refresh();
-        _frames = MainScreenLayout.FilterBarFrames(horizontal, _contentWidth, leadingInset, _countWidth,
+        var frames = MainScreenLayout.FilterBarFrames(horizontal, _contentWidth, leadingInset, _countWidth,
             ShowsSimilarityToggle, alignLeading: true,
             controlWidth: _compact ? DesignTokens.FilterCompactControlWidth : MainScreenLayout.FilterControlWidth,
             toggleWidth: _compact ? DesignTokens.FilterCompactToggleWidth : MainScreenLayout.FilterControlWidth);
+        if (SameFrames(frames, _frames)) return;
+        _frames = frames;
         Invalidate();
     }
+
+    /// <summary>
+    /// 布局收尾：拿最终几何核对已打开下拉的锚点。锚点仍在可视区内且位置变了就跟着挪，
+    /// 控件被隐藏/滚出可视区（真正失效）才收起。
+    /// </summary>
+    internal void CommitLayout()
+    {
+        if (_dropdown is not { } popup || _dropdownKind is not { } kind) return;
+        if (!popup.IsShowing) return;
+        if (!IsAttachedToWindow || Visibility != ViewStates.Visible || !IsShown
+            || !TryGetFrame(kind, out var frame) || !IsFrameVisible(frame))
+        {
+            DismissDropdown();
+            return;
+        }
+        var geometry = PopupGeometry(frame, _dropdownItemCount);
+        if (geometry.X == _dropdownX && geometry.Y == _dropdownY
+            && geometry.Width == _dropdownWidth && geometry.Height == _dropdownHeight) return;
+        _dropdownX = geometry.X;
+        _dropdownY = geometry.Y;
+        _dropdownWidth = geometry.Width;
+        _dropdownHeight = geometry.Height;
+        if (popup.ContentView?.IsAttachedToWindow != true) return;
+        popup.Update(geometry.X, geometry.Y, geometry.Width, geometry.Height);
+    }
+
+    /// <summary>控件当前是否还能作为锚点：中心点落在本视图（含父级裁剪）的可见区域内。</summary>
+    /// <param name="frame">dp 矩形。</param>
+    /// <returns>可见返回 true。</returns>
+    private bool IsFrameVisible(LayoutRect frame)
+    {
+        var visible = new Rect();
+        if (!GetLocalVisibleRect(visible)) return false;
+        double density = AndroidUiTheme.Density(Context!);
+        int x = (int)Math.Round((frame.X + frame.Width / 2) * density);
+        int y = (int)Math.Round((frame.Y + frame.Height / 2) * density);
+        return visible.Contains(x, y);
+    }
+
+    /// <summary>取某一类下拉对应的控件矩形。</summary>
+    /// <param name="kind">菜单类型。</param>
+    /// <param name="frame">dp 矩形。</param>
+    /// <returns>取到返回 true。</returns>
+    private bool TryGetFrame(FilterMenu kind, out LayoutRect frame)
+    {
+        frame = kind switch
+        {
+            FilterMenu.Sort => _frames.Sort,
+            FilterMenu.Order => _frames.Order,
+            _ => _frames.Rating,
+        };
+        return frame.Width > 0 && frame.Height > 0;
+    }
+
+    /// <summary>五个控件矩形的几何比较（dp；四舍五入到 0.01 足以区分真实变化）。</summary>
+    private static bool SameFrames(MainScreenLayout.FilterFrames a, MainScreenLayout.FilterFrames b)
+        => SameRect(a.Sort, b.Sort) && SameRect(a.Order, b.Order) && SameRect(a.Rating, b.Rating)
+            && SameRect(a.Count, b.Count) && SameRect(a.Toggle, b.Toggle);
+
+    private static bool SameRect(LayoutRect a, LayoutRect b)
+        => Math.Abs(a.X - b.X) < .01 && Math.Abs(a.Y - b.Y) < .01
+            && Math.Abs(a.Width - b.Width) < .01 && Math.Abs(a.Height - b.Height) < .01;
 
     /// <summary>自绘三个下拉控件、计数与 toggle。</summary>
     /// <param name="canvas">画布。</param>
@@ -216,17 +299,13 @@ internal sealed class AndroidFilterBar : View
         if (labels.Count == 0) return;
 
         double density = AndroidUiTheme.Density(activity);
-        var barLocation = new int[2];
-        GetLocationOnScreen(barLocation);
-        var metrics = Resources?.DisplayMetrics;
-        int screenWidth = metrics?.WidthPixels ?? Width;
-        int screenHeight = metrics?.HeightPixels ?? Height;
-        int menuWidth = Math.Max((int)Math.Round(112 * density), (int)Math.Round(frame.Width * density));
+        var menuWidth = Math.Max((int)Math.Round(112 * density), (int)Math.Round(frame.Width * density));
         int itemHeight = (int)Math.Round(40 * density);
         int padding = (int)Math.Round(4 * density);
         int contentHeight = labels.Count * itemHeight + padding * 2;
+        var metrics = Resources?.DisplayMetrics;
+        int screenHeight = metrics?.HeightPixels ?? Height;
         int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
-        int menuHeight = Math.Min(contentHeight, maxHeight);
 
         var content = new LinearLayout(activity) { Orientation = Orientation.Vertical };
         var background = new GradientDrawable();
@@ -282,16 +361,8 @@ internal sealed class AndroidFilterBar : View
             popupContent = scroll;
         }
 
-        int margin = (int)Math.Round(8 * density);
-        int x = barLocation[0] + (int)Math.Round(frame.X * density);
-        int below = barLocation[1] + (int)Math.Round(frame.MaxY * density) + (int)Math.Round(2 * density);
-        int above = barLocation[1] + (int)Math.Round(frame.Y * density) - menuHeight - (int)Math.Round(2 * density);
-        int y = below;
-        if (y + menuHeight > screenHeight - margin) y = above;
-        x = Math.Clamp(x, margin, Math.Max(margin, screenWidth - menuWidth - margin));
-        y = Math.Clamp(y, margin, Math.Max(margin, screenHeight - menuHeight - margin));
-
-        var popup = new PopupWindow(popupContent, menuWidth, menuHeight, true)
+        var geometry = PopupGeometry(frame, labels.Count);
+        var popup = new PopupWindow(popupContent, geometry.Width, geometry.Height, true)
         {
             OutsideTouchable = true,
             Focusable = true,
@@ -300,23 +371,66 @@ internal sealed class AndroidFilterBar : View
         popup.SetBackgroundDrawable(new ColorDrawable(Color.Transparent));
         popup.DismissEvent += (_, _) =>
         {
-            if (ReferenceEquals(_dropdown, popup)) _dropdown = null;
+            if (ReferenceEquals(_dropdown, popup))
+            {
+                _dropdown = null;
+                _dropdownKind = null;
+            }
             _menuOpen = false;
             Refresh();
         };
         _dropdown = popup;
+        _dropdownKind = kind;
+        _dropdownItemCount = labels.Count;
+        _dropdownX = geometry.X;
+        _dropdownY = geometry.Y;
+        _dropdownWidth = geometry.Width;
+        _dropdownHeight = geometry.Height;
         _menuOpen = true;
-        Console.WriteLine($"[Native] 筛选下拉 {kind} show=({x},{y}) size={menuWidth}x{menuHeight} frame={frame} bar=({barLocation[0]},{barLocation[1]})");
-        popup.ShowAtLocation(this, GravityFlags.Top | GravityFlags.Start, x, y);
+        Console.WriteLine($"[Native] 筛选下拉 {kind} show=({geometry.X},{geometry.Y}) size={geometry.Width}x{geometry.Height} frame={frame}");
+        popup.ShowAtLocation(this, GravityFlags.Top | GravityFlags.Start, geometry.X, geometry.Y);
+    }
+
+    /// <summary>按被点下拉框的真实屏幕位置算下拉窗口的位置与尺寸（夹在屏幕内；空间不足翻到框上方）。</summary>
+    /// <param name="frame">控件矩形（本视图 dp）。</param>
+    /// <param name="itemCount">菜单项数。</param>
+    /// <returns>屏幕 px 矩形。</returns>
+    private (int X, int Y, int Width, int Height) PopupGeometry(LayoutRect frame, int itemCount)
+    {
+        double density = AndroidUiTheme.Density(Context!);
+        var barLocation = new int[2];
+        GetLocationOnScreen(barLocation);
+        var metrics = Resources?.DisplayMetrics;
+        int screenWidth = metrics?.WidthPixels ?? Width;
+        int screenHeight = metrics?.HeightPixels ?? Height;
+        int menuWidth = Math.Max((int)Math.Round(112 * density), (int)Math.Round(frame.Width * density));
+        int itemHeight = (int)Math.Round(40 * density);
+        int padding = (int)Math.Round(4 * density);
+        int contentHeight = itemCount * itemHeight + padding * 2;
+        int maxHeight = Math.Max(itemHeight, screenHeight - (int)Math.Round(16 * density));
+        int menuHeight = Math.Min(contentHeight, maxHeight);
+
+        int margin = (int)Math.Round(8 * density);
+        int x = barLocation[0] + (int)Math.Round(frame.X * density);
+        int below = barLocation[1] + (int)Math.Round(frame.MaxY * density) + (int)Math.Round(2 * density);
+        int above = barLocation[1] + (int)Math.Round(frame.Y * density) - menuHeight - (int)Math.Round(2 * density);
+        int y = below;
+        if (y + menuHeight > screenHeight - margin) y = above;
+        x = Math.Clamp(x, margin, Math.Max(margin, screenWidth - menuWidth - margin));
+        y = Math.Clamp(y, margin, Math.Max(margin, screenHeight - menuHeight - margin));
+        return (x, y, menuWidth, menuHeight);
     }
 
     /// <summary>关闭筛选下拉（返回键优先消费）。</summary>
     /// <returns>关闭了返回 true。</returns>
     internal bool DismissDropdown()
     {
-        if (_dropdown?.IsShowing != true) return false;
-        _dropdown.Dismiss();
+        var popup = _dropdown;
         _dropdown = null;
+        _dropdownKind = null;
+        _menuOpen = false;
+        if (popup?.IsShowing != true) return false;
+        popup.Dismiss();
         return true;
     }
 

@@ -83,6 +83,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal bool FilterScrollableForChecks => _filterScrollHost.IsScrollable;
     /// <summary>筛选条当前横向滚动偏移（px，验收读取）。</summary>
     internal int FilterScrollOffsetForChecks => _filterScrollHost.ScrollOffset;
+    /// <summary>筛选条滚动宿主（验收用真实手势滚动；产品路径不读取）。</summary>
+    internal AndroidControlBarScrollHost FilterScrollHostForChecks => _filterScrollHost;
     /// <summary>最近一次布局算出的分区矩形（dp）。</summary>
     internal AndroidPaneFrames Panes => _panes;
     /// <summary>导航图宿主。</summary>
@@ -155,6 +157,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
         _filterBar = new AndroidFilterBar(activity, main);
         _filterScrollHost = new AndroidControlBarScrollHost(activity, _filterBar);
+        // 筛选条滚动时锚点跟着移走，已打开的下拉不能停在旧位置。
+        _filterScrollHost.ScrollChanged += OnFilterScrollChanged;
         AddView(_filterScrollHost);
         _filmstrip = new AndroidFilmstripView(activity, main);
         AddView(_filmstrip);
@@ -249,7 +253,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _session.Changed += OnSessionChanged;
         _session.Notice += OnSessionNotice;
         _main.PropertyChanged += OnMainPropertyChanged;
-        _main.Settings.PropertyChanged += OnSettingsChanged;
+        _main.Settings.PresentationChanged += OnSettingsPresentationChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
@@ -414,6 +418,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 LayoutChild(_controlScrollHost, content, density);
             }
 
+            // 最终几何落定后再核对下拉锚点：窄屏一次 OnLayout 的两次 Arrange 都不会收起菜单。
+            _filterBar.CommitLayout();
             LayoutOverlays(density, row);
             UpdateDetailHighlight();
             UpdateNavigationIndicator();
@@ -891,6 +897,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 break;
             case nameof(MainViewModel.IsRowLayout):
             case nameof(MainViewModel.IsScreenLandscape):
+                // 旋转后筛选条锚点整体失效，下拉不能跟着旧坐标留在屏幕上。
+                _filterBar.DismissDropdown();
                 CloseRatingSources();
                 RequestLayout();
                 break;
@@ -913,18 +921,65 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
     }
 
-    private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
+    /// <summary>
+    /// 共享设置按“呈现影响”上报（<see cref="SettingsChangeImpact"/>）：只刷新该位集合真正涉及的部件，
+    /// 不再对任意属性整条硬刷。诊断/持久化等不改变呈现的属性根本不会到达这里。
+    /// </summary>
+    /// <param name="impact">本次设置的呈现影响位集合。</param>
+    private void OnSettingsPresentationChanged(SettingsChangeImpact impact) => ApplySettingsImpact(impact);
+
+    private void ApplySettingsImpact(SettingsChangeImpact impact)
     {
-        // RATING-04：设置不直接收起来源浮窗，入口被隐藏/移除或槽位移动由浮窗每帧核对锚点时关闭
-        // （设置 VM 的派生属性会在打开文件夹后异步连发，不能据此关闭）。
-        if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute) or nameof(SettingsViewModel.ShowZoomIndicator))
-            _analysisHost.Raise();
-        _filterBar.Refresh();
-        RefreshControlBarHard();
-        UpdateHint();
+        if (_disposed || impact == SettingsChangeImpact.None) return;
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(() => ApplySettingsImpact(impact));
+            return;
+        }
+        if ((impact & SettingsChangeImpact.Analysis) != 0) _analysisHost.Raise();
+        if ((impact & SettingsChangeImpact.Navigator) != 0) UpdateNavigationIndicator();
+        if ((impact & SettingsChangeImpact.Similarity) != 0) _similarityPane.Refresh();
+        if ((impact & SettingsChangeImpact.FileProjection) != 0)
+        {
+            _filterBar.Refresh();
+            UpdateHint();
+        }
+        var control = impact & (SettingsChangeImpact.Commands | SettingsChangeImpact.Exif
+            | SettingsChangeImpact.Rating | SettingsChangeImpact.InputBindings);
+        if (control != 0)
+        {
+            // 命令/EXIF 项集合与评分组显隐会改分组或长度，需要重新量测；绑定文本只重绘。
+            bool geometry = (control & (SettingsChangeImpact.Commands | SettingsChangeImpact.Exif
+                | SettingsChangeImpact.Rating)) != 0;
+            RefreshControlBarContent(geometry);
+        }
+        if ((impact & SettingsChangeImpact.Rating) != 0)
+        {
+            // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起来源浮窗。
+            _filmstrip.RefreshCardStates();
+            _similarityPane.RefreshCardStates();
+        }
+        if ((impact & (SettingsChangeImpact.Layout | SettingsChangeImpact.FileProjection
+            | SettingsChangeImpact.Analysis | SettingsChangeImpact.Similarity)) != 0)
+            RequestLayout();
     }
 
-    /// <summary>控制栏立即重建并在一帧后再补一次（设置/文件/选择器返回等异步变更都走这里）。</summary>
+    /// <summary>控制栏内容刷新：重建分组并重绘；只有分组集合/长度变了才重新布局。</summary>
+    /// <param name="geometry">是否影响分组几何（命令/EXIF 项、评分组显隐）。</param>
+    private void RefreshControlBarContent(bool geometry)
+    {
+        if (_disposed) return;
+        if (!UiDispatcher.CheckAccess())
+        {
+            UiDispatcher.Post(() => RefreshControlBarContent(geometry));
+            return;
+        }
+        _controlBar.MarkDirty();
+        _controlBar.Invalidate();
+        if (geometry) RequestLayout();
+    }
+
+    /// <summary>控制栏立即重建并在一帧后再补一次（文件/选择器返回等异步变更都走这里）。</summary>
     private void RefreshControlBarHard()
     {
         _controlBar.MarkDirty();
@@ -933,7 +988,31 @@ internal sealed class AndroidNativeRootView : FrameLayout
         PostDelayed(() => { _controlBar.MarkDirty(); _controlBar.Invalidate(); RequestLayout(); }, 120);
     }
 
-    private void OnControlChanged(object? sender, PropertyChangedEventArgs args) => RefreshControlBarHard();
+    /// <summary>
+    /// 控制栏只按真实依赖刷新：EXIF 项/命令集合与评分组显隐改几何，星级透明度/写回模式只重绘。
+    /// 其余属性（例如当前照片的 EXIF 值）由对应来源另行通知，不再触发整条硬刷。
+    /// </summary>
+    private void OnControlChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        switch (args.PropertyName)
+        {
+            case nameof(ControlViewModel.EnabledExifItems):
+            case nameof(ControlViewModel.EnabledControls):
+            case nameof(ControlViewModel.ShowRating):
+                RefreshControlBarContent(geometry: true);
+                break;
+            case nameof(ControlViewModel.StarOpacity):
+            case nameof(ControlViewModel.SafeSetRating):
+                RefreshControlBarContent(geometry: false);
+                break;
+        }
+    }
+
+    /// <summary>筛选条滚动后已打开下拉的锚点失效，收起（未打开时无动作）。</summary>
+    private void OnFilterScrollChanged()
+    {
+        if (_filterBar.IsDropdownOpen) _filterBar.DismissDropdown();
+    }
 
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -1179,7 +1258,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _session.Changed -= OnSessionChanged;
             _session.Notice -= OnSessionNotice;
             _main.PropertyChanged -= OnMainPropertyChanged;
-            _main.Settings.PropertyChanged -= OnSettingsChanged;
+            _main.Settings.PresentationChanged -= OnSettingsPresentationChanged;
             _main.ControlVM.PropertyChanged -= OnControlChanged;
             _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged;
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
@@ -1192,6 +1271,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _filmstrip.RateRequested -= OnRateRequested;
             _filmstrip.SourcesRequested -= OnCardSourcesRequested;
             _filterBar.DropdownOpening -= CloseRatingSources;
+            _filterScrollHost.ScrollChanged -= OnFilterScrollChanged;
             _similarityPane.ShowRatingSources = null;
             _ratingSourcesPopup.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
