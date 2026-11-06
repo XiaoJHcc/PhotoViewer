@@ -54,6 +54,7 @@ public class BitmapCacheItem
 /// 每档至多一条条目：**像素编码不进缓存键**——同一 (存储身份, 尺寸档) 只保留最新一次解码产物，
 /// 编码变化按"长边足够且保真度不低于需求"(<see cref="Reusable"/>)复用，否则原地替换，
 /// 因此不会出现同档多份编码副本，也不会因压力升降泄漏内存。
+/// **跨档复用只借原实例**：双向命中都返回该产物并沿用它自己的缓存租约，不复制像素、不为对方档位另建条目。
 /// </summary>
 public static class BitmapLoader
 {
@@ -137,10 +138,14 @@ public static class BitmapLoader
         => (requiredLongEdge <= 0
                 || Math.Max(candidate.Width, candidate.Height) >= requiredLongEdge
                 // 解码器不放大：已是源分辨率的产物即满足任何代理目标，否则小图每次切图都要重解。
-                || candidate.SourceWidth > 0 && candidate.SourceHeight > 0
-                    && Math.Max(candidate.Width, candidate.Height) >= Math.Max(candidate.SourceWidth, candidate.SourceHeight)
-                    && Math.Min(candidate.Width, candidate.Height) >= Math.Min(candidate.SourceWidth, candidate.SourceHeight))
+                || IsSourceResolution(candidate))
             && FidelityAtLeast(candidate.Encoding, requiredEncoding);
+
+    /// <summary>产物是否实际已达源分辨率：源尺寸已知且图像长短边分别不小于源长短边（两维都验）。</summary>
+    private static bool IsSourceResolution(DecodedImage image)
+        => image.SourceWidth > 0 && image.SourceHeight > 0
+            && Math.Max(image.Width, image.Height) >= Math.Max(image.SourceWidth, image.SourceHeight)
+            && Math.Min(image.Width, image.Height) >= Math.Min(image.SourceWidth, image.SourceHeight);
 
     /// <summary>
     /// 编码保真度是否达标：解码器不放大，产物长边由源决定，故**不复核长边**——只复核编码，
@@ -279,7 +284,8 @@ public static class BitmapLoader
 
     /// <summary>
     /// 只查缓存的同步取图：按 <see cref="GetBitmapAsync(IFileRef, DecodeSizeHint, DecodePriority, CancellationToken)"/>
-    /// 的复用规则（代理档含跨档复用 Full）命中即携调用方租约返回；未命中返回 null，不解码、不排队、不并入在途任务。
+    /// 的复用规则（代理档含跨档复用 Full，Full 档含跨档复用已达源分辨率的代理）命中即携调用方租约返回；
+    /// 未命中返回 null，不解码、不排队、不并入在途任务。
     /// </summary>
     /// <param name="file">文件引用。</param>
     /// <param name="hint">尺寸档提示。</param>
@@ -300,7 +306,7 @@ public static class BitmapLoader
             fullItem.UpdateAccessTime();
             image = fullItem.Image;
         }
-        else image = null;
+        else image = TryAcquireSourceResolutionProxy(filePath, FullRequestEncoding());
         if (image != null) PerfTrace.RecordDecode(file.Name, true, 0, 0, image.Width, image.Height);
         return image;
     }
@@ -313,6 +319,35 @@ public static class BitmapLoader
         item.UpdateAccessTime();
         return item.Image;
     }
+
+    /// <summary>Full 请求复用代理档已达源分辨率且编码可用的产物，只借原实例并刷新访问时间。</summary>
+    private static DecodedImage? TryAcquireSourceResolutionProxy(string filePath, PixelEncoding requiredEncoding)
+    {
+        var key = new BitmapCacheKey(filePath, ImageSizeClass.Proxy);
+        if (!_cache.TryGetValue(key, out var item) || !IsSourceResolution(item.Image)
+            || !ReusableAsFull(item.Image.Encoding, requiredEncoding) || !item.Image.TryAcquire())
+            return null;
+        item.UpdateAccessTime();
+        return item.Image;
+    }
+
+    /// <summary>
+    /// 跨档当 Full 用的编码判据：注入策略后候选必须是 F16/8 位展示编码再比保真度；
+    /// 旧壳要求编码完全相同，不按通道布局猜保真度。
+    /// </summary>
+    private static bool ReusableAsFull(PixelEncoding candidate, PixelEncoding required)
+        => required switch
+        {
+            PixelEncoding.Bgra32 or PixelEncoding.Rgb24 => candidate == required,
+            _ when candidate is PixelEncoding.Rgba8 or PixelEncoding.RgbaF16 => FidelityAtLeast(candidate, required),
+            _ => false,
+        };
+
+    /// <summary>Full 请求所需编码：注入策略时按 Full 档协商，旧壳沿用忽略透明度口径（与 <see cref="ConvertToDesiredFormat"/> 一致）。</summary>
+    private static PixelEncoding FullRequestEncoding()
+        => _encodingPolicy == null
+            ? (IgnoreAlpha ? PixelEncoding.Rgb24 : PixelEncoding.Bgra32)
+            : PresentationEncoding(ImageSizeClass.Full);
 
     /// <summary>
     /// 写入缩略图分区(统一 LRU 的 Thumb 档);超出分区上限时按淘汰序列修剪非保护项。
@@ -895,8 +930,15 @@ public static class BitmapLoader
                 return cachedItem.Image;
             }
 
+            var reused = TryAcquireSourceResolutionProxy(filePath, FullRequestEncoding());
+            if (reused != null)
+            {
+                PerfTrace.RecordDecode(file.Name, true, 0, 0, reused.Width, reused.Height);
+                return reused;
+            }
+
             // 缓存未命中：合并同路径的在途请求（首个请求的 ct 生效于共享任务）
-            var decode = _inFlight.GetOrAdd(filePath, _ => StartFullDecode(file, filePath, PresentationEncoding(ImageSizeClass.Full), ct, priority));
+            var decode = _inFlight.GetOrAdd(filePath, _ => StartFullDecode(file, filePath, FullRequestEncoding(), ct, priority));
             // 合并到在途解码的请求提升票面(P0 翻到预取已在解的那一张时,该解码就地按 P0 排队)
             decode.Ticket.Promote(priority, DecodeContext.Alongside);
             DecodedImage? img;

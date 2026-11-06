@@ -192,7 +192,7 @@ internal static class WindowsPerfProbe
         WriteReport(reportPath, report);
     }
 
-    /// <summary>单张图片的全部测量项;每项完成后立刻释放该产物,避免多项大图同时驻留。</summary>
+    /// <summary>单张测量：保留代理与 Full 供分析和 RAW 对照使用，其余临时产物按项释放。</summary>
     /// <param name="report">报告缓冲(RAW 子探针写逐项对照行)。</param>
     /// <param name="collector">聚合器。</param>
     /// <param name="record">false = 预热张,执行但不计入统计。</param>

@@ -111,6 +111,7 @@ internal sealed partial class WindowsMainWindow
                 RequireSmoke(raw.ColorSpace == declaration.ColorSpace && raw.IccProfile.Length == declaration.IccLength
                     && raw.Encoding == PixelEncoding.Bgra32, "WIC RAW 标签与实际声明不一致或虚标精度");
                 checks.Add($"PASS WIC RAW source declaration and actual Bgra32 decode: {declaration.ColorSpace}, ICC={declaration.IccLength}B");
+                await CheckRawFullResolutionCacheAsync(rawPath, checks);
             }
             else checks.Add("SKIP WIC RAW source declaration: RAW codec not installed");
 
@@ -148,6 +149,37 @@ internal sealed partial class WindowsMainWindow
         {
             File.WriteAllText(report, JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
             Close();
+        }
+    }
+
+    private static async Task CheckRawFullResolutionCacheAsync(string path, List<string> checks)
+    {
+        var file = new LocalFileRef(path);
+        var key = file.StorageId.Value;
+        BitmapLoader.RemoveCached(key, ImageSizeClass.Proxy);
+        BitmapLoader.RemoveCached(key, ImageSizeClass.Full);
+        try
+        {
+            using var proxy = await BitmapLoader.GetBitmapAsync(file, DecodeSizeHint.ProxyTo(7680),
+                DecodePriority.P0_Current, CancellationToken.None)
+                ?? throw new InvalidOperationException("RAW 源分辨率代理未解码");
+            RequireSmoke(proxy.Width == proxy.SourceWidth && proxy.Height == proxy.SourceHeight,
+                "RAW 验收请求未取得源分辨率像素");
+            using var synchronous = BitmapLoader.TryAcquireCached(file, DecodeSizeHint.Full);
+            RequireSmoke(ReferenceEquals(proxy, synchronous), "Full 同步缓存查询未复用源分辨率代理");
+            var started = System.Diagnostics.Stopwatch.GetTimestamp();
+            using var full = await BitmapLoader.GetBitmapAsync(file, DecodeSizeHint.Full,
+                DecodePriority.P0_Current, CancellationToken.None);
+            var elapsed = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            RequireSmoke(ReferenceEquals(proxy, full), "Full 请求重复开发了已有源分辨率 RAW");
+            RequireSmoke(!BitmapLoader.IsInCache(key, ImageSizeClass.Full), "复用时不应额外创建 Full 缓存条目");
+            checks.Add($"PASS WIC RAW source-resolution proxy reused by synchronous/async Full request: "
+                + $"same instance, {proxy.Width}x{proxy.Height}, {proxy.Encoding}, no extra cache entry, request={elapsed:F2}ms");
+        }
+        finally
+        {
+            BitmapLoader.RemoveCached(key, ImageSizeClass.Proxy);
+            BitmapLoader.RemoveCached(key, ImageSizeClass.Full);
         }
     }
 

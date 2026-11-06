@@ -31,6 +31,7 @@ internal static class Program
 
         try
         {
+            PresentationCacheChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             StorageItemIdChecks.Run(checks, root);
             StorageIdentityRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             LocalFileRefChecks.Run(checks, root);
