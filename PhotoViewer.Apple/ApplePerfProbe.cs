@@ -1315,9 +1315,22 @@ public static class ApplePerfProbe
             Metric setTexture = Measure(_ =>
             {
                 renderer.SetTexture(image);
-                return (image.Width, image.Height, "RGBA16Float sync");
+                return (image.Width, image.Height, "RGBA16Float upload+encode(no-GPU-wait)");
+            }, prepare: () =>
+            {
+                renderer.SetTexture(null);
+                renderer.RequestTrim(PhotoViewer.Core.Memory.PressureLevel.Caution);
+                renderer.ApplyPendingTrim();
             });
             report.AppendLine(setTexture.Format("metalSetTexture"));
+            if (setTexture.Error == null && renderer.UploadCount != Runs)
+                throw new InvalidOperationException("上传计时意外命中了纹理缓存");
+            Metric cachedTexture = Measure(_ =>
+            {
+                renderer.SetTexture(image);
+                return (image.Width, image.Height, "RGBA16Float cached(no-upload)");
+            });
+            report.AppendLine(cachedTexture.Format("metalCachedSetTexture"));
         }
         catch (Exception exception)
         {
@@ -1422,7 +1435,7 @@ public static class ApplePerfProbe
     }
 
     /// <summary>三次计时取首次与中位数，统一成报告行。</summary>
-    private static Metric Measure(Func<int, (int width, int height, string extra)> body, int runs = Runs)
+    private static Metric Measure(Func<int, (int width, int height, string extra)> body, int runs = Runs, Action? prepare = null)
     {
         var metric = new Metric();
         var times = new double[runs];
@@ -1430,6 +1443,7 @@ public static class ApplePerfProbe
         {
             for (int run = 0; run < runs; run++)
             {
+                prepare?.Invoke();
                 var stopwatch = Stopwatch.StartNew();
                 var (width, height, extra) = body(run);
                 stopwatch.Stop();

@@ -115,7 +115,7 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     }
     /// <summary>内存客户端名称。</summary>
     public string Name => "iOSPhotoView";
-    /// <summary>纹理与三重缓冲的估算 GPU 字节（绘制目标恒为 RGBA16F）。</summary>
+    /// <summary>纹理（当前 + 最近两份缓存，含 mipmap）与三重缓冲的估算 GPU 字节（绘制目标恒为 RGBA16F）。</summary>
     public long FootprintBytes => _renderer.TextureBytes
         + (long)(_viewport.ViewWidth * _viewport.ViewHeight * _viewport.BackingScale * _viewport.BackingScale * 8 * 3);
 
@@ -378,9 +378,12 @@ internal sealed class iOSPhotoView : UIView, IMemoryClient
     /// <returns>线性 RGBA16F 帧，缓冲由池化租约持有。</returns>
     public DecodedImage CaptureLinearFrame(bool navigation = false) => _renderer.CaptureLinearFrame(navigation);
 
-    /// <summary>压力响应保留当前纹理，避免观片瞬间清屏；缓存由共享 Governor 修剪。</summary>
-    /// <param name="level">压力级别。</param>
-    public void Trim(PressureLevel level) { }
+    /// <summary>压力响应：只置待处理标记，实际修剪派到主线程，探测线程不释放 GPU 资源。</summary>
+    public void Trim(PressureLevel level)
+    {
+        _renderer.RequestTrim(level);
+        BeginInvokeOnMainThread(_renderer.ApplyPendingTrim);
+    }
 
     /// <summary>释放 Metal 资源并注销内存客户端。</summary>
     /// <param name="disposing">是否释放托管资源。</param>

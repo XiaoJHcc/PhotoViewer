@@ -46,7 +46,13 @@ public static class MacNativeApplication
         BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new MacPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new DefaultPerformanceBudget());
         MemoryGovernor.Initialize(new MacMemoryBudgetProvider());
-        if (args.Contains("--pv-native-smoke"))
+        bool decodeOptimize = DecodeOptimizeDirectory(args) != null;
+        if (decodeOptimize)
+        {
+            Directory.CreateDirectory("artifacts/acceptance/apple-decode-optimization");
+            PhotoDatabase.Initialize(System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/photos-probe.db"));
+        }
+        else if (args.Contains("--pv-native-smoke"))
         {
             Directory.CreateDirectory("artifacts/acceptance/native-p2-acceptance");
             PhotoDatabase.Initialize(System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/photos-smoke.db"));
@@ -57,7 +63,7 @@ public static class MacNativeApplication
             appleKeyboard: true,
             BitmapLoader.AutomaticCacheLimit);
         // 验收会话不读写用户偏好：界面状态留在内存。
-        IViewStateStore viewState = args.Contains("--pv-native-smoke")
+        IViewStateStore viewState = decodeOptimize || args.Contains("--pv-native-smoke")
             ? new InMemorySettingsStore()
             : new AppleViewStateStore();
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_CoreML());
@@ -66,9 +72,11 @@ public static class MacNativeApplication
         application.Run();
     }
 
-    /// <summary>生产走 Apple 偏好单键；冒烟会话走固定隔离文件，绝不触碰用户真实设置。</summary>
+    /// <summary>生产走 Apple 偏好单键；验收会话走各自的固定隔离文件，绝不触碰用户真实设置。</summary>
     private static ISettingsStore CreateSettingsStore(string[] args)
     {
+        if (DecodeOptimizeDirectory(args) != null)
+            return new FileSettingsStore(System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/settings-probe.json"));
         if (!args.Contains("--pv-native-smoke")) return new AppleSettingsStore();
         return new FileSettingsStore(System.IO.Path.GetFullPath("artifacts/acceptance/native-p2-acceptance/settings-smoke.json"));
     }
@@ -78,6 +86,14 @@ public static class MacNativeApplication
     {
         for (int index = 0; index + 1 < args.Length; index++)
             if (string.Equals(args[index], "--pv-perf-probe", StringComparison.Ordinal)) return args[index + 1];
+        return null;
+    }
+
+    /// <summary>验收专用解码优化探针目录（<c>--pv-decode-optimize</c> 的值）；未指定时为 null。</summary>
+    private static string? DecodeOptimizeDirectory(string[] args)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+            if (string.Equals(args[index], "--pv-decode-optimize", StringComparison.Ordinal)) return args[index + 1];
         return null;
     }
 
@@ -97,6 +113,7 @@ public static class MacNativeApplication
             if (args[index].StartsWith("--", StringComparison.Ordinal)) continue;
             if (index > 0 && string.Equals(args[index - 1], "--pv-perf-probe", StringComparison.Ordinal)) continue;
             if (index > 0 && string.Equals(args[index - 1], "--pv-perf-raw-compare", StringComparison.Ordinal)) continue;
+            if (index > 0 && string.Equals(args[index - 1], "--pv-decode-optimize", StringComparison.Ordinal)) continue;
             yield return args[index];
         }
     }
@@ -119,6 +136,36 @@ public static class MacNativeApplication
         {
             try
             {
+                // 解码优化探针只读素材，不建主窗口、不碰用户设置/数据库，也不触发其它验收套件。
+                if (DecodeOptimizeDirectory(args) is { } optimizeDirectory)
+                {
+                    string reportPath = System.IO.Path.GetFullPath(
+                        "artifacts/acceptance/apple-decode-optimization/probe.txt");
+                    Console.WriteLine($"[DecodeOptimize] start {optimizeDirectory} -> {reportPath}");
+                    bool passed;
+                    if (args.Contains("--pv-heif-thumbnail-only", StringComparer.Ordinal))
+                    {
+                        reportPath = System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/heif-thumbnail-checks.txt");
+                        var decoder = new MacHeifDecoder();
+                        passed = await AppleHeifThumbnailChecks.RunAsync(optimizeDirectory, reportPath,
+                            (file, size) => Task.Run(() => MacHeifDecoder.DecodeSubsampledWithImageIO(file.TryGetLocalPath()!, size ?? 0)),
+                            decoder.DecodeAsync);
+                    }
+                    else if (args.Contains("--pv-perf-components-only", StringComparer.Ordinal))
+                    {
+                        reportPath = System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/perf-components.txt");
+                        await ApplePerfProbe.RunAsync(optimizeDirectory, reportPath,
+                            () => (AppleMemoryFootprint.GetPhysFootprintBytes(), -1L));
+                        string report = await File.ReadAllTextAsync(reportPath);
+                        passed = report.Contains("metalCachedSetTexture", StringComparison.Ordinal)
+                            && !report.Contains("ERROR", StringComparison.Ordinal);
+                    }
+                    else passed = await AppleDecodeOptimizationProbe.RunAsync(optimizeDirectory, reportPath);
+                    Console.WriteLine($"[DecodeOptimize] {(passed ? "PASS" : "FAIL")} {reportPath}");
+                    Environment.Exit(passed ? 0 : 1);
+                    return;
+                }
+
                 await settingsRepository.InitializeAsync();
                 _main = new MainViewModel(settingsRepository, viewState, _openRequests);
                 _mainWindow = new MacMainWindow(_main, args.Contains("--pv-native-smoke"));
@@ -165,7 +212,7 @@ public static class MacNativeApplication
             catch (Exception exception)
             {
                 Console.Error.WriteLine(exception);
-                if (args.Contains("--pv-native-smoke")) { Environment.Exit(1); return; }
+                if (args.Contains("--pv-native-smoke") || DecodeOptimizeDirectory(args) != null) { Environment.Exit(1); return; }
                 using var alert = new NSAlert { MessageText = "原生窗口启动失败", InformativeText = exception.Message };
                 alert.RunModal(); NSApplication.SharedApplication.Terminate(null);
             }

@@ -38,7 +38,7 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     }
     /// <summary>内存客户端名称。</summary>
     public string Name => "MetalPhotoView";
-    /// <summary>纹理及三重缓冲的估算 GPU 字节，避免只记托管解码缓冲。</summary>
+    /// <summary>纹理（当前 + 最近两份缓存）及三重缓冲的估算 GPU 字节，避免只记托管解码缓冲。</summary>
     public long FootprintBytes => _renderer.TextureBytes
         + (long)(_viewport.ViewWidth * _viewport.ViewHeight * _viewport.BackingScale * _viewport.BackingScale * 8 * 3);
     /// <summary>原生坐标使用从上到下的逻辑点。</summary>
@@ -295,8 +295,12 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     public override void RightMouseDown(NSEvent theEvent) { if (InputHandler?.Invoke(theEvent) != true) base.RightMouseDown(theEvent); }
     /// <summary>处理照片区域按键，未匹配事件交回系统。</summary>
     public override void KeyDown(NSEvent theEvent) { if (InputHandler?.Invoke(theEvent) != true) base.KeyDown(theEvent); }
-    /// <summary>压力响应保留当前纹理，避免观片瞬间清屏；缓存由共享 Governor 修剪。</summary>
-    public void Trim(PressureLevel level) { }
+    /// <summary>压力响应：只置待处理标记，实际修剪派到主线程，探测线程不释放 GPU 资源。</summary>
+    public void Trim(PressureLevel level)
+    {
+        _renderer.RequestTrim(level);
+        BeginInvokeOnMainThread(_renderer.ApplyPendingTrim);
+    }
     /// <summary>关闭视图时释放 Metal 所有资源。</summary>
     protected override void Dispose(bool disposing)
     {

@@ -36,6 +36,15 @@ public static class NativeAcceptanceRunner
             window.Main.IsAnalysisViewVisible = false;
             window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             await Task.Delay(120);
+            if (args.Contains("--pv-native-texture-cache"))
+            {
+                string textureReport = AppleTextureCacheChecks.Run();
+                await File.WriteAllTextAsync(System.IO.Path.Combine(output, "native-texture-cache-checks.txt"), textureReport);
+                bool passed = !textureReport.Contains("FAIL", StringComparison.Ordinal);
+                Console.WriteLine($"[NativeSmoke] {(passed ? "PASS" : "FAIL")} texture-cache");
+                Environment.ExitCode = passed ? 0 : 1;
+                return;
+            }
             if (args.Contains("--pv-native-input"))
             {
                 await NativeInputAcceptance.RunAsync(window, settings, output);
