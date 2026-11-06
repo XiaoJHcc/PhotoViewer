@@ -610,6 +610,7 @@ internal static partial class AndroidNativeChecks
     {
         var photo = _root!.Photo;
         using var p3Source = ColorEngine.ToDisplayEncoding(full, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3);
+        await CheckBandedColorTransformAsync(p3Source);
         try
         {
             photo.RecreateSurfaceForChecks(false);

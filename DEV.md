@@ -217,6 +217,15 @@ dotnet run --project Tools/HeifFastDecodeTest -c Release -- read    # 文件读�
 ```
 
 
+### 色彩转换回归
+
+改动 `ColorEngine` 时运行共享色彩契约与串行参考对照；后者无参覆盖查表和通用分带路径，`-- general` / `-- lut` 可单跑。大图计时包含池化租借与转换，不包含解码或呈现；两端原生色彩检查仍需分别运行。
+
+```bash
+dotnet run --project Tools/ColorTestTool -c Release
+dotnet run --project Tools/ColorEngineLutCheck -c Release
+```
+
 ### EXIF 字段名称
 
 - 英文名称先用 MetadataExtractor，未知字段由 `PhotoViewer/Core/Exif/ExifToolTags.Generated.cs` 补充；重新生成：`python3 Tools/generate-exiftool-tags.py`。

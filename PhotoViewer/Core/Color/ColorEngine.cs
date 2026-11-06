@@ -151,11 +151,22 @@ public static class ColorEngine
             fixed (byte* sourcePixels = effective.Pixels)
             fixed (byte* targetPixels = buffer)
             {
-                var sourceInfo = new SKImageInfo(source.Width, source.Height, ColorType(effective.Encoding), SKAlphaType.Premul, sourceSpace.Space);
-                var targetInfo = new SKImageInfo(source.Width, source.Height, ColorType(encoding), SKAlphaType.Premul, targetSpace);
-                using var pixmap = new SKPixmap(sourceInfo, (IntPtr)sourcePixels, effective.Stride);
-                if (!pixmap.ReadPixels(targetInfo, (IntPtr)targetPixels, stride))
-                    throw new InvalidOperationException("skcms 像素色彩转换失败");
+                var sourceBase = (IntPtr)sourcePixels;
+                var targetBase = (IntPtr)targetPixels;
+                var sourceType = ColorType(effective.Encoding);
+                var targetType = ColorType(encoding);
+                void ConvertRows(int start, int end)
+                {
+                    var sourceInfo = new SKImageInfo(source.Width, end - start, sourceType, SKAlphaType.Premul, sourceSpace.Space);
+                    var targetInfo = new SKImageInfo(source.Width, end - start, targetType, SKAlphaType.Premul, targetSpace);
+                    using var pixmap = new SKPixmap(sourceInfo, IntPtr.Add(sourceBase, checked(start * effective.Stride)), effective.Stride);
+                    if (!pixmap.ReadPixels(targetInfo, IntPtr.Add(targetBase, checked(start * stride)), stride))
+                        throw new InvalidOperationException("skcms 像素色彩转换失败");
+                }
+                if ((long)source.Width * source.Height >= 1024 * 1024)
+                    ForEachRowBand(source.Height, ConvertRows);
+                else
+                    ConvertRows(0, source.Height);
             }
             return DecodedImage.CreatePooled(buffer, source.Width, source.Height, stride, encoding,
                 colorSpace,
