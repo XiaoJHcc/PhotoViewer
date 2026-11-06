@@ -6,6 +6,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Android.OS;
+using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
@@ -80,6 +81,7 @@ internal static partial class AndroidNativeChecks
             await CheckZoomUploadAsync("HIF", proxy, full, 3);
             await CheckLiveHifZoomAsync(path);
         });
+        await RunStepAsync("主图顶点缓冲复用", CheckVertexBufferReuseAsync);
     }
 
     private static async Task CheckLiveHifZoomAsync(string path)
@@ -130,6 +132,142 @@ internal static partial class AndroidNativeChecks
         }
     }
 
+    private static async Task CheckVertexBufferReuseAsync()
+    {
+        const int generation = int.MinValue + 200;
+        var photo = _root!.Photo;
+        var session = _session!;
+        await WaitAsync(() => photo.SurfaceReadyForChecks, "主图 EGL 表面就绪", 20000);
+        var renderer = PhotoRendererForChecks(photo);
+        bool surfaceP3 = photo.SurfaceIsP3;
+        var images = new DecodedImage?[8];
+        bool shared = true, uvMatched = true, quadValid = true, rebuilt = true;
+        int allocations = -1;
+        object? buffer = null, view = null;
+        string drawn = string.Empty;
+        try
+        {
+            for (int orientation = 1; orientation <= 8; orientation++)
+            {
+                var image = CreateOrientationPattern(orientation, 640, 480);
+                images[orientation - 1] = image;
+                photo.SetImage(image, generation + orientation);
+                photo.FitToView();
+                photo.Draw();
+                var state = renderer.VertexStateForChecks();
+                if (buffer == null)
+                {
+                    buffer = state.Buffer;
+                    view = state.Floats;
+                    allocations = state.Allocations;
+                }
+                shared &= buffer != null && ReferenceEquals(buffer, state.Buffer)
+                    && ReferenceEquals(view, state.Floats) && state.Allocations == allocations;
+                uvMatched &= MatchesOrientationUvs(state.Values, orientation);
+                quadValid &= IsCenteredQuad(state.Values);
+                drawn = $"orientation={orientation} allocations={state.Allocations} floats={state.Values.Length}";
+            }
+            Check("主图顶点缓冲 8 方向绘制零重分配", shared && allocations == 1 && uvMatched && quadValid,
+                $"allocations={allocations} sameBuffer={shared} uv={uvMatched} quad={quadValid} {drawn}");
+
+            bool pixelMatched = true;
+            string pixels = string.Empty;
+            foreach (var (u, v) in PixelSamplePoints)
+            {
+                var (sourceU, sourceV) = DisplayToSourceUv(8, (float)u, (float)v);
+                var expected = PatternQuadrant(sourceU, sourceV);
+                var actual = photo.ReadPixelForChecks(u, v);
+                bool matched = Math.Abs(actual.R - expected.R) <= FixtureTolerance
+                    && Math.Abs(actual.G - expected.G) <= FixtureTolerance
+                    && Math.Abs(actual.B - expected.B) <= FixtureTolerance;
+                pixelMatched &= matched;
+                pixels += $" ({u:0.##},{v:0.##})→({actual.R},{actual.G},{actual.B})"
+                    + $" 期望({expected.R},{expected.G},{expected.B})";
+            }
+            Check("主图顶点缓冲 方向8像素与源象限一致", pixelMatched, pixels.Trim());
+
+            photo.FitToView();
+            photo.Draw();
+            var fitState = renderer.VertexStateForChecks();
+            if (fitState.Values.Length != 16)
+                throw new InvalidOperationException($"顶点缓冲读取失败：floats={fitState.Values.Length}");
+            var fit = fitState.Values;
+            double fitWidth = fit[4] - fit[0];
+            double fitCenterX = (fit[0] + fit[4]) / 2.0;
+            double fitCenterY = (fit[1] + fit[13]) / 2.0;
+            photo.Viewport.ApplyGestureView(photo.Viewport.FitScale * 2, 40, -30);
+            photo.Draw();
+            var zoomState = renderer.VertexStateForChecks();
+            if (zoomState.Values.Length != 16)
+                throw new InvalidOperationException($"顶点缓冲读取失败：floats={zoomState.Values.Length}");
+            var zoomed = zoomState.Values;
+            double zoomedWidth = zoomed[4] - zoomed[0];
+            double zoomedCenterX = (zoomed[0] + zoomed[4]) / 2.0;
+            double zoomedCenterY = (zoomed[1] + zoomed[13]) / 2.0;
+            double panX = photo.Viewport.PanX, panY = photo.Viewport.PanY;
+            bool scaled = fitWidth > 0 && Math.Abs(zoomedWidth / fitWidth - 2) < .02;
+            bool panned = (Math.Abs(panX) > 1e-6 || Math.Abs(panY) > 1e-6)
+                && (Math.Abs(panX) < 1e-6 || (zoomedCenterX - fitCenterX) * panX > 0)
+                && (Math.Abs(panY) < 1e-6 || (zoomedCenterY - fitCenterY) * panY < 0);
+            bool uvKept = SameUvs(zoomed, fit);
+            shared &= ReferenceEquals(buffer, zoomState.Buffer) && ReferenceEquals(view, zoomState.Floats)
+                && zoomState.Allocations == allocations;
+            Check("主图顶点缓冲 缩放平移更新顶点", shared && scaled && panned && uvKept,
+                $"allocations={zoomState.Allocations} scale={(fitWidth > 0 ? zoomedWidth / fitWidth : 0):0.###}"
+                + $" pan=({panX:0.#},{panY:0.#})"
+                + $" shiftCenter=({zoomedCenterX - fitCenterX:0.####},{zoomedCenterY - fitCenterY:0.####})"
+                + $" uv={uvKept} sameBuffer={shared}");
+
+            photo.FitToView();
+            var surfaceView = (SurfaceView)typeof(AndroidPhotoView)
+                .GetField("_surfaceView", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(photo)!;
+            float[]? expectedValues = null;
+            for (int round = 1; round <= 2; round++)
+            {
+                renderer.Create(surfaceView.Holder!, photo.Density);
+                renderer.Resize(surfaceView.Width, surfaceView.Height);
+                renderer.SetImage(images[7]);
+                renderer.DrawFrame(photo.Viewport, photo.Density);
+                var rebuildState = renderer.VertexStateForChecks();
+                rebuilt &= rebuildState.Buffer != null && ReferenceEquals(buffer, rebuildState.Buffer)
+                    && ReferenceEquals(view, rebuildState.Floats) && rebuildState.Allocations == allocations
+                    && MatchesOrientationUvs(rebuildState.Values, 8) && IsCenteredQuad(rebuildState.Values);
+                if (expectedValues == null) expectedValues = rebuildState.Values;
+                else rebuilt &= SameValues(rebuildState.Values, expectedValues);
+            }
+            Check("主图顶点缓冲 表面重建后复用", rebuilt,
+                $"allocations={renderer.VertexStateForChecks().Allocations} sameBuffer={rebuilt}"
+                + $" rounds=2 floats={expectedValues?.Length ?? 0}");
+        }
+        finally
+        {
+            photo.FitToView();
+            photo.SetImage(null, generation + 100);
+            foreach (var image in images) image?.Dispose();
+            try
+            {
+                photo.RecreateSurfaceForChecks(surfaceP3);
+            }
+            finally
+            {
+                photo.SetImage(session.Image, session.Generation);
+            }
+        }
+    }
+
+    private static AndroidPhotoRenderer PhotoRendererForChecks(AndroidPhotoView photo)
+        => (AndroidPhotoRenderer)typeof(AndroidPhotoView)
+            .GetField("_renderer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(photo)!;
+
+    /// <summary>方向 8 的取样点（显示朝向归一化坐标，避开象限边界）。</summary>
+    private static readonly (double U, double V)[] PixelSamplePoints =
+    [
+        (0.22, 0.18),
+        (0.78, 0.14),
+        (0.16, 0.80),
+        (0.84, 0.76),
+    ];
+
     private static DecodedImage CreateZoomPattern(int width, int height, int sourceWidth, int sourceHeight, int seed, int rowPadding = 0)
     {
         int stride = checked(width * 4 + rowPadding);
@@ -146,6 +284,92 @@ internal static partial class AndroidNativeChecks
         var colorSpace = _root!.Photo.SurfaceIsP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
         return DecodedImage.CreatePooled(pixels, width, height, stride, PixelEncoding.Rgba8,
             colorSpace, sourceWidth, sourceHeight, orientation: seed == 2 ? 6 : 1);
+    }
+
+    private static DecodedImage CreateOrientationPattern(int orientation, int width, int height)
+    {
+        int stride = checked(width * 4);
+        var pixels = DecodedImage.RentPixels(checked(stride * height));
+        for (int y = 0; y < height; y++)
+        for (int x = 0; x < width; x++)
+        {
+            var (r, g, b) = PatternQuadrant((x + .5f) / width, (y + .5f) / height);
+            int offset = y * stride + x * 4;
+            pixels[offset] = r;
+            pixels[offset + 1] = g;
+            pixels[offset + 2] = b;
+            pixels[offset + 3] = 255;
+        }
+        var colorSpace = _root!.Photo.SurfaceIsP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
+        return DecodedImage.CreatePooled(pixels, width, height, stride, PixelEncoding.Rgba8,
+            colorSpace, width, height, orientation: orientation);
+    }
+
+    private static (byte R, byte G, byte B) PatternQuadrant(float u, float v) => (u, v) switch
+    {
+        (< .5f, < .5f) => (200, 40, 40),
+        (>= .5f, < .5f) => (40, 180, 60),
+        (< .5f, _) => (48, 64, 200),
+        (_, _) => (216, 196, 56),
+    };
+
+    private static (float U, float V) DisplayToSourceUv(int orientation, float u, float v)
+    {
+        var corners = OrientationCornerUvs(orientation);
+        float topU = (1 - u) * corners[0].U + u * corners[1].U;
+        float topV = (1 - u) * corners[0].V + u * corners[1].V;
+        float bottomU = (1 - u) * corners[2].U + u * corners[3].U;
+        float bottomV = (1 - u) * corners[2].V + u * corners[3].V;
+        return (topU + v * (bottomU - topU), topV + v * (bottomV - topV));
+    }
+
+    /// <summary>EXIF 方向 1–8 四角（显示左上 / 右上 / 左下 / 右下）的源纹理 UV，按 EXIF 定义独立写出。</summary>
+    private static (float U, float V)[] OrientationCornerUvs(int orientation) => orientation switch
+    {
+        2 => [(1f, 0f), (0f, 0f), (1f, 1f), (0f, 1f)],
+        3 => [(1f, 1f), (0f, 1f), (1f, 0f), (0f, 0f)],
+        4 => [(0f, 1f), (1f, 1f), (0f, 0f), (1f, 0f)],
+        5 => [(0f, 0f), (0f, 1f), (1f, 0f), (1f, 1f)],
+        6 => [(0f, 1f), (0f, 0f), (1f, 1f), (1f, 0f)],
+        7 => [(1f, 1f), (1f, 0f), (0f, 1f), (0f, 0f)],
+        8 => [(1f, 0f), (1f, 1f), (0f, 0f), (0f, 1f)],
+        _ => [(0f, 0f), (1f, 0f), (0f, 1f), (1f, 1f)],
+    };
+
+    private static bool MatchesOrientationUvs(float[] values, int orientation)
+    {
+        if (values.Length != 16) return false;
+        var expected = OrientationCornerUvs(orientation);
+        for (int corner = 0; corner < 4; corner++)
+            if (Math.Abs(values[corner * 4 + 2] - expected[corner].U) > 1e-6f
+                || Math.Abs(values[corner * 4 + 3] - expected[corner].V) > 1e-6f) return false;
+        return true;
+    }
+
+    private static bool IsCenteredQuad(float[] values)
+    {
+        if (values.Length != 16) return false;
+        if (values[4] <= values[0] || values[1] <= values[9]) return false;
+        if (values[4] != values[12] || values[0] != values[8]) return false;
+        if (values[1] != values[5] || values[9] != values[13]) return false;
+        return Math.Abs((values[0] + values[4]) / 2) < 1e-4f && Math.Abs((values[1] + values[13]) / 2) < 1e-4f;
+    }
+
+    private static bool SameUvs(float[] first, float[] second)
+    {
+        if (first.Length != 16 || second.Length != 16) return false;
+        for (int corner = 0; corner < 4; corner++)
+            if (Math.Abs(first[corner * 4 + 2] - second[corner * 4 + 2]) > 1e-6f
+                || Math.Abs(first[corner * 4 + 3] - second[corner * 4 + 3]) > 1e-6f) return false;
+        return true;
+    }
+
+    private static bool SameValues(float[] first, float[] second)
+    {
+        if (first.Length != 16 || second.Length != 16) return false;
+        for (int index = 0; index < 16; index++)
+            if (Math.Abs(first[index] - second[index]) > 1e-6f) return false;
+        return true;
     }
 
     private static async Task CheckZoomUploadAsync(string label, DecodedImage proxy, DecodedImage full, int generation)

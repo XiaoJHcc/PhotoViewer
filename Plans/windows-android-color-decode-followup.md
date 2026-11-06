@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 安卓 HEIF 回落色彩 | Windows 已验证的 libheif 色彩转换提取为可选共享源；安卓最终回落保留 ICC/nclx 与高位深语义，按目标输出；PQ/HLG 明确拒绝；统一显示朝向契约 | Windows 色彩专项；ColorTestTool；HEIF e2e/smoke；Android Debug/Release 构建；真机 color（强制回落与拒绝）及主流程 | 完成 |
 | HEIF 文件读取 | 去掉常见可寻址流 `MemoryStream + ToArray` 的重复整文件分配；传递取消；主图回落复用已读字节，保持非寻址兼容 | 扩充现有工具的读取边界检查；HEIF e2e/smoke；真机色彩与实际 HIF 解码；同口径探针对照 | 完成 |
-| 安卓顶点缓冲 | 复用 renderer 的 direct 顶点缓冲和视图；消除每帧托管数组与 direct 分配，生命周期随 renderer 释放 | Android 构建；真机 color/zoom/input，覆盖表面重建、方向、纹理缓存和真实 Full 升级 | 待实施 |
+| 安卓顶点缓冲 | 复用 renderer 的 direct 顶点缓冲和视图；消除每帧顶点数组与 direct 分配，生命周期随 renderer 释放 | Android 构建；真机 color/zoom/input，覆盖表面重建、方向、纹理缓存和真实 Full 升级 | 完成 |
 
 ## 下一步验证项（本轮不贸然实施）
 
@@ -45,3 +45,17 @@
 - Windows 主图与 Android 主图/展示缩略图在快速路径回落时复用本次字节，不重新打开文件。Android 真机 PQ/HLG 的完整入口回落检查均 `opens=1`，色彩检查增至 107/107。
 - `HeifFastDecodeTest read` 全通过；8MiB 文件读取实测分配 8,388,808B（有效载荷 8,388,608B），稳定长度路径只剩一份文件级数组，而非原来的两份。HEIF e2e/smoke、Windows Release、Android Release AOT 验收包通过。
 - Windows 同机同目录/同参数探针：HIF Full 184.4ms、5120 代理 214.9ms、列表缩略图 7.2ms。相对审查轮次 240.1/274.9/14.2ms 有下降，但 CPU/驱动与系统负载存在跑间波动，不把这组单轮差异全归因于读取优化；确定收益是少一份文件数组与回落零重复打开。
+
+
+### 安卓顶点缓冲
+
+- 每个 renderer 延迟创建一次 64B direct buffer、native-order float 视图及复用顶点数组；每帧只覆写顶点，EGL 上下文重建保留 CPU 缓冲，释放时视图先于 owner，异常分配路径不留半初始化资源。
+- 新增四项真实绘制回归：八方向的顶点/UV 与缓冲身份、方向 8 的非对称四象限 GPU 字节对照、缩放平移后顶点更新、两次上下文重建后身份和分配次数保持。两轮重建后累计分配仍为 1。
+- 小米 13/API 33，独立 Release AOT 包：最终 color 107/107、zoom 30/30、input 27/27；主流程先前 Release 22/22。真实 26MP HIF 代理 2496×1664、Full 6192×4128，解码 643.1/842.8ms；会话双击升级 Full 与纹理缓存正确，UI 心跳最大间断 119.5ms。GL 上传仍同步，本轮不宣称冷上传达到 16ms，也不把顶点缓冲复用当作 HEVC 解码提速。
+
+### 后续优先级
+
+1. Windows RAW 一次开发复用：先定量对照 Full 直接缓存与代理策略的首屏、放大延迟及内存，再决定落地。
+2. Android 主线程冷上传/色域回退转换的完整计时，随后评估绘制合帧和独立渲染线程。
+3. AVIF、非恒等 clap、复杂镜像组合与多 ROM 素材矩阵：明确共享 libheif 原生插件覆盖及不支持提示；不恢复未经数值校验的系统 HEIF 色彩出口。
+4. 本地直连显示器的 Windows 冷帧长尾与真实 HDR/ACM/跨屏验证。

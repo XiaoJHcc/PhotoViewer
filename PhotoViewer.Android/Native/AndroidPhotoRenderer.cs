@@ -55,6 +55,12 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private const int MipChainNumerator = 4;
     private const int MipChainDenominator = 3;
 
+    private const int VertexFloatCount = 16;
+    private const int VertexBufferBytes = VertexFloatCount * sizeof(float);
+    /// <summary>顶点属性字节步长；纹理坐标从第 3 个 float 起（字节偏移 8）。</summary>
+    private const int VertexStrideBytes = 16;
+    private const int VertexTexCoordByteOffset = 8;
+
     private readonly object _sync = new();
     private readonly List<TextureEntry> _recentTextures = new(RecentTextureCapacity);
     private readonly int[] _handleBuffer = new int[1];
@@ -73,6 +79,10 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     private TextureEntry? _spareTexture;
     private long _textureBytes;
     private ByteBuffer? _uploadBuffer;
+    private ByteBuffer? _vertexBuffer;
+    private FloatBuffer? _vertexFloats;
+    private readonly float[] _vertices = new float[VertexFloatCount];
+    private int _vertexAllocations;
     private bool _disposed;
     private bool _surfaceP3;
 
@@ -504,33 +514,82 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     /// <param name="height">高度（NDC）。</param>
     private void DrawQuad(int orientation, float x, float y, float width, float height)
     {
+        if (!EnsureVertexBuffer()) return;
         float right = x + width, bottom = y - height;
         var (u0, v0) = MapUv(orientation, 0, 0);
         var (u1, v1) = MapUv(orientation, 1, 0);
         var (u2, v2) = MapUv(orientation, 0, 1);
         var (u3, v3) = MapUv(orientation, 1, 1);
-        float[] vertices =
-        [
-            x, y, u0, v0,
-            right, y, u1, v1,
-            x, bottom, u2, v2,
-            right, bottom, u3, v3,
-        ];
+        var vertices = _vertices;
+        vertices[0] = x;
+        vertices[1] = y;
+        vertices[2] = u0;
+        vertices[3] = v0;
+        vertices[4] = right;
+        vertices[5] = y;
+        vertices[6] = u1;
+        vertices[7] = v1;
+        vertices[8] = x;
+        vertices[9] = bottom;
+        vertices[10] = u2;
+        vertices[11] = v2;
+        vertices[12] = right;
+        vertices[13] = bottom;
+        vertices[14] = u3;
+        vertices[15] = v3;
+        var buffer = _vertexBuffer!;
+        var floats = _vertexFloats!;
+        floats.Position(0);
+        floats.Put(vertices);
         GLES20.GlUseProgram(_program);
         GLES20.GlActiveTexture(GLES20.GlTexture0);
         GLES20.GlBindTexture(GLES20.GlTexture2d, _current?.Handle ?? 0);
         GLES20.GlEnableVertexAttribArray(_positionHandle);
         GLES20.GlEnableVertexAttribArray(_texCoordHandle);
-        var buffer = ByteBuffer.AllocateDirect(vertices.Length * 4).Order(ByteOrder.NativeOrder()!) as ByteBuffer;
-        if (buffer == null) return;
-        buffer.AsFloatBuffer()!.Put(vertices);
         buffer.Position(0);
-        GLES20.GlVertexAttribPointer(_positionHandle, 2, GLES20.GlFloat, false, 16, buffer);
-        buffer.Position(8);
-        GLES20.GlVertexAttribPointer(_texCoordHandle, 2, GLES20.GlFloat, false, 16, buffer);
+        GLES20.GlVertexAttribPointer(_positionHandle, 2, GLES20.GlFloat, false, VertexStrideBytes, buffer);
+        buffer.Position(VertexTexCoordByteOffset);
+        GLES20.GlVertexAttribPointer(_texCoordHandle, 2, GLES20.GlFloat, false, VertexStrideBytes, buffer);
         GLES20.GlDrawArrays(GLES20.GlTriangleStrip, 0, 4);
         GLES20.GlDisableVertexAttribArray(_positionHandle);
         GLES20.GlDisableVertexAttribArray(_texCoordHandle);
+    }
+
+    private bool EnsureVertexBuffer()
+    {
+        if (_vertexBuffer != null && _vertexFloats != null) return true;
+        ByteBuffer? buffer = null;
+        FloatBuffer? floats = null;
+        try
+        {
+            buffer = ByteBuffer.AllocateDirect(VertexBufferBytes);
+            floats = buffer?.Order(ByteOrder.NativeOrder()!)?.AsFloatBuffer();
+            if (floats == null || floats.Capacity() < VertexFloatCount) return false;
+            _vertexBuffer = buffer;
+            _vertexFloats = floats;
+            _vertexAllocations++;
+            buffer = null;
+            floats = null;
+            return true;
+        }
+        finally
+        {
+            floats?.Dispose();
+            buffer?.Dispose();
+        }
+    }
+
+    /// <summary>验收用：顶点缓冲对象身份、累计分配次数与当前 16 个 float。</summary>
+    internal (object? Buffer, object? Floats, int Allocations, float[] Values) VertexStateForChecks()
+    {
+        lock (_sync)
+        {
+            if (_vertexFloats == null) return (_vertexBuffer, null, _vertexAllocations, Array.Empty<float>());
+            var values = new float[VertexFloatCount];
+            _vertexFloats.Position(0);
+            _vertexFloats.Get(values);
+            return (_vertexBuffer, _vertexFloats, _vertexAllocations, values);
+        }
     }
 
     /// <summary>显示朝向归一化坐标 → 源纹理坐标（与 <see cref="PhotoViewport"/> 的显示朝向一致）。</summary>
@@ -752,6 +811,10 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             ReleaseContext();
             _uploadBuffer?.Dispose();
             _uploadBuffer = null;
+            _vertexFloats?.Dispose();
+            _vertexFloats = null;
+            _vertexBuffer?.Dispose();
+            _vertexBuffer = null;
         }
     }
 
