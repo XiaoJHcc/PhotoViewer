@@ -108,11 +108,16 @@ public sealed class LibHeifDecoder : IHeifDecoder
     /// <returns>显示朝向的线性 F16;色彩不能如实解释或解码失败返回 null(原因写入 <see cref="HeifLoader.LastDecodeError"/>)。</returns>
     internal static async Task<DecodedImage?> DecodePresentationAsync(IFileRef file, int? maxLongEdge, CancellationToken cancellationToken)
     {
-        var bytes = await FastHeifDecoder.ReadAllBytesAsync(file).ConfigureAwait(false);
+        var bytes = await FastHeifDecoder.ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false);
+        return await DecodePresentationAsync(bytes, maxLongEdge, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static Task<DecodedImage?> DecodePresentationAsync(byte[] bytes, int? maxLongEdge, CancellationToken cancellationToken)
+    {
         cancellationToken.ThrowIfCancellationRequested();
-        return await HeifLoader.RunCpuDecodeAsync(
+        return HeifLoader.RunCpuDecodeAsync(
             () => Task.Run(() => LibHeifColorDecoder.Decode(bytes, maxLongEdge, LibHeifOutput.RgbaF16ScRgb,
-                cancellationToken, out _), cancellationToken)).ConfigureAwait(false);
+                cancellationToken, out _), cancellationToken));
     }
 
     /// <summary>

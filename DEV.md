@@ -213,6 +213,7 @@ dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compil
 ```bash
 dotnet run --project Tools/HeifFastDecodeTest -c Release -- e2e     # 快速路径 vs libheif 回落逐色块 + 48 位通道 + 自建 12 位暗平面码值范围
 dotnet run --project Tools/HeifFastDecodeTest -c Release -- smoke   # 容器/色彩支持面与转换器口径
+dotnet run --project Tools/HeifFastDecodeTest -c Release -- read    # 文件读取、取消、长度变化与单缓冲分配
 ```
 
 

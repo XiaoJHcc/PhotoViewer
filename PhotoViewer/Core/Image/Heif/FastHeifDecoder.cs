@@ -134,18 +134,43 @@ public static partial class FastHeifDecoder
     // ------------------------------------------------------------------
 
     /// <summary>
-    /// 读取整个文件的字节:HEIF 容器解析与瓦片码流都从同一份缓冲切出,只读一次盘。
+    /// 读取整个文件的字节:可寻址流直接填充最终缓冲,容器解析与瓦片码流共用同一份字节。
     /// </summary>
     /// <param name="file">文件引用。</param>
+    /// <param name="cancellationToken">读取与打开的取消令牌。</param>
     /// <returns>文件字节。</returns>
-    public static async Task<byte[]> ReadAllBytesAsync(IFileRef file)
+    public static async Task<byte[]> ReadAllBytesAsync(IFileRef file, CancellationToken cancellationToken = default)
     {
-        await using var stream = await file.OpenReadAsync().ConfigureAwait(false);
-        using var buffer = stream.CanSeek
-            ? new MemoryStream((int)Math.Min(stream.Length, int.MaxValue))
-            : new MemoryStream();
-        await stream.CopyToAsync(buffer).ConfigureAwait(false);
-        return buffer.ToArray();
+        await using var stream = await file.OpenReadAsync(cancellationToken).ConfigureAwait(false);
+        cancellationToken.ThrowIfCancellationRequested();
+        long? remaining = null;
+        if (stream.CanSeek)
+        {
+            try { remaining = Math.Max(0, stream.Length - stream.Position); }
+            catch (NotSupportedException) { }
+        }
+        if (remaining is not long length)
+        {
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
+            return buffer.ToArray();
+        }
+        if (length > Array.MaxLength) throw new IOException("HEIF 文件过大,无法装入解码缓冲");
+        var bytes = new byte[(int)length];
+        int read = await stream.ReadAtLeastAsync(bytes, bytes.Length, throwOnEndOfStream: false, cancellationToken)
+            .ConfigureAwait(false);
+        if (read < bytes.Length)
+        {
+            Array.Resize(ref bytes, read);
+            return bytes;
+        }
+        var extra = new byte[1];
+        if (await stream.ReadAsync(extra, cancellationToken).ConfigureAwait(false) == 0) return bytes;
+        using var grown = new MemoryStream();
+        grown.Write(bytes);
+        grown.WriteByte(extra[0]);
+        await stream.CopyToAsync(grown, cancellationToken).ConfigureAwait(false);
+        return grown.ToArray();
     }
 
     /// <summary>

@@ -125,7 +125,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         PixelEncoding encoding,
         CancellationToken cancellationToken)
     {
-        var bytes = await ReadAllBytesAsync(file).ConfigureAwait(false);
+        var bytes = await ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
         string? reason = null;
@@ -138,7 +138,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         }
 
         LogFallback(file, reason);
-        return await LibHeifDecoder.DecodePresentationAsync(file, maxLongEdge, cancellationToken).ConfigureAwait(false);
+        return await LibHeifDecoder.DecodePresentationAsync(bytes, maxLongEdge, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -155,7 +155,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         int? targetLongEdge,
         CancellationToken cancellationToken)
     {
-        var bytes = await ReadAllBytesAsync(file).ConfigureAwait(false);
+        var bytes = await ReadAllBytesAsync(file, cancellationToken).ConfigureAwait(false);
         cancellationToken.ThrowIfCancellationRequested();
 
         string? reason = null;
@@ -301,7 +301,8 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
     /// <summary>读取整个文件的字节(HEIF 容器解析与瓦片码流都从这份缓冲切出)。</summary>
     /// <param name="file">文件引用。</param>
     /// <returns>文件字节。</returns>
-    private static Task<byte[]> ReadAllBytesAsync(IFileRef file) => FastHeifDecoder.ReadAllBytesAsync(file);
+    private static Task<byte[]> ReadAllBytesAsync(IFileRef file, CancellationToken cancellationToken)
+        => FastHeifDecoder.ReadAllBytesAsync(file, cancellationToken);
 
     /// <summary>已记录过回落原因的文件名(限幅;回落原因只与容器能力相关,同一文件不必重复刷屏)。</summary>
     private static readonly HashSet<string> FallbackLogged = new(StringComparer.Ordinal);

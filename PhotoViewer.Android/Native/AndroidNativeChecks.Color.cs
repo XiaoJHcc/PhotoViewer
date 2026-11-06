@@ -24,6 +24,24 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 internal static partial class AndroidNativeChecks
 {
+    private sealed class CountedHeifFile(PhotoViewer.Core.Storage.IFileRef inner) : PhotoViewer.Core.Storage.IFileRef
+    {
+        internal int Opens { get; private set; }
+        public string Name => inner.Name;
+        public Uri Path => inner.Path;
+        public PhotoViewer.Core.Storage.StorageItemId StorageId => inner.StorageId;
+        public string? TryGetLocalPath() => inner.TryGetLocalPath();
+        public Task<Stream> OpenReadAsync(CancellationToken cancellationToken = default)
+        {
+            Opens++;
+            return inner.OpenReadAsync(cancellationToken);
+        }
+        public Task<PhotoViewer.Core.Storage.StorageItemBasicProperties> GetBasicPropertiesAsync(CancellationToken cancellationToken = default)
+            => inner.GetBasicPropertiesAsync(cancellationToken);
+        public Task<PhotoViewer.Core.Storage.IFolderRef?> GetParentAsync(CancellationToken cancellationToken = default)
+            => inner.GetParentAsync(cancellationToken);
+    }
+
     /// <summary>输出帧缓冲的 sRGB 编码（<c>GL_SRGB</c>）：写入时 GL 负责线性→编码。</summary>
     private const int GlFramebufferSrgb = 0x8C40;
     /// <summary>输出帧缓冲的线性编码（<c>GL_LINEAR</c>）：像素值原样落盘，surfacebook 直通。</summary>
@@ -768,8 +786,10 @@ internal static partial class AndroidNativeChecks
                 continue;
             }
 
-            using var decoded = await decoder.DecodeAsync(new AndroidFileRef(patchedPath), FixtureProxyLongEdge,
+            var counted = new CountedHeifFile(new AndroidFileRef(patchedPath));
+            using var decoded = await decoder.DecodeAsync(counted, FixtureProxyLongEdge,
                 PixelEncoding.Rgba8, CancellationToken.None);
+            Check($"color HEIF {label} 回落复用文件字节", counted.Opens == 1, $"opens={counted.Opens}");
             var lastError = HeifLoader.LastDecodeError ?? string.Empty;
             Check($"color HEIF {label} 声明拒绝",
                 decoded == null && lastError.Contains("HDR", StringComparison.Ordinal),

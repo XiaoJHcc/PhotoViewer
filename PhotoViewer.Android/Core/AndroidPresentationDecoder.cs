@@ -65,12 +65,7 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
                 return preview == null ? null : ColorEngine.ToAnalysisSrgb8(preview, preview.Orientation);
             }
             if (HeifLoader.IsHeifFile(file))
-            {
-                var heif = DecodeHeifThumbnail(file, targetLongEdge, cancellationToken);
-                if (heif != null) return heif;
-                using var fallback = DecodeHeifLibHeif(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken);
-                return fallback == null ? null : ColorEngine.ToAnalysisSrgb8(fallback, fallback.Orientation);
-            }
+                return DecodeHeifThumbnail(file, targetLongEdge, cancellationToken);
 
             // 缩略图出口是 sRGB8 分析口径，直接解到 sRGB 省掉一次整图色域转换。
             using var decoded = DecodeLegacy(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken);
@@ -180,11 +175,7 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         if (RawLoader.IsRawFile(file))
             return DecodeRaw(file, maxLongEdge, target, cancellationToken);
         if (HeifLoader.IsHeifFile(file))
-        {
-            if (DecodeHeifFast(file, maxLongEdge, target, cancellationToken) is { } fast)
-                return fast;
-            return DecodeHeifLibHeif(file, maxLongEdge, target, cancellationToken);
-        }
+            return DecodeHeif(file, maxLongEdge, target, cancellationToken);
         return DecodeLegacy(file, maxLongEdge, target, cancellationToken);
     }
 
@@ -202,12 +193,12 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     /// 拒绝并写 <see cref="HeifLoader.LastDecodeError"/>，不按 SDR 输出。
     /// </summary>
     private static DecodedImage? DecodeHeifLibHeif(IFileRef file, int? maxLongEdge, ImageColorSpace target,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, byte[]? bytes = null)
     {
         var output = target == ImageColorSpace.DisplayP3 ? LibHeifOutput.Rgba8DisplayP3 : LibHeifOutput.Rgba8Srgb;
         try
         {
-            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            bytes ??= FastHeifDecoder.ReadAllBytesAsync(file, cancellationToken).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             string? reason = null;
             var decoded = HeifLoader.RunCpuDecodeAsync(() => Task.Run(() =>
@@ -250,20 +241,12 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         finally { scaled?.Dispose(); }
     }
 
-    /// <summary>
-    /// HEIF 快速路径：容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片，产物未旋转，
-    /// 方向取容器 <c>irot</c>/<c>imir</c>（ISO/IEC 23008-12 规定忽略 HEIF 的 EXIF Orientation 项）。
-    /// </summary>
-    /// <param name="file">文件引用。</param>
-    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
-    /// <param name="target">目标色域（调用方捕获一次）。</param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>RGBA8 产物；容器或色彩超出支持面时返回 null，由调用方回落。</returns>
-    private static DecodedImage? DecodeHeifFast(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
+    private static DecodedImage? DecodeHeif(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
     {
+        byte[]? bytes = null;
         try
         {
-            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            bytes = FastHeifDecoder.ReadAllBytesAsync(file, cancellationToken).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
             var fast = FastHeifDecoder.TryDecode(bytes, maxLongEdge, PixelEncoding.Rgba8, cancellationToken,
                 out var reason, target);
@@ -275,41 +258,28 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         {
             LogHeifFallback(file, $"{exception.GetType().Name}: {exception.Message}");
         }
-        return null;
+        return bytes == null ? null : DecodeHeifLibHeif(file, maxLongEdge, target, cancellationToken, bytes);
     }
 
-    /// <summary>
-    /// HEIF 缩略图快速路径：解主图并缩到长边上限，按容器方向做到显示朝向的 sRGB8；
-    /// 不做 letterbox 裁剪（方向对齐与裁剪由缩略图服务按容器元数据完成）。
-    /// </summary>
-    /// <param name="file">文件引用。</param>
-    /// <param name="targetLongEdge">按目标短边折算的长边上限。</param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>显示朝向的 sRGB8；快速路径不可用时返回 null，由调用方回落。</returns>
     private static DecodedImage? DecodeHeifThumbnail(IFileRef file, int targetLongEdge, CancellationToken cancellationToken)
     {
+        byte[]? bytes = null;
         try
         {
-            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            bytes = FastHeifDecoder.ReadAllBytesAsync(file, cancellationToken).GetAwaiter().GetResult();
             cancellationToken.ThrowIfCancellationRequested();
-            var fast = FastHeifDecoder.TryDecode(bytes, targetLongEdge, PixelEncoding.Bgra32, cancellationToken, out var reason);
-            if (fast == null)
-            {
-                LogHeifFallback(file, reason);
-                return null;
-            }
-
-            using (fast)
-            {
-                return ColorEngine.ToAnalysisSrgb8(fast, fast.Orientation);
-            }
+            using var fast = FastHeifDecoder.TryDecode(bytes, targetLongEdge, PixelEncoding.Bgra32, cancellationToken, out var reason);
+            if (fast != null) return ColorEngine.ToAnalysisSrgb8(fast, fast.Orientation);
+            LogHeifFallback(file, reason);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
             LogHeifFallback(file, $"{exception.GetType().Name}: {exception.Message}");
-            return null;
         }
+        if (bytes == null) return null;
+        using var fallback = DecodeHeifLibHeif(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken, bytes);
+        return fallback == null ? null : ColorEngine.ToAnalysisSrgb8(fallback, fallback.Orientation);
     }
 
     /// <summary>已记录过回落原因的文件（限幅；回落原因只与容器能力相关，同一文件不必重复刷屏）。</summary>

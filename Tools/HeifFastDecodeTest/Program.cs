@@ -15,7 +15,7 @@ internal static partial class Program
         Console.OutputEncoding = System.Text.Encoding.UTF8;
         if (args.Length == 0)
         {
-            Console.Error.WriteLine("usage: HeifFastDecodeTest <selftest|smoke|probe|parse|extract|validate|e2e|bench> [args]");
+            Console.Error.WriteLine("usage: HeifFastDecodeTest <selftest|read|smoke|probe|parse|extract|validate|e2e|bench> [args]");
             return 2;
         }
 
@@ -27,6 +27,8 @@ internal static partial class Program
             {
                 case "selftest":
                     return SelfTest.Run();
+                case "read":
+                    return ReadTests.Run();
                 case "smoke":
                     return Smoke.Run();
                 case "probe":
