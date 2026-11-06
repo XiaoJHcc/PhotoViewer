@@ -244,8 +244,6 @@ public static class ThumbnailService
         // 平台解码器兜底:Default Rotation 已被平台解码器内部应用,标记 IsPreRotated=true
         result.Add(new ThumbnailSource(
             width: 0, height: 0, origin: ThumbnailOrigin.HeifEmbedded,
-            // 各平台 HEIF 解码器是否已预旋转不同：Android 的 libheif/JPEG item 路径未旋转，
-            // 必须让 ThumbnailService 按容器方向再做方向对齐。
             isPreRotated: HeifLoader.OutputPreRotated,
             loaderAsync: target => HeifLoader.DecodeAsync(file, target)));
 

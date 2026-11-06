@@ -24,6 +24,7 @@ PhotoViewer.Windows/          # Windows 头工程：WinUI 3 原生壳
 PhotoViewer.Mac/              # macOS 头工程：AppKit + Metal 原生壳
 PhotoViewer.Apple/            # Apple 专属共享源（解码/Metal/验收，链接进 Mac/iOS）
 PhotoViewer.Shared/           # 跨壳纯 C# 共享源（几何/命令表，链接进 Mac/iOS/Android/Windows）
+PhotoViewer.Heif/             # libheif 色彩解码共享源（链接进 Windows/Android/Tools，Apple 不链接）
 PhotoViewer.iOS/              # iOS / iPadOS 头工程：UIKit + Metal 原生壳
 PhotoViewer.Android/          # Android 头工程：原生壳（Bootstrap/主题/门面）
 PhotoViewer.Web/              # Web 参考壳：只依据 Design/ 实现的主屏（ES module，零依赖，合成照片）
@@ -56,6 +57,7 @@ artifacts/                    # 本机验收证据与可再生产物（报告/�
 | [PhotoViewer/ViewModels/Tools/](PhotoViewer/ViewModels/Tools/AGENTS.md) | 工具页视图模型 |
 | [PhotoViewer.Apple/](PhotoViewer.Apple/AGENTS.md) | Apple 专属共享源：展示解码、Metal 渲染、Apple 验收与输入映射 |
 | [PhotoViewer.Shared/](PhotoViewer.Shared/AGENTS.md) | 跨壳纯 C# 共享源：视口/主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表 |
+| [PhotoViewer.Heif/](PhotoViewer.Heif/AGENTS.md) | 共享源：libheif 软件解码的色彩/位深口径（ICC 优先、nclx、48 位平面、PQ/HLG 拒绝）与显示朝向几何 |
 | [PhotoViewer.Mac/](PhotoViewer.Mac/AGENTS.md) | macOS 原生壳与平台接线 |
 | [PhotoViewer.iOS/](PhotoViewer.iOS/AGENTS.md) | iOS / iPadOS 原生壳与平台接线 |
 | [PhotoViewer.Android/](PhotoViewer.Android/AGENTS.md) | Android 原生壳（Bootstrap/主题/门面）与平台接线 |

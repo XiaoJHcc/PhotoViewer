@@ -3,22 +3,24 @@ using System.Threading;
 using System.Threading.Tasks;
 using Android.Graphics;
 using LibHeifSharp;
-using PhotoViewer.Core;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
-using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using Bitmap = Android.Graphics.Bitmap;
 
 namespace PhotoViewer.Android.Core;
 
 /// <summary>
-/// Android HEIF 解码器（胶片缩略图与兜底链）。
+/// Android HEIF 解码器（胶片缩略图与兜底链，纯 libheif 出口，无系统解码段）。
 /// 顺序：小尺寸请求先解容器自带的 <c>thmb</c> 缩略图项（约 5 ms，不动主图），
 /// 再走共享快速路径（容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片），
-/// 最后才是系统 <see cref="BitmapFactory"/> 与打包的 libheif 软解（覆盖 YUV 4:2:2、索尼 .HIF 等系统解不了的容器）。
-/// 契约不变：产物<b>未旋转</b>（<see cref="OutputPreRotated"/> 为 false），
-/// 由 <see cref="ThumbnailService"/> / <c>BitmapLoader</c> 按容器方向与 EXIF 方向各自对齐。
+/// 最后共享 libheif 软解（覆盖 YUV 4:2:2、索尼 .HIF 等快速路径解不了的容器；色彩与位深口径见
+/// <see cref="LibHeifColorDecoder"/>）。系统 <see cref="BitmapFactory"/> 的 HEIF 输出即使读到 P3 ICC
+/// 也有灰阶偏差，已不作为色彩出口。
+/// 契约：产物一律是**显示朝向**（方向 1）的 sRGB8，<see cref="OutputPreRotated"/> 为 true，
+/// <see cref="ThumbnailService"/> / <c>BitmapLoader</c> 不再按容器或 EXIF 方向二次旋转；
+/// 本链不读 HEIF 内的 EXIF Orientation 项（ISO/IEC 23008-12 规定忽略）。
 /// </summary>
 public sealed class AndroidLibHeifDecoder : IHeifDecoder
 {
@@ -32,8 +34,7 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     /// </summary>
     private static readonly string _libHeifUnavailableReason = GetLibHeifUnavailableReason();
 
-    /// <summary>系统级回退解码器（BitmapFactory）</summary>
-    private readonly AndroidHeifDecoder _systemFallback = new();
+
 
     /// <summary>
     /// 走容器 <c>thmb</c> 缩略图项的请求上限（目标长边，像素）。
@@ -104,22 +105,24 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
     }
 
     /// <summary>
-    /// 是否支持 HEIF 解码。libheif 可用时返回 true；否则取决于系统版本（API 28+）。
+    /// 是否支持 HEIF 解码。Android 上恒为 true；libheif 缺失时 <see cref="DecodeAsync"/> 会记下缺失原因并返回 null。
     /// </summary>
-    public bool IsSupported => _libHeifAvailable || _systemFallback.IsSupported;
+    public bool IsSupported => OperatingSystem.IsAndroid();
 
-    /// <summary>libheif/系统解码均不应用 EXIF 方向,BitmapLoader 负责旋转。</summary>
-    public bool OutputPreRotated => false;
+    /// <summary>产物一律已按容器 <c>irot</c>/<c>imir</c> 摆到显示朝向,方向恒为 1,调用方不得再旋转。</summary>
+    public bool OutputPreRotated => true;
 
     /// <summary>
-    /// 解码 HEIF：小尺寸请求先解容器 <c>thmb</c> 缩略图项，再走共享快速路径，
-    /// 最后回退系统解码器（<c>BitmapFactory</c>）与 libheif 软解（覆盖 YUV 4:2:2 等系统不支持的格式）。
-    /// maxSize = null 全分辨率;非空时代理（快速路径在转换时缩放，回落链按长边精缩）。
+    /// 解码 HEIF：小尺寸请求先解容器 <c>thmb</c> 缩略图项，再走共享快速路径，最后共享 libheif 软解。
+    /// 产物统一摆到显示朝向（方向 1）。
     /// </summary>
     public async Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxSize)
     {
         var reasons = new System.Text.StringBuilder();
         var bytes = await FastHeifDecoder.ReadAllBytesAsync(file).ConfigureAwait(false);
+        // 容器方向：null = 读不了（此时容器内嵌 JPEG item 的存储方向无法证明，不能当已摆正使用）。
+        int? containerOrientation = HeifContainer.TryParse(bytes, out _)?.ExifOrientation;
+        var identity = containerOrientation == 1;
 
         // 1) 胶片缩略图/导航图直接解相机写进容器的小图，不动主图。
         if (maxSize is int thumbnailLimit && thumbnailLimit <= ContainerThumbnailMaxLongEdge)
@@ -128,37 +131,39 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
             var thumbnail = await Task.Run(() => FastHeifDecoder.TryDecodeContainerThumbnail(
                 bytes, thumbnailLimit, PixelEncoding.Bgra32, CancellationToken.None, out thumbnailReason))
                 .ConfigureAwait(false);
-            if (thumbnail != null) return thumbnail;
-            reasons.AppendLine("① 容器缩略图项: "
-                + (thumbnailReason ?? "没有够大的 thmb 项"));
-            if (thumbnailReason != null)
-                Console.WriteLine($"[AndroidLibHeifDecoder] 缩略图项不可用（{file.Name}）：{thumbnailReason}");
+            if (thumbnail != null)
+            {
+                var display = ToDisplayOriented(thumbnail);
+                if (display != null) return display;
+                reasons.AppendLine("① 容器缩略图项: 方向变换失败");
+            }
+            else
+            {
+                reasons.AppendLine("① 容器缩略图项: " + (thumbnailReason ?? "没有够大的 thmb 项"));
+                if (thumbnailReason != null)
+                    Console.WriteLine($"[AndroidLibHeifDecoder] 缩略图项不可用（{file.Name}）：{thumbnailReason}");
+            }
         }
 
-        // 2) 共享快速路径：容器自解析 + pvhevc 并行解 HEVC 瓦片。
+        // 2) 共享快速路径：容器自解析 + pvhevc 并行解 HEVC 瓦片（产物未旋转，按自身方向摆正）。
         string? fastReason = null;
         var fast = await Task.Run(() => FastHeifDecoder.TryDecode(
             bytes, maxSize, PixelEncoding.Bgra32, CancellationToken.None, out fastReason)).ConfigureAwait(false);
-        if (fast != null) return fast;
-        reasons.AppendLine($"② 快速解码: {fastReason ?? "未知原因"}");
-        Console.WriteLine($"[AndroidLibHeifDecoder] 快速路径不可用（{file.Name}）：{fastReason ?? "未知原因"}");
-
-        // 3) 系统解码器（硬件加速，覆盖常见 HEIF 4:2:0 格式）
-        if (_systemFallback.IsSupported)
+        if (fast != null)
         {
-            var systemResult = await _systemFallback.DecodeAsync(file, maxSize);
-            if (systemResult != null) return systemResult;
-
-            reasons.AppendLine("③ 系统解码器(BitmapFactory/API 28+): 返回 null（格式可能不受支持）");
-            Console.WriteLine("[AndroidLibHeifDecoder] 系统解码器返回 null，尝试 libheif 软件解码。");
+            var display = ToDisplayOriented(fast);
+            if (display != null) return display;
+            reasons.AppendLine("② 快速解码: 方向变换失败");
         }
         else
         {
-            int apiLevel = (int)global::Android.OS.Build.VERSION.SdkInt;
-            reasons.AppendLine($"③ 系统解码器(BitmapFactory): 不支持（需 API 28+，当前 API {apiLevel}）");
+            reasons.AppendLine($"② 快速解码: {fastReason ?? "未知原因"}");
+            Console.WriteLine($"[AndroidLibHeifDecoder] 快速路径不可用（{file.Name}）：{fastReason ?? "未知原因"}");
         }
 
-        // 4) 系统无法解码（如 HEIF 4:2:2），回退 libheif 软件解码
+        // 3) 快速路径不可用时走共享 libheif 软解（产物已显示朝向）。
+        //    共享出口按文件真实声明（ICC 优先，其次 nclx）打标签再转 sRGB8，高位深源不先量化；
+        //    PQ/HLG 由它如实拒绝并写 HeifLoader.LastDecodeError，不按 SDR 输出。
         if (!_libHeifAvailable)
         {
             var reason = string.IsNullOrEmpty(_libHeifUnavailableReason)
@@ -173,22 +178,20 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
         {
             var result = await HeifLoader.RunCpuDecodeAsync(() => Task.Run(() =>
             {
-                // 缩略图请求（目标 <=512）优先用 HEIF 自带缩略图，避免每次全图 libheif 解码。
-                if (maxSize is <= ContainerThumbnailMaxLongEdge)
+                // 缩略图请求优先用容器内的 JPEG item（相机自己渲染的小图），避免全图软解；
+                // 该 item 的存储方向未知，只在容器方向恒等时才用。
+                if (identity && maxSize is <= ContainerThumbnailMaxLongEdge)
                 {
-                    var thumb = LoadThumbnail(bytes);
+                    var thumb = LoadEmbeddedJpegThumbnail(bytes);
                     if (thumb != null) return thumb;
                 }
-                var full = LoadBitmap(bytes);
-                if (full == null || !maxSize.HasValue) return full;
-                var scaled = SkiaImageCodec.ScaleToLongEdge(full, maxSize.Value);
-                if (scaled == null) return full; // null = 不需缩放(源已小于目标)或缩放失败,用全图保证正确性
-                full.Release();
-                return scaled;
+                return LibHeifColorDecoder.Decode(bytes, maxSize, LibHeifOutput.Bgra32Srgb,
+                    CancellationToken.None, out _);
             }));
             if (result == null)
             {
-                reasons.AppendLine("④ libheif 软件解码器: 解码返回 null（HeifImage 无效或格式不兼容）");
+                reasons.AppendLine("④ libheif 软件解码器: "
+                    + (HeifLoader.LastDecodeError ?? "解码返回 null（格式或色彩声明超出支持面）"));
                 HeifLoader.SetLastDecodeError(reasons.ToString().TrimEnd());
             }
             return result;
@@ -202,202 +205,52 @@ public sealed class AndroidLibHeifDecoder : IHeifDecoder
         }
     }
 
-    // ────────────────────────────────────────────────────────────────────────────
-    // 内部实现：LibHeifSharp 解码逻辑（与 Windows/LibHeifDecoder 一致）
-    // ────────────────────────────────────────────────────────────────────────────
-
-    private static DecodedImage? ToDecodedImageFromBitmap(Bitmap bitmap)
+    /// <summary>把未旋转产物按自身方向摆到显示朝向（方向 1）并统一成 sRGB8；接管并释放源租约，失败返回 null。</summary>
+    private static DecodedImage? ToDisplayOriented(DecodedImage source)
     {
-        int width = bitmap.Width, height = bitmap.Height;
-        if (width <= 0 || height <= 0) return null;
-        var colors = new int[width * height];
-        bitmap.GetPixels(colors, 0, width, 0, 0, width, height);
-        var buffer = DecodedImage.RentPixels(width * height * 4);
-        int offset = 0;
-        foreach (var color in colors)
+        if (source.Orientation == 1) return source;
+        try
         {
-            buffer[offset++] = (byte)(color & 0xFF);
-            buffer[offset++] = (byte)((color >> 8) & 0xFF);
-            buffer[offset++] = (byte)((color >> 16) & 0xFF);
-            buffer[offset++] = (byte)((color >> 24) & 0xFF);
+            return ColorEngine.ToAnalysisSrgb8(source, source.Orientation);
         }
-        return DecodedImage.CreatePooled(buffer, width, height, width * 4, PixelEncoding.Bgra32);
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[AndroidLibHeifDecoder] 方向变换失败（方向 {source.Orientation}）：{exception.Message}");
+            return null;
+        }
+        finally
+        {
+            source.Release();
+        }
     }
 
-    /// <summary>从 HEIF 容器取最大的内嵌缩略图；没有缩略图返回 null（调用方回退全图）。</summary>
-    private static DecodedImage? LoadThumbnail(byte[] data)
+    // ────────────────────────────────────────────────────────────────────────────
+    // 内部实现：容器内嵌 JPEG item（相机渲染的小图），出口恒 sRGB8
+    // ────────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// 解容器内嵌的 JPEG 缩略图 item（索尼 HIF 的 160×120 等）；没有该项或解不了返回 null。
+    /// 位图自报色域按真实值读取后显式规范到 sRGB8，不用 <see cref="Bitmap.GetPixels"/> 的打包值。
+    /// </summary>
+    private static DecodedImage? LoadEmbeddedJpegThumbnail(byte[] data)
     {
         var jpeg = HeifJpegThumbnailExtractor.TryExtract(data);
-        if (jpeg != null)
-        {
-            try
-            {
-                var options = new BitmapFactory.Options { InPreferredConfig = Bitmap.Config.Argb8888 };
-                using var bitmap = BitmapFactory.DecodeByteArray(jpeg, 0, jpeg.Length, options);
-                if (bitmap != null)
-                {
-                    return ToDecodedImageFromBitmap(bitmap);
-                }
-            }
-            catch (Exception)
-            {
-                // 回退 libheif thumbnail / 全图
-            }
-        }
-        return TryLoadLibHeifThumbnail(data);
-    }
-
-    /// <summary>用 libheif 解码内嵌缩略图项（容器 <c>thmb</c>）；解不了返回 null。</summary>
-    private static DecodedImage? TryLoadLibHeifThumbnail(byte[] data)
-    {
+        if (jpeg is null) return null;
         try
         {
-            using var context = new HeifContext(data);
-            using var primary = context.GetPrimaryImageHandle();
-            if (primary == null) return null;
-            var ids = primary.GetThumbnailImageIds();
-            if (ids == null || ids.Count == 0) return null;
-            using var thumbnail = primary.GetThumbnailImage(ids[ids.Count - 1]);
-            if (thumbnail == null) return null;
-            using var image = thumbnail.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
-            if (image == null) return null;
-            var bitmap = ConvertHeifImageToBitmap(image);
-            Console.WriteLine($"[AndroidLibHeifDecoder] 缩略图: {image.Width}x{image.Height}，跳过全图解码");
-            return bitmap;
+            var options = new BitmapFactory.Options { InPreferredConfig = Bitmap.Config.Argb8888 };
+            using var bitmap = BitmapFactory.DecodeByteArray(jpeg, 0, jpeg.Length, options);
+            if (bitmap == null) return null;
+            using var normalized = AndroidBitmapPixels.ToRgba8(bitmap, ImageColorSpace.Srgb,
+                bitmap.Width, bitmap.Height, 1);
+            if (normalized == null) return null;
+            Console.WriteLine($"[AndroidLibHeifDecoder] 缩略图 item: {bitmap.Width}x{bitmap.Height}，跳过全图解码");
+            return AndroidBitmapPixels.ToBgra32(normalized);
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 用 LibHeifSharp 解码完整 HEIF 图片。
-    /// 异常不在此方法内吞掉，由调用方捕获并格式化为用户可见的错误信息。
-    /// </summary>
-    private static DecodedImage? LoadBitmap(byte[] data)
-    {
-        Console.WriteLine($"[AndroidLibHeifDecoder] 开始 libheif 解码，数据大小: {data.Length} 字节");
-
-        using var context = new HeifContext(data);
-        Console.WriteLine("[AndroidLibHeifDecoder] HeifContext 创建成功");
-
-        using var imageHandle = context.GetPrimaryImageHandle();
-        if (imageHandle == null)
-            throw new UserFacingException("HEIF 文件中没有可解码的主图像");
-
-        Console.WriteLine($"[AndroidLibHeifDecoder] 主图句柄: {imageHandle.Width}x{imageHandle.Height}, " +
-                          $"HasAlpha={imageHandle.HasAlphaChannel}, BitDepth={imageHandle.BitDepth}");
-
-        using var image = imageHandle.Decode(HeifColorspace.Rgb, HeifChroma.InterleavedRgb24);
-        if (image == null)
-            throw new UserFacingException("HEIF 图像解码失败");
-
-        Console.WriteLine($"[AndroidLibHeifDecoder] 解码成功: {image.Width}x{image.Height}");
-
-        var result = ConvertHeifImageToBitmap(image);
-        if (result == null)
-            throw new UserFacingException("HEIF 图像像素转换失败");
-
-        return result;
-    }
-
-    /// <summary>
-    /// 将 HeifImage 转换为完整尺寸的图像（RGB24 → BGRA8888）。
-    /// </summary>
-    private static DecodedImage? ConvertHeifImageToBitmap(HeifImage heifImage)
-    {
-        try
-        {
-            var reportedWidth = (int)heifImage.Width;
-            var reportedHeight = (int)heifImage.Height;
-            if (reportedWidth <= 0 || reportedHeight <= 0) return null;
-
-            var plane = heifImage.GetPlane(HeifChannel.Interleaved);
-            if (plane == null) return null;
-
-            var stride = (int)plane.Stride;
-            if (stride <= 0) return null;
-
-            const int bytesPerPixel = 3;
-            var pixelsPerRow = stride / bytesPerPixel;
-
-            // 竖拍照片修正：如果每行像素数小于报告宽度且等于报告高度，说明宽高需交换
-            int actualWidth, actualHeight;
-            if (pixelsPerRow < reportedWidth && pixelsPerRow == reportedHeight)
-            {
-                actualWidth = reportedHeight;
-                actualHeight = reportedWidth;
-            }
-            else
-            {
-                actualWidth = reportedWidth;
-                actualHeight = reportedHeight;
-            }
-
-            var bgraData = DecodedImage.RentPixels(actualWidth * actualHeight * 4);
-
-            unsafe
-            {
-                var sourcePtr = (byte*)plane.Scan0;
-                if (sourcePtr == null)
-                {
-                    ImageBufferPool.Return(bgraData);
-                    return null;
-                }
-
-                for (int y = 0; y < actualHeight; y++)
-                {
-                    var sourceRowPtr = sourcePtr + (y * stride);
-                    var destRowOffset = y * actualWidth * 4;
-
-                    for (int x = 0; x < actualWidth; x++)
-                    {
-                        var srcPixelOffset = x * bytesPerPixel;
-                        var destPixelOffset = destRowOffset + (x * 4);
-
-                        if (srcPixelOffset + 2 >= stride) break;
-                        if (destPixelOffset + 3 >= bgraData.Length) break;
-
-                        // RGB → BGRA
-                        bgraData[destPixelOffset]     = sourceRowPtr[srcPixelOffset + 2]; // B
-                        bgraData[destPixelOffset + 1] = sourceRowPtr[srcPixelOffset + 1]; // G
-                        bgraData[destPixelOffset + 2] = sourceRowPtr[srcPixelOffset];     // R
-                        bgraData[destPixelOffset + 3] = 255;                              // A
-                    }
-                }
-            }
-
-            return CreateBitmapFromBgraData(bgraData, actualWidth, actualHeight);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AndroidLibHeifDecoder] HeifImage 转换失败: {ex.Message}");
-            return null;
-        }
-    }
-
-    /// <summary>
-    /// 从 BGRA 字节数组创建已解码图像(恒 Bgra32;IgnoreAlpha 的 24 位转换由 BitmapLoader 统一做)。
-    /// </summary>
-    /// <param name="bgraData">BGRA 原始像素数据</param>
-    /// <param name="width">图像宽度（像素）</param>
-    /// <param name="height">图像高度（像素）</param>
-    private static DecodedImage? CreateBitmapFromBgraData(byte[] bgraData, int width, int height)
-    {
-        try
-        {
-            var expected = (long)width * height * 4;
-            if (bgraData.Length < expected) return null;
-            // 缓冲为池化租用(调用方经 RentPixels 取得),随图像租约归零归还池
-            return DecodedImage.CreatePooled(bgraData, width, height, width * 4, PixelEncoding.Bgra32);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[AndroidLibHeifDecoder] 创建图像失败: {ex.Message}");
+            Console.WriteLine($"[AndroidLibHeifDecoder] 缩略图 item 解码失败: {exception.Message}");
             return null;
         }
     }
 }
-
-

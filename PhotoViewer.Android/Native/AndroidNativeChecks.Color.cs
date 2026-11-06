@@ -91,6 +91,7 @@ internal static partial class AndroidNativeChecks
             await RunStepAsync("color Bitmap 原始 P3 存储", CheckBitmapRawP3Async);
             await RunStepAsync("color 导航图", CheckNavigationAsync);
             await RunStepAsync("color 夹具解码", CheckColorFixturesAsync);
+            await RunStepAsync("color HEIF 回落色彩", CheckHeifFallbackColorAsync);
             await RunStepAsync("color 增强输出", CheckEnhanceAsync);
         }
         finally
@@ -623,6 +624,404 @@ internal static partial class AndroidNativeChecks
         }
         Check($"color 夹具 {label} 灰阶中性保持", neutrals.Count == 0 || neutralDrift <= 1,
             $"{neutralAt} 中性色块={neutrals.Count} 通道扩散增量={neutralDrift}");
+    }
+
+    // ── HEIF 最终回落色彩 ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// HEIF 最终回落色彩回归（全部走真实解码入口，不只测 helper）：
+    /// 强制共享 libheif 回落（跳过快速路径）在设备目标色域与 Display P3 / sRGB 三个出口上逐平坦色块对照主图解码入口；
+    /// <c>AndroidHeifDecoder</c> 兼容入口（现为共享 libheif wrapper，不再走系统 <c>BitmapFactory</c>）必须出 Bgra32Srgb 且色块与共享出口一致；
+    /// 容器声明改成 PQ/HLG 时展示解码入口必须返回 null 并记 HDR 原因；
+    /// 容器 <c>irot</c> 非 0 时回落产物必须是显示朝向（方向 1）且源几何同步互换，像素方向按色卡四角核对。
+    /// </summary>
+    private static async Task CheckHeifFallbackColorAsync()
+    {
+        var decoder = CurrentPresentationDecoder();
+        Check("color HEIF 回落展示解码器可用", decoder is AndroidPresentationDecoder,
+            decoder?.GetType().Name ?? "未注入");
+        if (decoder is null) return;
+
+        foreach (var (label, candidates) in new (string, string[])[]
+        {
+            ("P3", ColorFixtureNames.P3Heif),
+            ("sRGB", ColorFixtureNames.SrgbHeif),
+        })
+        {
+            await CheckHeifFallbackExitsAsync(decoder, label, candidates);
+        }
+
+        await CheckHeifCompatEntryAsync("sRGB", ColorFixtureNames.SrgbHeif);
+        await CheckHeifCompatEntryAsync("P3", ColorFixtureNames.P3Heif);
+        await CheckHeifHdrDeclarationsAsync(decoder);
+        await CheckHeifRotatedFallbackAsync();
+        await CheckHeifOrientationContractAsync();
+    }
+
+    /// <summary>
+    /// 一个 HEIF 夹具的回落出口对照：主图解码入口（快速路径，设备目标色域）作参照，
+    /// 强制共享 libheif 回落分别在设备目标色域、Display P3、sRGB 三个出口解一次，逐平坦色块比对。
+    /// </summary>
+    /// <param name="decoder">展示解码器。</param>
+    /// <param name="label">报告标签。</param>
+    /// <param name="candidates">夹具名候选。</param>
+    private static async Task CheckHeifFallbackExitsAsync(IPresentationImageDecoder decoder, string label, string[] candidates)
+    {
+        string? path = ResolveColorFixture(candidates);
+        if (path == null)
+        {
+            Check($"color HEIF 回落 {label}", false, $"缺少 {string.Join("/", candidates)}（push 到 files/pv-color-fixtures）");
+            return;
+        }
+
+        var file = new AndroidFileRef(path);
+        var deviceTarget = AndroidDisplayCapabilities.PresentationColorSpace;
+        using var reference = await decoder.DecodeAsync(file, FixtureProxyLongEdge, PixelEncoding.Rgba8, CancellationToken.None);
+        if (reference == null)
+        {
+            Check($"color HEIF 回落 {label} 参照解码", false, "主图解入口返回 null");
+            return;
+        }
+
+        foreach (var (exitLabel, target) in new (string, ImageColorSpace)[]
+        {
+            ("设备目标", deviceTarget),
+            ("Display P3", ImageColorSpace.DisplayP3),
+            ("sRGB", ImageColorSpace.Srgb),
+        })
+        {
+            using var fallback = await AndroidPresentationDecoder.DecodeHeifFallbackForChecksAsync(
+                file, FixtureProxyLongEdge, target, CancellationToken.None);
+            if (fallback == null)
+            {
+                Check($"color HEIF 回落 {label} {exitLabel} 出口", false, $"共享 libheif 返回 null（{HeifLoader.LastDecodeError}）");
+                continue;
+            }
+
+            var labelOk = fallback.ColorSpace == target && fallback.Orientation == 1
+                && Math.Max(fallback.Width, fallback.Height) <= FixtureProxyLongEdge + 1;
+            using var expected = ColorEngine.ToDisplayEncoding(reference, PixelEncoding.Rgba8, target);
+            var failure = CompareFlatBlocks(expected, fallback);
+            Check($"color HEIF 回落 {label} {exitLabel} 出口", labelOk && failure == null,
+                (labelOk ? "" : $"形态不符：{fallback.ColorSpace}/方向{fallback.Orientation}/{fallback.Width}x{fallback.Height}；")
+                + (failure ?? $"与快速路径逐平坦色块一致（容差 {FixtureTolerance}）")
+                + $" 源={fallback.SourceWidth}x{fallback.SourceHeight}");
+        }
+    }
+
+    private static async Task CheckHeifCompatEntryAsync(string label, string[] candidates)
+    {
+        string? path = ResolveColorFixture(candidates);
+        if (path == null)
+        {
+            Check($"color HEIF 兼容入口 {label} 出口", false, "缺少 HEIF 夹具");
+            return;
+        }
+
+        var file = new AndroidFileRef(path);
+        using var compat = await new AndroidHeifDecoder().DecodeAsync(file, FixtureProxyLongEdge);
+        if (compat == null)
+        {
+            Check($"color HEIF 兼容入口 {label} 出口", false, "回落解码返回 null");
+            return;
+        }
+
+        var shapeOk = compat.ColorSpace == ImageColorSpace.Srgb && compat.Encoding == PixelEncoding.Bgra32
+            && compat.Orientation == 1 && Math.Max(compat.Width, compat.Height) <= FixtureProxyLongEdge + 1;
+        Check($"color HEIF 兼容入口 {label} sRGB 出口", shapeOk,
+            $"{compat.Encoding}/{compat.ColorSpace}/{compat.Width}x{compat.Height} 方向={compat.Orientation}");
+
+        using var reference = await AndroidPresentationDecoder.DecodeHeifFallbackForChecksAsync(
+            file, Math.Max(compat.Width, compat.Height), ImageColorSpace.Srgb, CancellationToken.None);
+        if (reference == null)
+        {
+            Check($"color HEIF 兼容入口 {label} 色块参考", false, $"共享 libheif sRGB 出口返回 null（{HeifLoader.LastDecodeError}）");
+            return;
+        }
+
+        var failure = CompareFlatBlocks(reference, compat);
+        Check($"color HEIF 兼容入口 {label} 色块匹配参考", failure == null,
+            failure ?? $"与共享 libheif sRGB 出口逐平坦色块一致（容差 {FixtureTolerance}）");
+    }
+
+    /// <summary>
+    /// 容器声明改成 PQ/HLG 时必须拒绝：走真实展示解码入口（快速路径→共享 libheif），
+    /// 返回 null 且 <see cref="HeifLoader.LastDecodeError"/> 明确是 HDR —— 任何一段都不许按 SDR 输出。
+    /// </summary>
+    /// <param name="decoder">展示解码器。</param>
+    private static async Task CheckHeifHdrDeclarationsAsync(IPresentationImageDecoder decoder)
+    {
+        string? path = ResolveColorFixture(ColorFixtureNames.SrgbHeif);
+        if (path == null)
+        {
+            Check("color HEIF HDR 声明拒绝", false, "缺少 sRGB HEIF 夹具");
+            return;
+        }
+
+        var source = File.ReadAllBytes(path);
+        foreach (var (transfer, label) in new[] { ((ushort)16, "PQ"), ((ushort)18, "HLG") })
+        {
+            var patchedPath = await WriteTempHeifAsync($"hdr-{transfer}.heic", PatchNclxTransfer(source, transfer));
+            if (patchedPath == null)
+            {
+                Check($"color HEIF {label} 声明拒绝", false, "临时夹具写入失败");
+                continue;
+            }
+
+            using var decoded = await decoder.DecodeAsync(new AndroidFileRef(patchedPath), FixtureProxyLongEdge,
+                PixelEncoding.Rgba8, CancellationToken.None);
+            var lastError = HeifLoader.LastDecodeError ?? string.Empty;
+            Check($"color HEIF {label} 声明拒绝",
+                decoded == null && lastError.Contains("HDR", StringComparison.Ordinal),
+                decoded == null
+                    ? $"入口拒绝，原因={lastError}"
+                    : $"入口返回了产物 {decoded.Width}x{decoded.Height}（HDR 被当 SDR 输出）");
+        }
+    }
+
+    /// <summary>
+    /// 容器 <c>irot</c> 非 0 的强制回落：产物必须是显示朝向（方向 1）、画布宽高互换、源几何同步互换，
+    /// 代理缩放保留全幅几何；色卡四角轮转核对变换确实作用在像素上（不按 EXIF 猜方向）。
+    /// </summary>
+    private static async Task CheckHeifRotatedFallbackAsync()
+    {
+        string? path = ResolveColorFixture(ColorFixtureNames.SrgbHeif);
+        if (path == null)
+        {
+            Check("color HEIF irot 回落方向", false, "缺少 sRGB HEIF 夹具");
+            return;
+        }
+
+        var source = File.ReadAllBytes(path);
+        using var original = await AndroidPresentationDecoder.DecodeHeifFallbackForChecksAsync(
+            new AndroidFileRef(path), null, ImageColorSpace.Srgb, CancellationToken.None);
+        if (original == null)
+        {
+            Check("color HEIF irot 回落方向", false, "未旋转基线解码失败");
+            return;
+        }
+
+        var patchedPath = await WriteTempHeifAsync("irot-1.heic", PatchIrot(source, 1));
+        if (patchedPath == null)
+        {
+            Check("color HEIF irot 回落方向", false, "临时夹具写入失败");
+            return;
+        }
+
+        using var rotated = await AndroidPresentationDecoder.DecodeHeifFallbackForChecksAsync(
+            new AndroidFileRef(patchedPath), null, ImageColorSpace.Srgb, CancellationToken.None);
+        using var proxy = await AndroidPresentationDecoder.DecodeHeifFallbackForChecksAsync(
+            new AndroidFileRef(patchedPath), FixtureProxyLongEdge, ImageColorSpace.Srgb, CancellationToken.None);
+        if (rotated == null || proxy == null)
+        {
+            Check("color HEIF irot 回落方向", false, $"回落解码失败（{HeifLoader.LastDecodeError}）");
+            return;
+        }
+
+        Check("color HEIF irot 回落几何",
+            rotated.Orientation == 1
+            && rotated.Width == original.Height && rotated.Height == original.Width
+            && rotated.SourceWidth == original.Height && rotated.SourceHeight == original.Width
+            && proxy.SourceWidth == original.Height && proxy.SourceHeight == original.Width
+            && proxy.Orientation == 1 && Math.Max(proxy.Width, proxy.Height) <= FixtureProxyLongEdge + 1,
+            $"源 {original.Width}x{original.Height} → 回落 {rotated.Width}x{rotated.Height}"
+            + $"(方向 {rotated.Orientation},源几何 {rotated.SourceWidth}x{rotated.SourceHeight}),"
+            + $"代理 {proxy.Width}x{proxy.Height}(源几何 {proxy.SourceWidth}x{proxy.SourceHeight})");
+
+        // 色卡四角(1200x800):左上红、右上蓝、左下白块、右下背景灰。逆时针 90° 后整体轮转:
+        // 新左上=旧右上(蓝)、新右上=旧右下(背景灰)、新左下=旧左上(红)、新右下=旧左下(白块)。
+        if (rotated.Width < 200 || rotated.Height < 200)
+        {
+            Check("color HEIF irot 回落四角", false, $"产物过小 {rotated.Width}x{rotated.Height}，无法取四角样本");
+            return;
+        }
+
+        var topLeft = ColorPixelAt(rotated, 40, 60);
+        var topRight = ColorPixelAt(rotated, rotated.Width - 40, 60);
+        var bottomLeft = ColorPixelAt(rotated, 40, rotated.Height - 100);
+        var bottomRight = ColorPixelAt(rotated, rotated.Width - 40, rotated.Height - 100);
+        Check("color HEIF irot 回落四角",
+            (bottomRight.R, bottomRight.G, bottomRight.B) is ( >= 240, >= 240, >= 240)
+            && (topLeft.R, topLeft.G, topLeft.B) is ( <= 16, <= 16, >= 240)
+            && (bottomLeft.R, bottomLeft.G, bottomLeft.B) is ( >= 240, <= 16, <= 16)
+            && Math.Abs(topRight.R - 64) <= 12 && Math.Abs(topRight.G - 64) <= 12 && Math.Abs(topRight.B - 64) <= 12,
+            $"左上={DescribeColor(topLeft)}(期望蓝) 右上={DescribeColor(topRight)}(期望背景灰) "
+            + $"左下={DescribeColor(bottomLeft)}(期望红) 右下={DescribeColor(bottomRight)}(期望白块)");
+    }
+
+    /// <summary>
+    /// HEIF 方向契约（真实 IHeifDecoder 入口）：产物一律显示朝向（方向 1）。容器 <c>irot</c> = 1/2/3
+    /// （逆时针 90/180/270）各验一次代理几何与色卡四角；另经真实 <see cref="ThumbnailService"/> 核 180 一例
+    /// （该角度没有横竖启发式保护，二次旋转会直接暴露）。
+    /// </summary>
+    private static async Task CheckHeifOrientationContractAsync()
+    {
+        string? path = ResolveColorFixture(ColorFixtureNames.SrgbHeif);
+        if (path == null)
+        {
+            Check("color HEIF 方向契约", false, "缺少 sRGB HEIF 夹具");
+            return;
+        }
+
+        Check("color HEIF 产物已预旋转", HeifLoader.OutputPreRotated,
+            $"HeifLoader.OutputPreRotated={HeifLoader.OutputPreRotated}（IHeifDecoder 契约：产物已摆正）");
+
+        var source = File.ReadAllBytes(path);
+        var decoder = new AndroidLibHeifDecoder();
+        string? path180 = null;
+        foreach (var angle in new byte[] { 1, 2, 3 })
+        {
+            var patched = await WriteTempHeifAsync($"irot-{angle}.heic", PatchIrot(source, angle));
+            if (patched == null)
+            {
+                Check($"color HEIF irot={angle}", false, "临时夹具写入失败");
+                continue;
+            }
+            if (angle == 2) path180 = patched;
+
+            using var proxy = await decoder.DecodeAsync(new AndroidFileRef(patched), FixtureProxyLongEdge);
+            if (proxy == null)
+            {
+                Check($"color HEIF irot={angle}", false, $"IHeif 入口返回 null（{HeifLoader.LastDecodeError}）");
+                continue;
+            }
+
+            // 90/270 是竖图，180 保持横图；产物方向一律 1（已摆正）。
+            var expectPortrait = angle != 2;
+            var geometryOk = proxy.Orientation == 1
+                && (proxy.Height > proxy.Width) == expectPortrait
+                && Math.Max(proxy.Width, proxy.Height) <= FixtureProxyLongEdge + 1;
+            var cornersOk = HeifCornersMatch(proxy, ExpectedCorners(angle));
+            Check($"color HEIF irot={angle}", geometryOk && cornersOk,
+                $"{proxy.Width}x{proxy.Height} 方向={proxy.Orientation} "
+                + (cornersOk ? "四角正确" : "四角不符:" + DescribeCorners(proxy)));
+        }
+
+        if (path180 == null) return;
+        using var thumbnail = await ThumbnailService.GetThumbnailAsync(new AndroidFileRef(path180), 260);
+        var thumbOk = thumbnail != null && HeifCornersMatch(thumbnail, ExpectedCorners(2));
+        Check("color HEIF ThumbnailService 不再二次 180", thumbOk,
+            thumbnail == null
+                ? "ThumbnailService 返回 null"
+                : $"{thumbnail.Width}x{thumbnail.Height} "
+                  + (thumbOk ? "白块在右上（未二次旋转）" : "四角不符:" + DescribeCorners(thumbnail)));
+    }
+
+    /// <summary>色卡四角（左上红、右上蓝、左下白块、右下背景灰）逆时针 angle×90° 后各角应有的颜色。</summary>
+    private static ((int R, int G, int B) TL, (int R, int G, int B) TR, (int R, int G, int B) BL, (int R, int G, int B) BR)
+        ExpectedCorners(int angle) => angle switch
+        {
+            1 => ((0, 0, 255), (64, 64, 64), (255, 0, 0), (255, 255, 255)),
+            2 => ((64, 64, 64), (255, 255, 255), (0, 0, 255), (255, 0, 0)),
+            3 => ((255, 255, 255), (255, 0, 0), (64, 64, 64), (0, 0, 255)),
+            _ => ((255, 0, 0), (0, 0, 255), (255, 255, 255), (64, 64, 64)),
+        };
+
+    /// <summary>按归一化四角取样核对显示朝向（避开色卡文字，缩略图尺寸同样适用）。</summary>
+    private static bool HeifCornersMatch(DecodedImage image,
+        ((int R, int G, int B) TL, (int R, int G, int B) TR, (int R, int G, int B) BL, (int R, int G, int B) BR) corners)
+    {
+        if (image.Width < 150 || image.Height < 100) return false;
+        return CornerNear(image, 0.06, 0.06, corners.TL)
+            && CornerNear(image, 0.94, 0.06, corners.TR)
+            && CornerNear(image, 0.06, 0.95, corners.BL)
+            && CornerNear(image, 0.94, 0.95, corners.BR);
+    }
+
+    /// <summary>归一化取样点是否接近期望颜色。</summary>
+    private static bool CornerNear(DecodedImage image, double u, double v, (int R, int G, int B) expected)
+    {
+        var color = ColorPixelAt(image, u, v);
+        return Math.Abs(color.R - expected.R) <= 12
+            && Math.Abs(color.G - expected.G) <= 12
+            && Math.Abs(color.B - expected.B) <= 12;
+    }
+
+    /// <summary>四角实测值的报告文本。</summary>
+    private static string DescribeCorners(DecodedImage image)
+        => $"左上={DescribeColor(ColorPixelAt(image, 0.06, 0.06))} "
+            + $"右上={DescribeColor(ColorPixelAt(image, 0.94, 0.06))} "
+            + $"左下={DescribeColor(ColorPixelAt(image, 0.06, 0.95))} "
+            + $"右下={DescribeColor(ColorPixelAt(image, 0.94, 0.95))}";
+
+    /// <summary>把改过的夹具字节写进 App 内部临时目录（产品路径不使用）。</summary>
+    private static Task<string?> WriteTempHeifAsync(string name, byte[] bytes)
+    {
+        try
+        {
+            var folder = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "pv-color-fixtures-generated");
+            Directory.CreateDirectory(folder);
+            var full = IOPath.Combine(folder, name);
+            File.WriteAllBytes(full, bytes);
+            return Task.FromResult<string?>(full);
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine($"[NativeCheck] 临时夹具写入失败：{exception.Message}");
+            return Task.FromResult<string?>(null);
+        }
+    }
+
+    /// <summary>把每个 <c>nclx</c> 的传输特性改成给定代码(其余字节不动),用于构造 HDR 声明。</summary>
+    /// <param name="data">原始文件字节。</param>
+    /// <param name="transfer">目标传输特性代码。</param>
+    /// <returns>改过的副本。</returns>
+    private static byte[] PatchNclxTransfer(byte[] data, ushort transfer)
+    {
+        var patched = (byte[])data.Clone();
+        for (int i = 0; i + 8 <= patched.Length; i++)
+        {
+            if (patched[i] != (byte)'n' || patched[i + 1] != (byte)'c'
+                || patched[i + 2] != (byte)'l' || patched[i + 3] != (byte)'x') continue;
+            // 'nclx' 之后依次是 primaries(2)/transfer(2)/matrix(2)/full_range(1)。
+            patched[i + 6] = (byte)(transfer >> 8);
+            patched[i + 7] = (byte)transfer;
+        }
+        return patched;
+    }
+
+    /// <summary>把每个 <c>irot</c> 的角度改成给定值(单位 90°,其余字节不动)。</summary>
+    /// <param name="data">原始文件字节。</param>
+    /// <param name="angle">角度码(0-3)。</param>
+    /// <returns>改过的副本。</returns>
+    private static byte[] PatchIrot(byte[] data, byte angle)
+    {
+        var patched = (byte[])data.Clone();
+        for (int i = 0; i + 5 <= patched.Length; i++)
+        {
+            if (patched[i] != (byte)'i' || patched[i + 1] != (byte)'r'
+                || patched[i + 2] != (byte)'o' || patched[i + 3] != (byte)'t') continue;
+            patched[i + 4] = angle;
+        }
+        return patched;
+    }
+
+    /// <summary>
+    /// 在两幅同尺寸图像上按参考图的平坦色块逐点比对（8 位 RGBA/BGRA）,返回 null 表示一致。
+    /// </summary>
+    /// <param name="reference">参考图（决定取样点）。</param>
+    /// <param name="actual">实测图。</param>
+    /// <returns>null 或偏差描述。</returns>
+    private static string? CompareFlatBlocks(DecodedImage reference, DecodedImage actual)
+    {
+        if (reference.Width != actual.Width || reference.Height != actual.Height)
+            return $"尺寸不一致：参考 {reference.Width}x{reference.Height} 实测 {actual.Width}x{actual.Height}";
+        var samples = FindFlatSamples(reference);
+        if (samples.Count == 0) return "参考图中找不到平坦色块";
+        int worst = 0;
+        string worstAt = "无";
+        foreach (var sample in samples)
+        {
+            var want = ColorPixelAt(reference, sample.U, sample.V);
+            var mine = ColorPixelAt(actual, sample.U, sample.V);
+            int delta = ColorDelta(mine, want);
+            if (delta <= worst) continue;
+            worst = delta;
+            worstAt = $"({sample.U:0.###},{sample.V:0.###}) 实测={DescribeColor(mine)} 参考={DescribeColor(want)}";
+        }
+        return worst <= FixtureTolerance
+            ? null
+            : $"最大偏差={worst} 位置={worstAt} 平坦色块={samples.Count}";
     }
 
     // ── 增强 ──────────────────────────────────────────────────────────────────

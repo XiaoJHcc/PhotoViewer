@@ -133,6 +133,16 @@
         <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
         <Using Include="PhotoViewer.Shared"/>
     </ItemGroup>
+
+    <!--
+      共享 libheif 色彩解码：PhotoViewer.Heif/ 是纯源文件目录（不是独立程序集），
+      与 Windows 头链接同一份实现（ICC 优先、nclx、高位深 48 位平面、PQ/HLG 拒绝），
+      主图与缩略图回落的 libheif 段都走它，不再在本端手写 RGB24 拆包与标签缺失的产物。
+      该目录只依赖 Core + LibHeifSharp + SkiaSharp，不得出现任何平台类型。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Heif\**\*.cs"/>
+    </ItemGroup>
 <!--
   Microsoft.ML.OnnxRuntime 1.24.4 在 net10.0-android 下把 runtimes/linux-arm64/native/*.so
   误放进 FrameworkNativeLibrary。这些是 glibc 构建（依赖 libdl.so.2），会被打进

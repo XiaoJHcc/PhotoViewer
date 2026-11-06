@@ -17,11 +17,13 @@ using AndroidUri = Android.Net.Uri;
 namespace PhotoViewer.Android.Core;
 
 /// <summary>
-/// Android 原生主图解码器（A2）：RAW 走 LibRaw（<see cref="AndroidRawDecoder"/>，全分辨率开发 + 内嵌预览顶替），
-/// HEIF 先走共享快速路径（容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片），其余格式与快速路径回落用 <see cref="BitmapFactory"/>；
-/// 系统解不了的用户 HEIF（YUV 4:2:2 等）再回退打包的 libheif 软件解码。
-/// 代理用 <c>InSampleSize</c> + 精确缩放；方向不旋转像素，只写入 <see cref="DecodedImage.Orientation"/> 交顶点阶段处理
-/// （快速路径取容器 <c>irot</c>/<c>imir</c>，系统链取 EXIF 方向）。
+/// Android 原生主图解码器（A2）：RAW 走 LibRaw（<see cref="AndroidRawDecoder"/>，全分辨率开发 + 内嵌预览顶替）；
+/// HEIF 先走共享快速路径（容器自解析 + <c>pvhevc</c> 并行解 HEVC 瓦片），不可用时直接回落共享
+/// <see cref="LibHeifColorDecoder"/> 产出目标色域的 8 位 RGBA（ICC 优先、nclx、高位深不先量化），
+/// 不经系统 <c>BitmapFactory</c>（其 HEIF 输出即使读到 P3 ICC 也有灰阶偏差，不能当色彩出口）；
+/// 其余格式走系统解码链。
+/// 代理用 <c>InSampleSize</c> + 精确缩放；快速路径把容器方向交顶点阶段，libheif 回落则已按容器变换摆正，
+/// 不再应用 HEIF 内的 EXIF Orientation 项。
 /// 色彩：目标色域在每次解码开始时**捕获一次**并贯穿解码选项与产物标签，位图自报的真实色域再经
 /// <see cref="ColorEngine"/> 规范到该目标（见 <see cref="AndroidBitmapPixels.ToRgba8"/>）；不做隐式降级，也不按请求标签硬标。
 /// 同时实现 <see cref="IQuickPreviewDecoder"/>：RAW 首次解码空窗期用内嵌预览顶替（STATE-01）。
@@ -62,8 +64,13 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
                 using var preview = DecodeRawPreview(file, ImageColorSpace.Srgb, cancellationToken);
                 return preview == null ? null : ColorEngine.ToAnalysisSrgb8(preview, preview.Orientation);
             }
-            if (HeifLoader.IsHeifFile(file) && DecodeHeifThumbnail(file, targetLongEdge, cancellationToken) is { } heif)
-                return heif;
+            if (HeifLoader.IsHeifFile(file))
+            {
+                var heif = DecodeHeifThumbnail(file, targetLongEdge, cancellationToken);
+                if (heif != null) return heif;
+                using var fallback = DecodeHeifLibHeif(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken);
+                return fallback == null ? null : ColorEngine.ToAnalysisSrgb8(fallback, fallback.Orientation);
+            }
 
             // 缩略图出口是 sRGB8 分析口径，直接解到 sRGB 省掉一次整图色域转换。
             using var decoded = DecodeLegacy(file, targetLongEdge, ImageColorSpace.Srgb, cancellationToken);
@@ -158,7 +165,7 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
     }
 
 
-    /// <summary>同步解码主体（在线程池执行）：HEIF 先走快速路径，其余（及快速路径回落）用系统解码链。</summary>
+    /// <summary>同步解码主体（在线程池执行）：HEIF 先走快速路径，再走共享 libheif 回落，其余格式用系统解码链。</summary>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
     /// <param name="cancellationToken">取消令牌。</param>
@@ -172,9 +179,75 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         // RAW 不落 BitmapFactory：系统只会给出内嵌预览，违反代理精度规则。失败返回 null，由会话如实报错。
         if (RawLoader.IsRawFile(file))
             return DecodeRaw(file, maxLongEdge, target, cancellationToken);
-        if (HeifLoader.IsHeifFile(file) && DecodeHeifFast(file, maxLongEdge, target, cancellationToken) is { } fast)
-            return fast;
+        if (HeifLoader.IsHeifFile(file))
+        {
+            if (DecodeHeifFast(file, maxLongEdge, target, cancellationToken) is { } fast)
+                return fast;
+            return DecodeHeifLibHeif(file, maxLongEdge, target, cancellationToken);
+        }
         return DecodeLegacy(file, maxLongEdge, target, cancellationToken);
+    }
+
+    /// <summary>
+    /// 验收用：强制走共享 libheif 主图回落（跳过快速路径），供色彩回归对照快速路径；产品路径不经过这里。
+    /// </summary>
+    /// <returns>RGBA8 产物；解不了返回 null。</returns>
+    internal static Task<DecodedImage?> DecodeHeifFallbackForChecksAsync(IFileRef file, int? maxLongEdge,
+        ImageColorSpace target, CancellationToken cancellationToken)
+        => Task.Run(() => DecodeHeifLibHeif(file, maxLongEdge, target, cancellationToken), cancellationToken);
+
+    /// <summary>
+    /// HEIF 主图回落：共享 libheif 软解，产物为显示朝向（方向 1）的 8 位 RGBA、色彩按文件真实声明转成捕获的目标色域。
+    /// libheif 默认应用容器 <c>irot</c>/<c>imir</c>，源几何是全幅变换后的尺寸；PQ/HLG 与超出支持面的声明由共享解码器
+    /// 拒绝并写 <see cref="HeifLoader.LastDecodeError"/>，不按 SDR 输出。
+    /// </summary>
+    private static DecodedImage? DecodeHeifLibHeif(IFileRef file, int? maxLongEdge, ImageColorSpace target,
+        CancellationToken cancellationToken)
+    {
+        var output = target == ImageColorSpace.DisplayP3 ? LibHeifOutput.Rgba8DisplayP3 : LibHeifOutput.Rgba8Srgb;
+        try
+        {
+            var bytes = FastHeifDecoder.ReadAllBytesAsync(file).GetAwaiter().GetResult();
+            cancellationToken.ThrowIfCancellationRequested();
+            string? reason = null;
+            var decoded = HeifLoader.RunCpuDecodeAsync(() => Task.Run(() =>
+            {
+                var image = LibHeifColorDecoder.Decode(bytes, maxLongEdge, output, cancellationToken, out var failure);
+                reason = failure;
+                return image;
+            }, cancellationToken)).GetAwaiter().GetResult();
+            if (decoded == null)
+                LogHeifFallback(file, "共享 libheif 回落：" + (reason ?? HeifLoader.LastDecodeError ?? "未知原因"));
+            return decoded;
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception exception)
+        {
+            LogHeifFallback(file, $"共享 libheif 回落失败（{exception.GetType().Name}: {exception.Message}）");
+            return null;
+        }
+    }
+
+    /// <summary>用系统解码器解出位图并规范到捕获的目标色域（RAW 之外的兜底路径）。</summary>
+    /// <param name="file">文件引用。</param>
+    /// <param name="maxLongEdge">代理长边上限。</param>
+    /// <param name="target">目标色域（与产物标签同一来源）。</param>
+    /// <param name="orientation">写给渲染层的待应用方向。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
+    /// <returns>RGBA8 产物；系统解不了返回 null。</returns>
+    private static DecodedImage? DecodeBitmapToTarget(IFileRef file, int? maxLongEdge, ImageColorSpace target,
+        int orientation, CancellationToken cancellationToken)
+    {
+        int sourceWidth = 0, sourceHeight = 0;
+        using var bitmap = DecodeBitmap(file, maxLongEdge, target, out sourceWidth, out sourceHeight, cancellationToken);
+        if (bitmap == null) return null;
+        var scaled = maxLongEdge is { } limit ? ScaleToLimit(bitmap, limit) : null;
+        try
+        {
+            // 像素只从原始 ARGB_8888 存储读，位图实际色域显式规范到捕获的目标色域。
+            return AndroidBitmapPixels.ToRgba8(scaled ?? bitmap, target, sourceWidth, sourceHeight, orientation);
+        }
+        finally { scaled?.Dispose(); }
     }
 
     /// <summary>
@@ -275,39 +348,22 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         Console.WriteLine($"[Native] JPEG 容器声明源色域 {sourceColorSpace}，改共享 Skia 解码（{file.Name}）");
     }
 
-    /// <summary>系统解码链主体（在线程池执行）：<c>BitmapFactory</c> 失败再走 libheif。</summary>
-    /// <param name="file">文件引用。</param>
-    /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。</param>
-    /// <param name="target">目标色域（调用方捕获一次）。</param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>解码产物；失败返回 null。</returns>
+    /// <summary>JPEG 等非 HEIF 格式的系统解码链（在线程池执行）。</summary>
     private static DecodedImage? DecodeLegacy(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        int sourceWidth = 0, sourceHeight = 0;
         try
         {
             int orientation = ReadOrientation(file);
             var container = DecodeJpegWithContainerColor(file, maxLongEdge, target, orientation, cancellationToken,
                 out bool handled);
-            if (handled) return container;
-
-            using var bitmap = DecodeBitmap(file, maxLongEdge, target, out sourceWidth, out sourceHeight, cancellationToken);
-            if (bitmap == null)
-                return DecodeHeifFallback(file, maxLongEdge, target, cancellationToken);
-            var scaled = maxLongEdge is { } limit ? ScaleToLimit(bitmap, limit) : null;
-            try
-            {
-                // 像素只从原始 ARGB_8888 存储读，位图实际色域显式规范到捕获的目标色域。
-                return AndroidBitmapPixels.ToRgba8(scaled ?? bitmap, target, sourceWidth, sourceHeight, orientation);
-            }
-            finally { scaled?.Dispose(); }
+            return handled ? container : DecodeBitmapToTarget(file, maxLongEdge, target, orientation, cancellationToken);
         }
-        catch (System.OperationCanceledException) { throw; }
+        catch (OperationCanceledException) { throw; }
         catch (Exception exception)
         {
             Console.WriteLine($"[Native] 展示解码失败（{file.Name}）：{exception.GetType().Name}: {exception.Message}");
-            return DecodeHeifFallback(file, maxLongEdge, target, cancellationToken);
+            return null;
         }
     }
 
@@ -363,35 +419,6 @@ public sealed class AndroidPresentationDecoder : IPresentationImageDecoder, IQui
         if (!stream.CanSeek) return false;
         var metadata = JpegColorMetadata.Read(stream);
         return !metadata.HasIccProfile && metadata.ResolveColorSpace() != ImageColorSpace.Srgb;
-    }
-
-    /// <summary>系统 HEIF 解码失败时用打包的 libheif 软解，并转成捕获的目标色域。</summary>
-    /// <param name="file">文件引用。</param>
-    /// <param name="maxLongEdge">代理长边上限。</param>
-    /// <param name="target">目标色域（调用方捕获一次）。</param>
-    /// <param name="cancellationToken">取消令牌。</param>
-    /// <returns>解码产物；不是 HEIF 或软解也失败时为 null。</returns>
-    private static DecodedImage? DecodeHeifFallback(IFileRef file, int? maxLongEdge, ImageColorSpace target,
-        CancellationToken cancellationToken)
-    {
-        if (!HeifLoader.IsHeifFile(file)) return null;
-        try
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            using var decoded = HeifLoader.DecodeAsync(file, maxLongEdge).GetAwaiter().GetResult();
-            if (decoded == null) return null;
-            cancellationToken.ThrowIfCancellationRequested();
-            int orientation = ReadOrientation(file);
-            using var converted = ColorEngine.ToDisplayEncoding(decoded, PixelEncoding.Rgba8, target);
-            return AndroidBitmapPixels.CopyWithGeometry(converted, target,
-                Math.Max(converted.Width, decoded.SourceWidth), Math.Max(converted.Height, decoded.SourceHeight), orientation);
-        }
-        catch (System.OperationCanceledException) { throw; }
-        catch (Exception exception)
-        {
-            Console.WriteLine($"[Native] libheif 兜底解码失败（{file.Name}）：{exception.Message}");
-            return null;
-        }
     }
 
     /// <summary>用 BitmapFactory 解码（代理时按 2 的幂采样），并返回未旋转源尺寸。</summary>

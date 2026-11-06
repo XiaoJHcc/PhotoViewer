@@ -139,6 +139,22 @@ internal static class Reference
             4);
     }
 
+    /// <summary>BGRA8(源空间显式给出)→ 任意目标色彩空间的 8 位 BGRA;用于 8 位展示出口(如 Display P3)对照。</summary>
+    /// <param name="bgra">源 BGRA 字节。</param>
+    /// <param name="width">宽。</param>
+    /// <param name="height">高。</param>
+    /// <param name="sourceSpace">源色彩空间(与源字节的编码值一致)。</param>
+    /// <param name="targetSpace">目标色彩空间。</param>
+    /// <returns>目标色彩空间的 BGRA 字节。</returns>
+    public static byte[] ToBgra8WithSpace(byte[] bgra, int width, int height, SKColorSpace? sourceSpace, SKColorSpace targetSpace)
+        => ConvertPixels(
+            bgra,
+            width,
+            height,
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, sourceSpace ?? SKColorSpace.CreateSrgb()),
+            new SKImageInfo(width, height, SKColorType.Bgra8888, SKAlphaType.Opaque, targetSpace),
+            4);
+
     /// <summary>RGBA 半浮点(ICC 空间码值)→ sRGB8 BGRA。</summary>
     public static byte[] F16ToSrgb8WithIcc(byte[] f16, int width, int height, byte[]? icc)
     {

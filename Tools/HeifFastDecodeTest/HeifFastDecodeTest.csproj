@@ -25,6 +25,8 @@
     <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
     <!-- Windows 回落解码器：源文件链接，命名空间仍是 PhotoViewer.Windows.Core（internal 在本程序集内可见）。 -->
     <Compile Include="..\..\PhotoViewer.Windows\Core\LibHeifDecoder.cs" Link="Windows\LibHeifDecoder.cs" />
+    <!-- 共享 libheif 色彩解码：与 Windows/Android 生产端同一份源文件。 -->
+    <Compile Include="..\..\PhotoViewer.Heif\**\*.cs" LinkBase="Heif" />
   </ItemGroup>
 
   <ItemGroup>

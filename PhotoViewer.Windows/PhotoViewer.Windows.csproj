@@ -117,6 +117,16 @@
     </ItemGroup>
 
     <!--
+      共享 libheif 色彩解码：PhotoViewer.Heif/ 是纯源文件目录（不是独立程序集），
+      Windows 与 Android 显式链接同一份实现（ICC 优先、nclx、高位深 48 位平面、PQ/HLG 拒绝），
+      避免两端各自维护一套标签判定与码值归一化。Apple 头不链接（走 ImageIO）。
+      该目录只依赖 Core + LibHeifSharp + SkiaSharp，不得出现任何平台类型。
+    -->
+    <ItemGroup>
+        <Compile Include="..\PhotoViewer.Heif\**\*.cs"/>
+    </ItemGroup>
+
+    <!--
       WinAppSDK 1.8 的框架包自带一份 Windows ML 运行时(onnxruntime.dll 1.23.x + 自带 DirectML.dll),
       与本工程的 ONNX Runtime 1.24.4(DirectML EP)同名。两者版本与字节都不同:实测自包含发布时
       onnxruntime.dll 取到本工程版本、DirectML.dll 却取到框架版本,即结果靠运气 —— 一旦 managed
