@@ -219,31 +219,31 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         }
 
         DecodedImage? source = null;
-        int? orientation = null;
-        var extension = Path.GetExtension(path);
-        if (WindowsRawDecoder.IsAvailable(extension))
-        {
-            source = await Task.Run(() => WindowsRawDecoder.DecodeFull(path, cancellationToken, out orientation), cancellationToken)
-                .ConfigureAwait(false);
-        }
-
-        if (source is null)
-        {
-            source = await Task.Run(() => WindowsRawDecoder.DecodeEmbeddedFullPreview(path), cancellationToken)
-                .ConfigureAwait(false);
-            if (source is null) return null;
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-        if (orientation is null)
-        {
-            var exif = await ExifLoader.LoadExifDataAsync(file).ConfigureAwait(false);
-            orientation = exif?.OrientationValue ?? 1;
-        }
-
         DecodedImage? scaled = null;
+        int? orientation = null;
         try
         {
+            var extension = Path.GetExtension(path);
+            if (WindowsRawDecoder.IsAvailable(extension))
+            {
+                source = await Task.Run(() => WindowsRawDecoder.DecodeFull(path, cancellationToken, out orientation), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
+            if (source is null)
+            {
+                source = await Task.Run(() => WindowsRawDecoder.DecodeEmbeddedFullPreview(path), cancellationToken)
+                    .ConfigureAwait(false);
+                if (source is null) return null;
+            }
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (orientation is null)
+            {
+                var exif = await ExifLoader.LoadExifDataAsync(file).ConfigureAwait(false);
+                orientation = exif?.OrientationValue ?? 1;
+            }
+
             var effective = source;
             if (maxLongEdge is int target && Math.Max(source.Width, source.Height) > target)
             {
@@ -257,7 +257,7 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
         finally
         {
             scaled?.Release();
-            source.Release();
+            source?.Release();
         }
     }
 

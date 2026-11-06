@@ -21,12 +21,14 @@ namespace PhotoViewer.Windows.Native;
 /// 各取前 6 张(首张作预热,不计入统计)分段计时,写纯文本报告并退出。
 /// 与 <c>PhotoViewer.Apple/ApplePerfProbe.cs</c> 同结构、同报告口径,便于三端横向对比:
 /// 展示解码器直连(绕过缓存)的代理/全图解、libheif 子阶段、直方图、增强三步、分析用 sRGB8、
-/// 缩略图(560 / 120)与 DINO 推理,并记录私有字节峰值与托管堆。产品路径不调用。
+/// 缩略图(560 / 120)与 DINO 推理,并记录私有字节峰值与托管堆。
+/// ARW 分组另跑 <see cref="WindowsRawProbe"/>:同一份 WIC 单次开发下分解代理/Full 耗时,
+/// 并把两条路径的产物与产品解码器产物逐项比对。产品路径不调用。
 /// </summary>
 internal static class WindowsPerfProbe
 {
     /// <summary>代理长边目标:覆盖 2560×1440@150% 视口 2× 超采样之上与 4K 级视口。</summary>
-    private const int TargetLongEdgeA = 5120;
+    internal const int TargetLongEdgeA = 5120;
 
     /// <summary>第二个代理长边目标(接近 33MP 原生长边)。</summary>
     private const int TargetLongEdgeB = 7680;
@@ -137,6 +139,8 @@ internal static class WindowsPerfProbe
             measuredAny = true;
             Report(report, $"== {groupName} files={selected.Length} warmup={Path.GetFileName(selected[0])}");
             var collector = new Collector();
+            var rawCompared = 0;
+            var rawExact = 0;
             for (var index = 0; index < selected.Length; index++)
             {
                 var record = index > 0;
@@ -145,7 +149,12 @@ internal static class WindowsPerfProbe
                 var measureDino = !dinoMeasured && record;
                 try
                 {
-                    MeasureFile(collector, record, path, groupName == "HIF", measureDino);
+                    if (MeasureFile(report, collector, record, path, groupName == "HIF", groupName == "ARW", measureDino) is bool exact)
+                    {
+                        rawCompared++;
+                        if (exact) rawExact++;
+                    }
+
                     if (measureDino) dinoMeasured = true;
                 }
                 catch (Exception exception)
@@ -165,6 +174,12 @@ internal static class WindowsPerfProbe
             }
 
             collector.WriteTo(report);
+            if (rawCompared > 0)
+            {
+                Report(report, $"== {groupName} 对照:单次开发的代理/Full 与产品解码器产物完全一致 "
+                    + rawExact + "/" + rawCompared);
+            }
+
             WriteReport(reportPath, report);
         }
 
@@ -178,17 +193,22 @@ internal static class WindowsPerfProbe
     }
 
     /// <summary>单张图片的全部测量项;每项完成后立刻释放该产物,避免多项大图同时驻留。</summary>
+    /// <param name="report">报告缓冲(RAW 子探针写逐项对照行)。</param>
     /// <param name="collector">聚合器。</param>
     /// <param name="record">false = 预热张,执行但不计入统计。</param>
     /// <param name="path">图片路径。</param>
     /// <param name="isHeif">是否 HEIF(额外测 libheif 子阶段)。</param>
+    /// <param name="isRaw">是否 RAW(额外测单次开发下的代理/Full 对照)。</param>
     /// <param name="measureDino">是否测一次 DINO 推理(整个探针只测一次)。</param>
-    private static void MeasureFile(Collector collector, bool record, string path, bool isHeif, bool measureDino)
+    /// <returns>RAW 对照结论:true/false = 单次开发的两条路径是否与产品解码器产物完全一致;null = 未做 RAW 对照。</returns>
+    private static bool? MeasureFile(StringBuilder report, Collector collector, bool record, string path, bool isHeif,
+        bool isRaw, bool measureDino)
     {
         var file = new LocalFileRef(path);
         var decoder = new WindowsPresentationDecoder();
         DecodedImage? proxy = null;
         DecodedImage? full = null;
+        bool? rawExact = null;
         try
         {
             // 展示解码器直连(与壳注入的 WindowsPresentationDecoder 同一实现,绕过 BitmapLoader 缓存与准入)
@@ -222,6 +242,9 @@ internal static class WindowsPerfProbe
 
             if (isHeif) MeasureHeifStages(collector, record, file);
 
+            // RAW 受控对照:借产品解码器刚解出的代理/Full 作基准,另起一次 WIC 单次开发做分解测量。
+            if (isRaw) rawExact = WindowsRawProbe.Measure(collector, record, file, proxy, full, report);
+
             MeasureHistogram(collector, record, "histogramProxy5120", proxy);
             MeasureHistogram(collector, record, "histogramFull", full);
             MeasureEnhance(collector, record, "enhanceProxy5120", proxy);
@@ -246,6 +269,8 @@ internal static class WindowsPerfProbe
             proxy?.Dispose();
             full?.Dispose();
         }
+
+        return rawExact;
     }
 
     /// <summary>
@@ -395,7 +420,7 @@ internal static class WindowsPerfProbe
     private static void Report(StringBuilder report, string line) => report.AppendLine(line);
 
     /// <summary>字节数按 MB 保留一位小数。</summary>
-    private static string Megabytes(long bytes) => (bytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture) + "MB";
+    internal static string Megabytes(long bytes) => (bytes / 1048576.0).ToString("0.0", CultureInfo.InvariantCulture) + "MB";
 
     /// <summary>整份报告落盘;失败只记控制台,不打断测量。</summary>
     private static void WriteReport(string reportPath, StringBuilder report)
@@ -413,7 +438,7 @@ internal static class WindowsPerfProbe
     }
 
     /// <summary>逐项样本聚合:每项输出 n / median / min / max 与最后一次的输出尺寸与附加信息。</summary>
-    private sealed class Collector
+    internal sealed class Collector
     {
         private readonly List<string> _order = new();
         private readonly Dictionary<string, List<double>> _times = new();

@@ -42,7 +42,7 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 "./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-stress=D:/photos/A7C2" --pv-stress-count=100 --pv-stress-mode=ab
 ```
 
-探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`，`done` 行的 `extra` 含视口、代理目标与纹理上传耗时统计。
+探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；ARW 另测一次 WIC 开发下的代理/Full 派生时间、像素字节账，并与正常解码产物逐字节对照（会额外占用测试内存，不代表普通浏览的进程峰值）。压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`，`done` 行的 `extra` 含视口、代理目标与纹理上传耗时统计。
 
 ### Android
 
