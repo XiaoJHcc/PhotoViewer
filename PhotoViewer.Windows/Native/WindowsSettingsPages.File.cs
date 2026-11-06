@@ -68,10 +68,20 @@ internal sealed partial class WindowsSettingsPages
         });
 
         var delayValue = WindowsSettingsCard.ValueText($"{_settings.VisibleCenterDelayMs} ms");
-        var delaySlider = NewSlider(0, 1, 0.01, _settings.VisibleCenterDelayExp,
-            value => _settings.VisibleCenterDelayExp = value);
-        OnSetting(nameof(SettingsViewModel.VisibleCenterDelayMs),
-            () => delayValue.Text = $"{_settings.VisibleCenterDelayMs} ms");
+        var delaySlider = NewSlider(
+            PhotoViewer.Core.Settings.SettingsDocumentCodec.MinimumVisibleCenterDelayMs,
+            PhotoViewer.Core.Settings.SettingsDocumentCodec.MaximumVisibleCenterDelayMs,
+            PhotoViewer.Core.Settings.SettingsDocumentCodec.VisibleCenterDelayStepMs,
+            _settings.VisibleCenterDelayMs,
+            value => _settings.VisibleCenterDelayMs = (int)Math.Round(value));
+        memorySlider.IsThumbToolTipEnabled = false;
+        countSlider.IsThumbToolTipEnabled = false;
+        delaySlider.IsThumbToolTipEnabled = false;
+        OnSetting(nameof(SettingsViewModel.VisibleCenterDelayMs), () =>
+        {
+            delaySlider.Value = _settings.VisibleCenterDelayMs;
+            delayValue.Text = $"{_settings.VisibleCenterDelayMs} ms";
+        });
 
         var budgetHint = WindowsSettingsCard.Hint(
             _settings.PerformanceBudgetInfo, _settings.PerformanceBudgetInfoLevel);

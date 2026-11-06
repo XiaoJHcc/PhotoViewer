@@ -10,7 +10,7 @@ using PhotoViewer.ViewModels.Settings;
 namespace SettingsDefaultsCheck;
 
 /// <summary>
-/// 用假预算源核对设置默认值、schemaVersion 2 往返、draft 不写盘与保存失败不发布。
+/// 用假预算源核对设置默认值、schemaVersion 2 往返、滚动预载延时刻度归一、draft 不写盘与保存失败不发布。
 /// </summary>
 internal static class Program
 {
@@ -34,6 +34,7 @@ internal static class Program
         failed += await CheckFreshAsync(8192, 45);
         failed += await CheckSavedAsync();
         failed += await CheckZeroRoundtripAsync();
+        failed += await CheckVisibleCenterDelayAsync();
         failed += await CheckDraftDoesNotWriteAsync();
         failed += await CheckSimilarityPanelViewStateAsync();
         failed += await CheckLiveCommitAsync();
@@ -161,6 +162,108 @@ internal static class Program
         problems += Require(snapshot.PreloadForwardCount == 0, "VM 回填把显式 0 当作缺失（前预载）");
         problems += Require(snapshot.PreloadBackwardCount == 0, "VM 回填把显式 0 当作缺失（后预载）");
         problems += Require(snapshot.VisibleCenterPreloadCount == 0, "VM 回填把显式 0 当作缺失（列表滚动）");
+        return problems;
+    }
+
+    /// <summary>
+    /// 滚动预载延时：100–2000 ms、步进 100 ms，输入与文档读写都按最近刻度归一，正中间向上取整（SETTINGS-06）。
+    /// </summary>
+    private static async Task<int> CheckVisibleCenterDelayAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+
+        var problems = 0;
+        problems += Require(
+            SettingsDocumentCodec.MinimumVisibleCenterDelayMs == 100
+                && SettingsDocumentCodec.MaximumVisibleCenterDelayMs == 2000
+                && SettingsDocumentCodec.VisibleCenterDelayStepMs == 100,
+            $"范围常量不是 100–2000 / 100：{SettingsDocumentCodec.MinimumVisibleCenterDelayMs}–"
+                + $"{SettingsDocumentCodec.MaximumVisibleCenterDelayMs} / {SettingsDocumentCodec.VisibleCenterDelayStepMs}");
+        problems += Require(defaults.VisibleCenterDelayMs == 1000, $"默认延时不是 1000 ms：{defaults.VisibleCenterDelayMs}");
+
+        for (var ms = SettingsDocumentCodec.MinimumVisibleCenterDelayMs;
+             ms <= SettingsDocumentCodec.MaximumVisibleCenterDelayMs;
+             ms += SettingsDocumentCodec.VisibleCenterDelayStepMs)
+        {
+            var normalized = SettingsDocumentCodec.NormalizeVisibleCenterDelayMs(ms);
+            problems += Require(normalized == ms, $"刻度 {ms} ms 未原样保留：{normalized}");
+        }
+
+        (int Input, int Expected)[] samples =
+        [
+            (int.MinValue, 100), (-500, 100), (0, 100), (50, 100), (99, 100), (100, 100),
+            (149, 100), (150, 200), (151, 200), (249, 200), (250, 300),
+            (349, 300), (350, 400), (1049, 1000), (1050, 1100), (1150, 1200),
+            (1949, 1900), (1950, 2000), (1999, 2000), (2000, 2000),
+            (2001, 2000), (5000, 2000), (int.MaxValue, 2000),
+        ];
+        foreach (var (input, expected) in samples)
+        {
+            var normalized = SettingsDocumentCodec.NormalizeVisibleCenterDelayMs(input);
+            problems += Require(normalized == expected, $"归一 {input} ms 应为 {expected}，实际 {normalized}");
+        }
+
+        // 文档：写入按刻度归一，读取也把越界/非刻度值收回刻度。
+        var serializedInRange = SettingsDocumentCodec.Serialize(defaults with { VisibleCenterDelayMs = 340 });
+        var readInRange = SettingsDocumentCodec.Read(serializedInRange, defaults);
+        problems += Require(
+            readInRange.Settings?.VisibleCenterDelayMs == 300,
+            $"写入 340 ms 后回读不是 300：{readInRange.Settings?.VisibleCenterDelayMs}");
+
+        var serializedHalf = SettingsDocumentCodec.Serialize(defaults with { VisibleCenterDelayMs = 150 });
+        var readHalf = SettingsDocumentCodec.Read(serializedHalf, defaults);
+        problems += Require(
+            readHalf.Settings?.VisibleCenterDelayMs == 200,
+            $"写入 150 ms 后回读不是 200（正中间向上取整）：{readHalf.Settings?.VisibleCenterDelayMs}");
+
+        var serializedOver = SettingsDocumentCodec.Serialize(defaults with { VisibleCenterDelayMs = 5000 });
+        var readOver = SettingsDocumentCodec.Read(serializedOver, defaults);
+        problems += Require(
+            readOver.Settings?.VisibleCenterDelayMs == 2000,
+            $"写入 5000 ms 后回读不是 2000：{readOver.Settings?.VisibleCenterDelayMs}");
+
+        // 旧文档里可能存着旧范围（上限 5000）或任意非刻度值，读取时同样收回新刻度。
+        (int Stored, int Expected)[] documents = [(5000, 2000), (4321, 2000), (340, 300), (150, 200), (60, 100)];
+        foreach (var (stored, expected) in documents)
+        {
+            var document = $"{{\"schemaVersion\":{SettingsDocumentCodec.SchemaVersion},\"visibleCenterDelayMs\":{stored}}}";
+            var read = SettingsDocumentCodec.Read(document, defaults);
+            problems += Require(read.Status == SettingsDocumentReadStatus.Loaded, $"文档 {stored} ms 读取失败：{read.Status}");
+            problems += Require(
+                read.Settings?.VisibleCenterDelayMs == expected,
+                $"文档 {stored} ms 读取后应为 {expected}，实际 {read.Settings?.VisibleCenterDelayMs}");
+        }
+
+        // 工作副本：输入按同一口径归一，草稿也拿到归一后的值。
+        using var context = await DraftContext.CreateAsync(defaults);
+        var settings = context.Settings;
+        problems += Require(settings.VisibleCenterDelayMs == 1000, $"界面初值不是 1000 ms：{settings.VisibleCenterDelayMs}");
+
+        settings.VisibleCenterDelayMs = 1234;
+        problems += Require(settings.VisibleCenterDelayMs == 1200, $"输入 1234 未归一到 1200：{settings.VisibleCenterDelayMs}");
+        settings.VisibleCenterDelayMs = 1250;
+        problems += Require(settings.VisibleCenterDelayMs == 1300, $"输入 1250 未向上归一到 1300：{settings.VisibleCenterDelayMs}");
+        settings.VisibleCenterDelayMs = 50;
+        problems += Require(settings.VisibleCenterDelayMs == 100, $"输入 50 未夹到 100：{settings.VisibleCenterDelayMs}");
+        settings.VisibleCenterDelayMs = 2001;
+        problems += Require(settings.VisibleCenterDelayMs == 2000, $"输入 2001 未夹到 2000：{settings.VisibleCenterDelayMs}");
+        settings.VisibleCenterDelayMs = -300;
+        problems += Require(settings.VisibleCenterDelayMs == 100, $"输入 -300 未夹到 100：{settings.VisibleCenterDelayMs}");
+
+        settings.VisibleCenterDelayMs = 1500;
+        problems += Require(
+            settings.Session is not null && settings.Session.Draft.VisibleCenterDelayMs == 1500,
+            $"草稿未同步归一后的延时：{settings.Session?.Draft.VisibleCenterDelayMs}");
+        problems += Require(
+            settings.CreateSnapshot().VisibleCenterDelayMs == 1500,
+            $"快照未带上归一后的延时：{settings.CreateSnapshot().VisibleCenterDelayMs}");
+
+        Console.WriteLine(
+            $"滚动预载延时 -> {SettingsDocumentCodec.MinimumVisibleCenterDelayMs}–"
+            + $"{SettingsDocumentCodec.MaximumVisibleCenterDelayMs} ms / 步进 {SettingsDocumentCodec.VisibleCenterDelayStepMs} ms; "
+            + $"20 档刻度原样保留、{samples.Length} 个越界与半值取样、5 份文档、工作副本输入与草稿/快照同口径");
         return problems;
     }
 

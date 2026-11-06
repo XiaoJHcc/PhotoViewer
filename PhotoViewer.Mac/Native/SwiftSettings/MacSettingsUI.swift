@@ -833,8 +833,9 @@ struct FileSettingsPage: View {
                 SliderRow(
                     title: "滚动预载延时",
                     value: vm.bindIntAsDouble("file.preloadDelay") { vm.state.file.preloadDelay },
-                    range: 100...5000,
-                    valueText: "\(file.preloadDelay) ms")
+                    range: 100...2000,
+                    valueText: "\(file.preloadDelay) ms",
+                    step: 100)
             } header: {
                 Text("缓存与预加载")
             } footer: {
@@ -859,11 +860,13 @@ private enum SliderRowMetrics {
 
 /// 拉条行：标题 → 弹性拉条 → 固定最小宽右对齐数值，三者同行（SETTINGS-16）。
 /// 行宽不足时先压缩标题（尾部截断），拉条保有自己的最小宽度，不把拉条单独换到下一行。
+/// `step` 非空时拉条只落在从 `range` 下界起算的整数倍刻度上，拖动中的中间值不会离开刻度。
 struct SliderRow: View {
     let title: String
     let value: Binding<Double>
     let range: ClosedRange<Double>
     let valueText: String
+    var step: Double? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -871,9 +874,15 @@ struct SliderRow: View {
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(1)
-            Slider(value: value, in: range)
-                .tint(.blue)
-                .frame(minWidth: SliderRowMetrics.sliderMinWidth)
+            Group {
+                if let step {
+                    Slider(value: value, in: range, step: step)
+                } else {
+                    Slider(value: value, in: range)
+                }
+            }
+            .tint(.blue)
+            .frame(minWidth: SliderRowMetrics.sliderMinWidth)
             ValueText(text: valueText)
                 .frame(minWidth: SliderRowMetrics.valueMinWidth, alignment: .trailing)
                 .layoutPriority(1)

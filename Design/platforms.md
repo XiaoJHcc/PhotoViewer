@@ -296,7 +296,7 @@ Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本�
   - **SETTINGS-14@android**：JSON 存 `SharedPreferences`（`PhotoViewer.Android/Core/AndroidSettingsStorage.cs`），后台 `Commit` 并检查返回值；损坏/旧版备份为带时间戳的偏好键，最多 3 份。
   - 排序四端统一为拖拽（Android 用 `ItemTouchHelper` + 行尾把手，把手轻点给上移/下移菜单，`PhotoViewer.Android/Native/AndroidSettingsReorderList.cs`）。
 - **SETTINGS-12**：数值校验。范围夹取在各设置视图模型（如 `PhotoViewer/ViewModels/Settings/SettingsViewModel.BitmapCache.cs`、`SettingsViewModel.AI.cs`），非法输入不写入。
-- **SETTINGS-16**：Windows `WindowsSettingsCard.SliderRow`、macOS SwiftUI `SliderSettingRow`、iOS `CreateSliderRow` 均把标题、弹性拉条和右对齐当前值放在同一行；Android 保持 `SETTINGS-12@android` 的步进器差异。
+- **SETTINGS-16**：Windows `WindowsSettingsCard.SliderRow`、macOS SwiftUI `SliderSettingRow`、iOS `CreateSliderRow` 均把标题、弹性拉条和右对齐当前值放在同一行；Windows 标题占左半区，拉条与固定宽当前值列占右半区，跨行、跨分类拉条左右边缘一致；内部映射值不作拖动提示。Android 保持 `SETTINGS-12@android` 的步进器差异。
 - **SETTINGS-13**：键盘与显示缩放。桌面由系统控件提供 Tab/方向键语义；触屏由各端设置列表承担；动态字体与显示缩放随系统，四端均无专项断言。
 - **SETTINGS-14@web**：Web 参考壳只持久化影响主屏的设置项，列表项使用壳内 id，文档结构不与四端设置 JSON 互换。
 

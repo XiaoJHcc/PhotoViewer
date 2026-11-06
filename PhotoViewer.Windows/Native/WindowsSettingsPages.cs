@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Globalization;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Windows.Native;
@@ -93,6 +94,9 @@ internal sealed partial class WindowsSettingsPages
             Minimum = minimum,
             Maximum = maximum,
             StepFrequency = step,
+            SmallChange = step,
+            LargeChange = step * 5,
+            SnapsTo = SliderSnapsTo.StepValues,
             Value = Math.Clamp(value, minimum, maximum),
             VerticalAlignment = VerticalAlignment.Center,
         };

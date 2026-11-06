@@ -501,19 +501,11 @@ public partial class SettingsViewModel
     public int VisibleCenterDelayMs
     {
         get => _visibleCenterDelayMs;
-        set
-        {
-            this.RaiseAndSetIfChanged(ref _visibleCenterDelayMs, Math.Clamp(value, 100, 5000));
-            this.RaisePropertyChanged(nameof(VisibleCenterDelayExp));
-        }
+        set => this.RaiseAndSetIfChanged(
+            ref _visibleCenterDelayMs,
+            Core.Settings.SettingsDocumentCodec.NormalizeVisibleCenterDelayMs(value));
     }
-    // 0~1：100~5000 的指数映射
-    public double VisibleCenterDelayExp
-    {
-        get => ToExp(VisibleCenterDelayMs, 100, 5000);
-        set => VisibleCenterDelayMs = FromExp(value, 100, 5000);
-    }
-    
+
     private int _nativePreloadParallelism = 8;
     public int NativePreloadParallelism
     {

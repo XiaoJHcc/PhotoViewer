@@ -13,17 +13,25 @@ internal static class SettingsChecks
             BitmapCacheMaxCount = int.MaxValue,
             BitmapCacheMaxMemory = int.MaxValue,
             PreloadForwardCount = int.MaxValue,
+            VisibleCenterDelayMs = int.MaxValue,
         });
         c.Equal("缓存张数上界归一", 400, oversized.BitmapCacheMaxCount);
         c.Equal("缓存内存上界归一", 32768, oversized.BitmapCacheMaxMemory);
         c.Equal("预载按归一后缓存张数限制", 133, oversized.PreloadForwardCount);
+        c.Equal("滚动预载延时上界归一", SettingsDocumentCodec.MaximumVisibleCenterDelayMs, oversized.VisibleCenterDelayMs);
+        var offGridDelay = SettingsDocumentCodec.Normalize(new AppSettings { VisibleCenterDelayMs = 1549 });
+        c.Equal("滚动预载延时按最近刻度归一", 1500, offGridDelay.VisibleCenterDelayMs);
+        var halfDelay = SettingsDocumentCodec.Normalize(new AppSettings { VisibleCenterDelayMs = 1550 });
+        c.Equal("滚动预载延时正中间向上取整", 1600, halfDelay.VisibleCenterDelayMs);
         var undersized = SettingsDocumentCodec.Normalize(new AppSettings
         {
             BitmapCacheMaxCount = int.MinValue,
             BitmapCacheMaxMemory = int.MinValue,
+            VisibleCenterDelayMs = int.MinValue,
         });
         c.Equal("缓存张数下界归一", 1, undersized.BitmapCacheMaxCount);
         c.Equal("缓存内存下界归一", 512, undersized.BitmapCacheMaxMemory);
+        c.Equal("滚动预载延时下界归一", SettingsDocumentCodec.MinimumVisibleCenterDelayMs, undersized.VisibleCenterDelayMs);
         var path = Path.Combine(root, "settings.json");
         for (var index = 0; index < 5; index++)
         {

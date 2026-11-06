@@ -444,7 +444,11 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         cacheRows.Add(StepperRow("列表滚动预载数量", null, () => Settings.VisibleCenterPreloadCount,
             value => Settings.VisibleCenterPreloadCount = value, 0, () => Settings.PreloadMaximum, 1, value => $"{value} 张"));
         cacheRows.Add(StepperRow("滚动预载延时", null, () => Settings.VisibleCenterDelayMs,
-            value => Settings.VisibleCenterDelayMs = value, 100, () => 5000, 100, value => $"{value} ms"));
+            value => Settings.VisibleCenterDelayMs = value,
+            SettingsDocumentCodec.MinimumVisibleCenterDelayMs,
+            () => SettingsDocumentCodec.MaximumVisibleCenterDelayMs,
+            SettingsDocumentCodec.VisibleCenterDelayStepMs,
+            value => $"{value} ms"));
         Add(_content, Section("缓存与预加载", cacheRows.ToArray()));
         Add(_content, performance);
         Add(_content, cache);

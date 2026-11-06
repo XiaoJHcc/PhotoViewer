@@ -8,6 +8,7 @@ using CommunityToolkit.WinUI.Controls;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation.Peers;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using PhotoViewer.Core.Input;
@@ -115,7 +116,9 @@ internal static class WindowsSettingsAcceptance
                 "文件页仍显示“同名文件”分组小标题");
             checks.Add("PASS SETTINGS-06 file page: same-name toggle is the first row with no group header");
 
-            // SETTINGS-16：标题 → 弹性拉条 → 固定最小宽右对齐数值同行，拉条不被挤到下一行。
+            await CheckSliderRowsAsync(window, checks);
+
+            // SETTINGS-16：标题、右半区拉条与固定宽数值保持同行。
             var memoryTitle = FindDescendants<TextBlock>(window.Pages[0])
                 .FirstOrDefault(text => text.Text == "缓存内存上限")
                 ?? throw new InvalidOperationException("文件页没有“缓存内存上限”行");
@@ -439,6 +442,81 @@ internal static class WindowsSettingsAcceptance
             File.WriteAllText(
                 Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "settings-checks.json"),
                 JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    private static async Task CheckSliderRowsAsync(WindowsSettingsWindow window, List<string> checks)
+    {
+        var originalSize = window.Window.AppWindow.Size;
+        var originalDelay = window.Settings.VisibleCenterDelayMs;
+        try
+        {
+            foreach (var width in new[] { WindowsLayout.SettingsWindowWidth, WindowsLayout.SettingsWindowMinWidth })
+            {
+                var scale = window.Root.XamlRoot!.RasterizationScale;
+                window.Window.AppWindow.Resize(new global::Windows.Graphics.SizeInt32(
+                    (int)Math.Round(width * scale), originalSize.Height));
+                await Task.Delay(100);
+                double? left = null;
+                double? right = null;
+                var count = 0;
+                foreach (var page in new[] { 0, 4 })
+                {
+                    window.Navigation.SelectedItem = window.Navigation.MenuItems[page];
+                    await Task.Delay(60);
+                    window.Root.UpdateLayout();
+                    foreach (var slider in FindDescendants<Slider>(window.Pages[page]))
+                    {
+                        var controls = (FrameworkElement)VisualTreeHelper.GetParent(slider);
+                        var row = (FrameworkElement)VisualTreeHelper.GetParent(controls);
+                        var bounds = BoundsOf(slider, window.Root);
+                        var rowBounds = BoundsOf(row, window.Root);
+                        Require(bounds.Left >= (rowBounds.Left + rowBounds.Right) / 2,
+                            $"SETTINGS-16 拉条未处于右半区: {bounds} row={rowBounds}");
+                        Require(bounds.Right > bounds.Left && rowBounds.Right <= window.Root.ActualWidth,
+                            $"SETTINGS-16 拉条溢出或没有可用宽度: {bounds} row={rowBounds} window={window.Root.ActualWidth}");
+                        if (left.HasValue)
+                        {
+                            Require(Math.Abs(bounds.Left - left.Value) < .5 && Math.Abs(bounds.Right - right!.Value) < .5,
+                                $"SETTINGS-16 拉条边缘未对齐: {bounds} expected={left}..{right}");
+                        }
+                        left = bounds.Left;
+                        right = bounds.Right;
+                        var value = FindDescendants<TextBlock>(controls).Single();
+                        Require(Math.Abs(value.Width - WindowsLayout.SettingsSliderValueWidth) < .5,
+                            "SETTINGS-16 数值列宽度未固定");
+                        if (page == 0)
+                        {
+                            Require(!slider.IsThumbToolTipEnabled, "SETTINGS-16 缓存拉条仍显示内部映射气泡");
+                            if (slider.Minimum == SettingsDocumentCodec.MinimumVisibleCenterDelayMs)
+                            {
+                                Require(slider.Maximum == 2000 && slider.StepFrequency == 100 && slider.SmallChange == 100
+                                    && slider.SnapsTo == SliderSnapsTo.StepValues,
+                                    "SETTINGS-06 延时拉条范围/步进错误");
+                                for (var delay = 100; delay <= 2000; delay += 100)
+                                {
+                                    slider.Value = delay;
+                                    Require(window.Settings.VisibleCenterDelayMs == delay && value.Text == $"{delay} ms",
+                                        $"SETTINGS-06 延时挡位未同步: {delay}, actual={window.Settings.VisibleCenterDelayMs}/{value.Text}");
+                                }
+                                Require(Math.Abs(BoundsOf(slider, window.Root).Right - bounds.Right) < .5,
+                                    "SETTINGS-16 数值变化导致拉条边缘移动");
+                            }
+                        }
+                        count++;
+                    }
+                }
+                Require(count == 4, $"SETTINGS-16 拉条数量不是4: {count}");
+                checks.Add($"PASS SETTINGS-16 aligned right-half sliders: width={width:0}, all {count} sliders={left:0.0}..{right:0.0}; fixed value column; cache tooltips disabled; SETTINGS-06 20 delay stops 100..2000 ms");
+            }
+        }
+        finally
+        {
+            window.Settings.VisibleCenterDelayMs = originalDelay;
+            window.Window.AppWindow.Resize(originalSize);
+            window.Navigation.SelectedItem = window.Navigation.MenuItems[0];
+            await Task.Delay(100);
+            window.Root.UpdateLayout();
         }
     }
 

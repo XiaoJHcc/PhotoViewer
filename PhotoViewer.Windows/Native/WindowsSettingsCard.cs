@@ -15,9 +15,6 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal static class WindowsSettingsCard
 {
-    /// <summary>拉条行内滑块的最小宽度(行宽不足时优先压缩标题,三者仍属同一行)。</summary>
-    private const double SliderMinimumWidth = 120;
-
     /// <summary>拉条行标题与滑块之间的间距。</summary>
     private const double SliderTitleGap = 12;
 
@@ -138,38 +135,39 @@ internal static class WindowsSettingsCard
         valueText.Foreground = ThemeBrush("TextFillColorSecondaryBrush");
         valueText.VerticalAlignment = VerticalAlignment.Center;
         valueText.TextAlignment = TextAlignment.Right;
-        // 固定最小宽 + 文本右对齐(拉伸占满本列),数值贴齐行尾;不靠子元素对齐去猜模板内边距。
         valueText.HorizontalAlignment = HorizontalAlignment.Stretch;
+        valueText.Width = WindowsLayout.SettingsSliderValueWidth;
         valueText.MinWidth = WindowsLayout.SettingsSliderValueWidth;
         valueText.Margin = new Thickness(SliderValueGap, 0, 0, 0);
 
         var title = RowTitle(header);
         title.VerticalAlignment = VerticalAlignment.Center;
-        title.Margin = new Thickness(0, 0, SliderTitleGap, 0);
 
         slider.HorizontalAlignment = HorizontalAlignment.Stretch;
         slider.VerticalAlignment = VerticalAlignment.Center;
         slider.MinWidth = 0;
+        AutomationProperties.SetName(slider, header);
 
-        var content = new Grid();
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        content.ColumnDefinitions.Add(new ColumnDefinition
-        {
-            Width = new GridLength(1, GridUnitType.Star),
-            MinWidth = SliderMinimumWidth,
-        });
-        content.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        var controls = new Grid();
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        controls.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        controls.Children.Add(slider);
+        Grid.SetColumn(valueText, 1);
+        controls.Children.Add(valueText);
+
+        var content = new Grid { ColumnSpacing = SliderTitleGap };
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        content.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         content.Children.Add(title);
-        Grid.SetColumn(slider, 1);
-        content.Children.Add(slider);
-        Grid.SetColumn(valueText, 2);
-        content.Children.Add(valueText);
-
+        Grid.SetColumn(controls, 1);
+        content.Children.Add(controls);
+        var stretch = new WindowsSettingsStretchPanel();
+        stretch.Children.Add(content);
         return new SettingsCard
         {
             ContentAlignment = ContentAlignment.Vertical,
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
-            Content = content,
+            Content = stretch,
         };
     }
 
@@ -366,4 +364,31 @@ internal static class WindowsSettingsCard
     /// <param name="key">样式键</param>
     /// <returns>样式</returns>
     private static Style Style(string key) => Resource<Style>(key);
+}
+
+// SETTINGS-16：卡片窄宽度模板按内容期望宽度排列；在量测阶段申请可用宽度，避免星列收缩。
+internal sealed class WindowsSettingsStretchPanel : Panel
+{
+    protected override global::Windows.Foundation.Size MeasureOverride(global::Windows.Foundation.Size availableSize)
+    {
+        var desiredHeight = 0.0;
+        var desiredWidth = 0.0;
+        foreach (var child in Children)
+        {
+            child.Measure(availableSize);
+            desiredWidth = Math.Max(desiredWidth, child.DesiredSize.Width);
+            desiredHeight = Math.Max(desiredHeight, child.DesiredSize.Height);
+        }
+        return new global::Windows.Foundation.Size(
+            double.IsFinite(availableSize.Width) ? availableSize.Width : desiredWidth, desiredHeight);
+    }
+
+    protected override global::Windows.Foundation.Size ArrangeOverride(global::Windows.Foundation.Size finalSize)
+    {
+        foreach (var child in Children)
+        {
+            child.Arrange(new global::Windows.Foundation.Rect(0, 0, finalSize.Width, finalSize.Height));
+        }
+        return finalSize;
+    }
 }

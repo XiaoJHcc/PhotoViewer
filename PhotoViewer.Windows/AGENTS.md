@@ -75,7 +75,7 @@ Windows 头工程使用 WinUI 3、D3D11 与 DXGI，负责原生界面及平台�
 - 主图菜单每一项都有语义前置图标（`MenuFlyoutItem.Icon` + `FontIcon`，字形表在 `WindowsIcons`）：打开文件=文档、打开文件夹=文件夹、胶片栏=照片、分析栏=方格网、控制栏=滑杆、雾天增强=对比度、工具=扳手、设置=齿轮。WinUI 1.8 的 `ToggleMenuFlyoutItem` 派生自 `MenuFlyoutItem`，沿用同一 `Icon` 与模板的 `CheckedWithIcon`/`UncheckedWithIcon` 状态，勾选项保留系统勾选列；不要删勾选、不要把图标拼进 `Text`。
 - 控制栏按钮的悬停提示与读屏名称同源，统一走共享 `CommandTooltipText.Format`（`名称（主 / 次）`，空槽省略、主次相同只出现一次），键名仍由 `WindowsInput.FormatGesture` 给；未设置的槽传 `null`，不要出现"未设置"或用点号分隔命令名与绑定。
 - 全屏使用 `OverlappedPresenter` 的边框与最大化组合；独立窗口在 `Activate()` 前按目标 DPI 定尺寸，选择器绑定该窗口句柄。
-- 设置/工具共用 `WindowsWindowChrome` 和 `WindowsSettingsCard`。卡片使用 WinUI 主题资源；整块内容使用垂直对齐和 Stretch，需要撑满的控件放在 `Content`。
+- 设置/工具共用 `WindowsWindowChrome` 和 `WindowsSettingsCard`。卡片使用 WinUI 主题资源；整块内容使用垂直对齐和 Stretch，需要撑满的控件放在 `Content`。设置拉条行按 SETTINGS-16 分成等宽左右两区，左区为标题，右区为拉条与固定宽数值列，跨分类的拉条边缘一致；缓存相关拉条不显示内部映射气泡，滚动预载延时直接使用共享模型的毫秒范围与步进。
 - `NavigationView` 内容岛通过主题键去掉额外边框/圆角；不要使用不存在的 `PaneBackground` 属性。
 - 可排序列表直接提供 `UIElement` 行，重排后回写共享集合；不要在 `ContainerContentChanging` 中替换行内容。
 - `PhotoViewer.Windows` 命名空间会遮蔽 `Windows.*`；使用文件级 using 或 `global::Windows` 消歧。`DispatcherQueueTimer` 也可能需要完整限定名。

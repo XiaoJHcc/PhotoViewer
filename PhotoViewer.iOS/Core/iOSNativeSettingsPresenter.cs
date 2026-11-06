@@ -588,6 +588,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
     /// <param name="setter">写入值的方法。</param>
     /// <param name="minimum">最小值。</param>
     /// <param name="maximum">最大值。</param>
+    /// <param name="step">步进；> 0 时取值只落在从最小值起算的整数倍刻度上（滑条与文本同步取整）。</param>
     /// <param name="valueFormatter">数值格式化器。</param>
     /// <param name="onValueChanged">值变化后的额外回调。</param>
     /// <param name="onEditingCompleted">结束拖动后的额外回调。</param>
@@ -599,6 +600,7 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         Action<int> setter,
         int minimum,
         int maximum,
+        int step = 0,
         Func<int, string>? valueFormatter = null,
         Action? onValueChanged = null,
         Action? onEditingCompleted = null)
@@ -643,17 +645,25 @@ internal abstract class iOSNativeSettingsFormViewController : UIViewController
         valueMinimum.Priority = (float)UILayoutPriority.DefaultHigh;
         NSLayoutConstraint.ActivateConstraints([sliderMinimum, valueMinimum]);
 
+        int Snap(double raw)
+        {
+            var value = Math.Clamp((int)Math.Round(raw), minimum, maximum);
+            if (step <= 0) return value;
+
+            var steps = (int)Math.Round((value - minimum) / (double)step, MidpointRounding.AwayFromZero);
+            return Math.Clamp(minimum + (steps * step), minimum, maximum);
+        }
+
         void Refresh()
         {
-            var value = Math.Clamp(getter(), minimum, maximum);
+            var value = Snap(getter());
             slider.Value = value;
             valueLabel.Text = valueFormatter?.Invoke(value) ?? value.ToString(CultureInfo.InvariantCulture);
         }
 
         slider.ValueChanged += (_, _) =>
         {
-            var newValue = Math.Clamp((int)Math.Round(slider.Value), minimum, maximum);
-            setter(newValue);
+            setter(Snap(slider.Value));
             Refresh();
             onValueChanged?.Invoke();
         };
@@ -1151,8 +1161,9 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
             null,
             () => Settings.VisibleCenterDelayMs,
             value => Settings.VisibleCenterDelayMs = value,
-            100,
-            5000,
+            SettingsDocumentCodec.MinimumVisibleCenterDelayMs,
+            SettingsDocumentCodec.MaximumVisibleCenterDelayMs,
+            SettingsDocumentCodec.VisibleCenterDelayStepMs,
             valueFormatter: value => $"{value} ms"));
 
         contentStack.AddArrangedSubview(CreateSection("缓存与预加载", null, cacheRows.ToArray()));

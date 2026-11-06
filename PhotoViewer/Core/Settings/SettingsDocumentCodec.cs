@@ -41,8 +41,15 @@ public static class SettingsDocumentCodec
     public const int MaximumCacheCount = 400;
     public const int MinimumCacheMemoryMB = 512;
     public const int MaximumCacheMemoryMB = 32768;
-    private const int MinimumVisibleCenterDelayMs = 100;
-    private const int MaximumVisibleCenterDelayMs = 5000;
+    /// <summary>滚动预载延时下限（ms）。</summary>
+    public const int MinimumVisibleCenterDelayMs = 100;
+
+    /// <summary>滚动预载延时上限（ms）。</summary>
+    public const int MaximumVisibleCenterDelayMs = 2000;
+
+    /// <summary>滚动预载延时步进（ms）；取值只能是它从下限起算的整数倍。</summary>
+    public const int VisibleCenterDelayStepMs = 100;
+
     private const int MinimumParallelism = 1;
     private const int MaximumParallelism = 32;
 
@@ -123,10 +130,7 @@ public static class SettingsDocumentCodec
             PreloadForwardCount = Math.Clamp(settings.PreloadForwardCount, 0, preloadMaximum),
             PreloadBackwardCount = Math.Clamp(settings.PreloadBackwardCount, 0, preloadMaximum),
             VisibleCenterPreloadCount = Math.Clamp(settings.VisibleCenterPreloadCount, 0, preloadMaximum),
-            VisibleCenterDelayMs = Math.Clamp(
-                settings.VisibleCenterDelayMs,
-                MinimumVisibleCenterDelayMs,
-                MaximumVisibleCenterDelayMs),
+            VisibleCenterDelayMs = NormalizeVisibleCenterDelayMs(settings.VisibleCenterDelayMs),
             NativePreloadParallelism = Math.Clamp(
                 settings.NativePreloadParallelism,
                 MinimumParallelism,
@@ -136,6 +140,17 @@ public static class SettingsDocumentCodec
                 MinimumParallelism,
                 MaximumParallelism),
         };
+    }
+
+    /// <summary>
+    /// 把滚动预载延时归一：先夹取到 100–2000 ms，再取最近刻度（100 ms 的整数倍），正中间向上取整。
+    /// 输入与文档读写共用这一口径。
+    /// </summary>
+    public static int NormalizeVisibleCenterDelayMs(int value)
+    {
+        var clamped = Math.Clamp(value, MinimumVisibleCenterDelayMs, MaximumVisibleCenterDelayMs);
+        var steps = (clamped - MinimumVisibleCenterDelayMs + (VisibleCenterDelayStepMs / 2)) / VisibleCenterDelayStepMs;
+        return MinimumVisibleCenterDelayMs + (steps * VisibleCenterDelayStepMs);
     }
 
     private static AppSettings Map(SettingsDocumentDto document, AppSettings defaults)
