@@ -100,6 +100,24 @@ internal static partial class AndroidNativeChecks
     private static Task WaitForScreenAsync()
         => WaitAsync(() => _root != null && _root.Width > 0 && _root.Height > 0, "主屏布局");
 
+    // ── 上传统计 ──────────────────────────────────────────────────────────────
+
+    /// <summary>提交墙钟是否覆盖互不重叠的分段与旧 GL 合计（浮点留极小余量）。</summary>
+    private static bool SubmitCoversSegments(AndroidUploadStats.Entry entry)
+        => entry.SubmitMs + 1e-6 >= entry.SegmentsMs && entry.SubmitMs + 1e-6 >= entry.TotalMs;
+
+    /// <summary>一条上传统计的可读摘要；null 表示没有样本。</summary>
+    private static string DescribeUpload(AndroidUploadStats.Entry? entry)
+    {
+        if (entry is not { } value) return "无样本";
+        return $"cacheHit={value.CacheHit} reused={value.ReusedTexture} converted={value.Converted}"
+            + $" submit={value.SubmitMs:F2} segments={value.SegmentsMs:F2} gl={value.TotalMs:F2}"
+            + $" makeCurrent={value.MakeCurrentMs:F2} convert={value.ConvertMs:F2} create={value.CreateMs:F2}"
+            + $" alloc={value.AllocMs:F2} update={value.UpdateMs:F2} mips={value.MipsMs:F2}"
+            + $" finish={value.FinishMs:F2} size={value.Width}x{value.Height}"
+            + $" payload={(long)value.Width * value.Height * 4}";
+    }
+
     // ── 夹具 ──────────────────────────────────────────────────────────────────
 
     /// <summary>方向素材：<c>files/pv-check-orientation/orientation-1..8.jpg</c>（320×200，各带 EXIF 方向码）。</summary>

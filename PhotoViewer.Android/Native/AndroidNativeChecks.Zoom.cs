@@ -51,6 +51,7 @@ internal static partial class AndroidNativeChecks
             finally { photo.SetImage(null, int.MinValue + 51); }
             return Task.CompletedTask;
         });
+        await RunStepAsync("同尺寸上传与空纹理复用", CheckReusedTextureAsync);
         await RunStepAsync("26MP HIF", async () =>
         {
             string[] folders =
@@ -130,6 +131,95 @@ internal static partial class AndroidNativeChecks
             ticking = false;
             photo.FitToView();
         }
+    }
+
+    /// <summary>同尺寸不同实例连续上传：核对空纹理复用命中点、尺寸不符与 EGL 重建，并按 GPU 回读核对像素。</summary>
+    private static async Task CheckReusedTextureAsync()
+    {
+        var photo = _root!.Photo;
+        var session = _session!;
+        await WaitAsync(() => photo.SurfaceReadyForChecks, "主图 EGL 表面就绪", 20000);
+        var renderer = PhotoRendererForChecks(photo);
+        const int size = 256;
+        bool surfaceP3 = photo.SurfaceIsP3;
+        var images = new DecodedImage?[6];
+        var entries = new AndroidUploadStats.Entry?[6];
+        int generation = int.MinValue + 320;
+        try
+        {
+            photo.SetImage(null, ++generation);
+            photo.RecreateSurfaceForChecks(surfaceP3);
+            renderer = PhotoRendererForChecks(photo);
+
+            bool spareBeforeFourth = false;
+            AndroidUploadStats.Reset();
+            for (int index = 0; index < 4; index++)
+            {
+                if (index == 3) spareBeforeFourth = renderer.HasSpareTextureForChecks;
+                images[index] = CreateSolidColorImage(size, size, index);
+                photo.SetImage(images[index], ++generation);
+                entries[index] = AndroidUploadStats.LatestForChecks;
+            }
+            bool freshFirstFour = entries[0] is { ReusedTexture: false, CacheHit: false }
+                && entries[1] is { ReusedTexture: false, CacheHit: false }
+                && entries[2] is { ReusedTexture: false, CacheHit: false }
+                && entries[3] is { ReusedTexture: false, CacheHit: false };
+            Check("上传复用 前四次同尺寸均新建纹理", freshFirstFour && !spareBeforeFourth
+                && renderer.HasSpareTextureForChecks && renderer.RecentTextureCountForChecks == 2,
+                $"spareBeforeFourth={spareBeforeFourth} spare={renderer.HasSpareTextureForChecks}"
+                + $" recent={renderer.RecentTextureCountForChecks} 第四张={DescribeUpload(entries[3])}");
+
+            images[4] = CreateSolidColorImage(320, 240, 4);
+            photo.SetImage(images[4], ++generation);
+            entries[4] = AndroidUploadStats.LatestForChecks;
+            Check("上传复用 尺寸变化不命中空纹理",
+                entries[4] is { ReusedTexture: false, CacheHit: false } && renderer.HasSpareTextureForChecks,
+                DescribeUpload(entries[4]));
+
+            images[5] = CreateSolidColorImage(size, size, 5);
+            photo.SetImage(images[5], ++generation);
+            entries[5] = AndroidUploadStats.LatestForChecks;
+            var pixels = renderer.CheckTexturePixelsForChecks(images[5]!);
+            Check("上传复用 第五张同尺寸取到空纹理",
+                entries[5] is { ReusedTexture: true, CacheHit: false, Converted: false, CreateMs: 0 },
+                DescribeUpload(entries[5]));
+            Check("上传复用 复用纹理装载新一帧像素",
+                pixels.Matches && renderer.TextureWidth == size && renderer.TextureHeight == size,
+                $"{pixels.Details} texture={renderer.TextureWidth}x{renderer.TextureHeight}");
+
+            AndroidUploadStats.Reset();
+            photo.RecreateSurfaceForChecks(surfaceP3);
+            var rebuilt = AndroidUploadStats.LatestForChecks;
+            Check("上传复用 EGL 重建后不误报命中",
+                rebuilt is { ReusedTexture: false, CacheHit: false, Converted: false },
+                DescribeUpload(rebuilt));
+        }
+        finally
+        {
+            photo.SetImage(null, generation + 10);
+            foreach (var image in images) image?.Dispose();
+            photo.RecreateSurfaceForChecks(surfaceP3);
+            photo.SetImage(session.Image, session.Generation);
+            photo.FitToView();
+        }
+    }
+
+    /// <summary>纯色合成图（RGBA8，标签取当前表面色域）。</summary>
+    private static DecodedImage CreateSolidColorImage(int width, int height, int index)
+    {
+        int stride = checked(width * 4);
+        var pixels = DecodedImage.RentPixels(checked(stride * height));
+        byte red = (byte)(40 + index * 35), green = (byte)(200 - index * 25), blue = (byte)(80 + index * 20);
+        for (int offset = 0; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = red;
+            pixels[offset + 1] = green;
+            pixels[offset + 2] = blue;
+            pixels[offset + 3] = 255;
+        }
+        var colorSpace = _root!.Photo.SurfaceIsP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
+        return DecodedImage.CreatePooled(pixels, width, height, stride, PixelEncoding.Rgba8,
+            colorSpace, width, height);
     }
 
     private static async Task CheckVertexBufferReuseAsync()
@@ -415,6 +505,10 @@ internal static partial class AndroidNativeChecks
             Check($"{label} Full上传无秒级主线程停顿", upload.HasValue && uploadMs < 250,
                 $"uploadMs={uploadMs:F1} create={upload?.CreateMs:F1} alloc={upload?.AllocMs:F1}"
                 + $" copyUpload={upload?.UpdateMs:F1} copy={upload?.CopyMs:F1} mips={upload?.MipsMs:F1} arrayBytes={full.ByteCount}");
+            Check($"{label} Full上传提交墙钟覆盖分段", upload is { } submitted && SubmitCoversSegments(submitted),
+                DescribeUpload(upload));
+            Check($"{label} Full上传同表面源零转换", upload is { Converted: false },
+                DescribeUpload(upload));
             Check($"{label} 紧凑像素缓冲零中间拷贝", upload is { CopyBytes: 0, Chunks: 1 },
                 $"copied={upload?.CopyBytes} calls={upload?.Chunks} payload={(long)full.Width * full.Height * 4}");
             Check($"{label} 动画无250ms以上帧间断", gapMs < 250,
@@ -424,7 +518,8 @@ internal static partial class AndroidNativeChecks
             AndroidUploadStats.Reset();
             photo.SetImage(proxy, imageGeneration);
             photo.SetImage(full, imageGeneration);
-            Check($"{label} 代理Full回切命中纹理缓存", AndroidUploadStats.LatestForChecks is { TotalMs: 0 },
+            Check($"{label} 代理Full回切命中纹理缓存",
+                AndroidUploadStats.LatestForChecks is { TotalMs: 0, CacheHit: true, SubmitMs: >= 0 },
                 AndroidUploadStats.Summary());
         }
         finally

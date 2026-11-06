@@ -217,6 +217,26 @@ internal static partial class AndroidNativeChecks
         Check("color P3 源上传后源字节与标签未改",
             ColorBytesEqual(sourceBefore, source.Pixels) && source.ColorSpace == ImageColorSpace.DisplayP3 && source.Orientation == orientationBefore,
             $"标签={source.ColorSpace} 方向={source.Orientation} 字节一致={ColorBytesEqual(sourceBefore, source.Pixels)}");
+
+        AndroidUploadStats.Reset();
+        using var statsP3 = CreateColorQuadImage(ImageColorSpace.DisplayP3) ?? throw new InvalidOperationException("合成色块图创建失败");
+        await ShowColorSyntheticAsync(statsP3);
+        var convertedUpload = AndroidUploadStats.LatestForChecks;
+        Check("color P3→sRGB 上传记录真实转换",
+            convertedUpload is { Converted: true, CacheHit: false, ConvertMs: >= 0 }, DescribeUpload(convertedUpload));
+        Check("color P3→sRGB 提交墙钟覆盖分段",
+            convertedUpload is { } uploaded && SubmitCoversSegments(uploaded), DescribeUpload(convertedUpload));
+
+        using var statsSrgb = CreateColorQuadImage(ImageColorSpace.Srgb) ?? throw new InvalidOperationException("合成色块图创建失败");
+        await ShowColorSyntheticAsync(statsSrgb);
+        var directUpload = AndroidUploadStats.LatestForChecks;
+        Check("color sRGB 源上传 sRGB 表面零转换",
+            directUpload is { Converted: false, ConvertMs: 0, CacheHit: false }, DescribeUpload(directUpload));
+
+        await ShowColorSyntheticAsync(statsP3);
+        var hitUpload = AndroidUploadStats.LatestForChecks;
+        Check("color 跨色域源回切命中缓存不重转",
+            hitUpload is { CacheHit: true, TotalMs: 0, Converted: false, SubmitMs: >= 0 }, DescribeUpload(hitUpload));
     }
 
     /// <summary>反过来：sRGB 源在 P3 表面上必须转换到 P3，不能把 sRGB 码值直接喂给 P3 表面。</summary>
@@ -579,9 +599,50 @@ internal static partial class AndroidNativeChecks
         Check("color 夹具 大图全分辨率几何",
             full != null && full.Width == full.SourceWidth && full.Height == full.SourceHeight,
             full == null ? "解码返回 null" : $"{full.Width}x{full.Height} 源={full.SourceWidth}x{full.SourceHeight} 标签={full.ColorSpace}");
-        if (full != null)
-            Check("color 夹具 大图全分辨率长边", Math.Max(full.Width, full.Height) >= 3000,
-                $"长边={Math.Max(full.Width, full.Height)}（大图夹具应远大于代理档）");
+        if (full == null) return;
+        Check("color 夹具 大图全分辨率长边", Math.Max(full.Width, full.Height) >= 3000,
+            $"长边={Math.Max(full.Width, full.Height)}（大图夹具应远大于代理档）");
+        await CheckLargeUploadStatsAsync(full);
+    }
+
+    /// <summary>大图全幅上传对照：sRGB 表面必须记一次真实色域转换，重建 P3 表面后同一 P3 源完整重传记零转换。</summary>
+    private static async Task CheckLargeUploadStatsAsync(DecodedImage full)
+    {
+        var photo = _root!.Photo;
+        using var p3Source = ColorEngine.ToDisplayEncoding(full, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3);
+        try
+        {
+            photo.RecreateSurfaceForChecks(false);
+            AndroidUploadStats.Reset();
+            await ShowColorSyntheticAsync(p3Source);
+            var convertedUpload = AndroidUploadStats.LatestForChecks;
+            var convertedPixels = PhotoRendererForChecks(photo).CheckTexturePixelsForChecks(p3Source);
+            Check("color 大图全幅 sRGB 表面上传记为已转换",
+                convertedUpload is { Converted: true, CacheHit: false }, DescribeUpload(convertedUpload));
+            Check("color 大图全幅 sRGB 表面提交墙钟覆盖分段",
+                convertedUpload is { } first && SubmitCoversSegments(first), DescribeUpload(convertedUpload));
+            Check("color 大图全幅转换纹理像素一致", convertedPixels.Matches, convertedPixels.Details);
+
+            AndroidUploadStats.Reset();
+            photo.RecreateSurfaceForChecks(true);
+            var repeatedUpload = AndroidUploadStats.LatestForChecks;
+            var repeatedPixels = PhotoRendererForChecks(photo).CheckTexturePixelsForChecks(p3Source);
+            Check("color 大图全幅 P3 表面重建", photo.SurfaceIsP3,
+                $"P3={photo.SurfaceIsP3} 声明={AndroidDisplayCapabilities.DisplaySupportsP3} colorspace={ColorspaceName(photo)}");
+            Check("color 大图全幅同源重传零转换",
+                photo.SurfaceIsP3 && repeatedUpload is { Converted: false, CacheHit: false }, DescribeUpload(repeatedUpload));
+            Check("color 大图全幅同源重传提交墙钟覆盖分段",
+                repeatedUpload is { } second && SubmitCoversSegments(second), DescribeUpload(repeatedUpload));
+            Check("color 大图全幅同源重传纹理像素一致", repeatedPixels.Matches, repeatedPixels.Details);
+        }
+        finally
+        {
+            if (!photo.SurfaceIsP3) await RecreatePhotoSurfaceAsync(true);
+        }
+
+        // 换回小图，释放整幅产物的租约
+        using var restore = CreateColorQuadImage(SurfaceImageColorSpace()) ?? throw new InvalidOperationException("合成色块图创建失败");
+        await ShowColorSyntheticAsync(restore);
     }
 
     /// <summary>

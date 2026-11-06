@@ -71,7 +71,8 @@
           NativeLibs/armeabi-v7a/libheif.so
           NativeLibs/x86_64/libheif.so
 
-        缺少 .so 的 ABI / 系统版本（< API 28）将自动回退到系统 BitmapFactory 解码器。
+        HEIF 不回退到系统 BitmapFactory：快速路径与共享 libheif 均不可用时如实报解码失败。
+        此构建只含 HEVC 解码；AV1/AVIF 需要另行提供并验证对应插件，不能假定系统兜底。
         libde265.so 条目已保留（Condition 防止文件不存在时报错），可忽略。
     -->
     <ItemGroup>

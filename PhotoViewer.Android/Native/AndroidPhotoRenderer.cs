@@ -230,40 +230,63 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     /// <param name="image">展示图像（所有权在调用方，上传在调用期间同步完成）。</param>
     internal void SetImage(DecodedImage? image)
     {
+        long submitStart = Stopwatch.GetTimestamp();
         lock (_sync)
         {
-            if (_disposed) return;
-            if (image == null)
+            SubmitLocked(image, submitStart);
+        }
+    }
+
+    /// <summary>上传/切换纹理主体（调用方已持有 <see cref="_sync"/>）。</summary>
+    /// <param name="submitStart">外层提交起点（等锁之前的时间戳）。</param>
+    private void SubmitLocked(DecodedImage? image, long submitStart)
+    {
+        if (_disposed) return;
+        if (image == null)
+        {
+            Bind(null);
+            return;
+        }
+        if (image.Encoding != PixelEncoding.Rgba8)
+            throw new NotSupportedException($"Android 主图纹理不支持 {image.Encoding}");
+        if (_current?.Matches(image) == true)
+        {
+            // 同一产物已在显存：切图零上传，GL 四段记 0 ms 缓存命中
+            AndroidUploadStats.RecordCacheHit(image.Width, image.Height, ElapsedMs(submitStart));
+            return;
+        }
+        if (TakeCached(image) is { } cached)
+        {
+            Bind(cached);
+            AndroidUploadStats.RecordCacheHit(image.Width, image.Height, ElapsedMs(submitStart));
+            return;
+        }
+        if (_display == null || _surface == null || _context == null) return;
+        if (image.Pixels.LongLength < (long)(image.Height - 1) * image.Stride
+            + (long)image.Width * DecodedImage.BytesPerPixel(image.Encoding))
+            throw new ObjectDisposedException(nameof(image));
+
+        var makeCurrentStart = Stopwatch.GetTimestamp();
+        EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+        double makeCurrentMs = ElapsedMs(makeCurrentStart);
+
+        var source = image;
+        var targetSpace = _surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
+        bool converted = image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace;
+        double convertMs = 0;
+        DecodedImage? conversionLease = null;
+        try
+        {
+            if (converted)
             {
-                Bind(null);
-                return;
+                var convertStart = Stopwatch.GetTimestamp();
+                conversionLease = ColorEngine.ToDisplayEncoding(image, PixelEncoding.Rgba8, targetSpace);
+                convertMs = ElapsedMs(convertStart);
+                image = conversionLease;
             }
-            if (image.Encoding != PixelEncoding.Rgba8)
-                throw new NotSupportedException($"Android 主图纹理不支持 {image.Encoding}");
-            if (_current?.Matches(image) == true)
-            {
-                // 同一产物已在显存：切图零上传，压测统计记 0 ms 缓存命中
-                AndroidUploadStats.RecordCacheHit(image.Width, image.Height);
-                return;
-            }
-            if (TakeCached(image) is { } cached)
-            {
-                Bind(cached);
-                AndroidUploadStats.RecordCacheHit(image.Width, image.Height);
-                return;
-            }
-            if (_display == null || _surface == null || _context == null) return;
-            if (image.Pixels.LongLength < (long)(image.Height - 1) * image.Stride
-                + (long)image.Width * DecodedImage.BytesPerPixel(image.Encoding))
-                throw new ObjectDisposedException(nameof(image));
-            EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
-            var source = image;
-            var targetSpace = _surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
-            using var converted = image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace
-                ? ColorEngine.ToDisplayEncoding(image, PixelEncoding.Rgba8, targetSpace) : null;
-            image = converted ?? image;
-            var upload = Stopwatch.StartNew();
+            var mark = Stopwatch.GetTimestamp();
             var entry = TakeSpare(image.Width, image.Height);
+            bool reusedTexture = entry != null;
             double createMs;
             if (entry == null)
             {
@@ -274,7 +297,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMagFilter, GLES20.GlLinear);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureWrapS, GLES20.GlClampToEdge);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureWrapT, GLES20.GlClampToEdge);
-                createMs = upload.Elapsed.TotalMilliseconds;
+                createMs = ElapsedMs(mark);
             }
             else
             {
@@ -282,12 +305,12 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                 GLES20.GlBindTexture(GLES20.GlTexture2d, entry.Handle);
                 createMs = 0;
             }
-            upload.Restart();
+            mark = Stopwatch.GetTimestamp();
             int rowBytes = checked(image.Width * 4);
             GLES20.GlTexImage2D(GLES20.GlTexture2d, 0, GLES20.GlRgba, image.Width, image.Height, 0,
                 GLES20.GlRgba, GLES20.GlUnsignedByte, (ByteBuffer?)null);
-            var allocMs = upload.Elapsed.TotalMilliseconds;
-            upload.Restart();
+            var allocMs = ElapsedMs(mark);
+            mark = Stopwatch.GetTimestamp();
             var pixels = image.Pixels;
             long copyBytes = 0;
             int chunks = 0;
@@ -317,16 +340,28 @@ internal sealed class AndroidPhotoRenderer : IDisposable
                         GLES20.GlRgba, GLES20.GlUnsignedByte, buffer);
                 }
             }
-            var updateMs = upload.Elapsed.TotalMilliseconds;
-            upload.Restart();
+            var updateMs = ElapsedMs(mark);
+            mark = Stopwatch.GetTimestamp();
             GLES20.GlGenerateMipmap(GLES20.GlTexture2d);
-            var mipsMs = upload.Elapsed.TotalMilliseconds;
+            var mipsMs = ElapsedMs(mark);
+            var finishStart = Stopwatch.GetTimestamp();
             GLES20.GlBindTexture(GLES20.GlTexture2d, 0);
-            AndroidUploadStats.Record(image.Width, image.Height, createMs, allocMs, updateMs, mipsMs,
-                copyBytes, chunks, copyMs);
             Bind(entry);
+            conversionLease?.Dispose();
+            conversionLease = null;
+            var finishMs = ElapsedMs(finishStart);
+            AndroidUploadStats.Record(source.Width, source.Height, ElapsedMs(submitStart), converted, reusedTexture,
+                makeCurrentMs, convertMs, createMs, allocMs, updateMs, mipsMs, finishMs, copyBytes, chunks, copyMs);
+        }
+        finally
+        {
+            conversionLease?.Dispose();
         }
     }
+
+    /// <summary>自给定时间戳起的毫秒数（不建计时器对象）。</summary>
+    private static double ElapsedMs(long startTimestamp)
+        => Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
     private static unsafe void UploadPacked(DecodedImage image, byte[] pixels)
     {
@@ -590,6 +625,18 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             _vertexFloats.Get(values);
             return (_vertexBuffer, _vertexFloats, _vertexAllocations, values);
         }
+    }
+
+    /// <summary>验收用：是否已有可复用的空纹理。</summary>
+    internal bool HasSpareTextureForChecks
+    {
+        get { lock (_sync) return _spareTexture != null; }
+    }
+
+    /// <summary>验收用：最近缓存里的纹理张数。</summary>
+    internal int RecentTextureCountForChecks
+    {
+        get { lock (_sync) return _recentTextures.Count; }
     }
 
     /// <summary>显示朝向归一化坐标 → 源纹理坐标（与 <see cref="PhotoViewport"/> 的显示朝向一致）。</summary>
