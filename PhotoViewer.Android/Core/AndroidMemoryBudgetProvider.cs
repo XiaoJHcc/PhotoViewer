@@ -22,6 +22,9 @@ namespace PhotoViewer.Android.Core;
 /// 逼近 <c>threshold</c>（系统开始杀后台服务的水位）时按比例收窄可用量，让缓存先退让。
 /// Android 14 起前台收不到 RUNNING_* trim 回调，压力只能靠这里的周期探测发现。</para>
 /// <para>读数有短时缓存：Governor 探测、准入与缓存容量推导在同一轮会连续读多次。</para>
+/// <para>系统整机读数（<see cref="GetSystemMemoryInfo"/>）另行直读 <see cref="ActivityManager.MemoryInfo"/>，
+/// 与上面的预算/余量口径无关：预算是本进程前台可用的匿名内存上限，<c>availMem</c> 是整机可用内存，
+/// 两者不能互相顶替。</para>
 /// </remarks>
 public sealed class AndroidMemoryBudgetProvider : IMemoryBudgetProvider
 {
@@ -148,6 +151,20 @@ public sealed class AndroidMemoryBudgetProvider : IMemoryBudgetProvider
 
     /// <summary>预算 = 前台可见进程的匿名内存上限（按设备总内存分档）。</summary>
     public long GetBudgetBytes() => _budgetBytes;
+
+    /// <summary>
+    /// 系统整机内存读数（SETTINGS-06 能力提示）：总内存与当前可用内存直读 <see cref="ActivityManager.MemoryInfo"/>，
+    /// 不是本进程预算，也不是 <see cref="GetAvailableBytes"/> 的预算余量。
+    /// </summary>
+    /// <returns>读数；总内存不可得时 <see cref="SystemMemoryInfo.Unknown"/>，可用量不可得时为 -1。</returns>
+    public SystemMemoryInfo GetSystemMemoryInfo()
+    {
+        var info = ReadMemoryInfo();
+        long total = info?.TotalMem ?? 0;
+        if (total <= 0) return SystemMemoryInfo.Unknown;
+        long available = info?.AvailMem ?? -1;
+        return new SystemMemoryInfo(total, Math.Max(-1, available));
+    }
 
     /// <summary>
     /// 可用 = 预算 − 本进程占用；系统余量不足 <see cref="SystemComfortThresholds"/> 倍 threshold 时

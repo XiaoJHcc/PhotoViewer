@@ -4,6 +4,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.Design;
 using PhotoViewer.ViewModels.Settings;
 using Windows.UI;
 
@@ -309,7 +310,7 @@ internal static class WindowsSettingsCard
     /// <returns>画刷</returns>
     public static Brush LevelBrush(PerfInfoLevel level) => level switch
     {
-        PerfInfoLevel.Warning => ThemeBrush("SystemFillColorCautionBrush"),
+        PerfInfoLevel.Warning => Brush(WindowsLayout.Token(DesignTokens.ColorSettingsWarning)),
         PerfInfoLevel.Error => ThemeBrush("SystemFillColorCriticalBrush"),
         _ => ThemeBrush("TextFillColorSecondaryBrush"),
     };

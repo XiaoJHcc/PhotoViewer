@@ -36,6 +36,26 @@ public sealed class iOSMemoryBudgetProvider : IMemoryBudgetProvider
     /// <summary>当前进程驻留内存(phys_footprint,字节);失败返回 0。验收内存探针复用同一口径。</summary>
     public long GetFootprintBytes() => AppleMemoryFootprint.GetPhysFootprintBytes();
 
+    /// <summary>
+    /// 系统物理内存:总量取 <see cref="NSProcessInfo.PhysicalMemory"/>,可用量取内核 free + inactive 页估算并夹到总量。
+    /// 这是整机口径,不用 os_proc_available_memory 或进程预算冒充;页统计读取失败时可用量如实返回 -1(未知)。
+    /// </summary>
+    public SystemMemoryInfo GetSystemMemoryInfo()
+    {
+        try
+        {
+            long total = (long)NSProcessInfo.ProcessInfo.PhysicalMemory;
+            if (total <= 0) return SystemMemoryInfo.Unknown;
+            long available = AppleMemoryFootprint.GetSystemAvailableBytes();
+            return new SystemMemoryInfo(total, available < 0 ? -1 : Math.Min(available, total));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[iOSMemoryBudget] PhysicalMemory failed: {ex.Message}");
+            return SystemMemoryInfo.Unknown;
+        }
+    }
+
     /// <summary>回退预算:物理内存 × 50%(不再依赖机型表)。</summary>
     private static long FallbackBudgetBytes()
     {

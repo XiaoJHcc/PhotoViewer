@@ -1,8 +1,10 @@
 using System;
 using System.Linq;
 using System.Reactive.Concurrency;
+using System.Reflection;
 using System.Threading.Tasks;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.ViewModels.Settings;
@@ -10,10 +12,19 @@ using PhotoViewer.ViewModels.Settings;
 namespace SettingsDefaultsCheck;
 
 /// <summary>
-/// 用假预算源核对设置默认值、schemaVersion 2 往返、滚动预载延时刻度归一、draft 不写盘与保存失败不发布。
+/// 用假预算源核对设置默认值、schemaVersion 2 往返、滚动预载延时刻度归一、draft 不写盘、保存失败不发布，
+/// 以及设备缓存能力提示的纯计算口径与设置解耦的超限警告（SETTINGS-06）。
 /// </summary>
 internal static class Program
 {
+    private static readonly FieldInfo MemoryProviderField =
+        typeof(MemoryGovernor).GetField("_provider", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("MemoryGovernor._provider 字段不存在，预算源替身无法注入。");
+
+    private static readonly FieldInfo PressureLevelField =
+        typeof(MemoryGovernor).GetField("_level", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("MemoryGovernor._level 字段不存在，压力级别无法构造。");
+
     private static async Task<int> Main()
     {
         var dispatcher = new InlineDispatcher();
@@ -41,6 +52,10 @@ internal static class Program
         failed += await CheckSaveFailureAsync();
         failed += await CheckNativeSessionAsync();
         failed += await CheckRecoveryStatusAsync();
+        failed += CheckDeviceCacheEstimate();
+        failed += CheckCacheLimitWarning();
+        failed += await CheckDeviceCacheInfoInSettingsAsync();
+        failed += await CheckNormalPressureBytesPerPixelAsync();
 
         Console.WriteLine(failed == 0 ? "ALL PASS" : $"{failed} FAIL");
         return failed == 0 ? 0 : 1;
@@ -424,6 +439,373 @@ internal static class Program
         return problems;
     }
 
+    /// <summary>
+    /// 设备能力估算的纯计算口径：容量由调用方给出（可编辑平台 = 用户上限，自动平台 = 设备最大安全容量 =
+    /// 预算 × 55%），适屏按代理长边 3:2 且不超过 3300 万像素、完整 3300 万像素，
+    /// 两档各按 Normal 压力的每像素字节数换算（F16 = 8、8 位 = 4），未知读数给未知。
+    /// </summary>
+    private static int CheckDeviceCacheEstimate()
+    {
+        var problems = 0;
+        const long budget = 8L * 1024 * 1024 * 1024;
+        var system = new SystemMemoryInfo(16L * 1024 * 1024 * 1024, 6L * 1024 * 1024 * 1024);
+
+        problems += Require(Math.Abs(DeviceCacheCapability.SafeRatio(40) - 0.55) < 1e-9,
+            $"Caution 40 时安全比例不是 55%：{DeviceCacheCapability.SafeRatio(40)}");
+        problems += Require(Math.Abs(DeviceCacheCapability.SafeRatio(30) - 0.65) < 1e-9,
+            $"Caution 30 时安全比例不是 65%：{DeviceCacheCapability.SafeRatio(30)}");
+        problems += Require(
+            Math.Abs(DeviceCacheCapability.SafeRatio(MemoryGovernor.CautionEnterPercent) - 0.55) < 1e-9,
+            $"默认安全比例未沿用 Caution 进入阈值 + 5：{DeviceCacheCapability.SafeRatio(MemoryGovernor.CautionEnterPercent)}");
+        problems += Require(DeviceCacheCapability.FullPhotoPixels == 33_000_000, "完整照片像素口径不是 3300 万");
+
+        long deviceSafe = DeviceCacheCapability.DeviceSafeCapacity(budget, 40) ?? -1;
+        problems += Require(deviceSafe == (long)(budget * 0.55),
+            $"设备最大安全容量不是预算 × 55%：{deviceSafe}");
+        problems += Require(DeviceCacheCapability.DeviceSafeCapacity(0, 40) is null, "无预算时设备安全容量应为未知");
+        problems += Require(DeviceCacheCapability.DeviceSafeCapacity(budget, 100) == 0, "安全比例为 0 时安全容量应为 0");
+
+        problems += Require(DeviceCacheCapability.ScreenPhotoPixels(3840) == 9_830_400,
+            $"适屏像素不是长边² × 2/3：{DeviceCacheCapability.ScreenPhotoPixels(3840)}");
+        problems += Require(DeviceCacheCapability.ScreenPhotoPixels(8000) == 33_000_000,
+            $"适屏像素未按 3300 万封顶：{DeviceCacheCapability.ScreenPhotoPixels(8000)}");
+        problems += Require(DeviceCacheCapability.ScreenPhotoPixels(7036) == 33_000_000
+                && DeviceCacheCapability.ScreenPhotoPixels(7035) == 32_994_150,
+            $"封顶长边两侧不对：{DeviceCacheCapability.ScreenPhotoPixels(7035)}/"
+                + $"{DeviceCacheCapability.ScreenPhotoPixels(7036)}");
+        problems += Require(DeviceCacheCapability.ScreenPhotoPixels(int.MaxValue) == 33_000_000
+                && DeviceCacheCapability.ScreenPhotoPixels(int.MaxValue - 1) == 33_000_000,
+            $"极大长边溢出：{DeviceCacheCapability.ScreenPhotoPixels(int.MaxValue)}");
+        problems += Require(DeviceCacheCapability.ScreenPhotoPixels(0) == 0, "视口未知时适屏像素不是 0");
+
+        var f16 = DeviceCacheCapability.Compute(system, deviceSafe, 3840, 8, 8);
+        var eightBit = DeviceCacheCapability.Compute(system, deviceSafe, 3840, 4, 4);
+        problems += Require(f16.CapacityBytes == deviceSafe,
+            $"容量未原样用于换算：{f16.CapacityBytes}/{deviceSafe}");
+        problems += Require(f16.ScreenPhotoCount == 60, $"F16 适屏张数不是 60：{f16.ScreenPhotoCount}");
+        problems += Require(f16.FullPhotoCount == 17, $"F16 完整张数不是 17：{f16.FullPhotoCount}");
+        problems += Require(eightBit.ScreenPhotoCount == 120, $"8 位适屏张数不是 120：{eightBit.ScreenPhotoCount}");
+        problems += Require(eightBit.FullPhotoCount == 35, $"8 位完整张数不是 35：{eightBit.FullPhotoCount}");
+
+        // 用户上限口径：容量原样传入，不乘安全比例。
+        var userPicked = DeviceCacheCapability.Compute(system, 2048L * 1024 * 1024, 3840, 4, 4);
+        problems += Require(userPicked.CapacityBytes == 2048L * 1024 * 1024
+                && userPicked.ScreenPhotoCount == 54 && userPicked.FullPhotoCount == 16,
+            $"用户上限口径不对：{userPicked.CapacityBytes}/{userPicked.ScreenPhotoCount}/{userPicked.FullPhotoCount}");
+
+        var noViewport = DeviceCacheCapability.Compute(system, deviceSafe, 0, 8, 8);
+        problems += Require(noViewport.ScreenPhotoCount is null && noViewport.FullPhotoCount == 17,
+            $"视口未知时只有适屏张数应为未知：{noViewport.ScreenPhotoCount}/{noViewport.FullPhotoCount}");
+
+        var noCapacity = DeviceCacheCapability.Compute(system, null, 3840, 4, 4);
+        problems += Require(noCapacity.CapacityBytes == 0
+                && noCapacity.ScreenPhotoCount is null && noCapacity.FullPhotoCount is null,
+            $"容量未知时张数应为未知：{noCapacity.ScreenPhotoCount}/{noCapacity.FullPhotoCount}");
+
+        // 容量已知但不足一张时如实给 0，不当未知。
+        foreach (var (zeroCapacity, label) in new (long? Capacity, string Label)[]
+                 {
+                     (DeviceCacheCapability.DeviceSafeCapacity(1, 40), "预算 1 字节"),
+                     (DeviceCacheCapability.DeviceSafeCapacity(budget, 100), "安全比例为 0"),
+                     (1L, "容量 1 字节"),
+                 })
+        {
+            var zero = DeviceCacheCapability.Compute(system, zeroCapacity, 3840, 4, 4);
+            problems += Require(zero.ScreenPhotoCount == 0 && zero.FullPhotoCount == 0,
+                $"{label}时张数未如实给 0：{zero.ScreenPhotoCount}/{zero.FullPhotoCount}");
+        }
+
+        problems += Require(
+            DeviceCacheCapability.DescribeCapacity(DeviceCacheCapability.Compute(system, 0, 3840, 4, 4))
+                == "可缓存 0 张适屏照片 / 0 张 3300 万像素照片",
+            "零容量文案不对");
+
+        var unknown = DeviceCacheCapability.Compute(SystemMemoryInfo.Unknown, null, 0, 4, 4);
+        problems += Require(DeviceCacheCapability.DescribeSystemMemory(unknown) == "系统内存: 总 未知 / 当前可用 未知",
+            $"未知读数未显式未知：{DeviceCacheCapability.DescribeSystemMemory(unknown)}");
+        problems += Require(DeviceCacheCapability.DescribeCapacity(unknown) == "适屏照片：未知 / 3300 万像素照片：未知",
+            $"未知张数未显式未知：{DeviceCacheCapability.DescribeCapacity(unknown)}");
+        problems += Require(DeviceCacheCapability.DescribeCapacity(noViewport) == "适屏照片：未知 / 17 张 3300 万像素照片",
+            $"单项未知文案不对：{DeviceCacheCapability.DescribeCapacity(noViewport)}");
+        problems += Require(
+            DeviceCacheCapability.DescribeCapacity(DeviceCacheCapability.Compute(system, null, 3840, 8, 8))
+                == "适屏照片：未知 / 3300 万像素照片：未知",
+            "容量未知时两项都应未知");
+
+        problems += Require(DeviceCacheCapability.DescribeCapacity(f16) == "可缓存 60 张适屏照片 / 17 张 3300 万像素照片",
+            $"正常文案不对：{DeviceCacheCapability.DescribeCapacity(f16)}");
+        foreach (var banned in new[] { "缓存能力", "最大", "约", "3300 万像素照片：", "（3300" })
+        {
+            problems += Require(!DeviceCacheCapability.DescribeCapacity(f16).Contains(banned, StringComparison.Ordinal),
+                $"正常文案残留「{banned}」");
+        }
+
+        // 容量不足一张时如实为 0，不抬到 3 张。
+        var tiny = DeviceCacheCapability.Compute(system, 100L * 1024 * 1024, 3840, 4, 4);
+        problems += Require(tiny.FullPhotoCount == 0, $"零容量未如实给 0：{tiny.FullPhotoCount}");
+
+        // 张数不受用户缓存数量上限（1–400）截断：容量足够时按字节换算，可超过 400。
+        var huge = DeviceCacheCapability.Compute(system, 200L * 1024 * 1024 * 1024, 3840, 4, 4);
+        problems += Require(huge.FullPhotoCount > 400, $"张数被 400 条上限截断：{huge.FullPhotoCount}");
+
+        Console.WriteLine(
+            $"设备能力估算 -> 设备安全容量 8 GiB × 55% = {deviceSafe} B："
+            + $"F16 适屏 {f16.ScreenPhotoCount} / 完整 {f16.FullPhotoCount}，"
+            + $"8 位适屏 {eightBit.ScreenPhotoCount} / 完整 {eightBit.FullPhotoCount}；"
+            + $"用户 2048 MB 适屏 {userPicked.ScreenPhotoCount} / 完整 {userPicked.FullPhotoCount}；"
+            + $"未知「{DeviceCacheCapability.DescribeCapacity(unknown)}」，极大长边 {DeviceCacheCapability.ScreenPhotoPixels(int.MaxValue)}");
+        return problems;
+    }
+
+    /// <summary>
+    /// 用户缓存上限超限判定的四个阈值：总内存/平台预算为错误级、可用内存/设备最大安全容量为警告级，
+    /// 等于阈值不算超过，未知读数不误判；原因文本固定为「（当前设置超过 xx 上限）」，不带数字与单位。
+    /// </summary>
+    private static int CheckCacheLimitWarning()
+    {
+        var problems = 0;
+        const long mb = 1024L * 1024;
+        const long big = 1L << 40;
+        long user = 4096 * mb;
+
+        problems += Require(
+            DeviceCacheCapability.EvaluateLimit(user, 8192 * mb, 8192 * mb, 8192 * mb, 8192 * mb) == CacheLimitWarning.Normal,
+            "全部阈值之上仍告警");
+
+        problems += Require(
+            DeviceCacheCapability.EvaluateLimit(user, user, big, big, big).Level == CacheCapabilityLevel.Normal,
+            "等于系统总内存被判超限");
+        problems += Require(
+            DeviceCacheCapability.EvaluateLimit(user, big, big, user, big).Level == CacheCapabilityLevel.Normal,
+            "等于平台应用内存预算被判超限");
+        problems += Require(
+            DeviceCacheCapability.EvaluateLimit(user, big, user, big, big).Level == CacheCapabilityLevel.Normal,
+            "等于系统当前可用内存被判超限");
+        problems += Require(
+            DeviceCacheCapability.EvaluateLimit(user, big, big, big, user).Level == CacheCapabilityLevel.Normal,
+            "等于设备最大安全容量被判超限");
+
+        var overTotal = DeviceCacheCapability.EvaluateLimit(user + mb, user, big, big, big);
+        problems += Require(overTotal.Level == CacheCapabilityLevel.Error, $"超过系统总内存未判错误级：{overTotal.Level}");
+        problems += Require(overTotal.Reason == "（当前设置超过系统总内存上限）",
+            $"超过系统总内存的原因文本不对：{overTotal.Reason}");
+
+        var overBudget = DeviceCacheCapability.EvaluateLimit(user + mb, big, big, user, big);
+        problems += Require(overBudget.Level == CacheCapabilityLevel.Error, $"超过平台预算未判错误级：{overBudget.Level}");
+        problems += Require(overBudget.Reason == "（当前设置超过应用内存上限）",
+            $"超过平台预算的原因文本不对：{overBudget.Reason}");
+
+        var overAvailable = DeviceCacheCapability.EvaluateLimit(user + mb, big, user, big, big);
+        problems += Require(overAvailable.Level == CacheCapabilityLevel.Warning, $"超过系统可用未判警告级：{overAvailable.Level}");
+        problems += Require(overAvailable.Reason == "（当前设置超过系统可用内存上限）",
+            $"超过系统可用的原因文本不对：{overAvailable.Reason}");
+
+        var overDevice = DeviceCacheCapability.EvaluateLimit(user + mb, big, big, big, user);
+        problems += Require(overDevice.Level == CacheCapabilityLevel.Warning, $"超过设备安全容量未判警告级：{overDevice.Level}");
+        problems += Require(overDevice.Reason == "（当前设置超过设备缓存上限）",
+            $"超过设备安全容量的原因文本不对：{overDevice.Reason}");
+
+        foreach (var warning in new[] { overTotal, overBudget, overAvailable, overDevice })
+        {
+            problems += Require(warning.Reason is { } reason
+                    && !reason.Contains("MB", StringComparison.Ordinal)
+                    && !reason.Any(char.IsDigit),
+                $"警告文案带了数字或单位：{warning.Reason}");
+        }
+
+        var unknowns = DeviceCacheCapability.EvaluateLimit(32768 * mb, 0, -1, 0, 0);
+        problems += Require(unknowns.Level == CacheCapabilityLevel.Normal && unknowns.Reason is null,
+            $"未知读数被误判：{unknowns.Level}/{unknowns.Reason}");
+
+        problems += Require(DeviceCacheCapability.EvaluateLimit(0, user, user, user, user).Level == CacheCapabilityLevel.Normal,
+            "上限为 0 时仍告警");
+
+        Console.WriteLine(
+            "超限判定 -> 四阈值等于不告警；超过总内存/预算 = 错误级，超过可用/设备安全容量 = 警告级；"
+            + $"未知读数 {unknowns.Level}，原因示例：{overDevice.Reason}");
+        return problems;
+    }
+
+    /// <summary>
+    /// 设置页设备能力提示：两行文本由系统读数、平台预算与 Normal 压力字节数决定，
+    /// 与用户缓存内存/数量、线程、预载设置及自动口径无关；只有用户上限超限才抬级并给出原因。
+    /// </summary>
+    private static async Task<int> CheckDeviceCacheInfoInSettingsAsync()
+    {
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+
+        const string systemLine = "系统内存: 总 16 GB / 当前可用 6 GB";
+        // 可编辑平台：张数按工作副本的 2048 MB 上限折算（4 B/像素，适屏 3840² × 2/3）
+        const string defaultCounts = "可缓存 54 张适屏照片 / 16 张 3300 万像素照片";
+
+        using var provider = new MemoryProviderScope(new FixedMemoryProvider(
+            totalBytes: 16L * 1024 * 1024 * 1024,
+            availableBytes: 6L * 1024 * 1024 * 1024,
+            budgetBytes: 8L * 1024 * 1024 * 1024));
+
+        using var context = await DraftContext.CreateAsync(defaults);
+        var settings = context.Settings;
+        var problems = 0;
+
+        problems += Require(settings.ShowsCacheLimits, "桌面口径不应隐藏缓存上限两项");
+        problems += Require(settings.BitmapCacheMaxMemory == 2048, $"默认内存上限不是 2048 MB：{settings.BitmapCacheMaxMemory}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine,
+            $"第一行不是系统总量/当前可用：{settings.PerformanceBudgetInfo}");
+        problems += Require(settings.BitmapCacheCountInfo == defaultCounts,
+            $"第二行张数不符：{settings.BitmapCacheCountInfo}");
+        problems += Require(settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Normal, "无超限却抬级");
+        problems += Require(settings.BitmapCacheCountInfoLevel == PerfInfoLevel.Normal, "张数行不应定级");
+        foreach (var stale in new[] { "CPU", "核", "✓", "⚠", "预载", "告警", "缓存能力", "最大", "约 " })
+        {
+            problems += Require(!settings.PerformanceBudgetInfo.Contains(stale, StringComparison.Ordinal)
+                && !settings.BitmapCacheCountInfo.Contains(stale, StringComparison.Ordinal),
+                $"旧提示内容仍残留：{stale}");
+        }
+
+        // 内存上限翻倍：两档张数按同一比例变化。
+        settings.BitmapCacheMaxMemory = 4096;
+        problems += Require(settings.BitmapCacheCountInfo == "可缓存 109 张适屏照片 / 32 张 3300 万像素照片",
+            $"内存翻倍后张数不对：{settings.BitmapCacheCountInfo}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine, "未超限却追加了警告");
+
+        // 数量、线程与预载都不影响张数。
+        settings.BitmapCacheMaxCount = 100;
+        settings.PreloadForwardCount = 20;
+        settings.PreloadBackwardCount = 20;
+        settings.VisibleCenterPreloadCount = 20;
+        settings.NativePreloadParallelism = 2;
+        settings.CpuPreloadParallelism = 3;
+        problems += Require(settings.BitmapCacheCountInfo == "可缓存 109 张适屏照片 / 32 张 3300 万像素照片",
+            $"数量/线程/预载改变了张数：{settings.BitmapCacheCountInfo}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine, "数量/线程/预载改变了第一行");
+
+        // 超过设备最大安全容量（8192 MB 预算 × 55% = 4505 MB）：仍按所选内存算张数，同时告警。
+        settings.BitmapCacheMaxMemory = 5000;
+        problems += Require(settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Warning,
+            $"超过设备安全容量未告警：{settings.PerformanceBudgetInfoLevel}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine + "（当前设置超过设备缓存上限）",
+            $"设备缓存警告文案不对：{settings.PerformanceBudgetInfo}");
+        problems += Require(settings.BitmapCacheCountInfo == "可缓存 133 张适屏照片 / 39 张 3300 万像素照片",
+            $"超限后张数未按所选内存：{settings.BitmapCacheCountInfo}");
+
+        settings.BitmapCacheMaxMemory = 7000;
+        problems += Require(settings.PerformanceBudgetInfo == systemLine + "（当前设置超过系统可用内存上限）",
+            $"系统可用警告文案不对：{settings.PerformanceBudgetInfo}");
+        problems += Require(settings.BitmapCacheCountInfo == "可缓存 186 张适屏照片 / 55 张 3300 万像素照片",
+            $"超可用内存后张数未按所选内存：{settings.BitmapCacheCountInfo}");
+
+        settings.BitmapCacheMaxMemory = 9000;
+        problems += Require(settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Error,
+            $"超过应用预算未判错误级：{settings.PerformanceBudgetInfoLevel}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine + "（当前设置超过应用内存上限）",
+            $"应用内存警告文案不对：{settings.PerformanceBudgetInfo}");
+
+        settings.BitmapCacheMaxMemory = 20000;
+        problems += Require(settings.PerformanceBudgetInfo == systemLine + "（当前设置超过系统总内存上限）",
+            $"系统总内存警告文案不对：{settings.PerformanceBudgetInfo}");
+        problems += Require(settings.BitmapCacheCountInfo == "可缓存 533 张适屏照片 / 158 张 3300 万像素照片",
+            $"超总内存后张数未按所选内存：{settings.BitmapCacheCountInfo}");
+
+        settings.BitmapCacheMaxMemory = 2048;
+        problems += Require(settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Normal,
+            $"回到范围内未消退警告：{settings.PerformanceBudgetInfoLevel}");
+        problems += Require(settings.PerformanceBudgetInfo == systemLine, "警告消退后文案未恢复");
+        problems += Require(settings.BitmapCacheCountInfo == defaultCounts, "警告消退改变了张数");
+
+        // 自动管理缓存的平台（iPad / Android）：按设备最大安全容量（4505 MB）算张数，隐藏项改动无影响、不告警。
+        BitmapLoader.AutomaticCacheLimit = true;
+        try
+        {
+            using var hidden = await DraftContext.CreateAsync(defaults);
+            const string deviceCounts = "可缓存 120 张适屏照片 / 35 张 3300 万像素照片";
+            problems += Require(!hidden.Settings.ShowsCacheLimits, "自动口径未隐藏两项上限");
+            problems += Require(hidden.Settings.BitmapCacheCountInfo == deviceCounts,
+                $"自动口径张数不是设备最大安全容量：{hidden.Settings.BitmapCacheCountInfo}");
+
+            hidden.Settings.BitmapCacheMaxMemory = 20000;
+            problems += Require(hidden.Settings.BitmapCacheCountInfo == deviceCounts,
+                $"隐藏的上限改变了张数：{hidden.Settings.BitmapCacheCountInfo}");
+            problems += Require(hidden.Settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Normal,
+                $"隐藏项仍告警：{hidden.Settings.PerformanceBudgetInfoLevel}");
+            problems += Require(hidden.Settings.PerformanceBudgetInfo == systemLine, "隐藏项改动了第一行");
+        }
+        finally
+        {
+            BitmapLoader.AutomaticCacheLimit = false;
+        }
+
+        // 没有平台 budget 但用户内存已知：仍按用户上限给张数，未知读数不告警。
+        using var noBudget = new MemoryProviderScope(new FixedMemoryProvider(0, -1, 0));
+        using var unknownContext = await DraftContext.CreateAsync(defaults);
+        problems += Require(unknownContext.Settings.PerformanceBudgetInfo == "系统内存: 总 未知 / 当前可用 未知",
+            $"未知读数未显式未知：{unknownContext.Settings.PerformanceBudgetInfo}");
+        problems += Require(unknownContext.Settings.BitmapCacheCountInfo == defaultCounts,
+            $"无预算时未按用户上限给张数：{unknownContext.Settings.BitmapCacheCountInfo}");
+        problems += Require(unknownContext.Settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Normal,
+            $"未知读数误判告警：{unknownContext.Settings.PerformanceBudgetInfoLevel}");
+
+        Console.WriteLine($"设备能力提示 -> {systemLine} ;; {defaultCounts}；内存比例/数量无关/超限/自动/无预算已验");
+        return problems;
+    }
+
+    /// <summary>
+    /// 完整照片档必须按 Normal 压力的展示编码字节数换算：注入会随压力降档的编码策略后，
+    /// 当前压力只影响准入口径，能力估算张数不变。
+    /// </summary>
+    private static async Task<int> CheckNormalPressureBytesPerPixelAsync()
+    {
+        var problems = 0;
+        try
+        {
+            BitmapLoader.InitializePresentationDecoder(new NullPresentationDecoder(), new PressureSensitiveEncodingPolicy());
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("  FAIL 无法注入展示解码器：" + ex.Message);
+            return 1;
+        }
+
+        problems += Require(BitmapLoader.ProxyBytesPerPixel == 8, $"代理档 Normal 每像素字节不是 F16（8）：{BitmapLoader.ProxyBytesPerPixel}");
+        problems += Require(BitmapLoader.NormalFullBytesPerPixel == 8, $"完整档 Normal 每像素字节不是 F16（8）：{BitmapLoader.NormalFullBytesPerPixel}");
+
+        var budget = new WindowsLikeBudget(8192, null);
+        PerformanceBudget.Initialize(budget);
+        var defaults = SettingsDefaults.CreateDefault(budget, appleKeyboard: false);
+
+        using var provider = new MemoryProviderScope(new FixedMemoryProvider(
+            totalBytes: 16L * 1024 * 1024 * 1024,
+            availableBytes: 6L * 1024 * 1024 * 1024,
+            budgetBytes: 8L * 1024 * 1024 * 1024));
+
+        var previous = PressureLevelField.GetValue(null);
+        PressureLevelField.SetValue(null, PressureLevel.Warning);
+        int admissionBytes;
+        try
+        {
+            problems += Require(BitmapLoader.PresentationBytesPerPixel == 4,
+                $"压力降档后准入字节未变：{BitmapLoader.PresentationBytesPerPixel}");
+            problems += Require(BitmapLoader.NormalFullBytesPerPixel == 8,
+                $"能力估算跟随了当前压力：{BitmapLoader.NormalFullBytesPerPixel}");
+            admissionBytes = BitmapLoader.PresentationBytesPerPixel;
+
+            using var context = await DraftContext.CreateAsync(defaults);
+            const string expected = "可缓存 27 张适屏照片 / 8 张 3300 万像素照片";
+            problems += Require(context.Settings.BitmapCacheCountInfo == expected,
+                $"压力级别改变了能力估算：{context.Settings.BitmapCacheCountInfo}");
+        }
+        finally
+        {
+            PressureLevelField.SetValue(null, previous);
+        }
+
+        Console.WriteLine(
+            $"Normal 口径 -> 用户 2048 MB、F16 适屏 27 / 完整 8；压力 Warning 时准入 {admissionBytes} B，"
+            + "能力估算仍按 8 B");
+        return problems;
+    }
+
     private static async Task<bool> WaitUntilAsync(Func<bool> condition, int timeoutMs = 3000)
     {
         var deadline = Environment.TickCount64 + timeoutMs;
@@ -544,6 +926,57 @@ internal static class Program
 
         public int GetRecommendedCpuPreloadParallelism(int cacheMemoryMB)
             => ((IPerformanceBudget)_platform).GetRecommendedCpuPreloadParallelism(cacheMemoryMB);
+    }
+
+    /// <summary>固定读数的预算源替身：总内存/可用量/预算由用例给定，不走平台接口。</summary>
+    private sealed class FixedMemoryProvider(long totalBytes, long availableBytes, long budgetBytes) : IMemoryBudgetProvider
+    {
+        public SystemMemoryInfo GetSystemMemoryInfo() => new(totalBytes, availableBytes);
+
+        public long GetBudgetBytes() => budgetBytes;
+
+        public long GetAvailableBytes() => availableBytes;
+
+        public long GetFootprintBytes() => 0;
+    }
+
+    /// <summary>把预算源临时注入 MemoryGovernor（不启动探测计时器、不写内存事件日志），退出时还原。</summary>
+    private sealed class MemoryProviderScope : IDisposable
+    {
+        private readonly object? _previous;
+
+        public MemoryProviderScope(IMemoryBudgetProvider provider)
+        {
+            _previous = MemoryProviderField.GetValue(null);
+            MemoryProviderField.SetValue(null, provider);
+        }
+
+        public void Dispose() => MemoryProviderField.SetValue(null, _previous);
+    }
+
+    /// <summary>不会真正解码的展示解码器替身：只用于让编码协商生效。</summary>
+    private sealed class NullPresentationDecoder : IPresentationImageDecoder
+    {
+        public Task<DecodedImage?> DecodeAsync(
+            PhotoViewer.Core.Storage.IFileRef file, int? maxLongEdge, PixelEncoding encoding,
+            System.Threading.CancellationToken cancellationToken)
+            => throw new NotSupportedException("SettingsDefaultsCheck 不解码");
+
+        public Task<DecodedImage?> DecodeThumbnailAsync(
+            PhotoViewer.Core.Storage.IFileRef file, int minShortEdge, System.Threading.CancellationToken cancellationToken)
+            => throw new NotSupportedException("SettingsDefaultsCheck 不解码");
+    }
+
+    /// <summary>
+    /// 会随压力降档的编码策略：完整档 Normal 为 F16、Warning 起降 8 位，代理档恒 F16。
+    /// 用来验证设备能力估算固定取 Normal 压力字节数，不跟随当前压力漂移。
+    /// </summary>
+    private sealed class PressureSensitiveEncodingPolicy : IPresentationEncodingPolicy
+    {
+        public PixelEncoding Select(ImageSizeClass sizeClass, PressureLevel pressure)
+            => sizeClass == ImageSizeClass.Full && pressure >= PressureLevel.Warning
+                ? PixelEncoding.Rgba8
+                : PixelEncoding.RgbaF16;
     }
 
     /// <summary>控制台用的就地调度器。</summary>

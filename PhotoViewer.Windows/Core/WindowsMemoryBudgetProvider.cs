@@ -55,6 +55,15 @@ internal sealed partial class WindowsMemoryBudgetProvider : IMemoryBudgetProvide
         _watcher.Start();
     }
 
+    public SystemMemoryInfo GetSystemMemoryInfo()
+    {
+        var status = ReadStatus();
+        if (status is not { } value || value.TotalPhys == 0) return SystemMemoryInfo.Unknown;
+        long total = (long)Math.Min(value.TotalPhys, (ulong)long.MaxValue);
+        long available = (long)Math.Min(value.AvailPhys, (ulong)total);
+        return new SystemMemoryInfo(total, available);
+    }
+
     /// <inheritdoc/>
     public long GetBudgetBytes()
     {

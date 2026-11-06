@@ -90,6 +90,17 @@ public static class BitmapLoader
             (_encodingPolicy ?? throw new InvalidOperationException("展示编码策略未注入"))
                 .Select(ImageSizeClass.Proxy, PressureLevel.Normal));
 
+    /// <summary>
+    /// Full 档在 Normal 压力下的展示编码每像素字节数（设备能力估算用）。
+    /// 与 <see cref="PresentationBytesPerPixel"/> 不同：不随当前压力变化，否则估算会随内存压力漂移。
+    /// 旧壳（未注入展示解码器）保留原透明度口径。
+    /// </summary>
+    public static int NormalFullBytesPerPixel => _presentationDecoder == null
+        ? (IgnoreAlpha ? 3 : 4)
+        : DecodedImage.BytesPerPixel(
+            (_encodingPolicy ?? throw new InvalidOperationException("展示编码策略未注入"))
+                .Select(ImageSizeClass.Full, PressureLevel.Normal));
+
     /// <summary>启动期注入原生主图解码器与编码协商策略；禁止在已开始解码后更换解释口径。</summary>
     /// <param name="decoder">平台展示解码器。</param>
     /// <param name="policy">展示编码协商策略。</param>
@@ -1307,7 +1318,7 @@ public static class BitmapLoader
         return (count, size, info);
     }
 
-    // 内存告警事件载体（UI 仅展示触发时的大小、数量与时间）
+    // 系统内存告警的事件载体（iOS 壳在 DidReceiveMemoryWarning 时发送；设置页已不再展示告警快照）
     public readonly record struct MemoryWarningEvent(long sizeMB, int count, DateTimeOffset time);
 
     // ---- 统一内存管控 ----

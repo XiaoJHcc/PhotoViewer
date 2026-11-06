@@ -135,6 +135,8 @@ public static class DesignTokens
     public const uint ColorPopupBackground = 0xFF2B2B2Bu;
     /// <summary>color.popup.border（color） MENU-03：弹层 1 点描边（黑 36%）。</summary>
     public const uint ColorPopupBorder = 0x5C000000u;
+    /// <summary>color.settings.warning（color） SETTINGS-06：设置页内存警告文字色：低饱和暗金，降低深色背景上的亮度；四端统一，错误色保持原生语义色。</summary>
+    public const uint ColorSettingsWarning = 0xFFC4AA70u;
     /// <summary>color.sim.action.background（color） SIM-01：提取全部/补齐全部按钮与进度条底色。</summary>
     public const uint ColorSimActionBackground = 0xFF2A2A2Au;
     /// <summary>color.sim.action.border（color） SIM-01：动作按钮描边。</summary>

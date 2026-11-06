@@ -93,6 +93,18 @@ public static class MemoryGovernor
         }
     }
 
+    /// <summary>
+    /// 系统物理内存读数(总量 / 当前可用),供设备能力提示展示。
+    /// 未注入预算源或平台读数失败时返回 <see cref="SystemMemoryInfo.Unknown"/>,不回退为伪造数值。
+    /// </summary>
+    public static SystemMemoryInfo GetSystemMemoryInfo()
+    {
+        IMemoryBudgetProvider? provider;
+        lock (_gate) provider = _provider;
+        try { return provider?.GetSystemMemoryInfo() ?? SystemMemoryInfo.Unknown; }
+        catch { return SystemMemoryInfo.Unknown; }
+    }
+
     /// <summary>每轮压力探测结束(含 Initialize 的首轮)后触发,供缓存按最新 footprint 重算容量。回调在线程池线程。</summary>
     public static event Action? Probed;
 

@@ -2,8 +2,15 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using System.Diagnostics;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Design;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
+using PhotoViewer.Core.Settings;
+using PhotoViewer.Mac.Core;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -35,18 +42,69 @@ internal static class NativeSettingsAcceptance
             checks.Add($"category {category}: SwiftUI grouped form rendered");
             if (category == 0)
             {
-                // 桌面端缓存上限由用户设置生效，提示按实测预算与适屏尺寸给出可缓存张数
-                if (!presenter.WorkingSettings.ShowsCacheLimits) throw new InvalidOperationException("桌面端缓存上限两项不应隐藏");
-                string budgetInfo = presenter.WorkingSettings.PerformanceBudgetInfo;
-                if (!budgetInfo.Contains("核 / 内存", StringComparison.Ordinal) || !budgetInfo.EndsWith(" MB", StringComparison.Ordinal))
-                    throw new InvalidOperationException("设备性能提示未取运行时预算：" + budgetInfo);
-                string countInfo = presenter.WorkingSettings.BitmapCacheCountInfo;
-                if (!countInfo.Contains("适屏照片", StringComparison.Ordinal)
-                    || !(countInfo.StartsWith("✓ 可缓存", StringComparison.Ordinal) || countInfo.StartsWith("⚠ 可缓存", StringComparison.Ordinal)))
-                    throw new InvalidOperationException("缓存提示未按适屏张数口径：" + countInfo);
-                checks.Add("settings06: budget and cache-count hints come from the runtime budget (" + budgetInfo + " / " + countInfo + ")");
+                // 桌面端缓存上限可编辑：两档张数直接按工作副本内存上限估算，超限只挂一句简短警告
+                var settings = presenter.WorkingSettings;
+                if (!settings.ShowsCacheLimits) throw new InvalidOperationException("桌面端缓存上限两项不应隐藏");
+                var baseline = settings.CreateSnapshot();
+                string budgetInfo = settings.PerformanceBudgetInfo;
+                string countInfo = settings.BitmapCacheCountInfo;
+                if (budgetInfo.Contains("设备性能", StringComparison.Ordinal) || budgetInfo.Contains("核 / 内存", StringComparison.Ordinal)
+                    || budgetInfo.Contains("上次系统内存告警", StringComparison.Ordinal))
+                    throw new InvalidOperationException("系统内存提示仍是旧的运行时预算口径：" + budgetInfo);
+                AssertSystemMemoryHint(budgetInfo, "默认设置");
+                AssertCountWording(countInfo, "默认设置");
+                AssertWarningSuffix(budgetInfo, settings.PerformanceBudgetInfoLevel, "默认设置");
+                if (settings.BitmapCacheCountInfoLevel != PerfInfoLevel.Normal)
+                    throw new InvalidOperationException("张数提示不按用户设置定级：" + settings.BitmapCacheCountInfoLevel);
+                checks.Add("settings06: 系统内存与两档张数提示：" + budgetInfo + " / " + countInfo);
                 checks.Add("file footer: " + budgetInfo);
                 checks.Add("file footer: " + countInfo);
+
+                try
+                {
+                    // 内存拉条逐档改变张数：每档都按所选上限直接换算（不乘安全比例、不按预算/可用内存截断）
+                    bool screenNumeric = false;
+                    foreach (int limitMB in new[] { 1024, 8192, SettingsDocumentCodec.MaximumCacheMemoryMB })
+                    {
+                        settings.BitmapCacheMaxMemory = limitMB;
+                        string stage = $"缓存内存上限 {limitMB} MB";
+                        var counts = ParseCounts(settings.BitmapCacheCountInfo, stage);
+                        screenNumeric |= counts.Screen != null;
+                        AssertCountsForLimit(counts, limitMB, stage);
+                        AssertCountWording(settings.BitmapCacheCountInfo, stage);
+                        AssertSystemMemoryHint(settings.PerformanceBudgetInfo, stage);
+                        AssertWarningSuffix(settings.PerformanceBudgetInfo, settings.PerformanceBudgetInfoLevel, stage);
+                        checks.Add($"settings06: {stage} → {settings.BitmapCacheCountInfo}；级别 {settings.PerformanceBudgetInfoLevel}");
+                    }
+                    if (!screenNumeric)
+                        checks.Add("NOTE settings06: 当前无物理视口，适屏档按规范显示“未知”，只核对了完整档张数");
+
+                    // 张数只随内存上限变化：数量/预载/解码线程改了也不动
+                    string atLimit = settings.BitmapCacheCountInfo;
+                    settings.BitmapCacheMaxCount = 1;
+                    settings.PreloadForwardCount = 0;
+                    settings.NativePreloadParallelism = 1;
+                    if (settings.BitmapCacheCountInfo != atLimit)
+                        throw new InvalidOperationException("数量/预载/解码线程改了张数估算：" + settings.BitmapCacheCountInfo);
+
+                    var pageState = presenter.BuildState();
+                    string expectedLevel = MacNativeSettingsPresenter.LevelName(settings.PerformanceBudgetInfoLevel);
+                    if (pageState.File.BudgetLevel != expectedLevel || pageState.File.CacheCountLevel != "normal")
+                        throw new InvalidOperationException($"提示级别未传到 SwiftUI 状态：{pageState.File.BudgetLevel}/{expectedLevel}");
+                    if (pageState.File.WarningColor != DesignTokens.ColorSettingsWarning)
+                        throw new InvalidOperationException(
+                            $"警告色未取 color.settings.warning 令牌：0x{pageState.File.WarningColor:X8}");
+                    checks.Add($"settings06: 上限 {SettingsDocumentCodec.MaximumCacheMemoryMB} MB 时张数与数量/预载/线程无关，级别 {expectedLevel} 与警告色令牌 0x{pageState.File.WarningColor:X8} 已推给 SwiftUI");
+                }
+                finally
+                {
+                    settings.ApplySnapshot(baseline);
+                }
+                if (settings.BitmapCacheCountInfo != countInfo)
+                    throw new InvalidOperationException("恢复设置快照后张数未回到进入时的口径：" + settings.BitmapCacheCountInfo);
+                AssertWarningSuffix(settings.PerformanceBudgetInfo, settings.PerformanceBudgetInfoLevel, "快照恢复后");
+                checks.Add("settings06: 内存拉条（1 GB / 8 GB / 上限）按所选上限换算张数，超限只追加简短警告；快照恢复后提示复原");
+                checks.Add("SETTINGS-06 footer: 两段提示为可换行文本（SwiftUI VStack + fixedSize(vertical)），级别取 levelColor（normal/warning/error）");
             }
             await Task.Delay(300);
         }
@@ -271,6 +329,128 @@ internal static class NativeSettingsAcceptance
         checks.Add("close applies working copy / reopen restores all rows");
         await File.WriteAllLinesAsync(Path.Combine(output, "settings-ui-checks.txt"), checks);
     }
+
+    /// <summary>系统内存提示必须给出总物理内存与系统当前可用内存，且与平台读数同源。</summary>
+    private static void AssertSystemMemoryHint(string text, string stage)
+    {
+        var info = new MacMemoryBudgetProvider().GetSystemMemoryInfo();
+        if (info.TotalBytes <= 0) throw new InvalidOperationException(stage + "：未能读到系统总物理内存");
+        if (!ContainsSize(text, info.TotalBytes))
+            throw new InvalidOperationException($"{stage}：系统内存提示未给出总物理内存 {info.TotalBytes} 字节：{text}");
+        if (info.AvailableBytes < 0)
+        {
+            if (!text.Contains("未知", StringComparison.Ordinal))
+                throw new InvalidOperationException(stage + "：系统可用内存读取失败时应如实显示“未知”：" + text);
+            return;
+        }
+        if (info.AvailableBytes > info.TotalBytes)
+            throw new InvalidOperationException($"{stage}：系统可用内存超过总内存：{info.AvailableBytes}/{info.TotalBytes}");
+        // 提示随 2s 探测周期刷新，可读量可能滞后于本次直读；此时只要求两段尺寸都在场
+        if (!ContainsSize(text, info.AvailableBytes) && CountSizes(text) < 2)
+            throw new InvalidOperationException($"{stage}：系统内存提示未给出系统可用内存 {info.AvailableBytes} 字节：{text}");
+    }
+
+    /// <summary>张数文案只允许「可缓存 N 张适屏照片 / N 张 3300 万像素照片」（未知项写“未知”），不带“缓存能力/最大/约”。</summary>
+    private static void AssertCountWording(string text, string stage)
+    {
+        foreach (var banned in new[] { "缓存能力", "最大", "约" })
+            if (text.Contains(banned, StringComparison.Ordinal))
+                throw new InvalidOperationException($"{stage}：张数文案仍含「{banned}」：{text}");
+        ParseCounts(text, stage);
+    }
+
+    /// <summary>解析两档张数；数字缺失且不是“未知”即口径不符。</summary>
+    private static (long? Screen, long? Full) ParseCounts(string text, string stage)
+        => (ParseCountSlot(text, ScreenCountPattern, ScreenUnknownPattern, "适屏照片", stage),
+            ParseCountSlot(text, FullCountPattern, FullUnknownPattern, "3300 万像素照片", stage));
+
+    private static long? ParseCountSlot(string text, Regex countPattern, Regex unknownPattern, string slot, string stage)
+    {
+        if (countPattern.Match(text) is { Success: true } match && long.TryParse(match.Groups[1].Value, out var value))
+            return value;
+        if (unknownPattern.IsMatch(text)) return null;
+        throw new InvalidOperationException($"{stage}：{slot}张数缺失或口径不符：{text}");
+    }
+
+    /// <summary>两档张数必须等于「所选内存上限 ÷ 单张字节数」向下取整：不乘安全比例，也不按预算/可用内存/数量截断。</summary>
+    private static void AssertCountsForLimit((long? Screen, long? Full) counts, int limitMB, string stage)
+    {
+        long limitBytes = (long)limitMB * 1024 * 1024;
+        int screenBytesPerPixel = BitmapLoader.ProxyBytesPerPixel;
+        int fullBytesPerPixel = BitmapLoader.NormalFullBytesPerPixel;
+        int proxyLongEdge = BitmapLoader.ProxyTargetLongEdge;
+        if (proxyLongEdge > 0 && screenBytesPerPixel > 0)
+        {
+            long pixels = Math.Min((long)proxyLongEdge * proxyLongEdge * 2 / 3, FullPhotoPixels);
+            AssertCount(counts.Screen, limitBytes / (pixels * screenBytesPerPixel), "适屏照片", stage);
+        }
+        else if (counts.Screen != null)
+        {
+            throw new InvalidOperationException(stage + "：视口未知时不得给出适屏张数：" + counts.Screen);
+        }
+
+        if (fullBytesPerPixel > 0)
+            AssertCount(counts.Full, limitBytes / (FullPhotoPixels * fullBytesPerPixel), "3300 万像素照片", stage);
+    }
+
+    private static void AssertCount(long? actual, long expected, string slot, string stage)
+    {
+        if (actual is not { } value)
+            throw new InvalidOperationException($"{stage}：{slot}张数应为具体数字，实际为“未知”");
+        if (Math.Abs(value - expected) > 1)
+            throw new InvalidOperationException($"{stage}：{slot}张数 {value} 与按所选上限换算的 {expected} 不符（应直接按内存上限估算）");
+    }
+
+    /// <summary>超限警告只允许「（当前设置超过 xx 上限）」，级别随原因固定：总内存/应用内存错误级，可用内存/设备缓存警告级。</summary>
+    private static void AssertWarningSuffix(string text, PerfInfoLevel level, string stage)
+    {
+        var match = WarningPattern.Match(text);
+        if (match.Success)
+        {
+            string cause = match.Groups[1].Value;
+            var expected = cause is "系统总内存" or "应用内存" ? PerfInfoLevel.Error : PerfInfoLevel.Warning;
+            if (level != expected)
+                throw new InvalidOperationException($"{stage}：警告「当前设置超过{cause}上限」应为 {expected} 级，实际 {level}：{text}");
+            return;
+        }
+        if (text.Contains("超过", StringComparison.Ordinal) || level != PerfInfoLevel.Normal)
+            throw new InvalidOperationException($"{stage}：超限警告格式不符或级别缺原因：{text}");
+    }
+
+    /// <summary>3300 万像素（SETTINGS-06 完整照片口径）。</summary>
+    private const long FullPhotoPixels = 33_000_000;
+
+    private static readonly Regex ScreenCountPattern = new(@"可缓存\s*([0-9]+)\s*张适屏照片");
+    private static readonly Regex ScreenUnknownPattern = new(@"适屏照片[：:]\s*未知");
+    private static readonly Regex FullCountPattern = new(@"([0-9]+)\s*张\s*3300\s*万像素照片");
+    private static readonly Regex FullUnknownPattern = new(@"3300\s*万像素照片[：:]\s*未知");
+    private static readonly Regex WarningPattern = new(@"（当前设置超过(系统总内存|应用内存|系统可用内存|设备缓存)上限）");
+
+    /// <summary>文本里是否给出该字节量的近似数值（B/KB/MB/GB/TB 与 KiB/MiB/GiB/TiB，兼容 1000 与 1024 换算口径）。</summary>
+    private static bool ContainsSize(string text, long bytes)
+    {
+        if (bytes <= 0) return false;
+        foreach (Match match in SizePattern.Matches(text))
+        {
+            double value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            double factor = match.Groups[2].Value.ToUpperInvariant() switch
+            {
+                "TB" or "TIB" => 1024d * 1024 * 1024 * 1024,
+                "GB" or "GIB" => 1024d * 1024 * 1024,
+                "MB" or "MIB" => 1024d * 1024,
+                "KB" or "KIB" => 1024d,
+                _ => 1d,
+            };
+            if (Math.Abs(value * factor - bytes) <= Math.Max(bytes * 0.1, 512d * 1024 * 1024)) return true;
+        }
+        return false;
+    }
+
+    private static readonly Regex SizePattern =
+        new(@"([0-9]+(?:\.[0-9]+)?)\s*(TIB|GIB|MIB|KIB|TB|GB|MB|KB|B)", RegexOptions.IgnoreCase);
+
+    /// <summary>文本里的内存尺寸数量（用于接受周期探测周期内"当前可用"读数的正常滞后）。</summary>
+    private static int CountSizes(string text) => SizePattern.Matches(text).Count;
 
     private static NSTextField PresetField(NSView root, string id)
     {

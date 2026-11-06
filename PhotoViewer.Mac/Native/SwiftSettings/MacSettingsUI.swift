@@ -74,6 +74,8 @@ struct SVFileState: Codable {
     var budgetLevel: String
     var cacheCountInfo: String
     var cacheCountLevel: String
+    /// 警告文字色（`color.settings.warning` 令牌，0xAARRGGBB；占位状态为 0）。
+    var warningColor: UInt32 = 0
 }
 
 /// 预览分页状态。
@@ -671,10 +673,16 @@ extension View {
     }
 }
 
-/// 把语义级别映射到 SwiftUI 颜色。
-func levelColor(_ level: String) -> Color {
+/// 把语义级别映射到 SwiftUI 颜色；警告色取 C# 推来的设计令牌（0xAARRGGBB，不在此硬编码色值）。
+func levelColor(_ level: String, _ warningColor: UInt32) -> Color {
     switch level {
-    case "warning": return .orange
+    case "warning":
+        return Color(
+            .sRGB,
+            red: Double((warningColor >> 16) & 0xFF) / 255,
+            green: Double((warningColor >> 8) & 0xFF) / 255,
+            blue: Double(warningColor & 0xFF) / 255,
+            opacity: Double((warningColor >> 24) & 0xFF) / 255)
     case "error": return .red
     default: return .secondary
     }
@@ -840,10 +848,11 @@ struct FileSettingsPage: View {
                 Text("缓存与预加载")
             } footer: {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(file.budgetInfo).foregroundStyle(levelColor(file.budgetLevel))
-                    Text(file.cacheCountInfo).foregroundStyle(levelColor(file.cacheCountLevel))
+                    Text(file.budgetInfo).foregroundStyle(levelColor(file.budgetLevel, file.warningColor))
+                    Text(file.cacheCountInfo).foregroundStyle(levelColor(file.cacheCountLevel, file.warningColor))
                 }
                 .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
         .formStyle(.grouped)

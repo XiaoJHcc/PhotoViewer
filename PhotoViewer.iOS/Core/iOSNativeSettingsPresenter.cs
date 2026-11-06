@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
@@ -1036,6 +1037,10 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
     {
     }
 
+    private UILabel? _performanceInfo;
+    private UILabel? _cacheInfo;
+    private bool _infoRefreshHooked;
+
     /// <summary>
     /// 构建文件设置页面内容。
     /// </summary>
@@ -1044,28 +1049,11 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
     {
         Title = "文件";
 
-        var performanceInfo = new UILabel
-        {
-            Text = Settings.PerformanceBudgetInfo,
-            Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabel,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-        var cacheInfo = new UILabel
-        {
-            Text = Settings.BitmapCacheCountInfo,
-            Font = UIFont.SystemFontOfSize(12),
-            TextColor = UIColor.SecondaryLabel,
-            Lines = 0,
-            TranslatesAutoresizingMaskIntoConstraints = false
-        };
-
-        void RefreshInfoLabels()
-        {
-            performanceInfo.Text = Settings.PerformanceBudgetInfo;
-            cacheInfo.Text = Settings.BitmapCacheCountInfo;
-        }
+        var performanceInfo = CreateInfoLabel();
+        var cacheInfo = CreateInfoLabel();
+        _performanceInfo = performanceInfo;
+        _cacheInfo = cacheInfo;
+        HookInfoRefresh();
 
         contentStack.AddArrangedSubview(
             CreateSection(
@@ -1171,6 +1159,80 @@ internal sealed class iOSNativeFileSettingsViewController : iOSNativeSettingsFor
         contentStack.AddArrangedSubview(performanceInfo);
         contentStack.AddArrangedSubview(cacheInfo);
         RefreshInfoLabels();
+    }
+
+    /// <summary>能力提示行：多行文本整段换行，不截断。</summary>
+    private static UILabel CreateInfoLabel() => new()
+    {
+        Font = UIFont.SystemFontOfSize(12),
+        TextColor = UIColor.SecondaryLabel,
+        Lines = 0,
+        LineBreakMode = UILineBreakMode.WordWrap,
+        TranslatesAutoresizingMaskIntoConstraints = false
+    };
+
+    /// <summary>两段提示的文本与级别随周期内存探测刷新；整页重建只换控件，不重复订阅。</summary>
+    private void HookInfoRefresh()
+    {
+        if (_infoRefreshHooked) return;
+        _infoRefreshHooked = true;
+        Settings.PropertyChanged += OnSettingsPropertyChanged;
+    }
+
+    private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is not (nameof(SettingsViewModel.PerformanceBudgetInfo)
+            or nameof(SettingsViewModel.PerformanceBudgetInfoLevel)
+            or nameof(SettingsViewModel.BitmapCacheCountInfo)
+            or nameof(SettingsViewModel.BitmapCacheCountInfoLevel))) return;
+        if (NSThread.IsMain) RefreshInfoLabels();
+        else BeginInvokeOnMainThread(RefreshInfoLabels);
+    }
+
+    private void RefreshInfoLabels()
+    {
+        string budgetText = Settings.PerformanceBudgetInfo;
+        var budgetColor = InfoColor(Settings.PerformanceBudgetInfoLevel);
+        if (_performanceInfo is { } performance && !SameInfo(performance, budgetText, budgetColor))
+        {
+            performance.Text = budgetText;
+            performance.TextColor = budgetColor;
+        }
+
+        string countText = Settings.BitmapCacheCountInfo;
+        var countColor = InfoColor(Settings.BitmapCacheCountInfoLevel);
+        if (_cacheInfo is { } cache && !SameInfo(cache, countText, countColor))
+        {
+            cache.Text = countText;
+            cache.TextColor = countColor;
+        }
+    }
+
+    /// <summary>提示标签是否已是该文本与颜色；未变化就不重写，避免周期探测反复触发布局。</summary>
+    private static bool SameInfo(UILabel label, string text, UIColor color)
+    {
+        var current = label.TextColor;
+        return label.Text == text && current != null && (ReferenceEquals(current, color) || current.Equals(color));
+    }
+
+    /// <summary>语义级别 → 颜色：错误取系统红、警告取 `color.settings.warning` 令牌、常规取次级色（与 Mac `levelColor` 同口径）。</summary>
+    private static UIColor InfoColor(PerfInfoLevel level) => level switch
+    {
+        PerfInfoLevel.Error => UIColor.SystemRed,
+        PerfInfoLevel.Warning => PhotoViewer.iOS.Native.iOSColors.FromToken(
+            PhotoViewer.Core.Design.DesignTokens.ColorSettingsWarning),
+        _ => UIColor.SecondaryLabel,
+    };
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing && _infoRefreshHooked)
+        {
+            _infoRefreshHooked = false;
+            Settings.PropertyChanged -= OnSettingsPropertyChanged;
+        }
+
+        base.Dispose(disposing);
     }
 }
 

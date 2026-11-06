@@ -1,4 +1,5 @@
 using AppKit;
+using System.ComponentModel;
 using System.Globalization;
 using System.Reactive.Linq;
 using System.Text.Json;
@@ -26,6 +27,8 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     private readonly List<int> _historyBack = [];
     private readonly List<int> _historyForward = [];
     private readonly Dictionary<SettingsViewModel.ScalePreset, string> _presetIds = [];
+    private IDisposable? _infoRefresh;
+    private string _infoSnapshot = string.Empty;
 
     internal string PresetId(SettingsViewModel.ScalePreset preset)
     {
@@ -95,6 +98,7 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
             MacSettingsNative.CloseSink = HandleClose;
             _category = 0;
             _presenting = true;
+            StartInfoRefresh(_session.WorkingSettings);
         }
         MacSettingsNative.Show(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
         return true;
@@ -132,6 +136,8 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
     /// <summary>清空窗口级状态，等待下次展示重建工作副本。</summary>
     private void ResetPresentationState()
     {
+        _infoRefresh?.Dispose();
+        _infoRefresh = null;
         _session = null;
         _presenting = false;
         _category = -1;
@@ -170,6 +176,40 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         if (!_presenting || _closing) return;
         MacSettingsNative.UpdateState(JsonSerializer.Serialize(BuildState(), MacSettingsJsonContext.Default.MacSettingsStateDto));
     }
+
+    /// <summary>内存能力提示随周期探测刷新：两段文本或语义级别确实变化后才重推状态，SwiftUI 侧据此换行显示与换色。</summary>
+    private void StartInfoRefresh(SettingsViewModel settings)
+    {
+        _infoRefresh?.Dispose();
+        _infoSnapshot = InfoSnapshot(settings);
+        _infoRefresh = Observable
+            .FromEventPattern<PropertyChangedEventHandler, PropertyChangedEventArgs>(
+                handler => settings.PropertyChanged += handler,
+                handler => settings.PropertyChanged -= handler)
+            .Where(args => args.EventArgs.PropertyName is
+                nameof(SettingsViewModel.PerformanceBudgetInfo) or
+                nameof(SettingsViewModel.PerformanceBudgetInfoLevel) or
+                nameof(SettingsViewModel.BitmapCacheCountInfo) or
+                nameof(SettingsViewModel.BitmapCacheCountInfoLevel))
+            .Throttle(TimeSpan.FromMilliseconds(500))
+            .ObserveOn(PhotoViewer.Core.Platform.UiDispatcher.MainThreadScheduler)
+            .Subscribe(_ => PushInfoIfChanged(settings));
+    }
+
+    /// <summary>提示文本或级别与上次推送不同才重推，避免周期探测每次都刷新整份 SwiftUI 状态。</summary>
+    private void PushInfoIfChanged(SettingsViewModel settings)
+    {
+        if (!_presenting || _closing) return;
+        string snapshot = InfoSnapshot(settings);
+        if (snapshot == _infoSnapshot) return;
+        _infoSnapshot = snapshot;
+        PushState();
+    }
+
+    /// <summary>两段能力提示的文本与语义级别快照（用于变化检测）。</summary>
+    private static string InfoSnapshot(SettingsViewModel settings)
+        => settings.PerformanceBudgetInfo + '\u001f' + settings.PerformanceBudgetInfoLevel
+            + '\u001f' + settings.BitmapCacheCountInfo + '\u001f' + settings.BitmapCacheCountInfoLevel;
 
     /// <summary>构建完整窗口状态快照，含派生文本、冲突与语义级别；验收也读取同一份快照。</summary>
     internal MacSettingsStateDto BuildState()
@@ -263,8 +303,8 @@ public sealed class MacNativeSettingsPresenter : INativeSettingsPresenter
         };
     }
 
-    /// <summary>把提示语义级别映射为 Swift 侧可读名称。</summary>
-    private static string LevelName(PerfInfoLevel level) => level switch
+    /// <summary>把提示语义级别映射为 Swift 侧可读名称；验收按同一映射核对推送状态。</summary>
+    internal static string LevelName(PerfInfoLevel level) => level switch
     {
         PerfInfoLevel.Warning => "warning", PerfInfoLevel.Error => "error", _ => "normal",
     };

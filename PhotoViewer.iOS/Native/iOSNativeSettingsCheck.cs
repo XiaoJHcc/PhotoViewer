@@ -1,4 +1,6 @@
 using Foundation;
+using System.Globalization;
+using System.Text.RegularExpressions;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Platform;
@@ -185,20 +187,89 @@ internal static class iOSNativeSettingsCheck
             if (settings.ShowsCacheLimits) throw new InvalidOperationException("iPad 缓存容量应由实测预算自动管理");
             if (settings.PreloadMaximum != 10) throw new InvalidOperationException($"自动口径下预载上限应为 10，实际 {settings.PreloadMaximum}");
             var page = root.NavigationController!.TopViewController!;
-            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
-            if (labels.Contains("缓存内存上限") || labels.Contains("缓存数量上限"))
+            var labels = Descendants(page.View!).OfType<UILabel>().ToArray();
+            var texts = labels.Select(label => label.Text ?? string.Empty).ToArray();
+            if (texts.Contains("缓存内存上限") || texts.Contains("缓存数量上限"))
                 throw new InvalidOperationException("自动口径下仍显示缓存上限两项");
-            string budget = labels.FirstOrDefault(text => text.StartsWith("设备性能:", StringComparison.Ordinal))
-                ?? throw new InvalidOperationException("文件页缺少设备性能提示");
-            string count = labels.FirstOrDefault(text => text.StartsWith("✓ 可缓存", StringComparison.Ordinal)
-                || text.StartsWith("⚠ 可缓存", StringComparison.Ordinal))
-                ?? throw new InvalidOperationException("文件页缺少可缓存张数提示");
-            if (budget.Contains("iOS 内存限制", StringComparison.Ordinal))
-                throw new InvalidOperationException("预算提示仍带旧的内存调小说明");
-            if (!budget.Contains("核 / 内存", StringComparison.Ordinal) || !budget.EndsWith(" MB", StringComparison.Ordinal))
-                throw new InvalidOperationException($"设备性能提示未取运行时预算：{budget}");
-            if (!count.Contains("适屏照片", StringComparison.Ordinal))
-                throw new InvalidOperationException($"可缓存张数提示口径不符：{count}");
+
+            // 能力提示按当前文本属性定位：第一行系统总内存/当前可用，第二行两档张数（均允许换行）
+            var budgetLabel = labels.FirstOrDefault(label => label.Text == settings.PerformanceBudgetInfo)
+                ?? throw new InvalidOperationException("文件页缺少系统内存提示");
+            var countLabel = labels.FirstOrDefault(label => label.Text == settings.BitmapCacheCountInfo)
+                ?? throw new InvalidOperationException("文件页缺少缓存张数提示");
+            string budget = budgetLabel.Text ?? string.Empty;
+            string count = countLabel.Text ?? string.Empty;
+
+            if (budget.Contains("设备性能", StringComparison.Ordinal) || budget.Contains("核 / 内存", StringComparison.Ordinal)
+                || budget.Contains("上次系统内存告警", StringComparison.Ordinal))
+                throw new InvalidOperationException("系统内存提示仍是旧的运行时预算口径：" + budget);
+            AssertCountWording(count, "默认设置");
+            if (budget.Contains("超过", StringComparison.Ordinal) || WarningPattern.IsMatch(budget))
+                throw new InvalidOperationException("自动管理缓存的平台不应追加用户上限警告：" + budget);
+
+            // 容器：两段提示都必须是可换行文本（Lines = 0），长文本整段显示不截断
+            if (budgetLabel.Lines != 0 || countLabel.Lines != 0)
+                throw new InvalidOperationException($"能力提示未允许换行：{budgetLabel.Lines}/{countLabel.Lines}");
+            if (!SameColor(budgetLabel.TextColor, UIColor.SecondaryLabel) || !SameColor(countLabel.TextColor, UIColor.SecondaryLabel))
+                throw new InvalidOperationException("常规级别的能力提示未取次级色");
+            if (settings.PerformanceBudgetInfoLevel != PerfInfoLevel.Normal
+                || settings.BitmapCacheCountInfoLevel != PerfInfoLevel.Normal)
+                throw new InvalidOperationException("自动管理缓存的平台不应出现内存告警级别");
+
+            // 系统总内存 / 系统当前可用与平台读数同源；两档张数按设备最大安全容量估算
+            var info = new iOSMemoryBudgetProvider().GetSystemMemoryInfo();
+            if (info.TotalBytes <= 0) throw new InvalidOperationException("未能读到系统总物理内存");
+            if (!ContainsSize(budget, info.TotalBytes))
+                throw new InvalidOperationException($"系统内存提示未给出总物理内存 {info.TotalBytes} 字节：{budget}");
+            if (info.AvailableBytes < 0)
+            {
+                if (!budget.Contains("未知", StringComparison.Ordinal))
+                    throw new InvalidOperationException("系统可用内存读取失败时应如实显示“未知”：" + budget);
+            }
+            else
+            {
+                if (info.AvailableBytes > info.TotalBytes)
+                    throw new InvalidOperationException($"系统可用内存超过总内存：{info.AvailableBytes}/{info.TotalBytes}");
+                // 提示随 2s 探测周期刷新，可读量可能滞后于本次直读；此时只要求两段尺寸都在场
+                if (!ContainsSize(budget, info.AvailableBytes) && CountSizes(budget) < 2)
+                    throw new InvalidOperationException($"系统内存提示未给出系统可用内存 {info.AvailableBytes} 字节：{budget}");
+            }
+        });
+
+        // 张数只按设备最大安全容量估算：隐藏的用户内存/数量上限与预载份数变化都不得改动它
+        string countBefore = string.Empty;
+        string countAfter = string.Empty;
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            countBefore = settings.BitmapCacheCountInfo;
+            int forward = settings.PreloadForwardCount;
+            int memory = settings.BitmapCacheMaxMemory;
+            int count = settings.BitmapCacheMaxCount;
+            try
+            {
+                settings.PreloadForwardCount = forward == 0 ? 1 : 0;
+                settings.BitmapCacheMaxMemory = 512;
+                settings.BitmapCacheMaxCount = 1;
+                settings.BitmapCacheMaxMemory = 32768;
+                settings.BitmapCacheMaxCount = 400;
+            }
+            finally
+            {
+                settings.PreloadForwardCount = forward;
+                settings.BitmapCacheMaxMemory = memory;
+                settings.BitmapCacheMaxCount = count;
+            }
+            countAfter = settings.BitmapCacheCountInfo;
+        });
+        await Task.Delay(150);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            if (countAfter != countBefore)
+                throw new InvalidOperationException($"缓存张数随隐藏的用户上限/预载变化：{countBefore} → {countAfter}");
+            var page = root.NavigationController!.TopViewController!;
+            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            if (!labels.Contains(settings.BitmapCacheCountInfo))
+                throw new InvalidOperationException("缓存张数提示未随属性变化刷新");
         });
 
         // SETTINGS-15 / 周期刷新回归：卡片内最后一行不留底缘描边；长表单在内存探测的周期通知期间保持滚动位置。
@@ -255,7 +326,7 @@ internal static class iOSNativeSettingsCheck
 
         await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopViewController(false));
         await WaitForPage<iOSNativeSettingsRootViewController>(root);
-        lines.Add("PASS SETTINGS-06@ios：文件页由实测预算自动管理缓存，不显示缓存内存/数量两项，预算与适屏张数两条提示按新口径且无旧说明");
+        lines.Add("PASS SETTINGS-06@ios：文件页由实测预算自动管理缓存，不显示缓存内存/数量两项；提示为系统总内存/当前可用与「可缓存 N 张适屏照片 / N 张 3300 万像素照片」两段可换行文本，无告警；张数按设备最大安全容量估算，不随预载与隐藏的用户内存/数量上限变化，常规级别取次级色");
     }
 
     /// <summary>
@@ -761,4 +832,62 @@ internal static class iOSNativeSettingsCheck
             foreach (var nested in Descendants(child)) yield return nested;
         }
     }
+
+    /// <summary>文本里是否给出该字节量的近似数值（B/KB/MB/GB/TB 与 KiB/MiB/GiB/TiB，兼容 1000 与 1024 换算口径）。</summary>
+    private static bool ContainsSize(string text, long bytes)
+    {
+        if (bytes <= 0) return false;
+        foreach (Match match in SizePattern.Matches(text))
+        {
+            double value = double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+            double factor = match.Groups[2].Value.ToUpperInvariant() switch
+            {
+                "TB" or "TIB" => 1024d * 1024 * 1024 * 1024,
+                "GB" or "GIB" => 1024d * 1024 * 1024,
+                "MB" or "MIB" => 1024d * 1024,
+                "KB" or "KIB" => 1024d,
+                _ => 1d,
+            };
+            if (Math.Abs(value * factor - bytes) <= Math.Max(bytes * 0.1, 512d * 1024 * 1024)) return true;
+        }
+        return false;
+    }
+
+    private static readonly Regex SizePattern =
+        new(@"([0-9]+(?:\.[0-9]+)?)\s*(TIB|GIB|MIB|KIB|TB|GB|MB|KB|B)", RegexOptions.IgnoreCase);
+
+    /// <summary>文本里的内存尺寸数量（用于接受周期探测周期内"当前可用"读数的正常滞后）。</summary>
+    private static int CountSizes(string text) => SizePattern.Matches(text).Count;
+
+    /// <summary>张数文案只允许「可缓存 N 张适屏照片 / N 张 3300 万像素照片」（未知项写“未知”），不带“缓存能力/最大/约”。</summary>
+    private static void AssertCountWording(string text, string stage)
+    {
+        foreach (var banned in new[] { "缓存能力", "最大", "约" })
+            if (text.Contains(banned, StringComparison.Ordinal))
+                throw new InvalidOperationException($"{stage}：张数文案仍含「{banned}」：{text}");
+        ParseCounts(text, stage);
+    }
+
+    /// <summary>解析两档张数；数字缺失且不是“未知”即口径不符。</summary>
+    private static (long? Screen, long? Full) ParseCounts(string text, string stage)
+        => (ParseCountSlot(text, ScreenCountPattern, ScreenUnknownPattern, "适屏照片", stage),
+            ParseCountSlot(text, FullCountPattern, FullUnknownPattern, "3300 万像素照片", stage));
+
+    private static long? ParseCountSlot(string text, Regex countPattern, Regex unknownPattern, string slot, string stage)
+    {
+        if (countPattern.Match(text) is { Success: true } match && long.TryParse(match.Groups[1].Value, out var value))
+            return value;
+        if (unknownPattern.IsMatch(text)) return null;
+        throw new InvalidOperationException($"{stage}：{slot}张数缺失或口径不符：{text}");
+    }
+
+    private static readonly Regex ScreenCountPattern = new(@"可缓存\s*([0-9]+)\s*张适屏照片");
+    private static readonly Regex ScreenUnknownPattern = new(@"适屏照片[：:]\s*未知");
+    private static readonly Regex FullCountPattern = new(@"([0-9]+)\s*张\s*3300\s*万像素照片");
+    private static readonly Regex FullUnknownPattern = new(@"3300\s*万像素照片[：:]\s*未知");
+    private static readonly Regex WarningPattern = new(@"（当前设置超过(系统总内存|应用内存|系统可用内存|设备缓存)上限）");
+
+    /// <summary>两个 UIColor 是否同一颜色（动态系统色按实例或句柄比较，避免绑定层包装差异）。</summary>
+    private static bool SameColor(UIColor? actual, UIColor expected)
+        => actual != null && (ReferenceEquals(actual, expected) || actual.Equals(expected));
 }

@@ -74,6 +74,7 @@ internal static class AndroidUiTheme
     internal static readonly Color FilterToggleForeground = FromToken(DesignTokens.ColorFilterToggleForeground);
     /// <summary>设置页持久化失败状态文字（SETTINGS-14）。</summary>
     internal static readonly Color ErrorText = FromToken(DesignTokens.ColorSimError);
+    internal static readonly Color WarningText = FromToken(DesignTokens.ColorSettingsWarning);
 
     /// <summary>图标字体（uicons）在 Assets 中的路径。</summary>
     internal const string IconFontAsset = "Fonts/uicons-regular-rounded.ttf";

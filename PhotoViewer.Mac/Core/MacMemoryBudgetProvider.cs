@@ -42,4 +42,24 @@ public sealed class MacMemoryBudgetProvider : IMemoryBudgetProvider
 
     /// <summary>当前进程驻留(phys_footprint,含 GPU 纹理等非托管占用)。</summary>
     public long GetFootprintBytes() => AppleMemoryFootprint.GetPhysFootprintBytes();
+
+    /// <summary>
+    /// 系统物理内存:总量取 <see cref="NSProcessInfo.PhysicalMemory"/>,可用量取内核 free + inactive 页估算并夹到总量。
+    /// 这是整机口径,不取本进程预算或 os_proc_available_memory;页统计读取失败时可用量如实返回 -1(未知)。
+    /// </summary>
+    public SystemMemoryInfo GetSystemMemoryInfo()
+    {
+        try
+        {
+            long total = (long)NSProcessInfo.ProcessInfo.PhysicalMemory;
+            if (total <= 0) return SystemMemoryInfo.Unknown;
+            long available = AppleMemoryFootprint.GetSystemAvailableBytes();
+            return new SystemMemoryInfo(total, available < 0 ? -1 : Math.Min(available, total));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[MacMemoryBudget] PhysicalMemory failed: {ex.Message}");
+            return SystemMemoryInfo.Unknown;
+        }
+    }
 }

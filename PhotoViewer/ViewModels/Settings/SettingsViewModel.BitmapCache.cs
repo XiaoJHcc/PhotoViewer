@@ -28,8 +28,6 @@ public partial class SettingsViewModel
     /// 位图缓存与预取设置
     ///////////////////
 
-    private int _systemMemoryLimitMB; // 记录设备上限，便于事件到来时重建 UI 文本
-    private int _systemCpuCoreCount = 1;
     private int _systemNativePreloadLimit = 8;
     private int _systemCpuPreloadLimit = 8;
 
@@ -48,11 +46,12 @@ public partial class SettingsViewModel
     /// <summary>基准张数下的列表滚动预载默认份数。</summary>
     private const int DefaultPreloadCenterCount = 5;
 
-    /// <summary>按适屏尺寸估算照片字节数时的代理长边兜底（展示会话尚未上报视口时）。</summary>
-    private const int UnknownProxyLongEdge = 3840;
+    /// <summary>最近一次读取的设备能力估算与判定阈值（超限只看设备阈值，用户上限只决定可编辑平台的两档张数）。</summary>
+    private DeviceCacheEstimate _deviceCacheEstimate = new(0, -1, 0, null, null);
 
-    /// <summary>单张照片按多少像素估算（照片本身小于代理目标时按此上限）。</summary>
-    private const long EstimatedPhotoPixelCap = 24_000_000L;
+    private long _deviceCacheBudgetBytes;
+
+    private long? _deviceSafeCapacityBytes;
 
     /// <summary>
     /// 是否显示并允许编辑「缓存内存上限 / 缓存数量上限」。
@@ -61,29 +60,14 @@ public partial class SettingsViewModel
     public bool ShowsCacheLimits => !BitmapLoader.AutomaticCacheLimit;
 
     /// <summary>
-    /// 提示与超限判定共用的内存上限（MB）：直接取缓存容量推导所用的内存压力预算，
-    /// 保证"提示显示的上限 = 推导缓存所用的预算"；预算源未就绪时回退平台上报值。
-    /// </summary>
-    private int MemoryLimitMB
-    {
-        get
-        {
-            int budgetMB = (int)Math.Min(int.MaxValue, MemoryGovernor.BudgetBytes / (1024 * 1024));
-            return budgetMB > 0 ? budgetMB : _systemMemoryLimitMB;
-        }
-    }
-
-    /// <summary>
     /// 初始化数据（缓存数量、内存大小、预载数量）
-    /// 初始化监听（缓存数量、内存大小、有效缓存容量）
+    /// 初始化监听（设备能力提示、有效缓存容量）
     /// </summary>
     private void InitializeBitMapCache()
     {
         // 读取设备能力，默认值由平台预算源给出（IPerformanceBudget.GetRecommended*）
         try
         {
-            _systemMemoryLimitMB = PerformanceBudget.AppMemoryLimitMB;
-            _systemCpuCoreCount = Math.Max(1, PerformanceBudget.CpuCoreCount);
             _systemNativePreloadLimit = Math.Max(1, PerformanceBudget.NativePreloadThreadLimit);
             _systemCpuPreloadLimit = Math.Max(1, PerformanceBudget.CpuPreloadThreadLimit);
 
@@ -91,32 +75,18 @@ public partial class SettingsViewModel
             BitmapCacheMaxCount = PerformanceBudget.RecommendedCacheCount(BitmapCacheMaxMemory);
             NativePreloadParallelism = PerformanceBudget.RecommendedNativePreloadParallelism(BitmapCacheMaxMemory);
             CpuPreloadParallelism = PerformanceBudget.RecommendedCpuPreloadParallelism(BitmapCacheMaxMemory);
-
-            PerformanceBudgetInfo = BuildPerformanceBudgetInfo();
         }
         catch (Exception ex)
         {
             Console.WriteLine($"Failed to initialize performance budget: {ex.Message}");
             BitmapCacheMaxMemory = 2048;
-            _systemMemoryLimitMB = 0;
-            _systemCpuCoreCount = Math.Max(1, Environment.ProcessorCount);
-            _systemNativePreloadLimit = Math.Min(_systemCpuCoreCount, 8);
-            _systemCpuPreloadLimit = Math.Min(_systemCpuCoreCount, 4);
+            _systemNativePreloadLimit = Math.Min(Math.Max(1, Environment.ProcessorCount), 8);
+            _systemCpuPreloadLimit = Math.Min(Math.Max(1, Environment.ProcessorCount), 4);
             NativePreloadParallelism = _systemNativePreloadLimit;
             CpuPreloadParallelism = Math.Min(_systemCpuPreloadLimit, 1);
-            PerformanceBudgetInfo = "设备性能: 未知";
         }
 
-        // 订阅内存告警事件：仅显示触发时快照（大小、数量、时间）
-        _runtimeSubscriptions.Add(MessageBus.Current
-            .Listen<BitmapLoader.MemoryWarningEvent>()
-            .ObserveOn(UiDispatcher.MainThreadScheduler)
-            .Subscribe(evt =>
-            {
-                PerformanceBudgetInfo =
-                    $"{BuildPerformanceBudgetInfo()} / " +
-                    $"上次系统内存告警：缓存 {evt.sizeMB} MB, {evt.count} 项 @ {evt.time:HH:mm:ss}";
-            }));
+        RefreshDeviceCacheCapability();
 
         // 初始化三个预载滑条的 百分比 backing 字段（0~33.3333），确保 UI 初始位置正确
         // 注意：百分比是相对总缓存数的百分比（0 ~ 33.3333），实际预载数量由 percent/100 * BitmapCacheMaxCount 计算
@@ -147,45 +117,34 @@ public partial class SettingsViewModel
                     _freezePreloadExp = false;
                 }
             });
-        
-        // 监听内存上限变化同步到 BitmapLoader
+
+        // 监听内存上限变化同步到 BitmapLoader；可编辑平台的两档张数与警告都按用户上限立即重算
         this.WhenAnyValue(v => v.BitmapCacheMaxMemory)
             .Subscribe(v =>
             {
                 if (_applyRuntimeSettings) BitmapLoader.MaxCacheSize = v * 1024L * 1024L;
-                
-                // 更新内存信息颜色
-                this.RaisePropertyChanged(nameof(PerformanceBudgetInfoLevel));
-                
-                // 计算当前内存能够满足多少张照片
-                this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
+                RefreshDeviceCacheCapability();
             });
 
         // 新增：监听“忽略透明度”设置变化同步到 BitmapLoader
         this.WhenAnyValue(v => v.IgnoreAlpha)
-            .Subscribe(v =>
-            {
-                if (_applyRuntimeSettings) BitmapLoader.IgnoreAlpha = v;
-                // 计算当前内存能够满足多少张照片
-                this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
-            });
+            .Subscribe(v => { if (_applyRuntimeSettings) BitmapLoader.IgnoreAlpha = v; });
 
         this.WhenAnyValue(v => v.CpuPreloadParallelism)
             .Subscribe(v => { if (_applyRuntimeSettings) HeifLoader.SetCpuDecodeParallelism(v); });
 
-        // 有效缓存容量随实测预算与占用变化（MemoryGovernor 每轮探测后重算）：设置页打开时显示当前值。
-        // 探测本身 2s 一轮，这里再限流一次，避免提示行随探测抖动。
+        // 设备内存读数与视口代理尺寸随周期探测变化，探测本身 2s 一轮，这里再限流一次避免提示行抖动。
         _runtimeSubscriptions.Add(Observable
             .FromEvent(h => MemoryGovernor.Probed += h, h => MemoryGovernor.Probed -= h)
             .Throttle(TimeSpan.FromMilliseconds(500), UiDispatcher.MainThreadScheduler)
             .ObserveOn(UiDispatcher.MainThreadScheduler)
-            .Subscribe(_ => this.RaisePropertyChanged(nameof(BitmapCacheCountInfo))));
+            .Subscribe(_ => RefreshDeviceCacheCapability()));
     }
     
     /// <summary>
     /// 全新设置的预载默认值：缓存张数达到基准（30 张）时即默认的上一张 10 / 下一张 5 / 列表滚动 5；
     /// 张数更少时按同一比例收敛到推荐张数，保证不超过预载上限，
-    /// 且「前后预载 + 当前 + 对比」不超过缓存张数（SETTINGS-06 的提示行据此定级）。
+    /// 且「前后预载 + 当前 + 对比」不超过缓存张数。
     /// 已保存的设置由 <see cref="SettingsViewModel.Persistence"/> 在之后覆盖，不走这里。
     /// </summary>
     private void InitializePreloadDefaults()
@@ -243,8 +202,32 @@ public partial class SettingsViewModel
         return (int)Math.Round(v);
     }
 
-    private string BuildPerformanceBudgetInfo()
-        => $"设备性能: CPU {_systemCpuCoreCount} 核 / 内存 {MemoryLimitMB} MB";
+    /// <summary>
+    /// 重新读取设备能力（系统内存读数、平台预算、视口代理长边、两档 Normal 压力每像素字节数），
+    /// 按当前工作副本的用户上限（自动平台按设备最大安全容量）重算两档张数，刷新两行文本与级别。
+    /// 构造、周期探测与用户上限变化后调用；只发属性通知，不触发展示结构变更。
+    /// </summary>
+    private void RefreshDeviceCacheCapability()
+    {
+        _deviceCacheBudgetBytes = MemoryGovernor.BudgetBytes;
+        _deviceSafeCapacityBytes = DeviceCacheCapability.DeviceSafeCapacity(
+            _deviceCacheBudgetBytes, MemoryGovernor.CautionEnterPercent);
+
+        var capacityBytes = ShowsCacheLimits
+            ? BitmapCacheMaxMemory * 1024L * 1024L
+            : _deviceSafeCapacityBytes;
+
+        _deviceCacheEstimate = DeviceCacheCapability.Compute(
+            MemoryGovernor.GetSystemMemoryInfo(),
+            capacityBytes,
+            BitmapLoader.ProxyTargetLongEdge,
+            BitmapLoader.ProxyBytesPerPixel,
+            BitmapLoader.NormalFullBytesPerPixel);
+
+        RefreshCacheLimitWarning();
+        this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
+        this.RaisePropertyChanged(nameof(BitmapCacheCountInfoLevel));
+    }
 
     // 冻结标志：缓存数量上限变化时冻结 百分比 更新，保持滑条位置不变
     private bool _freezePreloadExp = false;
@@ -263,7 +246,6 @@ public partial class SettingsViewModel
                 Core.Settings.SettingsDocumentCodec.MinimumCacheCount,
                 Core.Settings.SettingsDocumentCodec.MaximumCacheCount));
             this.RaisePropertyChanged(nameof(BitmapCacheMaxCountExp));
-            this.RaisePropertyChanged(nameof(BitmapCacheCountInfo));
         }
     }
     // 0~1：1~400 的指数映射
@@ -293,29 +275,44 @@ public partial class SettingsViewModel
     }
 
     private string _performanceBudgetInfo = string.Empty;
+    /// <summary>第一行：系统总内存 / 当前可用内存；用户缓存上限超限时在同一行追加简短警告。</summary>
     public string PerformanceBudgetInfo
     {
         get => _performanceBudgetInfo;
         private set => this.RaiseAndSetIfChanged(ref _performanceBudgetInfo, value);
     }
-    
-    public PerfInfoLevel PerformanceBudgetInfoLevel
-    {
-        get
-        {
-            // 自动口径下用户上限不参与运行时，超限判定没有意义
-            if (!ShowsCacheLimits || _systemMemoryLimitMB <= 0)
-                return PerfInfoLevel.Normal;
 
-            if (BitmapCacheMaxMemory > MemoryLimitMB)
-                return PerfInfoLevel.Error;
-            else if (BitmapCacheMaxMemory > MemoryLimitMB * 0.51)
-                return PerfInfoLevel.Warning;
-            else
-                return PerfInfoLevel.Normal;
-        }
+    private CacheLimitWarning _cacheLimitWarning = CacheLimitWarning.Normal;
+    /// <summary>第一行的语义级别：只有用户缓存上限超限时才抬级，读数为未知时不误判。</summary>
+    public PerfInfoLevel PerformanceBudgetInfoLevel => ToPerfInfoLevel(_cacheLimitWarning.Level);
+
+    /// <summary>
+    /// 重算用户缓存上限的超限警告；阈值一律取设备最大安全缓存容量，与按用户上限算出的张数无关。
+    /// 自动管理缓存的平台不显示两项上限，也就没有超限警告。
+    /// </summary>
+    private void RefreshCacheLimitWarning()
+    {
+        _cacheLimitWarning = ShowsCacheLimits
+            ? DeviceCacheCapability.EvaluateLimit(
+                BitmapCacheMaxMemory * 1024L * 1024L,
+                _deviceCacheEstimate.TotalBytes,
+                _deviceCacheEstimate.AvailableBytes,
+                _deviceCacheBudgetBytes,
+                _deviceSafeCapacityBytes ?? 0)
+            : CacheLimitWarning.Normal;
+
+        var systemMemory = DeviceCacheCapability.DescribeSystemMemory(_deviceCacheEstimate);
+        PerformanceBudgetInfo = _cacheLimitWarning.Reason is { } reason ? systemMemory + reason : systemMemory;
+        this.RaisePropertyChanged(nameof(PerformanceBudgetInfoLevel));
     }
-    
+
+    private static PerfInfoLevel ToPerfInfoLevel(CacheCapabilityLevel level) => level switch
+    {
+        CacheCapabilityLevel.Error => PerfInfoLevel.Error,
+        CacheCapabilityLevel.Warning => PerfInfoLevel.Warning,
+        _ => PerfInfoLevel.Normal,
+    };
+
     // 忽略透明度通道
     private bool _ignoreAlpha = false;
     public bool IgnoreAlpha
@@ -325,52 +322,11 @@ public partial class SettingsViewModel
         // set => this.RaiseAndSetIfChanged(ref _ignoreAlpha, value);
     }
 
-    /// <summary>实际缓存容量（字节）：用户上限与按预算推导的上限取较小者；自动口径下只取推导上限。</summary>
-    private long CacheCapacityBytes()
-    {
-        long userBytes = BitmapCacheMaxMemory * 1024L * 1024L;
-        long derivedBytes = BitmapLoader.EffectiveCacheCapacityBytes;
-        if (derivedBytes <= 0) return userBytes;
-        return ShowsCacheLimits ? Math.Min(userBytes, derivedBytes) : derivedBytes;
-    }
+    /// <summary>第二行：可编辑平台按用户上限、自动平台按设备最大安全容量算出的两档可缓存张数。</summary>
+    public string BitmapCacheCountInfo => DeviceCacheCapability.DescribeCapacity(_deviceCacheEstimate);
 
-    /// <summary>单张适屏照片的字节数：代理长边按 3:2 取像素，照片本身小于代理目标时按 2400 万像素估算。</summary>
-    private static long ProxyPhotoBytes()
-    {
-        int longEdge = BitmapLoader.ProxyTargetLongEdge > 0 ? BitmapLoader.ProxyTargetLongEdge : UnknownProxyLongEdge;
-        long pixels = Math.Min((long)longEdge * longEdge * 2 / 3, EstimatedPhotoPixelCap);
-        return pixels * BitmapLoader.ProxyBytesPerPixel;
-    }
-
-    public string BitmapCacheCountInfo
-    {
-        get
-        {
-            long photoBytes = ProxyPhotoBytes();
-            long count = photoBytes > 0 ? CacheCapacityBytes() / photoBytes : 0;
-            if (ShowsCacheLimits) count = Math.Min(count, BitmapCacheMaxCount);
-            int needed = PreloadForwardCount + PreloadBackwardCount + 2;
-
-            if (count < 3)
-            {
-                BitmapCacheCountInfoLevel = PerfInfoLevel.Error;
-                return "⚠ 可缓存不足 3 张适屏照片";
-            }
-            if (count < needed)
-            {
-                BitmapCacheCountInfoLevel = PerfInfoLevel.Warning;
-                return $"⚠ 可缓存约 {count} 张适屏照片，少于预载与对比所需的 {needed} 张";
-            }
-            BitmapCacheCountInfoLevel = PerfInfoLevel.Normal;
-            return $"✓ 可缓存约 {count} 张适屏照片（预载与对比需 {needed} 张）";
-        }
-    }
-    private PerfInfoLevel _bitmapCacheCountInfoLevel = PerfInfoLevel.Normal;
-    public PerfInfoLevel BitmapCacheCountInfoLevel
-    {
-        get => _bitmapCacheCountInfoLevel;
-        private set => this.RaiseAndSetIfChanged(ref _bitmapCacheCountInfoLevel, value);
-    }
+    /// <summary>第二行不再按张数定级，级别恒为常规（保留接口供四端接线）。</summary>
+    public PerfInfoLevel BitmapCacheCountInfoLevel => PerfInfoLevel.Normal;
 
     private int _preloadMaximum = 10;
     public int PreloadMaximum

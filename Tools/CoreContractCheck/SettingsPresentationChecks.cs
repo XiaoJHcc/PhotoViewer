@@ -335,26 +335,49 @@ internal static class SettingsPresentationChecks
     {
         using var settings = new SettingsViewModel();
         var recorder = new Recorder();
-        var diagnostics = 0;
+        var changed = new ChangedNames();
         settings.PresentationChanged += recorder.OnImpact;
-        settings.PropertyChanged += (_, args) =>
-        {
-            if (args.PropertyName == nameof(SettingsViewModel.BitmapCacheCountInfo))
-                Interlocked.Increment(ref diagnostics);
-        };
+        settings.PropertyChanged += (_, args) => changed.Add(args.PropertyName);
 
         // 反射注入预算源后调用真实 EvaluateNow：不启动计时器，也不写用户 AppSupport 日志。
         var previousProvider = (IMemoryBudgetProvider?)MemoryProviderField.GetValue(null);
-        MemoryProviderField.SetValue(null, new FixedBudgetProvider());
+        var provider = new FixedBudgetProvider();
+        MemoryProviderField.SetValue(null, provider);
         try
         {
             MemoryGovernor.EvaluateNow();
 
             var observed = SpinWait.SpinUntil(
-                () => Volatile.Read(ref diagnostics) > 0,
+                () => changed.Contains(nameof(SettingsViewModel.BitmapCacheCountInfo)),
                 TimeSpan.FromSeconds(5));
             c.True("周期探测仍发诊断 PropertyChanged", observed,
                 $"5s 内未收到 {nameof(SettingsViewModel.BitmapCacheCountInfo)}");
+            var firstReading = settings.PerformanceBudgetInfo;
+
+            // 读数变化后按 500ms 限流再刷新一次：两行文本与两个级别都跟新读数走，且仍不发展示事件。
+            // 可编辑缓存上限的平台张数只看用户上限，因此刷新证据取系统内存那一行。
+            changed.Clear();
+            provider.BudgetBytes = 2L * 1024 * 1024 * 1024;
+            provider.AvailableBytes = 1L * 1024 * 1024 * 1024;
+            MemoryGovernor.EvaluateNow();
+
+            var refreshed = SpinWait.SpinUntil(
+                () => settings.PerformanceBudgetInfo != firstReading,
+                TimeSpan.FromSeconds(5));
+            c.True("读数变化后设备能力提示跟随探测刷新", refreshed,
+                $"5s 内提示未变化：{firstReading} / {settings.PerformanceBudgetInfo}");
+
+            foreach (var name in new[]
+                     {
+                         nameof(SettingsViewModel.PerformanceBudgetInfo),
+                         nameof(SettingsViewModel.PerformanceBudgetInfoLevel),
+                         nameof(SettingsViewModel.BitmapCacheCountInfo),
+                         nameof(SettingsViewModel.BitmapCacheCountInfoLevel),
+                     })
+            {
+                c.True("探测刷新 " + name, changed.Contains(name), "探测后未收到 " + name);
+            }
+
             c.Equal("周期探测不发布展示事件", 0, recorder.Count);
         }
         finally
@@ -509,11 +532,15 @@ internal static class SettingsPresentationChecks
 
     private sealed class FixedBudgetProvider : IMemoryBudgetProvider
     {
-        private const long Budget = 8L * 1024 * 1024 * 1024;
+        public long BudgetBytes { get; set; } = 8L * 1024 * 1024 * 1024;
 
-        public long GetBudgetBytes() => Budget;
+        public long AvailableBytes { get; set; } = 8L * 1024 * 1024 * 1024;
 
-        public long GetAvailableBytes() => Budget;
+        public SystemMemoryInfo GetSystemMemoryInfo() => new(16L * 1024 * 1024 * 1024, AvailableBytes);
+
+        public long GetBudgetBytes() => BudgetBytes;
+
+        public long GetAvailableBytes() => AvailableBytes;
 
         public long GetFootprintBytes() => 0;
     }

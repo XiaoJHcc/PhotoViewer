@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Foundation;
+using PhotoViewer.Core.Design;
 
 namespace PhotoViewer.Mac.Native;
 
@@ -69,14 +70,16 @@ internal sealed class MacFileStateDto
     public int PreloadDelay { get; set; }
     /// <summary>预载数量上限。</summary>
     public int PreloadMax { get; set; }
-    /// <summary>设备性能预算说明。</summary>
+    /// <summary>系统内存说明（总内存/当前可用；用户上限超限时只在后面追加一句简短警告）。</summary>
     public string BudgetInfo { get; set; } = string.Empty;
-    /// <summary>性能预算说明的语义级别。</summary>
+    /// <summary>系统内存说明的语义级别。</summary>
     public string BudgetLevel { get; set; } = "normal";
-    /// <summary>缓存数量提示说明。</summary>
+    /// <summary>两档可缓存张数说明（可缓存 N 张适屏照片 / N 张 3300 万像素照片）。</summary>
     public string CacheCountInfo { get; set; } = string.Empty;
-    /// <summary>缓存数量提示的语义级别。</summary>
+    /// <summary>张数说明的语义级别。</summary>
     public string CacheCountLevel { get; set; } = "normal";
+    /// <summary>警告文字色（`color.settings.warning`，0xAARRGGBB）。</summary>
+    public uint WarningColor { get; set; } = DesignTokens.ColorSettingsWarning;
 }
 
 /// <summary>缩放比例预设条目。</summary>

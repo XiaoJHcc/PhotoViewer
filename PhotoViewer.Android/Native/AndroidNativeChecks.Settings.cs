@@ -7,6 +7,7 @@ using Android.Views;
 using Android.Widget;
 using Google.Android.Material.BottomSheet;
 using PhotoViewer.Core.Design;
+using PhotoViewer.ViewModels.Settings;
 
 namespace PhotoViewer.Android.Native;
 
@@ -138,6 +139,58 @@ internal static partial class AndroidNativeChecks
             formatRow is { } format && format.MinHeight == standardRow && format.Height >= standardRow
             && format.SubtitleVisible && !format.TitleEllipsized && !format.SubtitleEllipsized,
             LayoutText(formatRow, $">={standardRow}px subtitle visible"));
+
+        // SETTINGS-06：文件页两条能力提示按内容换行（不省略、不截断）；Android 隐藏用户缓存上限，
+        // 能力数值恒为常规级、不告警；文案不再含 CPU 核数、预载需求与勾号。
+        var infoLabels = sheet.FileInfoLabelsForChecks;
+        Check("文件页内存提示两行就位", infoLabels.Count == 2, $"count={infoLabels.Count}");
+        bool infoWraps = infoLabels.Count == 2;
+        string infoGeometry = string.Empty;
+        string longProbe = new string('适', 240);
+        for (int index = 0; index < infoLabels.Count; index++)
+        {
+            var label = infoLabels[index];
+            if (label.Width <= 0)
+            {
+                infoWraps = false;
+                infoGeometry += $" [{index}]未布局";
+                continue;
+            }
+            string original = label.Text ?? string.Empty;
+            var width = View.MeasureSpec.MakeMeasureSpec(label.Width, MeasureSpecMode.Exactly);
+            var height = View.MeasureSpec.MakeMeasureSpec(0, MeasureSpecMode.Unspecified);
+            label.Text = longProbe;
+            label.Measure(width, height);
+            infoWraps &= label.MeasuredHeight > label.LineHeight;
+            infoGeometry += $" [{index}]w={label.Width} h={label.MeasuredHeight} line={label.LineHeight}";
+            label.Text = original;
+            label.Measure(width, height);
+        }
+        Check("内存提示行按内容换行", infoWraps, infoGeometry);
+
+        var budgetLevel = sheet.Settings.PerformanceBudgetInfoLevel;
+        var countLevel = sheet.Settings.BitmapCacheCountInfoLevel;
+        Check("自动口径下内存提示不告警",
+            !sheet.Settings.ShowsCacheLimits
+            && budgetLevel == PerfInfoLevel.Normal && countLevel == PerfInfoLevel.Normal,
+            $"showsCacheLimits={sheet.Settings.ShowsCacheLimits} perf={budgetLevel} cache={countLevel}");
+        Check("提示语义色按级别接线",
+            AndroidSettingsSheetView.LevelColorForChecks(PerfInfoLevel.Normal).ToArgb() == AndroidUiTheme.TextSecondary.ToArgb()
+            && AndroidSettingsSheetView.LevelColorForChecks(PerfInfoLevel.Warning).ToArgb() == AndroidUiTheme.WarningText.ToArgb()
+            && AndroidSettingsSheetView.LevelColorForChecks(PerfInfoLevel.Error).ToArgb() == AndroidUiTheme.ErrorText.ToArgb(),
+            "常规=次要文字 / 警示=琥珀 / 错误=红");
+        string budgetText = infoLabels.Count > 0 ? infoLabels[0].Text ?? string.Empty : string.Empty;
+        string countText = infoLabels.Count > 1 ? infoLabels[1].Text ?? string.Empty : string.Empty;
+        Check("内存提示为系统读数与两档张数",
+            budgetText.Contains("系统内存") && budgetText.Contains("当前可用")
+            && countText.Contains("适屏照片") && countText.Contains("3300 万像素照片")
+            && !countText.Contains("最大") && !countText.Contains("缓存能力"),
+            budgetText + " / " + countText);
+        string infoText = budgetText + " / " + countText;
+        Check("内存提示不再含 CPU 核数/预载需求/勾号",
+            budgetText.Length > 0 && countText.Length > 0
+            && !infoText.Contains("CPU") && !infoText.Contains("预载与对比") && !infoText.Contains("✓"),
+            infoText);
 
         // EXIF 显示表：单行 48dp、勾选对齐，且不再有说明脚注。
         sheet.ShowPageForChecks("exif");

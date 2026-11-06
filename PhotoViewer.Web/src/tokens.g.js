@@ -65,6 +65,7 @@ const tokens = Object.freeze({
     "color.nav.frame": "#FFFFFF",
     "color.popup.background": "#2B2B2B",
     "color.popup.border": "#5C000000",
+    "color.settings.warning": "#C4AA70",
     "color.sim.action.background": "#2A2A2A",
     "color.sim.action.border": "#555555",
     "color.sim.action.foreground": "#CCCCCC",

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Globalization;
 using System.Threading;
 using Android.App;
@@ -185,7 +186,9 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     private readonly TextView _title;
     private readonly TextView _back;
     private readonly LinearLayout _header;
-    private readonly List<(TextView Label, Func<string> Text)> _dynamicTexts = [];
+    private readonly List<(TextView Label, Func<string> Text, Func<PerfInfoLevel>? Level)> _dynamicTexts = [];
+    private readonly List<TextView> _fileInfoLabels = [];
+    private bool _refreshingDynamicTexts;
     private string _page = "root";
     private bool _closed;
     private AndroidSettingsReorderList? _hotkeyList;
@@ -277,6 +280,8 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
 
         // INPUT-13：外设连接只增删录制控件，不重置工作副本、不关闭页面、不弹软键盘。
         AndroidInputDevices.Changed += OnInputDevicesChanged;
+        // SETTINGS-06/12：内存读数与能力提示随周期探测更新，只刷提示行。
+        Settings.PropertyChanged += OnSettingsPropertyChanged;
         BuildPage("root");
         _viewport = AndroidSheetViewport.Create(this, root);
     }
@@ -323,6 +328,21 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>关闭事件（含下滑）统一提交未失焦的预设输入。</summary>
     internal void CommitPendingEdits() => CommitScalePresets();
 
+    /// <summary>内存读数与能力提示随周期探测更新（SETTINGS-06）：只刷提示行，不重建页面结构、不动设置值。</summary>
+    private void OnSettingsPropertyChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (args.PropertyName is not (nameof(SettingsViewModel.PerformanceBudgetInfo)
+            or nameof(SettingsViewModel.BitmapCacheCountInfo)
+            or nameof(SettingsViewModel.PerformanceBudgetInfoLevel)
+            or nameof(SettingsViewModel.BitmapCacheCountInfoLevel))) return;
+        // 其他页面没有提示行，不必排队刷新；回调可能来自探测线程，统一回 UI 线程刷新。
+        if (_dynamicTexts.Count == 0) return;
+        Post(() =>
+        {
+            if (!_closed) RefreshDynamicTexts();
+        });
+    }
+
     /// <summary>外设连接/断开：取消不再可用的录制，刷新控制页行，不触碰工作副本或草稿。</summary>
     private void OnInputDevicesChanged()
     {
@@ -334,7 +354,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         });
     }
 
-    /// <summary>释放时解除外设监听。</summary>
+    /// <summary>释放时解除外设与设置监听。</summary>
     /// <param name="disposing">是否释放托管资源。</param>
     protected override void Dispose(bool disposing)
     {
@@ -344,6 +364,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             _recordingItem = null;
             _viewport.Detach();
             AndroidInputDevices.Changed -= OnInputDevicesChanged;
+            Settings.PropertyChanged -= OnSettingsPropertyChanged;
         }
         base.Dispose(disposing);
     }
@@ -365,6 +386,7 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _scaleRows.Clear();
         _content.RemoveAllViews();
         _dynamicTexts.Clear();
+        _fileInfoLabels.Clear();
         _back.Visibility = page == "root" ? ViewStates.Invisible : ViewStates.Visible;
         _title.Text = page switch
         {
@@ -418,8 +440,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         _formatList = formats;
         Add(_content, SectionView("支持的文件格式", formats));
         var info = new List<View>();
-        var performance = InfoLabel(() => Settings.PerformanceBudgetInfo);
-        var cache = InfoLabel(() => Settings.BitmapCacheCountInfo);
+        var performance = InfoLabel(() => Settings.PerformanceBudgetInfo, () => Settings.PerformanceBudgetInfoLevel);
+        var cache = InfoLabel(() => Settings.BitmapCacheCountInfo, () => Settings.BitmapCacheCountInfoLevel);
+        _fileInfoLabels.Add(performance);
+        _fileInfoLabels.Add(cache);
         var cacheRows = new List<View>
         {
             StepperRow("原生解码线程", null, () => Settings.NativePreloadParallelism,
@@ -950,6 +974,14 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
     /// <summary>验收：半屏内容滚动宿主（手势断言用）。</summary>
     internal AndroidSheetScrollView ScrollHostForChecks => _scroll;
 
+    /// <summary>验收：文件页内存/缓存提示行（多行显示与语义色断言用）。</summary>
+    internal IReadOnlyList<TextView> FileInfoLabelsForChecks => _fileInfoLabels;
+
+    /// <summary>验收：提示语义级别对应的文字颜色（常规次要 / 警示 / 错误）。</summary>
+    /// <param name="level">语义级别。</param>
+    /// <returns>文字颜色。</returns>
+    internal static Color LevelColorForChecks(PerfInfoLevel level) => LevelColor(() => level);
+
     /// <summary>验收：顶部标题栏（拖动关闭断言用）。</summary>
     internal View HeaderForChecks => _header;
 
@@ -1181,19 +1213,48 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
         return card;
     }
 
-    /// <summary>动态文本（性能/缓存信息）包装。</summary>
-    private TextView InfoLabel(Func<string> text)
+    /// <summary>
+    /// 动态文本（内存/缓存提示）包装：按内容换行显示，颜色取语义级别（SETTINGS-06 / SETTINGS-12）。
+    /// </summary>
+    /// <param name="text">文本取值。</param>
+    /// <param name="level">语义级别取值；为空时按常规级。</param>
+    private TextView InfoLabel(Func<string> text, Func<PerfInfoLevel>? level = null)
     {
-        var label = Text(text(), 12, AndroidUiTheme.TextSecondary);
+        var label = Text(text(), 12, LevelColor(level));
+        // 系统总内存/当前可用与超限原因可能一行放不下：按内容换行，不省略、不截断。
+        label.SetSingleLine(false);
         label.SetPadding((int)AndroidUiTheme.Dp(_activity, 4), (int)AndroidUiTheme.Dp(_activity, 6), 0, 0);
-        _dynamicTexts.Add((label, text));
+        _dynamicTexts.Add((label, text, level));
         return label;
     }
 
-    /// <summary>刷新所有动态文本。</summary>
+    /// <summary>提示语义级别取色：常规用次要文字，警示与错误用语义色（状态同时由文本表达）。</summary>
+    /// <param name="level">语义级别取值。</param>
+    /// <returns>文字颜色。</returns>
+    private static Color LevelColor(Func<PerfInfoLevel>? level) => (level?.Invoke() ?? PerfInfoLevel.Normal) switch
+    {
+        PerfInfoLevel.Warning => AndroidUiTheme.WarningText,
+        PerfInfoLevel.Error => AndroidUiTheme.ErrorText,
+        _ => AndroidUiTheme.TextSecondary,
+    };
+
+    /// <summary>刷新所有动态文本与其语义色（只改提示行，不触发页面重建）。</summary>
     private void RefreshDynamicTexts()
     {
-        foreach (var item in _dynamicTexts) item.Label.Text = item.Text();
+        if (_refreshingDynamicTexts) return;
+        _refreshingDynamicTexts = true;
+        try
+        {
+            foreach (var item in _dynamicTexts)
+            {
+                item.Label.Text = item.Text();
+                item.Label.SetTextColor(LevelColor(item.Level));
+            }
+        }
+        finally
+        {
+            _refreshingDynamicTexts = false;
+        }
     }
 
     /// <summary>

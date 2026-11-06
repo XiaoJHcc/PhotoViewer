@@ -35,6 +35,10 @@ internal static class WindowsSettingsAcceptance
         try
         {
             Directory.CreateDirectory(WindowsMainWindow.SmokeOutputDirectory);
+            var fixturePath = Path.GetFullPath(Path.Combine("Fixtures", "jpeg", "color-srgb.jpg"));
+            await main.FolderVM.OpenImageAsync(new PhotoViewer.Core.Storage.LocalFileRef(fixturePath));
+            await WaitAsync(() => main.CurrentFile != null
+                && PhotoViewer.Core.Image.BitmapLoader.ProxyTargetLongEdge > 0, "真实照片视口");
             main.OpenSettingWindow();
             var window = presenter.Window ?? throw new InvalidOperationException("设置窗口未创建");
             await WaitAsync(() => window.Root.XamlRoot != null && window.Root.ActualWidth > 0, "设置窗口布局");
@@ -54,9 +58,12 @@ internal static class WindowsSettingsAcceptance
                 $"窗口宽度不是 960 DIP: {windowWidth:0.0}");
             checks.Add($"PASS window: dark, Mica, NavigationView + TitleBar + NumberBox, 5 categories, window={windowWidth:0} DIP, content={window.Root.ActualWidth:0} DIP");
 
-            // SETTINGS-06：默认值来自平台预算源，提示第一行为运行时预算、第二行按实测有效容量换算张数。
-            Require(!string.IsNullOrWhiteSpace(window.Settings.PerformanceBudgetInfo), "预算提示第一行为空");
-            Require(!string.IsNullOrWhiteSpace(window.Settings.BitmapCacheCountInfo), "预算提示第二行为空");
+            Require(window.Settings.PerformanceBudgetInfo.Contains("系统内存")
+                && window.Settings.PerformanceBudgetInfo.Contains("可用"), "设备提示缺少系统总内存或可用内存");
+            Require(window.Settings.BitmapCacheCountInfo.StartsWith("可缓存 ")
+                && window.Settings.BitmapCacheCountInfo.Contains("张适屏照片 / ")
+                && window.Settings.BitmapCacheCountInfo.Contains("张 3300 万像素照片"), "缓存提示缺少两档照片张数");
+            CheckDeviceCapability(window, checks);
             checks.Add(
                 $"PASS budget defaults: 缓存 {window.Settings.BitmapCacheMaxMemory} MB / {window.Settings.BitmapCacheMaxCount} 张"
                 + $"; 原生解码线程 {window.Settings.NativePreloadParallelism}/{window.Settings.NativePreloadParallelismMaximum}"
@@ -442,6 +449,62 @@ internal static class WindowsSettingsAcceptance
             File.WriteAllText(
                 Path.Combine(WindowsMainWindow.SmokeOutputDirectory, "settings-checks.json"),
                 JsonSerializer.Serialize(checks, new JsonSerializerOptions { WriteIndented = true }));
+        }
+    }
+
+    private static void CheckDeviceCapability(WindowsSettingsWindow window, List<string> checks)
+    {
+        var settings = window.Settings;
+        var original = settings.CreateSnapshot();
+        var capacityText = settings.BitmapCacheCountInfo;
+        try
+        {
+            Require(WindowsSettingsCard.LevelBrush(PerfInfoLevel.Warning) is SolidColorBrush warningBrush
+                && warningBrush.Color.Equals(WindowsLayout.Token(PhotoViewer.Core.Design.DesignTokens.ColorSettingsWarning)),
+                "设置警告文字没有使用柔和警告色令牌");
+            foreach (var memory in new[] { 512, 32768 })
+            {
+                settings.BitmapCacheMaxMemory = memory;
+                long bytes = memory * 1024L * 1024L;
+                long pixels = PhotoViewer.Core.Image.DeviceCacheCapability.ScreenPhotoPixels(
+                    PhotoViewer.Core.Image.BitmapLoader.ProxyTargetLongEdge);
+                long screenCount = bytes / (pixels * PhotoViewer.Core.Image.BitmapLoader.ProxyBytesPerPixel);
+                long fullCount = bytes / (PhotoViewer.Core.Image.DeviceCacheCapability.FullPhotoPixels
+                    * PhotoViewer.Core.Image.BitmapLoader.NormalFullBytesPerPixel);
+                capacityText = $"可缓存 {screenCount} 张适屏照片 / {fullCount} 张 3300 万像素照片";
+                foreach (var count in new[] { 1, 400 })
+                {
+                    settings.BitmapCacheMaxCount = count;
+                    Require(settings.BitmapCacheCountInfo == capacityText,
+                        "缓存张数没有按用户内存计算，或被数量上限截断");
+                }
+            }
+
+            long budget = PhotoViewer.Core.Memory.MemoryGovernor.BudgetBytes;
+            if (budget > 0 && 32768L * 1024 * 1024 > budget)
+            {
+                Require(settings.PerformanceBudgetInfoLevel == PerfInfoLevel.Error,
+                    "缓存上限超过平台预算没有报错");
+                Require(settings.PerformanceBudgetInfo.Contains("（当前设置超过")
+                    && settings.PerformanceBudgetInfo.EndsWith("上限）")
+                    && !settings.PerformanceBudgetInfo.Contains('\n'), "超限警告没有使用简短括号格式");
+            }
+
+            window.Root.UpdateLayout();
+            var hints = FindDescendants<TextBlock>(window.Pages[0]);
+            Require(hints.Any(text => text.Text == settings.PerformanceBudgetInfo
+                    && text.TextWrapping == TextWrapping.Wrap), "系统内存提示未绑定或不能换行");
+            Require(hints.Any(text => text.Text == capacityText
+                    && text.TextWrapping == TextWrapping.Wrap), "两档缓存提示未绑定或不能换行");
+            checks.Add("PASS SETTINGS-06 capacity: physical total/available, estimates follow memory setting even over budget, count limit ignored, concise warning and wrapped native text");
+        }
+        finally
+        {
+            settings.BitmapCacheMaxMemory = original.BitmapCacheMaxMemory;
+            settings.BitmapCacheMaxCount = original.BitmapCacheMaxCount;
+            settings.PreloadForwardCount = original.PreloadForwardCount;
+            settings.PreloadBackwardCount = original.PreloadBackwardCount;
+            settings.VisibleCenterPreloadCount = original.VisibleCenterPreloadCount;
         }
     }
 
