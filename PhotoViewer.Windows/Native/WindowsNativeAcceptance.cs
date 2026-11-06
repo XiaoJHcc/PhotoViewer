@@ -71,6 +71,12 @@ internal sealed partial class WindowsMainWindow
         var checks = new List<string>();
         try
         {
+            // RATING-04 的间距与夹取断言按窗口在桌面上的实际位置判断：先把验收窗口放到工作区内的固定起点，
+            // 系统新窗口级联才不会让同一份代码的几何每轮不同（只有检查模式移动主窗口）。
+            PlaceSmokeWindowInWorkArea();
+            await Task.Delay(150);
+            _root.UpdateLayout();
+
             await CheckDispatchAsync();
             checks.Add("PASS dispatcher: Normal precedes queued Background; worker returns to UI thread");
 
@@ -1871,35 +1877,265 @@ internal sealed partial class WindowsMainWindow
         }
     }
 
-    /// <summary>RATING-04：浮窗主体在窗口内留 edgeMargin，未被夹取的一侧与入口相距 arrowMargin 并居中对准入口。</summary>
-    private async Task RequireRatingSourcesGeometryAsync(string entry)
+    /// <summary>一次 RATING-04 浮窗几何断言的观测结果。</summary>
+    /// <param name="Body">实际浮窗主体矩形（根坐标）。</param>
+    /// <param name="Bounds">本次展示使用的定位边界（窗口安全区，或它与工作区的可见交集）。</param>
+    /// <param name="Ideal">未夹取的理想位置。</param>
+    /// <param name="Expected">按可见约束夹取后的期望位置。</param>
+    /// <param name="ClampedX">X 轴是否按可见约束夹取。</param>
+    /// <param name="ClampedY">Y 轴是否按可见约束夹取。</param>
+    private readonly record struct RatingSourcesGeometry(Rect Body, Rect Bounds, Rect Ideal, Rect Expected,
+        bool ClampedX, bool ClampedY);
+
+    /// <summary>
+    /// RATING-04：浮窗主体落在窗口安全区与显示器工作区的可见交集内，位置等于按该约束夹取后的期望位置；
+    /// 未被夹取的一侧仍与入口相距 arrowMargin 并居中对准入口。
+    /// </summary>
+    /// <param name="entry">断言条目名。</param>
+    /// <returns>本次断言的观测结果（靠边用例据此确认夹取真的被执行）。</returns>
+    private async Task<RatingSourcesGeometry> RequireRatingSourcesGeometryAsync(string entry)
     {
         Rect body = default;
         await WaitForSmokeAsync(() => _ratingSources.TryGetPresenterBounds(out body), $"{entry}来源浮窗未完成布局");
         var anchor = _ratingSources.AnchorRectForAcceptance;
-        double edge = DesignTokens.PopupRatingSourcesEdgeMargin;
+        var placement = _ratingSources.LastPlacement
+            ?? throw new InvalidOperationException($"{entry}来源浮窗没有记录展开方向");
         double gap = DesignTokens.PopupRatingSourcesArrowMargin;
-        RequireSmoke(body.Left >= edge - .5 && body.Top >= edge - .5
-            && body.Right <= _root.ActualWidth - edge + .5 && body.Bottom <= _root.ActualHeight - edge + .5,
-            $"{entry}来源浮窗越出窗口安全区: body={body}, root={_root.ActualWidth}x{_root.ActualHeight}");
-        double centerX = (anchor.Left + anchor.Right) / 2, centerY = (anchor.Top + anchor.Bottom) / 2;
-        bool clampedX = body.Left <= edge + .5 || body.Right >= _root.ActualWidth - edge - .5;
-        bool clampedY = body.Top <= edge + .5 || body.Bottom >= _root.ActualHeight - edge - .5;
-        switch (_ratingSources.LastPlacement)
+        var bounds = RequireRatingSourcesPlacementBounds(entry, body.Width, body.Height);
+
+        RequireSmoke(body.Left >= bounds.Left - .5 && body.Top >= bounds.Top - .5
+            && body.Right <= bounds.Right + .5 && body.Bottom <= bounds.Bottom + .5,
+            $"{entry}来源浮窗越出窗口安全区或显示器工作区: body={body}, bounds={bounds}, "
+            + $"root={_root.ActualWidth}x{_root.ActualHeight}, 产品定位边界={_ratingSources.PlacementBoundsForAcceptance}");
+
+        // 理想位置只由展开方向与 arrowMargin 决定；可见约束再逐轴夹取，断言与实际主体逐轴比对。
+        double centerX = (anchor.Left + anchor.Right) / 2;
+        double centerY = (anchor.Top + anchor.Bottom) / 2;
+        var ideal = placement switch
         {
-            case FlyoutPlacementMode.Bottom:
-                RequireSmoke(Math.Abs(body.Top - anchor.Bottom - gap) <= 1, $"{entry}来源浮窗与入口间距 {body.Top - anchor.Bottom}");
-                RequireSmoke(clampedX || Math.Abs((body.Left + body.Right) / 2 - centerX) <= 1, $"{entry}来源浮窗未居中对准入口");
-                break;
-            case FlyoutPlacementMode.Top:
-                RequireSmoke(Math.Abs(anchor.Top - body.Bottom - gap) <= 1, $"{entry}来源浮窗与入口间距 {anchor.Top - body.Bottom}");
-                RequireSmoke(clampedX || Math.Abs((body.Left + body.Right) / 2 - centerX) <= 1, $"{entry}来源浮窗未居中对准入口");
-                break;
-            case FlyoutPlacementMode.Left:
-                RequireSmoke(Math.Abs(anchor.Left - body.Right - gap) <= 1, $"{entry}来源浮窗与入口间距 {anchor.Left - body.Right}");
-                RequireSmoke(clampedY || Math.Abs((body.Top + body.Bottom) / 2 - centerY) <= 1, $"{entry}来源浮窗未居中对准入口");
-                break;
+            FlyoutPlacementMode.Top => new Rect(centerX - body.Width / 2, anchor.Top - gap - body.Height,
+                body.Width, body.Height),
+            FlyoutPlacementMode.Left => new Rect(anchor.Left - gap - body.Width, centerY - body.Height / 2,
+                body.Width, body.Height),
+            _ => new Rect(centerX - body.Width / 2, anchor.Bottom + gap, body.Width, body.Height),
+        };
+        var expected = new Rect(
+            Math.Max(bounds.Left, Math.Min(ideal.X, bounds.Right - body.Width)),
+            Math.Max(bounds.Top, Math.Min(ideal.Y, bounds.Bottom - body.Height)),
+            body.Width, body.Height);
+        RequireSmoke(Math.Abs(body.X - expected.X) <= 1 && Math.Abs(body.Y - expected.Y) <= 1,
+            $"{entry}来源浮窗位置 {body} 与可见约束下的期望位置 {expected} 不符(ideal={ideal}, bounds={bounds})");
+
+        bool clampedX = Math.Abs(expected.X - ideal.X) > .5;
+        bool clampedY = Math.Abs(expected.Y - ideal.Y) > .5;
+        if (placement is FlyoutPlacementMode.Top or FlyoutPlacementMode.Bottom)
+        {
+            if (!clampedY)
+            {
+                double actualGap = placement == FlyoutPlacementMode.Bottom
+                    ? body.Top - anchor.Bottom
+                    : anchor.Top - body.Bottom;
+                RequireSmoke(Math.Abs(actualGap - gap) <= 1, $"{entry}来源浮窗与入口间距 {actualGap}");
+            }
+
+            if (!clampedX)
+            {
+                RequireSmoke(Math.Abs((body.Left + body.Right) / 2 - centerX) <= 1, $"{entry}来源浮窗未居中对准入口");
+            }
         }
+        else
+        {
+            if (!clampedX)
+            {
+                RequireSmoke(Math.Abs(anchor.Left - body.Right - gap) <= 1, $"{entry}来源浮窗与入口间距 {anchor.Left - body.Right}");
+            }
+
+            if (!clampedY)
+            {
+                RequireSmoke(Math.Abs((body.Top + body.Bottom) / 2 - centerY) <= 1, $"{entry}来源浮窗未居中对准入口");
+            }
+        }
+
+        return new RatingSourcesGeometry(body, bounds, ideal, expected, clampedX, clampedY);
+    }
+
+    /// <summary>窗口安全区与显示器工作区的可见交集（根坐标）；交集容不下浮窗时退回窗口安全区。</summary>
+    /// <param name="entry">断言条目名。</param>
+    /// <param name="width">浮窗主体实际宽。</param>
+    /// <param name="height">浮窗主体实际高。</param>
+    /// <returns>本次断言使用的定位边界。</returns>
+    private Rect RequireRatingSourcesPlacementBounds(string entry, double width, double height)
+    {
+        double edge = DesignTokens.PopupRatingSourcesEdgeMargin;
+        var windowBounds = new Rect(edge, edge, _root.ActualWidth - edge * 2, _root.ActualHeight - edge * 2);
+        var work = WorkAreaInRootForAcceptance();
+        RequireSmoke(work != null, $"{entry}无法取得显示器工作区，来源浮窗可见范围无从核对");
+        var visible = work!.Value;
+        visible.Intersect(windowBounds);
+        return visible.Width >= width && visible.Height >= height ? visible : windowBounds;
+    }
+
+    /// <summary>显示器工作区（屏幕 DIP）。</summary>
+    /// <returns>工作区矩形。</returns>
+    private Rect WorkAreaInScreenDips()
+    {
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var work = DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest).WorkArea;
+        return new Rect(work.X / scale, work.Y / scale, work.Width / scale, work.Height / scale);
+    }
+
+    /// <summary>客户区原点在屏幕上的位置（DIP）。</summary>
+    /// <returns>屏幕坐标；取不到时返回 null。</returns>
+    private Point? ClientOriginInScreenDips()
+    {
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        if (!(scale > 0)) return null;
+        var hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(AppWindow.Id);
+        if (hwnd == IntPtr.Zero) return null;
+        var origin = new NativePoint();
+        if (!ClientToScreen(hwnd, ref origin)) return null;
+        return new Point(origin.X / scale, origin.Y / scale);
+    }
+
+    /// <summary>工作区在根元素坐标系里的矩形（验收独立计算，不复用产品实现）。</summary>
+    /// <returns>工作区矩形；查询失败时返回 null。</returns>
+    private Rect? WorkAreaInRootForAcceptance()
+    {
+        if (_root.XamlRoot is not { } xamlRoot || !(xamlRoot.RasterizationScale > 0)) return null;
+        if (ClientOriginInScreenDips() is not { } origin) return null;
+        var work = WorkAreaInScreenDips();
+        double offsetX = 0;
+        double offsetY = 0;
+        if (xamlRoot.Content is { } content && !ReferenceEquals(content, _root))
+        {
+            var offset = _root.TransformToVisual(content).TransformPoint(new Point(0, 0));
+            offsetX = offset.X;
+            offsetY = offset.Y;
+        }
+
+        return new Rect(work.X - origin.X - offsetX, work.Y - origin.Y - offsetY, work.Width, work.Height);
+    }
+
+    /// <summary>把验收窗口放到工作区内的固定起点（只有检查模式移动主窗口，产品运行不动窗口）。</summary>
+    private void PlaceSmokeWindowInWorkArea()
+    {
+        // 起点默认距工作区左上角 24；PV_NATIVE_SMOKE_WINDOW_INSET 可指定另一个工作区内起点，用于
+        // “换起点再跑一遍”的受控复验——断言与靠边用例照常执行，起点只决定常规情形的窗口位置。
+        double inset = double.TryParse(Environment.GetEnvironmentVariable("PV_NATIVE_SMOKE_WINDOW_INSET"),
+            out var requested) && requested >= 0 ? requested : 24;
+        var work = WorkAreaInScreenDips();
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var size = AppWindow.Size;
+        double width = size.Width / scale, height = size.Height / scale;
+        RequireSmoke(width + inset * 2 <= work.Width && height + inset * 2 <= work.Height,
+            $"显示器工作区 {work} 容不下验收窗口 {width}x{height}（起点内缩 {inset}），来源浮窗几何无法在工作区内验证");
+        AppWindow.Move(new PointInt32(
+            (int)Math.Round((work.X + inset) * scale), (int)Math.Round((work.Y + inset) * scale)));
+    }
+
+    /// <summary>把根元素坐标系里的点移到屏幕指定位置（靠边用例用它推窗口）。</summary>
+    /// <param name="rootPoint">根坐标里的点。</param>
+    /// <param name="screenPoint">目标屏幕位置（DIP）。</param>
+    private void PlaceWindowForSmoke(Point rootPoint, Point screenPoint)
+    {
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var origin = ClientOriginInScreenDips() ?? throw new InvalidOperationException("无法取得客户区屏幕原点");
+        var position = AppWindow.Position;
+        AppWindow.Move(new PointInt32(
+            (int)Math.Round(position.X + (screenPoint.X - origin.X - rootPoint.X) * scale),
+            (int)Math.Round(position.Y + (screenPoint.Y - origin.Y - rootPoint.Y) * scale)));
+    }
+
+    /// <summary>RATING-04 几何前提：主窗口完整位于显示器工作区内（靠边用例另行把它推出去）。</summary>
+    /// <param name="stage">失败时的阶段名。</param>
+    private void RequireWindowInsideWorkArea(string stage)
+    {
+        var work = WorkAreaInScreenDips();
+        var scale = _root.XamlRoot?.RasterizationScale ?? 1.0;
+        var size = AppWindow.Size;
+        var position = AppWindow.Position;
+        double left = position.X / scale, top = position.Y / scale;
+        double right = left + size.Width / scale, bottom = top + size.Height / scale;
+        RequireSmoke(left >= work.Left - .5 && top >= work.Top - .5
+            && right <= work.Right + .5 && bottom <= work.Bottom + .5,
+            $"{stage}:主窗口 {left:0},{top:0}-{right:0},{bottom:0} 未完整位于显示器工作区 {work}，"
+            + "来源浮窗几何无法按规范验证");
+    }
+
+    /// <summary>控制栏 0 号评分槽位在根坐标系里的矩形（靠边用例据此推导窗口位置）。</summary>
+    /// <returns>槽位矩形。</returns>
+    private Rect ControlBarRatingAnchor()
+    {
+        var button = _controlBar.RatingZeroButton;
+        return button.TransformToVisual(_root).TransformBounds(
+            new Rect(0, 0, button.ActualWidth, button.ActualHeight));
+    }
+
+    /// <summary>
+    /// RATING-04：主窗口部分越出显示器工作区时，来源浮窗仍完整可见并与可见约束边界对齐（防系统二次翻转）。
+    /// 窗口位置由工作区、窗口尺寸与浮窗外形推导，不依赖具体分辨率；同一二进制内先验下缘外、再验右缘外，
+    /// 每次关闭都核对共享状态，最后复位复验常规情形。
+    /// </summary>
+    /// <param name="checks">通过项收集器。</param>
+    private async Task RunRatingSourcesEdgeCasesAsync(List<string> checks)
+    {
+        var work = WorkAreaInScreenDips();
+        var restore = AppWindow.Position;
+        _main.Settings.LayoutMode = LayoutMode.Row;
+        await Task.Delay(200);
+        _root.UpdateLayout();
+
+        // 1) 下缘外：入口顶部落到工作区下缘以下，浮窗的理想位置必越过工作区，只能整体上移到可见交集内。
+        var anchor = ControlBarRatingAnchor();
+        var origin = ClientOriginInScreenDips() ?? throw new InvalidOperationException("无法取得客户区屏幕原点");
+        double beyondBottom = Math.Max(DesignTokens.PopupRatingSourcesArrowMargin * 2, work.Height * .05);
+        PlaceWindowForSmoke(new Point(anchor.X, anchor.Top),
+            new Point(origin.X + anchor.X, work.Bottom + beyondBottom));
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen, "下缘外来源浮窗打开");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Top, "下缘外横排控制栏来源浮窗未向上展开");
+        var bottom = await RequireRatingSourcesGeometryAsync("下缘外");
+        RequireSmoke(bottom.ClampedY && !bottom.ClampedX,
+            $"下缘外来源浮窗没有被工作区上移: body={bottom.Body}, ideal={bottom.Ideal}, bounds={bottom.Bounds}");
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
+            "下缘外来源浮窗关闭未同步共享状态");
+
+        // 2) 右缘外：入口完整留在工作区内，浮窗主体必须向左平移到工作区内。
+        AppWindow.Move(restore);
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        var center = ControlBarRatingAnchor();
+        origin = ClientOriginInScreenDips() ?? throw new InvalidOperationException("无法取得客户区屏幕原点");
+        double insideEdge = center.Width / 2 + 8;
+        PlaceWindowForSmoke(new Point((center.Left + center.Right) / 2, center.Top + center.Height / 2),
+            new Point(work.Right - insideEdge, origin.Y + center.Top + center.Height / 2));
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen, "右缘外来源浮窗打开");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Top, "右缘外横排控制栏来源浮窗未向上展开");
+        var right = await RequireRatingSourcesGeometryAsync("右缘外");
+        RequireSmoke(right.ClampedX && !right.ClampedY,
+            $"右缘外来源浮窗没有按工作区左移: body={right.Body}, ideal={right.Ideal}, bounds={right.Bounds}");
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
+            "右缘外来源浮窗关闭未同步共享状态");
+
+        // 3) 复位：回到工作区内的起点后重开，浮窗必须回到未夹取的令牌位置。
+        AppWindow.Move(restore);
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        RequireWindowInsideWorkArea("靠边用例复位");
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen, "复位后来源浮窗重开");
+        RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Top, "复位后横排控制栏来源浮窗未向上展开");
+        var restored = await RequireRatingSourcesGeometryAsync("复位后横排控制栏");
+        RequireSmoke(!restored.ClampedX && !restored.ClampedY,
+            $"复位后来源浮窗仍被夹取: body={restored.Body}, ideal={restored.Ideal}, bounds={restored.Bounds}");
+        checks.Add("PASS RATING-04 edge clamping: window hanging below/right of the work area keeps the flyout fully visible at the expected clamped position (per-axis tolerant comparison), restores the arrowMargin/centering position once the window is back inside, and closes with the native state in sync");
     }
 
     /// <summary>RATING-04：真实冲突入口、原生来源浮窗、整组写入与关闭条件。</summary>
@@ -1947,6 +2183,8 @@ internal sealed partial class WindowsMainWindow
             "冲突三角改变了控制栏 0 号按钮几何");
 
         int originalRating = conflictFile.Rating;
+        // 夹取断言以窗口完整位于工作区内为前提供；靠边用例会自行把窗口推出工作区，测完复位。
+        RequireWindowInsideWorkArea("评分冲突来源浮窗");
         new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
         await WaitForSmokeAsync(() => _ratingSources.IsOpen && _main.RatingSources.IsOpen, "控制栏来源浮窗打开");
         RequireSmoke(ReferenceEquals(_main.CurrentFile, conflictFile), "点击控制栏冲突三角切换了主图");
@@ -2010,6 +2248,10 @@ internal sealed partial class WindowsMainWindow
         await WaitForSmokeAsync(() => _ratingSources.IsOpen, "竖排控制栏来源浮窗打开");
         RequireSmoke(_ratingSources.LastPlacement == FlyoutPlacementMode.Left, "竖排控制栏来源浮窗未向左展开");
         await RequireRatingSourcesGeometryAsync("竖排控制栏");
+
+        // 靠边夹取：同一二进制内把窗口推出工作区下缘/右缘各验一次，再复位复验；结束时浮窗仍打开（横排控制栏），
+        // 后续整组写入直接在这个浮窗上继续。
+        await RunRatingSourcesEdgeCasesAsync(checks);
 
         File.SetAttributes(sidecarPath, FileAttributes.ReadOnly);
         try

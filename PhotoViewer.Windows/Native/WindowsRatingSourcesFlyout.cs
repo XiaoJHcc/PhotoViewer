@@ -25,6 +25,7 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
 
     private readonly MainViewModel _main;
     private readonly FrameworkElement _root;
+    private readonly Func<Rect?> _visibleWorkArea;
     private readonly Flyout _flyout;
     private readonly StackPanel _body;
     private readonly List<EntryView> _entries = [];
@@ -32,13 +33,15 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
     private ImageFile? _target;
     private ImageFile? _displayedWhenOpened;
     private Rect _anchorRect;
+    private Rect _placementBounds;
     private bool _presenting;
     private bool _disposed;
 
-    internal WindowsRatingSourcesFlyout(MainViewModel main, FrameworkElement root)
+    internal WindowsRatingSourcesFlyout(MainViewModel main, FrameworkElement root, Func<Rect?> visibleWorkArea)
     {
         _main = main;
         _root = root;
+        _visibleWorkArea = visibleWorkArea;
         _body = new StackPanel { Width = EntryWidth };
         var presenterStyle = new Style(typeof(FlyoutPresenter))
         {
@@ -66,6 +69,9 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
     internal IReadOnlyList<EntryView> EntryViews => _entries;
     internal void DismissNativeForAcceptance() => HideNative();
     internal Rect AnchorRectForAcceptance => _anchorRect;
+
+    /// <summary>验收观测：本次展示实际使用的定位边界（窗口安全区，或与工作区的可见交集）。</summary>
+    internal Rect PlacementBoundsForAcceptance => _placementBounds;
 
     /// <summary>验收专用：按当前布局重新计算来源浮窗锚点，用于核对诊断通知没有让锚点漂移。</summary>
     /// <param name="bounds">锚点在窗口内的边界。</param>
@@ -117,7 +123,16 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
                 ? FlyoutPlacementMode.Top
                 : FlyoutPlacementMode.Bottom;
 
-        // 窗口化弹层只按显示器夹取；RATING-04 要求主体留在窗口内，故按令牌自行定位后交给原生弹层。
+        // 窗口化弹层按显示器工作区自行夹取，越界时会把位置点当成底边/右边、整体平移一个自身尺寸。
+        // RATING-04 要求主体留在窗口安全区内，故按令牌自行定位，并先夹进"窗口安全区 ∩ 工作区可见交集"。
+        var bounds = WindowSafeBounds();
+        if (_visibleWorkArea() is { } visible)
+        {
+            visible.Intersect(bounds);
+            // 交集容不下浮窗时退回窗口安全区：不缩星排、不改展开方向，只把选择交给窗口内范围。
+            if (visible.Width >= width && visible.Height >= height) bounds = visible;
+        }
+
         double centerX = (anchorRect.Left + anchorRect.Right) / 2;
         double centerY = (anchorRect.Top + anchorRect.Bottom) / 2;
         var (x, y) = placement switch
@@ -126,8 +141,9 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
             FlyoutPlacementMode.Left => (anchorRect.Left - gap - width, centerY - height / 2),
             _ => (centerX - width / 2, anchorRect.Bottom + gap),
         };
-        x = Clamp(x, width, _root.ActualWidth);
-        y = Clamp(y, height, _root.ActualHeight);
+        x = Math.Max(bounds.Left, Math.Min(x, bounds.Right - width));
+        y = Math.Max(bounds.Top, Math.Min(y, bounds.Bottom - height));
+        _placementBounds = bounds;
 
         _presenting = true;
         try
@@ -212,10 +228,12 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         }
     }
 
-    private static double Clamp(double start, double size, double extent)
+    /// <summary>窗口安全区：根元素范围按 edgeMargin 内缩（RATING-04 要求主体与窗口边缘保持该距离）。</summary>
+    private Rect WindowSafeBounds()
     {
-        double margin = DesignTokens.PopupRatingSourcesEdgeMargin;
-        return Math.Max(margin, Math.Min(start, extent - margin - size));
+        double edge = DesignTokens.PopupRatingSourcesEdgeMargin;
+        return new Rect(edge, edge,
+            Math.Max(0, _root.ActualWidth - edge * 2), Math.Max(0, _root.ActualHeight - edge * 2));
     }
 
     private static bool NearlyEqual(Rect left, Rect right)

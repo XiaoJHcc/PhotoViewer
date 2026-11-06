@@ -260,7 +260,7 @@ internal sealed partial class WindowsMainWindow : Window
             ContextFlyout = _contextMenu,
             AllowDrop = true,
         };
-        _ratingSources = new WindowsRatingSourcesFlyout(main, _root);
+        _ratingSources = new WindowsRatingSourcesFlyout(main, _root, () => WindowsWorkArea.VisibleBoundsIn(_root, this));
         _filterBar.PopupOpening += _ratingSources.Close;
         _root.Children.Add(_rowHost);
         _root.Children.Add(_colHost);
