@@ -7,7 +7,7 @@ macOS 头工程只提供 AppKit + Metal 原生壳：Debug 与 Release 都从 `Pr
 | 文件/目录 | 职责 |
 |---|---|
 | Program.cs | 原生 AppKit 启动入口，直接交给 `MacNativeApplication.Run`。 |
-| Core/MacHeifDecoder.cs / MacRawDecoder.cs | 原生壳与已有缩略图路径，维持原有 8 位口径。 |
+| Core/MacHeifDecoder.cs / MacRawDecoder.cs | 缩略图与兼容解码路径，维持 8 位口径。HEIC/HEIF（不含 `.hif`）长边请求 ≤512 优先 ImageIO 内嵌小图，尺寸必须达到 `min(请求, 源长边)`，比例/显示朝向不符或失败即回退原图；更大请求和 RAW 复用 helper 默认保持 FromImageAlways。主图展示解码不走此入口。 |
 | Core/MacMemoryBudgetProvider.cs | macOS 预算源：预算 = 物理内存 × 50%，可用 = 预算 − 进程驻留（`AppleMemoryFootprint` 的 phys_footprint，含 Metal/IOSurface），并把驻留量作为 `GetFootprintBytes` 供缓存推导有效容量；`GetSystemMemoryInfo` 给整机口径（总内存取 `NSProcessInfo.PhysicalMemory`，可用取内核 free + inactive 页估算并夹到总量，读不到页统计时可用量为 -1 表示未知，不拿进程预算或 `os_proc_available_memory` 冒充）。`MacNativeApplication` 注入它（Windows 仍用 `DefaultMemoryBudgetProvider`）。 |
 | Core/MacOpenPaths.cs | 命令行、Finder/Dock/«打开方式»、窗口拖入的路径 → 共享 `LocalFileRef`/`LocalFolderRef`，再投递实例级 `OpenRequestChannel`；本地存储直接用共享 `LocalStorageRefs`，没有 Mac 专属存储引用或安全作用域书签。 |
 | Core/MacPresentationEncodingPolicy.cs | Mac 展示编码策略：任何尺寸档与压力级别都返回 RGBA16F 扩展线性 sRGB（I2 编码协商不改变 Mac 产物；iPad 的 8 位 P3 路径只在 iOS 策略启用）。 |

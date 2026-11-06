@@ -142,7 +142,16 @@ public static class MacNativeApplication
                     string reportPath = System.IO.Path.GetFullPath(
                         "artifacts/acceptance/apple-decode-optimization/probe.txt");
                     Console.WriteLine($"[DecodeOptimize] start {optimizeDirectory} -> {reportPath}");
-                    bool passed = await AppleDecodeOptimizationProbe.RunAsync(optimizeDirectory, reportPath);
+                    bool passed;
+                    if (args.Contains("--pv-heif-thumbnail-only", StringComparer.Ordinal))
+                    {
+                        reportPath = System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/heif-thumbnail-checks.txt");
+                        var decoder = new MacHeifDecoder();
+                        passed = await AppleHeifThumbnailChecks.RunAsync(optimizeDirectory, reportPath,
+                            (file, size) => Task.Run(() => MacHeifDecoder.DecodeSubsampledWithImageIO(file.TryGetLocalPath()!, size ?? 0)),
+                            decoder.DecodeAsync);
+                    }
+                    else passed = await AppleDecodeOptimizationProbe.RunAsync(optimizeDirectory, reportPath);
                     Console.WriteLine($"[DecodeOptimize] {(passed ? "PASS" : "FAIL")} {reportPath}");
                     Environment.Exit(passed ? 0 : 1);
                     return;

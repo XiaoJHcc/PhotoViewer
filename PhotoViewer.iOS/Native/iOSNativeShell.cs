@@ -94,6 +94,17 @@ public static class iOSNativeShell
         iOSDinoCheck.MaybeStart(args);
         StartPerfProbe(args);
         StartDecodeOptimize(args);
+        for (int index = 0; index + 1 < args.Length; index++)
+        {
+            if (!string.Equals(args[index], "--pv-heif-thumbnail-check", StringComparison.Ordinal)) continue;
+            string directory = ResolveDocumentsPath(args[index + 1]);
+            string reportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer", "heif-thumbnail-checks.txt");
+            var decoder = new iOSHeifDecoder();
+            _ = AppleHeifThumbnailChecks.RunAsync(directory, reportPath,
+                (file, size) => Task.Run(() => iOSHeifDecoder.DecodeSubsampledWithImageIO(file.TryGetLocalPath(), size ?? 0)),
+                decoder.DecodeAsync);
+            break;
+        }
         if (args.Contains("--pv-native-texture-cache-check", StringComparer.Ordinal))
         {
             DispatchQueue.MainQueue.DispatchAsync(() =>

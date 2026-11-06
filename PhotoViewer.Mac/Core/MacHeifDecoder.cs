@@ -2,6 +2,7 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
+using Foundation;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Storage;
@@ -28,23 +29,28 @@ public sealed class MacHeifDecoder : IHeifDecoder
             return Task.FromResult<DecodedImage?>(null);
         }
 
-        return Task.Run(() => maxSize.HasValue
-            ? DecodeSubsampledWithImageIO(path, maxSize.Value)
-            : DecodeWithImageIO(path, null));
+        return Task.Run(() =>
+        {
+            using var pool = new NSAutoreleasePool();
+            return maxSize.HasValue
+                ? DecodeSubsampledWithImageIO(path, maxSize.Value, preferEmbedded: PreferEmbedded(file, maxSize.Value))
+                : DecodeWithImageIO(path, null);
+        });
     }
 
-    /// <summary>
-    /// 代理图子采样解码:ImageIO thumbnail API,从原图渲染到长边 ≤ maxSize(不吃内嵌小图),
-    /// WithTransform=true 输出即显示朝向。内存峰值 ≈ 代理尺寸而非全尺寸(iPad 降峰值的关键路径)。
-    /// </summary>
-    internal static DecodedImage? DecodeSubsampledWithImageIO(string path, int maxSize)
+    private const int EmbeddedThumbnailMaxSize = 512;
+
+    // SONY .HIF 内嵌小图无收益且画质有损,保持既有缩略图策略
+    private static bool PreferEmbedded(IFileRef file, int maxSize)
+        => maxSize <= EmbeddedThumbnailMaxSize && !file.Name.EndsWith(".hif", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>代理图子采样解码:长边 ≤ maxSize,WithTransform=true 输出即显示朝向;preferEmbedded 时先试容器内嵌小图。</summary>
+    internal static DecodedImage? DecodeSubsampledWithImageIO(string path, int maxSize, bool preferEmbedded = false)
     {
         if (string.IsNullOrEmpty(path) || maxSize <= 0) return null;
 
         IntPtr url = IntPtr.Zero;
         IntPtr src = IntPtr.Zero;
-        IntPtr img = IntPtr.Zero;
-        IntPtr options = IntPtr.Zero;
 
         try
         {
@@ -55,7 +61,51 @@ public sealed class MacHeifDecoder : IHeifDecoder
             src = CGImageSourceCreateWithURL(url, IntPtr.Zero);
             if (src == IntPtr.Zero) return null;
 
-            options = CreateThumbnailOptions(maxSize);
+            if (preferEmbedded)
+            {
+                DecodedImage? embedded = null;
+                bool keep = false;
+                try
+                {
+                    embedded = DecodeThumbnail(src, maxSize, fromImageIfAbsent: true);
+                    keep = embedded != null && IsThumbnailSufficient(src, maxSize, embedded);
+                    if (keep) return embedded;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"ImageIO embedded thumbnail rejected: {ex.Message}");
+                }
+                finally
+                {
+                    if (!keep) embedded?.Dispose();
+                }
+            }
+
+            return DecodeThumbnail(src, maxSize, fromImageIfAbsent: false);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"ImageIO subsampled decode failed: {ex.Message}");
+            return null;
+        }
+        finally
+        {
+            if (src != IntPtr.Zero) CFRelease(src);
+            if (url != IntPtr.Zero) CFRelease(url);
+        }
+    }
+
+    private static DecodedImage? DecodeThumbnail(IntPtr src, int maxSize, bool fromImageIfAbsent)
+    {
+        IntPtr img = IntPtr.Zero;
+        IntPtr options = IntPtr.Zero;
+        IntPtr colorSpace = IntPtr.Zero;
+        IntPtr ctx = IntPtr.Zero;
+        byte[]? buffer = null;
+
+        try
+        {
+            options = CreateThumbnailOptions(maxSize, fromImageIfAbsent);
             if (options == IntPtr.Zero) return null;
 
             img = CGImageSourceCreateThumbnailAtIndex(src, 0, options);
@@ -67,79 +117,112 @@ public sealed class MacHeifDecoder : IHeifDecoder
 
             // 输出即显示朝向(WithTransform 已由 ImageIO 应用):1:1 画入 BGRA 缓冲
             var bytesPerRow = w * 4;
-            var buffer = DecodedImage.RentPixels(h * bytesPerRow);
-
-            IntPtr colorSpace = IntPtr.Zero;
-            IntPtr ctx = IntPtr.Zero;
+            buffer = DecodedImage.RentPixels(h * bytesPerRow);
 
             unsafe
             {
-                fixed (byte* p = buffer)
+                fixed (byte* p = buffer!)
                 {
-                    colorSpace = CGColorSpaceCreateDeviceRGB();
-                    if (colorSpace == IntPtr.Zero)
+                    try
                     {
-                        ImageBufferPool.Return(buffer);
-                        return null;
+                        colorSpace = CGColorSpaceCreateDeviceRGB();
+                        if (colorSpace == IntPtr.Zero) return null;
+
+                        const int bitsPerComponent = 8;
+                        const uint kCGBitmapByteOrder32Little = 2u << 12; // 0x2000
+                        const uint kCGImageAlphaPremultipliedFirst = 2u;
+                        uint bitmapInfo = kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst; // BGRA premultiplied
+
+                        ctx = CGBitmapContextCreate((IntPtr)p, (nuint)w, (nuint)h, (nuint)bitsPerComponent,
+                            (nuint)bytesPerRow, colorSpace, bitmapInfo);
+                        if (ctx == IntPtr.Zero) return null;
+
+                        CGContextSetBlendMode(ctx, (int)CoreGraphics.CGBlendMode.Copy);
+                        CGContextDrawImage(ctx, new CGRect(0, 0, w, h), img);
+
+                        var decoded = CreateBitmapFromBgraData(buffer!, w, h);
+                        if (decoded != null) buffer = null; // 租约已移交
+                        return decoded;
                     }
-
-                    const int bitsPerComponent = 8;
-                    const uint kCGBitmapByteOrder32Little = 2u << 12; // 0x2000
-                    const uint kCGImageAlphaPremultipliedFirst = 2u;
-                    uint bitmapInfo = kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst; // BGRA premultiplied
-
-                    ctx = CGBitmapContextCreate((IntPtr)p, (nuint)w, (nuint)h, (nuint)bitsPerComponent,
-                        (nuint)bytesPerRow, colorSpace, bitmapInfo);
-                    if (ctx == IntPtr.Zero)
+                    finally
                     {
-                        CFRelease(colorSpace);
-                        ImageBufferPool.Return(buffer);
-                        return null;
+                        // 上下文持有托管缓冲指针,必须在解除固定前释放
+                        if (ctx != IntPtr.Zero)
+                        {
+                            CFRelease(ctx);
+                            ctx = IntPtr.Zero;
+                        }
                     }
-
-                    CGContextDrawImage(ctx, new CGRect(0, 0, w, h), img);
-
-                    CFRelease(ctx);
-                    CFRelease(colorSpace);
-                    ctx = IntPtr.Zero;
-                    colorSpace = IntPtr.Zero;
                 }
             }
-
-            return CreateBitmapFromBgraData(buffer, w, h);
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"ImageIO subsampled decode failed: {ex.Message}");
+            Console.WriteLine($"ImageIO thumbnail decode failed: {ex.Message}");
             return null;
         }
         finally
         {
+            if (colorSpace != IntPtr.Zero) CFRelease(colorSpace);
+            if (buffer != null) ImageBufferPool.Return(buffer);
             if (options != IntPtr.Zero) CFRelease(options);
             if (img != IntPtr.Zero) CFRelease(img);
-            if (src != IntPtr.Zero) CFRelease(src);
-            if (url != IntPtr.Zero) CFRelease(url);
         }
     }
 
-    /// <summary>构建 thumbnail API 选项:FromImageAlways=true + MaxPixelSize + WithTransform=true。</summary>
-    private static IntPtr CreateThumbnailOptions(int maxSize)
+    private static bool IsThumbnailSufficient(IntPtr src, int maxSize, DecodedImage embedded)
+    {
+        IntPtr dict = IntPtr.Zero;
+        try
+        {
+            dict = CGImageSourceCopyPropertiesAtIndex(src, 0, IntPtr.Zero);
+            if (dict == IntPtr.Zero) return false;
+
+            int pixelWidth = GetIntProperty(dict, "PixelWidth", 0);
+            int pixelHeight = GetIntProperty(dict, "PixelHeight", 0);
+            int orientation = GetIntProperty(dict, "Orientation", 1);
+            if (pixelWidth <= 0 || pixelHeight <= 0 || orientation is < 1 or > 8) return false;
+
+            // 小源按源分辨率,不放大
+            int required = Math.Min(maxSize, Math.Max(pixelWidth, pixelHeight));
+            if (Math.Max(embedded.Width, embedded.Height) < required) return false;
+
+            // PixelWidth/Height 未含方向;换算出显示宽高后与已是显示朝向的内嵌产物比横竖
+            bool swaps = orientation is 5 or 6 or 7 or 8;
+            int displayWidth = swaps ? pixelHeight : pixelWidth;
+            int displayHeight = swaps ? pixelWidth : pixelHeight;
+            if (displayWidth != displayHeight && (embedded.Width > embedded.Height) != (displayWidth > displayHeight)) return false;
+
+            double sourceRatio = (double)Math.Max(pixelWidth, pixelHeight) / Math.Min(pixelWidth, pixelHeight);
+            double embeddedRatio = (double)Math.Max(embedded.Width, embedded.Height) / Math.Min(embedded.Width, embedded.Height);
+            return Math.Abs(embeddedRatio - sourceRatio) <= sourceRatio * 0.02;
+        }
+        finally
+        {
+            if (dict != IntPtr.Zero) CFRelease(dict);
+        }
+    }
+
+    /// <summary>构建 thumbnail API 选项:FromImageAlways(或 IfAbsent) + MaxPixelSize + WithTransform。</summary>
+    private static IntPtr CreateThumbnailOptions(int maxSize, bool fromImageIfAbsent)
     {
         IntPtr num = IntPtr.Zero;
         try
         {
-            IntPtr kFromImageAlways = GetImageIOConstant("kCGImageSourceCreateThumbnailFromImageAlways");
+            IntPtr kFromImage = GetImageIOConstant(fromImageIfAbsent
+                ? "kCGImageSourceCreateThumbnailFromImageIfAbsent"
+                : "kCGImageSourceCreateThumbnailFromImageAlways");
             IntPtr kMaxPixelSize = GetImageIOConstant("kCGImageSourceThumbnailMaxPixelSize");
             IntPtr kWithTransform = GetImageIOConstant("kCGImageSourceCreateThumbnailWithTransform");
             IntPtr cfTrue = GetCFConstant("kCFBooleanTrue");
-            if (kFromImageAlways == IntPtr.Zero || kMaxPixelSize == IntPtr.Zero || kWithTransform == IntPtr.Zero || cfTrue == IntPtr.Zero)
+            if (kFromImage == IntPtr.Zero || kMaxPixelSize == IntPtr.Zero || kWithTransform == IntPtr.Zero || cfTrue == IntPtr.Zero)
                 return IntPtr.Zero;
 
             num = CFNumberCreate(IntPtr.Zero, /*kCFNumberSInt32Type*/ 3, ref maxSize);
             if (num == IntPtr.Zero) return IntPtr.Zero;
 
             // 立即消费的字典:NULL 回调(不 retain)在本次调用内安全
-            var keys = new[] { kFromImageAlways, kMaxPixelSize, kWithTransform };
+            var keys = new[] { kFromImage, kMaxPixelSize, kWithTransform };
             var values = new[] { cfTrue, num, cfTrue };
             return CFDictionaryCreate(IntPtr.Zero, keys, values, 3, IntPtr.Zero, IntPtr.Zero);
         }
@@ -546,6 +629,9 @@ public sealed class MacHeifDecoder : IHeifDecoder
 
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
     private static extern void CGContextDrawImage(IntPtr c, CGRect rect, IntPtr image);
+
+    [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
+    private static extern void CGContextSetBlendMode(IntPtr c, int blendMode);
 
     // 新增：CTM 变换
     [DllImport("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")]
