@@ -13,6 +13,7 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     private readonly PhotoViewport _viewport = new();
     private readonly MetalPhotoRenderer _renderer;
     private CGPoint _lastDrag;
+    private bool _dragging;
     /// <summary>已上传的展示产物引用：同一对象再次上屏（会话状态通知）时只重绘，不重复上传整张纹理。</summary>
     private DecodedImage? _textureSource;
     /// <summary>当前照片的未旋转源尺寸与 EXIF 方向；用于区分"切图"与"代理↔Full 热替换"。</summary>
@@ -266,15 +267,18 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
     /// <summary>点击获焦，双击切换适应/100%，单击开始拖动。</summary>
     public override void MouseDown(NSEvent theEvent)
     {
+        _dragging = false;
         if (WindowInputHandler?.Invoke(theEvent) == true) return;
         Window?.MakeFirstResponder(this);
         _lastDrag = ConvertPointFromView(theEvent.LocationInWindow, null);
+        _dragging = true;
         if (theEvent.ClickCount == 2) ToggleFit(_lastDrag);
         else InputHandler?.Invoke(theEvent);
     }
-    /// <summary>放大后按原生鼠标位移平移照片。</summary>
+    /// <summary>仅平移由主图按下开始的照片拖动。</summary>
     public override void MouseDragged(NSEvent theEvent)
     {
+        if (!_dragging) return;
         var point = ConvertPointFromView(theEvent.LocationInWindow, null);
         if (!_viewport.IsFit)
         {
@@ -284,6 +288,7 @@ public sealed class MetalPhotoView : NSView, IMemoryClient
         }
         _lastDrag = point;
     }
+    public override void MouseUp(NSEvent theEvent) => _dragging = false;
     /// <summary>中键/侧键按照配置执行。</summary>
     public override void OtherMouseDown(NSEvent theEvent) { if (InputHandler?.Invoke(theEvent) != true) base.OtherMouseDown(theEvent); }
     /// <summary>右键优先匹配用户手势，否则显示原生上下文菜单。</summary>

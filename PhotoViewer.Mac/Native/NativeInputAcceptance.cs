@@ -2,6 +2,8 @@ using AppKit;
 using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
+using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Input;
 using PhotoViewer.Core.Settings;
 using PhotoViewer.Core.Storage;
@@ -13,7 +15,7 @@ namespace PhotoViewer.Mac.Native;
 /// <summary>主图区域输入回归，仅在隔离冒烟会话中以 --pv-native-smoke --pv-native-input 运行（不加载照片）。
 /// 覆盖：NSEvent 必须按类型取值（曾一次性读取全部字段，对鼠标/键盘事件抛 NSInternalInconsistencyException
 /// 被 ObjC 桥吞掉，导致主图右键菜单、空首屏点击乃至全部快捷键失效）、空首屏左键打开文件、主图右键弹出原生上下文菜单、
-/// 顶边拖动区双击按系统偏好缩放/最小化。
+/// 顶边拖动区双击按系统偏好缩放/最小化、照片拖动会话隔离（标题栏消费按下后不得沿用旧拖动锚点；用独立视图与合成小纹理验证）。
 /// 点击直接投递到主图视图（与胶片栏回归一致），因为冒烟进程非最前台窗口时系统不会派发首击。</summary>
 internal static class NativeInputAcceptance
 {
@@ -96,6 +98,9 @@ internal static class NativeInputAcceptance
 
         // 6) 隐藏式标题栏(FullSizeContentView)不会自带系统“双击标题栏”动作，验证顶边拖动区自实现。
         await VerifyTitlebarDoubleClick(window, checks);
+
+        // 6b) 照片拖动会话隔离：标题栏按下被窗口消费后，旧拖动锚点不得继续驱动主图平移。
+        VerifyDragSessionIsolation(window, checks);
 
         // 7) 退出路径：从未展示过设置窗口时关闭设置必须是空操作，不得去调尚未载入的设置动态库
         //    （退出时 WillTerminate 会调用它；修复前函数指针为 null，直接跳到地址 0 SIGSEGV）。
@@ -243,6 +248,107 @@ internal static class NativeInputAcceptance
             preferences.RemoveObject(key);
             if (window.Window.IsMiniaturized) window.Window.Deminiaturize(null);
             window.Window.SetFrame(original, true);
+        }
+    }
+
+    /// <summary>
+    /// 照片拖动会话隔离：标题栏按下被 WindowInputHandler 消费、或一次拖动以系统窗口拖动结束后，主图不得沿用
+    /// 上一次 MouseDown 留下的锚点继续平移。用独立 MetalPhotoView 与不置前的独立窗口验证，不触碰主图与加载会话：
+    /// 无按下的孤立拖动无效；真实按下-拖动按视图点增量平移且倍率不变；抬起后的拖动无效；
+    /// 有效拖动未抬起时再被标题栏消费的按下先清掉旧锚点，多处标题坐标拖动都不移动；随后真实的按下-拖动仍生效。
+    /// </summary>
+    private static void VerifyDragSessionIsolation(MacMainWindow window, List<string> checks)
+    {
+        var mainCentre = window.Photo.ViewCenter;
+        var mainScale = window.Photo.PointScale;
+        var frame = new CGRect(0, 0, 400, 300);
+        var content = new NSView(frame);
+        var frameWindow = new NSWindow(frame, NSWindowStyle.Borderless, NSBackingStore.Buffered, false);
+        var photo = new MetalPhotoView(frame);
+        var originalResponder = frameWindow.FirstResponder;
+        bool consumed = false;
+        photo.WindowInputHandler = _ => consumed;
+        try
+        {
+            frameWindow.ContentView = content;
+            content.AddSubview(photo);
+            if (!ReferenceEquals(photo.Window, frameWindow) || frameWindow.IsVisible)
+                throw new InvalidOperationException("独立拖动回归的视图未挂在不置前的独立窗口上");
+            using var image = new DecodedImage(new byte[32], 2, 2, 16, PixelEncoding.RgbaF16,
+                ImageColorSpace.LinearSrgb, sourceWidth: 6000, sourceHeight: 4000);
+            photo.SetImage(image, 1);
+            photo.ZoomToPhysical(1);
+            bool pannable = double.IsFinite(photo.PointScale)
+                && photo.DisplayWidth * photo.PointScale > (double)photo.Bounds.Width
+                && photo.DisplayHeight * photo.PointScale > (double)photo.Bounds.Height;
+            if (photo.IsFit || !pannable)
+                throw new InvalidOperationException($"独立拖动会话未进入可平移的物理 100%：倍率={photo.PhysicalScale} 视图={photo.Bounds}");
+
+            NSEvent Mouse(NSEventType type, CGPoint point)
+                => NSEvent.MouseEvent(type, photo.ConvertPointToView(point, null), 0, NSProcessInfo.ProcessInfo.SystemUptime,
+                    frameWindow.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException($"{type} 事件创建失败");
+            void Down(CGPoint point) { using var e = Mouse(NSEventType.LeftMouseDown, point); photo.MouseDown(e); }
+            void Drag(CGPoint point) { using var e = Mouse(NSEventType.LeftMouseDragged, point); photo.MouseDragged(e); }
+            void Up(CGPoint point) { using var e = Mouse(NSEventType.LeftMouseUp, point); photo.MouseUp(e); }
+
+            var scale = photo.PointScale;
+            var centre = photo.ViewPoint(.5, .5);
+            void Expect(string label, double deltaX, double deltaY)
+            {
+                var now = photo.ViewPoint(.5, .5);
+                double movedX = (double)now.X - (double)centre.X, movedY = (double)now.Y - (double)centre.Y;
+                if (Math.Abs(movedX - deltaX) > .01 || Math.Abs(movedY - deltaY) > .01)
+                    throw new InvalidOperationException($"{label}：视图点位移 ({movedX}, {movedY})，预期 ({deltaX}, {deltaY})");
+                if (Math.Abs(photo.PointScale - scale) > 1e-6)
+                    throw new InvalidOperationException($"{label}：倍率 {scale} → {photo.PointScale}");
+                centre = now;
+            }
+
+            Drag(new CGPoint(260, 210));
+            Expect("没有 MouseDown 的孤立拖动", 0, 0);
+
+            Down(new CGPoint(200, 150));
+            Drag(new CGPoint(240, 175));
+            Expect("正常按下-拖动", 40, 25);
+
+            Up(new CGPoint(240, 175));
+            Drag(new CGPoint(300, 220));
+            Expect("MouseUp 之后的拖动", 0, 0);
+
+            Down(new CGPoint(150, 140));
+            Drag(new CGPoint(170, 155));
+            Expect("第二次正常按下-拖动", 20, 15);
+
+            consumed = true;
+            foreach (var (down, drag) in new[]
+                     {
+                         (new CGPoint(16, 284), new CGPoint(140, 120)),
+                         (new CGPoint(200, 292), new CGPoint(60, 200)),
+                         (new CGPoint(384, 288), new CGPoint(250, 60)),
+                     })
+            {
+                Down(down);
+                Drag(drag);
+                Expect($"标题栏按下 {down} 后拖动", 0, 0);
+            }
+
+            consumed = false;
+            Down(new CGPoint(100, 100));
+            Drag(new CGPoint(130, 120));
+            Expect("标题栏消费后的正常按下-拖动", 30, 20);
+
+            if (window.Photo.ViewCenter != mainCentre || window.Photo.PointScale != mainScale)
+                throw new InvalidOperationException("独立拖动会话回归改动了主窗口照片视口");
+            checks.Add("drag session: orphan drag, drag after mouse-up and title-bar consumed presses never pan the photo at unchanged zoom");
+            checks.Add("drag session: a real press-drag pans by the exact view-point delta, and a consumed press clears the stale anchor at every title-bar coordinate");
+        }
+        finally
+        {
+            photo.RemoveFromSuperview();
+            if (originalResponder != null) frameWindow.MakeFirstResponder(originalResponder);
+            photo.Dispose();
+            frameWindow.Dispose();
+            content.Dispose();
         }
     }
 
