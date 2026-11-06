@@ -15,8 +15,14 @@ namespace PhotoViewer.Apple;
 /// </summary>
 public sealed class ApplePresentationDecoder : IPresentationImageDecoder
 {
+    private readonly bool _useCoreImage;
+
+    public ApplePresentationDecoder() : this(OperatingSystem.IsMacOS()) { }
+
+    internal ApplePresentationDecoder(bool useCoreImage) => _useCoreImage = useCoreImage;
+
     /// <summary>
-    /// RAW 渲染共用的 Core Image 上下文（CIContext 线程安全）：工作色彩空间为扩展线性 sRGB，
+    /// RAW 开发与 HEIF 转换共用的 Core Image 上下文（CIContext 线程安全）：工作色彩空间为扩展线性 sRGB，
     /// 不缓存中间结果，走 GPU 渲染器。
     /// </summary>
     private static readonly Lazy<CIContext> RawRenderContext = new(CreateRawRenderContext);
@@ -60,7 +66,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     /// <param name="encoding">目标像素编码。</param>
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>解码产物。</returns>
-    private static unsafe DecodedImage Decode(string path, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
+    private unsafe DecodedImage Decode(string path, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
     {
         if (encoding is not (PixelEncoding.RgbaF16 or PixelEncoding.Rgba8))
             throw new NotSupportedException($"Apple 展示解码器不支持编码 {encoding}");
@@ -86,7 +92,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     }
 
     /// <summary>ImageIO 路径：JPEG/HEIF 常态，也是 RAW 在 Core Image 不可用时的兜底（iOS 上可能只得到内嵌预览）。</summary>
-    private static unsafe DecodedImage DecodeImageIo(string path, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
+    private unsafe DecodedImage DecodeImageIo(string path, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
     {
         using var url = NSUrl.FromFilename(path);
         using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false })
@@ -110,6 +116,24 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         using var inferredImage = InterpretUntaggedJpeg(image, properties, path);
         int width = checked((int)image.Width);
         int height = checked((int)image.Height);
+        string extension = Path.GetExtension(path);
+        bool heif = extension.Equals(".heic", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".heif", StringComparison.OrdinalIgnoreCase)
+            || extension.Equals(".hif", StringComparison.OrdinalIgnoreCase);
+        if (_useCoreImage && heif && encoding == PixelEncoding.RgbaF16 && (long)width * height >= 4_000_000
+            && image.ColorSpace is { } sourceSpace)
+        {
+            try
+            {
+                using var ci = CIImage.FromCGImage(image, sourceSpace);
+                return RenderCoreImage(ci, ci.Extent, width, height, encoding, sourceWidth, sourceHeight, orientation, cancellationToken);
+            }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception exception)
+            {
+                Console.WriteLine($"[PresentationDecoder] HEIF Core Image 转换失败，回退位图绘制：{exception.Message}");
+            }
+        }
         return encoding == PixelEncoding.RgbaF16
             ? DecodeLinearF16(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken)
             : DecodeDisplayP3(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken);
@@ -141,7 +165,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         int width = (int)Math.Round(extent.Width);
         int height = (int)Math.Round(extent.Height);
         if (width <= 0 || height <= 0) throw new UserFacingException("RAW 解码的输出尺寸无效");
-        return RenderRaw(output, extent, width, height, encoding, sourceWidth, sourceHeight, orientation, cancellationToken);
+        return RenderCoreImage(output, extent, width, height, encoding, sourceWidth, sourceHeight, orientation, cancellationToken);
     }
 
     /// <summary>
@@ -178,10 +202,10 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     }
 
     /// <summary>
-    /// 把 RAW 输出直接渲染进池化缓冲：F16 用原生 RGBAh 格式 + 扩展线性 sRGB，8 位用原生 RGBA8 格式 + Display P3。
-    /// 两者的色彩与预乘口径与 ImageIO 路径的绘制函数相同（RAW 不透明）。
+    /// 把 Core Image 输出直接渲染进池化缓冲：F16 用原生 RGBAh 格式 + 扩展线性 sRGB，8 位用原生 RGBA8 格式 + Display P3。
+    /// RAW 开发与大型 HEIF 的 F16 转换共用，色彩与预乘口径保持不变。
     /// </summary>
-    private static unsafe DecodedImage RenderRaw(CIImage output, CGRect extent, int width, int height,
+    private static unsafe DecodedImage RenderCoreImage(CIImage output, CGRect extent, int width, int height,
         PixelEncoding encoding, int sourceWidth, int sourceHeight, int orientation, CancellationToken cancellationToken)
     {
         bool linear = encoding == PixelEncoding.RgbaF16;

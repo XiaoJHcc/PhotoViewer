@@ -151,6 +151,15 @@ public static class MacNativeApplication
                             (file, size) => Task.Run(() => MacHeifDecoder.DecodeSubsampledWithImageIO(file.TryGetLocalPath()!, size ?? 0)),
                             decoder.DecodeAsync);
                     }
+                    else if (args.Contains("--pv-perf-components-only", StringComparer.Ordinal))
+                    {
+                        reportPath = System.IO.Path.GetFullPath("artifacts/acceptance/apple-decode-optimization/perf-components.txt");
+                        await ApplePerfProbe.RunAsync(optimizeDirectory, reportPath,
+                            () => (AppleMemoryFootprint.GetPhysFootprintBytes(), -1L));
+                        string report = await File.ReadAllTextAsync(reportPath);
+                        passed = report.Contains("metalCachedSetTexture", StringComparison.Ordinal)
+                            && !report.Contains("ERROR", StringComparison.Ordinal);
+                    }
                     else passed = await AppleDecodeOptimizationProbe.RunAsync(optimizeDirectory, reportPath);
                     Console.WriteLine($"[DecodeOptimize] {(passed ? "PASS" : "FAIL")} {reportPath}");
                     Environment.Exit(passed ? 0 : 1);

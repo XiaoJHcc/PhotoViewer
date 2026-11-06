@@ -43,8 +43,9 @@ public static class AppleDecodeOptimizationProbe
         report.WriteLine($"PhotoViewer decode optimization probe platform={PlatformName()} " +
             $"arch={RuntimeInformation.ProcessArchitecture} cpus={Environment.ProcessorCount} T={TargetLongEdge} " +
             $"samples={Runs} compare_pair_budget={Megabytes(ComparePairBudget)}");
-        report.WriteLine("baseline=ImageIO thumbnail + CGBitmapContext (ApplePresentationDecoder); " +
-            "candidate=ImageIO thumbnail + CIImage.FromCGImage + reused CIContext.RenderToBitmap (probe experiment, not product)");
+        report.WriteLine("baseline=e2e_*_product: ApplePresentationDecoder(useCoreImage:false), bitmap only");
+        report.WriteLine("accelerated=e2e_*_accelerated: actual default ApplePresentationDecoder; CI only for HEIF F16 >=4MP; first sample keeps CI init");
+        report.WriteLine("ci=e2e_*_ci: independent probe candidate (ImageIO thumbnail + CIImage.FromCGImage + own CIContext); experiment only");
         report.WriteLine("note=pixel equality is not speed evidence; gc is not forced; candidate verdict is probe-only");
         report.WriteLine("raw_cold=proxy and full each use independent new CIRawFilter; raw_reuse=one new instance per round does proxy->full");
         report.WriteLine("completed=0 success=0");
@@ -130,110 +131,180 @@ public static class AppleDecodeOptimizationProbe
     private static bool MeasureStillEncoding(ReportWriter report, ProbeContext probe, NSUrl url, string path,
         EncodingPlan plan, int orientation, int sourceWidth, int sourceHeight)
     {
-        var decoder = new ApplePresentationDecoder();
+        // baseline 显式关闭 CI；accelerated 是真实默认产品路径（HEIF F16 >=4MP 才走 CI）。
+        var baseline = new ApplePresentationDecoder(useCoreImage: false);
+        var accelerated = new ApplePresentationDecoder();
         var file = new LocalFileRef(path);
         var productTimes = new double[Runs];
+        var acceleratedTimes = new double[Runs];
         DecodedImage? product = null;
+        DecodedImage? acceleratedImage = null;
         int productWidth = 0, productHeight = 0, productOrientation = 1;
-        try
+        int acceleratedWidth = 0, acceleratedHeight = 0, acceleratedOrientation = 1;
+        int candidateWidth = 0, candidateHeight = 0, candidateStride = 0;
+        byte[]? candidate = null;
+        var decodeTimes = new double[Runs];
+        var convertTimes = new double[Runs];
+        var totalTimes = new double[Runs];
+
+        void MeasureProduct(int run)
         {
-            for (int run = 0; run < Runs; run++)
+            using var pool = new NSAutoreleasePool();
+            product?.Dispose();
+            product = null;
+            var watch = Stopwatch.StartNew();
+            product = baseline.DecodeAsync(file, TargetLongEdge, plan.Encoding, CancellationToken.None)
+                .GetAwaiter().GetResult() ?? throw new InvalidOperationException("baseline 解码返回空");
+            productTimes[run] = watch.Elapsed.TotalMilliseconds;
+            productWidth = product.Width;
+            productHeight = product.Height;
+            productOrientation = product.Orientation;
+        }
+
+        void MeasureAccelerated(int run)
+        {
+            using var pool = new NSAutoreleasePool();
+            acceleratedImage?.Dispose();
+            acceleratedImage = null;
+            var watch = Stopwatch.StartNew();
+            acceleratedImage = accelerated.DecodeAsync(file, TargetLongEdge, plan.Encoding, CancellationToken.None)
+                .GetAwaiter().GetResult() ?? throw new InvalidOperationException("默认产品解码返回空");
+            acceleratedTimes[run] = watch.Elapsed.TotalMilliseconds;
+            acceleratedWidth = acceleratedImage.Width;
+            acceleratedHeight = acceleratedImage.Height;
+            acceleratedOrientation = acceleratedImage.Orientation;
+        }
+
+        void MeasureCandidate(int run)
+        {
+            using var roundPool = new NSAutoreleasePool();
+            var total = Stopwatch.StartNew();
+            using var source = OpenSource(url);
+            var decodeWatch = Stopwatch.StartNew();
+            var properties = source.GetProperties(0, null);
+            using var image = CreateThumbnail(source);
+            // 与产品同一套无 ICC JPEG 色彩推断；候选不能默默按 sRGB 解释。
+            using var inferred = InterpretUntaggedJpeg(image, properties, path);
+            var effective = inferred ?? image;
+            decodeTimes[run] = decodeWatch.Elapsed.TotalMilliseconds;
+            int width = checked((int)image.Width);
+            int height = checked((int)image.Height);
+            if (run == 0)
             {
-                product?.Dispose();
-                product = null;
-                var watch = Stopwatch.StartNew();
-                product = decoder.DecodeAsync(file, TargetLongEdge, plan.Encoding, CancellationToken.None)
-                    .GetAwaiter().GetResult() ?? throw new InvalidOperationException("产品解码返回空");
-                productTimes[run] = watch.Elapsed.TotalMilliseconds;
-                productWidth = product.Width;
-                productHeight = product.Height;
-                productOrientation = product.Orientation;
+                candidateWidth = width;
+                candidateHeight = height;
+                candidateStride = checked(width * plan.BytesPerPixel);
+                candidate = ImageBufferPool.Rent(checked(candidateStride * height));
+            }
+            else if (width != candidateWidth || height != candidateHeight)
+            {
+                throw new InvalidOperationException($"每轮缩解码尺寸不一致：{width}x{height} vs {candidateWidth}x{candidateHeight}");
             }
 
-            if (product == null) throw new InvalidOperationException("产品解码未产出图像");
-            int candidateWidth = 0, candidateHeight = 0, candidateStride = 0;
-            byte[]? candidate = null;
-            var decodeTimes = new double[Runs];
-            var convertTimes = new double[Runs];
-            var totalTimes = new double[Runs];
-            try
+            var convertWatch = Stopwatch.StartNew();
+            RenderCi(probe, effective, candidate!, width, height, plan);
+            convertTimes[run] = convertWatch.Elapsed.TotalMilliseconds;
+            totalTimes[run] = total.Elapsed.TotalMilliseconds;
+        }
+
+        try
+        {
+            // 三条路径轮流排在首/中/末，抵消"先 baseline 后 candidate"的顺序偏差；首次 CI 初始化留在 accelerated 首样本。
+            for (int run = 0; run < Runs; run++)
             {
-                for (int run = 0; run < Runs; run++)
+                string[] order = run switch
                 {
-                    using var roundPool = new NSAutoreleasePool();
-                    var total = Stopwatch.StartNew();
-                    using var source = OpenSource(url);
-                    var decodeWatch = Stopwatch.StartNew();
-                    var properties = source.GetProperties(0, null);
-                    using var image = CreateThumbnail(source);
-                    // 与产品同一套无 ICC JPEG 色彩推断；候选不能默默按 sRGB 解释。
-                    using var inferred = InterpretUntaggedJpeg(image, properties, path);
-                    var effective = inferred ?? image;
-                    decodeTimes[run] = decodeWatch.Elapsed.TotalMilliseconds;
-                    int width = checked((int)image.Width);
-                    int height = checked((int)image.Height);
-                    if (run == 0)
-                    {
-                        candidateWidth = width;
-                        candidateHeight = height;
-                        candidateStride = checked(width * plan.BytesPerPixel);
-                        candidate = ImageBufferPool.Rent(checked(candidateStride * height));
-                    }
-                    else if (width != candidateWidth || height != candidateHeight)
-                    {
-                        throw new InvalidOperationException($"每轮缩解码尺寸不一致：{width}x{height} vs {candidateWidth}x{candidateHeight}");
-                    }
-
-                    var convertWatch = Stopwatch.StartNew();
-                    RenderCi(probe, effective, candidate!, width, height, plan);
-                    convertTimes[run] = convertWatch.Elapsed.TotalMilliseconds;
-                    totalTimes[run] = total.Elapsed.TotalMilliseconds;
-                }
-
-                report.WriteLine(Timeline($"e2e_{plan.Label}_product", productTimes,
-                    $"encoding={plan.Encoding} out={productWidth}x{productHeight} orientation={productOrientation}"));
-                report.WriteLine(Timeline($"e2e_{plan.Label}_ci", totalTimes,
-                    $"encoding={plan.Encoding} out={candidateWidth}x{candidateHeight} orientation={orientation} " +
-                    $"decode={Median(decodeTimes):0.0}ms convert={Median(convertTimes):0.0}ms"));
-
-                bool ok = true;
-                if (productWidth != candidateWidth || productHeight != candidateHeight)
+                    0 => ["baseline", "accelerated", "candidate"],
+                    1 => ["accelerated", "candidate", "baseline"],
+                    _ => ["candidate", "baseline", "accelerated"],
+                };
+                foreach (string step in order)
                 {
-                    ok = false;
-                    report.WriteLine($"FAIL e2e_{plan.Label}_geometry product={productWidth}x{productHeight} ci={candidateWidth}x{candidateHeight}");
+                    if (step == "baseline") MeasureProduct(run);
+                    else if (step == "accelerated") MeasureAccelerated(run);
+                    else MeasureCandidate(run);
                 }
+            }
 
-                if (productOrientation != orientation)
-                {
-                    ok = false;
-                    report.WriteLine($"FAIL e2e_{plan.Label}_orientation product={productOrientation} source={orientation}");
-                }
+            if (product == null || acceleratedImage == null) throw new InvalidOperationException("产品解码未产出图像");
+            bool acceleratedPath = OperatingSystem.IsMacOS() && IsHeic(path) && plan.Half && (long)productWidth * productHeight >= 4_000_000;
+            report.WriteLine(Timeline($"e2e_{plan.Label}_product", productTimes,
+                $"encoding={plan.Encoding} out={productWidth}x{productHeight} orientation={productOrientation} decoder=bitmap(useCoreImage=false)"));
+            report.WriteLine(Timeline($"e2e_{plan.Label}_accelerated", acceleratedTimes,
+                $"encoding={plan.Encoding} out={acceleratedWidth}x{acceleratedHeight} orientation={acceleratedOrientation} " +
+                $"decoder=default accelerated={(acceleratedPath ? "active" : "inactive")} first=includes-CI-init"));
+            report.WriteLine(Timeline($"e2e_{plan.Label}_ci", totalTimes,
+                $"encoding={plan.Encoding} out={candidateWidth}x{candidateHeight} orientation={orientation} " +
+                $"decode={Median(decodeTimes):0.0}ms convert={Median(convertTimes):0.0}ms independent=1"));
 
-                if (product.SourceWidth != sourceWidth || product.SourceHeight != sourceHeight)
-                {
-                    ok = false;
-                    report.WriteLine($"FAIL e2e_{plan.Label}_source product={product.SourceWidth}x{product.SourceHeight} imageio={sourceWidth}x{sourceHeight}");
-                }
+            bool ok = true;
+            bool candidateGeometry = productWidth == candidateWidth && productHeight == candidateHeight;
+            if (!candidateGeometry)
+            {
+                ok = false;
+                report.WriteLine($"FAIL e2e_{plan.Label}_geometry product={productWidth}x{productHeight} ci={candidateWidth}x{candidateHeight}");
+            }
 
+            if (productOrientation != orientation)
+            {
+                ok = false;
+                report.WriteLine($"FAIL e2e_{plan.Label}_orientation product={productOrientation} source={orientation}");
+            }
+
+            if (product.SourceWidth != sourceWidth || product.SourceHeight != sourceHeight)
+            {
+                ok = false;
+                report.WriteLine($"FAIL e2e_{plan.Label}_source product={product.SourceWidth}x{product.SourceHeight} imageio={sourceWidth}x{sourceHeight}");
+            }
+
+            bool acceleratedGeometry = acceleratedWidth == productWidth && acceleratedHeight == productHeight &&
+                acceleratedOrientation == productOrientation &&
+                acceleratedImage.SourceWidth == product.SourceWidth && acceleratedImage.SourceHeight == product.SourceHeight &&
+                acceleratedImage.Encoding == product.Encoding && acceleratedImage.ColorSpace == product.ColorSpace;
+            if (!acceleratedGeometry)
+            {
+                ok = false;
+                report.WriteLine($"FAIL e2e_{plan.Label}_accelerated_geometry accelerated={acceleratedWidth}x{acceleratedHeight}/" +
+                    $"{acceleratedImage.SourceWidth}x{acceleratedImage.SourceHeight}/{acceleratedImage.Encoding}/{acceleratedImage.ColorSpace} " +
+                    $"product={productWidth}x{productHeight}/{product.SourceWidth}x{product.SourceHeight}/{product.Encoding}/{product.ColorSpace}");
+            }
+
+            bool quality = false;
+            if (candidateGeometry)
+            {
                 var difference = Compare(candidate!, candidateStride, product.Pixels, product.Stride,
                     candidateWidth, candidateHeight, plan.Half);
                 var (rows, flipMean) = DetectRows(candidate!, candidateStride, product.Pixels, product.Stride,
                     candidateWidth, candidateHeight, plan.Half, difference.Mean);
                 report.WriteLine(DifferenceLine($"compare e2e_{plan.Label}", difference) + $" rows={rows} flip_mean={flipMean:0.000000}");
                 double limit = plan.Half ? HalfMeanLimit : P3MeanLimit;
-                bool quality = rows != "flipped" && difference.Samples > 0 && difference.Mean <= limit;
+                quality = rows != "flipped" && difference.Samples > 0 && difference.Mean <= limit;
                 report.WriteLine($"verdict e2e_{plan.Label} candidate={(quality ? "within-tolerance" : "outside-tolerance")} " +
                     $"mean_limit={limit} note=probe-only");
-                return ok && quality;
             }
-            finally
+
+            bool acceleratedOk = false;
+            if (acceleratedGeometry)
             {
-                if (candidate != null) ImageBufferPool.Return(candidate);
+                var difference = Compare(acceleratedImage.Pixels, acceleratedImage.Stride, product.Pixels, product.Stride,
+                    productWidth, productHeight, plan.Half);
+                var (rows, flipMean) = DetectRows(acceleratedImage.Pixels, acceleratedImage.Stride, product.Pixels, product.Stride,
+                    productWidth, productHeight, plan.Half, difference.Mean);
+                double maxLimit = plan.Half ? 0.003 : 2;
+                report.WriteLine(DifferenceLine($"compare e2e_{plan.Label}_accelerated", difference) +
+                    $" rows={rows} flip_mean={flipMean:0.000000} max_limit={maxLimit} accelerated={(acceleratedPath ? "active" : "inactive")}");
+                acceleratedOk = rows != "flipped" && difference.Samples > 0 && difference.Max <= maxLimit;
+                report.WriteLine($"verdict e2e_{plan.Label}_accelerated accelerated={(acceleratedOk ? "within-tolerance" : "outside-tolerance")} " +
+                    $"max_limit={maxLimit} note=probe-only");
             }
+
+            return ok && quality && acceleratedOk;
         }
         finally
         {
             product?.Dispose();
+            acceleratedImage?.Dispose();
+            if (candidate != null) ImageBufferPool.Return(candidate);
         }
     }
 
