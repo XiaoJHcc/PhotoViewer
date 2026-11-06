@@ -1,28 +1,12 @@
 # 四端实现状态
 
-本文件按设计 ID 记录四端实现与验收状态；规则正文不写状态。状态词取自 [README §7](README.md#7-验收状态)：`代码核对`、`程序化通过`、`作者手验通过`、`待核验`、`缺口`、`延期`、`不适用`。
+本文件按设计 ID 记录四端实现与验收状态；规则正文不写状态。状态词取自 [README §7](README.md#7-验收状态)：`代码核对`、`程序化通过`、`作者手验通过`、`待核验`、`缺口`、`延期`、`不适用`。平台实现入口见 [platforms.md](platforms.md)。
 
-**证据规则**：每格只写"状态；简短覆盖边界或尚缺验证"；设备、素材与报告的验证范围见对应计划文档；程序化通过不等于作者手验，不能把一个平台的结果复制给另一个平台。未登记的 ID 一律写 `待核验`。平台实现入口见 [platforms.md](platforms.md)。
+**证据规则**：每格只写"状态；简短覆盖边界或尚缺验证"，不写日期、套件计数、设备型号与报告路径——这些记在 [四端验收证据台账](../Plans/native-rebuild-phase-6-unify.md#四端验收证据台账) 与各端证据文档。程序化通过不等于作者手验，不能把一个平台的结果复制给另一个平台；未登记的 ID 一律写 `待核验`。
 
-**手验与裁定（2026-10-22）**：macOS、iOS·iPadOS、Windows 三端常规 UI 呈现与操作已由作者手验通过（点击、真实照片加载、菜单/下拉、开关、设置页、工具页、分析栏/相似面板、缩放平移、排序筛选、评分写回、空态、跨启动持久化），Windows 另含 175%/200% 高 DPI 与真实跨屏。失败注入已覆盖打开/评分/Full/损坏设置/相似/分析失败（Mac、iPad）；Windows 的失败注入相关格子保持代码核对，不再另建注入套件。以下明确不再作为待办：真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性（不做压力验收）、桌面端外设热插拔与触控板分流（无验收条件）。仍未覆盖：广色域对拍与性能压力——相关格子保留各自的边界说明（Android 色域已改为程序化回读通过，见 2026-11-06 段）。逐项清单见 [原生收尾计划](../Plans/native-rebuild-phase-6-unify.md) 与下方各端证据文档。
+**验收边界（作者裁定）**：以下不作为验收待办——真实相机八方向素材（自生成八方向素材 + 代码核对即足）、雾天增强 + 分析同时开启的长时间稳定性、桌面端外设热插拔与触控板分流、Windows 程序化失败注入（相关格子以 `代码核对` 为终态）。硬件条件不具备的项（Windows 真屏 ACM/HDR 切换、Win10、校色仪；iPad 外接显示与广色域对拍；移动端真实存储 Provider 等）只在格内保留未验边界，不扩大为通过。
 
-**Windows 色彩（W-M7）**：功能实现与程序化验收已完成——`--pv-native-color` **16 PASS / 0 FAIL / 1 BOUNDARY**（本机显示器为 SDR）、smoke **35/35**（Debug 与 Release）、settings **14/14**、tools **9/9**，Debug/Release 构建 0 错 0 警；共享侧 `ColorTestTool` 68 PASS、`ColorEngineLutCheck` 逐字节一致、`HeifFastDecodeTest` 三套与 `CoreContractCheck` 905 PASS 全绿（详见 [Windows P2-W §19](../Plans/native-rebuild-windows-p2.md)）。作者浏览本轮色域检测图后目测未见异常，并同意提交；另已明确确认不同色域显示器跨屏完成。其余硬件无测试条件，只保留未验边界，不再列作当前待办，也不扩大为完整硬件矩阵通过。Android 当时因无可用设备（`adb devices -l` 为空、`emulator -list-avds` 为空）未能尝试 P3；该阻塞已解除，现行状态见下方 2026-11-06 段。
-
-**2026-10-23 Android 程序化验收**：基础操作与色彩已由作者手验通过（色彩当时按 sRGB 回退口径，已由 2026-11-06 段取代）。八方向、RAW 全分辨率、Full/打开/评分/DINO/相似/设置失败态、外部打开、外部存储写回、旋转与 fontScale/density 矩阵、滚轮分流、按键重复、控制栏焦点已由 `pv-check` 机测通过；SCOPE-03 与数据库不可用注入已于 2026-11-01 由 `pv-check faults` 机测通过；剩余仅 SCOPE-06 策略项、真机 ROM/手感与组合模式稳定性。
-
-**2026-10-24 共享 Core 重建验收**：`Tools/CoreContractCheck` 239 项通过（1 项 Windows 专项跳过），`SettingsDefaultsCheck` 通过。macOS base/layout/input/faults/toolbar/analysis/similarity/tools/settings/filmstrip 全通过；iOS 模拟器 photo/gesture/layout/input/analysis/similarity/tools/faults 全通过；Android `pv-check faults` 20/0、`pv-check storage` 22/0（debug DocumentsProvider；同 UID 打开与读取、Provider 拒绝访问故障注入，不覆盖跨 UID 临时授权或系统授权撤销）。Windows 仅完成类型检查，激活、真实 UI、设置关闭与写回未在本机验证。iOS 真机 security scope、Mac Finder/Dock 原生事件、Android DocumentsUI 与 USB/MTP/云 Provider 仍属未验边界。详见 [共享 Core 重建计划](../Plans/core-legacy-rebuild-plan-1.md)。
-
-**2026-10-26 设置持久化状态改为仅诊断**：SETTINGS-14 的失败原因只保留为共享诊断（`PersistenceStatus` / 仓库错误），四端设置页不再显示状态条或提示行。Mac faults **6/6**、iOS faults **6/6**、Android faults **22/0**（含诊断状态断言）PASS；Mac / iOS / Android Debug 构建 0 错，Windows `WindowsTypeCheck` 0 错；Windows 设置运行时验收沿用分支本机结果，合并后未在 Windows 重新运行。
-
-**2026-11-01 macOS/iOS 补齐程序化断言**：SCOPE-02（OS 内存告警关闭增强 + 一次性提示）在 Mac 与 iOS faults 注入；SCOPE-04（真 ARW 按传感器分辨率 7008×4672 解码、伪 RAW 回退 ImageIO 后报容器实际尺寸）在两端断言；SETTINGS-06 在 Mac settings 与 iOS input 套件断言运行时预算与适屏张数提示；OPEN-06 在 Mac 经 Launch Services `open -a` 投递真实 odoc，核对与命令行/拖入同一协调器并定位目标照片。Mac 九套 base 40 / faults 9 / layout / input / toolbar / analysis / similarity / tools / filmstrip / settings 全 PASS；iOS 模拟器（iPad mini A17 Pro / iOS 26.3）photo 13 / gesture 22 / layout 29 / input 48 / analysis 18 / similarity 10 / tools 9 / faults 9 全 PASS，报告归档 `artifacts/acceptance/ios-acceptance-2026-11-01/`。仍属未验边界：iOS 真机外设与 security scope、iPad 外接显示与广色域对拍、Windows 运行时。
-
-**2026-11-01 Android 补齐程序化断言**：MENU-06（雾天增强文案/勾选/无照片置灰，`pv-check main` 21/0）、SCOPE-03（现算与增强产物不入库不写 XMP、显式提取三路入库、清库清空库表并把诊断瓦片退回「未提取」）与 STATE-04（数据库不可用注入后如实「未提取」、不停留计算中、无伪造徽标且不崩溃，收尾恢复可用库）由 `pv-check faults` 36/0 机测通过；`pv-check all` 87 项连跑 15 次 0 崩溃、无新增 tombstone，历史启动期 SIGSEGV 在本轮未复现、仍未定位。报告归档 `artifacts/acceptance/android-acceptance-2026-11-01/`。
-
-**2026-11-02 Windows 运行态补齐**：共享 Core 重建后 Windows 只有类型检查，本轮在 Windows 本机实跑 `CoreContractCheck` **818 PASS / 1 SKIP / 0 FAIL**（唯一 skip 是 macOS 专有 `realpath` 身份）、`--pv-native-smoke` **30/30**（连跑两次）、`--pv-native-settings` **10/10**、`--pv-native-tools` **5/5**，Debug/Release 构建 0 错 0 警。期间修掉一个 Windows 缺陷：读文件只带 `FileShare.ReadWrite`，外部删除/改名与本应用原子替换都会被锁（`LocalFileRef.OpenReadAsync` 现同时允许 `FileShare.Delete`）；并把「权限拒绝打开」「只读 sidecar 预检」「不可读 sidecar 映射」三个原先在 Windows 上直接跳过的分支改成实跑（Windows 用只读属性/独占句柄，不套用 POSIX 模式）。冒烟夹具改为各自独占子目录（显式打开会刷新整个父目录），修复了冒烟第二次运行必失败。**OPEN-06** 新增 `--pv-native-activation-check`：本进程持单实例键并真实拉起第二个进程，核对激活转发、主实例切到目标、二次进程以 0 退出且不开第二个窗口，连跑两次通过。同日还实测了 Training `DatasetBuilder` 在 Windows 的 `--dump-render`（像素与既有 `display-plane-v3` 缓存逐文件哈希一致），关窗时在途大图上传的 `ObjectDisposedException` 已加前置守卫（原先是收尾回调在 D3D 上下文 Dispose 后仍调用 `Unmap`）；`PhotoGroupMap.Build` 的「先清空再回填」改为「先回填、再清空不在组内的文件」，并发读取不再看到 `Group == null`。MENU-06 也转为程序化（smoke 断言菜单文案与勾选跟随会话）。仍缺：WinUI 真实点选写回的作者复验、色彩（W-M7）与顺序连翻长尾。
-
-**2026-11-06 Android 色域（P3）真机落地**：主图默认按设备与窗口广色域能力协商表面——P3 passthrough（`0x3490`）→ 标准 P3（`0x3363`）→ sRGB（`0x3089`），并按 GL 帧缓冲的实际编码决定着色器是否先反 sRGB 线性化（标准 P3 未修正时 128 灰回读为 188、修正后为 128，均由直接回读证实）；`--ez pv-srgb true` 或 `--ez pv-p3 false` 仍可强制 sRGB 对照，默认不再强制。解码目标按 `DisplaySupportsP3` 在会话内稳定，上传按实际表面转换，导航图/缩略图/分析位图出口统一 sRGB；`Bitmap.GetPixels` 会返回 sRGB 打包值，改为 JNI 原始存储直读并如实规范目标色域。小米 13（2211133C / fuxi / Android 13·API 33）真机：Debug 与 Release 各 23 条既有警告、0 错误且无新增；整合远端零拷贝上传与触摸修复后，两种构建均 `pv-check color` 85/0、`main` 22/0、`input` 27/0；Debug `settings` 98/0，Release `zoom` 26/0。Debug `zoom` 25/1，唯一失败为真实 HIF 会话 UI 心跳性能门，未放宽门槛（详见 Android §8.4）；整合前另验 Debug `analysis` 51/0、`layout` 18/0、强制 sRGB `main` 22/0；HOME 切后台再回同一 PID，EGL 重建仍为 P3、照片 layer 为 DISPLAY_P3，灰阶 32/64/128/191/223 截图前后一致（该项在 Release 生产构建上实测）。报告 `artifacts/acceptance/android-color-xiaomi13-2026-11-06/`。`filter` 首跑在 Skia 动态库加载构造阶段 SIGSEGV（未确认与既有启动不稳定同因），重跑 28 PASS / 1 FAIL（恢复 `previousOrientation` 后等竖屏超时），本轮不按全量稳定通过计。以上仅本机范围，不移植其它平台。详见 [Android 执行清单 §8](../Plans/native-rebuild-phase-android.md)。
-
-证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列） · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md)。
+证据文档：[macOS P3](../Plans/native-rebuild-phase-3.md) · [iPad](../Plans/native-rebuild-phase-ipad.md) · [Windows P2](../Plans/native-rebuild-windows-p2.md) · [Windows 主屏控件](../Plans/windows-main-screen-controls.md) · [Android](../Plans/native-rebuild-phase-android.md) · [共享 Core 重建](../Plans/core-legacy-rebuild-plan-1.md) · [评分存储纠正](../Plans/rating-storage-correction-plan-1.md) · [原生输入与设置/工具界面收口](../Plans/native-input-ui-refinement.md) · [Web 参考壳差分台账](../Plans/web-shell-gaps.md)（Web 只作规范检验，不设状态列）。
 
 ## film
 
@@ -33,18 +17,18 @@
 | FILM-03 | 作者手验通过；减弱动态 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILM-05 | 程序化通过；卡片与冲突入口；浮窗状态见 RATING-04 | 程序化通过；卡片与冲突三角；浮窗状态见 RATING-04 | 程序化通过；卡片与冲突入口；浮窗状态见 RATING-04 | 程序化通过；卡片与冲突三角；浮窗状态见 RATING-04 |
-| FILM-06 | 程序化通过；真实改星、筛选暂留与补偿 | 程序化通过；模拟器改星与显示快照 | 程序化通过 11-02；smoke 只读素材写回失败提示与星色不变；真实点选写回待复验 | 程序化通过；Provider 写回与失败真值 |
+| FILM-06 | 程序化通过；真实改星、筛选暂留与补偿 | 程序化通过；模拟器改星与显示快照 | 程序化通过；smoke 只读素材写回失败提示与星色不变；真实点选写回待复验 | 程序化通过；Provider 写回与失败真值 |
 
 ## rating
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| RATING-01 | 程序化通过；来源矩阵、多包缺失比较、不可读状态 | 程序化通过；共享核心与模拟器冲突指示 | 程序化通过 11-02；CoreContractCheck Windows 实跑来源矩阵与冲突；WinUI 点选待复验 | 程序化通过；Provider 来源与冲突指示 |
-| RATING-02 | 程序化通过；真实 ARW/HEIC 副本、重叠范围拒绝、最小区间写 | 程序化通过；共享核心与模拟器读写，真机作用域未验 | 程序化通过 11-02；CoreContractCheck Windows 实跑真实 ARW/HEIF 副本写入；WinUI 点选待复验 | 程序化通过；随机写、只读预检、不可定位拒绝、新鲜 revision |
-| RATING-03 | 程序化通过；全来源预检、最终集合确认、NoChange、补偿/Partial | 程序化通过；共享核心与模拟器失败路径 | 程序化通过 11-02；CoreContractCheck Windows 实跑回滚/Partial；WinUI 点选待复验 | 程序化通过；Provider 全来源写与故障路径 |
+| RATING-01 | 程序化通过；来源矩阵、多包缺失比较、不可读状态 | 程序化通过；共享核心与模拟器冲突指示 | 程序化通过；CoreContractCheck Windows 实跑来源矩阵与冲突；WinUI 点选待复验 | 程序化通过；Provider 来源与冲突指示 |
+| RATING-02 | 程序化通过；真实 ARW/HEIC 副本、重叠范围拒绝、最小区间写 | 程序化通过；共享核心与模拟器读写，真机作用域未验 | 程序化通过；CoreContractCheck Windows 实跑真实 ARW/HEIF 副本写入；WinUI 点选待复验 | 程序化通过；随机写、只读预检、不可定位拒绝、新鲜 revision |
+| RATING-03 | 程序化通过；全来源预检、最终集合确认、NoChange、补偿/Partial | 程序化通过；共享核心与模拟器失败路径 | 程序化通过；CoreContractCheck Windows 实跑回滚/Partial；WinUI 点选待复验 | 程序化通过；Provider 全来源写与故障路径 |
 | RATING-04 | 程序化通过；实时来源、失败保留、方向与锚点关闭；作者复验待做 | 程序化通过；iOS 26.3 模拟器贴边箭头对准、紧凑保留浮窗；作者复验与真机/iOS 27 未覆盖 | 程序化通过；原生浮窗、长名布局、两向入口、工作区下/右边缘夹取与复位、失败保留与整组写入；作者复验与真实跨屏待做 | 程序化通过；卡片/控制栏入口、两来源内容、整组写入收敛、只读失败保留（模拟器真实点按含横竖屏方向）；TalkBack 与作者复验待做 |
-| RATING-05 | 程序化通过；代表值筛选与训练消费契约 | 程序化通过；共享投影与模拟器筛选 | 程序化通过 11-02；CoreContractCheck Windows 实跑代表值筛选 | 程序化通过；共享投影与原生输入 |
-| RATING-06 | 程序化通过；现有 canonical 包，PNG/无包/复杂结构不支持；相机往返未验 | 程序化通过；模拟器范围，真机 security scope 未验 | 程序化通过 11-02；CoreContractCheck Windows 实跑既有包往返与不足包拒绝；相机往返未验 | 程序化通过；Debug Provider 范围，USB/MTP/云 Provider 未验 |
+| RATING-05 | 程序化通过；代表值筛选与训练消费契约 | 程序化通过；共享投影与模拟器筛选 | 程序化通过；CoreContractCheck Windows 实跑代表值筛选 | 程序化通过；共享投影与原生输入 |
+| RATING-06 | 程序化通过；现有 canonical 包，PNG/无包/复杂结构不支持；相机往返未验 | 程序化通过；模拟器范围，真机 security scope 未验 | 程序化通过；CoreContractCheck Windows 实跑既有包往返与不足包拒绝；相机往返未验 | 程序化通过；Debug Provider 范围，USB/MTP/云 Provider 未验 |
 
 > 程序化证据与未覆盖边界见 [评分存储纠正计划](../Plans/rating-storage-correction-plan-1.md)；修订前作者验收不替代修订后复验。来源浮窗已实现 macOS / iOS / Web / Windows / Android（Web 由 `?check=all`、Windows 由原生 smoke、Android 由 `pv-check faults` 的 RATING-04 覆盖）；各端作者复验、iOS 真机/iOS 27、真实相机往返及移动端真实存储边界未验。
 
@@ -53,24 +37,24 @@
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
 | SHELL-01 | 作者手验通过 | 作者手验通过；栏位底 #111111 | 作者手验通过；栏位底 #111111 目视 | 作者手验通过；基础操作；栏位底 #111111 |
-| SHELL-02 | 代码核对；既有 32 点悬停标题栏、文件栏隐藏时全宽毛玻璃与新增窄宽度常驻栏均已实现并静态复核，当前 Windows 主机无法编译/实跑 AppKit，layout/input 套件与作者手验待做 | 不适用；无标题栏语义 | 程序化通过；既有悬停显隐、文件栏隐藏时全宽亚克力、筛选挖空、caption 命中（WM_NCHITTEST）、按钮字形随窗口态、全屏无拖动区、主图上方交换链亚克力回读（变暗/保色/隐藏复原、噪点纹理就位、与 XAML 段接缝同值）与新增窄宽度常驻栏（700 DIP 下 32 点布局让位、全宽亚克力、热区外与失焦保持，1200 DIP 恢复悬停覆盖层）均已在本机冒烟通过；作者目视无大问题，行布局完整复验待做 | 不适用；窗口装饰属平台 |
+| SHELL-02 | 代码核对；悬停标题栏、文件栏隐藏时全宽毛玻璃与窄宽度常驻栏已实现，layout/input 套件与作者手验待做 | 不适用；无标题栏语义 | 程序化通过；悬停显隐、跨度与背景、筛选挖空、caption 命中、窗口按钮字形、全屏无拖动区、主图区段交换链亚克力与接缝、窄宽度常驻栏让位与恢复；作者行布局完整复验待做 | 不适用；窗口装饰属平台 |
 | SHELL-03 | 作者手验通过 | 不适用；无应用内全屏 | 作者手验通过；四态往返 | 不适用；系统窗口 |
 | SHELL-04 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；偏好跨启动恢复 | 作者手验通过；ShowFilm/ShowControls 写平台偏好并跨启动恢复 | 作者手验通过；基础操作；两键写 SharedPreferences |
-| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI 与真实跨屏已验；色彩程序化通过（`--pv-native-color` 16/0/1 B），不同色域跨屏已由作者确认；其余硬件仅保留未验边界、不列待办 | 程序化通过；竖/横屏旋转与尺寸变化；HOME 切后台再回同一 PID 后 EGL 重建仍协商 P3、照片 layer 为 DISPLAY_P3；外接显示未验 |
+| SHELL-05 | 作者手验通过；跨屏色彩 | 作者手验通过；旋转/分屏/Stage Manager 已验，外接显示未验 | 作者手验通过；175%/200% DPI、真实跨屏与不同色域跨屏已验；色彩输出转换程序化通过，真屏 ACM/HDR 切换未验 | 程序化通过；竖/横屏旋转与尺寸变化；HOME 切后台再回同一 PID 后 EGL 重建仍协商 P3、照片 layer 为 DISPLAY_P3；外接显示未验 |
 | SHELL-06 | 作者手验通过；窗口按钮/触控菜单已验 | 作者手验通过；窗口按钮/触控菜单已验 | 程序化通过；自绘全屏/最小化/最大化/关闭按钮的提示与读屏名；作者复验待做 | 作者手验通过；基础操作 |
 
 ## filter
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| FILTER-01 | 程序化通过；星级筛选 13 项 | 程序化通过；CoreContractCheck | 程序化通过 11-02；CoreContractCheck Windows 实跑星级筛选 13 项 | 程序化通过；CoreContractCheck |
+| FILTER-01 | 程序化通过；星级筛选 13 项 | 程序化通过；CoreContractCheck | 程序化通过；CoreContractCheck Windows 实跑星级筛选 13 项 | 程序化通过；CoreContractCheck |
 | FILTER-02 | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；名称排序 OrdinalIgnoreCase | 作者手验通过；基础操作；名称排序 OrdinalIgnoreCase |
-| FILTER-03 | 程序化通过；13 项/已拒绝/冲突独立 | 程序化通过；CoreContractCheck | 程序化通过 11-02；CoreContractCheck Windows 实跑已拒绝/冲突独立 | 程序化通过；CoreContractCheck |
+| FILTER-03 | 程序化通过；13 项/已拒绝/冲突独立 | 程序化通过；CoreContractCheck | 程序化通过；CoreContractCheck Windows 实跑已拒绝/冲突独立 | 程序化通过；CoreContractCheck |
 | FILTER-04 | 作者手验通过；计数字号取令牌 | 作者手验通过；计数通知与暂留同帧 | 作者手验通过；计数通知补齐 | 作者手验通过；基础操作；计数通知与暂留同帧 |
 | FILTER-05 | 作者手验通过；落出后落最近前后项 | 作者手验通过；落出后落最近前后项 | 作者手验通过；落出后落最近前后项 | 作者手验通过；基础操作；落出后落最近前后项 |
 | FILTER-06 | 作者手验通过；文件栏隐藏/恢复保留逻辑态并还原面板 | 作者手验通过；含初态同步 | 作者手验通过 | 作者手验通过；基础操作；文件栏隐藏/恢复保留逻辑态并还原面板 |
 | FILTER-07 | 作者手验通过 | 作者手验通过；五项整组安全内容区居中 | 作者手验通过；@win 已登记 | 作者手验通过；基础操作；@android 已登记；窄屏横向滚动 |
-| FILTER-08 | 代码核对；诊断不重建菜单；周期按钮/卡片/来源浮窗稳定已机测，系统下拉展开保持待手验 | 程序化通过；两个探测周期及诊断注入后 UIMenu/按钮/卡片身份保持，既有菜单交互手验通过 | 代码核对；新增真实 ComboBox 周期保持断言已编译，待 Windows 实跑 | 程序化通过；三个下拉跨 6s 探测、重复布局、真实行选择、隐藏/旋转关闭及窄屏滚动，真机待复验 |
+| FILTER-08 | 代码核对；诊断不重建菜单；周期按钮/卡片/来源浮窗稳定已机测，系统下拉展开保持待手验 | 程序化通过；两个探测周期及诊断注入后 UIMenu/按钮/卡片身份保持，既有菜单交互手验通过 | 代码核对；真实 ComboBox 周期保持断言已编译，待 Windows 实跑 | 程序化通过；三个下拉跨 6s 探测、重复布局、真实行选择、隐藏/旋转关闭及窄屏滚动，真机待复验 |
 | FILTER-09 | 作者手验通过；设置字段跨启动恢复 | 作者手验通过；跨启动恢复 | 作者手验通过 | 作者手验通过；基础操作 |
 | FILTER-10 | 作者手验通过 | 作者手验通过 | 作者手验通过；无匹配照片 | 作者手验通过；基础操作 |
 
@@ -78,7 +62,7 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1；色彩程序化通过（JPEG 四源/HEIF/RAW/GPU 输出转换），真屏 ACM/HDR 与校色仪未验 | 作者手验通过（基础）；色彩程序化通过（本机 `pv-check color`，见 2026-11-06 段）——默认按设备与窗口广色域能力启用 P3，不再默认强制 sRGB；@android 行高已登记 |
+| IMAGE-01 | 作者手验通过；色彩/画质 | 程序化通过；P3/Adobe RGB 对拍未验 | 作者手验通过；圆角 6、描边 1；色彩程序化通过（JPEG 四源/HEIF/RAW/GPU 输出转换），真屏 ACM/HDR 与校色仪未验 | 作者手验通过（基础）；P3 表面协商与色彩回读程序化通过（广色域真机）；@android 行高已登记 |
 | IMAGE-02 | 作者手验通过 | 作者手验通过 | 作者手验通过；F 键对焦优先 | 作者手验通过；基础操作；接共享视口对焦点 |
 | IMAGE-03 | 程序化通过；faults: 代理保持 + FullError 提示 | 程序化通过；faults: 代理保持 + FullError 提示 | 代码核对；有代理只报 FullError | 程序化通过；Full 失败保留代理并提示 |
 | IMAGE-04 | 作者手验通过 | 作者手验通过；@ios 已登记 | 作者手验通过；预设未命中不回退端点 | 作者手验通过；基础操作；@android 已登记 |
@@ -175,15 +159,15 @@
 
 | ID | macOS | iOS·iPadOS | Windows | Android |
 |---|---|---|---|---|
-| OPEN-01 | 程序化通过；选择器/CLI/拖放统一入口 | 程序化通过；openURL/scene/drop 统一入口 | 程序化通过 11-02；CoreContractCheck Windows 实跑 CLI/拖放统一入口 + smoke 外部打开 | 程序化通过；合并为单个打开请求 |
-| OPEN-02 | 程序化通过；失败保留旧快照 | 程序化通过；失败保留旧快照 | 程序化通过 11-02；CoreContractCheck Windows 实跑失败保留旧快照 | 程序化通过；失败保留旧快照 |
-| OPEN-03 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过 11-02；CoreContractCheck Windows 实跑枚举失败回退单图与提示 | 程序化通过；枚举失败回退单图 |
-| OPEN-04 | 程序化通过；空筛选回退代表文件 | 程序化通过；空筛选回退代表文件 | 程序化通过 11-02；CoreContractCheck Windows 实跑空筛选回退代表文件 | 程序化通过；空筛选回退代表文件 |
-| OPEN-05 | 程序化通过；显式打开回适应态 | 程序化通过；显式打开回适应态 | 程序化通过 11-02；CoreContractCheck Windows 实跑显式打开回适应态 | 程序化通过；订阅 FitToViewRequested |
-| OPEN-06 | 程序化通过；CLI/Automation + 真实 Launch Services（Finder/Dock odoc）投递并定位 | 程序化通过；openURL/scene/drop，真机 scope 待验 | 程序化通过 11-02；`--pv-native-activation-check` 真实拉起第二进程：转发激活、主实例切到目标、二次进程退出码 0 且不开第二个窗口；文件关联注册表未配（非打包构建） | 程序化通过；ACTION_VIEW 同 UID content URI 打开与真实读取，跨 UID 临时授权待验 |
-| OPEN-07 | 程序化通过；拖放走统一通道 | 程序化通过；拖放走统一通道 | 程序化通过 11-02；CoreContractCheck Windows 实跑拖放投递统一通道 | 不适用；@android 已登记无拖入 |
-| OPEN-08 | 程序化通过；完整刷新、独立照片代际与 sidecar 增删 | 程序化通过；模拟器输入/布局、列表显示快照；真机未验 | 程序化通过 11-02；CoreContractCheck Windows 实跑全目录刷新/新增/删除/sidecar | 程序化通过；Provider 属性刷新、新鲜 revision、数字 URI 打开 |
-| OPEN-09 | 程序化通过；派生状态随新会话路由 | 程序化通过；派生状态随新会话路由 | 程序化通过 11-02；CoreContractCheck Windows 实跑派生状态随会话 | 程序化通过；派生状态随新会话路由 |
+| OPEN-01 | 程序化通过；选择器/CLI/拖放统一入口 | 程序化通过；openURL/scene/drop 统一入口 | 程序化通过；CoreContractCheck Windows 实跑 CLI/拖放统一入口 + smoke 外部打开 | 程序化通过；合并为单个打开请求 |
+| OPEN-02 | 程序化通过；失败保留旧快照 | 程序化通过；失败保留旧快照 | 程序化通过；CoreContractCheck Windows 实跑失败保留旧快照 | 程序化通过；失败保留旧快照 |
+| OPEN-03 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过；faults: 枚举失败回退单图 | 程序化通过；CoreContractCheck Windows 实跑枚举失败回退单图与提示 | 程序化通过；枚举失败回退单图 |
+| OPEN-04 | 程序化通过；空筛选回退代表文件 | 程序化通过；空筛选回退代表文件 | 程序化通过；CoreContractCheck Windows 实跑空筛选回退代表文件 | 程序化通过；空筛选回退代表文件 |
+| OPEN-05 | 程序化通过；显式打开回适应态 | 程序化通过；显式打开回适应态 | 程序化通过；CoreContractCheck Windows 实跑显式打开回适应态 | 程序化通过；订阅 FitToViewRequested |
+| OPEN-06 | 程序化通过；CLI/Automation + 真实 Launch Services（Finder/Dock odoc）投递并定位 | 程序化通过；openURL/scene/drop，真机 scope 待验 | 程序化通过；`--pv-native-activation-check` 真实拉起第二进程：转发激活、主实例切到目标、二次进程退出码 0 且不开第二个窗口；文件关联注册表未配（非打包构建） | 程序化通过；ACTION_VIEW 同 UID content URI 打开与真实读取，跨 UID 临时授权待验 |
+| OPEN-07 | 程序化通过；拖放走统一通道 | 程序化通过；拖放走统一通道 | 程序化通过；CoreContractCheck Windows 实跑拖放投递统一通道 | 不适用；@android 已登记无拖入 |
+| OPEN-08 | 程序化通过；完整刷新、独立照片代际与 sidecar 增删 | 程序化通过；模拟器输入/布局、列表显示快照；真机未验 | 程序化通过；CoreContractCheck Windows 实跑全目录刷新/新增/删除/sidecar | 程序化通过；Provider 属性刷新、新鲜 revision、数字 URI 打开 |
+| OPEN-09 | 程序化通过；派生状态随新会话路由 | 程序化通过；派生状态随新会话路由 | 程序化通过；CoreContractCheck Windows 实跑派生状态随会话 | 程序化通过；派生状态随新会话路由 |
 
 ## state
 
@@ -191,7 +175,7 @@
 |---|---|---|---|---|
 | STATE-01 | 程序化通过；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），切图无黑帧待手验 | 程序化通过（模拟器）；保留前一张/黑屏加载，低分辨率顶替未启用（共享能力已就绪），真机待手验 | 代码核对；切图与加载态 smoke 覆盖，保留前一张未单列断言，低分辨率顶替未启用 | 作者手验通过；基础操作；保留前一张/黑屏加载；RAW 初次解码以内嵌预览低分辨率顶替 |
 | STATE-02 | 程序化通过；faults: 打开失败提示条 | 程序化通过；faults: 打开失败提示条 | 程序化通过；打开失败走提示条，代码核对 | 程序化通过；打开失败走提示条 |
-| STATE-03 | 程序化通过；faults 覆盖评分失败提示 | 程序化通过；faults 6 | 程序化通过 11-02；smoke 评分失败提示条 | 程序化通过；faults 22/0 |
+| STATE-03 | 程序化通过；faults 覆盖评分失败提示 | 程序化通过；faults 评分失败提示 | 程序化通过；smoke 评分失败提示条 | 程序化通过；faults 评分失败提示 |
 | STATE-04 | 程序化通过 | 程序化通过 | 程序化通过 | 程序化通过；含数据库不可用注入（未提取、无伪造徽标、不崩溃） |
 
 ## settings
@@ -202,16 +186,16 @@
 | SETTINGS-02 | 作者手验通过 | 作者手验通过 | 程序化通过；同名合并首项且无小标题 | 作者手验通过 |
 | SETTINGS-03 | 作者手验通过 | 作者手验通过；应用固定深色，系统浅/深外观下取样一致 | 作者手验通过 | 程序化通过；设置/工具分类箭头 20dp 居中，行内边距 16/12 |
 | SETTINGS-04 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 程序化通过；初始半屏收起、按可见高度滚动且长表底部可达、标题上拖扩大到 85%、内容滚动/顶端下拉不收起、标题拖下关闭 |
-| SETTINGS-05 | 程序化通过；共享展示影响通道、周期诊断隔离及真实设置传播 | 程序化通过；共享通道、周期诊断隔离与模拟器关闭回写传播 | 代码核对；共享通道与类型检查通过，新增周期交互回归待 Windows 实跑 | 程序化通过；共享展示影响隔离、设置传播与预设输入居中 |
+| SETTINGS-05 | 程序化通过；共享展示影响通道、周期诊断隔离及真实设置传播 | 程序化通过；共享通道、周期诊断隔离与模拟器关闭回写传播 | 代码核对；共享通道与类型检查通过，周期交互回归待 Windows 实跑 | 程序化通过；共享展示影响隔离、设置传播与预设输入居中 |
 | SETTINGS-06 | 代码核对；按用户内存估算两档张数与简短警告；Apple 原生构建及运行待验 | 代码核对；按设备最大安全容量估算两档张数与新文案；Apple 原生构建及运行待验 | 程序化通过；真实照片下按用户内存估算且不按数量截断，简短超限警告；本机界面核对内存拉条驱动张数变化及柔和警告色 | 代码核对；按设备最大安全容量估算两档张数与新文案，Android 构建通过，设备运行待验 |
 | SETTINGS-07 | 代码核对；指示器无小标题，原生验收待 macOS | 代码核对；指示器无小标题，原生验收待 iOS | 程序化通过；指示器无小标题、预设整组居中 | 程序化通过；无冗余脚注、单值组居中、48dp 行高与原地编辑 |
 | SETTINGS-08 | 代码核对；边栏布局位置文案，原生验收待 macOS | 代码核对；边栏布局位置文案，原生验收待 iOS | 程序化通过；边栏布局位置文案 | 程序化通过；控制列表完整 17 项、纯触控 48dp 行高与命令图标 |
-| SETTINGS-09 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck 安全模式 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck | 程序化通过 11-02；CoreContractCheck 安全模式默认值 | 程序化通过；48dp 行高、勾选左缘 16dp、无操作脚注；安全模式契约不变 |
+| SETTINGS-09 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck 安全模式 | 程序化通过；SettingsDefaultsCheck + CoreContractCheck | 程序化通过；CoreContractCheck 安全模式默认值 | 程序化通过；48dp 行高、勾选左缘 16dp、无操作脚注；安全模式契约不变 |
 | SETTINGS-10 | 作者手验通过；直调已确认清库入口 | 不适用；长期不提供清库 | 作者手验通过；直调已确认清库入口 | 不适用；长期不提供清库 |
 | SETTINGS-11 | 作者手验通过；外设断开未验 | 作者手验通过；真实外接键盘未验 | 作者手验通过 | 程序化通过；录制/冲突/断连（能力注入） |
 | SETTINGS-12 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 作者手验通过；基础操作；@android 步进已登记 |
 | SETTINGS-13 | 作者手验通过；设置键盘操作/动态字体已验 | 作者手验通过；动态字体/显示缩放已验 | 作者手验通过；设置键盘操作/动态字体已验 | 程序化通过；相关检查覆盖字号 1.0/1.3、密度 420/525 与横屏；窄屏另有主屏筛选条旧断言失败 |
-| SETTINGS-14 | 程序化通过；schema 2、原子提交、备份最多三份、读取/保存失败不覆盖原文 | 程序化通过；schema 2、提交与损坏恢复、失败不发布 | 程序化通过 11-02；CoreContractCheck schema 2 原子提交与损坏恢复 | 程序化通过；SharedPreferences Commit、备份、失败不发布 |
+| SETTINGS-14 | 程序化通过；schema 2、原子提交、备份最多三份、读取/保存失败不覆盖原文 | 程序化通过；schema 2、提交与损坏恢复、失败不发布 | 程序化通过；CoreContractCheck schema 2 原子提交与损坏恢复 | 程序化通过；SharedPreferences Commit、备份、失败不发布 |
 | SETTINGS-15 | 作者手验通过；拖拽 | 作者手验通过；拖拽 | 作者手验通过；重排 | 程序化通过；完整表高、44dp 命中区与 16dp 字形左缘；单行 48dp 与标准 52dp 分流；拖拽/把手菜单保留 |
 | SETTINGS-16 | 代码核对；拉条单行与窄窗截图，原生验收待 macOS | 代码核对；拉条单行生产构建器断言，原生验收待 iOS | 程序化通过；960/720 DIP 四拉条右半区与跨分类左右对齐、固定数值列、缓存气泡隐藏；真实拖动与延时键盘步进/端点已验 | 不适用；步进器差异已登记 |
 
@@ -235,5 +219,5 @@
 | SCOPE-02 | 程序化通过；faults 注入 Warning 关闭增强并显示一次性提示 | 程序化通过；faults 注入 Warning 关闭增强并显示一次性提示 | 代码核对；内存自动关闭发提示条 | 程序化通过；内存告警关闭雾天增强并提示 |
 | SCOPE-03 | 程序化通过 | 程序化通过 | 程序化通过 | 程序化通过；现算不入库、显式提取入库、清库清缓存 |
 | SCOPE-04 | 程序化通过；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸 | 程序化通过（模拟器）；真 ARW 7008×4672，伪 RAW 回退后报容器实际尺寸；CoreML 回退 CPU、真机仍待验 | 程序化通过；RAW 走 WIC 系统 RAW 引擎全分辨率（真实 a7C II ARW 实测 7008×4672、代理 5120 长边），内嵌整幅 JPEG 只在等于裁切尺寸时兜底 | 程序化通过；RAW 7008×4672 全分辨率沿用既有验收；P3 按能力协商，色彩专项范围见 Android §8 |
-| SCOPE-05 | 程序化通过；全来源写入边界（CoreContractCheck + 真实副本） | 程序化通过；CoreContractCheck | 程序化通过 11-02；CoreContractCheck 全来源写入边界（Windows 实跑） | 程序化通过；storage 24/0 |
+| SCOPE-05 | 程序化通过；全来源写入边界（CoreContractCheck + 真实副本） | 程序化通过；CoreContractCheck | 程序化通过；CoreContractCheck 全来源写入边界（Windows 实跑） | 程序化通过；storage 套件全来源写入边界 |
 | SCOPE-06 | 作者手验通过 | 作者手验通过 | 作者手验通过 | 待核验；平台专属能力取舍 |

@@ -2,6 +2,8 @@ using CoreGraphics;
 using Foundation;
 using PhotoViewer.Apple;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
+using PhotoViewer.ViewModels.Main;
 using UIKit;
 
 namespace PhotoViewer.iOS.Native;
@@ -52,22 +54,80 @@ internal static class iOSContextMenus
         Action openTools, Action openSettings)
     {
         var handlers = new Dictionary<string, Action>(StringComparer.Ordinal);
-        var open = Item(handlers, "photo.open-folder", "打开文件夹…", AppleSymbolNames.Menu.OpenFolder, null, openFolder);
-        var toggles = UIMenu.Create(string.Empty, null!, new NSString("photo.panes"), UIMenuOptions.DisplayInline,
-        [
-            Item(handlers, "photo.film", "胶片栏", AppleSymbolNames.Menu.Filmstrip, filmVisible, toggleFilm),
-            Item(handlers, "photo.analysis", "分析栏", AppleSymbolNames.Menu.Analysis, analysisVisible, toggleAnalysis),
-            Item(handlers, "photo.control", "控制栏", AppleSymbolNames.Menu.Control, controlVisible, toggleControl),
-        ]);
-        var enhance = Item(handlers, "photo.enhance", "雾天增强", AppleSymbolNames.Menu.Enhance, enhanced, toggleEnhance, enabled: hasPhoto);
-        var settings = UIMenu.Create(string.Empty, null!, new NSString("photo.settings"), UIMenuOptions.DisplayInline,
-        [
-            Item(handlers, "photo.tools", "工具…", AppleSymbolNames.Menu.Tools, null, openTools),
-            Item(handlers, "photo.settings.open", "设置…", AppleSymbolNames.Menu.Settings, null, openSettings),
-        ]);
-        var menu = UIMenu.Create(string.Empty, null!, new NSString(PhotoIdentifier), default, [open, toggles, enhance, settings]);
+        var actions = new Dictionary<PhotoMenuItemId, Action>
+        {
+            [PhotoMenuItemId.OpenFolder] = openFolder,
+            [PhotoMenuItemId.Filmstrip] = toggleFilm,
+            [PhotoMenuItemId.Analysis] = toggleAnalysis,
+            [PhotoMenuItemId.ControlBar] = toggleControl,
+            [PhotoMenuItemId.Enhance] = toggleEnhance,
+            [PhotoMenuItemId.Tools] = openTools,
+            [PhotoMenuItemId.Settings] = openSettings,
+        };
+        var state = new PhotoMenuState(hasPhoto, filmVisible, analysisVisible, controlVisible, enhanced);
+        var elements = new List<UIMenuElement>();
+        var groupItems = new List<UIMenuElement>();
+        int currentGroup = -1;
+        void FlushGroup()
+        {
+            if (groupItems.Count == 1)
+            {
+                elements.Add(groupItems[0]);
+            }
+            else if (groupItems.Count > 1)
+            {
+                // 组内沿用共享目录顺序，用系统内联分组形成分隔段（MENU-01）。
+                string identifier = currentGroup switch
+                {
+                    PhotoMenuCatalog.PaneGroup => "photo.panes",
+                    PhotoMenuCatalog.WindowGroup => "photo.settings",
+                    _ => $"photo.group{currentGroup}",
+                };
+                elements.Add(UIMenu.Create(string.Empty, null!, new NSString(identifier), UIMenuOptions.DisplayInline, [.. groupItems]));
+            }
+            groupItems.Clear();
+        }
+
+        foreach (var item in PhotoMenuCatalog.Build(state, includeOpenFile: false))
+        {
+            if (item.Group != currentGroup)
+            {
+                FlushGroup();
+                currentGroup = item.Group;
+            }
+            groupItems.Add(Item(handlers, Identifier(item.Id), item.Text, MenuSymbol(item.Id),
+                item.IsCheck ? item.Checked : null, actions[item.Id], item.Enabled));
+        }
+        FlushGroup();
+        var menu = UIMenu.Create(string.Empty, null!, new NSString(PhotoIdentifier), default, [.. elements]);
         return new MenuResult(PhotoIdentifier, menu, handlers);
     }
+
+    /// <summary>验收与宿主共用的 action 标识；与菜单里的 <see cref="UIAction"/> 一一对应。</summary>
+    private static string Identifier(PhotoMenuItemId id) => id switch
+    {
+        PhotoMenuItemId.OpenFile => "photo.open-file",
+        PhotoMenuItemId.OpenFolder => "photo.open-folder",
+        PhotoMenuItemId.Filmstrip => "photo.film",
+        PhotoMenuItemId.Analysis => "photo.analysis",
+        PhotoMenuItemId.ControlBar => "photo.control",
+        PhotoMenuItemId.Enhance => "photo.enhance",
+        PhotoMenuItemId.Tools => "photo.tools",
+        _ => "photo.settings.open",
+    };
+
+    /// <summary>主图菜单项的 SF Symbols（MENU-06）。</summary>
+    private static string MenuSymbol(PhotoMenuItemId id) => id switch
+    {
+        PhotoMenuItemId.OpenFile => AppleSymbolNames.Menu.OpenFile,
+        PhotoMenuItemId.OpenFolder => AppleSymbolNames.Menu.OpenFolder,
+        PhotoMenuItemId.Filmstrip => AppleSymbolNames.Menu.Filmstrip,
+        PhotoMenuItemId.Analysis => AppleSymbolNames.Menu.Analysis,
+        PhotoMenuItemId.ControlBar => AppleSymbolNames.Menu.Control,
+        PhotoMenuItemId.Enhance => AppleSymbolNames.Menu.Enhance,
+        PhotoMenuItemId.Tools => AppleSymbolNames.Menu.Tools,
+        _ => AppleSymbolNames.Menu.Settings,
+    };
 
     /// <summary>
     /// 胶片栏卡片上下文菜单：标题为完整文件名与拍摄时间（[FILM-05] tooltip 的触屏等价物），
@@ -88,7 +148,7 @@ internal static class iOSContextMenus
         }
         var ratingMenu = UIMenu.Create("评分", null!, new NSString("card.rating-menu"), default, items);
         string title = file.PhotoDate is { } date
-            ? $"{file.Name} · {date:yyyy-MM-dd HH:mm:ss zzz}"
+            ? $"{file.Name} · {ShotTimeText.FormatShotTime(date)}"
             : file.Name;
         var menu = UIMenu.Create(title, null!, new NSString(CardIdentifier), default, [ratingMenu]);
         return new MenuResult(CardIdentifier, menu, handlers);

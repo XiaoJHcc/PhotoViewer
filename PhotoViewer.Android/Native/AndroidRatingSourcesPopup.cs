@@ -18,15 +18,6 @@ using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Android.Native;
 
-/// <summary>来源浮窗的入口类型：卡片入口默认向下，横排控制栏向上、竖排控制栏向左（RATING-04）。</summary>
-internal enum RatingSourcesAnchorKind
-{
-    /// <summary>胶片栏/相似面板卡片：0 号槽位矩形为锚点。</summary>
-    Card,
-    /// <summary>控制栏评分组：0 号按钮矩形为锚点。</summary>
-    Control,
-}
-
 /// <summary>
 /// RATING-04 星级来源浮窗：<see cref="PopupWindow"/> 承载一张自绘内容视图，纵向列出目标照片
 /// 所属组内的全部实际来源；点击任一条目的任意值都把同一值写入全部来源（RATING-03），
@@ -37,15 +28,12 @@ internal enum RatingSourcesAnchorKind
 internal sealed class AndroidRatingSourcesPopup : IDisposable
 {
     /// <summary>条目内槽位数（0 号清零叉 + 1–5 星）。</summary>
-    internal const int StarCount = 6;
-    /// <summary>信息行高：RATING-04 的纯排版布局值，不对应设计令牌。</summary>
-    private const double InfoHeight = 16;
+    internal const int StarCount = RatingSourcesLayout.SlotCount;
     /// <summary>浮窗描边宽度；内容宽之外的一层 1 点描边（与 Web 的 border-box 同口径）。</summary>
     private const double BorderWidth = 1;
 
     /// <summary>浮窗内容宽 = 六格星排 + 条目内边距 + 浮窗内边距（204dp）；描边另加。</summary>
-    internal static double ContentWidthDp => DesignTokens.ToolbarRatingButtonSize * StarCount
-        + DesignTokens.PopupRatingSourcesEntryPadding * 2 + DesignTokens.PopupPadding * 2;
+    internal static double ContentWidthDp => RatingSourcesLayout.ContentWidth;
     /// <summary>浮窗总宽（含 1 点描边）。</summary>
     internal static double WindowWidthDp => ContentWidthDp + BorderWidth * 2;
 
@@ -233,37 +221,23 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
     {
         var host = HostScreenRect();
         _hostRect = host;
-        int gap = (int)Math.Round(DesignTokens.PopupRatingSourcesArrowMargin * AndroidUiTheme.Density(_host.Context!));
-        string direction;
-        if (_kind == RatingSourcesAnchorKind.Control)
+        double density = AndroidUiTheme.Density(_host.Context!);
+        double gap = DesignTokens.PopupRatingSourcesArrowMargin * density;
+        var direction = RatingSourcesLayout.ResolveDirection(_kind, _controlHorizontal,
+            (_anchorRect.Top - host.Top) / density, (host.Bottom - _anchorRect.Bottom) / density,
+            height / density);
+        _direction = direction switch
         {
-            direction = _controlHorizontal ? "up" : "left";
-        }
-        else
-        {
-            int below = host.Bottom - _anchorRect.Bottom;
-            int above = _anchorRect.Top - host.Top;
-            direction = below < height + gap && above >= height + gap ? "up" : "down";
-        }
-        _direction = direction;
-        int x, y;
-        switch (direction)
-        {
-            case "up":
-                x = _anchorRect.CenterX() - width / 2;
-                y = _anchorRect.Top - gap - height;
-                break;
-            case "left":
-                x = _anchorRect.Left - gap - width;
-                y = _anchorRect.CenterY() - height / 2;
-                break;
-            default:
-                x = _anchorRect.CenterX() - width / 2;
-                y = _anchorRect.Bottom + gap;
-                break;
-        }
-        _x = Math.Clamp(x, host.Left, Math.Max(host.Left, host.Right - width));
-        _y = Math.Clamp(y, host.Top, Math.Max(host.Top, host.Bottom - height));
+            RatingSourcesDirection.Up => "up",
+            RatingSourcesDirection.Left => "left",
+            _ => "down",
+        };
+        var (x, y) = RatingSourcesLayout.Place(
+            new LayoutRect(_anchorRect.Left, _anchorRect.Top, _anchorRect.Width(), _anchorRect.Height()),
+            new LayoutRect(host.Left, host.Top, host.Width(), host.Height()),
+            width, height, direction, gap);
+        _x = (int)Math.Round(x);
+        _y = (int)Math.Round(y);
         _width = width;
         _height = height;
     }
@@ -425,7 +399,7 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
         {
             if (entryIndex < 0 || entryIndex >= _entries.Count || rating < 0 || rating >= StarCount) return new Rect();
             var layout = _entries[entryIndex];
-            float size = Px(DesignTokens.ToolbarRatingButtonSize);
+            float size = Px(RatingSourcesLayout.SlotSize);
             float left = layout.StarsLeft + rating * size;
             return new Rect((int)Math.Round(left), (int)Math.Round(layout.StarsTop),
                 (int)Math.Round(left + size), (int)Math.Round(layout.StarsTop + size));
@@ -439,56 +413,51 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
             return paint;
         }
 
-        /// <summary>按令牌与文本实测宽度排出各条目：名称放不下时改为双行，星排始终为满宽星槽。</summary>
+        /// <summary>按共享几何排出各条目：名称放不下时改为双行，星排始终为满宽星槽。</summary>
         private void BuildLayout()
         {
             _entries.Clear();
             float border = Px(BorderWidth);
             float padding = Px(DesignTokens.PopupPadding);
             float entryPadding = Px(DesignTokens.PopupRatingSourcesEntryPadding);
-            float labelGap = Px(DesignTokens.PopupRatingSourcesLabelGap);
-            float metaLineGap = Px(DesignTokens.PopupRatingSourcesMetaLineGap);
-            float infoHeight = Px(InfoHeight);
-            float starSize = Px(DesignTokens.ToolbarRatingButtonSize);
+            float infoHeight = Px(RatingSourcesLayout.InfoHeight);
             float spacing = Px(DesignTokens.PopupRatingSourcesEntrySpacing);
             float badgePadding = Px(DesignTokens.PopupRatingSourcesBadgePaddingX);
             float entryLeft = border + padding;
-            float entryWidth = Px(WindowWidthDp) - 2 * (border + padding);
-            float available = entryWidth - 2 * entryPadding;
             float y = border + padding;
+            var sharedEntries = new List<RatingSourcesEntryLayout>(_items.Count);
             for (int index = 0; index < _items.Count; index++)
             {
                 var item = _items[index];
-                float badgeWidth = _metaPaint.MeasureText(item.Kind) + badgePadding * 2;
-                float statusWidth = Math.Min(_metaPaint.MeasureText(item.Status),
-                    Math.Max(0, available - badgeWidth - labelGap));
-                float metaWidth = badgeWidth + labelGap + statusWidth;
-                bool twoLines = _namePaint.MeasureText(item.Name) + labelGap + metaWidth > available + .5f;
-                float nameLimit = twoLines ? available : Math.Max(0, available - labelGap - metaWidth);
+                var shared = RatingSourcesLayout.MeasureEntry(
+                    _namePaint.MeasureText(item.Name) / _density,
+                    (_metaPaint.MeasureText(item.Kind) + badgePadding * 2) / _density,
+                    _metaPaint.MeasureText(item.Status) / _density);
+                sharedEntries.Add(shared);
                 float infoTop = y + entryPadding;
-                float metaTop = twoLines ? infoTop + infoHeight + metaLineGap : infoTop;
-                float starsTop = metaTop + infoHeight + labelGap;
-                float height = starsTop + starSize + entryPadding - y;
-                float statusRight = entryLeft + entryWidth - entryPadding;
+                float metaTop = y + (float)(shared.MetaY * _density);
+                float starsTop = y + (float)(shared.StarsY * _density);
+                float height = (float)(shared.Height * _density);
+                float statusRight = entryLeft + (float)((shared.StatusX + shared.StatusWidth) * _density);
                 _entries.Add(new EntryLayout(
-                    twoLines,
+                    shared.TwoLines,
                     height,
                     entryLeft + entryPadding,
                     TextBaseline(_namePaint, infoTop, infoHeight),
-                    nameLimit,
-                    statusRight - statusWidth - labelGap - badgeWidth,
-                    badgeWidth,
+                    (float)(shared.NameWidth * _density),
+                    entryLeft + (float)(shared.BadgeX * _density),
+                    (float)(shared.BadgeWidth * _density),
                     metaTop,
                     TextBaseline(_metaPaint, metaTop, infoHeight),
                     statusRight,
                     TextBaseline(_metaPaint, metaTop, infoHeight),
-                    statusWidth,
+                    (float)(shared.StatusWidth * _density),
                     entryLeft + entryPadding,
                     starsTop));
                 y += height;
                 if (index < _items.Count - 1) y += spacing;
             }
-            ContentHeightPx = (int)Math.Ceiling(y + padding + border);
+            ContentHeightPx = (int)Math.Ceiling((RatingSourcesLayout.ContentHeight(sharedEntries) + BorderWidth * 2) * _density);
         }
 
         /// <summary>在给定行带内垂直居中的文本基线。</summary>
@@ -538,7 +507,7 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
             canvas.DrawText(MiddleEllipsize(item.Name, _namePaint, layout.NameLimit),
                 layout.NameLeft, layout.NameBaseline, _namePaint);
             var badge = new RectF(layout.BadgeLeft, layout.BadgeTop,
-                layout.BadgeLeft + layout.BadgeWidth, layout.BadgeTop + Px(InfoHeight));
+                layout.BadgeLeft + layout.BadgeWidth, layout.BadgeTop + Px(RatingSourcesLayout.InfoHeight));
             canvas.DrawRoundRect(badge, radius, radius, _badgePaint);
             _metaPaint.TextAlign = Paint.Align.Left;
             canvas.DrawText(item.Kind, badge.Left + Px(DesignTokens.PopupRatingSourcesBadgePaddingX),
@@ -548,7 +517,7 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
                 layout.StatusRight, layout.StatusBaseline, _metaPaint);
             _metaPaint.TextAlign = Paint.Align.Left;
 
-            float starSize = Px(DesignTokens.ToolbarRatingButtonSize);
+            float starSize = Px(RatingSourcesLayout.SlotSize);
             int? rated = item.State.State == XmpRatingState.Rated ? item.State.Value : null;
             for (int rating = 0; rating < StarCount; rating++)
             {
@@ -579,7 +548,7 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
         /// <summary>触点落在哪个槽位：返回 <c>entryIndex * 6 + rating</c>，未命中返回 -1。</summary>
         private int SlotAt(float x, float y)
         {
-            float starSize = Px(DesignTokens.ToolbarRatingButtonSize);
+            float starSize = Px(RatingSourcesLayout.SlotSize);
             for (int index = 0; index < _entries.Count; index++)
             {
                 var layout = _entries[index];
@@ -672,23 +641,7 @@ internal sealed class AndroidRatingSourcesPopup : IDisposable
         private static string MiddleEllipsize(string? text, Paint paint, float maxWidth)
         {
             if (string.IsNullOrEmpty(text) || maxWidth <= 0) return string.Empty;
-            if (paint.MeasureText(text) <= maxWidth) return text;
-            const string ellipsis = "…";
-            string Candidate(int kept)
-            {
-                int head = (kept + 1) / 2;
-                int tail = kept - head;
-                return head <= 0 ? ellipsis
-                    : string.Concat(text.AsSpan(0, head), ellipsis, text.AsSpan(text.Length - tail));
-            }
-            int low = 0, high = text.Length - 1;
-            while (low < high)
-            {
-                int middle = (low + high + 1) / 2;
-                if (paint.MeasureText(Candidate(middle)) <= maxWidth) low = middle;
-                else high = middle - 1;
-            }
-            return Candidate(low);
+            return RatingSourcesLayout.EllipsizeMiddle(text, maxWidth, candidate => paint.MeasureText(candidate));
         }
 
         /// <summary>dp → px。</summary>

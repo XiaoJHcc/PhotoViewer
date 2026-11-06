@@ -6,7 +6,7 @@
 
 **坐标空间**：共享几何一律以「点」为单位。Apple 头直接用逻辑点；Android 头**把 dp 当点**（`View` 的 px 只在边界换算，`PhotoViewport.ViewWidth/Height` 传 dp、`BackingScale = DisplayMetrics.Density`）。100% 口径仍是 1 源像素对 1 屏幕物理像素。
 
-**迁移门**：几何文件只做 namespace/using 级迁移。改动后必须跑 Mac 八套 `--pv-native-*` + iOS 七套 `--pv-native-*/-check` 零行为变化；Android 链入后还要过 Android 模拟器/真机门。
+**迁移门**：改动共享几何后必须复跑 Mac / iOS / Android 的原生验收套件；Windows 至少通过 `Tools/WindowsTypeCheck` 的类型检查与 Windows 原生冒烟。
 
 | 文件 | 职责 |
 |---|---|
@@ -14,9 +14,9 @@
 | MainScreenLayout.cs | 主屏分区几何：文件栏内容宽 116、筛选条五个控件位置（90×32 / 90×27 / 间距 5 / 外边距 10；行布局默认在安全内容区内整组横向居中；Android 保留 `FilterBarFrames(alignLeading: true)` 从内容前导边 + 10 起排的平台差异，iPad 使用默认居中；列布局 116 栏内纵排）、文件栏与控制栏主轴长度、两向分区矩形（文件栏/分隔线/主图/分析栏/控制栏，任一处长度为 0 即隐藏并把空间让给主图）。平台差异（macOS 隐藏标题栏让位、iOS/Android 真实安全区/无交通灯）留在各自 head。 |
 | FilmstripGeometry.cs | 胶片栏几何（96×144 卡片、10/5/10 内边距、横向首项居中、文档长度、可见项范围、FILM-02 居中偏移）与 `FilmstripAnimation`（350ms 三次缓出曲线、进度与 1 点阈值判定）。 |
 | ControlBarLayout.cs | 控制栏几何：分组类型（EXIF/评分/命令）的子控件尺寸与内边距、分组主轴/交叉轴长度、整组换行/换列、行内居中、文档尺寸与子控件偏移。宿主只落 frame。 |
+| RatingSourcesLayout.cs | RATING-04 来源浮窗几何：六格星排槽位、条目宽 / 内容宽 / 浮窗宽、条目单行或双行（文件名放不下时独占首行）与内容高、按入口类型（卡片 / 控制栏）与可用空间解析方向（卡片向下不足则向上、横排控制栏向上、竖排控制栏向左）、按入口矩形与宿主矩形放置并夹取、文件名中间省略。各端只提供文本测量与参照矩形；Mac/iOS 在调用处加原生文本控件内边距。 |
+| TitleBarLayout.cs | SHELL-02 桌面标题栏判定：行布局筛选挖空与窗口控制器区间相交（且非全屏、文件栏可见）时改为常驻回退；挖空与背景是否绘制。Mac / Windows 共用，标题最小宽与材质留在各端。 |
 | AnalysisPanelGeometry.cs | 分析栏瓦片几何：边长 `floor((可用主轴长度 − 20 − 8×(n−1)) / n)`、交叉轴 = 边长 + 20、槽位起点。Mac / iPad 共用；Android 分析栏按同一份数学。 |
 | SimilarityPanelGeometry.cs | 相似聚类面板几何：MinWidth 106 / MinHeight 154、外边距 4、列表内边距 8、列布局面板宽（卡片 96 + 内边距 + 描边）与行布局「从胶片栏右侧切出」的宽度规则（`RowWidth(hasItems, itemCount, paneWidth, dockWidth = 0)`：卡片数 × 96 + `sim.list.padding` + 2 × 描边 + 停靠区宽，封顶可用宽度一半）。 |
 | ExifTableGeometry.cs | EXIF 详情页 7 列行几何：Tag ID 60 点、其余 2:2:3、列间 1 点分隔线、单元格内边距 10/8、值列最多 3 行；给出卡片宽度下的列宽与可用文本宽。 |
 | InputCommandMap.cs | 平台中立的「手势 → 用户命令」查询（`CommandForGesture`）、命令是否登记（`IsCommandKnown`：唯一来源 `SettingsCatalog.Commands`，各平台输入派发的闸门；SF Symbols 等图标表只负责 UI，不得充当命令白名单）与命令元数据 `IsRepeatable`（INPUT-05：仅上一张/下一张/预设缩放可按住重复）。Apple 的 `AppleInputMapping` 与 Android 的 `AndroidInputMapping` 各自把原生事件解包成共享 `AppGesture`，再共用这一张用户主/次绑定表。 |
-
-> 2026-10-18 A1a：以上 7 个几何文件从 `PhotoViewer.Apple/` 迁入本目录，命名空间改 `PhotoViewer.Shared`；除 namespace 外内容未改。执行记录见 [Android 交接](../Plans/native-rebuild-android-handoff.md) 与 [执行清单 §7](../Plans/native-rebuild-phase-android.md)。

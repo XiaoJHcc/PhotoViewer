@@ -1,6 +1,6 @@
 # Windows 原生设置窗口方案（W-M5）
 
-> 2026-10-17 设计定稿并实施；同日完成 Win11 视觉重构。隶属 [native-rebuild-windows-p2.md](native-rebuild-windows-p2.md) §6 **W-M5**；交互契约 [SETTINGS-01/02](../Design/ui-contract.md)；共享工作副本 [NativeSettingsSession.cs](../PhotoViewer/Core/Settings/NativeSettingsSession.cs)。
+> 2026-10-17 设计定稿并实施；同日完成 Win11 视觉重构。隶属 [native-rebuild-windows-p2.md](native-rebuild-windows-p2.md) §6 **W-M5**；交互契约 [SETTINGS-01/02](../Design/README.md)；共享工作副本 [NativeSettingsSession.cs](../PhotoViewer/Core/Settings/NativeSettingsSession.cs)。
 >
 > 作者口径：**不要混搭新旧控件，保证一个软件内设计风格完全统一；验收只在 Win11，设计语言以最新 Win11 规范为准，旧系统自动回退、不设验收限制。** 本方案据此采用 Win11 设置页结构（Mica + TitleBar + NavigationView + SettingsCard），页面内容仍用 C# 构建。
 >
@@ -252,7 +252,7 @@ Window 960×720（min 720×560，Mica，标准边框 + 系统 caption）
 - `PhotoViewer.Windows/AGENTS.md`：文件清单、WinUI 硬约束、设置窗口验收。
 - [Design/architecture.md](../Design/architecture.md) §5.8：设置窗口原生链路一句话 + 入口 + 根因结论。
 - [native-rebuild-windows-p2.md](native-rebuild-windows-p2.md)：§0.2 控件事实、§6 W-M5、§13.2 #9、§17。
-- [Design/ui-contract.md](../Design/ui-contract.md)：SETTINGS-01/02/03 Windows 列（NavigationView / Mica / SettingsCard / 整行拖）。
+- [Design/ui-contract.md](../Design/README.md)：SETTINGS-01/02/03 Windows 列（NavigationView / Mica / SettingsCard / 整行拖）。
 - `PhotoViewer/ViewModels/Settings/AGENTS.md`：去掉「无法加载控件」的旧结论。
 - `Plans/native-rebuild-handoff.md`：下一步与状态。
 

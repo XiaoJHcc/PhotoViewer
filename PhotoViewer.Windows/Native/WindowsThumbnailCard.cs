@@ -350,7 +350,7 @@ internal sealed class WindowsThumbnailCard : Grid
         ToolTipService.SetToolTip(_name, file.DisplayName);
         var secondLine = _secondLineText ?? file.PhotoDate?.ToString("MM-dd HH:mm") ?? string.Empty;
         _secondLine.Text = secondLine;
-        ToolTipService.SetToolTip(_secondLine, _secondLineText == null ? file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss") : null);
+        ToolTipService.SetToolTip(_secondLine, _secondLineText == null ? ShotTimeText.FormatShotTime(file.PhotoDate) : null);
         bool hasProgress = _secondLineProgress.HasValue;
         _secondLineTrack.Visibility = hasProgress ? Visibility.Visible : Visibility.Collapsed;
         _secondLineFill.Visibility = hasProgress ? Visibility.Visible : Visibility.Collapsed;

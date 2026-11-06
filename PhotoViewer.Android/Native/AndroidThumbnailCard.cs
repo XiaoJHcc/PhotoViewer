@@ -11,6 +11,7 @@ using AndroidX.Core.View.Accessibility;
 using AndroidX.CustomView.Widget;
 using PhotoViewer.Core.Design;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Platform;
 using PhotoViewer.ViewModels.Main;
 
 namespace PhotoViewer.Android.Native;
@@ -395,7 +396,7 @@ internal sealed class AndroidThumbnailCard : View
         var title = menuItems.Add(0, 0, 0, _file.DisplayName)!;
         title.SetEnabled(false);
         var time = menuItems.Add(0, 1, 1,
-            _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "")!;
+            ShotTimeText.FormatShotTime(_file.PhotoDate) ?? "")!;
         time.SetEnabled(false);
         for (int rating = 0; rating <= 5; rating++)
         {

@@ -13,6 +13,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\PhotoViewer.Shared\**\*.cs" />
+    <Using Include="PhotoViewer.Shared" />
     <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
   </ItemGroup>
 </Project>

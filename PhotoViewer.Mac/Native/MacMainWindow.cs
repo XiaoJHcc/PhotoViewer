@@ -181,7 +181,7 @@ public sealed class MacMainWindow : IDisposable
         _titleLabel = TitleLabel();
         _titleLabel.StringValue = Window.Title;
         _root.AddSubview(_titleLabel);
-        _hint = Label("点击打开文件 或 拖拽图片到此处", 16);
+        _hint = Label(PhotoHintText.EmptyDesktopTitle, 16);
         _hint.Alignment = NSTextAlignment.Center;
         _hint.TextColor = NSColor.SecondaryLabel;
         _hintDetail.TextColor = NSColor.SecondaryLabel;
@@ -544,8 +544,9 @@ public sealed class MacMainWindow : IDisposable
             var zoom = TrafficLightInRoot(NSWindowButton.ZoomButton);
             double windowControlsRight = zoom.IsEmpty ? 0 : (double)zoom.X + (double)zoom.Width;
             // SHELL-02：交通灯与筛选挖空相交时，标题栏改为文件栏上方的常驻通栏。
-            _titlebarPersistent = row && _main.IsThumbnailViewVisible && !IsFullScreen
-                && windowControlsRight > (double)filterFrames.Sort.X;
+            _titlebarPersistent = TitleBarLayout.IsPersistent(row, _main.IsThumbnailViewVisible, IsFullScreen,
+                (double)filterFrames.Sort.X, (double)filterFrames.Toggle.X + (double)filterFrames.Toggle.Width,
+                0, windowControlsRight);
             double titlebarInset = _titlebarPersistent ? titlebarHeight : 0;
             double contentHeight = Math.Max(1, height - titlebarInset);
             // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
@@ -635,15 +636,16 @@ public sealed class MacMainWindow : IDisposable
             }
             // SHELL-02：悬停覆盖层在行布局挖空筛选控件；窄宽度常驻栏、列布局和文件栏隐藏都是通栏带。
             bool fileBarRow = row && fileSize > 0;
-            double dragStart = fileBarRow && !_titlebarPersistent ? (double)_sort.Frame.X : width;
-            double dragEnd = fileBarRow && !_titlebarPersistent
+            bool titlebarCutout = TitleBarLayout.HasCutout(row, fileBarRow, _titlebarPersistent);
+            double dragStart = titlebarCutout ? (double)_sort.Frame.X : width;
+            double dragEnd = titlebarCutout
                 ? (double)_similarityToggle.Frame.X + (double)_similarityToggle.Frame.Width
                 : width;
             _dragLeft.Frame = new CGRect(0, 0, _titlebarPersistent ? width : dragStart, titlebarHeight);
             _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), titlebarHeight);
-            _titlebarBackdrop = _titlebarPersistent || !fileBarRow;
+            _titlebarBackdrop = TitleBarLayout.HasBackdrop(row, fileBarRow, _titlebarPersistent);
             _titlebarMaterial.Frame = new CGRect(0, 0, width, titlebarHeight);
-            ArrangeTitlebarTitle(fileBarRow && !_titlebarPersistent ? dragStart : width, titlebarHeight);
+            ArrangeTitlebarTitle(titlebarCutout ? dragStart : width, titlebarHeight);
             ApplyTitlebarVisibility();
             UpdateViewport();
             ReportVisible();
@@ -1063,12 +1065,12 @@ public sealed class MacMainWindow : IDisposable
         UpdateFocusPoint();
         Photo.SetImage(Session.Image, Session.Generation);
         // STATE-01：有照片但图未就绪时只在共享 300ms 延迟态可见后提示；STATE-02 的解码失败仍优先。
-        _hint.StringValue = Session.Error.Length > 0 ? "无法打开该图片"
-            : _main.CurrentFile == null ? "点击打开文件 或 拖拽图片到此处"
-            : Session.IsLoadingVisible ? "正在载入…" : "";
-        _hintDetail.StringValue = Session.Error;
-        _hint.Hidden = _hint.StringValue.Length == 0;
-        _hintDetail.Hidden = Session.Error.Length == 0;
+        var (hintTitle, hintDetail) = PhotoHintText.Resolve(
+            _main.CurrentFile != null, Session.Error, Session.IsLoadingVisible, touch: false);
+        _hint.StringValue = hintTitle;
+        _hintDetail.StringValue = hintDetail;
+        _hint.Hidden = hintTitle.Length == 0;
+        _hintDetail.Hidden = hintDetail.Length == 0;
         // IMAGE-07：只有共享会话越过 500ms 门槛才显示"计算中…"。
         _busyPill.Hidden = !Session.IsEnhancingVisible;
         // IMAGE-03：屏上已有代理时 Full 升级失败只报非阻塞提示，不覆盖主图错误标题。
@@ -1277,11 +1279,18 @@ public sealed class MacMainWindow : IDisposable
         file.AddItem(Item("打开文件夹…", AppleSymbolNames.Menu.OpenFolder, () => _ = OpenPickerAsync(true)));
         menu.AddItem(new NSMenuItem("文件") { Submenu = file });
         var view = CreateMenu("显示");
-        AddCheck(view, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView, symbol: AppleSymbolNames.Menu.Filmstrip);
-        AddCheck(view, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView, symbol: AppleSymbolNames.Menu.Analysis);
-        AddCheck(view, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView, symbol: AppleSymbolNames.Menu.Control);
-        view.AddItem(NSMenuItem.SeparatorItem);
-        AddCheck(view, "雾天增强", () => Session.IsEnhanced, () => Execute("ToggleEnhance"), () => _main.CurrentFile != null, AppleSymbolNames.Menu.Enhance);
+        int displayGroup = -1;
+        foreach (var entry in PhotoMenuCatalog.Build(MenuState, includeOpenFile: false))
+        {
+            if (entry.Group is not (PhotoMenuCatalog.PaneGroup or PhotoMenuCatalog.PreviewGroup)) continue;
+            if (entry.Group != displayGroup)
+            {
+                if (displayGroup >= 0) view.AddItem(NSMenuItem.SeparatorItem);
+                displayGroup = entry.Group;
+            }
+            AddCheck(view, entry.Text, () => IsMenuChecked(entry.Id), () => ExecuteMenu(entry.Id),
+                () => IsMenuEnabled(entry.Id), MenuSymbol(entry.Id));
+        }
         menu.AddItem(new NSMenuItem("显示") { Submenu = view });
         var tools = CreateMenu("工具");
         var exif = Item("EXIF 详情…", AppleSymbolNames.Menu.Tools, () => ShowTools(0));
@@ -1357,19 +1366,70 @@ public sealed class MacMainWindow : IDisposable
     private NSMenu ContextMenu()
     {
         var menu = CreateMenu();
-        menu.AddItem(Item("打开文件…", AppleSymbolNames.Menu.OpenFile, () => _ = OpenPickerAsync(false)));
-        menu.AddItem(Item("打开文件夹…", AppleSymbolNames.Menu.OpenFolder, () => _ = OpenPickerAsync(true)));
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        AddCheck(menu, "胶片栏", () => _main.IsThumbnailViewVisible, _main.ToggleThumbnailView, symbol: AppleSymbolNames.Menu.Filmstrip);
-        AddCheck(menu, "分析栏", () => _main.IsAnalysisViewVisible, _main.ToggleAnalysisView, symbol: AppleSymbolNames.Menu.Analysis);
-        AddCheck(menu, "控制栏", () => _main.IsControlViewVisible, _main.ToggleControlView, symbol: AppleSymbolNames.Menu.Control);
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        AddCheck(menu, "雾天增强", () => Session.IsEnhanced, () => Execute("ToggleEnhance"), () => _main.CurrentFile != null, AppleSymbolNames.Menu.Enhance);
-        menu.AddItem(NSMenuItem.SeparatorItem);
-        menu.AddItem(Item("工具…", AppleSymbolNames.Menu.Tools, ShowTools));
-        menu.AddItem(Item("设置…", AppleSymbolNames.Menu.Settings, ShowSettings));
+        int group = -1;
+        foreach (var entry in PhotoMenuCatalog.Build(MenuState, includeOpenFile: true))
+        {
+            if (entry.Group != group)
+            {
+                if (group >= 0) menu.AddItem(NSMenuItem.SeparatorItem);
+                group = entry.Group;
+            }
+            if (entry.IsCheck)
+                AddCheck(menu, entry.Text, () => IsMenuChecked(entry.Id), () => ExecuteMenu(entry.Id),
+                    () => IsMenuEnabled(entry.Id), MenuSymbol(entry.Id));
+            else
+                menu.AddItem(Item(entry.Text, MenuSymbol(entry.Id), () => ExecuteMenu(entry.Id)));
+        }
         UpdateMenuChecks();
         return menu;
+    }
+
+    /// <summary>菜单构建时读取的共享状态快照（MENU-02：每次弹出按当前状态重建勾选）。</summary>
+    private PhotoMenuState MenuState => new(
+        _main.CurrentFile != null, _main.IsThumbnailViewVisible, _main.IsAnalysisViewVisible,
+        _main.IsControlViewVisible, Session.IsEnhanced);
+
+    /// <summary>主图菜单项的 SF Symbols（MENU-06：命令项与勾选项都带前置图标）。</summary>
+    private static string? MenuSymbol(PhotoMenuItemId id) => id switch
+    {
+        PhotoMenuItemId.OpenFile => AppleSymbolNames.Menu.OpenFile,
+        PhotoMenuItemId.OpenFolder => AppleSymbolNames.Menu.OpenFolder,
+        PhotoMenuItemId.Filmstrip => AppleSymbolNames.Menu.Filmstrip,
+        PhotoMenuItemId.Analysis => AppleSymbolNames.Menu.Analysis,
+        PhotoMenuItemId.ControlBar => AppleSymbolNames.Menu.Control,
+        PhotoMenuItemId.Enhance => AppleSymbolNames.Menu.Enhance,
+        PhotoMenuItemId.Tools => AppleSymbolNames.Menu.Tools,
+        _ => AppleSymbolNames.Menu.Settings,
+    };
+
+    /// <summary>菜单项勾选态取共享状态，与按钮和布局共用同一判据。</summary>
+    private bool IsMenuChecked(PhotoMenuItemId id) => id switch
+    {
+        PhotoMenuItemId.Filmstrip => _main.IsThumbnailViewVisible,
+        PhotoMenuItemId.Analysis => _main.IsAnalysisViewVisible,
+        PhotoMenuItemId.ControlBar => _main.IsControlViewVisible,
+        PhotoMenuItemId.Enhance => Session.IsEnhanced,
+        _ => false,
+    };
+
+    /// <summary>MENU-07：无当前照片时只置灰雾天增强，其余项照常可用。</summary>
+    private bool IsMenuEnabled(PhotoMenuItemId id)
+        => id != PhotoMenuItemId.Enhance || _main.CurrentFile != null;
+
+    /// <summary>菜单项执行入口与按钮、快捷键共用同一命令/方法。</summary>
+    private void ExecuteMenu(PhotoMenuItemId id)
+    {
+        switch (id)
+        {
+            case PhotoMenuItemId.OpenFile: _ = OpenPickerAsync(false); break;
+            case PhotoMenuItemId.OpenFolder: _ = OpenPickerAsync(true); break;
+            case PhotoMenuItemId.Filmstrip: _main.ToggleThumbnailView(); break;
+            case PhotoMenuItemId.Analysis: _main.ToggleAnalysisView(); break;
+            case PhotoMenuItemId.ControlBar: _main.ToggleControlView(); break;
+            case PhotoMenuItemId.Enhance: Execute("ToggleEnhance"); break;
+            case PhotoMenuItemId.Tools: ShowTools(); break;
+            case PhotoMenuItemId.Settings: ShowSettings(); break;
+        }
     }
 
     /// <summary>OPEN-05：显式打开时主图回到适应态。</summary>

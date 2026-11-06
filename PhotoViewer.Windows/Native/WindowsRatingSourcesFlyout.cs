@@ -17,11 +17,11 @@ namespace PhotoViewer.Windows.Native;
 /// <summary>RATING-04 来源浮窗：WinUI 原生轻量弹层，条目与整组写入状态来自共享 VM。</summary>
 internal sealed class WindowsRatingSourcesFlyout : IDisposable
 {
-    private const int StarCount = 6;
-    private const double InfoHeight = 16;
-    private static readonly double StarSize = DesignTokens.ToolbarRatingButtonSize;
-    private static readonly double EntryWidth = StarSize * StarCount + DesignTokens.PopupRatingSourcesEntryPadding * 2;
-    internal static double ContentWidth => EntryWidth + DesignTokens.PopupPadding * 2;
+    private const int StarCount = RatingSourcesLayout.SlotCount;
+    private const double InfoHeight = RatingSourcesLayout.InfoHeight;
+    private static readonly double StarSize = RatingSourcesLayout.SlotSize;
+    private static readonly double EntryWidth = RatingSourcesLayout.EntryWidth;
+    internal static double ContentWidth => RatingSourcesLayout.ContentWidth;
 
     private readonly MainViewModel _main;
     private readonly FrameworkElement _root;
@@ -110,18 +110,19 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         _target = target;
         _displayedWhenOpened = _main.CurrentFile;
         _anchorRect = anchorRect;
-        RefreshEntries();
-        _body.Measure(new Size(EntryWidth, double.PositiveInfinity));
+        var layouts = RefreshEntries();
         double border = ((Thickness)Application.Current.Resources["FlyoutBorderThemeThickness"]).Left;
         double width = ContentWidth + border * 2;
-        double height = _body.DesiredSize.Height + DesignTokens.PopupPadding * 2 + border * 2;
-        double gap = DesignTokens.PopupRatingSourcesArrowMargin;
-        double required = height + gap;
-        var placement = controlBarAnchor
-            ? controlHorizontal ? FlyoutPlacementMode.Top : FlyoutPlacementMode.Left
-            : _root.ActualHeight - anchorRect.Bottom < required && anchorRect.Top >= required
-                ? FlyoutPlacementMode.Top
-                : FlyoutPlacementMode.Bottom;
+        double height = RatingSourcesLayout.ContentHeight(layouts) + border * 2;
+        var direction = RatingSourcesLayout.ResolveDirection(
+            controlBarAnchor ? RatingSourcesAnchorKind.Control : RatingSourcesAnchorKind.Card,
+            controlHorizontal, anchorRect.Top, _root.ActualHeight - anchorRect.Bottom, height);
+        var placement = direction switch
+        {
+            RatingSourcesDirection.Up => FlyoutPlacementMode.Top,
+            RatingSourcesDirection.Left => FlyoutPlacementMode.Left,
+            _ => FlyoutPlacementMode.Bottom,
+        };
 
         // 窗口化弹层按显示器工作区自行夹取，越界时会把位置点当成底边/右边、整体平移一个自身尺寸。
         // RATING-04 要求主体留在窗口安全区内，故按令牌自行定位，并先夹进"窗口安全区 ∩ 工作区可见交集"。
@@ -133,16 +134,10 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
             if (visible.Width >= width && visible.Height >= height) bounds = visible;
         }
 
-        double centerX = (anchorRect.Left + anchorRect.Right) / 2;
-        double centerY = (anchorRect.Top + anchorRect.Bottom) / 2;
-        var (x, y) = placement switch
-        {
-            FlyoutPlacementMode.Top => (centerX - width / 2, anchorRect.Top - gap - height),
-            FlyoutPlacementMode.Left => (anchorRect.Left - gap - width, centerY - height / 2),
-            _ => (centerX - width / 2, anchorRect.Bottom + gap),
-        };
-        x = Math.Max(bounds.Left, Math.Min(x, bounds.Right - width));
-        y = Math.Max(bounds.Top, Math.Min(y, bounds.Bottom - height));
+        var (x, y) = RatingSourcesLayout.Place(
+            new LayoutRect(anchorRect.X, anchorRect.Y, anchorRect.Width, anchorRect.Height),
+            new LayoutRect(bounds.X, bounds.Y, bounds.Width, bounds.Height),
+            width, height, direction);
         _placementBounds = bounds;
 
         _presenting = true;
@@ -281,10 +276,11 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         }
     }
 
-    private void RefreshEntries()
+    private List<RatingSourcesEntryLayout> RefreshEntries()
     {
         _body.Children.Clear();
         _entries.Clear();
+        var layouts = new List<RatingSourcesEntryLayout>();
         var items = _main.RatingSources.Items;
         for (int index = 0; index < items.Count; index++)
         {
@@ -304,13 +300,16 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
 
             var entry = CreateEntry(items[index]);
             _entries.Add(entry);
+            layouts.Add(entry.Layout);
             _body.Children.Add(entry.Container);
         }
+        return layouts;
     }
 
     private EntryView CreateEntry(RatingSourceItem item)
     {
-        var layout = MeasureEntryLayout(item);
+        var shared = MeasureSharedEntry(item);
+        var layout = ToEntryLayout(shared);
         var name = new TextBlock
         {
             Text = layout.TwoLines ? EllipsizeMiddle(item.Name, layout.AvailableNameWidth) : item.Name,
@@ -419,7 +418,7 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
             Children = { name, badge, status, stars },
         };
         AutomationProperties.SetName(container, item.Name);
-        return new EntryView(container, name, badge, status, buttons, layout.TwoLines);
+        return new EntryView(container, name, badge, status, buttons, layout.TwoLines, shared);
     }
 
     private async void SetRating(int rating)
@@ -434,57 +433,30 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         }
     }
 
-    internal static EntryLayout MeasureEntryLayout(RatingSourceItem item)
-    {
-        double available = EntryWidth - DesignTokens.PopupRatingSourcesEntryPadding * 2;
-        double badgeWidth = Math.Ceiling(MeasureText(item.Kind, DesignTokens.PopupRatingSourcesMetaFontSize))
-            + DesignTokens.PopupRatingSourcesBadgePaddingX * 2;
-        double statusWidth = Math.Ceiling(MeasureText(item.Status, DesignTokens.PopupRatingSourcesMetaFontSize));
-        double metaWidth = badgeWidth + DesignTokens.PopupRatingSourcesLabelGap + statusWidth;
-        if (metaWidth > available)
-        {
-            statusWidth = Math.Max(0, available - badgeWidth - DesignTokens.PopupRatingSourcesLabelGap);
-            metaWidth = badgeWidth + DesignTokens.PopupRatingSourcesLabelGap + statusWidth;
-        }
-        bool twoLines = MeasureText(item.Name, DesignTokens.PopupRatingSourcesNameFontSize)
-            + DesignTokens.PopupRatingSourcesLabelGap + metaWidth > available + .5;
-        double nameWidth = twoLines
-            ? available
-            : Math.Max(0, available - DesignTokens.PopupRatingSourcesLabelGap - metaWidth);
-        double metaY = DesignTokens.PopupRatingSourcesEntryPadding
-            + (twoLines ? InfoHeight + DesignTokens.PopupRatingSourcesMetaLineGap : 0);
-        double starsY = metaY + InfoHeight + DesignTokens.PopupRatingSourcesLabelGap;
-        double height = starsY + StarSize + DesignTokens.PopupRatingSourcesEntryPadding;
-        return new EntryLayout(twoLines, height, nameWidth,
-            DesignTokens.PopupRatingSourcesEntryPadding,
-            metaY,
-            EntryWidth - DesignTokens.PopupRatingSourcesEntryPadding - statusWidth,
-            statusWidth,
-            EntryWidth - DesignTokens.PopupRatingSourcesEntryPadding - statusWidth
-                - DesignTokens.PopupRatingSourcesLabelGap - badgeWidth,
-            badgeWidth,
-            starsY);
-    }
+    internal static EntryLayout MeasureEntryLayout(RatingSourceItem item) => ToEntryLayout(MeasureSharedEntry(item));
+
+    /// <summary>条目三块信息的实测宽度交给共享几何；Windows 文本块无原生控件内边距。</summary>
+    private static RatingSourcesEntryLayout MeasureSharedEntry(RatingSourceItem item)
+        => RatingSourcesLayout.MeasureEntry(
+            MeasureText(item.Name, DesignTokens.PopupRatingSourcesNameFontSize),
+            Math.Ceiling(MeasureText(item.Kind, DesignTokens.PopupRatingSourcesMetaFontSize))
+                + DesignTokens.PopupRatingSourcesBadgePaddingX * 2,
+            Math.Ceiling(MeasureText(item.Status, DesignTokens.PopupRatingSourcesMetaFontSize)));
+
+    /// <summary>共享结果落成 WinUI 落位用的 frame 值。</summary>
+    private static EntryLayout ToEntryLayout(RatingSourcesEntryLayout shared) => new(
+        shared.TwoLines, shared.Height, shared.NameWidth,
+        DesignTokens.PopupRatingSourcesEntryPadding,
+        shared.MetaY,
+        shared.StatusX,
+        shared.StatusWidth,
+        shared.BadgeX,
+        shared.BadgeWidth,
+        shared.StarsY);
 
     private static string EllipsizeMiddle(string text, double maxWidth)
-    {
-        if (MeasureText(text, DesignTokens.PopupRatingSourcesNameFontSize) <= maxWidth) return text;
-        string Candidate(int kept)
-        {
-            int head = (kept + 1) / 2;
-            int tail = kept - head;
-            return text[..head] + "…" + text[(text.Length - tail)..];
-        }
-        int low = 0;
-        int high = Math.Max(0, text.Length - 1);
-        while (low < high)
-        {
-            int middle = (low + high + 1) / 2;
-            if (MeasureText(Candidate(middle), DesignTokens.PopupRatingSourcesNameFontSize) <= maxWidth) low = middle;
-            else high = middle - 1;
-        }
-        return Candidate(low);
-    }
+        => RatingSourcesLayout.EllipsizeMiddle(text, maxWidth,
+            candidate => MeasureText(candidate, DesignTokens.PopupRatingSourcesNameFontSize));
 
     private static double MeasureText(string text, double fontSize)
     {
@@ -521,5 +493,6 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         Border Badge,
         TextBlock Status,
         IReadOnlyList<Button> Stars,
-        bool TwoLines);
+        bool TwoLines,
+        RatingSourcesEntryLayout Layout);
 }

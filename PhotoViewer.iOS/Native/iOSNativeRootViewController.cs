@@ -1428,17 +1428,18 @@ internal sealed class iOSNativeRootViewController : UIViewController
 
     /// <summary>空态/加载提示文案（STATE-01：加载态由共享会话的 300ms 延迟态驱动）。</summary>
     /// <returns>提示文本；有照片且不在加载时为空串。</returns>
-    private string HintText() => _session.Error.Length > 0 ? "无法打开该图片"
-        : _session.IsLoadingVisible ? "载入中…"
-        : _main.CurrentFile == null ? "点击打开文件夹" : "";
+    private string HintText() => PhotoHintText.Resolve(
+        _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: true).Title;
 
     /// <summary>同步空态/加载提示与解码失败详情（Full 升级失败走提示条，不占用此处）。</summary>
     private void UpdateHint()
     {
-        _hintLabel.Text = HintText();
-        _hintDetail.Text = _session.Error;
-        _hintLabel.Hidden = _hintLabel.Text.Length == 0;
-        _hintDetail.Hidden = _session.Error.Length == 0;
+        var (title, detail) = PhotoHintText.Resolve(
+            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: true);
+        _hintLabel.Text = title;
+        _hintDetail.Text = detail;
+        _hintLabel.Hidden = title.Length == 0;
+        _hintDetail.Hidden = detail.Length == 0;
     }
 
     /// <summary>恢复栏位显隐偏好（验收会话不读写用户偏好）。</summary>

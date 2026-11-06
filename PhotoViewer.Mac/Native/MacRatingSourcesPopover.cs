@@ -18,18 +18,15 @@ namespace PhotoViewer.Mac.Native;
 internal sealed class MacRatingSourcesPopover : IDisposable
 {
     /// <summary>0 号清零叉 + 1–5 星，共六个槽位。</summary>
-    private const int StarCount = 6;
-    /// <summary>三块信息共用的行带高，用于同一行内垂直居中；纯布局值，不对应设计令牌。</summary>
-    private const double LabelHeight = 16;
+    private const int StarCount = RatingSourcesLayout.SlotCount;
+    /// <summary>三块信息共用的行带高，用于同一行内垂直居中。</summary>
+    private const double LabelHeight = RatingSourcesLayout.InfoHeight;
 
-    /// <summary>控制栏横排评分组的槽位、间距与字形口径，浮窗星排直接复用。</summary>
-    private static readonly ControlBarLayout.Metrics RatingMetrics =
-        ControlBarLayout.GetMetrics(ControlBarGroupKind.Rating);
-    private static readonly double StarSize = RatingMetrics.Width;
-    private static readonly double StarSpacing = RatingMetrics.Spacing;
-    private static readonly double StarsWidth = StarCount * StarSize + (StarCount - 1) * StarSpacing;
-    private static readonly double EntryWidth = StarsWidth + DesignTokens.PopupRatingSourcesEntryPadding * 2;
-    private static readonly double ContentWidth = EntryWidth + DesignTokens.PopupPadding * 2;
+    /// <summary>控制栏横排评分组的槽位与间距，浮窗星排直接复用共享指标。</summary>
+    private static readonly double StarSize = RatingSourcesLayout.SlotSize;
+    private static readonly double StarSpacing = RatingSourcesLayout.SlotSpacing;
+    private static readonly double EntryWidth = RatingSourcesLayout.EntryWidth;
+    private static readonly double ContentWidth = RatingSourcesLayout.ContentWidth;
     private static readonly NSFont NameFont =
         NSFont.SystemFontOfSize((nfloat)DesignTokens.PopupRatingSourcesNameFontSize)
         ?? throw new InvalidOperationException("系统字体不可用");
@@ -59,7 +56,7 @@ internal sealed class MacRatingSourcesPopover : IDisposable
     internal IntPtr ControllerHandle => _presentation?.Controller.Handle ?? IntPtr.Zero;
     internal CGSize ContentSize => _presentation?.Popover.ContentSize ?? CGSize.Empty;
     /// <summary>条目内可用的信息宽度，等于星级控件整体宽度。</summary>
-    internal static double EntryContentWidth => EntryWidth - DesignTokens.PopupRatingSourcesEntryPadding * 2;
+    internal static double EntryContentWidth => RatingSourcesLayout.EntryContentWidth;
 
     internal bool OwnsWindow(NSWindow? window)
         => window != null && (ReferenceEquals(window, _presentation?.Content.Window)
@@ -129,8 +126,10 @@ internal sealed class MacRatingSourcesPopover : IDisposable
         var visible = screen.VisibleFrame;
         double below = (double)(screenRect.Y - visible.Y);
         double above = (double)(visible.Y + visible.Height - (screenRect.Y + screenRect.Height));
-        double required = (double)contentSize.Height + DesignTokens.PopupRatingSourcesArrowMargin;
-        return below < required && above >= required ? NSRectEdge.MinYEdge : preferredEdge;
+        return RatingSourcesLayout.ResolveDirection(RatingSourcesAnchorKind.Card, false, above, below,
+                (double)contentSize.Height) == RatingSourcesDirection.Up
+            ? NSRectEdge.MinYEdge
+            : preferredEdge;
     }
 
     /// <summary>内容视图保持透明，让 NSPopover 自己的毛玻璃与圆角成为唯一一层外观。</summary>
@@ -182,36 +181,20 @@ internal sealed class MacRatingSourcesPopover : IDisposable
     internal static EntryLayout MeasureEntryLayout(string name, string kind, string status)
     {
         double padding = DesignTokens.PopupRatingSourcesEntryPadding;
-        double labelGap = DesignTokens.PopupRatingSourcesLabelGap;
-        double available = EntryWidth - padding * 2;
-        double nameWidth = Measure(name, NameFont);
+        // NSTextField 自带约 4 点控件内边距，标签/状态的实际占宽要把它算进去。
         double badgeWidth = Math.Ceiling(Measure(kind, MetaFont))
             + DesignTokens.PopupRatingSourcesBadgePaddingX * 2 + 4;
         double statusWidth = Math.Ceiling(Measure(status, MetaFont)) + 4;
-        double metaWidth = badgeWidth + labelGap + statusWidth;
-        if (metaWidth > available)
-        {
-            statusWidth = Math.Max(0, available - badgeWidth - labelGap);
-            metaWidth = badgeWidth + labelGap + statusWidth;
-        }
-        bool twoLines = nameWidth + labelGap + metaWidth > available + .5;
-        double nameFit = twoLines ? available : Math.Max(0, available - labelGap - metaWidth);
-        double metaBandY = twoLines
-            ? padding + LabelHeight + DesignTokens.PopupRatingSourcesMetaLineGap
-            : padding;
+        var shared = RatingSourcesLayout.MeasureEntry(Measure(name, NameFont), badgeWidth, statusWidth);
         double nameY = padding + (LabelHeight - NameFieldHeight) / 2;
-        double metaY = metaBandY + (LabelHeight - MetaFieldHeight) / 2;
-        double statusX = EntryWidth - padding - statusWidth;
-        double badgeX = statusX - labelGap - badgeWidth;
-        double starsY = metaBandY + LabelHeight + labelGap;
-        double height = starsY + StarSize + padding;
+        double metaY = shared.MetaY + (LabelHeight - MetaFieldHeight) / 2;
         return new EntryLayout(
-            twoLines,
-            height,
-            new CGRect(padding, nameY, nameFit, NameFieldHeight),
-            new CGRect(badgeX, metaBandY, badgeWidth, LabelHeight),
-            new CGRect(statusX, metaY, statusWidth, MetaFieldHeight),
-            starsY);
+            shared.TwoLines,
+            shared.Height,
+            new CGRect(padding, nameY, shared.NameWidth, NameFieldHeight),
+            new CGRect(shared.BadgeX, shared.MetaY, shared.BadgeWidth, LabelHeight),
+            new CGRect(shared.StatusX, metaY, shared.StatusWidth, MetaFieldHeight),
+            shared.StarsY);
     }
 
     private EntryView CreateEntry(RatingSourceItem item)

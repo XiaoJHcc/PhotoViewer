@@ -159,7 +159,7 @@ public sealed class MacThumbnailItem : NSCollectionViewItem
         _name.StringValue = _file.DisplayName;
         _name.ToolTip = _file.Name;
         _date.StringValue = _secondLineText ?? _file.PhotoDate?.ToString("MM-dd HH:mm") ?? "";
-        _date.ToolTip = _file.PhotoDate?.ToString("yyyy-MM-dd HH:mm:ss zzz");
+        _date.ToolTip = PhotoViewer.Core.Platform.ShotTimeText.FormatShotTime(_file.PhotoDate);
         _secondLineBar.Hidden = _secondLineProgress == null;
         if (_secondLineProgress is { } fraction)
             _secondLineFill.Frame = new CGRect(0, 0, (nfloat)(Math.Clamp(fraction, 0.0, 1.0) * SecondLineWidth), _secondLineBar.Bounds.Height);

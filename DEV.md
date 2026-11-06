@@ -104,23 +104,11 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 
 ## 验收素材
 
-验收素材是测试输入而非构建产物，统一放在 `Fixtures/` 随版本库分发，新克隆无需再手工拷贝；验收报告与截图写 `artifacts/acceptance/`，`release/` 只放分发包与打包过程产物。
-
-| 路径 | 内容 |
-|---|---|
-| `Fixtures/jpeg/` | 1200×800 色卡 `color-srgb.jpg` / `color-p3.jpg` / `color-adobe.jpg` / `color-untagged-adobe.jpg` 与 `orientation-1..8.jpg`，由 `Tools/generate-native-color-fixtures.py` 生成 |
-| `Fixtures/heif/` | 同一色卡的 HEVC 容器 `color-srgb.heic` / `color-p3.heic`，覆盖 HEIF 解码与容器 XMP |
-| `Fixtures/jpeg-large/color-p3-large.jpg` | 6000×4000 Display P3 色卡，iOS 代理→Full 档验收用 |
-| `Fixtures/toolbar/` | 工具栏评分回归的自有副本（`toolbar-01..03.jpg`） |
-| `Fixtures/raw/A7C01489.ARW`、`Fixtures/raw/A7C01495.ARW` | 真实 ILCE-7CM2 RAW；IFD0 tag 700 带 canonical XMP，`A7C01489` 的 `xmpMM:DocumentID` 固定为 `urn:uuid:e342971a-5835-4d56-b3ff-f434089d2e00` |
-
-- **初始星级属于夹具契约**：`color-srgb.jpg` 与 `color-srgb.heic` 内嵌 3 星、`Fixtures/raw/A7C01489.ARW` 为 0 星，Core 契约自检按这些初值断言。生成脚本产出的 JPEG 默认 0 星，重新生成色卡后须把 `color-srgb.jpg` 写回 3 星；HEIF 素材不在生成脚本内，按仓库内既有容器包使用。
-- 写评分/写回类验收只操作目录副本，不直接写仓库素材；RAW 就地评分用 `artifacts/scratch/native-p2-raw/` 副本（不入库，可随时重建）。
-- Core 契约自检在仓库根运行：`dotnet run --project Tools/CoreContractCheck -c Release`；素材不全时在开跑前报缺件并非零退出，不跑半套结果。
+验收素材是测试输入而非构建产物，统一放在 `Fixtures/` 随版本库分发，新克隆无需再拷贝；清单、初始星级、缺件口径与 Core 契约自检命令见 [Fixtures/README.md](Fixtures/README.md)。验收报告与截图写 `artifacts/acceptance/`。
 
 ## 产物目录
 
-`release/` 只放分发包与打包过程产物；验收报告、截图、日志、测试数据库、崩溃报告一律放 `artifacts/`，两者都不入库。
+`release/` 只放分发包与打包过程产物，顶层只允许 `packages/`、`ios-stable/`、`testflight/` 和 `SHA256SUMS`；验收报告、截图、日志、测试数据库、崩溃报告一律放 `artifacts/`。两者都不入库，报告/截图等出现在 `release/` 视为错误。
 
 | 路径 | 内容 | 生命周期 |
 |---|---|---|
@@ -132,7 +120,7 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 | `artifacts/diagnostics/` | 崩溃报告等诊断物 | 问题结案后删除 |
 | `artifacts/scratch/` | RAW 副本、临时状态 | 随时可清 |
 
-`release/` 顶层只允许 `packages/`、`ios-stable/`、`testflight/` 和 `SHA256SUMS`；报告、截图、日志、数据库、崩溃报告出现在 `release/` 视为错误。发布后运行：
+发布后运行：
 
 ```bash
 python3 Tools/check-release.py --write   # 校验 release 布局并重写 SHA256SUMS

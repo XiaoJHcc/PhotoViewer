@@ -491,46 +491,69 @@ internal sealed partial class WindowsMainWindow : Window
     private MenuFlyout BuildContextMenu()
     {
         var menu = new MenuFlyout();
-        var openFile = new MenuFlyoutItem { Text = "打开文件…", Icon = MenuGlyph(WindowsIcons.DocumentGlyph) };
-        openFile.Click += (_, _) => OpenFilePicker();
-        var openFolder = new MenuFlyoutItem { Text = "打开文件夹…", Icon = MenuGlyph(WindowsIcons.FolderGlyph) };
-        openFolder.Click += async (_, _) =>
+        var state = new PhotoMenuState(
+            _main.CurrentFile != null, _main.IsThumbnailViewVisible, _main.IsAnalysisViewVisible,
+            _main.IsControlViewVisible, _session.IsEnhanced);
+        int group = -1;
+        foreach (var entry in PhotoMenuCatalog.Build(state, includeOpenFile: true))
         {
-            var folder = await FilePicker.PickFolderAsync("选择图片文件夹");
-            if (folder != null)
+            if (entry.Group != group)
             {
-                await _main.FolderVM.OpenFolderAsync(folder);
+                if (group >= 0) menu.Items.Add(new MenuFlyoutSeparator());
+                group = entry.Group;
             }
-        };
+            switch (entry.Id)
+            {
+                case PhotoMenuItemId.OpenFile:
+                    var openFile = new MenuFlyoutItem { Text = entry.Text, Icon = MenuGlyph(WindowsIcons.DocumentGlyph) };
+                    openFile.Click += (_, _) => OpenFilePicker();
+                    menu.Items.Add(openFile);
+                    break;
+                case PhotoMenuItemId.OpenFolder:
+                    var openFolder = new MenuFlyoutItem { Text = entry.Text, Icon = MenuGlyph(WindowsIcons.FolderGlyph) };
+                    openFolder.Click += async (_, _) =>
+                    {
+                        var folder = await FilePicker.PickFolderAsync("选择图片文件夹");
+                        if (folder != null)
+                        {
+                            await _main.FolderVM.OpenFolderAsync(folder);
+                        }
+                    };
+                    menu.Items.Add(openFolder);
+                    break;
+                case PhotoMenuItemId.Filmstrip:
+                    _thumbnailMenuToggle = ToggleItem(entry, WindowsIcons.PhotosGlyph);
+                    _thumbnailMenuToggle.Click += (_, _) => _main.ToggleThumbnailView();
+                    menu.Items.Add(_thumbnailMenuToggle);
+                    break;
+                case PhotoMenuItemId.Analysis:
+                    _analysisMenuToggle = ToggleItem(entry, WindowsIcons.AnalysisGridGlyph);
+                    _analysisMenuToggle.Click += (_, _) => _main.ToggleAnalysisView();
+                    menu.Items.Add(_analysisMenuToggle);
+                    break;
+                case PhotoMenuItemId.ControlBar:
+                    _controlMenuToggle = ToggleItem(entry, WindowsIcons.SliderGlyph);
+                    _controlMenuToggle.Click += (_, _) => _main.ToggleControlView();
+                    menu.Items.Add(_controlMenuToggle);
+                    break;
+                case PhotoMenuItemId.Enhance:
+                    _enhanceMenuToggle = ToggleItem(entry, WindowsIcons.ContrastGlyph);
+                    _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
+                    menu.Items.Add(_enhanceMenuToggle);
+                    break;
+                case PhotoMenuItemId.Tools:
+                    var tools = new MenuFlyoutItem { Text = entry.Text, Icon = MenuGlyph(WindowsIcons.ToolsGlyph) };
+                    tools.Click += (_, _) => _main.OpenToolsWindow();
+                    menu.Items.Add(tools);
+                    break;
+                case PhotoMenuItemId.Settings:
+                    var settings = new MenuFlyoutItem { Text = entry.Text, Icon = MenuGlyph(WindowsIcons.SettingsGlyph) };
+                    settings.Click += (_, _) => _main.OpenSettingWindow();
+                    menu.Items.Add(settings);
+                    break;
+            }
+        }
 
-        _thumbnailMenuToggle = new ToggleMenuFlyoutItem
-        {
-            Text = "胶片栏",
-            IsChecked = _main.IsThumbnailViewVisible,
-            Icon = MenuGlyph(WindowsIcons.PhotosGlyph),
-        };
-        _thumbnailMenuToggle.Click += (_, _) => _main.ToggleThumbnailView();
-        _analysisMenuToggle = new ToggleMenuFlyoutItem
-        {
-            Text = "分析栏",
-            IsChecked = _main.IsAnalysisViewVisible,
-            Icon = MenuGlyph(WindowsIcons.AnalysisGridGlyph),
-        };
-        _analysisMenuToggle.Click += (_, _) => _main.ToggleAnalysisView();
-        _controlMenuToggle = new ToggleMenuFlyoutItem
-        {
-            Text = "控制栏",
-            IsChecked = _main.IsControlViewVisible,
-            Icon = MenuGlyph(WindowsIcons.SliderGlyph),
-        };
-        _controlMenuToggle.Click += (_, _) => _main.ToggleControlView();
-        _enhanceMenuToggle = new ToggleMenuFlyoutItem
-        {
-            Text = "雾天增强",
-            IsChecked = _session.IsEnhanced,
-            Icon = MenuGlyph(WindowsIcons.ContrastGlyph),
-        };
-        _enhanceMenuToggle.Click += (_, _) => ToggleEnhance();
         menu.Opening += (_, _) =>
         {
             _ratingSources.Close();
@@ -541,24 +564,17 @@ internal sealed partial class WindowsMainWindow : Window
             // MENU-07：无当前照片时雾天增强置灰，其余项照常可用。
             _enhanceMenuToggle.IsEnabled = _main.CurrentFile != null;
         };
-
-        menu.Items.Add(openFile);
-        menu.Items.Add(openFolder);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(_thumbnailMenuToggle);
-        menu.Items.Add(_analysisMenuToggle);
-        menu.Items.Add(_controlMenuToggle);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        menu.Items.Add(_enhanceMenuToggle);
-        menu.Items.Add(new MenuFlyoutSeparator());
-        var tools = new MenuFlyoutItem { Text = "工具…", Icon = MenuGlyph(WindowsIcons.ToolsGlyph) };
-        tools.Click += (_, _) => _main.OpenToolsWindow();
-        menu.Items.Add(tools);
-        var settings = new MenuFlyoutItem { Text = "设置…", Icon = MenuGlyph(WindowsIcons.SettingsGlyph) };
-        settings.Click += (_, _) => _main.OpenSettingWindow();
-        menu.Items.Add(settings);
         return menu;
     }
+
+    /// <summary>共享目录的勾选项落成 WinUI 开关项：文案、勾选与前置图标来自同一项（MENU-06）。</summary>
+    private static ToggleMenuFlyoutItem ToggleItem(PhotoMenuItem entry, string glyph) => new()
+    {
+        Text = entry.Text,
+        IsChecked = entry.Checked,
+        IsEnabled = entry.Enabled,
+        Icon = MenuGlyph(glyph),
+    };
 
     /// <summary>MENU-06:菜单项的语义前置图标(系统 Fluent 字形,尺寸随原生菜单图标列)。</summary>
     /// <param name="glyph">字形码位。</param>
@@ -1220,8 +1236,9 @@ internal sealed partial class WindowsMainWindow : Window
         var filterBounds = fileBarVisible && _isRowLayout
             ? _filterBar.GetInteractiveBounds(_root)
             : default(Rect);
-        var persistent = fileBarVisible && _isRowLayout && !_isFullScreen
-            && filterBounds.X + filterBounds.Width > _titleBar.GetButtonsLeft(_root);
+        var persistent = TitleBarLayout.IsPersistent(_isRowLayout, fileBarVisible, _isFullScreen,
+            filterBounds.X, filterBounds.X + filterBounds.Width,
+            _titleBar.GetButtonsLeft(_root), _root.ActualWidth);
         if (_isTitleBarPersistent != persistent)
         {
             _isTitleBarPersistent = persistent;
@@ -1231,7 +1248,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         var left = fileBarVisible && !_isRowLayout ? FilePaneRightEdge() : 0;
         var width = Math.Max(0, _root.ActualWidth - left);
-        var showBackground = persistent || !(fileBarVisible && _isRowLayout);
+        var showBackground = TitleBarLayout.HasBackdrop(_isRowLayout, fileBarVisible, persistent);
 
         // 标题栏与主图视图重叠的区段由主图渲染器在交换链内画同一份亚克力(SwapChainPanel 取不到
         // AcrylicBrush 背板),XAML 背景只铺其余区段。常驻栏已让主图下移,不启用交换链背板。
@@ -1255,7 +1272,7 @@ internal sealed partial class WindowsMainWindow : Window
 
         // 标题文字止于按钮组前(留出与前导间距同值的尾部间距);行布局悬停覆盖层再让出筛选条可点控件。
         var titleRightEdge = _titleBar.GetButtonsLeft(_root);
-        if (fileBarVisible && _isRowLayout && !persistent)
+        if (TitleBarLayout.HasCutout(_isRowLayout, fileBarVisible, persistent))
         {
             titleRightEdge = filterBounds.X;
         }
@@ -1732,33 +1749,14 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>刷新空首屏提示与命中层;解码失败时给出可见原因(FILM-06 同口径)。</summary>
     private void UpdateHint()
     {
-        var file = _main.CurrentFile;
-        var error = file == null ? null : _session.Error;
-        if (file == null)
-        {
-            _hintTitle.Text = "点击打开文件 或 拖拽图片到此处";
-            _hintDetail.Text = string.Empty;
-        }
-        else if (!string.IsNullOrEmpty(error))
-        {
-            _hintTitle.Text = error;
-            _hintDetail.Text = file.Name;
-        }
-        else if (_session.IsLoadingVisible)
-        {
-            // STATE-01：共享会话延迟 300ms 才暴露加载态，快速翻页不闪提示。
-            _hintTitle.Text = "正在载入…";
-            _hintDetail.Text = file.Name;
-        }
-        else
-        {
-            _hintTitle.Text = string.Empty;
-            _hintDetail.Text = string.Empty;
-        }
+        var (title, detail) = PhotoHintText.Resolve(
+            _main.CurrentFile != null, _session.Error, _session.IsLoadingVisible, touch: false);
+        _hintTitle.Text = title;
+        _hintDetail.Text = detail;
 
-        var visible = _hintTitle.Text.Length > 0 || _hintDetail.Text.Length > 0;
+        var visible = title.Length > 0 || detail.Length > 0;
         _hintPanel.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        _emptyHitArea.Visibility = file == null ? Visibility.Visible : Visibility.Collapsed;
+        _emptyHitArea.Visibility = _main.CurrentFile == null ? Visibility.Visible : Visibility.Collapsed;
     }
 
     /// <summary>

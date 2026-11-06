@@ -193,14 +193,14 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
         _hintLabel = new TextView(activity)
         {
-            Text = "PhotoViewer",
+            Text = PhotoHintText.EmptyTouchTitle,
             TextSize = (float)DesignTokens.ImageHintTitleFontSize,
             Gravity = GravityFlags.Center,
         };
         _hintLabel.SetTextColor(AndroidUiTheme.TextPrimary);
         _hintDetail = new TextView(activity)
         {
-            Text = "点按选择文件夹",
+            Text = string.Empty,
             TextSize = (float)DesignTokens.ImageHintDetailFontSize,
             Gravity = GravityFlags.Center,
         };
@@ -608,7 +608,15 @@ internal sealed class AndroidNativeRootView : FrameLayout
         int itemHeight = (int)Math.Round(44 * density);
         int padding = (int)Math.Round(4 * density);
         int dividerHeight = Math.Max(1, (int)Math.Round(density));
-        int contentHeight = itemHeight * 7 + dividerHeight * 6 + padding * 2;
+        var state = new PhotoMenuState(
+            _main.CurrentFile != null, _main.IsThumbnailViewVisible, _main.IsAnalysisViewVisible,
+            _main.IsControlViewVisible, _session.IsEnhanced);
+        // MENU-01：触屏没有「打开文件…」，其余项与顺序四端相同。
+        var menuItems = PhotoMenuCatalog.Build(state, includeOpenFile: false);
+        int groupCount = 1;
+        for (int index = 1; index < menuItems.Count; index++)
+            if (menuItems[index].Group != menuItems[index - 1].Group) groupCount++;
+        int contentHeight = itemHeight * menuItems.Count + dividerHeight * (groupCount - 1) + padding * 2;
         int maxHeight = Math.Max(itemHeight * 2, screenHeight - (int)Math.Round(16 * density));
         int menuHeight = Math.Min(contentHeight, maxHeight);
 
@@ -684,19 +692,38 @@ internal sealed class AndroidNativeRootView : FrameLayout
             content.AddView(row, new LinearLayout.LayoutParams(LayoutParams.MatchParent, itemHeight));
         }
 
-        // 与 iOS 分组一致：打开文件夹 | 栏位显隐 | 雾天增强 | 工具/设置；不逐项加分隔线。
-        // MENU-06：每项前置图标取 uicons，语义与桌面/系统菜单栏一致。
-        AddItem("打开文件夹…", null, DesignTokens.IconMenuOpenFolder, () => _ = _main.FolderVM.OpenFilePickerAsync());
-        AddDivider();
-        AddItem("胶片栏", _main.IsThumbnailViewVisible, DesignTokens.IconMenuFilmstrip, () => _main.ToggleThumbnailView());
-        AddItem("分析栏", _main.IsAnalysisViewVisible, DesignTokens.IconMenuAnalysis, () => _main.ToggleAnalysisView());
-        AddItem("控制栏", _main.IsControlViewVisible, DesignTokens.IconMenuControl, () => _main.ToggleControlView());
-        AddDivider();
-        // MENU-06/07：文案为「雾天增强」；无当前照片时置灰，工具仍可打开并显示空态。
-        AddItem("雾天增强", _session.IsEnhanced, DesignTokens.IconCommandToggleEnhance, () => _session.ToggleEnhanced(), _main.CurrentFile != null);
-        AddDivider();
-        AddItem("工具…", null, DesignTokens.IconMenuTools, ShowTools);
-        AddItem("设置…", null, DesignTokens.IconMenuSettings, () => _main.OpenSettingWindow());
+        // MENU-01/MENU-06：共享目录给出固定文案、分组、勾选与可用性；这里只落原生行、图标与执行入口。
+        int group = -1;
+        foreach (var item in menuItems)
+        {
+            if (item.Group != group)
+            {
+                if (group >= 0) AddDivider();
+                group = item.Group;
+            }
+            string icon = item.Id switch
+            {
+                PhotoMenuItemId.OpenFile => DesignTokens.IconMenuOpenFile,
+                PhotoMenuItemId.OpenFolder => DesignTokens.IconMenuOpenFolder,
+                PhotoMenuItemId.Filmstrip => DesignTokens.IconMenuFilmstrip,
+                PhotoMenuItemId.Analysis => DesignTokens.IconMenuAnalysis,
+                PhotoMenuItemId.ControlBar => DesignTokens.IconMenuControl,
+                PhotoMenuItemId.Enhance => DesignTokens.IconCommandToggleEnhance,
+                PhotoMenuItemId.Tools => DesignTokens.IconMenuTools,
+                _ => DesignTokens.IconMenuSettings,
+            };
+            Action action = item.Id switch
+            {
+                PhotoMenuItemId.OpenFile or PhotoMenuItemId.OpenFolder => () => _ = _main.FolderVM.OpenFilePickerAsync(),
+                PhotoMenuItemId.Filmstrip => () => _main.ToggleThumbnailView(),
+                PhotoMenuItemId.Analysis => () => _main.ToggleAnalysisView(),
+                PhotoMenuItemId.ControlBar => () => _main.ToggleControlView(),
+                PhotoMenuItemId.Enhance => () => _session.ToggleEnhanced(),
+                PhotoMenuItemId.Tools => ShowTools,
+                _ => () => _main.OpenSettingWindow(),
+            };
+            AddItem(item.Text, item.IsCheck ? item.Checked : null, icon, action, item.Enabled);
+        }
 
         ScrollView? scroll = null;
         View popupContent = content;
@@ -1176,20 +1203,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _hintLabel.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         _hintDetail.Visibility = show ? ViewStates.Visible : ViewStates.Gone;
         if (!show) return;
-        if (hasError)
-        {
-            _hintLabel.Text = "无法显示照片";
-            _hintDetail.Text = _session.Error;
-            return;
-        }
-        if (_session.IsLoadingVisible)
-        {
-            _hintLabel.Text = "正在载入…";
-            _hintDetail.Text = _main.CurrentFile?.Name ?? string.Empty;
-            return;
-        }
-        _hintLabel.Text = "PhotoViewer";
-        _hintDetail.Text = "点按选择文件夹，或长按打开菜单";
+        var (title, detail) = PhotoHintText.Resolve(
+            hasFile, _session.Error, _session.IsLoadingVisible, touch: true);
+        _hintLabel.Text = title;
+        _hintDetail.Text = detail;
     }
 
     /// <summary>导航图缩略图取当前展示产物（含增强），只在产物引用变化时重出；可见框与百分比每帧更新。</summary>

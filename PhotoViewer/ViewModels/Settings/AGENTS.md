@@ -6,7 +6,7 @@
 
 五个分页:**文件 / 预览 / 控制 / EXIF / AI**。每个 partial 持有一类设置项；live 构造的编辑经单一保存循环归一化后提交 `SettingsRepository`（后台保存、成功才发布，失败保留 last good），draft 构造只更新 `SettingsSession.Draft`（不写盘），隔离构造不读文件。没有自动保存或节流合并。
 
-`NativeSettingsSession` 由 live 设置建立 `SettingsSession` 工作副本，编辑期不写盘，关闭时 `ApplyAsync` 提交一次；副本 Dispose 释放 `WorkingSettings`。Windows W-M5 用同一 `NativeSettingsSession` 与 `WindowsNativeSettingsPresenter`：独立窗口、五分类、关闭一次性回写；WinUI 模板由根 `App.xaml` + `XamlControlsResources` 提供，界面用 `NavigationView` + `SettingsCard` + `NumberBox`/`InfoBar`（见 [PhotoViewer.Windows/AGENTS.md](../../../PhotoViewer.Windows/AGENTS.md)）。设备能力提示两行由共享 [DeviceCacheCapability.cs](../../Core/Image/DeviceCacheCapability.cs) 算出（系统总内存 / 当前可用，以及两档可缓存张数——可编辑平台按工作副本的用户内存上限、自动平台按设备最大安全容量），用户内存变化立即重算张数，缓存数量/线程/预载不影响；超限只抬级并在第一行追加简短警告。
+`NativeSettingsSession` 由 live 设置建立 `SettingsSession` 工作副本，编辑期不写盘，关闭时 `ApplyAsync` 提交一次；副本 Dispose 释放 `WorkingSettings`。Windows 设置窗口用同一 `NativeSettingsSession` 与 `WindowsNativeSettingsPresenter`：独立窗口、五分类、关闭一次性回写；WinUI 模板由根 `App.xaml` + `XamlControlsResources` 提供，界面用 `NavigationView` + `SettingsCard` + `NumberBox`/`InfoBar`（见 [PhotoViewer.Windows/AGENTS.md](../../../PhotoViewer.Windows/AGENTS.md)）。设备能力提示两行由共享 [DeviceCacheCapability.cs](../../Core/Image/DeviceCacheCapability.cs) 算出（系统总内存 / 当前可用，以及两档可缓存张数——可编辑平台按工作副本的用户内存上限、自动平台按设备最大安全容量），用户内存变化立即重算张数，缓存数量/线程/预载不影响；超限只抬级并在第一行追加简短警告。
 
 | 文件 | 分类 | 职责 |
 |---|---|---|

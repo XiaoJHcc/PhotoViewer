@@ -12,6 +12,6 @@
 | [PhotoFingerprint.cs](PhotoFingerprint.cs) | 指纹计算 | 三字段规范化 SHA1：`filename_noext` + `DateTimeOriginal`(秒, UTC ISO-8601) + `SubSecTimeOriginal`(3 位毫秒)。同一次曝光的 RAW/HIF/JPG 字节级字段一致 → 同指纹；高速连拍由 SubSec 毫秒区分；文件名编号循环由日期区隔。验证工具见 `ExifTestTool fp <folder>`。 |
 
 **连接纪律**:`journal_mode=WAL` 是库级持久设置,只在 `Initialize`/`DeleteDatabaseAsync` 的单连接上写一次;每条连接只设连接级
-`PRAGMA synchronous=NORMAL; foreign_keys=ON;`。曾经每次开连接都写 `journal_mode`,并发开几十上百连接时互相抢库锁
-(`SQLITE_BUSY` 重试),大图库里表现为面板/索引长时间卡死。另外 `FindSimilarAsync` 这类批量读也受连接池上限(默认 100)约束,
+`PRAGMA synchronous=NORMAL; foreign_keys=ON;`。禁止在每条新连接上写 `journal_mode`:并发连接会互相抢库锁
+(`SQLITE_BUSY` 重试),大图库里表现为面板/索引长时间卡死。`FindSimilarAsync` 这类批量读受连接池上限(默认 100)约束,
 调用方必须自带并发度上限,不要一张 Task 一个候选。

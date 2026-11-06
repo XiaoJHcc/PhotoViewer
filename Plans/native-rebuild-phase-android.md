@@ -276,6 +276,10 @@
 | 47 | 同名 HIF/ARW | 真实 same.hif+same.arw 实测 HIF 代表/主图；JPG+HIF 实测 JPG 代表；CurrentFile 映射回代表 |
 | 48 | HIF 缩略图/导航等待 | Sony HIF thmb 无 libheif 插件；新增 iinf/iloc JPEG item 提取（实测 160×120），缩略图/导航跳过全图，再走 512 代理缓存。主图 Full 仍一次全图 |
 | 49 | HIF 胶片横竖错乱 | ThumbnailService 将 HEIF 平台源写死为已预旋转；改为按 `HeifLoader.OutputPreRotated`，Android 走容器方向对齐；irot=90 的 HIF 实测卡片/主图同向 |
+| 52 | 设置五分类页面（文件格式 / EXIF / 快捷键）列表项较多需要滚动，且没有搜索 | 与 iOS 设置同口径用滚动表单；搜索不在范围内 |
+| 53 | 主行数字键 1–5 不触发评分快捷键：`AndroidInputMapping.MapKey` 的数字兜底只把 1 字符名补成 `D<n>`，而键码枚举是 `Num0`–`Num9`，`Enum.TryParse<GestureKey>("Num3")` 返回 null | **已修**：`Num0`–`Num9` 映射为 `D0`–`D9`；`pv-check input`「INPUT-05 主行数字键映射」通过 |
+| 54 | 窄屏（density 525 → 329dp）筛选条自然最小宽约 389dp，超出 329dp 内容区约 60dp，行布局无横向滚动 | **已修**：筛选条复用可滚动宿主（TOOLBAR-08 同一实现），控件宽度不压缩 |
+| 55 | `INPUT-04` 的「离散事件累积到一格才派发」分支实际不可达：非整数轴增量一律先判为精确滚动，两次 0.5 只平移不派发命令 | 按实际口径修正 `Design/spec/input.md` 与 `pv-check input`：非整格增量按精确滚动平移，整格按格计数 |
 
 ## 7. Windows 评审修订写回（2026-10-18）
 

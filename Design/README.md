@@ -2,8 +2,6 @@
 
 本目录是四端（Windows / macOS / iOS·iPadOS / Android）与 Web 参考壳 UI 与交互的唯一设计基准。Web 参考壳（[PhotoViewer.Web](../PhotoViewer.Web/AGENTS.md)）只依据本目录实现，是本规范的可执行版本：规则改动可以先在它上面验证，它与各端的差异用来发现规范缺口。Avalonia 旧壳退役后，对标不再以任何一个平台的实现为准：先改设计，再分别在四端执行。
 
-> 迁移完成（2026-10-19，[Phase 6 清单](../Plans/native-rebuild-phase-6.md) 6B）：`spec/`、`tokens.json`、`platforms.md`、`status.md` 已从原 `ui-contract.md` 拆分并成为唯一真源；旧文件只保留跳转说明。
-
 ## 1. 组成
 
 | 位置 | 层 | 内容 |

@@ -51,6 +51,10 @@ internal static class Program
             StatusMessageChecks.Run(checks);
             TooltipTextChecks.Run(checks);
             SettingsPresentationChecks.Run(checks);
+            PhotoMenuCatalogChecks.Run(checks);
+            PhotoHintTextChecks.Run(checks);
+            RatingSourcesLayoutChecks.Run(checks);
+            TitleBarLayoutChecks.Run(checks);
         }
         catch (Exception exception)
         {
