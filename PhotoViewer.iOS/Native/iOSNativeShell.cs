@@ -94,6 +94,17 @@ public static class iOSNativeShell
         iOSDinoCheck.MaybeStart(args);
         StartPerfProbe(args);
         StartDecodeOptimize(args);
+        if (args.Contains("--pv-native-texture-cache-check", StringComparer.Ordinal))
+        {
+            DispatchQueue.MainQueue.DispatchAsync(() =>
+            {
+                string report = AppleTextureCacheChecks.Run();
+                string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer");
+                Directory.CreateDirectory(directory);
+                File.WriteAllText(Path.Combine(directory, "native-texture-cache-checks.txt"), report);
+                Console.WriteLine($"[NativeSmoke] {(report.Contains("FAIL", StringComparison.Ordinal) ? "FAIL" : "PASS")} texture-cache");
+            });
+        }
         return _rootViewController;
     }
 

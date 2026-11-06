@@ -24,4 +24,6 @@
 - 历史基线仅作方向依据，见 `apple-performance-memory-plan-1.md`，本轮数据在各里程碑完成后补入。
 - Mac 原始 Debug 构建 0 错误 / 8 警告（含命令行 RID 既有提示），base 35 项及 layout/filmstrip/toolbar/input/analysis/similarity/tools/faults/settings 全通过。input 必须空窗口；混合大色卡目录不能用于 base（套件仅登记小色卡名称）。首次素材参数误配已修正后重跑，不修改套件语义。
 - 已安装的 iPad mini 模拟器原始应用八套 photo/layout/input/analysis/similarity/tools/gesture/faults 全通过，仅作回归基线，不作真机性能数据。
+- 第一个里程碑提交 `29dfc7c`：双端对照探针构建通过，Mac 与 iPad 模拟器均 `SUMMARY PASS`；原图输入含 Sony HIF、P3 大图、无标签 Adobe JPEG、ARW 方向 1/6。
+- 最近纹理里程碑：Mac 十套与 iPad 模拟器八套完整回归全通过（总包装超时后，模拟器剩余四套独立补跑通过）。专项在 Mac 与 iPad 模拟器均 15/15 通过，含 F16 扩展色域/8 位 P3/八方向/行距/字节上限/失败保留旧图/LRU/空图/并发修剪/弱引用租约。1600×1200 A/B 的 SetTexture 编码耗时（不含 GPU 完成/呈现）：Mac 强制修剪 1.57ms → 缓存 <0.01ms，模拟器 6.40ms → 0.01ms，不将其表述为完整切图或真机时延。
 - 独立 Swift ImageIO 小图对照：IMG_8923.HEIC 有内嵌 HEVC 缩略项，120 档同尺寸 90×120，Always 93.4ms / IfAbsent 3.1ms，sRGB8 mean 差 1.93/255；400 档 IfAbsent 仅 240×320，不满足目标，必须回落原图。IMG_8918.HEIC 无缩略项，两者像素完全相同、约 96–100ms。Sony 已有 JPEG 内嵌快路径不改变。报告 `artifacts/acceptance/apple-decode-optimization/baseline/thumbnail-probe.txt`。
