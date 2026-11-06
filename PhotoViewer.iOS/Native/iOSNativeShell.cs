@@ -93,6 +93,7 @@ public static class iOSNativeShell
         iOSNativeFaultCheck.MaybeStart(args, _rootViewController, _session);
         iOSDinoCheck.MaybeStart(args);
         StartPerfProbe(args);
+        StartDecodeOptimize(args);
         return _rootViewController;
     }
 
@@ -113,6 +114,41 @@ public static class iOSNativeShell
             Console.WriteLine($"[PerfProbe] start {directory} -> {reportPath}");
             _ = ApplePerfProbe.RunAsync(directory, reportPath,
                 () => (AppleMemoryFootprint.GetPhysFootprintBytes(), budget.GetAvailableBytes()));
+        }
+    }
+
+    /// <summary>
+    /// 验收专用（非产品行为）：<c>--pv-decode-optimize &lt;目录&gt;</c> 对照解码优化候选，
+    /// 报告写 Documents/PhotoViewer/decode-optimization.txt；相对路径按沙盒 Documents 解析。产品路径不调用。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    private static void StartDecodeOptimize(string[] args)
+    {
+        for (int index = 0; index + 1 < args.Length; index++)
+        {
+            if (!string.Equals(args[index], "--pv-decode-optimize", StringComparison.Ordinal)) continue;
+            string directory = ResolveDocumentsPath(args[index + 1]);
+            string reportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "PhotoViewer", "decode-optimization.txt");
+            Console.WriteLine($"[DecodeOptimize] start {directory} -> {reportPath}");
+            _ = RunDecodeOptimizeAsync(directory, reportPath);
+            return;
+        }
+    }
+
+    /// <summary>执行解码优化探针并打印结论；异常只报告，不影响原生壳其它验收。</summary>
+    /// <param name="directory">素材目录（绝对路径）。</param>
+    /// <param name="reportPath">报告文本路径。</param>
+    private static async Task RunDecodeOptimizeAsync(string directory, string reportPath)
+    {
+        try
+        {
+            bool passed = await AppleDecodeOptimizationProbe.RunAsync(directory, reportPath);
+            Console.WriteLine($"[DecodeOptimize] {(passed ? "PASS" : "FAIL")} {reportPath}");
+        }
+        catch (Exception exception)
+        {
+            Console.Error.WriteLine("[DecodeOptimize] FAIL " + exception);
         }
     }
 
