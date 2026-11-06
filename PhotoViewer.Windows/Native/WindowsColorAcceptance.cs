@@ -112,6 +112,7 @@ internal sealed partial class WindowsMainWindow
                     && raw.Encoding == PixelEncoding.Bgra32, "WIC RAW 标签与实际声明不一致或虚标精度");
                 checks.Add($"PASS WIC RAW source declaration and actual Bgra32 decode: {declaration.ColorSpace}, ICC={declaration.IccLength}B");
                 await CheckRawFullResolutionCacheAsync(rawPath, checks);
+                await CheckRawSourceReuseAsync(rawPath, checks);
             }
             else checks.Add("SKIP WIC RAW source declaration: RAW codec not installed");
 

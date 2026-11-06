@@ -42,7 +42,7 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 "./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-stress=D:/photos/A7C2" --pv-stress-count=100 --pv-stress-mode=ab
 ```
 
-探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；ARW 另测一次 WIC 开发下的代理/Full 派生时间、像素字节账，并与正常解码产物逐字节对照（会额外占用测试内存，不代表普通浏览的进程峰值）。压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`，`done` 行的 `extra` 含视口、代理目标与纹理上传耗时统计。
+探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；ARW 另测一次 WIC 开发下的代理/Full 派生时间、像素字节账，并与正常解码产物逐字节对照（会额外占用测试内存，不代表普通浏览的进程峰值）。压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`；Windows 的完成阶段是 `present-return`（目标代际正式纹理绑定且 Present 返回，不等同屏幕扫描完成），另记 `pixelsReadyMs` 与就绪后提交时间。`done.extra` 区分同步/异步上传、真实上传与缓存命中、暂存创建/映射/目标创建/拷贝/mip/后台墙钟、Render/Present、UI 心跳及内存账。可加 `--pv-stress-window=3000x1800` 固定物理窗口、`--pv-stress-full` 强制 Full、`--pv-stress-budget-mb=2048` 模拟小应用预算；模拟不代表小内存真机。`--pv-stress-count` 大于列表长度时循环翻页，A/B 持续切前两张。所有隔离入口支持 `--pv-acceptance-output=artifacts/acceptance/<本轮目录>` 分开保存报告。`--pv-native-upload` 可独立跑异步代际/真实GPU像素/持续压力回归，同时也属于完整 smoke。
 
 ### Android
 

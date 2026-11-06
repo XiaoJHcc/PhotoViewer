@@ -72,6 +72,7 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
 
     /// <summary>验收观测：本次展示实际使用的定位边界（窗口安全区，或与工作区的可见交集）。</summary>
     internal Rect PlacementBoundsForAcceptance => _placementBounds;
+    internal Size PlannedSizeForAcceptance { get; private set; }
 
     /// <summary>验收专用：按当前布局重新计算来源浮窗锚点，用于核对诊断通知没有让锚点漂移。</summary>
     /// <param name="bounds">锚点在窗口内的边界。</param>
@@ -111,9 +112,12 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         _displayedWhenOpened = _main.CurrentFile;
         _anchorRect = anchorRect;
         var layouts = RefreshEntries();
-        double border = ((Thickness)Application.Current.Resources["FlyoutBorderThemeThickness"]).Left;
-        double width = ContentWidth + border * 2;
-        double height = RatingSourcesLayout.ContentHeight(layouts) + border * 2;
+        var border = (Thickness)Application.Current.Resources["FlyoutBorderThemeThickness"];
+        var size = MeasurePresenterSize(ContentWidth, RatingSourcesLayout.ContentHeight(layouts), border,
+            _root.XamlRoot?.RasterizationScale ?? 1);
+        double width = size.Width;
+        double height = size.Height;
+        PlannedSizeForAcceptance = size;
         var direction = RatingSourcesLayout.ResolveDirection(
             controlBarAnchor ? RatingSourcesAnchorKind.Control : RatingSourcesAnchorKind.Card,
             controlHorizontal, anchorRect.Top, _root.ActualHeight - anchorRect.Bottom, height);
@@ -221,6 +225,14 @@ internal sealed class WindowsRatingSourcesFlyout : IDisposable
         {
             Close();
         }
+    }
+
+    internal static Size MeasurePresenterSize(double contentWidth, double contentHeight, Thickness border, double scale)
+    {
+        double Round(double value) => Math.Round(value * scale, MidpointRounding.AwayFromZero) / scale;
+        // 原生边框逐边取整；150% 下两条 1 DIP 边框实际共 4px，而不是 3px。
+        return new Size(Round(contentWidth) + Round(border.Left) + Round(border.Right),
+            Round(contentHeight) + Round(border.Top) + Round(border.Bottom));
     }
 
     /// <summary>窗口安全区：根元素范围按 edgeMargin 内缩（RATING-04 要求主体与窗口边缘保持该距离）。</summary>

@@ -108,6 +108,18 @@ public partial class App : Application
                 return;
             }
 
+            if (LaunchArgs.Contains("--pv-native-rating"))
+            {
+                await _window.RunRatingChecksAsync();
+                return;
+            }
+
+            if (LaunchArgs.Contains("--pv-native-upload"))
+            {
+                await _window.RunUploadAcceptanceAsync();
+                return;
+            }
+
             if (smoke)
             {
                 await _window.RunSmokeAsync();
@@ -157,7 +169,7 @@ public partial class App : Application
                 NativeStartupLog.Write($"[PerfProbe] start {perfProbeFolder} -> {reportPath}");
                 await WindowsPerfProbe.RunAsync(perfProbeFolder, reportPath);
                 NativeStartupLog.Write($"[PerfProbe] done {reportPath}");
-                Environment.Exit(0);
+                Environment.Exit(Environment.ExitCode);
                 return;
             }
 
@@ -186,6 +198,7 @@ public partial class App : Application
                     _main.Settings.NativePreloadParallelism = stressThreads;
                     NativeStartupLog.Write($"stress: preload parallelism override={stressThreads}");
                 }
+                await _window.PrepareStressAsync(LaunchArgs);
                 WindowsUploadStats.Reset();
                 HeifDecodeStats.Reset();
                 StressFlipDriver.LogDirectory = WindowsNativeApplication.IsolatedOutputDirectory;
@@ -206,10 +219,10 @@ public partial class App : Application
                 StressFlipDriver.Completed = () =>
                 {
                     NativeStartupLog.Write("stress: done, exiting");
-                    Environment.Exit(0);
+                    Environment.Exit(Environment.ExitCode);
                 };
                 NativeStartupLog.Write("stress: start, similarity panel collapsed, feature indexing off");
-                StressFlipDriver.MaybeStart(_main, _window.Session);
+                StressFlipDriver.MaybeStart(_main, _window);
             }
         }
         catch (Exception ex)

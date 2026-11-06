@@ -55,6 +55,7 @@ internal static class Program
             PhotoHintTextChecks.Run(checks);
             RatingSourcesLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
+            MemoryAdmissionChecks.Run(checks);
         }
         catch (Exception exception)
         {

@@ -40,7 +40,8 @@ namespace PhotoViewer.Windows.Native;
 internal sealed partial class WindowsMainWindow
 {
     /// <summary>以启动工作目录为基准的隔离验收输出目录。</summary>
-    internal static string SmokeOutputDirectory => Path.GetFullPath("artifacts/acceptance/native-win-acceptance");
+    internal static string SmokeOutputDirectory => WindowsNativeApplication.OutputDirectory
+        ?? Path.GetFullPath("artifacts/acceptance/native-win-acceptance");
 
     /// <summary>在构造共享视图模型前重置隔离目录的设置、界面状态与数据库，每轮从默认值开始。</summary>
     internal static void ConfigureSmokeStorage()
@@ -164,6 +165,7 @@ internal sealed partial class WindowsMainWindow
             await RunEnhancementChecksAsync(checks);
             await RunSimilarityPanelChecksAsync(checks);
             await RunRatingFailureChecksAsync(checks);
+            await RunUploadChecksAsync(checks);
             await RunRatingConflictChecksAsync(checks);
             await RunSettingsDiagnosticChecksAsync(checks);
             await RunAnalysisPreviewPointerChecksAsync(checks);
@@ -455,6 +457,7 @@ internal sealed partial class WindowsMainWindow
             await OpenPathsAsync(new[] { path });
             await WaitForSmokeAsync(() => _main.CurrentFile?.Name == "saturated.jpg" && _session.Image != null,
                 "背板素材载入");
+            await WaitForUploadAsync("背板素材代理上传");
             _root.UpdateLayout();
             _photo.FitToView();
             _photo.ToggleFit();
@@ -881,7 +884,7 @@ internal sealed partial class WindowsMainWindow
 
     /// <summary>
     /// 核对导航图缩略图四个象限的颜色,验证 EXIF 方向在缩略图上真的按显示朝向摆放
-    /// (素材源象限:左上红、右上绿、左下蓝、右下黄)。
+    /// (素材源象限:左上红、右上绿、左下蓝、左下黄)。
     /// </summary>
     /// <param name="orientation">EXIF 方向 1-8</param>
     private void CheckNavigatorQuadrants(int orientation)
@@ -1897,6 +1900,11 @@ internal sealed partial class WindowsMainWindow
     {
         Rect body = default;
         await WaitForSmokeAsync(() => _ratingSources.TryGetPresenterBounds(out body), $"{entry}来源浮窗未完成布局");
+        var planned = _ratingSources.PlannedSizeForAcceptance;
+        double scale = _root.XamlRoot?.RasterizationScale ?? 1;
+        RequireSmoke(Math.Abs(planned.Width - body.Width) * scale <= .5
+            && Math.Abs(planned.Height - body.Height) * scale <= .5,
+            $"{entry}浮窗定位使用的尺寸 {planned} 与真实 Presenter {body.Width}x{body.Height} 不符，scale={scale}");
         var anchor = _ratingSources.AnchorRectForAcceptance;
         var placement = _ratingSources.LastPlacement
             ?? throw new InvalidOperationException($"{entry}来源浮窗没有记录展开方向");
@@ -2073,12 +2081,22 @@ internal sealed partial class WindowsMainWindow
 
     /// <summary>
     /// RATING-04：主窗口部分越出显示器工作区时，来源浮窗仍完整可见并与可见约束边界对齐（防系统二次翻转）。
-    /// 窗口位置由工作区、窗口尺寸与浮窗外形推导，不依赖具体分辨率；同一二进制内先验下缘外、再验右缘外，
+    /// 窗口位置由工作区、窗口尺寸与浮窗外形推导，不依赖具体分辨率；覆盖四边与双轴夹取，
     /// 每次关闭都核对共享状态，最后复位复验常规情形。
     /// </summary>
     /// <param name="checks">通过项收集器。</param>
     private async Task RunRatingSourcesEdgeCasesAsync(List<string> checks)
     {
+        foreach (var (scale, width, height) in new[]
+        {
+            (1d, 206d, 194d), (1.25, 205.6, 193.6), (1.5, 206d + 2d / 3, 194d + 2d / 3),
+            (1.75, 204d + 16d / 7, 192d + 16d / 7), (2d, 206d, 194d), (2.5, 206.4, 194.4),
+        })
+        {
+            var size = WindowsRatingSourcesFlyout.MeasurePresenterSize(204, 192, new Thickness(1), scale);
+            RequireSmoke(Math.Abs(size.Width - width) < .0001 && Math.Abs(size.Height - height) < .0001,
+                $"DPI={scale} 原生浮窗逐边取整不符: {size}");
+        }
         var work = WorkAreaInScreenDips();
         var restore = AppWindow.Position;
         _main.Settings.LayoutMode = LayoutMode.Row;
@@ -2124,7 +2142,61 @@ internal sealed partial class WindowsMainWindow
         await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen,
             "右缘外来源浮窗关闭未同步共享状态");
 
-        // 3) 复位：回到工作区内的起点后重开，浮窗必须回到未夹取的令牌位置。
+        AppWindow.Move(restore);
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        var card = _filmstrip.CardFor(_main.CurrentFile!)
+            ?? throw new InvalidOperationException("边缘验收缺少当前照片卡片");
+        var cardButton = card.RatingZeroButton;
+        Rect CardAnchor() => cardButton.TransformToVisual(_root).TransformBounds(
+            new Rect(0, 0, cardButton.ActualWidth, cardButton.ActualHeight));
+        var cardAnchor = CardAnchor();
+        origin = ClientOriginInScreenDips() ?? throw new InvalidOperationException("无法取得客户区屏幕原点");
+        PlaceWindowForSmoke(new Point(cardAnchor.X + cardAnchor.Width / 2, cardAnchor.Y),
+            new Point(work.Left + bottom.Body.Width / 4, origin.Y + cardAnchor.Y));
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        new ButtonAutomationPeer(cardButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen, "左缘来源浮窗打开");
+        var left = await RequireRatingSourcesGeometryAsync("左缘卡片");
+        RequireSmoke(left.ClampedX, "左缘来源浮窗未横向夹取");
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen, "左缘来源浮窗关闭");
+
+        AppWindow.Move(restore);
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        cardAnchor = CardAnchor();
+        origin = ClientOriginInScreenDips() ?? throw new InvalidOperationException("无法取得客户区屏幕原点");
+        PlaceWindowForSmoke(new Point(cardAnchor.X, cardAnchor.Bottom),
+            new Point(origin.X + cardAnchor.X,
+                work.Top - DesignTokens.PopupRatingSourcesArrowMargin - bottom.Body.Height / 4));
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        new ButtonAutomationPeer(cardButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen, "上缘来源浮窗打开");
+        var top = await RequireRatingSourcesGeometryAsync("上缘卡片");
+        RequireSmoke(top.ClampedY, "上缘来源浮窗未纵向夹取");
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen, "上缘来源浮窗关闭");
+
+        AppWindow.Move(restore);
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        var cornerAnchor = ControlBarRatingAnchor();
+        PlaceWindowForSmoke(new Point(cornerAnchor.X + cornerAnchor.Width / 2, cornerAnchor.Top),
+            new Point(work.Left + insideEdge, work.Bottom + beyondBottom));
+        await Task.Delay(250);
+        _root.UpdateLayout();
+        new ButtonAutomationPeer(_controlBar.RatingZeroButton).Invoke();
+        await WaitForSmokeAsync(() => _ratingSources.IsOpen, "左下双轴来源浮窗打开");
+        var corner = await RequireRatingSourcesGeometryAsync("左下双轴");
+        RequireSmoke(corner.ClampedX && corner.ClampedY,
+            $"左下来源浮窗未同时夹取两轴: body={corner.Body}, ideal={corner.Ideal}, bounds={corner.Bounds}, "
+            + $"work={WorkAreaInScreenDips()}, position={AppWindow.Position}, scale={_root.XamlRoot?.RasterizationScale}");
+        _ratingSources.DismissNativeForAcceptance();
+        await WaitForSmokeAsync(() => !_ratingSources.IsOpen && !_main.RatingSources.IsOpen, "左下双轴来源浮窗关闭");
+
         AppWindow.Move(restore);
         await Task.Delay(250);
         _root.UpdateLayout();
@@ -2135,7 +2207,7 @@ internal sealed partial class WindowsMainWindow
         var restored = await RequireRatingSourcesGeometryAsync("复位后横排控制栏");
         RequireSmoke(!restored.ClampedX && !restored.ClampedY,
             $"复位后来源浮窗仍被夹取: body={restored.Body}, ideal={restored.Ideal}, bounds={restored.Bounds}");
-        checks.Add("PASS RATING-04 edge clamping: window hanging below/right of the work area keeps the flyout fully visible at the expected clamped position (per-axis tolerant comparison), restores the arrowMargin/centering position once the window is back inside, and closes with the native state in sync");
+        checks.Add("PASS RATING-04 edge clamping: DPI-rounded size matches native Presenter; bottom/right/left/top and simultaneous two-axis constraints preserve exact expected placement; reset restores arrowMargin/centering and native close stays in sync");
     }
 
     /// <summary>RATING-04：真实冲突入口、原生来源浮窗、整组写入与关闭条件。</summary>

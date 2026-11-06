@@ -52,6 +52,8 @@ internal static class WindowsNativeApplication
     /// 只为并行度扫描服务:隔离设置每轮会被重置,无法靠改设置文件做对照实验。
     /// </summary>
     internal static int? StressNativeThreads { get; private set; }
+    internal static string? OutputDirectory { get; private set; }
+    internal static long? StressBudgetBytes { get; private set; }
 
     /// <summary>隔离产物目录(设置、数据库、日志、报告都在这里)。</summary>
     internal static string IsolatedOutputDirectory => WindowsMainWindow.SmokeOutputDirectory;
@@ -73,6 +75,8 @@ internal static class WindowsNativeApplication
 
     /// <summary>本进程的预算源(含低内存监视线程);重复注入只创建一次。</summary>
     private static WindowsMemoryBudgetProvider? s_memoryBudgetProvider;
+    internal static IMemoryBudgetProvider MemoryBudgetProvider => s_memoryBudgetProvider
+        ?? throw new InvalidOperationException("内存预算尚未初始化");
 
     /// <summary>
     /// 启动原生壳。
@@ -96,7 +100,17 @@ internal static class WindowsNativeApplication
         ActivationCheckRequested = args.Contains("--pv-native-activation-check");
         IsolatedMode = smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
             || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested
-            || args.Contains("--pv-native-color");
+            || args.Contains("--pv-native-color") || args.Contains("--pv-native-upload")
+            || args.Contains("--pv-native-rating");
+
+        if (IsolatedMode)
+        {
+            var output = args.FirstOrDefault(a => a.StartsWith("--pv-acceptance-output=", StringComparison.Ordinal));
+            if (output != null) OutputDirectory = Path.GetFullPath(output["--pv-acceptance-output=".Length..]);
+            var budget = args.FirstOrDefault(a => a.StartsWith("--pv-stress-budget-mb=", StringComparison.Ordinal));
+            if (StressRequested && budget != null && int.TryParse(budget["--pv-stress-budget-mb=".Length..], out int mb)
+                && mb >= 1024) StressBudgetBytes = (long)mb << 20;
+        }
 
         var logName = StressRequested ? "native-startup-stress.log"
             : PerfProbeFolder != null ? "native-startup-probe.log"
@@ -163,8 +177,14 @@ internal static class WindowsNativeApplication
             ? WindowHandle
             : throw new InvalidOperationException("窗口句柄尚未就绪,无法弹出文件选择器。")));
         AppResources.Initialize(new WindowsAppResources());
+        var budgetProvider = s_memoryBudgetProvider ??= new WindowsMemoryBudgetProvider(StressBudgetBytes);
+        long budget = budgetProvider.GetBudgetBytes();
+        if (budget > 0) ImageBufferPool.MaxIdleBytes = Math.Min(512L << 20, budget / 32);
         FastHeifDecoder.Configure(new FastHeifOptions
         {
+            MaxConcurrentImages = Math.Max(1, Math.Min(Math.Max(2, Environment.ProcessorCount / 4),
+                budget > 0 ? (int)Math.Max(1, budget / (2L << 30)) : 1)),
+            MaxIdleContexts = budget is > 0 and < (4L << 30) ? 2 : 6,
             // 与 libheif 等同址:普通输出与单文件解包目录都是 AppContext.BaseDirectory。
             // 文件缺失时返回 0,交回 DllImport 默认探测(再失败由解码器按不可用处理)。
             LoadLibrary = static () =>
@@ -176,7 +196,7 @@ internal static class WindowsNativeApplication
         HeifLoader.Initialize(new LibHeifDecoder());
         BitmapLoader.InitializePresentationDecoder(new WindowsPresentationDecoder(), new WindowsPresentationEncodingPolicy());
         PerformanceBudget.Initialize(new WindowsPerformanceBudget());
-        MemoryGovernor.Initialize(s_memoryBudgetProvider ??= new WindowsMemoryBudgetProvider());
+        InitializeMemoryBudget(budgetProvider);
         // 评分回写由共享 RatingService + XmpRatingStoreFactory 走强类型路径,旧 IXmpPlatformWriter 门面不再注入。
         if (isolated)
         {
@@ -185,6 +205,17 @@ internal static class WindowsNativeApplication
         }
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_DML());
         NativeStartupLog.Write("facades ready");
+    }
+
+    internal static void InitializeMemoryBudget(IMemoryBudgetProvider provider)
+    {
+        string? logPath = null;
+        if (IsolatedMode)
+        {
+            Directory.CreateDirectory(IsolatedOutputDirectory);
+            logPath = Path.Combine(IsolatedOutputDirectory, "memory-events.jsonl");
+        }
+        MemoryGovernor.Initialize(provider, logPath);
     }
 
     /// <summary>解析 <c>--pv-stress-native-threads=N</c>(只用于压测并行度扫描)。</summary>

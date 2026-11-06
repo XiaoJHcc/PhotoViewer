@@ -876,26 +876,24 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             if (image.Pixels.Length == 0) throw new ArgumentException("像素租约已归零", nameof(image));
         }
 
+        TrackWanted(image, generation);
         // 期望上屏的帧按实例记录:在途上传据此判断"还要不要"。
         _wanted = image == null ? null : new WeakReference<DecodedImage>(image);
         var key = _wanted;
         bool cut = generation != _generation;
         _generation = generation;
+        RefreshUploadPending();
 
         // 会话的加载态/增强态等属性变化会带着同一帧重复触发 Changed;同一实例、同一代际没有任何 GPU 工作可做。
         if (image != null && _current?.Matches(image) == true)
         {
-            if (!cut)
-            {
-                WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
-                return;
-            }
+            if (!cut) return;
 
             // STATE-01:重新选中同一文件命中同一缓存实例 —— 纹理无需重传,但几何必须按切图重算
             // (适应态重新适应、跟随对焦居中到新照片的对焦点)。
             _viewport.BeginImageChange();
             _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _current.Width);
-            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            WindowsUploadStats.RecordCacheHit();
             Draw();
             NotifyViewportChanged();
             return;
@@ -924,7 +922,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         {
             BindTexture(cached);
             _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
-            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            WindowsUploadStats.RecordCacheHit();
             NativeStartupLog.Write($"photo view: 复用纹理 纹理={image.Width}x{image.Height} 缓存={_recentTextures.Count} " +
                 $"视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
             Draw();
@@ -984,35 +982,40 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <returns>可绑定的纹理条目</returns>
     private unsafe TextureEntry UploadSynchronously(DecodedImage image, WeakReference<DecodedImage> key)
     {
-        var uploadSw = Stopwatch.StartNew();
-
-        // 同尺寸空纹理优先复用(整幅 UpdateSubresource 覆写 + 重新生成 mip 链,内容不会残留)。
+        long started = Stopwatch.GetTimestamp();
         var entry = TakeSpare(image.Width, image.Height);
-        double createMs;
+        double createMs = 0;
         if (entry is null)
         {
             var texture = _device.CreateTexture2D(MippedTextureDescription((uint)image.Width, (uint)image.Height), null);
-            var view = _device.CreateShaderResourceView(texture, null);
-            entry = new TextureEntry(key, texture, view, image.Width, image.Height);
-            createMs = uploadSw.Elapsed.TotalMilliseconds;
+            try
+            {
+                var view = _device.CreateShaderResourceView(texture, null);
+                entry = new TextureEntry(key, texture, view, image.Width, image.Height);
+            }
+            catch
+            {
+                texture.Dispose();
+                throw;
+            }
+            createMs = WindowsUploadStats.Elapsed(started);
         }
         else
         {
             entry.Rebind(key);
-            createMs = 0;
+            WindowsUploadStats.RecordReuse();
         }
 
+        long copied = Stopwatch.GetTimestamp();
         fixed (byte* pixels = image.Pixels)
         {
             _context.Object.UpdateSubresource(entry.Texture.Object, 0, IntPtr.Zero, (IntPtr)pixels, (uint)image.Stride, 0);
         }
-
-        var updateMs = uploadSw.Elapsed.TotalMilliseconds - createMs;
+        double updateMs = WindowsUploadStats.Elapsed(copied);
+        long mipsStarted = Stopwatch.GetTimestamp();
         _context.Object.GenerateMips(entry.View.Object);
-        var mipsMs = uploadSw.Elapsed.TotalMilliseconds - createMs - updateMs;
-        WindowsUploadStats.Record(image.Width, image.Height, createMs, updateMs, mipsMs);
-        NativeStartupLog.Write($"photo view: 上传耗时 纹理={image.Width}x{image.Height}"
-            + $" 建纹理={createMs:0.0} 上传={updateMs:0.0} mip={mipsMs:0.0}ms");
+        WindowsUploadStats.Record(new(image.Width, image.Height, false, 0, 0, createMs, updateMs,
+            WindowsUploadStats.Elapsed(mipsStarted), 0, WindowsUploadStats.Elapsed(started)));
         return entry;
     }
 
@@ -1032,7 +1035,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <param name="entry">退掉的条目</param>
     private void Retire(TextureEntry entry)
     {
-        if (_spareTexture is null && entry.Bytes <= BackgroundUploadBytes)
+        if (CanRetainTextures && _spareTexture is null && entry.Bytes <= BackgroundUploadBytes)
         {
             entry.Rebind(null);
             _spareTexture = entry;
@@ -1072,23 +1075,27 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <param name="image">源图(读取尺寸)</param>
     private unsafe void BeginStagedUpload(WeakReference<DecodedImage> key, DecodedImage image)
     {
+        if (!image.TryAcquire()) return;
         IComObject<ID3D11Texture2D>? staging = null;
+        bool transferred = false;
+        long started = Stopwatch.GetTimestamp();
         try
         {
-            var stagingSw = Stopwatch.StartNew();
             staging = _device.CreateTexture2D(StagingTextureDescription((uint)image.Width, (uint)image.Height), null);
+            double stagingMs = WindowsUploadStats.Elapsed(started);
+            long mapStarted = Stopwatch.GetTimestamp();
             var mapped = _context.Object.Map(staging.Object, 0, D3D11_MAP.D3D11_MAP_WRITE, 0);
-            if (mapped.pData == IntPtr.Zero)
-            {
-                throw new InvalidOperationException("主图暂存纹理映射失败");
-            }
-
-            var upload = new StagedUpload(key, staging, stagingSw.Elapsed.TotalMilliseconds);
+            double mapMs = WindowsUploadStats.Elapsed(mapStarted);
+            if (mapped.pData == IntPtr.Zero) throw new InvalidOperationException("主图暂存纹理映射失败");
+            var upload = new StagedUpload(key, image, staging, started, stagingMs,
+                mapMs, checked((long)mapped.RowPitch * image.Height));
             staging = null;
             _stagedUpload = upload;
+            transferred = true;
             Volatile.Write(ref upload.Copying, 1);
+            UpdateGpuBytes();
             var destination = mapped.pData;
-            var rowPitch = (int)mapped.RowPitch;
+            var rowPitch = checked((int)mapped.RowPitch);
             _ = Task.Run(() => CopyIntoStaging(upload, destination, rowPitch));
             RefreshUploadPending();
         }
@@ -1097,6 +1104,10 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             NativeStartupLog.Fail("photo view staged upload", ex);
             staging?.Dispose();
             RefreshUploadPending();
+        }
+        finally
+        {
+            if (!transferred) image.Release();
         }
     }
 
@@ -1109,32 +1120,26 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <param name="rowPitch">映射内存行距(可能与源 stride 不同)</param>
     private void CopyIntoStaging(StagedUpload upload, IntPtr destination, int rowPitch)
     {
-        var backgroundSw = Stopwatch.StartNew();
+        long started = Stopwatch.GetTimestamp();
         try
         {
-            if (upload.Key.TryGetTarget(out var image) && image.TryAcquire())
-            {
-                try
-                {
-                    CopyRows(image, destination, rowPitch);
-                }
-                finally
-                {
-                    image.Release();
-                }
-            }
+            CopyRows(upload.Source, destination, rowPitch);
+            upload.Copied = true;
         }
         catch (Exception ex)
         {
             NativeStartupLog.Fail("photo view staged copy", ex);
         }
-
-        Volatile.Write(ref upload.Copying, 0);
-        var backgroundMs = backgroundSw.Elapsed.TotalMilliseconds;
+        finally
+        {
+            upload.Source.Release();
+            Volatile.Write(ref upload.Copying, 0);
+        }
+        var backgroundMs = WindowsUploadStats.Elapsed(started);
         if (!TryPostToUiThread(() => CompleteStagedUpload(upload, backgroundMs)))
         {
             // 面板已释放:没人会消费这次结果,后台也不再写映射内存,这里可以直接释放暂存纹理。
-            upload.Texture.Dispose();
+            upload.ReleaseTexture();
             Volatile.Write(ref _uploadPending, 0);
         }
     }
@@ -1172,31 +1177,23 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         IComObject<ID3D11ShaderResourceView>? view = null;
         try
         {
-            if (ReferenceEquals(_stagedUpload, upload)) _stagedUpload = null;
             var staging = upload.Texture;
-            if (_disposed)
-            {
-                // 面板已释放：排在队尾的收尾回调不再碰 D3D（上下文已 Dispose，Unmap 会抛 ObjectDisposedException），
-                // 暂存纹理在 finally 里直接释放。
-                return;
-            }
-
+            if (_disposed) return;
             _context.Object.Unmap(staging.Object, 0);
-            if (!upload.Key.TryGetTarget(out var image))
-            {
-                return;
-            }
-
-            var uploadSw = Stopwatch.StartNew();
+            if (!upload.Copied || (!IsWanted(upload.Key) && !CanRetainTextures)) return;
+            var image = upload.Source;
+            long started = Stopwatch.GetTimestamp();
             mipped = _device.CreateTexture2D(MippedTextureDescription((uint)image.Width, (uint)image.Height), null);
-            var createMs = uploadSw.Elapsed.TotalMilliseconds;
+            double createMs = WindowsUploadStats.Elapsed(started);
+            long copied = Stopwatch.GetTimestamp();
             _context.Object.CopySubresourceRegion(mipped.Object, 0, 0, 0, 0, staging.Object, 0, IntPtr.Zero);
-            var updateMs = uploadSw.Elapsed.TotalMilliseconds - createMs;
+            double updateMs = WindowsUploadStats.Elapsed(copied);
+            long mipsStarted = Stopwatch.GetTimestamp();
             view = _device.CreateShaderResourceView(mipped, null);
             _context.Object.GenerateMips(view.Object);
-            var mipsMs = uploadSw.Elapsed.TotalMilliseconds - createMs - updateMs;
-            // 建暂存纹理与映射也是 UI 线程成本,一并记进建纹理段。
-            WindowsUploadStats.Record(image.Width, image.Height, createMs + upload.StagingMs, updateMs, mipsMs, backgroundMs);
+            double mipsMs = WindowsUploadStats.Elapsed(mipsStarted);
+            WindowsUploadStats.Record(new(image.Width, image.Height, true, upload.StagingMs, upload.MapMs,
+                createMs, updateMs, mipsMs, backgroundMs, WindowsUploadStats.Elapsed(upload.Started)));
 
             var entry = new TextureEntry(upload.Key, mipped, view, image.Width, image.Height);
             mipped = null;
@@ -1204,14 +1201,10 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             if (!IsWanted(upload.Key))
             {
                 Remember(entry);
-                UpdateGpuBytes();
                 return;
             }
-
             BindTexture(entry);
             _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
-            NativeStartupLog.Write($"photo view: 上传照片(后台) 纹理={image.Width}x{image.Height} 源={image.SourceWidth}x{image.SourceHeight} " +
-                $"方向={image.Orientation} 显示={DisplayWidth}x{DisplayHeight} 视口={PhysicalViewport.Width}x{PhysicalViewport.Height}");
             Draw();
             NotifyViewportChanged();
         }
@@ -1223,10 +1216,14 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         {
             view?.Dispose();
             mipped?.Dispose();
-            upload.Texture.Dispose();
-            // 这次被取代了就把接力机会交给当前期望帧(连翻时只有最后一次会真正跑完并上屏)。
-            TryStartWantedUpload();
-            RefreshUploadPending();
+            upload.ReleaseTexture();
+            if (ReferenceEquals(_stagedUpload, upload)) _stagedUpload = null;
+            if (!_disposed)
+            {
+                UpdateGpuBytes();
+                TryStartWantedUpload();
+                RefreshUploadPending();
+            }
         }
     }
 
@@ -1257,7 +1254,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             // 上一次拷贝其实就是这一帧(例如 A→B→A):命中最近纹理,直接上屏。
             BindTexture(cached);
             _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, image.Width);
-            WindowsUploadStats.RecordCacheHit(image.Width, image.Height);
+            WindowsUploadStats.RecordCacheHit();
             Draw();
             NotifyViewportChanged();
             return;
@@ -1269,7 +1266,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <summary>按"当前期望帧是否有在途上传"刷新 <see cref="IsUploadPending"/>。</summary>
     private void RefreshUploadPending()
     {
-        bool pending = _stagedUpload != null && _wanted != null && Matches(_stagedUpload.Key, _wanted);
+        bool pending = _wanted?.TryGetTarget(out var image) == true && _current?.Matches(image) != true;
         Volatile.Write(ref _uploadPending, pending ? 1 : 0);
     }
 
@@ -1307,6 +1304,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         }
 
         UpdateGpuBytes();
+        RefreshUploadPending();
     }
 
     /// <summary>取走最近缓存里与给定实例同一对象的纹理条目(命中即从缓存摘下)。</summary>
@@ -1326,10 +1324,18 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         return null;
     }
 
+    private static bool CanRetainTextures => MemoryGovernor.CurrentLevel == PressureLevel.Normal
+        && !MemoryGovernor.InRecoveryHold;
+
     /// <summary>把退下来的纹理收进最近缓存,超出容量淘汰最久未用的一张。</summary>
     /// <param name="entry">退下来的条目</param>
     private void Remember(TextureEntry entry)
     {
+        if (!CanRetainTextures)
+        {
+            entry.Dispose();
+            return;
+        }
         // 实例已被回收的条目再也不会有命中机会,顺手清掉(数量上限只有两张)。
         for (var index = _recentTextures.Count - 1; index >= 0; index--)
         {
@@ -1361,6 +1367,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
         foreach (var entry in _recentTextures) total += entry.Bytes;
         total += _spareTexture?.Bytes ?? 0;
         total += _bandBytes;
+        total += _stagedUpload?.Bytes ?? 0;
         Interlocked.Exchange(ref _gpuBytes, total);
     }
 
@@ -1454,7 +1461,7 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
             if (Volatile.Read(ref staged.Copying) == 0)
             {
                 _context.Object.Unmap(staged.Texture.Object, 0);
-                staged.Texture.Dispose();
+                staged.ReleaseTexture();
             }
         }
 
@@ -1605,8 +1612,14 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// <summary>按当前几何重绘一帧并呈现;无纹理时只清屏。</summary>
     private void Draw()
     {
+        if (_disposed || _renderTarget == null) return;
+        long started = Stopwatch.GetTimestamp();
         RenderScene();
+        double renderMs = WindowsUploadStats.Elapsed(started);
+        long presentStarted = Stopwatch.GetTimestamp();
         _swapChain.Present(1, 0);
+        WindowsUploadStats.RecordDraw(renderMs, WindowsUploadStats.Elapsed(presentStarted));
+        NotifyFrameSubmitted();
         RenderStateChanged?.Invoke();
     }
 
@@ -2130,28 +2143,32 @@ internal sealed partial class WindowsPhotoView : SwapChainPanel, IDisposable
     /// </summary>
     private sealed class StagedUpload
     {
-        /// <summary>构造一次上传。</summary>
-        /// <param name="key">源图实例的弱引用</param>
-        /// <param name="texture">系统内存暂存纹理</param>
-        /// <param name="stagingMs">建纹理 + 映射的 UI 线程耗时(ms)</param>
-        internal StagedUpload(WeakReference<DecodedImage> key, IComObject<ID3D11Texture2D> texture, double stagingMs)
+        private int _released;
+        internal StagedUpload(WeakReference<DecodedImage> key, DecodedImage source,
+            IComObject<ID3D11Texture2D> texture, long started, double stagingMs, double mapMs, long bytes)
         {
             Key = key;
+            Source = source;
             Texture = texture;
+            Started = started;
             StagingMs = stagingMs;
+            MapMs = mapMs;
+            Bytes = bytes;
         }
 
-        /// <summary>源图实例的弱引用。</summary>
         internal WeakReference<DecodedImage> Key { get; }
-
-        /// <summary>系统内存暂存纹理。</summary>
+        internal DecodedImage Source { get; }
         internal IComObject<ID3D11Texture2D> Texture { get; }
-
-        /// <summary>建纹理 + 映射的 UI 线程耗时(ms),计入上传统计的建纹理段。</summary>
+        internal long Started { get; }
         internal double StagingMs { get; }
-
-        /// <summary>后台线程是否仍在写映射内存(1 = 在写,0 = 已结束)。</summary>
+        internal double MapMs { get; }
+        internal long Bytes { get; }
+        internal bool Copied;
         internal int Copying;
+        internal void ReleaseTexture()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0) Texture.Dispose();
+        }
     }
 
     /// <summary>

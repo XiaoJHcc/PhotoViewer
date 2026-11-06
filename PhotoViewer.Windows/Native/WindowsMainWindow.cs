@@ -303,7 +303,7 @@ internal sealed partial class WindowsMainWindow : Window
         ConfigureTitleBar();
     }
 
-    /// <summary>主图上屏信号源(压测驱动器按它计时)。</summary>
+    /// <summary>主图像素加载会话；提交显示信号由窗口的 IDisplayLoadSignal 提供。</summary>
     internal PhotoLoadSession Session => _session;
 
     /// <summary>原生控制栏(验收核对 EXIF 整组入口)。</summary>
@@ -317,7 +317,12 @@ internal sealed partial class WindowsMainWindow : Window
     {
         var viewport = _photo.PhysicalViewport;
         var longEdge = (int)Math.Max(viewport.Width, viewport.Height);
-        return $"viewport={viewport.Width:0}x{viewport.Height:0} proxyTarget={longEdge * 2} " + WindowsUploadStats.Summary();
+        var memory = _photo.TextureMemoryForChecks;
+        return $"viewport={viewport.Width:0}x{viewport.Height:0} proxyTarget={longEdge * 2} "
+            + $"gpuEstimateMB={memory.Total >> 20} stagingMB={memory.Staging >> 20} "
+            + $"idleMB={ImageBufferPool.IdleBytes >> 20} budgetMB={PhotoViewer.Core.Memory.MemoryGovernor.BudgetBytes >> 20} "
+            + $"uiHeartbeatMaxMs={_stressHeartbeatMaxMs.ToString("F2", System.Globalization.CultureInfo.InvariantCulture)} "
+            + WindowsUploadStats.Summary();
     }
 
     /// <summary>
@@ -327,6 +332,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         // 关窗后仍可能收到一次 Activated(失活):此时任何 Window 属性都会抛 COMException,统一由该标志挡住。
         _closed = true;
+        _stressHeartbeat?.Stop();
         DisposeDisplayColor();
         Activated -= OnWindowActivated;
         if (_xamlRoot != null)
@@ -1577,6 +1583,8 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>解码会话变化:同步展示帧、增强计算态与提示(回调内同步上传,不跨下一次 Changed 持引用)。</summary>
     private void OnImageChanged()
     {
+        if (_session.Image != null && !_session.IsSubstitute && _main.CurrentFile is { } ready)
+            PixelsReady?.Invoke(ready.File);
         // EXIF 可能晚于主图到达;每次会话变化都重读对焦点,ToggleFit 才能在 F 上按对焦点放大。
         UpdateFocusPoint();
         // 会话自己管理增强态:Image 在增强就绪后返回增强图,切图/清空时立即回到新图或 null。
@@ -1743,7 +1751,7 @@ internal sealed partial class WindowsMainWindow : Window
     {
         var viewport = _photo.PhysicalViewport;
         // 分析栏可见时细节预览要 100% 源 → 一并驱动 Full 解码(根 AGENTS 5.1 同口径)
-        _session.UpdateViewport(viewport.Width, viewport.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
+        _session.UpdateViewport(viewport.Width, viewport.Height, _stressFull || _photo.NeedsFull || _main.IsAnalysisViewVisible);
     }
 
     /// <summary>刷新空首屏提示与命中层;解码失败时给出可见原因(FILM-06 同口径)。</summary>

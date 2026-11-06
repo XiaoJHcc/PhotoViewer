@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Core.Image.Heif;
@@ -20,7 +21,8 @@ namespace PhotoViewer.Windows.Core;
 /// <remarks>
 /// HEIF 走 <see cref="FastHeifDecoder"/>(HEVC 瓦片并行解码),方向取容器的 <c>irot</c>/<c>imir</c>,
 /// 按 ISO/IEC 23008-12 忽略 HEIF 的 EXIF Orientation 项;容器或色彩超出支持面时回落 libheif,
-/// 后者已把像素按容器变换摆正,故回落路径的方向固定为 1。RAW 走系统 WIC RAW 引擎(见 <see cref="WindowsRawDecoder"/>)。
+/// 后者已把像素按容器变换摆正,故回落路径的方向固定为 1。RAW 走系统 WIC RAW 引擎(见 <see cref="WindowsRawDecoder"/>),
+/// 解出的 BGRA 源像素经 <see cref="WindowsRawSourceCache"/> 有界保留,紧接的代理 → Full 共用同一次开发。
 /// 回落路径不做 8 位 sRGB 中转:回落产物是**按文件真实色彩声明(ICC 优先,其次 nclx)转换**的线性 RGBA16F,
 /// 广色域保留到渲染层;色彩无法如实解释(HDR PQ/HLG、非支持原色)时如实返回 null 并记原因,不把未知当 sRGB。
 /// </remarks>
@@ -202,6 +204,10 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
     /// RAW 主图:系统 WIC RAW 引擎全分辨率解码(按相机声明裁切),失败时退回相机写的整幅内嵌 JPEG;
     /// 两者都没有时如实返回 null(与 SCOPE-04 的"停在可得尺寸"口径一致,不拿小预览冒充全分辨率)。
     /// </summary>
+    /// <remarks>
+    /// 一次 WIC 开发很贵而原生加载总是"先代理、随后 Full":解出的 BGRA 源像素经 <see cref="WindowsRawSourceCache"/>
+    /// 有界保留供紧接的 Full 共享;另申请只覆盖源与精缩 BGRA 的临时准入,输出 F16 由 <see cref="BitmapLoader"/> 预留。
+    /// </remarks>
     /// <param name="file">文件引用。</param>
     /// <param name="maxLongEdge">长边上限;null 表示全分辨率。</param>
     /// <param name="cancellationToken">取消令牌。</param>
@@ -218,23 +224,60 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
             return null;
         }
 
+        var identity = WindowsRawDecoder.IsAvailable(Path.GetExtension(path))
+            ? WindowsRawSourceCache.TryCreateKey(file, path)
+            : null;
+
         DecodedImage? source = null;
         DecodedImage? scaled = null;
-        int? orientation = null;
+        MemoryGovernor.AdmissionPermit? scratch = null;
         try
         {
-            var extension = Path.GetExtension(path);
-            if (WindowsRawDecoder.IsAvailable(extension))
+            int? orientation;
+            // 借用的租约立刻交给 source,取消与准入拒绝都由 finally 归还。
+            var retained = identity is { } key ? WindowsRawSourceCache.TryAcquire(key) : null;
+            source = retained?.Image;
+
+            (int Width, int Height)? geometry = null;
+            if (retained is { } resident) geometry = (resident.Image.Width, resident.Image.Height);
+            else if (identity is not null) geometry = WindowsRawDecoder.TryGetSize(path);
+            var estimate = EstimateScratchBytes(geometry, maxLongEdge);
+            if (!TryAcquireScratch((retained is null ? estimate.SourceBytes : 0) + estimate.ScaledBytes, out scratch))
             {
-                source = await Task.Run(() => WindowsRawDecoder.DecodeFull(path, cancellationToken, out orientation), cancellationToken)
-                    .ConfigureAwait(false);
+                return null;
             }
 
-            if (source is null)
+            if (retained is { } hit)
+            {
+                source = hit.Image;
+                cancellationToken.ThrowIfCancellationRequested();
+                orientation = hit.Orientation;
+            }
+            else if (identity is { } developKey)
+            {
+                var developed = await WindowsRawSourceCache.AcquireOrDevelopAsync(developKey, cancellationToken,
+                    () => DevelopRawSourceAsync(file, path, cancellationToken)).ConfigureAwait(false);
+                source = developed?.Image;
+                cancellationToken.ThrowIfCancellationRequested();
+                if (developed is { } result)
+                {
+                    source = result.Image;
+                    orientation = result.Orientation;
+                }
+                else
+                {
+                    source = await Task.Run(() => WindowsRawDecoder.DecodeEmbeddedFullPreview(path), cancellationToken)
+                        .ConfigureAwait(false);
+                    if (source is null) return null;
+                    orientation = null;
+                }
+            }
+            else
             {
                 source = await Task.Run(() => WindowsRawDecoder.DecodeEmbeddedFullPreview(path), cancellationToken)
                     .ConfigureAwait(false);
                 if (source is null) return null;
+                orientation = null;
             }
 
             cancellationToken.ThrowIfCancellationRequested();
@@ -252,13 +295,72 @@ public sealed class WindowsPresentationDecoder : IPresentationImageDecoder
                 if (scaled is not null) effective = scaled;
             }
 
+            scratch?.SetActual((retained is null ? source.ByteCount : 0) + (scaled?.ByteCount ?? 0));
+
             return ColorEngine.ToScRgb16(effective, source.SourceWidth, source.SourceHeight, orientation.Value);
         }
         finally
         {
             scaled?.Release();
             source?.Release();
+            scratch?.Dispose();
         }
+    }
+
+    /// <summary>一次 WIC 全分辨率开发 + 方向口径(WIC 缺元数据时回退自有 EXIF)。</summary>
+    private static async Task<(DecodedImage? Image, int? Orientation)> DevelopRawSourceAsync(
+        IFileRef file,
+        string path,
+        CancellationToken cancellationToken)
+    {
+        int? declared = null;
+        var image = await Task.Run(() => WindowsRawDecoder.DecodeFull(path, cancellationToken, out declared), cancellationToken)
+            .ConfigureAwait(false);
+        if (image is null) return (null, null);
+
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int? orientation = declared;
+            if (orientation is null)
+            {
+                var exif = await ExifLoader.LoadExifDataAsync(file).ConfigureAwait(false);
+                orientation = exif?.OrientationValue ?? 1;
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            return (image, orientation);
+        }
+        catch
+        {
+            image.Release();
+            throw;
+        }
+    }
+
+    /// <summary>按真实源几何估算源与代理精缩的 BGRA 字节数(只做算术,几何未知返回 0)。</summary>
+    internal static (long SourceBytes, long ScaledBytes) EstimateScratchBytes(
+        (int Width, int Height)? geometry,
+        int? maxLongEdge)
+    {
+        if (geometry is not { } size || size.Width <= 0 || size.Height <= 0) return (0, 0);
+
+        int bytesPerPixel = DecodedImage.BytesPerPixel(PixelEncoding.Bgra32);
+        long sourceBytes = (long)size.Width * size.Height * bytesPerPixel;
+        int longEdge = Math.Max(size.Width, size.Height);
+        if (maxLongEdge is not int target || longEdge <= target) return (sourceBytes, 0);
+
+        double ratio = (double)target / longEdge;
+        long width = Math.Max(1, (long)Math.Round(size.Width * ratio));
+        long height = Math.Max(1, (long)Math.Round(size.Height * ratio));
+        return (sourceBytes, width * height * bytesPerPixel);
+    }
+
+    /// <summary>RAW 入口的临时像素准入;无临时分配时无需申请。</summary>
+    private static bool TryAcquireScratch(long bytes, out MemoryGovernor.AdmissionPermit? permit)
+    {
+        permit = null;
+        if (bytes <= 0) return true;
+        return MemoryGovernor.TryAcquire(bytes, DecodeContext.Priority, out permit);
     }
 
     /// <summary>

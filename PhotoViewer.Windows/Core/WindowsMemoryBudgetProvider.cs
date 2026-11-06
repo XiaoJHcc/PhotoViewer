@@ -42,8 +42,11 @@ internal sealed partial class WindowsMemoryBudgetProvider : IMemoryBudgetProvide
     private volatile bool _stopped;
 
     /// <summary>创建预算源;低内存通知不可用时退化为纯周期探测(不影响预算读数)。</summary>
-    public WindowsMemoryBudgetProvider()
+    private readonly long? _budgetLimit;
+
+    public WindowsMemoryBudgetProvider(long? budgetLimit = null)
     {
+        _budgetLimit = budgetLimit;
         _notification = CreateMemoryResourceNotification(LowMemoryResourceNotification);
         if (_notification == IntPtr.Zero) return;
 
@@ -69,7 +72,7 @@ internal sealed partial class WindowsMemoryBudgetProvider : IMemoryBudgetProvide
     {
         var status = ReadStatus();
         if (status is not { } value || value.TotalPhys == 0) return 0;
-        return (long)(value.TotalPhys * BudgetRatio);
+        return Math.Min((long)(value.TotalPhys * BudgetRatio), _budgetLimit ?? long.MaxValue);
     }
 
     /// <inheritdoc/>
@@ -78,7 +81,7 @@ internal sealed partial class WindowsMemoryBudgetProvider : IMemoryBudgetProvide
         var status = ReadStatus();
         if (status is not { } value || value.TotalPhys == 0) return long.MaxValue;
 
-        var budget = (long)(value.TotalPhys * BudgetRatio);
+        var budget = Math.Min((long)(value.TotalPhys * BudgetRatio), _budgetLimit ?? long.MaxValue);
         var fromBudget = budget - GetFootprintBytes();
         var fromSystem = (long)value.AvailPhys - SystemReserveBytes;
         var available = Math.Min(fromBudget, fromSystem);

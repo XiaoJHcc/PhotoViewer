@@ -11,8 +11,10 @@ namespace PhotoViewer.Core.Image;
 /// 尺寸类:1KB~1MB 用 2 的幂;≥1MB 每八度 8 个子档(粒度 = 2^(k-4),k 为覆盖请求的最小 2 幂指数),
 /// 对齐浪费 ≤ 12.5%——33MP 8 位(约 131MB)因此落 128MB 档,不再占 256MB 档。
 /// 空闲容量:总字节受 <see cref="MaxIdleBytes"/> 封顶,每个尺寸类另有张数上限(≥16MB 2 个 / ≥1MB 8 个 / 小档 64 个)。
-/// 压力:Caution 起清空 ≥1MB 的空闲缓冲,Critical 清空全部;单次释放 ≥64MB 时在线程池后台触发一次 gen2 GC
-/// (Trim 契约不阻塞探测线程)。因超帽丢弃的大缓冲累计 ≥256MB 时也后台 gen2 一次(丢弃的数组要等 major GC 才归还系统),
+/// 压力:Caution 起清空 ≥1MB 的空闲缓冲,Critical 清空全部;持续压力期间归还也**不再回填**
+/// (Caution 起拒收 ≥1MB 大缓冲,Critical 拒收一切),否则清理后会被后续 Return 重新填满。
+/// 单次释放 ≥64MB 时在线程池后台触发一次 gen2 GC(Trim 契约不阻塞探测线程,无同步 GC)。
+/// 因超帽丢弃的大缓冲累计 ≥256MB 时也后台 gen2 一次(丢弃的数组要等 major GC 才归还系统),
 /// <see cref="ReleaseIdle"/> 供缓存腾容量时先释放空闲大缓冲。
 /// 约定:解码主路径大图必须经此池;小图/工具图可直接 new(不经 LOH,不 churn)。
 /// </summary>
@@ -78,25 +80,50 @@ public static class ImageBufferPool
 
     /// <summary>
     /// 归还缓冲。只有长度恰好是某个尺寸类的数组才入池(非本池产物、未对齐长度与超域缓冲直接丢给 GC)。
-    /// 因该类张数已满或空闲池超帽而丢给 GC 的大缓冲计入丢弃账,GC 触发见 <see cref="NoteDiscarded"/>。
+    /// 因该类张数已满、空闲池超帽或当前压力不收留而丢给 GC 的缓冲计入丢弃账,GC 触发见 <see cref="NoteDiscarded"/>。
     /// </summary>
     public static void Return(byte[]? buffer)
     {
         if (buffer == null) return;
         if (!TryGetBucketIndexForLength(buffer.Length, out int index)) return;
-        var stack = _buckets[index];
-        if (stack.Count >= _bucketCaps[index])
+        int size = _bucketSizes[index];
+
+        if (!PressureAllowsRetention(MemoryGovernor.CurrentLevel, size))
         {
-            NoteDiscarded(buffer.Length);
+            NoteDiscarded(size);
             return;
         }
-        if (!TryReserveIdle(_bucketSizes[index]))
+        if (_buckets[index].Count >= _bucketCaps[index])
         {
-            NoteDiscarded(buffer.Length);
+            NoteDiscarded(size);
             return;
         }
-        stack.Push(buffer);
+
+        // 先记账再入栈:DrainBucket 只扣实际弹出的缓冲,归还与修剪交错时账目仍精确
+        if (Interlocked.Add(ref _idleBytes, size) > MaxIdleBytes)
+        {
+            Interlocked.Add(ref _idleBytes, -size);
+            NoteDiscarded(size);
+            return;
+        }
+        _buckets[index].Push(buffer);
+
+        // 与压力修剪的竞态收口:入池后级别可能已抬升,而那次 Trim 已经跑完;
+        // 再确认一次,此时直接丢该尺寸类的空闲缓冲(返回 Normal 前这里不会再收留大缓冲)。
+        if (!PressureAllowsRetention(MemoryGovernor.CurrentLevel, size))
+        {
+            long released = DrainBucket(index);
+            if (released > 0) NoteDiscarded(released);
+        }
     }
+
+    /// <summary>
+    /// 当前压力是否还允许把该尺寸类的空闲缓冲留在池里:Caution 起大缓冲(≥1MB)一律不留,
+    /// Critical 起一个都不留。持续压力下 Return 也不回填,否则清理后被重新填满、压力永远退不下去。
+    /// </summary>
+    private static bool PressureAllowsRetention(PressureLevel level, int size)
+        => level < PressureLevel.Caution
+            || (level < PressureLevel.Critical && size < FineGrainBytes);
 
     /// <summary>
     /// 主动释放空闲缓冲(从大档开始),返回实际释放字节数。
@@ -193,17 +220,6 @@ public static class ImageBufferPool
         int shift = 0;
         while ((1 << shift) < value) shift++;
         return shift;
-    }
-
-    /// <summary>以 CAS 预留空闲字节;超过 <see cref="MaxIdleBytes"/> 时不入池。</summary>
-    private static bool TryReserveIdle(int size)
-    {
-        while (true)
-        {
-            long idle = Interlocked.Read(ref _idleBytes);
-            if (idle + size > MaxIdleBytes) return false;
-            if (Interlocked.CompareExchange(ref _idleBytes, idle + size, idle) == idle) return true;
-        }
     }
 
     /// <summary>清空一个尺寸类并返回释放的字节数。</summary>

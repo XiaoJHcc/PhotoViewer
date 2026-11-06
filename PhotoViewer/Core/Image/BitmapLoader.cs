@@ -457,7 +457,7 @@ public static class BitmapLoader
     /// <summary>
     /// 有效主分区字节上限：按实测预算推导并缓存（每轮 MemoryGovernor 探测后重算）。
     /// 用户上限、256MB 下限、<c>预算 × (1 − (Caution 进入阈值 + 5)/100) − 非缓存占用</c> 三者取夹取结果；
-    /// 非缓存占用 = max(0, 实测 footprint − 主分区缓存 − 缩略图缓存 − 池空闲字节)。
+    /// 主分区以外占用 = max(0, 实测 footprint − 主分区缓存)，包括缩略图与池空闲字节。
     /// <see cref="AutomaticCacheLimit"/> 为 true 时忽略用户上限，只按预算推导（iPad 自动口径）。
     /// </summary>
     public static long EffectiveCacheCapacityBytes => Interlocked.Read(ref _effectiveCapacityBytes);
@@ -493,7 +493,7 @@ public static class BitmapLoader
         long limit;
         if (budget > 0 && footprint > 0)
         {
-            long nonCache = Math.Max(0, footprint - FullCacheSize - ThumbCacheSize - ImageBufferPool.IdleBytes);
+            long nonCache = Math.Max(0, footprint - FullCacheSize);
             double ratio = 1 - (Math.Clamp(MemoryGovernor.CautionEnterPercent, 0, 90) + 5) / 100.0;
             long derived = (long)(budget * ratio) - nonCache;
             limit = automatic ? derived : Math.Min(userLimit, derived);

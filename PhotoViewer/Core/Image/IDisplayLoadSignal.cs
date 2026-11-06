@@ -4,13 +4,15 @@ using PhotoViewer.Core.Storage;
 namespace PhotoViewer.Core.Image;
 
 /// <summary>
-/// 主图"上屏完成"信号源：原生 <see cref="PhotoLoadSession"/> 实现，
-/// 压测驱动器据此计时与判读代理档，不依赖壳的具体类型。
+/// 主图加载完成信号源。PhotoLoadSession 表示正式像素就绪；异步上传的壳应提供
+/// 目标代际纹理提交显示后的实现。完成提交不等同于物理屏幕扫描完成。
 /// </summary>
 public interface IDisplayLoadSignal
 {
     /// <summary>当前上屏图是否代理档。</summary>
     bool CurrentIsProxy { get; }
+
+    string CompletionStage => "pixels-ready";
 
     /// <summary>当前上屏产物的像素编码（无图时为 null）；压测据此把编码协商结果写进逐张记录。</summary>
     PixelEncoding? CurrentEncoding { get; }
@@ -22,6 +24,8 @@ public interface IDisplayLoadSignal
     /// <param name="handler">上屏完成回调。</param>
     /// <returns>退订句柄。</returns>
     IDisposable Subscribe(Action<IFileRef> handler);
+
+    IDisposable SubscribePixelsReady(Action<IFileRef> handler) => Subscribe(handler);
 }
 
 /// <summary>把退订动作包成句柄（订阅方标准写法：<c>using var subscription = signal.Subscribe(...)</c>）。</summary>

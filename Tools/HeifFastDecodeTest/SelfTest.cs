@@ -1,8 +1,10 @@
+using PhotoViewer.Core.Color;
+using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 
-/// <summary>不依赖样张的自检:变换→EXIF 方向真值表。</summary>
+/// <summary>不依赖样张的自检:变换→EXIF 方向真值表、容器色彩声明、原生平面内存估值的纯计算口径。</summary>
 internal static class SelfTest
 {
     private enum Op
@@ -19,8 +21,75 @@ internal static class SelfTest
     {
         var failures = TransformTruthTable();
         failures += ColorTests.RunContainerCases();
+        failures += NativePlaneEstimateCases();
         Console.WriteLine(failures == 0 ? "selftest: PASS" : $"selftest: {failures} FAILURE(S)");
         return failures == 0 ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 原生平面临时内存估值的纯计算口径:合成容器(64×32 单瓦片、4:2:0、hvcC 声明 10 位)上手算期望值。
+    /// </summary>
+    /// <remarks>
+    /// 每块瓦片 = <c>strideY×codedHeight + 2×strideC×chromaHeight</c>(码流 16 像素、行距 64 字节对齐),
+    /// 全部瓦片求和后乘 2(解码帧 + 解码器保留表面);ICC 源另加转换中间图,最终展示缓冲不计。
+    /// </remarks>
+    /// <returns>失败项数。</returns>
+    private static int NativePlaneEstimateCases()
+    {
+        var icc = new byte[132];
+        for (var i = 0; i < icc.Length; i++) icc[i] = (byte)(0x30 + i);
+
+        var plain = HeifContainer.TryParse(ColorTests.BuildContainer(null, null), out var plainReason);
+        var withIcc = HeifContainer.TryParse(ColorTests.BuildContainer(null, icc), out var iccReason);
+        if (plain is null || withIcc is null)
+        {
+            Console.WriteLine($"  ! 估值用例的合成容器解析失败 plain={plainReason} icc={iccReason}");
+            return 1;
+        }
+
+        var failures = 0;
+
+        // 64×32、4:2:0、10 位(2 字节/样本):coded 64×32、strideY = align(128,64) = 128、
+        // 色度 32×16、strideC = align(64,64) = 64 → 单瓦片 128×32 + 2×64×16 = 6144,两份表面 = 12288。
+        failures += ExpectEstimate("单瓦片 4:2:0 10 位平面", plain, null, PixelEncoding.RgbaF16, 12288, 0);
+        // ICC 中间图按目标尺寸:64×32 = 2048 像素;位深 > 8 且出口为 RGBA16F/RGBA8 时 8 字节/像素。
+        failures += ExpectEstimate("ICC F16 中间图 8 字节/像素", withIcc, null, PixelEncoding.RgbaF16, 12288, 16384);
+        // 8 位 RGBA 非 P3 出口还有一张 sRGB8 中转图(4 字节/像素)。
+        failures += ExpectEstimate("ICC RGBA8 sRGB 多一张中转图", withIcc, null, PixelEncoding.Rgba8, 12288, 24576);
+        failures += ExpectEstimate("ICC RGBA8 P3 无中转图", withIcc, null, PixelEncoding.Rgba8, 12288, 16384,
+            ImageColorSpace.DisplayP3);
+        // 8 位出口(BGRA32)用 4 字节/像素的 ICC 码值图。
+        failures += ExpectEstimate("ICC BGRA32 中间图 4 字节/像素", withIcc, null, PixelEncoding.Bgra32, 12288, 8192);
+        // 目标面积缩小只改 ICC 中间图(8×4 = 32 像素),平面估值不变:原生解码仍是全瓦片。
+        failures += ExpectEstimate("代理目标不改平面估值", withIcc, 8, PixelEncoding.RgbaF16, 12288, 256);
+
+        Console.WriteLine($"native plane estimate cases: {(failures == 0 ? "ok" : "FAILED")}");
+        return failures;
+    }
+
+    /// <summary>断言一次估值与手算期望一致。</summary>
+    /// <param name="label">用例名。</param>
+    /// <param name="container">容器。</param>
+    /// <param name="maxLongEdge">目标长边上限。</param>
+    /// <param name="encoding">目标编码。</param>
+    /// <param name="planeBytes">期望平面字节。</param>
+    /// <param name="iccBytes">期望 ICC 中间图字节。</param>
+    /// <param name="colorSpace">8 位 RGBA 的目标色彩空间。</param>
+    /// <returns>0 = 通过,1 = 失败。</returns>
+    private static int ExpectEstimate(
+        string label,
+        HeifContainer container,
+        int? maxLongEdge,
+        PixelEncoding encoding,
+        long planeBytes,
+        long iccBytes,
+        ImageColorSpace colorSpace = ImageColorSpace.Srgb)
+    {
+        var estimate = FastHeifDecoder.EstimateScratch(container, maxLongEdge, encoding, colorSpace);
+        var ok = estimate.PlaneBytes == planeBytes && estimate.IccIntermediateBytes == iccBytes;
+        Console.WriteLine($"  {(ok ? "ok" : "! ")} {label}: 平面 {estimate.PlaneBytes}(期望 {planeBytes}) "
+            + $"ICC {estimate.IccIntermediateBytes}(期望 {iccBytes})");
+        return ok ? 0 : 1;
     }
 
     /// <summary>

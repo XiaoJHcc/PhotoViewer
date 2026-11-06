@@ -35,6 +35,9 @@ public static class MemoryGovernor
     /// <summary>周期探测间隔(默认 2s)。</summary>
     public static TimeSpan ProbeInterval { get; set; } = TimeSpan.FromSeconds(2);
 
+    /// <summary>非 P0 准入的记账提交重试上限:并发争抢预留额度时防止无限自旋(拒绝语义本就允许放弃)。</summary>
+    private const int MaxAdmissionAttempts = 16;
+
     private static readonly object _gate = new();
     private static readonly List<IMemoryClient> _clients = new();
     private static IMemoryBudgetProvider? _provider;
@@ -111,13 +114,13 @@ public static class MemoryGovernor
     /// <summary>
     /// 注入平台预算源并启动周期探测(2s,带水位迟滞防抖)。重复调用以最后一次为准。
     /// </summary>
-    public static void Initialize(IMemoryBudgetProvider provider)
+    public static void Initialize(IMemoryBudgetProvider provider, string? logPath = null)
     {
         lock (_gate)
         {
             _provider = provider ?? throw new ArgumentNullException(nameof(provider));
-            var settingsPath = SettingsPathHelper.GetDefaultPath("PhotoViewer");
-            _logPath = Path.Combine(Path.GetDirectoryName(settingsPath)!, "memory-events.jsonl");
+            _logPath = logPath ?? Path.Combine(Path.GetDirectoryName(SettingsPathHelper.GetDefaultPath("PhotoViewer"))!,
+                "memory-events.jsonl");
             _timer?.Dispose();
             _timer = new Timer(_ => SafeEvaluate(), null, ProbeInterval, ProbeInterval);
         }
@@ -170,41 +173,53 @@ public static class MemoryGovernor
             return true;
         }
 
-        var level = CurrentLevel;
-        long budget = provider.GetBudgetBytes();
-        long available = provider.GetAvailableBytes();
+        // 检查与记账必须一次原子提交:若各自读到同一个 reserved 再分别累加,
+        // 多个并发申请会同时通过"reserved + bytes <= cap",实际预留越过级别上限。
+        var level = PressureLevel.Normal;
+        long budget = 0;
+        long available = 0;
+        string reason = "cap-reject";
 
-        // 级别拒绝:Warning 起 P2/P3 一律拒绝;Critical 拒绝一切非 P0
-        if (level == PressureLevel.Critical ||
-            (level >= PressureLevel.Warning && priority >= DecodePriority.P2_Prefetch))
+        for (int attempt = 0; attempt < MaxAdmissionAttempts; attempt++)
         {
-            RefusalLog(bytes, priority, level, available, budget, "level-reject");
-            return false;
+            // 每轮重读级别/预算/可用:上一轮 CAS 失败期间它们可能已被别的准入或探测改变
+            level = CurrentLevel;
+            budget = provider.GetBudgetBytes();
+            available = provider.GetAvailableBytes();
+
+            // 级别拒绝:Warning 起 P2/P3 一律拒绝;Critical 拒绝一切非 P0
+            if (level == PressureLevel.Critical ||
+                (level >= PressureLevel.Warning && priority >= DecodePriority.P2_Prefetch))
+            {
+                reason = "level-reject";
+                break;
+            }
+
+            long cap = (long)(budget * AdmissionCapRatio(level));
+            long reserved = Interlocked.Read(ref _reservedBytes);
+
+            // 双重闸门:总额不超预留上限;单次不超当前可用的一半(避免单张解码吃掉大半余量)
+            if (reserved + bytes > cap) break;
+            if (available != long.MaxValue && bytes > available / 2) break;
+
+            if (Interlocked.CompareExchange(ref _reservedBytes, reserved + bytes, reserved) != reserved)
+                continue;
+
+            permit = new AdmissionPermit(bytes);
+            return true;
         }
 
-        // 级别定预留上限:Caution 25%,其余(P1 在 Warning)10%,Normal 50%
-        double capRatio = level switch
-        {
-            PressureLevel.Normal => 0.50,
-            PressureLevel.Caution => 0.25,
-            _ => 0.10,
-        };
-        long cap = (long)(budget * capRatio);
-        long reserved = Interlocked.Read(ref _reservedBytes);
-
-        // 双重闸门:总额不超预留上限;单次不超当前可用的一半(避免单张解码吃掉大半余量)
-        bool granted = reserved + bytes <= cap
-            && (available == long.MaxValue || bytes <= available / 2);
-        if (!granted)
-        {
-            RefusalLog(bytes, priority, level, available, budget, "cap-reject");
-            return false;
-        }
-
-        Interlocked.Add(ref _reservedBytes, bytes);
-        permit = new AdmissionPermit(bytes);
-        return true;
+        RefusalLog(bytes, priority, level, available, budget, reason);
+        return false;
     }
+
+    /// <summary>级别对应的在途预留上限比例:Normal 50%、Caution 25%、其余(P1 在 Warning)10%。</summary>
+    private static double AdmissionCapRatio(PressureLevel level) => level switch
+    {
+        PressureLevel.Normal => 0.50,
+        PressureLevel.Caution => 0.25,
+        _ => 0.10,
+    };
 
     /// <summary>
     /// OS 内存事件直报(iOS DidReceiveMemoryWarning / Android OnTrimMemory):只升不降,立即生效并落快照。

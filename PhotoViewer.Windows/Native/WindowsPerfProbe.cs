@@ -111,6 +111,7 @@ internal static class WindowsPerfProbe
         }
         catch (Exception exception)
         {
+            Environment.ExitCode = 1;
             Report(report, $"directory ERROR {exception.GetType().Name}: {exception.Message}");
             WriteReport(reportPath, report);
             return;
@@ -462,6 +463,7 @@ internal static class WindowsPerfProbe
         /// <summary>记录失败(同项后续成功不会覆盖失败信息,先清失败再写结果)。</summary>
         public void Fail(string name, Exception exception)
         {
+            Environment.ExitCode = 1;
             _failure[name] = exception.GetType().Name + ": " + exception.Message;
             if (!_times.ContainsKey(name)) _order.Add(name);
             if (!_times.ContainsKey(name)) _times[name] = new List<double>();

@@ -1,8 +1,10 @@
+using System.Reflection;
 using System.Text.Json;
 using LibHeifSharp;
 using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Image.Heif;
+using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.Windows.Core;
 using SkiaSharp;
@@ -56,6 +58,7 @@ internal static class E2E
         failures += RunRejectedColorDeclarations(files);
         failures += RunRotatedContainerGeometry(files);
         failures += RunLeaseAndCancellation(files);
+        failures += RunScratchAdmission(files);
         failures += RunOrientationContract(files);
         foreach (var file in files)
         {
@@ -529,6 +532,214 @@ internal static class E2E
         Console.WriteLine($"  {(ok ? "ok" : "! ")} {label}释放后回到池 {grew} 字节（产物 {productBytes} 字节）");
         return ok ? 0 : 1;
     }
+
+
+    /// <summary>
+    /// 原生平面临时内存准入(快速 HEIF 主图):纯估值口径、非 P0 拒批不回落、P0 豁免、许可归还、
+    /// 工具未注入预算源时全放行。
+    /// </summary>
+    /// <remarks>
+    /// 估值口径按**全部瓦片**的原生 YUV 平面算(解码始终是全瓦片,与最终展示面积无关),
+    /// 每块含 16 像素码流对齐、64 字节行距对齐与两份表面(解码帧 + 解码器保留表面),
+    /// 携带 ICC 的源另加转换中间图,最终展示缓冲不重复预留。
+    /// 拒批语义:非 P0 预算不足抛 <see cref="OutOfMemoryException"/>,不返回 null ——
+    /// 返回 null 会让调用方回落 libheif,再分配一份同量级原生内存。
+    /// </remarks>
+    /// <param name="files">夹具文件。</param>
+    /// <returns>失败项数。</returns>
+    private static int RunScratchAdmission(List<string> files)
+    {
+        Console.WriteLine("原生平面临时内存准入:");
+        var failures = FixtureEstimateCases(files);
+        failures += RefusalCases(files);
+        return failures;
+    }
+
+    /// <summary>
+    /// 真实夹具:按文档公式独立重算平面估值,与生产估值交叉核对(覆盖多瓦片/位深/色度分支)。
+    /// </summary>
+    /// <param name="files">夹具文件。</param>
+    /// <returns>失败项数。</returns>
+    private static int FixtureEstimateCases(List<string> files)
+    {
+        var failures = 0;
+        foreach (var file in files)
+        {
+            var bytes = File.ReadAllBytes(file);
+            var container = HeifContainer.TryParse(bytes, out _);
+            if (container is null || container.Width != ChartWidth || container.Height != ChartHeight) continue;
+
+            var estimate = FastHeifDecoder.EstimateScratch(container, null, PixelEncoding.RgbaF16);
+            var independent = IndependentPlaneBytes(container);
+            var ok = estimate.PlaneBytes == independent;
+            if (!ok) failures++;
+            Console.WriteLine($"  {(ok ? "ok" : "! ")} {Path.GetFileName(file)} 独立重算平面 {independent} 字节"
+                + $"(估值 {estimate.PlaneBytes}、ICC 中间图 {estimate.IccIntermediateBytes}),"
+                + $"瓦片 {container.Tiles.Count} 块、色度 {container.ChromaFormat}、位深 {container.PixelInfo.LumaBits}");
+        }
+
+        return failures;
+    }
+
+    /// <summary>按文档公式独立重算平面估值(不调用生产实现),用于交叉核对。</summary>
+    /// <param name="container">容器。</param>
+    /// <returns>平面字节。</returns>
+    private static long IndependentPlaneBytes(HeifContainer container)
+    {
+        var pixiBits = container.PixelInfo.BitsPerChannel.Count > 0 ? container.PixelInfo.BitsPerChannel[0] : 8;
+        var sampleBytes = Math.Max(pixiBits, container.PixelInfo.LumaBits) > 8 ? 2 : 1;
+        long total = 0;
+        foreach (var tile in container.Tiles)
+        {
+            long width = (tile.Width + 15) / 16 * 16;
+            long height = (tile.Height + 15) / 16 * 16;
+            long strideY = (width * sampleBytes + 63) / 64 * 64;
+            long chromaWidth = container.ChromaFormat == 0 ? 0 : container.ChromaFormat == 3 ? width : (width + 1) / 2;
+            long chromaHeight = container.ChromaFormat switch
+            {
+                0 => 0,
+                3 => height,
+                2 => height,
+                _ => (height + 1) / 2,
+            };
+            long strideC = (chromaWidth * sampleBytes + 63) / 64 * 64;
+            total += (strideY * height) + (2 * strideC * chromaHeight);
+        }
+
+        return total * 2;   // 解码帧 + 解码器保留表面
+    }
+
+    /// <summary>
+    /// 拒批与豁免:预算上限压到 512KB(64MB 预算的 50% 之类都远超它)后,
+    /// 非 P0 必须抛 <see cref="OutOfMemoryException"/> 且在途预留不增长(不回落 libheif);
+    /// P0 在同一预算下照常产出,且借用结束后 <see cref="MemoryGovernor.ReservedBytes"/> 归零。
+    /// 用例结束还原预算源为 null,保证工具其余用例仍走"未初始化全放行"。
+    /// </summary>
+    /// <param name="files">夹具文件。</param>
+    /// <returns>失败项数。</returns>
+    private static int RefusalCases(List<string> files)
+    {
+        byte[]? source = null;
+        foreach (var file in files)
+        {
+            var bytes = File.ReadAllBytes(file);
+            var container = HeifContainer.TryParse(bytes, out _);
+            if (container is null || container.Width != ChartWidth || container.Height != ChartHeight) continue;
+            source = bytes;
+            break;
+        }
+
+        if (source is null)
+        {
+            Console.WriteLine("  - 没有色卡夹具,跳过准入拒绝用例");
+            return 0;
+        }
+
+        // 快速解码不可用(pvhevc 缺失)时准入路径根本不会走到,跳过而不是报假失败。
+        using (var probe = FastHeifDecoder.TryDecode(source, null, PixelEncoding.RgbaF16, CancellationToken.None, out var probeReason))
+        {
+            if (probe is null)
+            {
+                Console.WriteLine($"  - 快速解码不可用,跳过准入用例({probeReason})");
+                return 0;
+            }
+        }
+
+        var failures = 0;
+        var previous = (IMemoryBudgetProvider?)ProviderField.GetValue(null);
+        ProviderField.SetValue(null, new TightBudgetProvider());
+        try
+        {
+            var estimate = Estimate(source);
+            Console.WriteLine($"  色卡原生平面估值 {estimate >> 10}KB,预算上限压到 512KB");
+
+            // 1) 非 P0:预算不足 → OutOfMemoryException(不是 null,不回落 libheif)
+            var reservedBefore = MemoryGovernor.ReservedBytes;
+            var refused = false;
+            try
+            {
+                using var scope = DecodeContext.Enter(DecodePriority.P2_Prefetch);
+                using var image = FastHeifDecoder.TryDecode(source, null, PixelEncoding.RgbaF16, CancellationToken.None, out var reason);
+                Console.WriteLine($"  ! 非 P0 预算不足未抛异常:产物={(image is null ? "null" : "有")} 原因={reason}");
+                failures++;
+            }
+            catch (OutOfMemoryException exception)
+            {
+                refused = exception.Message.Contains("内存预算不足", StringComparison.Ordinal)
+                    && MemoryGovernor.ReservedBytes == reservedBefore;
+                if (!refused) failures++;
+                Console.WriteLine($"  {(refused ? "ok" : "! ")} 非 P0 预算不足抛 OutOfMemoryException"
+                    + $"({(MemoryGovernor.ReservedBytes == reservedBefore ? "在途预留未增长" : "在途预留被改动")}):{exception.Message}");
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine($"  ! 非 P0 预算不足抛了非内存异常 {exception.GetType().Name}:{exception.Message}");
+                failures++;
+            }
+
+            // 2) P0:同一预算下照常放行(豁免),借用结束后在途预留归零(许可已归还)
+            var p0Baseline = MemoryGovernor.ReservedBytes;
+            DecodedImage? p0 = null;
+            try
+            {
+                using var scope = DecodeContext.Enter(DecodePriority.P0_Current);
+                p0 = FastHeifDecoder.TryDecode(source, null, PixelEncoding.RgbaF16, CancellationToken.None, out var reason);
+                var p0Ok = p0 is not null;
+                if (!p0Ok) failures++;
+                Console.WriteLine($"  {(p0Ok ? "ok" : "! ")} 同一紧预算下 P0 照常解出 {(p0 is null ? reason : p0.Width + "x" + p0.Height)}");
+            }
+            finally
+            {
+                p0?.Release();
+            }
+
+            var released = MemoryGovernor.ReservedBytes == p0Baseline;
+            if (!released) failures++;
+            Console.WriteLine($"  {(released ? "ok" : "! ")} P0 借用结束后在途预留归零(当前 {MemoryGovernor.ReservedBytes} 字节)");
+        }
+        finally
+        {
+            ProviderField.SetValue(null, previous);
+        }
+
+        // 3) 还原预算源后:未初始化的工具进程准入全放行,且不留记账
+        var cleanBaseline = MemoryGovernor.ReservedBytes;
+        using (var scope = DecodeContext.Enter(DecodePriority.P3_Background))
+        using (var restored = FastHeifDecoder.TryDecode(source, null, PixelEncoding.RgbaF16, CancellationToken.None, out var restoredReason))
+        {
+            var restoredOk = restored is not null && MemoryGovernor.ReservedBytes == cleanBaseline;
+            if (!restoredOk) failures++;
+            Console.WriteLine($"  {(restoredOk ? "ok" : "! ")} 未注入预算源时准入全放行"
+                + $"(产物 {(restored is null ? "null:" + restoredReason : restored.Width + "x" + restored.Height)},"
+                + $"在途预留 {MemoryGovernor.ReservedBytes} 字节)");
+        }
+
+        return failures;
+    }
+
+    /// <summary>色卡夹具的原生平面估值(P0 路径用不到优先级,这里只算字节数)。</summary>
+    private static long Estimate(byte[] bytes)
+    {
+        var container = HeifContainer.TryParse(bytes, out _);
+        return container is null ? 0 : FastHeifDecoder.EstimateScratch(container, null, PixelEncoding.RgbaF16).TotalBytes;
+    }
+
+    /// <summary>内存预算压到 1MB(准入上限 = 50% = 512KB),其余读数正常。</summary>
+    private sealed class TightBudgetProvider : IMemoryBudgetProvider
+    {
+        public long GetBudgetBytes() => 1L << 20;
+
+        public long GetAvailableBytes() => long.MaxValue;
+
+        public long GetFootprintBytes() => 0;
+
+        public SystemMemoryInfo GetSystemMemoryInfo() => new(16L << 30, long.MaxValue);
+    }
+
+    /// <summary>注入预算源用的私有字段(工具进程默认未初始化,用例结束必须还原为 null)。</summary>
+    private static readonly FieldInfo ProviderField =
+        typeof(MemoryGovernor).GetField("_provider", BindingFlags.NonPublic | BindingFlags.Static)
+        ?? throw new InvalidOperationException("MemoryGovernor._provider 字段不存在,准入替身无法注入。");
 
 
     /// <summary>

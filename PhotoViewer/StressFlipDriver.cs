@@ -19,7 +19,7 @@ namespace PhotoViewer;
 /// 走真实 CurrentFile 切换路径(与按键/手势翻页同源,覆盖解码/缓存/Governor 全链路),
 /// **翻页顺序取展示列表顺序**(与上一张/下一张命令看到的是同一份筛选/排序列表,
 /// 预取按该列表的翻页方向选邻居;用文件夹枚举顺序翻会让预取的邻居与下一张无关);
-/// 上屏判定经 <see cref="IDisplayLoadSignal"/> 取当前壳的展示会话(各原生壳均为 PhotoLoadSession),
+/// 完成判定经 <see cref="IDisplayLoadSignal"/> 取平台信号，CompletionStage 标明像素就绪或提交返回，
 /// 覆盖真实 P0 解码链路而非空跑。
 /// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
 /// 日志默认位于 settings 同目录 stress-flip.jsonl(头工程可改到隔离目录),供真机 42MP 连翻验收回放。
@@ -31,7 +31,7 @@ public static class StressFlipDriver
     /// <summary>待压测文件夹绝对路径(头工程启动参数注入;null = 不激活)。</summary>
     public static string? PendingFolderPath;
 
-    /// <summary>翻页上限;0 = 整个文件夹翻一遍。</summary>
+    /// <summary>翻页次数;0 = 整个文件夹翻一遍，超过列表长度时循环。</summary>
     public static int MaxFlips;
 
     /// <summary>在该 seq 翻页完成后注入一次 OS 内存告警(0 起;-1 = 不注入),验证修剪级联与恢复观察期。</summary>
@@ -125,7 +125,7 @@ public static class StressFlipDriver
         var runSw = Stopwatch.StartNew();
         File.WriteAllText(logPath, string.Empty);
         Log($"{{\"type\":\"begin\",\"folder\":\"{Esc(folderPath)}\",\"maxFlips\":{MaxFlips},\"warnAt\":{WarnAtSeq}"
-            + ",\"mode\":\"" + (AbMode ? "ab" : "sequential") + "\"}");
+            + ",\"mode\":\"" + (AbMode ? "ab" : "sequential") + "\",\"completion\":\"" + Esc(signal.CompletionStage) + "\"}");
 
         try
         {
@@ -157,7 +157,7 @@ public static class StressFlipDriver
                 Log("{\"type\":\"note\",\"reason\":\"ab mode requires >=2 displayed files, fallback to sequential\"}");
             }
 
-            var flips = MaxFlips > 0 ? Math.Min(MaxFlips, files.Count) : files.Count;
+            var flips = files.Count == 1 ? 1 : MaxFlips > 0 ? MaxFlips : files.Count;
             Log($"{{\"type\":\"plan\",\"files\":{files.Count},\"flips\":{flips}"
                 + (abMode ? ",\"abPair\":[0,1]" : "") + "}");
 
@@ -169,13 +169,22 @@ public static class StressFlipDriver
             for (var i = 0; i < flips; i++)
             {
                 // 顺序模式按展示列表逐张;对比模式在第 0/1 张之间来回(最近两张对比切换)
-                var target = files[abMode ? i % 2 : i];
-                var loaded = new TaskCompletionSource();
+                var target = files[abMode ? i % 2 : i % files.Count];
+                var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var flipSw = new Stopwatch();
+                double pixelsReadyMs = -1;
+                double submittedMs = -1;
+                using var readySubscription = signal.SubscribePixelsReady(file =>
+                {
+                    if (ReferenceEquals(file, target.File) && pixelsReadyMs < 0) pixelsReadyMs = flipSw.Elapsed.TotalMilliseconds;
+                });
                 using var subscription = signal.Subscribe(file =>
                 {
-                    if (ReferenceEquals(file, target.File)) loaded.TrySetResult();
+                    if (!ReferenceEquals(file, target.File) || loaded.Task.IsCompleted) return;
+                    submittedMs = flipSw.Elapsed.TotalMilliseconds;
+                    loaded.TrySetResult();
                 });
-                var flipSw = Stopwatch.StartNew();
+                flipSw.Start();
                 await UiDispatcher.InvokeAsync(() => { vm.CurrentFile = target; });
                 var winner = await Task.WhenAny(loaded.Task, Task.Delay(PerFlipTimeoutMs));
                 flipSw.Stop();
@@ -189,7 +198,7 @@ public static class StressFlipDriver
                 }
                 else
                 {
-                    ms = flipSw.Elapsed.TotalMilliseconds;
+                    ms = submittedMs;
                     latencies.Add(ms);
                     if (signal.CurrentIsProxy) proxyShown++;
                     else fullShown++;
@@ -198,6 +207,8 @@ public static class StressFlipDriver
                 Log("{\"seq\":" + i
                     + ",\"file\":\"" + Esc(target.Name) + "\""
                     + ",\"ms\":" + F(ms)
+                    + ",\"pixelsReadyMs\":" + F(pixelsReadyMs)
+                    + ",\"submitAfterReadyMs\":" + F(ms >= 0 && pixelsReadyMs >= 0 ? ms - pixelsReadyMs : -1)
                     + ",\"timeout\":" + B(timedOut)
                     + ",\"proxy\":" + B(signal.CurrentIsProxy)
                     + ",\"enc\":\"" + (signal.CurrentEncoding?.ToString() ?? "none") + "\""
@@ -232,10 +243,12 @@ public static class StressFlipDriver
                 + ",\"elapsedSec\":" + F(runSw.Elapsed.TotalSeconds)
                 + (string.IsNullOrEmpty(extra) ? "" : ",\"extra\":\"" + Esc(extra) + "\"")
                 + "}");
+            if (timeouts > 0) Environment.ExitCode = 1;
             Console.WriteLine($"[StressFlip] done: {flips} flips, {timeouts} timeouts");
         }
         catch (Exception ex)
         {
+            Environment.ExitCode = 1;
             Log($"{{\"type\":\"error\",\"reason\":\"{Esc(ex.ToString())}\"}}");
         }
         finally

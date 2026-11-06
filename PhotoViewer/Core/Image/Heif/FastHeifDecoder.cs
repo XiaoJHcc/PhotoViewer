@@ -273,6 +273,126 @@ public static partial class FastHeifDecoder
     }
 
     // ------------------------------------------------------------------
+    // 原生平面临时内存:估值与准入
+    // ------------------------------------------------------------------
+
+    /// <summary>码流对齐粒度(相机实测 <c>ispe</c> 1616×1080 的码流是 1664×1088)。</summary>
+    private const int CodedAlignment = 16;
+
+    /// <summary>行距对齐粒度(保守上界)。</summary>
+    private const int StrideAlignment = 64;
+
+    /// <summary>每块瓦片计两份表面(解码帧 + 解码器表面池保留的一份);保守估值,不是使用量上界。</summary>
+    private const int NativeSurfaceCopies = 2;
+
+    /// <summary>
+    /// 估算快速 HEIF 主图解码的原生平面临时内存(纯计算):全部瓦片的 YUV 平面按 16 像素码流对齐、
+    /// 64 字节行距对齐计,再乘 <see cref="NativeSurfaceCopies"/>;携带 ICC 的源另加转换中间图。
+    /// </summary>
+    /// <remarks>
+    /// 按全瓦片估算:解码始终是全瓦片原生解码,与最终展示(代理)面积无关(<paramref name="maxLongEdge"/> 只影响 ICC 中间图)。
+    /// 最终展示缓冲不计——调用方的解码准入已按产物尺寸预留。
+    /// 结果是**估算**而非测量:pvhevc/FFmpeg 的缓冲与 DPB 随码流变化,两份表面只是保守取值,不保证覆盖实际峰值。
+    /// </remarks>
+    public static HeifScratchEstimate EstimateScratch(
+        HeifContainer container,
+        int? maxLongEdge,
+        PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace = ImageColorSpace.Srgb)
+    {
+        ArgumentNullException.ThrowIfNull(container);
+
+        var bits = Math.Max(
+            container.PixelInfo.BitsPerChannel.Count > 0 ? container.PixelInfo.BitsPerChannel[0] : 8,
+            container.PixelInfo.LumaBits);
+        var sampleBytes = bits > 8 ? 2 : 1;
+
+        var tiles = container.Tiles;
+        long planeBytes = 0;
+        for (var index = 0; index < tiles.Count; index++)
+        {
+            var tile = tiles[index];
+            if (tile.Width <= 0 || tile.Height <= 0) continue;
+            planeBytes += TilePlaneBytes(tile.Width, tile.Height, container.ChromaFormat, sampleBytes);
+        }
+
+        planeBytes *= NativeSurfaceCopies;
+
+        long iccBytes = 0;
+        if (container.Color.HasIccProfile)
+        {
+            var (targetWidth, targetHeight) = TargetSize(container, maxLongEdge);
+            var wideCodes = bits > 8 && encoding is PixelEncoding.RgbaF16 or PixelEncoding.Rgba8;
+            var pixels = (long)targetWidth * targetHeight;
+            iccBytes = pixels * (wideCodes ? 8 : 4);
+            if (encoding == PixelEncoding.Rgba8 && rgba8ColorSpace != ImageColorSpace.DisplayP3)
+                iccBytes += pixels * 4;
+        }
+
+        return new HeifScratchEstimate(planeBytes, iccBytes);
+    }
+
+    private static long TilePlaneBytes(int width, int height, int chromaFormat, int sampleBytes)
+    {
+        var codedWidth = Align(width, CodedAlignment);
+        var codedHeight = Align(height, CodedAlignment);
+        var strideY = Align(codedWidth * sampleBytes, StrideAlignment);
+
+        long chromaWidth, chromaHeight;
+        switch (chromaFormat)
+        {
+            case 0:
+                chromaWidth = 0;
+                chromaHeight = 0;
+                break;
+            case 3:
+                chromaWidth = codedWidth;
+                chromaHeight = codedHeight;
+                break;
+            case 2:
+                chromaWidth = (codedWidth + 1) / 2;
+                chromaHeight = codedHeight;
+                break;
+            case 1:
+                chromaWidth = (codedWidth + 1) / 2;
+                chromaHeight = (codedHeight + 1) / 2;
+                break;
+            default:
+                // 未知色度格式按 4:4:4 估(最大平面),不按 4:2:0 低估
+                chromaWidth = codedWidth;
+                chromaHeight = codedHeight;
+                break;
+        }
+
+        var strideC = Align(chromaWidth * sampleBytes, StrideAlignment);
+        return (strideY * codedHeight) + (2 * strideC * chromaHeight);
+    }
+
+    private static long Align(long value, int alignment) => (value + alignment - 1) / alignment * alignment;
+
+    /// <summary>
+    /// 为整幅主图的瓦片解码申请原生平面临时内存(入解码闸门前):P0 由 Governor 豁免放行,
+    /// 非 P0 预算不足抛 <see cref="OutOfMemoryException"/> 而不返回 null——返回 null 会让调用方回落 libheif,
+    /// 再分配一份同量级原生内存。未注入预算源时全放行。
+    /// </summary>
+    private static MemoryGovernor.AdmissionPermit? AcquirePlaneBudget(
+        HeifContainer container,
+        int? maxLongEdge,
+        PixelEncoding encoding,
+        ImageColorSpace rgba8ColorSpace)
+    {
+        var estimate = EstimateScratch(container, maxLongEdge, encoding, rgba8ColorSpace);
+        if (estimate.TotalBytes <= 0) return null;
+
+        if (MemoryGovernor.TryAcquire(estimate.TotalBytes, DecodeContext.Priority, out var permit)) return permit;
+
+        throw new OutOfMemoryException(
+            "HEIF 原生解码内存预算不足:需预留 " + (estimate.TotalBytes >> 20) + "MB"
+            + "(瓦片平面 " + (estimate.PlaneBytes >> 20) + "MB + ICC 中间图 " + (estimate.IccIntermediateBytes >> 20) + "MB),"
+            + "级别 " + MemoryGovernor.CurrentLevel + ",优先级 " + DecodeContext.Priority);
+    }
+
+    // ------------------------------------------------------------------
     // 解码与转换
     // ------------------------------------------------------------------
 
@@ -295,11 +415,18 @@ public static partial class FastHeifDecoder
         var inFlight = HeifDecodeStats.Enter();
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            // 原生平面临时内存准入(全瓦片估值,入闸门前;P0 豁免,非 P0 拒批抛 OOM 不回落)。
+            // using 覆盖平面存活期:finally 先 ReturnContexts(平面指针失效),再由 using 归还预留。
+            using var planePermit = AcquirePlaneBudget(container, maxLongEdge, encoding, rgba8ColorSpace);
+
             var reserved = Math.Min(tiles.Count, s_settings.MaxConcurrentContexts);
-            var admission = Admit(reserved, cancellationToken, out var gateMs, out var contextsMs);
+            Admission? admission = null;
             var frames = new Slot[tiles.Count];
             try
             {
+                admission = Admit(reserved, cancellationToken, out var gateMs, out var contextsMs);
                 cancellationToken.ThrowIfCancellationRequested();
                 var tilesStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 var failure = DecodeTiles(container, frames, admission.Lane, cancellationToken);
@@ -322,8 +449,9 @@ public static partial class FastHeifDecoder
             }
             finally
             {
+                // 先收回上下文(平面指针随之失效),using 随后归还预留
                 ReturnContexts(frames);
-                admission.Dispose();
+                admission?.Dispose();
             }
         }
         finally
@@ -1310,6 +1438,17 @@ public static partial class FastHeifDecoder
             TrimIdleContexts();
         }
     }
+}
+
+/// <summary>
+/// 快速 HEIF 主图解码的原生平面临时内存估值(纯计算,不是测量)。
+/// <see cref="PlaneBytes"/> = 全部瓦片的 YUV 平面(含对齐与两份表面);<see cref="IccIntermediateBytes"/> = ICC 转换中间图。
+/// 不含最终展示缓冲——那部分由调用方的解码准入按产物尺寸预留。
+/// </summary>
+public readonly record struct HeifScratchEstimate(long PlaneBytes, long IccIntermediateBytes)
+{
+    /// <summary>需要向 <see cref="MemoryGovernor"/> 预留的合计字节。</summary>
+    public long TotalBytes => PlaneBytes + IccIntermediateBytes;
 }
 
 /// <summary>
