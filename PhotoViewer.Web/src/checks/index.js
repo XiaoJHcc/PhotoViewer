@@ -3,12 +3,12 @@
  * globalThis.pvCheckResult。每条检查前重置到已知场景（harbor、1200×850、auto、减少动态效果开），
  * 故障照片按字段查找而不是写死文件名。
  *
- * 覆盖：FILM / FILTER / RATING / MENU / INPUT / IMAGE / TOOLBAR / STATE / ANALYSIS / SIM / OPEN / SHELL。
+ * 覆盖：FILM / FILTER / RATING / MENU / INPUT / IMAGE / TOOLBAR / STATE / ANALYSIS / SIM / EDITION / OPEN / SHELL。
  */
 
 import { displayStars, hasRatingConflict, ratingSources, ratingWriteBlockReason, representativeRating } from "../core/rating.js";
 
-const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "open", "shell"];
+const MODULES = ["film", "filter", "rating", "menu", "input", "image", "toolbar", "state", "analysis", "similarity", "edition", "open", "shell"];
 
 const KEY_OF = {
     ArrowLeft: "ArrowLeft",
@@ -304,7 +304,7 @@ const CHECKS = [
     },
     {
         id: "FILTER-01",
-        title: "三项顺序、计数文本与控件结构",
+        title: "三项顺序、计数文本与控件结构（标准版四项、AI 版五项）",
         async run(shell, h) {
             const { app } = shell;
             const popups = h.domAll(".pv-popup");
@@ -317,12 +317,22 @@ const CHECKS = [
             // FILTER-04：计数字号取 filter.count.fontSize。
             h.assert(getComputedStyle(count).fontSize === `${shell.t("filter.count.fontSize")}px`,
                 `计数字号 ${getComputedStyle(count).fontSize}`);
-            const toggle = h.dom(".pv-filter-toggle");
-            h.assert(toggle.getAttribute("role") === "switch", "相似聚类开关缺少 switch 语义");
-            h.assert(toggle.getAttribute("aria-label") === "相似聚类", "相似聚类开关名称不符");
             const children = [...h.dom(".pv-pane-file").children];
             h.assert(children.indexOf(count) > children.indexOf(popups[2]), "计数不在星级筛选之后");
-            h.assert(children.indexOf(toggle) > children.indexOf(count), "相似聚类开关不在末位");
+            const toggle = document.querySelector(".pv-filter-toggle");
+            if (app.capabilities.similarity) {
+                h.assert(toggle !== null, "AI 版缺少相似聚类开关");
+                h.assert(toggle.getAttribute("role") === "switch", "相似聚类开关缺少 switch 语义");
+                h.assert(toggle.getAttribute("aria-label") === "相似聚类", "相似聚类开关名称不符");
+                h.assert(children.indexOf(toggle) > children.indexOf(count), "相似聚类开关不在末位");
+                return;
+            }
+            // EDITION-02：标准版不创建开关，也不留空槽或空分组。
+            h.assert(toggle === null, "标准版仍创建相似聚类开关");
+            h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
+            h.assert(app.state.layout.filter.controls.toggle === null, "标准版筛选条仍留开关几何");
+            h.assert(!count.nextElementSibling?.classList.contains("pv-filter-toggle"), "标准版计数后仍有空槽");
+            h.assert(h.domAll(".pv-filter-count").length === 1, "标准版计数元素重复");
         },
     },
     {
@@ -361,6 +371,13 @@ const CHECKS = [
         title: "相似聚类开关为药丸四态，常态/勾选取新令牌颜色",
         async run(shell, h) {
             const { app } = shell;
+            if (!app.capabilities.similarity) {
+                // EDITION-02/06：标准版不创建开关，展开态保留但不恢复。
+                h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似聚类开关");
+                h.assert(app.setSimilarityExpanded(true) === false, "标准版响应了相似展开请求");
+                h.assert(app.state.similarity.visible === false, "标准版恢复了相似面板");
+                return;
+            }
             const toggle = h.dom(".pv-filter-toggle");
             const style = () => getComputedStyle(toggle);
             const uncheckedBackground = style().backgroundColor;
@@ -679,6 +696,11 @@ const CHECKS = [
             await h.until(() => target.photo.rating === 3, 4000);
             h.assert(h.menu() === null, "选择评分后菜单未关闭");
 
+            // EDITION-02：标准版没有相似卡片，长按行为只在 AI 版验收。
+            if (!app.capabilities.similarity) {
+                h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似聚类开关");
+                return;
+            }
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.items.length > 0, 4000);
             await h.tick(80);
@@ -1239,20 +1261,30 @@ const CHECKS = [
             h.click(h.menuItem("analysis"));
             await h.tick(120);
             h.assert(app.state.panes.analysis === true, "菜单未打开分析栏");
-            await h.until(() => document.querySelectorAll(".pv-analysis-tile").length === 7
-                && app.state.analysis.tiles.length === 7, 4000);
+            const dino = app.capabilities.dino;
+            const focusTileCount = dino ? 7 : 5;
+            const withoutFocusCount = dino ? 6 : 4;
+            await h.until(() => document.querySelectorAll(".pv-analysis-tile").length === focusTileCount
+                && app.state.analysis.tiles.length === focusTileCount, 4000);
             const tiles = h.domAll(".pv-analysis-tile");
-            h.assert(tiles.length === 7, `有对焦点时瓦片数 ${tiles.length} ≠ 7`);
+            h.assert(tiles.length === focusTileCount, `有对焦点时瓦片数 ${tiles.length} ≠ ${focusTileCount}`);
             const widths = tiles.map((node) => Math.round(node.getBoundingClientRect().width));
             h.assert(widths.every((width) => Math.abs(width - widths[0]) <= 1), `瓦片不等边：${widths.join(",")}`);
             h.assert(tiles[0].dataset.kind === "focus", "首瓦片不是对焦点");
             h.assert(document.querySelector('.pv-analysis-tile[data-kind="focus"]') !== null, "有对焦点时缺少对焦点瓦片");
+            h.deepEqual(tiles.map((node) => node.dataset.kind), dino
+                ? ["focus", "center", "histogram", "pca", "cosine", "sharpness", "shake"]
+                : ["focus", "center", "histogram", "sharpness", "shake"], "分析栏瓦片顺序不符");
+            if (!dino) {
+                h.assert(document.querySelector('.pv-analysis-tile[data-kind="pca"]') === null, "标准版出现 PCA 空框");
+                h.assert(document.querySelector('.pv-analysis-tile[data-kind="cosine"]') === null, "标准版出现 Cosine 空框");
+            }
 
             const withoutFocus = h.harborPhoto((entry) => !entry.focus);
             app.selectCard(withoutFocus.id);
             await h.tick(120);
-            await h.until(() => document.querySelectorAll(".pv-analysis-tile").length === 6
-                && app.state.analysis.tiles.length === 6, 4000);
+            await h.until(() => document.querySelectorAll(".pv-analysis-tile").length === withoutFocusCount
+                && app.state.analysis.tiles.length === withoutFocusCount, 4000);
             h.assert(document.querySelector('.pv-analysis-tile[data-kind="focus"]') === null, "无对焦点时仍出现对焦点瓦片");
         },
     },
@@ -1267,7 +1299,8 @@ const CHECKS = [
             await h.tick(60);
             await h.openMainMenu();
             h.click(h.menuItem("analysis"));
-            await h.until(() => app.state.panes.analysis && h.domAll(".pv-analysis-tile").length === 7, 4000);
+            const tileCount = app.capabilities.dino ? 7 : 5;
+            await h.until(() => app.state.panes.analysis && h.domAll(".pv-analysis-tile").length === tileCount, 4000);
             await h.until(() => app.state.analysis.diagnostics !== null, 4000);
 
             const center = h.dom('.pv-analysis-tile[data-kind="center"]');
@@ -1370,7 +1403,8 @@ const CHECKS = [
             h.assert(app.state.analysis.hoverKind === null, "辅助技术再次激活未清除绿框");
             h.assert(center.getAttribute("aria-pressed") === "false", "辅助技术清除后仍标记激活");
 
-            const pca = h.dom('.pv-analysis-tile[data-kind="pca"]');
+            // EDITION-03：标准版只有 CV 诊断瓦片可点。
+            const pca = h.dom(`.pv-analysis-tile[data-kind="${app.capabilities.dino ? "pca" : "sharpness"}"]`);
             h.click(pca);
             await h.tick(60);
             const crosshair = app.state.analysis.crosshair;
@@ -1475,7 +1509,7 @@ const CHECKS = [
             h.click(h.menuItem("analysis"));
             await h.until(() => app.state.panes.analysis && h.domAll(".pv-analysis-tile").length > 0, 4000);
             await h.until(() => app.state.analysis.diagnostics !== null, 4000);
-            const tile = h.dom('.pv-analysis-tile[data-kind="pca"]');
+            const tile = h.dom(`.pv-analysis-tile[data-kind="${app.capabilities.dino ? "pca" : "sharpness"}"]`);
             h.click(tile);
             await h.tick(80);
             const cross = app.state.analysis.crosshair;
@@ -1493,6 +1527,14 @@ const CHECKS = [
         title: "相似开关展开面板、文件栏加宽、计数与排序不变",
         async run(shell, h) {
             const { app } = shell;
+            if (!app.capabilities.similarity) {
+                h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似聚类开关");
+                h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
+                h.assert(app.state.similarity.visible === false, "标准版相似面板可见");
+                h.assert(app.state.layout.similarity.occupation === 0, "标准版相似面板仍占位");
+                h.assert(await app.extractAll() === false, "标准版仍可批量提取");
+                return;
+            }
             const before = h.paneRect("file").width;
             const countText = h.dom(".pv-filter-count").textContent;
             const sortKey = app.state.sortKey;
@@ -1524,6 +1566,11 @@ const CHECKS = [
         title: "列布局面板与胶片栏同顶到文件栏底，行布局高 159、宽含停靠区",
         async run(shell, h) {
             const { app } = shell;
+            if (!app.capabilities.similarity) {
+                h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
+                h.assert(h.paneRect("file").width === shell.t("shell.filebar.content.width"), "标准版文件栏为相似面板让位");
+                return;
+            }
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.visible === true, 4000);
             await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
@@ -1558,6 +1605,11 @@ const CHECKS = [
         title: "点相似卡片切主图，胶片栏高亮留在锚点",
         async run(shell, h) {
             const { app } = shell;
+            if (!app.capabilities.similarity) {
+                h.assert(h.domAll(".pv-sim-item").length === 0, "标准版仍渲染相似项");
+                h.assert(app.state.displayedId === app.state.anchorId, "标准版相似入口改变了主图");
+                return;
+            }
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.items.length > 0 && app.state.similarity.calculating === false, 4000);
             await h.tick(80);
@@ -1578,6 +1630,13 @@ const CHECKS = [
         title: "提取全部显示进度并完成，计数收敛",
         async run(shell, h) {
             const { app } = shell;
+            if (!app.capabilities.similarity) {
+                const state = h.harborPhotos().map((photo) => photo.extracted);
+                h.assert(await app.extractAll() === false, "标准版仍可批量提取");
+                h.assert(h.harborPhotos().every((photo, index) => photo.extracted === state[index]), "标准版批量提取写入了特征库");
+                h.assert(app.state.similarity.progress === null, "标准版出现提取进度");
+                return;
+            }
             h.click(h.dom(".pv-filter-toggle"));
             await h.until(() => app.state.similarity.visible === true, 4000);
             await h.until(() => app.state.similarity.unextracted > 0 || app.state.similarity.items.length > 0, 4000);
@@ -1595,6 +1654,99 @@ const CHECKS = [
                 h.assert(app.state.similarity.unextracted === 0, `提取完成后仍有 ${app.state.similarity.unextracted} 张未提取`);
             } finally {
                 for (const [photo, value] of photoState) photo.extracted = value;
+            }
+        },
+    },
+    {
+        id: "EDITION-02",
+        title: "版本入口差异：标准版四项筛选与 4/5 瓦片，AI 版五项与 6/7 瓦片",
+        async run(shell, h) {
+            const { app } = shell;
+            const dino = app.capabilities.dino;
+            const focusPhoto = h.harborPhoto((entry) => entry.focus);
+            app.selectCard(focusPhoto.id);
+            await h.tick(60);
+            await h.openMainMenu();
+            h.click(h.menuItem("analysis"));
+            const expected = dino ? 7 : 5;
+            await h.until(() => app.state.panes.analysis
+                && app.state.analysis.tiles.length === expected
+                && h.domAll(".pv-analysis-tile").length === expected, 5000);
+            h.deepEqual(app.state.analysis.tiles.map((tile) => tile.kind), dino
+                ? ["focus", "center", "histogram", "pca", "cosine", "sharpness", "shake"]
+                : ["focus", "center", "histogram", "sharpness", "shake"], "版本瓦片构成不符");
+
+            const toggle = dino ? h.dom(".pv-filter-toggle") : document.querySelector(".pv-filter-toggle");
+            if (dino) {
+                h.assert(toggle !== null, "AI 版缺少相似聚类开关");
+                h.assert(h.dom(".pv-sim") !== null, "AI 版缺少相似面板容器");
+            } else {
+                h.assert(toggle === null, "标准版仍创建相似聚类开关");
+                h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
+                h.assert(app.state.layout.filter.controls.toggle === null, "标准版筛选条仍留开关槽位");
+                h.assert(app.state.analysis.dino === false, "标准版分析栏仍声明 DINO 能力");
+            }
+        },
+    },
+    {
+        id: "EDITION-03",
+        title: "即时计算 DINO/CV 分侧门控，另一侧保持未提取",
+        async run(shell, h) {
+            const { app } = shell;
+            const photo = h.harborPhoto((entry) => entry.extracted !== true);
+            h.assert(photo, "harbor 中找不到未提取照片");
+            app.selectCard(photo.id);
+            await h.tick(60);
+            await h.openMainMenu();
+            h.click(h.menuItem("analysis"));
+            const tileState = (kind) => app.state.analysis.tiles.find((tile) => tile.kind === kind)?.state;
+            const waitState = (kind, state) => h.until(() => tileState(kind) === state, 8000, 60);
+
+            app.updateSettings({ analysisImmediateDinoCompute: false, analysisImmediateCvCompute: false });
+            await waitState("sharpness", "empty");
+            h.assert(tileState("sharpness") === "empty", "两侧关闭时 CV 未保持未提取");
+
+            app.updateSettings({ analysisImmediateCvCompute: true });
+            await waitState("sharpness", "content");
+            h.assert(tileState("sharpness") === "content", "只开 CV 时锐度未现算");
+            if (app.capabilities.dino) {
+                h.assert(tileState("pca") === "empty", "只开 CV 时 DINO 被顺带现算");
+                app.updateSettings({ analysisImmediateDinoCompute: true, analysisImmediateCvCompute: false });
+                await waitState("pca", "content");
+                await waitState("sharpness", "empty");
+                h.assert(tileState("pca") === "content", "只开 DINO 时 PCA 未现算");
+                h.assert(tileState("sharpness") === "empty", "只开 DINO 时 CV 被顺带现算");
+            } else {
+                h.assert(tileState("pca") === undefined, "标准版出现 DINO 瓦片");
+                h.assert(tileState("cosine") === undefined, "标准版出现 Cosine 瓦片");
+            }
+            h.assert(photo.extracted !== true, "分析栏现算写入了特征库");
+        },
+    },
+    {
+        id: "EDITION-06",
+        title: "即时计算字段拆分持久化，标准版保留隐藏的 DINO/相似值",
+        async run(shell, h) {
+            const { app } = shell;
+            const before = JSON.parse(localStorage.getItem("PhotoViewer.Settings") ?? "null") ?? {};
+            if (!app.capabilities.similarity) {
+                app.updateSettings({ analysisImmediateCvCompute: true });
+            } else {
+                app.updateSettings({ analysisImmediateDinoCompute: true, analysisImmediateCvCompute: false });
+            }
+            const saved = JSON.parse(localStorage.getItem("PhotoViewer.Settings"));
+            h.assert("analysisImmediateCompute" in saved === false, "仍写出旧组合字段");
+            h.assert(typeof saved.analysisImmediateCvCompute === "boolean", "缺少独立 CV 字段");
+            h.assert(typeof saved.analysisImmediateDinoCompute === "boolean", "缺少独立 DINO 字段");
+            if (!app.capabilities.similarity) {
+                h.assert(saved.analysisImmediateDinoCompute === (before.analysisImmediateDinoCompute ?? app.settings.analysisImmediateDinoCompute),
+                    "标准版改写了不可见 DINO 开关");
+                if ("similarityThreshold" in before) {
+                    h.assert(saved.similarityThreshold === before.similarityThreshold, "标准版改写了相似阈值");
+                }
+                if ("similarityPanelExpanded" in before) {
+                    h.assert(saved.similarityPanelExpanded === before.similarityPanelExpanded, "标准版改写了相似展开态");
+                }
             }
         },
     },
@@ -1658,11 +1810,19 @@ const CHECKS = [
             await h.tick(80);
             h.assert(localStorage.getItem("PhotoViewer.Native.ShowFilm") === "true", "文件栏显隐恢复未写入偏好");
 
-            h.click(h.dom(".pv-filter-toggle"));
-            await h.until(() => JSON.parse(localStorage.getItem("PhotoViewer.Settings")).similarityPanelExpanded === true, 2000);
-            h.click(h.dom(".pv-filter-toggle"));
-            await h.tick(80);
-            h.assert(JSON.parse(localStorage.getItem("PhotoViewer.Settings")).similarityPanelExpanded === false, "相似开关未持久化");
+            if (app.capabilities.similarity) {
+                h.click(h.dom(".pv-filter-toggle"));
+                await h.until(() => JSON.parse(localStorage.getItem("PhotoViewer.Settings")).similarityPanelExpanded === true, 2000);
+                h.click(h.dom(".pv-filter-toggle"));
+                await h.tick(80);
+                h.assert(JSON.parse(localStorage.getItem("PhotoViewer.Settings")).similarityPanelExpanded === false, "相似开关未持久化");
+            } else {
+                // EDITION-02/06：标准版没有相似开关，隐藏值不因主屏操作被改写。
+                h.assert(document.querySelector(".pv-filter-toggle") === null, "标准版仍创建相似开关");
+                const stored = JSON.parse(localStorage.getItem("PhotoViewer.Settings") ?? "null");
+                h.assert(stored === null || typeof stored.similarityPanelExpanded !== "boolean" || stored.similarityPanelExpanded === app.settings.similarityPanelExpanded,
+                    "标准版改写了已存相似展开态");
+            }
 
             await h.openFilter("sort");
             h.click(h.menuItem("size"));
@@ -1738,13 +1898,17 @@ const CHECKS = [
             h.key("Escape");
             await h.tick(20);
 
-            // 相似面板复用卡片组件；打开一次确认列表态也满足同一条约束。
-            app.setSimilarityExpanded(true);
-            await h.tick(160);
-            result = scan();
-            h.assert(result.offenders.length === 0, `相似面板字形进入可读文本：${result.offenders.slice(0, 4).join("；")}`);
-            app.setSimilarityExpanded(false);
-            await h.tick(40);
+            // 相似面板复用卡片组件；AI 版打开一次确认列表态也满足同一条约束。
+            if (app.capabilities.similarity) {
+                app.setSimilarityExpanded(true);
+                await h.tick(160);
+                result = scan();
+                h.assert(result.offenders.length === 0, `相似面板字形进入可读文本：${result.offenders.slice(0, 4).join("；")}`);
+                app.setSimilarityExpanded(false);
+                await h.tick(40);
+            } else {
+                h.assert(document.querySelector(".pv-sim") === null, "标准版仍创建相似面板");
+            }
         },
     },
     {
@@ -2698,23 +2862,28 @@ function createHelpers(shell) {
         // 检查统一按 Ctrl 解码，因此关闭 Apple 键盘映射，避免 ⌘/⌃ 互换。
         shell.setReducedMotion(true);
         await closeOverlays();
-        app.updateSettings({
+        const patch = {
             layoutMode: "auto",
             showRating: true,
             showZoomIndicator: true,
             sameNameAsOne: true,
-            analysisImmediateCompute: false,
-            similarityPanelExpanded: false,
+            analysisImmediateCvCompute: false,
             appleKeyboard: false,
-            similarityThreshold: 0.85,
-            similarityMaxResults: 8,
-        });
+        };
+        // EDITION-06：标准版保留不可见的 DINO/相似值，不在检查重置时改写。
+        if (app.capabilities.dino) patch.analysisImmediateDinoCompute = false;
+        if (app.capabilities.similarity) {
+            patch.similarityPanelExpanded = false;
+            patch.similarityThreshold = 0.85;
+            patch.similarityMaxResults = 8;
+        }
+        app.updateSettings(patch);
         app.setSort("name", "asc");
         app.setRatingFilter("all");
         if (app.state.panes.analysis) app.toggleAnalysis();
         if (!app.state.panes.film) app.toggleFilmbar();
         if (!app.state.panes.control) app.toggleControlbar();
-        if (app.settings.similarityPanelExpanded) app.setSimilarityExpanded(false);
+        if (app.capabilities.similarity && app.settings.similarityPanelExpanded) app.setSimilarityExpanded(false);
         shell.setWindowSize(1200, 850);
         // OPEN-08：同一文件夹重开保持当前照片；检查统一从筛选后首张开始，避免上一检查的残留状态。
         const first = app.state.cards[0];

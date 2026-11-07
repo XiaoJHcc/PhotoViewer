@@ -110,29 +110,50 @@ export function mountDemoPanel(root, shell) {
     const showRating = checkbox("显示评分", settings().showRating !== false, (value) => app.updateSettings({ showRating: value }));
     const sameName = checkbox("同名合并", settings().sameNameAsOne !== false, (value) => app.updateSettings({ sameNameAsOne: value }));
     const navigator = checkbox("导航图", settings().showZoomIndicator !== false, (value) => app.updateSettings({ showZoomIndicator: value }));
-    const immediate = checkbox("即时计算 DINO / CV", Boolean(settings().analysisImmediateCompute), (value) => app.updateSettings({ analysisImmediateCompute: value }));
+    const immediateDino = app.capabilities.dino
+        ? checkbox("即时计算 DINO", Boolean(settings().analysisImmediateDinoCompute), (value) => app.updateSettings({ analysisImmediateDinoCompute: value }))
+        : null;
+    const immediateCv = checkbox("即时计算 CV", Boolean(settings().analysisImmediateCvCompute), (value) => app.updateSettings({ analysisImmediateCvCompute: value }));
     const appleKeyboard = checkbox("Apple 键盘映射", Boolean(settings().appleKeyboard), (value) => app.updateSettings({ appleKeyboard: value }));
 
-    const thresholdValue = el("span", { class: "pv-demo-value" }, settings().similarityThreshold.toFixed(2));
-    const thresholdRange = el("input", {
-        class: "pv-demo-range",
-        type: "range",
-        min: "0.75",
-        max: "0.95",
-        step: "0.01",
-        value: settings().similarityThreshold,
-        oninput: (event) => app.updateSettings({ similarityThreshold: Number(event.target.value) }),
-    });
-    const maxResultsValue = el("span", { class: "pv-demo-value" }, String(settings().similarityMaxResults));
-    const maxResultsRange = el("input", {
-        class: "pv-demo-range",
-        type: "range",
-        min: "1",
-        max: "32",
-        step: "1",
-        value: settings().similarityMaxResults,
-        oninput: (event) => app.updateSettings({ similarityMaxResults: Number(event.target.value) }),
-    });
+    const thresholdValue = app.capabilities.similarity
+        ? el("span", { class: "pv-demo-value" }, settings().similarityThreshold.toFixed(2))
+        : null;
+    const thresholdRange = app.capabilities.similarity
+        ? el("input", {
+            class: "pv-demo-range",
+            type: "range",
+            min: "0.75",
+            max: "0.95",
+            step: "0.01",
+            value: settings().similarityThreshold,
+            oninput: (event) => app.updateSettings({ similarityThreshold: Number(event.target.value) }),
+        })
+        : null;
+    const maxResultsValue = app.capabilities.similarity
+        ? el("span", { class: "pv-demo-value" }, String(settings().similarityMaxResults))
+        : null;
+    const maxResultsRange = app.capabilities.similarity
+        ? el("input", {
+            class: "pv-demo-range",
+            type: "range",
+            min: "1",
+            max: "32",
+            step: "1",
+            value: settings().similarityMaxResults,
+            oninput: (event) => app.updateSettings({ similarityMaxResults: Number(event.target.value) }),
+        })
+        : null;
+    const similarityControls = app.capabilities.similarity
+        ? [
+            el("div", { class: "pv-demo-field" },
+                el("span", {}, "相似阈值"),
+                el("span", { class: "pv-demo-inline" }, thresholdRange, thresholdValue)),
+            el("div", { class: "pv-demo-field" },
+                el("span", {}, "最多数量"),
+                el("span", { class: "pv-demo-inline" }, maxResultsRange, maxResultsValue)),
+        ]
+        : [];
 
     const exifInputs = new Map();
     const exifList = scrollList(settings().exifItems.map((item) => {
@@ -212,12 +233,15 @@ export function mountDemoPanel(root, shell) {
         showRating.input.checked = current.showRating !== false;
         sameName.input.checked = current.sameNameAsOne !== false;
         navigator.input.checked = current.showZoomIndicator !== false;
-        immediate.input.checked = Boolean(current.analysisImmediateCompute);
+        if (immediateDino) immediateDino.input.checked = Boolean(current.analysisImmediateDinoCompute);
+        immediateCv.input.checked = Boolean(current.analysisImmediateCvCompute);
         appleKeyboard.input.checked = Boolean(current.appleKeyboard);
-        if (document.activeElement !== thresholdRange) thresholdRange.value = current.similarityThreshold;
-        setText(thresholdValue, current.similarityThreshold.toFixed(2));
-        if (document.activeElement !== maxResultsRange) maxResultsRange.value = current.similarityMaxResults;
-        setText(maxResultsValue, String(current.similarityMaxResults));
+        if (thresholdRange) {
+            if (document.activeElement !== thresholdRange) thresholdRange.value = current.similarityThreshold;
+            setText(thresholdValue, current.similarityThreshold.toFixed(2));
+            if (document.activeElement !== maxResultsRange) maxResultsRange.value = current.similarityMaxResults;
+            setText(maxResultsValue, String(current.similarityMaxResults));
+        }
         for (const item of current.exifItems) {
             const input = exifInputs.get(item.id);
             if (input) input.checked = item.enabled !== false;
@@ -266,14 +290,10 @@ export function mountDemoPanel(root, shell) {
             showRating.node,
             sameName.node,
             navigator.node,
-            immediate.node,
+            ...(immediateDino ? [immediateDino.node] : []),
+            immediateCv.node,
             appleKeyboard.node,
-            el("div", { class: "pv-demo-field" },
-                el("span", {}, "相似阈值"),
-                el("span", { class: "pv-demo-inline" }, thresholdRange, thresholdValue)),
-            el("div", { class: "pv-demo-field" },
-                el("span", {}, "最多数量"),
-                el("span", { class: "pv-demo-inline" }, maxResultsRange, maxResultsValue)),
+            ...similarityControls,
             el("div", { class: "pv-demo-label" }, "EXIF 显示项"),
             exifList,
             el("div", { class: "pv-demo-label" }, "控制栏命令显示"),

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using PhotoViewer.Core.Color;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 
@@ -111,7 +112,7 @@ public sealed class CvDiagnosticPresenter : IDisposable
             }
 
             ct.ThrowIfCancellationRequested();
-            var cvSource = cvBitmap ?? thumbnail;
+            using var cvSource = ColorEngine.ToAnalysisSrgb8(cvBitmap ?? thumbnail);
             var cv = cached.Cv ?? await CvGridExtractor.ExtractAsync(cvSource, ct).ConfigureAwait(false);
             int cvW = cached.Cv != null && cached.CvImageWidth > 0 ? cached.CvImageWidth : cvSource.Width;
             int cvH = cached.Cv != null && cached.CvImageHeight > 0 ? cached.CvImageHeight : cvSource.Height;

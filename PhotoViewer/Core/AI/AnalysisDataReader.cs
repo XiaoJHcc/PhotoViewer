@@ -30,10 +30,10 @@ public static class AnalysisDataReader
         /// <summary>CV v5 七标量结果,null 表示未入库或版本不匹配。</summary>
         public CvGridResult? Cv { get; init; }
 
-        /// <summary>CV 实际解码用的原图宽度(像素),Cv 为 null 时为 0。</summary>
+        /// <summary>显示方向的分析图宽度(像素)；读库取已存 CV 尺寸，现算无 CV 时仍可用于诊断比例。</summary>
         public int CvImageWidth { get; init; }
 
-        /// <summary>CV 实际解码用的原图高度(像素),Cv 为 null 时为 0。</summary>
+        /// <summary>显示方向的分析图高度(像素)；读库取已存 CV 尺寸，现算无 CV 时仍可用于诊断比例。</summary>
         public int CvImageHeight { get; init; }
 
         /// <summary>所有数据都缺失。</summary>

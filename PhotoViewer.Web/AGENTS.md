@@ -16,7 +16,9 @@ node --test "tests/**/*.test.js" # 纯逻辑单测（零依赖）
 
 VS Code Tasks：**Serve Web**、**Test Web**。ES module 在 `file://` 下会被浏览器拦截，必须经本地服务打开。令牌产物 `src/tokens.g.js` 由 `python3 Tools/generate-design-tokens.py` 生成，不得手改。
 
-页面参数：`?demo` 打开窗口外演示面板（尺寸、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。
+页面参数：`?demo` 打开窗口外演示面板（尺寸、设置、故障注入、状态读数、几何导出）；`?check=<模块|all>` 运行页内行为检查并输出按设计 ID 的报告；`?platform=mac` 切到 mac 配置档（只为几何比对：交通灯让位等 `@mac` 差异）；`?edition=standard|ai` 选择构建变体（缺省 `ai`）；`?empty` 以空态启动；`?folder=<id>` 指定首个文件夹。
+
+`?edition` 只用于参考壳的 EDITION 差分验收，不是产品内版本切换：`standard` 不创建相似聚类入口与面板、筛选条按四项居中、分析栏只有 4/5 张瓦片（无 PCA/Cosine），设置模型保留不可见的 DINO/相似参数，只启用独立的「即时计算 CV」；`ai` 保持完整入口与六/七瓦片。两个版本都不显示升级、缺模型或版本说明文案。
 
 页内检查可无人值守跑：无头 Chrome 的 `--virtual-time-budget` 至少给到 120000 ms，预算偏小时只跑完部分检查（报告是 `done/total`，不是 FAIL）；`--headless=new` 需同时关掉 crashpad（`--disable-breakpad --disable-crash-reporter --disable-features=Crashpad`），否则在沙箱环境里会以 SIGTRAP 退出。
 
@@ -28,6 +30,7 @@ src/
   tokens.g.js           # 生成；默认导出基准值，platformTokens 导出平台覆盖
   core/                 # 纯逻辑：无 DOM、无全局状态，可在 Node 里单测
     types.js            # 模块间共用数据形状（JSDoc）
+    edition.js          # 版本能力（EDITION-01/02/03）：standard 无 DINO 与相似聚类
     tokens.js           # 按平台配置档取令牌（缺令牌立即抛错）
     clock.js            # 可注入的时间源与定时器（单测用假时钟）
     settings.js         # 设置模型默认值（只取 spec/settings.md 中影响主屏的项）
@@ -54,7 +57,7 @@ src/
 tests/                  # node --test，测试名以设计 ID 开头
 dev/                    # 开发用（不进产品）：render-preview（方向码/代理/Full/增强/连拍目视）、<组件>-harness（单组件自查页）
 assets/                 # 图标字体子集：uicons-pv.woff2（描边）、uicons-pv-solid.woff2（实心星/叉）
-tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对；--count-width 固定计数宽，Design/README §8）
+tools/export-geometry.mjs  # 导出几何 JSON（--profile mac 与 macOS 报告比对；--edition standard|ai 分别导出两版；--count-width 固定计数宽，Design/README §8）
 tools/subset-icons.py      # 从 Design/tokens.json 的 icon.* 码位生成 assets/ 下的图标字体子集
 ```
 

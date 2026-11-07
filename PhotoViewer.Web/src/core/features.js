@@ -1,7 +1,8 @@
 /**
  * 合成 DINO/CV 特征：由照片的场景种子确定性生成，同一 base（连拍）彼此相似，variant 带来差异。
- * featuresFor(photo) → Features（见 types.js）；同指纹的伴侣得到同一份特征。
- * cosine(a, b) 为两个单位向量的余弦。
+ * featuresFor(photo, scope = "all") → Features（见 types.js）；同指纹的伴侣得到同一份特征。
+ * scope "dino" 只生成 CLS/patch/PCA，"cv" 只生成锐度/抖动；两侧共用同一随机序列，
+ * 因此分侧结果与 "all" 的对应字段逐值一致。cosine(a, b) 为两个单位向量的余弦。
  */
 import { GRID, PATCH_DIM, CLS_DIM } from "./types.js";
 
@@ -14,6 +15,10 @@ export function mulberry32(seed) {
         t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
         return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
     };
+}
+
+export function normalizeFeatureScope(scope) {
+    return scope === "dino" || scope === "cv" ? scope : "all";
 }
 
 function gaussian(rand) {
@@ -37,37 +42,49 @@ export function cosine(a, b, aOffset = 0, bOffset = 0, length = a.length) {
 
 const cache = new Map();
 
-export function featuresFor(photo) {
-    const key = `${photo.scene.base}:${photo.scene.variant}`;
+export function featuresFor(photo, scope = "all") {
+    const side = normalizeFeatureScope(scope);
+    const key = `${photo.scene.base}:${photo.scene.variant}:${side}`;
     if (cache.has(key)) return cache.get(key);
     const baseRand = mulberry32(photo.scene.base * 7919 + 17);
     const varRand = mulberry32(photo.scene.base * 104729 + photo.scene.variant * 31 + 3);
     const spread = 0.18 + 0.12 * mulberry32(photo.scene.base + 5)();
+    const wantDino = side !== "cv";
+    const wantCv = side !== "dino";
 
-    const cls = new Float32Array(CLS_DIM);
+    const cls = wantDino ? new Float32Array(CLS_DIM) : null;
     // SIM-08：同一连拍场景共享基向量，帧差按 variant^0.4 增长，使归一分数落在 0.85–0.99。
     const variantSpread = Math.pow(photo.scene.variant, 0.4) * 1.13;
     for (let i = 0; i < CLS_DIM; i++) {
-        cls[i] = gaussian(baseRand) + spread * variantSpread * gaussian(varRand);
+        const base = gaussian(baseRand);
+        const variant = gaussian(varRand);
+        if (cls) cls[i] = base + spread * variantSpread * variant;
     }
-    normalize(cls);
+    if (cls) normalize(cls);
 
     const cells = GRID * GRID;
     const regions = 5;
-    const centers = [];
+    const centers = wantDino ? [] : null;
     for (let r = 0; r < regions; r++) {
-        const c = new Float32Array(PATCH_DIM);
-        for (let i = 0; i < PATCH_DIM; i++) c[i] = gaussian(baseRand);
-        centers.push({ vec: normalize(c), x: baseRand(), y: baseRand() });
+        if (centers) {
+            const c = new Float32Array(PATCH_DIM);
+            for (let i = 0; i < PATCH_DIM; i++) c[i] = gaussian(baseRand);
+            centers.push({ vec: normalize(c), x: baseRand(), y: baseRand() });
+        } else {
+            // 只推进随机序列，不分配未请求的 patch 中心。
+            for (let i = 0; i < PATCH_DIM; i++) gaussian(baseRand);
+            baseRand();
+            baseRand();
+        }
     }
     const shiftX = (varRand() - 0.5) * 0.08 * photo.scene.variant;
     const shiftY = (varRand() - 0.5) * 0.08 * photo.scene.variant;
-    const patches = new Float32Array(cells * PATCH_DIM);
-    const pca = new Float32Array(cells * 3);
-    const sharpness = new Float32Array(cells);
-    const dx = new Float32Array(cells);
-    const dy = new Float32Array(cells);
-    const mask = new Uint8Array(cells);
+    const patches = wantDino ? new Float32Array(cells * PATCH_DIM) : null;
+    const pca = wantDino ? new Float32Array(cells * 3) : null;
+    const sharpness = wantCv ? new Float32Array(cells) : null;
+    const dx = wantCv ? new Float32Array(cells) : null;
+    const dy = wantCv ? new Float32Array(cells) : null;
+    const mask = wantCv ? new Uint8Array(cells) : null;
     const shaky = photo.shake === true;
     const shakeAngle = baseRand() * Math.PI;
     const focusX = photo.focus ? photo.focus.x : 0.5;
@@ -78,26 +95,46 @@ export function featuresFor(photo) {
             const cell = gy * GRID + gx;
             const u = (gx + 0.5) / GRID + shiftX;
             const v = (gy + 0.5) / GRID + shiftY;
-            let best = 0;
-            let bestDist = Infinity;
-            for (let r = 0; r < regions; r++) {
-                const d = (u - centers[r].x) ** 2 + (v - centers[r].y) ** 2;
-                if (d < bestDist) { bestDist = d; best = r; }
+            if (patches) {
+                let best = 0;
+                let bestDist = Infinity;
+                for (let r = 0; r < regions; r++) {
+                    const d = (u - centers[r].x) ** 2 + (v - centers[r].y) ** 2;
+                    if (d < bestDist) { bestDist = d; best = r; }
+                }
+                const o = cell * PATCH_DIM;
+                for (let i = 0; i < PATCH_DIM; i++) patches[o + i] = centers[best].vec[i] + 0.25 * gaussian(varRand);
+                normalize(patches, o, PATCH_DIM);
+                for (let k = 0; k < 3; k++) pca[cell * 3 + k] = Math.min(1, Math.max(0, 0.5 + 0.5 * patches[o + k] * 1.6));
+            } else {
+                for (let i = 0; i < PATCH_DIM; i++) gaussian(varRand);
             }
-            const o = cell * PATCH_DIM;
-            for (let i = 0; i < PATCH_DIM; i++) patches[o + i] = centers[best].vec[i] + 0.25 * gaussian(varRand);
-            normalize(patches, o, PATCH_DIM);
-            for (let k = 0; k < 3; k++) pca[cell * 3 + k] = Math.min(1, Math.max(0, 0.5 + 0.5 * patches[o + k] * 1.6));
-            const df = Math.hypot(u - focusX, v - focusY);
-            sharpness[cell] = Math.max(0, Math.min(1, (shaky ? 0.45 : 0.95) * Math.exp(-df * df * 6) + 0.08 * varRand()));
-            const strength = shaky ? 0.6 + 0.4 * varRand() : 0.05 * varRand();
-            dx[cell] = Math.cos(shakeAngle) * strength;
-            dy[cell] = Math.sin(shakeAngle) * strength;
-            mask[cell] = sharpness[cell] > 0.15 ? 1 : 0;
+            if (sharpness) {
+                const df = Math.hypot(u - focusX, v - focusY);
+                sharpness[cell] = Math.max(0, Math.min(1, (shaky ? 0.45 : 0.95) * Math.exp(-df * df * 6) + 0.08 * varRand()));
+                const strength = shaky ? 0.6 + 0.4 * varRand() : 0.05 * varRand();
+                dx[cell] = Math.cos(shakeAngle) * strength;
+                dy[cell] = Math.sin(shakeAngle) * strength;
+                mask[cell] = sharpness[cell] > 0.15 ? 1 : 0;
+            } else {
+                varRand();
+                varRand();
+            }
         }
     }
-    const verdict = photo.shake === true ? "抖动" : photo.shake === false ? "稳定" : "未判定";
-    const features = Object.freeze({ cls, patches, pca, sharpness, shake: { dx, dy, mask }, verdict });
+
+    const out = {};
+    if (wantDino) {
+        out.cls = cls;
+        out.patches = patches;
+        out.pca = pca;
+    }
+    if (wantCv) {
+        out.sharpness = sharpness;
+        out.shake = { dx, dy, mask };
+        out.verdict = photo.shake === true ? "抖动" : photo.shake === false ? "稳定" : "未判定";
+    }
+    const features = Object.freeze(out);
     cache.set(key, features);
     return features;
 }

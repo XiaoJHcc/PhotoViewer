@@ -8,6 +8,11 @@ release/ 允许的顶层内容：
   SHA256SUMS   分发包校验清单
   README.md    可选说明
 
+双版本发布矩阵（见 Design/spec/editions.md 与 Plans/distribution-package-size-optimization-plan.md）：
+  -win-x64 .exe · -mac-arm64 .dmg · -android-arm64 .apk · -ios .ipa（-ios-arm64 同义）
+历史包继续按原后缀接受：-arm64 .dmg（macOS 0.8.x）、-android-signed .apk（Android 尚未迁移）。
+Android 只发布 arm64-v8a，x86_64/x64/x86/arm 后缀一律拒绝。
+
 用法：
   python3 Tools/check-release.py            # 只校验
   python3 Tools/check-release.py --write    # 校验并重写 release/SHA256SUMS
@@ -30,6 +35,26 @@ ALLOWED_TOP_DIRS = {"packages", "ios-stable", "testflight"}
 ALLOWED_TOP_FILES = {"SHA256SUMS", "README.md"}
 IOS_STABLE_ALLOWED = {"PhotoViewer.iOS.app"}
 
+# 双版本发布矩阵：平台后缀 → 允许的扩展名
+MATRIX_SUFFIXES = {
+    "win-x64": {".exe"},
+    "mac-arm64": {".dmg"},
+    "android-arm64": {".apk"},
+    "ios-arm64": {".ipa"},
+    "ios": {".ipa"},
+}
+# 尚未迁移平台的既有命名，继续接受但提示改用矩阵后缀
+LEGACY_SUFFIXES = {
+    "arm64": {".dmg"},  # macOS 0.8.x 及更早
+    "android-signed": {".apk"},  # Android 尚未切换到 -android-arm64
+}
+LEGACY_HINT = {
+    "arm64": "mac-arm64",
+    "android-signed": "android-arm64",
+}
+# Android 只发布 arm64-v8a；这些架构后缀不得出现在分发包名里
+REJECTED_ARCH_SUFFIX = re.compile(r"^(?:android|android-[\w.]*)-(?:x86_64|x64|x86|arm|armv7|armeabi|armeabi-v7a)$")
+
 
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
@@ -48,6 +73,16 @@ def human(size: int) -> str:
     return f"{size} B"
 
 
+def read_app_version() -> str:
+    props = ROOT / "Directory.Build.props"
+    try:
+        text = props.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r"<AppVersion>([^<]+)</AppVersion>", text)
+    return match.group(1).strip() if match else ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="校验 release/ 布局并生成 SHA256SUMS")
     parser.add_argument("--write", action="store_true", help="重写 release/SHA256SUMS")
@@ -55,6 +90,7 @@ def main() -> int:
 
     errors: list[str] = []
     warnings: list[str] = []
+    current_version = read_app_version()
 
     if not RELEASE.is_dir():
         print("缺少 release/ 目录", file=sys.stderr)
@@ -84,15 +120,49 @@ def main() -> int:
             if entry.suffix.lower() not in PACKAGE_EXTENSIONS:
                 errors.append(f"release/packages/{entry.name} 不是受支持的分发包格式")
                 continue
-            if not PACKAGE_NAME.match(entry.name):
+            match = PACKAGE_NAME.match(entry.name)
+            if not match:
                 errors.append(f"release/packages/{entry.name} 命名不符合 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>")
                 continue
             if entry.name.endswith("-android.apk"):
                 errors.append(f"release/packages/{entry.name} 是未签名 APK；只归档 -android-signed.apk")
                 continue
+
+            suffix = match.group(3)
+            extension = f".{match.group(4)}"
+            version = match.group(2)
+            if suffix in MATRIX_SUFFIXES:
+                allowed = MATRIX_SUFFIXES[suffix]
+            elif suffix in LEGACY_SUFFIXES:
+                allowed = LEGACY_SUFFIXES[suffix]
+                if version == current_version:
+                    warnings.append(
+                        f"release/packages/{entry.name} 使用历史平台后缀 -{suffix}；"
+                        f"当前版本新发布请改用 -{LEGACY_HINT[suffix]}"
+                    )
+            elif REJECTED_ARCH_SUFFIX.match(suffix):
+                errors.append(
+                    f"release/packages/{entry.name} 使用不受支持的架构后缀 -{suffix}；"
+                    "Android 只发布 arm64-v8a 的 -android-arm64.apk"
+                )
+                continue
+            else:
+                allowed_suffixes = "、".join(sorted(MATRIX_SUFFIXES))
+                errors.append(
+                    f"release/packages/{entry.name} 的平台后缀 -{suffix} 不在发布矩阵内；"
+                    f"允许 {allowed_suffixes}（历史后缀 -arm64、-android-signed 仍接受）"
+                )
+                continue
+            if extension not in allowed:
+                expected = "、".join(sorted(allowed))
+                errors.append(
+                    f"release/packages/{entry.name} 的平台后缀 -{suffix} 与扩展名 {extension} 不匹配；只能是 {expected}"
+                )
+                continue
             packages.append(entry)
 
     seen: dict[tuple[str, str, str], str] = {}
+    history: list[Path] = []
     for package in packages:
         match = PACKAGE_NAME.match(package.name)
         if not match:
@@ -103,6 +173,15 @@ def main() -> int:
             errors.append(f"release/packages 中 {product} {version} 的 {platform} 出现多次：{seen[key]} / {package.name}")
         else:
             seen[key] = package.name
+        if current_version and version != current_version:
+            history.append(package)
+
+    if current_version:
+        for product in ("PhotoViewer", "PhotoViewer-AI"):
+            if (product, current_version, "mac-arm64") not in seen:
+                warnings.append(
+                    f"当前版本 {current_version} 尚无 {product}-{current_version}-mac-arm64.dmg"
+                )
 
     ios_stable = RELEASE / "ios-stable"
     if not ios_stable.is_dir():
@@ -134,11 +213,27 @@ def main() -> int:
         print("release/packages/")
         for package in packages:
             print(f"  {package.name:<46} {human(package.stat().st_size):>10}")
+        if history:
+            print(f"  历史版本：{len(history)} 个旧版本包继续保留")
     else:
         warnings.append("release/packages/ 为空")
 
+    if current_version:
+        print(f"\n当前版本 {current_version} 发布矩阵")
+        variants = ("PhotoViewer", "PhotoViewer-AI")
+        for platform in ("win-x64", "mac-arm64", "android-arm64", "ios"):
+            cells = []
+            for product in variants:
+                found = seen.get((product, current_version, platform)) or seen.get(
+                    (product, current_version, "ios-arm64" if platform == "ios" else platform)
+                )
+                cells.append(found or "—")
+            print(f"  -{platform:<14} {' | '.join(cells)}")
+        if not any(version == current_version for _product, version, _platform in seen):
+            warnings.append(f"当前版本 {current_version} 尚无分发包")
+
     if archives:
-        print("release/testflight/")
+        print("\nrelease/testflight/")
         for archive in archives:
             print(f"  {archive.name}")
 

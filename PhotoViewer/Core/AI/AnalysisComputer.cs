@@ -36,12 +36,11 @@ public static class AnalysisComputer
         DecodedImage? sharpnessBmp = null;
         ShakeField? shakeField = null;
         string shakeLabel = "抖动拖影";
-        double aspect = 1.0;
         int cvW = data.CvImageWidth;
         int cvH = data.CvImageHeight;
+        double aspect = cvW > 0 && cvH > 0 ? (double)cvW / cvH : 1.0;
         if (data.Cv != null && cvW > 0 && cvH > 0)
         {
-            aspect = (double)cvW / cvH;
             float diagonal = MathF.Sqrt((float)cvW * cvW + (float)cvH * cvH);
             var sharpness = CvHeatmap.BuildSharpness(data.Cv);
             sharpnessBmp = HeatmapBitmapBuilder.BuildViridis(sharpness, CvGridResult.GridSize, CvGridResult.GridSize);

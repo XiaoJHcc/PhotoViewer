@@ -19,7 +19,7 @@ namespace PhotoViewer.Core.AI;
 /// - 与指纹缓存同 Entry 形状、同"不主动 Dispose"语义,但不走 LRU — 生命周期跟随主图缓存:
 ///   静态构造挂 <see cref="BitmapLoader.CacheStatusChanged"/>,主图位图被淘汰 / 清空时同步移除该路径
 ///   (含增强变体)的即时缓存项。即时计算依赖已解码主图,故项数天然受主图缓存容量约束。
-/// - key 同时包含增强变体与实际计算的 DINO/CV 能力,避免不同开关组合复用不完整结果。
+/// - key 同时包含增强变体与启用的 DINO/CV 能力；项内只保留成功现算侧，不混入只读基线或失败状态。
 ///
 /// AI 设置页"清除特征数据库"按钮通过 <see cref="InvalidateAll"/> 整体清空(指纹缓存与即时缓存一并清,
 /// 仍只清引用,不 Dispose)。

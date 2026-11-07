@@ -36,20 +36,26 @@ export function mountFilterBar(host, ctx) {
 
     const count = el("div", { class: "pv-filter-count" });
 
-    const toggle = el("button", {
-        class: "pv-filter-toggle",
-        type: "button",
-        role: "switch",
-        "aria-checked": "false",
-        "aria-label": "相似聚类",
-        "data-tooltip": "展开/关闭相似聚类面板",
-    }, el("span", { class: "pv-filter-toggle-label" }, "相似聚类"));
-    toggle.addEventListener("click", () => {
-        // FILTER-06：勾选态即设置里的展开状态，与面板当前可见性无关。
-        app.setSimilarityExpanded(!app.settings.similarityPanelExpanded);
-    });
+    // EDITION-02：标准版不创建相似聚类开关，也不留空槽。
+    const toggle = app.capabilities.similarity
+        ? el("button", {
+            class: "pv-filter-toggle",
+            type: "button",
+            role: "switch",
+            "aria-checked": "false",
+            "aria-label": "相似聚类",
+            "data-tooltip": "展开/关闭相似聚类面板",
+        }, el("span", { class: "pv-filter-toggle-label" }, "相似聚类"))
+        : null;
+    if (toggle) {
+        toggle.addEventListener("click", () => {
+            // FILTER-06：勾选态即设置里的展开状态，与面板当前可见性无关。
+            app.setSimilarityExpanded(!app.settings.similarityPanelExpanded);
+        });
+    }
 
-    host.append(popups[0].button, popups[1].button, popups[2].button, count, toggle);
+    host.append(popups[0].button, popups[1].button, popups[2].button, count);
+    if (toggle) host.append(toggle);
 
     function openPopup(kind, button) {
         const state = app.state;
@@ -92,7 +98,7 @@ export function mountFilterBar(host, ctx) {
         place(popups[1].button, controls?.order);
         place(popups[2].button, controls?.rating);
         place(count, controls?.count);
-        place(toggle, controls?.toggle);
+        if (toggle) place(toggle, controls?.toggle);
     }
 
     function renderChoices(state) {
@@ -106,6 +112,7 @@ export function mountFilterBar(host, ctx) {
     }
 
     function renderToggle() {
+        if (!toggle) return;
         toggle.setAttribute("aria-checked", String(Boolean(app.settings.similarityPanelExpanded)));
     }
 

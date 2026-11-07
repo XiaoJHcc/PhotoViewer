@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createTokens } from "../src/core/tokens.js";
 import { manualClock } from "../src/core/clock.js";
-import { createApp } from "../src/core/app.js";
+import { createApp, normalizeSettings } from "../src/core/app.js";
 import { featuresFor } from "../src/core/features.js";
 import { defaultSettings } from "../src/core/settings.js";
 
@@ -135,12 +135,13 @@ function filmViewport(app) {
     return app.state.layout.layoutMode === "col" ? film.scroll.h : film.scroll.w;
 }
 
-function harness({ storage = createStorage(), settings = null, width = 1200, height = 850, library = makeLibrary() } = {}) {
+function harness({ storage = createStorage(), settings = null, edition = "ai", width = 1200, height = 850, library = makeLibrary() } = {}) {
     const clock = manualClock();
     const film = createFilmHost();
     const app = createApp({
         t,
         clock,
+        edition,
         library,
         decoder: createDecoder(),
         store: createStore(),
@@ -753,4 +754,140 @@ test("SIM-03/SIM-10：提取全部转发相似面板并刷新未提取计数", a
     await running;
     assert.equal(app.state.photo.extracted, true);
     assert.equal(app.state.similarity.unextracted, 0);
+});
+
+test("EDITION-01/02：缺省 AI 版保留相似入口与 6/7 瓦片", async () => {
+    const { app } = harness();
+    app.openFolder("f1", { target: "f1/A001.JPG" });
+    app.toggleAnalysis();
+    await flush();
+    assert.equal(app.state.edition, "ai");
+    assert.deepEqual(app.state.capabilities, { dino: true, similarity: true });
+    assert.ok(app.state.layout.filter.controls.toggle, "AI 版筛选条缺少相似聚类开关");
+    assert.deepEqual(
+        app.state.analysis.tiles.map((entry) => entry.kind),
+        ["center", "histogram", "pca", "cosine", "sharpness", "shake"],
+    );
+    assert.equal(app.state.analysis.dino, true);
+});
+
+test("EDITION-02：标准版筛选条四项、无相似入口、分析栏 4/5 瓦片", async () => {
+    const { app } = harness({ edition: "standard" });
+    app.openFolder("f1", { target: "f1/A001.JPG" });
+    app.toggleAnalysis();
+    await flush();
+    assert.equal(app.state.edition, "standard");
+    assert.deepEqual(app.state.capabilities, { dino: false, similarity: false });
+    assert.equal(app.state.layout.filter.controls.toggle, null, "标准版仍留相似开关几何");
+    assert.equal(app.state.layout.filter.controls.count.y + app.state.layout.filter.controls.count.h
+        + t("filter.margin"), app.state.layout.filter.bar.h, "计数后仍留开关高度");
+    assert.equal(app.state.similarity.visible, false);
+    assert.equal(app.state.similarity.items.length, 0);
+    assert.equal(app.state.layout.similarity.occupation, 0);
+    assert.deepEqual(
+        app.state.analysis.tiles.map((entry) => entry.kind),
+        ["center", "histogram", "sharpness", "shake"],
+    );
+});
+
+test("EDITION-02：标准版行布局按四项重新整组居中", () => {
+    const { app } = harness({ edition: "standard" });
+    app.updateSettings({ layoutMode: "row" });
+    app.setWindowSize(1200, 850);
+    const filter = app.state.layout.filter;
+    assert.equal(filter.axis, "row");
+    assert.equal(filter.controls.toggle, null);
+    const groupWidth = t("filter.control.width") * 3 + filter.controls.count.w + t("filter.gap") * 3;
+    assert.equal(filter.groupWidth, groupWidth);
+    assert.equal(filter.controls.sort.x, (1200 - groupWidth) / 2);
+    assert.equal(filter.controls.count.x + filter.controls.count.w, filter.controls.sort.x + groupWidth);
+});
+
+test("EDITION-06：标准版保留已存相似展开态与 DINO 参数，但不恢复入口或任务", async () => {
+    const storage = createStorage();
+    storage.set("PhotoViewer.Settings", JSON.stringify({
+        similarityPanelExpanded: true,
+        similarityThreshold: 0.91,
+        similarityMaxResults: 5,
+        analysisImmediateDinoCompute: true,
+        analysisImmediateCvCompute: false,
+    }));
+    const { app } = harness({ storage, edition: "standard" });
+    app.openFolder("f1", { target: "f1/A001.JPG" });
+    await flush();
+    assert.equal(app.settings.similarityPanelExpanded, true, "启动改写了已存展开态");
+    assert.equal(app.settings.similarityThreshold, 0.91);
+    assert.equal(app.settings.similarityMaxResults, 5);
+    assert.equal(app.state.similarity.visible, false);
+    assert.equal(app.state.layout.panes.filePane.w, t("shell.filebar.content.width"));
+    assert.equal(app.setSimilarityExpanded(false), false, "标准版响应了相似开关");
+    assert.equal(app.settings.similarityPanelExpanded, true, "标准版清除了已存展开态");
+    assert.equal(await app.extractAll(), false, "标准版仍可批量提取");
+    assert.equal(app.state.similarity.progress, null);
+});
+
+test("EDITION-06：标准版保存只提交 CV 开关，隐藏的 DINO/相似值原样保留", () => {
+    const storage = createStorage();
+    storage.set("PhotoViewer.Settings", JSON.stringify({
+        similarityPanelExpanded: true,
+        similarityThreshold: 0.9,
+        similarityMaxResults: 4,
+        analysisImmediateDinoCompute: true,
+        analysisImmediateCvCompute: true,
+    }));
+    const { app } = harness({ storage, edition: "standard" });
+    app.updateSettings({
+        analysisImmediateCvCompute: false,
+        analysisImmediateDinoCompute: false,
+        similarityThreshold: 0.8,
+        similarityMaxResults: 32,
+        similarityPanelExpanded: false,
+    });
+    const saved = JSON.parse(storage.get("PhotoViewer.Settings"));
+    assert.equal(saved.analysisImmediateCvCompute, false);
+    assert.equal(saved.analysisImmediateDinoCompute, true, "标准版改写了不可见 DINO 值");
+    assert.equal(saved.similarityThreshold, 0.9);
+    assert.equal(saved.similarityMaxResults, 4);
+    assert.equal(saved.similarityPanelExpanded, true);
+    assert.equal("analysisImmediateCompute" in saved, false, "仍写出旧组合字段");
+});
+
+test("EDITION-06：无独立 CV 字段的旧文档继承原组合值", () => {
+    const both = normalizeSettings({ analysisImmediateCompute: true });
+    assert.equal(both.analysisImmediateDinoCompute, true);
+    assert.equal(both.analysisImmediateCvCompute, true, "旧组合值未继承到 CV");
+    const off = normalizeSettings({ analysisImmediateCompute: false });
+    assert.equal(off.analysisImmediateDinoCompute, false);
+    assert.equal(off.analysisImmediateCvCompute, false);
+
+    const split = normalizeSettings({
+        analysisImmediateCompute: true,
+        analysisImmediateDinoCompute: true,
+        analysisImmediateCvCompute: false,
+    });
+    assert.equal(split.analysisImmediateDinoCompute, true);
+    assert.equal(split.analysisImmediateCvCompute, false, "已有独立 CV 字段仍继承旧组合值");
+
+    const dinoOnly = normalizeSettings({ analysisImmediateDinoCompute: false });
+    assert.equal(dinoOnly.analysisImmediateCvCompute, false, "缺 CV 字段且无旧组合值时应取默认关闭");
+    assert.equal("analysisImmediateCompute" in both, false);
+});
+
+test("EDITION-03：两个即时计算开关独立持久化", () => {
+    const storage = createStorage();
+    const { app } = harness({ storage });
+    app.updateSettings({ analysisImmediateDinoCompute: true, analysisImmediateCvCompute: false });
+    let saved = JSON.parse(storage.get("PhotoViewer.Settings"));
+    assert.equal(saved.analysisImmediateDinoCompute, true);
+    assert.equal(saved.analysisImmediateCvCompute, false);
+    assert.equal("analysisImmediateCompute" in saved, false);
+
+    app.updateSettings({ analysisImmediateCvCompute: true });
+    saved = JSON.parse(storage.get("PhotoViewer.Settings"));
+    assert.equal(saved.analysisImmediateDinoCompute, true);
+    assert.equal(saved.analysisImmediateCvCompute, true);
+
+    const second = harness({ storage });
+    assert.equal(second.app.settings.analysisImmediateDinoCompute, true);
+    assert.equal(second.app.settings.analysisImmediateCvCompute, true);
 });

@@ -1,16 +1,18 @@
 /**
- * 分析栏编排（ANALYSIS-01–11）。
+ * 分析栏编排（ANALYSIS-01–11、EDITION-02/03）。
  *
- * new AnalysisPresenter({ t, clock, store, onChange, onLocate, thumbnailsBusy })
+ * new AnalysisPresenter({ t, clock, store, dino, onChange, onLocate, thumbnailsBusy })
  *   t(name)                 设计令牌创建的函数
  *   clock                   可注入时间源（clock.js）
- *   store                   { read(photo, { signal }), compute(photo, { signal, variant }), extractGroup(photos) }
+ *   store                   { read(photo, { signal }), compute(photo, { signal, variant, scope }), extractGroup(photos) }
+ *   dino                    是否具备 DINO 能力（标准版为 false）
  *   onChange()              对外状态变化后的回调
  *   onLocate(u, v)          双击细节预览时抛出的定位事件（显示朝向归一化坐标）
  *   thumbnailsBusy()        ANALYSIS-09：缩略图通道是否忙，未提取回退让位时一并等待
  *
  * 公开 API：
- *   setVisible(v) / setPhoto(photo|null) / setImmediateCompute(v) / setEnhanced(v) / setDisplaySurfaceReady(v)
+ *   setVisible(v) / setPhoto(photo|null) / setImmediateDino(v) / setImmediateCv(v)
+ *   setEnhanced(v) / setDisplaySurfaceReady(v)
  *   tiles() -> [{ kind, label, state: "content"|"empty"|"pending"|"failed", message }]
  *   crosshair -> { u, v } | null；hoverKind -> "focus"|"center"|null
  *   cosineMap() -> Float32Array(patchGrid²) | null
@@ -27,7 +29,6 @@ import { PATCH_DIM } from "./types.js";
 import { cosine } from "./features.js";
 
 const DETAIL_KINDS = ["focus", "center"];
-const DIAGNOSTIC_KINDS = ["pca", "cosine", "sharpness", "shake"];
 // ANALYSIS-09：让位等待同时观察主图上屏与缩略图通道，轮询间隔只需覆盖肉眼可辨的变化。
 const YIELD_POLL_MS = 50;
 
@@ -56,6 +57,43 @@ function sourceHeight(sourceSize) {
     return sourceSize?.height ?? sourceSize?.h ?? 0;
 }
 
+function hasDinoData(features) {
+    return Boolean(features && (features.patches || features.pca));
+}
+
+function hasCvData(features) {
+    return Boolean(features && features.sharpness && features.shake);
+}
+
+function dinoView(features) {
+    if (!features) return null;
+    return {
+        pca: features.pca,
+        patches: features.patches,
+        cls: features.cls,
+        verdict: features.verdict,
+    };
+}
+
+function cvView(features) {
+    if (!features) return null;
+    return {
+        sharpness: features.sharpness,
+        shake: features.shake,
+        verdict: features.verdict,
+    };
+}
+
+function newSide() {
+    return {
+        route: "idle",
+        state: "idle",
+        error: null,
+        render: null,
+        controller: null,
+    };
+}
+
 function buildHistogram(pixels, width, height) {
     const r = new Uint32Array(256);
     const g = new Uint32Array(256);
@@ -75,18 +113,20 @@ function buildHistogram(pixels, width, height) {
 }
 
 export class AnalysisPresenter {
-    constructor({ t, clock, store, onChange = null, onLocate = null, thumbnailsBusy = () => false }) {
+    constructor({ t, clock, store, dino = true, onChange = null, onLocate = null, thumbnailsBusy = () => false }) {
         this.t = t;
         this.clock = clock;
         this.store = store;
         this.onChange = onChange;
         this.onLocate = onLocate;
+        this.dino = dino !== false;
         // ANALYSIS-09：未提取回退让位时，缩略图通道也必须空闲。
         this.thumbnailsBusy = typeof thumbnailsBusy === "function" ? thumbnailsBusy : () => false;
 
         this.visible = false;
         this.photo = null;
-        this.immediateCompute = false;
+        this.immediateDino = false;
+        this.immediateCv = false;
         this.enhanced = false;
         this.displaySurfaceReady = false;
 
@@ -95,10 +135,11 @@ export class AnalysisPresenter {
         this.cosineRef = this.centerCell();
         this.cosineData = null;
 
-        this.render = null;
-        this.route = "idle";
-        this.routeState = "idle";
-        this.routeError = null;
+        this.dinoSide = newSide();
+        this.cvSide = newSide();
+        this.libraryState = "idle";
+        this.libraryError = null;
+        this.diagnosticsView = null;
 
         this.histogramData = null;
         this.histogramFrame = null;
@@ -107,8 +148,7 @@ export class AnalysisPresenter {
         this.cache = new Map();
         this.generation = 0;
         this.controller = null;
-        this.timers = new Set();
-        this.surfaceWaiter = null;
+        this.timers = new Map();
     }
 
     get crosshair() {
@@ -120,7 +160,28 @@ export class AnalysisPresenter {
     }
 
     get error() {
-        return this.routeError;
+        return this.dinoSide.error ?? this.cvSide.error ?? this.libraryError;
+    }
+
+    get route() {
+        if (this.libraryState === "loading") return "library";
+        if (this.dino && this.dinoSide.state === "loading") return this.dinoSide.route;
+        if (this.cvSide.state === "loading") return this.cvSide.route;
+        if (this.dino && this.dinoSide.route === "enhanced") return "enhanced";
+        if (this.dino && this.dinoSide.route === "fallback") return "fallback";
+        if (this.cvSide.route === "enhanced") return "enhanced";
+        if (this.cvSide.route === "fallback") return "fallback";
+        return "library";
+    }
+
+    get routeState() {
+        return this.loading ? "loading" : this.error ? "failed" : "done";
+    }
+
+    get loading() {
+        return this.libraryState === "loading"
+            || (this.dino && this.dinoSide.state === "loading")
+            || this.cvSide.state === "loading";
     }
 
     patchGrid() {
@@ -132,11 +193,26 @@ export class AnalysisPresenter {
         return { x: center, y: center };
     }
 
+    diagnosticKinds() {
+        return this.dino
+            ? ["pca", "cosine", "sharpness", "shake"]
+            : ["sharpness", "shake"];
+    }
+
+    sideFor(kind) {
+        // 路由用 "dino"/"cv"，瓦片用 pca/cosine/sharpness/shake，两者指向同一侧。
+        return kind === "dino" || kind === "pca" || kind === "cosine" ? this.dinoSide : this.cvSide;
+    }
+
     setVisible(value) {
         const next = Boolean(value);
         if (this.visible === next) return;
         this.visible = next;
-        if (!next) this.clearSession();
+        if (!next) {
+            // ANALYSIS-01：隐藏即取消在途任务，再清空内容与准星。
+            this.cancelInFlight();
+            this.clearSession();
+        }
         this.reroute();
         this.emit();
     }
@@ -157,16 +233,24 @@ export class AnalysisPresenter {
         if (!next) this.crosshairPos = null;
         this.cosineRef = this.centerCell();
         this.cosineData = null;
-        this.routeError = null;
+        this.libraryError = null;
         this.clearHistogram();
         this.reroute();
         this.emit();
     }
 
-    setImmediateCompute(value) {
+    setImmediateDino(value) {
+        const next = Boolean(value) && this.dino;
+        if (this.immediateDino === next) return;
+        this.immediateDino = next;
+        this.reroute();
+        this.emit();
+    }
+
+    setImmediateCv(value) {
         const next = Boolean(value);
-        if (this.immediateCompute === next) return;
-        this.immediateCompute = next;
+        if (this.immediateCv === next) return;
+        this.immediateCv = next;
         this.reroute();
         this.emit();
     }
@@ -185,7 +269,6 @@ export class AnalysisPresenter {
         if (this.displaySurfaceReady === next) return;
         this.displaySurfaceReady = next;
         if (!next) this.clearHistogram();
-        this.resumeSurfaceWaiter();
         this.emit();
     }
 
@@ -197,7 +280,9 @@ export class AnalysisPresenter {
     invalidate() {
         // SCOPE-03：清库同时清进程缓存与派生结果，诊断瓦片不保留上一轮的内存结果。
         this.cache.clear();
-        this.render = null;
+        this.dinoSide.render = null;
+        this.cvSide.render = null;
+        this.diagnosticsView = null;
         this.cosineData = null;
         this.reroute();
         this.emit();
@@ -206,10 +291,11 @@ export class AnalysisPresenter {
     clearSession() {
         this.hover = null;
         this.crosshairPos = null;
-        this.render = null;
-        this.route = "idle";
-        this.routeState = "idle";
-        this.routeError = null;
+        this.libraryState = "idle";
+        this.libraryError = null;
+        this.dinoSide = newSide();
+        this.cvSide = newSide();
+        this.diagnosticsView = null;
         this.cosineRef = this.centerCell();
         this.cosineData = null;
         this.clearHistogram();
@@ -218,164 +304,258 @@ export class AnalysisPresenter {
     removeCachedFeatures(photo) {
         if (!photo) return;
         this.cache.delete(this.libraryKey(photo));
-        this.cache.delete(this.computeKey(photo, "original"));
-        this.cache.delete(this.computeKey(photo, "enhanced"));
+        for (const kind of ["dino", "cv"]) {
+            for (const variant of ["original", "enhanced"]) {
+                this.cache.delete(this.computeKey(photo, kind, variant));
+            }
+        }
+        this.libraryState = "idle";
     }
 
     libraryKey(photo) {
-        return photo.fingerprint ? `fp:${photo.fingerprint}` : `id:${photo.id}`;
+        const scope = this.dino ? "all" : "cv";
+        return photo.fingerprint ? `fp:${photo.fingerprint}:${scope}` : `id:${photo.id}:${scope}`;
     }
 
-    computeKey(photo, variant) {
-        return `${photo.id}#${variant}`;
+    libraryView(features) {
+        if (!features || this.dino) return features;
+        // EDITION-03/05：标准版只保留 CV 结果，不缓存 DINO patch。
+        return cvView(features);
+    }
+
+    computeKey(photo, kind, variant) {
+        return `${photo.id}#${kind}#${variant}`;
+    }
+
+    immediateFor(kind) {
+        return kind === "dino" ? this.immediateDino : this.immediateCv;
     }
 
     reroute() {
         this.generation += 1;
         this.cancelInFlight();
         if (!this.visible || !this.photo) {
-            this.render = null;
-            this.route = "idle";
-            this.routeState = "idle";
-            this.routeError = null;
+            this.libraryState = "idle";
+            this.libraryError = null;
+            this.dinoSide = newSide();
+            this.cvSide = newSide();
+            this.diagnosticsView = null;
             return;
         }
         const photo = this.photo;
-        // ANALYSIS-09：三条路径同一时刻只走一条，增强联动优先于只读库。
-        if (this.immediateCompute && this.enhanced) {
-            const cached = this.cache.get(this.computeKey(photo, "enhanced"));
-            if (cached) {
-                this.applyRender(cached, "enhanced");
-                return;
-            }
-            this.startCompute(photo, "enhanced");
-            return;
+        const gen = this.generation;
+        this.libraryState = "loading";
+        this.libraryError = null;
+        // ANALYSIS-10：切图时先保留上一张瓦片，库结果到达后整体替换。
+        for (const kind of ["dino", "cv"]) {
+            const side = this.sideFor(kind);
+            side.route = "library";
+            side.state = "loading";
+            side.error = null;
         }
+        this.emit();
         const cached = this.cache.get(this.libraryKey(photo));
         if (cached) {
-            this.applyRender(cached, "library");
+            this.applyLibrary(cached, gen);
             return;
         }
-        this.startRead(photo);
+        this.startRead(photo, gen);
     }
 
-    startRead(photo) {
-        const gen = this.generation;
+    startRead(photo, gen) {
         const controller = new AbortController();
         this.controller = controller;
-        this.route = "library";
-        this.routeState = "loading";
-        this.routeError = null;
-        this.emit();
+        // EDITION-03/05：标准版只申请 CV 只读结果；AI 版可一次取回两侧。
+        const scope = this.dino ? "all" : "cv";
         let request;
         try {
-            request = Promise.resolve(this.store.read(photo, { signal: controller.signal }));
-        } catch (error) {
+            request = Promise.resolve(this.store.read(photo, { signal: controller.signal, scope }));
+        } catch {
             this.controller = null;
-            this.fail();
+            this.failLibrary();
             return;
         }
         request
             .then((features) => {
                 if (gen !== this.generation) return;
                 this.controller = null;
-                if (features) {
-                    this.cache.set(this.libraryKey(photo), features);
-                    this.applyRender(features, "library");
-                    return;
-                }
-                this.onLibraryMiss(photo);
+                const view = this.libraryView(features);
+                const usable = this.dino
+                    ? Boolean(hasDinoData(view) || hasCvData(view))
+                    : hasCvData(view);
+                // EDITION-03：空结果不是成功结果，不得写入库缓存。
+                if (usable) this.cache.set(this.libraryKey(photo), view);
+                this.applyLibrary(features, gen);
             })
             .catch(() => {
                 if (gen !== this.generation) return;
                 this.controller = null;
                 if (controller.signal.aborted) return;
-                this.fail();
+                this.failLibrary();
             });
     }
 
-    onLibraryMiss(photo) {
-        if (!this.immediateCompute) {
-            // ANALYSIS-10：即时计算关闭时库与缓存都无结果即“未提取”，不后台现算。
-            this.render = null;
-            this.route = "library";
-            this.routeState = "done";
-            this.routeError = null;
-            this.emit();
-            return;
+    applyLibrary(features, gen) {
+        if (gen !== this.generation) return;
+        this.libraryState = "done";
+        this.libraryError = null;
+        const missing = [];
+        const recompute = [];
+        for (const kind of ["dino", "cv"]) {
+            const side = this.sideFor(kind);
+            if (kind === "dino" && !this.dino) {
+                // EDITION-03/05：标准版只读取和派生 CV，不保留 DINO patch。
+                side.render = null;
+                side.route = "library";
+                side.state = "done";
+                side.error = null;
+                continue;
+            }
+            const available = kind === "dino" ? hasDinoData(features) : hasCvData(features);
+            if (available) {
+                side.render = kind === "dino" ? dinoView(features) : cvView(features);
+                side.route = "library";
+                side.state = "done";
+                side.error = null;
+                // EDITION-03/09：只读库先出图；雾天增强下启用侧仍需按当前展示图重算，禁用侧保留只读结果。
+                if (this.enhanced && this.immediateFor(kind)) recompute.push(kind);
+            } else {
+                side.render = null;
+                side.route = "library";
+                side.state = "done";
+                side.error = null;
+                if (this.immediateFor(kind)) missing.push(kind);
+            }
         }
-        const cached = this.cache.get(this.computeKey(photo, "original"));
-        if (cached) {
-            this.applyRender(cached, "fallback");
-            return;
-        }
-        this.startFallback(photo);
+        this.updateDiagnostics();
+        this.emit();
+        for (const kind of recompute) this.startSideCompute(kind, this.photo, "enhanced", gen);
+        for (const kind of missing) this.routeMiss(kind, this.photo, gen);
     }
 
-    startFallback(photo) {
-        const gen = this.generation;
-        this.route = "fallback";
-        this.routeState = "loading";
-        this.routeError = null;
-        // ANALYSIS-09：回退期间四张诊断瓦片显示“计算中…”，不拿上一张的图冒充当前照片。
-        this.render = null;
+    failLibrary() {
+        this.libraryState = "done";
+        this.libraryError = "计算失败";
+        for (const kind of ["dino", "cv"]) {
+            const side = this.sideFor(kind);
+            side.render = null;
+            side.route = "library";
+            side.state = "failed";
+            side.error = this.libraryError;
+        }
+        this.diagnosticsView = null;
+        this.emit();
+    }
+
+    routeMiss(kind, photo, gen) {
+        if (gen !== this.generation || !photo) return;
+        if (!this.immediateFor(kind)) return;
+        if (this.enhanced) {
+            this.startSideCompute(kind, photo, "enhanced", gen);
+            return;
+        }
+        this.startFallback(kind, photo, gen);
+    }
+
+    startFallback(kind, photo, gen) {
+        const side = this.sideFor(kind);
+        side.route = "fallback";
+        side.state = "loading";
+        side.error = null;
+        // ANALYSIS-09：回退期间该侧诊断瓦片显示“计算中…”，不拿上一张的图冒充当前照片。
+        side.render = null;
+        this.updateDiagnostics();
         this.emit();
         this.wait(this.t("motion.analysis.fallback.delay"))
-            .then(() => {
-                if (gen !== this.generation) return false;
+            .then((ok) => {
+                if (!ok || gen !== this.generation) return false;
                 return this.waitForDisplayYield();
             })
             .then((ready) => {
-                if (gen !== this.generation || ready === false) return null;
-                return this.startCompute(photo, "original", gen);
-            })
-            .catch(() => {
-                if (gen !== this.generation) return;
-                this.fail();
+                if (ready === false || gen !== this.generation) return;
+                this.startSideCompute(kind, photo, "original", gen);
             });
     }
 
-    startCompute(photo, variant, gen = this.generation) {
-        if (gen !== this.generation) return Promise.resolve();
-        this.route = variant === "enhanced" ? "enhanced" : "fallback";
-        this.routeState = "loading";
-        this.routeError = null;
-        this.render = null;
+    startSideCompute(kind, photo, variant, gen = this.generation) {
+        if (gen !== this.generation) return;
+        const side = this.sideFor(kind);
+        const cached = this.cache.get(this.computeKey(photo, kind, variant));
+        if (cached) {
+            this.applySide(kind, cached, variant === "enhanced" ? "enhanced" : "fallback", gen);
+            return;
+        }
+        side.route = variant === "enhanced" ? "enhanced" : "fallback";
+        side.state = "loading";
+        side.error = null;
+        side.render = null;
+        this.updateDiagnostics();
         this.emit();
         const controller = new AbortController();
-        this.controller = controller;
+        side.controller = controller;
         let request;
         try {
-            request = Promise.resolve(this.store.compute(photo, { signal: controller.signal, variant }));
-        } catch (error) {
-            this.controller = null;
-            this.fail();
-            return Promise.resolve();
+            // EDITION-03：两侧各按自己的能力请求，另一侧不得随这次计算顺带出图。
+            request = Promise.resolve(this.store.compute(photo, { signal: controller.signal, variant, scope: kind }));
+        } catch {
+            side.controller = null;
+            this.failSide(kind);
+            return;
         }
-        return request
+        request
             .then((features) => {
                 if (gen !== this.generation) return;
-                this.controller = null;
-                if (!features) throw new Error("缺少特征结果");
-                // SCOPE-03：现算产物只进进程缓存，不改 photo.extracted、不写库。
-                this.cache.set(this.computeKey(photo, variant), features);
-                this.applyRender(features, variant === "enhanced" ? "enhanced" : "fallback");
+                side.controller = null;
+                const view = kind === "dino" ? dinoView(features) : cvView(features);
+                const usable = kind === "dino" ? hasDinoData(view) : hasCvData(view);
+                // EDITION-03：空结果不得缓存为成功，也不得冒充该侧已出图。
+                if (!usable) throw new Error("缺少特征结果");
+                // SCOPE-03 / EDITION-05：现算产物只进进程缓存，不改 photo.extracted、不写库。
+                this.cache.set(this.computeKey(photo, kind, variant), view);
+                this.applySide(kind, view, variant === "enhanced" ? "enhanced" : "fallback", gen);
             })
             .catch(() => {
                 if (gen !== this.generation) return;
-                this.controller = null;
+                side.controller = null;
                 if (controller.signal.aborted) return;
-                this.fail();
+                this.failSide(kind);
             });
+    }
+
+    applySide(kind, view, route, gen) {
+        if (gen !== this.generation) return;
+        const side = this.sideFor(kind);
+        side.render = view;
+        side.route = route;
+        side.state = "done";
+        side.error = null;
+        this.updateDiagnostics();
+        this.emit();
+    }
+
+    failSide(kind) {
+        // ANALYSIS-10 / EDITION-03：单侧失败回落到可区分的失败状态，另一侧保持原样。
+        const side = this.sideFor(kind);
+        side.render = null;
+        side.state = "failed";
+        side.error = "计算失败";
+        this.updateDiagnostics();
+        this.emit();
+    }
+
+    updateDiagnostics() {
+        const dino = this.dino ? this.dinoSide.render : null;
+        const cv = this.cvSide.render;
+        this.diagnosticsView = dino || cv ? { ...(dino ?? {}), ...(cv ?? {}) } : null;
     }
 
     wait(ms) {
         return new Promise((resolve) => {
             const id = this.clock.setTimeout(() => {
                 this.timers.delete(id);
-                resolve();
+                resolve(true);
             }, ms);
-            this.timers.add(id);
+            this.timers.set(id, resolve);
         });
     }
 
@@ -385,40 +565,40 @@ export class AnalysisPresenter {
             let settled = false;
             let poll = null;
             let deadline = null;
-            const finish = () => {
+            const clear = (id) => {
+                if (id === null) return null;
+                this.clock.clearTimeout(id);
+                this.timers.delete(id);
+                return null;
+            };
+            const finish = (value) => {
                 if (settled) return;
                 settled = true;
-                this.surfaceWaiter = null;
-                if (poll !== null) {
-                    this.clock.clearTimeout(poll);
-                    this.timers.delete(poll);
-                    poll = null;
-                }
-                if (deadline !== null) {
-                    this.clock.clearTimeout(deadline);
-                    this.timers.delete(deadline);
-                    deadline = null;
-                }
-                resolve(true);
+                poll = clear(poll);
+                deadline = clear(deadline);
+                resolve(value);
+            };
+            const arm = (ms, callback) => {
+                let id = null;
+                id = this.clock.setTimeout(() => {
+                    this.timers.delete(id);
+                    callback();
+                }, ms);
+                this.timers.set(id, () => finish(false));
+                return id;
             };
             const tick = () => {
                 poll = null;
                 if (settled) return;
                 if (this.displayReady()) {
-                    finish();
+                    finish(true);
                     return;
                 }
-                poll = this.clock.setTimeout(tick, YIELD_POLL_MS);
-                this.timers.add(poll);
+                poll = arm(YIELD_POLL_MS, tick);
             };
             // ANALYSIS-09：最长等待 motion.analysis.fallback.yieldTimeout，超时后照常计算。
-            deadline = this.clock.setTimeout(finish, this.t("motion.analysis.fallback.yieldTimeout"));
-            this.timers.add(deadline);
-            poll = this.clock.setTimeout(tick, YIELD_POLL_MS);
-            this.timers.add(poll);
-            this.surfaceWaiter = (force) => {
-                if (force || this.displayReady()) finish();
-            };
+            deadline = arm(this.t("motion.analysis.fallback.yieldTimeout"), () => finish(true));
+            poll = arm(YIELD_POLL_MS, tick);
         });
     }
 
@@ -426,36 +606,22 @@ export class AnalysisPresenter {
         return this.displaySurfaceReady && !this.thumbnailsBusy();
     }
 
-    resumeSurfaceWaiter(force = false) {
-        if (this.surfaceWaiter) this.surfaceWaiter(force);
-    }
-
     cancelInFlight() {
         if (this.controller) {
             this.controller.abort();
             this.controller = null;
         }
-        for (const id of this.timers) this.clock.clearTimeout(id);
+        for (const side of [this.dinoSide, this.cvSide]) {
+            if (side.controller) {
+                side.controller.abort();
+                side.controller = null;
+            }
+        }
+        for (const [id, resolve] of this.timers) {
+            this.clock.clearTimeout(id);
+            resolve(false);
+        }
         this.timers.clear();
-        // 取消时强制解开让位等待，避免被清掉定时器后 Promise 永远挂起。
-        this.resumeSurfaceWaiter(true);
-    }
-
-    applyRender(features, route) {
-        this.render = { photoId: this.photo?.id ?? null, features, route };
-        this.route = route;
-        this.routeState = "done";
-        this.routeError = null;
-        this.cosineData = null;
-        this.emit();
-    }
-
-    fail() {
-        // ANALYSIS-10：失败回落到空状态，与“未提取”文案可区分。
-        this.render = null;
-        this.routeState = "failed";
-        this.routeError = "计算失败";
-        this.emit();
     }
 
     tiles() {
@@ -465,7 +631,7 @@ export class AnalysisPresenter {
         if (isValidFocus(photo?.focus)) list.push(this.detailTile("focus", detailReady));
         list.push(this.detailTile("center", detailReady));
         list.push(this.histogramTile());
-        for (const kind of DIAGNOSTIC_KINDS) list.push(this.diagnosticTile(kind));
+        for (const kind of this.diagnosticKinds()) list.push(this.diagnosticTile(kind));
         return list;
     }
 
@@ -493,22 +659,23 @@ export class AnalysisPresenter {
     }
 
     diagnosticTile(kind) {
+        const side = this.sideFor(kind);
         let state = "empty";
         let message = "未提取";
         if (!this.photo) {
             return { kind, label: this.labelFor(kind), state, message };
         }
-        if (this.routeState === "failed") {
+        if (side.state === "failed") {
             state = "failed";
-            message = this.routeError ?? "计算失败";
-        } else if (this.routeState === "loading" && this.route !== "library") {
+            message = side.error ?? "计算失败";
+        } else if (side.state === "loading" && side.route !== "library") {
             state = "pending";
             message = "计算中…";
-        } else if (this.render) {
+        } else if (side.render) {
             // ANALYSIS-10：只读库读取期间保留上一张瓦片直到新数据就绪；计算路径不保留。
             state = "content";
             message = null;
-        } else if (this.routeState === "loading") {
+        } else if (side.state === "loading") {
             state = "pending";
             message = "计算中…";
         }
@@ -531,18 +698,20 @@ export class AnalysisPresenter {
             case "sharpness":
                 return "锐度";
             case "shake":
-                return this.render?.features?.verdict ?? "抖动拖影";
+                return this.cvSide.render?.verdict ?? "抖动拖影";
             default:
                 return kind;
         }
     }
 
     diagnostics() {
-        return this.render?.features ?? null;
+        return this.diagnosticsView;
     }
 
     cosineMap() {
-        const features = this.render?.features;
+        // EDITION-03：标准版不建立 cosine 参考点，也不派生相似度图。
+        if (!this.dino) return null;
+        const features = this.dinoSide.render;
         if (!features || !features.patches) return null;
         if (this.cosineData) return this.cosineData;
         const grid = this.patchGrid();
@@ -562,15 +731,17 @@ export class AnalysisPresenter {
             return;
         }
         this.crosshairPos = { u, v };
-        const features = this.render?.features;
-        if (features?.patches) {
-            const grid = this.patchGrid();
-            const gx = clamp(Math.floor(u * grid), 0, grid - 1);
-            const gy = clamp(Math.floor(v * grid), 0, grid - 1);
-            // ANALYSIS-08：重复点同一格不重算 cosine。
-            if (gx !== this.cosineRef.x || gy !== this.cosineRef.y) {
-                this.cosineRef = { x: gx, y: gy };
-                this.cosineData = null;
+        if (this.dino) {
+            const features = this.dinoSide.render;
+            if (features?.patches) {
+                const grid = this.patchGrid();
+                const gx = clamp(Math.floor(u * grid), 0, grid - 1);
+                const gy = clamp(Math.floor(v * grid), 0, grid - 1);
+                // ANALYSIS-08：重复点同一格不重算 cosine。
+                if (gx !== this.cosineRef.x || gy !== this.cosineRef.y) {
+                    this.cosineRef = { x: gx, y: gy };
+                    this.cosineData = null;
+                }
             }
         }
         this.emit();

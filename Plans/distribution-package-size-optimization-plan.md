@@ -121,12 +121,24 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 
 ### P1-Mac：本地实施与验收结果
 
-- `PhotoViewerEnableDino` 同时控制共享实现、Mac 原生依赖、模型/License、UI 和打包内容。Mac 默认构建标准版，`PhotoViewerEnableDino=true` 构建 AI 版；其他平台当前仍默认 AI 行为，待各自实施。
+- `PhotoViewerEnableDino` 同时控制共享实现、Mac 原生依赖、模型/License、UI 和打包内容。Mac 标准版 Tasks 显式传 `PhotoViewerEnableDino=false`，AI 版显式传 `true`，裸构建缺少或传入非法值时报错；其他平台当前仍默认 AI 行为，待各自实施。
 - 标准版移除 DINO 提取/缓存/索引、相似聚类、patch 派生及 ONNX/MathNet 引用，保留 CV 分析、抖动徽标和三瓦片 CV 诊断。DINO/CV 即时计算已拆成独立设置；旧文档缺 CV 字段时继承原组合值。
-- `publish.sh --edition standard|ai|both` 发布独立 `.app` 与 DMG。`Tools/check-mac-package.py` 保存文件级大小/SHA-256 清单并阻断标准版推理资产、AI 版模型/许可证缺失及两版 Windows ORT DLL。`check-release.py` 支持同版本双产品归档。
-- 实测最终 Release：标准版 `.app` 49.81 MiB、DMG **22.01 MiB**；AI 版 `.app` 167.95 MiB、DMG **109.16 MiB**。AI 版较 §1.3 的 114.09 MiB 旧包减少 **4.93 MiB**，与误带 Windows ORT DLL 的清理项一致。证据位于 `artifacts/acceptance/mac-editions/`。
-- 双版本 layout / analysis / tools / similarity（AI）/ settings / input / toolbar / filmstrip / faults / texture-cache 原生套件均通过；四种 DINO/CV 开关组合及独立失败态通过。AI → 标准 → AI 跨进程设置、视图状态与特征往返通过。
-- `CoreContractCheck`：AI 1139 PASS、标准版 1133 PASS，均 0 FAIL；`SettingsDefaultsCheck` 与 Windows 类型检查通过。实际 Developer ID 签名、公证、stapler/Gatekeeper 和发布归档未在本轮执行，仍由正式发布任务验收。
+- `publish.sh --edition standard|ai|both` 发布独立 `.app` 与 DMG；`--local` 只运行 adhoc 构建、扫描及只读装载验证，不写正式归档。`bin/obj` 按变体隔离，源 `Info.plist` 构建前后无改动。扫描保存身份/版本/构建号、文件大小及 SHA-256，并拒绝标准版推理资产、AI 必需托管/原生组件或模型/许可证缺失；正反自检 9 项通过。`check-release.py` 校验双产品平台矩阵，兼容未迁移平台历史包名并拒绝未支持架构。
+- 首轮拆分测得标准版 `.app` 49.81 MiB、DMG 22.01 MiB；AI `.app` 167.95 MiB、DMG 109.16 MiB。正确性修复后的最终本地 Release/adhoc 实测分别为 **49.91 / 22.13 MiB** 与 **168.12 / 110.12 MiB**；这些是本地验证包，不是正式签名发布体积。包扫描与装载证据位于 `artifacts/acceptance/mac-editions/*-local-*.json`。
+- 双版本 layout / analysis / tools / settings / input / toolbar / filmstrip / faults / texture-cache 及 AI similarity 共 19 套原生回归通过。新增真实 P3/F16 与 EXIF 6 输入的 CV 数值对拍、无库 DINO-only 实际推理比例、库基线保留；Core 覆盖部分失败重试、成功侧复用和切图代际。AI → 标准 → AI 跨进程设置/视图状态恢复，CLS、patch、CV blob SHA-256、模型标识、CV spec/尺寸保持一致。证据位于 `artifacts/acceptance/mac-editions-fixes/`。
+- `CoreContractCheck`：AI **1181 PASS**、标准版 **1165 PASS**，均 0 FAIL、1 个既有 Windows 平台用例 SKIP；`SettingsDefaultsCheck`、68 项色彩契约与 Windows 类型检查通过。Web **344** 个单测通过，内置浏览器两版非 demo `check=all` 均 **56/56**；`?demo&check=all` 仍有既有 MENU-03 窗口/页面坐标混用断言问题，不在本任务改动范围。实际 Developer ID 签名、公证、stapler/Gatekeeper 和正式归档未执行，仍由正式发布任务验收。
+
+### P1：推广前的正确性与发布门
+
+- 分析栏始终先取当前照片的只读基线，增强只替换已授权的一侧；不得从上一轮瓦片反推基线。未增强时只补缺失侧；即时缓存只存成功侧，刷新可以重试失败侧且继续复用成功侧。
+- CV 诊断与 DINO 诊断的 CV 现算输入统一为显示方向的 BGRA8 sRGB；读库使用记录内的 CV 尺寸。DINO-only 的瓦片比例独立于 CV 开关。
+- 回归必须覆盖 F16/广色域/旋转输入数值对照、已有部分特征、增强状态打开分析栏、连续切图、部分失败后刷新、隐藏取消，以及 CLS/patch/CV 内容与版本标识的跨进程往返；不以空库四开关组合或行数检查替代。
+- 每个变体的恢复资产、中间产物和输出目录隔离；manifest 从源模板生成到中间目录，不由构建改写仓库文件。普通开发构建与发布使用同一变体标识与路径约定。
+- 发布版本唯一来源为 `Directory.Build.props`，显式版本参数不得仅更改文件名。扫描器同时验证包身份、版本/构建号、架构、禁止项与必需依赖，并在 DMG 只读挂载后再次扫描实际应用。
+- 本地 adhoc 验收与正式 Developer ID/公证分开记录；前者不能进入正式归档或替代 Gatekeeper 发布结论。
+- 三端推广时把独立 CV 控件、宿主 `ImmediateCvCompute`、属性变更重路由和编译能力一起接通；移除旧组合开关的默认接口回落，避免 UI 写独立字段而运行时仍读 DINO 字段。未实施的三端保持原组合行为，不提前切换半套接线。
+- Web 参考壳通过 `?edition=standard|ai` 表达两版，默认 AI；标准版必须实际不创建相似任务与 DINO 瓦片，参考壳版本选择不得变成产品内升级或版本切换入口。
+- iOS App Store 是否长期并列两个 App 仍是单独发布决策，不能用 TestFlight 两个构建号代替裁定；在裁定前不更改 Bundle ID 或签名资料。
 
 ### P2：独立无损优化
 

@@ -1,4 +1,5 @@
 import { createTokens } from "./core/tokens.js";
+import { normalizeEdition } from "./core/edition.js";
 import baseTokens from "./tokens.g.js";
 import { systemClock } from "./core/clock.js";
 import { createLibrary } from "./core/library.js";
@@ -20,6 +21,7 @@ import { mountRatingPopover } from "./shell/ratingsources.js";
 import { mountDemoPanel } from "./demo/panel.js";
 
 const params = new URLSearchParams(location.search);
+const edition = normalizeEdition(params.get("edition"));
 const t = createTokens(params.get("platform") ?? "web");
 const clock = systemClock();
 const library = createLibrary();
@@ -35,6 +37,7 @@ const reducedMotion = () => reducedMotionOverride ?? reducedMotionQuery.matches;
 
 const body = document.getElementById("app");
 body.dataset.platform = t.profile;
+body.dataset.edition = edition;
 const demo = params.has("demo");
 body.classList.toggle("is-demo", demo);
 
@@ -49,6 +52,7 @@ const app = createApp({
     t,
     clock,
     profile: t.profile,
+    edition,
     library,
     decoder,
     store,
@@ -84,11 +88,14 @@ ctx.ratingPopover = ratingPopover;
 const components = [
     mountFilterBar(panes.file, ctx),
     mountFilmstrip(panes.file, ctx),
-    mountSimilarity(panes.file, ctx),
+];
+// EDITION-02：标准版不创建相似面板组件。
+if (app.capabilities.similarity) components.push(mountSimilarity(panes.file, ctx));
+components.push(
     mountPhoto(panes.photo, ctx),
     mountAnalysis(panes.analysis, ctx),
     mountControlBar(panes.control, ctx),
-];
+);
 const picker = mountPicker(windowEl, ctx, library);
 components.push(picker);
 // RATING-04：来源浮窗最后更新，确保读到的卡片/控制栏节点已就位。
@@ -178,6 +185,7 @@ reducedMotionQuery.addEventListener?.("change", () => render(null));
 const shell = {
     app,
     t,
+    edition,
     library,
     store,
     decoder,

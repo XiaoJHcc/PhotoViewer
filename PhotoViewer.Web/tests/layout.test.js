@@ -395,3 +395,38 @@ test("RATING-04：浮窗按入口居中、保留 arrowMargin 余量并夹在宿�
         anchor: { x: 1180, y: 700, w: 30, h: 30 }, host, width, height, direction: "down", gap: 12,
     }), { x: 994, y: 696 });
 });
+
+test("FILTER-07/EDITION-02：标准版筛选条四项，计数后不留开关高度", () => {
+    const col = layout({ showSimilarity: false }).filter;
+    assert.equal(col.controls.toggle, null);
+    assert.deepEqual(col.controls.sort, { x: 13, y: 10, w: 90, h: 32 });
+    assert.deepEqual(col.controls.count, { x: (116 - countWidth) / 2, y: 121, w: countWidth, h: 17 });
+    assert.equal(col.bar.h, 121 + 17 + 10);
+    assert.equal(layout({ showSimilarity: false }).film.scroll.y, 148);
+    assert.equal(layout({ showSimilarity: false }).nodes["filter.toggle"], undefined);
+
+    const macFilter = layout({ showSimilarity: false }, mac, "mac").filter;
+    assert.equal(macFilter.controls.toggle, null);
+    assert.equal(macFilter.bar.h, mac("shell.filter.leadingInset") + 3 * 37 + 17 + 10);
+
+    const row = layout({ width: 1200, height: 850, layoutMode: "row", showSimilarity: false }).filter;
+    const groupWidth = 90 * 3 + countWidth + 5 * 3;
+    const start = (1200 - groupWidth) / 2;
+    assert.equal(row.controls.toggle, null);
+    assert.equal(row.groupWidth, groupWidth);
+    assert.deepEqual(row.controls.sort, { x: start, y: 10, w: 90, h: 32 });
+    assert.deepEqual(row.controls.count, { x: start + 285, y: 17.5, w: countWidth, h: 17 });
+    assert.equal(row.bar.h, 52);
+});
+
+test("ANALYSIS-03/EDITION-02：标准版 4/5 瓦片按实际 n 重算等边长", () => {
+    assert.equal(analysisTileSize({ mainSize: 850, tileCount: 4 }, t), 201);
+    assert.equal(analysisCrossSize({ mainSize: 850, tileCount: 4 }, t), 221);
+    assert.equal(analysisTileSize({ mainSize: 850, tileCount: 5 }, t), 159);
+    assert.equal(analysisCrossSize({ mainSize: 850, tileCount: 5 }, t), 179);
+
+    const visible = layout({ showAnalysis: true, analysisTileCount: 5, showSimilarity: false });
+    assert.equal(visible.analysis.tileCount, 5);
+    assert.equal(visible.analysis.cross, 179);
+    assert.equal(visible.panes.analysisPane.w, 179);
+});

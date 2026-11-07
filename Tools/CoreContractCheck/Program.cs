@@ -28,6 +28,17 @@ internal static class Program
 
         Console.WriteLine("临时根目录：" + root);
         Directory.CreateDirectory(root);
+        // 先固定隔离数据库路径：评级写回等用例会经 MainViewModel 同步 photos 副本，
+        // 若等到分析用例才初始化，默认路径已落到用户目录。
+        try
+        {
+            PhotoViewer.Core.Database.PhotoDatabase.Initialize(Path.Combine(root, "core-contract.db"));
+        }
+        catch (Exception exception)
+        {
+            Console.WriteLine("隔离数据库初始化失败：" + exception);
+            return 1;
+        }
 
         try
         {
@@ -57,6 +68,7 @@ internal static class Program
             RatingSourcesLayoutChecks.Run(checks);
             TitleBarLayoutChecks.Run(checks);
             MemoryAdmissionChecks.Run(checks);
+            AnalysisEditionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
         }
         catch (Exception exception)
         {
@@ -64,6 +76,9 @@ internal static class Program
         }
         finally
         {
+            // 连接池可能仍持有临时库文件句柄，先清池再删临时目录。
+            try { Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools(); }
+            catch (Exception poolFailure) { Console.WriteLine("清理数据库连接池失败：" + poolFailure.Message); }
             Cleanup(root);
         }
 

@@ -179,6 +179,7 @@ internal static class NativeAnalysisAcceptance
             await VerifyIndexRefreshAsync(main, window, output, checks);
 #endif
             await VerifyImmediateComputeIndependenceAsync(main, window, output, checks);
+            await NativeEditionAnalysisChecks.RunAsync(window, output, checks);
 
             // 7) 关闭分析栏后主图恢复占满剩余区域。
             window.Execute("ToggleAnalysisView");
@@ -405,6 +406,16 @@ internal static class NativeAnalysisAcceptance
                     return cvReady;
 #endif
                 }, $"DINO={dino}, CV={cv} 独立即时计算");
+#if PHOTOVIEWER_DINO
+                if (dino && !cv)
+                {
+                    using var image = ColorEngine.ToAnalysisSrgb8(window.Session.Image!);
+                    double expectedRatio = (double)image.Width / image.Height;
+                    if (Math.Abs(window.Analysis.Presenter.AspectRatio - expectedRatio) > 0.001)
+                        throw new InvalidOperationException("无 CV 基线的 DINO 现算宽高比未取当前分析图尺寸");
+                    checks.Add($"immediate DINO-only: missing-library inference keeps display aspect {expectedRatio:0.###}");
+                }
+#endif
                 checks.Add($"immediate: DINO={dino}, CV={cv} computes only the enabled capability");
             }
 

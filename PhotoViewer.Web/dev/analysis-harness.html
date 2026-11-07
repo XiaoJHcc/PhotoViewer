@@ -136,7 +136,8 @@ function syncControls(state) {
         photo ? `${photo.name} · o${photo.orientation} ${photo.width}×${photo.height}` : "无照片",
         `tier=${state.session.tier}`,
         `enhance=${state.session.enhance}`,
-        `即时=${app.settings.analysisImmediateCompute}`,
+        `即时DINO=${app.settings.analysisImmediateDinoCompute}`,
+        `即时CV=${app.settings.analysisImmediateCvCompute}`,
         `瓦片=${state.analysis.tiles.length}`,
         `hover=${state.analysis.hoverKind ?? "-"}`,
         `绿框=${state.analysis.highlight ? "有" : "无"}`,
@@ -165,7 +166,8 @@ function syncWindow() {
 button("上一张", () => app.navigate(-1));
 button("下一张", () => app.navigate(1));
 button("雾天增强", () => app.toggleEnhance());
-button("即时计算", () => app.updateSettings({ analysisImmediateCompute: !app.settings.analysisImmediateCompute }));
+button("即时计算 DINO", () => app.updateSettings({ analysisImmediateDinoCompute: !app.settings.analysisImmediateDinoCompute }));
+button("即时计算 CV", () => app.updateSettings({ analysisImmediateCvCompute: !app.settings.analysisImmediateCvCompute }));
 button("分析栏", () => app.toggleAnalysis());
 controls.append(photoSelect, readout);
 
@@ -368,7 +370,7 @@ async function runSelfTest() {
     for (let i = 0; i < 20 && !app.state.analysis.histogram; i += 1) await tick(100);
 
     // ANALYSIS-09/10：未提取回退显示“计算中”，回退完成后自行出图
-    app.updateSettings({ analysisImmediateCompute: true });
+    app.updateSettings({ analysisImmediateDinoCompute: true });
     const unextracted = app.state.cards.find((card) => card.photo.taken === null && !card.photo.extracted);
     if (unextracted) {
         app.selectCard(unextracted.photo.id);
@@ -390,7 +392,7 @@ async function runSelfTest() {
     } else {
         check("ANALYSIS-09 回退期显示计算中", false, "库中没有未提取照片");
     }
-    app.updateSettings({ analysisImmediateCompute: false });
+    app.updateSettings({ analysisImmediateDinoCompute: false });
 
     // 收尾：回到首张照片，留下一个诊断准星供目视核对
     app.openFolder("harbor");

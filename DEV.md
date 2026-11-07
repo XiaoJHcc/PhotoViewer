@@ -70,6 +70,8 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 | **Debug Mac AI** | 构建、签名并启动 `PhotoViewer-AI.app`，内置 DINO 模型与 ONNX Runtime。 |
 | **Run Mac AI** | 启动已有 AI 版构建，不重新编译。 |
 
+两个版本各自使用 `PhotoViewer.Mac/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离 `bin/obj`，两版不复用还原资产与中间文件。命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失时构建直接报错，不走默认目录；上面的 Tasks 已带该参数。构建只改写 `obj/<edition>/…/Info.plist` 副本，仓库内的 `PhotoViewer.Mac/Info.plist` 保持原样。
+
 ### Web 参考壳
 
 | Task | 用途 |
@@ -129,13 +131,13 @@ python3 Tools/check-release.py --write   # 校验 release 布局并重写 SHA256
 bash Tools/clean-artifacts.sh            # 预览可清理项；加 --yes 执行
 ```
 
-`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。
+`check-release.py` 按双版本矩阵校验平台后缀与扩展名：`-win-x64` `.exe`、`-mac-arm64` `.dmg`、`-android-arm64` `.apk`、`-ios`/`-ios-arm64` `.ipa`；历史包继续接受 `-arm64` `.dmg` 与 `-android-signed` `.apk`，`-android-x86_64` 等架构后缀直接拒绝。当前版本缺 Mac 双版本包时给出提示，不阻断其他平台尚未迁移的归档。`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。
 
 校验清单可在 `release/` 内核对：`cd release && shasum -a 256 -c SHA256SUMS`。
 
 ## 打包发布
 
-版本号由根目录 `Directory.Build.props` 控制；分发包位于 `release/packages/`，打包过程产物位于 `release/ios-stable/` 与 `release/testflight/`。
+版本号由根目录 `Directory.Build.props` 的 `AppVersion` / `AppBuildNumber` 统一控制，发布脚本不另行改版本；分发包位于 `release/packages/`，打包过程产物位于 `release/ios-stable/` 与 `release/testflight/`。
 
 Mac 采用 Developer ID 公证直发，不进入 Mac App Store。首次发布前在 Xcode 的 **Settings → Accounts → Manage Certificates** 创建带本机私钥的 **Developer ID Application** 证书，再把 App 专用密码存入本机钥匙串：
 
@@ -146,11 +148,22 @@ xcrun notarytool store-credentials "PhotoViewer-notary" \
 
 可用 `MAC_DEVELOPER_ID_IDENTITY` 指定签名身份、`MAC_NOTARY_PROFILE` 指定其他钥匙串配置；默认自动选择首个 Developer ID Application 身份并读取 `PhotoViewer-notary`。凭据不得写入仓库。若 Apple 已返回 `Accepted`、但附加票据时网络失败，运行 `bash PhotoViewer.Mac/publish.sh --staple-only --edition <standard|ai|both>`，只重试对应变体的票据附加与验证，不重新构建或上传。
 
+Mac 发布脚本以根 `Directory.Build.props` 的 `AppVersion` / `AppBuildNumber` 为唯一版本来源；兼容位置参数（`bash PhotoViewer.Mac/publish.sh 0.9.0`），但与之一致才继续，不一致立即报错退出，不擅自改写版本或构建号。正式发布在 `artifacts/acceptance/mac-editions/<edition>-publish.json` 保存机器可读证据：签名身份、`codesign` 校验、公证提交与状态、`stapler` 与 Gatekeeper 结果、DMG 大小与 SHA-256、只读挂载后卷内 `.app` 的扫描报告路径；公证状态非 `Accepted` 时保留 `<edition>-notarization-log.json` 并终止。发布与挂载核对都调用 `Tools/check-mac-package.py`，按 `--version` / `--build-number`（缺省读根 props）核对包目录名、`Info.plist` 身份与主程序 arm64 架构，并分别约束两版的模型、许可证与托管/原生推理资产。
+
+只做本机预览时运行 `bash PhotoViewer.Mac/publish.sh --local [--edition standard|ai|both]`：adhoc 构建、扫描与 DMG 装载验证后结束，DMG 落在 `artifacts/scratch/mac-local-dmg/`，不签名 Developer ID、不公证、不写入 `release/packages`。单独扫描任一架包：
+
+```bash
+python3 Tools/check-mac-package.py PhotoViewer.Mac/bin/standard/Release/net10.0-macos/osx-arm64/PhotoViewer.app \
+    --edition standard --output artifacts/acceptance/mac-editions/scan.json
+python3 Tools/check-mac-package.py --self-test    # 正反判定自检
+```
+
 | Task | 产物与说明 |
 |---|---|
 | **Publish Windows EXE (Release)** | 自包含 `release/packages/PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
 | **Publish Android APK (Release)** | 构建并签名 APK，归档 `release/packages/PhotoViewer-<版本>-android-signed.apk`。 |
-| **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，扫描实际 `.app` 后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
+| **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，核对 `.app` 身份与内容后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `release/packages/PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
+| **Publish Mac DMG (Local Adhoc Check)** | 只在本机验证：adhoc 构建、包扫描与 DMG 装载核对，产物留在 `artifacts/scratch/mac-local-dmg/`，不签名 Developer ID、不公证、不归档。 |
 | **Publish iOS IPA (Release)** | 生成 `release/packages/PhotoViewer-<版本>-ios-arm64.ipa`，并覆盖 `release/ios-stable/` 的 `.app` 安装源。 |
 | **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；`release/testflight/` 只保留最近一次归档。上传前自动执行归档检查。 |
 | **Validate iOS TestFlight Archive** | 检查当前版本归档的版本号、Bundle ID、分发签名、entitlements、AOT/ONNX 符号与图标，不上传。 |

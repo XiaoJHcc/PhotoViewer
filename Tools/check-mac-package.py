@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-"""扫描 macOS .app 包，生成文件清单并核对发行版本契约。
+"""扫描 macOS .app 包，核对发行版本契约并生成文件级清单。
 
 用法：
   python3 Tools/check-mac-package.py <App.app> --edition standard|ai --output <报告.json>
+        [--version 0.9.0] [--build-number 90] [--product-name PhotoViewer|PhotoViewer-AI]
+        [--bundle-id cc.xiaojh.PhotoViewer.Mac] [--executable PhotoViewer.Mac]
+  python3 Tools/check-mac-package.py --self-test
 
 只做本地文件检查：不挂载 DMG、不联网、不调用签名或公证工具。
 
-standard：不得包含 .onnx、文件名含 onnxruntime（不区分大小写）、DirectML，
-          或 Microsoft.ML.OnnxRuntime 托管 dll。
-ai：      必须包含精确模型 dinov3_vits16.onnx（字节数与 SHA-256 固定），
+身份：包目录名、Contents/Info.plist 的 CFBundleName / CFBundleDisplayName /
+CFBundleShortVersionString / CFBundleVersion / CFBundleIdentifier / CFBundleExecutable，
+以及 Contents/MacOS/<CFBundleExecutable> 的 arm64 可执行 Mach-O 头。版本号与构建号缺省
+取根 Directory.Build.props，也可显式传入；报告保存期望值与实际值。
+
+standard：不得包含 .onnx、文件名含 onnxruntime（不区分大小写）、DirectML、
+          Microsoft.ML.OnnxRuntime 托管 dll、MathNet.Numerics.dll 或 DINOv3 许可证。
+ai：      必须包含 Microsoft.ML.OnnxRuntime.dll、MathNet.Numerics.dll、
+          精确模型 dinov3_vits16.onnx（字节数与 SHA-256 固定）、DINOv3-LICENSE.md，
           以及 arm64 Mach-O 的 libonnxruntime*.dylib。
 两个版本都拒绝 Windows 的 onnxruntime*.dll。
 
-报告固定写入 edition / appPath / fileCount / totalBytes / files / errors，
-另附按分类的体积摘要。检查失败时仍写报告并以 1 退出。
+报告固定写入 edition / appPath / expectations / identity / fileCount / totalBytes /
+files / errors，另附按分类的体积摘要。检查失败时仍写报告并以 1 退出。
 """
 
 from __future__ import annotations
@@ -22,20 +31,41 @@ import argparse
 import hashlib
 import json
 import os
+import plistlib
 import re
+import shutil
 import struct
 import sys
+import tempfile
 from pathlib import Path
 
 MODEL_NAME = "dinov3_vits16.onnx"
 MODEL_BYTES = 86_594_677
 MODEL_SHA256 = "bcba38490ec2eded4a240751bebac198903daba7263871e8fee3aa39b03352e8"
 
+PRODUCT_NAMES = {"standard": "PhotoViewer", "ai": "PhotoViewer-AI"}
+DEFAULT_BUNDLE_ID = "cc.xiaojh.PhotoViewer.Mac"
+DEFAULT_EXECUTABLE = "PhotoViewer.Mac"
+
+AI_MANAGED_REQUIRED = ("Microsoft.ML.OnnxRuntime.dll", "MathNet.Numerics.dll")
+STANDARD_MANAGED_FORBIDDEN = ("Microsoft.ML.OnnxRuntime.dll", "MathNet.Numerics.dll")
+DINO_LICENSE_NAME = "DINOv3-LICENSE.md"
+
+IDENTITY_KEYS = (
+    ("CFBundleName", "产品名"),
+    ("CFBundleDisplayName", "显示名"),
+    ("CFBundleShortVersionString", "版本号"),
+    ("CFBundleVersion", "构建号"),
+    ("CFBundleIdentifier", "Bundle ID"),
+    ("CFBundleExecutable", "可执行文件名"),
+)
+
 # Mach-O 头常量（见 <mach-o/loader.h> 与 <mach-o/fat.h>）。
 MH_MAGIC = 0xFEEDFACE
 MH_MAGIC_64 = 0xFEEDFACF
 FAT_MAGIC = 0xCAFEBABE
 FAT_MAGIC_64 = 0xCAFEBABF
+MH_EXECUTE = 0x2
 MH_DYLIB = 0x6
 CPU_TYPE_ARM64 = 0x0100000C
 
@@ -57,6 +87,21 @@ def human(size: int) -> str:
             return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
         value /= 1024
     return f"{size} B"
+
+
+def read_root_props() -> dict:
+    """读取根 Directory.Build.props 的 AppVersion / AppBuildNumber。"""
+    props = Path(__file__).resolve().parent.parent / "Directory.Build.props"
+    values: dict = {}
+    try:
+        text = props.read_text(encoding="utf-8")
+    except OSError:
+        return values
+    for key in ("AppVersion", "AppBuildNumber"):
+        match = re.search(rf"<{key}>([^<]+)</{key}>", text)
+        if match:
+            values[key] = match.group(1).strip()
+    return values
 
 
 def _read_thin_header(handle, offset: int):
@@ -139,6 +184,10 @@ def is_arm64_macho_dylib(architectures: list[tuple[int, int]]) -> bool:
     return any(filetype == MH_DYLIB and cputype == CPU_TYPE_ARM64 for cputype, filetype in architectures)
 
 
+def is_arm64_macho_executable(architectures: list[tuple[int, int]]) -> bool:
+    return any(filetype == MH_EXECUTE and cputype == CPU_TYPE_ARM64 for cputype, filetype in architectures)
+
+
 def collect(app: Path, errors: list[str]) -> list[dict]:
     records: list[dict] = []
     for root, _dirs, names in os.walk(app, followlinks=False):
@@ -209,6 +258,73 @@ def build_summary(records: list[dict]) -> dict:
     return summary
 
 
+def check_identity(app: Path, expectations: dict, errors: list[str]) -> dict:
+    app_name = app.name
+    if app_name != f"{expectations['productName']}.app":
+        errors.append(
+            f"应用包目录名应为 {expectations['productName']}.app，实际 {app_name}"
+        )
+
+    info_plist = app / "Contents" / "Info.plist"
+    identity = {
+        "appBundle": app_name,
+        "infoPlistPath": str(info_plist),
+        "infoPlist": {},
+        "checks": [],
+        "verified": False,
+    }
+    if not info_plist.is_file():
+        errors.append("缺少 Contents/Info.plist")
+        return identity
+
+    try:
+        plist = plistlib.loads(info_plist.read_bytes())
+    except (OSError, plistlib.InvalidFileException) as exc:
+        errors.append(f"无法解析 Contents/Info.plist：{exc}")
+        return identity
+    if not isinstance(plist, dict):
+        errors.append("Contents/Info.plist 顶层不是字典")
+        return identity
+
+    expected = {
+        "CFBundleName": expectations["productName"],
+        "CFBundleDisplayName": expectations["productName"],
+        "CFBundleShortVersionString": expectations["version"],
+        "CFBundleVersion": expectations["buildNumber"],
+        "CFBundleIdentifier": expectations["bundleId"],
+        "CFBundleExecutable": expectations["executable"],
+    }
+    identity["infoPlist"] = {key: plist.get(key) for key, _label in IDENTITY_KEYS}
+    for key, label in IDENTITY_KEYS:
+        actual = plist.get(key)
+        want = expected[key]
+        ok = actual == want
+        identity["checks"].append({"field": key, "label": label, "expected": want, "actual": actual, "ok": ok})
+        if not ok:
+            errors.append(f"Info.plist {label}（{key}）不符：期望 {want}，实际 {actual}")
+
+    executable_path = app / "Contents" / "MacOS" / str(plist.get("CFBundleExecutable", ""))
+    architectures = macho_architectures(executable_path) if executable_path.is_file() else []
+    executable_ok = executable_path.is_file() and is_arm64_macho_executable(architectures)
+    identity["mainExecutable"] = {
+        "path": str(executable_path),
+        "exists": executable_path.is_file(),
+        "architectures": [
+            {"cputype": hex(cputype), "filetype": filetype} for cputype, filetype in architectures
+        ],
+        "arm64Executable": executable_ok,
+    }
+    if not executable_path.is_file():
+        errors.append(f"缺少主程序 Contents/MacOS/{plist.get('CFBundleExecutable')}")
+    elif not executable_ok:
+        errors.append(
+            f"主程序不是 arm64 可执行 Mach-O：{executable_path}（{architectures}）"
+        )
+
+    identity["verified"] = all(check["ok"] for check in identity["checks"]) and executable_ok
+    return identity
+
+
 def check_standard(records: list[dict], errors: list[str]) -> None:
     for record in records:
         lower = record["name"].lower()
@@ -219,6 +335,10 @@ def check_standard(records: list[dict], errors: list[str]) -> None:
             reasons.append("ONNX Runtime 文件")
         if "directml" in lower:
             reasons.append("DirectML 文件")
+        if record["name"] in STANDARD_MANAGED_FORBIDDEN:
+            reasons.append("托管推理组件")
+        if record["name"] == DINO_LICENSE_NAME:
+            reasons.append("DINO 模型许可证")
         if reasons:
             errors.append(f"标准版不得包含 {'、'.join(reasons)}：{record['path']}")
     for record in records:
@@ -230,9 +350,17 @@ def check_ai(records: list[dict], errors: list[str]) -> bool:
     for record in records:
         if is_windows_onnxruntime(record["name"]):
             errors.append(f"AI 版不得包含 Windows ONNX Runtime DLL：{record['path']}")
-    licenses = [record for record in records if record["name"] == "DINOv3-LICENSE.md"]
+
+    licenses = [record for record in records if record["name"] == DINO_LICENSE_NAME]
     if len(licenses) != 1:
-        errors.append(f"AI 版应恰好包含一份 DINOv3-LICENSE.md，实际 {len(licenses)} 份")
+        errors.append(f"AI 版应恰好包含一份 {DINO_LICENSE_NAME}，实际 {len(licenses)} 份")
+
+    for required in AI_MANAGED_REQUIRED:
+        matches = [record for record in records if record["name"] == required]
+        if len(matches) != 1:
+            errors.append(f"AI 版应恰好包含一份托管推理组件 {required}，实际 {len(matches)} 份")
+        elif not matches[0]["path"].startswith("Contents/MonoBundle/"):
+            errors.append(f"托管推理组件 {required} 不在 Contents/MonoBundle/：{matches[0]['path']}")
 
     models = [record for record in records if record["category"] == "model"]
     satisfied = False
@@ -277,30 +405,29 @@ def check_ai(records: list[dict], errors: list[str]) -> bool:
     return satisfied
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="扫描 macOS .app 并核对发行版本契约")
-    parser.add_argument("app", type=Path, help="待扫描的 .app 路径")
-    parser.add_argument("--edition", required=True, choices=("standard", "ai"), help="发行版本")
-    parser.add_argument("--output", required=True, type=Path, help="JSON 报告路径")
-    args = parser.parse_args()
-
-    app: Path = args.app
+def scan(app: Path, expectations: dict) -> dict:
+    """扫描单个 .app，返回报告字典（errors 非空即未通过）。"""
     errors: list[str] = []
     records: list[dict] = []
     model_satisfied = False
+    identity: dict = {}
+
     if not app.is_dir():
         errors.append(f"应用包不存在或不是目录：{app}")
     else:
         records = collect(app, errors)
-        if args.edition == "standard":
+        identity = check_identity(app, expectations, errors)
+        if expectations["edition"] == "standard":
             check_standard(records, errors)
         else:
             model_satisfied = check_ai(records, errors)
 
     summary = build_summary(records)
     report = {
-        "edition": args.edition,
+        "edition": expectations["edition"],
         "appPath": str(app.resolve()),
+        "expectations": expectations,
+        "identity": identity,
         "fileCount": len(records),
         "totalBytes": sum(record["bytes"] for record in records),
         "summary": summary,
@@ -316,34 +443,196 @@ def main() -> int:
         ],
         "errors": errors,
     }
-    if args.edition == "ai":
+    if expectations["edition"] == "ai":
         report["modelContract"] = {
             "expected": {"name": MODEL_NAME, "bytes": MODEL_BYTES, "sha256": MODEL_SHA256},
             "found": summary["modelFiles"],
             "satisfied": model_satisfied,
         }
+    report["passed"] = not errors
+    return report
 
-    output: Path = args.output
+
+def write_report(report: dict, output: Path) -> int:
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except OSError as exc:
         print(f"无法写入报告 {output}：{exc}", file=sys.stderr)
         return 1
+    return 0
 
-    print(f"edition：{args.edition}")
+
+def print_report(report: dict, output: Path | None) -> None:
+    print(f"edition：{report['edition']}")
     print(f"app：{report['appPath']}")
+    identity = report.get("identity") or {}
+    plist = identity.get("infoPlist") or {}
+    if plist:
+        print(
+            "身份："
+            f"{plist.get('CFBundleName')} / {plist.get('CFBundleShortVersionString')} "
+            f"({plist.get('CFBundleVersion')}) / {plist.get('CFBundleIdentifier')} / "
+            f"{plist.get('CFBundleExecutable')}"
+        )
     print(f"文件：{report['fileCount']}  总字节：{report['totalBytes']}（{human(report['totalBytes'])}）")
-    for category in summary["categories"]:
+    for category in report["summary"]["categories"]:
         print(f"  {category['category']:<20} {category['fileCount']:>5}  {human(category['bytes']):>12}")
-    print(f"报告：{output}")
-    if errors:
+    if output is not None:
+        print(f"报告：{output}")
+    if report["errors"]:
         print("包扫描未通过：", file=sys.stderr)
-        for message in errors:
+        for message in report["errors"]:
+            print(f"  - {message}", file=sys.stderr)
+    else:
+        print("包扫描通过")
+
+
+def _write_executable(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 小端 arm64 精简 Mach-O 头：magic / cputype / cpusubtype / filetype / ncmds / sizeofcmds / flags / reserved
+    path.write_bytes(struct.pack("<IIIIIIII", MH_MAGIC_64, CPU_TYPE_ARM64, 0, MH_EXECUTE, 0, 0, 0, 0))
+
+
+def _make_app(root: Path, product: str, version: str, build: str, *, extra_files: dict | None = None,
+              bundle_name: str | None = None, executable: str = DEFAULT_EXECUTABLE) -> Path:
+    app = root / f"{product}.app"
+    contents = app / "Contents"
+    (contents / "MacOS").mkdir(parents=True, exist_ok=True)
+    (contents / "MonoBundle").mkdir(parents=True, exist_ok=True)
+    plist = {
+        "CFBundleName": bundle_name or product,
+        "CFBundleDisplayName": bundle_name or product,
+        "CFBundleShortVersionString": version,
+        "CFBundleVersion": build,
+        "CFBundleIdentifier": DEFAULT_BUNDLE_ID,
+        "CFBundleExecutable": executable,
+    }
+    (contents / "Info.plist").write_bytes(plistlib.dumps(plist))
+    _write_executable(contents / "MacOS" / executable)
+    for rel, data in (extra_files or {}).items():
+        target = contents / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+    return app
+
+
+def self_test() -> int:
+    """用合成 .app 校验扫描器的正反判定（真实 AI 包仍由发布扫描覆盖）。"""
+    version, build = "9.9.9", "999"
+    cases: list[tuple[str, dict, bool, str | None]] = []
+
+    def expectations(edition: str, **overrides) -> dict:
+        base = {
+            "edition": edition,
+            "productName": PRODUCT_NAMES[edition],
+            "version": version,
+            "buildNumber": build,
+            "bundleId": DEFAULT_BUNDLE_ID,
+            "executable": DEFAULT_EXECUTABLE,
+        }
+        base.update(overrides)
+        return base
+
+    failures: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="pv-mac-scan-selftest-") as tmp:
+        root = Path(tmp)
+
+        app = _make_app(root / "standard-ok", "PhotoViewer", version, build,
+                        extra_files={"MonoBundle/PhotoViewer.dll": b"MZ"})
+        cases.append(("标准版合规包通过", {"app": app, "expectations": expectations("standard")}, True, None))
+
+        app = _make_app(root / "standard-leak", "PhotoViewer", version, build,
+                        extra_files={"MonoBundle/Microsoft.ML.OnnxRuntime.dll": b"MZ"})
+        cases.append(("标准版残留托管 ORT 失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "托管推理组件"))
+
+        app = _make_app(root / "standard-mathnet", "PhotoViewer", version, build,
+                        extra_files={"MonoBundle/MathNet.Numerics.dll": b"MZ"})
+        cases.append(("标准版残留 MathNet 失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "托管推理组件"))
+
+        app = _make_app(root / "standard-license", "PhotoViewer", version, build,
+                        extra_files={"Resources/Assets/Models/DINOv3-LICENSE.md": b"license"})
+        cases.append(("标准版残留 DINO 许可证失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "标准版不得包含 DINO 模型许可证"))
+
+        app = _make_app(root / "ai-no-managed", "PhotoViewer-AI", version, build)
+        cases.append(("AI 版缺少托管 ORT 失败", {"app": app, "expectations": expectations("ai")}, False,
+                      "AI 版应恰好包含一份托管推理组件 Microsoft.ML.OnnxRuntime.dll"))
+
+        app = _make_app(root / "bad-version", "PhotoViewer", "0.0.1", build)
+        cases.append(("版本号不符失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "Info.plist 版本号（CFBundleShortVersionString）不符"))
+
+        app = _make_app(root / "bad-build", "PhotoViewer", version, "1")
+        cases.append(("构建号不符失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "Info.plist 构建号（CFBundleVersion）不符"))
+
+        app = _make_app(root / "bad-product", "PhotoViewer", version, build, bundle_name="PhotoViewer-AI")
+        cases.append(("标准版误带 AI 产品名失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "Info.plist 产品名（CFBundleName）不符"))
+
+        app = _make_app(root / "wrong-dir", "PhotoViewer-AI", version, build)
+        cases.append(("包目录名与版本不符失败", {"app": app, "expectations": expectations("standard")}, False,
+                      "应用包目录名应为 PhotoViewer.app"))
+
+        for label, kwargs, expect_pass, needle in cases:
+            report = scan(kwargs["app"], kwargs["expectations"])
+            passed = report["passed"]
+            detail = "；".join(report["errors"][:3])
+            if passed != expect_pass:
+                failures.append(f"{label}：期望 {'通过' if expect_pass else '失败'}，实际 {'通过' if passed else '失败'}")
+            elif needle and not any(needle in message for message in report["errors"]):
+                failures.append(f"{label}：错误信息未包含「{needle}」，实际：{detail}")
+            else:
+                print(f"  [{'OK' if passed else 'OK（已拒绝）'}] {label}")
+
+    if failures:
+        print("自检未通过：", file=sys.stderr)
+        for message in failures:
             print(f"  - {message}", file=sys.stderr)
         return 1
-    print("包扫描通过")
+    print(f"自检通过（{len(cases)} 项）")
     return 0
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+    if "--self-test" in argv:
+        return self_test()
+
+    parser = argparse.ArgumentParser(description="扫描 macOS .app 并核对发行版本契约")
+    parser.add_argument("app", type=Path, help="待扫描的 .app 路径")
+    parser.add_argument("--edition", required=True, choices=("standard", "ai"), help="发行版本")
+    parser.add_argument("--output", required=True, type=Path, help="JSON 报告路径")
+    parser.add_argument("--version", help="期望的 CFBundleShortVersionString；缺省取根 Directory.Build.props")
+    parser.add_argument("--build-number", help="期望的 CFBundleVersion；缺省取根 Directory.Build.props")
+    parser.add_argument("--product-name", help="期望的产品名与 .app 目录名")
+    parser.add_argument("--bundle-id", default=DEFAULT_BUNDLE_ID, help=f"期望的 CFBundleIdentifier（默认 {DEFAULT_BUNDLE_ID}）")
+    parser.add_argument("--executable", default=DEFAULT_EXECUTABLE, help=f"期望的 CFBundleExecutable（默认 {DEFAULT_EXECUTABLE}）")
+    args = parser.parse_args(argv)
+
+    props = read_root_props()
+    version = args.version or props.get("AppVersion")
+    build_number = args.build_number or props.get("AppBuildNumber")
+    if not version or not build_number:
+        print("无法确定期望的版本号/构建号：请显式传 --version 与 --build-number", file=sys.stderr)
+        return 2
+
+    expectations = {
+        "edition": args.edition,
+        "productName": args.product_name or PRODUCT_NAMES[args.edition],
+        "version": version,
+        "buildNumber": build_number,
+        "bundleId": args.bundle_id,
+        "executable": args.executable,
+    }
+    report = scan(args.app, expectations)
+    if write_report(report, args.output):
+        return 1
+    print_report(report, args.output)
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
