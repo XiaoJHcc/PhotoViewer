@@ -127,7 +127,7 @@ internal static class NativeInputAcceptance
             var root = window.Window.ContentView ?? throw new InvalidOperationException("原生内容视图缺失");
             (string Name, CGPoint Point)[] blocked =
             [
-                ("筛选条", CenterInWindow(window.SimilarityToggle)),
+                ("筛选条", CenterInWindow(window.FilterBarClickTarget)),
                 ("控制栏", CenterInWindow(command)),
                 ("标题栏", new CGPoint(30, (double)root.Bounds.Height - 15)),
                 ("窗口外", new CGPoint(-20, 20)),
@@ -534,11 +534,11 @@ internal static class NativeInputAcceptance
         string[] expectedDisplaySymbols = [AppleSymbolNames.Menu.Filmstrip, AppleSymbolNames.Menu.Analysis, AppleSymbolNames.Menu.Control, AppleSymbolNames.Menu.Enhance];
         if (!displayItems.Select(item => item.Image?.AccessibilityDescription).SequenceEqual(expectedDisplaySymbols))
             throw new InvalidOperationException("系统显示菜单图标不符");
-        string[] expectedMenus = ["PhotoViewer", "文件", "显示", "工具", "操作"];
+        string[] expectedMenus = [MacProductInfo.DisplayName, "文件", "显示", "工具", "操作"];
         if (!mainMenu.Items.Select(item => item.Submenu?.Title).SequenceEqual(expectedMenus))
             throw new InvalidOperationException("系统菜单栏缺少工具/操作菜单或顺序错误");
         var tools = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "工具")!;
-        string[] expectedTools = ["EXIF 详情…", "DINO 诊断…"];
+        string[] expectedTools = ["EXIF 详情…", $"{MacProductInfo.DiagnosticName}…"];
         if (!tools.Items.Select(item => item.Title).SequenceEqual(expectedTools)) throw new InvalidOperationException("系统工具菜单结构不符");
         if (tools.Items[0].Enabled || !tools.Items[1].Enabled) throw new InvalidOperationException("空照片时工具菜单可用性错误");
         var actions = mainMenu.Items.Select(item => item.Submenu).Single(submenu => submenu?.Title == "操作")!;

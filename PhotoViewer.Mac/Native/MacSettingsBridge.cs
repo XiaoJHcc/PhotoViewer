@@ -183,8 +183,12 @@ internal sealed class MacAiStateDto
     public int SimilarityThreshold { get; set; }
     /// <summary>最多数量。</summary>
     public int MaxResults { get; set; }
-    /// <summary>即时计算 DINO/CV。</summary>
+    /// <summary>是否显示 DINO 专属设置。</summary>
+    public bool DinoEnabled { get; set; }
+    /// <summary>即时计算 DINO。</summary>
     public bool ImmediateCompute { get; set; }
+    /// <summary>即时计算 CV。</summary>
+    public bool ImmediateCvCompute { get; set; }
     /// <summary>清库按钮当前文案。</summary>
     public string ClearButtonText { get; set; } = string.Empty;
     /// <summary>清库状态文字。</summary>

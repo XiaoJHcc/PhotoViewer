@@ -1,6 +1,6 @@
 # 分发包体积优化计划
 
-> 状态：分发方向已裁定，待实施（2026-11-07）
+> 状态：macOS P0/P1 本地实施与验收完成，其他平台待实施（2026-11-07）
 > 关联：[发行版本设计规范](../Design/spec/editions.md) · [DINOv3 选片 Plan-1](dinov3-photo-ranking-plan-1.md) · [DINOv3 ONNX 构建说明](../DEV.md#dinov3-onnx-模型)
 > 范围：四平台模型与推理运行时分发、包体清理、发布矩阵。模型结构、预处理、特征 schema 与聚类算法不在本计划内变更。标准版入口、CV 保留范围、独立即时计算门控与版本切换兼容以发行版本设计规范为准。早期计划中关于模型打包、许可复核和在线下载的表述，以本计划的现行决策为准。
 
@@ -118,6 +118,15 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 - Android 两个变体均只构建和发布 arm64-v8a，APK 中不得残留 `lib/x86_64/`。
 - 完成产物扫描、基础功能、DINO 功能、升级切换和体积回归验收。
 - 桌面/Android 建立并列下载项；iOS 先明确 TestFlight 双变体流程，再决定 App Store 发行形态。
+
+### P1-Mac：本地实施与验收结果
+
+- `PhotoViewerEnableDino` 同时控制共享实现、Mac 原生依赖、模型/License、UI 和打包内容。Mac 默认构建标准版，`PhotoViewerEnableDino=true` 构建 AI 版；其他平台当前仍默认 AI 行为，待各自实施。
+- 标准版移除 DINO 提取/缓存/索引、相似聚类、patch 派生及 ONNX/MathNet 引用，保留 CV 分析、抖动徽标和三瓦片 CV 诊断。DINO/CV 即时计算已拆成独立设置；旧文档缺 CV 字段时继承原组合值。
+- `publish.sh --edition standard|ai|both` 发布独立 `.app` 与 DMG。`Tools/check-mac-package.py` 保存文件级大小/SHA-256 清单并阻断标准版推理资产、AI 版模型/许可证缺失及两版 Windows ORT DLL。`check-release.py` 支持同版本双产品归档。
+- 实测最终 Release：标准版 `.app` 49.81 MiB、DMG **22.01 MiB**；AI 版 `.app` 167.95 MiB、DMG **109.16 MiB**。AI 版较 §1.3 的 114.09 MiB 旧包减少 **4.93 MiB**，与误带 Windows ORT DLL 的清理项一致。证据位于 `artifacts/acceptance/mac-editions/`。
+- 双版本 layout / analysis / tools / similarity（AI）/ settings / input / toolbar / filmstrip / faults / texture-cache 原生套件均通过；四种 DINO/CV 开关组合及独立失败态通过。AI → 标准 → AI 跨进程设置、视图状态与特征往返通过。
+- `CoreContractCheck`：AI 1139 PASS、标准版 1133 PASS，均 0 FAIL；`SettingsDefaultsCheck` 与 Windows 类型检查通过。实际 Developer ID 签名、公证、stapler/Gatekeeper 和发布归档未在本轮执行，仍由正式发布任务验收。
 
 ### P2：独立无损优化
 

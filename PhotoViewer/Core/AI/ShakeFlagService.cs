@@ -44,7 +44,7 @@ public static class ShakeFlagService
         IReadOnlyList<FingerprintGroup> groups;
         try
         {
-            groups = await FolderFeatureIndexer.GroupByFingerprintAsync(files).ConfigureAwait(false);
+            groups = await FingerprintGrouping.GroupByFingerprintAsync(files).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

@@ -59,14 +59,16 @@ public static class MainScreenLayout
     public readonly record struct PaneFrames(LayoutRect FileBar, LayoutRect FileDivider, LayoutRect Photo, LayoutRect Analysis,
         LayoutRect ControlDivider, LayoutRect ControlBar);
 
-    /// <summary>筛选条自身的主轴长度：行布局为控件高 + 上下外边距，列布局为前导让位 + 三个控件 + 计数 + toggle 与尾部外边距。</summary>
+    /// <summary>筛选条自身的主轴长度：行布局为控件高 + 上下外边距，列布局按实际是否含 toggle 计算。</summary>
     /// <param name="horizontal">是否行布局（文件栏在上下）。</param>
     /// <param name="leadingInset">列布局的前导让位（macOS 为隐藏标题栏交通灯让位，iOS 为安全区顶边 + 外边距）。</param>
+    /// <param name="includeSimilarityToggle">是否计入相似聚类 toggle；标准版为 false。</param>
     /// <returns>筛选条主轴长度。</returns>
-    public static double FilterBarMainLength(bool horizontal, double leadingInset)
+    public static double FilterBarMainLength(bool horizontal, double leadingInset, bool includeSimilarityToggle = true)
         => horizontal
             ? FilterControlHeight + FilterMargin * 2
-            : leadingInset + FilterControlHeight * 3 + FilterGap * 3 + FilterCountHeight + FilterGap + FilterToggleHeight + FilterMargin;
+            : leadingInset + FilterControlHeight * 3 + FilterGap * 2 + FilterCountHeight + FilterMargin
+                + (includeSimilarityToggle ? FilterGap + FilterToggleHeight : 0);
 
     /// <summary>文件栏主轴长度（含分隔线）：行布局为筛选条 + 胶片栏带 + 分隔线，列布局为内容宽 + 分隔线 + 附加交叉轴长度。</summary>
     /// <param name="horizontal">是否行布局。</param>

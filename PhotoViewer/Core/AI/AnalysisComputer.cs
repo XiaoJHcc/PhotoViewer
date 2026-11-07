@@ -15,8 +15,12 @@ namespace PhotoViewer.Core.AI;
 /// </summary>
 public static class AnalysisComputer
 {
-    /// <summary>DINO patch 网格边长(32),与 <see cref="PatchHeatmap.Grid"/> 一致。</summary>
+    /// <summary>DINO patch 网格边长(32)。</summary>
+#if PHOTOVIEWER_DINO
     public const int PatchGridPixels = PatchHeatmap.Grid;
+#else
+    public const int PatchGridPixels = 32;
+#endif
 
     /// <summary>
     /// 把读库结果转成可缓存的派生数据。包含 4 张诊断位图 + ShakeField + 判定文字 + patch tokens。
@@ -47,9 +51,9 @@ public static class AnalysisComputer
             shakeLabel = ShakeClassifier.FormatLabel(verdict);
         }
 
-        // DINO 派生层(PCA-RGB + 默认中心 cosine 参考点 16,16)
         DecodedImage? pcaBmp = null;
         DecodedImage? cosineBmp = null;
+#if PHOTOVIEWER_DINO
         if (data.Patches != null)
         {
             var pcaRgb = PatchHeatmap.ComputePcaRgb(data.Patches);
@@ -60,6 +64,7 @@ public static class AnalysisComputer
             var cos = PatchHeatmap.ComputeRefCosine(data.Patches, rx, ry);
             cosineBmp = HeatmapBitmapBuilder.BuildViridis(cos, PatchGridPixels, PatchGridPixels);
         }
+#endif
 
         return new AnalysisResultCache.Entry
         {

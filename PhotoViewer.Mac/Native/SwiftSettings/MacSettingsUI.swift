@@ -106,9 +106,11 @@ struct SVExifState: Codable {
 
 /// AI 分页状态。
 struct SVAiState: Codable {
+    var dinoEnabled: Bool
     var similarityThreshold: Int
     var maxResults: Int
     var immediateCompute: Bool
+    var immediateCvCompute: Bool
     var clearButtonText: String
     var clearStatus: String
     var clearBusy: Bool
@@ -145,7 +147,8 @@ struct SVState: Codable {
                 commandTarget: 1, optionTarget: 2, controlTarget: 1, recordingActive: false),
             exif: SVExifState(items: [], showRating: true, safeSetRating: true),
             ai: SVAiState(
-                similarityThreshold: 85, maxResults: 8, immediateCompute: false,
+                dinoEnabled: false, similarityThreshold: 85, maxResults: 8,
+                immediateCompute: false, immediateCvCompute: false,
                 clearButtonText: "清除特征数据库", clearStatus: "", clearBusy: false))
     }
 }
@@ -1187,31 +1190,39 @@ struct AiSettingsPage: View {
 
     var body: some View {
         Form {
-            Section("相似聚类") {
-                SliderRow(
-                    title: "相似度阈值",
-                    value: vm.bindIntAsDouble("ai.threshold") { vm.state.ai.similarityThreshold },
-                    range: 75...95,
-                    valueText: "\(ai.similarityThreshold)%")
-                SliderRow(
-                    title: "最多数量",
-                    value: vm.bindIntAsDouble("ai.maxResults") { vm.state.ai.maxResults },
-                    range: 1...32,
-                    valueText: "\(ai.maxResults) 张")
+            if ai.dinoEnabled {
+                Section("相似聚类") {
+                    SliderRow(
+                        title: "相似度阈值",
+                        value: vm.bindIntAsDouble("ai.threshold") { vm.state.ai.similarityThreshold },
+                        range: 75...95,
+                        valueText: "\(ai.similarityThreshold)%")
+                    SliderRow(
+                        title: "最多数量",
+                        value: vm.bindIntAsDouble("ai.maxResults") { vm.state.ai.maxResults },
+                        range: 1...32,
+                        valueText: "\(ai.maxResults) 张")
+                }
             }
             Section("分析诊断") {
-                Toggle("即时计算DINO/CV", isOn: vm.bindBool("ai.immediateCompute") { vm.state.ai.immediateCompute })
+                if ai.dinoEnabled {
+                    Toggle("即时计算 DINO", isOn: vm.bindBool("ai.immediateCompute") { vm.state.ai.immediateCompute })
+                        .toggleStyle(.switch)
+                }
+                Toggle("即时计算 CV", isOn: vm.bindBool("ai.immediateCvCompute") { vm.state.ai.immediateCvCompute })
                     .toggleStyle(.switch)
             }
-            Section("特征数据库") {
-                HStack {
-                    Text("清除已提取的 DINO / CV 特征（不可撤销）")
-                    Spacer()
-                    Button(ai.clearButtonText) { confirmingClear = true }
-                        .disabled(ai.clearBusy)
-                }
-                if !ai.clearStatus.isEmpty {
-                    Text(ai.clearStatus).font(.callout).foregroundStyle(.secondary)
+            if ai.dinoEnabled {
+                Section("特征数据库") {
+                    HStack {
+                        Text("清除已提取的 DINO / CV 特征（不可撤销）")
+                        Spacer()
+                        Button(ai.clearButtonText) { confirmingClear = true }
+                            .disabled(ai.clearBusy)
+                    }
+                    if !ai.clearStatus.isEmpty {
+                        Text(ai.clearStatus).font(.callout).foregroundStyle(.secondary)
+                    }
                 }
             }
         }

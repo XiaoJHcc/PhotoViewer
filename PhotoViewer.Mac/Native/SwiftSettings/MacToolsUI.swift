@@ -3,7 +3,7 @@
 // 与设置窗口同目录、同动态库：由 csproj 的 `_BuildSwiftSettingsDylib` 目标
 // 与 MacSettingsUI.swift 一起编译成 libMacSettingsUI.dylib。
 //
-// 设计：C# 拥有工具页业务（EXIF 详情 / DINO 诊断）与页面 NSView；本文件只
+// 设计：C# 拥有工具页业务（EXIF 详情 / 当前版本诊断）与页面 NSView；本文件只
 // 提供与设置窗口一致的 NavigationSplitView 双栏外壳。分类选择由 SwiftUI
 // 侧栏发起，经 C ABI 回传 C#；C# 随后以 JSON 状态推送选中项与 EXIF 可用性。
 
@@ -14,8 +14,12 @@ import AppKit
 struct SVToolsState: Codable {
     var selected: Int
     var exifEnabled: Bool
+    var diagnosticTitle: String
+    var diagnosticSymbol: String
 
-    static let empty = SVToolsState(selected: 0, exifEnabled: true)
+    static let empty = SVToolsState(
+        selected: 0, exifEnabled: true,
+        diagnosticTitle: "CV 诊断", diagnosticSymbol: "waveform.path.ecg")
 }
 
 /// 全局单例宿主：窗口、桥接模型与选择回调。
@@ -32,6 +36,8 @@ enum PVTools {
 final class ToolsBridge: ObservableObject {
     @Published var selected: Int = 0
     @Published var exifEnabled: Bool = true
+    @Published var diagnosticTitle: String = "CV 诊断"
+    @Published var diagnosticSymbol: String = "waveform.path.ecg"
     let detailView: NSView
 
     init(detailView: NSView) {
@@ -45,6 +51,8 @@ final class ToolsBridge: ObservableObject {
             let decoded = try JSONDecoder().decode(SVToolsState.self, from: data)
             selected = decoded.selected
             exifEnabled = decoded.exifEnabled
+            diagnosticTitle = decoded.diagnosticTitle
+            diagnosticSymbol = decoded.diagnosticSymbol
         } catch {
             FileHandle.standardError.write(Data("[MacToolsUI] state decode failed: \(error)\n".utf8))
         }
@@ -73,9 +81,9 @@ struct ToolsRootView: View {
                 .tag(0)
                 .disabled(!vm.exifEnabled)
                 Label {
-                    Text("DINO 诊断")
+                    Text(vm.diagnosticTitle)
                 } icon: {
-                    CategoryIcon(symbol: "sparkles", color: .pink)
+                    CategoryIcon(symbol: vm.diagnosticSymbol, color: .pink)
                 }
                 .tag(1)
             }
@@ -84,7 +92,7 @@ struct ToolsRootView: View {
             .toolbar(removing: .sidebarToggle)
         } detail: {
             ToolsDetailHost(view: vm.detailView)
-                .navigationTitle(vm.selected == 0 ? "EXIF 详情" : "DINO 诊断")
+                .navigationTitle(vm.selected == 0 ? "EXIF 详情" : vm.diagnosticTitle)
         }
         .preferredColorScheme(.dark)
     }

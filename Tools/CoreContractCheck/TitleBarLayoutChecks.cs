@@ -44,5 +44,16 @@ internal static class TitleBarLayoutChecks
             TitleBarLayout.HasBackdrop(rowLayout: false, fileBarVisible: true, persistent: false));
         c.True("文件栏隐藏铺背景",
             TitleBarLayout.HasBackdrop(rowLayout: true, fileBarVisible: false, persistent: false));
+
+        double aiFilterHeight = MainScreenLayout.FilterBarMainLength(false, 42, includeSimilarityToggle: true);
+        double standardFilterHeight = MainScreenLayout.FilterBarMainLength(false, 42, includeSimilarityToggle: false);
+        c.Equal("标准版列布局移除相似开关高度", MainScreenLayout.FilterGap + MainScreenLayout.FilterToggleHeight,
+            aiFilterHeight - standardFilterHeight);
+        c.Equal("行布局筛选高度不随版本变化",
+            MainScreenLayout.FilterBarMainLength(true, 42, includeSimilarityToggle: true),
+            MainScreenLayout.FilterBarMainLength(true, 42, includeSimilarityToggle: false));
+        var standardFrames = MainScreenLayout.FilterBarFrames(true, 500, 0, 52, includeSimilarityToggle: false);
+        c.Equal("标准版四项筛选整组居中", 250,
+            (standardFrames.Sort.X + standardFrames.Count.MaxX) / 2);
     }
 }

@@ -29,6 +29,7 @@ public partial class SettingsViewModel
         nameof(SimilarityThreshold),
         nameof(SimilarityMaxResults),
         nameof(AnalysisImmediateCompute),
+        nameof(AnalysisImmediateCvCompute),
         nameof(BitmapCacheMaxCount),
         nameof(BitmapCacheMaxMemory),
         nameof(PreloadForwardCount),
@@ -185,6 +186,7 @@ public partial class SettingsViewModel
             SimilarityThreshold = SimilarityThreshold,
             SimilarityMaxResults = SimilarityMaxResults,
             AnalysisImmediateCompute = AnalysisImmediateCompute,
+            AnalysisImmediateCvCompute = AnalysisImmediateCvCompute,
             BitmapCacheMaxCount = BitmapCacheMaxCount,
             BitmapCacheMaxMemory = BitmapCacheMaxMemory,
             PreloadForwardCount = PreloadForwardCount,
@@ -238,6 +240,7 @@ public partial class SettingsViewModel
             SimilarityThreshold = settings.SimilarityThreshold;
             SimilarityMaxResults = settings.SimilarityMaxResults;
             AnalysisImmediateCompute = settings.AnalysisImmediateCompute;
+            AnalysisImmediateCvCompute = settings.AnalysisImmediateCvCompute;
             CheckHotkeyConflicts();
             UpdateSelectedFormats();
             UpdateEnabledExifItems();

@@ -10,6 +10,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <AssemblyName>CoreContractCheck</AssemblyName>
+    <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
+    <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>

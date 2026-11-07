@@ -46,8 +46,10 @@ public sealed class MacMainWindow : IDisposable
     private readonly NSPopUpButton _order;
     private readonly NSPopUpButton _ratingFilter;
     private readonly NSTextField _count;
+#if PHOTOVIEWER_DINO
     private readonly FilterToggleButton _similarityToggle;
     private readonly MacSimilarityPanel _similarityPane;
+#endif
     private readonly NSTextField _hint;
     private readonly NSTextField _busyPill;
     private readonly MacStatusToast _toast = new();
@@ -106,12 +108,16 @@ public sealed class MacMainWindow : IDisposable
     internal bool IsAutomatedValidation => _automatedValidation;
     /// <summary>控制栏系统滚动容器供溢出与边缘验收读取。</summary>
     internal NSScrollView ControlScroll => _controlScroll;
+    /// <summary>筛选条真实控件，供空态命中验收使用。</summary>
+    internal NSView FilterBarClickTarget => _sort;
+#if PHOTOVIEWER_DINO
     /// <summary>原生相似聚类面板供几何与交互回归读取。</summary>
     internal MacSimilarityPanel Similarity => _similarityPane;
     /// <summary>筛选条相似聚类 toggle 供原生布局验收读取。</summary>
     internal NSButton SimilarityToggle => _similarityToggle;
     /// <summary>相似聚类 toggle 的勾选态（按钮自持，验收读取）。</summary>
     internal bool SimilarityToggleIsOn => _similarityToggle.IsOn;
+#endif
     /// <summary>增强"计算中"药丸，供验收核对 500ms 门槛后的可见性。</summary>
     internal NSTextField EnhanceBusyPill => _busyPill;
     /// <summary>主图区底部提示条，供验收核对非模态反馈。</summary>
@@ -147,7 +153,7 @@ public sealed class MacMainWindow : IDisposable
         }
         Window = new NSWindow(new CGRect(100, 100, 1200, 850), NSWindowStyle.Titled | NSWindowStyle.Closable | NSWindowStyle.Miniaturizable | NSWindowStyle.Resizable | NSWindowStyle.FullSizeContentView, NSBackingStore.Buffered, false)
         {
-            Title = "PhotoViewer", TitleVisibility = NSWindowTitleVisibility.Hidden, TitlebarAppearsTransparent = true,
+            Title = MacProductInfo.DisplayName, TitleVisibility = NSWindowTitleVisibility.Hidden, TitlebarAppearsTransparent = true,
             BackgroundColor = NSColor.Black, MinSize = new CGSize(560, 480), AcceptsMouseMovedEvents = true,
             Appearance = NSAppearance.GetAppearance(NSAppearance.NameDarkAqua),
         };
@@ -212,16 +218,21 @@ public sealed class MacMainWindow : IDisposable
         _order = Popup(_main.FileVM.FilterBar.SortOrders.Select(item => item.DisplayName).ToArray());
         _ratingFilter = Popup(_main.FileVM.FilterBar.RatingFilters.Select(item => item.DisplayName).ToArray());
         _count = Label("共 0 张", 12); _count.Alignment = NSTextAlignment.Center;
+#if PHOTOVIEWER_DINO
         _similarityToggle = new FilterToggleButton("相似聚类", "展开/关闭相似聚类面板")
         {
             IsOn = _main.FileVM.FilterBar.IsSimilarityPanelOpen,
         };
+#endif
         _sort.Activated += (_, _) => _main.FileVM.FilterBar.SortMode = (SortMode)_main.FileVM.FilterBar.SortModes[(int)_sort.IndexOfSelectedItem].Value;
         _order.Activated += (_, _) => _main.FileVM.FilterBar.SortOrder = (SortOrder)_main.FileVM.FilterBar.SortOrders[(int)_order.IndexOfSelectedItem].Value;
         _ratingFilter.Activated += (_, _) => _main.FileVM.FilterBar.SelectedRatingFilter = _main.FileVM.FilterBar.RatingFilters[(int)_ratingFilter.IndexOfSelectedItem].Key;
-        // 勾选态由按钮自持并回写共享状态（不回读按钮，避免与 AppKit cell 状态耦合）。
+#if PHOTOVIEWER_DINO
         _similarityToggle.Toggled = open => _main.FileVM.FilterBar.IsSimilarityPanelOpen = open;
         foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count, _similarityToggle }) _filePane.AddSubview(control);
+#else
+        foreach (var control in new NSView[] { _sort, _order, _ratingFilter, _count }) _filePane.AddSubview(control);
+#endif
         _filmstripLayout = new MacFilmstripLayout();
         _collection = new NSCollectionView(new CGRect(0, 0, 116, 680)) { CollectionViewLayout = _filmstripLayout, Selectable = false, BackgroundColors = [NSColor.FromWhite(.07f, 1)] };
         _collection.RegisterClassForItem(typeof(MacThumbnailItem), "PhotoCard");
@@ -231,9 +242,11 @@ public sealed class MacMainWindow : IDisposable
         _scroll.UserScrollStarted = CancelFilmstripScroll;
         _liveScrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSScrollView.WillStartLiveScrollNotification, _ => CancelFilmstripScroll(), _scroll);
         _filePane.AddSubview(_scroll);
+#if PHOTOVIEWER_DINO
         _similarityPane = new MacSimilarityPanel(_main) { Hidden = true };
         _similarityPane.ShowRatingSources = ShowRatingSources;
         _filePane.AddSubview(_similarityPane);
+#endif
         _scrollObserver = NSNotificationCenter.DefaultCenter.AddObserver(NSView.BoundsChangedNotification, _ => OnFilmstripBoundsChanged(), _scroll.ContentView);
         _lastFilmstripOrigin = _scroll.ContentView.Bounds.Location;
         _controlScroll.ContentView.PostsBoundsChangedNotifications = true;
@@ -279,7 +292,9 @@ public sealed class MacMainWindow : IDisposable
         _main.Settings.PresentationChanged += OnSettingsChanged;
         _main.FileVM.ThumbnailList.PropertyChanged += OnFilesChanged;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
+#endif
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += ScrollToCurrent;
         BuildControls();
@@ -537,10 +552,15 @@ public sealed class MacMainWindow : IDisposable
             bool row = _main.IsRowLayout;
             _count.SizeToFit();
             double countWidth = Math.Ceiling((double)_count.Frame.Width);
-            double filterHeight = MainScreenLayout.FilterBarMainLength(row, DesignTokens.ShellFilterLeadingInset);
+#if PHOTOVIEWER_DINO
+            const bool includeSimilarityToggle = true;
+#else
+            const bool includeSimilarityToggle = false;
+#endif
+            double filterHeight = MainScreenLayout.FilterBarMainLength(row, DesignTokens.ShellFilterLeadingInset, includeSimilarityToggle);
             double filmstripHeight = MainScreenLayout.FilmstripBand;
             double titlebarHeight = DesignTokens.ShellTitlebarHeight;
-            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, DesignTokens.ShellFilterLeadingInset, countWidth, includeSimilarityToggle: true);
+            var filterFrames = MainScreenLayout.FilterBarFrames(row, row ? width : MainScreenLayout.FileBarContentWidth, DesignTokens.ShellFilterLeadingInset, countWidth, includeSimilarityToggle);
             var zoom = TrafficLightInRoot(NSWindowButton.ZoomButton);
             double windowControlsRight = zoom.IsEmpty ? 0 : (double)zoom.X + (double)zoom.Width;
             // SHELL-02：交通灯与筛选挖空相交时，标题栏改为文件栏上方的常驻通栏。
@@ -549,11 +569,13 @@ public sealed class MacMainWindow : IDisposable
                 0, windowControlsRight);
             double titlebarInset = _titlebarPersistent ? titlebarHeight : 0;
             double contentHeight = Math.Max(1, height - titlebarInset);
-            // 相似聚类面板：列布局由面板自定的宽度扩宽文件栏，行布局按旧壳 MaxWidth 规则从胶片栏切出右侧一段。
+            double similarityColumn = 0;
+#if PHOTOVIEWER_DINO
             bool similarityOpen = _main.IsThumbnailViewVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? filmstripHeight : width);
-            double similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityPanelGeometry.Margin) : 0;
+            similarityColumn = similarityOpen ? (row ? SimilarityRowWidth(width) : (double)_similarityPane.CrossSize + SimilarityPanelGeometry.Margin) : 0;
             _similarityPane.Hidden = !similarityOpen;
+#endif
             double fileSize = _main.IsThumbnailViewVisible
                 ? MainScreenLayout.FileBarMainLength(row, filterHeight, similarityColumn)
                 : 0;
@@ -599,16 +621,20 @@ public sealed class MacMainWindow : IDisposable
             _order.Frame = ToFrame(filterFrames.Order);
             _ratingFilter.Frame = ToFrame(filterFrames.Rating);
             _count.Frame = ToFrame(filterFrames.Count);
+#if PHOTOVIEWER_DINO
             _similarityToggle.Frame = ToFrame(filterFrames.Toggle);
+#endif
             _scroll.Frame = row
                 ? new CGRect(0, filterHeight, Math.Max(1, width - similarityColumn), filmstripHeight)
                 : new CGRect(0, filterHeight, MainScreenLayout.FileBarContentWidth, Math.Max(1, height - filterHeight));
+#if PHOTOVIEWER_DINO
             if (similarityOpen)
             {
                 _similarityPane.Frame = row
                     ? new CGRect(width - similarityColumn, filterHeight, Math.Max(1, similarityColumn - SimilarityPanelGeometry.Margin), (nfloat)_similarityPane.CrossSize)
                     : new CGRect(MainScreenLayout.FileBarContentWidth, filterHeight, (nfloat)_similarityPane.CrossSize, Math.Max(1, height - filterHeight));
             }
+#endif
             bool axisChanged = _filmstripLayout.Horizontal != row;
             if (axisChanged || previousViewport != _scroll.ContentView.Bounds.Size) CancelFilmstripScroll();
             _filmstripLayout.Horizontal = row;
@@ -639,7 +665,7 @@ public sealed class MacMainWindow : IDisposable
             bool titlebarCutout = TitleBarLayout.HasCutout(row, fileBarRow, _titlebarPersistent);
             double dragStart = titlebarCutout ? (double)_sort.Frame.X : width;
             double dragEnd = titlebarCutout
-                ? (double)_similarityToggle.Frame.X + (double)_similarityToggle.Frame.Width
+                ? (double)filterFrames.Toggle.X + (double)filterFrames.Toggle.Width
                 : width;
             _dragLeft.Frame = new CGRect(0, 0, _titlebarPersistent ? width : dragStart, titlebarHeight);
             _dragRight.Frame = new CGRect(dragEnd, 0, Math.Max(0, width - dragEnd), titlebarHeight);
@@ -769,17 +795,15 @@ public sealed class MacMainWindow : IDisposable
     /// <returns>原生 frame。</returns>
     private static CGRect ToFrame(LayoutRect rect, double yOffset = 0) => new(rect.X, (double)rect.Y + yOffset, rect.Width, rect.Height);
 
-    /// <summary>行布局下相似面板占用的水平长度（SIM-07）：内容宽 = 卡片数 × 96 + 列表两侧内边距 8 + 面板描边 2
-    /// + 列表态右侧停靠区宽，下限 MinWidth 106 且不超过可用宽度一半，最后叠加面板右侧 4 点外边距。
-    /// 停靠区（未提取计数 / 按钮 / 进度 / 错误）不预留就会把 1–2 项列表挤成零宽。</summary>
-    /// <param name="paneWidth">文件栏可用宽度。</param>
+#if PHOTOVIEWER_DINO
+    /// <summary>行布局下相似面板占用的水平长度，含列表态停靠区。</summary>
     private double SimilarityRowWidth(double paneWidth)
     {
         var panel = _main.FileVM.SimilarityPanel;
-        // 停靠区只在列表态且动作区（未提取计数/按钮/进度/错误）真的显示时占宽；全部已入库且无错误时没有停靠区。
         double dockWidth = panel.HasItems && panel.ShowActionArea ? _similarityPane.DockMeasureWidth() : 0;
         return SimilarityPanelGeometry.RowWidth(panel.HasItems, panel.SimilarItems.Count, paneWidth, dockWidth);
     }
+#endif
 
     /// <summary>共享设置/EXIF/评级生成控制区；原生符号按钮仍由用户显隐和顺序驱动。</summary>
     private void BuildControls()
@@ -1033,10 +1057,13 @@ public sealed class MacMainWindow : IDisposable
         _sort.SelectItem(filter.SortModes.FindIndex(item => (SortMode)item.Value == filter.SortMode));
         _order.SelectItem(filter.SortOrders.FindIndex(item => (SortOrder)item.Value == filter.SortOrder));
         _ratingFilter.SelectItem(filter.RatingFilters.FindIndex(item => item.Key == filter.SelectedRatingFilter));
+#if PHOTOVIEWER_DINO
         _similarityToggle.IsOn = filter.IsSimilarityPanelOpen;
         if (args.PropertyName == nameof(FilterBarViewModel.IsSimilarityPanelOpen)) Layout();
+#endif
     });
-    /// <summary>项目数与停靠区内容变化时重算行布局面板宽度（SIM-07 要求这两者变化都重算）。</summary>
+#if PHOTOVIEWER_DINO
+    /// <summary>项目数与停靠区内容变化时重算行布局面板宽度。</summary>
     private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
     {
         if (args.PropertyName is nameof(SimilarityPanelViewModel.HasItems) or nameof(SimilarityPanelViewModel.SimilarItems)
@@ -1044,6 +1071,7 @@ public sealed class MacMainWindow : IDisposable
             or nameof(SimilarityPanelViewModel.ShowActionAreaError))
             UiDispatcher.Post(Layout);
     }
+#endif
     /// <summary>项目数与视口共同决定文档尺寸，重排不把滚动主轴截短成窗口高度。</summary>
     internal void UpdateFilmstripLayout()
     {
@@ -1269,11 +1297,11 @@ public sealed class MacMainWindow : IDisposable
     private void BuildMenus()
     {
         var menu = CreateMenu();
-        var app = CreateMenu("PhotoViewer");
+        var app = CreateMenu(MacProductInfo.DisplayName);
         app.AddItem(Item("设置…", AppleSymbolNames.Menu.Settings, ShowSettings, ","));
         app.AddItem(NSMenuItem.SeparatorItem);
-        app.AddItem(Item("退出 PhotoViewer", AppleSymbolNames.Menu.Quit, () => NSApplication.SharedApplication.Terminate(null), "q"));
-        menu.AddItem(new NSMenuItem("PhotoViewer") { Submenu = app });
+        app.AddItem(Item($"退出 {MacProductInfo.DisplayName}", AppleSymbolNames.Menu.Quit, () => NSApplication.SharedApplication.Terminate(null), "q"));
+        menu.AddItem(new NSMenuItem(MacProductInfo.DisplayName) { Submenu = app });
         var file = CreateMenu("文件");
         file.AddItem(Item("打开文件…", AppleSymbolNames.Menu.OpenFile, () => _ = OpenPickerAsync(false)));
         file.AddItem(Item("打开文件夹…", AppleSymbolNames.Menu.OpenFolder, () => _ = OpenPickerAsync(true)));
@@ -1296,7 +1324,7 @@ public sealed class MacMainWindow : IDisposable
         var exif = Item("EXIF 详情…", AppleSymbolNames.Menu.Tools, () => ShowTools(0));
         tools.AddItem(exif);
         _menuAvailability.Add((exif, () => _main.Tools.IsExifDetailEnabled));
-        tools.AddItem(Item("DINO 诊断…", AppleSymbolNames.Menu.Analysis, () => ShowTools(1)));
+        tools.AddItem(Item($"{MacProductInfo.DiagnosticName}…", AppleSymbolNames.Menu.Analysis, () => ShowTools(1)));
         menu.AddItem(new NSMenuItem("工具") { Submenu = tools });
         _actionsMenu = CreateMenu("操作");
         menu.AddItem(new NSMenuItem("操作") { Submenu = _actionsMenu });
@@ -1451,14 +1479,20 @@ public sealed class MacMainWindow : IDisposable
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.PropertyChanged -= OnMainChanged; _main.Settings.PresentationChanged -= OnSettingsChanged; _main.FileVM.ThumbnailList.PropertyChanged -= OnFilesChanged; _main.ControlVM.PropertyChanged -= OnControlChanged;
         _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
+#endif
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= ScrollToCurrent;
         if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
         // 先收起来源浮窗并释放它，再拆锚点所在的控制栏/胶片栏与窗口：
         // NSPopover 关闭时仍会触碰定位视图，晚于 _controlPane/_similarityPane/Window 释放会访问已释放视图。
         _ratingSources.Dispose();
         Session.Notice -= ShowToast;
-        Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose(); _similarityPane.Dispose(); Photo.Dispose(); Window.Dispose();
+        Session.Dispose(); _navigationBitmap?.Dispose(); _analysisPane.Dispose(); _controlPane.Dispose();
+#if PHOTOVIEWER_DINO
+        _similarityPane.Dispose();
+#endif
+        Photo.Dispose(); Window.Dispose();
         _toast.Dispose(); _busyPill.Dispose();
     }
 

@@ -19,7 +19,7 @@ namespace PhotoViewer.Core.AI;
 /// - 与指纹缓存同 Entry 形状、同"不主动 Dispose"语义,但不走 LRU — 生命周期跟随主图缓存:
 ///   静态构造挂 <see cref="BitmapLoader.CacheStatusChanged"/>,主图位图被淘汰 / 清空时同步移除该路径
 ///   (含增强变体)的即时缓存项。即时计算依赖已解码主图,故项数天然受主图缓存容量约束。
-/// - 增强变体 key = 路径 + "#enhanced"(增强算法确定性,同路径结果稳定)。
+/// - key 同时包含增强变体与实际计算的 DINO/CV 能力,避免不同开关组合复用不完整结果。
 ///
 /// AI 设置页"清除特征数据库"按钮通过 <see cref="InvalidateAll"/> 整体清空(指纹缓存与即时缓存一并清,
 /// 仍只清引用,不 Dispose)。
@@ -76,15 +76,16 @@ public static class AnalysisResultCache
             if (inCache || cls != ImageSizeClass.Full) return;
             lock (_lock)
             {
-                _immediate.Remove(path);
-                _immediate.Remove(path + EnhancedSuffix);
+                var stale = _immediate.Keys.Where(key =>
+                    key.StartsWith(path + "#", StringComparison.OrdinalIgnoreCase)).ToArray();
+                foreach (var key in stale) _immediate.Remove(key);
             }
         };
     }
 
-    /// <summary>即时缓存 key:原片为文件路径本身,增强变体加 <see cref="EnhancedSuffix"/>。</summary>
-    public static string ImmediateKey(string filePath, bool enhanced) =>
-        enhanced ? filePath + EnhancedSuffix : filePath;
+    /// <summary>即时缓存 key 按增强状态与本次实际计算的 DINO/CV 能力区分。</summary>
+    public static string ImmediateKey(string filePath, bool enhanced, bool dino, bool cv) =>
+        filePath + (enhanced ? EnhancedSuffix : "") + $"#dino={(dino ? 1 : 0)};cv={(cv ? 1 : 0)}";
 
     /// <summary>查询即时缓存(增强预览联动 / 未提取回退的产物);miss 返回 null。</summary>
     public static Entry? TryGetImmediate(string key)

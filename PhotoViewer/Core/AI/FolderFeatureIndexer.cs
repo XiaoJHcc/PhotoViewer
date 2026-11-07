@@ -11,24 +11,6 @@ using PhotoViewer.Core.Memory;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// 一组同指纹的文件(同次曝光的 RAW/HEIF/JPG 共存),代表文件按解码代价从低到高排序。
-/// </summary>
-public sealed class FingerprintGroup
-{
-    /// <summary>组指纹;无法计算指纹的文件该字段为空字符串(每个文件独占一组)。</summary>
-    public string Fingerprint { get; init; } = "";
-
-    /// <summary>用于写库的指纹输入(取自代表文件)。</summary>
-    public PhotoFingerprintInput Input { get; init; } = null!;
-
-    /// <summary>组内文件,按解码代价升序排列(代表文件位于索引 0)。</summary>
-    public IReadOnlyList<ImageFile> Files { get; init; } = Array.Empty<ImageFile>();
-
-    /// <summary>代表文件:实际喂给 DINO 推理 + CV 提取的那一张。</summary>
-    public ImageFile Representative => Files[0];
-}
-
-/// <summary>
 /// 全文件夹批量特征提取调度器。
 /// 对 <see cref="ImageFile"/> 列表按指纹聚合后,**一轮扫描同时提取 DINO CLS + patch token + CV grid 三类原始数据**
 /// 并写入 <see cref="PhotoDatabase"/>。同次曝光的 RAW+HEIF/JPG 共享同一指纹,只跑一次。
@@ -71,53 +53,8 @@ public sealed class FolderFeatureIndexer
     /// </summary>
     /// <param name="files">原始文件列表(通常为 AllFiles)。</param>
     /// <returns>按指纹聚合后的组列表(顺序对最终结果不重要)。</returns>
-    public static async Task<IReadOnlyList<FingerprintGroup>> GroupByFingerprintAsync(IReadOnlyList<ImageFile> files)
-    {
-        var indexed = new Dictionary<string, List<ImageFile>>();
-        var indexedInputs = new Dictionary<string, PhotoFingerprintInput>();
-        var orphans = new List<FingerprintGroup>();
-
-        foreach (var file in files)
-        {
-            try
-            {
-                var exif = await file.LoadExifDataAsync().ConfigureAwait(false);
-                if (!file.ModifiedDate.HasValue)
-                    await file.LoadBasicPropertiesAsync().ConfigureAwait(false);
-
-                var input = PhotoFingerprint.BuildInput(file.Name, exif, file.ModifiedDate?.UtcDateTime);
-                if (!input.CaptureTime.HasValue)
-                {
-                    orphans.Add(new FingerprintGroup { Fingerprint = "", Input = input, Files = new[] { file } });
-                    continue;
-                }
-
-                var fp = PhotoFingerprint.Compute(input);
-                if (!indexed.TryGetValue(fp, out var list))
-                {
-                    list = new List<ImageFile>();
-                    indexed[fp] = list;
-                    indexedInputs[fp] = input;
-                }
-                list.Add(file);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[FolderFeatureIndexer] group skip {file.Name}: {ex.Message}");
-                var fallbackInput = PhotoFingerprint.BuildInput(file.Name, null, null);
-                orphans.Add(new FingerprintGroup { Fingerprint = "", Input = fallbackInput, Files = new[] { file } });
-            }
-        }
-
-        var result = new List<FingerprintGroup>(indexed.Count + orphans.Count);
-        foreach (var (fp, list) in indexed)
-        {
-            list.Sort((a, b) => DecodeCostScore(a.Name).CompareTo(DecodeCostScore(b.Name)));
-            result.Add(new FingerprintGroup { Fingerprint = fp, Input = indexedInputs[fp], Files = list });
-        }
-        result.AddRange(orphans);
-        return result;
-    }
+    public static Task<IReadOnlyList<FingerprintGroup>> GroupByFingerprintAsync(IReadOnlyList<ImageFile> files)
+        => FingerprintGrouping.GroupByFingerprintAsync(files);
 
     /// <summary>
     /// 查询某指纹三路数据齐备情况;调用方据此决定是否跳过解码。

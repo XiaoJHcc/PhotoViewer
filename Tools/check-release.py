@@ -2,7 +2,7 @@
 """校验 release/ 只含分发包与打包过程产物，并生成 SHA256SUMS。
 
 release/ 允许的顶层内容：
-  packages/    分发包（历史与当前），文件名 PhotoViewer-<版本>-<平台>-<架构>.<dmg|apk|ipa|exe>
+  packages/    分发包（历史与当前），文件名 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg|apk|ipa|exe>
   ios-stable/  最新 iOS 稳定安装源（PhotoViewer.iOS.app / PhotoViewer.iOS.ipa）
   testflight/  最近一次 TestFlight 归档（恰好一个 .xcarchive）
   SHA256SUMS   分发包校验清单
@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 RELEASE = ROOT / "release"
 
 PACKAGE_EXTENSIONS = {".dmg", ".apk", ".ipa", ".exe"}
-PACKAGE_NAME = re.compile(r"^PhotoViewer-(\d+\.\d+\.\d+)-(.+)\.(dmg|apk|ipa|exe)$")
+PACKAGE_NAME = re.compile(r"^(PhotoViewer(?:-AI)?)-(\d+\.\d+\.\d+)-(.+)\.(dmg|apk|ipa|exe)$")
 ALLOWED_TOP_DIRS = {"packages", "ios-stable", "testflight"}
 ALLOWED_TOP_FILES = {"SHA256SUMS", "README.md"}
 IOS_STABLE_ALLOWED = {"PhotoViewer.iOS.app"}
@@ -85,22 +85,22 @@ def main() -> int:
                 errors.append(f"release/packages/{entry.name} 不是受支持的分发包格式")
                 continue
             if not PACKAGE_NAME.match(entry.name):
-                errors.append(f"release/packages/{entry.name} 命名不符合 PhotoViewer-<版本>-<平台>-<架构>")
+                errors.append(f"release/packages/{entry.name} 命名不符合 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>")
                 continue
             if entry.name.endswith("-android.apk"):
                 errors.append(f"release/packages/{entry.name} 是未签名 APK；只归档 -android-signed.apk")
                 continue
             packages.append(entry)
 
-    seen: dict[tuple[str, str], str] = {}
+    seen: dict[tuple[str, str, str], str] = {}
     for package in packages:
         match = PACKAGE_NAME.match(package.name)
         if not match:
             continue
-        version, platform = match.group(1), match.group(2)
-        key = (version, platform)
+        product, version, platform = match.group(1), match.group(2), match.group(3)
+        key = (product, version, platform)
         if key in seen:
-            errors.append(f"release/packages 中 {version} 的 {platform} 出现多次：{seen[key]} / {package.name}")
+            errors.append(f"release/packages 中 {product} {version} 的 {platform} 出现多次：{seen[key]} / {package.name}")
         else:
             seen[key] = package.name
 

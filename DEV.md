@@ -65,8 +65,10 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 
 | Task | 用途 |
 |---|---|
-| **Debug Mac** | 构建、签名并启动原生 `.app`。 |
-| **Run Mac** | 启动已有构建，不重新编译。 |
+| **Debug Mac** | 构建、签名并启动标准版 `PhotoViewer.app`（不含 DINO/ONNX）。 |
+| **Run Mac** | 启动已有标准版构建，不重新编译。 |
+| **Debug Mac AI** | 构建、签名并启动 `PhotoViewer-AI.app`，内置 DINO 模型与 ONNX Runtime。 |
+| **Run Mac AI** | 启动已有 AI 版构建，不重新编译。 |
 
 ### Web 参考壳
 
@@ -112,7 +114,7 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 
 | 路径 | 内容 | 生命周期 |
 |---|---|---|
-| `release/packages/` | 历史与当前分发包，命名 `PhotoViewer-<版本>-<平台>-<架构>.<dmg/apk/ipa/exe>` | 每版每平台一份，长期保留；未签名 APK 等中间产物不归档 |
+| `release/packages/` | 历史与当前分发包，命名 `<PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg/apk/ipa/exe>` | 每版每平台每变体一份，长期保留；未签名 APK 等中间产物不归档 |
 | `release/ios-stable/` | 最新 iOS 稳定安装源（`.app`） | 每次 **Publish iOS IPA** 覆盖 |
 | `release/testflight/` | 最近一次 TestFlight `.xcarchive` | 每次上传覆盖，脚本只保留最新归档 |
 | `release/SHA256SUMS` | 分发包校验清单 | 每次发包后由 `check-release.py --write` 重写 |
@@ -142,13 +144,13 @@ xcrun notarytool store-credentials "PhotoViewer-notary" \
     --apple-id "<Apple ID>" --team-id "<Team ID>" --password "<App 专用密码>"
 ```
 
-可用 `MAC_DEVELOPER_ID_IDENTITY` 指定签名身份、`MAC_NOTARY_PROFILE` 指定其他钥匙串配置；默认自动选择首个 Developer ID Application 身份并读取 `PhotoViewer-notary`。凭据不得写入仓库。若 Apple 已返回 `Accepted`、但附加票据时网络失败，运行 `bash PhotoViewer.Mac/publish.sh --staple-only`，只重试票据附加与验证，不重新构建或上传。
+可用 `MAC_DEVELOPER_ID_IDENTITY` 指定签名身份、`MAC_NOTARY_PROFILE` 指定其他钥匙串配置；默认自动选择首个 Developer ID Application 身份并读取 `PhotoViewer-notary`。凭据不得写入仓库。若 Apple 已返回 `Accepted`、但附加票据时网络失败，运行 `bash PhotoViewer.Mac/publish.sh --staple-only --edition <standard|ai|both>`，只重试对应变体的票据附加与验证，不重新构建或上传。
 
 | Task | 产物与说明 |
 |---|---|
 | **Publish Windows EXE (Release)** | 自包含 `release/packages/PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
 | **Publish Android APK (Release)** | 构建并签名 APK，归档 `release/packages/PhotoViewer-<版本>-android-signed.apk`。 |
-| **Publish Mac DMG (Release)** | 构建应用，以 Developer ID + Hardened Runtime 逐个签名原生文件，封装并签名 DMG，提交 Apple 公证、附加票据并验证 Gatekeeper 评估；归档 `release/packages/PhotoViewer-<版本>-arm64.dmg`。 |
+| **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，扫描实际 `.app` 后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
 | **Publish iOS IPA (Release)** | 生成 `release/packages/PhotoViewer-<版本>-ios-arm64.ipa`，并覆盖 `release/ios-stable/` 的 `.app` 安装源。 |
 | **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；`release/testflight/` 只保留最近一次归档。上传前自动执行归档检查。 |
 | **Validate iOS TestFlight Archive** | 检查当前版本归档的版本号、Bundle ID、分发签名、entitlements、AOT/ONNX 符号与图标，不上传。 |
@@ -241,4 +243,4 @@ python Training/onnx/verify_onnx_parity.py \
     --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
 ```
 
-模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。
+模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。Mac 标准版不打包模型或推理运行时，AI 版打包同一模型并附 `Assets/Models/DINOv3-LICENSE.md`，发布扫描会核对模型字节数与 SHA-256。

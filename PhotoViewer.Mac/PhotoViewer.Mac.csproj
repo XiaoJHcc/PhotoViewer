@@ -3,6 +3,9 @@
         <TargetFramework>net10.0-macos</TargetFramework>
         <OutputType>Exe</OutputType>
         <ApplicationTitle>PhotoViewer</ApplicationTitle>
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
+        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <!-- 最低部署版本与 SwiftUI 动态库的 arm64-apple-macosx26.0 目标保持一致。 -->
         <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
         <UseAppHost>true</UseAppHost>
@@ -18,12 +21,18 @@
         <ValidateXcodeVersion>false</ValidateXcodeVersion>
     </PropertyGroup>
 
-    <ItemGroup>
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
         <PackageReference Include="Microsoft.ML.OnnxRuntime" />
     </ItemGroup>
 
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+        <Compile Remove="Native/MacSimilarityPanel.cs" />
+        <Compile Remove="Native/NativeSimilarityAcceptance.cs" />
+    </ItemGroup>
+
     <ItemGroup>
-        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
+                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
     </ItemGroup>
 
     <!--
@@ -50,11 +59,20 @@
         <DebugType>none</DebugType>
     </PropertyGroup>
 
-    <!-- 将图标作为 BundleResource 拷入 .app（Contents/Resources） -->
     <ItemGroup>
         <BundleResource Include="icon.icns"/>
-        <BundleResource Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
+        <BundleResource Condition="'$(PhotoViewerEnableDino)' == 'true'" Include="../PhotoViewer/Assets/Models/*.onnx" Link="Assets/Models/%(Filename)%(Extension)" />
+        <BundleResource Condition="'$(PhotoViewerEnableDino)' == 'true'" Include="../PhotoViewer/Assets/Models/DINOv3-LICENSE.md" Link="Assets/Models/DINOv3-LICENSE.md" />
     </ItemGroup>
+
+    <Target Name="_RemoveNonMacOnnxRuntimeAssets" BeforeTargets="_CodesignAppBundle">
+        <ItemGroup>
+            <_NonMacOnnxRuntimeAssets Include="$(AppBundleDir.TrimEnd('/'))/Contents/MonoBundle/onnxruntime*.dll" />
+            <_StandardDinoAssets Condition="'$(PhotoViewerEnableDino)' != 'true'" Include="$(AppBundleDir.TrimEnd('/'))/Contents/**/*onnx*" />
+            <_StandardDinoAssets Condition="'$(PhotoViewerEnableDino)' != 'true'" Include="$(AppBundleDir.TrimEnd('/'))/Contents/**/MathNet.Numerics.dll" />
+        </ItemGroup>
+        <Delete Files="@(_NonMacOnnxRuntimeAssets);@(_StandardDinoAssets)" />
+    </Target>
 
     <!--
       原生设置 UI 动态库：
@@ -93,6 +111,8 @@
     <Target Name="_SyncInfoPlistVersion" BeforeTargets="_DetectAppManifest">
         <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleShortVersionString $(AppVersion)' '$(MSBuildProjectDirectory)/Info.plist'" />
         <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleVersion $(AppBuildNumber)' '$(MSBuildProjectDirectory)/Info.plist'" />
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleDisplayName $(ApplicationTitle)' '$(MSBuildProjectDirectory)/Info.plist'" />
+        <Exec Command="/usr/libexec/PlistBuddy -c 'Set :CFBundleName $(ApplicationTitle)' '$(MSBuildProjectDirectory)/Info.plist'" />
         <Message Importance="high" Text="[版本同步] Info.plist → $(AppVersion) ($(AppBuildNumber))" />
     </Target>
 </Project>

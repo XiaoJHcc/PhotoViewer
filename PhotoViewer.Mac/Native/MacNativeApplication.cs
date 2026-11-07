@@ -62,11 +62,16 @@ public static class MacNativeApplication
             new DefaultPerformanceBudget(),
             appleKeyboard: true,
             BitmapLoader.AutomaticCacheLimit);
-        // 验收会话不读写用户偏好：界面状态留在内存。
-        IViewStateStore viewState = decodeOptimize || args.Contains("--pv-native-smoke")
-            ? new InMemorySettingsStore()
-            : new AppleViewStateStore();
+        // 验收会话不读写用户偏好；版本往返使用独立偏好前缀验证跨进程恢复。
+        bool editionRoundtrip = args.Any(argument => argument.StartsWith("--pv-native-edition-", StringComparison.Ordinal));
+        IViewStateStore viewState = editionRoundtrip
+            ? new AppleViewStateStore(NativeEditionAcceptance.ViewStatePrefix)
+            : decodeOptimize || args.Contains("--pv-native-smoke")
+                ? new InMemorySettingsStore()
+                : new AppleViewStateStore();
+#if PHOTOVIEWER_DINO
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_CoreML());
+#endif
         using var appDelegate = new NativeDelegate(args, settingsRepository, viewState);
         application.Delegate = appDelegate;
         application.Run();

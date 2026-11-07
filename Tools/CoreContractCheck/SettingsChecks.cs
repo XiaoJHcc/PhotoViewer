@@ -32,6 +32,21 @@ internal static class SettingsChecks
         c.Equal("缓存张数下界归一", 1, undersized.BitmapCacheMaxCount);
         c.Equal("缓存内存下界归一", 512, undersized.BitmapCacheMaxMemory);
         c.Equal("滚动预载延时下界归一", SettingsDocumentCodec.MinimumVisibleCenterDelayMs, undersized.VisibleCenterDelayMs);
+
+        var defaults = new AppSettings();
+        var inherited = SettingsDocumentCodec.Read(
+            "{\"schemaVersion\":2,\"analysisImmediateCompute\":true}", defaults).Settings!;
+        c.True("旧组合开关继承到 CV", inherited.AnalysisImmediateCompute && inherited.AnalysisImmediateCvCompute);
+        var independent = SettingsDocumentCodec.Read(
+            "{\"schemaVersion\":2,\"analysisImmediateCompute\":true,\"analysisImmediateCvCompute\":false}", defaults).Settings!;
+        c.True("独立 CV 字段优先于继承", independent.AnalysisImmediateCompute && !independent.AnalysisImmediateCvCompute);
+        var independentJson = SettingsDocumentCodec.Serialize(independent);
+        var independentRoundtrip = SettingsDocumentCodec.Read(independentJson, defaults).Settings!;
+        c.True("DINO/CV 开关分别持久化", independentRoundtrip.AnalysisImmediateCompute
+            && !independentRoundtrip.AnalysisImmediateCvCompute
+            && independentJson.Contains("\"analysisImmediateCompute\": true", StringComparison.Ordinal)
+            && independentJson.Contains("\"analysisImmediateCvCompute\": false", StringComparison.Ordinal));
+
         var path = Path.Combine(root, "settings.json");
         for (var index = 0; index < 5; index++)
         {

@@ -5,11 +5,43 @@ using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Platform;
 using PhotoViewer.Core.Storage;
 using PhotoViewer.ViewModels.Tools;
+#if PHOTOVIEWER_DINO
+using DiagnosticViewModel = PhotoViewer.ViewModels.Tools.DinoDebugViewModel;
+#else
+using DiagnosticViewModel = PhotoViewer.ViewModels.Tools.CvDebugViewModel;
+#endif
 
 namespace PhotoViewer.Mac.Native;
 
 internal static class NativeToolsAcceptance
 {
+    private static string DiagnosticStatus(ToolsViewModel tools)
+    {
+#if PHOTOVIEWER_DINO
+        return tools.DinoPresenter.Status;
+#else
+        return tools.CvPresenter.Status;
+#endif
+    }
+
+    private static bool DiagnosticBusy(ToolsViewModel tools)
+    {
+#if PHOTOVIEWER_DINO
+        return tools.DinoPresenter.IsBusy;
+#else
+        return tools.CvPresenter.IsBusy;
+#endif
+    }
+
+    private static bool DiagnosticHasThumbnail(ToolsViewModel tools)
+    {
+#if PHOTOVIEWER_DINO
+        return tools.DinoPresenter.ThumbnailTile.Source != null;
+#else
+        return tools.CvPresenter.ThumbnailTile.Source != null;
+#endif
+    }
+
     internal static async Task RunAsync(MacMainWindow window, string output)
     {
         var checks = new List<string>();
@@ -120,29 +152,39 @@ internal static class NativeToolsAcceptance
             }
 
             ClickCategory(host, 1);
-            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "侧栏选择进入 DINO");
-            await WaitAsync(() => tools.DinoPresenter.Status == main.CurrentFile!.Name && tools.DinoPresenter.ThumbnailTile.Source != null, "DINO 就绪", 180);
-            var dino = Descendants(content).OfType<MacDinoDiagnosticView>().Single();
-            var tiles = Descendants(dino).OfType<MacDiagnosticTile>().ToArray();
-            if (tiles.Length != 5) throw new InvalidOperationException("DINO 瓦片数不是 5");
+            await WaitAsync(() => tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1, "侧栏选择进入诊断");
+            await WaitAsync(() => DiagnosticStatus(tools) == main.CurrentFile!.Name && DiagnosticHasThumbnail(tools), "诊断就绪", 180);
+            var diagnostic = Descendants(content).OfType<MacDiagnosticView>().Single();
+            var tiles = Descendants(diagnostic).OfType<MacDiagnosticTile>().ToArray();
+#if PHOTOVIEWER_DINO
+            const int expectedTiles = 5;
+#else
+            const int expectedTiles = 3;
+#endif
+            if (tiles.Length != expectedTiles) throw new InvalidOperationException($"诊断瓦片数不是 {expectedTiles}");
             double bottom = tiles.Max(tile => (double)tile.Frame.Bottom);
-            if (dino.RigidText.Frame.Y < bottom || !dino.RigidText.Selectable || Math.Abs((double)dino.RigidText.Frame.Width - ((double)dino.RigidText.Superview!.Bounds.Width - 32)) > 1)
-                throw new InvalidOperationException("DINO 刚体文本非网格下方整宽可复制原生文本");
+            if (diagnostic.RigidText.Frame.Y < bottom || !diagnostic.RigidText.Selectable || Math.Abs((double)diagnostic.RigidText.Frame.Width - ((double)diagnostic.RigidText.Superview!.Bounds.Width - 32)) > 1)
+                throw new InvalidOperationException("诊断刚体文本非网格下方整宽可复制原生文本");
             var firstRow = tiles.Take(3).ToArray();
+            if (firstRow.Any(tile => Math.Abs((double)(tile.Frame.Y - firstRow[0].Frame.Y)) > .5))
+                throw new InvalidOperationException("诊断首行未保持三列上沿对齐");
+#if PHOTOVIEWER_DINO
             var secondRow = tiles.Skip(3).ToArray();
-            if (firstRow.Any(tile => Math.Abs((double)(tile.Frame.Y - firstRow[0].Frame.Y)) > .5)
-                || secondRow.Any(tile => Math.Abs((double)(tile.Frame.Y - secondRow[0].Frame.Y)) > .5))
+            if (secondRow.Any(tile => Math.Abs((double)(tile.Frame.Y - secondRow[0].Frame.Y)) > .5))
                 throw new InvalidOperationException("DINO 未保持 3+2 上沿对齐");
             await SaveWindowAsync(host.Window, Path.Combine(output, "native-tools-dino.png"));
-            checks.Add("dino: SwiftUI sidebar selection binding, shared presenter ready, 3+2 tiles and full-width selectable rigid text");
+#else
+            await SaveWindowAsync(host.Window, Path.Combine(output, "native-tools-cv.png"));
+#endif
+            checks.Add($"diagnostic: SwiftUI sidebar selection, shared presenter ready, {expectedTiles} tiles and full-width selectable rigid text");
             var sameWindow = host.Window;
             window.ShowTools();
             await Task.Delay(150);
-            if (host.Window != sameWindow || tools.CurrentTool is not DinoDebugViewModel) throw new InvalidOperationException("重复打开未保留工具页");
+            if (host.Window != sameWindow || tools.CurrentTool is not DiagnosticViewModel) throw new InvalidOperationException("重复打开未保留工具页");
             window.ShowTools(0);
             await WaitAsync(() => tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0, "系统菜单直达 EXIF");
             window.ShowTools(1);
-            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "系统菜单直达 DINO");
+            await WaitAsync(() => tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1, "系统菜单直达 DINO");
             if (host.Window != sameWindow) throw new InvalidOperationException("系统工具菜单创建了重复窗口");
             checks.Add("menu entry: EXIF and DINO direct actions reuse the same tools window and select the requested category");
             ClickCategory(host, 0);
@@ -154,7 +196,7 @@ internal static class NativeToolsAcceptance
             }
             await SaveWindowAsync(host.Window, Path.Combine(output, "native-tools-exif.png"));
             ClickCategory(host, 1);
-            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "再次进入 DINO");
+            await WaitAsync(() => tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1, "再次进入 DINO");
             host.CloseWindow();
             window.ShowTools();
             await WaitAsync(() => host.IsOpen && tools.CurrentTool is ExifDetailViewModel, "关闭后主入口重开默认 EXIF");
@@ -163,10 +205,10 @@ internal static class NativeToolsAcceptance
 
             var file = main.CurrentFile;
             main.CurrentFile = null;
-            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "无照片自动落 DINO");
+            await WaitAsync(() => tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1, "无照片自动落 DINO");
             host.SelectCategoryForTesting(0);
             await Task.Delay(200);
-            if (host.SelectedCategory != 1 || tools.CurrentTool is not DinoDebugViewModel)
+            if (host.SelectedCategory != 1 || tools.CurrentTool is not DiagnosticViewModel)
                 throw new InvalidOperationException("无 EXIF 仍可选择 EXIF 页");
             main.CurrentFile = file;
             checks.Add("availability: absent photo disables EXIF and falls back to DINO without a tools home page");
@@ -178,15 +220,15 @@ internal static class NativeToolsAcceptance
             TapExifGroup(window);
             await WaitAsync(() => host.IsOpen && tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0,
                 "关闭后控制栏 EXIF 入口直达详情");
-            if (tools.DinoPresenter.Status != "未加载") throw new InvalidOperationException("控制栏 EXIF 入口先启动了 DINO 推理");
+            if (DiagnosticStatus(tools) != "未加载") throw new InvalidOperationException("控制栏 EXIF 入口先启动了 DINO 推理");
             checks.Add("entry: closed window + control bar EXIF group opens the same window directly at EXIF detail");
 
             ClickCategory(host, 1);
-            await WaitAsync(() => tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1, "EXIF 入口测试前进入 DINO");
+            await WaitAsync(() => tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1, "EXIF 入口测试前进入 DINO");
             TapExifGroup(window);
             await WaitAsync(() => tools.CurrentTool is ExifDetailViewModel && host.SelectedCategory == 0,
                 "已展示 DINO 时 EXIF 入口切到详情");
-            if (tools.DinoPresenter.IsBusy) throw new InvalidOperationException("切到 EXIF 后 DINO 仍在计算");
+            if (DiagnosticBusy(tools)) throw new InvalidOperationException("切到 EXIF 后诊断仍在计算");
             window.ShowTools();
             await Task.Delay(200);
             if (host.SelectedCategory != 0 || tools.CurrentTool is not ExifDetailViewModel)
@@ -207,7 +249,7 @@ internal static class NativeToolsAcceptance
             main.CurrentFile = null;
             await WaitAsync(() => !tools.IsExifDetailEnabled, "无照片时 EXIF 不可用");
             TapExifGroup(window);
-            await WaitAsync(() => host.IsOpen && tools.CurrentTool is DinoDebugViewModel && host.SelectedCategory == 1,
+            await WaitAsync(() => host.IsOpen && tools.CurrentTool is DiagnosticViewModel && host.SelectedCategory == 1,
                 "无照片时控制栏 EXIF 入口回退 DINO");
             main.CurrentFile = file;
             checks.Add("entry: absent photo falls back to the platform default (DINO) instead of a tools home");

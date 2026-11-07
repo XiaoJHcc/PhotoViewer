@@ -39,6 +39,8 @@ public sealed record AppSettings
 
     public bool AnalysisImmediateCompute { get; init; }
 
+    public bool AnalysisImmediateCvCompute { get; init; }
+
     public int BitmapCacheMaxCount { get; init; } = 30;
 
     public int BitmapCacheMaxMemory { get; init; } = 2048;
@@ -77,6 +79,7 @@ public sealed record AppSettings
             && SimilarityThreshold.Equals(other.SimilarityThreshold)
             && SimilarityMaxResults == other.SimilarityMaxResults
             && AnalysisImmediateCompute == other.AnalysisImmediateCompute
+            && AnalysisImmediateCvCompute == other.AnalysisImmediateCvCompute
             && BitmapCacheMaxCount == other.BitmapCacheMaxCount
             && BitmapCacheMaxMemory == other.BitmapCacheMaxMemory
             && PreloadForwardCount == other.PreloadForwardCount

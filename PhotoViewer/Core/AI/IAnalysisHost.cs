@@ -11,8 +11,11 @@ public interface IAnalysisHost
     /// <summary>分析栏是否可见;不可见时 presenter 取消在途任务并清空诊断瓦片。</summary>
     bool AnalysisVisible { get; }
 
-    /// <summary>设置"分析诊断 / 即时计算DINO/CV"是否开启。</summary>
+    /// <summary>设置「即时计算 DINO」是否开启。</summary>
     bool ImmediateCompute { get; }
+
+    /// <summary>设置「即时计算 CV」是否开启；未拆分的平台沿用原组合开关。</summary>
+    bool ImmediateCvCompute => ImmediateCompute;
 
     /// <summary>当前照片。</summary>
     ImageFile? CurrentFile { get; }

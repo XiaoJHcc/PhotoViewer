@@ -31,10 +31,13 @@ public static class NativeAcceptanceRunner
         {
             // 冒烟会话从中性布局状态开始：栏位显隐与面板开合由各套件自行设定，
             // 否则上一轮落盘的设置（如相似聚类面板展开）会改变文件栏几何，污染几何对拍。
+#if PHOTOVIEWER_DINO
             if (window.SimilarityToggleIsOn != window.Main.FileVM.FilterBar.IsSimilarityPanelOpen)
                 throw new InvalidOperationException("启动时相似开关没有同步持久化状态");
+#endif
             window.Main.IsAnalysisViewVisible = false;
-            window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
+            bool editionRoundtrip = args.Any(argument => argument.StartsWith("--pv-native-edition-", StringComparison.Ordinal));
+            if (!editionRoundtrip) window.Main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
             await Task.Delay(120);
             if (args.Contains("--pv-native-texture-cache"))
             {
@@ -60,6 +63,13 @@ public static class NativeAcceptanceRunner
                 return;
             }
             await WaitAsync(() => window.Main.CurrentFile != null && window.Session.Image != null, "首图加载");
+            if (args.Any(argument => argument.StartsWith("--pv-native-edition-", StringComparison.Ordinal)))
+            {
+                await NativeEditionAcceptance.RunAsync(window, args);
+                File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
+                Environment.ExitCode = 0;
+                return;
+            }
             if (args.Contains("--pv-native-toolbar"))
             {
                 await NativeToolbarAcceptance.RunAsync(window, output);
@@ -85,10 +95,14 @@ public static class NativeAcceptanceRunner
             }
             if (args.Contains("--pv-native-similarity"))
             {
+#if PHOTOVIEWER_DINO
                 await NativeSimilarityAcceptance.RunAsync(window, output);
                 File.Delete(System.IO.Path.Combine(output, "native-smoke-error.txt"));
                 Environment.ExitCode = 0;
                 return;
+#else
+                throw new InvalidOperationException("标准版不包含相似聚类验收套件");
+#endif
             }
             if (args.Contains("--pv-native-tools"))
             {
@@ -210,6 +224,7 @@ public static class NativeAcceptanceRunner
                 var cv = await CvGridExtractor.ExtractAsync(analysis);
                 if (cv.Encode().Length == 0) throw new InvalidOperationException("CV 输出为空");
                 results.Add(new NativeCheck { Check = "cv-native-adapter", Width = analysis.Width, Height = analysis.Height });
+#if PHOTOVIEWER_DINO
                 using var thumbnail = await ThumbnailService.GetThumbnailAsync(first.File, 560, DecodePriority.P3_Background) ?? throw new InvalidOperationException("DINO 缩略图无法取得");
                 var features = await DinoFeatureExtractor.ExtractDualAsync(thumbnail, includePatches: true);
                 if (features.Cls.Length == 0 || features.Patches == null || !features.Cls.All(float.IsFinite)) throw new InvalidOperationException("DINO 双输出推理失败");
@@ -221,6 +236,7 @@ public static class NativeAcceptanceRunner
                 if (groups.Count != 1 || string.IsNullOrEmpty(groups[0].Fingerprint) || (await FolderFeatureIndexer.EvaluateMissingPartsAsync(groups[0].Fingerprint)).AnyMissing)
                     throw new InvalidOperationException("指纹索引三路持久化不完整");
                 results.Add(new NativeCheck { Check = "index-fingerprint-persistence", JsonRoundTrip = true });
+#endif
             }
             PhotoDatabase.Initialize();
             using (var database = PhotoDatabase.OpenConnection())

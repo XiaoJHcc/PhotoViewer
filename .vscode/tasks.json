@@ -75,6 +75,28 @@
       "problemMatcher": []
     },
     {
+      "label": "Build Mac AI (Debug)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.Mac/PhotoViewer.Mac.csproj -c Debug -r osx-arm64 -p:PhotoViewerEnableDino=true",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Debug Mac AI",
+      "type": "shell",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer-AI.app",
+      "dependsOn": "Build Mac AI (Debug)",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Run Mac AI",
+      "type": "shell",
+      "command": "open -n PhotoViewer.Mac/bin/Debug/net10.0-macos/osx-arm64/PhotoViewer-AI.app",
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
       "label": "Debug Android",
       "type": "shell",
       "windows": {
@@ -172,7 +194,7 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish Mac DMG (Release)",
+      "label": "Publish Mac DMG (Release, Standard + AI)",
       "type": "shell",
       "command": "bash PhotoViewer.Mac/publish.sh",
       "group": "build",

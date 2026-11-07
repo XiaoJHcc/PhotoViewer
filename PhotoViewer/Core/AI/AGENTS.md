@@ -4,6 +4,8 @@
 
 `namespace PhotoViewer.Core.AI`
 
+`PhotoViewerEnableDino=false` 时共享工程移除 DINO 提取/缓存/索引、相似聚类、patch 派生和 ONNX/MathNet 包引用；CV、直方图、细节预览、只读指纹分组与抖动徽标继续可用。`FingerprintGrouping` 是批量索引与抖动徽标共用的只读分组入口，标准版不得反向依赖 `FolderFeatureIndexer`。分析栏由「即时计算 DINO」与「即时计算 CV」独立门控，即时缓存按增强状态及实际计算能力区分，任一侧失败不影响另一侧；标准版另有 `CvDiagnosticPresenter` 三瓦片诊断，现算只进内存、不写特征库。
+
 原生索引适配：FolderFeatureIndexer 从主缓存取得 RgbaF16 时，调用 Core/Color/ColorEngine.ToAnalysisSrgb8 得到已应用方向的 BGRA8 后再跑 CV，并用转换后尺寸入库。DINO 的模型输入口径固定为**显式 sRGB8**：`DinoFeatureExtractor.RenderInputImage` 先把源规范到 sRGB8（广色域 / 线性 / 未标记来源由 `ColorEngine.ToSrgb8` 转换，sRGB8 源零额外拷贝）再做 Linear 采样缩放，缩略图出口本身也已是 sRGB8；算法版本、指纹与 schema 不改，同一张照片的向量不随文件源色域漂移。
 
 > 二期持久化收尾已落地,见 [Plans/dinov3-photo-ranking-plan-2-3-persistence.md](../../../Plans/dinov3-photo-ranking-plan-2-3-persistence.md);上游 CV 抖动算法 v5 r3 见 [Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md](../../../Plans/dinov3-photo-ranking-plan-2-2-shake-v5.md);更上游:[Plans/dinov3-photo-ranking-plan-1.md](../../../Plans/dinov3-photo-ranking-plan-1.md) · [Plans/dinov3-photo-ranking-plan-2-0.md](../../../Plans/dinov3-photo-ranking-plan-2-0.md) · [Plans/dinov3-photo-ranking-plan-2-1-wrapup.md](../../../Plans/dinov3-photo-ranking-plan-2-1-wrapup.md)(含标量/诊断图公式、14 张样本验收 checklist、废弃方案墓碑)。

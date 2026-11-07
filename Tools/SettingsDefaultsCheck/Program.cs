@@ -152,6 +152,7 @@ internal static class Program
             ShowRating = false,
             SafeSetRating = false,
             AnalysisImmediateCompute = false,
+            AnalysisImmediateCvCompute = false,
             PreloadForwardCount = 0,
             PreloadBackwardCount = 0,
             VisibleCenterPreloadCount = 0,

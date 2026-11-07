@@ -13,12 +13,14 @@ public class FileViewModel : ReactiveObject
 
     public FilterBarViewModel FilterBar { get; }
     public ThumbnailListViewModel ThumbnailList { get; }
+#if PHOTOVIEWER_DINO
     public SimilarityPanelViewModel SimilarityPanel { get; }
+#endif
 
     /// <summary>当前布局是否为行布局（分栏位于上下，内部横向排列）</summary>
     public bool IsRowLayout => Main.IsRowLayout;
 
-    /// <summary>相似聚类面板是否展开（绑定到 FileView 的 IsVisible）</summary>
+    /// <summary>相似聚类面板是否展开（标准版恒为 false）。</summary>
     public bool IsSimilarityPanelOpen => FilterBar.IsSimilarityPanelOpen;
 
     /// <summary>
@@ -31,16 +33,20 @@ public class FileViewModel : ReactiveObject
 
         FilterBar = new FilterBarViewModel(main, main.FolderVM);
         ThumbnailList = new ThumbnailListViewModel(main, main.FolderVM, FilterBar);
+#if PHOTOVIEWER_DINO
         SimilarityPanel = new SimilarityPanelViewModel(main, ThumbnailList, main.FolderVM);
+#endif
 
         main.WhenAnyValue(x => x.IsRowLayout)
             .Subscribe(_ => this.RaisePropertyChanged(nameof(IsRowLayout)));
 
+#if PHOTOVIEWER_DINO
         // 面板展开/收起由 SimilarityPanelViewModel 按"展开且文件栏可见"自行驱动,
         // 这里只负责把布局可见性变化转告绑定。
         FilterBar.SimilarityPanelToggled += _ =>
         {
             this.RaisePropertyChanged(nameof(IsSimilarityPanelOpen));
         };
+#endif
     }
 }

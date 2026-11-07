@@ -8,8 +8,8 @@ using PhotoViewer.Core.Image;
 namespace PhotoViewer.Core.AI;
 
 /// <summary>
-/// 分析栏只读门面:从 <see cref="ImageFile"/> 出发计算指纹,并行读 photo_patches + photos.cv_grid,
-/// 返回反序列化后的 patch token 数组与 <see cref="CvGridResult"/>(含 CV 实际解码尺寸)。
+/// 分析栏只读门面:从 <see cref="ImageFile"/> 出发计算指纹,AI 版并行读 photo_patches + photos.cv_grid,
+/// 标准版只读 photos.cv_grid;返回反序列化后的 patch token（AI）与 <see cref="CvGridResult"/>(含 CV 实际解码尺寸)。
 ///
 /// 抽自 <see cref="PhotoViewer.ViewModels.Tools.DinoDebugViewModel"/>.TryReadCachedAsync,差别在于:
 /// 仅做读库,不触发任何解码 / ONNX 推理 / CV 重算 — 缺失即为缺失,由调用方决定如何呈现(显示"未提取"占位)。
@@ -64,12 +64,11 @@ public static class AnalysisDataReader
         try
         {
             ct.ThrowIfCancellationRequested();
-
+            float[]? patches = null;
+#if PHOTOVIEWER_DINO
             var patchTask = PhotoDatabase.ReadPatchesAsync(fingerprint, DinoModelResources.ModelId);
             var cvTask = PhotoDatabase.ReadCvGridAsync(fingerprint);
             await Task.WhenAll(patchTask, cvTask).ConfigureAwait(false);
-
-            float[]? patches = null;
             if (patchTask.Result is byte[] pBlob)
             {
                 int total = DinoModelResources.PatchTokenCount * DinoModelResources.FeatureDim;
@@ -80,10 +79,13 @@ public static class AnalysisDataReader
                         patches[i] = BinaryPrimitives.ReadSingleLittleEndian(pBlob.AsSpan(i * sizeof(float), sizeof(float)));
                 }
             }
-
+            var cvRecord = cvTask.Result;
+#else
+            var cvRecord = await PhotoDatabase.ReadCvGridAsync(fingerprint).ConfigureAwait(false);
+#endif
             CvGridResult? cv = null;
             int cvW = 0, cvH = 0;
-            if (cvTask.Result is { Blob: var cvBlob, Spec: var cvSpec, ImageWidth: var w, ImageHeight: var h }
+            if (cvRecord is { Blob: var cvBlob, Spec: var cvSpec, ImageWidth: var w, ImageHeight: var h }
                 && cvSpec == CvGridResult.CurrentVersion)
             {
                 cv = CvGridResult.Decode(cvBlob, cvSpec);
