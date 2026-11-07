@@ -11,7 +11,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 验收专用（测试钩子）：<c>--pv-native-sheet-shots &lt;目录&gt;</c> 在同一张照片上依次打开设置根页、
-/// 设置子页（文件 / 预览 / 控制）与工具页（列表 / EXIF / DINO），把每个页面停在 <c>--pv-native-ui-snapshots</c> 检查点，
+/// 设置子页（文件 / 预览 / 控制 / AI）与工具页（列表 / EXIF / 当前发行版诊断页），把每个页面停在 <c>--pv-native-ui-snapshots</c> 检查点，
 /// 供外部截图比对 sheet 背景。只读素材，不写用户照片。
 /// </summary>
 internal static class iOSNativeSheetShotCheck
@@ -129,6 +129,12 @@ internal static class iOSNativeSheetShotCheck
             await HoldAsync("control-recording", lines);
             await UiDispatcher.InvokeAsync(() => control.Recorder.CancelRecording());
             await Task.Delay(300);
+            await UiDispatcher.InvokeAsync(() => settingsNavigation.PopToViewController(settingsRoot, false));
+            await UiDispatcher.InvokeAsync(() => settingsRoot.RowSelected(settingsRoot.TableView, NSIndexPath.FromRowSection(4, 0)));
+            await WaitAsync(() => settingsNavigation.TopViewController is iOSNativeAiSettingsViewController, "AI 设置页");
+            await Task.Delay(400);
+            await HoldAsync("settings-ai", lines);
+            await UiDispatcher.InvokeAsync(() => settingsNavigation.PopToViewController(settingsRoot, false));
 
             await UiDispatcher.InvokeAsync(() => root.DismissViewController(true, null));
             await WaitAsync(() => root.PresentedViewController == null, "设置页关闭");
@@ -151,12 +157,17 @@ internal static class iOSNativeSheetShotCheck
 
             await UiDispatcher.InvokeAsync(() => list.RowSelected(list.TableView, NSIndexPath.FromRowSection(1, 0)));
             await WaitAsync(() => presenter.Navigation?.TopViewController is iOSDinoDiagnosticView,
-                $"DINO 诊断页压栈（当前 {presenter.Navigation?.TopViewController?.GetType().Name ?? "null"}）");
+                $"诊断页压栈（当前 {presenter.Navigation?.TopViewController?.GetType().Name ?? "null"}）");
+#if PHOTOVIEWER_DINO
             await WaitAsync(() => main.Tools.DinoPresenter.Status == main.CurrentFile!.Name,
                 $"DINO 推理就绪（状态 {main.Tools.DinoPresenter.Status}，页 {presenter.Navigation?.TopViewController?.GetType().Name}）");
-            await WaitAsync(() => presenter.Navigation?.TopViewController is iOSDinoDiagnosticView view && view.Tiles[0].HasContent, "DINO 缩略图瓦片出图");
+#else
+            await WaitAsync(() => main.Tools.CvPresenter.Status == main.CurrentFile!.Name,
+                $"CV 诊断就绪（状态 {main.Tools.CvPresenter.Status}，页 {presenter.Navigation?.TopViewController?.GetType().Name}）");
+#endif
+            await WaitAsync(() => presenter.Navigation?.TopViewController is iOSDinoDiagnosticView view && view.Tiles[0].HasContent, "诊断缩略图瓦片出图");
             await Task.Delay(400);
-            await HoldAsync("tools-dino", lines);
+            await HoldAsync(iOSAppCapabilities.HasDino ? "tools-dino" : "tools-cv", lines);
             await UiDispatcher.InvokeAsync(presenter.Dismiss);
             await WaitAsync(() => !presenter.IsPresented, "工具页关闭");
 

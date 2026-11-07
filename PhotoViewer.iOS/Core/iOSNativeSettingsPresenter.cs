@@ -1574,8 +1574,8 @@ internal sealed class iOSNativeControlSettingsViewController : iOSNativeSettings
 }
 
 /// <summary>
-/// iOS 原生 AI 设置页。
-/// 用于配置相似聚类的阈值与最多返回数量。
+/// iOS 原生 AI 设置页。AI 版配置相似聚类阈值/数量与「即时计算 DINO」「即时计算 CV」两个独立开关；
+/// 标准版只保留「分析诊断」组的「即时计算 CV」，不建相似聚类分组或空槽。
 /// </summary>
 internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormViewController
 {
@@ -1596,6 +1596,7 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
     {
         Title = "AI";
 
+#if PHOTOVIEWER_DINO
         contentStack.AddArrangedSubview(
             CreateSection(
                 "相似聚类",
@@ -1616,16 +1617,24 @@ internal sealed class iOSNativeAiSettingsViewController : iOSNativeSettingsFormV
                     SettingsViewModel.SimilarityMaxResultsMin,
                     SettingsViewModel.SimilarityMaxResultsMax,
                     valueFormatter: value => $"{value} 张")));
+#endif
 
         contentStack.AddArrangedSubview(
             CreateSection(
                 "分析诊断",
                 null,
+#if PHOTOVIEWER_DINO
                 CreateSwitchRow(
-                    "即时计算DINO/CV",
+                    "即时计算 DINO",
                     null,
                     () => Settings.AnalysisImmediateCompute,
-                    value => Settings.AnalysisImmediateCompute = value)));
+                    value => Settings.AnalysisImmediateCompute = value),
+#endif
+                CreateSwitchRow(
+                    "即时计算 CV",
+                    null,
+                    () => Settings.AnalysisImmediateCvCompute,
+                    value => Settings.AnalysisImmediateCvCompute = value)));
     }
 }
 

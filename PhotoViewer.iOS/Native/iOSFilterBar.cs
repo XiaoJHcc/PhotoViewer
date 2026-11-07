@@ -11,20 +11,20 @@ namespace PhotoViewer.iOS.Native;
 /// 文件栏筛选条（[FILTER-01]）：排序 / 升降序 / 星级筛选三个 UIButton 走原生下拉菜单
 /// （<c>ShowsMenuAsPrimaryAction</c> + UIMenu），外加计数文本；几何全部取共享 <see cref="MainScreenLayout"/>，
 /// 与 Mac 原生壳同一份 90×32 / 间距 5 / 外边距 10 的口径，只把结果落成 UIKit frame。
-/// 相似聚类 toggle（90×27）显示，点击写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>，
-/// 面板本体由 <see cref="iOSSimilarityPanel"/> 渲染。
+/// AI 版的相似聚类 toggle（90×27）点击写共享 <see cref="FilterBarViewModel.IsSimilarityPanelOpen"/>，
+/// 面板本体由 <see cref="iOSSimilarityPanel"/> 渲染；标准版不创建该控件，整组按四项居中。
 /// </summary>
 internal sealed class iOSFilterBar : UIView
 {
-    /// <summary>相似聚类 toggle 是否参与筛选条布局（显示）。</summary>
-    internal const bool ShowsSimilarityToggle = true;
+    /// <summary>相似聚类 toggle 是否参与筛选条布局（仅 AI 版）。</summary>
+    internal const bool ShowsSimilarityToggle = iOSAppCapabilities.HasDino;
 
     private readonly MainViewModel _main;
     private readonly UIButton _sort;
     private readonly UIButton _order;
     private readonly UIButton _rating;
     private readonly UILabel _count = new();
-    private readonly UIButton _similarity;
+    private readonly UIButton? _similarity;
     /// <summary>上一次刷新的筛选内容摘要：菜单只在选项/选中项真的变化时重建，避免无关通知换掉已展开的下拉。</summary>
     private string _menuSignature = string.Empty;
 
@@ -36,8 +36,8 @@ internal sealed class iOSFilterBar : UIView
     internal UIButton RatingControl => _rating;
     /// <summary>筛选后计数文本。</summary>
     internal UILabel CountLabel => _count;
-    /// <summary>相似聚类 toggle。</summary>
-    internal UIButton SimilarityToggle => _similarity;
+    /// <summary>相似聚类 toggle；标准版不创建该控件，为 null。</summary>
+    internal UIButton? SimilarityToggle => _similarity;
     /// <summary>计数文本的自然宽度（本轮布局用）。</summary>
     internal double CountWidth { get; private set; }
 
@@ -53,17 +53,22 @@ internal sealed class iOSFilterBar : UIView
         _count.Font = UIFont.SystemFontOfSize(12);
         _count.TextColor = UIColor.FromRGB(0xDD, 0xDD, 0xDD);
         _count.TextAlignment = UITextAlignment.Center;
+#if PHOTOVIEWER_DINO
         _similarity = Control();
         _similarity.SetTitle("相似聚类", UIControlState.Normal);
         _similarity.AccessibilityHint = "展开/关闭相似聚类面板";
-        _similarity.Hidden = !ShowsSimilarityToggle;
         _similarity.TouchUpInside += (_, _) => _main.FileVM.FilterBar.IsSimilarityPanelOpen = !_main.FileVM.FilterBar.IsSimilarityPanelOpen;
         SyncToggle();
+#else
+        _similarity = null;
+#endif
         AddSubview(_sort);
         AddSubview(_order);
         AddSubview(_rating);
         AddSubview(_count);
+#if PHOTOVIEWER_DINO
         AddSubview(_similarity);
+#endif
         Refresh();
     }
 
@@ -94,6 +99,7 @@ internal sealed class iOSFilterBar : UIView
     /// </summary>
     private void SyncToggle()
     {
+        if (_similarity == null) return;
         bool open = _main.FileVM.FilterBar.IsSimilarityPanelOpen;
         var configuration = _similarity.Configuration!;
         configuration.BaseBackgroundColor = open
@@ -119,7 +125,7 @@ internal sealed class iOSFilterBar : UIView
         _order.Frame = ToCGRect(frames.Order);
         _rating.Frame = ToCGRect(frames.Rating);
         _count.Frame = ToCGRect(frames.Count);
-        _similarity.Frame = ToCGRect(frames.Toggle);
+        if (_similarity != null) _similarity.Frame = ToCGRect(frames.Toggle);
     }
 
     /// <summary>按共享布局矩形落成 UIKit frame。</summary>

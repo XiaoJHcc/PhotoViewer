@@ -12,7 +12,7 @@ namespace PhotoViewer.iOS.Native;
 
 /// <summary>
 /// 原生分析栏（UIKit 版）：常驻侧栏，按共享 <see cref="AnalysisPresenter"/> 的瓦片顺序渲染
-/// 细节预览（中心 / 对焦点）、直方图与 4 张 DINO/CV 诊断图。
+/// 细节预览（中心 / 对焦点）、直方图与诊断瓦片（AI 版含 DINO PCA / Cosine，标准版只有 CV 锐度 / 抖动）。
 /// 几何与旧壳 <c>AnalysisView</c>/Mac 原生分析栏同口径：正方形瓦片边长 =
 /// <c>floor((可用主轴长度 − 20 − 8×(n−1)) / n)</c>，行布局排在主图下方、列布局排在主图右侧，
 /// 交叉轴尺寸 = 瓦片边长 + 20。
@@ -304,12 +304,13 @@ internal sealed class iOSAnalysisPanel : UIView
             _host.Raise();
     }
 
-    /// <summary>「即时计算DINO/CV」开关变化后重新路由。</summary>
+    /// <summary>「即时计算 DINO / CV」开关变化后重新路由（标准版只保留 CV 开关）。</summary>
     /// <param name="sender">事件源（设置 VM）。</param>
     /// <param name="args">属性变化参数。</param>
     private void OnSettingsChanged(object? sender, PropertyChangedEventArgs args)
     {
-        if (args.PropertyName == nameof(SettingsViewModel.AnalysisImmediateCompute)) _host.Raise();
+        if (args.PropertyName is nameof(SettingsViewModel.AnalysisImmediateCompute)
+            or nameof(SettingsViewModel.AnalysisImmediateCvCompute)) _host.Raise();
     }
 
     /// <summary>展示图（代理 ↔ Full、增强切换）变化后刷新细节裁剪并重新路由。</summary>

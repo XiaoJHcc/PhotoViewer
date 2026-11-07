@@ -89,12 +89,70 @@ internal static class iOSNativeSettingsCheck
         await VerifyInlineBindingAsync(control, settings, lines);
         await VerifyCaptureAsync(root, control, settings, lines);
         await VerifyExifListMatchesControlRowHeightAsync(root, lines);
+        await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopToViewController(root, false));
+        await VerifyAiSettingsPageAsync(root, settings, lines);
         await UiDispatcher.InvokeAsync(() =>
         {
             control.Capabilities.Inject(false, false);
             root.NavigationController!.PopToViewController(root, false);
             settings.ApplySnapshot(snapshot);
         });
+    }
+
+    /// <summary>
+    /// EDITION-02/03：AI 设置页只多出「相似聚类」参数与两个独立的即时计算开关；
+    /// 标准版只有「分析诊断 / 即时计算 CV」，不建相似分组或 DINO 开关。开关经真实 ValueChanged 写工作副本。
+    /// </summary>
+    private static async Task VerifyAiSettingsPageAsync(iOSNativeSettingsRootViewController root, SettingsViewModel settings, List<string> lines)
+    {
+        await UiDispatcher.InvokeAsync(() => root.RowSelected(root.TableView, NSIndexPath.FromRowSection(4, 0)));
+        await WaitForPage<iOSNativeAiSettingsViewController>(root);
+        await UiDispatcher.InvokeAsync(() =>
+        {
+            var page = root.NavigationController!.TopViewController!;
+            page.View!.LayoutIfNeeded();
+            var labels = Descendants(page.View!).OfType<UILabel>().Select(label => label.Text ?? string.Empty).ToArray();
+            var switches = Descendants(page.View!).OfType<UISwitch>().ToArray();
+#if PHOTOVIEWER_DINO
+            foreach (string expected in new[] { "相似聚类", "相似度阈值", "最多数量", "分析诊断", "即时计算 DINO", "即时计算 CV" })
+                if (!labels.Contains(expected, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"AI 设置页缺少「{expected}」：{string.Join(" | ", labels)}");
+            if (switches.Length != 2)
+                throw new InvalidOperationException($"AI 设置页应为两个独立开关，实际 {switches.Length}");
+            bool dino = settings.AnalysisImmediateCompute;
+            switches[0].On = !dino;
+            switches[0].SendActionForControlEvents(UIControlEvent.ValueChanged);
+            if (settings.AnalysisImmediateCompute != !dino)
+                throw new InvalidOperationException("即时计算 DINO 开关未写工作副本");
+            settings.AnalysisImmediateCompute = dino;
+            bool cv = settings.AnalysisImmediateCvCompute;
+            switches[1].On = !cv;
+            switches[1].SendActionForControlEvents(UIControlEvent.ValueChanged);
+            if (settings.AnalysisImmediateCvCompute != !cv)
+                throw new InvalidOperationException("即时计算 CV 开关未写工作副本");
+            settings.AnalysisImmediateCvCompute = cv;
+            lines.Add("PASS AI 设置页：相似聚类参数 + 即时计算 DINO / CV 两个独立开关（真实 ValueChanged 写工作副本）");
+#else
+            if (labels.Contains("相似聚类", StringComparer.Ordinal) || labels.Contains("相似度阈值", StringComparer.Ordinal)
+                || labels.Contains("最多数量", StringComparer.Ordinal) || labels.Contains("即时计算 DINO", StringComparer.Ordinal)
+                || labels.Contains("即时计算 DINO/CV", StringComparer.Ordinal))
+                throw new InvalidOperationException($"标准版设置页残留 DINO/相似聚类控件：{string.Join(" | ", labels)}");
+            foreach (string expected in new[] { "分析诊断", "即时计算 CV" })
+                if (!labels.Contains(expected, StringComparer.Ordinal))
+                    throw new InvalidOperationException($"标准版设置页缺少「{expected}」：{string.Join(" | ", labels)}");
+            if (switches.Length != 1)
+                throw new InvalidOperationException($"标准版设置页应只有 CV 一个开关，实际 {switches.Length}");
+            bool cv = settings.AnalysisImmediateCvCompute;
+            switches[0].On = !cv;
+            switches[0].SendActionForControlEvents(UIControlEvent.ValueChanged);
+            if (settings.AnalysisImmediateCvCompute != !cv)
+                throw new InvalidOperationException("标准版即时计算 CV 开关未写工作副本");
+            settings.AnalysisImmediateCvCompute = cv;
+            lines.Add("PASS 标准版设置页：仅「分析诊断 / 即时计算 CV」一个开关，无相似分组或 DINO 开关");
+#endif
+        });
+        await SnapshotStageAsync(iOSAppCapabilities.HasDino ? "settings-ai" : "settings-cv");
+        await UiDispatcher.InvokeAsync(() => root.NavigationController!.PopToViewController(root, false));
     }
 
     /// <summary>

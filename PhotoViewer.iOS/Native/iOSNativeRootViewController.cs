@@ -26,7 +26,7 @@ namespace PhotoViewer.iOS.Native;
 /// 主图仍由 <see cref="iOSPhotoView"/> 渲染，物理视口照旧上报共享展示会话。
 /// 输入：主图长按/辅助点按上下文菜单、硬件键盘（HID → 共享手势 → 共享命令表，INPUT-01 守卫）、
 /// 离散滚轮按用户绑定、适应态横向轻扫翻页、从"文件"拖入。
-/// P3 功能：分析栏（细节预览 / 直方图 / DINO-CV 诊断，可见时主图升 Full）、相似聚类面板、
+/// P3 功能：分析栏（细节预览 / 直方图 / 诊断瓦片，可见时主图升 Full）、AI 版相似聚类面板、
 /// 增强预览（<see cref="PhotoLoadSession"/>）与工具页（sheet + 导航控制器）；细节预览手指点按触控活动主图绿框。
 /// </summary>
 internal sealed class iOSNativeRootViewController : UIViewController
@@ -52,7 +52,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
     private readonly iOSFilterBar _filterBar;
     private readonly iOSFilmstripView _filmstrip;
     private readonly iOSAnalysisPanel _analysisPane;
+#if PHOTOVIEWER_DINO
     private readonly iOSSimilarityPanel _similarityPane;
+#endif
     private readonly UIView _detailHighlight = new();
     private readonly UILabel _hintLabel = new();
     private readonly UILabel _hintDetail = new();
@@ -130,8 +132,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
     internal UIDropInteraction DropInteraction => _drop;
     /// <summary>分析栏（验收读取瓦片几何、presenter 状态与细节预览）。</summary>
     internal iOSAnalysisPanel AnalysisPane => _analysisPane;
-    /// <summary>相似聚类面板（验收读取卡片、交叉轴与列表态）。</summary>
+    /// <summary>相似聚类面板（AI 版验收读取卡片、交叉轴与列表态）；标准版不创建。</summary>
+#if PHOTOVIEWER_DINO
     internal iOSSimilarityPanel SimilarityPane => _similarityPane;
+#endif
     /// <summary>主图绿框叠加层（细节预览 hover / 触控活动的联动目标）。</summary>
     internal UIView DetailHighlightView => _detailHighlight;
     /// <summary>主图绿框当前是否可见。</summary>
@@ -177,7 +181,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _analysisPane = new iOSAnalysisPanel(main, session);
         _analysisPane.DetailHighlight = UpdateDetailHighlight;
         _analysisPane.DetailFocusRequested = FocusDetailPoint;
+#if PHOTOVIEWER_DINO
         _similarityPane = new iOSSimilarityPanel(main) { Hidden = true };
+#endif
         _controlBar = new iOSControlBar(RequestControlsRefresh);
         _ratingSources = new iOSRatingSourcesPopover(main, this);
         // 主图菜单用触点处的 1 点透明预览：长按只弹菜单，照片不抬升、不缩小。
@@ -201,12 +207,16 @@ internal sealed class iOSNativeRootViewController : UIViewController
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.ControlVM.PropertyChanged += OnControlChanged;
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
+#endif
         _filmstrip.RateRequested += OnRateRequested;
         _filmstrip.RatingSourcesRequested += ShowRatingSources;
         _filmstrip.RatingAnchorMoved += CloseCardRatingSources;
+#if PHOTOVIEWER_DINO
         _similarityPane.RatingSourcesRequested += ShowRatingSources;
         _similarityPane.RatingAnchorMoved += CloseCardRatingSources;
+#endif
         // STATE-03：评分写回失败统一由共享事件驱动提示条（共享层只对 RolledBack/Partial/异常发事件，
         // Superseded/Canceled 不发，因此快速连按不会弹虚假失败）。
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
@@ -296,7 +306,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
         root.AddSubview(_controlScroll);
         root.AddSubview(_filterBar);
         root.AddSubview(_filmstrip);
+#if PHOTOVIEWER_DINO
         root.AddSubview(_similarityPane);
+#endif
         root.AddSubview(_analysisPane);
         // 拖入：整个主屏都接收"文件"里的文件/文件夹（与 Mac 根视图同一语义）。
         root.AddInteraction(_drop);
@@ -464,12 +476,16 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.ControlVM.PropertyChanged -= OnControlChanged;
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
+#if PHOTOVIEWER_DINO
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
+#endif
             _filmstrip.RateRequested -= OnRateRequested;
             _filmstrip.RatingSourcesRequested -= ShowRatingSources;
             _filmstrip.RatingAnchorMoved -= CloseCardRatingSources;
+#if PHOTOVIEWER_DINO
             _similarityPane.RatingSourcesRequested -= ShowRatingSources;
             _similarityPane.RatingAnchorMoved -= CloseCardRatingSources;
+#endif
             _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
             _ratingSources.Dispose();
             _photo.ViewportChanged -= ApplyDetailHighlight;
@@ -483,7 +499,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _textEditBeginField = _textEditBeginView = _textEditEndField = _textEditEndView = null;
             _controlBar.Dispose();
             _analysisPane.Dispose();
+#if PHOTOVIEWER_DINO
             _similarityPane.Dispose();
+#endif
             _photo.Dispose();
             _session.Dispose();
         }
@@ -504,12 +522,13 @@ internal sealed class iOSNativeRootViewController : UIViewController
             _main.UpdateScreenOrientation(width, height);
             bool row = _main.IsRowLayout;
             double leadingInset = (double)safe.Top + MainScreenLayout.FilterMargin;
-            double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset);
+            double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset, iOSFilterBar.ShowsSimilarityToggle);
             bool filmVisible = _main.IsThumbnailViewVisible;
             bool controlVisible = _main.IsControlViewVisible;
             double availableMain = row
                 ? Math.Max(1, width - (double)safe.Left - (double)safe.Right)
                 : Math.Max(1, height - (double)safe.Top - (double)safe.Bottom);
+#if PHOTOVIEWER_DINO
             // 相似聚类：行布局从胶片栏右侧切出一段（含旧壳 MaxWidth 规则），列布局扩宽文件栏。
             bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row, row ? MainScreenLayout.FilmstripBand : availableMain);
@@ -522,6 +541,10 @@ internal sealed class iOSNativeRootViewController : UIViewController
                     : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
                 : 0;
             _similarityPane.Hidden = !similarityOpen;
+#else
+            // 标准版不创建相似面板，也不为它预留任何柱宽或高度。
+            const double similarityColumn = 0;
+#endif
             double fileMain = filmVisible
                 ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : (double)safe.Left + similarityColumn)
                 : 0;
@@ -566,6 +589,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 var nextFilmstripFrame = new CGRect(content.X, content.Y + filterMain, filmWidth, Math.Max(1, content.Height - filterMain));
                 if (_filmstrip.Frame != nextFilmstripFrame) CloseCardRatingSources();
                 _filmstrip.Frame = nextFilmstripFrame;
+#if PHOTOVIEWER_DINO
                 if (similarityOpen)
                 {
                     var nextSimilarityFrame = row
@@ -577,6 +601,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                     _similarityPane.Frame = nextSimilarityFrame;
                     _similarityPane.LayoutIfNeeded();
                 }
+#endif
             }
             ApplyDetailHighlight();
             bool axisChanged = _filmstrip.Horizontal != row;
@@ -875,7 +900,11 @@ internal sealed class iOSNativeRootViewController : UIViewController
         bool SameEntry(UICollectionView list) => list.Window != null && list.VisibleCells.OfType<iOSThumbnailCard>().Any(card =>
             ReferenceEquals(card.BoundFile, target) && card.StarButtons.Count > 0
             && card.StarButtons[0].ConvertRectToView(card.StarButtons[0].Bounds, View) == shown);
+#if PHOTOVIEWER_DINO
         if (!SameEntry(_filmstrip.Collection) && !SameEntry(_similarityPane.List)) _ratingSources.Close();
+#else
+        if (!SameEntry(_filmstrip.Collection)) _ratingSources.Close();
+#endif
     }
 
     private void CloseCardRatingSources()
@@ -1234,7 +1263,9 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Layout();
             _filmstrip.ReportVisibleRange();
         }
+#if PHOTOVIEWER_DINO
         _similarityPane.List.LayoutIfNeeded();
+#endif
     }
 
     /// <summary>控制栏自身的热键项变化：绑定改写即排队重建，不在属性通知链内同步刷新。</summary>
@@ -1280,6 +1311,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="args">属性变化参数。</param>
     private void OnFilterChanged(object? sender, PropertyChangedEventArgs args) => UiDispatcher.Post(RefreshScreen);
 
+#if PHOTOVIEWER_DINO
     /// <summary>
     /// 相似面板状态变化后重排主屏：行布局面板宽度 = 卡片数 × 卡宽 + 列表内边距 + 描边 + 停靠区宽（SIM-07），
     /// 从胶片栏右侧切出。集合增减或停靠区内容（未提取计数 / 动作区 / 错误文案）变化都必须重算，
@@ -1298,6 +1330,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
             Layout();
         });
     }
+#endif
 
     /// <summary>显式定位请求（上一张/下一张、打开文件、外部打开）。</summary>
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();

@@ -7,11 +7,12 @@ using UIKit;
 namespace PhotoViewer.iOS.Native;
 
 /// <summary>
-/// 原生 DINO 诊断页（UIKit 版）：与旧壳 <c>DinoDebugView</c>/Mac 原生页同构 —— 标题与状态文本、
+/// 原生诊断页（UIKit 版）：AI 版与旧壳 <c>DinoDebugView</c>/Mac 原生页同构 —— 标题与状态文本、
 /// DINO patch 三列瓦片（原图缩略图 / PCA-RGB / Cosine 相似度）、CV 网格三列瓦片
-/// （锐度 / 抖动拖影矢量，第六格留空），刚体拟合文本以整宽块放在网格下方。
-/// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/>（读库快路径与推理都在那里完成），
-/// 本视图只做位图适配与点击回传，绝不自行驱动推理。
+/// （锐度 / 抖动拖影矢量，第六格留空），刚体拟合文本以整宽块放在网格下方；
+/// 标准版为三瓦片 CV 诊断（原图缩略图 / 锐度 / 抖动拖影），不建 patch 区、不留空槽。
+/// 全部数据来自共享 <see cref="DinoDiagnosticPresenter"/> 或 <see cref="CvDiagnosticPresenter"/>
+/// （读库快路径与现算都在那里完成），本视图只做位图适配与点击回传，绝不自行驱动推理。
 /// </summary>
 internal sealed class iOSDinoDiagnosticView : UIViewController
 {
@@ -66,12 +67,18 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     private static readonly UIFont RigidTextFont = UIFont.FromName("Menlo", 12) ?? UIFont.SystemFontOfSize(12)!;
     private static readonly UIColor RigidTextColor = UIColor.Label;
 
+#if PHOTOVIEWER_DINO
     private readonly DinoDiagnosticPresenter _presenter;
+#else
+    private readonly CvDiagnosticPresenter _presenter;
+#endif
     private readonly UIScrollView _scroll;
     private readonly DocumentView _document;
-    private readonly UILabel _title = SingleLineLabel("DINO 诊断", TitleFont, TitleColor);
+    private readonly UILabel _title = SingleLineLabel(iOSAppCapabilities.DiagnosticName, TitleFont, TitleColor);
     private readonly UILabel _status = SingleLineLabel("", StatusFont, StatusColor);
+#if PHOTOVIEWER_DINO
     private readonly UILabel _patchHeader = SingleLineLabel("DINO patch (32×32，点击任意图设定参考点)", SectionFont, SectionColor);
+#endif
     private readonly UILabel _cvHeader = SingleLineLabel("CV 网格诊断（32×32 中心采样，像素单位）", SectionFont, SectionColor);
     private readonly UILabel _rigidTitle = SingleLineLabel("抖动分析（刚体拟合）", SectionFont, PanelTitleColor);
     private readonly UILabel _rigidMetrics = SingleLineLabel("|T| / |ω| / residual", PanelMetricsFont, PanelMetricsColor);
@@ -83,8 +90,10 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         TextContainerInset = new UIEdgeInsets(12, 12, 12, 12),
     };
     private readonly iOSDiagnosticTile _thumbnailTile = new();
+#if PHOTOVIEWER_DINO
     private readonly iOSDiagnosticTile _pcaTile = new();
     private readonly iOSDiagnosticTile _cosineTile = new();
+#endif
     private readonly iOSDiagnosticTile _sharpnessTile = new();
     private readonly iOSDiagnosticTile _shakeTile = new();
     private readonly iOSShakeFieldView _shakeOverlay = new();
@@ -93,11 +102,21 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     private string? _rigidSource;
     private bool _disposed;
 
-    /// <summary>页面上的五张诊断瓦片（验收读取数量与内容）。</summary>
-    internal IReadOnlyList<iOSDiagnosticTile> Tiles => [_thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile];
+    /// <summary>页面上的诊断瓦片（AI 版五张，标准版三张；验收读取数量与内容）。</summary>
+    internal IReadOnlyList<iOSDiagnosticTile> Tiles
+        =>
+#if PHOTOVIEWER_DINO
+        [_thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile];
+#else
+        [_thumbnailTile, _sharpnessTile, _shakeTile];
+#endif
 
-    /// <summary>共享 DINO 诊断 presenter（导航栏与验收读取状态）。</summary>
+    /// <summary>共享诊断 presenter（导航栏与验收读取状态）。</summary>
+#if PHOTOVIEWER_DINO
     internal DinoDiagnosticPresenter Presenter => _presenter;
+#else
+    internal CvDiagnosticPresenter Presenter => _presenter;
+#endif
 
     /// <summary>刚体拟合标题块（验收核对整宽块位于网格下方，TOOLS-05）。</summary>
     internal CGRect RigidTitleFrame => _rigidTitle.Frame;
@@ -105,12 +124,16 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
     /// <summary>第二行瓦片底边（验收核对刚体拟合块不挤进第六格）。</summary>
     internal double SecondRowBottom => Math.Max(_sharpnessTile.Frame.GetMaxY(), _shakeTile.Frame.GetMaxY());
 
-    /// <summary>建立滚动容器、五个诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
-    /// <param name="presenter">共享 DINO 诊断 presenter（由工具壳持有）。</param>
+    /// <summary>建立滚动容器、诊断瓦片与刚体拟合文本面板，并订阅 presenter 变化。</summary>
+    /// <param name="presenter">共享诊断 presenter（由工具壳持有）。</param>
+#if PHOTOVIEWER_DINO
     internal iOSDinoDiagnosticView(DinoDiagnosticPresenter presenter) : base(null, null)
+#else
+    internal iOSDinoDiagnosticView(CvDiagnosticPresenter presenter) : base(null, null)
+#endif
     {
         _presenter = presenter;
-        Title = "DINO 诊断";
+        Title = iOSAppCapabilities.DiagnosticName;
         View!.BackgroundColor = UIColor.SystemGroupedBackground;
         _scroll = new UIScrollView { BackgroundColor = UIColor.Clear, AlwaysBounceVertical = true };
         _rigidText.Layer.CornerRadius = 12;
@@ -118,9 +141,22 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         _document = new DocumentView(presenter.ClearCrosshair);
         _scroll.AddSubview(_document);
         View!.AddSubview(_scroll);
-        foreach (var view in new UIView[] { _title, _status, _patchHeader, _cvHeader, _rigidTitle, _rigidMetrics, _rigidText,
-            _thumbnailTile, _pcaTile, _cosineTile, _sharpnessTile, _shakeTile })
-            _document.AddSubview(view);
+        var views = new List<UIView> { _title, _status };
+#if PHOTOVIEWER_DINO
+        views.Add(_patchHeader);
+#endif
+        views.Add(_cvHeader);
+        views.Add(_rigidTitle);
+        views.Add(_rigidMetrics);
+        views.Add(_rigidText);
+        views.Add(_thumbnailTile);
+#if PHOTOVIEWER_DINO
+        views.Add(_pcaTile);
+        views.Add(_cosineTile);
+#endif
+        views.Add(_sharpnessTile);
+        views.Add(_shakeTile);
+        foreach (var view in views) _document.AddSubview(view);
         _shakeTile.Overlay = _shakeOverlay;
         foreach (var tile in Tiles)
         {
@@ -157,8 +193,10 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         _status.Text = _presenter.Status;
         SyncRigidText(_presenter.RigidMotionText);
         SyncTile(_thumbnailTile, _presenter.ThumbnailTile);
+#if PHOTOVIEWER_DINO
         SyncTile(_pcaTile, _presenter.PcaTile);
         SyncTile(_cosineTile, _presenter.CosineTile);
+#endif
         SyncTile(_sharpnessTile, _presenter.SharpnessTile);
         SyncTile(_shakeTile, _presenter.ShakeTile);
         _shakeOverlay.ShakeField = _presenter.ShakeTile.ShakeField;
@@ -239,6 +277,7 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
         y += LineHeight(TitleFont) + TitleBottomMargin;
         _status.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(StatusFont));
         y += LineHeight(StatusFont) + StatusBottomMargin;
+#if PHOTOVIEWER_DINO
         _patchHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
         y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
 
@@ -249,7 +288,13 @@ internal sealed class iOSDinoDiagnosticView : UIViewController
 
         rowTop = y;
         double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _sharpnessTile, _shakeTile, null);
-        // TOOLS-05：第六格留空，刚体拟合文本以整宽块放在网格下方，不挤进瓦片格。
+#else
+        _cvHeader.Frame = new CGRect(PageMarginX, y, contentWidth, LineHeight(SectionFont));
+        y += LineHeight(SectionFont) + SectionHeaderBottomMargin;
+        double rowTop = y;
+        double tileRowHeight = PlaceTiles(rowTop, cell, tileWidth, _thumbnailTile, _sharpnessTile, _shakeTile);
+#endif
+        // 刚体拟合文本以整宽块放在网格下方，不挤进瓦片格。
         y = PlaceRigidPanel(rowTop + tileRowHeight, contentWidth);
         _document.Frame = new CGRect(0, 0, width, Math.Max(1, y + PageMarginBottom));
         _scroll.ContentSize = _document.Frame.Size;

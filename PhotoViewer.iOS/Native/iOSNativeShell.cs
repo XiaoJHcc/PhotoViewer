@@ -1,10 +1,13 @@
 using System.Runtime.InteropServices;
 using CoreFoundation;
 using Foundation;
+#if PHOTOVIEWER_DINO
 using Microsoft.ML.OnnxRuntime;
+#endif
 using PhotoViewer.Apple;
 using PhotoViewer.Core;
 using PhotoViewer.Core.AI;
+using PhotoViewer.Core.Database;
 using PhotoViewer.Core.Image;
 using PhotoViewer.Core.Memory;
 using PhotoViewer.Core.Platform;
@@ -74,6 +77,8 @@ public static class iOSNativeShell
 
         BootTrace.Mark("native shell: bootstrap begin");
         InitializePlatform();
+        if (iOSNativeEditionCheck.IsRoundtripStage(args))
+            PhotoDatabase.Initialize(iOSNativeEditionCheck.DatabasePath);
         var main = InitializeMainViewModel(args);
         ApplyLaunchLayoutMode(args, main);
         ApplyLaunchAnalysisOpen(args, main);
@@ -86,11 +91,16 @@ public static class iOSNativeShell
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeInputCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeAnalysisCheck.MaybeStart(args, _rootViewController, _session);
+#if PHOTOVIEWER_DINO
         iOSNativeSimilarityCheck.MaybeStart(args, _rootViewController, _session);
+#endif
         iOSNativeToolsCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeSheetShotCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeFaultCheck.MaybeStart(args, _rootViewController, _session);
+        iOSNativeEditionCheck.MaybeStart(args, _rootViewController, _session);
+#if PHOTOVIEWER_DINO
         iOSDinoCheck.MaybeStart(args);
+#endif
         StartPerfProbe(args);
         StartDecodeOptimize(args);
         for (int index = 0; index + 1 < args.Length; index++)
@@ -189,13 +199,18 @@ public static class iOSNativeShell
 
     /// <summary>
     /// 生产走 Apple 偏好单键；验收会话走沙盒内的隔离文件，不读写用户真实设置。
+    /// 发行版往返使用验收专用 Apple 偏好键，验证实际 NSUserDefaults 存储。
     /// </summary>
     /// <param name="args">进程启动参数。</param>
     /// <returns>设置仓库（尚未读取）。</returns>
     private static SettingsRepository CreateSettingsRepository(string[] args)
     {
         ISettingsStore store;
-        if (IsAutomatedValidation(args))
+        if (iOSNativeEditionCheck.IsRoundtripStage(args))
+        {
+            store = new AppleSettingsStore(iOSNativeEditionCheck.SettingsKey);
+        }
+        else if (IsAutomatedValidation(args))
         {
             string directory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer", "acceptance");
@@ -280,11 +295,14 @@ public static class iOSNativeShell
         _settingsPresenter = new iOSNativeSettingsPresenter();
         NativeSettingsPresenter.Initialize(_settingsPresenter);
         NativeWindowPresenter.Initialize(new iOSWindowPresenter(_settingsPresenter));
+#if PHOTOVIEWER_DINO
         InstallOnnxRuntimeStaticResolver();
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_CoreML());
+#endif
         BootTrace.Mark("native shell: platform facades ready");
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>
     /// onnxruntime.xcframework 内是静态库，App 链接后没有独立动态镜像；托管侧 DllImport 名仍为
     /// "onnxruntime"。把该程序集的 DllImport 解析映射到主程序句柄（等价于 <c>__Internal</c>），
@@ -297,6 +315,7 @@ public static class iOSNativeShell
                 ? NativeLibrary.GetMainProgramHandle()
                 : IntPtr.Zero);
     }
+#endif
 
     /// <summary>
     /// 构建共享主 VM 并接线内存告警、设置落盘与压测驱动；
@@ -309,9 +328,12 @@ public static class iOSNativeShell
         // 主 VM 构造前完成设置仓库读取：首帧即拿到持久化设置，避免默认值闪现后回填。
         var repository = CreateSettingsRepository(args);
         repository.InitializeAsync().GetAwaiter().GetResult();
+        IViewStateStore viewState = iOSNativeEditionCheck.IsRoundtripStage(args)
+            ? new AppleViewStateStore(iOSNativeEditionCheck.ViewStatePrefix)
+            : IsAutomatedValidation(args) ? new InMemorySettingsStore() : new AppleViewStateStore();
         var main = new MainViewModel(
             repository,
-            IsAutomatedValidation(args) ? new InMemorySettingsStore() : new AppleViewStateStore(),
+            viewState,
             _openRequests ?? throw new InvalidOperationException("打开请求通道尚未接线"),
             new iOSStorageAccessSessionFactory());
         _main = main;

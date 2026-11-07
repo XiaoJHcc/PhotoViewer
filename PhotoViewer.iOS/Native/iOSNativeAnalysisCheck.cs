@@ -20,7 +20,8 @@ namespace PhotoViewer.iOS.Native;
 /// 验收专用（非产品行为，测试钩子）：<c>--pv-native-analysis-check &lt;目录&gt;</c> 在模拟器/真机上程序化核对
 /// 分析栏与增强预览——入口（主图菜单 + 控制栏命令）、两向瓦片几何（边长/间距 8/内边距 10/交叉轴）、
 /// 瓦片顺序与角标、诊断瓦片点击落准星、F16 代理与 8 位 P3 Full 两种展示编码下的直方图/细节裁剪
-/// （细节裁剪中心像素与主图帧读回对比）、"未提取"→ 真实批量索引后瓦片自行出图且不切图、
+/// （细节裁剪中心像素与主图帧读回对比）、"未提取"→ 真实批量索引（AI 版）或当前照片即时 CV（标准版）后
+/// 瓦片自行出图且不切图、
 /// 增强预览经 <see cref="PhotoLoadSession"/> 生效并还原、关闭后主图恢复占满、细节活动目标的触控序列与过期事件隔离。
 /// 素材要求：目录内至少一张 jpg 与 <c>color-p3-large.jpg</c>（长边 ≥ 4000，用于制造真实代理档与 8 位 P3 Full），
 /// 且必须位于 App 沙盒内 —— 不写用户照片或 TestCase。报告写 Documents/PhotoViewer/native-analysis-checks.txt。
@@ -90,6 +91,7 @@ internal static class iOSNativeAnalysisCheck
                     main.Settings.ShowRating = true;
                     main.Settings.LayoutMode = LayoutMode.Row;
                     main.Settings.AnalysisImmediateCompute = false;
+                    main.Settings.AnalysisImmediateCvCompute = false;
                     main.IsThumbnailViewVisible = true;
                     main.IsControlViewVisible = true;
                     main.IsAnalysisViewVisible = false;
@@ -137,18 +139,27 @@ internal static class iOSNativeAnalysisCheck
                     throw new InvalidOperationException("分析栏显示后主图未让出空间");
                 lines.Add("PASS 入口：主图菜单含分析栏，控制栏 ToggleAnalysisView 真实点击后分析栏显示且主图让位");
 
-                // 二、瓦片顺序与角标。
+                // 二、瓦片顺序与角标（标准版无 DINO PCA / Cosine）。
                 var labels = root.AnalysisPane.Presenter.Tiles.Select(tile => tile.ShortLabel).ToArray();
-                string[] expected = ["中心", "直方图", "DINO PCA", "Cosine 16,16", "锐度"];
-                if (!labels.Take(5).SequenceEqual(expected))
+#if PHOTOVIEWER_DINO
+                string[] leading = ["中心", "直方图", "DINO PCA", "Cosine 16,16", "锐度"];
+                const int tileCount = 6;
+#else
+                string[] leading = ["中心", "直方图", "锐度"];
+                const int tileCount = 4;
+#endif
+                if (!labels.Take(leading.Length).SequenceEqual(leading))
                     throw new InvalidOperationException($"分析栏瓦片顺序/角标不符：{string.Join(" | ", labels)}");
+                int expectedCount = tileCount + (labels.Contains("对焦点") ? 1 : 0);
+                if (labels.Length != expectedCount)
+                    throw new InvalidOperationException($"分析栏瓦片数量不符：{labels.Length}（期望 {expectedCount}）：{string.Join(" | ", labels)}");
                 lines.Add($"PASS 瓦片顺序与角标：{string.Join(" | ", labels)}");
                 var diagnostics = root.AnalysisPane.TileViews.OfType<iOSDiagnosticTile>().ToArray();
                 if (diagnostics.Length == 0 || diagnostics.Any(tile => !tile.UsesNearestNeighbour))
                     throw new InvalidOperationException("诊断瓦片主图未使用最近邻放大（热力图会糊）");
                 if (diagnostics.Any(tile => !tile.BackgroundDimmed))
                     throw new InvalidOperationException("诊断瓦片背景层未压暗到 alpha 0.30");
-                lines.Add($"PASS 瓦片绘制：{diagnostics.Length} 张诊断瓦片最近邻放大 + 背景 alpha 0.30");
+                lines.Add($"PASS 诊断瓦片：{diagnostics.Length} 张诊断瓦片最近邻放大 + 背景 alpha 0.30");
 
                 // 三、两向几何（显式布局模式）。
                 VerifyGeometry(root, row: true, lines);
@@ -170,8 +181,8 @@ internal static class iOSNativeAnalysisCheck
                         diagnostic.TapAt(CGPoint.Empty);
                         if (root.AnalysisPane.Presenter.CrosshairU != null) throw new InvalidOperationException("边框未清空准星");
                     }
+                    lines.Add($"PASS 诊断瓦片命中：{diagnostics.Length} 张 UIKit Window.HitTest逐层命中+瓦片事件处理注入，落共享准星/边框清空（非系统触摸注入）");
                 });
-                lines.Add("PASS 诊断四瓦片：UIKit Window.HitTest逐层命中+瓦片事件处理注入，落共享准星/边框清空（非系统触摸注入）");
 
                 // 五、F16 代理（分析栏关闭，避免其 needsFull 直接升级 Full）：
                 //     直方图渲染器与 DisplayCrop 按 F16 口径直接出图。
@@ -284,7 +295,9 @@ internal static class iOSNativeAnalysisCheck
 
                 // 九、未提取 → 真实索引：探针副本入库后诊断瓦片自行出图，期间不切图。
                 var indexing = await VerifyIndexRefreshAsync(root, main, directory, lines);
-                lines.Add($"PASS 入库刷新：真实索引 {indexing} 后瓦片出图且未切图");
+                lines.Add(iOSAppCapabilities.HasDino
+                    ? $"PASS 入库刷新：真实索引 {indexing} 后瓦片出图且未切图"
+                    : $"PASS 即时 CV 刷新：{indexing} 后瓦片出图且未切图、未写库");
 
                 // 十、关闭分析栏后主图恢复占满。
                 menu = root.BuildPhotoMenu();
@@ -418,7 +431,12 @@ internal static class iOSNativeAnalysisCheck
     private static void VerifyGeometry(iOSNativeRootViewController root, bool row, List<string> lines)
     {
         var tiles = root.AnalysisPane.TileViews;
-        if (tiles.Count < 6) throw new InvalidOperationException($"分析栏瓦片数不足：{tiles.Count}");
+#if PHOTOVIEWER_DINO
+        const int minimumTiles = 6;
+#else
+        const int minimumTiles = 4;
+#endif
+        if (tiles.Count < minimumTiles) throw new InvalidOperationException($"分析栏瓦片数不足：{tiles.Count}");
         var bounds = root.View!.Bounds;
         var safe = root.View.SafeAreaInsets;
         double available = row
@@ -528,8 +546,9 @@ internal static class iOSNativeAnalysisCheck
         return (pixels[offset + 2], pixels[offset + 1], pixels[offset]);
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>
-    /// 未提取 → 真实索引：复制一份唯一文件名的素材（指纹必然未入库）→ 打开并确认四张诊断瓦片为"未提取"
+    /// 未提取 → 真实索引：复制一份唯一文件名的素材（指纹必然未入库）→ 打开并确认诊断瓦片为"未提取"
     /// → 跑一次真实批量索引 → 断言瓦片自行出图，且期间没有切换当前照片。返回索引耗时描述。
     /// </summary>
     /// <param name="root">原生根控制器。</param>
@@ -571,6 +590,59 @@ internal static class iOSNativeAnalysisCheck
             File.Delete(probe);
         }
     }
+#else
+    /// <summary>
+    /// 标准版未提取路径：对一张未入库的探针副本开启「即时计算 CV」，只允许当前照片的显式现算，
+    /// 瓦片出图但不得写入特征库（EDITION-03/EDITION-05）。
+    /// </summary>
+    /// <param name="root">原生根控制器。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="directory">夹具目录。</param>
+    /// <param name="lines">报告行。</param>
+    /// <returns>现算耗时描述。</returns>
+    private static async Task<string> VerifyIndexRefreshAsync(iOSNativeRootViewController root, MainViewModel main, string directory, List<string> lines)
+    {
+        string workspace = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "analysis-fixtures");
+        Directory.CreateDirectory(workspace);
+        string smallest = Directory.GetFiles(directory, "*.jpg")
+            .Where(path => !string.Equals(Path.GetFileName(path), "color-p3-large.jpg", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => new FileInfo(path).Length)
+            .FirstOrDefault() ?? throw new InvalidOperationException("分析验收缺少用于 CV 探针的小图夹具");
+        string probe = Path.Combine(workspace, $"cv-probe-{DateTime.UtcNow.Ticks}.jpg");
+        File.Copy(smallest, probe, true);
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
+        var stopwatch = Stopwatch.StartNew();
+        try
+        {
+            await UiDispatcher.InvokeAsync(() =>
+            {
+                main.Settings.AnalysisImmediateCompute = false;
+                main.Settings.AnalysisImmediateCvCompute = true;
+                main.IsAnalysisViewVisible = true;
+            });
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(probe));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(probe), "探针图成为当前照片");
+            var presenter = root.AnalysisPane.Presenter;
+            if (presenter.Tiles.Any(tile => tile.ShortLabel is "DINO PCA" or "Cosine 16,16"))
+                throw new InvalidOperationException("标准版分析栏出现了 DINO 瓦片");
+            await WaitAsync(() => presenter.SharpnessTile.Source != null && presenter.ShakeTile.ShakeField != null,
+                "即时 CV 出图");
+            stopwatch.Stop();
+            string? fingerprint = await AnalysisDataReader.ComputeFingerprintAsync(main.CurrentFile!, CancellationToken.None);
+            if (fingerprint != null && await PhotoViewer.Core.Database.PhotoDatabase.ReadCvGridAsync(fingerprint) != null)
+                throw new InvalidOperationException("标准版即时 CV 写入了特征库");
+            if (main.CurrentFile?.Name != Path.GetFileName(probe))
+                throw new InvalidOperationException("回归期间当前照片被切换");
+            lines.Add("PASS 即时 CV：未入库探针只现算当前照片（锐度/抖动出图），未写特征库");
+            return $"{stopwatch.Elapsed.TotalSeconds:0.0}s（1 张，{Path.GetFileName(smallest)}，即时 CV）";
+        }
+        finally
+        {
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
+            File.Delete(probe);
+        }
+    }
+#endif
 
     /// <summary>收尾：恢复进入检查时的设置快照、布局与当前照片。</summary>
     /// <param name="root">原生根控制器。</param>

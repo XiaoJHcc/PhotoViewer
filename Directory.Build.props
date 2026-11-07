@@ -22,21 +22,15 @@
     <Copyright>Copyright © 2024-2026 xiaojh.cc</Copyright>
   </PropertyGroup>
 
-  <!--
-    Mac 双版本构建隔离：PhotoViewer.Mac 与它引用的共享工程按 standard/ai 分开 bin/obj，
-    两版不再共用还原资产与中间文件。必须在 Microsoft.Common.props 写入默认 obj 之前求值，
-    所以放在这里；构建入口（VS Code Tasks / publish.sh）显式传 PhotoViewerEnableDino，
-    该属性随 ProjectReference 传入共享工程。其他平台工程不带该属性，输出路径保持原样。
-  -->
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac'">
+  <!-- 必须早于 Microsoft.Common.props 设置默认 obj，防止两版复用还原资产。 -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS'">
     <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEnableDino)' != ''">true</PhotoViewerEditionExplicit>
     <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
-    <!-- 默认通配只排除当前 bin/obj；Mac 的 edition 子目录与历史目录都要排除，避免生成代码串进编译。 -->
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
     <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(PhotoViewerEnableDino)' != '' And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
+  <PropertyGroup Condition="'$(PhotoViewerEnableDino)' != '' And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
     <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' == 'true'">ai</PhotoViewerEdition>
     <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' != 'true'">standard</PhotoViewerEdition>
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/$(PhotoViewerEdition)/</BaseOutputPath>

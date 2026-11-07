@@ -40,7 +40,9 @@
       "label": "Serve Web",
       "type": "shell",
       "command": "python3 -m http.server 8080",
-      "options": { "cwd": "${workspaceFolder}/PhotoViewer.Web" },
+      "options": {
+        "cwd": "${workspaceFolder}/PhotoViewer.Web"
+      },
       "isBackground": true,
       "group": "test",
       "problemMatcher": []
@@ -104,7 +106,10 @@
         "options": {
           "shell": {
             "executable": "cmd.exe",
-            "args": ["/d", "/c"]
+            "args": [
+              "/d",
+              "/c"
+            ]
           }
         }
       },
@@ -122,7 +127,10 @@
         "options": {
           "shell": {
             "executable": "cmd.exe",
-            "args": ["/d", "/c"]
+            "args": [
+              "/d",
+              "/c"
+            ]
           }
         }
       },
@@ -133,46 +141,81 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Debug iOS Simulator",
+      "label": "Debug iOS Simulator (Standard)",
       "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 && xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 -p:PhotoViewerEnableDino=false && xcrun simctl install booted PhotoViewer.iOS/bin/standard/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Install iOS Simulator",
+      "label": "Install iOS Simulator (Standard)",
       "type": "shell",
-      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/standard/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
       "group": "test",
-      "problemMatcher": []
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS (Standard)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 -p:PhotoViewerEnableDino=false && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS (Standard)",
+      "type": "shell",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Install iOS Stable (Standard, Release)",
+      "type": "shell",
+      "command": "test -d release/ios-stable/standard/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/standard/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS Simulator (AI)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Debug -r iossimulator-arm64 -p:PhotoViewerEnableDino=true && xcrun simctl install booted PhotoViewer.iOS/bin/ai/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/ && xcrun simctl launch booted cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS Simulator (AI)",
+      "type": "shell",
+      "command": "xcrun simctl install booted PhotoViewer.iOS/bin/ai/Debug/net10.0-ios/iossimulator-arm64/PhotoViewer.iOS.app/",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Debug iOS (AI)",
+      "type": "shell",
+      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 -p:PhotoViewerEnableDino=true && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install iOS (AI)",
+      "type": "shell",
+      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Install iOS Stable (AI, Release)",
+      "type": "shell",
+      "command": "test -d release/ios-stable/ai/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/ai/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
+      "group": "test",
+      "problemMatcher": ""
     },
     {
       "label": "Refresh iOS Profile",
       "type": "shell",
       "command": "xcodebuild -project Tools/RefreshIosProfile/RefreshIosProfile.xcodeproj -scheme RefreshIosProfile -configuration Debug -destination 'generic/platform=iOS' -allowProvisioningUpdates build",
       "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "Debug iOS",
-      "type": "shell",
-      "command": "dotnet build PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": "$msCompile"
-    },
-    {
-      "label": "Install iOS",
-      "type": "shell",
-      "command": "xcrun devicectl device install app --device \"${input:iosDevice}\" PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": []
-    },
-    {
-      "label": "Install iOS Stable (Release)",
-      "type": "shell",
-      "command": "test -d release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device install app --device \"${input:iosDevice}\" release/ios-stable/PhotoViewer.iOS.app && xcrun devicectl device process launch --device \"${input:iosDevice}\" cc.xiaojh.PhotoViewer",
-      "group": "test",
-      "problemMatcher": []
+      "problemMatcher": ""
     },
     {
       "label": "Publish Windows EXE (Release)",
@@ -208,30 +251,93 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish iOS IPA (Release)",
+      "label": "Publish iOS IPA (Release, Standard + AI)",
       "type": "shell",
-      "command": "APP_VERSION=$(sed -n 's:.*<AppVersion>\\(.*\\)</AppVersion>.*:\\1:p' Directory.Build.props | head -n 1) && dotnet publish PhotoViewer.iOS/PhotoViewer.iOS.csproj -c Release -r ios-arm64 && mkdir -p release/ios-stable release/packages && rm -rf release/ios-stable/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.ipa && cp -R PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app release/ios-stable/PhotoViewer.iOS.app && cp PhotoViewer.iOS/bin/Release/net10.0-ios/ios-arm64/publish/PhotoViewer.iOS.ipa \"release/packages/PhotoViewer-${APP_VERSION}-ios-arm64.ipa\" && python3 Tools/check-release.py --write",
+      "command": "bash PhotoViewer.iOS/publish.sh",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Upload iOS TestFlight",
+      "label": "Publish iOS IPA (Local Check)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/publish-testflight.sh",
+      "command": "bash PhotoViewer.iOS/publish.sh --local",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Validate iOS TestFlight Archive",
+      "label": "Validate iOS Package (Standard)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh",
+      "command": "python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app --edition standard --output artifacts/acceptance/ios-editions/standard-package.json",
       "group": "build",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check iOS TestFlight Device",
+      "label": "Validate iOS Package (AI)",
       "type": "shell",
-      "command": "bash PhotoViewer.iOS/check-testflight-device.sh \"${input:iosDevice}\"",
+      "command": "python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/ai/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app --edition ai --output artifacts/acceptance/ios-editions/ai-package.json",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Scan iOS Package (Self-Test)",
+      "type": "shell",
+      "command": "python3 Tools/check-ios-package.py --self-test",
+      "group": "build",
+      "problemMatcher": ""
+    },
+    {
+      "label": "Upload iOS TestFlight (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Upload iOS TestFlight (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Archive iOS TestFlight (Local Only, Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition standard --archive-only",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Archive iOS TestFlight (Local Only, AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/publish-testflight.sh --edition ai --archive-only",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS TestFlight Archive (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh --edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Validate iOS TestFlight Archive (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/validate-testflight-archive.sh --edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check iOS TestFlight Device (Standard)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/check-testflight-device.sh --edition standard \"${input:iosDevice}\"",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check iOS TestFlight Device (AI)",
+      "type": "shell",
+      "command": "bash PhotoViewer.iOS/check-testflight-device.sh --edition ai \"${input:iosDevice}\"",
       "group": "build",
       "problemMatcher": "$msCompile"
     }
@@ -241,7 +347,10 @@
       "id": "iosDevice",
       "type": "pickString",
       "description": "选择要安装的 iOS 设备",
-      "options": ["XJH-17", "XJH-mini7"],
+      "options": [
+        "XJH-17",
+        "XJH-mini7"
+      ],
       "default": "XJH-mini7"
     }
   ]

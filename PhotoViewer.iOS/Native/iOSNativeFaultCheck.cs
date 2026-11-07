@@ -70,8 +70,12 @@ internal static class iOSNativeFaultCheck
             await VerifyOpenFailureAsync(main, root, small, lines);
             await VerifyRatingFailureAsync(main, root, small, lines);
             await VerifyCorruptSettingsAsync(work, lines);
+#if PHOTOVIEWER_DINO
             await VerifySimilarityFailureAsync(main, root, work, lines);
             await VerifyAnalysisFailureAsync(main, root, session, work, lines);
+#else
+            await VerifyCvAnalysisAsync(main, root, session, work, lines);
+#endif
             await VerifyRawCapabilityAsync(directory, work, lines);
             await VerifyEnhanceClosedByMemoryPressureAsync(main, root, session, small, lines);
         }
@@ -194,6 +198,7 @@ internal static class iOSNativeFaultCheck
         }
     }
 
+#if PHOTOVIEWER_DINO
     [DynamicDependency(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.NonPublicProperties, typeof(SimilarityPanelViewModel))]
     private static async Task VerifySimilarityFailureAsync(
         PhotoViewer.ViewModels.Main.MainViewModel main,
@@ -236,28 +241,78 @@ internal static class iOSNativeFaultCheck
         File.Copy(Path.Combine(work, "fault-good.jpg"), path, true);
         byte[]? originalModel = DinoModelResources.TryLoadModelBytes();
         bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
         bool previousVisible = main.IsAnalysisViewVisible;
         try
         {
             DinoFeatureExtractor.ConfigureModelOverride([1, 2, 3]);
             main.Settings.AnalysisImmediateCompute = true;
+            main.Settings.AnalysisImmediateCvCompute = true;
             main.IsAnalysisViewVisible = true;
             await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
             await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(path) && session.Image != null, "分析失败素材上屏");
-            await WaitAsync(() => root.AnalysisPane.Presenter.Tiles
-                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic)
-                .All(tile => tile.Placeholder == "分析失败"), "分析失败占位");
-            if (root.AnalysisPane.Presenter.Tiles.Any(tile => tile.Kind == AnalysisTileKind.Diagnostic && tile.Source != null))
-                throw new InvalidOperationException("分析失败后仍保留旧诊断图");
-            lines.Add("PASS analysis10：注入 DINO 失败后清空诊断图并显示失败文案");
+            var presenter = root.AnalysisPane.Presenter;
+            await WaitAsync(() => presenter.PcaTile.Placeholder == "分析失败"
+                && presenter.CosineTile.Placeholder == "分析失败", "DINO 分析失败占位");
+            if (presenter.PcaTile.Source != null || presenter.CosineTile.Source != null)
+                throw new InvalidOperationException("DINO 分析失败后仍保留旧 DINO 诊断图");
+            await WaitAsync(() => presenter.SharpnessTile.Source != null && presenter.ShakeTile.ShakeField != null,
+                "DINO 失败不影响独立 CV 现算");
+            lines.Add("PASS analysis10：注入 DINO 失败仅清空 DINO 诊断图并显示失败文案，独立 CV 仍真实出图");
         }
         finally
         {
             main.IsAnalysisViewVisible = previousVisible;
             main.Settings.AnalysisImmediateCompute = previousImmediate;
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
             if (originalModel != null) DinoFeatureExtractor.ConfigureModelOverride(originalModel);
         }
     }
+#else
+    /// <summary>
+    /// 标准版分析失败路径：只有 CV 能力，开启「即时计算 CV」后诊断瓦片必须真实出图，
+    /// 且不出现 DINO 瓦片或「缺少模型」状态（EDITION-01/EDITION-03）。
+    /// </summary>
+    private static async Task VerifyCvAnalysisAsync(
+        PhotoViewer.ViewModels.Main.MainViewModel main,
+        iOSNativeRootViewController root,
+        PhotoLoadSession session,
+        string work,
+        List<string> lines)
+    {
+        string path = Path.Combine(work, $"cv-analysis-{DateTime.UtcNow.Ticks}.jpg");
+        File.Copy(Path.Combine(work, "fault-good.jpg"), path, true);
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
+        bool previousVisible = main.IsAnalysisViewVisible;
+        try
+        {
+            main.Settings.AnalysisImmediateCvCompute = true;
+            main.IsAnalysisViewVisible = true;
+            await main.FolderVM.OpenImageAsync(new LocalFileRef(path));
+            await WaitAsync(() => main.CurrentFile?.Name == Path.GetFileName(path) && session.Image != null, "CV 分析素材上屏");
+            var diagnostics = root.AnalysisPane.Presenter.Tiles
+                .Where(tile => tile.Kind == AnalysisTileKind.Diagnostic).ToArray();
+            if (diagnostics.Length != 2)
+                throw new InvalidOperationException($"标准版诊断瓦片应为锐度/抖动两张，实际 {diagnostics.Length}");
+            await WaitAsync(() => diagnostics.All(tile => tile.Source != null || tile.ShakeField != null), "CV 诊断出图");
+            if (diagnostics.Any(tile => string.Equals(tile.Placeholder, "分析失败", StringComparison.Ordinal)))
+                throw new InvalidOperationException("标准版 CV 诊断显示失败占位");
+            // 设置变更路由：分析栏可见时关掉「即时计算 CV」，诊断图必须清回未提取；再开启重新现算。
+            await UiDispatcher.InvokeAsync(() => main.Settings.AnalysisImmediateCvCompute = false);
+            await WaitAsync(() => diagnostics.All(tile => tile.Source == null && string.Equals(tile.Placeholder, "未提取", StringComparison.Ordinal)),
+                "关闭即时计算 CV 后清回未提取");
+            await UiDispatcher.InvokeAsync(() => main.Settings.AnalysisImmediateCvCompute = true);
+            await WaitAsync(() => diagnostics.All(tile => tile.Source != null || tile.ShakeField != null), "重新开启即时计算 CV 后出图");
+            lines.Add("PASS standard CV：开启「即时计算 CV」后锐度与抖动拖影真实出图，关闭即清回未提取、重开可再算，无 DINO 瓦片");
+        }
+        finally
+        {
+            main.IsAnalysisViewVisible = previousVisible;
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
+            try { File.Delete(path); } catch { }
+        }
+    }
+#endif
 
     /// <summary>
     /// SCOPE-04：RAW 走平台全分辨率引擎；引擎不可用时回退 ImageIO，并如实报出容器实际像素尺寸。

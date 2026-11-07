@@ -3,8 +3,8 @@
 
 release/ 允许的顶层内容：
   packages/    分发包（历史与当前），文件名 <PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg|apk|ipa|exe>
-  ios-stable/  最新 iOS 稳定安装源（PhotoViewer.iOS.app / PhotoViewer.iOS.ipa）
-  testflight/  最近一次 TestFlight 归档（恰好一个 .xcarchive）
+  ios-stable/  最新 iOS 稳定安装源：<standard|ai>/PhotoViewer.iOS.app（旧布局为顶层 PhotoViewer.iOS.app）
+  testflight/  最近一次 TestFlight 归档：<standard|ai>/*.xcarchive（旧布局为顶层单个 .xcarchive）
   SHA256SUMS   分发包校验清单
   README.md    可选说明
 
@@ -34,6 +34,82 @@ PACKAGE_NAME = re.compile(r"^(PhotoViewer(?:-AI)?)-(\d+\.\d+\.\d+)-(.+)\.(dmg|ap
 ALLOWED_TOP_DIRS = {"packages", "ios-stable", "testflight"}
 ALLOWED_TOP_FILES = {"SHA256SUMS", "README.md"}
 IOS_STABLE_ALLOWED = {"PhotoViewer.iOS.app"}
+IOS_EDITIONS = ("standard", "ai")
+
+
+def check_ios_stable(ios_stable: Path) -> list[str]:
+    """release/ios-stable：顶层旧布局或 <standard|ai>/ 分版本安装源。"""
+    errors: list[str] = []
+    if not ios_stable.is_dir():
+        return errors
+    for entry in sorted(ios_stable.iterdir()):
+        if entry.name == ".DS_Store":
+            continue
+        if entry.is_dir() and entry.name in IOS_EDITIONS:
+            apps = [item for item in sorted(entry.iterdir()) if item.name != ".DS_Store"]
+            if len(apps) != 1 or apps[0].name not in IOS_STABLE_ALLOWED or not apps[0].is_dir():
+                listed = "、".join(item.name for item in apps) or "空"
+                errors.append(
+                    f"release/ios-stable/{entry.name}/ 应只含 PhotoViewer.iOS.app，实际：{listed}"
+                )
+        elif entry.name not in IOS_STABLE_ALLOWED:
+            errors.append(
+                f"release/ios-stable/{entry.name} 不属于 iOS 稳定安装源"
+                "（应为 PhotoViewer.iOS.app 或 standard/、ai/ 分版本目录）"
+            )
+    return errors
+
+
+def check_testflight(testflight: Path) -> tuple[list[Path], list[str], list[str]]:
+    """release/testflight：<standard|ai>/ 各一个归档；顶层单个归档为旧布局。"""
+    errors: list[str] = []
+    warnings: list[str] = []
+    archives: list[Path] = []
+    legacy_archives: list[Path] = []
+    legacy_uploads: list[Path] = []
+    edition_dirs = 0
+    for entry in sorted(testflight.iterdir()):
+        if entry.name == ".DS_Store":
+            continue
+        if entry.is_dir() and entry.name in IOS_EDITIONS:
+            edition_dirs += 1
+            entries = [item for item in sorted(entry.iterdir()) if item.name != ".DS_Store"]
+            found = [item for item in entries if item.is_dir() and item.suffix == ".xcarchive"]
+            for item in entries:
+                if item not in found:
+                    errors.append(
+                        f"release/testflight/{entry.name}/{item.name} 不属于最近一次归档；"
+                        "导出目录应在 artifacts/scratch/"
+                    )
+            if len(found) > 1:
+                errors.append(
+                    f"release/testflight/{entry.name}/ 有多个归档；只保留最新一份"
+                    "（运行 Tools/clean-artifacts.sh）"
+                )
+            elif not found and not entries:
+                warnings.append(f"release/testflight/{entry.name}/ 尚无归档")
+            archives.extend(found)
+        elif entry.is_dir() and entry.suffix == ".xcarchive":
+            legacy_archives.append(entry)
+        elif entry.is_dir() and entry.name.startswith("upload-"):
+            legacy_uploads.append(entry)
+        else:
+            errors.append(f"release/testflight/{entry.name} 不属于最近一次归档；旧归档/崩溃报告应在 artifacts/")
+
+    if edition_dirs:
+        for entry in legacy_archives + legacy_uploads:
+            warnings.append(
+                f"release/testflight/{entry.name} 是旧布局归档/导出目录；"
+                "新流程把归档放在 standard/、ai/ 下，可在清理时删除"
+            )
+        archives.extend(legacy_archives)
+    else:
+        if len(legacy_archives) > 1:
+            errors.append("release/testflight/ 有多个归档；只保留最近一次（运行 Tools/clean-artifacts.sh）")
+        if legacy_uploads:
+            errors.append("release/testflight/ 不应保留导出目录；导出产物应在 artifacts/scratch/")
+        archives.extend(legacy_archives)
+    return archives, errors, warnings
 
 # 双版本发布矩阵：平台后缀 → 允许的扩展名
 MATRIX_SUFFIXES = {
@@ -182,32 +258,29 @@ def main() -> int:
                 warnings.append(
                     f"当前版本 {current_version} 尚无 {product}-{current_version}-mac-arm64.dmg"
                 )
+            if (product, current_version, "ios") not in seen and (
+                product,
+                current_version,
+                "ios-arm64",
+            ) not in seen:
+                warnings.append(
+                    f"当前版本 {current_version} 尚无 {product}-{current_version}-ios.ipa"
+                )
 
     ios_stable = RELEASE / "ios-stable"
     if not ios_stable.is_dir():
         warnings.append("尚无 release/ios-stable/（Publish iOS IPA 后生成）")
     else:
-        for entry in sorted(ios_stable.iterdir()):
-            if entry.name == ".DS_Store":
-                continue
-            if entry.name not in IOS_STABLE_ALLOWED:
-                errors.append(f"release/ios-stable/{entry.name} 不属于 iOS 稳定安装源")
+        errors.extend(check_ios_stable(ios_stable))
 
     testflight = RELEASE / "testflight"
     if not testflight.is_dir():
         warnings.append("尚无 release/testflight/（Upload iOS TestFlight 后生成）")
         archives: list[Path] = []
     else:
-        archives = []
-        for entry in sorted(testflight.iterdir()):
-            if entry.name == ".DS_Store":
-                continue
-            if entry.is_dir() and entry.suffix == ".xcarchive":
-                archives.append(entry)
-            else:
-                errors.append(f"release/testflight/{entry.name} 不属于最近一次归档；旧归档/崩溃报告应在 artifacts/")
-        if len(archives) > 1:
-            errors.append("release/testflight/ 有多个归档；只保留最近一次（运行 Tools/clean-artifacts.sh）")
+        archives, archive_errors, archive_warnings = check_testflight(testflight)
+        errors.extend(archive_errors)
+        warnings.extend(archive_warnings)
 
     if packages:
         print("release/packages/")

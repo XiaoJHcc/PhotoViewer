@@ -87,12 +87,14 @@ adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-op
 
 | Task | 用途 |
 |---|---|
-| **Debug iOS Simulator** | 构建、安装并启动模拟器应用。 |
-| **Install iOS Simulator** | 仅安装已有模拟器构建。 |
-| **Debug iOS** | 构建 arm64 Release，选择真机并安装启动。 |
-| **Install iOS** | 选择真机，安装已有 Release 构建。 |
-| **Install iOS Stable (Release)** | 安装 `release/ios-stable/` 中归档的稳定应用。 |
+| **Debug iOS Simulator (Standard / AI)** | 构建、安装并启动对应版本的模拟器应用。 |
+| **Install iOS Simulator (Standard / AI)** | 仅安装已有对应版本的模拟器构建。 |
+| **Debug iOS (Standard / AI)** | 构建 arm64 Release，选择真机并安装启动对应版本。 |
+| **Install iOS (Standard / AI)** | 选择真机，安装已有对应版本的 Release 构建。 |
+| **Install iOS Stable (Standard / AI, Release)** | 安装 `release/ios-stable/<standard\|ai>/` 中归档的稳定应用。 |
 | **Refresh iOS Profile** | 通过 Xcode 续期免费 Apple ID 的开发预配文件。 |
+
+两个版本各自使用 `PhotoViewer.iOS/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失时构建直接报错，不走默认目录。上面的 Tasks 已带该参数。`.app` 目录名与主执行文件在两端固定为 `PhotoViewer.iOS.app` / `PhotoViewer.iOS`，`CFBundleName` / `CFBundleDisplayName` 随变体为 `PhotoViewer` 或 `PhotoViewer-AI`，Bundle ID 保持 `cc.xiaojh.PhotoViewer`。
 
 设备选项在 `.vscode/tasks.json` 的 `inputs[iosDevice]` 中维护。首次真机运行须在系统设置中信任开发者证书。启动参数、程序化验收与素材要求见 [iOS 模块手册](PhotoViewer.iOS/AGENTS.md)。
 
@@ -117,12 +119,12 @@ cp Tools/RefreshIosProfile/Local.xcconfig.sample Tools/RefreshIosProfile/Local.x
 | 路径 | 内容 | 生命周期 |
 |---|---|---|
 | `release/packages/` | 历史与当前分发包，命名 `<PhotoViewer|PhotoViewer-AI>-<版本>-<平台后缀>.<dmg/apk/ipa/exe>` | 每版每平台每变体一份，长期保留；未签名 APK 等中间产物不归档 |
-| `release/ios-stable/` | 最新 iOS 稳定安装源（`.app`） | 每次 **Publish iOS IPA** 覆盖 |
-| `release/testflight/` | 最近一次 TestFlight `.xcarchive` | 每次上传覆盖，脚本只保留最新归档 |
+| `release/ios-stable/` | 最新 iOS 稳定安装源，按版本分目录：`<standard|ai>/PhotoViewer.iOS.app` | 每次 **Publish iOS IPA** 覆盖对应版本的目录 |
+| `release/testflight/` | 最近一次 TestFlight `.xcarchive`，按版本分目录：`<standard|ai>/<产品名>-<版本>-<构建号>.xcarchive` | 每次对应变体上传覆盖，各保留最新一份 |
 | `release/SHA256SUMS` | 分发包校验清单 | 每次发包后由 `check-release.py --write` 重写 |
 | `artifacts/acceptance/` | 各套件报告与截图；同名套件目录覆盖写，带日期目录按轮次归档 | 每平台只保留最近 2 份轮次 |
 | `artifacts/diagnostics/` | 崩溃报告等诊断物 | 问题结案后删除 |
-| `artifacts/scratch/` | RAW 副本、临时状态 | 随时可清 |
+| `artifacts/scratch/` | RAW 副本、iOS 本地验证包与 TestFlight 导出目录、临时状态 | 随时可清 |
 
 发布后运行：
 
@@ -131,7 +133,7 @@ python3 Tools/check-release.py --write   # 校验 release 布局并重写 SHA256
 bash Tools/clean-artifacts.sh            # 预览可清理项；加 --yes 执行
 ```
 
-`check-release.py` 按双版本矩阵校验平台后缀与扩展名：`-win-x64` `.exe`、`-mac-arm64` `.dmg`、`-android-arm64` `.apk`、`-ios`/`-ios-arm64` `.ipa`；历史包继续接受 `-arm64` `.dmg` 与 `-android-signed` `.apk`，`-android-x86_64` 等架构后缀直接拒绝。当前版本缺 Mac 双版本包时给出提示，不阻断其他平台尚未迁移的归档。`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。
+`check-release.py` 按双版本矩阵校验平台后缀与扩展名：`-win-x64` `.exe`、`-mac-arm64` `.dmg`、`-android-arm64` `.apk`、`-ios`/`-ios-arm64` `.ipa`；历史包继续接受 `-arm64` `.dmg` 与 `-android-signed` `.apk`，`-android-x86_64` 等架构后缀直接拒绝。`release/ios-stable/` 与 `release/testflight/` 按 `standard/`、`ai/` 分目录校验（旧布局仍接受并提示迁移），每个版本目录只允许一个归档。当前版本缺 Mac 或 iOS 双版本包时给出提示，不阻断其他平台尚未迁移的归档。`clean-artifacts.sh` 会清空 `artifacts/scratch/`，删除各套件目录中的数据库、烟测设置与夹具副本，把 `release/testflight/` 收敛到各版本最新归档，并将 mac/ios/android 轮次目录收敛到最近 2 份。旧布局的顶层单归档在新 `standard/`、`ai/` 归档出现前保留最新一份（仅有的 dSYM 符号材料不会被清空），出现新变体归档后才收敛掉。
 
 校验清单可在 `release/` 内核对：`cd release && shasum -a 256 -c SHA256SUMS`。
 
@@ -164,12 +166,27 @@ python3 Tools/check-mac-package.py --self-test    # 正反判定自检
 | **Publish Android APK (Release)** | 构建并签名 APK，归档 `release/packages/PhotoViewer-<版本>-android-signed.apk`。 |
 | **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，核对 `.app` 身份与内容后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `release/packages/PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
 | **Publish Mac DMG (Local Adhoc Check)** | 只在本机验证：adhoc 构建、包扫描与 DMG 装载核对，产物留在 `artifacts/scratch/mac-local-dmg/`，不签名 Developer ID、不公证、不归档。 |
-| **Publish iOS IPA (Release)** | 生成 `release/packages/PhotoViewer-<版本>-ios-arm64.ipa`，并覆盖 `release/ios-stable/` 的 `.app` 安装源。 |
-| **Upload iOS TestFlight** | 使用 `Apple Distribution` 与 `PhotoViewer iOS App Store` Profile 归档并上传 App Store Connect；`release/testflight/` 只保留最近一次归档。上传前自动执行归档检查。 |
-| **Validate iOS TestFlight Archive** | 检查当前版本归档的版本号、Bundle ID、分发签名、entitlements、AOT/ONNX 符号与图标，不上传。 |
-| **Check iOS TestFlight Device** | 核对设备版本，连续 5 次冷启动并确认进程存活、无新增崩溃报告；设备需先通过 TestFlight 安装当前构建。 |
+| **Publish iOS IPA (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，扫描实际 `.app` 后归档 `release/packages/PhotoViewer-<版本>-ios.ipa` 与 `PhotoViewer-AI-<版本>-ios.ipa`，稳定安装源分版本覆盖 `release/ios-stable/<standard\|ai>/PhotoViewer.iOS.app`。仅需单变体时运行 `bash PhotoViewer.iOS/publish.sh --edition standard` 或 `--edition ai`。 |
+| **Publish iOS IPA (Local Check)** | 只在本机验证：构建、扫描、生成本地直装 IPA 并核对签名，产物留在 `artifacts/scratch/ios-local-publish/`，不写 `release/packages` 与 `release/ios-stable`。 |
+| **Upload iOS TestFlight (Standard) / (AI)** | 一次只为明确的一个变体归档；`release/testflight/<standard\|ai>/` 各自保留最新归档。归档后自动执行检查，再按 `ExportOptions` 的 `destination=upload` 上传 App Store Connect。 |
+| **Archive iOS TestFlight (Local Only, Standard / AI)** | 分发签名归档 + 本地校验（archive + dSYM），不导出、不上传，供核对签名、entitlements 与能力条件符号。 |
+| **Validate iOS TestFlight Archive (Standard / AI)** | 检查归档版本号、Bundle ID、分发签名、entitlements、dSYM 与图标，并按变体核对符号：standard 不得有 ONNX Runtime 符号，ai 必须有 `_OrtGetApiBase`；不上传。 |
+| **Check iOS TestFlight Device (Standard / AI)** | 核对设备版本（`--edition` 还会核对显示名 `PhotoViewer` / `PhotoViewer-AI`），连续 5 次冷启动并确认进程存活、无新增崩溃报告。 |
+| **Scan iOS Package (Self-Test)** | `Tools/check-ios-package.py --self-test`，用真实 clang 合成包并走真实 `nm` / `otool` 核对正反判定。 |
 
-每次上传 iOS 构建前递增 `AppBuildNumber`，即使 `AppVersion` 不变也不复用构建号。TestFlight 上传复用 Xcode 中已登录的开发者账号，不改变 Release 真机安装所用的开发签名。iOS Release 通过 `MtouchNoSymbolStrip=true` 保留 Mono AOT 启动符号，不能为缩减体积重新开启符号剥离。首次上传前复制 `PhotoViewer.iOS/ExportOptions.AppStore.Local.sample.plist` 为同目录 `ExportOptions.AppStore.Local.plist` 并填写本机 Team ID；该文件已忽略，不提交。
+每次上传 iOS 构建前递增 `AppBuildNumber`，即使 `AppVersion` 不变也不复用构建号；同一构建号只能对应一个变体，标准版与 AI 版必须分两次归档、分别递增构建号。TestFlight 上传复用 Xcode 中已登录的开发者账号，不改变 Release 真机安装所用的开发签名。iOS Release 通过 `MtouchNoSymbolStrip=true` 保留 Mono AOT 启动符号，不能为缩减体积重新开启符号剥离。首次上传前复制 `PhotoViewer.iOS/ExportOptions.AppStore.Local.sample.plist` 为同目录 `ExportOptions.AppStore.Local.plist` 并填写本机 Team ID；该文件已忽略，不提交。
+
+iOS 发布脚本 `PhotoViewer.iOS/publish.sh` 以根 `Directory.Build.props` 的 `AppVersion` / `AppBuildNumber` 为唯一版本来源，兼容位置参数但必须与之一致，不一致立即报错，不擅自改写版本。它显式传 `PhotoViewerEnableDino=false|true`，构建后先用 `Tools/check-ios-package.py` 扫描实际 `.app`（身份、版本/构建号、arm64、模型/许可证/ORT 托管与原生资产、主执行文件 ORT 符号、文件大小与 SHA-256 分类），再生成**不带 IPA 顶层 `Symbols/` 的本地直装 IPA**：只重打包 IPA 容器，不 strip、不重签 `.app`、不改 AOT；`Symbols/` 移存到 `bin/<edition>/…/publish/Symbols`，dSYM 留在同一目录继续可用于符号化。机器可读证据在 `artifacts/acceptance/ios-editions/<edition>[-local]-publish.json`。定位产物只认当前 `bin/<edition>/Release/net10.0-ios/ios-arm64/` 下的 `.app` 与 `publish/PhotoViewer.iOS.ipa`，不扫描其他 RID、Debug 或陈旧目录，缺失即报错。
+
+`publish-testflight.sh` 必须显式给 `--edition standard|ai`：缺省或传 `both` 直接报错，禁止同一构建号归档两个变体。默认流程是分发签名归档、`validate-testflight-archive.sh --edition …` 校验，再按 `ExportOptions` 的 `destination=upload` 上传 App Store Connect（复用 Xcode 已登录账号）；`--archive-only` 在归档与校验后结束，不导出、不上传。新归档先构建在 `<standard|ai>/.staging-<构建号>/` 下的同名 `.xcarchive`（校验仍按正式命名规则），通过后才置换正式路径并收敛旧归档；构建或校验失败时保留上一份归档、清掉本次临时产物。脚本不改版本号、不创建签名资料；导出目录落在 `artifacts/scratch/ios-testflight-export/`。实际双变体上传仍须分两次、各自递增构建号，属于需要本机凭据的独立操作，本仓库的脚本验证不代替它。
+
+单独扫描任一架包（`.app` 或 `.ipa`）：
+
+```bash
+python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/standard/Release/net10.0-ios/ios-arm64/PhotoViewer.iOS.app \
+    --edition standard --output artifacts/acceptance/ios-editions/standard-scan.json
+python3 Tools/check-ios-package.py --self-test    # 正反判定自检
+```
 
 Windows 发布脚本自动定位 Visual Studio 官方 Release x64 CRT；自定义构建环境可向 `PhotoViewer.Windows/publish-win-x64-singlefile.ps1` 传 `-VCRedistDirectory`。脚本在原名/改名 EXE 的独立目录和新缓存中执行验收，通过后归档，并在 `artifacts/acceptance/rebuild-check/windows-singlefile/` 保存报告与 `deployment.json`。CRT 来源须符合 [微软再分发许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)。
 
@@ -185,7 +202,7 @@ PhotoViewer.Android/setup-android-signing.ps1
 bash PhotoViewer.Android/setup-android-signing.sh
 ```
 
-签名配置写入被忽略的 `signing.json`。iOS IPA 仅能安装到签名与预配允许的设备；重新安装归档稳定版本使用 **Install iOS Stable (Release)**。
+签名配置写入被忽略的 `signing.json`。iOS IPA 仅能安装到签名与预配允许的设备；重新安装归档稳定版本使用 **Install iOS Stable (Standard / AI, Release)**（按变体读取 `release/ios-stable/<standard|ai>/PhotoViewer.iOS.app`）。
 
 ## 维护工具
 
