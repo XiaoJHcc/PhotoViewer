@@ -52,6 +52,12 @@ internal static partial class AndroidNativeChecks
                 case "color":
                     await RunColorChecksAsync();
                     break;
+                case "perf":
+                    await RunPerformanceChecksAsync();
+                    break;
+                case "background":
+                    await RunBackgroundPrefetchChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)

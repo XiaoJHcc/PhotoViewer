@@ -53,6 +53,21 @@ public static class AndroidNativeShell
     /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
     public static void RefreshAfterResume() => _root?.RefreshAfterResume();
 
+    /// <summary>
+    /// 应用活跃状态（Activity OnStart/OnStop 调用）：进后台停邻居与当前图 Full 预取、取消尚未开跑与在途的后台工作；
+    /// 回前台重新计划邻居与该图 Full 预热。幂等，不借用内存压力通道（不改压力级别、不进恢复观察期）。
+    /// </summary>
+    /// <param name="active">true 回前台，false 进后台。</param>
+    /// <returns>状态真的发生变化返回 true；重复上报同一状态返回 false。</returns>
+    public static bool SetApplicationActive(bool active)
+    {
+        bool changed = BitmapPrefetcher.SetApplicationActive(active);
+        if (changed)
+            Console.WriteLine($"[Native] 后台预取{(active ? "恢复" : "暂停")}：active={active}"
+                + $" replan={BitmapPrefetcher.ForegroundReplanCount} suspended={BitmapPrefetcher.SuspendedScheduleCount}");
+        return changed;
+    }
+
     /// <summary>关闭筛选下拉；返回键优先消费。</summary>
     /// <returns>关闭了返回 true。</returns>
     public static bool DismissFilterDropdown() => _root?.DismissFilterDropdown() == true;
@@ -103,7 +118,7 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("color");
         else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
-        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input")
+        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input" or "perf" or "background")
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");
         InitializePlatform(activity);
 

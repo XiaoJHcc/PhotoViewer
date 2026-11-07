@@ -245,6 +245,8 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _navigation.Visibility = ViewStates.Gone;
         AddView(_navigation);
 
+        _photo.PresentationFailed += reason => ShowStatus(
+            StatusMessages.PresentationFailed(_main.CurrentFile?.Name, reason), DesignTokens.MotionStatusToastDuration);
         _photo.SurfaceReady += OnSurfaceReady;
         _photo.ViewportChanged += OnPhotoViewportChanged;
         _photo.SwipeRequested += direction => Execute(direction < 0 ? "Previous" : "Next");
@@ -516,7 +518,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         if (file == null)
         {
             _session.SetFile(null);
-            _photo.SetImage(null, _session.Generation);
+            _photo.PresentImage(null, _session.Generation);
             UpdateHint();
             return;
         }
@@ -524,7 +526,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
         OnPhotoViewportChanged();
         Console.WriteLine($"[Native] 主图加载：{file.Name}（{file.File.StorageId.Value}）");
         _session.SetFile(file.File);
-        _photo.SetImage(_session.Image, _session.Generation);
+        _photo.PresentImage(_session.Image, _session.Generation);
         UpdateHint();
     }
 
@@ -545,7 +547,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private void OnSessionChanged()
     {
         // STATE-01：代际让视图区分「缓存命中切图」与「代理↔Full 热替换」，同一实例同代际只重绘。
-        _photo.SetImage(_session.Image, _session.Generation);
+        _photo.PresentImage(_session.Image, _session.Generation);
         _analysisHost.Raise();
         UpdateDetailHighlight();
         UpdateHint();

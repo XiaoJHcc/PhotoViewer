@@ -17,6 +17,7 @@ namespace PhotoViewer.Core.Image;
 /// 1. 当前图前后预取(前 Forward / 后 Backward)
 /// 2. 滚动停止后中心附近预取
 /// 3. latest-wins:新请求取消旧任务后重新排队,不再整体丢弃
+/// 4. 应用活跃闸:宿主上报"应用进入后台"后不再投递也不执行任何后台预取,回前台重新计划邻居与当前图 Full 预热
 ///
 /// 每张邻居位图的"预留内存 + 解码 + 分析栏预热"作为 P2 工作项投递给 <see cref="DecodeScheduler"/>,
 /// 并发度与 P0 让位由调度器统一负责(本类构造时把 Settings.NativePreloadParallelism 同步给调度器)。
@@ -33,6 +34,18 @@ public class BitmapPrefetcher
     private CancellationTokenSource? _currentVisibleCenterCts;
     private CancellationTokenSource? _fullWarmCts;
     private int _normalParallelism = 2; // 设置值镜像;Warning 起被 Governor 指令覆盖为 1
+
+    // ── 应用活跃状态 ────────────────────────────────────────────────────────────
+    // 静态:活跃状态属于进程/应用,不属于某一轮预取。默认活跃,未上报的宿主行为完全不变。
+    // 实例只以弱引用登记(不订阅静态事件),因此不会长出退出后仍在的强引用或订阅。
+    private static readonly object ApplicationGate = new();
+    private static readonly List<WeakReference<BitmapPrefetcher>> LiveInstances = new();
+    private static CancellationTokenSource _applicationLifetime = new();
+    private static bool _applicationActive = true;
+    private static int _backgroundPauseCount;
+    private static int _foregroundResumeCount;
+    private static int _foregroundReplanCount;
+    private static int _suspendedScheduleCount;
 
     /// <summary>当前图停留多久后预热 Full（放大/开分析栏时直接命中）。</summary>
     private const int FullWarmupDelayMs = 600;
@@ -57,6 +70,49 @@ public class BitmapPrefetcher
     public static int RawAlongsideLookahead { get; set; } = 2;
 
     /// <summary>
+    /// 应用是否处于活跃状态。默认 true（桌面端与不上报生命周期的宿主行为不变）；
+    /// false 时后台预取不投递新工作，已投递/在途的后台工作随 <see cref="ApplicationLifetimeToken"/> 一并取消。
+    /// </summary>
+    public static bool IsApplicationActive
+    {
+        get { lock (ApplicationGate) return _applicationActive; }
+    }
+
+    /// <summary>
+    /// 当前活跃代际的取消令牌。一切后台预取工作（轮次、工作项、当前图 Full 预热）都必须链接它：
+    /// 应用停止时一次性取消尚未开跑与在途的后台工作；恢复后换新代际，旧令牌保持已取消，迟到的旧轮次不会复活。
+    /// 沿 P0 并行的项平常切图不取消，但同样链接它——应用停止仍然取消。
+    /// </summary>
+    public static CancellationToken ApplicationLifetimeToken
+    {
+        get { lock (ApplicationGate) return _applicationLifetime.Token; }
+    }
+
+    /// <summary>累计进入后台次数（宿主上报 false 的次数），验收观察用。</summary>
+    public static int BackgroundPauseCount
+    {
+        get { lock (ApplicationGate) return _backgroundPauseCount; }
+    }
+
+    /// <summary>累计回到前台次数（宿主上报 true 的次数），验收观察用。</summary>
+    public static int ForegroundResumeCount
+    {
+        get { lock (ApplicationGate) return _foregroundResumeCount; }
+    }
+
+    /// <summary>累计回前台时重新计划的实例次数（每个存活预取器重排邻居与当前图 Full 预热算一次），验收观察用。</summary>
+    public static int ForegroundReplanCount
+    {
+        get { lock (ApplicationGate) return _foregroundReplanCount; }
+    }
+
+    /// <summary>累计被后台状态拦下的预取投递次数（轮次与工作项各计一次），验收观察"后台确实没排新工作"用。</summary>
+    public static int SuspendedScheduleCount
+    {
+        get { lock (ApplicationGate) return _suspendedScheduleCount; }
+    }
+
+    /// <summary>
     /// 构造位图预取器,绑定到主视图模型与缩略图列表视图模型。
     /// </summary>
     /// <param name="main">主视图模型(读取当前图、设置)</param>
@@ -66,6 +122,9 @@ public class BitmapPrefetcher
         _main = main;
         _list = list;
         _settings = main.Settings;
+
+        // 应用活跃闸只按弱引用登记:回前台时按存活实例重新计划,不给实例增加静态订阅
+        lock (ApplicationGate) LiveInstances.Add(new WeakReference<BitmapPrefetcher>(this));
 
         // 调度器静态化后拿不到 settings 实例,这里一次性挂钩同步并发度上限
         _normalParallelism = Math.Max(1, _settings.NativePreloadParallelism);
@@ -87,6 +146,106 @@ public class BitmapPrefetcher
         {
             if (changed.PropertyName == nameof(MainViewModel.CurrentFile)) ScheduleCurrentFullWarmup();
         };
+    }
+
+    /// <summary>
+    /// 上报应用活跃状态（宿主 Activity 的 OnStart/OnStop 或等价生命周期）。幂等：状态未变化时返回 false 且无副作用。
+    /// false 取消一切后台预取工作并拒绝新的投递——走的是预取自己的活跃闸，<b>不借用内存压力通道</b>：
+    /// 不改 <see cref="MemoryGovernor"/> 级别、不进入恢复观察期，回前台可立即重新预取。
+    /// true 换一代令牌，并让每个存活实例重新计划邻居预取与当前图 Full 预热。
+    /// </summary>
+    /// <param name="active">true 回前台，false 进后台。</param>
+    /// <returns>状态真的发生变化返回 true；重复上报同一状态返回 false。</returns>
+    public static bool SetApplicationActive(bool active)
+    {
+        BitmapPrefetcher[] replan;
+        CancellationTokenSource? suspended = null;
+        lock (ApplicationGate)
+        {
+            if (_applicationActive == active) return false;
+            _applicationActive = active;
+            if (active)
+            {
+                _foregroundResumeCount++;
+                // 换新代际:旧令牌保持已取消,仍在跑的旧轮次不会因为恢复而复活
+                _applicationLifetime = new CancellationTokenSource();
+                replan = CollectLiveInstancesLocked();
+                _foregroundReplanCount += replan.Length;
+            }
+            else
+            {
+                _backgroundPauseCount++;
+                replan = Array.Empty<BitmapPrefetcher>();
+                suspended = _applicationLifetime;
+            }
+        }
+
+        // 锁外执行:取消回调只落在后台工作自己的链接令牌与等待任务上,不在锁内回调外部代码
+        if (suspended != null)
+        {
+            try
+            {
+                suspended.Cancel();
+            }
+            catch (AggregateException ex)
+            {
+                // 单个取消回调抛异常不能把宿主的上报入口(Android OnStop)带崩
+                Console.WriteLine($"[BitmapPrefetcher] suspend callback failed: {ex.GetBaseException().Message}");
+            }
+        }
+
+        foreach (var instance in replan)
+        {
+            try
+            {
+                instance.ReplanForForeground();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[BitmapPrefetcher] resume replan failed: {ex.Message}");
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>取存活实例并顺手剔除已被回收的弱引用（不持强引用，退出/配置重建不留残留订阅）。</summary>
+    /// <returns>当前存活的预取器快照。</returns>
+    private static BitmapPrefetcher[] CollectLiveInstancesLocked()
+    {
+        var live = new List<BitmapPrefetcher>(LiveInstances.Count);
+        for (int i = LiveInstances.Count - 1; i >= 0; i--)
+        {
+            if (LiveInstances[i].TryGetTarget(out var instance)) live.Add(instance);
+            else LiveInstances.RemoveAt(i);
+        }
+
+        return live.ToArray();
+    }
+
+    /// <summary>
+    /// 后台预取准入：应用不活跃时拦下投递并记账。后台状态只走这一处判断，不复用压力状态机
+    /// （否则每次进后台都会裁缓存并让回前台多等 30s 恢复观察期）。
+    /// </summary>
+    /// <returns>允许投递返回 true。</returns>
+    private static bool CanScheduleBackgroundWork()
+    {
+        lock (ApplicationGate)
+        {
+            if (_applicationActive) return true;
+            _suspendedScheduleCount++;
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 回前台重排：被取消的轮次不会自愈，这里重新计划当前图 Full 预热与邻居预取
+    /// （两者内部各自投递线程池，不在调用线程上解码或等待）。
+    /// </summary>
+    private void ReplanForForeground()
+    {
+        ScheduleCurrentFullWarmup();
+        PrefetchAroundCurrent();
     }
 
     /// <summary>压力级别变化响应:升级取消在途预取;Warning 解码并发降 1;回 Normal 过观察期后恢复预取。</summary>
@@ -114,17 +273,21 @@ public class BitmapPrefetcher
     /// <summary>
     /// 当前图片变化后调用:取消旧任务,按保留排名顺序预取前后若干张(翻页方向优先)。
     /// 预取档位跟随实际需求:适应态只取代理,放大/分析栏可见时 ±1 邻居取 Full。
+    /// 应用不活跃时不排新一轮,由回前台的重排负责。
     /// </summary>
     public void PrefetchAroundCurrent()
     {
         _currentAroundCts?.Cancel();
         _currentAroundCts = new CancellationTokenSource();
         var ct = _currentAroundCts.Token;
+        if (!CanScheduleBackgroundWork()) return;
+        var appToken = ApplicationLifetimeToken;
 
         Task.Run(async () =>
         {
             try
             {
+                if (!IsApplicationActive) return;
                 if (_main.CurrentFile == null) return;
                 var files = _list.FilteredFiles;
                 if (files.Count == 0) return;
@@ -186,7 +349,7 @@ public class BitmapPrefetcher
                         full: ShouldPrefetchFull(proxyTarget, fullNeighbors, t.distance, alongside),
                         alongP0: alongside);
                 }).ToList();
-                await RunQueuedAsync(items, ct).ConfigureAwait(false);
+                await RunQueuedAsync(items, ct, appToken).ConfigureAwait(false);
             }
             catch { /* 忽略 */ }
         }, ct);
@@ -223,18 +386,21 @@ public class BitmapPrefetcher
     }
 
     /// <summary>
-    /// 滚动停止后调用:预取可见区域中心附近图片。
+    /// 滚动停止后调用:预取可见区域中心附近图片。应用不活跃时不排新一轮。
     /// </summary>
     public void PrefetchVisibleCenter(int firstIndex, int lastIndex)
     {
         _currentVisibleCenterCts?.Cancel();
         _currentVisibleCenterCts = new CancellationTokenSource();
         var ct = _currentVisibleCenterCts.Token;
+        if (!CanScheduleBackgroundWork()) return;
+        var appToken = ApplicationLifetimeToken;
 
         Task.Run(async () =>
         {
             try
             {
+                if (!IsApplicationActive) return;
                 var files = _list.FilteredFiles;
                 if (files.Count == 0) return;
                 firstIndex = Math.Max(0, Math.Min(firstIndex, files.Count - 1));
@@ -260,7 +426,7 @@ public class BitmapPrefetcher
                 // 可视区中心预取:代理档优先(目标未知时 Full 旧行为)
                 int proxyTarget = BitmapLoader.ProxyTargetLongEdge;
                 var items = selected.Select(i => (file: files[i], full: proxyTarget <= 0, alongP0: false)).ToList();
-                await RunQueuedAsync(items, ct).ConfigureAwait(false);
+                await RunQueuedAsync(items, ct, appToken).ConfigureAwait(false);
             }
             catch { /* 忽略 */ }
         }, ct);
@@ -287,13 +453,16 @@ public class BitmapPrefetcher
     /// 实际预取执行:每张邻居一个 P2 工作项投递给调度器,并发度由调度器统一限制。
     /// latest-wins:新请求取消旧 CTS,旧轮次工作项执行时因 ct 已取消而空跑退出。
     /// full=false 走代理档(省内存),full=true 走全分辨率(±1 邻居变焦连续性)。
-    /// alongP0=true 的项(翻页方向上的下一张)允许在 P0 在途时执行,且不等待高优先级空闲。
+    /// alongP0=true 的项(翻页方向上的下一张)允许在 P0 在途时执行,且不等待高优先级空闲;
+    /// 它平常切图不取消(跑完为止),但同样链接 <paramref name="appToken"/>——应用停止时取消。
     /// </summary>
-    private Task RunQueuedAsync(IEnumerable<(ImageFile file, bool full, bool alongP0)> items, CancellationToken ct)
+    private Task RunQueuedAsync(IEnumerable<(ImageFile file, bool full, bool alongP0)> items,
+        CancellationToken ct, CancellationToken appToken)
     {
         foreach (var (f, wantFull, alongP0) in items)
         {
             if (ct.IsCancellationRequested) break;
+            if (!CanScheduleBackgroundWork()) break;
             var file = f;
             var full = wantFull;
             var alongside = alongP0;
@@ -301,11 +470,16 @@ public class BitmapPrefetcher
             {
                 // 压力闸:Caution/恢复观察期起预取不执行(投递即空跑退出)
                 if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return;
+                // 活跃闸:暂停时已入队但还没开跑的项到这里空跑退出,不再起任何后台解码
+                if (!IsApplicationActive) return;
 
-                using var linkedCts = alongside ? null : CancellationTokenSource.CreateLinkedTokenSource(token, ct);
                 // 沿 P0 并行的项一旦开跑就让它跑完：它正是即将上屏的那一张，轮次切换只阻止尚未开始的工作。
                 // 否则下一张的预取每次都在"快好了"时被丢弃（取消点只在解码/绘制之后），P0 再从零解一遍。
-                var lct = alongside ? token : linkedCts!.Token;
+                // 应用停止令牌对两类项都链接：后台状态不保留任何在途后台工作。
+                using var linkedCts = alongside
+                    ? CancellationTokenSource.CreateLinkedTokenSource(token, appToken)
+                    : CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken);
+                var lct = linkedCts.Token;
 
                 if (!alongside)
                 {
@@ -348,20 +522,23 @@ public class BitmapPrefetcher
     /// 慢图(RAW 等)的 P0 常长于停留窗口:到期时 P0 仍在途就先让位,待主图解完再重新计满 600ms 稳定停留,
     /// 避免 Full 与"代理刚上屏、用户可能已切走"重叠抢解码器;当前图没有已上屏的代理产物(失败/无图)时不额外重解 Full。
     /// 预取不挤更重要条目:当前图是排名 ①,它的 Full 可以淘汰任意更差的排名;腾不出位置则跳过。
+    /// 应用不活跃时不排本轮,由回前台的重排重新计划。
     /// </summary>
     private void ScheduleCurrentFullWarmup()
     {
         _fullWarmCts?.Cancel();
         _fullWarmCts = new CancellationTokenSource();
         var ct = _fullWarmCts.Token;
+        if (!CanScheduleBackgroundWork()) return;
+        var appToken = ApplicationLifetimeToken;
         var file = _main.CurrentFile;
         if (file == null) return;
 
         var path = file.File.StorageId.Value;
 
         // 预热前提:仍停在当前图、不需要 Full、分析栏不可见、压力 Normal 且不在恢复观察期
-        bool WarmupAllowed()
-            => !ct.IsCancellationRequested
+        bool WarmupAllowed(CancellationToken token)
+            => !token.IsCancellationRequested
                 && !BitmapLoader.PrefetchFullWanted
                 && !_main.IsAnalysisViewVisible
                 && MemoryGovernor.CurrentLevel == PressureLevel.Normal
@@ -371,14 +548,18 @@ public class BitmapPrefetcher
         {
             try
             {
-                await Task.Delay(FullWarmupDelayMs, ct).ConfigureAwait(false);
-                if (!WarmupAllowed()) return;
+                // 应用停止令牌与切图令牌一起等待:进后台立刻放弃本轮,回前台由重排重新计划
+                using var roundCts = CancellationTokenSource.CreateLinkedTokenSource(ct, appToken);
+                var wct = roundCts.Token;
+
+                await Task.Delay(FullWarmupDelayMs, wct).ConfigureAwait(false);
+                if (!WarmupAllowed(wct)) return;
                 // 慢图的代理此刻可能还在 P0:等主图解完,再给它一段稳定停留窗口才预热
                 if (DecodeScheduler.P0InFlightCount > 0)
                 {
-                    if (!await WaitForP0IdleAsync(ct).ConfigureAwait(false)) return;
-                    await Task.Delay(FullWarmupDelayMs, ct).ConfigureAwait(false);
-                    if (!WarmupAllowed()) return;
+                    if (!await WaitForP0IdleAsync(wct).ConfigureAwait(false)) return;
+                    await Task.Delay(FullWarmupDelayMs, wct).ConfigureAwait(false);
+                    if (!WarmupAllowed(wct)) return;
                 }
 
                 if (BitmapLoader.IsInCache(path, ImageSizeClass.Full)) return;
@@ -388,14 +569,15 @@ public class BitmapPrefetcher
                 DecodeScheduler.Submit(path, DecodePriority.P2_Prefetch, async token =>
                 {
                     if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return;
+                    if (!IsApplicationActive) return;
                     if (BitmapLoader.IsInCache(path, ImageSizeClass.Full)) return;
                     if (BitmapLoader.PrefetchFullWanted) return;
-                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct);
-                    var image = await BitmapLoader.GetBitmapAsync(file.File, DecodePriority.P2_Prefetch, linkedCts.Token).ConfigureAwait(false);
+                    using var itemCts = CancellationTokenSource.CreateLinkedTokenSource(token, ct, appToken);
+                    var image = await BitmapLoader.GetBitmapAsync(file.File, DecodePriority.P2_Prefetch, itemCts.Token).ConfigureAwait(false);
                     image?.Release();
                 });
             }
-            catch (OperationCanceledException) { /* 切图后本轮作废 */ }
+            catch (OperationCanceledException) { /* 切图或进后台后本轮作废 */ }
             catch (Exception ex)
             {
                 Console.WriteLine($"[BitmapPrefetcher] full warmup failed for {file.Name}: {ex.Message}");
@@ -407,7 +589,7 @@ public class BitmapPrefetcher
     /// P0(主图解码)在途时让位:每 120ms 复查取消、压力级别与恢复观察期;
     /// 期间升到 Caution 以上或进入观察期即放弃本次预热(返回 false)。
     /// </summary>
-    /// <param name="ct">本轮预热令牌(切图即取消)。</param>
+    /// <param name="ct">本轮预热令牌(切图或应用停止即取消)。</param>
     /// <returns>P0 已空闲返回 true;被取消或压力不允许返回 false。</returns>
     private static async Task<bool> WaitForP0IdleAsync(CancellationToken ct)
     {

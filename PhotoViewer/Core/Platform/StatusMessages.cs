@@ -17,6 +17,9 @@ public static class StatusMessages
 
     public const string SinglePhotoRefreshed = "无法读取父目录，仅刷新当前照片";
 
+    public static string PresentationFailed(string? fileName, string? reason = null)
+        => Compose("无法显示", fileName, reason);
+
     /// <summary>评分写回失败；部分来源补偿失败时明确数据可能不一致。</summary>
     public static string RatingWriteFailed(string fileName, string? reason = null, bool partial = false)
         => Compose(partial ? "星级写入不完整" : "无法写入星级", fileName, reason);

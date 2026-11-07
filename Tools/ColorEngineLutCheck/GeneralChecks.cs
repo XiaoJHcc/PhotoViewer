@@ -28,6 +28,7 @@ internal static class GeneralChecks
         PremultipliedAlpha();
         Metadata();
         Concurrency();
+        Lifetimes();
         Console.WriteLine();
         Timing();
         Console.WriteLine();
@@ -180,6 +181,143 @@ internal static class GeneralChecks
             Console.WriteLine($"    ok  {workers} concurrent conversions x3 -> Bgra32 sRGB, source untouched");
         }
     }
+
+    // ---------------------------------------------------------------- 源租约与取消
+
+    /// <summary>源租约自持、已释放源拒绝读像素、预取消与在途取消都不泄漏源/目标且不改源。</summary>
+    private static void Lifetimes()
+    {
+        Console.WriteLine("  -- source lease during conversion, released source, pre-cancelled / in-flight cancellation");
+        PassthroughLease();
+        CheckRejected("released source, passthrough (same encoding + colour space)", PixelEncoding.Rgba8, ImageColorSpace.DisplayP3,
+            Random8(1025, 1025, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3));
+        CheckRejected("released source, P3 -> sRGB cross-gamut", PixelEncoding.Rgba8, ImageColorSpace.Srgb,
+            Random8(1025, 1025, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3));
+        CheckRejected("released source, P3 -> Bgra32 sRGB", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            Random8(1025, 1025, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3));
+        CheckRejected("released source, LUT fast path (linear F16 -> Bgra32 sRGB)", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            RandomF16(1025, 1025, 0, colorSpace: ImageColorSpace.LinearSrgb));
+
+        Cancelled("pre-cancelled general P3 -> Bgra32 sRGB, below threshold", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            Random8(1025, 1025, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3), inFlightDelayMs: null);
+        Cancelled("pre-cancelled LUT fast path, linear F16 -> Bgra32 sRGB", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            RandomF16(1025, 1025, 0, colorSpace: ImageColorSpace.LinearSrgb), inFlightDelayMs: null);
+        Cancelled("in-flight cancel, general banded path 4096x4096 P3 -> Bgra32 sRGB", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            Random8(4096, 4096, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3), inFlightDelayMs: 1);
+        Cancelled("in-flight cancel, LUT fast path 3000x3000 linear F16 -> Bgra32 sRGB", PixelEncoding.Bgra32, ImageColorSpace.Srgb,
+            RandomF16(3000, 3000, 0, colorSpace: ImageColorSpace.LinearSrgb), inFlightDelayMs: 1);
+    }
+
+    /// <summary>原格式直通返回源本身的另一份租约：该租约持有期间源像素必须有效，且每个持有者恰好释放一次。</summary>
+    private static void PassthroughLease()
+    {
+        var source = Random8(1025, 1025, 0, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3);
+        var pixelsBefore = (byte[])source.Pixels.Clone();
+        var passthrough = ColorEngine.ToDisplayEncoding(source, PixelEncoding.Rgba8, ImageColorSpace.DisplayP3);
+        bool sameInstance = ReferenceEquals(source, passthrough);
+        source.Release();
+        bool alive = passthrough.Pixels.Length != 0 && passthrough.Pixels.AsSpan().SequenceEqual(pixelsBefore);
+        passthrough.Release();
+        bool fullyReleased = passthrough.Pixels.Length == 0;
+        if (sameInstance && alive && fullyReleased)
+            Console.WriteLine("    ok  passthrough returns the source itself on an extra lease, alive until its own lease is released");
+        else
+        {
+            Program.Failures++;
+            Console.WriteLine($"    MISMATCH lease: passthrough same={sameInstance} alive={alive} released={fullyReleased}");
+        }
+    }
+
+    /// <summary>已释放的源必须在读像素之前失败：历史上空缓冲会直接进原生转换（Android NULL 崩溃机制）。</summary>
+    private static void CheckRejected(string label, PixelEncoding encoding, ImageColorSpace colorSpace, DecodedImage source)
+    {
+        source.Release();
+        Exception? error = null;
+        try
+        {
+            using var result = ColorEngine.ToDisplayEncoding(source, encoding, colorSpace);
+        }
+        catch (Exception failure)
+        {
+            error = failure;
+        }
+        if (error is ObjectDisposedException)
+            Console.WriteLine($"    ok  {label} -> ObjectDisposedException");
+        else
+        {
+            Program.Failures++;
+            Console.WriteLine($"    MISMATCH disposed: {label}: {(error == null ? "returned an image" : error.GetType().Name)}");
+        }
+    }
+
+    /// <summary>被取消的转换：源像素不变、源租约归还、已租目标缓冲回池；<paramref name="inFlightDelayMs"/> 为空表示预先取消。</summary>
+    private static void Cancelled(string label, PixelEncoding encoding, ImageColorSpace colorSpace, DecodedImage source,
+        int? inFlightDelayMs)
+    {
+        int bad = 0;
+        var pixelsBefore = (byte[])source.Pixels.Clone();
+        ImageBufferPool.ReleaseIdle(long.MaxValue);
+        long idleBefore = ImageBufferPool.IdleBytes;
+        long targetBytes = (long)source.Width * source.Height * DecodedImage.BytesPerPixel(encoding);
+
+        // 只留本次用例这一份租约：转换多借不退时，最后这一次 Release 之后像素不会被清空。
+        source.TryAcquire();
+        source.Release();
+
+        using var cts = new CancellationTokenSource();
+        if (inFlightDelayMs is { } delay) StartCanceller(cts, delay);
+        else cts.Cancel();
+
+        Exception? error = null;
+        try
+        {
+            using var result = ColorEngine.ToDisplayEncoding(source, encoding, colorSpace, default, cts.Token);
+        }
+        catch (Exception failure)
+        {
+            error = failure;
+        }
+
+        bool unchanged = source.Pixels.AsSpan().SequenceEqual(pixelsBefore);
+        long returned = ImageBufferPool.IdleBytes - idleBefore;
+        source.Release();
+        bool leaseReturned = source.Pixels.Length == 0;
+
+        if (error is not OperationCanceledException)
+        {
+            bad++;
+            Console.WriteLine($"    MISMATCH cancel: {label}: {(error == null ? "returned an image" : error.GetType().Name)}");
+        }
+        if (!unchanged)
+        {
+            bad++;
+            Console.WriteLine($"    MISMATCH source: {label}: 取消过程改动了源像素");
+        }
+        if (!leaseReturned)
+        {
+            bad++;
+            Console.WriteLine($"    MISMATCH lease: {label}: 转换没有归还源租约");
+        }
+        if (inFlightDelayMs == null ? returned != 0 : returned < targetBytes)
+        {
+            bad++;
+            Console.WriteLine($"    MISMATCH target: {label}: 池内空闲 {returned} 字节，期望 "
+                + (inFlightDelayMs == null ? "0（预取消不应租用目标缓冲）" : $"≥ {targetBytes}（目标缓冲回池）"));
+        }
+        if (bad == 0)
+            Console.WriteLine($"    ok  {label} -> OperationCanceledException, source intact, source lease + target buffer recycled");
+        else Program.Failures += bad;
+    }
+
+    /// <summary>墙钟自旋的延迟取消：定时器粒度（约 15.6 ms）会把"在途"推到转换结束之后。</summary>
+    private static void StartCanceller(CancellationTokenSource cts, int milliseconds)
+        => new Thread(() =>
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.Elapsed.TotalMilliseconds < milliseconds) Thread.SpinWait(500);
+            cts.Cancel();
+        })
+        { IsBackground = true }.Start();
 
     // ---------------------------------------------------------------- 大图计时
 

@@ -23,7 +23,7 @@ namespace PhotoViewer.Android.Native;
 /// 缩放/平移不用系统滚动容器：单指拖动只在放大态平移，双指捏合锚定焦点，双击/命令走
 /// <see cref="PhotoViewport.ToggleFit"/>；代理↔Full 热替换只换纹理，不碰视口状态。
 /// </summary>
-internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IMemoryClient
+internal sealed partial class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IMemoryClient
 {
     /// <summary>双击与命令缩放允许的物理倍率上限（与共享视口一致）。</summary>
     private const double MaximumPhysicalScale = 16;
@@ -149,59 +149,53 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         MemoryGovernor.Register(this);
     }
 
-    /// <summary>同步上传当前展示图；null 表示清空。</summary>
-    /// <param name="image">展示产物（会话持有所有权，本视图只在本调用内读取像素）。</param>
-    /// <param name="generation">会话照片代际（<see cref="PhotoLoadSession.Generation"/>）：代际变化即切图，
-    /// 同机型连拍的两张源尺寸与方向相同，只比几何无法区分切图与代理↔Full 热替换（STATE-01）。</param>
-    public void SetImage(DecodedImage? image, int generation)
+    private void SetImageCore(DecodedImage? image, int generation, DecodedImage? prepared = null)
     {
         if (_disposed) return;
         bool cut = generation != _generation;
+        if (!cut && ReferenceEquals(_image, image) && _renderer.HasTexture)
+        {
+            RequestDraw();
+            ViewportChanged?.Invoke();
+            return;
+        }
+        var previous = _image;
+        bool replace = !ReferenceEquals(previous, image);
+        if (replace && image != null && !image.TryAcquire())
+            throw new ObjectDisposedException(nameof(image));
+        try
+        {
+            if (_surfaceReady) _renderer.SetImage(image, prepared);
+        }
+        catch
+        {
+            if (replace) image?.Release();
+            throw;
+        }
+        _image = image;
         _generation = generation;
+        if (replace) previous?.Release();
+        RefreshTextureBytes();
         if (image == null)
         {
-            _image = null;
             _identity = default;
             _wheelAccumulator = 0;
-            _renderer.SetImage(null);
-            RefreshTextureBytes();
             _viewport.ClearTexture();
-            Draw();
-            ViewportChanged?.Invoke();
-            return;
         }
-        // 同一实例 + 同一代际：会话的加载态/增强态等通知，纹理与几何都没变，只重绘当前帧、不重传。
-        if (!cut && ReferenceEquals(_image, image))
+        else
         {
-            Draw();
-            ViewportChanged?.Invoke();
-            return;
-        }
-        var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
-        // STATE-01：重新选中同一文件命中同一缓存实例时代际变了，纹理不必重传，几何仍按切图重算。
-        bool reuseTexture = cut && ReferenceEquals(_image, image);
-        _image = image;
-        if (_surfaceReady)
-        {
-            if (!reuseTexture)
-            {
-                _renderer.SetImage(image);
-                RefreshTextureBytes();
-            }
+            var identity = (image.SourceWidth, image.SourceHeight, image.Orientation);
             if (!cut && identity == _identity)
-            {
-                // 同一张照片的代理 ↔ Full 热替换：只换纹理。
                 _viewport.ApplyTexture(_renderer.TextureWidth);
-                Draw();
-                ViewportChanged?.Invoke();
-                return;
+            else
+            {
+                _identity = identity;
+                _wheelAccumulator = 0;
+                _viewport.BeginImageChange();
+                _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
             }
         }
-        _identity = identity;
-        _wheelAccumulator = 0;
-        _viewport.BeginImageChange();
-        _viewport.ApplyImage(image.SourceWidth, image.SourceHeight, image.Orientation, _renderer.TextureWidth);
-        Draw();
+        RequestDraw();
         ViewportChanged?.Invoke();
     }
 
@@ -210,7 +204,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     {
         if (_image == null) return;
         _viewport.FitToView();
-        Draw();
+        RequestDraw();
         ViewportChanged?.Invoke();
     }
 
@@ -282,7 +276,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         double height = _viewport.ImageHeight * _viewport.Scale;
         if (width <= 0 || height <= 0) return;
         _viewport.ApplyGestureView(_viewport.Scale, (.5 - u) * width, (.5 - v) * height, interactive: true);
-        Draw();
+        RequestDraw();
         ViewportChanged?.Invoke();
     }
 
@@ -307,8 +301,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     internal void RecreateSurfaceForChecks(bool allowP3, bool allowPassthrough = true)
     {
         _surfaceReady = false;
+        _surfaceVersion++;
+        InvalidatePresentation();
+        CancelDraw();
         _renderer.Dispose();
-        _renderer = new AndroidPhotoRenderer();
+        _renderer = CreateRenderer();
         _renderer.Create(_surfaceView.Holder!, _density, allowP3, allowPassthrough);
         _renderer.Resize(_surfaceView.Width, _surfaceView.Height);
         _surfaceReady = true;
@@ -318,7 +315,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _viewport.ApplyTexture(_renderer.TextureWidth);
         }
         RefreshTextureBytes();
-        Draw();
+        RequestDraw();
     }
 
     /// <summary>单指轻扫判定入口（手势与验收共用）。</summary>
@@ -333,10 +330,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         return true;
     }
 
-    /// <summary>重绘当前帧并把视口上报给加载会话。</summary>
     internal void Draw()
     {
-        if (_surfaceReady) _renderer.DrawFrame(_viewport, _density);
+        CancelDraw();
+        if (!_surfaceReady || _disposed) return;
+        if (_renderer.DrawFrame(_viewport, _density)) _renderedFrames++;
     }
 
     /// <summary>上报视口像素尺寸与 Full 需求。</summary>
@@ -352,16 +350,15 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     {
         try
         {
-            _renderer = new AndroidPhotoRenderer();
+            _surfaceVersion++;
+            InvalidatePresentation();
+            _renderer.Dispose();
+            _renderer = CreateRenderer();
             _renderer.Create(holder, _density);
             _surfaceReady = true;
-            if (_image != null)
-            {
-                _renderer.SetImage(_image);
-                _viewport.ApplyTexture(_renderer.TextureWidth);
-            }
+            PresentImage(_requestedImage ?? _image, _requestedGeneration);
             RefreshTextureBytes();
-            Draw();
+            RequestDraw();
             SurfaceReady?.Invoke();
         }
         catch (Exception exception)
@@ -381,10 +378,10 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     public void SurfaceChanged(ISurfaceHolder holder, Format format, int width, int height)
     {
         _renderer.Resize(width, height);
-        Draw();
+        RequestDraw();
         // 栏位显隐后 SurfaceView 的新缓冲可能在本帧尚未就绪：下一帧再绘制一次，避免停在旧尺寸的帧上。
-        Post(Draw);
-        PostDelayed(Draw, 32);
+        Post(RequestDraw);
+        PostDelayed(RequestDraw, 32);
     }
 
     /// <summary>Surface 销毁：释放 EGL，等待下一次创建后重传纹理。</summary>
@@ -392,8 +389,11 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
     public void SurfaceDestroyed(ISurfaceHolder holder)
     {
         _surfaceReady = false;
+        _surfaceVersion++;
+        InvalidatePresentation();
+        CancelDraw();
         _renderer.Dispose();
-        _renderer = new AndroidPhotoRenderer();
+        _renderer = CreateRenderer();
         RefreshTextureBytes();
     }
 
@@ -422,9 +422,9 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             double height = _viewport.ImageHeight * _viewport.Scale;
             _viewport.ApplyGestureView(_viewport.Scale, (.5 - center.U) * width, (.5 - center.V) * height, interactive: false);
         }
-        Draw();
+        RequestDraw();
         // 布局变化后 SurfaceView 的缓冲可能在下一帧才跟上：再补一帧，避免缩略图/控制栏/分析栏开合时停在旧尺寸。
-        Post(Draw);
+        Post(RequestDraw);
         ViewportChanged?.Invoke();
     }
 
@@ -489,7 +489,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                     _viewport.PanBy(dx, dy);
                     _lastX = x;
                     _lastY = y;
-                    Draw();
+                    RequestDraw();
                     ViewportChanged?.Invoke();
                 }
                 break;
@@ -645,7 +645,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             if (!_viewport.IsFit)
             {
                 _viewport.PanBy(-horizontal * _scrollFactorPx / _density, -vertical * _scrollFactorPx / _density);
-                Draw();
+                RequestDraw();
                 ViewportChanged?.Invoke();
             }
             return true;
@@ -685,7 +685,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         bool endFit = _viewport.IsFit;
         if (Math.Abs(endScale - startScale) < 1e-6 && Math.Abs(endX - startX) < 1e-6 && Math.Abs(endY - startY) < 1e-6)
         {
-            Draw();
+            RequestDraw();
             ViewportChanged?.Invoke();
             return;
         }
@@ -701,7 +701,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
                 startX + (endX - startX) * eased,
                 startY + (endY - startY) * eased,
                 interactive: false);
-            Draw();
+            RequestDraw();
             ViewportChanged?.Invoke();
         };
         animator.AnimationEnd += (_, _) =>
@@ -712,7 +712,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _animation = null;
             _viewport.ApplyGestureView(endScale, endX, endY, interactive: false);
             if (endFit || _viewport.Scale < _viewport.FitScale - 1e-9) _viewport.FitToView();
-            Draw();
+            RequestDraw();
             ViewportChanged?.Invoke();
         };
         _animation = animator;
@@ -734,6 +734,12 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
         if (disposing && !_disposed)
         {
             _disposed = true;
+            _surfaceVersion++;
+            InvalidatePresentation();
+            CancelDraw();
+            SetRequestedImage(null, _generation);
+            _image?.Release();
+            _image = null;
             CancelAnimation();
             InvalidateLongPressCandidate();
             MemoryGovernor.Unregister(this);
@@ -846,7 +852,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _owner._lastFocusX = (float)focusX;
             _owner._lastFocusY = (float)focusY;
             _owner._hasLastFocus = true;
-            _owner.Draw();
+            _owner.RequestDraw();
             _owner.ViewportChanged?.Invoke();
             return true;
         }
@@ -858,7 +864,7 @@ internal sealed class AndroidPhotoView : FrameLayout, ISurfaceHolderCallback, IM
             _owner._pinching = false;
             _owner._hasLastFocus = false;
             _owner._viewport.ClampPan();
-            _owner.Draw();
+            _owner.RequestDraw();
             _owner.ViewportChanged?.Invoke();
         }
     }

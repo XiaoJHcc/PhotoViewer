@@ -1167,8 +1167,7 @@ internal static partial class AndroidNativeChecks
 
     /// <summary>
     /// 把合成图挂到主图、强制适应态并等一帧（代际每次都变，保证走切图语义并重新上传纹理）。
-    /// 上屏时本流程额外持一份租约（<see cref="_colorAttached"/>）：主图只持实例引用不持缓冲，
-    /// 调用方自己的租约随后归还也不会让主图指向已释放的实例；上一张的租约在新图接管之后才归还。
+    /// 本流程与主图分别持有展示租约；本流程的上一张租约在新图接管后归还。
     /// </summary>
     /// <param name="image">合成展示图（调用方仍持有创建者那份租约）。</param>
     private static async Task ShowColorSyntheticAsync(DecodedImage image)
@@ -1178,7 +1177,7 @@ internal static partial class AndroidNativeChecks
         var previous = _colorAttached;
         try
         {
-            photo.SetImage(image, ++_colorGeneration);
+            photo.SetImageForChecks(image, ++_colorGeneration);
         }
         catch
         {
@@ -1207,7 +1206,7 @@ internal static partial class AndroidNativeChecks
         bool replaced = false;
         try
         {
-            photo.SetImage(image, generation);
+            photo.SetImageForChecks(image, generation);
             // 到这里主图已经不再引用合成图，租约可以安全归还；之后的失败也不该再留着这份缓冲。
             replaced = true;
             photo.FitToView();
