@@ -109,7 +109,13 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 
 **矩阵维度**：fontScale、density、竖屏/横屏及回竖屏分别验证；当前结果与未覆盖边界见 [Design/status.md](../Design/status.md) 及对应计划。验收读取用的访问器（`StatusTextForChecks`、`StatusVisibleForChecks`、`ResetStatusForChecks`、`ControlBar.NodesForChecks`、`ControlBar.RatingConflictForChecks`、`ControlBar.TryGetRatingSlotScreenRect`、`ThumbnailCard.ShowsRatingConflict`/`StarSlotRectPx`/`ActivateSlot`、`RatingSourcesPopup`（`DirectionForChecks`/`AnchorRectForChecks`/`SlotRectPx`/`ContentViewForChecks`/`WidthPxForChecks`）、`SimilarityPane.DockError*ForChecks`、`FilterScrollableForChecks`、`FilterScrollOffsetForChecks`、`AnalysisHostForChecks`、`FilterBar`（`IsDropdownOpen`/`DropdownInstanceForChecks`/`DropdownKindForChecks`/`DropdownAnchorForChecks`/`DropdownContentViewForChecks`）、`FilterScrollHostForChecks`、`AndroidFilePicker.BeginFileRequestForChecks`/`FileRequestCode`、`AndroidSettingsSheetView`（`FileInfoLabelsForChecks`/`LevelColorForChecks`））都是 `internal` 且注释标「验收用」，产品路径不引用；`faults` 另用反射改 `BitmapLoader` 私有静态解码器字段与 `SimilarityPanelViewModel` 私有 setter，退出前一律还原。
 
-`all`（五组连跑）与个别独立模式的**启动期偶发 SIGSEGV 未关闭**：实测约每 8 次启动有 1 次在「刚打开文件夹、图片刚上屏」的 200 ms 内以 signal 11 退出（无托管异常、无 tombstone）。独立模式已加 `[NativeCheck] 独立模式开始/<步骤>` 日志，崩溃可定位到步骤之前还是步骤之内；分模式（尤其 `faults` / `layout` / `input`）仍优于 `all`，但不作为「必过」验收口径。
+### 启动与 UI 长尾排障
+
+- Debug 保持 `EmbedAssembliesIntoApk=true`，并显式使用 `AndroidUseAssemblyStore=true`，保留 Debug 符号。不要改回每程序集独立 DSO：Android 运行时 36.1.53 的该加载路径会在映射完成前把共享 `data_size` 从 ELF 长度改为载荷长度，并发懒加载可能按缩短长度再次映射，越界读取 ELF 节表。assembly store 不走这条映射路径。
+- `AndroidApp` 将进程域与 Android 未处理异常写到 `PhotoViewerCrash`，只记录、不标记已处理。原生 SIGSEGV / SIGABRT / `EXIT_SELF 255` 分别保留当次 Logcat 和 `dumpsys activity exit-info <应用ID>`，不能因时间接近就合并根因；没有托管钩子日志也不单独证明故障属于原生。
+- Android 启动时将 `YuvImageConverter.MaxDegreeOfParallelism` 配为 `max(1, CPU 核数 - 1)`，并将 `ConversionTaskScheduler` 注入同等并发上限的进程级 `ConcurrentExclusiveSchedulerPair.ConcurrentScheduler`。多幅 YUV 转换共用执行槽，单图可用完整转换预算，不按图像上限静态均分；图像上限另不超过 `max(1, CPU 核数 - 1)`。这是 CPU 并发策略，不改变像素算法、Full 请求时机或精度；未配置的平台保持原行为。
+- `zoom` 的真实 HIF 放大段开启 `AndroidFrameStats` 固定容量内存采样，平时关闭。报告区分 DrawFrame 等锁/MakeCurrent/GL 命令/Swap、根视图布局/会话/视口、调度回调与 Looper 分发，按最大心跳间隙的时间区间匹配样本，另记该间隙的 GC 增量与 UI 线程 CPU 时间；各类存在嵌套，不跨类相加。消息日志仅检查期间安装，结束清除；它自身有 JNI/字符串开销。上传墙钟不包含 Draw/Swap，不能单凭上传快就排除渲染阻塞。`zoom` 另按所有有效像素逐行对照有界并行与串行 Full，核对色彩、几何与方向不变。
+- 独立模式的 `[NativeCheck] 独立模式开始/<步骤>` 日志用于区分启动与检查内失败；当前复现、验证范围与历史尚未归因的异常见 [Android 性能与内存专项方案 2](../Plans/android-performance-memory-plan-2.md)。
 
 ### 压测与性能探针
 

@@ -522,7 +522,7 @@ internal static partial class AndroidNativeChecks
                 $"reads+={reads}（预热 1 + 对照 1）");
 
             (bool Geometry, bool Orientation, bool Color, int Mismatched, string? Detail) compared = default;
-            if (both) compared = await Task.Run(() => CompareRawFullDecodes(shared!, independent!, target));
+            if (both) compared = await Task.Run(() => CompareFullDecodes(shared!, independent!, target));
 
             Check("raw 两次 Full 对照 源几何一致", both && compared.Geometry,
                 both
@@ -553,7 +553,7 @@ internal static partial class AndroidNativeChecks
     }
 
     /// <summary>逐行比较有效像素（每行 Width*4 字节，不碰行距填充与池尾）。</summary>
-    private static (bool Geometry, bool Orientation, bool Color, int Mismatched, string? Detail) CompareRawFullDecodes(
+    private static (bool Geometry, bool Orientation, bool Color, int Mismatched, string? Detail) CompareFullDecodes(
         DecodedImage left, DecodedImage right, ImageColorSpace target)
     {
         bool geometry = left.SourceWidth == right.SourceWidth && left.SourceHeight == right.SourceHeight

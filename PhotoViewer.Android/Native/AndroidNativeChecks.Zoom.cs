@@ -81,6 +81,24 @@ internal static partial class AndroidNativeChecks
                 + $" encoding={full.Encoding} color={full.ColorSpace} decodeMs={proxyMs:F1}/{fullMs:F1}");
             await CheckZoomUploadAsync("HIF", proxy, full, 3);
             await CheckLiveHifZoomAsync(path);
+            int parallelism = PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism;
+            int cores = Math.Max(1, System.Environment.ProcessorCount);
+            Check("HIF 转换使用有界并行", parallelism >= 1 && (cores == 1 || parallelism < cores),
+                $"parallelism={parallelism} cores={cores}");
+            try
+            {
+                PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism = 1;
+                using var serial = await decoder.DecodeAsync(file, null, PixelEncoding.Rgba8, CancellationToken.None)
+                    ?? throw new InvalidOperationException("HIF serial full=null");
+                var compared = await Task.Run(() => CompareFullDecodes(full, serial, full.ColorSpace));
+                Check("HIF 有界并行与串行Full全像素一致", compared.Geometry && compared.Orientation
+                    && compared.Color && compared.Mismatched == 0,
+                    compared.Detail ?? $"{full.Height} 行 × {full.Width * 4} 字节，色彩/几何/方向一致");
+            }
+            finally
+            {
+                PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism = parallelism;
+            }
         });
         await RunStepAsync("主图顶点缓冲复用", CheckVertexBufferReuseAsync);
     }
@@ -101,12 +119,32 @@ internal static partial class AndroidNativeChecks
         bool ticking = true;
         long previous = Stopwatch.GetTimestamp();
         double maxGap = 0;
+        long maxGapStart = 0, maxGapEnd = 0;
+        string maxGapExtra = "-";
+        int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+        long cpuNanos = global::Android.OS.Debug.ThreadCpuTimeNanos();
         Action tick = null!;
         tick = () =>
         {
             if (!ticking) return;
             long now = Stopwatch.GetTimestamp();
-            maxGap = Math.Max(maxGap, Stopwatch.GetElapsedTime(previous, now).TotalMilliseconds);
+            int nextGc0 = GC.CollectionCount(0), nextGc1 = GC.CollectionCount(1), nextGc2 = GC.CollectionCount(2);
+            long nextCpu = global::Android.OS.Debug.ThreadCpuTimeNanos();
+            double gap = Stopwatch.GetElapsedTime(previous, now).TotalMilliseconds;
+            if (gap > maxGap)
+            {
+                maxGap = gap;
+                maxGapStart = previous;
+                maxGapEnd = now;
+                // GC 增量与 UI 线程 CPU 都是跨整个间隙的累计，不对应某个分段内部的耗时。
+                double cpuMs = cpuNanos >= 0 && nextCpu >= cpuNanos ? (nextCpu - cpuNanos) / 1e6 : double.NaN;
+                maxGapExtra = $"gapGc={nextGc0 - gc0}/{nextGc1 - gc1}/{nextGc2 - gc2} gapUiCpuMs={cpuMs:F1}";
+            }
+            gc0 = nextGc0;
+            gc1 = nextGc1;
+            gc2 = nextGc2;
+            cpuNanos = nextCpu;
+            AndroidFrameStats.Span(FrameStatsKind.Heartbeat, previous, now);
             previous = now;
             handler.PostDelayed(tick, 16);
         };
@@ -114,21 +152,24 @@ internal static partial class AndroidNativeChecks
         var clock = Stopwatch.StartNew();
         try
         {
+            AndroidFrameStats.Start();
             var (consumed, _) = await DoubleTapAsync(photo.Width / 2f, photo.Height / 2f);
             await WaitAsync(() => !session.IsProxy && Math.Abs(photo.PhysicalScale - 1) < .001,
                 "真实 HIF 双击与 Full 完成", 20000);
             await Task.Delay(80);
             var upload = AndroidUploadStats.LatestForChecks;
+            string diag = AndroidFrameStats.Summary(maxGapStart, maxGapEnd);
             Check("HIF 实际加载会话双击从代理到Full", consumed && startedProxy
                 && session.Image is { Width: >= 6000, Height: >= 4000 } && photo.Viewport.TextureWidth == session.Image.Width,
                 $"startedProxy={startedProxy} proxy={session.IsProxy} physical={photo.PhysicalScale:P2}"
                 + $" image={session.Image?.Width}x{session.Image?.Height} elapsedMs={clock.Elapsed.TotalMilliseconds:F1}");
             Check("HIF 实际会话UI心跳无250ms阻塞", maxGap < 250,
-                $"maxGapMs={maxGap:F1} uploadMs={upload?.TotalMs:F1} copyMs={upload?.CopyMs:F1}");
+                $"maxGapMs={maxGap:F1} {maxGapExtra} uploadMs={upload?.TotalMs:F1} copyMs={upload?.CopyMs:F1} {diag}");
         }
         finally
         {
             ticking = false;
+            AndroidFrameStats.Stop();
             photo.FitToView();
         }
     }

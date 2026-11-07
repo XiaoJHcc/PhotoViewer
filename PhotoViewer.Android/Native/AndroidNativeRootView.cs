@@ -314,6 +314,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
     protected override void OnLayout(bool changed, int l, int t, int r, int b)
     {
         if (_layingOut || Width < 1 || Height < 1) return;
+        long statsStart = AndroidFrameStats.Mark();
         _layingOut = true;
         try
         {
@@ -428,7 +429,11 @@ internal sealed class AndroidNativeRootView : FrameLayout
             UpdateDetailHighlight();
             UpdateNavigationIndicator();
         }
-        finally { _layingOut = false; }
+        finally
+        {
+            _layingOut = false;
+            AndroidFrameStats.Span(FrameStatsKind.Layout, statsStart, AndroidFrameStats.Mark());
+        }
     }
 
     /// <summary>摆好空态提示、增强提示、状态提示与导航图；提示都落在主图分区内，不重复扣底部安全区。</summary>
@@ -538,29 +543,45 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
     private void OnPhotoViewportChanged()
     {
-        if (_photo.Width < 1 || _photo.Height < 1) return;
-        _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
-        if (_main.Settings.ShowZoomIndicator) UpdateNavigationIndicator();
-        UpdateDetailHighlight();
+        long statsStart = AndroidFrameStats.Mark();
+        try
+        {
+            if (_photo.Width < 1 || _photo.Height < 1) return;
+            _session.UpdateViewport(_photo.Width, _photo.Height, _photo.NeedsFull || _main.IsAnalysisViewVisible);
+            if (_main.Settings.ShowZoomIndicator) UpdateNavigationIndicator();
+            UpdateDetailHighlight();
+        }
+        finally
+        {
+            AndroidFrameStats.Span(FrameStatsKind.Viewport, statsStart, AndroidFrameStats.Mark());
+        }
     }
 
     private void OnSessionChanged()
     {
-        // STATE-01：代际让视图区分「缓存命中切图」与「代理↔Full 热替换」，同一实例同代际只重绘。
-        _photo.PresentImage(_session.Image, _session.Generation);
-        _analysisHost.Raise();
-        UpdateDetailHighlight();
-        UpdateHint();
-        // IMAGE-07：药丸只在增强计算持续超过共享门槛时显示。
-        _enhanceBusy.Visibility = _session.IsEnhancingVisible ? ViewStates.Visible : ViewStates.Gone;
-        // IMAGE-03：屏上已有代理时的 Full 失败只走提示条，不覆盖主图错误标题。
-        if (_session.FullError != _lastFullError)
+        long statsStart = AndroidFrameStats.Mark();
+        try
         {
-            _lastFullError = _session.FullError;
-            if (!string.IsNullOrEmpty(_lastFullError))
-                ShowStatus(_lastFullError, DesignTokens.MotionStatusToastDuration);
+            // STATE-01：代际让视图区分「缓存命中切图」与「代理↔Full 热替换」，同一实例同代际只重绘。
+            _photo.PresentImage(_session.Image, _session.Generation);
+            _analysisHost.Raise();
+            UpdateDetailHighlight();
+            UpdateHint();
+            // IMAGE-07：药丸只在增强计算持续超过共享门槛时显示。
+            _enhanceBusy.Visibility = _session.IsEnhancingVisible ? ViewStates.Visible : ViewStates.Gone;
+            // IMAGE-03：屏上已有代理时的 Full 失败只走提示条，不覆盖主图错误标题。
+            if (_session.FullError != _lastFullError)
+            {
+                _lastFullError = _session.FullError;
+                if (!string.IsNullOrEmpty(_lastFullError))
+                    ShowStatus(_lastFullError, DesignTokens.MotionStatusToastDuration);
+            }
+            UpdateNavigationIndicator();
         }
-        UpdateNavigationIndicator();
+        finally
+        {
+            AndroidFrameStats.Span(FrameStatsKind.Session, statsStart, AndroidFrameStats.Mark());
+        }
     }
 
     /// <summary>SCOPE-02：共享会话的一次性提示（如内存压力自动关闭增强）走 STATE-03 提示条。</summary>

@@ -547,33 +547,51 @@ internal sealed class AndroidPhotoRenderer : IDisposable
 
     internal bool DrawFrame(PhotoViewport viewport, double density, bool present = true)
     {
-        lock (_sync)
+        long totalStart = AndroidFrameStats.Mark();
+        try
         {
-            if (_disposed || _display == null || _surface == null || _context == null) return false;
-            if (_width < 1 || _height < 1) return false;
-            if (!EGL14.EglMakeCurrent(_display, _surface, _surface, _context)) return false;
-            GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
-            GLES20.GlViewport(0, 0, _width, _height);
-            GLES20.GlDisable(GLES20.GlBlend);
-            GLES20.GlDisable(GLES20.GlDepthTest);
-            GLES20.GlClearColor(0f, 0f, 0f, 1f);
-            GLES20.GlClear(GLES20.GlColorBufferBit);
-            if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
+            lock (_sync)
             {
-                GLES20.GlUseProgram(_program);
-                if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
-                GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
-                double scale = Math.Max(1e-9, viewport.Scale) * density;
-                double drawWidth = viewport.ImageWidth * scale;
-                double drawHeight = viewport.ImageHeight * scale;
-                double centerX = _width / 2.0 + viewport.PanX * density;
-                double centerY = _height / 2.0 + viewport.PanY * density;
-                double left = centerX - drawWidth / 2;
-                double top = centerY - drawHeight / 2;
-                DrawQuad(viewport.Orientation, (float)(left / _width * 2 - 1), (float)(1 - top / _height * 2),
-                    (float)(drawWidth / _width * 2), (float)(drawHeight / _height * 2));
+                long mark = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.LockWait, totalStart, mark);
+                if (_disposed || _display == null || _surface == null || _context == null) return false;
+                if (_width < 1 || _height < 1) return false;
+                long makeCurrentStart = AndroidFrameStats.Mark();
+                bool madeCurrent = EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+                long commandsStart = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.MakeCurrent, makeCurrentStart, commandsStart);
+                if (!madeCurrent) return false;
+                GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
+                GLES20.GlViewport(0, 0, _width, _height);
+                GLES20.GlDisable(GLES20.GlBlend);
+                GLES20.GlDisable(GLES20.GlDepthTest);
+                GLES20.GlClearColor(0f, 0f, 0f, 1f);
+                GLES20.GlClear(GLES20.GlColorBufferBit);
+                if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
+                {
+                    GLES20.GlUseProgram(_program);
+                    if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
+                    GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
+                    double scale = Math.Max(1e-9, viewport.Scale) * density;
+                    double drawWidth = viewport.ImageWidth * scale;
+                    double drawHeight = viewport.ImageHeight * scale;
+                    double centerX = _width / 2.0 + viewport.PanX * density;
+                    double centerY = _height / 2.0 + viewport.PanY * density;
+                    double left = centerX - drawWidth / 2;
+                    double top = centerY - drawHeight / 2;
+                    DrawQuad(viewport.Orientation, (float)(left / _width * 2 - 1), (float)(1 - top / _height * 2),
+                        (float)(drawWidth / _width * 2), (float)(drawHeight / _height * 2));
+                }
+                long swapStart = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.Commands, commandsStart, swapStart);
+                bool swapped = present && EGL14.EglSwapBuffers(_display, _surface);
+                AndroidFrameStats.Span(FrameStatsKind.Swap, swapStart, AndroidFrameStats.Mark());
+                return swapped;
             }
-            return present && EGL14.EglSwapBuffers(_display, _surface);
+        }
+        finally
+        {
+            AndroidFrameStats.Span(FrameStatsKind.Total, totalStart, AndroidFrameStats.Mark());
         }
     }
 

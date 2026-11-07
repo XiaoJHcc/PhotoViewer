@@ -347,10 +347,8 @@ public static class AndroidNativeShell
     /// 配置共享 HEIF 快速解码器：原生库取 APK 的 <c>libpvhevc.so</c>，并发与空闲上下文按移动端收敛。
     /// </summary>
     /// <remarks>
-    /// 空闲上下文按最近一帧的 YUV 平面占内存，手机上只留两个；同时在转换的图像数默认 2，
-    /// 预算不足 3 GB 的设备降到 1，避免两幅全画幅的 YUV 平面同时驻留。
-    /// 原生库缺失时加载器返回 <see cref="IntPtr.Zero"/>，解码器退回默认探测并按不可用处理，
-    /// HEIF 继续走系统 <c>BitmapFactory</c> 与 libheif。
+    /// 空闲上下文只留两个；同时解码图像数按内存与核数收窄，全部 YUV 转换共用扣除一核后的 CPU 预算。
+    /// 原生库缺失时加载器返回 <see cref="IntPtr.Zero"/>，解码器按不可用处理，HEIF 回落共享 libheif。
     /// </remarks>
     private static void ConfigureHeifFastDecoder()
     {
@@ -365,8 +363,12 @@ public static class AndroidNativeShell
         }
 
         long budget = new AndroidMemoryBudgetProvider().GetBudgetBytes();
-        int maxImages = budget < 3L * 1024 * 1024 * 1024 ? 1 : 2;
-        int contexts = System.Environment.ProcessorCount;
+        int contexts = Math.Max(1, System.Environment.ProcessorCount);
+        int maxImages = Math.Min(budget < 3L * 1024 * 1024 * 1024 ? 1 : 2, Math.Max(1, contexts - 1));
+        int conversionThreads = Math.Max(1, contexts - 1);
+        YuvImageConverter.MaxDegreeOfParallelism = conversionThreads;
+        YuvImageConverter.ConversionTaskScheduler = new ConcurrentExclusiveSchedulerPair(
+            TaskScheduler.Default, conversionThreads).ConcurrentScheduler;
         FastHeifDecoder.Configure(new FastHeifOptions
         {
             LoadLibrary = () => handle,
@@ -376,7 +378,7 @@ public static class AndroidNativeShell
             MaxIdleContexts = 2,
         });
         Console.WriteLine($"[Native] HEIF 快速解码 pvhevc={(handle != IntPtr.Zero ? "ok" : "不可用")}"
-            + $" contexts={contexts}+2 images={maxImages} budget={budget >> 20}MB");
+            + $" contexts={contexts}+2 images={maxImages} yuvThreads={YuvImageConverter.MaxDegreeOfParallelism} budget={budget >> 20}MB");
     }
 
     /// <summary>

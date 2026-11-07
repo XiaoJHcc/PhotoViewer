@@ -8,6 +8,8 @@
 
 `SkiaImageCodec.DecodeToWidth/DecodeToLongEdge` 从 codec 原始尺寸填充 `SourceWidth/SourceHeight`，`ScaleToLongEdge` 继续保留这两项；无 EXIF 尺寸的照片也不能把代理尺寸当成 Full 几何。像素缩放算法和模型输入字节口径不变。
 
+`YuvImageConverter.MaxDegreeOfParallelism` 是每幅转换的 CPU 并发上限，默认 0 交给线程池；可选 `ConversionTaskScheduler` 由平台启动时注入，默认 null 保持原调度。Android 以扣除一核后的预算创建进程级有界并发调度器，所有 YUV 转换共用执行槽，单图不被静态均分拖慢；单线程 Full 分支也须经过已注入的调度器。它不改变逐像素算法、分带边界或输出精度。
+
 `DecodedImage` 保留 Bgra32/Rgb24，另有 RgbaF16 与 **Rgba8**（8 位展示编码，RGBA 字节序，色彩空间由 `ImageColorSpace` 声明）；`PresentationFidelity` 给出展示编码保真度序（F16 可覆盖 8 位请求，反之不可）。色彩标签（Core/Color）、源尺寸、待应用方向与可选 ICC 均显式携带。缓存大小按 `ByteCount` 实际池化分配记账；原生启动期注入后 Thumb 仍是 sRGB8，小图缺少内嵌来源时允许原生子采样，不回退原图全解码。PhotoLoadSession 保持同代际代理覆盖单调增长，不让慢的小代理覆盖大代理/Full；放大态切图直接请求 Full。代理在途原请求取消而新调用仍有效时重发代理，取消不当作解码错误回退 Full；当前代际被外部取消时复位状态并给出可见错误，不再静默黑屏。并发入库用原子更新保留更大代理与缓存租约。
 
 | 文件 | 模块 | 职责 |

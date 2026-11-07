@@ -20,5 +20,9 @@ public sealed class AndroidApp : Application
     public AndroidApp(IntPtr javaReference, JniHandleOwnership transfer)
         : base(javaReference, transfer)
     {
+        AppDomain.CurrentDomain.UnhandledException += (_, args) =>
+            global::Android.Util.Log.Error("PhotoViewerCrash", $"Unhandled terminating={args.IsTerminating}: {args.ExceptionObject}");
+        AndroidEnvironment.UnhandledExceptionRaiser += (_, args) =>
+            global::Android.Util.Log.Error("PhotoViewerCrash", $"Android unhandled: {args.Exception}");
     }
 }
