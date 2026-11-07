@@ -47,7 +47,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
     private readonly AndroidAnalysisHost _analysisHost;
     private readonly AnalysisPresenter _analysisPresenter;
     private readonly AndroidAnalysisPanel _analysisPane;
+#if PHOTOVIEWER_DINO
     private readonly AndroidSimilarityPanel _similarityPane;
+#endif
     private readonly AndroidRatingSourcesPopup _ratingSourcesPopup;
     private readonly DetailFrameView _detailHighlight;
     private LayoutRect _detailRect;
@@ -95,8 +97,10 @@ internal sealed class AndroidNativeRootView : FrameLayout
     internal AndroidInsets SafeInsets => _insets;
     /// <summary>分析栏（验收读取瓦片/可见性）。</summary>
     internal AndroidAnalysisPanel AnalysisPane => _analysisPane;
+#if PHOTOVIEWER_DINO
     /// <summary>相似聚类面板（验收读取可见性/列表）。</summary>
     internal AndroidSimilarityPanel SimilarityPane => _similarityPane;
+#endif
     /// <summary>星级来源浮窗（验收读取方向/锚点/条目）。</summary>
     internal AndroidRatingSourcesPopup RatingSourcesPopup => _ratingSourcesPopup;
     /// <summary>活动细节绿框视图。</summary>
@@ -182,10 +186,12 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _analysisPane.DetailFocusRequested += (u, v) => _photo.FocusOnPoint(u, v, 1);
         _analysisPane.Visibility = ViewStates.Gone;
         AddView(_analysisPane);
+#if PHOTOVIEWER_DINO
         _similarityPane = new AndroidSimilarityPanel(activity, main);
         _similarityPane.ShowRatingSources = (_, card) => OpenRatingSourcesForCard(card);
         _similarityPane.Visibility = ViewStates.Gone;
         AddView(_similarityPane);
+#endif
         _detailHighlight = new DetailFrameView(activity);
         _detailHighlight.Visibility = ViewStates.Gone;
         _detailHighlight.Clickable = false;
@@ -263,7 +269,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _main.FileVM.ThumbnailList.ScrollToCurrentRequested += OnScrollToCurrentRequested;
         _main.FileVM.FilterBar.PropertyChanged += OnFilterChanged;
         _main.FolderVM.AllFilesChanged += OnAllFilesChanged;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
+#endif
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
         _observedFile = _main.CurrentFile;
@@ -324,12 +332,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
             bool row = _main.IsRowLayout;
             // FileContent 已从安全区顶部起排；筛选条内部只再加普通外边距，避免列布局把 safe.Top 计两次。
             double leadingInset = MainScreenLayout.FilterMargin;
-            double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset);
+            double filterMain = MainScreenLayout.FilterBarMainLength(row, leadingInset, AndroidFilterBar.ShowsSimilarityToggle);
             bool filmVisible = _main.IsThumbnailViewVisible;
             bool controlVisible = _main.IsControlViewVisible;
             double availableMain = row
                 ? Math.Max(1, widthDp - _insets.Left - _insets.Right)
                 : Math.Max(1, heightDp - _insets.Top - _insets.Bottom);
+#if PHOTOVIEWER_DINO
             bool similarityOpen = filmVisible && _main.FileVM.FilterBar.IsSimilarityPanelOpen;
             if (similarityOpen) _similarityPane.SetLayout(row);
             var similarityPanel = _main.FileVM.SimilarityPanel;
@@ -343,6 +352,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
                         similarityPanel.SimilarItems.Count, availableMain, similarityDock)
                     : _similarityPane.CrossSize + SimilarityPanelGeometry.Margin)
                 : 0;
+#else
+            const double similarityColumn = 0;
+#endif
             double fileMain = filmVisible
                 ? MainScreenLayout.FileBarMainLength(row, filterMain, row ? 0 : _insets.Left + similarityColumn)
                 : 0;
@@ -377,7 +389,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
 
             _filterScrollHost.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
             _filmstrip.Visibility = filmVisible ? ViewStates.Visible : ViewStates.Gone;
+#if PHOTOVIEWER_DINO
             _similarityPane.Visibility = similarityOpen ? ViewStates.Visible : ViewStates.Gone;
+#endif
             if (filmVisible)
             {
                 var content = _panes.FileContent;
@@ -399,6 +413,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                 bool axisChanged = _filmstrip.IsHorizontal != row;
                 _filmstrip.SetAxis(row);
                 if (axisChanged) _filmstrip.ScrollToCurrent();
+#if PHOTOVIEWER_DINO
                 if (similarityOpen)
                 {
                     var similarityRect = row
@@ -408,6 +423,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
                             _similarityPane.CrossSize, Math.Max(1, content.Height - filterMain));
                     LayoutChild(_similarityPane, similarityRect, density);
                 }
+#endif
             }
 
             _controlScrollHost.Visibility = controlVisible ? ViewStates.Visible : ViewStates.Gone;
@@ -996,7 +1012,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         }
         if ((impact & SettingsChangeImpact.Analysis) != 0) _analysisHost.Raise();
         if ((impact & SettingsChangeImpact.Navigator) != 0) UpdateNavigationIndicator();
+#if PHOTOVIEWER_DINO
         if ((impact & SettingsChangeImpact.Similarity) != 0) _similarityPane.Refresh();
+#endif
         if ((impact & SettingsChangeImpact.FileProjection) != 0)
         {
             _filterBar.Refresh();
@@ -1015,7 +1033,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
         {
             // RATING-04：入口几何/显隐变化由卡片自身重绘，不据此收起来源浮窗。
             _filmstrip.RefreshCardStates();
+#if PHOTOVIEWER_DINO
             _similarityPane.RefreshCardStates();
+#endif
         }
         if ((impact & (SettingsChangeImpact.Layout | SettingsChangeImpact.FileProjection
             | SettingsChangeImpact.Analysis | SettingsChangeImpact.Similarity)) != 0)
@@ -1097,10 +1117,13 @@ internal sealed class AndroidNativeRootView : FrameLayout
         _controlBar.Invalidate();
         // 后台星级/来源补齐只改字段、不逐项发通知：卡片按当前模型重绘，冲突三角才会即时出现。
         _filmstrip.RefreshCardStates();
+#if PHOTOVIEWER_DINO
         _similarityPane.RefreshCardStates();
+#endif
         UpdateHint();
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>相似项集合/动作区变化后重排主屏（面板宽度随卡片数变化）。</summary>
     private void OnSimilarityPanelChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -1117,6 +1140,7 @@ internal sealed class AndroidNativeRootView : FrameLayout
             RequestLayout();
         }
     }
+#endif
 
     private void OnScrollToCurrentRequested() => _filmstrip.ScrollToCurrent();
 
@@ -1313,7 +1337,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _main.FileVM.ThumbnailList.ScrollToCurrentRequested -= OnScrollToCurrentRequested;
             _main.FileVM.FilterBar.PropertyChanged -= OnFilterChanged;
             _main.FolderVM.AllFilesChanged -= OnAllFilesChanged;
+#if PHOTOVIEWER_DINO
             _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
+#endif
             _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
             _main.OpenFailed -= OnOpenFailed;
             if (_observedFile != null) _observedFile.PropertyChanged -= OnCurrentFileChanged;
@@ -1321,7 +1347,9 @@ internal sealed class AndroidNativeRootView : FrameLayout
             _filmstrip.SourcesRequested -= OnCardSourcesRequested;
             _filterBar.DropdownOpening -= CloseRatingSources;
             _filterScrollHost.ScrollChanged -= OnFilterScrollChanged;
+#if PHOTOVIEWER_DINO
             _similarityPane.ShowRatingSources = null;
+#endif
             _ratingSourcesPopup.Dispose();
             _analysisPane.TileCountChanged -= RequestLayout;
             _analysisPane.DetailChanged -= UpdateDetailHighlight;

@@ -417,7 +417,13 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
             CategoryRow("预览", "缩放指示器与缩放比例预设", "preview"),
             CategoryRow("控制", "布局模式与控制栏显示", "control"),
             CategoryRow("EXIF", "EXIF 显示项与评分写回策略", "exif"),
-            CategoryRow("AI", "相似聚类阈值与即时计算", "ai"),
+            CategoryRow("AI",
+#if PHOTOVIEWER_DINO
+                "相似聚类阈值与即时计算",
+#else
+                "即时分析计算",
+#endif
+                "ai"),
         }));
     }
 
@@ -709,9 +715,10 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                 () => Settings.SafeSetRating, value => Settings.SafeSetRating = value)));
     }
 
-    /// <summary>AI 页：相似聚类阈值/数量与即时计算。</summary>
+    /// <summary>AI 页：按版本提供相似聚类参数及相互独立的 DINO/CV 即时计算开关。</summary>
     private void BuildAiPage()
     {
+#if PHOTOVIEWER_DINO
         Add(_content, Section("相似聚类",
             StepperRow("相似度阈值", null, () => (int)Math.Round(Settings.SimilarityThreshold * 100),
                 value => Settings.SimilarityThreshold = value / 100.0,
@@ -721,9 +728,17 @@ internal sealed class AndroidSettingsSheetView : FrameLayout
                 value => Settings.SimilarityMaxResults = value,
                 SettingsViewModel.SimilarityMaxResultsMin, () => SettingsViewModel.SimilarityMaxResultsMax,
                 1, value => $"{value} 张")));
-        Add(_content, Section("分析诊断",
-            SwitchRow("即时计算 DINO/CV", null, () => Settings.AnalysisImmediateCompute,
-                value => Settings.AnalysisImmediateCompute = value)));
+#endif
+        var analysisRows = new List<View>
+        {
+#if PHOTOVIEWER_DINO
+            SwitchRow("即时计算 DINO", null, () => Settings.AnalysisImmediateCompute,
+                value => Settings.AnalysisImmediateCompute = value),
+#endif
+            SwitchRow("即时计算 CV", null, () => Settings.AnalysisImmediateCvCompute,
+                value => Settings.AnalysisImmediateCvCompute = value),
+        };
+        Add(_content, Section("分析诊断", analysisRows.ToArray()));
     }
 
     /// <summary>布局模式选择对话框。</summary>

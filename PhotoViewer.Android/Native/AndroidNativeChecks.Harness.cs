@@ -5,11 +5,13 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using Android.App;
+using Android.Content;
 using Android.Graphics;
 using Android.OS;
 using Android.Views;
 using PhotoViewer.Android.Core;
 using PhotoViewer.Core.Image;
+using PhotoViewer.ViewModels.Main;
 using IOPath = System.IO.Path;
 
 namespace PhotoViewer.Android.Native;
@@ -58,6 +60,9 @@ internal static partial class AndroidNativeChecks
                 case "background":
                     await RunBackgroundPrefetchChecksAsync();
                     break;
+                case "edition":
+                    await RunEditionChecksAsync();
+                    break;
             }
         }
         catch (Exception exception)
@@ -68,6 +73,26 @@ internal static partial class AndroidNativeChecks
         {
             WriteReport();
         }
+    }
+
+    /// <summary>
+    /// <c>--es pv-check roundtrip</c>（验收）：AI → 标准 → AI 的跨进程 / 覆盖安装往返。
+    /// 三阶段要求隔离设置档与独立数据库在 <see cref="MainViewModel"/> 建立前生效，因此由 Shell 直接分发，
+    /// 不走 <see cref="RunStandaloneAsync"/> 的 inline 主流程（那条路径要先有首图并会写入主屏几何结果）。
+    /// </summary>
+    /// <param name="activity">宿主 Activity。</param>
+    /// <param name="main">共享主 VM。</param>
+    /// <param name="session">展示会话。</param>
+    /// <param name="root">主屏根视图。</param>
+    /// <param name="intent">启动 Intent（读取 <c>pv-check</c> / <c>pv-roundtrip</c>）。</param>
+    /// <returns>接管了 roundtrip 返回 true；调用方不再走普通 pv-check 分发。</returns>
+    internal static bool TryStartRoundtrip(Activity activity, MainViewModel main, PhotoLoadSession session,
+        AndroidNativeRootView root, Intent? intent)
+    {
+        if (!string.Equals(intent?.GetStringExtra("pv-check"), "roundtrip", StringComparison.OrdinalIgnoreCase))
+            return false;
+        StartRoundtrip(activity, main, session, root, intent?.GetStringExtra("pv-roundtrip"));
+        return true;
     }
 
     /// <summary>等待条件成立；超时抛异常，由该步的 try/catch 记 FAIL 并继续。</summary>
@@ -105,6 +130,26 @@ internal static partial class AndroidNativeChecks
     /// <summary>等待主屏完成首次布局（独立模式不依赖 <c>pv-open</c> 的夹具）。</summary>
     private static Task WaitForScreenAsync()
         => WaitAsync(() => _root != null && _root.Width > 0 && _root.Height > 0, "主屏布局");
+
+    /// <summary>发行版诊断 presenter 是否在计算（AI 版 DINO，标准版 CV）。</summary>
+    /// <param name="main">共享主 VM。</param>
+    /// <returns>是否在计算。</returns>
+    private static bool DiagnosticBusy(MainViewModel main)
+#if PHOTOVIEWER_DINO
+        => main.Tools.DinoPresenter.IsBusy;
+#else
+        => main.Tools.CvPresenter.IsBusy;
+#endif
+
+    /// <summary>发行版诊断 presenter 的状态文本（AI 版 DINO，标准版 CV）。</summary>
+    /// <param name="main">共享主 VM。</param>
+    /// <returns>状态文本。</returns>
+    private static string DiagnosticStatus(MainViewModel main)
+#if PHOTOVIEWER_DINO
+        => main.Tools.DinoPresenter.Status;
+#else
+        => main.Tools.CvPresenter.Status;
+#endif
 
     // ── 上传统计 ──────────────────────────────────────────────────────────────
 

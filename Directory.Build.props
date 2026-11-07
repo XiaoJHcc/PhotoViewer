@@ -22,15 +22,22 @@
     <Copyright>Copyright © 2024-2026 xiaojh.cc</Copyright>
   </PropertyGroup>
 
-  <!-- 必须早于 Microsoft.Common.props 设置默认 obj，防止两版复用还原资产。 -->
+  <!--
+    必须早于 Microsoft.Common.props 设置默认 obj，防止两版复用还原资产。
+    Android 不设默认版本：裸构建/restore 缺 PhotoViewerEnableDino 必须直接报错（见头工程 csproj），
+    不能悄悄落到标准版输出目录；共享 PhotoViewer 由头工程的 ProjectReference 透传该开关。
+  -->
   <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS'">
     <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEnableDino)' != ''">true</PhotoViewerEditionExplicit>
     <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">false</PhotoViewerEnableDino>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Android'">
+    <PhotoViewerEditionExplicit Condition="'$(PhotoViewerEnableDino)' != ''">true</PhotoViewerEditionExplicit>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer'">
     <DefaultItemExcludes>$(DefaultItemExcludes);bin/**;obj/**</DefaultItemExcludes>
   </PropertyGroup>
-  <PropertyGroup Condition="'$(PhotoViewerEnableDino)' != '' And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
+  <PropertyGroup Condition="'$(PhotoViewerEnableDino)' != '' And ('$(MSBuildProjectName)' == 'PhotoViewer.Mac' Or '$(MSBuildProjectName)' == 'PhotoViewer.iOS' Or '$(MSBuildProjectName)' == 'PhotoViewer.Android' Or '$(MSBuildProjectName)' == 'PhotoViewer')">
     <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' == 'true'">ai</PhotoViewerEdition>
     <PhotoViewerEdition Condition="'$(PhotoViewerEnableDino)' != 'true'">standard</PhotoViewerEdition>
     <BaseOutputPath Condition="'$(BaseOutputPath)' == ''">bin/$(PhotoViewerEdition)/</BaseOutputPath>

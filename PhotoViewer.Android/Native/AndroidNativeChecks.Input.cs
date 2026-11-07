@@ -569,13 +569,19 @@ internal static partial class AndroidNativeChecks
         var main = _main!;
         var center = PhotoCenter();
         bool previousVisible = main.IsAnalysisViewVisible;
+#if PHOTOVIEWER_DINO
         bool previousImmediate = main.Settings.AnalysisImmediateCompute;
+#endif
+        bool previousCv = main.Settings.AnalysisImmediateCvCompute;
         using var probe = new GestureProbe(root.Photo, root.AnalysisHostForChecks);
         try
         {
             await EnsureGesturePhotoAsync();
             // 即时推理默认关：拖动期间不让 DINO/CV 改写分析栏内容，把结论收在触摸语义上。
+#if PHOTOVIEWER_DINO
             main.Settings.AnalysisImmediateCompute = false;
+#endif
+            main.Settings.AnalysisImmediateCvCompute = false;
             await Task.Delay(300);
             foreach (bool visible in new[] { false, true })
             {
@@ -597,7 +603,10 @@ internal static partial class AndroidNativeChecks
             CancelActiveTouch(center.X, center.Y);
             root.DismissPhotoMenu();
             main.IsAnalysisViewVisible = previousVisible;
+#if PHOTOVIEWER_DINO
             main.Settings.AnalysisImmediateCompute = previousImmediate;
+#endif
+            main.Settings.AnalysisImmediateCvCompute = previousCv;
         }
     }
 

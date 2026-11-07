@@ -46,12 +46,14 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 
 ### Android
 
-设备需通过 ADB 连接，也可先启动 Android 模拟器。
+设备需通过 ADB 连接，也可先启动 arm64 模拟器。
 
 | Task | 用途 |
 |---|---|
-| **Debug Android** | 构建、安装、启动，并打开 Logcat。 |
-| **Install Android** | 仅安装已有构建。 |
+| **Debug Android (Standard / AI)** | 构建、安装、启动对应版本，并打开 Logcat。 |
+| **Install Android (Standard / AI)** | 仅安装已有对应版本构建。 |
+
+两个版本各自使用 `PhotoViewer.Android/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离；命令行构建、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或传入非法值时报错。两版保持同一 ApplicationId `cc.xiaojh.PhotoViewer`，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`，只构建 `android-arm64`。
 
 原生验收夹具先推到 `/data/local/tmp`，再用 `run-as cc.xiaojh.PhotoViewer` 复制到应用的 `files/pv-fixtures`。启动示例：
 
@@ -59,7 +61,7 @@ dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
 adb shell am start -n cc.xiaojh.PhotoViewer/.AndroidBootstrapActivity --es pv-open @files/pv-fixtures --es pv-check main
 ```
 
-`pv-check` 支持 `main|analysis|similarity|settings|tools` 基线模式，以及 `faults|layout|input|storage|filter|zoom|color` 独立模式；`filter` 覆盖下拉跨探测周期、重复布局与窄屏滚动，`zoom` 覆盖 26MP 代理→Full 上传、GPU 分块边界与实际 HIF 放大性能（需照片副本放在应用内部或外部 `pv-check-zoom/`）。`color` 需 P3 真机：把 `Fixtures/jpeg/color-*.jpg`、`Fixtures/heif/color-*.heic` 与 `Fixtures/jpeg-large/color-p3-large.jpg` 复制到应用的 `files/pv-color-fixtures/`，再以 `--es pv-check color` 冷启动；检查使用隔离设置，覆盖实际 EGL 编码、主图回读、位图原始 P3 存储、导航图、代理/Full 与增强。默认按设备能力尝试 P3；`--ez pv-srgb true` 或 `--ez pv-p3 false` 可强制 sRGB 对照。报告通过 `adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-<mode>.txt` 读取。具体素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
+`pv-check` 支持 `main|analysis|similarity|settings|tools` 基线模式，以及 `edition|roundtrip|faults|layout|input|storage|filter|zoom|color` 独立模式；`similarity` 仅属于 AI 版，`edition` 核对当前实际构建的编译能力、筛选/分析/诊断入口和独立即时计算设置。`roundtrip` 另需 `--es pv-roundtrip prepare|standard|ai`，依次完成 AI → 标准 → AI 的设置、展开态与特征库往返，使用隔离设置档和数据库。`filter` 覆盖下拉跨探测周期、重复布局与窄屏滚动，`zoom` 覆盖 26MP 代理→Full 上传、GPU 分块边界与实际 HIF 放大性能（需照片副本放在应用内部或外部 `pv-check-zoom/`）。`color` 需 P3 真机：把 `Fixtures/jpeg/color-*.jpg`、`Fixtures/heif/color-*.heic` 与 `Fixtures/jpeg-large/color-p3-large.jpg` 复制到应用的 `files/pv-color-fixtures/`，再以 `--es pv-check color` 冷启动；检查使用隔离设置，覆盖实际 EGL 编码、主图回读、位图原始 P3 存储、导航图、代理/Full 与增强。默认按设备能力尝试 P3；`--ez pv-srgb true` 或 `--ez pv-p3 false` 可强制 sRGB 对照。报告按版本分开保存，具体文件名、素材与参数见 [Android 模块手册](PhotoViewer.Android/AGENTS.md)。
 
 ### macOS
 
@@ -163,7 +165,8 @@ python3 Tools/check-mac-package.py --self-test    # 正反判定自检
 | Task | 产物与说明 |
 |---|---|
 | **Publish Windows EXE (Release)** | 自包含 `release/packages/PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
-| **Publish Android APK (Release)** | 构建并签名 APK，归档 `release/packages/PhotoViewer-<版本>-android-signed.apk`。 |
+| **Publish Android APK (Release, Standard + AI / Standard / AI)** | 构建、签名并扫描仅 arm64 的 APK，归档 `release/packages/PhotoViewer-<版本>-android-arm64.apk` 与 `PhotoViewer-AI-<版本>-android-arm64.apk`。命令行可用 `bash PhotoViewer.Android/publish-android-apk.sh --edition standard|ai|both`。 |
+| **Publish Android APK (Local Check)** | 构建两版并扫描实际 APK，产物留在 `artifacts/scratch/android-local-publish/`，不写正式归档；机器可读报告在 `artifacts/acceptance/android-editions/`。 |
 | **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，核对 `.app` 身份与内容后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `release/packages/PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
 | **Publish Mac DMG (Local Adhoc Check)** | 只在本机验证：adhoc 构建、包扫描与 DMG 装载核对，产物留在 `artifacts/scratch/mac-local-dmg/`，不签名 Developer ID、不公证、不归档。 |
 | **Publish iOS IPA (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，扫描实际 `.app` 后归档 `release/packages/PhotoViewer-<版本>-ios.ipa` 与 `PhotoViewer-AI-<版本>-ios.ipa`，稳定安装源分版本覆盖 `release/ios-stable/<standard\|ai>/PhotoViewer.iOS.app`。仅需单变体时运行 `bash PhotoViewer.iOS/publish.sh --edition standard` 或 `--edition ai`。 |
@@ -274,4 +277,4 @@ python Training/onnx/verify_onnx_parity.py \
     --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
 ```
 
-模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。Mac 标准版不打包模型或推理运行时，AI 版打包同一模型并附 `Assets/Models/DINOv3-LICENSE.md`，发布扫描会核对模型字节数与 SHA-256。
+模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。Mac、iOS、Android 标准版不打包模型或推理运行时，AI 版打包同一模型并附 `Assets/Models/DINOv3-LICENSE.md`，发布扫描会核对模型字节数与 SHA-256。

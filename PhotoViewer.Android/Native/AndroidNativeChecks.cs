@@ -25,13 +25,13 @@ namespace PhotoViewer.Android.Native;
 
 /// <summary>
 /// Android 原生壳程序化自检（A6，验收专用）：<c>--es pv-check &lt;mode&gt;</c> 在首图上屏后核对主屏分区、
-/// 安全区、筛选条/卡片/控制栏几何、Fit↔100% 往返、分析栏/相似面板/设置/工具页开合，并把报告写到
-/// App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;.txt</c>，供 <c>adb exec-out run-as ... cat</c> 取回。
+/// 安全区、筛选条/卡片/控制栏几何、Fit↔100% 往返、分析栏/设置/工具页开合（相似面板仅 AI 版），并把报告写到
+/// App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;-&lt;edition&gt;.txt</c>，供 <c>adb exec-out run-as ... cat</c> 取回。
 /// 仅测试路径调用，不改变产品行为。
 /// </summary>
 /// <remarks>
-/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> / <c>color</c> 是独立模式：按精确模式名分发，素材入口见模块手册
-/// （<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
+/// <c>faults</c> / <c>layout</c> / <c>input</c> / <c>storage</c> / <c>filter</c> / <c>zoom</c> / <c>color</c> / <c>edition</c> 是独立模式：按精确模式名分发，
+/// 素材入口见模块手册（<see cref="Wants"/> 不覆盖它们），不并入 <c>all</c>。
 /// </remarks>
 internal static partial class AndroidNativeChecks
 {
@@ -126,12 +126,17 @@ internal static partial class AndroidNativeChecks
 
         var content = panes.FileContent;
         var filter = root.FilterBar;
+        // EDITION-02：标准版末项是计数，AI 版末项才是相似聚类开关；末项决定这一行的实际内容宽度。
+        var filterTail = AndroidFilterBar.ShowsSimilarityToggle ? filter.SimilarityFrame : filter.CountFrame;
         Check("筛选条在文件栏内容区内",
             (layoutRow
-                ? filter.SortFrame.X >= 0 && filter.SimilarityFrame.MaxX <= content.Width + .5
-                : filter.SortFrame.Y >= 0 && filter.SimilarityFrame.MaxY <= content.Height + .5)
-            && filter.SortFrame.Height is >= 31 and <= 33 && filter.SimilarityFrame.Height is >= 26 and <= 28,
-            $"sort={filter.SortFrame} toggle={filter.SimilarityFrame} content={content}");
+                ? filter.SortFrame.X >= 0 && filterTail.MaxX <= content.Width + .5
+                : filter.SortFrame.Y >= 0 && filterTail.MaxY <= content.Height + .5)
+            && filter.SortFrame.Height is >= 31 and <= 33
+            && (AndroidFilterBar.ShowsSimilarityToggle
+                ? filterTail.Height is >= 26 and <= 28
+                : filterTail.Height is >= 16 and <= 18),
+            $"sort={filter.SortFrame} tail={filterTail} toggle={AndroidFilterBar.ShowsSimilarityToggle} content={content}");
         Check("筛选条计数宽度有限", filter.CountWidthDp is > 8 and < 200, $"{filter.CountWidthDp:0.#}dp");
 
         var files = main.FileVM.ThumbnailList.FilteredFiles;
@@ -203,7 +208,11 @@ internal static partial class AndroidNativeChecks
         var pane = root.AnalysisPane;
         Check("分析栏可见", pane.Visibility == global::Android.Views.ViewStates.Visible && root.Panes.Analysis.Height > 0,
             $"{pane.Visibility} {root.Panes.Analysis}");
-        Check("分析栏瓦片≥6", pane.TileCount >= 6, $"{pane.TileCount}");
+        // EDITION-02：标准版 4/5 张（无 DINO PCA/Cosine），AI 版 6/7 张；5/7 是出现对焦点细节后的张数。
+        int expectedDiagnosticTiles = AndroidAppCapabilities.HasDino ? 4 : 2;
+        Check($"分析栏瓦片 {expectedDiagnosticTiles + 2}/{expectedDiagnosticTiles + 3}",
+            pane.TileCount >= expectedDiagnosticTiles + 2 && pane.TileCount <= expectedDiagnosticTiles + 3,
+            $"{pane.TileCount} expected={expectedDiagnosticTiles + 2}..{expectedDiagnosticTiles + 3}");
         Check("分析栏瓦片边长合理", pane.TileSize > 20, $"{pane.TileSize:0.#}dp");
 
         // ANALYSIS-04/ANALYSIS-11：按下立即点亮、滑动切换/清除、抬起与取消清除、悬停独立。
@@ -216,6 +225,9 @@ internal static partial class AndroidNativeChecks
             else if (tile.Kind == AnalysisTileKind.Diagnostic) diagnosticTiles.Add(tile);
         }
         Check("分析栏有对焦点与中心两瓦片", detailTiles.Count >= 2, $"{detailTiles.Count}");
+        Check($"分析栏诊断瓦片 {expectedDiagnosticTiles} 张",
+            diagnosticTiles.Count == expectedDiagnosticTiles,
+            $"{diagnosticTiles.Count} labels=[{string.Join("/", diagnosticTiles.Select(tile => tile.ShortLabel))}]");
         if (detailTiles.Count > 0)
         {
             var firstDetail = detailTiles[0];
@@ -364,6 +376,7 @@ internal static partial class AndroidNativeChecks
         if (Wants("similarity") || Wants("all"))
         {
         Phase("similarity 相似面板");
+#if PHOTOVIEWER_DINO
         // 相似面板开合。
         main.FileVM.FilterBar.IsSimilarityPanelOpen = true;
         await System.Threading.Tasks.Task.Delay(900);
@@ -371,6 +384,19 @@ internal static partial class AndroidNativeChecks
             $"{root.SimilarityPane.Visibility}");
         main.FileVM.FilterBar.IsSimilarityPanelOpen = false;
         await System.Threading.Tasks.Task.Delay(400);
+#else
+        // EDITION-02：标准版没有相似聚类入口、面板与关联任务，筛选条末项直接是计数，
+        // 行布局的需要宽度也不含 toggle 槽位。
+        bool standardTail = filter.Horizontal
+            ? filter.CountFrame.X > filter.RatingFrame.MaxX - .6
+                && Math.Abs(filter.RequiredWidthDp
+                    - (Math.Max(filter.CountFrame.MaxX, filter.RatingFrame.MaxX) + MainScreenLayout.FilterMargin)) < .6
+            : filter.CountFrame.Y > filter.RatingFrame.MaxY - .6;
+        Check("标准版筛选条末项为计数且无 toggle 空槽",
+            !AndroidFilterBar.ShowsSimilarityToggle && filter.CountFrame.Width > 0 && standardTail,
+            $"toggle={AndroidFilterBar.ShowsSimilarityToggle} count={filter.CountFrame}"
+                + $" required={filter.RequiredWidthDp:0.#} rating={filter.RatingFrame} row={filter.Horizontal}");
+#endif
         }
 
         if (Wants("settings") || Wants("all"))
@@ -627,6 +653,8 @@ internal static partial class AndroidNativeChecks
             Check("倍率测试后快捷键行数保持", settings.Hotkeys.Count == hotkeyCount,
                 $"{settings.Hotkeys.Count}/{hotkeyCount}");
             AndroidInputDevices.SetChecksOverride(null, null);
+            // EDITION-02/EDITION-06：AI 页按版本提供控件（标准版只有「即时计算 CV」）。
+            await RunSettingsEditionChecksAsync(sheet);
             sheet.ShowPageForChecks("root");
             await System.Threading.Tasks.Task.Delay(150);
             // SETTINGS-04 / SETTINGS-15：内容区手势、行高、分类箭头、勾选对齐、命令图标与脚注。
@@ -664,14 +692,14 @@ internal static partial class AndroidNativeChecks
         Check("菜单入口显示工具列表", main.Tools.CurrentTool == null && AndroidToolsPresenter.CurrentPageForChecks == "root",
             $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
 
-        // TOOLBAR-06：控制栏 EXIF 整组入口（已展示列表）直达详情，且不触发 DINO 推理。
+        // TOOLBAR-06：控制栏 EXIF 整组入口（已展示列表）直达详情，且不触发诊断计算。
         root.ControlBar.TapExifGroup();
         await System.Threading.Tasks.Task.Delay(600);
         Check("EXIF 入口直达详情", AndroidToolsPresenter.IsOpen && main.Tools.CurrentTool is ExifDetailViewModel
             && AndroidToolsPresenter.CurrentPageForChecks == "exif",
             $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
-        Check("EXIF 入口不触发 DINO", !main.Tools.DinoPresenter.IsBusy && main.Tools.DinoPresenter.Status == "未加载",
-            $"busy={main.Tools.DinoPresenter.IsBusy} status={main.Tools.DinoPresenter.Status}");
+        Check("EXIF 入口不触发诊断计算", !DiagnosticBusy(main) && DiagnosticStatus(main) == "未加载",
+            $"busy={DiagnosticBusy(main)} status={DiagnosticStatus(main)}");
 
         // SETTINGS-04：工具半屏同样只在可见区域内布局；EXIF 长页滚到末尾后最后一项必须完整可见。
         if (toolsSheet != null && toolsContainer != null && toolsSheet.ScrollHostForChecks is { } toolsScroll)
@@ -688,14 +716,20 @@ internal static partial class AndroidNativeChecks
                 toolsTail.Detail + $" state={toolsBehavior?.State} top={toolsContainer.Top}/{toolsParent?.Height - toolsPeek}");
         }
 
-        // 已展示 DINO 时仍明确切到 EXIF（TOOLBAR-06），不保留原页。
-        main.Tools.OpenDinoDebug();
-        await System.Threading.Tasks.Task.Delay(150);
+        // 已展示诊断页时仍明确切到 EXIF（TOOLBAR-06），不保留原页；诊断入口按版本走共享 DiagnosticDebug。
+        main.Tools.OpenDiagnostic();
+        await System.Threading.Tasks.Task.Delay(300);
+        Check($"{AndroidAppCapabilities.DiagnosticName}入口打开诊断页",
+            ReferenceEquals(main.Tools.CurrentTool, main.Tools.DiagnosticDebug)
+            && AndroidToolsPresenter.CurrentPageForChecks == "diagnostic",
+            $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
         root.ControlBar.TapExifGroup();
         await System.Threading.Tasks.Task.Delay(600);
-        Check("已展示 DINO 时 EXIF 入口切回详情", main.Tools.CurrentTool is ExifDetailViewModel
+        Check("已展示诊断时 EXIF 入口切回详情", main.Tools.CurrentTool is ExifDetailViewModel
             && AndroidToolsPresenter.CurrentPageForChecks == "exif",
             $"tool={main.Tools.CurrentTool?.GetType().Name ?? "null"} page={AndroidToolsPresenter.CurrentPageForChecks}");
+        Check("切到 EXIF 后取消在途诊断", !DiagnosticBusy(main) && DiagnosticStatus(main) == "未加载",
+            $"busy={DiagnosticBusy(main)} status={DiagnosticStatus(main)}");
 
         // 控制栏直达仍保留工具列表作为返回目标。
         AndroidToolsPresenter.HandleBack();
@@ -749,17 +783,19 @@ internal static partial class AndroidNativeChecks
         WriteReport();
     }
 
-    /// <summary>把本次检查的逐条结果写到 App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;.txt</c>。</summary>
+    /// <summary>把本次检查的逐条结果写到 App 内部 <c>files/PhotoViewer/android-checks-&lt;mode&gt;-&lt;edition&gt;.txt</c>。</summary>
     private static void WriteReport()
     {
         if (_root != null) _root.KeepScreenOn = false;
         var report = new StringBuilder();
-        report.AppendLine($"Android native checks mode={_mode} {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
+        report.AppendLine($"Android native checks edition={AndroidAppCapabilities.EditionName} mode={_mode} {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}");
         report.AppendLine($"PASS {_passed} / FAIL {_failed}");
         foreach (var line in Lines) report.AppendLine(line);
         var directory = IOPath.Combine(_activity!.FilesDir!.AbsolutePath, "PhotoViewer");
         Directory.CreateDirectory(directory);
-        File.WriteAllText(IOPath.Combine(directory, $"android-checks-{_mode}.txt"), report.ToString());
+        // EDITION-07：报告名带发行版，标准版与 AI 版在同一设备上互不覆盖。
+        File.WriteAllText(IOPath.Combine(directory,
+            $"android-checks-{_mode}-{AndroidAppCapabilities.EditionName}.txt"), report.ToString());
         if (_mode is "zoom" or "input")
         {
             global::Android.Util.Log.Info("PhotoViewerChecks", $"{_mode}: PASS {_passed} / FAIL {_failed}");
@@ -1226,5 +1262,5 @@ internal static partial class AndroidNativeChecks
     /// <summary>
     /// 独立模式按精确模式名匹配，不并入 <c>all</c>；素材入口见模块手册。
     /// </summary>
-    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background";
+    private static bool IsStandaloneMode => _mode is "faults" or "layout" or "input" or "storage" or "filter" or "zoom" or "color" or "perf" or "background" or "edition";
 }

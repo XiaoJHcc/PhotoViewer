@@ -20,8 +20,8 @@ namespace PhotoViewer.Android.Native;
 /// </summary>
 internal sealed class AndroidFilterBar : View
 {
-    /// <summary>相似聚类 toggle 是否参与布局（A5 面板落地前置 false，避免出现点了无反应的入口）。</summary>
-    internal static bool ShowsSimilarityToggle { get; set; } = true;
+    /// <summary>相似聚类 toggle 仅存在于 AI 版。</summary>
+    internal const bool ShowsSimilarityToggle = AndroidAppCapabilities.HasDino;
 
     private readonly MainViewModel _main;
     private readonly Paint _textPaint;
@@ -200,6 +200,7 @@ internal sealed class AndroidFilterBar : View
         string countText = _compact ? $"{filter.FilteredCount} 张" : $"共 {filter.FilteredCount} 张";
         AndroidUiTheme.DrawCentered(canvas, countText, _countPaint, countCenterX, countBaseline,
             (float)(_frames.Count.Width * density) + 4);
+#if PHOTOVIEWER_DINO
         if (ShowsSimilarityToggle)
         {
             bool open = filter.IsSimilarityPanelOpen;
@@ -216,6 +217,7 @@ internal sealed class AndroidFilterBar : View
             AndroidUiTheme.DrawCentered(canvas, "相似聚类", _togglePaint, rect.CenterX(),
                 rect.CenterY() + _togglePaint.TextSize * .36f, rect.Width() - 6 * density);
         }
+#endif
     }
 
     /// <summary>绘制一个 90×32 下拉控件。</summary>
@@ -245,6 +247,7 @@ internal sealed class AndroidFilterBar : View
             if (Contains(_frames.Sort, x, y)) ShowMenu(FilterMenu.Sort);
             else if (Contains(_frames.Order, x, y)) ShowMenu(FilterMenu.Order);
             else if (Contains(_frames.Rating, x, y)) ShowMenu(FilterMenu.Rating);
+#if PHOTOVIEWER_DINO
             else if (ShowsSimilarityToggle && Contains(_frames.Toggle, x, y))
             {
                 var filter = _main.FileVM.FilterBar;
@@ -252,6 +255,7 @@ internal sealed class AndroidFilterBar : View
                 filter.IsSimilarityPanelOpen = !filter.IsSimilarityPanelOpen;
                 Invalidate();
             }
+#endif
         }
         return true;
     }

@@ -31,8 +31,10 @@ internal sealed class AndroidAnalysisHost : IAnalysisHost
 
     /// <summary>分析栏是否可见。</summary>
     public bool AnalysisVisible { get; private set; }
-    /// <summary>即时计算开关（设置页）。</summary>
+    /// <summary>DINO 即时计算开关（设置页）。</summary>
     public bool ImmediateCompute => _main.Settings.AnalysisImmediateCompute;
+    /// <summary>CV 即时计算开关（设置页）。</summary>
+    public bool ImmediateCvCompute => _main.Settings.AnalysisImmediateCvCompute;
     /// <summary>当前照片。</summary>
     public ImageFile? CurrentFile => _main.CurrentFile;
     /// <summary>当前展示图（原片或增强图）。</summary>
@@ -60,8 +62,8 @@ internal sealed class AndroidAnalysisHost : IAnalysisHost
 
 /// <summary>
 /// Android 分析栏（A5）：按共享 <see cref="AnalysisPanelGeometry"/> 排布中心/对焦细节预览、直方图与
-/// 4 张 DINO-CV 诊断瓦片；瓦片自绘，细节裁剪走共享 <see cref="DisplayCrop"/>（代理期留空）。
-/// 诊断瓦片点按落准星并重算 cosine；细节预览在按下/真实悬停时点亮绿框，抬起或离开即清除，双击定位主图。
+/// 当前版本的诊断瓦片；瓦片自绘，细节裁剪走共享 <see cref="DisplayCrop"/>（代理期留空）。
+/// 诊断瓦片点按落准星并交给共享 presenter；细节预览在按下/真实悬停时点亮绿框，抬起或离开即清除，双击定位主图。
 /// </summary>
 internal sealed class AndroidAnalysisPanel : View
 {

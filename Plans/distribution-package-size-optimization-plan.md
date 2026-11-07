@@ -1,6 +1,6 @@
 # 分发包体积优化计划
 
-> 状态：macOS P0/P1 本地实施与验收完成；iOS 双版本分拆、本地 IPA 优化和模拟器验收完成，真机/分发渠道验收未覆盖；Windows / Android 待实施（2026-11-07）
+> 状态：macOS P0/P1 本地实施与验收完成；iOS 双版本分拆、本地 IPA 优化和模拟器验收完成，真机/分发渠道验收未覆盖；Android P1 本地实施与模拟器验收完成，真机/正式归档未覆盖；Windows 待实施（2026-11-08）
 > 关联：[发行版本设计规范](../Design/spec/editions.md) · [DINOv3 选片 Plan-1](dinov3-photo-ranking-plan-1.md) · [DINOv3 ONNX 构建说明](../DEV.md#dinov3-onnx-模型)
 > 范围：四平台模型与推理运行时分发、包体清理、发布矩阵。模型结构、预处理、特征 schema 与聚类算法不在本计划内变更。标准版入口、CV 保留范围、独立即时计算门控与版本切换兼容以发行版本设计规范为准。早期计划中关于模型打包、许可复核和在线下载的表述，以本计划的现行决策为准。
 
@@ -137,6 +137,15 @@ iOS 估算尚未计入 Symbols 随 ONNX 移除而同步缩小的收益，不作�
 - 共享核心契约：标准版 1165 PASS、AI 版 1181 PASS，均 0 FAIL、1 个既有平台用例 SKIP。双版 Debug 和开发签名 Release/IPA 构建及扫描通过。最终标准版 `.app` **122.55 MiB**、IPA **33.37 MiB**；AI 版 `.app` **253.04 MiB**、IPA **122.09 MiB**，标准版下载包较 AI 版小 **72.67%**。包内 ORT 符号分别为 0 / 10，IPA 主执行文件与构建产物哈希相同，两版 IPA 均无顶层 Symbols，dSYM 保留；这些是本地开发签名验证包，不是 TestFlight 下载体积。证据在 `artifacts/acceptance/ios-editions/`，本地 IPA 在 `artifacts/scratch/ios-local-publish/`，未写入正式发布归档。
 - 真实 AI → 标准 → AI 覆盖安装三阶段通过：使用隔离键的 `AppleSettingsStore` / `AppleViewStateStore` 与同一验收数据库，标准版保留 DINO/CV 设置及展开态但不恢复面板，修改通用设置后 AI 版恢复；CLS、patch、CV 的 SHA-256、model_id、CV spec/尺寸逐项一致。初次失败来自模拟器 cfprefsd 延迟落盘与旧报告误判，验收现等待实际偏好文件持久化并核对当前阶段 START/PASS；未修改生产存储行为。证据在 `artifacts/acceptance/ios-editions/roundtrip-live/` 与 `roundtrip/`。
 - **未覆盖边界**：iPad 真机已安装标准版，但锁屏阻止启动，未获得真机运行结论。未上传 TestFlight；分发签名归档、渠道选择和作者手验不由本地开发签名包替代。App Store 并列上架身份仍未裁定。
+
+### P1-Android：实施与本地验收
+
+- Android 构建显式传 `PhotoViewerEnableDino=false|true`，头工程与共享工程按 `standard/ai` 隔离恢复资产、中间文件和输出；缺参/非法值均拒绝。两版保持同一 ApplicationId，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`，清单由源模板生成中间目录副本。仅构建 `android-arm64`，APK 不含 x86_64/armeabi-v7a。
+- 标准版移除模型、ONNX/MathNet 托管与原生依赖、DINO/相似入口，保留四项筛选条、CV 分析和三瓦片 CV 诊断；AI 版保留完整能力、固定模型和 DINOv3 License，两版 DINO/CV 即时计算独立。标准版 Debug/Release 均显式 `AndroidUseAssemblyStore=false`，AI 版 Debug 保持 `true`：缺少 DINO 程序集的 assembly store 布局会在 ReactiveUI/后台类型初始化阶段持续等待，改走逐程序集 DSO 后双版冷启动与回归通过。
+- `publish-android-apk.sh --edition standard|ai|both [--local]`（Windows 为 `.ps1 -Edition …`）自动选择具备 android workload 的 SDK，逐版发布并调用 `Tools/check-android-package.py` 扫描实际 APK 的身份、显示名、版本、ABI、模型/License 与托管/原生推理组件，保存逐文件大小和 SHA-256；扫描器 23 项正反自检通过。本地包在 `artifacts/scratch/android-local-publish/`，机器可读证据在 `artifacts/acceptance/android-editions/`，未写正式归档。
+- arm64 模拟器的标准版 edition/main/analysis/settings/tools/faults 六套、AI 版对应六套及 similarity 共十三套通过，计数分别为 13/22/52/105/40/41 与 12/22/52/106/40/37/23，均 0 FAIL。共享核心契约：标准版 **1187 PASS**、AI 版 **1203 PASS**，均 0 FAIL、1 个既有平台用例 SKIP。双版 Debug/Release 构建、包扫描和 Release 冷启动通过。
+- 最终本地 Release 标准版 **35.40 MiB**、AI 版 **129.08 MiB**，标准版下载包较 AI 版小 **72.57%**；这些是本地签名验证包，不是应用商店下载体积。
+- 真实 AI → 标准 → AI 覆盖安装三阶段通过（prepare 18、standard 28、ai 16，共 62 项）：使用隔离设置档 `edition-roundtrip` 与同一验收数据库，标准版保留 DINO/CV 设置及展开态但不恢复面板，修改通用设置后 AI 版恢复；CLS、patch、CV 的 SHA-256、model_id、CV spec/尺寸逐项一致。首轮设置值失败为提交后 VM 回填时序，验收现等待内存与持久化值一致，未修改生产存储行为。证据在 `artifacts/acceptance/android-editions/roundtrip-*.txt`。真机、正式归档及作者手验未覆盖。
 
 ### P1：推广前的正确性与发布门
 

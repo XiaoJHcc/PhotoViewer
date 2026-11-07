@@ -2,6 +2,14 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net10.0-android</TargetFramework>
+        <!-- 双版本显示名：标准版 PhotoViewer，AI 版 PhotoViewer-AI。ApplicationId 两版一致，
+             便于同一台设备覆盖安装并共用用户数据。 -->
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' != 'true'">PhotoViewer</ApplicationTitle>
+        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
+        <!-- 只发 arm64-v8a：APK 不得出现 x86_64 / armeabi-v7a。-->
+        <RuntimeIdentifiers>android-arm64</RuntimeIdentifiers>
+        <AndroidUseAssemblyStore Condition="'$(PhotoViewerEnableDino)' != 'true'">false</AndroidUseAssemblyStore>
         <!-- ONNX Runtime AAR 要求 minSdk >= 24（Android 7.0）；A2-M1 起必须满足此门槛 -->
         <SupportedOSPlatformVersion>24</SupportedOSPlatformVersion>
         <Nullable>enable</Nullable>
@@ -21,7 +29,9 @@
          可直接安装运行，代价是包体积略大、构建稍慢。 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
         <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
-        <AndroidUseAssemblyStore>true</AndroidUseAssemblyStore>
+        <!-- AI 版保留 Assembly Store；标准版改走逐程序集 DSO，避开缺少 DINO 程序集时
+             Assembly Store 在 ReactiveUI/后台类型初始化阶段的启动等待。 -->
+        <AndroidUseAssemblyStore Condition="'$(PhotoViewerEnableDino)' == 'true'">true</AndroidUseAssemblyStore>
     </PropertyGroup>
 
     <!-- Release 配置：启用 AOT 编译加快启动速度、减少 JIT 开销 -->
@@ -41,18 +51,22 @@
     </ItemGroup>
 
     <!--
-      DINO 模型作为 AndroidAsset 打进 APK（约 +83MB）；
+      AI 版：DINOv3 模型与许可证作为 AndroidAsset 打进 APK（模型约 +83MB）；
       原生资源提供器按 avares://PhotoViewer/Assets/Models/... 的路径部分读取 Assets/Models/...
+      标准版不引用 ONNX Runtime、不打模型与许可证。
     -->
-    <ItemGroup>
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
         <AndroidAsset Include="..\PhotoViewer\Assets\Models\*.onnx" Link="Assets\Models\%(Filename)%(Extension)" />
+        <AndroidAsset Include="..\PhotoViewer\Assets\Models\DINOv3-LICENSE.md" Link="Assets\Models\DINOv3-LICENSE.md" />
+    </ItemGroup>
+
+    <ItemGroup>
         <!-- 控制栏命令图标沿用共享 uicons 字体，随 APK 打包；实心字用于评分快捷命令的星底。 -->
         <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-regular-rounded.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
         <AndroidAsset Include="..\PhotoViewer\Assets\Fonts\uicons-solid-straight.ttf" Link="Assets\Fonts\%(Filename)%(Extension)" />
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="Microsoft.ML.OnnxRuntime" />
         <!-- 原生壳：Material 3 主题/控件、胶片栏 RecyclerView、edge-to-edge insets、设置 BottomSheet -->
         <PackageReference Include="Xamarin.Google.Android.Material" />
         <PackageReference Include="Xamarin.AndroidX.RecyclerView" />
@@ -63,14 +77,29 @@
         <PackageReference Include="LibHeifSharp"/>
     </ItemGroup>
 
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
+        <PackageReference Include="Microsoft.ML.OnnxRuntime" />
+    </ItemGroup>
+
+    <!--
+      标准版不编译 AI 专属面板与检查项：源文件留在仓库，只从编译项移除。
+      Compile Remove 对不存在的文件不报错，后续新增的相似面板/检查 partial 文件按同一清单登记即可。
+    -->
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+        <Compile Remove="Native\AndroidSimilarityPanel.cs" />
+        <Compile Remove="Native\AndroidNativeChecks.Similarity.cs" />
+        <Compile Remove="Native\AndroidNativeChecks.Dino.cs" />
+    </ItemGroup>
+
     <!--
         libheif 原生库配置：
         运行 .\build-native-android.ps1 脚本自动交叉编译，需要 Android NDK + CMake + Ninja。
 
         构建策略：libde265 编译为静态库并链接进 libheif.so，只需分发 libheif.so 一个文件。
           NativeLibs/arm64-v8a/libheif.so    ← 包含 HEIF 解码 + HEVC(libde265) 解码
-          NativeLibs/armeabi-v7a/libheif.so
-          NativeLibs/x86_64/libheif.so
+          NativeLibs/arm64-v8a/libde265.so   ← 可选，已并入 libheif.so
+
+        只打包 arm64-v8a：APK 不得出现 x86_64 / armeabi-v7a 原生库。
 
         HEIF 不回退到系统 BitmapFactory：快速路径与共享 libheif 均不可用时如实报解码失败。
         此构建只含 HEVC 解码；AV1/AVIF 需要另行提供并验证对应插件，不能假定系统兜底。
@@ -100,30 +129,13 @@
             Include="NativeLibs\arm64-v8a\libpvhevc.so">
             <Abi>arm64-v8a</Abi>
         </AndroidNativeLibrary>
-        <AndroidNativeLibrary
-            Condition="Exists('NativeLibs\armeabi-v7a\libde265.so')"
-            Include="NativeLibs\armeabi-v7a\libde265.so">
-            <Abi>armeabi-v7a</Abi>
-        </AndroidNativeLibrary>
-        <AndroidNativeLibrary
-            Condition="Exists('NativeLibs\armeabi-v7a\libheif.so')"
-            Include="NativeLibs\armeabi-v7a\libheif.so">
-            <Abi>armeabi-v7a</Abi>
-        </AndroidNativeLibrary>
-        <AndroidNativeLibrary
-            Condition="Exists('NativeLibs\x86_64\libde265.so')"
-            Include="NativeLibs\x86_64\libde265.so">
-            <Abi>x86_64</Abi>
-        </AndroidNativeLibrary>
-        <AndroidNativeLibrary
-            Condition="Exists('NativeLibs\x86_64\libheif.so')"
-            Include="NativeLibs\x86_64\libheif.so">
-            <Abi>x86_64</Abi>
-        </AndroidNativeLibrary>
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
+        <!-- 共享工程按同一 edition 还原/编译：AdditionalProperties 透传开关，
+             命令行的全局属性也照此转发，两版不会复用对方的 obj 资产。 -->
+        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
+                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
     </ItemGroup>
 
     <!--
@@ -145,6 +157,7 @@
     <ItemGroup>
         <Compile Include="..\PhotoViewer.Heif\**\*.cs"/>
     </ItemGroup>
+
 <!--
   Microsoft.ML.OnnxRuntime 1.24.4 在 net10.0-android 下把 runtimes/linux-arm64/native/*.so
   误放进 FrameworkNativeLibrary。这些是 glibc 构建（依赖 libdl.so.2），会被打进
@@ -156,5 +169,50 @@
   <ItemGroup>
     <FrameworkNativeLibrary Remove="$(NuGetPackageRoot)microsoft.ml.onnxruntime/*/runtimes/linux-arm64/native/*.so" />
   </ItemGroup>
+</Target>
+
+<!--
+  主清单把 android:label 写死为 PhotoViewer，而清单合并中主清单属性优先于
+  AndroidManifestOverlay（实测 overlay 的 label 不会覆盖主清单），ApplicationTitle
+  无法可靠改写它。这里把清单复制到当前 edition 的 obj 下改写 label，再让
+  AndroidManifest 指向副本（与 Mac/iOS 同步 Info.plist 同法）；源清单保持仓库原样。
+  副本随 edition 的 obj 隔离，标准版与 AI 版不会互相复用。
+-->
+<Target Name="_SyncAndroidManifestLabel"
+        BeforeTargets="_GetAndroidPackageName"
+        Inputs="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'Properties', 'AndroidManifest.xml'));$(MSBuildProjectFullPath)"
+        Outputs="$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'AndroidManifest.label.xml'))">
+    <PropertyGroup>
+        <_PvAndroidManifestSource>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', 'Properties', 'AndroidManifest.xml'))</_PvAndroidManifestSource>
+        <_PvAndroidManifestSynced>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'AndroidManifest.label.xml'))</_PvAndroidManifestSynced>
+    </PropertyGroup>
+    <MakeDir Directories="$(IntermediateOutputPath)" />
+    <Copy SourceFiles="$(_PvAndroidManifestSource)" DestinationFiles="$(_PvAndroidManifestSynced)" />
+    <XmlPoke XmlInputPath="$(_PvAndroidManifestSynced)"
+             Query="/manifest/application/@android:label"
+             Namespaces="&lt;Namespace Prefix='android' Uri='http://schemas.android.com/apk/res/android' /&gt;"
+             Value="$(ApplicationTitle)" />
+    <Message Importance="normal" Text="[清单同步] android:label=$(ApplicationTitle) → $(_PvAndroidManifestSynced)" />
+</Target>
+
+<Target Name="_UseSyncedAndroidManifestLabel"
+        BeforeTargets="_GetAndroidPackageName;GetAndroidDependencies"
+        DependsOnTargets="_SyncAndroidManifestLabel">
+    <PropertyGroup>
+        <_PvAndroidManifestSynced>$([MSBuild]::NormalizePath('$(MSBuildProjectDirectory)', '$(IntermediateOutputPath)', 'AndroidManifest.label.xml'))</_PvAndroidManifestSynced>
+        <AndroidManifest>$([MSBuild]::MakeRelative('$(MSBuildProjectDirectory)', '$(_PvAndroidManifestSynced)'))</AndroidManifest>
+    </PropertyGroup>
+</Target>
+
+<!--
+  标准版与 AI 版共用一套 bin/obj 会互相复用还原资产与中间文件，两版的 bin/obj 已按 edition
+  隔离（见根 Directory.Build.props）。裸构建/restore 缺少开关或给了非法值必须直接失败，
+  不能悄悄落到标准版目录；restore 与构建都必须显式带 -p:PhotoViewerEnableDino=true|false。
+-->
+<Target Name="_RequireExplicitDinoEdition"
+        BeforeTargets="Restore;PrepareForBuild"
+        Condition="'$(DesignTimeBuild)' != 'true'">
+    <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or ('$(PhotoViewerEnableDino)' != 'true' And '$(PhotoViewerEnableDino)' != 'false')"
+           Text="构建 PhotoViewer.Android 必须显式指定发行版本：-p:PhotoViewerEnableDino=false（标准版）或 -p:PhotoViewerEnableDino=true（AI 版）。运行命令见 DEV.md 的 Tasks 或 PhotoViewer.Android/publish-android-apk.sh。" />
 </Target>
 </Project>

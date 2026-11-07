@@ -99,10 +99,10 @@
       "problemMatcher": []
     },
     {
-      "label": "Debug Android",
+      "label": "Debug Android (Standard)",
       "type": "shell",
       "windows": {
-        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
+        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:PhotoViewerEnableDino=false -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
         "options": {
           "shell": {
             "executable": "cmd.exe",
@@ -114,16 +114,16 @@
         }
       },
       "osx": {
-        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug && \"$ADB\" install -r PhotoViewer.Android/bin/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -p:PhotoViewerEnableDino=false && \"$ADB\" install -r PhotoViewer.Android/bin/standard/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
       },
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Install Android",
+      "label": "Debug Android (AI)",
       "type": "shell",
       "windows": {
-        "command": "adb install -r PhotoViewer.Android\\bin\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+        "command": "adb logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -t:Run -p:PhotoViewerEnableDino=true -p:AndroidSdkDirectory=%LOCALAPPDATA%\\Android\\Sdk && adb logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W",
         "options": {
           "shell": {
             "executable": "cmd.exe",
@@ -135,7 +135,49 @@
         }
       },
       "osx": {
-        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" logcat -c && dotnet build PhotoViewer.Android/PhotoViewer.Android.csproj -c Debug -p:PhotoViewerEnableDino=true && \"$ADB\" install -r PhotoViewer.Android/bin/ai/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1 && \"$ADB\" logcat -s PhotoViewer:V AndroidRuntime:E mono:W monodroid:W"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install Android (Standard)",
+      "type": "shell",
+      "windows": {
+        "command": "adb install -r PhotoViewer.Android\\bin\\standard\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/standard/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
+      },
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Install Android (AI)",
+      "type": "shell",
+      "windows": {
+        "command": "adb install -r PhotoViewer.Android\\bin\\ai\\Debug\\net10.0-android\\cc.xiaojh.PhotoViewer-Signed.apk && adb shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1",
+        "options": {
+          "shell": {
+            "executable": "cmd.exe",
+            "args": [
+              "/d",
+              "/c"
+            ]
+          }
+        }
+      },
+      "osx": {
+        "command": "ADB=$HOME/Library/Android/sdk/platform-tools/adb; \"$ADB\" kill-server && \"$ADB\" start-server && \"$ADB\" install -r PhotoViewer.Android/bin/ai/Debug/net10.0-android/cc.xiaojh.PhotoViewer-Signed.apk && \"$ADB\" shell monkey -p cc.xiaojh.PhotoViewer -c android.intent.category.LAUNCHER 1"
       },
       "group": "test",
       "problemMatcher": "$msCompile"
@@ -225,13 +267,49 @@
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Publish Android APK (Release)",
+      "label": "Publish Android APK (Release, Standard + AI)",
       "type": "shell",
       "windows": {
-        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition both -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
       },
       "osx": {
-        "command": "bash PhotoViewer.Android/publish-android-apk.sh"
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition both"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Release, Standard)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition standard -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition standard"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Release, AI)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition ai -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition ai"
+      },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Android APK (Local Check)",
+      "type": "shell",
+      "windows": {
+        "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Android/publish-android-apk.ps1 -Edition both -Local -AndroidSdkDirectory ${env:LOCALAPPDATA}\\Android\\Sdk"
+      },
+      "osx": {
+        "command": "bash PhotoViewer.Android/publish-android-apk.sh --edition both --local"
       },
       "group": "build",
       "problemMatcher": "$msCompile"
