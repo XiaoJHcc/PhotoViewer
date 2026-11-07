@@ -77,6 +77,40 @@
 - CoreContractCheck：1132 PASS / 1 平台 SKIP / 0 FAIL；HEIF `selftest` / `e2e` / `smoke` 全部通过。新增调度自检覆盖 10 种直通/重采样编码组合与串行逐字节一致、4 幅并发共用上限 2（实测 queued=16 / peak=2）、度 1 必须经过注入调度器且无死锁；超时结束独立工具进程，避免未完成转换仍使用已释放的合成平面。
 - 独立应用 `cc.xiaojh.PhotoViewer.reliability` 已卸载，`/data/local/tmp/pv-reliability-lldb`、本轮 `bin/reliability` 和 scratch 工具已清理，恢复原正式应用。保留标准构建产物、验收报告和两份压缩轨迹，没有覆盖正式安装或用户设置。
 
+## 历史原生异常续查
+
+本节起点 `6148c63`，产品代码未回退。新证据放在 `artifacts/acceptance/android-exceptions/`；旧加载路径只通过命令行 `AndroidUseAssemblyStore=false` 构建到隔离包，用于复现，不改项目默认值或正式安装。
+
+### 历史 Skia 映射证据
+
+- 从设备 DropBox 找回 11 月 6 日两起崩溃的 `SYSTEM_TOMBSTONE` / `SYSTEM_TOMBSTONE_PROTO`。文本记录本身截断，proto 的 `dumpsys` 输出也限于 262144 字节；只解析完整字段，不把后部缺失的映射当成不存在。constructor 当次可完整解析的前 2069 条映射已经覆盖故障地址附近。
+- constructor 的 Skia 原生库只剩 RX 尾部 `0x6e8a50a000–0x6e8a892000`（文件偏移 `0x4e5000`）、RELRO 与 RW。三段各自反算得到同一加载基址 `0x6e8a021000`；原只读段和 RX 前缀确实不在 VMA 中。`__system_property_get` 读取的 `ro.arch` 字面量位于 `基址 + 0xc1583`，与故障地址按 16 字节向下对齐完全吻合。
+- 这些证据证明故障时缺失的映射，不证明谁解除映射。`app_process64` 与原生库区间之间的天然大空洞，也不能全部算成被错误解除的区域。历史 RenderThread 与另一条 Worker 异常仍只有信号行，没有可用完整栈。
+- 重新核对运行时源码：`mark_startup_done` 在 `Runtime.initInternal` 返回前执行，首图阶段的懒加载已经可以走 CAS 失败后的 `munmap`；本构建解压独立 DSO 到文件系统，偏移为 0，不能用「启动期不解除」或「APK 偏移不对齐必然失败」排除。越界节表读取若落到相邻可读映射，可污染 32 位 `data_size` 并成为解除长度；下节已取得实际调用参数。
+
+### 破坏性解除映射实证
+
+- 最终轻量探针在旧 `store=false` 隔离包第 4 轮启动、1.839 秒时捕获 `munmap(addr=0x7daec82000, len=0x6f72646e)`，实际长度 1,869,767,790B。调用者返回地址按当时 maps 反算为 `libmonodroid.so` 文件偏移 `0x725ac`，正是 `open_from_bundles` 的 CAS 竞争失败分支调用 `munmap` 后的下一条指令，不再是静态候选。
+- 当次快照含 2805 个 VMA；该区间与 1242 个 VMA 相交，其中 160 个是有路径的可执行映射，涉及大量与本程序集无关的系统原生库。合法单个程序集 wrapper 不可能需要解除约 1.74GiB 的无关映射。这坐实了 36.1.53 独立 DSO 加载路径能够破坏其他库代码页，并为「缺映射后 SIGSEGV」提供了直接机制证据。原始输出、退出记录与解析结果分别保存在 `filtered-native-repro-04-{stdout,exit,logcat}.txt`、`filtered-native-repro-04-stdout.trace.json`；分析器与探针源码保存在 `artifacts/acceptance/android-exceptions/tools/`。
+- 这次现场证明旧路径的实际破坏机制，与历史 Skia constructor 的缺失映射形状一致；历史 tombstone 本身没有当次 `munmap` 参数，因此仍不把它写成该历史调用的逐字节回放。EXIT_SELF 255 与 RenderThread 也继续保持独立归因边界。
+
+### 静默退出与新复现
+
+- `libmonosgen-2.0.so` 的 `0x19c13c` 是 Android 原生崩溃上报后的 `exit(-1)`，`0x19c124` 是上报 double fault 时的 `_exit(-1)`。报告打印到 fd 1，不保证进入 Logcat；没有 `PhotoViewerCrash` 或 Mono 错误日志不能单独排除原生崩溃。这只是退出候选路径，尚不等于历史 EXIT_SELF 255 已取得调用者。
+- 原生调试器已能在托管启动前挂上硬件退出断点。轻量退出断点批次 9 次在 10 秒采集窗口内未命中，第 10 次因脚本读取 PID 早于进程出现而中止，不计产品退出。早期软件断点、表达式求值、符号加载/分离过程产生的诊断故障单独保留，不纳入产品失败率。
+- 使用 SDK 的 `AndroidIncludeWrapSh=true` 在独立 Debug 包捕获标准输出。旧独立 DSO 路径再次复现 `libmonodroid.so+0x721ac`；新增托管栈为 `XmpMetaFactory.ParseFromBuffer → MetadataExtractor → ExifLoader.LoadExifDataAsync`。随后 12 次各 5 秒冷启动采集中 2 次同签名退出，其余仅代表窗口内存活，不冒充完整 `color` 套件通过。wrapper 改变启动和进程退出记录口径，不能把 wrapper 父进程的退出码当成原应用 EXIT_SELF 255。
+- 临时原生取证库只注入隔离包，记录 `exit/_exit` 调用者与解除区间；不改信号处理、不改变返回值、不用于性能比较。设备探针已验证 `exit(-1)` 返回 255、`_exit(17)` 返回 17、成功 `munmap` 保留原 errno、非法非对齐入参返回 `-1/EINVAL`。其本身的动态注入和日志开销必须与产品结果分开。
+
+### 当前 Assembly Store 配置复核
+
+- 使用当前产品相同的 `AndroidUseAssemblyStore=true` 构建隔离诊断包，APK 核对含 `libassembly-store.so`、不含逐 DLL wrapper；仅临时加入标准输出 wrapper 与上述探针。30 轮均跑完整个 `color` 套件，每轮 119 PASS / 0 FAIL，进程全部存活；30 份标准输出均只有探针初始化，无破坏性 `munmap`、`exit/_exit` 记录，Logcat 无 Fatal signal、PhotoViewerCrash 或 `libmonodroid+0x721ac`。汇总见 `store-native-repro-validation.json`，逐轮原始报告与日志保留。
+- 不带诊断参数的标准 Debug 已重新构建，0 错误、16 条既有警告；本次生成的标准 APK 含 Assembly Store、无 `wrap.sh`、无逐 DLL wrapper。旧路径复现与当前配置验证使用各自独立输出目录，不拿旧路径故障冒充当前产品回归。
+- 这轮结果验证现有 `6148c63` 的 Assembly Store 处置覆盖本次坐实的破坏链，因此无需为同一根因再增加图像、内存或 UI 产品补丁。诊断注入会改变启动形态，30 轮仍是本机本配置下的观测范围，不代替无注入标准包验收，也不关闭下述独立运行时风险。
+
+### 运行时的另一项已知风险
+
+[上游 #13261](https://github.com/dotnet/android/pull/13261) 修复 assembly store 的 `image_data` 先于 descriptor 发布的独立竞态；36.1.53 尚不含该修复。当前没有本应用与其匹配的故障记录，它不能解释旧 `store=false` 包的历史签名，也不构成退回独立 DSO 或盲升 SDK 的理由。保留当前 store 配置，后续只在取得对应证据或正式安排运行时 servicing 升级时处置。
+
 ## 收尾约束
 
-首次优化已按用户授权提交 `ab358ed`，本续修按用户授权提交 Git，不推送远端。4GB/6GB 真机、非小米 ROM、高刷全帧预算与历史 EXIT_SELF / Skia constructor / RenderThread 的独立归因仍未关闭；不把当前样本下的修复写成所有启动崩溃或所有 UI 长尾均已根治。
+首次优化已按用户授权提交 `ab358ed`，上一轮续修已提交 `6148c63`，均未推送远端。本次破坏性 `munmap` 机制取证与当前 Assembly Store 配置复核已完成；隔离诊断包已卸载，临时 LLDB、诊断构建目录和 scratch 已清理，正式应用已恢复。4GB/6GB 真机、非小米 ROM、高刷全帧预算与历史 EXIT_SELF / Skia constructor / RenderThread 的独立归因仍未关闭；不把当前样本下的修复写成所有启动崩溃或所有 UI 长尾均已根治。

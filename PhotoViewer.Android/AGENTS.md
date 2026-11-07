@@ -111,7 +111,7 @@ adb exec-out run-as cc.xiaojh.PhotoViewer cat files/PhotoViewer/android-checks-m
 
 ### 启动与 UI 长尾排障
 
-- Debug 保持 `EmbedAssembliesIntoApk=true`，并显式使用 `AndroidUseAssemblyStore=true`，保留 Debug 符号。不要改回每程序集独立 DSO：Android 运行时 36.1.53 的该加载路径会在映射完成前把共享 `data_size` 从 ELF 长度改为载荷长度，并发懒加载可能按缩短长度再次映射，越界读取 ELF 节表。assembly store 不走这条映射路径。
+- Debug 保持 `EmbedAssembliesIntoApk=true`，并显式使用 `AndroidUseAssemblyStore=true`，保留 Debug 符号。不要改回每程序集独立 DSO：Android 运行时 36.1.53 的该加载路径会在映射完成前把共享 `data_size` 从 ELF 长度改为载荷长度，并发懒加载可能按缩短长度再次映射并越界读取 ELF 节表；竞争失败分支随后会把污染长度传给 `munmap`，已实测一次调用解除约 1.74GiB 范围并覆盖大量无关原生库的可执行映射。assembly store 不走这条映射路径。
 - `AndroidApp` 将进程域与 Android 未处理异常写到 `PhotoViewerCrash`，只记录、不标记已处理。原生 SIGSEGV / SIGABRT / `EXIT_SELF 255` 分别保留当次 Logcat 和 `dumpsys activity exit-info <应用ID>`，不能因时间接近就合并根因；没有托管钩子日志也不单独证明故障属于原生。
 - Android 启动时将 `YuvImageConverter.MaxDegreeOfParallelism` 配为 `max(1, CPU 核数 - 1)`，并将 `ConversionTaskScheduler` 注入同等并发上限的进程级 `ConcurrentExclusiveSchedulerPair.ConcurrentScheduler`。多幅 YUV 转换共用执行槽，单图可用完整转换预算，不按图像上限静态均分；图像上限另不超过 `max(1, CPU 核数 - 1)`。这是 CPU 并发策略，不改变像素算法、Full 请求时机或精度；未配置的平台保持原行为。
 - `zoom` 的真实 HIF 放大段开启 `AndroidFrameStats` 固定容量内存采样，平时关闭。报告区分 DrawFrame 等锁/MakeCurrent/GL 命令/Swap、根视图布局/会话/视口、调度回调与 Looper 分发，按最大心跳间隙的时间区间匹配样本，另记该间隙的 GC 增量与 UI 线程 CPU 时间；各类存在嵌套，不跨类相加。消息日志仅检查期间安装，结束清除；它自身有 JNI/字符串开销。上传墙钟不包含 Draw/Swap，不能单凭上传快就排除渲染阻塞。`zoom` 另按所有有效像素逐行对照有界并行与串行 Full，核对色彩、几何与方向不变。
