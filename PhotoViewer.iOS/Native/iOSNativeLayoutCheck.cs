@@ -1216,6 +1216,8 @@ internal static class iOSNativeLayoutCheck
             ImageFile? bound = null;
             CGRect? staleFrame = null;
             CGSize documentDuring = CGSize.Empty;
+            IntPtr pathHandle = IntPtr.Zero;
+            bool pathShared = false;
             await UiDispatcher.InvokeAsync(() =>
             {
                 // 同一段主线程代码：格式筛选同步换掉 live 列表，胶片栏的 reload 只能排在本回调之后执行。
@@ -1224,10 +1226,18 @@ internal static class iOSNativeLayoutCheck
                 displayDuring = filmstrip.DisplayCount;
                 var source = collection.DataSource ?? throw new InvalidOperationException("胶片栏缺少数据源");
                 sourceCount = (int)source.GetItemsCount(collection, 0);
-                using var oldPath = NSIndexPath.FromItemSection(displayed - 1, 0);
+                // NSIndexPath 由 UIKit/Foundation 规范化：同一 (item, section) 回同一个托管包装，
+                // 任何一处 Dispose（含布局内的 using）都会把这里持有的这份一起作废。
+                var oldPath = NSIndexPath.FromItemSection(displayed - 1, 0);
+                pathHandle = oldPath.Handle;
+                pathShared = ReferenceEquals(NSIndexPath.FromItemSection(displayed - 1, 0), oldPath);
                 collection.ScrollToItem(oldPath, filmstrip.Horizontal
                     ? UICollectionViewScrollPosition.Right : UICollectionViewScrollPosition.Bottom, false);
                 collection.LayoutIfNeeded();
+                IntPtr currentHandle = oldPath.Handle;
+                if (pathHandle == IntPtr.Zero || currentHandle != pathHandle)
+                    throw new InvalidOperationException(
+                        $"滚动/布局作废了调用方持有的索引路径包装：handle 0x{pathHandle:x} → 0x{currentHandle:x}");
                 bound = (collection.CellForItem(oldPath) as iOSThumbnailCard)?.BoundFile;
                 staleFrame = filmstrip.FrameAt(displayed - 1);
                 documentDuring = filmstrip.DocumentSize;
@@ -1257,7 +1267,8 @@ internal static class iOSNativeLayoutCheck
                     $"重载后显示快照未跟随 live 列表：显示 {filmstrip.DisplayCount}、数据源 {sourceAfter}、live {list.FilteredFiles.Count}");
             if (filmstrip.FrameAt(0) != null || filmstrip.CardAt(0) != null)
                 throw new InvalidOperationException("重载后仍按旧快照保留卡片或几何");
-            lines.Add($"PASS 显示快照：live 筛选列表 {displayed} → 0 的陈旧索引窗口内，数据源({sourceCount})/卡片({lastDisplayed.Name})/布局/文档尺寸仍读同一快照、旧索引不越界；reload 后快照与 live 列表一起归零");
+            lines.Add($"NOTE 索引路径共享：同一 (item, section) 的 FromItemSection 返回{(pathShared ? "同一托管包装" : "不同托管包装")}；滚动/布局后调用方持有的包装句柄仍为 0x{pathHandle:x}，产品路径只创建不释放");
+            lines.Add($"PASS 显示快照：live 筛选列表 {displayed} → 0 的陈旧索引窗口内，数据源({sourceCount})/卡片({lastDisplayed.Name})/布局/文档尺寸仍读同一快照、旧索引不越界（调用方索引路径未被布局释放）；reload 后快照与 live 列表一起归零");
         }
         finally
         {
@@ -1392,7 +1403,8 @@ internal static class iOSNativeLayoutCheck
         // 几何与身份核对不依赖进入时的滚动位置：先让目标索引进入可见范围（程序化最小滚动，不播放动画）。
         if (!IsVisible(root, index))
         {
-            using var path = NSIndexPath.FromItemSection(index, 0);
+            // 共享实例：随后的 LayoutIfNeeded/CardAt 会用同一个包装，这里不得释放。
+            var path = NSIndexPath.FromItemSection(index, 0);
             root.Filmstrip.Collection.ScrollToItem(path, UICollectionViewScrollPosition.None, false);
         }
         while (true)

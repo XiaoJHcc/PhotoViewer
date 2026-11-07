@@ -713,37 +713,40 @@ internal static class iOSNativeInputCheck
             throw new InvalidOperationException("访问租约未对启动作用域时的同一 URL 实例成对结束");
         lines.Add("PASS 访问租约：Create/Dispose 对同一原 URL 实例成对 Start/Stop，全程不按 path 重建 URL");
 
-        // ④ 沙盒本地文件：引用仍是共享 Local 类型，租约走本地会话，不占用系统作用域。
+        // ④ 沙盒自有目录：Documents / Library / tmp 与 app bundle 自身都走本地会话，
+        //    Create/Attach/Dispose 不启动系统作用域；同一路径的 /var 与 /private/var 两种拼写必须得到同一判定。
         var sandboxBridge = new iOSExternalOpenBridge(new OpenRequestChannel(), new RecordingSecurityScope(started: false));
         var sandboxItems = sandboxBridge.Resolve([fileUrl]);
         if (sandboxItems.Count != 1 || sandboxItems[0] is not LocalFileRef)
             throw new InvalidOperationException("沙盒本地文件应继续使用共享 LocalFileRef");
-        var sandboxScope = new RecordingSecurityScope(started: false);
-        var sandboxFactory = new iOSStorageAccessSessionFactory(sandboxScope);
-        using (sandboxFactory.Create(new LocalFolderRef(workspace)))
+        string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        bool sawAlias = false;
+        foreach (string folder in new[]
+                 {
+                     documents,
+                     Path.Combine(documents, "..", "Library"),
+                     Path.GetTempPath(),
+                     NSBundle.MainBundle.BundlePath,
+                 })
         {
-            if (sandboxScope.Starts.Count != 0)
-                throw new InvalidOperationException("沙盒目录错误地启动了系统安全作用域");
+            var spellings = AliasSpellings(folder);
+            sawAlias |= spellings.Length > 1;
+            foreach (string spelling in spellings) VerifySandboxLease(spelling);
         }
-        lines.Add("PASS 沙盒本地文件：外部打开仍得到共享 LocalFileRef，沙盒目录租约不启动系统作用域");
+
+        lines.Add("PASS 沙盒自有目录：Documents/Library/tmp/app bundle 的 Create/Attach/Dispose 均不启动系统作用域"
+            + (sawAlias ? "（/var 与 /private/var 两种拼写同判定）" : "（当前卷不带 /var 别名，拼写归一由真机覆盖）"));
 
         // ⑤ 外部路径缺少系统 URL：按未授权上报，绝不偷偷重建 URL 再启动一次注定失败的作用域。
-        var orphanScope = new RecordingSecurityScope(started: true);
-        var orphanFactory = new iOSStorageAccessSessionFactory(orphanScope);
-        bool denied = false;
-        try
-        {
-            orphanFactory.Create(new LocalFolderRef(
-                "/private/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/PhotoViewerExternalCheck")).Dispose();
-        }
-        catch (StorageException ex) when (ex.Error == StorageError.AccessDenied)
-        {
-            denied = true;
-        }
-        if (!denied) throw new InvalidOperationException("外部路径缺少系统 URL 时应按 AccessDenied 上报");
-        if (orphanScope.Starts.Count != 0)
-            throw new InvalidOperationException("外部路径缺少系统 URL 时仍启动了按 path 重建的作用域");
-        lines.Add("PASS 外部路径缺少系统 URL：按访问授权失败上报，不再按 path 重建 URL");
+        //    同一外部路径的 /var 与 /private/var 两种拼写必须同判定；前缀相似的兄弟目录与 ../ 逃逸不得被放行。
+        const string external = "/var/mobile/Library/Mobile Documents/com~apple~CloudDocs/PhotoViewerExternalCheck";
+        string container = Path.GetDirectoryName(documents) ?? documents;
+        ExpectDeniedWithoutUrl("/private" + external);
+        ExpectDeniedWithoutUrl(external);
+        ExpectDeniedWithoutUrl(container + "Evil");
+        ExpectDeniedWithoutUrl(NSBundle.MainBundle.BundlePath + "Evil");
+        ExpectDeniedWithoutUrl(Path.Combine(documents, "..", "..", "outside"));
+        lines.Add("PASS 外部路径缺少系统 URL：/var 与 /private/var 同判定，前缀相似目录与 ../ 逃逸均按 AccessDenied 上报且不启动作用域");
 
         // ⑥ 选择器结果：文档选择器返回的 URL 与 openURL 同一判断口径（作用域 URL 保留原 URL，沙盒 URL 用 Local 引用）。
         var pickedFolder = iOSStorageRefs.CreateFolderRef(folderUrl, new RecordingSecurityScope(started: true));
@@ -763,6 +766,51 @@ internal static class iOSNativeInputCheck
         lines.Add("PASS 选择器结果：外部目录/文件保留原 URL，目录子项继承稳定身份，沙盒目录仍返回共享 LocalFolderRef");
         lines.Add("NOTE 模拟器不能构造真实沙盒扩展：真机需复核 Files「打开方式」(就地打开) 与文档选择器目录的读取/评分写回");
     }
+
+    /// <summary>
+    /// 沙盒自有目录（含 app bundle）的访问租约：Create/Attach/Dispose 一律走共享本地会话，
+    /// 系统作用域一次都不启动；系统作用域替身设为"可启动"，一旦被调用即暴露误判。
+    /// </summary>
+    /// <param name="path">沙盒内的目录路径（可以用另一种 /var 拼写给出）。</param>
+    private static void VerifySandboxLease(string path)
+    {
+        var scope = new RecordingSecurityScope(started: true);
+        var factory = new iOSStorageAccessSessionFactory(scope);
+        using var lease = factory.Create(new LocalFolderRef(path));
+        lease.Attach(new LocalFolderRef(path));
+        if (scope.Starts.Count != 0)
+            throw new InvalidOperationException($"沙盒自有目录被误判为外部路径：{path}");
+    }
+
+    /// <summary>
+    /// 没有系统交回 URL 的外部路径必须按访问授权失败上报，且不得尝试启动（更不得重建）安全作用域。
+    /// </summary>
+    /// <param name="path">应被判为沙盒之外、且没有系统 URL 的路径。</param>
+    private static void ExpectDeniedWithoutUrl(string path)
+    {
+        var scope = new RecordingSecurityScope(started: true);
+        var factory = new iOSStorageAccessSessionFactory(scope);
+        bool denied = false;
+        try
+        {
+            factory.Create(new LocalFolderRef(path)).Dispose();
+        }
+        catch (StorageException ex) when (ex.Error == StorageError.AccessDenied)
+        {
+            denied = true;
+        }
+        if (!denied) throw new InvalidOperationException($"外部路径缺少系统 URL 时应按 AccessDenied 上报：{path}");
+        if (scope.Starts.Count != 0)
+            throw new InvalidOperationException($"外部路径缺少系统 URL 时仍尝试启动安全作用域：{path}");
+    }
+
+    /// <summary>同一沙盒路径的 /var 与 /private/var 两种拼写（Apple 卷别名）；路径不涉及该别名时只返回原拼写。</summary>
+    /// <param name="path">沙盒路径。</param>
+    /// <returns>应得到同一判定的拼写。</returns>
+    private static string[] AliasSpellings(string path)
+        => path.StartsWith("/var/", StringComparison.Ordinal) ? [path, "/private" + path]
+            : path.StartsWith("/private/var/", StringComparison.Ordinal) ? [path, path["/private".Length..]]
+            : [path];
 
     /// <summary>
     /// 设置写回传播：从主图菜单真实弹出设置页，改写工作副本后经关闭回写路径应用，
@@ -1060,7 +1108,8 @@ internal static class iOSNativeInputCheck
         var deadline = DateTime.UtcNow.AddSeconds(5);
         if (!root.Filmstrip.Collection.IndexPathsForVisibleItems.Any(path => (int)path.Item == index))
         {
-            using var path = NSIndexPath.FromItemSection(index, 0);
+            // 共享实例：随后的 LayoutIfNeeded/CardAt 会用同一个包装，这里不得释放。
+            var path = NSIndexPath.FromItemSection(index, 0);
             root.Filmstrip.Collection.ScrollToItem(path, UICollectionViewScrollPosition.None, false);
         }
         while (true)

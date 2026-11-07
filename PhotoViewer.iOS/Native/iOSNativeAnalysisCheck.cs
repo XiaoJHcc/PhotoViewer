@@ -300,6 +300,12 @@ internal static class iOSNativeAnalysisCheck
                 await File.WriteAllLinesAsync(report, lines);
                 Console.WriteLine($"[NativeSmoke] PASS analysis ({lines.Count} checks)");
             }
+            catch
+            {
+                lines.Add("STATE " + DescribeDetailProbe(root, main, session, null)
+                    + $" encoding={session.Image?.Encoding} source={session.Image?.SourceWidth}x{session.Image?.SourceHeight} fullError={session.FullError}");
+                throw;
+            }
             finally
             {
                 var settings = main.Settings;

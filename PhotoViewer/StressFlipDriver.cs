@@ -21,8 +21,10 @@ namespace PhotoViewer;
 /// 预取按该列表的翻页方向选邻居;用文件夹枚举顺序翻会让预取的邻居与下一张无关);
 /// 完成判定经 <see cref="IDisplayLoadSignal"/> 取平台信号，CompletionStage 标明像素就绪或提交返回，
 /// 覆盖真实 P0 解码链路而非空跑。
-/// 逐张记录 P0 上屏延迟、压力级别与在途内存,JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
+/// 逐张记录 P0 上屏延迟、压力级别、在途内存、进程 footprint、展示缓存与缓冲池空闲字节,
+/// JSONL 手写落盘(规避 AOT 裁剪下反射序列化),
 /// 日志默认位于 settings 同目录 stress-flip.jsonl(头工程可改到隔离目录),供真机 42MP 连翻验收回放。
+/// 内存读数在计时结束后采样,不进上屏延迟;done 行给这些逐翻采样的最大值(字段名带 SampledPeak,不声称真实瞬时峰值)。
 /// 配套参数:--pv-stress=&lt;文件夹路径&gt;(相对路径由头工程解析)、--pv-stress-count=N、
 /// --pv-stress-warn=N、--pv-stress-mode=ab(最近两张对比切换,默认 sequential)。
 /// </summary>
@@ -51,6 +53,11 @@ public static class StressFlipDriver
     /// 未注入时不写该字段,JSONL 保持向后兼容。
     /// </summary>
     public static Func<string>? ExtraSummary;
+
+    /// <summary>
+    /// 平台纹理字节采样(可选,头工程仅压测激活时注入);未注入时逐翻行与 done 行都不写纹理字段。
+    /// </summary>
+    public static Func<long>? TextureBytesProvider;
 
     /// <summary>
     /// 一轮压测结束(写完 done 行)后的回调(可选,头工程注入)。
@@ -135,8 +142,19 @@ public static class StressFlipDriver
                 return;
             }
 
-            var folder = new LocalFolderRef(folderPath);
-            await UiDispatcher.InvokeAsync(() => vm.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false)).Unwrap();
+            Log("{\"type\":\"folder\",\"entries\":" + Directory.EnumerateFileSystemEntries(folderPath).Count()
+                + ",\"formats\":\"" + Esc(string.Join(",", vm.Settings.SelectedFormats)) + "\"}");
+            void OnOpenFailed(string message) => Log("{\"type\":\"error\",\"reason\":\"" + Esc(message) + "\"}");
+            vm.OpenFailed += OnOpenFailed;
+            try
+            {
+                var folder = new LocalFolderRef(folderPath);
+                await UiDispatcher.InvokeAsync(() => vm.FolderVM.OpenFolderAsync(folder, scrollToCurrent: false)).Unwrap();
+            }
+            finally
+            {
+                vm.OpenFailed -= OnOpenFailed;
+            }
 
             // 连翻顺序取"展示列表顺序"（与键盘/轻扫的上一张/下一张同源），而不是文件夹枚举顺序：
             // 预取按展示列表的翻页方向选邻居，枚举顺序与之无关，用枚举顺序测不出预取效果。
@@ -165,6 +183,11 @@ public static class StressFlipDriver
             var timeouts = 0;
             var proxyShown = 0;
             var fullShown = 0;
+            long? peakFootprint = null, peakCache = null, peakPoolIdle = null, peakTexture = null;
+
+            // 逐翻采样取最大值:只代表采样点上的最高值,不是真实瞬时峰值
+            static long? Max(long? current, long? value)
+                => value is { } next && (current is null || next > current.Value) ? next : current;
 
             for (var i = 0; i < flips; i++)
             {
@@ -188,6 +211,15 @@ public static class StressFlipDriver
                 await UiDispatcher.InvokeAsync(() => { vm.CurrentFile = target; });
                 var winner = await Task.WhenAny(loaded.Task, Task.Delay(PerFlipTimeoutMs));
                 flipSw.Stop();
+                // 读数在计时结束后采样:采样开销不进入上屏延迟
+                long footprintBytes = MemoryGovernor.FootprintBytes;
+                long cacheBytes = BitmapLoader.CurrentCacheSize;
+                long poolIdleBytes = ImageBufferPool.IdleBytes;
+                long? textureBytes = TextureBytesProvider?.Invoke();
+                peakFootprint = Max(peakFootprint, footprintBytes);
+                peakCache = Max(peakCache, cacheBytes);
+                peakPoolIdle = Max(peakPoolIdle, poolIdleBytes);
+                peakTexture = Max(peakTexture, textureBytes);
 
                 var timedOut = winner != loaded.Task;
                 double ms;
@@ -216,7 +248,12 @@ public static class StressFlipDriver
                     + ",\"hold\":" + B(MemoryGovernor.InRecoveryHold)
                     + ",\"reservedMB\":" + MemoryGovernor.ReservedBytes / 1048576
                     + ",\"gcMB\":" + GC.GetTotalMemory(false) / 1048576
-                    + ",\"tSec\":" + F(runSw.Elapsed.TotalSeconds) + "}");
+                    + ",\"tSec\":" + F(runSw.Elapsed.TotalSeconds)
+                    + ",\"footprintMB\":" + FootprintMb(footprintBytes)
+                    + ",\"cacheMB\":" + cacheBytes / 1048576
+                    + ",\"poolIdleMB\":" + poolIdleBytes / 1048576
+                    + (textureBytes is { } texture ? ",\"textureMB\":" + texture / 1048576 : "")
+                    + "}");
 
                 // 注入 OS 内存告警:验证修剪级联(memory-events.jsonl)与 30s 恢复观察期(后续 flip 的 hold 字段)
                 if (i == WarnAtSeq)
@@ -242,6 +279,10 @@ public static class StressFlipDriver
                 + ",\"decodeMissMeanMs\":" + F(miss.Mean)
                 + ",\"elapsedSec\":" + F(runSw.Elapsed.TotalSeconds)
                 + (string.IsNullOrEmpty(extra) ? "" : ",\"extra\":\"" + Esc(extra) + "\"")
+                + ",\"footprintSampledPeakMB\":" + FootprintMb(peakFootprint ?? 0)
+                + ",\"cacheSampledPeakMB\":" + (peakCache ?? 0) / 1048576
+                + ",\"poolIdleSampledPeakMB\":" + (peakPoolIdle ?? 0) / 1048576
+                + (TextureBytesProvider is null ? "" : ",\"textureSampledPeakMB\":" + (peakTexture ?? 0) / 1048576)
                 + "}");
             if (timeouts > 0) Environment.ExitCode = 1;
             Console.WriteLine($"[StressFlip] done: {flips} flips, {timeouts} timeouts");
@@ -281,8 +322,12 @@ public static class StressFlipDriver
     private static double Pct(IReadOnlyList<double> sorted, double q)
         => sorted.Count == 0 ? -1 : sorted[Math.Min(sorted.Count - 1, (int)(q * sorted.Count))];
 
-    /// <summary>JSONL 字段转义(仅引号与反斜杠)。</summary>
-    private static string Esc(string s) => s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+    private static string Esc(string s)
+        => System.Text.Json.JsonEncodedText.Encode(s).ToString();
+
+    /// <summary>字节 → 整 MB 文本;读不到(0)写 null,避免把未知 footprint 当成有效读数或托管堆大小。</summary>
+    private static string FootprintMb(long bytes)
+        => bytes > 0 ? (bytes / 1048576).ToString(CultureInfo.InvariantCulture) : "null";
 
     /// <summary>不变文化数值格式化(保留 1 位小数)。</summary>
     private static string F(double v) => v.ToString("F1", CultureInfo.InvariantCulture);

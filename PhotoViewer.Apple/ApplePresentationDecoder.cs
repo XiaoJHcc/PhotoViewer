@@ -16,8 +16,18 @@ namespace PhotoViewer.Apple;
 public sealed class ApplePresentationDecoder : IPresentationImageDecoder
 {
     private readonly bool _useCoreImage;
+    private static int _rawDecodes;
 
-    public ApplePresentationDecoder() : this(OperatingSystem.IsMacOS()) { }
+    /// <summary>验收探针读取最近一次 8 位 P3 转换实际使用的行带数；未走并行转换时为 0。</summary>
+    internal static int LastParallelBands;
+
+    /// <summary>iOS 的 RAW 单路准入：Core Image 的 RAW 创建/渲染同时只放行一路。</summary>
+    private static readonly RawDecodeAdmission RawAdmission = new();
+
+    /// <summary>只有 iOS 需要 RAW 单路准入；其它平台保持原入口。</summary>
+    private static bool RawAdmissionRequired => OperatingSystem.IsIOS();
+
+    public ApplePresentationDecoder() : this(true) { }
 
     internal ApplePresentationDecoder(bool useCoreImage) => _useCoreImage = useCoreImage;
 
@@ -37,23 +47,65 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>携带源尺寸、色彩与待应用方向的解码产物。</returns>
     public Task<DecodedImage?> DecodeAsync(IFileRef file, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
-        => Task.Run<DecodedImage?>(() => Decode(RequireLocalPath(file), maxLongEdge, encoding, cancellationToken), cancellationToken);
+        => RawAdmissionRequired
+            ? DecodeAdmittedAsync(file, maxLongEdge, encoding, cancellationToken)
+            : Task.Run<DecodedImage?>(() => Decode(RequireLocalPath(file), maxLongEdge, encoding, cancellationToken), cancellationToken);
 
     /// <summary>无内嵌预览的用户图片按短边缩解码，保持 ICC 与方向正确，不走原图全尺寸路径。</summary>
     public Task<DecodedImage?> DecodeThumbnailAsync(IFileRef file, int minShortEdge, CancellationToken cancellationToken)
-        => Task.Run<DecodedImage?>(() =>
+        => RawAdmissionRequired
+            ? DecodeThumbnailAdmittedAsync(file, minShortEdge, cancellationToken)
+            : Task.Run<DecodedImage?>(() => DecodeThumbnail(RequireLocalPath(file), minShortEdge, cancellationToken), cancellationToken);
+
+    /// <summary>iOS 的 RAW 解码先等单路名额，等待在新建 NSAutoreleasePool 之前完成；取消只退出等待。</summary>
+    private async Task<DecodedImage?> DecodeAdmittedAsync(IFileRef file, int? maxLongEdge, PixelEncoding encoding, CancellationToken cancellationToken)
+    {
+        string path = RequireLocalPath(file);
+        if (!RawLoader.IsRawFile(path))
+            return await Task.Run<DecodedImage?>(() => Decode(path, maxLongEdge, encoding, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+        IDisposable lease = await RawAdmission.AcquireAsync(DecodeContext.Current, cancellationToken).ConfigureAwait(false);
+        try
         {
-            using var pool = new NSAutoreleasePool();
-            var path = RequireLocalPath(file);
-            using var url = NSUrl.FromFilename(path);
-            using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false }) ?? throw new UserFacingException("系统无法读取缩略图尺寸");
-            var properties = source.GetProperties(0, null);
-            int width = properties?.PixelWidth ?? 0, height = properties?.PixelHeight ?? 0;
-            if (width <= 0 || height <= 0) throw new UserFacingException("缩略图源尺寸无效");
-            int target = Math.Max(minShortEdge, (int)Math.Ceiling((double)minShortEdge * Math.Max(width, height) / Math.Min(width, height)));
-            using var image = Decode(path, target, PixelEncoding.RgbaF16, cancellationToken);
-            return ColorEngine.ToAnalysisSrgb8(image);
-        }, cancellationToken);
+            return await Task.Run<DecodedImage?>(() => Decode(path, maxLongEdge, encoding, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+    }
+
+    /// <summary>缩略图兜底同样先等 RAW 单路名额；解码本体（含自动释放池）在线程池里同步完成。</summary>
+    private async Task<DecodedImage?> DecodeThumbnailAdmittedAsync(IFileRef file, int minShortEdge, CancellationToken cancellationToken)
+    {
+        string path = RequireLocalPath(file);
+        if (!RawLoader.IsRawFile(path))
+            return await Task.Run<DecodedImage?>(() => DecodeThumbnail(path, minShortEdge, cancellationToken), cancellationToken).ConfigureAwait(false);
+
+        IDisposable lease = await RawAdmission.AcquireAsync(DecodeContext.Current, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await Task.Run<DecodedImage?>(() => DecodeThumbnail(path, minShortEdge, cancellationToken), cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lease.Dispose();
+        }
+    }
+
+    /// <summary>缩略图兜底本体：短边缩解码，产物为显示朝向的 sRGB8。</summary>
+    private DecodedImage DecodeThumbnail(string path, int minShortEdge, CancellationToken cancellationToken)
+    {
+        using var pool = new NSAutoreleasePool();
+        using var url = NSUrl.FromFilename(path);
+        using var source = CGImageSource.FromUrl(url, new CGImageOptions { ShouldCache = false }) ?? throw new UserFacingException("系统无法读取缩略图尺寸");
+        var properties = source.GetProperties(0, null);
+        int width = properties?.PixelWidth ?? 0, height = properties?.PixelHeight ?? 0;
+        if (width <= 0 || height <= 0) throw new UserFacingException("缩略图源尺寸无效");
+        int target = Math.Max(minShortEdge, (int)Math.Ceiling((double)minShortEdge * Math.Max(width, height) / Math.Min(width, height)));
+        using var image = Decode(path, target, PixelEncoding.RgbaF16, cancellationToken);
+        return ColorEngine.ToAnalysisSrgb8(image);
+    }
 
     /// <summary>ImageIO / Core Image 只接受真实文件路径；SAF 等非本地来源明确报不支持。</summary>
     private static string RequireLocalPath(IFileRef file)
@@ -73,6 +125,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
         using var pool = new NSAutoreleasePool();
         if (RawLoader.IsRawFile(path))
         {
+            Interlocked.Increment(ref _rawDecodes);
             try
             {
                 return DecodeRaw(path, maxLongEdge, encoding, cancellationToken);
@@ -85,6 +138,10 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             catch (Exception exception)
             {
                 Console.WriteLine($"[PresentationDecoder] RAW 经 CIRawFilter 解码失败，回退 ImageIO：{exception.GetType().Name}: {exception.Message}");
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _rawDecodes);
             }
         }
 
@@ -121,6 +178,7 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             || extension.Equals(".heif", StringComparison.OrdinalIgnoreCase)
             || extension.Equals(".hif", StringComparison.OrdinalIgnoreCase);
         if (_useCoreImage && heif && encoding == PixelEncoding.RgbaF16 && (long)width * height >= 4_000_000
+            && (!OperatingSystem.IsIOS() || Volatile.Read(ref _rawDecodes) == 0)
             && image.ColorSpace is { } sourceSpace)
         {
             try
@@ -134,9 +192,12 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
                 Console.WriteLine($"[PresentationDecoder] HEIF Core Image 转换失败，回退位图绘制：{exception.Message}");
             }
         }
+        bool parallelP3 = _useCoreImage && heif && maxLongEdge is null && encoding == PixelEncoding.Rgba8
+            && (long)width * height >= 4_000_000;
         return encoding == PixelEncoding.RgbaF16
             ? DecodeLinearF16(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken)
-            : DecodeDisplayP3(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation, cancellationToken);
+            : DecodeDisplayP3(inferredImage ?? image, width, height, sourceWidth, sourceHeight, orientation,
+                parallelP3 ? ParallelBandCount(image) : 0, cancellationToken);
     }
 
     /// <summary>
@@ -295,22 +356,38 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
     /// <summary>
     /// 绘制到 8 位 Display P3 缓冲（sRGB 传递函数、RGBA 字节序、预乘 alpha），供 iPad Full 档与压力降级使用。
     /// P3 立方体容不下的超范围原色（如 Adobe RGB 红原色）在此被钳到 P3 原色，这是 8 位 P3 编码的既有边界。
+    /// bands &gt; 1 时按行带并行转换（共享 <see cref="AppleBitmapConversion"/>），失败回退串行绘制。
     /// </summary>
-    private static unsafe DecodedImage DecodeDisplayP3(CGImage image, int width, int height, int sourceWidth, int sourceHeight, int orientation, CancellationToken cancellationToken)
+    private static unsafe DecodedImage DecodeDisplayP3(CGImage image, int width, int height, int sourceWidth, int sourceHeight,
+        int orientation, int bands, CancellationToken cancellationToken)
     {
         int stride = checked(width * 4);
         var buffer = DecodedImage.RentPixels(checked(stride * height));
         try
         {
-            using var displayP3 = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3) ?? throw new UserFacingException("系统不支持 Display P3 色彩空间");
-            fixed (byte* pixels = buffer)
+            Volatile.Write(ref LastParallelBands, 0);
+            if (bands > 1)
             {
-                // PremultipliedLast + 默认字节序 = 内存中的 R,G,B,A 顺序。
-                using var context = new CGBitmapContext((IntPtr)pixels, width, height, 8, stride,
-                    displayP3, CGImageAlphaInfo.PremultipliedLast);
-                context.SetBlendMode(CGBlendMode.Copy);
-                context.DrawImage(new CGRect(0, 0, width, height), image);
+                try
+                {
+                    AppleBitmapConversion.DrawParallel(image, buffer, width, height, bands, cancellationToken);
+                    Volatile.Write(ref LastParallelBands, bands);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    Console.WriteLine($"[PresentationDecoder] 并行位图转换失败，回退串行绘制：{exception.GetType().Name}: {exception.Message}");
+                    DrawDisplayP3(image, buffer, width, height);
+                }
             }
+            else
+            {
+                DrawDisplayP3(image, buffer, width, height);
+            }
+
             cancellationToken.ThrowIfCancellationRequested();
             return DecodedImage.CreatePooled(buffer, width, height, stride, PixelEncoding.Rgba8,
                 ImageColorSpace.DisplayP3, sourceWidth, sourceHeight, orientation);
@@ -320,6 +397,34 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             ImageBufferPool.Return(buffer);
             throw;
         }
+    }
+
+    /// <summary>串行绘制到 8 位 Display P3 缓冲（原路径，也是并行转换失败的回退）。</summary>
+    private static unsafe void DrawDisplayP3(CGImage image, byte[] buffer, int width, int height)
+    {
+        int stride = checked(width * 4);
+        using var displayP3 = CGColorSpace.CreateWithName(CGColorSpaceNames.DisplayP3) ?? throw new UserFacingException("系统不支持 Display P3 色彩空间");
+        fixed (byte* pixels = buffer)
+        {
+            // PremultipliedLast + 默认字节序 = 内存中的 R,G,B,A 顺序。
+            using var context = new CGBitmapContext((IntPtr)pixels, width, height, 8, stride,
+                displayP3, CGImageAlphaInfo.PremultipliedLast);
+            context.SetBlendMode(CGBlendMode.Copy);
+            context.DrawImage(new CGRect(0, 0, width, height), image);
+        }
+    }
+
+    /// <summary>
+    /// iOS 全分辨率 8 位 P3 的 HEIF 源（10 位/32bpp/sRGB 容器）走并行位图：P0 或无票面 4 带，其余票面 2 带。
+    /// 其它源格式返回 0，保持串行旧路径。
+    /// </summary>
+    private static int ParallelBandCount(CGImage image)
+    {
+        if (!OperatingSystem.IsIOS() || (int)image.BitsPerComponent != 10 || (int)image.BitsPerPixel != 32
+            || image.ColorSpace?.Name != "kCGColorSpaceSRGB")
+            return 0;
+        DecodeTicket? ticket = DecodeContext.Current;
+        return ticket is null || ticket.Priority == DecodePriority.P0_Current ? 4 : 2;
     }
 
     /// <summary>JPEG 无内嵌 ICC 时按共享 EXIF/互操作规则解释像素，不覆盖已声明的配置文件。</summary>
@@ -368,5 +473,152 @@ public sealed class ApplePresentationDecoder : IPresentationImageDecoder
             stream.Position = next;
         }
         throw new InvalidDataException("JPEG 扫描头部不完整");
+    }
+}
+
+/// <summary>
+/// iOS RAW 单路准入：Core Image 的 RAW 创建/渲染同时只放行一路。
+/// 前台（P0）优先于 alongside 与普通后台；alongside 可与非 RAW 的 P0 并行，但不得越过已在等待的前台 RAW；
+/// 普通后台 RAW 在 P0 在途时让位。等待期间按当前票面重新排序（票面提升即时生效），取消只退出等待、不回落 ImageIO。
+/// </summary>
+internal sealed class RawDecodeAdmission
+{
+    private const int RecheckIntervalMs = 16;
+
+    private sealed class Waiter
+    {
+        public required long Sequence;
+        public required Func<DecodePriority> Priority;
+        public required Func<bool> Alongside;
+        public int Granted;
+    }
+
+    private readonly object _gate = new();
+    private readonly List<Waiter> _waiters = new();
+    private readonly SemaphoreSlim _wakeup = new(0);
+    private int _active;
+    private long _sequence;
+
+    /// <summary>已授租（正在执行）的 RAW 路数，最多 1。</summary>
+    public int ActiveCount
+    {
+        get { lock (_gate) return _active; }
+    }
+
+    /// <summary>排队等待的 RAW 请求数（不含已授租）。</summary>
+    public int WaitingCount
+    {
+        get { lock (_gate) return _waiters.Count; }
+    }
+
+    /// <summary>按解码票面取名额；票面为空按普通后台。</summary>
+    public Task<IDisposable> AcquireAsync(DecodeTicket? ticket, CancellationToken cancellationToken)
+    {
+        if (ticket is null)
+            return AcquireAsync(static () => DecodePriority.P2_Prefetch, static () => false, cancellationToken);
+        return AcquireAsync(() => ticket.Priority, () => ticket.Alongside, cancellationToken);
+    }
+
+    /// <summary>按当前优先级/并行标记取名额；等待期间重新读取，票面提升即时生效。</summary>
+    public async Task<IDisposable> AcquireAsync(Func<DecodePriority> priority, Func<bool> alongside, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var waiter = new Waiter
+        {
+            Sequence = Interlocked.Increment(ref _sequence),
+            Priority = priority,
+            Alongside = alongside,
+        };
+        lock (_gate)
+        {
+            _waiters.Add(waiter);
+            TryGrantLocked();
+        }
+
+        try
+        {
+            while (true)
+            {
+                lock (_gate) TryGrantLocked();
+                cancellationToken.ThrowIfCancellationRequested();
+                if (Volatile.Read(ref waiter.Granted) != 0) return new Lease(this);
+                await _wakeup.WaitAsync(RecheckIntervalMs, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch
+        {
+            lock (_gate)
+            {
+                if (Volatile.Read(ref waiter.Granted) != 0)
+                {
+                    // 已授租但调用方在拿到租约前被取消：把槽位还给队列，避免泄漏。
+                    _active = 0;
+                    TryGrantLocked();
+                }
+                else
+                {
+                    _waiters.Remove(waiter);
+                    TryGrantLocked();
+                }
+            }
+            throw;
+        }
+    }
+
+    /// <summary>在槽位空闲时按「前台 &gt; alongside &gt; 普通后台，同级先到先得」授租。</summary>
+    private void TryGrantLocked()
+    {
+        if (_active != 0) return;
+        Waiter? best = null;
+        foreach (var waiter in _waiters)
+        {
+            if (!EligibleLocked(waiter)) continue;
+            if (best is null || Rank(waiter) < Rank(best) ||
+                (Rank(waiter) == Rank(best) && waiter.Sequence < best.Sequence))
+            {
+                best = waiter;
+            }
+        }
+
+        if (best is null) return;
+        _waiters.Remove(best);
+        Volatile.Write(ref best.Granted, 1);
+        _active = 1;
+        if (_wakeup.CurrentCount == 0) _wakeup.Release();
+    }
+
+    private static int Rank(Waiter waiter)
+        => waiter.Priority() == DecodePriority.P0_Current ? 0 : waiter.Alongside() ? 1 : 2;
+
+    private bool EligibleLocked(Waiter waiter)
+    {
+        if (waiter.Priority() == DecodePriority.P0_Current) return true;
+        // 已有前台 RAW 在等：单路槽位先给它，旁的通道不得越过。
+        foreach (var other in _waiters)
+        {
+            if (!ReferenceEquals(other, waiter) && other.Priority() == DecodePriority.P0_Current) return false;
+        }
+
+        return waiter.Alongside() || DecodeScheduler.P0InFlightCount == 0;
+    }
+
+    private void Release()
+    {
+        lock (_gate)
+        {
+            if (_active == 0) return;
+            _active = 0;
+            TryGrantLocked();
+        }
+    }
+
+    /// <summary>一次名额租约；重复释放幂等。</summary>
+    private sealed class Lease : IDisposable
+    {
+        private RawDecodeAdmission? _owner;
+
+        public Lease(RawDecodeAdmission owner) => _owner = owner;
+
+        public void Dispose() => Interlocked.Exchange(ref _owner, null)?.Release();
     }
 }

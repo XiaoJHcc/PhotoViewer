@@ -16,6 +16,8 @@ namespace PhotoViewer.Apple;
 /// 验收专用只读对照探针：<c>--pv-decode-optimize &lt;目录&gt;</c>。
 /// JPEG/HEIC 比较产品 ImageIO+CGBitmapContext 与 ImageIO+CIImage+CIContext 两条路径；
 /// RAW 分开测"每次独立新实例"与"单实例 proxy→full"，核对像素、朝向、内存。
+/// 可选 <c>--pv-decode-full</c> 只测 JPEG/HEIF 真实全分辨率 8 位 P3（跳 RAW/F16 与 convert-only），
+/// 第三臂用并行位图行带而非 Core Image。
 /// 不进入产品；像素/朝向/色调守卫失败即探针 FAIL。
 /// </summary>
 public static class AppleDecodeOptimizationProbe
@@ -33,28 +35,43 @@ public static class AppleDecodeOptimizationProbe
     /// <summary>RAW Full 逐像素对拍允许同时保留两份输出；超出改用首尾+网格签名，避免双份大缓冲。</summary>
     private static long ComparePairBudget => OperatingSystem.IsMacOS() ? 768L * 1024 * 1024 : 320L * 1024 * 1024;
 
-    public static Task<bool> RunAsync(string directory, string reportPath)
-        => Task.Run(() => Run(directory, reportPath), CancellationToken.None);
+    public static Task<bool> RunAsync(string directory, string reportPath, bool fullResolution = false)
+        => Task.Run(() => Run(directory, reportPath, fullResolution), CancellationToken.None);
 
-    private static bool Run(string directory, string reportPath)
+    private static bool Run(string directory, string reportPath, bool fullResolution)
     {
         var report = new ReportWriter(reportPath);
         bool success = true;
+        string target = fullResolution ? "Full" : TargetLongEdge.ToString(CultureInfo.InvariantCulture);
         report.WriteLine($"PhotoViewer decode optimization probe platform={PlatformName()} " +
-            $"arch={RuntimeInformation.ProcessArchitecture} cpus={Environment.ProcessorCount} T={TargetLongEdge} " +
-            $"samples={Runs} compare_pair_budget={Megabytes(ComparePairBudget)}");
-        report.WriteLine("baseline=e2e_*_product: ApplePresentationDecoder(useCoreImage:false), bitmap only");
-        report.WriteLine("accelerated=e2e_*_accelerated: actual default ApplePresentationDecoder; CI only for HEIF F16 >=4MP; first sample keeps CI init");
-        report.WriteLine("ci=e2e_*_ci: independent probe candidate (ImageIO thumbnail + CIImage.FromCGImage + own CIContext); experiment only");
+            $"arch={RuntimeInformation.ProcessArchitecture} cpus={Environment.ProcessorCount} T={target} " +
+            $"samples={Runs} compare_pair_budget={Megabytes(ComparePairBudget)}" +
+            (fullResolution ? " mode=full-p3" : ""));
+        if (fullResolution)
+        {
+            report.WriteLine("baseline=e2e_p3_product: ApplePresentationDecoder(useCoreImage:false), maxLongEdge=null, bitmap only");
+            report.WriteLine("accelerated=e2e_p3_accelerated: actual default ApplePresentationDecoder maxLongEdge=null; source and conversion follow product policy");
+            report.WriteLine("candidate=e2e_p3_bitmap_parallel: HEIF bpc>8 >=4MP -> 4 parallel row bands, 8-row source halo, own CGContext per band (shared AppleBitmapConversion); JPEG/bpc<=8/small -> single DrawBitmap; no Core Image");
+            report.WriteLine("third_arm=render_decode: decode and draw are timed separately; includes decode, not convert-only");
+            report.WriteLine("scope=full-p3: jpeg+heif full-resolution 8-bit P3 only; raw, f16 plan and convert-only skipped");
+        }
+        else
+        {
+            report.WriteLine("baseline=e2e_*_product: ApplePresentationDecoder(useCoreImage:false), bitmap only");
+            report.WriteLine("accelerated=e2e_*_accelerated: actual default ApplePresentationDecoder; CI only for HEIF F16 >=4MP; first sample keeps CI init");
+            report.WriteLine("ci=e2e_*_ci: independent probe candidate (ImageIO thumbnail + CIImage.FromCGImage + own CIContext); experiment only");
+            report.WriteLine("raw_cold=proxy and full each use independent new CIRawFilter; raw_reuse=one new instance per round does proxy->full");
+        }
         report.WriteLine("note=pixel equality is not speed evidence; gc is not forced; candidate verdict is probe-only");
-        report.WriteLine("raw_cold=proxy and full each use independent new CIRawFilter; raw_reuse=one new instance per round does proxy->full");
         report.WriteLine("completed=0 success=0");
         report.Flush();
         try
         {
             if (!Directory.Exists(directory)) throw new DirectoryNotFoundException($"输入目录不存在：{directory}");
             Candidate[] inputs = Discover(directory);
-            if (inputs.Length == 0) throw new InvalidOperationException("目录内没有 JPEG/HEIC/ARW 素材");
+            if (fullResolution) inputs = inputs.Where(x => x.Kind != "raw").ToArray();
+            if (inputs.Length == 0)
+                throw new InvalidOperationException(fullResolution ? "目录内没有 JPEG/HEIC 素材" : "目录内没有 JPEG/HEIC/ARW 素材");
             report.WriteLine($"directory={directory} scan=top+1level files={inputs.Length} " +
                 $"jpeg={inputs.Count(x => x.Kind == "jpeg")} heic={inputs.Count(x => x.Kind == "heic")} raw={inputs.Count(x => x.Kind == "raw")}");
             foreach (Candidate input in inputs)
@@ -68,7 +85,7 @@ public static class AppleDecodeOptimizationProbe
                 {
                     bool ok = input.Kind == "raw"
                         ? MeasureRaw(report, probe, input.Path)
-                        : MeasureStill(report, probe, input.Path, input.Kind);
+                        : MeasureStill(report, probe, input.Path, input.Kind, fullResolution);
                     success &= ok;
                 }
                 catch (Exception exception)
@@ -99,7 +116,7 @@ public static class AppleDecodeOptimizationProbe
         return new ProbeContext();
     }
 
-    private static bool MeasureStill(ReportWriter report, ProbeContext probe, string path, string kind)
+    private static bool MeasureStill(ReportWriter report, ProbeContext probe, string path, string kind, bool full)
     {
         using var pool = new NSAutoreleasePool();
         using var url = NSUrl.FromFilename(path);
@@ -116,25 +133,109 @@ public static class AppleDecodeOptimizationProbe
 
         if (sourceWidth <= 0 || sourceHeight <= 0) throw new InvalidOperationException("源尺寸无效");
         report.WriteLine($"== {kind} {Path.GetFileName(path)} source={sourceWidth}x{sourceHeight} " +
-            $"orientation={orientation} T={TargetLongEdge} jpeg={jpeg}");
+            $"orientation={orientation} T={(full ? "Full" : TargetLongEdge.ToString(CultureInfo.InvariantCulture))} jpeg={jpeg}");
         bool ok = true;
         foreach (var plan in Plans(probe))
         {
-            ok &= MeasureStillEncoding(report, probe, url, path, plan, orientation, sourceWidth, sourceHeight);
+            if (full && plan.Half) continue;
+            ok &= MeasureStillEncoding(report, probe, url, path, plan, orientation, sourceWidth, sourceHeight, full);
             report.Flush();
         }
 
-        ok &= MeasureDecodedConversions(report, probe, url, path);
+        if (!full) ok &= MeasureDecodedConversions(report, probe, url, path);
+        else
+        {
+            using var source = OpenSource(url);
+            using var native = source.CreateThumbnail(0, new CGImageThumbnailOptions
+            {
+                CreateThumbnailFromImageAlways = true,
+                CreateThumbnailWithTransform = false,
+                MaxPixelSize = Math.Max(sourceWidth, sourceHeight),
+                ShouldCacheImmediately = true,
+            });
+            report.WriteLine($"full_native_thumbnail out={native?.Width}x{native?.Height} " +
+                $"bits_per_component={native?.BitsPerComponent} bits_per_pixel={native?.BitsPerPixel} color={native?.ColorSpace?.Name}");
+            ok &= MeasureP2Quality(report, url, path, sourceWidth, sourceHeight);
+        }
         return ok;
     }
 
+    /// <summary>P2 票面的实际默认解码器跑一次真实 Full，只做像素质量核对（不计时、不进中位数）。</summary>
+    private static bool MeasureP2Quality(ReportWriter report, NSUrl url, string path, int sourceWidth, int sourceHeight)
+    {
+        if (!OperatingSystem.IsIOS() || !IsHeic(path) || (long)sourceWidth * sourceHeight < 4_000_000) return true;
+
+        using var pool = new NSAutoreleasePool();
+        int bitsPerComponent, bitsPerPixel;
+        string color;
+        using (var source = OpenSource(url))
+        {
+            using var decoded = CreateFullImage(source);
+            bitsPerComponent = (int)decoded.BitsPerComponent;
+            bitsPerPixel = (int)decoded.BitsPerPixel;
+            color = decoded.ColorSpace?.Name ?? "-";
+        }
+
+        if (bitsPerComponent != 10 || bitsPerPixel != 32 || color != "kCGColorSpaceSRGB")
+        {
+            report.WriteLine($"quality-only p2_two_bands skip=source-format bits_per_component={bitsPerComponent} " +
+                $"bits_per_pixel={bitsPerPixel} color={color}");
+            return true;
+        }
+
+        var file = new LocalFileRef(path);
+        var serial = new ApplePresentationDecoder(useCoreImage: false);
+        var actual = new ApplePresentationDecoder();
+        DecodedImage? baseline = null;
+        DecodedImage? candidate = null;
+        try
+        {
+            baseline = serial.DecodeAsync(file, null, PixelEncoding.Rgba8, CancellationToken.None)
+                .GetAwaiter().GetResult() ?? throw new InvalidOperationException("P2 基线解码返回空");
+            using (DecodeContext.Enter(DecodePriority.P2_Prefetch))
+                candidate = actual.DecodeAsync(file, null, PixelEncoding.Rgba8, CancellationToken.None)
+                    .GetAwaiter().GetResult() ?? throw new InvalidOperationException("P2 默认解码返回空");
+            int observedBands = Volatile.Read(ref ApplePresentationDecoder.LastParallelBands);
+            if (candidate.Width != baseline.Width || candidate.Height != baseline.Height ||
+                candidate.Orientation != baseline.Orientation ||
+                candidate.SourceWidth != baseline.SourceWidth || candidate.SourceHeight != baseline.SourceHeight ||
+                candidate.Encoding != baseline.Encoding || candidate.ColorSpace != baseline.ColorSpace)
+            {
+                report.WriteLine($"FAIL quality-only p2_two_bands_geometry p2={candidate.Width}x{candidate.Height}/" +
+                    $"{candidate.SourceWidth}x{candidate.SourceHeight}/{candidate.Orientation}/{candidate.Encoding}/{candidate.ColorSpace} " +
+                    $"baseline={baseline.Width}x{baseline.Height}/{baseline.SourceWidth}x{baseline.SourceHeight}/" +
+                    $"{baseline.Orientation}/{baseline.Encoding}/{baseline.ColorSpace}");
+                return false;
+            }
+
+            var difference = Compare(candidate.Pixels, candidate.Stride, baseline.Pixels, baseline.Stride,
+                baseline.Width, baseline.Height, half: false);
+            var (rows, flipMean) = DetectRows(candidate.Pixels, candidate.Stride, baseline.Pixels, baseline.Stride,
+                baseline.Width, baseline.Height, false, difference.Mean);
+            bool ok = rows != "flipped" && difference.Samples > 0 && difference.Max <= 2 && observedBands == 2;
+            report.WriteLine(DifferenceLine("quality-only p2_two_bands", difference) +
+                $" rows={rows} flip_mean={flipMean:0.000000} bands_observed={observedBands} max_limit=2");
+            report.WriteLine($"verdict quality-only p2_two_bands candidate={(ok ? "within-tolerance" : "outside-tolerance")} " +
+                "max_limit=2 bands_expected=2 note=quality-only-not-timed");
+            return ok;
+        }
+        finally
+        {
+            baseline?.Dispose();
+            candidate?.Dispose();
+        }
+    }
+
     private static bool MeasureStillEncoding(ReportWriter report, ProbeContext probe, NSUrl url, string path,
-        EncodingPlan plan, int orientation, int sourceWidth, int sourceHeight)
+        EncodingPlan plan, int orientation, int sourceWidth, int sourceHeight, bool full)
     {
         // baseline 显式关闭 CI；accelerated 是真实默认产品路径（HEIF F16 >=4MP 才走 CI）。
         var baseline = new ApplePresentationDecoder(useCoreImage: false);
         var accelerated = new ApplePresentationDecoder();
         var file = new LocalFileRef(path);
+        int? limit = full ? null : TargetLongEdge;
+        long beforeFootprint = Footprint();
+        long beforePool = ImageBufferPool.IdleBytes;
         var productTimes = new double[Runs];
         var acceleratedTimes = new double[Runs];
         DecodedImage? product = null;
@@ -142,6 +243,11 @@ public static class AppleDecodeOptimizationProbe
         int productWidth = 0, productHeight = 0, productOrientation = 1;
         int acceleratedWidth = 0, acceleratedHeight = 0, acceleratedOrientation = 1;
         int candidateWidth = 0, candidateHeight = 0, candidateStride = 0;
+        int sourceBitsPerComponent = 0, sourceBitsPerPixel = 0;
+        string sourceColorSpace = "-";
+        string sourcePixelFormat = "-", sourceAlpha = "-";
+        bool parallelBitmap = false;
+        int bands = 1;
         byte[]? candidate = null;
         var decodeTimes = new double[Runs];
         var convertTimes = new double[Runs];
@@ -153,7 +259,7 @@ public static class AppleDecodeOptimizationProbe
             product?.Dispose();
             product = null;
             var watch = Stopwatch.StartNew();
-            product = baseline.DecodeAsync(file, TargetLongEdge, plan.Encoding, CancellationToken.None)
+            product = baseline.DecodeAsync(file, limit, plan.Encoding, CancellationToken.None)
                 .GetAwaiter().GetResult() ?? throw new InvalidOperationException("baseline 解码返回空");
             productTimes[run] = watch.Elapsed.TotalMilliseconds;
             productWidth = product.Width;
@@ -167,7 +273,7 @@ public static class AppleDecodeOptimizationProbe
             acceleratedImage?.Dispose();
             acceleratedImage = null;
             var watch = Stopwatch.StartNew();
-            acceleratedImage = accelerated.DecodeAsync(file, TargetLongEdge, plan.Encoding, CancellationToken.None)
+            acceleratedImage = accelerated.DecodeAsync(file, limit, plan.Encoding, CancellationToken.None)
                 .GetAwaiter().GetResult() ?? throw new InvalidOperationException("默认产品解码返回空");
             acceleratedTimes[run] = watch.Elapsed.TotalMilliseconds;
             acceleratedWidth = acceleratedImage.Width;
@@ -182,13 +288,23 @@ public static class AppleDecodeOptimizationProbe
             using var source = OpenSource(url);
             var decodeWatch = Stopwatch.StartNew();
             var properties = source.GetProperties(0, null);
-            using var image = CreateThumbnail(source);
+            using var image = full ? CreateFullImage(source) : CreateThumbnail(source);
             // 与产品同一套无 ICC JPEG 色彩推断；候选不能默默按 sRGB 解释。
             using var inferred = InterpretUntaggedJpeg(image, properties, path);
             var effective = inferred ?? image;
             decodeTimes[run] = decodeWatch.Elapsed.TotalMilliseconds;
             int width = checked((int)image.Width);
             int height = checked((int)image.Height);
+            if (full && run == 0)
+            {
+                sourceBitsPerComponent = (int)image.BitsPerComponent;
+                sourceBitsPerPixel = (int)image.BitsPerPixel;
+                sourceColorSpace = image.ColorSpace?.Name ?? "-";
+                sourcePixelFormat = ((CGBitmapInfo)(uint)image.BitmapInfo).GetPixelFormatInfo().ToString();
+                sourceAlpha = image.AlphaInfo.ToString();
+                parallelBitmap = IsHeic(path) && sourceBitsPerComponent > 8 && (long)width * height >= 4_000_000;
+                bands = parallelBitmap ? 4 : 1;
+            }
             if (run == 0)
             {
                 candidateWidth = width;
@@ -202,7 +318,10 @@ public static class AppleDecodeOptimizationProbe
             }
 
             var convertWatch = Stopwatch.StartNew();
-            RenderCi(probe, effective, candidate!, width, height, plan);
+            if (parallelBitmap)
+                AppleBitmapConversion.DrawParallel(effective, candidate!, width, height, bands, CancellationToken.None);
+            else if (full) DrawBitmap(effective, candidate!, width, height, plan.Encoding);
+            else RenderCi(probe, effective, candidate!, width, height, plan);
             convertTimes[run] = convertWatch.Elapsed.TotalMilliseconds;
             totalTimes[run] = total.Elapsed.TotalMilliseconds;
         }
@@ -227,22 +346,41 @@ public static class AppleDecodeOptimizationProbe
             }
 
             if (product == null || acceleratedImage == null) throw new InvalidOperationException("产品解码未产出图像");
-            bool acceleratedPath = OperatingSystem.IsMacOS() && IsHeic(path) && plan.Half && (long)productWidth * productHeight >= 4_000_000;
+            bool acceleratedPath = IsHeic(path) && plan.Half && (long)productWidth * productHeight >= 4_000_000;
+            int acceleratedBands = full ? Volatile.Read(ref ApplePresentationDecoder.LastParallelBands) : 0;
+            string acceleratedMode = full
+                ? $"conversion={(acceleratedBands > 0 ? "parallel-bitmap" : "bitmap")}" +
+                    (acceleratedBands > 0 ? $" bands={acceleratedBands}" : "") + " first=bitmap"
+                : "first=includes-CI-init";
+            string candidateLabel = full
+                ? $"e2e_{plan.Label}_bitmap{(parallelBitmap ? "_parallel" : "_single")}"
+                : $"e2e_{plan.Label}";
+            if (full)
+                report.WriteLine($"source_cgimage bits_per_component={sourceBitsPerComponent} bits_per_pixel={sourceBitsPerPixel} " +
+                    $"color={sourceColorSpace} pixel_format={sourcePixelFormat} alpha={sourceAlpha} full=1");
             report.WriteLine(Timeline($"e2e_{plan.Label}_product", productTimes,
                 $"encoding={plan.Encoding} out={productWidth}x{productHeight} orientation={productOrientation} decoder=bitmap(useCoreImage=false)"));
             report.WriteLine(Timeline($"e2e_{plan.Label}_accelerated", acceleratedTimes,
                 $"encoding={plan.Encoding} out={acceleratedWidth}x{acceleratedHeight} orientation={acceleratedOrientation} " +
-                $"decoder=default accelerated={(acceleratedPath ? "active" : "inactive")} first=includes-CI-init"));
-            report.WriteLine(Timeline($"e2e_{plan.Label}_ci", totalTimes,
-                $"encoding={plan.Encoding} out={candidateWidth}x{candidateHeight} orientation={orientation} " +
-                $"decode={Median(decodeTimes):0.0}ms convert={Median(convertTimes):0.0}ms independent=1"));
+                $"decoder=default accelerated={(acceleratedPath ? "active" : "inactive")} {acceleratedMode}"));
+            if (full)
+                report.WriteLine(Timeline(candidateLabel, totalTimes,
+                    $"encoding={plan.Encoding} out={candidateWidth}x{candidateHeight} orientation={orientation} " +
+                    $"decode={Median(decodeTimes):0.0}ms draw={Median(convertTimes):0.0}ms " +
+                    $"candidate={(parallelBitmap ? "parallel-bitmap" : "bitmap-single")} bands={bands} " +
+                    $"halo={(parallelBitmap ? AppleBitmapConversion.Halo : 0)} " +
+                    $"render={(parallelBitmap ? "parallel-bitmap" : "draw")} scope=render_decode(decode+draw, not convert-only)"));
+            else
+                report.WriteLine(Timeline($"e2e_{plan.Label}_ci", totalTimes,
+                    $"encoding={plan.Encoding} out={candidateWidth}x{candidateHeight} orientation={orientation} " +
+                    $"decode={Median(decodeTimes):0.0}ms convert={Median(convertTimes):0.0}ms independent=1"));
 
             bool ok = true;
             bool candidateGeometry = productWidth == candidateWidth && productHeight == candidateHeight;
             if (!candidateGeometry)
             {
                 ok = false;
-                report.WriteLine($"FAIL e2e_{plan.Label}_geometry product={productWidth}x{productHeight} ci={candidateWidth}x{candidateHeight}");
+                report.WriteLine($"FAIL {candidateLabel}_geometry product={productWidth}x{productHeight} ci={candidateWidth}x{candidateHeight}");
             }
 
             if (productOrientation != orientation)
@@ -276,11 +414,14 @@ public static class AppleDecodeOptimizationProbe
                     candidateWidth, candidateHeight, plan.Half);
                 var (rows, flipMean) = DetectRows(candidate!, candidateStride, product.Pixels, product.Stride,
                     candidateWidth, candidateHeight, plan.Half, difference.Mean);
-                report.WriteLine(DifferenceLine($"compare e2e_{plan.Label}", difference) + $" rows={rows} flip_mean={flipMean:0.000000}");
-                double limit = plan.Half ? HalfMeanLimit : P3MeanLimit;
-                quality = rows != "flipped" && difference.Samples > 0 && difference.Mean <= limit;
-                report.WriteLine($"verdict e2e_{plan.Label} candidate={(quality ? "within-tolerance" : "outside-tolerance")} " +
-                    $"mean_limit={limit} note=probe-only");
+                report.WriteLine(DifferenceLine($"compare {candidateLabel}", difference) + $" rows={rows} flip_mean={flipMean:0.000000}");
+                double meanLimit = plan.Half ? HalfMeanLimit : P3MeanLimit;
+                quality = rows != "flipped" && difference.Samples > 0 && difference.Mean <= meanLimit;
+                report.WriteLine($"verdict {candidateLabel} candidate={(quality ? "within-tolerance" : "outside-tolerance")} " +
+                    $"mean_limit={meanLimit} note=probe-only");
+                if (full && !plan.Half)
+                    ReportLargeDiffs(report, candidateLabel, candidate!, candidateStride, product.Pixels, product.Stride,
+                        candidateWidth, candidateHeight);
             }
 
             bool acceleratedOk = false;
@@ -305,6 +446,8 @@ public static class AppleDecodeOptimizationProbe
             product?.Dispose();
             acceleratedImage?.Dispose();
             if (candidate != null) ImageBufferPool.Return(candidate);
+            report.WriteLine($"still_memory {plan.Label} before={Megabytes(beforeFootprint)} after={Megabytes(Footprint())} " +
+                $"pool_before={Megabytes(beforePool)} pool_after={Megabytes(ImageBufferPool.IdleBytes)} note=endpoints-not-peak");
         }
     }
 
@@ -641,7 +784,8 @@ public static class AppleDecodeOptimizationProbe
         return buffer;
     }
 
-    private static unsafe void RenderCi(ProbeContext probe, CGImage image, byte[] buffer, int width, int height, EncodingPlan plan)
+    private static unsafe void RenderCi(ProbeContext probe, CGImage image, byte[] buffer, int width, int height,
+        EncodingPlan plan)
     {
         int stride = checked(width * plan.BytesPerPixel);
         if (buffer.LongLength < (long)stride * height) throw new InvalidOperationException("像素缓冲不足");
@@ -708,6 +852,10 @@ public static class AppleDecodeOptimizationProbe
             MaxPixelSize = TargetLongEdge,
             ShouldCacheImmediately = true,
         }) ?? throw new InvalidOperationException("ImageIO 缩解码失败");
+
+    private static CGImage CreateFullImage(CGImageSource source)
+        => source.CreateImage(0, new CGImageOptions { ShouldCacheImmediately = true })
+            ?? throw new InvalidOperationException("ImageIO 全图解码失败");
 
     /// <summary>镜像产品逻辑：无内嵌 ICC 的 RGB JPEG 按 EXIF/互操作标签解释，候选不得默认 sRGB。</summary>
     private static CGImage? InterpretUntaggedJpeg(CGImage image, CoreGraphics.CGImageProperties? properties, string path)
@@ -1016,6 +1164,34 @@ public static class AppleDecodeOptimizationProbe
         => $"{name} mean={difference.Mean.ToString("0.000000", CultureInfo.InvariantCulture)} " +
            $"max={difference.Max.ToString("0.000000", CultureInfo.InvariantCulture)} " +
            $"samples={difference.Samples} extended={difference.Extended}";
+
+    /// <summary>8 位候选的大差异分布（计时外）：定位差是否只出现在行带边界。</summary>
+    private static void ReportLargeDiffs(ReportWriter report, string name, byte[] candidate, int candidateStride,
+        byte[] reference, int referenceStride, int width, int height, int threshold = 2)
+    {
+        var rows = new int[height];
+        long channels = 0;
+        for (int y = 0; y < height; y++)
+        {
+            int count = 0;
+            int candidateRow = y * candidateStride, referenceRow = y * referenceStride;
+            for (int x = 0; x < width; x++)
+                for (int channel = 0; channel < 3; channel++)
+                {
+                    int offset = x * 4 + channel;
+                    if (Math.Abs(candidate[candidateRow + offset] - reference[referenceRow + offset]) > threshold) count++;
+                }
+
+            rows[y] = count;
+            channels += count;
+        }
+
+        var hit = Enumerable.Range(0, height).Where(y => rows[y] > 0).ToList();
+        string top = string.Join("/", hit.OrderByDescending(y => rows[y]).ThenBy(y => y).Take(12).Select(y => $"{y}:{rows[y]}"));
+        report.WriteLine($"largediff {name} threshold={threshold} channels={channels} " +
+            $"row_min={(hit.Count == 0 ? -1 : hit[0])} row_max={(hit.Count == 0 ? -1 : hit[^1])} rows={hit.Count} " +
+            $"top_rows={top}");
+    }
 
     private static string Timeline(string name, double[] times, string extra)
         => $"{name} first={times[0]:0.0}ms median={Median(times):0.0}ms " +

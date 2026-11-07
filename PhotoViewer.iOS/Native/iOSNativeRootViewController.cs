@@ -1146,7 +1146,7 @@ internal sealed class iOSNativeRootViewController : UIViewController
                 _ratingSources.Close();
                 // 切图后细节预览的触控活动/悬停都作废，绿框不得跟着旧裁剪中心留在新照片上。
                 HideDetailHighlight();
-                _session.SetFile(_main.CurrentFile?.File);
+                if (_sessionStarted) _session.SetFile(_main.CurrentFile?.File);
                 BuildControls();
                 UpdateHint();
             });
@@ -1366,16 +1366,14 @@ internal sealed class iOSNativeRootViewController : UIViewController
     /// <param name="v">归一化纵坐标。</param>
     private void FocusDetailPoint(double u, double v) => _photo.FocusOnPoint(u, v, 1);
 
-    /// <summary>
-    /// 视口首次有效后启动展示会话（先上报视口再发起解码：代理目标必须来自真实视口，
-    /// 否则会话会把目标钳成 1 像素而解码出 1×1 的"合格代理"）。
-    /// </summary>
+    /// <summary>首次有效布局后上报视口，再启动展示会话与压测。</summary>
     private void StartSession()
     {
         if (_sessionStarted || _photo.Bounds.Width < 1 || _photo.Bounds.Height < 1) return;
         _sessionStarted = true;
         ReportViewport();
         _session.SetFile(_main.CurrentFile?.File);
+        StressFlipDriver.MaybeStart(_main, _session);
     }
 
     /// <summary>会话产物变化：产物直接交 Metal 上传（不建第二份主图缓冲），并刷新空态/加载/错误提示。</summary>

@@ -51,6 +51,12 @@ public class BitmapPrefetcher
     private const int RawAlongsideDepth = 1;
 
     /// <summary>
+    /// RAW 提前窗口。默认 2 保留既有邻居规则；扩大时仅窗口内最近的一张 RAW 获得沿 P0 并行资格，
+    /// 仍受对应方向的预载份数限制。
+    /// </summary>
+    public static int RawAlongsideLookahead { get; set; } = 2;
+
+    /// <summary>
     /// 构造位图预取器,绑定到主视图模型与缩略图列表视图模型。
     /// </summary>
     /// <param name="main">主视图模型(读取当前图、设置)</param>
@@ -157,24 +163,63 @@ public class BitmapPrefetcher
                 // 只保留一张(与 P0 并发两路)才划算。
                 int aheadIndex = idx + direction;
                 bool aheadExists = aheadIndex >= 0 && aheadIndex < files.Count;
+                bool longRawLookahead = RawAlongsideLookahead > AlongsideDepth;
+                int rawAhead = longRawLookahead
+                    ? SelectRawAlongsideIndex(files, idx, direction, forward, backward, RawAlongsideLookahead)
+                    : -1;
                 int aheadDepth = aheadExists && RawLoader.IsRawFile(files[aheadIndex].File) ? RawAlongsideDepth : AlongsideDepth;
                 bool IsAhead(int index)
                 {
+                    if (index == rawAhead) return true;
                     int offset = (index - idx) * direction;
-                    return offset >= 1 && offset <= aheadDepth;
+                    if (offset < 1 || offset > (longRawLookahead ? AlongsideDepth : aheadDepth)) return false;
+                    // 扩展口径下 +1/+2 只给非 RAW：RAW 的名额由上面唯一一张占用。
+                    return !longRawLookahead || !RawLoader.IsRawFile(files[index].File);
                 }
 
-                // 分级预取:适应态只解代理;需要 Full 时 ±1 邻居取 Full(变焦连续性);代理目标未知时全部 Full(旧行为)
                 int proxyTarget = BitmapLoader.ProxyTargetLongEdge;
                 bool fullNeighbors = BitmapLoader.PrefetchFullWanted && BitmapLoader.PrefetchFullNeighbors;
-                var items = sorted.Select(t => (
-                    file: files[t.index],
-                    full: proxyTarget <= 0 || (t.distance == 1 && fullNeighbors),
-                    alongP0: aheadExists && IsAhead(t.index))).ToList();
+                var items = sorted.Select(t =>
+                {
+                    bool alongside = aheadExists && IsAhead(t.index);
+                    return (file: files[t.index],
+                        full: ShouldPrefetchFull(proxyTarget, fullNeighbors, t.distance, alongside),
+                        alongP0: alongside);
+                }).ToList();
                 await RunQueuedAsync(items, ct).ConfigureAwait(false);
             }
             catch { /* 忽略 */ }
         }, ct);
+    }
+
+    public static bool ShouldPrefetchFull(int proxyTarget, bool fullNeighbors, int distance, bool alongside)
+        => proxyTarget <= 0 || (fullNeighbors && (distance == 1 || alongside));
+
+    /// <summary>
+    /// 沿实际翻页方向、在已配置的前/后预载份数内找距离最近的 RAW（距离上限 <paramref name="window"/>）。
+    /// 只返回一张：它获得「沿 P0 并行」资格，其余 RAW 仍按普通后台预取排。
+    /// </summary>
+    /// <param name="files">当前筛选后的文件列表。</param>
+    /// <param name="currentIndex">当前图下标。</param>
+    /// <param name="direction">翻页方向（正=向后翻，负=向前翻）。</param>
+    /// <param name="forwardCount">配置的向后预载份数。</param>
+    /// <param name="backwardCount">配置的向前预载份数。</param>
+    /// <param name="window">RAW 提前窗口（距离上限，含）。</param>
+    /// <returns>选中的 RAW 下标；窗口内没有 RAW 返回 -1。</returns>
+    public static int SelectRawAlongsideIndex(IReadOnlyList<ImageFile> files, int currentIndex, int direction,
+        int forwardCount, int backwardCount, int window)
+    {
+        if (files is null || currentIndex < 0 || currentIndex >= files.Count || direction == 0) return -1;
+        int side = direction > 0 ? forwardCount : backwardCount;
+        int bound = direction > 0 ? files.Count - 1 - currentIndex : currentIndex;
+        int limit = Math.Min(Math.Min(window, Math.Max(0, side)), bound);
+        for (int distance = 1; distance <= limit; distance++)
+        {
+            int index = currentIndex + Math.Sign(direction) * distance;
+            if (RawLoader.IsRawFile(files[index].File)) return index;
+        }
+
+        return -1;
     }
 
     /// <summary>
@@ -300,6 +345,8 @@ public class BitmapPrefetcher
     /// <summary>
     /// 当前图 Full 预热:切图后停留 ≥600ms(期间再切图即作废)、适应态且分析栏不可见、压力 Normal 且不在恢复观察期时,
     /// 以 P2 解当前图 Full 入缓存(不上屏、不经展示会话),放大或打开分析栏时直接命中。
+    /// 慢图(RAW 等)的 P0 常长于停留窗口:到期时 P0 仍在途就先让位,待主图解完再重新计满 600ms 稳定停留,
+    /// 避免 Full 与"代理刚上屏、用户可能已切走"重叠抢解码器;当前图没有已上屏的代理产物(失败/无图)时不额外重解 Full。
     /// 预取不挤更重要条目:当前图是排名 ①,它的 Full 可以淘汰任意更差的排名;腾不出位置则跳过。
     /// </summary>
     private void ScheduleCurrentFullWarmup()
@@ -311,16 +358,32 @@ public class BitmapPrefetcher
         if (file == null) return;
 
         var path = file.File.StorageId.Value;
+
+        // 预热前提:仍停在当前图、不需要 Full、分析栏不可见、压力 Normal 且不在恢复观察期
+        bool WarmupAllowed()
+            => !ct.IsCancellationRequested
+                && !BitmapLoader.PrefetchFullWanted
+                && !_main.IsAnalysisViewVisible
+                && MemoryGovernor.CurrentLevel == PressureLevel.Normal
+                && !MemoryGovernor.InRecoveryHold;
+
         _ = Task.Run(async () =>
         {
             try
             {
                 await Task.Delay(FullWarmupDelayMs, ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested) return;
-                // 需要 Full 时主链路自己会取,预热无意义(且会与 P0 抢同一份解码)
-                if (BitmapLoader.PrefetchFullWanted || _main.IsAnalysisViewVisible) return;
-                if (MemoryGovernor.CurrentLevel != PressureLevel.Normal || MemoryGovernor.InRecoveryHold) return;
+                if (!WarmupAllowed()) return;
+                // 慢图的代理此刻可能还在 P0:等主图解完,再给它一段稳定停留窗口才预热
+                if (DecodeScheduler.P0InFlightCount > 0)
+                {
+                    if (!await WaitForP0IdleAsync(ct).ConfigureAwait(false)) return;
+                    await Task.Delay(FullWarmupDelayMs, ct).ConfigureAwait(false);
+                    if (!WarmupAllowed()) return;
+                }
+
                 if (BitmapLoader.IsInCache(path, ImageSizeClass.Full)) return;
+                // 只有当前图确实解出过代理才预热:解码失败/无图时不额外做一次 Full 重解
+                if (BitmapLoader.TryGetCached(path, ImageSizeClass.Proxy) == null) return;
 
                 DecodeScheduler.Submit(path, DecodePriority.P2_Prefetch, async token =>
                 {
@@ -338,6 +401,24 @@ public class BitmapPrefetcher
                 Console.WriteLine($"[BitmapPrefetcher] full warmup failed for {file.Name}: {ex.Message}");
             }
         }, ct);
+    }
+
+    /// <summary>
+    /// P0(主图解码)在途时让位:每 120ms 复查取消、压力级别与恢复观察期;
+    /// 期间升到 Caution 以上或进入观察期即放弃本次预热(返回 false)。
+    /// </summary>
+    /// <param name="ct">本轮预热令牌(切图即取消)。</param>
+    /// <returns>P0 已空闲返回 true;被取消或压力不允许返回 false。</returns>
+    private static async Task<bool> WaitForP0IdleAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            if (DecodeScheduler.P0InFlightCount == 0) return true;
+            if (MemoryGovernor.CurrentLevel >= PressureLevel.Caution || MemoryGovernor.InRecoveryHold) return false;
+            await Task.Delay(120, ct).ConfigureAwait(false);
+        }
+
+        return false;
     }
 
     /// <summary>

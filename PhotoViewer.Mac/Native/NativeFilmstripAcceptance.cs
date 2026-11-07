@@ -44,7 +44,11 @@ internal static class NativeFilmstripAcceptance
                     window.Main.FileVM.ThumbnailList.ScrollToCurrent();
                     await WaitScrollSettledAsync((MacFilmstripScrollView)window.FilmstripScroll);
                     window.Filmstrip.LayoutSubtreeIfNeeded();
-                    using var path = NSIndexPath.FromItemSection(index, 0);
+                    var path = NSIndexPath.FromItemSection(index, 0);
+                    var pathHandle = path.Handle;
+                    window.Filmstrip.CollectionViewLayout!.GetLayoutAttributesForElements(window.FilmstripScroll.ContentView.Bounds);
+                    if (path.Handle != pathHandle)
+                        throw new InvalidOperationException($"{mode}/{order} 第 {index} 项的索引路径在重入布局后被释放");
                     var attributes = window.Filmstrip.CollectionViewLayout!.GetLayoutAttributesForItem(path) ?? throw new InvalidOperationException("卡片几何缺失");
                     var frame = attributes.Frame;
                     var clip = window.FilmstripScroll.ContentView.Bounds;
@@ -60,7 +64,7 @@ internal static class NativeFilmstripAcceptance
                     VerifyVisibleCards(window, $"{mode}/{order}/index-{index}");
                     if (index > 0)
                     {
-                        using var previousPath = NSIndexPath.FromItemSection(index - 1, 0);
+                        var previousPath = NSIndexPath.FromItemSection(index - 1, 0);
                         var previous = window.Filmstrip.CollectionViewLayout.GetLayoutAttributesForItem(previousPath)!.Frame;
                         bool horizontal = mode == LayoutMode.Row;
                         if (horizontal ? Math.Abs((double)(frame.Y - previous.Y)) > .1 || frame.X <= previous.X
@@ -116,7 +120,7 @@ internal static class NativeFilmstripAcceptance
                 await Task.Delay(450);
                 double restored = mode == LayoutMode.Row ? (double)window.FilmstripScroll.ContentView.Bounds.X : (double)window.FilmstripScroll.ContentView.Bounds.Y;
                 int restoredIndex = files.IndexOf(savedCurrent);
-                using var restoredPath = NSIndexPath.FromItemSection(restoredIndex, 0);
+                var restoredPath = NSIndexPath.FromItemSection(restoredIndex, 0);
                 var restoredFrame = window.Filmstrip.CollectionViewLayout!.GetLayoutAttributesForItem(restoredPath)?.Frame
                     ?? throw new InvalidOperationException("恢复后当前项几何缺失");
                 double restoredCenter = mode == LayoutMode.Row
@@ -290,8 +294,8 @@ internal static class NativeFilmstripAcceptance
         scroll.ReflectScrolledClipView(scroll.ContentView);
         await Task.Delay(80);
         MacThumbnailItem card;
-        using (var clickPath = NSIndexPath.FromItemSection(1, 0))
-            card = window.Filmstrip.GetItem(clickPath) as MacThumbnailItem ?? throw new InvalidOperationException("点选回归缺少可见卡片");
+        var clickPath = NSIndexPath.FromItemSection(1, 0);
+        card = window.Filmstrip.GetItem(clickPath) as MacThumbnailItem ?? throw new InvalidOperationException("点选回归缺少可见卡片");
         var location = card.View.ConvertPointToView(new CGPoint(15, 15), null);
         using var click = NSEvent.MouseEvent(NSEventType.LeftMouseDown, location, 0, NSProcessInfo.ProcessInfo.SystemUptime,
             window.Window.WindowNumber, null!, 1, 1, 1) ?? throw new InvalidOperationException("卡片鼠标事件创建失败");
@@ -336,8 +340,8 @@ internal static class NativeFilmstripAcceptance
         scroll.ContentView.ScrollToPoint(CGPoint.Empty);
         scroll.ReflectScrolledClipView(scroll.ContentView);
         await Task.Delay(80);
-        using (var interruptPath = NSIndexPath.FromItemSection(1, 0))
-            card = window.Filmstrip.GetItem(interruptPath) as MacThumbnailItem ?? throw new InvalidOperationException("接管回归缺少可见卡片");
+        var interruptPath = NSIndexPath.FromItemSection(1, 0);
+        card = window.Filmstrip.GetItem(interruptPath) as MacThumbnailItem ?? throw new InvalidOperationException("接管回归缺少可见卡片");
         window.Main.FileVM.ThumbnailList.ScrollToCurrent();
         card.View.MouseDown(click);
         await Task.Delay(450);
@@ -504,8 +508,8 @@ internal static class NativeFilmstripAcceptance
         while (true)
         {
             window.Filmstrip.LayoutSubtreeIfNeeded();
-            using (var path = NSIndexPath.FromItemSection(index, 0))
-                if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
+            var path = NSIndexPath.FromItemSection(index, 0);
+            if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
             if (DateTime.UtcNow > deadline) throw new TimeoutException($"胶片栏第 {index} 项（{file.Name}）卡片未建立");
             await Task.Delay(25);
         }

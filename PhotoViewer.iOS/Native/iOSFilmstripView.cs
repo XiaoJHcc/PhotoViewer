@@ -74,8 +74,8 @@ internal sealed class iOSFilmstripLayout : UICollectionViewLayout
         var attributes = new List<UICollectionViewLayoutAttributes>(range.Last - range.First + 1);
         for (int index = range.First; index <= range.Last; index++)
         {
-            using var path = NSIndexPath.FromItemSection(index, 0);
-            attributes.Add(LayoutAttributesForItem(path));
+            // NSIndexPath 由 Foundation/UIKit 规范化：同一 item/section 回同一个共享包装，不得 Dispose。
+            attributes.Add(LayoutAttributesForItem(NSIndexPath.FromItemSection(index, 0)));
         }
         return attributes.ToArray();
     }
@@ -254,7 +254,8 @@ internal sealed class iOSFilmstripView : UIView
     internal iOSThumbnailCard? CardAt(int index)
     {
         if ((uint)index >= (uint)_displaySnapshot.Length) return null;
-        using var path = NSIndexPath.FromItemSection(index, 0);
+        // 共享包装：UIKit 回调与验收可能同时持有同一包装，释放会作废它们。
+        var path = NSIndexPath.FromItemSection(index, 0);
         return _collection.CellForItem(path) as iOSThumbnailCard;
     }
 
@@ -264,7 +265,7 @@ internal sealed class iOSFilmstripView : UIView
     internal CGRect? FrameAt(int index)
     {
         if ((uint)index >= (uint)_displaySnapshot.Length) return null;
-        using var path = NSIndexPath.FromItemSection(index, 0);
+        var path = NSIndexPath.FromItemSection(index, 0);
         var frame = _layout.LayoutAttributesForItem(path).Frame;
         return frame.Width > 0 && frame.Height > 0 ? frame : null;
     }

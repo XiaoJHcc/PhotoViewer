@@ -345,8 +345,8 @@ internal static class NativeMainLayoutAcceptance
         double viewportMain = row ? (double)clip.Width : (double)clip.Height;
         if (Math.Abs(documentMain - Math.Max((double)viewportMain, contentLength)) > .5)
             throw new InvalidOperationException($"{scope} 胶片栏文档主轴长度错误：{documentMain}");
-        using var firstPath = NSIndexPath.FromItemSection(0, 0);
-        using var secondPath = NSIndexPath.FromItemSection(1, 0);
+        var firstPath = NSIndexPath.FromItemSection(0, 0);
+        var secondPath = NSIndexPath.FromItemSection(1, 0);
         var firstCard = layout.GetLayoutAttributesForItem(firstPath)?.Frame ?? throw new InvalidOperationException($"{scope} 首卡几何缺失");
         var secondCard = layout.GetLayoutAttributesForItem(secondPath)?.Frame ?? throw new InvalidOperationException($"{scope} 第二卡几何缺失");
         double expectedLeft = row ? Math.Max(10, ((double)document.Width - count * 96) / 2) : 10;
@@ -360,14 +360,14 @@ internal static class NativeMainLayoutAcceptance
         if (Math.Abs(crossTail - 10) > Exact) throw new InvalidOperationException($"{scope} 胶片栏交叉轴内边距不是 10 点：{crossTail}");
         if (contentLength > (double)viewportMain + .5)
         {
-            using var lastPath = NSIndexPath.FromItemSection(count - 1, 0);
+            var lastPath = NSIndexPath.FromItemSection(count - 1, 0);
             var lastCard = layout.GetLayoutAttributesForItem(lastPath)?.Frame ?? throw new InvalidOperationException($"{scope} 末卡几何缺失");
             double tail = documentMain - (row ? (double)lastCard.X + (double)lastCard.Width : (double)lastCard.Y + (double)lastCard.Height);
             if (Math.Abs(tail - trailing) > .5) throw new InvalidOperationException($"{scope} 胶片栏末端内边距错误：{tail} != {trailing}");
         }
         foreach (int index in new[] { 0, 1 })
         {
-            using var path = NSIndexPath.FromItemSection(index, 0);
+            var path = NSIndexPath.FromItemSection(index, 0);
             var expected = layout.GetLayoutAttributesForItem(path)?.Frame ?? throw new InvalidOperationException($"{scope} 第 {index} 卡几何缺失");
             if (window.Filmstrip.GetItem(path) is not MacThumbnailItem card) throw new InvalidOperationException($"{scope} 第 {index} 卡视图缺失");
             if (!ReferenceEquals(card.BoundFile, window.Main.FileVM.ThumbnailList.FilteredFiles[index]))

@@ -1304,9 +1304,9 @@ internal static class NativeToolbarAcceptance
                     throw new InvalidOperationException($"{stage}重建了控制栏评分按钮（来源浮窗锚点随之换位）");
                 if (!ReferenceEquals(window.ControlBar.Commands.GetValueOrDefault("Next"), commandButton))
                     throw new InvalidOperationException($"{stage}重建了控制栏命令按钮");
-                using (var path = NSIndexPath.FromItemSection(index, 0))
-                    if (!ReferenceEquals(window.Filmstrip.GetItem(path), card))
-                        throw new InvalidOperationException($"{stage}重载了胶片卡片");
+                var path = NSIndexPath.FromItemSection(index, 0);
+                if (!ReferenceEquals(window.Filmstrip.GetItem(path), card))
+                    throw new InvalidOperationException($"{stage}重载了胶片卡片");
                 if (!popover.IsOpen || !ReferenceEquals(window.Main.RatingSources.Target, file))
                     throw new InvalidOperationException($"{stage}关闭了来源浮窗");
                 if (popover.AnchorRect != anchor)
@@ -1435,8 +1435,8 @@ internal static class NativeToolbarAcceptance
             if (index >= 0)
             {
                 window.Filmstrip.LayoutSubtreeIfNeeded();
-                using (var path = NSIndexPath.FromItemSection(index, 0))
-                    if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
+                var path = NSIndexPath.FromItemSection(index, 0);
+                if (window.Filmstrip.GetItem(path) is MacThumbnailItem card && ReferenceEquals(card.BoundFile, file)) return card;
             }
             if (DateTime.UtcNow > deadline) throw new TimeoutException("胶片栏卡片未创建");
             await Task.Delay(25);

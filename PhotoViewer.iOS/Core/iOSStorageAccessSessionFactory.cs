@@ -7,6 +7,8 @@ namespace PhotoViewer.iOS.Core;
 /// 打开会话的访问租约工厂。
 /// 系统交回的原 URL（文档选择器、openURL、拖入）随存储引用保留，租约直接用这些实例成对
 /// Start/Stop；沙盒自有路径继续走共享 <see cref="LocalStorageAccessSessionFactory"/>，不占用系统作用域。
+/// 沙盒边界取数据容器根（Documents 的父目录，含 Documents / Library / tmp）与 app bundle 自身，
+/// 判定只做词法绝对化与 /private/var ⇄ /var 别名归一，不探测文件系统。
 /// 从不按路径重建 URL —— 重建出的 URL 不带沙盒扩展，启动作用域必然失败。
 /// </summary>
 public sealed class iOSStorageAccessSessionFactory : IStorageAccessSessionFactory
@@ -59,26 +61,62 @@ public sealed class iOSStorageAccessSessionFactory : IStorageAccessSessionFactor
     }
 
     /// <summary>判断路径是否在 App 沙盒之外（沙盒内不需要系统作用域）。</summary>
-    /// <param name="path">规范化绝对路径。</param>
+    /// <param name="path">绝对路径。</param>
     /// <returns>需要系统作用域时返回 true。</returns>
     private static bool RequiresSecurityScope(string path)
     {
-        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        if (IsWithin(path, home)) return false;
+        var dataRoot = SandboxDataRoot();
+        if (dataRoot != null && IsWithin(path, dataRoot)) return false;
         var bundle = NSBundle.MainBundle.BundlePath;
         return !IsWithin(path, bundle);
     }
 
-    /// <summary>判断路径是否位于给定根目录之内。</summary>
+    /// <summary>
+    /// App 沙盒数据根（真机 = 数据容器根，含 Documents / Library / tmp）。
+    /// 由 <see cref="Environment.SpecialFolder.MyDocuments"/> 的父目录推导；取不到时返回 null，按外部路径处理（fail closed）。
+    /// </summary>
+    /// <returns>沙盒数据根绝对路径；无法确定时为 null。</returns>
+    private static string? SandboxDataRoot()
+    {
+        var documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+        if (string.IsNullOrWhiteSpace(documents)) return null;
+        var root = Path.GetDirectoryName(Path.GetFullPath(documents));
+        return string.IsNullOrEmpty(root) ? null : root;
+    }
+
+    /// <summary>
+    /// 词法绝对化并归一 Apple 的 /private/var 与 /var 别名。只做路径字符串运算，不探测文件系统
+    /// （作用域外探测外部目标必然失败）。
+    /// </summary>
+    /// <param name="path">绝对或相对路径。</param>
+    /// <returns>归一后的绝对路径。</returns>
+    private static string NormalizeAbsolute(string path)
+    {
+        var full = Path.GetFullPath(path);
+        return full == PrivateVar || full.StartsWith(PrivateVar + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+            ? full[PrivatePrefix.Length..]
+            : full;
+    }
+
+    /// <summary>判断路径等于根目录本身或位于其下（按目录分隔符比较，前缀相似的兄弟目录不算在内）。</summary>
     /// <param name="path">待判断路径。</param>
-    /// <param name="root">根目录。</param>
+    /// <param name="root">根目录；为空表示无法判断。</param>
     /// <returns>位于根目录内时返回 true。</returns>
-    private static bool IsWithin(string path, string root)
+    private static bool IsWithin(string path, string? root)
     {
         if (string.IsNullOrEmpty(root)) return false;
-        var fullRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return path.StartsWith(fullRoot, StringComparison.Ordinal);
+        var normalizedPath = NormalizeAbsolute(path);
+        var normalizedRoot = NormalizeAbsolute(root).TrimEnd(Path.DirectorySeparatorChar);
+        if (normalizedRoot.Length == 0) return false;
+        return normalizedPath == normalizedRoot
+            || normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal);
     }
+
+    /// <summary>Apple 卷别名：/private/var 与 /var 指向同一目录，比较前统一剥掉 /private。</summary>
+    private const string PrivateVar = "/private/var";
+
+    /// <summary>别名前缀，用于剥掉 /private。</summary>
+    private const string PrivatePrefix = "/private";
 
     /// <summary>取存储项的本地绝对路径；非本地项不支持。</summary>
     /// <param name="item">文件或目录引用。</param>

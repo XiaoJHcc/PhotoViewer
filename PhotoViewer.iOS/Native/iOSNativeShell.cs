@@ -79,9 +79,8 @@ public static class iOSNativeShell
         ApplyLaunchAnalysisOpen(args, main);
         _session = new PhotoLoadSession();
         _rootViewController = new iOSNativeRootViewController(main, _session, _openBridge, IsAutomatedValidation(args));
+        if (IsAutomatedValidation(args)) UIApplication.SharedApplication.IdleTimerDisabled = true;
         Console.WriteLine("[Native] UIKit 原生壳就绪");
-        // 压测与验收都走原生展示会话（PhotoLoadSession）的上屏信号，不经过旧壳展示适配器。
-        StressFlipDriver.MaybeStart(main, _session);
         iOSNativePhotoCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeGestureCheck.MaybeStart(args, _rootViewController, _session);
         iOSNativeLayoutCheck.MaybeStart(args, _rootViewController, _session);
@@ -116,6 +115,11 @@ public static class iOSNativeShell
                 Console.WriteLine($"[NativeSmoke] {(report.Contains("FAIL", StringComparison.Ordinal) ? "FAIL" : "PASS")} texture-cache");
             });
         }
+        if (args.Contains("--pv-native-raw-scheduling-check", StringComparer.Ordinal))
+        {
+            string directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "PhotoViewer");
+            _ = AppleRawDecodeChecks.RunAsync(Path.Combine(directory, "native-raw-scheduling-checks.txt"));
+        }
         return _rootViewController;
     }
 
@@ -141,6 +145,7 @@ public static class iOSNativeShell
 
     /// <summary>
     /// 验收专用（非产品行为）：<c>--pv-decode-optimize &lt;目录&gt;</c> 对照解码优化候选，
+    /// 可选 <c>--pv-decode-full</c> 改为 JPEG/HEIF 真实全分辨率 8 位 P3；
     /// 报告写 Documents/PhotoViewer/decode-optimization.txt；相对路径按沙盒 Documents 解析。产品路径不调用。
     /// </summary>
     /// <param name="args">进程启动参数。</param>
@@ -150,10 +155,11 @@ public static class iOSNativeShell
         {
             if (!string.Equals(args[index], "--pv-decode-optimize", StringComparison.Ordinal)) continue;
             string directory = ResolveDocumentsPath(args[index + 1]);
+            bool fullResolution = args.Contains("--pv-decode-full", StringComparer.Ordinal);
             string reportPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 "PhotoViewer", "decode-optimization.txt");
-            Console.WriteLine($"[DecodeOptimize] start {directory} -> {reportPath}");
-            _ = RunDecodeOptimizeAsync(directory, reportPath);
+            Console.WriteLine($"[DecodeOptimize] start {directory} -> {reportPath}{(fullResolution ? " full=1" : "")}");
+            _ = RunDecodeOptimizeAsync(directory, reportPath, fullResolution);
             return;
         }
     }
@@ -161,11 +167,12 @@ public static class iOSNativeShell
     /// <summary>执行解码优化探针并打印结论；异常只报告，不影响原生壳其它验收。</summary>
     /// <param name="directory">素材目录（绝对路径）。</param>
     /// <param name="reportPath">报告文本路径。</param>
-    private static async Task RunDecodeOptimizeAsync(string directory, string reportPath)
+    /// <param name="fullResolution">是否测 JPEG/HEIF 真实全分辨率 8 位 P3。</param>
+    private static async Task RunDecodeOptimizeAsync(string directory, string reportPath, bool fullResolution)
     {
         try
         {
-            bool passed = await AppleDecodeOptimizationProbe.RunAsync(directory, reportPath);
+            bool passed = await AppleDecodeOptimizationProbe.RunAsync(directory, reportPath, fullResolution);
             Console.WriteLine($"[DecodeOptimize] {(passed ? "PASS" : "FAIL")} {reportPath}");
         }
         catch (Exception exception)
@@ -265,6 +272,7 @@ public static class iOSNativeShell
         HeifLoader.Initialize(new iOSHeifDecoder());
         RawLoader.Initialize(new iOSRawDecoder());
         BitmapLoader.InitializePresentationDecoder(new ApplePresentationDecoder(), new iOSPresentationEncodingPolicy());
+        BitmapPrefetcher.RawAlongsideLookahead = 4;
         PerformanceBudget.Initialize(new iOSPerformanceBudget());
         // iPad 的缓存容量由实测预算推导,忽略用户缓存上限(自动口径在 BitmapLoader 内生效)
         BitmapLoader.AutomaticCacheLimit = true;
@@ -314,9 +322,13 @@ public static class iOSNativeShell
         SubscribePersistence(main);
 
         // 压测参数（devicectl/simctl 注入 --pv-stress 系）；相对路径按沙盒 Documents 解析。
-        // 激活期间禁止自动锁屏，避免压测中途被系统挂起。
+        // 激活期间禁止自动锁屏，避免压测中途被系统挂起；纹理字节采样只在这条路径注入，
+        // 普通运行不额外读渲染器状态。
         if (StressFlipDriver.TryParseArgs(NSProcessInfo.ProcessInfo.Arguments, ResolveDocumentsPath))
         {
+            StressFlipDriver.TextureBytesProvider = static () => _rootViewController?.Photo.TextureBytes ?? 0;
+            StressFlipDriver.ExtraSummary = static () => FormattableString.Invariant(
+                $"viewport={_rootViewController?.Photo.Bounds.Width}x{_rootViewController?.Photo.Bounds.Height} backing={_rootViewController?.Photo.TraitCollection.DisplayScale} proxyTarget={BitmapLoader.ProxyTargetLongEdge}");
             UIApplication.SharedApplication.IdleTimerDisabled = true;
         }
 

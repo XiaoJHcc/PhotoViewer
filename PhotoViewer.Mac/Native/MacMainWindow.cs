@@ -1211,7 +1211,7 @@ public sealed class MacMainWindow : IDisposable
             int index = _main.CurrentFile == null ? -1 : _main.FileVM.ThumbnailList.FilteredFiles.IndexOf(_main.CurrentFile);
             if (index < 0) return;
             _collection.LayoutSubtreeIfNeeded();
-            using var path = NSIndexPath.FromItemSection(index, 0);
+            var path = NSIndexPath.FromItemSection(index, 0);
             var attributes = _filmstripLayout.GetLayoutAttributesForItem(path);
             if (attributes == null) return;
             var frame = attributes.Frame;

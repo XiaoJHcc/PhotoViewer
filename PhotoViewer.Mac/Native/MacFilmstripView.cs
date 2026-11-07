@@ -52,8 +52,7 @@ internal sealed class MacFilmstripLayout : NSCollectionViewFlowLayout
         var attributes = new List<NSCollectionViewLayoutAttributes>(range.Last - range.First + 1);
         for (int index = range.First; index <= range.Last; index++)
         {
-            using var path = NSIndexPath.FromItemSection(index, 0);
-            var item = GetLayoutAttributesForItem(path);
+            var item = GetLayoutAttributesForItem(NSIndexPath.FromItemSection(index, 0));
             if (item != null) attributes.Add(item);
         }
         return attributes.ToArray();
