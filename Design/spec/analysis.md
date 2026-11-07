@@ -12,15 +12,15 @@
 - 启动默认隐藏；可见性是会话状态，不写入设置、不跨启动保留。文件栏与控制栏的持久化显隐不适用于本栏（见 [shell](shell.md)）。
 - 显示才工作：面板可见是读库、现算、推理的唯一开关；隐藏即取消在途任务、清空诊断内容与准星，再次显示按当前照片重算一次（缓存命中即出图）。
 - 面板隐藏期间切图不读特征库、不推理、不解码分析素材（见 [scope](scope.md) SCOPE-01）。
-- 瓦片顺序固定，对焦点瓦片只在该照片有 Sony 对焦数据时出现：
+- 瓦片顺序固定，对焦点瓦片只在该照片有 Sony 对焦数据时出现。标准版不包含 DINO PCA 与 Cosine，其余项按相同相对顺序直接收拢（EDITION-02）：
 
 | 序 | 瓦片 | 出现条件 | 数据来源 |
 |---|---|---|---|
 | 1 | 对焦点 | 当前照片有 Sony 对焦数据 | 全分辨率展示图的源像素裁剪 |
 | 2 | 中心 | 恒有 | 同上，归一化中心 0.5/0.5 |
 | 3 | 直方图 | 恒有 | 当前上屏图现算 |
-| 4 | DINO PCA | 恒有 | 库 / 即时缓存 |
-| 5 | Cosine x,y | 恒有 | 库 / 即时缓存，参考点可点选 |
+| 4 | DINO PCA | 仅 AI 版 | 库 / 即时缓存 |
+| 5 | Cosine x,y | 仅 AI 版 | 库 / 即时缓存，参考点可点选 |
 | 6 | 锐度 | 恒有 | 库 / 即时缓存 |
 | 7 | 抖动拖影 | 恒有 | 库 / 即时缓存 |
 
@@ -30,14 +30,14 @@
 
 - 每张瓦片是正方形外框：底色 `color.analysis.tile.background`（#222222）、描边 `color.analysis.tile.border`（#444444）`analysis.tile.border.width`（1 点）、圆角 `analysis.tile.cornerRadius`（6）。
 - 内容不带自己的圆角；圆角只由外框**一层**裁切产生。不得出现"卡里套卡"的双层圆角，也不得以内容自己的内圆角伪造裁切。紧贴描边内侧、半径为外圆角减描边宽的同心裁切属于同一层圆框，允许。
-- 诊断瓦片（DINO PCA / Cosine / 锐度 / 抖动拖影）按当前照片的 DINO/CV 网格宽高比居中置入（letterbox），不裁切、不拉伸；细节预览与直方图固定 1:1 铺满。
+- 诊断瓦片（AI 版 DINO PCA / Cosine / 锐度 / 抖动拖影，标准版锐度 / 抖动拖影）按当前照片对应网格的宽高比居中置入（letterbox），不裁切、不拉伸；细节预览与直方图固定 1:1 铺满。
 - 诊断图（热力图 / PCA-RGB）不插值放大（最近邻），保留逐格可读；抖动拖影瓦片把原图缩略图以 `analysis.background.alpha`（0.3）压暗作底，矢量线画在其上。
 - 左上角药丸角标：底色 `color.analysis.badge.background`（#88000000）、文字 `color.analysis.badge.foreground`、内边距 `analysis.badge.paddingX`/`paddingY`（8/4）、圆角 `analysis.badge.cornerRadius`（5，只圆外侧两角）、字号 `analysis.caption.fontSize`（12）；对焦点/中心写名称，Cosine 写坐标，抖动拖影写判定文字，过长截断。
-- 说明文字（caption）只在工具窗口的 DINO 诊断页使用；分析栏瓦片不加额外说明行（见 [tools](tools.md)）。
+- 说明文字（caption）只在工具窗口的 DINO/CV 诊断页使用；分析栏瓦片不加额外说明行（见 [tools](tools.md)）。
 
 ## ANALYSIS-03 等边长与几何 · 必须
 
-- 所有瓦片等边长，边长 `analysis.tile.size` = `max(1, floor((analysis.availableMain − analysis.panel.padding × 2 − analysis.tile.spacing × (n − 1)) / n))`，n 为当前瓦片数（6 或 7）。
+- 所有瓦片等边长，边长 `analysis.tile.size` = `max(1, floor((analysis.availableMain − analysis.panel.padding × 2 − analysis.tile.spacing × (n − 1)) / n))`，n 为当前实际瓦片数（AI 版 6 或 7，标准版 4 或 5）。
 - 主轴从 `analysis.panel.padding`（10）起排，间距 `analysis.tile.spacing`（8），末端不足一枚的零头留空；交叉轴 = 边长 + `analysis.panel.padding` × 2（20），据此分配面板空间。
 - 边长在测量/排列阶段统一给出，一次布局内全部瓦片共用同一值；首次打开、换向、窗口形变、瓦片增减后重算，不得"挤成一坨"或大小错位。
 - 不得采用"先读实际占位宽度、再异步回写子项尺寸"的写法，避免一轮布局内瓦片尺寸不一致。
@@ -78,21 +78,21 @@
 
 ## ANALYSIS-08 共享准星与 cosine 参考点 · 必须
 
-- 四张诊断瓦片（PCA / Cosine / 锐度 / 抖动拖影）共享同一准星；直方图与细节预览不显示准星。
-- 点按诊断瓦片内容区：准星落到该归一化位置，并把该点映射到 `analysis.dino.patchGrid`（32）× 32 的 patch 网格重算 cosine，Cosine 瓦片角标改为 `Cosine x,y`；重复点同一格不重算。
-- 没有 patch 数据时只移动准星，不改 cosine 参考点与角标。
-- 只有瓦片内容矩形内的点按落准星；点按内边距、角标或 letterbox 空白按面板空白处理：清除准星，cosine 参考点保留当前值。
-- 切图保留准星的归一化位置；cosine 参考点回到中心（`Cosine 16,16`）。面板隐藏或无当前照片时准星清空。
+- AI 版四张诊断瓦片（PCA / Cosine / 锐度 / 抖动拖影）共享同一准星；标准版只在锐度与抖动拖影之间共享。直方图与细节预览不显示准星。
+- AI 版点按诊断瓦片内容区：准星落到该归一化位置，并把该点映射到 `analysis.dino.patchGrid`（32）× 32 的 patch 网格重算 cosine，Cosine 瓦片角标改为 `Cosine x,y`；重复点同一格不重算。没有 patch 数据时只移动准星，不改 cosine 参考点与角标。
+- 标准版点按诊断瓦片只移动准星，不建立 cosine 参考点、不重算热力图，也不显示参考点坐标（EDITION-03）。
+- 只有瓦片内容矩形内的点按落准星；点按内边距、角标或 letterbox 空白按面板空白处理：清除准星，AI 版 cosine 参考点保留当前值。
+- 切图保留准星的归一化位置；AI 版 cosine 参考点回到中心（`Cosine 16,16`）。面板隐藏或无当前照片时准星清空。
 - 准星为 1 点白线（`color.analysis.crosshair`），单臂 `analysis.crosshair.arm`（12）；坐标映射按 letterbox 之后的内容矩形，不按瓦片外框。
 
 ## ANALYSIS-09 数据来源与即时计算门控 · 必须
 
-- 三条路径同一时刻只走一条，按优先级择一：①雾天增强联动（雾天增强图就绪且设置开启即时计算）②只读库（指纹→缓存→数据库，不解码、不推理）③未提取回退（库与缓存均无结果且设置开启即时计算）。
-- 只读库是默认路径；切图、缩放、悬停都不得触发 DINO/CV 推理（[scope](scope.md) SCOPE-01）。即时计算默认关闭，设置项归属见 [settings](settings.md)。
-- 未提取回退：先延迟 `motion.analysis.fallback.delay`（500ms），再让位等待主图已上屏且缩略图通道空闲，最长 `motion.analysis.fallback.yieldTimeout`（5000ms）；期间四张诊断瓦片显示"计算中…"（不保留上一张，避免把上一张的热力图当作当前照片）。快速翻页在延迟内即取消，零推理开销。
-- 回退与雾天增强重算只对当前展示图计算，产物只进进程内即时缓存、不写库；原片与雾天增强图分别缓存。关闭雾天增强或关闭即时计算即回到只读库路径。
+- DINO 与 CV 分别按「只读库 → 对应即时计算开启时的雾天增强联动或未提取回退」路由，不再用一个组合开关同时门控。只读库始终可用；标准版只读取 CV，不读取或派生 DINO patch（EDITION-03/05）。
+- 「即时计算 DINO」只门控 PCA-RGB / Cosine，「即时计算 CV」只门控锐度 / 抖动拖影，默认均关闭，设置项归属见 [settings](settings.md)。一侧关闭时该侧缺失结果保持「未提取」，不得随另一侧现算顺带生成。
+- 未提取回退：对应能力先延迟 `motion.analysis.fallback.delay`（500ms），再让位等待主图已上屏且缩略图通道空闲，最长 `motion.analysis.fallback.yieldTimeout`（5000ms）；只有实际现算的能力瓦片显示"计算中…"，不保留上一张，也不让另一侧显示虚假计算状态。快速翻页在延迟内即取消，零推理开销。
+- 回退与雾天增强重算只对当前展示图计算，产物只进进程内即时缓存、不写库；原片与雾天增强图分别缓存。两侧同时开启可以共享展示图解码，但不得合并为无法独立启停的任务。关闭雾天增强或关闭对应即时计算，该侧即回到只读库路径。
 - 当前照片无指纹（缺拍摄时间）视为无结果，走同一回退或占位逻辑，不把"无法识别"报成计算失败。
-- 只读库路径的派生结果可按指纹缓存复用；切到已缓存照片时直接换图，不重算、不闪烁。
+- 只读库路径的派生结果可按指纹缓存复用；切到已缓存照片时直接换图，不重算、不闪烁。切图、缩放、悬停在即时计算关闭时不得触发 DINO/CV 现算（[scope](scope.md) SCOPE-02）。
 
 ## ANALYSIS-10 未提取、计算中与刷新 · 必须
 

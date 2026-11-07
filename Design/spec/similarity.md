@@ -2,6 +2,8 @@
 
 **意图**：回答"这张照片还有哪些同批的相似照片"，让用户不丢失去向地跳到候选；面板只读库里已有的结果，计算只发生在用户打开面板时。
 
+本文件仅适用于 `PhotoViewer-AI`。标准版不包含相似聚类入口、面板、批量提取或后台任务，展开状态的保留与恢复按 [editions](editions.md) EDITION-02/05/06。
+
 数值令牌：`sim.*`（见 [tokens.json](../tokens.json)）。平台实现与差异见 [platforms.md](../platforms.md#sim)，验收状态见 [status.md](../status.md#sim)。
 
 ## SIM-01 面板开合与三态 · 必须
