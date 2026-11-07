@@ -231,6 +231,7 @@ dotnet msbuild Tools/WindowsTypeCheck/WindowsTypeCheck.csproj -restore -t:Compil
 重建后在 `Tools/HeifTileBench/` 目录执行 `python pvhevc_check.py`（逐瓦片对照 `heif_tile_extract.py` 的 Annex-B 产物与耗时）复核二进制；托管侧容器解析与 YUV 转换的对照验证用 `Tools/HeifFastDecodeTest`（`selftest`/`smoke`/`parse`/`extract`/`validate`/`e2e`/`bench`）。改动 HEIF 色彩链、F16 几何或 libheif 码值归一化后至少跑：
 
 ```bash
+dotnet run --project Tools/HeifFastDecodeTest -c Release -- selftest # 容器契约、共享转换调度上限、多幅并发与串行全像素一致性
 dotnet run --project Tools/HeifFastDecodeTest -c Release -- e2e     # 快速路径 vs libheif 回落逐色块 + 48 位通道 + 自建 12 位暗平面码值范围
 dotnet run --project Tools/HeifFastDecodeTest -c Release -- smoke   # 容器/色彩支持面与转换器口径
 dotnet run --project Tools/HeifFastDecodeTest -c Release -- read    # 文件读取、取消、长度变化与单缓冲分配

@@ -21,6 +21,7 @@
          可直接安装运行，代价是包体积略大、构建稍慢。 -->
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
         <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+        <AndroidUseAssemblyStore>true</AndroidUseAssemblyStore>
     </PropertyGroup>
 
     <!-- Release 配置：启用 AOT 编译加快启动速度、减少 JIT 开销 -->

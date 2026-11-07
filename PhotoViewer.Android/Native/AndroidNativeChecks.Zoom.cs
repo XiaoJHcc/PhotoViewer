@@ -39,7 +39,7 @@ internal static partial class AndroidNativeChecks
             var renderer = (AndroidPhotoRenderer)typeof(AndroidPhotoView)
                 .GetField("_renderer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(photo)!;
             AndroidUploadStats.Reset();
-            photo.SetImage(image, int.MinValue + 50);
+            photo.SetImageForChecks(image, int.MinValue + 50);
             try
             {
                 var pixels = renderer.CheckTexturePixelsForChecks(image);
@@ -48,7 +48,7 @@ internal static partial class AndroidNativeChecks
                 Check("行距填充不搬运额外尾部字节", copied is { CopyBytes: 6144000, Chunks: 2 },
                     $"copied={copied?.CopyBytes} chunks={copied?.Chunks} stride={image.Stride} array={image.ByteCount}");
             }
-            finally { photo.SetImage(null, int.MinValue + 51); }
+            finally { photo.SetImageForChecks(null, int.MinValue + 51); }
             return Task.CompletedTask;
         });
         await RunStepAsync("同尺寸上传与空纹理复用", CheckReusedTextureAsync);
@@ -81,6 +81,24 @@ internal static partial class AndroidNativeChecks
                 + $" encoding={full.Encoding} color={full.ColorSpace} decodeMs={proxyMs:F1}/{fullMs:F1}");
             await CheckZoomUploadAsync("HIF", proxy, full, 3);
             await CheckLiveHifZoomAsync(path);
+            int parallelism = PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism;
+            int cores = Math.Max(1, System.Environment.ProcessorCount);
+            Check("HIF 转换使用有界并行", parallelism >= 1 && (cores == 1 || parallelism < cores),
+                $"parallelism={parallelism} cores={cores}");
+            try
+            {
+                PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism = 1;
+                using var serial = await decoder.DecodeAsync(file, null, PixelEncoding.Rgba8, CancellationToken.None)
+                    ?? throw new InvalidOperationException("HIF serial full=null");
+                var compared = await Task.Run(() => CompareFullDecodes(full, serial, full.ColorSpace));
+                Check("HIF 有界并行与串行Full全像素一致", compared.Geometry && compared.Orientation
+                    && compared.Color && compared.Mismatched == 0,
+                    compared.Detail ?? $"{full.Height} 行 × {full.Width * 4} 字节，色彩/几何/方向一致");
+            }
+            finally
+            {
+                PhotoViewer.Core.Image.Heif.YuvImageConverter.MaxDegreeOfParallelism = parallelism;
+            }
         });
         await RunStepAsync("主图顶点缓冲复用", CheckVertexBufferReuseAsync);
     }
@@ -90,7 +108,7 @@ internal static partial class AndroidNativeChecks
         var photo = _root!.Photo;
         var main = _main!;
         var session = _session!;
-        photo.SetImage(session.Image, session.Generation);
+        photo.SetImageForChecks(session.Image, session.Generation);
         photo.FitToView();
         await main.FolderVM.OpenFolderAsync(new AndroidFolderRef(IOPath.GetDirectoryName(path)!));
         await WaitAsync(() => main.CurrentFile?.Name == IOPath.GetFileName(path)
@@ -101,12 +119,32 @@ internal static partial class AndroidNativeChecks
         bool ticking = true;
         long previous = Stopwatch.GetTimestamp();
         double maxGap = 0;
+        long maxGapStart = 0, maxGapEnd = 0;
+        string maxGapExtra = "-";
+        int gc0 = GC.CollectionCount(0), gc1 = GC.CollectionCount(1), gc2 = GC.CollectionCount(2);
+        long cpuNanos = global::Android.OS.Debug.ThreadCpuTimeNanos();
         Action tick = null!;
         tick = () =>
         {
             if (!ticking) return;
             long now = Stopwatch.GetTimestamp();
-            maxGap = Math.Max(maxGap, Stopwatch.GetElapsedTime(previous, now).TotalMilliseconds);
+            int nextGc0 = GC.CollectionCount(0), nextGc1 = GC.CollectionCount(1), nextGc2 = GC.CollectionCount(2);
+            long nextCpu = global::Android.OS.Debug.ThreadCpuTimeNanos();
+            double gap = Stopwatch.GetElapsedTime(previous, now).TotalMilliseconds;
+            if (gap > maxGap)
+            {
+                maxGap = gap;
+                maxGapStart = previous;
+                maxGapEnd = now;
+                // GC 增量与 UI 线程 CPU 都是跨整个间隙的累计，不对应某个分段内部的耗时。
+                double cpuMs = cpuNanos >= 0 && nextCpu >= cpuNanos ? (nextCpu - cpuNanos) / 1e6 : double.NaN;
+                maxGapExtra = $"gapGc={nextGc0 - gc0}/{nextGc1 - gc1}/{nextGc2 - gc2} gapUiCpuMs={cpuMs:F1}";
+            }
+            gc0 = nextGc0;
+            gc1 = nextGc1;
+            gc2 = nextGc2;
+            cpuNanos = nextCpu;
+            AndroidFrameStats.Span(FrameStatsKind.Heartbeat, previous, now);
             previous = now;
             handler.PostDelayed(tick, 16);
         };
@@ -114,21 +152,24 @@ internal static partial class AndroidNativeChecks
         var clock = Stopwatch.StartNew();
         try
         {
+            AndroidFrameStats.Start();
             var (consumed, _) = await DoubleTapAsync(photo.Width / 2f, photo.Height / 2f);
             await WaitAsync(() => !session.IsProxy && Math.Abs(photo.PhysicalScale - 1) < .001,
                 "真实 HIF 双击与 Full 完成", 20000);
             await Task.Delay(80);
             var upload = AndroidUploadStats.LatestForChecks;
+            string diag = AndroidFrameStats.Summary(maxGapStart, maxGapEnd);
             Check("HIF 实际加载会话双击从代理到Full", consumed && startedProxy
                 && session.Image is { Width: >= 6000, Height: >= 4000 } && photo.Viewport.TextureWidth == session.Image.Width,
                 $"startedProxy={startedProxy} proxy={session.IsProxy} physical={photo.PhysicalScale:P2}"
                 + $" image={session.Image?.Width}x{session.Image?.Height} elapsedMs={clock.Elapsed.TotalMilliseconds:F1}");
             Check("HIF 实际会话UI心跳无250ms阻塞", maxGap < 250,
-                $"maxGapMs={maxGap:F1} uploadMs={upload?.TotalMs:F1} copyMs={upload?.CopyMs:F1}");
+                $"maxGapMs={maxGap:F1} {maxGapExtra} uploadMs={upload?.TotalMs:F1} copyMs={upload?.CopyMs:F1} {diag}");
         }
         finally
         {
             ticking = false;
+            AndroidFrameStats.Stop();
             photo.FitToView();
         }
     }
@@ -147,7 +188,7 @@ internal static partial class AndroidNativeChecks
         int generation = int.MinValue + 320;
         try
         {
-            photo.SetImage(null, ++generation);
+            photo.SetImageForChecks(null, ++generation);
             photo.RecreateSurfaceForChecks(surfaceP3);
             renderer = PhotoRendererForChecks(photo);
 
@@ -157,7 +198,7 @@ internal static partial class AndroidNativeChecks
             {
                 if (index == 3) spareBeforeFourth = renderer.HasSpareTextureForChecks;
                 images[index] = CreateSolidColorImage(size, size, index);
-                photo.SetImage(images[index], ++generation);
+                photo.SetImageForChecks(images[index], ++generation);
                 entries[index] = AndroidUploadStats.LatestForChecks;
             }
             bool freshFirstFour = entries[0] is { ReusedTexture: false, CacheHit: false }
@@ -170,14 +211,14 @@ internal static partial class AndroidNativeChecks
                 + $" recent={renderer.RecentTextureCountForChecks} 第四张={DescribeUpload(entries[3])}");
 
             images[4] = CreateSolidColorImage(320, 240, 4);
-            photo.SetImage(images[4], ++generation);
+            photo.SetImageForChecks(images[4], ++generation);
             entries[4] = AndroidUploadStats.LatestForChecks;
             Check("上传复用 尺寸变化不命中空纹理",
                 entries[4] is { ReusedTexture: false, CacheHit: false } && renderer.HasSpareTextureForChecks,
                 DescribeUpload(entries[4]));
 
             images[5] = CreateSolidColorImage(size, size, 5);
-            photo.SetImage(images[5], ++generation);
+            photo.SetImageForChecks(images[5], ++generation);
             entries[5] = AndroidUploadStats.LatestForChecks;
             var pixels = renderer.CheckTexturePixelsForChecks(images[5]!);
             Check("上传复用 第五张同尺寸取到空纹理",
@@ -196,10 +237,10 @@ internal static partial class AndroidNativeChecks
         }
         finally
         {
-            photo.SetImage(null, generation + 10);
+            photo.SetImageForChecks(null, generation + 10);
             foreach (var image in images) image?.Dispose();
             photo.RecreateSurfaceForChecks(surfaceP3);
-            photo.SetImage(session.Image, session.Generation);
+            photo.SetImageForChecks(session.Image, session.Generation);
             photo.FitToView();
         }
     }
@@ -241,7 +282,7 @@ internal static partial class AndroidNativeChecks
             {
                 var image = CreateOrientationPattern(orientation, 640, 480);
                 images[orientation - 1] = image;
-                photo.SetImage(image, generation + orientation);
+                photo.SetImageForChecks(image, generation + orientation);
                 photo.FitToView();
                 photo.Draw();
                 var state = renderer.VertexStateForChecks();
@@ -332,7 +373,7 @@ internal static partial class AndroidNativeChecks
         finally
         {
             photo.FitToView();
-            photo.SetImage(null, generation + 100);
+            photo.SetImageForChecks(null, generation + 100);
             foreach (var image in images) image?.Dispose();
             try
             {
@@ -340,7 +381,7 @@ internal static partial class AndroidNativeChecks
             }
             finally
             {
-                photo.SetImage(session.Image, session.Generation);
+                photo.SetImageForChecks(session.Image, session.Generation);
             }
         }
     }
@@ -468,7 +509,7 @@ internal static partial class AndroidNativeChecks
         var renderer = (AndroidPhotoRenderer)typeof(AndroidPhotoView)
             .GetField("_renderer", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(photo)!;
         int imageGeneration = int.MinValue + generation;
-        photo.SetImage(proxy, imageGeneration);
+        photo.SetImageForChecks(proxy, imageGeneration);
         photo.FitToView();
         Check($"{label} 代理上屏", photo.HasImage && photo.Viewport.TextureWidth == proxy.Width,
             $"texture={photo.Viewport.TextureWidth} proxy={proxy.Width} fit={photo.PhysicalScale:P2}");
@@ -489,7 +530,7 @@ internal static partial class AndroidNativeChecks
             upgraded = true;
             upgradeScale = photo.PhysicalScale;
             var clock = Stopwatch.StartNew();
-            photo.SetImage(full, imageGeneration);
+            photo.SetImageForChecks(full, imageGeneration);
             uploadMs = clock.Elapsed.TotalMilliseconds;
             upload = AndroidUploadStats.LatestForChecks;
         }
@@ -516,8 +557,8 @@ internal static partial class AndroidNativeChecks
             var pixels = renderer.CheckTexturePixelsForChecks(full);
             Check($"{label} GPU像素含分块边界逐字节一致", pixels.Matches, pixels.Details);
             AndroidUploadStats.Reset();
-            photo.SetImage(proxy, imageGeneration);
-            photo.SetImage(full, imageGeneration);
+            photo.SetImageForChecks(proxy, imageGeneration);
+            photo.SetImageForChecks(full, imageGeneration);
             Check($"{label} 代理Full回切命中纹理缓存",
                 AndroidUploadStats.LatestForChecks is { TotalMs: 0, CacheHit: true, SubmitMs: >= 0 },
                 AndroidUploadStats.Summary());
@@ -525,7 +566,7 @@ internal static partial class AndroidNativeChecks
         finally
         {
             photo.ViewportChanged -= Frame;
-            photo.SetImage(null, imageGeneration + 10);
+            photo.SetImageForChecks(null, imageGeneration + 10);
         }
     }
 }

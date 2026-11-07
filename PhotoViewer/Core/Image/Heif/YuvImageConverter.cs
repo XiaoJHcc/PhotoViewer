@@ -146,8 +146,10 @@ public sealed class YuvImage
 /// </remarks>
 public static class YuvImageConverter
 {
-    /// <summary>并行度上限;0 表示交给线程池(默认)。仅用于测量与调优。</summary>
+    /// <summary>每幅转换的并行度上限；0 表示交给线程池（默认），平台可在启动时配置。</summary>
     public static int MaxDegreeOfParallelism { get; set; }
+
+    public static TaskScheduler? ConversionTaskScheduler { get; set; }
 
     /// <summary>最近一次转换的临时缓冲峰值字节数(各并行线程的并发峰值)。</summary>
     public static long LastScratchPeakBytes => Interlocked.Read(ref s_scratchPeak);
@@ -454,6 +456,8 @@ public static class YuvImageConverter
         var options = new ParallelOptions();
         var threadLimit = MaxDegreeOfParallelism;
         if (threadLimit > 0) options.MaxDegreeOfParallelism = threadLimit;
+        var scheduler = ConversionTaskScheduler;
+        if (scheduler != null) options.TaskScheduler = scheduler;
 
         unsafe
         {
@@ -550,7 +554,7 @@ public static class YuvImageConverter
     private static unsafe void RunFullResolution(Plan plan, byte* destination, ParallelOptions options)
     {
         var bands = (plan.TargetHeight + FullResBandRows - 1) / FullResBandRows;
-        if (options.MaxDegreeOfParallelism == 1)
+        if (options.MaxDegreeOfParallelism == 1 && options.TaskScheduler == TaskScheduler.Default)
         {
             RunFullResolutionRange(plan, destination, 0, bands);
             return;

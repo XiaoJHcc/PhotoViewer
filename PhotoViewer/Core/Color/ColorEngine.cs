@@ -73,14 +73,16 @@ public static class ColorEngine
     /// <param name="encoding">目标像素编码。</param>
     /// <param name="colorSpace">目标色彩标签。</param>
     /// <param name="iccProfile">目标为 ICC 标签时携带的 profile 字节；其余标签忽略。</param>
+    /// <param name="cancellationToken">取消令牌；取消后抛 <see cref="OperationCanceledException"/>，源像素不变、已租目标缓冲归还池。</param>
     /// <returns>须由调用方释放的目标图像（源已是目标口径时返回源本身的另一份租约）。</returns>
     public static DecodedImage ToDisplayEncoding(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace,
-        ReadOnlyMemory<byte> iccProfile = default)
+        ReadOnlyMemory<byte> iccProfile = default, CancellationToken cancellationToken = default)
     {
         if (colorSpace == ImageColorSpace.Icc && iccProfile.IsEmpty)
             throw new ArgumentException("ICC 展示口径缺少 profile 数据", nameof(iccProfile));
         using var space = SkColorSpaces.Resolve(colorSpace, iccProfile);
-        return ConvertCore(source, encoding, colorSpace, space.Space, targetIcc: colorSpace == ImageColorSpace.Icc ? iccProfile : default);
+        return ConvertCore(source, encoding, colorSpace, space.Space,
+            targetIcc: colorSpace == ImageColorSpace.Icc ? iccProfile : default, cancellationToken: cancellationToken);
     }
 
     /// <summary>为既有 CV 算法提供显示朝向的 sRGB8，不改变其亮度/网格数值口径（含 8 位 Display P3 展示产物）。</summary>
@@ -115,7 +117,7 @@ public static class ColorEngine
         int? sourceWidth = null, int? sourceHeight = null, int? orientation = null)
         => ConvertCore(source, encoding, colorSpace, targetSpace, sourceWidth, sourceHeight, orientation);
 
-    /// <summary>同上，另带目标为 ICC 标签时随产物携带的 profile 字节。</summary>
+    /// <summary>同上，另带目标为 ICC 标签时随产物携带的 profile 字节与取消令牌。</summary>
     /// <param name="source">源图像。</param>
     /// <param name="encoding">目标像素编码。</param>
     /// <param name="colorSpace">目标色彩标签。</param>
@@ -124,9 +126,13 @@ public static class ColorEngine
     /// <param name="sourceHeight">源全分辨率高;null 表示沿用源图像元数据。</param>
     /// <param name="orientation">EXIF 方向;null 表示沿用源图像元数据。</param>
     /// <param name="targetIcc">目标为 ICC 标签时随产物携带的 profile 字节。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
     private static unsafe DecodedImage ConvertCore(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace, SKColorSpace targetSpace,
-        int? sourceWidth = null, int? sourceHeight = null, int? orientation = null, ReadOnlyMemory<byte> targetIcc = default)
+        int? sourceWidth = null, int? sourceHeight = null, int? orientation = null, ReadOnlyMemory<byte> targetIcc = default,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
+
         // 元数据不可变:要求覆盖元数据时不能走"原格式直通"快路径。
         if (sourceWidth == null && sourceHeight == null && orientation == null && targetIcc.IsEmpty &&
             source.Encoding == encoding && source.ColorSpace == colorSpace)
@@ -135,50 +141,61 @@ public static class ColorEngine
             return source;
         }
 
-        // 同原色、仅传递函数不同(线性 sRGB ↔ sRGB)的常用配对走逐通道查表；其余仍由 skcms 处理。
-        if (TryConvertSamePrimaries(source, encoding, colorSpace, sourceWidth, sourceHeight, orientation) is { } converted)
-            return converted;
-
-        using var rgbConverted = source.Encoding == PixelEncoding.Rgb24 ? SkiaImageCodec.ToBgra32(source) : null;
-        var original = rgbConverted ?? source;
-        using var packed = original.Stride % DecodedImage.BytesPerPixel(original.Encoding) != 0 ? PackRows(original) : null;
-        var effective = packed ?? original;
-        using var sourceSpace = SkColorSpaces.Resolve(source.ColorSpace, source.IccProfile);
-        int stride = checked(source.Width * DecodedImage.BytesPerPixel(encoding));
-        var buffer = DecodedImage.RentPixels(checked(stride * source.Height));
+        // 转换期间自持一份源租约:已释放的源在读取像素前就失败,不会把空缓冲送进原生转换。
+        if (!source.TryAcquire()) throw new ObjectDisposedException(nameof(source));
         try
         {
-            fixed (byte* sourcePixels = effective.Pixels)
-            fixed (byte* targetPixels = buffer)
+            // 同原色、仅传递函数不同(线性 sRGB ↔ sRGB)的常用配对走逐通道查表；其余仍由 skcms 处理。
+            if (TryConvertSamePrimaries(source, encoding, colorSpace, sourceWidth, sourceHeight, orientation, cancellationToken) is { } converted)
+                return converted;
+
+            using var rgbConverted = source.Encoding == PixelEncoding.Rgb24 ? SkiaImageCodec.ToBgra32(source) : null;
+            var original = rgbConverted ?? source;
+            using var packed = original.Stride % DecodedImage.BytesPerPixel(original.Encoding) != 0 ? PackRows(original) : null;
+            var effective = packed ?? original;
+            using var sourceSpace = SkColorSpaces.Resolve(source.ColorSpace, source.IccProfile);
+            int stride = checked(source.Width * DecodedImage.BytesPerPixel(encoding));
+            var buffer = DecodedImage.RentPixels(checked(stride * source.Height));
+            try
             {
-                var sourceBase = (IntPtr)sourcePixels;
-                var targetBase = (IntPtr)targetPixels;
-                var sourceType = ColorType(effective.Encoding);
-                var targetType = ColorType(encoding);
-                void ConvertRows(int start, int end)
+                fixed (byte* sourcePixels = effective.Pixels)
+                fixed (byte* targetPixels = buffer)
                 {
-                    var sourceInfo = new SKImageInfo(source.Width, end - start, sourceType, SKAlphaType.Premul, sourceSpace.Space);
-                    var targetInfo = new SKImageInfo(source.Width, end - start, targetType, SKAlphaType.Premul, targetSpace);
-                    using var pixmap = new SKPixmap(sourceInfo, IntPtr.Add(sourceBase, checked(start * effective.Stride)), effective.Stride);
-                    if (!pixmap.ReadPixels(targetInfo, IntPtr.Add(targetBase, checked(start * stride)), stride))
-                        throw new InvalidOperationException("skcms 像素色彩转换失败");
+                    var sourceBase = (IntPtr)sourcePixels;
+                    var targetBase = (IntPtr)targetPixels;
+                    var sourceType = ColorType(effective.Encoding);
+                    var targetType = ColorType(encoding);
+                    void ConvertRows(int start, int end)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var sourceInfo = new SKImageInfo(source.Width, end - start, sourceType, SKAlphaType.Premul, sourceSpace.Space);
+                        var targetInfo = new SKImageInfo(source.Width, end - start, targetType, SKAlphaType.Premul, targetSpace);
+                        using var pixmap = new SKPixmap(sourceInfo, IntPtr.Add(sourceBase, checked(start * effective.Stride)), effective.Stride);
+                        if (!pixmap.ReadPixels(targetInfo, IntPtr.Add(targetBase, checked(start * stride)), stride))
+                            throw new InvalidOperationException("skcms 像素色彩转换失败");
+                    }
+                    if ((long)source.Width * source.Height >= 1024 * 1024)
+                        ForEachRowBand(source.Height, ConvertRows, cancellationToken);
+                    else
+                        ConvertRows(0, source.Height);
+                    cancellationToken.ThrowIfCancellationRequested();
                 }
-                if ((long)source.Width * source.Height >= 1024 * 1024)
-                    ForEachRowBand(source.Height, ConvertRows);
-                else
-                    ConvertRows(0, source.Height);
+                return DecodedImage.CreatePooled(buffer, source.Width, source.Height, stride, encoding,
+                    colorSpace,
+                    sourceWidth ?? source.SourceWidth,
+                    sourceHeight ?? source.SourceHeight,
+                    orientation ?? source.Orientation,
+                    targetIcc.IsEmpty ? null : targetIcc.ToArray());
             }
-            return DecodedImage.CreatePooled(buffer, source.Width, source.Height, stride, encoding,
-                colorSpace,
-                sourceWidth ?? source.SourceWidth,
-                sourceHeight ?? source.SourceHeight,
-                orientation ?? source.Orientation,
-                targetIcc.IsEmpty ? null : targetIcc.ToArray());
+            catch
+            {
+                ImageBufferPool.Return(buffer);
+                throw;
+            }
         }
-        catch
+        finally
         {
-            ImageBufferPool.Return(buffer);
-            throw;
+            source.Release();
         }
     }
 
@@ -209,25 +226,26 @@ public static class ColorEngine
     /// <param name="sourceWidth">源全分辨率宽覆盖值。</param>
     /// <param name="sourceHeight">源全分辨率高覆盖值。</param>
     /// <param name="orientation">EXIF 方向覆盖值。</param>
+    /// <param name="cancellationToken">取消令牌。</param>
     /// <returns>转换结果；空表示应回退到 skcms。</returns>
     private static unsafe DecodedImage? TryConvertSamePrimaries(DecodedImage source, PixelEncoding encoding, ImageColorSpace colorSpace,
-        int? sourceWidth, int? sourceHeight, int? orientation)
+        int? sourceWidth, int? sourceHeight, int? orientation, CancellationToken cancellationToken)
     {
         if (colorSpace == ImageColorSpace.Srgb && encoding is PixelEncoding.Bgra32 or PixelEncoding.Rgba8 &&
             source.Encoding == PixelEncoding.RgbaF16 && source.ColorSpace == ImageColorSpace.LinearSrgb)
-            return ConvertLinearToSrgb8(source, encoding, sourceWidth, sourceHeight, orientation);
+            return ConvertLinearToSrgb8(source, encoding, sourceWidth, sourceHeight, orientation, cancellationToken);
 
         if (colorSpace == ImageColorSpace.LinearSrgb && encoding == PixelEncoding.RgbaF16 &&
             source.Encoding is PixelEncoding.Bgra32 or PixelEncoding.Rgba8 or PixelEncoding.Rgb24 &&
             source.ColorSpace is ImageColorSpace.Srgb or ImageColorSpace.Legacy)
-            return ConvertSrgb8ToLinear(source, sourceWidth, sourceHeight, orientation);
+            return ConvertSrgb8ToLinear(source, sourceWidth, sourceHeight, orientation, cancellationToken);
 
         return null;
     }
 
     /// <summary>线性 F16 → sRGB8：同原色下只剩传递函数编码，逐像素三通道查表即可；alpha 非不透明时退回 skcms。</summary>
     private static unsafe DecodedImage? ConvertLinearToSrgb8(DecodedImage source, PixelEncoding encoding,
-        int? sourceWidth, int? sourceHeight, int? orientation)
+        int? sourceWidth, int? sourceHeight, int? orientation, CancellationToken cancellationToken)
     {
         var lut = LinearToSrgb8Lut.Value;
         byte[] lutR = lut.R, lutG = lut.G, lutB = lut.B;
@@ -277,8 +295,9 @@ public static class ColorEngine
                         }
                     }
                     if (breach) Interlocked.Exchange(ref opaqueBreach, 1);
-                });
+                }, cancellationToken);
             }
+            cancellationToken.ThrowIfCancellationRequested();
         }
         catch
         {
@@ -296,7 +315,7 @@ public static class ColorEngine
 
     /// <summary>sRGB8 → 线性 F16：同原色，逐通道查表得到半精度位模式；alpha 非不透明时退回 skcms。</summary>
     private static unsafe DecodedImage? ConvertSrgb8ToLinear(DecodedImage source,
-        int? sourceWidth, int? sourceHeight, int? orientation)
+        int? sourceWidth, int? sourceHeight, int? orientation, CancellationToken cancellationToken)
     {
         var lut = Srgb8ToLinearLut.Value;
         ushort[] lutR = lut.R, lutG = lut.G, lutB = lut.B;
@@ -356,8 +375,9 @@ public static class ColorEngine
                         }
                     }
                     if (breach) Interlocked.Exchange(ref opaqueBreach, 1);
-                });
+                }, cancellationToken);
             }
+            cancellationToken.ThrowIfCancellationRequested();
         }
         catch
         {
@@ -373,17 +393,19 @@ public static class ColorEngine
             sourceWidth ?? source.SourceWidth, sourceHeight ?? source.SourceHeight, orientation ?? source.Orientation);
     }
 
-    /// <summary>按行分带并行；小图退化为串行，避免调度开销压过像素量。</summary>
-    private static void ForEachRowBand(int height, Action<int, int> rows)
+    /// <summary>按行分带并行；小图退化为串行，避免调度开销压过像素量。每个行带起点与并行调度都响应取消。</summary>
+    private static void ForEachRowBand(int height, Action<int, int> rows, CancellationToken cancellationToken = default)
     {
         int bands = Math.Min(Environment.ProcessorCount * 4, height / 32);
         if (bands <= 1)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             rows(0, height);
             return;
         }
-        Parallel.For(0, bands, band =>
+        Parallel.For(0, bands, new ParallelOptions { CancellationToken = cancellationToken }, band =>
         {
+            cancellationToken.ThrowIfCancellationRequested();
             int perBand = (height + bands - 1) / bands;
             int start = band * perBand;
             int end = Math.Min(height, start + perBand);

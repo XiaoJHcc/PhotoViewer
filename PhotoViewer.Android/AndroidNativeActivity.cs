@@ -47,6 +47,25 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         Console.WriteLine("[Native] AndroidNativeActivity 就绪");
     }
 
+    /// <summary>
+    /// Activity 可见（进入前台）：恢复后台预取，并按存活预取器重新计划邻居与当前图 Full 预热。
+    /// 暂停/恢复只挂在 OnStart/OnStop 上——半屏、多窗口或系统对话框只触发 OnPause，界面仍在用，不该停预取。
+    /// </summary>
+    protected override void OnStart()
+    {
+        base.OnStart();
+        Native.AndroidNativeShell.SetApplicationActive(true);
+    }
+
+    /// <summary>
+    /// Activity 不可见（进后台/被完全遮盖/正在退出）：停后台预取并取消尚未开跑与在途的后台工作。
+    /// </summary>
+    protected override void OnStop()
+    {
+        base.OnStop();
+        Native.AndroidNativeShell.SetApplicationActive(false);
+    }
+
     /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
     protected override void OnResume()
     {
@@ -141,7 +160,9 @@ public sealed class AndroidNativeActivity : AppCompatActivity
         {
             TrimMemory.RunningLow => PressureLevel.Caution,
             TrimMemory.RunningCritical => PressureLevel.Warning,
-            TrimMemory.UiHidden => PressureLevel.Warning,
+            // UiHidden 只表示界面不可见（切到后台或被系统界面遮住），不是内存压力读数：
+            // 把它当压力会让每次切出都裁缓存、并让回前台多等一轮 RecoveryHold 观察期，
+            // 后台的后台预取由 BitmapPrefetcher 的应用活跃闸处理，不借用压力通道。
             TrimMemory.Background => PressureLevel.Critical,
             TrimMemory.Moderate => PressureLevel.Critical,
             TrimMemory.Complete => PressureLevel.Critical,

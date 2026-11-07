@@ -1,5 +1,4 @@
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Android.Graphics;
@@ -17,6 +16,8 @@ namespace PhotoViewer.Android.Core;
 /// 方向写进 <see cref="DecodedImage.Orientation"/> 由渲染层应用；<c>SourceWidth/Height</c> 是全分辨率裁剪尺寸。
 /// 曝光与色彩口径由原生层统一（相机白平衡、libraw 自动白点 + 限幅、无 ad-hoc 曲线），
 /// 因此同一文件在任何线程/设备上渲染一致。
+/// 文件字节经 <see cref="AndroidRawReadLease"/> 按文件引用身份在活跃租约期间共享：正式开发与内嵌预览重叠时只读一次文件，
+/// 最后一个租约释放即归还缓冲（没有常驻文件缓存，也不会按存储身份复用陈旧 revision）。
 /// </summary>
 public static partial class AndroidRawDecoder
 {
@@ -102,11 +103,11 @@ public static partial class AndroidRawDecoder
     /// <summary>
     /// 全分辨率或代理解码 RAW。
     /// </summary>
-    /// <param name="file">文件引用。</param>
+    /// <param name="file">文件引用；同一对象的并发调用共享一次文件读取。</param>
     /// <param name="maxLongEdge">代理长边上限；null 表示全分辨率。半尺寸输出长边仍 ≥ 上限时走 LibRaw half_size。</param>
     /// <param name="target">目标色彩空间；Display P3 由 LibRaw 直接输出 P3 原色，其余按 sRGB。</param>
     /// <param name="ct">取消令牌；取消时中止 LibRaw 并抛 <see cref="OperationCanceledException"/>。</param>
-    /// <returns>未旋转的 RGBA8 产物；不支持的 RAW 或失败返回 null。</returns>
+    /// <returns>未旋转的 RGBA8 产物；不支持的 RAW、内存准入被拒或失败返回 null。</returns>
     public static DecodedImage? Decode(IFileRef file, int? maxLongEdge, ImageColorSpace target, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
@@ -132,11 +133,21 @@ public static partial class AndroidRawDecoder
 
     private static DecodedImage? DecodeCore(IFileRef file, int? maxLongEdge, ImageColorSpace space, bool background, CancellationToken ct)
     {
-        byte[]? fileBytes = null;
         try
         {
-            fileBytes = ReadFile(file, ct, out int length);
-            if (fileBytes == null) return null;
+            // 同一次加载的正式开发与内嵌预览共用一个文件租约：重叠时只读一次文件，
+            // 最后一个租约释放即归还池化缓冲（无跨代际的常驻文件缓存）。
+            using var read = AndroidRawReadHandle.Open(file, DecodeContext.Priority);
+            var fileBytes = read.TryGetBytes(ct, out int length, out var readStatus);
+            if (fileBytes == null)
+            {
+                // 文件字节准入被拒不是解码错误：代理返回 null 时 BitmapLoader 不会记错误（P0 才会回退 Full）。
+                if (readStatus == AndroidRawReadStatus.Refused)
+                {
+                    Console.WriteLine($"[Native] RAW 文件读取跳过（{file.Name}）：{read.Detail}");
+                }
+                return null;
+            }
 
             unsafe
             {
@@ -169,15 +180,11 @@ public static partial class AndroidRawDecoder
             Console.WriteLine($"[Native] RAW 解码失败（{file.Name}）：{exception.GetType().Name}: {exception.Message}");
             return null;
         }
-        finally
-        {
-            if (fileBytes != null) ImageBufferPool.Return(fileBytes);
-        }
     }
 
     /// <summary>
     /// 解内嵌预览（最大且 ≤2MP 的内嵌 JPEG，Sony 为 1616x1080）。只做容器打开与缩略图解包，不解 RAW。
-    /// 供 STATE-01 低分辨率顶替使用。
+    /// 供 STATE-01 低分辨率顶替使用；与同一文件引用上的正式开发共用一次文件读取。
     /// </summary>
     /// <param name="file">文件引用。</param>
     /// <param name="target">目标色彩空间。</param>
@@ -188,10 +195,11 @@ public static partial class AndroidRawDecoder
         ct.ThrowIfCancellationRequested();
         var space = target == ImageColorSpace.DisplayP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
 
-        byte[]? fileBytes = null;
         try
         {
-            fileBytes = ReadFile(file, ct, out int length);
+            // 顶替预览是可选的：文件租约未就绪（准入被拒/读取失败）就按"没有预览"返回，不影响随后的正式解码。
+            using var read = AndroidRawReadHandle.Open(file, DecodeContext.Priority);
+            var fileBytes = read.TryGetBytes(ct, out int length, out _);
             if (fileBytes == null) return null;
 
             unsafe
@@ -243,10 +251,6 @@ public static partial class AndroidRawDecoder
             Console.WriteLine($"[Native] RAW 内嵌预览失败（{file.Name}）：{exception.GetType().Name}: {exception.Message}");
             return null;
         }
-        finally
-        {
-            if (fileBytes != null) ImageBufferPool.Return(fileBytes);
-        }
     }
 
     /// <summary>
@@ -254,6 +258,9 @@ public static partial class AndroidRawDecoder
     /// 按 A7C II（33MP）/A6700（26MP）实测 RSS 拟合：2.2 字节/原始像素（raw 缓冲）
     /// + 11 字节/输出像素（ushort×4 工作图 + 4 字节 RGBA 目标），实测偏保守 10–30%（默认 AHD）。
     /// 换 DHT（quality=11）另加约 10 字节/输出像素。
+    /// 调用方可把本值减去已被别处记账的部分再申请准入：源文件字节由共享读取租约记账，
+    /// 最终产物字节由 <c>BitmapLoader</c> 记账（口径见 <see cref="EstimateWorkBytes"/>）。
+    /// 极端/伪造尺寸按 <see cref="long.MaxValue"/> 饱和，不溢出成负数。
     /// </summary>
     /// <param name="width">未旋转的全分辨率宽。</param>
     /// <param name="height">未旋转的全分辨率高。</param>
@@ -262,12 +269,45 @@ public static partial class AndroidRawDecoder
     public static long EstimatePeakBytes(int width, int height, bool halfSize)
     {
         if (width <= 0 || height <= 0) return 0;
-        long outWidth = halfSize ? (width + 1) / 2 : width;
-        long outHeight = halfSize ? (height + 1) / 2 : height;
-        long rawBytes = (long)width * height * 22 / 10;
-        long outBytes = outWidth * outHeight * 11;
-        return (8L << 20) + rawBytes + outBytes;
+        long outWidth = halfSize ? HalfSize(width) : width;
+        long outHeight = halfSize ? HalfSize(height) : height;
+        long rawBytes = SaturatingMultiply((long)width * height, 22) / 10;
+        long outBytes = SaturatingMultiply(outWidth * outHeight, 11);
+        return SaturatingAdd(SaturatingAdd(8L << 20, rawBytes), outBytes);
     }
+
+    /// <summary>
+    /// 开发工作内存申请额（准入用的那个数）：峰值估算减去调用方已记账的产物字节。
+    /// 直接返回的 RGBA 缓冲就是调用方（<c>BitmapLoader</c> 按代理 Square 上界 / 源尺寸）已记账的产物，扣掉避免重复记账；
+    /// 走了精缩时 half/全尺寸中间缓冲**不是**最终产物，必须留在申请额里，同时也就覆盖了精缩目标的临时占用。
+    /// 尺寸非法或溢出时返回饱和值（≥0），不会退回负额度。
+    /// </summary>
+    /// <param name="fullWidth">未旋转的全分辨率宽。</param>
+    /// <param name="fullHeight">未旋转的全分辨率高。</param>
+    /// <param name="maxLongEdge">代理长边上限；null 为全分辨率。</param>
+    /// <returns>工作内存字节数。</returns>
+    internal static long EstimateWorkBytes(int fullWidth, int fullHeight, int? maxLongEdge)
+    {
+        if (fullWidth <= 0 || fullHeight <= 0) return 0;
+
+        // half_size 输出长边仍 ≥ 目标长边时用它：省掉去马赛克，代理目标精度仍 ≥ 2×。
+        bool half = maxLongEdge is { } limit && Math.Max(HalfSize(fullWidth), HalfSize(fullHeight)) >= limit;
+        long outWidth = half ? HalfSize(fullWidth) : fullWidth;
+        long outHeight = half ? HalfSize(fullHeight) : fullHeight;
+        bool downscales = maxLongEdge is { } postLimit && Math.Max(outWidth, outHeight) > postLimit;
+        long productBytes = downscales ? 0 : SaturatingMultiply(outWidth * outHeight, 4);
+        return Math.Max(0, EstimatePeakBytes(fullWidth, fullHeight, half) - productBytes);
+    }
+
+    /// <summary>half_size 输出边长（向上取整；int 边界不溢出）。</summary>
+    private static long HalfSize(int value) => ((long)value + 1) / 2;
+
+    /// <summary>饱和乘法：极端尺寸下按 long 上限夹取，不返回负值。</summary>
+    private static long SaturatingMultiply(long a, long b)
+        => a == 0 || b == 0 ? 0 : a > long.MaxValue / b ? long.MaxValue : a * b;
+
+    /// <summary>饱和加法：极端尺寸下按 long 上限夹取，不返回负值。</summary>
+    private static long SaturatingAdd(long a, long b) => a > long.MaxValue - b ? long.MaxValue : a + b;
 
     private static DecodedImage? DecodeWithHandle(IntPtr handle, int? maxLongEdge, ImageColorSpace space, bool background, CancellationToken ct)
     {
@@ -277,24 +317,19 @@ public static partial class AndroidRawDecoder
         if (fullWidth <= 0 || fullHeight <= 0) return null;
         int orientation = MapFlip(info.Flip);
 
-        // half_size 输出长边仍 ≥ 目标长边时用它：省掉去马赛克，代理目标精度仍 ≥ 2×。
-        bool half = maxLongEdge is { } limit &&
-                    Math.Max((fullWidth + 1) / 2, (fullHeight + 1) / 2) >= limit;
+        bool half = maxLongEdge is { } limit && Math.Max(HalfSize(fullWidth), HalfSize(fullHeight)) >= limit;
 
-        // 后台解码为工作内存另申请额度（BitmapLoader 只按产物尺寸预留）。
-        // 被拒即跳过：代理返回 null 时 BitmapLoader 不会记错误（P0 才会回退 Full），预取按"本轮没拿到"处理。
+        // 开发工作内存另申请额度：源文件字节已由共享读取租约记账，这里只算 LibRaw 工作图与我们自己的缓冲
+        // （口径与不重复记账规则见 EstimateWorkBytes）。P0 豁免准入但照常记账，后台被拒即跳过、不做任何回落。
+        long scratch = EstimateWorkBytes(fullWidth, fullHeight, maxLongEdge);
+
         MemoryGovernor.AdmissionPermit? permit = null;
-        if (background)
+        if (!MemoryGovernor.TryAcquire(scratch, DecodeContext.Priority, out permit))
         {
-            long outWidth = half ? (fullWidth + 1) / 2 : fullWidth;
-            long outHeight = half ? (fullHeight + 1) / 2 : fullHeight;
-            long scratch = Math.Max(0, EstimatePeakBytes(fullWidth, fullHeight, half) - outWidth * outHeight * 4);
-            if (!MemoryGovernor.TryAcquire(scratch, DecodeContext.Priority, out permit))
-            {
-                Console.WriteLine($"[Native] RAW 后台解码跳过（内存准入被拒 {scratch >> 20}MB，"
-                    + $"level={MemoryGovernor.CurrentLevel}）");
-                return null;
-            }
+            // 代理返回 null 时 BitmapLoader 不会记解码错误（P0 才会回退 Full），预取按"本轮没拿到"处理。
+            Console.WriteLine($"[Native] RAW 解码跳过（工作内存准入被拒 {scratch >> 20}MB，"
+                + $"level={MemoryGovernor.CurrentLevel}，后台={background}）");
+            return null;
         }
 
         try
@@ -397,50 +432,4 @@ public static partial class AndroidRawDecoder
         7 => 7,
         _ => 1,
     };
-
-    /// <summary>把整个文件读进池化缓冲（LibRaw 需要随机访问；句柄关闭前不得释放）。</summary>
-    private static byte[]? ReadFile(IFileRef file, CancellationToken ct, out int length)
-    {
-        length = 0;
-        using var stream = file.OpenReadAsync().GetAwaiter().GetResult();
-        long size = stream.CanSeek ? stream.Length : -1;
-        if (size <= 0)
-        {
-            using var copy = new MemoryStream();
-            stream.CopyTo(copy);
-            size = copy.Length;
-            if (size <= 0 || size > int.MaxValue) return null;
-            var rented = DecodedImage.RentPixels((int)size);
-            copy.Position = 0;
-            copy.ReadExactly(rented, 0, (int)size);
-            length = (int)size;
-            return rented;
-        }
-        if (size > int.MaxValue) return null;
-
-        var buffer = DecodedImage.RentPixels((int)size);
-        int read = 0;
-        try
-        {
-            while (read < size)
-            {
-                int n = stream.Read(buffer, read, (int)(size - read));
-                if (n <= 0) break;
-                read += n;
-                if ((read & 0xFFFFF) == 0) ct.ThrowIfCancellationRequested();
-            }
-        }
-        catch
-        {
-            ImageBufferPool.Return(buffer);
-            throw;
-        }
-        if (read != size)
-        {
-            ImageBufferPool.Return(buffer);
-            return null;
-        }
-        length = read;
-        return buffer;
-    }
 }

@@ -53,6 +53,21 @@ public static class AndroidNativeShell
     /// <summary>Activity 恢复（SAF 选择器返回）后强制刷新栏位与主图。</summary>
     public static void RefreshAfterResume() => _root?.RefreshAfterResume();
 
+    /// <summary>
+    /// 应用活跃状态（Activity OnStart/OnStop 调用）：进后台停邻居与当前图 Full 预取、取消尚未开跑与在途的后台工作；
+    /// 回前台重新计划邻居与该图 Full 预热。幂等，不借用内存压力通道（不改压力级别、不进恢复观察期）。
+    /// </summary>
+    /// <param name="active">true 回前台，false 进后台。</param>
+    /// <returns>状态真的发生变化返回 true；重复上报同一状态返回 false。</returns>
+    public static bool SetApplicationActive(bool active)
+    {
+        bool changed = BitmapPrefetcher.SetApplicationActive(active);
+        if (changed)
+            Console.WriteLine($"[Native] 后台预取{(active ? "恢复" : "暂停")}：active={active}"
+                + $" replan={BitmapPrefetcher.ForegroundReplanCount} suspended={BitmapPrefetcher.SuspendedScheduleCount}");
+        return changed;
+    }
+
     /// <summary>关闭筛选下拉；返回键优先消费。</summary>
     /// <returns>关闭了返回 true。</returns>
     public static bool DismissFilterDropdown() => _root?.DismissFilterDropdown() == true;
@@ -103,7 +118,7 @@ public static class AndroidNativeShell
             AndroidSettingsStorage.UseIsolatedProfile("color");
         else if (!string.IsNullOrWhiteSpace(intent?.GetStringExtra("pv-stress")))
             AndroidSettingsStorage.UseIsolatedProfile("stress");
-        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input")
+        else if (intent?.GetStringExtra("pv-check") is "zoom" or "input" or "perf" or "background")
             AndroidSettingsStorage.UseIsolatedProfile("input-checks");
         InitializePlatform(activity);
 
@@ -332,10 +347,8 @@ public static class AndroidNativeShell
     /// 配置共享 HEIF 快速解码器：原生库取 APK 的 <c>libpvhevc.so</c>，并发与空闲上下文按移动端收敛。
     /// </summary>
     /// <remarks>
-    /// 空闲上下文按最近一帧的 YUV 平面占内存，手机上只留两个；同时在转换的图像数默认 2，
-    /// 预算不足 3 GB 的设备降到 1，避免两幅全画幅的 YUV 平面同时驻留。
-    /// 原生库缺失时加载器返回 <see cref="IntPtr.Zero"/>，解码器退回默认探测并按不可用处理，
-    /// HEIF 继续走系统 <c>BitmapFactory</c> 与 libheif。
+    /// 空闲上下文只留两个；同时解码图像数按内存与核数收窄，全部 YUV 转换共用扣除一核后的 CPU 预算。
+    /// 原生库缺失时加载器返回 <see cref="IntPtr.Zero"/>，解码器按不可用处理，HEIF 回落共享 libheif。
     /// </remarks>
     private static void ConfigureHeifFastDecoder()
     {
@@ -350,8 +363,12 @@ public static class AndroidNativeShell
         }
 
         long budget = new AndroidMemoryBudgetProvider().GetBudgetBytes();
-        int maxImages = budget < 3L * 1024 * 1024 * 1024 ? 1 : 2;
-        int contexts = System.Environment.ProcessorCount;
+        int contexts = Math.Max(1, System.Environment.ProcessorCount);
+        int maxImages = Math.Min(budget < 3L * 1024 * 1024 * 1024 ? 1 : 2, Math.Max(1, contexts - 1));
+        int conversionThreads = Math.Max(1, contexts - 1);
+        YuvImageConverter.MaxDegreeOfParallelism = conversionThreads;
+        YuvImageConverter.ConversionTaskScheduler = new ConcurrentExclusiveSchedulerPair(
+            TaskScheduler.Default, conversionThreads).ConcurrentScheduler;
         FastHeifDecoder.Configure(new FastHeifOptions
         {
             LoadLibrary = () => handle,
@@ -361,7 +378,7 @@ public static class AndroidNativeShell
             MaxIdleContexts = 2,
         });
         Console.WriteLine($"[Native] HEIF 快速解码 pvhevc={(handle != IntPtr.Zero ? "ok" : "不可用")}"
-            + $" contexts={contexts}+2 images={maxImages} budget={budget >> 20}MB");
+            + $" contexts={contexts}+2 images={maxImages} yuvThreads={YuvImageConverter.MaxDegreeOfParallelism} budget={budget >> 20}MB");
     }
 
     /// <summary>

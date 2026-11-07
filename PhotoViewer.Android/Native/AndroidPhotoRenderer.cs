@@ -228,18 +228,27 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     /// 同一实例直接复用已有纹理、不重传；新建纹理优先复用同尺寸的空纹理，避免驱动在 <c>glGenTextures</c> 分配时停顿。
     /// </summary>
     /// <param name="image">展示图像（所有权在调用方，上传在调用期间同步完成）。</param>
-    internal void SetImage(DecodedImage? image)
+    internal void SetImage(DecodedImage? image, DecodedImage? prepared = null)
     {
         long submitStart = Stopwatch.GetTimestamp();
         lock (_sync)
         {
-            SubmitLocked(image, submitStart);
+            SubmitLocked(image, prepared, submitStart);
         }
     }
 
-    /// <summary>上传/切换纹理主体（调用方已持有 <see cref="_sync"/>）。</summary>
-    /// <param name="submitStart">外层提交起点（等锁之前的时间戳）。</param>
-    private void SubmitLocked(DecodedImage? image, long submitStart)
+    internal bool NeedsPreparation(DecodedImage image)
+    {
+        lock (_sync)
+        {
+            if (_current?.Matches(image) == true || _recentTextures.Exists(entry => entry.Matches(image))) return false;
+            return image.ColorSpace != (_surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb);
+        }
+    }
+
+    internal long RecentTextureByteLimit { get; set; } = 384L << 20;
+
+    private void SubmitLocked(DecodedImage? image, DecodedImage? prepared, long submitStart)
     {
         if (_disposed) return;
         if (image == null)
@@ -272,12 +281,22 @@ internal sealed class AndroidPhotoRenderer : IDisposable
 
         var source = image;
         var targetSpace = _surfaceP3 ? ImageColorSpace.DisplayP3 : ImageColorSpace.Srgb;
-        bool converted = image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace;
+        bool converted = prepared == null && (image.Encoding != PixelEncoding.Rgba8 || image.ColorSpace != targetSpace);
         double convertMs = 0;
         DecodedImage? conversionLease = null;
+        TextureEntry? uploading = null;
         try
         {
-            if (converted)
+            if (prepared != null)
+            {
+                if (prepared.Encoding != PixelEncoding.Rgba8 || prepared.ColorSpace != targetSpace
+                    || prepared.Width != image.Width || prepared.Height != image.Height
+                    || prepared.Orientation != image.Orientation || prepared.SourceWidth != image.SourceWidth
+                    || prepared.SourceHeight != image.SourceHeight || prepared.Pixels.Length == 0)
+                    throw new InvalidOperationException("后台准备产物与当前输出不匹配");
+                image = prepared;
+            }
+            else if (converted)
             {
                 var convertStart = Stopwatch.GetTimestamp();
                 conversionLease = ColorEngine.ToDisplayEncoding(image, PixelEncoding.Rgba8, targetSpace);
@@ -292,6 +311,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             {
                 GLES20.GlGenTextures(1, _handleBuffer, 0);
                 entry = new TextureEntry(new WeakReference<DecodedImage>(source), _handleBuffer[0], image.Width, image.Height);
+                uploading = entry;
                 GLES20.GlBindTexture(GLES20.GlTexture2d, entry.Handle);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMinFilter, GLES20.GlLinearMipmapLinear);
                 GLES20.GlTexParameteri(GLES20.GlTexture2d, GLES20.GlTextureMagFilter, GLES20.GlLinear);
@@ -301,6 +321,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             }
             else
             {
+                uploading = entry;
                 entry.Rebind(new WeakReference<DecodedImage>(source));
                 GLES20.GlBindTexture(GLES20.GlTexture2d, entry.Handle);
                 createMs = 0;
@@ -347,6 +368,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
             var finishStart = Stopwatch.GetTimestamp();
             GLES20.GlBindTexture(GLES20.GlTexture2d, 0);
             Bind(entry);
+            uploading = null;
             conversionLease?.Dispose();
             conversionLease = null;
             var finishMs = ElapsedMs(finishStart);
@@ -355,6 +377,7 @@ internal sealed class AndroidPhotoRenderer : IDisposable
         }
         finally
         {
+            if (uploading != null && !ReferenceEquals(uploading, _current)) DeleteTexture(uploading);
             conversionLease?.Dispose();
         }
     }
@@ -503,41 +526,72 @@ internal sealed class AndroidPhotoRenderer : IDisposable
     /// <summary>刷新纹理占用快照（当前 + 最近缓存 + 空纹理，含 mip 链）。</summary>
     private void UpdateTextureBytes()
     {
-        long total = _current?.Bytes ?? 0;
-        foreach (var entry in _recentTextures) total += entry.Bytes;
-        total += _spareTexture?.Bytes ?? 0;
-        Interlocked.Exchange(ref _textureBytes, total);
+        long recentBytes = _spareTexture?.Bytes ?? 0;
+        foreach (var entry in _recentTextures) recentBytes += entry.Bytes;
+        long limit = Math.Max(0, RecentTextureByteLimit);
+        if (recentBytes > limit && _spareTexture != null)
+        {
+            recentBytes -= _spareTexture.Bytes;
+            DeleteTexture(_spareTexture);
+            _spareTexture = null;
+        }
+        while (recentBytes > limit && _recentTextures.Count > 0)
+        {
+            var oldest = _recentTextures[0];
+            _recentTextures.RemoveAt(0);
+            recentBytes -= oldest.Bytes;
+            DeleteTexture(oldest);
+        }
+        Interlocked.Exchange(ref _textureBytes, (_current?.Bytes ?? 0) + recentBytes);
     }
 
-    internal void DrawFrame(PhotoViewport viewport, double density, bool present = true)
+    internal bool DrawFrame(PhotoViewport viewport, double density, bool present = true)
     {
-        lock (_sync)
+        long totalStart = AndroidFrameStats.Mark();
+        try
         {
-            if (_disposed || _display == null || _surface == null || _context == null) return;
-            if (_width < 1 || _height < 1) return;
-            if (!EGL14.EglMakeCurrent(_display, _surface, _surface, _context)) return;
-            GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
-            GLES20.GlViewport(0, 0, _width, _height);
-            GLES20.GlDisable(GLES20.GlBlend);
-            GLES20.GlDisable(GLES20.GlDepthTest);
-            GLES20.GlClearColor(0f, 0f, 0f, 1f);
-            GLES20.GlClear(GLES20.GlColorBufferBit);
-            if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
+            lock (_sync)
             {
-                GLES20.GlUseProgram(_program);
-                if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
-                GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
-                double scale = Math.Max(1e-9, viewport.Scale) * density;
-                double drawWidth = viewport.ImageWidth * scale;
-                double drawHeight = viewport.ImageHeight * scale;
-                double centerX = _width / 2.0 + viewport.PanX * density;
-                double centerY = _height / 2.0 + viewport.PanY * density;
-                double left = centerX - drawWidth / 2;
-                double top = centerY - drawHeight / 2;
-                DrawQuad(viewport.Orientation, (float)(left / _width * 2 - 1), (float)(1 - top / _height * 2),
-                    (float)(drawWidth / _width * 2), (float)(drawHeight / _height * 2));
+                long mark = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.LockWait, totalStart, mark);
+                if (_disposed || _display == null || _surface == null || _context == null) return false;
+                if (_width < 1 || _height < 1) return false;
+                long makeCurrentStart = AndroidFrameStats.Mark();
+                bool madeCurrent = EGL14.EglMakeCurrent(_display, _surface, _surface, _context);
+                long commandsStart = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.MakeCurrent, makeCurrentStart, commandsStart);
+                if (!madeCurrent) return false;
+                GLES20.GlBindFramebuffer(GLES20.GlFramebuffer, 0);
+                GLES20.GlViewport(0, 0, _width, _height);
+                GLES20.GlDisable(GLES20.GlBlend);
+                GLES20.GlDisable(GLES20.GlDepthTest);
+                GLES20.GlClearColor(0f, 0f, 0f, 1f);
+                GLES20.GlClear(GLES20.GlColorBufferBit);
+                if (HasTexture && _program != 0 && viewport.ImageWidth > 0 && viewport.ImageHeight > 0)
+                {
+                    GLES20.GlUseProgram(_program);
+                    if (_linearizeHandle < 0) _linearizeHandle = GLES20.GlGetUniformLocation(_program, "uLinearize");
+                    GLES20.GlUniform1i(_linearizeHandle, FramebufferEncoding == GlSrgb && !_bypassOutputTransfer ? 1 : 0);
+                    double scale = Math.Max(1e-9, viewport.Scale) * density;
+                    double drawWidth = viewport.ImageWidth * scale;
+                    double drawHeight = viewport.ImageHeight * scale;
+                    double centerX = _width / 2.0 + viewport.PanX * density;
+                    double centerY = _height / 2.0 + viewport.PanY * density;
+                    double left = centerX - drawWidth / 2;
+                    double top = centerY - drawHeight / 2;
+                    DrawQuad(viewport.Orientation, (float)(left / _width * 2 - 1), (float)(1 - top / _height * 2),
+                        (float)(drawWidth / _width * 2), (float)(drawHeight / _height * 2));
+                }
+                long swapStart = AndroidFrameStats.Mark();
+                AndroidFrameStats.Span(FrameStatsKind.Commands, commandsStart, swapStart);
+                bool swapped = present && EGL14.EglSwapBuffers(_display, _surface);
+                AndroidFrameStats.Span(FrameStatsKind.Swap, swapStart, AndroidFrameStats.Mark());
+                return swapped;
             }
-            if (present) EGL14.EglSwapBuffers(_display, _surface);
+        }
+        finally
+        {
+            AndroidFrameStats.Span(FrameStatsKind.Total, totalStart, AndroidFrameStats.Mark());
         }
     }
 

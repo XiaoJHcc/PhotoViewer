@@ -4,7 +4,7 @@ using PhotoViewer.Core.Image.Heif;
 
 namespace HeifFastDecodeTest;
 
-/// <summary>不依赖样张的自检:变换→EXIF 方向真值表、容器色彩声明、原生平面内存估值的纯计算口径。</summary>
+/// <summary>不依赖样张的自检:变换→EXIF 方向真值表、容器色彩声明、原生平面内存估值、YUV 转换调度一致性的纯计算口径。</summary>
 internal static class SelfTest
 {
     private enum Op
@@ -22,6 +22,7 @@ internal static class SelfTest
         var failures = TransformTruthTable();
         failures += ColorTests.RunContainerCases();
         failures += NativePlaneEstimateCases();
+        failures += SchedulingChecks.Run();
         Console.WriteLine(failures == 0 ? "selftest: PASS" : $"selftest: {failures} FAILURE(S)");
         return failures == 0 ? 0 : 1;
     }

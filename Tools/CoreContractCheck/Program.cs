@@ -44,6 +44,7 @@ internal static class Program
         {
             PresentationCacheChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             PrefetchPlanningChecks.Run(checks, root);
+            PrefetchLifecycleChecks.Run(checks);
             StorageItemIdChecks.Run(checks, root);
             StorageIdentityRegressionChecks.RunAsync(checks, root).GetAwaiter().GetResult();
             LocalFileRefChecks.Run(checks, root);
