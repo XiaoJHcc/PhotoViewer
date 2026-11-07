@@ -21,15 +21,17 @@
 
 | Task | 用途 |
 |---|---|
-| **Debug Windows** | 构建并启动 WinUI 3 原生壳。 |
-| **Run Windows** | 启动已有构建，不重新编译。 |
-| **Check Windows Native** | 构建并运行隔离冒烟，结束后自动关闭；失败退出码为 1。 |
-| **Check Windows Color** | 构建并运行隔离色彩专项（真实 JPEG/HEIF/RAW、显示器 ICC、GPU 输出切换），报告 `color-checks.json`；不改系统显示配置，真屏/跨屏结论另验。 |
+| **Debug Windows (Standard / AI)** | 构建并启动对应版本的 WinUI 3 原生壳。 |
+| **Run Windows (Standard / AI)** | 启动已有对应版本构建，不重新编译。 |
+| **Check Windows Native (Standard / AI)** | 构建并运行对应版本的隔离冒烟，结束后自动关闭；失败退出码为 1。 |
+| **Check Windows Color (Standard / AI)** | 构建并运行对应版本的隔离色彩专项（真实 JPEG/HEIF/RAW、显示器 ICC、GPU 输出切换），报告 `color-checks.json`；不改系统显示配置，真屏/跨屏结论另验。 |
+
+两个版本各自使用 `PhotoViewer.Windows/bin/<standard|ai>/` 与 `obj/<standard|ai>/`，共享工程 `PhotoViewer/` 同样按版本隔离。命令行构建、restore、运行与发布都必须显式传 `-p:PhotoViewerEnableDino=false|true`，缺失或非法值直接报错；Tasks 已带参数。两版只支持 `win-x64`，共用用户设置、数据库与单实例身份，显示名分别为 `PhotoViewer` / `PhotoViewer-AI`。
 
 从仓库根直接打开图片或文件夹：
 
 ```bash
-dotnet run --project PhotoViewer.Windows -c Debug -- "D:/photos/a.jpg"
+dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false -- "D:/photos/a.jpg"
 ```
 
 专项参数追加在 `--` 后：`--pv-native-settings`、`--pv-native-tools`；各自的 `-hold` 变体保持窗口供目视。`--pv-native-activation-check` 验证单实例二次激活（本进程持键并拉起第二个进程，核对转发、定位与退出码；数据仍走隔离目录）。报告位于工作目录的 `artifacts/acceptance/native-win-acceptance/`。检查范围与工程约束见 [Windows 模块手册](PhotoViewer.Windows/AGENTS.md)。
@@ -37,9 +39,9 @@ dotnet run --project PhotoViewer.Windows -c Debug -- "D:/photos/a.jpg"
 性能与压测入口同样使用隔离设置、数据库与日志（`artifacts/acceptance/native-win-acceptance/`），不触碰用户设置与照片：
 
 ```bash
-dotnet build PhotoViewer.Windows -c Release -p:Platform=x64
-"./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-perf-probe=D:/photos/A7C2"
-"./PhotoViewer.Windows/bin/x64/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-stress=D:/photos/A7C2" --pv-stress-count=100 --pv-stress-mode=ab
+dotnet build PhotoViewer.Windows -c Release -p:PhotoViewerEnableDino=false
+"./PhotoViewer.Windows/bin/standard/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-perf-probe=D:/photos/A7C2"
+"./PhotoViewer.Windows/bin/standard/Release/net10.0-windows10.0.19041.0/win-x64/PhotoViewer.Windows.exe" "--pv-stress=D:/photos/A7C2" --pv-stress-count=100 --pv-stress-mode=ab
 ```
 
 探针按 HIF / ARW / JPG 各取 6 张（首张预热）分段计时，写 `perf-probe.txt` 后自行退出；ARW 另测一次 WIC 开发下的代理/Full 派生时间、像素字节账，并与正常解码产物逐字节对照（会额外占用测试内存，不代表普通浏览的进程峰值）。压测按展示列表连翻（`--pv-stress-mode=ab` 改为相邻两张来回切），逐张写 `stress-flip.jsonl`；Windows 的完成阶段是 `present-return`（目标代际正式纹理绑定且 Present 返回，不等同屏幕扫描完成），另记 `pixelsReadyMs` 与就绪后提交时间。`done.extra` 区分同步/异步上传、真实上传与缓存命中、暂存创建/映射/目标创建/拷贝/mip/后台墙钟、Render/Present、UI 心跳及内存账。可加 `--pv-stress-window=3000x1800` 固定物理窗口、`--pv-stress-full` 强制 Full、`--pv-stress-budget-mb=2048` 模拟小应用预算；模拟不代表小内存真机。`--pv-stress-count` 大于列表长度时循环翻页，A/B 持续切前两张。所有隔离入口支持 `--pv-acceptance-output=artifacts/acceptance/<本轮目录>` 分开保存报告。`--pv-native-upload` 可独立跑异步代际/真实GPU像素/持续压力回归，同时也属于完整 smoke。
@@ -164,7 +166,9 @@ python3 Tools/check-mac-package.py --self-test    # 正反判定自检
 
 | Task | 产物与说明 |
 |---|---|
-| **Publish Windows EXE (Release)** | 自包含 `release/packages/PhotoViewer-<版本>-win-x64.exe`，运行时自动解包内置依赖；不启用 trim/R2R。 |
+| **Publish Windows EXE (Release, Standard + AI / Standard / AI)** | 构建、扫描与原生验收后归档自包含双版本单 EXE：`PhotoViewer-<版本>-win-x64.exe` / `PhotoViewer-AI-<版本>-win-x64.exe`；运行时自动解包依赖，不启用 trim/R2R。 |
+| **Publish Windows EXE (Local Check)** | 完整构建、扫描和原生验收双版本；产物留在 `artifacts/scratch/windows-local-publish/<standard\|ai>/`，不改正式归档。 |
+| **Scan Windows Package (Self-Test)** | `Tools/check-windows-package.py --self-test`，验证单文件扫描器的正反判定。 |
 | **Publish Android APK (Release, Standard + AI / Standard / AI)** | 构建、签名并扫描仅 arm64 的 APK，归档 `release/packages/PhotoViewer-<版本>-android-arm64.apk` 与 `PhotoViewer-AI-<版本>-android-arm64.apk`。命令行可用 `bash PhotoViewer.Android/publish-android-apk.sh --edition standard|ai|both`。 |
 | **Publish Android APK (Local Check)** | 构建两版并扫描实际 APK，产物留在 `artifacts/scratch/android-local-publish/`，不写正式归档；机器可读报告在 `artifacts/acceptance/android-editions/`。 |
 | **Publish Mac DMG (Release, Standard + AI)** | 默认依次构建标准版和 AI 版，核对 `.app` 身份与内容后以 Developer ID + Hardened Runtime 签名、公证并验证；分别归档 `release/packages/PhotoViewer-<版本>-mac-arm64.dmg` 与 `PhotoViewer-AI-<版本>-mac-arm64.dmg`。仅需单变体时运行 `bash PhotoViewer.Mac/publish.sh --edition standard` 或 `--edition ai`。 |
@@ -191,7 +195,7 @@ python3 Tools/check-ios-package.py PhotoViewer.iOS/bin/standard/Release/net10.0-
 python3 Tools/check-ios-package.py --self-test    # 正反判定自检
 ```
 
-Windows 发布脚本自动定位 Visual Studio 官方 Release x64 CRT；自定义构建环境可向 `PhotoViewer.Windows/publish-win-x64-singlefile.ps1` 传 `-VCRedistDirectory`。脚本在原名/改名 EXE 的独立目录和新缓存中执行验收，通过后归档，并在 `artifacts/acceptance/rebuild-check/windows-singlefile/` 保存报告与 `deployment.json`。CRT 来源须符合 [微软再分发许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)。
+Windows 发布脚本 `PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition standard|ai|both [-Local]` 自动定位 Visual Studio 官方 Release x64 CRT；自定义构建环境可传 `-VCRedistDirectory`。`-OutputDirectory` 指定输出根目录，脚本在其下创建 `standard/ai` 子目录；缺省本地验证输出到 `artifacts/scratch/windows-local-publish/`，正式发布输出到头工程对应变体的 `bin/`。脚本扫描实际 EXE 的 bundle 与嵌入资源，并在原名/中文空格路径改名副本的独立空缓存中执行验收；`-Edition both` 还会对刚产出的两版执行 AI → 标准 → AI 跨进程往返。所有请求的变体及往返门禁均通过才归档，本地验证不写 `release/`。报告与绑定产物 SHA-256 的 `deployment.json` 位于 `artifacts/acceptance/windows-editions/<轮次>/<edition>/`。CRT 来源须符合 [微软再分发许可](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution#visual-c-runtime-files)。
 
 Android 首次发布前，在对应宿主执行：
 
@@ -277,4 +281,4 @@ python Training/onnx/verify_onnx_parity.py \
     --onnx PhotoViewer/Assets/Models/dinov3_vits16.onnx
 ```
 
-模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。模型缺失不影响构建与基础浏览（Windows 壳按文件存在性条件打包模型），只有 DINO 诊断与相似聚类运行期报缺少模型；原生验收里的 DINO 检查需要模型。Mac、iOS、Android 标准版不打包模型或推理运行时，AI 版打包同一模型并附 `Assets/Models/DINOv3-LICENSE.md`，发布扫描会核对模型字节数与 SHA-256。
+模型权重内嵌在同一个 ONNX 文件中（`external_data=False`）；一致性校验要求 `cos_mean ≥ 0.999`。四端标准版不打包模型或推理运行时；AI 版随包附 `Assets/Models/DINOv3-LICENSE.md`，发布扫描严格核对固定导出的字节数与 SHA-256，模型缺失或不符即停止发布。Windows AI 普通开发构建允许模型缺失，只有相关入口与验收会报缺少模型；发布不允许此状态。Windows 目前保持其既有发布模型的 `b1579…` 导出，其他三端新版扫描器使用 `bcba…` 导出，精确值与跨端统一前的数值核对边界见 [模型契约](Plans/distribution-package-size-optimization-plan.md#12-当前模型契约)；不得只凭相同文件名或 ModelId 替换模型。

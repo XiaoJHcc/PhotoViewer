@@ -14,6 +14,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <DisableTransitiveFrameworkReferences>true</DisableTransitiveFrameworkReferences>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <EnableDefaultItems>false</EnableDefaultItems>
     <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
@@ -26,7 +27,9 @@
     <AppxPackage>false</AppxPackage>
     <GenerateAppxPackageOnBuild>false</GenerateAppxPackageOnBuild>
     <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <PhotoViewerEnableDino Condition="'$(PhotoViewerEnableDino)' == ''">true</PhotoViewerEnableDino>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
     <WinSrc>$(MSBuildThisFileDirectory)..\..\PhotoViewer.Windows\</WinSrc>
   </PropertyGroup>
 
@@ -40,6 +43,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.ML" ExcludeAssets="all" />
     <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
     <PackageReference Include="DirectNStandard" />
     <PackageReference Include="LibHeifSharp" />
@@ -47,7 +51,12 @@
     <PackageReference Include="WicNet" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+    <Compile Remove="$(WinSrc)Native\WindowsSimilarityPanel.cs" />
+    <PackageReference Remove="Microsoft.ML.OnnxRuntime.DirectML" />
+  </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj" />
+    <ProjectReference Include="..\..\PhotoViewer\PhotoViewer.csproj"
+                      AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
   </ItemGroup>
 </Project>

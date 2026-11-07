@@ -21,7 +21,7 @@ namespace PhotoViewer.Windows.Native;
 /// 各取前 6 张(首张作预热,不计入统计)分段计时,写纯文本报告并退出。
 /// 与 <c>PhotoViewer.Apple/ApplePerfProbe.cs</c> 同结构、同报告口径,便于三端横向对比:
 /// 展示解码器直连(绕过缓存)的代理/全图解、libheif 子阶段、直方图、增强三步、分析用 sRGB8、
-/// 缩略图(560 / 120)与 DINO 推理,并记录私有字节峰值与托管堆。
+/// 缩略图(560 / 120)与 DINO 推理(AI 版),并记录私有字节峰值与托管堆。
 /// ARW 分组另跑 <see cref="WindowsRawProbe"/>:同一份 WIC 单次开发下分解代理/Full 耗时,
 /// 并把两条路径的产物与产品解码器产物逐项比对。产品路径不调用。
 /// </summary>
@@ -42,8 +42,10 @@ internal static class WindowsPerfProbe
     /// <summary>胶片栏小缩略图短边。</summary>
     private const int ThumbSmall = 120;
 
+#if PHOTOVIEWER_DINO
     /// <summary>DINO 推理重复次数(第一次含 DirectML 会话建立,单列 first)。</summary>
     private const int DinoRuns = 3;
+#endif
 
     /// <summary>文件类型分组(顺序即报告顺序)。</summary>
     private static readonly (string Name, string[] Extensions)[] Groups =
@@ -263,7 +265,9 @@ internal static class WindowsPerfProbe
             MeasureThumbnail(collector, record, file, ThumbLarge);
             MeasureThumbnail(collector, record, file, ThumbSmall);
 
+#if PHOTOVIEWER_DINO
             if (measureDino) MeasureDino(collector, record, file);
+#endif
         }
         finally
         {
@@ -367,6 +371,7 @@ internal static class WindowsPerfProbe
         });
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>DINO 推理(第一次含 DirectML 会话建立;产品里它只用于批量特征索引)。</summary>
     private static void MeasureDino(Collector collector, bool record, IFileRef file)
     {
@@ -396,6 +401,8 @@ internal static class WindowsPerfProbe
             }
         }
     }
+
+#endif
 
     /// <summary>单次计时:执行并记录耗时/输出尺寸/附加信息,异常记为该测量项的失败。</summary>
     private static void Time(Collector collector, bool record, string name,

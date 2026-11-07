@@ -47,6 +47,27 @@ internal static class WindowsNativeApplication
     /// <summary>性能探针素材目录(<c>--pv-perf-probe</c>);null 表示不跑探针。</summary>
     internal static string? PerfProbeFolder { get; private set; }
 
+    /// <summary>发行版专项(<c>--pv-native-edition</c>):按当前实际构建变体核对入口与构成(EDITION-07)。</summary>
+    internal static bool EditionCheckRequested { get; private set; }
+
+    /// <summary>
+    /// 双版本往返阶段(<c>--pv-native-edition-roundtrip=prepare|standard|ai|all</c>);
+    /// null 表示不跑往返。各阶段是独立真实进程,共用同一隔离输出目录里的设置、界面状态与数据库。
+    /// </summary>
+    internal static string? EditionRoundtripStage { get; private set; }
+
+    /// <summary>往返编排(<c>all</c>)用的标准版 EXE(<c>--pv-edition-standard-exe</c>)。</summary>
+    internal static string? EditionStandardExe { get; private set; }
+
+    /// <summary>往返编排(<c>all</c>)用的 AI 版 EXE(<c>--pv-edition-ai-exe</c>)。</summary>
+    internal static string? EditionAiExe { get; private set; }
+
+    /// <summary>
+    /// 本轮是否保留隔离目录里既有的设置、界面状态与数据库。
+    /// 往返验收逐阶段读取上一版落盘的状态,默认的每轮重置会把被验收的东西删掉。
+    /// </summary>
+    internal static bool PreserveIsolatedState => EditionRoundtripStage != null;
+
     /// <summary>
     /// 压测用的后台预取并发覆盖(<c>--pv-stress-native-threads=N</c>);null = 用设置里的值。
     /// 只为并行度扫描服务:隔离设置每轮会被重置,无法靠改设置文件做对照实验。
@@ -98,8 +119,13 @@ internal static class WindowsNativeApplication
         StressNativeThreads = ParseNativeThreads(args);
         var thumbProbe = WindowsHeifThumbProbe.ParsePaths(args).Length > 0;
         ActivationCheckRequested = args.Contains("--pv-native-activation-check");
+        EditionCheckRequested = args.Contains("--pv-native-edition");
+        EditionRoundtripStage = ParseEditionRoundtrip(args);
+        EditionStandardExe = ParsePathArgument(args, "--pv-edition-standard-exe=");
+        EditionAiExe = ParsePathArgument(args, "--pv-edition-ai-exe=");
         IsolatedMode = smoke || settingsCheck || settingsHold || toolsCheck || toolsHold
             || StressRequested || PerfProbeFolder != null || thumbProbe || ActivationCheckRequested
+            || EditionCheckRequested || EditionRoundtripStage != null
             || args.Contains("--pv-native-color") || args.Contains("--pv-native-upload")
             || args.Contains("--pv-native-rating");
 
@@ -107,6 +133,12 @@ internal static class WindowsNativeApplication
         {
             var output = args.FirstOrDefault(a => a.StartsWith("--pv-acceptance-output=", StringComparison.Ordinal));
             if (output != null) OutputDirectory = Path.GetFullPath(output["--pv-acceptance-output=".Length..]);
+            // 发行版专项与往返各自落独立目录:默认 smoke 每轮会重置目录里的设置与数据库,
+            // 与被验收的往返状态同目录会把它删掉(EDITION-07)。
+            else if (EditionRoundtripStage != null)
+                OutputDirectory = Path.GetFullPath(Path.Combine("artifacts", "acceptance", "native-win-editions", "roundtrip"));
+            else if (EditionCheckRequested)
+                OutputDirectory = Path.GetFullPath(Path.Combine("artifacts", "acceptance", "native-win-editions", WindowsProductInfo.EditionName));
             var budget = args.FirstOrDefault(a => a.StartsWith("--pv-stress-budget-mb=", StringComparison.Ordinal));
             if (StressRequested && budget != null && int.TryParse(budget["--pv-stress-budget-mb=".Length..], out int mb)
                 && mb >= 1024) StressBudgetBytes = (long)mb << 20;
@@ -120,6 +152,10 @@ internal static class WindowsNativeApplication
             args,
             IsolatedMode ? Path.Combine(WindowsMainWindow.SmokeOutputDirectory, logName) : null);
         NativeStartupLog.InstallHooks();
+        NativeStartupLog.Write(
+            $"edition: {WindowsProductInfo.EditionName} hasDino={WindowsProductInfo.HasDino}"
+            + $" product={WindowsProductInfo.DisplayName}"
+            + (EditionRoundtripStage != null ? $" roundtrip={EditionRoundtripStage}" : string.Empty));
 
         WinRT.ComWrappersSupport.InitializeComWrappers();
         NativeStartupLog.Write("com wrappers ready");
@@ -201,9 +237,14 @@ internal static class WindowsNativeApplication
         if (isolated)
         {
             // 设置仓库由 App 在创建视图模型前建立并初始化，这里只重置隔离目录里的设置与数据库。
-            WindowsMainWindow.ConfigureSmokeStorage();
+            // 双版本往返逐阶段读取上一版落盘的内容，那一轮必须保留而不是重置。
+            if (PreserveIsolatedState) WindowsMainWindow.EnsureSmokeStorage();
+            else WindowsMainWindow.ConfigureSmokeStorage();
         }
+#if PHOTOVIEWER_DINO
+        // 标准版不注册推理后端：产物里没有 ONNX Runtime / DirectML，也不配置会话(EDITION-01)。
         DinoFeatureExtractor.ConfigureSession(options => options.AppendExecutionProvider_DML());
+#endif
         NativeStartupLog.Write("facades ready");
     }
 
@@ -230,6 +271,49 @@ internal static class WindowsNativeApplication
             {
                 return Math.Clamp(threads, 1, 32);
             }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// 解析 <c>--pv-native-edition-roundtrip=prepare|standard|ai|all</c>。
+    /// 未指定返回 null；取值非法(含缺参)时按 <c>unknown</c> 落盘，由验收阶段报错退出，不悄悄跑一轮默认检查。
+    /// </summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <returns>阶段标识；未请求往返时为 null。</returns>
+    private static string? ParseEditionRoundtrip(IEnumerable<string> args)
+    {
+        foreach (var arg in args)
+        {
+            if (!arg.StartsWith("--pv-native-edition-roundtrip", StringComparison.Ordinal)) continue;
+            var value = arg.StartsWith("--pv-native-edition-roundtrip=", StringComparison.Ordinal)
+                ? arg["--pv-native-edition-roundtrip=".Length..]
+                : string.Empty;
+            return value.Trim().ToLowerInvariant() switch
+            {
+                "prepare" => "prepare",
+                "standard" => "standard",
+                "ai" => "ai",
+                "all" => "all",
+                _ => "unknown",
+            };
+        }
+
+        return null;
+    }
+
+    /// <summary>解析 <c>--pv-edition-*-exe=&lt;路径&gt;</c> 形式的参数。</summary>
+    /// <param name="args">进程启动参数。</param>
+    /// <param name="prefix">完整参数前缀(含等号)。</param>
+    /// <returns>绝对路径；未指定或为空时返回 null。</returns>
+    private static string? ParsePathArgument(IEnumerable<string> args, string prefix)
+    {
+        foreach (var arg in args)
+        {
+            if (!arg.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            var value = arg[prefix.Length..].Trim('"');
+            return string.IsNullOrWhiteSpace(value) ? null : Path.GetFullPath(value);
         }
 
         return null;

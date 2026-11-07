@@ -108,6 +108,21 @@ public partial class App : Application
                 return;
             }
 
+            // 发行版专项与双版本往返:都在窗口就绪后跑,报告与隔离状态落在本轮的输出目录(EDITION-07)。
+            if (WindowsNativeApplication.EditionCheckRequested)
+            {
+                await _window.RunEditionChecksAsync(_toolsPresenter!, _settingsPresenter!);
+                _window.Close();
+                return;
+            }
+
+            if (WindowsNativeApplication.EditionRoundtripStage is { } roundtripStage)
+            {
+                await _window.RunEditionRoundtripAsync(roundtripStage, _toolsPresenter!);
+                _window.Close();
+                return;
+            }
+
             if (LaunchArgs.Contains("--pv-native-rating"))
             {
                 await _window.RunRatingChecksAsync();
@@ -191,7 +206,10 @@ public partial class App : Application
             if (stress)
             {
                 // 压测期间不跑后台特征索引:索引会解 560 缩略图并抢占解码与 CPU,把翻页延迟混成"索引延迟"。
+                // 标准版没有相似聚类入口,也不写这份展开态存储值(EDITION-06)。
+#if PHOTOVIEWER_DINO
                 _main.Settings.SimilarityPanelExpanded = false;
+#endif
                 // 并行度扫描:隔离设置每轮被重置,用启动参数覆盖后台预取并发(BitmapPrefetcher 订阅该属性)。
                 if (WindowsNativeApplication.StressNativeThreads is int stressThreads)
                 {

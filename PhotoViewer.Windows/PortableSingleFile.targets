@@ -1,4 +1,10 @@
 <Project>
+    <Target Name="RemoveWindowsDevelopmentPayload" AfterTargets="ComputeResolvedFilesToPublishList">
+        <ItemGroup>
+            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)"
+                Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(ResolvedFileToPublish.RelativePath)', '(?i)^(NativeLibs[\\/]|NativeSrc[\\/]|AGENTS\.md$|app\.manifest$|App\.xaml$|build-native-windows-hevc\.ps1$|publish-win-x64-singlefile\.ps1$|PortableSingleFile\.targets$)'))" />
+        </ItemGroup>
+    </Target>
     <Target Name="BundlePortableWindowsResources"
             AfterTargets="PrepareForBundle"
             Condition="'$(PublishSingleFile)' == 'true'">

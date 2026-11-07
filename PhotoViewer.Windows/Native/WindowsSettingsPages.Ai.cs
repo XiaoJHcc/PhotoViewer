@@ -9,10 +9,29 @@ namespace PhotoViewer.Windows.Native;
 
 internal sealed partial class WindowsSettingsPages
 {
-    /// <summary>AI 页:相似聚类、分析诊断、特征数据库清理。</summary>
+    /// <summary>
+    /// 分析/AI 页。AI 版是相似聚类参数、两个独立的即时计算开关与特征数据库清理；
+    /// 标准版只有「分析诊断」组的「即时计算 CV」一个开关,没有相似聚类参数与清库入口(EDITION-02)。
+    /// 标准版不可见的 DINO/相似参数仍原样保留在设置文档里(EDITION-06),本页不读也不写它们。
+    /// </summary>
     /// <returns>页面</returns>
     private UIElement BuildAiPage()
     {
+        var diagnosisGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
+#if PHOTOVIEWER_DINO
+        var dinoImmediate = NewToggle(_settings.AnalysisImmediateCompute,
+            value => _settings.AnalysisImmediateCompute = value);
+        OnSetting(nameof(SettingsViewModel.AnalysisImmediateCompute),
+            () => dinoImmediate.IsOn = _settings.AnalysisImmediateCompute);
+        diagnosisGroup.Children.Add(WindowsSettingsCard.ToggleRow("即时计算 DINO", null, dinoImmediate));
+#endif
+        var cvImmediate = NewToggle(_settings.AnalysisImmediateCvCompute,
+            value => _settings.AnalysisImmediateCvCompute = value);
+        OnSetting(nameof(SettingsViewModel.AnalysisImmediateCvCompute),
+            () => cvImmediate.IsOn = _settings.AnalysisImmediateCvCompute);
+        diagnosisGroup.Children.Add(WindowsSettingsCard.ToggleRow("即时计算 CV", null, cvImmediate));
+
+#if PHOTOVIEWER_DINO
         var thresholdValue = WindowsSettingsCard.ValueText(
             (_settings.SimilarityThreshold * 100).ToString("0") + "%");
         var threshold = NewSlider(75, 95, 1, _settings.SimilarityThreshold * 100,
@@ -33,11 +52,6 @@ internal sealed partial class WindowsSettingsPages
             value => _settings.SimilarityMaxResults = (int)Math.Round(value));
         OnSetting(nameof(SettingsViewModel.SimilarityMaxResults),
             () => maxResults.Value = _settings.SimilarityMaxResults);
-
-        var immediate = NewToggle(_settings.AnalysisImmediateCompute,
-            value => _settings.AnalysisImmediateCompute = value);
-        OnSetting(nameof(SettingsViewModel.AnalysisImmediateCompute),
-            () => immediate.IsOn = _settings.AnalysisImmediateCompute);
 
         var clearButton = NewButton("清除特征数据库", () => _ = ClearDatabaseAsync());
         clearButton.IsEnabled = !_settings.ClearDbBusy;
@@ -67,9 +81,6 @@ internal sealed partial class WindowsSettingsPages
         similarityGroup.Children.Add(WindowsSettingsCard.Row(
             "最多数量", "相似聚类面板最多显示的相似照片数", NumberBoxWithUnit(maxResults, "张")));
 
-        var diagnosisGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
-        diagnosisGroup.Children.Add(WindowsSettingsCard.ToggleRow("即时计算DINO/CV", null, immediate));
-
         var databaseGroup = new StackPanel { Spacing = WindowsLayout.SettingsCardGap };
         databaseGroup.Children.Add(clearRow);
         databaseGroup.Children.Add(statusBar);
@@ -82,8 +93,15 @@ internal sealed partial class WindowsSettingsPages
             diagnosisGroup,
             WindowsSettingsCard.SectionHeader("特征数据库"),
             databaseGroup);
+#else
+        return Page(
+            "AI",
+            WindowsSettingsCard.SectionHeader("分析诊断"),
+            diagnosisGroup);
+#endif
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>清库:ContentDialog 确认后走共享两段确认命令。</summary>
     /// <returns>任务</returns>
     private async Task ClearDatabaseAsync()
@@ -117,4 +135,5 @@ internal sealed partial class WindowsSettingsPages
         // SETTINGS-10：已有系统确认对话框，直接调用共享“已确认”入口，不进入不可见的 arm 态。
         await _settings.ClearFeatureDatabaseConfirmedAsync();
     }
+#endif
 }

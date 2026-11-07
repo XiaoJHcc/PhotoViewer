@@ -37,8 +37,8 @@ namespace PhotoViewer.Windows.Native;
 /// </summary>
 internal sealed partial class WindowsMainWindow : Window
 {
-    /// <summary>窗口标题的应用名(标题格式 <c>文件夹名 - 文件名 - PhotoViewer</c>,SHELL-02)。</summary>
-    private const string AppTitle = "PhotoViewer";
+    /// <summary>窗口标题的应用名(标题格式 <c>文件夹名 - 文件名 - 产品名</c>,SHELL-02;产品名按发行版)。</summary>
+    private const string AppTitle = WindowsProductInfo.DisplayName;
 
     /// <summary>任务栏缩略浮窗图标:随输出复制的 icon.ico(与 EXE 图标同源)。</summary>
     private const string WindowIconFileName = "icon.ico";
@@ -50,7 +50,9 @@ internal sealed partial class WindowsMainWindow : Window
     private readonly WindowsFilmstripView _filmstrip;
     private readonly WindowsFilterBar _filterBar;
     private readonly WindowsControlBar _controlBar;
+#if PHOTOVIEWER_DINO
     private readonly WindowsSimilarityPanel _similarity;
+#endif
     private readonly WindowsAnalysisPanel _analysis;
     private WindowsRatingSourcesFlyout _ratingSources = null!;
 
@@ -230,7 +232,9 @@ internal sealed partial class WindowsMainWindow : Window
             UpdateStatusToastWidth();
         };
 
+#if PHOTOVIEWER_DINO
         _similarity = new WindowsSimilarityPanel(main, RateFile, ShowRatingSources);
+#endif
         _analysis = new WindowsAnalysisPanel(main, _session,
             (u, v) => _photo.FocusOnImagePoint(u, v),
             uv =>
@@ -286,7 +290,9 @@ internal sealed partial class WindowsMainWindow : Window
         _main.FolderVM.PropertyChanged += OnFolderChanged;
         _main.RatingWriteFailedDetailed += OnRatingWriteFailed;
         _main.OpenFailed += OnOpenFailed;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged += OnSimilarityPanelChanged;
+#endif
         _session.Changed += OnImageChanged;
         _session.Notice += OnSessionNotice;
         _photo.ViewportChanged += OnViewportChanged;
@@ -355,7 +361,9 @@ internal sealed partial class WindowsMainWindow : Window
         _main.FolderVM.PropertyChanged -= OnFolderChanged;
         _main.RatingWriteFailedDetailed -= OnRatingWriteFailed;
         _main.OpenFailed -= OnOpenFailed;
+#if PHOTOVIEWER_DINO
         _main.FileVM.SimilarityPanel.PropertyChanged -= OnSimilarityPanelChanged;
+#endif
         AppWindow.Changed -= OnAppWindowChanged;
         _session.Changed -= OnImageChanged;
         _session.Notice -= OnSessionNotice;
@@ -363,7 +371,9 @@ internal sealed partial class WindowsMainWindow : Window
         _photo.RenderStateChanged -= OnPhotoRenderStateChanged;
         _statusTimer?.Stop();
         _filmstrip.Detach();
+#if PHOTOVIEWER_DINO
         _similarity.Detach();
+#endif
         _analysis.Detach();
         _filterBar.Detach();
         _controlBar.Detach();
@@ -466,8 +476,9 @@ internal sealed partial class WindowsMainWindow : Window
     }
 
     /// <summary>
-    /// 构建文件栏:筛选条 + 胶片条 + 相似聚类面板(旧壳 FileView 三分区同构)。
+    /// 构建文件栏:筛选条 + 胶片条(旧壳 FileView 三分区同构);AI 版另有相似聚类面板。
     /// 上下布局时筛选条横跨两列;左右布局时筛选条只占 116 主列,相似面板在主列右侧。
+    /// 标准版不创建相似面板,列定义只剩主列,不占位也不留空槽(EDITION-02)。
     /// </summary>
     private Grid BuildFilePane()
     {
@@ -475,17 +486,19 @@ internal sealed partial class WindowsMainWindow : Window
         pane.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         pane.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
         pane.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        pane.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         Grid.SetRow(_filterBar, 0);
         Grid.SetColumn(_filterBar, 0);
-        Grid.SetColumnSpan(_filterBar, 2);
         Grid.SetRow(_filmstrip, 1);
         Grid.SetColumn(_filmstrip, 0);
-        Grid.SetRow(_similarity, 1);
-        Grid.SetColumn(_similarity, 1);
         pane.Children.Add(_filterBar);
         pane.Children.Add(_filmstrip);
+#if PHOTOVIEWER_DINO
+        pane.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        Grid.SetColumnSpan(_filterBar, 2);
+        Grid.SetRow(_similarity, 1);
+        Grid.SetColumn(_similarity, 1);
         pane.Children.Add(_similarity);
+#endif
         return pane;
     }
 
@@ -829,7 +842,9 @@ internal sealed partial class WindowsMainWindow : Window
             _rowHost.Children.Add(_analysis);
             _rowHost.Children.Add(_controlBar);
             _filePane.ColumnDefinitions[0].Width = new GridLength(1, GridUnitType.Star);
+#if PHOTOVIEWER_DINO
             Grid.SetColumnSpan(_filterBar, 2);
+#endif
 
             // 文件栏底部一条分隔线,文件栏占内容宽度
             _filePaneFrame.Width = double.NaN;
@@ -870,7 +885,9 @@ internal sealed partial class WindowsMainWindow : Window
         _filmstrip.SetOrientation(_isRowLayout);
         _filterBar.SetOrientation(_isRowLayout);
         _controlBar.SetOrientation(_isRowLayout);
+#if PHOTOVIEWER_DINO
         _similarity.SetOrientation(_isRowLayout);
+#endif
         _analysis.SetOrientation(_isRowLayout);
         UpdateSimilarityWidth();
         // 构造期 ActualWidth/Height 还是 0;此时别更新方向,否则 Auto 布局会先按竖屏建一遍再切列布局。
@@ -892,7 +909,9 @@ internal sealed partial class WindowsMainWindow : Window
             _filePaneFrame.Visibility = _main.IsThumbnailViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _controlBar.Visibility = _main.IsControlViewVisible ? Visibility.Visible : Visibility.Collapsed;
             _analysis.Visibility = _main.IsAnalysisViewVisible ? Visibility.Visible : Visibility.Collapsed;
+#if PHOTOVIEWER_DINO
             _similarity.Visibility = _main.FileVM.IsSimilarityPanelOpen ? Visibility.Visible : Visibility.Collapsed;
+#endif
 
             UpdateDetailHighlight();
             if (!_main.IsThumbnailViewVisible)
@@ -942,13 +961,16 @@ internal sealed partial class WindowsMainWindow : Window
     /// <summary>按可用宽度落相似面板宽度(SIM-01/SIM-07):行布局取共享 RowWidth 并夹到一半。</summary>
     private void UpdateSimilarityWidth()
     {
+#if PHOTOVIEWER_DINO
         var panel = _main.FileVM.SimilarityPanel;
         _similarity.SetAvailableWidth(
             Math.Max(0, _root.ActualWidth),
             panel.HasItems,
             panel.SimilarItems.Count);
+#endif
     }
 
+#if PHOTOVIEWER_DINO
     /// <summary>相似面板内容变化时同步宽度(项数会改变行布局切出的宽度)。</summary>
     private void OnSimilarityPanelChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -960,6 +982,7 @@ internal sealed partial class WindowsMainWindow : Window
             UpdateTitleBarChrome();
         }
     }
+#endif
 
     /// <summary>窗口失焦收起标题栏并撤掉分析栏绿框;重新激活后设真实窗口图标。</summary>
     private void OnWindowActivated(object sender, WindowActivatedEventArgs e)

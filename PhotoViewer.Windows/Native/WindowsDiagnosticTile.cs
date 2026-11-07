@@ -190,6 +190,24 @@ internal sealed class WindowsDiagnosticTile : Panel
         SetPlaceholder(placeholder);
     }
 
+    /// <summary>
+    /// 清空瓦片当前显示的全部内容(主图/压暗背景/叠加层矢量场)并落到占位文字。
+    /// 换图代际、未提取、计算中与失败态都必须走这里:只比较位图引用不足以保证旧图被摘掉,
+    /// 例如缓存引用与源同时为 null 时旧位图会一直留在 <see cref="_image"/> 上。
+    /// </summary>
+    /// <param name="placeholder">占位文字;null 表示不显示占位</param>
+    internal void ClearContent(string? placeholder)
+    {
+        _image.Source = null;
+        _backgroundImage.Source = null;
+        if (_overlay is WindowsShakeFieldView shake)
+        {
+            shake.ShakeField = null;
+        }
+
+        SetPlaceholder(placeholder);
+    }
+
     /// <summary>只更新占位文字(位图引用未变时用,避免重复上传)。</summary>
     /// <param name="placeholder">占位文字;null 隐藏</param>
     public void SetPlaceholder(string? placeholder)

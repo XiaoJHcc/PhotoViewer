@@ -4,94 +4,90 @@
         <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
         <OutputType>WinExe</OutputType>
         <RootNamespace>PhotoViewer.Windows</RootNamespace>
+        <ApplicationTitle>PhotoViewer</ApplicationTitle>
+        <ApplicationTitle Condition="'$(PhotoViewerEnableDino)' == 'true'">PhotoViewer-AI</ApplicationTitle>
+        <Product>$(ApplicationTitle)</Product>
+        <AssemblyTitle>$(ApplicationTitle)</AssemblyTitle>
         <AssemblyName Condition="'$(WindowsReleaseAssemblyName)' != ''">$(WindowsReleaseAssemblyName)</AssemblyName>
         <Nullable>enable</Nullable>
         <ImplicitUsings>enable</ImplicitUsings>
-        <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
-        <!-- 固定 win-x64:既有的 LibHeif.Native.win-x64 只支持 x64,发布脚本也已硬拒其他 RID。
-             固定后 Debug 与 Release 都按 win-x64 构建,输出目录为 bin/<cfg>/net10.0-windows10.0.19041.0/win-x64/。 -->
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
         <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-
-        <!-- WinUI 3 原生壳:非打包(unpackaged)部署;入口由本工程自写(见 Program.cs) -->
         <UseWinUI>true</UseWinUI>
-        <!-- 根 App.xaml 只承载 XamlControlsResources(见 App.xaml);不要删:
-             没有它就没有 IXamlMetadataProvider,Fluent 控件模板(NavigationView/TitleBar/NumberBox/
-             TextBox/InfoBar/ProgressBar)会缺 TabView* / AcrylicBackgroundFillColorDefaultBrush 资源。 -->
+        <!-- App.xaml 的 XamlControlsResources 提供 Fluent 模板和主题资源。 -->
         <WindowsPackageType>None</WindowsPackageType>
-        <!-- 开启 PRI 发布接线;非打包应用的资源包名为 $(TargetName).pri,单文件发布时一并解包。 -->
         <EnableMsixTooling>true</EnableMsixTooling>
-        <!-- 自包含 Windows App SDK 运行时:免装运行时依赖(直发 exe 的用户机器上没有它),
-             并让 WinUI 自带的 Microsoft.UI.Xaml.Controls.pri 随输出就位(Fluent 资源查找依赖它)。 -->
         <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <DisableTransitiveFrameworkReferences>true</DisableTransitiveFrameworkReferences>
         <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-        <!-- EXE 图标：引用共享项目中的 icon.ico -->
+        <DefineConstants Condition="'$(PhotoViewerEnableDino)' == 'true'">$(DefineConstants);PHOTOVIEWER_DINO</DefineConstants>
         <ApplicationIcon>..\PhotoViewer\Assets\icon.ico</ApplicationIcon>
-    </PropertyGroup>
-
-    <PropertyGroup>
         <ApplicationManifest>app.manifest</ApplicationManifest>
     </PropertyGroup>
 
+    <Target Name="RequireExplicitWindowsEdition" BeforeTargets="Restore;PrepareForBuild"
+            Condition="'$(DesignTimeBuild)' != 'true'">
+        <Error Condition="'$(PhotoViewerEditionExplicit)' != 'true' Or ('$(PhotoViewerEnableDino)' != 'true' And '$(PhotoViewerEnableDino)' != 'false')"
+               Text="构建 PhotoViewer.Windows 必须显式指定发行版本：-p:PhotoViewerEnableDino=false（标准版）或 -p:PhotoViewerEnableDino=true（AI 版）。运行命令见 DEV.md 的 Tasks。" />
+        <Error Condition="'$(RuntimeIdentifier)' != 'win-x64'" Text="Windows 仅支持 win-x64。" />
+    </Target>
+
     <ItemGroup>
-        <PackageReference Include="Microsoft.WindowsAppSDK"/>
+        <PackageReference Include="Microsoft.WindowsAppSDK" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.ML" ExcludeAssets="all" />
         <PackageReference Include="CommunityToolkit.WinUI.Controls.SettingsControls" />
         <PackageReference Include="DirectNStandard" />
         <PackageReference Include="LibHeifSharp" />
         <PackageReference Include="LibHeif.Native.win-x64" />
-        <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" />
         <PackageReference Include="WicNet" />
+        <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Condition="'$(PhotoViewerEnableDino)' == 'true'" />
+        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"
+                          AdditionalProperties="PhotoViewerEnableDino=$(PhotoViewerEnableDino)" />
     </ItemGroup>
 
     <ItemGroup>
-        <ProjectReference Include="..\PhotoViewer\PhotoViewer.csproj"/>
-        <!-- DINOv3 模型受 Meta 许可约束、不入库（见 DEV.md「DINOv3 ONNX 模型」）：
-             缺失时仍可构建与运行，仅 DINO / 相似聚类在运行期报缺少模型。 -->
+        <AssemblyMetadata Include="PhotoViewerEdition" Value="$(PhotoViewerEdition)" />
+        <AssemblyMetadata Include="AppBuildNumber" Value="$(AppBuildNumber)" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' != 'true'">
+        <Compile Remove="Native/WindowsSimilarityPanel.cs" />
+    </ItemGroup>
+
+    <ItemGroup Condition="'$(PhotoViewerEnableDino)' == 'true'">
         <EmbeddedResource Include="..\PhotoViewer\Assets\Models\dinov3_vits16.onnx"
                           LogicalName="PhotoViewer.Windows.NativeAssets.Assets.Models.dinov3_vits16.onnx"
-                          Condition="Exists('..\PhotoViewer\Assets\Models\dinov3_vits16.onnx')"/>
+                          Condition="Exists('..\PhotoViewer\Assets\Models\dinov3_vits16.onnx')" />
+        <Content Include="..\PhotoViewer\Assets\Models\DINOv3-LICENSE.md"
+                 Link="Assets/Models/DINOv3-LICENSE.md"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
     </ItemGroup>
 
-    <!--
-      pvhevc.dll:静态链接「仅 HEVC 解码器」LGPL FFmpeg 的最小解码库(源码与构建脚本见 NativeSrc/pvhevc、
-      build-native-windows-hevc.ps1),HEIF 快速解码路径依赖它。与 libheif 一样必须是应用本地模块:
-      单文件发布时随全内容解包落到 EXE 同目录,托管侧按 AppContext.BaseDirectory 解析。
-      许可与构建说明(txt)一并随包分发。
-    -->
-    <ItemGroup>
-        <Content Include="NativeLibs\win-x64\pvhevc.dll"
-                 Link="pvhevc.dll"
-                 CopyToOutputDirectory="PreserveNewest"
-                 CopyToPublishDirectory="PreserveNewest"
-                 ExcludeFromSingleFile="false"/>
-        <Content Include="NativeLibs\win-x64\pvhevc.txt;NativeLibs\win-x64\pvhevc-FFmpeg-LICENSE.txt"
-                 Link="%(Filename)%(Extension)"
-                 CopyToOutputDirectory="PreserveNewest"
-                 CopyToPublishDirectory="PreserveNewest"
-                 ExcludeFromSingleFile="false"/>
-    </ItemGroup>
+    <Target Name="RequireWindowsPublishModel" BeforeTargets="ComputeFilesToPublish"
+            Condition="'$(PhotoViewerEnableDino)' == 'true'">
+        <Error Condition="!Exists('..\PhotoViewer\Assets\Models\dinov3_vits16.onnx')"
+               Text="AI 版发布必须包含固定 DINOv3 模型，参见 DEV.md。" />
+    </Target>
 
-    <!--
-      icon.ico:EXE 图标由 ApplicationIcon 编进资源,但 Win11 任务栏悬停缩略浮窗读的是窗口图标
-      (AppWindow.SetIcon),非打包壳没有安装包清单可回退。这里以链路文件随输出/发布复制一份,
-      激活后由 WindowsMainWindow 按 AppContext.BaseDirectory 设置;单文件发布保持解包(ExcludeFromSingleFile=false),
-      仍是单个 EXE 分发。
-    -->
     <ItemGroup>
-        <Content Include="..\PhotoViewer\Assets\icon.ico"
-                 Link="icon.ico"
-                 CopyToOutputDirectory="PreserveNewest"
-                 CopyToPublishDirectory="PreserveNewest"
-                 ExcludeFromSingleFile="false"/>
+        <Content Remove="NativeLibs\**" />
+        <None Remove="NativeLibs\**" />
+        <Content Include="NativeLibs\win-x64\pvhevc.dll;NativeLibs\win-x64\pvhevc.txt;NativeLibs\win-x64\pvhevc-FFmpeg-LICENSE.txt"
+                 Link="%(Filename)%(Extension)" TargetPath="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
+        <Content Include="..\PhotoViewer\Assets\icon.ico" Link="icon.ico"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
+                 ExcludeFromSingleFile="false" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(PublishSingleFile)' == 'true'">
         <_WindowsVCRedistFile Include="msvcp140.dll;msvcp140_1.dll;vcruntime140.dll;vcruntime140_1.dll" />
         <Content Include="@(_WindowsVCRedistFile->'$(WindowsVCRedistDirectory)\%(Identity)')"
-                 Condition="'$(WindowsVCRedistDirectory)' != ''"
-                 Link="%(Filename)%(Extension)"
-                 CopyToOutputDirectory="PreserveNewest"
-                 CopyToPublishDirectory="PreserveNewest"
+                 Condition="'$(WindowsVCRedistDirectory)' != ''" Link="%(Filename)%(Extension)"
+                 CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest"
                  ExcludeFromSingleFile="false" />
     </ItemGroup>
 
@@ -105,44 +101,20 @@
         <Error Condition="!Exists('$(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)')" Text="Missing CRT file: $(WindowsVCRedistDirectory)\%(_WindowsVCRedistFile.Identity)" />
     </Target>
 
-    <!--
-      共享几何源：PhotoViewer.Shared/ 是纯源文件目录（不是独立程序集），
-      由 Mac / iOS / Android 三个原生头共同链接；Windows 头同样链接同一份视口、
-      主屏/胶片栏/控制栏/分析栏/相似面板/EXIF 表几何与命令表，避免第四套并行常量。
-      该目录不得出现 WinUI 类型，平台专属宿主留在 Native/ 下。
-    -->
     <ItemGroup>
-        <Compile Include="..\PhotoViewer.Shared\**\*.cs"/>
-        <Using Include="PhotoViewer.Shared"/>
+        <Compile Include="..\PhotoViewer.Shared\**\*.cs" />
+        <Using Include="PhotoViewer.Shared" />
+        <Compile Include="..\PhotoViewer.Heif\**\*.cs" />
     </ItemGroup>
 
-    <!--
-      共享 libheif 色彩解码：PhotoViewer.Heif/ 是纯源文件目录（不是独立程序集），
-      Windows 与 Android 显式链接同一份实现（ICC 优先、nclx、高位深 48 位平面、PQ/HLG 拒绝），
-      避免两端各自维护一套标签判定与码值归一化。Apple 头不链接（走 ImageIO）。
-      该目录只依赖 Core + LibHeifSharp + SkiaSharp，不得出现任何平台类型。
-    -->
-    <ItemGroup>
-        <Compile Include="..\PhotoViewer.Heif\**\*.cs"/>
-    </ItemGroup>
-
-    <!--
-      WinAppSDK 1.8 的框架包自带一份 Windows ML 运行时(onnxruntime.dll 1.23.x + 自带 DirectML.dll),
-      与本工程的 ONNX Runtime 1.24.4(DirectML EP)同名。两者版本与字节都不同:实测自包含发布时
-      onnxruntime.dll 取到本工程版本、DirectML.dll 却取到框架版本,即结果靠运气 —— 一旦 managed
-      的 Microsoft.ML.OnnxRuntime 1.24.4 配上框架的 1.23.x native,推理会在运行期直接失败。
-      用 SDK 自带的排除钩子(目标内 `MicrosoftWindowsAppSDKFiles Remove="@(MicrosoftWindowsAppSDKFilesExcluded)"`)
-      显式丢弃框架侧的同名副本,固定保留本工程包内的版本。
-    -->
+    <!-- 固定使用项目版本的 ORT/DirectML，避免 WinAppSDK 同名依赖混用；标准版同样排除 SDK 推理库。 -->
     <PropertyGroup>
-        <!-- 注意:此处必须用评估期就有的属性拼路径。IntermediateOutputPath 要到 SDK 的
-             Microsoft.Common.targets(工程体之后导入)才补上 TFM/RID 段,在工程体里读它是空的。 -->
-        <WinAppSdkMsixContentDir>$(MSBuildProjectDirectory)\$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\$(RuntimeIdentifier)\MsixContent\</WinAppSdkMsixContentDir>
+        <WinAppSdkMsixContentDir>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)', '$(BaseIntermediateOutputPath)', '$(Configuration)', '$(TargetFramework)', '$(RuntimeIdentifier)', 'MsixContent'))</WinAppSdkMsixContentDir>
     </PropertyGroup>
     <ItemGroup>
-        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime.dll"/>
-        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime_providers_shared.dll"/>
-        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)DirectML.dll"/>
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime.dll" />
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)onnxruntime_providers_shared.dll" />
+        <MicrosoftWindowsAppSDKFilesExcluded Include="$(WinAppSdkMsixContentDir)DirectML.dll" />
     </ItemGroup>
     <Import Project="PortableSingleFile.targets" />
 </Project>

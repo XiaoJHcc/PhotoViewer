@@ -4,14 +4,16 @@ using System.Linq;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
+using PhotoViewer.Core.AI;
 using PhotoViewer.ViewModels.Tools;
 using Windows.UI;
 
 namespace PhotoViewer.Windows.Native;
 
 /// <summary>
-/// 工具窗口壳:Win11 设置页结构(Mica + TitleBar + NavigationView)承载 EXIF 详情 / 照片数据统计 / DINO 诊断。
-/// 导航状态与工具数据全部复用共享 <see cref="ToolsViewModel"/> 与 <see cref="DinoDiagnosticPresenter"/>;
+/// 工具窗口壳:Win11 设置页结构(Mica + TitleBar + NavigationView)承载 EXIF 详情 / 诊断 / 照片数据统计。
+/// 诊断页按发行版为「DINO 诊断」(AI 版)或「CV 诊断」(标准版),顺序固定在原 DINO 位置(EDITION-04)。
+/// 导航状态与工具数据全部复用共享 <see cref="ToolsViewModel"/> 与其诊断 presenter;
 /// 本类只做分类选择、页面显隐与窗口生命周期,不自行驱动推理。
 /// </summary>
 internal sealed class WindowsToolsWindow
@@ -19,7 +21,7 @@ internal sealed class WindowsToolsWindow
     private static readonly (string Title, string Key, ToolsPage Page)[] Categories =
     [
         ("EXIF 详情", "Exif", ToolsPage.Exif),
-        ("DINO 诊断", "Dino", ToolsPage.Dino),
+        (WindowsProductInfo.DiagnosticName, WindowsProductInfo.DiagnosticCategoryKey, ToolsPage.Diagnostic),
         ("照片数据统计", "Stats", ToolsPage.Stats),
     ];
 
@@ -32,7 +34,7 @@ internal sealed class WindowsToolsWindow
     private readonly Grid _pageHost;
     private readonly WindowsExifToolPage _exifPage;
     private readonly WindowsStatsToolPage _statsPage;
-    private readonly WindowsDinoToolPage _dinoPage;
+    private readonly WindowsDinoToolPage _diagnosticPage;
     private readonly List<UIElement> _pages = [];
     private readonly List<NavigationViewItem> _navItems = [];
     private bool _sized;
@@ -84,10 +86,10 @@ internal sealed class WindowsToolsWindow
         Func<IntPtr> handle = () => WinRT.Interop.WindowNative.GetWindowHandle(_window);
         _exifPage = new WindowsExifToolPage(tools);
         _statsPage = new WindowsStatsToolPage(tools.PhotoStats, handle);
-        _dinoPage = new WindowsDinoToolPage(tools.DinoPresenter);
+        _diagnosticPage = new WindowsDinoToolPage(DiagnosticPresenterFor(tools));
         _pages.Add(_exifPage);
         _pages.Add(_statsPage);
-        _pages.Add(_dinoPage);
+        _pages.Add(_diagnosticPage);
 
         _pageHost = new Grid { Background = transparent };
         foreach (var page in _pages)
@@ -155,7 +157,7 @@ internal sealed class WindowsToolsWindow
     /// <summary>窗口标题栏控件(验收确认 TitleBar 可用)。</summary>
     internal TitleBar TitleBarControl => _titleBar;
 
-    /// <summary>三页内容。</summary>
+    /// <summary>三页内容(EXIF / 诊断 / 照片数据统计)。</summary>
     internal IReadOnlyList<UIElement> Pages => _pages;
 
     /// <summary>EXIF 详情页。</summary>
@@ -164,8 +166,8 @@ internal sealed class WindowsToolsWindow
     /// <summary>照片数据统计页。</summary>
     internal WindowsStatsToolPage StatsPage => _statsPage;
 
-    /// <summary>DINO 诊断页。</summary>
-    internal WindowsDinoToolPage DinoPage => _dinoPage;
+    /// <summary>诊断页(AI 版 DINO 诊断 / 标准版 CV 诊断)。</summary>
+    internal WindowsDinoToolPage DiagnosticPage => _diagnosticPage;
 
     /// <summary>共享工具壳视图模型。</summary>
     internal ToolsViewModel Tools => _tools;
@@ -195,20 +197,15 @@ internal sealed class WindowsToolsWindow
     /// </summary>
     private void SelectInitialPage()
     {
-        var page = _tools.CurrentTool switch
-        {
-            ExifDetailViewModel => ToolsPage.Exif,
-            PhotoStatsViewModel => ToolsPage.Stats,
-            DinoDebugViewModel => ToolsPage.Dino,
-            _ => _tools.IsExifDetailEnabled ? ToolsPage.Exif : ToolsPage.Stats,
-        };
+        var page = PageForCurrentTool()
+            ?? (_tools.IsExifDetailEnabled ? ToolsPage.Exif : ToolsPage.Stats);
         SelectPage(page, openShared: true);
     }
 
     /// <summary>已打开的窗口再次被请求时恢复上次分类;若上次分类已不可用则退回可用页。</summary>
     private void EnsureSelection()
     {
-        if (_tools.CurrentTool is ExifDetailViewModel or PhotoStatsViewModel or DinoDebugViewModel)
+        if (PageForCurrentTool() != null)
         {
             return;
         }
@@ -232,8 +229,8 @@ internal sealed class WindowsToolsWindow
             page = ToolsPage.Stats;
         }
 
-        // TOOLS-06：离开 DINO 页即取消在途任务，重回页面时由共享 Open 重新触发。
-        if (_selected == ToolsPage.Dino && page != ToolsPage.Dino)
+        // TOOLS-06：离开诊断页即取消在途任务，重回页面时由共享 Open 重新触发。
+        if (_selected == ToolsPage.Diagnostic && page != ToolsPage.Diagnostic)
         {
             _tools.Deactivate();
         }
@@ -267,10 +264,36 @@ internal sealed class WindowsToolsWindow
             case ToolsPage.Stats:
                 _tools.OpenPhotoStats();
                 break;
-            case ToolsPage.Dino:
-                _tools.OpenDinoDebug();
+            case ToolsPage.Diagnostic:
+                _tools.OpenDiagnostic();
                 break;
         }
+    }
+
+    /// <summary>
+    /// 共享当前工具对应的分类页;诊断页按实例判定(两版是不同 presenter 的 VM),
+    /// 不写死任一版本的 VM 类型名。
+    /// </summary>
+    /// <returns>分类页;当前工具不属于这三页时返回 null。</returns>
+    private ToolsPage? PageForCurrentTool()
+    {
+        var current = _tools.CurrentTool;
+        if (current == null)
+        {
+            return null;
+        }
+
+        if (ReferenceEquals(current, _tools.DiagnosticDebug))
+        {
+            return ToolsPage.Diagnostic;
+        }
+
+        return current switch
+        {
+            ExifDetailViewModel => ToolsPage.Exif,
+            PhotoStatsViewModel => ToolsPage.Stats,
+            _ => null,
+        };
     }
 
     /// <summary>按共享状态刷新分类可用性(EXIF 需要当前照片已有 EXIF 数据)。</summary>
@@ -294,17 +317,9 @@ internal sealed class WindowsToolsWindow
                 UpdateAvailability();
                 break;
             case nameof(ToolsViewModel.CurrentTool):
-                switch (_tools.CurrentTool)
+                if (PageForCurrentTool() is { } shared)
                 {
-                    case ExifDetailViewModel:
-                        ShowSharedPage(ToolsPage.Exif);
-                        break;
-                    case PhotoStatsViewModel:
-                        ShowSharedPage(ToolsPage.Stats);
-                        break;
-                    case DinoDebugViewModel:
-                        ShowSharedPage(ToolsPage.Dino);
-                        break;
+                    ShowSharedPage(shared);
                 }
 
                 break;
@@ -334,6 +349,18 @@ internal sealed class WindowsToolsWindow
         SelectPage(page, openShared: true);
     }
 
+    /// <summary>
+    /// 取当前发行版的诊断 presenter:AI 版 DINO、标准版 CV。两版共享同一 <see cref="ToolsViewModel"/>,
+    /// 具体类型由编译能力决定。
+    /// </summary>
+    /// <param name="tools">共享工具壳视图模型</param>
+    /// <returns>诊断 presenter</returns>
+#if PHOTOVIEWER_DINO
+    private static DinoDiagnosticPresenter DiagnosticPresenterFor(ToolsViewModel tools) => tools.DinoPresenter;
+#else
+    private static CvDiagnosticPresenter DiagnosticPresenterFor(ToolsViewModel tools) => tools.CvPresenter;
+#endif
+
     /// <summary>首次布局后把焦点给根元素,让键盘滚动/切换生效。</summary>
     private void OnLoaded(object sender, RoutedEventArgs args) => _root.Focus(FocusState.Programmatic);
 
@@ -341,12 +368,12 @@ internal sealed class WindowsToolsWindow
     private void OnClosed(object sender, WindowEventArgs args)
     {
         NativeStartupLog.Write("tools window closed");
-        // TOOLS-06：关闭窗口即取消在途 DINO 任务，不在后台续算。
+        // TOOLS-06：关闭窗口即取消在途诊断任务，不在后台续算。
         _tools.Deactivate();
         _tools.PropertyChanged -= OnToolsChanged;
         _exifPage.Detach();
         _statsPage.Detach();
-        _dinoPage.Detach();
+        _diagnosticPage.Detach();
         Closed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -378,6 +405,6 @@ internal enum ToolsPage
     /// <summary>照片数据统计(Windows 专属)。</summary>
     Stats = 1,
 
-    /// <summary>DINO 诊断。</summary>
-    Dino = 2,
+    /// <summary>诊断页(AI 版 DINO 诊断 / 标准版 CV 诊断),固定在原 DINO 位置。</summary>
+    Diagnostic = 2,
 }

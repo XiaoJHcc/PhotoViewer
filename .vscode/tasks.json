@@ -9,30 +9,58 @@
       "problemMatcher": []
     },
     {
-      "label": "Debug Windows",
+      "label": "Debug Windows (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Run Windows",
+      "label": "Debug Windows (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check Windows Native",
+      "label": "Run Windows (Standard)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --pv-native-smoke",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=false",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
     {
-      "label": "Check Windows Color",
+      "label": "Run Windows (AI)",
       "type": "shell",
-      "command": "dotnet run --project PhotoViewer.Windows -c Debug -- --pv-native-color",
+      "command": "dotnet run --project PhotoViewer.Windows --no-build -c Debug -p:PhotoViewerEnableDino=true",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Native (Standard)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false -- --pv-native-smoke",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Native (AI)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true -- --pv-native-smoke",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Color (Standard)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=false -- --pv-native-color",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Check Windows Color (AI)",
+      "type": "shell",
+      "command": "dotnet run --project PhotoViewer.Windows -c Debug -p:PhotoViewerEnableDino=true -- --pv-native-color",
       "group": "test",
       "problemMatcher": "$msCompile"
     },
@@ -260,11 +288,39 @@
       "problemMatcher": ""
     },
     {
-      "label": "Publish Windows EXE (Release)",
+      "label": "Publish Windows EXE (Release, Standard + AI)",
       "type": "shell",
-      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition both",
       "group": "build",
       "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Windows EXE (Release, Standard)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition standard",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Windows EXE (Release, AI)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition ai",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Publish Windows EXE (Local Check)",
+      "type": "shell",
+      "command": "powershell -ExecutionPolicy Bypass -File ${workspaceFolder}/PhotoViewer.Windows/publish-win-x64-singlefile.ps1 -Edition both -Local",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "Scan Windows Package (Self-Test)",
+      "type": "shell",
+      "command": "python Tools/check-windows-package.py --self-test",
+      "group": "build",
+      "problemMatcher": ""
     },
     {
       "label": "Publish Android APK (Release, Standard + AI)",

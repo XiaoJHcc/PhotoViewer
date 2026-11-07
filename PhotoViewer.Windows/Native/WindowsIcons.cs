@@ -157,7 +157,7 @@ internal static class WindowsIcons
     };
 
     /// <summary>
-    /// 工具窗口分类 → 导航图标字形。分类键由工具窗口固定使用(Exif/Stats/Dino)。
+    /// 工具窗口分类 → 导航图标字形。分类键由工具窗口固定使用(Exif/Stats/Dino/Cv)。
     /// </summary>
     /// <param name="category">分类键</param>
     /// <returns>Segoe Fluent Icons 字形</returns>
@@ -166,6 +166,7 @@ internal static class WindowsIcons
         "Exif" => "\uE946",
         "Stats" => "\uE9D2",
         "Dino" => "\uE99A",
+        "Cv" => "\uE9D9",
         _ => WindowsLayout.ToolsWindowGlyph,
     };
 
